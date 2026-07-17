@@ -75,39 +75,49 @@ public class AiSettings
     public int DeepDiveMaxTokens { get; set; } = 8192;
 
     /// <summary>
-    /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位，最常見用途是限制模型「思考/推理」的長度。
-    /// 這類參數沒有統一標準、依模型與 llama.cpp 版本而異，所以用透傳而非寫死的強型別欄位，
-    /// 才能不改程式碼、只改設定檔就調整。
+    /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位，最常見用途是限制模型「思考/推理」的長度、
+    /// 或補充 OpenAI 相容層沒有的 llama.cpp 原生參數。這類參數沒有統一標準、依模型與 llama.cpp
+    /// 版本而異，所以用透傳而非寫死的強型別欄位，才能不改程式碼、只改設定檔就調整。
     ///
     /// 從實際 log 觀察到回覆內容混有 &lt;|channel|&gt; 特殊符號，這是 OpenAI Harmony 格式
     /// （gpt-oss 系列模型用來分隔 analysis/final 等輸出通道）外洩的痕跡，代表這個模型很可能
     /// 是 Harmony/gpt-oss 家族而非單純 Gemini 風格，預設同時帶上兩種慣例的欄位：
     /// - reasoning_effort：gpt-oss 在 llama.cpp 的官方文件化參數，值為 low/medium/high
     /// - chat_template_kwargs.thinking_budget：Gemini 風格聊天範本常見的數字預算慣例
-    /// 伺服器通常會忽略不認得的欄位、不會報錯，所以兩種都送不會互相干擾，但**仍不保證兩者
-    /// 之一對你的模型/伺服器組合一定有效**——請對照 llama.cpp server 啟動時印出的聊天範本
+    ///
+    /// 另外實測 FrequencyPenalty/PresencePenalty（OpenAI 相容層的加法尺度）調到 0.5
+    /// 仍壓不下明顯的退化重複輸出，額外帶上 llama.cpp **原生**的 repeat_penalty
+    /// （乘法尺度，1.0＝不懲罰，llama.cpp server 對 /v1/chat/completions 的請求體通常會
+    /// 直接透傳非標準欄位給底層取樣器，不一定要透過 OpenAI 相容層轉譯，可能更可靠）。
+    ///
+    /// 伺服器通常會忽略不認得的欄位、不會報錯，所以都送不會互相干擾，但**不保證每一個
+    /// 對你的模型/伺服器組合都有效**——請對照 llama.cpp server 啟動時印出的聊天範本
     /// 或模型文件確認實際支援的欄位名稱。
     /// </summary>
     public Dictionary<string, JsonElement>? ExtraRequestFields { get; set; } = new()
     {
         ["reasoning_effort"] = JsonSerializer.SerializeToElement("low"),
-        ["chat_template_kwargs"] = JsonSerializer.SerializeToElement(new { thinking_budget = 512 })
+        ["chat_template_kwargs"] = JsonSerializer.SerializeToElement(new { thinking_budget = 512 }),
+        ["repeat_penalty"] = JsonSerializer.SerializeToElement(1.3)
     };
 
     /// <summary>
     /// 頻率懲罰：對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出
-    /// （實際觀察到的失敗模式，如摘要欄位塞滿重複的 "-1-1-1-1..." 或 "0 0 0 0..."）。
-    /// 0 = 不懲罰，正值抑制重複；OpenAI 相容 API 的標準欄位，llama.cpp 也支援。
-    /// 0.3 在實測中似乎不足以壓下這個模型的退化傾向，先調到 0.5；若仍常出現重複垃圾，
-    /// 可以再往上調（llama.cpp 通常允許到 2.0），但過高可能影響正常內容的流暢度。
+    /// （實際觀察到的失敗模式，如摘要欄位塞滿重複的 "-1-1-1-1..."、"0 0 0 0..."、
+    /// "process 45312 process 45312..." 這類反覆片語）。0 = 不懲罰，正值抑制重複；
+    /// OpenAI 相容 API 的標準欄位，llama.cpp 也支援。
+    /// 0.3 實測不足以壓下這個模型的退化傾向，調到 0.5 後從 log 觀察似乎依然明顯，
+    /// 這裡先調到 0.8 作為下一步嘗試；若持續無效，可能代表這個 server/模型組合下
+    /// OpenAI 相容層的 frequency_penalty 沒有確實生效，改靠上面的 repeat_penalty
+    /// 或請維護伺服器的人確認實際支援的取樣參數。
     /// </summary>
-    public double? FrequencyPenalty { get; set; } = 0.5;
+    public double? FrequencyPenalty { get; set; } = 0.8;
 
     /// <summary>
     /// 存在懲罰：對已出現過的 token（不論次數）給固定懲罰，鼓勵話題/用詞多樣性，
     /// 與 FrequencyPenalty 互補，一起抑制退化重複。0 = 不懲罰。
     /// </summary>
-    public double? PresencePenalty { get; set; } = 0.5;
+    public double? PresencePenalty { get; set; } = 0.8;
 }
 
 public class PermissionSettings

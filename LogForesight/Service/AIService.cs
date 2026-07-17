@@ -99,7 +99,8 @@ public class AIService
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<TaskCanceledException>()
-                    .Handle<EmptyAiResponseException>(),
+                    .Handle<EmptyAiResponseException>()
+                    .Handle<AiEnvelopeParseException>(),
                 OnRetry = args =>
                 {
                     var msg = $"AI 呼叫失敗（{args.Outcome.Exception?.Message}），" +
@@ -162,7 +163,26 @@ public class AIService
                 var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, ct);
                 response.EnsureSuccessStatusCode();
 
-                var result = await response.Content.ReadFromJsonAsync<OpenAIResponse>(cancellationToken: ct);
+                // 先讀成字串再自己解析，而不是直接 ReadFromJsonAsync：中間的 proxy/gateway
+                // 偶爾會用 HTTP 200 回傳非 JSON 的純文字/HTML 錯誤頁（例如逾時橫幅），
+                // 這樣才能在解析失敗時把實際內容記下來，而不是只有一句無從查起的例外訊息
+                var rawBody = await response.Content.ReadAsStringAsync(ct);
+                OpenAIResponse? result;
+                try
+                {
+                    result = JsonSerializer.Deserialize<OpenAIResponse>(rawBody);
+                }
+                catch (JsonException ex)
+                {
+                    var preview = PreviewForLog(rawBody);
+                    Console.WriteLine($"    AI 回應信封不是合法 JSON，預覽：{preview}");
+                    Log.Warn(ex, "AI 回應信封不是合法 JSON，HTTP 狀態碼={StatusCode}，預覽：{Preview}",
+                        (int)response.StatusCode, preview);
+                    // 包裝成同一種例外類型丟出去，讓 Polly 依 ShouldHandle 判斷是否重試，
+                    // 且不掩蓋原始例外（透過 InnerException 保留完整堆疊供除錯）
+                    throw new AiEnvelopeParseException(ex);
+                }
+
                 var text = result?.Choices.FirstOrDefault()?.Message.Content;
 
                 // 空回應視為失敗觸發重試，不讓「無內容」流進分析結果
@@ -285,6 +305,13 @@ public class AIService
     private class EmptyAiResponseException : Exception
     {
         public EmptyAiResponseException() : base("模型回傳空內容") { }
+    }
+
+    /// <summary>HTTP 狀態碼是成功，但回應本體不是合法 JSON（常見於中間 proxy/gateway 用 200
+    /// 回傳純文字/HTML 錯誤頁）。視為暫時性失敗交給 Polly 重試，而不是直接判定整次呼叫失敗。</summary>
+    private class AiEnvelopeParseException : Exception
+    {
+        public AiEnvelopeParseException(JsonException inner) : base("AI 回應信封不是合法 JSON", inner) { }
     }
 
     private class OpenAIRequest
