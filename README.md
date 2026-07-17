@@ -447,9 +447,8 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
     "FrequencyPenalty": 0.8,
     "PresencePenalty": 0.8,
     "ExtraRequestFields": {
-      "reasoning_effort": "low",
-      "chat_template_kwargs": { "thinking_budget": 512 },
-      "repeat_penalty": 1.3
+      "chat_template_kwargs": { "enable_thinking": false },
+      "rep_pen": 1.3
     }
   },
   "Permissions": {
@@ -460,16 +459,16 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
-| `Ai.BaseUrl` | `http://localhost:8080` | llama.cpp 的 OpenAI 相容 API 位址 |
+| `Ai.BaseUrl` | `http://localhost:8080` | OpenAI 相容 API 位址（實測環境為 KoboldCpp，也適用其他 llama.cpp 系 server） |
 | `Ai.TimeoutSeconds` | `600` | 單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘） |
 | `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
 | `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
 | `Ai.JsonRetryCount` | `2` | 網路正常但 JSON 格式/內容檢查未過時的額外重問次數 |
 | `Ai.MaxTokens` | `1536` | 一般（終端 JSON 較短）呼叫的上限，用於每日總覽分析與前置掃描，`0` = 不設上限。故意抓緊：這類回應正常只有幾百字元，模型退化重複輸出時會一路生成到頂到上限才停，上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂 |
 | `Ai.DeepDiveMaxTokens` | `8192` | 深入分析呼叫（`RiskReportService` 逐類別分析）的上限，獨立於 `MaxTokens` 之外——這類回應天生比終端摘要長得多（一次分析多個問題的原因/影響/處置步驟），用同一個上限會逼你在「精簡呼叫失敗時拖太久」和「深入分析被截斷」之間二選一 |
-| `Ai.FrequencyPenalty` | `0.8` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類反覆片語）。OpenAI 相容標準欄位，llama.cpp 也支援。從 0.3 調到 0.5 實測仍壓不下明顯的退化重複，這裡先調到 0.8 做下一步嘗試（llama.cpp 通常允許到 2.0）；若持續無效，可能代表這個 server/模型組合下這個欄位沒有確實生效，改靠 `ExtraRequestFields` 的 `repeat_penalty`（llama.cpp 原生參數）或詢問維護伺服器的人 |
+| `Ai.FrequencyPenalty` | `0.8` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類反覆片語）。OpenAI 相容標準欄位，理論上 KoboldCpp 的相容層會轉譯成內部取樣參數；從 0.3 一路調到 0.8 仍未完全根除，實際效果請對照 `Ai.ExtraRequestFields` 的 `rep_pen`（KoboldCpp 原生參數，見下） |
 | `Ai.PresencePenalty` | `0.8` | 存在懲罰，跟 FrequencyPenalty 互補，一起抑制退化重複 |
-| `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON。**這類參數沒有統一標準、依模型與 llama.cpp 版本而異**：`reasoning_effort` 是 gpt-oss/Harmony 格式模型在 llama.cpp 的官方文件化參數（low/medium/high，限制思考長度），`chat_template_kwargs.thinking_budget` 是 Gemini 風格聊天範本的數字預算慣例，`repeat_penalty` 是 llama.cpp **原生**的重複懲罰（乘法尺度，1.0＝不懲罰，不透過 OpenAI 相容層轉譯，llama.cpp server 通常會直接透傳非標準欄位給底層取樣器，可能比 `FrequencyPenalty`/`PresencePenalty` 更可靠）。都送不會互相干擾，伺服器不認得的欄位通常直接忽略、不會報錯——請對照 llama.cpp server 啟動時印出的聊天範本或模型文件確認實際支援哪個 |
+| `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON。**已從實際的 KoboldCpp 啟動設定檔（kcpps）確認**：`chat_template_kwargs.enable_thinking` 是這個模型的聊天範本認得的**布林**思考開關（先前猜測的數字預算 `thinking_budget` 這個 key 範本根本不認得，等於沒作用），伺服器層級預設整台開著（true），故意設 `false` 關閉；`rep_pen` 是 KoboldCpp（KoboldAI 系譜）**原生**的重複懲罰參數名稱，不是原生 llama.cpp server 慣例的 `repeat_penalty`——先前那個 key 這台伺服器很可能不認得。都送不會互相干擾，伺服器不認得的欄位通常直接忽略、不會報錯——換了不同 server/模型時請對照它自己的啟動設定或文件重新確認 |
 | `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
@@ -537,24 +536,29 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
 `concurrentWrites` 屬性，設定解析會拋例外，已從設定檔移除（本程式用具名 Mutex 保證同時間
 只有一個執行個體，本來就不需要這個屬性）。
 
-### llama.cpp
+### llama.cpp / KoboldCpp
 
-程式呼叫 `{BaseUrl}/v1/chat/completions`（OpenAI 相容 API）。
+程式呼叫 `{BaseUrl}/v1/chat/completions`（OpenAI 相容 API），實測環境是
+**KoboldCpp**（llama.cpp-based、但有自己的參數命名與 chat completions adapter，
+跟原生 llama.cpp server 不完全相同）。
 
 - **請求佇列**：`AIService` 內建單一併發佇列（`SemaphoreSlim(1,1)`），同一時間只發出一個
-  request，其餘呼叫依序排隊——本機 llama.cpp 同時處理多個請求會互搶 GPU 資源，
-  導致全部變慢甚至逾時，序列化最穩定。
-- 使用 `response_format: {"type": "json_object"}` 強制 JSON 輸出，需要支援此參數的
-  llama.cpp 版本（2024 年初以後的版本皆支援）。
-- 27B/31B 級模型（如 Tesla V100 32GB 上的 Gemma）單次回應可能需數分鐘。
-  首次執行回補 14 天時每天都呼叫 AI（總覽＋風險日的深入分析），總時間可能超過一小時，
-  屬預期行為（品質優先）。
-- **判斷模型是否為 Harmony/gpt-oss 格式**：如果診斷 log 裡的回覆內容混有 `<|channel|>`、
-  `<|message|>`、`<|start|>`、`<|return|>` 這類特殊符號，代表模型是 OpenAI Harmony 格式
-  （gpt-oss 系列，用 analysis/final 等輸出通道分隔思考與正式回答），這些符號外洩到
-  `content` 欄位通常代表 server 端沒有正確依 Harmony 格式解析/分離推理內容。這種情況下
-  `Ai.ExtraRequestFields` 應優先嘗試 `reasoning_effort`（low/medium/high，gpt-oss 在
-  llama.cpp 的官方參數）而非 Gemini 風格的 `thinking_budget`。
+  request，其餘呼叫依序排隊——本機推論同時處理多個請求會互搶 GPU 資源，導致全部變慢甚至
+  逾時，序列化最穩定；也跟實測 KoboldCpp 設定裡的 `parallelrequests: 1`（伺服器本來就
+  一次只處理一個請求）吻合。
+- 使用 `response_format: {"type": "json_object"}` 強制 JSON 輸出。
+- 27B/31B 級模型單次回應可能需數分鐘。首次執行回補 14 天時每天都呼叫 AI（總覽＋風險日的
+  深入分析），總時間可能超過一小時，屬預期行為（品質優先）。
+- **判斷模型是否有推理/思考通道外洩**：如果診斷 log 裡的回覆內容混有 `<|channel|>`、
+  `<|message|>`、`<|start|>`、`<|return|>` 這類特殊符號，代表模型的思考內容外洩到最終
+  輸出裡（可能是 KoboldCpp 的 `chatcompletionsadapter: AutoGuess` 誤判了模型的輸出格式，
+  沒有正確拆分思考與正式回答）。**優先檢查伺服器自己的啟動設定檔**（KoboldCpp 是
+  `.kcpps`，通常在啟動時也會印出完整參數）找 `jinja_kwargs`——那裡面的 key
+  才是這個模型的聊天範本實際認得的思考控制參數，不要用其他家 server 的慣例猜；
+  本專案實測的 KoboldCpp 環境認的是 `enable_thinking`（布林），送 `thinking_budget`
+  這種其他慣例的數字預算完全沒作用。同理，重複懲罰的原生參數名稱也因 server 而異：
+  KoboldCpp 用 `rep_pen`，原生 llama.cpp server 用 `repeat_penalty`，兩者送錯地方
+  都是靜默無效、不會報錯，所以效果不彰時不能只靠猜，务必查對方的啟動設定或文件。
 
 ## 限制與後續方向
 

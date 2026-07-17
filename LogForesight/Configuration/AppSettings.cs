@@ -75,30 +75,28 @@ public class AiSettings
     public int DeepDiveMaxTokens { get; set; } = 8192;
 
     /// <summary>
-    /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位，最常見用途是限制模型「思考/推理」的長度、
-    /// 或補充 OpenAI 相容層沒有的 llama.cpp 原生參數。這類參數沒有統一標準、依模型與 llama.cpp
-    /// 版本而異，所以用透傳而非寫死的強型別欄位，才能不改程式碼、只改設定檔就調整。
+    /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位。
     ///
-    /// 從實際 log 觀察到回覆內容混有 &lt;|channel|&gt; 特殊符號，這是 OpenAI Harmony 格式
-    /// （gpt-oss 系列模型用來分隔 analysis/final 等輸出通道）外洩的痕跡，代表這個模型很可能
-    /// 是 Harmony/gpt-oss 家族而非單純 Gemini 風格，預設同時帶上兩種慣例的欄位：
-    /// - reasoning_effort：gpt-oss 在 llama.cpp 的官方文件化參數，值為 low/medium/high
-    /// - chat_template_kwargs.thinking_budget：Gemini 風格聊天範本常見的數字預算慣例
+    /// 實際伺服器是 **KoboldCpp**（非原生 llama.cpp server），已從對方的啟動設定檔確認以下
+    /// 關鍵事實，取代先前的猜測：
+    /// - `"jinja_kwargs": "{\"enable_thinking\": true}"` ── 這個模型的聊天範本認的是
+    ///   **布林開關** `enable_thinking`，不是數字預算；先前猜的 `thinking_budget` 這個 key
+    ///   範本根本不認得，等於完全沒作用。伺服器目前預設整台開著（true），所以預設一律會思考。
+    ///   直接關閉（false）才是目前唯一有實證支援的思考控制手段。
+    /// - `"chatcompletionsadapter": "AutoGuess"` ── KoboldCpp 用這個機制自動猜測聊天/輸出
+    ///   格式；如果它誤判了這個客製化 Gemma-MoE checkpoint 的格式，觀察到的 `&lt;|channel|&gt;`
+    ///   （Harmony 格式的輸出通道分隔符號）外洩到內容裡就说得通了——不一定是模型本身的問題，
+    ///   也可能是 adapter 沒有正確解析/拆分模型輸出。
+    /// - 重複懲罰的 KoboldCpp **原生**參數名稱是 `rep_pen`（KoboldAI 系譜命名），不是原生
+    ///   llama.cpp server 的 `repeat_penalty`——先前那個 key 這台伺服器很可能根本不認得。
     ///
-    /// 另外實測 FrequencyPenalty/PresencePenalty（OpenAI 相容層的加法尺度）調到 0.5
-    /// 仍壓不下明顯的退化重複輸出，額外帶上 llama.cpp **原生**的 repeat_penalty
-    /// （乘法尺度，1.0＝不懲罰，llama.cpp server 對 /v1/chat/completions 的請求體通常會
-    /// 直接透傳非標準欄位給底層取樣器，不一定要透過 OpenAI 相容層轉譯，可能更可靠）。
-    ///
-    /// 伺服器通常會忽略不認得的欄位、不會報錯，所以都送不會互相干擾，但**不保證每一個
-    /// 對你的模型/伺服器組合都有效**——請對照 llama.cpp server 啟動時印出的聊天範本
-    /// 或模型文件確認實際支援的欄位名稱。
+    /// `reasoning_effort` 保留但降低權重：KoboldCpp 有自己的 `reasoningeffort` 啟動參數，
+    /// 不確定 OpenAI 相容層是否支援逐請求覆寫；`enable_thinking:false` 才是目前的主力手段。
     /// </summary>
     public Dictionary<string, JsonElement>? ExtraRequestFields { get; set; } = new()
     {
-        ["reasoning_effort"] = JsonSerializer.SerializeToElement("low"),
-        ["chat_template_kwargs"] = JsonSerializer.SerializeToElement(new { thinking_budget = 512 }),
-        ["repeat_penalty"] = JsonSerializer.SerializeToElement(1.3)
+        ["chat_template_kwargs"] = JsonSerializer.SerializeToElement(new { enable_thinking = false }),
+        ["rep_pen"] = JsonSerializer.SerializeToElement(1.3)
     };
 
     /// <summary>
