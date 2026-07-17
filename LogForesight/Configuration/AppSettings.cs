@@ -58,11 +58,21 @@ public class AiSettings
     public int JsonRetryCount { get; set; } = 2;
 
     /// <summary>
-    /// 單次回應的最大 token 數上限，避免模型異常時無限重複輸出拖垮回應品質與時間。0 = 不設上限。
-    /// 注意：如果模型的「思考/推理」長度本身沒有上限，一直調高這個值只是把截斷點往後延，
-    /// 不是根本解——先用 ExtraRequestFields 限制思考長度（見下方），這裡才不用一直往上加。
+    /// 一般（終端 JSON 較短）呼叫的 token 上限，用於每日總覽分析與前置掃描。0 = 不設上限。
+    /// 這類回應正常應該只有幾百字元；上限故意抓緊，是因為觀察到模型退化重複輸出時會一路
+    /// 生成到頂到上限才停——上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂、
+    /// 白白浪費時間。如果模型的「思考/推理」長度本身沒有上限，一直調高這個值也只是把
+    /// 截斷點往後延，不是根本解——請優先用 ExtraRequestFields 限制思考長度（見下方）。
     /// </summary>
-    public int MaxTokens { get; set; } = 4096;
+    public int MaxTokens { get; set; } = 1536;
+
+    /// <summary>
+    /// 深入分析呼叫（RiskReportService 逐類別的問題分析）的 token 上限，獨立於 MaxTokens 之外。
+    /// 這類回應天生就比終端摘要長得多（一次要分析多個問題的原因/影響/處置步驟），
+    /// 用同一個上限會逼你在「精簡呼叫失敗時拖太久」和「深入分析被截斷」之間二選一，
+    /// 所以拆開兩個設定各自調。
+    /// </summary>
+    public int DeepDiveMaxTokens { get; set; } = 8192;
 
     /// <summary>
     /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位，最常見用途是限制模型「思考/推理」的長度。
@@ -88,14 +98,16 @@ public class AiSettings
     /// 頻率懲罰：對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出
     /// （實際觀察到的失敗模式，如摘要欄位塞滿重複的 "-1-1-1-1..." 或 "0 0 0 0..."）。
     /// 0 = 不懲罰，正值抑制重複；OpenAI 相容 API 的標準欄位，llama.cpp 也支援。
+    /// 0.3 在實測中似乎不足以壓下這個模型的退化傾向，先調到 0.5；若仍常出現重複垃圾，
+    /// 可以再往上調（llama.cpp 通常允許到 2.0），但過高可能影響正常內容的流暢度。
     /// </summary>
-    public double? FrequencyPenalty { get; set; } = 0.3;
+    public double? FrequencyPenalty { get; set; } = 0.5;
 
     /// <summary>
     /// 存在懲罰：對已出現過的 token（不論次數）給固定懲罰，鼓勵話題/用詞多樣性，
     /// 與 FrequencyPenalty 互補，一起抑制退化重複。0 = 不懲罰。
     /// </summary>
-    public double? PresencePenalty { get; set; } = 0.3;
+    public double? PresencePenalty { get; set; } = 0.5;
 }
 
 public class PermissionSettings

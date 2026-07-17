@@ -79,8 +79,10 @@ var runStopwatch = Stopwatch.StartNew();
 // AI API 設定由執行檔目錄的 appsettings.json 載入
 var settings = AppSettings.Load();
 Console.WriteLine($"AI API：{settings.Ai.BaseUrl}（逾時 {settings.Ai.TimeoutSeconds} 秒，失敗重試 {settings.Ai.RetryCount} 次）");
-log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCount}, JsonRetryCount={JsonRetryCount}, MaxTokens={MaxTokens}",
-    settings.Ai.BaseUrl, settings.Ai.TimeoutSeconds, settings.Ai.RetryCount, settings.Ai.JsonRetryCount, settings.Ai.MaxTokens);
+log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCount}, JsonRetryCount={JsonRetryCount}, " +
+         "MaxTokens={MaxTokens}, DeepDiveMaxTokens={DeepDiveMaxTokens}, FrequencyPenalty={FrequencyPenalty}, PresencePenalty={PresencePenalty}",
+    settings.Ai.BaseUrl, settings.Ai.TimeoutSeconds, settings.Ai.RetryCount, settings.Ai.JsonRetryCount,
+    settings.Ai.MaxTokens, settings.Ai.DeepDiveMaxTokens, settings.Ai.FrequencyPenalty, settings.Ai.PresencePenalty);
 
 try
 {
@@ -88,7 +90,7 @@ try
 var eventLogService = new EventLogService();
 var aiService = new AIService(settings.Ai);
 var historyService = new LogHistoryService();
-var reportService = new RiskReportService(aiService); // 風險報告輸出至執行檔目錄下的 export
+var reportService = new RiskReportService(aiService, settings.Ai.DeepDiveMaxTokens); // 風險報告輸出至執行檔目錄下的 export
 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, ServerDescription, reportService);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions);
 

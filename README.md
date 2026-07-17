@@ -442,9 +442,10 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
     "RetryCount": 3,
     "RetryDelaySeconds": 10,
     "JsonRetryCount": 2,
-    "MaxTokens": 4096,
-    "FrequencyPenalty": 0.3,
-    "PresencePenalty": 0.3,
+    "MaxTokens": 1536,
+    "DeepDiveMaxTokens": 8192,
+    "FrequencyPenalty": 0.5,
+    "PresencePenalty": 0.5,
     "ExtraRequestFields": {
       "reasoning_effort": "low",
       "chat_template_kwargs": { "thinking_budget": 512 }
@@ -463,9 +464,10 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
 | `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
 | `Ai.JsonRetryCount` | `2` | 網路正常但 JSON 格式/內容檢查未過時的額外重問次數 |
-| `Ai.MaxTokens` | `4096` | 單次回應的最大 token 數上限，`0` = 不設上限。**如果模型的思考長度本身沒有上限，一直調高這個值只是把截斷點往後延，不是根本解**——先用下面的 `ExtraRequestFields` 限制思考長度 |
-| `Ai.FrequencyPenalty` | `0.3` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿重複的 `-1-1-1-1...`）。OpenAI 相容標準欄位，llama.cpp 也支援 |
-| `Ai.PresencePenalty` | `0.3` | 存在懲罰，跟 FrequencyPenalty 互補，一起抑制退化重複 |
+| `Ai.MaxTokens` | `1536` | 一般（終端 JSON 較短）呼叫的上限，用於每日總覽分析與前置掃描，`0` = 不設上限。故意抓緊：這類回應正常只有幾百字元，模型退化重複輸出時會一路生成到頂到上限才停，上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂 |
+| `Ai.DeepDiveMaxTokens` | `8192` | 深入分析呼叫（`RiskReportService` 逐類別分析）的上限，獨立於 `MaxTokens` 之外——這類回應天生比終端摘要長得多（一次分析多個問題的原因/影響/處置步驟），用同一個上限會逼你在「精簡呼叫失敗時拖太久」和「深入分析被截斷」之間二選一 |
+| `Ai.FrequencyPenalty` | `0.5` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿重複的 `-1-1-1-1...`）。OpenAI 相容標準欄位，llama.cpp 也支援。0.3 實測似乎不夠力，已調到 0.5；若仍常出現重複垃圾可再往上調（llama.cpp 通常允許到 2.0），過高則可能影響正常內容的流暢度 |
+| `Ai.PresencePenalty` | `0.5` | 存在懲罰，跟 FrequencyPenalty 互補，一起抑制退化重複 |
 | `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON，最常見用途是限制模型「思考/推理」的長度，避免小模型把大部分 token 額度花在思考、擠壓到實際 JSON 輸出的空間。**這類參數沒有統一標準、依模型與 llama.cpp 版本而異**：`reasoning_effort` 是 gpt-oss/Harmony 格式模型在 llama.cpp 的官方文件化參數（low/medium/high），`chat_template_kwargs.thinking_budget` 是 Gemini 風格聊天範本的數字預算慣例，兩者都送不會互相干擾，伺服器不認得的欄位通常直接忽略、不會報錯——請對照 llama.cpp server 啟動時印出的聊天範本或模型文件確認實際支援哪個 |
 | `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
 
@@ -477,9 +479,9 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | 機制 | 說明 |
 |---|---|
 | **Polly 網路重試** | 連線失敗、HTTP 錯誤、逾時、**空回應**皆自動重試（預設 3 次、指數退避），涵蓋模型剛重啟或瞬間過載等暫時性失敗；console 會印出每次重試 |
-| **連線主動回收** | `HttpClient` 設定 `PooledConnectionLifetime`＝2 分鐘、`PooledConnectionIdleTimeout`＝30 秒，主動回收池化連線。AI 主機通常是跨網路的遠端服務，呼叫間的閒置空檔容易被中間的防火牆/NAT/負載平衡器悄悄斷線，`HttpClient` 若沿用「看似還活著」的連線就會送出失敗（症狀：偶發「An error occurred while sending the request.」，重試後幾乎都成功）。主動回收從根本消除這類假性失敗 |
-| **固定 HTTP/1.1** | `HttpClient` 的 `DefaultRequestVersion`/`DefaultVersionPolicy` 固定為 HTTP/1.1，不讓 .NET 嘗試協商 HTTP/2。llama.cpp server 只說 HTTP/1.1，但長時間生成（本模型單次常見 60~80 秒）過程中，某些反向代理/負載平衡器對 HTTP/2 雙向串流處理不完整時容易在回應途中被切斷（症狀：「The response ended prematurely.」），固定版本可避免這類協商造成的中途斷線 |
-| **抑制退化重複輸出** | `FrequencyPenalty`/`PresencePenalty`（皆預設 0.3）送給模型，抑制小模型在生成過程中卡進重複迴圈的退化輸出（實際觀察到摘要欄位塞滿 `-1-1-1-1...`、`0 0 0 0...` 這類重複垃圾）。搭配 `ExtraRequestFields` 限制思考長度，雙管齊下降低失敗機率，而不是單靠重試次數硬扛 |
+| **停用連線池** | `SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.Zero`，每次呼叫都用全新連線。從實際 log 的時間戳確認：「The response ended prematurely.」幾乎都發生在前一次呼叫剛結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，用戶端還不知道就拿去重用」的典型特徵。**曾經以為是 HTTP/2 協商問題、加了固定 HTTP/1.1 版本，但實測沒解決**，故已排除該假設並移除；每次呼叫間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的握手成本相對生成時間微乎其微，直接停用連線池換取穩定性更划算 |
+| **抑制退化重複輸出** | `FrequencyPenalty`/`PresencePenalty`（預設 0.5）送給模型，抑制小模型在生成過程中卡進重複迴圈的退化輸出（實際觀察到摘要欄位塞滿 `-1-1-1-1...`、`0 0 0 0...` 這類重複垃圾）。搭配 `ExtraRequestFields` 限制思考長度，雙管齊下降低失敗機率，而不是單靠重試次數硬扛 |
+| **依用途分開 token 上限** | 終端 JSON 較短的呼叫（每日總覽、前置掃描）用 `Ai.MaxTokens`（預設 1536，故意抓緊），篇幅天生較長的深入分析用 `Ai.DeepDiveMaxTokens`（預設 8192）。單一全域上限會逼你在「精簡呼叫退化時拖很久才觸頂」和「深入分析被截斷」之間二選一，拆開後兩邊都能設到剛好 |
 | **AI JSON 容錯解析** | `AiJson`（`Models/AiAnalysisResult.cs`）用括號配對掃描（正確跳過字串內容中的括號）取出真正的 JSON 物件，比天真的「第一個 `{` 到最後一個 `}`」精準——前言文字混有大括號、或模型多回了一個陣列包裹都能正確抓出。若輸出被 `max_tokens` 攔腰截斷，另外用堆疊追蹤 `{}`/`[]` 的巢狀順序，依正確的後進先出順序補上缺少的收尾符號（只算深度不記順序的話，物件裡包陣列會補錯括號種類，产生語法仍不合法的「修復」）後再解析一次。全部候選都失敗時印出回覆預覽方便診斷，而非直接吞掉黑盒子 |
 | **AI JSON 格式/內容重試** | `response_format=json_object` 只保證輸出是「合法 JSON」，不保證是預期的物件形狀——模型可能回傳陣列包多個物件、或欄位塞入異常冗長的重複文字，兩者語法都合法但不符期望。`ChatJsonAsync<T>` 解析後再檢查內容合理性（必填欄位非空、長度未超出正常摘要範圍），檢查未過就重新請求（預設 2 次），失敗原因與嘗試次數皆印出 |
 | **System prompt 明確禁止前言** | 兩個系統提示都要求「直接以 `{` 開始輸出，不要有任何前言、推理過程或說明文字」，減少 MoE 模型在正式輸出前先寫一段推理文字、把 `max_tokens` 額度耗在 JSON 本體之外的情況 |

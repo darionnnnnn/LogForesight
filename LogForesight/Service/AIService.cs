@@ -49,15 +49,16 @@ public class AIService
 
     public AIService(AiSettings settings)
     {
-        // PooledConnectionLifetime/IdleTimeout：AI 主機通常是跨網路的遠端服務（非 localhost），
-        // 呼叫之間常有數十秒閒置空檔，防火牆/NAT/負載平衡器可能已把閒置連線悄悄斷開，
-        // 但 HttpClient 預設會沿用「看似還活著」的池化連線，送出時才失敗
-        // （症狀：偶發 "An error occurred while sending the request."，重試後幾乎都成功，
-        // 因為重試會建立全新連線）。主動、提早回收連線可從根本消除這類假性失敗。
+        // 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
+        // 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
+        // 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
+        // 用戶端還不知道就拿去重用」的典型特徵，跟 HTTP/2 協商無關（先前以為是協商問題，
+        // 加了固定 HTTP/1.1 版本也沒解決，故排除該假設）。
+        // 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
+        // 相對生成時間微乎其微，直接停用連線池換取穩定性划算。
         var handler = new SocketsHttpHandler
         {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
+            PooledConnectionLifetime = TimeSpan.Zero
         };
         _httpClient = new HttpClient(handler)
         {
@@ -112,7 +113,12 @@ public class AIService
     }
 
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
-    public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false, string model = "local-model", double temperature = 0.2)
+    /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
+    /// 短小的終端 JSON（如每日總覽、前置掃描）該用較小的上限——模型一旦退化重複輸出，
+    /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
+    /// 才需要調大</param>
+    public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
+        string model = "local-model", double temperature = 0.2, int? maxTokens = null)
     {
         var messages = new List<OpenAIMessage>();
         if (!string.IsNullOrEmpty(systemPrompt))
@@ -121,13 +127,14 @@ public class AIService
         }
         messages.Add(new OpenAIMessage { Role = "user", Content = prompt });
 
+        var effectiveMaxTokens = maxTokens ?? _maxTokens;
         var requestBody = new OpenAIRequest
                           {
                               Model = model,
                               Temperature = temperature,
                               Messages = messages,
                               ResponseFormat = jsonMode ? new OpenAIResponseFormat() : null,
-                              MaxTokens = _maxTokens > 0 ? _maxTokens : null,
+                              MaxTokens = effectiveMaxTokens > 0 ? effectiveMaxTokens : null,
                               FrequencyPenalty = _frequencyPenalty,
                               PresencePenalty = _presencePenalty
                           };
@@ -188,8 +195,9 @@ public class AIService
     /// 所以語法解析之外還需要 validate 檢查內容是否合理。地端模型呼叫不用省，失敗就重問。
     /// </summary>
     /// <param name="validate">額外的內容合理性檢查（如必填欄位非空、長度未超出正常摘要範圍），null 則只要求解析成功</param>
+    /// <param name="maxTokens">覆寫預設的 token 上限，見 <see cref="ChatAsync"/> 的說明</param>
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2) where T : class
+        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null) where T : class
     {
         string rawContent = string.Empty;
         string? lastError = null;
@@ -197,7 +205,7 @@ public class AIService
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
-            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature);
+            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens);
 
             if (!response.Success)
             {

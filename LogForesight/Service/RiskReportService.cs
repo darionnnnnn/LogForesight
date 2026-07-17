@@ -30,10 +30,12 @@ public class RiskReportService
 
     private readonly AIService _aiService;
     private readonly string _exportDir;
+    private readonly int _deepDiveMaxTokens;
 
-    public RiskReportService(AIService aiService, string? exportDir = null)
+    public RiskReportService(AIService aiService, int deepDiveMaxTokens = 8192, string? exportDir = null)
     {
         _aiService = aiService;
+        _deepDiveMaxTokens = deepDiveMaxTokens;
         // 輸出到執行檔所在目錄下的 export（排程執行時 CurrentDirectory 可能是 system32，不可靠）
         _exportDir = exportDir ?? Path.Combine(AppContext.BaseDirectory, "export");
     }
@@ -194,7 +196,7 @@ public class RiskReportService
 }
 """);
 
-        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt);
+        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens);
         return result.Value;
     }
 
