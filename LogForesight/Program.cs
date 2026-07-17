@@ -5,16 +5,36 @@ using NLog;
 // 明確指定設定檔路徑並覆寫 logDir 變數為 AppContext.BaseDirectory，不依賴 NLog 自己搜尋
 // nlog.config 或判斷 ${basedir}——跟 history.txt/export/appsettings.json 用同一套基準目錄邏輯，
 // 不同啟動方式（捷徑、排程工作、工作目錄不同）都不會讓 log 檔案跑到非預期的位置。
+// 全部包 try/catch：設定檔有問題也不該讓診斷 log 這個輔助功能擋下主流程。
+var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
 var nlogConfigPath = Path.Combine(AppContext.BaseDirectory, "nlog.config");
-if (File.Exists(nlogConfigPath))
+try
 {
-    LogManager.Setup().LoadConfigurationFromFile(nlogConfigPath);
-    LogManager.Configuration!.Variables["logDir"] = Path.Combine(AppContext.BaseDirectory, "logs");
-    LogManager.ReconfigExistingLoggers();
+    if (File.Exists(nlogConfigPath))
+    {
+        LogManager.Setup().LoadConfigurationFromFile(nlogConfigPath);
+        LogManager.Configuration!.Variables["logDir"] = logDir;
+        LogManager.ReconfigExistingLoggers();
+    }
+    else
+    {
+        Console.WriteLine($"找不到 {nlogConfigPath}，診斷 log 位置可能不是預期目錄。");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"診斷 log 初始化失敗（不影響主流程）：{ex.Message}");
 }
 
 var log = LogManager.GetCurrentClassLogger();
-log.Info("診斷 log 目錄：{LogDir}", Path.Combine(AppContext.BaseDirectory, "logs"));
+log.Info("診斷 log 目錄：{LogDir}", logDir);
+LogManager.Flush();
+
+// 自我檢查：明確告知這次執行 log 檔案到底有沒有寫成功，不用再靠猜的
+var expectedLogFile = Path.Combine(logDir, "logforesight.log");
+Console.WriteLine(File.Exists(expectedLogFile)
+    ? $"診斷 log：{expectedLogFile}"
+    : $"⚠ 診斷 log 未寫入 {expectedLogFile}，請檢查該目錄的寫入權限（上方若有 NLog 內部警告訊息也一併確認）。");
 
 // 排程/背景執行時完全看不到 console，任何在 try/catch 涵蓋範圍外發生的例外（例如背景執行緒）
 // 至少要留下完整堆疊到檔案 log，不能無聲無息地消失

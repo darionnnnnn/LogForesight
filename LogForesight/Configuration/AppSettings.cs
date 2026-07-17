@@ -59,10 +59,25 @@ public class AiSettings
 
     /// <summary>
     /// 單次回應的最大 token 數上限，避免模型異常時無限重複輸出拖垮回應品質與時間。0 = 不設上限。
-    /// 部分模型（尤其 MoE）在輸出 JSON 前會先產生一段推理/前言文字，太小的上限會讓 JSON 本體
-    /// 被攔腰截斷（保證解析失敗），預設值刻意抓寬鬆一些；地端呼叫不用省，寧可留餘裕。
+    /// 注意：如果模型的「思考/推理」長度本身沒有上限，一直調高這個值只是把截斷點往後延，
+    /// 不是根本解——先用 ExtraRequestFields 限制思考長度（見下方），這裡才不用一直往上加。
     /// </summary>
-    public int MaxTokens { get; set; } = 8192;
+    public int MaxTokens { get; set; } = 4096;
+
+    /// <summary>
+    /// 原封不動合併進送給 AI 的請求 JSON 的額外欄位，最常見用途是限制模型「思考/推理」的長度。
+    /// 這類參數沒有統一標準、依模型與 llama.cpp 版本而異，所以用透傳而非寫死的強型別欄位，
+    /// 才能不改程式碼、只改設定檔就調整。預設值 chat_template_kwargs.thinking_budget=512
+    /// 是 llama.cpp 對支援思考預算的 Jinja 聊天範本（如 Gemini 風格）常見的慣例欄位名稱，
+    /// 但**不保證適用於所有模型/伺服器組合**——請對照 llama.cpp server 啟動時印出的聊天範本，
+    /// 或該模型的文件確認正確欄位名稱，不對的話這個設定會被伺服器忽略、不會報錯。
+    /// appsettings.json 範例：
+    /// "ExtraRequestFields": { "chat_template_kwargs": { "thinking_budget": 512 } }
+    /// </summary>
+    public Dictionary<string, JsonElement>? ExtraRequestFields { get; set; } = new()
+    {
+        ["chat_template_kwargs"] = JsonSerializer.SerializeToElement(new { thinking_budget = 512 })
+    };
 }
 
 public class PermissionSettings

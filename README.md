@@ -442,7 +442,10 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
     "RetryCount": 3,
     "RetryDelaySeconds": 10,
     "JsonRetryCount": 2,
-    "MaxTokens": 8192
+    "MaxTokens": 4096,
+    "ExtraRequestFields": {
+      "chat_template_kwargs": { "thinking_budget": 512 }
+    }
   },
   "Permissions": {
     "WatchedFolders": []
@@ -457,7 +460,8 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
 | `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
 | `Ai.JsonRetryCount` | `2` | 網路正常但 JSON 格式/內容檢查未過時的額外重問次數 |
-| `Ai.MaxTokens` | `8192` | 單次回應的最大 token 數上限，`0` = 不設上限。部分模型（尤其 MoE）在輸出 JSON 前會先產生一段推理/前言文字，太小的上限會讓 JSON 本體被攔腰截斷；地端呼叫不用省，寧可留寬裕 |
+| `Ai.MaxTokens` | `4096` | 單次回應的最大 token 數上限，`0` = 不設上限。**如果模型的思考長度本身沒有上限，一直調高這個值只是把截斷點往後延，不是根本解**——先用下面的 `ExtraRequestFields` 限制思考長度 |
+| `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON，最常見用途是限制模型「思考/推理」的長度，避免小模型把大部分 token 額度花在思考、擠壓到實際 JSON 輸出的空間。**這類參數沒有統一標準、依模型與 llama.cpp 版本而異**，預設的 `chat_template_kwargs.thinking_budget` 是常見慣例但不保證適用你的環境——請對照 llama.cpp server 啟動時印出的聊天範本或模型文件確認正確欄位名稱；欄位名稱不對的話伺服器通常會直接忽略、不會報錯，所以調整後請實際跑一次確認耗時/輸出有沒有變化 |
 | `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
@@ -506,6 +510,21 @@ console 輸出是給人即時看的摘要，遇到需要深入排查的問題（
 ### 層級
 
 只寫 `Info` 以上到檔案（`Debug` 用於更細的追蹤，預設不輸出）。`Warn` 是重試/降級等需要留意但已有備援處理的情況，`Error`/`Fatal` 是分析失敗或程式中斷。要排查問題時建議直接找 `WARN`/`ERROR`/`FATAL` 開頭的行。
+
+### 目錄一定寫在執行檔目錄，不靠 NLog 自己判斷
+
+`nlog.config` 內建的 `${basedir}` 是 NLog 自己判斷的基準目錄，跟專案其他地方（`history.txt`、
+`export\`、`appsettings.json`）統一使用的 `AppContext.BaseDirectory` 不是同一套邏輯，
+不同啟動方式（捷徑、排程工作、工作目錄不同）可能讓兩者兜不上。`Program.cs` 啟動時
+**明確**用 `AppContext.BaseDirectory` 組出 `nlog.config` 的完整路徑載入，並強制覆寫 `logDir`
+變數，不依賴 NLog 自動搜尋設定檔或判斷基準目錄。
+
+啟動時也會自我檢查並印到 console：成功會顯示 log 檔案完整路徑，失敗會印出明確警告
+（`⚠ 診斷 log 未寫入 ...`），不用再靠猜的。`nlog.config` 也開啟了
+`internalLogToConsole="true"`——NLog 自己的設定解析錯誤（例如版本不相容的屬性）會直接印在
+console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLog 6.x 的 `FileTarget` 已不支援
+`concurrentWrites` 屬性，設定解析會拋例外，已從設定檔移除（本程式用具名 Mutex 保證同時間
+只有一個執行個體，本來就不需要這個屬性）。
 
 ### llama.cpp
 

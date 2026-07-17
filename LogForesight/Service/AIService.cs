@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using NLog;
 using Polly;
@@ -34,6 +35,7 @@ public class AIService
     private readonly string _baseUrl;
     private readonly int _maxTokens;
     private readonly int _jsonRetryCount;
+    private readonly JsonObject? _extraRequestFields;
     private readonly ResiliencePipeline _retryPipeline;
 
     /// <summary>
@@ -58,6 +60,18 @@ public class AIService
         _baseUrl = settings.BaseUrl.TrimEnd('/');
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;
+
+        // 額外請求欄位原封不動合併進送給 llama.cpp 的 JSON（例如限制模型「思考」長度的參數）。
+        // 這類參數的實際欄位名稱因模型/伺服器版本而異（沒有統一標準，跟 max_tokens 不同），
+        // 用原始 JSON 透傳而不是寫死成強型別欄位，設定檔可直接調整不需要改程式碼再重新編譯
+        if (settings.ExtraRequestFields is { Count: > 0 })
+        {
+            _extraRequestFields = new JsonObject();
+            foreach (var (key, value) in settings.ExtraRequestFields)
+            {
+                _extraRequestFields[key] = JsonNode.Parse(value.GetRawText());
+            }
+        }
 
         // Polly 重試：連線失敗、HTTP 錯誤、逾時、空回應皆重試，間隔指數遞增（10s → 20s → 40s）。
         // 涵蓋模型剛重啟、瞬間過載等暫時性失敗；重試全部耗盡才回報失敗，由呼叫端降級處理。
@@ -102,6 +116,16 @@ public class AIService
                               MaxTokens = _maxTokens > 0 ? _maxTokens : null
                           };
 
+        // 把設定檔裡的額外欄位（如思考長度上限）合併進標準欄位之外送出
+        JsonNode requestNode = JsonSerializer.SerializeToNode(requestBody)!;
+        if (_extraRequestFields != null)
+        {
+            foreach (var (key, value) in _extraRequestFields)
+            {
+                requestNode[key] = value?.DeepClone();
+            }
+        }
+
         // 只記長度不記內容：prompt 本身可能有數 KB，完整寫進 log 會讓檔案隨呼叫次數暴增
         Log.Debug("Chat 請求：jsonMode={JsonMode}, promptChars={PromptChars}, systemPromptChars={SystemPromptChars}",
             jsonMode, prompt.Length, systemPrompt?.Length ?? 0);
@@ -112,7 +136,7 @@ public class AIService
         {
             var content = await _retryPipeline.ExecuteAsync(async ct =>
             {
-                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestBody, ct);
+                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, ct);
                 response.EnsureSuccessStatusCode();
 
                 var result = await response.Content.ReadFromJsonAsync<OpenAIResponse>(cancellationToken: ct);
