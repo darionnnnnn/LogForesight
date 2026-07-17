@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -35,6 +36,8 @@ public class AIService
     private readonly string _baseUrl;
     private readonly int _maxTokens;
     private readonly int _jsonRetryCount;
+    private readonly double? _frequencyPenalty;
+    private readonly double? _presencePenalty;
     private readonly JsonObject? _extraRequestFields;
     private readonly ResiliencePipeline _retryPipeline;
 
@@ -56,10 +59,21 @@ public class AIService
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
         };
-        _httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds) };
+        _httpClient = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
+            // 固定用 HTTP/1.1，不讓 .NET 嘗試 HTTP/2 協商——llama.cpp server 本身只說 HTTP/1.1，
+            // 但長時間生成（本模型單次常見 60~80 秒）中途，某些反向代理/負載平衡器對 HTTP/2
+            // 雙向串流處理不完整時容易在回應途中被切斷（症狀："The response ended
+            // prematurely."），固定版本可避免這類協商造成的中途斷線
+            DefaultRequestVersion = HttpVersion.Version11,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+        };
         _baseUrl = settings.BaseUrl.TrimEnd('/');
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;
+        _frequencyPenalty = settings.FrequencyPenalty;
+        _presencePenalty = settings.PresencePenalty;
 
         // 額外請求欄位原封不動合併進送給 llama.cpp 的 JSON（例如限制模型「思考」長度的參數）。
         // 這類參數的實際欄位名稱因模型/伺服器版本而異（沒有統一標準，跟 max_tokens 不同），
@@ -113,7 +127,9 @@ public class AIService
                               Temperature = temperature,
                               Messages = messages,
                               ResponseFormat = jsonMode ? new OpenAIResponseFormat() : null,
-                              MaxTokens = _maxTokens > 0 ? _maxTokens : null
+                              MaxTokens = _maxTokens > 0 ? _maxTokens : null,
+                              FrequencyPenalty = _frequencyPenalty,
+                              PresencePenalty = _presencePenalty
                           };
 
         // 把設定檔裡的額外欄位（如思考長度上限）合併進標準欄位之外送出
@@ -281,6 +297,14 @@ public class AIService
         [JsonPropertyName("max_tokens")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public int? MaxTokens { get; set; }
+
+        [JsonPropertyName("frequency_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? FrequencyPenalty { get; set; }
+
+        [JsonPropertyName("presence_penalty")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public double? PresencePenalty { get; set; }
     }
 
     private class OpenAIResponseFormat
