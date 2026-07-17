@@ -1,0 +1,24 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Claude Code local session config
+.claude/
+
+# LogForesight 執行期產生的資料——內含真實伺服器的 Event Log 分析結果，絕不能進版本控制
+LogForesight/history.txt
+LogForesight/export/
+LogForesight/logs/
+LogForesight/permission_snapshot.json
+
+# OS
+.DS_Store
+Thumbs.db

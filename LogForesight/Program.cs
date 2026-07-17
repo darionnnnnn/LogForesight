@@ -1,0 +1,315 @@
+using System.Diagnostics;
+using LogForesight;
+using NLog;
+
+// 明確指定設定檔路徑並覆寫 logDir 變數為 AppContext.BaseDirectory，不依賴 NLog 自己搜尋
+// nlog.config 或判斷 ${basedir}——跟 history.txt/export/appsettings.json 用同一套基準目錄邏輯，
+// 不同啟動方式（捷徑、排程工作、工作目錄不同）都不會讓 log 檔案跑到非預期的位置。
+var nlogConfigPath = Path.Combine(AppContext.BaseDirectory, "nlog.config");
+if (File.Exists(nlogConfigPath))
+{
+    LogManager.Setup().LoadConfigurationFromFile(nlogConfigPath);
+    LogManager.Configuration!.Variables["logDir"] = Path.Combine(AppContext.BaseDirectory, "logs");
+    LogManager.ReconfigExistingLoggers();
+}
+
+var log = LogManager.GetCurrentClassLogger();
+log.Info("診斷 log 目錄：{LogDir}", Path.Combine(AppContext.BaseDirectory, "logs"));
+
+// 排程/背景執行時完全看不到 console，任何在 try/catch 涵蓋範圍外發生的例外（例如背景執行緒）
+// 至少要留下完整堆疊到檔案 log，不能無聲無息地消失
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    log.Fatal(e.ExceptionObject as Exception, "未捕捉的例外導致程式終止");
+
+// ── 設定 ─────────────────────────────────────────────────────────
+// 趨勢比對窗口天數，也是首次執行自動建立歷史的天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）
+const int TrendWindowDays = 14;
+// 歷史資料庫保留天數（需 >= TrendWindowDays），超過的舊紀錄於每次啟動時自動清除
+const int RetentionDays = 90;
+// 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（同一事件在不同角色的機器上嚴重性不同，
+// 例如 AD 網域控制站上的登入失敗遠比一般伺服器敏感）。請依實際環境填寫，例如：
+// "公司機房的 AD 網域控制站" / "對外提供服務的 IIS 網頁伺服器" / "內部檔案伺服器"。留空則略過。
+const string ServerDescription = "";
+
+// 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
+try
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+}
+catch
+{
+    // 無主控台環境，忽略
+}
+
+// 單一執行個體：排程與手動執行重疊時，後啟動者直接退出，
+// 避免兩個程序同時寫 history.txt 或同時 Prune 重寫導致資料損毀
+using var instanceMutex = new Mutex(initiallyOwned: true, @"Global\LogForesight", out bool isFirstInstance);
+if (!isFirstInstance)
+{
+    Console.WriteLine("另一個 LogForesight 執行個體正在執行中，本次直接結束。");
+    log.Info("另一個執行個體正在執行中，本次直接結束");
+    LogManager.Shutdown();
+    return 0;
+}
+
+Console.WriteLine("--- LogForesight 啟動 ---");
+log.Info("===== LogForesight 啟動 =====");
+var runStopwatch = Stopwatch.StartNew();
+
+// AI API 設定由執行檔目錄的 appsettings.json 載入
+var settings = AppSettings.Load();
+Console.WriteLine($"AI API：{settings.Ai.BaseUrl}（逾時 {settings.Ai.TimeoutSeconds} 秒，失敗重試 {settings.Ai.RetryCount} 次）");
+log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCount}, JsonRetryCount={JsonRetryCount}, MaxTokens={MaxTokens}",
+    settings.Ai.BaseUrl, settings.Ai.TimeoutSeconds, settings.Ai.RetryCount, settings.Ai.JsonRetryCount, settings.Ai.MaxTokens);
+
+try
+{
+
+var eventLogService = new EventLogService();
+var aiService = new AIService(settings.Ai);
+var historyService = new LogHistoryService();
+var reportService = new RiskReportService(aiService); // 風險報告輸出至執行檔目錄下的 export
+var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, ServerDescription, reportService);
+var permissionMonitor = new PermissionMonitorService(settings.Permissions);
+
+// 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
+//    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
+//    刻意不依賴 Security log／稽核政策，直接比對 ACL 與 Administrators 群組成員，
+//    在目前沒有系統管理員權限讀取 Security log 的情況下仍能運作。
+Console.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
+var permissionCheck = permissionMonitor.Check();
+if (permissionCheck.Alerts.Count > 0)
+{
+    var original = Console.ForegroundColor;
+    Console.ForegroundColor = ConsoleColor.Magenta;
+    Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+    Console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
+    foreach (var alert in permissionCheck.Alerts)
+    {
+        Console.WriteLine($"  ║  - {alert}");
+    }
+    Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
+    Console.ForegroundColor = original;
+
+    // 被異動項目明細：獨立於自動檢查之外的人工防護層——逐項列出異動前後對照，
+    // 讓使用者自行判斷每一筆是否為正常/授權的異動
+    Console.WriteLine("\n  被異動項目明細（請逐項人工確認是否為正常異動）：");
+    for (int i = 0; i < permissionCheck.Details.Count; i++)
+    {
+        var d = permissionCheck.Details[i];
+        Console.WriteLine($"    {i + 1}. {d.Target}｜{d.ChangeType}");
+        Console.WriteLine($"       異動前：{d.Before}");
+        Console.WriteLine($"       異動後：{d.After}");
+    }
+
+    var permissionReportPath = Path.Combine(AppContext.BaseDirectory, "export", $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt");
+    Directory.CreateDirectory(Path.GetDirectoryName(permissionReportPath)!);
+
+    var reportSb = new System.Text.StringBuilder();
+    reportSb.AppendLine("LogForesight 權限異動報告");
+    reportSb.AppendLine($"檢查時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+    reportSb.AppendLine();
+    reportSb.AppendLine("■ 異動告警");
+    foreach (var alert in permissionCheck.Alerts)
+    {
+        reportSb.AppendLine($"- {alert}");
+    }
+    reportSb.AppendLine();
+    reportSb.AppendLine("■ 被異動項目明細（請逐項人工確認是否為正常/授權的異動）");
+    for (int i = 0; i < permissionCheck.Details.Count; i++)
+    {
+        var d = permissionCheck.Details[i];
+        reportSb.AppendLine($"{i + 1}. 對象：{d.Target}");
+        reportSb.AppendLine($"   異動類型：{d.ChangeType}");
+        reportSb.AppendLine($"   異動前：{d.Before}");
+        reportSb.AppendLine($"   異動後：{d.After}");
+        reportSb.AppendLine("   └ 請確認：此異動是否為您或授權人員的操作？若否，可能為入侵或誤設定，建議立即調查。");
+        reportSb.AppendLine();
+    }
+
+    await File.WriteAllTextAsync(permissionReportPath, reportSb.ToString(), System.Text.Encoding.UTF8);
+    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
+}
+else
+{
+    Console.WriteLine("  未偵測到權限異動。");
+}
+
+// 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長
+var pruned = historyService.Prune(RetentionDays);
+if (pruned > 0)
+{
+    Console.WriteLine($"已清除 {pruned} 筆超過 {RetentionDays} 天的歷史紀錄。");
+}
+
+// 2. 找出趨勢窗口內缺漏的日子（首次執行 = 整個窗口都缺；平常 = 只有昨天）
+var yesterday = DateTime.Today.AddDays(-1);
+var missingDates = Enumerable.Range(1, TrendWindowDays)
+    .Select(offset => DateTime.Today.AddDays(-offset))
+    .Where(date => !historyService.HasRecord(date))
+    .OrderBy(date => date)
+    .ToList();
+
+if (missingDates.Count == 0)
+{
+    Console.WriteLine($"\n{yesterday:yyyy-MM-dd} 已有分析紀錄，跳過（同一天重複執行不會產生重複資料）。");
+    log.Info("{Date:yyyy-MM-dd} 已有分析紀錄，本次跳過", yesterday);
+}
+else
+{
+    // 3. 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描。
+    //    抓取全部前置：後面的 AI 分析迴圈只從記憶體取資料，不會每分析完一天才回頭抓下一天。
+    var rangeStart = missingDates[0];
+    Console.WriteLine($"\n平行掃描 System/Application/Security，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
+    var allLogs = await eventLogService.GetEventLogsRangeFromAllAsync(rangeStart, DateTime.Today);
+    var logsByDate = allLogs
+        .GroupBy(l => l.TimeGenerated.Date)
+        .ToDictionary(g => g.Key, g => g.ToList());
+    Console.WriteLine($"共取得 {allLogs.Count} 筆事件。");
+
+    if (missingDates.Count > 1)
+    {
+        Console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（每天皆完整 AI 分析，由最舊到最新，後面的日期能參照前面累積的歷史）。");
+        Console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
+    }
+
+    // 4. 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行
+    var results = new List<DailyAnalysisRecord>();
+    var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
+    foreach (var date in missingDates)
+    {
+        Console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（含 AI 判讀）...");
+        var dayStopwatch = Stopwatch.StartNew();
+
+        var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+        var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays);
+        results.Add(record);
+
+        dayStopwatch.Stop();
+        elapsedByDate[date] = dayStopwatch.Elapsed;
+        PrintResult(record, verbose: date == yesterday);
+        Console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
+    }
+
+    // 5. 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
+    Console.WriteLine("\n══════════ 本次執行結果 ══════════");
+    foreach (var r in results)
+    {
+        Console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
+                          (r.ReportFile != null ? $"  → {r.ReportFile}" : ""));
+    }
+
+    var riskyCount = results.Count(r => r.ReportFile != null);
+    if (riskyCount > 0)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。");
+        Console.ForegroundColor = original;
+    }
+    else
+    {
+        Console.WriteLine("\n  所有日期風險等級為低，無需特別處置。");
+    }
+
+    log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
+}
+
+    Console.WriteLine($"\n歷史資料庫：{historyService.FilePath}");
+    Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
+    Console.WriteLine("--- 執行結束 ---");
+    log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
+    LogManager.Shutdown(); // 確保緩衝的 log 都寫入檔案再結束程序
+    return 0;
+}
+catch (Exception ex)
+{
+    // 全域防護：任何未預期的錯誤都要留下訊息並回報非零 exit code，
+    // 讓工作排程器（勾選「工作失敗時通知」或檢查 LastTaskResult）能監控到
+    Console.WriteLine($"\n執行失敗：{ex}");
+    Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
+    log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
+    LogManager.Shutdown();
+    return 1;
+}
+
+static string FormatElapsed(TimeSpan span) =>
+    span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
+    : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
+    : $"{span.Seconds} 秒";
+
+static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
+{
+    Console.WriteLine($"  錯誤 {record.ErrorCount} 筆、警告 {record.WarningCount} 筆、稽核事件 {record.AuditEventCount} 筆，風險等級：{record.RiskLevel}");
+
+    // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者
+    var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical).ToList();
+    if (record.RiskLevel == "高" || criticalIssues.Count > 0)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine();
+        Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+        Console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
+        foreach (var issue in criticalIssues)
+        {
+            Console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
+            Console.WriteLine($"  ║    → {issue.KnownIssue}");
+        }
+        Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
+        Console.ForegroundColor = original;
+    }
+
+    // 跨 log 關聯訊號：已知攻擊鏈/故障鏈組合，最重要的線索，紅色醒目顯示
+    if (record.CorrelationAlerts.Count > 0)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
+        foreach (var alert in record.CorrelationAlerts)
+        {
+            Console.WriteLine($"    - {alert}");
+        }
+        Console.ForegroundColor = original;
+    }
+
+    // 程式比對歷史後發現的頻率異常（首次出現、頻率上升、總量突增），用黃色提醒
+    if (record.TrendAlerts.Count > 0)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"\n  ⚠ 頻率異常（與近期歷史比對）：");
+        foreach (var alert in record.TrendAlerts)
+        {
+            Console.WriteLine($"    - {alert}");
+        }
+        Console.ForegroundColor = original;
+    }
+
+    if (record.AiAnalyzed && (verbose || record.RiskLevel == "高" || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
+    {
+        Console.WriteLine($"\n  AI 分析結果：");
+        Console.WriteLine($"  摘要：{record.Summary}");
+        if (record.TrendAssessment.Length > 0)
+        {
+            Console.WriteLine($"  趨勢：{record.TrendAssessment}");
+        }
+        for (int i = 0; i < record.Recommendations.Count; i++)
+        {
+            Console.WriteLine($"  建議 {i + 1}：{record.Recommendations[i]}");
+        }
+    }
+    else if (!record.AiAnalyzed && verbose)
+    {
+        Console.WriteLine($"  {record.Summary}");
+    }
+
+    // 有輸出風險報告時明確指引檔案位置，讓使用者知道去哪看細節
+    if (record.ReportFile != null)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}");
+        Console.ForegroundColor = original;
+    }
+}
