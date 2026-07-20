@@ -110,9 +110,10 @@ public static class LogAggregator
     /// <summary>
     /// 從 Security 事件的完整訊息（未截斷）彙總相異的帳號名稱與來源 IP。
     /// 範例訊息截 200 字常截不到這些欄位，但「50 次登入失敗是打同一帳號還是掃多帳號、
-    /// 來自單一 IP 還是多個 IP」正是入侵分析最關鍵的判讀依據。
+    /// 來自單一 IP 還是多個 IP」正是入侵分析最關鍵的判讀依據。公開給
+    /// <see cref="LogAnalysisService"/> 重用，用來比對 4625（失敗）與 4624（成功）是否為同一組帳號/IP。
     /// </summary>
-    private static string? ExtractSecurityDetails(IEnumerable<string> rawMessages)
+    public static (HashSet<string> Accounts, HashSet<string> Ips) ExtractAccountsAndIps(IEnumerable<string> rawMessages)
     {
         var accounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var ips = new HashSet<string>();
@@ -145,6 +146,13 @@ public static class LogAggregator
                 }
             }
         }
+
+        return (accounts, ips);
+    }
+
+    private static string? ExtractSecurityDetails(IEnumerable<string> rawMessages)
+    {
+        var (accounts, ips) = ExtractAccountsAndIps(rawMessages);
 
         var parts = new List<string>();
         if (accounts.Count > 0)

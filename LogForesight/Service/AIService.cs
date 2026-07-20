@@ -40,6 +40,7 @@ public class AIService
     private readonly double? _presencePenalty;
     private readonly JsonObject? _extraRequestFields;
     private readonly ResiliencePipeline _retryPipeline;
+    private readonly IPromptDumper _dumper;
 
     /// <summary>
     /// 請求佇列：同一時間只發出一個 request 給 AI API，其餘呼叫依序排隊。
@@ -47,8 +48,9 @@ public class AIService
     /// </summary>
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
 
-    public AIService(AiSettings settings)
+    public AIService(AiSettings settings, IPromptDumper? dumper = null)
     {
+        _dumper = dumper ?? new NullPromptDumper();
         // 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
         // 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
         // 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
@@ -119,7 +121,7 @@ public class AIService
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null)
+        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat")
     {
         var messages = new List<OpenAIMessage>();
         if (!string.IsNullOrEmpty(systemPrompt))
@@ -129,6 +131,20 @@ public class AIService
         messages.Add(new OpenAIMessage { Role = "user", Content = prompt });
 
         var effectiveMaxTokens = maxTokens ?? _maxTokens;
+
+        // context 預算的共用防線：所有 AI 呼叫都經過這裡，是唯一同時知道 prompt 與輸出上限的咽喉點。
+        // 小模型（實測 context 20480）爆 context 時 server 端行為不可靠（可能靜默截頭、可能報錯），
+        // 這裡先保守估算並在超標時記 WARN——各呼叫類型本身已有結構性上限或字元硬上限做實際截斷，
+        // 這道防線負責在那些截斷失效時把問題顯性化，而不是等 server 端悄悄吞掉一段輸入。
+        if (effectiveMaxTokens > 0 &&
+            PromptBudget.ExceedsBudget(prompt + (systemPrompt ?? ""), effectiveMaxTokens, out var estimatedPromptTokens))
+        {
+            Console.WriteLine($"  ⚠ [{label}] prompt 估計 {estimatedPromptTokens} tokens + 輸出上限 {effectiveMaxTokens}，" +
+                              $"可能超出 context 預算（約 {PromptBudget.UsableTokens}），回應有被 server 端截斷的風險。");
+            Log.Warn("[{Label}] prompt 估計 {PromptTokens} tokens + maxTokens {MaxTokens} 可能超出可用預算 {Usable}",
+                label, estimatedPromptTokens, effectiveMaxTokens, PromptBudget.UsableTokens);
+        }
+
         var requestBody = new OpenAIRequest
                           {
                               Model = model,
@@ -195,6 +211,7 @@ public class AIService
             });
 
             Log.Info("Chat 完成：耗時={ElapsedMs}ms, 回應長度={ResponseChars} 字元", sw.ElapsedMilliseconds, content.Length);
+            _dumper.Dump(label, systemPrompt ?? "", prompt, content);
             return new AiResponse { Success = true, Content = content };
         }
         catch (Exception ex)
@@ -217,7 +234,8 @@ public class AIService
     /// <param name="validate">額外的內容合理性檢查（如必填欄位非空、長度未超出正常摘要範圍），null 則只要求解析成功</param>
     /// <param name="maxTokens">覆寫預設的 token 上限，見 <see cref="ChatAsync"/> 的說明</param>
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null) where T : class
+        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        string label = "chat-json") where T : class
     {
         string rawContent = string.Empty;
         string? lastError = null;
@@ -225,7 +243,8 @@ public class AIService
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
-            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens);
+            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
+                label: totalAttempts > 1 ? $"{label}-a{attempt}" : label);
 
             if (!response.Success)
             {

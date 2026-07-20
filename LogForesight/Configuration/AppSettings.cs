@@ -10,6 +10,8 @@ public class AppSettings
 {
     public AiSettings Ai { get; set; } = new();
     public PermissionSettings Permissions { get; set; } = new();
+    public AnalysisSettings Analysis { get; set; } = new();
+    public StorageSettings Storage { get; set; } = new();
 
     public static AppSettings Load()
     {
@@ -125,4 +127,35 @@ public class PermissionSettings
     /// 執行檔自身所在目錄一律會被監控，不需加入此清單。
     /// </summary>
     public List<string> WatchedFolders { get; set; } = new();
+}
+
+public class AnalysisSettings
+{
+    /// <summary>
+    /// 伺服器角色描述（如「公司機房的 AD 網域控制站」），會帶入 prompt 讓 AI 依環境判讀
+    /// （同一事件在不同角色的機器上嚴重性不同）。留空則略過。原為 Program.cs 的常數，
+    /// 搬進設定檔是為了未來多主機化時每台主機能各自設定角色描述做準備。
+    /// </summary>
+    public string ServerDescription { get; set; } = "";
+
+    /// <summary>
+    /// 每週體檢執行的星期幾（週對週回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）。
+    /// 週末公司較不忙碌，適合長時間占用 AI 服務；錯過（機器關機、排程失敗）時會在下次執行自動補跑。
+    /// </summary>
+    public DayOfWeek WeeklyCheckupDay { get; set; } = DayOfWeek.Saturday;
+
+    /// <summary>
+    /// 每次執行深入分析的主機數上限，0 = 無上限（預設）。問題數量是環境決定的，不該用台數砍掉真問題；
+    /// 這個設定只是給未來「AI 服務跟其他系統共用、需要臨時限流」情境的安全閥，平常不需要調整。
+    /// </summary>
+    public int MaxDeepDiveHostsPerRun { get; set; } = 0;
+}
+
+public class StorageSettings
+{
+    /// <summary>
+    /// 分析紀錄的儲存後端。目前只有 "Jsonl"（預設，現行檔案格式）；
+    /// 未來要接 DB 時新增對應實作並在這裡加一個 case 即可，分析邏輯不需改動。
+    /// </summary>
+    public string Type { get; set; } = "Jsonl";
 }

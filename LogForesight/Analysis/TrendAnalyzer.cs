@@ -39,11 +39,27 @@ public static class TrendAnalyzer
             return alerts;
         }
 
+        // DataIncomplete 的日子（事件來源保留歷史不足以涵蓋整天）一律排除在基準計算外，
+        // 否則不完整的一天會墊低/墊高平均值，讓之後的正常量被誤判為頻率異常（或反過來把真異常蓋掉）
+        var reliableHistory = history.Where(h => !h.DataIncomplete).ToList();
+
+        // 安全稽核事件量（AuditEventCount）幾乎全來自 Security log，該來源本次或歷史上無權限讀取時
+        // 這個數字是假的零，不能拿來當基準
+        var reliableAuditHistory = reliableHistory.Where(h => h.SecurityLogAvailable != false).ToList();
+
         var prevRecord = history.FirstOrDefault(h => h.Date.Date == targetDate.Date.AddDays(-1));
 
         foreach (var sig in issues)
         {
-            var pastCounts = history
+            bool isSecuritySignature = sig.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase);
+
+            // Security 簽章額外排除「當天 Security log 讀取失敗」的歷史日，避免假性零把平均墊低，
+            // 造成權限恢復後的正常量被誤判成「首次出現」或「頻率上升」
+            var relevantHistory = isSecuritySignature
+                ? reliableHistory.Where(h => h.SecurityLogAvailable != false).ToList()
+                : reliableHistory;
+
+            var pastCounts = relevantHistory
                 .Select(h => h.TopIssues.FirstOrDefault(i => SameIssue(i, sig)))
                 .Where(m => m != null)
                 .Select(m => m!.Count)
@@ -60,7 +76,7 @@ public static class TrendAnalyzer
                 sig.Trend = IssueTrend.New;
                 if (sig.Severity >= IssueSeverity.High)
                 {
-                    alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {history.Count} 日歷史中從未發生");
+                    alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
                 }
             }
             else if (sig.Count >= RisingMinCount && sig.Count >= sig.HistoryDailyAverage * RisingFactor)
@@ -68,7 +84,7 @@ public static class TrendAnalyzer
                 sig.Trend = IssueTrend.Rising;
                 sig.Severity = Escalate(sig.Severity);
                 var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {history.Count} 日平均 x{sig.HistoryDailyAverage}{prevText}");
+                alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
             }
             else if (sig.HistoryDailyAverage >= RisingMinCount && sig.Count * RisingFactor <= sig.HistoryDailyAverage)
             {
@@ -81,17 +97,25 @@ public static class TrendAnalyzer
         }
 
         // 整體錯誤量突增：個別事件都不顯眼、但總量暴增，也是異常訊號（例如大量不同來源同時出錯）
-        var avgErrors = history.Average(h => (double)h.ErrorCount);
-        if (todayErrorCount >= 10 && todayErrorCount >= avgErrors * RisingFactor)
+        // DataIncomplete 的日子排除在平均值外，避免不完整的一天墊低基準
+        if (reliableHistory.Count > 0)
         {
-            alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {history.Count} 日平均 {avgErrors:0.#} 筆");
+            var avgErrors = reliableHistory.Average(h => (double)h.ErrorCount);
+            if (todayErrorCount >= 10 && todayErrorCount >= avgErrors * RisingFactor)
+            {
+                alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史平均 {avgErrors:0.#} 筆");
+            }
         }
 
-        // 安全稽核事件總量突增：稽核事件（如 4625 登入失敗）不計入錯誤數，需獨立比對總量
-        var avgAudit = history.Average(h => (double)h.AuditEventCount);
-        if (todayAuditCount >= 10 && todayAuditCount >= avgAudit * RisingFactor)
+        // 安全稽核事件總量突增：稽核事件（如 4625 登入失敗）不計入錯誤數，需獨立比對總量；
+        // 額外排除 Security log 無權限的歷史日（假性零會把平均墊低）
+        if (reliableAuditHistory.Count > 0)
         {
-            alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {history.Count} 日平均 {avgAudit:0.#} 筆，需留意入侵嘗試");
+            var avgAudit = reliableAuditHistory.Average(h => (double)h.AuditEventCount);
+            if (todayAuditCount >= 10 && todayAuditCount >= avgAudit * RisingFactor)
+            {
+                alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史平均 {avgAudit:0.#} 筆，需留意入侵嘗試");
+            }
         }
 
         return alerts;

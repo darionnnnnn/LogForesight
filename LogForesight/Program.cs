@@ -2,6 +2,18 @@ using System.Diagnostics;
 using LogForesight;
 using NLog;
 
+// --selftest：純驗證模式（部署到新主機時先跑這個），只測規則/趨勢/關聯三層純函數，
+// 不需要 NLog / 設定檔 / 單一執行個體鎖，也不寫 history、不呼叫 AI、不讀真實 Event Log，跑完立即結束
+if (args.Contains("--selftest"))
+{
+    var selfTestOk = SelfTestRunner.Run();
+    return selfTestOk ? 0 : 1;
+}
+
+// --debug-dump：驗證期用，完整輸出每次 AI 呼叫的 prompt 與原始回應到 diag\ 目錄
+// （平常的診斷 log 刻意不記錄完整內容，見 README「診斷用檔案 Log」章節）
+bool debugDump = args.Contains("--debug-dump");
+
 // 明確指定設定檔路徑並覆寫 logDir 變數為 AppContext.BaseDirectory，不依賴 NLog 自己搜尋
 // nlog.config 或判斷 ${basedir}——跟 history.txt/export/appsettings.json 用同一套基準目錄邏輯，
 // 不同啟動方式（捷徑、排程工作、工作目錄不同）都不會讓 log 檔案跑到非預期的位置。
@@ -46,10 +58,6 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 const int TrendWindowDays = 14;
 // 歷史資料庫保留天數（需 >= TrendWindowDays），超過的舊紀錄於每次啟動時自動清除
 const int RetentionDays = 90;
-// 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（同一事件在不同角色的機器上嚴重性不同，
-// 例如 AD 網域控制站上的登入失敗遠比一般伺服器敏感）。請依實際環境填寫，例如：
-// "公司機房的 AD 網域控制站" / "對外提供服務的 IIS 網頁伺服器" / "內部檔案伺服器"。留空則略過。
-const string ServerDescription = "";
 
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
@@ -84,15 +92,23 @@ log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCo
     settings.Ai.BaseUrl, settings.Ai.TimeoutSeconds, settings.Ai.RetryCount, settings.Ai.JsonRetryCount,
     settings.Ai.MaxTokens, settings.Ai.DeepDiveMaxTokens, settings.Ai.FrequencyPenalty, settings.Ai.PresencePenalty);
 
+if (debugDump)
+{
+    Console.WriteLine("  🔍 --debug-dump 模式：完整 prompt 與 AI 回應將輸出到 diag\\ 目錄");
+}
+
 try
 {
 
 var eventLogService = new EventLogService();
-var aiService = new AIService(settings.Ai);
-var historyService = new LogHistoryService();
-var reportService = new RiskReportService(aiService, settings.Ai.DeepDiveMaxTokens); // 風險報告輸出至執行檔目錄下的 export
-var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, ServerDescription, reportService);
+IPromptDumper dumper = debugDump ? new FilePromptDumper() : new NullPromptDumper();
+var aiService = new AIService(settings.Ai, dumper);
+var historyService = StorageFactory.CreateRecordStore(settings.Storage); // 依 Storage.Type 選後端，目前只有 Jsonl
+var reportSink = new FileReportSink(); // 風險報告輸出至執行檔目錄下的 export
+var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
+var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, settings.Analysis.ServerDescription, reportService);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions);
+var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink);
 
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
@@ -124,9 +140,6 @@ if (permissionCheck.Alerts.Count > 0)
         Console.WriteLine($"       異動後：{d.After}");
     }
 
-    var permissionReportPath = Path.Combine(AppContext.BaseDirectory, "export", $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt");
-    Directory.CreateDirectory(Path.GetDirectoryName(permissionReportPath)!);
-
     var reportSb = new System.Text.StringBuilder();
     reportSb.AppendLine("LogForesight 權限異動報告");
     reportSb.AppendLine($"檢查時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -149,8 +162,9 @@ if (permissionCheck.Alerts.Count > 0)
         reportSb.AppendLine();
     }
 
-    await File.WriteAllTextAsync(permissionReportPath, reportSb.ToString(), System.Text.Encoding.UTF8);
-    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
+    var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
+    var permissionReportRef = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
+    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportRef.Value}");
 }
 else
 {
@@ -179,15 +193,21 @@ if (missingDates.Count == 0)
 }
 else
 {
-    // 3. 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描。
-    //    抓取全部前置：後面的 AI 分析迴圈只從記憶體取資料，不會每分析完一天才回頭抓下一天。
+    // 3. 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料
+    //   （哪些來源保留的歷史不足以涵蓋整個區間、Security 本次是否可讀）。
+    //   抓取全部前置：後面的 AI 分析迴圈只從記憶體取資料，不會每分析完一天才回頭抓下一天。
     var rangeStart = missingDates[0];
     Console.WriteLine($"\n平行掃描 System/Application/Security，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
-    var allLogs = await eventLogService.GetEventLogsRangeFromAllAsync(rangeStart, DateTime.Today);
-    var logsByDate = allLogs
+    var scanResult = await eventLogService.ScanRangeFromAllAsync(rangeStart, DateTime.Today);
+    var logsByDate = scanResult.Entries
         .GroupBy(l => l.TimeGenerated.Date)
         .ToDictionary(g => g.Key, g => g.ToList());
-    Console.WriteLine($"共取得 {allLogs.Count} 筆事件。");
+    Console.WriteLine($"共取得 {scanResult.Entries.Count} 筆事件。");
+
+    if (scanResult.SecurityAvailable == false)
+    {
+        Console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
+    }
 
     if (missingDates.Count > 1)
     {
@@ -204,7 +224,9 @@ else
         var dayStopwatch = Stopwatch.StartNew();
 
         var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
-        var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays);
+        var dataIncomplete = scanResult.IsDateIncomplete(date);
+        var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays,
+            dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable);
         results.Add(record);
 
         dayStopwatch.Stop();
@@ -237,7 +259,45 @@ else
     log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
 }
 
-    Console.WriteLine($"\n歷史資料庫：{historyService.FilePath}");
+// 6. 每週體檢：週對週回顧（獨立於每日分析），到了設定的星期幾或距上次體檢已超過 7 天（含補跑）就執行。
+//    以「昨天」為體檢基準日——那是最近一筆已完整分析並寫入歷史的一天。
+if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.WeeklyCheckupDay))
+{
+    Console.WriteLine($"\n執行每週體檢（週對週回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
+    var checkupStopwatch = Stopwatch.StartNew();
+    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.ServerDescription);
+
+    if (!checkup.Completed)
+    {
+        // AI 失敗：不寫入歷史，下次執行時補跑機制會重試（不消耗本週體檢額度）
+        Console.WriteLine($"  ⚠ 週體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
+    }
+    else
+    {
+        historyService.AttachWeeklyCheckup(yesterday, checkup);
+
+        if (checkup.HasFindings)
+        {
+            var original = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"  📋 週體檢有發現：{checkup.Conclusion}");
+            if (checkup.ReportFile != null)
+            {
+                Console.WriteLine($"  📄 週檢報告：{checkup.ReportFile}");
+            }
+            Console.ForegroundColor = original;
+        }
+        else
+        {
+            Console.WriteLine($"  週體檢完成，無累積性異常。（{checkup.Conclusion}）");
+        }
+    }
+    Console.WriteLine($"  ⏱ 週體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
+    log.Info("週體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
+        yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
+}
+
+    Console.WriteLine($"\n歷史資料庫：{historyService.Location}");
     Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
     Console.WriteLine("--- 執行結束 ---");
     log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
@@ -263,6 +323,24 @@ static string FormatElapsed(TimeSpan span) =>
 static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
 {
     Console.WriteLine($"  錯誤 {record.ErrorCount} 筆、警告 {record.WarningCount} 筆、稽核事件 {record.AuditEventCount} 筆，風險等級：{record.RiskLevel}");
+
+    if (record.DataIncomplete)
+    {
+        Console.WriteLine("  ⚠ 本日部分事件來源保留歷史不足以涵蓋整天，統計數字可能偏低（非真實反映當日狀況）。");
+    }
+
+    // Security 無權限時逐條列出因此停用的偵測項目——覆蓋率誠實申報，不是一句「讀取失敗」帶過
+    if (record.UncoveredChecks.Count > 0)
+    {
+        var original = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
+        foreach (var check in record.UncoveredChecks)
+        {
+            Console.WriteLine($"    - {check}");
+        }
+        Console.ForegroundColor = original;
+    }
 
     // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者
     var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical).ToList();

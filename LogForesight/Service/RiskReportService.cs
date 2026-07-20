@@ -22,6 +22,13 @@ public class RiskReportService
     private const int MinRawLogsPerCategory = 3;
     private const int MaxIssuesPerCategory = 4;
 
+    /// <summary>
+    /// 深入分析 prompt 的字元硬上限（context 20480 token 的環境下，深入分析輸出保留 8192 token 後
+    /// prompt 只剩約 10K token 空間，唯一貼近預算的呼叫）。異常情況下（如單筆事件訊息異常長）
+    /// 沒有硬上限就可能爆 context；超出時從原始 log 區尾端截斷，問題清單與主分析摘要永不截斷。
+    /// </summary>
+    private const int MaxDeepDivePromptChars = 16 * 1024;
+
     private const string DeepDiveSystemPrompt =
         "你是資深 Windows Server 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
         "只根據提供的資料判斷，不要臆測資料中不存在的事件。全程使用繁體中文。" +
@@ -29,22 +36,20 @@ public class RiskReportService
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
     private readonly AIService _aiService;
-    private readonly string _exportDir;
+    private readonly IReportSink _reportSink;
     private readonly int _deepDiveMaxTokens;
 
-    public RiskReportService(AIService aiService, int deepDiveMaxTokens = 8192, string? exportDir = null)
+    public RiskReportService(AIService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
     {
         _aiService = aiService;
+        _reportSink = reportSink;
         _deepDiveMaxTokens = deepDiveMaxTokens;
-        // 輸出到執行檔所在目錄下的 export（排程執行時 CurrentDirectory 可能是 system32，不可靠）
-        _exportDir = exportDir ?? Path.Combine(AppContext.BaseDirectory, "export");
     }
 
-    /// <summary>產生風險報告檔，回傳檔案完整路徑</summary>
-    public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "")
+    /// <summary>產生風險報告檔，回傳報告參照（今日為檔案完整路徑）</summary>
+    /// <param name="host">主機識別，單機情境留空即可</param>
+    public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "", string host = "")
     {
-        Directory.CreateDirectory(_exportDir);
-
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
         // 依類別分組，嚴重度最高的類別排最前面
@@ -71,22 +76,22 @@ public class RiskReportService
             var categoryLogs = SelectRawLogs(logs, issues, logQuotaPerCategory);
 
             // 每類別一次獨立深入分析呼叫（主分析摘要作為全局脈絡帶入，跨類別資訊不遺失）
-            var deepDive = record.AiAnalyzed
+            var outcome = record.AiAnalyzed
                 ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription)
-                : null;
+                : new DeepDiveOutcome(null, false, 0, categoryLogs.Count);
 
-            if (record.AiAnalyzed && deepDive == null)
+            if (record.AiAnalyzed && outcome.Result == null)
             {
                 Log.Warn("{Date:yyyy-MM-dd} 【{Category}】深入分析失敗或無法解析，該區塊將標注從缺", record.Date, group.Key);
             }
 
-            sections.Add(new CategorySection(group.Key, issues, categoryLogs, deepDive));
+            sections.Add(new CategorySection(group.Key, issues, categoryLogs, outcome.Result, outcome.Truncated, outcome.IncludedLogs));
         }
 
-        var path = Path.Combine(_exportDir, BuildFileName(record.Date, record.RiskLevel, sections));
-        await File.WriteAllTextAsync(path, BuildReport(record, sections), Encoding.UTF8);
-        Log.Info("風險報告已寫入：{Path}", path);
-        return path;
+        var fileName = BuildFileName(record.Date, record.RiskLevel, sections);
+        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections));
+        Log.Info("風險報告已寫入：{Path}", reportRef.Value);
+        return reportRef;
     }
 
     /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）</summary>
@@ -149,41 +154,37 @@ public class RiskReportService
         return selected.OrderBy(l => l.TimeGenerated).Take(maxTotal).ToList();
     }
 
-    private async Task<DeepDiveResult?> DeepDiveAsync(DailyAnalysisRecord record, IssueCategory category,
+    /// <summary>
+    /// 組 prompt 時把「頭部」（問題清單、全局脈絡——永不截斷）與「原始 log 區」分開組裝，
+    /// 原始 log 依時間順序累加，一旦逼近 <see cref="MaxDeepDivePromptChars"/> 就停止累加、
+    /// 不是整批塞入後才發現超標。問題清單與統計數字不受影響，只有佐證用的原始 log 可能被截斷。
+    /// </summary>
+    private async Task<DeepDiveOutcome> DeepDiveAsync(DailyAnalysisRecord record, IssueCategory category,
         List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription)
     {
-        var sb = new StringBuilder();
+        var head = new StringBuilder();
 
         if (serverDescription.Length > 0)
         {
-            sb.AppendLine($"【伺服器環境】{serverDescription}");
+            head.AppendLine($"【伺服器環境】{serverDescription}");
         }
 
-        sb.AppendLine($"{record.Date:yyyy-MM-dd} 的每日分析已判定風險等級「{record.RiskLevel}」。" +
+        head.AppendLine($"{record.Date:yyyy-MM-dd} 的每日分析已判定風險等級「{record.RiskLevel}」。" +
                       $"本次請聚焦【{CategoryZh(category)}】類別的問題，逐一深入分析可能原因與處置方式。");
-        sb.AppendLine();
-        sb.AppendLine($"【全局脈絡】（跨類別的每日分析結論，供參考）{record.Summary}" +
+        head.AppendLine();
+        head.AppendLine($"【全局脈絡】（跨類別的每日分析結論，供參考）{record.Summary}" +
                       (record.TrendAssessment.Length > 0 ? $" 趨勢：{record.TrendAssessment}" : ""));
-        sb.AppendLine();
-        sb.AppendLine($"【{CategoryZh(category)}類別的重點問題】");
+        head.AppendLine();
+        head.AppendLine($"【{CategoryZh(category)}類別的重點問題】");
         foreach (var issue in issues)
         {
-            sb.AppendLine(FormatIssue(issue));
+            head.AppendLine(FormatIssue(issue));
         }
 
-        if (rawLogs.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("【相關原始 log】（依時間排序，可觀察事件先後順序與關聯）");
-            foreach (var log in rawLogs)
-            {
-                sb.AppendLine(FormatRawLog(log, maxMessageLength: 300));
-            }
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），每個重點問題一則分析、依嚴重程度排序：");
-        sb.AppendLine("""
+        var footer = new StringBuilder();
+        footer.AppendLine();
+        footer.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），每個重點問題一則分析、依嚴重程度排序：");
+        footer.AppendLine("""
 {
   "analyses": [
     {
@@ -196,8 +197,45 @@ public class RiskReportService
 }
 """);
 
-        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens);
-        return result.Value;
+        var logLines = rawLogs.Select(l => FormatRawLog(l, maxMessageLength: 300)).ToList();
+
+        var sb = new StringBuilder(head.ToString());
+        int included = logLines.Count;
+        bool truncated = false;
+
+        if (logLines.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("【相關原始 log】（依時間排序，可觀察事件先後順序與關聯）");
+
+            // 留給截斷註記與 footer 的餘裕，避免算到剛好卡在邊界
+            int budget = MaxDeepDivePromptChars - head.Length - footer.Length - 200;
+            int used = 0;
+            included = 0;
+            foreach (var line in logLines)
+            {
+                if (used + line.Length > budget)
+                {
+                    truncated = true;
+                    break;
+                }
+                sb.AppendLine(line);
+                used += line.Length;
+                included++;
+            }
+
+            if (truncated)
+            {
+                sb.AppendLine($"（原始 log 因 prompt 長度上限已截斷，僅列出 {included}/{logLines.Count} 筆；問題清單與統計數字不受影響）");
+                Log.Warn("{Date:yyyy-MM-dd}【{Category}】深入分析原始 log 因 {Limit} 字元上限截斷：{Included}/{Total} 筆",
+                    record.Date, category, MaxDeepDivePromptChars, included, logLines.Count);
+            }
+        }
+        sb.Append(footer);
+
+        var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens,
+            label: $"deepdive-{record.Date:yyyyMMdd}-{category}");
+        return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }
 
     private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections)
@@ -212,6 +250,18 @@ public class RiskReportService
         // 整體摘要：跨類別的每日分析結論（風險等級的依據）
         sb.AppendLine();
         sb.AppendLine("■ 整體摘要");
+        if (record.UncoveredChecks.Count > 0)
+        {
+            sb.AppendLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
+            foreach (var check in record.UncoveredChecks)
+            {
+                sb.AppendLine($"    - {check}");
+            }
+        }
+        if (record.DataIncomplete)
+        {
+            sb.AppendLine("  ⚠ 本日部分事件來源的保留歷史不足以涵蓋整天，統計數字可能偏低，非真實反映當日狀況。");
+        }
         sb.AppendLine($"  {record.Summary}");
         if (record.TrendAssessment.Length > 0)
         {
@@ -244,6 +294,11 @@ public class RiskReportService
 
             sb.AppendLine();
             sb.AppendLine($"  ── AI 深入分析（{CategoryZh(section.Category)}） ──");
+            if (section.LogsTruncatedInPrompt)
+            {
+                sb.AppendLine($"  （原始 log 篇幅超出深入分析 prompt 上限，AI 僅參考其中 {section.LogsIncludedInPrompt}/{section.Logs.Count} 筆；" +
+                              "下方「相關原始 Log」仍完整列出全部證據）");
+            }
             if (section.DeepDive == null || section.DeepDive.Analyses.Count == 0)
             {
                 sb.AppendLine("  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
@@ -351,7 +406,12 @@ public class RiskReportService
         IssueCategory Category,
         List<LogIssueSignature> Issues,
         List<EventLogEntryData> Logs,
-        DeepDiveResult? DeepDive);
+        DeepDiveResult? DeepDive,
+        bool LogsTruncatedInPrompt,
+        int LogsIncludedInPrompt);
+
+    /// <summary>DeepDiveAsync 的結果：分析內容 + 原始 log 是否因 prompt 上限被截斷</summary>
+    private record DeepDiveOutcome(DeepDiveResult? Result, bool Truncated, int IncludedLogs, int TotalLogs);
 
     /// <summary>深入分析呼叫的 JSON 契約</summary>
     private class DeepDiveResult

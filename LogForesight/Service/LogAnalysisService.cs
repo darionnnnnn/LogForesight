@@ -38,13 +38,13 @@ public class LogAnalysisService
 
     private readonly EventLogService _eventLogService;
     private readonly AIService _aiService;
-    private readonly LogHistoryService _historyService;
+    private readonly IAnalysisRecordStore _historyService;
     private readonly RiskReportService? _reportService;
     private readonly string _serverDescription;
 
     /// <param name="serverDescription">伺服器角色描述（如「AD 網域控制站」），會帶入 prompt 讓 AI 依環境判讀；空字串則略過</param>
     /// <param name="reportService">提供時，風險「中」以上的日期會輸出 export/{日期}.txt 風險報告</param>
-    public LogAnalysisService(EventLogService eventLogService, AIService aiService, LogHistoryService historyService,
+    public LogAnalysisService(EventLogService eventLogService, AIService aiService, IAnalysisRecordStore historyService,
         string serverDescription = "", RiskReportService? reportService = null)
     {
         _eventLogService = eventLogService;
@@ -63,7 +63,11 @@ public class LogAnalysisService
     /// 分析迴圈不需等待任何 Event Log I/O，只等 AI 推論）
     /// </summary>
     /// <param name="useAi">false = 統計模式：聚合、規則分類、趨勢比對照常執行，但不呼叫 AI</param>
-    public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true, int historyDays = 14)
+    /// <param name="dataIncomplete">true = 本日事件來源不完整（如 Event Log 回補時已被覆蓋），寫入紀錄供趨勢基準排除</param>
+    /// <param name="securityLogAvailable">本次執行 Security log 是否成功讀取；false 時停用相關規則層偵測、
+    /// 相關關聯模式改標記「未檢查」，並在趨勢基準計算時排除本日的 Security 簽章</param>
+    public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
+        int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true)
     {
         var sw = Stopwatch.StartNew();
         Log.Info("開始分析 {Date:yyyy-MM-dd}：log 筆數={LogCount}, useAi={UseAi}", targetDate, logs.Count, useAi);
@@ -84,9 +88,26 @@ public class LogAnalysisService
             .ThenByDescending(i => i.Count)
             .ToList();
 
+        // 條件式撈取 4624（成功登入）：只有當日 4625 達暴力破解門檻才額外查一次，
+        // 平時不收（SuccessAudit 量極大），比對是否與失敗記錄同一組帳號/IP——
+        // 這是暴力破解「得手」最直接的證據，比只看見帳號建立/提權更早、更確定
+        SuccessfulLogonMatch? successfulLogonMatch = null;
+        if (securityLogAvailable != false)
+        {
+            var bruteForceSignature = issues.FirstOrDefault(i =>
+                i.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) &&
+                i.Source.Contains("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
+                i.EventId == 4625 && i.Count >= 10);
+
+            if (bruteForceSignature != null)
+            {
+                successfulLogonMatch = await DetectSuccessfulLogonAfterBruteForceAsync(targetDate, logs);
+            }
+        }
+
         // 跨 log 關聯比對：多個獨立訊號的已知攻擊鏈/故障鏈組合（含跨日比對）。
         // 單一事件各自不嚴重、組合起來卻是明確故事——小模型最容易漏掉的判讀，由程式確定性比對
-        var correlations = CorrelationAnalyzer.Detect(issues, history, targetDate);
+        var correlations = CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
 
         // 這幾個清單都是程式自己產生的短結構化字串（不是原始 log 內容），數量也有上限，記錄完整內容沒問題
         if (trendAlerts.Count > 0)
@@ -119,15 +140,19 @@ public class LogAnalysisService
                 tailIssues.Count, screening.Notable.Count, screening.CleanCount, screening.FailedCount);
         }
 
+        var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable);
+
         if (useAi)
         {
-            var prompt = BuildPrompt(targetDate, issues, errorCount, warningCount, auditCount, history, trendAlerts, correlations, screening);
+            var prompt = BuildPrompt(targetDate, issues, errorCount, warningCount, auditCount, history, trendAlerts, correlations, screening,
+                dataIncomplete, uncoveredChecks);
 
             // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
             // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
             var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, SystemPrompt,
                 validate: r => r.RiskLevel.Length > 0 && r.Summary.Length > 0
-                               && r.Summary.Length <= MaxSummaryChars && r.Trend.Length <= MaxSummaryChars);
+                               && r.Summary.Length <= MaxSummaryChars && r.Trend.Length <= MaxSummaryChars,
+                label: $"daily-{targetDate:yyyyMMdd}");
 
             if (result.Success)
             {
@@ -171,7 +196,10 @@ public class LogAnalysisService
             ScreenedTailCount = screening != null ? tailIssues.Count : 0,
             ScreeningNotes = screening?.Notable
                 .Select(n => $"{n.Issue.LogName}/{n.Issue.Source} EventId {n.Issue.EventId} x{n.Issue.Count}：{n.Reason}")
-                .ToList() ?? new List<string>()
+                .ToList() ?? new List<string>(),
+            DataIncomplete = dataIncomplete,
+            SecurityLogAvailable = securityLogAvailable,
+            UncoveredChecks = uncoveredChecks
         };
 
         // 風險「中」以上輸出報告檔（含第二階段 AI 深入分析與原始 log），路徑一併寫入歷史
@@ -195,6 +223,62 @@ public class LogAnalysisService
             targetDate, riskLevel, errorCount, warningCount, auditCount, useAi, sw.ElapsedMilliseconds, record.ReportFile ?? "(無)");
 
         return record;
+    }
+
+    /// <summary>
+    /// 4625 達暴力破解門檻時，條件式撈取當日 4624（成功登入），比對是否與失敗記錄同一組帳號/IP。
+    /// 平時不收 4624（SuccessAudit 量極大），只在已有暴力破解訊號時才多查一次，兼顧偵測面與效能。
+    /// </summary>
+    private async Task<SuccessfulLogonMatch?> DetectSuccessfulLogonAfterBruteForceAsync(DateTime targetDate, List<EventLogEntryData> logs)
+    {
+        var failedMessages = logs
+            .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625)
+            .Select(l => l.Message);
+        var (failedAccounts, failedIps) = LogAggregator.ExtractAccountsAndIps(failedMessages);
+
+        if (failedAccounts.Count == 0 && failedIps.Count == 0)
+        {
+            return null;
+        }
+
+        var scan = await Task.Run(() =>
+            _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security", securityExtraEventIds: new[] { 4624 }));
+
+        var successMessages = scan.Entries.Where(l => l.EventId == 4624).Select(l => l.Message).ToList();
+        if (successMessages.Count == 0)
+        {
+            return null;
+        }
+
+        var (successAccounts, successIps) = LogAggregator.ExtractAccountsAndIps(successMessages);
+        var matchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
+        var matchedIps = successIps.Intersect(failedIps).ToList();
+
+        if (matchedAccounts.Count == 0 && matchedIps.Count == 0)
+        {
+            return null;
+        }
+
+        Log.Warn("{Date:yyyy-MM-dd} 偵測到破解得手跡象：大量登入失敗後同一組帳號/IP 出現成功登入（帳號={Accounts}，IP={Ips}）",
+            targetDate, string.Join(",", matchedAccounts), string.Join(",", matchedIps));
+
+        return new SuccessfulLogonMatch { MatchedAccounts = matchedAccounts, MatchedIps = matchedIps };
+    }
+
+    /// <summary>Security 無權限時，逐條列出因此停用的偵測項目——覆蓋率誠實申報，而不是一句「讀取失敗」帶過</summary>
+    private static List<string> BuildUncoveredChecks(bool? securityLogAvailable)
+    {
+        if (securityLogAvailable != false)
+        {
+            return new List<string>();
+        }
+
+        return new List<string>
+        {
+            "入侵跡象規則表（Security-Auditing 相關：登入失敗/帳戶鎖定/帳號建立/權限與角色異動等）未檢查",
+            "跨 log 關聯模式【入侵鏈】【持久化】【滅跡】【提權→植入】【跨日入侵鏈】【破解得手】未檢查（皆需要 Security log）",
+            "安全稽核事件總量趨勢比對未檢查"
+        };
     }
 
     /// <summary>超出主 prompt 呈現上限的項目（前置掃描的對象；與 BuildPrompt 的分界一致）</summary>
@@ -235,7 +319,7 @@ public class LogAnalysisService
             sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），no 為上列項目編號；全部屬一般雜訊時 notable 給空陣列：");
             sb.AppendLine("""{"notable": [{"no": 1, "reason": "為何值得注意"}]}""");
 
-            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt);
+            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}");
             var parsed = result.Value;
 
             if (parsed == null)
@@ -261,7 +345,8 @@ public class LogAnalysisService
 
     private string BuildPrompt(DateTime date, List<LogIssueSignature> issues,
         int errorCount, int warningCount, int auditCount, List<DailyAnalysisRecord> history,
-        List<string> trendAlerts, List<CorrelationFinding> correlations, ScreeningOutcome? screening)
+        List<string> trendAlerts, List<CorrelationFinding> correlations, ScreeningOutcome? screening,
+        bool dataIncomplete, List<string> uncoveredChecks)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"以下是 Windows Server 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要（已聚合統計），" +
@@ -270,6 +355,22 @@ public class LogAnalysisService
         if (_serverDescription.Length > 0)
         {
             sb.AppendLine($"【伺服器環境】{_serverDescription}");
+        }
+
+        if (uncoveredChecks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("【本次未能檢查的項目】（權限或來源限制，非「已檢查且無異常」，判讀時請留意這是偵測盲區）");
+            foreach (var check in uncoveredChecks)
+            {
+                sb.AppendLine($"- {check}");
+            }
+        }
+
+        if (dataIncomplete)
+        {
+            sb.AppendLine();
+            sb.AppendLine("【資料完整性提醒】本日部分事件來源的保留歷史不足以涵蓋整天，統計數字可能偏低，非真實反映當日狀況。");
         }
 
         sb.AppendLine();

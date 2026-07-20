@@ -1,7 +1,6 @@
 using System.DirectoryServices.AccountManagement;
 using System.Security.AccessControl;
 using System.Security.Principal;
-using System.Text.Json;
 using NLog;
 
 namespace LogForesight;
@@ -41,12 +40,12 @@ public class PermissionMonitorService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly string _snapshotPath;
+    private readonly IPermissionSnapshotStore _snapshotStore;
     private readonly List<string> _watchedFolders;
 
-    public PermissionMonitorService(PermissionSettings settings, string? snapshotPath = null)
+    public PermissionMonitorService(PermissionSettings settings, IPermissionSnapshotStore? snapshotStore = null)
     {
-        _snapshotPath = snapshotPath ?? Path.Combine(AppContext.BaseDirectory, "permission_snapshot.json");
+        _snapshotStore = snapshotStore ?? new FilePermissionSnapshotStore();
 
         // 執行檔自身目錄一律監控（防止程式本身被竄改），加上使用者在 appsettings.json 額外指定的資料夾
         var folders = new List<string> { AppContext.BaseDirectory.TrimEnd('\\') };
@@ -65,12 +64,12 @@ public class PermissionMonitorService
         var current = Capture();
         var result = new PermissionCheckResult();
 
-        var previous = LoadPrevious();
+        var previous = _snapshotStore.Load();
         if (previous == null)
         {
             Console.WriteLine("  尚無權限基準快照，本次建立基準（不產生異動告警）。");
             Log.Info("尚無權限基準快照，建立基準");
-            Save(current);
+            _snapshotStore.Save(current);
             return result;
         }
 
@@ -170,7 +169,7 @@ public class PermissionMonitorService
             }
         }
 
-        Save(current);
+        _snapshotStore.Save(current);
 
         if (result.Alerts.Count > 0)
         {
@@ -253,41 +252,4 @@ public class PermissionMonitorService
         }
     }
 
-    private PermissionSnapshot? LoadPrevious()
-    {
-        if (!File.Exists(_snapshotPath))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<PermissionSnapshot>(File.ReadAllText(_snapshotPath));
-        }
-        catch (JsonException)
-        {
-            Console.WriteLine("  權限快照檔損毀，本次重建基準（不產生異動告警）。");
-            return null;
-        }
-    }
-
-    private void Save(PermissionSnapshot snapshot)
-    {
-        var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(_snapshotPath, json);
-    }
-
-    private class PermissionSnapshot
-    {
-        public DateTime CapturedAt { get; set; }
-        public List<string>? AdministratorsMembers { get; set; }
-        public Dictionary<string, FolderAclSnapshot> Folders { get; set; } = new();
-    }
-
-    private class FolderAclSnapshot
-    {
-        public bool Accessible { get; set; }
-        public string? Owner { get; set; }
-        public List<string> Rules { get; set; } = new();
-    }
 }

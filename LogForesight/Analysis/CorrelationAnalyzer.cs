@@ -7,6 +7,17 @@ public class CorrelationFinding
 }
 
 /// <summary>
+/// LogAnalysisService 條件式撈取 4624（成功登入）後，與當日 4625（失敗）比對出的重疊帳號/IP。
+/// 這個比對需要原始事件內容（帳號/IP 從訊息全文抽取），CorrelationAnalyzer 只吃聚合後的簽章，
+/// 所以比對本身在 Service 層做、結果以這個小物件傳入，Detect 本身維持純函數、不做 I/O。
+/// </summary>
+public class SuccessfulLogonMatch
+{
+    public List<string> MatchedAccounts { get; init; } = new();
+    public List<string> MatchedIps { get; init; } = new();
+}
+
+/// <summary>
 /// 跨 log 關聯分析：偵測「多個獨立訊號的已知組合模式」（攻擊鏈、故障連鎖）。
 /// 單一事件各自看都不嚴重、組合起來卻是明確的入侵或故障故事——這種關聯判讀
 /// 正是小模型最容易漏掉的部分，所以由程式確定性比對，AI 只負責解讀比對結果。
@@ -23,7 +34,7 @@ public static class CorrelationAnalyzer
     private static readonly int[] NtfsErrorIds = { 55, 98, 130, 140, 141 };
 
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
-        List<DailyAnalysisRecord> history, DateTime targetDate)
+        List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)
     {
         var findings = new List<CorrelationFinding>();
 
@@ -56,6 +67,23 @@ public static class CorrelationAnalyzer
                 Severity = IssueSeverity.Critical,
                 Description = $"【入侵鏈】同日出現大量登入失敗（x{bruteForce!.Count}）與帳號建立/提權操作（EventId {accountChange.EventId}）" +
                               $"——暴力破解得手後建立立足點的典型組合{ordering}，應立即調查該帳號的所有活動"
+            });
+        }
+
+        if (heavyBruteForce && successfulLogonMatch != null &&
+            (successfulLogonMatch.MatchedAccounts.Count > 0 || successfulLogonMatch.MatchedIps.Count > 0))
+        {
+            var accountsText = successfulLogonMatch.MatchedAccounts.Count > 0
+                ? $"帳號：{string.Join("、", successfulLogonMatch.MatchedAccounts.Take(5))}" : "";
+            var ipsText = successfulLogonMatch.MatchedIps.Count > 0
+                ? $"來源IP：{string.Join("、", successfulLogonMatch.MatchedIps.Take(5))}" : "";
+            var matchedText = string.Join("；", new[] { accountsText, ipsText }.Where(s => s.Length > 0));
+
+            findings.Add(new CorrelationFinding
+            {
+                Severity = IssueSeverity.Critical,
+                Description = $"【破解得手】同日大量登入失敗（x{bruteForce!.Count}）後，相同帳號/IP 出現成功登入（{matchedText}）" +
+                              "——暴力破解極可能已得手，應立即鎖定該帳號、強制改密碼並全面稽查其後續活動"
             });
         }
 
