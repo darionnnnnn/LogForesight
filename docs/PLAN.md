@@ -18,7 +18,7 @@
 - 規則/趨勢/關聯三層＋跨主機關聯層：**全部主機每天跑**（純計算，秒級）。
 - AI 每日判讀：**只給被前四層標記的主機**（規則命中 Medium 以上、趨勢異常、關聯訊號）。
 - 未標記主機日照寫 history（`AiAnalyzed=false` 統計模式，沿用現有語意）。
-- 深入分析：**不設上限**（`MaxDeepDiveHostsPerRun=0` 預設無上限），僅按嚴重度排序（最嚴重先做）。安全閥設定保留給臨時限流情境。
+- 深入分析：**不設上限**，僅按嚴重度排序（最嚴重先做）。（原保留的 `MaxDeepDiveHostsPerRun` 安全閥設定已於 2026-07-20 依過度設計體檢移除——有設定無行為會誤導使用者；Phase 3 若真需要限流，屆時連同行為一起實作。）
 - 機房總覽：每天 1 次 AI 呼叫，吃第五層產出＋各主機一行結論。
 
 ### B. 每週體檢（已確認：週末跑，全量 AI 可接受）
@@ -160,16 +160,41 @@ reports(id, kind, host_id, date, content)
 
 | # | 查詢 | 形式 | 頻率 |
 |---|---|---|---|
-| Q1 | 全機房日聚合：`SELECT count(*), min(dt), max(dt) WHERE (watchlist Lucene) GROUP BY 主機,來源,EventID OVER 當日` | 1 個聚合查詢（不分主機） | 每日/缺漏日各 1 |
+| Q1 | 全機房日聚合：`SELECT count(*), min(dt), max(dt) WHERE (清單 IP 篩選 AND watchlist Lucene) GROUP BY 主機,來源,EventID OVER 當日` | 聚合查詢，**IP 清單過長時分批**（如每批 50 個 IP 一次查詢，避免 Lucene 篩選字串超長） | 每日/缺漏日各 1 輪 |
 | Q2 | 標記主機簽章範例：單一 (host,source,eventId) 篩選＋欄位投影＋limit 3 | 小查詢 | 每進 prompt 簽章 1 次（估 50~200/日） |
 | Q3 | 風險主機原始 log（報告用） | 小查詢 | 每風險主機數次 |
-| Q4 | 主機發現＋頻道覆蓋：`GROUP BY 主機,頻道 OVER 近24h` | 1 次 | 每日 1 |
+| Q4 | 清單主機的頻道覆蓋檢查：對清單 IP `GROUP BY 主機,頻道 OVER 近24h` | 1 輪 | 每日 1 |
 
 負擔控制：單一併發佇列、排程錯峰、search job 用完即 DELETE、Polly 退避重試、欄位投影。
 
 **GROUP BY 經 REST 不可用時的退回方案**：Q1 改 watchlist 篩選＋只投影 host/source/eventId/dt 四欄＋分頁拉回本地計數。
 
-主機清單：Q4 自動發現＋`HostInclude`/`HostExclude` 樣式過濾，不手工維護清單。昨日有、今日無回報的主機列入總覽告警（agent 或主機掛了）。
+**失敗隔離**：單一批次/單一 IP 的查詢失敗只影響該批主機（該日標記「查詢失敗、資料不完整」，
+比照 DataIncomplete 的基準排除邏輯），其他主機照常分析；Sentinel 整體連不上則機房 pipeline
+當次跳過並明確告警，本機分析不受影響，缺的日子由既有 per-host 缺漏回補機制下次補上。
+
+### 主機清單：txt 檔匯入（2026-07-20 定案，取代原「自動發現」設計）
+
+要處理的主機以 **IP 清單**為準，來源是**指定目錄下的 txt 檔**；未來 Web 介面上線後改由
+Web 維護（寫入 `lf_hosts`），txt 停用——**同一時間只有一個主人**，不做雙向同步。
+
+- **檔案位置**：`NetIq.HostListDirectory` 指定目錄，讀取其中全部 `*.txt` 合併
+  （允許不同團隊各自維護一份清單檔）
+- **格式**：一行一台，`IP[,角色描述]`；`#` 開頭為註解、空行忽略；UTF-8（容忍 BOM）
+- **驗證**：格式不合法的行**警告並略過**（不中斷）；重複 IP 去重並警告；
+  目錄不存在或清單為空 → 機房 pipeline 跳過並明確提示（不視為錯誤）
+- **清單變更語意**：新增 IP → 視為新主機，統計基準回補（不做 AI）後納入日常分析；
+  移除 IP → 停止分析，既有 history 保留（DB 階段標 `active=false`）
+- **主機識別**：以 IP 為 NetIQ 主機的識別鍵（per-host history 檔名、報告目錄都用 IP）；
+  主機名稱從 Sentinel 事件欄位取得後作為顯示屬性記錄。前提假設：**伺服器為固定 IP**
+  （DHCP 環境此設計不成立，目前環境為伺服器機房、假設成立）
+- **無資料告警**：清單上的 IP 當日在 Sentinel 查無任何事件 → 列入機房總覽的
+  「無資料主機」區塊（agent 停了、IP 寫錯、或未納入收錄——都是要人處理的事，
+  不能靜默當成「今天很平靜」）
+- **多網卡風險**：主機若以其他網卡的 IP 回報事件，清單 IP 會查無資料——列入 probe
+  驗證項（見 #7），實測確認 Sentinel 記錄的是哪個 IP
+- **DB 階段銜接**：`--import-hosts` 把 txt 匯入 `lf_hosts`（source='netiq'）；
+  Web 維護上線前 txt 仍為主、每次執行重新讀取比對，上線後設定切換停用 txt 匯入
 
 ### `--netiq-probe` 驗證項（Phase 1 閘門，輸出貼回對話定案）
 
@@ -179,6 +204,9 @@ reports(id, kind, host_id, date, content)
 4. `dt` 時區基準與日切界
 5. 各主機頻道覆蓋與詳細度
 6. 分頁上限與 search job 生命週期/DELETE
+7. **主機 IP 欄位是否存在、記錄的是哪個 IP**（txt 清單以 IP 篩選的前提；多網卡主機是否以清單外的 IP 回報——會造成「查無資料」假象）；Security 頻道實際收錄範圍（DB-PLAN 決策點 #4 第二步的依據）
+8. **以 IP 清單做 Lucene 篩選的實測**：單一查詢可容納幾個 IP 條件（決定 Q1 的分批大小）；IP 欄位可否用於 GROUP BY／篩選
+9. **認證方式細節**：Basic auth 或 token 交換；session 逾時與重新認證行為（帳密欄位設計不受影響，只影響 SentinelClient 內部）
 
 ## 設定檔規劃
 
@@ -188,21 +216,35 @@ reports(id, kind, host_id, date, content)
   "Permissions": { "WatchedFolders": [] },
   "Analysis": {
     "WeeklyCheckupDay": "Saturday",
-    "MaxDeepDiveHostsPerRun": 0,
     "ServerDescription": "（自 Program.cs 常數搬入）"
   },
   "NetIq": {
     "Enabled": false,
     "BaseUrl": "https://sentinel:8443",
-    "HostInclude": ["*"], "HostExclude": [],
-    "HostRoles": { "DC01": "AD 網域控制站", "WEB-*": "對外 IIS" },
+    "Account": "唯讀查詢帳號",
+    "Password": "明文，或 enc: 開頭的 DPAPI 加密值（見下）",
+    "HostListDirectory": "hosts",
     "PageSize": 500, "TimeoutSeconds": 120, "RetryCount": 3
   },
   "Storage": { "Type": "Jsonl" }
 }
 ```
 
-認證欄位待 probe 後定案。`Enabled:false` 保證單機部署不受影響。
+（`HostInclude`/`HostExclude`/`HostRoles` 已隨「txt 主機清單」定案移除——包含/排除語意由
+txt 清單本身承擔，角色描述改為 txt 的第二欄；`MaxDeepDiveHostsPerRun` 已於 2026-07-20 移除。）
+
+**認證與密碼保護**：
+
+- `Account`/`Password` 對應 Sentinel 的**唯讀查詢帳號**（最小權限，已列入申請）；
+  帳密如何送出（Basic auth 或先換 token）依 probe #1 實測結果實作，設定欄位不變
+- `Password` 支援兩種形式：明文（初期測試用）或 `enc:` 前綴的 **DPAPI 加密值**——
+  提供 `--protect-netiq-password` 指令在部署機上產生（DPAPI machine 綁定，
+  設定檔被複製到別台也解不開）。一個監控入侵的工具自己放明文 SIEM 密碼說不過去，
+  但也不引入憑證庫等重型依賴，DPAPI 是 Windows 內建的合理中點
+- **密碼永不寫入任何 log**（診斷 log 記設定摘要時遮蔽此欄位）
+- **版控紅線**：repo 裡的 appsettings.json 永遠只放空白佔位，真實帳密只存在部署目錄的副本
+
+`Enabled:false` 保證單機部署不受影響。
 
 ## 檔案層級變更
 
@@ -235,7 +277,7 @@ reports(id, kind, host_id, date, content)
 | 2 | SentinelStatsSource，2~3 台試點端到端 | 試點輸出貼回比對 |
 | 3 | 全量：自動發現、分級 AI、週末全量體檢、第五層、機房總覽、覆蓋率清單 | 首次全量耗時分布＋總覽貼回調參 |
 | 4 | 通知管道（Email / Teams webhook 擇一） | 實際收到通知 |
-| 5（未來，時機由使用者決定） | SQLite 後端實作＋JSONL 匯入器；之後查詢 UI（只依賴 Reader 介面） | UI 查得到歷史資料 |
+| 5（DB 就緒後啟動，欄位級設計已定案於 **docs/DB-PLAN.md**） | DB 後端（SQL Server 或 Oracle，EF Core provider 切換）＋JSONL/報告匯入器＋Web 查詢（依負責主機授權）＋AI 問答 | 建表、匯入舊資料、Web 查得到自己主機並可問答 |
 
 回補策略：NetIQ 主機首次接入只回補統計基準（不做 AI，幾分鐘完成）；AI 自次日起服務被標記主機；首個週末做第一輪全量體檢。
 
@@ -250,7 +292,10 @@ reports(id, kind, host_id, date, content)
 **刻意延後（對應後續階段，非缺漏）**
 - 報告結構化模型（`RiskReportModel` 等）：未建。`IReportSink` 收「已渲染文字」，與 DB schema 的 `reports(content)` text 欄位一致；可查詢的結構化資料走 `IAnalysisRecordStore`（對應 `daily_records`/`top_issues`/`alerts`）。兩條路分工，非缺漏。
 - `CompositeReportSink`：Phase 5（DB 與檔案並存的過渡期）才需要。
-- `MaxDeepDiveHostsPerRun`：已定義於設定檔但無行為，是 Phase 3 機房限流安全閥，單機無可限流。
+- ~~`MaxDeepDiveHostsPerRun`~~：過度設計體檢的唯一標記項（有設定無行為），**已於 2026-07-20 自程式碼與設定檔移除**；Phase 3 若需限流連同行為一起實作。
+- ⚠ **深析「只存報告全文」的延後決策已被推翻**（2026-07-20，Web AI 問答需求）：深析結果需
+  結構化落地（餵問答 context、跨主機查詢）。詳見 docs/DB-PLAN.md——其中「現在就能做的準備」
+  第 1 項（`DailyAnalysisRecord.DeepDives` 欄位）有資料保全的時間壓力，應排入下一次實作。
 
 ## 時間預算估算（300 台）
 
@@ -267,3 +312,10 @@ reports(id, kind, host_id, date, content)
 6. Sentinel 8.5、數百台規模、API 帳號申請中；測試輸出貼回對話分析（2026-07-20）
 7. AI 環境定案：Gemma 4 26B、context 20480；全部呼叫經預算驗算通過，新增深入分析 16KB 上限、週體檢/總覽輸入塑形、PromptBudget 護欄（2026-07-20）
 8. 未來寫入 DB＋查詢介面：Phase 0 先抽持久層介面（Repository/Strategy/Composite，讀寫分離），現有檔案格式為預設實作；DB 首選 SQLite、schema 草案已列，屆時零架構異動（2026-07-20）
+9. Web 需求定案：使用者於 Web 查詢**自己負責的主機**狀態＋依已取得資訊**問 AI** 風險細節與處理方式；DB 為 SQL Server 或 Oracle（未定）→ 欄位級 schema 以雙 DB 可移植規則定案於 docs/DB-PLAN.md，取代原 SQLite 草案；ORM 建議 EF Core（provider 切換）；深析結構化落地由延後改為 pre-work（2026-07-20）
+10. Web 需求第二輪修訂：AI 問答**降為未來選項**（視資源）；風險報告全文直接於畫面顯示；DB **長期保存**；主篩選＝主機/日期區間/風險層級/風險類型；主管儀表板看類型/數量/緊急程度 → 新增 `record_categories` 彙總表、保留策略改長期、**檔案保留 90→365 天列入 pre-work（時間壓力）**、提案 `record_handling` 處理狀態追蹤待確認（2026-07-20）
+11. 第三輪定案：檔案保留**維持 90 天**（txt=臨時資料庫，DB 上線僅匯入近 90 天已接受，365 天提案否決）；處理狀態追蹤**納入**（＋預計完成日＋處理說明＋處理人員可指派/自動帶入＋`record_handling_log` 歷程）；主機識別**存 IP＋hw_uuid**、三層證據綁定機制（人工確認合併，不自動）；Security 長期保存分兩步（先 probe 確認抓得到什麼）；自由文字搜尋**不做**；Web 細節後議（2026-07-20）
+12. 第四輪簡化：主機綁定的 hw_uuid 與程式建議機制**移除**（VM 環境下 UUID 重建即變、非可靠證據，收集/比對機制屬過度設計）→ 定案**純人工綁定**：Web 輸入/選取舊主機 ID 即合併，`hosts.merged_into` 留墓碑；IP 保留為顯示用線索、不做程式比對。同輪完成全案過度設計體檢，唯一標記項為 `MaxDeepDiveHostsPerRun`（有設定無行為），處置待使用者決定（2026-07-20）
+13. 第五輪定案：**資料表一律 `lf_` 前綴**（索引 `ix_lf_`，含前綴仍全數 ≤30 字元）；**txt ↔ DB 一致性保證機制化**（單一模型契約、介面語意即規格、合約測試、精簡策略單點化 `RecordStorageShaper`、同一序列化設定、匯入後抽樣核對、雙寫過渡期）——pre-work 增為三項：DeepDives 入 JSONL、Host 欄位、RecordStorageShaper 抽取（2026-07-20）
+14. 第六輪定案：`MaxDeepDiveHostsPerRun` **已自程式碼移除**（建置與 106 測試通過）；NetIQ 認證走 appsettings（Account＋Password，支援 `enc:` DPAPI 加密、密碼不落 log、repo 只放佔位）；**主機清單改為 txt 檔匯入**（`HostListDirectory` 目錄下 *.txt 合併、一行一台 `IP[,角色]`、以 IP 為 NetIQ 主機識別鍵、固定 IP 假設、無資料 IP 列入總覽告警、Web 維護上線後 txt 停用），取代原自動發現＋HostInclude/Exclude/HostRoles 設計；probe 增列 IP 欄位語意/IP 篩選批次上限/認證細節（2026-07-20）
+15. **三項 pre-work 全數完成並驗證**（2026-07-20）：`DailyAnalysisRecord` 加 `Host`（`LogAnalysisService` 新建構參數，預設 `Environment.MachineName`）與 `DeepDives`（`CategoryDeepDive`/`DeepDiveFinding`，`RiskReportService.GenerateAsync` 深析成功後同步寫入）；精簡策略抽成 `Persistence/RecordStorageShaper.cs` 純函數，`JsonlAnalysisRecordStore` 改呼叫它。建置零警告、116 測試（新增 5 個）與 64 項 selftest 全過。已知覆蓋缺口：`RiskReportService` 內「深析寫入 DeepDives」的接線本身無自動化測試（`AIService` 未抽介面，缺 mock 基礎設施），詳見 docs/DB-PLAN.md「現在就能做的準備」

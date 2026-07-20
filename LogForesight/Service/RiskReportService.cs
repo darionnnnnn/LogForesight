@@ -85,6 +85,22 @@ public class RiskReportService
                 Log.Warn("{Date:yyyy-MM-dd} 【{Category}】深入分析失敗或無法解析，該區塊將標注從缺", record.Date, group.Key);
             }
 
+            // 結構化落地：與報告全文（下方 BuildReport）並存，供未來 DB/查詢直接讀欄位，不用反解析文字報告
+            if (outcome.Result != null && outcome.Result.Analyses.Count > 0)
+            {
+                record.DeepDives.Add(new CategoryDeepDive
+                {
+                    Category = group.Key,
+                    Findings = outcome.Result.Analyses.Select(a => new DeepDiveFinding
+                    {
+                        Problem = a.Problem,
+                        LikelyCauses = a.LikelyCauses,
+                        Impact = a.Impact,
+                        NextSteps = a.NextSteps
+                    }).ToList()
+                });
+            }
+
             sections.Add(new CategorySection(group.Key, issues, categoryLogs, outcome.Result, outcome.Truncated, outcome.IncludedLogs));
         }
 

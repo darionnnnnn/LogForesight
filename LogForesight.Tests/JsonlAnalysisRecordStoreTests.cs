@@ -111,6 +111,40 @@ public class JsonlAnalysisRecordStoreTests : IDisposable
     }
 
     [Fact]
+    public void Host與DeepDives可完整序列化與讀回()
+    {
+        var store = new JsonlAnalysisRecordStore(_tempFile);
+        var record = new DailyAnalysisRecord
+        {
+            Date = DateTime.Today,
+            Host = "SRV-DB01",
+            RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 1 } },
+            DeepDives = new List<CategoryDeepDive>
+            {
+                new()
+                {
+                    Category = IssueCategory.Storage,
+                    Findings = new List<DeepDiveFinding>
+                    {
+                        new() { Problem = "磁碟壞軌", Impact = "資料遺失風險", LikelyCauses = new() { "硬碟老化" }, NextSteps = new() { "更換硬碟" } }
+                    }
+                }
+            }
+        };
+
+        store.Append(record);
+        var read = Assert.Single(store.ReadRecent(1));
+
+        Assert.Equal("SRV-DB01", read.Host);
+        var deepDive = Assert.Single(read.DeepDives);
+        Assert.Equal(IssueCategory.Storage, deepDive.Category);
+        var finding = Assert.Single(deepDive.Findings);
+        Assert.Equal("磁碟壞軌", finding.Problem);
+        Assert.Equal("更換硬碟", finding.NextSteps.Single());
+    }
+
+    [Fact]
     public void HasRecord與缺漏偵測邏輯不變()
     {
         var store = new JsonlAnalysisRecordStore(_tempFile);

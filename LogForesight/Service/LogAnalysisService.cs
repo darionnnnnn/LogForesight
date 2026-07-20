@@ -41,17 +41,20 @@ public class LogAnalysisService
     private readonly IAnalysisRecordStore _historyService;
     private readonly RiskReportService? _reportService;
     private readonly string _serverDescription;
+    private readonly string _host;
 
     /// <param name="serverDescription">伺服器角色描述（如「AD 網域控制站」），會帶入 prompt 讓 AI 依環境判讀；空字串則略過</param>
     /// <param name="reportService">提供時，風險「中」以上的日期會輸出 export/{日期}.txt 風險報告</param>
+    /// <param name="host">寫入紀錄的主機識別；null/空字串時預設為 Environment.MachineName（本機情境的自然值）</param>
     public LogAnalysisService(EventLogService eventLogService, AIService aiService, IAnalysisRecordStore historyService,
-        string serverDescription = "", RiskReportService? reportService = null)
+        string serverDescription = "", RiskReportService? reportService = null, string? host = null)
     {
         _eventLogService = eventLogService;
         _aiService = aiService;
         _historyService = historyService;
         _serverDescription = serverDescription;
         _reportService = reportService;
+        _host = string.IsNullOrEmpty(host) ? Environment.MachineName : host;
     }
 
     /// <summary>自行抓取當日 log 後分析（單日情境用）</summary>
@@ -182,6 +185,7 @@ public class LogAnalysisService
         var record = new DailyAnalysisRecord
         {
             Date = targetDate.Date,
+            Host = _host,
             ErrorCount = errorCount,
             WarningCount = warningCount,
             AuditEventCount = auditCount,

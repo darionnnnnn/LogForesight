@@ -5,6 +5,14 @@ namespace LogForesight;
 public class DailyAnalysisRecord
 {
     public DateTime Date { get; set; }
+
+    /// <summary>
+    /// 產生本筆紀錄的主機（本機直讀＝Environment.MachineName；未來 NetIQ 主機＝Sentinel 回報的主機識別）。
+    /// 現階段單機情境下這個欄位本身不影響任何邏輯，是為 DB 匯入與多主機階段預先準備——
+    /// 屆時匯入器直接讀這個欄位即知道每筆紀錄屬於哪台主機，不用從檔名或設定檔反推。
+    /// </summary>
+    public string Host { get; set; } = string.Empty;
+
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
     public int AuditEventCount { get; set; }
@@ -52,6 +60,33 @@ public class DailyAnalysisRecord
 
     /// <summary>本次執行若剛好做了每週體檢，結果附掛於當天紀錄；平常日為 null</summary>
     public WeeklyCheckupResult? WeeklyCheckup { get; set; }
+
+    /// <summary>
+    /// 各類別的 AI 深入分析結構化結果（風險「中」以上才有）。與報告全文（ReportFile）並存但目的不同：
+    /// 報告全文是給人看的完整排版，這裡是給未來 DB／查詢/問答用的結構化資料，兩者由同一次深析呼叫產生，
+    /// 不需要事後從文字反解析。低風險日恆為空清單（該日從不觸發深析）。
+    /// </summary>
+    public List<CategoryDeepDive> DeepDives { get; set; } = new();
+}
+
+/// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
+public class CategoryDeepDive
+{
+    // 與 LogIssueSignature 的列舉欄位一致，存字串（"Storage"）而非整數——
+    // 這是 docs/DB-PLAN.md 一致性機制 #5：兩後端逐字一致，未來 DB 匯入直接對應字串類別，不用反查數字
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public IssueCategory Category { get; set; }
+    public List<DeepDiveFinding> Findings { get; set; } = new();
+}
+
+/// <summary>單一問題的深入分析——欄位對應 RiskReportService 深析呼叫的 JSON 契約，但這是儲存端的獨立模型
+/// （不隨 AI 回應的 JsonPropertyName 命名走），AI 契約要調整時不會牽動這裡</summary>
+public class DeepDiveFinding
+{
+    public string Problem { get; set; } = string.Empty;
+    public List<string> LikelyCauses { get; set; } = new();
+    public string Impact { get; set; } = string.Empty;
+    public List<string> NextSteps { get; set; } = new();
 }
 
 /// <summary>每週體檢（週對週回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）的結論</summary>

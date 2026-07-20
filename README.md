@@ -375,7 +375,8 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 - **append-only**：每日只附加一行，不用讀寫整個檔案，長期執行不會越來越慢
 - 仍是純文字，記事本直接開就能看
 
-每行欄位：`Date`、`ErrorCount`、`WarningCount`、`AuditEventCount`、
+每行欄位：`Date`、`Host`（產生本筆紀錄的主機，本機為 `Environment.MachineName`，
+為未來多主機/DB 匯入預先準備，單機情境不影響任何邏輯）、`ErrorCount`、`WarningCount`、`AuditEventCount`、
 `TopIssues`（問題簽章，每筆含：來源/EventId/次數/類別/嚴重度、
 發生時段 `FirstSeen`~`LastSeen`（判斷集中爆發或全天零星）、
 最多 3 則相異範例訊息 `SampleMessages` 與 `DistinctMessageCount`（區分「同一服務掛 10 次」
@@ -384,7 +385,14 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 `TrendAlerts`（程式偵測到的頻率異常）、`RiskLevel`、
 `Summary`/`TrendAssessment`/`Recommendations`（AI 回傳 JSON 解析後的結構化欄位）、
 `AiAnalyzed`（false = AI 未呼叫或呼叫失敗的降級紀錄）、
-`ReportFile`（風險「中」以上時輸出的報告檔路徑，無風險為 null）。
+`ReportFile`（風險「中」以上時輸出的報告檔路徑，無風險為 null）、
+`DeepDives`（各類別深入分析的結構化結果，與報告全文並存但獨立於 AI 回應的 JSON 契約，
+供未來 DB／查詢直接讀取，不需反解析報告文字；低風險日恆為空清單）。
+
+無風險（低）日寫入時會經 `RecordStorageShaper`（`Persistence/RecordStorageShaper.cs`）精簡：
+`TopIssues` 的次數/嚴重度/趨勢數字/發生時段完整保留（趨勢基準計算需要），
+只省略 `SampleMessages`/`KeyDetails` 這類體積大戶；風險「中」以上完整保留不精簡。
+這個精簡規則是純函數、單點定義，未來 DB 後端會呼叫同一份規則，不會各自維護一套逐漸漂移。
 
 欄位已結構化，後續要接 Email / Telegram / webhook 通知時，直接取
 `RiskLevel`、`Summary`、`Recommendations` 組内容即可，不需再解析自然語言。
@@ -515,8 +523,7 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
   },
   "Analysis": {
     "ServerDescription": "",
-    "WeeklyCheckupDay": "Saturday",
-    "MaxDeepDiveHostsPerRun": 0
+    "WeeklyCheckupDay": "Saturday"
   },
   "Storage": {
     "Type": "Jsonl"
@@ -539,7 +546,6 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
 | `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
 | `Analysis.WeeklyCheckupDay` | `Saturday` | 每週體檢執行的星期幾；錯過會在下次執行自動補跑，不會消失 |
-| `Analysis.MaxDeepDiveHostsPerRun` | `0`（無上限） | 每次執行深入分析的主機數上限，問題數量由環境決定、不該用台數砍真問題；只是給未來 AI 服務共用時臨時限流的安全閥 |
 | `Storage.Type` | `Jsonl` | 分析紀錄的儲存後端，目前只有現行 JSONL 檔案格式；未來接 DB 只需新增實作，此設定切換 |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，

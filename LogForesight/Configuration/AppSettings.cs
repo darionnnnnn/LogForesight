@@ -143,12 +143,6 @@ public class AnalysisSettings
     /// 週末公司較不忙碌，適合長時間占用 AI 服務；錯過（機器關機、排程失敗）時會在下次執行自動補跑。
     /// </summary>
     public DayOfWeek WeeklyCheckupDay { get; set; } = DayOfWeek.Saturday;
-
-    /// <summary>
-    /// 每次執行深入分析的主機數上限，0 = 無上限（預設）。問題數量是環境決定的，不該用台數砍掉真問題；
-    /// 這個設定只是給未來「AI 服務跟其他系統共用、需要臨時限流」情境的安全閥，平常不需要調整。
-    /// </summary>
-    public int MaxDeepDiveHostsPerRun { get; set; } = 0;
 }
 
 public class StorageSettings
