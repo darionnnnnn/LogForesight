@@ -6,8 +6,11 @@ namespace LogForesight;
 
 /// <summary>
 /// 風險日報告：當日風險等級「中」以上時輸出報告檔，讓使用者聚焦問題點。
-/// 報告依問題類別分區塊（儲存裝置、硬體、安全、服務、備份、設定、資源），
-/// 每個類別發一次獨立的深入分析呼叫——類別內的事件彼此相關該一起看
+/// 報告依問題類別分區塊（儲存裝置、硬體、安全、服務、備份、設定、資源）。
+/// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/AI-ROLE-PLAN.md）：
+/// 規則已命中的類別（Category ≠ Other）直接查 <see cref="KnownIssueCatalog"/> 的靜態知識庫，
+/// 零 AI 呼叫、零延遲、零幻覺；只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）
+/// 才發一次獨立的 AI 深入分析呼叫——類別內的事件彼此相關該一起看
 /// （如 disk/Ntfs/storahci 常是同一顆硬碟的故事），跨類別的整合判讀已由主分析完成，
 /// 各類別結果並列呈現、不需合併結論，所以分開呼叫沒有整合問題。
 /// 檔名標注當日發現的類別：export/2026-07-15_儲存裝置+安全.txt。
@@ -75,12 +78,15 @@ public class RiskReportService
 
             var categoryLogs = SelectRawLogs(logs, issues, logQuotaPerCategory);
 
-            // 每類別一次獨立深入分析呼叫（主分析摘要作為全局脈絡帶入，跨類別資訊不遺失）
-            var outcome = record.AiAnalyzed
-                ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription)
-                : new DeepDiveOutcome(null, false, 0, categoryLogs.Count);
+            // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/AI-ROLE-PLAN.md）；
+            // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
+            var outcome = group.Key == IssueCategory.Other
+                ? (record.AiAnalyzed
+                    ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription)
+                    : new DeepDiveOutcome(null, false, 0, categoryLogs.Count))
+                : BuildStaticOutcome(issues, categoryLogs.Count);
 
-            if (record.AiAnalyzed && outcome.Result == null)
+            if (group.Key == IssueCategory.Other && record.AiAnalyzed && outcome.Result == null)
             {
                 Log.Warn("{Date:yyyy-MM-dd} 【{Category}】深入分析失敗或無法解析，該區塊將標注從缺", record.Date, group.Key);
             }
@@ -254,6 +260,36 @@ public class RiskReportService
         return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }
 
+    /// <summary>
+    /// 規則已命中的類別直接查 KnownIssueCatalog 的靜態知識庫渲染，不呼叫 AI：同一 Event ID 的
+    /// 原因/處置幾乎不變，寫死比每次重新生成更快、更一致、零幻覺，AI 服務不可用時也不會從缺。
+    /// 理論上該類別的每個問題都命中過規則（Category 正是規則分類來的），查不到規則屬防禦性情況，
+    /// 略過該問題而非產生空白區塊。
+    /// </summary>
+    private static DeepDiveOutcome BuildStaticOutcome(List<LogIssueSignature> issues, int totalLogs)
+    {
+        var analyses = new List<DeepDiveItem>();
+        foreach (var issue in issues)
+        {
+            var rule = KnownIssueCatalog.FindRule(issue.Source, issue.EventId);
+            if (rule == null || rule.PlainExplanation.Length == 0)
+            {
+                continue;
+            }
+
+            analyses.Add(new DeepDiveItem
+            {
+                Problem = rule.PlainExplanation,
+                Impact = rule.Impact,
+                LikelyCauses = rule.LikelyCauses.ToList(),
+                NextSteps = rule.NextSteps.ToList()
+            });
+        }
+
+        // 查表零延遲，原始 log 不受 prompt 篇幅限制，視為「全數已涵蓋」
+        return new DeepDiveOutcome(new DeepDiveResult { Analyses = analyses }, false, totalLogs, totalLogs);
+    }
+
     private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections)
     {
         var sb = new StringBuilder();
@@ -263,9 +299,23 @@ public class RiskReportService
         sb.AppendLine($"  產生時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine("══════════════════════════════════════════════════════════");
 
-        // 整體摘要：跨類別的每日分析結論（風險等級的依據）
+        // 白話總覽：置頂，主管/非技術讀者看完這段即可結束（2026-07-20 AI 角色轉換，見 docs/AI-ROLE-PLAN.md）。
+        // 技術細節（趨勢數字、關聯訊號、原始 log）全部保留在下方區塊，供維運人員查證。
         sb.AppendLine();
-        sb.AppendLine("■ 整體摘要");
+        sb.AppendLine("■ 白話總覽");
+        if (record.Headline.Length > 0)
+        {
+            sb.AppendLine($"  {record.Headline}");
+        }
+        sb.AppendLine($"  {record.Summary}");
+        if (record.Action.Length > 0)
+        {
+            sb.AppendLine($"  現在該做：{record.Action}");
+        }
+        sb.AppendLine();
+
+        // 技術摘要：趨勢數字、關聯訊號、覆蓋率申報——供查證與後續調查
+        sb.AppendLine("■ 技術摘要");
         if (record.UncoveredChecks.Count > 0)
         {
             sb.AppendLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
@@ -278,7 +328,6 @@ public class RiskReportService
         {
             sb.AppendLine("  ⚠ 本日部分事件來源的保留歷史不足以涵蓋整天，統計數字可能偏低，非真實反映當日狀況。");
         }
-        sb.AppendLine($"  {record.Summary}");
         if (record.TrendAssessment.Length > 0)
         {
             sb.AppendLine($"  趨勢：{record.TrendAssessment}");
@@ -290,10 +339,6 @@ public class RiskReportService
         foreach (var alert in record.TrendAlerts)
         {
             sb.AppendLine($"  ⚠ {alert}");
-        }
-        for (int i = 0; i < record.Recommendations.Count; i++)
-        {
-            sb.AppendLine($"  建議 {i + 1}：{record.Recommendations[i]}");
         }
         sb.AppendLine();
 
@@ -308,8 +353,13 @@ public class RiskReportService
                 sb.AppendLine(FormatIssue(issue));
             }
 
+            // Other 以外的類別已由規則命中，處置參考直接查靜態知識庫（零 AI 呼叫）；
+            // 只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）才是真正的 AI 深入分析
+            bool isStaticSection = section.Category != IssueCategory.Other;
             sb.AppendLine();
-            sb.AppendLine($"  ── AI 深入分析（{CategoryZh(section.Category)}） ──");
+            sb.AppendLine(isStaticSection
+                ? "  ── 處置參考（知識庫） ──"
+                : $"  ── AI 深入分析（{CategoryZh(section.Category)}） ──");
             if (section.LogsTruncatedInPrompt)
             {
                 sb.AppendLine($"  （原始 log 篇幅超出深入分析 prompt 上限，AI 僅參考其中 {section.LogsIncludedInPrompt}/{section.Logs.Count} 筆；" +
@@ -317,7 +367,9 @@ public class RiskReportService
             }
             if (section.DeepDive == null || section.DeepDive.Analyses.Count == 0)
             {
-                sb.AppendLine("  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
+                sb.AppendLine(isStaticSection
+                    ? "  （知識庫查無對應處置參考）"
+                    : "  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
             }
             else
             {

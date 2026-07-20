@@ -23,6 +23,7 @@ public static class SelfTestRunner
 
         RunRuleLayerChecks();
         RunTrendLayerChecks();
+        RunSlowTrendLayerChecks();
         RunCorrelationLayerChecks();
 
         Console.WriteLine($"\n=== 結果：{_pass} 通過、{_fail} 失敗（耗時 {sw.ElapsedMilliseconds}ms）===");
@@ -148,6 +149,46 @@ public static class SelfTestRunner
             TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10);
             Check("Security 無權限的歷史日被排除在 Security 簽章基準外（平均應為 10）",
                 sig.HistoryDailyAverage == 10.0, $"實際平均={sig.HistoryDailyAverage}");
+        }
+    }
+
+    // ── 慢速趨勢層：近 7 天 vs 前 7 天總量比較（2026-07-20 新增，取代原週六全量體檢找慢速斜線的職責）──
+
+    private static void RunSlowTrendLayerChecks()
+    {
+        Console.WriteLine("\n-- 慢速趨勢層（SlowTrendAnalyzer）--");
+
+        // 視窗（targetDate=T）：近期＝今日＋T-1..T-6（7 天）、前期＝T-7..T-13（7 天），兩側等長
+        {
+            // 前 7 天每天 x1（合計 7），近期歷史 6 天每天 x2（合計 12）+ 今日 x5 → recentTotal=17 ≥ 7*1.5 且 ≥10
+            var prior = Enumerable.Range(7, 7).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 1, IssueSeverity.Critical));
+            var recent = Enumerable.Range(1, 6).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.Critical));
+            var history = prior.Concat(recent).ToList();
+            var sig = Sig("System", "disk", 153, 5, IssueSeverity.Critical, IssueCategory.Storage);
+
+            var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today);
+            Check("近7天累計達前7天x1.5倍且達最低次數 → 觸發慢速惡化告警", alerts.Any(a => a.Contains("慢速惡化")));
+        }
+        {
+            // 兩側視窗等長的不變量：每天固定 x3 的平穩訊號，倍率恰為 1.0，不得觸發
+            var prior = Enumerable.Range(7, 7).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 3, IssueSeverity.Critical));
+            var recent = Enumerable.Range(1, 6).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 3, IssueSeverity.Critical));
+            var history = prior.Concat(recent).ToList();
+            var sig = Sig("System", "disk", 153, 3, IssueSeverity.Critical, IssueCategory.Storage);
+
+            var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today);
+            Check("平穩訊號（兩側視窗等長）不誤觸發", alerts.Count == 0, $"實際告警數={alerts.Count}");
+        }
+        {
+            // 前期資料只有 5 天（不足 7 天），即使近期暴增也不比對，且回報「未評估」供呼叫端申報缺口
+            var prior = Enumerable.Range(7, 5).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 1, IssueSeverity.Critical));
+            var recent = Enumerable.Range(1, 6).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 20, IssueSeverity.Critical));
+            var history = prior.Concat(recent).ToList();
+            var sig = Sig("System", "disk", 153, 50, IssueSeverity.Critical, IssueCategory.Storage);
+
+            var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, out bool evaluated);
+            Check("前期資料不足七天時不比對且回報未評估", alerts.Count == 0 && !evaluated,
+                $"實際告警數={alerts.Count}, evaluated={evaluated}");
         }
     }
 

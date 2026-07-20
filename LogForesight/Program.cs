@@ -259,18 +259,19 @@ else
     log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
 }
 
-// 6. 每週體檢：週對週回顧（獨立於每日分析），到了設定的星期幾或距上次體檢已超過 7 天（含補跑）就執行。
+// 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
+//    （2026-07-20 重設計：due-date 輪巡取代固定星期幾，見 docs/PLAN.md「核心設計決策 B」）。
 //    以「昨天」為體檢基準日——那是最近一筆已完整分析並寫入歷史的一天。
-if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.WeeklyCheckupDay))
+if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
 {
-    Console.WriteLine($"\n執行每週體檢（週對週回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
+    Console.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
     var checkupStopwatch = Stopwatch.StartNew();
-    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.ServerDescription);
+    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays, settings.Analysis.ServerDescription);
 
     if (!checkup.Completed)
     {
-        // AI 失敗：不寫入歷史，下次執行時補跑機制會重試（不消耗本週體檢額度）
-        Console.WriteLine($"  ⚠ 週體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
+        // AI 失敗：不寫入歷史，下次執行時補跑機制會重試（不消耗本期體檢額度）
+        Console.WriteLine($"  ⚠ 體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
     }
     else
     {
@@ -280,20 +281,20 @@ if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.WeeklyCheck
         {
             var original = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"  📋 週體檢有發現：{checkup.Conclusion}");
+            Console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
             if (checkup.ReportFile != null)
             {
-                Console.WriteLine($"  📄 週檢報告：{checkup.ReportFile}");
+                Console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
             }
             Console.ForegroundColor = original;
         }
         else
         {
-            Console.WriteLine($"  週體檢完成，無累積性異常。（{checkup.Conclusion}）");
+            Console.WriteLine($"  體檢完成，無累積性異常。（{checkup.Conclusion}）");
         }
     }
-    Console.WriteLine($"  ⏱ 週體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
-    log.Info("週體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
+    Console.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
+    log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
         yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
 }
 
@@ -320,9 +321,23 @@ static string FormatElapsed(TimeSpan span) =>
     : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
     : $"{span.Seconds} 秒";
 
+/// <summary>風險等級的行動語意對照，讓 console 不用另外解讀「中」「高」代表要做什麼（2026-07-20 AI 角色轉換）</summary>
+static string RiskActionZh(string riskLevel) => riskLevel switch
+{
+    "高" => "需要立即處理",
+    "中" => "本週內確認",
+    "低" => "無需動作",
+    _ => "狀態未知"
+};
+
 static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
 {
-    Console.WriteLine($"  錯誤 {record.ErrorCount} 筆、警告 {record.WarningCount} 筆、稽核事件 {record.AuditEventCount} 筆，風險等級：{record.RiskLevel}");
+    Console.WriteLine($"  錯誤 {record.ErrorCount} 筆、警告 {record.WarningCount} 筆、稽核事件 {record.AuditEventCount} 筆，" +
+                      $"風險等級：{record.RiskLevel}（{RiskActionZh(record.RiskLevel)}）");
+    if (record.Headline.Length > 0)
+    {
+        Console.WriteLine($"  {record.Headline}");
+    }
 
     if (record.DataIncomplete)
     {
@@ -351,6 +366,10 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
         Console.WriteLine();
         Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
         Console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
+        if (record.Headline.Length > 0)
+        {
+            Console.WriteLine($"  ║  {record.Headline}");
+        }
         foreach (var issue in criticalIssues)
         {
             Console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
@@ -378,7 +397,7 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
     {
         var original = Console.ForegroundColor;
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"\n  ⚠ 頻率異常（與近期歷史比對）：");
+        Console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
         foreach (var alert in record.TrendAlerts)
         {
             Console.WriteLine($"    - {alert}");
@@ -388,15 +407,14 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
 
     if (record.AiAnalyzed && (verbose || record.RiskLevel == "高" || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
     {
-        Console.WriteLine($"\n  AI 分析結果：");
-        Console.WriteLine($"  摘要：{record.Summary}");
+        Console.WriteLine($"\n  白話說明：{record.Summary}");
         if (record.TrendAssessment.Length > 0)
         {
             Console.WriteLine($"  趨勢：{record.TrendAssessment}");
         }
-        for (int i = 0; i < record.Recommendations.Count; i++)
+        if (record.Action.Length > 0)
         {
-            Console.WriteLine($"  建議 {i + 1}：{record.Recommendations[i]}");
+            Console.WriteLine($"  現在該做：{record.Action}");
         }
     }
     else if (!record.AiAnalyzed && verbose)

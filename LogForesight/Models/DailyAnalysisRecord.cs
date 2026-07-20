@@ -26,10 +26,22 @@ public class DailyAnalysisRecord
 
     public string RiskLevel { get; set; } = string.Empty;
 
-    // AI 回傳的結構化結果（JSON 契約解析後的欄位），後續接 mail/webhook 可直接取用
+    // AI 回傳的白話翻譯結果（JSON 契約解析後的欄位，2026-07-20 AI 角色轉換）。
+    // 偵測與風險判定完全由規則/趨勢/關聯三層負責（見 KnownIssueCatalog／TrendAnalyzer／CorrelationAnalyzer），
+    // 這裡是「把結論講成人話」的產出，AI 服務不可用時從缺不影響風險等級或處置建議
+    // （規則命中問題的處置建議來自 KnownIssueCatalog 的靜態知識庫，見 RiskReportService）。
+
+    /// <summary>一句話標題，讓不懂 Event Log 的人一眼看懂今天的狀況</summary>
+    public string Headline { get; set; } = string.Empty;
+
+    /// <summary>今天發生什麼的白話敘述（沿用既有欄位名，序列化格式不變）</summary>
     public string Summary { get; set; } = string.Empty;
+
+    /// <summary>這是新問題、正在惡化、還是延續中的已知問題——接續前幾天脈絡講</summary>
     public string TrendAssessment { get; set; } = string.Empty;
-    public List<string> Recommendations { get; set; } = new();
+
+    /// <summary>現在該做什麼、多急迫（取代原本的多項 Recommendations 清單）</summary>
+    public string Action { get; set; } = string.Empty;
 
     /// <summary>false = 統計模式紀錄（AI 未呼叫或呼叫失敗時的降級紀錄）</summary>
     public bool AiAnalyzed { get; set; } = true;
@@ -58,7 +70,7 @@ public class DailyAnalysisRecord
     /// <summary>因權限或來源限制而未能執行的偵測項目說明（如「無 Security 權限，入侵跡象規則表與相關關聯模式未檢查」）</summary>
     public List<string> UncoveredChecks { get; set; } = new();
 
-    /// <summary>本次執行若剛好做了每週體檢，結果附掛於當天紀錄；平常日為 null</summary>
+    /// <summary>本次執行若剛好做了體檢（due-date 到期，見 WeeklyCheckupService），結果附掛於當天紀錄；平常日為 null</summary>
     public WeeklyCheckupResult? WeeklyCheckup { get; set; }
 
     /// <summary>
@@ -89,12 +101,19 @@ public class DeepDiveFinding
     public List<string> NextSteps { get; set; } = new();
 }
 
-/// <summary>每週體檢（週對週回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）的結論</summary>
+/// <summary>
+/// 體檢（週期性回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）的結論。
+/// 2026-07-20 重設計：「發現」職責已移交每日確定性的 SlowTrendAnalyzer，體檢只負責「講故事」——
+/// 詳見 docs/PLAN.md「核心設計決策 B」與 docs/AI-ROLE-PLAN.md。
+/// </summary>
 public class WeeklyCheckupResult
 {
     public DateTime CheckupDate { get; set; }
 
-    /// <summary>false = AI 判讀本週無值得額外提出的發現，不輸出獨立報告檔</summary>
+    /// <summary>
+    /// false = 窗口內三層皆無訊號（確定性閘門判定，不呼叫 AI），不輸出獨立報告檔。
+    /// true 時必定是閘門已判定窗口內有值得回顧的訊號，AI 只負責把它講成一段回顧文字。
+    /// </summary>
     public bool HasFindings { get; set; }
 
     public string Conclusion { get; set; } = string.Empty;

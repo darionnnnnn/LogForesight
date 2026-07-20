@@ -59,6 +59,39 @@ public class KnownIssueCatalogTests
         Assert.Null(signature.KnownIssue);
     }
 
+    /// <summary>
+    /// 每條規則的靜態知識庫欄位（2026-07-20 AI 角色轉換新增）不可為空——
+    /// 這些內容在規則命中時直接取代 AI 深入分析呼叫（見 RiskReportService.BuildStaticOutcome），
+    /// 缺一個欄位就會讓報告的「處置參考」區塊靜默漏掉該問題。
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllRules))]
+    public void 每條規則都有完整的白話知識庫內容(KnownIssueRule rule)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(rule.PlainExplanation));
+        Assert.False(string.IsNullOrWhiteSpace(rule.Impact));
+        Assert.NotEmpty(rule.LikelyCauses);
+        Assert.All(rule.LikelyCauses, c => Assert.False(string.IsNullOrWhiteSpace(c)));
+        Assert.NotEmpty(rule.NextSteps);
+        Assert.All(rule.NextSteps, s => Assert.False(string.IsNullOrWhiteSpace(s)));
+    }
+
+    [Fact]
+    public void FindRule可依SourceEventId查回規則且與Classify比對邏輯一致()
+    {
+        var rule = KnownIssueCatalog.FindRule("disk", 153);
+
+        Assert.NotNull(rule);
+        Assert.Equal(IssueCategory.Storage, rule!.Category);
+        Assert.Equal(IssueSeverity.Critical, rule.Severity);
+    }
+
+    [Fact]
+    public void FindRule對未命中規則的來源回傳null()
+    {
+        Assert.Null(KnownIssueCatalog.FindRule("TotallyUnknownSource", 1));
+    }
+
     private static EventLogEntryType InferEntryType(string source, int eventId)
     {
         if (!source.Equals("Security-Auditing", StringComparison.OrdinalIgnoreCase))

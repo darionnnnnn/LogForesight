@@ -6,8 +6,9 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 每日分析流程：取多來源 log → 聚合 → 規則分類 → 帶入近期歷史 → 呼叫 AI 分析 → 寫回歷史。
-/// 設計原則見 README.md「小模型策略」：規則負責偵測已知危險訊號，AI 負責綜合判讀與趨勢比對。
+/// 每日分析流程：取多來源 log → 聚合 → 規則分類 → 帶入近期歷史 → 呼叫 AI 白話翻譯 → 寫回歷史。
+/// 設計原則見 docs/AI-ROLE-PLAN.md：規則/趨勢/關聯三層負責偵測與風險判定（確定性、AI 判斷只能
+/// 把風險往上拉不能往下壓），AI 負責把這些結論翻譯成白話——低風險日（三層皆無訊號）不呼叫 AI。
 /// </summary>
 public class LogAnalysisService
 {
@@ -23,16 +24,34 @@ public class LogAnalysisService
 
     /// <summary>前置掃描每批的項目數（每批一次獨立 AI 呼叫，prompt 約 5KB）</summary>
     private const int ScreeningChunkSize = 20;
+
+    /// <summary>
+    /// 低風險日仍執行前置掃描的未分類事件種類門檻。低於此值的低風險日維持零 AI 呼叫；
+    /// 達到此值代表當日有異常大量的未分類事件，規則層依定義沒看過它們，值得付出一次掃描成本。
+    /// </summary>
+    private const int MinTailForLowRiskScreening = 20;
     private const int FlaggedSampleCount = 2;    // 重點問題每項附 2 則範例訊息
     private const int OtherSampleCount = 1;      // 其他事件每項附 1 則
 
-    /// <summary>摘要/趨勢欄位的合理長度上限。一到兩句話的摘要不該超過這個長度，
-    /// 超過視為模型異常重複輸出（JSON 語法可能仍合法，但內容不合理），觸發 JSON 重試</summary>
+    /// <summary>敘事欄位（story/trend_story/action）的合理長度上限。這些是一到兩句話的白話敘述，
+    /// 不該超過這個長度，超過視為模型異常重複輸出（JSON 語法可能仍合法，但內容不合理），觸發 JSON 重試</summary>
     private const int MaxSummaryChars = 600;
 
+    /// <summary>標題欄位（headline）的長度上限——比敘事欄位更短，一句話而非一段話</summary>
+    private const int MaxHeadlineChars = 60;
+
+    /// <summary>
+    /// 2026-07-20 AI 角色轉換（見 docs/AI-ROLE-PLAN.md）：AI 不再是判斷風險或找根因的分析引擎，
+    /// 那些已由規則/趨勢/關聯三層與 KnownIssueCatalog 的靜態知識庫負責。AI 唯一的職責是把
+    /// 這些已經算好的結論翻譯成不懂 Event Log 的人也能看懂的白話——risk_level 仍要填，但只作為
+    /// 安全網（只能把風險往上拉，不能往下壓，見 MoreSevere），不是重新判斷的依據。
+    /// </summary>
     private const string SystemPrompt =
-        "你是資深 Windows Server 維運與資安分析師。回答務必簡潔，只根據使用者提供的資料判斷，" +
-        "不要臆測資料中不存在的事件。全程使用繁體中文。" +
+        "你是資深 Windows Server 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
+        "以下資料已由程式完成規則比對、趨勢分析與風險判定，你的工作分兩部分：" +
+        "(1) 依專業判斷填寫 risk_level，但這只是輔助判斷、不會讓程式判定的風險等級降低；" +
+        "(2) 把結論轉譯成不懂 Event Log 的管理者也能看懂的白話——不要引用 Event ID 或程式碼層級術語，" +
+        "只根據使用者提供的資料撰寫，不要臆測資料中不存在的事件。全程使用繁體中文。" +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出一個符合使用者指定結構的 JSON 物件。";
 
@@ -86,6 +105,13 @@ public class LogAnalysisService
 
         // 程式端確定性頻率比對：當日 vs 前一日 vs 歷史平均，頻率上升會就地升級該事件的嚴重度
         var trendAlerts = TrendAnalyzer.Apply(issues, history, targetDate, errorCount, auditCount);
+
+        // 慢速趨勢偵測（2026-07-20，見 docs/AI-ROLE-PLAN.md）：近 7 天 vs 前 7 天總量比較，
+        // 每日、全主機、確定性執行，捕捉躲在 TrendAnalyzer 單日門檻下的緩慢惡化訊號——
+        // 取代原本「週六全量體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天。
+        // 併入既有 trendAlerts 清單：同屬程式比對出的頻率異常，prompt/報告/console 沿用同一套呈現與風險下限判定
+        trendAlerts.AddRange(SlowTrendAnalyzer.Apply(issues, history, targetDate, out bool slowTrendEvaluated));
+
         issues = issues
             .OrderByDescending(i => i.Severity)
             .ThenByDescending(i => i.Count)
@@ -124,26 +150,66 @@ public class LogAnalysisService
 
         // 程式判定的風險下限：規則或關聯鏈命中 Critical → 高；有 High 問題/頻率異常/關聯訊號 → 中
         var ruleRisk = ComputeRuleBasedRisk(issues, trendAlerts, correlations);
+        bool lowRisk = ruleRisk == "低";
 
-        string riskLevel = ruleRisk;
-        string summary = "（統計模式紀錄，未呼叫 AI 分析）";
-        string trendAssessment = string.Empty;
-        var recommendations = new List<string>();
-
-        // 前置掃描：事件種類超過主 prompt 呈現上限時，超出的低嚴重度項目先分批給獨立的
+        // 前置掃描：Other 類事件種類超過主 prompt 呈現上限時，超出的項目先分批給獨立的
         // AI 呼叫逐項篩選（這些項目彼此不需要一起看，適合拆分），值得注意的帶著掃描意見
-        // 回流主分析——主呼叫維持全局判讀，不因折疊漏看、也不因塞滿明細稀釋注意力
+        // 回流主分析——主呼叫維持全局判讀，不因折疊漏看、也不因塞滿明細稀釋注意力。
+        //
+        // 低風險日原則上完全不呼叫 AI（見下方 skipAiForLowRisk），但「三層皆無訊號、卻有大量
+        // 未分類事件」的日子是唯一的例外：那些事件規則層依定義沒看過，若連掃描都不做就沒有任何
+        // 一層檢視過它們。門檻 MinTailForLowRiskScreening 讓一般的低風險日仍維持零 AI 呼叫，
+        // 只有未分類種類異常多時才付出掃描成本（2026-07-20 審查後補上，見 docs/AI-ROLE-PLAN.md）。
         ScreeningOutcome? screening = null;
         var tailIssues = GetTailIssues(issues);
-        if (useAi && tailIssues.Count > 0)
+        bool shouldScreen = tailIssues.Count > 0 &&
+                            (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening);
+        if (useAi && shouldScreen)
         {
-            Console.WriteLine($"  事件種類較多，前置掃描 {tailIssues.Count} 項低嚴重度項目...");
+            Console.WriteLine($"  事件種類較多，前置掃描 {tailIssues.Count} 項未分類項目...");
             screening = await ScreenTailAsync(targetDate, tailIssues);
             Log.Info("前置掃描完成：共 {Total} 項，值得注意 {Notable} 項，一般雜訊 {Clean} 項，掃描失敗 {Failed} 項",
                 tailIssues.Count, screening.Notable.Count, screening.CleanCount, screening.FailedCount);
         }
 
+        // 低風險日（四層皆無訊號）不呼叫 AI：沒有訊號就沒有故事可講，白話翻譯的價值趨近於零，
+        // 2026-07-20 AI 角色轉換——2000 台規模下這是 AI 時間預算能否成立的關鍵之一。
+        // 但前置掃描若在未分類事件裡找到值得注意的項目，仍要跑主分析——掃描結果必須能拉高當日
+        // 風險等級（MoreSevere），否則掃描發現的異常只會躺在 ScreeningNotes 裡不影響任何判定。
+        // 沿用既有 AiAnalyzed=false 的統計模式語意，只是原因從「AI 失敗」變成「本日不需要」。
+        bool skipAiForLowRisk = useAi && lowRisk && (screening?.Notable.Count ?? 0) == 0;
+        if (skipAiForLowRisk)
+        {
+            useAi = false;
+        }
+
+        string riskLevel = ruleRisk;
+        string headline = skipAiForLowRisk ? "今日狀況正常，無需處理" : "（統計模式紀錄，未呼叫 AI 分析）";
+        string summary = skipAiForLowRisk
+            ? "今日無異常訊號，規則/趨勢/慢速趨勢/關聯四層檢查全數通過。"
+            : "（統計模式紀錄，未呼叫 AI 分析）";
+        string trendAssessment = string.Empty;
+        string action = string.Empty;
+
         var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable);
+
+        // 慢速趨勢層若因前期歷史不足而完全沒有比對，要明講——「沒告警」不等於「沒問題」。
+        // 歷史本來就不足（部署未滿兩週）屬預期，記 Info；歷史夠長卻仍無法比對，代表前期窗口內
+        // 有 DataIncomplete 的日子把可靠天數吃掉了，那是需要留意的靜默失效，記 WARN 並列入申報。
+        if (!slowTrendEvaluated)
+        {
+            if (history.Count >= 2 * SlowTrendAnalyzer.WindowDays)
+            {
+                Log.Warn("{Date:yyyy-MM-dd} 慢速趨勢比對未執行：前期窗口可靠歷史不足 {Window} 天" +
+                         "（歷史共 {HistoryDays} 天，可能含 DataIncomplete 的日子）", targetDate, SlowTrendAnalyzer.WindowDays, history.Count);
+                uncoveredChecks.Add($"慢速趨勢比對未執行（前期窗口可靠歷史不足 {SlowTrendAnalyzer.WindowDays} 天，緩慢惡化訊號本日未檢查）");
+            }
+            else
+            {
+                Log.Info("{Date:yyyy-MM-dd} 慢速趨勢比對未執行：歷史累積未滿兩期（共 {HistoryDays} 天），屬預期",
+                    targetDate, history.Count);
+            }
+        }
 
         if (useAi)
         {
@@ -153,31 +219,37 @@ public class LogAnalysisService
             // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
             // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
             var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, SystemPrompt,
-                validate: r => r.RiskLevel.Length > 0 && r.Summary.Length > 0
-                               && r.Summary.Length <= MaxSummaryChars && r.Trend.Length <= MaxSummaryChars,
+                validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
+                               && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
+                               && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,
                 label: $"daily-{targetDate:yyyyMMdd}");
 
             if (result.Success)
             {
-                summary = result.Value!.Summary;
-                trendAssessment = result.Value.Trend;
-                recommendations = result.Value.Recommendations;
+                headline = result.Value!.Headline;
+                summary = result.Value.Story;
+                trendAssessment = result.Value.TrendStory;
+                action = result.Value.Action;
                 // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
                 riskLevel = MoreSevere(NormalizeRisk(result.Value.RiskLevel), ruleRisk);
             }
             else if (result.RawContent.Length > 0)
             {
                 // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
-                // 仍算完成 AI 分析（useAi 維持 true），只是品質降級
+                // 仍算完成 AI 分析（useAi 維持 true），只是白話翻譯品質降級
+                headline = "AI 回覆格式異常，以下為原始內容";
                 summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{Truncate(result.RawContent, MaxSummaryChars)}";
                 riskLevel = MoreSevere(NormalizeRisk(result.RawContent), ruleRisk);
                 Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", targetDate, result.Attempts);
             }
             else
             {
-                // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄
+                // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
+                // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
+                // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
                 useAi = false;
-                summary = $"（AI 呼叫失敗：{result.Error}，已降級為統計紀錄）";
+                headline = "今日分析摘要暫缺（AI 服務未回應）";
+                summary = $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。";
                 Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", targetDate, result.Error);
             }
         }
@@ -193,9 +265,10 @@ public class LogAnalysisService
             TrendAlerts = trendAlerts,
             CorrelationAlerts = correlations.Select(c => c.Description).ToList(),
             RiskLevel = riskLevel,
+            Headline = headline,
             Summary = summary,
             TrendAssessment = trendAssessment,
-            Recommendations = recommendations,
+            Action = action,
             AiAnalyzed = useAi,
             ScreenedTailCount = screening != null ? tailIssues.Count : 0,
             ScreeningNotes = screening?.Notable
@@ -285,12 +358,15 @@ public class LogAnalysisService
         };
     }
 
-    /// <summary>超出主 prompt 呈現上限的項目（前置掃描的對象；與 BuildPrompt 的分界一致）</summary>
+    /// <summary>
+    /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。
+    /// 2026-07-20 AI 角色轉換後限縮：規則已命中的尾巴不再掃描——靜態知識庫已涵蓋處置建議，
+    /// 不需要 AI 逐項篩選；只有 Other 類（未命中規則）才是 AI 唯一還需要判讀新型態問題的地方
+    /// （見 docs/AI-ROLE-PLAN.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
+    /// </summary>
     private static List<LogIssueSignature> GetTailIssues(List<LogIssueSignature> issues)
     {
-        var flaggedTail = issues.Where(i => i.KnownIssue != null).Skip(MaxFlaggedInPrompt);
-        var othersTail = issues.Where(i => i.KnownIssue == null).Skip(MaxOthersInPrompt);
-        return flaggedTail.Concat(othersTail).ToList();
+        return issues.Where(i => i.KnownIssue == null).Skip(MaxOthersInPrompt).ToList();
     }
 
     /// <summary>
@@ -353,8 +429,10 @@ public class LogAnalysisService
         bool dataIncomplete, List<string> uncoveredChecks)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"以下是 Windows Server 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要（已聚合統計），" +
-                      "請評估系統健康狀況，特別注意硬體故障前兆與入侵跡象，提早示警。");
+        sb.AppendLine($"以下是 Windows Server 在 {date:yyyy-MM-dd}（{WeekdayZh(date)}）的事件日誌摘要" +
+                      "（已聚合統計，且已由程式完成規則比對、趨勢分析與風險判定）。" +
+                      "請依這些資料給出風險等級判斷，並把結論轉譯成白話讓不懂技術的人也能理解，" +
+                      "特別注意硬體故障前兆與入侵跡象。");
 
         if (_serverDescription.Length > 0)
         {
@@ -416,11 +494,12 @@ public class LogAnalysisService
             {
                 AppendIssue(sb, i, history.Count, flagged: true);
             }
-            // 有前置掃描時超出項目已被 AI 檢視並在下方彙報，這裡的折疊統計行只是無掃描時的備援
-            if (flagged.Count > MaxFlaggedInPrompt && screening == null)
+            // 規則命中的尾巴不再前置掃描（2026-07-20 限縮，見 GetTailIssues）——靜態知識庫已涵蓋
+            // 處置建議，這裡固定顯示折疊統計行，不像 Other 類尾巴有掃描結果可以彙報
+            if (flagged.Count > MaxFlaggedInPrompt)
             {
                 var folded = flagged.Skip(MaxFlaggedInPrompt).ToList();
-                sb.AppendLine($"（另有 {folded.Count} 個嚴重度較低的規則命中問題共 {folded.Sum(i => i.Count)} 筆，未逐項列出）");
+                sb.AppendLine($"（另有 {folded.Count} 個嚴重度較低的規則命中問題共 {folded.Sum(i => i.Count)} 筆，未逐項列出——處置建議見報告的「處置參考（知識庫）」區塊）");
             }
         }
 
@@ -496,10 +575,11 @@ public class LogAnalysisService
         sb.AppendLine("請只回傳一個 JSON 物件（不要 markdown 圍欄、不要任何其他文字），結構如下：");
         sb.AppendLine("""
 {
-  "risk_level": "低、中、高 擇一",
-  "summary": "一到兩句話說明當日整體狀況",
-  "trend": "依據上方頻率比對結果，指出哪些問題是首次出現、頻率上升或持續惡化，並解讀可能原因",
-  "recommendations": ["最多三項具體行動，最重要的放第一項"]
+  "risk_level": "低、中、高 擇一（輔助判斷，不會讓程式判定的風險等級降低）",
+  "headline": "一句話標題，讓不懂 Event Log 的人一眼看懂今天的狀況",
+  "story": "用白話講清楚今天發生了什麼，避免使用 Event ID 或程式碼層級的專有術語",
+  "trend_story": "依據上方頻率比對結果，這是新問題、正在惡化、還是延續中的已知問題，用白話接續之前的脈絡講",
+  "action": "現在該做什麼、多急迫，例如「今天就要處理」「本週內確認」「持續觀察即可」"
 }
 """);
 

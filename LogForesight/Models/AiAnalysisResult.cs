@@ -169,6 +169,9 @@ public static class AiJson
 
 /// <summary>
 /// 每日總覽分析（第一階段呼叫）的 JSON 契約。
+/// 2026-07-20 AI 角色轉換：AI 不再是分析引擎，是把程式已算好的結論翻譯成白話的角色
+/// （見 docs/AI-ROLE-PLAN.md）。risk_level 仍保留——AI 的判斷只能把風險等級往上拉，
+/// 不能往下壓（LogAnalysisService.MoreSevere），是零成本的安全網，機制不變。
 /// 結構化的目的：後續要接 Email / Telegram / webhook 等自動化動作時，
 /// 直接取欄位使用，不需要再從自然語言文字裡撈資訊。
 /// </summary>
@@ -177,18 +180,25 @@ public class AiAnalysisResult
     [JsonPropertyName("risk_level")]
     public string RiskLevel { get; set; } = string.Empty;
 
-    [JsonPropertyName("summary")]
-    public string Summary { get; set; } = string.Empty;
+    /// <summary>一句話標題，讓不懂 Event Log 的人一眼看懂今天的狀況</summary>
+    [JsonPropertyName("headline")]
+    public string Headline { get; set; } = string.Empty;
 
-    [JsonPropertyName("trend")]
-    public string Trend { get; set; } = string.Empty;
+    /// <summary>今天發生什麼的白話敘述，禁用 Event ID 與程式碼層級術語</summary>
+    [JsonPropertyName("story")]
+    public string Story { get; set; } = string.Empty;
 
-    [JsonPropertyName("recommendations")]
-    public List<string> Recommendations { get; set; } = new();
+    /// <summary>這是新問題、正在惡化、還是延續中的已知問題——接續前幾天脈絡講</summary>
+    [JsonPropertyName("trend_story")]
+    public string TrendStory { get; set; } = string.Empty;
+
+    /// <summary>現在該做什麼、多急迫（取代原本的多項 recommendations 清單）</summary>
+    [JsonPropertyName("action")]
+    public string Action { get; set; } = string.Empty;
 
     public static AiAnalysisResult? TryParse(string raw)
     {
         var result = AiJson.TryParse<AiAnalysisResult>(raw);
-        return result != null && (result.Summary.Length > 0 || result.RiskLevel.Length > 0) ? result : null;
+        return result != null && (result.Story.Length > 0 || result.Headline.Length > 0 || result.RiskLevel.Length > 0) ? result : null;
     }
 }

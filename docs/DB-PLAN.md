@@ -10,7 +10,8 @@
    查找自己主機的問題；**風險報告直接在畫面顯示**（現有 txt 全文照出）
 2. **主管**：一眼看出目前有哪些風險類型、數量、緊急程度
 3. **AI 問答降為未來選項**：視屆時資源決定是否做；schema 保留設計但不圍繞它做任何取捨
-4. **DB 以長期保存為目標**（不同於檔案端的 90 天輪替）
+4. ~~DB 以長期保存為目標~~ →（2026-07-20 修訂）**統一保留年限 `DbRetentionDays`=730**
+   （未來三年只改設定 1095），見「保留策略」
 5. DB 尚未就緒，**可能是 SQL Server 或 Oracle** → 全部設計必須雙 DB 可移植
 6. LogForesight.exe 維持批次分析職責不變；Web 是獨立的查詢應用，讀同一個 DB
 
@@ -51,6 +52,7 @@ lf_hosts
   host_name      nvarchar(255)  UNIQUE NOT NULL   -- 本機=Environment.MachineName；NetIQ=Sentinel 主機名
   ip_address     nvarchar(45)   NULL              -- 最近已知 IP（45 字元容納 IPv6）
   ip_updated_at  timestamp      NULL
+  netiq_server   nvarchar(50)   NULL              -- 所屬 Sentinel 的 Name（路由/顯示屬性，非識別鍵；本機為 NULL）
   role_desc      nvarchar(500)                    -- 對應 HostRoles / ServerDescription
   source         nvarchar(20)   NOT NULL          -- 'local' | 'netiq'
   active         bool           NOT NULL
@@ -90,9 +92,10 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   ai_analyzed      bool NOT NULL
   security_log_available bool NULL                -- 三態：NULL=未嘗試
   data_incomplete  bool NOT NULL
-  summary          nvarchar(2000)
+  headline         nvarchar(200)                  -- AI 白話標題（2026-07-20 AI 角色轉換，↔ DailyAnalysisRecord.Headline）
+  summary          nvarchar(2000)                 -- AI 白話敘述（↔ Summary，序列化欄位名不變）
   trend_assessment nvarchar(2000)
-  recommendations_json text                       -- List<string>
+  action           nvarchar(500)                  -- AI 白話行動建議（↔ Action，取代原 recommendations_json 多項清單）
   screened_tail_count  int NOT NULL
   screening_notes_json text                       -- List<string>
   uncovered_checks_json text                      -- List<string>（未檢查項目申報）
@@ -248,24 +251,32 @@ lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
 
-### 保留策略（已定案：DB 長期保存）
+### 保留策略（2026-07-20 修訂：統一年限，取代原「長期保存不清理」）
 
-**DB 端以長期保存為目標，預設不清理**。容量估算（300 台規模）驗證可行性：
+- **`Storage.DbRetentionDays` 預設 730**（兩年）；未來若改三年只動設定（1095），不動程式。
+- **全部資料表統一適用**——含 `lf_permission_changes`、`lf_record_handling(_log)`、`lf_reports`：
+  「時間過了當時紀錄也不重要了」，到期直接刪、未來有需要再修改（2026-07-20 決策；
+  曾提議的稽核類資料排除年限**已否決**）。
+- **應用層滾動清理**：批次 exe 每晚執行時（與 txt Prune 同位置）刪除
+  `record_date < 今天 − DbRetentionDays` 的資料，FK 子表先刪
+  （handling_log → handling → deep_dives → top_issues → categories → alerts → daily_records → reports）。
+  每晚僅刪一天份（2000 台約 3 萬列 lf_top_issues），**不需要分割表**，可移植性規則不受影響。
 
-| 資料 | 年增量估算 | 十年累積 |
+容量估算（2000 台、保留兩年的穩態）：
+
+| 資料 | 年增量估算 | 兩年穩態 |
 |---|---|---|
-| lf_daily_records | 300 台 × 365 天 ≈ 11 萬列/年 | ~110 萬列 |
-| lf_top_issues（大宗） | × 平均 15 簽章 ≈ 165 萬列/年 | ~1,650 萬列 |
-| lf_record_categories/alerts | 各數十萬列/年 | 數百萬列 |
-| lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 300MB/年 | ~3GB |
+| lf_daily_records | 2000 台 × 365 天 ≈ 73 萬列/年 | ~146 萬列 |
+| lf_top_issues（大宗） | × 平均 15 簽章 ≈ 1,100 萬列/年 | ~2,200 萬列 |
+| lf_record_categories/alerts | 各數百萬列/年 | 各 <1,000 萬列 |
+| lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
 
-這個量級對 SQL Server / Oracle 都很輕鬆，靠既有索引即可，**不需要分割表**（partitioning
-兩家語法完全不同，引入就破壞可移植性；若十年後真有需要再說）。長期保存下的兩個配套：
+這個量級對 SQL Server / Oracle 仍屬輕鬆，靠既有索引即可。配套不變：
 
 - **Schema 演進採「只增不改」**：新版本只加欄位（nullable 或有預設值）、不改不刪既有欄位，
   舊資料永遠可讀；配合 EF Core migration 記錄版本。
 - **檔案端維持 90 天輪替（已確認 2026-07-20）**：txt 定位為「臨時資料庫」，DB 上線時最多
-  匯入近 90 天歷史——此限制已知悉並接受，長期保存自 DB 上線日起算。
+  匯入近 90 天歷史——此限制已知悉並接受，保留年限自 DB 上線日起算。
 
 ## Web 查詢情境 → 資料表對應（驗證 schema 夠用）
 
@@ -470,5 +481,7 @@ nullable），屆時若要限制，方案備選：(a) `key_details` 單獨設保
 | 4 | Security 長期保存 | ⏳ 兩步走：先確認抓得到什麼（本機權限＋Phase 1 probe），再決定保存政策 |
 | 5 | 自由文字搜尋 | ✅ 不做（欄位主體不明確；主篩選＋Event ID 已涵蓋） |
 | 6 | Web 驗證/細節 | ⏸ 後議（lf_users 表按 AD 假設設計，屆時可改） |
+| 7 | DB 保留年限 | ✅ 統一 `DbRetentionDays`=730（未來三年改 1095）；全表適用含權限異動/處理歷程，到期直接刪；應用層每晚滾動清理（2026-07-20） |
+| 8 | 多 Sentinel 主機歸屬 | ✅ `lf_hosts.netiq_server` 記錄所屬 Sentinel（路由/顯示屬性）；IP 全域唯一維持識別鍵（2026-07-20） |
 
 **唯一留待後續的開放項**：#4 的第二步（probe 後回到本節 C）。schema 本身已無開放問題。
