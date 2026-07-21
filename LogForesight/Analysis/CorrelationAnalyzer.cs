@@ -25,13 +25,16 @@ public class SuccessfulLogonMatch
 /// </summary>
 public static class CorrelationAnalyzer
 {
-    // 事件群組定義（與 KnownIssueCatalog 的規則對齊）
-    private static readonly int[] AccountChangeIds = { 4720, 4722, 4724, 4728, 4732, 4756 };
-    private static readonly int[] PersistenceSecurityIds = { 4697, 4698 };
-    private static readonly int[] AuditTamperIds = { 1102, 4719, 4907 };
-    private static readonly int[] PermissionChangeIds = { 4670, 4703, 4704, 4705, 4717, 4718 };
-    private static readonly int[] DiskErrorIds = { 7, 11, 51, 52, 153 };
-    private static readonly int[] NtfsErrorIds = { 55, 98, 130, 140, 141 };
+    // 事件群組定義（與 KnownIssueCatalog 的規則對齊）。internal（非 private）是刻意的：
+    // SelfTestRunner 會逐一驗證這些 ID 都存在於目前生效的規則表，防止規則表演進後兩邊悄悄漂移
+    // ——關聯層的組合模式仍是程式碼邏輯、不搬進 rules.json（見 docs/RULES-PLAN.md 語意邊界），
+    // 但它引用的事件 ID 應該要跟規則表對得上。
+    internal static readonly int[] AccountChangeIds = { 4720, 4722, 4724, 4728, 4732, 4756 };
+    internal static readonly int[] PersistenceSecurityIds = { 4697, 4698 };
+    internal static readonly int[] AuditTamperIds = { 1102, 4719, 4907 };
+    internal static readonly int[] PermissionChangeIds = { 4670, 4703, 4704, 4705, 4717, 4718 };
+    internal static readonly int[] DiskErrorIds = { 7, 11, 51, 52, 153 };
+    internal static readonly int[] NtfsErrorIds = { 55, 98, 130, 140, 141 };
 
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
         List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)

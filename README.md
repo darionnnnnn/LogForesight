@@ -266,6 +266,15 @@ LogForesight.exe --selftest
 比對結果，一分鐘內確認五層偵測邏輯在新環境正常，而不是等真的出事才發現某條規則沒動。
 exit code 0 = 全部通過。
 
+**2026-07-21 規則外部化後**：`--selftest` 一律**唯讀**載入目前實際生效的規則——執行檔目錄有
+`rules.json` 就驗證它（輸出開頭會標明「驗證對象：{路徑}（seed vX）」），沒有或載入失敗就驗證
+內建種子（標明「驗證對象：內建種子」）。**絕不寫入任何檔案**，包括不會幫你建立 `rules.json`
+——這個承諾是刻意的：`--selftest` 要能在乾淨環境反覆執行而不留副作用。額外會檢查：規則驗證
+有無不合格項目、是否有規則被排序在前面的規則遮蔽（永遠不會命中）、推導出的 Security 稽核
+watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於目前規則表；`suppressions.json`
+存在時也會唯讀列出每筆抑制的到期狀態。**改完 `rules.json` 後的建議 SOP 就是跑一次
+`--selftest`，exit code 0 代表這次修改沒有破壞既有的偵測邏輯。**
+
 驗證期需要看到完整 prompt 與 AI 原始回應（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
 Log」章節）時，加上 `--debug-dump`：
 
@@ -275,6 +284,64 @@ LogForesight.exe --debug-dump
 
 每次 AI 呼叫（含 JSON 重試的每次嘗試）會各輸出一個檔案到執行檔目錄的 `diag\`，驗證完可以直接
 刪除整個資料夾，平常執行不要加這個參數（會持續佔用磁碟空間）。
+
+## 規則庫（rules.json）與抑制設定
+
+2026-07-21 規則外部化：`KnownIssueCatalog` 的規則表（本文件「監控的危險訊號清單」列出的
+那些規則）不再寫死在程式碼裡，改成第一次執行時寫入執行檔目錄的 **`rules.json`**，之後直接
+編輯這個檔案即可調整規則，**不需要重新編譯部署**。完整設計定案（語意邊界、seed/匯入政策、
+未來 DB 映射）見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
+
+### 維護 SOP
+
+1. 用文字編輯器打開 `rules.json`（**務必存成 UTF-8**——內容是中文長文字，記事本存檔時注意
+   編碼，否則下次打開會看到亂碼）。
+2. 新增規則：複製一條現有規則當模板，改 `Id`（建議 `custom-` 開頭）、`Origin` 設成 `"custom"`、
+   填好 `SourcePattern`/`EventIds`/`Category`/`Severity` 與四個知識庫欄位
+   （`PlainExplanation`/`Impact`/`LikelyCauses`/`NextSteps`）。
+   停用某條規則：把該條的 `Enabled` 改成 `false`（保留在檔案裡，不用刪除）。
+3. **改完存檔後跑一次 `LogForesight.exe --selftest`**，exit code 0 就是好的——它會唯讀載入
+   你剛改的 `rules.json`，驗證欄位是否合格、有沒有規則彼此遮蔽、關聯層事件 ID 是否仍對得上，
+   不需要真的跑一次分析才能確認改壞了沒有。
+
+### 已知限制與注意事項
+
+- 想微調某條 `builtin` 規則的內容（改門檻、改處置文字）？**不要直接改那條**——程式改版後的
+  `--import-rules` 可能會覆蓋回去（見下）。正確做法：把該條 `Enabled` 設 `false`，複製一條
+  改成 `custom-` 開頭的新規則再修改。
+- 規則的比對順序＝檔案裡的陣列順序（第一個命中的規則生效）；`--selftest` 會警告「永遠不會被
+  命中」的規則（被排在前面、範圍更廣的規則遮蔽），照提示調整順序或縮小比對範圍即可。
+- **停用規則不會讓對應事件從趨勢層/關聯層的偵測中消失**（只是不再有規則命中的分類與知識庫
+  說明），這是刻意設計，見 docs/RULES-PLAN.md 的語意邊界說明。
+
+### 匯入程式內建的新規則／更新（`--import-rules`）
+
+程式改版後若內建規則有新增或修訂，啟動時會提示「內建規則有更新（vX→vY）」。要套用：
+
+```
+LogForesight.exe --import-rules                          # 預覽：列出將新增/更新/略過/衝突的規則，不寫檔
+LogForesight.exe --import-rules --apply                  # 套用：新增缺少的 builtin 規則
+LogForesight.exe --import-rules --apply --overwrite-builtin   # 連同「內容被程式更新過」的既有 builtin 規則一併覆蓋
+```
+
+你自訂的 `custom` 規則永遠不會被這個指令碰到；`--overwrite-builtin` 覆蓋時也會保留你對該條
+`Enabled` 的設定（停用不會被悄悄打開）。
+
+### 主機級告警抑制（`--suppress` / `--unsuppress` / `--list-suppressions`）
+
+某條規則在這台主機上已確認是已知雜訊、不想再收到通知，但又不想整條規則永久停用（停用後
+其他主機也會跟著沒有分類）時，用抑制：
+
+```
+LogForesight.exe --suppress builtin-service-crash-loop-703x --reason "MyApp 重啟屬正常" --days 30
+LogForesight.exe --list-suppressions
+LogForesight.exe --unsuppress builtin-service-crash-loop-703x
+```
+
+**抑制只關掉通知與風險升級，事件仍會照常聚合、命中規則、寫入歷史**——這樣才能在體檢報告與
+未來的管理頁看到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的
+永久盲區。`--days` 省略則永久生效直到手動 `--unsuppress`；到期後不會自動清理，只是恢復告警，
+執行時 console 會提示。設定檔為 `suppressions.json`，同樣建議 UTF-8 存檔。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 
@@ -670,10 +737,12 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
 - **舊版 EventLog API**：`System.Diagnostics.EventLog` 只能讀傳統三大日誌；
   改用 `EventLogReader`（`System.Diagnostics.Eventing.Reader`）可讀 `Microsoft-Windows-*/Operational`
   等新式頻道（如 Windows Defender、RDP 連線記錄），入侵偵測面會更廣。
-- **規則表維護**：`KnownIssueCatalog.Rules` 是純程式碼表，觀察一段時間後把貴公司環境特有的
-  雜訊（可忽略）與重要訊號（要加嚴）補進去，準確度會持續提升；規則的白話知識庫內容（處置參考）
-  也建議一併調整成貴公司實際的處置流程。`LogForesight.Tests` 逐條規則自動產生測試案例，
-  新增規則時測試自動涵蓋，不用手動補案例。
+- **規則表維護（2026-07-21 已完成外部化）**：規則表已從程式碼搬到 `rules.json`（見「規則庫
+  （rules.json）與抑制設定」章節），觀察一段時間後可直接編輯這個檔案，把貴公司環境特有的
+  雜訊（可忽略，或用 `--suppress` 關通知）與重要訊號（新增規則或調嚴重度）補進去，不需要
+  重新編譯部署；規則的白話知識庫內容（處置參考）也建議一併調整成貴公司實際的處置流程。
+  改完用 `--selftest` 驗證即可，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
+  `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
 - **多台伺服器（NetIQ Sentinel 整合）**：目前是單機直讀。規劃中的下一階段是接上多台 NetIQ Sentinel
   （約 2000 台主機規模，分散於多台 Sentinel、共用查詢帳密）做集中分析——分級分析（規則/趨勢/慢速趨勢/
   關聯全量跑，AI 只判讀有訊號的主機）、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等設計已在
@@ -681,4 +750,6 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
 - **DB 後端**：`history.txt`／`export\` 目前是唯一實作（`JsonlAnalysisRecordStore`／`FileReportSink`）。
   查詢介面（`IAnalysisRecordReader`/`IReportSink`）已抽出，欄位級 schema 與兩年保留策略已定案於
   `docs/DB-PLAN.md`，未來要接 SQL Server/Oracle 供查詢 UI 使用時，只需新增一個實作類別並在
-  `Storage.Type` 切換，不需要異動分析邏輯。
+  `Storage.Type` 切換，不需要異動分析邏輯。規則庫（`IKnownIssueRuleStore`）與抑制設定
+  （`ISuppressionStore`）也是同一套 Strategy + Factory 模式，欄位級 DB 映射（正規化的
+  1 主表＋3 子表）已定案於 `docs/RULES-PLAN.md`。

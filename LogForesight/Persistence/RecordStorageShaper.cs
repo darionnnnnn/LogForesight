@@ -59,6 +59,8 @@ public static class RecordStorageShaper
                 Category = i.Category,
                 Severity = i.Severity,
                 KnownIssue = i.KnownIssue,
+                RuleId = i.RuleId,
+                Suppressed = i.Suppressed,
                 Trend = i.Trend,
                 PreviousDayCount = i.PreviousDayCount,
                 HistoryDailyAverage = i.HistoryDailyAverage,

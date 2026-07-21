@@ -38,12 +38,16 @@ public class WeeklyCheckupService
     private readonly AIService _aiService;
     private readonly IAnalysisRecordReader _historyReader;
     private readonly IReportSink _reportSink;
+    private readonly ISuppressionStore? _suppressionStore;
 
-    public WeeklyCheckupService(AIService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink)
+    /// <param name="suppressionStore">提供時，體檢報告固定列出本機生效中的抑制清單＋窗口期間各自的
+    /// 發生次數（見 docs/RULES-PLAN.md 陷阱 4：暫時關閉的告警不該變成永久盲區）；null 時略過該區塊。</param>
+    public WeeklyCheckupService(AIService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink, ISuppressionStore? suppressionStore = null)
     {
         _aiService = aiService;
         _historyReader = historyReader;
         _reportSink = reportSink;
+        _suppressionStore = suppressionStore;
     }
 
     /// <summary>
@@ -119,7 +123,10 @@ public class WeeklyCheckupService
         // 檔名沿用既有 "_週檢.txt" 慣例（docs/PLAN.md 已承諾「輸出不變」），內部語意雖已從
         // 固定星期改為 due-date 輪巡，但對外的檔案格式與既有部署/查閱習慣不需要跟著變動
         var fileName = $"{checkupDate:yyyy-MM-dd}_週檢.txt";
-        var content = BuildReportText(checkupDate, window, outcome);
+        var activeSuppressions = _suppressionStore != null
+            ? SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), Environment.MachineName, DateTime.Now)
+            : new List<RuleSuppression>();
+        var content = BuildReportText(checkupDate, window, outcome, activeSuppressions);
         outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup, host, fileName, content);
 
         Log.Info("{Date:yyyy-MM-dd} 體檢完成：有發現={HasFindings}", checkupDate, outcome.HasFindings);
@@ -238,7 +245,8 @@ public class WeeklyCheckupService
         return second >= Math.Max(3, (int)(first * 1.5));
     }
 
-    private static string BuildReportText(DateTime checkupDate, List<DailyAnalysisRecord> window, WeeklyCheckupResult outcome)
+    private static string BuildReportText(DateTime checkupDate, List<DailyAnalysisRecord> window, WeeklyCheckupResult outcome,
+        List<RuleSuppression> activeSuppressions)
     {
         var sb = new StringBuilder();
         sb.AppendLine("══════════════════════════════════════════════════════════");
@@ -254,6 +262,23 @@ public class WeeklyCheckupService
         {
             sb.AppendLine($"  {day.Date:yyyy-MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}");
         }
+
+        // 固定列出生效中的抑制設定＋本期發生次數：防止「暫時關掉」變成永久盲區
+        // （見 docs/RULES-PLAN.md 陷阱 4）——只要體檢確實有產生報告，這個提醒就一定在
+        if (activeSuppressions.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("■ 生效中的抑制設定（提醒：暫時關閉通知的告警，本期仍照常偵測與記錄）");
+            foreach (var s in activeSuppressions)
+            {
+                int occurrences = window.SelectMany(d => d.TopIssues)
+                    .Where(i => i.RuleId != null && i.RuleId.Equals(s.RuleId, StringComparison.OrdinalIgnoreCase))
+                    .Sum(i => i.Count);
+                var expiry = s.ExpiresAt == null ? "永久" : $"至 {s.ExpiresAt:yyyy-MM-dd}";
+                sb.AppendLine($"  - {s.RuleId}（{expiry}）：本期共發生 {occurrences} 次｜原因：{s.Reason}");
+            }
+        }
+
         return sb.ToString();
     }
 

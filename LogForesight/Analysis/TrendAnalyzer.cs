@@ -71,10 +71,12 @@ public static class TrendAnalyzer
                 ? null
                 : prevRecord.TopIssues.FirstOrDefault(i => SameIssue(i, sig))?.Count ?? 0;
 
+            // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警文字——
+            // 抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-PLAN.md 的語意邊界）
             if (pastCounts.Count == 0)
             {
                 sig.Trend = IssueTrend.New;
-                if (sig.Severity >= IssueSeverity.High)
+                if (sig.Severity >= IssueSeverity.High && !sig.Suppressed)
                 {
                     alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
                 }
@@ -83,8 +85,11 @@ public static class TrendAnalyzer
             {
                 sig.Trend = IssueTrend.Rising;
                 sig.Severity = Escalate(sig.Severity);
-                var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                if (!sig.Suppressed)
+                {
+                    var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
+                    alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                }
             }
             else if (sig.HistoryDailyAverage >= RisingMinCount && sig.Count * RisingFactor <= sig.HistoryDailyAverage)
             {

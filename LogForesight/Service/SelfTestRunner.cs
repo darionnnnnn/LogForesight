@@ -21,6 +21,12 @@ public static class SelfTestRunner
 
         Console.WriteLine("=== LogForesight Self-Test（不寫入 history、不呼叫 AI、不讀取真實 Event Log）===\n");
 
+        // 2026-07-21 規則外部化後：selftest 唯讀載入實際生效的規則（rules.json 存在就用它，
+        // 不存在/載入失敗就用內建種子），驗證/初始化後，下面的規則層/趨勢層/關聯層檢查
+        // 自動涵蓋「現場實際配置」而不只是程式碼內建種子——但絕不寫入任何檔案，
+        // 維持 README 對 --selftest 的承諾（不需要設定檔、跑完不留副作用）。
+        RunRuleLoadingChecks();
+
         RunRuleLayerChecks();
         RunTrendLayerChecks();
         RunSlowTrendLayerChecks();
@@ -28,6 +34,109 @@ public static class SelfTestRunner
 
         Console.WriteLine($"\n=== 結果：{_pass} 通過、{_fail} 失敗（耗時 {sw.ElapsedMilliseconds}ms）===");
         return _fail == 0;
+    }
+
+    /// <summary>Security-Auditing 規則的原始寫死清單（規則外部化前的版本），現在改當作
+    /// 「推導出的 watchlist 至少要涵蓋這些」的驗證基準，而不是獨立維護的清單本身。</summary>
+    private static readonly HashSet<int> LegacySecurityWatchlistBaseline = new()
+    {
+        1102, 4719, 4720, 4722, 4724, 4728, 4732, 4756, 4729, 4733, 4757,
+        4697, 4698, 4740, 4670, 4907, 4717, 4718, 4704, 4705, 4703, 4735, 4739, 4731, 4734
+    };
+
+    private static void RunRuleLoadingChecks()
+    {
+        Console.WriteLine("-- 規則載入（唯讀，selftest 絕不寫入 rules.json/suppressions.json）--");
+
+        var store = new JsonKnownIssueRuleStore();
+        List<KnownIssueRule> sourceRules;
+
+        if (!store.Exists)
+        {
+            sourceRules = KnownIssueSeed.CreateRules();
+            Console.WriteLine($"  驗證對象：內建種子（{store.Location} 不存在）");
+        }
+        else
+        {
+            var outcome = store.Load();
+            if (outcome.Success)
+            {
+                sourceRules = outcome.Content!.Rules;
+                Console.WriteLine($"  驗證對象：{store.Location}（seed v{outcome.Content.SeedVersion}，共 {sourceRules.Count} 條）");
+            }
+            else
+            {
+                sourceRules = KnownIssueSeed.CreateRules();
+                Console.WriteLine($"  驗證對象：內建種子（{store.Location} 載入失敗：{outcome.Error}）");
+            }
+        }
+
+        var validation = RuleValidator.Validate(sourceRules);
+        Check("規則驗證：無不合格規則", validation.SkippedRules.Count == 0,
+            validation.SkippedRules.Count > 0
+                ? string.Join("；", validation.SkippedRules.Select(s => $"{s.Rule.Id}：{s.Reason}"))
+                : "");
+        Check("遮蔽偵測：無規則被永久遮蔽", validation.ShadowWarnings.Count == 0,
+            string.Join("；", validation.ShadowWarnings));
+
+        KnownIssueCatalog.Initialize(validation.ValidRules);
+
+        Check($"推導 watchlist 涵蓋原始基準清單（{LegacySecurityWatchlistBaseline.Count} 項）",
+            LegacySecurityWatchlistBaseline.All(id => KnownIssueCatalog.SecurityAuditWatchlist.Contains(id)),
+            $"目前推導結果：{string.Join(",", KnownIssueCatalog.SecurityAuditWatchlist.OrderBy(x => x))}");
+
+        CheckCorrelationIdsExistInRules();
+        RunSuppressionFileChecks();
+    }
+
+    /// <summary>關聯層的事件群組（CorrelationAnalyzer 的 internal 陣列）是程式碼另外維護的一份 ID 清單，
+    /// 驗證它們都存在於目前生效的規則表——規則表演進（如使用者停用某條規則）後兩邊容易悄悄漂移不同步。
+    /// 這是 ID 層級的粗略比對（不比對來源字串），用意是抓明顯的漂移，不是精確驗證比對邏輯。</summary>
+    private static void CheckCorrelationIdsExistInRules()
+    {
+        void CheckGroup(string name, int[] ids)
+        {
+            var missing = ids.Where(id => KnownIssueCatalog.Rules.All(r => !r.MatchAllEventIds && !r.EventIds.Contains(id))).ToList();
+            Check($"關聯層事件群組 {name} 的所有 ID 都存在於目前規則表",
+                missing.Count == 0,
+                missing.Count > 0 ? $"規則表未涵蓋：{string.Join(",", missing)}" : "");
+        }
+
+        CheckGroup("AccountChangeIds", CorrelationAnalyzer.AccountChangeIds);
+        CheckGroup("PersistenceSecurityIds", CorrelationAnalyzer.PersistenceSecurityIds);
+        CheckGroup("AuditTamperIds", CorrelationAnalyzer.AuditTamperIds);
+        CheckGroup("PermissionChangeIds", CorrelationAnalyzer.PermissionChangeIds);
+        CheckGroup("DiskErrorIds", CorrelationAnalyzer.DiskErrorIds);
+        CheckGroup("NtfsErrorIds", CorrelationAnalyzer.NtfsErrorIds);
+    }
+
+    /// <summary>抑制設定是可選功能，不存在時略過；存在時唯讀逐條檢視，只印資訊不影響 pass/fail——
+    /// 一筆抑制指向已停用/不存在的規則是操作面的陳舊設定，不是「確定性層壞掉」，不該讓 selftest 變紅。</summary>
+    private static void RunSuppressionFileChecks()
+    {
+        Console.WriteLine("\n-- 抑制設定（suppressions.json，選用功能）--");
+
+        var store = new JsonSuppressionStore();
+        if (!File.Exists(store.Location))
+        {
+            Console.WriteLine("  未使用此功能（檔案不存在），略過。");
+            return;
+        }
+
+        var all = store.LoadAll();
+        var knownIds = KnownIssueCatalog.Rules.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Console.WriteLine($"  共 {all.Count} 筆抑制設定：");
+        foreach (var s in all)
+        {
+            if (!knownIds.Contains(s.RuleId))
+            {
+                Console.WriteLine($"  ⚠ {s.RuleId}（主機 {s.Host}）：目前規則庫查無此 Id 或該規則已停用，此設定可能已失效");
+            }
+            if (s.ExpiresAt != null && s.ExpiresAt.Value <= DateTime.Now)
+            {
+                Console.WriteLine($"  ℹ {s.RuleId}（主機 {s.Host}）已於 {s.ExpiresAt:yyyy-MM-dd} 到期，目前恢復告警中，可用 --unsuppress 或編輯檔案清理");
+            }
+        }
     }
 
     private static void Check(string name, bool condition, string detail = "")

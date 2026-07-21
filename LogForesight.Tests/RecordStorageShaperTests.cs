@@ -22,6 +22,25 @@ public class RecordStorageShaperTests
         Assert.Null(issue.KeyDetails);
     }
 
+    /// <summary>
+    /// RuleId/Suppressed（2026-07-21 規則外部化＋抑制機制新增）必須在低風險日精簡時保留——
+    /// 頻率報表要靠 RuleId 彙總，抑制判斷要靠 Suppressed，兩者體積都很小，沒有精簡的理由，
+    /// 漏掉的話低風險日的抑制/頻率資料會靜默消失。
+    /// </summary>
+    [Fact]
+    public void 低風險日_保留RuleId與Suppressed()
+    {
+        var record = LowRiskRecord();
+        record.TopIssues[0].RuleId = "builtin-storage-disk-io";
+        record.TopIssues[0].Suppressed = true;
+
+        var shaped = RecordStorageShaper.ForStorage(record);
+        var issue = Assert.Single(shaped.TopIssues);
+
+        Assert.Equal("builtin-storage-disk-io", issue.RuleId);
+        Assert.True(issue.Suppressed);
+    }
+
     [Fact]
     public void 低風險日_Host與DeepDives原樣帶過()
     {

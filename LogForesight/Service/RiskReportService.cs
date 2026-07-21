@@ -51,7 +51,10 @@ public class RiskReportService
 
     /// <summary>產生風險報告檔，回傳報告參照（今日為檔案完整路徑）</summary>
     /// <param name="host">主機識別，單機情境留空即可</param>
-    public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "", string host = "")
+    /// <param name="activeSuppressions">本機現在生效中的抑制項目（含 Reason），用來在報告的
+    /// 「已抑制的告警」區塊顯示原因；null/空清單時該區塊不輸出</param>
+    public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
+        List<RuleSuppression>? activeSuppressions = null, string host = "")
     {
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
@@ -111,7 +114,7 @@ public class RiskReportService
         }
 
         var fileName = BuildFileName(record.Date, record.RiskLevel, sections);
-        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections));
+        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections, activeSuppressions));
         Log.Info("風險報告已寫入：{Path}", reportRef.Value);
         return reportRef;
     }
@@ -290,7 +293,7 @@ public class RiskReportService
         return new DeepDiveOutcome(new DeepDiveResult { Analyses = analyses }, false, totalLogs, totalLogs);
     }
 
-    private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections)
+    private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections, List<RuleSuppression>? activeSuppressions)
     {
         var sb = new StringBuilder();
         sb.AppendLine("══════════════════════════════════════════════════════════");
@@ -411,6 +414,23 @@ public class RiskReportService
                 sb.AppendLine(FormatRawLog(log, maxMessageLength: 500));
             }
             sb.AppendLine();
+        }
+
+        // 已抑制的告警：本機維護者關閉通知的規則，仍列出讓看報告的人知道「有東西被關掉了」——
+        // 偵測與紀錄照常，只是不吵、不拉風險（見 docs/RULES-PLAN.md 語意邊界）
+        var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
+        if (suppressedIssues.Count > 0)
+        {
+            sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            sb.AppendLine($"■ 已抑制的告警 {suppressedIssues.Count} 項（通知已關閉，偵測與紀錄照常）");
+            foreach (var issue in suppressedIssues)
+            {
+                var reason = activeSuppressions?.FirstOrDefault(s =>
+                    s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
+                sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.Source} EventId {issue.EventId} x{issue.Count}" +
+                              $"：{issue.KnownIssue}");
+                sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");
+            }
         }
 
         // 前置掃描結果：主分析前已由獨立 AI 呼叫篩選過的低嚴重度項目

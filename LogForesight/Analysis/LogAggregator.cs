@@ -38,6 +38,14 @@ public class LogIssueSignature
     /// <summary>命中規則表時的已知問題說明，未命中為 null</summary>
     public string? KnownIssue { get; set; }
 
+    /// <summary>命中規則的穩定 Id（KnownIssueRule.Id），未命中為 null。落紀錄供未來管理頁的
+    /// 頻率報表與抑制比對使用（用 Id 查詢，不依賴 (Source, EventId) 反推，規則演進後仍對得上）</summary>
+    public string? RuleId { get; set; }
+
+    /// <summary>true = 此簽章命中的規則已被本機的 suppressions 設定抑制——只影響「要不要吵」
+    /// （通知、風險升級），偵測與紀錄照常，見 docs/RULES-PLAN.md 的語意邊界</summary>
+    public bool Suppressed { get; set; }
+
     // 以下由 TrendAnalyzer.Apply 填入（與歷史紀錄比對後的頻率趨勢）
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public IssueTrend Trend { get; set; } = IssueTrend.Unknown;

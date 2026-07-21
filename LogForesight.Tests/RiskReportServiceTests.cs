@@ -10,6 +10,10 @@ namespace LogForesight.Tests;
 /// 這裡只涵蓋純規則命中的情境（不含 Other），因此不需要 mock/啟動真的 AI 服務——
 /// AIService 的建構子本身不發任何網路請求，只要流程中不觸發 DeepDiveAsync 就不會用到它。
 /// </summary>
+// 這裡的測試透過 KnownIssueCatalog.FindRule 讀取共用的靜態規則表（"disk" 等規則命中查表），
+// 需要跟會呼叫 KnownIssueCatalog.Initialize 的測試序列執行，避免平行執行時讀到暫時被改寫的狀態
+// ——見 KnownIssueCatalogStateCollection 的說明。
+[Collection("KnownIssueCatalogState")]
 public class RiskReportServiceTests
 {
     private sealed class FakeReportSink : IReportSink

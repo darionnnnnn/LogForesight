@@ -24,4 +24,10 @@
         </None>
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- 讓 Tests 專案能直接單元測試 internal 的純函數（如 LogAnalysisService.ComputeRuleBasedRisk），
+             不需要為了可測試性把內部實作細節公開成 public API。 -->
+        <InternalsVisibleTo Include="LogForesight.Tests" />
+    </ItemGroup>
+
 </Project>

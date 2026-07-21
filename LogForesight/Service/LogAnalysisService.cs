@@ -58,19 +58,23 @@ public class LogAnalysisService
     private readonly EventLogService _eventLogService;
     private readonly AIService _aiService;
     private readonly IAnalysisRecordStore _historyService;
+    private readonly ISuppressionStore _suppressionStore;
     private readonly RiskReportService? _reportService;
     private readonly string _serverDescription;
     private readonly string _host;
 
+    /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-PLAN.md）：只影響「要不要吵」
+    /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
     /// <param name="serverDescription">伺服器角色描述（如「AD 網域控制站」），會帶入 prompt 讓 AI 依環境判讀；空字串則略過</param>
     /// <param name="reportService">提供時，風險「中」以上的日期會輸出 export/{日期}.txt 風險報告</param>
     /// <param name="host">寫入紀錄的主機識別；null/空字串時預設為 Environment.MachineName（本機情境的自然值）</param>
     public LogAnalysisService(EventLogService eventLogService, AIService aiService, IAnalysisRecordStore historyService,
-        string serverDescription = "", RiskReportService? reportService = null, string? host = null)
+        ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null, string? host = null)
     {
         _eventLogService = eventLogService;
         _aiService = aiService;
         _historyService = historyService;
+        _suppressionStore = suppressionStore;
         _serverDescription = serverDescription;
         _reportService = reportService;
         _host = string.IsNullOrEmpty(host) ? Environment.MachineName : host;
@@ -95,6 +99,22 @@ public class LogAnalysisService
         Log.Info("開始分析 {Date:yyyy-MM-dd}：log 筆數={LogCount}, useAi={UseAi}", targetDate, logs.Count, useAi);
 
         var issues = LogAggregator.Aggregate(logs);
+
+        // 主機級告警抑制（見 docs/RULES-PLAN.md）：只標記「這個簽章命中的規則被本機抑制」，
+        // 不影響聚合、分類或後續寫入歷史——偵測與紀錄照常，只是後面判定風險/組告警文字時要跳過它。
+        // 保留完整的 activeSuppressions（含 Reason）供風險報告的「已抑制的告警」區塊顯示。
+        var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, DateTime.Now);
+        if (activeSuppressions.Count > 0)
+        {
+            var suppressedRuleIds = SuppressionFilter.ToRuleIdSet(activeSuppressions);
+            foreach (var issue in issues)
+            {
+                if (issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId))
+                {
+                    issue.Suppressed = true;
+                }
+            }
+        }
 
         // EntryType 0 是 classic API 讀到的 Critical 等級事件（如 Kernel-Power 41），計入錯誤
         var errorCount = logs.Count(l => l.EntryType == EventLogEntryType.Error || (int)l.EntryType == 0);
@@ -284,7 +304,7 @@ public class LogAnalysisService
         {
             try
             {
-                record.ReportFile = await _reportService.GenerateAsync(record, logs, _serverDescription);
+                record.ReportFile = await _reportService.GenerateAsync(record, logs, _serverDescription, activeSuppressions);
             }
             catch (Exception ex)
             {
@@ -639,16 +659,21 @@ public class LogAnalysisService
         };
     }
 
-    private static string ComputeRuleBasedRisk(List<LogIssueSignature> issues, List<string> trendAlerts,
+    /// <summary>
+    /// 程式判定的風險下限。被抑制的簽章不參與風險判定的 Critical/High 門檻——抑制關的是
+    /// 「要不要吵」，這裡正是「吵不吵」的判定點；關聯層（correlations）完全不受抑制影響，
+    /// 單事件被關掉不代表組合出來的攻擊鏈/故障鏈訊號也該被關掉（見 docs/RULES-PLAN.md 語意邊界）。
+    /// </summary>
+    internal static string ComputeRuleBasedRisk(List<LogIssueSignature> issues, List<string> trendAlerts,
         List<CorrelationFinding> correlations)
     {
-        if (issues.Any(i => i.Severity == IssueSeverity.Critical) ||
+        if (issues.Any(i => !i.Suppressed && i.Severity == IssueSeverity.Critical) ||
             correlations.Any(c => c.Severity == IssueSeverity.Critical))
         {
             return "高";
         }
 
-        if (trendAlerts.Count > 0 || correlations.Count > 0 || issues.Any(i => i.Severity == IssueSeverity.High))
+        if (trendAlerts.Count > 0 || correlations.Count > 0 || issues.Any(i => !i.Suppressed && i.Severity == IssueSeverity.High))
         {
             return "中";
         }

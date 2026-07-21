@@ -100,15 +100,67 @@ if (debugDump)
 try
 {
 
+// 規則庫載入（見 docs/RULES-PLAN.md）：初次部署寫入內建種子、之後從 rules.json 載入並驗證，
+// 在建立任何分析服務之前完成——KnownIssueCatalog 的靜態規則表必須先就緒，後續的聚合/分類才有意義。
+var ruleStore = StorageFactory.CreateRuleStore(settings.Storage);
+
+// --import-rules：手動把內建種子的新增/修訂規則匯入 rules.json（預設只預覽，--apply 才寫檔），
+// 見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」的決定。放在 mutex 保護內執行，
+// 避免與排程執行中的分析流程同時寫規則檔；跑完直接結束，不進入每日分析流程。
+if (args.Contains("--import-rules"))
+{
+    RuleImporter.Run(ruleStore, apply: args.Contains("--apply"), overwriteBuiltin: args.Contains("--overwrite-builtin"));
+    LogManager.Shutdown();
+    return 0;
+}
+
+// --suppress / --unsuppress / --list-suppressions：主機級告警抑制的最小維護指令（見 docs/RULES-PLAN.md）。
+// 同樣放在 mutex 保護內、跑完即結束，不進入每日分析流程。
+if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contains("--list-suppressions"))
+{
+    var suppressionStoreForCli = StorageFactory.CreateSuppressionStore(settings.Storage);
+
+    if (args.Contains("--list-suppressions"))
+    {
+        SuppressionCli.List(suppressionStoreForCli);
+    }
+    else if (args.Contains("--unsuppress"))
+    {
+        SuppressionCli.Unsuppress(suppressionStoreForCli, GetArgValue(args, "--unsuppress"));
+    }
+    else
+    {
+        var (ruleContentForCli, _) = RuleBootstrapper.LoadContent(ruleStore);
+        var knownIds = RuleValidator.Validate(ruleContentForCli.Rules).ValidRules
+            .Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        SuppressionCli.Suppress(suppressionStoreForCli, knownIds,
+            GetArgValue(args, "--suppress"), GetArgValue(args, "--reason"), GetArgValue(args, "--days"));
+    }
+
+    LogManager.Shutdown();
+    return 0;
+}
+
+RuleBootstrapper.Run(ruleStore);
+
+var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage);
+var currentHost = Environment.MachineName;
+var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
+foreach (var expired in expiredSuppressions)
+{
+    Console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
+                      $"原因：{expired.Reason}；未自動清理，可用 --unsuppress 或編輯 suppressions.json）");
+}
+
 var eventLogService = new EventLogService();
 IPromptDumper dumper = debugDump ? new FilePromptDumper() : new NullPromptDumper();
 var aiService = new AIService(settings.Ai, dumper);
 var historyService = StorageFactory.CreateRecordStore(settings.Storage); // 依 Storage.Type 選後端，目前只有 Jsonl
 var reportSink = new FileReportSink(); // 風險報告輸出至執行檔目錄下的 export
 var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
-var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, settings.Analysis.ServerDescription, reportService);
+var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore, settings.Analysis.ServerDescription, reportService);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions);
-var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink);
+var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
@@ -316,6 +368,13 @@ catch (Exception ex)
     return 1;
 }
 
+/// <summary>取 --flag value 形式的參數值；flag 不存在或後面沒有值時回傳 null</summary>
+static string? GetArgValue(string[] args, string flag)
+{
+    var idx = Array.IndexOf(args, flag);
+    return idx >= 0 && idx + 1 < args.Length ? args[idx + 1] : null;
+}
+
 static string FormatElapsed(TimeSpan span) =>
     span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
     : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
@@ -357,8 +416,17 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
         Console.ForegroundColor = original;
     }
 
-    // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者
-    var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical).ToList();
+    // 主機級抑制（見 docs/RULES-PLAN.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
+    // 而不是完全看不到——偵測與紀錄照常，只是不吵、不拉風險，摘要本身不受此限制
+    var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
+    if (suppressedIssues.Count > 0)
+    {
+        var summary = string.Join("、", suppressedIssues.Select(i => $"{i.RuleId} x{i.Count}"));
+        Console.WriteLine($"  🔕 本日 {suppressedIssues.Count} 條告警已抑制（{summary}）");
+    }
+
+    // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）
+    var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical && !i.Suppressed).ToList();
     if (record.RiskLevel == "高" || criticalIssues.Count > 0)
     {
         var original = Console.ForegroundColor;

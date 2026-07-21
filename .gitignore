@@ -19,6 +19,12 @@ LogForesight/export/
 LogForesight/logs/
 LogForesight/permission_snapshot.json
 
+# 規則庫／抑制設定（2026-07-21 規則外部化，見 docs/RULES-PLAN.md）：初次執行時自動寫入種子，
+# 之後由各環境自行維護；跟 history.txt 一樣是執行期產生/維護的資料，不進版本控制，
+# 避免不同機器的規則調整互相覆蓋
+LogForesight/rules.json
+LogForesight/suppressions.json
+
 # OS
 .DS_Store
 Thumbs.db
