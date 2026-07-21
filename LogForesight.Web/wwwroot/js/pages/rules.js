@@ -1,0 +1,478 @@
+/**
+ * 規則維護（docs/WEB-SPEC.md §9.7）。
+ *
+ * 四層保護在 UI 上的體現：
+ *   - builtin 不顯示刪除鈕（只能停用）
+ *   - builtin 被改過時顯示「已修改」徽章與「回復預設」鈕
+ *   - 儲存前先跑後端驗證，不合格不寫入
+ */
+
+import { api } from '../core/api.js';
+import { renderTable, renderLoading, toast, confirmAction, withBusy } from '../core/ui.js';
+import { severityBadge, formatDate } from '../core/format.js';
+
+const CATEGORY_NAMES = {
+    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
+    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
+};
+
+const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
+const restoreModal = new bootstrap.Modal(document.getElementById('restore-modal'));
+const suppressModal = new bootstrap.Modal(document.getElementById('suppress-modal'));
+
+let rules = [];
+let suppressions = [];
+let editingRule = null;
+let restoringRuleId = null;
+let suppressingRuleId = null;
+
+document.getElementById('rule-tabs').addEventListener('click', event => {
+    const button = event.target.closest('[data-tab]');
+    if (!button) return;
+
+    for (const tab of document.querySelectorAll('#rule-tabs .nav-link')) {
+        tab.classList.toggle('active', tab === button);
+    }
+    for (const panel of document.querySelectorAll('[data-panel]')) {
+        panel.classList.toggle('d-none', panel.dataset.panel !== button.dataset.tab);
+    }
+});
+
+async function load() {
+    renderLoading(document.getElementById('rule-list'), 8);
+
+    [rules, suppressions] = await Promise.all([
+        api.get('/api/rules'),
+        api.get('/api/rules/suppressions')
+    ]);
+
+    renderRules();
+    renderSuppressions();
+}
+
+function renderRules() {
+    const keyword = document.getElementById('rule-search').value.trim().toLowerCase();
+    const filter = document.getElementById('rule-filter').value;
+
+    let filtered = rules;
+    if (keyword) {
+        filtered = filtered.filter(r =>
+            r.id.toLowerCase().includes(keyword) ||
+            r.sourcePattern.toLowerCase().includes(keyword) ||
+            r.description.toLowerCase().includes(keyword) ||
+            r.eventIds.some(id => String(id).includes(keyword)));
+    }
+    if (filter === 'enabled') filtered = filtered.filter(r => r.enabled);
+    if (filter === 'disabled') filtered = filtered.filter(r => !r.enabled);
+    if (filter === 'modified') filtered = filtered.filter(r => r.isModified);
+    if (filter === 'custom') filtered = filtered.filter(r => r.origin === 'custom');
+
+    document.getElementById('rule-count').textContent = `共 ${filtered.length} 條`;
+
+    renderTable(document.getElementById('rule-list'), {
+        columns: [
+            { title: '規則', render: r => ruleCell(r) },
+            { title: '比對', render: r => matchCell(r) },
+            { title: '類別', render: r => CATEGORY_NAMES[r.category] ?? r.category },
+            { title: '嚴重度', render: r => severityBadge(r.severity) },
+            { title: '門檻', className: 'text-end', render: r => String(r.countThreshold) },
+            { title: '狀態', render: r => statusCell(r) },
+            { title: '', className: 'text-end', render: r => actionsCell(r) }
+        ],
+        rows: filtered,
+        empty: { title: '沒有符合條件的規則', hint: '請調整搜尋或篩選條件。' }
+    });
+}
+
+function ruleCell(rule) {
+    const wrap = document.createElement('div');
+
+    const id = document.createElement('div');
+    id.className = 'font-monospace small';
+    id.textContent = rule.id;
+    wrap.appendChild(id);
+
+    const desc = document.createElement('div');
+    desc.textContent = rule.description;
+    wrap.appendChild(desc);
+
+    return wrap;
+}
+
+function matchCell(rule) {
+    const wrap = document.createElement('div');
+
+    const source = document.createElement('div');
+    source.className = 'font-monospace small';
+    source.textContent = rule.sourcePattern;
+    wrap.appendChild(source);
+
+    const ids = document.createElement('div');
+    ids.className = 'small text-muted';
+    ids.textContent = rule.matchAllEventIds ? '全部事件' : rule.eventIds.join(', ');
+    wrap.appendChild(ids);
+
+    return wrap;
+}
+
+function statusCell(rule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-column gap-1 align-items-start';
+
+    const enabled = document.createElement('span');
+    enabled.className = `badge text-bg-${rule.enabled ? 'success' : 'secondary'}`;
+    enabled.textContent = rule.enabled ? '啟用' : '停用';
+    wrap.appendChild(enabled);
+
+    if (rule.origin === 'custom') {
+        const custom = document.createElement('span');
+        custom.className = 'badge text-bg-info';
+        custom.textContent = '自訂';
+        wrap.appendChild(custom);
+    } else if (rule.isModified) {
+        // builtin 被改過要標示出來：程式改版時這條不會自動跟進新種子
+        const modified = document.createElement('span');
+        modified.className = 'badge text-bg-warning';
+        modified.textContent = '已修改';
+        modified.title = rule.modifiedByName
+            ? `由 ${rule.modifiedByName} 於 ${formatDate(rule.modifiedAt)} 修改`
+            : '已被修改過';
+        wrap.appendChild(modified);
+    }
+
+    if (rule.seedHasNewerVersion) {
+        const newer = document.createElement('span');
+        newer.className = 'badge text-bg-primary';
+        newer.textContent = '種子有新版';
+        newer.title = '程式內建種子有更新的內容，可用「回復預設」套用';
+        wrap.appendChild(newer);
+    }
+
+    if (rule.suppression) {
+        const suppressed = document.createElement('span');
+        suppressed.className = 'badge text-bg-dark';
+        suppressed.textContent = rule.suppression.isExpired ? '抑制已到期' : '已抑制';
+        suppressed.title = `${rule.suppression.host}：${rule.suppression.reason}`;
+        wrap.appendChild(suppressed);
+    }
+
+    return wrap;
+}
+
+function actionsCell(rule) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex gap-1 justify-content-end flex-wrap';
+
+    wrap.appendChild(button('編輯', 'outline-primary', () => openRuleModal(rule)));
+    wrap.appendChild(button(rule.enabled ? '停用' : '啟用', 'outline-secondary', () => toggleEnabled(rule)));
+    wrap.appendChild(button('抑制', 'outline-dark', () => openSuppressModal(rule)));
+
+    if (rule.canRestore) {
+        wrap.appendChild(button('回復預設', 'outline-warning', () => openRestoreModal(rule)));
+    }
+
+    // builtin 沒有刪除鈕——不需要它時請停用（可隨時恢復）
+    if (rule.canDelete) {
+        wrap.appendChild(button('刪除', 'outline-danger', () => deleteRule(rule)));
+    }
+
+    return wrap;
+}
+
+function button(text, variant, onClick) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = `btn btn-sm btn-${variant}`;
+    el.textContent = text;
+    el.addEventListener('click', onClick);
+    return el;
+}
+
+// ── 編輯 ─────────────────────────────────────────────────────────────────────
+
+function openRuleModal(rule) {
+    editingRule = rule;
+    document.getElementById('rule-validation').replaceChildren();
+
+    document.getElementById('rule-modal-title').textContent = rule ? `編輯規則 ${rule.id}` : '新增規則';
+    document.getElementById('rule-id').value = rule?.id ?? 'custom-';
+    document.getElementById('rule-id').disabled = !!rule;   // Id 是穩定識別鍵，建立後不可改
+    document.getElementById('rule-id-hint').textContent = rule
+        ? 'Id 一經建立即不可變更（seed 同步與抑制設定都靠它比對）。'
+        : '新規則必須以 custom- 開頭。';
+
+    document.getElementById('rule-source').value = rule?.sourcePattern ?? '';
+    document.getElementById('rule-event-ids').value = rule?.eventIds.join(', ') ?? '';
+    document.getElementById('rule-match-all').checked = rule?.matchAllEventIds ?? false;
+    document.getElementById('rule-category').value = rule?.category ?? 'Other';
+    document.getElementById('rule-severity').value = rule?.severity ?? 'Medium';
+    document.getElementById('rule-description').value = rule?.description ?? '';
+    document.getElementById('rule-threshold').value = rule?.countThreshold ?? 1;
+    document.getElementById('rule-plain').value = rule?.plainExplanation ?? '';
+    document.getElementById('rule-impact').value = rule?.impact ?? '';
+    document.getElementById('rule-causes').value = rule?.likelyCauses.join('\n') ?? '';
+    document.getElementById('rule-steps').value = rule?.nextSteps.join('\n') ?? '';
+    document.getElementById('rule-enabled').checked = rule?.enabled ?? true;
+
+    ruleModal.show();
+}
+
+function collectRule() {
+    const eventIds = document.getElementById('rule-event-ids').value
+        .split(',')
+        .map(s => Number(s.trim()))
+        .filter(n => Number.isInteger(n) && n > 0);
+
+    return {
+        id: document.getElementById('rule-id').value.trim(),
+        enabled: document.getElementById('rule-enabled').checked,
+        sourcePattern: document.getElementById('rule-source').value.trim(),
+        eventIds,
+        matchAllEventIds: document.getElementById('rule-match-all').checked,
+        category: document.getElementById('rule-category').value,
+        severity: document.getElementById('rule-severity').value,
+        description: document.getElementById('rule-description').value.trim(),
+        countThreshold: Number(document.getElementById('rule-threshold').value) || 1,
+        plainExplanation: document.getElementById('rule-plain').value.trim(),
+        impact: document.getElementById('rule-impact').value.trim(),
+        likelyCauses: splitLines(document.getElementById('rule-causes').value),
+        nextSteps: splitLines(document.getElementById('rule-steps').value)
+    };
+}
+
+function splitLines(text) {
+    return text.split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+document.getElementById('rule-validate').addEventListener('click', async () => {
+    const result = await api.post('/api/rules/validate', collectRule());
+    showValidation(result);
+
+    if (result.isValid && result.warnings.length === 0) toast('這條規則通過驗證', 'success');
+});
+
+function showValidation(result) {
+    const container = document.getElementById('rule-validation');
+    container.replaceChildren();
+
+    if (result.errors.length > 0) {
+        container.appendChild(alertBox('danger', '規則不合格，無法儲存', result.errors));
+    }
+    if (result.warnings.length > 0) {
+        container.appendChild(alertBox('warning', '請注意', result.warnings));
+    }
+    if (result.isValid && result.warnings.length === 0) {
+        container.appendChild(alertBox('success', '通過驗證', []));
+    }
+}
+
+function alertBox(variant, title, items) {
+    const box = document.createElement('div');
+    box.className = `alert alert-${variant}`;
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'fw-semibold';
+    titleEl.textContent = title;
+    box.appendChild(titleEl);
+
+    if (items.length > 0) {
+        const list = document.createElement('ul');
+        list.className = 'mb-0 ps-3 small';
+        for (const item of items) {
+            const li = document.createElement('li');
+            li.textContent = item;
+            list.appendChild(li);
+        }
+        box.appendChild(list);
+    }
+
+    return box;
+}
+
+document.getElementById('rule-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const saveButton = document.getElementById('rule-save');
+    const restore = withBusy(saveButton, '儲存中');
+
+    try {
+        await api.post('/api/rules', collectRule());
+        toast(editingRule ? '已更新規則' : '已新增規則', 'success');
+        ruleModal.hide();
+        await load();
+    } catch {
+        // 後端的驗證錯誤已由 api.js 以 toast 顯示
+    } finally {
+        restore();
+    }
+});
+
+async function toggleEnabled(rule) {
+    await api.put(`/api/rules/${encodeURIComponent(rule.id)}/enabled`, { enabled: !rule.enabled });
+    toast(`已${rule.enabled ? '停用' : '啟用'}規則 ${rule.id}`, 'success');
+    await load();
+}
+
+async function deleteRule(rule) {
+    const suppressionCount = suppressions.filter(s => s.ruleId === rule.id).length;
+
+    const confirmed = await confirmAction({
+        title: '刪除自訂規則',
+        message: `將刪除規則「${rule.id}」（${rule.description}）` +
+                 (suppressionCount > 0 ? `及其 ${suppressionCount} 筆抑制設定` : '') +
+                 '。此操作無法復原。',
+        confirmText: '刪除'
+    });
+    if (!confirmed) return;
+
+    await api.delete(`/api/rules/${encodeURIComponent(rule.id)}`);
+    toast(`已刪除規則 ${rule.id}`, 'success');
+    await load();
+}
+
+// ── 回復預設 ─────────────────────────────────────────────────────────────────
+
+async function openRestoreModal(rule) {
+    restoringRuleId = rule.id;
+    const body = document.getElementById('restore-body');
+    renderLoading(body, 3);
+    restoreModal.show();
+
+    const preview = await api.get(`/api/rules/${encodeURIComponent(rule.id)}/restore-preview`);
+    body.replaceChildren();
+
+    if (preview.differences.length === 0) {
+        body.appendChild(alertBox('info', '目前內容與程式內建預設相同，回復不會有任何變化。', []));
+        return;
+    }
+
+    const note = document.createElement('div');
+    note.className = 'alert alert-light border small';
+    note.textContent = '回復只還原規則內容，會保留您目前的啟用/停用設定。';
+    body.appendChild(note);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-table-wrap';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0';
+    table.innerHTML = '<thead><tr><th>欄位</th><th>目前內容</th><th>內建預設</th></tr></thead>';
+
+    const tbody = document.createElement('tbody');
+    for (const diff of preview.differences) {
+        const tr = document.createElement('tr');
+
+        const field = document.createElement('th');
+        field.textContent = diff.field;
+
+        const current = document.createElement('td');
+        current.className = 'small';
+        current.textContent = diff.current || '（空）';
+
+        const seed = document.createElement('td');
+        seed.className = 'small text-success';
+        seed.textContent = diff.seed || '（空）';
+
+        tr.append(field, current, seed);
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    body.appendChild(wrap);
+}
+
+document.getElementById('restore-confirm').addEventListener('click', async () => {
+    await api.post(`/api/rules/${encodeURIComponent(restoringRuleId)}/restore`);
+    toast(`已將 ${restoringRuleId} 回復為內建預設`, 'success');
+    restoreModal.hide();
+    await load();
+});
+
+// ── 抑制 ─────────────────────────────────────────────────────────────────────
+
+function openSuppressModal(rule) {
+    suppressingRuleId = rule.id;
+    document.getElementById('suppress-host').value = '';
+    document.getElementById('suppress-reason').value = '';
+    document.getElementById('suppress-days').value = '';
+    suppressModal.show();
+}
+
+document.getElementById('suppress-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const host = document.getElementById('suppress-host').value.trim();
+    const reason = document.getElementById('suppress-reason').value.trim();
+    if (!host || !reason) {
+        toast('請填寫主機與原因', 'warning');
+        return;
+    }
+
+    const days = document.getElementById('suppress-days').value;
+    await api.post(`/api/rules/${encodeURIComponent(suppressingRuleId)}/suppressions`, {
+        host,
+        reason,
+        days: days ? Number(days) : null
+    });
+
+    toast('已建立抑制設定', 'success');
+    suppressModal.hide();
+    await load();
+});
+
+function renderSuppressions() {
+    renderTable(document.getElementById('suppression-list'), {
+        columns: [
+            { title: '規則', render: s => s.ruleId },
+            { title: '主機', render: s => s.host },
+            { title: '原因', render: s => s.reason },
+            { title: '到期', render: s => expiryCell(s) },
+            { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
+        ],
+        rows: suppressions,
+        empty: {
+            title: '目前沒有抑制設定',
+            hint: '若某條規則在某台主機上已確認是已知雜訊，可於規則列表的「抑制」建立。'
+        }
+    });
+}
+
+function expiryCell(suppression) {
+    const span = document.createElement('span');
+
+    if (!suppression.expiresAt) {
+        span.textContent = '永久（直到手動解除）';
+        return span;
+    }
+
+    span.textContent = formatDate(suppression.expiresAt);
+    if (suppression.isExpired) {
+        // 到期後不自動清理、只是恢復告警——這裡標示出來讓人知道可以清掉了
+        span.className = 'text-muted';
+        span.textContent += '（已到期，告警已恢復）';
+    }
+    return span;
+}
+
+function removeSuppressionButton(suppression) {
+    return button('解除', 'outline-danger', async () => {
+        const confirmed = await confirmAction({
+            title: '解除抑制',
+            message: `解除後，規則「${suppression.ruleId}」在主機「${suppression.host}」上的告警將恢復。`,
+            confirmText: '解除',
+            confirmVariant: 'warning'
+        });
+        if (!confirmed) return;
+
+        await api.delete(
+            `/api/rules/${encodeURIComponent(suppression.ruleId)}/suppressions/${encodeURIComponent(suppression.host)}`);
+        toast('已解除抑制', 'success');
+        await load();
+    });
+}
+
+document.getElementById('btn-new-rule').addEventListener('click', () => openRuleModal(null));
+document.getElementById('rule-search').addEventListener('input', renderRules);
+document.getElementById('rule-filter').addEventListener('change', renderRules);
+
+load();

@@ -1,0 +1,71 @@
+@{
+    ViewData["Title"] = "問題查詢";
+}
+
+<div class="lf-card mb-3 lf-no-print">
+    <div class="lf-card__body">
+        <form id="filter-form" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label for="filter-hosts" class="form-label small mb-1">主機</label>
+                <select class="form-select form-select-sm" id="filter-hosts" multiple size="1"></select>
+            </div>
+            <div class="col-md-2">
+                <label for="filter-from" class="form-label small mb-1">起始日期</label>
+                <input type="date" class="form-control form-control-sm" id="filter-from" />
+            </div>
+            <div class="col-md-2">
+                <label for="filter-to" class="form-label small mb-1">結束日期</label>
+                <input type="date" class="form-control form-control-sm" id="filter-to" />
+            </div>
+            <div class="col-md-2">
+                <label for="filter-risk" class="form-label small mb-1">風險層級</label>
+                <select class="form-select form-select-sm" id="filter-risk" multiple size="1">
+                    <option value="高">高</option>
+                    <option value="中">中</option>
+                    <option value="低">低</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="filter-category" class="form-label small mb-1">風險類型</label>
+                <select class="form-select form-select-sm" id="filter-category" multiple size="1">
+                    <option value="Storage">儲存裝置</option>
+                    <option value="Hardware">硬體</option>
+                    <option value="Security">安全</option>
+                    <option value="Service">服務</option>
+                    <option value="Backup">備份</option>
+                    <option value="Config">設定</option>
+                    <option value="Resource">資源</option>
+                    <option value="Other">其他</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
+                <input type="number" class="form-control form-control-sm" id="filter-event-id" />
+            </div>
+
+            <div class="col-12 d-flex gap-2 mt-2">
+                <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset">清除條件</button>
+                <div class="btn-group btn-group-sm ms-auto">
+                    <button type="button" class="btn btn-outline-secondary" data-range="7">近 7 天</button>
+                    <button type="button" class="btn btn-outline-secondary" data-range="30">近 30 天</button>
+                    <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">查詢結果 <span class="text-muted small" id="result-count"></span></h2>
+        <button type="button" class="btn btn-sm btn-outline-secondary lf-no-print" id="btn-copy-csv">複製為 CSV</button>
+    </div>
+    <div class="lf-card__body p-0" id="record-list"></div>
+</div>
+
+<nav class="mt-3 lf-no-print" id="pager"></nav>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/records.js"></script>
+}

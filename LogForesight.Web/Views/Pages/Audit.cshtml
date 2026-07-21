@@ -1,0 +1,52 @@
+@{
+    ViewData["Title"] = "操作紀錄";
+}
+
+<div class="lf-card mb-3">
+    <div class="lf-card__body">
+        <form id="audit-filter" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label for="audit-from" class="form-label small mb-1">起始日期</label>
+                <input type="date" class="form-control form-control-sm" id="audit-from" />
+            </div>
+            <div class="col-auto">
+                <label for="audit-to" class="form-label small mb-1">結束日期</label>
+                <input type="date" class="form-control form-control-sm" id="audit-to" />
+            </div>
+            <div class="col-md-3">
+                <label for="audit-actions" class="form-label small mb-1">動作</label>
+                <select class="form-select form-select-sm" id="audit-actions" multiple size="1"></select>
+            </div>
+            <div class="col-auto">
+                <label for="audit-result" class="form-label small mb-1">結果</label>
+                <select class="form-select form-select-sm" id="audit-result">
+                    <option value="">全部</option>
+                    <option value="Ok">成功</option>
+                    <option value="Denied">被拒</option>
+                    <option value="Failed">失敗</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+            </div>
+            <div class="col-auto">
+                <button type="button" class="btn btn-sm btn-outline-danger" id="btn-denied">
+                    只看被拒的存取
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">操作紀錄 <span class="text-muted small" id="audit-count"></span></h2>
+    </div>
+    <div class="lf-card__body p-0" id="audit-list"></div>
+</div>
+
+<nav class="mt-3" id="audit-pager"></nav>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/audit.js"></script>
+}

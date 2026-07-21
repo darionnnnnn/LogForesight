@@ -1,0 +1,209 @@
+@{
+    ViewData["Title"] = "規則維護";
+}
+
+<div class="alert alert-light border">
+    規則儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），<strong>不合格不會寫入</strong>。
+    停用規則只關掉「規則命中的分類與知識庫」，<strong>趨勢層與關聯層對同一事件的偵測不受影響</strong>。
+</div>
+
+<ul class="nav nav-tabs mb-3" id="rule-tabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="rules" type="button">規則</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="suppressions" type="button">告警抑制</button></li>
+</ul>
+
+<section data-panel="rules">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">規則 <span class="text-muted small" id="rule-count"></span></h2>
+            <div class="d-flex gap-2">
+                <input type="search" class="form-control form-control-sm" id="rule-search"
+                       placeholder="搜尋來源、Event ID、說明" style="width: 240px;" />
+                <select class="form-select form-select-sm" id="rule-filter" style="width: 130px;">
+                    <option value="">全部</option>
+                    <option value="enabled">已啟用</option>
+                    <option value="disabled">已停用</option>
+                    <option value="modified">已修改</option>
+                    <option value="custom">自訂規則</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-primary" id="btn-new-rule">新增規則</button>
+            </div>
+        </div>
+        <div class="lf-card__body p-0" id="rule-list"></div>
+    </div>
+</section>
+
+<section data-panel="suppressions" class="d-none">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">告警抑制</h2>
+            <span class="text-muted small">抑制只關掉通知與風險升級，事件仍照常聚合與紀錄</span>
+        </div>
+        <div class="lf-card__body p-0" id="suppression-list"></div>
+    </div>
+</section>
+
+<!-- 規則編輯 -->
+<div class="modal fade" id="rule-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="rule-modal-title">規則</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="rule-form" novalidate>
+                <div class="modal-body">
+                    <div id="rule-validation"></div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="rule-id" class="form-label">規則 Id <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="rule-id" required />
+                            <div class="form-text" id="rule-id-hint">新規則必須以 custom- 開頭。</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="rule-source" class="form-label">來源比對 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="rule-source" required />
+                            <div class="form-text">Event Log 的來源名稱，例如 disk、Ntfs。</div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="rule-event-ids" class="form-label">Event ID</label>
+                            <input type="text" class="form-control" id="rule-event-ids" placeholder="7, 11, 51" />
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" id="rule-match-all" />
+                                <label class="form-check-label" for="rule-match-all">
+                                    比對此來源的全部事件（不看 Event ID）
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="rule-category" class="form-label">類別</label>
+                            <select class="form-select" id="rule-category">
+                                <option value="Storage">儲存裝置</option>
+                                <option value="Hardware">硬體</option>
+                                <option value="Security">安全</option>
+                                <option value="Service">服務</option>
+                                <option value="Resource">資源</option>
+                                <option value="Backup">備份</option>
+                                <option value="Config">設定</option>
+                                <option value="Other">其他</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="rule-severity" class="form-label">嚴重度</label>
+                            <select class="form-select" id="rule-severity">
+                                <option value="Critical">Critical</option>
+                                <option value="High">High</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Low">Low</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-9">
+                            <label for="rule-description" class="form-label">說明 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="rule-description" required />
+                        </div>
+                        <div class="col-md-3">
+                            <label for="rule-threshold" class="form-label">次數門檻</label>
+                            <input type="number" class="form-control" id="rule-threshold" min="1" value="1" />
+                            <div class="form-text">未達門檻降一級。</div>
+                        </div>
+
+                        <div class="col-12"><hr class="my-1" /><strong class="small">處置知識庫</strong>
+                            <div class="form-text">規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。</div>
+                        </div>
+
+                        <div class="col-12">
+                            <label for="rule-plain" class="form-label">白話說明</label>
+                            <textarea class="form-control" id="rule-plain" rows="2"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <label for="rule-impact" class="form-label">不處理的影響</label>
+                            <textarea class="form-control" id="rule-impact" rows="2"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="rule-causes" class="form-label">常見原因（一行一項）</label>
+                            <textarea class="form-control" id="rule-causes" rows="4"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="rule-steps" class="form-label">處置步驟（一行一項）</label>
+                            <textarea class="form-control" id="rule-steps" rows="4"></textarea>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="rule-enabled" checked />
+                                <label class="form-check-label" for="rule-enabled">啟用</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-outline-primary" id="rule-validate">先驗證</button>
+                    <button type="submit" class="btn btn-primary" id="rule-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 回復預設的前後對照 -->
+<div class="modal fade" id="restore-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">回復為程式內建預設</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body" id="restore-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-warning" id="restore-confirm">回復預設</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增抑制 -->
+<div class="modal fade" id="suppress-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">抑制此規則的告警</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="suppress-form">
+                <div class="modal-body">
+                    <div class="alert alert-light border small">
+                        抑制<strong>只關掉通知與風險升級</strong>，事件仍照常聚合、命中規則、寫入歷史——
+                        這樣體檢報告與頻率報表才看得到「這條被抑制的規則本期實際發生了幾次」，
+                        暫時關掉的東西不會變成沒人記得的永久盲區。
+                    </div>
+                    <div class="mb-3">
+                        <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="suppress-host" required />
+                    </div>
+                    <div class="mb-3">
+                        <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="suppress-reason" rows="2" required></textarea>
+                        <div class="form-text">日後回頭確認「當初為什麼關掉」的唯一依據。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="suppress-days" class="form-label">生效天數</label>
+                        <input type="number" class="form-control" id="suppress-days" min="1" placeholder="留空 = 永久，直到手動解除" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">建立抑制</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/rules.js"></script>
+}

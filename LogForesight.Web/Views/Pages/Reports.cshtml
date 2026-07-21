@@ -1,0 +1,114 @@
+@{
+    ViewData["Title"] = "報表";
+}
+
+@* 版面依 docs/WEB-SPEC.md §9.6：期間列 → KPI 卡 → 2×2 圖表網格 → 明細 → 簽章查詢 *@
+
+<div class="lf-card mb-3 lf-no-print">
+    <div class="lf-card__body">
+        <form id="report-form" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label for="report-from" class="form-label small mb-1">起始日期</label>
+                <input type="date" class="form-control form-control-sm" id="report-from" />
+            </div>
+            <div class="col-auto">
+                <label for="report-to" class="form-label small mb-1">結束日期</label>
+                <input type="date" class="form-control form-control-sm" id="report-to" />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">套用</button>
+            </div>
+            <div class="col-auto">
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-outline-secondary" data-range="7">本週</button>
+                    <button type="button" class="btn btn-outline-secondary" data-range="30">本月</button>
+                    <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
+                </div>
+            </div>
+            <div class="col-auto ms-auto">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<h1 class="h5 d-none d-print-block mb-3" id="print-title"></h1>
+
+<div class="row g-3" id="report-kpi"></div>
+
+<div class="row g-3 mt-1">
+    <div class="col-lg-6">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">告警數量趨勢</h2>
+                <div id="trend-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart" id="trend-wrapper"><canvas id="trend-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-6">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">風險類型分布</h2>
+                <div id="category-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart" id="category-wrapper"><canvas id="category-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-6">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">主機告警排行</h2>
+                <div id="host-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-6">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">風險層級占比</h2>
+                <div id="risk-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+</div>
+
+<section class="lf-card mt-3 lf-no-print">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">跨主機同簽章查詢</h2>
+    </div>
+    <div class="lf-card__body">
+        <form id="signature-form" class="row g-2 align-items-end mb-3">
+            <div class="col-auto">
+                <label for="signature-event-id" class="form-label small mb-1">Event ID</label>
+                <input type="number" class="form-control form-control-sm" id="signature-event-id" placeholder="153" />
+            </div>
+            <div class="col-auto">
+                <label for="signature-source" class="form-label small mb-1">來源（選填）</label>
+                <input type="text" class="form-control form-control-sm" id="signature-source" placeholder="disk" />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+            </div>
+        </form>
+        <div id="signature-result"></div>
+    </div>
+</section>
+
+@section Scripts {
+    <script src="~/lib/chartjs/chart.umd.min.js"></script>
+    <script type="module" src="~/js/pages/reports.js"></script>
+}

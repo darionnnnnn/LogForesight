@@ -8,6 +8,12 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <!-- Models / Analysis / Persistence / Configuration 已抽至共用類別庫，與 Web 共用
+             （docs/WEB-SPEC.md §2）。本專案保留 Service/（會做 I/O 的服務）與 Program.cs。 -->
+        <ProjectReference Include="..\LogForesight.Core\LogForesight.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="NLog" Version="6.1.4" />
         <PackageReference Include="Polly" Version="8.7.0" />
         <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.0" />

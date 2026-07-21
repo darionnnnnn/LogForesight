@@ -1,0 +1,93 @@
+@{
+    ViewData["Title"] = "群組與授權";
+}
+
+<ul class="nav nav-tabs mb-3" id="group-tabs">
+    <li class="nav-item">
+        <button class="nav-link active" data-tab="user-groups" type="button">使用者群組</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-tab="host-groups" type="button">主機群組</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-tab="access" type="button">授權矩陣</button>
+    </li>
+</ul>
+
+<section data-panel="user-groups">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">使用者群組</h2>
+            <button type="button" class="btn btn-sm btn-primary" data-new-user-group>新增群組</button>
+        </div>
+        <div class="lf-card__body p-0" id="user-group-list"></div>
+    </div>
+</section>
+
+<section data-panel="host-groups" class="d-none">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">主機群組</h2>
+            <button type="button" class="btn btn-sm btn-primary" data-new-host-group>新增群組</button>
+        </div>
+        <div class="lf-card__body p-0" id="host-group-list"></div>
+    </div>
+</section>
+
+<section data-panel="access" class="d-none">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">授權矩陣</h2>
+            <span class="text-muted small">勾選＝該部門可看見該群組的主機</span>
+        </div>
+        <div class="lf-card__body">
+            <div class="alert alert-light border small mb-3">
+                只列出一般使用者群組：<strong>admin / manager / dev 角色本來就能看見全部主機</strong>，
+                不需要也不受此矩陣影響。
+            </div>
+            <div id="access-matrix"></div>
+        </div>
+    </div>
+</section>
+
+<!-- 群組編輯對話框 -->
+<div class="modal fade" id="group-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="group-modal-title">群組</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="group-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="group-name" class="form-label">群組名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="group-name" required />
+                    </div>
+                    <div class="mb-3" id="group-role-field">
+                        <label for="group-role" class="form-label">角色</label>
+                        <select class="form-select" id="group-role">
+                            <option value="User">User（一般使用者：只看被授權的主機，可維護處理狀態）</option>
+                            <option value="Dev">Dev（開發人員：執行監控＋全部主機唯讀）</option>
+                            <option value="Manager">Manager（主管：全部主機唯讀）</option>
+                            <option value="Admin">Admin（系統管理員：全部權限）</option>
+                        </select>
+                        <div class="form-text" id="group-role-hint"></div>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="group-active" checked />
+                        <label class="form-check-label" for="group-active">啟用（停用後成員立即失去此群組帶來的權限）</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="group-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/groups.js"></script>
+}

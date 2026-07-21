@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0-windows</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <!--
+      批次 exe 與 Web 共用的類別庫（docs/WEB-SPEC.md §2 Phase 0）。
+      收錄：Models（資料模型）、Analysis（無狀態分析邏輯與規則驗證）、
+            Persistence（儲存介面與現行 JSONL/檔案實作）、Configuration（設定類別）。
+      不收錄：Service/（會做 I/O 的服務：讀 Event Log、呼叫 AI、權限監控）與 Program.cs，
+              那些是批次 exe 的職責，Web 不需要也不應該引用。
+
+      TargetFramework 為 net8.0-windows 而非 net8.0：LogIssueSignature.EntryType 使用
+      System.Diagnostics.EventLogEntryType（Windows 專屬），是既有序列化契約的一部分。
+      本系統本來就只在 Windows 上運作（讀 Windows Event Log、AD 驗證），
+      為了平台中立而改掉這個型別會動到歷史資料格式，不划算。
+    -->
+    <ItemGroup>
+        <PackageReference Include="NLog" Version="6.1.4" />
+        <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!--
+          抽 Core 前這些檔案與 Service/、Program.cs 同屬一個組件，internal 成員（如
+          CorrelationAnalyzer 的事件 ID 常數，供 SelfTestRunner 驗證關聯層引用的 ID
+          是否都存在於規則表）本來就互相可見。拆組件後以 InternalsVisibleTo 恢復原本的
+          可見範圍，而不是把這些實作細節改成 public API——重構的要求是行為零改變，
+          不該順手擴大公開介面。
+        -->
+        <InternalsVisibleTo Include="LogForesight" />
+        <InternalsVisibleTo Include="LogForesight.Tests" />
+    </ItemGroup>
+
+</Project>

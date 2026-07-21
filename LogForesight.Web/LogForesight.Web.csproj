@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <!--
+          net8.0-windows（非 net8.0）：引用的 LogForesight.Core 為 net8.0-windows
+          （LogIssueSignature.EntryType 使用 Windows 專屬的 EventLogEntryType，屬既有序列化契約）。
+          本系統本來就只在 Windows 上運作——分析 Windows Event Log、AD 驗證、部署於 Windows Server，
+          綁定 Windows 不是額外的限制。詳見 docs/WEB-SPEC.md §2。
+        -->
+        <TargetFramework>net8.0-windows</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\LogForesight.Core\LogForesight.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+        <PackageReference Include="NLog.Web.AspNetCore" Version="6.0.4" />
+        <!-- AD 帳密驗證（LdapAuthenticationProvider）。Windows 專屬，與 net8.0-windows 一致 -->
+        <PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="nlog.config">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>

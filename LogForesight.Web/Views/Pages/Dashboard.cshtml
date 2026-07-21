@@ -1,0 +1,57 @@
+@{
+    ViewData["Title"] = "總覽儀表板";
+}
+
+@*
+    頁面殼：只有容器，資料由 pages/dashboard.js 呼叫 API 取得（docs/WEB-SPEC.md §8.5）。
+    所有統計卡與排行列皆可下鑽到問題查詢（§8.4）。
+*@
+
+<div class="d-flex justify-content-between align-items-center mb-3 lf-no-print">
+    <div class="btn-group btn-group-sm" role="group" aria-label="期間">
+        <button type="button" class="btn btn-outline-primary" data-days="1">今天</button>
+        <button type="button" class="btn btn-outline-primary active" data-days="7">近 7 天</button>
+        <button type="button" class="btn btn-outline-primary" data-days="30">近 30 天</button>
+    </div>
+    <span class="text-muted small" id="dashboard-range"></span>
+</div>
+
+<div id="dashboard-banner"></div>
+
+<div class="row g-3" id="dashboard-kpi"></div>
+
+<div class="row g-3 mt-1">
+    <div class="col-12">
+        <section class="lf-card">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">風險類型</h2>
+                <span class="text-muted small">點擊卡片查看該類型的問題明細</span>
+            </div>
+            <div class="lf-card__body" id="dashboard-categories"></div>
+        </section>
+    </div>
+</div>
+
+<div class="row g-3 mt-1">
+    <div class="col-lg-7">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">高風險主機</h2>
+            </div>
+            <div class="lf-card__body p-0" id="dashboard-hosts"></div>
+        </section>
+    </div>
+    <div class="col-lg-5">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">未回報主機</h2>
+                <span class="text-muted small">沒回報 ≠ 沒問題</span>
+            </div>
+            <div class="lf-card__body p-0" id="dashboard-silent"></div>
+        </section>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/dashboard.js"></script>
+}

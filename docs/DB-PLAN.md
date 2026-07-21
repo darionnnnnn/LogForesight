@@ -136,6 +136,10 @@ lf_record_categories                                 -- 當日的「類別彙總
   issue_count    int NOT NULL                     -- 該類別當日簽章數
   total_events   int NOT NULL                     -- 該類別當日事件總筆數
   max_severity   nvarchar(10) NOT NULL            -- 該類別當日最高嚴重度
+  critical_count int NOT NULL DEFAULT 0           -- ↓ 2026-07-21 Web 報表需求新增：各嚴重度簽章數分解
+  high_count     int NOT NULL DEFAULT 0           --   （「類別×嚴重度」堆疊圖與下鑽篩選直接查此表，
+  medium_count   int NOT NULL DEFAULT 0           --    不掃 lf_top_issues；見 WEB-SPEC.md §10.4）
+  low_count      int NOT NULL DEFAULT 0
   PK (record_id, category)
 ```
 
@@ -144,6 +148,11 @@ lf_record_categories                                 -- 當日的「類別彙總
 這張表在批次寫入時一次算好（write-once，資料本來就不會變），
 「本週儲存裝置類 Critical 有幾台/幾天」變成一個索引查詢。這延續整個專案的原則：
 **能確定性預先算好的東西不要留到查詢時算**——批次端如此，DB 端也如此。
+
+> 2026-07-21 增補：Web 報表的「類別×嚴重度」堆疊圖需要嚴重度分解，增列四個
+> `*_count` 欄（見上）。彙總計算定義為 Core 的純函數（`CategoryAggregator`），
+> SQL 寫入路徑與 JSONL 查詢期聚合共用同一份——與 `RecordStorageShaper` 同一套
+> 單點原則（一致性機制 #4），分析邏輯不受影響。詳見 WEB-SPEC.md §10.4。
 
 ### 深入分析（本次規劃的關鍵新增——AI 問答與跨主機查詢需要結構化）
 

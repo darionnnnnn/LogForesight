@@ -16,6 +16,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\LogForesight\LogForesight.csproj" />
+        <ProjectReference Include="..\LogForesight.Core\LogForesight.Core.csproj" />
+        <ProjectReference Include="..\LogForesight.Web\LogForesight.Web.csproj" />
     </ItemGroup>
 
 </Project>

@@ -1,0 +1,50 @@
+@{
+    ViewData["Title"] = "執行監控";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="btn-group btn-group-sm">
+        <button type="button" class="btn btn-outline-primary" data-days="7">7 天</button>
+        <button type="button" class="btn btn-outline-primary active" data-days="14">14 天</button>
+        <button type="button" class="btn btn-outline-primary" data-days="30">30 天</button>
+    </div>
+    <div id="run-legend" class="d-flex gap-3 small text-muted flex-wrap"></div>
+</div>
+
+<section class="lf-card mb-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">執行總表</h2>
+        <span class="text-muted small">點擊格子查看該次執行的詳細紀錄</span>
+    </div>
+    <div class="lf-card__body" id="run-matrix"></div>
+</section>
+
+<section class="lf-card mb-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">異常彙總</h2>
+        <span class="text-muted small">同一錯誤在幾台主機出現——判斷是個案還是通案</span>
+    </div>
+    <div class="lf-card__body p-0" id="run-errors"></div>
+</section>
+
+<section class="lf-card d-none" id="run-detail-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title" id="run-detail-title">執行詳情</h2>
+        <div class="d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" id="log-level-filter" style="width: 130px;">
+                <option value="">全部等級</option>
+                <option value="Warn">Warn 以上</option>
+                <option value="Error">Error 以上</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="run-detail-close">關閉</button>
+        </div>
+    </div>
+    <div class="lf-card__body">
+        <div id="run-detail-stats" class="row g-3 mb-3"></div>
+        <div id="run-detail-logs"></div>
+    </div>
+</section>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/runs.js"></script>
+}

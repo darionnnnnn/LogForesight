@@ -24,6 +24,13 @@ LogForesight/permission_snapshot.json
 # 避免不同機器的規則調整互相覆蓋
 LogForesight/rules.json
 LogForesight/suppressions.json
+LogForesight/rule_seeds.json
+LogForesight/rundata/
+LogForesight/webdata/
+
+# Web 本機開發設定——內含開發用 JWT 簽章金鑰與 serverAdmin 密碼雜湊，絕不能進版本控制
+# （正式環境以環境變數 Jwt__SecretKey 等覆寫，見 docs/WEB-SPEC.md §5）
+LogForesight.Web/appsettings.Development.json
 
 # OS
 .DS_Store

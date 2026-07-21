@@ -1,0 +1,120 @@
+@{
+    ViewData["Title"] = "CSV 匯入";
+}
+
+<div class="alert alert-light border">
+    <strong>匯入順序：先「使用者」、再「主機」、最後「群組授權」。</strong>
+    主機的負責人必須是已存在的使用者帳號，群組授權的兩端也必須是已存在的群組。
+</div>
+
+<div class="row g-3" id="import-cards">
+    <div class="col-lg-4">
+        <div class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">1. 使用者</h2>
+            </div>
+            <div class="lf-card__body">
+                <p class="small text-muted">自然鍵：<code>account</code>。已存在則更新，不存在則新增。</p>
+                <div class="lf-table-wrap mb-3">
+                    <table class="table table-sm small mb-0">
+                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>account</code></td><td>是</td><td>AD 帳號</td></tr>
+                            <tr><td><code>display_name</code></td><td></td><td>空白＝不變</td></tr>
+                            <tr><td><code>email</code></td><td></td><td>空白＝不變</td></tr>
+                            <tr><td><code>groups</code></td><td></td><td>分號分隔；<strong>有值＝整組取代</strong>、空白＝不變</td></tr>
+                            <tr><td><code>active</code></td><td></td><td>1 或 0，空白＝1</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Users/template">下載範本</a>
+                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Users" />
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">2. 主機</h2>
+            </div>
+            <div class="lf-card__body">
+                <p class="small text-muted">自然鍵：<code>host_name</code>。</p>
+                <div class="lf-table-wrap mb-3">
+                    <table class="table table-sm small mb-0">
+                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>host_name</code></td><td>是</td><td>需與批次回報的機器名稱一致</td></tr>
+                            <tr><td><code>ip_address</code></td><td></td><td>顯示用線索</td></tr>
+                            <tr><td><code>netiq_server</code></td><td></td><td>所屬 Sentinel</td></tr>
+                            <tr><td><code>role_desc</code></td><td></td><td>伺服器角色描述</td></tr>
+                            <tr><td><code>groups</code></td><td></td><td>分號分隔；有值＝整組取代</td></tr>
+                            <tr><td><code>owners</code></td><td></td><td>分號分隔的<strong>既有</strong>帳號</td></tr>
+                            <tr><td><code>active</code></td><td></td><td>1 或 0</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Hosts/template">下載範本</a>
+                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Hosts" />
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="lf-card h-100 lf-card--warning">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">3. 群組授權</h2>
+            </div>
+            <div class="lf-card__body">
+                <p class="small text-muted">
+                    <strong>全量取代</strong>：檔案就是授權的完整清單，
+                    沒列出的既有授權會被移除（預覽會逐筆列出將被移除的項目）。
+                </p>
+                <div class="lf-table-wrap mb-3">
+                    <table class="table table-sm small mb-0">
+                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>user_group</code></td><td>是</td><td>既有的使用者群組名稱</td></tr>
+                            <tr><td><code>host_group</code></td><td>是</td><td>既有的主機群組名稱</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/GroupAccess/template">下載範本</a>
+                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="GroupAccess" />
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="lf-card mt-3 d-none" id="preview-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">預覽 <span class="text-muted small" id="preview-file"></span></h2>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="preview-cancel">取消</button>
+            <button type="button" class="btn btn-sm btn-primary" id="preview-apply">套用</button>
+        </div>
+    </div>
+    <div class="lf-card__body">
+        <div id="preview-summary" class="mb-3"></div>
+        <div id="preview-warnings"></div>
+        <div id="preview-rows"></div>
+    </div>
+</div>
+
+<div class="lf-card mt-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">匯入紀錄</h2>
+    </div>
+    <div class="lf-card__body p-0" id="import-logs"></div>
+</div>
+
+<div class="lf-card mt-3 d-none" id="encoding-note">
+    <div class="lf-card__body small text-muted">
+        檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，
+        否則中文欄位會變成亂碼。
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/imports.js"></script>
+}

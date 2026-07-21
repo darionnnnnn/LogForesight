@@ -143,6 +143,18 @@ if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contain
 
 RuleBootstrapper.Run(ruleStore);
 
+// 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要一份
+// 使用者碰不到的原始內容才比較得出差異。放在 RuleBootstrapper 之後——那時規則庫已就緒。
+try
+{
+    StorageFactory.CreateRuleSeedStore(settings.Storage, AppContext.BaseDirectory)
+        .Sync(KnownIssueSeed.CreateRules(), KnownIssueSeed.Version);
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
+}
+
 var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage);
 var currentHost = Environment.MachineName;
 var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
@@ -151,6 +163,22 @@ foreach (var expired in expiredSuppressions)
     Console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
                       $"原因：{expired.Reason}；未自動清理，可用 --unsuppress 或編輯 suppressions.json）");
 }
+
+// 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
+// 能回答「昨晚每台主機都跑了嗎、有沒有出問題」。掛上 NLog target 後 Warn 以上自動流入，
+// 不需要在既有程式碼各處加呼叫。建立失敗不影響分析（見 BatchRunRecorder）。
+IBatchRunStore? batchRunStore = null;
+try
+{
+    batchRunStore = StorageFactory.CreateBatchRunStore(settings.Storage, AppContext.BaseDirectory);
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
+}
+
+using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, args);
+runRecorder.Milestone($"批次啟動（版本 {typeof(Program).Assembly.GetName().Version}）");
 
 var eventLogService = new EventLogService();
 IPromptDumper dumper = debugDump ? new FilePromptDumper() : new NullPromptDumper();
@@ -161,6 +189,22 @@ var reportService = new RiskReportService(aiService, reportSink, settings.Ai.Dee
 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore, settings.Analysis.ServerDescription, reportService);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions);
 var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
+
+// 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
+// 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
+// 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
+// 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
+// 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺。
+try
+{
+    StorageFactory.CreateHostStore(settings.Storage, AppContext.BaseDirectory)
+        .Touch(currentHost, DateTime.Now);
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
+    Console.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
+}
 
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
@@ -217,6 +261,36 @@ if (permissionCheck.Alerts.Count > 0)
     var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
     var permissionReportRef = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
     Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportRef.Value}");
+
+    // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
+    // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
+    // 沒有這一軌，那一頁在 JSONL 前期就沒有任何資料可顯示。
+    // 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析停擺。
+    try
+    {
+        var permissionChangeStore = StorageFactory.CreatePermissionChangeStore(settings.Storage, AppContext.BaseDirectory);
+        var detectedAt = DateTime.Now;
+
+        permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
+        {
+            ChangeId = Guid.NewGuid().ToString("N"),
+            HostName = currentHost,
+            DetectedAt = detectedAt,
+            Target = detail.Target,
+            ChangeType = detail.ChangeType,
+            Before = detail.Before,
+            After = detail.After,
+            // Alerts 與 Details 由 PermissionCheckResult.Add 成對加入，索引一一對應
+            AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty
+        }));
+
+        Console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
+    }
+    catch (Exception ex)
+    {
+        log.Warn(ex, "權限異動的結構化寫入失敗（不影響本次分析與既有報告）：{0}", ex.Message);
+        Console.WriteLine($"  ⚠ 權限異動的結構化寫入失敗（既有報告不受影響）：{ex.Message}");
+    }
 }
 else
 {
@@ -283,9 +357,20 @@ else
 
         dayStopwatch.Stop();
         elapsedByDate[date] = dayStopwatch.Elapsed;
+        runRecorder.RecordDayAnalyzed();
+
+        // AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
+        // 只有後者該計入 AI 失敗——把刻意跳過算成失敗，會讓執行監控在完全安靜的日子
+        // 也顯示「有警告」，狼來了幾次之後就沒有人再看那個顏色了。
+        if (record.AiAnalyzed || record.RiskLevel != "低")
+        {
+            runRecorder.RecordAiCall(record.AiAnalyzed);
+        }
         PrintResult(record, verbose: date == yesterday);
         Console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
     }
+
+    runRecorder.Milestone($"逐日分析完成：{results.Count} 天");
 
     // 5. 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
     Console.WriteLine("\n══════════ 本次執行結果 ══════════");
@@ -354,11 +439,16 @@ if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupInte
     Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
     Console.WriteLine("--- 執行結束 ---");
     log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
+    runRecorder.Milestone("執行結束");
+    runRecorder.Finish(exitCode: 0);
     LogManager.Shutdown(); // 確保緩衝的 log 都寫入檔案再結束程序
     return 0;
 }
 catch (Exception ex)
 {
+    // 執行紀錄的回填由 runRecorder 的 using 負責：例外往外傳時 using 產生的 finally
+    // 會先執行 Dispose()，以 exit code 1 回填。因此掛掉的執行在監控頁顯示為「失敗」
+    // 而不是停在「執行中」——後者正好會把最需要注意的狀態藏起來。
     // 全域防護：任何未預期的錯誤都要留下訊息並回報非零 exit code，
     // 讓工作排程器（勾選「工作失敗時通知」或檢查 LastTaskResult）能監控到
     Console.WriteLine($"\n執行失敗：{ex}");

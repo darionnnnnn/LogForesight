@@ -1,0 +1,48 @@
+@{
+    ViewData["Title"] = "登入";
+    Layout = null;   // 登入頁不套主版面（沒有側欄與選單）
+}
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登入 - LogForesight</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    <div class="lf-login">
+        <div class="lf-login__card">
+            <div class="lf-login__title">LogForesight</div>
+            <div class="lf-login__subtitle">Windows 事件日誌預警系統</div>
+
+            <form id="lf-login-form" novalidate>
+                <div class="mb-3">
+                    <label for="account" class="form-label">帳號</label>
+                    <input type="text" class="form-control" id="account" name="account"
+                           autocomplete="username" autofocus required />
+                    <div class="invalid-feedback" id="account-error"></div>
+                </div>
+
+                <div class="mb-3 d-none" id="password-field">
+                    <label for="password" class="form-label">密碼</label>
+                    <input type="password" class="form-control" id="password" name="password"
+                           autocomplete="current-password" />
+                </div>
+
+                <div class="alert alert-danger d-none" id="login-error" role="alert"></div>
+
+                <button type="submit" class="btn btn-primary w-100" id="login-submit">登入</button>
+            </form>
+
+            <div class="text-center mt-3">
+                <small class="text-muted" id="provider-hint"></small>
+            </div>
+        </div>
+    </div>
+
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script type="module" src="~/js/pages/login.js"></script>
+</body>
+</html>

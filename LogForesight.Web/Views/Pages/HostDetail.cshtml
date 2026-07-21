@@ -1,0 +1,33 @@
+@{
+    ViewData["Title"] = "主機詳情";
+}
+
+<div id="host-detail" data-host-id="@ViewData["HostId"]">
+    <div id="host-header"></div>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">風險時間軸</h2>
+            <div class="btn-group btn-group-sm lf-no-print">
+                <button type="button" class="btn btn-outline-primary" data-days="14">14 天</button>
+                <button type="button" class="btn btn-outline-primary active" data-days="30">30 天</button>
+                <button type="button" class="btn btn-outline-primary" data-days="90">90 天</button>
+            </div>
+        </div>
+        <div class="lf-card__body">
+            <div id="host-timeline"></div>
+            <div class="d-flex gap-3 mt-3 small text-muted flex-wrap" id="timeline-legend"></div>
+        </div>
+    </section>
+
+    <section class="lf-card mt-3 d-none" id="checkup-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">最近一次體檢</h2>
+        </div>
+        <div class="lf-card__body" id="host-checkup"></div>
+    </section>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/host-detail.js"></script>
+}

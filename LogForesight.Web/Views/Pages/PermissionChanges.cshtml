@@ -1,0 +1,46 @@
+@{
+    ViewData["Title"] = "權限異動待辦";
+}
+
+<div class="alert alert-light border">
+    自動檢查負責<strong>發現有異動</strong>，逐筆確認讓了解環境的人判斷<strong>這筆是否正常</strong>——
+    同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。
+</div>
+
+<ul class="nav nav-tabs mb-3" id="perm-tabs">
+    <li class="nav-item"><button class="nav-link active" data-status="pending" type="button">待確認</button></li>
+    <li class="nav-item"><button class="nav-link" data-status="authorized" type="button">已確認授權</button></li>
+    <li class="nav-item"><button class="nav-link" data-status="suspicious" type="button">標記可疑</button></li>
+    <li class="nav-item"><button class="nav-link" data-status="" type="button">全部</button></li>
+</ul>
+
+<div id="perm-list"></div>
+
+<div class="modal fade" id="confirm-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="confirm-modal-title">確認權限異動</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="confirm-form">
+                <div class="modal-body">
+                    <div class="mb-3" id="confirm-detail"></div>
+                    <div class="mb-2">
+                        <label for="confirm-note" class="form-label">說明</label>
+                        <textarea class="form-control" id="confirm-note" rows="3"></textarea>
+                        <div class="form-text" id="confirm-note-hint"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="confirm-submit">確認</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/permission-changes.js"></script>
+}

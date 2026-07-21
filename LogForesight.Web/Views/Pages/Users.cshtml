@@ -1,0 +1,61 @@
+@{
+    ViewData["Title"] = "使用者";
+}
+
+<div class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">使用者</h2>
+        <div class="d-flex gap-2">
+            <input type="search" class="form-control form-control-sm" id="user-search"
+                   placeholder="搜尋帳號或姓名" style="width: 220px;" />
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-user">新增使用者</button>
+        </div>
+    </div>
+    <div class="lf-card__body p-0" id="user-list"></div>
+</div>
+
+<!-- 編輯對話框 -->
+<div class="modal fade" id="user-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="user-modal-title">使用者</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="user-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="user-account" class="form-label">帳號 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="user-account" required />
+                        <div class="form-text">AD 帳號，例如 DOMAIN\wangxm。建立後不可修改。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="user-display-name" class="form-label">顯示名稱</label>
+                        <input type="text" class="form-control" id="user-display-name" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="user-email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="user-email" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">所屬群組</label>
+                        <div id="user-groups" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;"></div>
+                        <div class="form-text">群組決定這個人的角色與可看見的主機。</div>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="user-active" checked />
+                        <label class="form-check-label" for="user-active">啟用（停用後立即無法登入）</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="user-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/users.js"></script>
+}

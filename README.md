@@ -8,21 +8,34 @@ MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Lo
 ## 專案結構
 
 ```
-LogForesight/
+LogForesight/          批次分析主程式（console exe）：讀 Event Log、呼叫 AI、體檢、權限監控，
+│                       並回報執行紀錄與權限異動明細供 Web 使用（2026-07-21 Phase 1–4 配合項）
 ├── Program.cs
-├── Service/         有狀態、會做 I/O 的服務：呼叫 AI API、讀 Event Log、體檢、權限監控
-├── Analysis/         無狀態的純規則/分析邏輯：規則表、趨勢比對、跨 log 關聯分析、聚合統計、prompt 預算
-├── Models/            資料模型：分析紀錄、AI 回應契約與容錯解析、權限快照
-├── Persistence/       持久層抽象：讀寫介面（IAnalysisRecordReader/Writer、IReportSink、
-│                       IPermissionSnapshotStore）＋現行檔案格式的預設實作。
-│                       換 DB 後端只需新增一個實作類別，分析邏輯不需修改。
-└── Configuration/     appsettings.json 對應的設定類別
+└── Service/           有狀態、會做 I/O 的服務
 
-LogForesight.Tests/    規則層/趨勢層/慢速趨勢層/關聯層/報告雙軌渲染的單元測試（xUnit），規則表新增規則時測試自動涵蓋
+LogForesight.Core/     批次與 Web 共用的類別庫（2026-07-21 自批次專案抽出，行為零改變）
+├── Analysis/           無狀態的純規則/分析邏輯：規則表、趨勢比對、跨 log 關聯分析、聚合統計、prompt 預算
+├── Models/             資料模型：分析紀錄、AI 回應契約與容錯解析、權限快照、
+│                        Web 身分/主機/處理狀態/權限異動確認/稽核/執行紀錄
+├── Persistence/        持久層抽象：讀寫介面＋現行 JSONL/JSON 檔案格式的預設實作。
+│                        換 DB 後端只需新增實作類別，分析邏輯與 Web 皆不需修改
+└── Configuration/      appsettings.json 對應的設定類別
+
+LogForesight.Web/      Web 查詢/維護介面（ASP.NET Core MVC，.NET 8，2026-07-21 Phase 0–4 完成）：
+│                       儀表板、問題查詢、風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、
+│                       權限異動逐筆確認、規則維護（builtin 可改可回復不可刪）、CSV 匯入、
+│                       執行監控、操作稽核。群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
+│                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
+│                       前期與批次共用同一資料目錄（Storage.DataRoot 指向批次執行檔目錄），
+│                       SQL 後端（Phase 5）待 DB 環境就緒後啟動
+└── （本機開發設定：複製 appsettings.Development.json.example 填入金鑰）
+
+LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（JSONL 與未來 SQL 跑同一組案例）、
+                        Web 授權範圍/處理流程/規則保護/CSV 匯入
 ```
 
-C# 專案採檔案掃描（非資料夾對應命名空間），所有檔案統一 `namespace LogForesight`，
-資料夾純粹是實體檔案的分類，不影響編譯或參照方式。
+C# 專案採檔案掃描（非資料夾對應命名空間），批次與 Core 統一 `namespace LogForesight`
+（資料夾純粹是實體檔案的分類）；Web 專案依 ASP.NET 慣例採資料夾對應命名空間（`LogForesight.Web.*`）。
 
 ## 架構
 

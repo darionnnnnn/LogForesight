@@ -1,0 +1,362 @@
+/*
+  LogForesight 設計系統（docs/WEB-SPEC.md §8.2）
+
+  Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
+  所有樣式取值一律引用下面的 token，元件樣式裡不出現寫死的顏色/圓角/陰影——
+  這是「自訂外觀」與「維護成本最小化」能同時成立的前提：調整外觀改這一段，全站生效。
+*/
+
+:root {
+    /* 主色＝Bootstrap 預設 primary。刻意不覆寫 --bs-primary，升級 Bootstrap 零成本 */
+    --lf-primary: #0d6efd;
+    --lf-primary-dark: #0a58ca;
+    --lf-primary-soft: #e7f1ff;
+
+    /* 版面 */
+    --lf-sidebar-bg: #1b2a41;
+    --lf-sidebar-fg: #c7d2e0;
+    --lf-sidebar-active-bg: rgba(13, 110, 253, .18);
+    --lf-sidebar-width: 232px;
+    --lf-content-bg: #f4f6f9;
+    --lf-card-bg: #ffffff;
+    --lf-border: #e3e8ef;
+    --lf-text: #1f2933;
+    --lf-text-muted: #6b7684;
+
+    --lf-card-radius: .5rem;
+    --lf-card-shadow: 0 1px 3px rgba(27, 42, 65, .08);
+    --lf-card-shadow-hover: 0 4px 12px rgba(27, 42, 65, .12);
+
+    /* 語意色：風險與嚴重度。同一個顏色在圖表、徽章、卡片、時間軸中意義相同（§8.2 原則 3） */
+    --lf-risk-high: #dc3545;
+    --lf-risk-mid: #ffc107;
+    --lf-risk-low: #6c757d;
+    --lf-severity-critical: #dc3545;
+    --lf-severity-high: #fd7e14;
+    --lf-severity-medium: #0dcaf0;
+    --lf-severity-low: #adb5bd;
+
+    /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色） */
+    --lf-cat-storage: #0d6efd;
+    --lf-cat-hardware: #6f42c1;
+    --lf-cat-security: #dc3545;
+    --lf-cat-service: #fd7e14;
+    --lf-cat-backup: #20c997;
+    --lf-cat-config: #6c757d;
+    --lf-cat-resource: #d63384;
+    --lf-cat-other: #adb5bd;
+}
+
+body {
+    background: var(--lf-content-bg);
+    color: var(--lf-text);
+    font-family: "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+}
+
+/* ── 版面骨架：深色側欄＋淺灰內容區 ─────────────────────────────────────── */
+
+.lf-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+.lf-sidebar {
+    width: var(--lf-sidebar-width);
+    flex: 0 0 var(--lf-sidebar-width);
+    background: var(--lf-sidebar-bg);
+    color: var(--lf-sidebar-fg);
+    display: flex;
+    flex-direction: column;
+}
+
+.lf-sidebar__brand {
+    padding: 1.15rem 1.25rem;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #fff;
+    letter-spacing: .02em;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.lf-sidebar__brand small {
+    display: block;
+    font-size: .72rem;
+    font-weight: 400;
+    color: var(--lf-sidebar-fg);
+    margin-top: .15rem;
+}
+
+.lf-sidebar__nav {
+    padding: .75rem 0;
+    flex: 1 1 auto;
+}
+
+.lf-sidebar__link {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .6rem 1.25rem;
+    color: var(--lf-sidebar-fg);
+    text-decoration: none;
+    font-size: .93rem;
+    border-left: 3px solid transparent;
+}
+
+.lf-sidebar__link:hover {
+    background: rgba(255, 255, 255, .05);
+    color: #fff;
+}
+
+.lf-sidebar__link.is-active {
+    background: var(--lf-sidebar-active-bg);
+    border-left-color: var(--lf-primary);
+    color: #fff;
+    font-weight: 500;
+}
+
+.lf-sidebar__footer {
+    padding: .9rem 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, .08);
+    font-size: .85rem;
+}
+
+.lf-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.lf-topbar {
+    background: var(--lf-card-bg);
+    border-bottom: 1px solid var(--lf-border);
+    padding: .7rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.lf-content {
+    padding: 1.5rem;
+    flex: 1 1 auto;
+}
+
+/* ── 卡片 ──────────────────────────────────────────────────────────────── */
+
+.lf-card {
+    background: var(--lf-card-bg);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-card-radius);
+    box-shadow: var(--lf-card-shadow);
+}
+
+.lf-card__header {
+    padding: .85rem 1.15rem;
+    border-bottom: 1px solid var(--lf-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.lf-card__title {
+    font-size: .98rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.lf-card__body {
+    padding: 1.15rem;
+}
+
+/*
+  統計卡：大字數字＋小字標籤（§8.2 原則 2「數字優先」）。
+  可下鑽的卡片（§8.4）以 hover 抬升提示可點擊——統計數字是入口，不是終點。
+*/
+.lf-stat {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+}
+
+.lf-stat__value {
+    font-size: 2.1rem;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.lf-stat__label {
+    font-size: .85rem;
+    color: var(--lf-text-muted);
+}
+
+a.lf-stat:hover .lf-card,
+.lf-card--clickable:hover {
+    box-shadow: var(--lf-card-shadow-hover);
+    border-color: var(--lf-primary);
+}
+
+/* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
+.lf-card--critical {
+    border-left: 4px solid var(--lf-risk-high);
+}
+
+.lf-card--warning {
+    border-left: 4px solid var(--lf-risk-mid);
+}
+
+.lf-card--ok {
+    border-left: 4px solid #198754;
+}
+
+/* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據 */
+.lf-chart {
+    position: relative;
+    height: 280px;
+}
+
+/* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI ───────────────────── */
+
+.lf-badge {
+    display: inline-block;
+    padding: .18rem .55rem;
+    border-radius: 1rem;
+    font-size: .78rem;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.lf-badge--high { background: var(--lf-risk-high); color: #fff; }
+.lf-badge--mid { background: var(--lf-risk-mid); color: #332701; }
+.lf-badge--low { background: #e9ecef; color: #495057; }
+
+/* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
+
+.report-text {
+    font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
+    font-size: .87rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    color: var(--lf-text);
+}
+
+/* ── 表格與寬內容：橫向捲動限制在容器內，頁面本身永遠不橫向捲動 ─────────── */
+
+.lf-table-wrap {
+    overflow-x: auto;
+}
+
+.lf-table-wrap > table {
+    margin-bottom: 0;
+}
+
+/* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）─────────── */
+
+.lf-empty {
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: var(--lf-text-muted);
+}
+
+.lf-empty__title {
+    font-weight: 600;
+    color: var(--lf-text);
+    margin-bottom: .35rem;
+}
+
+.lf-skeleton {
+    height: 1rem;
+    border-radius: .25rem;
+    background: linear-gradient(90deg, #eef1f5 25%, #e2e7ee 37%, #eef1f5 63%);
+    background-size: 400% 100%;
+    animation: lf-skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes lf-skeleton-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+
+/* ── 登入頁 ────────────────────────────────────────────────────────────── */
+
+.lf-login {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #24405f 100%);
+    padding: 1rem;
+}
+
+.lf-login__card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--lf-card-bg);
+    border-radius: var(--lf-card-radius);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .22);
+    padding: 2rem;
+}
+
+.lf-login__title {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-bottom: .25rem;
+}
+
+.lf-login__subtitle {
+    font-size: .85rem;
+    color: var(--lf-text-muted);
+    margin-bottom: 1.5rem;
+}
+
+/* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
+
+@media print {
+    .lf-sidebar,
+    .lf-topbar,
+    .lf-no-print {
+        display: none !important;
+    }
+
+    .lf-content {
+        padding: 0;
+    }
+
+    .lf-card {
+        box-shadow: none;
+        border: 1px solid #ccc;
+        break-inside: avoid;
+    }
+}
+
+/* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .lf-layout {
+        flex-direction: column;
+    }
+
+    .lf-sidebar {
+        width: 100%;
+        flex: 0 0 auto;
+    }
+
+    .lf-sidebar__nav {
+        display: flex;
+        overflow-x: auto;
+        padding: 0;
+    }
+
+    .lf-sidebar__link {
+        border-left: none;
+        border-bottom: 3px solid transparent;
+        white-space: nowrap;
+    }
+
+    .lf-sidebar__link.is-active {
+        border-left: none;
+        border-bottom-color: var(--lf-primary);
+    }
+}

@@ -1,0 +1,86 @@
+@{
+    ViewData["Title"] = "風險日詳情";
+}
+
+@*
+    頁面殼：初始參數以 data-* 屬性傳給 JS（§8.1——cshtml 內不寫 inline script、
+    不用 Razor 內插 JS 變數）。
+*@
+<div id="record-detail"
+     data-host-id="@ViewData["HostId"]"
+     data-date="@ViewData["Date"]">
+
+    <div id="detail-header"></div>
+
+    <div class="row g-3 mt-1">
+        <div class="col-lg-8">
+            <section class="lf-card mb-3">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">重點問題</h2>
+                </div>
+                <div class="lf-card__body p-0" id="detail-issues"></div>
+            </section>
+
+            <section class="lf-card mb-3 d-none" id="deep-dive-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">深入分析</h2>
+                </div>
+                <div class="lf-card__body" id="detail-deepdives"></div>
+            </section>
+
+            <section class="lf-card d-none" id="report-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">風險報告全文</h2>
+                    <div class="d-flex gap-2 lf-no-print">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-copy-report">複製</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print">列印</button>
+                    </div>
+                </div>
+                <div class="lf-card__body">
+                    <pre class="report-text" id="detail-report"></pre>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-lg-4">
+            <section class="lf-card mb-3">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">處理狀態</h2>
+                </div>
+                <div class="lf-card__body" id="handling-panel"></div>
+            </section>
+
+            <section class="lf-card mb-3" id="handling-log-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">處理歷程</h2>
+                </div>
+                <div class="lf-card__body" id="handling-log"></div>
+            </section>
+
+            <section class="lf-card mb-3" id="alerts-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">程式偵測訊號</h2>
+                </div>
+                <div class="lf-card__body" id="detail-alerts"></div>
+            </section>
+
+            <section class="lf-card mb-3">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">類型分布</h2>
+                </div>
+                <div class="lf-card__body" id="detail-categories"></div>
+            </section>
+
+            <section class="lf-card" id="coverage-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">資料涵蓋率</h2>
+                </div>
+                <div class="lf-card__body" id="detail-coverage"></div>
+            </section>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/record-detail.js"></script>
+}

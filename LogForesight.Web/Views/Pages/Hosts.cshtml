@@ -1,0 +1,77 @@
+@{
+    ViewData["Title"] = "主機";
+}
+
+<div class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">主機</h2>
+        <div class="d-flex gap-2">
+            <input type="search" class="form-control form-control-sm" id="host-search"
+                   placeholder="搜尋主機名稱或 IP" style="width: 220px;" />
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
+        </div>
+    </div>
+    <div class="lf-card__body p-0" id="host-list"></div>
+</div>
+
+<div class="modal fade" id="host-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="host-modal-title">主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="host-form" novalidate>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="host-name" class="form-label">主機名稱 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="host-name" required />
+                            <div class="form-text">須與批次分析回報的機器名稱一致。建立後不可修改。</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="host-ip" class="form-label">IP 位址</label>
+                            <input type="text" class="form-control" id="host-ip" />
+                            <div class="form-text">僅供人工辨識，程式不做比對。</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="host-netiq" class="form-label">所屬 Sentinel</label>
+                            <input type="text" class="form-control" id="host-netiq" />
+                        </div>
+                        <div class="col-md-6">
+                            <label for="host-role-desc" class="form-label">角色描述</label>
+                            <input type="text" class="form-control" id="host-role-desc" />
+                            <div class="form-text">例如「AD 網域控制站」，會影響 AI 判讀事件的嚴重性。</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">主機群組</label>
+                            <div id="host-groups" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                            <div class="form-text">決定哪些部門看得到這台主機。</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">負責人</label>
+                            <div id="host-owners" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                            <div class="form-text">
+                                負責人<strong>不會</strong>自動取得檢視權限，檢視權來自部門群組授權。
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="host-active" checked />
+                                <label class="form-check-label" for="host-active">啟用</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="host-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/hosts.js"></script>
+}
