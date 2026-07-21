@@ -361,8 +361,8 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | # | 機制 | 說明 |
 |---|---|---|
 | 1 | **單一模型契約** | JSONL 序列化的就是 `DailyAnalysisRecord` 等 C# 模型；DB 每張表是同一模型的欄位投影（機械對應：PascalCase → snake_case，僅保留字改名例外：`Count`→`event_count`、`Source`→`source_name`）。**模型改欄位＝兩個後端同時改**，不存在只改一邊的路徑 |
-| 2 | **介面語意即規格** | 兩個後端都實作 `IAnalysisRecordStore`，`ReadRecent`（升冪、近 N 天）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離 |
-| 3 | **合約測試（contract tests）** | 現有 `JsonlAnalysisRecordStoreTests` 在 DB 階段重構為「合約測試基底」：同一組測試案例分別跑在 Jsonl 與 DB 實作上，**DB 實作必須通過與 txt 完全相同的測試**才算完成——一致性由測試強制，不靠 code review 肉眼比對 |
+| 2 | **介面語意即規格** ✅ 已落實（2026-07-21） | 兩個後端都實作 `IAnalysisRecordStore`。`ReadRecent(anchorDate, days)`（**顯式錨定**日期區間 `[anchor-(days-1), anchor]`、升冪、錨定日之後不回傳，DB 對應 `WHERE date BETWEEN`）、`HasAnyRecord`（DB 對應 `EXISTS`）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離。詳見 docs/HISTORY-STORE-FIX-PLAN.md |
+| 3 | **合約測試（contract tests）** ✅ 已落實（2026-07-21） | `AnalysisRecordStoreContractTests` 抽象基底已建立（`JsonlAnalysisRecordStoreContractTests` 為其第一個實作）：同一組案例分別跑在 Jsonl 與未來的 DB 實作上，**DB 實作必須通過與 txt 完全相同的測試**才算完成——一致性由測試強制，不靠 code review 肉眼比對。JSONL 特有的壞行容錯與原子重寫案例留在 `JsonlAnalysisRecordStoreTests`，不進基底 |
 | 4 | **精簡策略單點化**（pre-work #3） | 「無風險日砍範例訊息、留全部數字」目前是 `JsonlAnalysisRecordStore` 的私有方法——規則長在單一實作裡，DB 實作就得複製一份，遲早漂移。抽成共用的 `RecordStorageShaper`（純函數），兩個後端都呼叫同一份規則 |
 | 5 | **同一份 JSON 序列化設定** | DB 的 `*_json` 欄位用與 JSONL 相同的 System.Text.Json 選項與同一批模型類別序列化；列舉存字串（`JsonStringEnumConverter`）、風險等級存中文字串，兩邊逐字一致 |
 | 6 | **匯入後抽樣核對** | JSONL → DB 匯入器跑完後，自動抽 N 天以 `ReadRecent` 分別從兩後端讀回、逐欄位比對，一致才算匯入成功（驗收內建，不靠人工抽查） |

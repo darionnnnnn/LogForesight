@@ -7,9 +7,18 @@ public class DailyAnalysisRecord
     public DateTime Date { get; set; }
 
     /// <summary>
-    /// 產生本筆紀錄的主機（本機直讀＝Environment.MachineName；未來 NetIQ 主機＝Sentinel 回報的主機識別）。
-    /// 現階段單機情境下這個欄位本身不影響任何邏輯，是為 DB 匯入與多主機階段預先準備——
-    /// 屆時匯入器直接讀這個欄位即知道每筆紀錄屬於哪台主機，不用從檔名或設定檔反推。
+    /// 產生本筆紀錄的主機 PK（↔ lf_daily_records.host_id）。**這是紀錄與主機的關聯鍵**——
+    /// 主機改名、換 IP、搬遷 Sentinel 都不影響歸戶，因為身分是這個號碼而不是任何一段文字。
+    ///
+    /// 0 = 本欄位問世前寫入的舊紀錄，或批次當下取不到主機列（hosts.json 寫入失敗）的降級；
+    /// 這兩種情況查詢端一律退回以 <see cref="Host"/> 字串比對，見 <see cref="HostMatcher"/>。
+    /// </summary>
+    public long HostId { get; set; }
+
+    /// <summary>
+    /// 產生本筆紀錄的主機名稱（本機直讀＝Environment.MachineName；NetIQ 主機＝清單登錄的識別字串）。
+    /// **寫入當下的顯示名快照**：關聯鍵是 <see cref="HostId"/>，這個欄位的用途是
+    /// (1) 主機列遺失時人仍辨認得出這筆紀錄屬於誰、(2) 舊紀錄的 fallback 比對。
     /// </summary>
     public string Host { get; set; } = string.Empty;
 

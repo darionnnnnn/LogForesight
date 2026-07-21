@@ -12,6 +12,7 @@ public class AppSettings
     public PermissionSettings Permissions { get; set; } = new();
     public AnalysisSettings Analysis { get; set; } = new();
     public StorageSettings Storage { get; set; } = new();
+    public NetIqSettings NetIq { get; set; } = new();
 
     public static AppSettings Load()
     {
@@ -146,6 +147,53 @@ public class AnalysisSettings
     /// 錯過（機器關機、排程失敗）時會在下次執行自動補跑，機制不變。單機情境下等同「每 N 天做一次」。
     /// </summary>
     public int CheckupIntervalDays { get; set; } = 7;
+}
+
+/// <summary>
+/// NetIQ Sentinel 連線設定（docs/PLAN.md）。
+///
+/// 目前只有 <see cref="Servers"/> 一個欄位有實際行為——Web 用它填「所屬 Sentinel」的下拉選單
+/// 並驗證登錄值。連線帳密、查詢節流等欄位要等機房 pipeline 實作時才一併加入：
+/// 本專案已有「有設定卻沒有對應行為會誤導使用者」的前例（`MaxDeepDiveHostsPerRun`
+/// 因此被移除），不預先鋪設定。
+/// </summary>
+public class NetIqSettings
+{
+    /// <summary>
+    /// 各台 Sentinel。**批次的 appsettings.json 是唯一事實來源**——Web 唯讀解析同一份檔案
+    /// （資料根目錄本來就指向批次執行檔目錄），不另建 Sentinel 管理表：
+    /// 加一台 Sentinel 本來就要改批次設定，兩處各存一份只會分歧。
+    /// </summary>
+    public List<SentinelServer> Servers { get; set; } = new();
+
+    /// <summary>
+    /// 主機清單的主人："Txt"（<see cref="HostListDirectory"/> 下的 per-Sentinel txt 檔）
+    /// 或 "Web"（Web 主機頁維護）。
+    ///
+    /// **同一時間只有一個主人，不做雙向同步**：Txt 模式下每次執行都會以 txt 覆寫主機清單
+    /// （清單中移除的主機一併停止分析），所以切到 Web 之後若再跑 `--import-hosts`，
+    /// 會把 Web 上新增的主機停掉——那個指令因此會在 Web 模式下拒絕執行。
+    /// 交接 SOP 見 docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 D。
+    /// </summary>
+    public string HostListSource { get; set; } = "Txt";
+
+    /// <summary>
+    /// Txt 模式的清單目錄（相對路徑以執行檔目錄為基準）。
+    /// **檔名即 Sentinel 歸屬**：`{Servers[].Name}.txt`，一台 Sentinel 一個檔案。
+    /// </summary>
+    public string HostListDirectory { get; set; } = "hosts";
+
+    /// <summary>清單來源是否為 Web 維護（不分大小寫）</summary>
+    public bool UsesWebHostList =>
+        string.Equals(HostListSource, "Web", StringComparison.OrdinalIgnoreCase);
+}
+
+public class SentinelServer
+{
+    /// <summary>識別名稱，也是主機清單登錄「所屬 Sentinel」時填的值</summary>
+    public string Name { get; set; } = string.Empty;
+
+    public string BaseUrl { get; set; } = string.Empty;
 }
 
 /// <summary>

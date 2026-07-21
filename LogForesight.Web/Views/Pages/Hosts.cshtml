@@ -2,12 +2,27 @@
     ViewData["Title"] = "主機";
 }
 
+<div id="netiq-queues" class="row g-3 mb-3"></div>
+
 <div class="lf-card">
-    <div class="lf-card__header">
+    <div class="lf-card__header flex-wrap gap-2">
         <h2 class="lf-card__title">主機</h2>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
             <input type="search" class="form-control form-control-sm" id="host-search"
-                   placeholder="搜尋主機名稱或 IP" style="width: 220px;" />
+                   placeholder="搜尋名稱／顯示名／IP" style="width: 200px;" />
+            <select class="form-select form-select-sm" id="host-filter" style="width: 190px;">
+                <option value="">全部主機</option>
+                <option value="local">本機直讀</option>
+                <option value="netiq">NetIQ 來源</option>
+                <option value="pending">待歸屬 Sentinel</option>
+                <option value="conflict">IP 衝突</option>
+                <option value="ungrouped">未分組</option>
+                <option value="inactive">已停用／已併入</option>
+            </select>
+            <select class="form-select form-select-sm" id="sentinel-filter" style="width: 160px;">
+                <option value="">所有 Sentinel</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-bulk-hosts">批次貼上</button>
             <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
         </div>
     </div>
@@ -27,16 +42,21 @@
                         <div class="col-md-6">
                             <label for="host-name" class="form-label">主機名稱 <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="host-name" required />
-                            <div class="form-text">須與批次分析回報的機器名稱一致。建立後不可修改。</div>
+                            <div class="form-text" id="host-name-hint">
+                                本機主機須與批次回報的機器名稱一致；NetIQ 主機請填 IP。建立後不可修改。
+                            </div>
                         </div>
                         <div class="col-md-6">
                             <label for="host-ip" class="form-label">IP 位址</label>
                             <input type="text" class="form-control" id="host-ip" />
-                            <div class="form-text">僅供人工辨識，程式不做比對。</div>
+                            <div class="form-text">NetIQ 主機以此向 Sentinel 查詢；本機主機僅供人工辨識。</div>
                         </div>
                         <div class="col-md-6">
                             <label for="host-netiq" class="form-label">所屬 Sentinel</label>
-                            <input type="text" class="form-control" id="host-netiq" />
+                            <select class="form-select" id="host-netiq">
+                                <option value="">（待歸屬，由批次自動確認）</option>
+                            </select>
+                            <div class="form-text" id="host-netiq-hint">名單來自批次 appsettings.json 的 NetIq.Servers。</div>
                         </div>
                         <div class="col-md-6">
                             <label for="host-role-desc" class="form-label">角色描述</label>
@@ -46,7 +66,7 @@
                         <div class="col-md-6">
                             <label class="form-label">主機群組</label>
                             <div id="host-groups" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
-                            <div class="form-text">決定哪些部門看得到這台主機。</div>
+                            <div class="form-text">決定哪些部門看得到這台主機。<strong>未分組時只有 admin 看得到。</strong></div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">負責人</label>
@@ -58,7 +78,9 @@
                         <div class="col-12">
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="host-active" checked />
-                                <label class="form-check-label" for="host-active">啟用</label>
+                                <label class="form-check-label" for="host-active">
+                                    啟用（停用＝停止分析，既有歷史紀錄保留）
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -66,6 +88,42 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary" id="host-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="bulk-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次登錄 NetIQ 主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="bulk-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="bulk-netiq" class="form-label">所屬 Sentinel</label>
+                        <select class="form-select" id="bulk-netiq">
+                            <option value="">（待歸屬，由批次自動確認）</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label for="bulk-lines" class="form-label">主機清單</label>
+                        <textarea class="form-control font-monospace" id="bulk-lines" rows="12"
+                                  placeholder="10.1.2.12,DB 主機&#10;10.1.2.13,網站主機&#10;# 井號開頭為註解"></textarea>
+                        <div class="form-text">
+                            一行一台，格式 <code>IP[,角色描述]</code>；<code>#</code> 開頭為註解、空行忽略
+                            （與既有 txt 清單格式相同，可直接貼上）。
+                            <strong>格式不合的行會被略過並列出原因，不影響其他行。</strong>
+                        </div>
+                    </div>
+                    <div id="bulk-result"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">關閉</button>
+                    <button type="submit" class="btn btn-primary" id="bulk-save">登錄</button>
                 </div>
             </form>
         </div>

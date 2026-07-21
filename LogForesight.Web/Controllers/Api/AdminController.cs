@@ -18,12 +18,18 @@ public class AdminController : ControllerBase
 {
     private readonly IUserAdminService _users;
     private readonly IHostAdminService _hosts;
+    private readonly INetiqHostService _netiq;
     private readonly IGroupAdminService _groups;
 
-    public AdminController(IUserAdminService users, IHostAdminService hosts, IGroupAdminService groups)
+    public AdminController(
+        IUserAdminService users,
+        IHostAdminService hosts,
+        INetiqHostService netiq,
+        IGroupAdminService groups)
     {
         _users = users;
         _hosts = hosts;
+        _netiq = netiq;
         _groups = groups;
     }
 
@@ -82,6 +88,31 @@ public class AdminController : ControllerBase
         _hosts.MergeHost(request.SourceHostId, request.TargetHostId);
         return ApiResponse.Ok();
     }
+
+    [HttpPost("hosts/{hostId:long}/unmerge")]
+    public ApiResponse UnmergeHost(long hostId)
+    {
+        _hosts.UnmergeHost(hostId);
+        return ApiResponse.Ok();
+    }
+
+    // ── NetIQ 主機清單 ────────────────────────────────────────────────────────
+
+    [HttpGet("netiq/overview")]
+    public ApiResponse<NetiqOverviewDto> GetNetiqOverview() =>
+        ApiResponse<NetiqOverviewDto>.Ok(_netiq.GetOverview());
+
+    [HttpPost("netiq/hosts")]
+    public ApiResponse<HostDto> AddNetiqHost([FromBody] AddNetiqHostRequest request) =>
+        ApiResponse<HostDto>.Ok(_netiq.AddHost(request));
+
+    [HttpPost("netiq/hosts/bulk")]
+    public ApiResponse<BulkAddResultDto> BulkAddNetiqHosts([FromBody] BulkAddNetiqHostsRequest request) =>
+        ApiResponse<BulkAddResultDto>.Ok(_netiq.BulkAddHosts(request));
+
+    [HttpPut("hosts/{hostId:long}/active")]
+    public ApiResponse<HostDto> SetHostActive(long hostId, [FromBody] SetHostActiveRequest request) =>
+        ApiResponse<HostDto>.Ok(_netiq.SetActive(hostId, request.Active));
 
     // ── 主機群組與授權矩陣 ────────────────────────────────────────────────────
 

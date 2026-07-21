@@ -323,7 +323,8 @@ internal class FakeRecordRepository : IRecordRepository
                 r.Date.Date == date.Date);
     }
 
-    public string? ResolveHostName(long hostId) => _hosts.Get(hostId)?.HostName;
+    public List<HostKey> ResolveHostKeys(long hostId) =>
+        HostIdentityResolver.Expand(_hosts.GetAll(), hostId);
 
     public WebHost? ResolveHost(string hostName) => _hosts.FindByName(hostName);
 }

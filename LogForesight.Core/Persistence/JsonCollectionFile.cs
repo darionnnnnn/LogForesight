@@ -60,13 +60,21 @@ public abstract class JsonCollectionFile<T> where T : class
     }
 
     /// <summary>
-    /// 以讀取→修改→寫入的方式更新整份清單，全程持有行程內鎖，
+    /// 以讀取→修改→寫入的方式更新整份清單，全程同時持有行程內鎖與**跨程序鎖檔**，
     /// 寫入採「寫 temp → File.Replace」原子替換（中途失敗不會留下半截檔案）。
+    ///
+    /// 為什麼讀改寫要整段互斥、而不是只保證寫入原子：原子替換擋得住半截檔案，
+    /// 擋不住**更新遺失**——兩邊各自讀到舊值、後寫的把先寫的整份蓋掉。
+    /// `hosts.json` 正是批次與 Web 共同寫入的檔案（docs/WEB-SPEC.md §10.2），
+    /// 後果具體且嚴重：同一個 HostId 配給兩台主機（識別碼是紀錄的關聯鍵，
+    /// 撞號等於紀錄歸錯主機、跨越授權邊界），或批次的回報時間把 Web 剛設好的群組蓋掉。
     /// </summary>
     protected TResult Mutate<TResult>(Func<List<T>, TResult> mutation)
     {
         lock (_lock)
         {
+            using var fileLock = AcquireCrossProcessLock();
+
             var items = ReadNoLock();
             var result = mutation(items);
             WriteAtomic(items);
@@ -76,6 +84,42 @@ public abstract class JsonCollectionFile<T> where T : class
 
     protected void Mutate(Action<List<T>> mutation) =>
         Mutate<object?>(items => { mutation(items); return null; });
+
+    /// <summary>
+    /// 跨程序互斥：獨占開啟一個 `.lock` 附屬檔，取不到就短暫重試。
+    ///
+    /// 用鎖檔而不是具名 Mutex：批次由工作排程器執行、Web 是另一個行程，兩者可能不在
+    /// 同一個登入工作階段——`Local\` 的 Mutex 跨不過工作階段，`Global\` 又需要額外權限
+    /// （SeCreateGlobalPrivilege），一般使用者身分執行時會直接失敗。鎖檔沒有這些前提。
+    ///
+    /// 逾時就讓例外往外拋：等不到鎖代表另一個行程卡住，此時硬寫下去就是更新遺失——
+    /// 顯性失敗遠優於靜默覆蓋（呼叫端如 Program.cs 的主機登記已有降級處理）。
+    /// </summary>
+    private FileStream AcquireCrossProcessLock()
+    {
+        var lockPath = _filePath + ".lock";
+        var deadline = DateTime.UtcNow.AddSeconds(LockTimeoutSeconds);
+
+        while (true)
+        {
+            try
+            {
+                // DeleteOnClose：正常釋放時一併移除，不在資料目錄留下累積的鎖檔
+                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                    FileShare.None, bufferSize: 1, FileOptions.DeleteOnClose);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // UnauthorizedAccessException 也要重試：另一個行程正在 DeleteOnClose 移除同一個檔案時，
+                // 這一側的開啟會落在「標記為刪除中」的短暫視窗上
+                if (DateTime.UtcNow >= deadline) throw;
+                Thread.Sleep(LockRetryMs);
+            }
+        }
+    }
+
+    private const int LockTimeoutSeconds = 15;
+    private const int LockRetryMs = 25;
 
     private void WriteAtomic(List<T> items)
     {

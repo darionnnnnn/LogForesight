@@ -4,8 +4,9 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// <see cref="IAnalysisRecordQuery"/> 的合約測試基底（docs/WEB-SPEC.md §12）。
-/// JSONL 與未來的 SQL 實作跑同一組案例——尤其是 HostNames 空集合的語意，
-/// 那是授權正確性的關鍵，兩個後端不容許有任何差異。
+/// JSONL 與未來的 SQL 實作跑同一組案例——尤其是 <see cref="RecordQueryFilter.Hosts"/>
+/// 空集合的語意與「PK 優先、舊紀錄退回名稱」的比對規則，那是授權正確性的關鍵，
+/// 兩個後端不容許有任何差異。
 /// </summary>
 public abstract class AnalysisRecordQueryContractTests : IDisposable
 {
@@ -14,15 +15,40 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
 
     public virtual void Dispose() { }
 
+    // 測試用的主機識別對應：Record 與 Key 共用同一份，測試才不必逐一傳 id 也能對得起來
+    private static readonly Dictionary<string, long> HostIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["HOST-A"] = 1,
+        ["HOST-B"] = 2,
+        ["HOST-X"] = 99
+    };
+
+    protected static long IdOf(string hostName) => HostIds[hostName];
+
+    protected static HostKey Key(string hostName) =>
+        new() { HostId = IdOf(hostName), HostName = hostName };
+
+    /// <summary>現行紀錄：帶 HostId（關聯鍵）</summary>
     protected static DailyAnalysisRecord Record(
         string host, DateTime date, string risk = "低",
         params LogIssueSignature[] issues) => new()
     {
+        HostId = IdOf(host),
         Host = host,
         Date = date,
         RiskLevel = risk,
         Headline = $"{host} {date:MM-dd}",
         TopIssues = issues.ToList()
+    };
+
+    /// <summary>HostId 欄位問世前寫入的舊紀錄：只有名稱快照，沒有關聯鍵</summary>
+    protected static DailyAnalysisRecord LegacyRecord(string host, DateTime date, string risk = "低") => new()
+    {
+        HostId = 0,
+        Host = host,
+        Date = date,
+        RiskLevel = risk,
+        Headline = $"{host} {date:MM-dd}（舊紀錄）"
     };
 
     protected static LogIssueSignature Issue(
@@ -39,7 +65,7 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     };
 
     [Fact]
-    public void HostNames為null_不限主機()
+    public void Hosts為null_不限主機()
     {
         var store = CreateStore();
         store.Append(Record("HOST-A", DateTime.Today));
@@ -54,37 +80,93 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     /// 這是失敗方向最糟的一種錯誤。
     /// </summary>
     [Fact]
-    public void HostNames為空集合_回傳空結果()
+    public void Hosts為空集合_回傳空結果()
     {
         var store = CreateStore();
         store.Append(Record("HOST-A", DateTime.Today));
         store.Append(Record("HOST-B", DateTime.Today));
 
-        var result = Query.Query(new RecordQueryFilter { HostNames = Array.Empty<string>() });
+        var result = Query.Query(new RecordQueryFilter { Hosts = Array.Empty<HostKey>() });
 
         Assert.Empty(result);
     }
 
     [Fact]
-    public void HostNames指定_只回該主機()
+    public void Hosts指定_只回該主機()
     {
         var store = CreateStore();
         store.Append(Record("HOST-A", DateTime.Today));
         store.Append(Record("HOST-B", DateTime.Today));
 
-        var result = Query.Query(new RecordQueryFilter { HostNames = new[] { "HOST-A" } });
+        var result = Query.Query(new RecordQueryFilter { Hosts = new[] { Key("HOST-A") } });
 
         Assert.Single(result);
         Assert.Equal("HOST-A", result[0].Host);
     }
 
+    /// <summary>
+    /// **PK 關聯的核心價值**：主機改名後，改名前寫入的紀錄仍歸戶正確。
+    /// 名稱只是寫入當下的快照，比對走的是 HostId。
+    /// </summary>
     [Fact]
-    public void HostNames比對不分大小寫()
+    public void 主機改名_既有紀錄仍以HostId歸戶()
     {
         var store = CreateStore();
         store.Append(Record("HOST-A", DateTime.Today));
 
-        Assert.Single(Query.Query(new RecordQueryFilter { HostNames = new[] { "host-a" } }));
+        var renamed = new HostKey { HostId = IdOf("HOST-A"), HostName = "改名後的主機" };
+
+        Assert.Single(Query.Query(new RecordQueryFilter { Hosts = new[] { renamed } }));
+    }
+
+    /// <summary>
+    /// 舊紀錄（HostId 未寫入）退回名稱比對——舊資料不遷移也查得到，
+    /// 且名稱比對不分大小寫（沿用 HostId 問世前的既有語意）。
+    /// </summary>
+    [Fact]
+    public void 舊紀錄無HostId_退回名稱比對且不分大小寫()
+    {
+        var store = CreateStore();
+        store.Append(LegacyRecord("HOST-A", DateTime.Today));
+
+        var lowerCaseKey = new HostKey { HostId = IdOf("HOST-A"), HostName = "host-a" };
+
+        Assert.Single(Query.Query(new RecordQueryFilter { Hosts = new[] { lowerCaseKey } }));
+    }
+
+    /// <summary>
+    /// **PK 優先的嚴格性**：紀錄有 HostId 就只認 HostId，不因名稱相同而放行。
+    /// 若實作寫成「id 或名稱任一命中」，id 已經對不上的紀錄會從名稱溜回查詢範圍，
+    /// 而查詢範圍正是授權範圍。
+    /// </summary>
+    [Fact]
+    public void 紀錄有HostId_不因名稱相同而命中別台主機()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today));
+
+        var otherHostSameName = new HostKey { HostId = 12345, HostName = "HOST-A" };
+
+        Assert.Empty(Query.Query(new RecordQueryFilter { Hosts = new[] { otherHostSameName } }));
+    }
+
+    /// <summary>
+    /// 別名展開：一台主機併入另一台後有多個識別，任一命中即納入——
+    /// 這正是「Merge 之後合併前的歷史不該消失」在儲存層的表現。
+    /// </summary>
+    [Fact]
+    public void 多個識別_任一命中即納入()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today.AddDays(-1)));
+        store.Append(Record("HOST-B", DateTime.Today));
+
+        var result = Query.Query(new RecordQueryFilter
+        {
+            Hosts = new[] { Key("HOST-B"), Key("HOST-A") }
+        });
+
+        Assert.Equal(2, result.Count);
     }
 
     [Fact]
@@ -166,7 +248,7 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
 
         var result = Query.Query(new RecordQueryFilter
         {
-            HostNames = new[] { "HOST-A" },
+            Hosts = new[] { Key("HOST-A") },
             RiskLevels = new[] { "高" },
             Categories = new[] { IssueCategory.Storage }
         });
@@ -189,13 +271,13 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     }
 
     [Fact]
-    public void GetOne_主機與日期為自然鍵()
+    public void GetOne_主機與日期為鍵()
     {
         var store = CreateStore();
         store.Append(Record("HOST-A", DateTime.Today, "高"));
         store.Append(Record("HOST-B", DateTime.Today, "低"));
 
-        var result = Query.GetOne("HOST-A", DateTime.Today);
+        var result = Query.GetOne(new[] { Key("HOST-A") }, DateTime.Today);
 
         Assert.NotNull(result);
         Assert.Equal("高", result!.RiskLevel);
@@ -205,7 +287,44 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     public void GetOne_查無資料回null()
     {
         CreateStore();
-        Assert.Null(Query.GetOne("HOST-X", DateTime.Today));
+        Assert.Null(Query.GetOne(new[] { Key("HOST-X") }, DateTime.Today));
+    }
+
+    [Fact]
+    public void GetOne_識別集合為空_回null()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today));
+
+        Assert.Null(Query.GetOne(Array.Empty<HostKey>(), DateTime.Today));
+    }
+
+    /// <summary>
+    /// 合併當天兩個識別可能各有一筆紀錄。呼叫端把存活主機排在最前，
+    /// 詳情頁呈現的就會是現行識別下的那筆，而不是墓碑那筆。
+    /// </summary>
+    [Fact]
+    public void GetOne_多個識別_依傳入順序擇一()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today, "低"));
+        store.Append(Record("HOST-B", DateTime.Today, "高"));
+
+        var result = Query.GetOne(new[] { Key("HOST-B"), Key("HOST-A") }, DateTime.Today);
+
+        Assert.Equal("高", result!.RiskLevel);
+    }
+
+    /// <summary>舊紀錄同樣要能以 GetOne 取得（詳情頁對舊資料不能開天窗）</summary>
+    [Fact]
+    public void GetOne_舊紀錄以名稱fallback取得()
+    {
+        var store = CreateStore();
+        store.Append(LegacyRecord("HOST-A", DateTime.Today, "高"));
+
+        var result = Query.GetOne(new[] { Key("HOST-A") }, DateTime.Today);
+
+        Assert.Equal("高", result!.RiskLevel);
     }
 }
 

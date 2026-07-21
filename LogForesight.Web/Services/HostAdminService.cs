@@ -11,6 +11,7 @@ public interface IHostAdminService
     HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds);
     HostDto SetHostOwners(long hostId, IEnumerable<long> userIds);
     void MergeHost(long sourceHostId, long targetHostId);
+    void UnmergeHost(long hostId);
 }
 
 public class HostAdminService : IHostAdminService
@@ -18,13 +19,20 @@ public class HostAdminService : IHostAdminService
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;
     private readonly IUserStore _users;
+    private readonly INetiqServerCatalog _servers;
     private readonly IAuditService _audit;
 
-    public HostAdminService(IHostStore hosts, IHostGroupStore hostGroups, IUserStore users, IAuditService audit)
+    public HostAdminService(
+        IHostStore hosts,
+        IHostGroupStore hostGroups,
+        IUserStore users,
+        INetiqServerCatalog servers,
+        IAuditService audit)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
         _users = users;
+        _servers = servers;
         _audit = audit;
     }
 
@@ -44,6 +52,22 @@ public class HostAdminService : IHostAdminService
         var hostName = request.HostName.Trim();
         if (string.IsNullOrWhiteSpace(hostName))
             throw DomainException.Validation("主機名稱不可為空。");
+
+        // 這是**同一份資料的另一條寫入路徑**（NetIQ 清單走 NetiqHostService）。
+        // 驗證只掛在其中一條的話，從編輯表單就能繞過去存進不合格的值——
+        // 而不合格的 IP／Sentinel 的後果是這台主機永遠查無資料，且完全沒有跡象
+        if (!string.IsNullOrWhiteSpace(request.IpAddress) && !NetiqHostList.IsValidIp(request.IpAddress))
+            throw DomainException.Validation($"「{request.IpAddress.Trim()}」不是有效的 IP 位址。");
+
+        if (!string.IsNullOrWhiteSpace(request.NetiqServer) && !_servers.IsKnownServer(request.NetiqServer))
+        {
+            var known = _servers.GetServerNames();
+            throw DomainException.Validation(
+                $"「{request.NetiqServer.Trim()}」不在已設定的 Sentinel 名單中" +
+                (known.Count == 0
+                    ? "（批次 appsettings.json 的 NetIq.Servers 尚未設定）。"
+                    : $"，可選：{string.Join("、", known)}。"));
+        }
 
         var existing = _hosts.FindByName(hostName);
         var isNew = existing == null;
@@ -140,6 +164,13 @@ public class HostAdminService : IHostAdminService
         if (source.MergedInto != null)
             throw DomainException.Conflict($"{source.HostName} 已經併入其他主機，請先解除原本的綁定。");
 
+        // 目標本身是墓碑就會形成 A→B→C 的鏈。查詢的別名展開認得整條鏈（歷史不會掉），
+        // 但鏈對使用者是純粹的困惑——併入一台已經停用的主機，畫面上看不出資料最後去了哪。
+        // 擋在這裡，要求指向最終那台
+        if (target.MergedInto != null)
+            throw DomainException.Conflict(
+                $"{target.HostName} 本身已併入其他主機，不能作為併入目標；請改以最終的那台主機為目標。");
+
         _hosts.Merge(sourceHostId, targetHostId);
 
         _audit.Record(
@@ -151,6 +182,26 @@ public class HostAdminService : IHostAdminService
             detail: new { Source = source.HostName, Target = target.HostName });
     }
 
+    public void UnmergeHost(long hostId)
+    {
+        var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
+
+        if (host.MergedInto == null)
+            throw DomainException.Validation($"{host.HostName} 沒有併入任何主機，不需要解除。");
+
+        var target = _hosts.Get(host.MergedInto.Value);
+
+        _hosts.Unmerge(hostId);
+
+        _audit.Record(
+            action: AuditActions.HostUnmerge,
+            summary: $"解除主機 {host.HostName} 與 {target?.HostName ?? $"(已刪除:{host.MergedInto})"} 的綁定" +
+                     $"（{host.HostName} 恢復啟用；合併時帶入對方的群組/負責人等設定不會自動收回，請一併確認）",
+            targetKind: "host",
+            targetId: hostId.ToString(),
+            detail: new { Source = host.HostName, Target = target?.HostName });
+    }
+
     private static string Format(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
 
     private static HostDto ToDto(
@@ -160,6 +211,7 @@ public class HostAdminService : IHostAdminService
     {
         HostId = host.HostId,
         HostName = host.HostName,
+        DisplayName = host.DisplayName,
         IpAddress = host.IpAddress,
         NetiqServer = host.NetiqServer,
         RoleDesc = host.RoleDesc,

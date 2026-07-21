@@ -24,6 +24,7 @@ public static class RecordStorageShaper
         return new DailyAnalysisRecord
         {
             Date = record.Date,
+            HostId = record.HostId,
             Host = record.Host,
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,

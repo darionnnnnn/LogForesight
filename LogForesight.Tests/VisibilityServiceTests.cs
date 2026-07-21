@@ -250,12 +250,32 @@ internal class FakeHostStore : IHostStore
         if (host != null) host.OwnerUserIds = userIds.Distinct().ToList();
     }
 
+    public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt)
+    {
+        var host = Get(hostId);
+        if (host == null) return null;
+
+        host.LastReportAt = reportedAt;
+        if (!string.IsNullOrWhiteSpace(displayName)) host.DisplayName = displayName;
+        return host;
+    }
+
+    // 欄位搬移刻意不在替身裡重做一次：這裡只要維持「墓碑＋停用」的可見性語意，
+    // 搬移規則由 HostStoreContractTests 對真實實作驗證
     public void Merge(long sourceHostId, long targetHostId)
     {
         var source = Get(sourceHostId);
         if (source == null) return;
         source.MergedInto = targetHostId;
         source.Active = false;
+    }
+
+    public void Unmerge(long hostId)
+    {
+        var host = Get(hostId);
+        if (host == null) return;
+        host.MergedInto = null;
+        host.Active = true;
     }
 }
 

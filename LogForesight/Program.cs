@@ -141,6 +141,20 @@ if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contain
     return 0;
 }
 
+// --import-hosts / --host-list：NetIQ 主機清單的維護指令（docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 D）。
+// 同樣放在 mutex 保護內、跑完即結束——匯入會改寫主機清單，不能與排程中的分析流程同時進行。
+if (args.Contains("--import-hosts") || args.Contains("--host-list"))
+{
+    var hostStoreForCli = StorageFactory.CreateHostStore(settings.Storage, AppContext.BaseDirectory);
+
+    var exitCode = args.Contains("--import-hosts")
+        ? HostListCli.Import(hostStoreForCli, settings.NetIq, AppContext.BaseDirectory)
+        : HostListCli.List(hostStoreForCli, settings.NetIq, AppContext.BaseDirectory);
+
+    LogManager.Shutdown();
+    return exitCode;
+}
+
 RuleBootstrapper.Run(ruleStore);
 
 // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要一份
@@ -185,26 +199,31 @@ IPromptDumper dumper = debugDump ? new FilePromptDumper() : new NullPromptDumper
 var aiService = new AIService(settings.Ai, dumper);
 var historyService = StorageFactory.CreateRecordStore(settings.Storage); // 依 Storage.Type 選後端，目前只有 Jsonl
 var reportSink = new FileReportSink(); // 風險報告輸出至執行檔目錄下的 export
-var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
-var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore, settings.Analysis.ServerDescription, reportService);
-var permissionMonitor = new PermissionMonitorService(settings.Permissions);
-var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
-
 // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
 // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
+// 同時取回主機 PK——**那是分析紀錄與主機的關聯鍵**（docs/NETIQ-HOSTLIST-WEB-PLAN.md），
+// 所以這段必須排在分析服務建立之前。
 // 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
 // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
-// 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺。
+// 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺——
+// 此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
+long currentHostId = 0;
 try
 {
-    StorageFactory.CreateHostStore(settings.Storage, AppContext.BaseDirectory)
-        .Touch(currentHost, DateTime.Now);
+    currentHostId = StorageFactory.CreateHostStore(settings.Storage, AppContext.BaseDirectory)
+        .Touch(currentHost, DateTime.Now).HostId;
 }
 catch (Exception ex)
 {
     log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
     Console.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
 }
+
+var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
+var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
+    settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
+var permissionMonitor = new PermissionMonitorService(settings.Permissions);
+var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。

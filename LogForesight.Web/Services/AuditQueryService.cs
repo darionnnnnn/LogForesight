@@ -67,6 +67,7 @@ public class AuditQueryService : IAuditQueryService
         [AuditActions.UserUpdate] = "更新使用者",
         [AuditActions.HostUpdate] = "更新主機",
         [AuditActions.HostMerge] = "合併主機",
+        [AuditActions.HostUnmerge] = "解除主機合併",
         [AuditActions.GroupCreate] = "新增群組",
         [AuditActions.GroupUpdate] = "更新群組",
         [AuditActions.GroupDelete] = "刪除群組",

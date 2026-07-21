@@ -50,15 +50,19 @@ public class RecordQueryService : IRecordQueryService
         var filter = BuildFilter(request);
         var records = _repository.Query(filter);
 
+        // 紀錄 → 存活主機的索引：合併過的主機，舊識別下的紀錄要歸到存活主機，
+        // 處理狀態（以現行主機名稱為鍵）與清單的連結才對得上
+        var lookup = new HostLookup(_hosts.GetAll());
+
         // 處理狀態存在另一份資料（handling.json），一次撈起來在記憶體 join——
         // 逐筆查會變成 N 次讀取，而 JSONL 後端的每次讀取都是一次檔案解析
-        var handlings = LoadHandlings(records);
+        var handlings = LoadHandlings(records, lookup);
 
         if (request.Statuses is { Count: > 0 })
         {
             var wanted = request.Statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
             records = records
-                .Where(r => wanted.Contains(StatusOf(handlings, r)))
+                .Where(r => wanted.Contains(StatusOf(handlings, lookup, r)))
                 .ToList();
         }
 
@@ -67,7 +71,7 @@ public class RecordQueryService : IRecordQueryService
             records = records
                 .Where(r =>
                 {
-                    var handling = FindHandling(handlings, r);
+                    var handling = FindHandling(handlings, lookup, r);
                     return handling?.DueDate.HasValue == true &&
                            handling.DueDate.Value.Date < DateTime.Today &&
                            HandlingStatuses.Unresolved.Contains(handling.Status);
@@ -86,13 +90,10 @@ public class RecordQueryService : IRecordQueryService
         var pageSize = Math.Clamp(request.PageSize, 1, 200);
         var page = Math.Max(request.Page, 1);
 
-        var hostsByName = _hosts.GetAll()
-            .ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
         return new PagedResult<RecordListItemDto>
         {
             Items = ordered.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(r => ToListItem(r, hostsByName, FindHandling(handlings, r)))
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r)))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
@@ -100,25 +101,36 @@ public class RecordQueryService : IRecordQueryService
         };
     }
 
-    private List<RecordHandling> LoadHandlings(List<DailyAnalysisRecord> records)
+    private List<RecordHandling> LoadHandlings(List<DailyAnalysisRecord> records, HostLookup lookup)
     {
         if (records.Count == 0) return new List<RecordHandling>();
 
-        var hostNames = records.Select(r => r.Host).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var hostNames = records.Select(r => HostNameOf(lookup, r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var from = records.Min(r => r.Date);
         var to = records.Max(r => r.Date);
 
         return _handlings.GetMany(hostNames, from, to);
     }
 
-    private static RecordHandling? FindHandling(List<RecordHandling> handlings, DailyAnalysisRecord record) =>
+    /// <summary>
+    /// 紀錄對應的**現行**主機名稱——處理狀態以現行名稱為鍵（HandlingService 一律由 hostId 解析），
+    /// 所以合併前寫在舊識別下的紀錄要用存活主機的名稱去找，否則它們的處理狀態會全部看起來像未處理。
+    /// 主機列查無對應時退回紀錄自帶的名稱快照。
+    /// </summary>
+    private static string HostNameOf(HostLookup lookup, DailyAnalysisRecord record) =>
+        lookup.For(record)?.HostName ?? record.Host;
+
+    private static RecordHandling? FindHandling(
+        List<RecordHandling> handlings, HostLookup lookup, DailyAnalysisRecord record) =>
         handlings.FirstOrDefault(h =>
-            string.Equals(h.HostName, record.Host, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(h.HostName, HostNameOf(lookup, record), StringComparison.OrdinalIgnoreCase) &&
             h.Date.Date == record.Date.Date);
 
     /// <summary>從未處理過的風險日視為 open——待辦清單必須包含它們，否則新問題不會出現在待辦裡</summary>
-    private static string StatusOf(List<RecordHandling> handlings, DailyAnalysisRecord record) =>
-        FindHandling(handlings, record)?.Status ?? HandlingStatuses.Open;
+    private static string StatusOf(List<RecordHandling> handlings, HostLookup lookup, DailyAnalysisRecord record) =>
+        FindHandling(handlings, lookup, record)?.Status ?? HandlingStatuses.Open;
 
     public RecordDetailDto GetDetail(long hostId, DateTime date)
     {
@@ -185,11 +197,17 @@ public class RecordQueryService : IRecordQueryService
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
 
         var from = DateTime.Today.AddDays(-days + 1);
+        // 別名展開：這台主機若併入過其他主機，時間軸要涵蓋合併前的那段歷史，
+        // 否則「風險時間軸」會在合併日之前整片空白，看起來像沒有分析過
         var records = _repository.Query(new RecordQueryFilter
         {
-            HostNames = new[] { host.HostName },
+            Hosts = _repository.ResolveHostKeys(hostId),
             From = from
-        }).ToDictionary(r => r.Date.Date);
+        })
+            // 一天可能有兩筆：合併當天存活主機與墓碑各分析過一次。時間軸一天一格，
+            // 取存活主機那筆（沒有才退而取其一）——直接 ToDictionary 會因重複鍵整頁爆掉
+            .GroupBy(r => r.Date.Date)
+            .ToDictionary(g => g.Key, g => g.FirstOrDefault(r => r.HostId == hostId) ?? g.First());
 
         // 逐日填格：**沒有紀錄的日子也要有格子**——那代表「這天沒分析」，
         // 與「這天分析過、沒風險」是完全不同的意義，畫面上必須分得出來
@@ -249,10 +267,10 @@ public class RecordQueryService : IRecordQueryService
 
         if (request.HostIds is { Count: > 0 })
         {
-            filter.HostNames = request.HostIds
-                .Select(id => _repository.ResolveHostName(id))
-                .Where(name => name != null)
-                .Select(name => name!)
+            // 每台主機展開成「本身＋已併入它的墓碑列」，篩選某台主機時才看得到它合併前的歷史
+            filter.Hosts = request.HostIds
+                .SelectMany(id => _repository.ResolveHostKeys(id))
+                .DistinctBy(k => k.HostId)
                 .ToList();
         }
 
@@ -278,17 +296,19 @@ public class RecordQueryService : IRecordQueryService
 
     private RecordListItemDto ToListItem(
         DailyAnalysisRecord record,
-        IReadOnlyDictionary<string, WebHost> hostsByName,
+        HostLookup lookup,
         RecordHandling? handling)
     {
-        hostsByName.TryGetValue(record.Host, out var host);
+        // 顯示與連結一律指向**存活**主機：合併之後，舊識別的紀錄若還掛著舊 id，
+        // 使用者點進去會落到已停用的墓碑列
+        var host = lookup.For(record);
 
         var status = handling?.Status ?? HandlingStatuses.Open;
 
         return new RecordListItemDto
         {
             HostId = host?.HostId ?? 0,
-            HostName = record.Host,
+            HostName = host?.HostName ?? record.Host,
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
             Headline = record.Headline,

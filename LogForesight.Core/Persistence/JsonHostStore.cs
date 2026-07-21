@@ -35,8 +35,9 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
             existing.Active = host.Active;
             existing.GroupIds = host.GroupIds;
             existing.OwnerUserIds = host.OwnerUserIds;
-            // LastReportAt 與 MergedInto 刻意不由此路徑覆寫：
-            // 前者是批次的職責，後者只能經 Merge 設定
+            // LastReportAt、DisplayName 與 MergedInto 刻意不由此路徑覆寫：
+            // 前兩者是批次的職責（Web 不知道 Sentinel 回報了什麼名字），
+            // 後者只能經 Merge/Unmerge 設定
             return existing;
         });
     }
@@ -63,6 +64,22 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
 
             // 只更新回報時間：其餘欄位由 Web 維護，批次不知道也不該猜
             existing.LastReportAt = reportedAt;
+            return existing;
+        });
+    }
+
+    public WebHost? TouchNetiq(long hostId, string? displayName, DateTime reportedAt)
+    {
+        return Mutate(hosts =>
+        {
+            var existing = hosts.FirstOrDefault(h => h.HostId == hostId);
+            if (existing == null) return null;
+
+            existing.LastReportAt = reportedAt;
+
+            // 只在 Sentinel 真的回報了名稱時才寫入：查不到名稱的那幾天不該把既有的顯示名清空
+            if (!string.IsNullOrWhiteSpace(displayName)) existing.DisplayName = displayName;
+
             return existing;
         });
     }
@@ -94,9 +111,51 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
             var source = hosts.FirstOrDefault(h => h.HostId == sourceHostId);
             if (source == null) return;
 
+            var target = hosts.FirstOrDefault(h => h.HostId == targetHostId);
+            if (target != null) CarryOverDescriptiveFields(source, target);
+
             source.MergedInto = targetHostId;
             source.Active = false;
         });
+    }
+
+    public void Unmerge(long hostId)
+    {
+        Mutate(hosts =>
+        {
+            var host = hosts.FirstOrDefault(h => h.HostId == hostId);
+            if (host == null) return;
+
+            host.MergedInto = null;
+            host.Active = true;
+        });
+    }
+
+    /// <summary>
+    /// 目標的空欄位以來源填補（見 <see cref="IHostStore.Merge"/> 的契約說明）。
+    /// 一律「目標有值就不動」——合併不該悄悄改掉人已經設好的東西。
+    /// </summary>
+    private static void CarryOverDescriptiveFields(WebHost source, WebHost target)
+    {
+        if (string.IsNullOrWhiteSpace(target.RoleDesc)) target.RoleDesc = source.RoleDesc;
+        if (target.GroupIds.Count == 0) target.GroupIds = source.GroupIds.ToList();
+        if (target.OwnerUserIds.Count == 0) target.OwnerUserIds = source.OwnerUserIds.ToList();
+        if (string.IsNullOrWhiteSpace(target.NetiqServer)) target.NetiqServer = source.NetiqServer;
+
+        if (string.IsNullOrWhiteSpace(target.IpAddress))
+        {
+            target.IpAddress = source.IpAddress;
+            target.IpUpdatedAt = source.IpUpdatedAt;
+        }
+
+        // 顯示名沒有就退而用來源的登錄名稱：典型情境是「CSV 以機器名登錄的那列」併入
+        // 「NetIQ 以 IP 登錄的那列」，不接的話清單上就只剩一串 IP，人認不出是哪台
+        if (string.IsNullOrWhiteSpace(target.DisplayName))
+        {
+            target.DisplayName = string.IsNullOrWhiteSpace(source.DisplayName)
+                ? source.HostName
+                : source.DisplayName;
+        }
     }
 }
 

@@ -179,9 +179,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IVisibilityService, VisibilityService>();
         services.AddScoped<IUserAdminService, UserAdminService>();
         services.AddScoped<IHostAdminService, HostAdminService>();
+        services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<IGroupAdminService, GroupAdminService>();
 
-        // 查詢面：Repository 負責主機名稱↔ID 轉換與可見範圍強制套用
+        // Sentinel 名單唯讀取自批次 appsettings.json；Singleton＋依檔案時間快取，
+        // 不必每次請求都重讀解析（改設定也不需要重啟 Web）
+        services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
+
+        // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<IRecordQueryService, RecordQueryService>();
         services.AddScoped<IDashboardService, DashboardService>();

@@ -131,6 +131,162 @@ public abstract class HostStoreContractTests : IDisposable
         Assert.False(after.Active);
         Assert.Equal("SRV-OLD", after.HostName);
     }
+
+    // ── TouchNetiq（批次回填，NetIQ 來源）─────────────────────────────────────
+
+    /// <summary>
+    /// 與 Touch 同一條原則：批次只寫自己知道的欄位。這裡多一個 DisplayName，
+    /// 但角色描述、群組、負責人一樣不准動。
+    /// </summary>
+    [Fact]
+    public void TouchNetiq_只更新回報時間與顯示名()
+    {
+        var store = CreateStore();
+        var host = store.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12",
+            Source = "netiq",
+            RoleDesc = "OO部門資料庫",
+            GroupIds = new List<long> { 3 },
+            OwnerUserIds = new List<long> { 11 }
+        });
+
+        var reportedAt = new DateTime(2026, 7, 21, 3, 0, 0);
+        store.TouchNetiq(host.HostId, "SRV-DB-01", reportedAt);
+
+        var after = store.Get(host.HostId)!;
+        Assert.Equal(reportedAt, after.LastReportAt);
+        Assert.Equal("SRV-DB-01", after.DisplayName);
+        Assert.Equal("OO部門資料庫", after.RoleDesc);
+        Assert.Equal(new long[] { 3 }, after.GroupIds);
+        Assert.Equal(new long[] { 11 }, after.OwnerUserIds);
+    }
+
+    /// <summary>Sentinel 沒回報名稱的那幾天，不該把既有的顯示名清空</summary>
+    [Fact]
+    public void TouchNetiq_顯示名為空_不覆寫既有值()
+    {
+        var store = CreateStore();
+        var host = store.Upsert(new WebHost { HostName = "10.1.2.12", Source = "netiq" });
+        store.TouchNetiq(host.HostId, "SRV-DB-01", DateTime.Now);
+
+        store.TouchNetiq(host.HostId, null, DateTime.Now);
+
+        Assert.Equal("SRV-DB-01", store.Get(host.HostId)!.DisplayName);
+    }
+
+    /// <summary>
+    /// 主機不存在時回 null 而不是建立——NetIQ 主機一律由 Web 清單維護，
+    /// 這裡若用名稱補建，admin 打錯字就會默默多出一台幽靈主機。
+    /// </summary>
+    [Fact]
+    public void TouchNetiq_主機不存在_回null且不新增()
+    {
+        var store = CreateStore();
+
+        Assert.Null(store.TouchNetiq(999, "SRV-X", DateTime.Now));
+        Assert.Empty(store.GetAll());
+    }
+
+    // ── Merge 的描述性欄位搬移 ────────────────────────────────────────────────
+
+    /// <summary>
+    /// **這是搬移存在的全部理由**：把「CSV 預先登錄、已設好群組與負責人」的那列，
+    /// 併入「NetIQ 剛回報、什麼都還沒設」的那列，若不帶過去，結果是群組全掉——
+    /// 而且要等到有人問「怎麼大家都看不到這台主機了」才會發現。
+    /// </summary>
+    [Fact]
+    public void Merge_目標空欄位_自來源帶入()
+    {
+        var store = CreateStore();
+        var source = store.Upsert(new WebHost
+        {
+            HostName = "SRV-DB-01",
+            RoleDesc = "OO部門資料庫",
+            GroupIds = new List<long> { 3, 7 },
+            OwnerUserIds = new List<long> { 11 }
+        });
+        var target = store.Upsert(new WebHost
+        {
+            HostName = "10.1.2.12",
+            Source = "netiq",
+            NetiqServer = "SENTINEL-A"
+        });
+
+        store.Merge(source.HostId, target.HostId);
+
+        var after = store.Get(target.HostId)!;
+        Assert.Equal("OO部門資料庫", after.RoleDesc);
+        Assert.Equal(new long[] { 3, 7 }, after.GroupIds);
+        Assert.Equal(new long[] { 11 }, after.OwnerUserIds);
+        Assert.Equal("SENTINEL-A", after.NetiqServer);
+        // 顯示名沒有就退而用來源的登錄名稱，清單上才不會只剩一串 IP
+        Assert.Equal("SRV-DB-01", after.DisplayName);
+    }
+
+    /// <summary>合併不該悄悄改掉人已經設好的東西——目標有值就一律保留目標的</summary>
+    [Fact]
+    public void Merge_目標已有值_不被來源覆蓋()
+    {
+        var store = CreateStore();
+        var source = store.Upsert(new WebHost
+        {
+            HostName = "SRV-OLD",
+            RoleDesc = "舊的描述",
+            GroupIds = new List<long> { 3 }
+        });
+        var target = store.Upsert(new WebHost
+        {
+            HostName = "SRV-NEW",
+            RoleDesc = "現行描述",
+            GroupIds = new List<long> { 9 }
+        });
+
+        store.Merge(source.HostId, target.HostId);
+
+        var after = store.Get(target.HostId)!;
+        Assert.Equal("現行描述", after.RoleDesc);
+        Assert.Equal(new long[] { 9 }, after.GroupIds);
+    }
+
+    /// <summary>搬移是複製不是移動：來源保留自己的值，Unmerge 才還原得回來</summary>
+    [Fact]
+    public void Merge_來源欄位不被清空()
+    {
+        var store = CreateStore();
+        var source = store.Upsert(new WebHost
+        {
+            HostName = "SRV-OLD",
+            RoleDesc = "舊的描述",
+            GroupIds = new List<long> { 3 }
+        });
+        var target = store.Upsert(new WebHost { HostName = "SRV-NEW" });
+
+        store.Merge(source.HostId, target.HostId);
+
+        var after = store.Get(source.HostId)!;
+        Assert.Equal("舊的描述", after.RoleDesc);
+        Assert.Equal(new long[] { 3 }, after.GroupIds);
+    }
+
+    // ── Unmerge ───────────────────────────────────────────────────────────────
+
+    /// <summary>「留墓碑不刪除」要能真的救得回來，才不只是一句安慰</summary>
+    [Fact]
+    public void Unmerge_清除墓碑標記並恢復啟用()
+    {
+        var store = CreateStore();
+        var source = store.Upsert(new WebHost { HostName = "SRV-OLD", RoleDesc = "舊的描述" });
+        var target = store.Upsert(new WebHost { HostName = "SRV-NEW" });
+        store.Merge(source.HostId, target.HostId);
+
+        store.Unmerge(source.HostId);
+
+        var after = store.Get(source.HostId)!;
+        Assert.Null(after.MergedInto);
+        Assert.True(after.Active);
+        Assert.Equal("舊的描述", after.RoleDesc);
+    }
 }
 
 public class JsonHostStoreContractTests : HostStoreContractTests

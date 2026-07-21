@@ -102,6 +102,10 @@ public class HostDto
 {
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>Sentinel 回報的主機名稱（批次回填，唯讀）——NetIQ 主機以 IP 登錄時的辨識依據</summary>
+    public string? DisplayName { get; set; }
+
     public string? IpAddress { get; set; }
     public string? NetiqServer { get; set; }
     public string RoleDesc { get; set; } = string.Empty;

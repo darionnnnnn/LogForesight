@@ -22,7 +22,14 @@ public class WeeklyCheckupServiceTests
             _lastCheckup = lastCheckup;
         }
 
-        public List<DailyAnalysisRecord> ReadRecent(int days) => _records;
+        // 替身照實作錨定窗語意過濾，否則測試會在「未來紀錄混入窗口」這件事上失去防護
+        public List<DailyAnalysisRecord> ReadRecent(DateTime anchorDate, int days) =>
+            _records
+                .Where(r => r.Date.Date >= anchorDate.Date.AddDays(-(days - 1)) && r.Date.Date <= anchorDate.Date)
+                .OrderBy(r => r.Date)
+                .ToList();
+
+        public bool HasAnyRecord() => _records.Count > 0;
         public bool HasRecord(DateTime date) => _records.Any(r => r.Date.Date == date.Date);
         public DateTime? LastWeeklyCheckupDate() => _lastCheckup;
     }

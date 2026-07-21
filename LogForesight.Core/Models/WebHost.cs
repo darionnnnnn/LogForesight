@@ -1,15 +1,28 @@
 namespace LogForesight;
 
 /// <summary>
-/// 受監控的主機（↔ lf_hosts）。<see cref="HostName"/> 是自然鍵——
-/// 批次分析寫入紀錄時以主機名稱識別，CSV 匯入也以它 upsert。
+/// 受監控的主機（↔ lf_hosts）。
+///
+/// **身分是 <see cref="HostId"/>**（分析紀錄以它關聯，見 <see cref="DailyAnalysisRecord.HostId"/>），
+/// <see cref="HostName"/> 則是登錄用的自然鍵：CSV 匯入與批次 <see cref="IHostStore.Touch"/>
+/// 以它 upsert，但改名不影響任何既有紀錄的歸戶。
 /// </summary>
 public class WebHost
 {
     public long HostId { get; set; }
 
-    /// <summary>本機為 Environment.MachineName；NetIQ 來源為 Sentinel 主機名。比對不分大小寫</summary>
+    /// <summary>
+    /// 登錄識別字串：本機為 Environment.MachineName；NetIQ 來源為清單登錄時輸入的字串
+    /// （通常是 IP）。upsert 與比對不分大小寫。
+    /// </summary>
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Sentinel 事件回報的主機名稱，由批次回填（NetIQ 來源專用；本機來源為 null——
+    /// 那邊的 <see cref="HostName"/> 本來就是機器名）。
+    /// **純顯示屬性**：NetIQ 主機以 IP 登錄，光看清單認不出是哪台機器，這個欄位補上人看得懂的名字。
+    /// </summary>
+    public string? DisplayName { get; set; }
 
     /// <summary>
     /// 最近已知 IP。**純顯示用線索**，人在辨認新舊主機時最實用——

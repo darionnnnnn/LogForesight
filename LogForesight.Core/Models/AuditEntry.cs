@@ -94,6 +94,7 @@ public static class AuditActions
     public const string UserUpdate = "user_update";
     public const string HostUpdate = "host_update";
     public const string HostMerge = "host_merge";
+    public const string HostUnmerge = "host_unmerge";
     public const string GroupCreate = "group_create";
     public const string GroupUpdate = "group_update";
     public const string GroupDelete = "group_delete";

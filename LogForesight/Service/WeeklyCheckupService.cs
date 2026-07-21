@@ -57,7 +57,7 @@ public class WeeklyCheckupService
     /// </summary>
     public bool ShouldRun(DateTime today, int intervalDays)
     {
-        if (_historyReader.ReadRecent(1).Count == 0)
+        if (!_historyReader.HasAnyRecord())
         {
             return false;
         }
@@ -70,7 +70,7 @@ public class WeeklyCheckupService
     /// <param name="host">主機識別，單機情境留空即可</param>
     public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", string host = "")
     {
-        var window = _historyReader.ReadRecent(intervalDays);
+        var window = _historyReader.ReadRecent(checkupDate, intervalDays);
 
         // 確定性閘門：窗口內三層（風險等級/趨勢異常/關聯訊號）皆無訊號時，不呼叫 AI——
         // 安靜的期間沒有故事可講，直接寫固定結論。TrendAlerts 已含 SlowTrendAnalyzer 的慢速惡化告警，
@@ -89,7 +89,7 @@ public class WeeklyCheckupService
 
         // 上次體檢結論可能落在窗口之外（體檢本身是週期性的，窗口內未必含上次體檢那天），
         // 用較寬的窗口另外找，抓不到就沒有延續性脈絡可帶入，不當錯誤處理
-        var lastCheckup = _historyReader.ReadRecent(Math.Max(21, intervalDays * 3))
+        var lastCheckup = _historyReader.ReadRecent(checkupDate, Math.Max(21, intervalDays * 3))
             .Where(d => d.WeeklyCheckup != null)
             .OrderByDescending(d => d.Date)
             .Select(d => d.WeeklyCheckup)

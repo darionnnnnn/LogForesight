@@ -364,6 +364,33 @@ LogForesight.exe --unsuppress builtin-service-crash-loop-703x
 永久盲區。`--days` 省略則永久生效直到手動 `--unsuppress`；到期後不會自動清理，只是恢復告警，
 執行時 console 會提示。設定檔為 `suppressions.json`，同樣建議 UTF-8 存檔。
 
+## NetIQ 主機清單（`--import-hosts` / `--host-list`）
+
+多主機階段要處理哪些主機，由「主機清單」決定。清單有兩個可能的主人，
+**同一時間只有一個**（`appsettings.json` 的 `NetIq.HostListSource`）：
+
+| 設定值 | 主人 | 說明 |
+|---|---|---|
+| `"Txt"`（預設） | `NetIq.HostListDirectory` 下的 txt 檔 | **檔名即 Sentinel 歸屬**（`{Sentinel 名稱}.txt`），一行一台 `IP[,角色描述]`、`#` 開頭為註解 |
+| `"Web"` | Web 主機頁 | 由 admin 在畫面上維護，支援批次貼上同樣格式的清單 |
+
+```
+LogForesight.exe --host-list      # 列出目前設定下實際會被查詢的主機（含被排除的原因）
+LogForesight.exe --import-hosts   # 把 txt 清單匯入主機資料（Txt 模式專用）
+```
+
+Txt 模式下**每次執行都會以 txt 覆寫主機清單**：新增的 IP 納入分析，
+清單中移除的 IP 停止分析（主機列與既有歷史保留，不刪除）。也因為 txt 是主人，
+切換到 Web 之後再跑 `--import-hosts` 會把 Web 上新增的主機當成「已移除」而停用——
+所以那個指令在 `HostListSource = "Web"` 時**直接拒絕執行**，這道欄杆防的是交接時的疏忽。
+
+**交接 SOP**：`--import-hosts` → 核對輸出筆數與 Web 主機頁一致 →
+設定改成 `"Web"` → 移除 txt 清單。
+
+`--host-list` 會把**不會被查詢的主機逐一列出原因**（尚未確定所屬 Sentinel、IP 與其他主機衝突），
+而不是安靜地少幾台——與「沒告警 ≠ 沒問題」是同一個原則：沒查到不等於沒事，畫面上必須看得出來。
+IP 衝突時只查最早建立的那一台，行為才可預測。
+
 ## 權限/角色異動監控（PermissionMonitorService）
 
 除了 Security log 事件規則，另外用**直接比對當前狀態**的方式監控權限異動——
@@ -484,8 +511,11 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 - **append-only**：每日只附加一行，不用讀寫整個檔案，長期執行不會越來越慢
 - 仍是純文字，記事本直接開就能看
 
-每行欄位：`Date`、`Host`（產生本筆紀錄的主機，本機為 `Environment.MachineName`，
-為未來多主機/DB 匯入預先準備，單機情境不影響任何邏輯）、`ErrorCount`、`WarningCount`、`AuditEventCount`、
+每行欄位：`Date`、`HostId`（**紀錄與主機的關聯鍵**，取自主機清單 `webdata\hosts.json` 的 PK；
+主機日後改名或換 IP，既有紀錄仍歸戶正確。0 = 本欄位問世前寫入的舊紀錄，或本次執行取不到
+主機清單時的降級，此時查詢端退回以 `Host` 名稱比對）、`Host`（產生本筆紀錄的主機名稱，
+本機為 `Environment.MachineName`，寫入當下的顯示名快照）、
+`ErrorCount`、`WarningCount`、`AuditEventCount`、
 `TopIssues`（問題簽章，每筆含：來源/EventId/次數/類別/嚴重度、
 發生時段 `FirstSeen`~`LastSeen`（判斷集中爆發或全天零星）、
 最多 3 則相異範例訊息 `SampleMessages` 與 `DistinctMessageCount`（區分「同一服務掛 10 次」
