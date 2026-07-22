@@ -171,7 +171,7 @@ function messageCell(group) {
 
 function levelBadge(level) {
     const span = document.createElement('span');
-    span.className = `badge text-bg-${level === 'Fatal' ? 'dark' : 'danger'}`;
+    span.className = `lf-badge lf-badge--${level === 'Fatal' ? 'dark' : 'danger'}`;
     span.textContent = level;
     return span;
 }
@@ -269,7 +269,7 @@ function renderLogs() {
 function logLevelBadge(level) {
     const variants = { Info: 'light', Warn: 'warning', Error: 'danger', Fatal: 'dark' };
     const span = document.createElement('span');
-    span.className = `badge text-bg-${variants[level] ?? 'secondary'}`;
+    span.className = `lf-badge lf-badge--${variants[level] ?? 'secondary'}`;
     span.textContent = level;
     return span;
 }

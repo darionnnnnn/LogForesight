@@ -584,7 +584,9 @@ a.lf-stat:hover .lf-card,
 .lf-badge--success { background: var(--lf-success-soft); color: var(--lf-success-text); border-color: #bbe7c9; }
 .lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #b9e4ee; }
 .lf-badge--primary { background: var(--lf-primary-soft); color: var(--lf-primary-text); border-color: var(--lf-primary-soft-border); }
-.lf-badge--neutral { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+.lf-badge--neutral,
+.lf-badge--secondary,
+.lf-badge--light { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
 .lf-badge--dark { background: var(--lf-dark-soft); color: var(--lf-dark-text); }
 
 .lf-badge .lf-icon { width: .85em; height: .85em; }

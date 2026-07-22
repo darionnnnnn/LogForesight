@@ -116,7 +116,7 @@ function renderMatrix() {
         th.textContent = row.userGroupName;
         if (!row.active) {
             const hint = document.createElement('span');
-            hint.className = 'badge text-bg-secondary ms-2';
+            hint.className = 'lf-badge lf-badge--secondary ms-2';
             hint.textContent = '已停用';
             th.appendChild(hint);
         }
@@ -282,14 +282,14 @@ document.querySelector('[data-new-host-group]').addEventListener('click', () => 
 function roleBadge(role) {
     const variants = { Admin: 'danger', Manager: 'primary', Dev: 'info', User: 'secondary' };
     const span = document.createElement('span');
-    span.className = `badge text-bg-${variants[role] ?? 'secondary'}`;
+    span.className = `lf-badge lf-badge--${variants[role] ?? 'secondary'}`;
     span.textContent = role;
     return span;
 }
 
 function activeBadge(active) {
     const span = document.createElement('span');
-    span.className = `badge text-bg-${active ? 'success' : 'secondary'}`;
+    span.className = `lf-badge lf-badge--${active ? 'success' : 'secondary'}`;
     span.textContent = active ? '啟用' : '停用';
     return span;
 }

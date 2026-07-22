@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading } from '../core/ui.js';
+import { renderTable, renderLoading, renderPagination } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const RESULT_META = {
@@ -99,7 +99,7 @@ function render() {
 function resultBadge(result) {
     const meta = RESULT_META[result] ?? { text: result, variant: 'secondary' };
     const span = document.createElement('span');
-    span.className = `badge text-bg-${meta.variant}`;
+    span.className = `lf-badge lf-badge--${meta.variant}`;
     span.textContent = meta.text;
     return span;
 }
@@ -134,42 +134,16 @@ function summaryCell(entry) {
 }
 
 function renderPager() {
-    const pager = document.getElementById('audit-pager');
-    pager.replaceChildren();
-
     const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    if (totalPages <= 1) return;
-
-    const list = document.createElement('ul');
-    list.className = 'pagination pagination-sm mb-0';
-
-    const addItem = (label, page, disabled = false, active = false) => {
-        const item = document.createElement('li');
-        item.className = `page-item${disabled ? ' disabled' : ''}${active ? ' active' : ''}`;
-
-        const link = document.createElement('button');
-        link.type = 'button';
-        link.className = 'page-link';
-        link.textContent = label;
-        link.disabled = disabled;
-        link.addEventListener('click', () => {
+    renderPagination(document.getElementById('audit-pager'), {
+        page: lastResult.page,
+        totalPages,
+        onPage: page => {
             currentPage = page;
             search();
             window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-
-        item.appendChild(link);
-        list.appendChild(item);
-    };
-
-    addItem('上一頁', lastResult.page - 1, lastResult.page <= 1);
-    for (let p = 1; p <= totalPages; p++) {
-        if (totalPages > 9 && Math.abs(p - lastResult.page) > 3 && p !== 1 && p !== totalPages) continue;
-        addItem(String(p), p, false, p === lastResult.page);
-    }
-    addItem('下一頁', lastResult.page + 1, lastResult.page >= totalPages);
-
-    pager.appendChild(list);
+        }
+    });
 }
 
 document.getElementById('audit-filter').addEventListener('submit', event => {

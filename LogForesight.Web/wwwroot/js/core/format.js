@@ -6,6 +6,8 @@
  * 各頁自己判斷的話遲早會出現「這頁的黃色是中風險、那頁的黃色是警告」。
  */
 
+import { icon } from './ui.js';
+
 /** 風險等級 → 徽章 CSS class（後端回傳中文「高/中/低」） */
 const RISK_CLASS = {
     '高': 'lf-badge--high',
@@ -35,11 +37,15 @@ const HANDLING_STATUS = {
  * 泛用淡色徽章工廠（§8.2「顏色＋文字」）——各頁面自訂狀態徽章（啟用/停用/IP衝突…）
  * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應 site.css 的 lf-badge--*：
  * success | danger | warning | info | primary | neutral | dark。
+ * icon（選填）為 sprite symbol id，會以 SVG 前置於文字（取代原本用 emoji 當圖示的做法）。
  */
-export function statusBadge(text, variant = 'neutral', { title } = {}) {
+export function statusBadge(text, variant = 'neutral', { title, icon: iconName } = {}) {
     const span = document.createElement('span');
     span.className = `lf-badge lf-badge--${variant}`;
-    span.textContent = text;
+    if (iconName) span.appendChild(icon(iconName));
+    const label = document.createElement('span');
+    label.textContent = text;
+    span.appendChild(label);
     if (title) span.title = title;
     return span;
 }

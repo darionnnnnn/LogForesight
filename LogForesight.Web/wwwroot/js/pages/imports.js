@@ -160,7 +160,7 @@ function renderRows() {
 function actionBadge(action) {
     const meta = ACTION_META[action] ?? { text: action, variant: 'secondary' };
     const span = document.createElement('span');
-    span.className = `badge text-bg-${meta.variant}`;
+    span.className = `lf-badge lf-badge--${meta.variant}`;
     span.textContent = meta.text;
     return span;
 }

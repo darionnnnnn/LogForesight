@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
 import { formatDateTime, formatNumber } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 
@@ -207,7 +207,7 @@ function severityBreakdown(category) {
     for (const part of parts) {
         if (part.count === 0) continue;
         const badge = document.createElement('span');
-        badge.className = `badge text-bg-${part.variant} me-1`;
+        badge.className = `lf-badge lf-badge--${part.variant} me-1`;
         badge.textContent = `${part.label} ${part.count}`;
         wrap.appendChild(badge);
     }
@@ -231,10 +231,13 @@ function renderHosts(data) {
 function correlationCell(host) {
     if (host.correlationDays === 0) return '';
 
-    // 關聯訊號＝程式確定性比對出的攻擊鏈/故障鏈，比單一事件更值得警戒，用紅色🔗延續 console 的視覺語言
+    // 關聯訊號＝程式確定性比對出的攻擊鏈/故障鏈，比單一事件更值得警戒，用紅色鏈結圖示延續 console 的視覺語言
     const span = document.createElement('span');
-    span.className = 'text-danger fw-semibold';
-    span.textContent = `🔗 ${host.correlationDays}`;
+    span.className = 'text-danger fw-semibold d-inline-flex align-items-center gap-1 justify-content-end';
+    span.appendChild(icon('link-45deg'));
+    const count = document.createElement('span');
+    count.textContent = String(host.correlationDays);
+    span.appendChild(count);
     span.title = '有攻擊鏈／故障鏈的關聯訊號';
     return span;
 }

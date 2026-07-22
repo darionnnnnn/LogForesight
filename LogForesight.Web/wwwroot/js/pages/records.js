@@ -7,8 +7,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast } from '../core/ui.js';
-import { riskBadge, handlingBadge } from '../core/format.js';
+import { renderTable, renderLoading, toast, renderPagination } from '../core/ui.js';
+import { riskBadge, handlingBadge, statusBadge } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
@@ -150,19 +150,21 @@ function headlineCell(record) {
     wrap.appendChild(text);
 
     if (record.hasCorrelation) {
-        const badge = document.createElement('span');
-        badge.className = 'badge text-bg-danger ms-2';
-        badge.textContent = '🔗 關聯訊號';
-        badge.title = '程式確定性比對出的攻擊鏈／故障鏈組合';
+        const badge = statusBadge('關聯訊號', 'danger', {
+            icon: 'link-45deg',
+            title: '程式確定性比對出的攻擊鏈／故障鏈組合'
+        });
+        badge.classList.add('ms-2');
         wrap.appendChild(badge);
     }
 
     // 涵蓋率缺口要顯眼：「沒告警」可能是「沒看」而不是「沒問題」
     if (record.hasCoverageGap) {
-        const badge = document.createElement('span');
-        badge.className = 'badge text-bg-warning ms-2';
-        badge.textContent = '⚠ 涵蓋不完整';
-        badge.title = '資料不完整或 Security log 未讀取——沒告警不等於沒問題';
+        const badge = statusBadge('涵蓋不完整', 'warning', {
+            icon: 'exclamation-triangle',
+            title: '資料不完整或 Security log 未讀取——沒告警不等於沒問題'
+        });
+        badge.classList.add('ms-2');
         wrap.appendChild(badge);
     }
 
@@ -175,7 +177,7 @@ function handlingCell(record) {
 
     if (record.isOverdue) {
         const overdue = document.createElement('span');
-        overdue.className = 'badge text-bg-danger ms-1';
+        overdue.className = 'lf-badge lf-badge--danger ms-1';
         overdue.textContent = '逾期';
         wrap.appendChild(overdue);
     }
@@ -187,7 +189,7 @@ function categoryBadges(record) {
     const wrap = document.createElement('span');
     for (const category of record.categories) {
         const badge = document.createElement('span');
-        badge.className = 'badge text-bg-light border me-1';
+        badge.className = 'lf-badge lf-badge--light border me-1';
         badge.textContent = CATEGORY_NAMES[category] ?? category;
         wrap.appendChild(badge);
     }
@@ -195,42 +197,16 @@ function categoryBadges(record) {
 }
 
 function renderPager() {
-    const pager = document.getElementById('pager');
-    pager.replaceChildren();
-
     const totalPages = Math.ceil(lastResult.total / lastResult.pageSize);
-    if (totalPages <= 1) return;
-
-    const list = document.createElement('ul');
-    list.className = 'pagination pagination-sm mb-0';
-
-    const addItem = (label, page, disabled = false, active = false) => {
-        const item = document.createElement('li');
-        item.className = `page-item${disabled ? ' disabled' : ''}${active ? ' active' : ''}`;
-
-        const link = document.createElement('button');
-        link.type = 'button';
-        link.className = 'page-link';
-        link.textContent = label;
-        link.disabled = disabled;
-        link.addEventListener('click', () => {
+    renderPagination(document.getElementById('pager'), {
+        page: lastResult.page,
+        totalPages,
+        onPage: page => {
             currentPage = page;
             search();
             window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-
-        item.appendChild(link);
-        list.appendChild(item);
-    };
-
-    addItem('上一頁', lastResult.page - 1, lastResult.page <= 1);
-    for (let p = 1; p <= totalPages; p++) {
-        if (totalPages > 9 && Math.abs(p - lastResult.page) > 3 && p !== 1 && p !== totalPages) continue;
-        addItem(String(p), p, false, p === lastResult.page);
-    }
-    addItem('下一頁', lastResult.page + 1, lastResult.page >= totalPages);
-
-    pager.appendChild(list);
+        }
+    });
 }
 
 // ── 事件 ─────────────────────────────────────────────────────────────────────

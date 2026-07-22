@@ -2,9 +2,14 @@
     ViewData["Title"] = "權限異動待辦";
 }
 
-<div class="alert alert-light border">
-    自動檢查負責<strong>發現有異動</strong>，逐筆確認讓了解環境的人判斷<strong>這筆是否正常</strong>——
-    同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。
+<div class="lf-hint mb-3">
+    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+    <span>系統負責發現異動，請逐筆確認每筆是否為授權操作。</span>
+    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+            data-bs-title="為什麼要逐筆確認"
+            data-bs-content="自動檢查負責發現有異動，逐筆確認讓了解環境的人判斷這筆是否正常——同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。">
+        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+    </button>
 </div>
 
 <ul class="nav nav-tabs mb-3" id="perm-tabs">

@@ -291,7 +291,7 @@ async function loadLogs(hostId, date) {
         action.textContent = log.actionText;
 
         const status = document.createElement('span');
-        status.className = `badge text-bg-${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
+        status.className = `lf-badge lf-badge--${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
         status.textContent = log.statusText;
 
         head.append(action, status);

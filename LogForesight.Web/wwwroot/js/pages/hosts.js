@@ -241,7 +241,7 @@ function statusBadges(host) {
 
 function badge(text, variant) {
     const el = document.createElement('span');
-    el.className = `badge text-bg-${variant} me-1`;
+    el.className = `lf-badge lf-badge--${variant} me-1`;
     el.textContent = text;
     return el;
 }
@@ -293,7 +293,7 @@ function badges(names, emptyText) {
     const wrap = document.createElement('span');
     for (const name of names) {
         const el = document.createElement('span');
-        el.className = 'badge text-bg-light border me-1';
+        el.className = 'lf-badge lf-badge--light border me-1';
         el.textContent = name;
         wrap.appendChild(el);
     }
