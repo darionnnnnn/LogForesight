@@ -21,23 +21,52 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
 
     private readonly string _filePath;
 
+    /// <summary>
+    /// 批次寫入端的「本機」識別。非 null 時，批次面的讀寫（<see cref="HasRecord"/>／
+    /// <see cref="ReadRecent"/>／<see cref="HasAnyRecord"/>／<see cref="LastWeeklyCheckupDate"/>／
+    /// <see cref="AttachWeeklyCheckup"/>／<see cref="Prune"/>）**只看這台主機自己的紀錄**——
+    /// 同一份 history.txt 若含多台主機（示範資料、或多台共用同一資料根）時，缺日判定與趨勢
+    /// 基準才不會被別台主機的紀錄汙染（例如別台把趨勢窗口填滿，害本機被判「已分析過」整段跳過）。
+    ///
+    /// null＝不分主機（Web 查詢面走 <see cref="Query"/>／<see cref="GetOne"/> 各自帶 host 過濾，
+    /// 不經這些方法；既有測試與單機單資料夾部署也維持原本的全域行為）。
+    /// </summary>
+    private readonly HostKey? _ownerHost;
+
     /// <summary>上次讀取時的壞行數，用來只在數字變化時記 log（見 ReportBadLines）</summary>
     private int _lastBadLineCount;
 
     /// <summary>是否曾成功開啟過此檔——用來區分「首次執行還沒有檔」與「正在被替換」</summary>
     private volatile bool _fileSeen;
 
-    public JsonlAnalysisRecordStore(string? filePath = null)
+    public JsonlAnalysisRecordStore(string? filePath = null, HostKey? ownerHost = null)
     {
         // 預設放執行檔同目錄（與 export 一致），方便部署時整個資料夾搬移；
         // 用 AppContext.BaseDirectory 而非 CurrentDirectory，排程執行時後者可能是 system32
         _filePath = filePath ?? Path.Combine(AppContext.BaseDirectory, "history.txt");
+        _ownerHost = ownerHost;
 
         var dir = Path.GetDirectoryName(_filePath);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
         {
             Directory.CreateDirectory(dir);
         }
+    }
+
+    /// <summary>
+    /// 這筆紀錄是否屬於「本機」（<see cref="_ownerHost"/>）。owner 為 null 時一律 true（不分主機）。
+    ///
+    /// 比對刻意比 Web 的 <see cref="HostMatcher"/> 寬鬆——用 id 或名稱任一命中即算自己的：
+    /// 主機登記（Touch）失敗那次 <c>HostId</c> 會退為 0，嚴格的 PK 優先比對會讓這台機器
+    /// 認不得自己先前以真實 id 寫入的紀錄，於是重複分析同一天。放寬成「id 或名稱」才能
+    /// 跨越 id 0 ↔ 實際 id 的轉換仍歸戶到自己。跨主機誤命中需要「同一份檔裡另一台主機恰好同名」，
+    /// 單機／一主機一資料夾的部署不會發生。
+    /// </summary>
+    private bool BelongsToOwner(DailyAnalysisRecord record)
+    {
+        if (_ownerHost == null) return true;
+        if (_ownerHost.HostId != 0 && record.HostId == _ownerHost.HostId) return true;
+        return string.Equals(record.Host, _ownerHost.HostName, StringComparison.OrdinalIgnoreCase);
     }
 
     public string Location => _filePath;
@@ -51,10 +80,10 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         File.AppendAllText(_filePath, json + Environment.NewLine);
     }
 
-    /// <summary>該日期已分析過就跳過，重跑不會產生重複紀錄</summary>
+    /// <summary>該日期已分析過就跳過，重跑不會產生重複紀錄（owner 設定時只看本機自己的紀錄）</summary>
     public bool HasRecord(DateTime date)
     {
-        return ReadAll().Any(r => r.Date.Date == date.Date);
+        return ReadAll().Any(r => r.Date.Date == date.Date && BelongsToOwner(r));
     }
 
     /// <summary>
@@ -74,7 +103,7 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         for (int i = 0; i < lines.Count; i++)
         {
             var record = TryParse(lines[i]);
-            if (record == null || record.Date.Date != date.Date)
+            if (record == null || record.Date.Date != date.Date || !BelongsToOwner(record))
             {
                 continue;
             }
@@ -98,7 +127,7 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
     public DateTime? LastWeeklyCheckupDate()
     {
         return ReadAll()
-            .Where(r => r.WeeklyCheckup != null)
+            .Where(r => r.WeeklyCheckup != null && BelongsToOwner(r))
             .Select(r => (DateTime?)r.WeeklyCheckup!.CheckupDate.Date)
             .OrderByDescending(d => d)
             .FirstOrDefault();
@@ -118,7 +147,15 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         var cutoff = DateTime.Today.AddDays(-retentionDays);
         var allLines = ReadAllLinesTolerant();
         var keptLines = allLines
-            .Where(line => TryParse(line)?.Date.Date >= cutoff)
+            .Where(line =>
+            {
+                var record = TryParse(line);
+                if (record == null) return false;                       // 無法解析的行一併清除（原行為不變）
+                // owner 設定時只修剪本機自己的舊紀錄，別台主機的紀錄原樣保留——
+                // 多台共用同一資料根時，本機的保留期不該連帶砍掉別台的歷史。
+                if (_ownerHost != null && !BelongsToOwner(record)) return true;
+                return record.Date.Date >= cutoff;
+            })
             .ToList();
 
         if (keptLines.Count == allLines.Count)
@@ -137,12 +174,12 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         var to = anchorDate.Date;
 
         return ReadAll()
-            .Where(r => r.Date.Date >= from && r.Date.Date <= to)
+            .Where(r => r.Date.Date >= from && r.Date.Date <= to && BelongsToOwner(r))
             .OrderBy(r => r.Date)
             .ToList();
     }
 
-    public bool HasAnyRecord() => ReadAll().Count > 0;
+    public bool HasAnyRecord() => ReadAll().Any(BelongsToOwner);
 
     // ── IAnalysisRecordQuery（Web 查詢，見 IAnalysisRecordQuery 的介面註解）──────────
     // JSONL 後端就是把整份 history.txt 讀出來後在記憶體篩選。前期單機資料量（90 天 × 1 台）

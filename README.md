@@ -557,8 +557,15 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 
 ## 歷史資料庫（history.txt）
 
-檔案：**執行檔同目錄**的 `history.txt`（與 `export\` 一致，部署時整個資料夾搬移即可；
-使用 `AppContext.BaseDirectory` 而非 CurrentDirectory，排程執行時後者可能是 system32）
+檔案：`{Storage.DataRoot}\history.txt`。`DataRoot` 留空＝**執行檔同目錄**
+（`AppContext.BaseDirectory`，而非 CurrentDirectory——排程執行時後者可能是 system32），與
+`rules.json`／`export\`／`webdata\` 一致，部署時整個資料夾搬移即可；也可在 `appsettings.json`
+把 `Storage.DataRoot` 指到建置目錄以外的固定資料夾，資料就不隨重建 exe 而動（Web 端填同一路徑共用）。
+
+> **每台主機一份自己的歷史**：缺日判定（是否已分析過某天）與趨勢基準（近 14 天）都**只看本機
+> 自己的紀錄**——批次以「本機主機識別」綁定歷史 store。同一份 `history.txt` 內若含其他主機的紀錄
+> （示範資料、或多台共用同一 `DataRoot`），不會害本機被誤判成「已分析過」而整段跳過，也不會混進
+> 趨勢基準（未來 DB 後端對應 `WHERE host_id = @本機`）。Web 查詢端本就各自帶主機過濾，不受影響。
 
 ### 為什麼選 JSON Lines 而不是 CSV
 

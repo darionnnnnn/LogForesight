@@ -44,6 +44,21 @@ try
     settings.Validate(builder.Environment.IsProduction());
     builder.Services.AddSingleton(settings);
 
+    // 資料根目錄健檢（誠實申報，沿用批次端「沒告警 ≠ 沒問題」的原則）：
+    // DataRoot 存在（Validate 已檢查）但底下既無 rules.json 也無 history.txt，最常見的成因是
+    // Storage:DataRoot 指錯了——指到 Web 自己的執行檔目錄、而不是批次 LogForesight.exe 的資料目錄。
+    // 那正是「規則維護頁報『載入規則失敗，檔案不存在』、儀表板一片空白」的來源。
+    // 刻意不 fail-fast：批次還沒首次執行是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
+    var dataRoot = settings.Storage.ResolveDataRoot();
+    if (!File.Exists(Path.Combine(dataRoot, "rules.json")) &&
+        !File.Exists(Path.Combine(dataRoot, "history.txt")))
+    {
+        logger.Warn("資料根目錄 {0} 底下找不到 rules.json 或 history.txt。若批次 LogForesight.exe 已執行過，" +
+            "代表 Storage:DataRoot 指錯目錄（應指向批次的資料目錄），規則頁與儀表板會因此空白。", dataRoot);
+        Console.Error.WriteLine($"⚠ 資料根目錄「{dataRoot}」底下找不到 rules.json / history.txt；" +
+            "若批次已執行過，請確認 Storage:DataRoot 指向批次 LogForesight.exe 的資料目錄。");
+    }
+
     // ── DI（§4.3）─────────────────────────────────────────────────────────────
     builder.Services.AddStorage(settings);
     builder.Services.AddLogForesightAuth(settings);

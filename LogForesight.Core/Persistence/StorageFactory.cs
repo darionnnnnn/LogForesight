@@ -6,15 +6,19 @@ namespace LogForesight;
 /// </summary>
 public static class StorageFactory
 {
-    public static IAnalysisRecordStore CreateRecordStore(StorageSettings settings, string? filePath = null)
+    /// <param name="ownerHost">
+    /// 批次寫入端的「本機」識別。傳入時，缺日判定與趨勢基準等批次面讀寫只看這台主機自己的
+    /// 紀錄（見 <see cref="JsonlAnalysisRecordStore"/> 的 ownerHost 說明）。Web 查詢端不傳，維持不分主機。
+    /// </param>
+    public static IAnalysisRecordStore CreateRecordStore(StorageSettings settings, string? filePath = null, HostKey? ownerHost = null)
     {
         switch (settings.Type)
         {
             case "Jsonl":
-                return new JsonlAnalysisRecordStore(filePath);
+                return new JsonlAnalysisRecordStore(filePath, ownerHost);
             default:
                 Console.WriteLine($"未知的 Storage.Type「{settings.Type}」，改用預設的 Jsonl。");
-                return new JsonlAnalysisRecordStore(filePath);
+                return new JsonlAnalysisRecordStore(filePath, ownerHost);
         }
     }
 
