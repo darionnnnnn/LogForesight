@@ -13,23 +13,36 @@ const RISK_CLASS = {
     '低': 'lf-badge--low'
 };
 
-/** 嚴重度 → Bootstrap 語意色 */
+/** 嚴重度 → 淡色徽章 variant（對應 site.css 的 lf-badge--*）*/
 const SEVERITY_VARIANT = {
     Critical: 'danger',
     High: 'warning',
     Medium: 'info',
-    Low: 'secondary'
+    Low: 'neutral'
 };
 
-/** 處理狀態 → { 顯示文字, Bootstrap 語意色 } */
+/** 處理狀態 → { 顯示文字, 淡色徽章 variant } */
 const HANDLING_STATUS = {
     open: { text: '未處理', variant: 'danger' },
     in_progress: { text: '處理中', variant: 'primary' },
     resolved: { text: '已處理', variant: 'success' },
-    wont_fix: { text: '不處理', variant: 'secondary' },
-    false_positive: { text: '誤報', variant: 'secondary' },
-    known_noise: { text: '已知雜訊', variant: 'secondary' }
+    wont_fix: { text: '不處理', variant: 'neutral' },
+    false_positive: { text: '誤報', variant: 'neutral' },
+    known_noise: { text: '已知雜訊', variant: 'neutral' }
 };
+
+/**
+ * 泛用淡色徽章工廠（§8.2「顏色＋文字」）——各頁面自訂狀態徽章（啟用/停用/IP衝突…）
+ * 統一走這裡，取代散落各頁的 `badge text-bg-*`。variant 對應 site.css 的 lf-badge--*：
+ * success | danger | warning | info | primary | neutral | dark。
+ */
+export function statusBadge(text, variant = 'neutral', { title } = {}) {
+    const span = document.createElement('span');
+    span.className = `lf-badge lf-badge--${variant}`;
+    span.textContent = text;
+    if (title) span.title = title;
+    return span;
+}
 
 /** 風險等級徽章元素 */
 export function riskBadge(riskLevel) {
@@ -41,19 +54,13 @@ export function riskBadge(riskLevel) {
 
 /** 嚴重度徽章元素 */
 export function severityBadge(severity) {
-    const span = document.createElement('span');
-    span.className = `badge text-bg-${SEVERITY_VARIANT[severity] ?? 'secondary'}`;
-    span.textContent = severity;
-    return span;
+    return statusBadge(severity, SEVERITY_VARIANT[severity] ?? 'neutral');
 }
 
 /** 處理狀態徽章元素 */
 export function handlingBadge(status) {
-    const meta = HANDLING_STATUS[status] ?? { text: status ?? '未處理', variant: 'secondary' };
-    const span = document.createElement('span');
-    span.className = `badge text-bg-${meta.variant}`;
-    span.textContent = meta.text;
-    return span;
+    const meta = HANDLING_STATUS[status] ?? { text: status ?? '未處理', variant: 'neutral' };
+    return statusBadge(meta.text, meta.variant);
 }
 
 /** yyyy-MM-dd（不做隱式時區轉換：後端給的就是主機當地日期） */
