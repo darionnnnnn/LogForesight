@@ -189,7 +189,8 @@ public class NetIqSettings
     public string HostListSource { get; set; } = "Txt";
 
     /// <summary>
-    /// Txt 模式的清單目錄（相對路徑以執行檔目錄為基準）。
+    /// Txt 模式的清單目錄（相對路徑以資料根目錄 <see cref="StorageSettings.DataRoot"/> 為基準，
+    /// DataRoot 留空＝執行檔目錄，即既有行為）。
     /// **檔名即 Sentinel 歸屬**：`{Servers[].Name}.txt`，一台 Sentinel 一個檔案。
     /// </summary>
     public string HostListDirectory { get; set; } = "hosts";
@@ -221,9 +222,10 @@ public class StorageSettings
     public string Type { get; set; } = "Jsonl";
 
     /// <summary>
-    /// JSONL 後端的資料根目錄（history.txt／rules.json／export\／webdata\ 的所在）。
-    /// 空字串 = 執行檔目錄（批次 exe 的既有行為，AppContext.BaseDirectory）；
-    /// Web 是不同的執行檔目錄，必須明確指向批次的資料目錄才讀得到同一份資料。
+    /// JSONL 後端的資料根目錄（history.txt／rules.json／rule_seeds.json／suppressions.json／
+    /// permission_snapshot.json／export\／webdata\／hosts 清單的所在）。
+    /// **批次與 Web 都吃這個設定**：空字串 = 各自的執行檔目錄（批次的既有預設行為）；
+    /// 要共用資料時兩邊填同一個路徑——Web 與批次是不同的執行檔目錄，Web 留空會讀不到批次的資料。
     /// </summary>
     public string DataRoot { get; set; } = "";
 

@@ -21,6 +21,20 @@ public static class SelfTestRunner
 
         Console.WriteLine("=== LogForesight Self-Test（不寫入 history、不呼叫 AI、不讀取真實 Event Log）===\n");
 
+        // 資料根目錄與正式執行同一套解析（Storage.DataRoot，留空＝執行檔目錄）：
+        // selftest 的承諾是「驗證實際生效的規則」，DataRoot 指到別處時，實際生效的
+        // rules.json / suppressions.json 就在那裡——驗證執行檔目錄的副本等於驗證錯的檔案。
+        // 「不需要設定檔」的承諾不變：appsettings.json 不存在或壞掉時 AppSettings.Load
+        // 自帶預設值（＝執行檔目錄），任何讀取失敗也退回執行檔目錄，selftest 照常執行。
+        try
+        {
+            _dataRoot = AppSettings.Load().Storage.ResolveDataRoot();
+        }
+        catch
+        {
+            _dataRoot = AppContext.BaseDirectory;
+        }
+
         // 2026-07-21 規則外部化後：selftest 唯讀載入實際生效的規則（rules.json 存在就用它，
         // 不存在/載入失敗就用內建種子），驗證/初始化後，下面的規則層/趨勢層/關聯層檢查
         // 自動涵蓋「現場實際配置」而不只是程式碼內建種子——但絕不寫入任何檔案，
@@ -44,20 +58,26 @@ public static class SelfTestRunner
         4697, 4698, 4740, 4670, 4907, 4717, 4718, 4704, 4705, 4703, 4735, 4739, 4731, 4734
     };
 
+    /// <summary>驗證對象所在的資料根目錄，於 <see cref="Run"/> 開頭解析（預設執行檔目錄）</summary>
+    private static string _dataRoot = AppContext.BaseDirectory;
+
     private static void RunRuleLoadingChecks()
     {
         Console.WriteLine("-- 規則載入（唯讀，selftest 絕不寫入 rules.json/suppressions.json）--");
 
-        var store = new JsonKnownIssueRuleStore();
+        // 先以 File.Exists 判斷、檔案存在才建 store：store 的建構式會替不存在的目錄建目錄，
+        // DataRoot 指到尚未建立的資料夾時直接建 store 就是一次寫入副作用，違反 selftest 的承諾。
+        var rulesPath = Path.Combine(_dataRoot, "rules.json");
         List<KnownIssueRule> sourceRules;
 
-        if (!store.Exists)
+        if (!File.Exists(rulesPath))
         {
             sourceRules = KnownIssueSeed.CreateRules();
-            Console.WriteLine($"  驗證對象：內建種子（{store.Location} 不存在）");
+            Console.WriteLine($"  驗證對象：內建種子（{rulesPath} 不存在）");
         }
         else
         {
+            var store = new JsonKnownIssueRuleStore(rulesPath);
             var outcome = store.Load();
             if (outcome.Success)
             {
@@ -160,12 +180,15 @@ public static class SelfTestRunner
     {
         Console.WriteLine("\n-- 抑制設定（suppressions.json，選用功能）--");
 
-        var store = new JsonSuppressionStore();
-        if (!File.Exists(store.Location))
+        // 與規則載入同理：先 File.Exists 再建 store，避免建構式替不存在的 DataRoot 建目錄
+        var suppressionsPath = Path.Combine(_dataRoot, "suppressions.json");
+        if (!File.Exists(suppressionsPath))
         {
             Console.WriteLine("  未使用此功能（檔案不存在），略過。");
             return;
         }
+
+        var store = new JsonSuppressionStore(suppressionsPath);
 
         var all = store.LoadAll();
         var knownIds = KnownIssueCatalog.Rules.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
