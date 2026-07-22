@@ -15,23 +15,30 @@
     <div class="lf-layout">
         <aside class="lf-sidebar lf-no-print">
             <div class="lf-sidebar__brand">
-                LogForesight
-                <small>Windows 事件日誌預警</small>
+                <span class="lf-sidebar__brand-mark">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
+                </span>
+                <span>
+                    LogForesight
+                    <small>Windows 事件日誌預警</small>
+                </span>
             </div>
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>
             <div class="lf-sidebar__footer">
-                <div id="lf-current-user" class="mb-2 text-truncate"></div>
-                <button type="button" class="btn btn-sm btn-outline-light w-100" id="lf-logout">登出</button>
+                <div class="lf-sidebar__user">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#people"></use></svg>
+                    <span id="lf-current-user" class="text-truncate"></span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-light w-100" id="lf-logout">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#box-arrow-right"></use></svg>
+                    登出
+                </button>
             </div>
         </aside>
 
         <div class="lf-main">
             <header class="lf-topbar lf-no-print">
-                <nav aria-label="breadcrumb">
-                    <ol class="breadcrumb mb-0">
-                        <li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li>
-                    </ol>
-                </nav>
+                <h1 class="lf-topbar__title">@ViewData["Title"]</h1>
             </header>
 
             <main class="lf-content">

@@ -6,20 +6,39 @@
  */
 
 import { api, getCurrentUser, hasCapability } from './api.js';
+import { icon } from './ui.js';
 
-/** 選單定義：requires 為 null 代表所有已登入者可見 */
-const NAV_ITEMS = [
-    { href: '/', label: '總覽儀表板', requires: null },
-    { href: '/records', label: '問題查詢', requires: null },
-    { href: '/permission-changes', label: '權限異動待辦', requires: 'ConfirmPermission' },
-    { href: '/reports', label: '報表', requires: null },
-    { href: '/runs', label: '執行監控', requires: 'DevMonitor' },
-    { href: '/admin/rules', label: '規則維護', requires: 'Maintain' },
-    { href: '/admin/users', label: '使用者', requires: 'Maintain' },
-    { href: '/admin/hosts', label: '主機', requires: 'Maintain' },
-    { href: '/admin/groups', label: '群組與授權', requires: 'Maintain' },
-    { href: '/admin/imports', label: 'CSV 匯入', requires: 'Maintain' },
-    { href: '/audit', label: '操作紀錄', requires: 'ViewAudit' }
+/**
+ * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
+ * 避免管理與監控功能平鋪成一長串。空 section（例如一般使用者看不到任何系統管理項）不渲染標題。
+ */
+const NAV_SECTIONS = [
+    {
+        label: '監控作業',
+        items: [
+            { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
+            { href: '/records', label: '問題查詢', icon: 'search', requires: null },
+            { href: '/permission-changes', label: '權限異動待辦', icon: 'clipboard-check', requires: 'ConfirmPermission' },
+            { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
+        ]
+    },
+    {
+        label: '系統管理',
+        items: [
+            { href: '/admin/rules', label: '規則維護', icon: 'sliders', requires: 'Maintain' },
+            { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
+            { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
+            { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
+            { href: '/admin/imports', label: 'CSV 匯入', icon: 'upload', requires: 'Maintain' }
+        ]
+    },
+    {
+        label: '系統',
+        items: [
+            { href: '/runs', label: '執行監控', icon: 'activity', requires: 'DevMonitor' },
+            { href: '/audit', label: '操作紀錄', icon: 'journal-text', requires: 'ViewAudit' }
+        ]
+    }
 ];
 
 /**
@@ -39,6 +58,7 @@ async function init() {
     renderNav(user);
     renderCurrentUser(user);
     bindLogout();
+    initHelpPopovers();
 
     if (user.needsAdminSetup) {
         const { toast } = await import('./ui.js');
@@ -52,21 +72,47 @@ function renderNav(user) {
 
     const currentPath = location.pathname;
 
-    for (const item of NAV_ITEMS) {
-        if (item.requires && !hasCapability(user, item.requires)) continue;
-        if (user.isServerAdmin && BUSINESS_PAGES.includes(item.href)) continue;
+    for (const section of NAV_SECTIONS) {
+        const visible = section.items.filter(item => {
+            if (item.requires && !hasCapability(user, item.requires)) return false;
+            if (user.isServerAdmin && BUSINESS_PAGES.includes(item.href)) return false;
+            return true;
+        });
+        if (visible.length === 0) continue;   // 整組不可見就連標題一起省略
 
-        const link = document.createElement('a');
-        link.href = item.href;
-        link.className = 'lf-sidebar__link';
-        link.textContent = item.label;
+        const heading = document.createElement('div');
+        heading.className = 'lf-sidebar__section';
+        heading.textContent = section.label;
+        nav.appendChild(heading);
 
-        const isActive = item.href === '/'
-            ? currentPath === '/'
-            : currentPath.startsWith(item.href);
-        if (isActive) link.classList.add('is-active');
+        for (const item of visible) {
+            const link = document.createElement('a');
+            link.href = item.href;
+            link.className = 'lf-sidebar__link';
+            link.appendChild(icon(item.icon));
 
-        nav.appendChild(link);
+            const label = document.createElement('span');
+            label.textContent = item.label;
+            link.appendChild(label);
+
+            const isActive = item.href === '/'
+                ? currentPath === '/'
+                : currentPath.startsWith(item.href);
+            if (isActive) link.classList.add('is-active');
+
+            nav.appendChild(link);
+        }
+    }
+}
+
+/**
+ * 統一初始化頁面上的說明 popover（§8.6）——把大段 alert 文字收進 popover，
+ * 各頁只要在 cshtml 標 data-bs-toggle="popover" 即可，不需自己寫 inline script。
+ */
+function initHelpPopovers() {
+    const triggers = document.querySelectorAll('[data-bs-toggle="popover"]');
+    for (const el of triggers) {
+        new bootstrap.Popover(el, { trigger: 'focus', html: false });
     }
 }
 
