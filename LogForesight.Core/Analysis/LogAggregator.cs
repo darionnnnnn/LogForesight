@@ -64,8 +64,11 @@ public static class LogAggregator
 {
     private static readonly Regex Ipv4Regex = new(@"\b\d{1,3}(\.\d{1,3}){3}\b", RegexOptions.Compiled);
 
-    /// <summary>Security 事件訊息中帳號欄位的標籤（中英文系統皆支援）</summary>
-    private static readonly string[] AccountLabels = { "Account Name:", "帳戶名稱:", "帳戶名稱：" };
+    /// <summary>
+    /// Security 與 RDP 事件訊息中帳號欄位的標籤（中英文系統皆支援）。
+    /// "Account Name:" 為 Security 4625/4624；"User:" 為 TerminalServices 工作階段事件（21/25/1149）。
+    /// </summary>
+    private static readonly string[] AccountLabels = { "Account Name:", "帳戶名稱:", "帳戶名稱：", "User:", "使用者:", "使用者：" };
 
     /// <summary>
     /// 依 (LogName, Source, EventId, EntryType) 分組統計並用規則表分類。
@@ -95,7 +98,7 @@ public static class LogAggregator
                     LastSeen = g.Max(e => e.TimeGenerated).ToString("HH:mm"),
                     SampleMessages = distinctMessages.Take(3).ToList(),
                     DistinctMessageCount = distinctMessages.Count,
-                    KeyDetails = g.Key.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase)
+                    KeyDetails = ShouldExtractKeyDetails(g.Key.LogName)
                         ? ExtractSecurityDetails(g.Select(e => e.Message))
                         : null
                 };
@@ -147,9 +150,23 @@ public static class LogAggregator
                     }
 
                     var value = line[(idx + label.Length)..].Trim();
-                    if (value.Length > 0 && value != "-" && !value.EndsWith("$"))
+                    if (value.Length == 0 || value == "-" || value.EndsWith("$"))
                     {
-                        accounts.Add(value);
+                        continue;
+                    }
+
+                    accounts.Add(value);
+
+                    // RDP 的 "User:" 是 DOMAIN\user 格式，4625 的 "Account Name:" 常是純帳號——
+                    // 同時收錄 \ 後的純帳號，兩種來源的帳號才對得上（否則交集永遠落空）
+                    int slash = value.LastIndexOf('\\');
+                    if (slash >= 0 && slash + 1 < value.Length)
+                    {
+                        var bare = value[(slash + 1)..];
+                        if (bare.Length > 0 && !bare.EndsWith("$"))
+                        {
+                            accounts.Add(bare);
+                        }
                     }
                 }
             }
@@ -157,6 +174,15 @@ public static class LogAggregator
 
         return (accounts, ips);
     }
+
+    /// <summary>
+    /// 哪些頻道要抽取帳號/IP 彙總（KeyDetails）：Security 與兩個 RDP TerminalServices 頻道。
+    /// RDP 也要，因為【暴力破解→RDP 得手】的跨日比對靠歷史簽章裡存的 KeyDetails IP 集合對照。
+    /// </summary>
+    private static bool ShouldExtractKeyDetails(string logName) =>
+        logName.Equals(ChannelCatalog.SecurityChannel, StringComparison.OrdinalIgnoreCase) ||
+        logName.Equals(ChannelCatalog.RdpLsmChannel, StringComparison.OrdinalIgnoreCase) ||
+        logName.Equals(ChannelCatalog.RdpRcmChannel, StringComparison.OrdinalIgnoreCase);
 
     private static string? ExtractSecurityDetails(IEnumerable<string> rawMessages)
     {

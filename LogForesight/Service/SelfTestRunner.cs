@@ -85,6 +85,7 @@ public static class SelfTestRunner
             LegacySecurityWatchlistBaseline.All(id => KnownIssueCatalog.SecurityAuditWatchlist.Contains(id)),
             $"目前推導結果：{string.Join(",", KnownIssueCatalog.SecurityAuditWatchlist.OrderBy(x => x))}");
 
+        CheckChannelWatchlists();
         CheckCorrelationIdsExistInRules();
         RunSuppressionFileChecks();
     }
@@ -96,7 +97,10 @@ public static class SelfTestRunner
     {
         void CheckGroup(string name, int[] ids)
         {
-            var missing = ids.Where(id => KnownIssueCatalog.Rules.All(r => !r.MatchAllEventIds && !r.EventIds.Contains(id))).ToList();
+            // 只認「明確列出該 ID」的規則。舊判斷式對 MatchAllEventIds 規則的處理有誤：
+            // 只要存在任何一條 MatchAll 規則（如 WHEA-Logger），所有 ID 都被視為「已涵蓋」，
+            // 整個漂移檢查形同虛設——關聯層引用的 ID 本來就都該有對應的明確規則。
+            var missing = ids.Where(id => !KnownIssueCatalog.Rules.Any(r => r.EventIds.Contains(id))).ToList();
             Check($"關聯層事件群組 {name} 的所有 ID 都存在於目前規則表",
                 missing.Count == 0,
                 missing.Count > 0 ? $"規則表未涵蓋：{string.Join(",", missing)}" : "");
@@ -108,6 +112,46 @@ public static class SelfTestRunner
         CheckGroup("PermissionChangeIds", CorrelationAnalyzer.PermissionChangeIds);
         CheckGroup("DiskErrorIds", CorrelationAnalyzer.DiskErrorIds);
         CheckGroup("NtfsErrorIds", CorrelationAnalyzer.NtfsErrorIds);
+
+        // Defender 兩組的缺席分兩種：規則表整批沒有 Defender 規則（舊版 rules.json seed v1，
+        // 尚未 --import-rules）屬操作面情境，跳過並提示匯入（與 CheckChannelWatchlists 同一態度）；
+        // 有 Defender 規則卻缺個別 ID（使用者刪改了單條規則）才是真正的漂移，照樣判失敗。
+        if (KnownIssueCatalog.HasWatchlist("Microsoft-Windows-Windows Defender"))
+        {
+            CheckGroup("DefenderMalwareIds", CorrelationAnalyzer.DefenderMalwareIds);
+            CheckGroup("DefenderProtectionOffIds", CorrelationAnalyzer.DefenderProtectionOffIds);
+        }
+        else
+        {
+            Console.WriteLine("  ℹ Defender 規則未載入（rules.json 可能為舊版 seed），跳過 Defender 關聯 ID 對表——如需啟用請 --import-rules --apply");
+        }
+    }
+
+    /// <summary>Operational 頻道（Defender/RDP）的 watchlist 是否涵蓋預期事件——沒涵蓋代表對應規則
+    /// 缺失或被停用，該頻道的 Information 等級事件就收不進來（掃了卻沒偵測）。</summary>
+    private static void CheckChannelWatchlists()
+    {
+        void CheckWatchlist(string name, string probe, int[] expected)
+        {
+            // 頻道規則整批未載入（舊版 rules.json seed v1）時跳過而非判失敗——那是「頻道啟用但規則缺席」
+            // 的操作面情境（提示 --import-rules），不是確定性層壞掉。與抑制檢查同樣是 info-only 的降級路徑。
+            if (!KnownIssueCatalog.HasWatchlist(probe))
+            {
+                Console.WriteLine($"  ℹ {name} 頻道規則未載入（rules.json 可能為舊版 seed），跳過 watchlist 檢查——如需啟用請 --import-rules --apply");
+                return;
+            }
+            var missing = expected.Where(id => !KnownIssueCatalog.IsWatched(probe, id)).ToList();
+            Check($"{name} watchlist 涵蓋預期事件（{expected.Length} 項）",
+                missing.Count == 0,
+                missing.Count > 0 ? $"未涵蓋：{string.Join(",", missing)}" : "");
+        }
+
+        CheckWatchlist("Defender", "Microsoft-Windows-Windows Defender",
+            new[] { 1005, 1006, 1007, 1008, 1116, 1117, 1118, 1119, 5001, 5010, 5012, 2001, 2003, 2004 });
+        CheckWatchlist("RDP LocalSessionManager", "Microsoft-Windows-TerminalServices-LocalSessionManager",
+            new[] { 21, 24, 25 });
+        CheckWatchlist("RDP RemoteConnectionManager", "Microsoft-Windows-TerminalServices-RemoteConnectionManager",
+            new[] { 1149 });
     }
 
     /// <summary>抑制設定是可選功能，不存在時略過；存在時唯讀逐條檢視，只印資訊不影響 pass/fail——
@@ -163,15 +207,10 @@ public static class SelfTestRunner
         {
             var eventId = rule.EventIds.Length > 0 ? rule.EventIds[0] : 9999;
             var source = rule.SourcePattern;
-            var entryType = source.Equals("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
-                             eventId is 4625 or 4740
-                ? EventLogEntryType.FailureAudit
-                : source.Equals("Security-Auditing", StringComparison.OrdinalIgnoreCase)
-                    ? EventLogEntryType.SuccessAudit
-                    : EventLogEntryType.Error;
+            var (logName, entryType) = InferChannel(source, eventId);
 
             // 剛好達到門檻：完整嚴重度
-            var atThreshold = MakeEntries(rule.CountThreshold, source, eventId, entryType);
+            var atThreshold = MakeEntries(rule.CountThreshold, source, eventId, entryType, logName);
             var sigAtThreshold = LogAggregator.Aggregate(atThreshold)
                 .FirstOrDefault(s => s.Source == source && s.EventId == eventId);
             Check($"{source} #{eventId} 達門檻(x{rule.CountThreshold}) → {rule.Category}/{rule.Severity}",
@@ -181,7 +220,7 @@ public static class SelfTestRunner
             // 未達門檻時應降一級（僅門檻 > 1 的規則才有意義）
             if (rule.CountThreshold > 1)
             {
-                var belowThreshold = MakeEntries(1, source, eventId, entryType);
+                var belowThreshold = MakeEntries(1, source, eventId, entryType, logName);
                 var sigBelow = LogAggregator.Aggregate(belowThreshold)
                     .FirstOrDefault(s => s.Source == source && s.EventId == eventId);
                 var expected = rule.Severity == IssueSeverity.Low ? IssueSeverity.Low : rule.Severity - 1;
@@ -192,12 +231,42 @@ public static class SelfTestRunner
         }
     }
 
-    private static List<EventLogEntryData> MakeEntries(int count, string source, int eventId, EventLogEntryType entryType)
+    /// <summary>
+    /// 依規則來源推斷合成事件的頻道與 EntryType，讓 selftest 產生的事件貼近真實：
+    /// Security-Auditing 依 EventId 分 Failure/Success 稽核；Defender/RDP 是 Operational 頻道的
+    /// Information 等級事件；其餘走 System 的 Error。分類（Classify）本身與 EntryType 無關，
+    /// 但頻道正確能讓涉及頻道判斷的邏輯（如 KeyDetails 抽取）在 selftest 中也走對路徑。
+    /// </summary>
+    private static (string LogName, EventLogEntryType EntryType) InferChannel(string source, int eventId)
+    {
+        bool isSecurityAuditing = source.Equals("Security-Auditing", StringComparison.OrdinalIgnoreCase);
+        if (isSecurityAuditing)
+        {
+            var type = eventId is 4625 or 4740 ? EventLogEntryType.FailureAudit : EventLogEntryType.SuccessAudit;
+            return ("Security", type);
+        }
+        if (source.Contains("Windows Defender", StringComparison.OrdinalIgnoreCase))
+        {
+            return (ChannelCatalog.DefenderChannel, EventLogEntryType.Information);
+        }
+        if (source.Contains("TerminalServices-LocalSessionManager", StringComparison.OrdinalIgnoreCase))
+        {
+            return (ChannelCatalog.RdpLsmChannel, EventLogEntryType.Information);
+        }
+        if (source.Contains("TerminalServices-RemoteConnectionManager", StringComparison.OrdinalIgnoreCase))
+        {
+            return (ChannelCatalog.RdpRcmChannel, EventLogEntryType.Information);
+        }
+        return ("System", EventLogEntryType.Error);
+    }
+
+    private static List<EventLogEntryData> MakeEntries(int count, string source, int eventId, EventLogEntryType entryType,
+        string logName = "System")
         => Enumerable.Range(0, count)
             .Select(i => new EventLogEntryData
             {
                 TimeGenerated = DateTime.Today.AddMinutes(i),
-                LogName = "System",
+                LogName = logName,
                 Source = source,
                 EventId = eventId,
                 EntryType = entryType,
@@ -301,11 +370,11 @@ public static class SelfTestRunner
         }
     }
 
-    // ── 關聯層：13 種模式各自的最小觸發組合 ──────────────────────────────────
+    // ── 關聯層：每種模式各自的最小觸發組合，另含防誤報的負向案例 ──────────────────────
 
     private static void RunCorrelationLayerChecks()
     {
-        Console.WriteLine("\n-- 關聯層（CorrelationAnalyzer，共 12 種模式）--");
+        Console.WriteLine("\n-- 關聯層（CorrelationAnalyzer）--");
 
         CheckPattern("【入侵鏈】", new()
         {
@@ -380,19 +449,92 @@ public static class SelfTestRunner
         CheckPattern("【儲存持續劣化】",
             new() { Sig("System", "disk", 153, 5, IssueSeverity.Critical, IssueCategory.Storage) },
             history: new() { yesterdayStorage });
+
+        // ── Defender 關聯 ──
+        CheckPattern("【防護遭關閉→惡意程式】", new()
+        {
+            Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 5001, 1, IssueSeverity.High, IssueCategory.Security),
+            Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+
+        CheckPattern("【惡意程式→持久化】", new()
+        {
+            Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security),
+            Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+
+        var yesterdayProtectionOff = HistoryDay(DateTime.Today.AddDays(-1), "Microsoft-Windows-Windows Defender", 5001, 1,
+            IssueSeverity.High, ChannelCatalog.DefenderChannel, IssueCategory.Security);
+        CheckPattern("【防護遭關閉→惡意程式】(跨日)",
+            new() { Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security) },
+            history: new() { yesterdayProtectionOff },
+            expectLabel: "【防護遭關閉→惡意程式】");
+
+        // ── RDP：破解得手含 RDP 註記，以及跨日暴力破解→RDP 得手（需 IP 交集）──
+        CheckPattern("【破解得手】(含RDP)",
+            new() { Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security) },
+            match: new SuccessfulLogonMatch { MatchedIps = new() { "203.0.113.9" }, IncludesRdp = true },
+            expectLabel: "【破解得手】", expectSubstring: "含 RDP 工作階段登入");
+
+        var yesterdayBruteWithIp = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7");
+        CheckPattern("【暴力破解→RDP 得手】",
+            new() { Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+                IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7") },
+            history: new() { yesterdayBruteWithIp });
+
+        // ── 防誤報負向案例：正常 RDP 使用不得單獨觸發任何關聯 ──
+        CheckNoFinding("RDP 登入單獨出現不觸發任何關聯（正常遠端維運）", new()
+        {
+            Sig(ChannelCatalog.RdpLsmChannel, "Microsoft-Windows-TerminalServices-LocalSessionManager", 21, 30, IssueSeverity.Low, IssueCategory.Security),
+            Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 30, IssueSeverity.Low, IssueCategory.Security)
+        });
+
+        CheckNoFinding("RDP 登入＋帳號建立但無暴力破解錨點不觸發（管理員 RDP 建帳號屬日常維運）", new()
+        {
+            Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 5, IssueSeverity.Low, IssueCategory.Security),
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        });
+
+        // 昨日暴力破解 IP 與今日 RDP IP 不重疊 → 不觸發【暴力破解→RDP 得手】（IP 無交集不臆測）
+        var yesterdayBruteOtherIp = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 15, IssueSeverity.High,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(1個): 198.51.100.2");
+        CheckNoFinding("昨日暴力破解 IP 與今日 RDP IP 不重疊時不觸發（無交集不臆測）", new()
+            {
+                Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+                    IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7")
+            },
+            history: new() { yesterdayBruteOtherIp },
+            onlyPattern: "【暴力破解→RDP 得手】");
     }
 
-    private static void CheckPattern(string pattern, List<LogIssueSignature> issues,
-        List<DailyAnalysisRecord>? history = null, SuccessfulLogonMatch? match = null)
+    private static void CheckPattern(string name, List<LogIssueSignature> issues,
+        List<DailyAnalysisRecord>? history = null, SuccessfulLogonMatch? match = null,
+        string? expectLabel = null, string? expectSubstring = null)
     {
         var findings = CorrelationAnalyzer.Detect(issues, history ?? new List<DailyAnalysisRecord>(), DateTime.Today, match);
-        var hit = findings.Any(f => f.Description.Contains(pattern));
+        var label = expectLabel ?? name;
+        var hit = findings.Any(f => f.Description.Contains(label) &&
+                                    (expectSubstring == null || f.Description.Contains(expectSubstring)));
         var summary = string.Join("、", findings.Select(f => f.Description.Split('】')[0] + "】"));
-        Check($"關聯模式 {pattern} 觸發", hit, hit ? "" : $"實際觸發：[{summary}]");
+        Check($"關聯模式 {name} 觸發", hit, hit ? "" : $"實際觸發：[{summary}]");
+    }
+
+    /// <summary>防誤報負向斷言：確認某組合「不」觸發關聯。onlyPattern 為 null 時要求完全無 finding；
+    /// 給定時只要求該特定模式未觸發（允許其他合理模式存在）。</summary>
+    private static void CheckNoFinding(string name, List<LogIssueSignature> issues,
+        List<DailyAnalysisRecord>? history = null, SuccessfulLogonMatch? match = null, string? onlyPattern = null)
+    {
+        var findings = CorrelationAnalyzer.Detect(issues, history ?? new List<DailyAnalysisRecord>(), DateTime.Today, match);
+        var clean = onlyPattern == null
+            ? findings.Count == 0
+            : !findings.Any(f => f.Description.Contains(onlyPattern));
+        var summary = string.Join("、", findings.Select(f => f.Description.Split('】')[0] + "】"));
+        Check($"防誤報：{name}", clean, clean ? "" : $"意外觸發：[{summary}]");
     }
 
     private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
-        IssueCategory category = IssueCategory.Other)
+        IssueCategory category = IssueCategory.Other, string? keyDetails = null)
         => new()
         {
             LogName = logName,
@@ -403,15 +545,16 @@ public static class SelfTestRunner
             Severity = severity,
             Category = category,
             FirstSeen = "00:00",
-            LastSeen = "23:59"
+            LastSeen = "23:59",
+            KeyDetails = keyDetails
         };
 
     private static DailyAnalysisRecord HistoryDay(DateTime date, string source, int eventId, int count, IssueSeverity severity,
-        string logName = "System", IssueCategory category = IssueCategory.Other)
+        string logName = "System", IssueCategory category = IssueCategory.Other, string? keyDetails = null)
         => new()
         {
             Date = date.Date,
             RiskLevel = "低",
-            TopIssues = new List<LogIssueSignature> { Sig(logName, source, eventId, count, severity, category) }
+            TopIssues = new List<LogIssueSignature> { Sig(logName, source, eventId, count, severity, category, keyDetails) }
         };
 }

@@ -116,6 +116,7 @@ public class RecordStorageShaperTests
         var original = new DailyAnalysisRecord
         {
             Date = new DateTime(2026, 7, 20),
+            HostId = 42,
             Host = "SRV-REFLECT",
             ErrorCount = 3,
             WarningCount = 2,
@@ -136,8 +137,21 @@ public class RecordStorageShaperTests
             UncoveredChecks = new List<string> { "uncovered" },
             WeeklyCheckup = new WeeklyCheckupResult { CheckupDate = new DateTime(2026, 7, 20), HasFindings = true, Conclusion = "wc" },
             DeepDives = new List<CategoryDeepDive> { new() { Category = IssueCategory.Storage } },
+            ChannelsRead = new List<string> { "System", "Security" },
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 1, SampleMessages = new() { "x" } } }
         };
+
+        // fixture 自我檢查：每個頂層欄位都必須被上面設成「非預設值」，否則下面的比對對該欄位是盲的
+        // （original 與 shaped 兩邊都是預設值，漏複製也比不出差異——ChannelsRead 曾因此漏網，
+        //  見 2026-07-22 EventLogReader 遷移的修正）。新增欄位忘了加進這個 fixture 會在這裡先失敗。
+        var defaults = new DailyAnalysisRecord();
+        foreach (var prop in typeof(DailyAnalysisRecord).GetProperties())
+        {
+            var fixtureValue = prop.GetValue(original);
+            var defaultValue = prop.GetValue(defaults);
+            Assert.False(Equals(fixtureValue, defaultValue),
+                $"fixture 的 {prop.Name} 仍是預設值——請在本測試的 original 物件裡設定非預設值，欄位保留比對才有效力");
+        }
 
         var shaped = RecordStorageShaper.ForStorage(original);
 

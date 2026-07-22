@@ -164,7 +164,11 @@ reports(id, kind, host_id, date, content)
 
 1. **4625→4624 破解得手關聯**：當日 4625 ≥10 時回撈當日 4624，比對相同帳號/IP 的成功登入 → 新關聯模式【破解得手】，Critical。（4624 平時不收，條件式撈取避免 SuccessAudit 量爆炸。）
 2. **資料完整性標記**：倒序掃描記下實際可回溯的最早事件時間；早於它的回補日在 history 標 `DataIncomplete`，趨勢基準排除這些日子，報告註明。
-3. 候選（後續）：4672 特權登入、4648 明示認證；4688 與 Operational 頻道（Defender/RDP/PowerShell）走 Sentinel 收錄面處理。
+3. 候選（後續）：4672 特權登入、4648 明示認證；4688 走 Sentinel 收錄面處理。
+   - **更新（2026-07，已完成）**：Defender / RDP 的 Operational 頻道原規劃走 Sentinel，改為
+     **在本機直接以 `EventLogReader` 讀取**（見 README「EventLogReader 遷移＋Operational 頻道擴充」）。
+     已納入 Defender（惡意程式偵測/防護遭關閉，seed v2 規則）與 RDP TerminalServices（Low 收集規則），
+     並新增【暴力破解→RDP 得手】【防護遭關閉→惡意程式】【惡意程式→持久化】關聯。PowerShell 頻道仍待評估。
 
 ## 驗證機制（Phase 0）
 

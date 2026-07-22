@@ -15,6 +15,10 @@ public class SuccessfulLogonMatch
 {
     public List<string> MatchedAccounts { get; init; } = new();
     public List<string> MatchedIps { get; init; } = new();
+
+    /// <summary>成功登入面是否包含 RDP 工作階段登入（LSM 21/25、RCM 1149）而不只是 4624——用於在
+    /// 【破解得手】描述中附註「含 RDP 工作階段登入」，讓調查者知道得手途徑可能是遠端桌面。</summary>
+    public bool IncludesRdp { get; init; }
 }
 
 /// <summary>
@@ -35,6 +39,8 @@ public static class CorrelationAnalyzer
     internal static readonly int[] PermissionChangeIds = { 4670, 4703, 4704, 4705, 4717, 4718 };
     internal static readonly int[] DiskErrorIds = { 7, 11, 51, 52, 153 };
     internal static readonly int[] NtfsErrorIds = { 55, 98, 130, 140, 141 };
+    internal static readonly int[] DefenderMalwareIds = { 1006, 1116, 1007, 1117, 1008, 1118, 1119 };
+    internal static readonly int[] DefenderProtectionOffIds = { 5001, 5010, 5012 };
 
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
         List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)
@@ -58,6 +64,12 @@ public static class CorrelationAnalyzer
         var bruteForce = Find("Security-Auditing", 4625);
         bool heavyBruteForce = bruteForce != null && bruteForce.Count >= 10;
         var accountChange = Find("Security-Auditing", AccountChangeIds);
+
+        // 今日的 RDP 成功登入簽章（LSM 21/25、RCM 1149）——本身不是告警，只在與攻擊錨點交集時才成為訊號
+        var rdpSuccess = issues.Where(i =>
+            (i.Source.Contains("TerminalServices-LocalSessionManager", StringComparison.OrdinalIgnoreCase) && (i.EventId is 21 or 25)) ||
+            (i.Source.Contains("TerminalServices-RemoteConnectionManager", StringComparison.OrdinalIgnoreCase) && i.EventId == 1149))
+            .ToList();
         var newService = Find("Service Control Manager", 7045) ?? Find("Security-Auditing", PersistenceSecurityIds);
 
         if (heavyBruteForce && accountChange != null)
@@ -81,11 +93,12 @@ public static class CorrelationAnalyzer
             var ipsText = successfulLogonMatch.MatchedIps.Count > 0
                 ? $"來源IP：{string.Join("、", successfulLogonMatch.MatchedIps.Take(5))}" : "";
             var matchedText = string.Join("；", new[] { accountsText, ipsText }.Where(s => s.Length > 0));
+            var rdpNote = successfulLogonMatch.IncludesRdp ? "（含 RDP 工作階段登入）" : "";
 
             findings.Add(new CorrelationFinding
             {
                 Severity = IssueSeverity.Critical,
-                Description = $"【破解得手】同日大量登入失敗（x{bruteForce!.Count}）後，相同帳號/IP 出現成功登入（{matchedText}）" +
+                Description = $"【破解得手】同日大量登入失敗（x{bruteForce!.Count}）後，相同帳號/IP 出現成功登入{rdpNote}（{matchedText}）" +
                               "——暴力破解極可能已得手，應立即鎖定該帳號、強制改密碼並全面稽查其後續活動"
             });
         }
@@ -120,6 +133,37 @@ public static class CorrelationAnalyzer
                 Severity = IssueSeverity.Critical,
                 Description = $"【提權→植入】權限/特權異動（EventId {permissionChange.EventId}）與新服務/排程任務同日出現" +
                               "——先取得權限再植入執行體的攻擊推進模式"
+            });
+        }
+
+        // ── 安全：Microsoft Defender 關聯（同日）──────────────────────────
+        // Defender 事件天生低誤報，但單獨的 5001（管理員關防護）只走規則層 High、不觸發關聯——
+        // 要有「防護關閉 + 惡意程式/攻擊訊號」的組合才升級為關聯，避免把正常維運誤判成攻擊。
+
+        var defenderMalware = Find("Windows Defender", DefenderMalwareIds);
+        var defenderProtectionOff = Find("Windows Defender", DefenderProtectionOffIds);
+
+        if (defenderProtectionOff != null && (defenderMalware != null || heavyBruteForce || accountChange != null))
+        {
+            var trigger = defenderMalware != null ? "同日偵測到惡意程式"
+                : heavyBruteForce ? "同日出現大量登入失敗"
+                : "同日出現帳號建立/提權操作";
+            findings.Add(new CorrelationFinding
+            {
+                Severity = IssueSeverity.Critical,
+                Description = $"【防護遭關閉→惡意程式】防毒防護被關閉/停用（EventId {defenderProtectionOff.EventId}）且{trigger}" +
+                              "——入侵者常在植入惡意程式前先解除防護，應立即重啟防護、全機掃描並調查關閉來源"
+            });
+        }
+
+        if (defenderMalware != null && newService != null)
+        {
+            findings.Add(new CorrelationFinding
+            {
+                Severity = IssueSeverity.Critical,
+                Description = $"【惡意程式→持久化】偵測到惡意程式（EventId {defenderMalware.EventId}）與新服務/排程任務" +
+                              $"同日出現（{newService.Source} EventId {newService.EventId}）——惡意程式建立持久化立足點的典型組合，" +
+                              "請確認該服務/任務的執行檔來源與簽章，並確認惡意程式已徹底清除"
             });
         }
 
@@ -231,10 +275,57 @@ public static class CorrelationAnalyzer
                                   "硬碟剩餘壽命可能以天計，備份與更換不應再等待"
                 });
             }
+
+            bool yesterdayProtectionOff = previousDay.TopIssues.Any(i =>
+                i.Source.Contains("Windows Defender", StringComparison.OrdinalIgnoreCase) &&
+                DefenderProtectionOffIds.Contains(i.EventId));
+            if (yesterdayProtectionOff && defenderMalware != null)
+            {
+                findings.Add(new CorrelationFinding
+                {
+                    Severity = IssueSeverity.Critical,
+                    Description = "【防護遭關閉→惡意程式】昨日防毒防護被關閉、今日偵測到惡意程式——攻擊者先解除防護、" +
+                                  "隔日植入惡意程式的跨日推進模式，應立即隔離主機並全面稽查"
+                });
+            }
+
+            // 【暴力破解→RDP 得手】需錨點：昨日大量登入失敗的來源 IP ∩ 今日 RDP 成功登入的來源 IP 非空。
+            // 純以 IP 交集判定（跨日只有歷史簽章的 KeyDetails 可用），解析不到 IP 就不觸發、不臆測——
+            // 正常的每日 RDP 維運不會與昨日暴力破解的 IP 重疊，因此不會誤報。
+            if (rdpSuccess.Count > 0)
+            {
+                var yesterdayBruteIps = previousDay.TopIssues
+                    .Where(i => i.EventId == 4625 && i.Count >= 10 && i.KeyDetails != null)
+                    .SelectMany(i => ExtractIps(i.KeyDetails!))
+                    .ToHashSet();
+                var todayRdpIps = rdpSuccess
+                    .Where(i => i.KeyDetails != null)
+                    .SelectMany(i => ExtractIps(i.KeyDetails!))
+                    .ToHashSet();
+                var overlapIps = yesterdayBruteIps.Intersect(todayRdpIps).ToList();
+
+                if (overlapIps.Count > 0)
+                {
+                    findings.Add(new CorrelationFinding
+                    {
+                        Severity = IssueSeverity.Critical,
+                        Description = $"【暴力破解→RDP 得手】昨日大量登入失敗的來源 IP，今日以遠端桌面成功登入" +
+                                      $"（來源IP：{string.Join("、", overlapIps.Take(5))}）——暴力破解跨日以 RDP 得手的跡象，" +
+                                      "應立即鎖定該來源、檢查其遠端工作階段的所有活動並強制改密碼"
+                    });
+                }
+            }
         }
 
         return findings;
     }
+
+    private static readonly System.Text.RegularExpressions.Regex Ipv4Regex =
+        new(@"\b\d{1,3}(\.\d{1,3}){3}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>從簽章的 KeyDetails 字串（如「來源IP(2個): 1.2.3.4, 5.6.7.8」）解析出 IPv4 位址，供跨日 IP 交集比對。</summary>
+    private static IEnumerable<string> ExtractIps(string keyDetails) =>
+        Ipv4Regex.Matches(keyDetails).Select(m => m.Value);
 
     /// <summary>依 FirstSeen (HH:mm) 判斷 later 是否在 earlier 之後開始發生，無法解析時回傳 false（不做臆測）</summary>
     private static bool HappenedAfter(LogIssueSignature later, LogIssueSignature earlier) =>

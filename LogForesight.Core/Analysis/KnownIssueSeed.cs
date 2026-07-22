@@ -9,8 +9,10 @@ namespace LogForesight;
 public static class KnownIssueSeed
 {
     /// <summary>種子版本：每次調整 CreateRules() 的內容（新增規則、修訂知識庫文字）就遞增，
-    /// `--import-rules` 依此判斷 rules.json 是否落後於程式內建的種子。</summary>
-    public const int Version = 1;
+    /// `--import-rules` 依此判斷 rules.json 是否落後於程式內建的種子。
+    /// v2（EventLogReader 遷移）：新增 Microsoft Defender 與 RDP TerminalServices 兩類 Operational
+    /// 頻道的規則（見 docs/RULES-PLAN.md 與 README「監控的危險訊號清單」）。</summary>
+    public const int Version = 2;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
@@ -423,5 +425,103 @@ public static class KnownIssueSeed
                 Impact = "本機群組通常影響範圍侷限於單一主機，但仍可能被用來規避既有的權限控管設計。",
                 LikelyCauses = new[] { "管理員的本機帳戶管理作業", "入侵者建立群組作為權限管理或立足點的一部分" },
                 NextSteps = new[] { "確認是否為已知的本機管理操作", "非預期時檢查該群組的成員與被賦予的權限" } },
+
+        // ── Microsoft Defender（Operational 頻道，2026-07 EventLogReader 遷移後可讀）─────────
+        // Defender 事件天生低誤報：偵測到惡意程式本身就是明確訊號。分級的關鍵在「已處置 vs 處置失敗」
+        // 與「防護被關閉」——不做「1116 之後沒看到 1117」這類缺席推論（資料不完整時會誤報）。
+        new() { Id = "builtin-defender-malware-detected-1006-1116", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 1006, 1116 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.High,
+                Description = "Microsoft Defender 偵測到惡意程式（1006/1116），應確認處置結果與感染來源",
+                PlainExplanation = "防毒軟體在這台伺服器上發現了惡意程式。",
+                Impact = "惡意程式可能竊取資料、加密勒索、作為入侵者的立足點，或橫向擴散到其他主機。",
+                LikelyCauses = new[] { "使用者下載或執行了受感染的檔案", "入侵者植入的惡意程式或後門",
+                    "受感染的隨身碟／網路共享", "既有感染在掃描時才被發現" },
+                NextSteps = new[] { "確認 Defender 是否已成功隔離/移除（對應 1007/1117 處置事件）",
+                    "查明惡意程式的檔案路徑與來源，評估感染範圍", "若處置失敗（1008/1118/1119）應立即隔離該主機",
+                    "檢查同時段是否有帳號建立/提權/新服務等入侵跡象" } },
+        new() { Id = "builtin-defender-malware-handled-1007-1117", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 1007, 1117 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.Medium,
+                Description = "Microsoft Defender 已對惡意程式採取處置（1007/1117，如隔離/移除）",
+                PlainExplanation = "防毒軟體已對偵測到的惡意程式採取處置動作（例如隔離或移除）。",
+                Impact = "已處置代表立即威脅降低，但仍需查明感染來源，避免同一途徑再次被感染。",
+                LikelyCauses = new[] { "Defender 對先前偵測到的惡意程式自動採取隔離/清除", "使用者或管理員手動處置" },
+                NextSteps = new[] { "確認處置確實成功（狀態非失敗）", "追查感染來源與範圍，處理根因而非只清除結果",
+                    "留意是否有其他主機出現同一惡意程式" } },
+        new() { Id = "builtin-defender-malware-action-failed-1008-1118-1119", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 1008, 1118, 1119 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.Critical,
+                Description = "Microsoft Defender 對惡意程式的處置失敗（1008/1118/1119），惡意程式可能仍活躍",
+                PlainExplanation = "防毒軟體嘗試處置惡意程式但失敗了，威脅可能仍然存在於系統中。",
+                Impact = "處置失敗代表惡意程式可能仍在執行或潛伏，持續造成危害或作為入侵跳板。",
+                LikelyCauses = new[] { "惡意程式主動抵抗移除（如常駐於執行中的程序）",
+                    "檔案被鎖定或權限不足", "惡意程式已取得較高權限、干擾防毒運作" },
+                NextSteps = new[] { "立即將該主機從網路隔離，防止擴散", "以離線掃描工具或重開機至安全模式再次處置",
+                    "確認惡意程式的持久化位置（服務、排程、登錄）", "評估是否需要重建系統，並全面稽查該主機的帳號與活動" } },
+        new() { Id = "builtin-defender-rtp-disabled-5001", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 5001 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.High,
+                Description = "Microsoft Defender 即時防護被關閉（5001），可能是入侵者為植入惡意程式而先解除防護",
+                PlainExplanation = "防毒軟體的即時防護被關閉了，這台伺服器目前處於沒有即時防護的狀態。",
+                Impact = "即時防護關閉期間，惡意程式可以不受阻擋地執行；入侵者常在植入惡意程式前先關閉防護。",
+                LikelyCauses = new[] { "管理員或安裝程式為相容性暫時關閉（多數情況屬正常維運）",
+                    "群組原則或第三方防毒接管", "入侵者為規避偵測而主動關閉防護" },
+                NextSteps = new[] { "確認關閉是否為已知的授權操作與執行者", "非預期時立即重新啟用即時防護並全機掃描",
+                    "檢查關閉前後是否出現惡意程式偵測或其他入侵跡象", "確認是否有第三方防毒接管（屬正常，見 5010/5012）" } },
+        new() { Id = "builtin-defender-av-disabled-5010-5012", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 5010, 5012 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.Medium,
+                Description = "Microsoft Defender 的防毒/掃描被停用（5010/5012），需確認是否為第三方防毒接管",
+                PlainExplanation = "Defender 的病毒掃描或防毒功能被停用了。",
+                Impact = "若沒有其他防毒接手，這台主機將失去惡意程式防護；若是第三方防毒接管則屬正常。",
+                LikelyCauses = new[] { "安裝了第三方防毒軟體，Defender 自動退居被動（正常情境）",
+                    "管理員或原則主動停用", "入侵者停用防毒以規避偵測" },
+                NextSteps = new[] { "確認是否有第三方防毒正在運作、防護未中斷", "非預期停用時重新啟用並掃描",
+                    "確認停用是否對應到已知的軟體安裝或原則變更" } },
+        new() { Id = "builtin-defender-scan-failed-1005", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 1005 },
+                Category = IssueCategory.Config, Severity = IssueSeverity.Medium,
+                Description = "Microsoft Defender 掃描失敗（1005），防護涵蓋率可能不完整",
+                PlainExplanation = "防毒軟體的掃描沒有正常完成。",
+                Impact = "掃描失敗代表部分檔案未被檢查，潛在的惡意程式可能因此沒被發現。",
+                LikelyCauses = new[] { "掃描過程被中斷（關機、資源不足）", "檔案被鎖定或損毀導致掃描出錯",
+                    "Defender 元件或病毒碼異常" },
+                NextSteps = new[] { "手動重新執行一次完整掃描確認能否完成", "檢查是否有系統資源不足或磁碟錯誤",
+                    "持續失敗時確認 Defender 服務與病毒碼狀態" } },
+        new() { Id = "builtin-defender-update-failed-200x", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "Windows Defender", EventIds = new[] { 2001, 2003, 2004 },
+                Category = IssueCategory.Config, Severity = IssueSeverity.Medium, CountThreshold = 3,
+                Description = "Microsoft Defender 病毒碼/引擎更新失敗（2001/2003/2004），持續失敗會使防護過時",
+                PlainExplanation = "防毒軟體的病毒碼或引擎更新失敗了。",
+                Impact = "病毒碼過時會讓防毒無法辨識新型惡意程式，防護等於漏洞越來越大。",
+                LikelyCauses = new[] { "網路連線問題無法連上更新伺服器", "更新來源設定錯誤或代理伺服器阻擋",
+                    "磁碟空間不足或權限問題" },
+                NextSteps = new[] { "確認主機能否連上 Windows Update／WSUS／更新來源",
+                    "手動觸發一次病毒碼更新確認能否成功", "偶發一兩次多為暫時性網路問題，連續失敗才需深入排查" } },
+
+        // ── RDP 遠端桌面（TerminalServices Operational 頻道）─────────────────
+        // **這兩條規則刻意設為 Low：正常遠端桌面使用即會產生，本身不是告警訊號。** 收集目的是提供
+        // 關聯分析（【破解得手】【暴力破解→RDP 得手】需要成功登入的帳號/IP）與趨勢基準。Low 不參與
+        // 風險判定（ComputeRuleBasedRisk 只看 High/Critical）、不觸發「首次出現」告警（門檻 ≥High），
+        // 所以日常 RDP 維運、重複登入、新員工首次登入都不會產生任何告警——入侵訊號一律經由「有錨點」
+        // 的確定性關聯（暴力破解達門檻 + 帳號/IP 交集）才成立，見 CorrelationAnalyzer。
+        new() { Id = "builtin-rdp-session-events-21-24-25", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "TerminalServices-LocalSessionManager", EventIds = new[] { 21, 24, 25 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.Low,
+                Description = "遠端桌面工作階段事件（登入/中斷/重連）——正常遠端使用即會產生，收集供關聯與趨勢分析，本身非告警",
+                PlainExplanation = "有人透過遠端桌面登入、中斷或重新連線這台伺服器。日常遠端維運會正常產生這些紀錄。",
+                Impact = "單筆事件屬正常運作；只有在與大量登入失敗等攻擊訊號的帳號/IP 交集時，才代表可能是入侵得手。",
+                LikelyCauses = new[] { "管理員或使用者的正常遠端桌面連線", "自動化工具或跳板機的遠端工作階段" },
+                NextSteps = new[] { "正常情況無需處理", "僅在同時出現大量登入失敗、且帳號/IP 相符時才需視為入侵得手調查" } },
+        new() { Id = "builtin-rdp-auth-success-1149", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
+                SourcePattern = "TerminalServices-RemoteConnectionManager", EventIds = new[] { 1149 },
+                Category = IssueCategory.Security, Severity = IssueSeverity.Low,
+                Description = "遠端桌面驗證成功（1149）——正常遠端使用即會產生，收集供關聯與趨勢分析，本身非告警",
+                PlainExplanation = "有人通過遠端桌面的身分驗證、成功連上這台伺服器。日常遠端維運會正常產生此紀錄。",
+                Impact = "單筆事件屬正常運作；只有在與同組帳號/IP 的大量登入失敗交集時，才代表暴力破解可能已得手。",
+                LikelyCauses = new[] { "管理員或使用者通過遠端桌面驗證", "自動化或跳板機的遠端連線" },
+                NextSteps = new[] { "正常情況無需處理", "僅在與大量登入失敗的帳號/IP 相符時才需視為破解得手調查" } },
+
     };
 }

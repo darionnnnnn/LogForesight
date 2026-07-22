@@ -147,6 +147,17 @@ public class AnalysisSettings
     /// 錯過（機器關機、排程失敗）時會在下次執行自動補跑，機制不變。單機情境下等同「每 N 天做一次」。
     /// </summary>
     public int CheckupIntervalDays { get; set; } = 7;
+
+    /// <summary>
+    /// 要掃描的 Event Log 頻道全名清單。**空清單 = 使用預設六頻道**
+    /// （System / Application / Security 三個傳統日誌，加上 Microsoft Defender 與 RDP TerminalServices
+    /// 兩類 Operational 頻道，見 <see cref="ChannelCatalog.Defaults"/>）。
+    ///
+    /// 主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「頻道不存在／不適用」，
+    /// 不會當成錯誤。要縮小或擴充掃描範圍時在此列出頻道全名，例如：
+    /// ["System", "Application", "Security", "Microsoft-Windows-Windows Defender/Operational"]。
+    /// </summary>
+    public List<string> Channels { get; set; } = new();
 }
 
 /// <summary>

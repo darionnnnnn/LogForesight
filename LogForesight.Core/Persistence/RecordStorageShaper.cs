@@ -43,6 +43,8 @@ public static class RecordStorageShaper
             DataIncomplete = record.DataIncomplete,
             SecurityLogAvailable = record.SecurityLogAvailable,
             UncoveredChecks = record.UncoveredChecks,
+            ChannelsRead = record.ChannelsRead,  // 趨勢基準的頻道覆蓋判斷（ChannelCoverage.WasRead）依賴它，
+                                                 // 漏掉會讓低風險日被當成舊紀錄、新頻道的暖身永遠結束不了
             WeeklyCheckup = record.WeeklyCheckup,
             DeepDives = record.DeepDives,       // 低風險日恆為空清單（該日從不觸發深析），原樣帶過即可
             TopIssues = record.TopIssues.Select(i => new LogIssueSignature

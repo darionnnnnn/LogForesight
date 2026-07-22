@@ -79,6 +79,13 @@ public class DailyAnalysisRecord
     /// <summary>因權限或來源限制而未能執行的偵測項目說明（如「無 Security 權限，入侵跡象規則表與相關關聯模式未檢查」）</summary>
     public List<string> UncoveredChecks { get; set; } = new();
 
+    /// <summary>
+    /// 本日實際成功讀取的頻道全名清單。**null = 本欄位問世前寫入的舊紀錄**（同 <see cref="HostId"/>=0 的
+    /// 降級慣例）；趨勢層/慢速趨勢層以 <see cref="ChannelCoverage.WasRead"/> 判斷是否納入某頻道簽章的基準，
+    /// 舊紀錄自動 fallback 到「三個傳統日誌 + SecurityLogAvailable」的既有語意，新頻道則不算入基準。
+    /// </summary>
+    public List<string>? ChannelsRead { get; set; }
+
     /// <summary>本次執行若剛好做了體檢（due-date 到期，見 WeeklyCheckupService），結果附掛於當天紀錄；平常日為 null</summary>
     public WeeklyCheckupResult? WeeklyCheckup { get; set; }
 

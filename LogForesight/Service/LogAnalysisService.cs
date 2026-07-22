@@ -97,8 +97,11 @@ public class LogAnalysisService
     /// <param name="dataIncomplete">true = 本日事件來源不完整（如 Event Log 回補時已被覆蓋），寫入紀錄供趨勢基準排除</param>
     /// <param name="securityLogAvailable">本次執行 Security log 是否成功讀取；false 時停用相關規則層偵測、
     /// 相關關聯模式改標記「未檢查」，並在趨勢基準計算時排除本日的 Security 簽章</param>
+    /// <param name="channels">本次各頻道的讀取三態（成功/被拒/不存在）；null = 舊呼叫端（單日情境），
+    /// 退回三頻道假設。寫入 <see cref="DailyAnalysisRecord.ChannelsRead"/> 供暖身/趨勢基準判斷，
+    /// 並讓 UncoveredChecks 申報被拒的 Defender/RDP 頻道</param>
     public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
-        int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true)
+        int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null)
     {
         var sw = Stopwatch.StartNew();
         Log.Info("開始分析 {Date:yyyy-MM-dd}：log 筆數={LogCount}, useAi={UseAi}", targetDate, logs.Count, useAi);
@@ -218,7 +221,7 @@ public class LogAnalysisService
         string trendAssessment = string.Empty;
         string action = string.Empty;
 
-        var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable);
+        var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable, channels);
 
         // 慢速趨勢層若因前期歷史不足而完全沒有比對，要明講——「沒告警」不等於「沒問題」。
         // 歷史本來就不足（部署未滿兩週）屬預期，記 Info；歷史夠長卻仍無法比對，代表前期窗口內
@@ -304,7 +307,8 @@ public class LogAnalysisService
                 .ToList() ?? new List<string>(),
             DataIncomplete = dataIncomplete,
             SecurityLogAvailable = securityLogAvailable,
-            UncoveredChecks = uncoveredChecks
+            UncoveredChecks = uncoveredChecks,
+            ChannelsRead = channels?.Read
         };
 
         // 風險「中」以上輸出報告檔（含第二階段 AI 深入分析與原始 log），路徑一併寫入歷史
@@ -349,13 +353,19 @@ public class LogAnalysisService
         var scan = await Task.Run(() =>
             _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security", securityExtraEventIds: new[] { 4624 }));
 
-        var successMessages = scan.Entries.Where(l => l.EventId == 4624).Select(l => l.Message).ToList();
-        if (successMessages.Count == 0)
+        var logonSuccessMessages = scan.Entries.Where(l => l.EventId == 4624).Select(l => l.Message).ToList();
+
+        // RDP 成功登入（LSM 21/25、RCM 1149）已在主掃描收進 logs（Operational 頻道 watchlist），
+        // 一併納入成功登入面：暴力破解未必走 4624，也可能直接以 RDP 工作階段得手
+        var rdpSuccessMessages = logs.Where(IsRdpSuccessLogon).Select(l => l.Message).ToList();
+
+        var allSuccessMessages = logonSuccessMessages.Concat(rdpSuccessMessages).ToList();
+        if (allSuccessMessages.Count == 0)
         {
             return null;
         }
 
-        var (successAccounts, successIps) = LogAggregator.ExtractAccountsAndIps(successMessages);
+        var (successAccounts, successIps) = LogAggregator.ExtractAccountsAndIps(allSuccessMessages);
         var matchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
         var matchedIps = successIps.Intersect(failedIps).ToList();
 
@@ -364,26 +374,50 @@ public class LogAnalysisService
             return null;
         }
 
-        Log.Warn("{Date:yyyy-MM-dd} 偵測到破解得手跡象：大量登入失敗後同一組帳號/IP 出現成功登入（帳號={Accounts}，IP={Ips}）",
-            targetDate, string.Join(",", matchedAccounts), string.Join(",", matchedIps));
+        // 判斷「得手途徑是否含 RDP」：僅當交集帳號/IP 確實出現在 RDP 成功面時才標註，避免 4624 得手也誤稱 RDP
+        var (rdpAccounts, rdpIps) = LogAggregator.ExtractAccountsAndIps(rdpSuccessMessages);
+        bool includesRdp = matchedAccounts.Any(a => rdpAccounts.Contains(a)) || matchedIps.Any(rdpIps.Contains);
 
-        return new SuccessfulLogonMatch { MatchedAccounts = matchedAccounts, MatchedIps = matchedIps };
+        Log.Warn("{Date:yyyy-MM-dd} 偵測到破解得手跡象：大量登入失敗後同一組帳號/IP 出現成功登入（帳號={Accounts}，IP={Ips}，含RDP={Rdp}）",
+            targetDate, string.Join(",", matchedAccounts), string.Join(",", matchedIps), includesRdp);
+
+        return new SuccessfulLogonMatch { MatchedAccounts = matchedAccounts, MatchedIps = matchedIps, IncludesRdp = includesRdp };
     }
 
-    /// <summary>Security 無權限時，逐條列出因此停用的偵測項目——覆蓋率誠實申報，而不是一句「讀取失敗」帶過</summary>
-    private static List<string> BuildUncoveredChecks(bool? securityLogAvailable)
+    /// <summary>RDP 成功登入事件：LocalSessionManager 21（登入）/25（重連），RemoteConnectionManager 1149（驗證成功）。</summary>
+    private static bool IsRdpSuccessLogon(EventLogEntryData l) =>
+        (l.LogName.Equals(ChannelCatalog.RdpLsmChannel, StringComparison.OrdinalIgnoreCase) && (l.EventId is 21 or 25)) ||
+        (l.LogName.Equals(ChannelCatalog.RdpRcmChannel, StringComparison.OrdinalIgnoreCase) && l.EventId == 1149);
+
+    /// <summary>
+    /// 逐條列出因權限或來源限制而停用的偵測項目——覆蓋率誠實申報，而不是一句「讀取失敗」帶過。
+    /// 只申報「被拒」（存在卻讀不到＝偵測盲區）；「頻道不存在」（該偵測本來就不適用於這台主機）
+    /// 由 Program.cs 印到 console，不塞進這裡逐日重複，以免無 Defender/RDP 角色的主機每天噪音。
+    /// </summary>
+    private static List<string> BuildUncoveredChecks(bool? securityLogAvailable, ChannelAvailability? channels)
     {
-        if (securityLogAvailable != false)
+        var checks = new List<string>();
+
+        if (securityLogAvailable == false)
         {
-            return new List<string>();
+            checks.Add("入侵跡象規則表（Security-Auditing 相關：登入失敗/帳戶鎖定/帳號建立/權限與角色異動等）未檢查");
+            checks.Add("跨 log 關聯模式【入侵鏈】【持久化】【滅跡】【提權→植入】【跨日入侵鏈】【破解得手】【暴力破解→RDP 得手】未檢查（皆需要 Security log）");
+            checks.Add("安全稽核事件總量趨勢比對未檢查");
         }
 
-        return new List<string>
+        if (channels != null)
         {
-            "入侵跡象規則表（Security-Auditing 相關：登入失敗/帳戶鎖定/帳號建立/權限與角色異動等）未檢查",
-            "跨 log 關聯模式【入侵鏈】【持久化】【滅跡】【提權→植入】【跨日入侵鏈】【破解得手】未檢查（皆需要 Security log）",
-            "安全稽核事件總量趨勢比對未檢查"
-        };
+            if (channels.WasDenied(ChannelCatalog.DefenderChannel))
+            {
+                checks.Add("防毒（Microsoft Defender）頻道存取被拒：惡意程式偵測／防護遭關閉規則與【防護遭關閉→惡意程式】【惡意程式→持久化】關聯未檢查");
+            }
+            if (channels.WasDenied(ChannelCatalog.RdpLsmChannel) || channels.WasDenied(ChannelCatalog.RdpRcmChannel))
+            {
+                checks.Add("遠端桌面（RDP TerminalServices）頻道存取被拒：RDP 工作階段收集與【暴力破解→RDP 得手】關聯未檢查");
+            }
+        }
+
+        return checks;
     }
 
     /// <summary>

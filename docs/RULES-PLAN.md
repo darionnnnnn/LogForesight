@@ -44,10 +44,20 @@
 3. **關聯層的組合模式不搬進規則庫**：`CorrelationAnalyzer` 比對的是「多個獨立事件的已知組合」
    （入侵鏈、故障連鎖等），這是程式邏輯（條件判斷、時序比對、跨日比對），不是可以用
    `(SourcePattern, EventIds) → 分類/嚴重度` 描述的資料，所以維持在程式碼裡。它引用的事件 ID
-   常數（`CorrelationAnalyzer.AccountChangeIds` 等六組，故意標 `internal` 供 selftest 驗證）
+   常數（`CorrelationAnalyzer.AccountChangeIds` 等，2026-07 起共八組，含 Defender 的
+   `DefenderMalwareIds`/`DefenderProtectionOffIds`，故意標 `internal` 供 selftest 驗證）
    與規則表是兩份獨立維護的東西——`rules.json` 新增的 Security 事件規則**不會**自動延伸關聯層
-   的偵測範圍；`--selftest` 有一項檢查會驗證這六組 ID 是否都存在於目前生效的規則表，抓漂移用，
+   的偵測範圍；`--selftest` 有一項檢查會驗證這幾組 ID 是否都存在於目前生效的規則表，抓漂移用，
    但不能反向保證「規則表的新事件都被關聯層涵蓋」。
+
+4. **規則不加 `LogName` 欄位；頻道由 provider 名稱天然區分**（2026-07 EventLogReader 遷移）：
+   新增 Defender/RDP Operational 頻道後，規則仍只靠 `SourcePattern` 區分頻道（provider 名稱唯一：
+   `Microsoft-Windows-Windows Defender`、`Microsoft-Windows-TerminalServices-*`），schema 與未來
+   DB 映射不變。各頻道的 watchlist（Operational 頻道的 Information 等級事件要收哪些）沿用原本
+   Security watchlist 的推導機制擴為多頻道（`KnownIssueCatalog.ChannelWatchlists`）：凡 SourcePattern
+   命中該頻道 provider 探測字串的啟用規則，其 EventIds 聯集即為該頻道 watchlist——新增一條 Defender/RDP
+   規則，對應頻道 watchlist 自動涵蓋，不需另外同步。停用規則會讓其事件退出 watchlist（Information
+   事件收不進來），這與「停用只影響 Classify」略有不同，是 Operational 頻道收取機制的必然。
 
 ## 規則模型
 

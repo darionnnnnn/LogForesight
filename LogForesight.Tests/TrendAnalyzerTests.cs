@@ -128,6 +128,66 @@ public class TrendAnalyzerTests
         Assert.Contains(alerts, a => a.Contains("整體錯誤量突增"));
     }
 
+    // ── 新頻道暖身（防切換日告警風暴）────────────────────────────────────
+
+    [Fact]
+    public void 新頻道可靠歷史不足暖身天數時首次出現不告警不升級()
+    {
+        // Defender 頻道剛上線：只有 2 天讀取歷史（< WarmupDays=3），此簽章從未出現過。
+        // 應標記 New（供紀錄），但不產生「首次出現」告警、也不升級嚴重度——避免切換日風暴。
+        var history = Enumerable.Range(1, 2)
+            .Select(d => DefenderHistoryDay(DateTime.Today.AddDays(-d), 9999, 0)) // 別的事件，本簽章不在其中
+            .ToList();
+        var sig = Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 3, IssueSeverity.High);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.Equal(IssueTrend.New, sig.Trend);
+        Assert.Equal(IssueSeverity.High, sig.Severity);              // 未升級
+        Assert.DoesNotContain(alerts, a => a.Contains("首次出現"));   // 暖身期不告警
+    }
+
+    [Fact]
+    public void 新頻道可靠歷史達暖身天數後首次出現照常告警()
+    {
+        var history = Enumerable.Range(1, 3)
+            .Select(d => DefenderHistoryDay(DateTime.Today.AddDays(-d), 9999, 0))
+            .ToList();
+        var sig = Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 3, IssueSeverity.High);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.Equal(IssueTrend.New, sig.Trend);
+        Assert.Contains(alerts, a => a.Contains("首次出現"));
+    }
+
+    [Fact]
+    public void 舊紀錄不算入新頻道基準_Defender簽章視為暖身()
+    {
+        // 舊紀錄（ChannelsRead=null）對 Defender 頻道一律視為未讀，即使歷史很長，
+        // 新頻道的可靠歷史仍為 0 → 暖身，首次出現不吵
+        var history = Enumerable.Range(1, 14)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), RiskLevel = "低", ChannelsRead = null })
+            .ToList();
+        var sig = Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 3, IssueSeverity.High);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.DoesNotContain(alerts, a => a.Contains("首次出現"));
+    }
+
+    private static DailyAnalysisRecord DefenderHistoryDay(DateTime date, int eventId, int count)
+        => new()
+        {
+            Date = date.Date,
+            RiskLevel = "低",
+            ChannelsRead = new List<string> { "System", "Application", "Security", ChannelCatalog.DefenderChannel },
+            TopIssues = new List<LogIssueSignature>
+            {
+                Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", eventId, count, IssueSeverity.High, IssueCategory.Security)
+            }
+        };
+
     private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
         IssueCategory category = IssueCategory.Other)
         => new()

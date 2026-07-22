@@ -342,8 +342,29 @@ else
     //   （哪些來源保留的歷史不足以涵蓋整個區間、Security 本次是否可讀）。
     //   抓取全部前置：後面的 AI 分析迴圈只從記憶體取資料，不會每分析完一天才回頭抓下一天。
     var rangeStart = missingDates[0];
-    Console.WriteLine($"\n平行掃描 System/Application/Security，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
-    var scanResult = await eventLogService.ScanRangeFromAllAsync(rangeStart, DateTime.Today);
+
+    // 掃描頻道：設定未指定時用預設六頻道（三傳統日誌 + Defender/RDP 兩類 Operational 頻道）。
+    // 使用者手打的頻道名正規化為 canonical 大小寫（Windows 頻道名不分大小寫，但簽章的 LogName
+    // 與 TrendAnalyzer.SameIssue 的比對是逐字的——設定裡大小寫改一次，該頻道的趨勢歷史就斷一次）。
+    var channelNames = settings.Analysis.Channels.Count > 0
+        ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+        : ChannelCatalog.DefaultChannelNames;
+
+    // 啟動誠實申報：Operational 頻道已啟用、但規則表沒有對應規則時，其 Information 等級事件不會被
+    // 收集（掃了卻沒偵測）。舊 rules.json（seed v1）配新程式即屬此況，提示跑 --import-rules 匯入。
+    foreach (var name in channelNames)
+    {
+        var policy = ChannelCatalog.Resolve(name);
+        if (policy.Kind == ChannelInclusionKind.OperationalWatchlist && !KnownIssueCatalog.HasWatchlist(policy.ProviderProbe))
+        {
+            Console.WriteLine($"  ⚠ 頻道「{name}」已啟用，但目前規則表沒有對應規則，其 Information 等級事件不會被收集。" +
+                              "請執行 LogForesight.exe --import-rules --apply 匯入內建 Defender/RDP 規則。");
+            log.Warn("頻道 {Channel} 已啟用但無對應規則（watchlist 空），Information 事件未收集", name);
+        }
+    }
+
+    Console.WriteLine($"\n平行掃描頻道：{string.Join("、", channelNames)}，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
+    var scanResult = await eventLogService.ScanRangeFromAllAsync(rangeStart, DateTime.Today, channelNames);
     var logsByDate = scanResult.Entries
         .GroupBy(l => l.TimeGenerated.Date)
         .ToDictionary(g => g.Key, g => g.ToList());
@@ -353,6 +374,25 @@ else
     {
         Console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
     }
+
+    // 頻道三態誠實申報：不存在（該偵測不適用）與被拒（偵測盲區）用語明確區分，都印出來讓人看得到。
+    var missingChannels = scanResult.ChannelsMissing.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
+    if (missingChannels.Count > 0)
+    {
+        Console.WriteLine($"  · 下列頻道在本機不存在（未安裝對應角色，相關偵測不適用）：{string.Join("、", missingChannels)}");
+    }
+    var deniedChannels = scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
+    if (deniedChannels.Count > 0)
+    {
+        Console.WriteLine($"  ⚠ 下列頻道存取被拒（需系統管理員權限，屬偵測盲區）：{string.Join("、", deniedChannels)}");
+    }
+
+    var channelAvailability = new ChannelAvailability
+    {
+        Read = scanResult.ChannelsRead,
+        Denied = scanResult.ChannelsDenied,
+        Missing = scanResult.ChannelsMissing
+    };
 
     if (missingDates.Count > 1)
     {
@@ -371,7 +411,7 @@ else
         var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
         var dataIncomplete = scanResult.IsDateIncomplete(date);
         var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays,
-            dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable);
+            dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
         results.Add(record);
 
         dayStopwatch.Stop();

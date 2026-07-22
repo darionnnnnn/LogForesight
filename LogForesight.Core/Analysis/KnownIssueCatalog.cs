@@ -107,34 +107,71 @@ public static class KnownIssueCatalog
     /// 聯集就是 watchlist。規則表新增一條 Security 規則時，watchlist 自動涵蓋，不需要另外記得
     /// 同步（原本寫死的清單容易漏改，見 docs/RULES-PLAN.md 的陷阱說明）。
     /// </summary>
-    public static HashSet<int> SecurityAuditWatchlist { get; private set; } = DeriveSecurityAuditWatchlist(Rules);
+    public static HashSet<int> SecurityAuditWatchlist { get; private set; } = DeriveWatchlist(Rules, ChannelCatalog.SecurityProbe);
 
     /// <summary>
-    /// 用已驗證過的規則清單覆寫目前生效的規則表，並重新推導 watchlist。
+    /// 各 Operational／Security 頻道的 watchlist（key = <see cref="ChannelPolicy.ProviderProbe"/>）。
+    /// 與 <see cref="SecurityAuditWatchlist"/> 同一套推導機制，只是擴為多頻道：新增一條 Defender/RDP
+    /// 規則時，對應頻道的 watchlist 自動涵蓋其 EventIds，不需要另外記得同步。
+    /// </summary>
+    public static IReadOnlyDictionary<string, HashSet<int>> ChannelWatchlists { get; private set; } = DeriveChannelWatchlists(Rules);
+
+    /// <summary>
+    /// 用已驗證過的規則清單覆寫目前生效的規則表，並重新推導所有頻道的 watchlist。
     /// 傳入的清單應已經過 <see cref="RuleValidator"/> 驗證；只有 <see cref="KnownIssueRule.Enabled"/>
     /// 為 true 的規則會真正參與比對——停用規則保留在儲存端供人查閱，但不影響 Classify/FindRule。
     /// </summary>
     public static void Initialize(List<KnownIssueRule> validatedRules)
     {
         Rules = validatedRules.Where(r => r.Enabled).ToList();
-        SecurityAuditWatchlist = DeriveSecurityAuditWatchlist(Rules);
+        SecurityAuditWatchlist = DeriveWatchlist(Rules, ChannelCatalog.SecurityProbe);
+        ChannelWatchlists = DeriveChannelWatchlists(Rules);
     }
 
     /// <summary>
-    /// 探測字串使用 classic EventLog API 實際觀察到的 Security log 來源全名——真正的比對邏輯
-    /// （<see cref="FindRule"/>）是 `實際來源.Contains(規則.SourcePattern)`，所以這裡反過來看：
-    /// 「這條規則的 SourcePattern 會不會命中 Security log 事件」用同一個探測字串驗證即可，
-    /// 不需要另外維護一份「這條規則是不是 Security 規則」的判斷邏輯。
+    /// 某頻道（以 provider 探測字串指名）是否把這個 EventId 納入 watchlist——供 EventLogService
+    /// 判斷 Operational 頻道的 Information 等級事件要不要收。
     /// </summary>
-    private const string SecurityAuditingProbe = "Microsoft-Windows-Security-Auditing";
+    public static bool IsWatched(string providerProbe, int eventId) =>
+        ChannelWatchlists.TryGetValue(providerProbe, out var watchlist) && watchlist.Contains(eventId);
 
-    private static HashSet<int> DeriveSecurityAuditWatchlist(List<KnownIssueRule> rules)
+    /// <summary>某頻道是否有任何 watchlist 事件（用來提示「頻道已啟用但規則表沒有對應規則」）。</summary>
+    public static bool HasWatchlist(string providerProbe) =>
+        ChannelWatchlists.TryGetValue(providerProbe, out var watchlist) && watchlist.Count > 0;
+
+    private static Dictionary<string, HashSet<int>> DeriveChannelWatchlists(List<KnownIssueRule> rules)
+    {
+        var map = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var policy in ChannelCatalog.Defaults)
+        {
+            // ErrorWarningOnly 頻道靠 Error/Warning 等級收取，不需要 watchlist；沒有探測字串也無從推導。
+            if (policy.Kind == ChannelInclusionKind.ErrorWarningOnly || string.IsNullOrEmpty(policy.ProviderProbe))
+            {
+                continue;
+            }
+            map[policy.ProviderProbe] = DeriveWatchlist(rules, policy.ProviderProbe);
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// 推導單一頻道的 watchlist：真正的比對邏輯（<see cref="FindRule"/>）是
+    /// `實際來源.Contains(規則.SourcePattern)`，所以這裡反過來看——「這條規則的 SourcePattern 會不會
+    /// 命中此頻道的事件」用該頻道的 provider 探測字串驗證即可，不需要另外維護一份「這條是不是某頻道規則」
+    /// 的判斷邏輯。凡命中且非 MatchAllEventIds 的啟用規則，其 EventIds 併入 watchlist。
+    /// </summary>
+    private static HashSet<int> DeriveWatchlist(List<KnownIssueRule> rules, string providerProbe)
     {
         var watchlist = new HashSet<int>();
+        if (string.IsNullOrEmpty(providerProbe))
+        {
+            return watchlist;
+        }
+
         foreach (var rule in rules)
         {
-            bool isSecurityAuditingSource = SecurityAuditingProbe.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase);
-            if (!isSecurityAuditingSource || rule.MatchAllEventIds)
+            bool sourceMatches = providerProbe.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase);
+            if (!sourceMatches || rule.MatchAllEventIds)
             {
                 continue;
             }

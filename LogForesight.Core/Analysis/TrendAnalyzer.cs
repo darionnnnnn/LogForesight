@@ -51,13 +51,15 @@ public static class TrendAnalyzer
 
         foreach (var sig in issues)
         {
-            bool isSecuritySignature = sig.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase);
+            // 只用「當天實際讀取了該頻道」的歷史日當基準，避免假性零（頻道當天沒讀到）把平均墊低，
+            // 造成頻道恢復/上線後的正常量被誤判成「首次出現」或「頻率上升」。這是既有 Security 特例的
+            // 一般化：Security 沿用 SecurityLogAvailable 語意，新頻道（Defender/RDP）自動享有同一保護。
+            var relevantHistory = reliableHistory.Where(h => ChannelCoverage.WasRead(h, sig.LogName)).ToList();
 
-            // Security 簽章額外排除「當天 Security log 讀取失敗」的歷史日，避免假性零把平均墊低，
-            // 造成權限恢復後的正常量被誤判成「首次出現」或「頻率上升」
-            var relevantHistory = isSecuritySignature
-                ? reliableHistory.Where(h => h.SecurityLogAvailable != false).ToList()
-                : reliableHistory;
+            // 暖身期：該頻道可靠歷史不足 WarmupDays 天時，趨勢欄位照算（供紀錄與報表），但不產生
+            // New/Rising 告警、不做嚴重度升級——防的是新頻道上線第一天「所有簽章都是首次出現」的
+            // 切換日告警風暴。既有頻道的可靠歷史遠多於此值，channelWarmingUp 恆為 false，行為零改變。
+            bool channelWarmingUp = relevantHistory.Count < ChannelCoverage.WarmupDays;
 
             var pastCounts = relevantHistory
                 .Select(h => h.TopIssues.FirstOrDefault(i => SameIssue(i, sig)))
@@ -76,7 +78,7 @@ public static class TrendAnalyzer
             if (pastCounts.Count == 0)
             {
                 sig.Trend = IssueTrend.New;
-                if (sig.Severity >= IssueSeverity.High && !sig.Suppressed)
+                if (sig.Severity >= IssueSeverity.High && !sig.Suppressed && !channelWarmingUp)
                 {
                     alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
                 }
@@ -84,11 +86,15 @@ public static class TrendAnalyzer
             else if (sig.Count >= RisingMinCount && sig.Count >= sig.HistoryDailyAverage * RisingFactor)
             {
                 sig.Trend = IssueTrend.Rising;
-                sig.Severity = Escalate(sig.Severity);
-                if (!sig.Suppressed)
+                // 暖身期不升級嚴重度、不告警——新頻道歷史太短，倍率比較還不可靠
+                if (!channelWarmingUp)
                 {
-                    var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                    alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                    sig.Severity = Escalate(sig.Severity);
+                    if (!sig.Suppressed)
+                    {
+                        var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
+                        alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                    }
                 }
             }
             else if (sig.HistoryDailyAverage >= RisingMinCount && sig.Count * RisingFactor <= sig.HistoryDailyAverage)

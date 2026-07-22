@@ -62,12 +62,11 @@ public static class SlowTrendAnalyzer
 
         foreach (var sig in issues)
         {
-            bool isSecuritySignature = sig.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase);
-
-            // Security 簽章額外排除「當天 Security log 讀取失敗」的歷史日，避免假性零把前期總量墊低，
-            // 造成權限恢復後的正常量被誤判成慢速惡化——與 TrendAnalyzer 同一套排除規則
-            var relevantRecent = isSecuritySignature ? recentDays.Where(h => h.SecurityLogAvailable != false).ToList() : recentDays;
-            var relevantPrior = isSecuritySignature ? priorDays.Where(h => h.SecurityLogAvailable != false).ToList() : priorDays;
+            // 只用「當天實際讀取了該頻道」的歷史日當基準，避免假性零把前期總量墊低造成假斜線——
+            // 與 TrendAnalyzer 同一套排除規則（ChannelCoverage.WasRead 一般化了原本的 Security 特例）。
+            // 新頻道（Defender/RDP）上線後前期窗口天然不足 WindowDays，會被下方守門整批略過，不需另設暖身。
+            var relevantRecent = recentDays.Where(h => ChannelCoverage.WasRead(h, sig.LogName)).ToList();
+            var relevantPrior = priorDays.Where(h => ChannelCoverage.WasRead(h, sig.LogName)).ToList();
 
             if (relevantPrior.Count < WindowDays)
             {
