@@ -153,11 +153,13 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Jsonl", "DataRoot": "..\\LogForesight\\bin\\Debug\\net8.0-windows", "ConnectionString": "" },
-  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "", "ExpireHours": 8 },
+  "Storage": { "Type": "Jsonl", "DataRoot": "", "ConnectionString": "" },
+  // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
+  // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ldap。
+  "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
   "Auth": {
     "Provider": "Stub",
-    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "" }
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
   "Import": { "MaxFileSizeKb": 2048, "MaxRows": 5000 },
   "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 }
@@ -173,8 +175,12 @@ LogForesight.Web/
 - **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
   （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
   `StorageOptions` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
-- `Jwt.SecretKey` **不進版控**：開發用 `appsettings.Development.json`（gitignore）或 user-secrets，
-  正式環境用環境變數覆寫（`Jwt__SecretKey`）。
+- `Jwt.SecretKey` / `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
+  （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
+  這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
+  （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
+  `Ldap`（`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
+  想覆寫本機測試值（如指向批次實際資料目錄的 `Storage.DataRoot`）可用 `appsettings.Development.json`（gitignore）。
 - `Storage.DataRoot`：JSONL 後端的資料根目錄＝批次執行檔目錄（`history.txt`、`rules.json` 所在），
   Web 的自有資料寫入其下 `webdata\`（§10.3）。
 

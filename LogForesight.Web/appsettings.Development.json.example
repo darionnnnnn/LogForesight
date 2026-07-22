@@ -1,5 +1,8 @@
 {
-  "//": "本機開發設定範本：複製為 appsettings.Development.json 後填入實際值。該檔已列入 .gitignore（內含金鑰與密碼雜湊），不會進版本控制。",
+  // 本機開發設定範本：複製為 appsettings.Development.json 後填入實際值。
+  // 該檔已列入 .gitignore（內含金鑰與密碼雜湊），不會進版本控制。
+  // 提示：本倉庫的 appsettings.Development.json 已附一組可直接測試的預設值
+  //       （帳號 svc-lfadmin / 密碼 LogForesight-dev），照抄即可，或依下列步驟自訂。
   "Logging": {
     "LogLevel": {
       "Default": "Information",
@@ -7,18 +10,19 @@
     }
   },
   "Storage": {
-    "//": "指向批次 LogForesight.exe 的執行檔目錄（history.txt / rules.json / webdata 所在）",
+    // 指向批次 LogForesight.exe 的執行檔目錄（history.txt / rules.json / webdata 所在；目錄必須存在）
     "DataRoot": "<批次執行檔目錄的完整路徑，如 C:\\...\\LogForesight\\bin\\Debug\\net8.0-windows>"
   },
   "Jwt": {
-    "//": "HMAC-SHA256 簽章金鑰，至少 32 bytes。可用 PowerShell 產生：[Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }))",
+    // HMAC-SHA256 簽章金鑰，至少 32 bytes。可用 PowerShell 產生：
+    // [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }))
     "SecretKey": "<至少 32 bytes 的隨機字串>"
   },
   "Auth": {
     "Provider": "Stub",
     "ServerAdmin": {
       "Account": "svc-lfadmin",
-      "//": "以 LogForesight.Web.exe --hash-password 產生",
+      // 以 LogForesight.Web.exe --hash-password 產生（測試可用任意自訂的已知密碼）
       "PasswordHash": "<PBKDF2 雜湊>"
     }
   }

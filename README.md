@@ -28,7 +28,8 @@ LogForesight.Web/      Web 查詢/維護介面（ASP.NET Core MVC，.NET 8，202
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
 │                       前期與批次共用同一資料目錄（Storage.DataRoot 指向批次執行檔目錄），
 │                       SQL 後端（Phase 5）待 DB 環境就緒後啟動
-└── （本機開發設定：複製 appsettings.Development.json.example 填入金鑰）
+└── （appsettings.json 已內含開箱即測的測試登入 svc-lfadmin / LogForesight-dev；
+                        正式環境務必依檔內【正式環境需修改】說明改用環境變數與 Ldap，見 docs/WEB-SPEC.md §5）
 
 LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（JSONL 與未來 SQL 跑同一組案例）、
                         Web 授權範圍/處理流程/規則保護/CSV 匯入
