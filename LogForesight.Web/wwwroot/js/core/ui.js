@@ -5,6 +5,128 @@
  * 「載入中要有回饋」這些規範（§8.6）如果靠每頁自己實作，遲早有頁面漏掉。
  */
 
+/**
+ * 內嵌 SVG sprite 圖示（§8.2）。name 一律是開發者提供的常數（sprite 內的 symbol id），
+ * 不接受使用者資料——因此以 setAttribute 組 href 無 XSS 疑慮。
+ * SVG 元素必須用 createElementNS 建立，一般 createElement 會靜默失效。
+ */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+export function icon(name, className) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', className ? `lf-icon ${className}` : 'lf-icon');
+    svg.setAttribute('aria-hidden', 'true');
+
+    const use = document.createElementNS(SVG_NS, 'use');
+    const href = `/img/icons.svg#${name}`;
+    use.setAttribute('href', href);
+    use.setAttributeNS(XLINK_NS, 'xlink:href', href);   // 舊瀏覽器相容
+    svg.appendChild(use);
+    return svg;
+}
+
+/**
+ * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
+ * text 走 textContent；variant/size/iconName 皆為開發者常數。
+ */
+export function button(text, { variant = 'outline-secondary', size = 'sm', icon: iconName, onClick, type = 'button', title } = {}) {
+    const btn = document.createElement('button');
+    btn.type = type;
+    btn.className = `btn btn-${size} btn-${variant}`;
+    if (title) btn.title = title;
+    if (iconName) btn.appendChild(icon(iconName));
+    if (text) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        btn.appendChild(span);
+    }
+    if (onClick) btn.addEventListener('click', onClick);
+    return btn;
+}
+
+/**
+ * 頁籤切換（§8.5）：抽出 rules/groups/permission-changes 重複的 [data-tab]/[data-panel] 邏輯。
+ * tabsEl 內的 [data-tab] 按鈕與同層 [data-panel] 區塊以 data 值配對；點擊切換 active 與 d-none。
+ */
+export function bindTabs(tabsEl, { onChange } = {}) {
+    if (!tabsEl) return;
+    const panels = tabsEl.parentElement
+        ? tabsEl.parentElement.querySelectorAll('[data-panel]')
+        : document.querySelectorAll('[data-panel]');
+
+    tabsEl.addEventListener('click', event => {
+        const btn = event.target.closest('[data-tab]');
+        if (!btn) return;
+        const name = btn.dataset.tab;
+
+        for (const link of tabsEl.querySelectorAll('[data-tab]')) {
+            link.classList.toggle('active', link === btn);
+        }
+        for (const panel of panels) {
+            panel.classList.toggle('d-none', panel.dataset.panel !== name);
+        }
+        if (onChange) onChange(name);
+    });
+}
+
+/**
+ * 分頁列（§8.6-7）：抽出 records.js/audit.js 幾乎相同的手搓分頁。
+ * page 為 1-based；onPage(n) 由呼叫端載入該頁。totalPages <= 1 時清空容器。
+ */
+export function renderPagination(container, { page, totalPages, onPage }) {
+    if (!totalPages || totalPages <= 1) {
+        container.replaceChildren();
+        return;
+    }
+
+    const nav = document.createElement('nav');
+    const ul = document.createElement('ul');
+    ul.className = 'pagination pagination-sm mb-0';
+
+    const addItem = (label, targetPage, { disabled = false, active = false } = {}) => {
+        const li = document.createElement('li');
+        li.className = `page-item${disabled ? ' disabled' : ''}${active ? ' active' : ''}`;
+        const a = document.createElement('a');
+        a.className = 'page-link';
+        a.href = '#';
+        a.textContent = label;
+        if (!disabled && !active) {
+            a.addEventListener('click', e => { e.preventDefault(); onPage(targetPage); });
+        } else {
+            a.addEventListener('click', e => e.preventDefault());
+        }
+        li.appendChild(a);
+        ul.appendChild(li);
+    };
+
+    addItem('‹', page - 1, { disabled: page <= 1 });
+
+    // 視窗化頁碼：目前頁前後各 2 頁，頭尾恆顯示
+    const windowSize = 2;
+    const pages = new Set([1, totalPages]);
+    for (let p = page - windowSize; p <= page + windowSize; p++) {
+        if (p >= 1 && p <= totalPages) pages.add(p);
+    }
+    const sorted = [...pages].sort((a, b) => a - b);
+    let prev = 0;
+    for (const p of sorted) {
+        if (p - prev > 1) {
+            const li = document.createElement('li');
+            li.className = 'page-item disabled';
+            li.innerHTML = '<span class="page-link">…</span>';
+            ul.appendChild(li);
+        }
+        addItem(String(p), p, { active: p === page });
+        prev = p;
+    }
+
+    addItem('›', page + 1, { disabled: page >= totalPages });
+
+    nav.appendChild(ul);
+    container.replaceChildren(nav);
+}
+
 /** 右下角提示。type: success | danger | warning | info */
 export function toast(message, type = 'info', delay = 4000) {
     let container = document.getElementById('lf-toast-container');
@@ -131,9 +253,16 @@ export function renderTable(container, { columns, rows, empty }) {
 }
 
 /** 空狀態（§8.6-5）：不留白畫面，要說明「接下來該做什麼」 */
-export function renderEmpty(container, { title = '尚無資料', hint = '' } = {}) {
+export function renderEmpty(container, { title = '尚無資料', hint = '', icon: iconName = 'inbox' } = {}) {
     const el = document.createElement('div');
     el.className = 'lf-empty';
+
+    if (iconName) {
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'lf-empty__icon';
+        iconWrap.appendChild(icon(iconName));
+        el.appendChild(iconWrap);
+    }
 
     const titleEl = document.createElement('div');
     titleEl.className = 'lf-empty__title';

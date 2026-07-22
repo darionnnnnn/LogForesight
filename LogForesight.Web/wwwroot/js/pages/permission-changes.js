@@ -155,7 +155,7 @@ function statusBadge(status) {
     }[status] ?? { text: status, variant: 'secondary' };
 
     const span = document.createElement('span');
-    span.className = `badge text-bg-${meta.variant}`;
+    span.className = `lf-badge lf-badge--${meta.variant}`;
     span.textContent = meta.text;
     return span;
 }

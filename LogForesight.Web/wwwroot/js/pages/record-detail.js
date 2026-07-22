@@ -64,7 +64,7 @@ function renderHeader(detail) {
 
     if (!detail.aiAnalyzed) {
         const badge = document.createElement('span');
-        badge.className = 'badge text-bg-secondary';
+        badge.className = 'lf-badge lf-badge--secondary';
         badge.textContent = '統計模式（AI 未分析）';
         badge.title = 'AI 未呼叫或呼叫失敗，規則與趨勢告警照常運作';
         top.appendChild(badge);
@@ -137,7 +137,7 @@ function sourceCell(issue) {
 
     if (issue.suppressed) {
         const badge = document.createElement('span');
-        badge.className = 'badge text-bg-secondary';
+        badge.className = 'lf-badge lf-badge--secondary';
         badge.textContent = '已抑制';
         badge.title = '此規則已被本機抑制：只關掉通知與風險升級，事件仍照常紀錄';
         wrap.appendChild(badge);

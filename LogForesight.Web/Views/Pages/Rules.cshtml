@@ -2,9 +2,14 @@
     ViewData["Title"] = "規則維護";
 }
 
-<div class="alert alert-light border">
-    規則儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），<strong>不合格不會寫入</strong>。
-    停用規則只關掉「規則命中的分類與知識庫」，<strong>趨勢層與關聯層對同一事件的偵測不受影響</strong>。
+<div class="lf-hint mb-3">
+    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+    <span>規則儲存前會自動驗證，不合格不會寫入。</span>
+    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+            data-bs-title="關於規則維護"
+            data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。">
+        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+    </button>
 </div>
 
 <ul class="nav nav-tabs mb-3" id="rule-tabs">
@@ -110,25 +115,36 @@
                             <div class="form-text">未達門檻降一級。</div>
                         </div>
 
-                        <div class="col-12"><hr class="my-1" /><strong class="small">處置知識庫</strong>
-                            <div class="form-text">規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。</div>
+                        <div class="col-12">
+                            <hr class="my-1" />
+                            <button type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-2"
+                                    data-bs-toggle="collapse" data-bs-target="#rule-kb" aria-expanded="false" aria-controls="rule-kb">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#chevron-down"></use></svg>
+                                處置知識庫
+                                <span class="text-muted small" id="rule-kb-summary"></span>
+                            </button>
+                            <div class="form-text">規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。（選填）</div>
                         </div>
 
-                        <div class="col-12">
-                            <label for="rule-plain" class="form-label">白話說明</label>
-                            <textarea class="form-control" id="rule-plain" rows="2"></textarea>
-                        </div>
-                        <div class="col-12">
-                            <label for="rule-impact" class="form-label">不處理的影響</label>
-                            <textarea class="form-control" id="rule-impact" rows="2"></textarea>
-                        </div>
-                        <div class="col-md-6">
-                            <label for="rule-causes" class="form-label">常見原因（一行一項）</label>
-                            <textarea class="form-control" id="rule-causes" rows="4"></textarea>
-                        </div>
-                        <div class="col-md-6">
-                            <label for="rule-steps" class="form-label">處置步驟（一行一項）</label>
-                            <textarea class="form-control" id="rule-steps" rows="4"></textarea>
+                        <div class="col-12 collapse" id="rule-kb">
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <label for="rule-plain" class="form-label">白話說明</label>
+                                    <textarea class="form-control" id="rule-plain" rows="2"></textarea>
+                                </div>
+                                <div class="col-12">
+                                    <label for="rule-impact" class="form-label">不處理的影響</label>
+                                    <textarea class="form-control" id="rule-impact" rows="2"></textarea>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="rule-causes" class="form-label">常見原因（一行一項）</label>
+                                    <textarea class="form-control" id="rule-causes" rows="4"></textarea>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="rule-steps" class="form-label">處置步驟（一行一項）</label>
+                                    <textarea class="form-control" id="rule-steps" rows="4"></textarea>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="col-12">
@@ -176,14 +192,20 @@
             </div>
             <form id="suppress-form">
                 <div class="modal-body">
-                    <div class="alert alert-light border small">
-                        抑制<strong>只關掉通知與風險升級</strong>，事件仍照常聚合、命中規則、寫入歷史——
-                        這樣體檢報告與頻率報表才看得到「這條被抑制的規則本期實際發生了幾次」，
-                        暫時關掉的東西不會變成沒人記得的永久盲區。
+                    <div class="lf-hint mb-3">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+                        <span>抑制只關掉通知與風險升級，事件仍照常聚合與紀錄。</span>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+                                data-bs-title="抑制的作用範圍"
+                                data-bs-content="抑制只關掉通知與風險升級，事件仍照常聚合、命中規則、寫入歷史——這樣體檢報告與頻率報表才看得到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的永久盲區。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
                     </div>
                     <div class="mb-3">
                         <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="suppress-host" required />
+                        <select class="form-select" id="suppress-host" required>
+                            <option value="">請選擇主機…</option>
+                        </select>
                     </div>
                     <div class="mb-3">
                         <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
@@ -205,5 +227,5 @@
 </div>
 
 @section Scripts {
-    <script type="module" src="~/js/pages/rules.js"></script>
+    <script type="module" src="~/js/pages/rules.js" asp-append-version="true"></script>
 }

@@ -2,55 +2,333 @@
   LogForesight 設計系統（docs/WEB-SPEC.md §8.2）
 
   Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
-  所有樣式取值一律引用下面的 token，元件樣式裡不出現寫死的顏色/圓角/陰影——
+  所有樣式取值一律引用下面的 token，元件樣式裡不出現寫死的顏色/圓角/陰影/間距——
   這是「自訂外觀」與「維護成本最小化」能同時成立的前提：調整外觀改這一段，全站生效。
+
+  2026-07-22 專業化改版：品牌色改靛藍系，補齊字級/間距/圓角/陰影/focus token，
+  並透過 Bootstrap 5.3 的元件級 CSS 變數把按鈕/表單/分頁/頁籤等 retheme 成同一套外觀
+  （取代舊版「不覆寫 --bs-primary」的決策——那讓 Bootstrap 藍與自訂靛藍並存，外觀不一致）。
 */
 
 :root {
-    /* 主色＝Bootstrap 預設 primary。刻意不覆寫 --bs-primary，升級 Bootstrap 零成本 */
-    --lf-primary: #0d6efd;
-    --lf-primary-dark: #0a58ca;
-    --lf-primary-soft: #e7f1ff;
+    /* ── 品牌色（靛藍系，取代 Bootstrap 預設藍）─────────────────────────── */
+    --lf-primary: #4f46e5;
+    --lf-primary-dark: #4338ca;
+    --lf-primary-hover: #6366f1;
+    --lf-primary-soft: #eef2ff;
+    --lf-primary-soft-border: #dfe3fb;
+    --lf-primary-text: #3730a3;
 
-    /* 版面 */
-    --lf-sidebar-bg: #1b2a41;
-    --lf-sidebar-fg: #c7d2e0;
-    --lf-sidebar-active-bg: rgba(13, 110, 253, .18);
-    --lf-sidebar-width: 232px;
-    --lf-content-bg: #f4f6f9;
+    /* ── 中性色階（cool slate，符合「灰藍白」低彩度基調）──────────────── */
+    --lf-gray-50: #f8fafc;
+    --lf-gray-100: #f1f5f9;
+    --lf-gray-200: #e5e9f0;
+    --lf-gray-300: #cbd5e1;
+    --lf-gray-400: #94a3b8;
+    --lf-gray-500: #64748b;
+    --lf-gray-600: #475569;
+    --lf-gray-700: #334155;
+    --lf-gray-800: #1e293b;
+    --lf-gray-900: #0f172a;
+
+    /* ── 版面 ─────────────────────────────────────────────────────────── */
+    --lf-sidebar-bg: #161d2e;
+    --lf-sidebar-fg: #a9b4c7;
+    --lf-sidebar-fg-strong: #f1f4fa;
+    --lf-sidebar-section: #6f7c93;
+    --lf-sidebar-active-bg: rgba(99, 102, 241, .22);
+    --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
+    --lf-sidebar-width: 244px;
+    --lf-content-bg: #f6f7fb;
     --lf-card-bg: #ffffff;
-    --lf-border: #e3e8ef;
-    --lf-text: #1f2933;
-    --lf-text-muted: #6b7684;
+    --lf-border: #e5e9f0;
+    --lf-border-strong: #d5dbe6;
+    --lf-text: #1e293b;
+    --lf-text-muted: #64748b;
 
-    --lf-card-radius: .5rem;
-    --lf-card-shadow: 0 1px 3px rgba(27, 42, 65, .08);
-    --lf-card-shadow-hover: 0 4px 12px rgba(27, 42, 65, .12);
+    /* ── 字級階層 ─────────────────────────────────────────────────────── */
+    --lf-font-size-xs: .75rem;
+    --lf-font-size-sm: .825rem;
+    --lf-font-size-base: .9rem;
+    --lf-font-size-lg: 1rem;
+    --lf-font-size-xl: 1.2rem;
+    --lf-font-size-2xl: 1.45rem;
+    --lf-font-size-stat: 1.95rem;
+    --lf-line-tight: 1.25;
+    --lf-line-base: 1.55;
 
-    /* 語意色：風險與嚴重度。同一個顏色在圖表、徽章、卡片、時間軸中意義相同（§8.2 原則 3） */
-    --lf-risk-high: #dc3545;
-    --lf-risk-mid: #ffc107;
-    --lf-risk-low: #6c757d;
-    --lf-severity-critical: #dc3545;
-    --lf-severity-high: #fd7e14;
-    --lf-severity-medium: #0dcaf0;
-    --lf-severity-low: #adb5bd;
+    /* ── 間距階層 ─────────────────────────────────────────────────────── */
+    --lf-space-1: .25rem;
+    --lf-space-2: .5rem;
+    --lf-space-3: .75rem;
+    --lf-space-4: 1rem;
+    --lf-space-5: 1.5rem;
+    --lf-space-6: 2rem;
 
-    /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色） */
-    --lf-cat-storage: #0d6efd;
-    --lf-cat-hardware: #6f42c1;
-    --lf-cat-security: #dc3545;
-    --lf-cat-service: #fd7e14;
-    --lf-cat-backup: #20c997;
-    --lf-cat-config: #6c757d;
-    --lf-cat-resource: #d63384;
-    --lf-cat-other: #adb5bd;
+    /* ── 圓角 ─────────────────────────────────────────────────────────── */
+    --lf-radius-sm: .375rem;
+    --lf-radius: .625rem;
+    --lf-radius-lg: .875rem;
+    --lf-radius-pill: 100px;
+
+    /* ── 陰影 ─────────────────────────────────────────────────────────── */
+    --lf-shadow-xs: 0 1px 2px rgba(15, 23, 42, .06);
+    --lf-shadow-sm: 0 1px 3px rgba(15, 23, 42, .08), 0 1px 2px rgba(15, 23, 42, .04);
+    --lf-shadow-md: 0 6px 18px rgba(15, 23, 42, .12), 0 2px 6px rgba(15, 23, 42, .06);
+    --lf-shadow-lg: 0 14px 40px rgba(15, 23, 42, .18);
+
+    /* ── 互動 ─────────────────────────────────────────────────────────── */
+    --lf-focus-ring: 0 0 0 .2rem rgba(79, 70, 229, .22);
+    --lf-transition: .15s ease;
+
+    /* 舊 token 別名（保留既有元件引用，升級零成本）*/
+    --lf-card-radius: var(--lf-radius);
+    --lf-card-shadow: var(--lf-shadow-xs);
+    --lf-card-shadow-hover: var(--lf-shadow-md);
+
+    /* ── 語意色：風險與嚴重度。名稱固定不可改（charts.js 執行期讀取），只調色值 ──
+       同一個顏色在圖表、徽章、卡片、時間軸中意義相同（§8.2 原則 3）。
+       另備 -soft companion 供淡色徽章使用。*/
+    --lf-risk-high: #dc2626;
+    --lf-risk-high-soft: #fdecec;
+    --lf-risk-high-text: #991b1b;
+    --lf-risk-mid: #f59e0b;
+    --lf-risk-mid-soft: #fef4e2;
+    --lf-risk-mid-text: #92400e;
+    --lf-risk-low: #64748b;
+
+    --lf-severity-critical: #dc2626;
+    --lf-severity-high: #ea580c;
+    --lf-severity-medium: #0891b2;
+    --lf-severity-low: #94a3b8;
+
+    /* 一般狀態語意色（供 statusBadge 淡色徽章）*/
+    --lf-success: #16a34a;
+    --lf-success-soft: #e8f6ec;
+    --lf-success-text: #166534;
+    --lf-info: #0891b2;
+    --lf-info-soft: #e4f6fa;
+    --lf-info-text: #155e75;
+    --lf-warning: #d97706;
+    --lf-warning-soft: #fef4e2;
+    --lf-warning-text: #92400e;
+    --lf-danger: #dc2626;
+    --lf-danger-soft: #fdecec;
+    --lf-danger-text: #991b1b;
+    --lf-neutral-soft: #eef1f6;
+    --lf-neutral-text: #475569;
+    --lf-dark-soft: #e2e6ee;
+    --lf-dark-text: #334155;
+
+    /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
+    --lf-cat-storage: #4f46e5;
+    --lf-cat-hardware: #7c3aed;
+    --lf-cat-security: #dc2626;
+    --lf-cat-service: #ea580c;
+    --lf-cat-backup: #0d9488;
+    --lf-cat-config: #64748b;
+    --lf-cat-resource: #db2777;
+    --lf-cat-other: #94a3b8;
+
+    /* ── Bootstrap 元件級變數 retheme（不動 lib，只覆寫 CSS 變數）─────── */
+    --bs-primary: var(--lf-primary);
+    --bs-primary-rgb: 79, 70, 229;
+    --bs-link-color: var(--lf-primary);
+    --bs-link-hover-color: var(--lf-primary-dark);
+    --bs-body-color: var(--lf-text);
+    --bs-border-color: var(--lf-border);
 }
 
 body {
     background: var(--lf-content-bg);
     color: var(--lf-text);
     font-family: "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    font-size: var(--lf-font-size-base);
+    line-height: var(--lf-line-base);
+}
+
+/* ── 共用小元件 ────────────────────────────────────────────────────────── */
+
+/* 內嵌 SVG sprite 圖示：跟隨文字色與字級，裝飾性、永遠 aria-hidden（§8.2）*/
+.lf-icon {
+    width: 1em;
+    height: 1em;
+    fill: currentColor;
+    vertical-align: -0.125em;
+    flex-shrink: 0;
+}
+
+/* 一行式輔助說明，取代大段 alert（§8.6）*/
+.lf-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lf-space-2);
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+}
+
+.lf-hint .lf-icon {
+    margin-top: .15em;
+    color: var(--lf-gray-400);
+}
+
+/* 小型「說明」圖示鈕（開 popover）*/
+.lf-help {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--lf-gray-400);
+    line-height: 1;
+    cursor: pointer;
+    transition: color var(--lf-transition);
+}
+
+.lf-help:hover { color: var(--lf-primary); }
+
+/* ── Bootstrap 元件微調（透過元件級變數，維持 Bootstrap 行為）─────────── */
+
+.btn {
+    --bs-btn-border-radius: var(--lf-radius-sm);
+    --bs-btn-font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: .4em;
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition);
+}
+
+.btn-sm { --bs-btn-border-radius: var(--lf-radius-sm); }
+
+.btn-primary {
+    --bs-btn-bg: var(--lf-primary);
+    --bs-btn-border-color: var(--lf-primary);
+    --bs-btn-hover-bg: var(--lf-primary-dark);
+    --bs-btn-hover-border-color: var(--lf-primary-dark);
+    --bs-btn-active-bg: var(--lf-primary-dark);
+    --bs-btn-active-border-color: var(--lf-primary-dark);
+    --bs-btn-disabled-bg: var(--lf-primary);
+    --bs-btn-disabled-border-color: var(--lf-primary);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--lf-primary);
+    --bs-btn-border-color: var(--lf-primary);
+    --bs-btn-hover-bg: var(--lf-primary);
+    --bs-btn-hover-border-color: var(--lf-primary);
+    --bs-btn-active-bg: var(--lf-primary-dark);
+    --bs-btn-active-border-color: var(--lf-primary-dark);
+}
+
+.btn:focus-visible { box-shadow: var(--lf-focus-ring); }
+
+.form-control,
+.form-select {
+    border-color: var(--lf-border-strong);
+    border-radius: var(--lf-radius-sm);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--lf-primary-hover);
+    box-shadow: var(--lf-focus-ring);
+}
+
+.form-check-input:checked {
+    background-color: var(--lf-primary);
+    border-color: var(--lf-primary);
+}
+
+.form-check-input:focus {
+    border-color: var(--lf-primary-hover);
+    box-shadow: var(--lf-focus-ring);
+}
+
+.form-label {
+    font-size: var(--lf-font-size-sm);
+    font-weight: 500;
+    margin-bottom: var(--lf-space-1);
+}
+
+.form-text { font-size: var(--lf-font-size-xs); }
+
+/* 分頁 */
+.pagination {
+    --bs-pagination-color: var(--lf-text-muted);
+    --bs-pagination-hover-color: var(--lf-primary-dark);
+    --bs-pagination-hover-bg: var(--lf-primary-soft);
+    --bs-pagination-focus-box-shadow: var(--lf-focus-ring);
+    --bs-pagination-active-bg: var(--lf-primary);
+    --bs-pagination-active-border-color: var(--lf-primary);
+    --bs-pagination-border-color: var(--lf-border);
+    --bs-pagination-border-radius: var(--lf-radius-sm);
+}
+
+/* 模態框 */
+.modal-content {
+    border: none;
+    border-radius: var(--lf-radius-lg);
+    box-shadow: var(--lf-shadow-lg);
+}
+
+.modal-header {
+    border-bottom-color: var(--lf-border);
+    padding: var(--lf-space-4) var(--lf-space-5);
+}
+
+.modal-title { font-size: var(--lf-font-size-lg); font-weight: 600; }
+.modal-body { padding: var(--lf-space-5); }
+.modal-footer { border-top-color: var(--lf-border); padding: var(--lf-space-3) var(--lf-space-5); }
+
+/* 下拉/提示氣泡 */
+.dropdown-menu {
+    --bs-dropdown-border-color: var(--lf-border);
+    --bs-dropdown-border-radius: var(--lf-radius);
+    --bs-dropdown-box-shadow: var(--lf-shadow-md);
+    --bs-dropdown-link-active-bg: var(--lf-primary);
+    font-size: var(--lf-font-size-sm);
+}
+
+.popover {
+    --bs-popover-border-color: var(--lf-border);
+    --bs-popover-border-radius: var(--lf-radius);
+    --bs-popover-header-bg: var(--lf-gray-50);
+    --bs-popover-max-width: 320px;
+    box-shadow: var(--lf-shadow-md);
+    font-size: var(--lf-font-size-sm);
+}
+
+.alert {
+    --bs-alert-border-radius: var(--lf-radius);
+    border-color: var(--lf-border);
+    font-size: var(--lf-font-size-sm);
+}
+
+/* 底線式頁籤（三個用 nav-tabs 的頁面零 markup 變更即生效）*/
+.nav-tabs {
+    --bs-nav-tabs-border-color: var(--lf-border);
+    gap: var(--lf-space-1);
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.nav-tabs .nav-link {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: var(--lf-space-2) var(--lf-space-3);
+    transition: color var(--lf-transition), border-color var(--lf-transition);
+}
+
+.nav-tabs .nav-link:hover { color: var(--lf-primary); border-color: transparent; }
+
+.nav-tabs .nav-link.active {
+    color: var(--lf-primary);
+    font-weight: 600;
+    background: none;
+    border: none;
+    border-bottom: 2px solid var(--lf-primary);
 }
 
 /* ── 版面骨架：深色側欄＋淺灰內容區 ─────────────────────────────────────── */
@@ -70,55 +348,102 @@ body {
 }
 
 .lf-sidebar__brand {
-    padding: 1.15rem 1.25rem;
-    font-size: 1.1rem;
-    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    padding: var(--lf-space-4) var(--lf-space-5);
+    font-size: var(--lf-font-size-xl);
+    font-weight: 700;
     color: #fff;
-    letter-spacing: .02em;
-    border-bottom: 1px solid rgba(255, 255, 255, .08);
+    letter-spacing: .01em;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
 }
 
 .lf-sidebar__brand small {
     display: block;
-    font-size: .72rem;
+    font-size: .7rem;
     font-weight: 400;
-    color: var(--lf-sidebar-fg);
+    color: var(--lf-sidebar-section);
     margin-top: .15rem;
+    letter-spacing: 0;
 }
 
+.lf-sidebar__brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: var(--lf-radius-sm);
+    background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.lf-sidebar__brand-mark .lf-icon { width: 1.05rem; height: 1.05rem; }
+
 .lf-sidebar__nav {
-    padding: .75rem 0;
+    padding: var(--lf-space-2) var(--lf-space-2) var(--lf-space-4);
     flex: 1 1 auto;
+    overflow-y: auto;
+}
+
+.lf-sidebar__section {
+    padding: var(--lf-space-4) var(--lf-space-3) var(--lf-space-1);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    letter-spacing: .06em;
+    color: var(--lf-sidebar-section);
+    text-transform: uppercase;
 }
 
 .lf-sidebar__link {
     display: flex;
     align-items: center;
-    gap: .6rem;
-    padding: .6rem 1.25rem;
+    gap: var(--lf-space-3);
+    margin: 1px var(--lf-space-1);
+    padding: .5rem .7rem;
     color: var(--lf-sidebar-fg);
     text-decoration: none;
-    font-size: .93rem;
-    border-left: 3px solid transparent;
+    font-size: var(--lf-font-size-base);
+    border-radius: var(--lf-radius-sm);
+    transition: background-color var(--lf-transition), color var(--lf-transition);
+}
+
+.lf-sidebar__link .lf-icon {
+    width: 1.1rem;
+    height: 1.1rem;
+    opacity: .75;
 }
 
 .lf-sidebar__link:hover {
-    background: rgba(255, 255, 255, .05);
-    color: #fff;
+    background: var(--lf-sidebar-hover-bg);
+    color: var(--lf-sidebar-fg-strong);
 }
 
 .lf-sidebar__link.is-active {
     background: var(--lf-sidebar-active-bg);
-    border-left-color: var(--lf-primary);
     color: #fff;
     font-weight: 500;
 }
 
+.lf-sidebar__link.is-active .lf-icon { opacity: 1; }
+
 .lf-sidebar__footer {
-    padding: .9rem 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, .08);
-    font-size: .85rem;
+    padding: var(--lf-space-3) var(--lf-space-4);
+    border-top: 1px solid rgba(255, 255, 255, .07);
+    font-size: var(--lf-font-size-sm);
 }
+
+.lf-sidebar__user {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-bottom: var(--lf-space-2);
+    color: var(--lf-sidebar-fg-strong);
+}
+
+.lf-sidebar__user .lf-icon { color: var(--lf-sidebar-section); width: 1.1rem; height: 1.1rem; }
 
 .lf-main {
     flex: 1 1 auto;
@@ -130,14 +455,22 @@ body {
 .lf-topbar {
     background: var(--lf-card-bg);
     border-bottom: 1px solid var(--lf-border);
-    padding: .7rem 1.5rem;
+    padding: var(--lf-space-3) var(--lf-space-5);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    min-height: 3.25rem;
+}
+
+.lf-topbar__title {
+    font-size: var(--lf-font-size-xl);
+    font-weight: 600;
+    margin: 0;
+    color: var(--lf-text);
 }
 
 .lf-content {
-    padding: 1.5rem;
+    padding: var(--lf-space-5);
     flex: 1 1 auto;
 }
 
@@ -146,26 +479,32 @@ body {
 .lf-card {
     background: var(--lf-card-bg);
     border: 1px solid var(--lf-border);
-    border-radius: var(--lf-card-radius);
-    box-shadow: var(--lf-card-shadow);
+    border-radius: var(--lf-radius);
+    box-shadow: var(--lf-shadow-xs);
 }
 
 .lf-card__header {
-    padding: .85rem 1.15rem;
+    padding: var(--lf-space-3) var(--lf-space-4);
     border-bottom: 1px solid var(--lf-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--lf-space-3);
 }
 
 .lf-card__title {
-    font-size: .98rem;
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    font-size: var(--lf-font-size-lg);
     font-weight: 600;
     margin: 0;
 }
 
+.lf-card__title .lf-icon { color: var(--lf-gray-400); }
+
 .lf-card__body {
-    padding: 1.15rem;
+    padding: var(--lf-space-4);
 }
 
 /*
@@ -176,36 +515,40 @@ body {
     display: block;
     text-decoration: none;
     color: inherit;
+    transition: box-shadow var(--lf-transition), border-color var(--lf-transition), transform var(--lf-transition);
 }
 
 .lf-stat__value {
-    font-size: 2.1rem;
-    font-weight: 600;
+    font-size: var(--lf-font-size-stat);
+    font-weight: 700;
     line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
 }
 
 .lf-stat__label {
-    font-size: .85rem;
+    font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
 }
 
 a.lf-stat:hover .lf-card,
 .lf-card--clickable:hover {
-    box-shadow: var(--lf-card-shadow-hover);
-    border-color: var(--lf-primary);
+    box-shadow: var(--lf-shadow-md);
+    border-color: var(--lf-primary-soft-border);
+    transform: translateY(-1px);
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
 .lf-card--critical {
-    border-left: 4px solid var(--lf-risk-high);
+    border-left: 3px solid var(--lf-risk-high);
 }
 
 .lf-card--warning {
-    border-left: 4px solid var(--lf-risk-mid);
+    border-left: 3px solid var(--lf-risk-mid);
 }
 
 .lf-card--ok {
-    border-left: 4px solid #198754;
+    border-left: 3px solid var(--lf-success);
 }
 
 /* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據 */
@@ -214,27 +557,72 @@ a.lf-stat:hover .lf-card,
     height: 280px;
 }
 
-/* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI ───────────────────── */
+/* ── 徽章：一律「顏色＋文字」，不做只靠顏色區分的 UI（§8.2）───────────────
+   風險徽章維持高對比（風險必須是畫面最響亮的元素）；狀態徽章走淡色 token 系。*/
 
 .lf-badge {
-    display: inline-block;
-    padding: .18rem .55rem;
-    border-radius: 1rem;
-    font-size: .78rem;
-    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: .3em;
+    padding: .2rem .6rem;
+    border-radius: var(--lf-radius-pill);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
     line-height: 1.5;
+    white-space: nowrap;
+    border: 1px solid transparent;
+}
+
+/* 風險：高＝實心紅（最響亮）、中＝琥珀、低＝中性 */
+.lf-badge--high { background: var(--lf-risk-high); color: #fff; }
+.lf-badge--mid { background: var(--lf-risk-mid-soft); color: var(--lf-risk-mid-text); border-color: #f6dca6; }
+.lf-badge--low { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+
+/* 狀態淡色徽章（statusBadge / severityBadge / handlingBadge 使用）*/
+.lf-badge--danger { background: var(--lf-danger-soft); color: var(--lf-danger-text); border-color: #f6cccc; }
+.lf-badge--warning { background: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: #f6dca6; }
+.lf-badge--success { background: var(--lf-success-soft); color: var(--lf-success-text); border-color: #bbe7c9; }
+.lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #b9e4ee; }
+.lf-badge--primary { background: var(--lf-primary-soft); color: var(--lf-primary-text); border-color: var(--lf-primary-soft-border); }
+.lf-badge--neutral,
+.lf-badge--secondary,
+.lf-badge--light { background: var(--lf-neutral-soft); color: var(--lf-neutral-text); }
+.lf-badge--dark { background: var(--lf-dark-soft); color: var(--lf-dark-text); }
+
+.lf-badge .lf-icon { width: .85em; height: .85em; }
+
+/* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
+
+.table {
+    --bs-table-hover-bg: var(--lf-primary-soft);
+    --bs-table-color: var(--lf-text);
+    margin-bottom: 0;
+}
+
+.table > thead > tr > th {
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--lf-text-muted);
+    text-transform: none;
+    border-bottom: 1px solid var(--lf-border);
+    padding: var(--lf-space-2) var(--lf-space-3);
     white-space: nowrap;
 }
 
-.lf-badge--high { background: var(--lf-risk-high); color: #fff; }
-.lf-badge--mid { background: var(--lf-risk-mid); color: #332701; }
-.lf-badge--low { background: #e9ecef; color: #495057; }
+.table > tbody > tr > td {
+    padding: var(--lf-space-3);
+    border-bottom-color: var(--lf-border);
+    vertical-align: middle;
+}
+
+.table > tbody > tr:last-child > td { border-bottom: none; }
 
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 
 .report-text {
     font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
-    font-size: .87rem;
+    font-size: var(--lf-font-size-sm);
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
@@ -246,6 +634,7 @@ a.lf-stat:hover .lf-card,
 
 .lf-table-wrap {
     overflow-x: auto;
+    scrollbar-width: thin;
 }
 
 .lf-table-wrap > table {
@@ -255,24 +644,33 @@ a.lf-stat:hover .lf-card,
 /* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）─────────── */
 
 .lf-empty {
-    padding: 2.5rem 1rem;
+    padding: var(--lf-space-6) var(--lf-space-4);
     text-align: center;
     color: var(--lf-text-muted);
 }
 
+.lf-empty__icon {
+    color: var(--lf-gray-300);
+    margin-bottom: var(--lf-space-3);
+}
+
+.lf-empty__icon .lf-icon { width: 2.25rem; height: 2.25rem; }
+
 .lf-empty__title {
     font-weight: 600;
     color: var(--lf-text);
-    margin-bottom: .35rem;
+    margin-bottom: var(--lf-space-1);
 }
 
 .lf-skeleton {
     height: 1rem;
-    border-radius: .25rem;
-    background: linear-gradient(90deg, #eef1f5 25%, #e2e7ee 37%, #eef1f5 63%);
+    border-radius: var(--lf-radius-sm);
+    background: linear-gradient(90deg, var(--lf-gray-100) 25%, var(--lf-gray-200) 37%, var(--lf-gray-100) 63%);
     background-size: 400% 100%;
     animation: lf-skeleton-shimmer 1.2s ease-in-out infinite;
 }
+
+.lf-skeleton--lg { height: 1.75rem; }
 
 @keyframes lf-skeleton-shimmer {
     0% { background-position: 100% 50%; }
@@ -286,29 +684,39 @@ a.lf-stat:hover .lf-card,
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #24405f 100%);
-    padding: 1rem;
+    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #2a2f52 55%, var(--lf-primary-dark) 130%);
+    padding: var(--lf-space-4);
 }
 
 .lf-login__card {
     width: 100%;
-    max-width: 380px;
+    max-width: 400px;
     background: var(--lf-card-bg);
-    border-radius: var(--lf-card-radius);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, .22);
-    padding: 2rem;
+    border-radius: var(--lf-radius-lg);
+    box-shadow: var(--lf-shadow-lg);
+    padding: var(--lf-space-6);
+}
+
+.lf-login__brand {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    font-weight: 700;
+    font-size: var(--lf-font-size-xl);
+    color: var(--lf-text);
+    margin-bottom: var(--lf-space-5);
 }
 
 .lf-login__title {
-    font-size: 1.3rem;
+    font-size: var(--lf-font-size-2xl);
     font-weight: 600;
-    margin-bottom: .25rem;
+    margin-bottom: var(--lf-space-1);
 }
 
 .lf-login__subtitle {
-    font-size: .85rem;
+    font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
-    margin-bottom: 1.5rem;
+    margin-bottom: var(--lf-space-5);
 }
 
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
@@ -329,6 +737,9 @@ a.lf-stat:hover .lf-card,
         border: 1px solid #ccc;
         break-inside: avoid;
     }
+
+    /* 淡色徽章在灰階列印仍靠邊框與文字辨識 */
+    .lf-badge { border-color: #bbb !important; }
 }
 
 /* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
@@ -345,18 +756,25 @@ a.lf-stat:hover .lf-card,
 
     .lf-sidebar__nav {
         display: flex;
+        align-items: center;
         overflow-x: auto;
         padding: 0;
     }
 
+    /* 分組標籤在橫向列沒有意義，收起 */
+    .lf-sidebar__section {
+        display: none;
+    }
+
     .lf-sidebar__link {
-        border-left: none;
+        margin: 0;
+        border-radius: 0;
         border-bottom: 3px solid transparent;
         white-space: nowrap;
     }
 
     .lf-sidebar__link.is-active {
-        border-left: none;
-        border-bottom-color: var(--lf-primary);
+        background: var(--lf-sidebar-hover-bg);
+        border-bottom-color: var(--lf-primary-hover);
     }
 }

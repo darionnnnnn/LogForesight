@@ -62,7 +62,7 @@ function renderGroupBadges(user) {
     const wrap = document.createElement('span');
     for (const name of user.groupNames) {
         const badge = document.createElement('span');
-        badge.className = 'badge text-bg-light border me-1';
+        badge.className = 'lf-badge lf-badge--light border me-1';
         badge.textContent = name;
         wrap.appendChild(badge);
     }
@@ -71,7 +71,7 @@ function renderGroupBadges(user) {
 
 function renderActiveBadge(active) {
     const span = document.createElement('span');
-    span.className = `badge text-bg-${active ? 'success' : 'secondary'}`;
+    span.className = `lf-badge lf-badge--${active ? 'success' : 'secondary'}`;
     span.textContent = active ? '啟用' : '停用';
     return span;
 }

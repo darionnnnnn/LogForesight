@@ -8,30 +8,37 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - LogForesight</title>
-    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
-    <link rel="stylesheet" href="~/css/site.css" />
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
 <body>
     <div class="lf-layout">
         <aside class="lf-sidebar lf-no-print">
             <div class="lf-sidebar__brand">
-                LogForesight
-                <small>Windows 事件日誌預警</small>
+                <span class="lf-sidebar__brand-mark">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
+                </span>
+                <span>
+                    LogForesight
+                    <small>Windows 事件日誌預警</small>
+                </span>
             </div>
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>
             <div class="lf-sidebar__footer">
-                <div id="lf-current-user" class="mb-2 text-truncate"></div>
-                <button type="button" class="btn btn-sm btn-outline-light w-100" id="lf-logout">登出</button>
+                <div class="lf-sidebar__user">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#people"></use></svg>
+                    <span id="lf-current-user" class="text-truncate"></span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-light w-100" id="lf-logout">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#box-arrow-right"></use></svg>
+                    登出
+                </button>
             </div>
         </aside>
 
         <div class="lf-main">
             <header class="lf-topbar lf-no-print">
-                <nav aria-label="breadcrumb">
-                    <ol class="breadcrumb mb-0">
-                        <li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li>
-                    </ol>
-                </nav>
+                <h1 class="lf-topbar__title">@ViewData["Title"]</h1>
             </header>
 
             <main class="lf-content">
@@ -40,8 +47,8 @@
         </div>
     </div>
 
-    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
-    <script type="module" src="~/js/core/layout.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js" asp-append-version="true"></script>
+    <script type="module" src="~/js/core/layout.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
