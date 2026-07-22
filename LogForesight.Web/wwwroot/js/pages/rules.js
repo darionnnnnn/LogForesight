@@ -8,8 +8,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy } from '../core/ui.js';
-import { severityBadge, formatDate } from '../core/format.js';
+import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs } from '../core/ui.js';
+import { severityBadge, statusBadge, formatDate } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
@@ -25,18 +25,11 @@ let suppressions = [];
 let editingRule = null;
 let restoringRuleId = null;
 let suppressingRuleId = null;
+let hostOptionsLoaded = false;   // 抑制 modal 的主機下拉延遲載入
 
-document.getElementById('rule-tabs').addEventListener('click', event => {
-    const button = event.target.closest('[data-tab]');
-    if (!button) return;
+const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
 
-    for (const tab of document.querySelectorAll('#rule-tabs .nav-link')) {
-        tab.classList.toggle('active', tab === button);
-    }
-    for (const panel of document.querySelectorAll('[data-panel]')) {
-        panel.classList.toggle('d-none', panel.dataset.panel !== button.dataset.tab);
-    }
-});
+bindTabs(document.getElementById('rule-tabs'));
 
 async function load() {
     renderLoading(document.getElementById('rule-list'), 8);
@@ -119,41 +112,29 @@ function statusCell(rule) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex flex-column gap-1 align-items-start';
 
-    const enabled = document.createElement('span');
-    enabled.className = `badge text-bg-${rule.enabled ? 'success' : 'secondary'}`;
-    enabled.textContent = rule.enabled ? '啟用' : '停用';
-    wrap.appendChild(enabled);
+    wrap.appendChild(statusBadge(rule.enabled ? '啟用' : '停用', rule.enabled ? 'success' : 'neutral'));
 
     if (rule.origin === 'custom') {
-        const custom = document.createElement('span');
-        custom.className = 'badge text-bg-info';
-        custom.textContent = '自訂';
-        wrap.appendChild(custom);
+        wrap.appendChild(statusBadge('自訂', 'info'));
     } else if (rule.isModified) {
         // builtin 被改過要標示出來：程式改版時這條不會自動跟進新種子
-        const modified = document.createElement('span');
-        modified.className = 'badge text-bg-warning';
-        modified.textContent = '已修改';
-        modified.title = rule.modifiedByName
-            ? `由 ${rule.modifiedByName} 於 ${formatDate(rule.modifiedAt)} 修改`
-            : '已被修改過';
-        wrap.appendChild(modified);
+        wrap.appendChild(statusBadge('已修改', 'warning', {
+            title: rule.modifiedByName
+                ? `由 ${rule.modifiedByName} 於 ${formatDate(rule.modifiedAt)} 修改`
+                : '已被修改過'
+        }));
     }
 
     if (rule.seedHasNewerVersion) {
-        const newer = document.createElement('span');
-        newer.className = 'badge text-bg-primary';
-        newer.textContent = '種子有新版';
-        newer.title = '程式內建種子有更新的內容，可用「回復預設」套用';
-        wrap.appendChild(newer);
+        wrap.appendChild(statusBadge('種子有新版', 'primary', {
+            title: '程式內建種子有更新的內容，可用「回復預設」套用'
+        }));
     }
 
     if (rule.suppression) {
-        const suppressed = document.createElement('span');
-        suppressed.className = 'badge text-bg-dark';
-        suppressed.textContent = rule.suppression.isExpired ? '抑制已到期' : '已抑制';
-        suppressed.title = `${rule.suppression.host}：${rule.suppression.reason}`;
-        wrap.appendChild(suppressed);
+        wrap.appendChild(statusBadge(rule.suppression.isExpired ? '抑制已到期' : '已抑制', 'dark', {
+            title: `${rule.suppression.host}：${rule.suppression.reason}`
+        }));
     }
 
     return wrap;
@@ -163,29 +144,25 @@ function actionsCell(rule) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-1 justify-content-end flex-wrap';
 
-    wrap.appendChild(button('編輯', 'outline-primary', () => openRuleModal(rule)));
-    wrap.appendChild(button(rule.enabled ? '停用' : '啟用', 'outline-secondary', () => toggleEnabled(rule)));
-    wrap.appendChild(button('抑制', 'outline-dark', () => openSuppressModal(rule)));
+    wrap.appendChild(button('', { variant: 'outline-primary', icon: 'pencil', title: '編輯', onClick: () => openRuleModal(rule) }));
+    wrap.appendChild(button('', {
+        variant: 'outline-secondary',
+        icon: rule.enabled ? 'slash-circle' : 'plus-lg',
+        title: rule.enabled ? '停用' : '啟用',
+        onClick: () => toggleEnabled(rule)
+    }));
+    wrap.appendChild(button('', { variant: 'outline-dark', icon: 'bell-slash', title: '抑制', onClick: () => openSuppressModal(rule) }));
 
     if (rule.canRestore) {
-        wrap.appendChild(button('回復預設', 'outline-warning', () => openRestoreModal(rule)));
+        wrap.appendChild(button('', { variant: 'outline-warning', icon: 'arrow-counterclockwise', title: '回復預設', onClick: () => openRestoreModal(rule) }));
     }
 
     // builtin 沒有刪除鈕——不需要它時請停用（可隨時恢復）
     if (rule.canDelete) {
-        wrap.appendChild(button('刪除', 'outline-danger', () => deleteRule(rule)));
+        wrap.appendChild(button('', { variant: 'outline-danger', icon: 'trash', title: '刪除', onClick: () => deleteRule(rule) }));
     }
 
     return wrap;
-}
-
-function button(text, variant, onClick) {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = `btn btn-sm btn-${variant}`;
-    el.textContent = text;
-    el.addEventListener('click', onClick);
-    return el;
 }
 
 // ── 編輯 ─────────────────────────────────────────────────────────────────────
@@ -213,6 +190,14 @@ function openRuleModal(rule) {
     document.getElementById('rule-causes').value = rule?.likelyCauses.join('\n') ?? '';
     document.getElementById('rule-steps').value = rule?.nextSteps.join('\n') ?? '';
     document.getElementById('rule-enabled').checked = rule?.enabled ?? true;
+
+    // 處置知識庫預設收合（漸進揭露）；已填內容的規則自動展開，摘要行顯示填了幾欄
+    const kbFilled = [rule?.plainExplanation, rule?.impact, rule?.likelyCauses?.length, rule?.nextSteps?.length]
+        .filter(Boolean).length;
+    document.getElementById('rule-kb-summary').textContent = kbFilled > 0 ? `已填 ${kbFilled}/4 欄` : '未填寫';
+    const kbToggle = document.querySelector('[data-bs-target="#rule-kb"]');
+    kbToggle.setAttribute('aria-expanded', kbFilled > 0 ? 'true' : 'false');
+    if (kbFilled > 0) kbCollapse.show(); else kbCollapse.hide();
 
     ruleModal.show();
 }
@@ -395,7 +380,26 @@ function openSuppressModal(rule) {
     document.getElementById('suppress-host').value = '';
     document.getElementById('suppress-reason').value = '';
     document.getElementById('suppress-days').value = '';
+    ensureHostOptions();
     suppressModal.show();
+}
+
+/** 首次開啟抑制 modal 時載入主機清單填入下拉（避免要人手打主機名打錯）。與 hosts 頁同一端點、同 Maintain 權限。 */
+async function ensureHostOptions() {
+    if (hostOptionsLoaded) return;
+    const select = document.getElementById('suppress-host');
+    try {
+        const hosts = await api.get('/api/admin/hosts');
+        for (const host of hosts) {
+            const option = document.createElement('option');
+            option.value = host.hostName;
+            option.textContent = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
+            select.appendChild(option);
+        }
+        hostOptionsLoaded = true;
+    } catch {
+        // api.js 已以 toast 顯示錯誤；使用者可稍後重開再試
+    }
 }
 
 document.getElementById('suppress-form').addEventListener('submit', async event => {
@@ -455,7 +459,7 @@ function expiryCell(suppression) {
 }
 
 function removeSuppressionButton(suppression) {
-    return button('解除', 'outline-danger', async () => {
+    return button('解除', { variant: 'outline-danger', icon: 'trash', onClick: async () => {
         const confirmed = await confirmAction({
             title: '解除抑制',
             message: `解除後，規則「${suppression.ruleId}」在主機「${suppression.host}」上的告警將恢復。`,
@@ -468,7 +472,7 @@ function removeSuppressionButton(suppression) {
             `/api/rules/${encodeURIComponent(suppression.ruleId)}/suppressions/${encodeURIComponent(suppression.host)}`);
         toast('已解除抑制', 'success');
         await load();
-    });
+    } });
 }
 
 document.getElementById('btn-new-rule').addEventListener('click', () => openRuleModal(null));
