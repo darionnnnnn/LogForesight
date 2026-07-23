@@ -41,6 +41,20 @@ try
 
     // ── 組態：全部集中在強型別的 WebAppSettings（§5）────────────────────────
     var settings = builder.Configuration.Get<WebAppSettings>() ?? new WebAppSettings();
+
+    // 開發／測試環境：DataRoot 未明確指定時，改用「相對於本站台輸出目錄推算出的批次輸出目錄」，
+    // 不再寫死絕對路徑（見 appsettings.Development.json 的說明）。這樣不綁使用者名稱，
+    // 也會自動跟著 Debug/Release 與 TFM 變動。開發者若在設定檔明確填了 DataRoot，則尊重其值、不推算。
+    if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(settings.Storage.DataRoot))
+    {
+        var computed = TryResolveSiblingBatchDataRoot();
+        if (computed is not null)
+        {
+            settings.Storage.DataRoot = computed;
+            logger.Info("開發環境自動推算批次資料根目錄（Storage.DataRoot）：{0}", computed);
+        }
+    }
+
     settings.Validate(builder.Environment.IsProduction());
     builder.Services.AddSingleton(settings);
 
@@ -123,6 +137,30 @@ catch (Exception ex)
 finally
 {
     LogManager.Shutdown();
+}
+
+/// <summary>
+/// 開發／測試環境用：從本站台的輸出目錄推算同一個 repo 內批次 LogForesight.exe 的輸出目錄，
+/// 取代 appsettings.Development.json 中原本寫死的絕對路徑。
+///
+/// 兩個專案的輸出結構相同（{repo}\{專案}\bin\{Config}\{TFM}），差別只在專案資料夾名稱，
+/// 所以把本站台輸出目錄尾端的 bin\{Config}\{TFM} 原樣接到批次專案資料夾（LogForesight）下即可——
+/// 自動跟著 Debug/Release 與 TFM 變動，且不含任何使用者相關的絕對路徑。
+/// （"LogForesight" 是批次專案的資料夾名稱，屬 repo 結構常數，非使用者路徑。）
+///
+/// 推算不出（目錄結構非預期）時回 null，交由呼叫端維持原值、後續 Validate 顯性報錯，
+/// 不猜一個可能錯的路徑蓋掉設定。
+/// </summary>
+static string? TryResolveSiblingBatchDataRoot()
+{
+    var webBinTfm = new DirectoryInfo(AppContext.BaseDirectory); // …\LogForesight.Web\bin\{Config}\{TFM}
+    var webProjectDir = webBinTfm.Parent?.Parent?.Parent;        // …\LogForesight.Web
+    var repoRoot = webProjectDir?.Parent;                        // repo 根目錄
+    if (webProjectDir is null || repoRoot is null) return null;
+
+    // bin\{Config}\{TFM}——本站台與批次相同，原樣沿用即可跟著建置設定與 TFM 變動
+    var tail = Path.GetRelativePath(webProjectDir.FullName, webBinTfm.FullName);
+    return Path.Combine(repoRoot.FullName, "LogForesight", tail);
 }
 
 /// <summary>讀取密碼但不回顯（避免密碼留在畫面與終端機的捲動紀錄裡）</summary>
