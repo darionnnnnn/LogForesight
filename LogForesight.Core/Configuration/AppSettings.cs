@@ -4,7 +4,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 從執行檔目錄的 appsettings.json 載入設定。
-/// 檔案不存在或格式錯誤時使用預設值並提示，不中斷執行。
+/// 檔案不存在時使用預設值（開箱即用）；存在但解析失敗時擲例外中止啟動（見 Load 的語意說明）。
 /// </summary>
 public class AppSettings
 {
@@ -14,11 +14,21 @@ public class AppSettings
     public StorageSettings Storage { get; set; } = new();
     public NetIqSettings NetIq { get; set; } = new();
 
-    public static AppSettings Load()
-    {
-        // 讀執行檔所在目錄（排程執行時 CurrentDirectory 可能是 system32，不可靠）
-        var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    // 讀執行檔所在目錄（排程執行時 CurrentDirectory 可能是 system32，不可靠）
+    public static AppSettings Load() =>
+        Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
 
+    /// <summary>
+    /// 兩種缺席語意刻意不同（2026-07-23 定案，起因：Storage 段一個括號錯誤讓整份設定
+    /// ——含 AI 位址——被靜默丟棄，使用者只看到「AI 抓到預設值」卻找不到原因）：
+    ///   - 檔案**不存在** → 用預設值（開箱即用，測試情境不必先寫設定檔）
+    ///   - 檔案**存在但解析失敗** → 擲 <see cref="AppSettingsLoadException"/> 中止啟動。
+    ///     檔案存在代表使用者有明確的設定意圖，靜默退回預設值會讓批次照著「不是使用者要的
+    ///     設定」跑——Storage.Type 退回 Jsonl 會把資料寫進與正式後端分裂的另一份儲存，
+    ///     比「不跑」嚴重得多。與「正式環境用 Stub 驗證直接擋下」同一個原則。
+    /// </summary>
+    public static AppSettings Load(string path)
+    {
         if (!File.Exists(path))
         {
             Console.WriteLine($"找不到 {path}，使用預設設定。");
@@ -37,10 +47,18 @@ public class AppSettings
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"appsettings.json 格式錯誤（{ex.Message}），使用預設設定。");
-            return new AppSettings();
+            throw new AppSettingsLoadException(
+                $"appsettings.json 格式錯誤，無法啟動：{ex.Message}｜檔案位置：{path}｜" +
+                "請修正 JSON 語法（常見：漏掉大括號、引號或逗號）後再執行。" +
+                "刻意不以預設值繼續：設定檔存在代表有明確設定意圖，照預設值跑可能寫進錯誤的儲存後端。", ex);
         }
     }
+}
+
+/// <summary>設定檔存在但無法解析——啟動必須中止（語意見 <see cref="AppSettings.Load(string)"/>）</summary>
+public class AppSettingsLoadException : Exception
+{
+    public AppSettingsLoadException(string message, Exception inner) : base(message, inner) { }
 }
 
 public class AiSettings

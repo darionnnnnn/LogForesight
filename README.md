@@ -706,7 +706,7 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 
 ### 設定檔（appsettings.json / nlog.config）
 
-執行檔目錄下的 `appsettings.json`，找不到或格式錯誤時使用預設值並提示、不中斷執行：
+執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端（`--selftest` 不受此限，設定檔壞掉仍可執行）：
 
 ```json
 {

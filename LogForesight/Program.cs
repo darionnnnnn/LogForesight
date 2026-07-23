@@ -84,8 +84,24 @@ Console.WriteLine("--- LogForesight 啟動 ---");
 log.Info("===== LogForesight 啟動 =====");
 var runStopwatch = Stopwatch.StartNew();
 
-// AI API 設定由執行檔目錄的 appsettings.json 載入
-var settings = AppSettings.Load();
+// AI API 設定由執行檔目錄的 appsettings.json 載入。
+// 設定檔存在但解析失敗＝致命錯誤（見 AppSettings.Load 的語意說明）：清楚印出原因與位置後
+// 以非零 exit code 結束，讓工作排程器的失敗通知抓得到；不印堆疊（那對修 JSON 沒有幫助）。
+AppSettings settings;
+try
+{
+    settings = AppSettings.Load();
+}
+catch (AppSettingsLoadException ex)
+{
+    var original = Console.ForegroundColor;
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"\n{ex.Message}");
+    Console.ForegroundColor = original;
+    log.Fatal("設定檔解析失敗，啟動中止：{Message}", ex.Message);
+    LogManager.Shutdown();
+    return 1;
+}
 
 // 資料根目錄：所有「資料」（history.txt／rules.json／rule_seeds.json／suppressions.json／
 // webdata\／export\／permission_snapshot.json／hosts 清單）都寫在這裡，Web 也讀同一個根。

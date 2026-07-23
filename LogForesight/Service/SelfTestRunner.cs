@@ -24,8 +24,9 @@ public static class SelfTestRunner
         // 資料根目錄與正式執行同一套解析（Storage.DataRoot，留空＝執行檔目錄）：
         // selftest 的承諾是「驗證實際生效的規則」，DataRoot 指到別處時，實際生效的
         // rules.json / suppressions.json 就在那裡——驗證執行檔目錄的副本等於驗證錯的檔案。
-        // 「不需要設定檔」的承諾不變：appsettings.json 不存在或壞掉時 AppSettings.Load
-        // 自帶預設值（＝執行檔目錄），任何讀取失敗也退回執行檔目錄，selftest 照常執行。
+        // 「不需要設定檔」的承諾不變：appsettings.json 不存在時 AppSettings.Load 自帶預設值；
+        // 存在但壞掉時 Load 會擲例外（正式啟動要擋下），selftest 靠這層 catch 退回執行檔目錄
+        // 照常執行——selftest 的職責是驗證偵測規則，不是驗證設定檔。
         try
         {
             _dataRoot = AppSettings.Load().Storage.ResolveDataRoot();

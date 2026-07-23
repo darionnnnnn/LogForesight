@@ -140,6 +140,10 @@ public class JsonlAnalysisRecordStoreTests : IDisposable
 
         using var done = new CancellationTokenSource();
         var observedCounts = new System.Collections.Concurrent.ConcurrentBag<int>();
+        // writer 等 reader 真的開始讀了才開始重寫——否則平行測試回合的執行緒池忙碌時，
+        // writer 可能在 reader 第一圈之前就跑完 60 次並 Cancel，觀察清單全空、
+        // 測試也根本沒測到「重寫期間讀取」（本測試曾因此間歇性失敗）
+        using var readerStarted = new ManualResetEventSlim();
 
         // 保險絲：writer 若中途擲例外，reader 的迴圈沒有東西叫它停——
         // 沒有這個上限，一個失敗的測試會變成掛住整個測試回合
@@ -147,16 +151,21 @@ public class JsonlAnalysisRecordStoreTests : IDisposable
 
         var reader = Task.Run(() =>
         {
-            while (!done.Token.IsCancellationRequested)
+            // do-while：至少讀一次（Cancel 已觸發也一樣），觀察清單不可能為空
+            do
             {
                 observedCounts.Add(store.ReadRecent(anchor, recordCount).Count);
+                readerStarted.Set();
             }
+            while (!done.Token.IsCancellationRequested);
         });
 
         var writer = Task.Run(() =>
         {
             try
             {
+                readerStarted.Wait(TimeSpan.FromSeconds(10));
+
                 // AttachWeeklyCheckup 每次都重寫整個檔案，是最頻繁的整檔改寫路徑
                 for (int i = 0; i < 60; i++)
                 {
