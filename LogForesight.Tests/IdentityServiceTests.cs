@@ -81,10 +81,14 @@ public class IdentityServiceTests
     /// 預設的 <see cref="StubAuthenticationProvider"/> 的 RequiresPassword 為 false，
     /// 測試模式「一律免密碼」對所有帳號（含救援帳號）一致。
     /// </summary>
-    [Fact]
-    public void Login_Stub模式_serverAdmin免密碼也能登入()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("隨便打的錯誤密碼")]
+    public void Login_Stub模式_serverAdmin任意密碼都能登入(string? anyPassword)
     {
-        var outcome = Create().Login(ServerAdminAccount, null);
+        // Stub 免密碼的定義是後端不比對密碼值：留空、錯誤密碼都通過
+        var outcome = Create().Login(ServerAdminAccount, anyPassword);
 
         Assert.True(outcome.Success);
         Assert.True(outcome.Identity!.IsServerAdmin);
