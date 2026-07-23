@@ -146,7 +146,7 @@ export function attachToolbar(container, { chart, canvasWrapper, tableColumns, t
     toggleButton.type = 'button';
     toggleButton.className = 'btn btn-sm btn-outline-secondary';
     toggleButton.textContent = '表格';
-    toggleButton.setAttribute('aria-label', `以表格檢視「${title}」的數據`);
+    toggleButton.setAttribute('aria-label', `以表格檢視「${title}」的資料`);
     toggleButton.addEventListener('click', () => {
         const showingTable = !tableWrapper.classList.contains('d-none');
 

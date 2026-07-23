@@ -34,7 +34,7 @@ public class RiskReportService
 
     private const string DeepDiveSystemPrompt =
         "你是資深 Windows Server 維運與資安分析師。請針對已確認的問題深入分析可能原因、影響與處置方式，" +
-        "只根據提供的資料判斷，不要臆測資料中不存在的事件。全程使用繁體中文。" +
+        "只根據提供的資料判斷，不要臆測資料中不存在的事件。" + PromptGuidelines.Language +
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
