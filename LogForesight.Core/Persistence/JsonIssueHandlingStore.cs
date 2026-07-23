@@ -10,6 +10,7 @@ namespace LogForesight;
 public class JsonIssueHandlingStore : JsonCollectionFile<IssueHandling>, IIssueHandlingStore
 {
     public JsonIssueHandlingStore(string filePath) : base(filePath) { }
+    public JsonIssueHandlingStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<IssueHandling> GetForDay(string hostName, DateTime date) =>
         Read().Where(h => SameDay(h, hostName, date)).ToList();

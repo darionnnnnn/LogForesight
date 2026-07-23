@@ -4,6 +4,7 @@ namespace LogForesight;
 public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
 {
     public JsonHostStore(string filePath) : base(filePath) { }
+    public JsonHostStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebHost> GetAll() => Read();
 
@@ -164,6 +165,7 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
 public class JsonHostGroupStore : JsonCollectionFile<HostGroup>, IHostGroupStore
 {
     public JsonHostGroupStore(string filePath) : base(filePath) { }
+    public JsonHostGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<HostGroup> GetAll() => Read();
 
@@ -198,6 +200,7 @@ public class JsonHostGroupStore : JsonCollectionFile<HostGroup>, IHostGroupStore
 public class JsonGroupAccessStore : JsonCollectionFile<GroupAccess>, IGroupAccessStore
 {
     public JsonGroupAccessStore(string filePath) : base(filePath) { }
+    public JsonGroupAccessStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<GroupAccess> GetAll() => Read();
 

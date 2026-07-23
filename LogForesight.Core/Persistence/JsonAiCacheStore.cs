@@ -17,6 +17,7 @@ public interface IAiCacheStore
 public class JsonAiCacheStore : JsonCollectionFile<AiCacheEntry>, IAiCacheStore
 {
     public JsonAiCacheStore(string filePath) : base(filePath) { }
+    public JsonAiCacheStore(IJsonBlobStore blob) : base(blob) { }
 
     public string? Get(string key) =>
         Read().FirstOrDefault(e => e.Key == key)?.Content;

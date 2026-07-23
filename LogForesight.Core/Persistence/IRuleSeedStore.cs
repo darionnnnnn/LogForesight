@@ -44,6 +44,7 @@ public class JsonRuleSeedStore : JsonCollectionFile<RuleSeedSnapshot>, IRuleSeed
     };
 
     public JsonRuleSeedStore(string filePath) : base(filePath) { }
+    public JsonRuleSeedStore(IJsonBlobStore blob) : base(blob) { }
 
     public RuleSeedSnapshot? Get(string ruleId) =>
         Read().FirstOrDefault(s => string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));

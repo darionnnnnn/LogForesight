@@ -15,42 +15,70 @@ namespace LogForesight;
 public static class StorageFactory
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
-    private static bool _sqlSchemaEnsured;
     private static readonly object _schemaLock = new();
 
-    /// <summary>SqlServer 模式的 EF 分析紀錄 store（含首次 EnsureCreated 建表）。ownerHost 由批次傳入。</summary>
-    private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost)
-    {
-        var cs = settings.ConnectionString;
-        Func<LfDbContext> factory = () =>
-            new LfDbContext(new DbContextOptionsBuilder<LfDbContext>().UseSqlServer(cs).Options);
+    private static Func<LfDbContext>? _dbFactory;
+    private static string _dbDesc = "";
 
-        // 第一次建立時確保 schema 存在（idempotent）。migration 的正式版另行處理，
-        // 目前用 EnsureCreated 讓使用者可立即在空資料庫上跑起來
+    /// <summary>Type 是否為 SQL 後端（Sqlite 測試/開發、SqlServer 正式）</summary>
+    private static bool IsSql(StorageSettings settings) =>
+        settings.Type is "Sqlite" or "SqlServer";
+
+    /// <summary>
+    /// 取（快取的）EF DbContext 工廠。首次建立時依 provider 建連線並 EnsureCreated 建表（idempotent）。
+    /// Sqlite（測試/開發）：ConnectionString 或退回 {fallbackDir}\logforesight.db；SqlServer（正式）：ConnectionString。
+    /// </summary>
+    private static Func<LfDbContext> GetDbFactory(StorageSettings settings, string fallbackDir)
+    {
         lock (_schemaLock)
         {
-            if (!_sqlSchemaEnsured)
-            {
-                Log.Info("[SQL] 啟用 SqlServer 後端（{Cs}）。混合模式：分析紀錄走 SQL，webdata（使用者/群組/主機/處理狀態…）暫維持 JSONL。正在確保 schema…",
-                    MaskConnectionString(cs));
-                try
-                {
-                    using var ctx = factory();
-                    ctx.Database.EnsureCreated();
-                    Log.Info("[SQL] schema 確認完成（lf_daily_records / lf_top_issues）");
-                }
-                catch (Exception ex)
-                {
-                    // 連線/建表失敗要顯性——這是 SqlServer 模式跑不起來的第一線索
-                    Log.Error(ex, "[SQL] 連線或建立 schema 失敗：{Msg}。請確認 Storage.ConnectionString 與資料庫可用性。", ex.Message);
-                    throw;
-                }
-                _sqlSchemaEnsured = true;
-            }
-        }
+            if (_dbFactory != null) return _dbFactory;
 
-        return new EfAnalysisRecordStore(factory, $"SqlServer（{MaskConnectionString(cs)}）", ownerHost);
+            DbContextOptions<LfDbContext> options;
+            if (settings.Type == "Sqlite")
+            {
+                var cs = string.IsNullOrWhiteSpace(settings.ConnectionString)
+                    ? $"Data Source={Path.Combine(fallbackDir, "logforesight.db")}"
+                    : settings.ConnectionString;
+                options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(cs).Options;
+                _dbDesc = $"Sqlite（{cs}）";
+            }
+            else
+            {
+                options = new DbContextOptionsBuilder<LfDbContext>().UseSqlServer(settings.ConnectionString).Options;
+                _dbDesc = $"SqlServer（{MaskConnectionString(settings.ConnectionString)}）";
+            }
+
+            Func<LfDbContext> factory = () => new LfDbContext(options);
+
+            Log.Info("[SQL] 啟用 {Desc} 後端。分析紀錄＋多數 webdata 走 SQL；append-only 紀錄（稽核/執行/匯入）暫維持 JSONL。正在確保 schema…", _dbDesc);
+            try
+            {
+                using var ctx = factory();
+                ctx.Database.EnsureCreated();
+                Log.Info("[SQL] schema 確認完成");
+            }
+            catch (Exception ex)
+            {
+                // 連線/建表失敗要顯性——這是 SQL 模式跑不起來的第一線索
+                Log.Error(ex, "[SQL] 連線或建立 schema 失敗：{Msg}。請確認 Storage.ConnectionString 與資料庫可用性。", ex.Message);
+                throw;
+            }
+
+            _dbFactory = factory;
+            return factory;
+        }
     }
+
+    /// <summary>依 provider 建立 store 的底層 blob（SQL→DB 一列以 key 為鍵、Jsonl→jsonlPath 檔案）</summary>
+    private static IJsonBlobStore Blob(StorageSettings settings, string dataRoot, string key, string jsonlPath) =>
+        IsSql(settings)
+            ? new EfJsonBlobStore(GetDbFactory(settings, dataRoot), key)
+            : new FileJsonBlobStore(jsonlPath);
+
+    /// <summary>SQL 模式的 EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>
+    private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost, string fallbackDir) =>
+        new(GetDbFactory(settings, fallbackDir), _dbDesc, ownerHost);
 
     /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>
     private static string MaskConnectionString(string cs)
@@ -69,8 +97,9 @@ public static class StorageFactory
     {
         switch (settings.Type)
         {
+            case "Sqlite":
             case "SqlServer":
-                return CreateEfRecordStore(settings, ownerHost);
+                return CreateEfRecordStore(settings, ownerHost, Path.GetDirectoryName(filePath) ?? ".");
             case "Jsonl":
                 return new JsonlAnalysisRecordStore(filePath, ownerHost);
             default:
@@ -117,7 +146,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonUserStore(WebDataPath(dataRoot, "users.json"));
+                return new JsonUserStore(Blob(settings, dataRoot, "users", WebDataPath(dataRoot, "users.json")));
         }
     }
 
@@ -128,7 +157,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonUserGroupStore(WebDataPath(dataRoot, "groups.json"));
+                return new JsonUserGroupStore(Blob(settings, dataRoot, "user_groups", WebDataPath(dataRoot, "groups.json")));
         }
     }
 
@@ -137,9 +166,10 @@ public static class StorageFactory
     {
         switch (settings.Type)
         {
+            case "Sqlite":
             case "SqlServer":
                 // Web 查詢面不分主機（ownerHost=null）；Query/GetOne 自帶可見範圍過濾
-                return CreateEfRecordStore(settings, null);
+                return CreateEfRecordStore(settings, null, dataRoot);
             case "Jsonl":
             default:
                 return new JsonlAnalysisRecordStore(Path.Combine(dataRoot, "history.txt"));
@@ -164,7 +194,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonHostStore(WebDataPath(dataRoot, "hosts.json"));
+                return new JsonHostStore(Blob(settings, dataRoot, "hosts", WebDataPath(dataRoot, "hosts.json")));
         }
     }
 
@@ -175,7 +205,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonHostGroupStore(WebDataPath(dataRoot, "host_groups.json"));
+                return new JsonHostGroupStore(Blob(settings, dataRoot, "host_groups", WebDataPath(dataRoot, "host_groups.json")));
         }
     }
 
@@ -186,7 +216,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonGroupAccessStore(WebDataPath(dataRoot, "group_access.json"));
+                return new JsonGroupAccessStore(Blob(settings, dataRoot, "group_access", WebDataPath(dataRoot, "group_access.json")));
         }
     }
 
@@ -208,7 +238,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonRuleSeedStore(Path.Combine(dataRoot, "rule_seeds.json"));
+                return new JsonRuleSeedStore(Blob(settings, dataRoot, "rule_seeds", Path.Combine(dataRoot, "rule_seeds.json")));
         }
     }
 
@@ -245,7 +275,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonAiCacheStore(WebDataPath(dataRoot, "ai_cache.json"));
+                return new JsonAiCacheStore(Blob(settings, dataRoot, "ai_cache", WebDataPath(dataRoot, "ai_cache.json")));
         }
     }
 
@@ -256,7 +286,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonIssueHandlingStore(WebDataPath(dataRoot, "issue_handling.json"));
+                return new JsonIssueHandlingStore(Blob(settings, dataRoot, "issue_handling", WebDataPath(dataRoot, "issue_handling.json")));
         }
     }
 

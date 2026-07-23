@@ -22,8 +22,20 @@ public class LfDbContext : DbContext
     public DbSet<DailyRecordRow> DailyRecords => Set<DailyRecordRow>();
     public DbSet<TopIssueRow> TopIssues => Set<TopIssueRow>();
 
+    /// <summary>webdata 各 store 的整份 JSON 內容（一個 key 一列，↔ EfJsonBlobStore）</summary>
+    public DbSet<BlobRow> Blobs => Set<BlobRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<BlobRow>(e =>
+        {
+            e.ToTable("lf_blobs");
+            e.HasKey(x => x.BlobKey);
+            e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
+            e.Property(x => x.Content).HasColumnName("content");
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
         b.Entity<DailyRecordRow>(e =>
         {
             e.ToTable("lf_daily_records");
@@ -84,4 +96,12 @@ public class TopIssueRow
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
+}
+
+/// <summary>webdata 整份 JSON 內容的一列（key＝store 名稱，如 "users"）。↔ lf_blobs</summary>
+public class BlobRow
+{
+    public string BlobKey { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
 }

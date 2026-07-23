@@ -301,3 +301,21 @@ public class JsonHostStoreContractTests : HostStoreContractTests
         GC.SuppressFinalize(this);
     }
 }
+
+/// <summary>
+/// 同一組主機 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）——
+/// 驗證 webdata store 透過 blob 抽象改走資料庫後，行為與檔案後端逐位一致
+/// （store 邏輯完全沒改，只換了底層 IJsonBlobStore）。
+/// </summary>
+public class EfHostStoreContractTests : HostStoreContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IHostStore CreateStore() => new JsonHostStore(_fx.Blob("hosts"));
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
+}

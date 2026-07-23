@@ -7,6 +7,7 @@ namespace LogForesight;
 public class JsonUserStore : JsonCollectionFile<WebUser>, IUserStore
 {
     public JsonUserStore(string filePath) : base(filePath) { }
+    public JsonUserStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebUser> GetAll() => Read();
 
@@ -55,6 +56,7 @@ public class JsonUserStore : JsonCollectionFile<WebUser>, IUserStore
 public class JsonUserGroupStore : JsonCollectionFile<UserGroup>, IUserGroupStore
 {
     public JsonUserGroupStore(string filePath) : base(filePath) { }
+    public JsonUserGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<UserGroup> GetAll() => Read();
 

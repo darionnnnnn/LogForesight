@@ -27,6 +27,8 @@
              正式環境用 SqlServer，測試用 SQLite 跑同一組合約測試，語意逐位一致 -->
         <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.10" />
+        <!-- Sqlite 是測試/開發環境的後端（Type="Sqlite"）：真資料庫、單一 .db 檔，取代 JSONL 檔案 -->
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
     </ItemGroup>
 
     <ItemGroup>
