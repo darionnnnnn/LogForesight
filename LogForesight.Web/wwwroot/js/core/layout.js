@@ -138,4 +138,31 @@ function bindLogout() {
     });
 }
 
+/**
+ * 字級偏好（小／中／大）：套在 <html> 的 data-font-scale 上，乘進根字級的縮放倍率
+ * （見 site.css）。與登入狀態無關，所以在 init 的 await 之前先跑，避免等 /api/auth/me
+ * 回來才縮放造成閃動。中＝預設，不覆寫倍率。
+ */
+function initFontScale() {
+    applyFontScale(localStorage.getItem('lf.fontScale') || 'medium');
+
+    const group = document.getElementById('lf-font-scale');
+    if (!group) return;
+
+    group.addEventListener('click', event => {
+        const button = event.target.closest('[data-scale]');
+        if (!button) return;
+        applyFontScale(button.dataset.scale);
+        localStorage.setItem('lf.fontScale', button.dataset.scale);
+    });
+}
+
+function applyFontScale(scale) {
+    document.documentElement.dataset.fontScale = scale;
+    for (const button of document.querySelectorAll('#lf-font-scale [data-scale]')) {
+        button.classList.toggle('active', button.dataset.scale === scale);
+    }
+}
+
+initFontScale();
 init();

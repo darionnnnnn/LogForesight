@@ -203,8 +203,10 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
  * columns: [{ key, title, className, render(row) }]
  * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
  * 仍照自己的行為，不被整列連結攔截。
+ * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），
+ * 點該列（避開列內連結/按鈕）即展開/收合，首欄前置一個展開箭頭。與 rowHref 互斥使用。
  */
-export function renderTable(container, { columns, rows, empty, rowHref }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -241,23 +243,50 @@ export function renderTable(container, { columns, rows, empty, rowHref }) {
             });
         }
 
-        for (const col of columns) {
+        const detail = rowDetail ? rowDetail(row) : null;
+
+        for (const [index, col] of columns.entries()) {
             const td = document.createElement('td');
             if (col.className) td.className = col.className;
+
+            // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示
+            if (detail && index === 0) {
+                const caret = document.createElement('span');
+                caret.className = 'lf-row-caret';
+                caret.appendChild(icon('chevron-down'));
+                td.appendChild(caret);
+            }
 
             const content = col.render ? col.render(row) : row[col.key];
             if (content instanceof Node) {
                 td.appendChild(content);
             } else if (content === null || content === undefined) {
-                td.textContent = '';
+                td.appendChild(document.createTextNode(''));
             } else {
                 // 一律用 textContent 而非 innerHTML：資料裡混有 Event Log 的原始訊息，
                 // 那是攻擊者可控的字串，絕不能當成 HTML 解析
-                td.textContent = String(content);
+                td.appendChild(document.createTextNode(String(content)));
             }
             tr.appendChild(td);
         }
         tbody.appendChild(tr);
+
+        if (detail) {
+            const detailRow = document.createElement('tr');
+            detailRow.className = 'lf-row-detail d-none';
+            const cell = document.createElement('td');
+            cell.colSpan = columns.length;
+            cell.appendChild(detail);
+            detailRow.appendChild(cell);
+            tbody.appendChild(detailRow);
+
+            tr.classList.add('lf-row-expandable');
+            tr.addEventListener('click', event => {
+                if (event.target.closest('a, button')) return;
+                const open = detailRow.classList.toggle('d-none');
+                tr.classList.toggle('lf-row-open', !open);
+            });
+        }
     }
     table.appendChild(tbody);
     wrap.appendChild(table);

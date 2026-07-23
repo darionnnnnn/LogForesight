@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon } from '../core/ui.js';
 import { riskBadge, severityBadge, formatNumber } from '../core/format.js';
 import { initHandlingPanel } from './handling-panel.js';
 
@@ -37,7 +37,6 @@ async function load() {
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
-    renderDeepDives(currentDetail);
 
     await initHandlingPanel(hostId, date);
 
@@ -196,6 +195,7 @@ function renderIssues(detail) {
 
         const section = document.createElement('section');
         section.className = 'lf-issue-group';
+        section.dataset.category = category.category;   // 類型分布頁內導航的落點
         if (highlighted.has(category.category)) section.classList.add('lf-issue-group--hit');
 
         const header = document.createElement('div');
@@ -208,8 +208,16 @@ function renderIssues(detail) {
         section.appendChild(header);
 
         const body = document.createElement('div');
-        renderTable(body, { columns: ISSUE_COLUMNS, rows: issues });
+        // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
+        renderTable(body, { columns: ISSUE_COLUMNS, rows: issues, rowDetail: guidancePanel });
         section.appendChild(body);
+
+        // 「其他」類別（未命中規則）沒有逐列處置參考，改在分節末尾附上 AI 深入分析——
+        // 取代舊版獨立的深入分析卡，讓分析與所屬類別至少對齊在同一個區塊
+        if (category.category === 'Other') {
+            const analysis = otherAnalysis(detail);
+            if (analysis) section.appendChild(analysis);
+        }
 
         container.appendChild(section);
     }
@@ -353,6 +361,12 @@ function renderAlerts(detail) {
     }
 }
 
+/**
+ * 類型分布＝本日問題的目錄，不是離開本頁的出口。
+ * 點某一類 → 捲到並高亮該類別的問題分節（頁內導航），使用者留在原地看到細節；
+ * 想看「其他日期同類問題」的跨日需求，收進每列尾端的次要小連結（帶全部風險層級，
+ * 免得問題查詢的預設隱藏低風險把該類的低風險日藏掉）。
+ */
 function renderCategories(detail) {
     const container = document.getElementById('detail-categories');
 
@@ -363,11 +377,13 @@ function renderCategories(detail) {
 
     const list = document.createElement('div');
     for (const category of detail.categories) {
-        const row = document.createElement('a');
-        row.className = 'd-flex justify-content-between align-items-center py-2 border-bottom text-decoration-none text-body';
-        // 下鑽：點類別 → 帶條件回問題查詢（§8.4）。顯式帶全部風險層級，
-        // 免得問題查詢的「預設隱藏低風險」把這一類的低風險日藏掉
-        row.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`;
+        const row = document.createElement('div');
+        row.className = 'd-flex justify-content-between align-items-center py-2 border-bottom';
+
+        const nav = document.createElement('button');
+        nav.type = 'button';
+        nav.className = 'btn btn-link p-0 text-body text-decoration-none text-start flex-grow-1 d-flex justify-content-between align-items-center';
+        nav.addEventListener('click', () => scrollToCategory(category.category));
 
         const name = document.createElement('span');
         name.textContent = CATEGORY_NAMES[category.category] ?? category.category;
@@ -381,11 +397,36 @@ function renderCategories(detail) {
         count.textContent = `${category.issueCount} 項 / ${formatNumber(category.totalEvents)} 筆`;
         right.appendChild(count);
 
-        row.append(name, right);
+        nav.append(name, right);
+
+        // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
+        const cross = document.createElement('a');
+        cross.className = 'lf-no-print ms-2 text-muted';
+        cross.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`;
+        cross.title = '在問題查詢中看這一類（可跨日）';
+        cross.appendChild(icon('search'));
+
+        row.append(nav, cross);
         list.appendChild(row);
     }
 
     container.replaceChildren(list);
+}
+
+/**
+ * 捲到指定類別的問題分節並短暫高亮。若該類別的分節目前被嚴重度篩選整個隱藏
+ * （例如只有 Low 問題、而 Low 被關掉），提示使用者放寬篩選，而不是靜默沒反應。
+ */
+function scrollToCategory(category) {
+    const section = document.querySelector(`.lf-issue-group[data-category="${category}"]`);
+    if (!section) {
+        toast('這一類的問題目前被嚴重度篩選隱藏了，請在上方放寬篩選。', 'info');
+        return;
+    }
+
+    section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    section.classList.add('lf-issue-group--flash');
+    setTimeout(() => section.classList.remove('lf-issue-group--flash'), 1200);
 }
 
 /**
@@ -433,53 +474,91 @@ function renderCoverage(detail) {
     container.appendChild(box);
 }
 
-function renderDeepDives(detail) {
-    if (detail.deepDives.length === 0) return;
+/**
+ * 問題列的處置參考面板（規則命中問題才有 guidance）。與 txt 報告「處置參考（知識庫）」
+ * 同一份內容，掛在該問題列下方——不再讓使用者在獨立卡片與問題表之間玩多對多連連看。
+ * 回傳 null 時 renderTable 不會替該列加展開列。
+ */
+function guidancePanel(issue) {
+    const g = issue.guidance;
+    if (!g) return null;
 
-    document.getElementById('deep-dive-card').classList.remove('d-none');
-    const container = document.getElementById('detail-deepdives');
-    container.replaceChildren();
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-guidance';
 
-    for (const dive of detail.deepDives) {
-        const section = document.createElement('div');
-        section.className = 'mb-3';
-
-        const title = document.createElement('h3');
-        title.className = 'h6 fw-semibold';
-        title.textContent = `【${CATEGORY_NAMES[dive.category] ?? dive.category}】`;
-        section.appendChild(title);
-
-        for (const finding of dive.findings) {
-            const item = document.createElement('div');
-            item.className = 'border-start ps-3 mb-3';
-
-            const problem = document.createElement('div');
-            problem.className = 'fw-semibold';
-            problem.textContent = finding.problem;
-            item.appendChild(problem);
-
-            if (finding.impact) {
-                const impact = document.createElement('div');
-                impact.className = 'small text-muted mb-1';
-                impact.textContent = `影響：${finding.impact}`;
-                item.appendChild(impact);
-            }
-
-            appendList(item, '可能原因', finding.likelyCauses);
-            appendList(item, '處置步驟', finding.nextSteps);
-
-            section.appendChild(item);
-        }
-
-        container.appendChild(section);
+    if (g.explanation) {
+        const label = document.createElement('div');
+        label.className = 'lf-guidance__label';
+        label.textContent = '說明';
+        const text = document.createElement('div');
+        text.className = 'small';
+        text.textContent = g.explanation;
+        wrap.append(label, text);
     }
+
+    if (g.impact) {
+        const label = document.createElement('div');
+        label.className = 'lf-guidance__label';
+        label.textContent = '影響';
+        const text = document.createElement('div');
+        text.className = 'small';
+        text.textContent = g.impact;
+        wrap.append(label, text);
+    }
+
+    appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
+    appendList(wrap, '處置步驟', g.nextSteps, 'lf-guidance__label');
+
+    return wrap;
 }
 
-function appendList(parent, label, items) {
+/**
+ * 「其他」類別（未命中規則）的 AI 深入分析。過去獨立成一張卡，與重點問題表多對多對不起來；
+ * 現在渲染在【其他】分節末尾，至少與所屬類別對齊在同一區塊。規則命中的類別不走這裡——
+ * 它們的處置參考已逐列掛在問題下（同一份知識庫來源，避免重複呈現）。
+ */
+function otherAnalysis(detail) {
+    const dive = detail.deepDives.find(d => d.category === 'Other');
+    if (!dive || dive.findings.length === 0) return null;
+
+    const box = document.createElement('div');
+    box.className = 'lf-issue-group__ai px-3 py-3 border-top';
+
+    const heading = document.createElement('div');
+    heading.className = 'small fw-semibold text-muted mb-2';
+    heading.textContent = 'AI 深入分析（規則未涵蓋的問題）';
+    box.appendChild(heading);
+
+    for (const finding of dive.findings) {
+        const item = document.createElement('div');
+        item.className = 'border-start ps-3 mb-3';
+
+        const problem = document.createElement('div');
+        problem.className = 'fw-semibold';
+        problem.textContent = finding.problem;
+        item.appendChild(problem);
+
+        if (finding.impact) {
+            const impact = document.createElement('div');
+            impact.className = 'small text-muted mb-1';
+            impact.textContent = `影響：${finding.impact}`;
+            item.appendChild(impact);
+        }
+
+        appendList(item, '可能原因', finding.likelyCauses);
+        appendList(item, '處置步驟', finding.nextSteps);
+
+        box.appendChild(item);
+    }
+
+    return box;
+}
+
+function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1') {
     if (!items || items.length === 0) return;
 
     const title = document.createElement('div');
-    title.className = 'small fw-semibold mt-1';
+    title.className = labelClass;
     title.textContent = label;
     parent.appendChild(title);
 

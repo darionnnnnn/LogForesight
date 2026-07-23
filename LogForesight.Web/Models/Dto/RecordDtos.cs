@@ -126,6 +126,22 @@ public class IssueDto
     /// <summary>趨勢的白話描述（含比對數字），前端直接顯示不再自行組裝</summary>
     public string TrendText { get; set; } = string.Empty;
     public string Trend { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。
+    /// 掛在問題列下方（可展開），讓「這個問題怎麼辦」與問題本身直接對齊，
+    /// 不必再到獨立的深入分析卡玩多對多連連看。
+    /// </summary>
+    public IssueGuidanceDto? Guidance { get; set; }
+}
+
+/// <summary>單一問題的處置參考——欄位對應 KnownIssueRule 的白話知識庫（也是 txt 報告「處置參考」的來源）</summary>
+public class IssueGuidanceDto
+{
+    public string Explanation { get; set; } = string.Empty;
+    public string Impact { get; set; } = string.Empty;
+    public List<string> LikelyCauses { get; set; } = new();
+    public List<string> NextSteps { get; set; } = new();
 }
 
 public class CategorySummaryDto

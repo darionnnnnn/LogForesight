@@ -32,6 +32,7 @@ public class RecordQueryService : IRecordQueryService
     private readonly IHostGroupStore _hostGroups;
     private readonly IVisibilityService _visibility;
     private readonly IRecordHandlingStore _handlings;
+    private readonly IKnownIssueRuleStore _rules;
 
     public RecordQueryService(
         IRecordRepository repository,
@@ -40,7 +41,8 @@ public class RecordQueryService : IRecordQueryService
         IUserStore users,
         IHostGroupStore hostGroups,
         IVisibilityService visibility,
-        IRecordHandlingStore handlings)
+        IRecordHandlingStore handlings,
+        IKnownIssueRuleStore rules)
     {
         _repository = repository;
         _reports = reports;
@@ -49,6 +51,7 @@ public class RecordQueryService : IRecordQueryService
         _hostGroups = hostGroups;
         _visibility = visibility;
         _handlings = handlings;
+        _rules = rules;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -220,6 +223,10 @@ public class RecordQueryService : IRecordQueryService
 
         var host = _hosts.Get(hostId);
 
+        // 規則命中問題的處置參考來自當前 rules.json（反映 Web 上的規則編輯），
+        // 一次載入建索引，逐列查是記憶體查表。單日詳情低頻，一次檔案讀取可忽略
+        var guidance = LoadGuidanceLookup();
+
         return new RecordDetailDto
         {
             HostId = hostId,
@@ -235,7 +242,7 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(ToIssueDto).ToList(),
+            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance)).ToList(),
             Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -431,7 +438,24 @@ public class RecordQueryService : IRecordQueryService
     private static bool HasCoverageGap(DailyAnalysisRecord record) =>
         record.DataIncomplete || record.SecurityLogAvailable == false;
 
-    private static IssueDto ToIssueDto(LogIssueSignature issue) => new()
+    /// <summary>
+    /// 規則 Id → 規則 的處置參考索引。用當前 rules.json（反映 Web 編輯）；載入失敗時退回
+    /// 內建種子，詳情頁仍看得到處置參考、不會因規則檔一時讀不到就整片從缺。
+    /// </summary>
+    private Dictionary<string, KnownIssueRule> LoadGuidanceLookup()
+    {
+        var outcome = _rules.Load();
+        var rules = outcome.Success && outcome.Content != null
+            ? outcome.Content.Rules
+            : KnownIssueSeed.CreateRules();
+
+        // 同 Id 理論上唯一；防禦性地取第一筆，避免壞檔的重複 Id 讓 ToDictionary 整個炸掉
+        return rules
+            .GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IssueDto ToIssueDto(LogIssueSignature issue, Dictionary<string, KnownIssueRule>? guidance = null) => new()
     {
         LogName = issue.LogName,
         Source = issue.Source,
@@ -447,8 +471,33 @@ public class RecordQueryService : IRecordQueryService
         SampleMessages = issue.SampleMessages,
         Suppressed = issue.Suppressed,
         Trend = issue.Trend.ToString(),
-        TrendText = BuildTrendText(issue)
+        TrendText = BuildTrendText(issue),
+        Guidance = BuildGuidance(issue, guidance)
     };
+
+    /// <summary>
+    /// 規則命中問題的處置參考（與 txt 報告「處置參考（知識庫）」同一份來源）。
+    /// 以問題的 RuleId 反查規則——用命中當下記下的 Id 最精準（來源/EventId 反查可能因規則改動而漂移）。
+    /// 無 RuleId（未命中規則的 Other）或規則無知識內容時回 null，前端就不掛展開面板。
+    /// </summary>
+    private static IssueGuidanceDto? BuildGuidance(LogIssueSignature issue, Dictionary<string, KnownIssueRule>? guidance)
+    {
+        if (guidance == null || string.IsNullOrEmpty(issue.RuleId)) return null;
+        if (!guidance.TryGetValue(issue.RuleId, out var rule)) return null;
+
+        var hasContent = !string.IsNullOrWhiteSpace(rule.PlainExplanation) ||
+                         !string.IsNullOrWhiteSpace(rule.Impact) ||
+                         rule.LikelyCauses.Length > 0 || rule.NextSteps.Length > 0;
+        if (!hasContent) return null;
+
+        return new IssueGuidanceDto
+        {
+            Explanation = rule.PlainExplanation,
+            Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses.ToList(),
+            NextSteps = rule.NextSteps.ToList()
+        };
+    }
 
     /// <summary>
     /// 趨勢的白話描述在後端組好（含比對數字），前端不再自行拼裝——

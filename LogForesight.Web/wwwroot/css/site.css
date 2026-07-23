@@ -47,9 +47,10 @@
     --lf-text-muted: #64748b;
 
     /* ── 字級階層 ─────────────────────────────────────────────────────── */
-    --lf-font-size-xs: .75rem;
-    --lf-font-size-sm: .825rem;
-    --lf-font-size-base: .9rem;
+    /* 全部用 rem，跟隨 html 根字級（見下方 html 規則）等比縮放；base 較舊版提一階 */
+    --lf-font-size-xs: .78rem;
+    --lf-font-size-sm: .86rem;
+    --lf-font-size-base: .95rem;
     --lf-font-size-lg: 1rem;
     --lf-font-size-xl: 1.2rem;
     --lf-font-size-2xl: 1.45rem;
@@ -138,6 +139,20 @@
     --bs-body-color: var(--lf-text);
     --bs-border-color: var(--lf-border);
 }
+
+/*
+  根字級隨視寬平滑縮放：所有字級 token 用 rem，會一併等比放大。
+  舊版沒設 html 字級＝固定沿用瀏覽器預設 16px，在 2K/4K 大螢幕上整體偏小
+  （rem 跟隨根字級、不會自己跟解析度變）。clamp 讓小筆電維持 15px 不爆版、
+  2K 約 18px、再寬到上限 20px 收斂。乘上使用者偏好倍率（見下）做個人微調。
+*/
+html {
+    font-size: calc(clamp(15px, 0.5vw + 13px, 20px) * var(--lf-font-scale, 1));
+}
+
+/* 使用者字級偏好（存 localStorage，由 layout.js 套在 <html> 上）。中＝預設不覆寫 */
+:root[data-font-scale="small"] { --lf-font-scale: .9; }
+:root[data-font-scale="large"] { --lf-font-scale: 1.15; }
 
 body {
     background: var(--lf-content-bg);
@@ -599,6 +614,13 @@ a.lf-stat:hover .lf-card,
 .lf-issue-group__header { padding: .75rem 1rem .35rem; }
 .lf-issue-group--hit { box-shadow: inset 3px 0 0 var(--lf-primary); }
 
+/* 類型分布頁內導航的短暫高亮：點某一類 → 捲到分節並閃一下主色底 */
+.lf-issue-group--flash { animation: lf-flash 1.2s ease-out; }
+@keyframes lf-flash {
+    0%   { background: var(--lf-primary-soft); }
+    100% { background: transparent; }
+}
+
 /* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
 
 .table {
@@ -628,6 +650,31 @@ a.lf-stat:hover .lf-card,
 
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
+
+/* 可展開列：首欄展開箭頭，收合時朝右、展開時朝下 */
+.table > tbody > tr.lf-row-expandable { cursor: pointer; }
+.lf-row-caret {
+    display: inline-flex;
+    margin-right: .4em;
+    color: var(--lf-text-muted);
+    transform: rotate(-90deg);
+    transition: transform .15s ease;
+}
+.lf-row-open .lf-row-caret { transform: rotate(0); }
+.lf-row-detail > td {
+    background: var(--lf-gray-50);
+    padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
+}
+
+/* 處置參考面板（問題列展開）：與 txt 報告「處置參考（知識庫）」同一份內容 */
+.lf-guidance__label {
+    font-weight: 600;
+    font-size: var(--lf-font-size-sm);
+    margin-top: var(--lf-space-3);
+    margin-bottom: var(--lf-space-1);
+}
+.lf-guidance__label:first-child { margin-top: 0; }
+.lf-guidance ul { margin: 0; padding-left: 1.25rem; }
 
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 
