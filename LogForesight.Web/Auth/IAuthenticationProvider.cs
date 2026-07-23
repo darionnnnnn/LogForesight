@@ -21,7 +21,10 @@ public interface IAuthenticationProvider
     /// <summary>供診斷 log 與 /api/auth/me 顯示的名稱</summary>
     string Name { get; }
 
-    /// <summary>此 Provider 是否需要密碼（Stub 不需要，登入頁據此隱藏密碼欄）</summary>
+    /// <summary>
+    /// 此 Provider 是否驗密碼。Ldap=true（登入頁密碼欄必填）；Stub=false（後端一律通過、不比對密碼，
+    /// 登入頁密碼欄仍顯示但改為選填）。也一併決定 serverAdmin 救援帳號在此模式是否驗密碼。
+    /// </summary>
     bool RequiresPassword { get; }
 
     CredentialCheckResult Verify(string account, string? password);
