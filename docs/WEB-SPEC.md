@@ -223,14 +223,21 @@ LogForesight.Web/
   （`LogForesight.Web.exe --hash-password`）隨 Phase 0 提供；已簽發的 JWT 最長 8 小時自然失效。
 - **Web 端鎖定**：serverAdmin 連續 5 次登入失敗鎖定 15 分鐘（記憶體計數即可）——
   它是本地帳號、**不受 AD 帳戶鎖定原則保護**，必須自帶防暴力破解；一般 AD 帳號則不做
-  Web 端鎖定，交由 AD 原則（見下）。
+  Web 端鎖定，交由 AD 原則（見下）。**此鎖定只在驗密碼的 Provider（正式 Ldap）下有意義**；
+  `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
 - 全部操作照常稽核（account=設定的帳號名、user_id NULL）；儀表板登入失敗卡對它的
   失敗嘗試同樣可見。
 - 啟動驗證：`ServerAdmin.Account`/`PasswordHash` 為必填（§5）。
 
-**Stub 免密碼（已接受，2026-07-21）**：測試期間環境不含核心重要主機，免密碼風險已評估接受；
-`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆維持不變
-（防的是「帶著 Stub 上正式環境」的失誤，不是測試期的使用）。
+**Stub 免密碼（已接受，2026-07-21；2026-07-23 涵蓋 serverAdmin）**：測試期間環境不含核心重要
+主機，免密碼風險已評估接受。`Provider=Stub` 下**所有帳號一致免密碼——含本地救援帳號
+serverAdmin**：`IdentityService` 把 `IAuthenticationProvider.RequiresPassword` 傳入
+`ServerAdminAuthenticator.TryLogin`，為 `false`（Stub）時 serverAdmin 免密碼放行並清空失敗計數，
+登入頁據 `RequiresPassword=false` 隱藏密碼欄。（此前 serverAdmin 在 Stub 下仍強制驗密碼，
+與一般帳號不一致、預設帳號無法無密碼登入，已修正。）`Provider=Stub` 且
+`ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆維持不變（防的是「帶著 Stub 上
+正式環境」的失誤，不是測試期的使用）——正式環境強制 Ldap（`RequiresPassword=true`），
+救援帳號仍走 PBKDF2 密碼＋鎖定，這條免密碼捷徑到不了正式環境。
 
 **正式驗證（已定案：AD LDAP）**：`LdapAuthenticationProvider` 以使用者帳密向 AD bind 驗證；
 **登入失敗的鎖定交由 AD 帳戶鎖定原則**（驗證失敗即計入網域的失敗次數，達原則門檻自動鎖定），
@@ -849,5 +856,5 @@ HostRanking/Categories 組裝邏輯重複；`HandlingStatusText` 在兩個 Servi
 | 3 | 登入失敗儀表板卡片 | ✅ 納入（admin 可見，§9.1） |
 | 4 | dev 對業務資料可見範圍 | ✅ 全部唯讀（查執行問題需對照分析結果）；環境敏感時可收斂為授權制 |
 | 5 | 正式驗證方式 | ✅ 定案 AD LDAP（2026-07-21）；失敗鎖定交由 AD 帳戶鎖定原則，Web 端不重複建置（§6.2） |
-| 6 | 測試期 Stub 免密碼 | ✅ 已接受（2026-07-21，測試環境不含核心重要主機）；Production+Stub fail fast 欄杆維持 |
-| 7 | serverAdmin 本地救援帳號 | ✅ 定案（2026-07-21）：appsettings 定義、密碼封存定期輪替（PBKDF2 雜湊存放）、最小授權（Maintain+ViewAudit）、Web 端 5 次失敗鎖 15 分鐘（§6.2） |
+| 6 | 測試期 Stub 免密碼 | ✅ 已接受（2026-07-21，測試環境不含核心重要主機）；**2026-07-23 起涵蓋 serverAdmin（Stub 下所有帳號一致免密碼，§6.2）**；Production+Stub fail fast 欄杆維持 |
+| 7 | serverAdmin 本地救援帳號 | ✅ 定案（2026-07-21）：appsettings 定義、密碼封存定期輪替（PBKDF2 雜湊存放）、最小授權（Maintain+ViewAudit）、Web 端 5 次失敗鎖 15 分鐘（§6.2）；**Stub 模式免密碼、不套鎖定（僅 Ldap 驗密碼時適用）** |
