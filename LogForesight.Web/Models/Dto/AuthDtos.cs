@@ -7,7 +7,7 @@ public class LoginRequest
     [Required(ErrorMessage = "請輸入帳號")]
     public string Account { get; set; } = string.Empty;
 
-    /// <summary>Stub 模式忽略此欄位（登入頁也會隱藏密碼欄）</summary>
+    /// <summary>Stub 模式後端一律通過、不比對此欄位值（登入頁仍照常顯示密碼欄，只是設為選填）</summary>
     public string? Password { get; set; }
 }
 
