@@ -78,8 +78,12 @@
             </div>
             <span class="text-muted small" id="result-count"></span>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-secondary lf-no-print" id="btn-copy-csv">複製為 CSV</button>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="btn-ai-summary">AI 歸納</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary lf-no-print" id="btn-copy-csv">複製為 CSV</button>
+        </div>
     </div>
+    <div id="ai-summary" class="px-3 pt-3"></div>
     <div class="lf-card__body p-0" id="record-list"></div>
 </div>
 

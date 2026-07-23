@@ -30,6 +30,63 @@ async function load() {
     renderCategories(data);
     renderHosts(data);
     renderSilentHosts(data);
+
+    loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
+}
+
+/**
+ * AI 今日焦點（docs/SCALE-2000-PLAN.md §6 W1-1）：純加值。
+ * AI 不可用或回空時整卡不顯示——不留「載入失敗」的殘影。
+ */
+async function loadAiFocus() {
+    const container = document.getElementById('dashboard-ai-focus');
+    container.replaceChildren();
+
+    let focus;
+    try {
+        focus = await api.get(`/api/ai/today-focus?days=${currentDays}`, { silent: true });
+    } catch {
+        return;
+    }
+    if (!focus || !focus.items || focus.items.length === 0) return;
+
+    const card = document.createElement('div');
+    card.className = 'lf-card mb-3';
+    const body = document.createElement('div');
+    body.className = 'lf-card__body';
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-2 d-flex align-items-center gap-2';
+    const titleText = document.createElement('span');
+    titleText.textContent = 'AI 今日焦點';
+    title.appendChild(titleText);
+    const hint = document.createElement('span');
+    hint.className = 'lf-badge lf-badge--secondary';
+    hint.textContent = 'AI 輔助，僅供排序參考';
+    title.appendChild(hint);
+    body.appendChild(title);
+
+    const list = document.createElement('ol');
+    list.className = 'mb-0 ps-3';
+    for (const item of focus.items) {
+        const li = document.createElement('li');
+        li.className = 'mb-1';
+        // AI 文字一律 textContent（AI 產出不可信任為 HTML）
+        const text = document.createElement('span');
+        text.textContent = item.text;
+        li.appendChild(text);
+        if (item.link) {
+            const link = document.createElement('a');
+            link.href = item.link;   // 後端已過白名單驗證
+            link.className = 'ms-2 small';
+            link.textContent = '查看 →';
+            li.appendChild(link);
+        }
+        list.appendChild(li);
+    }
+    body.appendChild(list);
+    card.appendChild(body);
+    container.appendChild(card);
 }
 
 /** 全綠時明確說「沒事」——空白畫面無法讓人分辨「沒問題」與「沒載入」 */

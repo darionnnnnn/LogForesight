@@ -178,6 +178,17 @@ public static class StorageFactory
         }
     }
 
+    /// <summary>Web AI 加值輸出的快取（webdata\ai_cache.json）</summary>
+    public static IAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot)
+    {
+        switch (settings.Type)
+        {
+            case "Jsonl":
+            default:
+                return new JsonAiCacheStore(WebDataPath(dataRoot, "ai_cache.json"));
+        }
+    }
+
     /// <summary>問題層級處理狀態（webdata\issue_handling.json）——Web 寫，日層級結案與否由此推導</summary>
     public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot)
     {

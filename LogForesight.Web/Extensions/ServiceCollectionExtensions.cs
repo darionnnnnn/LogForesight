@@ -40,6 +40,7 @@ public static class ServiceCollectionExtensions
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
         services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
+        services.AddSingleton<IAiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
         services.AddSingleton<IPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
 
         // 規則維護與執行監控
@@ -195,6 +196,11 @@ public static class ServiceCollectionExtensions
                 ? new StubNetiqDirectoryClient()
                 : new SentinelRestDirectoryClient(sp.GetRequiredService<IHttpClientFactory>()));
         services.AddScoped<INetiqDiscoveryService, NetiqDiscoveryService>();
+
+        // AI 加值層（純加值、失敗靜默降級）。WebAiService 讀批次 appsettings 的 AI 位址、
+        // 建互動情境的短逾時客戶端；Singleton 讓快取與 HttpClient 共用一份
+        services.AddSingleton<IWebAiService, WebAiService>();
+        services.AddScoped<IAiInsightService, AiInsightService>();
 
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();

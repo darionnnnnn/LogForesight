@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
 import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES } from '../core/format.js';
 import { initHandlingPanel } from './handling-panel.js';
 
@@ -32,16 +32,20 @@ const ISSUE_STATUS_OPTIONS = [
 
 // 標「已知雜訊」時要不要提議建立抑制規則，取決於能否維護規則（Maintain）
 let canMaintainRules = false;
+// AI 判讀（W2）只在 AI 可用時提供
+let aiAvailable = false;
 
 async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
 
-    const [detail, user] = await Promise.all([
+    const [detail, user, aiStatus] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
-        getCurrentUser()
+        getCurrentUser(),
+        api.get('/api/ai/status', { silent: true }).catch(() => null)
     ]);
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
+    aiAvailable = !!aiStatus?.available;
 
     renderHeader(currentDetail);
     renderSeverityFilter(currentDetail);
@@ -628,7 +632,8 @@ function renderCoverage(detail) {
  */
 function guidancePanel(issue) {
     const g = issue.guidance;
-    if (!g) return null;
+    // 未命中規則（無知識庫）但 AI 可用 → 提供「AI 判讀」（W2 主要服務「其他」類別）
+    if (!g) return aiAvailable ? aiInterpretPanel(issue) : null;
 
     const wrap = document.createElement('div');
     wrap.className = 'lf-guidance';
@@ -656,6 +661,53 @@ function guidancePanel(issue) {
     appendList(wrap, '可能原因', g.likelyCauses, 'lf-guidance__label');
     appendList(wrap, '處置步驟', g.nextSteps, 'lf-guidance__label');
 
+    return wrap;
+}
+
+/**
+ * 未命中規則問題的「AI 判讀」面板（W2）：一顆按鈕，點了才呼叫 AI（不自動呼叫，
+ * 避免展開就打 AI）。AI 產出以 textContent 呈現；失敗靜默提示。
+ */
+function aiInterpretPanel(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-guidance';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-secondary';
+    button.textContent = 'AI 判讀';
+
+    const output = document.createElement('div');
+    output.className = 'small mt-2';
+
+    button.addEventListener('click', async event => {
+        event.stopPropagation();
+        const restore = withBusy(button, '判讀中');
+        try {
+            const params = new URLSearchParams({ hostId: String(hostId), date, issueKey: issue.issueKey });
+            const result = await api.get(`/api/ai/interpret-issue?${params.toString()}`, { silent: true });
+            if (!result || !result.text) {
+                output.textContent = 'AI 目前無法判讀這個問題。';
+                output.classList.add('text-muted');
+            } else {
+                output.replaceChildren();
+                const label = document.createElement('span');
+                label.className = 'lf-badge lf-badge--secondary me-2';
+                label.textContent = 'AI 判讀';
+                const text = document.createElement('span');
+                text.textContent = result.text;
+                output.append(label, text);
+            }
+        } catch {
+            output.textContent = 'AI 目前無法判讀這個問題。';
+            output.classList.add('text-muted');
+        } finally {
+            restore();
+            button.disabled = true;   // 判讀過就不重複呼叫
+        }
+    });
+
+    wrap.append(button, output);
     return wrap;
 }
 

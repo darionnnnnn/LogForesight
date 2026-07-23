@@ -12,7 +12,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, renderPagination } from '../core/ui.js';
+import { renderTable, renderLoading, toast, renderPagination, withBusy } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES } from '../core/format.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
@@ -25,10 +25,61 @@ let currentView = 'detail';
 let currentPage = 1;
 let lastResult = null;
 
+let aiAvailable = false;
+
 async function init() {
     await loadHostOptions();
     applyUrlToForm();
     await search();
+    initAiSummary();
+}
+
+/**
+ * AI 歸納（docs/SCALE-2000-PLAN.md §6 W1-2）：使用者主動點才呼叫（查詢頁高頻，
+ * 自動呼叫會塞爆 AI 佇列）。只在明細視角、且 AI 可用時顯示按鈕。
+ */
+async function initAiSummary() {
+    try {
+        const status = await api.get('/api/ai/status', { silent: true });
+        aiAvailable = !!status?.available;
+    } catch {
+        aiAvailable = false;
+    }
+    updateAiSummaryButton();
+
+    document.getElementById('btn-ai-summary').addEventListener('click', async () => {
+        const area = document.getElementById('ai-summary');
+        const button = document.getElementById('btn-ai-summary');
+        const restore = withBusy(button, '歸納中');
+        try {
+            const params = new URLSearchParams(location.search);
+            const result = await api.get(`/api/ai/query-summary?${params.toString()}`, { silent: true });
+            area.replaceChildren();
+            if (!result || !result.text) {
+                toast('目前沒有跨主機的共通訊號可歸納', 'info');
+                return;
+            }
+            const box = document.createElement('div');
+            box.className = 'alert alert-light border mb-0';
+            const label = document.createElement('span');
+            label.className = 'lf-badge lf-badge--secondary me-2';
+            label.textContent = 'AI 歸納';
+            const text = document.createElement('span');
+            text.textContent = result.text;   // AI 產出一律 textContent
+            box.append(label, text);
+            area.appendChild(box);
+        } catch {
+            // 靜默
+        } finally {
+            restore();
+        }
+    });
+}
+
+function updateAiSummaryButton() {
+    // 只有明細視角支援歸納（彙總視角沒有逐筆問題可聚類）
+    document.getElementById('btn-ai-summary').classList.toggle('d-none', !aiAvailable || currentView !== 'detail');
+    if (currentView !== 'detail') document.getElementById('ai-summary').replaceChildren();
 }
 
 async function loadHostOptions() {
@@ -150,6 +201,7 @@ async function search() {
     history.replaceState(null, '', query ? `?${query}` : location.pathname);
 
     renderActiveConditions(filters);
+    document.getElementById('ai-summary').replaceChildren();   // 篩選變了，舊的 AI 歸納作廢
     renderLoading(listContainer, 6);
     lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`);
     render();
@@ -423,6 +475,7 @@ document.getElementById('view-toggle').addEventListener('click', event => {
     if (!btn || btn.dataset.view === currentView) return;
     currentView = btn.dataset.view;
     setActiveView(currentView);
+    updateAiSummaryButton();
     currentPage = 1;
     search();
 });

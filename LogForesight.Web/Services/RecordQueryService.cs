@@ -22,6 +22,9 @@ public interface IRecordQueryService
     string? GetReport(long hostId, DateTime date);
 
     HostDetailDto GetHostDetail(long hostId, int days);
+
+    /// <summary>跨主機同簽章聚類（AI 歸納的確定性前置）：同 Source+EventId 出現在多台主機的前 5 組</summary>
+    List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request);
 }
 
 public class RecordQueryService : IRecordQueryService
@@ -380,6 +383,32 @@ public class RecordQueryService : IRecordQueryService
                 Conclusion = latestCheckup.Conclusion
             }
         };
+    }
+
+    public List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request)
+    {
+        var records = _repository.Query(BuildFilter(request));
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        return records
+            .SelectMany(r => r.TopIssues.Select(i => new
+            {
+                i.Source, i.EventId, i.Count, Host = HostNameOf(lookup, r)
+            }))
+            .GroupBy(x => new { x.Source, x.EventId })
+            .Select(g => new IssueClusterDto
+            {
+                Source = g.Key.Source,
+                EventId = g.Key.EventId,
+                HostCount = g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                TotalCount = g.Sum(x => x.Count)
+            })
+            // 只保留跨主機的——單台出現的不叫「共通」，AI 歸納那些沒有價值
+            .Where(c => c.HostCount > 1)
+            .OrderByDescending(c => c.HostCount)
+            .ThenByDescending(c => c.TotalCount)
+            .Take(5)
+            .ToList();
     }
 
     private RecordQueryFilter BuildFilter(RecordSearchRequest request)
