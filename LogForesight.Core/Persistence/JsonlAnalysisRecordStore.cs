@@ -193,7 +193,7 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         var matcher = filter.Hosts == null ? null : new HostMatcher(filter.Hosts);
 
         return ReadAll()
-            .Where(r => (matcher == null || matcher.Matches(r)) && Matches(r, filter))
+            .Where(r => (matcher == null || matcher.Matches(r)) && RecordFilterMatcher.Matches(r, filter))
             .OrderByDescending(r => r.Date)
             .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -218,39 +218,6 @@ public class JsonlAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQue
         return null;
     }
 
-    private static bool Matches(DailyAnalysisRecord record, RecordQueryFilter filter)
-    {
-        if (filter.From.HasValue && record.Date.Date < filter.From.Value.Date) return false;
-        if (filter.To.HasValue && record.Date.Date > filter.To.Value.Date) return false;
-
-        if (filter.RiskLevels is { Count: > 0 } && !filter.RiskLevels.Contains(record.RiskLevel)) return false;
-
-        if (filter.Categories is { Count: > 0 } &&
-            !record.TopIssues.Any(i => filter.Categories.Contains(i.Category)))
-        {
-            return false;
-        }
-
-        if (filter.MinSeverity.HasValue &&
-            !record.TopIssues.Any(i => i.Severity >= filter.MinSeverity.Value))
-        {
-            return false;
-        }
-
-        if (filter.EventId.HasValue &&
-            !record.TopIssues.Any(i => i.EventId == filter.EventId.Value))
-        {
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(filter.Source) &&
-            !record.TopIssues.Any(i => string.Equals(i.Source, filter.Source, StringComparison.OrdinalIgnoreCase)))
-        {
-            return false;
-        }
-
-        return true;
-    }
 
     private List<DailyAnalysisRecord> ReadAll()
     {

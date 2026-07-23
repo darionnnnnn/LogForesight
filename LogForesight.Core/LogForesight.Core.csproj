@@ -23,6 +23,10 @@
         <PackageReference Include="NLog" Version="6.1.4" />
         <PackageReference Include="System.Diagnostics.EventLog" Version="9.0.0" />
         <PackageReference Include="Polly" Version="8.7.0" />
+        <!-- SQL 後端（docs/DB-PLAN.md、SCALE-2000-PLAN §4）。EF Core LINQ 保持 provider 中立：
+             正式環境用 SqlServer，測試用 SQLite 跑同一組合約測試，語意逐位一致 -->
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.10" />
     </ItemGroup>
 
     <ItemGroup>

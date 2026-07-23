@@ -1,11 +1,66 @@
+using Microsoft.EntityFrameworkCore;
+using LogForesight.Sql;
+using NLog;
+
 namespace LogForesight;
 
 /// <summary>
-/// 依設定選擇儲存後端（Strategy + Factory）。目前只有 Jsonl 一種實作；
-/// 未來新增 DB 後端時，這裡是唯一需要新增 case 的地方，呼叫端（Program.cs／LogAnalysisService）不需修改。
+/// 依設定選擇儲存後端（Strategy + Factory）。"Jsonl"（預設）與 "SqlServer" 兩種；
+/// 新增後端時這裡是唯一需要改的地方，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改。
+///
+/// SQL 後端目前只有**分析紀錄**（lf_daily_records/lf_top_issues）走 EF；webdata 各 store
+/// 暫維持 JSONL（增量遷移，SqlServer 模式下記一行 log 說明混合狀態）。分析紀錄是量級與效能的
+/// 主要驅動（2000 台 × 90 天），優先遷移。
 /// </summary>
 public static class StorageFactory
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+    private static bool _sqlSchemaEnsured;
+    private static readonly object _schemaLock = new();
+
+    /// <summary>SqlServer 模式的 EF 分析紀錄 store（含首次 EnsureCreated 建表）。ownerHost 由批次傳入。</summary>
+    private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost)
+    {
+        var cs = settings.ConnectionString;
+        Func<LfDbContext> factory = () =>
+            new LfDbContext(new DbContextOptionsBuilder<LfDbContext>().UseSqlServer(cs).Options);
+
+        // 第一次建立時確保 schema 存在（idempotent）。migration 的正式版另行處理，
+        // 目前用 EnsureCreated 讓使用者可立即在空資料庫上跑起來
+        lock (_schemaLock)
+        {
+            if (!_sqlSchemaEnsured)
+            {
+                Log.Info("[SQL] 啟用 SqlServer 後端（{Cs}）。混合模式：分析紀錄走 SQL，webdata（使用者/群組/主機/處理狀態…）暫維持 JSONL。正在確保 schema…",
+                    MaskConnectionString(cs));
+                try
+                {
+                    using var ctx = factory();
+                    ctx.Database.EnsureCreated();
+                    Log.Info("[SQL] schema 確認完成（lf_daily_records / lf_top_issues）");
+                }
+                catch (Exception ex)
+                {
+                    // 連線/建表失敗要顯性——這是 SqlServer 模式跑不起來的第一線索
+                    Log.Error(ex, "[SQL] 連線或建立 schema 失敗：{Msg}。請確認 Storage.ConnectionString 與資料庫可用性。", ex.Message);
+                    throw;
+                }
+                _sqlSchemaEnsured = true;
+            }
+        }
+
+        return new EfAnalysisRecordStore(factory, $"SqlServer（{MaskConnectionString(cs)}）", ownerHost);
+    }
+
+    /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>
+    private static string MaskConnectionString(string cs)
+    {
+        var parts = cs.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .Where(p => !p.TrimStart().StartsWith("Password", StringComparison.OrdinalIgnoreCase) &&
+                        !p.TrimStart().StartsWith("Pwd", StringComparison.OrdinalIgnoreCase));
+        return string.Join(";", parts);
+    }
+
     /// <param name="ownerHost">
     /// 批次寫入端的「本機」識別。傳入時，缺日判定與趨勢基準等批次面讀寫只看這台主機自己的
     /// 紀錄（見 <see cref="JsonlAnalysisRecordStore"/> 的 ownerHost 說明）。Web 查詢端不傳，維持不分主機。
@@ -14,6 +69,8 @@ public static class StorageFactory
     {
         switch (settings.Type)
         {
+            case "SqlServer":
+                return CreateEfRecordStore(settings, ownerHost);
             case "Jsonl":
                 return new JsonlAnalysisRecordStore(filePath, ownerHost);
             default:
@@ -80,6 +137,9 @@ public static class StorageFactory
     {
         switch (settings.Type)
         {
+            case "SqlServer":
+                // Web 查詢面不分主機（ownerHost=null）；Query/GetOne 自帶可見範圍過濾
+                return CreateEfRecordStore(settings, null);
             case "Jsonl":
             default:
                 return new JsonlAnalysisRecordStore(Path.Combine(dataRoot, "history.txt"));
