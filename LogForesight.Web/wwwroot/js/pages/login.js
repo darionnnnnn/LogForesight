@@ -23,12 +23,11 @@ async function init() {
             passwordField.classList.remove('d-none');
             passwordInput.setAttribute('required', 'required');
         } else {
-            // 測試（Stub）模式：一般帳號免密碼，但本地救援管理員 svc-lfadmin 仍需驗證密碼
-            // （ServerAdminAuthenticator 在任何 Provider 下都會驗密碼）。若把密碼欄藏起來，
-            // serverAdmin 就永遠送不出密碼 → 首次部署沒有任何 admin 時會卡死無法登入。
-            // 因此密碼欄保持顯示、設為選填：一般帳號留白即可，svc-lfadmin 填入自己的密碼。
-            passwordField.classList.remove('d-none');
-            providerHint.textContent = '測試模式：一般帳號免密碼；救援管理員 svc-lfadmin 請輸入其密碼';
+            // 測試（Stub）模式：所有帳號皆免密碼——一般帳號由 StubAuthenticationProvider 放行，
+            // 本地救援管理員 svc-lfadmin 也免密碼（ServerAdminAuthenticator 在 Stub 下不驗密碼，
+            // 見 IdentityService 傳入的 provider.RequiresPassword）。密碼欄維持隱藏，送出 password=null。
+            // 正式環境強制 Ldap（requiresPassword=true）→ 上面分支顯示密碼欄，救援帳號仍需真密碼。
+            providerHint.textContent = '測試模式：免密碼登入（正式環境改用 AD 帳密）';
         }
     } catch {
         showError('無法取得登入設定，請確認伺服器狀態。');
