@@ -299,6 +299,17 @@ public static class StorageFactory
         }
     }
 
+    /// <summary>NetIQ 匯入排程佇列（webdata\netiq_import_queue.json，§5.3 D-3）——Web 排入、批次套用</summary>
+    public static INetiqImportQueueStore CreateNetiqImportQueueStore(StorageSettings settings, string dataRoot)
+    {
+        switch (settings.Type)
+        {
+            case "Jsonl":
+            default:
+                return new JsonNetiqImportQueueStore(Blob(settings, dataRoot, "netiq_import_queue", WebDataPath(dataRoot, "netiq_import_queue.json")));
+        }
+    }
+
     /// <summary>
     /// 權限異動（rundata\perm_changes.jsonl 由批次寫、webdata\perm_confirms.json 由 Web 寫）。
     /// 兩個檔案各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。

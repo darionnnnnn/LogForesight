@@ -153,11 +153,22 @@ public class NetiqImportRequest
     public List<string> SelectedIps { get; set; } = new();
 }
 
-public class NetiqImportResultDto
+/// <summary>NetIQ 匯入排程佇列的畫面呈現（§5.3 D-3）</summary>
+public class NetiqQueueEntryDto
 {
+    public string QueueId { get; set; } = string.Empty;
+    public string ServerName { get; set; } = string.Empty;
+    public int HostCount { get; set; }
+    public string RequestedByAccount { get; set; } = string.Empty;
+    public DateTime RequestedAt { get; set; }
+
+    /// <summary>pending | applied | failed | cancelled</summary>
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+
+    public DateTime? AppliedAt { get; set; }
     public int Added { get; set; }
     public int Updated { get; set; }
-
-    /// <summary>重疊復活（原被停用的孤兒主機重新綁到新 Sentinel）的台數</summary>
     public int Revived { get; set; }
+    public string? FailureReason { get; set; }
 }

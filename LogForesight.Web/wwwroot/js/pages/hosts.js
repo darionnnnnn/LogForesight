@@ -744,13 +744,13 @@ document.getElementById('scan-import').addEventListener('click', async () => {
     const selectedIps = selectedScanIps();
     if (selectedIps.length === 0 || !scanToken) return;
 
-    const restore = withBusy(document.getElementById('scan-import'), '匯入中');
+    const restore = withBusy(document.getElementById('scan-import'), '排入中');
     try {
-        const result = await api.post('/api/admin/netiq/import', { token: scanToken, selectedIps });
-        toast(`匯入完成：新增 ${result.added}、更新 ${result.updated}` +
-            (result.revived > 0 ? `、重新啟用 ${result.revived}` : ''), 'success');
+        // §5.3 D-3：這裡只排入佇列，不立即落盤主機異動——實際新增/更新/復活由下次批次執行套用
+        await api.post('/api/admin/netiq/import', { token: scanToken, selectedIps });
+        toast(`已排入 ${selectedIps.length} 台主機的匯入請求，將於下次批次執行時套用（可在下方佇列列表取消）`, 'success');
         scanModal.hide();
-        await load();
+        await loadImportQueue();
     } catch {
         // 錯誤已由 api.js 顯示
     } finally {
@@ -758,4 +758,101 @@ document.getElementById('scan-import').addEventListener('click', async () => {
     }
 });
 
+// ── NetIQ 匯入佇列狀態（§5.3 D-3）─────────────────────────────────────────────
+
+async function loadImportQueue() {
+    const container = document.getElementById('netiq-import-queue');
+    if (!container) return;
+
+    let entries;
+    try {
+        entries = await api.get('/api/admin/netiq/import-queue', { silent: true });
+    } catch {
+        return;
+    }
+
+    if (!entries || entries.length === 0) {
+        container.replaceChildren();
+        return;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'lf-card mb-3';
+
+    const header = document.createElement('div');
+    header.className = 'lf-card__header';
+    const title = document.createElement('h2');
+    title.className = 'lf-card__title mb-0';
+    title.textContent = 'NetIQ 匯入佇列';
+    header.appendChild(title);
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'lf-card__body p-0';
+
+    renderTable(body, {
+        columns: [
+            { title: 'Sentinel', render: e => e.serverName },
+            { title: '台數', className: 'text-end', render: e => String(e.hostCount) },
+            { title: '排入者', render: e => e.requestedByAccount },
+            { title: '排入時間', render: e => formatDateTime(e.requestedAt) },
+            { title: '狀態', render: e => queueStatusCell(e) },
+            { title: '', className: 'text-end', render: e => queueActionsCell(e) }
+        ],
+        rows: entries
+    });
+    card.appendChild(body);
+    container.replaceChildren(card);
+}
+
+function queueStatusCell(entry) {
+    const wrap = document.createElement('div');
+
+    const variant = { pending: 'warning', applied: 'success', failed: 'danger', cancelled: 'secondary' }[entry.status] ?? 'secondary';
+    const badge = document.createElement('span');
+    badge.className = `lf-badge lf-badge--${variant}`;
+    badge.textContent = entry.statusText;
+    wrap.appendChild(badge);
+
+    if (entry.status === 'applied') {
+        const detail = document.createElement('div');
+        detail.className = 'small text-muted mt-1';
+        detail.textContent = `新增 ${entry.added}、更新 ${entry.updated}` +
+            (entry.revived > 0 ? `、復活 ${entry.revived}` : '');
+        wrap.appendChild(detail);
+    }
+    if (entry.status === 'failed' && entry.failureReason) {
+        const detail = document.createElement('div');
+        detail.className = 'small text-danger mt-1';
+        detail.textContent = entry.failureReason;
+        wrap.appendChild(detail);
+    }
+
+    return wrap;
+}
+
+function queueActionsCell(entry) {
+    if (entry.status !== 'pending') return '';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-danger';
+    btn.textContent = '取消';
+    btn.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            title: '取消匯入請求',
+            message: `取消排入 Sentinel「${entry.serverName}」的 ${entry.hostCount} 台主機匯入請求，這些主機不會被套用。`,
+            confirmText: '取消請求',
+            confirmVariant: 'danger'
+        });
+        if (!confirmed) return;
+
+        await api.post(`/api/admin/netiq/import-queue/${encodeURIComponent(entry.queueId)}/cancel`);
+        toast('已取消匯入請求', 'success');
+        await loadImportQueue();
+    });
+    return btn;
+}
+
 load();
+loadImportQueue();

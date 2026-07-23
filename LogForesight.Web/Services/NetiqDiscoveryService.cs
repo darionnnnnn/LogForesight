@@ -1,18 +1,31 @@
 using System.Collections.Concurrent;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1）：掃描 Sentinel → 網段分組 → 勾選 → 匯入。
-/// 掃描結果暫存 token（30 分鐘），Import 只接受掃描過的 IP，避免前端硬塞任意主機。
+/// NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1、§5.3 D-3）：掃描 Sentinel → 網段分組 → 勾選 → 排入匯入。
+/// 掃描結果暫存 token（30 分鐘），Enqueue 只接受掃描過的 IP，避免前端硬塞任意主機。
+///
+/// **不在這裡直接落盤主機異動**（§5.3 D-3 定案）：勾選送出只是把請求寫進佇列，
+/// 實際的主機新增/更新/孤兒復活由批次執行開頭處理（見 <see cref="NetiqImportApplier"/>
+/// 與批次 Program.cs 的 --apply-netiq-imports）。兩千台量級下主機異動集中在批次時段
+/// 一次落盤，避免上班時間 Web 端操作與正在跑的批次互踩。
 /// </summary>
 public interface INetiqDiscoveryService
 {
     List<NetiqScanTargetDto> GetScanTargets();
     Task<NetiqScanResultDto> ScanAsync(string serverName, CancellationToken ct);
-    NetiqImportResultDto Import(NetiqImportRequest request);
+
+    /// <summary>把使用者勾選的主機排入匯入佇列（不落盤主機異動）</summary>
+    NetiqQueueEntryDto Enqueue(NetiqImportRequest request);
+
+    List<NetiqQueueEntryDto> GetQueue();
+
+    /// <summary>取消一筆排程中的請求；已套用/失敗/已取消的請求不可再取消</summary>
+    void CancelQueueEntry(string queueId);
 }
 
 public class NetiqDiscoveryService : INetiqDiscoveryService
@@ -20,6 +33,8 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
     private readonly INetiqServerCatalog _catalog;
     private readonly INetiqDirectoryClient _client;
     private readonly IHostStore _hosts;
+    private readonly INetiqImportQueueStore _queue;
+    private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
 
     private static readonly ConcurrentDictionary<string, PendingScan> Pending = new();
@@ -29,11 +44,15 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
         INetiqServerCatalog catalog,
         INetiqDirectoryClient client,
         IHostStore hosts,
+        INetiqImportQueueStore queue,
+        ICurrentUser currentUser,
         IAuditService audit)
     {
         _catalog = catalog;
         _client = client;
         _hosts = hosts;
+        _queue = queue;
+        _currentUser = currentUser;
         _audit = audit;
     }
 
@@ -116,7 +135,7 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
         };
     }
 
-    public NetiqImportResultDto Import(NetiqImportRequest request)
+    public NetiqQueueEntryDto Enqueue(NetiqImportRequest request)
     {
         CleanupExpired();
         if (!Pending.TryGetValue(request.Token, out var scan))
@@ -129,54 +148,72 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var result = new NetiqImportResultDto();
-        foreach (var ip in wanted)
-        {
-            var existing = _hosts.FindByName(ip);
+        if (wanted.Count == 0)
+            throw DomainException.Validation("請至少勾選一台主機。");
 
-            if (existing?.OrphanedFromSentinel != null)
-            {
-                // 重疊復活：同 HostId 復活，歷史/群組/負責人零斷裂
-                existing.Active = true;
-                existing.NetiqServer = scan.ServerName;
-                existing.OrphanedFromSentinel = null;
-                _hosts.Upsert(existing);
-                result.Revived++;
-            }
-            else if (existing != null)
-            {
-                existing.NetiqServer = scan.ServerName;
-                existing.Active = true;
-                _hosts.Upsert(existing);
-                result.Updated++;
-            }
-            else
-            {
-                _hosts.Upsert(new WebHost
-                {
-                    HostName = ip,
-                    IpAddress = ip,
-                    IpUpdatedAt = DateTime.Now,
-                    NetiqServer = scan.ServerName,
-                    Source = "netiq",
-                    Active = true,
-                    GroupIds = new List<long>(),
-                    OwnerUserIds = new List<long>()
-                });
-                result.Added++;
-            }
-        }
+        var entry = new NetiqImportQueueEntry
+        {
+            ServerName = scan.ServerName,
+            SelectedIps = wanted,
+            RequestedByAccount = _currentUser.Account,
+            RequestedAt = DateTime.Now,
+            Status = NetiqImportQueueStatuses.Pending
+        };
+        _queue.Save(entry);
+
+        // 排入當下只記「排入」，不記「已匯入」——實際落盤發生在批次執行時，
+        // 稽核措辭必須誠實反映「這件事現在還沒發生」
+        _audit.Record(
+            action: AuditActions.NetiqImportEnqueue,
+            summary: $"排入 NetIQ 匯入佇列（Sentinel：{scan.ServerName}，{wanted.Count} 台），將於下次批次執行時套用",
+            targetKind: "netiq_import_queue",
+            targetId: entry.QueueId,
+            detail: new { entry.QueueId, scan.ServerName, Count = wanted.Count });
+
+        return ToDto(entry);
+    }
+
+    public List<NetiqQueueEntryDto> GetQueue() => _queue.GetAll().Select(ToDto).ToList();
+
+    public void CancelQueueEntry(string queueId)
+    {
+        var entry = _queue.Get(queueId) ?? throw DomainException.NotFound("找不到這筆匯入請求。");
+        if (entry.Status != NetiqImportQueueStatuses.Pending)
+            throw DomainException.Validation("這筆請求已經處理過，無法取消。");
+
+        entry.Status = NetiqImportQueueStatuses.Cancelled;
+        _queue.Save(entry);
 
         _audit.Record(
-            action: AuditActions.HostUpdate,
-            summary: $"從 NetIQ 匯入主機（Sentinel：{scan.ServerName}）：新增 {result.Added}、更新 {result.Updated}" +
-                     (result.Revived > 0 ? $"、重新啟用 {result.Revived}" : ""),
-            targetKind: "host",
-            targetId: null,
-            detail: new { scan.ServerName, result.Added, result.Updated, result.Revived, Count = wanted.Count });
-
-        return result;
+            action: AuditActions.NetiqImportCancel,
+            summary: $"取消 NetIQ 匯入佇列請求（Sentinel：{entry.ServerName}，{entry.SelectedIps.Count} 台）",
+            targetKind: "netiq_import_queue",
+            targetId: entry.QueueId,
+            detail: new { entry.QueueId, entry.ServerName });
     }
+
+    private static NetiqQueueEntryDto ToDto(NetiqImportQueueEntry entry) => new()
+    {
+        QueueId = entry.QueueId,
+        ServerName = entry.ServerName,
+        HostCount = entry.SelectedIps.Count,
+        RequestedByAccount = entry.RequestedByAccount,
+        RequestedAt = entry.RequestedAt,
+        Status = entry.Status,
+        StatusText = entry.Status switch
+        {
+            NetiqImportQueueStatuses.Pending => "排程中，將於下次批次執行時套用",
+            NetiqImportQueueStatuses.Applied => "已套用",
+            NetiqImportQueueStatuses.Failed => "套用失敗",
+            NetiqImportQueueStatuses.Cancelled => "已取消",
+            _ => entry.Status
+        },
+        AppliedAt = entry.AppliedAt,
+        Added = entry.Added,
+        Updated = entry.Updated,
+        Revived = entry.Revived,
+        FailureReason = entry.FailureReason
+    };
 
     /// <summary>IP 的 /24 網段字串（10.1.2.37 → 10.1.2.0/24）。非法 IP 歸到「其他」</summary>
     private static string Slash24(string ip)

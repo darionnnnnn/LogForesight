@@ -128,8 +128,19 @@ public class AdminController : ControllerBase
         ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, ct));
 
     [HttpPost("netiq/import")]
-    public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
-        ApiResponse<NetiqImportResultDto>.Ok(_discovery.Import(request));
+    public ApiResponse<NetiqQueueEntryDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
+        ApiResponse<NetiqQueueEntryDto>.Ok(_discovery.Enqueue(request));
+
+    [HttpGet("netiq/import-queue")]
+    public ApiResponse<List<NetiqQueueEntryDto>> GetNetiqImportQueue() =>
+        ApiResponse<List<NetiqQueueEntryDto>>.Ok(_discovery.GetQueue());
+
+    [HttpPost("netiq/import-queue/{queueId}/cancel")]
+    public ApiResponse CancelNetiqImportQueueEntry(string queueId)
+    {
+        _discovery.CancelQueueEntry(queueId);
+        return ApiResponse.Ok();
+    }
 
     // ── 主機群組與授權矩陣 ────────────────────────────────────────────────────
 

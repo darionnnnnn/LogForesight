@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
         services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
         services.AddSingleton<INoiseMarkStore>(_ => StorageFactory.CreateNoiseMarkStore(storage, dataRoot));
+        services.AddSingleton<INetiqImportQueueStore>(_ => StorageFactory.CreateNetiqImportQueueStore(storage, dataRoot));
         services.AddSingleton<IAiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
         services.AddSingleton<IPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
 

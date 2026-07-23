@@ -167,6 +167,21 @@ if (args.Contains("--import-hosts") || args.Contains("--host-list"))
     return exitCode;
 }
 
+// --apply-netiq-imports：立即套用 Web 排入的 NetIQ 匯入佇列（docs/SCALE-2000-PLAN.md §5.3 D-3），
+// 不必等到下次排程執行。正常執行也會在開頭自動處理一次（見下方），這裡供想立即套用時手動觸發。
+if (args.Contains("--apply-netiq-imports"))
+{
+    var queueStoreForCli = StorageFactory.CreateNetiqImportQueueStore(settings.Storage, dataRoot);
+    var hostStoreForCli = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
+    var auditStoreForCli = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot);
+
+    var count = NetiqImportQueueCli.ApplyPending(queueStoreForCli, hostStoreForCli, auditStoreForCli);
+    Console.WriteLine(count == 0 ? "目前沒有排程中的 NetIQ 匯入請求。" : $"已處理 {count} 筆 NetIQ 匯入請求。");
+
+    LogManager.Shutdown();
+    return 0;
+}
+
 RuleBootstrapper.Run(ruleStore);
 
 // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要一份
@@ -231,6 +246,23 @@ try
 catch (Exception ex)
 {
     log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
+}
+
+// 每次批次執行開頭處理 Web 排入的 NetIQ 匯入佇列（docs/SCALE-2000-PLAN.md §5.3 D-3）：
+// 兩千台量級下主機異動集中在批次時段一次落盤，避免上班時間 Web 端操作與批次互踩。
+// 排在孤兒掃描之後、Touch 之前——這樣新匯入的主機同一次執行內就會被 Touch 登記。
+// 失敗不得中斷分析：佇列套用是附屬作業，不該讓當晚的事件分析整個停擺。
+try
+{
+    var queueStore = StorageFactory.CreateNetiqImportQueueStore(settings.Storage, dataRoot);
+    var auditStore = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot);
+    var appliedCount = NetiqImportQueueCli.ApplyPending(queueStore, StorageFactory.CreateHostStore(settings.Storage, dataRoot), auditStore);
+    if (appliedCount > 0)
+        Console.WriteLine($"  已套用 {appliedCount} 筆排程中的 NetIQ 匯入請求。");
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "NetIQ 匯入佇列套用失敗（不影響本次分析）：{0}", ex.Message);
 }
 
 long currentHostId = 0;

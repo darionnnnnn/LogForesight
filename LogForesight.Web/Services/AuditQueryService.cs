@@ -74,7 +74,11 @@ public class AuditQueryService : IAuditQueryService
         [AuditActions.AccessGrant] = "授予存取權",
         [AuditActions.AccessRevoke] = "收回存取權",
 
-        [AuditActions.ImportApply] = "套用 CSV 匯入"
+        [AuditActions.ImportApply] = "套用 CSV 匯入",
+
+        [AuditActions.NetiqImportEnqueue] = "排入 NetIQ 匯入佇列",
+        [AuditActions.NetiqImportCancel] = "取消 NetIQ 匯入請求",
+        [AuditActions.NetiqImportApplied] = "套用 NetIQ 匯入佇列"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry) => new()

@@ -3,6 +3,7 @@
 }
 
 <div id="netiq-queues" class="row g-3 mb-3"></div>
+<div id="netiq-import-queue"></div>
 
 <div class="lf-toolbar">
     <div class="lf-toolbar__row">
@@ -158,6 +159,10 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">
+                <div class="lf-hint mb-3">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+                    <span>勾選送出只會排入匯入佇列，實際新增/更新主機由下次批次執行時套用（或請維運人員手動執行 --apply-netiq-imports）。</span>
+                </div>
                 <div class="d-flex gap-2 align-items-end mb-3">
                     <div class="flex-grow-1">
                         <label for="scan-server" class="form-label small mb-1">Sentinel</label>
@@ -171,7 +176,7 @@
             <div class="modal-footer">
                 <div class="me-auto small text-muted" id="scan-selection"></div>
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
-                <button type="button" class="btn btn-primary" id="scan-import" disabled>匯入勾選主機</button>
+                <button type="button" class="btn btn-primary" id="scan-import" disabled>排入匯入佇列</button>
             </div>
         </div>
     </div>

@@ -93,8 +93,10 @@ public class NetiqDiscoveryServiceTests
             System.Threading.Tasks.Task.FromResult(_hosts);
     }
 
+    private readonly FakeNetiqImportQueueStore _queue = new();
+
     private NetiqDiscoveryService Create(FakeClient client, params SentinelServer[] servers) =>
-        new(new NetiqHostServiceTests.FakeNetiqServerCatalog(servers), client, _hosts, new FakeAuditService());
+        new(new NetiqHostServiceTests.FakeNetiqServerCatalog(servers), client, _hosts, _queue, new FakeCurrentUser(), new FakeAuditService());
 
     private static SentinelServer Discoverable(string name) =>
         new() { Name = name, BaseUrl = "https://x", Username = "u", Password = "p" };
@@ -134,8 +136,62 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(1, result.Subnets[0].OrphanOverlapCount);
     }
 
+    /// <summary>§5.3 D-3：套用改為兩階段——排入佇列（不落盤主機異動）＋批次套用（實際落盤）</summary>
     [Fact]
-    public async System.Threading.Tasks.Task 匯入_重疊主機復活保留HostId與關聯()
+    public async System.Threading.Tasks.Task 排入佇列_不立即落盤主機異動()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
+        var scan = await svc.ScanAsync("S1", default);
+
+        var entry = svc.Enqueue(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
+
+        Assert.Equal(NetiqImportQueueStatuses.Pending, entry.Status);
+        Assert.Equal(1, entry.HostCount);
+        Assert.Equal("test", entry.RequestedByAccount);
+        Assert.Null(_hosts.FindByName("10.1.2.50"));   // 主機還沒被建立——落盤要等批次套用
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task 排入佇列_只接受掃描過的IP()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
+        var scan = await svc.ScanAsync("S1", default);
+
+        // 塞一個沒掃描到的 IP，應被忽略；若因此變成空清單則直接擋下
+        Assert.Throws<DomainException>(() =>
+            svc.Enqueue(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.9.9.9" } }));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task 取消排程中的請求_狀態變更為已取消()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
+        var scan = await svc.ScanAsync("S1", default);
+        var entry = svc.Enqueue(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
+
+        svc.CancelQueueEntry(entry.QueueId);
+
+        var updated = svc.GetQueue().First(e => e.QueueId == entry.QueueId);
+        Assert.Equal(NetiqImportQueueStatuses.Cancelled, updated.Status);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task 已套用的請求不可再取消()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
+        var scan = await svc.ScanAsync("S1", default);
+        var entry = svc.Enqueue(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
+
+        var stored = _queue.Get(entry.QueueId)!;
+        stored.Status = NetiqImportQueueStatuses.Applied;
+        _queue.Save(stored);
+
+        Assert.Throws<DomainException>(() => svc.CancelQueueEntry(entry.QueueId));
+    }
+
+    /// <summary>批次套用邏輯（NetiqImportApplier）：重疊主機復活保留 HostId 與關聯，與舊版 Import() 行為逐位相同</summary>
+    [Fact]
+    public void 套用_重疊主機復活保留HostId與關聯()
     {
         var orphan = _hosts.Upsert(new WebHost
         {
@@ -144,11 +200,11 @@ public class NetiqDiscoveryServiceTests
             GroupIds = new List<long> { 5 }, OwnerUserIds = new List<long> { 9 }
         });
 
-        var svc = Create(new FakeClient(("SRV-A", "10.1.2.11")), Discoverable("SENTINEL-NEW"));
-        var scan = await svc.ScanAsync("SENTINEL-NEW", default);
-        var result = svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.11" } });
+        var outcome = NetiqImportApplier.Apply(
+            new NetiqImportQueueEntry { ServerName = "SENTINEL-NEW", SelectedIps = new() { "10.1.2.11" } },
+            _hosts);
 
-        Assert.Equal(1, result.Revived);
+        Assert.Equal(1, outcome.Revived);
         var revived = _hosts.FindByName("10.1.2.11")!;
         Assert.Equal(orphan.HostId, revived.HostId);       // 同 HostId
         Assert.True(revived.Active);
@@ -159,28 +215,31 @@ public class NetiqDiscoveryServiceTests
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task 匯入_新主機以IP為HostName登錄()
+    public void 套用_新主機以IP為HostName登錄()
     {
-        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
-        var result = svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
+        var outcome = NetiqImportApplier.Apply(
+            new NetiqImportQueueEntry { ServerName = "S1", SelectedIps = new() { "10.1.2.50" } },
+            _hosts);
 
-        Assert.Equal(1, result.Added);
+        Assert.Equal(1, outcome.Added);
         var added = _hosts.FindByName("10.1.2.50")!;
         Assert.Equal("netiq", added.Source);
         Assert.Equal("S1", added.NetiqServer);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task 匯入_只接受掃描過的IP()
+    public void 套用_既有主機更新Sentinel歸屬()
     {
-        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
-        // 塞一個沒掃描到的 IP，應被忽略
-        var result = svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.9.9.9" } });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.50", IpAddress = "10.1.2.50", Source = "netiq", NetiqServer = "OLD", Active = false });
 
-        Assert.Equal(0, result.Added);
-        Assert.Null(_hosts.FindByName("10.9.9.9"));
+        var outcome = NetiqImportApplier.Apply(
+            new NetiqImportQueueEntry { ServerName = "NEW", SelectedIps = new() { "10.1.2.50" } },
+            _hosts);
+
+        Assert.Equal(1, outcome.Updated);
+        var updated = _hosts.FindByName("10.1.2.50")!;
+        Assert.Equal("NEW", updated.NetiqServer);
+        Assert.True(updated.Active);
     }
 
     [Fact]
@@ -201,5 +260,91 @@ public class NetiqDiscoveryServiceTests
         Assert.True(targets.First(t => t.Name == "S1").CanDiscover);
         Assert.False(targets.First(t => t.Name == "S2").CanDiscover);
         Assert.NotNull(targets.First(t => t.Name == "S2").Reason);
+    }
+}
+
+internal class FakeNetiqImportQueueStore : INetiqImportQueueStore
+{
+    private readonly List<NetiqImportQueueEntry> _items = new();
+
+    public List<NetiqImportQueueEntry> GetAll() => _items.OrderByDescending(e => e.RequestedAt).ToList();
+
+    public NetiqImportQueueEntry? Get(string queueId) =>
+        _items.FirstOrDefault(e => e.QueueId == queueId);
+
+    public void Save(NetiqImportQueueEntry entry)
+    {
+        var existing = _items.FirstOrDefault(e => e.QueueId == entry.QueueId);
+        if (existing == null) { _items.Add(entry); return; }
+        existing.Status = entry.Status;
+        existing.AppliedAt = entry.AppliedAt;
+        existing.Added = entry.Added;
+        existing.Updated = entry.Updated;
+        existing.Revived = entry.Revived;
+        existing.FailureReason = entry.FailureReason;
+    }
+}
+
+internal class FakeAuditLogStore : IAuditLogStore
+{
+    public readonly List<AuditEntry> Entries = new();
+
+    public void Append(AuditEntry entry) => Entries.Add(entry);
+
+    public PagedResult<AuditEntry> Query(AuditQuery query) => new() { Items = Entries, Total = Entries.Count };
+
+    public int Count(DateTime from, DateTime to, string action) =>
+        Entries.Count(e => e.Action == action && e.OccurredAt >= from && e.OccurredAt <= to);
+}
+
+/// <summary>批次端套用佇列（docs/SCALE-2000-PLAN.md §5.3 D-3）：與 Web 的 Enqueue 各自獨立測試，
+/// 確保兩階段（排入／套用）拆開後行為仍逐位對得上舊版一次到位的 Import()。</summary>
+public class NetiqImportQueueCliTests
+{
+    private readonly FakeHostStore _hosts = new();
+    private readonly FakeNetiqImportQueueStore _queue = new();
+    private readonly FakeAuditLogStore _audit = new();
+
+    [Fact]
+    public void 套用所有排程中項目_狀態變更為已套用並記錄筆數()
+    {
+        _queue.Save(new NetiqImportQueueEntry
+        {
+            ServerName = "S1", SelectedIps = new() { "10.1.2.60" },
+            RequestedByAccount = "DOMAIN\\alice", RequestedAt = DateTime.Now
+        });
+
+        var count = NetiqImportQueueCli.ApplyPending(_queue, _hosts, _audit);
+
+        Assert.Equal(1, count);
+        var entry = _queue.GetAll().Single();
+        Assert.Equal(NetiqImportQueueStatuses.Applied, entry.Status);
+        Assert.Equal(1, entry.Added);
+        Assert.NotNull(entry.AppliedAt);
+        Assert.NotNull(_hosts.FindByName("10.1.2.60"));
+
+        var audited = _audit.Entries.Single();
+        Assert.Equal("DOMAIN\\alice", audited.Account);   // 稽核歸戶到排入當下的操作人，不是批次身分
+        Assert.Equal(AuditResult.Ok, audited.Result);
+    }
+
+    [Fact]
+    public void 已取消或已套用的項目不會被重複處理()
+    {
+        _queue.Save(new NetiqImportQueueEntry { ServerName = "S1", SelectedIps = new() { "10.1.2.61" }, Status = NetiqImportQueueStatuses.Cancelled });
+        _queue.Save(new NetiqImportQueueEntry { ServerName = "S1", SelectedIps = new() { "10.1.2.62" }, Status = NetiqImportQueueStatuses.Applied });
+
+        var count = NetiqImportQueueCli.ApplyPending(_queue, _hosts, _audit);
+
+        Assert.Equal(0, count);
+        Assert.Null(_hosts.FindByName("10.1.2.61"));
+        Assert.Null(_hosts.FindByName("10.1.2.62"));
+    }
+
+    [Fact]
+    public void 沒有排程中項目時回傳零()
+    {
+        Assert.Equal(0, NetiqImportQueueCli.ApplyPending(_queue, _hosts, _audit));
+        Assert.Empty(_audit.Entries);
     }
 }
