@@ -92,6 +92,14 @@ function setActiveView(view) {
     for (const btn of document.querySelectorAll('#view-toggle [data-view]')) {
         btn.classList.toggle('active', btn.dataset.view === view);
     }
+
+    // 彙總視角的 API 不支援處理狀態篩選——chip 停用而不是默默忽略，
+    // 否則使用者選了「未處理」卻看到全部，會以為篩選壞掉
+    const supportsStatus = view === 'detail';
+    for (const btn of document.querySelectorAll('#filter-status-chips button')) {
+        btn.disabled = !supportsStatus;
+        btn.title = supportsStatus ? '' : '依主機／依日期視角不支援處理狀態篩選';
+    }
 }
 
 function collectFilters() {

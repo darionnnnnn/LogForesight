@@ -110,7 +110,19 @@ try
     }
 
     app.UseHttpsRedirection();
-    app.UseStaticFiles();
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        // no-cache＝「可以快取，但每次用前要帶 ETag 回來驗證」（不是不快取）。
+        // 為什麼必要：頁面模組（js/pages/*）經 asp-append-version 有版本參數，但它們
+        // import 的共用模組（js/core/*）網址沒有版本——瀏覽器啟發式快取會把舊版
+        // core 模組留到天荒地老，core 檔案一改（例如新增 export），舊快取的 core 配上
+        // 新版頁面模組直接 import 失敗、整頁掛掉，除非使用者知道要硬重整。
+        // 改動前後檔案未變時仍是 304，多的只是一次極輕的驗證往返。
+        OnPrepareResponse = context =>
+        {
+            context.Context.Response.Headers.CacheControl = "no-cache";
+        }
+    });
     app.UseRouting();
 
     app.UseAuthentication();

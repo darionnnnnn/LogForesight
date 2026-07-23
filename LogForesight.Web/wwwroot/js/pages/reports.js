@@ -292,13 +292,19 @@ function renderHostChart() {
         }
     });
 
-    // 表格模式（工具列切換）給全量主機，不只 Top 10
+    // 表格模式（工具列切換）：Top 10 逐台＋「其他」彙總列；完整逐台清單走「查看全部」
+    // 連到問題查詢的依主機視角（伺服器端排行只回 Top 10＋彙總，不整包搬運）
+    const tableRows = hosts.map(h => [h.hostName, h.highRiskDays, h.mediumRiskDays, h.correlationDays, h.latestHeadline]);
+    if (others) {
+        tableRows.push([`其他 ${others.hostCount} 台（彙總）`, others.highRiskDays, others.mediumRiskDays, '', '']);
+    }
+
     charts.attachToolbar(document.getElementById('host-toolbar'), {
         chart: chartInstances.host,
         canvasWrapper: wrapper,
         title: '主機告警排行',
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
-        tableRows: hosts.map(h => [h.hostName, h.highRiskDays, h.mediumRiskDays, h.correlationDays, h.latestHeadline])
+        tableRows
     });
 }
 
