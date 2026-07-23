@@ -77,6 +77,20 @@ public class ReportSummaryDto
 
     /// <summary>主機排行（水平長條 Top 10）</summary>
     public List<DashboardHostDto> HostRanking { get; set; } = new();
+
+    /// <summary>本期有風險日的主機總數——主機量大時 Top 10 之外還有多少台，畫面要說得出來</summary>
+    public int RankedHostCount { get; set; }
+
+    /// <summary>Top 10 以外主機的合計（高＋中風險日），供「其他 N 台」彙總條；無其他主機時為 null</summary>
+    public HostRankingOthersDto? Others { get; set; }
+}
+
+/// <summary>主機排行 Top 10 之外的彙總（避免主機量大時尾端主機完全隱形）</summary>
+public class HostRankingOthersDto
+{
+    public int HostCount { get; set; }
+    public int HighRiskDays { get; set; }
+    public int MediumRiskDays { get; set; }
 }
 
 public class ReportKpiDto

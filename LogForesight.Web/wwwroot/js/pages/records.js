@@ -13,12 +13,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, renderPagination } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge } from '../core/format.js';
-
-const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
+import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES } from '../core/format.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -59,6 +54,7 @@ function applyUrlToForm() {
     setChips('filter-risk-chips', 'risk',
         params.has('riskLevels') ? splitCsv(params.get('riskLevels')) : DEFAULT_RISKS);
     setChips('filter-category-chips', 'category', splitCsv(params.get('categories')));
+    setChips('filter-status-chips', 'status', splitCsv(params.get('statuses')));
     document.getElementById('filter-from').value = params.get('from') ?? defaultFrom();
     document.getElementById('filter-to').value = params.get('to') ?? today();
     document.getElementById('filter-event-id').value = params.get('eventId') ?? '';
@@ -106,9 +102,10 @@ function collectFilters() {
         from: document.getElementById('filter-from').value,
         to: document.getElementById('filter-to').value,
         eventId: document.getElementById('filter-event-id').value,
-        // 下面三項只由下鑽網址帶入，不放在篩選列（避免主篩選列過度複雜）
+        // 處理狀態現在是可見的 chip（不再只由下鑽網址帶入）
+        statuses: activeChips('filter-status-chips', 'status').join(','),
+        // severity/overdue 仍只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）
         severity: new URLSearchParams(location.search).get('severity') ?? '',
-        statuses: new URLSearchParams(location.search).get('statuses') ?? '',
         overdue: new URLSearchParams(location.search).get('overdue') ?? ''
     };
 }
@@ -144,9 +141,49 @@ async function search() {
     // 同步網址：可直接複製分享，重新整理回到同一個結果與同一個視角
     history.replaceState(null, '', query ? `?${query}` : location.pathname);
 
+    renderActiveConditions(filters);
     renderLoading(listContainer, 6);
     lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`);
     render();
+}
+
+/**
+ * 下鑽帶入的隱藏條件（severity/overdue）顯性化為可移除標籤——否則使用者只看到
+ * 「為什麼只有這幾筆」卻在篩選列找不到原因。點 ✕ 移除該條件並重查。
+ */
+function renderActiveConditions(filters) {
+    const container = document.getElementById('active-conditions');
+    if (!container) return;
+    container.replaceChildren();
+
+    const tags = [];
+    if (filters.severity) tags.push({ label: `嚴重度：${filters.severity}`, param: 'severity' });
+    if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
+
+    for (const tag of tags) {
+        const chip = document.createElement('span');
+        chip.className = 'lf-badge lf-badge--primary d-inline-flex align-items-center gap-1';
+
+        const text = document.createElement('span');
+        text.textContent = tag.label;
+        chip.appendChild(text);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn-close btn-close-sm';
+        remove.setAttribute('aria-label', `移除條件：${tag.label}`);
+        remove.style.fontSize = '.6rem';
+        remove.addEventListener('click', () => {
+            // severity/overdue 只存在 URL，移除＝從 URL 拿掉再重查
+            const params = new URLSearchParams(location.search);
+            params.delete(tag.param);
+            history.replaceState(null, '', `?${params.toString()}`);
+            currentPage = 1;
+            search();
+        });
+        chip.appendChild(remove);
+        container.appendChild(chip);
+    }
 }
 
 function render() {
@@ -362,9 +399,9 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 });
 
 // chip：即點即篩（免按套用）
-for (const container of ['filter-risk-chips', 'filter-category-chips']) {
+for (const container of ['filter-risk-chips', 'filter-category-chips', 'filter-status-chips']) {
     document.getElementById(container).addEventListener('click', event => {
-        const btn = event.target.closest('button[data-risk], button[data-category]');
+        const btn = event.target.closest('button[data-risk], button[data-category], button[data-status]');
         if (!btn) return;
         btn.classList.toggle('active');
         currentPage = 1;

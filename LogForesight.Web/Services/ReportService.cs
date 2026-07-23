@@ -36,6 +36,8 @@ public class ReportService : IReportService
         var previousFrom = previousTo.AddDays(-span + 1);
         var previousRecords = _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo });
 
+        var ranked = BuildHostRanking(records);
+
         var dto = new ReportSummaryDto
         {
             From = from.ToString("yyyy-MM-dd"),
@@ -43,10 +45,28 @@ public class ReportService : IReportService
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
             Categories = BuildCategories(records),
-            HostRanking = BuildHostRanking(records)
+            HostRanking = ranked.Take(HostRankingLimit).ToList(),
+            RankedHostCount = ranked.Count,
+            Others = BuildOthers(ranked)
         };
 
         return dto;
+    }
+
+    /// <summary>排行榜顯示上限——超過的併入「其他 N 台」彙總條，保住圖表可讀性又不讓尾端主機隱形</summary>
+    private const int HostRankingLimit = 10;
+
+    private static HostRankingOthersDto? BuildOthers(List<DashboardHostDto> ranked)
+    {
+        var others = ranked.Skip(HostRankingLimit).ToList();
+        if (others.Count == 0) return null;
+
+        return new HostRankingOthersDto
+        {
+            HostCount = others.Count,
+            HighRiskDays = others.Sum(h => h.HighRiskDays),
+            MediumRiskDays = others.Sum(h => h.MediumRiskDays)
+        };
     }
 
     public List<SignatureHitDto> FindSignature(int eventId, string? source)
@@ -166,7 +186,6 @@ public class ReportService : IReportService
             .OrderByDescending(h => h.HighRiskDays)
             .ThenByDescending(h => h.CorrelationDays)
             .ThenByDescending(h => h.MediumRiskDays)
-            .Take(10)
-            .ToList();
+            .ToList();   // 全量回傳，Top N 與「其他」彙總在 GetSummary 切分
     }
 }

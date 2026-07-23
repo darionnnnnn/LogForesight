@@ -8,13 +8,8 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
-import { formatNumber, severityBadge } from '../core/format.js';
+import { formatNumber, severityBadge, CATEGORY_NAMES } from '../core/format.js';
 import * as charts from '../core/charts.js';
-
-const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
 
 let currentData = null;
 const chartInstances = {};
@@ -253,21 +248,35 @@ function renderCategoryChart() {
 
 function renderHostChart() {
     const hosts = currentData.hostRanking;
+    const others = currentData.others;
     const wrapper = document.getElementById('host-wrapper');
+
+    renderHostRankMeta();
 
     if (hosts.length === 0) {
         charts.renderNoData(wrapper, '此期間沒有風險主機');
         return;
     }
 
+    // 主機量大時，Top 10 之外的主機併成一條「其他 N 台」——尾端主機不會完全隱形，
+    // 也看得出前 10 佔整體多少。這一條不可下鑽（它是彙總，不是單一主機）。
+    const labels = hosts.map(h => h.hostName);
+    const high = hosts.map(h => h.highRiskDays);
+    const medium = hosts.map(h => h.mediumRiskDays);
+    if (others) {
+        labels.push(`其他 ${others.hostCount} 台`);
+        high.push(others.highRiskDays);
+        medium.push(others.mediumRiskDays);
+    }
+
     const risk = charts.riskColors();
     chartInstances.host?.destroy();
     chartInstances.host = charts.bar(document.getElementById('host-chart'), {
         data: {
-            labels: hosts.map(h => h.hostName),
+            labels,
             datasets: [
-                { label: '高風險日', data: hosts.map(h => h.highRiskDays), backgroundColor: risk['高'] },
-                { label: '中風險日', data: hosts.map(h => h.mediumRiskDays), backgroundColor: risk['中'] }
+                { label: '高風險日', data: high, backgroundColor: risk['高'] },
+                { label: '中風險日', data: medium, backgroundColor: risk['中'] }
             ]
         },
         options: {
@@ -278,11 +287,12 @@ function renderHostChart() {
             }
         },
         drillTo: point => {
-            const host = hosts[point.index];
-            return host.hostId > 0 ? `/hosts/${host.hostId}` : null;
+            const host = hosts[point.index];   // 「其他」條沒有對應 hosts 元素，回 null 不下鑽
+            return host && host.hostId > 0 ? `/hosts/${host.hostId}` : null;
         }
     });
 
+    // 表格模式（工具列切換）給全量主機，不只 Top 10
     charts.attachToolbar(document.getElementById('host-toolbar'), {
         chart: chartInstances.host,
         canvasWrapper: wrapper,
@@ -290,6 +300,24 @@ function renderHostChart() {
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
         tableRows: hosts.map(h => [h.hostName, h.highRiskDays, h.mediumRiskDays, h.correlationDays, h.latestHeadline])
     });
+}
+
+/** 排行榜標題副說明（共 N 台）與「查看全部」連結——連到問題查詢的依主機視角，同一段期間 */
+function renderHostRankMeta() {
+    const subtitle = document.getElementById('host-rank-subtitle');
+    const viewAll = document.getElementById('host-view-all');
+    const count = currentData.rankedHostCount;
+
+    subtitle.textContent = count > 0 ? `共 ${count} 台有風險日` : '';
+
+    // 有主機被 Top 10 擋在外面時才顯示「查看全部」，沒有就別給多餘的出口
+    if (currentData.others) {
+        viewAll.href = `/records?view=host&riskLevels=${encodeURIComponent('高,中')}` +
+            `&from=${currentData.from}&to=${currentData.to}`;
+        viewAll.classList.remove('d-none');
+    } else {
+        viewAll.classList.add('d-none');
+    }
 }
 
 function renderRiskChart() {

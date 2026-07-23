@@ -8,6 +8,20 @@
 
 import { icon } from './ui.js';
 
+/**
+ * 風險類別的中文名（後端回傳英文列舉字串）。集中在這裡，取代先前散在 4 個頁面模組的
+ * 各自副本——同一個對照表複製多份，遲早有頁面漏改（新增類別時尤其）。
+ */
+export const CATEGORY_NAMES = {
+    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
+    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
+};
+
+/** 類別英文列舉 → 中文名，查無回原字串 */
+export function categoryName(category) {
+    return CATEGORY_NAMES[category] ?? category;
+}
+
 /** 風險等級 → 徽章 CSS class（後端回傳中文「高/中/低」） */
 const RISK_CLASS = {
     '高': 'lf-badge--high',

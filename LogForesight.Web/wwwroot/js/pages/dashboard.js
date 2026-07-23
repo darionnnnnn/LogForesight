@@ -8,13 +8,8 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
-import { formatDateTime, formatNumber } from '../core/format.js';
+import { formatDateTime, formatNumber, CATEGORY_NAMES } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
-
-const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
 
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
 

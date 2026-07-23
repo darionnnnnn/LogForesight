@@ -8,13 +8,8 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction } from '../core/ui.js';
-import { riskBadge, severityBadge, formatNumber } from '../core/format.js';
+import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES } from '../core/format.js';
 import { initHandlingPanel } from './handling-panel.js';
-
-const CATEGORY_NAMES = {
-    Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
-    Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
-};
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -58,6 +53,38 @@ async function load() {
     await initHandlingPanel(hostId, date);
 
     if (currentDetail.hasReport) await loadReport();
+
+    setupNextUnhandled();
+}
+
+/**
+ * 「下一筆未處理」捷徑：處理完一天後不必手動返回清單再自己找下一筆。
+ * 沿用問題查詢的緊急程度排序（未結案的高＋中風險日），跳到目前這筆之後的下一筆。
+ * 目前這筆已不在未處理清單（剛結案）時，跳到清單第一筆；全部處理完則按鈕不顯示。
+ */
+async function setupNextUnhandled() {
+    const button = document.getElementById('next-unhandled');
+    if (!button) return;
+
+    let items;
+    try {
+        const result = await api.get(
+            `/api/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&pageSize=200`,
+            { silent: true });
+        items = result.items;
+    } catch {
+        return;   // 取不到就不顯示捷徑，不打斷詳情頁
+    }
+
+    if (!items || items.length === 0) return;
+
+    const currentIndex = items.findIndex(r => r.hostId === hostId && r.date === date);
+    // 目前這筆還在未處理清單 → 取它之後的下一筆；已不在（剛結案）→ 取第一筆
+    const next = currentIndex >= 0 ? items[currentIndex + 1] : items[0];
+    if (!next) return;   // 這是最後一筆未處理
+
+    button.href = `/records/${next.hostId}/${next.date}`;
+    button.classList.remove('d-none');
 }
 
 function renderHeader(detail) {

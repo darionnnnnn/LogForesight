@@ -64,8 +64,14 @@
     <div class="col-lg-6">
         <section class="lf-card h-100">
             <div class="lf-card__header">
-                <h2 class="lf-card__title">主機告警排行</h2>
-                <div id="host-toolbar"></div>
+                <div class="d-flex align-items-center gap-2">
+                    <h2 class="lf-card__title mb-0">主機告警排行</h2>
+                    <span class="text-muted small" id="host-rank-subtitle"></span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="host-view-all">查看全部</a>
+                    <div id="host-toolbar"></div>
+                </div>
             </div>
             <div class="lf-card__body">
                 <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
