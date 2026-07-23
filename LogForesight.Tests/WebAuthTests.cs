@@ -163,6 +163,20 @@ public class ServerAdminAuthenticatorTests
             Create().TryLogin(Account, null, requiresPassword: false));
     }
 
+    /// <summary>
+    /// Stub 模式的核心定義：不論輸入什麼密碼都通過——連「錯誤密碼」也放行
+    /// （免密碼發生在後端且不比對密碼值，不是「密碼必須留空」）。
+    /// </summary>
+    [Theory]
+    [InlineData("完全錯誤的密碼")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Stub模式_任意密碼都通過(string? anyPassword)
+    {
+        Assert.Equal(ServerAdminLoginResult.Success,
+            Create().TryLogin(Account, anyPassword, requiresPassword: false));
+    }
+
     /// <summary>Stub 模式不驗密碼，先前的失敗計數不應把免密碼登入擋在鎖定外</summary>
     [Fact]
     public void Stub模式_先前失敗不影響免密碼登入()

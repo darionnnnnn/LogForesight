@@ -230,11 +230,13 @@ LogForesight.Web/
 - 啟動驗證：`ServerAdmin.Account`/`PasswordHash` 為必填（§5）。
 
 **Stub 免密碼（已接受，2026-07-21；2026-07-23 涵蓋 serverAdmin）**：測試期間環境不含核心重要
-主機，免密碼風險已評估接受。`Provider=Stub` 下**所有帳號一致免密碼——含本地救援帳號
-serverAdmin**：`IdentityService` 把 `IAuthenticationProvider.RequiresPassword` 傳入
-`ServerAdminAuthenticator.TryLogin`，為 `false`（Stub）時 serverAdmin 免密碼放行並清空失敗計數，
-登入頁據 `RequiresPassword=false` 隱藏密碼欄。（此前 serverAdmin 在 Stub 下仍強制驗密碼，
-與一般帳號不一致、預設帳號無法無密碼登入，已修正。）`Provider=Stub` 且
+主機，免密碼風險已評估接受。**「免密碼」的界線在後端、不在前端**：`Provider=Stub` 下登入頁
+**照常顯示密碼欄、使用者照常輸入、前端驗證不變**；密碼送到後端後，Stub 模式一律通過密碼
+驗證——**不論輸入什麼密碼（含錯誤、留空）都放行**。一般帳號由 `StubAuthenticationProvider.Verify`
+恆回 Ok；**本地救援帳號 serverAdmin 同樣一致**：`IdentityService` 把
+`IAuthenticationProvider.RequiresPassword` 傳入 `ServerAdminAuthenticator.TryLogin`，為 `false`
+（Stub）時不比對密碼直接放行並清空失敗計數。（此前 serverAdmin 在 Stub 下仍強制驗密碼，
+與一般帳號不一致、預設帳號無法免密碼登入，已修正。）`Provider=Stub` 且
 `ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆維持不變（防的是「帶著 Stub 上
 正式環境」的失誤，不是測試期的使用）——正式環境強制 Ldap（`RequiresPassword=true`），
 救援帳號仍走 PBKDF2 密碼＋鎖定，這條免密碼捷徑到不了正式環境。
