@@ -153,7 +153,7 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Jsonl", "DataRoot": "", "ConnectionString": "" },
+  "Storage": { "Type": "Jsonl", "DataRoot": "", "ConnectionString": "" },  // Type: Jsonl | Sqlite | SqlServer（§10.5）
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ldap。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -174,7 +174,16 @@ LogForesight.Web/
   不合格直接 fail fast 拋例外，不讓站台帶病啟動——沿用批次端「設定錯誤要顯性化」的原則。
 - **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
   （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
-  `StorageOptions` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
+  `StorageSettings` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
+- **`Storage.Type` 三選一**（§10.5 Phase C 完成後）：`Jsonl`（現行檔案格式，單機開箱即用，預設）／
+  `Sqlite`（測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔）／`SqlServer`（正式環境，2000 台量級）。
+  SQL 模式下**全部資料**（分析紀錄＋webdata）走資料庫。Web 的 `appsettings.Development.json`
+  已預設 `Type=Sqlite`（測試模式捨棄檔案，驗證與正式相同的 SQL 語意）；正式部署改 `SqlServer`。
+- **批次設定檔的 fail-fast（2026-07-23）**：批次 `AppSettings.Load` 兩種缺席語意刻意不同——
+  檔案**不存在**用預設值（開箱即用）；**存在但解析失敗**擲 `AppSettingsLoadException` 中止啟動
+  （紅字印出錯誤行號與位置、exit code 1）。理由：設定檔存在代表有明確設定意圖，靜默退回預設值
+  會讓 `Storage.Type` 掉回 `Jsonl`、資料寫進與正式後端分裂的另一份儲存，比「不跑」嚴重。
+  （`--selftest` 不受此限，設定檔壞掉仍可執行——其職責是驗證偵測規則、非設定檔。）
 - `Jwt.SecretKey` / `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
@@ -375,6 +384,15 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 仍零成本，且全站外觀一致。`.nav-tabs` 一併改為**底線式頁籤**（無外框），三個用 `nav-tabs`
 的頁面零 markup 變更即生效。
 
+**共用篩選工具列與 chip（2026-07-23 Phase D-0，視覺基盤）**：問題查詢／規則維護／主機／
+使用者頁的搜尋＋快速篩選原本各頁各自手排 flex 列與裸 `btn-group`，間距配色零散。改為一組
+共用元件——`.lf-toolbar`（一列式篩選列：欄位列＋分節列＋分隔線 `.lf-toolbar__divider`）與
+`.lf-chip`（藥丸狀篩選鈕，淡底／主色 active，取代裸 `btn-group`，比按鈕輕、比純文字可點）。
+`ui.js` 的 `renderChips(container, { items, attr, activeValues, multi, onToggle })` 是唯一
+渲染工廠（`multi=false` 單選＝點擊清掉群組內其他 active，適合狀態/排序方向；`multi=true` 多選
+＝空集合代表不限）。各頁篩選一致性靠共用元件保證、不靠各頁自律——這是 D-1～D-4 各頁改版
+（規則/主機/使用者的快速篩選、問題查詢的群組 chip、風險日詳情的狀態面板）的共同基座。
+
 **圖示**：採自架單一 SVG sprite（`wwwroot/img/icons.svg`，Bootstrap Icons MIT 子集，見 §8.1
 白名單），零外部請求、無字型下載。cshtml 內以 `<svg class="lf-icon"><use href="/img/icons.svg#名稱">`
 引用（注意 `href` 走絕對路徑，Razor 不解析 SVG `<use>` 內的 `~/`）；JS 動態產生的內容用
@@ -479,24 +497,57 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、高風險主機排行、
-  待辦區（未處理/逾期/權限異動 pending 數）、無回報主機、Web 登入失敗 24h 卡（admin 才顯示）。
+  待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、**依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有 Critical 時該類別卡
   置頂加紅邊，全綠時首屏顯示「今日無風險訊號」大字狀態（沒事也要一眼確認是真的沒事）。
-- API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁 5 個請求）。
+- **未回報主機改計數卡＋下鑽（2026-07-23 Phase D-4）**：兩千台規模下逐台列出可能數百筆，
+  改成一個大數字卡（`SilentHostsCount`）＋連結到主機頁的 `/admin/hosts?status=silent`
+  篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
+- **依群組風險概況（2026-07-23 Phase D-4）**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
+  點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
+- API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
+  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `IHandlingService.GetTodo` 同一套推導規則）。
 
 ### 9.2 `/records` 問題查詢（全角色）
-- 主篩選列：主機（多選，授權範圍）／日期區間／風險層級／風險類型／Event ID／處理狀態。
-  預設：近 7 天＋風險中以上。結果列表：日期、主機、風險、headline、類別、處理狀態、處理人。
-- API：`GET api/records?hostIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&page=`
-  （`severity`/`overdue` 為下鑽用選用參數，§10.3）
+- 主篩選列：主機（**搜尋式 autocomplete**，授權範圍）／**主機群組 chip**／日期區間／風險層級／
+  風險類型／Event ID／處理狀態。預設：近 7 天＋風險中以上。三個檢視角度（明細／依主機／依日期）
+  共用同一條篩選列與同一組 URL 參數。結果列表：日期、主機、風險、headline、類別、處理狀態、處理人。
+- **主機篩選改 autocomplete（2026-07-23 Phase D-4）**：兩千台規模下不能把全部主機灌進一個
+  `<select multiple>`。輸入 2 字元後查 `GET api/hosts?query=`（伺服器端包含比對、上限 20 筆），
+  已選主機顯示為可移除 chip；URL 帶入的 `hostIds` 以 `GET api/hosts?ids=`（精確取回、不受上限）
+  解析回顯示名稱，下鑽連結才能正確還原成 chip。
+- **主機群組 chip（2026-07-23 Phase D-4）**：`GET api/hosts/groups`（只列出使用者看得到主機所屬的
+  群組，不洩漏看不到的部門）；`GroupIds` 於 `RecordSearchRequest` 展開為主機集合後與 `HostIds` 取聯集。
+- API：`GET api/records?hostIds=&groupIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&page=`
+  （`severity`/`overdue` 為下鑽用選用參數，§10.3；三視角端點 `api/records`、`api/records/by-host`、`api/records/by-date` 皆支援 `groupIds`）
 
 ### 9.3 `/records/{hostId}/{date}` 風險日詳情
-- 區塊：結構化層（top issues 含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
-  報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）。
+- 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
+  報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）、
+  類型分布（頁內導航到對應問題分節）。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
+- **改版（2026-07-23 Phase D-1，七項）**：
+  1. **報告全文預設收合**：報告卡標題可點擊展開/收合，展開狀態記 `localStorage`（常看全文的人不必每次重點）。
+  2. **低風險預設不處理**：`IssueDto.IsDefaultUnhandled`（Low 且從未標記時後端算出）→ 顯示「不處理（預設）」
+     不落盤，提供「確認不處理」（落盤 wont_fix）與「調回未處理」（落盤明確 `open`）兩個動作。
+  3. **已知雜訊記憶**：新增 `NoiseMark`／`INoiseMarkStore`（`webdata\noise_marks.json`，主機＋簽章為鍵、
+     不含日期）。標「已知雜訊」時寫記憶；之後同主機同簽章的新問題自動顯示「已知雜訊（自動）」。
+     「調回未處理」用兩個誠實的循序對話框（是否繼續／是否順便刪記憶），不把「取消」誤讀成「確定」。
+     與規則抑制並存：有 `RuleId` 走抑制（治本）、無 `RuleId` 靠記憶（治標，供未命中規則的 Other 類別）。
+  4. **類別標題列依最高嚴重度加淡色底**（danger/warning/neutral soft），一眼區分分節輕重。
+  5. **趨勢欄與範例訊息**：`BuildTrendText` 首次出現時不再輸出「前一日 0 次」（贅述）；範例訊息由
+     展開式 `<pre>` 改 **hover 泡泡**（`bootstrap.Popover`，`html:false` 避免注入）；趨勢欄文字適度換行。
+  6. **處理欄由下拉改「勾選＋浮出面板」**：勾選＝快速標已處理；勾選後浮出面板選具體狀態（chip），
+     **依狀態動態調整欄位**（不處理→原因必填；誤報→提示調整規則連結；已知雜訊→備註＋寫記憶＋抑制提議）；
+     取消勾選＝立即清除（可逆、不用二次確認）。
+  7. **計數器改「已處理／未處理」**：只算 resolved 與真正未標記的（含明確 `open`），不處理/誤報/已知雜訊/
+     低風險預設不處理**兩邊都不計**——回答「還剩幾件要動手」。
+  - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
+    低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
-  `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`
+  `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
+  `PUT api/records/{key}/handling/issues`（問題層級狀態，request 加 `note`／`forgetNoise` 欄位）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/Sentinel/負責人/群組）、
@@ -538,16 +589,33 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   編輯表單（builtin 無刪除鈕、有「回復預設」含前後對照確認）；抑制管理頁籤（主機/規則/事由/到期）；
   規則異動史（稽核過濾 `target_kind=rule`）。**儲存前後端執行規則驗證**（欄位合格、遮蔽、關聯層覆蓋——
   自 `--selftest` 抽出的共用驗證邏輯，位於 Core），驗證不過拒絕儲存並逐條顯示問題。
+- **快速篩選 toolbar（2026-07-23 Phase D-2）**：狀態／來源／抑制單選 chip，嚴重度／類別多選 chip，
+  排序＝嚴重度/類別/門檻。取代舊版單一下拉（一次只能選一種條件），chip 各自獨立可疊加。詳情頁「誤報」
+  提示的 `?search=` deep-link 開頁自動帶入搜尋字。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
   `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
+  **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，排序＝帳號/顯示名稱。
 - 主機：清單（名稱/IP/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/群組/負責人）、
   新舊主機合併（自停用清單選取→確認→`merged_into` 墓碑）。
+  **快速篩選 toolbar（Phase D-2）**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，排序＝名稱/最後回報。
+- 主機清單**改伺服器端分頁＋搜尋＋篩選（2026-07-23 Phase D-4）**：`GET api/admin/hosts` 改參數化
+  （`HostSearchRequest`：query/status/sentinel/groupIds/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
+  chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
+  IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
+- **NetIQ 匯入排程化（2026-07-23 Phase D-3）**：主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
+  改「**排入匯入佇列**」（`webdata\netiq_import_queue.json`）——不再立即落盤主機異動。實際新增/更新/孤兒復活
+  由批次執行處理（每次執行開頭自動處理待套用佇列，或手動 `LogForesight.exe --apply-netiq-imports`）。
+  主機頁顯示佇列狀態（排程中可取消／已套用含結果數字／失敗含原因／已取消）。理由：兩千台規模下主機異動
+  集中在批次時段一次落盤，避免上班時間 Web 操作與正在跑的批次互踩。稽核歸戶用排入當下的操作人帳號，
+  即使落盤延後到批次執行仍看得出是誰要求的（新增稽核動作 `netiq_import_enqueue`/`_cancel`/`_applied`）。
+  落盤邏輯抽為 Core 純函數 `NetiqImportApplier`（新增/更新/孤兒復活三態），供 Web 與批次共用同一份規則。
 - 群組：三頁籤——使用者群組（builtin admin/manager 鎖刪除與 role）、主機群組、
   **授權矩陣**（列=user 角色群組、欄=主機群組、勾選=授權）。
-- API：`api/admin/users*`、`api/admin/hosts*`、`api/admin/groups*`、`api/admin/access*`
+- API：`api/admin/users*`、`api/admin/hosts*`（分頁）、`api/admin/netiq/import`（排入）／`import-queue`（查詢）／
+  `import-queue/{id}/cancel`（取消）、`api/admin/groups*`、`api/admin/access*`；`api/hosts?query=`／`?ids=`／`/groups`（§9.2）
 
 ### 9.9 `/admin/imports` CSV 匯入（`Maintain`）
 - 三卡片（使用者/主機/群組授權）：範本下載、格式說明表、上傳 → 預覽（摘要＋逐列動作/錯誤＋
@@ -562,9 +630,13 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   會清掉既有授權，移除項目必須在套用前顯性可見並二次確認，不可只顯示新增與更新。
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
-- 總表（主機×日期色格：成功/警告/失敗/未執行/中斷）、單次執行詳情（統計＋逐條 log，等級篩選、
-  exception 展開）、異常彙總（Error/Fatal 按訊息聚合）。
-- API：`GET api/runs/matrix?days=`、`GET api/runs/{id}`、`GET api/runs/errors?days=`
+- 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、
+  單日主機明細（點日期下鑽的逐主機狀態）、單次執行詳情（統計＋逐條 log，等級篩選、exception 展開）、
+  異常彙總（Error/Fatal 按訊息聚合）。
+- **矩陣改每日彙總（2026-07-23 Phase D-4）**：舊版「主機×日期」色格矩陣在兩千台 × 90 天下會炸出
+  最多 18 萬格 DOM。改成每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
+  點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。原 `BuildCell` 狀態判定邏輯保留。
+- API：`GET api/runs/summary?days=`、`GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`
 
 ### 9.11 `/audit` 操作紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
@@ -613,6 +685,9 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IUserStore` / `IGroupStore` | `webdata\users.json`、`groups.json`、`group_access.json`、`host_owners.json` | Web |
 | `IHostStore` | `webdata\hosts.json` | Web＋批次（批次僅 upsert host_name/last_report_at） |
 | `IRecordHandlingStore` | `webdata\handling.json`（快照）＋`handling_log.jsonl`（歷程 append） | Web |
+| `IIssueHandlingStore` | `webdata\issue_handling.json`（問題層級狀態，方案 B） | Web |
+| `INoiseMarkStore`（Phase D-1） | `webdata\noise_marks.json`（已知雜訊記憶，主機＋簽章為鍵） | Web |
+| `INetiqImportQueueStore`（Phase D-3） | `webdata\netiq_import_queue.json`（NetIQ 匯入佇列） | Web 排入、批次套用 |
 | `IPermissionChangeStore` | `rundata\perm_changes.jsonl`（異動明細，change_id=GUID）＋`webdata\perm_confirms.jsonl`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各檔，維持單一寫入者） |
 | `IRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | `rules.json`、`rule_seeds.json`、`suppressions.json` | Web＋批次 |
 | `IBatchRunStore` | `rundata\runs.jsonl`、`run_logs.jsonl` | 批次 |
@@ -656,6 +731,28 @@ lf_top_issues 算好」的持久層職責，批次的分析層看不到這張表
 - 整檔型 `.json` 的寫入=「寫 temp → `File.Replace` 原子替換」，CSV 匯入的 all-or-nothing 靠此達成。
 - 多人高頻寫入的正式情境屬 SQL 後端；JSONL 後端定位為前期單機測試，**但介面語意與合約測試
   兩後端完全一致**（SOLID 的 L；DB-PLAN 一致性機制 #3）。
+
+### 10.5 SQL 後端（Phase C 完成 2026-07-23，三 provider 全資料走 SQL）
+
+`Storage.Type` 三選一，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
+
+- **`Jsonl`**（預設）：§10.2 的檔案格式，單機開箱即用。
+- **`Sqlite`**：測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔（Web `appsettings.Development.json` 預設值）。
+- **`SqlServer`**：正式環境（2000 台量級）。
+
+SQL 模式（Sqlite/SqlServer）下**全部資料走資料庫**（Phase C 收斂——先前分析紀錄走 SQL、
+webdata 走 JSONL 的混合狀態已統一）：
+
+- **分析紀錄**：`lf_daily_records`（正規化列＋full-record JSON）＋`lf_top_issues`（跨主機篩選子列）。
+- **webdata 各 store** 透過兩個抽象改走 DB，store 業務邏輯（續號、回填、查詢）**完全沒改**：
+  - `IJsonBlobStore`／`EfJsonBlobStore`（整份型 store → `lf_blobs`，一列一 key）
+  - `IJsonLogStore`／`EfJsonLogStore`（append-only store → `lf_log_lines`）
+- **provider 中立 LINQ**：SQLite in-memory 上跑同一組合約測試（`AnalysisRecordStoreContractTests`、
+  `HostStoreContractTests`、`EfWebdataStoreTests`）驗證兩後端語意逐位一致——正式是 SQL Server、
+  測試是 SQLite，同一份測試護航。
+- 表由程式首次啟動時 `EnsureCreated` 自動建立（無 migration）。批次與 Web 須設**相同的 `Storage.Type`**；
+  SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
+- 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
 
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）
 
@@ -854,6 +951,26 @@ store 建立前早退（唯讀承諾成立）、前端動態內容一律 `textCo
 HostRanking/Categories 組裝邏輯重複；`HandlingStatusText` 在兩個 Service 各有一份；
 前端 `CATEGORY_NAMES` 對照表散在 4 個頁面模組（應收進 `core/format.js`）；
 清單頁逐列 `_users.Get()` 造成 JSONL 後端 N 次檔案讀取（SQL 階段自然消失，屆時再評估）。
+
+### SCALE-2000 施工（✅ 2026-07-23，詳見 docs/SCALE-2000-PLAN.md）
+
+2026-07-21 Phase 0–4 完成後，依 SCALE-2000-PLAN 執行兩千台量級的擴充，分支 `bugfix-ui-adjustments`：
+
+| 階段 | 內容 | 對應本規格 |
+|---|---|---|
+| **Phase A** | 負責人 CSV 匯入、網段綁定主機群組 | §9.9、§9.8 |
+| **Phase B** | NetIQ 主動探索匯入、Sentinel 生命週期（孤兒主機停用/復活） | §9.8 |
+| **Phase C** | SQL 後端完成——三 provider（Jsonl/Sqlite/SqlServer），全資料走 SQL；測試/開發預設 SQLite | §5、§10.5 |
+| **Phase D-0** | 篩選 toolbar／chip 共用元件（視覺基盤） | §8.2 |
+| **Phase D-1** | 風險日詳情改版（七項：報告收合、低風險預設、已知雜訊記憶、狀態面板、計數器…） | §9.3 |
+| **Phase D-2** | 規則/主機/使用者頁掛 toolbar 快速篩選＋排序 | §9.7、§9.8 |
+| **Phase D-3** | NetIQ 匯入排程化（Web 排入佇列、批次套用） | §9.8 |
+| **Phase D-4** | 量級 UI 調整（主機 autocomplete、群組風險概況、執行監控每日彙總、主機頁伺服器分頁） | §9.1、§9.2、§9.8、§9.10 |
+| **Phase E** | Web AI 加值層 W1+W2（今日焦點、查詢歸納、詳情判讀，靜默降級） | §9.1、§9.2、§9.3 |
+| **設定 fail-fast** | 批次設定檔存在但解析失敗改為中止啟動，不再靜默用預設值（起因：Storage 段括號誤刪讓整份設定含 AI 位址被丟棄） | §5 |
+
+驗收：建置 0 警告；單元測試 **707 通過**（含 SQLite 合約測試、NetIQ 佇列、設定載入回歸釘樁）；
+`--selftest` 通過。全部改動未併回主線，留在 `bugfix-ui-adjustments`。
 
 ### 開放事項
 

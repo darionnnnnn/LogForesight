@@ -6,6 +6,11 @@
 > 已定決策：SQL 後端納入本輪（SQL Server）；負責人匯入帳號不存在時自動建立；
 > AI 範圍 W1＋W2（自然語言轉篩選列實驗性、不在本輪）。
 > 明確排除：WEB-SPEC 總體檢列出的 P3 規格債（主機詳情補區塊等），另行處理。
+>
+> **實作狀態（2026-07-23）：Phase A/B/C/D/E 全部完成**，分支 `bugfix-ui-adjustments`
+> （未併回主線）。707 單元測試綠。實作與過程摘要見 WEB-SPEC.md §14「SCALE-2000 施工」。
+> 施工中一併修正：批次設定檔存在但解析失敗改為 fail-fast（見 WEB-SPEC §5）。
+> 本文件為**規劃定案版**，以下各節即最終實作的依據；與程式碼的落點註解交叉對照。
 
 ## 0. 為什麼 SQL 後端是前提
 
@@ -395,14 +400,14 @@ koboldcpp no-thinking 下實測目標 3~5 秒。
 
 ---
 
-## 7. 施工順序與相依
+## 7. 施工順序與相依（✅ 全部完成 2026-07-23）
 
 ```
-Phase A（可並行，不依賴 SQL）：負責人匯入 ＋ 網段綁定群組
-Phase B：NetIQ 探索匯入（Stub 先行，真連線待 Sentinel 環境）
-Phase E：AI 基礎建設 → W1 → W2（不依賴 SQL，可提前）
-Phase C：SQL Server 後端（合約測試護航）
-Phase D：D-0 視覺基盤 → D-1 詳情改版 → D-2 清單篩選 → D-3 NetIQ 佇列 → D-4 量級調整（依賴 C）
+Phase A（可並行，不依賴 SQL）：負責人匯入 ＋ 網段綁定群組              ✅
+Phase B：NetIQ 探索匯入（Stub 先行，真連線待 Sentinel 環境）          ✅
+Phase E：AI 基礎建設 → W1 → W2（不依賴 SQL，可提前）                 ✅
+Phase C：SQL 後端（三 provider Jsonl/Sqlite/SqlServer，合約測試護航）  ✅
+Phase D：D-0 視覺基盤 → D-1 詳情改版 → D-2 清單篩選 → D-3 NetIQ 佇列 → D-4 量級調整（依賴 C）  ✅
 ```
 
 ## 8. 統一驗收

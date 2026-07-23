@@ -27,11 +27,11 @@ LogForesight.Web/      Web 查詢/維護介面（ASP.NET Core MVC，.NET 8，202
 │                       執行監控、操作稽核。群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
 │                       前期與批次共用同一資料目錄（Storage.DataRoot 指向批次執行檔目錄），
-│                       SQL 後端（Phase 5）待 DB 環境就緒後啟動
+│                       儲存後端三選一（Jsonl/Sqlite/SqlServer，見 docs/WEB-SPEC.md §10.5）
 └── （appsettings.json 已內含開箱即測的測試登入 svc-lfadmin / LogForesight-dev；
                         正式環境務必依檔內【正式環境需修改】說明改用環境變數與 Ldap，見 docs/WEB-SPEC.md §5）
 
-LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（JSONL 與未來 SQL 跑同一組案例）、
+LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（JSONL 與 SQLite 跑同一組案例）、
                         Web 授權範圍/處理流程/規則保護/CSV 匯入
 ```
 
@@ -450,6 +450,18 @@ Txt 模式下**每次執行都會以 txt 覆寫主機清單**：新增的 IP 納
 而不是安靜地少幾台——與「沒告警 ≠ 沒問題」是同一個原則：沒查到不等於沒事，畫面上必須看得出來。
 IP 衝突時只查最早建立的那一台，行為才可預測。
 
+### NetIQ 匯入佇列套用（`--apply-netiq-imports`）
+
+Web 主機頁的「從 NetIQ 匯入」精靈，掃描/勾選後的「套用」改成**排入佇列**（不立即落盤主機異動），
+實際新增/更新/孤兒復活由批次處理——每次批次正常執行的開頭會自動處理待套用佇列，或手動：
+
+```bash
+LogForesight.exe --apply-netiq-imports   # 立即套用 Web 排入的 NetIQ 匯入請求，不必等下次排程
+```
+
+理由：兩千台量級下主機異動集中在批次時段一次落盤，避免上班時間 Web 端操作與正在跑的批次互踩。
+稽核歸戶到排入當下的操作人（即使落盤延後到批次執行）。設計見 docs/SCALE-2000-PLAN.md §5.3。
+
 ## 權限/角色異動監控（PermissionMonitorService）
 
 除了 Security log 事件規則，另外用**直接比對當前狀態**的方式監控權限異動——
@@ -734,7 +746,9 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
     "Channels": []
   },
   "Storage": {
-    "Type": "Jsonl"
+    "Type": "Jsonl",
+    "DataRoot": "",
+    "ConnectionString": ""
   }
 }
 ```
@@ -755,7 +769,9 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
 | `Analysis.CheckupIntervalDays` | `7` | 體檢間隔天數（2026-07-20 由固定星期六改為 due-date 輪巡）；距上次體檢達此天數即到期，錯過會在下次執行自動補跑，不會消失 |
 | `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
-| `Storage.Type` | `Jsonl` | 分析紀錄的儲存後端，目前只有現行 JSONL 檔案格式；未來接 DB 只需新增實作，此設定切換 |
+| `Storage.Type` | `Jsonl` | 儲存後端三選一：`Jsonl`（現行檔案格式，單機開箱即用）／`Sqlite`（測試/開發用單一 `.db` 檔真資料庫，不寫 JSON）／`SqlServer`（正式環境，2000 台量級）。SQL 模式下全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。批次與 Web 兩端須設相同值。詳見 docs/WEB-SPEC.md §10.5 |
+| `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（history.txt／rules.json／webdata\ 等所在；SQLite 模式決定 `.db` 落點）。批次與 Web 填同一路徑共用資料 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控 |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
@@ -879,9 +895,10 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
   （約 2000 台主機規模，分散於多台 Sentinel、共用查詢帳密）做集中分析——分級分析（規則/趨勢/慢速趨勢/
   關聯全量跑，AI 只判讀有訊號的主機）、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等設計已在
   `docs/PLAN.md` 中規劃完成，`Persistence/` 的讀寫介面也已預留，實作時不需要更動既有分析邏輯的架構。
-- **DB 後端**：`history.txt`／`export\` 目前是唯一實作（`JsonlAnalysisRecordStore`／`FileReportSink`）。
-  查詢介面（`IAnalysisRecordReader`/`IReportSink`）已抽出，欄位級 schema 與兩年保留策略已定案於
-  `docs/DB-PLAN.md`，未來要接 SQL Server/Oracle 供查詢 UI 使用時，只需新增一個實作類別並在
-  `Storage.Type` 切換，不需要異動分析邏輯。規則庫（`IKnownIssueRuleStore`）與抑制設定
-  （`ISuppressionStore`）也是同一套 Strategy + Factory 模式，欄位級 DB 映射（正規化的
-  1 主表＋3 子表）已定案於 `docs/RULES-PLAN.md`。
+- **DB 後端（2026-07-23 完成）**：`Storage.Type` 三選一——`Jsonl`（檔案）／`Sqlite`（測試/開發）／
+  `SqlServer`（正式，2000 台量級）。SQL 模式下**全部資料**（分析紀錄＋webdata）走資料庫：分析紀錄以
+  正規化列＋JSON 存（`lf_daily_records`/`lf_top_issues`），webdata 各 store 透過 `IJsonBlobStore`
+  （整份型 → `lf_blobs`）與 `IJsonLogStore`（append-only → `lf_log_lines`）改走 DB，store 業務邏輯
+  完全沒改。`StorageFactory` 是唯一路由點，分析邏輯不需異動。provider 中立 LINQ 讓 SQLite in-memory
+  上跑同一組合約測試驗證兩後端語意逐位一致。完整設計見 `docs/WEB-SPEC.md §10.5` 與 `docs/DB-PLAN.md`；
+  規則庫（`IKnownIssueRuleStore`）與抑制設定（`ISuppressionStore`）同一套 Strategy + Factory 模式。
