@@ -2,14 +2,42 @@
     ViewData["Title"] = "使用者";
 }
 
+<div class="lf-toolbar">
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__search">
+            <input type="search" class="form-control form-control-sm" id="user-search" placeholder="搜尋帳號或姓名" />
+        </div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">排序</span>
+            <select class="form-select form-select-sm lf-toolbar__sort" id="user-sort">
+                <option value="account">帳號</option>
+                <option value="displayName">顯示名稱</option>
+            </select>
+        </div>
+        <div class="lf-toolbar__spacer"></div>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-new-user">新增使用者</button>
+    </div>
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">狀態</span>
+            <div class="lf-toolbar__chips" id="user-status-chips"></div>
+        </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">角色</span>
+            <div class="lf-toolbar__chips" id="user-role-chips"></div>
+        </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">群組</span>
+            <div class="lf-toolbar__chips" id="user-group-chips"></div>
+        </div>
+    </div>
+</div>
+
 <div class="lf-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">使用者</h2>
-        <div class="d-flex gap-2">
-            <input type="search" class="form-control form-control-sm" id="user-search"
-                   placeholder="搜尋帳號或姓名" style="width: 220px;" />
-            <button type="button" class="btn btn-sm btn-primary" id="btn-new-user">新增使用者</button>
-        </div>
+        <h2 class="lf-card__title">使用者 <span class="text-muted small" id="user-count"></span></h2>
     </div>
     <div class="lf-card__body p-0" id="user-list"></div>
 </div>

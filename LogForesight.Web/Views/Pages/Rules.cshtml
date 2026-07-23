@@ -18,21 +18,55 @@
 </ul>
 
 <section data-panel="rules">
+    <div class="lf-toolbar">
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__search">
+                <input type="search" class="form-control form-control-sm" id="rule-search" placeholder="搜尋來源、Event ID、說明" />
+            </div>
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">排序</span>
+                <select class="form-select form-select-sm lf-toolbar__sort" id="rule-sort">
+                    <option value="severity">嚴重度（高到低）</option>
+                    <option value="category">類別</option>
+                    <option value="threshold">門檻（高到低）</option>
+                    <option value="id">Id</option>
+                </select>
+            </div>
+            <div class="lf-toolbar__spacer"></div>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-rule">新增規則</button>
+        </div>
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">狀態</span>
+                <div class="lf-toolbar__chips" id="rule-status-chips"></div>
+            </div>
+            <div class="lf-toolbar__divider"></div>
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">來源</span>
+                <div class="lf-toolbar__chips" id="rule-origin-chips"></div>
+            </div>
+            <div class="lf-toolbar__divider"></div>
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">抑制</span>
+                <div class="lf-toolbar__chips" id="rule-suppression-chips"></div>
+            </div>
+        </div>
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">嚴重度</span>
+                <div class="lf-toolbar__chips" id="rule-severity-chips"></div>
+            </div>
+            <div class="lf-toolbar__divider"></div>
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">類別</span>
+                <div class="lf-toolbar__chips" id="rule-category-chips"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">規則 <span class="text-muted small" id="rule-count"></span></h2>
-            <div class="d-flex gap-2">
-                <input type="search" class="form-control form-control-sm" id="rule-search"
-                       placeholder="搜尋來源、Event ID、說明" style="width: 240px;" />
-                <select class="form-select form-select-sm" id="rule-filter" style="width: 130px;">
-                    <option value="">全部</option>
-                    <option value="enabled">已啟用</option>
-                    <option value="disabled">已停用</option>
-                    <option value="modified">已修改</option>
-                    <option value="custom">自訂規則</option>
-                </select>
-                <button type="button" class="btn btn-sm btn-primary" id="btn-new-rule">新增規則</button>
-            </div>
         </div>
         <div class="lf-card__body p-0" id="rule-list"></div>
     </div>

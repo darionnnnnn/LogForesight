@@ -6,14 +6,18 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
 const searchInput = document.getElementById('host-search');
-const filterSelect = document.getElementById('host-filter');
 const sentinelFilter = document.getElementById('sentinel-filter');
+const sortSelect = document.getElementById('host-sort');
+
+// chip 篩選狀態（§5.1 D-2）：狀態沿用舊版下拉的六個值改單選 chip；群組為新增的多選 chip
+let statusMode = '';
+const groupFilter = new Set();
 const form = document.getElementById('host-form');
 const bulkForm = document.getElementById('bulk-form');
 const modal = new bootstrap.Modal(document.getElementById('host-modal'));
@@ -48,6 +52,7 @@ async function load() {
         overview.ipConflicts.flatMap(group => group.hosts.filter(h => !h.isPolled).map(h => h.hostId)));
 
     fillSentinelOptions();
+    setupGroupChips();
     renderQueues();
     render();
 }
@@ -131,7 +136,8 @@ function renderQueues() {
 
         button.append(value, title, hint);
         button.addEventListener('click', () => {
-            filterSelect.value = card.key;
+            statusMode = card.key;
+            setupStatusChips();
             render();
         });
 
@@ -140,16 +146,61 @@ function renderQueues() {
     }
 }
 
+/**
+ * 狀態單選 chip（沿用舊版下拉的六個值，改用 chip 視覺）＋主機群組多選 chip（§5.1 D-2 新增）。
+ * 待辦佇列卡點擊仍走同一個 statusMode，只是改呼叫 setupStatusChips() 同步 active 樣式。
+ */
+function setupStatusChips() {
+    renderChips(document.getElementById('host-status-chips'), {
+        items: [
+            { value: '', label: '全部主機' },
+            { value: 'local', label: '本機直讀' },
+            { value: 'netiq', label: 'NetIQ 來源' },
+            { value: 'pending', label: '待歸屬 Sentinel' },
+            { value: 'conflict', label: 'IP 衝突' },
+            { value: 'ungrouped', label: '未分組' },
+            { value: 'inactive', label: '已停用／已併入' }
+        ],
+        attr: 'status',
+        activeValues: [statusMode],
+        multi: false,
+        onToggle: value => { statusMode = value; render(); }
+    });
+}
+
+function setupGroupChips() {
+    renderChips(document.getElementById('host-group-chips'), {
+        items: hostGroups.map(g => ({ value: String(g.groupId), label: g.groupName })),
+        attr: 'group',
+        activeValues: [...groupFilter],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) groupFilter.add(value); else groupFilter.delete(value);
+            render();
+        }
+    });
+}
+
+function sortHosts(list) {
+    const sorted = [...list];
+    if (sortSelect.value === 'lastReport') {
+        sorted.sort((a, b) => new Date(b.lastReportAt ?? 0) - new Date(a.lastReportAt ?? 0));
+    } else {
+        sorted.sort((a, b) => a.hostName.localeCompare(b.hostName));
+    }
+    return sorted;
+}
+
 function visibleRows() {
     const keyword = searchInput.value.trim().toLowerCase();
-    const mode = filterSelect.value;
     const sentinel = sentinelFilter.value;
 
-    return hosts.filter(host => {
+    const filtered = hosts.filter(host => {
         if (keyword && !matchesKeyword(host, keyword)) return false;
         if (sentinel && host.netiqServer !== sentinel) return false;
+        if (groupFilter.size > 0 && !host.groupIds.some(id => groupFilter.has(String(id)))) return false;
 
-        switch (mode) {
+        switch (statusMode) {
             case 'local': return host.source === 'local' && host.active;
             case 'netiq': return host.source === 'netiq' && host.active;
             case 'pending': return host.source === 'netiq' && host.active && !host.mergedInto && !host.netiqServer;
@@ -159,6 +210,8 @@ function visibleRows() {
             default: return true;
         }
     });
+
+    return sortHosts(filtered);
 }
 
 function matchesKeyword(host, keyword) {
@@ -169,6 +222,7 @@ function matchesKeyword(host, keyword) {
 
 function render() {
     const rows = visibleRows();
+    document.getElementById('host-count').textContent = `共 ${rows.length} 台`;
 
     renderTable(listContainer, {
         columns: [
@@ -545,8 +599,9 @@ document.getElementById('btn-bulk-hosts').addEventListener('click', () => {
 });
 
 searchInput.addEventListener('input', render);
-filterSelect.addEventListener('change', render);
 sentinelFilter.addEventListener('change', render);
+sortSelect.addEventListener('change', render);
+setupStatusChips();
 
 // ── 從 NetIQ 主動探索匯入精靈（docs/SCALE-2000-PLAN.md §1）─────────────────────
 

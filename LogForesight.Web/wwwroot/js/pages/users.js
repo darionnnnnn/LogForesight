@@ -3,10 +3,11 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, renderChips } from '../core/ui.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
+const sortSelect = document.getElementById('user-sort');
 const modalElement = document.getElementById('user-modal');
 const form = document.getElementById('user-form');
 const modal = new bootstrap.Modal(modalElement);
@@ -14,6 +15,11 @@ const modal = new bootstrap.Modal(modalElement);
 let users = [];
 let groups = [];
 let editingUser = null;
+
+// chip 篩選狀態（§5.1 D-2）：狀態/角色單選，群組多選
+let statusFilter = '';
+let roleFilter = '';
+const groupFilter = new Set();
 
 async function load() {
     renderLoading(listContainer, 5);
@@ -23,16 +29,68 @@ async function load() {
         api.get('/api/admin/groups')
     ]);
 
+    setupToolbar();
     render();
+}
+
+/** 角色 chip 的選項來自現有群組的 role 去重——群組是實際存在的，不會出現選了也沒結果的角色 */
+function setupToolbar() {
+    renderChips(document.getElementById('user-status-chips'), {
+        items: [{ value: '', label: '全部' }, { value: 'active', label: '啟用' }, { value: 'inactive', label: '停用' }],
+        attr: 'status',
+        activeValues: [statusFilter],
+        multi: false,
+        onToggle: value => { statusFilter = value; render(); }
+    });
+
+    const roles = [...new Set(groups.map(g => g.role))];
+    renderChips(document.getElementById('user-role-chips'), {
+        items: [{ value: '', label: '全部' }, ...roles.map(r => ({ value: r, label: r }))],
+        attr: 'role',
+        activeValues: [roleFilter],
+        multi: false,
+        onToggle: value => { roleFilter = value; render(); }
+    });
+
+    renderChips(document.getElementById('user-group-chips'), {
+        items: groups.map(g => ({ value: String(g.groupId), label: g.groupName })),
+        attr: 'group',
+        activeValues: [...groupFilter],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) groupFilter.add(value); else groupFilter.delete(value);
+            render();
+        }
+    });
+}
+
+function sortUsers(list) {
+    const sorted = [...list];
+    if (sortSelect.value === 'displayName') {
+        sorted.sort((a, b) => (a.displayName || a.account).localeCompare(b.displayName || b.account, 'zh-Hant'));
+    } else {
+        sorted.sort((a, b) => a.account.localeCompare(b.account));
+    }
+    return sorted;
 }
 
 function render() {
     const keyword = searchInput.value.trim().toLowerCase();
-    const rows = keyword
+    const groupRoleOf = new Map(groups.map(g => [g.groupId, g.role]));
+
+    let rows = keyword
         ? users.filter(u =>
             u.account.toLowerCase().includes(keyword) ||
             (u.displayName ?? '').toLowerCase().includes(keyword))
         : users;
+
+    if (statusFilter === 'active') rows = rows.filter(u => u.active);
+    if (statusFilter === 'inactive') rows = rows.filter(u => !u.active);
+    if (roleFilter) rows = rows.filter(u => u.groupIds.some(id => groupRoleOf.get(id) === roleFilter));
+    if (groupFilter.size > 0) rows = rows.filter(u => u.groupIds.some(id => groupFilter.has(String(id))));
+
+    rows = sortUsers(rows);
+    document.getElementById('user-count').textContent = `共 ${rows.length} 位`;
 
     renderTable(listContainer, {
         columns: [
@@ -172,5 +230,6 @@ form.addEventListener('submit', async event => {
 
 document.getElementById('btn-new-user').addEventListener('click', () => openModal(null));
 searchInput.addEventListener('input', render);
+sortSelect.addEventListener('change', render);
 
 load();

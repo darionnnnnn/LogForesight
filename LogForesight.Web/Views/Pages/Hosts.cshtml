@@ -4,28 +4,46 @@
 
 <div id="netiq-queues" class="row g-3 mb-3"></div>
 
-<div class="lf-card">
-    <div class="lf-card__header flex-wrap gap-2">
-        <h2 class="lf-card__title">主機</h2>
-        <div class="d-flex gap-2 flex-wrap">
-            <input type="search" class="form-control form-control-sm" id="host-search"
-                   placeholder="搜尋名稱／顯示名／IP" style="width: 200px;" />
-            <select class="form-select form-select-sm" id="host-filter" style="width: 190px;">
-                <option value="">全部主機</option>
-                <option value="local">本機直讀</option>
-                <option value="netiq">NetIQ 來源</option>
-                <option value="pending">待歸屬 Sentinel</option>
-                <option value="conflict">IP 衝突</option>
-                <option value="ungrouped">未分組</option>
-                <option value="inactive">已停用／已併入</option>
-            </select>
-            <select class="form-select form-select-sm" id="sentinel-filter" style="width: 160px;">
+<div class="lf-toolbar">
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__search">
+            <input type="search" class="form-control form-control-sm" id="host-search" placeholder="搜尋名稱／顯示名／IP" />
+        </div>
+        <div class="lf-toolbar__field" style="min-width: 160px;">
+            <select class="form-select form-select-sm" id="sentinel-filter">
                 <option value="">所有 Sentinel</option>
             </select>
+        </div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">排序</span>
+            <select class="form-select form-select-sm lf-toolbar__sort" id="host-sort">
+                <option value="name">名稱</option>
+                <option value="lastReport">最後回報（新到舊）</option>
+            </select>
+        </div>
+        <div class="lf-toolbar__spacer"></div>
+        <div class="d-flex gap-2">
             <button type="button" class="btn btn-sm btn-outline-primary" id="btn-scan-netiq">從 NetIQ 匯入</button>
             <button type="button" class="btn btn-sm btn-outline-primary" id="btn-bulk-hosts">批次貼上</button>
             <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
         </div>
+    </div>
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">狀態</span>
+            <div class="lf-toolbar__chips" id="host-status-chips"></div>
+        </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">主機群組</span>
+            <div class="lf-toolbar__chips" id="host-group-chips"></div>
+        </div>
+    </div>
+</div>
+
+<div class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">主機 <span class="text-muted small" id="host-count"></span></h2>
     </div>
     <div class="lf-card__body p-0" id="host-list"></div>
 </div>

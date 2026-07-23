@@ -8,12 +8,23 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips } from '../core/ui.js';
 import { severityBadge, statusBadge, formatDate } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
+};
+
+const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
+
+// chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
+const chipFilters = {
+    status: '',
+    origin: '',
+    suppression: '',
+    severities: new Set(),
+    categories: new Set()
 };
 
 const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
@@ -43,9 +54,91 @@ async function load() {
     renderSuppressions();
 }
 
+/**
+ * 篩選 toolbar（§5.1 D-2）：狀態/來源/抑制單選 chip，嚴重度/類別多選 chip，取代舊版單一下拉——
+ * 舊版下拉一次只能選一種條件（例如「已修改」跟「自訂規則」不能同時看），chip 各自獨立可疊加。
+ */
+function setupToolbar() {
+    renderChips(document.getElementById('rule-status-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'enabled', label: '已啟用' },
+            { value: 'disabled', label: '已停用' },
+            { value: 'modified', label: '已修改' }
+        ],
+        attr: 'status',
+        activeValues: [chipFilters.status],
+        multi: false,
+        onToggle: value => { chipFilters.status = value; renderRules(); }
+    });
+
+    renderChips(document.getElementById('rule-origin-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'builtin', label: '內建' },
+            { value: 'custom', label: '自訂' }
+        ],
+        attr: 'origin',
+        activeValues: [chipFilters.origin],
+        multi: false,
+        onToggle: value => { chipFilters.origin = value; renderRules(); }
+    });
+
+    renderChips(document.getElementById('rule-suppression-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'suppressed', label: '已抑制' },
+            { value: 'none', label: '未抑制' }
+        ],
+        attr: 'suppression',
+        activeValues: [chipFilters.suppression],
+        multi: false,
+        onToggle: value => { chipFilters.suppression = value; renderRules(); }
+    });
+
+    renderChips(document.getElementById('rule-severity-chips'), {
+        items: SEVERITY_ORDER.map(s => ({ value: s, label: s })),
+        attr: 'severity',
+        activeValues: [...chipFilters.severities],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) chipFilters.severities.add(value); else chipFilters.severities.delete(value);
+            renderRules();
+        }
+    });
+
+    renderChips(document.getElementById('rule-category-chips'), {
+        items: Object.entries(CATEGORY_NAMES).map(([value, label]) => ({ value, label })),
+        attr: 'category',
+        activeValues: [...chipFilters.categories],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) chipFilters.categories.add(value); else chipFilters.categories.delete(value);
+            renderRules();
+        }
+    });
+
+    document.getElementById('rule-sort').addEventListener('change', renderRules);
+}
+
+function sortRules(list) {
+    const by = document.getElementById('rule-sort').value;
+    const sorted = [...list];
+
+    if (by === 'severity') {
+        sorted.sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
+    } else if (by === 'category') {
+        sorted.sort((a, b) => (CATEGORY_NAMES[a.category] ?? a.category).localeCompare(CATEGORY_NAMES[b.category] ?? b.category, 'zh-Hant'));
+    } else if (by === 'threshold') {
+        sorted.sort((a, b) => b.countThreshold - a.countThreshold);
+    } else {
+        sorted.sort((a, b) => a.id.localeCompare(b.id));
+    }
+    return sorted;
+}
+
 function renderRules() {
     const keyword = document.getElementById('rule-search').value.trim().toLowerCase();
-    const filter = document.getElementById('rule-filter').value;
 
     let filtered = rules;
     if (keyword) {
@@ -55,10 +148,21 @@ function renderRules() {
             r.description.toLowerCase().includes(keyword) ||
             r.eventIds.some(id => String(id).includes(keyword)));
     }
-    if (filter === 'enabled') filtered = filtered.filter(r => r.enabled);
-    if (filter === 'disabled') filtered = filtered.filter(r => !r.enabled);
-    if (filter === 'modified') filtered = filtered.filter(r => r.isModified);
-    if (filter === 'custom') filtered = filtered.filter(r => r.origin === 'custom');
+
+    if (chipFilters.status === 'enabled') filtered = filtered.filter(r => r.enabled);
+    if (chipFilters.status === 'disabled') filtered = filtered.filter(r => !r.enabled);
+    if (chipFilters.status === 'modified') filtered = filtered.filter(r => r.isModified);
+
+    if (chipFilters.origin === 'builtin') filtered = filtered.filter(r => r.origin !== 'custom');
+    if (chipFilters.origin === 'custom') filtered = filtered.filter(r => r.origin === 'custom');
+
+    if (chipFilters.suppression === 'suppressed') filtered = filtered.filter(r => !!r.suppression);
+    if (chipFilters.suppression === 'none') filtered = filtered.filter(r => !r.suppression);
+
+    if (chipFilters.severities.size > 0) filtered = filtered.filter(r => chipFilters.severities.has(r.severity));
+    if (chipFilters.categories.size > 0) filtered = filtered.filter(r => chipFilters.categories.has(r.category));
+
+    filtered = sortRules(filtered);
 
     document.getElementById('rule-count').textContent = `共 ${filtered.length} 條`;
 
@@ -477,6 +581,10 @@ function removeSuppressionButton(suppression) {
 
 document.getElementById('btn-new-rule').addEventListener('click', () => openRuleModal(null));
 document.getElementById('rule-search').addEventListener('input', renderRules);
-document.getElementById('rule-filter').addEventListener('change', renderRules);
 
+// 詳情頁「誤報」提示連結帶 ?search= 過來（§5.1 D-1 #6）：直接定位到那條規則
+const searchParam = new URLSearchParams(location.search).get('search');
+if (searchParam) document.getElementById('rule-search').value = searchParam;
+
+setupToolbar();
 load();
