@@ -43,7 +43,9 @@ function renderKpi() {
             label: '問題總數',
             value: kpi.totalIssues,
             previous: kpi.totalIssuesPrevious,
-            url: `/records?from=${currentData.from}&to=${currentData.to}`
+            // 問題總數含低風險日的問題，下鑽顯式帶全部風險層級，
+            // 免得問題查詢的「預設隱藏低風險」把數字對不上
+            url: `/records?riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`
         },
         {
             label: '高風險日',
@@ -229,7 +231,10 @@ function renderCategoryChart() {
         drillTo: point => {
             const category = categories[point.index];
             const severityName = severityKeys[point.datasetIndex].label;
+            // 類型分布跨全部風險日統計（嚴重度是問題層級，與當日風險等級無關），
+            // 下鑽顯式帶全部風險層級，否則點 Low 段會被預設隱藏低風險過濾成近乎空白
             return `/records?categories=${category.category}&severity=${severityName}` +
+                   `&riskLevels=${encodeURIComponent('高,中,低')}` +
                    `&from=${currentData.from}&to=${currentData.to}`;
         }
     });
