@@ -611,8 +611,17 @@ a.lf-stat:hover .lf-card,
    左側主色框標示「這節就是你點進來的那一類」。*/
 
 .lf-issue-group + .lf-issue-group { border-top: 1px solid var(--lf-border); }
-.lf-issue-group__header { padding: .75rem 1rem .35rem; }
+.lf-issue-group__header {
+    padding: .6rem 1rem;
+    border-bottom: 1px solid var(--lf-border);
+}
 .lf-issue-group--hit { box-shadow: inset 3px 0 0 var(--lf-primary); }
+
+/* 類別標題列依最高嚴重度加淡色底（§5.1 D-1 #4）：一眼區分分節輕重，不必逐列看嚴重度徽章 */
+.lf-issue-group__header--critical,
+.lf-issue-group__header--high { background: var(--lf-danger-soft); }
+.lf-issue-group__header--medium { background: var(--lf-warning-soft); }
+.lf-issue-group__header--low { background: var(--lf-neutral-soft); }
 
 /* 類型分布頁內導航的短暫高亮：點某一類 → 捲到分節並閃一下主色底 */
 .lf-issue-group--flash { animation: lf-flash 1.2s ease-out; }
@@ -776,16 +785,63 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
-/* 問題層級處理狀態下拉：緊湊、寬度貼合文字；已標記時用主色邊框凸顯「這項已表態」 */
-.lf-status-select {
-    width: auto;
-    min-width: 5.5rem;
-    display: inline-block;
+/* ── 問題層級處理狀態：勾選＋浮出細節面板（§5.1 D-1 #6）─────────────────────
+   取代舊版下拉：勾選＝快速標已處理；勾選後浮出面板選具體狀態，依狀態動態調整欄位。 */
+
+.lf-issue-status {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--lf-space-2);
+    min-width: 9rem;
 }
-.lf-status-select--set {
-    border-color: var(--lf-primary);
-    color: var(--lf-primary-text);
+
+.lf-issue-status__check {
+    margin-top: .3rem;
+    cursor: pointer;
+}
+
+.lf-issue-status__panel {
+    background: var(--lf-gray-50);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2);
+    min-width: 15rem;
+    max-width: 20rem;
+}
+
+.lf-issue-status__panel .lf-chip {
+    padding: .22rem .55rem;
+}
+
+.lf-issue-status__field-label {
+    font-size: var(--lf-font-size-xs);
     font-weight: 600;
+    color: var(--lf-text-muted);
+    margin: var(--lf-space-2) 0 var(--lf-space-1);
+}
+
+/* 唯讀（無 Handle 能力）或已結案狀態的小徽章＋動作鈕排列 */
+.lf-issue-status__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-1);
+    flex-wrap: wrap;
+}
+
+/* 趨勢欄文字適度換行（§5.1 D-1 #5）：內容常有好幾個片語（頻率上升、前一日 N 次…），
+   不換行會把欄位越撐越寬，把整張表擠得要橫向捲動 */
+.lf-trend-cell {
+    max-width: 220px;
+    white-space: normal;
+    line-height: 1.4;
+}
+
+/* 範例訊息 hover 泡泡：等寬、保留換行，內容多時限高捲動 */
+.lf-sample-popover .popover-body {
+    font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow-y: auto;
 }
 
 /* 處置參考面板（問題列展開）：與 txt 報告「處置參考（知識庫）」同一份內容 */
@@ -797,6 +853,14 @@ a.lf-stat:hover .lf-card,
 }
 .lf-guidance__label:first-child { margin-top: 0; }
 .lf-guidance ul { margin: 0; padding-left: 1.25rem; }
+
+/* 可收合區塊的箭頭圖示：收合時朝右、展開時朝下（§5.1 D-1 #1 報告全文預設收合） */
+.lf-collapse-caret {
+    display: inline-flex;
+    transform: rotate(-90deg);
+    transition: transform .15s ease;
+}
+.lf-collapse-caret--open { transform: rotate(0); }
 
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 

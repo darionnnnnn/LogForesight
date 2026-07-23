@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, renderChips } from '../core/ui.js';
 import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES } from '../core/format.js';
 import { initHandlingPanel } from './handling-panel.js';
 
@@ -21,14 +21,22 @@ const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
 const activeSeverities = new Set(['Critical', 'High', 'Medium']);
 let currentDetail = null;
 
-// 問題層級處理狀態選項（方案 B）：未處理＝清除標記，其餘為結案類
+// 問題層級處理狀態選項（方案 B）：勾選面板內的具體狀態選擇，不含「未處理」——
+// 未處理由取消勾選表示，不是面板裡的一個選項
 const ISSUE_STATUS_OPTIONS = [
-    { value: '', text: '未處理' },
     { value: 'resolved', text: '已處理' },
     { value: 'wont_fix', text: '不處理' },
     { value: 'false_positive', text: '誤報' },
     { value: 'known_noise', text: '已知雜訊' }
 ];
+
+// 依狀態決定備註欄的標籤與是否必填（§5.1 D-1 #6：依狀態動態調整欄位）
+const NOTE_FIELD_BY_STATUS = {
+    resolved: { label: '處理說明（選填）', required: false },
+    wont_fix: { label: '不處理原因（必填）', required: true },
+    false_positive: { label: '備註（選填）', required: false },
+    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false }
+};
 
 // 標「已知雜訊」時要不要提議建立抑制規則，取決於能否維護規則（Maintain）
 let canMaintainRules = false;
@@ -59,6 +67,24 @@ async function load() {
     if (currentDetail.hasReport) await loadReport();
 
     setupNextUnhandled();
+}
+
+/**
+ * 報告全文預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的
+ * 重點問題，全文留給少數需要逐字核對的場合。展開狀態記 localStorage——
+ * 常看全文的人不必每次進來都重新展開。
+ */
+function setupReportToggle() {
+    const expanded = localStorage.getItem('lf.recordDetail.reportExpanded') === 'true';
+    document.getElementById('report-body').classList.toggle('d-none', !expanded);
+    document.getElementById('report-caret').classList.toggle('lf-collapse-caret--open', expanded);
+
+    document.getElementById('report-toggle').addEventListener('click', () => {
+        const body = document.getElementById('report-body');
+        const nowOpen = body.classList.toggle('d-none') === false;
+        document.getElementById('report-caret').classList.toggle('lf-collapse-caret--open', nowOpen);
+        localStorage.setItem('lf.recordDetail.reportExpanded', String(nowOpen));
+    });
 }
 
 /**
@@ -168,40 +194,10 @@ function issueColumns() {
         { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
         { title: '嚴重度', render: i => severityBadge(i.severity) },
         { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
-        { title: '趨勢', render: i => i.trendText },
+        { title: '趨勢', className: 'lf-trend-cell', render: i => i.trendText },
         { title: '說明', render: i => knownIssueCell(i) },
         { title: '處理', render: i => statusControl(i) }
     ];
-}
-
-/**
- * 問題層級處理狀態控制（方案 B）。可處理者顯示下拉即選即存；否則唯讀徽章。
- * 標「已知雜訊」且該問題命中規則、且使用者能維護規則時，接著提議一鍵建立抑制規則
- * ——這是「已知雜訊」的治本動作：同樣的雜訊之後不再進報告。
- */
-function statusControl(issue) {
-    if (!currentDetail.canHandle) {
-        return issue.handlingStatus
-            ? severityNeutralBadge(issue.handlingStatusText)
-            : document.createTextNode('未處理');
-    }
-
-    const select = document.createElement('select');
-    select.className = 'form-select form-select-sm lf-status-select';
-    if (issue.handlingStatus) select.classList.add('lf-status-select--set');
-
-    for (const option of ISSUE_STATUS_OPTIONS) {
-        const el = document.createElement('option');
-        el.value = option.value;
-        el.textContent = option.text;
-        el.selected = option.value === issue.handlingStatus;
-        select.appendChild(el);
-    }
-
-    select.addEventListener('change', () => setIssueStatus(issue, select.value, select));
-    // 避免點下拉時觸發整列的處置參考展開
-    select.addEventListener('click', event => event.stopPropagation());
-    return select;
 }
 
 function severityNeutralBadge(text) {
@@ -211,32 +207,252 @@ function severityNeutralBadge(text) {
     return span;
 }
 
-async function setIssueStatus(issue, status, select) {
-    const previous = issue.handlingStatus;
-    select.disabled = true;
-    try {
-        const result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
-            issueKey: issue.issueKey,
-            status
+/**
+ * 問題層級處理狀態控制（方案 B，§5.1 D-1 #2/#3/#6）。四條路徑：
+ *   1. 無 Handle 能力 → 唯讀徽章
+ *   2. 低風險且從未標記過 → 「不處理（預設）」＋確認不處理／調回未處理
+ *   3. 從未標記過但同主機同簽章有已知雜訊記憶 → 「已知雜訊（自動）」＋調回未處理
+ *   4. 其餘（含明確 open 與已結案）→ 勾選＋浮出面板
+ */
+function statusControl(issue) {
+    if (!currentDetail.canHandle) {
+        if (issue.handlingStatus === 'open' || (!issue.handlingStatus && !issue.isDefaultUnhandled && !issue.isAutoNoise))
+            return document.createTextNode('未處理');
+        if (issue.isDefaultUnhandled) return severityNeutralBadge('不處理（預設）');
+        if (issue.isAutoNoise) return severityNeutralBadge('已知雜訊（自動）');
+        return severityNeutralBadge(issue.handlingStatusText);
+    }
+
+    if (issue.isDefaultUnhandled) return defaultUnhandledControl(issue);
+    if (issue.isAutoNoise) return autoNoiseControl(issue);
+    return checkboxControl(issue);
+}
+
+/** 低風險預設不處理（§5.1 D-1 #2）：推導不落盤，使用者可確認或調回未處理 */
+function defaultUnhandledControl(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-issue-status__actions';
+
+    const badge = severityNeutralBadge('不處理（預設）');
+    badge.title = '低風險問題預設不處理；沒有實際落盤，可在此確認或調回未處理';
+    wrap.appendChild(badge);
+
+    const confirmBtn = smallActionButton('確認不處理', () => setIssueStatus(issue, 'wont_fix', wrap, { note: null }));
+    const reopenBtn = smallActionButton('調回未處理', () => setIssueStatus(issue, 'open', wrap, { forgetNoise: false }));
+    wrap.append(confirmBtn, reopenBtn);
+    return wrap;
+}
+
+/** 已知雜訊記憶自動判讀（§5.1 D-1 #3）：同主機同簽章之前標過已知雜訊，這次自動顯示 */
+function autoNoiseControl(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-issue-status__actions';
+
+    const badge = severityNeutralBadge('已知雜訊（自動）');
+    badge.title = issue.noiseNote
+        ? `依記憶自動判讀：${issue.noiseNote}`
+        : '同主機同簽章先前標記過已知雜訊，本次自動套用同樣判讀';
+    wrap.appendChild(badge);
+
+    const reopenBtn = smallActionButton('調回未處理', async () => {
+        // 兩個對話框各自誠實：第一個的「取消」是真的取消整個動作；
+        // 第二個是獨立的是非題，「取消」＝合理的「不刪除」答案，不會被誤讀成中止操作
+        const proceed = await confirmAction({
+            title: '調回未處理',
+            message: `將「${issue.source} ${issue.eventId}」標為未處理。`,
+            confirmText: '調回未處理',
+            confirmVariant: 'primary'
+        });
+        if (!proceed) return;
+
+        const forget = await confirmAction({
+            title: '是否同時刪除已知雜訊記憶？',
+            message: '刪除後，同主機同簽章之後不會再自動判讀成雜訊，需要重新標記；' +
+                '不刪除的話，下次出現這個問題仍會自動判讀成已知雜訊。' +
+                (issue.noiseNote ? `（記憶備註：${issue.noiseNote}）` : ''),
+            confirmText: '刪除記憶',
+            confirmVariant: 'danger'
+        });
+        await setIssueStatus(issue, 'open', wrap, { forgetNoise: forget });
+    });
+    wrap.appendChild(reopenBtn);
+    return wrap;
+}
+
+function smallActionButton(text, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-link p-0';
+    btn.textContent = text;
+    btn.addEventListener('click', event => { event.stopPropagation(); onClick(); });
+    return btn;
+}
+
+/**
+ * 一般勾選＋浮出面板控制（§5.1 D-1 #6）。勾選框反映「是否有結案類狀態」：
+ *   - 未勾選 → 勾選時開面板（預設選「已處理」，需按確定才送出，不是勾了就存）
+ *   - 已勾選（有結案狀態）→ 點擊可重新打開面板修改；取消勾選＝立即清除（可逆，不用二次確認）
+ * 明確 open 狀態視覺上等同未勾選（都是「未處理」），但不會被自動推導蓋掉。
+ */
+function checkboxControl(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-issue-status';
+
+    const isClosed = issue.handlingStatus && issue.handlingStatus !== 'open';
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input lf-issue-status__check';
+    check.checked = !!isClosed;
+    check.title = isClosed ? '取消勾選＝清除處理標記' : '勾選＝標記已處理（可在面板改選其他狀態）';
+
+    const label = document.createElement('span');
+    label.textContent = isClosed ? issue.handlingStatusText : '未處理';
+
+    const col = document.createElement('div');
+    col.append(check, document.createElement('br'), label);
+    wrap.appendChild(col);
+
+    check.addEventListener('click', event => event.stopPropagation());
+    label.addEventListener('click', event => event.stopPropagation());
+
+    check.addEventListener('change', () => {
+        if (check.checked) {
+            wrap.appendChild(statusPanel(issue, wrap, label, check));
+        } else {
+            // 立即清除：可逆操作，不需要二次確認彈窗
+            setIssueStatus(issue, '', wrap, {});
+        }
+    });
+
+    // 已是結案狀態時，點文字/勾選本體之外的地方（例如整列）不應該打開面板——
+    // 只有明確想「改」的人會去點勾選框；已勾選時再點一次勾選框只會觸發 change 清除，
+    // 若想修改成別的狀態，提供一個「修改」小連結
+    if (isClosed) {
+        const editBtn = smallActionButton('修改', () => wrap.appendChild(statusPanel(issue, wrap, label, check)));
+        col.appendChild(editBtn);
+    }
+
+    return wrap;
+}
+
+/** 浮出的狀態選擇面板：chip 選狀態＋依狀態動態調整的備註欄 */
+function statusPanel(issue, wrap, label, check) {
+    const existing = wrap.querySelector('.lf-issue-status__panel');
+    if (existing) return existing;
+
+    const panel = document.createElement('div');
+    panel.className = 'lf-issue-status__panel';
+    panel.addEventListener('click', event => event.stopPropagation());
+
+    let selected = issue.handlingStatus && issue.handlingStatus !== 'open' ? issue.handlingStatus : 'resolved';
+
+    const chips = document.createElement('div');
+    chips.className = 'lf-toolbar__chips';
+    panel.appendChild(chips);
+
+    const fieldLabel = document.createElement('div');
+    fieldLabel.className = 'lf-issue-status__field-label';
+    panel.appendChild(fieldLabel);
+
+    const note = document.createElement('textarea');
+    note.className = 'form-control form-control-sm';
+    note.rows = 2;
+    note.value = issue.handlingStatus === selected ? (issue._localNote ?? '') : '';
+    panel.appendChild(note);
+
+    const ruleHint = document.createElement('div');
+    ruleHint.className = 'lf-hint mt-1';
+    panel.appendChild(ruleHint);
+
+    function renderChipsAndField() {
+        renderChips(chips, {
+            items: ISSUE_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.text })),
+            attr: 'issueStatus',
+            activeValues: [selected],
+            multi: false,
+            onToggle: value => { selected = value; renderChipsAndField(); }
         });
 
-        // 就地更新本地模型與畫面，不整頁重載
-        issue.handlingStatus = result.status;
-        issue.handlingStatusText = result.statusText;
-        select.classList.toggle('lf-status-select--set', !!result.status);
-        renderProgress(result.closedIssues, result.totalIssues);
+        const field = NOTE_FIELD_BY_STATUS[selected];
+        fieldLabel.textContent = field.label;
+        note.required = field.required;
 
-        toast(status ? `已標為「${result.statusText}」` : '已清除處理標記', 'success');
+        // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）
+        ruleHint.classList.toggle('d-none', !(selected === 'false_positive' && issue.ruleId && canMaintainRules));
+        ruleHint.textContent = '';
+        if (selected === 'false_positive' && issue.ruleId && canMaintainRules) {
+            const link = document.createElement('a');
+            link.href = `/admin/rules?search=${encodeURIComponent(issue.ruleId)}`;
+            link.target = '_blank';
+            link.textContent = '如果這條規則常常誤判，可以到規則維護調整判定條件';
+            ruleHint.appendChild(link);
+        }
+    }
+    renderChipsAndField();
+
+    const actions = document.createElement('div');
+    actions.className = 'd-flex gap-2 mt-2';
+
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn btn-sm btn-primary';
+    save.textContent = '確定';
+    save.addEventListener('click', () => {
+        const field = NOTE_FIELD_BY_STATUS[selected];
+        if (field.required && !note.value.trim()) {
+            note.classList.add('is-invalid');
+            return;
+        }
+        setIssueStatus(issue, selected, wrap, { note: note.value.trim() || null });
+    });
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-sm btn-outline-secondary';
+    cancel.textContent = '取消';
+    cancel.addEventListener('click', () => {
+        panel.remove();
+        // 取消時勾選框要回到操作前的狀態（若是「勾選開面板但取消」，勾選要退回未勾選）
+        check.checked = !!(issue.handlingStatus && issue.handlingStatus !== 'open');
+    });
+
+    actions.append(save, cancel);
+    panel.appendChild(actions);
+    return panel;
+}
+
+/**
+ * 送出問題狀態變更。wrap 是目前顯示在表格「處理」欄的控制項節點——
+ * 成功後重新取回這個問題目前的狀態（含後端算好的低風險預設／已知雜訊自動判讀旗標），
+ * 就地替換 wrap，不整頁重載；也不能只拿 PUT 的回應自己猜這兩個旗標，
+ * 那套推導邏輯只在後端算一次（單一事實來源），前端用哪個值必須問後端要。
+ */
+async function setIssueStatus(issue, status, wrap, extra = {}) {
+    try {
+        await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
+            issueKey: issue.issueKey,
+            status,
+            note: extra.note ?? null,
+            forgetNoise: !!extra.forgetNoise
+        });
+
+        const fresh = await api.get(`/api/records/${hostId}/${date}`, { silent: true });
+        const updated = fresh.topIssues.find(i => i.issueKey === issue.issueKey);
+        if (updated) Object.assign(issue, updated);
+        if (extra.note !== undefined) issue._localNote = extra.note;
+
+        wrap.replaceWith(statusControl(issue));
+        renderProgress();
+
+        toast(status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記', 'success');
 
         // 已知雜訊 → 提議建立抑制規則（治本）
         if (status === 'known_noise' && issue.ruleId && canMaintainRules) {
             await offerSuppression(issue);
         }
     } catch (error) {
-        select.value = previous;   // 還原下拉，畫面與後端保持一致
         toast(error?.message || '更新失敗', 'danger');
-    } finally {
-        select.disabled = false;
     }
 }
 
@@ -263,11 +479,29 @@ async function offerSuppression(issue) {
     }
 }
 
-/** 當日處理進度「N/M 已處理」，顯示在重點問題卡標題旁 */
-function renderProgress(closed, total) {
+/**
+ * 重點問題旁的計數器：只顯示「已處理／未處理」（§5.1 D-1 #7），忽略其他標籤——
+ * 這顆計數器要回答的是「還剩幾件要動手」，不是「標了幾件」：
+ *   已處理＝真的標成 resolved 的問題數
+ *   未處理＝從沒標記過、且不是低風險預設不處理／已知雜訊自動判讀的問題（含明確 open）
+ * 不處理／誤報／已知雜訊／低風險預設不處理，兩邊都不計——那些是「已經有結論」，
+ * 不是「還沒處理」，混進未處理只會讓使用者以為還有事要做。
+ * 從 currentDetail.topIssues 現算，每次任何一項狀態變動後呼叫，不依賴後端往返。
+ */
+function renderProgress() {
     const el = document.getElementById('detail-progress');
-    if (!el) return;
-    el.textContent = total > 0 ? `${closed}/${total} 已處理` : '';
+    if (!el || !currentDetail) return;
+
+    const issues = currentDetail.topIssues;
+    if (issues.length === 0) { el.textContent = ''; return; }
+
+    const resolved = issues.filter(i => i.handlingStatus === 'resolved').length;
+    const unhandled = issues.filter(i =>
+        i.handlingStatus === 'open' ||
+        (i.handlingStatus === '' && !i.isDefaultUnhandled && !i.isAutoNoise)
+    ).length;
+
+    el.textContent = `已處理 ${resolved}／未處理 ${unhandled}`;
 }
 
 /** 下鑽帶入的類別（§8.4）：從儀表板分類卡或查詢頁篩著類別點進來時，網址會帶 categories */
@@ -328,9 +562,7 @@ function renderIssues(detail) {
     const highlighted = highlightedCategories();
     container.replaceChildren();
 
-    // 當日處理進度：已結案問題數 / 總數（結案類狀態才算）
-    const closed = detail.topIssues.filter(i => i.handlingStatus).length;
-    renderProgress(closed, detail.topIssues.length);
+    renderProgress();
 
     let shown = 0;
     let hidden = 0;
@@ -350,7 +582,7 @@ function renderIssues(detail) {
         if (highlighted.has(category.category)) section.classList.add('lf-issue-group--hit');
 
         const header = document.createElement('div');
-        header.className = 'lf-issue-group__header d-flex align-items-center gap-2';
+        header.className = `lf-issue-group__header lf-issue-group__header--${category.maxSeverity.toLowerCase()} d-flex align-items-center gap-2`;
 
         const title = document.createElement('span');
         title.className = 'fw-semibold';
@@ -441,21 +673,34 @@ function knownIssueCell(issue) {
         wrap.appendChild(distinct);
     }
 
-    if (issue.sampleMessages?.length) {
-        const toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'btn btn-link btn-sm p-0 lf-no-print';
-        toggle.textContent = '範例訊息';
-
-        const box = document.createElement('pre');
-        box.className = 'report-text small mt-1 d-none';
-        box.textContent = issue.sampleMessages.join('\n---\n');
-
-        toggle.addEventListener('click', () => box.classList.toggle('d-none'));
-        wrap.append(toggle, box);
-    }
+    if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
 
     return wrap;
+}
+
+/**
+ * 範例訊息改 hover 泡泡（§5.1 D-1 #5）：原本的展開式 <pre> 一展開就佔掉整列高度，
+ * 多筆問題同時攤開會讓畫面很亂。改成滑過才顯示的 popover——trigger 含 focus，
+ * 點擊（取得焦點）會維持顯示，方便選取複製；點頁面其他地方失焦即關閉。
+ * content 走 html:false（純文字），事件訊息是攻擊者可控字串，不能當 HTML 解析。
+ */
+function sampleMessagesTrigger(issue) {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'btn btn-link btn-sm p-0 lf-no-print';
+    trigger.textContent = '範例訊息';
+
+    // eslint-disable-next-line no-undef
+    new bootstrap.Popover(trigger, {
+        trigger: 'hover focus',
+        placement: 'top',
+        html: false,
+        customClass: 'lf-sample-popover',
+        title: `範例訊息（${issue.sampleMessages.length}）`,
+        content: issue.sampleMessages.join('\n---\n')
+    });
+
+    return trigger;
 }
 
 /**
@@ -777,6 +1022,7 @@ async function loadReport() {
 
     document.getElementById('report-card').classList.remove('d-none');
     document.getElementById('detail-report').textContent = content;
+    setupReportToggle();
 }
 
 document.getElementById('btn-copy-report').addEventListener('click', async () => {

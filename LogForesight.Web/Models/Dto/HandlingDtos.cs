@@ -52,11 +52,17 @@ public class SetIssueStatusRequest
     [Required]
     public string IssueKey { get; set; } = string.Empty;
 
-    /// <summary>resolved | wont_fix | false_positive | known_noise；空字串＝清除標記（回到未處理）</summary>
+    /// <summary>resolved | wont_fix | false_positive | known_noise | open；空字串＝清除標記（回到未處理）</summary>
     public string Status { get; set; } = string.Empty;
 
     [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
     public string? Note { get; set; }
+
+    /// <summary>
+    /// status=open 時才有意義：這個問題目前是「低風險預設不處理」或「已知雜訊記憶自動判讀」
+    /// 而使用者要「調回未處理」——true 時一併刪除對應的雜訊記憶，之後同簽章不再自動判讀成雜訊。
+    /// </summary>
+    public bool ForgetNoise { get; set; }
 }
 
 /// <summary>問題狀態更新後回傳的當日進度（讓前端就地更新「N/M 已處理」與日層級推導狀態）</summary>

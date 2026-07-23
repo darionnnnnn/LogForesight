@@ -31,13 +31,18 @@
 
             <section class="lf-card d-none" id="report-card">
                 <div class="lf-card__header">
-                    <h2 class="lf-card__title">風險報告全文</h2>
+                    <button type="button" class="btn btn-link p-0 text-body text-decoration-none d-flex align-items-center gap-2" id="report-toggle">
+                        <span class="lf-collapse-caret" id="report-caret">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#chevron-down"></use></svg>
+                        </span>
+                        <h2 class="lf-card__title mb-0">風險報告全文</h2>
+                    </button>
                     <div class="d-flex gap-2 lf-no-print">
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-copy-report">複製</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print">列印</button>
                     </div>
                 </div>
-                <div class="lf-card__body">
+                <div class="lf-card__body d-none" id="report-body">
                     <pre class="report-text" id="detail-report"></pre>
                 </div>
             </section>

@@ -288,6 +288,17 @@ public static class StorageFactory
         }
     }
 
+    /// <summary>已知雜訊記憶（webdata\noise_marks.json，§5.1 D-1 #3）——同主機同簽章的自動雜訊判讀依據</summary>
+    public static INoiseMarkStore CreateNoiseMarkStore(StorageSettings settings, string dataRoot)
+    {
+        switch (settings.Type)
+        {
+            case "Jsonl":
+            default:
+                return new JsonNoiseMarkStore(Blob(settings, dataRoot, "noise_marks", WebDataPath(dataRoot, "noise_marks.json")));
+        }
+    }
+
     /// <summary>
     /// 權限異動（rundata\perm_changes.jsonl 由批次寫、webdata\perm_confirms.json 由 Web 寫）。
     /// 兩個檔案各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。

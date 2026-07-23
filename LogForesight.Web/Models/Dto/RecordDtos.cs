@@ -140,9 +140,25 @@ public class IssueDto
     /// <summary>命中的規則 Id（未命中規則為 null）——標「已知雜訊」時可據此一鍵建立抑制規則</summary>
     public string? RuleId { get; set; }
 
-    /// <summary>此問題的處理狀態（方案 B），空字串＝未處理</summary>
+    /// <summary>此問題的處理狀態（方案 B）：resolved/wont_fix/false_positive/known_noise/open，
+    /// 空字串＝從未標記過（實際顯示是「未處理」還是自動推導的預設值，見下列兩個旗標）</summary>
     public string HandlingStatus { get; set; } = string.Empty;
     public string HandlingStatusText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// true＝從未標記過且為低風險——前端顯示「不處理（預設）」而非「未處理」，
+    /// 並提供「確認不處理」／「調回未處理」兩個動作（§5.1 D-1 #2）。
+    /// </summary>
+    public bool IsDefaultUnhandled { get; set; }
+
+    /// <summary>
+    /// true＝從未標記過，但同主機同簽章有已知雜訊記憶——前端顯示「已知雜訊（自動）」，
+    /// 提供「調回未處理」動作（§5.1 D-1 #3）。與 IsDefaultUnhandled 互斥（記憶優先於低風險預設）。
+    /// </summary>
+    public bool IsAutoNoise { get; set; }
+
+    /// <summary>記憶當初標記時留下的備註，IsAutoNoise 為 true 時才有意義</summary>
+    public string? NoiseNote { get; set; }
 
     /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。

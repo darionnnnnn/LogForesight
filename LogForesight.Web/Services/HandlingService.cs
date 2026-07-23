@@ -43,6 +43,7 @@ public class HandlingService : IHandlingService
 {
     private readonly IRecordHandlingStore _store;
     private readonly IIssueHandlingStore _issueStore;
+    private readonly INoiseMarkStore _noiseMarks;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IUserStore _users;
@@ -53,6 +54,7 @@ public class HandlingService : IHandlingService
     public HandlingService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
+        INoiseMarkStore noiseMarks,
         IRecordRepository repository,
         IHostStore hosts,
         IUserStore users,
@@ -62,6 +64,7 @@ public class HandlingService : IHandlingService
     {
         _store = store;
         _issueStore = issueStore;
+        _noiseMarks = noiseMarks;
         _repository = repository;
         _hosts = hosts;
         _users = users;
@@ -127,7 +130,7 @@ public class HandlingService : IHandlingService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        if (!clearing && !IssueHandlingStatuses.IsClosed(request.Status))
+        if (!clearing && !IssueHandlingStatuses.IsValid(request.Status))
             throw DomainException.Validation($"未知的問題處理狀態「{request.Status}」。");
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
@@ -151,6 +154,24 @@ public class HandlingService : IHandlingService
                 ActorAccount = _currentUser.Account,
                 UpdatedAt = DateTime.Now
             });
+
+            // 標「已知雜訊」＝寫入記憶，之後同主機同簽章的新問題自動判讀成雜訊（治標，供無規則命中的 Other 類別）
+            if (request.Status == IssueHandlingStatuses.KnownNoise)
+            {
+                _noiseMarks.Save(new NoiseMark
+                {
+                    HostName = host.HostName,
+                    IssueKey = request.IssueKey,
+                    MarkedByAccount = _currentUser.Account,
+                    MarkedAt = DateTime.Now,
+                    Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim()
+                });
+            }
+            // 「調回未處理」且使用者選擇一併刪除記憶——之後同簽章不再自動判讀成雜訊
+            else if (request.Status == IssueHandlingStatuses.Open && request.ForgetNoise)
+            {
+                _noiseMarks.Delete(host.HostName, request.IssueKey);
+            }
         }
 
         _audit.Record(
@@ -422,13 +443,14 @@ public class HandlingService : IHandlingService
         _ => status
     };
 
-    /// <summary>問題層級狀態文字（皆為結案類；未標記＝未處理由呼叫端處理）</summary>
+    /// <summary>問題層級狀態文字（未標記＝未處理由呼叫端處理）</summary>
     private static string IssueStatusText(string status) => status switch
     {
         IssueHandlingStatuses.Resolved => "已處理",
         IssueHandlingStatuses.WontFix => "不處理",
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        IssueHandlingStatuses.Open => "未處理",
         _ => status
     };
 

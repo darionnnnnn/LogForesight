@@ -37,6 +37,7 @@ public class RecordQueryService : IRecordQueryService
     private readonly IVisibilityService _visibility;
     private readonly IRecordHandlingStore _handlings;
     private readonly IIssueHandlingStore _issueHandlings;
+    private readonly INoiseMarkStore _noiseMarks;
     private readonly IKnownIssueRuleStore _rules;
     private readonly ICurrentUser _currentUser;
 
@@ -49,6 +50,7 @@ public class RecordQueryService : IRecordQueryService
         IVisibilityService visibility,
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
+        INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser)
     {
@@ -60,6 +62,7 @@ public class RecordQueryService : IRecordQueryService
         _visibility = visibility;
         _handlings = handlings;
         _issueHandlings = issueHandlings;
+        _noiseMarks = noiseMarks;
         _rules = rules;
         _currentUser = currentUser;
     }
@@ -264,10 +267,16 @@ public class RecordQueryService : IRecordQueryService
         var guidance = LoadGuidanceLookup();
 
         // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題
+        var hostName = host?.HostName ?? record.Host;
         var issueStatus = _issueHandlings
-            .GetForDay(host?.HostName ?? record.Host, date)
+            .GetForDay(hostName, date)
             .GroupBy(h => h.IssueKey, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Status, StringComparer.Ordinal);
+
+        // 已知雜訊記憶（跨日、以主機＋簽章為鍵，見 §5.1 D-1 #3）：未標記的問題若命中記憶，
+        // 前端自動顯示「已知雜訊（自動）」，不必使用者每天重標
+        var noiseMarks = _noiseMarks.GetForHost(hostName)
+            .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
         return new RecordDetailDto
         {
@@ -284,7 +293,7 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus)).ToList(),
+            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus, noiseMarks)).ToList(),
             Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -528,10 +537,15 @@ public class RecordQueryService : IRecordQueryService
     private static IssueDto ToIssueDto(
         LogIssueSignature issue,
         Dictionary<string, KnownIssueRule>? guidance = null,
-        Dictionary<string, string>? issueStatus = null)
+        Dictionary<string, string>? issueStatus = null,
+        Dictionary<string, NoiseMark>? noiseMarks = null)
     {
         var key = IssueSignatureKey.For(issue);
         var status = issueStatus != null && issueStatus.TryGetValue(key, out var s) ? s : string.Empty;
+
+        // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
+        var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
+        var isDefaultUnhandled = status.Length == 0 && noiseMark == null && issue.Severity == IssueSeverity.Low;
 
         return new IssueDto
         {
@@ -554,7 +568,10 @@ public class RecordQueryService : IRecordQueryService
             IssueKey = key,
             RuleId = issue.RuleId,
             HandlingStatus = status,
-            HandlingStatusText = IssueStatusText(status)
+            HandlingStatusText = IssueStatusText(status),
+            IsDefaultUnhandled = isDefaultUnhandled,
+            IsAutoNoise = noiseMark != null,
+            NoiseNote = noiseMark?.Note
         };
     }
 
@@ -564,6 +581,7 @@ public class RecordQueryService : IRecordQueryService
         IssueHandlingStatuses.WontFix => "不處理",
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        IssueHandlingStatuses.Open => string.Empty,
         _ => string.Empty
     };
 
@@ -622,7 +640,10 @@ public class RecordQueryService : IRecordQueryService
                 break;
         }
 
-        if (issue.PreviousDayCount.HasValue) parts.Add($"前一日 {issue.PreviousDayCount} 次");
+        // 首次出現時「前一日 N 次」是贅述（首次出現＝前一日必為 0），不輸出——
+        // 這是 §5.1 D-1 #5：畫面已經說了「首次」，不需要再用一個必然是 0 的數字佐證
+        if (effectiveTrend != IssueTrend.New && issue.PreviousDayCount.HasValue)
+            parts.Add($"前一日 {issue.PreviousDayCount} 次");
         if (issue.HistoryDailyAverage.HasValue) parts.Add($"歷史平均 {issue.HistoryDailyAverage.Value:0.#} 次");
         if (issue.DaysSeenInHistory > 0) parts.Add($"近期出現 {issue.DaysSeenInHistory} 天");
 

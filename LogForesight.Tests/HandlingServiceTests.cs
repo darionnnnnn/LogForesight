@@ -20,6 +20,7 @@ public class HandlingServiceTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeHandlingStore _handlings = new();
     private readonly FakeIssueHandlingStore _issueHandlings = new();
+    private readonly FakeNoiseMarkStore _noiseMarks = new();
     private readonly FakeAuditService _audit = new();
     private readonly FakeRecordRepository _repository;
 
@@ -48,7 +49,7 @@ public class HandlingServiceTests
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
         return new HandlingService(
-            _handlings, _issueHandlings, _repository, _hosts, _users,
+            _handlings, _issueHandlings, _noiseMarks, _repository, _hosts, _users,
             new AlwaysVisibleService(_hosts), currentUser, _audit);
     }
 
@@ -408,6 +409,88 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.InProgressCount);
     }
 
+    /// <summary>已知雜訊記憶（§5.1 D-1 #3）：標記後記憶留存，之後同主機同簽章可查得到</summary>
+    [Fact]
+    public void 標已知雜訊_寫入記憶()
+    {
+        var day = Today.AddDays(-8);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var key = IssueSignatureKey.For(a);
+
+        Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = key,
+            Status = IssueHandlingStatuses.KnownNoise,
+            Note = "已知硬碟廠商韌體訊息"
+        });
+
+        var mark = _noiseMarks.Get(_host.HostName, key);
+        Assert.NotNull(mark);
+        Assert.Equal("已知硬碟廠商韌體訊息", mark!.Note);
+    }
+
+    /// <summary>調回未處理且選擇刪除記憶時，記憶應被清除；不選擇刪除時記憶留存</summary>
+    [Fact]
+    public void 調回未處理_選擇刪除記憶時記憶消失()
+    {
+        var day = Today.AddDays(-9);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var key = IssueSignatureKey.For(a);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest { IssueKey = key, Status = IssueHandlingStatuses.KnownNoise });
+        Assert.NotNull(_noiseMarks.Get(_host.HostName, key));
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = key,
+            Status = IssueHandlingStatuses.Open,
+            ForgetNoise = true
+        });
+
+        Assert.Null(_noiseMarks.Get(_host.HostName, key));
+    }
+
+    [Fact]
+    public void 調回未處理_不刪記憶時記憶留存()
+    {
+        var day = Today.AddDays(-10);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var key = IssueSignatureKey.For(a);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest { IssueKey = key, Status = IssueHandlingStatuses.KnownNoise });
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = key,
+            Status = IssueHandlingStatuses.Open,
+            ForgetNoise = false
+        });
+
+        Assert.NotNull(_noiseMarks.Get(_host.HostName, key));
+    }
+
+    /// <summary>open 是合法的可持久化狀態（不是結案類，但通過驗證）</summary>
+    [Fact]
+    public void 設定Open狀態_通過驗證且不計入已結案()
+    {
+        var day = Today.AddDays(-11);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var result = Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Open
+        });
+
+        Assert.Equal(0, result.ClosedIssues);
+        Assert.Equal(HandlingStatuses.Open, result.DayStatus);
+    }
+
     [Fact]
     public void 標記不存在的問題_擲驗證例外()
     {
@@ -514,6 +597,32 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
     private static bool Same(IssueHandling h, string hostName, DateTime date, string issueKey) =>
         string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
         h.Date.Date == date.Date && h.IssueKey == issueKey;
+}
+
+internal class FakeNoiseMarkStore : INoiseMarkStore
+{
+    private readonly List<NoiseMark> _items = new();
+
+    public List<NoiseMark> GetForHost(string hostName) =>
+        _items.Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    public NoiseMark? Get(string hostName, string issueKey) =>
+        _items.FirstOrDefault(m => Same(m, hostName, issueKey));
+
+    public void Save(NoiseMark mark)
+    {
+        var existing = _items.FirstOrDefault(m => Same(m, mark.HostName, mark.IssueKey));
+        if (existing == null) { _items.Add(mark); return; }
+        existing.MarkedByAccount = mark.MarkedByAccount;
+        existing.MarkedAt = mark.MarkedAt;
+        existing.Note = mark.Note;
+    }
+
+    public void Delete(string hostName, string issueKey) =>
+        _items.RemoveAll(m => Same(m, hostName, issueKey));
+
+    private static bool Same(NoiseMark m, string hostName, string issueKey) =>
+        string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase) && m.IssueKey == issueKey;
 }
 
 internal class FakeHandlingStore : IRecordHandlingStore
