@@ -131,6 +131,18 @@ public class AdminController : ControllerBase
         return ApiResponse.Ok();
     }
 
+    /// <summary>批次加入成員的預覽（網段／關鍵字命中主機，不寫入）</summary>
+    [HttpPost("host-groups/{groupId:long}/members/preview")]
+    public ApiResponse<HostGroupMemberPreviewDto> PreviewMembers(
+        long groupId, [FromBody] HostGroupMemberQueryRequest request) =>
+        ApiResponse<HostGroupMemberPreviewDto>.Ok(_groups.PreviewMembers(groupId, request));
+
+    /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
+    [HttpPost("host-groups/{groupId:long}/members")]
+    public ApiResponse<HostGroupMemberPreviewDto> AddMembers(
+        long groupId, [FromBody] AddHostGroupMembersRequest request) =>
+        ApiResponse<HostGroupMemberPreviewDto>.Ok(_groups.AddMembers(groupId, request));
+
     [HttpGet("access")]
     public ApiResponse<AccessMatrixDto> GetAccessMatrix() =>
         ApiResponse<AccessMatrixDto>.Ok(_groups.GetAccessMatrix());

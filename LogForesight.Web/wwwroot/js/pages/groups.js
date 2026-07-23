@@ -8,11 +8,13 @@ import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
+const membersModal = new bootstrap.Modal(document.getElementById('members-modal'));
 
 let userGroups = [];
 let hostGroups = [];
 let matrix = null;
 let editing = null;      // { kind: 'user' | 'host', group }
+let membersState = null; // { groupId, mode, candidates }
 
 // ── 分頁切換 ─────────────────────────────────────────────────────────────────
 
@@ -170,6 +172,16 @@ function groupActions(kind, group) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-1 justify-content-end';
 
+    // 主機群組多一個「加入成員」——兩千台情境下逐台編輯不現實，改用網段/關鍵字批次加入
+    if (kind === 'host') {
+        const members = document.createElement('button');
+        members.type = 'button';
+        members.className = 'btn btn-sm btn-outline-secondary';
+        members.textContent = '加入成員';
+        members.addEventListener('click', () => openMembersModal(group));
+        wrap.appendChild(members);
+    }
+
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'btn btn-sm btn-outline-primary';
@@ -278,6 +290,149 @@ async function onDelete(kind, group) {
 
 document.querySelector('[data-new-user-group]').addEventListener('click', () => openModal('user', null));
 document.querySelector('[data-new-host-group]').addEventListener('click', () => openModal('host', null));
+
+// ── 批次加入成員（網段／關鍵字）─────────────────────────────────────────────
+
+const membersInput = document.getElementById('members-input');
+
+function openMembersModal(group) {
+    membersState = { groupId: group.groupId, mode: 'cidr', candidates: [] };
+
+    document.getElementById('members-group-name').textContent = group.groupName;
+    membersInput.value = '';
+    setMembersMode('cidr');
+    document.getElementById('members-summary').textContent = '';
+    document.getElementById('members-preview').replaceChildren();
+    document.getElementById('members-remove-field').classList.add('d-none');
+    document.getElementById('members-remove-others').checked = false;
+    document.getElementById('members-apply').disabled = true;
+
+    membersModal.show();
+}
+
+function setMembersMode(mode) {
+    membersState.mode = mode;
+    for (const btn of document.querySelectorAll('#members-mode [data-mode]')) {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    }
+    membersInput.placeholder = mode === 'cidr'
+        ? '10.1.2.0/24、10.1.2.* 或單一 IP'
+        : '主機名或 IP 關鍵字';
+}
+
+document.getElementById('members-mode').addEventListener('click', event => {
+    const btn = event.target.closest('[data-mode]');
+    if (btn) setMembersMode(btn.dataset.mode);
+});
+
+document.getElementById('members-search').addEventListener('click', searchMembers);
+membersInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); searchMembers(); }
+});
+
+async function searchMembers() {
+    const value = membersInput.value.trim();
+    if (!value) { toast('請輸入網段或關鍵字', 'warning'); return; }
+
+    const body = membersState.mode === 'cidr' ? { pattern: value } : { query: value };
+    try {
+        const preview = await api.post(`/api/admin/host-groups/${membersState.groupId}/members/preview`, body);
+        membersState.candidates = preview.candidates;
+        renderMembersPreview(preview);
+    } catch {
+        // 錯誤已由 api.js 顯示（含網段格式錯誤）
+    }
+}
+
+function renderMembersPreview(preview) {
+    const summary = document.getElementById('members-summary');
+    const applyBtn = document.getElementById('members-apply');
+    const removeField = document.getElementById('members-remove-field');
+
+    if (preview.candidates.length === 0) {
+        summary.textContent = '沒有命中任何主機。';
+        document.getElementById('members-preview').replaceChildren();
+        applyBtn.disabled = true;
+        removeField.classList.add('d-none');
+        return;
+    }
+
+    summary.textContent = `命中 ${preview.matchCount} 台` +
+        (preview.inOtherGroupsCount > 0 ? `，其中 ${preview.inOtherGroupsCount} 台已屬其他群組` : '');
+
+    // 已在本群組的預設不勾且不可選；其餘預設勾選
+    renderTable(document.getElementById('members-preview'), {
+        columns: [
+            { title: '', className: 'text-center', render: c => memberCheckbox(c) },
+            { title: '主機', render: c => c.hostName },
+            { title: 'IP', render: c => c.ipAddress ?? '' },
+            { title: '現有群組', render: c => currentGroupsCell(c) }
+        ],
+        rows: preview.candidates
+    });
+
+    removeField.classList.toggle('d-none', preview.inOtherGroupsCount === 0);
+    updateMembersApplyState();
+}
+
+function memberCheckbox(candidate) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'form-check-input';
+    box.dataset.hostId = String(candidate.hostId);
+    box.checked = !candidate.alreadyInTarget;
+    box.disabled = candidate.alreadyInTarget;
+    box.title = candidate.alreadyInTarget ? '已在本群組' : '';
+    box.addEventListener('change', updateMembersApplyState);
+    return box;
+}
+
+function currentGroupsCell(candidate) {
+    const wrap = document.createElement('span');
+    if (candidate.alreadyInTarget) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--success';
+        badge.textContent = '已在本群組';
+        wrap.appendChild(badge);
+        return wrap;
+    }
+    // 已屬其他群組顯性通知（主色徽章），使用者才知道這台已經歸別的群組管
+    for (const name of candidate.currentGroups) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--primary me-1';
+        badge.textContent = name;
+        wrap.appendChild(badge);
+    }
+    return wrap;
+}
+
+function selectedHostIds() {
+    return Array.from(document.querySelectorAll('#members-preview input[type="checkbox"]:checked:not(:disabled)'))
+        .map(box => Number(box.dataset.hostId));
+}
+
+function updateMembersApplyState() {
+    document.getElementById('members-apply').disabled = selectedHostIds().length === 0;
+}
+
+document.getElementById('members-apply').addEventListener('click', async () => {
+    const hostIds = selectedHostIds();
+    if (hostIds.length === 0) return;
+
+    const removeFromOthers = document.getElementById('members-remove-others').checked;
+    const button = document.getElementById('members-apply');
+    const restore = withBusy(button, '加入中');
+    try {
+        await api.post(`/api/admin/host-groups/${membersState.groupId}/members`, { hostIds, removeFromOthers });
+        toast(`已將 ${hostIds.length} 台主機加入群組`, 'success');
+        membersModal.hide();
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
 
 function roleBadge(role) {
     const variants = { Admin: 'danger', Manager: 'primary', Dev: 'info', User: 'secondary' };

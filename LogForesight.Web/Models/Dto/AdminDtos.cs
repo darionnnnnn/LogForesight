@@ -78,6 +78,45 @@ public class SaveHostGroupRequest
     public bool Active { get; set; } = true;
 }
 
+// ── 批次加入群組成員（網段／關鍵字，docs/SCALE-2000-PLAN.md §3）─────────────
+
+public class HostGroupMemberQueryRequest
+{
+    /// <summary>網段：CIDR（10.1.2.0/24）或萬用字元（10.1.2.*）或單一 IP</summary>
+    public string? Pattern { get; set; }
+
+    /// <summary>關鍵字：比對 hostname 或 IP（Pattern 與 Query 擇一）</summary>
+    public string? Query { get; set; }
+}
+
+/// <summary>預覽命中的主機——含現有群組（顯性通知已屬其他群組）與是否已在目標群組</summary>
+public class HostGroupMemberCandidateDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public List<string> CurrentGroups { get; set; } = new();
+    public bool InOtherGroups { get; set; }
+    public bool AlreadyInTarget { get; set; }
+}
+
+public class HostGroupMemberPreviewDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+    public int MatchCount { get; set; }
+    public int InOtherGroupsCount { get; set; }
+    public List<HostGroupMemberCandidateDto> Candidates { get; set; } = new();
+}
+
+public class AddHostGroupMembersRequest
+{
+    public List<long> HostIds { get; set; } = new();
+
+    /// <summary>同時把這些主機移出其原本所屬的其他主機群組（預設否，僅加入）</summary>
+    public bool RemoveFromOthers { get; set; }
+}
+
 /// <summary>授權矩陣：列＝使用者群組、欄＝主機群組</summary>
 public class AccessMatrixDto
 {

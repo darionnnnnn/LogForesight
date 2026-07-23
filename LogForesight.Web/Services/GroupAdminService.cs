@@ -17,6 +17,12 @@ public interface IGroupAdminService
     HostGroupDto SaveHostGroup(SaveHostGroupRequest request);
     void DeleteHostGroup(long groupId);
 
+    /// <summary>批次加入群組成員的預覽：以網段或關鍵字查命中主機（含現有群組）</summary>
+    HostGroupMemberPreviewDto PreviewMembers(long hostGroupId, HostGroupMemberQueryRequest request);
+
+    /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
+    HostGroupMemberPreviewDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request);
+
     AccessMatrixDto GetAccessMatrix();
     void SetAccess(long userGroupId, IEnumerable<long> hostGroupIds);
 }
@@ -202,6 +208,110 @@ public class GroupAdminService : IGroupAdminService
             summary: $"刪除主機群組「{group.GroupName}」",
             targetKind: "group",
             targetId: groupId.ToString());
+    }
+
+    public HostGroupMemberPreviewDto PreviewMembers(long hostGroupId, HostGroupMemberQueryRequest request)
+    {
+        var group = _hostGroups.Get(hostGroupId)
+                    ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
+
+        var matched = MatchHosts(request);
+        var groupsById = _hostGroups.GetAll().ToDictionary(g => g.GroupId, g => g.GroupName);
+
+        var candidates = matched
+            .Select(h =>
+            {
+                // 現有群組排除「本目標群組」——那不是「已屬其他群組」，另以 AlreadyInTarget 表達
+                var otherGroups = h.GroupIds
+                    .Where(id => id != hostGroupId)
+                    .Select(id => groupsById.TryGetValue(id, out var name) ? name : $"(已刪除:{id})")
+                    .ToList();
+
+                return new HostGroupMemberCandidateDto
+                {
+                    HostId = h.HostId,
+                    HostName = h.HostName,
+                    IpAddress = h.IpAddress,
+                    CurrentGroups = otherGroups,
+                    InOtherGroups = otherGroups.Count > 0,
+                    AlreadyInTarget = h.GroupIds.Contains(hostGroupId)
+                };
+            })
+            .OrderByDescending(c => c.InOtherGroups)   // 已屬其他群組的排前面，需要留意的先看到
+            .ThenBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new HostGroupMemberPreviewDto
+        {
+            GroupId = group.GroupId,
+            GroupName = group.GroupName,
+            MatchCount = candidates.Count,
+            InOtherGroupsCount = candidates.Count(c => c.InOtherGroups),
+            Candidates = candidates
+        };
+    }
+
+    public HostGroupMemberPreviewDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request)
+    {
+        var group = _hostGroups.Get(hostGroupId)
+                    ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
+
+        var wanted = request.HostIds.Distinct().ToList();
+        var added = new List<string>();
+
+        foreach (var hostId in wanted)
+        {
+            var host = _hosts.Get(hostId);
+            if (host == null || host.MergedInto != null) continue;   // 查無或墓碑列略過（防前端送過期資料）
+            if (host.GroupIds.Contains(hostGroupId) && !request.RemoveFromOthers) continue;
+
+            // removeFromOthers：只保留本目標群組；否則在既有群組上追加本群組
+            var newGroups = request.RemoveFromOthers
+                ? new List<long> { hostGroupId }
+                : host.GroupIds.Concat(new[] { hostGroupId }).Distinct().ToList();
+
+            _hosts.SetGroups(hostId, newGroups);
+            added.Add(host.HostName);
+        }
+
+        _audit.Record(
+            action: AuditActions.HostUpdate,
+            summary: $"批次加入主機群組「{group.GroupName}」：{added.Count} 台" +
+                     (request.RemoveFromOthers ? "（並移出原群組）" : ""),
+            targetKind: "group",
+            targetId: group.GroupId.ToString(),
+            detail: new { group.GroupName, request.RemoveFromOthers, Hosts = added });
+
+        // 回傳套用後的最新預覽（同一組主機），讓前端就地反映結果
+        return PreviewMembers(hostGroupId, new HostGroupMemberQueryRequest());
+    }
+
+    /// <summary>
+    /// 依網段或關鍵字命中主機。墓碑列（已併入其他主機）一律排除——它們不該再被指派群組。
+    /// 網段與 IP 欄位比對；關鍵字同時比對 HostName 與 IpAddress（NetIQ 主機名即 IP）。
+    /// </summary>
+    private List<WebHost> MatchHosts(HostGroupMemberQueryRequest request)
+    {
+        var hosts = _hosts.GetAll().Where(h => h.MergedInto == null);
+
+        if (!string.IsNullOrWhiteSpace(request.Pattern))
+        {
+            var range = CidrMatcher.Parse(request.Pattern)
+                        ?? throw DomainException.Validation(
+                            $"「{request.Pattern}」不是有效的網段（可用 10.1.2.0/24、10.1.2.* 或單一 IP）。");
+            return hosts.Where(h => CidrMatcher.Matches(range, h.IpAddress)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            var q = request.Query.Trim();
+            return hosts
+                .Where(h => h.HostName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                            (h.IpAddress ?? "").Contains(q, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        return new List<WebHost>();
     }
 
     /// <summary>
