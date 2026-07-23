@@ -180,9 +180,14 @@ LogForesight.Web/
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
   （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
   `Ldap`（`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
-  想覆寫本機測試值（如指向批次實際資料目錄的 `Storage.DataRoot`）可用 `appsettings.Development.json`（gitignore）。
+  想覆寫本機測試值可用 `appsettings.Development.json`（gitignore）。
 - `Storage.DataRoot`：JSONL 後端的資料根目錄＝批次執行檔目錄（`history.txt`、`rules.json` 所在），
   Web 的自有資料寫入其下 `webdata\`（§10.3）。
+- **開發環境自動推算 `DataRoot`**：`ASPNETCORE_ENVIRONMENT=Development` 且 `Storage.DataRoot` 為空時，
+  `Program.cs` 依本站台輸出目錄推算同一個 repo 內批次的輸出目錄（`{repo}\LogForesight\bin\{Config}\{TFM}`），
+  取代先前 `appsettings.Development.json` 寫死的絕對路徑——不綁使用者名稱、自動跟著 Debug/Release 與 TFM 變動。
+  推算不出（目錄結構非預期）時維持空值、交由 `Validate()` 顯性報錯。開發者若明確填了 `DataRoot` 則尊重其值、不推算；
+  正式環境不受影響（本機制只在 Development 生效）。
 
 ## 6. 身分驗證
 

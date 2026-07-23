@@ -10,8 +10,11 @@
     }
   },
   "Storage": {
-    // 指向批次 LogForesight.exe 的執行檔目錄（history.txt / rules.json / webdata 所在；目錄必須存在）
-    "DataRoot": "<批次執行檔目錄的完整路徑，如 C:\\...\\LogForesight\\bin\\Debug\\net8.0-windows>"
+    // DataRoot 留空即可：開發環境下 Program.cs 會依本站台輸出目錄自動推算同一個 repo 內批次
+    // LogForesight.exe 的輸出目錄（{repo}\LogForesight\bin\{Config}\{TFM}），會跟著 Debug/Release
+    // 與 TFM 變動、不綁使用者名稱。只有要讀「別處」的批次資料時才需在此明確填絕對路徑
+    // （有值時尊重設定、不做推算；填的目錄必須存在，否則啟動驗證會 fail fast）。
+    "DataRoot": ""
   },
   "Jwt": {
     // HMAC-SHA256 簽章金鑰，至少 32 bytes。可用 PowerShell 產生：
