@@ -155,6 +155,25 @@ public class ServerAdminAuthenticatorTests
         Assert.Equal(ServerAdminLoginResult.Success, Create().TryLogin(Account, Password));
     }
 
+    /// <summary>Stub 模式（requiresPassword=false）：救援帳號免密碼登入，空密碼也放行</summary>
+    [Fact]
+    public void Stub模式_免密碼登入成功()
+    {
+        Assert.Equal(ServerAdminLoginResult.Success,
+            Create().TryLogin(Account, null, requiresPassword: false));
+    }
+
+    /// <summary>Stub 模式不驗密碼，先前的失敗計數不應把免密碼登入擋在鎖定外</summary>
+    [Fact]
+    public void Stub模式_先前失敗不影響免密碼登入()
+    {
+        var auth = Create(maxAttempts: 2);
+        auth.TryLogin(Account, "wrong");   // 需密碼模式下的一次失敗
+
+        Assert.Equal(ServerAdminLoginResult.Success,
+            auth.TryLogin(Account, null, requiresPassword: false));
+    }
+
     [Fact]
     public void 連續失敗達門檻_觸發鎖定()
     {

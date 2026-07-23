@@ -76,6 +76,30 @@ public class IdentityServiceTests
         Assert.True(Create().Login(ServerAdminAccount, ServerAdminPassword).Success);
     }
 
+    /// <summary>
+    /// Stub（測試）模式下 serverAdmin 免密碼登入——與一般帳號一致。
+    /// 預設的 <see cref="StubAuthenticationProvider"/> 的 RequiresPassword 為 false，
+    /// 測試模式「一律免密碼」對所有帳號（含救援帳號）一致。
+    /// </summary>
+    [Fact]
+    public void Login_Stub模式_serverAdmin免密碼也能登入()
+    {
+        var outcome = Create().Login(ServerAdminAccount, null);
+
+        Assert.True(outcome.Success);
+        Assert.True(outcome.Identity!.IsServerAdmin);
+    }
+
+    /// <summary>需驗密碼的 Provider（如正式環境 Ldap）下，serverAdmin 仍必須提供正確密碼</summary>
+    [Fact]
+    public void Login_需密碼模式_serverAdmin空密碼被拒()
+    {
+        var outcome = Create(new AlwaysFailProvider()).Login(ServerAdminAccount, null);
+
+        Assert.False(outcome.Success);
+        Assert.Equal("帳號或密碼錯誤。", outcome.ErrorMessage);
+    }
+
     [Fact]
     public void Login_未建立的帳號_失敗且訊息指向管理員()
     {

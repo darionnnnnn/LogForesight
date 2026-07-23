@@ -52,11 +52,24 @@ public class ServerAdminAuthenticator
         return state.LockedUntil.Value - DateTime.UtcNow;
     }
 
-    public ServerAdminLoginResult TryLogin(string account, string? password)
+    /// <param name="requiresPassword">
+    /// 目前的驗證方式是否驗密碼（＝<see cref="IAuthenticationProvider.RequiresPassword"/>）。
+    /// Stub（測試）模式為 false：此時救援帳號比照一般帳號免密碼登入，讓「測試模式一律免密碼」
+    /// 對所有帳號一致。正式環境強制 Ldap（true），且 <see cref="WebAppSettings.Validate"/> 會擋下
+    /// 帶 Stub 上正式環境的部署，所以這條免密碼捷徑到不了正式環境。
+    /// </param>
+    public ServerAdminLoginResult TryLogin(string account, string? password, bool requiresPassword = true)
     {
         if (!IsServerAdmin(account)) return ServerAdminLoginResult.NotServerAdmin;
 
         if (LockedUntil(account) != null) return ServerAdminLoginResult.LockedOut;
+
+        // Stub 模式不驗密碼：直接視為成功，且清掉失敗計數（沒有密碼可錯，鎖定在此模式無意義）
+        if (!requiresPassword)
+        {
+            _failures.TryRemove(account, out _);
+            return ServerAdminLoginResult.Success;
+        }
 
         if (!string.IsNullOrEmpty(password) && PasswordHasher.Verify(password, _settings.PasswordHash))
         {
