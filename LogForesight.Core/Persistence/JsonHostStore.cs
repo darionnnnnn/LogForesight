@@ -35,6 +35,7 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
             existing.Active = host.Active;
             existing.GroupIds = host.GroupIds;
             existing.OwnerUserIds = host.OwnerUserIds;
+            existing.OrphanedFromSentinel = host.OrphanedFromSentinel;
             // LastReportAt、DisplayName 與 MergedInto 刻意不由此路徑覆寫：
             // 前兩者是批次的職責（Web 不知道 Sentinel 回報了什麼名字），
             // 後者只能經 Merge/Unmerge 設定

@@ -187,6 +187,15 @@ public static class ServiceCollectionExtensions
         // 不必每次請求都重讀解析（改設定也不需要重啟 Web）
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
 
+        // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線。
+        // 真連線的認證/回應解析待 Sentinel 環境驗證（見 SentinelRestDirectoryClient）
+        services.AddHttpClient();
+        services.AddScoped<INetiqDirectoryClient>(sp =>
+            sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment()
+                ? new StubNetiqDirectoryClient()
+                : new SentinelRestDirectoryClient(sp.GetRequiredService<IHttpClientFactory>()));
+        services.AddScoped<INetiqDiscoveryService, NetiqDiscoveryService>();
+
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<IRecordQueryService, RecordQueryService>();

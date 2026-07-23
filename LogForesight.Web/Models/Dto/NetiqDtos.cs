@@ -90,3 +90,74 @@ public class SetHostActiveRequest
 {
     public bool Active { get; set; }
 }
+
+// ── 主動探索匯入（docs/SCALE-2000-PLAN.md §1）───────────────────────────────
+
+/// <summary>可掃描的 Sentinel（帳密齊備才能主動探索）</summary>
+public class NetiqScanTargetDto
+{
+    public string Name { get; set; } = string.Empty;
+    public bool CanDiscover { get; set; }
+
+    /// <summary>不可掃描的原因（設定不完整），供畫面提示</summary>
+    public string? Reason { get; set; }
+}
+
+public class NetiqScanRequest
+{
+    [Required]
+    public string Server { get; set; } = string.Empty;
+}
+
+public class NetiqScanResultDto
+{
+    public string Token { get; set; } = string.Empty;
+    public string Server { get; set; } = string.Empty;
+    public int TotalCount { get; set; }
+    public List<NetiqSubnetDto> Subnets { get; set; } = new();
+}
+
+public class NetiqSubnetDto
+{
+    public string Cidr { get; set; } = string.Empty;
+    public int TotalCount { get; set; }
+    public int ExistingCount { get; set; }
+
+    /// <summary>與「因 Sentinel 移除而停用」的主機重疊——匯入即復活重綁</summary>
+    public int OrphanOverlapCount { get; set; }
+
+    public List<NetiqScanHostDto> Hosts { get; set; } = new();
+}
+
+public class NetiqScanHostDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string IpAddress { get; set; } = string.Empty;
+
+    /// <summary>使用中的既有主機（再勾＝更新顯示名/Sentinel 歸屬）</summary>
+    public bool Exists { get; set; }
+
+    /// <summary>與停用的孤兒主機重疊（原屬某 Sentinel、因移除而停用）</summary>
+    public bool OrphanOverlap { get; set; }
+
+    /// <summary>OrphanOverlap 時：原本所屬的 Sentinel 名稱</summary>
+    public string? OrphanedFrom { get; set; }
+}
+
+public class NetiqImportRequest
+{
+    [Required]
+    public string Token { get; set; } = string.Empty;
+
+    /// <summary>使用者勾選要匯入的 IP（＝HostName）</summary>
+    public List<string> SelectedIps { get; set; } = new();
+}
+
+public class NetiqImportResultDto
+{
+    public int Added { get; set; }
+    public int Updated { get; set; }
+
+    /// <summary>重疊復活（原被停用的孤兒主機重新綁到新 Sentinel）的台數</summary>
+    public int Revived { get; set; }
+}

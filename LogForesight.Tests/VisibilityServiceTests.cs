@@ -221,6 +221,7 @@ internal class FakeHostStore : IHostStore
         existing.Active = host.Active;
         existing.GroupIds = host.GroupIds;
         existing.OwnerUserIds = host.OwnerUserIds;
+        existing.OrphanedFromSentinel = host.OrphanedFromSentinel;
         return existing;
     }
 

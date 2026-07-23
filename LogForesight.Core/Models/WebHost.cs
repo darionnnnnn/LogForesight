@@ -61,6 +61,16 @@ public class WebHost
     /// 負責人的用途是處理人指派時的預設值與排序。
     /// </summary>
     public List<long> OwnerUserIds { get; set; } = new();
+
+    /// <summary>
+    /// 因所屬 Sentinel 自設定移除而被**系統**停用時，記下原本的 Sentinel 名稱（docs/SCALE-2000-PLAN.md §1.7）。
+    /// null＝不是這種情況（含管理員手動停用）。
+    ///
+    /// 為什麼要獨立欄位而不從「Active=false ＋ NetiqServer 不在設定」推導：要把**系統停用**
+    /// 與**人工停用**分開。人工停用代表人已表態不要這台，汰換 Sentinel 時不得替人反悔自動復活；
+    /// 只有帶此標記的主機才進 NetIQ 匯入精靈的「重疊」分類、被建議一鍵復活重綁。
+    /// </summary>
+    public string? OrphanedFromSentinel { get; set; }
 }
 
 /// <summary>主機群組（↔ lf_host_groups）。維度不限於部門，也可以是 DMZ、DB 伺服器等分類</summary>

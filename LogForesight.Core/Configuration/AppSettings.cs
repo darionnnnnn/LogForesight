@@ -206,6 +206,18 @@ public class SentinelServer
     public string Name { get; set; } = string.Empty;
 
     public string BaseUrl { get; set; } = string.Empty;
+
+    /// <summary>探索連線帳號（docs/SCALE-2000-PLAN.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
+    public string Username { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 探索連線密碼。**正式環境以環境變數覆寫**（NetIq__Servers__0__Password），不寫進版控。
+    /// Web 端唯讀解析同一份批次 appsettings（既有決策），但密碼絕不回傳前端——只回「可否掃描」。
+    /// </summary>
+    public string Password { get; set; } = string.Empty;
+
+    /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>
+    public bool CanDiscover => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
 }
 
 /// <summary>

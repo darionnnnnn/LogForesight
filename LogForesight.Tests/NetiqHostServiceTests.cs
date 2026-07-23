@@ -199,13 +199,24 @@ public class NetiqHostServiceTests
 
     internal sealed class FakeNetiqServerCatalog : INetiqServerCatalog
     {
-        private readonly List<string> _names;
+        private readonly List<SentinelServer> _servers;
 
-        public FakeNetiqServerCatalog(params string[] names) => _names = names.ToList();
+        public FakeNetiqServerCatalog(params string[] names) =>
+            _servers = names.Select(n => new SentinelServer { Name = n }).ToList();
 
-        public List<string> GetServerNames() => _names.ToList();
+        public FakeNetiqServerCatalog(params SentinelServer[] servers) => _servers = servers.ToList();
+
+        public List<SentinelServer> GetServers() => _servers.ToList();
+
+        public SentinelServer? GetServer(string? name) =>
+            string.IsNullOrWhiteSpace(name)
+                ? null
+                : _servers.FirstOrDefault(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        public List<string> GetServerNames() => _servers.Select(s => s.Name).ToList();
 
         public bool IsKnownServer(string? name) =>
-            !string.IsNullOrWhiteSpace(name) && _names.Contains(name.Trim(), StringComparer.OrdinalIgnoreCase);
+            !string.IsNullOrWhiteSpace(name) &&
+            _servers.Any(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 }

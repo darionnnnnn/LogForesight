@@ -19,6 +19,12 @@ public interface INetiqServerCatalog
 
     /// <summary>名稱是否存在於設定中（不分大小寫）；用於登錄與匯入時的驗證</summary>
     bool IsKnownServer(string? name);
+
+    /// <summary>完整的 Sentinel 設定（含 BaseUrl 與探索帳密）——主動探索用。密碼絕不外流至前端</summary>
+    List<SentinelServer> GetServers();
+
+    /// <summary>依名稱取單一 Sentinel 設定（不分大小寫，查無回 null）</summary>
+    SentinelServer? GetServer(string? name);
 }
 
 public class NetiqServerCatalog : INetiqServerCatalog
@@ -28,7 +34,7 @@ public class NetiqServerCatalog : INetiqServerCatalog
     private readonly string _settingsPath;
     private readonly object _lock = new();
 
-    private List<string>? _cached;
+    private List<SentinelServer>? _cached;
     private DateTime _cachedFileTime;
 
     public NetiqServerCatalog(WebAppSettings settings)
@@ -36,7 +42,7 @@ public class NetiqServerCatalog : INetiqServerCatalog
         _settingsPath = Path.Combine(settings.Storage.ResolveDataRoot(), "appsettings.json");
     }
 
-    public List<string> GetServerNames()
+    public List<SentinelServer> GetServers()
     {
         lock (_lock)
         {
@@ -45,7 +51,7 @@ public class NetiqServerCatalog : INetiqServerCatalog
 
             if (_cached == null || lastWrite != _cachedFileTime)
             {
-                _cached = LoadServerNames();
+                _cached = LoadServers();
                 _cachedFileTime = lastWrite;
             }
 
@@ -53,16 +59,24 @@ public class NetiqServerCatalog : INetiqServerCatalog
         }
     }
 
+    public SentinelServer? GetServer(string? name) =>
+        string.IsNullOrWhiteSpace(name)
+            ? null
+            : GetServers().FirstOrDefault(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    public List<string> GetServerNames() =>
+        GetServers().Select(s => s.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+
     public bool IsKnownServer(string? name) =>
         !string.IsNullOrWhiteSpace(name) &&
         GetServerNames().Contains(name.Trim(), StringComparer.OrdinalIgnoreCase);
 
-    private List<string> LoadServerNames()
+    private List<SentinelServer> LoadServers()
     {
         if (!File.Exists(_settingsPath))
         {
             Log.Info("批次設定檔不存在（{0}），Sentinel 名單為空", _settingsPath);
-            return new List<string>();
+            return new List<SentinelServer>();
         }
 
         try
@@ -77,10 +91,9 @@ public class NetiqServerCatalog : INetiqServerCatalog
             var parsed = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_settingsPath), options);
 
             return (parsed?.NetIq.Servers ?? new List<SentinelServer>())
-                .Select(s => s.Name?.Trim() ?? string.Empty)
-                .Where(name => name.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Where(s => !string.IsNullOrWhiteSpace(s.Name))
+                .GroupBy(s => s.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
                 .ToList();
         }
         catch (Exception ex) when (ex is JsonException or IOException)
@@ -88,7 +101,7 @@ public class NetiqServerCatalog : INetiqServerCatalog
             // 讀不到就是名單為空，不讓站台掛掉——但要留下紀錄，
             // 否則畫面上「Sentinel 下拉是空的」會查不出原因
             Log.Warn(ex, "解析批次設定檔的 NetIq.Servers 失敗（{0}）：{1}", _settingsPath, ex.Message);
-            return new List<string>();
+            return new List<SentinelServer>();
         }
     }
 }

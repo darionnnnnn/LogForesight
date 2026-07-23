@@ -218,6 +218,21 @@ var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險
 // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
 // 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺——
 // 此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
+// Sentinel 生命週期（docs/SCALE-2000-PLAN.md §1.7）：自設定移除的 Sentinel，停用其所屬 NetIQ 主機。
+// 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
+// 冪等（已停用不重複處理）、且有空名單安全欄杆（防設定檔誤刪演變成全站停用）。
+try
+{
+    var sentinelNames = settings.NetIq.Servers.Select(s => s.Name).ToList();
+    var sweep = NetiqOrphanSweeper.Sweep(StorageFactory.CreateHostStore(settings.Storage, dataRoot), sentinelNames);
+    if (sweep.OrphanedCount > 0)
+        Console.WriteLine($"  ⚠ 偵測到 Sentinel 自設定移除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
+}
+
 long currentHostId = 0;
 try
 {

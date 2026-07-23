@@ -548,4 +548,159 @@ searchInput.addEventListener('input', render);
 filterSelect.addEventListener('change', render);
 sentinelFilter.addEventListener('change', render);
 
+// ── 從 NetIQ 主動探索匯入精靈（docs/SCALE-2000-PLAN.md §1）─────────────────────
+
+const scanModal = new bootstrap.Modal(document.getElementById('scan-modal'));
+let scanToken = null;
+
+document.getElementById('btn-scan-netiq').addEventListener('click', async () => {
+    document.getElementById('scan-result').replaceChildren();
+    document.getElementById('scan-selection').textContent = '';
+    document.getElementById('scan-import').disabled = true;
+    scanToken = null;
+
+    const select = document.getElementById('scan-server');
+    select.replaceChildren();
+    try {
+        const targets = await api.get('/api/admin/netiq/scan-targets');
+        if (targets.length === 0) {
+            document.getElementById('scan-hint').textContent =
+                '批次 appsettings.json 尚未設定任何 Sentinel。';
+        } else {
+            document.getElementById('scan-hint').textContent = '';
+            for (const t of targets) {
+                const opt = document.createElement('option');
+                opt.value = t.name;
+                opt.textContent = t.canDiscover ? t.name : `${t.name}（${t.reason}）`;
+                opt.disabled = !t.canDiscover;
+                select.appendChild(opt);
+            }
+        }
+    } catch {
+        return;
+    }
+    scanModal.show();
+});
+
+document.getElementById('scan-run').addEventListener('click', async () => {
+    const server = document.getElementById('scan-server').value;
+    if (!server) return;
+
+    const restore = withBusy(document.getElementById('scan-run'), '掃描中');
+    try {
+        const result = await api.post('/api/admin/netiq/scan', { server });
+        scanToken = result.token;
+        renderScanResult(result);
+    } catch {
+        // 錯誤已由 api.js 顯示（含連線/逾時）
+    } finally {
+        restore();
+    }
+});
+
+function renderScanResult(result) {
+    const container = document.getElementById('scan-result');
+    container.replaceChildren();
+
+    const total = document.createElement('div');
+    total.className = 'small text-muted mb-2';
+    total.textContent = `共掃描到 ${result.totalCount} 台，分佈於 ${result.subnets.length} 個網段`;
+    container.appendChild(total);
+
+    for (const subnet of result.subnets) {
+        const details = document.createElement('details');
+        details.className = 'mb-2 border rounded';
+
+        const summary = document.createElement('summary');
+        summary.className = 'px-2 py-1 small';
+        summary.style.cursor = 'pointer';
+        // 網段層級的勾選框：勾整段
+        const segBox = document.createElement('input');
+        segBox.type = 'checkbox';
+        segBox.className = 'form-check-input me-2';
+        segBox.addEventListener('click', e => e.stopPropagation());
+        segBox.addEventListener('change', () => {
+            for (const box of details.querySelectorAll('input.lf-scan-host:not(:disabled)')) box.checked = segBox.checked;
+            updateScanSelection();
+        });
+        summary.appendChild(segBox);
+        const label = document.createElement('span');
+        label.textContent = `${subnet.cidr}（${subnet.totalCount} 台` +
+            (subnet.existingCount > 0 ? `，${subnet.existingCount} 台已登錄` : '') +
+            (subnet.orphanOverlapCount > 0 ? `，${subnet.orphanOverlapCount} 台可復活` : '') + '）';
+        summary.appendChild(label);
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'px-2 pb-2';
+        for (const host of subnet.hosts) {
+            body.appendChild(scanHostRow(host));
+        }
+        details.appendChild(body);
+        container.appendChild(details);
+    }
+    updateScanSelection();
+}
+
+function scanHostRow(host) {
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-center gap-2 py-1 small';
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'form-check-input lf-scan-host';
+    box.dataset.ip = host.ipAddress;
+    // 新主機與可復活的預設勾選；使用中的既有主機預設不勾（再勾＝更新歸屬）
+    box.checked = host.orphanOverlap || (!host.exists);
+    box.addEventListener('change', updateScanSelection);
+    row.appendChild(box);
+
+    const name = document.createElement('span');
+    name.textContent = `${host.ipAddress}　${host.hostName}`;
+    row.appendChild(name);
+
+    if (host.exists) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = '已登錄';
+        row.appendChild(badge);
+    }
+    if (host.orphanOverlap) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--primary';
+        badge.textContent = `原屬 ${host.orphanedFrom}，因移除而停用`;
+        row.appendChild(badge);
+    }
+    return row;
+}
+
+function selectedScanIps() {
+    return Array.from(document.querySelectorAll('#scan-result input.lf-scan-host:checked'))
+        .map(box => box.dataset.ip);
+}
+
+function updateScanSelection() {
+    const count = selectedScanIps().length;
+    document.getElementById('scan-selection').textContent = count > 0 ? `已選 ${count} 台` : '';
+    document.getElementById('scan-import').disabled = count === 0 || !scanToken;
+}
+
+document.getElementById('scan-import').addEventListener('click', async () => {
+    const selectedIps = selectedScanIps();
+    if (selectedIps.length === 0 || !scanToken) return;
+
+    const restore = withBusy(document.getElementById('scan-import'), '匯入中');
+    try {
+        const result = await api.post('/api/admin/netiq/import', { token: scanToken, selectedIps });
+        toast(`匯入完成：新增 ${result.added}、更新 ${result.updated}` +
+            (result.revived > 0 ? `、重新啟用 ${result.revived}` : ''), 'success');
+        scanModal.hide();
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
 load();

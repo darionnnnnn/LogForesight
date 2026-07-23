@@ -22,6 +22,7 @@
             <select class="form-select form-select-sm" id="sentinel-filter" style="width: 160px;">
                 <option value="">所有 Sentinel</option>
             </select>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="btn-scan-netiq">從 NetIQ 匯入</button>
             <button type="button" class="btn btn-sm btn-outline-primary" id="btn-bulk-hosts">批次貼上</button>
             <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
         </div>
@@ -126,6 +127,34 @@
                     <button type="submit" class="btn btn-primary" id="bulk-save">登錄</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- 從 NetIQ 主動探索匯入精靈 -->
+<div class="modal fade" id="scan-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">從 NetIQ 匯入主機</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex gap-2 align-items-end mb-3">
+                    <div class="flex-grow-1">
+                        <label for="scan-server" class="form-label small mb-1">Sentinel</label>
+                        <select class="form-select form-select-sm" id="scan-server"></select>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary" id="scan-run">掃描</button>
+                </div>
+                <div id="scan-hint" class="small text-muted mb-2"></div>
+                <div id="scan-result"></div>
+            </div>
+            <div class="modal-footer">
+                <div class="me-auto small text-muted" id="scan-selection"></div>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="scan-import" disabled>匯入勾選主機</button>
+            </div>
         </div>
     </div>
 </div>

@@ -19,17 +19,20 @@ public class AdminController : ControllerBase
     private readonly IUserAdminService _users;
     private readonly IHostAdminService _hosts;
     private readonly INetiqHostService _netiq;
+    private readonly INetiqDiscoveryService _discovery;
     private readonly IGroupAdminService _groups;
 
     public AdminController(
         IUserAdminService users,
         IHostAdminService hosts,
         INetiqHostService netiq,
+        INetiqDiscoveryService discovery,
         IGroupAdminService groups)
     {
         _users = users;
         _hosts = hosts;
         _netiq = netiq;
+        _discovery = discovery;
         _groups = groups;
     }
 
@@ -113,6 +116,20 @@ public class AdminController : ControllerBase
     [HttpPut("hosts/{hostId:long}/active")]
     public ApiResponse<HostDto> SetHostActive(long hostId, [FromBody] SetHostActiveRequest request) =>
         ApiResponse<HostDto>.Ok(_netiq.SetActive(hostId, request.Active));
+
+    // ── NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1）──────────────────────────
+
+    [HttpGet("netiq/scan-targets")]
+    public ApiResponse<List<NetiqScanTargetDto>> GetScanTargets() =>
+        ApiResponse<List<NetiqScanTargetDto>>.Ok(_discovery.GetScanTargets());
+
+    [HttpPost("netiq/scan")]
+    public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>
+        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, ct));
+
+    [HttpPost("netiq/import")]
+    public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
+        ApiResponse<NetiqImportResultDto>.Ok(_discovery.Import(request));
 
     // ── 主機群組與授權矩陣 ────────────────────────────────────────────────────
 
