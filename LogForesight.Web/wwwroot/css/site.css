@@ -621,6 +621,116 @@ a.lf-stat:hover .lf-card,
     100% { background: transparent; }
 }
 
+/* ── 篩選工具列（§5.0 D-0）────────────────────────────────────────────────
+   統一問題查詢／規則維護／主機／使用者頁的搜尋＋快速篩選＋排序排版；
+   取代各頁各自手排的 flex 列與裸 btn-group，避免排版各異、間距不一致。 */
+
+.lf-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-3);
+    flex-wrap: wrap;
+    padding: var(--lf-space-3) var(--lf-space-4);
+    background: var(--lf-gray-50);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    margin-bottom: var(--lf-space-4);
+}
+
+.lf-toolbar__row {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-3);
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+.lf-toolbar__row + .lf-toolbar__row {
+    padding-top: var(--lf-space-3);
+    border-top: 1px solid var(--lf-border);
+}
+
+.lf-toolbar__search {
+    flex: 1 1 220px;
+    min-width: 180px;
+    max-width: 320px;
+}
+
+.lf-toolbar__field {
+    min-width: 140px;
+}
+
+.lf-toolbar__group {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    flex-wrap: wrap;
+}
+
+.lf-toolbar__group-label {
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+}
+
+.lf-toolbar__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-1);
+}
+
+.lf-toolbar__sort {
+    width: auto;
+    min-width: 9rem;
+}
+
+.lf-toolbar__spacer { flex: 1 1 auto; }
+
+.lf-toolbar__divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--lf-border-strong);
+    margin: 0 var(--lf-space-1);
+}
+
+/* chip：取代裸 btn-group 的篩選鈕，藥丸狀＋淡底，比按鈕更輕、比純文字更可點 */
+.lf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .35em;
+    padding: .3rem .7rem;
+    border-radius: var(--lf-radius-pill);
+    border: 1px solid var(--lf-border-strong);
+    background: var(--lf-card-bg);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), color var(--lf-transition);
+}
+
+.lf-chip:hover { border-color: var(--lf-primary-hover); color: var(--lf-primary-text); }
+
+.lf-chip.active {
+    background: var(--lf-primary);
+    border-color: var(--lf-primary);
+    color: #fff;
+    font-weight: 600;
+}
+
+.lf-chip:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+
+.lf-chip__count {
+    font-variant-numeric: tabular-nums;
+    opacity: .85;
+}
+
 /* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
 
 .table {

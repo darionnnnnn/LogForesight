@@ -294,6 +294,52 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     container.replaceChildren(wrap);
 }
 
+/**
+ * 篩選 chip 群組渲染（§5.0 D-0）：問題查詢／規則維護／主機／使用者頁共用同一套視覺與互動，
+ * 取代各頁各自手排的裸 btn-group。multi=true 可複選（點擊只切換自己）；multi=false 為單選
+ * （點擊會清掉群組內其他 active，適合「狀態」「排序方向」這類互斥篩選）。
+ * onToggle(value, nowActive) 由呼叫端更新篩選狀態並重新查詢/重繪；本函式只管畫面與 class。
+ */
+export function renderChips(container, { items, attr, activeValues, multi = true, onToggle }) {
+    container.replaceChildren();
+    const active = new Set(activeValues ?? []);
+
+    for (const item of items) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lf-chip';
+        btn.dataset[attr] = item.value;
+        if (active.has(item.value)) btn.classList.add('active');
+        if (item.disabled) btn.disabled = true;
+        if (item.title) btn.title = item.title;
+
+        const text = document.createElement('span');
+        text.textContent = item.label;
+        btn.appendChild(text);
+
+        if (item.count !== undefined && item.count !== null) {
+            const count = document.createElement('span');
+            count.className = 'lf-chip__count';
+            count.textContent = String(item.count);
+            btn.appendChild(count);
+        }
+
+        btn.addEventListener('click', () => {
+            if (!multi) {
+                for (const other of container.querySelectorAll('.lf-chip')) other.classList.remove('active');
+                btn.classList.add('active');
+                onToggle(item.value, true);
+                return;
+            }
+            const nowActive = !btn.classList.contains('active');
+            btn.classList.toggle('active', nowActive);
+            onToggle(item.value, nowActive);
+        });
+
+        container.appendChild(btn);
+    }
+}
+
 /** 空狀態（§8.6-5）：不留白畫面，要說明「接下來該做什麼」 */
 export function renderEmpty(container, { title = '尚無資料', hint = '', icon: iconName = 'inbox' } = {}) {
     const el = document.createElement('div');

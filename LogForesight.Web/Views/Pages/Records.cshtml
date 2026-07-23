@@ -2,70 +2,76 @@
     ViewData["Title"] = "問題查詢";
 }
 
-<div class="lf-card mb-3 lf-no-print">
-    <div class="lf-card__body">
-        <form id="filter-form" class="row g-3 align-items-end">
-            <div class="col-md-3">
-                <label for="filter-hosts" class="form-label small mb-1">主機</label>
-                <select class="form-select form-select-sm" id="filter-hosts" multiple size="1"></select>
-            </div>
-            <div class="col-md-2">
-                <label for="filter-from" class="form-label small mb-1">起始日期</label>
-                <input type="date" class="form-control form-control-sm" id="filter-from" />
-            </div>
-            <div class="col-md-2">
-                <label for="filter-to" class="form-label small mb-1">結束日期</label>
-                <input type="date" class="form-control form-control-sm" id="filter-to" />
-            </div>
-            <div class="col-md-2">
-                <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
-                <input type="number" class="form-control form-control-sm" id="filter-event-id" />
-            </div>
-            <div class="col-md-3 d-flex gap-2">
-                <button type="submit" class="btn btn-sm btn-primary">套用主機／日期</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset">清除條件</button>
-            </div>
+<div class="lf-toolbar lf-no-print">
+    <form id="filter-form" class="lf-toolbar__row">
+        <div class="lf-toolbar__field" style="min-width: 220px;">
+            <label for="filter-hosts" class="form-label small mb-1">主機</label>
+            <select class="form-select form-select-sm" id="filter-hosts" multiple size="1"></select>
+        </div>
+        <div class="lf-toolbar__field" style="min-width: 150px;">
+            <label for="filter-from" class="form-label small mb-1">起始日期</label>
+            <input type="date" class="form-control form-control-sm" id="filter-from" />
+        </div>
+        <div class="lf-toolbar__field" style="min-width: 150px;">
+            <label for="filter-to" class="form-label small mb-1">結束日期</label>
+            <input type="date" class="form-control form-control-sm" id="filter-to" />
+        </div>
+        <div class="lf-toolbar__field" style="min-width: 100px;">
+            <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
+            <input type="number" class="form-control form-control-sm" id="filter-event-id" />
+        </div>
+        <div class="d-flex gap-2 align-self-end">
+            <button type="submit" class="btn btn-sm btn-primary">套用</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset">清除條件</button>
+        </div>
 
-            <div class="col-12 d-flex flex-wrap gap-4 align-items-center">
-                <div class="d-flex align-items-center gap-2">
-                    <span class="form-label small mb-0">風險層級</span>
-                    <div class="btn-group btn-group-sm" role="group" aria-label="風險層級" id="filter-risk-chips">
-                        <button type="button" class="btn btn-outline-secondary" data-risk="高">高</button>
-                        <button type="button" class="btn btn-outline-secondary" data-risk="中">中</button>
-                        <button type="button" class="btn btn-outline-secondary" data-risk="低">低</button>
-                    </div>
-                </div>
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <span class="form-label small mb-0">風險類型</span>
-                    <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="風險類型" id="filter-category-chips">
-                        <button type="button" class="btn btn-outline-secondary" data-category="Storage">儲存裝置</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Hardware">硬體</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Security">安全</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Service">服務</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Backup">備份</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Config">設定</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Resource">資源</button>
-                        <button type="button" class="btn btn-outline-secondary" data-category="Other">其他</button>
-                    </div>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="form-label small mb-0">處理狀態</span>
-                    <div class="btn-group btn-group-sm" role="group" aria-label="處理狀態" id="filter-status-chips">
-                        <button type="button" class="btn btn-outline-secondary" data-status="open">未處理</button>
-                        <button type="button" class="btn btn-outline-secondary" data-status="in_progress">處理中</button>
-                        <button type="button" class="btn btn-outline-secondary" data-status="resolved">已處理</button>
-                    </div>
-                </div>
-                <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="期間快捷">
-                    <button type="button" class="btn btn-outline-secondary" data-range="7">近 7 天</button>
-                    <button type="button" class="btn btn-outline-secondary" data-range="30">近 30 天</button>
-                    <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
-                </div>
-            </div>
+        <div class="lf-toolbar__spacer"></div>
 
-            <div class="col-12 d-flex flex-wrap gap-2 align-items-center" id="active-conditions"></div>
-        </form>
+        <div class="lf-toolbar__group align-self-end">
+            <span class="lf-toolbar__group-label">期間快捷</span>
+            <div class="lf-toolbar__chips">
+                <button type="button" class="lf-chip" data-range="7">近 7 天</button>
+                <button type="button" class="lf-chip" data-range="30">近 30 天</button>
+                <button type="button" class="lf-chip" data-range="90">近 90 天</button>
+            </div>
+        </div>
+    </form>
+
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">風險層級</span>
+            <div class="lf-toolbar__chips" id="filter-risk-chips">
+                <button type="button" class="lf-chip" data-risk="高">高</button>
+                <button type="button" class="lf-chip" data-risk="中">中</button>
+                <button type="button" class="lf-chip" data-risk="低">低</button>
+            </div>
+        </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">風險類型</span>
+            <div class="lf-toolbar__chips" id="filter-category-chips">
+                <button type="button" class="lf-chip" data-category="Storage">儲存裝置</button>
+                <button type="button" class="lf-chip" data-category="Hardware">硬體</button>
+                <button type="button" class="lf-chip" data-category="Security">安全</button>
+                <button type="button" class="lf-chip" data-category="Service">服務</button>
+                <button type="button" class="lf-chip" data-category="Backup">備份</button>
+                <button type="button" class="lf-chip" data-category="Config">設定</button>
+                <button type="button" class="lf-chip" data-category="Resource">資源</button>
+                <button type="button" class="lf-chip" data-category="Other">其他</button>
+            </div>
+        </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">處理狀態</span>
+            <div class="lf-toolbar__chips" id="filter-status-chips">
+                <button type="button" class="lf-chip" data-status="open">未處理</button>
+                <button type="button" class="lf-chip" data-status="in_progress">處理中</button>
+                <button type="button" class="lf-chip" data-status="resolved">已處理</button>
+            </div>
+        </div>
     </div>
+
+    <div class="lf-toolbar__row" id="active-conditions"></div>
 </div>
 
 <div class="lf-card">

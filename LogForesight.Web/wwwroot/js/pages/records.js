@@ -220,6 +220,9 @@ function renderActiveConditions(filters) {
     if (filters.severity) tags.push({ label: `嚴重度：${filters.severity}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
 
+    // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
+    container.classList.toggle('d-none', tags.length === 0);
+
     for (const tag of tags) {
         const chip = document.createElement('span');
         chip.className = 'lf-badge lf-badge--primary d-inline-flex align-items-center gap-1';
