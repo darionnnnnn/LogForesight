@@ -22,11 +22,15 @@ public class RecordListItemDto
 
     public bool AiAnalyzed { get; set; }
 
-    /// <summary>處理狀態（未處理過的風險日為 open）</summary>
+    /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
     public string? HandlerName { get; set; }
     public bool IsOverdue { get; set; }
+
+    /// <summary>當日問題結案進度（清單顯示 N/M 已處理）；TotalIssues 為 0 時前端不顯示</summary>
+    public int TotalIssues { get; set; }
+    public int ClosedIssues { get; set; }
 }
 
 /// <summary>

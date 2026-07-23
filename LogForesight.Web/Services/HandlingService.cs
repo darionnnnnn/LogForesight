@@ -255,22 +255,33 @@ public class HandlingService : IHandlingService
         string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
 
         var hostNames = records.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var handlings = _store.GetMany(hostNames, records.Min(r => r.Date), records.Max(r => r.Date));
+        var from = records.Min(r => r.Date);
+        var to = records.Max(r => r.Date);
+        var handlings = _store.GetMany(hostNames, from, to);
+        var issueHandlings = _issueStore.GetMany(hostNames, from, to);
 
         var todo = new HandlingTodoDto();
         foreach (var record in records)
         {
+            var name = NameOf(record);
             var handling = handlings.FirstOrDefault(h =>
-                string.Equals(h.HostName, NameOf(record), StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
                 h.Date.Date == record.Date.Date);
 
-            var status = handling?.Status ?? HandlingStatuses.Open;
-            if (status == HandlingStatuses.Open) todo.OpenCount++;
-            else if (status == HandlingStatuses.InProgress) todo.InProgressCount++;
+            // 日狀態由問題層級推導（方案 B，與問題清單同一套規則）——
+            // 全部問題結案的風險日不再算未處理，即使日層級從沒被人動過
+            var forDay = issueHandlings
+                .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
+                            h.Date.Date == record.Date.Date)
+                .ToList();
+            var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status);
+
+            if (progress.DayStatus == HandlingStatuses.Open) todo.OpenCount++;
+            else if (progress.DayStatus == HandlingStatuses.InProgress) todo.InProgressCount++;
 
             if (handling?.DueDate.HasValue == true &&
                 handling.DueDate.Value.Date < DateTime.Today &&
-                HandlingStatuses.Unresolved.Contains(status))
+                progress.IsUnresolved)
             {
                 todo.OverdueCount++;
             }

@@ -70,16 +70,18 @@ public class RecordQueryService : IRecordQueryService
         // 處理狀態（以現行主機名稱為鍵）與清單的連結才對得上
         var lookup = new HostLookup(_hosts.GetAll());
 
-        // 處理狀態存在另一份資料（handling.json），一次撈起來在記憶體 join——
-        // 逐筆查會變成 N 次讀取，而 JSONL 後端的每次讀取都是一次檔案解析
+        // 處理狀態存在另外兩份資料（日層級 handling.json、問題層級 issue_handling.json），
+        // 各一次撈起來在記憶體 join——逐筆查會變成 N 次檔案解析。日狀態由兩者推導（方案 B）
         var handlings = LoadHandlings(records, lookup);
+        var issueHandlings = LoadIssueHandlings(records, lookup);
+
+        DayHandlingDerivation.DayProgress Progress(DailyAnalysisRecord r) =>
+            DeriveProgress(r, handlings, issueHandlings, lookup);
 
         if (request.Statuses is { Count: > 0 })
         {
             var wanted = request.Statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            records = records
-                .Where(r => wanted.Contains(StatusOf(handlings, lookup, r)))
-                .ToList();
+            records = records.Where(r => wanted.Contains(Progress(r).DayStatus)).ToList();
         }
 
         if (request.Overdue == true)
@@ -90,7 +92,7 @@ public class RecordQueryService : IRecordQueryService
                     var handling = FindHandling(handlings, lookup, r);
                     return handling?.DueDate.HasValue == true &&
                            handling.DueDate.Value.Date < DateTime.Today &&
-                           HandlingStatuses.Unresolved.Contains(handling.Status);
+                           Progress(r).IsUnresolved;
                 })
                 .ToList();
         }
@@ -109,7 +111,7 @@ public class RecordQueryService : IRecordQueryService
         return new PagedResult<RecordListItemDto>
         {
             Items = ordered.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r)))
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r)))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
@@ -205,6 +207,34 @@ public class RecordQueryService : IRecordQueryService
         return _handlings.GetMany(hostNames, from, to);
     }
 
+    private List<IssueHandling> LoadIssueHandlings(List<DailyAnalysisRecord> records, HostLookup lookup)
+    {
+        if (records.Count == 0) return new List<IssueHandling>();
+
+        var hostNames = records.Select(r => HostNameOf(lookup, r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return _issueHandlings.GetMany(hostNames, records.Min(r => r.Date), records.Max(r => r.Date));
+    }
+
+    /// <summary>單筆紀錄的日狀態推導（方案 B）：日層級狀態 + 當日問題層級標記，走 DayHandlingDerivation 單點規則</summary>
+    private DayHandlingDerivation.DayProgress DeriveProgress(
+        DailyAnalysisRecord record,
+        List<RecordHandling> dayHandlings,
+        List<IssueHandling> issueHandlings,
+        HostLookup lookup)
+    {
+        var name = HostNameOf(lookup, record);
+        var dayStatus = FindHandling(dayHandlings, lookup, record)?.Status;
+        var forDay = issueHandlings
+            .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
+                        h.Date.Date == record.Date.Date)
+            .ToList();
+
+        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus);
+    }
+
     /// <summary>
     /// 紀錄對應的**現行**主機名稱——處理狀態以現行名稱為鍵（HandlingService 一律由 hostId 解析），
     /// 所以合併前寫在舊識別下的紀錄要用存活主機的名稱去找，否則它們的處理狀態會全部看起來像未處理。
@@ -218,10 +248,6 @@ public class RecordQueryService : IRecordQueryService
         handlings.FirstOrDefault(h =>
             string.Equals(h.HostName, HostNameOf(lookup, record), StringComparison.OrdinalIgnoreCase) &&
             h.Date.Date == record.Date.Date);
-
-    /// <summary>從未處理過的風險日視為 open——待辦清單必須包含它們，否則新問題不會出現在待辦裡</summary>
-    private static string StatusOf(List<RecordHandling> handlings, HostLookup lookup, DailyAnalysisRecord record) =>
-        FindHandling(handlings, lookup, record)?.Status ?? HandlingStatuses.Open;
 
     public RecordDetailDto GetDetail(long hostId, DateTime date)
     {
@@ -399,13 +425,12 @@ public class RecordQueryService : IRecordQueryService
     private RecordListItemDto ToListItem(
         DailyAnalysisRecord record,
         HostLookup lookup,
-        RecordHandling? handling)
+        RecordHandling? handling,
+        DayHandlingDerivation.DayProgress progress)
     {
         // 顯示與連結一律指向**存活**主機：合併之後，舊識別的紀錄若還掛著舊 id，
         // 使用者點進去會落到已停用的墓碑列
         var host = lookup.For(record);
-
-        var status = handling?.Status ?? HandlingStatuses.Open;
 
         return new RecordListItemDto
         {
@@ -422,14 +447,16 @@ public class RecordQueryService : IRecordQueryService
             HasCorrelation = record.CorrelationAlerts.Count > 0,
             HasCoverageGap = HasCoverageGap(record),
             AiAnalyzed = record.AiAnalyzed,
-            HandlingStatus = status,
-            HandlingStatusText = HandlingStatusText(status),
+            HandlingStatus = progress.DayStatus,
+            HandlingStatusText = HandlingStatusText(progress.DayStatus),
+            TotalIssues = progress.Total,
+            ClosedIssues = progress.Closed,
             HandlerName = handling?.HandlerId.HasValue == true
                 ? _users.Get(handling.HandlerId.Value)?.DisplayName
                 : null,
             IsOverdue = handling?.DueDate.HasValue == true &&
                         handling.DueDate.Value.Date < DateTime.Today &&
-                        HandlingStatuses.Unresolved.Contains(status)
+                        progress.IsUnresolved
         };
     }
 

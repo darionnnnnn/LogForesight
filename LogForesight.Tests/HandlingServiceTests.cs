@@ -378,6 +378,36 @@ public class HandlingServiceTests
         Assert.Equal(HandlingStatuses.Open, cleared.DayStatus);
     }
 
+    /// <summary>
+    /// Phase 2 釘樁：問題全部結案的風險日，即使日層級從沒被人動過，也不再算未處理。
+    /// 這是「日狀態由問題層推導」在待辦統計上的兌現。
+    /// </summary>
+    [Fact]
+    public void 待辦統計_問題全部結案的風險日不算未處理()
+    {
+        var day = Today.AddDays(-7);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        var record = _repository.AddRecord(_host.HostName, day, a, b);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(b),
+            Status = IssueHandlingStatuses.WontFix
+        });
+
+        var todo = service.GetTodo(new[] { record });
+
+        Assert.Equal(0, todo.OpenCount);
+        Assert.Equal(0, todo.InProgressCount);
+    }
+
     [Fact]
     public void 標記不存在的問題_擲驗證例外()
     {

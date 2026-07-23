@@ -236,6 +236,15 @@ function handlingCell(record) {
         wrap.appendChild(overdue);
     }
 
+    // 問題結案進度（方案 B）：未全部結案時顯示 N/M，讓「處理中」看得出還剩幾項
+    if (record.totalIssues > 0 && record.closedIssues < record.totalIssues) {
+        const progress = document.createElement('span');
+        progress.className = 'text-muted small ms-2';
+        progress.textContent = `${record.closedIssues}/${record.totalIssues}`;
+        progress.title = '已結案問題數 / 當日問題總數';
+        wrap.appendChild(progress);
+    }
+
     return wrap;
 }
 
