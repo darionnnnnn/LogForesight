@@ -32,7 +32,7 @@ public interface IImportLogStore
 /// <summary>JSONL 後端實作：webdata\import_logs.jsonl（append-only）</summary>
 public class JsonImportLogStore : IImportLogStore
 {
-    private readonly string _filePath;
+    private readonly IJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
 
@@ -42,11 +42,11 @@ public class JsonImportLogStore : IImportLogStore
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public JsonImportLogStore(string filePath)
+    public JsonImportLogStore(string filePath) : this(new FileJsonLogStore(filePath)) { }
+
+    public JsonImportLogStore(IJsonLogStore log)
     {
-        _filePath = filePath;
-        var dir = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        _log = log;
         _lastId = ReadAll().LastOrDefault()?.ImportId ?? 0;
     }
 
@@ -55,9 +55,7 @@ public class JsonImportLogStore : IImportLogStore
         lock (_lock)
         {
             entry.ImportId = ++_lastId;
-            File.AppendAllText(_filePath,
-                JsonSerializer.Serialize(entry, JsonOptions) + Environment.NewLine,
-                new UTF8Encoding(false));
+            _log.AppendLine(JsonSerializer.Serialize(entry, JsonOptions));
         }
     }
 
@@ -66,25 +64,20 @@ public class JsonImportLogStore : IImportLogStore
 
     private List<ImportLogEntry> ReadAll()
     {
-        lock (_lock)
+        var result = new List<ImportLogEntry>();
+        foreach (var line in _log.ReadLines())
         {
-            if (!File.Exists(_filePath)) return new List<ImportLogEntry>();
-
-            var result = new List<ImportLogEntry>();
-            foreach (var line in File.ReadLines(_filePath, Encoding.UTF8))
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var entry = JsonSerializer.Deserialize<ImportLogEntry>(line, JsonOptions);
-                    if (entry != null) result.Add(entry);
-                }
-                catch (JsonException)
-                {
-                    // 逐行獨立：單行損毀只跳過該行
-                }
+                var entry = JsonSerializer.Deserialize<ImportLogEntry>(line, JsonOptions);
+                if (entry != null) result.Add(entry);
             }
-            return result;
+            catch (JsonException)
+            {
+                // 逐行獨立：單行損毀只跳過該行
+            }
         }
+        return result;
     }
 }

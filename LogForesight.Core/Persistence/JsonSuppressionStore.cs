@@ -13,13 +13,15 @@ public class JsonSuppressionStore : ISuppressionStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly string _filePath;
+    private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
     public JsonSuppressionStore(string? filePath = null)
-    {
-        _filePath = filePath ?? Path.Combine(AppContext.BaseDirectory, "suppressions.json");
+        : this(new FileJsonBlobStore(filePath ?? Path.Combine(AppContext.BaseDirectory, "suppressions.json"))) { }
 
+    public JsonSuppressionStore(IJsonBlobStore blob)
+    {
+        _blob = blob;
         _options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -27,31 +29,15 @@ public class JsonSuppressionStore : ISuppressionStore
             ReadCommentHandling = JsonCommentHandling.Skip,
             AllowTrailingCommas = true
         };
-
-        var dir = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-        {
-            Directory.CreateDirectory(dir);
-        }
     }
 
-    public string Location => _filePath;
+    public string Location => _blob.Location;
 
     public List<RuleSuppression> LoadAll()
     {
-        if (!File.Exists(_filePath))
+        var text = _blob.Read();
+        if (string.IsNullOrWhiteSpace(text))
         {
-            return new List<RuleSuppression>();
-        }
-
-        string text;
-        try
-        {
-            text = File.ReadAllText(_filePath, Encoding.UTF8);
-        }
-        catch (Exception ex)
-        {
-            Log.Warn(ex, "suppressions.json 讀取失敗，本次視為無抑制設定：{Path}", _filePath);
             return new List<RuleSuppression>();
         }
 
@@ -66,7 +52,7 @@ public class JsonSuppressionStore : ISuppressionStore
         }
         catch (JsonException ex)
         {
-            Log.Warn("suppressions.json 格式錯誤，本次視為無抑制設定：{Path}，原因：{Error}", _filePath, ex.Message);
+            Log.Warn("suppressions 格式錯誤，本次視為無抑制設定：{Path}，原因：{Error}", _blob.Location, ex.Message);
             return new List<RuleSuppression>();
         }
 
@@ -74,7 +60,7 @@ public class JsonSuppressionStore : ISuppressionStore
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
             {
-                Log.Warn("suppressions.json 根節點不是陣列，本次視為無抑制設定：{Path}", _filePath);
+                Log.Warn("suppressions 根節點不是陣列，本次視為無抑制設定：{Path}", _blob.Location);
                 return new List<RuleSuppression>();
             }
 
@@ -101,13 +87,7 @@ public class JsonSuppressionStore : ISuppressionStore
         }
     }
 
-    /// <summary>原子寫入：寫暫存檔後改名，與 JsonKnownIssueRuleStore 同一套做法</summary>
-    public void SaveAll(List<RuleSuppression> suppressions)
-    {
-        var json = JsonSerializer.Serialize(suppressions, _options);
-        var tmpPath = _filePath + ".tmp";
-
-        File.WriteAllText(tmpPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        File.Move(tmpPath, _filePath, overwrite: true);
-    }
+    /// <summary>原子寫入（底層 blob 保證；檔案版寫暫存後改名、DB 版交易）</summary>
+    public void SaveAll(List<RuleSuppression> suppressions) =>
+        _blob.Mutate<object?>(_ => (JsonSerializer.Serialize(suppressions, _options), null));
 }

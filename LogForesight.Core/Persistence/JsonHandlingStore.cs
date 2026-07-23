@@ -10,7 +10,7 @@ namespace LogForesight;
 /// </summary>
 public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IRecordHandlingStore
 {
-    private readonly string _logPath;
+    private readonly IJsonLogStore _logStore;
     private readonly object _logLock = new();
     private long _lastLogId;
 
@@ -20,9 +20,12 @@ public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IReco
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public JsonRecordHandlingStore(string snapshotPath, string logPath) : base(snapshotPath)
+    public JsonRecordHandlingStore(string snapshotPath, string logPath)
+        : this(new FileJsonBlobStore(snapshotPath), new FileJsonLogStore(logPath)) { }
+
+    public JsonRecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
     {
-        _logPath = logPath;
+        _logStore = logStore;
         _lastLogId = ReadAllLogs().LastOrDefault()?.LogId ?? 0;
     }
 
@@ -67,9 +70,7 @@ public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IReco
             log.LogId = ++_lastLogId;
             if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
 
-            File.AppendAllText(_logPath,
-                JsonSerializer.Serialize(log, LogJsonOptions) + Environment.NewLine,
-                new UTF8Encoding(false));
+            _logStore.AppendLine(JsonSerializer.Serialize(log, LogJsonOptions));
         }
     }
 
@@ -87,25 +88,20 @@ public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IReco
 
     private List<RecordHandlingLog> ReadAllLogs()
     {
-        lock (_logLock)
+        var result = new List<RecordHandlingLog>();
+        foreach (var line in _logStore.ReadLines())
         {
-            if (!File.Exists(_logPath)) return new List<RecordHandlingLog>();
-
-            var result = new List<RecordHandlingLog>();
-            foreach (var line in File.ReadLines(_logPath, Encoding.UTF8))
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var log = JsonSerializer.Deserialize<RecordHandlingLog>(line, LogJsonOptions);
-                    if (log != null) result.Add(log);
-                }
-                catch (JsonException)
-                {
-                    // 逐行獨立：單行損毀只跳過該行
-                }
+                var log = JsonSerializer.Deserialize<RecordHandlingLog>(line, LogJsonOptions);
+                if (log != null) result.Add(log);
             }
-            return result;
+            catch (JsonException)
+            {
+                // 逐行獨立：單行損毀只跳過該行
+            }
         }
+        return result;
     }
 }

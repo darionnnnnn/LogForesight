@@ -5,12 +5,16 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 依設定選擇儲存後端（Strategy + Factory）。"Jsonl"（預設）與 "SqlServer" 兩種；
+/// 依設定選擇儲存後端（Strategy + Factory）。三種 provider：
+///   - "Jsonl"（預設）：現行檔案格式，單機開箱即用
+///   - "Sqlite"：測試/開發用的單一 .db 檔（真資料庫，取代 JSONL 檔案）
+///   - "SqlServer"：正式環境（2000 台量級）
 /// 新增後端時這裡是唯一需要改的地方，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改。
 ///
-/// SQL 後端目前只有**分析紀錄**（lf_daily_records/lf_top_issues）走 EF；webdata 各 store
-/// 暫維持 JSONL（增量遷移，SqlServer 模式下記一行 log 說明混合狀態）。分析紀錄是量級與效能的
-/// 主要驅動（2000 台 × 90 天），優先遷移。
+/// SQL 模式（Sqlite/SqlServer）下**全部資料**走 SQL：分析紀錄以正規化列＋JSON 存
+/// （lf_daily_records/lf_top_issues），webdata 各 store 透過 IJsonBlobStore（整份型 → lf_blobs）
+/// 與 IJsonLogStore（append-only → lf_log_lines）改走資料庫，store 業務邏輯完全沒改。
+/// LINQ 保持 provider 中立，SQLite 上跑同一組合約測試驗證語意逐位一致。
 /// </summary>
 public static class StorageFactory
 {
@@ -51,7 +55,7 @@ public static class StorageFactory
 
             Func<LfDbContext> factory = () => new LfDbContext(options);
 
-            Log.Info("[SQL] 啟用 {Desc} 後端。分析紀錄＋多數 webdata 走 SQL；append-only 紀錄（稽核/執行/匯入）暫維持 JSONL。正在確保 schema…", _dbDesc);
+            Log.Info("[SQL] 啟用 {Desc} 後端（全資料走 SQL，無檔案）。正在確保 schema…", _dbDesc);
             try
             {
                 using var ctx = factory();
@@ -75,6 +79,12 @@ public static class StorageFactory
         IsSql(settings)
             ? new EfJsonBlobStore(GetDbFactory(settings, dataRoot), key)
             : new FileJsonBlobStore(jsonlPath);
+
+    /// <summary>依 provider 建立 append-only 逐行 store（SQL→lf_log_lines 以 key 為鍵、Jsonl→jsonlPath 檔案）</summary>
+    private static IJsonLogStore LogStore(StorageSettings settings, string dataRoot, string key, string jsonlPath) =>
+        IsSql(settings)
+            ? new EfJsonLogStore(GetDbFactory(settings, dataRoot), key)
+            : new FileJsonLogStore(jsonlPath);
 
     /// <summary>SQL 模式的 EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>
     private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost, string fallbackDir) =>
@@ -108,30 +118,18 @@ public static class StorageFactory
         }
     }
 
-    /// <summary>規則儲存後端，目前只有 rules.json 一種實作；未來新增 DB 後端時在這裡加一個 case 即可</summary>
+    /// <summary>規則儲存後端（rules.json／DB blob）</summary>
     public static IKnownIssueRuleStore CreateRuleStore(StorageSettings settings, string? filePath = null)
     {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-                return new JsonKnownIssueRuleStore(filePath);
-            default:
-                Console.WriteLine($"未知的 Storage.Type「{settings.Type}」，規則庫改用預設的 Jsonl。");
-                return new JsonKnownIssueRuleStore(filePath);
-        }
+        var path = filePath ?? Path.Combine(AppContext.BaseDirectory, "rules.json");
+        return new JsonKnownIssueRuleStore(Blob(settings, Path.GetDirectoryName(path) ?? ".", "rules", path));
     }
 
-    /// <summary>抑制設定的儲存後端，目前只有 suppressions.json 一種實作</summary>
+    /// <summary>抑制設定的儲存後端（suppressions.json／DB blob）</summary>
     public static ISuppressionStore CreateSuppressionStore(StorageSettings settings, string? filePath = null)
     {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-                return new JsonSuppressionStore(filePath);
-            default:
-                Console.WriteLine($"未知的 Storage.Type「{settings.Type}」，抑制設定改用預設的 Jsonl。");
-                return new JsonSuppressionStore(filePath);
-        }
+        var path = filePath ?? Path.Combine(AppContext.BaseDirectory, "suppressions.json");
+        return new JsonSuppressionStore(Blob(settings, Path.GetDirectoryName(path) ?? ".", "suppressions", path));
     }
 
     // ── Web 自有資料的儲存後端（docs/WEB-SPEC.md §10.2）────────────────────────────
@@ -227,7 +225,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonAuditLogStore(WebDataPath(dataRoot, "audit.jsonl"));
+                return new JsonAuditLogStore(LogStore(settings, dataRoot, "audit", WebDataPath(dataRoot, "audit.jsonl")));
         }
     }
 
@@ -250,8 +248,8 @@ public static class StorageFactory
             case "Jsonl":
             default:
                 return new JsonBatchRunStore(
-                    Path.Combine(dataRoot, "rundata", "runs.jsonl"),
-                    Path.Combine(dataRoot, "rundata", "run_logs.jsonl"));
+                    LogStore(settings, dataRoot, "batch_runs", Path.Combine(dataRoot, "rundata", "runs.jsonl")),
+                    LogStore(settings, dataRoot, "batch_run_logs", Path.Combine(dataRoot, "rundata", "run_logs.jsonl")));
         }
     }
 
@@ -263,8 +261,8 @@ public static class StorageFactory
             case "Jsonl":
             default:
                 return new JsonRecordHandlingStore(
-                    WebDataPath(dataRoot, "handling.json"),
-                    WebDataPath(dataRoot, "handling_log.jsonl"));
+                    Blob(settings, dataRoot, "record_handling", WebDataPath(dataRoot, "handling.json")),
+                    LogStore(settings, dataRoot, "handling_log", WebDataPath(dataRoot, "handling_log.jsonl")));
         }
     }
 
@@ -301,8 +299,8 @@ public static class StorageFactory
             case "Jsonl":
             default:
                 return new JsonPermissionChangeStore(
-                    Path.Combine(dataRoot, "rundata", "perm_changes.jsonl"),
-                    WebDataPath(dataRoot, "perm_confirms.json"));
+                    LogStore(settings, dataRoot, "perm_changes", Path.Combine(dataRoot, "rundata", "perm_changes.jsonl")),
+                    Blob(settings, dataRoot, "perm_confirms", WebDataPath(dataRoot, "perm_confirms.json")));
         }
     }
 
@@ -313,7 +311,7 @@ public static class StorageFactory
         {
             case "Jsonl":
             default:
-                return new JsonImportLogStore(WebDataPath(dataRoot, "import_logs.jsonl"));
+                return new JsonImportLogStore(LogStore(settings, dataRoot, "import_logs", WebDataPath(dataRoot, "import_logs.jsonl")));
         }
     }
 

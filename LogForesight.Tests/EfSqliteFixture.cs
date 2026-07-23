@@ -27,5 +27,7 @@ public sealed class EfSqliteFixture : IDisposable
 
     public IJsonBlobStore Blob(string key) => new EfJsonBlobStore(NewContext, key);
 
+    public IJsonLogStore LogStore(string key) => new EfJsonLogStore(NewContext, key);
+
     public void Dispose() => _connection.Dispose();
 }

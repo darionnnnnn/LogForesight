@@ -80,8 +80,8 @@ public interface IBatchRunStore
 /// </summary>
 public class JsonBatchRunStore : IBatchRunStore
 {
-    private readonly string _runsPath;
-    private readonly string _logsPath;
+    private readonly IJsonLogStore _runs;
+    private readonly IJsonLogStore _logs;
     private readonly object _lock = new();
     private long _lastRunId;
     private long _lastLogId;
@@ -93,12 +93,12 @@ public class JsonBatchRunStore : IBatchRunStore
     };
 
     public JsonBatchRunStore(string runsPath, string logsPath)
-    {
-        _runsPath = runsPath;
-        _logsPath = logsPath;
+        : this(new FileJsonLogStore(runsPath), new FileJsonLogStore(logsPath)) { }
 
-        var dir = Path.GetDirectoryName(runsPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+    public JsonBatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
+    {
+        _runs = runs;
+        _logs = logs;
 
         _lastRunId = ReadAllRunLines().Select(r => r.RunId).DefaultIfEmpty(0).Max();
         _lastLogId = ReadAllLogs().Select(l => l.LogId).DefaultIfEmpty(0).Max();
@@ -129,9 +129,7 @@ public class JsonBatchRunStore : IBatchRunStore
             log.LogId = ++_lastLogId;
             if (log.LoggedAt == default) log.LoggedAt = DateTime.Now;
 
-            File.AppendAllText(_logsPath,
-                JsonSerializer.Serialize(log, JsonOptions) + Environment.NewLine,
-                new UTF8Encoding(false));
+            _logs.AppendLine(JsonSerializer.Serialize(log, JsonOptions));
         }
     }
 
@@ -173,20 +171,16 @@ public class JsonBatchRunStore : IBatchRunStore
             .ToList();
 
     private void AppendRunLine(BatchRun run) =>
-        File.AppendAllText(_runsPath,
-            JsonSerializer.Serialize(run, JsonOptions) + Environment.NewLine,
-            new UTF8Encoding(false));
+        _runs.AppendLine(JsonSerializer.Serialize(run, JsonOptions));
 
-    private List<BatchRun> ReadAllRunLines() => ReadLines<BatchRun>(_runsPath);
+    private List<BatchRun> ReadAllRunLines() => Parse<BatchRun>(_runs);
 
-    private List<BatchRunLog> ReadAllLogs() => ReadLines<BatchRunLog>(_logsPath);
+    private List<BatchRunLog> ReadAllLogs() => Parse<BatchRunLog>(_logs);
 
-    private static List<T> ReadLines<T>(string path) where T : class
+    private static List<T> Parse<T>(IJsonLogStore log) where T : class
     {
-        if (!File.Exists(path)) return new List<T>();
-
         var result = new List<T>();
-        foreach (var line in File.ReadLines(path, Encoding.UTF8))
+        foreach (var line in log.ReadLines())
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try

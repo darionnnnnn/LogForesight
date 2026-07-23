@@ -27,7 +27,7 @@ public interface IAuditLogStore
 /// </summary>
 public class JsonAuditLogStore : IAuditLogStore
 {
-    private readonly string _filePath;
+    private readonly IJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
 
@@ -38,11 +38,11 @@ public class JsonAuditLogStore : IAuditLogStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public JsonAuditLogStore(string filePath)
+    public JsonAuditLogStore(string filePath) : this(new FileJsonLogStore(filePath)) { }
+
+    public JsonAuditLogStore(IJsonLogStore log)
     {
-        _filePath = filePath;
-        var dir = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        _log = log;
         _lastId = ReadAll().LastOrDefault()?.AuditId ?? 0;
     }
 
@@ -53,8 +53,7 @@ public class JsonAuditLogStore : IAuditLogStore
             entry.AuditId = ++_lastId;
             if (entry.OccurredAt == default) entry.OccurredAt = DateTime.Now;
 
-            var line = JsonSerializer.Serialize(entry, JsonOptions);
-            File.AppendAllText(_filePath, line + Environment.NewLine, new UTF8Encoding(false));
+            _log.AppendLine(JsonSerializer.Serialize(entry, JsonOptions));
         }
     }
 
@@ -96,26 +95,20 @@ public class JsonAuditLogStore : IAuditLogStore
 
     private List<AuditEntry> ReadAll()
     {
-        lock (_lock)
+        var result = new List<AuditEntry>();
+        foreach (var line in _log.ReadLines())
         {
-            if (!File.Exists(_filePath)) return new List<AuditEntry>();
-
-            var result = new List<AuditEntry>();
-            foreach (var line in File.ReadLines(_filePath, Encoding.UTF8))
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var entry = JsonSerializer.Deserialize<AuditEntry>(line, JsonOptions);
-                    if (entry != null) result.Add(entry);
-                }
-                catch (JsonException)
-                {
-                    // 逐行獨立：單行損毀只跳過該行，不讓整份稽核紀錄讀不出來
-                    // （與 history.txt 的容錯策略一致）
-                }
+                var entry = JsonSerializer.Deserialize<AuditEntry>(line, JsonOptions);
+                if (entry != null) result.Add(entry);
             }
-            return result;
+            catch (JsonException)
+            {
+                // 逐行獨立：單行損毀只跳過該行（與 history.txt 的容錯策略一致）
+            }
         }
+        return result;
     }
 }

@@ -17,15 +17,15 @@ public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly string _filePath;
+    private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
     public JsonKnownIssueRuleStore(string? filePath = null)
-    {
-        // 預設放執行檔同目錄（與 appsettings.json/history.txt 一致），用 AppContext.BaseDirectory
-        // 而非 CurrentDirectory——排程執行時後者可能是 system32
-        _filePath = filePath ?? Path.Combine(AppContext.BaseDirectory, "rules.json");
+        : this(new FileJsonBlobStore(filePath ?? Path.Combine(AppContext.BaseDirectory, "rules.json"))) { }
 
+    public JsonKnownIssueRuleStore(IJsonBlobStore blob)
+    {
+        _blob = blob;
         _options = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -34,33 +34,18 @@ public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
             AllowTrailingCommas = true,
             Converters = { new JsonStringEnumConverter() }
         };
-
-        var dir = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-        {
-            Directory.CreateDirectory(dir);
-        }
     }
 
-    public string Location => _filePath;
+    public string Location => _blob.Location;
 
-    public bool Exists => File.Exists(_filePath);
+    public bool Exists => _blob.Read() != null;
 
     public RuleLoadOutcome Load()
     {
-        if (!Exists)
+        var text = _blob.Read();
+        if (text == null)
         {
             return RuleLoadOutcome.Fail("檔案不存在");
-        }
-
-        string text;
-        try
-        {
-            text = File.ReadAllText(_filePath, Encoding.UTF8);
-        }
-        catch (Exception ex)
-        {
-            return RuleLoadOutcome.Fail($"讀取檔案失敗：{ex.Message}");
         }
 
         JsonDocument doc;
@@ -139,14 +124,8 @@ public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
     /// 損毀的規則檔——那樣的話下次啟動會被誤判成「整檔壞掉」而降級用內建種子。
     /// UTF-8 with BOM：記事本等工具在無 BOM 時容易誤判編碼，中文內容顯示亂碼是最容易踩的坑。
     /// </summary>
-    public void Save(RuleFileContent content)
-    {
-        var json = JsonSerializer.Serialize(content, _options);
-        var tmpPath = _filePath + ".tmp";
-
-        File.WriteAllText(tmpPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        File.Move(tmpPath, _filePath, overwrite: true);
-    }
+    public void Save(RuleFileContent content) =>
+        _blob.Mutate<object?>(_ => (JsonSerializer.Serialize(content, _options), null));
 
     private static int? TryGetInt(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out var el) && el.TryGetInt32(out var value) ? value : null;

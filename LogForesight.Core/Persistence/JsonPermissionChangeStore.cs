@@ -13,7 +13,7 @@ namespace LogForesight;
 /// </summary>
 public class JsonPermissionChangeStore : IPermissionChangeStore
 {
-    private readonly string _changesPath;
+    private readonly IJsonLogStore _changes;
     private readonly JsonConfirmationFile _confirmations;
     private readonly object _lock = new();
 
@@ -24,29 +24,25 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
     };
 
     public JsonPermissionChangeStore(string changesPath, string confirmationsPath)
-    {
-        _changesPath = changesPath;
-        var dir = Path.GetDirectoryName(changesPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        : this(new FileJsonLogStore(changesPath), new FileJsonBlobStore(confirmationsPath)) { }
 
-        _confirmations = new JsonConfirmationFile(confirmationsPath);
+    public JsonPermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
+    {
+        _changes = changes;
+        _confirmations = new JsonConfirmationFile(confirmations);
     }
 
     public void AppendChanges(IEnumerable<PermissionChangeRecord> changes)
     {
         lock (_lock)
         {
-            var builder = new StringBuilder();
             foreach (var change in changes)
             {
                 if (string.IsNullOrWhiteSpace(change.ChangeId))
                     change.ChangeId = Guid.NewGuid().ToString("N");
 
-                builder.AppendLine(JsonSerializer.Serialize(change, JsonOptions));
+                _changes.AppendLine(JsonSerializer.Serialize(change, JsonOptions));
             }
-
-            if (builder.Length > 0)
-                File.AppendAllText(_changesPath, builder.ToString(), new UTF8Encoding(false));
         }
     }
 
@@ -103,32 +99,27 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
 
     private List<PermissionChangeRecord> ReadAllChanges()
     {
-        lock (_lock)
+        var result = new List<PermissionChangeRecord>();
+        foreach (var line in _changes.ReadLines())
         {
-            if (!File.Exists(_changesPath)) return new List<PermissionChangeRecord>();
-
-            var result = new List<PermissionChangeRecord>();
-            foreach (var line in File.ReadLines(_changesPath, Encoding.UTF8))
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var change = JsonSerializer.Deserialize<PermissionChangeRecord>(line, JsonOptions);
-                    if (change != null) result.Add(change);
-                }
-                catch (JsonException)
-                {
-                    // 逐行獨立：單行損毀只跳過該行
-                }
+                var change = JsonSerializer.Deserialize<PermissionChangeRecord>(line, JsonOptions);
+                if (change != null) result.Add(change);
             }
-            return result;
+            catch (JsonException)
+            {
+                // 逐行獨立：單行損毀只跳過該行
+            }
         }
+        return result;
     }
 
     /// <summary>確認狀態的整檔型儲存（Web 單一寫入者，原子替換）</summary>
     private class JsonConfirmationFile : JsonCollectionFile<PermissionChangeConfirmation>
     {
-        public JsonConfirmationFile(string filePath) : base(filePath) { }
+        public JsonConfirmationFile(IJsonBlobStore blob) : base(blob) { }
 
         public new List<PermissionChangeConfirmation> Read() => base.Read();
 

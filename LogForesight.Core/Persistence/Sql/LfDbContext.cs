@@ -25,6 +25,9 @@ public class LfDbContext : DbContext
     /// <summary>webdata 各 store 的整份 JSON 內容（一個 key 一列，↔ EfJsonBlobStore）</summary>
     public DbSet<BlobRow> Blobs => Set<BlobRow>();
 
+    /// <summary>append-only 逐行 JSONL（稽核/執行/匯入/處理歷程，↔ EfJsonLogStore）</summary>
+    public DbSet<LogLineRow> LogLines => Set<LogLineRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -34,6 +37,16 @@ public class LfDbContext : DbContext
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+        });
+
+        b.Entity<LogLineRow>(e =>
+        {
+            e.ToTable("lf_log_lines");
+            e.HasKey(x => x.Seq);
+            e.Property(x => x.Seq).HasColumnName("seq").ValueGeneratedOnAdd();
+            e.Property(x => x.LogKey).HasColumnName("log_key").HasMaxLength(100);
+            e.Property(x => x.Line).HasColumnName("line");
+            e.HasIndex(x => new { x.LogKey, x.Seq });
         });
 
         b.Entity<DailyRecordRow>(e =>
@@ -104,4 +117,12 @@ public class BlobRow
     public string BlobKey { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>append-only JSONL 的一行（log_key＝來源，如 "audit"；seq 自增即附加順序）。↔ lf_log_lines</summary>
+public class LogLineRow
+{
+    public long Seq { get; set; }
+    public string LogKey { get; set; } = string.Empty;
+    public string Line { get; set; } = string.Empty;
 }
