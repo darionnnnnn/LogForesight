@@ -72,7 +72,7 @@ public class IdentityService : IIdentityService
 
         // serverAdmin 優先比對：它不存在於 lf_users，也不經任何 Provider，
         // 這樣 AD 停擺時仍然進得來（這正是它存在的理由之一）
-        var serverAdminResult = _serverAdmin.TryLogin(account, password);
+        var serverAdminResult = _serverAdmin.TryLogin(account, password, _provider.RequiresPassword);
         switch (serverAdminResult)
         {
             case ServerAdminLoginResult.Success:
