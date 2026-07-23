@@ -18,6 +18,7 @@ public class DashboardService : IDashboardService
     private readonly ICurrentUser _currentUser;
     private readonly IHandlingService _handling;
     private readonly IPermissionChangeService _permissionChanges;
+    private readonly IHostGroupStore _hostGroups;
 
     public DashboardService(
         IRecordRepository repository,
@@ -25,7 +26,8 @@ public class DashboardService : IDashboardService
         IAuditLogStore audit,
         ICurrentUser currentUser,
         IHandlingService handling,
-        IPermissionChangeService permissionChanges)
+        IPermissionChangeService permissionChanges,
+        IHostGroupStore hostGroups)
     {
         _repository = repository;
         _visibility = visibility;
@@ -33,6 +35,7 @@ public class DashboardService : IDashboardService
         _currentUser = currentUser;
         _handling = handling;
         _permissionChanges = permissionChanges;
+        _hostGroups = hostGroups;
     }
 
     public DashboardDto GetSummary(int days)
@@ -52,6 +55,7 @@ public class DashboardService : IDashboardService
         BuildCategoryCards(dto, records);
         BuildHostRanking(dto, records, visibleHosts);
         BuildSilentHosts(dto, visibleHosts);
+        BuildGroupRisk(dto, records, visibleHosts);
 
         dto.HighRiskDays = records.Count(r => r.RiskLevel == "高");
         dto.MediumRiskDays = records.Count(r => r.RiskLevel == "中");
@@ -130,21 +134,53 @@ public class DashboardService : IDashboardService
     /// 無回報主機：批次沒跑就不會有任何風險紀錄。
     /// 「這台很安靜」與「這台根本沒在看」在畫面上必須分得出來——
     /// 這是 README「沒告警 ≠ 沒問題」在主機層級的版本。
+    ///
+    /// §5.4 D-4：只算數量，不逐台列出——兩千台規模下這份清單本身可能就有數百筆，
+    /// 逐台渲染會把儀表板撐爆。點計數卡改導向主機頁的「未回報」篩選（Hosts.SilentThreshold）。
     /// </summary>
     private static void BuildSilentHosts(DashboardDto dto, List<WebHost> visibleHosts)
     {
         var cutoff = DateTime.Now.AddDays(-2);
 
-        dto.SilentHosts = visibleHosts
-            .Where(h => h.Active && (h.LastReportAt == null || h.LastReportAt < cutoff))
-            .Select(h => new DashboardSilentHostDto
+        dto.SilentHostsCount = visibleHosts
+            .Count(h => h.Active && (h.LastReportAt == null || h.LastReportAt < cutoff));
+    }
+
+    /// <summary>
+    /// 依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽個別主機」是主要動線，
+    /// 比一次攤開兩千台實際得多。只列出「至少有一台可見主機」的群組。
+    /// </summary>
+    private void BuildGroupRisk(DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts)
+    {
+        var recordsByHost = records
+            .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        dto.GroupRisk = _hostGroups.GetAll()
+            .Where(g => g.Active)
+            .Select(group =>
             {
-                HostId = h.HostId,
-                HostName = h.HostName,
-                LastReportAt = h.LastReportAt,
-                DaysSilent = h.LastReportAt == null ? null : (int)(DateTime.Now - h.LastReportAt.Value).TotalDays
+                var memberHosts = visibleHosts.Where(h => h.Active && h.GroupIds.Contains(group.GroupId)).ToList();
+                var memberRecords = memberHosts
+                    .SelectMany(h => recordsByHost.TryGetValue(h.HostName, out var recs) ? recs : new List<DailyAnalysisRecord>())
+                    .ToList();
+
+                // 待辦母體與儀表板整體待辦同一套規則：只算高／中風險日，低風險日不進待辦
+                var todo = _handling.GetTodo(memberRecords.Where(r => r.RiskLevel is "高" or "中").ToList());
+
+                return new DashboardGroupRiskDto
+                {
+                    GroupId = group.GroupId,
+                    GroupName = group.GroupName,
+                    HostCount = memberHosts.Count,
+                    HighRiskDays = memberRecords.Count(r => r.RiskLevel == "高"),
+                    MediumRiskDays = memberRecords.Count(r => r.RiskLevel == "中"),
+                    UnhandledCount = todo.OpenCount + todo.InProgressCount
+                };
             })
-            .OrderByDescending(h => h.DaysSilent ?? int.MaxValue)
+            .Where(g => g.HostCount > 0)
+            .OrderByDescending(g => g.HighRiskDays)
+            .ThenByDescending(g => g.MediumRiskDays)
             .ToList();
     }
 }

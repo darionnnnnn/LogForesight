@@ -30,6 +30,7 @@ public class RecordsController : ControllerBase
     [HttpGet]
     public ApiResponse<PagedResult<RecordListItemDto>> Search(
         [FromQuery] string? hostIds,
+        [FromQuery] string? groupIds,
         [FromQuery] string? from,
         [FromQuery] string? to,
         [FromQuery] string? riskLevels,
@@ -45,6 +46,7 @@ public class RecordsController : ControllerBase
         var request = new RecordSearchRequest
         {
             HostIds = ParseLongs(hostIds),
+            GroupIds = ParseLongs(groupIds),
             From = ParseDate(from),
             To = ParseDate(to),
             RiskLevels = ParseStrings(riskLevels),
@@ -65,6 +67,7 @@ public class RecordsController : ControllerBase
     [HttpGet("by-host")]
     public ApiResponse<PagedResult<RecordHostGroupDto>> ByHost(
         [FromQuery] string? hostIds,
+        [FromQuery] string? groupIds,
         [FromQuery] string? from,
         [FromQuery] string? to,
         [FromQuery] string? riskLevels,
@@ -75,12 +78,13 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(
-            _service.SearchByHost(BuildRequest(hostIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+            _service.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
 
     /// <summary>依日期彙總（主機合併）</summary>
     [HttpGet("by-date")]
     public ApiResponse<PagedResult<RecordDateGroupDto>> ByDate(
         [FromQuery] string? hostIds,
+        [FromQuery] string? groupIds,
         [FromQuery] string? from,
         [FromQuery] string? to,
         [FromQuery] string? riskLevels,
@@ -91,14 +95,15 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
-            _service.SearchByDate(BuildRequest(hostIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+            _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
 
     private static RecordSearchRequest BuildRequest(
-        string? hostIds, string? from, string? to, string? riskLevels, string? categories,
+        string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
         string? severity, int? eventId, string? source, int page, int pageSize) =>
         new()
         {
             HostIds = ParseLongs(hostIds),
+            GroupIds = ParseLongs(groupIds),
             From = ParseDate(from),
             To = ParseDate(to),
             RiskLevels = ParseStrings(riskLevels),

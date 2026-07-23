@@ -493,8 +493,10 @@ async function ensureHostOptions() {
     if (hostOptionsLoaded) return;
     const select = document.getElementById('suppress-host');
     try {
-        const hosts = await api.get('/api/admin/hosts');
-        for (const host of hosts) {
+        // §5.4 D-4：/api/admin/hosts 改伺服器端分頁，這裡要看到「全部」主機才能挑選——
+        // 拉單頁上限（200）；主機數更多的部署，抑制設定的主機選取之後再視需要改成 autocomplete
+        const result = await api.get('/api/admin/hosts?pageSize=200');
+        for (const host of result.items) {
             const option = document.createElement('option');
             option.value = host.hostName;
             option.textContent = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;

@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
-import { formatDateTime, formatNumber, CATEGORY_NAMES } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
@@ -17,6 +17,7 @@ async function load() {
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-silent'), 2);
+    renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
     const [data, user] = await Promise.all([
         api.get(`/api/dashboard/summary?days=${currentDays}`),
@@ -30,6 +31,7 @@ async function load() {
     renderCategories(data);
     renderHosts(data);
     renderSilentHosts(data);
+    renderGroupRisk(data);
 
     loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
 }
@@ -303,24 +305,49 @@ function hostLink(host) {
     return link;
 }
 
+/**
+ * 未回報主機改計數卡＋下鑽（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
+ * 改成一個大數字＋連結到主機頁的「未回報」篩選，該頁本來就有分頁與搜尋。
+ */
 function renderSilentHosts(data) {
-    renderTable(document.getElementById('dashboard-silent'), {
-        columns: [
-            { title: '主機', render: h => hostLink(h) },
-            { title: '最近回報', render: h => silentCell(h) }
-        ],
-        rows: data.silentHosts,
-        empty: { title: '所有主機都正常回報', hint: '每台主機近兩天內都有執行紀錄。' }
-    });
+    const container = document.getElementById('dashboard-silent');
+    container.replaceChildren();
+
+    if (data.silentHostsCount === 0) {
+        renderEmpty(container, { title: '所有主機都正常回報', hint: `每台主機近兩天內都有執行紀錄。` });
+        return;
+    }
+
+    const link = document.createElement('a');
+    link.href = '/admin/hosts?status=silent';
+    link.className = 'lf-stat d-block text-center py-3';
+
+    const value = document.createElement('div');
+    value.className = 'lf-stat__value text-danger';
+    value.textContent = formatNumber(data.silentHostsCount);
+
+    const label = document.createElement('div');
+    label.className = 'lf-stat__label';
+    label.textContent = '台主機超過 2 天未回報，點此查看';
+
+    link.append(value, label);
+    container.appendChild(link);
 }
 
-function silentCell(host) {
-    const span = document.createElement('span');
-    span.className = 'text-danger';
-    span.textContent = host.lastReportAt
-        ? `${formatDateTime(host.lastReportAt)}（${host.daysSilent} 天前）`
-        : '尚未回報';
-    return span;
+/** 依群組風險概況（§5.4 D-4）：點列導向問題查詢並帶群組篩選，兩千台規模的主要動線是「先群組後下鑽」 */
+function renderGroupRisk(data) {
+    renderTable(document.getElementById('dashboard-group-risk'), {
+        columns: [
+            { title: '群組', render: g => g.groupName },
+            { title: '主機數', className: 'text-end', render: g => formatNumber(g.hostCount) },
+            { title: '高風險日', className: 'text-end', render: g => formatNumber(g.highRiskDays) },
+            { title: '中風險日', className: 'text-end', render: g => formatNumber(g.mediumRiskDays) },
+            { title: '未處理', className: 'text-end', render: g => formatNumber(g.unhandledCount) }
+        ],
+        rows: data.groupRisk,
+        rowHref: g => `/records?groupIds=${g.groupId}&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
+        empty: { title: '尚未設定任何主機群組', hint: '可於「群組與授權」頁建立主機群組並指派主機。' }
+    });
 }
 
 for (const button of document.querySelectorAll('[data-days]')) {

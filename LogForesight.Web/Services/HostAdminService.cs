@@ -6,12 +6,31 @@ namespace LogForesight.Web.Services;
 /// <summary>主機維護（docs/WEB-SPEC.md §9.8 主機頁）</summary>
 public interface IHostAdminService
 {
-    List<HostDto> GetHosts();
+    /// <summary>伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：兩千台規模下不能一次把全部主機灌給前端</summary>
+    PagedResult<HostDto> GetHosts(HostSearchRequest request);
     HostDto SaveHost(SaveHostRequest request);
     HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds);
     HostDto SetHostOwners(long hostId, IEnumerable<long> userIds);
     void MergeHost(long sourceHostId, long targetHostId);
     void UnmergeHost(long hostId);
+}
+
+/// <summary>與 hosts.js 既有的狀態 chip 值一一對應——後端篩選語意搬過來，前端不用改 chip 定義</summary>
+public class HostSearchRequest
+{
+    public string? Query { get; set; }
+
+    /// <summary>空字串=全部；local | netiq | pending | conflict | silent | ungrouped | inactive</summary>
+    public string Status { get; set; } = "";
+
+    public string? Sentinel { get; set; }
+    public List<long>? GroupIds { get; set; }
+
+    /// <summary>name | lastReport</summary>
+    public string Sort { get; set; } = "name";
+
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
 }
 
 public class HostAdminService : IHostAdminService
@@ -20,31 +39,90 @@ public class HostAdminService : IHostAdminService
     private readonly IHostGroupStore _hostGroups;
     private readonly IUserStore _users;
     private readonly INetiqServerCatalog _servers;
+    private readonly INetiqHostService _netiqHosts;
     private readonly IAuditService _audit;
+
+    /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
+    private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
 
     public HostAdminService(
         IHostStore hosts,
         IHostGroupStore hostGroups,
         IUserStore users,
         INetiqServerCatalog servers,
+        INetiqHostService netiqHosts,
         IAuditService audit)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
         _users = users;
         _servers = servers;
+        _netiqHosts = netiqHosts;
         _audit = audit;
     }
 
-    public List<HostDto> GetHosts()
+    public PagedResult<HostDto> GetHosts(HostSearchRequest request)
     {
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
 
-        return _hosts.GetAll()
-            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+        IEnumerable<WebHost> filtered = _hosts.GetAll();
+
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            var keyword = request.Query.Trim();
+            filtered = filtered.Where(h =>
+                h.HostName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (h.DisplayName ?? "").Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (h.IpAddress ?? "").Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Sentinel))
+            filtered = filtered.Where(h => string.Equals(h.NetiqServer, request.Sentinel, StringComparison.OrdinalIgnoreCase));
+
+        if (request.GroupIds is { Count: > 0 })
+        {
+            var wantedGroups = request.GroupIds.ToHashSet();
+            filtered = filtered.Where(h => h.GroupIds.Any(wantedGroups.Contains));
+        }
+
+        if (request.Status == "conflict")
+        {
+            // IP 衝突需要跨主機比對，沿用既有的 NetiqHostList 衝突偵測（NetiqHostService.GetOverview 已算好）
+            var conflictIds = _netiqHosts.GetOverview().IpConflicts
+                .SelectMany(g => g.Hosts.Select(h => h.HostId))
+                .ToHashSet();
+            filtered = filtered.Where(h => conflictIds.Contains(h.HostId));
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            filtered = request.Status switch
+            {
+                "local" => filtered.Where(h => h.Source == "local" && h.Active),
+                "netiq" => filtered.Where(h => h.Source == "netiq" && h.Active),
+                "pending" => filtered.Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null && string.IsNullOrEmpty(h.NetiqServer)),
+                "silent" => filtered.Where(h => h.Active && (h.LastReportAt == null || DateTime.Now - h.LastReportAt.Value > SilentCutoff)),
+                "ungrouped" => filtered.Where(h => h.Active && h.MergedInto == null && h.GroupIds.Count == 0),
+                "inactive" => filtered.Where(h => !h.Active),
+                _ => filtered
+            };
+        }
+
+        var sorted = request.Sort == "lastReport"
+            ? filtered.OrderByDescending(h => h.LastReportAt ?? DateTime.MinValue)
+            : filtered.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase);
+
+        var all = sorted.ToList();
+        var page = Math.Max(1, request.Page);
+        var pageSize = Math.Clamp(request.PageSize, 1, 200);
+
+        var items = all
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(h => ToDto(h, groups, users))
             .ToList();
+
+        return new PagedResult<HostDto> { Items = items, Page = page, PageSize = pageSize, Total = all.Count };
     }
 
     public HostDto SaveHost(SaveHostRequest request)

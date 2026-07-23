@@ -431,10 +431,20 @@ public class RecordQueryService : IRecordQueryService
             Source = request.Source
         };
 
-        if (request.HostIds is { Count: > 0 })
+        // 主機群組展開成主機 Id 集合，與明確勾選的 HostIds 取聯集——兩個條件都是「我要看這些主機」，
+        // 不是互斥的兩種篩選（勾了群組又額外勾一台不在群組內的主機是常見用法）
+        var hostIds = new HashSet<long>(request.HostIds ?? Enumerable.Empty<long>());
+        if (request.GroupIds is { Count: > 0 })
+        {
+            var wantedGroups = request.GroupIds.ToHashSet();
+            foreach (var host in _hosts.GetAll().Where(h => h.GroupIds.Any(wantedGroups.Contains)))
+                hostIds.Add(host.HostId);
+        }
+
+        if (hostIds.Count > 0)
         {
             // 每台主機展開成「本身＋已併入它的墓碑列」，篩選某台主機時才看得到它合併前的歷史
-            filter.Hosts = request.HostIds
+            filter.Hosts = hostIds
                 .SelectMany(id => _repository.ResolveHostKeys(id))
                 .DistinctBy(k => k.HostId)
                 .ToList();
@@ -674,6 +684,10 @@ public class RecordQueryService : IRecordQueryService
 public class RecordSearchRequest
 {
     public List<long>? HostIds { get; set; }
+
+    /// <summary>主機群組篩選（§5.4 D-4）：展開為主機集合後與 HostIds 取聯集，
+    /// 兩千台規模下「看某個部門的主機」比一台台勾選實際得多</summary>
+    public List<long>? GroupIds { get; set; }
     public DateTime? From { get; set; }
     public DateTime? To { get; set; }
     public List<string>? RiskLevels { get; set; }

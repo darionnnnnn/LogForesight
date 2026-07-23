@@ -11,7 +11,11 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public interface IRunMonitorService
 {
-    RunMatrixDto GetMatrix(int days);
+    /// <summary>每日彙總（§5.4 D-4）：取代逐主機矩陣，兩千台規模下矩陣會炸出過大的 DOM</summary>
+    List<RunDaySummaryDto> GetDaySummaries(int days);
+
+    /// <summary>單一日期的逐主機狀態（點日期下鑽時取得）</summary>
+    List<RunDayHostStatusDto> GetDayDetail(DateTime date);
 
     RunDetailDto GetDetail(long runId);
 
@@ -26,59 +30,105 @@ public class RunMonitorService : IRunMonitorService
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
 
+    /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
+    private const int MaxFailedHostNames = 10;
+
     public RunMonitorService(IBatchRunStore runs, IHostStore hosts)
     {
         _runs = runs;
         _hosts = hosts;
     }
 
-    public RunMatrixDto GetMatrix(int days)
-    {
-        var runs = _runs.GetRecentRuns(days, hostNames: null);
-        var from = DateTime.Today.AddDays(-days + 1);
-
-        var dates = new List<string>();
-        for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
-            dates.Add(date.ToString("yyyy-MM-dd"));
-
-        // 主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
-        // 只看已登記會漏掉尚未加入 Web 的主機，只看回報過的會漏掉「從來沒跑過」的主機——
-        // 而後者正是最需要被看到的一種
-        var hostNames = _hosts.GetAll().Where(h => h.Active).Select(h => h.HostName)
+    /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
+    /// 只看已登記會漏掉尚未加入 Web 的主機，只看回報過的會漏掉「從來沒跑過」的主機——
+    /// 而後者正是最需要被看到的一種</summary>
+    private List<string> AllHostNames(List<BatchRun> runs) =>
+        _hosts.GetAll().Where(h => h.Active).Select(h => h.HostName)
             .Union(runs.Select(r => r.HostName), StringComparer.OrdinalIgnoreCase)
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var matrix = new RunMatrixDto { Dates = dates };
+    public List<RunDaySummaryDto> GetDaySummaries(int days)
+    {
+        var runs = _runs.GetRecentRuns(days, hostNames: null);
+        var from = DateTime.Today.AddDays(-days + 1);
+        var hostNames = AllHostNames(runs);
 
-        foreach (var hostName in hostNames)
+        var summaries = new List<RunDaySummaryDto>();
+        for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
         {
-            var row = new RunMatrixRowDto { HostName = hostName };
+            var dateStr = date.ToString("yyyy-MM-dd");
+            var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hostNames.Count };
+            var failedHosts = new List<string>();
 
-            foreach (var date in dates)
+            foreach (var hostName in hostNames)
             {
-                var dayRuns = runs
-                    .Where(r => string.Equals(r.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-                                r.StartedAt.ToString("yyyy-MM-dd") == date)
-                    .OrderByDescending(r => r.StartedAt)
-                    .ToList();
+                var dayRuns = RunsForHostOnDate(runs, hostName, dateStr);
+                var status = StatusOf(dayRuns);
 
-                row.Cells.Add(BuildCell(date, dayRuns));
+                switch (status)
+                {
+                    case "success": summary.SuccessCount++; break;
+                    case "warning": summary.WarningCount++; break;
+                    case "failed": summary.FailedCount++; failedHosts.Add(hostName); break;
+                    case "stuck": summary.StuckCount++; failedHosts.Add(hostName); break;
+                    case "running": summary.RunningCount++; break;
+                    default: summary.NotRunCount++; break;
+                }
             }
 
-            matrix.Rows.Add(row);
+            summary.FailedHostNames = failedHosts.Take(MaxFailedHostNames).ToList();
+            summary.OtherFailedCount = Math.Max(0, failedHosts.Count - MaxFailedHostNames);
+            summaries.Add(summary);
         }
 
-        return matrix;
+        return summaries;
     }
 
-    private static RunCellDto BuildCell(string date, List<BatchRun> dayRuns)
+    public List<RunDayHostStatusDto> GetDayDetail(DateTime date)
+    {
+        // GetRecentRuns 的窗口是 [Today-days+1, Today]；用「到這天為止經過的天數」當窗口大小，
+        // 剛好含括目標日期，再於 RunsForHostOnDate 篩到那一天。日期在未來時窗口最小取 1。
+        var windowDays = Math.Max(1, (DateTime.Today - date.Date).Days + 1);
+        var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
+        var dateStr = date.ToString("yyyy-MM-dd");
+        var hostNames = AllHostNames(runs);
+
+        return hostNames.Select(hostName =>
+        {
+            var dayRuns = RunsForHostOnDate(runs, hostName, dateStr);
+            var cell = BuildCell(dateStr, dayRuns);
+            return new RunDayHostStatusDto
+            {
+                HostName = hostName,
+                Status = cell.Status,
+                RunId = cell.RunId,
+                StartedAt = cell.StartedAt,
+                FinishedAt = cell.FinishedAt,
+                DaysAnalyzed = cell.DaysAnalyzed,
+                WarnCount = cell.WarnCount,
+                ErrorCount = cell.ErrorCount,
+                AiFailures = cell.AiFailures,
+                RunCount = cell.RunCount
+            };
+        }).ToList();
+    }
+
+    private static List<BatchRun> RunsForHostOnDate(List<BatchRun> runs, string hostName, string dateStr) =>
+        runs.Where(r => string.Equals(r.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                        r.StartedAt.ToString("yyyy-MM-dd") == dateStr)
+            .OrderByDescending(r => r.StartedAt)
+            .ToList();
+
+    private static string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
+
+    private static RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)
         {
             // 沒有執行紀錄——排程沒跑、機器關機，或這台根本還沒部署。
             // 這與「跑了但沒問題」是完全不同的狀態，必須分得出來
-            return new RunCellDto { Date = date, Status = "none" };
+            return new RunDayHostStatusDto { Status = "none" };
         }
 
         var latest = dayRuns[0];
@@ -90,9 +140,8 @@ public class RunMonitorService : IRunMonitorService
             : latest.WarnCount > 0 || latest.AiFailures > 0 ? "warning"
             : "success";
 
-        return new RunCellDto
+        return new RunDayHostStatusDto
         {
-            Date = date,
             Status = status,
             RunId = latest.RunId,
             StartedAt = latest.StartedAt,

@@ -24,7 +24,13 @@ public class DashboardDto
 
     public List<DashboardCategoryDto> Categories { get; set; } = new();
     public List<DashboardHostDto> HostRanking { get; set; } = new();
-    public List<DashboardSilentHostDto> SilentHosts { get; set; } = new();
+
+    /// <summary>未回報主機數（§5.4 D-4：計數卡＋下鑽，不再整表渲染逐台清單——
+    /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
+    public int SilentHostsCount { get; set; }
+
+    /// <summary>依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽」是主要動線</summary>
+    public List<DashboardGroupRiskDto> GroupRisk { get; set; } = new();
 }
 
 public class DashboardCategoryDto
@@ -51,12 +57,15 @@ public class DashboardHostDto
     public string LatestHeadline { get; set; } = string.Empty;
 }
 
-public class DashboardSilentHostDto
+/// <summary>依主機群組的風險概況（§5.4 D-4）</summary>
+public class DashboardGroupRiskDto
 {
-    public long HostId { get; set; }
-    public string HostName { get; set; } = string.Empty;
-    public DateTime? LastReportAt { get; set; }
-    public int? DaysSilent { get; set; }
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+    public int HostCount { get; set; }
+    public int HighRiskDays { get; set; }
+    public int MediumRiskDays { get; set; }
+    public int UnhandledCount { get; set; }
 }
 
 // ── 報表（§9.6）────────────────────────────────────────────────────────────

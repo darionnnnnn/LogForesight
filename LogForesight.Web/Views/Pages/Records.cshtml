@@ -4,9 +4,12 @@
 
 <div class="lf-toolbar lf-no-print">
     <form id="filter-form" class="lf-toolbar__row">
-        <div class="lf-toolbar__field" style="min-width: 220px;">
-            <label for="filter-hosts" class="form-label small mb-1">主機</label>
-            <select class="form-select form-select-sm" id="filter-hosts" multiple size="1"></select>
+        <div class="lf-toolbar__field position-relative" style="min-width: 240px;">
+            <label for="filter-host-search" class="form-label small mb-1">主機</label>
+            <input type="text" class="form-control form-control-sm" id="filter-host-search"
+                   placeholder="輸入主機名稱搜尋…" autocomplete="off" />
+            <div id="filter-host-suggestions" class="dropdown-menu p-0" style="max-height: 260px; overflow-y: auto;"></div>
+            <div id="filter-host-chips" class="d-flex flex-wrap gap-1 mt-1"></div>
         </div>
         <div class="lf-toolbar__field" style="min-width: 150px;">
             <label for="filter-from" class="form-label small mb-1">起始日期</label>
@@ -68,6 +71,13 @@
                 <button type="button" class="lf-chip" data-status="in_progress">處理中</button>
                 <button type="button" class="lf-chip" data-status="resolved">已處理</button>
             </div>
+        </div>
+    </div>
+
+    <div class="lf-toolbar__row" id="filter-group-row">
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">主機群組</span>
+            <div class="lf-toolbar__chips" id="filter-group-chips"></div>
         </div>
     </div>
 

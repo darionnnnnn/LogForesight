@@ -14,9 +14,17 @@
 <section class="lf-card mb-3">
     <div class="lf-card__header">
         <h2 class="lf-card__title">執行總表</h2>
-        <span class="text-muted small">點選格子檢視該次執行的詳細紀錄</span>
+        <span class="text-muted small">每日一列；點日期看該天每台主機的狀態</span>
     </div>
-    <div class="lf-card__body" id="run-matrix"></div>
+    <div class="lf-card__body p-0" id="run-summary"></div>
+</section>
+
+<section class="lf-card d-none mb-3" id="run-day-detail-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title" id="run-day-detail-title">當日主機狀態</h2>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="run-day-detail-close">關閉</button>
+    </div>
+    <div class="lf-card__body p-0" id="run-day-detail-list"></div>
 </section>
 
 <section class="lf-card mb-3">

@@ -12,7 +12,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, renderPagination, withBusy } from '../core/ui.js';
+import { renderTable, renderLoading, toast, renderPagination, withBusy, renderChips } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES } from '../core/format.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
@@ -27,11 +27,18 @@ let lastResult = null;
 
 let aiAvailable = false;
 
+// 主機篩選（§5.4 D-4）：兩千台規模下不能把全部主機灌進一個 <select>，
+// 改成搜尋式 autocomplete＋已選主機顯示為可移除 chip。key 用字串，與 URL/DOM dataset 一致
+const selectedHosts = new Map();   // hostId(string) → hostName
+let hostGroups = [];
+const activeGroupIds = new Set();  // groupId(string)
+
 async function init() {
-    await loadHostOptions();
     applyUrlToForm();
+    await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions()]);
     await search();
     initAiSummary();
+    setupHostAutocomplete();
 }
 
 /**
@@ -82,25 +89,145 @@ function updateAiSummaryButton() {
     if (currentView !== 'detail') document.getElementById('ai-summary').replaceChildren();
 }
 
-async function loadHostOptions() {
-    const hosts = await api.get('/api/hosts');
-    const select = document.getElementById('filter-hosts');
+/**
+ * 網址帶的 hostIds 只有數字，畫面上的 chip 需要顯示名稱——用 ids= 參數精確取回
+ * （不受 query= 搜尋的 20 筆上限），下鑽連結（例如報表的主機排行）才能正確還原成 chip。
+ */
+async function resolveSelectedHostsFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const csv = params.get('hostIds');
+    if (!csv) return;
 
-    for (const host of hosts) {
-        const option = document.createElement('option');
-        option.value = host.hostId;
-        option.textContent = host.hostName;
-        select.appendChild(option);
+    try {
+        const hosts = await api.get(`/api/hosts?ids=${encodeURIComponent(csv)}`, { silent: true });
+        for (const host of hosts) selectedHosts.set(String(host.hostId), host.hostName);
+    } catch {
+        // 解析失敗就不顯示 chip；篩選條件本身仍在 URL 上，重新查詢不受影響
+    }
+    renderHostChips();
+}
+
+function renderHostChips() {
+    const container = document.getElementById('filter-host-chips');
+    container.replaceChildren();
+
+    for (const [id, name] of selectedHosts) {
+        const chip = document.createElement('span');
+        chip.className = 'lf-badge lf-badge--primary d-inline-flex align-items-center gap-1';
+
+        const text = document.createElement('span');
+        text.textContent = name;
+        chip.appendChild(text);
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn-close btn-close-sm';
+        remove.style.fontSize = '.6rem';
+        remove.setAttribute('aria-label', `移除主機：${name}`);
+        remove.addEventListener('click', () => {
+            selectedHosts.delete(id);
+            renderHostChips();
+            currentPage = 1;
+            search();
+        });
+        chip.appendChild(remove);
+
+        container.appendChild(chip);
+    }
+}
+
+/** 搜尋式主機 autocomplete：輸入 2 字元後查伺服器（防抖 250ms），點建議項加入 chip */
+function setupHostAutocomplete() {
+    const input = document.getElementById('filter-host-search');
+    const suggestions = document.getElementById('filter-host-suggestions');
+    let debounceTimer = null;
+
+    input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        const value = input.value.trim();
+        if (value.length < 2) {
+            hideHostSuggestions();
+            return;
+        }
+        debounceTimer = setTimeout(() => loadHostSuggestions(value), 250);
+    });
+
+    document.addEventListener('click', event => {
+        if (!event.target.closest('#filter-host-search, #filter-host-suggestions')) hideHostSuggestions();
+    });
+
+    async function loadHostSuggestions(query) {
+        let hosts;
+        try {
+            hosts = await api.get(`/api/hosts?query=${encodeURIComponent(query)}`, { silent: true });
+        } catch {
+            return;
+        }
+
+        const candidates = hosts.filter(h => !selectedHosts.has(String(h.hostId)));
+        suggestions.replaceChildren();
+
+        if (candidates.length === 0) {
+            suggestions.classList.remove('show');
+            return;
+        }
+
+        for (const host of candidates) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'dropdown-item small';
+            item.textContent = host.hostName;
+            item.addEventListener('click', () => {
+                selectedHosts.set(String(host.hostId), host.hostName);
+                renderHostChips();
+                hideHostSuggestions();
+                input.value = '';
+                currentPage = 1;
+                search();
+            });
+            suggestions.appendChild(item);
+        }
+        suggestions.classList.add('show');
     }
 
-    if (hosts.length === 0) select.disabled = true;
+    function hideHostSuggestions() {
+        suggestions.replaceChildren();
+        suggestions.classList.remove('show');
+    }
+}
+
+/** 主機群組 chip（§5.4 D-4）：只列出目前使用者看得到主機所屬的群組，選了不限的角色不會看到空群組 */
+async function loadGroupOptions() {
+    const params = new URLSearchParams(location.search);
+    for (const id of splitCsv(params.get('groupIds'))) activeGroupIds.add(id);
+
+    try {
+        hostGroups = await api.get('/api/hosts/groups', { silent: true });
+    } catch {
+        hostGroups = [];
+    }
+
+    const row = document.getElementById('filter-group-row');
+    row.classList.toggle('d-none', hostGroups.length === 0);
+    if (hostGroups.length === 0) return;
+
+    renderChips(document.getElementById('filter-group-chips'), {
+        items: hostGroups.map(g => ({ value: String(g.groupId), label: g.groupName })),
+        attr: 'group',
+        activeValues: [...activeGroupIds],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) activeGroupIds.add(value); else activeGroupIds.delete(value);
+            currentPage = 1;
+            search();
+        }
+    });
 }
 
 /** URL → 表單／chip。下鑽進來的連結帶著條件，畫面必須反映它們 */
 function applyUrlToForm() {
     const params = new URLSearchParams(location.search);
 
-    setMultiSelect('filter-hosts', params.get('hostIds'));
     // riskLevels 參數不存在＝首次進頁，套預設高＋中；存在（含空字串）＝尊重使用者的選擇
     setChips('filter-risk-chips', 'risk',
         params.has('riskLevels') ? splitCsv(params.get('riskLevels')) : DEFAULT_RISKS);
@@ -117,14 +244,6 @@ function applyUrlToForm() {
 
 function splitCsv(csv) {
     return csv ? csv.split(',').filter(Boolean) : [];
-}
-
-function setMultiSelect(id, csv) {
-    if (!csv) return;
-    const values = csv.split(',');
-    for (const option of document.getElementById(id).options) {
-        option.selected = values.includes(option.value);
-    }
 }
 
 function setChips(containerId, attr, values) {
@@ -155,7 +274,8 @@ function setActiveView(view) {
 
 function collectFilters() {
     return {
-        hostIds: selectedValues('filter-hosts'),
+        hostIds: [...selectedHosts.keys()],
+        groupIds: [...activeGroupIds],
         riskLevels: activeChips('filter-risk-chips', 'risk'),
         categories: activeChips('filter-category-chips', 'category'),
         from: document.getElementById('filter-from').value,
@@ -169,13 +289,10 @@ function collectFilters() {
     };
 }
 
-function selectedValues(id) {
-    return Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
-}
-
 function buildQueryString(filters, page) {
     const params = new URLSearchParams();
     if (filters.hostIds.length) params.set('hostIds', filters.hostIds.join(','));
+    if (filters.groupIds.length) params.set('groupIds', filters.groupIds.join(','));
     // riskLevels 一律寫入（即使為空）——空字串代表「使用者選了不限」，與「首次進頁」要分得出來
     params.set('riskLevels', filters.riskLevels.join(','));
     if (filters.categories.length) params.set('categories', filters.categories.join(','));

@@ -195,3 +195,10 @@ public class VisibleHostDto
     public string RoleDesc { get; set; } = string.Empty;
     public DateTime? LastReportAt { get; set; }
 }
+
+/// <summary>主機群組篩選選項（§5.4 D-4）——比完整 HostGroupDto 精簡，一般使用者用不到 MemberCount/Active</summary>
+public class HostGroupOptionDto
+{
+    public long GroupId { get; set; }
+    public string GroupName { get; set; } = string.Empty;
+}

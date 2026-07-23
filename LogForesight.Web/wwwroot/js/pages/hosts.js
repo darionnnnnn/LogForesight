@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const listContainer = document.getElementById('host-list');
@@ -15,19 +15,28 @@ const searchInput = document.getElementById('host-search');
 const sentinelFilter = document.getElementById('sentinel-filter');
 const sortSelect = document.getElementById('host-sort');
 
-// chip 篩選狀態（§5.1 D-2）：狀態沿用舊版下拉的六個值改單選 chip；群組為新增的多選 chip
-let statusMode = '';
+// chip 篩選狀態（§5.1 D-2）：狀態沿用舊版下拉的六個值改單選 chip；群組為新增的多選 chip。
+// URL 帶 ?status= 時預選（§5.4 D-4：儀表板「未回報主機」計數卡下鑽用）
+let statusMode = new URLSearchParams(location.search).get('status') ?? '';
 const groupFilter = new Set();
+
+// 未回報定義（§5.4 D-4）：只用來顯示 chip 標籤文字，實際篩選在伺服器端（HostAdminService 同一套規則）
+const SILENT_CUTOFF_DAYS = 2;
 const form = document.getElementById('host-form');
 const bulkForm = document.getElementById('bulk-form');
 const modal = new bootstrap.Modal(document.getElementById('host-modal'));
 const bulkModal = new bootstrap.Modal(document.getElementById('bulk-modal'));
 
-let hosts = [];
+// currentPageHosts：只有目前這一頁的主機（伺服器端分頁，§5.4 D-4）——不是全部主機，
+// 篩選/排序/搜尋一律重新呼叫伺服器，不在瀏覽器內對這個陣列做二次篩選
+let currentPageHosts = [];
 let hostGroups = [];
 let users = [];
 let overview = { sentinelNames: [], ipConflicts: [] };
 let editingHost = null;
+let currentPage = 1;
+let lastResult = null;
+let searchDebounce = null;
 
 /**
  * IP 衝突的主機 ID。兩個集合都直接取自後端的衝突明細，前端不自行重算——
@@ -40,8 +49,7 @@ let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
 async function load() {
     renderLoading(listContainer, 5);
 
-    [hosts, hostGroups, users, overview] = await Promise.all([
-        api.get('/api/admin/hosts'),
+    [hostGroups, users, overview] = await Promise.all([
         api.get('/api/admin/host-groups'),
         api.get('/api/admin/users'),
         api.get('/api/admin/netiq/overview')
@@ -54,7 +62,7 @@ async function load() {
     fillSentinelOptions();
     setupGroupChips();
     renderQueues();
-    render();
+    await search();
 }
 
 function fillSentinelOptions() {
@@ -138,7 +146,8 @@ function renderQueues() {
         button.addEventListener('click', () => {
             statusMode = card.key;
             setupStatusChips();
-            render();
+            currentPage = 1;
+            search();
         });
 
         col.appendChild(button);
@@ -149,6 +158,7 @@ function renderQueues() {
 /**
  * 狀態單選 chip（沿用舊版下拉的六個值，改用 chip 視覺）＋主機群組多選 chip（§5.1 D-2 新增）。
  * 待辦佇列卡點擊仍走同一個 statusMode，只是改呼叫 setupStatusChips() 同步 active 樣式。
+ * §5.4 D-4：篩選改伺服器端分頁，任何 chip 變動都重新查詢（currentPage 重設為 1）。
  */
 function setupStatusChips() {
     renderChips(document.getElementById('host-status-chips'), {
@@ -158,13 +168,14 @@ function setupStatusChips() {
             { value: 'netiq', label: 'NetIQ 來源' },
             { value: 'pending', label: '待歸屬 Sentinel' },
             { value: 'conflict', label: 'IP 衝突' },
+            { value: 'silent', label: `未回報（${SILENT_CUTOFF_DAYS} 天以上）` },
             { value: 'ungrouped', label: '未分組' },
             { value: 'inactive', label: '已停用／已併入' }
         ],
         attr: 'status',
         activeValues: [statusMode],
         multi: false,
-        onToggle: value => { statusMode = value; render(); }
+        onToggle: value => { statusMode = value; currentPage = 1; search(); }
     });
 }
 
@@ -176,53 +187,33 @@ function setupGroupChips() {
         multi: true,
         onToggle: (value, active) => {
             if (active) groupFilter.add(value); else groupFilter.delete(value);
-            render();
+            currentPage = 1;
+            search();
         }
     });
 }
 
-function sortHosts(list) {
-    const sorted = [...list];
-    if (sortSelect.value === 'lastReport') {
-        sorted.sort((a, b) => new Date(b.lastReportAt ?? 0) - new Date(a.lastReportAt ?? 0));
-    } else {
-        sorted.sort((a, b) => a.hostName.localeCompare(b.hostName));
-    }
-    return sorted;
-}
+/** 伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：任何篩選條件改變都重新呼叫伺服器，不在瀏覽器內二次篩選 */
+async function search() {
+    const params = new URLSearchParams();
+    const keyword = searchInput.value.trim();
+    if (keyword) params.set('query', keyword);
+    if (statusMode) params.set('status', statusMode);
+    if (sentinelFilter.value) params.set('sentinel', sentinelFilter.value);
+    if (groupFilter.size > 0) params.set('groupIds', [...groupFilter].join(','));
+    params.set('sort', sortSelect.value === 'lastReport' ? 'lastReport' : 'name');
+    params.set('page', String(currentPage));
 
-function visibleRows() {
-    const keyword = searchInput.value.trim().toLowerCase();
-    const sentinel = sentinelFilter.value;
-
-    const filtered = hosts.filter(host => {
-        if (keyword && !matchesKeyword(host, keyword)) return false;
-        if (sentinel && host.netiqServer !== sentinel) return false;
-        if (groupFilter.size > 0 && !host.groupIds.some(id => groupFilter.has(String(id)))) return false;
-
-        switch (statusMode) {
-            case 'local': return host.source === 'local' && host.active;
-            case 'netiq': return host.source === 'netiq' && host.active;
-            case 'pending': return host.source === 'netiq' && host.active && !host.mergedInto && !host.netiqServer;
-            case 'conflict': return conflictIds.has(host.hostId);
-            case 'ungrouped': return host.active && !host.mergedInto && host.groupIds.length === 0;
-            case 'inactive': return !host.active;
-            default: return true;
-        }
-    });
-
-    return sortHosts(filtered);
-}
-
-function matchesKeyword(host, keyword) {
-    return host.hostName.toLowerCase().includes(keyword) ||
-        (host.displayName ?? '').toLowerCase().includes(keyword) ||
-        (host.ipAddress ?? '').toLowerCase().includes(keyword);
+    renderLoading(listContainer, 5);
+    lastResult = await api.get(`/api/admin/hosts?${params.toString()}`);
+    currentPageHosts = lastResult.items;
+    render();
 }
 
 function render() {
-    const rows = visibleRows();
-    document.getElementById('host-count').textContent = `共 ${rows.length} 台`;
+    document.getElementById('host-count').textContent = `共 ${lastResult.total} 台`;
+
+    const hasFilter = !!(searchInput.value.trim() || statusMode || sentinelFilter.value || groupFilter.size > 0);
 
     renderTable(listContainer, {
         columns: [
@@ -235,10 +226,20 @@ function render() {
             { title: '最近回報', render: lastReportCell },
             { title: '', className: 'text-end', render: actionsCell }
         ],
-        rows,
-        empty: hosts.length === 0
+        rows: currentPageHosts,
+        empty: !hasFilter && lastResult.total === 0
             ? { title: '尚無主機', hint: '批次分析執行時會自動登記本機；NetIQ 主機請用「新增主機」或「批次貼上」建立。' }
             : { title: '沒有符合條件的主機', hint: '請調整搜尋或篩選條件後再試。' }
+    });
+
+    renderPagination(document.getElementById('host-pager'), {
+        page: lastResult.page,
+        totalPages: Math.ceil(lastResult.total / lastResult.pageSize),
+        onPage: page => {
+            currentPage = page;
+            search();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
     });
 }
 
@@ -598,9 +599,14 @@ document.getElementById('btn-bulk-hosts').addEventListener('click', () => {
     bulkModal.show();
 });
 
-searchInput.addEventListener('input', render);
-sentinelFilter.addEventListener('change', render);
-sortSelect.addEventListener('change', render);
+// 搜尋輸入防抖（§5.4 D-4）：伺服器端搜尋改成每次打字都發請求的話，兩千台規模下會塞爆——
+// 停止輸入 300ms 後才查詢
+searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { currentPage = 1; search(); }, 300);
+});
+sentinelFilter.addEventListener('change', () => { currentPage = 1; search(); });
+sortSelect.addEventListener('change', () => { currentPage = 1; search(); });
 setupStatusChips();
 
 // ── 從 NetIQ 主動探索匯入精靈（docs/SCALE-2000-PLAN.md §1）─────────────────────

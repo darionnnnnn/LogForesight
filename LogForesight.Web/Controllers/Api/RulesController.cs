@@ -91,10 +91,20 @@ public class RunsController : ControllerBase
         _settings = settings;
     }
 
-    [HttpGet("matrix")]
-    public ApiResponse<RunMatrixDto> Matrix([FromQuery] int? days) =>
-        ApiResponse<RunMatrixDto>.Ok(
-            _service.GetMatrix(Math.Clamp(days ?? _settings.Ui.RunMatrixDays, 1, 90)));
+    [HttpGet("summary")]
+    public ApiResponse<List<RunDaySummaryDto>> Summary([FromQuery] int? days) =>
+        ApiResponse<List<RunDaySummaryDto>>.Ok(
+            _service.GetDaySummaries(Math.Clamp(days ?? _settings.Ui.RunMatrixDays, 1, 90)));
+
+    [HttpGet("day/{date}")]
+    public ApiResponse<List<RunDayHostStatusDto>> DayDetail(string date)
+    {
+        if (!DateTime.TryParseExact(date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+            throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+
+        return ApiResponse<List<RunDayHostStatusDto>>.Ok(_service.GetDayDetail(parsed));
+    }
 
     [HttpGet("{runId:long}")]
     public ApiResponse<RunDetailDto> Detail(long runId) =>

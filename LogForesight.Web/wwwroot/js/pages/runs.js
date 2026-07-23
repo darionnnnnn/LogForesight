@@ -22,16 +22,16 @@ let currentDays = 14;
 let currentLogs = [];
 
 async function load() {
-    renderLoading(document.getElementById('run-matrix'), 4);
+    renderLoading(document.getElementById('run-summary'), 4);
     renderLoading(document.getElementById('run-errors'), 3);
 
-    const [matrix, errors] = await Promise.all([
-        api.get(`/api/runs/matrix?days=${currentDays}`),
+    const [summaries, errors] = await Promise.all([
+        api.get(`/api/runs/summary?days=${currentDays}`),
         api.get(`/api/runs/errors?days=${currentDays}`)
     ]);
 
     renderLegend();
-    renderMatrix(matrix);
+    renderSummary(summaries);
     renderErrors(errors);
 }
 
@@ -57,10 +57,14 @@ function renderLegend() {
     }
 }
 
-function renderMatrix(matrix) {
-    const container = document.getElementById('run-matrix');
+/**
+ * 執行總表改每日一列（§5.4 D-4）：取代舊版「主機×日期」矩陣——
+ * 兩千台規模下矩陣會炸出過大的 DOM（2000×90 格），彙總後點日期才下鑽看逐主機明細。
+ */
+function renderSummary(summaries) {
+    const container = document.getElementById('run-summary');
 
-    if (matrix.rows.length === 0) {
+    if (summaries.every(s => s.totalHosts === 0)) {
         renderEmpty(container, {
             title: '尚無執行紀錄',
             hint: '批次程式執行後會自動登記；請確認 LogForesight.exe 的排程已設定。'
@@ -68,83 +72,112 @@ function renderMatrix(matrix) {
         return;
     }
 
+    renderTable(container, {
+        columns: [
+            { title: '日期', render: s => dateLink(s.date) },
+            { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
+            { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
+            { title: '失敗', className: 'text-end', render: s => countCell(s.failedCount, 'failed') },
+            { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
+            { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
+            { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
+            { title: '失敗主機', render: s => failedHostsCell(s) }
+        ],
+        rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
+        empty: { title: '尚無執行紀錄' }
+    });
+}
+
+function dateLink(date) {
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = date;
+    link.addEventListener('click', event => {
+        event.preventDefault();
+        showDayDetail(date);
+    });
+    return link;
+}
+
+function countCell(count, status) {
+    if (count === 0) return document.createTextNode('');
+    const span = document.createElement('span');
+    span.style.color = STATUS_META[status].color;
+    span.style.fontWeight = '600';
+    span.textContent = String(count);
+    return span;
+}
+
+function failedHostsCell(summary) {
+    const total = summary.failedCount + summary.stuckCount;
+    if (total === 0) return document.createTextNode('');
+
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
+    wrap.className = 'small';
+    wrap.textContent = summary.failedHostNames.join('、');
 
-    const table = document.createElement('table');
-    table.className = 'table table-sm align-middle mb-0';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-
-    const corner = document.createElement('th');
-    corner.textContent = '主機';
-    corner.style.minWidth = '10rem';
-    headRow.appendChild(corner);
-
-    for (const date of matrix.dates) {
-        const th = document.createElement('th');
-        th.className = 'text-center small';
-        th.style.padding = '.25rem';
-        th.textContent = date.slice(5);   // MM-dd
-        headRow.appendChild(th);
+    if (summary.otherFailedCount > 0) {
+        const more = document.createElement('span');
+        more.className = 'text-muted';
+        more.textContent = `　其他 ${summary.otherFailedCount} 台`;
+        wrap.appendChild(more);
     }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    for (const row of matrix.rows) {
-        const tr = document.createElement('tr');
-
-        const th = document.createElement('th');
-        th.className = 'small';
-        th.textContent = row.hostName;
-        tr.appendChild(th);
-
-        for (const cell of row.cells) {
-            const td = document.createElement('td');
-            td.className = 'text-center';
-            td.style.padding = '.25rem';
-            td.appendChild(cellElement(cell, row.hostName));
-            tr.appendChild(td);
-        }
-
-        tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    container.replaceChildren(wrap);
+    return wrap;
 }
 
-function cellElement(cell, hostName) {
-    const meta = STATUS_META[cell.status] ?? STATUS_META.none;
-    const clickable = cell.runId != null;
+/** 點日期下鑽：該天每台主機的狀態，取代舊版矩陣的「一格看一次執行」 */
+async function showDayDetail(date) {
+    const card = document.getElementById('run-day-detail-card');
+    card.classList.remove('d-none');
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('run-day-detail-title').textContent = `${date} 各主機狀態`;
 
-    const el = document.createElement(clickable ? 'button' : 'span');
-    el.className = 'rounded d-inline-block border-0';
-    el.style.width = '20px';
-    el.style.height = '20px';
-    el.style.background = meta.color;
-    el.style.padding = '0';
+    renderLoading(document.getElementById('run-day-detail-list'), 6);
+    const hosts = await api.get(`/api/runs/day/${date}`);
 
-    if (clickable) {
-        el.type = 'button';
-        el.style.cursor = 'pointer';
-        el.addEventListener('click', () => showDetail(cell.runId));
-    }
-
-    const parts = [`${hostName}　${cell.date}　${meta.label}`];
-    if (cell.runId != null) {
-        parts.push(`分析 ${cell.daysAnalyzed} 天`);
-        if (cell.warnCount > 0) parts.push(`警告 ${cell.warnCount}`);
-        if (cell.errorCount > 0) parts.push(`錯誤 ${cell.errorCount}`);
-        if (cell.aiFailures > 0) parts.push(`AI 失敗 ${cell.aiFailures}`);
-        if (cell.runCount > 1) parts.push(`當日執行 ${cell.runCount} 次`);
-    }
-    el.title = parts.join('｜');
-
-    return el;
+    renderTable(document.getElementById('run-day-detail-list'), {
+        columns: [
+            { title: '主機', render: h => h.hostName },
+            { title: '狀態', render: h => statusBadgeCell(h.status) },
+            { title: '分析天數', className: 'text-end', render: h => h.runId != null ? String(h.daysAnalyzed) : '' },
+            { title: '警告 / 錯誤', className: 'text-end', render: h => h.runId != null ? `${h.warnCount} / ${h.errorCount}` : '' },
+            { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
+        ],
+        rows: hosts,
+        empty: { title: '這天沒有任何主機資料' }
+    });
 }
+
+function statusBadgeCell(status) {
+    const meta = STATUS_META[status] ?? STATUS_META.none;
+    const span = document.createElement('span');
+    span.className = 'd-inline-flex align-items-center gap-2';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'rounded d-inline-block';
+    swatch.style.width = '10px';
+    swatch.style.height = '10px';
+    swatch.style.background = meta.color;
+
+    const text = document.createElement('span');
+    text.textContent = meta.label;
+
+    span.append(swatch, text);
+    return span;
+}
+
+function viewRunButton(runId) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-primary';
+    button.textContent = '查看執行';
+    button.addEventListener('click', () => showDetail(runId));
+    return button;
+}
+
+document.getElementById('run-day-detail-close').addEventListener('click', () => {
+    document.getElementById('run-day-detail-card').classList.add('d-none');
+});
 
 function renderErrors(errors) {
     renderTable(document.getElementById('run-errors'), {

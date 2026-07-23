@@ -17,6 +17,7 @@ public class HostAdminServiceTests
         new FakeHostGroupStore(),
         new FakeUserStore(),
         new NetiqHostServiceTests.FakeNetiqServerCatalog("SENTINEL-A"),
+        new FakeNetiqHostServiceForAdmin(),
         new FakeAuditService());
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
@@ -115,4 +116,14 @@ public class HostAdminServiceTests
 
         Assert.Throws<DomainException>(() => Create().UnmergeHost(host.HostId));
     }
+}
+
+/// <summary>HostAdminService 只需要 GetOverview()（IP 衝突偵測，§5.4 D-4 的 conflict 篩選）——
+/// 這裡的測試不涉及 conflict 狀態篩選，回空清單即可</summary>
+internal class FakeNetiqHostServiceForAdmin : INetiqHostService
+{
+    public NetiqOverviewDto GetOverview() => new();
+    public HostDto AddHost(AddNetiqHostRequest request) => throw new NotSupportedException();
+    public BulkAddResultDto BulkAddHosts(BulkAddNetiqHostsRequest request) => throw new NotSupportedException();
+    public HostDto SetActive(long hostId, bool active) => throw new NotSupportedException();
 }

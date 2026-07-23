@@ -70,8 +70,32 @@ public class AdminController : ControllerBase
     // ── 主機 ─────────────────────────────────────────────────────────────────
 
     [HttpGet("hosts")]
-    public ApiResponse<List<HostDto>> GetHosts() =>
-        ApiResponse<List<HostDto>>.Ok(_hosts.GetHosts());
+    public ApiResponse<PagedResult<HostDto>> GetHosts(
+        [FromQuery] string? query,
+        [FromQuery] string status = "",
+        [FromQuery] string? sentinel = null,
+        [FromQuery] string? groupIds = null,
+        [FromQuery] string sort = "name",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var request = new HostSearchRequest
+        {
+            Query = query,
+            Status = status,
+            Sentinel = sentinel,
+            GroupIds = string.IsNullOrWhiteSpace(groupIds)
+                ? null
+                : groupIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => long.TryParse(s, out var id) ? id : (long?)null)
+                    .Where(id => id.HasValue).Select(id => id!.Value).ToList(),
+            Sort = sort,
+            Page = page,
+            PageSize = pageSize
+        };
+
+        return ApiResponse<PagedResult<HostDto>>.Ok(_hosts.GetHosts(request));
+    }
 
     [HttpPost("hosts")]
     public ApiResponse<HostDto> SaveHost([FromBody] SaveHostRequest request) =>

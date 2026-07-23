@@ -1,21 +1,31 @@
 namespace LogForesight.Web.Models.Dto;
 
-/// <summary>執行監控總表：列＝主機、欄＝日期</summary>
-public class RunMatrixDto
-{
-    public List<string> Dates { get; set; } = new();
-    public List<RunMatrixRowDto> Rows { get; set; } = new();
-}
-
-public class RunMatrixRowDto
-{
-    public string HostName { get; set; } = string.Empty;
-    public List<RunCellDto> Cells { get; set; } = new();
-}
-
-public class RunCellDto
+/// <summary>
+/// 執行監控每日彙總（§5.4 D-4）：取代舊版「主機×日期」矩陣。
+/// 兩千台規模下矩陣會炸出 2000×90 格 DOM，改成每天一列的計數＋失敗主機清單
+/// （上限 10 台＋「其他 N 台」），完整清單透過 <see cref="RunDayDetailHostDto"/> 點日期取得。
+/// </summary>
+public class RunDaySummaryDto
 {
     public string Date { get; set; } = string.Empty;
+
+    public int TotalHosts { get; set; }
+    public int SuccessCount { get; set; }
+    public int WarningCount { get; set; }
+    public int FailedCount { get; set; }
+    public int StuckCount { get; set; }
+    public int RunningCount { get; set; }
+    public int NotRunCount { get; set; }
+
+    /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
+    public List<string> FailedHostNames { get; set; } = new();
+    public int OtherFailedCount { get; set; }
+}
+
+/// <summary>單一日期的逐主機狀態（點日期下鑽時取得，同一天最多 TotalHosts 筆，不是整個矩陣）</summary>
+public class RunDayHostStatusDto
+{
+    public string HostName { get; set; } = string.Empty;
 
     /// <summary>success | warning | failed | running | stuck | none</summary>
     public string Status { get; set; } = string.Empty;
