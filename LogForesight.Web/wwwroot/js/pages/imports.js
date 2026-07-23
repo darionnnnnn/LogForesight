@@ -16,7 +16,7 @@ const previewWarnings = document.getElementById('preview-warnings');
 const previewRows = document.getElementById('preview-rows');
 const applyButton = document.getElementById('preview-apply');
 
-const KIND_NAMES = { Users: '使用者', Hosts: '主機', GroupAccess: '群組授權' };
+const KIND_NAMES = { Users: '使用者', Hosts: '主機', GroupAccess: '群組授權', Owners: '負責人' };
 const ACTION_META = {
     Add: { text: '新增', variant: 'success' },
     Update: { text: '更新', variant: 'primary' },
@@ -116,6 +116,13 @@ function renderSummary() {
         const note = document.createElement('div');
         note.className = 'alert alert-info mt-3 mb-0';
         note.textContent = `套用時將自動建立群組：${currentPlan.newGroups.join('、')}`;
+        previewSummary.appendChild(note);
+    }
+
+    if (currentPlan.newUsers && currentPlan.newUsers.length > 0) {
+        const note = document.createElement('div');
+        note.className = 'alert alert-info mt-3 mb-0';
+        note.textContent = `套用時將自動建立 ${currentPlan.newUsers.length} 個使用者帳號：${currentPlan.newUsers.join('、')}`;
         previewSummary.appendChild(note);
     }
 }

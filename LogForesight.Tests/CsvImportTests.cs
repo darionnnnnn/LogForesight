@@ -412,3 +412,121 @@ public class GroupAccessCsvImporterTests
         Assert.Equal(ooHosts.GroupId, remaining[0].HostGroupId);
     }
 }
+
+public class OwnerCsvImporterTests
+{
+    private readonly FakeHostStore _hosts = new();
+    private readonly FakeUserStore _users = new();
+
+    private OwnerCsvImporter Importer => new(_hosts, _users);
+
+    private static CsvTable Parse(string content) =>
+        CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
+
+    private WebHost AddHost(string name, string? ip = null) =>
+        _hosts.Upsert(new WebHost { HostName = name, IpAddress = ip });
+
+    [Fact]
+    public void 同主機多列_彙總為多位負責人並取代()
+    {
+        AddHost("SRV01");
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+        _users.Upsert(new WebUser { Account = "DOMAIN\\b" });
+
+        var table = Parse("host_name,owner_account\r\nSRV01,DOMAIN\\a\r\nSRV01,DOMAIN\\b\r\n");
+        var plan = Importer.BuildPlan(table, "owners.csv");
+
+        // 一台主機 → 一列預覽（彙總），不是兩列
+        Assert.Single(plan.Rows);
+        Assert.Equal(ImportRowAction.Update, plan.Rows[0].Action);
+
+        Importer.Apply(plan, table);
+        Assert.Equal(2, _hosts.FindByName("SRV01")!.OwnerUserIds.Count);
+    }
+
+    [Fact]
+    public void 帳號不存在_預覽標記將自動建立_套用時建立()
+    {
+        AddHost("SRV01");
+
+        var table = Parse("host_name,owner_account\r\nSRV01,DOMAIN\\new\r\n");
+        var plan = Importer.BuildPlan(table, "owners.csv");
+
+        Assert.Contains("DOMAIN\\new", plan.NewUsers);
+        Assert.True(plan.CanApply);
+
+        var result = Importer.Apply(plan, table);
+        Assert.Contains("DOMAIN\\new", result.CreatedUsers);
+        Assert.NotNull(_users.FindByAccount("DOMAIN\\new"));
+        // 自動建立的帳號是一般使用者、無群組
+        Assert.Empty(_users.FindByAccount("DOMAIN\\new")!.GroupIds);
+    }
+
+    [Fact]
+    public void host_name空白_以IP比對主機()
+    {
+        AddHost("SRV01", "10.2.3.21");
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        var table = Parse("host_name,ip_address,owner_account\r\n,10.2.3.21,DOMAIN\\a\r\n");
+        var plan = Importer.BuildPlan(table, "owners.csv");
+        Assert.True(plan.CanApply);
+
+        Importer.Apply(plan, table);
+        Assert.Single(_hosts.FindByName("SRV01")!.OwnerUserIds);
+    }
+
+    [Fact]
+    public void 主機不存在_標記錯誤不自動建立主機()
+    {
+        var plan = Importer.BuildPlan(
+            Parse("host_name,owner_account\r\nGHOST,DOMAIN\\a\r\n"), "owners.csv");
+
+        Assert.Equal(1, plan.ErrorCount);
+        Assert.Contains("找不到主機", plan.Rows[0].Error);
+        Assert.Empty(_hosts.GetAll());
+    }
+
+    [Fact]
+    public void IP對應多台主機_擋下要求改用主機名()
+    {
+        AddHost("SRV01", "10.1.1.1");
+        AddHost("SRV02", "10.1.1.1");
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        var plan = Importer.BuildPlan(
+            Parse("host_name,ip_address,owner_account\r\n,10.1.1.1,DOMAIN\\a\r\n"), "owners.csv");
+
+        Assert.Equal(1, plan.ErrorCount);
+        Assert.Contains("多台主機", plan.Rows[0].Error);
+    }
+
+    [Fact]
+    public void host_name與ip指向不同主機_交叉驗證擋下()
+    {
+        AddHost("SRV01", "10.1.1.1");
+        AddHost("SRV02", "10.2.2.2");
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        var plan = Importer.BuildPlan(
+            Parse("host_name,ip_address,owner_account\r\nSRV01,10.2.2.2,DOMAIN\\a\r\n"), "owners.csv");
+
+        Assert.Equal(1, plan.ErrorCount);
+        Assert.Contains("指向不同主機", plan.Rows[0].Error);
+    }
+
+    [Fact]
+    public void 未出現在檔案的主機_負責人不受影響()
+    {
+        var srv1 = AddHost("SRV01");
+        var other = _users.Upsert(new WebUser { Account = "DOMAIN\\keep" });
+        var srv2 = _hosts.Upsert(new WebHost { HostName = "SRV02", OwnerUserIds = new List<long> { other.UserId } });
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        var table = Parse("host_name,owner_account\r\nSRV01,DOMAIN\\a\r\n");
+        Importer.Apply(Importer.BuildPlan(table, "owners.csv"), table);
+
+        // SRV02 不在檔案中 → 負責人不動
+        Assert.Equal(new[] { other.UserId }, _hosts.FindByName("SRV02")!.OwnerUserIds);
+    }
+}

@@ -98,6 +98,34 @@
             </div>
         </div>
     </div>
+
+    <div class="col-lg-4">
+        <div class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">負責人</h2>
+            </div>
+            <div class="lf-card__body">
+                <p class="small text-muted">
+                    指派主機的負責人。一台主機多列＝多位負責人；<strong>檔案中出現的主機，負責人整組取代</strong>。
+                </p>
+                <details class="mb-3">
+                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                    <div class="lf-table-wrap">
+                    <table class="table table-sm small mb-0">
+                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>host_name</code></td><td>擇一</td><td>主機名稱（與 ip_address 至少填一個）</td></tr>
+                            <tr><td><code>ip_address</code></td><td>擇一</td><td>host_name 空白時以此比對主機</td></tr>
+                            <tr><td><code>owner_account</code></td><td>是</td><td>負責人帳號，<strong>不存在會自動建立</strong></td></tr>
+                        </tbody>
+                    </table>
+                    </div>
+                </details>
+                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Owners/template">下載範本</a>
+                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="lf-card mt-3 d-none" id="preview-card">

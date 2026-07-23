@@ -34,6 +34,7 @@ public class ImportsController : ControllerBase
             ImportKind.Users => "users.csv",
             ImportKind.Hosts => "hosts.csv",
             ImportKind.GroupAccess => "group_access.csv",
+            ImportKind.Owners => "owners.csv",
             _ => "template.csv"
         };
 

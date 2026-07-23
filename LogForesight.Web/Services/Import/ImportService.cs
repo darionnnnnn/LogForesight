@@ -120,10 +120,11 @@ public class ImportService : IImportService
             action: AuditActions.ImportApply,
             summary: $"匯入 {KindName(kind)}（{pending.Plan.FileName}）：新增 {result.Added}、更新 {result.Updated}" +
                      (result.Removed > 0 ? $"、移除 {result.Removed}" : "") +
-                     (result.CreatedGroups.Count > 0 ? $"，新建群組 {string.Join("、", result.CreatedGroups)}" : ""),
+                     (result.CreatedGroups.Count > 0 ? $"，新建群組 {string.Join("、", result.CreatedGroups)}" : "") +
+                     (result.CreatedUsers.Count > 0 ? $"，新建帳號 {string.Join("、", result.CreatedUsers)}" : ""),
             targetKind: "import",
             targetId: kind.ToString(),
-            detail: new { result.Added, result.Updated, result.Removed, result.CreatedGroups, pending.Plan.FileName });
+            detail: new { result.Added, result.Updated, result.Removed, result.CreatedGroups, result.CreatedUsers, pending.Plan.FileName });
 
         return result;
     }
@@ -161,6 +162,7 @@ public class ImportService : IImportService
         ImportKind.Users => "使用者",
         ImportKind.Hosts => "主機",
         ImportKind.GroupAccess => "群組授權",
+        ImportKind.Owners => "負責人",
         _ => kind.ToString()
     };
 

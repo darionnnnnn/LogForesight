@@ -207,6 +207,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICsvImporter, UserCsvImporter>();
         services.AddScoped<ICsvImporter, HostCsvImporter>();
         services.AddScoped<ICsvImporter, GroupAccessCsvImporter>();
+        services.AddScoped<ICsvImporter, OwnerCsvImporter>();
         services.AddScoped<IImportService, ImportService>();
 
         return services;

@@ -4,7 +4,10 @@ public enum ImportKind
 {
     Users,
     Hosts,
-    GroupAccess
+    GroupAccess,
+
+    /// <summary>負責人指派（owners.csv）：host 對 owner 帳號，帳號不存在時自動建立</summary>
+    Owners
 }
 
 public enum ImportRowAction
@@ -64,6 +67,9 @@ public class ImportPlan
     /// <summary>將自動建立的群組名稱（使用者群組或主機群組，依 Kind 而定）</summary>
     public List<string> NewGroups { get; init; } = new();
 
+    /// <summary>將自動建立的使用者帳號（負責人匯入專用；owners.csv 引用不存在的帳號時自動建）</summary>
+    public List<string> NewUsers { get; init; } = new();
+
     /// <summary>不擋下但需要提醒的事項（如負責人看不到自己負責的主機）</summary>
     public List<string> Warnings { get; init; } = new();
 
@@ -88,4 +94,7 @@ public class ImportResult
     public int Updated { get; set; }
     public int Removed { get; set; }
     public List<string> CreatedGroups { get; } = new();
+
+    /// <summary>本次自動建立的使用者帳號（負責人匯入）</summary>
+    public List<string> CreatedUsers { get; } = new();
 }
