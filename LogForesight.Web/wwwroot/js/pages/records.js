@@ -1,9 +1,14 @@
 /**
  * 問題查詢（docs/WEB-SPEC.md §9.2）。
  *
- * 篩選條件與 URL 查詢字串同步（§8.6-2）——這同時滿足兩件事：
- * 查詢結果可以複製網址給同事，以及讓所有下鑽（§8.4）只需要「組出網址再導頁」，
- * 明細頁不必為下鑽寫任何額外程式碼。
+ * 篩選條件與 URL 查詢字串同步（§8.6-2）——查詢結果可以複製網址給同事，
+ * 所有下鑽（§8.4）只需要「組出網址再導頁」，明細頁不必為下鑽寫額外程式碼。
+ *
+ * 三個檢視角度共用同一條篩選列與同一組 URL 參數（view=detail|host|date）：
+ *   - 明細：一列一筆風險日（主機×日期）
+ *   - 依主機：日期合併，一列一台主機
+ *   - 依日期：主機合併，一列一天
+ * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
 import { api } from '../core/api.js';
@@ -15,8 +20,13 @@ const CATEGORY_NAMES = {
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
 };
 
+// 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
+const DEFAULT_RISKS = ['高', '中'];
+
 const form = document.getElementById('filter-form');
 const listContainer = document.getElementById('record-list');
+
+let currentView = 'detail';
 let currentPage = 1;
 let lastResult = null;
 
@@ -37,23 +47,29 @@ async function loadHostOptions() {
         select.appendChild(option);
     }
 
-    if (hosts.length === 0) {
-        select.disabled = true;
-    }
+    if (hosts.length === 0) select.disabled = true;
 }
 
-/** URL → 表單。下鑽進來的連結帶著條件，畫面必須反映它們 */
+/** URL → 表單／chip。下鑽進來的連結帶著條件，畫面必須反映它們 */
 function applyUrlToForm() {
     const params = new URLSearchParams(location.search);
 
     setMultiSelect('filter-hosts', params.get('hostIds'));
-    setMultiSelect('filter-risk', params.get('riskLevels'));
-    setMultiSelect('filter-category', params.get('categories'));
+    // riskLevels 參數不存在＝首次進頁，套預設高＋中；存在（含空字串）＝尊重使用者的選擇
+    setChips('filter-risk-chips', 'risk',
+        params.has('riskLevels') ? splitCsv(params.get('riskLevels')) : DEFAULT_RISKS);
+    setChips('filter-category-chips', 'category', splitCsv(params.get('categories')));
     document.getElementById('filter-from').value = params.get('from') ?? defaultFrom();
     document.getElementById('filter-to').value = params.get('to') ?? today();
     document.getElementById('filter-event-id').value = params.get('eventId') ?? '';
 
+    currentView = ['detail', 'host', 'date'].includes(params.get('view')) ? params.get('view') : 'detail';
+    setActiveView(currentView);
     currentPage = Number(params.get('page')) || 1;
+}
+
+function splitCsv(csv) {
+    return csv ? csv.split(',').filter(Boolean) : [];
 }
 
 function setMultiSelect(id, csv) {
@@ -64,15 +80,33 @@ function setMultiSelect(id, csv) {
     }
 }
 
+function setChips(containerId, attr, values) {
+    const wanted = new Set(values);
+    for (const btn of document.querySelectorAll(`#${containerId} [data-${attr}]`)) {
+        btn.classList.toggle('active', wanted.has(btn.dataset[attr]));
+    }
+}
+
+function activeChips(containerId, attr) {
+    return Array.from(document.querySelectorAll(`#${containerId} [data-${attr}].active`))
+        .map(btn => btn.dataset[attr]);
+}
+
+function setActiveView(view) {
+    for (const btn of document.querySelectorAll('#view-toggle [data-view]')) {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    }
+}
+
 function collectFilters() {
     return {
         hostIds: selectedValues('filter-hosts'),
-        riskLevels: selectedValues('filter-risk'),
-        categories: selectedValues('filter-category'),
+        riskLevels: activeChips('filter-risk-chips', 'risk'),
+        categories: activeChips('filter-category-chips', 'category'),
         from: document.getElementById('filter-from').value,
         to: document.getElementById('filter-to').value,
         eventId: document.getElementById('filter-event-id').value,
-        // 下面兩項只由下鑽網址帶入，不放在表單裡（避免主篩選列過度複雜）
+        // 下面三項只由下鑽網址帶入，不放在篩選列（避免主篩選列過度複雜）
         severity: new URLSearchParams(location.search).get('severity') ?? '',
         statuses: new URLSearchParams(location.search).get('statuses') ?? '',
         overdue: new URLSearchParams(location.search).get('overdue') ?? ''
@@ -86,7 +120,8 @@ function selectedValues(id) {
 function buildQueryString(filters, page) {
     const params = new URLSearchParams();
     if (filters.hostIds.length) params.set('hostIds', filters.hostIds.join(','));
-    if (filters.riskLevels.length) params.set('riskLevels', filters.riskLevels.join(','));
+    // riskLevels 一律寫入（即使為空）——空字串代表「使用者選了不限」，與「首次進頁」要分得出來
+    params.set('riskLevels', filters.riskLevels.join(','));
     if (filters.categories.length) params.set('categories', filters.categories.join(','));
     if (filters.from) params.set('from', filters.from);
     if (filters.to) params.set('to', filters.to);
@@ -94,49 +129,68 @@ function buildQueryString(filters, page) {
     if (filters.severity) params.set('severity', filters.severity);
     if (filters.statuses) params.set('statuses', filters.statuses);
     if (filters.overdue) params.set('overdue', filters.overdue);
+    if (currentView !== 'detail') params.set('view', currentView);
     if (page > 1) params.set('page', String(page));
     return params.toString();
 }
+
+/** 明細視角才支援處理狀態／逾期篩選；彙總視角不帶這兩個參數 */
+const ENDPOINT = { detail: '/api/records', host: '/api/records/by-host', date: '/api/records/by-date' };
 
 async function search() {
     const filters = collectFilters();
     const query = buildQueryString(filters, currentPage);
 
-    // 同步網址：使用者可以直接複製這條網址分享，重新整理也回到同一個結果
+    // 同步網址：可直接複製分享，重新整理回到同一個結果與同一個視角
     history.replaceState(null, '', query ? `?${query}` : location.pathname);
 
     renderLoading(listContainer, 6);
-    lastResult = await api.get(`/api/records?${query}`);
+    lastResult = await api.get(`${ENDPOINT[currentView]}?${query}`);
     render();
 }
 
 function render() {
     document.getElementById('result-count').textContent =
-        lastResult.total > 0 ? `共 ${lastResult.total} 筆` : '';
+        lastResult.total > 0 ? `共 ${lastResult.total} ${currentView === 'detail' ? '筆' : (currentView === 'host' ? '台主機' : '天')}` : '';
 
+    if (currentView === 'host') renderHostView();
+    else if (currentView === 'date') renderDateView();
+    else renderDetailView();
+
+    renderPager();
+}
+
+// ── 明細視角 ─────────────────────────────────────────────────────────────────
+
+function renderDetailView() {
     renderTable(listContainer, {
         columns: [
             { title: '日期', render: r => dateLink(r) },
             { title: '主機', render: r => r.hostName },
             { title: '風險', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
-            { title: '類型', render: r => categoryBadges(r) },
+            { title: '類型', render: r => categoryBadges(r.categories) },
             { title: '處理狀態', render: r => handlingCell(r) },
             { title: '處理人', render: r => r.handlerName ?? '' }
         ],
         rows: lastResult.items,
+        rowHref: r => `/records/${r.hostId}/${r.date}${detailQuery()}`,
         empty: {
             title: '沒有符合條件的資料',
             hint: '請調整日期區間或篩選條件；若剛部署，請先確認批次分析已執行過。'
         }
     });
+}
 
-    renderPager();
+/** 類別條件跟著連結進明細（§8.4 下鑽上下文不中斷）：明細頁會高亮並捲到對應的問題分節 */
+function detailQuery() {
+    const categories = activeChips('filter-category-chips', 'category');
+    return categories.length ? `?categories=${encodeURIComponent(categories.join(','))}` : '';
 }
 
 function dateLink(record) {
     const link = document.createElement('a');
-    link.href = `/records/${record.hostId}/${record.date}`;
+    link.href = `/records/${record.hostId}/${record.date}${detailQuery()}`;
     link.textContent = record.date;
     return link;
 }
@@ -185,11 +239,88 @@ function handlingCell(record) {
     return wrap;
 }
 
-function categoryBadges(record) {
+// ── 依主機視角（日期合併）────────────────────────────────────────────────────
+
+function renderHostView() {
+    renderTable(listContainer, {
+        columns: [
+            { title: '主機', render: h => textCell(h.hostName) },
+            { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
+            { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
+            { title: '低風險', className: 'text-end', render: h => String(h.lowRiskDays) },
+            { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h.correlationDays) },
+            { title: '類型', render: h => categoryBadges(h.categories) },
+            { title: '最新狀況', render: h => `${h.latestDate}　${h.latestHeadline}` }
+        ],
+        rows: lastResult.items,
+        rowHref: h => h.hostId > 0 ? `/hosts/${h.hostId}` : null,
+        empty: { title: '沒有符合條件的主機', hint: '請調整篩選條件或日期區間。' }
+    });
+}
+
+// ── 依日期視角（主機合併）────────────────────────────────────────────────────
+
+function renderDateView() {
+    renderTable(listContainer, {
+        columns: [
+            { title: '日期', render: d => dateViewLink(d) },
+            { title: '主機數', className: 'text-end', render: d => String(d.hostCount) },
+            { title: '高風險', className: 'text-end', render: d => String(d.highRiskHosts) },
+            { title: '中風險', className: 'text-end', render: d => String(d.mediumRiskHosts) },
+            { title: '低風險', className: 'text-end', render: d => String(d.lowRiskHosts) },
+            { title: '關聯訊號', className: 'text-end', render: d => correlationCell(d.correlationHosts) },
+            { title: '類型', render: d => categoryBadges(d.categories) }
+        ],
+        rows: lastResult.items,
+        // 點某天 → 切到明細視角並鎖定這天（單日區間）
+        rowHref: d => detailForDate(d.date),
+        empty: { title: '沒有符合條件的日期', hint: '請調整篩選條件或日期區間。' }
+    });
+}
+
+/** 依日期視角下鑽到明細：沿用目前篩選，換成明細視角並鎖定單日區間 */
+function detailForDate(date) {
+    const params = new URLSearchParams(buildQueryString(collectFilters(), 1));
+    params.delete('view');   // 明細是預設視角，不需要參數
+    params.delete('page');
+    params.set('from', date);
+    params.set('to', date);
+    return `?${params.toString()}`;
+}
+
+function dateViewLink(row) {
+    const link = document.createElement('a');
+    link.href = detailForDate(row.date);
+    link.textContent = row.date;
+    return link;
+}
+
+// ── 共用元件 ─────────────────────────────────────────────────────────────────
+
+function textCell(value) {
+    const span = document.createElement('span');
+    span.textContent = value;
+    return span;
+}
+
+function correlationCell(count) {
+    if (!count) return '';
+    const span = document.createElement('span');
+    span.className = 'text-danger fw-semibold';
+    span.textContent = String(count);
+    span.title = '有攻擊鏈／故障鏈的關聯訊號';
+    return span;
+}
+
+function categoryBadges(categories) {
+    // 有類別篩選時，命中的類別 badge 用主色標示，看得出哪個是你篩的
+    const active = new Set(activeChips('filter-category-chips', 'category'));
     const wrap = document.createElement('span');
-    for (const category of record.categories) {
+    for (const category of categories) {
         const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--light border me-1';
+        badge.className = active.has(category)
+            ? 'lf-badge lf-badge--primary me-1'
+            : 'lf-badge lf-badge--light border me-1';
         badge.textContent = CATEGORY_NAMES[category] ?? category;
         wrap.appendChild(badge);
     }
@@ -221,6 +352,27 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     location.href = location.pathname;
 });
 
+// chip：即點即篩（免按套用）
+for (const container of ['filter-risk-chips', 'filter-category-chips']) {
+    document.getElementById(container).addEventListener('click', event => {
+        const btn = event.target.closest('button[data-risk], button[data-category]');
+        if (!btn) return;
+        btn.classList.toggle('active');
+        currentPage = 1;
+        search();
+    });
+}
+
+// 視角切換：換 endpoint 重查，篩選條件不變
+document.getElementById('view-toggle').addEventListener('click', event => {
+    const btn = event.target.closest('[data-view]');
+    if (!btn || btn.dataset.view === currentView) return;
+    currentView = btn.dataset.view;
+    setActiveView(currentView);
+    currentPage = 1;
+    search();
+});
+
 for (const button of document.querySelectorAll('[data-range]')) {
     button.addEventListener('click', () => {
         const days = Number(button.dataset.range);
@@ -234,27 +386,15 @@ for (const button of document.querySelectorAll('[data-range]')) {
     });
 }
 
-/** 複製為 CSV：前端序列化當前頁，零後端成本（§8.6-7） */
+/** 複製為 CSV：前端序列化當前頁，零後端成本（§8.6-7）。欄位隨視角而異 */
 document.getElementById('btn-copy-csv').addEventListener('click', async () => {
     if (!lastResult || lastResult.items.length === 0) {
         toast('目前沒有可複製的資料', 'warning');
         return;
     }
 
-    const header = ['日期', '主機', '風險', '狀況', '類型', '錯誤數', '警告數'];
-    const lines = [header.join(',')];
-
-    for (const item of lastResult.items) {
-        lines.push([
-            item.date,
-            quote(item.hostName),
-            item.riskLevel,
-            quote(item.headline),
-            quote(item.categories.map(c => CATEGORY_NAMES[c] ?? c).join(';')),
-            item.errorCount,
-            item.warningCount
-        ].join(','));
-    }
+    const lines = [csvHeader().join(',')];
+    for (const item of lastResult.items) lines.push(csvRow(item).join(','));
 
     try {
         await navigator.clipboard.writeText(lines.join('\r\n'));
@@ -263,6 +403,26 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
         toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
     }
 });
+
+function csvHeader() {
+    if (currentView === 'host') return ['主機', '高風險', '中風險', '低風險', '關聯訊號', '類型', '最新日期', '最新狀況'];
+    if (currentView === 'date') return ['日期', '主機數', '高風險', '中風險', '低風險', '關聯訊號', '類型'];
+    return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
+}
+
+function csvRow(item) {
+    const cats = c => quote((c ?? []).map(x => CATEGORY_NAMES[x] ?? x).join(';'));
+    if (currentView === 'host') {
+        return [quote(item.hostName), item.highRiskDays, item.mediumRiskDays, item.lowRiskDays,
+            item.correlationDays, cats(item.categories), item.latestDate, quote(item.latestHeadline)];
+    }
+    if (currentView === 'date') {
+        return [item.date, item.hostCount, item.highRiskHosts, item.mediumRiskHosts, item.lowRiskHosts,
+            item.correlationHosts, cats(item.categories)];
+    }
+    return [item.date, quote(item.hostName), item.riskLevel, quote(item.headline),
+        cats(item.categories), quote(item.handlingStatusText), quote(item.handlerName ?? '')];
+}
 
 function quote(value) {
     const text = String(value ?? '');

@@ -84,6 +84,23 @@ public class TrendAnalyzerTests
     }
 
     [Fact]
+    public void 只在不完整日出現過的簽章不判為New而是Recurring()
+    {
+        // 釘住「趨勢說首次出現、卻有昨日次數」的矛盾：昨天（不完整日）出現過 4 次，
+        // 可靠歷史因排除不完整日而為空，但存在性判定要看全部歷史——曾出現過就不是首次。
+        var incomplete = HistoryDay(DateTime.Today.AddDays(-1), "Resource-Exhaustion", 2004, 4, IssueSeverity.High);
+        incomplete.DataIncomplete = true;
+        var history = new List<DailyAnalysisRecord> { incomplete };
+        var sig = Sig("System", "Resource-Exhaustion", 2004, 1, IssueSeverity.High);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 1, 0);
+
+        Assert.Equal(IssueTrend.Recurring, sig.Trend);
+        Assert.Equal(4, sig.PreviousDayCount);
+        Assert.DoesNotContain(alerts, a => a.Contains("首次出現"));
+    }
+
+    [Fact]
     public void DataIncomplete的歷史日排除在基準外()
     {
         var incomplete = HistoryDay(DateTime.Today.AddDays(-1), "disk", 153, 0, IssueSeverity.High);

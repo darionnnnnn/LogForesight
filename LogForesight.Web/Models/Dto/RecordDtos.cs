@@ -29,6 +29,50 @@ public class RecordListItemDto
     public bool IsOverdue { get; set; }
 }
 
+/// <summary>
+/// 問題查詢「依主機」視角的彙總列（把同一台主機的多天合併成一列）。
+/// 回答的是「哪台主機在這段期間最該擔心」，與明細視角看的是同一批紀錄、同一組篩選。
+/// </summary>
+public class RecordHostGroupDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public int HighRiskDays { get; set; }
+    public int MediumRiskDays { get; set; }
+    public int LowRiskDays { get; set; }
+
+    /// <summary>有關聯訊號（攻擊鏈／故障鏈）的日數——緊急程度排序的第二順位</summary>
+    public int CorrelationDays { get; set; }
+
+    /// <summary>期間內出現過的風險類型（跨日去重，依最高嚴重度排序）</summary>
+    public List<string> Categories { get; set; } = new();
+
+    public string LatestDate { get; set; } = string.Empty;
+    public string LatestRiskLevel { get; set; } = string.Empty;
+    public string LatestHeadline { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 問題查詢「依日期」視角的彙總列（把同一天的多台主機合併成一列）。
+/// 回答的是「哪一天整體最不平靜」，適合看事件是否集中爆發。
+/// </summary>
+public class RecordDateGroupDto
+{
+    public string Date { get; set; } = string.Empty;
+    public int HighRiskHosts { get; set; }
+    public int MediumRiskHosts { get; set; }
+    public int LowRiskHosts { get; set; }
+
+    /// <summary>當天有關聯訊號的主機數</summary>
+    public int CorrelationHosts { get; set; }
+
+    /// <summary>當天出現過的風險類型（跨主機去重，依最高嚴重度排序）</summary>
+    public List<string> Categories { get; set; } = new();
+
+    /// <summary>當天有風險紀錄的主機數（去重）</summary>
+    public int HostCount { get; set; }
+}
+
 /// <summary>風險日詳情</summary>
 public class RecordDetailDto
 {

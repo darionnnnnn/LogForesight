@@ -28,8 +28,12 @@ public interface IHandlingService
 
     List<HandlingLogDto> GetLogs(long hostId, DateTime date);
 
-    /// <summary>儀表板待辦：未處理與逾期</summary>
-    HandlingTodoDto GetTodo();
+    /// <summary>
+    /// 儀表板待辦：未處理與逾期。母體是傳入的風險日紀錄——
+    /// **沒有 handling 列的風險日也要算未處理**（與問題查詢清單同一套語意），
+    /// 只數 handling.json 既有列會漏掉所有「從未被動過」的新問題。
+    /// </summary>
+    HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records);
 }
 
 public class HandlingService : IHandlingService
@@ -176,22 +180,38 @@ public class HandlingService : IHandlingService
             .ToList();
     }
 
-    public HandlingTodoDto GetTodo()
+    public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)
     {
-        var visibleHostNames = _visibility.GetVisibleHosts()
-            .Select(h => h.HostName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (records.Count == 0) return new HandlingTodoDto();
 
-        var unresolved = _store.GetUnresolved()
-            .Where(h => visibleHostNames.Contains(h.HostName))
-            .ToList();
+        // 紀錄 → 現行主機名稱：handling 以現行名稱為鍵（與 RecordQueryService 同一套規則）。
+        // 可見範圍不在這裡過濾——傳入的紀錄已經過 RecordRepository 的可見範圍交集
+        var lookup = new HostLookup(_hosts.GetAll());
+        string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
 
-        return new HandlingTodoDto
+        var hostNames = records.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var handlings = _store.GetMany(hostNames, records.Min(r => r.Date), records.Max(r => r.Date));
+
+        var todo = new HandlingTodoDto();
+        foreach (var record in records)
         {
-            OpenCount = unresolved.Count(h => h.Status == HandlingStatuses.Open),
-            InProgressCount = unresolved.Count(h => h.Status == HandlingStatuses.InProgress),
-            OverdueCount = unresolved.Count(h => h.DueDate.HasValue && h.DueDate.Value.Date < DateTime.Today)
-        };
+            var handling = handlings.FirstOrDefault(h =>
+                string.Equals(h.HostName, NameOf(record), StringComparison.OrdinalIgnoreCase) &&
+                h.Date.Date == record.Date.Date);
+
+            var status = handling?.Status ?? HandlingStatuses.Open;
+            if (status == HandlingStatuses.Open) todo.OpenCount++;
+            else if (status == HandlingStatuses.InProgress) todo.InProgressCount++;
+
+            if (handling?.DueDate.HasValue == true &&
+                handling.DueDate.Value.Date < DateTime.Today &&
+                HandlingStatuses.Unresolved.Contains(status))
+            {
+                todo.OverdueCount++;
+            }
+        }
+
+        return todo;
     }
 
     /// <summary>

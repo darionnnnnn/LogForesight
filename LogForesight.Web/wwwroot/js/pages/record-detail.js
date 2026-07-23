@@ -20,21 +20,28 @@ const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
+// 嚴重度由重到輕；預設不顯示 Low——重點問題頁常被 Low 的雜訊淹沒，
+// 真正要看的 Critical/High/Medium 反而被推到下面（與清單頁預設排除低風險同一個取捨）
+const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
+const activeSeverities = new Set(['Critical', 'High', 'Medium']);
+let currentDetail = null;
+
 async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
 
-    const detail = await api.get(`/api/records/${hostId}/${date}`);
+    currentDetail = await api.get(`/api/records/${hostId}/${date}`);
 
-    renderHeader(detail);
-    renderIssues(detail);
-    renderAlerts(detail);
-    renderCategories(detail);
-    renderCoverage(detail);
-    renderDeepDives(detail);
+    renderHeader(currentDetail);
+    renderSeverityFilter(currentDetail);
+    renderIssues(currentDetail);
+    renderAlerts(currentDetail);
+    renderCategories(currentDetail);
+    renderCoverage(currentDetail);
+    renderDeepDives(currentDetail);
 
     await initHandlingPanel(hostId, date);
 
-    if (detail.hasReport) await loadReport();
+    if (currentDetail.hasReport) await loadReport();
 }
 
 function renderHeader(detail) {
@@ -108,19 +115,124 @@ function renderHeader(detail) {
     container.replaceChildren(card);
 }
 
+const ISSUE_COLUMNS = [
+    { title: '來源 / Event', render: i => sourceCell(i) },
+    { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
+    { title: '嚴重度', render: i => severityBadge(i.severity) },
+    { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
+    { title: '趨勢', render: i => i.trendText },
+    { title: '說明', render: i => knownIssueCell(i) }
+];
+
+/** 下鑽帶入的類別（§8.4）：從儀表板分類卡或查詢頁篩著類別點進來時，網址會帶 categories */
+function highlightedCategories() {
+    const csv = new URLSearchParams(location.search).get('categories');
+    return new Set(csv ? csv.split(',') : []);
+}
+
+/**
+ * 嚴重度篩選鈕：點選即重繪（免按查詢，比照儀表板期間鈕）。
+ * 用 btn-group + active 沿用既有視覺語言，不另造樣式。
+ */
+function renderSeverityFilter(detail) {
+    const container = document.getElementById('detail-severity-filter');
+    if (!container) return;
+
+    // 只列出當日實際存在的嚴重度，避免出現點了也沒東西的空鈕
+    const present = SEVERITY_ORDER.filter(s => detail.topIssues.some(i => i.severity === s));
+    if (present.length <= 1) {
+        container.replaceChildren();
+        return;
+    }
+
+    container.replaceChildren();
+    for (const severity of present) {
+        const count = detail.topIssues.filter(i => i.severity === severity).length;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary' + (activeSeverities.has(severity) ? ' active' : '');
+        btn.textContent = `${severity} ${count}`;
+        btn.addEventListener('click', () => {
+            if (activeSeverities.has(severity)) activeSeverities.delete(severity);
+            else activeSeverities.add(severity);
+            btn.classList.toggle('active');
+            renderIssues(currentDetail);
+        });
+        container.appendChild(btn);
+    }
+}
+
+/**
+ * 重點問題依類別分節，對齊報告 txt 的「■【類別】重點問題 N 項」——
+ * 一天常同時有硬體＋資源＋服務的問題，合併成一張平面表會讓「這項屬於哪一類」
+ * 從畫面上消失，儀表板分類卡下鑽進來就對不上自己點的類別。
+ * 分節順序沿用 detail.categories（CategoryAggregator：最高嚴重度 → 問題數）。
+ */
 function renderIssues(detail) {
-    renderTable(document.getElementById('detail-issues'), {
-        columns: [
-            { title: '來源 / Event', render: i => sourceCell(i) },
-            { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
-            { title: '嚴重度', render: i => severityBadge(i.severity) },
-            { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
-            { title: '趨勢', render: i => i.trendText },
-            { title: '說明', render: i => knownIssueCell(i) }
-        ],
-        rows: detail.topIssues,
-        empty: { title: '當日沒有重點問題', hint: '沒有任何事件簽章達到列入重點的門檻。' }
-    });
+    const container = document.getElementById('detail-issues');
+
+    if (detail.topIssues.length === 0) {
+        renderEmpty(container, {
+            title: '當日沒有重點問題',
+            hint: '沒有任何事件簽章達到列入重點的門檻。'
+        });
+        return;
+    }
+
+    const highlighted = highlightedCategories();
+    container.replaceChildren();
+
+    let shown = 0;
+    let hidden = 0;
+
+    for (const category of detail.categories) {
+        const all = detail.topIssues.filter(i => i.category === category.category);
+        if (all.length === 0) continue;
+
+        const issues = all.filter(i => activeSeverities.has(i.severity));
+        hidden += all.length - issues.length;
+        if (issues.length === 0) continue;
+        shown += issues.length;
+
+        const section = document.createElement('section');
+        section.className = 'lf-issue-group';
+        if (highlighted.has(category.category)) section.classList.add('lf-issue-group--hit');
+
+        const header = document.createElement('div');
+        header.className = 'lf-issue-group__header d-flex align-items-center gap-2';
+
+        const title = document.createElement('span');
+        title.className = 'fw-semibold';
+        title.textContent = `【${CATEGORY_NAMES[category.category] ?? category.category}】重點問題 ${issues.length} 項`;
+        header.append(title, severityBadge(category.maxSeverity));
+        section.appendChild(header);
+
+        const body = document.createElement('div');
+        renderTable(body, { columns: ISSUE_COLUMNS, rows: issues });
+        section.appendChild(body);
+
+        container.appendChild(section);
+    }
+
+    // 全被篩掉時給明確出口，不留白畫面讓人誤以為「這天沒問題」
+    if (shown === 0) {
+        renderEmpty(container, {
+            title: `已隱藏全部 ${hidden} 項`,
+            hint: '目前的嚴重度篩選未包含任何一項，點上方的嚴重度鈕加回。'
+        });
+        return;
+    }
+
+    // 有被篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
+    if (hidden > 0) {
+        const note = document.createElement('div');
+        note.className = 'text-muted small px-3 py-2 border-top';
+        note.textContent = `另有 ${hidden} 項因嚴重度篩選未顯示。`;
+        container.appendChild(note);
+    }
+
+    // 下鑽進來時直接捲到命中的第一個類別分節
+    container.querySelector('.lf-issue-group--hit')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 function sourceCell(issue) {
@@ -253,8 +365,9 @@ function renderCategories(detail) {
     for (const category of detail.categories) {
         const row = document.createElement('a');
         row.className = 'd-flex justify-content-between align-items-center py-2 border-bottom text-decoration-none text-body';
-        // 下鑽：點類別 → 帶條件回問題查詢（§8.4）
-        row.href = `/records?categories=${category.category}&from=${detail.date}&to=${detail.date}`;
+        // 下鑽：點類別 → 帶條件回問題查詢（§8.4）。顯式帶全部風險層級，
+        // 免得問題查詢的「預設隱藏低風險」把這一類的低風險日藏掉
+        row.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`;
 
         const name = document.createElement('span');
         name.textContent = CATEGORY_NAMES[category.category] ?? category.category;

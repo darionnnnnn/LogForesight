@@ -61,6 +61,55 @@ public class RecordsController : ControllerBase
         return ApiResponse<PagedResult<RecordListItemDto>>.Ok(_service.Search(request));
     }
 
+    /// <summary>依主機彙總（日期合併）。篩選參數與 <see cref="Search"/> 同義，只是換視角</summary>
+    [HttpGet("by-host")]
+    public ApiResponse<PagedResult<RecordHostGroupDto>> ByHost(
+        [FromQuery] string? hostIds,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string? riskLevels,
+        [FromQuery] string? categories,
+        [FromQuery] string? severity,
+        [FromQuery] int? eventId,
+        [FromQuery] string? source,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50) =>
+        ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(
+            _service.SearchByHost(BuildRequest(hostIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+
+    /// <summary>依日期彙總（主機合併）</summary>
+    [HttpGet("by-date")]
+    public ApiResponse<PagedResult<RecordDateGroupDto>> ByDate(
+        [FromQuery] string? hostIds,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string? riskLevels,
+        [FromQuery] string? categories,
+        [FromQuery] string? severity,
+        [FromQuery] int? eventId,
+        [FromQuery] string? source,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50) =>
+        ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
+            _service.SearchByDate(BuildRequest(hostIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+
+    private static RecordSearchRequest BuildRequest(
+        string? hostIds, string? from, string? to, string? riskLevels, string? categories,
+        string? severity, int? eventId, string? source, int page, int pageSize) =>
+        new()
+        {
+            HostIds = ParseLongs(hostIds),
+            From = ParseDate(from),
+            To = ParseDate(to),
+            RiskLevels = ParseStrings(riskLevels),
+            Categories = ParseStrings(categories),
+            Severity = severity,
+            EventId = eventId,
+            Source = source,
+            Page = page,
+            PageSize = pageSize
+        };
+
     [HttpGet("{hostId:long}/{date}")]
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
         ApiResponse<RecordDetailDto>.Ok(_service.GetDetail(hostId, RequireDate(date)));

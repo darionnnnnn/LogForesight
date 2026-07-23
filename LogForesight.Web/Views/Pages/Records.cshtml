@@ -4,7 +4,7 @@
 
 <div class="lf-card mb-3 lf-no-print">
     <div class="lf-card__body">
-        <form id="filter-form" class="row g-2 align-items-end">
+        <form id="filter-form" class="row g-3 align-items-end">
             <div class="col-md-3">
                 <label for="filter-hosts" class="form-label small mb-1">主機</label>
                 <select class="form-select form-select-sm" id="filter-hosts" multiple size="1"></select>
@@ -18,35 +18,37 @@
                 <input type="date" class="form-control form-control-sm" id="filter-to" />
             </div>
             <div class="col-md-2">
-                <label for="filter-risk" class="form-label small mb-1">風險層級</label>
-                <select class="form-select form-select-sm" id="filter-risk" multiple size="1">
-                    <option value="高">高</option>
-                    <option value="中">中</option>
-                    <option value="低">低</option>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <label for="filter-category" class="form-label small mb-1">風險類型</label>
-                <select class="form-select form-select-sm" id="filter-category" multiple size="1">
-                    <option value="Storage">儲存裝置</option>
-                    <option value="Hardware">硬體</option>
-                    <option value="Security">安全</option>
-                    <option value="Service">服務</option>
-                    <option value="Backup">備份</option>
-                    <option value="Config">設定</option>
-                    <option value="Resource">資源</option>
-                    <option value="Other">其他</option>
-                </select>
-            </div>
-            <div class="col-md-1">
                 <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
                 <input type="number" class="form-control form-control-sm" id="filter-event-id" />
             </div>
-
-            <div class="col-12 d-flex gap-2 mt-2">
-                <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+            <div class="col-md-3 d-flex gap-2">
+                <button type="submit" class="btn btn-sm btn-primary">套用主機／日期</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset">清除條件</button>
-                <div class="btn-group btn-group-sm ms-auto">
+            </div>
+
+            <div class="col-12 d-flex flex-wrap gap-4 align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="form-label small mb-0">風險層級</span>
+                    <div class="btn-group btn-group-sm" role="group" aria-label="風險層級" id="filter-risk-chips">
+                        <button type="button" class="btn btn-outline-secondary" data-risk="高">高</button>
+                        <button type="button" class="btn btn-outline-secondary" data-risk="中">中</button>
+                        <button type="button" class="btn btn-outline-secondary" data-risk="低">低</button>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="form-label small mb-0">風險類型</span>
+                    <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="風險類型" id="filter-category-chips">
+                        <button type="button" class="btn btn-outline-secondary" data-category="Storage">儲存裝置</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Hardware">硬體</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Security">安全</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Service">服務</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Backup">備份</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Config">設定</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Resource">資源</button>
+                        <button type="button" class="btn btn-outline-secondary" data-category="Other">其他</button>
+                    </div>
+                </div>
+                <div class="btn-group btn-group-sm ms-auto" role="group" aria-label="期間快捷">
                     <button type="button" class="btn btn-outline-secondary" data-range="7">近 7 天</button>
                     <button type="button" class="btn btn-outline-secondary" data-range="30">近 30 天</button>
                     <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
@@ -58,7 +60,14 @@
 
 <div class="lf-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">查詢結果 <span class="text-muted small" id="result-count"></span></h2>
+        <div class="d-flex align-items-center gap-3">
+            <div class="btn-group btn-group-sm lf-no-print" role="group" aria-label="檢視角度" id="view-toggle">
+                <button type="button" class="btn btn-outline-primary" data-view="detail">明細</button>
+                <button type="button" class="btn btn-outline-primary" data-view="host">依主機</button>
+                <button type="button" class="btn btn-outline-primary" data-view="date">依日期</button>
+            </div>
+            <span class="text-muted small" id="result-count"></span>
+        </div>
         <button type="button" class="btn btn-sm btn-outline-secondary lf-no-print" id="btn-copy-csv">複製為 CSV</button>
     </div>
     <div class="lf-card__body p-0" id="record-list"></div>

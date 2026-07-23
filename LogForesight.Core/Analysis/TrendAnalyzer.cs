@@ -73,14 +73,30 @@ public static class TrendAnalyzer
                 ? null
                 : prevRecord.TopIssues.FirstOrDefault(i => SameIssue(i, sig))?.Count ?? 0;
 
+            // 「首次出現」是**存在性**判定，要看全部歷史（含不完整日）——不完整的日子出現過也是
+            // 出現過。可靠歷史（relevantHistory）刻意排除不完整日以免墊歪「平均值」，但拿它來判
+            // 「有沒有出現過」會誤把「只在不完整日出現過」的簽章當成首次，於是與 PreviousDayCount
+            // 自相矛盾（趨勢說首次出現、卻有昨日次數）。兩者要用不同基準：平均看可靠、存在看全部。
+            bool everSeen = history.Any(h => h.Date.Date < targetDate.Date &&
+                                             h.TopIssues.Any(i => SameIssue(i, sig)));
+
             // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警文字——
             // 抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-PLAN.md 的語意邊界）
             if (pastCounts.Count == 0)
             {
-                sig.Trend = IssueTrend.New;
-                if (sig.Severity >= IssueSeverity.High && !sig.Suppressed && !channelWarmingUp)
+                if (everSeen)
                 {
-                    alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
+                    // 曾出現過但可靠歷史為空（只在不完整/頻道未讀的日子出現）：不能宣稱首次出現，
+                    // 也算不出可靠的頻率基準——標記為重複發生，不觸發「首次出現」告警與升級
+                    sig.Trend = IssueTrend.Recurring;
+                }
+                else
+                {
+                    sig.Trend = IssueTrend.New;
+                    if (sig.Severity >= IssueSeverity.High && !sig.Suppressed && !channelWarmingUp)
+                    {
+                        alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
+                    }
                 }
             }
             else if (sig.Count >= RisingMinCount && sig.Count >= sig.HistoryDailyAverage * RisingFactor)

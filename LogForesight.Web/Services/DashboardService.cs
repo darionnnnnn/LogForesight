@@ -58,7 +58,8 @@ public class DashboardService : IDashboardService
         dto.CoverageGapDays = records.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
 
         // 主管看到「有哪些風險」後的下一句話幾乎必然是「那有人在處理嗎？」
-        dto.Todo = _handling.GetTodo();
+        // 待辦母體 = 本期的高＋中風險日：低風險日不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）
+        dto.Todo = _handling.GetTodo(records.Where(r => r.RiskLevel is "高" or "中").ToList());
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
 
         // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，

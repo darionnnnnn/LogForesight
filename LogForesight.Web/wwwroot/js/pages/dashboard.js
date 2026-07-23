@@ -85,13 +85,14 @@ function renderKpi(data, user) {
         }
     ];
 
-    // 待辦：主管看到「有哪些風險」後的下一個問題是「有人在處理嗎」
+    // 待辦：主管看到「有哪些風險」後的下一個問題是「有人在處理嗎」。
+    // 後端只數本期的高＋中風險日，下鑽連結帶同一組條件，卡片數字與點進去的筆數才對得上
     const unresolved = data.todo.openCount + data.todo.inProgressCount;
     cards.push({
         label: data.todo.overdueCount > 0 ? `未處理（逾期 ${data.todo.overdueCount}）` : '未處理',
         value: unresolved,
         variant: data.todo.overdueCount > 0 ? 'danger' : (unresolved > 0 ? 'warning' : 'secondary'),
-        url: '/records?statuses=open,in_progress'
+        url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`
     });
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
@@ -161,7 +162,8 @@ function renderCategories(data) {
 
         const link = document.createElement('a');
         link.className = 'lf-stat';
-        link.href = `/records?categories=${category.category}&from=${data.from}&to=${data.to}`;
+        // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上
+        link.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
 
         // 嚴重度驅動顯著性：Critical 加紅邊、High 加黃邊（§8.2 原則 1）
         const severityClass = category.criticalCount > 0 ? ' lf-card--critical'

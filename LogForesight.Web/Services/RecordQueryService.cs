@@ -9,6 +9,12 @@ public interface IRecordQueryService
 {
     PagedResult<RecordListItemDto> Search(RecordSearchRequest request);
 
+    /// <summary>依主機彙總（日期合併）——同一組篩選，換一個角度看</summary>
+    PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request);
+
+    /// <summary>依日期彙總（主機合併）</summary>
+    PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request);
+
     RecordDetailDto GetDetail(long hostId, DateTime date);
 
     /// <summary>報告全文；沒有報告或已被清理時回 null</summary>
@@ -98,6 +104,81 @@ public class RecordQueryService : IRecordQueryService
             Page = page,
             PageSize = pageSize,
             Total = ordered.Count
+        };
+    }
+
+    public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request)
+    {
+        var records = _repository.Query(BuildFilter(request));
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        var groups = records
+            .Select(r => new { Record = r, Host = lookup.For(r) })
+            .GroupBy(x => x.Host?.HostName ?? x.Record.Host, StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.Record.Date).First();
+                return new RecordHostGroupDto
+                {
+                    HostId = latest.Host?.HostId ?? 0,
+                    HostName = latest.Host?.HostName ?? latest.Record.Host,
+                    HighRiskDays = g.Count(x => x.Record.RiskLevel == "高"),
+                    MediumRiskDays = g.Count(x => x.Record.RiskLevel == "中"),
+                    LowRiskDays = g.Count(x => x.Record.RiskLevel == "低"),
+                    CorrelationDays = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
+                    Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
+                        .Select(c => c.Category.ToString()).ToList(),
+                    LatestDate = latest.Record.Date.ToString("yyyy-MM-dd"),
+                    LatestRiskLevel = latest.Record.RiskLevel,
+                    LatestHeadline = latest.Record.Headline
+                };
+            })
+            // 緊急程度：高風險日 → 關聯訊號日 → 中風險日（與明細排序、儀表板排行同一套）
+            .OrderByDescending(h => h.HighRiskDays)
+            .ThenByDescending(h => h.CorrelationDays)
+            .ThenByDescending(h => h.MediumRiskDays)
+            .ToList();
+
+        return Paginate(groups, request);
+    }
+
+    public PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request)
+    {
+        var records = _repository.Query(BuildFilter(request));
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        var groups = records
+            .Select(r => new { Record = r, HostName = lookup.For(r)?.HostName ?? r.Host })
+            .GroupBy(x => x.Record.Date.Date)
+            .Select(g => new RecordDateGroupDto
+            {
+                Date = g.Key.ToString("yyyy-MM-dd"),
+                HighRiskHosts = g.Count(x => x.Record.RiskLevel == "高"),
+                MediumRiskHosts = g.Count(x => x.Record.RiskLevel == "中"),
+                LowRiskHosts = g.Count(x => x.Record.RiskLevel == "低"),
+                CorrelationHosts = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
+                Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
+                    .Select(c => c.Category.ToString()).ToList(),
+                HostCount = g.Select(x => x.HostName).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+            })
+            .OrderByDescending(d => d.Date)
+            .ToList();
+
+        return Paginate(groups, request);
+    }
+
+    /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
+    private static PagedResult<T> Paginate<T>(List<T> items, RecordSearchRequest request)
+    {
+        var pageSize = Math.Clamp(request.PageSize, 1, 200);
+        var page = Math.Max(request.Page, 1);
+
+        return new PagedResult<T>
+        {
+            Items = items.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+            Page = page,
+            PageSize = pageSize,
+            Total = items.Count
         };
     }
 
@@ -377,7 +458,14 @@ public class RecordQueryService : IRecordQueryService
     {
         var parts = new List<string>();
 
-        switch (issue.Trend)
+        // 防衛已存的舊紀錄：TrendAnalyzer 修正前寫入的行可能標成 New 卻帶著昨日次數
+        // （首次出現的判定曾誤用可靠歷史，把「只在不完整日出現過」當成首次）。history.txt
+        // 不會回填，這裡遇到矛盾就改述為重複發生，不讓畫面自打嘴巴。
+        var effectiveTrend = issue.Trend == IssueTrend.New && issue.PreviousDayCount > 0
+            ? IssueTrend.Recurring
+            : issue.Trend;
+
+        switch (effectiveTrend)
         {
             case IssueTrend.New:
                 parts.Add("首次出現");

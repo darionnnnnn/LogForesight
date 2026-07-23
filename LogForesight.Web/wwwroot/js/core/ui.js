@@ -201,8 +201,10 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
 /**
  * 表格渲染：欄位定義 → <table>，含空狀態與載入中列。
  * columns: [{ key, title, className, render(row) }]
+ * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
+ * 仍照自己的行為，不被整列連結攔截。
  */
-export function renderTable(container, { columns, rows, empty }) {
+export function renderTable(container, { columns, rows, empty, rowHref }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -228,6 +230,17 @@ export function renderTable(container, { columns, rows, empty }) {
     const tbody = document.createElement('tbody');
     for (const row of rows) {
         const tr = document.createElement('tr');
+
+        const href = rowHref ? rowHref(row) : null;
+        if (href) {
+            tr.classList.add('lf-row-link');
+            tr.addEventListener('click', event => {
+                // 讓列內的連結／按鈕保有自己的行為，只有點到空白處才走整列導向
+                if (event.target.closest('a, button')) return;
+                location.href = href;
+            });
+        }
+
         for (const col of columns) {
             const td = document.createElement('td');
             if (col.className) td.className = col.className;

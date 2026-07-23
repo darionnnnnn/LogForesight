@@ -591,6 +591,14 @@ a.lf-stat:hover .lf-card,
 
 .lf-badge .lf-icon { width: .85em; height: .85em; }
 
+/* ── 重點問題的類別分節（§9.3）────────────────────────────────────────────
+   對齊報告 txt 的「■【類別】重點問題 N 項」；--hit = 下鑽帶入的類別，
+   左側主色框標示「這節就是你點進來的那一類」。*/
+
+.lf-issue-group + .lf-issue-group { border-top: 1px solid var(--lf-border); }
+.lf-issue-group__header { padding: .75rem 1rem .35rem; }
+.lf-issue-group--hit { box-shadow: inset 3px 0 0 var(--lf-primary); }
+
 /* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
 
 .table {
@@ -617,6 +625,9 @@ a.lf-stat:hover .lf-card,
 }
 
 .table > tbody > tr:last-child > td { border-bottom: none; }
+
+/* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
+.table > tbody > tr.lf-row-link { cursor: pointer; }
 
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 

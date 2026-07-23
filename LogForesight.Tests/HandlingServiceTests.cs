@@ -270,6 +270,7 @@ public class HandlingServiceTests
         });
 
         // 直接寫入一筆已逾期的資料（Update 會擋下過去的日期）
+        _repository.AddRecord(_host.HostName, Today.AddDays(-1));
         _handlings.Save(new RecordHandling
         {
             HostName = _host.HostName,
@@ -278,11 +279,25 @@ public class HandlingServiceTests
             DueDate = DateTime.Today.AddDays(-2)
         });
 
-        var todo = service.GetTodo();
+        var todo = service.GetTodo(_repository.Query(new RecordQueryFilter()));
 
         Assert.Equal(1, todo.InProgressCount);
         Assert.Equal(1, todo.OpenCount);
         Assert.Equal(1, todo.OverdueCount);
+    }
+
+    /// <summary>
+    /// 釘住儀表板「清單全是未處理、待辦卻顯示 0」的修正：
+    /// 沒有 handling 列的風險日**就是**未處理，不是「不存在的待辦」。
+    /// </summary>
+    [Fact]
+    public void 待辦統計_從未處理過的風險日視為未處理()
+    {
+        var todo = Create(Capability.Handle).GetTodo(_repository.Query(new RecordQueryFilter()));
+
+        Assert.Equal(1, todo.OpenCount);
+        Assert.Equal(0, todo.InProgressCount);
+        Assert.Equal(0, todo.OverdueCount);
     }
 }
 
