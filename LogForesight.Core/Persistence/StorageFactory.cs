@@ -178,6 +178,17 @@ public static class StorageFactory
         }
     }
 
+    /// <summary>問題層級處理狀態（webdata\issue_handling.json）——Web 寫，日層級結案與否由此推導</summary>
+    public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot)
+    {
+        switch (settings.Type)
+        {
+            case "Jsonl":
+            default:
+                return new JsonIssueHandlingStore(WebDataPath(dataRoot, "issue_handling.json"));
+        }
+    }
+
     /// <summary>
     /// 權限異動（rundata\perm_changes.jsonl 由批次寫、webdata\perm_confirms.json 由 Web 寫）。
     /// 兩個檔案各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。

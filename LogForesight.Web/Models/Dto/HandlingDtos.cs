@@ -45,6 +45,36 @@ public class AssignHandlerRequest
     public long? HandlerId { get; set; }
 }
 
+/// <summary>設定單一問題的處理狀態（詳情頁逐列狀態鈕）</summary>
+public class SetIssueStatusRequest
+{
+    /// <summary>問題簽章鍵（IssueSignatureKey）</summary>
+    [Required]
+    public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>resolved | wont_fix | false_positive | known_noise；空字串＝清除標記（回到未處理）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
+    public string? Note { get; set; }
+}
+
+/// <summary>問題狀態更新後回傳的當日進度（讓前端就地更新「N/M 已處理」與日層級推導狀態）</summary>
+public class IssueStatusResultDto
+{
+    public string IssueKey { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+
+    /// <summary>當日問題總數與已結案數（清單／標題顯示 N/M 已處理）</summary>
+    public int TotalIssues { get; set; }
+    public int ClosedIssues { get; set; }
+
+    /// <summary>由問題層推導出的日層級狀態（全結案＝resolved，否則沿用日層級 open/in_progress）</summary>
+    public string DayStatus { get; set; } = string.Empty;
+    public string DayStatusText { get; set; } = string.Empty;
+}
+
 public class HandlingLogDto
 {
     public string Action { get; set; } = string.Empty;

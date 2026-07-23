@@ -105,6 +105,9 @@ public class RecordDetailDto
 
     public bool HasReport { get; set; }
     public WeeklyCheckupDto? WeeklyCheckup { get; set; }
+
+    /// <summary>目前登入者是否可維護處理狀態——前端據此決定逐列狀態是可操作還是唯讀（防線在後端）</summary>
+    public bool CanHandle { get; set; }
 }
 
 public class IssueDto
@@ -126,6 +129,16 @@ public class IssueDto
     /// <summary>趨勢的白話描述（含比對數字），前端直接顯示不再自行組裝</summary>
     public string TrendText { get; set; } = string.Empty;
     public string Trend { get; set; } = string.Empty;
+
+    /// <summary>問題簽章的穩定鍵（IssueSignatureKey）——逐列設定處理狀態時回傳給後端</summary>
+    public string IssueKey { get; set; } = string.Empty;
+
+    /// <summary>命中的規則 Id（未命中規則為 null）——標「已知雜訊」時可據此一鍵建立抑制規則</summary>
+    public string? RuleId { get; set; }
+
+    /// <summary>此問題的處理狀態（方案 B），空字串＝未處理</summary>
+    public string HandlingStatus { get; set; } = string.Empty;
+    public string HandlingStatusText { get; set; } = string.Empty;
 
     /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。

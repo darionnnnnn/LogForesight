@@ -1,3 +1,4 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -32,7 +33,9 @@ public class RecordQueryService : IRecordQueryService
     private readonly IHostGroupStore _hostGroups;
     private readonly IVisibilityService _visibility;
     private readonly IRecordHandlingStore _handlings;
+    private readonly IIssueHandlingStore _issueHandlings;
     private readonly IKnownIssueRuleStore _rules;
+    private readonly ICurrentUser _currentUser;
 
     public RecordQueryService(
         IRecordRepository repository,
@@ -42,7 +45,9 @@ public class RecordQueryService : IRecordQueryService
         IHostGroupStore hostGroups,
         IVisibilityService visibility,
         IRecordHandlingStore handlings,
-        IKnownIssueRuleStore rules)
+        IIssueHandlingStore issueHandlings,
+        IKnownIssueRuleStore rules,
+        ICurrentUser currentUser)
     {
         _repository = repository;
         _reports = reports;
@@ -51,7 +56,9 @@ public class RecordQueryService : IRecordQueryService
         _hostGroups = hostGroups;
         _visibility = visibility;
         _handlings = handlings;
+        _issueHandlings = issueHandlings;
         _rules = rules;
+        _currentUser = currentUser;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -227,6 +234,12 @@ public class RecordQueryService : IRecordQueryService
         // 一次載入建索引，逐列查是記憶體查表。單日詳情低頻，一次檔案讀取可忽略
         var guidance = LoadGuidanceLookup();
 
+        // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題
+        var issueStatus = _issueHandlings
+            .GetForDay(host?.HostName ?? record.Host, date)
+            .GroupBy(h => h.IssueKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Status, StringComparer.Ordinal);
+
         return new RecordDetailDto
         {
             HostId = hostId,
@@ -242,7 +255,7 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance)).ToList(),
+            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus)).ToList(),
             Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -266,7 +279,8 @@ public class RecordQueryService : IRecordQueryService
                 CheckupDate = record.WeeklyCheckup.CheckupDate.ToString("yyyy-MM-dd"),
                 HasFindings = record.WeeklyCheckup.HasFindings,
                 Conclusion = record.WeeklyCheckup.Conclusion
-            }
+            },
+            CanHandle = _currentUser.Has(Capability.Handle)
         };
     }
 
@@ -455,24 +469,46 @@ public class RecordQueryService : IRecordQueryService
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IssueDto ToIssueDto(LogIssueSignature issue, Dictionary<string, KnownIssueRule>? guidance = null) => new()
+    private static IssueDto ToIssueDto(
+        LogIssueSignature issue,
+        Dictionary<string, KnownIssueRule>? guidance = null,
+        Dictionary<string, string>? issueStatus = null)
     {
-        LogName = issue.LogName,
-        Source = issue.Source,
-        EventId = issue.EventId,
-        Count = issue.Count,
-        Category = issue.Category.ToString(),
-        Severity = issue.Severity.ToString(),
-        KnownIssue = issue.KnownIssue,
-        FirstSeen = issue.FirstSeen,
-        LastSeen = issue.LastSeen,
-        DistinctMessageCount = issue.DistinctMessageCount,
-        KeyDetails = issue.KeyDetails,
-        SampleMessages = issue.SampleMessages,
-        Suppressed = issue.Suppressed,
-        Trend = issue.Trend.ToString(),
-        TrendText = BuildTrendText(issue),
-        Guidance = BuildGuidance(issue, guidance)
+        var key = IssueSignatureKey.For(issue);
+        var status = issueStatus != null && issueStatus.TryGetValue(key, out var s) ? s : string.Empty;
+
+        return new IssueDto
+        {
+            LogName = issue.LogName,
+            Source = issue.Source,
+            EventId = issue.EventId,
+            Count = issue.Count,
+            Category = issue.Category.ToString(),
+            Severity = issue.Severity.ToString(),
+            KnownIssue = issue.KnownIssue,
+            FirstSeen = issue.FirstSeen,
+            LastSeen = issue.LastSeen,
+            DistinctMessageCount = issue.DistinctMessageCount,
+            KeyDetails = issue.KeyDetails,
+            SampleMessages = issue.SampleMessages,
+            Suppressed = issue.Suppressed,
+            Trend = issue.Trend.ToString(),
+            TrendText = BuildTrendText(issue),
+            Guidance = BuildGuidance(issue, guidance),
+            IssueKey = key,
+            RuleId = issue.RuleId,
+            HandlingStatus = status,
+            HandlingStatusText = IssueStatusText(status)
+        };
+    }
+
+    private static string IssueStatusText(string status) => status switch
+    {
+        IssueHandlingStatuses.Resolved => "已處理",
+        IssueHandlingStatuses.WontFix => "不處理",
+        IssueHandlingStatuses.FalsePositive => "誤報",
+        IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        _ => string.Empty
     };
 
     /// <summary>

@@ -666,6 +666,18 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* 問題層級處理狀態下拉：緊湊、寬度貼合文字；已標記時用主色邊框凸顯「這項已表態」 */
+.lf-status-select {
+    width: auto;
+    min-width: 5.5rem;
+    display: inline-block;
+}
+.lf-status-select--set {
+    border-color: var(--lf-primary);
+    color: var(--lf-primary-text);
+    font-weight: 600;
+}
+
 /* 處置參考面板（問題列展開）：與 txt 報告「處置參考（知識庫）」同一份內容 */
 .lf-guidance__label {
     font-weight: 600;

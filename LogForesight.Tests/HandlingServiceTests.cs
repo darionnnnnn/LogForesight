@@ -19,6 +19,7 @@ public class HandlingServiceTests
     private readonly FakeUserStore _users = new();
     private readonly FakeHostStore _hosts = new();
     private readonly FakeHandlingStore _handlings = new();
+    private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeAuditService _audit = new();
     private readonly FakeRecordRepository _repository;
 
@@ -47,7 +48,7 @@ public class HandlingServiceTests
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
         return new HandlingService(
-            _handlings, _repository, _hosts, _users,
+            _handlings, _issueHandlings, _repository, _hosts, _users,
             new AlwaysVisibleService(_hosts), currentUser, _audit);
     }
 
@@ -299,6 +300,97 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.InProgressCount);
         Assert.Equal(0, todo.OverdueCount);
     }
+
+    // ── 問題層級處理狀態（方案 B）─────────────────────────────────────────────
+
+    private static LogIssueSignature Issue(string source, int eventId) => new()
+    {
+        LogName = "System",
+        Source = source,
+        EventId = eventId,
+        EntryType = System.Diagnostics.EventLogEntryType.Error
+    };
+
+    [Fact]
+    public void 標記部分問題_日進度反映已結案數與處理中()
+    {
+        var day = Today.AddDays(-3);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+
+        var result = Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        Assert.Equal(2, result.TotalIssues);
+        Assert.Equal(1, result.ClosedIssues);
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+    }
+
+    [Fact]
+    public void 標記全部問題_日狀態推導為已處理()
+    {
+        var day = Today.AddDays(-4);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(b),
+            Status = IssueHandlingStatuses.KnownNoise
+        });
+
+        Assert.Equal(2, result.ClosedIssues);
+        Assert.Equal(HandlingStatuses.Resolved, result.DayStatus);
+    }
+
+    [Fact]
+    public void 清除問題標記_回到未處理()
+    {
+        var day = Today.AddDays(-5);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+        var cleared = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = ""
+        });
+
+        Assert.Equal(0, cleared.ClosedIssues);
+        Assert.Equal(string.Empty, cleared.Status);
+        Assert.Equal(HandlingStatuses.Open, cleared.DayStatus);
+    }
+
+    [Fact]
+    public void 標記不存在的問題_擲驗證例外()
+    {
+        var day = Today.AddDays(-6);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+
+        Assert.Throws<DomainException>(() =>
+            Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+            {
+                IssueKey = "System|nonexistent|999|1",
+                Status = IssueHandlingStatuses.Resolved
+            }));
+    }
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────
@@ -323,8 +415,18 @@ internal class FakeRecordRepository : IRecordRepository
 
     public FakeRecordRepository(FakeHostStore hosts) => _hosts = hosts;
 
-    public void AddRecord(string hostName, DateTime date) =>
-        _records.Add(new DailyAnalysisRecord { Host = hostName, Date = date, RiskLevel = "高" });
+    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues)
+    {
+        var record = new DailyAnalysisRecord
+        {
+            Host = hostName,
+            Date = date,
+            RiskLevel = "高",
+            TopIssues = issues.ToList()
+        };
+        _records.Add(record);
+        return record;
+    }
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter) => _records.ToList();
 
@@ -342,6 +444,46 @@ internal class FakeRecordRepository : IRecordRepository
         HostIdentityResolver.Expand(_hosts.GetAll(), hostId);
 
     public WebHost? ResolveHost(string hostName) => _hosts.FindByName(hostName);
+}
+
+internal class FakeIssueHandlingStore : IIssueHandlingStore
+{
+    private readonly List<IssueHandling> _items = new();
+
+    public List<IssueHandling> GetForDay(string hostName, DateTime date) =>
+        _items.Where(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                          h.Date.Date == date.Date).ToList();
+
+    public List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to)
+    {
+        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _items.Where(h => names.Contains(h.HostName) &&
+                                 h.Date.Date >= from.Date && h.Date.Date <= to.Date).ToList();
+    }
+
+    public void Save(IssueHandling handling)
+    {
+        if (string.IsNullOrWhiteSpace(handling.Status))
+        {
+            Clear(handling.HostName, handling.Date, handling.IssueKey);
+            return;
+        }
+
+        var existing = _items.FirstOrDefault(h => Same(h, handling.HostName, handling.Date, handling.IssueKey));
+        if (existing == null) { _items.Add(handling); return; }
+        existing.Status = handling.Status;
+        existing.Note = handling.Note;
+        existing.ActorId = handling.ActorId;
+        existing.ActorAccount = handling.ActorAccount;
+        existing.UpdatedAt = handling.UpdatedAt;
+    }
+
+    public void Clear(string hostName, DateTime date, string issueKey) =>
+        _items.RemoveAll(h => Same(h, hostName, date, issueKey));
+
+    private static bool Same(IssueHandling h, string hostName, DateTime date, string issueKey) =>
+        string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+        h.Date.Date == date.Date && h.IssueKey == issueKey;
 }
 
 internal class FakeHandlingStore : IRecordHandlingStore

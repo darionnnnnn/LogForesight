@@ -6,8 +6,8 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon } from '../core/ui.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction } from '../core/ui.js';
 import { riskBadge, severityBadge, formatNumber } from '../core/format.js';
 import { initHandlingPanel } from './handling-panel.js';
 
@@ -26,10 +26,27 @@ const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
 const activeSeverities = new Set(['Critical', 'High', 'Medium']);
 let currentDetail = null;
 
+// 問題層級處理狀態選項（方案 B）：未處理＝清除標記，其餘為結案類
+const ISSUE_STATUS_OPTIONS = [
+    { value: '', text: '未處理' },
+    { value: 'resolved', text: '已處理' },
+    { value: 'wont_fix', text: '不處理' },
+    { value: 'false_positive', text: '誤報' },
+    { value: 'known_noise', text: '已知雜訊' }
+];
+
+// 標「已知雜訊」時要不要提議建立抑制規則，取決於能否維護規則（Maintain）
+let canMaintainRules = false;
+
 async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
 
-    currentDetail = await api.get(`/api/records/${hostId}/${date}`);
+    const [detail, user] = await Promise.all([
+        api.get(`/api/records/${hostId}/${date}`),
+        getCurrentUser()
+    ]);
+    currentDetail = detail;
+    canMaintainRules = hasCapability(user, 'Maintain');
 
     renderHeader(currentDetail);
     renderSeverityFilter(currentDetail);
@@ -114,14 +131,113 @@ function renderHeader(detail) {
     container.replaceChildren(card);
 }
 
-const ISSUE_COLUMNS = [
-    { title: '來源 / Event', render: i => sourceCell(i) },
-    { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
-    { title: '嚴重度', render: i => severityBadge(i.severity) },
-    { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
-    { title: '趨勢', render: i => i.trendText },
-    { title: '說明', render: i => knownIssueCell(i) }
-];
+function issueColumns() {
+    return [
+        { title: '來源 / Event', render: i => sourceCell(i) },
+        { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
+        { title: '嚴重度', render: i => severityBadge(i.severity) },
+        { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
+        { title: '趨勢', render: i => i.trendText },
+        { title: '說明', render: i => knownIssueCell(i) },
+        { title: '處理', render: i => statusControl(i) }
+    ];
+}
+
+/**
+ * 問題層級處理狀態控制（方案 B）。可處理者顯示下拉即選即存；否則唯讀徽章。
+ * 標「已知雜訊」且該問題命中規則、且使用者能維護規則時，接著提議一鍵建立抑制規則
+ * ——這是「已知雜訊」的治本動作：同樣的雜訊之後不再進報告。
+ */
+function statusControl(issue) {
+    if (!currentDetail.canHandle) {
+        return issue.handlingStatus
+            ? severityNeutralBadge(issue.handlingStatusText)
+            : document.createTextNode('未處理');
+    }
+
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm lf-status-select';
+    if (issue.handlingStatus) select.classList.add('lf-status-select--set');
+
+    for (const option of ISSUE_STATUS_OPTIONS) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.text;
+        el.selected = option.value === issue.handlingStatus;
+        select.appendChild(el);
+    }
+
+    select.addEventListener('change', () => setIssueStatus(issue, select.value, select));
+    // 避免點下拉時觸發整列的處置參考展開
+    select.addEventListener('click', event => event.stopPropagation());
+    return select;
+}
+
+function severityNeutralBadge(text) {
+    const span = document.createElement('span');
+    span.className = 'lf-badge lf-badge--neutral';
+    span.textContent = text;
+    return span;
+}
+
+async function setIssueStatus(issue, status, select) {
+    const previous = issue.handlingStatus;
+    select.disabled = true;
+    try {
+        const result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
+            issueKey: issue.issueKey,
+            status
+        });
+
+        // 就地更新本地模型與畫面，不整頁重載
+        issue.handlingStatus = result.status;
+        issue.handlingStatusText = result.statusText;
+        select.classList.toggle('lf-status-select--set', !!result.status);
+        renderProgress(result.closedIssues, result.totalIssues);
+
+        toast(status ? `已標為「${result.statusText}」` : '已清除處理標記', 'success');
+
+        // 已知雜訊 → 提議建立抑制規則（治本）
+        if (status === 'known_noise' && issue.ruleId && canMaintainRules) {
+            await offerSuppression(issue);
+        }
+    } catch (error) {
+        select.value = previous;   // 還原下拉，畫面與後端保持一致
+        toast(error?.message || '更新失敗', 'danger');
+    } finally {
+        select.disabled = false;
+    }
+}
+
+/** 標「已知雜訊」後的治本提議：把該規則在這台主機抑制，同樣雜訊之後不再進報告 */
+async function offerSuppression(issue) {
+    const ok = await confirmAction({
+        title: '一併建立抑制規則？',
+        message: `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制規則「${issue.ruleId}」？` +
+            '抑制後這個訊號不再拉高風險、不再進報告（事件仍照常紀錄）。',
+        confirmText: '建立抑制',
+        confirmVariant: 'primary'
+    });
+    if (!ok) return;
+
+    try {
+        await api.post(`/api/rules/${encodeURIComponent(issue.ruleId)}/suppressions`, {
+            host: currentDetail.hostName,
+            reason: `詳情頁標記已知雜訊：${issue.source} ${issue.eventId}`,
+            days: null
+        });
+        toast('已建立抑制規則', 'success');
+    } catch (error) {
+        toast(error?.message || '建立抑制規則失敗，可到「規則維護」手動設定', 'warning');
+    }
+}
+
+/** 當日處理進度「N/M 已處理」，顯示在重點問題卡標題旁 */
+function renderProgress(closed, total) {
+    const el = document.getElementById('detail-progress');
+    if (!el) return;
+    el.textContent = total > 0 ? `${closed}/${total} 已處理` : '';
+}
 
 /** 下鑽帶入的類別（§8.4）：從儀表板分類卡或查詢頁篩著類別點進來時，網址會帶 categories */
 function highlightedCategories() {
@@ -181,6 +297,10 @@ function renderIssues(detail) {
     const highlighted = highlightedCategories();
     container.replaceChildren();
 
+    // 當日處理進度：已結案問題數 / 總數（結案類狀態才算）
+    const closed = detail.topIssues.filter(i => i.handlingStatus).length;
+    renderProgress(closed, detail.topIssues.length);
+
     let shown = 0;
     let hidden = 0;
 
@@ -209,7 +329,7 @@ function renderIssues(detail) {
 
         const body = document.createElement('div');
         // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
-        renderTable(body, { columns: ISSUE_COLUMNS, rows: issues, rowDetail: guidancePanel });
+        renderTable(body, { columns: issueColumns(), rows: issues, rowDetail: guidancePanel });
         section.appendChild(body);
 
         // 「其他」類別（未命中規則）沒有逐列處置參考，改在分節末尾附上 AI 深入分析——

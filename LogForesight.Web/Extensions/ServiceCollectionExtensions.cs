@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
+        services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
         services.AddSingleton<IPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
 
         // 規則維護與執行監控

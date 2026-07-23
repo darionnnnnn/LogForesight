@@ -27,6 +27,26 @@ public interface IRecordHandlingStore
 }
 
 /// <summary>
+/// 問題層級處理狀態的讀寫（↔ 未來 lf_issue_handling）。
+/// 與 <see cref="IRecordHandlingStore"/> 分開：後者是日層級的案件（處理人／期限／說明），
+/// 這裡是同一天內每個問題各自的結案狀態。日層級的結案與否由這裡的資料推導。
+/// </summary>
+public interface IIssueHandlingStore
+{
+    /// <summary>單一風險日內所有已標記的問題狀態（未標記的問題不會有列＝未處理）</summary>
+    List<IssueHandling> GetForDay(string hostName, DateTime date);
+
+    /// <summary>批次取得多筆（清單／儀表板彙總避免 N 次查詢）</summary>
+    List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to);
+
+    /// <summary>寫入／更新單一問題的狀態；status 為 null／空字串代表清除該問題的標記（回到未處理）</summary>
+    void Save(IssueHandling handling);
+
+    /// <summary>清除某問題的標記（回到未處理）</summary>
+    void Clear(string hostName, DateTime date, string issueKey);
+}
+
+/// <summary>
 /// 權限異動的讀寫（↔ lf_permission_changes）。
 ///
 /// **批次與 Web 的寫入職責分離**：批次呼叫 <see cref="AppendChanges"/> 寫入偵測到的異動，
