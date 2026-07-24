@@ -320,7 +320,7 @@ txt 清單本身承擔，角色描述改為 txt 的第二欄；`MaxDeepDiveHosts
 | 階段 | 內容 | 閘門 |
 |---|---|---|
 | 0 | **持久層介面抽取（行為零改變的重構，最先做）** / selftest / debug-dump / 測試專案 / DataIncomplete / 4624 關聯 / Security 未檢查申報＋基準排除 / 無風險日精簡 / **每週體檢（單機版，含 6KB 輸入塑形）** / **深入分析 16KB prompt 硬上限＋PromptBudget** / ServerDescription 進設定檔 | 兩台機器 selftest＋真實執行輸出貼回分析 |
-| 1 | SentinelClient + `--netiq-probe` | probe 輸出貼回，定案欄位對應與 Q1 形式 |
+| 1 | SentinelClient + `--netiq-probe` | probe 輸出貼回，定案欄位對應與 Q1 形式 ｜**程式碼已完成 2026-07-24**（細部設計與原廠 API 事實見 docs/NETIQ-API-PLAN.md），閘門本身（真實環境 probe 輸出貼回）待執行 |
 | 2 | SentinelStatsSource，2~3 台試點端到端 | 試點輸出貼回比對 |
 | 3 | 全量：txt 主機清單（多 Sentinel 路由）、分級 AI、每日慢速趨勢偵測、體檢 due-date 輪巡＋閘門、第五層、機房總覽（含來源狀態）、覆蓋率清單 | 首次全量耗時分布＋總覽貼回調參 |
 | 4 | 通知管道（Email / Teams webhook 擇一） | 實際收到通知 |

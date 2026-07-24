@@ -178,24 +178,58 @@ public class AnalysisSettings
 }
 
 /// <summary>
-/// NetIQ Sentinel 連線設定（docs/PLAN.md）。
+/// NetIQ Sentinel 連線設定（docs/PLAN.md、docs/NETIQ-API-PLAN.md）。
 ///
-/// 目前只有 <see cref="Servers"/> 一個欄位有實際行為——Web 用它填「所屬 Sentinel」的下拉選單
-/// 並驗證登錄值。連線帳密、查詢節流等欄位要等機房 pipeline 實作時才一併加入：
-/// 本專案已有「有設定卻沒有對應行為會誤導使用者」的前例（`MaxDeepDiveHostsPerRun`
-/// 因此被移除），不預先鋪設定。
+/// <see cref="Servers"/> 現況（2026-07-24 起，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：
+/// Sentinel 連線資訊的事實來源已改為 Web 維護的 <see cref="ISentinelStore"/>（DB blob），
+/// 此欄位降為「store 為空時的一次性種子」（<c>SentinelSeeder</c>），不再是日常讀取路徑。
+///
+/// 其餘欄位（<see cref="QueryDelayMs"/> 等）是 <c>SentinelClient</c> 查詢行為的節流／逃生門設定，
+/// 與帳密事實來源無關，隨 docs/NETIQ-API-PLAN.md 實作一併加入——本專案已有「有設定卻沒有對應
+/// 行為會誤導使用者」的前例（`MaxDeepDiveHostsPerRun` 因此被移除），故這批欄位與其行為同批到位。
 /// </summary>
 public class NetIqSettings
 {
     /// <summary>
-    /// 各台 Sentinel。**批次的 appsettings.json 是唯一事實來源**——Web 唯讀解析同一份檔案
-    /// （資料根目錄本來就指向批次執行檔目錄），不另建 Sentinel 管理表：
-    /// 加一台 Sentinel 本來就要改批次設定，兩處各存一份只會分歧。
-    ///
-    /// （2026-07-24 起主機清單的主人固定為 Web 主機頁維護，Txt 清單模式已退役——
-    /// 見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12。）
+    /// 各台 Sentinel 的一次性種子（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：僅在
+    /// <c>ISentinelStore</c> 為空時，Web 啟動時讀這裡匯入一次，之後改由 Web 維護，
+    /// 這裡的值不再被讀取。新環境部署後應改到 Web「資料匯入」頁維護 Sentinel。
     /// </summary>
     public List<SentinelServer> Servers { get; set; } = new();
+
+    /// <summary>
+    /// 範例訊息（Q2）查詢範圍。<c>Full</c>＝進 prompt 的每個簽章都查範例訊息（預設，
+    /// 多台 Sentinel 分攤後負擔可接受，且範例訊息對規則/趨勢/關聯三層偵測零作用，
+    /// 縮減只會犧牲敘事具體性）；<c>Reduced</c>＝僅 Security 與 Other 類簽章查範例
+    /// （與 AI 白話翻譯角色一致的降級保險開關，供哪台 Sentinel 反映負載時單獨調整）。
+    /// docs/PLAN.md「Q2 取樣策略」。
+    /// </summary>
+    public string SampleFetchMode { get; set; } = "Full";
+
+    /// <summary>每次 REST 呼叫（含建立/輪詢/翻頁）之間的節流間隔毫秒數。0 = 不節流。</summary>
+    public int QueryDelayMs { get; set; } = 0;
+
+    /// <summary>event-search job 的單頁筆數（對應 Sentinel API 的 <c>pgsize</c>）。</summary>
+    public int PageSize { get; set; } = 500;
+
+    /// <summary>
+    /// 單一 event-search job 最多回傳的事件筆數（對應 Sentinel API 的 <c>max-results</c>）。
+    /// 異常爆量日（如遭大量暴力破解）不無限制拉取，超過時該批標記結果被截斷，
+    /// 呼叫端比照 <c>DataIncomplete</c> 的基準排除邏輯處理。
+    /// </summary>
+    public int MaxResultsPerJob { get; set; } = 100_000;
+
+    /// <summary>單次 REST 呼叫的逾時秒數。</summary>
+    public int TimeoutSeconds { get; set; } = 120;
+
+    /// <summary>失敗重試次數（Polly：503／逾時／網路錯誤重試，4xx 不重試）。</summary>
+    public int RetryCount { get; set; } = 3;
+
+    /// <summary>
+    /// true＝略過 Sentinel 憑證的驗證。Sentinel 常見以自簽憑證部署，這是顯式的逃生門
+    /// （非靜默放行），啟用時每個 SentinelClient 建立時記一筆 WARN。預設 false（嚴格驗證）。
+    /// </summary>
+    public bool AllowInvalidCertificates { get; set; } = false;
 }
 
 public class SentinelServer

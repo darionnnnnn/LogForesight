@@ -196,6 +196,17 @@ if (args.Contains("--host-list"))
     return exitCode;
 }
 
+// --netiq-probe：對已設定的 Sentinel 跑一組小規模驗證查詢，輸出可貼回對話定案欄位對應
+// （docs/NETIQ-API-PLAN.md §3.5、§8 步驟 2 的閘門）。放在 mutex 保護內、跑完即結束，不進入每日分析流程。
+if (args.Contains("--netiq-probe"))
+{
+    var sentinelStoreForProbe = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
+    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, settings.NetIq);
+
+    LogManager.Shutdown();
+    return probeExitCode;
+}
+
 RuleBootstrapper.Run(ruleStore);
 
 // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要一份
