@@ -949,7 +949,7 @@ store 建立前早退（唯讀承諾成立）、前端動態內容一律 `textCo
 
 | 優先 | 偏差 | 說明 |
 |---|---|---|
-| P2 | `rundata\`／`webdata\audit.jsonl` 無保留清理 | §11-6 規劃 RunLogRetentionDays=90／稽核 730；目前只有 history.txt 有 90 天 Prune。單機量級增長慢，SQL 階段（統一滾動清理）前補上即可 |
+| P2 | `rundata\`／`webdata\audit.jsonl` 無保留清理 | §11-6 規劃 RunLogRetentionDays=90／稽核 730；目前只有 history.txt 有 120 天 Prune。單機量級增長慢，SQL 階段（統一滾動清理）前補上即可 |
 | P3 | §9.2 主篩選列缺「處理狀態」下拉 | 功能存在（URL 參數 `statuses` 可用、儀表板下鑽依賴它），僅表單未提供控制項；且下鑽帶入的隱藏條件（severity/statuses）畫面上無標示 |
 | P3 | §9.4 主機詳情缺「權限異動紀錄／生效中抑制」區塊；§9.8 使用者詳情缺「操作紀錄／最近登入」頁籤；§9.7 規則頁缺「異動史」連結 | 資料與 API 皆已存在（audit/suppressions 端點），純前端增補 |
 | P3 | §8.6-2 表格欄位排序未實作；§6.3 `session_expired` 稽核補記未實作 | 便利性條款，不影響正確性 |

@@ -54,10 +54,12 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
     log.Fatal(e.ExceptionObject as Exception, "未捕捉的例外導致程式終止");
 
 // ── 設定 ─────────────────────────────────────────────────────────
-// 趨勢比對窗口天數，也是首次執行自動建立歷史的天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）
+// 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）
 const int TrendWindowDays = 14;
-// 歷史資料庫保留天數（需 >= TrendWindowDays），超過的舊紀錄於每次啟動時自動清除
-const int RetentionDays = 90;
+// 首次執行（歷史資料庫全空）時回補歷史的天數，讓趨勢分析一開始就有更充足的基準資料
+const int InitialHistoryDays = 120;
+// 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除
+const int RetentionDays = 120;
 
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
@@ -404,9 +406,13 @@ if (pruned > 0)
     Console.WriteLine($"已清除 {pruned} 筆超過 {RetentionDays} 天的歷史紀錄。");
 }
 
-// 2. 找出趨勢窗口內缺漏的日子（首次執行 = 整個窗口都缺；平常 = 只有昨天）
+// 2. 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
+//    一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天（平常 = 只缺
+//    昨天，排程漏跑則連缺漏那幾天一起補）。以 HasAnyRecord() 判定首次執行——長時間漏跑（近
+//    TrendWindowDays 天恰好全缺、但更早仍有紀錄）不會被誤判成首次而觸發整段深度回補。
 var yesterday = DateTime.Today.AddDays(-1);
-var missingDates = Enumerable.Range(1, TrendWindowDays)
+var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : InitialHistoryDays;
+var missingDates = Enumerable.Range(1, lookbackDays)
     .Select(offset => DateTime.Today.AddDays(-offset))
     .Where(date => !historyService.HasRecord(date))
     .OrderBy(date => date)

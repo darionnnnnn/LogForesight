@@ -63,7 +63,7 @@ IDailyStatsSource（per-host / per-day 聚合簽章統計）
 - per-host 檔案：`history\{host}.txt`；本機沿用現有 `history.txt`。
 - **無風險日精簡：數字全留、文字砍掉**——全部簽章的計數/嚴重度/趨勢數字/FirstSeen~LastSeen 完整保留（趨勢基準零損失），SampleMessages 與 KeyDetails 不落地（回查走 Sentinel）。
   - ⚠ 不可只留 top N 簽章——會破壞 14 日平均與「首次出現」判定。
-- 保留 90 天不變。
+- 保留 120 天（2026-07-24 由 90 天調整，配合首次執行回補 120 天，回補的歷史不會下次啟動即被清除）。
 
 ### E. Security 無權限 → 覆蓋率誠實申報（已確認）
 
