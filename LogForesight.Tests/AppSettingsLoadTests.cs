@@ -23,7 +23,7 @@ public class AppSettingsLoadTests : IDisposable
         var settings = AppSettings.Load(PathOf("missing.json"));
 
         Assert.Equal("http://localhost:8080", settings.Ai.BaseUrl);
-        Assert.Equal("Jsonl", settings.Storage.Type);
+        Assert.Equal("Sqlite", settings.Storage.Type);
     }
 
     [Fact]

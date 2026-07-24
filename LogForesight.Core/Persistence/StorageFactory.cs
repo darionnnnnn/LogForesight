@@ -6,8 +6,8 @@ namespace LogForesight;
 
 /// <summary>
 /// 依設定選擇儲存後端（Strategy + Factory）。三種 provider：
-///   - "Jsonl"（預設）：現行檔案格式，單機開箱即用
-///   - "Sqlite"：測試/開發用的單一 .db 檔（真資料庫，取代 JSONL 檔案）
+///   - "Sqlite"（預設）：測試/開發用的單一 .db 檔（真資料庫，取代 JSONL 檔案）
+///   - "Jsonl"：現行檔案格式，單機檔案相容模式
 ///   - "SqlServer"：正式環境（2000 台量級）
 /// 新增後端時這裡是唯一需要改的地方，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改。
 ///

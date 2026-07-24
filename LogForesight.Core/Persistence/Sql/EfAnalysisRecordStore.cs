@@ -40,14 +40,17 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     public string Location => _location;
 
     /// <summary>批次面讀取限縮到 owner 的紀錄（owner 為 null＝不分主機）。與
-    /// JsonlAnalysisRecordStore.BelongsToOwner 同語意：id 命中或名稱命中任一即算自己的。</summary>
+    /// JsonlAnalysisRecordStore.BelongsToOwner 同語意：id 命中或名稱命中任一即算自己的。
+    /// 名稱比對必須不分大小寫（同 BelongsToOwner 的 OrdinalIgnoreCase）——SQL 端 `=` 的大小寫
+    /// 語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、SqlServer 常見 CI 不分），
+    /// 兩邊都以 UPPER() 正規化才與 JSONL 逐位一致；主機名為 ASCII，UPPER 等價 OrdinalIgnoreCase。</summary>
     private IQueryable<DailyRecordRow> OwnedRows(LfDbContext ctx)
     {
         var q = ctx.DailyRecords.AsQueryable();
         if (_ownerHost == null) return q;
         var id = _ownerHost.HostId;
-        var name = _ownerHost.HostName;
-        return q.Where(r => (id != 0 && r.HostId == id) || r.HostName == name);
+        var name = _ownerHost.HostName.ToUpperInvariant();
+        return q.Where(r => (id != 0 && r.HostId == id) || r.HostName.ToUpper() == name);
     }
 
     // ── 寫入 ─────────────────────────────────────────────────────────────────
@@ -184,22 +187,29 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             q = q.Where(r => risks.Contains(r.RiskLevel));
         }
 
-        // 主機在 DB 端預篩，複製 HostMatcher 的 PK 優先語意：
-        // 有 host_id 的列只認 id；host_id=0 的舊列才認名稱。**空集合＝零結果**（授權語意）。
+        // 主機以 id 在 DB 端粗篩（高選擇度、便宜）；host_id=0 的舊列一律先撈出，
+        // 名稱比對留給下面的共用 HostMatcher 在記憶體套用——**不**在 SQL 端比較字串。
+        // SQL 端 `=` 的大小寫語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、
+        // SqlServer 常見 CI 不分），與 HostMatcher 的 OrdinalIgnoreCase 不保證一致；
+        // 舊列是有限的存量資料，先撈回用同一份 HostMatcher 比對，才與 JSONL 逐位一致。
         if (filter.Hosts != null)
         {
             var ids = filter.Hosts.Select(k => k.HostId).Where(id => id != 0).ToList();
-            var names = filter.Hosts.Select(k => k.HostName).ToList();
-            q = q.Where(r => (r.HostId != 0 && ids.Contains(r.HostId)) ||
-                             (r.HostId == 0 && names.Contains(r.HostName)));
+            q = q.Where(r => (r.HostId != 0 && ids.Contains(r.HostId)) || r.HostId == 0);
         }
 
         var rows = q.ToList();
 
-        // 其餘欄位（category/eventId/source/severity）以共用函數在記憶體套用——
-        // 與 JSONL 逐位一致，且避免 LINQ→SQL 對 JSON 內容的細微翻譯差異
-        var result = rows
-            .Select(Deserialize)
+        // 其餘欄位（含主機名稱 fallback、category/eventId/source/severity）以共用函數在記憶體
+        // 套用——與 JSONL 逐位一致，且避免 LINQ→SQL 對字串大小寫/JSON 內容的細微翻譯差異
+        var records = rows.Select(Deserialize);
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        var result = records
             .Where(r => RecordFilterMatcher.Matches(r, filter))
             .OrderByDescending(r => r.Date)
             .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)

@@ -5,39 +5,30 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 主機級告警抑制（見 docs/RULES-PLAN.md）：涵蓋儲存層（JsonSuppressionStore round-trip、
-/// 缺檔/損毀時的容錯）、篩選純函數（SuppressionFilter 的主機/到期判斷）、
-/// 以及抑制對分析層的實際效果——被抑制的 Critical/High 不強制拉高風險、不產生趨勢告警文字，
-/// 但關聯層與紀錄本身完全不受影響（語意邊界）。
+/// <see cref="JsonSuppressionStore"/> 的儲存層合約（見 docs/RULES-PLAN.md）：缺檔/損毀時降級為
+/// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
+/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可跑在檔案或 DB blob 上——
+/// SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
+/// 「原子寫入不留暫存檔」是 <see cref="FileJsonBlobStore"/> 特有的實作細節，留在檔案版另立測試。
 /// </summary>
-public class SuppressionTests : IDisposable
+public abstract class SuppressionStoreContractTests : IDisposable
 {
-    private readonly string _path;
+    protected abstract IJsonBlobStore CreateBlob();
 
-    public SuppressionTests()
-    {
-        _path = Path.Combine(Path.GetTempPath(), $"logforesight-suppressions-test-{Guid.NewGuid():N}.json");
-    }
+    private IJsonBlobStore? _blob;
+    private IJsonBlobStore Blob => _blob ??= CreateBlob();
 
-    public void Dispose()
-    {
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp))
-        {
-            File.Delete(tmp);
-        }
-    }
+    private JsonSuppressionStore Store() => new(Blob);
 
-    // ── JsonSuppressionStore ─────────────────────────────────────
+    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+        blob.Mutate<object?>(_ => (text, null));
+
+    public virtual void Dispose() { }
 
     [Fact]
     public void 檔案不存在時LoadAll回傳空清單()
     {
-        var store = new JsonSuppressionStore(_path);
+        var store = Store();
 
         Assert.Empty(store.LoadAll());
     }
@@ -45,7 +36,7 @@ public class SuppressionTests : IDisposable
     [Fact]
     public void SaveAndLoadRoundTrip保留欄位()
     {
-        var store = new JsonSuppressionStore(_path);
+        var store = Store();
         var item = new RuleSuppression
         {
             RuleId = "builtin-service-crash-loop-703x",
@@ -69,10 +60,27 @@ public class SuppressionTests : IDisposable
     [Fact]
     public void 整檔損毀時降級為空清單而不拋例外()
     {
-        File.WriteAllText(_path, "{ not a valid array ");
-        var store = new JsonSuppressionStore(_path);
+        WriteRaw(Blob, "{ not a valid array ");
+        var store = Store();
 
         Assert.Empty(store.LoadAll());
+    }
+}
+
+/// <summary>JSONL 後端（單機檔案相容模式）＋原子寫入不留暫存檔的檔案特有行為</summary>
+public class JsonSuppressionStoreTests : SuppressionStoreContractTests
+{
+    private readonly string _path =
+        Path.Combine(Path.GetTempPath(), $"logforesight-suppressions-test-{Guid.NewGuid():N}.json");
+
+    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
+
+    public override void Dispose()
+    {
+        if (File.Exists(_path)) File.Delete(_path);
+        var tmp = _path + ".tmp";
+        if (File.Exists(tmp)) File.Delete(tmp);
+        GC.SuppressFinalize(this);
     }
 
     [Fact]
@@ -83,7 +91,32 @@ public class SuppressionTests : IDisposable
 
         Assert.False(File.Exists(_path + ".tmp"));
     }
+}
 
+/// <summary>
+/// SQLite（EF）後端——SQLite 現為主要測試方式，驗證抑制設定容錯邏輯在 DB blob 上
+/// 與 Jsonl 版逐位一致。
+/// </summary>
+public class EfSuppressionStoreTests : SuppressionStoreContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IJsonBlobStore CreateBlob() => _fx.Blob("suppressions");
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>
+/// 抑制的篩選純函數（<see cref="SuppressionFilter"/>）與其對分析層的實際效果——
+/// 被抑制的 Critical/High 不強制拉高風險、不產生趨勢告警文字，但關聯層與紀錄本身完全不受影響
+/// （語意邊界）。純函數測試，與儲存後端無關。
+/// </summary>
+public class SuppressionTests
+{
     // ── SuppressionFilter ────────────────────────────────────────
 
     [Fact]

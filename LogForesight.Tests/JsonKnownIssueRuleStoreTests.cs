@@ -5,31 +5,28 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// rules.json 的讀寫容錯（見 docs/RULES-PLAN.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且
-/// 不覆寫使用者的壞檔；單一規則物件解析失敗只跳過該條，其餘規則照常載入；原子寫入不留暫存檔。
+/// 不覆寫使用者的壞檔；單一規則物件解析失敗只跳過該條，其餘規則照常載入；列舉值以字串儲存。
+///
+/// 這些容錯邏輯全部寫在 <see cref="JsonKnownIssueRuleStore"/> 本身（blob 無關），透過
+/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始（可能損毀的）內容即可跑在
+/// 檔案或 DB blob 上——SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
+/// 「原子寫入不留暫存檔」是 <see cref="FileJsonBlobStore"/> 特有的實作細節，留在檔案版另立測試。
 /// </summary>
-public class JsonKnownIssueRuleStoreTests : IDisposable
+public abstract class KnownIssueRuleStoreContractTests : IDisposable
 {
-    private readonly string _path;
+    protected abstract IJsonBlobStore CreateBlob();
 
-    public JsonKnownIssueRuleStoreTests()
-    {
-        _path = Path.Combine(Path.GetTempPath(), $"logforesight-rules-test-{Guid.NewGuid():N}.json");
-    }
+    private IJsonBlobStore? _blob;
+    private IJsonBlobStore Blob => _blob ??= CreateBlob();
 
-    public void Dispose()
-    {
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp))
-        {
-            File.Delete(tmp);
-        }
-    }
+    private JsonKnownIssueRuleStore Store() => new(Blob);
 
-    private static KnownIssueRule SampleRule(string id = "custom-sample") => new()
+    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+        blob.Mutate<object?>(_ => (text, null));
+
+    public virtual void Dispose() { }
+
+    protected static KnownIssueRule SampleRule(string id = "custom-sample") => new()
     {
         Id = id,
         Origin = "custom",
@@ -52,7 +49,7 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
     [Fact]
     public void 不存在的檔案Exists為false且Load失敗()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
 
         Assert.False(store.Exists);
         Assert.False(store.Load().Success);
@@ -61,7 +58,7 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
     [Fact]
     public void SaveAndLoadRoundTrip保留規則內容()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         var content = new RuleFileContent { SchemaVersion = 1, SeedVersion = 3, Rules = new List<KnownIssueRule> { SampleRule() } };
 
         store.Save(content);
@@ -82,10 +79,10 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
     [Fact]
     public void 列舉值以字串儲存而非數字_方便人工編輯()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         store.Save(new RuleFileContent { Rules = new List<KnownIssueRule> { SampleRule() } });
 
-        var text = File.ReadAllText(_path);
+        var text = Blob.Read()!;
         Assert.Contains("\"Medium\"", text);
         Assert.Contains("\"Other\"", text);
     }
@@ -109,9 +106,9 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
           ]
         }
         """;
-        File.WriteAllText(_path, json);
+        WriteRaw(Blob, json);
 
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         var outcome = store.Load();
 
         Assert.True(outcome.Success);
@@ -123,28 +120,46 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
     public void 整檔JSON語法錯誤時Load失敗且不覆寫原檔()
     {
         const string original = "{ this is not valid json ";
-        File.WriteAllText(_path, original);
+        WriteRaw(Blob, original);
 
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         var outcome = store.Load();
 
         Assert.False(outcome.Success);
-        Assert.Equal(original, File.ReadAllText(_path));
+        Assert.Equal(original, Blob.Read());
     }
 
     [Fact]
     public void SchemaVersion高於程式支援版本時Load失敗()
     {
         var json = $$"""{ "SchemaVersion": {{RuleFileContent.CurrentSchemaVersion + 1}}, "SeedVersion": 1, "Rules": [] }""";
-        File.WriteAllText(_path, json);
+        WriteRaw(Blob, json);
 
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         var outcome = store.Load();
 
         Assert.False(outcome.Success);
         Assert.Contains("升級程式", outcome.Error);
     }
+}
 
+/// <summary>JSONL 後端（單機檔案相容模式）＋原子寫入不留暫存檔的檔案特有行為</summary>
+public class JsonKnownIssueRuleStoreTests : KnownIssueRuleStoreContractTests
+{
+    private readonly string _path =
+        Path.Combine(Path.GetTempPath(), $"logforesight-rules-test-{Guid.NewGuid():N}.json");
+
+    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
+
+    public override void Dispose()
+    {
+        if (File.Exists(_path)) File.Delete(_path);
+        var tmp = _path + ".tmp";
+        if (File.Exists(tmp)) File.Delete(tmp);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>原子寫入是 FileJsonBlobStore 的實作細節（DB 版無暫存檔可言），不進合約基底</summary>
     [Fact]
     public void Save不會在目錄留下暫存檔()
     {
@@ -152,5 +167,22 @@ public class JsonKnownIssueRuleStoreTests : IDisposable
         store.Save(new RuleFileContent { Rules = new List<KnownIssueRule> { SampleRule() } });
 
         Assert.False(File.Exists(_path + ".tmp"));
+    }
+}
+
+/// <summary>
+/// SQLite（EF）後端——SQLite 現為主要測試方式，驗證規則檔容錯邏輯在 DB blob 上
+/// 與 Jsonl 版逐位一致。
+/// </summary>
+public class EfKnownIssueRuleStoreTests : KnownIssueRuleStoreContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

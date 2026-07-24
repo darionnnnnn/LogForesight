@@ -350,6 +350,31 @@ public class JsonlAnalysisRecordQueryTests : AnalysisRecordQueryContractTests
 }
 
 /// <summary>
+/// SQLite（EF）後端跑同一組查詢合約——SQLite 現為主要測試方式，這裡與 Jsonl 版驗證
+/// Web 查詢面（Query/GetOne 的 Hosts 授權語意、PK 優先比對）逐位一致。
+/// </summary>
+public class EfAnalysisRecordQueryTests : AnalysisRecordQueryContractTests
+{
+    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
+    private readonly EfSqliteFixture _fx = new();
+
+    public EfAnalysisRecordQueryTests()
+    {
+        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
+    }
+
+    protected override IAnalysisRecordStore CreateStore() => _store;
+
+    protected override IAnalysisRecordQuery Query => _store;
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>
 /// 報告全文讀取的路徑防護。報告參照來自歷史紀錄檔——那是資料而不是程式常數，
 /// 若被竄改成 ..\..\Windows\System32\... 這類路徑，沒有防護就是任意檔案讀取。
 /// </summary>

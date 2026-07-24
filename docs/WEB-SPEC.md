@@ -153,7 +153,7 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Jsonl", "DataRoot": "", "ConnectionString": "" },  // Type: Jsonl | Sqlite | SqlServer（§10.5）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | Jsonl | SqlServer（§10.5）
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ldap。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -175,14 +175,15 @@ LogForesight.Web/
 - **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
   （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
   `StorageSettings` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
-- **`Storage.Type` 三選一**（§10.5 Phase C 完成後）：`Jsonl`（現行檔案格式，單機開箱即用，預設）／
-  `Sqlite`（測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔）／`SqlServer`（正式環境，2000 台量級）。
-  SQL 模式下**全部資料**（分析紀錄＋webdata）走資料庫。Web 的 `appsettings.Development.json`
-  已預設 `Type=Sqlite`（測試模式捨棄檔案，驗證與正式相同的 SQL 語意）；正式部署改 `SqlServer`。
+- **`Storage.Type` 三選一**（2026-07-24 起 `Sqlite` 為預設與主要測試方式）：`Sqlite`（測試/開發用的
+  單一 `.db` 檔真資料庫，不寫任何 JSON 檔，預設）／`Jsonl`（現行檔案格式，單機檔案相容模式）／
+  `SqlServer`（正式環境，2000 台量級）。SQL 模式下**全部資料**（分析紀錄＋webdata）走資料庫。
+  Web 的 `appsettings.Development.json` 同樣預設 `Type=Sqlite`（驗證與正式相同的 SQL 語意）；
+  正式部署改 `SqlServer`。
 - **批次設定檔的 fail-fast（2026-07-23）**：批次 `AppSettings.Load` 兩種缺席語意刻意不同——
   檔案**不存在**用預設值（開箱即用）；**存在但解析失敗**擲 `AppSettingsLoadException` 中止啟動
   （紅字印出錯誤行號與位置、exit code 1）。理由：設定檔存在代表有明確設定意圖，靜默退回預設值
-  會讓 `Storage.Type` 掉回 `Jsonl`、資料寫進與正式後端分裂的另一份儲存，比「不跑」嚴重。
+  會讓 `Storage.Type` 掉回程式預設（現為 `Sqlite`）、資料寫進與正式後端分裂的另一份儲存，比「不跑」嚴重。
   （`--selftest` 不受此限，設定檔壞掉仍可執行——其職責是驗證偵測規則、非設定檔。）
 - `Jwt.SecretKey` / `ServerAdmin.PasswordHash`：**基礎 `appsettings.json` 內含「公開已知」的測試值**
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
@@ -729,15 +730,16 @@ lf_top_issues 算好」的持久層職責，批次的分析層看不到這張表
 
 - 每個檔案**單一主要寫入者**（上表）；Web 與批次唯一交集（`hosts.json`、規則檔）以短暫檔案鎖處理。
 - 整檔型 `.json` 的寫入=「寫 temp → `File.Replace` 原子替換」，CSV 匯入的 all-or-nothing 靠此達成。
-- 多人高頻寫入的正式情境屬 SQL 後端；JSONL 後端定位為前期單機測試，**但介面語意與合約測試
-  兩後端完全一致**（SOLID 的 L；DB-PLAN 一致性機制 #3）。
+- 多人高頻寫入的正式情境屬 SQL 後端；JSONL 後端定位為單機檔案相容模式（2026-07-24 起主要
+  測試方式改為 SQLite），**但介面語意與合約測試兩後端完全一致**（SOLID 的 L；DB-PLAN 一致性機制 #3）。
 
-### 10.5 SQL 後端（Phase C 完成 2026-07-23，三 provider 全資料走 SQL）
+### 10.5 SQL 後端（Phase C 完成 2026-07-23，三 provider 全資料走 SQL；2026-07-24 起 Sqlite 為預設）
 
 `Storage.Type` 三選一，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
 
-- **`Jsonl`**（預設）：§10.2 的檔案格式，單機開箱即用。
-- **`Sqlite`**：測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔（Web `appsettings.Development.json` 預設值）。
+- **`Sqlite`**（預設）：測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔——現為主要測試方式，
+  批次與 Web 的 `appsettings.json` 皆預設此值。
+- **`Jsonl`**：§10.2 的檔案格式，單機檔案相容模式。
 - **`SqlServer`**：正式環境（2000 台量級）。
 
 SQL 模式（Sqlite/SqlServer）下**全部資料走資料庫**（Phase C 收斂——先前分析紀錄走 SQL、
@@ -747,9 +749,15 @@ webdata 走 JSONL 的混合狀態已統一）：
 - **webdata 各 store** 透過兩個抽象改走 DB，store 業務邏輯（續號、回填、查詢）**完全沒改**：
   - `IJsonBlobStore`／`EfJsonBlobStore`（整份型 store → `lf_blobs`，一列一 key）
   - `IJsonLogStore`／`EfJsonLogStore`（append-only store → `lf_log_lines`）
-- **provider 中立 LINQ**：SQLite in-memory 上跑同一組合約測試（`AnalysisRecordStoreContractTests`、
-  `HostStoreContractTests`、`EfWebdataStoreTests`）驗證兩後端語意逐位一致——正式是 SQL Server、
-  測試是 SQLite，同一份測試護航。
+- **provider 中立 LINQ**：SQLite in-memory 上跑同一組合約測試驗證兩後端語意逐位一致——正式是
+  SQL Server、測試是 SQLite，同一份測試護航。合約基底（2026-07-24 擴充後）：
+  `AnalysisRecordStoreContractTests`（批次讀寫）、`AnalysisRecordQueryContractTests`（Web 查詢）、
+  `AnalysisRecordStoreHostScopeContractTests`（ownerHost 歸戶）、`HostStoreContractTests`／
+  `UserStoreContractTests`（webdata）、`KnownIssueRuleStoreContractTests`／
+  `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`／`RuleImporterRunContractTests`
+  （規則與抑制），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
+  SQLite 合約子類為必要項、Jsonl 為次要合約實作**；檔案特有行為（原子替換、壞檔容錯的檔案面）
+  留在檔案版測試。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立（無 migration）。批次與 Web 須設**相同的 `Storage.Type`**；
   SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。

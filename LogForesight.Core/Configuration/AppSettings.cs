@@ -246,10 +246,10 @@ public class SentinelServer
 public class StorageSettings
 {
     /// <summary>
-    /// 分析紀錄的儲存後端。目前只有 "Jsonl"（預設，現行檔案格式）；
-    /// 未來要接 DB 時新增對應實作並在這裡加一個 case 即可，分析邏輯不需改動。
+    /// 分析紀錄的儲存後端。三選一："Sqlite"（預設，測試/開發用單一 .db 真資料庫）、
+    /// "Jsonl"（現行檔案格式，單機相容模式）、"SqlServer"（正式環境）。
     /// </summary>
-    public string Type { get; set; } = "Jsonl";
+    public string Type { get; set; } = "Sqlite";
 
     /// <summary>
     /// JSONL 後端的資料根目錄（history.txt／rules.json／rule_seeds.json／suppressions.json／

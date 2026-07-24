@@ -7,29 +7,10 @@ namespace LogForesight.Tests;
 /// `--import-rules` 的合併邏輯（見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」）：
 /// builtin 預設只補缺，內容有異動需要 --overwrite-builtin 才覆蓋且保留使用者的 Enabled 選擇，
 /// custom 規則一律不受匯入影響，Id 相同但 Origin 不一致視為衝突不處理。
+/// <see cref="RuleImporter.BuildPlan"/> 是純函數，與儲存後端無關。
 /// </summary>
-public class RuleImporterTests : IDisposable
+public class RuleImporterTests
 {
-    private readonly string _path;
-
-    public RuleImporterTests()
-    {
-        _path = Path.Combine(Path.GetTempPath(), $"logforesight-import-test-{Guid.NewGuid():N}.json");
-    }
-
-    public void Dispose()
-    {
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp))
-        {
-            File.Delete(tmp);
-        }
-    }
-
     private static KnownIssueRule Rule(string id, string origin = "builtin", bool enabled = true,
         string sourcePattern = "A", int[]? eventIds = null, string description = "d1") => new()
         {
@@ -131,13 +112,25 @@ public class RuleImporterTests : IDisposable
         Assert.Contains(plan.ResultingRules, r => r.Id == "custom-mine");
         Assert.Contains(plan.ResultingRules, r => r.Id == "builtin-new");
     }
+}
 
-    // ── Run（含檔案 I/O）─────────────────────────────────────────
+/// <summary>
+/// `RuleImporter.Run` 的編排（預覽 vs --apply、既有檔案套用）跑在儲存 store 上——
+/// 邏輯本身與 blob 底層無關，SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
+/// </summary>
+public abstract class RuleImporterRunContractTests : IDisposable
+{
+    protected abstract IJsonBlobStore CreateBlob();
+
+    private IJsonBlobStore? _blob;
+    private JsonKnownIssueRuleStore Store() => new(_blob ??= CreateBlob());
+
+    public virtual void Dispose() { }
 
     [Fact]
     public void Run_檔案不存在時預覽不寫檔_Apply才真正寫入完整種子()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
 
         RuleImporter.Run(store, apply: false, overwriteBuiltin: false);
         Assert.False(store.Exists);
@@ -154,7 +147,7 @@ public class RuleImporterTests : IDisposable
     [Fact]
     public void Run_既有檔案套用後更新SeedVersion且補上缺少的builtin規則()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = 0, Rules = new List<KnownIssueRule>() });
 
         RuleImporter.Run(store, apply: true, overwriteBuiltin: false);
@@ -168,7 +161,7 @@ public class RuleImporterTests : IDisposable
     [Fact]
     public void Run_預覽模式不寫入任何檔案內容變更()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = 0, Rules = new List<KnownIssueRule>() });
 
         RuleImporter.Run(store, apply: false, overwriteBuiltin: false);
@@ -177,5 +170,36 @@ public class RuleImporterTests : IDisposable
         Assert.True(outcome.Success);
         Assert.Empty(outcome.Content!.Rules); // 預覽模式：規則清單仍是空的，SeedVersion 仍是舊的
         Assert.Equal(0, outcome.Content.SeedVersion);
+    }
+}
+
+/// <summary>JSONL 後端（單機檔案相容模式）</summary>
+public class JsonRuleImporterRunTests : RuleImporterRunContractTests
+{
+    private readonly string _path =
+        Path.Combine(Path.GetTempPath(), $"logforesight-import-test-{Guid.NewGuid():N}.json");
+
+    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
+
+    public override void Dispose()
+    {
+        if (File.Exists(_path)) File.Delete(_path);
+        var tmp = _path + ".tmp";
+        if (File.Exists(tmp)) File.Delete(tmp);
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>SQLite（EF）後端——SQLite 現為主要測試方式</summary>
+public class EfRuleImporterRunTests : RuleImporterRunContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

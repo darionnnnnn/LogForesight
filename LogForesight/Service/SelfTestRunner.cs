@@ -29,11 +29,14 @@ public static class SelfTestRunner
         // 照常執行——selftest 的職責是驗證偵測規則，不是驗證設定檔。
         try
         {
-            _dataRoot = AppSettings.Load().Storage.ResolveDataRoot();
+            var storage = AppSettings.Load().Storage;
+            _dataRoot = storage.ResolveDataRoot();
+            _sqlMode = storage.Type is "Sqlite" or "SqlServer";
         }
         catch
         {
             _dataRoot = AppContext.BaseDirectory;
+            _sqlMode = false;
         }
 
         // 2026-07-21 規則外部化後：selftest 唯讀載入實際生效的規則（rules.json 存在就用它，
@@ -62,6 +65,11 @@ public static class SelfTestRunner
     /// <summary>驗證對象所在的資料根目錄，於 <see cref="Run"/> 開頭解析（預設執行檔目錄）</summary>
     private static string _dataRoot = AppContext.BaseDirectory;
 
+    /// <summary>Storage.Type 是否為 SQL 後端（Sqlite/SqlServer）。SQL 模式下實際生效的規則在
+    /// DB 的 lf_blobs，而 selftest 刻意不連 DB（連線＋EnsureCreated 是寫入副作用，違反
+    /// 「跑完不留副作用」的承諾）——只能驗證 rules.json（若存在）或內建種子，要誠實申報這個限制。</summary>
+    private static bool _sqlMode;
+
     private static void RunRuleLoadingChecks()
     {
         Console.WriteLine("-- 規則載入（唯讀，selftest 絕不寫入 rules.json/suppressions.json）--");
@@ -74,7 +82,9 @@ public static class SelfTestRunner
         if (!File.Exists(rulesPath))
         {
             sourceRules = KnownIssueSeed.CreateRules();
-            Console.WriteLine($"  驗證對象：內建種子（{rulesPath} 不存在）");
+            Console.WriteLine(_sqlMode
+                ? $"  驗證對象：內建種子（SQL 模式下實際生效的規則在資料庫；selftest 不連 DB 以免留下建檔副作用，{rulesPath} 也不存在）"
+                : $"  驗證對象：內建種子（{rulesPath} 不存在）");
         }
         else
         {

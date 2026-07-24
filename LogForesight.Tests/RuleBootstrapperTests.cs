@@ -6,38 +6,28 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 啟動流程的規則載入編排（見 docs/RULES-PLAN.md）：不存在時寫入種子（僅此一次）、
 /// 存在但損毀時降級用內建種子且不覆寫壞檔、驗證後只有 Enabled 的規則生效。
+/// 邏輯本身與 blob 底層無關，SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
 /// </summary>
-[Collection("KnownIssueCatalogState")]
-public class RuleBootstrapperTests : IDisposable
+public abstract class RuleBootstrapperContractTests : IDisposable
 {
-    private readonly string _path;
+    protected abstract IJsonBlobStore CreateBlob();
 
-    public RuleBootstrapperTests()
-    {
-        _path = Path.Combine(Path.GetTempPath(), $"logforesight-bootstrap-test-{Guid.NewGuid():N}.json");
-    }
+    private IJsonBlobStore? _blob;
+    private IJsonBlobStore Blob => _blob ??= CreateBlob();
+
+    private JsonKnownIssueRuleStore Store() => new(Blob);
+
+    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+        blob.Mutate<object?>(_ => (text, null));
 
     // Run() 呼叫 KnownIssueCatalog.Initialize 覆寫共用靜態狀態；每個測試後重置回完整種子，
     // 避免影響同 collection 內其他測試類別（如 RiskReportServiceTests 依賴預設完整規則表）。
-    public void Dispose()
-    {
-        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
-
-        if (File.Exists(_path))
-        {
-            File.Delete(_path);
-        }
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp))
-        {
-            File.Delete(tmp);
-        }
-    }
+    public virtual void Dispose() => KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
 
     [Fact]
     public void 檔案不存在時寫入內建種子且回傳全部啟用()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
 
         var result = RuleBootstrapper.Run(store);
 
@@ -53,14 +43,14 @@ public class RuleBootstrapperTests : IDisposable
     public void 檔案損毀時降級用內建種子且不覆寫原檔()
     {
         const string corrupted = "{ not valid json at all";
-        File.WriteAllText(_path, corrupted);
-        var store = new JsonKnownIssueRuleStore(_path);
+        WriteRaw(Blob, corrupted);
+        var store = Store();
 
         var result = RuleBootstrapper.Run(store);
 
         Assert.True(result.UsedFallbackSeed);
         Assert.Equal("內建種子", result.Source);
-        Assert.Equal(corrupted, File.ReadAllText(_path)); // 原檔完全沒被動過
+        Assert.Equal(corrupted, Blob.Read()); // 原檔完全沒被動過
     }
 
     [Fact]
@@ -88,7 +78,7 @@ public class RuleBootstrapperTests : IDisposable
         var disabledRuleSourcePattern = rules[0].SourcePattern;
         var disabledRuleEventId = rules[0].EventIds.Length > 0 ? rules[0].EventIds[0] : 0;
 
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = KnownIssueSeed.Version, Rules = rules });
 
         var result = RuleBootstrapper.Run(store);
@@ -101,12 +91,48 @@ public class RuleBootstrapperTests : IDisposable
     [Fact]
     public void 內建種子版本較新時提示可匯入()
     {
-        var store = new JsonKnownIssueRuleStore(_path);
+        var store = Store();
         store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = KnownIssueSeed.Version - 1, Rules = KnownIssueSeed.CreateRules() });
 
         var result = RuleBootstrapper.Run(store);
 
         Assert.NotNull(result.UpdateHint);
         Assert.Contains("--import-rules", result.UpdateHint);
+    }
+}
+
+/// <summary>JSONL 後端（單機檔案相容模式）</summary>
+[Collection("KnownIssueCatalogState")]
+public class RuleBootstrapperTests : RuleBootstrapperContractTests
+{
+    private readonly string _path =
+        Path.Combine(Path.GetTempPath(), $"logforesight-bootstrap-test-{Guid.NewGuid():N}.json");
+
+    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
+
+    public override void Dispose()
+    {
+        base.Dispose();
+
+        if (File.Exists(_path)) File.Delete(_path);
+        var tmp = _path + ".tmp";
+        if (File.Exists(tmp)) File.Delete(tmp);
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>SQLite（EF）後端——SQLite 現為主要測試方式</summary>
+[Collection("KnownIssueCatalogState")]
+public class EfRuleBootstrapperTests : RuleBootstrapperContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
+
+    public override void Dispose()
+    {
+        base.Dispose();
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

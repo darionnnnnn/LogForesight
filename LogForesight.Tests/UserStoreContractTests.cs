@@ -103,7 +103,7 @@ public abstract class UserStoreContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端的合約測試。SQL 後端完成時新增 SqlUserStoreContractTests，跑同一組案例。</summary>
+/// <summary>JSONL 後端的合約測試（單機檔案相容模式）。</summary>
 public class JsonUserStoreContractTests : UserStoreContractTests
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
@@ -113,6 +113,23 @@ public class JsonUserStoreContractTests : UserStoreContractTests
     public override void Dispose()
     {
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>
+/// 同一組使用者 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）——SQLite 現為
+/// 主要測試方式，驗證 webdata store 透過 blob 抽象改走資料庫後，行為與檔案後端逐位一致。
+/// </summary>
+public class EfUserStoreContractTests : UserStoreContractTests
+{
+    private readonly EfSqliteFixture _fx = new();
+
+    protected override IUserStore CreateStore() => new JsonUserStore(_fx.Blob("users"));
+
+    public override void Dispose()
+    {
+        _fx.Dispose();
         GC.SuppressFinalize(this);
     }
 }
