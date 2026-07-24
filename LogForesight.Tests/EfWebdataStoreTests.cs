@@ -1,4 +1,6 @@
 using LogForesight;
+using LogForesight.Sql;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -41,6 +43,24 @@ public class EfWebdataStoreTests
         var reread = new JsonUserStore(fx.Blob("users")).FindByAccount("domain\\a");
         Assert.NotNull(reread);
         Assert.Equal("甲", reread!.DisplayName);
+    }
+
+    [Fact]
+    public void Sentinel_EF往返_密文原樣保存()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new JsonSentinelStore(fx.Blob("sentinels"));
+
+        var saved = store.Upsert(new Sentinel
+        {
+            Name = "S1", BaseUrl = "https://s1", Username = "svc",
+            PasswordEnc = CryptoHelper.Encrypt("hunter2")
+        });
+
+        var reread = new JsonSentinelStore(fx.Blob("sentinels")).FindByName("s1");
+        Assert.NotNull(reread);
+        Assert.Equal(saved.SentinelId, reread!.SentinelId);
+        Assert.Equal("hunter2", CryptoHelper.Decrypt(reread.PasswordEnc));
     }
 
     // ── append-only（IJsonLogStore）─────────────────────────────────────────
@@ -102,5 +122,44 @@ public class EfWebdataStoreTests
         Assert.NotNull(run);
         Assert.NotNull(run!.FinishedAt);
         Assert.Equal(0, run.ExitCode);
+    }
+
+    // ── 並發保護（lf_blobs.UpdatedAt 為 ConcurrencyToken）──────────────────────
+
+    /// <summary>
+    /// 補齊 JSONL 檔案時代跨程序鎖檔要防的事故：兩個行程各自讀到舊內容，
+    /// 後寫的整份蓋掉先寫的。UpdatedAt 設為 ConcurrencyToken 後，帶著過期原始值的寫入
+    /// 必須被擋下（拋 DbUpdateConcurrencyException），而不是靜默覆蓋掉搶先寫入的內容。
+    /// </summary>
+    [Fact]
+    public void Blob並發衝突_過期寫入被擋下_不遺失搶先寫入的內容()
+    {
+        using var fx = new EfSqliteFixture();
+
+        using (var seed = fx.NewContext())
+        {
+            seed.Blobs.Add(new BlobRow { BlobKey = "race", Content = "v0", UpdatedAt = DateTime.Now });
+            seed.SaveChanges();
+        }
+
+        // ctxA 讀到 v0（帶著 v0 的 UpdatedAt 當原始並發權杖），尚未寫回
+        using var ctxA = fx.NewContext();
+        var rowA = ctxA.Blobs.Single(b => b.BlobKey == "race");
+
+        // ctxB 搶先讀改寫，UpdatedAt 前進成功落地
+        using (var ctxB = fx.NewContext())
+        {
+            var rowB = ctxB.Blobs.Single(b => b.BlobKey == "race");
+            rowB.Content = "v1";
+            rowB.UpdatedAt = DateTime.Now.AddSeconds(1);
+            ctxB.SaveChanges();
+        }
+
+        // ctxA 此時才要寫回：帶的仍是 v0 的原始 UpdatedAt，與 DB 現況（v1 的 UpdatedAt）不符
+        rowA.Content = "v0-from-A（不該落地）";
+        Assert.Throws<DbUpdateConcurrencyException>(() => ctxA.SaveChanges());
+
+        using var verify = fx.NewContext();
+        Assert.Equal("v1", verify.Blobs.Single(b => b.BlobKey == "race").Content);
     }
 }

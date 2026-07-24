@@ -7,9 +7,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// <see cref="JsonSuppressionStore"/> 的儲存層合約（見 docs/RULES-PLAN.md）：缺檔/損毀時降級為
 /// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
-/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可跑在檔案或 DB blob 上——
-/// SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
-/// 「原子寫入不留暫存檔」是 <see cref="FileJsonBlobStore"/> 特有的實作細節，留在檔案版另立測試。
+/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
 /// </summary>
 public abstract class SuppressionStoreContractTests : IDisposable
 {
@@ -67,36 +65,7 @@ public abstract class SuppressionStoreContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端（單機檔案相容模式）＋原子寫入不留暫存檔的檔案特有行為</summary>
-public class JsonSuppressionStoreTests : SuppressionStoreContractTests
-{
-    private readonly string _path =
-        Path.Combine(Path.GetTempPath(), $"logforesight-suppressions-test-{Guid.NewGuid():N}.json");
-
-    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
-
-    public override void Dispose()
-    {
-        if (File.Exists(_path)) File.Delete(_path);
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp)) File.Delete(tmp);
-        GC.SuppressFinalize(this);
-    }
-
-    [Fact]
-    public void Save不會在目錄留下暫存檔()
-    {
-        var store = new JsonSuppressionStore(_path);
-        store.SaveAll(new List<RuleSuppression> { new() { RuleId = "x", Host = "h", Reason = "r" } });
-
-        Assert.False(File.Exists(_path + ".tmp"));
-    }
-}
-
-/// <summary>
-/// SQLite（EF）後端——SQLite 現為主要測試方式，驗證抑制設定容錯邏輯在 DB blob 上
-/// 與 Jsonl 版逐位一致。
-/// </summary>
+/// <summary>SQLite（EF）後端，驗證抑制設定容錯邏輯在 DB blob 上正確。</summary>
 public class EfSuppressionStoreTests : SuppressionStoreContractTests
 {
     private readonly EfSqliteFixture _fx = new();

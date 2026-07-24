@@ -45,6 +45,14 @@ public class HostAdminService : IHostAdminService
     /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
 
+    /// <summary>
+    /// 新主機豁免無回報告警的寬限期（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 9）：一個批次週期
+    /// （批次通常每天跑一次）。剛匯入的主機在第一次批次跑完前 LastReportAt 必為空，
+    /// 沒有寬限期的話一次匯入一批就會立刻在儀表板與這裡的「未回報」篩選觸發告警洪水。
+    /// public 讓 DashboardService 引用同一個值——兩邊都用這個定義,不是各自寫一份數字。
+    /// </summary>
+    public static readonly TimeSpan NewHostGracePeriod = TimeSpan.FromHours(24);
+
     public HostAdminService(
         IHostStore hosts,
         IHostGroupStore hostGroups,
@@ -78,7 +86,14 @@ public class HostAdminService : IHostAdminService
         }
 
         if (!string.IsNullOrWhiteSpace(request.Sentinel))
-            filtered = filtered.Where(h => string.Equals(h.NetiqServer, request.Sentinel, StringComparison.OrdinalIgnoreCase));
+        {
+            // 依 SentinelId 比對而不是名稱字串——篩選條件在 Sentinel 改名後仍要選得到同一批主機。
+            // 名稱對不到任何現存 Sentinel 時查無資料，而不是意外落回「SentinelId==null」比對到待歸屬主機
+            var sentinelId = _servers.GetServer(request.Sentinel)?.Id;
+            filtered = sentinelId.HasValue
+                ? filtered.Where(h => h.SentinelId == sentinelId.Value)
+                : Enumerable.Empty<WebHost>();
+        }
 
         if (request.GroupIds is { Count: > 0 })
         {
@@ -100,8 +115,10 @@ public class HostAdminService : IHostAdminService
             {
                 "local" => filtered.Where(h => h.Source == "local" && h.Active),
                 "netiq" => filtered.Where(h => h.Source == "netiq" && h.Active),
-                "pending" => filtered.Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null && string.IsNullOrEmpty(h.NetiqServer)),
-                "silent" => filtered.Where(h => h.Active && (h.LastReportAt == null || DateTime.Now - h.LastReportAt.Value > SilentCutoff)),
+                "pending" => filtered.Where(h => h.Source == "netiq" && h.Active && h.MergedInto == null && h.SentinelId == null),
+                "silent" => filtered.Where(h => h.Active && (h.LastReportAt == null
+                    ? DateTime.Now - h.CreatedAt > NewHostGracePeriod
+                    : DateTime.Now - h.LastReportAt.Value > SilentCutoff)),
                 "ungrouped" => filtered.Where(h => h.Active && h.MergedInto == null && h.GroupIds.Count == 0),
                 "inactive" => filtered.Where(h => !h.Active),
                 _ => filtered
@@ -137,14 +154,19 @@ public class HostAdminService : IHostAdminService
         if (!string.IsNullOrWhiteSpace(request.IpAddress) && !NetiqHostList.IsValidIp(request.IpAddress))
             throw DomainException.Validation($"「{request.IpAddress.Trim()}」不是有效的 IP 位址。");
 
-        if (!string.IsNullOrWhiteSpace(request.NetiqServer) && !_servers.IsKnownServer(request.NetiqServer))
+        SentinelServer? sentinel = null;
+        if (!string.IsNullOrWhiteSpace(request.NetiqServer))
         {
-            var known = _servers.GetServerNames();
-            throw DomainException.Validation(
-                $"「{request.NetiqServer.Trim()}」不在已設定的 Sentinel 名單中" +
-                (known.Count == 0
-                    ? "（批次 appsettings.json 的 NetIq.Servers 尚未設定）。"
-                    : $"，可選：{string.Join("、", known)}。"));
+            sentinel = _servers.GetServer(request.NetiqServer);
+            if (sentinel == null)
+            {
+                var known = _servers.GetServerNames();
+                throw DomainException.Validation(
+                    $"「{request.NetiqServer.Trim()}」不在已設定的 Sentinel 名單中" +
+                    (known.Count == 0
+                        ? "（尚未於 Sentinel 管理頁新增任何 Sentinel）。"
+                        : $"，可選：{string.Join("、", known)}。"));
+            }
         }
 
         var existing = _hosts.FindByName(hostName);
@@ -157,7 +179,8 @@ public class HostAdminService : IHostAdminService
             HostName = hostName,
             IpAddress = string.IsNullOrWhiteSpace(request.IpAddress) ? null : request.IpAddress.Trim(),
             IpUpdatedAt = ipChanged ? DateTime.Now : existing?.IpUpdatedAt,
-            NetiqServer = string.IsNullOrWhiteSpace(request.NetiqServer) ? null : request.NetiqServer.Trim(),
+            SentinelId = sentinel?.Id,
+            NetiqServer = sentinel?.Name,
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = existing?.Source ?? "local",
             Active = request.Active,
@@ -297,6 +320,7 @@ public class HostAdminService : IHostAdminService
         Active = host.Active,
         MergedInto = host.MergedInto,
         LastReportAt = host.LastReportAt,
+        CreatedAt = host.CreatedAt,
         GroupIds = host.GroupIds,
         GroupNames = host.GroupIds
             .Select(id => groupsById.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})")

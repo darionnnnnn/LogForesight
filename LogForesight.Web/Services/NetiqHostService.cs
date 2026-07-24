@@ -76,7 +76,7 @@ public class NetiqHostService : INetiqHostService
         if (!NetiqHostList.IsValidIp(ip))
             throw DomainException.Validation($"「{ip}」不是有效的 IP 位址。");
 
-        var sentinel = NormalizeSentinel(request.NetiqServer);
+        var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         // IP 重複刻意**不擋**：改用衝突佇列處理（決策：軟處理）。
         // 擋下來的話，汰換交接期間「新舊兩台短暫共用同一個 IP 紀錄」就無法登錄，
@@ -88,6 +88,7 @@ public class NetiqHostService : INetiqHostService
             HostName = ip,
             IpAddress = ip,
             IpUpdatedAt = existing?.IpAddress == ip ? existing.IpUpdatedAt : DateTime.Now,
+            SentinelId = sentinelId,
             NetiqServer = sentinel,
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = NetiqHostList.NetiqSource,
@@ -110,7 +111,7 @@ public class NetiqHostService : INetiqHostService
 
     public BulkAddResultDto BulkAddHosts(BulkAddNetiqHostsRequest request)
     {
-        var sentinel = NormalizeSentinel(request.NetiqServer);
+        var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         var result = new BulkAddResultDto();
         var seenIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -141,6 +142,7 @@ public class NetiqHostService : INetiqHostService
                 HostName = parsed.IpAddress,
                 IpAddress = parsed.IpAddress,
                 IpUpdatedAt = existing?.IpAddress == parsed.IpAddress ? existing.IpUpdatedAt : DateTime.Now,
+                SentinelId = sentinelId ?? existing?.SentinelId,
                 NetiqServer = sentinel ?? existing?.NetiqServer,
                 // 角色描述留空時保留既有值：重貼一次清單不該把已經填好的描述洗掉
                 RoleDesc = parsed.RoleDesc.Length > 0 ? parsed.RoleDesc : existing?.RoleDesc ?? "",
@@ -174,6 +176,7 @@ public class NetiqHostService : INetiqHostService
             HostName = host.HostName,
             IpAddress = host.IpAddress,
             IpUpdatedAt = host.IpUpdatedAt,
+            SentinelId = host.SentinelId,
             NetiqServer = host.NetiqServer,
             RoleDesc = host.RoleDesc,
             Source = host.Source,
@@ -195,25 +198,27 @@ public class NetiqHostService : INetiqHostService
     }
 
     /// <summary>
-    /// Sentinel 名稱正規化：空白＝待歸屬（允許），有填則必須存在於批次設定的名單中。
+    /// 解析 Sentinel 名稱成 (SentinelId, 正規化名稱)：空白＝待歸屬（允許），有填則必須是
+    /// 已存在的 Sentinel。識別鍵是 PK（定案 4），這裡順便把名稱換成 Sentinel 現存的正確大小寫。
     /// 打錯名字的後果是這台主機永遠不會被任何一輪查詢帶到——擋在輸入端比事後查「為什麼沒資料」便宜得多。
     /// </summary>
-    private string? NormalizeSentinel(string? value)
+    private (long? SentinelId, string? Name) ResolveSentinel(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (string.IsNullOrWhiteSpace(value)) return (null, null);
 
         var name = value.Trim();
-        if (!_servers.IsKnownServer(name))
+        var server = _servers.GetServer(name);
+        if (server == null)
         {
             var known = _servers.GetServerNames();
             throw DomainException.Validation(
                 $"「{name}」不在已設定的 Sentinel 名單中" +
                 (known.Count == 0
-                    ? "（批次 appsettings.json 的 NetIq.Servers 尚未設定）。"
+                    ? "（尚未於 Sentinel 管理頁新增任何 Sentinel）。"
                     : $"，可選：{string.Join("、", known)}。"));
         }
 
-        return name;
+        return (server.Id, server.Name);
     }
 
     private static BulkAddLineDto Skip(NetiqHostLine line, string reason) => new()
@@ -240,6 +245,7 @@ public class NetiqHostService : INetiqHostService
             Active = host.Active,
             MergedInto = host.MergedInto,
             LastReportAt = host.LastReportAt,
+            CreatedAt = host.CreatedAt,
             GroupIds = host.GroupIds,
             GroupNames = host.GroupIds
                 .Select(id => groups.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})")

@@ -4,7 +4,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// <see cref="IAnalysisRecordStore"/> 的合約測試基底（docs/DB-PLAN.md 一致性機制 #3）。
-/// JSONL 與未來的 SQL 實作跑同一組案例——**DB 實作必須通過與 txt 完全相同的測試**才算完成，
+/// 見 <see cref="EfAnalysisRecordStoreContractTests"/>：SQL 實作跑同一組案例，
 /// 一致性由測試強制，不靠 code review 肉眼比對。
 ///
 /// 尤其是 <see cref="IAnalysisRecordReader.ReadRecent"/> 的錨定窗語意：它決定趨勢基準的
@@ -317,19 +317,5 @@ public abstract class AnalysisRecordStoreContractTests : IDisposable
         var finding = Assert.Single(deepDive.Findings);
         Assert.Equal("磁碟壞軌", finding.Problem);
         Assert.Equal("更換硬碟", finding.NextSteps.Single());
-    }
-}
-
-public class JsonlAnalysisRecordStoreContractTests : AnalysisRecordStoreContractTests
-{
-    private readonly string _tempFile =
-        Path.Combine(Path.GetTempPath(), $"lf_test_{Guid.NewGuid():N}.txt");
-
-    protected override IAnalysisRecordStore CreateStore() => new JsonlAnalysisRecordStore(_tempFile);
-
-    public override void Dispose()
-    {
-        if (File.Exists(_tempFile)) File.Delete(_tempFile);
-        GC.SuppressFinalize(this);
     }
 }

@@ -4,8 +4,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 批次歷史 store 綁定「本機」識別（ownerHost）後，缺日判定與趨勢基準只看本機自己的紀錄
-/// （docs/DB-PLAN.md 一致性機制 #3）。JSONL 與 SQL（EF）後端跑同一組案例——
-/// **DB 實作必須通過與 txt 完全相同的測試**才算完成。
+/// （docs/DB-PLAN.md 一致性機制 #3）。
 ///
 /// 這組測試釘住的是實際踩到的 bug：同一份資料（history.txt 或 DB）內若含別台主機的紀錄
 /// （示範資料、或多台共用同一資料根），全域的缺日判定會把「別台在這天有紀錄」誤當成
@@ -155,26 +154,7 @@ public abstract class AnalysisRecordStoreHostScopeContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端（單機檔案相容模式）</summary>
-public class JsonlAnalysisRecordStoreHostScopeTests : AnalysisRecordStoreHostScopeContractTests
-{
-    private readonly string _tempFile =
-        Path.Combine(Path.GetTempPath(), $"lf_hostscope_{Guid.NewGuid():N}.txt");
-
-    protected override IAnalysisRecordStore CreateStore(HostKey? ownerHost) =>
-        new JsonlAnalysisRecordStore(_tempFile, ownerHost);
-
-    public override void Dispose()
-    {
-        if (File.Exists(_tempFile)) File.Delete(_tempFile);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>
-/// SQLite（EF）後端——SQLite 現為主要測試方式，驗證批次面 ownerHost 主機範圍語意
-/// 在 SQL 後端與 JSONL 逐位一致。
-/// </summary>
+/// <summary>SQLite（EF）後端，驗證批次面 ownerHost 主機範圍語意。</summary>
 public class EfAnalysisRecordStoreHostScopeTests : AnalysisRecordStoreHostScopeContractTests
 {
     private readonly EfSqliteFixture _fx = new();

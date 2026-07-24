@@ -74,6 +74,13 @@
                         </select>
                         <div class="form-text" id="group-role-hint"></div>
                     </div>
+                    <div class="mb-3" id="group-host-access-field">
+                        <label class="form-label">可檢視的主機群組</label>
+                        <div id="group-host-access-checks" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;"></div>
+                        <div class="text-muted small d-none" id="group-host-access-viewall">
+                            此角色可檢視全部主機，不受主機群組授權限制。
+                        </div>
+                    </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="group-active" checked />
                         <label class="form-check-label" for="group-active">啟用（停用後成員立即失去此群組帶來的權限）</label>
@@ -88,36 +95,57 @@
     </div>
 </div>
 
-<!-- 批次加入主機群組成員（網段／關鍵字） -->
+<!-- 主機群組成員：目前成員／加入成員 -->
 <div class="modal fade" id="members-modal" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">加入成員到「<span id="members-group-name"></span>」</h5>
+                <h5 class="modal-title">「<span id="members-group-name"></span>」的成員</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <div class="modal-body">
-                <div class="btn-group btn-group-sm mb-3" role="group" aria-label="查找方式" id="members-mode">
-                    <button type="button" class="btn btn-outline-secondary active" data-mode="cidr">依網段</button>
-                    <button type="button" class="btn btn-outline-secondary" data-mode="query">依主機名／IP</button>
-                </div>
-                <div class="input-group input-group-sm mb-3">
-                    <input type="text" class="form-control" id="members-input"
-                           placeholder="10.1.2.0/24、10.1.2.* 或單一 IP" />
-                    <button type="button" class="btn btn-primary" id="members-search">查找</button>
-                </div>
+                <ul class="nav nav-tabs mb-3" id="members-tabs">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-tab="current" type="button">目前成員</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-tab="add" type="button">加入成員</button>
+                    </li>
+                </ul>
 
-                <div id="members-summary" class="small text-muted mb-2"></div>
-                <div id="members-preview"></div>
+                <section data-panel="current">
+                    <div id="current-members-summary" class="small text-muted mb-2"></div>
+                    <div id="current-members-list"></div>
+                </section>
 
-                <div class="form-check mt-3 d-none" id="members-remove-field">
-                    <input class="form-check-input" type="checkbox" id="members-remove-others" />
-                    <label class="form-check-label small" for="members-remove-others">
-                        同時把選取的主機移出其原本所屬的其他主機群組
-                    </label>
-                </div>
+                <section data-panel="add" class="d-none">
+                    <div class="btn-group btn-group-sm mb-3" role="group" aria-label="查找方式" id="members-mode">
+                        <button type="button" class="btn btn-outline-secondary active" data-mode="cidr">依網段</button>
+                        <button type="button" class="btn btn-outline-secondary" data-mode="query">依主機名／IP</button>
+                    </div>
+                    <div class="input-group input-group-sm mb-3">
+                        <input type="text" class="form-control" id="members-input"
+                               placeholder="10.1.2.0/24、10.1.2.* 或單一 IP" />
+                        <button type="button" class="btn btn-primary" id="members-search">查找</button>
+                    </div>
+
+                    <div id="members-summary" class="small text-muted mb-2"></div>
+                    <div id="members-preview"></div>
+
+                    <div class="form-check mt-3 d-none" id="members-remove-field">
+                        <input class="form-check-input" type="checkbox" id="members-remove-others" />
+                        <label class="form-check-label small" for="members-remove-others">
+                            同時把選取的主機移出其原本所屬的其他主機群組
+                        </label>
+                    </div>
+                </section>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer" id="members-footer-current">
+                <div class="me-auto small text-danger" id="current-members-warning"></div>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">關閉</button>
+                <button type="button" class="btn btn-danger" id="current-members-remove" disabled>移出選取主機</button>
+            </div>
+            <div class="modal-footer d-none" id="members-footer-add">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                 <button type="button" class="btn btn-primary" id="members-apply" disabled>加入選取主機</button>
             </div>

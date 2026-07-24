@@ -202,11 +202,9 @@ public class NetiqHostServiceTests
         private readonly List<SentinelServer> _servers;
 
         public FakeNetiqServerCatalog(params string[] names) =>
-            _servers = names.Select(n => new SentinelServer { Name = n }).ToList();
+            _servers = names.Select((n, i) => new SentinelServer { Id = i + 1, Name = n }).ToList();
 
         public FakeNetiqServerCatalog(params SentinelServer[] servers) => _servers = servers.ToList();
-
-        public List<SentinelServer> GetServers() => _servers.ToList();
 
         public SentinelServer? GetServer(string? name) =>
             string.IsNullOrWhiteSpace(name)

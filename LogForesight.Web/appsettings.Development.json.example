@@ -10,8 +10,7 @@
     }
   },
   "Storage": {
-    // 預設 "Sqlite"：開發／測試走真資料庫（不寫 JSON 檔），與正式 SQL Server 語意一致。
-    // 要回到檔案模式對照除錯，改回 "Jsonl" 即可。
+    // 預設 "Sqlite"：開發／測試走真資料庫，與正式 SQL Server 語意一致。
     "Type": "Sqlite",
     // DataRoot 留空即可：開發環境下 Program.cs 會依本站台輸出目錄自動推算同一個 repo 內批次
     // LogForesight.exe 的輸出目錄（{repo}\LogForesight\bin\{Config}\{TFM}），會跟著 Debug/Release

@@ -29,7 +29,7 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
-            { href: '/admin/imports', label: 'CSV 匯入', icon: 'upload', requires: 'Maintain' }
+            { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' }
         ]
     },
     {

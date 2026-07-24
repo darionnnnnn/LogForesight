@@ -1,9 +1,8 @@
 namespace LogForesight;
 
-/// <summary><see cref="IHostStore"/> 的 JSONL 後端實作：webdata\hosts.json</summary>
-public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
+/// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
+public class JsonHostStore : JsonBlobCollection<WebHost>, IHostStore
 {
-    public JsonHostStore(string filePath) : base(filePath) { }
     public JsonHostStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebHost> GetAll() => Read();
@@ -23,6 +22,7 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
             if (existing == null)
             {
                 host.HostId = NextId(hosts.Select(h => h.HostId));
+                if (host.CreatedAt == default) host.CreatedAt = DateTime.Now;
                 hosts.Add(host);
                 return host;
             }
@@ -30,6 +30,7 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
             existing.HostName = host.HostName;
             existing.IpAddress = host.IpAddress;
             existing.IpUpdatedAt = host.IpUpdatedAt;
+            existing.SentinelId = host.SentinelId;
             existing.NetiqServer = host.NetiqServer;
             existing.RoleDesc = host.RoleDesc;
             existing.Source = host.Source;
@@ -58,7 +59,8 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
                     HostId = NextId(hosts.Select(h => h.HostId)),
                     HostName = hostName,
                     Source = source,
-                    LastReportAt = reportedAt
+                    LastReportAt = reportedAt,
+                    CreatedAt = DateTime.Now
                 };
                 hosts.Add(host);
                 return host;
@@ -142,7 +144,11 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
         if (string.IsNullOrWhiteSpace(target.RoleDesc)) target.RoleDesc = source.RoleDesc;
         if (target.GroupIds.Count == 0) target.GroupIds = source.GroupIds.ToList();
         if (target.OwnerUserIds.Count == 0) target.OwnerUserIds = source.OwnerUserIds.ToList();
-        if (string.IsNullOrWhiteSpace(target.NetiqServer)) target.NetiqServer = source.NetiqServer;
+        if (target.SentinelId == null)
+        {
+            target.SentinelId = source.SentinelId;
+            target.NetiqServer = source.NetiqServer;
+        }
 
         if (string.IsNullOrWhiteSpace(target.IpAddress))
         {
@@ -161,10 +167,9 @@ public class JsonHostStore : JsonCollectionFile<WebHost>, IHostStore
     }
 }
 
-/// <summary><see cref="IHostGroupStore"/> 的 JSONL 後端實作：webdata\host_groups.json</summary>
-public class JsonHostGroupStore : JsonCollectionFile<HostGroup>, IHostGroupStore
+/// <summary><see cref="IHostGroupStore"/> 的實作（blob key=host_groups，整份型）</summary>
+public class JsonHostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 {
-    public JsonHostGroupStore(string filePath) : base(filePath) { }
     public JsonHostGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<HostGroup> GetAll() => Read();
@@ -196,10 +201,9 @@ public class JsonHostGroupStore : JsonCollectionFile<HostGroup>, IHostGroupStore
     public void Delete(long groupId) => Mutate(groups => groups.RemoveAll(g => g.GroupId == groupId));
 }
 
-/// <summary><see cref="IGroupAccessStore"/> 的 JSONL 後端實作：webdata\group_access.json</summary>
-public class JsonGroupAccessStore : JsonCollectionFile<GroupAccess>, IGroupAccessStore
+/// <summary><see cref="IGroupAccessStore"/> 的實作（blob key=group_access，整份型）</summary>
+public class JsonGroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessStore
 {
-    public JsonGroupAccessStore(string filePath) : base(filePath) { }
     public JsonGroupAccessStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<GroupAccess> GetAll() => Read();

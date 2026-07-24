@@ -148,8 +148,8 @@ public class HostLookupTests
 /// </summary>
 public class RecordRepositoryAliasTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
-    private readonly JsonlAnalysisRecordStore _store;
+    private readonly EfSqliteFixture _fx = new();
+    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
     private readonly FakeHostStore _hosts = new();
     private readonly WebHost _oldHost;
     private readonly WebHost _newHost;
@@ -159,7 +159,7 @@ public class RecordRepositoryAliasTests : IDisposable
 
     public RecordRepositoryAliasTests()
     {
-        _store = new JsonlAnalysisRecordStore(Path.Combine(_dir, "history.txt"));
+        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
 
         _oldHost = _hosts.Upsert(new WebHost { HostName = "SRV-OLD" });
         _newHost = _hosts.Upsert(new WebHost { HostName = "SRV-NEW" });
@@ -249,7 +249,7 @@ public class RecordRepositoryAliasTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+        _fx.Dispose();
         GC.SuppressFinalize(this);
     }
 

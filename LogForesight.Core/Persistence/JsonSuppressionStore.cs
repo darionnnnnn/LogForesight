@@ -16,9 +16,6 @@ public class JsonSuppressionStore : ISuppressionStore
     private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
-    public JsonSuppressionStore(string? filePath = null)
-        : this(new FileJsonBlobStore(filePath ?? Path.Combine(AppContext.BaseDirectory, "suppressions.json"))) { }
-
     public JsonSuppressionStore(IJsonBlobStore blob)
     {
         _blob = blob;

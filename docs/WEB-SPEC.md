@@ -27,8 +27,9 @@
 沿用前期規劃已定案的決策（不再重述理由）：群組制授權（使用者群組↔主機群組多對多）、
 角色四種（user/dev/manager/admin，能力聯集）、負責人與處理人分離（僅 admin 可指派）、
 規則四層保護（builtin 可改可停可回復不可刪）、CSV 三檔匯入（預覽後 all-or-nothing 套用）、
-全系統操作稽核（含登入登出）、儲存層單一介面（JSONL 即資料庫，SQL 就緒後切換）、
-不做自由文字搜尋。
+全系統操作稽核（含登入登出）、儲存層單一介面（webdata 各 store 業務邏輯與後端無關，透過
+`IJsonBlobStore`/`IJsonLogStore` 走 SQL；**Jsonl 檔案後端已於 2026-07-24 全面退役**，
+`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，見 §10.4、§10.5）、不做自由文字搜尋。
 
 ## 2. 系統全貌
 
@@ -53,8 +54,9 @@ flowchart LR
 ```
 
 - **批次 exe 職責不變**：分析、寫入紀錄、寫入執行紀錄（`IBatchRunStore`）。不呼叫 Web API。
-- **Web 不直接碰檔案或 DB**：只透過 Core 的儲存介面。JSONL 與 SQL 是同一組介面的兩個後端，
-  Web 程式碼對後端無感知（前期限制：JSONL 後端下 Web 與批次需部署於同一台機器）。
+- **Web 不直接碰檔案或 DB**：只透過 Core 的儲存介面，Web 程式碼對後端無感知。
+  （2026-07-24 前 JSONL 與 SQL 曾是同一組介面的兩個後端，JSONL 後端下 Web 與批次需部署於
+  同一台機器；**JSONL 後端已全面退役**，現只剩 Sqlite／SqlServer 兩個 SQL provider，見 §10.4。）
 - **前置作業（Phase 0）**：抽出 `LogForesight.Core` 類別庫（Models、Analysis 不動、
   Persistence 介面與 Jsonl 實作、`RecordStorageShaper`），exe 與 Web 專案共同引用。
   這原是 DB-PLAN 排在 DB 階段的第一步，因「JSONL 即資料庫」決策提前到 Web 開發之前。
@@ -78,9 +80,9 @@ flowchart LR
 |---|---|
 | **S** 單一職責 | Controller 只做「HTTP ↔ DTO 轉換與呼叫 Service」，不含業務邏輯；Service 只做業務規則，不碰 HttpContext；Repository 只做資料存取，不做授權判斷。稽核、授權、例外處理各自是獨立的 Filter/Middleware，不散落在各 Action 內 |
 | **O** 開放封閉 | 儲存後端以 `Storage.Type` 切換實作、不改呼叫端（Strategy + Factory，沿用批次端既有模式）；驗證方式以 `IAuthenticationProvider` 抽換（Stub → AD/Windows）；新增角色能力只改 `RoleCapabilityMap` 一處 |
-| **L** 里氏替換 | JSONL 與 SQL 實作必須通過**同一組合約測試**（DB-PLAN 一致性機制 #3），語意寫在介面註解，實作不得偏離——替換後端不允許行為差異 |
+| **L** 里氏替換 | Sqlite 與 SqlServer 實作必須通過**同一組合約測試**（DB-PLAN 一致性機制 #3），語意寫在介面註解，實作不得偏離——替換 provider 不允許行為差異（JSONL 曾是第三個受此規則約束的後端，已於 2026-07-24 退役，見 §10.4） |
 | **I** 介面隔離 | 儲存介面按聚合根拆分（`IUserStore`、`IRuleStore`、`IAuditLogStore`…），不做一個巨型 `IRepository`；讀寫需求差異大的（分析紀錄）維持既有的 Reader/Writer 分離 |
-| **D** 依賴反轉 | Service 依賴介面而非實作；介面定義在 Core、實作可在 Core（Jsonl/Sql）——依賴方向永遠指向抽象。Controller 與 Service 全部建構式注入 |
+| **D** 依賴反轉 | Service 依賴介面而非實作；介面定義在 Core、實作也在 Core（`EfJsonBlobStore`/`EfJsonLogStore` 等）——依賴方向永遠指向抽象。Controller 與 Service 全部建構式注入 |
 
 **審查基準**：PR 審查時對照此表；違反任一條需在 PR 說明中給出理由。
 
@@ -153,7 +155,7 @@ LogForesight.Web/
 
 ```json
 {
-  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | Jsonl | SqlServer（§10.5）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已於 2026-07-24 退役）
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ldap。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -175,11 +177,11 @@ LogForesight.Web/
 - **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
   （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
   `StorageSettings` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
-- **`Storage.Type` 三選一**（2026-07-24 起 `Sqlite` 為預設與主要測試方式）：`Sqlite`（測試/開發用的
-  單一 `.db` 檔真資料庫，不寫任何 JSON 檔，預設）／`Jsonl`（現行檔案格式，單機檔案相容模式）／
-  `SqlServer`（正式環境，2000 台量級）。SQL 模式下**全部資料**（分析紀錄＋webdata）走資料庫。
-  Web 的 `appsettings.Development.json` 同樣預設 `Type=Sqlite`（驗證與正式相同的 SQL 語意）；
-  正式部署改 `SqlServer`。
+- **`Storage.Type` 二選一**（2026-07-24 起 `Sqlite` 為預設與主要測試方式，`Jsonl` 檔案後端已
+  全面退役、設成 `Jsonl` 啟動即報錯）：`Sqlite`（測試/開發用的單一 `.db` 檔真資料庫，不寫任何
+  JSON 檔，預設）／`SqlServer`（正式環境，2000 台量級）。**全部資料**（分析紀錄＋webdata）
+  走資料庫。Web 的 `appsettings.Development.json` 同樣預設 `Type=Sqlite`（驗證與正式相同的
+  SQL 語意）；正式部署改 `SqlServer`。
 - **批次設定檔的 fail-fast（2026-07-23）**：批次 `AppSettings.Load` 兩種缺席語意刻意不同——
   檔案**不存在**用預設值（開箱即用）；**存在但解析失敗**擲 `AppSettingsLoadException` 中止啟動
   （紅字印出錯誤行號與位置、exit code 1）。理由：設定檔存在代表有明確設定意圖，靜默退回預設值
@@ -679,21 +681,33 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 
 ### 10.2 儲存介面（Core）
 
-| 介面 | JSONL 後端檔案（`DataRoot` 相對） | 寫入者 |
+**（2026-07-24 改寫）Jsonl 檔案後端已退役**，下表的「儲存 key」一律指 `lf_blobs`（整份 JSON
+文件，一列一 key）或 `lf_log_lines`（append-only，同 key 多列）裡的 `BlobKey`，不再有實體檔案；
+`StorageFactory` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
+
+| 介面 | 儲存 key（blob＝整份型／log＝append-only） | 寫入者 |
 |---|---|---|
-| `IAnalysisRecordReader/Writer`（既有） | `history.txt` | 批次 |
-| `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt` | 批次 |
-| `IUserStore` / `IGroupStore` | `webdata\users.json`、`groups.json`、`group_access.json`、`host_owners.json` | Web |
-| `IHostStore` | `webdata\hosts.json` | Web＋批次（批次僅 upsert host_name/last_report_at） |
-| `IRecordHandlingStore` | `webdata\handling.json`（快照）＋`handling_log.jsonl`（歷程 append） | Web |
-| `IIssueHandlingStore` | `webdata\issue_handling.json`（問題層級狀態，方案 B） | Web |
-| `INoiseMarkStore`（Phase D-1） | `webdata\noise_marks.json`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `INetiqImportQueueStore`（Phase D-3） | `webdata\netiq_import_queue.json`（NetIQ 匯入佇列） | Web 排入、批次套用 |
-| `IPermissionChangeStore` | `rundata\perm_changes.jsonl`（異動明細，change_id=GUID）＋`webdata\perm_confirms.jsonl`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各檔，維持單一寫入者） |
-| `IRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | `rules.json`、`rule_seeds.json`、`suppressions.json` | Web＋批次 |
-| `IBatchRunStore` | `rundata\runs.jsonl`、`run_logs.jsonl` | 批次 |
-| `IImportLogStore` | `webdata\import_logs.jsonl` | Web |
-| `IAuditLogStore` | `webdata\audit.jsonl` | Web |
+| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；唯一走真表的分析資料） | 批次 |
+| `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」） | 批次 |
+| `IUserStore` | blob `users` | Web |
+| `IUserGroupStore` | blob `user_groups` | Web |
+| `IHostStore` | blob `hosts`（含群組/負責人參照，`SetGroups`/`SetOwners` 直接改本文件內的清單） | Web＋批次（批次僅 upsert host_name/last_report_at） |
+| `IHostGroupStore` | blob `host_groups` | Web |
+| `IGroupAccessStore` | blob `group_access` | Web |
+| `ISentinelStore`（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文） | Web |
+| `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append） | Web |
+| `IIssueHandlingStore` | blob `issue_handling`（問題層級狀態，方案 B） | Web |
+| `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
+| `IPermissionChangeStore` | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
+| `IPermissionSnapshotStore` | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
+| `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |
+| `IBatchRunStore` | log `batch_runs`、`batch_run_logs` | 批次 |
+| `IImportLogStore` | log `import_logs`（CSV 與 NetIQ 掃描匯入共用同一份紀錄） | Web |
+| `IAuditLogStore` | log `audit` | Web |
+| `IAiCacheStore` | blob `ai_cache`（Web AI 加值輸出快取） | Web |
+
+已退役：`INetiqImportQueueStore`（Phase 3，docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7，匯入改即時
+落盤，不再有排入佇列的中間狀態）。
 
 ### 10.3 資料庫影響檢查（2026-07-21 報表/下鑽設計增補後）
 
@@ -716,34 +730,44 @@ lf_top_issues 算好」的持久層職責，批次的分析層看不到這張表
 
 - 彙總計算定義為 Core 的**純函數 `CategoryAggregator`**（`List<LogIssueSignature>` →
   各類別含嚴重度分解的彙總列），單元測試直接覆蓋——與 `RecordStorageShaper` 同一套
-  單點原則（DB-PLAN 一致性機制 #4：規則不長在單一實作裡，兩個後端呼叫同一份）
-- **SQL 後端**（Phase 5）：寫入路徑（批次 exe 執行）呼叫 `CategoryAggregator` 算好入庫
-- **JSONL 後端**：不儲存彙總（檔案格式不變、不需資料遷移），Web Repository 查詢期
-  對讀回的紀錄呼叫同一個 `CategoryAggregator` 即時聚合——前期單機資料量下成本可忽略，
-  且保證兩後端數字逐位一致（合約測試驗證）
+  單點原則（DB-PLAN 一致性機制 #4：規則不長在單一實作裡，不同呼叫端共用同一份）
+- 寫入路徑（批次 exe 執行）呼叫 `CategoryAggregator` 算好後隨 `lf_daily_records` 一併入庫
+  （`lf_record_categories` 的四個計數欄），Web 查詢端直接讀已算好的欄位，不必查詢期重算
+  （2026-07-24 改寫：Jsonl 後端退役前這裡曾有「檔案後端查詢期即時聚合」的替代路徑，
+  現已隨 Jsonl 一併移除，只剩單一寫入時機）
 
 **API 影響**：`api/records` 增加兩個選用參數——`severity`（經 `lf_record_categories`
 的計數欄過濾）與 `overdue`（join `lf_record_handling.due_date`），§8.4 下鑽表格的
 目標 URL 全部由既有＋此二參數覆蓋。
 
-### 10.4 JSONL 後端的既定限制與對策（接受，不繞開）
+### 10.4 Jsonl 檔案後端退役與 blob 併發防線（2026-07-24 改寫）
 
-- 每個檔案**單一主要寫入者**（上表）；Web 與批次唯一交集（`hosts.json`、規則檔）以短暫檔案鎖處理。
-- 整檔型 `.json` 的寫入=「寫 temp → `File.Replace` 原子替換」，CSV 匯入的 all-or-nothing 靠此達成。
-- 多人高頻寫入的正式情境屬 SQL 後端；JSONL 後端定位為單機檔案相容模式（2026-07-24 起主要
-  測試方式改為 SQLite），**但介面語意與合約測試兩後端完全一致**（SOLID 的 L；DB-PLAN 一致性機制 #3）。
+**Jsonl 檔案後端已全面退役**（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10）：`Storage.Type` 收斂為
+Sqlite／SqlServer 二選一，設成 `Jsonl` 啟動即報錯；沒有服役中的 Jsonl 正式資料需要遷移，
+`--import-history` 匯入器確定不做。原本「每個檔案單一主要寫入者＋`File.Replace` 原子替換」
+的併發保護一併走入歷史——換 DB 後這一層防線一度沒跟上：`EfJsonBlobStore.Mutate` 在
+SqlServer 預設隔離等級下「讀→改→寫」擋不住更新遺失（兩行程同讀舊值、後寫蓋先寫），
+SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走的正是 SqlServer。
 
-### 10.5 SQL 後端（Phase C 完成 2026-07-23，三 provider 全資料走 SQL；2026-07-24 起 Sqlite 為預設）
+**對策**：`lf_blobs.UpdatedAt` 設為 EF `ConcurrencyToken`。帶著過期內容寫入的一方會被
+資料庫拒絕（`DbUpdateConcurrencyException`，屬 `DbUpdateException`）並交由 `EfJsonBlobStore.Mutate`
+既有的重試迴圈（最多 5 次、遞增退避）重新開交易讀最新值、重算、再寫一次——批次與 Web
+併發寫入同一份 webdata 文件時，不會有一方的變更被靜默蓋掉。CSV 匯入的 all-or-nothing
+現由 `Mutate` 的單一交易（`BeginTransaction`/`SaveChanges`/`Commit`）保證，取代原本的
+temp 檔＋`File.Replace` 手法。
 
-`Storage.Type` 三選一，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
+### 10.5 SQL 後端（Phase C 完成 2026-07-23，全資料走 SQL；2026-07-24 起 Sqlite 為預設、Jsonl 退役）
+
+`Storage.Type` **二選一**，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
 
 - **`Sqlite`**（預設）：測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔——現為主要測試方式，
   批次與 Web 的 `appsettings.json` 皆預設此值。
-- **`Jsonl`**：§10.2 的檔案格式，單機檔案相容模式。
 - **`SqlServer`**：正式環境（2000 台量級）。
 
-SQL 模式（Sqlite/SqlServer）下**全部資料走資料庫**（Phase C 收斂——先前分析紀錄走 SQL、
-webdata 走 JSONL 的混合狀態已統一）：
+（`Jsonl` 已於 2026-07-24 全面退役，見 §10.4；`Storage.Type` 設成非 Sqlite/SqlServer 的值
+一律於啟動時報錯，不會靜默退回舊行為。）
+
+**全部資料走資料庫**（Phase C 收斂——先前分析紀錄走 SQL、webdata 走 JSONL 的混合狀態已統一）：
 
 - **分析紀錄**：`lf_daily_records`（正規化列＋full-record JSON）＋`lf_top_issues`（跨主機篩選子列）。
 - **webdata 各 store** 透過兩個抽象改走 DB，store 業務邏輯（續號、回填、查詢）**完全沒改**：
@@ -756,8 +780,7 @@ webdata 走 JSONL 的混合狀態已統一）：
   `UserStoreContractTests`（webdata）、`KnownIssueRuleStoreContractTests`／
   `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`／`RuleImporterRunContractTests`
   （規則與抑制），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
-  SQLite 合約子類為必要項、Jsonl 為次要合約實作**；檔案特有行為（原子替換、壞檔容錯的檔案面）
-  留在檔案版測試。
+  SQLite 合約子類為必要項**（Jsonl 合約實作已隨檔案後端一併退役，見 §10.4）。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立（無 migration）。批次與 Web 須設**相同的 `Storage.Type`**；
   SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。

@@ -32,8 +32,8 @@ public interface IRuleSeedStore
     void Sync(IEnumerable<KnownIssueRule> seedRules, int seedVersion);
 }
 
-/// <summary>JSONL 後端實作：rule_seeds.json（整檔型，原子替換）</summary>
-public class JsonRuleSeedStore : JsonCollectionFile<RuleSeedSnapshot>, IRuleSeedStore
+/// <summary><see cref="IRuleSeedStore"/> 的實作（blob key=rule_seeds，整份型）</summary>
+public class JsonRuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeedStore
 {
     private static readonly JsonSerializerOptions RuleJsonOptions = new()
     {
@@ -43,7 +43,6 @@ public class JsonRuleSeedStore : JsonCollectionFile<RuleSeedSnapshot>, IRuleSeed
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
-    public JsonRuleSeedStore(string filePath) : base(filePath) { }
     public JsonRuleSeedStore(IJsonBlobStore blob) : base(blob) { }
 
     public RuleSeedSnapshot? Get(string ruleId) =>

@@ -116,7 +116,7 @@ public class RuleImporterTests
 
 /// <summary>
 /// `RuleImporter.Run` 的編排（預覽 vs --apply、既有檔案套用）跑在儲存 store 上——
-/// 邏輯本身與 blob 底層無關，SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
+/// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
 /// </summary>
 public abstract class RuleImporterRunContractTests : IDisposable
 {
@@ -173,24 +173,7 @@ public abstract class RuleImporterRunContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端（單機檔案相容模式）</summary>
-public class JsonRuleImporterRunTests : RuleImporterRunContractTests
-{
-    private readonly string _path =
-        Path.Combine(Path.GetTempPath(), $"logforesight-import-test-{Guid.NewGuid():N}.json");
-
-    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
-
-    public override void Dispose()
-    {
-        if (File.Exists(_path)) File.Delete(_path);
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp)) File.Delete(tmp);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>SQLite（EF）後端——SQLite 現為主要測試方式</summary>
+/// <summary>SQLite（EF）後端</summary>
 public class EfRuleImporterRunTests : RuleImporterRunContractTests
 {
     private readonly EfSqliteFixture _fx = new();

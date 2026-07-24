@@ -1,3 +1,4 @@
+using LogForesight;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
@@ -62,16 +63,13 @@ try
     // DataRoot 存在（Validate 已檢查）但底下沒有該儲存後端的資料足跡，最常見的成因是
     // Storage:DataRoot 指錯了——指到 Web 自己的執行檔目錄、而不是批次 LogForesight.exe 的資料目錄。
     // 那正是「規則維護頁報『載入規則失敗』、儀表板一片空白」的來源。
-    // 檢查目標依後端而異：Jsonl 看 rules.json/history.txt；Sqlite（預設連線）看 logforesight.db；
+    // 只有「Sqlite 用預設連線」時才在 DataRoot 底下有檔案足跡可查（.db 落點）；
     // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageFactory 首次連線 fail-fast 把關，這裡不重複檢查。
     // 刻意不 fail-fast：批次還沒首次執行是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
-    var expectedDataFiles = settings.Storage.Type switch
-    {
-        "Sqlite" when string.IsNullOrWhiteSpace(settings.Storage.ConnectionString) => new[] { "logforesight.db" },
-        "Jsonl" => new[] { "rules.json", "history.txt" },
-        _ => Array.Empty<string>()   // SqlServer／自訂連線的 Sqlite：足跡不在 DataRoot，交給 DB 連線把關
-    };
+    var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
+        ? new[] { "logforesight.db" }
+        : Array.Empty<string>();   // SqlServer／自訂連線的 Sqlite：足跡不在 DataRoot，交給 DB 連線把關
     if (expectedDataFiles.Length > 0 &&
         !expectedDataFiles.Any(f => File.Exists(Path.Combine(dataRoot, f))))
     {
@@ -109,6 +107,20 @@ try
             logger.Warn("目前沒有任何 admin 群組成員。請以 serverAdmin 帳號（{0}）登入後指派。",
                 settings.Auth.ServerAdmin.Account);
         }
+
+        // Sentinel 改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、6）：
+        // store 為空時自批次 appsettings.json 的 NetIq.Servers 匯入一次種子，之後皆以 Web 為準。
+        var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
+        var seeded = SentinelSeeder.SeedIfEmpty(sentinelStore, dataRoot);
+        if (seeded > 0)
+            logger.Info("Sentinel store 為空，已自批次 appsettings.json 匯入 {0} 筆種子。", seeded);
+
+        // SentinelId 回填（定案 4）：一次性遷移，冪等，見 SentinelIdBackfiller 的類別註解
+        var hostStore = scope.ServiceProvider.GetRequiredService<IHostStore>();
+        var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);
+        if (backfill.BackfilledCount > 0)
+            logger.Info("已回填 {0} 台主機的 SentinelId（{1} 台對不到現存 Sentinel，維持待歸屬）。",
+                backfill.BackfilledCount, backfill.UnresolvedCount);
     }
 
     // ── 管線 ─────────────────────────────────────────────────────────────────

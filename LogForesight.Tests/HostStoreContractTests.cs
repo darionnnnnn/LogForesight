@@ -2,10 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>
-/// <see cref="IHostStore"/> 的合約測試基底（docs/WEB-SPEC.md §12）。
-/// JSONL 與未來的 SQL 實作跑同一組案例。
-/// </summary>
+/// <summary><see cref="IHostStore"/> 的合約測試基底（docs/WEB-SPEC.md §12）。</summary>
 public abstract class HostStoreContractTests : IDisposable
 {
     protected abstract IHostStore CreateStore();
@@ -210,6 +207,7 @@ public abstract class HostStoreContractTests : IDisposable
         {
             HostName = "10.1.2.12",
             Source = "netiq",
+            SentinelId = 42,
             NetiqServer = "SENTINEL-A"
         });
 
@@ -289,24 +287,7 @@ public abstract class HostStoreContractTests : IDisposable
     }
 }
 
-public class JsonHostStoreContractTests : HostStoreContractTests
-{
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
-
-    protected override IHostStore CreateStore() => new JsonHostStore(Path.Combine(_dir, "hosts.json"));
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>
-/// 同一組主機 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）——
-/// 驗證 webdata store 透過 blob 抽象改走資料庫後，行為與檔案後端逐位一致
-/// （store 邏輯完全沒改，只換了底層 IJsonBlobStore）。
-/// </summary>
+/// <summary>主機 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）。</summary>
 public class EfHostStoreContractTests : HostStoreContractTests
 {
     private readonly EfSqliteFixture _fx = new();

@@ -43,9 +43,9 @@ public class PermissionMonitorService
     private readonly IPermissionSnapshotStore _snapshotStore;
     private readonly List<string> _watchedFolders;
 
-    public PermissionMonitorService(PermissionSettings settings, IPermissionSnapshotStore? snapshotStore = null)
+    public PermissionMonitorService(PermissionSettings settings, IPermissionSnapshotStore snapshotStore)
     {
-        _snapshotStore = snapshotStore ?? new FilePermissionSnapshotStore();
+        _snapshotStore = snapshotStore;
 
         // 執行檔自身目錄一律監控（防止程式本身被竄改），加上使用者在 appsettings.json 額外指定的資料夾
         var folders = new List<string> { AppContext.BaseDirectory.TrimEnd('\\') };

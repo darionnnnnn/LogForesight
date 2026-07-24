@@ -137,13 +137,21 @@ public class DashboardService : IDashboardService
     ///
     /// §5.4 D-4：只算數量，不逐台列出——兩千台規模下這份清單本身可能就有數百筆，
     /// 逐台渲染會把儀表板撐爆。點計數卡改導向主機頁的「未回報」篩選（Hosts.SilentThreshold）。
+    ///
+    /// **新主機豁免**（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 9）：LastReportAt 為 null 的主機
+    /// 只在建立超過 <see cref="HostAdminService.NewHostGracePeriod"/>（與該處保持一致，
+    /// 兩邊數字才不會對不上）才算無回報——剛匯入的主機第一次批次還沒跑完，
+    /// LastReportAt 必然是空的，不豁免的話整批匯入就會立刻觸發告警洪水。
+    /// 已經回報過至少一次（LastReportAt 有值）的主機不受豁免影響，維持原本的 2 天判定。
     /// </summary>
     private static void BuildSilentHosts(DashboardDto dto, List<WebHost> visibleHosts)
     {
         var cutoff = DateTime.Now.AddDays(-2);
+        var graceCutoff = DateTime.Now - HostAdminService.NewHostGracePeriod;
 
         dto.SilentHostsCount = visibleHosts
-            .Count(h => h.Active && (h.LastReportAt == null || h.LastReportAt < cutoff));
+            .Count(h => h.Active &&
+                        (h.LastReportAt == null ? h.CreatedAt < graceCutoff : h.LastReportAt < cutoff));
     }
 
     /// <summary>

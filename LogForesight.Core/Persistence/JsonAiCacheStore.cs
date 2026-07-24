@@ -1,6 +1,6 @@
 namespace LogForesight;
 
-/// <summary>Web AI 加值輸出的快取存取（webdata\ai_cache.json）</summary>
+/// <summary>Web AI 加值輸出的快取存取（blob key=ai_cache）</summary>
 public interface IAiCacheStore
 {
     /// <summary>取快取內容；查無回 null</summary>
@@ -11,12 +11,11 @@ public interface IAiCacheStore
 }
 
 /// <summary>
-/// <see cref="IAiCacheStore"/> 的 JSONL 後端實作。整檔型（會更新，走原子替換＋跨程序鎖）。
+/// <see cref="IAiCacheStore"/> 的實作（blob key=ai_cache，整份型，原子讀改寫）。
 /// Put 時順手修剪過期項——快取量小、寫入低頻，不必另設清理排程。
 /// </summary>
-public class JsonAiCacheStore : JsonCollectionFile<AiCacheEntry>, IAiCacheStore
+public class JsonAiCacheStore : JsonBlobCollection<AiCacheEntry>, IAiCacheStore
 {
-    public JsonAiCacheStore(string filePath) : base(filePath) { }
     public JsonAiCacheStore(IJsonBlobStore blob) : base(blob) { }
 
     public string? Get(string key) =>

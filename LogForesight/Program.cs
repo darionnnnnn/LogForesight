@@ -105,8 +105,21 @@ catch (AppSettingsLoadException ex)
     return 1;
 }
 
-// 資料根目錄：所有「資料」（history.txt／rules.json／rule_seeds.json／suppressions.json／
-// webdata\／export\／permission_snapshot.json／hosts 清單）都寫在這裡，Web 也讀同一個根。
+if (!settings.Storage.IsValidType)
+{
+    var original = Console.ForegroundColor;
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"\nStorage:Type「{settings.Storage.Type}」不受支援，僅允許 " +
+                       $"{string.Join(" / ", StorageSettings.ValidTypes)}（Jsonl 檔案格式已於 2026-07-24 退役）。");
+    Console.ForegroundColor = original;
+    log.Fatal("Storage:Type 設定不合格，啟動中止：{Type}", settings.Storage.Type);
+    LogManager.Shutdown();
+    return 1;
+}
+
+// 資料根目錄：export\ 報告與 Sqlite 預設 db 檔位置的依據（Storage.ConnectionString 未設時
+// 用 {DataRoot}\logforesight.db），Web 也讀同一個根。其餘資料（分析紀錄／規則／webdata）
+// 已全數入庫，不再是這個目錄下的檔案。
 // Storage:DataRoot 留空＝執行檔目錄（既有部署行為，逐位元組不變）；填了才把資料搬離建置輸出目錄。
 // 刻意不含 logs\／nlog.config／appsettings.json（那些是隨執行檔的基礎設施，不是資料），
 // 也不含 PermissionMonitor 對「執行檔自身目錄」的竄改監控（監控的是 exe 位置，非資料）。
@@ -132,7 +145,7 @@ try
 
 // 規則庫載入（見 docs/RULES-PLAN.md）：初次部署寫入內建種子、之後從 rules.json 載入並驗證，
 // 在建立任何分析服務之前完成——KnownIssueCatalog 的靜態規則表必須先就緒，後續的聚合/分類才有意義。
-var ruleStore = StorageFactory.CreateRuleStore(settings.Storage, Path.Combine(dataRoot, "rules.json"));
+var ruleStore = StorageFactory.CreateRuleStore(settings.Storage, dataRoot);
 
 // --import-rules：手動把內建種子的新增/修訂規則匯入 rules.json（預設只預覽，--apply 才寫檔），
 // 見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」的決定。放在 mutex 保護內執行，
@@ -148,7 +161,7 @@ if (args.Contains("--import-rules"))
 // 同樣放在 mutex 保護內、跑完即結束，不進入每日分析流程。
 if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contains("--list-suppressions"))
 {
-    var suppressionStoreForCli = StorageFactory.CreateSuppressionStore(settings.Storage, Path.Combine(dataRoot, "suppressions.json"));
+    var suppressionStoreForCli = StorageFactory.CreateSuppressionStore(settings.Storage, dataRoot);
 
     if (args.Contains("--list-suppressions"))
     {
@@ -171,33 +184,16 @@ if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contain
     return 0;
 }
 
-// --import-hosts / --host-list：NetIQ 主機清單的維護指令（docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 D）。
-// 同樣放在 mutex 保護內、跑完即結束——匯入會改寫主機清單，不能與排程中的分析流程同時進行。
-if (args.Contains("--import-hosts") || args.Contains("--host-list"))
+// --host-list：列出目前設定下實際會被查詢的主機（主機清單由 Web 主機頁維護）。
+// 放在 mutex 保護內、跑完即結束。
+if (args.Contains("--host-list"))
 {
     var hostStoreForCli = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
-
-    var exitCode = args.Contains("--import-hosts")
-        ? HostListCli.Import(hostStoreForCli, settings.NetIq, dataRoot)
-        : HostListCli.List(hostStoreForCli, settings.NetIq, dataRoot);
+    var sentinelStoreForCli = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
+    var exitCode = HostListCli.List(hostStoreForCli, sentinelStoreForCli);
 
     LogManager.Shutdown();
     return exitCode;
-}
-
-// --apply-netiq-imports：立即套用 Web 排入的 NetIQ 匯入佇列（docs/SCALE-2000-PLAN.md §5.3 D-3），
-// 不必等到下次排程執行。正常執行也會在開頭自動處理一次（見下方），這裡供想立即套用時手動觸發。
-if (args.Contains("--apply-netiq-imports"))
-{
-    var queueStoreForCli = StorageFactory.CreateNetiqImportQueueStore(settings.Storage, dataRoot);
-    var hostStoreForCli = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
-    var auditStoreForCli = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot);
-
-    var count = NetiqImportQueueCli.ApplyPending(queueStoreForCli, hostStoreForCli, auditStoreForCli);
-    Console.WriteLine(count == 0 ? "目前沒有排程中的 NetIQ 匯入請求。" : $"已處理 {count} 筆 NetIQ 匯入請求。");
-
-    LogManager.Shutdown();
-    return 0;
 }
 
 RuleBootstrapper.Run(ruleStore);
@@ -214,7 +210,7 @@ catch (Exception ex)
     log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
 }
 
-var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage, Path.Combine(dataRoot, "suppressions.json"));
+var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage, dataRoot);
 var currentHost = Environment.MachineName;
 var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
 foreach (var expired in expiredSuppressions)
@@ -251,36 +247,37 @@ var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險
 // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
 // 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺——
 // 此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
-// Sentinel 生命週期（docs/SCALE-2000-PLAN.md §1.7）：自設定移除的 Sentinel，停用其所屬 NetIQ 主機。
-// 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
-// 冪等（已停用不重複處理）、且有空名單安全欄杆（防設定檔誤刪演變成全站停用）。
+//
+// SentinelId 回填（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）：一次性遷移，冪等，排最前面——
+// 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
 try
 {
-    var sentinelNames = settings.NetIq.Servers.Select(s => s.Name).ToList();
-    var sweep = NetiqOrphanSweeper.Sweep(StorageFactory.CreateHostStore(settings.Storage, dataRoot), sentinelNames);
+    var backfill = SentinelIdBackfiller.Run(
+        StorageFactory.CreateHostStore(settings.Storage, dataRoot),
+        StorageFactory.CreateSentinelStore(settings.Storage, dataRoot));
+    if (backfill.BackfilledCount > 0)
+        Console.WriteLine($"  已回填 {backfill.BackfilledCount} 台主機的 SentinelId" +
+            (backfill.UnresolvedCount > 0 ? $"（另有 {backfill.UnresolvedCount} 台對不到現存 Sentinel，維持待歸屬）" : "。"));
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "SentinelId 回填失敗（不影響本次分析）：{0}", ex.Message);
+}
+
+// Sentinel 生命週期：Sentinel 被刪除時，停用其所屬 NetIQ 主機。
+// 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
+// 冪等（已停用不重複處理）、且有空名單安全欄杆（防種子尚未匯入演變成全站停用）。
+try
+{
+    var sentinelIds = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot)
+        .GetAll().Select(s => s.SentinelId).ToList();
+    var sweep = NetiqOrphanSweeper.Sweep(StorageFactory.CreateHostStore(settings.Storage, dataRoot), sentinelIds);
     if (sweep.OrphanedCount > 0)
-        Console.WriteLine($"  ⚠ 偵測到 Sentinel 自設定移除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
+        Console.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
 }
 catch (Exception ex)
 {
     log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-// 每次批次執行開頭處理 Web 排入的 NetIQ 匯入佇列（docs/SCALE-2000-PLAN.md §5.3 D-3）：
-// 兩千台量級下主機異動集中在批次時段一次落盤，避免上班時間 Web 端操作與批次互踩。
-// 排在孤兒掃描之後、Touch 之前——這樣新匯入的主機同一次執行內就會被 Touch 登記。
-// 失敗不得中斷分析：佇列套用是附屬作業，不該讓當晚的事件分析整個停擺。
-try
-{
-    var queueStore = StorageFactory.CreateNetiqImportQueueStore(settings.Storage, dataRoot);
-    var auditStore = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot);
-    var appliedCount = NetiqImportQueueCli.ApplyPending(queueStore, StorageFactory.CreateHostStore(settings.Storage, dataRoot), auditStore);
-    if (appliedCount > 0)
-        Console.WriteLine($"  已套用 {appliedCount} 筆排程中的 NetIQ 匯入請求。");
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "NetIQ 匯入佇列套用失敗（不影響本次分析）：{0}", ex.Message);
 }
 
 long currentHostId = 0;
@@ -299,13 +296,13 @@ catch (Exception ex)
 // 同一份 history.txt 內別台主機（示範資料、或多台共用資料根）的紀錄不會害本機被誤判成
 // 「已分析過」而整段跳過，也不會混進趨勢基準。必須排在 Touch 取得 currentHostId 之後。
 var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
-var historyService = StorageFactory.CreateRecordStore(settings.Storage, Path.Combine(dataRoot, "history.txt"), ownerHost);
+var historyService = StorageFactory.CreateRecordStore(settings.Storage, dataRoot, ownerHost);
 
 var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
     settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions,
-    new FilePermissionSnapshotStore(Path.Combine(dataRoot, "permission_snapshot.json")));
+    StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
 var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態

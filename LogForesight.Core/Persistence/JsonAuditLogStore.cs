@@ -20,10 +20,10 @@ public interface IAuditLogStore
 }
 
 /// <summary>
-/// <see cref="IAuditLogStore"/> 的 JSONL 後端實作：webdata\audit.jsonl。
+/// <see cref="IAuditLogStore"/> 的實作（log key=audit，append-only）。
 ///
-/// 用逐行 JSONL 而不是整檔 JSON：稽核是 append-only 的高頻寫入，
-/// 每次都重寫整份檔案會隨資料量線性變慢（與 history.txt 選 JSONL 的理由相同）。
+/// 走逐列的 <see cref="IJsonLogStore"/> 而不是整份 blob：稽核是 append-only 的高頻寫入，
+/// 每次都重寫整份文件會隨資料量線性變慢。
 /// </summary>
 public class JsonAuditLogStore : IAuditLogStore
 {
@@ -37,8 +37,6 @@ public class JsonAuditLogStore : IAuditLogStore
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         Converters = { new JsonStringEnumConverter() }
     };
-
-    public JsonAuditLogStore(string filePath) : this(new FileJsonLogStore(filePath)) { }
 
     public JsonAuditLogStore(IJsonLogStore log)
     {

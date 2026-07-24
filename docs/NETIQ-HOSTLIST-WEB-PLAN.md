@@ -98,7 +98,13 @@ Sentinel 是**路由屬性**（哪台 Sentinel 查得到這台主機），群組
 - 配套：**「未分組主機」佇列**（主機頁篩選＋儀表板 admin 提示數）＋
   **批次指派**（勾選多台一次入組）；大量初始分組建議走既有 CSV 匯入的 `groups` 欄位
 
-### 決策 D：清單主人交接——txt 與 Web 單一主人，設定切換
+### 決策 D：清單主人交接——txt 與 Web 單一主人，設定切換 ⏸ 已廢止（2026-07-24）
+
+> **廢止**：docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12 決定 Txt 主機清單模式整支退役
+> （`HostListSource`/`HostListDirectory` 設定、`TxtHostListProvider`、`--import-hosts` 全刪），
+> 不是「切換」而是「拿掉其中一個主人」——Sentinel 連線設定進 Web 之後，「清單主人在 txt」的
+> 過渡定位已消失，txt 內容需要匯入時改用 Web「批次貼上」（`bulk-modal`）即可，不需要專屬的
+> 交接 SOP。原文保留供歷史對照：
 
 - 批次抽 `IHostListProvider`：`TxtHostListProvider`（PLAN.md 原設計）與
   `StoreHostListProvider`（讀 `IHostStore`，本規劃）；
@@ -107,7 +113,13 @@ Sentinel 是**路由屬性**（哪台 Sentinel 查得到這台主機），群組
 - 交接 SOP：`--import-hosts`（txt → host store，冪等 upsert）→ 核對 Web 主機頁筆數 →
   設定切 `Web` → txt 移除。Txt 模式下批次仍以 `Touch` 取得 HostId 後寫紀錄（PK 方案不分模式）
 
-### 決策 E：Sentinel 名單來源——批次 appsettings 唯讀，不另建表
+### 決策 E：Sentinel 名單來源——批次 appsettings 唯讀，不另建表 ⏸ 已修訂（2026-07-24）
+
+> **修訂**：docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、2 把單一事實來源從「批次 appsettings.json」
+> 改為「共用儲存層（`sentinels` blob，`ISentinelStore`）」——當時的前提是「批次與 Web 靠
+> `DataRoot` 共用檔案，設定檔就是共用點」；Phase C 之後共用點已是資料庫，讓 Web 直接管理
+> Sentinel（完整 CRUD，含密碼加密）反而消除了「畫面選得到、批次卻查不到」的分歧風險。
+> 「同一時間只有一個主人」原則不變，主人從 appsettings.json 換成共用 store。原文保留供歷史對照：
 
 Web 的 Sentinel 下拉選單讀批次 `appsettings.json` 的 `NetIq.Servers`（同一 DataRoot、唯讀）。
 BaseUrl/帳密只有批次需要；不建 `lf_sentinels` 表、不做 Web 端 Sentinel CRUD——

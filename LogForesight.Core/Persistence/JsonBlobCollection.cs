@@ -5,24 +5,20 @@ using System.Text.Json.Serialization;
 namespace LogForesight;
 
 /// <summary>
-/// 「整份 JSON 陣列」的共用存取基底（webdata\users.json、groups.json… 等 Web 自有資料）。
+/// 「整份 JSON 陣列」的共用存取基底（users、hosts、host_groups… 等 webdata blob）。
 ///
 /// 為什麼要有這個類別：整份型資料的兩條規則——「原子更新（不留半截）」與「讀改寫整段
 /// 互斥（不遺失更新）」——如果讓每個 store 各自實作，遲早有人漏掉。規則寫在這裡一次，
 /// 所有 store 繼承取得，與 RecordStorageShaper「精簡策略單點化」是同一個理由。
 ///
-/// 2026-07-23 起底層改走 <see cref="IJsonBlobStore"/>：文字放檔案（現行）或資料庫
-/// （SQLite 測試／SqlServer 正式）由注入的 blob 決定，store 的方法本體完全不變。
+/// 底層一律走 <see cref="IJsonBlobStore"/>（SQLite 測試／SqlServer 正式），
+/// store 的方法本體完全不受後端影響。
 /// </summary>
-public abstract class JsonCollectionFile<T> where T : class
+public abstract class JsonBlobCollection<T> where T : class
 {
     private readonly IJsonBlobStore _blob;
 
-    /// <summary>檔案後端的便利建構子（沿用原本以路徑建立的呼叫端與測試）</summary>
-    protected JsonCollectionFile(string filePath) : this(new FileJsonBlobStore(filePath)) { }
-
-    /// <summary>指定底層（檔案或 DB）</summary>
-    protected JsonCollectionFile(IJsonBlobStore blob) => _blob = blob;
+    protected JsonBlobCollection(IJsonBlobStore blob) => _blob = blob;
 
     /// <summary>供 log／Location 顯示（相容原本的名稱；DB 後端回傳的是位置描述而非真實路徑）</summary>
     protected string FilePath => _blob.Location;

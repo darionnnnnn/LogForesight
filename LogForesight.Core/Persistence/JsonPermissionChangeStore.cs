@@ -4,12 +4,12 @@ using System.Text.Json;
 namespace LogForesight;
 
 /// <summary>
-/// <see cref="IPermissionChangeStore"/> 的 JSONL 後端實作。
+/// <see cref="IPermissionChangeStore"/> 的實作。
 ///
-/// **兩個檔案、兩個寫入者**（§10.4 單一寫入者規則）：
-///   - rundata\perm_changes.jsonl：批次寫入偵測到的異動（append-only）
-///   - webdata\perm_confirms.json：Web 寫入人工確認狀態（整檔型，需更新）
-/// 分開才不需要跨程序交易；SQL 後端會合併成同一張表。
+/// **兩個 key、兩個寫入者**（沿用單一寫入者原則）：
+///   - log key=perm_changes：批次寫入偵測到的異動（append-only）
+///   - blob key=perm_confirms：Web 寫入人工確認狀態（整份型，需更新）
+/// 各寫各的 key，寫入路徑不交錯。
 /// </summary>
 public class JsonPermissionChangeStore : IPermissionChangeStore
 {
@@ -22,9 +22,6 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
         PropertyNameCaseInsensitive = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
-
-    public JsonPermissionChangeStore(string changesPath, string confirmationsPath)
-        : this(new FileJsonLogStore(changesPath), new FileJsonBlobStore(confirmationsPath)) { }
 
     public JsonPermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
     {
@@ -116,8 +113,8 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
         return result;
     }
 
-    /// <summary>確認狀態的整檔型儲存（Web 單一寫入者，原子替換）</summary>
-    private class JsonConfirmationFile : JsonCollectionFile<PermissionChangeConfirmation>
+    /// <summary>確認狀態的整份型儲存（Web 單一寫入者，原子讀改寫）</summary>
+    private class JsonConfirmationFile : JsonBlobCollection<PermissionChangeConfirmation>
     {
         public JsonConfirmationFile(IJsonBlobStore blob) : base(blob) { }
 

@@ -117,6 +117,22 @@ public class AddHostGroupMembersRequest
     public bool RemoveFromOthers { get; set; }
 }
 
+/// <summary>「目前成員」頁籤用：本群組現有成員，附帶移除後是否會變未分組的判斷依據</summary>
+public class HostGroupMemberDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+
+    /// <summary>扣除本群組後，此主機仍隸屬的其他群組數；0 代表移除後會變成未分組</summary>
+    public int OtherGroupCount { get; set; }
+}
+
+public class RemoveHostGroupMembersRequest
+{
+    public List<long> HostIds { get; set; } = new();
+}
+
 /// <summary>授權矩陣：列＝使用者群組、欄＝主機群組</summary>
 public class AccessMatrixDto
 {
@@ -152,6 +168,10 @@ public class HostDto
     public bool Active { get; set; }
     public long? MergedInto { get; set; }
     public DateTime? LastReportAt { get; set; }
+
+    /// <summary>建立時間——「未回報」告警的寬限期依據，剛匯入的主機不該立刻被當成無回報（定案 9）</summary>
+    public DateTime CreatedAt { get; set; }
+
     public List<long> GroupIds { get; set; } = new();
     public List<string> GroupNames { get; set; } = new();
     public List<long> OwnerUserIds { get; set; } = new();

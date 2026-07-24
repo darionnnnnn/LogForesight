@@ -1,7 +1,7 @@
 namespace LogForesight;
 
 /// <summary>
-/// 「已知雜訊」記憶（↔ webdata\noise_marks.json，docs/SCALE-2000-PLAN.md §5.1 D-1 #3）。
+/// 「已知雜訊」記憶（↔ blob key=noise_marks，docs/SCALE-2000-PLAN.md §5.1 D-1 #3）。
 ///
 /// 使用者在風險日詳情把某個問題標「已知雜訊」時寫入一筆；之後同主機同簽章的
 /// 新問題（不同日期、尚無明確標記）會**自動顯示**「已知雜訊（自動）」，不必每天重標一次。

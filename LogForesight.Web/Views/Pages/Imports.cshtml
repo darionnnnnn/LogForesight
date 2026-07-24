@@ -1,147 +1,186 @@
 @{
-    ViewData["Title"] = "CSV 匯入";
+    ViewData["Title"] = "資料匯入";
 }
 
-<div class="lf-hint mb-3">
-    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
-    <span>匯入順序：先「使用者」、再「主機」、最後「群組授權」。</span>
-    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
-            data-bs-title="為什麼有順序"
-            data-bs-content="主機的負責人必須是已存在的使用者帳號，群組授權的兩端也必須是已存在的群組，因此要先匯入使用者、再主機、最後群組授權。">
-        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
-    </button>
-</div>
+<ul class="nav nav-tabs mb-3" id="import-tabs">
+    <li class="nav-item">
+        <button class="nav-link active" data-tab="csv" type="button">CSV 匯入</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-tab="netiq" type="button">NetIQ 匯入</button>
+    </li>
+</ul>
 
-<div class="row g-3" id="import-cards">
-    <div class="col-lg-4">
-        <div class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">1. 使用者</h2>
+<section data-panel="csv">
+    <div class="lf-hint mb-3">
+        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+        <span>匯入順序：先「使用者」、再「主機」、最後「群組授權」。</span>
+        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+                data-bs-title="為什麼有順序"
+                data-bs-content="主機的負責人必須是已存在的使用者帳號，群組授權的兩端也必須是已存在的群組，因此要先匯入使用者、再主機、最後群組授權。">
+            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+        </button>
+    </div>
+
+    <div class="row g-3" id="import-cards">
+        <div class="col-lg-4">
+            <div class="lf-card h-100">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">1. 使用者</h2>
+                </div>
+                <div class="lf-card__body">
+                    <p class="small text-muted">自然鍵：<code>account</code>。已存在則更新，不存在則新增。</p>
+                    <details class="mb-3">
+                        <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                        <div class="lf-table-wrap">
+                        <table class="table table-sm small mb-0">
+                            <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>account</code></td><td>是</td><td>AD 帳號</td></tr>
+                                <tr><td><code>display_name</code></td><td></td><td>空白＝不變</td></tr>
+                                <tr><td><code>email</code></td><td></td><td>空白＝不變</td></tr>
+                                <tr><td><code>groups</code></td><td></td><td>分號分隔；<strong>有值＝整組取代</strong>、空白＝不變</td></tr>
+                                <tr><td><code>active</code></td><td></td><td>1 或 0，空白＝1</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </details>
+                    <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Users/template">下載範本</a>
+                    <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Users" />
+                </div>
             </div>
-            <div class="lf-card__body">
-                <p class="small text-muted">自然鍵：<code>account</code>。已存在則更新，不存在則新增。</p>
-                <details class="mb-3">
-                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
-                    <div class="lf-table-wrap">
-                    <table class="table table-sm small mb-0">
-                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
-                        <tbody>
-                            <tr><td><code>account</code></td><td>是</td><td>AD 帳號</td></tr>
-                            <tr><td><code>display_name</code></td><td></td><td>空白＝不變</td></tr>
-                            <tr><td><code>email</code></td><td></td><td>空白＝不變</td></tr>
-                            <tr><td><code>groups</code></td><td></td><td>分號分隔；<strong>有值＝整組取代</strong>、空白＝不變</td></tr>
-                            <tr><td><code>active</code></td><td></td><td>1 或 0，空白＝1</td></tr>
-                        </tbody>
-                    </table>
-                    </div>
-                </details>
-                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Users/template">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Users" />
+        </div>
+
+        <div class="col-lg-4">
+            <div class="lf-card h-100">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">2. 主機</h2>
+                </div>
+                <div class="lf-card__body">
+                    <p class="small text-muted">自然鍵：<code>host_name</code>。</p>
+                    <details class="mb-3">
+                        <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                        <div class="lf-table-wrap">
+                        <table class="table table-sm small mb-0">
+                            <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>host_name</code></td><td>是</td><td>需與批次回報的機器名稱一致</td></tr>
+                                <tr><td><code>ip_address</code></td><td></td><td>顯示用線索</td></tr>
+                                <tr><td><code>netiq_server</code></td><td></td><td>所屬 Sentinel</td></tr>
+                                <tr><td><code>role_desc</code></td><td></td><td>伺服器角色描述</td></tr>
+                                <tr><td><code>groups</code></td><td></td><td>分號分隔；有值＝整組取代</td></tr>
+                                <tr><td><code>owners</code></td><td></td><td>分號分隔的<strong>既有</strong>帳號</td></tr>
+                                <tr><td><code>active</code></td><td></td><td>1 或 0</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </details>
+                    <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Hosts/template">下載範本</a>
+                    <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Hosts" />
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="lf-card h-100 lf-card--warning">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">3. 群組授權</h2>
+                </div>
+                <div class="lf-card__body">
+                    <p class="small text-muted">
+                        <strong>全量取代</strong>：檔案就是授權的完整清單，
+                        沒列出的既有授權會被移除（預覽會逐筆列出將被移除的項目）。
+                    </p>
+                    <details class="mb-3">
+                        <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                        <div class="lf-table-wrap">
+                        <table class="table table-sm small mb-0">
+                            <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>user_group</code></td><td>是</td><td>既有的使用者群組名稱</td></tr>
+                                <tr><td><code>host_group</code></td><td>是</td><td>既有的主機群組名稱</td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </details>
+                    <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/GroupAccess/template">下載範本</a>
+                    <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="GroupAccess" />
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="lf-card h-100">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">負責人</h2>
+                </div>
+                <div class="lf-card__body">
+                    <p class="small text-muted">
+                        指派主機的負責人。一台主機多列＝多位負責人；<strong>檔案中出現的主機，負責人整組取代</strong>。
+                    </p>
+                    <details class="mb-3">
+                        <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
+                        <div class="lf-table-wrap">
+                        <table class="table table-sm small mb-0">
+                            <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
+                            <tbody>
+                                <tr><td><code>host_name</code></td><td>擇一</td><td>主機名稱（與 ip_address 至少填一個）</td></tr>
+                                <tr><td><code>ip_address</code></td><td>擇一</td><td>host_name 空白時以此比對主機</td></tr>
+                                <tr><td><code>owner_account</code></td><td>是</td><td>負責人帳號，<strong>不存在會自動建立</strong></td></tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </details>
+                    <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Owners/template">下載範本</a>
+                    <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="col-lg-4">
-        <div class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">2. 主機</h2>
+    <div class="lf-card mt-3 d-none" id="preview-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">預覽 <span class="text-muted small" id="preview-file"></span></h2>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="preview-cancel">取消</button>
+                <button type="button" class="btn btn-sm btn-primary" id="preview-apply">套用</button>
             </div>
-            <div class="lf-card__body">
-                <p class="small text-muted">自然鍵：<code>host_name</code>。</p>
-                <details class="mb-3">
-                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
-                    <div class="lf-table-wrap">
-                    <table class="table table-sm small mb-0">
-                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
-                        <tbody>
-                            <tr><td><code>host_name</code></td><td>是</td><td>需與批次回報的機器名稱一致</td></tr>
-                            <tr><td><code>ip_address</code></td><td></td><td>顯示用線索</td></tr>
-                            <tr><td><code>netiq_server</code></td><td></td><td>所屬 Sentinel</td></tr>
-                            <tr><td><code>role_desc</code></td><td></td><td>伺服器角色描述</td></tr>
-                            <tr><td><code>groups</code></td><td></td><td>分號分隔；有值＝整組取代</td></tr>
-                            <tr><td><code>owners</code></td><td></td><td>分號分隔的<strong>既有</strong>帳號</td></tr>
-                            <tr><td><code>active</code></td><td></td><td>1 或 0</td></tr>
-                        </tbody>
-                    </table>
-                    </div>
-                </details>
-                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Hosts/template">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Hosts" />
-            </div>
+        </div>
+        <div class="lf-card__body">
+            <div id="preview-summary" class="mb-3"></div>
+            <div id="preview-warnings"></div>
+            <div id="preview-rows"></div>
         </div>
     </div>
 
-    <div class="col-lg-4">
-        <div class="lf-card h-100 lf-card--warning">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">3. 群組授權</h2>
-            </div>
-            <div class="lf-card__body">
-                <p class="small text-muted">
-                    <strong>全量取代</strong>：檔案就是授權的完整清單，
-                    沒列出的既有授權會被移除（預覽會逐筆列出將被移除的項目）。
-                </p>
-                <details class="mb-3">
-                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
-                    <div class="lf-table-wrap">
-                    <table class="table table-sm small mb-0">
-                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
-                        <tbody>
-                            <tr><td><code>user_group</code></td><td>是</td><td>既有的使用者群組名稱</td></tr>
-                            <tr><td><code>host_group</code></td><td>是</td><td>既有的主機群組名稱</td></tr>
-                        </tbody>
-                    </table>
-                    </div>
-                </details>
-                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/GroupAccess/template">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="GroupAccess" />
-            </div>
+    <div class="lf-card mt-3" id="encoding-note">
+        <div class="lf-card__body small text-muted">
+            檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，
+            否則中文欄位會變成亂碼。
+        </div>
+    </div>
+</section>
+
+<section data-panel="netiq" class="d-none">
+    <div class="lf-toolbar">
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__spacer"></div>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
         </div>
     </div>
 
-    <div class="col-lg-4">
-        <div class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">負責人</h2>
-            </div>
-            <div class="lf-card__body">
-                <p class="small text-muted">
-                    指派主機的負責人。一台主機多列＝多位負責人；<strong>檔案中出現的主機，負責人整組取代</strong>。
-                </p>
-                <details class="mb-3">
-                    <summary class="small text-muted mb-2" style="cursor:pointer">欄位格式說明</summary>
-                    <div class="lf-table-wrap">
-                    <table class="table table-sm small mb-0">
-                        <thead><tr><th>欄位</th><th>必填</th><th>說明</th></tr></thead>
-                        <tbody>
-                            <tr><td><code>host_name</code></td><td>擇一</td><td>主機名稱（與 ip_address 至少填一個）</td></tr>
-                            <tr><td><code>ip_address</code></td><td>擇一</td><td>host_name 空白時以此比對主機</td></tr>
-                            <tr><td><code>owner_account</code></td><td>是</td><td>負責人帳號，<strong>不存在會自動建立</strong></td></tr>
-                        </tbody>
-                    </table>
-                    </div>
-                </details>
-                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Owners/template">下載範本</a>
-                <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
-            </div>
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">
+                Sentinel <span class="text-muted small" id="sentinel-count"></span>
+            </h2>
+            <span tabindex="0" data-bs-toggle="popover" data-bs-content="各台 NetIQ Sentinel 的連線設定。「掃描匯入」對這台 Sentinel 主動探索主機清單並勾選匯入；停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。">
+                <i class="bi bi-question-circle text-muted"></i>
+            </span>
         </div>
+        <div class="lf-card__body p-0" id="sentinel-list"></div>
     </div>
-</div>
-
-<div class="lf-card mt-3 d-none" id="preview-card">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title">預覽 <span class="text-muted small" id="preview-file"></span></h2>
-        <div class="d-flex gap-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary" id="preview-cancel">取消</button>
-            <button type="button" class="btn btn-sm btn-primary" id="preview-apply">套用</button>
-        </div>
-    </div>
-    <div class="lf-card__body">
-        <div id="preview-summary" class="mb-3"></div>
-        <div id="preview-warnings"></div>
-        <div id="preview-rows"></div>
-    </div>
-</div>
+</section>
 
 <div class="lf-card mt-3">
     <div class="lf-card__header">
@@ -150,10 +189,97 @@
     <div class="lf-card__body p-0" id="import-logs"></div>
 </div>
 
-<div class="lf-card mt-3 d-none" id="encoding-note">
-    <div class="lf-card__body small text-muted">
-        檔案請存成 <strong>UTF-8</strong>。以 Excel 編輯時請選「CSV UTF-8」格式另存，
-        否則中文欄位會變成亂碼。
+<!-- Sentinel 簡易編輯（不含掃描；掃描/新增走下方精靈） -->
+<div class="modal fade" id="sentinel-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sentinel-modal-title">編輯 Sentinel</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="sentinel-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="sentinel-name" class="form-label">名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sentinel-name" required />
+                        <div class="form-text">主機頁「所屬 Sentinel」下拉會顯示這個名稱。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-base-url" class="form-label">連線位址</label>
+                        <input type="text" class="form-control" id="sentinel-base-url" placeholder="https://sentinel.corp.local" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-username" class="form-label">探索帳號</label>
+                        <input type="text" class="form-control" id="sentinel-username" />
+                        <div class="form-text">帳號密碼齊備才能用「掃描匯入」主動探索這台 Sentinel 上的主機。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-password" class="form-label">探索密碼</label>
+                        <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
+                        <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="sentinel-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 新增 Sentinel／掃描匯入精靈 -->
+<div class="modal fade" id="netiq-wizard-modal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="wizard-title">從 NetIQ 匯入</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div id="wizard-pane-connect">
+                    <div class="mb-3">
+                        <label for="wizard-name" class="form-label">名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="wizard-name" />
+                        <div class="form-text">主機頁「所屬 Sentinel」下拉會顯示這個名稱。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="wizard-base-url" class="form-label">連線位址</label>
+                        <input type="text" class="form-control" id="wizard-base-url" placeholder="https://sentinel.corp.local" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="wizard-username" class="form-label">探索帳號 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="wizard-username" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="wizard-password" class="form-label">探索密碼 <span class="text-danger">*</span></label>
+                        <input type="password" class="form-control" id="wizard-password" autocomplete="new-password" />
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="wizard-auto-scan" checked />
+                        <label class="form-check-label" for="wizard-auto-scan">建立後自動掃描並匯入主機</label>
+                    </div>
+                </div>
+
+                <div id="wizard-pane-subnets" class="d-none">
+                    <div id="wizard-scan-result"></div>
+                </div>
+
+                <div id="wizard-pane-groups" class="d-none">
+                    <p class="small text-muted">
+                        各網段可選既有主機群組、建立新群組，或跳過（跳過＝未分組，只有 admin 看得到）。
+                        只影響本次<strong>新增</strong>的主機，既有主機的群組不會被改動。
+                    </p>
+                    <div id="wizard-group-assign"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="me-auto small text-muted" id="wizard-hint"></div>
+                <button type="button" class="btn btn-outline-secondary d-none" id="wizard-back">上一步</button>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="wizard-primary">下一步</button>
+            </div>
+        </div>
     </div>
 </div>
 

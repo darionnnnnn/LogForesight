@@ -23,6 +23,12 @@ public interface IGroupAdminService
     /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
     HostGroupMemberPreviewDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request);
 
+    /// <summary>目前成員清單（給「目前成員」頁籤，依 /24 分組是前端的事，這裡只回平面清單）</summary>
+    List<HostGroupMemberDto> GetMembers(long hostGroupId);
+
+    /// <summary>把選定主機移出群組（只動這一個群組，其餘既有群組不受影響）</summary>
+    void RemoveMembers(long hostGroupId, IEnumerable<long> hostIds);
+
     AccessMatrixDto GetAccessMatrix();
     void SetAccess(long userGroupId, IEnumerable<long> hostGroupIds);
 }
@@ -284,6 +290,49 @@ public class GroupAdminService : IGroupAdminService
 
         // 回傳套用後的最新預覽（同一組主機），讓前端就地反映結果
         return PreviewMembers(hostGroupId, new HostGroupMemberQueryRequest());
+    }
+
+    public List<HostGroupMemberDto> GetMembers(long hostGroupId)
+    {
+        var group = _hostGroups.Get(hostGroupId)
+                    ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
+
+        return _hosts.GetAll()
+            .Where(h => h.MergedInto == null && h.GroupIds.Contains(hostGroupId))
+            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => new HostGroupMemberDto
+            {
+                HostId = h.HostId,
+                HostName = h.HostName,
+                IpAddress = h.IpAddress,
+                OtherGroupCount = h.GroupIds.Count(id => id != hostGroupId)
+            })
+            .ToList();
+    }
+
+    public void RemoveMembers(long hostGroupId, IEnumerable<long> hostIds)
+    {
+        var group = _hostGroups.Get(hostGroupId)
+                    ?? throw DomainException.NotFound("找不到這個主機群組，可能已被刪除。");
+
+        var removed = new List<string>();
+        foreach (var hostId in hostIds.Distinct())
+        {
+            var host = _hosts.Get(hostId);
+            if (host == null || !host.GroupIds.Contains(hostGroupId)) continue;   // 查無或早已不在此群組，安靜略過
+
+            _hosts.SetGroups(hostId, host.GroupIds.Where(id => id != hostGroupId));
+            removed.Add(host.HostName);
+        }
+
+        if (removed.Count == 0) return;
+
+        _audit.Record(
+            action: AuditActions.HostUpdate,
+            summary: $"從主機群組「{group.GroupName}」移出：{removed.Count} 台",
+            targetKind: "group",
+            targetId: group.GroupId.ToString(),
+            detail: new { group.GroupName, Hosts = removed });
     }
 
     /// <summary>

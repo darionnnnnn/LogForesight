@@ -26,7 +26,7 @@ public static class NetiqHostList
     /// （見 docs/NETIQ-HOSTLIST-WEB-PLAN.md「Sentinel 歸屬自動確認」），確認前不進日常輪巡。
     /// </summary>
     public static IEnumerable<WebHost> PendingAssignment(IEnumerable<WebHost> allHosts) =>
-        Listed(allHosts).Where(h => string.IsNullOrWhiteSpace(h.NetiqServer));
+        Listed(allHosts).Where(h => h.SentinelId == null);
 
     /// <summary>
     /// IP 衝突組：同一個 IP 有兩台以上的活躍 NetIQ 主機。
@@ -44,13 +44,19 @@ public static class NetiqHostList
             .ToList();
 
     /// <summary>
-    /// 今晚實際要向 Sentinel 查詢的主機：已歸屬、有 IP、且未落在 IP 衝突的「非首位」。
+    /// 今晚實際要向 Sentinel 查詢的主機：已歸屬、有 IP、所屬 Sentinel 未停用、
+    /// 且未落在 IP 衝突的「非首位」。
     ///
     /// 衝突時只輪巡最早建立（HostId 最小）的那台，行為才可預測；被跳過的那些不是靜默忽略——
     /// 呼叫端負責把它們列進機房總覽的「來源狀態」，理由與「無資料主機」一樣：
     /// 沒查到不等於沒事，畫面上必須看得出來。
     /// </summary>
-    public static List<WebHost> Pollable(IEnumerable<WebHost> allHosts)
+    /// <param name="isSentinelActive">
+    /// 給定 SentinelId 是否為啟用中的 Sentinel；null＝不篩（相容既有呼叫端，測試與不涉及
+    /// Sentinel 停用情境時可省略）。傳入時，主機所屬 Sentinel 已停用＝暫停輪巡但主機本身不動
+    /// （與刪除 Sentinel 觸發的孤兒流程刻意分開，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 5）。
+    /// </param>
+    public static List<WebHost> Pollable(IEnumerable<WebHost> allHosts, Func<long, bool>? isSentinelActive = null)
     {
         var hosts = allHosts as IReadOnlyList<WebHost> ?? allHosts.ToList();
 
@@ -60,9 +66,10 @@ public static class NetiqHostList
             .ToHashSet();
 
         return Listed(hosts)
-            .Where(h => !string.IsNullOrWhiteSpace(h.NetiqServer) &&
+            .Where(h => h.SentinelId.HasValue &&
                         !string.IsNullOrWhiteSpace(h.IpAddress) &&
-                        !skipped.Contains(h.HostId))
+                        !skipped.Contains(h.HostId) &&
+                        (isSentinelActive == null || isSentinelActive(h.SentinelId.Value)))
             .OrderBy(h => h.HostId)
             .ToList();
     }

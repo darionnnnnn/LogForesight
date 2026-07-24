@@ -76,9 +76,12 @@ public class AuditQueryService : IAuditQueryService
 
         [AuditActions.ImportApply] = "套用 CSV 匯入",
 
-        [AuditActions.NetiqImportEnqueue] = "排入 NetIQ 匯入佇列",
-        [AuditActions.NetiqImportCancel] = "取消 NetIQ 匯入請求",
-        [AuditActions.NetiqImportApplied] = "套用 NetIQ 匯入佇列"
+        [AuditActions.NetiqImportApplied] = "NetIQ 掃描匯入",
+
+        [AuditActions.SentinelCreate] = "新增 Sentinel",
+        [AuditActions.SentinelUpdate] = "更新 Sentinel",
+        [AuditActions.SentinelDelete] = "刪除 Sentinel",
+        [AuditActions.SentinelSetActive] = "變更 Sentinel 啟用狀態"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry) => new()

@@ -72,10 +72,10 @@ public interface IBatchRunStore
 }
 
 /// <summary>
-/// JSONL 後端實作：rundata\runs.jsonl ＋ rundata\run_logs.jsonl。
+/// <see cref="IBatchRunStore"/> 的實作（log key=batch_runs ＋ batch_run_logs，append-only）。
 ///
-/// runs.jsonl 是 append-only 但需要「回填結束時間」——實作方式是再 append 一列同 RunId 的完整紀錄，
-/// 讀取時同 RunId 取最後一列。這樣寫入端維持純附加（不需要重寫整檔），
+/// 執行紀錄是 append-only 但需要「回填結束時間」——實作方式是再 append 一列同 RunId 的完整紀錄，
+/// 讀取時同 RunId 取最後一列。這樣寫入端維持純附加，
 /// 而批次執行中途被強制中斷時，先前寫的「開始」那一列仍然留著，正好就是我們要偵測的狀態。
 /// </summary>
 public class JsonBatchRunStore : IBatchRunStore
@@ -91,9 +91,6 @@ public class JsonBatchRunStore : IBatchRunStore
         PropertyNameCaseInsensitive = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
-
-    public JsonBatchRunStore(string runsPath, string logsPath)
-        : this(new FileJsonLogStore(runsPath), new FileJsonLogStore(logsPath)) { }
 
     public JsonBatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
     {

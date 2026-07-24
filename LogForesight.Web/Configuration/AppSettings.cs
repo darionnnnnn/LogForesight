@@ -32,6 +32,10 @@ public class WebAppSettings
     {
         var errors = new List<string>();
 
+        if (!Storage.IsValidType)
+            errors.Add($"Storage:Type「{Storage.Type}」不受支援，僅允許 " +
+                       $"{string.Join(" / ", StorageSettings.ValidTypes)}（Jsonl 檔案格式已於 2026-07-24 退役）。");
+
         if (string.IsNullOrWhiteSpace(Jwt.SecretKey))
             errors.Add("Jwt:SecretKey 未設定（正式環境請用環境變數 Jwt__SecretKey 或 user-secrets 提供，不要進版控）。");
         else if (System.Text.Encoding.UTF8.GetByteCount(Jwt.SecretKey) < 32)

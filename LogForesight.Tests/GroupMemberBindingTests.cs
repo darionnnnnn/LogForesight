@@ -132,4 +132,76 @@ public class GroupMemberBindingTests
         Assert.Equal(1, preview.MatchCount);
         Assert.Equal("SRV-NEW", preview.Candidates[0].HostName);
     }
+
+    // ── 目前成員（docs/NETIQ-WEB-CONFIG-PLAN.md Phase 5）─────────────────────────
+
+    [Fact]
+    public void 目前成員_只列本群組且算OtherGroupCount()
+    {
+        var other = AddGroup("OO部門主機");
+        var target = AddGroup("DB伺服器");
+        AddHost("SRV01", "10.1.2.11", target, other);   // 屬本群組＋另一群組
+        AddHost("SRV02", "10.1.2.12", target);           // 只屬本群組
+        AddHost("SRV03", "10.1.2.13", other);             // 不屬本群組
+
+        var members = Create().GetMembers(target);
+
+        Assert.Equal(2, members.Count);
+        Assert.Equal(1, members.First(m => m.HostName == "SRV01").OtherGroupCount);
+        Assert.Equal(0, members.First(m => m.HostName == "SRV02").OtherGroupCount);
+    }
+
+    [Fact]
+    public void 目前成員_墓碑主機不列入()
+    {
+        var target = AddGroup("DB伺服器");
+        var survivor = AddHost("SRV-NEW", "10.1.2.11", target);
+        var tombstoned = _hosts.Upsert(new WebHost
+        {
+            HostName = "SRV-OLD", IpAddress = "10.1.2.12", GroupIds = new List<long> { target }
+        });
+        _hosts.Merge(tombstoned.HostId, survivor.HostId);
+
+        var members = Create().GetMembers(target);
+
+        Assert.Single(members);
+        Assert.Equal("SRV-NEW", members[0].HostName);
+    }
+
+    [Fact]
+    public void 移出成員_只動目標群組不影響其他群組()
+    {
+        var other = AddGroup("OO部門主機");
+        var target = AddGroup("DB伺服器");
+        var host = AddHost("SRV01", "10.1.2.11", target, other);
+
+        Create().RemoveMembers(target, new[] { host.HostId });
+
+        var groups = _hosts.Get(host.HostId)!.GroupIds;
+        Assert.DoesNotContain(target, groups);
+        Assert.Contains(other, groups);
+    }
+
+    [Fact]
+    public void 移出成員_移出唯一群組後變未分組()
+    {
+        var target = AddGroup("DB伺服器");
+        var host = AddHost("SRV01", "10.1.2.11", target);
+
+        Create().RemoveMembers(target, new[] { host.HostId });
+
+        Assert.Empty(_hosts.Get(host.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void 移出成員_不在群組內的主機安靜略過()
+    {
+        var target = AddGroup("DB伺服器");
+        var other = AddGroup("OO部門主機");
+        var host = AddHost("SRV01", "10.1.2.11", other);
+
+        Create().RemoveMembers(target, new[] { host.HostId });
+
+        Assert.Equal(new[] { other }, _hosts.Get(host.HostId)!.GroupIds);
+    }
 }

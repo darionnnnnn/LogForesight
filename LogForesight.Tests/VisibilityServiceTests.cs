@@ -216,6 +216,7 @@ internal class FakeHostStore : IHostStore
         }
 
         existing.IpAddress = host.IpAddress;
+        existing.SentinelId = host.SentinelId;
         existing.NetiqServer = host.NetiqServer;
         existing.RoleDesc = host.RoleDesc;
         existing.Active = host.Active;
@@ -278,6 +279,41 @@ internal class FakeHostStore : IHostStore
         host.MergedInto = null;
         host.Active = true;
     }
+}
+
+internal class FakeSentinelStore : ISentinelStore
+{
+    private readonly List<Sentinel> _sentinels = new();
+    private long _nextId = 1;
+
+    public List<Sentinel> GetAll() => _sentinels.ToList();
+
+    public Sentinel? Get(long sentinelId) => _sentinels.FirstOrDefault(s => s.SentinelId == sentinelId);
+
+    public Sentinel? FindByName(string name) =>
+        _sentinels.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    public Sentinel Upsert(Sentinel sentinel)
+    {
+        var existing = sentinel.SentinelId == 0 ? null : Get(sentinel.SentinelId);
+        if (existing == null)
+        {
+            sentinel.SentinelId = _nextId++;
+            if (sentinel.CreatedAt == default) sentinel.CreatedAt = DateTime.Now;
+            _sentinels.Add(sentinel);
+            return sentinel;
+        }
+
+        existing.Name = sentinel.Name;
+        existing.BaseUrl = sentinel.BaseUrl;
+        existing.Username = sentinel.Username;
+        existing.PasswordEnc = sentinel.PasswordEnc;
+        existing.Active = sentinel.Active;
+        existing.UpdatedAt = DateTime.Now;
+        return existing;
+    }
+
+    public void Delete(long sentinelId) => _sentinels.RemoveAll(s => s.SentinelId == sentinelId);
 }
 
 internal class FakeHostGroupStore : IHostGroupStore

@@ -116,6 +116,49 @@ public class HostAdminServiceTests
 
         Assert.Throws<DomainException>(() => Create().UnmergeHost(host.HostId));
     }
+
+    // ── 未回報篩選（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 9：新主機寬限期）───────────
+
+    [Fact]
+    public void GetHosts_剛匯入未滿寬限期的主機_不算未回報()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.1", Active = true, CreatedAt = DateTime.Now.AddHours(-1)
+        });
+
+        var result = Create().GetHosts(new HostSearchRequest { Status = "silent" });
+
+        Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public void GetHosts_建立超過寬限期仍未回報_算未回報()
+    {
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.2", Active = true, CreatedAt = DateTime.Now.AddHours(-25)
+        });
+
+        var result = Create().GetHosts(new HostSearchRequest { Status = "silent" });
+
+        Assert.Single(result.Items);
+    }
+
+    [Fact]
+    public void GetHosts_已回報過的主機_寬限期不適用_沿用原本兩天判定()
+    {
+        // 剛建立（1 小時前）但曾經回報過、且那次回報已是 3 天前——寬限期只管「從未回報過」的主機
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.3", Active = true,
+            CreatedAt = DateTime.Now.AddHours(-1), LastReportAt = DateTime.Now.AddDays(-3)
+        });
+
+        var result = Create().GetHosts(new HostSearchRequest { Status = "silent" });
+
+        Assert.Single(result.Items);
+    }
 }
 
 /// <summary>HostAdminService 只需要 GetOverview()（IP 衝突偵測，§5.4 D-4 的 conflict 篩選）——

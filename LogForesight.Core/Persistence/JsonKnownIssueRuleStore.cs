@@ -6,8 +6,8 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 以人可編輯的 JSON 檔（rules.json）儲存規則表。這是 <see cref="IKnownIssueRuleStore"/> 的預設實作；
-/// 換成 DB 後端時只需新增另一個實作類別，呼叫端不需修改（與 JsonlAnalysisRecordStore 同一模式）。
+/// 規則表的儲存邏輯（容錯解析／原子寫入語意）。這是 <see cref="IKnownIssueRuleStore"/> 的實作，
+/// 透過注入的 <see cref="IJsonBlobStore"/> 不受底層是檔案或 DB blob 影響。
 ///
 /// 容錯設計（見 docs/RULES-PLAN.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且**不覆寫使用者的壞檔**，
 /// 讓使用者能看著原檔修正；單一規則物件解析失敗（欄位型別不合、enum 打錯字）只跳過該條，
@@ -19,9 +19,6 @@ public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
 
     private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
-
-    public JsonKnownIssueRuleStore(string? filePath = null)
-        : this(new FileJsonBlobStore(filePath ?? Path.Combine(AppContext.BaseDirectory, "rules.json"))) { }
 
     public JsonKnownIssueRuleStore(IJsonBlobStore blob)
     {

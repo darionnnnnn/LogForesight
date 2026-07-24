@@ -104,11 +104,15 @@ public static class AuditActions
     // 匯入
     public const string ImportApply = "import_apply";
 
-    // NetIQ 匯入排程佇列（§5.3 D-3）：Web 排入/取消與批次套用是三個不同的稽核事件，
-    // 不能沿用 ImportApply（那個字面是給 CSV 匯入用的，混用會讓稽核清單的動作標籤說謊）
-    public const string NetiqImportEnqueue = "netiq_import_enqueue";
-    public const string NetiqImportCancel = "netiq_import_cancel";
+    // NetIQ 掃描匯入（定案 7:改即時落盤,不再有排入/取消的中間狀態）：
+    // 不沿用 ImportApply——那個字面是給 CSV 匯入用的，混用會讓稽核清單的動作標籤說謊
     public const string NetiqImportApplied = "netiq_import_applied";
+
+    // Sentinel 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：密碼欄位絕不進 DetailJson
+    public const string SentinelCreate = "sentinel_create";
+    public const string SentinelUpdate = "sentinel_update";
+    public const string SentinelDelete = "sentinel_delete";
+    public const string SentinelSetActive = "sentinel_set_active";
 
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";

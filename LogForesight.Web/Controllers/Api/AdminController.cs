@@ -21,19 +21,22 @@ public class AdminController : ControllerBase
     private readonly INetiqHostService _netiq;
     private readonly INetiqDiscoveryService _discovery;
     private readonly IGroupAdminService _groups;
+    private readonly ISentinelAdminService _sentinels;
 
     public AdminController(
         IUserAdminService users,
         IHostAdminService hosts,
         INetiqHostService netiq,
         INetiqDiscoveryService discovery,
-        IGroupAdminService groups)
+        IGroupAdminService groups,
+        ISentinelAdminService sentinels)
     {
         _users = users;
         _hosts = hosts;
         _netiq = netiq;
         _discovery = discovery;
         _groups = groups;
+        _sentinels = sentinels;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -143,28 +146,18 @@ public class AdminController : ControllerBase
 
     // ── NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1）──────────────────────────
 
-    [HttpGet("netiq/scan-targets")]
-    public ApiResponse<List<NetiqScanTargetDto>> GetScanTargets() =>
-        ApiResponse<List<NetiqScanTargetDto>>.Ok(_discovery.GetScanTargets());
-
     [HttpPost("netiq/scan")]
     public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>
         ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, ct));
 
+    /// <summary>新增 Sentinel 精靈步驟 1：以尚未存檔的帳密掃描，成功才建立 Sentinel（定案 6）</summary>
+    [HttpPost("netiq/create-and-scan")]
+    public async Task<ApiResponse<NetiqScanResultDto>> CreateAndScan([FromBody] CreateAndScanSentinelRequest request, CancellationToken ct) =>
+        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.CreateAndScanAsync(request, ct));
+
     [HttpPost("netiq/import")]
-    public ApiResponse<NetiqQueueEntryDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
-        ApiResponse<NetiqQueueEntryDto>.Ok(_discovery.Enqueue(request));
-
-    [HttpGet("netiq/import-queue")]
-    public ApiResponse<List<NetiqQueueEntryDto>> GetNetiqImportQueue() =>
-        ApiResponse<List<NetiqQueueEntryDto>>.Ok(_discovery.GetQueue());
-
-    [HttpPost("netiq/import-queue/{queueId}/cancel")]
-    public ApiResponse CancelNetiqImportQueueEntry(string queueId)
-    {
-        _discovery.CancelQueueEntry(queueId);
-        return ApiResponse.Ok();
-    }
+    public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
+        ApiResponse<NetiqImportResultDto>.Ok(_discovery.Import(request));
 
     // ── 主機群組與授權矩陣 ────────────────────────────────────────────────────
 
@@ -195,6 +188,19 @@ public class AdminController : ControllerBase
         long groupId, [FromBody] AddHostGroupMembersRequest request) =>
         ApiResponse<HostGroupMemberPreviewDto>.Ok(_groups.AddMembers(groupId, request));
 
+    /// <summary>「目前成員」頁籤：本群組現有成員清單</summary>
+    [HttpGet("host-groups/{groupId:long}/members")]
+    public ApiResponse<List<HostGroupMemberDto>> GetMembers(long groupId) =>
+        ApiResponse<List<HostGroupMemberDto>>.Ok(_groups.GetMembers(groupId));
+
+    /// <summary>把選定主機移出群組</summary>
+    [HttpPost("host-groups/{groupId:long}/members/remove")]
+    public ApiResponse RemoveMembers(long groupId, [FromBody] RemoveHostGroupMembersRequest request)
+    {
+        _groups.RemoveMembers(groupId, request.HostIds);
+        return ApiResponse.Ok();
+    }
+
     [HttpGet("access")]
     public ApiResponse<AccessMatrixDto> GetAccessMatrix() =>
         ApiResponse<AccessMatrixDto>.Ok(_groups.GetAccessMatrix());
@@ -205,4 +211,25 @@ public class AdminController : ControllerBase
         _groups.SetAccess(userGroupId, request.HostGroupIds);
         return ApiResponse.Ok();
     }
+
+    // ── Sentinel ─────────────────────────────────────────────────────────────
+
+    [HttpGet("sentinels")]
+    public ApiResponse<List<SentinelDto>> GetSentinels() =>
+        ApiResponse<List<SentinelDto>>.Ok(_sentinels.GetSentinels());
+
+    [HttpPost("sentinels")]
+    public ApiResponse<SentinelDto> SaveSentinel([FromBody] SaveSentinelRequest request) =>
+        ApiResponse<SentinelDto>.Ok(_sentinels.SaveSentinel(request));
+
+    [HttpDelete("sentinels/{sentinelId:long}")]
+    public ApiResponse DeleteSentinel(long sentinelId)
+    {
+        _sentinels.DeleteSentinel(sentinelId);
+        return ApiResponse.Ok();
+    }
+
+    [HttpPut("sentinels/{sentinelId:long}/active")]
+    public ApiResponse<SentinelDto> SetSentinelActive(long sentinelId, [FromBody] SetSentinelActiveRequest request) =>
+        ApiResponse<SentinelDto>.Ok(_sentinels.SetActive(sentinelId, request.Active));
 }

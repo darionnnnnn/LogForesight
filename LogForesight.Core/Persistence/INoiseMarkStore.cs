@@ -1,8 +1,8 @@
 namespace LogForesight;
 
 /// <summary>
-/// 已知雜訊記憶的讀寫（↔ <see cref="NoiseMark"/>）。整檔型（會更新，走
-/// <see cref="JsonCollectionFile{T}"/> 的原子替換＋跨程序鎖），規模有界——
+/// 已知雜訊記憶的讀寫（↔ <see cref="NoiseMark"/>）。整份型（會更新，走
+/// <see cref="JsonBlobCollection{T}"/> 的原子讀改寫），規模有界——
 /// 只有「真的被標過已知雜訊」的簽章才佔一列，不是每天都寫。
 /// </summary>
 public interface INoiseMarkStore
@@ -18,9 +18,8 @@ public interface INoiseMarkStore
     void Delete(string hostName, string issueKey);
 }
 
-public class JsonNoiseMarkStore : JsonCollectionFile<NoiseMark>, INoiseMarkStore
+public class JsonNoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 {
-    public JsonNoiseMarkStore(string filePath) : base(filePath) { }
     public JsonNoiseMarkStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<NoiseMark> GetForHost(string hostName) =>

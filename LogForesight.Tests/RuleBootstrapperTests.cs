@@ -6,7 +6,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 啟動流程的規則載入編排（見 docs/RULES-PLAN.md）：不存在時寫入種子（僅此一次）、
 /// 存在但損毀時降級用內建種子且不覆寫壞檔、驗證後只有 Enabled 的規則生效。
-/// 邏輯本身與 blob 底層無關，SQLite（EF）現為主要測試方式，與 Jsonl 版跑同一組案例。
+/// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
 /// </summary>
 public abstract class RuleBootstrapperContractTests : IDisposable
 {
@@ -101,27 +101,7 @@ public abstract class RuleBootstrapperContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端（單機檔案相容模式）</summary>
-[Collection("KnownIssueCatalogState")]
-public class RuleBootstrapperTests : RuleBootstrapperContractTests
-{
-    private readonly string _path =
-        Path.Combine(Path.GetTempPath(), $"logforesight-bootstrap-test-{Guid.NewGuid():N}.json");
-
-    protected override IJsonBlobStore CreateBlob() => new FileJsonBlobStore(_path);
-
-    public override void Dispose()
-    {
-        base.Dispose();
-
-        if (File.Exists(_path)) File.Delete(_path);
-        var tmp = _path + ".tmp";
-        if (File.Exists(tmp)) File.Delete(tmp);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>SQLite（EF）後端——SQLite 現為主要測試方式</summary>
+/// <summary>SQLite（EF）後端</summary>
 [Collection("KnownIssueCatalogState")]
 public class EfRuleBootstrapperTests : RuleBootstrapperContractTests
 {

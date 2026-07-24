@@ -32,7 +32,16 @@ public class WebHost
 
     public DateTime? IpUpdatedAt { get; set; }
 
-    /// <summary>所屬 Sentinel 的名稱（路由/顯示屬性，非識別鍵；本機來源為 null）</summary>
+    /// <summary>
+    /// 所屬 Sentinel 的 PK（識別鍵；本機來源為 null）。null 且 Source='netiq'＝待歸屬。
+    /// Sentinel 改名不影響這個欄位——routing 靠 PK，同 HostId 的前例（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）。
+    /// </summary>
+    public long? SentinelId { get; set; }
+
+    /// <summary>
+    /// 所屬 Sentinel 的名稱快照（**純顯示屬性**，不再是識別鍵）。
+    /// 隨 <see cref="SentinelId"/> 變動同步更新，寫入端不得單獨改這個欄位而不動 SentinelId。
+    /// </summary>
     public string? NetiqServer { get; set; }
 
     /// <summary>伺服器角色描述，同一事件在 AD 網域控制站與檔案伺服器上的嚴重性不同</summary>
@@ -51,6 +60,12 @@ public class WebHost
 
     /// <summary>最近一次分析紀錄的寫入時間——儀表板「無回報主機」告警的依據</summary>
     public DateTime? LastReportAt { get; set; }
+
+    /// <summary>
+    /// 建立時間。用途：剛匯入的主機在第一次批次跑完前 <see cref="LastReportAt"/> 必為空，
+    /// 未滿一個批次週期不列入「無回報主機」告警,避免整批匯入即告警洪水（定案 9）。
+    /// </summary>
+    public DateTime CreatedAt { get; set; }
 
     /// <summary>所屬主機群組（↔ lf_host_group_members）</summary>
     public List<long> GroupIds { get; set; } = new();

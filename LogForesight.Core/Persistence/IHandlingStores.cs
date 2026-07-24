@@ -50,8 +50,8 @@ public interface IIssueHandlingStore
 /// 權限異動的讀寫（↔ lf_permission_changes）。
 ///
 /// **批次與 Web 的寫入職責分離**：批次呼叫 <see cref="AppendChanges"/> 寫入偵測到的異動，
-/// Web 呼叫 <see cref="SaveConfirmation"/> 寫入人工確認結果。JSONL 後端下這是兩個檔案
-/// （單一寫入者規則），SQL 後端是同一張表的不同欄位——介面隱藏這個差異。
+/// Web 呼叫 <see cref="SaveConfirmation"/> 寫入人工確認結果。實作上是兩個不同的儲存 key
+/// （沿用單一寫入者原則，見 JsonPermissionChangeStore）——介面隱藏這個差異。
 /// </summary>
 public interface IPermissionChangeStore
 {

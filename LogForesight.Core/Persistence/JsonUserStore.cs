@@ -1,12 +1,8 @@
 namespace LogForesight;
 
-/// <summary>
-/// <see cref="IUserStore"/> 的 JSONL 後端實作：webdata\users.json（整檔型，原子替換）。
-/// 前期單機測試用；SQL 就緒後新增 SqlUserStore 並在 StorageFactory 切換，呼叫端不動。
-/// </summary>
-public class JsonUserStore : JsonCollectionFile<WebUser>, IUserStore
+/// <summary><see cref="IUserStore"/> 的實作（blob key=users，整份型）</summary>
+public class JsonUserStore : JsonBlobCollection<WebUser>, IUserStore
 {
-    public JsonUserStore(string filePath) : base(filePath) { }
     public JsonUserStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebUser> GetAll() => Read();
@@ -50,12 +46,9 @@ public class JsonUserStore : JsonCollectionFile<WebUser>, IUserStore
     }
 }
 
-/// <summary>
-/// <see cref="IUserGroupStore"/> 的 JSONL 後端實作：webdata\groups.json（整檔型，原子替換）。
-/// </summary>
-public class JsonUserGroupStore : JsonCollectionFile<UserGroup>, IUserGroupStore
+/// <summary><see cref="IUserGroupStore"/> 的實作（blob key=user_groups，整份型）</summary>
+public class JsonUserGroupStore : JsonBlobCollection<UserGroup>, IUserGroupStore
 {
-    public JsonUserGroupStore(string filePath) : base(filePath) { }
     public JsonUserGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<UserGroup> GetAll() => Read();

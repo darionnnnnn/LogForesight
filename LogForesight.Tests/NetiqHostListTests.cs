@@ -16,6 +16,7 @@ public class NetiqHostListTests
         HostId = id,
         HostName = ip,
         IpAddress = ip,
+        SentinelId = sentinel == null ? null : 1,
         NetiqServer = sentinel,
         Source = "netiq",
         Active = active,

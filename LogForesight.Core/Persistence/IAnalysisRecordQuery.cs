@@ -44,8 +44,8 @@ public class RecordQueryFilter
 /// 批次要的是「近 N 天」「這天有沒有紀錄」，Web 要的是多條件篩選與分頁，
 /// 合成一個介面會讓兩邊都被迫依賴自己用不到的方法。
 ///
-/// JSONL 後端讀 history.txt 後在記憶體篩選；SQL 後端轉成真正的查詢。
-/// 語意（尤其是 <see cref="RecordQueryFilter.Hosts"/> 空集合的行為）由合約測試強制一致。
+/// 語意（尤其是 <see cref="RecordQueryFilter.Hosts"/> 空集合的行為）由合約測試強制一致，
+/// Sqlite 與 SqlServer 兩個 provider 跑同一組案例。
 /// </summary>
 public interface IAnalysisRecordQuery
 {

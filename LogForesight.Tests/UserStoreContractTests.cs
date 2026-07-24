@@ -5,10 +5,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// <see cref="IUserStore"/> 的**合約測試基底**（docs/WEB-SPEC.md §12、DB-PLAN 一致性機制 #3）。
-///
-/// 測試案例寫在這裡、與實作無關；JSONL 後端與未來的 SQL 後端各自繼承一個子類別，
-/// 跑的是同一組案例。「兩個後端行為一致」因此由測試強制，不靠 code review 肉眼比對——
-/// SQL 實作完成時，通過這組測試才算數。
+/// 測試案例寫在這裡、與實作無關，見 <see cref="EfUserStoreContractTests"/>。
 /// </summary>
 public abstract class UserStoreContractTests : IDisposable
 {
@@ -103,24 +100,7 @@ public abstract class UserStoreContractTests : IDisposable
     }
 }
 
-/// <summary>JSONL 後端的合約測試（單機檔案相容模式）。</summary>
-public class JsonUserStoreContractTests : UserStoreContractTests
-{
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
-
-    protected override IUserStore CreateStore() => new JsonUserStore(Path.Combine(_dir, "users.json"));
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>
-/// 同一組使用者 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）——SQLite 現為
-/// 主要測試方式，驗證 webdata store 透過 blob 抽象改走資料庫後，行為與檔案後端逐位一致。
-/// </summary>
+/// <summary>使用者 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）。</summary>
 public class EfUserStoreContractTests : UserStoreContractTests
 {
     private readonly EfSqliteFixture _fx = new();
@@ -130,41 +110,6 @@ public class EfUserStoreContractTests : UserStoreContractTests
     public override void Dispose()
     {
         _fx.Dispose();
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>JSONL 後端的持久性驗證：跨實例讀得回來（不是只存在記憶體裡）</summary>
-public class JsonUserStorePersistenceTests : IDisposable
-{
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
-
-    private string FilePath => Path.Combine(_dir, "users.json");
-
-    [Fact]
-    public void 寫入後以新實例讀取_資料仍在()
-    {
-        new JsonUserStore(FilePath).Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "王小明" });
-
-        var reloaded = new JsonUserStore(FilePath).FindByAccount("DOMAIN\\wang");
-
-        Assert.NotNull(reloaded);
-        Assert.Equal("王小明", reloaded!.DisplayName);
-    }
-
-    [Fact]
-    public void 寫入後不留下暫存檔_原子替換完成()
-    {
-        var store = new JsonUserStore(FilePath);
-        store.Upsert(new WebUser { Account = "DOMAIN\\wang" });
-        store.Upsert(new WebUser { Account = "DOMAIN\\lee" });
-
-        Assert.False(File.Exists(FilePath + ".tmp"));
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
         GC.SuppressFinalize(this);
     }
 }

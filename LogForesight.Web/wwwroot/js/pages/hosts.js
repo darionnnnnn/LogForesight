@@ -88,7 +88,7 @@ function fillSentinelOptions() {
 
     const hint = document.getElementById('host-netiq-hint');
     if (overview.sentinelNames.length === 0) {
-        hint.textContent = '批次 appsettings.json 的 NetIq.Servers 尚未設定，目前只能登錄為待歸屬。';
+        hint.textContent = '尚未於「資料匯入／NetIQ」頁新增任何 Sentinel，目前只能登錄為待歸屬。';
         hint.classList.add('text-warning');
     }
 }
@@ -318,12 +318,17 @@ function sourceCell(host) {
  * 最近回報時間：超過 2 天沒回報就標紅。
  * 這正是「沒告警 ≠ 沒問題」的一種——批次沒跑就不會有任何風險紀錄，
  * 畫面上必須看得出是「真的沒事」還是「根本沒在看」。
+ *
+ * 新主機寬限期（與後端 HostAdminService.NewHostGracePeriod 一致，24 小時）：
+ * 剛匯入的主機在第一次批次跑完前 lastReportAt 必為空，寬限期內不標紅，
+ * 否則整批匯入會讓畫面一次冒出一片刺眼的紅字，而那些主機根本還沒到該被檢查的時間。
  */
 function lastReportCell(host) {
     const span = document.createElement('span');
 
     if (!host.lastReportAt) {
-        span.className = 'text-danger';
+        const hoursOld = (Date.now() - new Date(host.createdAt).getTime()) / 3600000;
+        span.className = hoursOld > 24 ? 'text-danger' : 'text-muted';
         span.textContent = '尚未回報';
         return span;
     }
@@ -609,256 +614,4 @@ sentinelFilter.addEventListener('change', () => { currentPage = 1; search(); });
 sortSelect.addEventListener('change', () => { currentPage = 1; search(); });
 setupStatusChips();
 
-// ── 從 NetIQ 主動探索匯入精靈（docs/SCALE-2000-PLAN.md §1）─────────────────────
-
-const scanModal = new bootstrap.Modal(document.getElementById('scan-modal'));
-let scanToken = null;
-
-document.getElementById('btn-scan-netiq').addEventListener('click', async () => {
-    document.getElementById('scan-result').replaceChildren();
-    document.getElementById('scan-selection').textContent = '';
-    document.getElementById('scan-import').disabled = true;
-    scanToken = null;
-
-    const select = document.getElementById('scan-server');
-    select.replaceChildren();
-    try {
-        const targets = await api.get('/api/admin/netiq/scan-targets');
-        if (targets.length === 0) {
-            document.getElementById('scan-hint').textContent =
-                '批次 appsettings.json 尚未設定任何 Sentinel。';
-        } else {
-            document.getElementById('scan-hint').textContent = '';
-            for (const t of targets) {
-                const opt = document.createElement('option');
-                opt.value = t.name;
-                opt.textContent = t.canDiscover ? t.name : `${t.name}（${t.reason}）`;
-                opt.disabled = !t.canDiscover;
-                select.appendChild(opt);
-            }
-        }
-    } catch {
-        return;
-    }
-    scanModal.show();
-});
-
-document.getElementById('scan-run').addEventListener('click', async () => {
-    const server = document.getElementById('scan-server').value;
-    if (!server) return;
-
-    const restore = withBusy(document.getElementById('scan-run'), '掃描中');
-    try {
-        const result = await api.post('/api/admin/netiq/scan', { server });
-        scanToken = result.token;
-        renderScanResult(result);
-    } catch {
-        // 錯誤已由 api.js 顯示（含連線/逾時）
-    } finally {
-        restore();
-    }
-});
-
-function renderScanResult(result) {
-    const container = document.getElementById('scan-result');
-    container.replaceChildren();
-
-    const total = document.createElement('div');
-    total.className = 'small text-muted mb-2';
-    total.textContent = `共掃描到 ${result.totalCount} 台，分佈於 ${result.subnets.length} 個網段`;
-    container.appendChild(total);
-
-    for (const subnet of result.subnets) {
-        const details = document.createElement('details');
-        details.className = 'mb-2 border rounded';
-
-        const summary = document.createElement('summary');
-        summary.className = 'px-2 py-1 small';
-        summary.style.cursor = 'pointer';
-        // 網段層級的勾選框：勾整段
-        const segBox = document.createElement('input');
-        segBox.type = 'checkbox';
-        segBox.className = 'form-check-input me-2';
-        segBox.addEventListener('click', e => e.stopPropagation());
-        segBox.addEventListener('change', () => {
-            for (const box of details.querySelectorAll('input.lf-scan-host:not(:disabled)')) box.checked = segBox.checked;
-            updateScanSelection();
-        });
-        summary.appendChild(segBox);
-        const label = document.createElement('span');
-        label.textContent = `${subnet.cidr}（${subnet.totalCount} 台` +
-            (subnet.existingCount > 0 ? `，${subnet.existingCount} 台已登錄` : '') +
-            (subnet.orphanOverlapCount > 0 ? `，${subnet.orphanOverlapCount} 台可復活` : '') + '）';
-        summary.appendChild(label);
-        details.appendChild(summary);
-
-        const body = document.createElement('div');
-        body.className = 'px-2 pb-2';
-        for (const host of subnet.hosts) {
-            body.appendChild(scanHostRow(host));
-        }
-        details.appendChild(body);
-        container.appendChild(details);
-    }
-    updateScanSelection();
-}
-
-function scanHostRow(host) {
-    const row = document.createElement('div');
-    row.className = 'd-flex align-items-center gap-2 py-1 small';
-
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'form-check-input lf-scan-host';
-    box.dataset.ip = host.ipAddress;
-    // 新主機與可復活的預設勾選；使用中的既有主機預設不勾（再勾＝更新歸屬）
-    box.checked = host.orphanOverlap || (!host.exists);
-    box.addEventListener('change', updateScanSelection);
-    row.appendChild(box);
-
-    const name = document.createElement('span');
-    name.textContent = `${host.ipAddress}　${host.hostName}`;
-    row.appendChild(name);
-
-    if (host.exists) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
-        badge.textContent = '已登錄';
-        row.appendChild(badge);
-    }
-    if (host.orphanOverlap) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--primary';
-        badge.textContent = `原屬 ${host.orphanedFrom}，因移除而停用`;
-        row.appendChild(badge);
-    }
-    return row;
-}
-
-function selectedScanIps() {
-    return Array.from(document.querySelectorAll('#scan-result input.lf-scan-host:checked'))
-        .map(box => box.dataset.ip);
-}
-
-function updateScanSelection() {
-    const count = selectedScanIps().length;
-    document.getElementById('scan-selection').textContent = count > 0 ? `已選 ${count} 台` : '';
-    document.getElementById('scan-import').disabled = count === 0 || !scanToken;
-}
-
-document.getElementById('scan-import').addEventListener('click', async () => {
-    const selectedIps = selectedScanIps();
-    if (selectedIps.length === 0 || !scanToken) return;
-
-    const restore = withBusy(document.getElementById('scan-import'), '排入中');
-    try {
-        // §5.3 D-3：這裡只排入佇列，不立即落盤主機異動——實際新增/更新/復活由下次批次執行套用
-        await api.post('/api/admin/netiq/import', { token: scanToken, selectedIps });
-        toast(`已排入 ${selectedIps.length} 台主機的匯入請求，將於下次批次執行時套用（可在下方佇列列表取消）`, 'success');
-        scanModal.hide();
-        await loadImportQueue();
-    } catch {
-        // 錯誤已由 api.js 顯示
-    } finally {
-        restore();
-    }
-});
-
-// ── NetIQ 匯入佇列狀態（§5.3 D-3）─────────────────────────────────────────────
-
-async function loadImportQueue() {
-    const container = document.getElementById('netiq-import-queue');
-    if (!container) return;
-
-    let entries;
-    try {
-        entries = await api.get('/api/admin/netiq/import-queue', { silent: true });
-    } catch {
-        return;
-    }
-
-    if (!entries || entries.length === 0) {
-        container.replaceChildren();
-        return;
-    }
-
-    const card = document.createElement('div');
-    card.className = 'lf-card mb-3';
-
-    const header = document.createElement('div');
-    header.className = 'lf-card__header';
-    const title = document.createElement('h2');
-    title.className = 'lf-card__title mb-0';
-    title.textContent = 'NetIQ 匯入佇列';
-    header.appendChild(title);
-    card.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'lf-card__body p-0';
-
-    renderTable(body, {
-        columns: [
-            { title: 'Sentinel', render: e => e.serverName },
-            { title: '台數', className: 'text-end', render: e => String(e.hostCount) },
-            { title: '排入者', render: e => e.requestedByAccount },
-            { title: '排入時間', render: e => formatDateTime(e.requestedAt) },
-            { title: '狀態', render: e => queueStatusCell(e) },
-            { title: '', className: 'text-end', render: e => queueActionsCell(e) }
-        ],
-        rows: entries
-    });
-    card.appendChild(body);
-    container.replaceChildren(card);
-}
-
-function queueStatusCell(entry) {
-    const wrap = document.createElement('div');
-
-    const variant = { pending: 'warning', applied: 'success', failed: 'danger', cancelled: 'secondary' }[entry.status] ?? 'secondary';
-    const badge = document.createElement('span');
-    badge.className = `lf-badge lf-badge--${variant}`;
-    badge.textContent = entry.statusText;
-    wrap.appendChild(badge);
-
-    if (entry.status === 'applied') {
-        const detail = document.createElement('div');
-        detail.className = 'small text-muted mt-1';
-        detail.textContent = `新增 ${entry.added}、更新 ${entry.updated}` +
-            (entry.revived > 0 ? `、復活 ${entry.revived}` : '');
-        wrap.appendChild(detail);
-    }
-    if (entry.status === 'failed' && entry.failureReason) {
-        const detail = document.createElement('div');
-        detail.className = 'small text-danger mt-1';
-        detail.textContent = entry.failureReason;
-        wrap.appendChild(detail);
-    }
-
-    return wrap;
-}
-
-function queueActionsCell(entry) {
-    if (entry.status !== 'pending') return '';
-
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-danger';
-    btn.textContent = '取消';
-    btn.addEventListener('click', async () => {
-        const confirmed = await confirmAction({
-            title: '取消匯入請求',
-            message: `取消排入 Sentinel「${entry.serverName}」的 ${entry.hostCount} 台主機匯入請求，這些主機不會被套用。`,
-            confirmText: '取消請求',
-            confirmVariant: 'danger'
-        });
-        if (!confirmed) return;
-
-        await api.post(`/api/admin/netiq/import-queue/${encodeURIComponent(entry.queueId)}/cancel`);
-        toast('已取消匯入請求', 'success');
-        await loadImportQueue();
-    });
-    return btn;
-}
-
 load();
-loadImportQueue();

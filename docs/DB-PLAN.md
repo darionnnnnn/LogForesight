@@ -5,9 +5,14 @@
 > （見「現在就能做的準備」），DB 選型（SQL Server 或 Oracle）不影響任何已定案內容。
 >
 > **實作狀態（2026-07-23）：SQL 後端已完成**（SCALE-2000-PLAN Phase C）。本文件為欄位級定案的
-> **設計依據**，仍然有效；實際落地的 provider 架構（Jsonl/Sqlite/SqlServer 三選一、EF Core、
+> **設計依據**，仍然有效；實際落地的 provider 架構（**Sqlite/SqlServer 二選一**、EF Core、
 > `lf_blobs`/`lf_log_lines` 抽象）與現況說明見 WEB-SPEC.md §10.5。本文以下的「待 DB 就緒」語句
 > 指的是規劃當下的時序，非現況。
+>
+> **（2026-07-24 補記）Jsonl 檔案後端已全面退役**（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10）：
+> 沒有服役中的 Jsonl 正式資料需要遷移，`--import-history` 匯入器確定**不做**（定案 10）；
+> `Storage.Type` 設成 `Jsonl` 一律於啟動時報錯。本文件下方仍以「txt/JSONL」描述當初從檔案
+> 過渡到 DB 的機制設計，是規劃當下已達成目的的歷史記錄，不代表現行架構仍有 Jsonl 選項。
 
 ## 需求（2026-07-20 第二輪更新）
 
@@ -351,8 +356,9 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 - 新增 `SqlAnalysisRecordStore`、`DbReportSink`；`StorageFactory` 加 case；設定
   `"Storage": { "Type": "SqlServer" | "Oracle", "ConnectionString": "..." }`
 - **過渡期 `CompositeReportSink`**：檔案＋DB 同時寫（單機部署不看 Web 的人仍有 txt 可看）
-- **匯入器**：`--import-history` 讀 `history.txt`（結構化紀錄）＋ `export\*.txt`（報告全文，
-  檔名還原日期/風險/類別）→ 入庫，舊資料不流失
+- **匯入器**：~~`--import-history` 讀 `history.txt`（結構化紀錄）＋ `export\*.txt`（報告全文，
+  檔名還原日期/風險/類別）→ 入庫，舊資料不流失~~——**（2026-07-24 定案 10）確定不做**：
+  SQL 後端上線時沒有服役中的 Jsonl 正式資料需要遷移，這支工具從未被建立也不再需要
 - **Web 應用**：獨立 ASP.NET Core 專案，讀同一 DB；批次 exe 職責不變
 
 **專案結構調整（實作時）**：抽 `LogForesight.Core` 類別庫（Models、Analysis、Persistence 介面、
@@ -401,6 +407,20 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 與建置驗證，未來要補測試時要先解決 AIService 缺乏介面的問題。
 （本機 IP 的收集屬 DB 階段——它是 host 層級的一次性資訊，匯入時當場收集即可，
 不需要跟著每日紀錄存。）
+
+## Schema 升級機制（定案 13，2026-07-24）
+
+`LfDbContext` 目前靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
+對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併這一輪（`Sentinel`／`SentinelId`／
+`CreatedAt` 等新增欄位）全部落在既有的 `lf_blobs` JSON 文件裡，零 DDL 異動，所以這次沒有
+撞到這個限制；但這是**未來的地雷**——下一次需要新增真表或對既有真表加欄位時，
+`EnsureCreated()` 對已上線的資料庫什麼都不會做，異動不會生效也不會報錯，靜默失敗最難查。
+
+**方針（先寫下來，本輪不建機制）**：屆時採**自製冪等 DDL**（開機時檢查→缺什麼補什麼，
+可重複執行不出錯），**不用 EF Core Migrations**——雙 provider（Sqlite／SqlServer）各自維護
+一份 migration 歷史的長期成本，對這個專案的變更頻率不成比例；自製 DDL 檢查腳本反而更貼近
+現有「`EnsureCreated` 全有全無」的簡單心智模型，只是把它從「只在全新庫做一次」延伸成
+「每次啟動都補差異」。
 
 ## 使用場景盤點與待討論細節（2026-07-20 第二輪，續規劃）
 
@@ -497,5 +517,8 @@ nullable），屆時若要限制，方案備選：(a) `key_details` 單獨設保
 | 6 | Web 驗證/細節 | ⏸ 後議（lf_users 表按 AD 假設設計，屆時可改） |
 | 7 | DB 保留年限 | ✅ 統一 `DbRetentionDays`=730（未來三年改 1095）；全表適用含權限異動/處理歷程，到期直接刪；應用層每晚滾動清理（2026-07-20） |
 | 8 | 多 Sentinel 主機歸屬 | ✅ `lf_hosts.netiq_server` 記錄所屬 Sentinel（路由/顯示屬性）；IP 全域唯一維持識別鍵（2026-07-20） |
+| 9 | Jsonl 檔案後端 | ✅ **已退役**（2026-07-24，定案 10）：`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，設成 `Jsonl` 啟動即報錯 |
+| 10 | `--import-history` 匯入器 | ✅ **確定不做**（2026-07-24，定案 10）：沒有服役中的 Jsonl 正式資料需要遷移 |
+| 11 | Schema 升級機制 | ✅ 本輪零 DDL，暫不建機制；方針已定案（定案 13，見上節）——未來採自製冪等 DDL，不用 EF Migrations |
 
 **唯一留待後續的開放項**：#4 的第二步（probe 後回到本節 C）。schema 本身已無開放問題。

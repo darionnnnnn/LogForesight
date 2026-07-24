@@ -1,15 +1,14 @@
 namespace LogForesight;
 
 /// <summary>
-/// <see cref="IIssueHandlingStore"/> 的 JSONL 後端實作（webdata\issue_handling.json）。
-/// 整檔型（會更新，走 <see cref="JsonCollectionFile{T}"/> 的原子替換＋跨程序鎖）。
+/// <see cref="IIssueHandlingStore"/> 的實作（blob key=issue_handling）。
+/// 整份型（會更新，走 <see cref="JsonBlobCollection{T}"/> 的原子讀改寫）。
 ///
 /// 只保留「有標記」的問題列——未標記＝未處理，不佔一列。清除標記等於刪掉該列，
-/// 讓 issue_handling.json 只裝真正被人動過的問題，跟風險日「缺列即未處理」同一套語意。
+/// 讓這份文件只裝真正被人動過的問題，跟風險日「缺列即未處理」同一套語意。
 /// </summary>
-public class JsonIssueHandlingStore : JsonCollectionFile<IssueHandling>, IIssueHandlingStore
+public class JsonIssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandlingStore
 {
-    public JsonIssueHandlingStore(string filePath) : base(filePath) { }
     public JsonIssueHandlingStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<IssueHandling> GetForDay(string hostName, DateTime date) =>

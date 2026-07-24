@@ -24,8 +24,7 @@ public class AppSettings
     ///   - 檔案**不存在** → 用預設值（開箱即用，測試情境不必先寫設定檔）
     ///   - 檔案**存在但解析失敗** → 擲 <see cref="AppSettingsLoadException"/> 中止啟動。
     ///     檔案存在代表使用者有明確的設定意圖，靜默退回預設值會讓批次照著「不是使用者要的
-    ///     設定」跑——Storage.Type 退回 Jsonl 會把資料寫進與正式後端分裂的另一份儲存，
-    ///     比「不跑」嚴重得多。與「正式環境用 Stub 驗證直接擋下」同一個原則。
+    ///     設定」跑——比「不跑」嚴重得多。與「正式環境用 Stub 驗證直接擋下」同一個原則。
     /// </summary>
     public static AppSettings Load(string path)
     {
@@ -192,34 +191,21 @@ public class NetIqSettings
     /// 各台 Sentinel。**批次的 appsettings.json 是唯一事實來源**——Web 唯讀解析同一份檔案
     /// （資料根目錄本來就指向批次執行檔目錄），不另建 Sentinel 管理表：
     /// 加一台 Sentinel 本來就要改批次設定，兩處各存一份只會分歧。
+    ///
+    /// （2026-07-24 起主機清單的主人固定為 Web 主機頁維護，Txt 清單模式已退役——
+    /// 見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12。）
     /// </summary>
     public List<SentinelServer> Servers { get; set; } = new();
-
-    /// <summary>
-    /// 主機清單的主人："Txt"（<see cref="HostListDirectory"/> 下的 per-Sentinel txt 檔）
-    /// 或 "Web"（Web 主機頁維護）。
-    ///
-    /// **同一時間只有一個主人，不做雙向同步**：Txt 模式下每次執行都會以 txt 覆寫主機清單
-    /// （清單中移除的主機一併停止分析），所以切到 Web 之後若再跑 `--import-hosts`，
-    /// 會把 Web 上新增的主機停掉——那個指令因此會在 Web 模式下拒絕執行。
-    /// 交接 SOP 見 docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 D。
-    /// </summary>
-    public string HostListSource { get; set; } = "Txt";
-
-    /// <summary>
-    /// Txt 模式的清單目錄（相對路徑以資料根目錄 <see cref="StorageSettings.DataRoot"/> 為基準，
-    /// DataRoot 留空＝執行檔目錄，即既有行為）。
-    /// **檔名即 Sentinel 歸屬**：`{Servers[].Name}.txt`，一台 Sentinel 一個檔案。
-    /// </summary>
-    public string HostListDirectory { get; set; } = "hosts";
-
-    /// <summary>清單來源是否為 Web 維護（不分大小寫）</summary>
-    public bool UsesWebHostList =>
-        string.Equals(HostListSource, "Web", StringComparison.OrdinalIgnoreCase);
 }
 
 public class SentinelServer
 {
+    /// <summary>
+    /// SentinelId（DB 投影專用；appsettings.json 反序列化時恆為 0，只當種子來源，
+    /// 匯入後身分改以 <see cref="Sentinel.SentinelId"/> 為準）。
+    /// </summary>
+    public long Id { get; set; }
+
     /// <summary>識別名稱，也是主機清單登錄「所屬 Sentinel」時填的值</summary>
     public string Name { get; set; } = string.Empty;
 
@@ -245,22 +231,27 @@ public class SentinelServer
 /// </summary>
 public class StorageSettings
 {
+    /// <summary>受支援的儲存後端。Jsonl 檔案格式已於 2026-07-24 退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10。</summary>
+    public static readonly string[] ValidTypes = { "Sqlite", "SqlServer" };
+
     /// <summary>
-    /// 分析紀錄的儲存後端。三選一："Sqlite"（預設，測試/開發用單一 .db 真資料庫）、
-    /// "Jsonl"（現行檔案格式，單機相容模式）、"SqlServer"（正式環境）。
+    /// 儲存後端。二選一："Sqlite"（預設，測試/開發用單一 .db 真資料庫）、"SqlServer"（正式環境）。
     /// </summary>
     public string Type { get; set; } = "Sqlite";
 
     /// <summary>
-    /// JSONL 後端的資料根目錄（history.txt／rules.json／rule_seeds.json／suppressions.json／
-    /// permission_snapshot.json／export\／webdata\／hosts 清單的所在）。
+    /// 資料根目錄：Sqlite 未設定 ConnectionString 時，預設 db 檔位置的退路；
+    /// export\ 報告全文等交付檔案的所在。
     /// **批次與 Web 都吃這個設定**：空字串 = 各自的執行檔目錄（批次的既有預設行為）；
     /// 要共用資料時兩邊填同一個路徑——Web 與批次是不同的執行檔目錄，Web 留空會讀不到批次的資料。
     /// </summary>
     public string DataRoot { get; set; } = "";
 
-    /// <summary>SQL 後端的連線字串（Type 非 Jsonl 時使用）</summary>
+    /// <summary>SQL 後端的連線字串</summary>
     public string ConnectionString { get; set; } = "";
+
+    /// <summary>Type 是否為受支援的後端（不分大小寫）</summary>
+    public bool IsValidType => ValidTypes.Contains(Type, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>實際生效的資料根目錄：未設定時回退到執行檔目錄</summary>
     public string ResolveDataRoot() =>

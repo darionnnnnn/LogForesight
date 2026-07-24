@@ -24,9 +24,8 @@ public class HostListResult
 }
 
 /// <summary>
-/// 機房分析的主機清單來源（docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 D）。
-/// 兩個實作對應 txt 與 Web 兩個「主人」，但**輸出結構完全相同**，
-/// 呼叫端（機房 pipeline）不需要知道清單從哪來。
+/// 機房分析的主機清單來源。主機清單的主人固定為 Web 主機頁維護
+/// （Txt 清單模式已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12）。
 /// </summary>
 public interface IHostListProvider
 {
@@ -40,83 +39,51 @@ public interface IHostListProvider
 public class StoreHostListProvider : IHostListProvider
 {
     private readonly IHostStore _hosts;
+    private readonly ISentinelStore _sentinels;
 
-    public StoreHostListProvider(IHostStore hosts) => _hosts = hosts;
+    public StoreHostListProvider(IHostStore hosts, ISentinelStore sentinels)
+    {
+        _hosts = hosts;
+        _sentinels = sentinels;
+    }
 
     public string Description => "Web 維護的主機清單";
 
-    public HostListResult GetHostList() => HostListSelection.FromStore(_hosts);
+    public HostListResult GetHostList() => HostListSelection.FromStore(_hosts, _sentinels);
 }
 
-/// <summary>
-/// txt 清單：先以 txt 覆寫主機清單資料（txt 是主人），再走與 Web 模式**完全相同**的挑選邏輯。
-///
-/// 兩個模式共用挑選尾段而不是各寫一份，是為了讓「換個來源、選出來的主機卻不一樣」
-/// 這種 bug 在結構上不可能發生——差別只在「有沒有先同步 txt」。
-/// </summary>
-public class TxtHostListProvider : IHostListProvider
-{
-    private readonly IHostStore _hosts;
-    private readonly string _directory;
-    private readonly IReadOnlyCollection<string> _knownServers;
-
-    public TxtHostListProvider(IHostStore hosts, string directory, IReadOnlyCollection<string> knownServers)
-    {
-        _hosts = hosts;
-        _directory = directory;
-        _knownServers = knownServers;
-    }
-
-    public string Description => $"txt 清單目錄 {_directory}";
-
-    public HostListResult GetHostList()
-    {
-        var sync = NetiqTxtImporter.Sync(_hosts, _directory, _knownServers);
-
-        if (!sync.DirectoryUsable)
-        {
-            var unusable = new HostListResult { SourceUsable = false };
-            unusable.Warnings.AddRange(sync.Warnings);
-            return unusable;
-        }
-
-        var result = HostListSelection.FromStore(_hosts);
-        // 同步過程的警告排在前面：它們說明的是「清單本身有問題」，
-        // 比「某台主機被規則排除」更靠近根因
-        result.Warnings.InsertRange(0, sync.Warnings);
-        return result;
-    }
-}
-
-/// <summary>
-/// 「從主機清單資料挑出今晚要查的主機」——兩個 provider 共用的單一實作。
-/// 挑選規則本身在 <see cref="NetiqHostList"/>（Core），Web 畫面用的是同一份，
-/// 所以畫面標示與批次行為不會分歧。
-/// </summary>
+/// <summary>「從主機清單資料挑出今晚要查的主機」。挑選規則本身在 <see cref="NetiqHostList"/>（Core），
+/// Web 畫面用的是同一份，所以畫面標示與批次行為不會分歧。</summary>
 internal static class HostListSelection
 {
-    public static HostListResult FromStore(IHostStore hosts)
+    public static HostListResult FromStore(IHostStore hosts, ISentinelStore sentinels)
     {
         var allHosts = hosts.GetAll();
+        var allSentinels = sentinels.GetAll().ToDictionary(s => s.SentinelId);
         var result = new HostListResult();
 
-        foreach (var host in NetiqHostList.Pollable(allHosts))
+        // 分組鍵用 Sentinel 現存的名稱（不是主機列上可能落後的 NetiqServer 快照）——
+        // 識別鍵是 SentinelId（定案 4），這裡才是唯一真的需要「現在叫什麼名字」的地方
+        // （查詢分組＋連線資訊要對得上）
+        foreach (var host in NetiqHostList.Pollable(allHosts, id => allSentinels.TryGetValue(id, out var s) && s.Active))
         {
-            if (!result.ByServer.TryGetValue(host.NetiqServer!, out var list))
+            var name = allSentinels[host.SentinelId!.Value].Name;
+            if (!result.ByServer.TryGetValue(name, out var list))
             {
                 list = new List<NetiqTarget>();
-                result.ByServer[host.NetiqServer!] = list;
+                result.ByServer[name] = list;
             }
 
             list.Add(new NetiqTarget(host.HostId, host.IpAddress!, host.RoleDesc));
         }
 
-        AddExclusionWarnings(allHosts, result);
+        AddExclusionWarnings(allHosts, allSentinels, result);
         return result;
     }
 
     /// <summary>被規則排除的主機逐一列出——靜默排除等於製造一個沒人知道的監控盲區</summary>
-    private static void AddExclusionWarnings(List<WebHost> allHosts, HostListResult result)
+    private static void AddExclusionWarnings(
+        List<WebHost> allHosts, Dictionary<long, Sentinel> allSentinels, HostListResult result)
     {
         foreach (var pending in NetiqHostList.PendingAssignment(allHosts))
         {
@@ -130,6 +97,13 @@ internal static class HostListSelection
                 result.Warnings.Add(
                     $"{skipped.HostName}：IP {skipped.IpAddress} 與 {group[0].HostName} 衝突，本次不查詢");
             }
+        }
+
+        // 所屬 Sentinel 已停用（暫停輪巡）——與待歸屬／IP 衝突同一原則，不能靜默略過
+        foreach (var host in NetiqHostList.Listed(allHosts).Where(h => h.SentinelId.HasValue))
+        {
+            if (allSentinels.TryGetValue(host.SentinelId!.Value, out var sentinel) && !sentinel.Active)
+                result.Warnings.Add($"{host.HostName}：所屬 Sentinel「{sentinel.Name}」已停用，本次不查詢");
         }
     }
 }

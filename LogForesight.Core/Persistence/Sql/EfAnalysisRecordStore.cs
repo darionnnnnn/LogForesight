@@ -24,7 +24,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     private readonly string _location;
 
     /// <summary>
-    /// 批次寫入端的「本機」識別（同 JsonlAnalysisRecordStore.ownerHost）。非 null 時，批次面讀取
+    /// 批次寫入端的「本機」識別。非 null 時，批次面讀取
     /// （ReadRecent/HasRecord/HasAnyRecord/LastWeeklyCheckupDate/Prune）只看這台主機自己的紀錄，
     /// 缺日判定與趨勢基準才不會被別台主機汙染。null＝不分主機（Web 查詢面走 Query/GetOne，不經這些方法）。
     /// </summary>
@@ -39,11 +39,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     public string Location => _location;
 
-    /// <summary>批次面讀取限縮到 owner 的紀錄（owner 為 null＝不分主機）。與
-    /// JsonlAnalysisRecordStore.BelongsToOwner 同語意：id 命中或名稱命中任一即算自己的。
-    /// 名稱比對必須不分大小寫（同 BelongsToOwner 的 OrdinalIgnoreCase）——SQL 端 `=` 的大小寫
-    /// 語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、SqlServer 常見 CI 不分），
-    /// 兩邊都以 UPPER() 正規化才與 JSONL 逐位一致；主機名為 ASCII，UPPER 等價 OrdinalIgnoreCase。</summary>
+    /// <summary>批次面讀取限縮到 owner 的紀錄（owner 為 null＝不分主機）：
+    /// id 命中或名稱命中任一即算自己的，名稱比對不分大小寫。
+    /// SQL 端 `=` 的大小寫語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、
+    /// SqlServer 常見 CI 不分），兩邊都以 UPPER() 正規化才逐位一致；主機名為 ASCII，
+    /// UPPER 等價 OrdinalIgnoreCase。</summary>
     private IQueryable<DailyRecordRow> OwnedRows(LfDbContext ctx)
     {
         var q = ctx.DailyRecords.AsQueryable();

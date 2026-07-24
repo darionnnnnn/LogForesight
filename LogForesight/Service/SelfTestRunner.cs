@@ -21,28 +21,8 @@ public static class SelfTestRunner
 
         Console.WriteLine("=== LogForesight Self-Test（不寫入 history、不呼叫 AI、不讀取真實 Event Log）===\n");
 
-        // 資料根目錄與正式執行同一套解析（Storage.DataRoot，留空＝執行檔目錄）：
-        // selftest 的承諾是「驗證實際生效的規則」，DataRoot 指到別處時，實際生效的
-        // rules.json / suppressions.json 就在那裡——驗證執行檔目錄的副本等於驗證錯的檔案。
-        // 「不需要設定檔」的承諾不變：appsettings.json 不存在時 AppSettings.Load 自帶預設值；
-        // 存在但壞掉時 Load 會擲例外（正式啟動要擋下），selftest 靠這層 catch 退回執行檔目錄
-        // 照常執行——selftest 的職責是驗證偵測規則，不是驗證設定檔。
-        try
-        {
-            var storage = AppSettings.Load().Storage;
-            _dataRoot = storage.ResolveDataRoot();
-            _sqlMode = storage.Type is "Sqlite" or "SqlServer";
-        }
-        catch
-        {
-            _dataRoot = AppContext.BaseDirectory;
-            _sqlMode = false;
-        }
-
-        // 2026-07-21 規則外部化後：selftest 唯讀載入實際生效的規則（rules.json 存在就用它，
-        // 不存在/載入失敗就用內建種子），驗證/初始化後，下面的規則層/趨勢層/關聯層檢查
-        // 自動涵蓋「現場實際配置」而不只是程式碼內建種子——但絕不寫入任何檔案，
-        // 維持 README 對 --selftest 的承諾（不需要設定檔、跑完不留副作用）。
+        // 實際生效的規則/抑制設定存於資料庫，selftest 刻意不連 DB（連線＋EnsureCreated 是寫入
+        // 副作用，違反「跑完不留副作用」的承諾），只驗證內建種子——見 RunRuleLoadingChecks 的說明。
         RunRuleLoadingChecks();
 
         RunRuleLayerChecks();
@@ -62,45 +42,15 @@ public static class SelfTestRunner
         4697, 4698, 4740, 4670, 4907, 4717, 4718, 4704, 4705, 4703, 4735, 4739, 4731, 4734
     };
 
-    /// <summary>驗證對象所在的資料根目錄，於 <see cref="Run"/> 開頭解析（預設執行檔目錄）</summary>
-    private static string _dataRoot = AppContext.BaseDirectory;
-
-    /// <summary>Storage.Type 是否為 SQL 後端（Sqlite/SqlServer）。SQL 模式下實際生效的規則在
-    /// DB 的 lf_blobs，而 selftest 刻意不連 DB（連線＋EnsureCreated 是寫入副作用，違反
-    /// 「跑完不留副作用」的承諾）——只能驗證 rules.json（若存在）或內建種子，要誠實申報這個限制。</summary>
-    private static bool _sqlMode;
-
     private static void RunRuleLoadingChecks()
     {
-        Console.WriteLine("-- 規則載入（唯讀，selftest 絕不寫入 rules.json/suppressions.json）--");
+        Console.WriteLine("-- 規則載入（唯讀，selftest 絕不連線資料庫）--");
 
-        // 先以 File.Exists 判斷、檔案存在才建 store：store 的建構式會替不存在的目錄建目錄，
-        // DataRoot 指到尚未建立的資料夾時直接建 store 就是一次寫入副作用，違反 selftest 的承諾。
-        var rulesPath = Path.Combine(_dataRoot, "rules.json");
-        List<KnownIssueRule> sourceRules;
-
-        if (!File.Exists(rulesPath))
-        {
-            sourceRules = KnownIssueSeed.CreateRules();
-            Console.WriteLine(_sqlMode
-                ? $"  驗證對象：內建種子（SQL 模式下實際生效的規則在資料庫；selftest 不連 DB 以免留下建檔副作用，{rulesPath} 也不存在）"
-                : $"  驗證對象：內建種子（{rulesPath} 不存在）");
-        }
-        else
-        {
-            var store = new JsonKnownIssueRuleStore(rulesPath);
-            var outcome = store.Load();
-            if (outcome.Success)
-            {
-                sourceRules = outcome.Content!.Rules;
-                Console.WriteLine($"  驗證對象：{store.Location}（seed v{outcome.Content.SeedVersion}，共 {sourceRules.Count} 條）");
-            }
-            else
-            {
-                sourceRules = KnownIssueSeed.CreateRules();
-                Console.WriteLine($"  驗證對象：內建種子（{store.Location} 載入失敗：{outcome.Error}）");
-            }
-        }
+        // 實際生效的規則在資料庫（lf_blobs），而 selftest 刻意不連 DB
+        // （連線＋EnsureCreated 是寫入副作用，違反「跑完不留副作用」的承諾）——
+        // 只能驗證內建種子，要誠實申報這個限制。
+        var sourceRules = KnownIssueSeed.CreateRules();
+        Console.WriteLine("  驗證對象：內建種子（實際生效的規則在資料庫；selftest 不連 DB 以免留下建檔副作用）");
 
         var validation = RuleValidator.Validate(sourceRules);
         Check("規則驗證：無不合格規則", validation.SkippedRules.Count == 0,
@@ -185,36 +135,12 @@ public static class SelfTestRunner
             new[] { 1149 });
     }
 
-    /// <summary>抑制設定是可選功能，不存在時略過；存在時唯讀逐條檢視，只印資訊不影響 pass/fail——
-    /// 一筆抑制指向已停用/不存在的規則是操作面的陳舊設定，不是「確定性層壞掉」，不該讓 selftest 變紅。</summary>
+    /// <summary>抑制設定現在存於資料庫；selftest 刻意不連 DB（見 <see cref="RunRuleLoadingChecks"/>
+    /// 的理由），只提示以 --list-suppressions 查看，不在此檢視內容。</summary>
     private static void RunSuppressionFileChecks()
     {
-        Console.WriteLine("\n-- 抑制設定（suppressions.json，選用功能）--");
-
-        // 與規則載入同理：先 File.Exists 再建 store，避免建構式替不存在的 DataRoot 建目錄
-        var suppressionsPath = Path.Combine(_dataRoot, "suppressions.json");
-        if (!File.Exists(suppressionsPath))
-        {
-            Console.WriteLine("  未使用此功能（檔案不存在），略過。");
-            return;
-        }
-
-        var store = new JsonSuppressionStore(suppressionsPath);
-
-        var all = store.LoadAll();
-        var knownIds = KnownIssueCatalog.Rules.Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        Console.WriteLine($"  共 {all.Count} 筆抑制設定：");
-        foreach (var s in all)
-        {
-            if (!knownIds.Contains(s.RuleId))
-            {
-                Console.WriteLine($"  ⚠ {s.RuleId}（主機 {s.Host}）：目前規則庫查無此 Id 或該規則已停用，此設定可能已失效");
-            }
-            if (s.ExpiresAt != null && s.ExpiresAt.Value <= DateTime.Now)
-            {
-                Console.WriteLine($"  ℹ {s.RuleId}（主機 {s.Host}）已於 {s.ExpiresAt:yyyy-MM-dd} 到期，目前恢復告警中，可用 --unsuppress 或編輯檔案清理");
-            }
-        }
+        Console.WriteLine("\n-- 抑制設定（選用功能）--");
+        Console.WriteLine("  設定存於資料庫，selftest 不連線；如需檢視請執行 --list-suppressions。");
     }
 
     private static void Check(string name, bool condition, string detail = "")

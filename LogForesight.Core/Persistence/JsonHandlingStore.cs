@@ -4,11 +4,11 @@ using System.Text.Json;
 namespace LogForesight;
 
 /// <summary>
-/// <see cref="IRecordHandlingStore"/> 的 JSONL 後端實作。
-/// 快照存整檔型 handling.json（會更新，需原子替換），
-/// 歷程存 handling_log.jsonl（append-only，逐行獨立）。
+/// <see cref="IRecordHandlingStore"/> 的實作。
+/// 快照存整份型 blob（key=record_handling，原子讀改寫），
+/// 歷程存 log（key=handling_log，append-only，逐列獨立）。
 /// </summary>
-public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IRecordHandlingStore
+public class JsonRecordHandlingStore : JsonBlobCollection<RecordHandling>, IRecordHandlingStore
 {
     private readonly IJsonLogStore _logStore;
     private readonly object _logLock = new();
@@ -19,9 +19,6 @@ public class JsonRecordHandlingStore : JsonCollectionFile<RecordHandling>, IReco
         PropertyNameCaseInsensitive = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
-
-    public JsonRecordHandlingStore(string snapshotPath, string logPath)
-        : this(new FileJsonBlobStore(snapshotPath), new FileJsonLogStore(logPath)) { }
 
     public JsonRecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
     {

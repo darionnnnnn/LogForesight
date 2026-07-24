@@ -36,7 +36,12 @@ public class LfDbContext : DbContext
             e.HasKey(x => x.BlobKey);
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
-            e.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            // 樂觀鎖：UpdatedAt 當並發權杖。EfJsonBlobStore.Mutate 是「讀→改→寫」，
+            // 沒有這個標記的話兩個行程各自讀到舊內容、後寫的整份蓋掉先寫的（更新遺失）——
+            // 這正是 JSONL 檔案時代跨程序鎖檔要防的事故，換 DB 後要用資料庫的機制補上。
+            // SaveChanges 時 EF 會在 WHERE 子句帶上原始讀到的值，被別人搶先改過就撞
+            // DbUpdateConcurrencyException（繼承自 DbUpdateException，既有重試迴圈已涵蓋）。
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
         });
 
         b.Entity<LogLineRow>(e =>

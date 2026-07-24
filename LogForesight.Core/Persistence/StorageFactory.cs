@@ -5,16 +5,18 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 依設定選擇儲存後端（Strategy + Factory）。三種 provider：
-///   - "Sqlite"（預設）：測試/開發用的單一 .db 檔（真資料庫，取代 JSONL 檔案）
-///   - "Jsonl"：現行檔案格式，單機檔案相容模式
+/// 依設定選擇儲存後端（Strategy + Factory）。兩種 provider：
+///   - "Sqlite"（預設）：測試/開發用的單一 .db 檔
 ///   - "SqlServer"：正式環境（2000 台量級）
 /// 新增後端時這裡是唯一需要改的地方，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改。
 ///
-/// SQL 模式（Sqlite/SqlServer）下**全部資料**走 SQL：分析紀錄以正規化列＋JSON 存
-/// （lf_daily_records/lf_top_issues），webdata 各 store 透過 IJsonBlobStore（整份型 → lf_blobs）
-/// 與 IJsonLogStore（append-only → lf_log_lines）改走資料庫，store 業務邏輯完全沒改。
-/// LINQ 保持 provider 中立，SQLite 上跑同一組合約測試驗證語意逐位一致。
+/// **全部資料走 SQL，無檔案**：分析紀錄以正規化列＋JSON 存（lf_daily_records/lf_top_issues），
+/// webdata 各 store 透過 IJsonBlobStore（整份型 → lf_blobs）與 IJsonLogStore（append-only →
+/// lf_log_lines）走資料庫，store 業務邏輯不受後端影響。LINQ 保持 provider 中立，
+/// SQLite 上跑合約測試驗證語意。
+///
+/// （2026-07-24 起 Jsonl 檔案後端已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10。
+/// `Storage.Type` 設成非 Sqlite/SqlServer 的值一律於啟動時報錯，見 AppSettings 驗證。）
 /// </summary>
 public static class StorageFactory
 {
@@ -23,10 +25,6 @@ public static class StorageFactory
 
     private static Func<LfDbContext>? _dbFactory;
     private static string _dbDesc = "";
-
-    /// <summary>Type 是否為 SQL 後端（Sqlite 測試/開發、SqlServer 正式）</summary>
-    private static bool IsSql(StorageSettings settings) =>
-        settings.Type is "Sqlite" or "SqlServer";
 
     /// <summary>
     /// 取（快取的）EF DbContext 工廠。首次建立時依 provider 建連線並 EnsureCreated 建表（idempotent）。
@@ -74,19 +72,15 @@ public static class StorageFactory
         }
     }
 
-    /// <summary>依 provider 建立 store 的底層 blob（SQL→DB 一列以 key 為鍵、Jsonl→jsonlPath 檔案）</summary>
-    private static IJsonBlobStore Blob(StorageSettings settings, string dataRoot, string key, string jsonlPath) =>
-        IsSql(settings)
-            ? new EfJsonBlobStore(GetDbFactory(settings, dataRoot), key)
-            : new FileJsonBlobStore(jsonlPath);
+    /// <summary>store 的底層 blob（整份 JSON 存 lf_blobs 一列，key 為鍵）</summary>
+    private static IJsonBlobStore Blob(StorageSettings settings, string dataRoot, string key) =>
+        new EfJsonBlobStore(GetDbFactory(settings, dataRoot), key);
 
-    /// <summary>依 provider 建立 append-only 逐行 store（SQL→lf_log_lines 以 key 為鍵、Jsonl→jsonlPath 檔案）</summary>
-    private static IJsonLogStore LogStore(StorageSettings settings, string dataRoot, string key, string jsonlPath) =>
-        IsSql(settings)
-            ? new EfJsonLogStore(GetDbFactory(settings, dataRoot), key)
-            : new FileJsonLogStore(jsonlPath);
+    /// <summary>store 的底層 append-only 逐行資料（lf_log_lines，key 為鍵）</summary>
+    private static IJsonLogStore LogStore(StorageSettings settings, string dataRoot, string key) =>
+        new EfJsonLogStore(GetDbFactory(settings, dataRoot), key);
 
-    /// <summary>SQL 模式的 EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>
+    /// <summary>EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>
     private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost, string fallbackDir) =>
         new(GetDbFactory(settings, fallbackDir), _dbDesc, ownerHost);
 
@@ -99,244 +93,105 @@ public static class StorageFactory
         return string.Join(";", parts);
     }
 
+    /// <param name="dataRoot">
+    /// 資料根目錄：Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）。
+    /// </param>
     /// <param name="ownerHost">
     /// 批次寫入端的「本機」識別。傳入時，缺日判定與趨勢基準等批次面讀寫只看這台主機自己的
-    /// 紀錄（見 <see cref="JsonlAnalysisRecordStore"/> 的 ownerHost 說明）。Web 查詢端不傳，維持不分主機。
+    /// 紀錄。Web 查詢端不傳，維持不分主機。
     /// </param>
-    public static IAnalysisRecordStore CreateRecordStore(StorageSettings settings, string? filePath = null, HostKey? ownerHost = null)
-    {
-        switch (settings.Type)
-        {
-            case "Sqlite":
-            case "SqlServer":
-                return CreateEfRecordStore(settings, ownerHost, Path.GetDirectoryName(filePath) ?? ".");
-            case "Jsonl":
-                return new JsonlAnalysisRecordStore(filePath, ownerHost);
-            default:
-                Console.WriteLine($"未知的 Storage.Type「{settings.Type}」，改用預設的 Jsonl。");
-                return new JsonlAnalysisRecordStore(filePath, ownerHost);
-        }
-    }
+    public static IAnalysisRecordStore CreateRecordStore(StorageSettings settings, string dataRoot, HostKey? ownerHost = null) =>
+        CreateEfRecordStore(settings, ownerHost, dataRoot);
 
-    /// <summary>規則儲存後端（rules.json／DB blob）</summary>
-    public static IKnownIssueRuleStore CreateRuleStore(StorageSettings settings, string? filePath = null)
-    {
-        var path = filePath ?? Path.Combine(AppContext.BaseDirectory, "rules.json");
-        return new JsonKnownIssueRuleStore(Blob(settings, Path.GetDirectoryName(path) ?? ".", "rules", path));
-    }
+    /// <summary>規則儲存後端（DB blob，key=rules）</summary>
+    public static IKnownIssueRuleStore CreateRuleStore(StorageSettings settings, string dataRoot) =>
+        new JsonKnownIssueRuleStore(Blob(settings, dataRoot, "rules"));
 
-    /// <summary>抑制設定的儲存後端（suppressions.json／DB blob）</summary>
-    public static ISuppressionStore CreateSuppressionStore(StorageSettings settings, string? filePath = null)
-    {
-        var path = filePath ?? Path.Combine(AppContext.BaseDirectory, "suppressions.json");
-        return new JsonSuppressionStore(Blob(settings, Path.GetDirectoryName(path) ?? ".", "suppressions", path));
-    }
+    /// <summary>抑制設定的儲存後端（DB blob，key=suppressions）</summary>
+    public static ISuppressionStore CreateSuppressionStore(StorageSettings settings, string dataRoot) =>
+        new JsonSuppressionStore(Blob(settings, dataRoot, "suppressions"));
 
     // ── Web 自有資料的儲存後端（docs/WEB-SPEC.md §10.2）────────────────────────────
-    // 檔案位於 {DataRoot}\webdata\，與批次的 history.txt／rules.json 同一個資料根目錄：
-    // JSONL 後端下 Web 與批次讀寫同一份資料，這是「JSONL 即資料庫」決策的直接結果。
-    // 未來 SQL 後端在此加 case，Web 的 Service 層完全不需修改。
 
-    /// <summary>Web 使用者（webdata\users.json）</summary>
-    public static IUserStore CreateUserStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonUserStore(Blob(settings, dataRoot, "users", WebDataPath(dataRoot, "users.json")));
-        }
-    }
+    /// <summary>Web 使用者</summary>
+    public static IUserStore CreateUserStore(StorageSettings settings, string dataRoot) =>
+        new JsonUserStore(Blob(settings, dataRoot, "users"));
 
-    /// <summary>使用者群組（webdata\groups.json）</summary>
-    public static IUserGroupStore CreateUserGroupStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonUserGroupStore(Blob(settings, dataRoot, "user_groups", WebDataPath(dataRoot, "groups.json")));
-        }
-    }
+    /// <summary>使用者群組</summary>
+    public static IUserGroupStore CreateUserGroupStore(StorageSettings settings, string dataRoot) =>
+        new JsonUserGroupStore(Blob(settings, dataRoot, "user_groups"));
 
-    /// <summary>Web 的分析紀錄查詢（多條件篩選）。JSONL 後端與寫入端共用同一份 history.txt</summary>
-    public static IAnalysisRecordQuery CreateRecordQuery(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Sqlite":
-            case "SqlServer":
-                // Web 查詢面不分主機（ownerHost=null）；Query/GetOne 自帶可見範圍過濾
-                return CreateEfRecordStore(settings, null, dataRoot);
-            case "Jsonl":
-            default:
-                return new JsonlAnalysisRecordStore(Path.Combine(dataRoot, "history.txt"));
-        }
-    }
+    /// <summary>Web 的分析紀錄查詢（多條件篩選）</summary>
+    public static IAnalysisRecordQuery CreateRecordQuery(StorageSettings settings, string dataRoot) =>
+        // Web 查詢面不分主機（ownerHost=null）；Query/GetOne 自帶可見範圍過濾
+        CreateEfRecordStore(settings, null, dataRoot);
 
-    /// <summary>報告全文讀取（export\ 下的 txt）</summary>
-    public static IReportReader CreateReportReader(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new FileReportReader(dataRoot);
-        }
-    }
+    /// <summary>報告全文讀取（export\ 下的 txt——交付物，不屬「JSON 作為資料庫」，維持檔案）</summary>
+    public static IReportReader CreateReportReader(StorageSettings settings, string dataRoot) =>
+        new FileReportReader(dataRoot);
 
-    /// <summary>主機（webdata\hosts.json）——批次與 Web 共同寫入，職責見 IHostStore 註解</summary>
-    public static IHostStore CreateHostStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonHostStore(Blob(settings, dataRoot, "hosts", WebDataPath(dataRoot, "hosts.json")));
-        }
-    }
+    /// <summary>主機——批次與 Web 共同寫入，職責見 IHostStore 註解</summary>
+    public static IHostStore CreateHostStore(StorageSettings settings, string dataRoot) =>
+        new JsonHostStore(Blob(settings, dataRoot, "hosts"));
 
-    /// <summary>主機群組（webdata\host_groups.json）</summary>
-    public static IHostGroupStore CreateHostGroupStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonHostGroupStore(Blob(settings, dataRoot, "host_groups", WebDataPath(dataRoot, "host_groups.json")));
-        }
-    }
+    /// <summary>主機群組</summary>
+    public static IHostGroupStore CreateHostGroupStore(StorageSettings settings, string dataRoot) =>
+        new JsonHostGroupStore(Blob(settings, dataRoot, "host_groups"));
 
-    /// <summary>群組授權對應（webdata\group_access.json）</summary>
-    public static IGroupAccessStore CreateGroupAccessStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonGroupAccessStore(Blob(settings, dataRoot, "group_access", WebDataPath(dataRoot, "group_access.json")));
-        }
-    }
+    /// <summary>群組授權對應</summary>
+    public static IGroupAccessStore CreateGroupAccessStore(StorageSettings settings, string dataRoot) =>
+        new JsonGroupAccessStore(Blob(settings, dataRoot, "group_access"));
 
-    /// <summary>操作稽核（webdata\audit.jsonl）</summary>
-    public static IAuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonAuditLogStore(LogStore(settings, dataRoot, "audit", WebDataPath(dataRoot, "audit.jsonl")));
-        }
-    }
+    /// <summary>操作稽核</summary>
+    public static IAuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot) =>
+        new JsonAuditLogStore(LogStore(settings, dataRoot, "audit"));
 
-    /// <summary>內建規則的原廠種子鏡像（rule_seeds.json，供「回復預設」比對與還原）</summary>
-    public static IRuleSeedStore CreateRuleSeedStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonRuleSeedStore(Blob(settings, dataRoot, "rule_seeds", Path.Combine(dataRoot, "rule_seeds.json")));
-        }
-    }
+    /// <summary>內建規則的原廠種子鏡像（供「回復預設」比對與還原）</summary>
+    public static IRuleSeedStore CreateRuleSeedStore(StorageSettings settings, string dataRoot) =>
+        new JsonRuleSeedStore(Blob(settings, dataRoot, "rule_seeds"));
 
-    /// <summary>批次執行紀錄（rundata\runs.jsonl ＋ run_logs.jsonl）——批次寫、Web 讀</summary>
-    public static IBatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonBatchRunStore(
-                    LogStore(settings, dataRoot, "batch_runs", Path.Combine(dataRoot, "rundata", "runs.jsonl")),
-                    LogStore(settings, dataRoot, "batch_run_logs", Path.Combine(dataRoot, "rundata", "run_logs.jsonl")));
-        }
-    }
+    /// <summary>批次執行紀錄——批次寫、Web 讀</summary>
+    public static IBatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot) =>
+        new JsonBatchRunStore(
+            LogStore(settings, dataRoot, "batch_runs"),
+            LogStore(settings, dataRoot, "batch_run_logs"));
 
-    /// <summary>風險日處理狀態（webdata\handling.json ＋ handling_log.jsonl）</summary>
-    public static IRecordHandlingStore CreateHandlingStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonRecordHandlingStore(
-                    Blob(settings, dataRoot, "record_handling", WebDataPath(dataRoot, "handling.json")),
-                    LogStore(settings, dataRoot, "handling_log", WebDataPath(dataRoot, "handling_log.jsonl")));
-        }
-    }
+    /// <summary>風險日處理狀態</summary>
+    public static IRecordHandlingStore CreateHandlingStore(StorageSettings settings, string dataRoot) =>
+        new JsonRecordHandlingStore(
+            Blob(settings, dataRoot, "record_handling"),
+            LogStore(settings, dataRoot, "handling_log"));
 
-    /// <summary>Web AI 加值輸出的快取（webdata\ai_cache.json）</summary>
-    public static IAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonAiCacheStore(Blob(settings, dataRoot, "ai_cache", WebDataPath(dataRoot, "ai_cache.json")));
-        }
-    }
+    /// <summary>Web AI 加值輸出的快取</summary>
+    public static IAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot) =>
+        new JsonAiCacheStore(Blob(settings, dataRoot, "ai_cache"));
 
-    /// <summary>問題層級處理狀態（webdata\issue_handling.json）——Web 寫，日層級結案與否由此推導</summary>
-    public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonIssueHandlingStore(Blob(settings, dataRoot, "issue_handling", WebDataPath(dataRoot, "issue_handling.json")));
-        }
-    }
+    /// <summary>問題層級處理狀態——Web 寫，日層級結案與否由此推導</summary>
+    public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot) =>
+        new JsonIssueHandlingStore(Blob(settings, dataRoot, "issue_handling"));
 
-    /// <summary>已知雜訊記憶（webdata\noise_marks.json，§5.1 D-1 #3）——同主機同簽章的自動雜訊判讀依據</summary>
-    public static INoiseMarkStore CreateNoiseMarkStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonNoiseMarkStore(Blob(settings, dataRoot, "noise_marks", WebDataPath(dataRoot, "noise_marks.json")));
-        }
-    }
-
-    /// <summary>NetIQ 匯入排程佇列（webdata\netiq_import_queue.json，§5.3 D-3）——Web 排入、批次套用</summary>
-    public static INetiqImportQueueStore CreateNetiqImportQueueStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonNetiqImportQueueStore(Blob(settings, dataRoot, "netiq_import_queue", WebDataPath(dataRoot, "netiq_import_queue.json")));
-        }
-    }
+    /// <summary>已知雜訊記憶（§5.1 D-1 #3）——同主機同簽章的自動雜訊判讀依據</summary>
+    public static INoiseMarkStore CreateNoiseMarkStore(StorageSettings settings, string dataRoot) =>
+        new JsonNoiseMarkStore(Blob(settings, dataRoot, "noise_marks"));
 
     /// <summary>
-    /// 權限異動（rundata\perm_changes.jsonl 由批次寫、webdata\perm_confirms.json 由 Web 寫）。
-    /// 兩個檔案各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。
+    /// 權限異動（perm_changes 由批次寫、perm_confirms 由 Web 寫）。
+    /// 兩者各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。
     /// </summary>
-    public static IPermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonPermissionChangeStore(
-                    LogStore(settings, dataRoot, "perm_changes", Path.Combine(dataRoot, "rundata", "perm_changes.jsonl")),
-                    Blob(settings, dataRoot, "perm_confirms", WebDataPath(dataRoot, "perm_confirms.json")));
-        }
-    }
+    public static IPermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot) =>
+        new JsonPermissionChangeStore(
+            LogStore(settings, dataRoot, "perm_changes"),
+            Blob(settings, dataRoot, "perm_confirms"));
 
-    /// <summary>CSV 匯入紀錄（webdata\import_logs.jsonl）</summary>
-    public static IImportLogStore CreateImportLogStore(StorageSettings settings, string dataRoot)
-    {
-        switch (settings.Type)
-        {
-            case "Jsonl":
-            default:
-                return new JsonImportLogStore(LogStore(settings, dataRoot, "import_logs", WebDataPath(dataRoot, "import_logs.jsonl")));
-        }
-    }
+    /// <summary>權限/角色異動監控的快照（批次寫、批次讀，Web 不碰）</summary>
+    public static IPermissionSnapshotStore CreatePermissionSnapshotStore(StorageSettings settings, string dataRoot) =>
+        new JsonPermissionSnapshotStore(Blob(settings, dataRoot, "permission_snapshot"));
 
-    private static string WebDataPath(string dataRoot, string fileName) =>
-        Path.Combine(dataRoot, "webdata", fileName);
+    /// <summary>CSV／NetIQ 匯入紀錄</summary>
+    public static IImportLogStore CreateImportLogStore(StorageSettings settings, string dataRoot) =>
+        new JsonImportLogStore(LogStore(settings, dataRoot, "import_logs"));
+
+    /// <summary>NetIQ Sentinel 連線設定（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、2）</summary>
+    public static ISentinelStore CreateSentinelStore(StorageSettings settings, string dataRoot) =>
+        new JsonSentinelStore(Blob(settings, dataRoot, "sentinels"));
 }

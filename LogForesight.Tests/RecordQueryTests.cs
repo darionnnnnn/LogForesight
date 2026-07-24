@@ -328,31 +328,7 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     }
 }
 
-public class JsonlAnalysisRecordQueryTests : AnalysisRecordQueryContractTests
-{
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-test-" + Guid.NewGuid().ToString("N"));
-    private JsonlAnalysisRecordStore? _store;
-
-    protected override IAnalysisRecordStore CreateStore()
-    {
-        _store = new JsonlAnalysisRecordStore(Path.Combine(_dir, "history.txt"));
-        return _store;
-    }
-
-    protected override IAnalysisRecordQuery Query =>
-        _store ?? (JsonlAnalysisRecordStore)CreateStore();
-
-    public override void Dispose()
-    {
-        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-        GC.SuppressFinalize(this);
-    }
-}
-
-/// <summary>
-/// SQLite（EF）後端跑同一組查詢合約——SQLite 現為主要測試方式，這裡與 Jsonl 版驗證
-/// Web 查詢面（Query/GetOne 的 Hosts 授權語意、PK 優先比對）逐位一致。
-/// </summary>
+/// <summary>SQLite（EF）後端跑查詢合約，驗證 Web 查詢面（Query/GetOne 的 Hosts 授權語意、PK 優先比對）。</summary>
 public class EfAnalysisRecordQueryTests : AnalysisRecordQueryContractTests
 {
     private readonly LogForesight.Sql.EfAnalysisRecordStore _store;

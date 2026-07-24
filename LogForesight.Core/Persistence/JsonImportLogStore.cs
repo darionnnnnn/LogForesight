@@ -10,13 +10,18 @@ public class ImportLogEntry
     public long? UserId { get; set; }
     public string Account { get; set; } = string.Empty;
 
-    /// <summary>Users | Hosts | GroupAccess</summary>
+    /// <summary>Users | Hosts | GroupAccess | Owners | Netiq</summary>
     public string Kind { get; set; } = string.Empty;
 
+    /// <summary>CSV 匯入＝檔名；NetIQ 掃描匯入＝所屬 Sentinel 名稱（沒有檔案可言，借用這個欄位顯示來源）</summary>
     public string FileName { get; set; } = string.Empty;
     public int AddedCount { get; set; }
     public int UpdatedCount { get; set; }
     public int RemovedCount { get; set; }
+
+    /// <summary>NetIQ 掃描匯入專用：孤兒主機重疊而復活重綁的台數（CSV 匯入恆為 0）</summary>
+    public int RevivedCount { get; set; }
+
     public List<string> CreatedGroups { get; set; } = new();
     public DateTime CreatedAt { get; set; }
 }
@@ -29,7 +34,7 @@ public interface IImportLogStore
     List<ImportLogEntry> GetRecent(int count);
 }
 
-/// <summary>JSONL 後端實作：webdata\import_logs.jsonl（append-only）</summary>
+/// <summary><see cref="IImportLogStore"/> 的實作（log key=import_logs，append-only）</summary>
 public class JsonImportLogStore : IImportLogStore
 {
     private readonly IJsonLogStore _log;
@@ -41,8 +46,6 @@ public class JsonImportLogStore : IImportLogStore
         PropertyNameCaseInsensitive = true,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
-
-    public JsonImportLogStore(string filePath) : this(new FileJsonLogStore(filePath)) { }
 
     public JsonImportLogStore(IJsonLogStore log)
     {

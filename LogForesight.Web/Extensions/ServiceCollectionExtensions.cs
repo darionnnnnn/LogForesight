@@ -24,7 +24,7 @@ public static class ServiceCollectionExtensions
         var storage = settings.Storage;
         var dataRoot = storage.ResolveDataRoot();
 
-        // Singleton：JSONL 實作內部自行處理檔案鎖，共用一個實例才能保證行程內的寫入互斥
+        // Singleton：DbContext 工廠內部快取，共用一個實例避免重複解析連線設定
         services.AddSingleton<IUserStore>(_ => StorageFactory.CreateUserStore(storage, dataRoot));
         services.AddSingleton<IUserGroupStore>(_ => StorageFactory.CreateUserGroupStore(storage, dataRoot));
         services.AddSingleton<IHostStore>(_ => StorageFactory.CreateHostStore(storage, dataRoot));
@@ -32,6 +32,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IGroupAccessStore>(_ => StorageFactory.CreateGroupAccessStore(storage, dataRoot));
         services.AddSingleton<IAuditLogStore>(_ => StorageFactory.CreateAuditLogStore(storage, dataRoot));
         services.AddSingleton<IImportLogStore>(_ => StorageFactory.CreateImportLogStore(storage, dataRoot));
+        services.AddSingleton<ISentinelStore>(_ => StorageFactory.CreateSentinelStore(storage, dataRoot));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
         services.AddSingleton<IAnalysisRecordQuery>(_ => StorageFactory.CreateRecordQuery(storage, dataRoot));
@@ -41,16 +42,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
         services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
         services.AddSingleton<INoiseMarkStore>(_ => StorageFactory.CreateNoiseMarkStore(storage, dataRoot));
-        services.AddSingleton<INetiqImportQueueStore>(_ => StorageFactory.CreateNetiqImportQueueStore(storage, dataRoot));
         services.AddSingleton<IAiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
         services.AddSingleton<IPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
 
         // 規則維護與執行監控
-        services.AddSingleton<IKnownIssueRuleStore>(_ =>
-            StorageFactory.CreateRuleStore(storage, Path.Combine(dataRoot, "rules.json")));
+        services.AddSingleton<IKnownIssueRuleStore>(_ => StorageFactory.CreateRuleStore(storage, dataRoot));
         services.AddSingleton<IRuleSeedStore>(_ => StorageFactory.CreateRuleSeedStore(storage, dataRoot));
-        services.AddSingleton<ISuppressionStore>(_ =>
-            StorageFactory.CreateSuppressionStore(storage, Path.Combine(dataRoot, "suppressions.json")));
+        services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
         services.AddSingleton<IBatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
         return services;
@@ -186,9 +184,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<IGroupAdminService, GroupAdminService>();
 
-        // Sentinel 名單唯讀取自批次 appsettings.json；Singleton＋依檔案時間快取，
-        // 不必每次請求都重讀解析（改設定也不需要重啟 Web）
+        // Sentinel 名單改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
+        services.AddScoped<ISentinelAdminService, SentinelAdminService>();
 
         // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線。
         // 真連線的認證/回應解析待 Sentinel 環境驗證（見 SentinelRestDirectoryClient）

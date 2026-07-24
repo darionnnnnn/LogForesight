@@ -93,16 +93,6 @@ public class SetHostActiveRequest
 
 // ── 主動探索匯入（docs/SCALE-2000-PLAN.md §1）───────────────────────────────
 
-/// <summary>可掃描的 Sentinel（帳密齊備才能主動探索）</summary>
-public class NetiqScanTargetDto
-{
-    public string Name { get; set; } = string.Empty;
-    public bool CanDiscover { get; set; }
-
-    /// <summary>不可掃描的原因（設定不完整），供畫面提示</summary>
-    public string? Reason { get; set; }
-}
-
 public class NetiqScanRequest
 {
     [Required]
@@ -151,24 +141,53 @@ public class NetiqImportRequest
 
     /// <summary>使用者勾選要匯入的 IP（＝HostName）</summary>
     public List<string> SelectedIps { get; set; } = new();
+
+    /// <summary>
+    /// 各網段的群組指派（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 8）。省略/空清單＝維持
+    /// Phase 3 的行為（全部落在未分組安全預設）；只影響本次新增的主機，既有主機的
+    /// 群組一律不動。
+    /// </summary>
+    public List<NetiqSubnetGroupAssignment> GroupAssignments { get; set; } = new();
 }
 
-/// <summary>NetIQ 匯入排程佇列的畫面呈現（§5.3 D-3）</summary>
-public class NetiqQueueEntryDto
+/// <summary>單一網段的群組指派方式</summary>
+public class NetiqSubnetGroupAssignment
 {
-    public string QueueId { get; set; } = string.Empty;
+    [Required]
+    public string Cidr { get; set; } = string.Empty;
+
+    /// <summary>skip（預設，未分組）| existing（用 HostGroupId）| new（用 NewGroupName 建立）</summary>
+    public string Mode { get; set; } = "skip";
+
+    public long? HostGroupId { get; set; }
+
+    [StringLength(100)]
+    public string? NewGroupName { get; set; }
+}
+
+/// <summary>「新增即掃描」精靈步驟 1：連線設定。掃描成功才建立 Sentinel（定案 6：掃描即帳密驗證）</summary>
+public class CreateAndScanSentinelRequest
+{
+    [Required(ErrorMessage = "請輸入 Sentinel 名稱")]
+    [StringLength(50)]
+    public string Name { get; set; } = string.Empty;
+
+    [StringLength(255)]
+    public string? BaseUrl { get; set; }
+
+    [Required(ErrorMessage = "請輸入探索帳號")]
+    [StringLength(100)]
+    public string Username { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "請輸入探索密碼")]
+    public string Password { get; set; } = string.Empty;
+}
+
+/// <summary>NetIQ 掃描匯入的即時套用結果（定案 7：不再有排入/取消的中間狀態）</summary>
+public class NetiqImportResultDto
+{
     public string ServerName { get; set; } = string.Empty;
-    public int HostCount { get; set; }
-    public string RequestedByAccount { get; set; } = string.Empty;
-    public DateTime RequestedAt { get; set; }
-
-    /// <summary>pending | applied | failed | cancelled</summary>
-    public string Status { get; set; } = string.Empty;
-    public string StatusText { get; set; } = string.Empty;
-
-    public DateTime? AppliedAt { get; set; }
     public int Added { get; set; }
     public int Updated { get; set; }
     public int Revived { get; set; }
-    public string? FailureReason { get; set; }
 }
