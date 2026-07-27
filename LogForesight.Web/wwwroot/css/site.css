@@ -360,6 +360,13 @@ body {
     color: var(--lf-sidebar-fg);
     display: flex;
     flex-direction: column;
+    /* 貼齊視窗高度：沒有這個，.lf-layout 只有 min-height:100vh，側欄會跟著整頁內容一路長高，
+       .lf-sidebar__nav 的 overflow-y:auto 永遠不會真的觸發。貼齊之後側欄固定在視窗高度內，
+       選單項目太多時才會出現內部捲動，也才輪得到 JS 的自動收合邏輯派上用場。 */
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    align-self: flex-start;
 }
 
 .lf-sidebar__brand {
@@ -410,6 +417,33 @@ body {
     letter-spacing: .06em;
     color: var(--lf-sidebar-section);
     text-transform: uppercase;
+}
+
+/* 可收合的分組標題（目前只有「系統管理」用得到，見 layout.js）：
+   視覺上盡量貼近純文字標題，只多一個可點擊游標與收合箭頭 */
+.lf-sidebar__section--toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: 0;
+    cursor: pointer;
+}
+
+.lf-sidebar__section--toggle .lf-icon {
+    width: .85rem;
+    height: .85rem;
+    opacity: .7;
+    transition: transform var(--lf-transition);
+}
+
+.lf-sidebar__section--toggle[aria-expanded="false"] .lf-icon {
+    transform: rotate(-90deg);
+}
+
+.lf-sidebar__section-items.is-collapsed {
+    display: none;
 }
 
 .lf-sidebar__link {
@@ -528,6 +562,10 @@ body {
 */
 .lf-stat {
     display: block;
+    /* 沒有這行，同一排卡片高度仍會不一致：.row 的 flex 拉伸只會撐高 .col（本身沒有內容），
+       中間這層 block 元素預設不會跟著撐滿，導致孫層 .lf-card 的 h-100 其實是相對一個
+       仍然貼齊自身內容高度的父層，等於沒作用。撐滿這層，h-100 才吃得到同排最高卡片的高度。 */
+    height: 100%;
     text-decoration: none;
     color: inherit;
     transition: box-shadow var(--lf-transition), border-color var(--lf-transition), transform var(--lf-transition);
@@ -551,6 +589,26 @@ a.lf-stat:hover .lf-card,
     box-shadow: var(--lf-shadow-md);
     border-color: var(--lf-primary-soft-border);
     transform: translateY(-1px);
+}
+
+/*
+  統計卡跨行高度不一致修正：Bootstrap 的 row 是 flex + wrap，`h-100` 的
+  align-items:stretch 只在同一個換行的 flex line 內生效——換行後的下一行
+  （例如分類卡最後一排只剩一張）各自為政，高度不會跟上一排看齊。
+  三組統計卡各自的內容複雜度已知（KPI 純數字／分類卡含可能換行的嚴重度徽章／
+  報表 KPI 多一行前期比較），直接給每組一個涵蓋最壞情況的最小高度，
+  讓同一組卡片不論落在第幾排都是同一個高度。用 rem 而非 px，跟著字級偏好縮放。
+*/
+#dashboard-kpi .lf-card {
+    min-height: 5.5rem;
+}
+
+#report-kpi .lf-card {
+    min-height: 7rem;
+}
+
+#dashboard-categories .lf-card {
+    min-height: 10rem;
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
@@ -996,6 +1054,9 @@ a.lf-stat:hover .lf-card,
     .lf-sidebar {
         width: 100%;
         flex: 0 0 auto;
+        /* 窄螢幕側欄變成頂部橫向捲動列，不需要（也不該）貼齊視窗高度 */
+        position: static;
+        height: auto;
     }
 
     .lf-sidebar__nav {

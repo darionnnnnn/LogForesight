@@ -24,6 +24,8 @@ const NAV_SECTIONS = [
     },
     {
         label: '系統管理',
+        // 項目最多的一組，視窗矮時最先被自動收合（見 autoCollapseIfNeeded）
+        collapsible: true,
         items: [
             { href: '/admin/rules', label: '規則維護', icon: 'sliders', requires: 'Maintain' },
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
@@ -82,10 +84,27 @@ function renderNav(user) {
         });
         if (visible.length === 0) continue;   // 整組不可見就連標題一起省略
 
-        const heading = document.createElement('div');
-        heading.className = 'lf-sidebar__section';
-        heading.textContent = section.label;
-        nav.appendChild(heading);
+        const itemsWrap = document.createElement('div');
+        itemsWrap.className = 'lf-sidebar__section-items';
+
+        if (section.collapsible) {
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'lf-sidebar__section lf-sidebar__section--toggle';
+            toggle.dataset.section = section.label;
+
+            const label = document.createElement('span');
+            label.textContent = section.label;
+            toggle.append(label, icon('chevron-down'));
+
+            nav.appendChild(toggle);
+            bindSectionToggle(toggle, itemsWrap, section.label);
+        } else {
+            const heading = document.createElement('div');
+            heading.className = 'lf-sidebar__section';
+            heading.textContent = section.label;
+            nav.appendChild(heading);
+        }
 
         for (const item of visible) {
             const link = document.createElement('a');
@@ -102,9 +121,85 @@ function renderNav(user) {
                 : currentPath.startsWith(item.href);
             if (isActive) link.classList.add('is-active');
 
-            nav.appendChild(link);
+            itemsWrap.appendChild(link);
         }
+
+        nav.appendChild(itemsWrap);
     }
+
+    if (document.querySelector('.lf-sidebar__section--toggle')) {
+        autoCollapseIfNeeded();
+
+        // 兩條路徑都掛，不是二選一：ResizeObserver 抓得到側欄本身框變化的所有成因
+        // （字級偏好切換、瀏覽器縮放，不只是拉視窗），window resize 則是最基本的保底，
+        // 兩者都很便宜，沒有理由只留一條
+        const debounced = debounce(autoCollapseIfNeeded, 150);
+        const sidebar = document.querySelector('.lf-sidebar');
+        if (sidebar && window.ResizeObserver) {
+            new ResizeObserver(debounced).observe(sidebar);
+        }
+        window.addEventListener('resize', debounced);
+    }
+}
+
+/**
+ * 分組收合／展開（目前只有「系統管理」啟用，見 NAV_SECTIONS 的 collapsible 旗標）。
+ * 使用者手動點過的狀態記 localStorage、跨頁保留；沒手動點過時交給 autoCollapseIfNeeded
+ * 依視窗高度決定，兩者用同一個 class 切換，互不衝突（自動收合不寫 localStorage，
+ * 才不會讓「這次視窗矮」的暫時判斷變成往後永遠收合）。
+ */
+function sectionStorageKey(label) {
+    return `lf.sidebar.collapsed.${label}`;
+}
+
+function bindSectionToggle(toggle, itemsWrap, label) {
+    const manual = localStorage.getItem(sectionStorageKey(label));
+    if (manual === 'true') setSectionCollapsed(toggle, itemsWrap, true);
+
+    toggle.addEventListener('click', () => {
+        // 以 class 而非 aria-expanded 屬性判斷目前狀態——預設（未收合）時屬性根本不存在，
+        // 用屬性的有無反推狀態容易搞反第一次點擊的方向
+        const collapsed = itemsWrap.classList.contains('is-collapsed');
+        setSectionCollapsed(toggle, itemsWrap, !collapsed);
+        localStorage.setItem(sectionStorageKey(label), String(!collapsed));
+    });
+}
+
+function setSectionCollapsed(toggle, itemsWrap, collapsed) {
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    itemsWrap.classList.toggle('is-collapsed', collapsed);
+}
+
+/**
+ * 視窗矮到選單放不下時，自動收合「系統管理」（目前唯一可收合的分組）——
+ * 側欄現在貼齊視窗高度（見 site.css），選單项目一多就會被裁切、只能内部捲動，
+ * 這裡讓最常不需要天天點的一組先讓路，而不是預設就要捲動才看得到「報表」在下面。
+ * 只在使用者**沒有手動設定過**這組的展開狀態時才自動介入，不覆蓋使用者的明確選擇。
+ */
+function autoCollapseIfNeeded() {
+    const nav = document.getElementById('lf-nav');
+    const toggle = document.querySelector('.lf-sidebar__section--toggle');
+    if (!nav || !toggle) return;
+
+    const label = toggle.dataset.section;
+    if (localStorage.getItem(sectionStorageKey(label)) !== null) return;   // 使用者已手動設定過，不介入
+
+    const itemsWrap = toggle.nextElementSibling;
+    const overflowing = nav.scrollHeight > nav.clientHeight;
+
+    // 已經是收合狀態就不用再判斷是否要展開回去——那是使用者要手動做的事，
+    // 自動邏輯只負責「不夠高就收」，不負責「夠高了就展開」（避免視窗邊緣抖動時反覆跳動）
+    if (overflowing && itemsWrap && !itemsWrap.classList.contains('is-collapsed')) {
+        setSectionCollapsed(toggle, itemsWrap, true);
+    }
+}
+
+function debounce(fn, delayMs) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delayMs);
+    };
 }
 
 /**
