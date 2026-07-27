@@ -1,0 +1,117 @@
+@{
+    ViewData["Title"] = "NetIQ 維護";
+}
+
+<div class="lf-toolbar">
+    <div class="lf-toolbar__row">
+        <div class="lf-toolbar__spacer"></div>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
+    </div>
+</div>
+
+<div class="lf-card mb-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">
+            Sentinel <span class="text-muted small" id="sentinel-count"></span>
+        </h2>
+        <span tabindex="0" data-bs-toggle="popover"
+              data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
+            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+        </span>
+    </div>
+    <div class="lf-card__body p-0" id="sentinel-list"></div>
+</div>
+
+<form id="netiq-options-form">
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">連線與節流參數</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-3">套用於全部 Sentinel 的查詢行為，不是個別 Sentinel 的連線設定。</p>
+            <div class="row g-3">
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-sample-fetch-mode" class="form-label">範例訊息查詢範圍</label>
+                    <select class="form-select" id="opt-sample-fetch-mode">
+                        <option value="Full">Full（每個簽章都查）</option>
+                        <option value="Reduced">Reduced（僅 Security／Other 類簽章查）</option>
+                    </select>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-query-delay" class="form-label">節流間隔（毫秒）</label>
+                    <input type="number" class="form-control" id="opt-query-delay" min="0" max="60000" />
+                    <div class="form-text">每次 REST 呼叫之間的間隔。0＝不節流。</div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-page-size" class="form-label">單頁筆數</label>
+                    <input type="number" class="form-control" id="opt-page-size" min="1" max="5000" />
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-max-results" class="form-label">單一查詢最多筆數</label>
+                    <input type="number" class="form-control" id="opt-max-results" min="1" max="10000000" />
+                    <div class="form-text">超過時該批標記結果被截斷，防止異常爆量日無限制拉取。</div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-timeout" class="form-label">逾時秒數</label>
+                    <input type="number" class="form-control" id="opt-timeout" min="1" max="3600" />
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-retry-count" class="form-label">失敗重試次數</label>
+                    <input type="number" class="form-control" id="opt-retry-count" min="0" max="20" />
+                </div>
+            </div>
+            <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />
+                <label class="form-check-label" for="opt-allow-invalid-certs">略過憑證驗證（Sentinel 使用自簽憑證時的逃生門）</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex align-items-center gap-3 mt-3">
+        <button type="submit" class="btn btn-primary" id="netiq-options-save">儲存</button>
+        <span class="text-muted small" id="netiq-options-updated"></span>
+    </div>
+</form>
+
+<!-- Sentinel 編輯 -->
+<div class="modal fade" id="sentinel-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sentinel-modal-title">編輯 Sentinel</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="sentinel-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="sentinel-name" class="form-label">名稱 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="sentinel-name" required />
+                        <div class="form-text">主機頁「所屬 Sentinel」下拉會顯示這個名稱。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-base-url" class="form-label">連線位址</label>
+                        <input type="text" class="form-control" id="sentinel-base-url" placeholder="https://sentinel.corp.local" />
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-username" class="form-label">探索帳號</label>
+                        <input type="text" class="form-control" id="sentinel-username" />
+                        <div class="form-text">帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sentinel-password" class="form-label">探索密碼</label>
+                        <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
+                        <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="sentinel-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/netiq.js" asp-append-version="true"></script>
+}

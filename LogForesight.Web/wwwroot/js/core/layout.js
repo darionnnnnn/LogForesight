@@ -30,6 +30,7 @@ const NAV_SECTIONS = [
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
+            { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/settings', label: '設定', icon: 'gear', requires: 'Maintain' }
         ]
     },

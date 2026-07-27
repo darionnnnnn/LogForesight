@@ -12,7 +12,6 @@ public class AppSettings
     public PermissionSettings Permissions { get; set; } = new();
     public AnalysisSettings Analysis { get; set; } = new();
     public StorageSettings Storage { get; set; } = new();
-    public NetIqSettings NetIq { get; set; } = new();
 
     // 讀執行檔所在目錄（排程執行時 CurrentDirectory 可能是 system32，不可靠）
     public static AppSettings Load() =>
@@ -185,66 +184,14 @@ public class AnalysisSettings
 }
 
 /// <summary>
-/// NetIQ Sentinel 連線設定（docs/PLAN.md、docs/NETIQ-API-PLAN.md）。
-///
-/// <see cref="Servers"/> 現況（2026-07-24 起，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：
-/// Sentinel 連線資訊的事實來源已改為 Web 維護的 <see cref="ISentinelStore"/>（DB blob），
-/// 此欄位降為「store 為空時的一次性種子」（<c>SentinelSeeder</c>），不再是日常讀取路徑。
-///
-/// 其餘欄位（<see cref="QueryDelayMs"/> 等）是 <c>SentinelClient</c> 查詢行為的節流／逃生門設定，
-/// 與帳密事實來源無關，隨 docs/NETIQ-API-PLAN.md 實作一併加入——本專案已有「有設定卻沒有對應
-/// 行為會誤導使用者」的前例（`MaxDeepDiveHostsPerRun` 因此被移除），故這批欄位與其行為同批到位。
+/// Sentinel 連線的**明碼、可直接連線**投影（給 <see cref="SentinelClient"/> 用）。
+/// 事實來源是 Web 維護的 <see cref="ISentinelStore"/>（DB，密碼以密文存放）；
+/// 這個型別是呼叫端解密後、僅存在於執行期記憶體的連線用副本，不落地、不進 log
+/// （docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）。連線與節流參數見 <see cref="NetiqOptions"/>。
 /// </summary>
-public class NetIqSettings
-{
-    /// <summary>
-    /// 各台 Sentinel 的一次性種子（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：僅在
-    /// <c>ISentinelStore</c> 為空時，Web 啟動時讀這裡匯入一次，之後改由 Web 維護，
-    /// 這裡的值不再被讀取。新環境部署後應改到 Web「資料匯入」頁維護 Sentinel。
-    /// </summary>
-    public List<SentinelServer> Servers { get; set; } = new();
-
-    /// <summary>
-    /// 範例訊息（Q2）查詢範圍。<c>Full</c>＝進 prompt 的每個簽章都查範例訊息（預設，
-    /// 多台 Sentinel 分攤後負擔可接受，且範例訊息對規則/趨勢/關聯三層偵測零作用，
-    /// 縮減只會犧牲敘事具體性）；<c>Reduced</c>＝僅 Security 與 Other 類簽章查範例
-    /// （與 AI 白話翻譯角色一致的降級保險開關，供哪台 Sentinel 反映負載時單獨調整）。
-    /// docs/PLAN.md「Q2 取樣策略」。
-    /// </summary>
-    public string SampleFetchMode { get; set; } = "Full";
-
-    /// <summary>每次 REST 呼叫（含建立/輪詢/翻頁）之間的節流間隔毫秒數。0 = 不節流。</summary>
-    public int QueryDelayMs { get; set; } = 0;
-
-    /// <summary>event-search job 的單頁筆數（對應 Sentinel API 的 <c>pgsize</c>）。</summary>
-    public int PageSize { get; set; } = 500;
-
-    /// <summary>
-    /// 單一 event-search job 最多回傳的事件筆數（對應 Sentinel API 的 <c>max-results</c>）。
-    /// 異常爆量日（如遭大量暴力破解）不無限制拉取，超過時該批標記結果被截斷，
-    /// 呼叫端比照 <c>DataIncomplete</c> 的基準排除邏輯處理。
-    /// </summary>
-    public int MaxResultsPerJob { get; set; } = 100_000;
-
-    /// <summary>單次 REST 呼叫的逾時秒數。</summary>
-    public int TimeoutSeconds { get; set; } = 120;
-
-    /// <summary>失敗重試次數（Polly：503／逾時／網路錯誤重試，4xx 不重試）。</summary>
-    public int RetryCount { get; set; } = 3;
-
-    /// <summary>
-    /// true＝略過 Sentinel 憑證的驗證。Sentinel 常見以自簽憑證部署，這是顯式的逃生門
-    /// （非靜默放行），啟用時每個 SentinelClient 建立時記一筆 WARN。預設 false（嚴格驗證）。
-    /// </summary>
-    public bool AllowInvalidCertificates { get; set; } = false;
-}
-
 public class SentinelServer
 {
-    /// <summary>
-    /// SentinelId（DB 投影專用；appsettings.json 反序列化時恆為 0，只當種子來源，
-    /// 匯入後身分改以 <see cref="Sentinel.SentinelId"/> 為準）。
-    /// </summary>
+    /// <summary>對應 <see cref="Sentinel.SentinelId"/>，供呼叫端比對／記錄用</summary>
     public long Id { get; set; }
 
     /// <summary>識別名稱，也是主機清單登錄「所屬 Sentinel」時填的值</summary>
@@ -255,10 +202,7 @@ public class SentinelServer
     /// <summary>探索連線帳號（docs/SCALE-2000-PLAN.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
     public string Username { get; set; } = string.Empty;
 
-    /// <summary>
-    /// 探索連線密碼。**正式環境以環境變數覆寫**（NetIq__Servers__0__Password），不寫進版控。
-    /// Web 端唯讀解析同一份批次 appsettings（既有決策），但密碼絕不回傳前端——只回「可否掃描」。
-    /// </summary>
+    /// <summary>探索連線密碼（明碼，由 <see cref="Sentinel.PasswordEnc"/> 解密而來）</summary>
     public string Password { get; set; } = string.Empty;
 
     /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>

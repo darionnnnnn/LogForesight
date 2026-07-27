@@ -19,7 +19,7 @@ public class SentinelClientTests
         Password = "secret"
     };
 
-    private static NetIqSettings Settings(int retryCount = 3, int timeoutSeconds = 120, int queryDelayMs = 0, int pageSize = 500) => new()
+    private static NetiqOptions Settings(int retryCount = 3, int timeoutSeconds = 120, int queryDelayMs = 0, int pageSize = 500) => new()
     {
         RetryCount = retryCount,
         TimeoutSeconds = timeoutSeconds,

@@ -22,7 +22,7 @@ public static class NetiqProbeCli
     /// probe 的第一步就該用有文件背書的寫法，語法本身被拒的機率最低。</summary>
     private const string MatchAllFilter = "sev:[0 TO 5]";
 
-    public static async Task<int> RunAsync(ISentinelStore sentinelStore, NetIqSettings settings)
+    public static async Task<int> RunAsync(ISentinelStore sentinelStore, NetiqOptions settings)
     {
         var sentinels = sentinelStore.GetAll().Where(s => s.Active).ToList();
         if (sentinels.Count == 0)
@@ -64,7 +64,7 @@ public static class NetiqProbeCli
         Password = CryptoHelper.IsEncrypted(s.PasswordEnc) ? CryptoHelper.Decrypt(s.PasswordEnc) : s.PasswordEnc
     };
 
-    private static async Task<bool> ProbeOneAsync(SentinelServer server, NetIqSettings settings)
+    private static async Task<bool> ProbeOneAsync(SentinelServer server, NetiqOptions settings)
     {
         Console.WriteLine($"── Sentinel「{server.Name}」（{server.BaseUrl}） ──");
         Console.WriteLine($"   [人工核對] apidoc（有無聚合端點可取代 §1.3 的本地聚合退回方案）：" +

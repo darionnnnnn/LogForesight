@@ -81,14 +81,14 @@ public sealed class SentinelClient : ISentinelClient
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly SentinelServer _server;
-    private readonly NetIqSettings _settings;
+    private readonly NetiqOptions _settings;
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _queue = new(1, 1);
     private readonly ResiliencePipeline _retryPipeline;
     private string? _token;
     private bool _disposed;
 
-    public SentinelClient(SentinelServer server, NetIqSettings settings, HttpMessageHandler? handler = null)
+    public SentinelClient(SentinelServer server, NetiqOptions settings, HttpMessageHandler? handler = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。");
@@ -132,7 +132,7 @@ public sealed class SentinelClient : ISentinelClient
             .Build();
     }
 
-    private static HttpMessageHandler CreateDefaultHandler(NetIqSettings settings)
+    private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings)
     {
         var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) };
         if (settings.AllowInvalidCertificates)

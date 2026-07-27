@@ -1,8 +1,9 @@
 /**
  * 資料匯入（docs/WEB-SPEC.md §9.9、docs/NETIQ-WEB-CONFIG-PLAN.md）。
  *
- * CSV 匯入（上傳→預覽→套用）與 NetIQ 匯入（Sentinel 管理＋新增/掃描精靈）合併在同一頁，
+ * CSV 匯入（上傳→預覽→套用）與 NetIQ 匯入（從既有 Sentinel 掃描並匯入主機）合併在同一頁，
  * 因為兩者最終都寫進同一份「匯入紀錄」，拆成兩頁只會讓使用者要來回找歷史紀錄。
+ * Sentinel 本身的連線設定／新增／編輯改在「系統管理 > NetIQ 維護」頁維護。
  */
 
 import { api } from '../core/api.js';
@@ -240,210 +241,78 @@ async function loadLogs() {
     });
 }
 
-// ── NetIQ 匯入：Sentinel 清單與編輯 ──────────────────────────────────────────
+// ── NetIQ 匯入：從既有 Sentinel 掃描（Sentinel 本身的新增／編輯在「NetIQ 維護」頁） ──
 
-const sentinelListContainer = document.getElementById('sentinel-list');
-const sentinelForm = document.getElementById('sentinel-form');
-const sentinelModal = new bootstrap.Modal(document.getElementById('sentinel-modal'));
+const scanPicker = document.getElementById('netiq-scan-picker');
+let discoverableSentinels = [];
 
-let sentinels = [];
-let editingSentinel = null;
-
-async function loadSentinels() {
-    renderLoading(sentinelListContainer, 3);
-    sentinels = await api.get('/api/admin/sentinels');
-    renderSentinels();
+async function loadScanPicker() {
+    renderLoading(scanPicker, 1);
+    const sentinels = await api.get('/api/admin/sentinels');
+    discoverableSentinels = sentinels.filter(s => s.active && s.canDiscover);
+    renderScanPicker(sentinels);
 }
 
-function renderSentinels() {
-    document.getElementById('sentinel-count').textContent = `共 ${sentinels.length} 台`;
+function renderScanPicker(allSentinels) {
+    scanPicker.replaceChildren();
 
-    renderTable(sentinelListContainer, {
-        columns: [
-            { title: '名稱', render: s => s.name },
-            { title: '連線位址', render: s => s.baseUrl || '' },
-            { title: '探索帳密', render: s => renderDiscoverBadge(s) },
-            { title: '主機數', render: s => String(s.hostCount) },
-            { title: '狀態', render: s => renderSentinelActiveBadge(s.active) },
-            { title: '', className: 'text-end', render: s => renderSentinelActions(s) }
-        ],
-        rows: sentinels,
-        empty: { title: '尚無 Sentinel', hint: '用右上角的「新增 Sentinel」建立第一台。' }
-    });
-}
-
-function renderDiscoverBadge(sentinel) {
-    const span = document.createElement('span');
-    if (sentinel.canDiscover) {
-        span.className = 'lf-badge lf-badge--success';
-        span.textContent = '已設定';
-    } else {
-        span.className = 'text-muted small';
-        span.textContent = sentinel.hasPassword ? '缺帳號' : '未設定';
-    }
-    return span;
-}
-
-function renderSentinelActiveBadge(active) {
-    const span = document.createElement('span');
-    span.className = `lf-badge lf-badge--${active ? 'success' : 'secondary'}`;
-    span.textContent = active ? '啟用' : '停用（暫停輪巡）';
-    return span;
-}
-
-function renderSentinelActions(sentinel) {
-    const wrap = document.createElement('div');
-    wrap.className = 'd-flex gap-1 justify-content-end';
-
-    const scan = document.createElement('button');
-    scan.type = 'button';
-    scan.className = 'btn btn-sm btn-primary';
-    scan.textContent = '掃描匯入';
-    scan.disabled = !sentinel.canDiscover;
-    scan.title = sentinel.canDiscover ? '' : '請先於「編輯」補上探索帳密';
-    scan.addEventListener('click', () => openWizardExisting(sentinel));
-    wrap.appendChild(scan);
-
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.className = 'btn btn-sm btn-outline-primary';
-    edit.textContent = '編輯';
-    edit.addEventListener('click', () => openSentinelModal(sentinel));
-    wrap.appendChild(edit);
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'btn btn-sm btn-outline-secondary';
-    toggle.textContent = sentinel.active ? '停用' : '啟用';
-    toggle.addEventListener('click', () => onToggleSentinelActive(sentinel));
-    wrap.appendChild(toggle);
-
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'btn btn-sm btn-outline-danger';
-    remove.textContent = '刪除';
-    remove.addEventListener('click', () => onDeleteSentinel(sentinel));
-    wrap.appendChild(remove);
-
-    return wrap;
-}
-
-async function onToggleSentinelActive(sentinel) {
-    try {
-        await api.put(`/api/admin/sentinels/${sentinel.sentinelId}/active`, { active: !sentinel.active });
-        toast(sentinel.active ? `已停用「${sentinel.name}」（暫停輪巡）` : `已啟用「${sentinel.name}」`, 'success');
-        await loadSentinels();
-    } catch {
-        // 錯誤已由 api.js 顯示
-    }
-}
-
-async function onDeleteSentinel(sentinel) {
-    const confirmed = await confirmAction({
-        title: '刪除 Sentinel',
-        message: sentinel.hostCount > 0
-            ? `「${sentinel.name}」轄下有 ${sentinel.hostCount} 台使用中的主機，刪除後這些主機會停用並標記為孤兒（可於主機頁重新綁定到其他 Sentinel，歷史紀錄不受影響）。確定要刪除嗎？`
-            : `將刪除 Sentinel「${sentinel.name}」。此操作無法復原。`,
-        confirmText: '刪除'
-    });
-    if (!confirmed) return;
-
-    try {
-        await api.delete(`/api/admin/sentinels/${sentinel.sentinelId}`);
-        toast(`已刪除 Sentinel「${sentinel.name}」`, 'success');
-        await loadSentinels();
-    } catch {
-        // 錯誤已由 api.js 顯示
-    }
-}
-
-function openSentinelModal(sentinel) {
-    editingSentinel = sentinel;
-
-    document.getElementById('sentinel-modal-title').textContent = sentinel ? `編輯 ${sentinel.name}` : '新增 Sentinel';
-    document.getElementById('sentinel-name').value = sentinel?.name ?? '';
-    document.getElementById('sentinel-base-url').value = sentinel?.baseUrl ?? '';
-    document.getElementById('sentinel-username').value = sentinel?.username ?? '';
-    document.getElementById('sentinel-password').value = '';
-    document.getElementById('sentinel-password-hint').textContent = sentinel?.hasPassword
-        ? '已設定，留空＝不變更。'
-        : '留空＝此 Sentinel 無法主動掃描。';
-
-    sentinelModal.show();
-}
-
-sentinelForm.addEventListener('submit', async event => {
-    event.preventDefault();
-
-    const name = document.getElementById('sentinel-name').value.trim();
-    if (!name) {
-        toast('請輸入 Sentinel 名稱', 'warning');
+    if (allSentinels.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'text-muted small mb-0';
+        empty.innerHTML = '尚無 Sentinel，請先至「<a href="/admin/netiq">NetIQ 維護</a>」頁新增。';
+        scanPicker.appendChild(empty);
         return;
     }
 
-    const saveButton = document.getElementById('sentinel-save');
-    const restore = withBusy(saveButton, '儲存中');
-
-    try {
-        await api.post('/api/admin/sentinels', {
-            sentinelId: editingSentinel?.sentinelId ?? 0,
-            name,
-            baseUrl: document.getElementById('sentinel-base-url').value.trim(),
-            username: document.getElementById('sentinel-username').value.trim(),
-            // 留空字串＝不變更（後端 write-only 語意）；沒有勾選清除密碼的介面，
-            // 需要清空密碼的情境（例如帳密停用）改用「停用」而非清空密碼
-            password: document.getElementById('sentinel-password').value || null
-        });
-
-        toast(editingSentinel ? '已更新 Sentinel' : '已新增 Sentinel', 'success');
-        sentinelModal.hide();
-        await loadSentinels();
-    } catch {
-        // 錯誤訊息已由 api.js 以 toast 顯示
-    } finally {
-        restore();
+    if (discoverableSentinels.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'text-muted small mb-0';
+        empty.innerHTML = '目前沒有帳密齊備且啟用中的 Sentinel，請至「<a href="/admin/netiq">NetIQ 維護</a>」頁補上探索帳密。';
+        scanPicker.appendChild(empty);
+        return;
     }
-});
 
-// ── NetIQ 匯入：新增／掃描精靈（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 6-8） ────────
-//
-// 「新增 Sentinel」與「對既有 Sentinel 掃描匯入」共用同一個精靈：前者多一個連線設定
-// 步驟（掃描成功才建立 Sentinel，定案 6＝掃描即帳密驗證），後兩步（選主機／指派群組）
-// 完全相同，拆成兩套 UI 只會製造重複與不同步的風險。
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-center gap-2';
+
+    const select = document.createElement('select');
+    select.className = 'form-select';
+    select.style.maxWidth = '320px';
+    select.id = 'scan-sentinel-select';
+    for (const sentinel of discoverableSentinels) {
+        select.appendChild(new Option(sentinel.name, sentinel.name));
+    }
+    row.appendChild(select);
+
+    const scanButton = document.createElement('button');
+    scanButton.type = 'button';
+    scanButton.className = 'btn btn-primary';
+    scanButton.textContent = '掃描匯入';
+    scanButton.addEventListener('click', () => {
+        const sentinel = discoverableSentinels.find(s => s.name === select.value);
+        if (sentinel) openWizard(sentinel);
+    });
+    row.appendChild(scanButton);
+
+    scanPicker.appendChild(row);
+}
+
+// ── 掃描精靈（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7-8） ───────────────────────
 
 const wizardModal = new bootstrap.Modal(document.getElementById('netiq-wizard-modal'));
 const wizardTitle = document.getElementById('wizard-title');
 const wizardHint = document.getElementById('wizard-hint');
 const wizardBackButton = document.getElementById('wizard-back');
 const wizardPrimaryButton = document.getElementById('wizard-primary');
-const autoScanCheckbox = document.getElementById('wizard-auto-scan');
 
-let wizardMode = 'create';        // 'create' | 'existing'
-let wizardPane = 'connect';       // 'connect' | 'subnets' | 'groups'
+let wizardPane = 'subnets';       // 'subnets' | 'groups'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
-let wizardExistingServer = null;  // mode === 'existing' 時的 Sentinel 名稱
+let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
-function openWizardCreate() {
-    wizardMode = 'create';
-    wizardPane = 'connect';
-    wizardScan = null;
-    wizardExistingServer = null;
-
-    document.getElementById('wizard-name').value = '';
-    document.getElementById('wizard-base-url').value = '';
-    document.getElementById('wizard-username').value = '';
-    document.getElementById('wizard-password').value = '';
-    autoScanCheckbox.checked = true;
-
-    renderWizardPane();
-    wizardModal.show();
-}
-
-async function openWizardExisting(sentinel) {
-    wizardMode = 'existing';
+async function openWizard(sentinel) {
     wizardPane = 'subnets';
     wizardScan = null;
-    wizardExistingServer = sentinel.name;
+    wizardServer = sentinel.name;
 
     renderWizardPane();
     wizardModal.show();
@@ -468,18 +337,14 @@ function wizardNote(text) {
 }
 
 function renderWizardPane() {
-    document.getElementById('wizard-pane-connect').classList.toggle('d-none', wizardPane !== 'connect');
     document.getElementById('wizard-pane-subnets').classList.toggle('d-none', wizardPane !== 'subnets');
     document.getElementById('wizard-pane-groups').classList.toggle('d-none', wizardPane !== 'groups');
 
     wizardBackButton.classList.toggle('d-none', wizardPane !== 'groups');
     wizardHint.textContent = '';
 
-    if (wizardPane === 'connect') {
-        wizardTitle.textContent = '新增 Sentinel';
-        wizardPrimaryButton.textContent = autoScanCheckbox.checked ? '掃描並建立' : '建立';
-    } else if (wizardPane === 'subnets') {
-        wizardTitle.textContent = wizardMode === 'create' ? '選擇要匯入的主機' : `從「${wizardExistingServer}」掃描匯入`;
+    if (wizardPane === 'subnets') {
+        wizardTitle.textContent = `從「${wizardServer}」掃描匯入`;
         wizardPrimaryButton.textContent = '下一步';
         updateSubnetSelectionHint();
     } else {
@@ -488,12 +353,6 @@ function renderWizardPane() {
     }
 }
 
-autoScanCheckbox.addEventListener('change', () => {
-    if (wizardPane === 'connect') renderWizardPane();
-});
-
-document.getElementById('btn-new-sentinel').addEventListener('click', openWizardCreate);
-
 wizardBackButton.addEventListener('click', () => {
     if (wizardPane !== 'groups') return;
     wizardPane = 'subnets';
@@ -501,52 +360,12 @@ wizardBackButton.addEventListener('click', () => {
 });
 
 wizardPrimaryButton.addEventListener('click', () => {
-    if (wizardPane === 'connect') {
-        wizardSubmitConnect();
-    } else if (wizardPane === 'subnets') {
+    if (wizardPane === 'subnets') {
         wizardAdvanceToGroups();
     } else {
         wizardSubmitImport();
     }
 });
-
-async function wizardSubmitConnect() {
-    const name = document.getElementById('wizard-name').value.trim();
-    const username = document.getElementById('wizard-username').value.trim();
-    const password = document.getElementById('wizard-password').value;
-    const baseUrl = document.getElementById('wizard-base-url').value.trim();
-    const autoScan = autoScanCheckbox.checked;
-
-    if (!name) {
-        toast('請輸入 Sentinel 名稱', 'warning');
-        return;
-    }
-    if (autoScan && (!username || !password)) {
-        toast('自動掃描需要探索帳號與密碼', 'warning');
-        return;
-    }
-
-    const restore = withBusy(wizardPrimaryButton, autoScan ? '掃描中' : '建立中');
-    try {
-        if (autoScan) {
-            wizardScan = await api.post('/api/admin/netiq/create-and-scan', { name, baseUrl, username, password });
-            restore();
-            await loadSentinels();
-            wizardPane = 'subnets';
-            renderWizardPane();
-            renderSubnetSelection();
-        } else {
-            await api.post('/api/admin/sentinels', { sentinelId: 0, name, baseUrl, username, password: password || null });
-            restore();
-            toast('已新增 Sentinel', 'success');
-            wizardModal.hide();
-            await loadSentinels();
-        }
-    } catch {
-        restore();
-        // 錯誤已由 api.js 顯示
-    }
-}
 
 function wizardAdvanceToGroups() {
     if (selectedWizardIps().length === 0) {
@@ -572,7 +391,7 @@ async function wizardSubmitImport() {
         toast(`已匯入：新增 ${result.added}、更新 ${result.updated}` +
               (result.revived > 0 ? `、復活 ${result.revived}` : ''), 'success', 6000);
         wizardModal.hide();
-        await loadSentinels();
+        await loadScanPicker();
         await loadLogs();
     } catch {
         // 錯誤已由 api.js 顯示
@@ -750,4 +569,4 @@ function collectGroupAssignments() {
 }
 
 loadLogs();
-loadSentinels();
+loadScanPicker();

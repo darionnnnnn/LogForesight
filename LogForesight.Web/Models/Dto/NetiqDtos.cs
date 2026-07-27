@@ -191,3 +191,42 @@ public class NetiqImportResultDto
     public int Updated { get; set; }
     public int Revived { get; set; }
 }
+
+// ── 連線與節流參數（「系統管理 > NetIQ 維護」頁）───────────────────────────
+
+public class NetiqOptionsDto
+{
+    public string SampleFetchMode { get; set; } = "Full";
+    public int QueryDelayMs { get; set; }
+    public int PageSize { get; set; }
+    public int MaxResultsPerJob { get; set; }
+    public int TimeoutSeconds { get; set; }
+    public int RetryCount { get; set; }
+    public bool AllowInvalidCertificates { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedByAccount { get; set; }
+}
+
+public class UpdateNetiqOptionsRequest
+{
+    /// <summary>Full | Reduced</summary>
+    [Required]
+    public string SampleFetchMode { get; set; } = "Full";
+
+    [Range(0, 60_000)]
+    public int QueryDelayMs { get; set; }
+
+    [Range(1, 5000)]
+    public int PageSize { get; set; }
+
+    [Range(1, 10_000_000)]
+    public int MaxResultsPerJob { get; set; }
+
+    [Range(1, 3600)]
+    public int TimeoutSeconds { get; set; }
+
+    [Range(0, 20)]
+    public int RetryCount { get; set; }
+
+    public bool AllowInvalidCertificates { get; set; }
+}

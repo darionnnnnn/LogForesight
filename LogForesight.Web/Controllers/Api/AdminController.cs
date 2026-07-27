@@ -22,6 +22,7 @@ public class AdminController : ControllerBase
     private readonly INetiqDiscoveryService _discovery;
     private readonly IGroupAdminService _groups;
     private readonly ISentinelAdminService _sentinels;
+    private readonly INetiqOptionsService _netiqOptions;
 
     public AdminController(
         IUserAdminService users,
@@ -29,7 +30,8 @@ public class AdminController : ControllerBase
         INetiqHostService netiq,
         INetiqDiscoveryService discovery,
         IGroupAdminService groups,
-        ISentinelAdminService sentinels)
+        ISentinelAdminService sentinels,
+        INetiqOptionsService netiqOptions)
     {
         _users = users;
         _hosts = hosts;
@@ -37,6 +39,7 @@ public class AdminController : ControllerBase
         _discovery = discovery;
         _groups = groups;
         _sentinels = sentinels;
+        _netiqOptions = netiqOptions;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -232,4 +235,14 @@ public class AdminController : ControllerBase
     [HttpPut("sentinels/{sentinelId:long}/active")]
     public ApiResponse<SentinelDto> SetSentinelActive(long sentinelId, [FromBody] SetSentinelActiveRequest request) =>
         ApiResponse<SentinelDto>.Ok(_sentinels.SetActive(sentinelId, request.Active));
+
+    // ── NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁）────────────────────
+
+    [HttpGet("netiq/options")]
+    public ApiResponse<NetiqOptionsDto> GetNetiqOptions() =>
+        ApiResponse<NetiqOptionsDto>.Ok(_netiqOptions.Get());
+
+    [HttpPut("netiq/options")]
+    public ApiResponse<NetiqOptionsDto> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
+        ApiResponse<NetiqOptionsDto>.Ok(_netiqOptions.Update(request));
 }

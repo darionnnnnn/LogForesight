@@ -108,12 +108,9 @@ try
                 settings.Auth.ServerAdmin.Account);
         }
 
-        // Sentinel 改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、6）：
-        // store 為空時自批次 appsettings.json 的 NetIq.Servers 匯入一次種子，之後皆以 Web 為準。
+        // Sentinel 一律由 Web「系統管理 > NetIQ 維護」頁維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），
+        // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
-        var seeded = SentinelSeeder.SeedIfEmpty(sentinelStore, dataRoot);
-        if (seeded > 0)
-            logger.Info("Sentinel store 為空，已自批次 appsettings.json 匯入 {0} 筆種子。", seeded);
 
         // SentinelId 回填（定案 4）：一次性遷移，冪等，見 SentinelIdBackfiller 的類別註解
         var hostStore = scope.ServiceProvider.GetRequiredService<IHostStore>();

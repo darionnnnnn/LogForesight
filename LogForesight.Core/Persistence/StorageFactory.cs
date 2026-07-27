@@ -198,4 +198,8 @@ public static class StorageFactory
     /// <summary>全站系統設定（未處理等級門檻／AI 位址／補充留存天數，「系統管理 > 設定」頁維護）</summary>
     public static ISystemSettingsStore CreateSystemSettingsStore(StorageSettings settings, string dataRoot) =>
         new JsonSystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
+
+    /// <summary>NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁維護）</summary>
+    public static INetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
+        new JsonNetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));
 }

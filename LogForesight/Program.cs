@@ -230,7 +230,8 @@ if (args.Contains("--host-list"))
 if (args.Contains("--netiq-probe"))
 {
     var sentinelStoreForProbe = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
-    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, settings.NetIq);
+    var netiqOptionsForProbe = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
+    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, netiqOptionsForProbe);
 
     LogManager.Shutdown();
     return probeExitCode;
