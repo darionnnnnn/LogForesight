@@ -509,6 +509,142 @@ public class HandlingServiceTests
                 Status = IssueHandlingStatuses.Resolved
             }));
     }
+
+    // ── 批次套用（風險日詳情：勾選多個問題後在右側處理狀態區塊一次套用）─────────
+
+    [Fact]
+    public void 批次套用_多個問題同時標記成功()
+    {
+        var day = Today.AddDays(-12);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        var c = Issue("net", 2000);
+        _repository.AddRecord(_host.HostName, day, a, b, c);
+
+        var result = Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        Assert.Equal(2, result.UpdatedIssueKeys.Count);
+        Assert.Equal(2, result.ClosedIssues);
+        Assert.Equal(3, result.TotalIssues);
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+    }
+
+    [Fact]
+    public void 批次套用_處理中狀態存下預計完成日()
+    {
+        var day = Today.AddDays(-13);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var dueDate = Today.AddDays(7);
+
+        Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = dueDate
+        });
+
+        var stored = _issueHandlings.GetForDay(_host.HostName, day);
+        Assert.All(stored, h => Assert.Equal(dueDate.Date, h.DueDate));
+    }
+
+    [Fact]
+    public void 批次套用_非處理中狀態不存預計完成日()
+    {
+        var day = Today.AddDays(-14);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a) },
+            Status = IssueHandlingStatuses.Resolved,
+            DueDate = Today.AddDays(7)   // 使用者填了但狀態不是處理中——不該被存下
+        });
+
+        var stored = _issueHandlings.GetForDay(_host.HostName, day).Single();
+        Assert.Null(stored.DueDate);
+    }
+
+    [Fact]
+    public void 批次套用_略過已不存在的問題鍵()
+    {
+        var day = Today.AddDays(-15);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var result = Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), "System|gone|999|1" },
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        Assert.Single(result.UpdatedIssueKeys);
+        Assert.Equal(IssueSignatureKey.For(a), result.UpdatedIssueKeys[0]);
+    }
+
+    [Fact]
+    public void 批次套用_全部問題鍵都不存在時擲驗證例外()
+    {
+        var day = Today.AddDays(-16);
+        _repository.AddRecord(_host.HostName, day, Issue("disk", 153));
+
+        Assert.Throws<DomainException>(() =>
+            Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+            {
+                IssueKeys = new List<string> { "System|gone|999|1" },
+                Status = IssueHandlingStatuses.Resolved
+            }));
+    }
+
+    [Fact]
+    public void 批次套用_調回未處理且選擇刪除記憶時記憶消失()
+    {
+        var day = Today.AddDays(-17);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.KnownNoise
+        });
+        Assert.NotNull(_noiseMarks.Get(_host.HostName, IssueSignatureKey.For(a)));
+        Assert.NotNull(_noiseMarks.Get(_host.HostName, IssueSignatureKey.For(b)));
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Open,
+            ForgetNoise = true
+        });
+
+        Assert.Null(_noiseMarks.Get(_host.HostName, IssueSignatureKey.For(a)));
+        Assert.Null(_noiseMarks.Get(_host.HostName, IssueSignatureKey.For(b)));
+    }
+
+    [Fact]
+    public void 批次套用_處理中預計完成日早於今天_擲驗證例外()
+    {
+        var day = Today.AddDays(-18);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Assert.Throws<DomainException>(() =>
+            Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+            {
+                IssueKeys = new List<string> { IssueSignatureKey.For(a) },
+                Status = IssueHandlingStatuses.InProgress,
+                DueDate = Today.AddDays(-1)
+            }));
+    }
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────
