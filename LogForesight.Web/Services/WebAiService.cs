@@ -38,11 +38,19 @@ public class WebAiService : IWebAiService
     private readonly Lazy<AIService?> _ai;
     private readonly bool _available;
 
-    public WebAiService(WebAppSettings settings, IAiCacheStore cache)
+    public WebAiService(WebAppSettings settings, IAiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
 
+        // 進階參數（Timeout/Retry/Tokens…）仍讀批次 appsettings.json；位址／金鑰的事實來源
+        // 是「系統管理 > 設定」頁（DB），appsettings.Ai.BaseUrl 只是 DB 尚未設定時的退路
         var aiSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot());
+        var dbSettings = systemSettings.Get();
+        if (aiSettings != null)
+        {
+            if (!string.IsNullOrWhiteSpace(dbSettings.AiBaseUrl)) aiSettings.BaseUrl = dbSettings.AiBaseUrl;
+            if (CryptoHelper.IsEncrypted(dbSettings.AiApiKeyEnc)) aiSettings.ApiKey = CryptoHelper.Decrypt(dbSettings.AiApiKeyEnc);
+        }
         _available = aiSettings != null && !string.IsNullOrWhiteSpace(aiSettings.BaseUrl);
 
         // 延遲建立：沒人用 AI 時不必建 HttpClient。互動情境的參數覆寫——**不重試**：

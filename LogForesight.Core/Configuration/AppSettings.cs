@@ -62,8 +62,15 @@ public class AppSettingsLoadException : Exception
 
 public class AiSettings
 {
-    /// <summary>llama.cpp 的 OpenAI 相容 API 位址</summary>
+    /// <summary>llama.cpp 的 OpenAI 相容 API 位址。實際生效值優先讀「系統管理 > 設定」頁（<see cref="SystemSettings.AiBaseUrl"/>），此為 DB 尚未設定時的退路</summary>
     public string BaseUrl { get; set; } = "http://localhost:8080";
+
+    /// <summary>
+    /// 需驗證的 API 端點所需金鑰（明碼，僅存在於執行期記憶體），發送時以 Authorization: Bearer 帶入。
+    /// 地端無驗證的端點留空即可。**唯一事實來源是「系統管理 > 設定」頁**（<see cref="SystemSettings.AiApiKeyEnc"/>
+    /// 解密後填入），appsettings.json 不提供這個欄位。
+    /// </summary>
+    public string ApiKey { get; set; } = "";
 
     /// <summary>單次 AI 呼叫的逾時秒數。本機 27B 級模型單次回應可能需數分鐘，預設 600 秒</summary>
     public int TimeoutSeconds { get; set; } = 600;

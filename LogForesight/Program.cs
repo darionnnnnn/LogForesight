@@ -54,12 +54,14 @@ AppDomain.CurrentDomain.UnhandledException += (_, e) =>
     log.Fatal(e.ExceptionObject as Exception, "未捕捉的例外導致程式終止");
 
 // ── 設定 ─────────────────────────────────────────────────────────
-// 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）
+// 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）——分析語意常數，不開放設定
 const int TrendWindowDays = 14;
-// 首次執行（歷史資料庫全空）時回補歷史的天數，讓趨勢分析一開始就有更充足的基準資料
-const int InitialHistoryDays = 120;
-// 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除
-const int RetentionDays = 120;
+// 首次執行（歷史資料庫全空）時回補歷史的天數，讓趨勢分析一開始就有更充足的基準資料。
+// 事實來源是「系統管理 > 設定」頁（DB），這裡是 DB 尚未設定時的退路；實際生效值於讀取
+// dataRoot 後、DB 可用時覆寫（見下方 systemSettings 讀取區塊）。
+var InitialHistoryDays = 120;
+// 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除。同上，DB 為事實來源。
+var RetentionDays = 120;
 
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
@@ -129,6 +131,33 @@ if (!string.Equals(dataRoot, AppContext.BaseDirectory, StringComparison.OrdinalI
     Console.WriteLine($"資料根目錄：{dataRoot}");
     log.Info("資料根目錄（Storage.DataRoot）：{DataRoot}", dataRoot);
 }
+// 「系統管理 > 設定」頁（DB）是 AI 位址／金鑰與補充／留存天數的事實來源；appsettings.json 的
+// Ai.BaseUrl 與上面兩個預設值只是 DB 尚未設定時的退路（開箱即用，不強制先跑過 Web 設定頁）。
+// TimeoutSeconds/RetryCount 等節流參數仍由 appsettings.json 控制，不在設定頁維護。
+try
+{
+    var systemSettings = StorageFactory.CreateSystemSettingsStore(settings.Storage, dataRoot).Get();
+    if (!string.IsNullOrWhiteSpace(systemSettings.AiBaseUrl))
+        settings.Ai.BaseUrl = systemSettings.AiBaseUrl;
+    if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
+        settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
+
+    if (systemSettings.RetentionDays >= systemSettings.InitialHistoryDays)
+    {
+        InitialHistoryDays = systemSettings.InitialHistoryDays;
+        RetentionDays = systemSettings.RetentionDays;
+    }
+    else
+    {
+        log.Warn("系統設定的歷史資料保留天數（{RetentionDays}）小於首次回補天數（{InitialHistoryDays}），改用內建預設值。",
+            systemSettings.RetentionDays, systemSettings.InitialHistoryDays);
+    }
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "讀取系統設定（AI 位址／金鑰／補充留存天數）失敗，改用內建預設值：{0}", ex.Message);
+}
+
 Console.WriteLine($"AI API：{settings.Ai.BaseUrl}（逾時 {settings.Ai.TimeoutSeconds} 秒，失敗重試 {settings.Ai.RetryCount} 次）");
 log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCount}, JsonRetryCount={JsonRetryCount}, " +
          "MaxTokens={MaxTokens}, DeepDiveMaxTokens={DeepDiveMaxTokens}, FrequencyPenalty={FrequencyPenalty}, PresencePenalty={PresencePenalty}",

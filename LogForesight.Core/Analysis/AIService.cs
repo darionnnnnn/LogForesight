@@ -72,6 +72,14 @@ public class AIService
             DefaultRequestVersion = HttpVersion.Version11,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
+
+        // 需驗證的端點才帶 Authorization；地端無驗證的端點（多數情況）沒有金鑰，不送這個標頭
+        if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+        {
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+        }
+
         _baseUrl = settings.BaseUrl.TrimEnd('/');
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;

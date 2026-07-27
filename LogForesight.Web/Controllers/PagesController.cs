@@ -76,6 +76,10 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Imports() => View();
 
+    [HttpGet("/admin/settings")]
+    [Permission(Capability.Maintain)]
+    public IActionResult Settings() => View();
+
     [HttpGet("/access-denied")]
     public IActionResult AccessDenied() => View();
 

@@ -1,0 +1,70 @@
+@{
+    ViewData["Title"] = "設定";
+}
+
+<form id="settings-form" novalidate>
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">未處理計算</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-2">
+                只有勾選的等級才會列入「未處理」計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦。
+                未勾選的等級若從未被人明確標記過，會顯示「不處理（預設）」，不計入未處理數量；
+                使用者仍可隨時手動「調回未處理」。
+            </p>
+            <div class="d-flex flex-wrap gap-3" id="severity-checks"></div>
+        </div>
+    </div>
+
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">AI 服務</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="mb-3">
+                <label for="ai-base-url" class="form-label">API 位址</label>
+                <input type="text" class="form-control" id="ai-base-url" placeholder="http://localhost:8080" />
+                <div class="form-text">OpenAI 相容端點（如 llama.cpp／KoboldCpp）。留空會停用 AI 分析與加值功能。</div>
+            </div>
+            <div class="mb-2">
+                <label for="ai-api-key" class="form-label">API 金鑰</label>
+                <input type="password" class="form-control" id="ai-api-key" autocomplete="new-password" placeholder="留空＝沿用既有金鑰" />
+                <div class="form-text" id="ai-api-key-hint">地端無驗證的端點可留空；需驗證的端點會以 Authorization: Bearer 帶入。</div>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="ai-api-key-clear" />
+                <label class="form-check-label" for="ai-api-key-clear">清除目前的 API 金鑰</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">資料保留</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="row g-3">
+                <div class="col-sm-6">
+                    <label for="initial-history-days" class="form-label">首次執行回補天數</label>
+                    <input type="number" class="form-control" id="initial-history-days" min="1" max="3650" required />
+                    <div class="form-text">歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。</div>
+                </div>
+                <div class="col-sm-6">
+                    <label for="retention-days" class="form-label">歷史資料保留天數</label>
+                    <input type="number" class="form-control" id="retention-days" min="1" max="3650" required />
+                    <div class="form-text">超過此天數的歷史紀錄，每次批次啟動時自動清除。不可小於首次執行回補天數。</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex align-items-center gap-3">
+        <button type="submit" class="btn btn-primary" id="settings-save">儲存</button>
+        <span class="text-muted small" id="settings-updated"></span>
+    </div>
+</form>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/settings.js" asp-append-version="true"></script>
+}
