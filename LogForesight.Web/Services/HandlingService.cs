@@ -26,6 +26,9 @@ public interface IHandlingService
     /// <summary>設定單一問題的處理狀態（方案 B）；回傳更新後的當日進度</summary>
     IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request);
 
+    /// <summary>批次設定多個問題的處理狀態（風險日詳情：勾選多個問題後在右側區塊一次套用）</summary>
+    BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request);
+
     /// <summary>指派/改派處理人（僅 admin）</summary>
     HandlingDto Assign(long hostId, DateTime date, long? handlerId);
 
@@ -133,49 +136,13 @@ public class HandlingService : IHandlingService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        if (!clearing && !IssueHandlingStatuses.IsValid(request.Status))
-            throw DomainException.Validation($"未知的問題處理狀態「{request.Status}」。");
+        ValidateIssueStatus(request.Status, request.DueDate, clearing);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
                     ?? throw DomainException.Validation("找不到這個問題，可能紀錄已更新，請重新整理。");
 
-        if (clearing)
-        {
-            _issueStore.Clear(host.HostName, date, request.IssueKey);
-        }
-        else
-        {
-            _issueStore.Save(new IssueHandling
-            {
-                HostName = host.HostName,
-                Date = date.Date,
-                IssueKey = request.IssueKey,
-                Status = request.Status,
-                Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
-                ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-                ActorAccount = _currentUser.Account,
-                UpdatedAt = DateTime.Now
-            });
-
-            // 標「已知雜訊」＝寫入記憶，之後同主機同簽章的新問題自動判讀成雜訊（治標，供無規則命中的 Other 類別）
-            if (request.Status == IssueHandlingStatuses.KnownNoise)
-            {
-                _noiseMarks.Save(new NoiseMark
-                {
-                    HostName = host.HostName,
-                    IssueKey = request.IssueKey,
-                    MarkedByAccount = _currentUser.Account,
-                    MarkedAt = DateTime.Now,
-                    Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim()
-                });
-            }
-            // 「調回未處理」且使用者選擇一併刪除記憶——之後同簽章不再自動判讀成雜訊
-            else if (request.Status == IssueHandlingStatuses.Open && request.ForgetNoise)
-            {
-                _noiseMarks.Delete(host.HostName, request.IssueKey);
-            }
-        }
+        ApplyIssueStatus(host, date, request.IssueKey, request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing);
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
@@ -184,12 +151,10 @@ public class HandlingService : IHandlingService
                 : $"將 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】標為「{IssueStatusText(request.Status)}」",
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
-            detail: new { request.IssueKey, request.Status, request.Note });
+            detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
 
         // 回傳更新後的當日進度，讓前端就地更新「N/M 已處理」與日層級推導狀態
-        var handlings = _issueStore.GetForDay(host.HostName, date);
-        var dayLevel = _store.Get(host.HostName, date)?.Status;
-        var progress = DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities());
+        var progress = ComputeProgress(host, date, record);
 
         return new IssueStatusResultDto
         {
@@ -201,6 +166,104 @@ public class HandlingService : IHandlingService
             DayStatus = progress.DayStatus,
             DayStatusText = StatusText(progress.DayStatus)
         };
+    }
+
+    public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request)
+    {
+        var host = RequireVisibleHost(hostId);
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+
+        var clearing = string.IsNullOrWhiteSpace(request.Status);
+        ValidateIssueStatus(request.Status, request.DueDate, clearing);
+
+        // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了
+        var validKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+        var appliedKeys = request.IssueKeys.Distinct(StringComparer.Ordinal).Where(validKeys.Contains).ToList();
+        if (appliedKeys.Count == 0)
+            throw DomainException.Validation("找不到任何勾選的問題，可能紀錄已更新，請重新整理。");
+
+        foreach (var issueKey in appliedKeys)
+            ApplyIssueStatus(host, date, issueKey, request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing);
+
+        _audit.Record(
+            action: AuditActions.HandlingStatus,
+            summary: clearing
+                ? $"批次清除 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題的處理標記"
+                : $"批次將 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題標為「{IssueStatusText(request.Status)}」",
+            targetKind: "issue_handling",
+            targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
+            detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
+
+        var progress = ComputeProgress(host, date, record);
+
+        return new BatchIssueStatusResultDto
+        {
+            UpdatedIssueKeys = appliedKeys,
+            TotalIssues = progress.Total,
+            ClosedIssues = progress.Closed,
+            DayStatus = progress.DayStatus,
+            DayStatusText = StatusText(progress.DayStatus)
+        };
+    }
+
+    private static void ValidateIssueStatus(string status, DateTime? dueDate, bool clearing)
+    {
+        if (!clearing && !IssueHandlingStatuses.IsValid(status))
+            throw DomainException.Validation($"未知的問題處理狀態「{status}」。");
+
+        if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
+            throw DomainException.Validation("預計完成日不可早於今天。");
+    }
+
+    /// <summary>寫入單一問題的處理狀態（不含稽核記錄——單筆與批次的稽核摘要不同，由呼叫端各自記）</summary>
+    private void ApplyIssueStatus(
+        WebHost host, DateTime date, string issueKey, string status, string? note, DateTime? dueDate, bool forgetNoise, bool clearing)
+    {
+        if (clearing)
+        {
+            _issueStore.Clear(host.HostName, date, issueKey);
+            return;
+        }
+
+        _issueStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = date.Date,
+            IssueKey = issueKey,
+            Status = status,
+            Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+            // 預計完成日只在「處理中」才有意義，其餘狀態一律不存，避免舊資料殘留誤導
+            DueDate = status == IssueHandlingStatuses.InProgress ? dueDate : null,
+            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
+            ActorAccount = _currentUser.Account,
+            UpdatedAt = DateTime.Now
+        });
+
+        // 標「已知雜訊」＝寫入記憶，之後同主機同簽章的新問題自動判讀成雜訊（治標，供無規則命中的 Other 類別）
+        if (status == IssueHandlingStatuses.KnownNoise)
+        {
+            _noiseMarks.Save(new NoiseMark
+            {
+                HostName = host.HostName,
+                IssueKey = issueKey,
+                MarkedByAccount = _currentUser.Account,
+                MarkedAt = DateTime.Now,
+                Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim()
+            });
+        }
+        // 「調回未處理」且使用者選擇一併刪除記憶——之後同簽章不再自動判讀成雜訊
+        else if (status == IssueHandlingStatuses.Open && forgetNoise)
+        {
+            _noiseMarks.Delete(host.HostName, issueKey);
+        }
+    }
+
+    private DayHandlingDerivation.DayProgress ComputeProgress(WebHost host, DateTime date, DailyAnalysisRecord record)
+    {
+        var handlings = _issueStore.GetForDay(host.HostName, date);
+        var dayLevel = _store.Get(host.HostName, date)?.Status;
+        return DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities());
     }
 
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId)
@@ -454,6 +517,7 @@ public class HandlingService : IHandlingService
         IssueHandlingStatuses.WontFix => "不處理",
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        IssueHandlingStatuses.InProgress => "處理中",
         IssueHandlingStatuses.Open => "未處理",
         _ => status
     };

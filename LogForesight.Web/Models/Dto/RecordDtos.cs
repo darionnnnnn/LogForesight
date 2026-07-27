@@ -160,6 +160,9 @@ public class IssueDto
     /// <summary>記憶當初標記時留下的備註，IsAutoNoise 為 true 時才有意義</summary>
     public string? NoiseNote { get; set; }
 
+    /// <summary>預計完成日（yyyy-MM-dd）——只有 HandlingStatus=in_progress 時才有意義</summary>
+    public string? DueDate { get; set; }
+
     /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。
     /// 掛在問題列下方（可展開），讓「這個問題怎麼辦」與問題本身直接對齊，

@@ -45,24 +45,61 @@ public class AssignHandlerRequest
     public long? HandlerId { get; set; }
 }
 
-/// <summary>設定單一問題的處理狀態（詳情頁逐列狀態鈕）</summary>
+/// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）</summary>
 public class SetIssueStatusRequest
 {
     /// <summary>問題簽章鍵（IssueSignatureKey）</summary>
     [Required]
     public string IssueKey { get; set; } = string.Empty;
 
-    /// <summary>resolved | wont_fix | false_positive | known_noise | open；空字串＝清除標記（回到未處理）</summary>
+    /// <summary>resolved | wont_fix | false_positive | known_noise | in_progress | open；空字串＝清除標記（回到未處理）</summary>
     public string Status { get; set; } = string.Empty;
 
     [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
     public string? Note { get; set; }
+
+    /// <summary>預計完成日——只有 Status=in_progress 時才會被存下</summary>
+    public DateTime? DueDate { get; set; }
 
     /// <summary>
     /// status=open 時才有意義：這個問題目前是「低風險預設不處理」或「已知雜訊記憶自動判讀」
     /// 而使用者要「調回未處理」——true 時一併刪除對應的雜訊記憶，之後同簽章不再自動判讀成雜訊。
     /// </summary>
     public bool ForgetNoise { get; set; }
+}
+
+/// <summary>
+/// 批次設定多個問題的處理狀態（風險日詳情：勾選多個問題 → 右側處理狀態區塊填一次 → 套用）。
+/// 取代逐列各自開面板填寫的舊流程。
+/// </summary>
+public class BatchSetIssueStatusRequest
+{
+    /// <summary>勾選的問題簽章鍵清單</summary>
+    [Required]
+    [MinLength(1, ErrorMessage = "請至少勾選一個問題")]
+    public List<string> IssueKeys { get; set; } = new();
+
+    /// <summary>resolved | wont_fix | false_positive | known_noise | in_progress | open；空字串＝清除標記（回到未處理）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
+    public string? Note { get; set; }
+
+    /// <summary>預計完成日——只有 Status=in_progress 時才會被存下</summary>
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>同 <see cref="SetIssueStatusRequest.ForgetNoise"/>，套用到每一個勾選的問題</summary>
+    public bool ForgetNoise { get; set; }
+}
+
+/// <summary>批次套用後的結果：更新了哪些問題＋更新後的當日進度</summary>
+public class BatchIssueStatusResultDto
+{
+    public List<string> UpdatedIssueKeys { get; set; } = new();
+    public int TotalIssues { get; set; }
+    public int ClosedIssues { get; set; }
+    public string DayStatus { get; set; } = string.Empty;
+    public string DayStatusText { get; set; } = string.Empty;
 }
 
 /// <summary>問題狀態更新後回傳的當日進度（讓前端就地更新「N/M 已處理」與日層級推導狀態）</summary>

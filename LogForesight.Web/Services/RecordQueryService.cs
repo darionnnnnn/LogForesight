@@ -271,12 +271,13 @@ public class RecordQueryService : IRecordQueryService
         // 一次載入建索引，逐列查是記憶體查表。單日詳情低頻，一次檔案讀取可忽略
         var guidance = LoadGuidanceLookup();
 
-        // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題
+        // 問題層級處理狀態（方案 B）：以現行主機名稱為鍵取當日已標記的問題。
+        // 存整筆 IssueHandling（不只是 Status 字串）——批次套用改版後還需要 DueDate
         var hostName = host?.HostName ?? record.Host;
-        var issueStatus = _issueHandlings
+        var issueHandlingByKey = _issueHandlings
             .GetForDay(hostName, date)
             .GroupBy(h => h.IssueKey, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First().Status, StringComparer.Ordinal);
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
         // 已知雜訊記憶（跨日、以主機＋簽章為鍵，見 §5.1 D-1 #3）：未標記的問題若命中記憶，
         // 前端自動顯示「已知雜訊（自動）」，不必使用者每天重標
@@ -300,7 +301,7 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus, noiseMarks, unhandledSeverities)).ToList(),
+            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities)).ToList(),
             Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -554,12 +555,13 @@ public class RecordQueryService : IRecordQueryService
     private static IssueDto ToIssueDto(
         LogIssueSignature issue,
         Dictionary<string, KnownIssueRule>? guidance,
-        Dictionary<string, string>? issueStatus,
+        Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
         var key = IssueSignatureKey.For(issue);
-        var status = issueStatus != null && issueStatus.TryGetValue(key, out var s) ? s : string.Empty;
+        var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
+        var status = handling?.Status ?? string.Empty;
 
         // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
         var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
@@ -590,7 +592,8 @@ public class RecordQueryService : IRecordQueryService
             HandlingStatusText = IssueStatusText(status),
             IsDefaultUnhandled = isDefaultUnhandled,
             IsAutoNoise = noiseMark != null,
-            NoiseNote = noiseMark?.Note
+            NoiseNote = noiseMark?.Note,
+            DueDate = handling?.DueDate?.ToString("yyyy-MM-dd")
         };
     }
 
@@ -600,6 +603,7 @@ public class RecordQueryService : IRecordQueryService
         IssueHandlingStatuses.WontFix => "不處理",
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
+        IssueHandlingStatuses.InProgress => "處理中",
         IssueHandlingStatuses.Open => string.Empty,
         _ => string.Empty
     };

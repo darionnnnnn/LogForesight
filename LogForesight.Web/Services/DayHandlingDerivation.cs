@@ -42,12 +42,16 @@ public static class DayHandlingDerivation
             .Select(h => h.IssueKey)
             .ToHashSet(StringComparer.Ordinal);
 
+        // 問題層級也能明確標成「處理中」（批次套用改版）：即使還沒有任何問題結案，
+        // 只要有一個被標成 in_progress，這一天就不該再算 open——有人已經在動它了
+        var anyInProgress = issueHandlings.Any(h => h.Status == IssueHandlingStatuses.InProgress);
+
         var total = counted.Count;
         var closed = counted.Count(i => closedKeys.Contains(IssueSignatureKey.For(i)));
 
         string status;
         if (total > 0 && closed == total) status = HandlingStatuses.Resolved;
-        else if (closed > 0) status = HandlingStatuses.InProgress;
+        else if (closed > 0 || anyInProgress) status = HandlingStatuses.InProgress;
         else status = string.IsNullOrEmpty(dayLevelStatus) ? HandlingStatuses.Open : dayLevelStatus;
 
         return new DayProgress(total, closed, status);

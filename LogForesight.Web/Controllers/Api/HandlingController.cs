@@ -34,11 +34,17 @@ public class HandlingController : ControllerBase
     public ApiResponse<HandlingDto> Update(long hostId, string date, [FromBody] UpdateHandlingRequest request) =>
         ApiResponse<HandlingDto>.Ok(_service.Update(hostId, RequireDate(date), request));
 
-    /// <summary>設定單一問題的處理狀態（方案 B 逐列狀態）。與日層級更新同為 Handle 能力</summary>
+    /// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）。與日層級更新同為 Handle 能力</summary>
     [HttpPut("issues")]
     [Permission(Capability.Handle)]
     public ApiResponse<IssueStatusResultDto> SetIssueStatus(long hostId, string date, [FromBody] SetIssueStatusRequest request) =>
         ApiResponse<IssueStatusResultDto>.Ok(_service.SetIssueStatus(hostId, RequireDate(date), request));
+
+    /// <summary>批次設定多個問題的處理狀態（勾選多個問題後在右側處理狀態區塊一次套用）</summary>
+    [HttpPut("issues/batch")]
+    [Permission(Capability.Handle)]
+    public ApiResponse<BatchIssueStatusResultDto> SetIssueStatusBatch(long hostId, string date, [FromBody] BatchSetIssueStatusRequest request) =>
+        ApiResponse<BatchIssueStatusResultDto>.Ok(_service.SetIssueStatusBatch(hostId, RequireDate(date), request));
 
     [HttpPut("assign")]
     [Permission(Capability.Assign)]

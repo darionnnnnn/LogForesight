@@ -20,7 +20,7 @@ public class IssueHandling
     /// <summary>問題簽章的穩定鍵（見 <see cref="IssueSignatureKey.For"/>）</summary>
     public string IssueKey { get; set; } = string.Empty;
 
-    /// <summary>resolved | wont_fix | false_positive | known_noise | open（只有真的被人動過才存；
+    /// <summary>resolved | wont_fix | false_positive | known_noise | in_progress | open（只有真的被人動過才存；
     /// 大多數「未處理」仍以缺列表示，open 只用在需要明確蓋掉自動推導的少數情境——見 <see cref="IssueHandlingStatuses.Open"/>）</summary>
     public string Status { get; set; } = string.Empty;
 
@@ -29,6 +29,9 @@ public class IssueHandling
     public string ActorAccount { get; set; } = string.Empty;
 
     public string? Note { get; set; }
+
+    /// <summary>預計完成日——只有 Status=in_progress 時才有意義，畫面上僅該狀態顯示此欄位</summary>
+    public DateTime? DueDate { get; set; }
 
     public DateTime UpdatedAt { get; set; }
 }
@@ -47,10 +50,14 @@ public static class IssueSignatureKey
 }
 
 /// <summary>
-/// 問題層級的處理狀態集合。結案類（Closed）四種——問題層級不需要 in_progress
-/// （「正在處理」是整個風險日的案件狀態，維持在日層級）。
+/// 問題層級的處理狀態集合。結案類（Closed）四種＋一個未結案但需要明確持久化的 in_progress。
 ///
-/// <see cref="Open"/> 是唯一的非結案類、但仍需要**明確持久化**的狀態：
+/// <see cref="InProgress"/>（2026-07-27 起，風險日詳情批次套用改版）：問題層級現在也能標
+/// 「處理中」並帶 <see cref="IssueHandling.DueDate"/>——批次勾選多個問題、在右側處理狀態
+/// 區塊填一次即可套用，不用再逐項各自填。非結案類，但一旦有任一問題被標成 in_progress，
+/// 當日狀態即推導為 in_progress（見 DayHandlingDerivation）。
+///
+/// <see cref="Open"/> 是唯一另一個非結案類、但仍需要**明確持久化**的狀態：
 /// 用在使用者要蓋掉畫面自動推導的預設值時（低風險預設不處理／已知雜訊記憶自動判讀），
 /// 「調回未處理」若只是清除標記，缺列語意會讓畫面重新套用同一個自動推導、
 /// 使用者的操作等於沒發生。所以這裡持久化一筆 open，明確蓋掉自動推導。
@@ -61,6 +68,7 @@ public static class IssueHandlingStatuses
     public const string WontFix = "wont_fix";
     public const string FalsePositive = "false_positive";
     public const string KnownNoise = "known_noise";
+    public const string InProgress = "in_progress";
     public const string Open = "open";
 
     public static readonly string[] Closed =
@@ -70,7 +78,7 @@ public static class IssueHandlingStatuses
 
     public static readonly string[] All =
     {
-        Resolved, WontFix, FalsePositive, KnownNoise, Open
+        Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Open
     };
 
     /// <summary>是否為結案類狀態</summary>
