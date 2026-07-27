@@ -81,7 +81,10 @@ public class AuditQueryService : IAuditQueryService
         [AuditActions.SentinelCreate] = "新增 Sentinel",
         [AuditActions.SentinelUpdate] = "更新 Sentinel",
         [AuditActions.SentinelDelete] = "刪除 Sentinel",
-        [AuditActions.SentinelSetActive] = "變更 Sentinel 啟用狀態"
+        [AuditActions.SentinelSetActive] = "變更 Sentinel 啟用狀態",
+
+        [AuditActions.SettingsUpdate] = "更新系統設定",
+        [AuditActions.NetiqOptionsUpdate] = "更新 NetIQ 連線與節流參數"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry) => new()

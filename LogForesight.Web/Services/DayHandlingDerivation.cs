@@ -20,18 +20,30 @@ public static class DayHandlingDerivation
     ///   - 有問題結案但未全結 → in_progress（已開始處理）
     ///   - 沒有任何問題被標記 → 退回日層級狀態（沒有問題可標時的 fallback，也相容舊資料）
     /// </summary>
+    /// <param name="unhandledSeverities">
+    /// 未處理計算納入哪些嚴重度（「系統管理 > 設定」頁維護，見 <see cref="SystemSettings.UnhandledSeverities"/>）。
+    /// 未列在此集合的嚴重度，若從未被明確標記過，視同「不處理（預設）」——不計入 Total/Closed，
+    /// 該問題本身也不會阻擋這一天推導成 resolved。**明確標記過的問題（含 open）一律尊重使用者的判斷，
+    /// 不受這個集合影響**：曾標成結案的照樣算結案，曾被「調回未處理」的照樣算未結案。
+    /// </param>
     public static DayProgress Derive(
         IReadOnlyCollection<LogIssueSignature> issues,
         IReadOnlyCollection<IssueHandling> issueHandlings,
-        string? dayLevelStatus)
+        string? dayLevelStatus,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
+        var handledKeys = issueHandlings.Select(h => h.IssueKey).ToHashSet(StringComparer.Ordinal);
+        var counted = issues
+            .Where(i => unhandledSeverities.Contains(i.Severity) || handledKeys.Contains(IssueSignatureKey.For(i)))
+            .ToList();
+
         var closedKeys = issueHandlings
             .Where(h => IssueHandlingStatuses.IsClosed(h.Status))
             .Select(h => h.IssueKey)
             .ToHashSet(StringComparer.Ordinal);
 
-        var total = issues.Count;
-        var closed = issues.Count(i => closedKeys.Contains(IssueSignatureKey.For(i)));
+        var total = counted.Count;
+        var closed = counted.Count(i => closedKeys.Contains(IssueSignatureKey.For(i)));
 
         string status;
         if (total > 0 && closed == total) status = HandlingStatuses.Resolved;

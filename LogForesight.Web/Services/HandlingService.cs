@@ -50,6 +50,7 @@ public class HandlingService : IHandlingService
     private readonly IVisibilityService _visibility;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
+    private readonly ISystemSettingsStore _settings;
 
     public HandlingService(
         IRecordHandlingStore store,
@@ -60,7 +61,8 @@ public class HandlingService : IHandlingService
         IUserStore users,
         IVisibilityService visibility,
         ICurrentUser currentUser,
-        IAuditService audit)
+        IAuditService audit,
+        ISystemSettingsStore settings)
     {
         _store = store;
         _issueStore = issueStore;
@@ -71,6 +73,7 @@ public class HandlingService : IHandlingService
         _visibility = visibility;
         _currentUser = currentUser;
         _audit = audit;
+        _settings = settings;
     }
 
     public HandlingDto Get(long hostId, DateTime date)
@@ -186,7 +189,7 @@ public class HandlingService : IHandlingService
         // 回傳更新後的當日進度，讓前端就地更新「N/M 已處理」與日層級推導狀態
         var handlings = _issueStore.GetForDay(host.HostName, date);
         var dayLevel = _store.Get(host.HostName, date)?.Status;
-        var progress = DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel);
+        var progress = DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities());
 
         return new IssueStatusResultDto
         {
@@ -280,6 +283,7 @@ public class HandlingService : IHandlingService
         var to = records.Max(r => r.Date);
         var handlings = _store.GetMany(hostNames, from, to);
         var issueHandlings = _issueStore.GetMany(hostNames, from, to);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
         var todo = new HandlingTodoDto();
         foreach (var record in records)
@@ -295,7 +299,7 @@ public class HandlingService : IHandlingService
                 .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
                             h.Date.Date == record.Date.Date)
                 .ToList();
-            var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status);
+            var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities);
 
             if (progress.DayStatus == HandlingStatuses.Open) todo.OpenCount++;
             else if (progress.DayStatus == HandlingStatuses.InProgress) todo.InProgressCount++;

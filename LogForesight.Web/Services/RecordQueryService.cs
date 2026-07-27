@@ -40,6 +40,7 @@ public class RecordQueryService : IRecordQueryService
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IKnownIssueRuleStore _rules;
     private readonly ICurrentUser _currentUser;
+    private readonly ISystemSettingsStore _settings;
 
     public RecordQueryService(
         IRecordRepository repository,
@@ -52,7 +53,8 @@ public class RecordQueryService : IRecordQueryService
         IIssueHandlingStore issueHandlings,
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser,
+        ISystemSettingsStore settings)
     {
         _repository = repository;
         _reports = reports;
@@ -65,6 +67,7 @@ public class RecordQueryService : IRecordQueryService
         _noiseMarks = noiseMarks;
         _rules = rules;
         _currentUser = currentUser;
+        _settings = settings;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -80,9 +83,10 @@ public class RecordQueryService : IRecordQueryService
         // 各一次撈起來在記憶體 join——逐筆查會變成 N 次檔案解析。日狀態由兩者推導（方案 B）
         var handlings = LoadHandlings(records, lookup);
         var issueHandlings = LoadIssueHandlings(records, lookup);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
         DayHandlingDerivation.DayProgress Progress(DailyAnalysisRecord r) =>
-            DeriveProgress(r, handlings, issueHandlings, lookup);
+            DeriveProgress(r, handlings, issueHandlings, lookup, unhandledSeverities);
 
         if (request.Statuses is { Count: > 0 })
         {
@@ -229,7 +233,8 @@ public class RecordQueryService : IRecordQueryService
         DailyAnalysisRecord record,
         List<RecordHandling> dayHandlings,
         List<IssueHandling> issueHandlings,
-        HostLookup lookup)
+        HostLookup lookup,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
         var name = HostNameOf(lookup, record);
         var dayStatus = FindHandling(dayHandlings, lookup, record)?.Status;
@@ -238,7 +243,7 @@ public class RecordQueryService : IRecordQueryService
                         h.Date.Date == record.Date.Date)
             .ToList();
 
-        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus);
+        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities);
     }
 
     /// <summary>
@@ -278,6 +283,8 @@ public class RecordQueryService : IRecordQueryService
         var noiseMarks = _noiseMarks.GetForHost(hostName)
             .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
         return new RecordDetailDto
         {
             HostId = hostId,
@@ -293,7 +300,7 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus, noiseMarks)).ToList(),
+            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueStatus, noiseMarks, unhandledSeverities)).ToList(),
             Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -546,16 +553,18 @@ public class RecordQueryService : IRecordQueryService
 
     private static IssueDto ToIssueDto(
         LogIssueSignature issue,
-        Dictionary<string, KnownIssueRule>? guidance = null,
-        Dictionary<string, string>? issueStatus = null,
-        Dictionary<string, NoiseMark>? noiseMarks = null)
+        Dictionary<string, KnownIssueRule>? guidance,
+        Dictionary<string, string>? issueStatus,
+        Dictionary<string, NoiseMark>? noiseMarks,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
         var key = IssueSignatureKey.For(issue);
         var status = issueStatus != null && issueStatus.TryGetValue(key, out var s) ? s : string.Empty;
 
         // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
         var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
-        var isDefaultUnhandled = status.Length == 0 && noiseMark == null && issue.Severity == IssueSeverity.Low;
+        // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
+        var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
 
         return new IssueDto
         {

@@ -22,6 +22,7 @@ public class HandlingServiceTests
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeNoiseMarkStore _noiseMarks = new();
     private readonly FakeAuditService _audit = new();
+    private readonly FakeSystemSettingsStore _settings = new();
     private readonly FakeRecordRepository _repository;
 
     private readonly WebUser _owner;
@@ -50,7 +51,7 @@ public class HandlingServiceTests
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
         return new HandlingService(
             _handlings, _issueHandlings, _noiseMarks, _repository, _hosts, _users,
-            new AlwaysVisibleService(_hosts), currentUser, _audit);
+            new AlwaysVisibleService(_hosts), currentUser, _audit, _settings);
     }
 
     /// <summary>
@@ -304,12 +305,16 @@ public class HandlingServiceTests
 
     // ── 問題層級處理狀態（方案 B）─────────────────────────────────────────────
 
-    private static LogIssueSignature Issue(string source, int eventId) => new()
+    // 預設 Severity=High：落在 SystemSettings.UnhandledSeverities 的預設值內，
+    // 讓這裡的測試專注在結案狀態組合的計算邏輯，不受未處理等級篩選影響
+    // （等級篩選本身的行為由 DayHandlingDerivationTests 專門釘住）
+    private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity = IssueSeverity.High) => new()
     {
         LogName = "System",
         Source = source,
         EventId = eventId,
-        EntryType = System.Diagnostics.EventLogEntryType.Error
+        EntryType = System.Diagnostics.EventLogEntryType.Error,
+        Severity = severity
     };
 
     [Fact]
@@ -623,6 +628,19 @@ internal class FakeNoiseMarkStore : INoiseMarkStore
 
     private static bool Same(NoiseMark m, string hostName, string issueKey) =>
         string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase) && m.IssueKey == issueKey;
+}
+
+internal class FakeSystemSettingsStore : ISystemSettingsStore
+{
+    private SystemSettings _settings = new();
+
+    public SystemSettings Get() => _settings;
+
+    public SystemSettings Update(Action<SystemSettings> mutation)
+    {
+        mutation(_settings);
+        return _settings;
+    }
 }
 
 internal class FakeHandlingStore : IRecordHandlingStore

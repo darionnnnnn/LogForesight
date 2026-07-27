@@ -33,6 +33,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAuditLogStore>(_ => StorageFactory.CreateAuditLogStore(storage, dataRoot));
         services.AddSingleton<IImportLogStore>(_ => StorageFactory.CreateImportLogStore(storage, dataRoot));
         services.AddSingleton<ISentinelStore>(_ => StorageFactory.CreateSentinelStore(storage, dataRoot));
+        services.AddSingleton<ISystemSettingsStore>(_ => StorageFactory.CreateSystemSettingsStore(storage, dataRoot));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
         services.AddSingleton<IAnalysisRecordQuery>(_ => StorageFactory.CreateRecordQuery(storage, dataRoot));
@@ -187,6 +188,9 @@ public static class ServiceCollectionExtensions
         // Sentinel 名單改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
         services.AddScoped<ISentinelAdminService, SentinelAdminService>();
+
+        // 全站系統設定（未處理等級門檻／AI 位址／補充留存天數）
+        services.AddScoped<ISystemSettingsService, SystemSettingsService>();
 
         // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線。
         // 真連線的認證/回應解析待 Sentinel 環境驗證（見 SentinelRestDirectoryClient）

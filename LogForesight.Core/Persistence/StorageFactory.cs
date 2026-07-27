@@ -194,4 +194,8 @@ public static class StorageFactory
     /// <summary>NetIQ Sentinel 連線設定（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、2）</summary>
     public static ISentinelStore CreateSentinelStore(StorageSettings settings, string dataRoot) =>
         new JsonSentinelStore(Blob(settings, dataRoot, "sentinels"));
+
+    /// <summary>全站系統設定（未處理等級門檻／AI 位址／補充留存天數，「系統管理 > 設定」頁維護）</summary>
+    public static ISystemSettingsStore CreateSystemSettingsStore(StorageSettings settings, string dataRoot) =>
+        new JsonSystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
 }

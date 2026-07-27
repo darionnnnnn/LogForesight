@@ -114,6 +114,10 @@ public static class AuditActions
     public const string SentinelDelete = "sentinel_delete";
     public const string SentinelSetActive = "sentinel_set_active";
 
+    // 系統設定：AI 金鑰欄位絕不進 DetailJson，只留「是否變動」的布林
+    public const string SettingsUpdate = "settings_update";
+    public const string NetiqOptionsUpdate = "netiq_options_update";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }
