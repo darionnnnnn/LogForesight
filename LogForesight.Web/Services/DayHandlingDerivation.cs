@@ -56,4 +56,15 @@ public static class DayHandlingDerivation
 
         return new DayProgress(total, closed, status);
     }
+
+    /// <summary>
+    /// 問題層級是否有已逾期的「處理中」標記。逾期語意的問題層來源，與日層級的
+    /// <see cref="RecordHandling.DueDate"/> 並列（兩者任一逾期，該風險日即算逾期）——
+    /// 規則同樣單點定義在這裡，清單篩選、清單標記與儀表板逾期計數共用。
+    /// 只看 in_progress：其他狀態不會存 DueDate（HandlingService.ApplyIssueStatus 落盤時已清空），
+    /// 結案類就算殘留日期也不構成「逾期未處理」。
+    /// </summary>
+    public static bool HasOverdueIssue(IEnumerable<IssueHandling> issueHandlings, DateTime today) =>
+        issueHandlings.Any(h => h.Status == IssueHandlingStatuses.InProgress &&
+                                h.DueDate.HasValue && h.DueDate.Value.Date < today.Date);
 }

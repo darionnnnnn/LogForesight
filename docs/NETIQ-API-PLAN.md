@@ -88,6 +88,14 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 > Sentinel 連線設定現在由 **Web 維護、存 `ISentinelStore`（webdata blob，key=`sentinels`）**，
 > 密碼用 **Core 既有的 `CryptoHelper`（AES-256，`enc:v1:` 前綴，金鑰內嵌程式）**加密，
 > 不是 DPAPI；`appsettings.NetIq.Servers` 降為「store 為空時的一次性種子」。以下對帳表已更新為現況。
+>
+> **2026-07-27 再修正**：節流設定與種子的落點又演進了一步——`NetIqSettings` 類別與
+> appsettings.json 的 `NetIq` 區段（含 `Servers` 種子）**已整個移除**，`SentinelSeeder` 退役。
+> 節流參數改為 `NetiqOptions`（webdata blob，key=`netiq_options`），由 Web
+> 「系統管理 > NetIQ 維護」頁（`/admin/netiq`）維護，批次與 Web 都從
+> `StorageFactory.CreateNetiqOptionsStore` 讀同一份；`SentinelClient`／`NetiqProbeCli`
+> 的參數型別同步改為 `NetiqOptions`（欄位不變）。下表第 4 列「仍留在 `AppSettings.NetIq`」
+> 的描述已過時，僅保留當時脈絡。
 
 | 項目 | 既有狀態（2026-07-24 確認） | 本規劃處置 |
 |---|---|---|

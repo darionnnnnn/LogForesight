@@ -137,8 +137,12 @@ if (!string.Equals(dataRoot, AppContext.BaseDirectory, StringComparison.OrdinalI
 try
 {
     var systemSettings = StorageFactory.CreateSystemSettingsStore(settings.Storage, dataRoot).Get();
-    if (!string.IsNullOrWhiteSpace(systemSettings.AiBaseUrl))
-        settings.Ai.BaseUrl = systemSettings.AiBaseUrl;
+
+    // 「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：前者沿用
+    // appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI（設定頁明講留空停用），
+    // AI 呼叫失敗時各日自動降級為統計模式，規則/趨勢/關聯偵測不受影響
+    if (systemSettings.UpdatedAt != null)
+        settings.Ai.BaseUrl = systemSettings.AiBaseUrl.Trim();
     if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
         settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
 

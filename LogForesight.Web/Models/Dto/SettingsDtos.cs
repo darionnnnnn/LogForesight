@@ -27,7 +27,7 @@ public class UpdateSystemSettingsRequest
     [MinLength(1, ErrorMessage = "請至少勾選一個未處理等級")]
     public List<string> UnhandledSeverities { get; set; } = new();
 
-    [Required]
+    /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]
     public string AiBaseUrl { get; set; } = "";
 

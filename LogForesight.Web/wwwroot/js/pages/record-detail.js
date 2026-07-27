@@ -51,11 +51,17 @@ async function load() {
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
 
-    await initHandlingPanel(hostId, date, () => selectedIssueKeys, load);
+    await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
 
     if (currentDetail.hasReport) await loadReport();
 
     setupNextUnhandled();
+}
+
+/** 批次套用成功後：重載頁面，已知雜訊另接治本提議（建立抑制規則） */
+async function onBatchSaved(result) {
+    await load();
+    if (result?.status === 'known_noise') await offerBatchSuppression(result.issueKeys);
 }
 
 /**
@@ -302,9 +308,15 @@ function checkboxControl(issue) {
     col.append(check, label);
 
     if (issue.handlingStatus === 'in_progress' && issue.dueDate) {
+        // yyyy-MM-dd 字串比大小即日期先後（本地日期字串，見 handling-panel 快速鈕的組法）
+        const pad = n => String(n).padStart(2, '0');
+        const now = new Date();
+        const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        const isOverdue = issue.dueDate < todayStr;
+
         const due = document.createElement('div');
-        due.className = 'small text-muted lf-issue-status__due';
-        due.textContent = `預計 ${issue.dueDate.slice(5)}`;
+        due.className = `small lf-issue-status__due ${isOverdue ? 'text-danger fw-semibold' : 'text-muted'}`;
+        due.textContent = `${isOverdue ? '逾期' : '預計'} ${issue.dueDate.slice(5)}`;
         col.appendChild(due);
     }
 
@@ -344,37 +356,48 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
         renderProgress();
 
         toast(status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記', 'success');
-
-        // 已知雜訊 → 提議建立抑制規則（治本）
-        if (status === 'known_noise' && issue.ruleId && canMaintainRules) {
-            await offerSuppression(issue);
-        }
     } catch (error) {
         toast(error?.message || '更新失敗', 'danger');
     }
 }
 
-/** 標「已知雜訊」後的治本提議：把該規則在這台主機抑制，同樣雜訊之後不再進報告 */
-async function offerSuppression(issue) {
+/**
+ * 批次標「已知雜訊」後的治本提議：勾選的問題中有命中規則的，提議把那些規則在本主機抑制，
+ * 同樣雜訊之後不再進報告（沿用舊逐列面板的抑制提議，改為批次一次確認）。
+ */
+async function offerBatchSuppression(issueKeys) {
+    if (!canMaintainRules || !currentDetail) return;
+
+    const keys = new Set(issueKeys);
+    const ruleIds = [...new Set(currentDetail.topIssues
+        .filter(i => keys.has(i.issueKey) && i.ruleId && !i.suppressed)
+        .map(i => i.ruleId))];
+    if (ruleIds.length === 0) return;
+
     const ok = await confirmAction({
         title: '一併建立抑制規則？',
-        message: `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制規則「${issue.ruleId}」？` +
-            '抑制後這個訊號不再拉高風險、不再進報告（事件仍照常紀錄）。',
+        message: `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制命中的 ${ruleIds.length} 條規則` +
+            `（${ruleIds.join('、')}）？抑制後這些訊號不再拉高風險、不再進報告（事件仍照常紀錄）。`,
         confirmText: '建立抑制',
         confirmVariant: 'primary'
     });
     if (!ok) return;
 
-    try {
-        await api.post(`/api/rules/${encodeURIComponent(issue.ruleId)}/suppressions`, {
-            host: currentDetail.hostName,
-            reason: `詳情頁標記已知雜訊：${issue.source} ${issue.eventId}`,
-            days: null
-        });
-        toast('已建立抑制規則', 'success');
-    } catch (error) {
-        toast(error?.message || '建立抑制規則失敗，可到「規則維護」手動設定', 'warning');
+    let failed = 0;
+    for (const ruleId of ruleIds) {
+        try {
+            await api.post(`/api/rules/${encodeURIComponent(ruleId)}/suppressions`, {
+                host: currentDetail.hostName,
+                reason: '詳情頁批次標記已知雜訊',
+                days: null
+            }, { silent: true });
+        } catch {
+            failed++;
+        }
     }
+
+    if (failed === 0) toast(`已建立 ${ruleIds.length} 條抑制規則`, 'success');
+    else toast(`部分抑制規則建立失敗（${failed}/${ruleIds.length}），可到「規則維護」手動設定`, 'warning');
 }
 
 /**

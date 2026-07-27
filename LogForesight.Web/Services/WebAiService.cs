@@ -15,7 +15,8 @@ namespace LogForesight.Web.Services;
 ///   2. 逾時獨立設短（互動情境，10 秒），與批次的 600 秒不同。
 ///   3. 輸出永遠由呼叫端以 textContent 呈現；AI 回傳的下鑽參數必須過白名單驗證才組連結。
 ///
-/// AI 位址沿用「批次 appsettings 唯一事實來源、Web 唯讀」的既有決策（同 Sentinel 名單）。
+/// AI 位址／金鑰的事實來源是「系統管理 > 設定」頁（DB，2026-07-27 起），批次 appsettings 的
+/// Ai.BaseUrl 降為 DB 未設定時的退路；進階參數（Timeout/Retry/Tokens）仍讀批次 appsettings。
 /// </summary>
 public interface IWebAiService
 {
@@ -35,45 +36,74 @@ public class WebAiService : IWebAiService
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private readonly IAiCacheStore _cache;
-    private readonly Lazy<AIService?> _ai;
-    private readonly bool _available;
+    private readonly ISystemSettingsStore _systemSettings;
+
+    /// <summary>批次 appsettings.json 的 Ai 區段（進階參數來源＋BaseUrl 退路）；讀不到為 null，啟動後不變</summary>
+    private readonly AiSettings? _batchSettings;
+
+    // 本類別是 Singleton，但 AI 位址／金鑰可在設定頁隨時改：每次取用時比對 DB 目前值，
+    // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）。重建是低頻事件，
+    // 被汰換的舊 HttpClient 交給 GC 即可，不值得為它引入 IDisposable 的漣漪。
+    private readonly object _clientLock = new();
+    private AIService? _client;
+    private (string BaseUrl, string KeyEnc) _clientSnapshot;
 
     public WebAiService(WebAppSettings settings, IAiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
-
-        // 進階參數（Timeout/Retry/Tokens…）仍讀批次 appsettings.json；位址／金鑰的事實來源
-        // 是「系統管理 > 設定」頁（DB），appsettings.Ai.BaseUrl 只是 DB 尚未設定時的退路
-        var aiSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot());
-        var dbSettings = systemSettings.Get();
-        if (aiSettings != null)
-        {
-            if (!string.IsNullOrWhiteSpace(dbSettings.AiBaseUrl)) aiSettings.BaseUrl = dbSettings.AiBaseUrl;
-            if (CryptoHelper.IsEncrypted(dbSettings.AiApiKeyEnc)) aiSettings.ApiKey = CryptoHelper.Decrypt(dbSettings.AiApiKeyEnc);
-        }
-        _available = aiSettings != null && !string.IsNullOrWhiteSpace(aiSettings.BaseUrl);
-
-        // 延遲建立：沒人用 AI 時不必建 HttpClient。互動情境的參數覆寫——**不重試**：
-        // 互動情境下重試只會把「失敗」拖成數十秒（逾時×嘗試＋退避），使用者早就不等了。
-        // 一次打不到就降級，讓卡片安靜消失比讓人盯著轉圈更好。
-        _ai = new Lazy<AIService?>(() =>
-        {
-            if (aiSettings == null) return null;
-            aiSettings.TimeoutSeconds = 8;
-            aiSettings.MaxTokens = 256;
-            aiSettings.RetryCount = 1;          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
-            aiSettings.RetryDelaySeconds = 0;
-            aiSettings.JsonRetryCount = 0;
-            return new AIService(aiSettings);
-        });
+        _systemSettings = systemSettings;
+        _batchSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot());
     }
 
-    public bool Available => _available;
+    /// <summary>
+    /// 目前生效的 AI 位址。「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：
+    /// 前者退回批次 appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI——
+    /// 設定頁明講「留空會停用」，不能被退路悄悄接手。
+    /// </summary>
+    private string EffectiveBaseUrl(SystemSettings db) =>
+        db.UpdatedAt == null
+            ? (_batchSettings?.BaseUrl ?? db.AiBaseUrl).Trim()
+            : db.AiBaseUrl.Trim();
+
+    public bool Available => !string.IsNullOrWhiteSpace(EffectiveBaseUrl(_systemSettings.Get()));
+
+    /// <summary>依 DB 目前的位址／金鑰取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
+    private AIService? GetClient()
+    {
+        var db = _systemSettings.Get();
+        var baseUrl = EffectiveBaseUrl(db);
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+
+        lock (_clientLock)
+        {
+            if (_client != null && _clientSnapshot == (baseUrl, db.AiApiKeyEnc)) return _client;
+
+            // 互動情境的參數覆寫——**不重試**：互動情境下重試只會把「失敗」拖成數十秒
+            // （逾時×嘗試＋退避），使用者早就不等了。一次打不到就降級，
+            // 讓卡片安靜消失比讓人盯著轉圈更好。
+            var interactive = new AiSettings
+            {
+                BaseUrl = baseUrl,
+                ApiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) ? CryptoHelper.Decrypt(db.AiApiKeyEnc) : "",
+                TimeoutSeconds = 8,
+                MaxTokens = 256,
+                RetryCount = 1,          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
+                RetryDelaySeconds = 0,
+                JsonRetryCount = 0,
+                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
+                PresencePenalty = _batchSettings?.PresencePenalty,
+                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+            };
+
+            _client = new AIService(interactive);
+            _clientSnapshot = (baseUrl, db.AiApiKeyEnc);
+            return _client;
+        }
+    }
 
     public async Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class
     {
-        if (!_available) return null;
-
         var cached = _cache.Get(cacheKey);
         if (cached != null)
         {
@@ -83,7 +113,7 @@ public class WebAiService : IWebAiService
 
         try
         {
-            var ai = _ai.Value;
+            var ai = GetClient();
             if (ai == null) return null;
 
             var result = await ai.ChatJsonAsync<T>(userPrompt, systemPrompt);
@@ -114,8 +144,8 @@ public class WebAiService : IWebAiService
     }
 
     /// <summary>
-    /// 讀批次 appsettings.json 的 Ai 區段（唯一事實來源）。讀不到就回 null（＝AI 不可用），
-    /// 不讓站台掛掉——AI 是加值層，設定缺失只該讓加值功能消失，不影響其餘。
+    /// 讀批次 appsettings.json 的 Ai 區段（進階參數來源＋DB 未設定位址時的退路）。
+    /// 讀不到就回 null——AI 是加值層，設定缺失只該讓加值功能降級，不影響其餘。
     /// </summary>
     private static AiSettings? LoadBatchAiSettings(string dataRoot)
     {

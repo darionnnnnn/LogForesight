@@ -367,9 +367,12 @@ public class HandlingService : IHandlingService
             if (progress.DayStatus == HandlingStatuses.Open) todo.OpenCount++;
             else if (progress.DayStatus == HandlingStatuses.InProgress) todo.InProgressCount++;
 
-            if (handling?.DueDate.HasValue == true &&
-                handling.DueDate.Value.Date < DateTime.Today &&
-                progress.IsUnresolved)
+            // 逾期兩層都看：日層級 DueDate 過期且未結案，或任一問題層級「處理中」過期
+            // （與問題查詢清單的 IsOverdue 同一套語意，來源同為 DayHandlingDerivation.HasOverdueIssue）
+            var dayOverdue = handling?.DueDate.HasValue == true &&
+                             handling.DueDate.Value.Date < DateTime.Today &&
+                             progress.IsUnresolved;
+            if (dayOverdue || DayHandlingDerivation.HasOverdueIssue(forDay, DateTime.Today))
             {
                 todo.OverdueCount++;
             }

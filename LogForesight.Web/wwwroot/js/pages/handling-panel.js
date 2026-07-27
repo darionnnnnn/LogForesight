@@ -40,7 +40,12 @@ const STATUS_VARIANTS = {
 /** 目前面板的狀態：initHandlingPanel 之後才有值，refreshSelection 靠這份重繪 */
 let state = null;
 
-export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved) {
+/**
+ * @param {() => Set<string>} getSelection 目前勾選的問題鍵集合（record-detail 持有）
+ * @param {(result?: {status: string, issueKeys: string[]}) => Promise} onBatchSaved 批次套用成功後回呼（重載頁面＋後續治本提議）
+ * @param {{canMaintainRules?: boolean}} options 能力旗標：誤報時是否顯示規則維護提示
+ */
+export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved, options = {}) {
     const panel = document.getElementById('handling-panel');
     renderLoading(panel, 3);
 
@@ -52,7 +57,7 @@ export async function initHandlingPanel(hostId, date, getSelection, onBatchSaved
     // 被正常瀏覽的噪音淹沒後，真正的權限試探就再也看不出來了。
     const users = handling.canAssign ? await loadAssignableUsers() : [];
 
-    state = { hostId, date, handling, users, getSelection, onBatchSaved };
+    state = { hostId, date, handling, users, getSelection, onBatchSaved, options };
     render();
     await loadLogs(hostId, date);
 }
@@ -171,7 +176,7 @@ function assignField(handling, users, hostId, date) {
                 handlerId: select.value ? Number(select.value) : null
             });
             toast(updated.handlerName ? `已指派給 ${updated.handlerName}` : '已取消指派', 'success');
-            await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved);
+            await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch {
             select.disabled = false;
         }
@@ -281,6 +286,17 @@ function handlingForm() {
     noteInput.placeholder = '例如：已確認為每週維護重開機，屬正常現象';
     form.appendChild(noteInput);
 
+    // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）——
+    // 沿用舊逐列面板的提示，批次模式下無法指向單一規則，改連到規則維護頁
+    const ruleHint = document.createElement('div');
+    ruleHint.className = 'lf-hint mb-3 d-none';
+    const ruleLink = document.createElement('a');
+    ruleLink.href = '/admin/rules';
+    ruleLink.target = '_blank';
+    ruleLink.textContent = '如果規則常常誤判，可以到規則維護調整判定條件';
+    ruleHint.appendChild(ruleLink);
+    form.appendChild(ruleHint);
+
     function renderChips() {
         chipGroup.replaceChildren();
         for (const chip of STATUS_CHIPS) {
@@ -300,6 +316,7 @@ function handlingForm() {
     function updateFieldsForStatus() {
         dueWrap.classList.toggle('d-none', selectedStatus !== 'in_progress');
         forgetNoiseWrap.classList.toggle('d-none', selectedStatus !== 'open');
+        ruleHint.classList.toggle('d-none', !(selectedStatus === 'false_positive' && state.options.canMaintainRules));
 
         const field = NOTE_FIELD_BY_STATUS[selectedStatus] ?? { label: '說明（選填）', required: false };
         noteLabel.textContent = field.label;
@@ -331,8 +348,9 @@ function handlingForm() {
         const restore = withBusy(submit, batchMode ? '套用中' : '儲存中');
         try {
             if (batchMode) {
+                const issueKeys = [...selection];
                 await api.put(`/api/records/${hostId}/${date}/handling/issues/batch`, {
-                    issueKeys: [...selection],
+                    issueKeys,
                     status: selectedStatus,
                     note: noteInput.value.trim() || null,
                     dueDate: selectedStatus === 'in_progress' ? (dueInput.value || null) : null,
@@ -340,7 +358,8 @@ function handlingForm() {
                 });
                 selection.clear();
                 toast('已套用處理狀態', 'success');
-                await state.onBatchSaved?.();
+                // 把套用結果回報給頁面：已知雜訊等狀態的後續治本提議（建立抑制規則）由呼叫端接手
+                await state.onBatchSaved?.({ status: selectedStatus, issueKeys });
             } else {
                 await api.put(`/api/records/${hostId}/${date}/handling`, {
                     status: selectedStatus,
@@ -348,7 +367,7 @@ function handlingForm() {
                     dueDate: selectedStatus === 'in_progress' ? (dueInput.value || null) : null
                 });
                 toast('已更新處理狀態', 'success');
-                await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved);
+                await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
             }
         } catch {
             restore();

@@ -645,6 +645,52 @@ public class HandlingServiceTests
                 DueDate = Today.AddDays(-1)
             }));
     }
+
+    /// <summary>逾期兩層都看：問題層級「處理中」的預計完成日過期，即使日層級沒有 DueDate 也算逾期</summary>
+    [Fact]
+    public void 待辦統計_問題層級處理中逾期_計入逾期()
+    {
+        var day = Today.AddDays(-19);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+
+        // 寫入驗證擋下過去的預計完成日，這裡直接落一筆已逾期的資料模擬「當初填了、後來過期」
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = _host.HostName,
+            Date = day,
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = Today.AddDays(-2),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = Create(Capability.Handle).GetTodo(new[] { record });
+
+        Assert.Equal(1, todo.InProgressCount);   // in_progress 標記讓日狀態推導為處理中
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    /// <summary>問題層級「處理中」的預計完成日還沒到，不算逾期</summary>
+    [Fact]
+    public void 待辦統計_問題層級處理中未到期_不計入逾期()
+    {
+        var day = Today.AddDays(-20);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a) },
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = Today.AddDays(3)
+        });
+
+        var todo = Create(Capability.Handle).GetTodo(new[] { record });
+
+        Assert.Equal(1, todo.InProgressCount);
+        Assert.Equal(0, todo.OverdueCount);
+    }
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────

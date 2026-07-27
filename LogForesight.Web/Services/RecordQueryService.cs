@@ -88,6 +88,18 @@ public class RecordQueryService : IRecordQueryService
         DayHandlingDerivation.DayProgress Progress(DailyAnalysisRecord r) =>
             DeriveProgress(r, handlings, issueHandlings, lookup, unhandledSeverities);
 
+        // 逾期＝日層級 DueDate 過期且未結案，或任一問題層級「處理中」的 DueDate 過期
+        // （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）
+        bool IsOverdue(DailyAnalysisRecord r)
+        {
+            var handling = FindHandling(handlings, lookup, r);
+            var dayOverdue = handling?.DueDate.HasValue == true &&
+                             handling.DueDate.Value.Date < DateTime.Today &&
+                             Progress(r).IsUnresolved;
+            return dayOverdue ||
+                   DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(r, issueHandlings, lookup), DateTime.Today);
+        }
+
         if (request.Statuses is { Count: > 0 })
         {
             var wanted = request.Statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -96,15 +108,7 @@ public class RecordQueryService : IRecordQueryService
 
         if (request.Overdue == true)
         {
-            records = records
-                .Where(r =>
-                {
-                    var handling = FindHandling(handlings, lookup, r);
-                    return handling?.DueDate.HasValue == true &&
-                           handling.DueDate.Value.Date < DateTime.Today &&
-                           Progress(r).IsUnresolved;
-                })
-                .ToList();
+            records = records.Where(IsOverdue).ToList();
         }
 
         // 緊急程度排序（§DB-PLAN E 節定案）：風險層級 → 有無關聯訊號 → 日期新到舊。
@@ -121,7 +125,7 @@ public class RecordQueryService : IRecordQueryService
         return new PagedResult<RecordListItemDto>
         {
             Items = ordered.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r)))
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r)))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
@@ -236,14 +240,21 @@ public class RecordQueryService : IRecordQueryService
         HostLookup lookup,
         IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
-        var name = HostNameOf(lookup, record);
         var dayStatus = FindHandling(dayHandlings, lookup, record)?.Status;
-        var forDay = issueHandlings
+        var forDay = IssueHandlingsFor(record, issueHandlings, lookup);
+
+        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities);
+    }
+
+    /// <summary>該紀錄當日的問題層級標記（以現行主機名稱為鍵，同 HostNameOf 的合併語意）</summary>
+    private static List<IssueHandling> IssueHandlingsFor(
+        DailyAnalysisRecord record, List<IssueHandling> issueHandlings, HostLookup lookup)
+    {
+        var name = HostNameOf(lookup, record);
+        return issueHandlings
             .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
                         h.Date.Date == record.Date.Date)
             .ToList();
-
-        return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities);
     }
 
     /// <summary>
@@ -482,7 +493,8 @@ public class RecordQueryService : IRecordQueryService
         DailyAnalysisRecord record,
         HostLookup lookup,
         RecordHandling? handling,
-        DayHandlingDerivation.DayProgress progress)
+        DayHandlingDerivation.DayProgress progress,
+        bool isOverdue)
     {
         // 顯示與連結一律指向**存活**主機：合併之後，舊識別的紀錄若還掛著舊 id，
         // 使用者點進去會落到已停用的墓碑列
@@ -510,9 +522,7 @@ public class RecordQueryService : IRecordQueryService
             HandlerName = handling?.HandlerId.HasValue == true
                 ? _users.Get(handling.HandlerId.Value)?.DisplayName
                 : null,
-            IsOverdue = handling?.DueDate.HasValue == true &&
-                        handling.DueDate.Value.Date < DateTime.Today &&
-                        progress.IsUnresolved
+            IsOverdue = isOverdue
         };
     }
 
