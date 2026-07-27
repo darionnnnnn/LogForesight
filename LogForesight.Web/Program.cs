@@ -37,6 +37,10 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // 以 Windows 服務執行（docs/OPS-HARDENING-PLAN.md P1-3）：只在真的被服務控制管理器啟動時
+    // 才切換生命週期管理，一般用 `dotnet run`／console 啟動不受影響
+    builder.Host.UseWindowsService();
+
     builder.Logging.ClearProviders();
     builder.Host.UseNLog();
 

@@ -62,6 +62,10 @@ const int TrendWindowDays = 14;
 var InitialHistoryDays = 120;
 // 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除。同上，DB 為事實來源。
 var RetentionDays = 120;
+// 執行歷程（批次執行紀錄／診斷、匯入紀錄）保留天數；同上，DB 為事實來源（docs/OPS-HARDENING-PLAN.md P0-3）。
+var RunLogRetentionDays = 90;
+// 稽核紀錄保留天數；同上，DB 為事實來源。
+var AuditRetentionDays = 730;
 
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
@@ -156,6 +160,9 @@ try
         log.Warn("系統設定的歷史資料保留天數（{RetentionDays}）小於首次回補天數（{InitialHistoryDays}），改用內建預設值。",
             systemSettings.RetentionDays, systemSettings.InitialHistoryDays);
     }
+
+    RunLogRetentionDays = systemSettings.RunLogRetentionDays;
+    AuditRetentionDays = systemSettings.AuditRetentionDays;
 }
 catch (Exception ex)
 {
@@ -446,6 +453,39 @@ var pruned = historyService.Prune(RetentionDays);
 if (pruned > 0)
 {
     Console.WriteLine($"已清除 {pruned} 筆超過 {RetentionDays} 天的歷史紀錄。");
+}
+
+// 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/OPS-HARDENING-PLAN.md P0-3）——
+// 排程屬於批次、Web 不養常駐背景工作是既定架構，這裡搭著既有的夜間清理一起做。
+// 處理歷程（handling_log）與權限異動確認（perm_changes）刻意不清：前者是業務敘事，
+// 後者有「待確認」狀態機，清理會湮滅告警——本輪只清「執行過程」性質的三個 log key。
+try
+{
+    var runLogPruned = (batchRunStore?.Prune(RunLogRetentionDays) ?? 0) +
+                        StorageFactory.CreateImportLogStore(settings.Storage, dataRoot).Prune(RunLogRetentionDays);
+    if (runLogPruned > 0)
+        Console.WriteLine($"已清除 {runLogPruned} 筆超過 {RunLogRetentionDays} 天的執行歷程／匯入紀錄。");
+
+    var auditPruned = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot).Prune(AuditRetentionDays);
+    if (auditPruned > 0)
+        Console.WriteLine($"已清除 {auditPruned} 筆超過 {AuditRetentionDays} 天的稽核紀錄。");
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "執行歷程／匯入／稽核紀錄清理失敗（不影響本次分析）：{0}", ex.Message);
+}
+
+// 1c. 清理過期的風險報告檔（docs/OPS-HARDENING-PLAN.md P1-4）——與歷史紀錄同一個 RetentionDays，
+// 報告本來就是紀錄的交付物，沒有獨立設定的必要。
+try
+{
+    var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), RetentionDays);
+    if (reportsPruned > 0)
+        Console.WriteLine($"已清除 {reportsPruned} 份超過 {RetentionDays} 天的風險報告檔。");
+}
+catch (Exception ex)
+{
+    log.Warn(ex, "風險報告檔清理失敗（不影響本次分析）：{0}", ex.Message);
 }
 
 // 2. 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析

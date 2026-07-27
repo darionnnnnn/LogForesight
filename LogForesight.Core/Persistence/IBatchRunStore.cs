@@ -69,6 +69,13 @@ public interface IBatchRunStore
 
     /// <summary>近 N 天的 Error/Fatal 紀錄（異常彙總）</summary>
     List<BatchRunLog> GetRecentErrors(int days);
+
+    /// <summary>
+    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）。
+    /// 依附加時間（非 StartedAt/LoggedAt 業務時間）判斷——批次每日執行，兩者實務上等價，
+    /// 且直接用附加時間可讓底層 SQL 端整批刪，不必逐行反序列化 JSON 比對業務日期。
+    /// </summary>
+    int Prune(int retentionDays);
 }
 
 /// <summary>
@@ -158,6 +165,12 @@ public class JsonBatchRunStore : IBatchRunStore
             .Where(l => l.LoggedAt.Date >= cutoff && l.Level is "Error" or "Fatal")
             .OrderByDescending(l => l.LoggedAt)
             .ToList();
+    }
+
+    public int Prune(int retentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        return _runs.Prune(cutoff) + _logs.Prune(cutoff);
     }
 
     /// <summary>同一 RunId 取最後一列——「結束」那一列會覆蓋先前的「開始」</summary>

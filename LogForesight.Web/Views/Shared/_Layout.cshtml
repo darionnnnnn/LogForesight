@@ -2,6 +2,11 @@
     主版面（docs/WEB-SPEC.md §8.2 版面骨架、§8.5 頁面殼）。
     View 只有結構、沒有資料——側欄選單由 core/layout.js 依 /api/auth/me 回傳的能力渲染。
 *@
+@{
+    // 頁尾顯示版本號（docs/OPS-HARDENING-PLAN.md P1-4）：報修時能確認回報者手上的部署是哪個版本，
+    // 與批次端 --selftest 輸出的版本號同一個來源（Directory.Build.props 的 <Version>）。
+    var appVersion = typeof(LogForesight.Web.Configuration.WebAppSettings).Assembly.GetName().Version;
+}
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -33,6 +38,7 @@
                     <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#box-arrow-right"></use></svg>
                     登出
                 </button>
+                <div class="lf-sidebar__version text-muted small">v@(appVersion)</div>
             </div>
         </aside>
 

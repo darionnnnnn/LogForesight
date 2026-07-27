@@ -326,6 +326,139 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
 
         Assert.Equal("高", result!.RiskLevel);
     }
+
+    // ── QueryPage（docs/OPS-HARDENING-PLAN.md P1-2）─────────────────────────────
+
+    private static DailyAnalysisRecord RecordWithCorrelation(string host, DateTime date, string risk, bool hasCorrelation) => new()
+    {
+        HostId = IdOf(host),
+        Host = host,
+        Date = date,
+        RiskLevel = risk,
+        Headline = $"{host} {date:MM-dd}",
+        CorrelationAlerts = hasCorrelation ? new List<string> { "跨主機同時重啟" } : new List<string>()
+    };
+
+    [Fact]
+    public void QueryPage_基本分頁_page與pageSize正確切分()
+    {
+        var store = CreateStore();
+        for (var i = 0; i < 5; i++)
+            store.Append(Record("HOST-A", DateTime.Today.AddDays(-i)));
+
+        var page1 = Query.QueryPage(new RecordQueryFilter(), page: 1, pageSize: 2);
+        var page2 = Query.QueryPage(new RecordQueryFilter(), page: 2, pageSize: 2);
+        var page3 = Query.QueryPage(new RecordQueryFilter(), page: 3, pageSize: 2);
+
+        Assert.Equal(5, page1.Total);
+        Assert.Equal(5, page2.Total);
+        Assert.Equal(2, page1.Items.Count);
+        Assert.Equal(2, page2.Items.Count);
+        Assert.Single(page3.Items);
+
+        // 三頁合起來剛好是全部 5 天、彼此不重複
+        var allDates = page1.Items.Concat(page2.Items).Concat(page3.Items).Select(r => r.Date.Date).ToList();
+        Assert.Equal(5, allDates.Distinct().Count());
+    }
+
+    [Fact]
+    public void QueryPage_Total反映套用篩選條件後的總筆數()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today, "高"));
+        store.Append(Record("HOST-A", DateTime.Today.AddDays(-1), "低"));
+        store.Append(Record("HOST-A", DateTime.Today.AddDays(-2), "高"));
+
+        var result = Query.QueryPage(new RecordQueryFilter { RiskLevels = new[] { "高" } }, page: 1, pageSize: 50);
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal(2, result.Items.Count);
+    }
+
+    /// <summary>排序依「風險等級→有無關聯訊號→日期」三鍵新到舊——與清單頁排序同一套規則</summary>
+    [Fact]
+    public void QueryPage_排序依風險等級_關聯訊號_日期()
+    {
+        var store = CreateStore();
+        // 刻意打亂寫入順序，逼排序邏輯真的生效而不是巧合地符合插入順序
+        store.Append(RecordWithCorrelation("HOST-A", DateTime.Today.AddDays(-5), "低", hasCorrelation: false));
+        store.Append(RecordWithCorrelation("HOST-A", DateTime.Today.AddDays(-1), "高", hasCorrelation: false));
+        store.Append(RecordWithCorrelation("HOST-A", DateTime.Today.AddDays(-3), "高", hasCorrelation: true));
+        store.Append(RecordWithCorrelation("HOST-A", DateTime.Today, "中", hasCorrelation: false));
+
+        var result = Query.QueryPage(new RecordQueryFilter(), page: 1, pageSize: 50);
+
+        // 高+有關聯 > 高+無關聯（日期較近者優先）> 中 > 低
+        var order = result.Items.Select(r => r.Date.Date).ToList();
+        Assert.Equal(new[]
+        {
+            DateTime.Today.AddDays(-3), // 高、有關聯訊號
+            DateTime.Today.AddDays(-1), // 高、無關聯訊號
+            DateTime.Today,             // 中
+            DateTime.Today.AddDays(-5)  // 低
+        }, order);
+    }
+
+    /// <summary>授權語意：空集合＝零結果，QueryPage 與 Query 必須一致，不能因為走分頁路徑就漏掉這條規則</summary>
+    [Fact]
+    public void QueryPage_Hosts為空集合_回傳空結果()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today));
+
+        var result = Query.QueryPage(new RecordQueryFilter { Hosts = Array.Empty<HostKey>() }, page: 1, pageSize: 50);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(0, result.Total);
+    }
+
+    /// <summary>
+    /// 含 HostId=0 舊列時的退回路徑：結果集合（不只是筆數）必須與 Query() 的既有語意完全一致，
+    /// 這是「正確性優先、退化的只有效能」這個設計承諾的驗收點。
+    /// </summary>
+    [Fact]
+    public void QueryPage_含舊紀錄時_結果與Query語意一致()
+    {
+        var store = CreateStore();
+        store.Append(Record("HOST-A", DateTime.Today, "高"));
+        store.Append(LegacyRecord("HOST-A", DateTime.Today.AddDays(-1), "中"));
+        store.Append(Record("HOST-B", DateTime.Today.AddDays(-2), "低"));
+
+        var filter = new RecordQueryFilter { Hosts = new[] { Key("HOST-A") } };
+        var expected = Query.Query(filter);
+        var paged = Query.QueryPage(filter, page: 1, pageSize: 50);
+
+        Assert.Equal(expected.Count, paged.Total);
+        Assert.Equal(
+            expected.OrderBy(r => r.Date).Select(r => r.Headline),
+            paged.Items.OrderBy(r => r.Date).Select(r => r.Headline));
+    }
+
+    /// <summary>跨頁完整遍歷 QueryPage 收集到的紀錄集合，需與一次性 Query() 的集合完全一致（不重複、不遺漏）</summary>
+    [Fact]
+    public void QueryPage_跨頁收集結果與Query一致()
+    {
+        var store = CreateStore();
+        for (var i = 0; i < 7; i++)
+            store.Append(Record("HOST-A", DateTime.Today.AddDays(-i), i % 2 == 0 ? "高" : "低"));
+
+        var filter = new RecordQueryFilter();
+        var expected = Query.Query(filter);
+
+        var collected = new List<DailyAnalysisRecord>();
+        for (var page = 1; ; page++)
+        {
+            var result = Query.QueryPage(filter, page, pageSize: 3);
+            if (result.Items.Count == 0) break;
+            collected.AddRange(result.Items);
+            if (collected.Count >= result.Total) break;
+        }
+
+        Assert.Equal(expected.Count, collected.Count);
+        Assert.Equal(
+            expected.Select(r => r.Date.Date).OrderBy(d => d),
+            collected.Select(r => r.Date.Date).OrderBy(d => d));
+    }
 }
 
 /// <summary>SQLite（EF）後端跑查詢合約，驗證 Web 查詢面（Query/GetOne 的 Hosts 授權語意、PK 優先比對）。</summary>

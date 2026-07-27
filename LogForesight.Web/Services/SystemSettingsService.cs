@@ -75,6 +75,8 @@ public class SystemSettingsService : ISystemSettingsService
                 s.AiApiKeyEnc = CryptoHelper.Encrypt(request.AiApiKey);
             s.InitialHistoryDays = request.InitialHistoryDays;
             s.RetentionDays = request.RetentionDays;
+            s.RunLogRetentionDays = request.RunLogRetentionDays;
+            s.AuditRetentionDays = request.AuditRetentionDays;
             s.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -86,8 +88,8 @@ public class SystemSettingsService : ISystemSettingsService
             // API 金鑰是否變動只留布林，不留明碼/密文，比照 Sentinel 密碼的稽核原則
             detail: new
             {
-                Before = new { before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl, before.InitialHistoryDays, before.RetentionDays },
-                After = new { saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl, saved.InitialHistoryDays, saved.RetentionDays },
+                Before = new { before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl, before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays },
+                After = new { saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl, saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey)
             });
 
@@ -110,6 +112,8 @@ public class SystemSettingsService : ISystemSettingsService
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
         InitialHistoryDays = s.InitialHistoryDays,
         RetentionDays = s.RetentionDays,
+        RunLogRetentionDays = s.RunLogRetentionDays,
+        AuditRetentionDays = s.AuditRetentionDays,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount
     };

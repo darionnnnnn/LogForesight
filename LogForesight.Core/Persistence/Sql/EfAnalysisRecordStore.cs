@@ -67,6 +67,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             HostName = shaped.Host,
             RecordDate = shaped.Date.Date,
             RiskLevel = shaped.RiskLevel,
+            HasCorrelation = shaped.CorrelationAlerts.Count > 0,
             WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
             ContentJson = JsonSerializer.Serialize(shaped),
             CreatedAt = DateTime.Now
@@ -171,14 +172,18 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
     // ── 查詢（Web 面）─────────────────────────────────────────────────────────
 
-    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
+    /// <summary>
+    /// 下推 <see cref="RecordQueryFilter"/> 除主機名稱 fallback 外的欄位到 SQL 端——
+    /// <see cref="Query"/> 與 <see cref="QueryPage"/> 共用的單點，篩選語意不會因為兩處各自維護
+    /// 一份而漂移（docs/OPS-HARDENING-PLAN.md P1-2）。
+    ///
+    /// Category／MinSeverity／EventId／Source 以 <c>lf_top_issues</c> 的 EXISTS 子查詢下推——
+    /// 這張維度表當初就是為 filter-only 設計、索引已建（docs/DB-PLAN.md），此前一直沒有查詢端用到。
+    /// </summary>
+    private static IQueryable<DailyRecordRow> ApplyPushableFilters(
+        LfDbContext ctx, IQueryable<DailyRecordRow> q, RecordQueryFilter filter)
     {
-        var sw = Stopwatch.StartNew();
-        using var ctx = _contextFactory();
-
-        IQueryable<DailyRecordRow> q = ctx.DailyRecords;
-
-        // 日期在 DB 端預篩（高選擇度、便宜）
+        // 日期／風險層級在 DB 端預篩（高選擇度、便宜）
         if (filter.From.HasValue) { var f = filter.From.Value.Date; q = q.Where(r => r.RecordDate >= f); }
         if (filter.To.HasValue) { var t = filter.To.Value.Date; q = q.Where(r => r.RecordDate <= t); }
         if (filter.RiskLevels is { Count: > 0 })
@@ -187,21 +192,53 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             q = q.Where(r => risks.Contains(r.RiskLevel));
         }
 
+        if (filter.Categories is { Count: > 0 })
+        {
+            var categoryNames = filter.Categories.Select(c => c.ToString()).ToList();
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && categoryNames.Contains(t.Category)));
+        }
+        if (filter.MinSeverity.HasValue)
+        {
+            var minRank = (int)filter.MinSeverity.Value;
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SeverityRank >= minRank));
+        }
+        if (filter.EventId.HasValue)
+        {
+            var eventId = filter.EventId.Value;
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.EventId == eventId));
+        }
+        if (!string.IsNullOrWhiteSpace(filter.Source))
+        {
+            // 與 OwnedRows 同一個 UPPER() 正規化理由：provider collation 不保證一致，
+            // 兩邊都正規化才與 RecordFilterMatcher 的 OrdinalIgnoreCase 逐位一致
+            var source = filter.Source.ToUpperInvariant();
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == source));
+        }
+
         // 主機以 id 在 DB 端粗篩（高選擇度、便宜）；host_id=0 的舊列一律先撈出，
-        // 名稱比對留給下面的共用 HostMatcher 在記憶體套用——**不**在 SQL 端比較字串。
+        // 名稱比對留給呼叫端在記憶體用 HostMatcher 套用——**不**在 SQL 端比較字串。
         // SQL 端 `=` 的大小寫語意依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、
         // SqlServer 常見 CI 不分），與 HostMatcher 的 OrdinalIgnoreCase 不保證一致；
-        // 舊列是有限的存量資料，先撈回用同一份 HostMatcher 比對，才與 JSONL 逐位一致。
+        // 舊列是有限的存量資料，先撈回比對，才與既有語意逐位一致。
         if (filter.Hosts != null)
         {
             var ids = filter.Hosts.Select(k => k.HostId).Where(id => id != 0).ToList();
             q = q.Where(r => (r.HostId != 0 && ids.Contains(r.HostId)) || r.HostId == 0);
         }
 
+        return q;
+    }
+
+    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
+    {
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
         var rows = q.ToList();
 
-        // 其餘欄位（含主機名稱 fallback、category/eventId/source/severity）以共用函數在記憶體
-        // 套用——與 JSONL 逐位一致，且避免 LINQ→SQL 對字串大小寫/JSON 內容的細微翻譯差異
+        // 主機名稱 fallback（HostId=0 的舊列）以共用函數在記憶體套用——
+        // 避免 LINQ→SQL 對字串大小寫的細微翻譯差異
         var records = rows.Select(Deserialize);
         if (filter.Hosts != null)
         {
@@ -210,6 +247,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
 
         var result = records
+            // RecordFilterMatcher 在此仍會重新比對已下推的欄位——SQL 端已narrow，
+            // 這裡是無成本的防禦性覆核，不是查詢正確性的唯一依據
             .Where(r => RecordFilterMatcher.Matches(r, filter))
             .OrderByDescending(r => r.Date)
             .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
@@ -219,6 +258,87 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             filter.From, filter.To, filter.Hosts?.Count, filter.RiskLevels?.Count, filter.Categories?.Count, filter.EventId, rows.Count, result.Count, sw.ElapsedMilliseconds);
         return result;
     }
+
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    {
+        var sw = Stopwatch.StartNew();
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
+        using var ctx = _contextFactory();
+
+        // HostId=0 的舊列需要在記憶體對名稱做精確比對（ApplyPushableFilters 的 collation 理由），
+        // 這個殘餘條件存在時無法安全做 SQL 端真分頁——有這類舊列就整批撈回退回記憶體排序＋分頁，
+        // 沒有就直接在 SQL 端 OFFSET/FETCH。這是本方法效能與正確性的分界點，
+        // 契約測試（EfAnalysisRecordQueryTests）逐位比對兩條路徑與 Query() 結果一致。
+        var hasLegacyHostRows = ctx.DailyRecords.Any(r => r.HostId == 0);
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+
+        if (!hasLegacyHostRows)
+        {
+            var total = q.Count();
+
+            var items = q
+                // 與記憶體排序（RiskRank／CorrelationAlerts.Count>0／Date）語意一致的 SQL 版本；
+                // C# 巢狀三元運算式會被 EF Core 翻成 SQL CASE WHEN
+                .OrderByDescending(r => r.RiskLevel == "高" ? 3 : r.RiskLevel == "中" ? 2 : r.RiskLevel == "低" ? 1 : 0)
+                .ThenByDescending(r => r.HasCorrelation)
+                .ThenByDescending(r => r.RecordDate)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList()
+                .Select(Deserialize)
+                .ToList();
+
+            Log.Debug("[SQL] QueryPage（全下推，SQL 端分頁，page={Page} size={Size}）→ {Total} 筆符合、本頁 {Items} 筆、{Ms}ms",
+                page, pageSize, total, items.Count, sw.ElapsedMilliseconds);
+
+            return new PagedResult<DailyAnalysisRecord> { Items = items, Page = page, PageSize = pageSize, Total = total };
+        }
+
+        // 退回：SQL 已過濾掉大部分不相關的列（含 category/severity/eventId/source），
+        // 但仍需在記憶體對 HostId=0 的舊列做精確名稱比對，因此無法在 SQL 端分頁；
+        // 正確性優先，退化的只有效能（見類別註解）
+        var rows = q.ToList();
+        var records = rows.Select(Deserialize).AsEnumerable();
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        var ordered = records
+            .Where(r => RecordFilterMatcher.Matches(r, filter))
+            .OrderByDescending(r => RiskRank(r.RiskLevel))
+            .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
+            .ThenByDescending(r => r.Date)
+            .ToList();
+
+        Log.Debug("[SQL] QueryPage（含 HostId=0 舊列，退回全窗撈回 {Rows} 列後於記憶體排序＋分頁）→ {Total} 筆符合、{Ms}ms",
+            rows.Count, ordered.Count, sw.ElapsedMilliseconds);
+
+        return new PagedResult<DailyAnalysisRecord>
+        {
+            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+            Page = page,
+            PageSize = pageSize,
+            Total = ordered.Count
+        };
+    }
+
+    /// <summary>
+    /// 風險等級排序權重。與 <c>RecordQueryService.RiskRank</c>／<c>ReportService</c> 內幾乎相同的
+    /// 私有方法是同一份定義各自獨立維護的第三份複本（<see cref="QueryPage"/> 的 SQL CASE WHEN
+    /// 是第二份）——三處已各自維護多時、沒有共用單點，這裡沿用既有寫法，不把改動範圍蔓延到
+    /// 不相關的檔案去做抽象。
+    /// </summary>
+    private static int RiskRank(string riskLevel) => riskLevel switch
+    {
+        "高" => 3,
+        "中" => 2,
+        "低" => 1,
+        _ => 0
+    };
 
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
     {

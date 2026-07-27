@@ -73,6 +73,47 @@ public class RecordQueryService : IRecordQueryService
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
     {
         var filter = BuildFilter(request);
+        var pageSize = Math.Clamp(request.PageSize, 1, 200);
+        var page = Math.Max(request.Page, 1);
+
+        // Statuses／Overdue 篩選依賴處理狀態（handling.json／issue_handling.json），那不在 SQL 裡，
+        // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
+        // 才能把排序＋分頁整個下推給 SQL（docs/OPS-HARDENING-PLAN.md P1-2），只為「這一頁」載入
+        // 處理狀態，這是 2000 台規模下清單頁最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑。
+        var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true;
+
+        if (!needsHandlingFilter)
+        {
+            var paged = _repository.QueryPage(filter, page, pageSize);
+            var pageLookup = new HostLookup(_hosts.GetAll());
+            var pageHandlings = LoadHandlings(paged.Items, pageLookup);
+            var pageIssueHandlings = LoadIssueHandlings(paged.Items, pageLookup);
+            var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+            DayHandlingDerivation.DayProgress PageProgress(DailyAnalysisRecord r) =>
+                DeriveProgress(r, pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
+
+            bool PageIsOverdue(DailyAnalysisRecord r)
+            {
+                var handling = FindHandling(pageHandlings, pageLookup, r);
+                var dayOverdue = handling?.DueDate.HasValue == true &&
+                                 handling.DueDate.Value.Date < DateTime.Today &&
+                                 PageProgress(r).IsUnresolved;
+                return dayOverdue ||
+                       DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(r, pageIssueHandlings, pageLookup), DateTime.Today);
+            }
+
+            return new PagedResult<RecordListItemDto>
+            {
+                Items = paged.Items
+                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r)))
+                    .ToList(),
+                Page = page,
+                PageSize = pageSize,
+                Total = paged.Total
+            };
+        }
+
         var records = _repository.Query(filter);
 
         // 紀錄 → 存活主機的索引：合併過的主機，舊識別下的紀錄要歸到存活主機，
@@ -118,9 +159,6 @@ public class RecordQueryService : IRecordQueryService
             .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
             .ThenByDescending(r => r.Date)
             .ToList();
-
-        var pageSize = Math.Clamp(request.PageSize, 1, 200);
-        var page = Math.Max(request.Page, 1);
 
         return new PagedResult<RecordListItemDto>
         {

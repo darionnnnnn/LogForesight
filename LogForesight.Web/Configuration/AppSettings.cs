@@ -12,6 +12,18 @@ namespace LogForesight.Web.Configuration;
 /// </summary>
 public class WebAppSettings
 {
+    /// <summary>
+    /// 已提交進版控、公開已知的測試值（appsettings.json 的預設 SecretKey／PasswordHash）。
+    /// Production 帶著這組值啟動＝所有 JWT 都可被外人偽造、serverAdmin 密碼形同公開——
+    /// 這道清單只擋「忘了用環境變數覆寫」的疏忽，不是額外的機密保護層。
+    /// **未來再提交任何測試用金鑰／雜湊，記得同步加進這裡。**
+    /// </summary>
+    private static readonly HashSet<string> KnownDevSecrets = new(StringComparer.Ordinal)
+    {
+        "bge6V8SsJu6GRuYYyVniemo/XhAJ4J3kis3sqSDai5gluW9wmA2Vnd4opTbXBTxo", // Jwt:SecretKey（appsettings.json）
+        "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M=" // Auth:ServerAdmin:PasswordHash（appsettings.json，明文＝LogForesight-dev）
+    };
+
     /// <summary>儲存後端。型別取自 Core，與批次 exe 共用同一份欄位定義</summary>
     public StorageSettings Storage { get; set; } = new();
 
@@ -40,6 +52,8 @@ public class WebAppSettings
             errors.Add("Jwt:SecretKey 未設定（正式環境請用環境變數 Jwt__SecretKey 或 user-secrets 提供，不要進版控）。");
         else if (System.Text.Encoding.UTF8.GetByteCount(Jwt.SecretKey) < 32)
             errors.Add("Jwt:SecretKey 長度不足：HMAC-SHA256 簽章金鑰至少需要 32 bytes。");
+        else if (isProduction && KnownDevSecrets.Contains(Jwt.SecretKey))
+            errors.Add("Jwt:SecretKey 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Jwt__SecretKey 設定另一組隨機字串）。");
 
         if (Jwt.ExpireHours <= 0)
             errors.Add("Jwt:ExpireHours 必須大於 0。");
@@ -53,6 +67,8 @@ public class WebAppSettings
 
         if (string.IsNullOrWhiteSpace(Auth.ServerAdmin.PasswordHash))
             errors.Add("Auth:ServerAdmin:PasswordHash 未設定（以 LogForesight.Web.exe --hash-password 產生）。");
+        else if (isProduction && KnownDevSecrets.Contains(Auth.ServerAdmin.PasswordHash))
+            errors.Add("Auth:ServerAdmin:PasswordHash 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Auth__ServerAdmin__PasswordHash 設定 --hash-password 產生的新雜湊）。");
 
         // Stub 不驗密碼，只要知道帳號就能登入。測試環境刻意允許（已評估接受），
         // 但絕不能跟著設定檔一起被帶上正式環境——這道欄杆防的是部署時的疏忽，不是測試期的使用。

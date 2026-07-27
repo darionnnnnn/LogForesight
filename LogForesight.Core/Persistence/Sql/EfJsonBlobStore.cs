@@ -42,23 +42,36 @@ public sealed class EfJsonBlobStore : IJsonBlobStore
             {
                 try
                 {
-                    using var ctx = _contextFactory();
-                    using var tx = ctx.Database.BeginTransaction();
+                    // SqlServer 啟用 EnableRetryOnFailure 後，execution strategy 不相容使用者自開的交易
+                    // （BeginTransaction），必須包在 CreateExecutionStrategy().Execute(...) 內；
+                    // Sqlite 沒有設定重試策略，這裡是 no-op（NonRetryingExecutionStrategy 只單純呼叫一次）。
+                    // 用來取得 strategy 的 probe context 用完即丟——strategy 只由 DbContextOptions 決定，
+                    // 不含任何連線狀態。
+                    using var probe = _contextFactory();
+                    var strategy = probe.Database.CreateExecutionStrategy();
 
-                    var row = ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key);
-                    var (content, result) = mutation(row?.Content);
-
-                    if (row == null)
-                        ctx.Blobs.Add(new BlobRow { BlobKey = _key, Content = content, UpdatedAt = DateTime.Now });
-                    else
+                    return strategy.Execute(() =>
                     {
-                        row.Content = content;
-                        row.UpdatedAt = DateTime.Now;
-                    }
+                        // 重試時必須用全新 context——同一個 context 的變更追蹤會殘留上一次嘗試
+                        // 加入的列，重試時再 Add 一次會造成重複追蹤
+                        using var ctx = _contextFactory();
+                        using var tx = ctx.Database.BeginTransaction();
 
-                    ctx.SaveChanges();
-                    tx.Commit();
-                    return result;
+                        var row = ctx.Blobs.FirstOrDefault(b => b.BlobKey == _key);
+                        var (content, result) = mutation(row?.Content);
+
+                        if (row == null)
+                            ctx.Blobs.Add(new BlobRow { BlobKey = _key, Content = content, UpdatedAt = DateTime.Now });
+                        else
+                        {
+                            row.Content = content;
+                            row.UpdatedAt = DateTime.Now;
+                        }
+
+                        ctx.SaveChanges();
+                        tx.Commit();
+                        return result;
+                    });
                 }
                 catch (Exception ex) when (attempt < maxAttempts && IsTransient(ex))
                 {

@@ -416,4 +416,11 @@ internal class FakeImportLogStore : IImportLogStore
 
     public List<ImportLogEntry> GetRecent(int count) =>
         Entries.OrderByDescending(e => e.CreatedAt).Take(count).ToList();
+
+    public int Prune(int retentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var removed = Entries.RemoveAll(e => e.CreatedAt < cutoff);
+        return removed;
+    }
 }

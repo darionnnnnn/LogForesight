@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    docs/OPS-HARDENING-PLAN.md P1-4：所有專案共用同一個版本號，取代各自散落的預設 1.0.0.0——
+    報修時要能一眼確認回報者手上的批次／Web 是不是同一次部署，版本要對得上程式碼版本。
+    MSBuild 會自動套用到同目錄與子目錄下所有專案，不必逐一在 .csproj 裡設定。
+  -->
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>

@@ -19,7 +19,8 @@ public static class SelfTestRunner
         _fail = 0;
         var sw = Stopwatch.StartNew();
 
-        Console.WriteLine("=== LogForesight Self-Test（不寫入 history、不呼叫 AI、不讀取真實 Event Log）===\n");
+        Console.WriteLine($"=== LogForesight Self-Test（版本 {typeof(SelfTestRunner).Assembly.GetName().Version}，" +
+                           "不寫入 history、不呼叫 AI、不讀取真實 Event Log）===\n");
 
         // 實際生效的規則/抑制設定存於資料庫，selftest 刻意不連 DB（連線＋EnsureCreated 是寫入
         // 副作用，違反「跑完不留副作用」的承諾），只驗證內建種子——見 RunRuleLoadingChecks 的說明。

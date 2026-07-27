@@ -47,7 +47,11 @@ public static class StorageFactory
             }
             else
             {
-                options = new DbContextOptionsBuilder<LfDbContext>().UseSqlServer(settings.ConnectionString).Options;
+                // 暫時性錯誤（failover／節流等）自動重試（docs/OPS-HARDENING-PLAN.md P0-4）；
+                // Sqlite 是本機檔案，沒有這類網路層暫時性錯誤，不需要
+                options = new DbContextOptionsBuilder<LfDbContext>()
+                    .UseSqlServer(settings.ConnectionString, o => o.EnableRetryOnFailure(maxRetryCount: 5))
+                    .Options;
                 _dbDesc = $"SqlServer（{MaskConnectionString(settings.ConnectionString)}）";
             }
 
@@ -58,6 +62,9 @@ public static class StorageFactory
             {
                 using var ctx = factory();
                 ctx.Database.EnsureCreated();
+                // EnsureCreated 只在資料庫不存在時建表，對既有 DB 什麼都不做——
+                // 這裡補上既有 DB 缺的欄位/索引（docs/DB-PLAN.md 定案 13：自製冪等 DDL）
+                SchemaUpgrader.Upgrade(ctx);
                 Log.Info("[SQL] schema 確認完成");
             }
             catch (Exception ex)

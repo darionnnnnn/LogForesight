@@ -97,6 +97,8 @@ function renderAiFields(settings) {
 function renderRetentionFields(settings) {
     document.getElementById('initial-history-days').value = settings.initialHistoryDays;
     document.getElementById('retention-days').value = settings.retentionDays;
+    document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
+    document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
 }
 
 function renderUpdatedAt(settings) {
@@ -134,6 +136,9 @@ function bindForm() {
             return;
         }
 
+        const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
+        const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
+
         const apiKey = document.getElementById('ai-api-key').value;
         const clearApiKey = document.getElementById('ai-api-key-clear').checked;
 
@@ -146,7 +151,9 @@ function bindForm() {
                 aiApiKey: apiKey || null,
                 clearAiApiKey: clearApiKey,
                 initialHistoryDays,
-                retentionDays
+                retentionDays,
+                runLogRetentionDays,
+                auditRetentionDays
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);

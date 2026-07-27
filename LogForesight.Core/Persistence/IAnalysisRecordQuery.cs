@@ -58,4 +58,16 @@ public interface IAnalysisRecordQuery
     /// 依傳入順序擇一命中（呼叫端把存活主機排在最前，見 <see cref="HostIdentityResolver.Expand"/>）。
     /// </summary>
     DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date);
+
+    /// <summary>
+    /// 分頁查詢（docs/OPS-HARDENING-PLAN.md P1-2），依「風險等級→有無關聯訊號→日期」新到舊排序——
+    /// 與 <c>RecordQueryService.Search</c> 清單頁的排序同一套規則。
+    ///
+    /// 與 <see cref="Query"/> 不同：<see cref="Query"/> 撈回全部符合條件的紀錄（批次與不分頁呼叫端用），
+    /// 這個方法在條件允許時直接在 SQL 端排序＋分頁，不必先把全部符合條件的紀錄撈進記憶體——
+    /// 這是 2000 台規模下清單頁效能的關鍵。若篩選條件裡含有無法下推的殘餘（見
+    /// <see cref="EfAnalysisRecordStore"/> 的實作說明），會退回「SQL 過濾＋整批撈回→記憶體排序與分頁」，
+    /// 正確性優先，退化的只有效能。
+    /// </summary>
+    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize);
 }

@@ -17,6 +17,9 @@ public interface IAuditLogStore
 
     /// <summary>指定期間內、指定動作的筆數（儀表板的「近 24 小時登入失敗」卡片用）</summary>
     int Count(DateTime from, DateTime to, string action);
+
+    /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）</summary>
+    int Prune(int retentionDays);
 }
 
 /// <summary>
@@ -57,13 +60,37 @@ public class JsonAuditLogStore : IAuditLogStore
 
     public PagedResult<AuditEntry> Query(AuditQuery query)
     {
-        var filtered = ReadAll().Where(e => Matches(e, query))
+        var pageSize = Math.Clamp(query.PageSize, 1, 200);
+        var page = Math.Max(query.Page, 1);
+
+        // 完全沒有篩選條件：純粹分頁瀏覽全部，SQL 端直接分頁，不必先讀全表
+        // （docs/OPS-HARDENING-PLAN.md P1-2——稽核頁預設檢視就是這個情境，2000 台規模下
+        // 稽核表可能有數十萬列，每次開頁都整表讀回記憶體會是第一個效能瓶頸）。
+        // 只要有任何篩選條件就不走這條路：From/To 篩選涉及 CreatedAt 為 null 的既存列
+        // （schema 升級前寫入）在 SQL 端無法精確判斷是否落在範圍內，全表無篩選時這個顧慮不存在。
+        var noFilter = query.From == null && query.To == null && query.UserId == null &&
+                       query.Result == null && string.IsNullOrEmpty(query.TargetKind) &&
+                       query.Actions is not { Count: > 0 };
+
+        if (noFilter)
+        {
+            var (lines, total) = _log.ReadPage((page - 1) * pageSize, pageSize);
+            return new PagedResult<AuditEntry>
+            {
+                Items = ParseLines(lines),
+                Page = page,
+                PageSize = pageSize,
+                Total = total
+            };
+        }
+
+        // 有篩選條件：以日期範圍先在 SQL 端窄化候選集（沒有時間戳記的既存列一律視為候選，
+        // 精確判斷交給下面的 Matches），其餘欄位在記憶體過濾——仍避免了讀回「範圍外」的舊資料
+        var filtered = ParseLines(_log.ReadLines(query.From, query.To))
+            .Where(e => Matches(e, query))
             .OrderByDescending(e => e.OccurredAt)
             .ThenByDescending(e => e.AuditId)
             .ToList();
-
-        var pageSize = Math.Clamp(query.PageSize, 1, 200);
-        var page = Math.Max(query.Page, 1);
 
         return new PagedResult<AuditEntry>
         {
@@ -75,8 +102,11 @@ public class JsonAuditLogStore : IAuditLogStore
     }
 
     public int Count(DateTime from, DateTime to, string action) =>
-        ReadAll().Count(e => e.OccurredAt >= from && e.OccurredAt <= to &&
-                             string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
+        ParseLines(_log.ReadLines(from, to))
+            .Count(e => e.OccurredAt >= from && e.OccurredAt <= to &&
+                        string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
+
+    public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
 
     private static bool Matches(AuditEntry entry, AuditQuery query)
     {
@@ -91,10 +121,12 @@ public class JsonAuditLogStore : IAuditLogStore
         return true;
     }
 
-    private List<AuditEntry> ReadAll()
+    private List<AuditEntry> ReadAll() => ParseLines(_log.ReadLines());
+
+    private static List<AuditEntry> ParseLines(IEnumerable<string> lines)
     {
         var result = new List<AuditEntry>();
-        foreach (var line in _log.ReadLines())
+        foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
             try

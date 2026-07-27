@@ -15,6 +15,12 @@ public interface IRecordRepository
     /// <summary>依條件查詢（已套用目前登入者的可見範圍）</summary>
     List<DailyAnalysisRecord> Query(RecordQueryFilter filter);
 
+    /// <summary>
+    /// 分頁查詢（已套用目前登入者的可見範圍）——docs/OPS-HARDENING-PLAN.md P1-2。
+    /// 可下推的條件盡量在 SQL 端完成排序與分頁，見 <see cref="IAnalysisRecordQuery.QueryPage"/>。
+    /// </summary>
+    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize);
+
     /// <summary>單筆紀錄；不在可見範圍內回 null（不區分「不存在」與「沒權限」）</summary>
     DailyAnalysisRecord? GetOne(long hostId, DateTime date);
 
@@ -43,16 +49,28 @@ public class RecordRepository : IRecordRepository
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
     {
+        ApplyVisibility(filter);
+        return _records.Query(filter);
+    }
+
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    {
+        ApplyVisibility(filter);
+        return _records.QueryPage(filter, page, pageSize);
+    }
+
+    /// <summary>
+    /// 呼叫端可以再縮小範圍（例如只看某幾台），但**不可能擴大**——交集永遠不超出可見範圍。
+    /// 這是第 3 層防線實際生效的地方，Query 與 QueryPage 共用同一份邏輯。
+    /// </summary>
+    private void ApplyVisibility(RecordQueryFilter filter)
+    {
         var visible = VisibleHostKeys();
         var visibleIds = visible.Select(k => k.HostId).ToHashSet();
 
-        // 呼叫端可以再縮小範圍（例如只看某幾台），但**不可能擴大**——
-        // 交集永遠不超出可見範圍。這是第 3 層防線實際生效的地方。
         filter.Hosts = filter.Hosts == null
             ? visible
             : filter.Hosts.Where(k => visibleIds.Contains(k.HostId)).ToList();
-
-        return _records.Query(filter);
     }
 
     public DailyAnalysisRecord? GetOne(long hostId, DateTime date)

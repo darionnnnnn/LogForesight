@@ -56,9 +56,13 @@ public class VisibilityService : IVisibilityService
     {
         if (_cached != null) return _cached;
 
-        var allHosts = _hosts.GetAll();
+        // 停用主機（管理員手動停用，或 Sentinel 移除觸發的系統停用）從可見範圍整批排除——
+        // 資料只留在資料庫，歷史/儀表板/報表都不再計入，重新啟用即全部復原。
+        // 墓碑列（合併來源，同樣 Active=false）不受影響：它們的歷史經由存活主機的別名展開
+        // 可見（RecordRepository.VisibleHostKeys），不需要自己也在這個集合裡。
+        var allHosts = _hosts.GetAll().Where(h => h.Active).ToList();
 
-        // ViewAll（dev / manager / admin）：全部主機
+        // ViewAll（dev / manager / admin）：全部啟用中的主機
         if (_currentUser.Has(Capability.ViewAll))
         {
             _cached = allHosts.Select(h => h.HostId).ToHashSet();

@@ -162,4 +162,37 @@ public class EfWebdataStoreTests
         using var verify = fx.NewContext();
         Assert.Equal("v1", verify.Blobs.Single(b => b.BlobKey == "race").Content);
     }
+
+    /// <summary>
+    /// P0-4：<see cref="EfJsonBlobStore.Mutate"/> 撞上暫時性例外（含樂觀鎖衝突）時自動重試並成功落地。
+    /// 驗證 P0-4 為相容 SqlServer <c>EnableRetryOnFailure</c> 加上的 execution strategy 包裝
+    /// （<c>CreateExecutionStrategy().Execute(...)</c>，每次呼叫都用全新 DbContext）沒有破壞
+    /// 既有「外層 for 迴圈依 <c>IsTransient</c> 判斷重試」的行為。
+    ///
+    /// 未在此以雙 context 模擬真實跨行程並發衝突：<see cref="EfSqliteFixture"/> 為了讓 in-memory DB
+    /// 跨 context 保留內容，多個 context 共用同一條實體 SQLite 連線——這與正式環境「不同連線」的
+    /// 並發語意不同（同連線同時只能有一個交易，兩個 context 的寫入會被序列化而非真正競態），
+    /// 直接丟一個 DbUpdateException 更能精準且穩定地測到「IsTransient 判定＋重試」這條路徑。
+    /// </summary>
+    [Fact]
+    public void Mutate_遇到暫時性例外時自動重試並成功落地()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = fx.Blob("transient-retry");
+
+        var callCount = 0;
+        var result = store.Mutate(content =>
+        {
+            callCount++;
+            if (callCount == 1)
+                throw new DbUpdateException("模擬暫時性衝突（IsTransient 應判定為可重試）");
+            return ((content ?? "") + "v1", callCount);
+        });
+
+        Assert.Equal(2, callCount); // 第一次拋出、第二次重試才成功
+        Assert.Equal(2, result);
+
+        using var verify = fx.NewContext();
+        Assert.Equal("v1", verify.Blobs.Single(b => b.BlobKey == "transient-retry").Content);
+    }
 }

@@ -39,6 +39,19 @@ public class SystemSettings
     /// <summary>歷史資料庫保留天數（需 &gt;= InitialHistoryDays）</summary>
     public int RetentionDays { get; set; } = 120;
 
+    /// <summary>
+    /// 執行歷程保留天數（批次執行紀錄／診斷、匯入紀錄——docs/WEB-SPEC.md §11-6、
+    /// docs/OPS-HARDENING-PLAN.md P0-3）。與業務資料的 <see cref="RetentionDays"/> 分開，
+    /// 因為兩者性質不同：這是「這次跑了什麼」的執行歷程，不是分析結果本身。
+    /// </summary>
+    public int RunLogRetentionDays { get; set; } = 90;
+
+    /// <summary>
+    /// 稽核紀錄保留天數（操作稽核——docs/WEB-SPEC.md §11-6、docs/OPS-HARDENING-PLAN.md P0-3）。
+    /// 稽核是合規／追責用途，保留期通常比業務資料更長，故獨立設定。
+    /// </summary>
+    public int AuditRetentionDays { get; set; } = 730;
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

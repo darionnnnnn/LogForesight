@@ -116,6 +116,62 @@ public class RoleCapabilityMapTests
     }
 }
 
+/// <summary>P0-2：已提交進版控的公開測試金鑰／雜湊，不得帶著上 Production</summary>
+public class WebAppSettingsValidationTests
+{
+    private const string KnownDevSecretKey = "bge6V8SsJu6GRuYYyVniemo/XhAJ4J3kis3sqSDai5gluW9wmA2Vnd4opTbXBTxo";
+    private const string KnownDevPasswordHash = "PBKDF2$210000$s79Mzbz0FKaArA2SsMlCuQ==$2JKMIZGXFQbelisLIZZo+WAMCPJ0Ao3XPm5jg8TFy9M=";
+
+    /// <summary>其餘欄位皆合格的基準設定，僅金鑰/雜湊/環境由呼叫端覆寫</summary>
+    private static WebAppSettings Baseline() => new()
+    {
+        Jwt = new JwtSettings { SecretKey = KnownDevSecretKey, ExpireHours = 8 },
+        Auth = new AuthSettings
+        {
+            Provider = "Ldap",
+            ServerAdmin = new ServerAdminSettings { Account = "svc-lfadmin", PasswordHash = KnownDevPasswordHash }
+        },
+        Storage = new LogForesight.StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory }
+    };
+
+    [Fact]
+    public void Production且用已知SecretKey_啟動失敗()
+    {
+        var settings = Baseline();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: true));
+        Assert.Contains("Jwt:SecretKey", ex.Message);
+    }
+
+    [Fact]
+    public void Production且用已知PasswordHash_啟動失敗()
+    {
+        var settings = Baseline();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: true));
+        Assert.Contains("Auth:ServerAdmin:PasswordHash", ex.Message);
+    }
+
+    /// <summary>本機測試合法使用這組公開值——非 Production 不擋</summary>
+    [Fact]
+    public void 非Production且用已知值_通過()
+    {
+        var settings = Baseline();
+
+        settings.Validate(isProduction: false);   // 不應拋例外
+    }
+
+    [Fact]
+    public void Production且已覆寫成非已知值_通過()
+    {
+        var settings = Baseline();
+        settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
+        settings.Auth.ServerAdmin.PasswordHash = "PBKDF2$210000$另一組真正產生的雜湊$不是已知測試值==";
+
+        settings.Validate(isProduction: true);   // 不應拋例外
+    }
+}
+
 public class ServerAdminAuthenticatorTests
 {
     private const string Account = "svc-lfadmin";

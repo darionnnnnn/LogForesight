@@ -730,6 +730,23 @@ internal class FakeRecordRepository : IRecordRepository
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter) => _records.ToList();
 
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    {
+        var ordered = _records
+            .OrderByDescending(r => r.RiskLevel == "高" ? 3 : r.RiskLevel == "中" ? 2 : r.RiskLevel == "低" ? 1 : 0)
+            .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
+            .ThenByDescending(r => r.Date)
+            .ToList();
+
+        return new PagedResult<DailyAnalysisRecord>
+        {
+            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+            Page = page,
+            PageSize = pageSize,
+            Total = ordered.Count
+        };
+    }
+
     public DailyAnalysisRecord? GetOne(long hostId, DateTime date)
     {
         var host = _hosts.Get(hostId);

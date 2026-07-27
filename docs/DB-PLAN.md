@@ -413,19 +413,28 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 （本機 IP 的收集屬 DB 階段——它是 host 層級的一次性資訊，匯入時當場收集即可，
 不需要跟著每日紀錄存。）
 
-## Schema 升級機制（定案 13，2026-07-24）
+## Schema 升級機制（定案 13，2026-07-24；**已落實 2026-07-27**）
 
-`LfDbContext` 目前靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
-對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併這一輪（`Sentinel`／`SentinelId`／
-`CreatedAt` 等新增欄位）全部落在既有的 `lf_blobs` JSON 文件裡，零 DDL 異動，所以這次沒有
-撞到這個限制；但這是**未來的地雷**——下一次需要新增真表或對既有真表加欄位時，
-`EnsureCreated()` 對已上線的資料庫什麼都不會做，異動不會生效也不會報錯，靜默失敗最難查。
+`LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
+對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／
+`CreatedAt` 等新增欄位）全部落在既有的 `lf_blobs` JSON 文件裡，零 DDL 異動，當時沒有
+撞到這個限制；但下一次需要新增真表或對既有真表加欄位時，`EnsureCreated()` 對已上線的
+資料庫什麼都不會做，異動不會生效也不會報錯，靜默失敗最難查——這正是 P0-3（`lf_log_lines`
+清理需要的 `created_at` 欄）撞上的情況，因此本輪落實機制。
 
-**方針（先寫下來，本輪不建機制）**：屆時採**自製冪等 DDL**（開機時檢查→缺什麼補什麼，
-可重複執行不出錯），**不用 EF Core Migrations**——雙 provider（Sqlite／SqlServer）各自維護
-一份 migration 歷史的長期成本，對這個專案的變更頻率不成比例；自製 DDL 檢查腳本反而更貼近
-現有「`EnsureCreated` 全有全無」的簡單心智模型，只是把它從「只在全新庫做一次」延伸成
-「每次啟動都補差異」。
+**方針（已落實）**：採**自製冪等 DDL**（開機時檢查→缺什麼補什麼，可重複執行不出錯），
+**不用 EF Core Migrations**——雙 provider（Sqlite／SqlServer）各自維護一份 migration 歷史的
+長期成本，對這個專案的變更頻率不成比例；自製 DDL 檢查腳本反而更貼近現有「`EnsureCreated`
+全有全無」的簡單心智模型，只是把它從「只在全新庫做一次」延伸成「每次啟動都補差異」。
+
+實作：`LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs`，於 `StorageFactory.GetDbFactory`
+的 `EnsureCreated()` 之後呼叫（同一把 `_schemaLock` 內，批次與 Web 啟動時都會跑到）。
+每一步是「檢查缺什麼（SQLite 查 `pragma_table_info`/`pragma_index_list`，SqlServer 查
+`INFORMATION_SCHEMA.COLUMNS`/`sys.indexes`）→ 缺才補（`ALTER TABLE ADD`／`CREATE INDEX`）」，
+新建的 DB 因 `EnsureCreated` 已建好最新 schema，每一步在新 DB 上都是 no-op。
+首個落地案例：`lf_log_lines` 補 `created_at` 欄＋`(log_key, created_at)` 索引
+（docs/OPS-HARDENING-PLAN.md P0-3 的前置需求）。未建 `lf_schema_version` 版本表——
+冪等檢查本身就是狀態，步驟數量還不到需要額外版本追蹤的規模。
 
 ## 使用場景盤點與待討論細節（2026-07-20 第二輪，續規劃）
 

@@ -19,6 +19,12 @@ public class SystemSettingsDto
 
     public int RetentionDays { get; set; }
 
+    /// <summary>執行歷程（批次執行紀錄／匯入紀錄）保留天數</summary>
+    public int RunLogRetentionDays { get; set; }
+
+    /// <summary>稽核紀錄保留天數</summary>
+    public int AuditRetentionDays { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
@@ -47,4 +53,10 @@ public class UpdateSystemSettingsRequest
 
     [Range(1, 3650, ErrorMessage = "歷史資料保留天數必須介於 1~3650 天")]
     public int RetentionDays { get; set; }
+
+    [Range(7, 3650, ErrorMessage = "執行歷程保留天數必須介於 7~3650 天")]
+    public int RunLogRetentionDays { get; set; }
+
+    [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
+    public int AuditRetentionDays { get; set; }
 }

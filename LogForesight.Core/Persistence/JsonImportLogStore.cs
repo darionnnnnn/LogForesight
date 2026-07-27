@@ -32,6 +32,9 @@ public interface IImportLogStore
 
     /// <summary>近期匯入紀錄，新到舊</summary>
     List<ImportLogEntry> GetRecent(int count);
+
+    /// <summary>清除超過保留天數的匯入紀錄，回傳刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）</summary>
+    int Prune(int retentionDays);
 }
 
 /// <summary><see cref="IImportLogStore"/> 的實作（log key=import_logs，append-only）</summary>
@@ -64,6 +67,8 @@ public class JsonImportLogStore : IImportLogStore
 
     public List<ImportLogEntry> GetRecent(int count) =>
         ReadAll().OrderByDescending(e => e.CreatedAt).Take(count).ToList();
+
+    public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
 
     private List<ImportLogEntry> ReadAll()
     {

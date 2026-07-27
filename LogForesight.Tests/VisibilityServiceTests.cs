@@ -156,6 +156,48 @@ public class VisibilityServiceTests
         service.EnsureVisible(ooHost.HostId);   // 不應拋例外
     }
 
+    /// <summary>停用主機的資料只留在資料庫，可見範圍必須排除它——這是 N-1 的核心行為</summary>
+    [Fact]
+    public void 主機已停用_不在ViewAll的可見範圍()
+    {
+        var (_, ooHost, xxHost) = SetupTwoDepartments();
+        ooHost.Active = false;
+        _hosts.Upsert(ooHost);
+
+        var visible = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIds();
+
+        Assert.DoesNotContain(ooHost.HostId, visible);
+        Assert.Contains(xxHost.HostId, visible);
+    }
+
+    /// <summary>群組授權路徑同樣要排除停用主機，不能只有 ViewAll 分支生效</summary>
+    [Fact]
+    public void 主機已停用_不在群組授權的可見範圍()
+    {
+        var (user, ooHost, _) = SetupTwoDepartments();
+        ooHost.Active = false;
+        _hosts.Upsert(ooHost);
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.DoesNotContain(ooHost.HostId, visible);
+    }
+
+    /// <summary>重新啟用後應完全復原——停用是可逆的，不是刪除</summary>
+    [Fact]
+    public void 主機重新啟用後_恢復可見()
+    {
+        var (_, ooHost, _) = SetupTwoDepartments();
+        ooHost.Active = false;
+        _hosts.Upsert(ooHost);
+        ooHost.Active = true;
+        _hosts.Upsert(ooHost);
+
+        var visible = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIds();
+
+        Assert.Contains(ooHost.HostId, visible);
+    }
+
     [Fact]
     public void GetVisibleHosts_依主機名稱排序()
     {

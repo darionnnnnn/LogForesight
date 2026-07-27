@@ -311,6 +311,12 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 **Service 層的資料範圍過濾是不可繞過的最後防線**：即使某個 API 忘了掛 Filter，
 查詢仍只回授權範圍的資料。
 
+**停用主機不在可見範圍**（2026-07-27，docs/OPS-HARDENING-PLAN.md N-1）：`Active=false` 的主機
+（管理員手動停用或 Sentinel 移除觸發的系統停用）一律排除在 `GetVisibleHostIds()` 之外——
+含 ViewAll 分支。其歷史紀錄因此不出現在問題查詢/儀表板/報表的任何計數，資料只留在資料庫，
+重新啟用即全部復原；主機管理頁不經此路徑，停用主機本身仍可見可管理。墓碑列（合併來源，
+同為 Active=false）的歷史不受影響——經 `RecordRepository.VisibleHostKeys` 從存活主機做別名展開。
+
 ### 7.2 API 統一慣例
 
 - 路由：`api/{resource}`，資源複數、動作用 HTTP 動詞表達；非 CRUD 動作用子路徑
@@ -695,7 +701,10 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
        **明確不動**：日風險等級與報告 txt（批次已算定的證據層）、問題查詢頁的日層級搜尋與下鑽參數。
   2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
      DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
-  3. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）。
+  3. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）；
+     2026-07-27（docs/OPS-HARDENING-PLAN.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
+     批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
+     批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
 - API：`GET/PUT api/admin/settings`
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
@@ -824,6 +833,11 @@ SQLite 因資料庫級寫入鎖＋busy 重試無此問題，但正式環境走�
 現由 `Mutate` 的單一交易（`BeginTransaction`/`SaveChanges`/`Commit`）保證，取代原本的
 temp 檔＋`File.Replace` 手法。
 
+（2026-07-27 P0-4 補充：SqlServer provider 啟用 `EnableRetryOnFailure` 後，execution strategy
+與使用者自開交易不相容，`Mutate` 的交易段已包進 `CreateExecutionStrategy().Execute(...)`，
+且每次執行策略重試都用全新 `DbContext`——Sqlite 上是 no-op（`NonRetryingExecutionStrategy`），
+上述樂觀鎖重試語意不變。見 docs/OPS-HARDENING-PLAN.md §5。）
+
 ### 10.5 SQL 後端（Phase C 完成 2026-07-23，全資料走 SQL；2026-07-24 起 Sqlite 為預設、Jsonl 退役）
 
 `Storage.Type` **二選一**，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
@@ -849,7 +863,9 @@ temp 檔＋`File.Replace` 手法。
   `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`／`RuleImporterRunContractTests`
   （規則與抑制），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
   SQLite 合約子類為必要項**（Jsonl 合約實作已隨檔案後端一併退役，見 §10.4）。
-- 表由程式首次啟動時 `EnsureCreated` 自動建立（無 migration）。批次與 Web 須設**相同的 `Storage.Type`**；
+- 表由程式首次啟動時 `EnsureCreated` 自動建立；對**既有** DB 的欄位/索引增補由 `SchemaUpgrader`
+  （自製冪等 DDL，2026-07-27 落實定案 13，見 docs/DB-PLAN.md「Schema 升級機制」）在 EnsureCreated
+  之後接手——不用 EF Migrations。批次與 Web 須設**相同的 `Storage.Type`**；
   SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
 
@@ -866,8 +882,9 @@ temp 檔＋`File.Replace` 手法。
 
 ## 12. 測試策略
 
-- **合約測試**：每個新儲存介面一組合約測試基底，JSONL 實作先跑；SQL 實作完成時必須通過同一組
-  （沿用 `JsonlAnalysisRecordStoreTests` 的既定路線）。
+- **合約測試**：每個新儲存介面一組合約測試基底（`AnalysisRecordStoreContractTests` 等），
+  各後端實作跑同一組案例確保語意逐位一致；Jsonl 檔案後端已於 2026-07-24 退役，
+  SQL（`EfAnalysisRecordStoreContractTests`，SQLite 上跑）現為唯一且預設路線。
 - **Service 單元測試**：注入 in-memory store 假實作，覆蓋授權範圍過濾（user 看不到未授權主機——
   **每個查詢型 Service 至少一條此測試**）、指派/狀態變更的能力規則、CSV 預覽的錯誤判定、
   規則儲存驗證、稽核有寫入。
@@ -883,7 +900,7 @@ temp 檔＋`File.Replace` 手法。
 | 2 ✅ | 查詢面：儀表板、問題查詢、風險日詳情（唯讀）、主機詳情、報表（含 Chart.js 導入與 `core/charts.js` 包裝層、下鑽接線；Core 的 `CategoryAggregator` 純函數於此期建立，§10.3） | 已完成 2026-07-21，驗收結果見 §14 |
 | 3 ✅ | 寫入面：處理狀態/指派、權限異動確認、完整稽核接線；批次端權限異動結構化寫入（§2.1 雙軌） | 已完成 2026-07-21，驗收結果見 §14 |
 | 4 ✅ | 規則維護（含 seeds/回復/驗證）＋批次端 `lf_batch_runs` 寫入＋執行監控頁 | 已完成 2026-07-21，驗收結果見 §14 |
-| 5 ⏸ | SQL 後端實作（合約測試通過，含寫入時以 `CategoryAggregator` 填 `lf_record_categories`）＋`Storage.Type` 切換＋`--import-history` 匯入器 | **暫緩（2026-07-21 決定）**：待 DB 環境（SQL Server 或 Oracle）就緒後啟動。啟動前建議先補總體檢列出的 P2（rundata/稽核保留清理）。合約測試基底已就緒，SQL 實作繼承同一組案例即可 |
+| 5 ✅ | SQL 後端實作（合約測試通過，含寫入時以 `CategoryAggregator` 填 `lf_record_categories`）＋`Storage.Type` 切換 | **已完成**：見 docs/DB-PLAN.md（Phase C，2026-07-24）。EF Core＋Sqlite/SqlServer 雙 provider，Sqlite 現為預設與主要測試路徑，Jsonl 檔案後端已退役（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10）。`--import-history` 匯入器未實作（原始需求已由「全部資料走 SQL、無檔案」的路線取代，不再需要獨立匯入步驟） |
 
 ## 14. 實作進度與過程中的定案
 
@@ -1040,7 +1057,7 @@ store 建立前早退（唯讀承諾成立）、前端動態內容一律 `textCo
 
 | 優先 | 偏差 | 說明 |
 |---|---|---|
-| P2 | `rundata\`／`webdata\audit.jsonl` 無保留清理 | §11-6 規劃 RunLogRetentionDays=90／稽核 730；目前只有 history.txt 有 120 天 Prune。單機量級增長慢，SQL 階段（統一滾動清理）前補上即可 |
+| ~~P2~~ ✅ | ~~`rundata\`／`webdata\audit.jsonl` 無保留清理~~ **已於 2026-07-27 完成**（docs/OPS-HARDENING-PLAN.md P0-3） | §11-6 規劃的 RunLogRetentionDays(90)／AuditRetentionDays(730) 已落地：`lf_log_lines` 補 `created_at` 欄，批次啟動時依「系統管理 > 設定」頁的保留天數清理執行歷程/匯入/稽核紀錄（handling_log 與 perm_changes 刻意不清，理由見該計畫 §4.2） |
 | P3 | §9.2 主篩選列缺「處理狀態」下拉 | 功能存在（URL 參數 `statuses` 可用、儀表板下鑽依賴它），僅表單未提供控制項；且下鑽帶入的隱藏條件（severity/statuses）畫面上無標示 |
 | P3 | §9.4 主機詳情缺「權限異動紀錄／生效中抑制」區塊；§9.8 使用者詳情缺「操作紀錄／最近登入」頁籤；§9.7 規則頁缺「異動史」連結 | 資料與 API 皆已存在（audit/suppressions 端點），純前端增補 |
 | P3 | §8.6-2 表格欄位排序未實作；§6.3 `session_expired` 稽核補記未實作 | 便利性條款，不影響正確性 |

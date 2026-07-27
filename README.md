@@ -793,6 +793,81 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
+## Web 部署（docs/OPS-HARDENING-PLAN.md P1-3）
+
+Web（`LogForesight.Web`）與批次（`LogForesight.exe`）通常部署在同一台伺服器：批次夜間跑分析寫入資料庫，
+Web 提供查詢介面；兩者的 `Storage:*` 設定必須指向同一份資料（見上方「設定檔」表格）。
+
+### 以 Windows 服務執行
+
+`Program.cs` 已加 `UseWindowsService()`：一般用 `dotnet run` 或直接執行 `.exe` 完全不受影響，
+只有真的被服務控制管理器（SCM）啟動時才切換生命週期管理（開機自動啟動、服務控制台可停/啟/重啟）。
+
+```
+sc create LogForesightWeb ^
+  binPath= "C:\path\to\LogForesight.Web.exe" ^
+  start= auto
+sc description LogForesightWeb "LogForesight 查詢介面（Web）"
+sc start LogForesightWeb
+```
+
+服務帳號需要對 `Storage:DataRoot`（含批次資料庫檔案，若用 Sqlite）與自己的 `logs\` 目錄有讀寫權限；
+若批次與 Web 用不同服務帳號執行，記得兩邊都要對共用的資料目錄有權限。
+
+### HTTPS（Kestrel）
+
+正式環境不建議用 `dotnet dev-certs` 的開發憑證。在 `appsettings.json` 加 `Kestrel` 區段綁正式憑證：
+
+```json
+{
+  "Kestrel": {
+    "Endpoints": {
+      "Https": {
+        "Url": "https://0.0.0.0:8443",
+        "Certificate": {
+          "Path": "C:\\certs\\logforesight.pfx",
+          "Password": ""
+        }
+      }
+    }
+  }
+}
+```
+
+`Certificate:Password` 同樣不要寫進版控——用環境變數 `Kestrel__Endpoints__Https__Certificate__Password` 覆寫。
+憑證更新是手動流程：換新 pfx 檔、更新設定裡的路徑/密碼、重啟服務；到期前務必排進 runbook 提醒，
+過期當天才發現只會是使用者連不上站台。
+
+### 環境變數（不進版控的機密）
+
+appsettings.json 會進版控，下列欄位在正式環境**一律**用環境變數覆寫（設定檔留空即可）：
+
+| 環境變數 | 對應設定 | 用途 |
+|---|---|---|
+| `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
+| `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
+| `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
+| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，且**批次與 Web 必須設同一把**，兩邊才讀得懂彼此寫入的密文 |
+| `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
+| `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
+
+### 防火牆
+
+內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可，不需要 IIS 反向代理：只開放 Web 站台埠號（如 8443）
+給實際會用到的內網範圍，不對外網開放。
+
+### 目錄配置（與批次同機）
+
+```
+D:\LogForesight\
+├─ Batch\                  ← LogForesight.exe 與其 appsettings.json（含 logforesight.db，若用 Sqlite）
+│   └─ export\             ← 風險報告全文
+└─ Web\                    ← LogForesight.Web.exe 與其 appsettings.json
+```
+
+Web 的 `Storage:DataRoot` 指向 `Batch\` 目錄（同一份 `Storage:Type`/`ConnectionString`），
+才讀得到批次寫入的分析結果；Web 自己的 `logs\`／`nlog.config` 留在 `Web\` 目錄下，不與批次共用。
+
 ## 正式環境穩定性設計
 
 | 機制 | 說明 |

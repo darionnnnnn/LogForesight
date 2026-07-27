@@ -51,7 +51,11 @@ public class LfDbContext : DbContext
             e.Property(x => x.Seq).HasColumnName("seq").ValueGeneratedOnAdd();
             e.Property(x => x.LogKey).HasColumnName("log_key").HasMaxLength(100);
             e.Property(x => x.Line).HasColumnName("line");
+            // 既存資料庫在本欄新增前已有的列一律為 NULL——SchemaUpgrader 負責幫既有 DB 補這一欄，
+            // 新 DB 則由 EnsureCreated 直接建好，兩條路徑最終 schema 相同
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
             e.HasIndex(x => new { x.LogKey, x.Seq });
+            e.HasIndex(x => new { x.LogKey, x.CreatedAt });
         });
 
         b.Entity<DailyRecordRow>(e =>
@@ -63,6 +67,12 @@ public class LfDbContext : DbContext
             e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
             e.Property(x => x.RecordDate).HasColumnName("record_date");
             e.Property(x => x.RiskLevel).HasColumnName("risk_level").HasMaxLength(10);
+            // 抽出的排序鍵（docs/OPS-HARDENING-PLAN.md P1-2）：問題查詢頁清單排序依
+            // 「風險等級→有無關聯訊號→日期」，前者已有 RiskLevel 欄可下推，這欄補上後者——
+            // 否則「有無關聯訊號」只存在 ContentJson 裡，逼得分頁查詢必須整批撈回記憶體才能排序。
+            // 舊資料（本欄新增前寫入的列）預設 false，下次批次重新分析同一天會自然更新為正確值；
+            // 短期內排序稍不精準是可接受的權衡，見 SchemaUpgrader 的補欄位說明。
+            e.Property(x => x.HasCorrelation).HasColumnName("has_correlation").HasDefaultValue(false);
             e.Property(x => x.WeeklyCheckupDate).HasColumnName("weekly_checkup_date");
             e.Property(x => x.ContentJson).HasColumnName("content_json");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
@@ -100,6 +110,7 @@ public class DailyRecordRow
     public string HostName { get; set; } = string.Empty;
     public DateTime RecordDate { get; set; }
     public string RiskLevel { get; set; } = string.Empty;
+    public bool HasCorrelation { get; set; }
     public DateTime? WeeklyCheckupDate { get; set; }
     public string ContentJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
@@ -130,4 +141,7 @@ public class LogLineRow
     public long Seq { get; set; }
     public string LogKey { get; set; } = string.Empty;
     public string Line { get; set; } = string.Empty;
+
+    /// <summary>插入時間；schema 升級前寫入的既存列為 null（見 <see cref="SchemaUpgrader"/>）</summary>
+    public DateTime? CreatedAt { get; set; }
 }

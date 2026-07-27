@@ -113,7 +113,7 @@ Txt 退役已提前併入 Phase 1(見上)。建置零警告、**687 項單元測
 | Core | `Sentinel` 模型、`ISentinelStore`+blob 實作(key=`sentinels`)、`CryptoHelper`(AES-256,`enc:v1:` 前綴,定案 2、3) | ✅ |
 | WebHost | `SentinelId`(long?)/`CreatedAt` 屬性;`SentinelIdBackfiller` 一次性回填(冪等,批次與 Web 啟動時都跑);`NetiqHostList.PendingAssignment`/`Pollable` 改吃 SentinelId,`Pollable` 新增可選的 `isSentinelActive` 排除停用 Sentinel 的主機 | ✅ |
 | Web API | `SentinelAdminService`+`AdminController` 的 Sentinel CRUD(Maintain 能力、稽核、密碼 write-only);刪除直接孤兒化轄下主機(不沿用批次向的 `NetiqOrphanSweeper`——那支帶有「現存名單整個是空就安全跳過」的欄杆,會誤擋「刪除最後一台」這個合法操作);停用=暫停輪巡,主機不動 | ✅ |
-| Web UI | 新頁面 `/admin/sentinels`(Sentinels.cshtml+sentinels.js,List+Modal 模式);「新增即掃描」精靈留待 Phase 4 資料匯入頁整併時做 | ✅ |
+| Web UI | 新頁面 `/admin/sentinels`(Sentinels.cshtml+sentinels.js,List+Modal 模式);「新增即掃描」精靈留待 Phase 4 資料匯入頁整併時做(**路由後續兩度變動**:先於本文件下方「退役」階段併入 `/admin/imports`,後於 feature/admin-settings-netiq-handling 分支再遷出為現行的 `/admin/netiq`,Sentinel CRUD 與 NetIQ 連線/節流設定同頁維護) | ✅ |
 | Catalog | `NetiqServerCatalog` 改讀 `ISentinelStore`(介面不變,呼叫端零改動,密碼在此解密供探索用戶端使用);`SentinelServer` 加 `Id` 欄位 | ✅ |
 | 種子 | `SentinelSeeder`:sentinels blob 為空時於 Web 啟動時自批次 `appsettings.NetIq.Servers` 一次匯入(密碼順手加密);找不到/解析失敗批次設定檔不擋啟動 | ✅ |
 | 批次 | `NetiqOrphanSweeper`/`NetiqImportApplier` 改吃 SentinelId;`HostListProviders.cs` 的 `HostListSelection.FromStore` 改注入 `ISentinelStore`,分組鍵用 Sentinel 現存名稱(不是可能落後的 NetiqServer 快照),Sentinel 停用時排除並列警告 | ✅ |

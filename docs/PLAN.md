@@ -1,7 +1,12 @@
-# LogForesight 擴充規劃（已確認，待實作）
+# LogForesight 擴充規劃（已確認，多數階段已實作）
 
 > 本文件是需求討論的收斂結果。實作按階段進行，每階段有驗證閘門。
 > 規劃日期：2026-07-20
+>
+> **現況（2026-07-27）**：NetIQ Web 整併、SQL 儲存後端等後續階段已分別在
+> docs/NETIQ-WEB-CONFIG-PLAN.md、docs/DB-PLAN.md、docs/NETIQ-API-PLAN.md 定案並完成——
+> 本文件保留作為原始需求脈絡，密碼保護章節已被 docs/OPS-HARDENING-PLAN.md P0-5 取代
+> （見下方 DPAPI 段落的更新註記）。
 
 ## 背景與目標
 
@@ -284,10 +289,13 @@ txt 清單本身承擔，角色描述改為 txt 的第二欄；`MaxDeepDiveHosts
 
 - `Account`/`Password` 對應 Sentinel 的**唯讀查詢帳號**（最小權限，已列入申請）；
   帳密如何送出（Basic auth 或先換 token）依 probe #1 實測結果實作，設定欄位不變
-- `Password` 支援兩種形式：明文（初期測試用）或 `enc:` 前綴的 **DPAPI 加密值**——
-  提供 `--protect-netiq-password` 指令在部署機上產生（DPAPI machine 綁定，
-  設定檔被複製到別台也解不開）。一個監控入侵的工具自己放明文 SIEM 密碼說不過去，
-  但也不引入憑證庫等重型依賴，DPAPI 是 Windows 內建的合理中點
+- **（已改採，取代本段原 DPAPI 提案）** `Sentinel.PasswordEnc` 實際採
+  `CryptoHelper`（AES-256-CBC，`enc:v1:` 前綴），而非本段原規劃的 DPAPI：
+  DPAPI machine 綁定會讓批次與 Web 兩個行程（甚至異機部署）互相解不開彼此的密文，
+  與「批次寫、Web 讀」的既有資料流不相容。金鑰目前內嵌於程式（本質是混淆，見
+  `CryptoHelper` 類別註解的防護邊界聲明）；docs/OPS-HARDENING-PLAN.md §6（P0-5）
+  已定案改為環境變數 `LF_CRYPTO_KEY`（未設定時 fallback 內嵌金鑰＋WARN，
+  解密端雙金鑰嘗試以支援金鑰輪替過渡期），批次與 Web 共用同一把機器層級金鑰
 - **密碼永不寫入任何 log**（診斷 log 記設定摘要時遮蔽此欄位）
 - **版控紅線**：repo 裡的 appsettings.json 永遠只放空白佔位，真實帳密只存在部署目錄的副本
 

@@ -1,6 +1,7 @@
 # NetIQ Sentinel 取數 API 實作規劃（NETIQ-API-PLAN）
 
-> 2026-07-24 規劃定案候選版，**尚未實作**。
+> 2026-07-24 規劃定案候選版；**`SentinelClient` / `--netiq-probe` CLI 已實作完成**，
+> 卡在等使用者於真實 Sentinel 環境跑 `--netiq-probe` 貼回實際輸出，才能繼續後續欄位對應。
 > 範圍：依 NetIQ 原廠文件確認的 Sentinel REST API 事實，落成批次端取數 pipeline
 > （`SentinelClient` / `SentinelStatsSource` / `--netiq-probe`，對應 docs/PLAN.md Phase 1–2）
 > 與 Web 端 `SentinelRestDirectoryClient` 骨架補完。

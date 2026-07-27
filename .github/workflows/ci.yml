@@ -1,0 +1,24 @@
+name: CI
+
+# 最低限度：每次提交測試必跑（docs/OPS-HARDENING-PLAN.md P1-4）。單人開發，
+# 先求建置與測試不紅字即可，不上完整 pipeline（linting/覆蓋率/多環境矩陣等留待有需要再加）。
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    # net8.0-windows：批次端讀 Windows Event Log、AD 驗證，只能在 Windows 上建置與測試
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - run: dotnet build --configuration Release
+
+      - run: dotnet test --configuration Release --no-build
