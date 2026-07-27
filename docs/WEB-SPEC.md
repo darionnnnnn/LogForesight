@@ -529,28 +529,36 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）、
   類型分布（頁內導航到對應問題分節）。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
-- **改版（2026-07-23 Phase D-1，七項）**：
+- **改版（2026-07-23 Phase D-1，七項；2026-07-27 批次套用改版再修訂第 2、6、7 項）**：
   1. **報告全文預設收合**：報告卡標題可點擊展開/收合，展開狀態記 `localStorage`（常看全文的人不必每次重點）。
-  2. **低風險預設不處理**：`IssueDto.IsDefaultUnhandled`（Low 且從未標記時後端算出）→ 顯示「不處理（預設）」
-     不落盤，提供「確認不處理」（落盤 wont_fix）與「調回未處理」（落盤明確 `open`）兩個動作。
-  3. **已知雜訊記憶**：新增 `NoiseMark`／`INoiseMarkStore`（`webdata\noise_marks.json`，主機＋簽章為鍵、
-     不含日期）。標「已知雜訊」時寫記憶；之後同主機同簽章的新問題自動顯示「已知雜訊（自動）」。
+  2. **未處理等級預設不處理**：`IssueDto.IsDefaultUnhandled`（未列入「系統管理 > 設定」頁
+     `UnhandledSeverities` 的嚴重度、且從未標記時後端算出，預設等同原本寫死的 Low）→ 顯示
+     「不處理（預設）」不落盤，提供「確認不處理」（落盤 wont_fix）與「調回未處理」（落盤明確 `open`）兩個動作。
+  3. **已知雜訊記憶**：`NoiseMark`／`INoiseMarkStore`（webdata blob，主機＋簽章為鍵、不含日期）。
+     標「已知雜訊」時寫記憶；之後同主機同簽章的新問題自動顯示「已知雜訊（自動）」。
      「調回未處理」用兩個誠實的循序對話框（是否繼續／是否順便刪記憶），不把「取消」誤讀成「確定」。
      與規則抑制並存：有 `RuleId` 走抑制（治本）、無 `RuleId` 靠記憶（治標，供未命中規則的 Other 類別）。
   4. **類別標題列依最高嚴重度加淡色底**（danger/warning/neutral soft），一眼區分分節輕重。
   5. **趨勢欄與範例訊息**：`BuildTrendText` 首次出現時不再輸出「前一日 0 次」（贅述）；範例訊息由
      展開式 `<pre>` 改 **hover 泡泡**（`bootstrap.Popover`，`html:false` 避免注入）；趨勢欄文字適度換行。
-  6. **處理欄由下拉改「勾選＋浮出面板」**：勾選＝快速標已處理；勾選後浮出面板選具體狀態（chip），
-     **依狀態動態調整欄位**（不處理→原因必填；誤報→提示調整規則連結；已知雜訊→備註＋寫記憶＋抑制提議）；
-     取消勾選＝立即清除（可逆、不用二次確認）。
-  7. **計數器改「已處理／未處理」**：只算 resolved 與真正未標記的（含明確 `open`），不處理/誤報/已知雜訊/
-     低風險預設不處理**兩邊都不計**——回答「還剩幾件要動手」。
+  6. **處理欄改「純勾選＋右側批次套用」**（2026-07-27 修訂，取代原本的「勾選＋浮出面板」）：勾選
+     只代表「這列要包含在下一次批次套用」，跟這列目前狀態脫鉤；右側「處理狀態」區塊改為狀態直選
+     chip（取代原下拉／面板），值域含新增的 `in_progress`（處理中）；預計完成日 `DueDate` 只有選
+     「處理中」才顯示，並提供 3/7/14 日快速鈕。有勾選問題時送出套用到問題層級（批次 API），
+     沒有勾選時沿用日層級狀態編輯（相容既有行為）。依狀態動態調整說明欄必填（不處理→必填；
+     誤報→提示調整規則連結；已知雜訊→備註＋寫記憶＋抑制提議）不變。
+  7. **計數器維持「已處理／未處理」**：只算 resolved 與真正未標記的（含明確 `open`），不處理/誤報/
+     已知雜訊/處理中/預設不處理**都不計**——回答「還剩幾件要動手」。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
+  - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
+    `in_progress`，日狀態推導（`DayHandlingDerivation`）即提前進入 `in_progress`，不必等到有問題結案。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
   `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
-  `PUT api/records/{key}/handling/issues`（問題層級狀態，request 加 `note`／`forgetNoise` 欄位）
+  `PUT api/records/{key}/handling/issues`（單筆問題層級狀態）、
+  `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
+  `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/Sentinel/負責人/群組）、
@@ -631,6 +639,30 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   owners 引用帳號必須已存在（先匯使用者再匯主機），負責人無檢視權時預覽出警告不擋。
 - **群組授權（全量取代語意）的預覽必須明列「將被移除」的授權清單**——上傳漏列/空檔
   會清掉既有授權，移除項目必須在套用前顯性可見並二次確認，不可只顯示新增與更新。
+- **NetIQ 掃描匯入分頁（2026-07-27 起精簡）**：Sentinel 連線設定（新增／編輯／停用／刪除）已搬到
+  §9.9a `/admin/netiq`；本頁的「NetIQ 匯入」分頁只留「選擇一台已設定好探索帳密的 Sentinel → 掃描匯入」，
+  精靈跳過原本的連線設定步驟直接進網段勾選。
+
+### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
+- 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/探索帳密狀態/主機數/啟用狀態）
+  ＋新增／編輯（簡易表單，不含掃描）／停用（暫停輪巡，主機不動）／刪除（轄下主機停用並標記孤兒）。
+- **連線與節流參數**：`SampleFetchMode`／`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
+  `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
+  取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
+  直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。
+- API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
+  （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`（新增）
+
+### 9.9b `/admin/settings` 系統設定（`Maintain`）
+- 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
+  的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
+  1. **未處理計算**：勾選哪些嚴重度（Critical/High/Medium/Low）納入未處理計算，套用於問題查詢頁、
+     風險日詳情頁與儀表板待辦（單點事實來源 `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。
+     預設 Critical/High/Medium，與改版前寫死的 Low 規則行為一致。
+  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
+     DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
+  3. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）。
+- API：`GET/PUT api/admin/settings`
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
 - 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、
@@ -694,7 +726,9 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IHostStore` | blob `hosts`（含群組/負責人參照，`SetGroups`/`SetOwners` 直接改本文件內的清單） | Web＋批次（批次僅 upsert host_name/last_report_at） |
 | `IHostGroupStore` | blob `host_groups` | Web |
 | `IGroupAccessStore` | blob `group_access` | Web |
-| `ISentinelStore`（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文） | Web |
+| `ISentinelStore`（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
+| `INetiqOptionsStore`（2026-07-27） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
+| `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數，`/admin/settings` 維護） | Web＋批次讀 |
 | `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append） | Web |
 | `IIssueHandlingStore` | blob `issue_handling`（問題層級狀態，方案 B） | Web |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |

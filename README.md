@@ -624,14 +624,19 @@ Sqlite 模式下這個路徑改用來決定 `logforesight.db` 的預設位置（
 欄位已結構化，後續要接 Email / Telegram / webhook 通知時，直接取
 `RiskLevel`、`Headline`、`Summary`、`Action` 組內容即可，不需再解析自然語言。
 
-### 保留策略：120 天，啟動時自動清理
+### 保留策略：預設 120 天，啟動時自動清理
 
-`Program.cs` 的 `RetentionDays = 120`，每次啟動先清除超過 120 天的舊紀錄，資料庫不會無限增長。
+首次執行回補天數（`InitialHistoryDays`）與歷史保留天數（`RetentionDays`）預設都是 120 天，
+每次啟動先清除超過保留天數的舊紀錄，資料庫不會無限增長。
 
 天數的取捨：趨勢比對只需要 14 天，但保留 120 天的成本極低（每筆約 5~15KB，120 天約 1~2MB），
 換來兩個價值——可觀察月週期性的變化，以及發生資安事件時能回查近半年的異常軌跡；
-同時搭配首次執行的 `InitialHistoryDays = 120` 回補天數，回補的歷史不會在下次啟動就被清掉。
-要調整就改常數，`RetentionDays` 必須 ≥ `InitialHistoryDays`（≥ `TrendWindowDays` 自然滿足）。
+同時搭配首次執行的回補天數，回補的歷史不會在下次啟動就被清掉。
+
+**這兩個值改由 Web「系統管理 > 設定」頁維護（DB），不再是 `Program.cs` 的寫死常數**——
+appsettings.json 沒有對應設定，未曾在設定頁調整過時沿用上述預設值。調整時 `RetentionDays`
+必須 ≥ `InitialHistoryDays`（設定頁與後端皆會擋下不合格的組合）。趨勢比對窗口
+`TrendWindowDays`（14 天）是分析語意常數，不開放設定。
 
 ## 使用方式
 
@@ -767,7 +772,7 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
-| `Ai.BaseUrl` | `http://localhost:8080` | OpenAI 相容 API 位址（實測環境為 KoboldCpp，也適用其他 llama.cpp 系 server） |
+| `Ai.BaseUrl` | `http://localhost:8080` | OpenAI 相容 API 位址（實測環境為 KoboldCpp，也適用其他 llama.cpp 系 server）。**事實來源是 Web「系統管理 > 設定」頁**（DB，可一併設定需驗證端點用的 API 金鑰），這裡的值只是設定頁尚未設定時的退路 |
 | `Ai.TimeoutSeconds` | `600` | 單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘） |
 | `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
 | `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
