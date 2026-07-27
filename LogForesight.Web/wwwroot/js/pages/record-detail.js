@@ -7,9 +7,9 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, renderChips } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
 import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES } from '../core/format.js';
-import { initHandlingPanel } from './handling-panel.js';
+import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -21,22 +21,10 @@ const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
 const activeSeverities = new Set(['Critical', 'High', 'Medium']);
 let currentDetail = null;
 
-// 問題層級處理狀態選項（方案 B）：勾選面板內的具體狀態選擇，不含「未處理」——
-// 未處理由取消勾選表示，不是面板裡的一個選項
-const ISSUE_STATUS_OPTIONS = [
-    { value: 'resolved', text: '已處理' },
-    { value: 'wont_fix', text: '不處理' },
-    { value: 'false_positive', text: '誤報' },
-    { value: 'known_noise', text: '已知雜訊' }
-];
-
-// 依狀態決定備註欄的標籤與是否必填（§5.1 D-1 #6：依狀態動態調整欄位）
-const NOTE_FIELD_BY_STATUS = {
-    resolved: { label: '處理說明（選填）', required: false },
-    wont_fix: { label: '不處理原因（必填）', required: true },
-    false_positive: { label: '備註（選填）', required: false },
-    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false }
-};
+// 批次套用改版（2026-07-27）：勾選純粹代表「這列要包含在下一次批次套用」，
+// 與這列目前的處理狀態脫鉤——狀態改在右側「處理狀態」區塊填一次套用給全部勾選的問題
+// （見 handling-panel.js），不再逐列各自跳出面板。每次 load() 重新整理時清空。
+const selectedIssueKeys = new Set();
 
 // 標「已知雜訊」時要不要提議建立抑制規則，取決於能否維護規則（Maintain）
 let canMaintainRules = false;
@@ -45,6 +33,7 @@ let aiAvailable = false;
 
 async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
+    selectedIssueKeys.clear();
 
     const [detail, user, aiStatus] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
@@ -62,7 +51,7 @@ async function load() {
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
 
-    await initHandlingPanel(hostId, date);
+    await initHandlingPanel(hostId, date, () => selectedIssueKeys, load);
 
     if (currentDetail.hasReport) await loadReport();
 
@@ -208,11 +197,11 @@ function severityNeutralBadge(text) {
 }
 
 /**
- * 問題層級處理狀態控制（方案 B，§5.1 D-1 #2/#3/#6）。四條路徑：
+ * 問題層級處理狀態控制（方案 B，§5.1 D-1 #2/#3）。四條路徑：
  *   1. 無 Handle 能力 → 唯讀徽章
- *   2. 低風險且從未標記過 → 「不處理（預設）」＋確認不處理／調回未處理
+ *   2. 未列入未處理計算的等級且從未標記過 → 「不處理（預設）」＋確認不處理／調回未處理
  *   3. 從未標記過但同主機同簽章有已知雜訊記憶 → 「已知雜訊（自動）」＋調回未處理
- *   4. 其餘（含明確 open 與已結案）→ 勾選＋浮出面板
+ *   4. 其餘（含明確 open 與已結案）→ 純勾選，狀態改在右側區塊批次套用
  */
 function statusControl(issue) {
     if (!currentDetail.canHandle) {
@@ -289,137 +278,46 @@ function smallActionButton(text, onClick) {
 }
 
 /**
- * 一般勾選＋浮出面板控制（§5.1 D-1 #6）。勾選框反映「是否有結案類狀態」：
- *   - 未勾選 → 勾選時開面板（預設選「已處理」，需按確定才送出，不是勾了就存）
- *   - 已勾選（有結案狀態）→ 點擊可重新打開面板修改；取消勾選＝立即清除（可逆，不用二次確認）
- * 明確 open 狀態視覺上等同未勾選（都是「未處理」），但不會被自動推導蓋掉。
+ * 純勾選（批次套用改版）：勾選只代表「這列要包含在下一次批次套用」，跟這列目前的
+ * 處理狀態脫鉤——狀態改到右側「處理狀態」區塊填一次，套用到全部勾選的問題
+ * （見 handling-panel.js 的 refreshSelection/batch 提交）。目前狀態改用文字＋預計完成日顯示。
  */
 function checkboxControl(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-issue-status';
 
-    const isClosed = issue.handlingStatus && issue.handlingStatus !== 'open';
+    const hasStatus = issue.handlingStatus && issue.handlingStatus !== 'open';
 
     const check = document.createElement('input');
     check.type = 'checkbox';
     check.className = 'form-check-input lf-issue-status__check';
-    check.checked = !!isClosed;
-    check.title = isClosed ? '取消勾選＝清除處理標記' : '勾選＝標記已處理（可在面板改選其他狀態）';
+    check.checked = selectedIssueKeys.has(issue.issueKey);
+    check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';
 
-    const label = document.createElement('span');
-    label.textContent = isClosed ? issue.handlingStatusText : '未處理';
+    const label = document.createElement('div');
+    label.className = 'small';
+    label.textContent = hasStatus ? issue.handlingStatusText : '未處理';
 
     const col = document.createElement('div');
-    col.append(check, document.createElement('br'), label);
+    col.append(check, label);
+
+    if (issue.handlingStatus === 'in_progress' && issue.dueDate) {
+        const due = document.createElement('div');
+        due.className = 'small text-muted lf-issue-status__due';
+        due.textContent = `預計 ${issue.dueDate.slice(5)}`;
+        col.appendChild(due);
+    }
+
     wrap.appendChild(col);
 
     check.addEventListener('click', event => event.stopPropagation());
-    label.addEventListener('click', event => event.stopPropagation());
-
     check.addEventListener('change', () => {
-        if (check.checked) {
-            wrap.appendChild(statusPanel(issue, wrap, label, check));
-        } else {
-            // 立即清除：可逆操作，不需要二次確認彈窗
-            setIssueStatus(issue, '', wrap, {});
-        }
+        if (check.checked) selectedIssueKeys.add(issue.issueKey);
+        else selectedIssueKeys.delete(issue.issueKey);
+        refreshSelection();
     });
-
-    // 已是結案狀態時，點文字/勾選本體之外的地方（例如整列）不應該打開面板——
-    // 只有明確想「改」的人會去點勾選框；已勾選時再點一次勾選框只會觸發 change 清除，
-    // 若想修改成別的狀態，提供一個「修改」小連結
-    if (isClosed) {
-        const editBtn = smallActionButton('修改', () => wrap.appendChild(statusPanel(issue, wrap, label, check)));
-        col.appendChild(editBtn);
-    }
 
     return wrap;
-}
-
-/** 浮出的狀態選擇面板：chip 選狀態＋依狀態動態調整的備註欄 */
-function statusPanel(issue, wrap, label, check) {
-    const existing = wrap.querySelector('.lf-issue-status__panel');
-    if (existing) return existing;
-
-    const panel = document.createElement('div');
-    panel.className = 'lf-issue-status__panel';
-    panel.addEventListener('click', event => event.stopPropagation());
-
-    let selected = issue.handlingStatus && issue.handlingStatus !== 'open' ? issue.handlingStatus : 'resolved';
-
-    const chips = document.createElement('div');
-    chips.className = 'lf-toolbar__chips';
-    panel.appendChild(chips);
-
-    const fieldLabel = document.createElement('div');
-    fieldLabel.className = 'lf-issue-status__field-label';
-    panel.appendChild(fieldLabel);
-
-    const note = document.createElement('textarea');
-    note.className = 'form-control form-control-sm';
-    note.rows = 2;
-    note.value = issue.handlingStatus === selected ? (issue._localNote ?? '') : '';
-    panel.appendChild(note);
-
-    const ruleHint = document.createElement('div');
-    ruleHint.className = 'lf-hint mt-1';
-    panel.appendChild(ruleHint);
-
-    function renderChipsAndField() {
-        renderChips(chips, {
-            items: ISSUE_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.text })),
-            attr: 'issueStatus',
-            activeValues: [selected],
-            multi: false,
-            onToggle: value => { selected = value; renderChipsAndField(); }
-        });
-
-        const field = NOTE_FIELD_BY_STATUS[selected];
-        fieldLabel.textContent = field.label;
-        note.required = field.required;
-
-        // 誤報且能維護規則時，提議調整規則（治本：規則本身可能過嚴）
-        ruleHint.classList.toggle('d-none', !(selected === 'false_positive' && issue.ruleId && canMaintainRules));
-        ruleHint.textContent = '';
-        if (selected === 'false_positive' && issue.ruleId && canMaintainRules) {
-            const link = document.createElement('a');
-            link.href = `/admin/rules?search=${encodeURIComponent(issue.ruleId)}`;
-            link.target = '_blank';
-            link.textContent = '如果這條規則常常誤判，可以到規則維護調整判定條件';
-            ruleHint.appendChild(link);
-        }
-    }
-    renderChipsAndField();
-
-    const actions = document.createElement('div');
-    actions.className = 'd-flex gap-2 mt-2';
-
-    const save = document.createElement('button');
-    save.type = 'button';
-    save.className = 'btn btn-sm btn-primary';
-    save.textContent = '確定';
-    save.addEventListener('click', () => {
-        const field = NOTE_FIELD_BY_STATUS[selected];
-        if (field.required && !note.value.trim()) {
-            note.classList.add('is-invalid');
-            return;
-        }
-        setIssueStatus(issue, selected, wrap, { note: note.value.trim() || null });
-    });
-
-    const cancel = document.createElement('button');
-    cancel.type = 'button';
-    cancel.className = 'btn btn-sm btn-outline-secondary';
-    cancel.textContent = '取消';
-    cancel.addEventListener('click', () => {
-        panel.remove();
-        // 取消時勾選框要回到操作前的狀態（若是「勾選開面板但取消」，勾選要退回未勾選）
-        check.checked = !!(issue.handlingStatus && issue.handlingStatus !== 'open');
-    });
-
-    actions.append(save, cancel);
-    panel.appendChild(actions);
-    return panel;
 }
 
 /**

@@ -843,14 +843,15 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
-/* ── 問題層級處理狀態：勾選＋浮出細節面板（§5.1 D-1 #6）─────────────────────
-   取代舊版下拉：勾選＝快速標已處理；勾選後浮出面板選具體狀態，依狀態動態調整欄位。 */
+/* ── 問題層級處理狀態：純勾選＋右側批次套用（2026-07-27 改版）─────────────────
+   取代舊版「勾選即浮出面板逐列填寫」：勾選只代表「這列要包含在下一次批次套用」，
+   狀態改到右側「處理狀態」區塊填一次、套用到所有勾選的問題（見 handling-panel.js）。 */
 
 .lf-issue-status {
     display: flex;
     align-items: flex-start;
     gap: var(--lf-space-2);
-    min-width: 9rem;
+    min-width: 8rem;
 }
 
 .lf-issue-status__check {
@@ -858,24 +859,9 @@ a.lf-stat:hover .lf-card,
     cursor: pointer;
 }
 
-.lf-issue-status__panel {
-    background: var(--lf-gray-50);
-    border: 1px solid var(--lf-border);
-    border-radius: var(--lf-radius-sm);
-    padding: var(--lf-space-2);
-    min-width: 15rem;
-    max-width: 20rem;
-}
-
-.lf-issue-status__panel .lf-chip {
-    padding: .22rem .55rem;
-}
-
-.lf-issue-status__field-label {
-    font-size: var(--lf-font-size-xs);
-    font-weight: 600;
-    color: var(--lf-text-muted);
-    margin: var(--lf-space-2) 0 var(--lf-space-1);
+/* 預計完成日：獨立一行，日期本身不換行（避免「07-30」被硬拆成兩行） */
+.lf-issue-status__due {
+    white-space: nowrap;
 }
 
 /* 唯讀（無 Handle 能力）或已結案狀態的小徽章＋動作鈕排列 */
