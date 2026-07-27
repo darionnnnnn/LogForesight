@@ -1,6 +1,7 @@
 using System.Globalization;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -79,6 +80,55 @@ public class AiController : ControllerBase
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
         return ApiResponse<AiTextDto?>.Ok(await _ai.InterpretIssueAsync(issue, detail.HostName, detail.Date));
+    }
+
+    /// <summary>
+    /// 詳情頁對話（R7 精簡版）：單一問題為範圍，不持久化，client 每輪送完整歷史。
+    /// 授權與 context 完全複用 GetDetail（同 interpret-issue），不信任 client 帶來的內容以外欄位——
+    /// 輪數、角色交錯、單則長度一律伺服器端強制，不只是前端 UX 限制。
+    /// </summary>
+    [HttpPost("chat")]
+    public async Task<ApiResponse<AiTextDto?>> Chat([FromBody] ChatRequest request)
+    {
+        if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
+
+        var parsedDate = ParseDate(request.Date) ?? throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        var detail = _records.GetDetail(request.HostId, parsedDate);
+        var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == request.IssueKey);
+        if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
+
+        ValidateChatMessages(request.Messages);
+
+        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages));
+    }
+
+    private const int MaxChatTurns = 10;
+    private const int MaxUserMessageChars = 500;
+    private const int MaxAssistantMessageChars = 1500;
+
+    /// <summary>
+    /// 對話輪數上限、角色交錯、單則長度一律在這裡強制——client 端的限制只是 UX，
+    /// 真正的防線在這裡（例如用 curl 直接打這支 API 跳過前端）。
+    /// </summary>
+    private static void ValidateChatMessages(List<ChatMessageDto> messages)
+    {
+        if (messages.Count == 0) throw DomainException.Validation("對話內容不可為空。");
+
+        var userTurns = messages.Count(m => m.Role == "user");
+        if (userTurns > MaxChatTurns) throw DomainException.Validation("對話已達 10 輪上限，請清除重來。");
+
+        if (messages[^1].Role != "user") throw DomainException.Validation("對話格式錯誤：最後一則必須是使用者訊息。");
+
+        for (int i = 0; i < messages.Count; i++)
+        {
+            var expectedRole = i % 2 == 0 ? "user" : "assistant";
+            if (messages[i].Role != expectedRole)
+                throw DomainException.Validation("對話格式錯誤：角色必須依使用者／AI 交替。");
+
+            var maxLen = messages[i].Role == "user" ? MaxUserMessageChars : MaxAssistantMessageChars;
+            if (string.IsNullOrWhiteSpace(messages[i].Content) || messages[i].Content.Length > maxLen)
+                throw DomainException.Validation($"對話格式錯誤：訊息內容不可為空，且不可超過 {maxLen} 字。");
+        }
     }
 
     private static List<long>? ParseLongs(string? csv) =>

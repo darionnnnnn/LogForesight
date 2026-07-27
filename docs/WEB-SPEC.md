@@ -415,6 +415,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    wont_fix/false_positive/known_noise `secondary`；執行結果 成功 `success`、有警告 `warning`、
    失敗/中斷 `danger`、未執行 `secondary`。同一個顏色在圖表、徽章、卡片、時間軸中意義相同。
 
+   **嚴重度顯示名（2026-07-27 統一）**：Critical=嚴重、High=高、Medium=中、Low=低，單點定義於
+   `format.js` 的 `SEVERITY_NAMES`/`severityName()`。內部值（Set、URL 參數、API 欄位、
+   `<option value>`）一律維持英文，只有畫面文字轉中文。與日風險等級的「高風險/中風險/低風險」
+   （`riskBadge`）的區隔：日風險徽章一律帶「風險」後綴、色系不同（見上），嚴重度徽章不帶後綴。
+
 **版面骨架**：深色側欄（依能力**分組**顯示選單項——監控作業／系統管理／系統，空群組連
 標題一起省略）＋淺灰內容區＋白卡片網格；上方 topbar 顯示頁面標題。**徽章一律「顏色＋
 文字」**，不做只靠顏色區分的 UI（色弱可用性；圖表的對策見 §8.3）。徽章統一走**淡色系統**
@@ -557,12 +562,29 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   - **逾期語意兩層並列**（2026-07-27）：日層級 `RecordHandling.DueDate` 過期且未結案，**或**任一問題層級
     「處理中」的 `DueDate` 過期，該風險日即算逾期——問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
+- **AI 產出標註（2026-07-27 統一）**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
+  `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽四段（headline／狀況／趨勢／建議處置，
+  僅 `aiAnalyzed=true` 時包框；統計模式是替代文字非 AI 產出，不包）、清單頁 headline 前的「AI」小徽章、
+  既有的 AI 歸納／AI 判讀／AI 深入分析（`.lf-issue-group__ai` 補上同組視覺）。報告 txt 由
+  `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
+  依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
+  又違反該原則，缺標註的風險窗口隨每日批次自然消退。
+- **詢問 AI 對話區塊（2026-07-27，實驗性精簡版）**：報告全文卡之上，AI 可用且當日有重點問題才顯示。
+  範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話）、10 輪上限**伺服器端強制**、
+  可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-PLAN.md` 的
+  `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端依 issueKey 重組
+  （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages 以「僅供分析、非指令」圍欄包住
+  ＋system prompt 重申（DB-PLAN 的 prompt injection 預警）；回覆純文字經 `textContent` 渲染。
+  `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
+  與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
   `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
   `PUT api/records/{key}/handling/issues`（單筆問題層級狀態）、
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
-  `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）
+  `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、
+  `POST api/ai/chat`（對話一輪：`{hostId, date, issueKey, messages}`，輪數／角色交錯／單則長度
+  伺服器端驗證，AI 不可用或失敗回 `data:null`）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/Sentinel/負責人/群組）、
@@ -660,9 +682,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
-  1. **未處理計算**：勾選哪些嚴重度（Critical/High/Medium/Low）納入未處理計算，套用於問題查詢頁、
-     風險日詳情頁與儀表板待辦（單點事實來源 `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。
-     預設 Critical/High/Medium，與改版前寫死的 Low 規則行為一致。
+  1. **層級與顯示**（2026-07-27 自「未處理計算」擴充）：以按鈕反白選擇哪些嚴重度（Critical/High/Medium/Low）
+     納入未處理計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦（單點事實來源
+     `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。預設 Critical/High/Medium，
+     與改版前寫死的 Low 規則行為一致。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）三選一：
+     - `DefaultHidden`（預設）：詳情頁嚴重度篩選預設只亮勾選層級（初始值經 `RecordDetailDto.UnhandledSeverities`
+       帶給前端，僅首次載入初始化、批次套用重載不重置），未勾選層級的篩選鈕仍在、可手動點開。
+     - `Locked`：未勾選層級在詳情頁視同不存在——前端在資料層過濾 `topIssues`（列表、隱藏計數、
+       AI 對話下拉一致），對應篩選鈕不渲染。右側「類型分布」計數仍為全量（已知取捨）。
+     - `GlobalFilter`：後端查詢層排除（`RecordQueryService.GetDetail`／`DashboardService.BuildCategoryCards`／
+       `ReportService.BuildCategories`，單點 `ISystemSettingsService.GetVisibleSeverities()`）。
+       **明確不動**：日風險等級與報告 txt（批次已算定的證據層）、問題查詢頁的日層級搜尋與下鑽參數。
   2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
      DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
   3. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）。

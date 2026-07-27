@@ -24,6 +24,12 @@ public class AiInsightServiceTests
             Calls++;
             return Task.FromResult(Response == null ? null : JsonSerializer.Deserialize<T>(Response, Opts));
         }
+
+        public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)
+        {
+            Calls++;
+            return Task.FromResult(Response);
+        }
     }
 
     private static DashboardDto Dashboard(int high, int medium) => new()

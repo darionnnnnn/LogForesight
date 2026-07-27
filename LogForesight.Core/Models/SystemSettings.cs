@@ -16,6 +16,14 @@ public class SystemSettings
     /// </summary>
     public List<string> UnhandledSeverities { get; set; } = new() { "Critical", "High", "Medium" };
 
+    /// <summary>
+    /// 層級顯示模式，決定 <see cref="UnhandledSeverities"/> 以外的嚴重度在畫面上如何呈現：
+    /// <c>DefaultHidden</c>（預設隱藏但可手動開啟）／<c>Locked</c>（完全隱藏、無法開啟）／
+    /// <c>GlobalFilter</c>（後端查詢層直接排除，全站統計數字只計入已勾選層級）。
+    /// 不影響風險等級判定與報告全文——那是批次時已算定的證據層，不受顯示設定影響。
+    /// </summary>
+    public string SeverityDisplayMode { get; set; } = "DefaultHidden";
+
     /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";
 

@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, severityName } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
@@ -207,13 +207,10 @@ function renderCategories(data) {
     }
 
     const colors = categoryColors();
-    const row = document.createElement('div');
-    row.className = 'row g-3';
+    const grid = document.createElement('div');
+    grid.className = 'lf-category-grid';
 
     for (const category of data.categories) {
-        const col = document.createElement('div');
-        col.className = 'col-6 col-md-4 col-xl-3';
-
         const link = document.createElement('a');
         link.className = 'lf-stat';
         // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上
@@ -243,28 +240,27 @@ function renderCategories(data) {
         card.querySelector('.small').replaceChildren(severityBreakdown(category));
 
         link.appendChild(card);
-        col.appendChild(link);
-        row.appendChild(col);
+        grid.appendChild(link);
     }
 
-    container.replaceChildren(row);
+    container.replaceChildren(grid);
 }
 
 /** 嚴重度分解：顏色＋文字，不做只靠顏色區分的 UI */
 function severityBreakdown(category) {
     const wrap = document.createElement('span');
     const parts = [
-        { count: category.criticalCount, label: 'Critical', variant: 'danger' },
-        { count: category.highCount, label: 'High', variant: 'warning' },
-        { count: category.mediumCount, label: 'Medium', variant: 'info' },
-        { count: category.lowCount, label: 'Low', variant: 'secondary' }
+        { count: category.criticalCount, severity: 'Critical', variant: 'danger' },
+        { count: category.highCount, severity: 'High', variant: 'warning' },
+        { count: category.mediumCount, severity: 'Medium', variant: 'info' },
+        { count: category.lowCount, severity: 'Low', variant: 'secondary' }
     ];
 
     for (const part of parts) {
         if (part.count === 0) continue;
         const badge = document.createElement('span');
         badge.className = `lf-badge lf-badge--${part.variant} me-1`;
-        badge.textContent = `${part.label} ${part.count}`;
+        badge.textContent = `${severityName(part.severity)} ${part.count}`;
         wrap.appendChild(badge);
     }
     return wrap;

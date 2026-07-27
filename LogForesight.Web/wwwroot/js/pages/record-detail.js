@@ -8,17 +8,20 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
-import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES } from '../core/format.js';
+import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES, severityName } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
+import { initChatPanel } from './chat-panel.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
-// 嚴重度由重到輕；預設不顯示 Low——重點問題頁常被 Low 的雜訊淹沒，
-// 真正要看的 Critical/High/Medium 反而被推到下面（與清單頁預設排除低風險同一個取捨）
+// 嚴重度由重到輕；預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
+// 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
+// 只在頁面首次載入時初始化一次：批次套用觸發的重載（onBatchSaved → load()）不能
+// 把使用者手動調整過的篩選狀態蓋回預設值。
 const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
-const activeSeverities = new Set(['Critical', 'High', 'Medium']);
+let activeSeverities = null;
 let currentDetail = null;
 
 // 批次套用改版（2026-07-27）：勾選純粹代表「這列要包含在下一次批次套用」，
@@ -40,9 +43,22 @@ async function load() {
         getCurrentUser(),
         api.get('/api/ai/status', { silent: true }).catch(() => null)
     ]);
+    // Locked 模式（完全隱藏）：未勾選層級的問題在這一頁視同不存在——先從資料層拿掉，
+    // 重點問題列表、「另有 N 項未顯示」計數、AI 對話下拉才會一致（不能只是不給篩選鈕，
+    // 否則隱藏計數會算入使用者永遠打不開的項目、對話下拉還列得出被鎖定的問題）
+    if (detail.severityDisplayMode === 'Locked') {
+        const allowed = new Set(detail.unhandledSeverities);
+        detail.topIssues = detail.topIssues.filter(i => allowed.has(i.severity));
+    }
+
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
     aiAvailable = !!aiStatus?.available;
+
+    if (activeSeverities === null) {
+        activeSeverities = new Set(
+            detail.unhandledSeverities?.length ? detail.unhandledSeverities : ['Critical', 'High', 'Medium']);
+    }
 
     renderHeader(currentDetail);
     renderSeverityFilter(currentDetail);
@@ -50,6 +66,7 @@ async function load() {
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
+    initChatPanel(hostId, date, currentDetail.topIssues, aiAvailable);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
 
@@ -147,21 +164,41 @@ function renderHeader(detail) {
 
     body.appendChild(top);
 
-    if (detail.headline) {
-        const headline = document.createElement('div');
-        headline.className = 'fs-5 mb-2';
-        headline.textContent = detail.headline;
-        body.appendChild(headline);
+    // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
+    const textParts = [];
+    if (detail.headline) textParts.push({ headline: true, text: detail.headline });
+    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
+        if (text) textParts.push({ label, text });
     }
 
-    for (const [label, text] of [['狀況', detail.summary], ['趨勢', detail.trendAssessment], ['建議處置', detail.action]]) {
-        if (!text) continue;
-        const p = document.createElement('p');
-        p.className = 'mb-2';
-        const strong = document.createElement('strong');
-        strong.textContent = `${label}：`;
-        p.append(strong, document.createTextNode(text));
-        body.appendChild(p);
+    if (textParts.length > 0) {
+        const target = document.createElement('div');
+        if (detail.aiAnalyzed) {
+            target.className = 'lf-ai-block mb-2';
+            const badge = document.createElement('span');
+            badge.className = 'lf-badge lf-badge--secondary mb-2';
+            badge.textContent = 'AI 摘要';
+            target.appendChild(badge);
+        }
+
+        for (const part of textParts) {
+            if (part.headline) {
+                const headline = document.createElement('div');
+                headline.className = 'fs-5 mb-2';
+                headline.textContent = part.text;
+                target.appendChild(headline);
+                continue;
+            }
+            const p = document.createElement('p');
+            p.className = 'mb-2';
+            const strong = document.createElement('strong');
+            strong.textContent = `${part.label}：`;
+            p.append(strong, document.createTextNode(part.text));
+            target.appendChild(p);
+        }
+
+        body.appendChild(target);
     }
 
     const stats = document.createElement('div');
@@ -439,7 +476,8 @@ function renderSeverityFilter(detail) {
     const container = document.getElementById('detail-severity-filter');
     if (!container) return;
 
-    // 只列出當日實際存在的嚴重度，避免出現點了也沒東西的空鈕
+    // 只列出當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
+    // Locked 模式不需特判：load() 已把未勾選層級從 topIssues 拿掉，這裡自然長不出對應的鈕
     const present = SEVERITY_ORDER.filter(s => detail.topIssues.some(i => i.severity === s));
     if (present.length <= 1) {
         container.replaceChildren();
@@ -452,7 +490,7 @@ function renderSeverityFilter(detail) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-outline-secondary' + (activeSeverities.has(severity) ? ' active' : '');
-        btn.textContent = `${severity} ${count}`;
+        btn.textContent = `${severityName(severity)} ${count}`;
         btn.addEventListener('click', () => {
             if (activeSeverities.has(severity)) activeSeverities.delete(severity);
             else activeSeverities.add(severity);

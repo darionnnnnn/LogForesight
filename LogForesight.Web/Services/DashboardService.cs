@@ -19,6 +19,7 @@ public class DashboardService : IDashboardService
     private readonly IHandlingService _handling;
     private readonly IPermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
+    private readonly ISystemSettingsService _settings;
 
     public DashboardService(
         IRecordRepository repository,
@@ -27,7 +28,8 @@ public class DashboardService : IDashboardService
         ICurrentUser currentUser,
         IHandlingService handling,
         IPermissionChangeService permissionChanges,
-        IHostGroupStore hostGroups)
+        IHostGroupStore hostGroups,
+        ISystemSettingsService settings)
     {
         _repository = repository;
         _visibility = visibility;
@@ -36,6 +38,7 @@ public class DashboardService : IDashboardService
         _handling = handling;
         _permissionChanges = permissionChanges;
         _hostGroups = hostGroups;
+        _settings = settings;
     }
 
     public DashboardDto GetSummary(int days)
@@ -52,7 +55,7 @@ public class DashboardService : IDashboardService
             TotalHosts = visibleHosts.Count
         };
 
-        BuildCategoryCards(dto, records);
+        BuildCategoryCards(dto, records, _settings.GetVisibleSeverities());
         BuildHostRanking(dto, records, visibleHosts);
         BuildSilentHosts(dto, visibleHosts);
         BuildGroupRisk(dto, records, visibleHosts);
@@ -76,15 +79,19 @@ public class DashboardService : IDashboardService
         return dto;
     }
 
-    private static void BuildCategoryCards(DashboardDto dto, List<DailyAnalysisRecord> records)
+    private static void BuildCategoryCards(DashboardDto dto, List<DailyAnalysisRecord> records, HashSet<string>? visibleSeverities)
     {
+        // GlobalFilter 模式：未勾選層級的問題直接從聚合來源排除，卡片數字只計已勾選層級
+        List<LogIssueSignature> Visible(DailyAnalysisRecord r) =>
+            visibleSeverities == null ? r.TopIssues : r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity.ToString())).ToList();
+
         // 逐日彙總後合併：CategoryAggregator 是兩個儲存後端共用的同一份規則（§10.3），
         // 儀表板與明細頁因此不可能算出不同的數字
-        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(r.TopIssues));
+        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(Visible(r)));
         var merged = CategoryAggregator.Merge(perDay);
 
         var hostsPerCategory = records
-            .SelectMany(r => r.TopIssues.Select(i => new { i.Category, r.Host }))
+            .SelectMany(r => Visible(r).Select(i => new { i.Category, r.Host }))
             .GroupBy(x => x.Category)
             .ToDictionary(
                 g => g.Key,

@@ -16,11 +16,13 @@ public class ReportService : IReportService
 {
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
+    private readonly ISystemSettingsService _settings;
 
-    public ReportService(IRecordRepository repository, IHostStore hosts)
+    public ReportService(IRecordRepository repository, IHostStore hosts, ISystemSettingsService settings)
     {
         _repository = repository;
         _hosts = hosts;
+        _settings = settings;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to)
@@ -44,7 +46,7 @@ public class ReportService : IReportService
             To = to.ToString("yyyy-MM-dd"),
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
-            Categories = BuildCategories(records),
+            Categories = BuildCategories(records, _settings.GetVisibleSeverities()),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked)
@@ -142,13 +144,17 @@ public class ReportService : IReportService
         return points;
     }
 
-    private static List<DashboardCategoryDto> BuildCategories(List<DailyAnalysisRecord> records)
+    private static List<DashboardCategoryDto> BuildCategories(List<DailyAnalysisRecord> records, HashSet<string>? visibleSeverities)
     {
+        // GlobalFilter 模式：未勾選層級的問題直接從聚合來源排除，統計數字只計已勾選層級
+        List<LogIssueSignature> Visible(DailyAnalysisRecord r) =>
+            visibleSeverities == null ? r.TopIssues : r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity.ToString())).ToList();
+
         var merged = CategoryAggregator.Merge(
-            records.SelectMany(r => CategoryAggregator.Aggregate(r.TopIssues)));
+            records.SelectMany(r => CategoryAggregator.Aggregate(Visible(r))));
 
         var hostsPerCategory = records
-            .SelectMany(r => r.TopIssues.Select(i => new { i.Category, r.Host }))
+            .SelectMany(r => Visible(r).Select(i => new { i.Category, r.Host }))
             .GroupBy(x => x.Category)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count());
 

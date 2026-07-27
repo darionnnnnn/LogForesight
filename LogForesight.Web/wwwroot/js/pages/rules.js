@@ -9,7 +9,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips } from '../core/ui.js';
-import { severityBadge, statusBadge, formatDate } from '../core/format.js';
+import { severityBadge, statusBadge, formatDate, severityName } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
@@ -97,7 +97,7 @@ function setupToolbar() {
     });
 
     renderChips(document.getElementById('rule-severity-chips'), {
-        items: SEVERITY_ORDER.map(s => ({ value: s, label: s })),
+        items: SEVERITY_ORDER.map(s => ({ value: s, label: severityName(s) })),
         attr: 'severity',
         activeValues: [...chipFilters.severities],
         multi: true,

@@ -37,6 +37,18 @@ const SEVERITY_VARIANT = {
     Low: 'neutral'
 };
 
+/**
+ * 嚴重度英文列舉 → 中文顯示名。內部值（Set、URL 參數、API 欄位、<option value>）
+ * 一律維持英文；只有畫面文字改中文。不帶「風險」後綴，避免和日風險等級的
+ * 「高風險/中風險/低風險」（riskBadge）字面撞在一起——兩者色系也不同。
+ */
+export const SEVERITY_NAMES = { Critical: '嚴重', High: '高', Medium: '中', Low: '低' };
+
+/** 嚴重度英文列舉 → 中文名，查無回原字串 */
+export function severityName(severity) {
+    return SEVERITY_NAMES[severity] ?? severity;
+}
+
 /** 處理狀態 → { 顯示文字, 淡色徽章 variant } */
 const HANDLING_STATUS = {
     open: { text: '未處理', variant: 'danger' },
@@ -72,9 +84,11 @@ export function riskBadge(riskLevel) {
     return span;
 }
 
-/** 嚴重度徽章元素 */
+/** 嚴重度徽章元素（title 附英文原值，方便與規則設定頁等處的英文值對照） */
 export function severityBadge(severity) {
-    return statusBadge(severity, SEVERITY_VARIANT[severity] ?? 'neutral');
+    return statusBadge(severityName(severity), SEVERITY_VARIANT[severity] ?? 'neutral', {
+        title: `嚴重度：${severity}`
+    });
 }
 
 /** 處理狀態徽章元素 */

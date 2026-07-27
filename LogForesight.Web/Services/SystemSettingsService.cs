@@ -13,12 +13,21 @@ public interface ISystemSettingsService
     SystemSettingsDto Get();
 
     SystemSettingsDto Update(UpdateSystemSettingsRequest request);
+
+    /// <summary>
+    /// 模式為 GlobalFilter 時回傳應顯示的嚴重度集合（查詢層據此過濾問題聚合）；
+    /// 其他模式回傳 null（表示不過濾，維持顯示層各自決定）。
+    /// </summary>
+    HashSet<string>? GetVisibleSeverities();
 }
 
 public class SystemSettingsService : ISystemSettingsService
 {
     /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）</summary>
     public static readonly string[] ValidSeverities = { "Critical", "High", "Medium", "Low" };
+
+    /// <summary>合法層級顯示模式（見 SystemSettings.SeverityDisplayMode）</summary>
+    public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "Locked", "GlobalFilter" };
 
     private readonly ISystemSettingsStore _store;
     private readonly ICurrentUser _currentUser;
@@ -33,11 +42,22 @@ public class SystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
 
+    public HashSet<string>? GetVisibleSeverities()
+    {
+        var settings = _store.Get();
+        return settings.SeverityDisplayMode == "GlobalFilter"
+            ? settings.UnhandledSeverities.ToHashSet()
+            : null;
+    }
+
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
     {
         var severities = NormalizeSeverities(request.UnhandledSeverities);
         if (severities.Count == 0)
             throw DomainException.Validation("請至少勾選一個未處理等級。");
+
+        if (!ValidSeverityDisplayModes.Contains(request.SeverityDisplayMode))
+            throw DomainException.Validation("層級顯示模式不合法。");
 
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
@@ -47,6 +67,7 @@ public class SystemSettingsService : ISystemSettingsService
         var saved = _store.Update(s =>
         {
             s.UnhandledSeverities = severities;
+            s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
                 s.AiApiKeyEnc = "";
@@ -65,8 +86,8 @@ public class SystemSettingsService : ISystemSettingsService
             // API 金鑰是否變動只留布林，不留明碼/密文，比照 Sentinel 密碼的稽核原則
             detail: new
             {
-                Before = new { before.UnhandledSeverities, before.AiBaseUrl, before.InitialHistoryDays, before.RetentionDays },
-                After = new { saved.UnhandledSeverities, saved.AiBaseUrl, saved.InitialHistoryDays, saved.RetentionDays },
+                Before = new { before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl, before.InitialHistoryDays, before.RetentionDays },
+                After = new { saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl, saved.InitialHistoryDays, saved.RetentionDays },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey)
             });
 
@@ -84,6 +105,7 @@ public class SystemSettingsService : ISystemSettingsService
     private static SystemSettingsDto ToDto(SystemSettings s) => new()
     {
         UnhandledSeverities = s.UnhandledSeverities,
+        SeverityDisplayMode = s.SeverityDisplayMode,
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
         InitialHistoryDays = s.InitialHistoryDays,

@@ -28,6 +28,12 @@ public interface IWebAiService
     /// 任何失敗（未設定、逾時、非 JSON、驗證未過）回 null。
     /// </summary>
     Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class;
+
+    /// <summary>
+    /// 詳情頁對話（R7 精簡版）一輪回覆：純文字、不走快取（每輪內容都不同，快取沒有意義）。
+    /// 任何失敗回 null，呼叫端顯示「AI 目前忙碌或無法回應」。
+    /// </summary>
+    Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt);
 }
 
 public class WebAiService : IWebAiService
@@ -47,6 +53,13 @@ public class WebAiService : IWebAiService
     private readonly object _clientLock = new();
     private AIService? _client;
     private (string BaseUrl, string KeyEnc) _clientSnapshot;
+
+    // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
+    // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
+    // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
+    private readonly object _chatClientLock = new();
+    private AIService? _chatClient;
+    private (string BaseUrl, string KeyEnc) _chatClientSnapshot;
 
     public WebAiService(WebAppSettings settings, IAiCacheStore cache, ISystemSettingsStore systemSettings)
     {
@@ -99,6 +112,58 @@ public class WebAiService : IWebAiService
             _client = new AIService(interactive);
             _clientSnapshot = (baseUrl, db.AiApiKeyEnc);
             return _client;
+        }
+    }
+
+    /// <summary>依 DB 目前的位址／金鑰取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
+    private AIService? GetChatClient()
+    {
+        var db = _systemSettings.Get();
+        var baseUrl = EffectiveBaseUrl(db);
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+
+        lock (_chatClientLock)
+        {
+            if (_chatClient != null && _chatClientSnapshot == (baseUrl, db.AiApiKeyEnc)) return _chatClient;
+
+            // 對話回覆比單一問題判讀長，token 上限拉高；地端模型回應快（實測 50~80 t/s），
+            // 逾時不必抓得像批次那麼保守，但仍給足餘裕避免正常對話被腰斬。不重試——
+            // 互動情境下重試只會把「失敗」拖得更久，一次打不到就讓使用者自己重問。
+            var chat = new AiSettings
+            {
+                BaseUrl = baseUrl,
+                ApiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) ? CryptoHelper.Decrypt(db.AiApiKeyEnc) : "",
+                TimeoutSeconds = 60,
+                MaxTokens = 768,
+                RetryCount = 1,
+                RetryDelaySeconds = 0,
+                JsonRetryCount = 0,
+                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
+                PresencePenalty = _batchSettings?.PresencePenalty,
+                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+            };
+
+            _chatClient = new AIService(chat);
+            _chatClientSnapshot = (baseUrl, db.AiApiKeyEnc);
+            return _chatClient;
+        }
+    }
+
+    public async Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)
+    {
+        try
+        {
+            var ai = GetChatClient();
+            if (ai == null) return null;
+
+            var result = await ai.ChatAsync(userPrompt, systemPrompt, jsonMode: false, label: "record-detail-chat");
+            return result.Success && !string.IsNullOrWhiteSpace(result.Content) ? result.Content.Trim() : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "詳情頁對話呼叫失敗（靜默降級）：{0}", ex.Message);
+            return null;
         }
     }
 

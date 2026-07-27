@@ -13,7 +13,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, renderPagination, withBusy, renderChips } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES } from '../core/format.js';
+import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES, severityName } from '../core/format.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -334,7 +334,7 @@ function renderActiveConditions(filters) {
     container.replaceChildren();
 
     const tags = [];
-    if (filters.severity) tags.push({ label: `嚴重度：${filters.severity}`, param: 'severity' });
+    if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
@@ -414,6 +414,14 @@ function dateLink(record) {
 
 function headlineCell(record) {
     const wrap = document.createElement('span');
+
+    if (record.aiAnalyzed && record.headline) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary me-1';
+        badge.textContent = 'AI';
+        badge.title = 'AI 產出摘要';
+        wrap.appendChild(badge);
+    }
 
     const text = document.createElement('span');
     text.textContent = record.headline || '（無 AI 摘要）';

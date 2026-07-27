@@ -112,6 +112,12 @@ public class RecordDetailDto
 
     /// <summary>目前登入者是否可維護處理狀態——前端據此決定逐列狀態是可操作還是唯讀（防線在後端）</summary>
     public bool CanHandle { get; set; }
+
+    /// <summary>系統設定的未處理計算嚴重度——前端嚴重度篩選預設值依此初始化（見系統管理 > 設定）</summary>
+    public List<string> UnhandledSeverities { get; set; } = new();
+
+    /// <summary>層級顯示模式：DefaultHidden／Locked／GlobalFilter（見 SystemSettings.SeverityDisplayMode）</summary>
+    public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 }
 
 public class IssueDto

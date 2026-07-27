@@ -592,11 +592,10 @@ a.lf-stat:hover .lf-card,
 }
 
 /*
-  統計卡跨行高度不一致修正：Bootstrap 的 row 是 flex + wrap，`h-100` 的
+  KPI 卡跨行高度不一致修正：Bootstrap 的 row 是 flex + wrap，`h-100` 的
   align-items:stretch 只在同一個換行的 flex line 內生效——換行後的下一行
-  （例如分類卡最後一排只剩一張）各自為政，高度不會跟上一排看齊。
-  三組統計卡各自的內容複雜度已知（KPI 純數字／分類卡含可能換行的嚴重度徽章／
-  報表 KPI 多一行前期比較），直接給每組一個涵蓋最壞情況的最小高度，
+  各自為政，高度不會跟上一排看齊。兩組 KPI 卡各自的內容複雜度已知
+  （純數字／多一行前期比較），直接給一個涵蓋最壞情況的最小高度，
   讓同一組卡片不論落在第幾排都是同一個高度。用 rem 而非 px，跟著字級偏好縮放。
 */
 #dashboard-kpi .lf-card {
@@ -607,8 +606,12 @@ a.lf-stat:hover .lf-card,
     min-height: 7rem;
 }
 
-#dashboard-categories .lf-card {
-    min-height: 10rem;
+/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁；
+   auto-fill（非 auto-fit）讓卡少時維持合理寬度，不會被拉爆成半版寬 */
+.lf-category-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: var(--lf-space-3);
 }
 
 /* 嚴重度驅動顯著性（§8.2 原則 1）：最嚴重的問題在畫面上最醒目 */
@@ -686,6 +689,23 @@ a.lf-stat:hover .lf-card,
 @keyframes lf-flash {
     0%   { background: var(--lf-primary-soft); }
     100% { background: transparent; }
+}
+
+/* ── AI 產出內容標註（統一 2026-07-27）──────────────────────────────────────
+   凡是 AI 生成的文字都用左邊框＋淡底標出，讓使用者一眼分辨「這段是 AI 講的」
+   和「這段是規則/統計算出來的」；徽章負責語意，邊框負責視覺分區。 */
+.lf-ai-block {
+    border-left: 3px solid var(--lf-primary);
+    background: var(--lf-gray-50);
+    padding: var(--lf-space-3);
+    border-radius: var(--lf-radius);
+}
+
+/* 「AI 深入分析」區塊沿用同一套邊框視覺，但保留自己原有的 px-3/py-3 版心留白，
+   不疊加 .lf-ai-block 的 padding（避免雙重留白） */
+.lf-issue-group__ai {
+    border-left: 3px solid var(--lf-primary);
+    background: var(--lf-gray-50);
 }
 
 /* ── 篩選工具列（§5.0 D-0）────────────────────────────────────────────────
@@ -872,15 +892,17 @@ a.lf-stat:hover .lf-card,
     flex-wrap: wrap;
 }
 
-/* 趨勢欄文字適度換行（§5.1 D-1 #5）：內容常有好幾個片語（頻率上升、前一日 N 次…），
-   不換行會把欄位越撐越寬，把整張表擠得要橫向捲動 */
+/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀 */
 .lf-trend-cell {
-    max-width: 220px;
-    white-space: normal;
+    max-width: 180px;
+    white-space: pre-line;
     line-height: 1.4;
 }
 
-/* 範例訊息 hover 泡泡：等寬、保留換行，內容多時限高捲動 */
+/* 範例訊息 hover 泡泡：等寬、保留換行，內容多時限高捲動；加寬避免長訊息過度折行 */
+.lf-sample-popover {
+    --bs-popover-max-width: min(640px, 90vw);
+}
 .lf-sample-popover .popover-body {
     font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
     white-space: pre-wrap;

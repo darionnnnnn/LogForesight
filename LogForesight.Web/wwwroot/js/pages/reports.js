@@ -8,7 +8,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
-import { formatNumber, severityBadge, CATEGORY_NAMES } from '../core/format.js';
+import { formatNumber, severityBadge, CATEGORY_NAMES, severityName } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -199,11 +199,12 @@ function renderCategoryChart() {
     const severity = charts.severityColors();
 
     // 類別 × 嚴重度的堆疊長條——這正是 lf_record_categories 需要嚴重度分解欄位的原因（§10.3）
+    // severity 存英文原值（下鑽 URL 參數、取色皆用它）；label 只用於畫面顯示
     const severityKeys = [
-        { key: 'criticalCount', label: 'Critical' },
-        { key: 'highCount', label: 'High' },
-        { key: 'mediumCount', label: 'Medium' },
-        { key: 'lowCount', label: 'Low' }
+        { key: 'criticalCount', severity: 'Critical' },
+        { key: 'highCount', severity: 'High' },
+        { key: 'mediumCount', severity: 'Medium' },
+        { key: 'lowCount', severity: 'Low' }
     ];
 
     chartInstances.category?.destroy();
@@ -211,9 +212,9 @@ function renderCategoryChart() {
         data: {
             labels: categories.map(c => CATEGORY_NAMES[c.category] ?? c.category),
             datasets: severityKeys.map(s => ({
-                label: s.label,
+                label: severityName(s.severity),
                 data: categories.map(c => c[s.key]),
-                backgroundColor: severity[s.label]
+                backgroundColor: severity[s.severity]
             }))
         },
         options: {
@@ -225,10 +226,10 @@ function renderCategoryChart() {
         },
         drillTo: point => {
             const category = categories[point.index];
-            const severityName = severityKeys[point.datasetIndex].label;
+            const severityValue = severityKeys[point.datasetIndex].severity;
             // 類型分布跨全部風險日統計（嚴重度是問題層級，與當日風險等級無關），
             // 下鑽顯式帶全部風險層級，否則點 Low 段會被預設隱藏低風險過濾成近乎空白
-            return `/records?categories=${category.category}&severity=${severityName}` +
+            return `/records?categories=${category.category}&severity=${severityValue}` +
                    `&riskLevels=${encodeURIComponent('高,中,低')}` +
                    `&from=${currentData.from}&to=${currentData.to}`;
         }
@@ -238,7 +239,7 @@ function renderCategoryChart() {
         chart: chartInstances.category,
         canvasWrapper: wrapper,
         title: '風險類型分布',
-        tableColumns: ['類型', 'Critical', 'High', 'Medium', 'Low', '問題數', '主機數'],
+        tableColumns: ['類型', '嚴重', '高', '中', '低', '問題數', '主機數'],
         tableRows: categories.map(c => [
             CATEGORY_NAMES[c.category] ?? c.category,
             c.criticalCount, c.highCount, c.mediumCount, c.lowCount, c.issueCount, c.affectedHosts

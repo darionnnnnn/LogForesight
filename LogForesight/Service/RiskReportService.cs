@@ -305,7 +305,7 @@ public class RiskReportService
         // 白話總覽：置頂，主管/非技術讀者看完這段即可結束（2026-07-20 AI 角色轉換，見 docs/AI-ROLE-PLAN.md）。
         // 技術細節（趨勢數字、關聯訊號、原始 log）全部保留在下方區塊，供維運人員查證。
         sb.AppendLine();
-        sb.AppendLine("■ 白話總覽");
+        sb.AppendLine(record.AiAnalyzed ? "■ 白話總覽（AI 產出）" : "■ 白話總覽");
         if (record.Headline.Length > 0)
         {
             sb.AppendLine($"  {record.Headline}");
@@ -333,7 +333,9 @@ public class RiskReportService
         }
         if (record.TrendAssessment.Length > 0)
         {
-            sb.AppendLine($"  趨勢：{record.TrendAssessment}");
+            sb.AppendLine(record.AiAnalyzed
+                ? $"  趨勢（AI 判讀）：{record.TrendAssessment}"
+                : $"  趨勢：{record.TrendAssessment}");
         }
         foreach (var alert in record.CorrelationAlerts)
         {

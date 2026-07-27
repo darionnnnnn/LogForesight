@@ -7,6 +7,9 @@ public class SystemSettingsDto
     /// <summary>未處理計算納入的嚴重度（Critical/High/Medium/Low）</summary>
     public List<string> UnhandledSeverities { get; set; } = new();
 
+    /// <summary>層級顯示模式：DefaultHidden／Locked／GlobalFilter（見 SystemSettings.SeverityDisplayMode）</summary>
+    public string SeverityDisplayMode { get; set; } = "DefaultHidden";
+
     public string AiBaseUrl { get; set; } = "";
 
     /// <summary>API 金鑰是否已設定；金鑰本身 write-only，絕不回傳明碼或密文</summary>
@@ -26,6 +29,8 @@ public class UpdateSystemSettingsRequest
     [Required(ErrorMessage = "請至少勾選一個未處理等級")]
     [MinLength(1, ErrorMessage = "請至少勾選一個未處理等級")]
     public List<string> UnhandledSeverities { get; set; } = new();
+
+    public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
     /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]

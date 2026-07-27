@@ -295,7 +295,14 @@ public class RecordQueryService : IRecordQueryService
         var noiseMarks = _noiseMarks.GetForHost(hostName)
             .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
-        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+        var settings = _settings.Get();
+        var unhandledSeverities = settings.ParseUnhandledSeverities();
+
+        // GlobalFilter 模式：未勾選層級直接從聚合來源排除，詳情頁的重點問題與類別統計
+        // 全部只計入已勾選層級；其他模式不過濾，交由前端依 SeverityDisplayMode 決定顯示方式
+        var visibleTopIssues = settings.SeverityDisplayMode == "GlobalFilter"
+            ? record.TopIssues.Where(i => settings.UnhandledSeverities.Contains(i.Severity.ToString())).ToList()
+            : record.TopIssues;
 
         return new RecordDetailDto
         {
@@ -312,8 +319,8 @@ public class RecordQueryService : IRecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = record.TopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities)).ToList(),
-            Categories = CategoryAggregator.Aggregate(record.TopIssues).Select(ToCategoryDto).ToList(),
+            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities)).ToList(),
+            Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
             DeepDives = record.DeepDives.Select(d => new DeepDiveDto
@@ -337,7 +344,9 @@ public class RecordQueryService : IRecordQueryService
                 HasFindings = record.WeeklyCheckup.HasFindings,
                 Conclusion = record.WeeklyCheckup.Conclusion
             },
-            CanHandle = _currentUser.Has(Capability.Handle)
+            CanHandle = _currentUser.Has(Capability.Handle),
+            UnhandledSeverities = settings.UnhandledSeverities,
+            SeverityDisplayMode = settings.SeverityDisplayMode
         };
     }
 
@@ -680,7 +689,7 @@ public class RecordQueryService : IRecordQueryService
         if (issue.HistoryDailyAverage.HasValue) parts.Add($"歷史平均 {issue.HistoryDailyAverage.Value:0.#} 次");
         if (issue.DaysSeenInHistory > 0) parts.Add($"近期出現 {issue.DaysSeenInHistory} 天");
 
-        return string.Join("、", parts);
+        return string.Join("\n", parts);
     }
 
     private static CategorySummaryDto ToCategoryDto(CategorySummary summary) => new()

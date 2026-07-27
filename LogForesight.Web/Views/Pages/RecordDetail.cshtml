@@ -29,6 +29,27 @@
                 <div class="lf-card__body p-0" id="detail-issues"></div>
             </section>
 
+            <section class="lf-card d-none mb-3 lf-no-print" id="chat-card">
+                <div class="lf-card__header">
+                    <h2 class="lf-card__title">詢問 AI（實驗性）</h2>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="text-muted small" id="chat-turn-count"></span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="chat-clear">清除重來</button>
+                    </div>
+                </div>
+                <div class="lf-card__body">
+                    <select class="form-select form-select-sm mb-2" id="chat-issue-select">
+                        <option value="">請先選擇要詢問的異常項目…</option>
+                    </select>
+                    <div id="chat-messages" class="mb-2"></div>
+                    <form id="chat-form" class="d-flex gap-2">
+                        <input type="text" class="form-control form-control-sm" id="chat-input"
+                               placeholder="針對上面選的問題發問…" maxlength="500" disabled />
+                        <button type="submit" class="btn btn-sm btn-primary" id="chat-send" disabled>送出</button>
+                    </form>
+                </div>
+            </section>
+
             <section class="lf-card d-none" id="report-card">
                 <div class="lf-card__header">
                     <button type="button" class="btn btn-link p-0 text-body text-decoration-none d-flex align-items-center gap-2" id="report-toggle">
