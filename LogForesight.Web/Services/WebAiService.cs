@@ -41,7 +41,7 @@ public class WebAiService : IWebAiService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    private readonly IAiCacheStore _cache;
+    private readonly JsonAiCacheStore _cache;
     private readonly ISystemSettingsStore _systemSettings;
 
     /// <summary>批次 appsettings.json 的 Ai 區段（進階參數來源＋BaseUrl 退路）；讀不到為 null，啟動後不變</summary>
@@ -57,7 +57,7 @@ public class WebAiService : IWebAiService
     private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _interactiveClient;
     private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _chatClient;
 
-    public WebAiService(WebAppSettings settings, IAiCacheStore cache, ISystemSettingsStore systemSettings)
+    public WebAiService(WebAppSettings settings, JsonAiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
         _systemSettings = systemSettings;

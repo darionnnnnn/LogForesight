@@ -50,42 +50,14 @@ public class BatchRunLog
     public string? ExceptionText { get; set; }
 }
 
-public interface IBatchRunStore
-{
-    /// <summary>啟動時登記，回傳配發的 RunId</summary>
-    long StartRun(BatchRun run);
-
-    /// <summary>結束時回填統計與結束時間</summary>
-    void FinishRun(BatchRun run);
-
-    void AppendLog(BatchRunLog log);
-
-    /// <summary>近 N 天的執行紀錄（執行監控總表）</summary>
-    List<BatchRun> GetRecentRuns(int days, IReadOnlyCollection<string>? hostNames);
-
-    BatchRun? GetRun(long runId);
-
-    List<BatchRunLog> GetLogs(long runId);
-
-    /// <summary>近 N 天的 Error/Fatal 紀錄（異常彙總）</summary>
-    List<BatchRunLog> GetRecentErrors(int days);
-
-    /// <summary>
-    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）。
-    /// 依附加時間（非 StartedAt/LoggedAt 業務時間）判斷——批次每日執行，兩者實務上等價，
-    /// 且直接用附加時間可讓底層 SQL 端整批刪，不必逐行反序列化 JSON 比對業務日期。
-    /// </summary>
-    int Prune(int retentionDays);
-}
-
 /// <summary>
-/// <see cref="IBatchRunStore"/> 的實作（log key=batch_runs ＋ batch_run_logs，append-only）。
+/// 一次批次執行的紀錄存取（log key=batch_runs ＋ batch_run_logs，append-only）。
 ///
 /// 執行紀錄是 append-only 但需要「回填結束時間」——實作方式是再 append 一列同 RunId 的完整紀錄，
 /// 讀取時同 RunId 取最後一列。這樣寫入端維持純附加，
 /// 而批次執行中途被強制中斷時，先前寫的「開始」那一列仍然留著，正好就是我們要偵測的狀態。
 /// </summary>
-public class JsonBatchRunStore : IBatchRunStore
+public class JsonBatchRunStore
 {
     private readonly IJsonLogStore _runs;
     private readonly IJsonLogStore _logs;
@@ -108,6 +80,7 @@ public class JsonBatchRunStore : IBatchRunStore
         _lastLogId = ReadAllLogs().Select(l => l.LogId).DefaultIfEmpty(0).Max();
     }
 
+    /// <summary>啟動時登記，回傳配發的 RunId</summary>
     public long StartRun(BatchRun run)
     {
         lock (_lock)
@@ -118,6 +91,7 @@ public class JsonBatchRunStore : IBatchRunStore
         }
     }
 
+    /// <summary>結束時回填統計與結束時間</summary>
     public void FinishRun(BatchRun run)
     {
         lock (_lock)
@@ -137,6 +111,7 @@ public class JsonBatchRunStore : IBatchRunStore
         }
     }
 
+    /// <summary>近 N 天的執行紀錄（執行監控總表）</summary>
     public List<BatchRun> GetRecentRuns(int days, IReadOnlyCollection<string>? hostNames)
     {
         var cutoff = DateTime.Today.AddDays(-days + 1);
@@ -157,6 +132,7 @@ public class JsonBatchRunStore : IBatchRunStore
     public List<BatchRunLog> GetLogs(long runId) =>
         ReadAllLogs().Where(l => l.RunId == runId).OrderBy(l => l.LogId).ToList();
 
+    /// <summary>近 N 天的 Error/Fatal 紀錄（異常彙總）</summary>
     public List<BatchRunLog> GetRecentErrors(int days)
     {
         var cutoff = DateTime.Today.AddDays(-days + 1);
@@ -167,6 +143,11 @@ public class JsonBatchRunStore : IBatchRunStore
             .ToList();
     }
 
+    /// <summary>
+    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）。
+    /// 依附加時間（非 StartedAt/LoggedAt 業務時間）判斷——批次每日執行，兩者實務上等價，
+    /// 且直接用附加時間可讓底層 SQL 端整批刪，不必逐行反序列化 JSON 比對業務日期。
+    /// </summary>
     public int Prune(int retentionDays)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);

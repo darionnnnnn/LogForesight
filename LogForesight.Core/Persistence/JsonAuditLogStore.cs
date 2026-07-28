@@ -5,30 +5,13 @@ using System.Text.Json.Serialization;
 namespace LogForesight;
 
 /// <summary>
-/// 操作稽核的儲存（↔ lf_audit_logs）。
-/// **只有 Append 與 Query，沒有更新或刪除**——這是稽核資料的本質要求，
-/// 寫成介面約定之後，實作端就沒有「順手加個修正方法」的空間。
-/// </summary>
-public interface IAuditLogStore
-{
-    void Append(AuditEntry entry);
-
-    PagedResult<AuditEntry> Query(AuditQuery query);
-
-    /// <summary>指定期間內、指定動作的筆數（儀表板的「近 24 小時登入失敗」卡片用）</summary>
-    int Count(DateTime from, DateTime to, string action);
-
-    /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）</summary>
-    int Prune(int retentionDays);
-}
-
-/// <summary>
-/// <see cref="IAuditLogStore"/> 的實作（log key=audit，append-only）。
+/// 操作稽核的儲存（↔ lf_audit_logs，log key=audit，append-only）。
+/// **只有 Append 與 Query，沒有更新或刪除**——這是稽核資料的本質要求。
 ///
 /// 走逐列的 <see cref="IJsonLogStore"/> 而不是整份 blob：稽核是 append-only 的高頻寫入，
 /// 每次都重寫整份文件會隨資料量線性變慢。
 /// </summary>
-public class JsonAuditLogStore : IAuditLogStore
+public class JsonAuditLogStore
 {
     private readonly IJsonLogStore _log;
     private readonly object _lock = new();
@@ -101,11 +84,13 @@ public class JsonAuditLogStore : IAuditLogStore
         };
     }
 
+    /// <summary>指定期間內、指定動作的筆數（儀表板的「近 24 小時登入失敗」卡片用）</summary>
     public int Count(DateTime from, DateTime to, string action) =>
         ParseLines(_log.ReadLines(from, to))
             .Count(e => e.OccurredAt >= from && e.OccurredAt <= to &&
                         string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）</summary>
     public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
 
     private static bool Matches(AuditEntry entry, AuditQuery query)

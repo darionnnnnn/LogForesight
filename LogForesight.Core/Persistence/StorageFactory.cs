@@ -150,7 +150,7 @@ public static class StorageFactory
         new JsonGroupAccessStore(Blob(settings, dataRoot, "group_access"));
 
     /// <summary>操作稽核</summary>
-    public static IAuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot) =>
+    public static JsonAuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot) =>
         new JsonAuditLogStore(LogStore(settings, dataRoot, "audit"));
 
     /// <summary>內建規則的原廠種子鏡像（供「回復預設」比對與還原）</summary>
@@ -158,7 +158,7 @@ public static class StorageFactory
         new JsonRuleSeedStore(Blob(settings, dataRoot, "rule_seeds"));
 
     /// <summary>批次執行紀錄——批次寫、Web 讀</summary>
-    public static IBatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot) =>
+    public static JsonBatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot) =>
         new JsonBatchRunStore(
             LogStore(settings, dataRoot, "batch_runs"),
             LogStore(settings, dataRoot, "batch_run_logs"));
@@ -170,7 +170,7 @@ public static class StorageFactory
             LogStore(settings, dataRoot, "handling_log"));
 
     /// <summary>Web AI 加值輸出的快取</summary>
-    public static IAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot) =>
+    public static JsonAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot) =>
         new JsonAiCacheStore(Blob(settings, dataRoot, "ai_cache"));
 
     /// <summary>問題層級處理狀態——Web 寫，日層級結案與否由此推導</summary>
@@ -185,13 +185,13 @@ public static class StorageFactory
     /// 權限異動（perm_changes 由批次寫、perm_confirms 由 Web 寫）。
     /// 兩者各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。
     /// </summary>
-    public static IPermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot) =>
+    public static JsonPermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot) =>
         new JsonPermissionChangeStore(
             LogStore(settings, dataRoot, "perm_changes"),
             Blob(settings, dataRoot, "perm_confirms"));
 
     /// <summary>權限/角色異動監控的快照（批次寫、批次讀，Web 不碰）</summary>
-    public static IPermissionSnapshotStore CreatePermissionSnapshotStore(StorageSettings settings, string dataRoot) =>
+    public static JsonPermissionSnapshotStore CreatePermissionSnapshotStore(StorageSettings settings, string dataRoot) =>
         new JsonPermissionSnapshotStore(Blob(settings, dataRoot, "permission_snapshot"));
 
     /// <summary>CSV／NetIQ 匯入紀錄</summary>
@@ -207,6 +207,6 @@ public static class StorageFactory
         new JsonSystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
 
     /// <summary>NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁維護）</summary>
-    public static INetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
+    public static JsonNetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
         new JsonNetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));
 }

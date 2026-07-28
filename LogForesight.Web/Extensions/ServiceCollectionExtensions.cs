@@ -30,11 +30,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHostStore>(_ => StorageFactory.CreateHostStore(storage, dataRoot));
         services.AddSingleton<IHostGroupStore>(_ => StorageFactory.CreateHostGroupStore(storage, dataRoot));
         services.AddSingleton<IGroupAccessStore>(_ => StorageFactory.CreateGroupAccessStore(storage, dataRoot));
-        services.AddSingleton<IAuditLogStore>(_ => StorageFactory.CreateAuditLogStore(storage, dataRoot));
+        services.AddSingleton<JsonAuditLogStore>(_ => StorageFactory.CreateAuditLogStore(storage, dataRoot));
         services.AddSingleton<IImportLogStore>(_ => StorageFactory.CreateImportLogStore(storage, dataRoot));
         services.AddSingleton<ISentinelStore>(_ => StorageFactory.CreateSentinelStore(storage, dataRoot));
         services.AddSingleton<ISystemSettingsStore>(_ => StorageFactory.CreateSystemSettingsStore(storage, dataRoot));
-        services.AddSingleton<INetiqOptionsStore>(_ => StorageFactory.CreateNetiqOptionsStore(storage, dataRoot));
+        services.AddSingleton<JsonNetiqOptionsStore>(_ => StorageFactory.CreateNetiqOptionsStore(storage, dataRoot));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
         services.AddSingleton<IAnalysisRecordQuery>(_ => StorageFactory.CreateRecordQuery(storage, dataRoot));
@@ -44,14 +44,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
         services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
         services.AddSingleton<INoiseMarkStore>(_ => StorageFactory.CreateNoiseMarkStore(storage, dataRoot));
-        services.AddSingleton<IAiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
-        services.AddSingleton<IPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
+        services.AddSingleton<JsonAiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
+        services.AddSingleton<JsonPermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
 
         // 規則維護與執行監控
         services.AddSingleton<IKnownIssueRuleStore>(_ => StorageFactory.CreateRuleStore(storage, dataRoot));
         services.AddSingleton<IRuleSeedStore>(_ => StorageFactory.CreateRuleSeedStore(storage, dataRoot));
         services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
-        services.AddSingleton<IBatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
+        services.AddSingleton<JsonBatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
         return services;
     }

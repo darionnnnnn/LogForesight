@@ -46,30 +46,3 @@ public interface IIssueHandlingStore
     void Clear(string hostName, DateTime date, string issueKey);
 }
 
-/// <summary>
-/// 權限異動的讀寫（↔ lf_permission_changes）。
-///
-/// **批次與 Web 的寫入職責分離**：批次呼叫 <see cref="AppendChanges"/> 寫入偵測到的異動，
-/// Web 呼叫 <see cref="SaveConfirmation"/> 寫入人工確認結果。實作上是兩個不同的儲存 key
-/// （沿用單一寫入者原則，見 JsonPermissionChangeStore）——介面隱藏這個差異。
-/// </summary>
-public interface IPermissionChangeStore
-{
-    /// <summary>批次寫入本次偵測到的異動（append-only）</summary>
-    void AppendChanges(IEnumerable<PermissionChangeRecord> changes);
-
-    /// <summary>依主機與確認狀態查詢；hostNames 為空集合時回空結果（授權範圍為空）</summary>
-    List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount);
-
-    PermissionChangeRecord? Get(string changeId);
-
-    /// <summary>確認狀態；未確認過的異動回 null（呼叫端視為 pending）</summary>
-    PermissionChangeConfirmation? GetConfirmation(string changeId);
-
-    List<PermissionChangeConfirmation> GetConfirmations(IEnumerable<string> changeIds);
-
-    void SaveConfirmation(PermissionChangeConfirmation confirmation);
-
-    /// <summary>待確認筆數（儀表板待辦區）</summary>
-    int CountPending(IReadOnlyCollection<string>? hostNames);
-}

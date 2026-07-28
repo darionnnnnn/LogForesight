@@ -9,7 +9,7 @@ public class DashboardService
 {
     private readonly IRecordRepository _repository;
     private readonly IVisibilityService _visibility;
-    private readonly IAuditLogStore _audit;
+    private readonly JsonAuditLogStore _audit;
     private readonly ICurrentUser _currentUser;
     private readonly HandlingService _handling;
     private readonly PermissionChangeService _permissionChanges;
@@ -18,7 +18,7 @@ public class DashboardService
     public DashboardService(
         IRecordRepository repository,
         IVisibilityService visibility,
-        IAuditLogStore audit,
+        JsonAuditLogStore audit,
         ICurrentUser currentUser,
         HandlingService handling,
         PermissionChangeService permissionChanges,

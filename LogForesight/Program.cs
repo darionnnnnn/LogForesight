@@ -274,7 +274,7 @@ foreach (var expired in expiredSuppressions)
 // 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
 // 能回答「昨晚每台主機都跑了嗎、有沒有出問題」。掛上 NLog target 後 Warn 以上自動流入，
 // 不需要在既有程式碼各處加呼叫。建立失敗不影響分析（見 BatchRunRecorder）。
-IBatchRunStore? batchRunStore = null;
+JsonBatchRunStore? batchRunStore = null;
 try
 {
     batchRunStore = StorageFactory.CreateBatchRunStore(settings.Storage, dataRoot);

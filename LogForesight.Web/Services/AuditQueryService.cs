@@ -5,9 +5,9 @@ namespace LogForesight.Web.Services;
 /// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
 public class AuditQueryService
 {
-    private readonly IAuditLogStore _store;
+    private readonly JsonAuditLogStore _store;
 
-    public AuditQueryService(IAuditLogStore store)
+    public AuditQueryService(JsonAuditLogStore store)
     {
         _store = store;
     }

@@ -22,12 +22,12 @@ public interface IAuditService
 
 public class AuditService : IAuditService
 {
-    private readonly IAuditLogStore _store;
+    private readonly JsonAuditLogStore _store;
     private readonly ICurrentUser _currentUser;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
-    public AuditService(IAuditLogStore store, ICurrentUser currentUser, IHttpContextAccessor httpContextAccessor)
+    public AuditService(JsonAuditLogStore store, ICurrentUser currentUser, IHttpContextAccessor httpContextAccessor)
     {
         _store = store;
         _currentUser = currentUser;

@@ -4,14 +4,17 @@ using System.Text.Json;
 namespace LogForesight;
 
 /// <summary>
-/// <see cref="IPermissionChangeStore"/> 的實作。
+/// 權限異動的讀寫（↔ lf_permission_changes）。
+///
+/// **批次與 Web 的寫入職責分離**：批次呼叫 <see cref="AppendChanges"/> 寫入偵測到的異動，
+/// Web 呼叫 <see cref="SaveConfirmation"/> 寫入人工確認結果。
 ///
 /// **兩個 key、兩個寫入者**（沿用單一寫入者原則）：
 ///   - log key=perm_changes：批次寫入偵測到的異動（append-only）
 ///   - blob key=perm_confirms：Web 寫入人工確認狀態（整份型，需更新）
 /// 各寫各的 key，寫入路徑不交錯。
 /// </summary>
-public class JsonPermissionChangeStore : IPermissionChangeStore
+public class JsonPermissionChangeStore
 {
     private readonly IJsonLogStore _changes;
     private readonly JsonConfirmationFile _confirmations;
@@ -29,6 +32,7 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
         _confirmations = new JsonConfirmationFile(confirmations);
     }
 
+    /// <summary>批次寫入本次偵測到的異動（append-only）</summary>
     public void AppendChanges(IEnumerable<PermissionChangeRecord> changes)
     {
         lock (_lock)
@@ -43,6 +47,7 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
         }
     }
 
+    /// <summary>依主機與確認狀態查詢；hostNames 為空集合時回空結果（授權範圍為空）</summary>
     public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount)
     {
         var changes = ReadAllChanges();
@@ -78,6 +83,7 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
         ReadAllChanges().FirstOrDefault(c =>
             string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>確認狀態；未確認過的異動回 null（呼叫端視為 pending）</summary>
     public PermissionChangeConfirmation? GetConfirmation(string changeId) =>
         _confirmations.Read().FirstOrDefault(c =>
             string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
@@ -91,6 +97,7 @@ public class JsonPermissionChangeStore : IPermissionChangeStore
     public void SaveConfirmation(PermissionChangeConfirmation confirmation) =>
         _confirmations.Upsert(confirmation);
 
+    /// <summary>待確認筆數（儀表板待辦區）</summary>
     public int CountPending(IReadOnlyCollection<string>? hostNames) =>
         Query(hostNames, PermissionConfirmStatuses.Pending, int.MaxValue).Count;
 
