@@ -1,7 +1,5 @@
 using LogForesight;
 using LogForesight.Sql;
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -13,20 +11,9 @@ namespace LogForesight.Tests;
 /// </summary>
 public class EfAnalysisRecordStoreRiskOrderingTests : IDisposable
 {
-    private readonly SqliteConnection _connection;
+    private readonly EfSqliteFixture _fx = new();
 
-    public EfAnalysisRecordStoreRiskOrderingTests()
-    {
-        _connection = new SqliteConnection("DataSource=:memory:");
-        _connection.Open();
-        using var ctx = NewContext();
-        ctx.Database.EnsureCreated();
-    }
-
-    private LfDbContext NewContext() =>
-        new(new DbContextOptionsBuilder<LfDbContext>().UseSqlite(_connection).Options);
-
-    public void Dispose() { _connection.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date, string risk) => new()
     {
@@ -37,7 +24,7 @@ public class EfAnalysisRecordStoreRiskOrderingTests : IDisposable
     public void QueryPage_SQL端排序權重與RiskLevels_Rank一致()
     {
         // 全部帶正常 HostId（非 0），走 SQL 全下推分頁路徑（QueryPage 的 CASE WHEN 分支）
-        var store = new EfAnalysisRecordStore(NewContext, "test");
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "test");
         store.Append(Rec(1, "LOW-HOST", new DateTime(2026, 7, 1), RiskLevels.Low));
         store.Append(Rec(2, "HIGH-HOST", new DateTime(2026, 7, 1), RiskLevels.High));
         store.Append(Rec(3, "MEDIUM-HOST", new DateTime(2026, 7, 1), RiskLevels.Medium));

@@ -1,6 +1,4 @@
 using LogForesight.Sql;
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -10,32 +8,17 @@ namespace LogForesight.Tests;
 ///
 /// 尤其是 <see cref="IAnalysisRecordReader.ReadRecent"/> 的錨定窗語意：它決定趨勢基準的
 /// 計算範圍，換一種算法就會讓同一天的分析得出不同的風險判定。
-///
-/// 用 SQLite in-memory：LINQ 保持 provider 中立，SQLite 上通過即代表 store 邏輯正確；
-/// SqlServer 專屬行為（migration、連線）在真實環境以 log 驗證。SQLite in-memory 的資料庫
-/// 生命週期綁在**開啟中的連線**，所以整個測試實例共用一條連線，每個 context 在其上建立。
 /// </summary>
 public class AnalysisRecordStoreContractTests : IDisposable
 {
-    private readonly SqliteConnection _connection;
-
-    public AnalysisRecordStoreContractTests()
-    {
-        _connection = new SqliteConnection("DataSource=:memory:");
-        _connection.Open();
-        using var ctx = NewContext();
-        ctx.Database.EnsureCreated();
-    }
-
-    private LfDbContext NewContext() =>
-        new(new DbContextOptionsBuilder<LfDbContext>().UseSqlite(_connection).Options);
+    private readonly EfSqliteFixture _fx = new();
 
     private IAnalysisRecordStore CreateStore() =>
-        new EfAnalysisRecordStore(NewContext, "sqlite-in-memory");
+        new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
 
     public void Dispose()
     {
-        _connection.Dispose();
+        _fx.Dispose();
         GC.SuppressFinalize(this);
     }
 

@@ -1,7 +1,5 @@
 using LogForesight;
 using LogForesight.Sql;
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -13,22 +11,11 @@ namespace LogForesight.Tests;
 /// </summary>
 public class EfRecordQueryTests : IDisposable
 {
-    private readonly SqliteConnection _connection;
+    private readonly EfSqliteFixture _fx = new();
 
-    public EfRecordQueryTests()
-    {
-        _connection = new SqliteConnection("DataSource=:memory:");
-        _connection.Open();
-        using var ctx = NewContext();
-        ctx.Database.EnsureCreated();
-    }
+    private EfAnalysisRecordStore Store() => new(_fx.NewContext, "test");
 
-    private LfDbContext NewContext() =>
-        new(new DbContextOptionsBuilder<LfDbContext>().UseSqlite(_connection).Options);
-
-    private EfAnalysisRecordStore Store() => new(NewContext, "test");
-
-    public void Dispose() { _connection.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date, string risk = "低",
         params LogIssueSignature[] issues) => new()
