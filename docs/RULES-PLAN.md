@@ -4,9 +4,9 @@
 > 新增偵測項目）需要重新編譯部署，維護門檻過高。本文件是這次調整的完整設計定案，實作見
 > `Analysis/KnownIssueCatalog.cs`（`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、
 > `Analysis/RuleValidator.cs`、`Analysis/SuppressionFilter.cs`、
-> `Persistence/IKnownIssueRuleStore.cs`／`JsonKnownIssueRuleStore.cs`、`Service/RuleBootstrapper.cs`、
+> `Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、`Service/RuleBootstrapper.cs`、
 > `Service/RuleImporter.cs`、`Models/RuleSuppression.cs`、`Persistence/ISuppressionStore.cs`／
-> `JsonSuppressionStore.cs`、`Service/SuppressionCli.cs`。
+> `SuppressionStore.cs`、`Service/SuppressionCli.cs`。
 
 ## 目標與整體流程
 
@@ -118,33 +118,34 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 
 ## 儲存後端與 Interface
 
-沿用專案既有的 Strategy + Factory 模式（與 `IAnalysisRecordStore`/`JsonlAnalysisRecordStore`
-同一套）：
+沿用專案既有的 Strategy + Factory 模式（與 `IAnalysisRecordStore` 同一套）：
 
 ```
-IKnownIssueRuleStore          （介面：Location / Exists / Load / Save）
-  └ JsonKnownIssueRuleStore    （前期實作：rules.json）
-  └ (未來) DbKnownIssueRuleStore
+IKnownIssueRuleStore （介面：Location / Exists / Load / Save）
+  └ KnownIssueRuleStore  （唯一實作，DB blob，key=rules）
 
-ISuppressionStore              （介面：Location / LoadAll / SaveAll）
-  └ JsonSuppressionStore        （前期實作：suppressions.json）
-  └ (未來) DbSuppressionStore
+ISuppressionStore     （介面：Location / LoadAll / SaveAll）
+  └ SuppressionStore     （唯一實作，DB blob，key=suppressions）
 ```
 
-`StorageFactory.CreateRuleStore`/`CreateSuppressionStore` 依 `Storage.Type` 選後端，與
-`CreateRecordStore` 同一開關；未來新增 DB 後端只需新增實作類別＋一個 case，
-`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端不需修改。
+`StorageFactory.CreateRuleStore`/`CreateSuppressionStore` 是唯一路由點，與 `CreateRecordStore`
+同一開關；`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端只認介面。
 
-`rules.json`／`suppressions.json` 的容錯設計：
+> **2026-07-24 起規則存資料庫**：Jsonl 檔案後端已全面退役（見 docs/HISTORY.md「2026-07-24」段
+> 定案 10），`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，兩者都是 DB。原本的
+> `JsonKnownIssueRuleStore`／`JsonSuppressionStore` 已於 2026-07-28 的簡化重構改名為
+> `KnownIssueRuleStore`／`SuppressionStore`（名稱裡的 Json 早已名不符實——底層一律走
+> `EfJsonBlobStore` 存進 `lf_blobs`）。下方保留的容錯設計中，「檔案」請讀作「blob 內容」。
 
-- **整檔 JSON 語法錯誤 → Load 失敗，且不覆寫使用者的壞檔**，讓使用者能看著原檔修正；
-  程式降級用內建種子（規則）或空清單（抑制）繼續執行，不因設定檔壞掉而整個中斷。
+序列化與容錯設計：
+
+- **整份 JSON 語法錯誤 → Load 失敗，且不覆寫使用者的壞內容**，讓使用者能看著原值修正；
+  程式降級用內建種子（規則）或空清單（抑制）繼續執行，不因內容壞掉而整個中斷。
 - **單一物件解析失敗只跳過該條**，其餘照常載入（逐元素 try/catch，而非整份反序列化）。
-- **原子寫入**：先寫 `.tmp` 再 `File.Move(overwrite: true)`，避免寫入途中被中斷留下半個
-  損毀的檔案。
-- **UTF-8 with BOM**：規則檔內容是中文長文字，缺 BOM 時記事本等工具容易誤判編碼顯示亂碼。
+- **原子寫入**：由 `EfJsonBlobStore.Mutate` 的單一交易保證（含 `UpdatedAt` 樂觀鎖與重試），
+  取代檔案時代的「寫 `.tmp` 再 `File.Move`」手法——批次與 Web 併發寫入不會有一方被靜默蓋掉。
 - Enum（`Category`/`Severity`）以字串儲存（`JsonStringEnumConverter`），不是數字——
-  人工編輯時看得懂，也對應未來 DB 的 `CHECK` 約束設計（見下）。
+  值本身可讀，也對應下方 DB 正規化草案的 `CHECK` 約束設計。
 
 ## Seed／匯入政策
 

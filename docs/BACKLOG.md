@@ -33,13 +33,23 @@
 
 ## 本次簡化重構（refactor/simplify-2026-07）遞延項
 
-- **`NetiqHostService.SetActive` 與 `OwnerCsvImporter.Apply` 的欄位複製遺漏**：Phase 6d 體檢時
-  發現這兩處手刻 `new WebHost { ... }` 物件時，遺漏了 `HostStore.Upsert`/`SentinelStore.Upsert`
-  既存分支實際會消費的欄位（`SetActive` 遺漏 `OrphanedFromSentinel`；`OwnerCsvImporter.Apply`
-  遺漏 `Os`、`SentinelId`）——呼叫這兩個方法時會靜默把這些欄位重置為型別預設值。
-  這是**發現的既有 bug**，非本次重構引入；因不在「行為不變」的重構範圍內，且缺乏測試覆蓋
-  驗證修法安全性，故未在重構中一併修正，留待獨立的修 bug 任務處理（已透過 spawn_task 另開
-  背景任務追蹤）。
+- **`OwnerCsvImporter.Apply` 會靜默清掉主機的 Sentinel 歸屬與 OS**（既有 bug，非本次重構引入，
+  **影響嚴重**）：`OwnerCsvImporter.Apply`（`LogForesight.Web/Services/Import/OwnerCsvImporter.cs`
+  約 159 行）手刻 `new WebHost { ... }` 交給 `HostStore.Upsert`，但漏抄了三個
+  `Upsert` 既存分支實際會複製的欄位——`SentinelId`、`Os`、`OrphanedFromSentinel`，
+  因此匯入 owners.csv 更新負責人時，會把這些欄位一併重置為型別預設值：
+  - `SentinelId` → `null`：該主機掉進 `NetiqHostList.PendingAssignment`（待歸屬），
+    **從此不進日常輪巡**——看起來還在監控，實際上沒有人在看它，正是本專案最不能有的失敗方式。
+  - `Os` → `"windows"`：Linux 主機的偵測面被整個換成 Windows 規則。
+  - `OrphanedFromSentinel` → `null`：孤兒標記遺失，汰換 Sentinel 時無法用「重疊」分類復活。
+
+  owners.csv 的職責只有「更新負責人清單」，不該動到監控歸屬與平台判定。修法方向是照抄
+  `Upsert` 既存分支消費的全部欄位（或改為先 `Get` 再只改 `OwnerUserIds`）；因需要新增回歸測試
+  釘住「匯入負責人不影響其他欄位」，不在本次「行為不變」的重構範圍內，另案處理。
+
+  > 對照組（**不是 bug，不要跟著一起「修」**）：`NetiqHostService.SetActive` 同樣沒傳
+  > `OrphanedFromSentinel`，但那是**刻意的**——設計明訂「手動重新啟用一台孤兒主機時一併清除
+  > `OrphanedFromSentinel`（人已表態，標記使命結束）」，見 docs/HISTORY.md「2026-07-23」段 §1.7。
 - **`RecordsController` 的查詢參數尚未收斂為查詢模型類別**：`RecordsController.cs` 目前仍有
   35 個 `[FromQuery]` 參數（3 個端點各約 11 個），Phase 6f 體檢時判斷「model binding 語意屬
   行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試

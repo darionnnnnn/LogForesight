@@ -46,7 +46,7 @@ C# 專案採檔案掃描（非資料夾對應命名空間），批次與 Core �
 flowchart TD
     ELS["EventLogService（EventLogReader）<br/>System / Application / Security<br/>+ Defender / RDP Operational 頻道"]
     AGG["LogAggregator<br/>分組聚合統計"]
-    RULES[("rules.json<br/>規則庫")]
+    RULES[("規則庫（DB）<br/>IKnownIssueRuleStore")]
     CAT["KnownIssueCatalog<br/>規則分類 + 嚴重度 + 知識庫"]
 
     subgraph DET["確定性偵測層（AI 失效也照常運作）"]
@@ -401,15 +401,15 @@ LogForesight.exe --selftest
 比對結果，一分鐘內確認五層偵測邏輯在新環境正常，而不是等真的出事才發現某條規則沒動。
 exit code 0 = 全部通過。
 
-**2026-07-21 規則外部化後**：`--selftest` 一律**唯讀**載入目前實際生效的規則——資料根目錄
-（`Storage.DataRoot`，留空＝執行檔目錄）有
-`rules.json` 就驗證它（輸出開頭會標明「驗證對象：{路徑}（seed vX）」），沒有或載入失敗就驗證
-內建種子（標明「驗證對象：內建種子」）。**絕不寫入任何檔案**，包括不會幫你建立 `rules.json`
-——這個承諾是刻意的：`--selftest` 要能在乾淨環境反覆執行而不留副作用。額外會檢查：規則驗證
-有無不合格項目、是否有規則被排序在前面的規則遮蔽（永遠不會命中）、推導出的 Security 稽核
-watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於目前規則表；`suppressions.json`
-存在時也會唯讀列出每筆抑制的到期狀態。**改完 `rules.json` 後的建議 SOP 就是跑一次
-`--selftest`，exit code 0 代表這次修改沒有破壞既有的偵測邏輯。**
+**驗證對象是內建種子，不是資料庫裡實際生效的規則**（Jsonl 後端於 2026-07-24 退役、規則改存
+資料庫後的刻意取捨）：`--selftest` **完全不連資料庫**——連線就可能在乾淨環境建出空的 `.db` 檔，
+違背「反覆執行不留任何副作用」這個承諾。輸出開頭會明白標示「驗證對象：內建種子（實際生效的
+規則在資料庫；selftest 不連 DB 以免留下建檔副作用）」，不會讓人誤以為驗的是線上規則。
+
+因此它驗的是**這個版本的程式內建了什麼規則**：規則驗證有無不合格項目、是否有規則被排序在
+前面的規則遮蔽（永遠不會命中）、推導出的 Security 稽核 watchlist 是否涵蓋齊全、關聯層引用的
+事件 ID 是否都存在於種子規則表。要驗證「你改過的規則」有沒有問題，走 Web 規則維護頁的
+儲存前驗證（見下方「規則庫與抑制設定」），那一層擋的才是實際生效的內容。
 
 驗證期需要看到完整 prompt 與 AI 原始回應（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
 Log」章節）時，加上 `--debug-dump`：
@@ -421,34 +421,43 @@ LogForesight.exe --debug-dump
 每次 AI 呼叫（含 JSON 重試的每次嘗試）會各輸出一個檔案到執行檔目錄的 `diag\`，驗證完可以直接
 刪除整個資料夾，平常執行不要加這個參數（會持續佔用磁碟空間）。
 
-## 規則庫（rules.json）與抑制設定
+## 規則庫與抑制設定
 
 2026-07-21 規則外部化：`KnownIssueCatalog` 的規則表（本文件「監控的危險訊號清單」列出的
-那些規則）不再寫死在程式碼裡，改成第一次執行時寫入執行檔目錄的 **`rules.json`**，之後直接
-編輯這個檔案即可調整規則，**不需要重新編譯部署**。完整設計定案（語意邊界、seed/匯入政策、
-未來 DB 映射）見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
+那些規則）不再寫死在程式碼裡，調整規則**不需要重新編譯部署**。
 
-### 維護 SOP
+**存放位置（2026-07-24 起）**：規則與抑制設定存在**資料庫**裡（`lf_blobs` 的 `rules`／
+`suppressions` 兩個 key），不是可以直接開啟編輯的檔案——`rules.json`／`suppressions.json`
+是 Jsonl 檔案後端時代的產物，該後端已於 2026-07-24 全面退役（見 docs/HISTORY.md「2026-07-24」段
+定案 10）。完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
+[docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
 
-1. 用文字編輯器打開 `rules.json`（**務必存成 UTF-8**——內容是中文長文字，記事本存檔時注意
-   編碼，否則下次打開會看到亂碼）。
-2. 新增規則：複製一條現有規則當模板，改 `Id`（建議 `custom-` 開頭）、`Origin` 設成 `"custom"`、
-   填好 `Category`/`Severity` 與四個知識庫欄位
-   （`PlainExplanation`/`Impact`/`LikelyCauses`/`NextSteps`），比對欄位則**依平台二選一**：
-   Windows 規則（`Platform: "windows"`，省略時的預設）填 `SourcePattern`/`EventIds`；
-   Linux 規則（`Platform: "linux"`）填 `ProgramPattern`＋`MessagePatterns`（或 `EventNamePattern`），
-   兩組欄位不可混用（驗證會擋）。
-   停用某條規則：把該條的 `Enabled` 改成 `false`（保留在檔案裡，不用刪除）。
-3. **改完存檔後跑一次 `LogForesight.exe --selftest`**，exit code 0 就是好的——它會唯讀載入
-   你剛改的 `rules.json`，驗證欄位是否合格、有沒有規則彼此遮蔽、關聯層事件 ID 是否仍對得上，
-   不需要真的跑一次分析才能確認改壞了沒有。
+### 維護 SOP：走 Web 規則維護頁
+
+**`/admin/rules`（系統管理 > 規則維護，需 Maintain 能力）是日常維護規則的正式途徑**，
+分「Windows規則｜Linux規則｜告警抑制」三個分頁（見 docs/WEB-SPEC.md §9.7）：
+
+1. 清單頁可依類別／嚴重度／來源（內建/自訂）／啟用狀態／有無抑制快速篩選，一眼看出哪些
+   規則被改過（「已修改」徽章）、哪些內建規則有新版種子可匯入。
+2. 新增規則：填 `Id`（強制 `custom-` 開頭）、類別／嚴重度／門檻／「命中即列為高風險日（重大）」，
+   以及四個知識庫欄位（白話說明／影響／常見原因／處置步驟）。比對欄位**依所在分頁自動決定平台**：
+   Windows 填來源比對＋Event ID；Linux 填 Program 比對＋訊息子字串（或正規化事件名）。
+   平台與 `Origin` 同屬身分欄位，建立後不可變更。
+3. 停用規則：清單上直接切換 `Enabled`，不必刪除（保留紀錄才查得回歷史）。
+4. **儲存前後端都會跑規則驗證**（欄位合格、遮蔽偵測、關聯層事件 ID 覆蓋——與 `--selftest`
+   共用位於 Core 的同一套驗證邏輯），驗證不過會拒絕儲存並逐條列出問題。這一層擋的就是
+   實際生效的內容，所以改完**不需要**再跑 `--selftest` 確認（後者驗的是程式內建種子，見上節）。
+
+批次端另提供 `--import-rules`（匯入程式新版內建規則）與 `--suppress`／`--unsuppress`／
+`--list-suppressions`（主機級抑制）等 CLI 指令，供沒有 Web 或想批次操作時使用，見下面兩節。
 
 ### 已知限制與注意事項
 
 - 想微調某條 `builtin` 規則的內容（改門檻、改處置文字）？**不要直接改那條**——程式改版後的
-  `--import-rules` 可能會覆蓋回去（見下）。正確做法：把該條 `Enabled` 設 `false`，複製一條
-  改成 `custom-` 開頭的新規則再修改。
-- 規則的比對順序＝檔案裡的陣列順序（第一個命中的規則生效）；`--selftest` 會警告「永遠不會被
+  `--import-rules --overwrite-builtin` 可能會覆蓋回去（見下）。正確做法：把該條停用，
+  複製一條改成 `custom-` 開頭的新規則再修改。（規則維護頁的「回復預設」可把改壞的 builtin
+  規則還原成原廠內容，含前後對照確認。）
+- 規則的比對順序＝清單順序（第一個命中的規則生效）；儲存時的遮蔽偵測會警告「永遠不會被
   命中」的規則（被排在前面、範圍更廣的規則遮蔽），照提示調整順序或縮小比對範圍即可。
   **Windows 與 Linux 規則各自獨立排序**，不會互相遮蔽。Linux 規則要特別留意 program 名稱的
   包含關係（`"sudo"` 包含 `"su"`），具體的要排在泛用的前面。
@@ -469,7 +478,7 @@ LogForesight.exe --import-rules --apply --overwrite-builtin   # 連同「內容�
 `Enabled` 的設定（停用不會被悄悄打開）。
 
 > **既有部署升級到 EventLogReader 版（seed v2）的 SOP**：seed v2 新增了 Defender/RDP 規則。
-> 已有 `rules.json`（seed v1）的主機換上新執行檔後，啟動會提示「頻道已啟用但規則表沒有對應規則」
+> 規則庫仍停在 seed v1 的主機換上新執行檔後，啟動會提示「頻道已啟用但規則表沒有對應規則」
 > ——依序執行 `--import-rules`（預覽 v1→v2 差異）→ `--import-rules --apply`（補上 Defender/RDP
 > 規則）→ `--selftest`（exit code 0 即完成）。**未匯入前的行為是誠實申報的**：Defender/RDP 的
 > Information 等級事件不會被收集（沒有 watchlist），啟動時會警告並在當日申報，不會靜默漏偵測。
@@ -492,7 +501,8 @@ LogForesight.exe --unsuppress builtin-service-crash-loop-703x
 **抑制只關掉通知與風險升級，事件仍會照常聚合、命中規則、寫入歷史**——這樣才能在體檢報告與
 未來的管理頁看到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的
 永久盲區。`--days` 省略則永久生效直到手動 `--unsuppress`；到期後不會自動清理，只是恢復告警，
-執行時 console 會提示。設定檔為 `suppressions.json`，同樣建議 UTF-8 存檔。
+執行時 console 會提示。抑制設定與規則同樣存在資料庫（`lf_blobs` 的 `suppressions` key），
+也可在 Web `/admin/rules` 的「告警抑制」分頁維護（含主機下拉依規則平台過濾）。
 
 ## NetIQ 主機清單（`--host-list`）
 
@@ -980,11 +990,11 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
     暖身期內不產生 New/Rising 告警、不升級嚴重度，避免切換日的告警風暴；規則層與關聯層不受影響
     （Defender 真驗出病毒照樣拉高風險）。掃描頻道可在 `appsettings.json` 的 `Analysis.Channels`
     調整（見設定表）。
-- **規則表維護（2026-07-21 已完成外部化）**：規則表已從程式碼搬到 `rules.json`（見「規則庫
-  （rules.json）與抑制設定」章節），觀察一段時間後可直接編輯這個檔案，把貴公司環境特有的
+- **規則表維護（2026-07-21 已完成外部化）**：規則表已從程式碼搬到資料庫（見「規則庫與抑制設定」
+  章節），觀察一段時間後可在 Web `/admin/rules` 頁調整，把貴公司環境特有的
   雜訊（可忽略，或用 `--suppress` 關通知）與重要訊號（新增規則或調嚴重度）補進去，不需要
   重新編譯部署；規則的白話知識庫內容（處置參考）也建議一併調整成貴公司實際的處置流程。
-  改完用 `--selftest` 驗證即可，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
+  儲存時前後端都會跑規則驗證，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
   `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
 - **多台伺服器（NetIQ Sentinel 整合）**：批次分析引擎本身仍是單機直讀。**Sentinel 連線設定與主機清單
   的管理已於 2026-07-24 完成搬進 Web**（多台 Sentinel、新增即掃描精靈、匯入即時落盤、依網段指派

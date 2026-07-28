@@ -9,6 +9,13 @@
 > docs/LINUX-RULES-PLAN.md、docs/NETIQ-API-PLAN.md）只描述**目前的程式行為**；
 > 本檔的內容一律是「當時如何決策、如何實作」的歷史記錄，其中提到的「本文件」「見上」等字樣
 > 指原始文件自身，閱讀時請留意上下文。
+>
+> **內文引用的舊檔名對照**：各段原文中出現的 `docs/PLAN.md`、`docs/AI-ROLE-PLAN.md`、
+> `docs/HISTORY-STORE-FIX-PLAN.md`、`docs/NETIQ-HOSTLIST-WEB-PLAN.md`、`docs/SCALE-2000-PLAN.md`、
+> `docs/NETIQ-WEB-CONFIG-PLAN.md`、`docs/WEB-FEEDBACK-PLAN.md`、`docs/SHARED-STANDARDS-PLAN.md`、
+> `docs/OPS-HARDENING-PLAN.md`、`docs/WEB-FEEDBACK-2-PLAN.md` **這 10 個檔案都已併入本檔**
+> （逐字保留原文，故引用字樣未改寫）。要找它們的內容，依下方各段的日期標題對照即可——
+> 每段標題都標明了「（原 docs/XXX.md）」。
 
 ---
 
