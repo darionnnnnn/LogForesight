@@ -52,8 +52,7 @@ public class RecordQueryService
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
     {
         var filter = BuildFilter(request);
-        var pageSize = Math.Clamp(request.PageSize, 1, 200);
-        var page = Math.Max(request.Page, 1);
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
         // Statuses／Overdue 篩選依賴處理狀態（handling.json／issue_handling.json），那不在 SQL 裡，
         // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
@@ -215,8 +214,7 @@ public class RecordQueryService
     /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
     private static PagedResult<T> Paginate<T>(List<T> items, RecordSearchRequest request)
     {
-        var pageSize = Math.Clamp(request.PageSize, 1, 200);
-        var page = Math.Max(request.Page, 1);
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
         return new PagedResult<T>
         {
@@ -434,8 +432,8 @@ public class RecordQueryService
             Os = host.Os,
             NetiqServer = host.NetiqServer,
             LastReportAt = host.LastReportAt,
-            GroupNames = host.GroupIds.Select(id => groups.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})").ToList(),
-            OwnerNames = host.OwnerUserIds.Select(id => users.TryGetValue(id, out var u) ? u.DisplayName : $"(已刪除:{id})").ToList(),
+            GroupNames = NameFormat.ResolveNames(host.GroupIds, groups, g => g.GroupName),
+            OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, users, u => u.DisplayName),
             Timeline = timeline,
             LatestCheckup = latestCheckup == null ? null : new WeeklyCheckupDto
             {

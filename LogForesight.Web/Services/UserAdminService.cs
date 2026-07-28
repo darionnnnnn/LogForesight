@@ -83,7 +83,7 @@ public class UserAdminService
 
         _audit.Record(
             action: AuditActions.UserUpdate,
-            summary: $"變更使用者 {user.Account} 的群組：由「{FormatGroups(before)}」改為「{FormatGroups(after)}」",
+            summary: $"變更使用者 {user.Account} 的群組：由「{NameFormat.Join(before)}」改為「{NameFormat.Join(after)}」",
             targetKind: "user",
             targetId: userId.ToString(),
             detail: new { Before = before, After = after });
@@ -184,8 +184,6 @@ public class UserAdminService
         return (accounts, invalidCount);
     }
 
-    private static string FormatGroups(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
-
     private static UserDto ToDto(WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById) => new()
     {
         UserId = user.UserId,
@@ -194,8 +192,6 @@ public class UserAdminService
         Email = user.Email,
         Active = user.Active,
         GroupIds = user.GroupIds,
-        GroupNames = user.GroupIds
-            .Select(id => groupsById.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})")
-            .ToList()
+        GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName)
     };
 }

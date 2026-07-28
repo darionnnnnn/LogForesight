@@ -130,8 +130,7 @@ public class HostAdminService
             : filtered.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase);
 
         var all = sorted.ToList();
-        var page = Math.Max(1, request.Page);
-        var pageSize = Math.Clamp(request.PageSize, 1, 200);
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
         var items = all
             .Skip((page - 1) * pageSize)
@@ -223,7 +222,7 @@ public class HostAdminService
 
         _audit.Record(
             action: AuditActions.HostUpdate,
-            summary: $"變更主機 {host.HostName} 的群組：由「{Format(before)}」改為「{Format(after)}」" +
+            summary: $"變更主機 {host.HostName} 的群組：由「{NameFormat.Join(before)}」改為「{NameFormat.Join(after)}」" +
                      "（會影響哪些使用者看得到這台主機）",
             targetKind: "host",
             targetId: hostId.ToString(),
@@ -250,7 +249,7 @@ public class HostAdminService
 
         _audit.Record(
             action: AuditActions.HostUpdate,
-            summary: $"變更主機 {host.HostName} 的負責人：由「{Format(before)}」改為「{Format(after)}」",
+            summary: $"變更主機 {host.HostName} 的負責人：由「{NameFormat.Join(before)}」改為「{NameFormat.Join(after)}」",
             targetKind: "host",
             targetId: hostId.ToString(),
             detail: new { Before = before, After = after });
@@ -294,20 +293,19 @@ public class HostAdminService
         if (host.MergedInto == null)
             throw DomainException.Validation($"{host.HostName} 沒有併入任何主機，不需要解除。");
 
-        var target = _hosts.Get(host.MergedInto.Value);
+        var mergedIntoId = host.MergedInto.Value;
+        var target = _hosts.Get(mergedIntoId);
 
         _hosts.Unmerge(hostId);
 
         _audit.Record(
             action: AuditActions.HostUnmerge,
-            summary: $"解除主機 {host.HostName} 與 {target?.HostName ?? $"(已刪除:{host.MergedInto})"} 的綁定" +
+            summary: $"解除主機 {host.HostName} 與 {NameFormat.OrDeleted(target?.HostName, mergedIntoId)} 的綁定" +
                      $"（{host.HostName} 恢復啟用；合併時帶入對方的群組/負責人等設定不會自動收回，請一併確認）",
             targetKind: "host",
             targetId: hostId.ToString(),
             detail: new { Source = host.HostName, Target = target?.HostName });
     }
-
-    private static string Format(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
 
     private static HostDto ToDto(
         WebHost host,
@@ -327,12 +325,8 @@ public class HostAdminService
         LastReportAt = host.LastReportAt,
         CreatedAt = host.CreatedAt,
         GroupIds = host.GroupIds,
-        GroupNames = host.GroupIds
-            .Select(id => groupsById.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})")
-            .ToList(),
+        GroupNames = NameFormat.ResolveNames(host.GroupIds, groupsById, g => g.GroupName),
         OwnerUserIds = host.OwnerUserIds,
-        OwnerNames = host.OwnerUserIds
-            .Select(id => usersById.TryGetValue(id, out var u) ? u.DisplayName : $"(已刪除:{id})")
-            .ToList()
+        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => u.DisplayName)
     };
 }

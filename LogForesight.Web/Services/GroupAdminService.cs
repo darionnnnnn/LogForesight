@@ -202,10 +202,8 @@ public class GroupAdminService
             .Select(h =>
             {
                 // 現有群組排除「本目標群組」——那不是「已屬其他群組」，另以 AlreadyInTarget 表達
-                var otherGroups = h.GroupIds
-                    .Where(id => id != hostGroupId)
-                    .Select(id => groupsById.TryGetValue(id, out var name) ? name : $"(已刪除:{id})")
-                    .ToList();
+                var otherGroups = NameFormat.ResolveNames(
+                    h.GroupIds.Where(id => id != hostGroupId), groupsById, name => name);
 
                 return new HostGroupMemberCandidateDto
                 {
@@ -402,11 +400,9 @@ public class GroupAdminService
         _audit.Record(
             action: isGrant ? AuditActions.AccessGrant : AuditActions.AccessRevoke,
             summary: $"變更「{userGroup.GroupName}」可存取的主機群組：" +
-                     $"由「{Format(before)}」改為「{Format(after)}」",
+                     $"由「{NameFormat.Join(before)}」改為「{NameFormat.Join(after)}」",
             targetKind: "group",
             targetId: userGroupId.ToString(),
             detail: new { Before = before, After = after });
     }
-
-    private static string Format(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
 }

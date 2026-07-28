@@ -257,13 +257,9 @@ public class NetiqHostService : INetiqHostService
             LastReportAt = host.LastReportAt,
             CreatedAt = host.CreatedAt,
             GroupIds = host.GroupIds,
-            GroupNames = host.GroupIds
-                .Select(id => groups.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})")
-                .ToList(),
+            GroupNames = NameFormat.ResolveNames(host.GroupIds, groups, g => g.GroupName),
             OwnerUserIds = host.OwnerUserIds,
-            OwnerNames = host.OwnerUserIds
-                .Select(id => users.TryGetValue(id, out var u) ? u.DisplayName : $"(已刪除:{id})")
-                .ToList()
+            OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, users, u => u.DisplayName)
         };
     }
 }

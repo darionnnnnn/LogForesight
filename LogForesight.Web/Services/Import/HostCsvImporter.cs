@@ -308,8 +308,8 @@ public class HostCsvImporter : ICsvImporter
                 changes.Add(new ImportFieldChange
                 {
                     Field = "主機群組",
-                    Before = before.Count == 0 ? "（無）" : string.Join("、", before),
-                    After = after.Count == 0 ? "（無）" : string.Join("、", after)
+                    Before = NameFormat.Join(before),
+                    After = NameFormat.Join(after)
                 });
             }
         }
@@ -326,8 +326,8 @@ public class HostCsvImporter : ICsvImporter
                 changes.Add(new ImportFieldChange
                 {
                     Field = "負責人",
-                    Before = before.Count == 0 ? "（無）" : string.Join("、", before),
-                    After = after.Count == 0 ? "（無）" : string.Join("、", after)
+                    Before = NameFormat.Join(before),
+                    After = NameFormat.Join(after)
                 });
             }
         }

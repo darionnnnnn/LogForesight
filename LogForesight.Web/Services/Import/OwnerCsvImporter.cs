@@ -79,7 +79,7 @@ public class OwnerCsvImporter : ICsvImporter
                 .ToList();
 
             var beforeNames = host.OwnerUserIds
-                .Select(id => _users.Get(id)?.Account ?? $"(已刪除:{id})")
+                .Select(id => NameFormat.OrDeleted(_users.Get(id)?.Account, id))
                 .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -97,10 +97,10 @@ public class OwnerCsvImporter : ICsvImporter
             else
             {
                 rowPlan.Action = ImportRowAction.Update;
-                rowPlan.Description = $"負責人：{Fmt(beforeNames)} → {Fmt(targetAccounts)}";
+                rowPlan.Description = $"負責人：{NameFormat.Join(beforeNames)} → {NameFormat.Join(targetAccounts)}";
                 rowPlan.Changes.Add(new ImportFieldChange
                 {
-                    Field = "負責人", Before = Fmt(beforeNames), After = Fmt(targetAccounts)
+                    Field = "負責人", Before = NameFormat.Join(beforeNames), After = NameFormat.Join(targetAccounts)
                 });
             }
 
@@ -237,6 +237,4 @@ public class OwnerCsvImporter : ICsvImporter
         var ip = row.Get("ip_address");
         return string.IsNullOrWhiteSpace(ip) ? "(未指定主機)" : ip;
     }
-
-    private static string Fmt(List<string> names) => names.Count == 0 ? "（無）" : string.Join("、", names);
 }

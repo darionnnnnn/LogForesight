@@ -105,10 +105,10 @@ public class GroupAccessCsvImporter : ICsvImporter
         {
             if (inFile.Contains((access.UserGroupId, access.HostGroupId))) continue;
 
-            var userGroupName = userGroups.FirstOrDefault(g => g.GroupId == access.UserGroupId)?.GroupName
-                                ?? $"(已刪除:{access.UserGroupId})";
-            var hostGroupName = hostGroups.FirstOrDefault(g => g.GroupId == access.HostGroupId)?.GroupName
-                                ?? $"(已刪除:{access.HostGroupId})";
+            var userGroupName = NameFormat.OrDeleted(
+                userGroups.FirstOrDefault(g => g.GroupId == access.UserGroupId)?.GroupName, access.UserGroupId);
+            var hostGroupName = NameFormat.OrDeleted(
+                hostGroups.FirstOrDefault(g => g.GroupId == access.HostGroupId)?.GroupName, access.HostGroupId);
 
             plan.Rows.Add(new ImportRowPlan
             {

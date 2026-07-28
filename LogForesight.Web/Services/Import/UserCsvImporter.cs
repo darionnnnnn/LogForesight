@@ -204,8 +204,8 @@ public class UserCsvImporter : ICsvImporter
                 changes.Add(new ImportFieldChange
                 {
                     Field = "群組",
-                    Before = beforeNames.Count == 0 ? "（無）" : string.Join("、", beforeNames),
-                    After = afterNames.Count == 0 ? "（無）" : string.Join("、", afterNames)
+                    Before = NameFormat.Join(beforeNames),
+                    After = NameFormat.Join(afterNames)
                 });
             }
         }
