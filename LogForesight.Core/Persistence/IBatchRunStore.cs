@@ -65,12 +65,6 @@ public class JsonBatchRunStore
     private long _lastRunId;
     private long _lastLogId;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
     public JsonBatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
     {
         _runs = runs;
@@ -107,7 +101,7 @@ public class JsonBatchRunStore
             log.LogId = ++_lastLogId;
             if (log.LoggedAt == default) log.LoggedAt = DateTime.Now;
 
-            _logs.AppendLine(JsonSerializer.Serialize(log, JsonOptions));
+            _logs.AppendLine(JsonSerializer.Serialize(log, LfJsonOptions.Compact));
         }
     }
 
@@ -162,28 +156,9 @@ public class JsonBatchRunStore
             .ToList();
 
     private void AppendRunLine(BatchRun run) =>
-        _runs.AppendLine(JsonSerializer.Serialize(run, JsonOptions));
+        _runs.AppendLine(JsonSerializer.Serialize(run, LfJsonOptions.Compact));
 
-    private List<BatchRun> ReadAllRunLines() => Parse<BatchRun>(_runs);
+    private List<BatchRun> ReadAllRunLines() => JsonLogParser.Parse<BatchRun>(_runs.ReadLines(), LfJsonOptions.Compact);
 
-    private List<BatchRunLog> ReadAllLogs() => Parse<BatchRunLog>(_logs);
-
-    private static List<T> Parse<T>(IJsonLogStore log) where T : class
-    {
-        var result = new List<T>();
-        foreach (var line in log.ReadLines())
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var item = JsonSerializer.Deserialize<T>(line, JsonOptions);
-                if (item != null) result.Add(item);
-            }
-            catch (JsonException)
-            {
-                // 逐行獨立：單行損毀只跳過該行
-            }
-        }
-        return result;
-    }
+    private List<BatchRunLog> ReadAllLogs() => JsonLogParser.Parse<BatchRunLog>(_logs.ReadLines(), LfJsonOptions.Compact);
 }

@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace LogForesight;
 
@@ -23,14 +22,6 @@ public abstract class JsonBlobCollection<T> where T : class
     /// <summary>供 log／Location 顯示（相容原本的名稱；DB 後端回傳的是位置描述而非真實路徑）</summary>
     protected string FilePath => _blob.Location;
 
-    protected static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
     /// <summary>讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。</summary>
     protected List<T> Read() => Deserialize(_blob.Read());
 
@@ -44,7 +35,7 @@ public abstract class JsonBlobCollection<T> where T : class
         {
             var items = Deserialize(raw);
             var result = mutation(items);
-            return (JsonSerializer.Serialize(items, JsonOptions), result);
+            return (JsonSerializer.Serialize(items, LfJsonOptions.Pretty), result);
         });
 
     protected void Mutate(Action<List<T>> mutation) =>
@@ -54,7 +45,7 @@ public abstract class JsonBlobCollection<T> where T : class
     private static List<T> Deserialize(string? json) =>
         string.IsNullOrWhiteSpace(json)
             ? new List<T>()
-            : JsonSerializer.Deserialize<List<T>>(json, JsonOptions) ?? new List<T>();
+            : JsonSerializer.Deserialize<List<T>>(json, LfJsonOptions.Pretty) ?? new List<T>();
 
     /// <summary>新識別碼＝現有最大值 + 1（單一寫入者前提下足夠；SQL 後端亦沿用，寫入仍走整段互斥）</summary>
     protected static long NextId(IEnumerable<long> existingIds)

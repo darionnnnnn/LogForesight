@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace LogForesight;
 
@@ -12,14 +11,6 @@ public class JsonNetiqOptionsStore
 {
     private readonly IJsonBlobStore _blob;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
     public JsonNetiqOptionsStore(IJsonBlobStore blob) => _blob = blob;
 
     public NetiqOptions Get() => Deserialize(_blob.Read());
@@ -31,11 +22,11 @@ public class JsonNetiqOptionsStore
             var options = Deserialize(raw);
             mutation(options);
             options.UpdatedAt = DateTime.Now;
-            return (JsonSerializer.Serialize(options, JsonOptions), options);
+            return (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options);
         });
 
     private static NetiqOptions Deserialize(string? json) =>
         string.IsNullOrWhiteSpace(json)
             ? new NetiqOptions()
-            : JsonSerializer.Deserialize<NetiqOptions>(json, JsonOptions) ?? new NetiqOptions();
+            : JsonSerializer.Deserialize<NetiqOptions>(json, LfJsonOptions.Pretty) ?? new NetiqOptions();
 }

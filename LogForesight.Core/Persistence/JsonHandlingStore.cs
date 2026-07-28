@@ -14,12 +14,6 @@ public class JsonRecordHandlingStore : JsonBlobCollection<RecordHandling>, IReco
     private readonly object _logLock = new();
     private long _lastLogId;
 
-    private static readonly JsonSerializerOptions LogJsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
     public JsonRecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
     {
         _logStore = logStore;
@@ -67,7 +61,7 @@ public class JsonRecordHandlingStore : JsonBlobCollection<RecordHandling>, IReco
             log.LogId = ++_lastLogId;
             if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
 
-            _logStore.AppendLine(JsonSerializer.Serialize(log, LogJsonOptions));
+            _logStore.AppendLine(JsonSerializer.Serialize(log, LfJsonOptions.Compact));
         }
     }
 
@@ -83,22 +77,6 @@ public class JsonRecordHandlingStore : JsonBlobCollection<RecordHandling>, IReco
         string.Equals(handling.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
         handling.Date.Date == date.Date;
 
-    private List<RecordHandlingLog> ReadAllLogs()
-    {
-        var result = new List<RecordHandlingLog>();
-        foreach (var line in _logStore.ReadLines())
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var log = JsonSerializer.Deserialize<RecordHandlingLog>(line, LogJsonOptions);
-                if (log != null) result.Add(log);
-            }
-            catch (JsonException)
-            {
-                // 逐行獨立：單行損毀只跳過該行
-            }
-        }
-        return result;
-    }
+    private List<RecordHandlingLog> ReadAllLogs() =>
+        JsonLogParser.Parse<RecordHandlingLog>(_logStore.ReadLines(), LfJsonOptions.Compact);
 }

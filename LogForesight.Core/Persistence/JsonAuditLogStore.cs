@@ -60,7 +60,7 @@ public class JsonAuditLogStore
             var (lines, total) = _log.ReadPage((page - 1) * pageSize, pageSize);
             return new PagedResult<AuditEntry>
             {
-                Items = ParseLines(lines),
+                Items = JsonLogParser.Parse<AuditEntry>(lines, JsonOptions),
                 Page = page,
                 PageSize = pageSize,
                 Total = total
@@ -69,7 +69,7 @@ public class JsonAuditLogStore
 
         // 有篩選條件：以日期範圍先在 SQL 端窄化候選集（沒有時間戳記的既存列一律視為候選，
         // 精確判斷交給下面的 Matches），其餘欄位在記憶體過濾——仍避免了讀回「範圍外」的舊資料
-        var filtered = ParseLines(_log.ReadLines(query.From, query.To))
+        var filtered = JsonLogParser.Parse<AuditEntry>(_log.ReadLines(query.From, query.To), JsonOptions)
             .Where(e => Matches(e, query))
             .OrderByDescending(e => e.OccurredAt)
             .ThenByDescending(e => e.AuditId)
@@ -86,7 +86,7 @@ public class JsonAuditLogStore
 
     /// <summary>指定期間內、指定動作的筆數（儀表板的「近 24 小時登入失敗」卡片用）</summary>
     public int Count(DateTime from, DateTime to, string action) =>
-        ParseLines(_log.ReadLines(from, to))
+        JsonLogParser.Parse<AuditEntry>(_log.ReadLines(from, to), JsonOptions)
             .Count(e => e.OccurredAt >= from && e.OccurredAt <= to &&
                         string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
 
@@ -106,24 +106,5 @@ public class JsonAuditLogStore
         return true;
     }
 
-    private List<AuditEntry> ReadAll() => ParseLines(_log.ReadLines());
-
-    private static List<AuditEntry> ParseLines(IEnumerable<string> lines)
-    {
-        var result = new List<AuditEntry>();
-        foreach (var line in lines)
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var entry = JsonSerializer.Deserialize<AuditEntry>(line, JsonOptions);
-                if (entry != null) result.Add(entry);
-            }
-            catch (JsonException)
-            {
-                // 逐行獨立：單行損毀只跳過該行（與 history.txt 的容錯策略一致）
-            }
-        }
-        return result;
-    }
+    private List<AuditEntry> ReadAll() => JsonLogParser.Parse<AuditEntry>(_log.ReadLines(), JsonOptions);
 }

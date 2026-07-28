@@ -20,7 +20,7 @@ public class JsonPermissionSnapshotStore
 
         try
         {
-            return JsonSerializer.Deserialize<PermissionSnapshot>(text);
+            return JsonSerializer.Deserialize<PermissionSnapshot>(text, LfJsonOptions.Pretty);
         }
         catch (JsonException)
         {
@@ -30,5 +30,5 @@ public class JsonPermissionSnapshotStore
     }
 
     public void Save(PermissionSnapshot snapshot) =>
-        _blob.Mutate<object?>(_ => (JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }), null));
+        _blob.Mutate<object?>(_ => (JsonSerializer.Serialize(snapshot, LfJsonOptions.Pretty), null));
 }

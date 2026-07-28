@@ -44,12 +44,6 @@ public class JsonImportLogStore : IImportLogStore
     private readonly object _lock = new();
     private long _lastId;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
     public JsonImportLogStore(IJsonLogStore log)
     {
         _log = log;
@@ -61,7 +55,7 @@ public class JsonImportLogStore : IImportLogStore
         lock (_lock)
         {
             entry.ImportId = ++_lastId;
-            _log.AppendLine(JsonSerializer.Serialize(entry, JsonOptions));
+            _log.AppendLine(JsonSerializer.Serialize(entry, LfJsonOptions.Compact));
         }
     }
 
@@ -70,22 +64,5 @@ public class JsonImportLogStore : IImportLogStore
 
     public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
 
-    private List<ImportLogEntry> ReadAll()
-    {
-        var result = new List<ImportLogEntry>();
-        foreach (var line in _log.ReadLines())
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var entry = JsonSerializer.Deserialize<ImportLogEntry>(line, JsonOptions);
-                if (entry != null) result.Add(entry);
-            }
-            catch (JsonException)
-            {
-                // 逐行獨立：單行損毀只跳過該行
-            }
-        }
-        return result;
-    }
+    private List<ImportLogEntry> ReadAll() => JsonLogParser.Parse<ImportLogEntry>(_log.ReadLines(), LfJsonOptions.Compact);
 }

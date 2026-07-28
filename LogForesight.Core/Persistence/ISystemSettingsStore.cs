@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace LogForesight;
 
@@ -21,14 +20,6 @@ public class JsonSystemSettingsStore : ISystemSettingsStore
 {
     private readonly IJsonBlobStore _blob;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Converters = { new JsonStringEnumConverter() }
-    };
-
     public JsonSystemSettingsStore(IJsonBlobStore blob) => _blob = blob;
 
     public SystemSettings Get() => Deserialize(_blob.Read());
@@ -39,12 +30,12 @@ public class JsonSystemSettingsStore : ISystemSettingsStore
             var settings = Deserialize(raw);
             mutation(settings);
             settings.UpdatedAt = DateTime.Now;
-            return (JsonSerializer.Serialize(settings, JsonOptions), settings);
+            return (JsonSerializer.Serialize(settings, LfJsonOptions.Pretty), settings);
         });
 
     /// <summary>內容不存在（首次執行）時回預設值——<see cref="SystemSettings"/> 的欄位預設值即沿用原本的寫死行為</summary>
     private static SystemSettings Deserialize(string? json) =>
         string.IsNullOrWhiteSpace(json)
             ? new SystemSettings()
-            : JsonSerializer.Deserialize<SystemSettings>(json, JsonOptions) ?? new SystemSettings();
+            : JsonSerializer.Deserialize<SystemSettings>(json, LfJsonOptions.Pretty) ?? new SystemSettings();
 }

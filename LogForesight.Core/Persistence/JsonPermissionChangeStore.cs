@@ -20,12 +20,6 @@ public class JsonPermissionChangeStore
     private readonly JsonConfirmationFile _confirmations;
     private readonly object _lock = new();
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
     public JsonPermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
     {
         _changes = changes;
@@ -42,7 +36,7 @@ public class JsonPermissionChangeStore
                 if (string.IsNullOrWhiteSpace(change.ChangeId))
                     change.ChangeId = Guid.NewGuid().ToString("N");
 
-                _changes.AppendLine(JsonSerializer.Serialize(change, JsonOptions));
+                _changes.AppendLine(JsonSerializer.Serialize(change, LfJsonOptions.Compact));
             }
         }
     }
@@ -101,24 +95,8 @@ public class JsonPermissionChangeStore
     public int CountPending(IReadOnlyCollection<string>? hostNames) =>
         Query(hostNames, PermissionConfirmStatuses.Pending, int.MaxValue).Count;
 
-    private List<PermissionChangeRecord> ReadAllChanges()
-    {
-        var result = new List<PermissionChangeRecord>();
-        foreach (var line in _changes.ReadLines())
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var change = JsonSerializer.Deserialize<PermissionChangeRecord>(line, JsonOptions);
-                if (change != null) result.Add(change);
-            }
-            catch (JsonException)
-            {
-                // 逐行獨立：單行損毀只跳過該行
-            }
-        }
-        return result;
-    }
+    private List<PermissionChangeRecord> ReadAllChanges() =>
+        JsonLogParser.Parse<PermissionChangeRecord>(_changes.ReadLines(), LfJsonOptions.Compact);
 
     /// <summary>確認狀態的整份型儲存（Web 單一寫入者，原子讀改寫）</summary>
     private class JsonConfirmationFile : JsonBlobCollection<PermissionChangeConfirmation>
