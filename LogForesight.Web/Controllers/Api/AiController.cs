@@ -15,15 +15,15 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/ai")]
 public class AiController : ControllerBase
 {
-    private readonly IAiInsightService _ai;
-    private readonly IDashboardService _dashboard;
-    private readonly IRecordQueryService _records;
+    private readonly AiInsightService _ai;
+    private readonly DashboardService _dashboard;
+    private readonly RecordQueryService _records;
     private readonly WebAppSettings _settings;
 
     public AiController(
-        IAiInsightService ai,
-        IDashboardService dashboard,
-        IRecordQueryService records,
+        AiInsightService ai,
+        DashboardService dashboard,
+        RecordQueryService records,
         WebAppSettings settings)
     {
         _ai = ai;

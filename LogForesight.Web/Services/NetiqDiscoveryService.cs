@@ -15,28 +15,14 @@ namespace LogForesight.Web.Services;
 /// 兩千台量級下這一步本身很輕量（純粹是 upsert 幾十到幾百列），真正重的規則檢查本來就
 /// 要等下次批次才有——即時落盤只是讓「這台主機被收進清單」這件事本身不用等到隔天。
 /// </summary>
-public interface INetiqDiscoveryService
-{
-    Task<NetiqScanResultDto> ScanAsync(string serverName, CancellationToken ct);
-
-    /// <summary>
-    /// 新增 Sentinel 精靈步驟 1（定案 6）：以尚未存檔的帳密直接掃描——掃描本身就是連線驗證，
-    /// 掃描成功才建立 Sentinel；失敗則什麼都不留下，帳密只過境不落地。
-    /// </summary>
-    Task<NetiqScanResultDto> CreateAndScanAsync(CreateAndScanSentinelRequest request, CancellationToken ct);
-
-    /// <summary>套用使用者勾選的主機：立即新增/更新/孤兒復活，並記入匯入紀錄</summary>
-    NetiqImportResultDto Import(NetiqImportRequest request);
-}
-
-public class NetiqDiscoveryService : INetiqDiscoveryService
+public class NetiqDiscoveryService
 {
     private readonly INetiqServerCatalog _catalog;
     private readonly INetiqDirectoryClient _client;
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;
     private readonly ISentinelStore _sentinels;
-    private readonly ISentinelAdminService _sentinelAdmin;
+    private readonly SentinelAdminService _sentinelAdmin;
     private readonly IImportLogStore _importLogs;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
@@ -50,7 +36,7 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
         IHostStore hosts,
         IHostGroupStore hostGroups,
         ISentinelStore sentinels,
-        ISentinelAdminService sentinelAdmin,
+        SentinelAdminService sentinelAdmin,
         IImportLogStore importLogs,
         ICurrentUser currentUser,
         IAuditService audit)

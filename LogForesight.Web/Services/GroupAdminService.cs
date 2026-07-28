@@ -7,33 +7,7 @@ namespace LogForesight.Web.Services;
 /// 群組與授權維護（docs/WEB-SPEC.md §9.8 群組頁）。
 /// builtin 群組的保護規則在這一層強制——Repository 只負責存取。
 /// </summary>
-public interface IGroupAdminService
-{
-    List<UserGroupDto> GetUserGroups();
-    UserGroupDto SaveUserGroup(SaveUserGroupRequest request);
-    void DeleteUserGroup(long groupId);
-
-    List<HostGroupDto> GetHostGroups();
-    HostGroupDto SaveHostGroup(SaveHostGroupRequest request);
-    void DeleteHostGroup(long groupId);
-
-    /// <summary>批次加入群組成員的預覽：以網段或關鍵字查命中主機（含現有群組）</summary>
-    HostGroupMemberPreviewDto PreviewMembers(long hostGroupId, HostGroupMemberQueryRequest request);
-
-    /// <summary>把選定主機加入群組（可選同時移出原群組）</summary>
-    HostGroupMemberPreviewDto AddMembers(long hostGroupId, AddHostGroupMembersRequest request);
-
-    /// <summary>目前成員清單（給「目前成員」頁籤，依 /24 分組是前端的事，這裡只回平面清單）</summary>
-    List<HostGroupMemberDto> GetMembers(long hostGroupId);
-
-    /// <summary>把選定主機移出群組（只動這一個群組，其餘既有群組不受影響）</summary>
-    void RemoveMembers(long hostGroupId, IEnumerable<long> hostIds);
-
-    AccessMatrixDto GetAccessMatrix();
-    void SetAccess(long userGroupId, IEnumerable<long> hostGroupIds);
-}
-
-public class GroupAdminService : IGroupAdminService
+public class GroupAdminService
 {
     private readonly IUserGroupStore _userGroups;
     private readonly IHostGroupStore _hostGroups;

@@ -103,7 +103,7 @@ try
     // ── 啟動時的資料準備 ──────────────────────────────────────────────────────
     using (var scope = app.Services.CreateScope())
     {
-        var identity = scope.ServiceProvider.GetRequiredService<IIdentityService>();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
 
         if (identity.HasNoAdmins())

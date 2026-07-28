@@ -14,9 +14,9 @@ namespace LogForesight.Web.Controllers.Api;
 [Permission(Capability.Maintain)]
 public class RulesController : ControllerBase
 {
-    private readonly IRuleAdminService _service;
+    private readonly RuleAdminService _service;
 
-    public RulesController(IRuleAdminService service)
+    public RulesController(RuleAdminService service)
     {
         _service = service;
     }
@@ -82,10 +82,10 @@ public class RulesController : ControllerBase
 [Permission(Capability.DevMonitor)]
 public class RunsController : ControllerBase
 {
-    private readonly IRunMonitorService _service;
+    private readonly RunMonitorService _service;
     private readonly WebAppSettings _settings;
 
-    public RunsController(IRunMonitorService service, WebAppSettings settings)
+    public RunsController(RunMonitorService service, WebAppSettings settings)
     {
         _service = service;
         _settings = settings;

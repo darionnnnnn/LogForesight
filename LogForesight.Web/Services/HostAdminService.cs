@@ -3,18 +3,6 @@ using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>主機維護（docs/WEB-SPEC.md §9.8 主機頁）</summary>
-public interface IHostAdminService
-{
-    /// <summary>伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：兩千台規模下不能一次把全部主機灌給前端</summary>
-    PagedResult<HostDto> GetHosts(HostSearchRequest request);
-    HostDto SaveHost(SaveHostRequest request);
-    HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds);
-    HostDto SetHostOwners(long hostId, IEnumerable<long> userIds);
-    void MergeHost(long sourceHostId, long targetHostId);
-    void UnmergeHost(long hostId);
-}
-
 /// <summary>與 hosts.js 既有的狀態 chip 值一一對應——後端篩選語意搬過來，前端不用改 chip 定義</summary>
 public class HostSearchRequest
 {
@@ -36,7 +24,8 @@ public class HostSearchRequest
     public int PageSize { get; set; } = 50;
 }
 
-public class HostAdminService : IHostAdminService
+/// <summary>主機維護（docs/WEB-SPEC.md §9.8 主機頁）</summary>
+public class HostAdminService
 {
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;

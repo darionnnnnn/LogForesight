@@ -27,25 +27,13 @@ public class AiTextDto
 /// AI 加值功能（docs/SCALE-2000-PLAN.md §6 W1＋W2）。
 /// 每個功能：把**已彙總的結構化統計**餵給 AI，要一段短輸出。程式先算好確定性的部分，
 /// AI 只做「講白話、排順序」。AI 不可用時一律回 null（呼叫端隱藏對應 UI）。
+///
+/// <see cref="ChatAsync"/>：詳情頁對話（R7 精簡版）一輪回覆。messages 是已通過伺服器端輪數／
+/// 格式驗證的完整對話歷史（含最新一則使用者訊息），不走快取——每輪內容都不同。
+/// reportText 為當日分析報告全文（docs/WEB-FEEDBACK-PLAN.md #11），
+/// 無報告（低風險日）時為 null，此時對話僅依問題結構化欄位回答（既有行為不變）。
 /// </summary>
-public interface IAiInsightService
-{
-    bool Available { get; }
-
-    Task<AiFocusDto?> TodayFocusAsync(DashboardDto dashboard);
-    Task<AiTextDto?> SummarizeQueryAsync(List<IssueClusterDto> clusters, string cacheSalt);
-    Task<AiTextDto?> InterpretIssueAsync(IssueDto issue, string hostName, string date);
-
-    /// <summary>
-    /// 詳情頁對話（R7 精簡版）一輪回覆。<paramref name="messages"/> 是已通過伺服器端輪數／
-    /// 格式驗證的完整對話歷史（含最新一則使用者訊息），不走快取——每輪內容都不同。
-    /// <paramref name="reportText"/> 為當日分析報告全文（docs/WEB-FEEDBACK-PLAN.md #11），
-    /// 無報告（低風險日）時為 null，此時對話僅依問題結構化欄位回答（既有行為不變）。
-    /// </summary>
-    Task<AiTextDto?> ChatAsync(IssueDto issue, string hostName, string date, List<ChatMessageDto> messages, string? reportText);
-}
-
-public class AiInsightService : IAiInsightService
+public class AiInsightService
 {
     private readonly IWebAiService _ai;
 

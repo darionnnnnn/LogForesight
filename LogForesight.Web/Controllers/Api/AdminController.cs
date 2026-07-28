@@ -16,22 +16,22 @@ namespace LogForesight.Web.Controllers.Api;
 [Permission(Capability.Maintain)]
 public class AdminController : ControllerBase
 {
-    private readonly IUserAdminService _users;
-    private readonly IHostAdminService _hosts;
+    private readonly UserAdminService _users;
+    private readonly HostAdminService _hosts;
     private readonly INetiqHostService _netiq;
-    private readonly INetiqDiscoveryService _discovery;
-    private readonly IGroupAdminService _groups;
-    private readonly ISentinelAdminService _sentinels;
-    private readonly INetiqOptionsService _netiqOptions;
+    private readonly NetiqDiscoveryService _discovery;
+    private readonly GroupAdminService _groups;
+    private readonly SentinelAdminService _sentinels;
+    private readonly NetiqOptionsService _netiqOptions;
 
     public AdminController(
-        IUserAdminService users,
-        IHostAdminService hosts,
+        UserAdminService users,
+        HostAdminService hosts,
         INetiqHostService netiq,
-        INetiqDiscoveryService discovery,
-        IGroupAdminService groups,
-        ISentinelAdminService sentinels,
-        INetiqOptionsService netiqOptions)
+        NetiqDiscoveryService discovery,
+        GroupAdminService groups,
+        SentinelAdminService sentinels,
+        NetiqOptionsService netiqOptions)
     {
         _users = users;
         _hosts = hosts;

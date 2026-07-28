@@ -13,11 +13,11 @@ namespace LogForesight.Web.Controllers.Api;
 [Permission(Capability.Maintain)]
 public class ImportsController : ControllerBase
 {
-    private readonly IImportService _imports;
+    private readonly ImportService _imports;
     private readonly IImportLogStore _logs;
     private readonly WebAppSettings _settings;
 
-    public ImportsController(IImportService imports, IImportLogStore logs, WebAppSettings settings)
+    public ImportsController(ImportService imports, IImportLogStore logs, WebAppSettings settings)
     {
         _imports = imports;
         _logs = logs;

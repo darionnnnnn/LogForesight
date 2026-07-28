@@ -12,22 +12,22 @@ namespace LogForesight.Web.Controllers.Api;
 /// 登入/登出/取得目前身分（docs/WEB-SPEC.md §9.0）。
 ///
 /// Controller 的職責僅止於「HTTP ↔ DTO 轉換與呼叫 Service」——
-/// 驗證邏輯在 IdentityService、token 簽發在 IJwtTokenService、稽核在 IAuditService。
+/// 驗證邏輯在 IdentityService、token 簽發在 JwtTokenService、稽核在 IAuditService。
 /// </summary>
 [ApiController]
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly IIdentityService _identity;
-    private readonly IJwtTokenService _tokens;
+    private readonly IdentityService _identity;
+    private readonly JwtTokenService _tokens;
     private readonly IAuthenticationProvider _provider;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly WebAppSettings _settings;
 
     public AuthController(
-        IIdentityService identity,
-        IJwtTokenService tokens,
+        IdentityService identity,
+        JwtTokenService tokens,
         IAuthenticationProvider provider,
         ICurrentUser currentUser,
         IAuditService audit,

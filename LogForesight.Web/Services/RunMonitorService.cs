@@ -9,20 +9,7 @@ namespace LogForesight.Web.Services;
 /// 回答的問題是「昨晚每台主機都跑了嗎、有沒有出問題」，
 /// 而不是「分析結果是什麼」（那是儀表板的事）。
 /// </summary>
-public interface IRunMonitorService
-{
-    /// <summary>每日彙總（§5.4 D-4）：取代逐主機矩陣，兩千台規模下矩陣會炸出過大的 DOM</summary>
-    List<RunDaySummaryDto> GetDaySummaries(int days);
-
-    /// <summary>單一日期的逐主機狀態（點日期下鑽時取得）</summary>
-    List<RunDayHostStatusDto> GetDayDetail(DateTime date);
-
-    RunDetailDto GetDetail(long runId);
-
-    List<RunErrorGroupDto> GetErrorSummary(int days);
-}
-
-public class RunMonitorService : IRunMonitorService
+public class RunMonitorService
 {
     private readonly IBatchRunStore _runs;
     private readonly IHostStore _hosts;

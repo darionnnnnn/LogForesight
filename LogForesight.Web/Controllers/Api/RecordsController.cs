@@ -20,9 +20,9 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/records")]
 public class RecordsController : ControllerBase
 {
-    private readonly IRecordQueryService _service;
+    private readonly RecordQueryService _service;
 
-    public RecordsController(IRecordQueryService service)
+    public RecordsController(RecordQueryService service)
     {
         _service = service;
     }

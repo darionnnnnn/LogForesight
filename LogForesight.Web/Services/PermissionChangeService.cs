@@ -10,16 +10,7 @@ namespace LogForesight.Web.Services;
 /// 自動檢查負責「發現有異動」，逐筆確認讓了解環境的人判斷「這筆是否正常」——
 /// 同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。
 /// </summary>
-public interface IPermissionChangeService
-{
-    List<PermissionChangeDto> Query(string? status, int maxCount);
-
-    PermissionChangeDto Confirm(string changeId, ConfirmPermissionChangeRequest request);
-
-    int CountPending();
-}
-
-public class PermissionChangeService : IPermissionChangeService
+public class PermissionChangeService
 {
     private readonly IPermissionChangeStore _store;
     private readonly IHostStore _hosts;

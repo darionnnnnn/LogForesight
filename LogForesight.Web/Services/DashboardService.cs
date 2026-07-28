@@ -5,19 +5,14 @@ using LogForesight.Web.Repositories;
 namespace LogForesight.Web.Services;
 
 /// <summary>總覽儀表板（docs/WEB-SPEC.md §9.1）</summary>
-public interface IDashboardService
-{
-    DashboardDto GetSummary(int days);
-}
-
-public class DashboardService : IDashboardService
+public class DashboardService
 {
     private readonly IRecordRepository _repository;
     private readonly IVisibilityService _visibility;
     private readonly IAuditLogStore _audit;
     private readonly ICurrentUser _currentUser;
-    private readonly IHandlingService _handling;
-    private readonly IPermissionChangeService _permissionChanges;
+    private readonly HandlingService _handling;
+    private readonly PermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
 
     public DashboardService(
@@ -25,8 +20,8 @@ public class DashboardService : IDashboardService
         IVisibilityService visibility,
         IAuditLogStore audit,
         ICurrentUser currentUser,
-        IHandlingService handling,
-        IPermissionChangeService permissionChanges,
+        HandlingService handling,
+        PermissionChangeService permissionChanges,
         IHostGroupStore hostGroups)
     {
         _repository = repository;

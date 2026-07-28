@@ -7,20 +7,7 @@ namespace LogForesight.Web.Services;
 /// Sentinel 連線設定維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）。
 /// 「新增即掃描」精靈與資料匯入頁整併留待 Phase 4；這裡先把 CRUD 本身建好。
 /// </summary>
-public interface ISentinelAdminService
-{
-    List<SentinelDto> GetSentinels();
-
-    SentinelDto SaveSentinel(SaveSentinelRequest request);
-
-    /// <summary>刪除＝觸發孤兒流程：轄下使用中的 NetIQ 主機停用並標記孤兒（可於 Web 重新綁定），主機列本身不刪</summary>
-    void DeleteSentinel(long sentinelId);
-
-    /// <summary>停用＝暫停輪巡，主機不動、不標記孤兒（過渡期用的溫和選項，與刪除刻意分開）</summary>
-    SentinelDto SetActive(long sentinelId, bool active);
-}
-
-public class SentinelAdminService : ISentinelAdminService
+public class SentinelAdminService
 {
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;

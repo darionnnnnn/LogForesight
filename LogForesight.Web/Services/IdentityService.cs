@@ -12,21 +12,6 @@ public record LoginOutcome(bool Success, TokenIdentity? Identity, string? ErrorM
     public static LoginOutcome Fail(string message) => new(false, null, message);
 }
 
-public interface IIdentityService
-{
-    /// <summary>驗證帳密並解析出可簽發 token 的身分</summary>
-    LoginOutcome Login(string account, string? password);
-
-    /// <summary>某使用者依其所屬群組取得的能力（多群組取聯集）</summary>
-    IReadOnlySet<Capability> ResolveCapabilities(WebUser user);
-
-    /// <summary>建立系統種子群組（admin / manager / dev），已存在則不動</summary>
-    void EnsureSeedGroups();
-
-    /// <summary>目前是否還沒有任何 admin 群組成員（首次部署的引導狀態）</summary>
-    bool HasNoAdmins();
-}
-
 /// <summary>
 /// 登入流程的業務層（docs/WEB-SPEC.md §6.2）。
 ///
@@ -34,7 +19,7 @@ public interface IIdentityService
 /// 這裡負責驗證通過之後的事——查使用者、檢查停用、算能力、組出 token 身分。
 /// 換驗證方式時這個類別完全不需要修改，這正是把 Provider 抽出去的目的。
 /// </summary>
-public class IdentityService : IIdentityService
+public class IdentityService
 {
     private readonly IUserStore _users;
     private readonly IUserGroupStore _groups;

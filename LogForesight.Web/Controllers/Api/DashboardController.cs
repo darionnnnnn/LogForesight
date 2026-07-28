@@ -12,10 +12,10 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/dashboard")]
 public class DashboardController : ControllerBase
 {
-    private readonly IDashboardService _dashboard;
+    private readonly DashboardService _dashboard;
     private readonly WebAppSettings _settings;
 
-    public DashboardController(IDashboardService dashboard, WebAppSettings settings)
+    public DashboardController(DashboardService dashboard, WebAppSettings settings)
     {
         _dashboard = dashboard;
         _settings = settings;
@@ -32,9 +32,9 @@ public class DashboardController : ControllerBase
 [Route("api/host-detail")]
 public class HostDetailController : ControllerBase
 {
-    private readonly IRecordQueryService _service;
+    private readonly RecordQueryService _service;
 
-    public HostDetailController(IRecordQueryService service)
+    public HostDetailController(RecordQueryService service)
     {
         _service = service;
     }
@@ -49,9 +49,9 @@ public class HostDetailController : ControllerBase
 [Route("api/reports")]
 public class ReportsController : ControllerBase
 {
-    private readonly IReportService _reports;
+    private readonly ReportService _reports;
 
-    public ReportsController(IReportService reports)
+    public ReportsController(ReportService reports)
     {
         _reports = reports;
     }

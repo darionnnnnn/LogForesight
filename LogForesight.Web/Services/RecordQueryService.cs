@@ -6,28 +6,7 @@ using LogForesight.Web.Repositories;
 namespace LogForesight.Web.Services;
 
 /// <summary>問題查詢與風險日詳情（docs/WEB-SPEC.md §9.2、§9.3）</summary>
-public interface IRecordQueryService
-{
-    PagedResult<RecordListItemDto> Search(RecordSearchRequest request);
-
-    /// <summary>依主機彙總（日期合併）——同一組篩選，換一個角度看</summary>
-    PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request);
-
-    /// <summary>依日期彙總（主機合併）</summary>
-    PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request);
-
-    RecordDetailDto GetDetail(long hostId, DateTime date);
-
-    /// <summary>報告全文；沒有報告或已被清理時回 null</summary>
-    string? GetReport(long hostId, DateTime date);
-
-    HostDetailDto GetHostDetail(long hostId, int days);
-
-    /// <summary>跨主機同簽章聚類（AI 歸納的確定性前置）：同 Source+EventId 出現在多台主機的前 5 組</summary>
-    List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request);
-}
-
-public class RecordQueryService : IRecordQueryService
+public class RecordQueryService
 {
     private readonly IRecordRepository _repository;
     private readonly IReportReader _reports;

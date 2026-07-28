@@ -5,14 +5,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>NetIQ 連線與節流參數維護（「系統管理 > NetIQ 維護」頁）</summary>
-public interface INetiqOptionsService
-{
-    NetiqOptionsDto Get();
-
-    NetiqOptionsDto Update(UpdateNetiqOptionsRequest request);
-}
-
-public class NetiqOptionsService : INetiqOptionsService
+public class NetiqOptionsService
 {
     private static readonly string[] ValidFetchModes = { "Full", "Reduced" };
 

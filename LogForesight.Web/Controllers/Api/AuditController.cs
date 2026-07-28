@@ -14,9 +14,9 @@ namespace LogForesight.Web.Controllers.Api;
 [Permission(Capability.ViewAudit)]
 public class AuditController : ControllerBase
 {
-    private readonly IAuditQueryService _service;
+    private readonly AuditQueryService _service;
 
-    public AuditController(IAuditQueryService service)
+    public AuditController(AuditQueryService service)
     {
         _service = service;
     }

@@ -60,7 +60,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLogForesightAuth(this IServiceCollection services, WebAppSettings settings)
     {
         services.AddHttpContextAccessor();
-        services.AddSingleton<IJwtTokenService, JwtTokenService>();
+        services.AddSingleton<JwtTokenService>();
         services.AddSingleton<ServerAdminAuthenticator>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
@@ -187,20 +187,20 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLogForesightServices(this IServiceCollection services)
     {
         services.AddScoped<IAuditService, AuditService>();
-        services.AddScoped<IIdentityService, IdentityService>();
+        services.AddScoped<IdentityService>();
         services.AddScoped<IVisibilityService, VisibilityService>();
-        services.AddScoped<IUserAdminService, UserAdminService>();
-        services.AddScoped<IHostAdminService, HostAdminService>();
+        services.AddScoped<UserAdminService>();
+        services.AddScoped<HostAdminService>();
         services.AddScoped<INetiqHostService, NetiqHostService>();
-        services.AddScoped<IGroupAdminService, GroupAdminService>();
+        services.AddScoped<GroupAdminService>();
 
         // Sentinel 名單改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
-        services.AddScoped<ISentinelAdminService, SentinelAdminService>();
+        services.AddScoped<SentinelAdminService>();
 
         // 全站系統設定（未處理等級門檻／AI 位址／補充留存天數）
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
-        services.AddScoped<INetiqOptionsService, NetiqOptionsService>();
+        services.AddScoped<NetiqOptionsService>();
 
         // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線。
         // 真連線的認證/回應解析待 Sentinel 環境驗證（見 SentinelRestDirectoryClient）
@@ -209,27 +209,27 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment()
                 ? new StubNetiqDirectoryClient()
                 : new SentinelRestDirectoryClient(sp.GetRequiredService<IHttpClientFactory>()));
-        services.AddScoped<INetiqDiscoveryService, NetiqDiscoveryService>();
+        services.AddScoped<NetiqDiscoveryService>();
 
         // AI 加值層（純加值、失敗靜默降級）。WebAiService 讀批次 appsettings 的 AI 位址、
         // 建互動情境的短逾時客戶端；Singleton 讓快取與 HttpClient 共用一份
         services.AddSingleton<IWebAiService, WebAiService>();
-        services.AddScoped<IAiInsightService, AiInsightService>();
+        services.AddScoped<AiInsightService>();
 
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
-        services.AddScoped<IRecordQueryService, RecordQueryService>();
-        services.AddScoped<IDashboardService, DashboardService>();
-        services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<RecordQueryService>();
+        services.AddScoped<DashboardService>();
+        services.AddScoped<ReportService>();
 
         // 寫入面
-        services.AddScoped<IHandlingService, HandlingService>();
-        services.AddScoped<IPermissionChangeService, PermissionChangeService>();
-        services.AddScoped<IAuditQueryService, AuditQueryService>();
+        services.AddScoped<HandlingService>();
+        services.AddScoped<PermissionChangeService>();
+        services.AddScoped<AuditQueryService>();
 
         // 規則維護與執行監控
-        services.AddScoped<IRuleAdminService, RuleAdminService>();
-        services.AddScoped<IRunMonitorService, RunMonitorService>();
+        services.AddScoped<RuleAdminService>();
+        services.AddScoped<RunMonitorService>();
 
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // 新增第四種匯入時只要多註冊一個實作，流程與 Controller 都不必改（OCP）
@@ -237,7 +237,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICsvImporter, HostCsvImporter>();
         services.AddScoped<ICsvImporter, GroupAccessCsvImporter>();
         services.AddScoped<ICsvImporter, OwnerCsvImporter>();
-        services.AddScoped<IImportService, ImportService>();
+        services.AddScoped<ImportService>();
 
         return services;
     }

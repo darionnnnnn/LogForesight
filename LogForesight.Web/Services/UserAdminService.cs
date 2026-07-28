@@ -9,22 +9,7 @@ namespace LogForesight.Web.Services;
 /// 業務規則集中在這裡，不在 Controller 也不在 Repository：
 /// builtin 群組的保護、稽核寫入、群組存在性驗證。
 /// </summary>
-public interface IUserAdminService
-{
-    List<UserDto> GetUsers();
-
-    UserDto SaveUser(SaveUserRequest request);
-
-    UserDto SetUserGroups(long userId, IEnumerable<long> groupIds);
-
-    /// <summary>
-    /// 一次新增多個帳號（docs/WEB-FEEDBACK-PLAN.md #7）：只填帳號＋所屬群組，
-    /// 顯示名稱預設＝帳號、Email 留空（登入時若走 AD 可自動補上，見 #8）。
-    /// </summary>
-    BatchCreateUsersResultDto BatchCreateUsers(BatchCreateUsersRequest request);
-}
-
-public class UserAdminService : IUserAdminService
+public class UserAdminService
 {
     private readonly IUserStore _users;
     private readonly IUserGroupStore _groups;

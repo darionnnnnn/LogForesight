@@ -15,37 +15,15 @@ namespace LogForesight.Web.Services;
 /// 這對應到使用情境：主機 A 的負責人是 OOO，但主管認為這個問題緊急、
 /// 先交給 XXX 處理——此時**負責人不變**（那是主機的長期屬性），
 /// 變的是這個風險日的處理人。
+///
+/// <see cref="GetTodo"/>：全站待辦（儀表板 KPI／報表處理進度共用，docs/SHARED-STANDARDS-PLAN.md S3）：
+/// 未處理與逾期。**母體（高＋中風險日）由本方法內部強制套用**——呼叫端傳整批候選紀錄即可，
+/// 不必（也不應該）自己先過濾，否則「待辦只算高＋中風險日」這條規則遲早在某個新呼叫端漏掉。
+/// 低風險日全站一律不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）。
+/// **沒有 handling 列的風險日也要算未處理**（與問題查詢清單同一套語意），
+/// 只數 handling.json 既有列會漏掉所有「從未被動過」的新問題。
 /// </summary>
-public interface IHandlingService
-{
-    HandlingDto Get(long hostId, DateTime date);
-
-    /// <summary>更新狀態/說明/預計完成日（不含指派）</summary>
-    HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request);
-
-    /// <summary>設定單一問題的處理狀態（方案 B）；回傳更新後的當日進度</summary>
-    IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request);
-
-    /// <summary>批次設定多個問題的處理狀態（風險日詳情：勾選多個問題後在右側區塊一次套用）</summary>
-    BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request);
-
-    /// <summary>指派/改派處理人（僅 admin）</summary>
-    HandlingDto Assign(long hostId, DateTime date, long? handlerId);
-
-    List<HandlingLogDto> GetLogs(long hostId, DateTime date);
-
-    /// <summary>
-    /// 全站待辦（儀表板 KPI／報表處理進度共用，docs/SHARED-STANDARDS-PLAN.md S3）：未處理與逾期。
-    /// **母體（高＋中風險日）由本方法內部強制套用**——呼叫端傳整批候選紀錄即可，
-    /// 不必（也不應該）自己先過濾，否則「待辦只算高＋中風險日」這條規則遲早在某個新呼叫端漏掉。
-    /// 低風險日全站一律不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）。
-    /// **沒有 handling 列的風險日也要算未處理**（與問題查詢清單同一套語意），
-    /// 只數 handling.json 既有列會漏掉所有「從未被動過」的新問題。
-    /// </summary>
-    HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records);
-}
-
-public class HandlingService : IHandlingService
+public class HandlingService
 {
     private readonly IRecordHandlingStore _store;
     private readonly IIssueHandlingStore _issueStore;

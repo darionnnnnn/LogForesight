@@ -18,9 +18,9 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/records/{hostId:long}/{date}/handling")]
 public class HandlingController : ControllerBase
 {
-    private readonly IHandlingService _service;
+    private readonly HandlingService _service;
 
-    public HandlingController(IHandlingService service)
+    public HandlingController(HandlingService service)
     {
         _service = service;
     }
@@ -67,9 +67,9 @@ public class HandlingController : ControllerBase
 [Route("api/permission-changes")]
 public class PermissionChangesController : ControllerBase
 {
-    private readonly IPermissionChangeService _service;
+    private readonly PermissionChangeService _service;
 
-    public PermissionChangesController(IPermissionChangeService service)
+    public PermissionChangesController(PermissionChangeService service)
     {
         _service = service;
     }

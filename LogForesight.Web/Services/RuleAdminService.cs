@@ -18,31 +18,7 @@ namespace LogForesight.Web.Services;
 /// **儲存前一律跑 <see cref="RuleValidator"/>**——把 `--selftest` 的規則驗證內建進儲存路徑，
 /// 而不是指望使用者改完記得去跑一次。驗證不過就拒絕寫入，rules.json 永遠是合格的。
 /// </summary>
-public interface IRuleAdminService
-{
-    List<RuleDto> GetRules();
-
-    RuleDto SaveRule(SaveRuleRequest request);
-
-    void SetEnabled(string ruleId, bool enabled);
-
-    void DeleteRule(string ruleId);
-
-    RuleRestorePreviewDto PreviewRestore(string ruleId);
-
-    RuleDto RestoreSeed(string ruleId);
-
-    /// <summary>不寫入，只回報這份規則內容是否合格（前端即時提示用）</summary>
-    RuleValidationDto ValidateRule(SaveRuleRequest request);
-
-    List<RuleSuppressionDto> GetSuppressions();
-
-    void AddSuppression(string ruleId, AddSuppressionRequest request);
-
-    void RemoveSuppression(string ruleId, string host);
-}
-
-public class RuleAdminService : IRuleAdminService
+public class RuleAdminService
 {
     private readonly IKnownIssueRuleStore _rules;
     private readonly IRuleSeedStore _seeds;

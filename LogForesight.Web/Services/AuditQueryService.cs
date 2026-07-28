@@ -3,15 +3,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>操作紀錄查閱（docs/WEB-SPEC.md §9.11）</summary>
-public interface IAuditQueryService
-{
-    PagedResult<AuditEntryDto> Query(AuditQuery query);
-
-    /// <summary>可用的動作代碼與中文名稱（篩選下拉的來源，前端不自行維護對照表）</summary>
-    Dictionary<string, string> GetActionNames();
-}
-
-public class AuditQueryService : IAuditQueryService
+public class AuditQueryService
 {
     private readonly IAuditLogStore _store;
 

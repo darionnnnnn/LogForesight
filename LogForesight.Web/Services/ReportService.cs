@@ -4,23 +4,15 @@ using LogForesight.Web.Repositories;
 namespace LogForesight.Web.Services;
 
 /// <summary>報表（docs/WEB-SPEC.md §9.6）——主管的主要畫面</summary>
-public interface IReportService
-{
-    ReportSummaryDto GetSummary(DateTime from, DateTime to);
-
-    /// <summary>跨主機同簽章查詢：這個 Event ID 在哪些主機、哪些日子出現過</summary>
-    List<SignatureHitDto> FindSignature(int eventId, string? source);
-}
-
-public class ReportService : IReportService
+public class ReportService
 {
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
-    private readonly IHandlingService _handling;
+    private readonly HandlingService _handling;
 
     public ReportService(
-        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, IHandlingService handling)
+        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, HandlingService handling)
     {
         _repository = repository;
         _hosts = hosts;

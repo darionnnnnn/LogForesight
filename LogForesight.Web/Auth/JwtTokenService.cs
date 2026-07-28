@@ -14,14 +14,6 @@ public record TokenIdentity(
     IReadOnlySet<Capability> Capabilities,
     bool IsServerAdmin);
 
-public interface IJwtTokenService
-{
-    string CreateToken(TokenIdentity identity);
-
-    /// <summary>供 Cookie 設定過期時間用</summary>
-    DateTimeOffset ExpiresAt();
-}
-
 /// <summary>
 /// JWT 簽發（docs/WEB-SPEC.md §6.1、§6.2）。
 ///
@@ -29,7 +21,7 @@ public interface IJwtTokenService
 /// 但主機授權範圍必須即時——調部門後不該還看得到前部門的主機，
 /// 所以範圍每次請求由 IVisibilityService 重新解析。
 /// </summary>
-public class JwtTokenService : IJwtTokenService
+public class JwtTokenService
 {
     // 自訂 claim 名稱，不使用 ClaimTypes 的 WS-Federation 長 URI：
     // 那些 URI 會被 JwtBearer 的 claim 映射機制改寫，讀取端就得知道「寫進去的名字」與

@@ -9,19 +9,7 @@ namespace LogForesight.Web.Services.Import;
 /// CSV 匯入的流程協調（docs/WEB-SPEC.md §9.9）：上傳 → 預覽（不寫入）→ 套用。
 /// 各種類的實際邏輯在對應的 <see cref="ICsvImporter"/>，這裡只負責流程與共用驗證。
 /// </summary>
-public interface IImportService
-{
-    /// <summary>範本 CSV（UTF-8 BOM，Excel 開啟不亂碼）</summary>
-    byte[] GetTemplate(ImportKind kind);
-
-    /// <summary>解析並驗證，回傳預覽計畫。**不寫入任何資料**</summary>
-    ImportPlan Preview(ImportKind kind, Stream content, string fileName);
-
-    /// <summary>套用先前預覽的計畫（以 token 綁定，避免預覽 A 檔卻套用 B 檔）</summary>
-    ImportResult Apply(ImportKind kind, string token);
-}
-
-public class ImportService : IImportService
+public class ImportService
 {
     private readonly IEnumerable<ICsvImporter> _importers;
     private readonly IAuditService _audit;
