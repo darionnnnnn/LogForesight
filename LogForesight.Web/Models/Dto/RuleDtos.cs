@@ -7,9 +7,19 @@ public class RuleDto
     public string Id { get; set; } = string.Empty;
     public string Origin { get; set; } = string.Empty;
     public bool Enabled { get; set; }
+
+    /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES-PLAN.md）</summary>
+    public string Platform { get; set; } = "windows";
+
     public string SourcePattern { get; set; } = string.Empty;
     public List<int> EventIds { get; set; } = new();
     public bool MatchAllEventIds { get; set; }
+
+    // ── Linux 專用比對欄位 ─────────────────────────────────────────────
+    public string ProgramPattern { get; set; } = string.Empty;
+    public string EventNamePattern { get; set; } = string.Empty;
+    public List<string> MessagePatterns { get; set; } = new();
+
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
@@ -50,12 +60,23 @@ public class SaveRuleRequest
 
     public bool Enabled { get; set; } = true;
 
-    [Required(ErrorMessage = "請輸入來源比對字串")]
+    /// <summary>'windows'（預設）| 'linux'。是否合法、與其他欄位是否互相對應
+    /// 由 RuleValidator 在儲存前把關（§1.3），這裡不重複驗證。</summary>
+    public string Platform { get; set; } = "windows";
+
     [StringLength(255)]
     public string SourcePattern { get; set; } = string.Empty;
 
     public List<int> EventIds { get; set; } = new();
     public bool MatchAllEventIds { get; set; }
+
+    [StringLength(255)]
+    public string ProgramPattern { get; set; } = string.Empty;
+
+    [StringLength(255)]
+    public string EventNamePattern { get; set; } = string.Empty;
+
+    public List<string> MessagePatterns { get; set; } = new();
 
     [Required]
     public string Category { get; set; } = string.Empty;
@@ -101,6 +122,10 @@ public class RuleSuppressionDto
     public string Reason { get; set; } = string.Empty;
     public DateTime? ExpiresAt { get; set; }
     public bool IsExpired { get; set; }
+
+    /// <summary>所屬規則的平台（'windows'/'linux'），由 RuleId 反查帶出——
+    /// 抑制清單依平台篩選、「抑制此規則」的主機下拉也依此過濾（docs/LINUX-RULES-PLAN.md §5.1）</summary>
+    public string Platform { get; set; } = "windows";
 }
 
 public class AddSuppressionRequest

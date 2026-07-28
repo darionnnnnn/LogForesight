@@ -242,4 +242,178 @@ public class RuleValidatorTests
 
         Assert.Empty(outcome.ShadowWarnings);
     }
+
+    // ── Linux 規則（docs/LINUX-RULES-PLAN.md §1.3）──────────────────────
+
+    private static KnownIssueRule LinuxRule(
+        string id = "custom-linux-test-rule",
+        string programPattern = "sshd",
+        string eventNamePattern = "",
+        string[]? messagePatterns = null,
+        bool enabled = true) => new()
+        {
+            Id = id,
+            Origin = "custom",
+            Enabled = enabled,
+            Scope = "all",
+            Platform = "linux",
+            ProgramPattern = programPattern,
+            EventNamePattern = eventNamePattern,
+            MessagePatterns = messagePatterns ?? Array.Empty<string>(),
+            Category = IssueCategory.Security,
+            Severity = IssueSeverity.Medium,
+            Description = "desc",
+            CountThreshold = 1,
+            PlainExplanation = "explanation",
+            Impact = "impact",
+            LikelyCauses = new[] { "cause" },
+            NextSteps = new[] { "step" }
+        };
+
+    [Fact]
+    public void Platform不合法值時不合格()
+    {
+        var rule = Rule();
+        var bad = new KnownIssueRule
+        {
+            Id = rule.Id, Origin = rule.Origin, Enabled = rule.Enabled, Scope = rule.Scope,
+            Platform = "macos", SourcePattern = rule.SourcePattern, EventIds = rule.EventIds,
+            Category = rule.Category, Severity = rule.Severity, Description = rule.Description,
+            CountThreshold = rule.CountThreshold, PlainExplanation = rule.PlainExplanation, Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses, NextSteps = rule.NextSteps
+        };
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { bad });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("Platform", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void Linux合格規則_ProgramPattern路通過驗證()
+    {
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { LinuxRule(programPattern: "sshd") });
+
+        Assert.Single(outcome.ValidRules);
+        Assert.Empty(outcome.SkippedRules);
+    }
+
+    [Fact]
+    public void Linux合格規則_EventNamePattern路通過驗證()
+    {
+        var outcome = RuleValidator.Validate(
+            new List<KnownIssueRule> { LinuxRule(programPattern: "", eventNamePattern: "AUTH_FAILURE") });
+
+        Assert.Single(outcome.ValidRules);
+        Assert.Empty(outcome.SkippedRules);
+    }
+
+    [Fact]
+    public void Linux規則ProgramPattern與EventNamePattern都空白時不合格()
+    {
+        var outcome = RuleValidator.Validate(
+            new List<KnownIssueRule> { LinuxRule(programPattern: "", eventNamePattern: "") });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("至少要填一個", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void Linux規則不可填SourcePattern等Windows專用欄位()
+    {
+        var rule = LinuxRule();
+        var withSource = new KnownIssueRule
+        {
+            Id = rule.Id, Origin = rule.Origin, Enabled = rule.Enabled, Scope = rule.Scope,
+            Platform = "linux", ProgramPattern = rule.ProgramPattern, SourcePattern = "disk",
+            Category = rule.Category, Severity = rule.Severity, Description = rule.Description,
+            CountThreshold = rule.CountThreshold, PlainExplanation = rule.PlainExplanation, Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses, NextSteps = rule.NextSteps
+        };
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { withSource });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("Windows 專用欄位", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void Windows規則不可填ProgramPattern等Linux專用欄位()
+    {
+        var rule = Rule();
+        var withProgram = new KnownIssueRule
+        {
+            Id = rule.Id, Origin = rule.Origin, Enabled = rule.Enabled, Scope = rule.Scope,
+            Platform = "windows", SourcePattern = rule.SourcePattern, EventIds = rule.EventIds,
+            ProgramPattern = "sshd",
+            Category = rule.Category, Severity = rule.Severity, Description = rule.Description,
+            CountThreshold = rule.CountThreshold, PlainExplanation = rule.PlainExplanation, Impact = rule.Impact,
+            LikelyCauses = rule.LikelyCauses, NextSteps = rule.NextSteps
+        };
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { withProgram });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("Linux 專用欄位", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void MessagePatterns超過條數上限時不合格()
+    {
+        var tooMany = Enumerable.Range(0, RuleSchemaLimits.MessagePatternsMaxCount + 1)
+            .Select(i => $"pattern{i}").ToArray();
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { LinuxRule(messagePatterns: tooMany) });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("條數上限", outcome.SkippedRules[0].Reason);
+    }
+
+    [Fact]
+    public void MessagePatterns含空白項目時不合格()
+    {
+        var outcome = RuleValidator.Validate(
+            new List<KnownIssueRule> { LinuxRule(messagePatterns: new[] { "ok", "  " }) });
+
+        Assert.Empty(outcome.ValidRules);
+    }
+
+    [Fact]
+    public void Windows與Linux規則不會互相判定為遮蔽()
+    {
+        // Windows 端一條 match-all 泛用規則，Linux 端一條 program-only（無訊息篩選）泛用規則，
+        // 兩者範圍字面上「看起來」都很寬，但平台分區的遮蔽偵測必須完全獨立。
+        var windowsBroad = Rule(id: "win-broad", sourcePattern: "Security-Auditing", matchAllEventIds: true);
+        var linuxBroad = LinuxRule(id: "linux-broad", programPattern: "sshd");
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { windowsBroad, linuxBroad });
+
+        Assert.Empty(outcome.ShadowWarnings);
+    }
+
+    [Fact]
+    public void Linux規則_不篩訊息的泛用規則排前面時具體規則被判定為遮蔽()
+    {
+        var broad = LinuxRule(id: "broad", programPattern: "sudo");
+        var specific = LinuxRule(id: "specific", programPattern: "sudo", messagePatterns: new[] { "authentication failure" });
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { broad, specific });
+
+        Assert.Single(outcome.ShadowWarnings);
+        Assert.Contains("specific", outcome.ShadowWarnings[0]);
+        Assert.Contains("broad", outcome.ShadowWarnings[0]);
+    }
+
+    [Fact]
+    public void Linux規則_有篩訊息的規則排前面時不觸發遮蔽()
+    {
+        // earlier 有 MessagePatterns 篩選，充分條件不成立（訊息子字串涵蓋關係不做精確判定），
+        // 保守不誤報——即使兩條規則 program 相同。
+        var withMessages = LinuxRule(id: "with-messages", programPattern: "sudo", messagePatterns: new[] { "authentication failure" });
+        var other = LinuxRule(id: "other", programPattern: "sudo", messagePatterns: new[] { "incorrect password attempt" });
+
+        var outcome = RuleValidator.Validate(new List<KnownIssueRule> { withMessages, other });
+
+        Assert.Empty(outcome.ShadowWarnings);
+    }
 }

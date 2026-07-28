@@ -20,6 +20,19 @@ public abstract class HostStoreContractTests : IDisposable
         Assert.Equal("網站主機", store.Get(saved.HostId)!.RoleDesc);
     }
 
+    /// <summary>docs/LINUX-RULES-PLAN.md：Os 未指定時預設 windows；Upsert 更新既有主機時 Os 隨之更新。</summary>
+    [Fact]
+    public void Os_預設windows_且Upsert可更新()
+    {
+        var store = CreateStore();
+
+        var saved = store.Upsert(new WebHost { HostName = "SRV-01" });
+        Assert.Equal("windows", saved.Os);
+
+        store.Upsert(new WebHost { HostName = "SRV-01", Os = "linux" });
+        Assert.Equal("linux", store.Get(saved.HostId)!.Os);
+    }
+
     [Fact]
     public void FindByName_不分大小寫()
     {

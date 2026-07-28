@@ -67,22 +67,17 @@ public static class RuleValidator
         {
             return "MatchFilter 此版本尚未支援，必須為 null";
         }
-        if (string.IsNullOrWhiteSpace(rule.SourcePattern))
+        if (rule.Platform != "windows" && rule.Platform != "linux")
         {
-            return "SourcePattern 空白";
+            return $"Platform 必須是 windows 或 linux，實際為「{rule.Platform}」";
         }
-        if (rule.SourcePattern.Length > RuleSchemaLimits.SourcePatternMaxLength)
+
+        var platformReason = rule.Platform == "windows" ? CheckWindowsFields(rule) : CheckLinuxFields(rule);
+        if (platformReason != null)
         {
-            return $"SourcePattern 超過長度上限（{RuleSchemaLimits.SourcePatternMaxLength}）";
+            return platformReason;
         }
-        if (!rule.MatchAllEventIds && rule.EventIds.Length == 0)
-        {
-            return "EventIds 為空但 MatchAllEventIds 未設為 true（全比對必須顯式宣告，見 docs/RULES-PLAN.md）";
-        }
-        if (rule.EventIds.Any(id => id <= 0))
-        {
-            return "EventIds 內含非正整數";
-        }
+
         if (rule.CountThreshold < 1)
         {
             return "CountThreshold 必須 >= 1";
@@ -139,6 +134,84 @@ public static class RuleValidator
         return null;
     }
 
+    /// <summary>Windows 規則欄位（docs/RULES-PLAN.md 陷阱說明）：Linux 專用三欄必空，
+    /// SourcePattern 必填，EventIds 非空或 MatchAllEventIds 二擇一成立。</summary>
+    private static string? CheckWindowsFields(KnownIssueRule rule)
+    {
+        if (!string.IsNullOrEmpty(rule.ProgramPattern) || !string.IsNullOrEmpty(rule.EventNamePattern) || rule.MessagePatterns.Length > 0)
+        {
+            return "windows 規則不可填 ProgramPattern/EventNamePattern/MessagePatterns（Linux 專用欄位）";
+        }
+        if (string.IsNullOrWhiteSpace(rule.SourcePattern))
+        {
+            return "SourcePattern 空白";
+        }
+        if (rule.SourcePattern.Length > RuleSchemaLimits.SourcePatternMaxLength)
+        {
+            return $"SourcePattern 超過長度上限（{RuleSchemaLimits.SourcePatternMaxLength}）";
+        }
+        if (!rule.MatchAllEventIds && rule.EventIds.Length == 0)
+        {
+            return "EventIds 為空但 MatchAllEventIds 未設為 true（全比對必須顯式宣告，見 docs/RULES-PLAN.md）";
+        }
+        if (rule.EventIds.Any(id => id <= 0))
+        {
+            return "EventIds 內含非正整數";
+        }
+        return null;
+    }
+
+    /// <summary>Linux 規則欄位（docs/LINUX-RULES-PLAN.md §1.3）：Windows 專用欄位必空，
+    /// ProgramPattern／EventNamePattern 至少一個非空（兩條比對路至少通一條），
+    /// MessagePatterns 每條非空白、不過長、最多 8 條（超過代表規則想做的事太多，該拆條）。</summary>
+    private static string? CheckLinuxFields(KnownIssueRule rule)
+    {
+        if (!string.IsNullOrEmpty(rule.SourcePattern) || rule.EventIds.Length > 0 || rule.MatchAllEventIds)
+        {
+            return "linux 規則不可填 SourcePattern/EventIds/MatchAllEventIds（Windows 專用欄位）";
+        }
+        if (string.IsNullOrEmpty(rule.ProgramPattern) && string.IsNullOrEmpty(rule.EventNamePattern))
+        {
+            return "linux 規則的 ProgramPattern 與 EventNamePattern 至少要填一個";
+        }
+        if (rule.ProgramPattern.Length > RuleSchemaLimits.ProgramPatternMaxLength)
+        {
+            return $"ProgramPattern 超過長度上限（{RuleSchemaLimits.ProgramPatternMaxLength}）";
+        }
+        if (rule.EventNamePattern.Length > RuleSchemaLimits.EventNamePatternMaxLength)
+        {
+            return $"EventNamePattern 超過長度上限（{RuleSchemaLimits.EventNamePatternMaxLength}）";
+        }
+        if (rule.MessagePatterns.Length > RuleSchemaLimits.MessagePatternsMaxCount)
+        {
+            return $"MessagePatterns 超過條數上限（{RuleSchemaLimits.MessagePatternsMaxCount}）";
+        }
+        if (rule.MessagePatterns.Any(string.IsNullOrWhiteSpace))
+        {
+            return "MessagePatterns 內含空白項目";
+        }
+        if (rule.MessagePatterns.Any(p => p.Length > RuleSchemaLimits.MessagePatternMaxLength))
+        {
+            return $"MessagePatterns 有項目超過長度上限（{RuleSchemaLimits.MessagePatternMaxLength}）";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 遮蔽偵測入口：Windows 與 Linux 規則各自的比對邏輯完全獨立（FindRule／FindLinuxRule
+    /// 明確按 Platform 分路，見 KnownIssueCatalog），一個平台的規則不可能遮蔽另一個平台的規則，
+    /// 所以分區偵測——Windows 規則永遠不會被判定遮蔽 Linux 規則，反之亦然
+    /// （docs/LINUX-RULES-PLAN.md §1.3）。Where 保留原始清單的相對順序，
+    /// 「比對順序＝清單順序」的語意在各自分區內成立。
+    /// </summary>
+    private static List<string> DetectShadowing(List<KnownIssueRule> validRules)
+    {
+        var warnings = new List<string>();
+        warnings.AddRange(DetectWindowsShadowing(validRules.Where(r => r.Platform == "windows").ToList()));
+        warnings.AddRange(DetectLinuxShadowing(validRules.Where(r => r.Platform == "linux").ToList()));
+        return warnings;
+    }
+
     /// <summary>
     /// 遮蔽偵測（充分條件，非完整精確語意）：FindRule 依清單順序取第一個命中的規則，
     /// 若排在後面的規則 later，其比對範圍已被排在前面且啟用中的規則 earlier 完全涵蓋
@@ -149,7 +222,7 @@ public static class RuleValidator
     /// 只收啟用規則），說它「被遮蔽、永遠不會命中」沒有意義，而且 selftest 把遮蔽警告視為失敗，
     /// 停用規則的假警報會讓「停用 builtin ＋另外加一條 custom」這個官方建議的改法無故變成紅燈。
     /// </summary>
-    private static List<string> DetectShadowing(List<KnownIssueRule> validRules)
+    private static List<string> DetectWindowsShadowing(List<KnownIssueRule> validRules)
     {
         var warnings = new List<string>();
 
@@ -184,6 +257,49 @@ public static class RuleValidator
 
                 warnings.Add($"規則 {later.Id} 被排在前面的規則 {earlier.Id} 遮蔽，永遠不會命中" +
                              $"（{earlier.Id} 的 SourcePattern「{earlier.SourcePattern}」與 EventIds 已涵蓋 {later.Id}），" +
+                             "請調整順序或縮小其中一條的比對範圍");
+                break;
+            }
+        }
+
+        return warnings;
+    }
+
+    /// <summary>
+    /// Linux 版遮蔽偵測，充分條件更保守：只有 earlier 的 <c>MessagePatterns</c> 為空
+    /// （program 命中即算，不篩訊息）時，才可能完全涵蓋 later 的 program 範圍——
+    /// 訊息子字串之間的涵蓋關係不做精確判定，比對成本高，且誤報遮蔽警告比漏報更擾人
+    /// （docs/LINUX-RULES-PLAN.md §1.3）。EventNamePattern 路徑同理不參與涵蓋判定，
+    /// 事件名比對與 program 比對是獨立的兩條路，沒有清楚的「涵蓋」語意可用。
+    /// </summary>
+    private static List<string> DetectLinuxShadowing(List<KnownIssueRule> validRules)
+    {
+        var warnings = new List<string>();
+
+        for (int i = 0; i < validRules.Count; i++)
+        {
+            var later = validRules[i];
+            if (!later.Enabled || string.IsNullOrEmpty(later.ProgramPattern))
+            {
+                continue;
+            }
+
+            for (int j = 0; j < i; j++)
+            {
+                var earlier = validRules[j];
+                if (!earlier.Enabled || string.IsNullOrEmpty(earlier.ProgramPattern) || earlier.MessagePatterns.Length > 0)
+                {
+                    continue;
+                }
+
+                bool programCovered = later.ProgramPattern.Contains(earlier.ProgramPattern, StringComparison.OrdinalIgnoreCase);
+                if (!programCovered)
+                {
+                    continue;
+                }
+
+                warnings.Add($"規則 {later.Id} 被排在前面的規則 {earlier.Id} 遮蔽，永遠不會命中" +
+                             $"（{earlier.Id} 的 ProgramPattern「{earlier.ProgramPattern}」不篩訊息，已涵蓋 {later.Id} 的 program 範圍），" +
                              "請調整順序或縮小其中一條的比對範圍");
                 break;
             }

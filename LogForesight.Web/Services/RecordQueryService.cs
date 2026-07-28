@@ -346,6 +346,9 @@ public class RecordQueryService : IRecordQueryService
         {
             HostId = hostId,
             HostName = host?.HostName ?? record.Host,
+            HostDisplayName = host?.DisplayName,
+            HostIpAddress = host?.IpAddress,
+            HostOs = host?.Os ?? "windows",
             HostRoleDesc = host?.RoleDesc ?? "",
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
@@ -446,8 +449,10 @@ public class RecordQueryService : IRecordQueryService
         {
             HostId = host.HostId,
             HostName = host.HostName,
+            DisplayName = host.DisplayName,
             RoleDesc = host.RoleDesc,
             IpAddress = host.IpAddress,
+            Os = host.Os,
             NetiqServer = host.NetiqServer,
             LastReportAt = host.LastReportAt,
             GroupNames = host.GroupIds.Select(id => groups.TryGetValue(id, out var g) ? g.GroupName : $"(已刪除:{id})").ToList(),

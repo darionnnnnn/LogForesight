@@ -40,7 +40,8 @@ function renderHeader(detail) {
 
     const title = document.createElement('div');
     title.className = 'fs-5 fw-semibold mb-1';
-    title.textContent = detail.hostName;
+    // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
+    title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
     body.appendChild(title);
 
     if (detail.roleDesc) {
@@ -55,6 +56,7 @@ function renderHeader(detail) {
 
     const fields = [
         ['IP 位址', detail.ipAddress || '未設定'],
+        ['作業系統', detail.os === 'linux' ? 'Linux' : 'Windows'],
         ['所屬 Sentinel', detail.netiqServer || '本機直讀'],
         ['主機群組', detail.groupNames.length ? detail.groupNames.join('、') : '未分群'],
         ['負責人', detail.ownerNames.length ? detail.ownerNames.join('、') : '未指定'],

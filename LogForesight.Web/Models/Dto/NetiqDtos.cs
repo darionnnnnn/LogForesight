@@ -55,6 +55,9 @@ public class AddNetiqHostRequest
 
     [StringLength(500)]
     public string? RoleDesc { get; set; }
+
+    /// <summary>'windows'（預設）| 'linux'</summary>
+    public string Os { get; set; } = "windows";
 }
 
 public class BulkAddNetiqHostsRequest
@@ -66,6 +69,9 @@ public class BulkAddNetiqHostsRequest
     /// <summary>一行一台，格式 <c>IP[,角色描述]</c>；`#` 開頭為註解、空行忽略</summary>
     [Required(ErrorMessage = "請貼上主機清單")]
     public string Lines { get; set; } = string.Empty;
+
+    /// <summary>'windows'（預設）| 'linux'——整批同一種作業系統，混合平台請分兩批貼上</summary>
+    public string Os { get; set; } = "windows";
 }
 
 /// <summary>

@@ -29,6 +29,11 @@ const chipFilters = {
     categories: new Set()
 };
 
+// docs/LINUX-RULES-PLAN.md §5.1：Windows規則／Linux規則兩個 tab 共用同一套清單/篩選/排序，
+// 只差 Platform 過濾——currentPlatform 由 tab 上的 data-platform 決定，不是獨立的分頁狀態。
+let currentPlatform = 'windows';
+let suppressionPlatform = '';   // 告警抑制分頁的平台篩選；空字串＝全部
+
 const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
 const restoreModal = new bootstrap.Modal(document.getElementById('restore-modal'));
 const suppressModal = new bootstrap.Modal(document.getElementById('suppress-modal'));
@@ -38,11 +43,21 @@ let suppressions = [];
 let editingRule = null;
 let restoringRuleId = null;
 let suppressingRuleId = null;
-let hostOptionsLoaded = false;   // 抑制 modal 的主機下拉延遲載入
+let hostOptions = null;   // 抑制 modal 的主機下拉候選（延遲載入、依規則平台過濾），null = 尚未載入
 
 const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
 
-bindTabs(document.getElementById('rule-tabs'));
+const ruleTabsEl = document.getElementById('rule-tabs');
+bindTabs(ruleTabsEl);
+// Windows規則／Linux規則兩個 tab 共用 data-tab="rules"（同一個 data-panel），
+// bindTabs 只負責切換面板顯示；平台切換靠這裡另外偵測 data-platform。
+ruleTabsEl.addEventListener('click', event => {
+    const btn = event.target.closest('[data-platform]');
+    if (!btn) return;
+    currentPlatform = btn.dataset.platform;
+    updateSearchPlaceholder();
+    renderRules();
+});
 
 async function load() {
     renderLoading(document.getElementById('rule-list'), 8);
@@ -133,7 +148,26 @@ function setupToolbar() {
         onToggle: value => { chipFilters.elevates = value; renderRules(); }
     });
 
+    renderChips(document.getElementById('suppression-platform-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'windows', label: 'Windows' },
+            { value: 'linux', label: 'Linux' }
+        ],
+        attr: 'suppressionPlatform',
+        activeValues: [suppressionPlatform],
+        multi: false,
+        onToggle: value => { suppressionPlatform = value; renderSuppressions(); }
+    });
+
     document.getElementById('rule-sort').addEventListener('change', renderRules);
+}
+
+/** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES-PLAN.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息 */
+function updateSearchPlaceholder() {
+    document.getElementById('rule-search').placeholder = currentPlatform === 'linux'
+        ? '搜尋 program、訊息關鍵字、說明'
+        : '搜尋來源、Event ID、說明';
 }
 
 function sortRules(list) {
@@ -155,13 +189,17 @@ function sortRules(list) {
 function renderRules() {
     const keyword = document.getElementById('rule-search').value.trim().toLowerCase();
 
-    let filtered = rules;
+    let filtered = rules.filter(r => r.platform === currentPlatform);
     if (keyword) {
         filtered = filtered.filter(r =>
             r.id.toLowerCase().includes(keyword) ||
-            r.sourcePattern.toLowerCase().includes(keyword) ||
             r.description.toLowerCase().includes(keyword) ||
-            r.eventIds.some(id => String(id).includes(keyword)));
+            (r.platform === 'linux'
+                ? r.programPattern.toLowerCase().includes(keyword) ||
+                  r.eventNamePattern.toLowerCase().includes(keyword) ||
+                  r.messagePatterns.some(p => p.toLowerCase().includes(keyword))
+                : r.sourcePattern.toLowerCase().includes(keyword) ||
+                  r.eventIds.some(id => String(id).includes(keyword))));
     }
 
     if (chipFilters.status === 'enabled') filtered = filtered.filter(r => r.enabled);
@@ -224,6 +262,28 @@ function ruleCell(rule) {
 
 function matchCell(rule) {
     const wrap = document.createElement('div');
+
+    if (rule.platform === 'linux') {
+        if (rule.programPattern) {
+            const program = document.createElement('div');
+            program.className = 'font-monospace small';
+            program.textContent = rule.programPattern;
+            wrap.appendChild(program);
+        }
+        if (rule.eventNamePattern) {
+            const eventName = document.createElement('div');
+            eventName.className = 'small text-muted';
+            eventName.textContent = `事件名：${rule.eventNamePattern}`;
+            wrap.appendChild(eventName);
+        }
+        if (rule.messagePatterns.length > 0) {
+            const messages = document.createElement('div');
+            messages.className = 'small text-muted';
+            messages.textContent = rule.messagePatterns.join(' / ');
+            wrap.appendChild(messages);
+        }
+        return wrap;
+    }
 
     const source = document.createElement('div');
     source.className = 'font-monospace small';
@@ -301,7 +361,14 @@ function openRuleModal(rule) {
     editingRule = rule;
     document.getElementById('rule-validation').replaceChildren();
 
-    document.getElementById('rule-modal-title').textContent = rule ? `編輯規則 ${rule.id}` : '新增規則';
+    // 編輯既有規則沿用它自己的平台；新增規則採目前所在分頁（Windows規則/Linux規則）的平台，
+    // 平台一經建立不可變更（見 RuleAdminService.BuildRule）。
+    const platform = rule?.platform ?? currentPlatform;
+    applyPlatformBlocks(platform);
+
+    document.getElementById('rule-modal-title').textContent = rule
+        ? `編輯規則 ${rule.id}`
+        : `新增${platform === 'linux' ? ' Linux' : ' Windows'}規則`;
     document.getElementById('rule-id').value = rule?.id ?? 'custom-';
     document.getElementById('rule-id').disabled = !!rule;   // Id 是穩定識別鍵，建立後不可改
     document.getElementById('rule-id-hint').textContent = rule
@@ -311,6 +378,9 @@ function openRuleModal(rule) {
     document.getElementById('rule-source').value = rule?.sourcePattern ?? '';
     document.getElementById('rule-event-ids').value = rule?.eventIds.join(', ') ?? '';
     document.getElementById('rule-match-all').checked = rule?.matchAllEventIds ?? false;
+    document.getElementById('rule-program').value = rule?.programPattern ?? '';
+    document.getElementById('rule-event-name').value = rule?.eventNamePattern ?? '';
+    document.getElementById('rule-message-patterns').value = rule?.messagePatterns.join('\n') ?? '';
     document.getElementById('rule-category').value = rule?.category ?? 'Other';
     document.getElementById('rule-severity').value = rule?.severity ?? 'Medium';
     document.getElementById('rule-elevates-day-risk').checked = rule?.elevatesDayRisk ?? false;
@@ -333,7 +403,16 @@ function openRuleModal(rule) {
     ruleModal.show();
 }
 
+/** 依平台顯示/隱藏比對欄位區塊（Windows：來源+Event ID；Linux：Program+事件名+訊息子字串） */
+function applyPlatformBlocks(platform) {
+    for (const el of document.querySelectorAll('[data-platform-block]')) {
+        el.classList.toggle('d-none', el.dataset.platformBlock !== platform);
+    }
+}
+
 function collectRule() {
+    const platform = editingRule?.platform ?? currentPlatform;
+
     const eventIds = document.getElementById('rule-event-ids').value
         .split(',')
         .map(s => Number(s.trim()))
@@ -342,9 +421,13 @@ function collectRule() {
     return {
         id: document.getElementById('rule-id').value.trim(),
         enabled: document.getElementById('rule-enabled').checked,
+        platform,
         sourcePattern: document.getElementById('rule-source').value.trim(),
         eventIds,
         matchAllEventIds: document.getElementById('rule-match-all').checked,
+        programPattern: document.getElementById('rule-program').value.trim(),
+        eventNamePattern: document.getElementById('rule-event-name').value.trim(),
+        messagePatterns: splitLines(document.getElementById('rule-message-patterns').value),
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
         elevatesDayRisk: document.getElementById('rule-elevates-day-risk').checked,
@@ -507,32 +590,44 @@ document.getElementById('restore-confirm').addEventListener('click', async () =>
 
 // ── 抑制 ─────────────────────────────────────────────────────────────────────
 
-function openSuppressModal(rule) {
+async function openSuppressModal(rule) {
     suppressingRuleId = rule.id;
-    document.getElementById('suppress-host').value = '';
     document.getElementById('suppress-reason').value = '';
     document.getElementById('suppress-days').value = '';
-    ensureHostOptions();
+    await ensureHostOptions();
+    populateHostOptions(rule.platform);
     suppressModal.show();
 }
 
-/** 首次開啟抑制 modal 時載入主機清單填入下拉（避免要人手打主機名打錯）。與 hosts 頁同一端點、同 Maintain 權限。 */
+/** 首次開啟抑制 modal 時載入主機清單（避免要人手打主機名打錯）。與 hosts 頁同一端點、同 Maintain 權限。 */
 async function ensureHostOptions() {
-    if (hostOptionsLoaded) return;
-    const select = document.getElementById('suppress-host');
+    if (hostOptions) return;
     try {
         // §5.4 D-4：/api/admin/hosts 改伺服器端分頁，這裡要看到「全部」主機才能挑選——
         // 拉單頁上限（200）；主機數更多的部署，抑制設定的主機選取之後再視需要改成 autocomplete
         const result = await api.get('/api/admin/hosts?pageSize=200');
-        for (const host of result.items) {
-            const option = document.createElement('option');
-            option.value = host.hostName;
-            option.textContent = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
-            select.appendChild(option);
-        }
-        hostOptionsLoaded = true;
+        hostOptions = result.items;
     } catch {
         // api.js 已以 toast 顯示錯誤；使用者可稍後重開再試
+        hostOptions = [];
+    }
+}
+
+/** 依規則平台過濾主機下拉（docs/LINUX-RULES-PLAN.md §5.1）：Linux 規則只列 Linux 主機，反之亦然 */
+function populateHostOptions(platform) {
+    const select = document.getElementById('suppress-host');
+    select.replaceChildren();
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '請選擇主機…';
+    select.appendChild(placeholder);
+
+    for (const host of (hostOptions ?? []).filter(h => h.os === platform)) {
+        const option = document.createElement('option');
+        option.value = host.hostName;
+        option.textContent = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
+        select.appendChild(option);
     }
 }
 
@@ -559,15 +654,20 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
 });
 
 function renderSuppressions() {
+    const filtered = suppressionPlatform
+        ? suppressions.filter(s => s.platform === suppressionPlatform)
+        : suppressions;
+
     renderTable(document.getElementById('suppression-list'), {
         columns: [
             { title: '規則', render: s => s.ruleId },
+            { title: '平台', render: s => s.platform === 'linux' ? 'Linux' : 'Windows' },
             { title: '主機', render: s => s.host },
             { title: '原因', render: s => s.reason },
             { title: '到期', render: s => expiryCell(s) },
             { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
         ],
-        rows: suppressions,
+        rows: filtered,
         empty: {
             title: '目前沒有抑制設定',
             hint: '若某條規則在某台主機上已確認是已知雜訊，可於規則列表的「抑制」建立。'
@@ -616,5 +716,6 @@ document.getElementById('rule-search').addEventListener('input', renderRules);
 const searchParam = new URLSearchParams(location.search).get('search');
 if (searchParam) document.getElementById('rule-search').value = searchParam;
 
+updateSearchPlaceholder();
 setupToolbar();
 load();

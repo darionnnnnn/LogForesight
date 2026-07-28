@@ -34,6 +34,7 @@ public class JsonHostStore : JsonBlobCollection<WebHost>, IHostStore
             existing.NetiqServer = host.NetiqServer;
             existing.RoleDesc = host.RoleDesc;
             existing.Source = host.Source;
+            existing.Os = host.Os;
             existing.Active = host.Active;
             existing.GroupIds = host.GroupIds;
             existing.OwnerUserIds = host.OwnerUserIds;

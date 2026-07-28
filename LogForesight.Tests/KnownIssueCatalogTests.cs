@@ -24,8 +24,17 @@ public class KnownIssueCatalogTests : IDisposable
     public static IEnumerable<object[]> AllRules() =>
         KnownIssueSeed.CreateRules().Select(r => new object[] { r });
 
+    /// <summary>Windows 規則子集：這個檔案裡凡是走 LogAggregator/Classify（Event Log 語意）的
+    /// 測試都只能吃這個子集——Linux 規則的 SourcePattern/EventIds 恆空，見 LinuxRules() 的獨立測試。</summary>
+    public static IEnumerable<object[]> WindowsRules() =>
+        KnownIssueSeed.CreateRules().Where(r => r.Platform == "windows").Select(r => new object[] { r });
+
+    /// <summary>Linux 規則子集（docs/LINUX-RULES-PLAN.md）：比對走 KnownIssueCatalog.FindLinuxRule。</summary>
+    public static IEnumerable<object[]> LinuxRules() =>
+        KnownIssueSeed.CreateRules().Where(r => r.Platform == "linux").Select(r => new object[] { r });
+
     [Theory]
-    [MemberData(nameof(AllRules))]
+    [MemberData(nameof(WindowsRules))]
     public void 達到門檻時分類與嚴重度符合規則表(KnownIssueRule rule)
     {
         var eventId = rule.EventIds.Length > 0 ? rule.EventIds[0] : 9999;
@@ -40,7 +49,7 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Theory]
-    [MemberData(nameof(AllRules))]
+    [MemberData(nameof(WindowsRules))]
     public void 未達門檻時嚴重度降一級(KnownIssueRule rule)
     {
         if (rule.CountThreshold <= 1)
@@ -103,6 +112,42 @@ public class KnownIssueCatalogTests : IDisposable
     public void FindRule對未命中規則的來源回傳null()
     {
         Assert.Null(KnownIssueCatalog.FindRule("TotallyUnknownSource", 1));
+    }
+
+    // ── Linux 規則（docs/LINUX-RULES-PLAN.md）：比對走 FindLinuxRule，不經 LogAggregator ──
+
+    [Theory]
+    [MemberData(nameof(LinuxRules))]
+    public void Linux規則各自宣告的比對路都能命中自己(KnownIssueRule rule)
+    {
+        if (!string.IsNullOrEmpty(rule.EventNamePattern))
+        {
+            var hit = KnownIssueCatalog.FindLinuxRule("unrelated-program", rule.EventNamePattern, "");
+            Assert.NotNull(hit);
+            Assert.Equal(rule.Id, hit!.Id);
+        }
+
+        if (!string.IsNullOrEmpty(rule.ProgramPattern))
+        {
+            var message = rule.MessagePatterns.Length > 0 ? rule.MessagePatterns[0] : "任意訊息內容";
+            var hit = KnownIssueCatalog.FindLinuxRule(rule.ProgramPattern, null, message);
+            Assert.NotNull(hit);
+            Assert.Equal(rule.Id, hit!.Id);
+        }
+    }
+
+    [Fact]
+    public void FindLinuxRule對完全不相關的program與訊息回傳null()
+    {
+        Assert.Null(KnownIssueCatalog.FindLinuxRule("totally-unrelated-xyz", null, "totally unrelated message xyz"));
+    }
+
+    [Fact]
+    public void FindRule明確排除Linux規則_即使SourcePattern為空字串也不會意外命中()
+    {
+        // Linux 規則的 SourcePattern 恆空；FindRule 若不顯式排除 Platform，"".Contains("") 恆真
+        // 會是地雷（見 docs/LINUX-RULES-PLAN.md §1.2）。用空字串來源直接戳這個邊界。
+        Assert.Null(KnownIssueCatalog.FindRule("", 1));
     }
 
     // ── 規則外部化（2026-07-21）新增：種子本身的地基完整性 ─────────────────

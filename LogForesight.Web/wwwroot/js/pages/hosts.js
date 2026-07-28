@@ -19,6 +19,7 @@ const sortSelect = document.getElementById('host-sort');
 // URL 帶 ?status= 時預選（§5.4 D-4：儀表板「未回報主機」計數卡下鑽用）
 let statusMode = new URLSearchParams(location.search).get('status') ?? '';
 const groupFilter = new Set();
+let osFilter = '';   // 空白＝全部；'windows' | 'linux'（docs/LINUX-RULES-PLAN.md §3）
 
 // 未回報定義（§5.4 D-4）：只用來顯示 chip 標籤文字，實際篩選在伺服器端（HostAdminService 同一套規則）
 const SILENT_CUTOFF_DAYS = 2;
@@ -61,6 +62,7 @@ async function load() {
 
     fillSentinelOptions();
     setupGroupChips();
+    setupOsChips();
     renderQueues();
     await search();
 }
@@ -179,6 +181,20 @@ function setupStatusChips() {
     });
 }
 
+function setupOsChips() {
+    renderChips(document.getElementById('host-os-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'windows', label: 'Windows' },
+            { value: 'linux', label: 'Linux' }
+        ],
+        attr: 'os',
+        activeValues: [osFilter],
+        multi: false,
+        onToggle: value => { osFilter = value; currentPage = 1; search(); }
+    });
+}
+
 function setupGroupChips() {
     renderChips(document.getElementById('host-group-chips'), {
         items: hostGroups.map(g => ({ value: String(g.groupId), label: g.groupName })),
@@ -201,6 +217,7 @@ async function search() {
     if (statusMode) params.set('status', statusMode);
     if (sentinelFilter.value) params.set('sentinel', sentinelFilter.value);
     if (groupFilter.size > 0) params.set('groupIds', [...groupFilter].join(','));
+    if (osFilter) params.set('os', osFilter);
     params.set('sort', sortSelect.value === 'lastReport' ? 'lastReport' : 'name');
     params.set('page', String(currentPage));
 
@@ -213,13 +230,14 @@ async function search() {
 function render() {
     document.getElementById('host-count').textContent = `共 ${lastResult.total} 台`;
 
-    const hasFilter = !!(searchInput.value.trim() || statusMode || sentinelFilter.value || groupFilter.size > 0);
+    const hasFilter = !!(searchInput.value.trim() || statusMode || sentinelFilter.value || groupFilter.size > 0 || osFilter);
 
     renderTable(listContainer, {
         columns: [
             { title: '主機', render: hostNameCell },
             { title: '來源', render: sourceCell },
             { title: 'IP', render: h => h.ipAddress ?? '' },
+            { title: 'OS', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
             { title: '角色描述', render: h => h.roleDesc },
             { title: '主機群組', render: h => badges(h.groupNames, '未分組（只有 admin 看得到）') },
             { title: '負責人', render: h => badges(h.ownerNames, '未指定') },
@@ -433,6 +451,7 @@ function openModal(host) {
     document.getElementById('host-ip').value = host?.ipAddress ?? '';
     document.getElementById('host-netiq').value = host?.netiqServer ?? '';
     document.getElementById('host-role-desc').value = host?.roleDesc ?? '';
+    document.getElementById('host-os').value = host?.os ?? 'windows';
     document.getElementById('host-active').checked = host?.active ?? true;
 
     renderCheckboxes('host-groups', hostGroups.map(g => ({
@@ -504,6 +523,7 @@ form.addEventListener('submit', async event => {
             ipAddress: document.getElementById('host-ip').value.trim() || null,
             netiqServer: document.getElementById('host-netiq').value.trim() || null,
             roleDesc: document.getElementById('host-role-desc').value.trim(),
+            os: document.getElementById('host-os').value,
             active: document.getElementById('host-active').checked
         });
 
@@ -537,6 +557,7 @@ bulkForm.addEventListener('submit', async event => {
     try {
         const result = await api.post('/api/admin/netiq/hosts/bulk', {
             netiqServer: document.getElementById('bulk-netiq').value.trim() || null,
+            os: document.getElementById('bulk-os').value,
             lines
         });
 
@@ -600,6 +621,7 @@ function selectedIds(containerId) {
 document.getElementById('btn-new-host').addEventListener('click', () => openModal(null));
 document.getElementById('btn-bulk-hosts').addEventListener('click', () => {
     document.getElementById('bulk-lines').value = '';
+    document.getElementById('bulk-os').value = 'windows';
     document.getElementById('bulk-result').replaceChildren();
     bulkModal.show();
 });

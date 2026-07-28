@@ -35,13 +35,13 @@ public class HostCsvImporter : ICsvImporter
     public string[] RequiredHeaders => new[] { "host_name" };
 
     public string[] KnownHeaders =>
-        new[] { "host_name", "ip_address", "netiq_server", "role_desc", "groups", "owners", "active" };
+        new[] { "host_name", "ip_address", "netiq_server", "role_desc", "os", "groups", "owners", "active" };
 
     public string BuildTemplate() =>
-        "host_name,ip_address,netiq_server,role_desc,groups,owners,active\r\n" +
-        "SRV-OO-WEB01,10.1.2.11,SENTINEL-A,OO部門網站主機,OO部門主機,DOMAIN\\wangxm;DOMAIN\\lidh,1\r\n" +
-        "SRV-OO-DB01,10.1.2.12,SENTINEL-A,OO部門資料庫,OO部門主機;DB伺服器,DOMAIN\\lidh,1\r\n" +
-        "SRV-XX-AP01,10.2.3.21,SENTINEL-B,XX部門AP,XX部門主機,DOMAIN\\chenyt,1\r\n";
+        "host_name,ip_address,netiq_server,role_desc,os,groups,owners,active\r\n" +
+        "SRV-OO-WEB01,10.1.2.11,SENTINEL-A,OO部門網站主機,windows,OO部門主機,DOMAIN\\wangxm;DOMAIN\\lidh,1\r\n" +
+        "SRV-OO-DB01,10.1.2.12,SENTINEL-A,OO部門資料庫,windows,OO部門主機;DB伺服器,DOMAIN\\lidh,1\r\n" +
+        "SRV-XX-AP01,10.2.3.21,SENTINEL-B,XX部門AP,linux,XX部門主機,DOMAIN\\chenyt,1\r\n";
 
     public ImportPlan BuildPlan(CsvTable table, string fileName)
     {
@@ -77,6 +77,14 @@ public class HostCsvImporter : ICsvImporter
             {
                 rowPlan.Action = ImportRowAction.Error;
                 rowPlan.Error = "active 只能填 1 或 0。";
+                plan.Rows.Add(rowPlan);
+                continue;
+            }
+
+            if (row.HasValue("os") && row.Get("os") is not ("windows" or "linux"))
+            {
+                rowPlan.Action = ImportRowAction.Error;
+                rowPlan.Error = "os 只能填 windows 或 linux。";
                 plan.Rows.Add(rowPlan);
                 continue;
             }
@@ -234,6 +242,7 @@ public class HostCsvImporter : ICsvImporter
                 NetiqServer = row.HasValue("netiq_server") ? row.Get("netiq_server") : existing?.NetiqServer,
                 RoleDesc = row.HasValue("role_desc") ? row.Get("role_desc") : existing?.RoleDesc ?? "",
                 Source = existing?.Source ?? "local",
+                Os = row.HasValue("os") ? row.Get("os") : existing?.Os ?? "windows",
                 Active = row.GetBool("active") ?? existing?.Active ?? true,
                 GroupIds = groupIds,
                 OwnerUserIds = ownerIds
@@ -262,6 +271,7 @@ public class HostCsvImporter : ICsvImporter
         CompareText("ip_address", "IP", existing.IpAddress);
         CompareText("netiq_server", "Sentinel", existing.NetiqServer);
         CompareText("role_desc", "角色描述", existing.RoleDesc);
+        CompareText("os", "作業系統", existing.Os);
 
         var active = row.GetBool("active");
         if (active.HasValue && active.Value != existing.Active)

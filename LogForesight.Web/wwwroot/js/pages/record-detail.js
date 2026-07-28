@@ -164,7 +164,8 @@ function renderHeader(detail) {
     const hostLink = document.createElement('a');
     hostLink.href = `/hosts/${detail.hostId}`;
     hostLink.className = 'fs-5 fw-semibold text-decoration-none';
-    hostLink.textContent = detail.hostName;
+    // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
+    hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
 
     const dateSpan = document.createElement('span');
     dateSpan.className = 'text-muted';
@@ -176,6 +177,19 @@ function renderHeader(detail) {
     const riskBasisTitle = detail.riskBasisText ??
         '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
     top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
+
+    // docs/LINUX-RULES-PLAN.md：詳情頁除 hostname 外，加 IP 與作業系統類型
+    const osBadge = document.createElement('span');
+    osBadge.className = 'lf-badge lf-badge--light border';
+    osBadge.textContent = detail.hostOs === 'linux' ? 'Linux' : 'Windows';
+    top.appendChild(osBadge);
+
+    if (detail.hostIpAddress) {
+        const ipSpan = document.createElement('span');
+        ipSpan.className = 'text-muted small font-monospace';
+        ipSpan.textContent = detail.hostIpAddress;
+        top.appendChild(ipSpan);
+    }
 
     if (!detail.aiAnalyzed) {
         const badge = document.createElement('span');

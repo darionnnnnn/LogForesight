@@ -82,6 +82,15 @@ public class RecordDetailDto
 {
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+
+    /// <summary>Sentinel 回報的主機名稱（NetIQ 來源專用）——NetIQ 主機以 IP 登錄，光看 HostName 認不出是哪台機器</summary>
+    public string? HostDisplayName { get; set; }
+
+    public string? HostIpAddress { get; set; }
+
+    /// <summary>'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    public string HostOs { get; set; } = "windows";
+
     public string HostRoleDesc { get; set; } = string.Empty;
     public string Date { get; set; } = string.Empty;
     public string RiskLevel { get; set; } = string.Empty;
@@ -249,8 +258,13 @@ public class HostDetailDto
 {
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
     public string RoleDesc { get; set; } = string.Empty;
     public string? IpAddress { get; set; }
+
+    /// <summary>'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    public string Os { get; set; } = "windows";
+
     public string? NetiqServer { get; set; }
     public DateTime? LastReportAt { get; set; }
     public List<string> GroupNames { get; set; } = new();

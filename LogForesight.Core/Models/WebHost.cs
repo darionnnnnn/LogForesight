@@ -50,6 +50,13 @@ public class WebHost
     /// <summary>'local'（本機直讀）| 'netiq'（自 Sentinel 取得）</summary>
     public string Source { get; set; } = "local";
 
+    /// <summary>
+    /// 'windows'（預設）| 'linux'。決定批次端套用哪個平台的規則面（docs/LINUX-RULES-PLAN.md §3）：
+    /// 本機來源恆 windows（行為零改變）；NetIQ 來源由匯入精靈/主機頁維護，
+    /// 能從 Sentinel 事件自動判別時預填，不能判別則需人工選擇，不做猜測預設。
+    /// </summary>
+    public string Os { get; set; } = "windows";
+
     public bool Active { get; set; } = true;
 
     /// <summary>

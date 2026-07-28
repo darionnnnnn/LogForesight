@@ -196,6 +196,10 @@ public class HostDto
     public string? NetiqServer { get; set; }
     public string RoleDesc { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+
+    /// <summary>'windows' | 'linux'——決定套用哪個平台的規則面（docs/LINUX-RULES-PLAN.md）</summary>
+    public string Os { get; set; } = "windows";
+
     public bool Active { get; set; }
     public long? MergedInto { get; set; }
     public DateTime? LastReportAt { get; set; }
@@ -223,6 +227,9 @@ public class SaveHostRequest
 
     [StringLength(500)]
     public string? RoleDesc { get; set; }
+
+    /// <summary>'windows'（預設）| 'linux'</summary>
+    public string Os { get; set; } = "windows";
 
     public bool Active { get; set; } = true;
 }

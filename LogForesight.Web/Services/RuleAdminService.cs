@@ -239,8 +239,15 @@ public class RuleAdminService : IRuleAdminService
 
     // ── 抑制設定 ─────────────────────────────────────────────────────────────
 
-    public List<RuleSuppressionDto> GetSuppressions() =>
-        _suppressions.LoadAll().Select(ToSuppressionDto).ToList();
+    public List<RuleSuppressionDto> GetSuppressions()
+    {
+        var platformByRuleId = LoadContent().Rules
+            .ToDictionary(r => r.Id, r => r.Platform, StringComparer.OrdinalIgnoreCase);
+
+        return _suppressions.LoadAll()
+            .Select(s => ToSuppressionDto(s, platformByRuleId.GetValueOrDefault(s.RuleId, "windows")))
+            .ToList();
+    }
 
     public void AddSuppression(string ruleId, AddSuppressionRequest request)
     {
@@ -336,6 +343,10 @@ public class RuleAdminService : IRuleAdminService
         if (!Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var severity))
             throw DomainException.Validation($"未知的嚴重度「{request.Severity}」。");
 
+        // Platform 一經建立不可變更（哪個分頁新增就是哪個平台）：既有規則沿用原值，
+        // 新規則採前端所在分頁送來的值，二者都不看使用者能否事後改動。
+        var platform = existing?.Platform ?? (request.Platform == "linux" ? "linux" : "windows");
+
         return new KnownIssueRule
         {
             Id = request.Id.Trim(),
@@ -343,10 +354,17 @@ public class RuleAdminService : IRuleAdminService
             Origin = existing?.Origin ?? "custom",
             Enabled = request.Enabled,
             Scope = existing?.Scope ?? "all",
-            MatchAllEventIds = request.MatchAllEventIds,
+            Platform = platform,
+            MatchAllEventIds = platform == "windows" && request.MatchAllEventIds,
             MatchFilter = existing?.MatchFilter,
-            SourcePattern = request.SourcePattern.Trim(),
-            EventIds = request.MatchAllEventIds ? Array.Empty<int>() : request.EventIds.Distinct().ToArray(),
+            SourcePattern = platform == "windows" ? request.SourcePattern.Trim() : string.Empty,
+            EventIds = platform == "windows" && !request.MatchAllEventIds
+                ? request.EventIds.Distinct().ToArray() : Array.Empty<int>(),
+            ProgramPattern = platform == "linux" ? request.ProgramPattern.Trim() : string.Empty,
+            EventNamePattern = platform == "linux" ? request.EventNamePattern.Trim() : string.Empty,
+            MessagePatterns = platform == "linux"
+                ? request.MessagePatterns.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()).ToArray()
+                : Array.Empty<string>(),
             Category = category,
             Severity = severity,
             ElevatesDayRisk = request.ElevatesDayRisk,
@@ -370,10 +388,14 @@ public class RuleAdminService : IRuleAdminService
             Origin = source.Origin,
             Enabled = enabled ?? source.Enabled,
             Scope = source.Scope,
+            Platform = source.Platform,
             MatchAllEventIds = source.MatchAllEventIds,
             MatchFilter = source.MatchFilter,
             SourcePattern = source.SourcePattern,
             EventIds = source.EventIds,
+            ProgramPattern = source.ProgramPattern,
+            EventNamePattern = source.EventNamePattern,
+            MessagePatterns = source.MessagePatterns,
             Category = source.Category,
             Severity = source.Severity,
             ElevatesDayRisk = source.ElevatesDayRisk,
@@ -400,6 +422,9 @@ public class RuleAdminService : IRuleAdminService
 
         Compare("來源比對", current.SourcePattern, seed.SourcePattern);
         Compare("Event ID", string.Join(", ", current.EventIds), string.Join(", ", seed.EventIds));
+        Compare("Program 比對", current.ProgramPattern, seed.ProgramPattern);
+        Compare("事件名比對", current.EventNamePattern, seed.EventNamePattern);
+        Compare("訊息子字串", string.Join(" / ", current.MessagePatterns), string.Join(" / ", seed.MessagePatterns));
         Compare("類別", current.Category.ToString(), seed.Category.ToString());
         Compare("嚴重度", current.Severity.ToString(), seed.Severity.ToString());
         Compare("命中即列為高風險日", current.ElevatesDayRisk.ToString(), seed.ElevatesDayRisk.ToString());
@@ -430,9 +455,13 @@ public class RuleAdminService : IRuleAdminService
             Id = rule.Id,
             Origin = rule.Origin,
             Enabled = rule.Enabled,
+            Platform = rule.Platform,
             SourcePattern = rule.SourcePattern,
             EventIds = rule.EventIds.ToList(),
             MatchAllEventIds = rule.MatchAllEventIds,
+            ProgramPattern = rule.ProgramPattern,
+            EventNamePattern = rule.EventNamePattern,
+            MessagePatterns = rule.MessagePatterns.ToList(),
             Category = rule.Category.ToString(),
             Severity = rule.Severity.ToString(),
             ElevatesDayRisk = rule.ElevatesDayRisk,
@@ -448,16 +477,17 @@ public class RuleAdminService : IRuleAdminService
             SeedHasNewerVersion = snapshot != null && snapshot.SeedVersion > currentSeedVersion,
             CanRestore = isBuiltin && snapshot != null,
             CanDelete = !isBuiltin,
-            Suppression = suppression == null ? null : ToSuppressionDto(suppression)
+            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform)
         };
     }
 
-    private static RuleSuppressionDto ToSuppressionDto(RuleSuppression suppression) => new()
+    private static RuleSuppressionDto ToSuppressionDto(RuleSuppression suppression, string platform) => new()
     {
         RuleId = suppression.RuleId,
         Host = suppression.Host,
         Reason = suppression.Reason,
         ExpiresAt = suppression.ExpiresAt,
-        IsExpired = suppression.ExpiresAt.HasValue && suppression.ExpiresAt.Value.Date < DateTime.Today
+        IsExpired = suppression.ExpiresAt.HasValue && suppression.ExpiresAt.Value.Date < DateTime.Today,
+        Platform = platform
     };
 }

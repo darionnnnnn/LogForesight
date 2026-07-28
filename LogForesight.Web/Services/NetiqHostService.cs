@@ -76,6 +76,9 @@ public class NetiqHostService : INetiqHostService
         if (!NetiqHostList.IsValidIp(ip))
             throw DomainException.Validation($"「{ip}」不是有效的 IP 位址。");
 
+        if (request.Os != "windows" && request.Os != "linux")
+            throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
+
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         // IP 重複刻意**不擋**：改用衝突佇列處理（決策：軟處理）。
@@ -92,6 +95,7 @@ public class NetiqHostService : INetiqHostService
             NetiqServer = sentinel,
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = NetiqHostList.NetiqSource,
+            Os = request.Os,
             Active = true,
             GroupIds = existing?.GroupIds ?? new List<long>(),
             OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
@@ -100,8 +104,8 @@ public class NetiqHostService : INetiqHostService
         _audit.Record(
             action: AuditActions.HostUpdate,
             summary: existing == null
-                ? $"新增 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}）"
-                : $"更新 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}）",
+                ? $"新增 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}、OS：{request.Os}）"
+                : $"更新 NetIQ 主機 {ip}（Sentinel：{sentinel ?? "待歸屬"}、OS：{request.Os}）",
             targetKind: "host",
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.NetiqServer, saved.RoleDesc });
@@ -111,6 +115,9 @@ public class NetiqHostService : INetiqHostService
 
     public BulkAddResultDto BulkAddHosts(BulkAddNetiqHostsRequest request)
     {
+        if (request.Os != "windows" && request.Os != "linux")
+            throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
+
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         var result = new BulkAddResultDto();
@@ -147,6 +154,7 @@ public class NetiqHostService : INetiqHostService
                 // 角色描述留空時保留既有值：重貼一次清單不該把已經填好的描述洗掉
                 RoleDesc = parsed.RoleDesc.Length > 0 ? parsed.RoleDesc : existing?.RoleDesc ?? "",
                 Source = NetiqHostList.NetiqSource,
+                Os = request.Os,
                 Active = true,
                 GroupIds = existing?.GroupIds ?? new List<long>(),
                 OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
@@ -180,6 +188,7 @@ public class NetiqHostService : INetiqHostService
             NetiqServer = host.NetiqServer,
             RoleDesc = host.RoleDesc,
             Source = host.Source,
+            Os = host.Os,
             Active = active,
             GroupIds = host.GroupIds,
             OwnerUserIds = host.OwnerUserIds
@@ -242,6 +251,7 @@ public class NetiqHostService : INetiqHostService
             NetiqServer = host.NetiqServer,
             RoleDesc = host.RoleDesc,
             Source = host.Source,
+            Os = host.Os,
             Active = host.Active,
             MergedInto = host.MergedInto,
             LastReportAt = host.LastReportAt,

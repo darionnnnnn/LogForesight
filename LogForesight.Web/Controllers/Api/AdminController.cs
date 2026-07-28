@@ -86,6 +86,7 @@ public class AdminController : ControllerBase
         [FromQuery] string status = "",
         [FromQuery] string? sentinel = null,
         [FromQuery] string? groupIds = null,
+        [FromQuery] string? os = null,
         [FromQuery] string sort = "name",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
@@ -100,6 +101,7 @@ public class AdminController : ControllerBase
                 : groupIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
                     .Select(s => long.TryParse(s, out var id) ? id : (long?)null)
                     .Where(id => id.HasValue).Select(id => id!.Value).ToList(),
+            Os = os,
             Sort = sort,
             Page = page,
             PageSize = pageSize

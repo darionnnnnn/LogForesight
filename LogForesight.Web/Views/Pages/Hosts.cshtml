@@ -38,6 +38,11 @@
             <span class="lf-toolbar__group-label">主機群組</span>
             <div class="lf-toolbar__chips" id="host-group-chips"></div>
         </div>
+        <div class="lf-toolbar__divider"></div>
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">作業系統</span>
+            <div class="lf-toolbar__chips" id="host-os-chips"></div>
+        </div>
     </div>
 </div>
 
@@ -85,6 +90,14 @@
                             <div class="form-text">例如「AD 網域控制站」，會影響 AI 判讀事件的嚴重性。</div>
                         </div>
                         <div class="col-md-6">
+                            <label for="host-os" class="form-label">作業系統類型</label>
+                            <select class="form-select" id="host-os">
+                                <option value="windows">Windows</option>
+                                <option value="linux">Linux</option>
+                            </select>
+                            <div class="form-text">決定套用哪個平台的規則面（規則維護頁的 Windows規則／Linux規則）。</div>
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">主機群組</label>
                             <div id="host-groups" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
                             <div class="form-text">決定哪些部門看得到這台主機。<strong>未分組時只有 admin 看得到。</strong></div>
@@ -129,6 +142,14 @@
                         <select class="form-select" id="bulk-netiq">
                             <option value="">（待歸屬，由批次自動確認）</option>
                         </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulk-os" class="form-label">作業系統類型</label>
+                        <select class="form-select" id="bulk-os">
+                            <option value="windows">Windows</option>
+                            <option value="linux">Linux</option>
+                        </select>
+                        <div class="form-text">整批同一種作業系統；混合平台請分兩批貼上。</div>
                     </div>
                     <div class="mb-2">
                         <label for="bulk-lines" class="form-label">主機清單</label>

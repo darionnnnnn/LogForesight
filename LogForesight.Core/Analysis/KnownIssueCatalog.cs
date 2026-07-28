@@ -49,8 +49,34 @@ public class KnownIssueRule
     /// <summary>為未來「同規則同主機下，只關閉部分比對範圍」的抑制粒度卡位，此版本必須為 null。</summary>
     public string? MatchFilter { get; init; }
 
+    /// <summary>"windows"（預設，Event Log 來源＋Event ID 比對）或 "linux"（syslog program＋
+    /// 事件名/訊息比對，見 <see cref="ProgramPattern"/> 等三欄位）。docs/LINUX-RULES-PLAN.md D1：
+    /// 雙平台共用同一規則模型與儲存，不分兩套 store。舊 rules.json 沒有這個欄位時，
+    /// init 預設值就是「windows」——不需要額外的載入期正規化程式碼。</summary>
+    public string Platform { get; init; } = "windows";
+
     public string SourcePattern { get; init; } = string.Empty;
     public int[] EventIds { get; init; } = Array.Empty<int>();
+
+    // ── Linux 專用比對欄位（docs/LINUX-RULES-PLAN.md §1.1/§1.2）─────────────────
+    // Windows 規則（Platform="windows"）這三欄恆空；Linux 規則的 SourcePattern/EventIds/
+    // MatchAllEventIds 恆空/false（由 RuleValidator 平台條件式驗證把關）。
+    // 比對語意是兩條路的 OR：EventNamePattern 命中，或 ProgramPattern 命中且
+    // （MessagePatterns 為空或其中任一子字串命中）——見 KnownIssueCatalog.FindLinuxRule。
+
+    /// <summary>Linux：syslog identifier／process 名稱比對（如 sshd、sudo、kernel），
+    /// 語意與 SourcePattern 相同（不分大小寫 Contains）。</summary>
+    public string ProgramPattern { get; init; } = string.Empty;
+
+    /// <summary>Linux：Sentinel 正規化事件名比對（collector 有做正規化的環境用這條路，
+    /// 不需要另外比對訊息內容，最穩定）。可空——只靠 ProgramPattern+MessagePatterns 的規則不填。</summary>
+    public string EventNamePattern { get; init; } = string.Empty;
+
+    /// <summary>Linux：訊息子字串清單，OR 語意、不分大小寫 Contains，任一命中即算。
+    /// 空陣列＝不看訊息內容，ProgramPattern 命中就算（如帳號異動類事件）。
+    /// 刻意用子字串而非 regex——人工在 Web 頁維護時所見即所得，見 docs/LINUX-RULES-PLAN.md §1.2。</summary>
+    public string[] MessagePatterns { get; init; } = Array.Empty<string>();
+
     public IssueCategory Category { get; init; }
 
     /// <summary>
@@ -185,6 +211,13 @@ public static class KnownIssueCatalog
 
         foreach (var rule in rules)
         {
+            // Linux 規則沒有頻道 watchlist 的概念（見 docs/LINUX-RULES-PLAN.md §4.2）；
+            // 顯式排除，不依賴「SourcePattern 空字串 Contains 恆真但 EventIds 恆空」的隱含行為。
+            if (rule.Platform != "windows")
+            {
+                continue;
+            }
+
             bool sourceMatches = providerProbe.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase);
             if (!sourceMatches || rule.MatchAllEventIds)
             {
@@ -201,17 +234,58 @@ public static class KnownIssueCatalog
     }
 
     /// <summary>
-    /// 依 (Source, EventId) 找出命中的規則（不含次數門檻判斷）。與 Classify 共用比對邏輯，
+    /// 依 (Source, EventId) 找出命中的 Windows 規則（不含次數門檻判斷）。與 Classify 共用比對邏輯，
     /// 供報告端在規則命中類別直接渲染靜態知識內容，不需要重新呼叫 AI 深入分析。
+    /// 明確只看 Platform="windows" 規則——Linux 規則的 SourcePattern 恆空，
+    /// 顯式排除比依賴「空字串 Contains 恆真但 EventIds 恆空」的隱含行為清楚（docs/LINUX-RULES-PLAN.md §1.2）。
     /// </summary>
     public static KnownIssueRule? FindRule(string source, int eventId)
     {
         foreach (var rule in Rules)
         {
+            if (rule.Platform != "windows")
+            {
+                continue;
+            }
+
             bool sourceMatch = source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase);
             bool idMatch = rule.MatchAllEventIds || rule.EventIds.Contains(eventId);
 
             if (sourceMatch && idMatch)
+            {
+                return rule;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 依 (program, 正規化事件名, 訊息) 找出命中的 Linux 規則（不含次數門檻判斷）。
+    /// 比對語意（docs/LINUX-RULES-PLAN.md §1.2）是兩條路的 OR，讓同一份種子同時支援
+    /// 「Sentinel 有做事件正規化」與「只收到 raw syslog」兩種環境：
+    ///   (a) EventNamePattern 非空且命中該事件的正規化事件名
+    ///   (b) ProgramPattern 非空且命中 program，且 MessagePatterns 為空或其中任一子字串命中訊息
+    /// </summary>
+    public static KnownIssueRule? FindLinuxRule(string program, string? eventName, string message)
+    {
+        foreach (var rule in Rules)
+        {
+            if (rule.Platform != "linux")
+            {
+                continue;
+            }
+
+            bool eventNameMatch = !string.IsNullOrEmpty(rule.EventNamePattern) &&
+                !string.IsNullOrEmpty(eventName) &&
+                eventName.Contains(rule.EventNamePattern, StringComparison.OrdinalIgnoreCase);
+
+            bool programMatch = !string.IsNullOrEmpty(rule.ProgramPattern) &&
+                program.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase) &&
+                (rule.MessagePatterns.Length == 0 ||
+                 rule.MessagePatterns.Any(p => message.Contains(p, StringComparison.OrdinalIgnoreCase)));
+
+            if (eventNameMatch || programMatch)
             {
                 return rule;
             }

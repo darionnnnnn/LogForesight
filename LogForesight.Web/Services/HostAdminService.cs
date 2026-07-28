@@ -26,6 +26,9 @@ public class HostSearchRequest
     public string? Sentinel { get; set; }
     public List<long>? GroupIds { get; set; }
 
+    /// <summary>空白＝全部；'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    public string? Os { get; set; }
+
     /// <summary>name | lastReport</summary>
     public string Sort { get; set; } = "name";
 
@@ -101,6 +104,11 @@ public class HostAdminService : IHostAdminService
             filtered = filtered.Where(h => h.GroupIds.Any(wantedGroups.Contains));
         }
 
+        if (!string.IsNullOrWhiteSpace(request.Os))
+        {
+            filtered = filtered.Where(h => string.Equals(h.Os, request.Os, StringComparison.OrdinalIgnoreCase));
+        }
+
         if (request.Status == "conflict")
         {
             // IP 衝突需要跨主機比對，沿用既有的 NetiqHostList 衝突偵測（NetiqHostService.GetOverview 已算好）
@@ -169,6 +177,9 @@ public class HostAdminService : IHostAdminService
             }
         }
 
+        if (request.Os != "windows" && request.Os != "linux")
+            throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
+
         var existing = _hosts.FindByName(hostName);
         var isNew = existing == null;
 
@@ -183,6 +194,7 @@ public class HostAdminService : IHostAdminService
             NetiqServer = sentinel?.Name,
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = existing?.Source ?? "local",
+            Os = request.Os,
             Active = request.Active,
             // 群組與負責人由專屬端點維護，避免「更新角色描述」意外清掉它們
             GroupIds = existing?.GroupIds ?? new List<long>(),
@@ -196,7 +208,7 @@ public class HostAdminService : IHostAdminService
                 : $"更新主機 {saved.HostName}：角色描述「{saved.RoleDesc}」、狀態「{(saved.Active ? "啟用" : "停用")}」",
             targetKind: "host",
             targetId: saved.HostId.ToString(),
-            detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Active });
+            detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Active });
 
         return ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId));
     }
@@ -317,6 +329,7 @@ public class HostAdminService : IHostAdminService
         NetiqServer = host.NetiqServer,
         RoleDesc = host.RoleDesc,
         Source = host.Source,
+        Os = host.Os,
         Active = host.Active,
         MergedInto = host.MergedInto,
         LastReportAt = host.LastReportAt,

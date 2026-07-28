@@ -27,6 +27,7 @@ public static class SelfTestRunner
         RunRuleLoadingChecks();
 
         RunRuleLayerChecks();
+        RunLinuxRuleLayerChecks();
         RunTrendLayerChecks();
         RunSlowTrendLayerChecks();
         RunCorrelationLayerChecks();
@@ -162,9 +163,12 @@ public static class SelfTestRunner
 
     private static void RunRuleLayerChecks()
     {
-        Console.WriteLine("-- 規則層（KnownIssueCatalog.Rules，共 " + KnownIssueCatalog.Rules.Count + " 條）--");
+        // Linux 規則（docs/LINUX-RULES-PLAN.md）不適用這裡的 Windows Event Log 語意
+        // （SourcePattern/EventIds 對它們恆空），走獨立的 RunLinuxRuleLayerChecks。
+        var windowsRules = KnownIssueCatalog.Rules.Where(r => r.Platform == "windows").ToList();
+        Console.WriteLine("-- 規則層（KnownIssueCatalog.Rules，共 " + windowsRules.Count + " 條）--");
 
-        foreach (var rule in KnownIssueCatalog.Rules)
+        foreach (var rule in windowsRules)
         {
             var eventId = rule.EventIds.Length > 0 ? rule.EventIds[0] : 9999;
             var source = rule.SourcePattern;
@@ -190,6 +194,47 @@ public static class SelfTestRunner
                     sigBelow == null ? "未產生對應簽章" : $"實際={sigBelow.Severity}");
             }
         }
+    }
+
+    /// <summary>
+    /// Linux 規則層（docs/LINUX-RULES-PLAN.md §6）：規則比對是純函數
+    /// （<see cref="KnownIssueCatalog.FindLinuxRule"/>），不需要真正的取數管線就能驗證——
+    /// 逐條規則各自驗證它宣告的每一條比對路（事件名路／program+訊息路），
+    /// 兩條路都沒宣告是驗證期就會被 RuleValidator 擋下的不合格規則，這裡不重複檢查。
+    /// </summary>
+    private static void RunLinuxRuleLayerChecks()
+    {
+        var linuxRules = KnownIssueCatalog.Rules.Where(r => r.Platform == "linux").ToList();
+        Console.WriteLine($"\n-- Linux 規則層（KnownIssueCatalog.FindLinuxRule，共 {linuxRules.Count} 條）--");
+
+        foreach (var rule in linuxRules)
+        {
+            if (!string.IsNullOrEmpty(rule.EventNamePattern))
+            {
+                var hit = KnownIssueCatalog.FindLinuxRule("unrelated-program", rule.EventNamePattern, "");
+                Check($"{rule.Id}：事件名路命中（program 故意給不相關值）",
+                    hit?.Id == rule.Id, hit == null ? "未命中任何規則" : $"實際命中={hit.Id}");
+            }
+
+            if (!string.IsNullOrEmpty(rule.ProgramPattern))
+            {
+                var message = rule.MessagePatterns.Length > 0 ? rule.MessagePatterns[0] : "任意訊息內容";
+                var hit = KnownIssueCatalog.FindLinuxRule(rule.ProgramPattern, null, message);
+                Check($"{rule.Id}：program{(rule.MessagePatterns.Length > 0 ? "+訊息" : "")}路命中",
+                    hit?.Id == rule.Id, hit == null ? "未命中任何規則" : $"實際命中={hit.Id}");
+
+                if (rule.MessagePatterns.Length > 0)
+                {
+                    var noHit = KnownIssueCatalog.FindLinuxRule(rule.ProgramPattern, null, "與任何 MessagePatterns 都不相關的內容 zzz");
+                    Check($"{rule.Id}：program 命中但訊息不符時不命中此規則",
+                        noHit?.Id != rule.Id, noHit == null ? "" : $"意外命中={noHit.Id}");
+                }
+            }
+        }
+
+        var garbage = KnownIssueCatalog.FindLinuxRule("totally-unrelated-program-xyz", null, "totally unrelated message xyz");
+        Check("完全不相關的 program/訊息不命中任何 Linux 規則", garbage == null,
+            garbage == null ? "" : $"意外命中={garbage.Id}");
     }
 
     /// <summary>
