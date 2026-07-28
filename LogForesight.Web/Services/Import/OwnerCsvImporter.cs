@@ -156,21 +156,14 @@ public class OwnerCsvImporter : ICsvImporter
             if (host.OwnerUserIds.OrderBy(x => x).SequenceEqual(ownerIds.OrderBy(x => x)))
                 continue;   // 未變更不寫入（與預覽的 Unchanged 對齊）
 
-            _hosts.Upsert(new WebHost
-            {
-                HostName = host.HostName,
-                DisplayName = host.DisplayName,
-                IpAddress = host.IpAddress,
-                IpUpdatedAt = host.IpUpdatedAt,
-                NetiqServer = host.NetiqServer,
-                RoleDesc = host.RoleDesc,
-                Source = host.Source,
-                Active = host.Active,
-                MergedInto = host.MergedInto,
-                LastReportAt = host.LastReportAt,
-                GroupIds = host.GroupIds,
-                OwnerUserIds = ownerIds
-            });
+            // 走 SetOwners 而不是 Upsert：owners.csv 的職責只有負責人清單，這個方法剛好只改那一個欄位。
+            // 這裡原本手刻 new WebHost 逐欄回填後交給 Upsert，而 Upsert 的既存分支會用傳入物件覆寫
+            // 一整組欄位——漏抄的三個（SentinelId、Os、OrphanedFromSentinel）於是被靜默重置：
+            // SentinelId 掉成 null 讓主機落入「待歸屬」、從此不進日常輪巡（畫面上還在，實際沒人在看），
+            // Os 退回 windows 讓 Linux 主機套錯規則面，OrphanedFromSentinel 遺失則讓孤兒主機無法復活。
+            // 逐欄複製漏抄在本專案已有前例（RuleImporter 漏抄 ElevatesDayRisk，見 docs/HISTORY.md），
+            // 改用意圖精準的 SetOwners 就不必再維護那份清單，WebHost 日後新增欄位也不會再漏。
+            _hosts.SetOwners(host.HostId, ownerIds);
             result.Updated++;
         }
 

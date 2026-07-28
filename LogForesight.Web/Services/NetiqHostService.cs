@@ -175,6 +175,19 @@ public class NetiqHostService : INetiqHostService
         return result;
     }
 
+    /// <summary>
+    /// 人工啟用／停用主機。
+    ///
+    /// **刻意不傳 <c>OrphanedFromSentinel</c>（不是漏抄）**：`Upsert` 的既存分支會用傳入物件
+    /// 覆寫該欄位，因此這裡不填＝標記被清除，而這正是要的行為——設計明訂「手動重新啟用一台
+    /// 孤兒主機時一併清除 OrphanedFromSentinel（人已表態，標記使命結束）」，見 docs/HISTORY.md
+    /// 「2026-07-23」段 §1.7。孤兒標記的用途只是讓汰換 Sentinel 時能在掃描精靈裡認出「這台
+    /// 原屬某台已移除的 Sentinel」，人一旦自己動手處置過，這個標記就沒有意義了。
+    ///
+    /// 對照 <c>OwnerCsvImporter</c>：那裡曾因手刻 WebHost 漏抄欄位而靜默清掉 SentinelId／Os，
+    /// 已改走 <see cref="IHostStore.SetOwners"/>。兩者看起來像同一種寫法，但語意相反——
+    /// 這裡是「要覆寫」，那裡是「不該覆寫」，做逐欄比對的體檢時別把這裡一併「修」掉。
+    /// </summary>
     public HostDto SetActive(long hostId, bool active)
     {
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");

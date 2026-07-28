@@ -580,3 +580,123 @@ public class OwnerCsvImporterTests
         Assert.Equal(new[] { other.UserId }, _hosts.FindByName("SRV02")!.OwnerUserIds);
     }
 }
+
+/// <summary>
+/// owners.csv 的職責只有「更新負責人清單」，不得動到監控歸屬與平台判定。
+///
+/// **為什麼這組跑在真實 <see cref="HostStore"/> 而不是測試替身上**：曾經的 bug 是 Apply 手刻
+/// <c>new WebHost { ... }</c> 交給 <see cref="IHostStore.Upsert"/>，漏抄了 Upsert 既存分支
+/// 實際會覆寫的 <c>SentinelId</c>／<c>Os</c>／<c>OrphanedFromSentinel</c>——最嚴重的是 SentinelId
+/// 被清成 null 後主機落入「待歸屬」、從此不進日常輪巡。這個症狀源自真實 Upsert 的逐欄覆寫語意，
+/// 而 <c>FakeHostStore.Upsert</c> 的欄位清單與真實實作並非逐位相同（例如它不覆寫 <c>Os</c>），
+/// 用替身寫這組測試會在 bug 還在的情況下照樣綠燈——那正是它當初躲過測試的方式。
+/// </summary>
+public class OwnerCsvImporterHostFieldTests : IDisposable
+{
+    private readonly EfSqliteFixture _fx = new();
+    private readonly IHostStore _hosts;
+    private readonly FakeUserStore _users = new();
+
+    public OwnerCsvImporterHostFieldTests() => _hosts = new HostStore(_fx.Blob("hosts"));
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private OwnerCsvImporter Importer => new(_hosts, _users);
+
+    private static CsvTable Parse(string content) =>
+        CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
+
+    /// <summary>
+    /// 每個欄位都刻意填「非型別預設」的值，漏抄才看得出來（例如 Os 不填 linux 就與預設的
+    /// windows 分不出差別）。情境取孤兒主機：被系統停用、留著標記等汰換 Sentinel 時復活。
+    /// </summary>
+    private WebHost AddHost() => _hosts.Upsert(new WebHost
+    {
+        HostName = "10.1.2.12",
+        DisplayName = "SRV-DB-01",
+        IpAddress = "10.1.2.12",
+        IpUpdatedAt = new DateTime(2026, 7, 20, 3, 0, 0),
+        SentinelId = 42,
+        NetiqServer = "SENTINEL-A",
+        RoleDesc = "OO部門資料庫",
+        Source = "netiq",
+        Os = WebHost.OsLinux,
+        Active = false,
+        GroupIds = new List<long> { 3, 7 },
+        OwnerUserIds = new List<long> { 11 },
+        OrphanedFromSentinel = "SENTINEL-OLD"
+    });
+
+    private void ImportOwner(string account)
+    {
+        var table = Parse($"host_name,owner_account\r\n10.1.2.12,{account}\r\n");
+        var plan = Importer.BuildPlan(table, "owners.csv");
+        Assert.True(plan.CanApply);
+        Assert.Equal(1, Importer.Apply(plan, table).Updated);
+    }
+
+    /// <summary>
+    /// 三個曾經被漏抄的欄位各自點名——反射版測試看得出「有欄位變了」，但看不出哪一個變了
+    /// 會造成什麼後果，這裡把後果寫在斷言旁邊。
+    /// </summary>
+    [Fact]
+    public void 匯入負責人_不動Sentinel歸屬與OS與孤兒標記()
+    {
+        var host = AddHost();
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        ImportOwner("DOMAIN\\a");
+
+        var after = _hosts.Get(host.HostId)!;
+        // 清成 null 會讓這台落入「待歸屬」、從此不進日常輪巡——看起來還在監控，實際沒人在看
+        Assert.Equal(42, after.SentinelId);
+        // 退回 windows 會讓 Linux 主機整個換成 Windows 規則面
+        Assert.Equal(WebHost.OsLinux, after.Os);
+        // 標記遺失後，汰換 Sentinel 時這台無法再用「重疊」分類復活
+        Assert.Equal("SENTINEL-OLD", after.OrphanedFromSentinel);
+    }
+
+    /// <summary>
+    /// 逐欄反射比對：除 OwnerUserIds 外每個欄位都必須與匯入前逐位相同。
+    /// 與 <c>覆蓋builtin時除Enabled與修改追蹤外每一個欄位都取自種子</c> 同一個作法——
+    /// 點名式斷言只釘得住今天已知的欄位，<see cref="WebHost"/> 日後新增欄位時要照樣紅燈，
+    /// 得靠反射把「全部欄位」都納進來。
+    /// </summary>
+    [Fact]
+    public void 匯入負責人_除負責人外每一個欄位都不變()
+    {
+        var host = AddHost();
+        _users.Upsert(new WebUser { Account = "DOMAIN\\a" });
+
+        // Get 每次都自 JSON 重新反序列化，這份快照與 store 內的實體互不相干
+        var before = _hosts.Get(host.HostId)!;
+
+        ImportOwner("DOMAIN\\a");
+
+        var after = _hosts.Get(host.HostId)!;
+        foreach (var property in typeof(WebHost).GetProperties().Where(p => p.CanRead && p.GetIndexParameters().Length == 0))
+        {
+            if (property.Name == nameof(WebHost.OwnerUserIds)) continue;
+
+            var expected = property.GetValue(before);
+            var actual = property.GetValue(after);
+
+            if (expected is System.Collections.IEnumerable expectedItems and not string)
+            {
+                Assert.True(expectedItems.Cast<object>().SequenceEqual(((System.Collections.IEnumerable)actual!).Cast<object>()),
+                    $"欄位 {property.Name} 被 owners.csv 匯入改動了——匯入負責人只該改 OwnerUserIds");
+                continue;
+            }
+
+            Assert.True(Equals(expected, actual),
+                $"欄位 {property.Name} 被 owners.csv 匯入改動了（匯入前={expected}、匯入後={actual}）——匯入負責人只該改 OwnerUserIds");
+        }
+
+        // 負責人本身確實有換掉，否則上面的「都沒變」是因為根本沒寫入
+        Assert.Equal(new[] { _users.FindByAccount("DOMAIN\\a")!.UserId }, after.OwnerUserIds);
+    }
+}
