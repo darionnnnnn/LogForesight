@@ -59,15 +59,6 @@ public class SentinelClientException : Exception
     public SentinelClientException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
-public interface ISentinelClient : IAsyncDisposable
-{
-    /// <summary>
-    /// 建立 job → 輪詢至終態 → 逐頁取回結果 → 刪除 job 的完整生命週期。
-    /// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-PLAN.md §5「job 用完即刪」）。
-    /// </summary>
-    Task<SentinelSearchResult> SearchAsync(SentinelSearchRequest request, CancellationToken ct = default);
-}
-
 /// <summary>
 /// Sentinel REST API 封裝：SAML token 認證生命週期＋event-search job 生命週期
 /// （docs/NETIQ-API-PLAN.md §1、§3.1）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
@@ -75,8 +66,11 @@ public interface ISentinelClient : IAsyncDisposable
 /// 單一 instance＝單一併發佇列（同 <see cref="AIService"/> 慣例）：同一時間只有一個 job 在跑，
 /// 跨 Sentinel 平行由呼叫端各自建立一個 client 實例達成。token 整個 instance 生命週期內重用，
 /// <see cref="DisposeAsync"/> 時登出。
+///
+/// 建立 job → 輪詢至終態 → 逐頁取回結果 → 刪除 job 的完整生命週期（<see cref="SearchAsync"/>）。
+/// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-PLAN.md §5「job 用完即刪」）。
 /// </summary>
-public sealed class SentinelClient : ISentinelClient
+public sealed class SentinelClient : IAsyncDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

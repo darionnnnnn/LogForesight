@@ -13,19 +13,13 @@ public static class HostListCli
         Console.WriteLine($"清單來源：{provider.Description}");
         Console.WriteLine();
 
-        return PrintHostList(provider) ? 0 : 1;
+        PrintHostList(provider);
+        return 0;
     }
 
-    private static bool PrintHostList(IHostListProvider provider)
+    private static void PrintHostList(StoreHostListProvider provider)
     {
         var list = provider.GetHostList();
-
-        if (!list.SourceUsable)
-        {
-            PrintWarnings(list.Warnings);
-            Console.WriteLine("清單來源不可用，機房分析會跳過（本機分析不受影響）。");
-            return false;
-        }
 
         if (list.TotalHosts == 0)
         {
@@ -51,7 +45,6 @@ public static class HostListCli
         }
 
         PrintWarnings(list.Warnings);
-        return true;
     }
 
     private static string OsLabel(string os) =>

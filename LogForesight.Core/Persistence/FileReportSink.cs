@@ -13,13 +13,13 @@ public class FileReportSink : IReportSink
         _exportDir = exportDir ?? Path.Combine(AppContext.BaseDirectory, "export");
     }
 
-    public async Task<ReportRef> WriteAsync(ReportKind kind, string host, string fileName, string content)
+    public async Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
     {
         var dir = string.IsNullOrEmpty(host) ? _exportDir : Path.Combine(_exportDir, host);
         Directory.CreateDirectory(dir);
 
         var path = Path.Combine(dir, fileName);
         await File.WriteAllTextAsync(path, content, Encoding.UTF8);
-        return new ReportRef(path);
+        return path;
     }
 }

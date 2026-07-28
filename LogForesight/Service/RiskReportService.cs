@@ -114,9 +114,9 @@ public class RiskReportService
         }
 
         var fileName = BuildFileName(record.Date, record.RiskLevel, sections);
-        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections, activeSuppressions));
-        Log.Info("風險報告已寫入：{Path}", reportRef.Value);
-        return reportRef;
+        var reportPath = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections, activeSuppressions));
+        Log.Info("風險報告已寫入：{Path}", reportPath);
+        return reportPath;
     }
 
     /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）</summary>

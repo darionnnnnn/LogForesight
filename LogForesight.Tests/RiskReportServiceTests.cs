@@ -20,10 +20,10 @@ public class RiskReportServiceTests
     {
         public string? LastContent { get; private set; }
 
-        public Task<ReportRef> WriteAsync(ReportKind kind, string host, string fileName, string content)
+        public Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
         {
             LastContent = content;
-            return Task.FromResult<ReportRef>(new ReportRef($"fake/{fileName}"));
+            return Task.FromResult($"fake/{fileName}");
         }
     }
 

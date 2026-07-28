@@ -410,8 +410,8 @@ if (permissionCheck.Alerts.Count > 0)
     }
 
     var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
-    var permissionReportRef = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
-    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportRef.Value}");
+    var permissionReportPath = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
+    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
 
     // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
     // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。

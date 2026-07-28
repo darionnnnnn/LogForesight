@@ -13,8 +13,6 @@ public interface IUserAdminService
 {
     List<UserDto> GetUsers();
 
-    List<UserGroupDto> GetGroups();
-
     UserDto SaveUser(SaveUserRequest request);
 
     UserDto SetUserGroups(long userId, IEnumerable<long> groupIds);
@@ -46,25 +44,6 @@ public class UserAdminService : IUserAdminService
         return _users.GetAll()
             .OrderBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
             .Select(u => ToDto(u, groupsById))
-            .ToList();
-    }
-
-    public List<UserGroupDto> GetGroups()
-    {
-        var users = _users.GetAll();
-
-        return _groups.GetAll()
-            .OrderByDescending(g => g.Builtin)
-            .ThenBy(g => g.GroupName, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new UserGroupDto
-            {
-                GroupId = g.GroupId,
-                GroupName = g.GroupName,
-                Role = g.Role.ToString(),
-                Builtin = g.Builtin,
-                Active = g.Active,
-                MemberCount = users.Count(u => u.GroupIds.Contains(g.GroupId))
-            })
             .ToList();
     }
 

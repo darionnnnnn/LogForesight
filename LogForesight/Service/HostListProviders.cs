@@ -18,29 +18,14 @@ public class HostListResult
     /// </summary>
     public List<string> Warnings { get; } = new();
 
-    /// <summary>
-    /// false = 清單來源本身不可用（Txt 模式下目錄不存在或沒有 txt）。
-    /// 與「清單是空的」要分得開：前者是設定沒完成，後者是真的沒有主機要查。
-    /// </summary>
-    public bool SourceUsable { get; set; } = true;
-
     public int TotalHosts => ByServer.Values.Sum(list => list.Count);
 }
 
 /// <summary>
-/// 機房分析的主機清單來源。主機清單的主人固定為 Web 主機頁維護
-/// （Txt 清單模式已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12）。
+/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12），
+/// 直接讀主機清單資料，不做任何同步。
 /// </summary>
-public interface IHostListProvider
-{
-    /// <summary>供 console/log 顯示的來源描述</summary>
-    string Description { get; }
-
-    HostListResult GetHostList();
-}
-
-/// <summary>Web 主機頁維護的清單：直接讀主機清單資料，不做任何同步</summary>
-public class StoreHostListProvider : IHostListProvider
+public class StoreHostListProvider
 {
     private readonly IHostStore _hosts;
     private readonly ISentinelStore _sentinels;

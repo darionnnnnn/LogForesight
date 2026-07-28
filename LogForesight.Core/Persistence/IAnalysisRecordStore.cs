@@ -33,9 +33,16 @@ public interface IAnalysisRecordReader
     DateTime? LastWeeklyCheckupDate();
 }
 
-/// <summary>寫入每日分析紀錄。契約：append-only，且不保證同日去重——去重由呼叫端以 <see cref="IAnalysisRecordReader.HasRecord"/> 防護</summary>
-public interface IAnalysisRecordWriter
+/// <summary>
+/// 分析 pipeline 實際使用的完整存取介面（讀+寫合一）。查詢用途的消費端應改依賴
+/// 上面較窄的 <see cref="IAnalysisRecordReader"/>。
+/// </summary>
+public interface IAnalysisRecordStore : IAnalysisRecordReader
 {
+    /// <summary>供 console/log 顯示的位置描述（今日為檔案完整路徑，未來 DB 後端可能是連線字串摘要）</summary>
+    string Location { get; }
+
+    /// <summary>寫入每日分析紀錄。契約：append-only，且不保證同日去重——去重由呼叫端以 <see cref="IAnalysisRecordReader.HasRecord"/> 防護</summary>
     void Append(DailyAnalysisRecord record);
 
     /// <summary>清除超過保留天數的舊紀錄，回傳清除筆數</summary>
@@ -47,13 +54,4 @@ public interface IAnalysisRecordWriter
     /// 找不到對應日期的紀錄時安靜略過（理論上不應發生，因為呼叫前一定先做過當日分析）。
     /// </summary>
     void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup);
-}
-
-/// <summary>
-/// 分析 pipeline 實際使用的完整存取介面（讀+寫合一）。查詢用途的消費端應改依賴上面兩個較窄的介面。
-/// </summary>
-public interface IAnalysisRecordStore : IAnalysisRecordReader, IAnalysisRecordWriter
-{
-    /// <summary>供 console/log 顯示的位置描述（今日為檔案完整路徑，未來 DB 後端可能是連線字串摘要）</summary>
-    string Location { get; }
 }
