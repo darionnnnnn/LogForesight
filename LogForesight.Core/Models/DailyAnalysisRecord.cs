@@ -36,7 +36,7 @@ public class DailyAnalysisRecord
     public string RiskLevel { get; set; } = string.Empty;
 
     /// <summary>
-    /// 日風險等級的判定依據代碼（docs/WEB-FEEDBACK-2-PLAN.md #11）：null＝本欄位問世前寫入的
+    /// 日風險等級的判定依據代碼（docs/HISTORY.md #11）：null＝本欄位問世前寫入的
     /// 舊紀錄（同 <see cref="HostId"/>=0 的降級慣例，前端顯示通用說明）。
     /// 值域：<c>rule:{Source} EventId {EventId}</c>（命中重大旗標規則）／<c>correlation</c>
     /// （關聯訊號帶旗標）／<c>trend</c>（頻率異常）／<c>high_issue:{Source} EventId {EventId}</c>
@@ -90,7 +90,7 @@ public class DailyAnalysisRecord
     public List<string> UncoveredChecks { get; set; } = new();
 
     /// <summary>
-    /// 涵蓋率缺口（docs/SHARED-STANDARDS-PLAN.md S6）：事件來源不完整，或 Security log 未能讀取。
+    /// 涵蓋率缺口（docs/HISTORY.md S6）：事件來源不完整，或 Security log 未能讀取。
     /// 不序列化——由 <see cref="DataIncomplete"/>／<see cref="SecurityLogAvailable"/> 算出，
     /// 避免另存一份可能與來源欄位漂移不同步的值。取代原本 Dashboard／Report 各自寫一次的判斷式。
     /// </summary>
@@ -98,7 +98,7 @@ public class DailyAnalysisRecord
     public bool HasCoverageGap => DataIncomplete || SecurityLogAvailable == false;
 
     /// <summary>
-    /// 因全站嚴重度顯示設定（SiteHidden）被過濾掉的問題數（docs/WEB-FEEDBACK-2-PLAN.md #11）。
+    /// 因全站嚴重度顯示設定（SiteHidden）被過濾掉的問題數（docs/HISTORY.md #11）。
     /// **不序列化、不持久化**——由 RecordRepository 在讀取當下計算填入，只有風險日詳情頁的
     /// 單筆讀取路徑會設定它（見 IRecordRepository.GetOne），其餘查詢路徑維持預設值 0。
     /// 風險等級判定不受顯示設定影響（見 SystemSettings.SeverityDisplayMode 文件），這個欄位
@@ -148,7 +148,7 @@ public class DeepDiveFinding
 /// <summary>
 /// 體檢（週期性回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）的結論。
 /// 2026-07-20 重設計：「發現」職責已移交每日確定性的 SlowTrendAnalyzer，體檢只負責「講故事」——
-/// 詳見 docs/PLAN.md「核心設計決策 B」與 docs/AI-ROLE-PLAN.md。
+/// 詳見 docs/PLAN.md「核心設計決策 B」與 docs/HISTORY.md。
 /// </summary>
 public class WeeklyCheckupResult
 {

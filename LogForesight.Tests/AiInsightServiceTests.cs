@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AI 加值層的**確定性部分**（docs/SCALE-2000-PLAN.md §6）：下鑽參數白名單驗證、
+/// AI 加值層的**確定性部分**（docs/HISTORY.md §6）：下鑽參數白名單驗證、
 /// 靜默降級、無風險不呼叫。AI 實際輸出品質需 koboldcpp 才驗得到，不在單元測試範圍。
 /// </summary>
 public class AiInsightServiceTests
@@ -133,7 +133,7 @@ public class AiInsightServiceTests
         Assert.NotEqual(WebAiService.HashInput("abc"), WebAiService.HashInput("abd"));
     }
 
-    // ── R7 對話：#11 報告全文餵入（docs/WEB-FEEDBACK-PLAN.md #11）──────────────
+    // ── R7 對話：#11 報告全文餵入（docs/HISTORY.md #11）──────────────
 
     private static IssueDto Issue() => new()
     {

@@ -8,7 +8,7 @@ namespace LogForesight.Web.Services.Import;
 ///   而不是逐列——一列一列看「新增負責人 X」無法表達「這台的負責人整組換成 A、B」的取代語意。
 /// - **帳號不存在時自動建立**（User 角色、無群組）。與 hosts.csv 的「擋下」刻意不同：
 ///   兩千台情境手動先建幾百個帳號不現實，且帳號真偽在 LDAP 登入時自然驗證
-///   （見 docs/SCALE-2000-PLAN.md §2）。主機則**不**自動建立——主機的建立途徑是
+///   （見 docs/HISTORY.md §2）。主機則**不**自動建立——主機的建立途徑是
 ///   批次 Touch／NetIQ 匯入／hosts.csv，負責人檔不該成為第四條。
 /// </summary>
 public class OwnerCsvImporter : ICsvImporter

@@ -7,7 +7,7 @@
 > 的 log 預警能以與 Windows 相同的方式維護與檢視：Web 規則維護頁分為
 > **Windows規則／Linux規則／告警抑制** 三分頁，批次端依主機 OS 套用對應平台的規則面。
 > 關聯文件：docs/RULES-PLAN.md（規則外部化基礎）、docs/NETIQ-API-PLAN.md（取數管線，
-> Linux 取數是它的擴充）、docs/PLAN.md（多主機總路線）。
+> Linux 取數是它的擴充）、docs/HISTORY.md（多主機總路線）。
 
 ## 0. 已確認的決策（2026-07-28）
 
@@ -338,7 +338,7 @@ commit `4e79766`＋體檢修正，分支 `feature/linux-rules-platform`。**與�
 
 - `RuleImporter` 的 `--overwrite-builtin` 覆蓋路徑逐欄複製時**漏抄 `ElevatesDayRisk`**：覆蓋任何
   builtin 規則都會把「重大」旗標清成 false，該規則從此不再把當天判定為高風險日——靜默的行為降級。
-  應是 docs/WEB-FEEDBACK-2-PLAN.md #1 三級化時漏的。
+  應是 docs/HISTORY.md #1 三級化時漏的。
 - `RuleImporter.ContentEqualExceptEnabled` 同樣**沒比對 `ElevatesDayRisk`**：種子只改旗標時會被誤判
   「內容相同、略過」。
 - 兩者的修法：複製邏輯改成 `KnownIssueRule.CloneForSeedOverwrite`（貼著欄位宣告放，新增欄位時看得到），

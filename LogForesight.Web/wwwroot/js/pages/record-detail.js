@@ -43,7 +43,7 @@ async function load() {
         getCurrentUser(),
         api.get('/api/ai/status', { silent: true }).catch(() => null)
     ]);
-    // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/SHARED-STANDARDS-PLAN.md S1）：
+    // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/HISTORY.md S1）：
     // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
@@ -60,7 +60,7 @@ async function load() {
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
-    // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）
+    // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/HISTORY.md #4）
     initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
@@ -81,7 +81,7 @@ async function onBatchSaved(result) {
  * 重點問題，全文留給少數需要逐字核對的場合。展開狀態記 localStorage——
  * 常看全文的人不必每次進來都重新展開。
  *
- * 整個 header 都可點開合（docs/WEB-FEEDBACK-2-PLAN.md #10）：原本只有標題那顆
+ * 整個 header 都可點開合（docs/HISTORY.md #10）：原本只有標題那顆
  * btn-link 可點，右側複製/列印鈕之外的空白區點了沒反應。複製/列印鈕各自
  * stopPropagation，不被 header 的點擊攔截。
  */
@@ -171,7 +171,7 @@ function renderHeader(detail) {
     dateSpan.className = 'text-muted';
     dateSpan.textContent = detail.date;
 
-    // 判定依據（docs/WEB-FEEDBACK-2-PLAN.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
+    // 判定依據（docs/HISTORY.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
     // 高風險日不保證看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號、或問題被顯示設定隱藏）——
     // 沒有明確依據（舊紀錄／低風險日）時給通用說明，不留使用者自己猜
     const riskBasisTitle = detail.riskBasisText ??
@@ -253,7 +253,7 @@ function renderHeader(detail) {
         body.appendChild(role);
     }
 
-    // docs/WEB-FEEDBACK-2-PLAN.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
+    // docs/HISTORY.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
     // 否則使用者會誤以為「風險等級判定的依據」就是眼前看到的這些問題
     if (detail.hiddenIssueCount > 0) {
         const hiddenNote = document.createElement('div');
@@ -268,7 +268,7 @@ function renderHeader(detail) {
 }
 
 /**
- * 表格欄位定義（docs/WEB-FEEDBACK-2-PLAN.md #7）：勾選與處理狀態拆成獨立兩欄——
+ * 表格欄位定義（docs/HISTORY.md #7）：勾選與處理狀態拆成獨立兩欄——
  * 舊版「處理」欄同時塞 checkbox＋狀態文字＋預計完成日，「不處理（預設）」「已知雜訊（自動）」
  * 兩種列還完全沒有 checkbox（不能參與批次套用）。sectionIssues 是這張表要渲染的那批問題
  * （用於「選取」欄全選 checkbox 的作用範圍）。
@@ -368,7 +368,7 @@ function severityNeutralBadge(text) {
 }
 
 /**
- * 嚴重度徽章＋「重大」旗標（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：命中帶
+ * 嚴重度徽章＋「重大」旗標（docs/HISTORY.md #1，B1 三級化）：命中帶
  * ElevatesDayRisk 旗標規則的問題，一眼看得出「這條問題特別嚴重、是它讓今天變高風險日」。
  */
 function severityCell(issue) {
@@ -573,7 +573,7 @@ function isInProgressIssue(issue) {
 }
 
 /**
- * 重點問題旁的計數器（docs/WEB-FEEDBACK-2-PLAN.md #8/D3）：三段「已處理／處理中／未處理」，
+ * 重點問題旁的計數器（docs/HISTORY.md #8/D3）：三段「已處理／處理中／未處理」，
  * 忽略其他標籤——這顆計數器要回答的是「還剩幾件要動手、進度到哪」，不是「標了幾件」：
  *   已處理＝真的標成 resolved 的問題數
  *   處理中＝標成 in_progress 的問題數
@@ -608,7 +608,7 @@ function highlightedCategories() {
 }
 
 /**
- * 目前嚴重度篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）：詢問 AI 下拉與
+ * 目前嚴重度篩選後仍可見的問題（docs/HISTORY.md #4）：詢問 AI 下拉與
  * 嚴重度篩選鈕切換時共用同一份判斷，避免兩處篩選邏輯各自維護後兜不起來。
  */
 function visibleTopIssues() {
@@ -697,7 +697,7 @@ function renderIssues(detail) {
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
-        // 已結案排序收合（docs/WEB-FEEDBACK-2-PLAN.md #8/D2，僅風險日詳情——問題查詢清單
+        // 已結案排序收合（docs/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
         // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
         // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
         const primary = issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i));
@@ -834,7 +834,7 @@ function knownIssueCell(issue) {
 }
 
 /**
- * 原始訊息（docs/WEB-FEEDBACK-2-PLAN.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
+ * 原始訊息（docs/HISTORY.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
  * 這個問題實際觸發的事件訊息樣本，供比對確認——舊名稱「範例訊息」看不出指的是什麼。
  * hover popover 在窄欄位下常被 Popper 定位空間壓縮、內容擠成一團，且與點擊維持顯示
  * 兩套手勢並存會曖昧；改為點擊開 modal，寬度不受定位限制，逐則訊息各自成段落，

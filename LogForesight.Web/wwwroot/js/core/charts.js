@@ -33,7 +33,7 @@ export function categoryColors() {
     };
 }
 
-/** docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High，色盤剩三級 */
+/** docs/HISTORY.md #1（B1 三級化）：Critical 收斂進 High，色盤剩三級 */
 export function severityColors() {
     return {
         High: token('--lf-severity-high', '#fd7e14'),
@@ -50,7 +50,7 @@ export function riskColors() {
     };
 }
 
-/** 占比圖表用的中性色（docs/WEB-FEEDBACK-PLAN.md #6：受影響主機占比／處理進度） */
+/** 占比圖表用的中性色（docs/HISTORY.md #6：受影響主機占比／處理進度） */
 export function statusColors() {
     return {
         success: token('--lf-success', '#16a34a'),
@@ -144,7 +144,7 @@ export const doughnut = (canvas, spec) => create(canvas, { ...spec, type: 'dough
  * 表格切換不只是「無障礙加分項」——色弱使用者、需要精確讀值的人、
  * 想複製數字到別處的人，都靠它。資料本來就在前端，零後端成本。
  *
- * PNG 下載已移除（docs/WEB-FEEDBACK-2-PLAN.md #4）：需要圖檔的情境走既有
+ * PNG 下載已移除（docs/HISTORY.md #4）：需要圖檔的情境走既有
  * 「列印 / 存成 PDF」，不再逐圖各自下載。
  */
 export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
@@ -174,7 +174,7 @@ export function attachToolbar(container, { canvasWrapper, tableColumns, tableRow
 }
 
 /**
- * 圓餅圖左圖右文字條列（docs/WEB-FEEDBACK-2-PLAN.md #3）：取代表格切換＋PNG 下載——
+ * 圓餅圖左圖右文字條列（docs/HISTORY.md #3）：取代表格切換＋PNG 下載——
  * 圓餅圖本來就沒有 XY 軸，數字已經在條列裡，不需要再切換一次表格模式。
  * 每列「色點＋名稱＋數值＋百分比」，列本身可點（沿用該分段的 drillTo URL，
  * 與點圖同一個下鑽目的地）；沒有 url 的列（如彙總的「其餘」）不做成連結。
@@ -249,7 +249,7 @@ export function renderNoData(container, message = '此期間沒有資料') {
 }
 
 /**
- * 甜甜圈中央疊加文字（docs/WEB-FEEDBACK-PLAN.md #6：受影響主機占比／處理進度的百分比）。
+ * 甜甜圈中央疊加文字（docs/HISTORY.md #6：受影響主機占比／處理進度的百分比）。
  * canvasWrapper 需為 .lf-chart（position: relative）；文字絕對定位置中，不影響圖表本身。
  */
 export function setCenterText(canvasWrapper, text) {

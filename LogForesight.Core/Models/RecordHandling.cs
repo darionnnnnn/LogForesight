@@ -58,7 +58,7 @@ public class RecordHandlingLog
     public string Action { get; set; } = string.Empty;
 
     /// <summary>
-    /// 問題層級操作才有值（docs/WEB-FEEDBACK-2-PLAN.md #6/D4）：日層級操作（指派/日層級狀態變更）
+    /// 問題層級操作才有值（docs/HISTORY.md #6/D4）：日層級操作（指派/日層級狀態變更）
     /// 維持 null。問題層級標記逐筆記錄——「攏統的彙總標記沒有意義」，批次勾 N 項就要留下 N 列，
     /// 每一列都查得到「誰、何時、對哪個問題、標成什麼」。
     /// </summary>
@@ -93,7 +93,7 @@ public static class HandlingStatuses
     public static bool IsValid(string status) => All.Contains(status);
 
     /// <summary>
-    /// 對外一律三態（docs/WEB-FEEDBACK-2-PLAN.md #12）：問題查詢清單、CSV、儀表板／報表
+    /// 對外一律三態（docs/HISTORY.md #12）：問題查詢清單、CSV、儀表板／報表
     /// 統計只呈現 未處理／處理中／已處理，六種結案類細節（不處理/誤報/已知雜訊…）
     /// 一律收斂為「已處理」——那些是「已經有結論」，對外部檢視而言就是不再需要動作了。
     /// **只在對外出口套用，不動 DayHandlingDerivation 的內部推導**：Unresolved/逾期判定
@@ -115,7 +115,7 @@ public static class HandlingActions
     public const string NoteUpdate = "note";
     public const string AutoAssign = "auto_assign";
 
-    /// <summary>問題層級標記狀態（含批次套用，逐問題一列）——docs/WEB-FEEDBACK-2-PLAN.md #6/D4</summary>
+    /// <summary>問題層級標記狀態（含批次套用，逐問題一列）——docs/HISTORY.md #6/D4</summary>
     public const string IssueStatus = "issue_status";
 
     /// <summary>問題層級清除標記（調回未處理）</summary>

@@ -16,7 +16,7 @@ let users = [];
 let groups = [];
 let editingUser = null;
 
-// 新增筆數（docs/WEB-FEEDBACK-PLAN.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
+// 新增筆數（docs/HISTORY.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
 // 編輯既有使用者一律走單筆（帳號本來就不可改，多筆模式沒有意義）
 let createMode = 'single';
 
@@ -242,7 +242,7 @@ form.addEventListener('submit', async event => {
 });
 
 /**
- * 多筆新增（docs/WEB-FEEDBACK-PLAN.md #7）：送出前先比對頁面已載入的使用者清單，
+ * 多筆新增（docs/HISTORY.md #7）：送出前先比對頁面已載入的使用者清單，
  * 發現已存在帳號時跳確認，讓使用者決定「跳過已存在」或「以這次勾選的群組覆蓋其權限」；
  * 前端這一步只是 UX 提示，後端仍以自己當下的查詢結果為準（避免兩人同時操作的競態）。
  */

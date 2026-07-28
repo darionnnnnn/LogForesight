@@ -28,7 +28,7 @@ public class SettingsController : ControllerBase
     public ApiResponse<SystemSettingsDto> Update([FromBody] UpdateSystemSettingsRequest request) =>
         ApiResponse<SystemSettingsDto>.Ok(_settings.Update(request));
 
-    /// <summary>AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用表單目前填的值＋管理者當場輸入的帳密試 bind</summary>
+    /// <summary>AD 測試連線（docs/HISTORY.md #9）：用表單目前填的值＋管理者當場輸入的帳密試 bind</summary>
     [HttpPost("ad-test")]
     public ApiResponse<TestAdConnectionResultDto> TestAdConnection([FromBody] TestAdConnectionRequest request) =>
         ApiResponse<TestAdConnectionResultDto>.Ok(_settings.TestAdConnection(request));

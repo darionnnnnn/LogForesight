@@ -43,7 +43,7 @@ async function init() {
 }
 
 /**
- * AI 歸納（docs/SCALE-2000-PLAN.md §6 W1-2）：使用者主動點才呼叫（查詢頁高頻，
+ * AI 歸納（docs/HISTORY.md §6 W1-2）：使用者主動點才呼叫（查詢頁高頻，
  * 自動呼叫會塞爆 AI 佇列）。只在明細視角、且 AI 可用時顯示按鈕。
  */
 async function initAiSummary() {

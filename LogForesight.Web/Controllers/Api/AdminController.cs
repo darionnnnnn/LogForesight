@@ -52,7 +52,7 @@ public class AdminController : ControllerBase
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));
 
-    /// <summary>一次新增多個帳號（docs/WEB-FEEDBACK-PLAN.md #7）</summary>
+    /// <summary>一次新增多個帳號（docs/HISTORY.md #7）</summary>
     [HttpPost("users/batch")]
     public ApiResponse<BatchCreateUsersResultDto> BatchCreateUsers([FromBody] BatchCreateUsersRequest request) =>
         ApiResponse<BatchCreateUsersResultDto>.Ok(_users.BatchCreateUsers(request));
@@ -150,7 +150,7 @@ public class AdminController : ControllerBase
     public ApiResponse<HostDto> SetHostActive(long hostId, [FromBody] SetHostActiveRequest request) =>
         ApiResponse<HostDto>.Ok(_netiq.SetActive(hostId, request.Active));
 
-    // ── NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1）──────────────────────────
+    // ── NetIQ 主動探索匯入（docs/HISTORY.md §1）──────────────────────────
 
     [HttpPost("netiq/scan")]
     public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>

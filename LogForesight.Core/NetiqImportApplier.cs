@@ -2,7 +2,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 套用一批 NetIQ 掃描勾選結果：落盤成主機異動（新增/更新/孤兒復活三態）。
-/// 掃描精靈勾選送出後直接呼叫（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7:排入佇列已退役,
+/// 掃描精靈勾選送出後直接呼叫（docs/HISTORY.md 定案 7:排入佇列已退役,
 /// 改即時落盤——2000 台量級下這一步本身很輕量,真正重的規則檢查本來就要等下次批次)。
 /// </summary>
 public static class NetiqImportApplier

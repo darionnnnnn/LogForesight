@@ -9,7 +9,7 @@
 > `lf_blobs`/`lf_log_lines` 抽象）與現況說明見 WEB-SPEC.md §10.5。本文以下的「待 DB 就緒」語句
 > 指的是規劃當下的時序，非現況。
 >
-> **（2026-07-24 補記）Jsonl 檔案後端已全面退役**（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10）：
+> **（2026-07-24 補記）Jsonl 檔案後端已全面退役**（docs/HISTORY.md 定案 10）：
 > 沒有服役中的 Jsonl 正式資料需要遷移，`--import-history` 匯入器確定**不做**（定案 10）；
 > `Storage.Type` 設成 `Jsonl` 一律於啟動時報錯。本文件下方仍以「txt/JSONL」描述當初從檔案
 > 過渡到 DB 的機制設計，是規劃當下已達成目的的歷史記錄，不代表現行架構仍有 Jsonl 選項。
@@ -377,7 +377,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | # | 機制 | 說明 |
 |---|---|---|
 | 1 | **單一模型契約** | JSONL 序列化的就是 `DailyAnalysisRecord` 等 C# 模型；DB 每張表是同一模型的欄位投影（機械對應：PascalCase → snake_case，僅保留字改名例外：`Count`→`event_count`、`Source`→`source_name`）。**模型改欄位＝兩個後端同時改**，不存在只改一邊的路徑 |
-| 2 | **介面語意即規格** ✅ 已落實（2026-07-21） | 兩個後端都實作 `IAnalysisRecordStore`。`ReadRecent(anchorDate, days)`（**顯式錨定**日期區間 `[anchor-(days-1), anchor]`、升冪、錨定日之後不回傳，DB 對應 `WHERE date BETWEEN`）、`HasAnyRecord`（DB 對應 `EXISTS`）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離。詳見 docs/HISTORY-STORE-FIX-PLAN.md |
+| 2 | **介面語意即規格** ✅ 已落實（2026-07-21） | 兩個後端都實作 `IAnalysisRecordStore`。`ReadRecent(anchorDate, days)`（**顯式錨定**日期區間 `[anchor-(days-1), anchor]`、升冪、錨定日之後不回傳，DB 對應 `WHERE date BETWEEN`）、`HasAnyRecord`（DB 對應 `EXISTS`）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離。詳見 docs/HISTORY.md |
 | 3 | **合約測試（contract tests）** ✅ 已落實（2026-07-21） | `AnalysisRecordStoreContractTests` 抽象基底已建立（`JsonlAnalysisRecordStoreContractTests` 為其第一個實作）：同一組案例分別跑在 Jsonl 與未來的 DB 實作上，**DB 實作必須通過與 txt 完全相同的測試**才算完成——一致性由測試強制，不靠 code review 肉眼比對。JSONL 特有的壞行容錯與原子重寫案例留在 `JsonlAnalysisRecordStoreTests`，不進基底 |
 | 4 | **精簡策略單點化**（pre-work #3） | 「無風險日砍範例訊息、留全部數字」目前是 `JsonlAnalysisRecordStore` 的私有方法——規則長在單一實作裡，DB 實作就得複製一份，遲早漂移。抽成共用的 `RecordStorageShaper`（純函數），兩個後端都呼叫同一份規則 |
 | 5 | **同一份 JSON 序列化設定** | DB 的 `*_json` 欄位用與 JSONL 相同的 System.Text.Json 選項與同一批模型類別序列化；列舉存字串（`JsonStringEnumConverter`）、風險等級存中文字串，兩邊逐字一致 |
@@ -433,7 +433,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 `INFORMATION_SCHEMA.COLUMNS`/`sys.indexes`）→ 缺才補（`ALTER TABLE ADD`／`CREATE INDEX`）」，
 新建的 DB 因 `EnsureCreated` 已建好最新 schema，每一步在新 DB 上都是 no-op。
 首個落地案例：`lf_log_lines` 補 `created_at` 欄＋`(log_key, created_at)` 索引
-（docs/OPS-HARDENING-PLAN.md P0-3 的前置需求）。未建 `lf_schema_version` 版本表——
+（docs/HISTORY.md P0-3 的前置需求）。未建 `lf_schema_version` 版本表——
 冪等檢查本身就是狀態，步驟數量還不到需要額外版本追蹤的規模。
 
 ## 使用場景盤點與待討論細節（2026-07-20 第二輪，續規劃）

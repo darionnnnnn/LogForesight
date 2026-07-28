@@ -213,7 +213,7 @@ LogForesight.exe --list-suppressions
 
 ## 未來擴充卡位（此版本不實作，只預留欄位/語意）
 
-- **`Scope`**：目前只接受 `"all"`（全域規則）。多主機/群組規模化時（見 `docs/PLAN.md` 的
+- **`Scope`**：目前只接受 `"all"`（全域規則）。多主機/群組規模化時（見 `docs/HISTORY.md` 的
   NetIQ Sentinel 規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。
   欄位已卡位，屆時只需要在 `RuleValidator` 放寬檢查、在 `FindRule`/`Classify` 加入呼叫端
   的主機身分比對，不需要動 schema。

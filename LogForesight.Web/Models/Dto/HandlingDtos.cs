@@ -12,7 +12,7 @@ public class HandlingDto
     public string StatusText { get; set; } = string.Empty;
 
     /// <summary>
-    /// 由問題標記推導出的日狀態（docs/WEB-FEEDBACK-2-PLAN.md #6）——與 Status 不同：
+    /// 由問題標記推導出的日狀態（docs/HISTORY.md #6）——與 Status 不同：
     /// Status 是存的日層級快照，這個是「現在真正的狀態」，兩者在批次套用問題標記後可能不同步。
     /// null＝呼叫端未補算（Update/Assign 的回傳值），前端應 fallback 用 Status/StatusText。
     /// </summary>
@@ -139,7 +139,7 @@ public class HandlingLogDto
     public string? HandlerName { get; set; }
     public string? Note { get; set; }
 
-    /// <summary>問題層級操作才有值（「Source EventId」）——docs/WEB-FEEDBACK-2-PLAN.md #6</summary>
+    /// <summary>問題層級操作才有值（「Source EventId」）——docs/HISTORY.md #6</summary>
     public string? IssueLabel { get; set; }
 
     public string ActorAccount { get; set; } = string.Empty;
@@ -153,7 +153,7 @@ public class HandlingTodoDto
     public int OverdueCount { get; set; }
 
     /// <summary>
-    /// 已處理的風險日數——docs/WEB-FEEDBACK-PLAN.md #6、docs/WEB-FEEDBACK-2-PLAN.md #12
+    /// 已處理的風險日數——docs/HISTORY.md #6、docs/HISTORY.md #12
     /// 報表「處理進度」用。對外三態（<see cref="HandlingStatuses.ExternalOf"/>）：
     /// 日層級 fallback 若為 wont_fix／false_positive／known_noise 也算已處理——這三態是
     /// 「這天已有結論」，對外部檢視（report/dashboard 只看還有沒有事要做）而言等同已處理，
@@ -163,7 +163,7 @@ public class HandlingTodoDto
     /// 那是「這件事的處理方式」的細節，只在單筆問題層級才有意義。</summary>
     public int ResolvedCount { get; set; }
 
-    /// <summary>母體：期間內高＋中風險日總數（分母）——docs/WEB-FEEDBACK-PLAN.md #6 報表「處理進度」用</summary>
+    /// <summary>母體：期間內高＋中風險日總數（分母）——docs/HISTORY.md #6 報表「處理進度」用</summary>
     public int TotalCount { get; set; }
 }
 

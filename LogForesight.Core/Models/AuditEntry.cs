@@ -108,7 +108,7 @@ public static class AuditActions
     // 不沿用 ImportApply——那個字面是給 CSV 匯入用的，混用會讓稽核清單的動作標籤說謊
     public const string NetiqImportApplied = "netiq_import_applied";
 
-    // Sentinel 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：密碼欄位絕不進 DetailJson
+    // Sentinel 維護（docs/HISTORY.md 定案 1）：密碼欄位絕不進 DetailJson
     public const string SentinelCreate = "sentinel_create";
     public const string SentinelUpdate = "sentinel_update";
     public const string SentinelDelete = "sentinel_delete";

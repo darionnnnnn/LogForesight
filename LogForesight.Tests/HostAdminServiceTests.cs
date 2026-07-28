@@ -117,7 +117,7 @@ public class HostAdminServiceTests
         Assert.Throws<DomainException>(() => Create().UnmergeHost(host.HostId));
     }
 
-    // ── 未回報篩選（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 9：新主機寬限期）───────────
+    // ── 未回報篩選（docs/HISTORY.md 定案 9：新主機寬限期）───────────
 
     [Fact]
     public void GetHosts_剛匯入未滿寬限期的主機_不算未回報()

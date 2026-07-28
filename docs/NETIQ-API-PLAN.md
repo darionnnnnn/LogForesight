@@ -3,10 +3,10 @@
 > 2026-07-24 規劃定案候選版；**`SentinelClient` / `--netiq-probe` CLI 已實作完成**，
 > 卡在等使用者於真實 Sentinel 環境跑 `--netiq-probe` 貼回實際輸出，才能繼續後續欄位對應。
 > 範圍：依 NetIQ 原廠文件確認的 Sentinel REST API 事實，落成批次端取數 pipeline
-> （`SentinelClient` / `SentinelStatsSource` / `--netiq-probe`，對應 docs/PLAN.md Phase 1–2）
+> （`SentinelClient` / `SentinelStatsSource` / `--netiq-probe`，對應 docs/HISTORY.md Phase 1–2）
 > 與 Web 端 `SentinelRestDirectoryClient` 骨架補完。
 > 設計主軸：**盡可能降低 Sentinel server 負擔**（§5 有完整對策清單）。
-> 本文件與 docs/PLAN.md「Sentinel 8.5 查詢設計」互補：PLAN.md 定了 Q1~Q4 的高階形式，
+> 本文件與 docs/HISTORY.md「Sentinel 8.5 查詢設計」互補：docs/HISTORY.md 定了 Q1~Q4 的高階形式，
 > 本文件把「API 怎麼呼叫」落到端點、payload 與類別層級。
 
 ## 0. 原廠文件依據
@@ -45,7 +45,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 | 建立 | `POST /SentinelRESTServices/objects/event-search`（201 Created，回 `@href`） | body 見下 |
 | 查狀態 | `GET /SentinelRESTServices/objects/event-search/{id}`（或 event-search-status） | `status`：0 Pending / 1 Running / 2 Completed / 3 CompletedWithErrors / 4 Unavailable / 5 Canceled / 6 AccessDenied；`found`＝符合總數、`avail`＝目前可取數、`results`＝**第一頁結果的 URL** |
 | 取結果 | `GET <results URL>` 逐頁 | 每頁 `pgsize` 筆，跟隨回應中的下一頁連結 |
-| 清理 | `DELETE /SentinelRESTServices/objects/event-search/{id}` | **用完即刪**（PLAN.md 既有決策），不留 job 佔用 server 資源 |
+| 清理 | `DELETE /SentinelRESTServices/objects/event-search/{id}` | **用完即刪**（docs/HISTORY.md 既有決策），不留 job 佔用 server 資源 |
 
 建立 job 的 body 欄位（原廠文件欄位名）：
 
@@ -69,7 +69,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 ### 1.3 沒有 GROUP BY——退回方案轉正
 
 公開 REST API **只有 search job，沒有伺服器端聚合**（GROUP BY / facet 不在公開端點中；
-`submitGroupEval` 屬內部 Distributed Search 介面，不在支援面上）。因此 PLAN.md
+`submitGroupEval` 屬內部 Distributed Search 介面，不在支援面上）。因此 docs/HISTORY.md
 「GROUP BY 經 REST 不可用時的退回方案」**直接轉為正案**：
 
 > Q1 ＝ watchlist Lucene 篩選（server 端先過濾掉 99% 事件）＋欄位投影（每筆只回
@@ -83,9 +83,9 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 
 ## 2. 與既有規劃/程式的對帳
 
-> **2026-07-24 修正**：本節原依 PLAN.md／SCALE-2000-PLAN 撰寫，假設帳密設定仍以
+> **2026-07-24 修正**：本節原依 docs/HISTORY.md 撰寫，假設帳密設定仍以
 > `appsettings.NetIq.Servers`（per-server `Username`/`Password`）為事實來源、密碼用
-> DPAPI 保護。**這個前提已被 docs/NETIQ-WEB-CONFIG-PLAN.md（同日稍晚定案）取代**：
+> DPAPI 保護。**這個前提已被 docs/HISTORY.md（同日稍晚定案）取代**：
 > Sentinel 連線設定現在由 **Web 維護、存 `ISentinelStore`（webdata blob，key=`sentinels`）**，
 > 密碼用 **Core 既有的 `CryptoHelper`（AES-256，`enc:v1:` 前綴，金鑰內嵌程式）**加密，
 > 不是 DPAPI；`appsettings.NetIq.Servers` 降為「store 為空時的一次性種子」。以下對帳表已更新為現況。
@@ -104,7 +104,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 | 密碼保護 | **`CryptoHelper.Encrypt/Decrypt`（AES-256，`enc:v1:` 前綴）已實作**，非 DPAPI；解密只在讀出時做一次，明碼只留在行程記憶體 | 沿用既有 Helper，**不新增 DPAPI 或 `--protect-netiq-password`**（原規劃此項作廢） |
 | `SentinelRestDirectoryClient` | 骨架端點打 `/SecurityManager/rest/hosts`（占位、非 Sentinel 端點）＋Basic auth 直打；已改吃 `INetiqServerCatalog`（內部即 `ISentinelStore`）取得含明碼密碼的 `SentinelServer` | 整段改寫：連線資訊來源不變，只改「怎麼打 API」——走 §1.1 SAML 認證＋§4.4 的探索查詢 |
 | `NetIqSettings` 節流欄位 | 刻意未加（「有設定無行為」紅線） | 本次連同行為一起加：`QueryDelayMs`/`PageSize`/`TimeoutSeconds`/`RetryCount`/`MaxResultsPerJob`/`AllowInvalidCertificates`（這些是**查詢行為**設定，與帳密事實來源無關，仍留在 `AppSettings.NetIq`，批次與 Web 各自從自己的 appsettings 讀） |
-| Q4 頻道覆蓋 | PLAN.md 降為每週 | 不變，實作照每週 |
+| Q4 頻道覆蓋 | docs/HISTORY.md 降為每週 | 不變，實作照每週 |
 
 ### 2.1 連線資訊怎麼取得（batch／Web 各自的既有管道）
 
@@ -154,6 +154,10 @@ public interface ISentinelClient : IAsyncDisposable
 >    介面在同一個檔案內、屆時是局部改動。
 > 2. `CountAsync` **未實作**——目前沒有任何呼叫端（probe 用 `MaxResults:1` 的 SearchAsync
 >    拿 `Found` 即可），依「有介面無使用者就不留」的專案慣例，等 Q1 量級預估真的需要時再加。
+> 3. **`ISentinelClient` 介面已移除（2026-07-28 簡化重構）**：從未有第二個實作或測試假件，
+>    純屬型別多型的殘留；`SentinelClient` 類別保留、只是不再 `: ISentinelClient`，改直接實作
+>    `IAsyncDisposable`。呼叫端一律注入具體類別 `SentinelClient`，本節與 §3.4 的介面型別提及處
+>    在實作上已是這個具體類別。
 
 內部行為（全部集中在這一層，呼叫端零感知）：
 
@@ -172,7 +176,7 @@ public interface ISentinelClient : IAsyncDisposable
 ### 3.2 `SentinelStatsSource`（新，批次；實作 `IDailyStatsSource`）
 
 業務層：把 Q1~Q4 組裝成 `DailySignatureStats`（與 `LocalStatsSource` 同一輸出模型，
-下游五層偵測零改變——PLAN.md 抽象層「日統計」定案的兌現）。
+下游五層偵測零改變——docs/HISTORY.md 抽象層「日統計」定案的兌現）。
 
 - **Q1 主聚合**：per-Sentinel、per-日。filter＝`(watchlist Lucene) AND (IP 清單批次)`；
   fields＝主機、來源、EventID、dt 四欄。IP 清單分批（預設 50 台/批，probe #8 實測
@@ -183,7 +187,7 @@ public interface ISentinelClient : IAsyncDisposable
 - **Q3 風險主機原始 log**：風險日才觸發，單主機小查詢、20 筆預算（沿用既有）。
 - **Q4 頻道覆蓋**：每週一次，per-Sentinel 全清單 IP 查近 24h、fields＝主機＋頻道，
   本地 distinct → 未收 Security 頻道主機清單（覆蓋率誠實申報）。
-- **失敗隔離**（PLAN.md 既有決策的落點）：單一 IP 批次失敗 → 該批主機當日標
+- **失敗隔離**（docs/HISTORY.md 既有決策的落點）：單一 IP 批次失敗 → 該批主機當日標
   「查詢失敗、資料不完整」，其他批照常；單台 Sentinel 整台失聯 → 其轄下主機全標、
   機房總覽「來源狀態」列失聯 Sentinel。
 
@@ -302,7 +306,7 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
 3. `SentinelFieldMap` ＋ watchlist→Lucene 產生器 ＋ 本地聚合
 4. `SentinelStatsSource`（Q1→Q2→Q3→Q4）＋ 合約測試
 5. `SentinelRestDirectoryClient` 改寫（Web 探索走真 API，連線資訊來源不變只換 API 呼叫方式）
-6. 試點 → 全量（PLAN.md Phase 2→3 原路線）
+6. 試點 → 全量（docs/HISTORY.md Phase 2→3 原路線）
 
 **2026-07-24 實作進度**：步驟 1～2 已完成（`SentinelClient`／`--netiq-probe`／設定欄位／單元測試），
 **步驟 2 的真實環境輸出尚未取得**——步驟 3～6 全部依賴 probe 定案的欄位對應，故本輪先停在這裡，
@@ -314,5 +318,5 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
 2. `dt` 時區與日切界實測。
 3. 8.5 apidoc 是否有聚合端點（有→Q1 改走聚合，§1.3 設計降為退路）。
 4. IP 篩選單一 filter 的安全批次大小（預設 50 待實測）。
-5. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，PLAN.md probe #7）。
+5. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，docs/HISTORY.md probe #7）。
 6. token 有效期長短（決定長輪收集中是否需要主動換發）。

@@ -60,7 +60,7 @@ public interface IAnalysisRecordQuery
     DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date);
 
     /// <summary>
-    /// 分頁查詢（docs/OPS-HARDENING-PLAN.md P1-2），依「風險等級→有無關聯訊號→日期」新到舊排序——
+    /// 分頁查詢（docs/HISTORY.md P1-2），依「風險等級→有無關聯訊號→日期」新到舊排序——
     /// 與 <c>RecordQueryService.Search</c> 清單頁的排序同一套規則。
     ///
     /// 與 <see cref="Query"/> 不同：<see cref="Query"/> 撈回全部符合條件的紀錄（批次與不分頁呼叫端用），

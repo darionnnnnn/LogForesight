@@ -76,7 +76,7 @@ async function loadAssignableUsers() {
 }
 
 /**
- * 由問題標記推導出的狀態文字（docs/WEB-FEEDBACK-2-PLAN.md #6）：與存的日層級快照
+ * 由問題標記推導出的狀態文字（docs/HISTORY.md #6）：與存的日層級快照
  * （handling.statusText）不同——後者指派後會卡在「處理中」不再更新，這裡才是
  * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
  * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
@@ -395,7 +395,7 @@ const ISSUE_LOG_ACTIONS = new Set(['issue_status', 'issue_status_cleared']);
  * 處理歷程 timeline：完整敘事（指派 → 查修中 → 換了硬碟 → 結案）。
  * 這正是快照與歷程分兩份儲存的目的——單一說明欄位會把前面的過程蓋掉。
  *
- * D4（docs/WEB-FEEDBACK-2-PLAN.md #6）改為問題層級逐筆記錄後，卡片內固定高度＋
+ * D4（docs/HISTORY.md #6）改為問題層級逐筆記錄後，卡片內固定高度＋
  * 「放大檢視」modal（#13）：卡片內把同一次批次（同操作者＋同動作＋同時間戳，
  * 見 HandlingService.SetIssueStatusBatch 的 occurredAt）收合成一條摘要，
  * modal 內展開逐筆——資料本來就是逐筆的，只有呈現方式不同。

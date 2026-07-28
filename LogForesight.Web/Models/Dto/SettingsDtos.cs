@@ -25,7 +25,7 @@ public class SystemSettingsDto
     /// <summary>稽核紀錄保留天數</summary>
     public int AuditRetentionDays { get; set; }
 
-    /// <summary>是否啟用 DB 設定的 AD 驗證（docs/WEB-FEEDBACK-PLAN.md #9）</summary>
+    /// <summary>是否啟用 DB 設定的 AD 驗證（docs/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
 
     public List<string> AdServers { get; set; } = new();
@@ -69,7 +69,7 @@ public class UpdateSystemSettingsRequest
     [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
 
-    // ── AD 驗證（docs/WEB-FEEDBACK-PLAN.md #9）────────────────────────────────
+    // ── AD 驗證（docs/HISTORY.md #9）────────────────────────────────
 
     public bool AdAuthEnabled { get; set; }
 
@@ -83,7 +83,7 @@ public class UpdateSystemSettingsRequest
 }
 
 /// <summary>
-/// AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用管理者當場輸入的帳密，
+/// AD 測試連線（docs/HISTORY.md #9）：用管理者當場輸入的帳密，
 /// 對表單目前填的伺服器清單試 bind（不需先儲存）。密碼不落盤、不進稽核 detail。
 /// </summary>
 public class TestAdConnectionRequest

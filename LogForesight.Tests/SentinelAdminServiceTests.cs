@@ -5,7 +5,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel CRUD（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：密碼 write-only、
+/// <summary>Sentinel CRUD（docs/HISTORY.md 定案 1）：密碼 write-only、
 /// 刪除觸發孤兒流程、停用不動主機、改名同步主機顯示快照。</summary>
 public class SentinelAdminServiceTests
 {

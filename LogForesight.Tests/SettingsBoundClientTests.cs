@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/SHARED-STANDARDS-PLAN.md S8：「設定快照 → 重建客戶端」共用工具。
+/// docs/HISTORY.md S8：「設定快照 → 重建客戶端」共用工具。
 /// 取代 WebAiService 原本互動／對話情境各自寫一份的 lock+快照比對邏輯；
 /// #9 的 AD 動態驗證是第三個使用點，快照形狀與 WebAiService 的 (BaseUrl, KeyEnc) 不同
 /// （AD 是伺服器清單＋SearchBase／Filter），因此泛型化為任意快照型別——這裡直接測泛型工具本身，

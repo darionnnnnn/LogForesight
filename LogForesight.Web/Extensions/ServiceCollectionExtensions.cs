@@ -65,7 +65,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
-        // DynamicAuthenticationProvider（docs/WEB-FEEDBACK-PLAN.md #9）包一層：DB 設定的
+        // DynamicAuthenticationProvider（docs/HISTORY.md #9）包一層：DB 設定的
         // AdAuthEnabled 開啟時改走 AD 動態設定，否則委派給 appsettings 決定的原 provider——
         // 這裡的 switch 只決定「沒開啟 AD 動態設定時」的行為，語意與改版前完全一致。
         services.AddSingleton<IAuthenticationProvider>(sp =>
@@ -194,7 +194,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
 
-        // Sentinel 名單改由 Web 維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），讀寫都經 ISentinelStore
+        // Sentinel 名單改由 Web 維護（docs/HISTORY.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
         services.AddScoped<SentinelAdminService>();
 

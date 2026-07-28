@@ -36,7 +36,7 @@ public class LogIssueSignature
     public IssueSeverity Severity { get; set; } = IssueSeverity.Low;
 
     /// <summary>
-    /// 命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：由
+    /// 命中即列為高風險日（docs/HISTORY.md #1，B1 三級化）：由
     /// <see cref="KnownIssueCatalog.Classify"/> 依命中規則的旗標帶入，或由
     /// <see cref="TrendAnalyzer"/> 在 High 嚴重度問題頻率上升時設為 true
     /// （舊制下這種情況會把嚴重度升到 Critical，直接讓當天判定為高風險日；

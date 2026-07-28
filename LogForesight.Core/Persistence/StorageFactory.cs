@@ -15,7 +15,7 @@ namespace LogForesight;
 /// lf_log_lines）走資料庫，store 業務邏輯不受後端影響。LINQ 保持 provider 中立，
 /// SQLite 上跑合約測試驗證語意。
 ///
-/// （2026-07-24 起 Jsonl 檔案後端已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10。
+/// （2026-07-24 起 Jsonl 檔案後端已退役，見 docs/HISTORY.md 定案 10。
 /// `Storage.Type` 設成非 Sqlite/SqlServer 的值一律於啟動時報錯，見 AppSettings 驗證。）
 /// </summary>
 public static class StorageFactory
@@ -47,7 +47,7 @@ public static class StorageFactory
             }
             else
             {
-                // 暫時性錯誤（failover／節流等）自動重試（docs/OPS-HARDENING-PLAN.md P0-4）；
+                // 暫時性錯誤（failover／節流等）自動重試（docs/HISTORY.md P0-4）；
                 // Sqlite 是本機檔案，沒有這類網路層暫時性錯誤，不需要
                 options = new DbContextOptionsBuilder<LfDbContext>()
                     .UseSqlServer(settings.ConnectionString, o => o.EnableRetryOnFailure(maxRetryCount: 5))
@@ -198,7 +198,7 @@ public static class StorageFactory
     public static IImportLogStore CreateImportLogStore(StorageSettings settings, string dataRoot) =>
         new ImportLogStore(LogStore(settings, dataRoot, "import_logs"));
 
-    /// <summary>NetIQ Sentinel 連線設定（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、2）</summary>
+    /// <summary>NetIQ Sentinel 連線設定（docs/HISTORY.md 定案 1、2）</summary>
     public static ISentinelStore CreateSentinelStore(StorageSettings settings, string dataRoot) =>
         new SentinelStore(Blob(settings, dataRoot, "sentinels"));
 

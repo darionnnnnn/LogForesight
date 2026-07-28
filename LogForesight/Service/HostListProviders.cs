@@ -22,7 +22,7 @@ public class HostListResult
 }
 
 /// <summary>
-/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12），
+/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/HISTORY.md 定案 12），
 /// 直接讀主機清單資料，不做任何同步。
 /// </summary>
 public class StoreHostListProvider

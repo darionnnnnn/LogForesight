@@ -120,7 +120,7 @@ public class IdentityService
     }
 
     /// <summary>
-    /// AD 登入自動補顯示名稱與 Email（docs/WEB-FEEDBACK-PLAN.md #8）：批次新增使用者
+    /// AD 登入自動補顯示名稱與 Email（docs/HISTORY.md #8）：批次新增使用者
     /// （#7）只填帳號，顯示名稱預設＝帳號、Email 留空；使用者第一次以 AD 登入時，
     /// 用同一次驗證取得的 AD 屬性補齊這兩個欄位。
     ///

@@ -14,7 +14,7 @@ public class NetiqDiscoveryException : Exception
 }
 
 /// <summary>
-/// 向 Sentinel 主動查詢其管理的主機清單（docs/SCALE-2000-PLAN.md §1.2）。
+/// 向 Sentinel 主動查詢其管理的主機清單（docs/HISTORY.md §1.2）。
 ///
 /// 真實 API 的認證方式與回應格式屬環境細節（不同版本 Sentinel 不同），因此隔離在介面後：
 /// <see cref="SentinelRestDirectoryClient"/> 真連線、<see cref="StubNetiqDirectoryClient"/> 給
@@ -53,7 +53,7 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 
 /// <summary>
 /// Sentinel REST API 真連線。**認證方式與端點路徑待真實環境驗證前不定案**
-/// （docs/SCALE-2000-PLAN.md §1.2）：此處以基本驗證＋可設定端點的骨架實作，
+/// （docs/HISTORY.md §1.2）：此處以基本驗證＋可設定端點的骨架實作，
 /// 回應解析待接上真 Sentinel 後補齊；失敗一律轉成可顯示的 NetiqDiscoveryException。
 /// </summary>
 public class SentinelRestDirectoryClient : INetiqDirectoryClient

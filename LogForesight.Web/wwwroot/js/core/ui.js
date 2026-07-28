@@ -230,7 +230,7 @@ export function showDetailModal({ title = '', body, size } = {}) {
 }
 
 /**
- * 表單未儲存變更追蹤（docs/WEB-FEEDBACK-2-PLAN.md #2）：離開頁面前跳出瀏覽器原生確認。
+ * 表單未儲存變更追蹤（docs/HISTORY.md #2）：離開頁面前跳出瀏覽器原生確認。
  * MPA 站台下 beforeunload 這一個 handler 就涵蓋側欄跳轉、重新整理、關閉分頁，
  * 不需要攔截個別連結。excludeSelector 可排除表單內不算「設定內容」的欄位
  * （例如測完即丟的測試帳密）——這些欄位的變更不該觸發離開提醒。
@@ -258,7 +258,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 表格渲染：欄位定義 → <table>，含空狀態與載入中列。
  * columns: [{ key, title, className, render(row), renderHeader() }]
  * renderHeader()（選填）：回傳 Node 時取代 title 文字作為表頭儲存格內容——
- * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/WEB-FEEDBACK-2-PLAN.md #7）。
+ * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/HISTORY.md #7）。
  * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
  * 仍照自己的行為，不被整列連結攔截。
  * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），

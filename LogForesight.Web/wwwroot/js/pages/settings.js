@@ -7,11 +7,11 @@ import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved } from '../core/ui.js';
 import { formatDateTime, severityName, SEVERITY_ORDER } from '../core/format.js';
 
-// 未儲存提醒（docs/WEB-FEEDBACK-2-PLAN.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
+// 未儲存提醒（docs/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
 let unsaved = null;
 
-// 兩段式（docs/WEB-FEEDBACK-PLAN.md #5，2026-07-27 簡化自三段式）：
+// 兩段式（docs/HISTORY.md #5，2026-07-27 簡化自三段式）：
 // 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁
 const DISPLAY_MODES = [
     {
@@ -104,7 +104,7 @@ function renderAiFields(settings) {
     document.getElementById('ai-api-key-clear').checked = false;
 }
 
-/** docs/WEB-FEEDBACK-PLAN.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
+/** docs/HISTORY.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
 function renderAdFields(settings) {
     document.getElementById('ad-auth-enabled').checked = settings.adAuthEnabled;
     document.getElementById('ad-servers').value = (settings.adServers ?? []).join('\n');
@@ -208,7 +208,7 @@ function bindForm() {
 }
 
 /**
- * AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用表單目前填的值（不需先儲存）＋
+ * AD 測試連線（docs/HISTORY.md #9）：用表單目前填的值（不需先儲存）＋
  * 管理者當場輸入的帳密試 bind。這裡是管理者對自己測試，失敗訊息可以顯示細節
  * （與一般登入一律「帳號或密碼錯誤」不同）。
  */

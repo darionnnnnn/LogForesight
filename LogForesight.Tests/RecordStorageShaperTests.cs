@@ -42,7 +42,7 @@ public class RecordStorageShaperTests
     }
 
     /// <summary>
-    /// ElevatesDayRisk（docs/WEB-FEEDBACK-2-PLAN.md #1）必須在低風險日精簡時保留，理由同 RuleId/Suppressed。
+    /// ElevatesDayRisk（docs/HISTORY.md #1）必須在低風險日精簡時保留，理由同 RuleId/Suppressed。
     /// **低風險日確實可能帶這個旗標**：被抑制的簽章不參與風險判定（ComputeRuleBasedRisk 跳過
     /// Suppressed），但旗標與趨勢升級照算——所以「命中重大規則但已抑制」的日子會是低風險日、
     /// 且帶著旗標。漏掉這個欄位，那些日子的「重大」標記與頻率報表依據會靜默消失。

@@ -50,10 +50,10 @@ public class SystemSettingsServiceTests
     }
 
     /// <summary>
-    /// docs/SHARED-STANDARDS-PLAN.md S10：ValidSeverities 是手寫陣列（承載畫面勾選順序，
+    /// docs/HISTORY.md S10：ValidSeverities 是手寫陣列（承載畫面勾選順序，
     /// 由重到輕，無法直接用 Enum.GetNames 因為那是宣告順序），IssueSeverity 加值時編譯器
     /// 不會提醒這裡要跟著加——用測試斷言集合一致，enum 漏改時這裡紅燈。
-    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：IssueSeverity 列舉刻意保留 Critical
+    /// docs/HISTORY.md #1（B1 三級化）：IssueSeverity 列舉刻意保留 Critical
     /// （舊資料反序列化相容用），但 ValidSeverities 是「使用者可勾選的層級」，三級化後
     /// 不再包含它——兩者從此不再逐一對應，是設計選擇而非漏同步。
     /// </summary>
@@ -131,7 +131,7 @@ public class SystemSettingsServiceTests
         Assert.False(saved.AiHasApiKey);
     }
 
-    // ── docs/WEB-FEEDBACK-PLAN.md #5：三模式簡化為兩個（DefaultHidden／SiteHidden）──────
+    // ── docs/HISTORY.md #5：三模式簡化為兩個（DefaultHidden／SiteHidden）──────
 
     [Theory]
     [InlineData("Locked")]
@@ -183,7 +183,7 @@ public class SystemSettingsServiceTests
 
         var visible = service.GetVisibleSeverities();
 
-        // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：舊設定殘留的 "Critical" 正規化為 "High"，
+        // docs/HISTORY.md #1（B1 三級化）：舊設定殘留的 "Critical" 正規化為 "High"，
         // 與既有的 "High" 合併成同一個值——三級化前的兩個不同層級現在是同一層級
         Assert.NotNull(visible);
         Assert.Equal(new HashSet<string> { "High" }, visible);
@@ -198,7 +198,7 @@ public class SystemSettingsServiceTests
         Assert.Null(service.GetVisibleSeverities());
     }
 
-    // ── docs/WEB-FEEDBACK-PLAN.md #9：AD 驗證設定 ──────────────────────────────
+    // ── docs/HISTORY.md #9：AD 驗證設定 ──────────────────────────────
 
     [Fact]
     public void Update_AD啟用但伺服器清單為空_丟例外()

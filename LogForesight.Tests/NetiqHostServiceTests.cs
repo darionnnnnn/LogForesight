@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// NetIQ 主機清單維護（docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 A、IP 衝突軟處理）。
+/// NetIQ 主機清單維護（docs/HISTORY.md 決策 A、IP 衝突軟處理）。
 /// </summary>
 public class NetiqHostServiceTests
 {

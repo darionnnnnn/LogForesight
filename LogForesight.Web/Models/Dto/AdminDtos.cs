@@ -36,7 +36,7 @@ public class SetUserGroupsRequest
 }
 
 /// <summary>
-/// 一次新增多個帳號（docs/WEB-FEEDBACK-PLAN.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
+/// 一次新增多個帳號（docs/HISTORY.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
 /// 由伺服器端決定（顯示名稱＝帳號、Email 留空），前端多筆模式因此隱藏這兩個欄位。
 /// </summary>
 public class BatchCreateUsersRequest
@@ -109,7 +109,7 @@ public class SaveHostGroupRequest
     public bool Active { get; set; } = true;
 }
 
-// ── 批次加入群組成員（網段／關鍵字，docs/SCALE-2000-PLAN.md §3）─────────────
+// ── 批次加入群組成員（網段／關鍵字，docs/HISTORY.md §3）─────────────
 
 public class HostGroupMemberQueryRequest
 {

@@ -304,7 +304,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// 待辦母體＝高＋中風險日（docs/SHARED-STANDARDS-PLAN.md S3）：低風險日即使從未處理過，
+    /// 待辦母體＝高＋中風險日（docs/HISTORY.md S3）：低風險日即使從未處理過，
     /// 也不進待辦——這條規則由 GetTodo 內部強制套用，呼叫端不必自己先過濾。
     /// </summary>
     [Fact]
@@ -430,7 +430,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/WEB-FEEDBACK-2-PLAN.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
+    /// docs/HISTORY.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
     /// 當天沒有問題層級標記）時，對外三態要算作「已處理」。這是原始 bug 的釘樁——舊版
     /// GetTodo 的三個桶（Open/InProgress/Resolved）都數不到 wont_fix，讓「未完成」
     /// （Total－Resolved）把已結案的日子誤算成未完成。
@@ -577,7 +577,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/WEB-FEEDBACK-2-PLAN.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
+    /// docs/HISTORY.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
     /// （不是一筆彙總）——每一筆都查得到「對哪個問題、標成什麼」，含反正規化的 IssueLabel。
     /// </summary>
     [Fact]

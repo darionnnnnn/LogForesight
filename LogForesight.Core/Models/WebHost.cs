@@ -34,7 +34,7 @@ public class WebHost
 
     /// <summary>
     /// 所屬 Sentinel 的 PK（識別鍵；本機來源為 null）。null 且 Source='netiq'＝待歸屬。
-    /// Sentinel 改名不影響這個欄位——routing 靠 PK，同 HostId 的前例（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）。
+    /// Sentinel 改名不影響這個欄位——routing 靠 PK，同 HostId 的前例（docs/HISTORY.md 定案 4）。
     /// </summary>
     public long? SentinelId { get; set; }
 
@@ -102,7 +102,7 @@ public class WebHost
     public List<long> OwnerUserIds { get; set; } = new();
 
     /// <summary>
-    /// 因所屬 Sentinel 自設定移除而被**系統**停用時，記下原本的 Sentinel 名稱（docs/SCALE-2000-PLAN.md §1.7）。
+    /// 因所屬 Sentinel 自設定移除而被**系統**停用時，記下原本的 Sentinel 名稱（docs/HISTORY.md §1.7）。
     /// null＝不是這種情況（含管理員手動停用）。
     ///
     /// 為什麼要獨立欄位而不從「Active=false ＋ NetiqServer 不在設定」推導：要把**系統停用**

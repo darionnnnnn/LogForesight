@@ -8,7 +8,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/SHARED-STANDARDS-PLAN.md S1：問題嚴重度可見性收斂到 RecordRepository 單一咽喉點。
+/// docs/HISTORY.md S1：問題嚴重度可見性收斂到 RecordRepository 單一咽喉點。
 /// 這組測試釘住「SiteHidden 模式下 Query／QueryPage／GetOne 都會過濾 TopIssues，
 /// DefaultHidden（GetVisibleSeverities 回 null）不過濾」的契約，取代原本分散在
 /// DashboardService／ReportService／RecordQueryService 各自判斷、且查詢頁分組視圖／
@@ -104,7 +104,7 @@ public class RecordRepositorySeverityVisibilityTests : IDisposable
     }
 
     /// <summary>
-    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：舊資料相容的單一咽喉點——三級化之前
+    /// docs/HISTORY.md #1（B1 三級化）：舊資料相容的單一咽喉點——三級化之前
     /// 寫入的 Severity=Critical，讀取時正規化為 High＋ElevatesDayRisk=true，可解釋性
     /// （「重大」徽章）不因三級化而消失。只在讀取時於記憶體正規化，不回寫資料庫。
     /// </summary>

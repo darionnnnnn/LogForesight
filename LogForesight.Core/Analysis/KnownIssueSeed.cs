@@ -12,7 +12,7 @@ public static class KnownIssueSeed
     /// `--import-rules` 依此判斷 rules.json 是否落後於程式內建的種子。
     /// v2（EventLogReader 遷移）：新增 Microsoft Defender 與 RDP TerminalServices 兩類 Operational
     /// 頻道的規則（見 docs/RULES-PLAN.md 與 README「監控的危險訊號清單」）。
-    /// v3（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：原 Severity=Critical 的 7 條規則改為
+    /// v3（docs/HISTORY.md #1，B1 三級化）：原 Severity=Critical 的 7 條規則改為
     /// High＋ElevatesDayRisk=true，行為不變（仍讓命中當天判定為高風險日），嚴重度顯示收斂為三級。
     /// v4（docs/LINUX-RULES-PLAN.md）：新增 16 條 Platform="linux" 種子規則（SSH 暴力破解、
     /// 帳號/群組異動、auditd 滅跡、儲存/硬體/OOM、服務失敗迴圈、時間同步、cron 失敗），

@@ -62,7 +62,7 @@ const int TrendWindowDays = 14;
 var InitialHistoryDays = 120;
 // 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除。同上，DB 為事實來源。
 var RetentionDays = 120;
-// 執行歷程（批次執行紀錄／診斷、匯入紀錄）保留天數；同上，DB 為事實來源（docs/OPS-HARDENING-PLAN.md P0-3）。
+// 執行歷程（批次執行紀錄／診斷、匯入紀錄）保留天數；同上，DB 為事實來源（docs/HISTORY.md P0-3）。
 var RunLogRetentionDays = 90;
 // 稽核紀錄保留天數；同上，DB 為事實來源。
 var AuditRetentionDays = 730;
@@ -288,7 +288,7 @@ var aiService = new AIService(settings.Ai, dumper);
 var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
 // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
 // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
-// 同時取回主機 PK——**那是分析紀錄與主機的關聯鍵**（docs/NETIQ-HOSTLIST-WEB-PLAN.md），
+// 同時取回主機 PK——**那是分析紀錄與主機的關聯鍵**（docs/HISTORY.md），
 // 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
 // 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
 // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
@@ -300,7 +300,7 @@ var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險
 var hostStore = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
 var sentinelStore = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
 
-// SentinelId 回填（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）：一次性遷移，冪等，排最前面——
+// SentinelId 回填（docs/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
 // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
 try
 {
@@ -451,7 +451,7 @@ if (pruned > 0)
     Console.WriteLine($"已清除 {pruned} 筆超過 {RetentionDays} 天的歷史紀錄。");
 }
 
-// 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/OPS-HARDENING-PLAN.md P0-3）——
+// 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/HISTORY.md P0-3）——
 // 排程屬於批次、Web 不養常駐背景工作是既定架構，這裡搭著既有的夜間清理一起做。
 // 處理歷程（handling_log）與權限異動確認（perm_changes）刻意不清：前者是業務敘事，
 // 後者有「待確認」狀態機，清理會湮滅告警——本輪只清「執行過程」性質的三個 log key。
@@ -471,7 +471,7 @@ catch (Exception ex)
     log.Warn(ex, "執行歷程／匯入／稽核紀錄清理失敗（不影響本次分析）：{0}", ex.Message);
 }
 
-// 1c. 清理過期的風險報告檔（docs/OPS-HARDENING-PLAN.md P1-4）——與歷史紀錄同一個 RetentionDays，
+// 1c. 清理過期的風險報告檔（docs/HISTORY.md P1-4）——與歷史紀錄同一個 RetentionDays，
 // 報告本來就是紀錄的交付物，沒有獨立設定的必要。
 try
 {
@@ -747,7 +747,7 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
     }
 
     // 高風險或命中「重大」旗標規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）。
-    // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原本看 Severity==Critical，
+    // docs/HISTORY.md #1（B1 三級化）：原本看 Severity==Critical，
     // 三級化後嚴重度封頂 High，改看 ElevatesDayRisk 旗標——判定行為不變
     var criticalIssues = record.TopIssues.Where(i => i.ElevatesDayRisk && !i.Suppressed).ToList();
     if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)

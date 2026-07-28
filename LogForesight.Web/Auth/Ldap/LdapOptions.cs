@@ -3,7 +3,7 @@ using System.DirectoryServices;
 namespace LogForesight.Web.Auth.Ldap;
 
 /// <summary>
-/// LDAP 連線與查詢設定（docs/WEB-FEEDBACK-PLAN.md #9）。Servers／SearchBase／SearchFilter
+/// LDAP 連線與查詢設定（docs/HISTORY.md #9）。Servers／SearchBase／SearchFilter
 /// 對應「系統管理 > 設定」頁的 AdServers／AdSearchBase／AdSearchFilter；其餘欄位（使用者屬性
 /// 對應、bind 驗證方式）目前固定用 AD 慣例值，未來若要支援 OpenLDAP 等其他目錄再開放到 UI。
 /// </summary>

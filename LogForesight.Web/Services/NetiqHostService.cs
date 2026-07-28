@@ -4,7 +4,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主機清單維護（docs/NETIQ-HOSTLIST-WEB-PLAN.md 決策 A）。
+/// NetIQ 主機清單維護（docs/HISTORY.md 決策 A）。
 ///
 /// **清單項目就是 <see cref="WebHost"/> 列**（`Source='netiq'`），不另建實體：
 /// 群組、負責人、合併、CSV 匯入、授權全部直接重用，也不會多出一層

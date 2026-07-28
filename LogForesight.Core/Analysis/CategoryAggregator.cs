@@ -23,7 +23,7 @@ public class CategorySummary
     public int LowCount { get; set; }
 
     /// <summary>
-    /// 命中「重大」旗標的問題數（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：取代原本
+    /// 命中「重大」旗標的問題數（docs/HISTORY.md #1，B1 三級化）：取代原本
     /// CriticalCount 在畫面上的顯著性用途（如儀表板分類卡紅框）——三級化後嚴重度不再產生
     /// Critical，CriticalCount 因此恆為 0，改看這個旗標計數。
     /// </summary>

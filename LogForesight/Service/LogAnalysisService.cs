@@ -7,7 +7,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 每日分析流程：取多來源 log → 聚合 → 規則分類 → 帶入近期歷史 → 呼叫 AI 白話翻譯 → 寫回歷史。
-/// 設計原則見 docs/AI-ROLE-PLAN.md：規則/趨勢/關聯三層負責偵測與風險判定（確定性、AI 判斷只能
+/// 設計原則見 docs/HISTORY.md：規則/趨勢/關聯三層負責偵測與風險判定（確定性、AI 判斷只能
 /// 把風險往上拉不能往下壓），AI 負責把這些結論翻譯成白話——低風險日（三層皆無訊號）不呼叫 AI。
 /// </summary>
 public class LogAnalysisService
@@ -41,7 +41,7 @@ public class LogAnalysisService
     private const int MaxHeadlineChars = 60;
 
     /// <summary>
-    /// 2026-07-20 AI 角色轉換（見 docs/AI-ROLE-PLAN.md）：AI 不再是判斷風險或找根因的分析引擎，
+    /// 2026-07-20 AI 角色轉換（見 docs/HISTORY.md）：AI 不再是判斷風險或找根因的分析引擎，
     /// 那些已由規則/趨勢/關聯三層與 KnownIssueCatalog 的靜態知識庫負責。AI 唯一的職責是把
     /// 這些已經算好的結論翻譯成不懂 Event Log 的人也能看懂的白話——risk_level 仍要填，但只作為
     /// 安全網（只能把風險往上拉，不能往下壓，見 RiskLevels.MoreSevere），不是重新判斷的依據。
@@ -136,7 +136,7 @@ public class LogAnalysisService
         // 程式端確定性頻率比對：當日 vs 前一日 vs 歷史平均，頻率上升會就地升級該事件的嚴重度
         var trendAlerts = TrendAnalyzer.Apply(issues, history, targetDate, errorCount, auditCount);
 
-        // 慢速趨勢偵測（2026-07-20，見 docs/AI-ROLE-PLAN.md）：近 7 天 vs 前 7 天總量比較，
+        // 慢速趨勢偵測（2026-07-20，見 docs/HISTORY.md）：近 7 天 vs 前 7 天總量比較，
         // 每日、全主機、確定性執行，捕捉躲在 TrendAnalyzer 單日門檻下的緩慢惡化訊號——
         // 取代原本「週六全量體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天。
         // 併入既有 trendAlerts 清單：同屬程式比對出的頻率異常，prompt/報告/console 沿用同一套呈現與風險下限判定
@@ -182,7 +182,7 @@ public class LogAnalysisService
         var ruleRisk = ComputeRuleBasedRisk(issues, trendAlerts, correlations);
         bool lowRisk = ruleRisk == "低";
 
-        // 判定依據（docs/WEB-FEEDBACK-2-PLAN.md #11）：純顯示用途，說明「為什麼是這個風險等級」，
+        // 判定依據（docs/HISTORY.md #11）：純顯示用途，說明「為什麼是這個風險等級」，
         // 不影響任何判定邏輯本身。AI 若把風險往上拉（下方 MoreSevere），會覆寫為 "ai_raise"
         var riskBasis = DescribeRiskBasis(issues, correlations, trendAlerts, ruleRisk);
 
@@ -193,7 +193,7 @@ public class LogAnalysisService
         // 低風險日原則上完全不呼叫 AI（見下方 skipAiForLowRisk），但「三層皆無訊號、卻有大量
         // 未分類事件」的日子是唯一的例外：那些事件規則層依定義沒看過，若連掃描都不做就沒有任何
         // 一層檢視過它們。門檻 MinTailForLowRiskScreening 讓一般的低風險日仍維持零 AI 呼叫，
-        // 只有未分類種類異常多時才付出掃描成本（2026-07-20 審查後補上，見 docs/AI-ROLE-PLAN.md）。
+        // 只有未分類種類異常多時才付出掃描成本（2026-07-20 審查後補上，見 docs/HISTORY.md）。
         ScreeningOutcome? screening = null;
         var tailIssues = GetTailIssues(issues);
         bool shouldScreen = tailIssues.Count > 0 &&
@@ -431,7 +431,7 @@ public class LogAnalysisService
     /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。
     /// 2026-07-20 AI 角色轉換後限縮：規則已命中的尾巴不再掃描——靜態知識庫已涵蓋處置建議，
     /// 不需要 AI 逐項篩選；只有 Other 類（未命中規則）才是 AI 唯一還需要判讀新型態問題的地方
-    /// （見 docs/AI-ROLE-PLAN.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
+    /// （見 docs/HISTORY.md），與 RiskReportService 深析限縮到 Other 類的原則一致。
     /// </summary>
     private static List<LogIssueSignature> GetTailIssues(List<LogIssueSignature> issues)
     {
@@ -710,7 +710,7 @@ public class LogAnalysisService
     /// 程式判定的風險下限。被抑制的簽章不參與風險判定的旗標/High 門檻——抑制關的是
     /// 「要不要吵」，這裡正是「吵不吵」的判定點；關聯層（correlations）完全不受抑制影響，
     /// 單事件被關掉不代表組合出來的攻擊鏈/故障鏈訊號也該被關掉（見 docs/RULES-PLAN.md 語意邊界）。
-    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原本看 Severity==Critical 判定高風險日，
+    /// docs/HISTORY.md #1（B1 三級化）：原本看 Severity==Critical 判定高風險日，
     /// 三級化後嚴重度封頂 High，改看 ElevatesDayRisk 旗標——判定行為完全不變。
     /// </summary>
     internal static string ComputeRuleBasedRisk(List<LogIssueSignature> issues, List<string> trendAlerts,
@@ -731,7 +731,7 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// 程式判定依據的代碼（docs/WEB-FEEDBACK-2-PLAN.md #11）：純顯示用途，說明「為什麼是這個
+    /// 程式判定依據的代碼（docs/HISTORY.md #11）：純顯示用途，說明「為什麼是這個
     /// 風險等級」，不影響任何判定邏輯。與 ComputeRuleBasedRisk 判斷同一組條件，只是額外指名
     /// 是哪一條規則/哪一種訊號觸發的。呼叫端在 AI 把風險往上拉時會覆寫成 "ai_raise"。
     /// </summary>

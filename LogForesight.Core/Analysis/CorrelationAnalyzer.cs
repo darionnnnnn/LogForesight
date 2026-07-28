@@ -5,7 +5,7 @@ public class CorrelationFinding
     public IssueSeverity Severity { get; init; }
 
     /// <summary>
-    /// 命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化前這裡的 Severity 是 Critical）：
+    /// 命中即列為高風險日（docs/HISTORY.md #1，B1 三級化前這裡的 Severity 是 Critical）：
     /// 攻擊鏈/故障鏈組合本身就是明確的高風險訊號，三級化後嚴重度封頂 High，改用旗標維持
     /// 「這個組合一命中，當天就是高風險日」的行為（見 LogAnalysisService.ComputeRuleBasedRisk）。
     /// </summary>

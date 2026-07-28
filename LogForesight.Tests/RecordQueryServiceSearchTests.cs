@@ -161,7 +161,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/WEB-FEEDBACK-2-PLAN.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
+    /// docs/HISTORY.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
     /// 已知雜訊同理）時，清單的「已處理」chip 也要查得到，不能只精確比對 resolved。
     /// </summary>
     [Fact]
@@ -218,7 +218,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Single(result.Items);
     }
 
-    // ── 嚴重度可見性（docs/SHARED-STANDARDS-PLAN.md S1）：釘住查詢頁分組視圖的漏套修正 ──
+    // ── 嚴重度可見性（docs/HISTORY.md S1）：釘住查詢頁分組視圖的漏套修正 ──
 
     private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity, IssueCategory category) =>
         new() { LogName = "System", Source = source, EventId = eventId, Severity = severity, Category = category, Count = 1 };

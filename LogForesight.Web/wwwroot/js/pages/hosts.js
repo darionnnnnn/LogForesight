@@ -1,5 +1,5 @@
 /**
- * 主機維護（docs/WEB-SPEC.md §9.8、docs/NETIQ-HOSTLIST-WEB-PLAN.md 步驟 3）。
+ * 主機維護（docs/WEB-SPEC.md §9.8、docs/HISTORY.md 步驟 3）。
  *
  * 這一頁除了 CRUD 還負責一件事：把「哪些主機今晚不會被檢查」講出來。
  * 待歸屬、IP 衝突、未分組各自代表一種靜默的失效，藏起來就會變成沒人記得的盲區。

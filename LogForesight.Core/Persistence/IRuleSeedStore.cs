@@ -70,7 +70,7 @@ public class RuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeedStor
     /// <summary>
     /// 把快照還原成規則物件；內容損毀時回 null（呼叫端提示無法回復，而不是寫入壞資料）。
     ///
-    /// 舊版快照的嚴重度一併正規化（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：
+    /// 舊版快照的嚴重度一併正規化（docs/HISTORY.md #1，B1 三級化）：
     /// 鏡像是**批次啟動時**才同步的，站台升級後到下一次批次執行之間，這裡讀到的仍是
     /// 三級化之前寫入的 Severity=Critical 快照。不正規化的話「回復預設」會把規則寫回
     /// Critical＋ElevatesDayRisk=false——嚴重度顯示不出中文名是小事，**旗標消失會讓

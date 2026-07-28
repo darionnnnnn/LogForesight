@@ -1,5 +1,5 @@
 /**
- * 資料匯入（docs/WEB-SPEC.md §9.9、docs/NETIQ-WEB-CONFIG-PLAN.md）。
+ * 資料匯入（docs/WEB-SPEC.md §9.9、docs/HISTORY.md）。
  *
  * CSV 匯入（上傳→預覽→套用）與 NetIQ 匯入（從既有 Sentinel 掃描並匯入主機）合併在同一頁，
  * 因為兩者最終都寫進同一份「匯入紀錄」，拆成兩頁只會讓使用者要來回找歷史紀錄。
@@ -297,7 +297,7 @@ function renderScanPicker(allSentinels) {
     scanPicker.appendChild(row);
 }
 
-// ── 掃描精靈（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7-8） ───────────────────────
+// ── 掃描精靈（docs/HISTORY.md 定案 7-8） ───────────────────────
 
 const wizardModal = new bootstrap.Modal(document.getElementById('netiq-wizard-modal'));
 const wizardTitle = document.getElementById('wizard-title');

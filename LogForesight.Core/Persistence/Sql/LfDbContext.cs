@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 namespace LogForesight.Sql;
 
 /// <summary>
-/// SQL 後端的 EF Core 內容（docs/DB-PLAN.md、SCALE-2000-PLAN §4）。
+/// SQL 後端的 EF Core 內容（docs/DB-PLAN.md、docs/HISTORY.md「2026-07-23」段 §4）。
 ///
 /// 設計取捨（第一版，可驗證可增量）：每筆分析紀錄存成
 ///   - 一列 <see cref="DailyRecordRow"/>：抽出可過濾/排序的欄（host_id、host_name、
@@ -67,7 +67,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
             e.Property(x => x.RecordDate).HasColumnName("record_date");
             e.Property(x => x.RiskLevel).HasColumnName("risk_level").HasMaxLength(10);
-            // 抽出的排序鍵（docs/OPS-HARDENING-PLAN.md P1-2）：問題查詢頁清單排序依
+            // 抽出的排序鍵（docs/HISTORY.md P1-2）：問題查詢頁清單排序依
             // 「風險等級→有無關聯訊號→日期」，前者已有 RiskLevel 欄可下推，這欄補上後者——
             // 否則「有無關聯訊號」只存在 ContentJson 裡，逼得分頁查詢必須整批撈回記憶體才能排序。
             // 舊資料（本欄新增前寫入的列）預設 false，下次批次重新分析同一天會自然更新為正確值；

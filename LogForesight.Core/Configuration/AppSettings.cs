@@ -187,7 +187,7 @@ public class AnalysisSettings
 /// Sentinel 連線的**明碼、可直接連線**投影（給 <see cref="SentinelClient"/> 用）。
 /// 事實來源是 Web 維護的 <see cref="ISentinelStore"/>（DB，密碼以密文存放）；
 /// 這個型別是呼叫端解密後、僅存在於執行期記憶體的連線用副本，不落地、不進 log
-/// （docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）。連線與節流參數見 <see cref="NetiqOptions"/>。
+/// （docs/HISTORY.md 定案 1）。連線與節流參數見 <see cref="NetiqOptions"/>。
 /// </summary>
 public class SentinelServer
 {
@@ -199,7 +199,7 @@ public class SentinelServer
 
     public string BaseUrl { get; set; } = string.Empty;
 
-    /// <summary>探索連線帳號（docs/SCALE-2000-PLAN.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
+    /// <summary>探索連線帳號（docs/HISTORY.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
     public string Username { get; set; } = string.Empty;
 
     /// <summary>探索連線密碼（明碼，由 <see cref="Sentinel.PasswordEnc"/> 解密而來）</summary>
@@ -216,7 +216,7 @@ public class SentinelServer
 /// </summary>
 public class StorageSettings
 {
-    /// <summary>受支援的儲存後端。Jsonl 檔案格式已於 2026-07-24 退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 10。</summary>
+    /// <summary>受支援的儲存後端。Jsonl 檔案格式已於 2026-07-24 退役，見 docs/HISTORY.md 定案 10。</summary>
     public static readonly string[] ValidTypes = { "Sqlite", "SqlServer" };
 
     /// <summary>

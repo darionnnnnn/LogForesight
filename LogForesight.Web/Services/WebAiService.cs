@@ -7,7 +7,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Web 的 AI 加值層（docs/SCALE-2000-PLAN.md §6）。原則：**程式能確定性算的不交給 AI**，
+/// Web 的 AI 加值層（docs/HISTORY.md §6）。原則：**程式能確定性算的不交給 AI**，
 /// AI 只做「幫人看懂、幫人排序」。輸入是已彙總的結構化統計（prompt 小），輸出短。
 ///
 /// 三條鐵律：

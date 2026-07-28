@@ -24,20 +24,20 @@ public class AiTextDto
 }
 
 /// <summary>
-/// AI 加值功能（docs/SCALE-2000-PLAN.md §6 W1＋W2）。
+/// AI 加值功能（docs/HISTORY.md §6 W1＋W2）。
 /// 每個功能：把**已彙總的結構化統計**餵給 AI，要一段短輸出。程式先算好確定性的部分，
 /// AI 只做「講白話、排順序」。AI 不可用時一律回 null（呼叫端隱藏對應 UI）。
 ///
 /// <see cref="ChatAsync"/>：詳情頁對話（R7 精簡版）一輪回覆。messages 是已通過伺服器端輪數／
 /// 格式驗證的完整對話歷史（含最新一則使用者訊息），不走快取——每輪內容都不同。
-/// reportText 為當日分析報告全文（docs/WEB-FEEDBACK-PLAN.md #11），
+/// reportText 為當日分析報告全文（docs/HISTORY.md #11），
 /// 無報告（低風險日）時為 null，此時對話僅依問題結構化欄位回答（既有行為不變）。
 /// </summary>
 public class AiInsightService
 {
     private readonly IWebAiService _ai;
 
-    // 由 enum 推導而非手寫清單（docs/SHARED-STANDARDS-PLAN.md S10）：IssueCategory 加值時
+    // 由 enum 推導而非手寫清單（docs/HISTORY.md S10）：IssueCategory 加值時
     // 這裡自動涵蓋，不會有「加了類別、白名單忘了跟著加」的靜默漏網
     private static readonly HashSet<string> KnownCategories =
         new(Enum.GetNames<IssueCategory>(), StringComparer.OrdinalIgnoreCase);
@@ -188,7 +188,7 @@ public class AiInsightService
         return sb.ToString();
     }
 
-    /// <summary>報告全文在對話 prompt 中的佔用上限（docs/WEB-FEEDBACK-PLAN.md #11）。
+    /// <summary>報告全文在對話 prompt 中的佔用上限（docs/HISTORY.md #11）。
     /// 不是有多少預算就填多少——地端模型 prefill 一萬多 token 要數十秒，60 秒逾時會開始不夠；
     /// 8k 涵蓋絕大多數報告，延遲仍可控。之後換更快硬體只需調這一個數字。</summary>
     private const int ReportMaxTokens = 8000;

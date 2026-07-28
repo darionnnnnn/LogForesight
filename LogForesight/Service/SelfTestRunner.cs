@@ -296,7 +296,7 @@ public static class SelfTestRunner
             var history = Enumerable.Range(1, 14).Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.High)).ToList();
             var sig = Sig("System", "disk", 153, 10, IssueSeverity.High);
             var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
-            // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：嚴重度封頂 High，舊制的「升級為 Critical」
+            // docs/HISTORY.md #1（B1 三級化）：嚴重度封頂 High，舊制的「升級為 Critical」
             // 改用 ElevatesDayRisk 旗標達成同樣的高風險日判定效果
             Check("14日平均x2、今日x10 → Rising 且嚴重度封頂 High、標記 ElevatesDayRisk",
                 sig.Trend == IssueTrend.Rising && sig.Severity == IssueSeverity.High && sig.ElevatesDayRisk,

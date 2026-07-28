@@ -56,7 +56,7 @@ public class RecordQueryService
 
         // Statuses／Overdue 篩選依賴處理狀態（handling.json／issue_handling.json），那不在 SQL 裡，
         // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
-        // 才能把排序＋分頁整個下推給 SQL（docs/OPS-HARDENING-PLAN.md P1-2），只為「這一頁」載入
+        // 才能把排序＋分頁整個下推給 SQL（docs/HISTORY.md P1-2），只為「這一頁」載入
         // 處理狀態，這是 2000 台規模下清單頁最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑。
         var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true;
 
@@ -566,7 +566,7 @@ public class RecordQueryService
 
     /// <summary>對外三態文字（#12）：呼叫端一律先經 HandlingStatuses.ExternalOf，這裡只需覆蓋三態</summary>
     /// <summary>
-    /// 判定依據代碼 → 白話文字（docs/WEB-FEEDBACK-2-PLAN.md #11）：與 LogAnalysisService
+    /// 判定依據代碼 → 白話文字（docs/HISTORY.md #11）：與 LogAnalysisService
     /// 寫入的代碼格式對應（rule:.../correlation/trend/high_issue:.../medium/ai_raise）。
     /// null／未知代碼一律回 null，前端顯示通用說明，不強行湊一句解釋不出來的話。
     /// </summary>

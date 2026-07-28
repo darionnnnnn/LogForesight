@@ -5,7 +5,7 @@
 在問題擴大前示警。
 偵測與風險判定完全由確定性的規則/趨勢/慢速趨勢/關聯層負責；本機 AI 模型（llama.cpp + Gemma 26B/27B 級
 MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Log 的人也能一眼看懂狀況該怎麼處理
-（2026-07-20 AI 角色轉換，詳見 [docs/AI-ROLE-PLAN.md](docs/AI-ROLE-PLAN.md)）。
+（2026-07-20 AI 角色轉換，詳見 [docs/HISTORY.md](docs/HISTORY.md)）。
 
 ## 專案結構
 
@@ -58,7 +58,7 @@ flowchart TD
 
     RISK["LogAnalysisService<br/>風險等級確定性判定"]
     AI["AIService<br/>llama.cpp / KoboldCpp"]
-    HIST[("history.txt<br/>IAnalysisRecordStore")]
+    HIST[("分析紀錄庫（DB）<br/>IAnalysisRecordStore")]
     REPORT["RiskReportService<br/>export/*.txt"]
 
     ELS --> AGG
@@ -100,7 +100,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 → 風險強制「高」；
 趨勢層（含慢速趨勢）有頻率異常或關聯層有任何訊號 → 風險至少「中」。AI 判斷只能把風險往上拉、
 不能往下壓，即使 AI 判斷輕忽或 AI 服務不可用也不影響告警與處置建議（詳見
-[docs/AI-ROLE-PLAN.md](docs/AI-ROLE-PLAN.md)）。
+[docs/HISTORY.md](docs/HISTORY.md)）。
 
 ### 關聯層偵測的組合模式（`CorrelationAnalyzer`）
 
@@ -188,7 +188,7 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 > 四級嚴重度與三級日風險等級（高/中/低風險日）字面相撞、卻是兩套不可互推的層級，
 > 造成「詳情頁顯示高風險、但最嚴重的問題只有中」這類困惑。改以顯性旗標承載該職責後，
 > 判定行為完全不變，嚴重度與日風險等級統一為三級。舊資料的 `Critical` 於**讀取時**
-> 正規化為「高＋重大」（不回寫證據層），詳見 docs/WEB-FEEDBACK-2-PLAN.md #1。
+> 正規化為「高＋重大」（不回寫證據層），詳見 docs/HISTORY.md #1。
 
 **日風險等級**（高/中/低風險日）是「主機×日期」整天的批次判定結果，不是任何單一問題
 嚴重度的別名，兩者不可互相推導（`RiskLevels` 與 `IssueSeverity` 是兩個獨立列舉）。
@@ -378,7 +378,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 - **確定性閘門**：窗口內任一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
   三層皆無訊號的窗口直接寫固定結論「本期無累積性異常，程式比對通過」，不消耗 AI 呼叫——
   安靜的期間本來就沒有故事可講，這是多主機規模下 AI 時間預算能否成立的關鍵之一
-  （詳見 [docs/AI-ROLE-PLAN.md](docs/AI-ROLE-PLAN.md)）。
+  （詳見 [docs/HISTORY.md](docs/HISTORY.md)）。
 - **AI 失敗不消耗額度**：閘門判定有訊號、實際呼叫 AI 卻失敗時，該次**不寫入歷史**
   （`WeeklyCheckupResult.Completed = false`），讓下次執行的補跑機制重試，而不是把這一期的
   體檢額度用掉。
@@ -497,7 +497,7 @@ LogForesight.exe --unsuppress builtin-service-crash-loop-703x
 ## NetIQ 主機清單（`--host-list`）
 
 多主機階段要處理哪些主機，由「主機清單」決定，固定由 **Web 主機頁維護**
-（admin 在畫面上新增/停用/批次貼上；docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12）。
+（admin 在畫面上新增/停用/批次貼上；docs/HISTORY.md 定案 12）。
 
 ```
 LogForesight.exe --host-list      # 列出目前設定下實際會被查詢的主機（含被排除的原因）
@@ -512,7 +512,7 @@ IP 衝突時只查最早建立的那一台，行為才可預測。每台主機�
 ### NetIQ 主動探索匯入
 
 Web 主機頁的「從 NetIQ 匯入」精靈：掃描 Sentinel → 依網段勾選 → **送出即立即新增/更新/孤兒復活**
-（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7；早期版本曾排入佇列等批次執行時才套用，已改為即時落盤，
+（docs/HISTORY.md 定案 7；早期版本曾排入佇列等批次執行時才套用，已改為即時落盤，
 批次端不需要任何指令介入）。結果記入「資料匯入」頁的匯入紀錄，與 CSV 匯入共用同一份稽核軌跡。
 當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——即時的只是「主機被收進清單」這件事本身。
 
@@ -640,76 +640,6 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
       主分析摘要作為全局脈絡帶入，跨類別資訊不遺失
     把 prompt 對半切的做法則不採用：跨訊號關聯（如新服務安裝＋服務崩潰＋帳號建立）
     會被切斷，還要合併兩份可能矛盾的結論。
-
-## 歷史資料庫（history.txt，⏸ 已隨 Jsonl 後端於 2026-07-24 退役）
-
-> **現況**：`Storage.Type` 現為 Sqlite／SqlServer 二選一（見「DB 後端」一節），`history.txt`
-> 這個檔案**不會再被寫入**——同一份 `DailyAnalysisRecord` 資料改存進 `lf_daily_records`
-> 資料表（正規化列＋full-record JSON），備份標的因此也從「複製 `webdata\`／`history.txt`
-> 等檔案」變成「備份 Sqlite 的 `.db` 檔，或依 SqlServer 慣例排程備份資料庫」。
-> 以下內容原樣保留，作為 `DailyAnalysisRecord` **欄位級資料模型**與保留策略的說明——
-> 這部分定義沒有變，只是容器從檔案換成資料庫列；「檔案」「history.txt」等字樣請讀作
-> 對應的資料庫列。
-
-檔案：~~`{Storage.DataRoot}\history.txt`~~（已退役）。`DataRoot` 留空＝**執行檔同目錄**
-（`AppContext.BaseDirectory`，而非 CurrentDirectory——排程執行時後者可能是 system32）；
-Sqlite 模式下這個路徑改用來決定 `logforesight.db` 的預設位置（`Storage.ConnectionString`
-未設時的退路），也可在 `appsettings.json` 把 `Storage.DataRoot` 指到建置目錄以外的固定資料夾，
-資料就不隨重建 exe 而動（Web 端填同一路徑共用）。
-
-> **每台主機一份自己的歷史**：缺日判定（是否已分析過某天）與趨勢基準（近 14 天）都**只看本機
-> 自己的紀錄**——批次以「本機主機識別」綁定歷史 store。同一份 `history.txt` 內若含其他主機的紀錄
-> （示範資料、或多台共用同一 `DataRoot`），不會害本機被誤判成「已分析過」而整段跳過，也不會混進
-> 趨勢基準（未來 DB 後端對應 `WHERE host_id = @本機`）。Web 查詢端本就各自帶主機過濾，不受影響。
-
-### 為什麼選 JSON Lines 而不是 CSV
-
-每天一行 JSON，作為輕量資料庫使用：
-- **巢狀結構**：每筆紀錄含 `TopIssues`（一天多個問題、每個問題多個欄位），CSV 塞巢狀資料
-  要嘛攤平成不定欄數、要嘛欄位內再塞編碼字串，都難維護；JSON 天生支援
-- **免跳脫地獄**：log 訊息常含逗號、引號、換行，CSV 的跳脫規則容易出錯，JSON 序列化器全處理掉
-- **append-only**：每日只附加一行，不用讀寫整個檔案，長期執行不會越來越慢
-- 仍是純文字，記事本直接開就能看
-
-每行欄位：`Date`、`HostId`（**紀錄與主機的關聯鍵**，取自主機清單 `webdata\hosts.json` 的 PK；
-主機日後改名或換 IP，既有紀錄仍歸戶正確。0 = 本欄位問世前寫入的舊紀錄，或本次執行取不到
-主機清單時的降級，此時查詢端退回以 `Host` 名稱比對）、`Host`（產生本筆紀錄的主機名稱，
-本機為 `Environment.MachineName`，寫入當下的顯示名快照）、
-`ErrorCount`、`WarningCount`、`AuditEventCount`、
-`TopIssues`（問題簽章，每筆含：來源/EventId/次數/類別/嚴重度、
-發生時段 `FirstSeen`~`LastSeen`（判斷集中爆發或全天零星）、
-最多 3 則相異範例訊息 `SampleMessages` 與 `DistinctMessageCount`（區分「同一服務掛 10 次」
-和「10 個服務各掛一次」）、Security 事件的帳號/IP 彙總 `KeyDetails`、
-以及趨勢比對結果 `Trend`/`PreviousDayCount`/`HistoryDailyAverage`/`DaysSeenInHistory`）、
-`TrendAlerts`（程式偵測到的頻率異常，含慢速趨勢層告警）、`RiskLevel`、
-`Headline`/`Summary`/`TrendAssessment`/`Action`（AI 回傳 JSON 解析後的白話翻譯結構化欄位，
-2026-07-20 AI 角色轉換）、`AiAnalyzed`（false = AI 未呼叫或呼叫失敗的降級紀錄，
-包含低風險日刻意不呼叫 AI 的情況）、
-`ReportFile`（風險「中」以上時輸出的報告檔路徑，無風險為 null）、
-`DeepDives`（各類別深入分析的結構化結果，與報告全文並存但獨立於 AI 回應的 JSON 契約，
-供未來 DB／查詢直接讀取，不需反解析報告文字；低風險日恆為空清單）。
-
-無風險（低）日寫入時會經 `RecordStorageShaper`（`Persistence/RecordStorageShaper.cs`）精簡：
-`TopIssues` 的次數/嚴重度/趨勢數字/發生時段完整保留（趨勢基準計算需要），
-只省略 `SampleMessages`/`KeyDetails` 這類體積大戶；風險「中」以上完整保留不精簡。
-這個精簡規則是純函數、單點定義，未來 DB 後端會呼叫同一份規則，不會各自維護一套逐漸漂移。
-
-欄位已結構化，後續要接 Email / Telegram / webhook 通知時，直接取
-`RiskLevel`、`Headline`、`Summary`、`Action` 組內容即可，不需再解析自然語言。
-
-### 保留策略：預設 120 天，啟動時自動清理
-
-首次執行回補天數（`InitialHistoryDays`）與歷史保留天數（`RetentionDays`）預設都是 120 天，
-每次啟動先清除超過保留天數的舊紀錄，資料庫不會無限增長。
-
-天數的取捨：趨勢比對只需要 14 天，但保留 120 天的成本極低（每筆約 5~15KB，120 天約 1~2MB），
-換來兩個價值——可觀察月週期性的變化，以及發生資安事件時能回查近半年的異常軌跡；
-同時搭配首次執行的回補天數，回補的歷史不會在下次啟動就被清掉。
-
-**這兩個值改由 Web「系統管理 > 設定」頁維護（DB），不再是 `Program.cs` 的寫死常數**——
-appsettings.json 沒有對應設定，未曾在設定頁調整過時沿用上述預設值。調整時 `RetentionDays`
-必須 ≥ `InitialHistoryDays`（設定頁與後端皆會擋下不合格的組合）。趨勢比對窗口
-`TrendWindowDays`（14 天）是分析語意常數，不開放設定。
 
 ## 使用方式
 
@@ -866,7 +796,7 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
-## Web 部署（docs/OPS-HARDENING-PLAN.md P1-3）
+## Web 部署（docs/HISTORY.md P1-3）
 
 Web（`LogForesight.Web`）與批次（`LogForesight.exe`）通常部署在同一台伺服器：批次夜間跑分析寫入資料庫，
 Web 提供查詢介面；兩者的 `Storage:*` 設定必須指向同一份資料（見上方「設定檔」表格）。
@@ -977,7 +907,7 @@ console 輸出是給人即時看的摘要，遇到需要深入排查的問題（
 
 **完整 prompt 文字**和**完整 Event Log 內容**一律不寫入——只記字元數/筆數等統計數字。原因：
 - prompt 每次呼叫可能有數 KB，完整記錄的話 log 檔案大小會隨呼叫次數線性增長，很快就暴增
-- Event Log 內容本來就已經完整保存在歷史資料庫（`history.txt`）與風險報告（`export\`），不需要在診斷 log 裡重複一份
+- Event Log 內容本來就已經完整保存在分析紀錄資料庫與風險報告（`export\`），不需要在診斷 log 裡重複一份
 - 已經記錄的「短診斷片段」（回覆預覽、解析後的物件、程式產生的告警字串）本身都有長度上限或天然筆數上限，不會無界增長
 
 ### 容量控制（雙重防護）
@@ -991,7 +921,7 @@ console 輸出是給人即時看的摘要，遇到需要深入排查的問題（
 
 ### 目錄一定寫在執行檔目錄，不靠 NLog 自己判斷
 
-`nlog.config` 內建的 `${basedir}` 是 NLog 自己判斷的基準目錄，跟專案其他地方（`history.txt`、
+`nlog.config` 內建的 `${basedir}` 是 NLog 自己判斷的基準目錄，跟專案其他地方（`logforesight.db`、
 `export\`、`appsettings.json`）統一使用的 `AppContext.BaseDirectory` 不是同一套邏輯，
 不同啟動方式（捷徑、排程工作、工作目錄不同）可能讓兩者兜不上。`Program.cs` 啟動時
 **明確**用 `AppContext.BaseDirectory` 組出 `nlog.config` 的完整路徑載入，並強制覆寫 `logDir`
@@ -1031,9 +961,9 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
 ## 限制與後續方向
 
 - **AI 角色轉換（2026-07-20 已完成）**：AI 從分析引擎轉為白話翻譯層，規則命中問題改查靜態知識庫，
-  完整設計與階段記錄見 [docs/AI-ROLE-PLAN.md](docs/AI-ROLE-PLAN.md)；這是多主機規模下 AI 時間預算
-  能否成立的前提，詳見 `docs/PLAN.md` 的時間預算估算。
-- **通知管道**：目前只寫 console。排程執行時沒人盯著畫面，建議下一步接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位為第二層縱深防禦，即時性要求不如第一層監控，見 `docs/PLAN.md`。
+  完整設計與階段記錄見 [docs/HISTORY.md](docs/HISTORY.md)；這是多主機規模下 AI 時間預算
+  能否成立的前提，詳見 `docs/HISTORY.md` 的時間預算估算。
+- **通知管道**：目前只寫 console。排程執行時沒人盯著畫面，建議下一步接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位為第二層縱深防禦，即時性要求不如第一層監控，見 `docs/HISTORY.md`。
 - **EventLogReader 讀取新式頻道＋Operational 頻道擴充（2026-07 已完成）**：新增以
   `EventLogReader`（`System.Diagnostics.Eventing.Reader`）讀取 `Microsoft-Windows-*/Operational`
   新式頻道——classic `System.Diagnostics.EventLog` 只能讀傳統三大日誌。預設已納入
@@ -1058,16 +988,16 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
   `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
 - **多台伺服器（NetIQ Sentinel 整合）**：批次分析引擎本身仍是單機直讀。**Sentinel 連線設定與主機清單
   的管理已於 2026-07-24 完成搬進 Web**（多台 Sentinel、新增即掃描精靈、匯入即時落盤、依網段指派
-  主機群組，完整設計見 [docs/NETIQ-WEB-CONFIG-PLAN.md](docs/NETIQ-WEB-CONFIG-PLAN.md)）——這一層
+  主機群組，完整設計見 [docs/HISTORY.md](docs/HISTORY.md)）——這一層
   解決的是「主機清單哪裡維護」，還不是「跨主機集中分析」。規劃中的下一階段才是接上多台 NetIQ Sentinel
   （約 2000 台主機規模，共用查詢帳密）做**批次面**的集中分析——分級分析（規則/趨勢/慢速趨勢/
   關聯全量跑，AI 只判讀有訊號的主機）、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等設計已在
-  `docs/PLAN.md` 中規劃完成，`Persistence/` 的讀寫介面也已預留，實作時不需要更動既有分析邏輯的架構。
+  `docs/HISTORY.md` 中規劃完成，`Persistence/` 的讀寫介面也已預留，實作時不需要更動既有分析邏輯的架構。
 - **DB 後端（2026-07-23 完成；2026-07-24 起 Sqlite 改為預設與主要測試方式，Jsonl 檔案後端全面退役）**：
   `Storage.Type` 二選一——`Sqlite`（測試/開發，預設）／`SqlServer`（正式，2000 台量級）；
   設成 `Jsonl` 一律於啟動時報錯，不再有檔案相容模式。**全部資料**（分析紀錄＋webdata）走資料庫：分析紀錄以
-  正規化列＋JSON 存（`lf_daily_records`/`lf_top_issues`），webdata 各 store 透過 `IJsonBlobStore`
-  （整份型 → `lf_blobs`）與 `IJsonLogStore`（append-only → `lf_log_lines`）改走 DB，store 業務邏輯
+  正規化列＋JSON 存（`lf_daily_records`/`lf_top_issues`），webdata 各 store 透過 `EfJsonBlobStore`
+  （整份型 → `lf_blobs`）與 `EfJsonLogStore`（append-only → `lf_log_lines`）改走 DB，store 業務邏輯
   完全沒改。`StorageFactory` 是唯一路由點，分析邏輯不需異動。provider 中立 LINQ 讓 SQLite in-memory
   上跑同一組合約測試驗證兩後端語意逐位一致。完整設計見 `docs/WEB-SPEC.md §10.5` 與 `docs/DB-PLAN.md`；
   規則庫（`IKnownIssueRuleStore`）與抑制設定（`ISuppressionStore`）同一套 Strategy + Factory 模式。

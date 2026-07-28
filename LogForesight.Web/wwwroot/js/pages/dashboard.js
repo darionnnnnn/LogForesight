@@ -38,7 +38,7 @@ async function load() {
 }
 
 /**
- * AI 今日焦點（docs/SCALE-2000-PLAN.md §6 W1-1）：純加值。
+ * AI 今日焦點（docs/HISTORY.md §6 W1-1）：純加值。
  * AI 不可用或回空時整卡不顯示——不留「載入失敗」的殘影。
  */
 async function loadAiFocus() {
@@ -116,7 +116,7 @@ function renderKpi(data, user) {
             label: '高風險日',
             value: data.highRiskDays,
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
-            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/WEB-FEEDBACK-PLAN.md #5）
+            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/HISTORY.md #5）
             hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('高')}&from=${data.from}&to=${data.to}`
         },
@@ -209,7 +209,7 @@ function renderCategories(data) {
         link.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
 
         // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
-        // docs/WEB-FEEDBACK-2-PLAN.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
+        // docs/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
         const severityClass = category.elevatesCount > 0 ? ' lf-card--critical'
             : category.highCount > 0 ? ' lf-card--warning' : '';
 
@@ -243,7 +243,7 @@ function renderCategories(data) {
  * 嚴重度分解：顏色＋文字，不做只靠顏色區分的 UI。
  * 徽章顏色改走 format.js 的 severityCountBadge（單一標準）——這裡原本自己拼一份，
  * 把 Low 的底色寫成 secondary，與其餘頁面（format.js 的 SEVERITY_VARIANT＝neutral）不同色，
- * 是 docs/SHARED-STANDARDS-PLAN.md S11 記錄的實際分歧案例。
+ * 是 docs/HISTORY.md S11 記錄的實際分歧案例。
  */
 function severityBreakdown(category) {
     const wrap = document.createElement('span');

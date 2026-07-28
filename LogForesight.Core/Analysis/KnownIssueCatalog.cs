@@ -80,14 +80,14 @@ public class KnownIssueRule
     public IssueCategory Category { get; init; }
 
     /// <summary>
-    /// Severity 不是 init——docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）需要在載入時把舊資料的
+    /// Severity 不是 init——docs/HISTORY.md #1（B1 三級化）需要在載入時把舊資料的
     /// Severity=Critical 就地正規化為 High（見 <see cref="NormalizeLegacyCriticalSeverity"/>），
     /// 而 KnownIssueRule 是普通 class 不是 record，沒有 `with` 表達式可用。
     /// </summary>
     public IssueSeverity Severity { get; set; }
 
     /// <summary>
-    /// 命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：三級化前的 Critical
+    /// 命中即列為高風險日（docs/HISTORY.md #1，B1 三級化）：三級化前的 Critical
     /// 唯一的實際作用就是這個——LogAnalysisService.ComputeRuleBasedRisk 只要當天命中一條
     /// 未被抑制的旗標規則（或關聯訊號帶旗標），就把當天判定為高風險日。畫面上另以「重大」
     /// 徽章顯性標註（取代原本「嚴重」等級給人的直覺），見 IssueDto/SignatureHitDto.ElevatesDayRisk。
@@ -166,7 +166,7 @@ public class KnownIssueRule
 
 /// <summary>
 /// 已知危險訊號的規則表。偵測「已知模式」交給確定性規則，不依賴 AI 模型的召回率；
-/// AI 負責綜合判讀、趨勢比對與規則未涵蓋的新型態問題（見 docs/AI-ROLE-PLAN.md）。
+/// AI 負責綜合判讀、趨勢比對與規則未涵蓋的新型態問題（見 docs/HISTORY.md）。
 ///
 /// 2026-07-21 規則外部化（見 docs/RULES-PLAN.md）：規則表不再是唯讀的程式碼常數，改由
 /// <see cref="KnownIssueSeed"/> 提供內建種子，初次部署時寫入外部儲存（rules.json 概念上的
@@ -340,7 +340,7 @@ public static class KnownIssueCatalog
             var thresholdMet = signature.Count >= rule.CountThreshold;
             signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
             // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
-            // 讓當天判定成高風險日，旗標要複製同一個行為（docs/WEB-FEEDBACK-2-PLAN.md #1）
+            // 讓當天判定成高風險日，旗標要複製同一個行為（docs/HISTORY.md #1）
             signature.ElevatesDayRisk = thresholdMet && rule.ElevatesDayRisk;
             signature.KnownIssue = rule.Description;
             signature.RuleId = rule.Id;
@@ -356,7 +356,7 @@ public static class KnownIssueCatalog
         s == IssueSeverity.Low ? IssueSeverity.Low : s - 1;
 
     /// <summary>
-    /// 舊資料相容（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：規則檔裡若還存著三級化之前
+    /// 舊資料相容（docs/HISTORY.md #1，B1 三級化）：規則檔裡若還存著三級化之前
     /// 寫入的 Severity=Critical（內建種子已遷移，但使用者自訂規則或舊部署的 rules.json 可能還是舊值），
     /// 載入時一律正規化為 High＋ElevatesDayRisk=true——Critical 原本唯一的實際作用就是這個，
     /// 正規化後行為不變。只在載入時於記憶體正規化，不覆寫原檔（與規則檔容錯設計一致，

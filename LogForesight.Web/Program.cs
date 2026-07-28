@@ -37,7 +37,7 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // 以 Windows 服務執行（docs/OPS-HARDENING-PLAN.md P1-3）：只在真的被服務控制管理器啟動時
+    // 以 Windows 服務執行（docs/HISTORY.md P1-3）：只在真的被服務控制管理器啟動時
     // 才切換生命週期管理，一般用 `dotnet run`／console 啟動不受影響
     builder.Host.UseWindowsService();
 
@@ -112,7 +112,7 @@ try
                 settings.Auth.ServerAdmin.Account);
         }
 
-        // Sentinel 一律由 Web「系統管理 > NetIQ 維護」頁維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1），
+        // Sentinel 一律由 Web「系統管理 > NetIQ 維護」頁維護（docs/HISTORY.md 定案 1），
         // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
 

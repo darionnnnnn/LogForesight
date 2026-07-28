@@ -129,7 +129,7 @@ public class SuppressionTests
     public void 被抑制的Critical不強制拉高風險()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
-        // 模擬命中「重大」旗標規則（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化後判定看旗標不看 Severity）
+        // 模擬命中「重大」旗標規則（docs/HISTORY.md #1，B1 三級化後判定看旗標不看 Severity）
         issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
 

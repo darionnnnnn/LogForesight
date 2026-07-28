@@ -18,13 +18,13 @@ public interface ISystemSettingsService
 
     /// <summary>
     /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合（RecordRepository 據此過濾問題聚合，
-    /// 這是全站唯一的過濾點，見 docs/SHARED-STANDARDS-PLAN.md S1）；
+    /// 這是全站唯一的過濾點，見 docs/HISTORY.md S1）；
     /// DefaultHidden 回傳 null（表示不過濾，維持顯示層各自決定）。
     /// </summary>
     HashSet<string>? GetVisibleSeverities();
 
     /// <summary>
-    /// AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用管理者當場輸入的帳密，對表單目前填的
+    /// AD 測試連線（docs/HISTORY.md #9）：用管理者當場輸入的帳密，對表單目前填的
     /// 伺服器清單試 bind——未儲存的值也能測。密碼不落盤、不進稽核 detail，稽核只記執行過測試
     /// 與對象伺服器。這裡是管理者對自己測試，失敗原因可以顯示細節（與一般登入的規則不同）。
     /// </summary>
@@ -33,19 +33,19 @@ public interface ISystemSettingsService
 
 public class SystemSettingsService : ISystemSettingsService
 {
-    /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）。docs/WEB-FEEDBACK-2-PLAN.md #1
+    /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）。docs/HISTORY.md #1
     /// （B1 三級化）：Critical 不再是可選層級，舊設定殘留的 "Critical" 由 NormalizeLegacySeverities
     /// 讀取時正規化為 "High"。</summary>
     public static readonly string[] ValidSeverities = { "High", "Medium", "Low" };
 
     /// <summary>舊資料相容：既有設定 blob 裡的 "Critical" 一律視同 "High"（三級化前後語意相同，
-    /// 見 docs/WEB-FEEDBACK-2-PLAN.md #1）。只在讀取/過濾判斷時正規化，不改寫 blob 本身。</summary>
+    /// 見 docs/HISTORY.md #1）。只在讀取/過濾判斷時正規化，不改寫 blob 本身。</summary>
     private static List<string> NormalizeLegacySeverities(IEnumerable<string> values) =>
         values.Select(v => v == "Critical" ? "High" : v).Distinct().ToList();
 
     /// <summary>
     /// 合法層級顯示模式（見 SystemSettings.SeverityDisplayMode）。
-    /// docs/WEB-FEEDBACK-PLAN.md #5：原本三個模式（DefaultHidden／Locked／GlobalFilter）
+    /// docs/HISTORY.md #5：原本三個模式（DefaultHidden／Locked／GlobalFilter）
     /// 簡化為兩個——Locked 與 GlobalFilter 的差異只在於「詳情頁是否顯示已隱藏層級的按鈕」，
     /// 而過濾機制已收斂到 RecordRepository 單一咽喉點（S1），沒有理由再分兩種嚴格程度不同的隱藏。
     /// </summary>

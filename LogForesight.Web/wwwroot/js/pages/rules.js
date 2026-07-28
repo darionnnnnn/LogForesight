@@ -16,7 +16,7 @@ const CATEGORY_NAMES = {
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
 };
 
-// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High
+// docs/HISTORY.md #1（B1 三級化）：Critical 收斂進 High
 const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
@@ -135,7 +135,7 @@ function setupToolbar() {
         }
     });
 
-    // docs/WEB-FEEDBACK-2-PLAN.md #1：「重大」快篩——命中即列為高風險日的規則
+    // docs/HISTORY.md #1：「重大」快篩——命中即列為高風險日的規則
     renderChips(document.getElementById('rule-elevates-chips'), {
         items: [
             { value: '', label: '全部' },
@@ -236,7 +236,7 @@ function renderRules() {
     });
 }
 
-/** 嚴重度徽章＋「重大」旗標（docs/WEB-FEEDBACK-2-PLAN.md #1） */
+/** 嚴重度徽章＋「重大」旗標（docs/HISTORY.md #1） */
 function severityCell(rule) {
     const wrap = document.createElement('span');
     wrap.className = 'd-inline-flex align-items-center gap-1';

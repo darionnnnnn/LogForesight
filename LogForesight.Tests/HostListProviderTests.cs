@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 主機清單來源（docs/NETIQ-WEB-CONFIG-PLAN.md）：主機清單的主人固定為 Web 主機頁維護
+/// 主機清單來源（docs/HISTORY.md）：主機清單的主人固定為 Web 主機頁維護
 /// （Txt 清單模式已退役，定案 12）——這裡驗證挑選規則（待歸屬／IP 衝突／Sentinel 停用排除警告）。
 /// </summary>
 public class HostListProviderTests

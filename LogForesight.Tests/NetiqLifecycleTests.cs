@@ -6,7 +6,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel 孤兒主機停用（docs/SCALE-2000-PLAN.md §1.7）。</summary>
+/// <summary>Sentinel 孤兒主機停用（docs/HISTORY.md §1.7）。</summary>
 public class NetiqOrphanSweeperTests
 {
     private readonly FakeHostStore _hosts = new();
@@ -80,7 +80,7 @@ public class NetiqOrphanSweeperTests
 }
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1；docs/NETIQ-WEB-CONFIG-PLAN.md 定案 7）。
+/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 7）。
 /// 勾選送出即立即落盤，不再有排入佇列/取消的中間狀態。
 /// </summary>
 public class NetiqDiscoveryServiceTests
@@ -334,7 +334,7 @@ public class NetiqDiscoveryServiceTests
         await Assert.ThrowsAsync<DomainException>(() => svc.ScanAsync("S1", default));
     }
 
-    // ── 套用：網段群組指派（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 8） ─────────────
+    // ── 套用：網段群組指派（docs/HISTORY.md 定案 8） ─────────────
 
     [Fact]
     public void 套用_新主機依網段指派套用群組()

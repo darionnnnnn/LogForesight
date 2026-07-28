@@ -139,7 +139,7 @@ public class BatchRunStore
     }
 
     /// <summary>
-    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/OPS-HARDENING-PLAN.md P0-3）。
+    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/HISTORY.md P0-3）。
     /// 依附加時間（非 StartedAt/LoggedAt 業務時間）判斷——批次每日執行，兩者實務上等價，
     /// 且直接用附加時間可讓底層 SQL 端整批刪，不必逐行反序列化 JSON 比對業務日期。
     /// </summary>

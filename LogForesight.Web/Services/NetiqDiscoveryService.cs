@@ -6,11 +6,11 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/SCALE-2000-PLAN.md §1；docs/NETIQ-WEB-CONFIG-PLAN.md 定案 6、7、8）：
+/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 6、7、8）：
 /// 新增 Sentinel（可選自動掃描）或選既有 Sentinel 掃描 → 網段分組 → 勾選 → （可選）指派群組 → 立即套用。
 /// 掃描結果暫存 token（30 分鐘），套用只接受掃描過的 IP，避免前端硬塞任意主機。
 ///
-/// **勾選送出即落盤**（定案 7，修訂 SCALE-2000-PLAN §5.3 原本的排入佇列設計）：
+/// **勾選送出即落盤**（定案 7，修訂 docs/HISTORY.md「2026-07-23」段 §5.3 原本的排入佇列設計）：
 /// 主機列新增/更新/孤兒復活直接透過 <see cref="NetiqImportApplier"/> 套用，不再等批次執行。
 /// 兩千台量級下這一步本身很輕量（純粹是 upsert 幾十到幾百列），真正重的規則檢查本來就
 /// 要等下次批次才有——即時落盤只是讓「這台主機被收進清單」這件事本身不用等到隔天。

@@ -1,10 +1,10 @@
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Sentinel 名單的讀取層（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）。
+/// Sentinel 名單的讀取層（docs/HISTORY.md 定案 1）。
 ///
 /// **單一事實來源現在是共用的 <see cref="ISentinelStore"/>**（批次與 Web 都讀寫同一份資料庫）。
-/// 這是既有決策（NETIQ-HOSTLIST-WEB-PLAN.md 決策 E：曾以批次 appsettings.json 為唯一事實來源）
+/// 這是既有決策（docs/HISTORY.md「2026-07-21」段 NetIQ 主機清單規劃的決策 E：曾以批次 appsettings.json 為唯一事實來源）
 /// 的修訂——當時的前提是「批次與 Web 靠 DataRoot 共用檔案」，Phase C 之後共用點已是資料庫，
 /// 讓 Web 直接管理 Sentinel 反而消除了「畫面選得到、批次卻查不到」的分歧風險。
 /// 介面維持原樣，呼叫端（NetiqDiscoveryService／NetiqHostService／HostAdminService）零改動。

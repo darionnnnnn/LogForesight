@@ -95,7 +95,7 @@ public class RecordDetailDto
     public string Date { get; set; } = string.Empty;
     public string RiskLevel { get; set; } = string.Empty;
 
-    /// <summary>日風險等級的判定依據說明（docs/WEB-FEEDBACK-2-PLAN.md #11），已轉為白話文字；
+    /// <summary>日風險等級的判定依據說明（docs/HISTORY.md #11），已轉為白話文字；
     /// null＝舊紀錄（本欄位問世前寫入），前端顯示通用說明。</summary>
     public string? RiskBasisText { get; set; }
 
@@ -146,7 +146,7 @@ public class IssueDto
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：前端顯示「重大」
+    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化）：前端顯示「重大」
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
     public bool ElevatesDayRisk { get; set; }
 
@@ -219,7 +219,7 @@ public class CategorySummaryDto
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
-    /// <summary>命中「重大」旗標的問題數（docs/WEB-FEEDBACK-2-PLAN.md #1）</summary>
+    /// <summary>命中「重大」旗標的問題數（docs/HISTORY.md #1）</summary>
     public int ElevatesCount { get; set; }
 }
 

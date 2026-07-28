@@ -23,7 +23,7 @@ public class RuleDto
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化，取代原「嚴重」等級）</summary>
+    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
     public bool ElevatesDayRisk { get; set; }
 
     public string Description { get; set; } = string.Empty;
@@ -84,7 +84,7 @@ public class SaveRuleRequest
     [Required]
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化，取代原「嚴重」等級）</summary>
+    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
     public bool ElevatesDayRisk { get; set; }
 
     [Required(ErrorMessage = "請輸入規則說明")]

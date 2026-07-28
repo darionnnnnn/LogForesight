@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/WEB-FEEDBACK-PLAN.md #7：一次新增多個帳號。UserAdminService 先前沒有專屬測試檔，
+/// docs/HISTORY.md #7：一次新增多個帳號。UserAdminService 先前沒有專屬測試檔，
 /// 這裡順帶補上既有 SaveUser／SetUserGroups 的基本案例，再測批次新增。
 /// </summary>
 public class UserAdminServiceTests

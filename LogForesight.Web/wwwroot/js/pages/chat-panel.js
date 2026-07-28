@@ -40,7 +40,7 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
 
 /**
  * 嚴重度篩選鈕切換時呼叫（record-detail.js renderSeverityFilter）：下拉選單只列出
- * 目前篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）——不重新綁定事件，
+ * 目前篩選後仍可見的問題（docs/HISTORY.md #4）——不重新綁定事件，
  * 只重建選項；目前選中的問題被篩掉時才重置選擇與對話，否則保留使用者正在進行的對話。
  */
 export function updateIssueOptions(topIssues) {

@@ -38,7 +38,7 @@ public class HostAdminService
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
 
     /// <summary>
-    /// 新主機豁免無回報告警的寬限期（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 9）：一個批次週期
+    /// 新主機豁免無回報告警的寬限期（docs/HISTORY.md 定案 9）：一個批次週期
     /// （批次通常每天跑一次）。剛匯入的主機在第一次批次跑完前 LastReportAt 必為空，
     /// 沒有寬限期的話一次匯入一批就會立刻在儀表板與這裡的「未回報」篩選觸發告警洪水。
     /// public 讓 DashboardService 引用同一個值——兩邊都用這個定義,不是各自寫一份數字。

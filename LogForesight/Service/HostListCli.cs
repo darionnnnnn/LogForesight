@@ -2,7 +2,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 主機清單的查詢指令：`--host-list` 列出目前設定下實際會查詢的主機。
-/// 主機清單的主人固定為 Web 主機頁維護（Txt 清單模式已退役，見 docs/NETIQ-WEB-CONFIG-PLAN.md 定案 12）。
+/// 主機清單的主人固定為 Web 主機頁維護（Txt 清單模式已退役，見 docs/HISTORY.md 定案 12）。
 /// </summary>
 public static class HostListCli
 {

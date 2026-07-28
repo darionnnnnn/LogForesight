@@ -207,7 +207,7 @@ public class IdentityServiceTests
             CredentialCheckResult.Fail("測試用：一律失敗");
     }
 
-    // ── docs/WEB-FEEDBACK-PLAN.md #8：AD 登入自動補顯示名稱與 Email ──────────────
+    // ── docs/HISTORY.md #8：AD 登入自動補顯示名稱與 Email ──────────────
 
     private class FixedResultProvider : IAuthenticationProvider
     {

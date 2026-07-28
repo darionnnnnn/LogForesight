@@ -7,7 +7,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/WEB-FEEDBACK-PLAN.md #6：報表新增的管理者指標（TotalHosts／Handling）。
+/// docs/HISTORY.md #6：報表新增的管理者指標（TotalHosts／Handling）。
 /// 與 <see cref="RecordQueryServiceSearchTests"/> 同一套慣例——串接真正的
 /// EfAnalysisRecordStore＋RecordRepository，而非重新實作一份簡化邏輯。
 /// </summary>

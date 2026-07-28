@@ -4,7 +4,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Sentinel 連線設定維護（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）。
+/// Sentinel 連線設定維護（docs/HISTORY.md 定案 1）。
 /// 「新增即掃描」精靈與資料匯入頁整併留待 Phase 4；這裡先把 CRUD 本身建好。
 /// </summary>
 public class SentinelAdminService

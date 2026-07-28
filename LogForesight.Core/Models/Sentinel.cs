@@ -4,7 +4,7 @@ namespace LogForesight;
 /// NetIQ Sentinel 連線設定（↔ webdata blob，key=sentinels）。
 ///
 /// 取代原本「批次 appsettings.json 的 NetIq.Servers 是唯一事實來源」的決策
-/// （docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1）：批次與 Web 現在共用資料庫，Sentinel 改由 Web 維護，
+/// （docs/HISTORY.md 定案 1）：批次與 Web 現在共用資料庫，Sentinel 改由 Web 維護，
 /// 批次與 Web 都讀同一份 store。appsettings.NetIq.Servers 降為僅供空庫時的一次性種子。
 /// </summary>
 public class Sentinel

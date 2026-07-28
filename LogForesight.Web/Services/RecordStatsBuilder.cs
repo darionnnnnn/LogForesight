@@ -3,7 +3,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 儀表板與報表共用的統計組裝（docs/SHARED-STANDARDS-PLAN.md S4/S5）。取代原本
+/// 儀表板與報表共用的統計組裝（docs/HISTORY.md S4/S5）。取代原本
 /// DashboardService／ReportService 各自維護的一份幾乎逐行相同的類別統計與主機排行邏輯——
 /// 兩處遲早會在某次修改中漂移成不同的數字，尤其是嚴重度可見性（S1）接上之後兩邊都要同步改。
 ///

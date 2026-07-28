@@ -97,7 +97,7 @@ public class SetHostActiveRequest
     public bool Active { get; set; }
 }
 
-// ── 主動探索匯入（docs/SCALE-2000-PLAN.md §1）───────────────────────────────
+// ── 主動探索匯入（docs/HISTORY.md §1）───────────────────────────────
 
 public class NetiqScanRequest
 {
@@ -149,7 +149,7 @@ public class NetiqImportRequest
     public List<string> SelectedIps { get; set; } = new();
 
     /// <summary>
-    /// 各網段的群組指派（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 8）。省略/空清單＝維持
+    /// 各網段的群組指派（docs/HISTORY.md 定案 8）。省略/空清單＝維持
     /// Phase 3 的行為（全部落在未分組安全預設）；只影響本次新增的主機，既有主機的
     /// 群組一律不動。
     /// </summary>

@@ -16,7 +16,7 @@ namespace LogForesight.Web.Services;
 /// 先交給 XXX 處理——此時**負責人不變**（那是主機的長期屬性），
 /// 變的是這個風險日的處理人。
 ///
-/// <see cref="GetTodo"/>：全站待辦（儀表板 KPI／報表處理進度共用，docs/SHARED-STANDARDS-PLAN.md S3）：
+/// <see cref="GetTodo"/>：全站待辦（儀表板 KPI／報表處理進度共用，docs/HISTORY.md S3）：
 /// 未處理與逾期。**母體（高＋中風險日）由本方法內部強制套用**——呼叫端傳整批候選紀錄即可，
 /// 不必（也不應該）自己先過濾，否則「待辦只算高＋中風險日」這條規則遲早在某個新呼叫端漏掉。
 /// 低風險日全站一律不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）。
@@ -64,7 +64,7 @@ public class HandlingService
     {
         var host = RequireVisibleHost(hostId);
         var handling = _store.Get(host.HostName, date);
-        // 補撈 record 算推導狀態（docs/WEB-FEEDBACK-2-PLAN.md #6）：處理面板要顯示的是
+        // 補撈 record 算推導狀態（docs/HISTORY.md #6）：處理面板要顯示的是
         // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步
         var record = _repository.GetOne(hostId, date);
 
@@ -456,7 +456,7 @@ public class HandlingService
     }
 
     /// <summary>
-    /// 問題層級的歷程列（docs/WEB-FEEDBACK-2-PLAN.md #6/D4）：與日層級的 <see cref="AppendLog"/>
+    /// 問題層級的歷程列（docs/HISTORY.md #6/D4）：與日層級的 <see cref="AppendLog"/>
     /// 分開——問題層級沒有「處理人」（那是日層級概念），且需要 IssueKey/IssueLabel 定位是哪個問題。
     /// </summary>
     private void AppendIssueLog(WebHost host, DateTime date, string issueKey, string issueLabel, string action, string status, string? note, DateTime occurredAt)

@@ -2,7 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>一次性 SentinelId 回填（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）。</summary>
+/// <summary>一次性 SentinelId 回填（docs/HISTORY.md 定案 4）。</summary>
 public class SentinelIdBackfillerTests
 {
     private readonly FakeHostStore _hosts = new();
