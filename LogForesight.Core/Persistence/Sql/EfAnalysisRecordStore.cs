@@ -7,9 +7,9 @@ namespace LogForesight.Sql;
 
 /// <summary>
 /// <see cref="IAnalysisRecordStore"/> ＋ <see cref="IAnalysisRecordQuery"/> 的 SQL 後端實作。
-/// 與 JSONL 的語意逐位一致由合約測試（SQLite 上跑同一組案例）強制。
+/// 語意由合約測試（SQLite 上跑）強制。
 ///
-/// **關鍵共用規則**（不重寫，直接呼叫 Core 的單點函數，保證兩後端一致）：
+/// **關鍵共用規則**（不重寫，直接呼叫 Core 的單點函數，避免規則各處各寫一份）：
 ///   - 寫入精簡：<see cref="RecordStorageShaper.ForStorage"/>（低風險日砍範例訊息/KeyDetails）
 ///   - 查詢過濾：<see cref="RecordFilterMatcher.Matches"/>（除 Hosts 外的欄位）
 ///   - 主機比對：<see cref="HostMatcher"/>（PK 優先、空集合＝零結果的授權語意）
@@ -350,7 +350,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return null;
     }
 
-    /// <summary>反序列化與 JSONL 用同一套（預設 JsonSerializer），round-trip 保真且逐位一致</summary>
+    /// <summary>預設 JsonSerializer，round-trip 保真</summary>
     private static DailyAnalysisRecord Deserialize(DailyRecordRow row) =>
         JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
 }

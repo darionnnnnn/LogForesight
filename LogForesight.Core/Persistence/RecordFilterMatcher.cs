@@ -3,10 +3,10 @@ namespace LogForesight;
 /// <summary>
 /// 分析紀錄對查詢條件的比對（<see cref="RecordQueryFilter"/> 中除了 Hosts 以外的欄位）。
 ///
-/// **兩個後端共用的單點規則**（docs/DB-PLAN.md 一致性機制 #3）：JSONL 全載入後在記憶體篩選、
-/// SQL 以日期/主機在資料庫預篩後再對其餘欄位套用同一個函數——語意逐位一致，
-/// 不靠 code review 肉眼比對。與 <see cref="RecordStorageShaper"/>、<see cref="CategoryAggregator"/>
-/// 同一套「能被兩後端共用的規則不長在單一實作裡」的原則。
+/// **單點規則**（docs/DB-PLAN.md 一致性機制 #3）：SQL 端以日期/主機在資料庫預篩後，
+/// 其餘欄位一律套用同一個函數比對——篩選語意只有一份定義，不靠 code review 肉眼比對。
+/// 與 <see cref="RecordStorageShaper"/>、<see cref="CategoryAggregator"/> 同一套
+/// 「規則不長在單一呼叫端裡」的原則。
 ///
 /// Hosts 不在此：那是主機識別（<see cref="HostMatcher"/>）＋空集合＝零結果的授權語意，
 /// 與一般欄位篩選是兩件事，各自維護。

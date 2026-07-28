@@ -1,7 +1,7 @@
 namespace LogForesight;
 
 /// <summary>
-/// 內建規則種子：初次部署時寫入外部儲存（rules.json，未來 DB）的起始內容，也是
+/// 內建規則種子：初次部署時寫入外部儲存（DB blob，key=rules）的起始內容，也是
 /// <see cref="KnownIssueCatalog.Rules"/> 在未呼叫 Initialize 前的預設值（單元測試/selftest 降級路徑）。
 /// 這裡不再是唯一的規則來源——使用者可在 rules.json 停用/新增規則；`--import-rules` 用
 /// <see cref="Version"/> 判斷是否有新版種子內容可匯入。Id 一經出貨永不改名（見 docs/RULES-PLAN.md）。

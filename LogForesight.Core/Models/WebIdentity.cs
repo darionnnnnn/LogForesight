@@ -40,8 +40,8 @@ public class WebUser
     public bool Active { get; set; } = true;
 
     /// <summary>
-    /// 所屬使用者群組（↔ lf_user_group_members）。JSONL 後端內嵌於本物件，
-    /// SQL 後端是獨立關聯表——store 介面隱藏這個差異，呼叫端看到的都是這份清單。
+    /// 所屬使用者群組（↔ lf_user_group_members，獨立關聯表）。store 介面隱藏底層是關聯表這件事，
+    /// 呼叫端看到的都是這份清單。
     /// </summary>
     public List<long> GroupIds { get; set; } = new();
 }

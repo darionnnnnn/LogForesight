@@ -3,8 +3,7 @@ namespace LogForesight;
 /// <summary>
 /// 使用者的讀寫（↔ lf_users ＋ lf_user_group_members）。
 ///
-/// 介面語意即規格（DB-PLAN 一致性機制 #2）——JSONL 與 SQL 實作都必須符合下列約定，
-/// 合約測試會對兩個後端跑同一組案例：
+/// 介面語意即規格（DB-PLAN 一致性機制 #2）——實作必須符合下列約定，由合約測試強制：
 /// - <see cref="FindByAccount"/> 的帳號比對**不分大小寫**（AD 帳號本來就不分，
 ///   使用者輸入 domain\user 或 DOMAIN\USER 必須是同一個人）
 /// - <see cref="Upsert"/> 以 <c>Account</c> 為自然鍵：存在則更新、不存在則新增並配發 UserId

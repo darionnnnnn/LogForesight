@@ -22,7 +22,7 @@ public enum IssueSeverity
 
 public class KnownIssueRule
 {
-    // ── 規則管理欄位（規則外部化，rules.json／未來 DB 共用）─────────────────
+    // ── 規則管理欄位（規則外部化，見 docs/RULES-PLAN.md）─────────────────────
     // 規則搬出程式碼後，這幾個欄位是「誰能改這條規則」「怎麼比對順序」「要不要吵」的地基，
     // 詳見 docs/RULES-PLAN.md。內建種子（KnownIssueSeed）會把這些欄位填好，程式碼裡的規則物件
     // 本身維持純資料、不含任何比對邏輯。
@@ -169,8 +169,8 @@ public class KnownIssueRule
 /// AI 負責綜合判讀、趨勢比對與規則未涵蓋的新型態問題（見 docs/AI-ROLE-PLAN.md）。
 ///
 /// 2026-07-21 規則外部化（見 docs/RULES-PLAN.md）：規則表不再是唯讀的程式碼常數，改由
-/// <see cref="KnownIssueSeed"/> 提供內建種子，初次部署時寫入外部儲存（rules.json，未來 DB），
-/// 之後在儲存端維護。<see cref="Rules"/> 預設等於內建種子（單元測試、selftest 的降級路徑
+/// <see cref="KnownIssueSeed"/> 提供內建種子，初次部署時寫入外部儲存（rules.json 概念上的
+/// DB blob），之後在儲存端維護。<see cref="Rules"/> 預設等於內建種子（單元測試、selftest 的降級路徑
 /// 不呼叫 <see cref="Initialize"/> 時，行為與規則外部化之前完全相同）；正常啟動流程由
 /// RuleBootstrapper 載入、驗證後呼叫 Initialize 覆寫。
 /// </summary>

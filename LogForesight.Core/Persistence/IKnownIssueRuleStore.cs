@@ -38,9 +38,9 @@ public class RuleLoadOutcome
 }
 
 /// <summary>
-/// 規則儲存後端的抽象。前期實作為 rules.json（<see cref="KnownIssueRuleStore"/>），
-/// 未來 DB 後端只需新增另一個實作類別並在 StorageFactory 加一個 case，
-/// KnownIssueCatalog／RuleBootstrapper 等消費端完全不用修改（與 IAnalysisRecordStore 同一模式）。
+/// 規則儲存後端的抽象，唯一實作為 <see cref="KnownIssueRuleStore"/>（DB blob，key=rules）。
+/// 保留這層介面是因為 KnownIssueCatalog／RuleBootstrapper 等消費端只依賴規則存取的語意，
+/// 測試也透過這個介面注入假件。
 /// </summary>
 public interface IKnownIssueRuleStore
 {

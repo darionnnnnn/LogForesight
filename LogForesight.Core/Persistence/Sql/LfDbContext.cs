@@ -10,7 +10,7 @@ namespace LogForesight.Sql;
 ///     record_date、risk_level、weekly_checkup_date）＋整筆紀錄的 JSON（round-trip 保真）；
 ///   - 多列 <see cref="TopIssueRow"/> 子表：抽出問題層級的過濾維度
 ///     （category、event_id、source_name、severity_rank），供跨主機/類別查詢在 DB 端預篩。
-/// 讀取一律反序列化 JSON（保真、與 JSONL 逐位一致）；過濾靠抽出的欄與子表（效能）。
+/// 讀取一律反序列化 JSON（round-trip 保真）；過濾靠抽出的欄與子表（效能）。
 /// 完整正規化（alerts/categories/deep_dives 各自成表）留待特定查詢需要時再加，不影響此設計正確性。
 ///
 /// LINQ 保持 provider 中立：正式環境 SqlServer、測試 SQLite 跑同一組合約測試。

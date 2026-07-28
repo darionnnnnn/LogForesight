@@ -1,9 +1,8 @@
 namespace LogForesight;
 
 /// <summary>
-/// 分析紀錄的儲存前整形規則：純函數，所有儲存後端（現行 JSONL、未來 DB）都呼叫同一份，
-/// 確保「無風險日精簡策略」只有一份定義——規則長在單一實作裡的話，DB 實作屆時得複製一份，
-/// 兩份規則遲早漂移不同步（docs/DB-PLAN.md「txt ↔ DB 一致性保證」機制 #4：精簡策略單點化）。
+/// 分析紀錄的儲存前整形規則：純函數，確保「無風險日精簡策略」只有一份定義
+/// （docs/DB-PLAN.md 一致性機制 #4：精簡策略單點化）。
 /// </summary>
 public static class RecordStorageShaper
 {

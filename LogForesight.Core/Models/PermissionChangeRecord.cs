@@ -35,9 +35,9 @@ public class PermissionChangeRecord
 /// <summary>
 /// 權限異動的人工確認狀態（↔ lf_permission_changes 的 confirm_* 欄位）。
 ///
-/// 獨立於 <see cref="PermissionChangeRecord"/> 之外的原因是 JSONL 後端的
-/// 「單一寫入者」規則：異動由批次寫、確認由 Web 寫，各寫各的檔案才不需要跨程序交易。
-/// SQL 後端會合併成同一張表的欄位。
+/// 獨立於 <see cref="PermissionChangeRecord"/> 之外的原因是「單一寫入者」規則：
+/// 異動由批次寫、確認由 Web 寫，各寫各的儲存 key 才不需要跨程序交易
+/// （見 <see cref="PermissionChangeStore"/>）。
 /// </summary>
 public class PermissionChangeConfirmation
 {

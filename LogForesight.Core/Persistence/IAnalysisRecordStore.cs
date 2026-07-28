@@ -39,7 +39,7 @@ public interface IAnalysisRecordReader
 /// </summary>
 public interface IAnalysisRecordStore : IAnalysisRecordReader
 {
-    /// <summary>供 console/log 顯示的位置描述（今日為檔案完整路徑，未來 DB 後端可能是連線字串摘要）</summary>
+    /// <summary>供 console/log 顯示的位置描述（連線字串摘要，密碼已遮罩）</summary>
     string Location { get; }
 
     /// <summary>寫入每日分析紀錄。契約：append-only，且不保證同日去重——去重由呼叫端以 <see cref="IAnalysisRecordReader.HasRecord"/> 防護</summary>
@@ -50,7 +50,7 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
 
     /// <summary>
     /// 將週體檢結果附掛到已存在的當日紀錄。週體檢在每日分析＋Append 之後才執行（需要讀到當天剛寫入的統計），
-    /// 所以是對既有紀錄的一次更新，不是新增一筆——JSONL 實作會重寫該行；DB 後端會是一次 UPDATE。
+    /// 所以是對既有紀錄的一次更新，不是新增一筆——DB 後端是一次 UPDATE。
     /// 找不到對應日期的紀錄時安靜略過（理論上不應發生，因為呼叫前一定先做過當日分析）。
     /// </summary>
     void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup);
