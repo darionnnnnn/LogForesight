@@ -17,7 +17,7 @@ public class EfWebdataStoreTests
     public void 規則庫_EF往返()
     {
         using var fx = new EfSqliteFixture();
-        var store = new JsonKnownIssueRuleStore(fx.Blob("rules"));
+        var store = new KnownIssueRuleStore(fx.Blob("rules"));
 
         Assert.False(store.Exists);
         store.Save(new RuleFileContent
@@ -37,10 +37,10 @@ public class EfWebdataStoreTests
     public void 使用者_EF往返_跨store實例持久()
     {
         using var fx = new EfSqliteFixture();
-        new JsonUserStore(fx.Blob("users")).Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
+        new UserStore(fx.Blob("users")).Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
 
         // 另一個 store 實例讀同一個 DB key——資料在 DB 裡持久
-        var reread = new JsonUserStore(fx.Blob("users")).FindByAccount("domain\\a");
+        var reread = new UserStore(fx.Blob("users")).FindByAccount("domain\\a");
         Assert.NotNull(reread);
         Assert.Equal("甲", reread!.DisplayName);
     }
@@ -49,7 +49,7 @@ public class EfWebdataStoreTests
     public void Sentinel_EF往返_密文原樣保存()
     {
         using var fx = new EfSqliteFixture();
-        var store = new JsonSentinelStore(fx.Blob("sentinels"));
+        var store = new SentinelStore(fx.Blob("sentinels"));
 
         var saved = store.Upsert(new Sentinel
         {
@@ -57,7 +57,7 @@ public class EfWebdataStoreTests
             PasswordEnc = CryptoHelper.Encrypt("hunter2")
         });
 
-        var reread = new JsonSentinelStore(fx.Blob("sentinels")).FindByName("s1");
+        var reread = new SentinelStore(fx.Blob("sentinels")).FindByName("s1");
         Assert.NotNull(reread);
         Assert.Equal(saved.SentinelId, reread!.SentinelId);
         Assert.Equal("hunter2", CryptoHelper.Decrypt(reread.PasswordEnc));
@@ -69,7 +69,7 @@ public class EfWebdataStoreTests
     public void 稽核_EF附加與查詢往返()
     {
         using var fx = new EfSqliteFixture();
-        var store = new JsonAuditLogStore(fx.LogStore("audit"));
+        var store = new AuditLogStore(fx.LogStore("audit"));
 
         store.Append(new AuditEntry { Action = "login", Account = "a", Result = AuditResult.Ok });
         store.Append(new AuditEntry { Action = "login_failed", Account = "b", Result = AuditResult.Denied });
@@ -82,10 +82,10 @@ public class EfWebdataStoreTests
     public void 稽核_ID跨store實例遞增不重號()
     {
         using var fx = new EfSqliteFixture();
-        new JsonAuditLogStore(fx.LogStore("audit")).Append(new AuditEntry { Action = "x" });
+        new AuditLogStore(fx.LogStore("audit")).Append(new AuditEntry { Action = "x" });
 
         // 新 store 實例應從 DB 讀回 lastId，續號而非從 1 重來
-        var store2 = new JsonAuditLogStore(fx.LogStore("audit"));
+        var store2 = new AuditLogStore(fx.LogStore("audit"));
         store2.Append(new AuditEntry { Action = "y" });
 
         var ids = store2.Query(new AuditQuery()).Items.Select(e => e.AuditId).ToList();
@@ -98,7 +98,7 @@ public class EfWebdataStoreTests
     public void 處理狀態_快照與歷程_EF往返()
     {
         using var fx = new EfSqliteFixture();
-        var store = new JsonRecordHandlingStore(fx.Blob("handling"), fx.LogStore("handling_log"));
+        var store = new RecordHandlingStore(fx.Blob("handling"), fx.LogStore("handling_log"));
         var date = DateTime.Today;
 
         store.Save(new RecordHandling { HostName = "SRV-01", Date = date, Status = "in_progress" });
@@ -112,7 +112,7 @@ public class EfWebdataStoreTests
     public void 執行紀錄_開始結束回填_EF往返()
     {
         using var fx = new EfSqliteFixture();
-        var store = new JsonBatchRunStore(fx.LogStore("runs"), fx.LogStore("run_logs"));
+        var store = new BatchRunStore(fx.LogStore("runs"), fx.LogStore("run_logs"));
 
         var runId = store.StartRun(new BatchRun { HostName = "SRV-01", StartedAt = DateTime.Now });
         store.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-01", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });

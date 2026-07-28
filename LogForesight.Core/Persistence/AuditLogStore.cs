@@ -11,7 +11,7 @@ namespace LogForesight;
 /// 走逐列的 <see cref="IJsonLogStore"/> 而不是整份 blob：稽核是 append-only 的高頻寫入，
 /// 每次都重寫整份文件會隨資料量線性變慢。
 /// </summary>
-public class JsonAuditLogStore
+public class AuditLogStore
 {
     private readonly IJsonLogStore _log;
     private readonly object _lock = new();
@@ -24,7 +24,7 @@ public class JsonAuditLogStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public JsonAuditLogStore(IJsonLogStore log)
+    public AuditLogStore(IJsonLogStore log)
     {
         _log = log;
         _lastId = ReadAll().LastOrDefault()?.AuditId ?? 0;

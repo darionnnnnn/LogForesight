@@ -8,13 +8,13 @@ namespace LogForesight;
 /// 快照存整份型 blob（key=record_handling，原子讀改寫），
 /// 歷程存 log（key=handling_log，append-only，逐列獨立）。
 /// </summary>
-public class JsonRecordHandlingStore : JsonBlobCollection<RecordHandling>, IRecordHandlingStore
+public class RecordHandlingStore : JsonBlobCollection<RecordHandling>, IRecordHandlingStore
 {
     private readonly IJsonLogStore _logStore;
     private readonly object _logLock = new();
     private long _lastLogId;
 
-    public JsonRecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
+    public RecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
     {
         _logStore = logStore;
         _lastLogId = ReadAllLogs().LastOrDefault()?.LogId ?? 0;

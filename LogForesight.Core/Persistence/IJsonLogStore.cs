@@ -29,7 +29,7 @@ public interface IJsonLogStore
     /// 依附加時間範圍讀取（不分頁，依附加順序），供呼叫端先在 SQL 端窄化候選集再於記憶體精確過濾
     /// （docs/OPS-HARDENING-PLAN.md P1-2）。from/to 為 null 代表不限；沒有時間戳記的既存列
     /// （schema 升級前寫入）一律視為在範圍內——**這裡的窄化不保證絕對精確**，呼叫端仍須對
-    /// 精確欄位做最終判斷（見 <c>JsonAuditLogStore.Count</c> 的用法）。
+    /// 精確欄位做最終判斷（見 <c>AuditLogStore.Count</c> 的用法）。
     /// </summary>
     IReadOnlyList<string> ReadLines(DateTime? from, DateTime? to);
 

@@ -40,10 +40,10 @@ public class PermissionMonitorService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly JsonPermissionSnapshotStore _snapshotStore;
+    private readonly PermissionSnapshotStore _snapshotStore;
     private readonly List<string> _watchedFolders;
 
-    public PermissionMonitorService(PermissionSettings settings, JsonPermissionSnapshotStore snapshotStore)
+    public PermissionMonitorService(PermissionSettings settings, PermissionSnapshotStore snapshotStore)
     {
         _snapshotStore = snapshotStore;
 

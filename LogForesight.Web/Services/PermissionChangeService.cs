@@ -12,14 +12,14 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class PermissionChangeService
 {
-    private readonly JsonPermissionChangeStore _store;
+    private readonly PermissionChangeStore _store;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
     private readonly Auth.ICurrentUser _currentUser;
     private readonly IAuditService _audit;
 
     public PermissionChangeService(
-        JsonPermissionChangeStore store,
+        PermissionChangeStore store,
         IHostStore hosts,
         IVisibilityService visibility,
         Auth.ICurrentUser currentUser,

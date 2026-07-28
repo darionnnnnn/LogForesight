@@ -11,7 +11,7 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class RunMonitorService
 {
-    private readonly JsonBatchRunStore _runs;
+    private readonly BatchRunStore _runs;
     private readonly IHostStore _hosts;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
@@ -20,7 +20,7 @@ public class RunMonitorService
     /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
     private const int MaxFailedHostNames = 10;
 
-    public RunMonitorService(JsonBatchRunStore runs, IHostStore hosts)
+    public RunMonitorService(BatchRunStore runs, IHostStore hosts)
     {
         _runs = runs;
         _hosts = hosts;

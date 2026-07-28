@@ -16,11 +16,11 @@ public interface ISystemSettingsStore
 /// 系列 store 同一套底層（<see cref="IJsonBlobStore"/>），但本體是單一物件而非清單，
 /// 故不繼承 JsonBlobCollection（它的 Read/Mutate 是針對 List&lt;T&gt; 設計的）。
 /// </summary>
-public class JsonSystemSettingsStore : ISystemSettingsStore
+public class SystemSettingsStore : ISystemSettingsStore
 {
     private readonly IJsonBlobStore _blob;
 
-    public JsonSystemSettingsStore(IJsonBlobStore blob) => _blob = blob;
+    public SystemSettingsStore(IJsonBlobStore blob) => _blob = blob;
 
     public SystemSettings Get() => Deserialize(_blob.Read());
 

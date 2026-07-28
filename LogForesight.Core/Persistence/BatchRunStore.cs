@@ -57,7 +57,7 @@ public class BatchRunLog
 /// 讀取時同 RunId 取最後一列。這樣寫入端維持純附加，
 /// 而批次執行中途被強制中斷時，先前寫的「開始」那一列仍然留著，正好就是我們要偵測的狀態。
 /// </summary>
-public class JsonBatchRunStore
+public class BatchRunStore
 {
     private readonly IJsonLogStore _runs;
     private readonly IJsonLogStore _logs;
@@ -65,7 +65,7 @@ public class JsonBatchRunStore
     private long _lastRunId;
     private long _lastLogId;
 
-    public JsonBatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
+    public BatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
     {
         _runs = runs;
         _logs = logs;

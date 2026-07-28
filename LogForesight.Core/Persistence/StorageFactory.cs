@@ -112,21 +112,21 @@ public static class StorageFactory
 
     /// <summary>規則儲存後端（DB blob，key=rules）</summary>
     public static IKnownIssueRuleStore CreateRuleStore(StorageSettings settings, string dataRoot) =>
-        new JsonKnownIssueRuleStore(Blob(settings, dataRoot, "rules"));
+        new KnownIssueRuleStore(Blob(settings, dataRoot, "rules"));
 
     /// <summary>抑制設定的儲存後端（DB blob，key=suppressions）</summary>
     public static ISuppressionStore CreateSuppressionStore(StorageSettings settings, string dataRoot) =>
-        new JsonSuppressionStore(Blob(settings, dataRoot, "suppressions"));
+        new SuppressionStore(Blob(settings, dataRoot, "suppressions"));
 
     // ── Web 自有資料的儲存後端（docs/WEB-SPEC.md §10.2）────────────────────────────
 
     /// <summary>Web 使用者</summary>
     public static IUserStore CreateUserStore(StorageSettings settings, string dataRoot) =>
-        new JsonUserStore(Blob(settings, dataRoot, "users"));
+        new UserStore(Blob(settings, dataRoot, "users"));
 
     /// <summary>使用者群組</summary>
     public static IUserGroupStore CreateUserGroupStore(StorageSettings settings, string dataRoot) =>
-        new JsonUserGroupStore(Blob(settings, dataRoot, "user_groups"));
+        new UserGroupStore(Blob(settings, dataRoot, "user_groups"));
 
     /// <summary>Web 的分析紀錄查詢（多條件篩選）</summary>
     public static IAnalysisRecordQuery CreateRecordQuery(StorageSettings settings, string dataRoot) =>
@@ -139,74 +139,74 @@ public static class StorageFactory
 
     /// <summary>主機——批次與 Web 共同寫入，職責見 IHostStore 註解</summary>
     public static IHostStore CreateHostStore(StorageSettings settings, string dataRoot) =>
-        new JsonHostStore(Blob(settings, dataRoot, "hosts"));
+        new HostStore(Blob(settings, dataRoot, "hosts"));
 
     /// <summary>主機群組</summary>
     public static IHostGroupStore CreateHostGroupStore(StorageSettings settings, string dataRoot) =>
-        new JsonHostGroupStore(Blob(settings, dataRoot, "host_groups"));
+        new HostGroupStore(Blob(settings, dataRoot, "host_groups"));
 
     /// <summary>群組授權對應</summary>
     public static IGroupAccessStore CreateGroupAccessStore(StorageSettings settings, string dataRoot) =>
-        new JsonGroupAccessStore(Blob(settings, dataRoot, "group_access"));
+        new GroupAccessStore(Blob(settings, dataRoot, "group_access"));
 
     /// <summary>操作稽核</summary>
-    public static JsonAuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot) =>
-        new JsonAuditLogStore(LogStore(settings, dataRoot, "audit"));
+    public static AuditLogStore CreateAuditLogStore(StorageSettings settings, string dataRoot) =>
+        new AuditLogStore(LogStore(settings, dataRoot, "audit"));
 
     /// <summary>內建規則的原廠種子鏡像（供「回復預設」比對與還原）</summary>
     public static IRuleSeedStore CreateRuleSeedStore(StorageSettings settings, string dataRoot) =>
-        new JsonRuleSeedStore(Blob(settings, dataRoot, "rule_seeds"));
+        new RuleSeedStore(Blob(settings, dataRoot, "rule_seeds"));
 
     /// <summary>批次執行紀錄——批次寫、Web 讀</summary>
-    public static JsonBatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot) =>
-        new JsonBatchRunStore(
+    public static BatchRunStore CreateBatchRunStore(StorageSettings settings, string dataRoot) =>
+        new BatchRunStore(
             LogStore(settings, dataRoot, "batch_runs"),
             LogStore(settings, dataRoot, "batch_run_logs"));
 
     /// <summary>風險日處理狀態</summary>
     public static IRecordHandlingStore CreateHandlingStore(StorageSettings settings, string dataRoot) =>
-        new JsonRecordHandlingStore(
+        new RecordHandlingStore(
             Blob(settings, dataRoot, "record_handling"),
             LogStore(settings, dataRoot, "handling_log"));
 
     /// <summary>Web AI 加值輸出的快取</summary>
-    public static JsonAiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot) =>
-        new JsonAiCacheStore(Blob(settings, dataRoot, "ai_cache"));
+    public static AiCacheStore CreateAiCacheStore(StorageSettings settings, string dataRoot) =>
+        new AiCacheStore(Blob(settings, dataRoot, "ai_cache"));
 
     /// <summary>問題層級處理狀態——Web 寫，日層級結案與否由此推導</summary>
     public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot) =>
-        new JsonIssueHandlingStore(Blob(settings, dataRoot, "issue_handling"));
+        new IssueHandlingStore(Blob(settings, dataRoot, "issue_handling"));
 
     /// <summary>已知雜訊記憶（§5.1 D-1 #3）——同主機同簽章的自動雜訊判讀依據</summary>
     public static INoiseMarkStore CreateNoiseMarkStore(StorageSettings settings, string dataRoot) =>
-        new JsonNoiseMarkStore(Blob(settings, dataRoot, "noise_marks"));
+        new NoiseMarkStore(Blob(settings, dataRoot, "noise_marks"));
 
     /// <summary>
     /// 權限異動（perm_changes 由批次寫、perm_confirms 由 Web 寫）。
-    /// 兩者各有單一寫入者，見 JsonPermissionChangeStore 的類別註解。
+    /// 兩者各有單一寫入者，見 PermissionChangeStore 的類別註解。
     /// </summary>
-    public static JsonPermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot) =>
-        new JsonPermissionChangeStore(
+    public static PermissionChangeStore CreatePermissionChangeStore(StorageSettings settings, string dataRoot) =>
+        new PermissionChangeStore(
             LogStore(settings, dataRoot, "perm_changes"),
             Blob(settings, dataRoot, "perm_confirms"));
 
     /// <summary>權限/角色異動監控的快照（批次寫、批次讀，Web 不碰）</summary>
-    public static JsonPermissionSnapshotStore CreatePermissionSnapshotStore(StorageSettings settings, string dataRoot) =>
-        new JsonPermissionSnapshotStore(Blob(settings, dataRoot, "permission_snapshot"));
+    public static PermissionSnapshotStore CreatePermissionSnapshotStore(StorageSettings settings, string dataRoot) =>
+        new PermissionSnapshotStore(Blob(settings, dataRoot, "permission_snapshot"));
 
     /// <summary>CSV／NetIQ 匯入紀錄</summary>
     public static IImportLogStore CreateImportLogStore(StorageSettings settings, string dataRoot) =>
-        new JsonImportLogStore(LogStore(settings, dataRoot, "import_logs"));
+        new ImportLogStore(LogStore(settings, dataRoot, "import_logs"));
 
     /// <summary>NetIQ Sentinel 連線設定（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 1、2）</summary>
     public static ISentinelStore CreateSentinelStore(StorageSettings settings, string dataRoot) =>
-        new JsonSentinelStore(Blob(settings, dataRoot, "sentinels"));
+        new SentinelStore(Blob(settings, dataRoot, "sentinels"));
 
     /// <summary>全站系統設定（未處理等級門檻／AI 位址／補充留存天數，「系統管理 > 設定」頁維護）</summary>
     public static ISystemSettingsStore CreateSystemSettingsStore(StorageSettings settings, string dataRoot) =>
-        new JsonSystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
+        new SystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
 
     /// <summary>NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁維護）</summary>
-    public static JsonNetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
-        new JsonNetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));
+    public static NetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
+        new NetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));
 }

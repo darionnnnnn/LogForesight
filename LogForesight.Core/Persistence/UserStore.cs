@@ -1,9 +1,9 @@
 namespace LogForesight;
 
 /// <summary><see cref="IUserStore"/> 的實作（blob key=users，整份型）</summary>
-public class JsonUserStore : JsonBlobCollection<WebUser>, IUserStore
+public class UserStore : JsonBlobCollection<WebUser>, IUserStore
 {
-    public JsonUserStore(IJsonBlobStore blob) : base(blob) { }
+    public UserStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebUser> GetAll() => Read();
 
@@ -47,9 +47,9 @@ public class JsonUserStore : JsonBlobCollection<WebUser>, IUserStore
 }
 
 /// <summary><see cref="IUserGroupStore"/> 的實作（blob key=user_groups，整份型）</summary>
-public class JsonUserGroupStore : JsonBlobCollection<UserGroup>, IUserGroupStore
+public class UserGroupStore : JsonBlobCollection<UserGroup>, IUserGroupStore
 {
-    public JsonUserGroupStore(IJsonBlobStore blob) : base(blob) { }
+    public UserGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<UserGroup> GetAll() => Read();
 

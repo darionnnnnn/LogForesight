@@ -6,7 +6,7 @@ namespace LogForesight;
 /// <summary>
 /// webdata 儲存層共用的 <see cref="JsonSerializerOptions"/>。原本每個 store 各自 new 一份，
 /// 10 餘處逐字相同的設定散落各檔——這裡收斂成兩份唯一版本，其餘與這兩份不完全相同的
-/// （JsonAuditLogStore／JsonKnownIssueRuleStore／JsonSuppressionStore／IRuleSeedStore 的
+/// （AuditLogStore／KnownIssueRuleStore／SuppressionStore／IRuleSeedStore 的
 /// RuleJsonOptions）刻意不歸併，各自的差異是真實需求（列舉轉換、註解／結尾逗號容忍等），
 /// 硬併會改變行為。
 /// </summary>

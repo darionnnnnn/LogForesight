@@ -33,7 +33,7 @@ public interface IRuleSeedStore
 }
 
 /// <summary><see cref="IRuleSeedStore"/> 的實作（blob key=rule_seeds，整份型）</summary>
-public class JsonRuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeedStore
+public class RuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeedStore
 {
     private static readonly JsonSerializerOptions RuleJsonOptions = new()
     {
@@ -43,7 +43,7 @@ public class JsonRuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeed
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
-    public JsonRuleSeedStore(IJsonBlobStore blob) : base(blob) { }
+    public RuleSeedStore(IJsonBlobStore blob) : base(blob) { }
 
     public RuleSeedSnapshot? Get(string ruleId) =>
         Read().FirstOrDefault(s => string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));

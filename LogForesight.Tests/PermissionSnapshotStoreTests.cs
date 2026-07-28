@@ -4,15 +4,15 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="JsonPermissionSnapshotStore"/> 讀寫原本各自 new 一份不同的 JsonSerializerOptions
+/// <see cref="PermissionSnapshotStore"/> 讀寫原本各自 new 一份不同的 JsonSerializerOptions
 /// （Save 縮排、Load 完全不帶選項）——收斂共用 <see cref="LfJsonOptions"/> 之前，先釘住
 /// 「舊格式（Load 端原本沒有的選項）存下的內容，新選項仍讀得回來」這個相容性前提。
 /// </summary>
-public class JsonPermissionSnapshotStoreTests : IDisposable
+public class PermissionSnapshotStoreTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private JsonPermissionSnapshotStore Store() => new(_fx.Blob("permission_snapshot"));
+    private PermissionSnapshotStore Store() => new(_fx.Blob("permission_snapshot"));
 
     public void Dispose()
     {
@@ -65,7 +65,7 @@ public class JsonPermissionSnapshotStoreTests : IDisposable
         var legacyJson = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
         blob.Mutate<object?>(_ => (legacyJson, null));
 
-        var store = new JsonPermissionSnapshotStore(blob);
+        var store = new PermissionSnapshotStore(blob);
         var loaded = store.Load();
 
         Assert.NotNull(loaded);

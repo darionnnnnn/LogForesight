@@ -18,9 +18,9 @@ public interface INoiseMarkStore
     void Delete(string hostName, string issueKey);
 }
 
-public class JsonNoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
+public class NoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 {
-    public JsonNoiseMarkStore(IJsonBlobStore blob) : base(blob) { }
+    public NoiseMarkStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<NoiseMark> GetForHost(string hostName) =>
         Read().Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();

@@ -16,12 +16,12 @@ public class BatchRunRecorder : IDisposable
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly JsonBatchRunStore? _store;
+    private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
     private bool _finished;
 
-    public BatchRunRecorder(JsonBatchRunStore? store, string hostName, string[] args)
+    public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args)
     {
         _store = store;
         _run = new BatchRun
@@ -118,11 +118,11 @@ public class BatchRunRecorder : IDisposable
     /// </summary>
     private class BatchRunNLogTarget : TargetWithLayout
     {
-        private readonly JsonBatchRunStore _store;
+        private readonly BatchRunStore _store;
         private readonly long _runId;
         private readonly Action<string> _onRecorded;
 
-        public BatchRunNLogTarget(JsonBatchRunStore store, long runId, Action<string> onRecorded)
+        public BatchRunNLogTarget(BatchRunStore store, long runId, Action<string> onRecorded)
         {
             _store = store;
             _runId = runId;

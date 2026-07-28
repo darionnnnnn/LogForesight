@@ -9,11 +9,11 @@ public class NetiqOptionsService
 {
     private static readonly string[] ValidFetchModes = { "Full", "Reduced" };
 
-    private readonly JsonNetiqOptionsStore _store;
+    private readonly NetiqOptionsStore _store;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
 
-    public NetiqOptionsService(JsonNetiqOptionsStore store, ICurrentUser currentUser, IAuditService audit)
+    public NetiqOptionsService(NetiqOptionsStore store, ICurrentUser currentUser, IAuditService audit)
     {
         _store = store;
         _currentUser = currentUser;

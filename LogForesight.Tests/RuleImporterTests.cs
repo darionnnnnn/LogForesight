@@ -233,7 +233,7 @@ public class RuleImporterRunContractTests : IDisposable
     private readonly EfSqliteFixture _fx = new();
 
     private IJsonBlobStore? _blob;
-    private JsonKnownIssueRuleStore Store() => new(_blob ??= _fx.Blob("rules"));
+    private KnownIssueRuleStore Store() => new(_blob ??= _fx.Blob("rules"));
 
     public void Dispose()
     {

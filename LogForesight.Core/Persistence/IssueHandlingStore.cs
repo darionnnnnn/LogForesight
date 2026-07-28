@@ -7,9 +7,9 @@ namespace LogForesight;
 /// 只保留「有標記」的問題列——未標記＝未處理，不佔一列。清除標記等於刪掉該列，
 /// 讓這份文件只裝真正被人動過的問題，跟風險日「缺列即未處理」同一套語意。
 /// </summary>
-public class JsonIssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandlingStore
+public class IssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandlingStore
 {
-    public JsonIssueHandlingStore(IJsonBlobStore blob) : base(blob) { }
+    public IssueHandlingStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<IssueHandling> GetForDay(string hostName, DateTime date) =>
         Read().Where(h => SameDay(h, hostName, date)).ToList();

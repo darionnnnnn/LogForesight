@@ -4,14 +4,14 @@ namespace LogForesight;
 
 /// <summary>
 /// NetIQ 連線與節流參數的讀寫（↔ webdata blob，key=netiq_options）。單一物件，非清單。
-/// 整份 JSON 存一筆 blob，與 <see cref="JsonSystemSettingsStore"/> 同一套模式
+/// 整份 JSON 存一筆 blob，與 <see cref="SystemSettingsStore"/> 同一套模式
 /// （單一物件而非清單，故不繼承 <see cref="JsonBlobCollection{T}"/>）。
 /// </summary>
-public class JsonNetiqOptionsStore
+public class NetiqOptionsStore
 {
     private readonly IJsonBlobStore _blob;
 
-    public JsonNetiqOptionsStore(IJsonBlobStore blob) => _blob = blob;
+    public NetiqOptionsStore(IJsonBlobStore blob) => _blob = blob;
 
     public NetiqOptions Get() => Deserialize(_blob.Read());
 

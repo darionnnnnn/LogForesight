@@ -1,9 +1,9 @@
 namespace LogForesight;
 
 /// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
-public class JsonHostStore : JsonBlobCollection<WebHost>, IHostStore
+public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 {
-    public JsonHostStore(IJsonBlobStore blob) : base(blob) { }
+    public HostStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<WebHost> GetAll() => Read();
 
@@ -169,9 +169,9 @@ public class JsonHostStore : JsonBlobCollection<WebHost>, IHostStore
 }
 
 /// <summary><see cref="IHostGroupStore"/> 的實作（blob key=host_groups，整份型）</summary>
-public class JsonHostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
+public class HostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 {
-    public JsonHostGroupStore(IJsonBlobStore blob) : base(blob) { }
+    public HostGroupStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<HostGroup> GetAll() => Read();
 
@@ -203,9 +203,9 @@ public class JsonHostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 }
 
 /// <summary><see cref="IGroupAccessStore"/> 的實作（blob key=group_access，整份型）</summary>
-public class JsonGroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessStore
+public class GroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessStore
 {
-    public JsonGroupAccessStore(IJsonBlobStore blob) : base(blob) { }
+    public GroupAccessStore(IJsonBlobStore blob) : base(blob) { }
 
     public List<GroupAccess> GetAll() => Read();
 

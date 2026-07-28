@@ -8,7 +8,7 @@ public class UserStoreContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IUserStore CreateStore() => new JsonUserStore(_fx.Blob("users"));
+    private IUserStore CreateStore() => new UserStore(_fx.Blob("users"));
 
     public void Dispose()
     {

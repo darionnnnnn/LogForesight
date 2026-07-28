@@ -16,7 +16,7 @@ public class RuleBootstrapperContractTests : IDisposable
     private IJsonBlobStore? _blob;
     private IJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
 
-    private JsonKnownIssueRuleStore Store() => new(Blob);
+    private KnownIssueRuleStore Store() => new(Blob);
 
     private static void WriteRaw(IJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));

@@ -13,14 +13,14 @@ namespace LogForesight;
 /// 讓使用者能看著原檔修正；單一規則物件解析失敗（欄位型別不合、enum 打錯字）只跳過該條，
 /// 其餘規則照常載入——手動編輯打錯一條不該讓整份規則表失效。
 /// </summary>
-public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
+public class KnownIssueRuleStore : IKnownIssueRuleStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
-    public JsonKnownIssueRuleStore(IJsonBlobStore blob)
+    public KnownIssueRuleStore(IJsonBlobStore blob)
     {
         _blob = blob;
         _options = new JsonSerializerOptions

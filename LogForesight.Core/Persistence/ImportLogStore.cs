@@ -38,13 +38,13 @@ public interface IImportLogStore
 }
 
 /// <summary><see cref="IImportLogStore"/> 的實作（log key=import_logs，append-only）</summary>
-public class JsonImportLogStore : IImportLogStore
+public class ImportLogStore : IImportLogStore
 {
     private readonly IJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
 
-    public JsonImportLogStore(IJsonLogStore log)
+    public ImportLogStore(IJsonLogStore log)
     {
         _log = log;
         _lastId = ReadAll().LastOrDefault()?.ImportId ?? 0;

@@ -7,7 +7,7 @@ public class HostStoreContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IHostStore CreateStore() => new JsonHostStore(_fx.Blob("hosts"));
+    private IHostStore CreateStore() => new HostStore(_fx.Blob("hosts"));
 
     public void Dispose()
     {

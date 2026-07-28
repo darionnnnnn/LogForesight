@@ -9,14 +9,14 @@ namespace LogForesight;
 /// 空清單並記警告——抑制是可選的維運調校，讀取失敗不該讓分析流程整個失敗，只是這次沒有
 /// 任何抑制生效（等同「還沒設定過」，比整個程式中斷安全）。
 /// </summary>
-public class JsonSuppressionStore : ISuppressionStore
+public class SuppressionStore : ISuppressionStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly IJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
-    public JsonSuppressionStore(IJsonBlobStore blob)
+    public SuppressionStore(IJsonBlobStore blob)
     {
         _blob = blob;
         _options = new JsonSerializerOptions

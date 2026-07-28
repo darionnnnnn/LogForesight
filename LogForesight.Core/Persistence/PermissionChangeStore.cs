@@ -14,13 +14,13 @@ namespace LogForesight;
 ///   - blob key=perm_confirms：Web 寫入人工確認狀態（整份型，需更新）
 /// 各寫各的 key，寫入路徑不交錯。
 /// </summary>
-public class JsonPermissionChangeStore
+public class PermissionChangeStore
 {
     private readonly IJsonLogStore _changes;
     private readonly JsonConfirmationFile _confirmations;
     private readonly object _lock = new();
 
-    public JsonPermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
+    public PermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
     {
         _changes = changes;
         _confirmations = new JsonConfirmationFile(confirmations);

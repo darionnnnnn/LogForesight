@@ -305,7 +305,7 @@ public class RuleAdminService
                        ?? throw DomainException.NotFound(
                            "找不到這條規則的原廠備份。請先執行一次批次程式以同步內建種子。");
 
-        var seedRule = JsonRuleSeedStore.Deserialize(snapshot)
+        var seedRule = RuleSeedStore.Deserialize(snapshot)
                        ?? throw DomainException.Conflict("原廠備份內容損毀，無法回復。");
 
         return (current, seedRule);

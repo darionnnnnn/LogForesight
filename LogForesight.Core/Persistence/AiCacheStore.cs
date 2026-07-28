@@ -4,9 +4,9 @@ namespace LogForesight;
 /// Web AI 加值輸出的快取存取（blob key=ai_cache，整份型，原子讀改寫）。
 /// Put 時順手修剪過期項——快取量小、寫入低頻，不必另設清理排程。
 /// </summary>
-public class JsonAiCacheStore : JsonBlobCollection<AiCacheEntry>
+public class AiCacheStore : JsonBlobCollection<AiCacheEntry>
 {
-    public JsonAiCacheStore(IJsonBlobStore blob) : base(blob) { }
+    public AiCacheStore(IJsonBlobStore blob) : base(blob) { }
 
     /// <summary>取快取內容；查無回 null</summary>
     public string? Get(string key) =>
