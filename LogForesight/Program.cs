@@ -102,10 +102,7 @@ try
 }
 catch (AppSettingsLoadException ex)
 {
-    var original = Console.ForegroundColor;
-    Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"\n{ex.Message}");
-    Console.ForegroundColor = original;
+    WithColor(ConsoleColor.Red, () => Console.WriteLine($"\n{ex.Message}"));
     log.Fatal("設定檔解析失敗，啟動中止：{Message}", ex.Message);
     LogManager.Shutdown();
     return 1;
@@ -113,11 +110,9 @@ catch (AppSettingsLoadException ex)
 
 if (!settings.Storage.IsValidType)
 {
-    var original = Console.ForegroundColor;
-    Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"\nStorage:Type「{settings.Storage.Type}」不受支援，僅允許 " +
-                       $"{string.Join(" / ", StorageSettings.ValidTypes)}（Jsonl 檔案格式已於 2026-07-24 退役）。");
-    Console.ForegroundColor = original;
+    WithColor(ConsoleColor.Red, () => Console.WriteLine(
+        $"\nStorage:Type「{settings.Storage.Type}」不受支援，僅允許 " +
+        $"{string.Join(" / ", StorageSettings.ValidTypes)}（Jsonl 檔案格式已於 2026-07-24 退役）。"));
     log.Fatal("Storage:Type 設定不合格，啟動中止：{Type}", settings.Storage.Type);
     LogManager.Shutdown();
     return 1;
@@ -300,13 +295,16 @@ var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險
 // 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺——
 // 此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
 //
+// 以下三段都操作同一批主機/Sentinel 資料，共用同一組 store 實例（原本各自呼叫
+// StorageFactory 建立，內容相同但白白多構造幾次 wrapper 物件）。
+var hostStore = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
+var sentinelStore = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
+
 // SentinelId 回填（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 4）：一次性遷移，冪等，排最前面——
 // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
 try
 {
-    var backfill = SentinelIdBackfiller.Run(
-        StorageFactory.CreateHostStore(settings.Storage, dataRoot),
-        StorageFactory.CreateSentinelStore(settings.Storage, dataRoot));
+    var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);
     if (backfill.BackfilledCount > 0)
         Console.WriteLine($"  已回填 {backfill.BackfilledCount} 台主機的 SentinelId" +
             (backfill.UnresolvedCount > 0 ? $"（另有 {backfill.UnresolvedCount} 台對不到現存 Sentinel，維持待歸屬）" : "。"));
@@ -321,9 +319,8 @@ catch (Exception ex)
 // 冪等（已停用不重複處理）、且有空名單安全欄杆（防種子尚未匯入演變成全站停用）。
 try
 {
-    var sentinelIds = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot)
-        .GetAll().Select(s => s.SentinelId).ToList();
-    var sweep = NetiqOrphanSweeper.Sweep(StorageFactory.CreateHostStore(settings.Storage, dataRoot), sentinelIds);
+    var sentinelIds = sentinelStore.GetAll().Select(s => s.SentinelId).ToList();
+    var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds);
     if (sweep.OrphanedCount > 0)
         Console.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
 }
@@ -335,8 +332,7 @@ catch (Exception ex)
 long currentHostId = 0;
 try
 {
-    currentHostId = StorageFactory.CreateHostStore(settings.Storage, dataRoot)
-        .Touch(currentHost, DateTime.Now).HostId;
+    currentHostId = hostStore.Touch(currentHost, DateTime.Now).HostId;
 }
 catch (Exception ex)
 {
@@ -365,16 +361,16 @@ Console.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFold
 var permissionCheck = permissionMonitor.Check();
 if (permissionCheck.Alerts.Count > 0)
 {
-    var original = Console.ForegroundColor;
-    Console.ForegroundColor = ConsoleColor.Magenta;
-    Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-    Console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
-    foreach (var alert in permissionCheck.Alerts)
+    WithColor(ConsoleColor.Magenta, () =>
     {
-        Console.WriteLine($"  ║  - {alert}");
-    }
-    Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-    Console.ForegroundColor = original;
+        Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+        Console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
+        foreach (var alert in permissionCheck.Alerts)
+        {
+            Console.WriteLine($"  ║  - {alert}");
+        }
+        Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
+    });
 
     // 被異動項目明細：獨立於自動檢查之外的人工防護層——逐項列出異動前後對照，
     // 讓使用者自行判斷每一筆是否為正常/授權的異動
@@ -611,10 +607,8 @@ else
     var riskyCount = results.Count(r => r.ReportFile != null);
     if (riskyCount > 0)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。");
-        Console.ForegroundColor = original;
+        WithColor(ConsoleColor.Yellow, () => Console.WriteLine(
+            $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。"));
     }
     else
     {
@@ -644,14 +638,14 @@ if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupInte
 
         if (checkup.HasFindings)
         {
-            var original = Console.ForegroundColor;
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
-            if (checkup.ReportFile != null)
+            WithColor(ConsoleColor.Cyan, () =>
             {
-                Console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
-            }
-            Console.ForegroundColor = original;
+                Console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
+                if (checkup.ReportFile != null)
+                {
+                    Console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
+                }
+            });
         }
         else
         {
@@ -693,6 +687,15 @@ static string? GetArgValue(string[] args, string flag)
     return idx >= 0 && idx + 1 < args.Length ? args[idx + 1] : null;
 }
 
+/// <summary>暫時切換 console 前景色執行一段輸出，結束後還原——取代原本重複 10 次的存/切/還原三行式</summary>
+static void WithColor(ConsoleColor color, Action write)
+{
+    var original = Console.ForegroundColor;
+    Console.ForegroundColor = color;
+    try { write(); }
+    finally { Console.ForegroundColor = original; }
+}
+
 static string FormatElapsed(TimeSpan span) =>
     span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
     : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
@@ -724,14 +727,14 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
     // Security 無權限時逐條列出因此停用的偵測項目——覆蓋率誠實申報，不是一句「讀取失敗」帶過
     if (record.UncoveredChecks.Count > 0)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.DarkYellow;
-        Console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
-        foreach (var check in record.UncoveredChecks)
+        WithColor(ConsoleColor.DarkYellow, () =>
         {
-            Console.WriteLine($"    - {check}");
-        }
-        Console.ForegroundColor = original;
+            Console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
+            foreach (var check in record.UncoveredChecks)
+            {
+                Console.WriteLine($"    - {check}");
+            }
+        });
     }
 
     // 主機級抑制（見 docs/RULES-PLAN.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
@@ -749,48 +752,48 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
     var criticalIssues = record.TopIssues.Where(i => i.ElevatesDayRisk && !i.Suppressed).ToList();
     if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine();
-        Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-        Console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
-        if (record.Headline.Length > 0)
+        WithColor(ConsoleColor.Red, () =>
         {
-            Console.WriteLine($"  ║  {record.Headline}");
-        }
-        foreach (var issue in criticalIssues)
-        {
-            Console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
-            Console.WriteLine($"  ║    → {issue.KnownIssue}");
-        }
-        Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-        Console.ForegroundColor = original;
+            Console.WriteLine();
+            Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+            Console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
+            if (record.Headline.Length > 0)
+            {
+                Console.WriteLine($"  ║  {record.Headline}");
+            }
+            foreach (var issue in criticalIssues)
+            {
+                Console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
+                Console.WriteLine($"  ║    → {issue.KnownIssue}");
+            }
+            Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
+        });
     }
 
     // 跨 log 關聯訊號：已知攻擊鏈/故障鏈組合，最重要的線索，紅色醒目顯示
     if (record.CorrelationAlerts.Count > 0)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
-        foreach (var alert in record.CorrelationAlerts)
+        WithColor(ConsoleColor.Red, () =>
         {
-            Console.WriteLine($"    - {alert}");
-        }
-        Console.ForegroundColor = original;
+            Console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
+            foreach (var alert in record.CorrelationAlerts)
+            {
+                Console.WriteLine($"    - {alert}");
+            }
+        });
     }
 
     // 程式比對歷史後發現的頻率異常（首次出現、頻率上升、總量突增），用黃色提醒
     if (record.TrendAlerts.Count > 0)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
-        foreach (var alert in record.TrendAlerts)
+        WithColor(ConsoleColor.Yellow, () =>
         {
-            Console.WriteLine($"    - {alert}");
-        }
-        Console.ForegroundColor = original;
+            Console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
+            foreach (var alert in record.TrendAlerts)
+            {
+                Console.WriteLine($"    - {alert}");
+            }
+        });
     }
 
     if (record.AiAnalyzed && (verbose || record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
@@ -813,9 +816,7 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
     // 有輸出風險報告時明確指引檔案位置，讓使用者知道去哪看細節
     if (record.ReportFile != null)
     {
-        var original = Console.ForegroundColor;
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine($"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}");
-        Console.ForegroundColor = original;
+        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(
+            $"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}"));
     }
 }
