@@ -54,8 +54,21 @@ public class RecordHandlingLog
 
     public string ActorAccount { get; set; } = string.Empty;
 
-    /// <summary>這筆歷程記錄的是什麼動作，供 timeline 顯示（指派/狀態變更/說明更新）</summary>
+    /// <summary>這筆歷程記錄的是什麼動作，供 timeline 顯示（指派/狀態變更/說明更新/標記問題）</summary>
     public string Action { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 問題層級操作才有值（docs/WEB-FEEDBACK-2-PLAN.md #6/D4）：日層級操作（指派/日層級狀態變更）
+    /// 維持 null。問題層級標記逐筆記錄——「攏統的彙總標記沒有意義」，批次勾 N 項就要留下 N 列，
+    /// 每一列都查得到「誰、何時、對哪個問題、標成什麼」。
+    /// </summary>
+    public string? IssueKey { get; set; }
+
+    /// <summary>
+    /// 問題的顯示文字（「Source EventId」）**反正規化存下來**：歷程是追責紀錄，
+    /// 不能因為日後這筆問題不再出現在報告裡、或規則被改名，就查不回「當時標的是哪個問題」。
+    /// </summary>
+    public string? IssueLabel { get; set; }
 
     public DateTime CreatedAt { get; set; }
 }
@@ -78,6 +91,21 @@ public static class HandlingStatuses
     public static readonly string[] Unresolved = { Open, InProgress };
 
     public static bool IsValid(string status) => All.Contains(status);
+
+    /// <summary>
+    /// 對外一律三態（docs/WEB-FEEDBACK-2-PLAN.md #12）：問題查詢清單、CSV、儀表板／報表
+    /// 統計只呈現 未處理／處理中／已處理，六種結案類細節（不處理/誤報/已知雜訊…）
+    /// 一律收斂為「已處理」——那些是「已經有結論」，對外部檢視而言就是不再需要動作了。
+    /// **只在對外出口套用，不動 DayHandlingDerivation 的內部推導**：Unresolved/逾期判定
+    /// 仍要看真正的 Open/InProgress，不能被這裡的收斂污染。詳細結論只在風險日詳情頁呈現
+    /// （問題層級 IssueHandlingStatuses 的六態原樣顯示，不受此函式影響）。
+    /// </summary>
+    public static string ExternalOf(string status) => status switch
+    {
+        Open => Open,
+        InProgress => InProgress,
+        _ => Resolved
+    };
 }
 
 public static class HandlingActions
@@ -86,4 +114,10 @@ public static class HandlingActions
     public const string StatusChange = "status";
     public const string NoteUpdate = "note";
     public const string AutoAssign = "auto_assign";
+
+    /// <summary>問題層級標記狀態（含批次套用，逐問題一列）——docs/WEB-FEEDBACK-2-PLAN.md #6/D4</summary>
+    public const string IssueStatus = "issue_status";
+
+    /// <summary>問題層級清除標記（調回未處理）</summary>
+    public const string IssueStatusCleared = "issue_status_cleared";
 }

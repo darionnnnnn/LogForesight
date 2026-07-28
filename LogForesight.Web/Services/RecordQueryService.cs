@@ -143,8 +143,10 @@ public class RecordQueryService : IRecordQueryService
 
         if (request.Statuses is { Count: > 0 })
         {
+            // 對外三態篩選（#12）：畫面上的「已處理」chip 要涵蓋全部結案類
+            // （不處理/誤報/已知雜訊…），不能只比對到原始的 resolved
             var wanted = request.Statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            records = records.Where(r => wanted.Contains(Progress(r).DayStatus)).ToList();
+            records = records.Where(r => wanted.Contains(HandlingStatuses.ExternalOf(Progress(r).DayStatus))).ToList();
         }
 
         if (request.Overdue == true)
@@ -347,6 +349,8 @@ public class RecordQueryService : IRecordQueryService
             HostRoleDesc = host?.RoleDesc ?? "",
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
+            RiskBasisText = FormatRiskBasis(record.RiskBasis),
+            HiddenIssueCount = record.HiddenIssueCount,
             Headline = record.Headline,
             Summary = record.Summary,
             TrendAssessment = record.TrendAssessment,
@@ -560,8 +564,9 @@ public class RecordQueryService : IRecordQueryService
             HasCorrelation = record.CorrelationAlerts.Count > 0,
             HasCoverageGap = record.HasCoverageGap,
             AiAnalyzed = record.AiAnalyzed,
-            HandlingStatus = progress.DayStatus,
-            HandlingStatusText = HandlingStatusText(progress.DayStatus),
+            // 對外三態（#12）：清單頁只呈現 未處理／處理中／已處理，結案類細節留給詳情頁
+            HandlingStatus = HandlingStatuses.ExternalOf(progress.DayStatus),
+            HandlingStatusText = HandlingStatusText(HandlingStatuses.ExternalOf(progress.DayStatus)),
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
             HandlerName = handling?.HandlerId.HasValue == true
@@ -571,14 +576,29 @@ public class RecordQueryService : IRecordQueryService
         };
     }
 
+    /// <summary>對外三態文字（#12）：呼叫端一律先經 HandlingStatuses.ExternalOf，這裡只需覆蓋三態</summary>
+    /// <summary>
+    /// 判定依據代碼 → 白話文字（docs/WEB-FEEDBACK-2-PLAN.md #11）：與 LogAnalysisService
+    /// 寫入的代碼格式對應（rule:.../correlation/trend/high_issue:.../medium/ai_raise）。
+    /// null／未知代碼一律回 null，前端顯示通用說明，不強行湊一句解釋不出來的話。
+    /// </summary>
+    private static string? FormatRiskBasis(string? basis)
+    {
+        if (string.IsNullOrEmpty(basis)) return null;
+        if (basis == "ai_raise") return "AI 判讀上調（程式判定較低）";
+        if (basis == "trend") return "頻率異常規則命中";
+        if (basis == "correlation") return "跨事件關聯訊號命中";
+        if (basis == "medium") return "問題嚴重度判定為中風險";
+        if (basis.StartsWith("rule:", StringComparison.Ordinal)) return $"重大規則命中：{basis[5..]}";
+        if (basis.StartsWith("high_issue:", StringComparison.Ordinal)) return $"高嚴重度問題：{basis[11..]}";
+        return null;
+    }
+
     private static string HandlingStatusText(string status) => status switch
     {
         HandlingStatuses.Open => "未處理",
         HandlingStatuses.InProgress => "處理中",
         HandlingStatuses.Resolved => "已處理",
-        HandlingStatuses.WontFix => "不處理",
-        HandlingStatuses.FalsePositive => "誤報",
-        HandlingStatuses.KnownNoise => "已知雜訊",
         _ => status
     };
 
@@ -623,6 +643,7 @@ public class RecordQueryService : IRecordQueryService
             Count = issue.Count,
             Category = issue.Category.ToString(),
             Severity = issue.Severity.ToString(),
+            ElevatesDayRisk = issue.ElevatesDayRisk,
             KnownIssue = issue.KnownIssue,
             FirstSeen = issue.FirstSeen,
             LastSeen = issue.LastSeen,
@@ -729,7 +750,8 @@ public class RecordQueryService : IRecordQueryService
         CriticalCount = summary.CriticalCount,
         HighCount = summary.HighCount,
         MediumCount = summary.MediumCount,
-        LowCount = summary.LowCount
+        LowCount = summary.LowCount,
+        ElevatesCount = summary.ElevatesCount
     };
 }
 

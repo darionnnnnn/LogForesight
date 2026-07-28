@@ -26,7 +26,7 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today, match);
 
-        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.Severity == IssueSeverity.Critical);
+        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.ElevatesDayRisk);
     }
 
     [Fact]
@@ -252,7 +252,7 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
 
-        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") && f.Severity == IssueSeverity.Critical);
+        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") && f.ElevatesDayRisk);
     }
 
     [Fact]

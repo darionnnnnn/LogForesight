@@ -33,8 +33,15 @@ public interface ISystemSettingsService
 
 public class SystemSettingsService : ISystemSettingsService
 {
-    /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）</summary>
-    public static readonly string[] ValidSeverities = { "Critical", "High", "Medium", "Low" };
+    /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）。docs/WEB-FEEDBACK-2-PLAN.md #1
+    /// （B1 三級化）：Critical 不再是可選層級，舊設定殘留的 "Critical" 由 NormalizeLegacySeverities
+    /// 讀取時正規化為 "High"。</summary>
+    public static readonly string[] ValidSeverities = { "High", "Medium", "Low" };
+
+    /// <summary>舊資料相容：既有設定 blob 裡的 "Critical" 一律視同 "High"（三級化前後語意相同，
+    /// 見 docs/WEB-FEEDBACK-2-PLAN.md #1）。只在讀取/過濾判斷時正規化，不改寫 blob 本身。</summary>
+    private static List<string> NormalizeLegacySeverities(IEnumerable<string> values) =>
+        values.Select(v => v == "Critical" ? "High" : v).Distinct().ToList();
 
     /// <summary>
     /// 合法層級顯示模式（見 SystemSettings.SeverityDisplayMode）。
@@ -67,7 +74,7 @@ public class SystemSettingsService : ISystemSettingsService
     {
         var settings = _store.Get();
         return NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
-            ? settings.UnhandledSeverities.ToHashSet()
+            ? NormalizeLegacySeverities(settings.UnhandledSeverities).ToHashSet()
             : null;
     }
 
@@ -212,7 +219,7 @@ public class SystemSettingsService : ISystemSettingsService
 
     private static SystemSettingsDto ToDto(SystemSettings s) => new()
     {
-        UnhandledSeverities = s.UnhandledSeverities,
+        UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),

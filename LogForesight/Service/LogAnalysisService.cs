@@ -178,9 +178,13 @@ public class LogAnalysisService
             Log.Info("關聯訊號 {Count} 項：{Alerts}", correlations.Count, string.Join(" | ", correlations.Select(c => c.Description)));
         }
 
-        // 程式判定的風險下限：規則或關聯鏈命中 Critical → 高；有 High 問題/頻率異常/關聯訊號 → 中
+        // 程式判定的風險下限：規則或關聯鏈命中「重大」旗標 → 高；有 High 問題/頻率異常/關聯訊號 → 中
         var ruleRisk = ComputeRuleBasedRisk(issues, trendAlerts, correlations);
         bool lowRisk = ruleRisk == "低";
+
+        // 判定依據（docs/WEB-FEEDBACK-2-PLAN.md #11）：純顯示用途，說明「為什麼是這個風險等級」，
+        // 不影響任何判定邏輯本身。AI 若把風險往上拉（下方 MoreSevere），會覆寫為 "ai_raise"
+        var riskBasis = DescribeRiskBasis(issues, correlations, trendAlerts, ruleRisk);
 
         // 前置掃描：Other 類事件種類超過主 prompt 呈現上限時，超出的項目先分批給獨立的
         // AI 呼叫逐項篩選（這些項目彼此不需要一起看，適合拆分），值得注意的帶著掃描意見
@@ -262,6 +266,7 @@ public class LogAnalysisService
                 action = result.Value.Action;
                 // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
                 riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value.RiskLevel), ruleRisk);
+                if (riskLevel != ruleRisk) riskBasis = "ai_raise";
             }
             else if (result.RawContent.Length > 0)
             {
@@ -270,6 +275,7 @@ public class LogAnalysisService
                 headline = "AI 回覆格式異常，以下為原始內容";
                 summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{Truncate(result.RawContent, MaxSummaryChars)}";
                 riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
+                if (riskLevel != ruleRisk) riskBasis = "ai_raise";
                 Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", targetDate, result.Attempts);
             }
             else
@@ -296,6 +302,7 @@ public class LogAnalysisService
             TrendAlerts = trendAlerts,
             CorrelationAlerts = correlations.Select(c => c.Description).ToList(),
             RiskLevel = riskLevel,
+            RiskBasis = riskBasis,
             Headline = headline,
             Summary = summary,
             TrendAssessment = trendAssessment,
@@ -702,15 +709,17 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// 程式判定的風險下限。被抑制的簽章不參與風險判定的 Critical/High 門檻——抑制關的是
+    /// 程式判定的風險下限。被抑制的簽章不參與風險判定的旗標/High 門檻——抑制關的是
     /// 「要不要吵」，這裡正是「吵不吵」的判定點；關聯層（correlations）完全不受抑制影響，
     /// 單事件被關掉不代表組合出來的攻擊鏈/故障鏈訊號也該被關掉（見 docs/RULES-PLAN.md 語意邊界）。
+    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原本看 Severity==Critical 判定高風險日，
+    /// 三級化後嚴重度封頂 High，改看 ElevatesDayRisk 旗標——判定行為完全不變。
     /// </summary>
     internal static string ComputeRuleBasedRisk(List<LogIssueSignature> issues, List<string> trendAlerts,
         List<CorrelationFinding> correlations)
     {
-        if (issues.Any(i => !i.Suppressed && i.Severity == IssueSeverity.Critical) ||
-            correlations.Any(c => c.Severity == IssueSeverity.Critical))
+        if (issues.Any(i => !i.Suppressed && i.ElevatesDayRisk) ||
+            correlations.Any(c => c.ElevatesDayRisk))
         {
             return RiskLevels.High;
         }
@@ -721,6 +730,32 @@ public class LogAnalysisService
         }
 
         return RiskLevels.Low;
+    }
+
+    /// <summary>
+    /// 程式判定依據的代碼（docs/WEB-FEEDBACK-2-PLAN.md #11）：純顯示用途，說明「為什麼是這個
+    /// 風險等級」，不影響任何判定邏輯。與 ComputeRuleBasedRisk 判斷同一組條件，只是額外指名
+    /// 是哪一條規則/哪一種訊號觸發的。呼叫端在 AI 把風險往上拉時會覆寫成 "ai_raise"。
+    /// </summary>
+    private static string? DescribeRiskBasis(
+        List<LogIssueSignature> issues, List<CorrelationFinding> correlations, List<string> trendAlerts, string ruleRisk)
+    {
+        if (ruleRisk == RiskLevels.High)
+        {
+            var flagged = issues.FirstOrDefault(i => !i.Suppressed && i.ElevatesDayRisk);
+            if (flagged != null) return $"rule:{flagged.Source} EventId {flagged.EventId}";
+            return correlations.Any(c => c.ElevatesDayRisk) ? "correlation" : "rule";
+        }
+
+        if (ruleRisk == RiskLevels.Medium)
+        {
+            if (trendAlerts.Count > 0) return "trend";
+            if (correlations.Count > 0) return "correlation";
+            var high = issues.FirstOrDefault(i => !i.Suppressed && i.Severity == IssueSeverity.High);
+            return high != null ? $"high_issue:{high.Source} EventId {high.EventId}" : "medium";
+        }
+
+        return null;   // 低風險：沒有明確依據可講
     }
 
     /// <summary>前置掃描的彙總結果</summary>

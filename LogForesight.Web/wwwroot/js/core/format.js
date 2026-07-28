@@ -29,9 +29,12 @@ const RISK_CLASS = {
     '低': 'lf-badge--low'
 };
 
-/** 嚴重度 → 淡色徽章 variant（對應 site.css 的 lf-badge--*）*/
+/**
+ * 嚴重度 → 淡色徽章 variant（對應 site.css 的 lf-badge--*）。
+ * docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 已收斂進 High，不再是獨立層級——
+ * 原本「特別嚴重」的意義改由 elevatesBadge() 的「重大」徽章承接，不再靠嚴重度本身多分一級。
+ */
 const SEVERITY_VARIANT = {
-    Critical: 'danger',
     High: 'warning',
     Medium: 'info',
     Low: 'neutral'
@@ -42,7 +45,7 @@ const SEVERITY_VARIANT = {
  * 一律維持英文；只有畫面文字改中文。不帶「風險」後綴，避免和日風險等級的
  * 「高風險/中風險/低風險」（riskBadge）字面撞在一起——兩者色系也不同。
  */
-export const SEVERITY_NAMES = { Critical: '嚴重', High: '高', Medium: '中', Low: '低' };
+export const SEVERITY_NAMES = { High: '高', Medium: '中', Low: '低' };
 
 /** 嚴重度英文列舉 → 中文名，查無回原字串 */
 export function severityName(severity) {
@@ -53,7 +56,19 @@ export function severityName(severity) {
  * 嚴重度合法值，由重到輕（docs/SHARED-STANDARDS-PLAN.md S11）。取代 record-detail.js／
  * settings.js 各自維護的同值陣列——兩份copy遲早有一份漏改（新增嚴重度時尤其）。
  */
-export const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
+export const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
+
+/**
+ * 「重大」徽章（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：命中規則帶
+ * ElevatesDayRisk 旗標的問題——這類問題出現當天就直接判定為高風險日，是原「嚴重」等級
+ * 唯一的實際作用。詳情頁重點問題列、規則維護頁、跨主機同簽章查詢三處共用同一顆徽章
+ * （§8.2 顏色＋文字單一定義原則）。
+ */
+export function elevatesBadge() {
+    return statusBadge('重大', 'danger', {
+        title: '命中重大規則——此類問題出現當日即列為高風險日'
+    });
+}
 
 /**
  * 嚴重度計數徽章（顏色＋文字，如「高 3」）：dashboard.js 的分類卡曾自己拼一份，
@@ -64,14 +79,17 @@ export function severityCountBadge(severity, count) {
     return statusBadge(`${severityName(severity)} ${count}`, SEVERITY_VARIANT[severity] ?? 'neutral');
 }
 
-/** 處理狀態 → { 顯示文字, 淡色徽章 variant } */
+/**
+ * 處理狀態 → { 顯示文字, 淡色徽章 variant }。對外一律三態（docs/WEB-FEEDBACK-2-PLAN.md #12）：
+ * 後端 RecordListItemDto 的 handlingStatus 已先經 HandlingStatuses.ExternalOf 收斂
+ * （不處理/誤報/已知雜訊…併入「已處理」），這裡只需覆蓋三態；未知值一律回退顯示原字串。
+ * 詳細結論只在風險日詳情頁呈現（issue 層級走 IssueHandlingStatuses 的六態原樣顯示，
+ * 不經過這個徽章工廠）。
+ */
 const HANDLING_STATUS = {
     open: { text: '未處理', variant: 'danger' },
     in_progress: { text: '處理中', variant: 'primary' },
-    resolved: { text: '已處理', variant: 'success' },
-    wont_fix: { text: '不處理', variant: 'neutral' },
-    false_positive: { text: '誤報', variant: 'neutral' },
-    known_noise: { text: '已知雜訊', variant: 'neutral' }
+    resolved: { text: '已處理', variant: 'success' }
 };
 
 /**
@@ -91,11 +109,16 @@ export function statusBadge(text, variant = 'neutral', { title, icon: iconName }
     return span;
 }
 
-/** 風險等級徽章元素 */
-export function riskBadge(riskLevel) {
+/**
+ * 風險等級徽章元素。title（選填，docs/WEB-FEEDBACK-2-PLAN.md #11）：日風險等級的判定依據，
+ * 解釋「為什麼是這個風險等級」——日風險等級與問題嚴重度是刻意分開的兩套層級，
+ * 高風險日不保證看得到高嚴重度問題（見 record-detail.js renderHeader）。
+ */
+export function riskBadge(riskLevel, { title } = {}) {
     const span = document.createElement('span');
     span.className = `lf-badge ${RISK_CLASS[riskLevel] ?? 'lf-badge--low'}`;
     span.textContent = `${riskLevel}風險`;
+    if (title) span.title = title;
     return span;
 }
 

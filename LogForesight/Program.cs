@@ -743,8 +743,10 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
         Console.WriteLine($"  🔕 本日 {suppressedIssues.Count} 條告警已抑制（{summary}）");
     }
 
-    // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）
-    var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical && !i.Suppressed).ToList();
+    // 高風險或命中「重大」旗標規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）。
+    // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原本看 Severity==Critical，
+    // 三級化後嚴重度封頂 High，改看 ElevatesDayRisk 旗標——判定行為不變
+    var criticalIssues = record.TopIssues.Where(i => i.ElevatesDayRisk && !i.Suppressed).ToList();
     if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)
     {
         var original = Console.ForegroundColor;

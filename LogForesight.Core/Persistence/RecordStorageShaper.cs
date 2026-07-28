@@ -32,6 +32,7 @@ public static class RecordStorageShaper
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
             RiskLevel = record.RiskLevel,
+            RiskBasis = record.RiskBasis,
             Headline = record.Headline,
             Summary = record.Summary,
             TrendAssessment = record.TrendAssessment,
@@ -45,6 +46,8 @@ public static class RecordStorageShaper
             UncoveredChecks = record.UncoveredChecks,
             ChannelsRead = record.ChannelsRead,  // 趨勢基準的頻道覆蓋判斷（ChannelCoverage.WasRead）依賴它，
                                                  // 漏掉會讓低風險日被當成舊紀錄、新頻道的暖身永遠結束不了
+            HiddenIssueCount = record.HiddenIssueCount,  // 批次寫入時恆為 0（只有 Web 的 RecordRepository
+                                                          // 讀取當下會設定），複製只是維持欄位完整性
             WeeklyCheckup = record.WeeklyCheckup,
             DeepDives = record.DeepDives,       // 低風險日恆為空清單（該日從不觸發深析），原樣帶過即可
             TopIssues = record.TopIssues.Select(i => new LogIssueSignature
@@ -61,6 +64,10 @@ public static class RecordStorageShaper
                 KeyDetails = null,                          // 精簡：同上
                 Category = i.Category,
                 Severity = i.Severity,
+                // 低風險日仍可能帶「重大」旗標：被抑制的簽章不拉高風險（見 ComputeRuleBasedRisk）
+                // 但旗標照算，趨勢層的升級同理——漏掉這個欄位，那些日子的重大標記與頻率報表
+                // 依據會靜默消失（與下方 RuleId/Suppressed 同一個理由）
+                ElevatesDayRisk = i.ElevatesDayRisk,
                 KnownIssue = i.KnownIssue,
                 RuleId = i.RuleId,
                 Suppressed = i.Suppressed,

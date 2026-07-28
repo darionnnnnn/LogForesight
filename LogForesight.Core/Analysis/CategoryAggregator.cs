@@ -21,6 +21,13 @@ public class CategorySummary
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
+
+    /// <summary>
+    /// 命中「重大」旗標的問題數（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：取代原本
+    /// CriticalCount 在畫面上的顯著性用途（如儀表板分類卡紅框）——三級化後嚴重度不再產生
+    /// Critical，CriticalCount 因此恆為 0，改看這個旗標計數。
+    /// </summary>
+    public int ElevatesCount { get; set; }
 }
 
 /// <summary>
@@ -50,7 +57,8 @@ public static class CategoryAggregator
                 CriticalCount = group.Count(i => i.Severity == IssueSeverity.Critical),
                 HighCount = group.Count(i => i.Severity == IssueSeverity.High),
                 MediumCount = group.Count(i => i.Severity == IssueSeverity.Medium),
-                LowCount = group.Count(i => i.Severity == IssueSeverity.Low)
+                LowCount = group.Count(i => i.Severity == IssueSeverity.Low),
+                ElevatesCount = group.Count(i => i.ElevatesDayRisk)
             })
             .OrderByDescending(s => s.MaxSeverity)
             .ThenByDescending(s => s.IssueCount)
@@ -74,7 +82,8 @@ public static class CategoryAggregator
                 CriticalCount = group.Sum(s => s.CriticalCount),
                 HighCount = group.Sum(s => s.HighCount),
                 MediumCount = group.Sum(s => s.MediumCount),
-                LowCount = group.Sum(s => s.LowCount)
+                LowCount = group.Sum(s => s.LowCount),
+                ElevatesCount = group.Sum(s => s.ElevatesCount)
             })
             .OrderByDescending(s => s.MaxSeverity)
             .ThenByDescending(s => s.IssueCount)

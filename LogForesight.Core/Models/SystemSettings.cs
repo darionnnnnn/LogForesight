@@ -10,11 +10,13 @@ namespace LogForesight;
 public class SystemSettings
 {
     /// <summary>
-    /// 未處理計算納入哪些嚴重度（<see cref="IssueSeverity"/> 名稱：Critical/High/Medium/Low）。
+    /// 未處理計算納入哪些嚴重度（<see cref="IssueSeverity"/> 名稱：High/Medium/Low——
+    /// docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化後 Critical 不再是可選層級，
+    /// 舊部署存的 "Critical" 由 <see cref="ParseUnhandledSeverities"/> 讀取時正規化為 "High"）。
     /// 未列在此清單的嚴重度，若問題未被明確標記，視同「不處理（預設）」，不計入未處理／待辦統計
     /// （一般化原本寫死「Low 一律預設不處理」的規則）。
     /// </summary>
-    public List<string> UnhandledSeverities { get; set; } = new() { "Critical", "High", "Medium" };
+    public List<string> UnhandledSeverities { get; set; } = new() { "High", "Medium" };
 
     /// <summary>
     /// 層級顯示模式，決定 <see cref="UnhandledSeverities"/> 以外的嚴重度（問題嚴重度，
@@ -80,9 +82,13 @@ public class SystemSettings
     /// <see cref="UnhandledSeverities"/> 解析成 <see cref="IssueSeverity"/> 集合，供
     /// <c>DayHandlingDerivation.Derive</c> 與問題明細的預設不處理判定共用。無法解析的字串（設定損毀）
     /// 靜默略過，不讓整個未處理計算因為一個壞字串而掛掉。
+    /// 舊資料相容（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：既有設定中殘留的 "Critical"
+    /// 正規化為 "High" 再解析——三級化後問題嚴重度不會再產生 Critical，讀取時静默轉換一次，
+    /// 既有部署不需要手動改設定。
     /// </summary>
     public HashSet<IssueSeverity> ParseUnhandledSeverities() =>
         UnhandledSeverities
+            .Select(s => s == "Critical" ? "High" : s)
             .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
             .Where(s => s.HasValue)
             .Select(s => s!.Value)

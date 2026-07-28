@@ -101,6 +101,7 @@ public class ReportService : IReportService
                     Date = record.Date.ToString("yyyy-MM-dd"),
                     Count = issue.Count,
                     Severity = issue.Severity.ToString(),
+                    ElevatesDayRisk = issue.ElevatesDayRisk,
                     Category = issue.Category.ToString(),
                     KnownIssue = issue.KnownIssue
                 }))

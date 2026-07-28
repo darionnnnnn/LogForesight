@@ -107,6 +107,11 @@ public class JsonKnownIssueRuleStore : IKnownIssueRuleStore
                     skipped.Count, string.Join("；", skipped));
             }
 
+            // 舊資料相容（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：單一咽喉點，批次的
+            // RuleBootstrapper 與 Web 的 RuleAdminService/RecordQueryService 都經由 Load() 讀取，
+            // 在這裡正規化一次即可涵蓋全部呼叫端，不必各自記得處理舊值
+            KnownIssueCatalog.NormalizeLegacyCriticalSeverity(rules);
+
             return RuleLoadOutcome.Ok(new RuleFileContent
             {
                 SchemaVersion = schemaVersion,

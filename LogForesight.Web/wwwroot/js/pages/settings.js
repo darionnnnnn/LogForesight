@@ -4,8 +4,12 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved } from '../core/ui.js';
 import { formatDateTime, severityName, SEVERITY_ORDER } from '../core/format.js';
+
+// 未儲存提醒（docs/WEB-FEEDBACK-2-PLAN.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
+// AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
+let unsaved = null;
 
 // 兩段式（docs/WEB-FEEDBACK-PLAN.md #5，2026-07-27 簡化自三段式）：
 // 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁
@@ -196,6 +200,7 @@ function bindForm() {
             renderAiFields(current);
             renderAdFields(current);
             renderUpdatedAt(current);
+            unsaved?.clear();
         } finally {
             restore();
         }
@@ -250,4 +255,7 @@ function bindAdTest() {
 
 bindForm();
 bindAdTest();
+unsaved = trackUnsaved(document.getElementById('settings-form'), {
+    excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result'
+});
 load();

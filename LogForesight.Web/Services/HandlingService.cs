@@ -86,8 +86,11 @@ public class HandlingService : IHandlingService
     {
         var host = RequireVisibleHost(hostId);
         var handling = _store.Get(host.HostName, date);
+        // 補撈 record 算推導狀態（docs/WEB-FEEDBACK-2-PLAN.md #6）：處理面板要顯示的是
+        // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步
+        var record = _repository.GetOne(hostId, date);
 
-        return ToDto(host, date, handling);
+        return ToDto(host, date, handling, TryComputeProgress(host, date, record));
     }
 
     public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request)
@@ -145,7 +148,7 @@ public class HandlingService : IHandlingService
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
                     ?? throw DomainException.Validation("找不到這個問題，可能紀錄已更新，請重新整理。");
 
-        ApplyIssueStatus(host, date, request.IssueKey, request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing);
+        ApplyIssueStatus(host, date, request.IssueKey, IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
@@ -180,14 +183,21 @@ public class HandlingService : IHandlingService
         var clearing = string.IsNullOrWhiteSpace(request.Status);
         ValidateIssueStatus(request.Status, request.DueDate, clearing);
 
-        // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了
-        var validKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
-        var appliedKeys = request.IssueKeys.Distinct(StringComparer.Ordinal).Where(validKeys.Contains).ToList();
+        // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
+        // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
+        var labelByKey = record.TopIssues
+            .GroupBy(IssueSignatureKey.For, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => IssueLabel(g.First()), StringComparer.Ordinal);
+        var appliedKeys = request.IssueKeys.Distinct(StringComparer.Ordinal).Where(labelByKey.ContainsKey).ToList();
         if (appliedKeys.Count == 0)
             throw DomainException.Validation("找不到任何勾選的問題，可能紀錄已更新，請重新整理。");
 
+        // 逐問題各寫一列歷程（D4：批次勾 N 項就要留下 N 列，不做彙總）——見 ApplyIssueStatus 內的 AppendIssueLog。
+        // 整批共用同一個 occurredAt（不是逐次呼叫 DateTime.Now）：前端 timeline 靠「同一操作者＋
+        // 同一時間戳」把這批列視覺分組成一塊，時間戳若逐次取值會因執行順序產生極小差異而分不了組
+        var occurredAt = DateTime.Now;
         foreach (var issueKey in appliedKeys)
-            ApplyIssueStatus(host, date, issueKey, request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing);
+            ApplyIssueStatus(host, date, issueKey, labelByKey[issueKey], request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, occurredAt);
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
@@ -219,15 +229,22 @@ public class HandlingService : IHandlingService
             throw DomainException.Validation("預計完成日不可早於今天。");
     }
 
-    /// <summary>寫入單一問題的處理狀態（不含稽核記錄——單筆與批次的稽核摘要不同，由呼叫端各自記）</summary>
+    /// <summary>
+    /// 寫入單一問題的處理狀態，並成對寫入處理歷程（不含稽核記錄——單筆與批次的稽核摘要不同，
+    /// 由呼叫端各自記）。批次呼叫端逐一呼叫本方法，天然逐問題各留一列歷程（D4）。
+    /// </summary>
     private void ApplyIssueStatus(
-        WebHost host, DateTime date, string issueKey, string status, string? note, DateTime? dueDate, bool forgetNoise, bool clearing)
+        WebHost host, DateTime date, string issueKey, string issueLabel, string status, string? note, DateTime? dueDate, bool forgetNoise, bool clearing, DateTime occurredAt)
     {
         if (clearing)
         {
             _issueStore.Clear(host.HostName, date, issueKey);
+            // 清除標記＝調回未處理，歷程狀態記 open 較有意義（而非空字串），STATUS_VARIANTS/StatusText 通用
+            AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatusCleared, status: HandlingStatuses.Open, note: null, occurredAt);
             return;
         }
+
+        AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatus, status, note, occurredAt);
 
         _issueStore.Save(new IssueHandling
         {
@@ -240,7 +257,7 @@ public class HandlingService : IHandlingService
             DueDate = status == IssueHandlingStatuses.InProgress ? dueDate : null,
             ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
             ActorAccount = _currentUser.Account,
-            UpdatedAt = DateTime.Now
+            UpdatedAt = occurredAt
         });
 
         // 標「已知雜訊」＝寫入記憶，之後同主機同簽章的新問題自動判讀成雜訊（治標，供無規則命中的 Other 類別）
@@ -268,6 +285,10 @@ public class HandlingService : IHandlingService
         var dayLevel = _store.Get(host.HostName, date)?.Status;
         return DayHandlingDerivation.Derive(record.TopIssues, handlings, dayLevel, _settings.Get().ParseUnhandledSeverities());
     }
+
+    /// <summary>Get() 專用：record 可能不存在（分析尚未跑過），沒有紀錄就沒有推導狀態可算</summary>
+    private DayHandlingDerivation.DayProgress? TryComputeProgress(WebHost host, DateTime date, DailyAnalysisRecord? record) =>
+        record == null ? null : ComputeProgress(host, date, record);
 
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId)
     {
@@ -329,6 +350,7 @@ public class HandlingService : IHandlingService
                     ? _users.Get(log.HandlerId.Value)?.DisplayName ?? "（已刪除）"
                     : null,
                 Note = log.Note,
+                IssueLabel = log.IssueLabel,
                 ActorAccount = log.ActorAccount,
                 CreatedAt = log.CreatedAt
             })
@@ -369,9 +391,16 @@ public class HandlingService : IHandlingService
                 .ToList();
             var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities);
 
-            if (progress.DayStatus == HandlingStatuses.Open) todo.OpenCount++;
-            else if (progress.DayStatus == HandlingStatuses.InProgress) todo.InProgressCount++;
-            else if (progress.DayStatus == HandlingStatuses.Resolved) todo.ResolvedCount++;
+            // 對外三態（#12）：日層級 fallback 出來的狀態可能是 wont_fix/false_positive/known_noise
+            // （使用者把整天標成這些狀態、當天沒有問題層級標記時），改看 ExternalOf 前這三種狀態
+            // 誰都不算，會讓 OpenCount+InProgressCount+ResolvedCount 加總小於 TotalCount，
+            // 「未完成」（Total－Resolved）因此把已結案的日子誤算成未完成
+            switch (HandlingStatuses.ExternalOf(progress.DayStatus))
+            {
+                case HandlingStatuses.Open: todo.OpenCount++; break;
+                case HandlingStatuses.InProgress: todo.InProgressCount++; break;
+                default: todo.ResolvedCount++; break;
+            }
 
             // 逾期兩層都看：日層級 DueDate 過期且未結案，或任一問題層級「處理中」過期
             // （與問題查詢清單的 IsOverdue 同一套語意，來源同為 DayHandlingDerivation.HasOverdueIssue）
@@ -448,6 +477,27 @@ public class HandlingService : IHandlingService
         });
     }
 
+    /// <summary>
+    /// 問題層級的歷程列（docs/WEB-FEEDBACK-2-PLAN.md #6/D4）：與日層級的 <see cref="AppendLog"/>
+    /// 分開——問題層級沒有「處理人」（那是日層級概念），且需要 IssueKey/IssueLabel 定位是哪個問題。
+    /// </summary>
+    private void AppendIssueLog(WebHost host, DateTime date, string issueKey, string issueLabel, string action, string status, string? note, DateTime occurredAt)
+    {
+        _store.AppendLog(new RecordHandlingLog
+        {
+            HostName = host.HostName,
+            Date = date.Date,
+            Status = status,
+            IssueKey = issueKey,
+            IssueLabel = issueLabel,
+            Note = note,
+            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
+            ActorAccount = _currentUser.Account,
+            Action = action,
+            CreatedAt = occurredAt
+        });
+    }
+
     private WebHost RequireVisibleHost(long hostId)
     {
         _visibility.EnsureVisible(hostId);
@@ -461,7 +511,7 @@ public class HandlingService : IHandlingService
             throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
     }
 
-    private HandlingDto ToDto(WebHost host, DateTime date, RecordHandling? handling)
+    private HandlingDto ToDto(WebHost host, DateTime date, RecordHandling? handling, DayHandlingDerivation.DayProgress? progress = null)
     {
         // 尚未有任何處理紀錄時，以「唯一負責人」作為顯示上的預設處理人。
         // **這裡只計算不寫入**——讀取不該產生副作用，也不該每次瀏覽都留下一筆稽核；
@@ -480,6 +530,14 @@ public class HandlingService : IHandlingService
             Date = date.ToString("yyyy-MM-dd"),
             Status = handling?.Status ?? HandlingStatuses.Open,
             StatusText = StatusText(handling?.Status ?? HandlingStatuses.Open),
+            // 由問題標記推導出的日狀態（#6）：處理面板應顯示這個，不是上面存的日層級快照——
+            // 指派時日層級會被自動推進成 in_progress（見下方 Assign），之後問題全結案也不會
+            // 回頭改寫那個存值，只有推導值能反映「現在真正的狀態」。progress 為 null（Update/
+            // Assign 呼叫端不補算）時前端 fallback 用 Status/StatusText，行為與改版前一致。
+            DerivedStatus = progress?.DayStatus,
+            DerivedStatusText = progress != null ? StatusText(progress.Value.DayStatus) : null,
+            TotalIssues = progress?.Total ?? 0,
+            ClosedIssues = progress?.Closed ?? 0,
             HandlerId = handlerId,
             HandlerName = handler?.DisplayName,
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
@@ -537,6 +595,11 @@ public class HandlingService : IHandlingService
         HandlingActions.AutoAssign => "自動帶入處理人",
         HandlingActions.StatusChange => "變更狀態",
         HandlingActions.NoteUpdate => "更新說明",
+        HandlingActions.IssueStatus => "標記問題",
+        HandlingActions.IssueStatusCleared => "清除問題標記",
         _ => action
     };
+
+    /// <summary>問題歷程列的顯示文字（「Source EventId」），反正規化存進 RecordHandlingLog.IssueLabel</summary>
+    private static string IssueLabel(LogIssueSignature issue) => $"{issue.Source} {issue.EventId}";
 }

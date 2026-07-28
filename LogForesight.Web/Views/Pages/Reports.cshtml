@@ -84,16 +84,17 @@
     </div>
 </div>
 
-@* 三顆占比小圖：原本「風險層級占比」獨占一張大卡，改與新增的兩顆指標並列（#6） *@
+@* 三顆占比小圖：原本「風險層級占比」獨占一張大卡，改與新增的兩顆指標並列（#6）；
+   2026-07-28（#3）圓餅圖本來就沒有 XY 軸，改左圖右文字條列，不再切換表格／下載 PNG *@
 <div class="row g-3 mt-1">
     <div class="col-lg-4" id="risk-section">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">風險層級占比</h2>
-                <div id="risk-toolbar"></div>
             </div>
-            <div class="lf-card__body">
-                <div class="lf-chart lf-chart--sm" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+            <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
+                <div class="lf-chart lf-chart--sm flex-shrink-0" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+                <div class="flex-grow-1" id="risk-legend"></div>
             </div>
         </section>
     </div>
@@ -102,10 +103,10 @@
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">受影響主機占比</h2>
-                <div id="affected-hosts-toolbar"></div>
             </div>
-            <div class="lf-card__body">
-                <div class="lf-chart lf-chart--sm" id="affected-hosts-wrapper"><canvas id="affected-hosts-chart"></canvas></div>
+            <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
+                <div class="lf-chart lf-chart--sm flex-shrink-0" id="affected-hosts-wrapper"><canvas id="affected-hosts-chart"></canvas></div>
+                <div class="flex-grow-1" id="affected-hosts-legend"></div>
             </div>
         </section>
     </div>
@@ -114,10 +115,10 @@
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">處理進度</h2>
-                <div id="handling-progress-toolbar"></div>
             </div>
-            <div class="lf-card__body">
-                <div class="lf-chart lf-chart--sm" id="handling-progress-wrapper"><canvas id="handling-progress-chart"></canvas></div>
+            <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
+                <div class="lf-chart lf-chart--sm flex-shrink-0" id="handling-progress-wrapper"><canvas id="handling-progress-chart"></canvas></div>
+                <div class="flex-grow-1" id="handling-progress-legend"></div>
             </div>
         </section>
     </div>
@@ -128,6 +129,11 @@
         <h2 class="lf-card__title">跨主機同簽章查詢</h2>
     </div>
     <div class="lf-card__body">
+        <p class="text-muted small mb-3">
+            輸入 Event ID（可加來源縮小範圍），找出<strong>同一個事件簽章曾出現在哪些主機、哪些日子</strong>——
+            用來判斷問題是單機個案還是全環境共通（例如同一批次更新後多台同時出現）。
+            查詢範圍：您有權檢視的主機、資料保留期內的全部紀錄（<strong>不受上方報表期間限制</strong>）。
+        </p>
         <form id="signature-form" class="row g-2 align-items-end mb-3">
             <div class="col-auto">
                 <label for="signature-event-id" class="form-label small mb-1">Event ID</label>

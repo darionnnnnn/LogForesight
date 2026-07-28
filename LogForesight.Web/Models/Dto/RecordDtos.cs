@@ -86,6 +86,14 @@ public class RecordDetailDto
     public string Date { get; set; } = string.Empty;
     public string RiskLevel { get; set; } = string.Empty;
 
+    /// <summary>日風險等級的判定依據說明（docs/WEB-FEEDBACK-2-PLAN.md #11），已轉為白話文字；
+    /// null＝舊紀錄（本欄位問世前寫入），前端顯示通用說明。</summary>
+    public string? RiskBasisText { get; set; }
+
+    /// <summary>因全站嚴重度顯示設定被隱藏的問題數（0＝無隱藏或非 SiteHidden 模式）；
+    /// 風險等級判定不受此設定影響，這個數字只用來解釋「為什麼看到的問題比判定依據少」</summary>
+    public int HiddenIssueCount { get; set; }
+
     public string Headline { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public string TrendAssessment { get; set; } = string.Empty;
@@ -128,6 +136,11 @@ public class IssueDto
     public int Count { get; set; }
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
+
+    /// <summary>命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：前端顯示「重大」
+    /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
+    public bool ElevatesDayRisk { get; set; }
+
     public string? KnownIssue { get; set; }
     public string FirstSeen { get; set; } = string.Empty;
     public string LastSeen { get; set; } = string.Empty;
@@ -196,6 +209,9 @@ public class CategorySummaryDto
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
+
+    /// <summary>命中「重大」旗標的問題數（docs/WEB-FEEDBACK-2-PLAN.md #1）</summary>
+    public int ElevatesCount { get; set; }
 }
 
 public class DeepDiveDto

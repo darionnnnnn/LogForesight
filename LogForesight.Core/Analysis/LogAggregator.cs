@@ -35,6 +35,16 @@ public class LogIssueSignature
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public IssueSeverity Severity { get; set; } = IssueSeverity.Low;
 
+    /// <summary>
+    /// 命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：由
+    /// <see cref="KnownIssueCatalog.Classify"/> 依命中規則的旗標帶入，或由
+    /// <see cref="TrendAnalyzer"/> 在 High 嚴重度問題頻率上升時設為 true
+    /// （舊制下這種情況會把嚴重度升到 Critical，直接讓當天判定為高風險日；
+    /// 三級化後嚴重度封頂 High，改用這個旗標達成同樣效果——LogAnalysisService.ComputeRuleBasedRisk
+    /// 據此判定高風險日，行為與三級化前完全一致）。
+    /// </summary>
+    public bool ElevatesDayRisk { get; set; }
+
     /// <summary>命中規則表時的已知問題說明，未命中為 null</summary>
     public string? KnownIssue { get; set; }
 

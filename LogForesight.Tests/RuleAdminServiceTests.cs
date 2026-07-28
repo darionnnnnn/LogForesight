@@ -157,6 +157,27 @@ public class RuleAdminServiceTests
         Assert.False(restored.ModifiedAt.HasValue);
     }
 
+    /// <summary>
+    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原廠鏡像是**批次啟動時**才同步的，站台升級後到
+    /// 下一次批次執行之間，鏡像裡仍是三級化之前的 Severity=Critical 快照（本測試 fixture 正是這個狀態）。
+    /// 回復預設必須把它正規化為 High＋ElevatesDayRisk——否則不只是嚴重度顯示不出中文名，
+    /// **旗標消失會讓這條規則從此不再把當天判定為高風險日**，是靜默的行為降級。
+    /// </summary>
+    [Fact]
+    public void 回復預設_舊版鏡像的Critical正規化為High加重大旗標()
+    {
+        var service = Create();
+        var request = ValidRequest(BuiltinId);
+        request.Description = "改壞的說明";
+        service.SaveRule(request);
+
+        service.RestoreSeed(BuiltinId);
+
+        var restored = _rules.Content.Rules.Single();
+        Assert.Equal(IssueSeverity.High, restored.Severity);
+        Assert.True(restored.ElevatesDayRisk);
+    }
+
     /// <summary>回復內容不等於重新啟用——沿用 --overwrite-builtin 的既有語意，停用不會被悄悄打開</summary>
     [Fact]
     public void 回復預設_保留使用者的停用設定()

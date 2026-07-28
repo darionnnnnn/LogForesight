@@ -43,6 +43,11 @@ public class DashboardCategoryDto
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
+
+    /// <summary>命中「重大」旗標的問題數（docs/WEB-FEEDBACK-2-PLAN.md #1）：分類卡的紅框顯著性
+    /// 判定改看這個，取代三級化後恆為 0 的 CriticalCount</summary>
+    public int ElevatesCount { get; set; }
+
     public int AffectedHosts { get; set; }
 }
 
@@ -137,6 +142,11 @@ public class SignatureHitDto
     public string Date { get; set; } = string.Empty;
     public int Count { get; set; }
     public string Severity { get; set; } = string.Empty;
+
+    /// <summary>命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1）：前端顯示「重大」徽章——
+    /// 跨主機同簽章查詢正是「全環境共通重大問題」的主要排查入口。</summary>
+    public bool ElevatesDayRisk { get; set; }
+
     public string Category { get; set; } = string.Empty;
     public string? KnownIssue { get; set; }
 }

@@ -429,6 +429,34 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.InProgressCount);
     }
 
+    /// <summary>
+    /// docs/WEB-FEEDBACK-2-PLAN.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
+    /// 當天沒有問題層級標記）時，對外三態要算作「已處理」。這是原始 bug 的釘樁——舊版
+    /// GetTodo 的三個桶（Open/InProgress/Resolved）都數不到 wont_fix，讓「未完成」
+    /// （Total－Resolved）把已結案的日子誤算成未完成。
+    /// </summary>
+    [Fact]
+    public void 待辦統計_日層級WontFix算入已處理()
+    {
+        var day = Today.AddDays(-18);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        service.Update(_host.HostId, day, new UpdateHandlingRequest
+        {
+            Status = HandlingStatuses.WontFix,
+            Note = "評估後決定不處理"
+        });
+
+        var todo = service.GetTodo(new[] { record });
+
+        Assert.Equal(0, todo.OpenCount);
+        Assert.Equal(0, todo.InProgressCount);
+        Assert.Equal(1, todo.ResolvedCount);
+        Assert.Equal(1, todo.TotalCount);
+    }
+
     /// <summary>已知雜訊記憶（§5.1 D-1 #3）：標記後記憶留存，之後同主機同簽章可查得到</summary>
     [Fact]
     public void 標已知雜訊_寫入記憶()
@@ -546,6 +574,79 @@ public class HandlingServiceTests
         Assert.Equal(2, result.ClosedIssues);
         Assert.Equal(3, result.TotalIssues);
         Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+    }
+
+    /// <summary>
+    /// docs/WEB-FEEDBACK-2-PLAN.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
+    /// （不是一筆彙總）——每一筆都查得到「對哪個問題、標成什麼」，含反正規化的 IssueLabel。
+    /// </summary>
+    [Fact]
+    public void 批次套用_歷程逐問題各留一筆記錄()
+    {
+        var day = Today.AddDays(-12);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+
+        Create(Capability.Handle).SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        var logs = _handlings.GetLogs(_host.HostName, day);
+        Assert.Equal(2, logs.Count);
+        Assert.All(logs, l => Assert.Equal(HandlingActions.IssueStatus, l.Action));
+        Assert.All(logs, l => Assert.Equal(HandlingStatuses.Resolved, l.Status));
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(a) && l.IssueLabel == "disk 153");
+        Assert.Contains(logs, l => l.IssueKey == IssueSignatureKey.For(b) && l.IssueLabel == "app 1000");
+        // 同一次批次共用同一個時間戳（供前端 timeline 視覺分組），操作者一致
+        Assert.All(logs, l => Assert.Equal(logs[0].CreatedAt, l.CreatedAt));
+        Assert.All(logs, l => Assert.False(string.IsNullOrEmpty(l.ActorAccount)));
+        Assert.All(logs, l => Assert.Equal(logs[0].ActorAccount, l.ActorAccount));
+    }
+
+    /// <summary>單筆標記（非批次）同樣要留下問題層級的歷程，含 IssueLabel</summary>
+    [Fact]
+    public void 單筆標記_歷程記錄問題鍵與顯示文字()
+    {
+        var day = Today.AddDays(-16);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.InProgress,
+            Note = "查修中"
+        });
+
+        var log = Assert.Single(_handlings.GetLogs(_host.HostName, day));
+        Assert.Equal(HandlingActions.IssueStatus, log.Action);
+        Assert.Equal(IssueSignatureKey.For(a), log.IssueKey);
+        Assert.Equal("disk 153", log.IssueLabel);
+        Assert.Equal(HandlingStatuses.InProgress, log.Status);
+        Assert.Equal("查修中", log.Note);
+    }
+
+    /// <summary>清除標記（調回未處理）也要留痕，不是靜默消失——歷程要看得出「誰把它清掉的」</summary>
+    [Fact]
+    public void 清除問題標記_歷程記錄清除動作()
+    {
+        var day = Today.AddDays(-17);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        { IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Resolved });
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        { IssueKey = IssueSignatureKey.For(a), Status = "" });
+
+        var logs = _handlings.GetLogs(_host.HostName, day);
+        Assert.Equal(2, logs.Count);
+        Assert.Equal(HandlingActions.IssueStatusCleared, logs[1].Action);
+        Assert.Equal(IssueSignatureKey.For(a), logs[1].IssueKey);
     }
 
     [Fact]

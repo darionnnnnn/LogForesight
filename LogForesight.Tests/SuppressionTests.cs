@@ -81,7 +81,7 @@ public class EfSuppressionStoreTests : SuppressionStoreContractTests
 
 /// <summary>
 /// 抑制的篩選純函數（<see cref="SuppressionFilter"/>）與其對分析層的實際效果——
-/// 被抑制的 Critical/High 不強制拉高風險、不產生趨勢告警文字，但關聯層與紀錄本身完全不受影響
+/// 被抑制的「重大」旗標/High 不強制拉高風險、不產生趨勢告警文字，但關聯層與紀錄本身完全不受影響
 /// （語意邊界）。純函數測試，與儲存後端無關。
 /// </summary>
 public class SuppressionTests
@@ -138,6 +138,8 @@ public class SuppressionTests
     public void 被抑制的Critical不強制拉高風險()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
+        // 模擬命中「重大」旗標規則（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化後判定看旗標不看 Severity）
+        issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
 
         var risk = LogAnalysisService.ComputeRuleBasedRisk(new List<LogIssueSignature> { issue },
@@ -150,6 +152,7 @@ public class SuppressionTests
     public void 未被抑制的Critical仍強制拉高風險()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
+        issue.ElevatesDayRisk = true;
 
         var risk = LogAnalysisService.ComputeRuleBasedRisk(new List<LogIssueSignature> { issue },
             new List<string>(), new List<CorrelationFinding>());
@@ -173,8 +176,9 @@ public class SuppressionTests
     public void 關聯層訊號不受抑制影響_即使唯一的Critical事件被抑制()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
+        issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
-        var correlation = new CorrelationFinding { Severity = IssueSeverity.Critical, Description = "test" };
+        var correlation = new CorrelationFinding { Severity = IssueSeverity.High, ElevatesDayRisk = true, Description = "test" };
 
         var risk = LogAnalysisService.ComputeRuleBasedRisk(new List<LogIssueSignature> { issue },
             new List<string>(), new List<CorrelationFinding> { correlation });
@@ -196,7 +200,8 @@ public class SuppressionTests
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
 
         Assert.Equal(IssueTrend.Rising, sig.Trend);
-        Assert.Equal(IssueSeverity.Critical, sig.Severity); // 嚴重度仍照算升級，供頻率報表使用
+        Assert.Equal(IssueSeverity.High, sig.Severity); // 嚴重度封頂 High（B1 三級化）
+        Assert.True(sig.ElevatesDayRisk); // 但仍照算標記「重大」旗標，供頻率報表使用
         Assert.DoesNotContain(alerts, a => a.Contains("頻率上升")); // 但不吵
     }
 

@@ -5,10 +5,13 @@
  *   1. 注入設計 token 的色盤與字型（語意色全站一致，§8.2 原則 3）
  *   2. 統一 tooltip / legend / 座標軸樣式
  *   3. 接上下鑽（§8.4）：點擊資料點 → 導向帶篩選條件的明細頁
- *   4. 提供「表格」切換與 PNG 下載
+ *   4. 提供折線/長條圖的「表格」切換，與占比圓餅圖的右側文字條列
+ *      （2026-07-28 起不再提供 PNG 下載，見 attachToolbar／attachDoughnutLegend）
  *
  * 換圖表庫時只需要重寫這個模組——這是防廢棄的實際手段，不是原則宣示。
  */
+
+import { formatNumber } from './format.js';
 
 /** 自 CSS 變數讀取設計 token：顏色只在 site.css 定義一次 */
 function token(name, fallback) {
@@ -30,9 +33,9 @@ export function categoryColors() {
     };
 }
 
+/** docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High，色盤剩三級 */
 export function severityColors() {
     return {
-        Critical: token('--lf-severity-critical', '#dc3545'),
         High: token('--lf-severity-high', '#fd7e14'),
         Medium: token('--lf-severity-medium', '#0dcaf0'),
         Low: token('--lf-severity-low', '#adb5bd')
@@ -136,12 +139,15 @@ export const bar = (canvas, spec) => create(canvas, { ...spec, type: 'bar' });
 export const doughnut = (canvas, spec) => create(canvas, { ...spec, type: 'doughnut' });
 
 /**
- * 圖卡的工具列：表格切換 ＋ PNG 下載（§8.3 規則 4）。
+ * 圖卡的工具列：表格切換（§8.3 規則 4）。
  *
  * 表格切換不只是「無障礙加分項」——色弱使用者、需要精確讀值的人、
  * 想複製數字到別處的人，都靠它。資料本來就在前端，零後端成本。
+ *
+ * PNG 下載已移除（docs/WEB-FEEDBACK-2-PLAN.md #4）：需要圖檔的情境走既有
+ * 「列印 / 存成 PDF」，不再逐圖各自下載。
  */
-export function attachToolbar(container, { chart, canvasWrapper, tableColumns, tableRows, title }) {
+export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
     const toolbar = document.createElement('div');
     toolbar.className = 'd-flex gap-1 lf-no-print';
 
@@ -163,20 +169,47 @@ export function attachToolbar(container, { chart, canvasWrapper, tableColumns, t
         toggleButton.textContent = showingTable ? '表格' : '圖表';
     });
 
-    const downloadButton = document.createElement('button');
-    downloadButton.type = 'button';
-    downloadButton.className = 'btn btn-sm btn-outline-secondary';
-    downloadButton.textContent = 'PNG';
-    downloadButton.setAttribute('aria-label', `下載「${title}」圖表`);
-    downloadButton.addEventListener('click', () => {
-        const link = document.createElement('a');
-        link.href = chart.toBase64Image();
-        link.download = `${title}.png`;
-        link.click();
-    });
-
-    toolbar.append(toggleButton, downloadButton);
+    toolbar.appendChild(toggleButton);
     container.appendChild(toolbar);
+}
+
+/**
+ * 圓餅圖左圖右文字條列（docs/WEB-FEEDBACK-2-PLAN.md #3）：取代表格切換＋PNG 下載——
+ * 圓餅圖本來就沒有 XY 軸，數字已經在條列裡，不需要再切換一次表格模式。
+ * 每列「色點＋名稱＋數值＋百分比」，列本身可點（沿用該分段的 drillTo URL，
+ * 與點圖同一個下鑽目的地）；沒有 url 的列（如彙總的「其餘」）不做成連結。
+ * items: [{ label, value, color, url }]
+ */
+export function attachDoughnutLegend(container, items) {
+    const total = items.reduce((sum, item) => sum + item.value, 0);
+
+    const list = document.createElement('div');
+    list.className = 'lf-legend-list';
+
+    for (const item of items) {
+        const percent = total > 0 ? Math.round((item.value / total) * 100) : 0;
+
+        const row = document.createElement(item.url ? 'a' : 'div');
+        row.className = 'lf-legend-row' + (item.url ? ' lf-legend-row--link' : '');
+        if (item.url) row.href = item.url;
+
+        const dot = document.createElement('span');
+        dot.className = 'lf-legend-row__dot';
+        dot.style.backgroundColor = item.color;
+
+        const label = document.createElement('span');
+        label.className = 'lf-legend-row__label';
+        label.textContent = item.label;
+
+        const value = document.createElement('span');
+        value.className = 'lf-legend-row__value';
+        value.textContent = `${formatNumber(item.value)}（${percent}%）`;
+
+        row.append(dot, label, value);
+        list.appendChild(row);
+    }
+
+    container.replaceChildren(list);
 }
 
 function buildTable(columns, rows) {

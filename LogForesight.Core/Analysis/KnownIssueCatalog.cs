@@ -52,7 +52,22 @@ public class KnownIssueRule
     public string SourcePattern { get; init; } = string.Empty;
     public int[] EventIds { get; init; } = Array.Empty<int>();
     public IssueCategory Category { get; init; }
-    public IssueSeverity Severity { get; init; }
+
+    /// <summary>
+    /// Severity 不是 init——docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）需要在載入時把舊資料的
+    /// Severity=Critical 就地正規化為 High（見 <see cref="NormalizeLegacyCriticalSeverity"/>），
+    /// 而 KnownIssueRule 是普通 class 不是 record，沒有 `with` 表達式可用。
+    /// </summary>
+    public IssueSeverity Severity { get; set; }
+
+    /// <summary>
+    /// 命中即列為高風險日（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：三級化前的 Critical
+    /// 唯一的實際作用就是這個——LogAnalysisService.ComputeRuleBasedRisk 只要當天命中一條
+    /// 未被抑制的旗標規則（或關聯訊號帶旗標），就把當天判定為高風險日。畫面上另以「重大」
+    /// 徽章顯性標註（取代原本「嚴重」等級給人的直覺），見 IssueDto/SignatureHitDto.ElevatesDayRisk。
+    /// </summary>
+    public bool ElevatesDayRisk { get; set; }
+
     public string Description { get; init; } = string.Empty;
 
     /// <summary>當日發生次數達到此值才算完整嚴重度，未達則降一級（例如零星的登入失敗屬正常雜訊）</summary>
@@ -212,9 +227,11 @@ public static class KnownIssueCatalog
         if (rule != null)
         {
             signature.Category = rule.Category;
-            signature.Severity = signature.Count >= rule.CountThreshold
-                ? rule.Severity
-                : Downgrade(rule.Severity);
+            var thresholdMet = signature.Count >= rule.CountThreshold;
+            signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
+            // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
+            // 讓當天判定成高風險日，旗標要複製同一個行為（docs/WEB-FEEDBACK-2-PLAN.md #1）
+            signature.ElevatesDayRisk = thresholdMet && rule.ElevatesDayRisk;
             signature.KnownIssue = rule.Description;
             signature.RuleId = rule.Id;
             return;
@@ -222,8 +239,28 @@ public static class KnownIssueCatalog
 
         signature.Category = IssueCategory.Other;
         signature.Severity = IssueSeverity.Low;
+        signature.ElevatesDayRisk = false;
     }
 
     private static IssueSeverity Downgrade(IssueSeverity s) =>
         s == IssueSeverity.Low ? IssueSeverity.Low : s - 1;
+
+    /// <summary>
+    /// 舊資料相容（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：規則檔裡若還存著三級化之前
+    /// 寫入的 Severity=Critical（內建種子已遷移，但使用者自訂規則或舊部署的 rules.json 可能還是舊值），
+    /// 載入時一律正規化為 High＋ElevatesDayRisk=true——Critical 原本唯一的實際作用就是這個，
+    /// 正規化後行為不變。只在載入時於記憶體正規化，不覆寫原檔（與規則檔容錯設計一致，
+    /// 見 docs/RULES-PLAN.md 陷阱 3；下次使用者透過 Web 儲存該規則時會自然寫回正規化後的值）。
+    /// </summary>
+    public static void NormalizeLegacyCriticalSeverity(IEnumerable<KnownIssueRule> rules)
+    {
+        foreach (var rule in rules)
+        {
+            if (rule.Severity == IssueSeverity.Critical)
+            {
+                rule.Severity = IssueSeverity.High;
+                rule.ElevatesDayRisk = true;
+            }
+        }
+    }
 }

@@ -349,6 +349,7 @@ public class RuleAdminService : IRuleAdminService
             EventIds = request.MatchAllEventIds ? Array.Empty<int>() : request.EventIds.Distinct().ToArray(),
             Category = category,
             Severity = severity,
+            ElevatesDayRisk = request.ElevatesDayRisk,
             Description = request.Description.Trim(),
             CountThreshold = request.CountThreshold,
             PlainExplanation = request.PlainExplanation.Trim(),
@@ -375,6 +376,7 @@ public class RuleAdminService : IRuleAdminService
             EventIds = source.EventIds,
             Category = source.Category,
             Severity = source.Severity,
+            ElevatesDayRisk = source.ElevatesDayRisk,
             Description = source.Description,
             CountThreshold = source.CountThreshold,
             PlainExplanation = source.PlainExplanation,
@@ -400,6 +402,7 @@ public class RuleAdminService : IRuleAdminService
         Compare("Event ID", string.Join(", ", current.EventIds), string.Join(", ", seed.EventIds));
         Compare("類別", current.Category.ToString(), seed.Category.ToString());
         Compare("嚴重度", current.Severity.ToString(), seed.Severity.ToString());
+        Compare("命中即列為高風險日", current.ElevatesDayRisk.ToString(), seed.ElevatesDayRisk.ToString());
         Compare("說明", current.Description, seed.Description);
         Compare("次數門檻", current.CountThreshold.ToString(), seed.CountThreshold.ToString());
         Compare("白話說明", current.PlainExplanation, seed.PlainExplanation);
@@ -432,6 +435,7 @@ public class RuleAdminService : IRuleAdminService
             MatchAllEventIds = rule.MatchAllEventIds,
             Category = rule.Category.ToString(),
             Severity = rule.Severity.ToString(),
+            ElevatesDayRisk = rule.ElevatesDayRisk,
             Description = rule.Description,
             CountThreshold = rule.CountThreshold,
             PlainExplanation = rule.PlainExplanation,

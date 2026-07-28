@@ -7,8 +7,8 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
-import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, showDetailModal } from '../core/ui.js';
+import { riskBadge, severityBadge, elevatesBadge, formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -80,18 +80,41 @@ async function onBatchSaved(result) {
  * 報告全文預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的
  * 重點問題，全文留給少數需要逐字核對的場合。展開狀態記 localStorage——
  * 常看全文的人不必每次進來都重新展開。
+ *
+ * 整個 header 都可點開合（docs/WEB-FEEDBACK-2-PLAN.md #10）：原本只有標題那顆
+ * btn-link 可點，右側複製/列印鈕之外的空白區點了沒反應。複製/列印鈕各自
+ * stopPropagation，不被 header 的點擊攔截。
  */
 function setupReportToggle() {
-    const expanded = localStorage.getItem('lf.recordDetail.reportExpanded') === 'true';
-    document.getElementById('report-body').classList.toggle('d-none', !expanded);
-    document.getElementById('report-caret').classList.toggle('lf-collapse-caret--open', expanded);
+    const header = document.getElementById('report-header');
+    const body = document.getElementById('report-body');
+    const caret = document.getElementById('report-caret');
 
-    document.getElementById('report-toggle').addEventListener('click', () => {
-        const body = document.getElementById('report-body');
-        const nowOpen = body.classList.toggle('d-none') === false;
-        document.getElementById('report-caret').classList.toggle('lf-collapse-caret--open', nowOpen);
-        localStorage.setItem('lf.recordDetail.reportExpanded', String(nowOpen));
+    const expanded = localStorage.getItem('lf.recordDetail.reportExpanded') === 'true';
+    applyReportExpanded(expanded);
+
+    header.addEventListener('click', () => toggleReport());
+    header.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleReport();
+        }
     });
+
+    for (const id of ['btn-copy-report', 'btn-print']) {
+        document.getElementById(id).addEventListener('click', event => event.stopPropagation());
+    }
+
+    function toggleReport() {
+        applyReportExpanded(body.classList.contains('d-none'));
+    }
+
+    function applyReportExpanded(nowOpen) {
+        body.classList.toggle('d-none', !nowOpen);
+        caret.classList.toggle('lf-collapse-caret--open', nowOpen);
+        header.setAttribute('aria-expanded', String(nowOpen));
+        localStorage.setItem('lf.recordDetail.reportExpanded', String(nowOpen));
+    }
 }
 
 /**
@@ -147,7 +170,12 @@ function renderHeader(detail) {
     dateSpan.className = 'text-muted';
     dateSpan.textContent = detail.date;
 
-    top.append(hostLink, dateSpan, riskBadge(detail.riskLevel));
+    // 判定依據（docs/WEB-FEEDBACK-2-PLAN.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
+    // 高風險日不保證看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號、或問題被顯示設定隱藏）——
+    // 沒有明確依據（舊紀錄／低風險日）時給通用說明，不留使用者自己猜
+    const riskBasisTitle = detail.riskBasisText ??
+        '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
+    top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
 
     if (!detail.aiAnalyzed) {
         const badge = document.createElement('span');
@@ -211,20 +239,111 @@ function renderHeader(detail) {
         body.appendChild(role);
     }
 
+    // docs/WEB-FEEDBACK-2-PLAN.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
+    // 否則使用者會誤以為「風險等級判定的依據」就是眼前看到的這些問題
+    if (detail.hiddenIssueCount > 0) {
+        const hiddenNote = document.createElement('div');
+        hiddenNote.className = 'small text-muted mt-2';
+        hiddenNote.textContent =
+            `另有 ${detail.hiddenIssueCount} 項問題已依全站顯示設定隱藏；風險等級以完整資料判定，不受此設定影響。`;
+        body.appendChild(hiddenNote);
+    }
+
     card.appendChild(body);
     container.replaceChildren(card);
 }
 
-function issueColumns() {
-    return [
-        { title: '來源 / Event', render: i => sourceCell(i) },
+/**
+ * 表格欄位定義（docs/WEB-FEEDBACK-2-PLAN.md #7）：勾選與處理狀態拆成獨立兩欄——
+ * 舊版「處理」欄同時塞 checkbox＋狀態文字＋預計完成日，「不處理（預設）」「已知雜訊（自動）」
+ * 兩種列還完全沒有 checkbox（不能參與批次套用）。sectionIssues 是這張表要渲染的那批問題
+ * （用於「選取」欄全選 checkbox 的作用範圍）。
+ */
+function issueColumns(sectionIssues) {
+    const columns = [
+        // 「來源 / Event」留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在
+        // 第一欄最前面，「選取」欄若搶第一位，展開箭頭會跟 checkbox 擠在同一格
+        { title: '來源 / Event', render: i => sourceCell(i) }
+    ];
+
+    if (currentDetail.canHandle) {
+        columns.push({
+            title: '選取',
+            className: 'text-center lf-no-print',
+            renderHeader: () => selectAllCheckbox(sectionIssues),
+            render: i => selectCheckbox(i, sectionIssues)
+        });
+    }
+
+    columns.push(
         { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
-        { title: '嚴重度', render: i => severityBadge(i.severity) },
-        { title: '時段', render: i => `${i.firstSeen}~${i.lastSeen}` },
+        { title: '嚴重度', render: i => severityCell(i) },
+        { title: '時段', className: 'text-nowrap', render: i => `${i.firstSeen}~${i.lastSeen}` },
         { title: '趨勢', className: 'lf-trend-cell', render: i => i.trendText },
         { title: '說明', render: i => knownIssueCell(i) },
-        { title: '處理', render: i => statusControl(i) }
-    ];
+        { title: '處理狀態', render: i => statusControl(i) }
+    );
+
+    return columns;
+}
+
+/**
+ * 「選取」欄的勾選 checkbox：批次套用允許覆蓋任何問題的狀態（後端 SetIssueStatusBatch
+ * 不區分），前端沒理由把「不處理（預設）」「已知雜訊（自動）」擋在批次選取之外——
+ * 這兩種列現在也有 checkbox，取代舊版完全沒有的狀況。
+ */
+function selectCheckbox(issue, sectionIssues) {
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.dataset.issueKey = issue.issueKey;
+    check.checked = selectedIssueKeys.has(issue.issueKey);
+    check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        if (check.checked) selectedIssueKeys.add(issue.issueKey);
+        else selectedIssueKeys.delete(issue.issueKey);
+        refreshSelection();
+
+        const headerCheck = check.closest('table')?.querySelector('thead input[type="checkbox"]');
+        if (headerCheck) syncSelectAllCheckbox(headerCheck, sectionIssues);
+    });
+
+    return check;
+}
+
+/** 表頭全選 checkbox：勾/取消當前這張表（分節或收合區塊）目前顯示的列——批次套用的常見手勢 */
+function selectAllCheckbox(sectionIssues) {
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.title = '勾選／取消勾選這批問題';
+    syncSelectAllCheckbox(check, sectionIssues);
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        for (const issue of sectionIssues) {
+            if (check.checked) selectedIssueKeys.add(issue.issueKey);
+            else selectedIssueKeys.delete(issue.issueKey);
+        }
+
+        const table = check.closest('table');
+        if (table) {
+            for (const rowCheck of table.querySelectorAll('tbody input[type="checkbox"][data-issue-key]')) {
+                rowCheck.checked = check.checked;
+            }
+        }
+        refreshSelection();
+    });
+
+    return check;
+}
+
+function syncSelectAllCheckbox(check, sectionIssues) {
+    const selectedCount = sectionIssues.filter(i => selectedIssueKeys.has(i.issueKey)).length;
+    check.checked = selectedCount > 0 && selectedCount === sectionIssues.length;
+    check.indeterminate = selectedCount > 0 && selectedCount < sectionIssues.length;
 }
 
 function severityNeutralBadge(text) {
@@ -235,11 +354,24 @@ function severityNeutralBadge(text) {
 }
 
 /**
- * 問題層級處理狀態控制（方案 B，§5.1 D-1 #2/#3）。四條路徑：
+ * 嚴重度徽章＋「重大」旗標（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：命中帶
+ * ElevatesDayRisk 旗標規則的問題，一眼看得出「這條問題特別嚴重、是它讓今天變高風險日」。
+ */
+function severityCell(issue) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(issue.severity));
+    if (issue.elevatesDayRisk) wrap.appendChild(elevatesBadge());
+    return wrap;
+}
+
+/**
+ * 問題層級處理狀態顯示（方案 B，§5.1 D-1 #2/#3；#7 拆欄後這裡只管「處理狀態」欄，
+ * 勾選移到獨立的「選取」欄，見 selectCheckbox）。四條路徑：
  *   1. 無 Handle 能力 → 唯讀徽章
  *   2. 未列入未處理計算的等級且從未標記過 → 「不處理（預設）」＋確認不處理／調回未處理
  *   3. 從未標記過但同主機同簽章有已知雜訊記憶 → 「已知雜訊（自動）」＋調回未處理
- *   4. 其餘（含明確 open 與已結案）→ 純勾選，狀態改在右側區塊批次套用
+ *   4. 其餘（含明確 open 與已結案）→ 狀態文字＋預計完成日
  */
 function statusControl(issue) {
     if (!currentDetail.canHandle) {
@@ -252,7 +384,7 @@ function statusControl(issue) {
 
     if (issue.isDefaultUnhandled) return defaultUnhandledControl(issue);
     if (issue.isAutoNoise) return autoNoiseControl(issue);
-    return checkboxControl(issue);
+    return statusLabel(issue);
 }
 
 /** 低風險預設不處理（§5.1 D-1 #2）：推導不落盤，使用者可確認或調回未處理 */
@@ -316,28 +448,20 @@ function smallActionButton(text, onClick) {
 }
 
 /**
- * 純勾選（批次套用改版）：勾選只代表「這列要包含在下一次批次套用」，跟這列目前的
- * 處理狀態脫鉤——狀態改到右側「處理狀態」區塊填一次，套用到全部勾選的問題
- * （見 handling-panel.js 的 refreshSelection/batch 提交）。目前狀態改用文字＋預計完成日顯示。
+ * 狀態文字＋預計完成日（#7 拆欄後取代原本的 checkboxControl）：勾選已移到獨立的
+ * 「選取」欄（見 selectCheckbox），這裡純顯示——狀態改到右側「處理狀態」區塊填一次，
+ * 套用到全部勾選的問題（見 handling-panel.js 的 refreshSelection/batch 提交）。
  */
-function checkboxControl(issue) {
+function statusLabel(issue) {
     const wrap = document.createElement('div');
     wrap.className = 'lf-issue-status';
 
     const hasStatus = issue.handlingStatus && issue.handlingStatus !== 'open';
 
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'form-check-input lf-issue-status__check';
-    check.checked = selectedIssueKeys.has(issue.issueKey);
-    check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';
-
     const label = document.createElement('div');
     label.className = 'small';
     label.textContent = hasStatus ? issue.handlingStatusText : '未處理';
-
-    const col = document.createElement('div');
-    col.append(check, label);
+    wrap.appendChild(label);
 
     if (issue.handlingStatus === 'in_progress' && issue.dueDate) {
         // yyyy-MM-dd 字串比大小即日期先後（本地日期字串，見 handling-panel 快速鈕的組法）
@@ -346,17 +470,8 @@ function checkboxControl(issue) {
         const due = document.createElement('div');
         due.className = `small lf-issue-status__due ${isOverdue ? 'text-danger fw-semibold' : 'text-muted'}`;
         due.textContent = `${isOverdue ? '逾期' : '預計'} ${issue.dueDate.slice(5)}`;
-        col.appendChild(due);
+        wrap.appendChild(due);
     }
-
-    wrap.appendChild(col);
-
-    check.addEventListener('click', event => event.stopPropagation());
-    check.addEventListener('change', () => {
-        if (check.checked) selectedIssueKeys.add(issue.issueKey);
-        else selectedIssueKeys.delete(issue.issueKey);
-        refreshSelection();
-    });
 
     return wrap;
 }
@@ -430,12 +545,28 @@ async function offerBatchSuppression(issueKeys) {
 }
 
 /**
- * 重點問題旁的計數器：只顯示「已處理／未處理」（§5.1 D-1 #7），忽略其他標籤——
- * 這顆計數器要回答的是「還剩幾件要動手」，不是「標了幾件」：
+ * 未處理判定（含明確 open 或從沒標記過、且不是低風險預設不處理／已知雜訊自動判讀的問題）：
+ * renderProgress 的三段計數器與 renderIssues 的排序／收合共用同一份判斷（D2/D3），
+ * 避免計數器說的「未處理」跟畫面上排在最前面的列對不起來。
+ */
+function isUnresolvedIssue(issue) {
+    return issue.handlingStatus === 'open' ||
+        (!issue.handlingStatus && !issue.isDefaultUnhandled && !issue.isAutoNoise);
+}
+
+function isInProgressIssue(issue) {
+    return issue.handlingStatus === 'in_progress';
+}
+
+/**
+ * 重點問題旁的計數器（docs/WEB-FEEDBACK-2-PLAN.md #8/D3）：三段「已處理／處理中／未處理」，
+ * 忽略其他標籤——這顆計數器要回答的是「還剩幾件要動手、進度到哪」，不是「標了幾件」：
  *   已處理＝真的標成 resolved 的問題數
- *   未處理＝從沒標記過、且不是低風險預設不處理／已知雜訊自動判讀的問題（含明確 open）
- * 不處理／誤報／已知雜訊／低風險預設不處理，兩邊都不計——那些是「已經有結論」，
- * 不是「還沒處理」，混進未處理只會讓使用者以為還有事要做。
+ *   處理中＝標成 in_progress 的問題數
+ *   未處理＝見 isUnresolvedIssue
+ * 不處理／誤報／已知雜訊／低風險預設不處理，三邊都不計——那些是「已經有結論」，
+ * 不是「還沒處理」，混進未處理只會讓使用者以為還有事要做。任一段為 0 時省略，
+ * 避免「已處理 0／處理中 0／未處理 12」這種噪音。
  * 從 currentDetail.topIssues 現算，每次任何一項狀態變動後呼叫，不依賴後端往返。
  */
 function renderProgress() {
@@ -446,12 +577,14 @@ function renderProgress() {
     if (issues.length === 0) { el.textContent = ''; return; }
 
     const resolved = issues.filter(i => i.handlingStatus === 'resolved').length;
-    const unhandled = issues.filter(i =>
-        i.handlingStatus === 'open' ||
-        (i.handlingStatus === '' && !i.isDefaultUnhandled && !i.isAutoNoise)
-    ).length;
+    const inProgress = issues.filter(isInProgressIssue).length;
+    const unhandled = issues.filter(isUnresolvedIssue).length;
 
-    el.textContent = `已處理 ${resolved}／未處理 ${unhandled}`;
+    const parts = [];
+    if (resolved > 0) parts.push(`已處理 ${resolved}`);
+    if (inProgress > 0) parts.push(`處理中 ${inProgress}`);
+    if (unhandled > 0) parts.push(`未處理 ${unhandled}`);
+    el.textContent = parts.join('／');
 }
 
 /** 下鑽帶入的類別（§8.4）：從儀表板分類卡或查詢頁篩著類別點進來時，網址會帶 categories */
@@ -550,10 +683,24 @@ function renderIssues(detail) {
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
+        // 已結案排序收合（docs/WEB-FEEDBACK-2-PLAN.md #8/D2，僅風險日詳情——問題查詢清單
+        // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
+        // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
+        const primary = issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i));
+        const rest = issues.filter(i => !isUnresolvedIssue(i) && !isInProgressIssue(i));
+
         const body = document.createElement('div');
-        // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
-        renderTable(body, { columns: issueColumns(), rows: issues, rowDetail: guidancePanel });
+        if (primary.length > 0) {
+            // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
+            renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: guidancePanel });
+        } else {
+            renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」查看。' });
+        }
         section.appendChild(body);
+
+        if (rest.length > 0) {
+            section.appendChild(collapsedRestSection(rest));
+        }
 
         // 「其他」類別（未命中規則）沒有逐列處置參考，改在分節末尾附上 AI 深入分析——
         // 取代舊版獨立的深入分析卡，讓分析與所屬類別至少對齊在同一個區塊
@@ -584,6 +731,40 @@ function renderIssues(detail) {
 
     // 下鑽進來時直接捲到命中的第一個類別分節
     container.querySelector('.lf-issue-group--hit')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+/**
+ * 已結案／已有結論問題的收合區塊（#8）：分節底部一條「展開▾」列，點開才渲染完整表格。
+ * 每次 renderIssues 重繪都重新收合（不記憶展開狀態）——批次套用後常有列從上方主表
+ * 「搬」進這裡，維持收合預設值最不會讓人意外。
+ */
+function collapsedRestSection(rest) {
+    const wrap = document.createElement('div');
+    wrap.className = 'border-top';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-link btn-sm text-decoration-none text-body d-flex align-items-center gap-2 px-3 py-2 lf-no-print';
+
+    const caret = document.createElement('span');
+    caret.className = 'lf-collapse-caret';
+    caret.appendChild(icon('chevron-down'));
+
+    const label = document.createElement('span');
+    label.textContent = `已處理／已有結論 ${rest.length} 項`;
+    toggle.append(caret, label);
+
+    const body = document.createElement('div');
+    body.className = 'd-none';
+    renderTable(body, { columns: issueColumns(rest), rows: rest, rowDetail: guidancePanel });
+
+    toggle.addEventListener('click', () => {
+        const nowOpen = body.classList.toggle('d-none') === false;
+        caret.classList.toggle('lf-collapse-caret--open', nowOpen);
+    });
+
+    wrap.append(toggle, body);
+    return wrap;
 }
 
 function sourceCell(issue) {
@@ -639,28 +820,44 @@ function knownIssueCell(issue) {
 }
 
 /**
- * 範例訊息改 hover 泡泡（§5.1 D-1 #5）：原本的展開式 <pre> 一展開就佔掉整列高度，
- * 多筆問題同時攤開會讓畫面很亂。改成滑過才顯示的 popover——trigger 含 focus，
- * 點擊（取得焦點）會維持顯示，方便選取複製；點頁面其他地方失焦即關閉。
- * content 走 html:false（純文字），事件訊息是攻擊者可控字串，不能當 HTML 解析。
+ * 原始訊息（docs/WEB-FEEDBACK-2-PLAN.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
+ * 這個問題實際觸發的事件訊息樣本，供比對確認——舊名稱「範例訊息」看不出指的是什麼。
+ * hover popover 在窄欄位下常被 Popper 定位空間壓縮、內容擠成一團，且與點擊維持顯示
+ * 兩套手勢並存會曖昧；改為點擊開 modal，寬度不受定位限制，逐則訊息各自成段落，
+ * 不再把 `---` 當分隔字串塞進同一段文字裡。
  */
 function sampleMessagesTrigger(issue) {
     const trigger = document.createElement('button');
     trigger.type = 'button';
     trigger.className = 'btn btn-link btn-sm p-0 lf-no-print';
-    trigger.textContent = '範例訊息';
+    trigger.textContent = `原始訊息 ${issue.sampleMessages.length} 則`;
+    trigger.title = '這個問題實際觸發的事件訊息樣本，供比對確認';
 
-    // eslint-disable-next-line no-undef
-    new bootstrap.Popover(trigger, {
-        trigger: 'hover focus',
-        placement: 'top',
-        html: false,
-        customClass: 'lf-sample-popover',
-        title: `範例訊息（${issue.sampleMessages.length}）`,
-        content: issue.sampleMessages.join('\n---\n')
+    trigger.addEventListener('click', event => {
+        event.stopPropagation();
+        showDetailModal({
+            title: `原始訊息（${issue.source} ${issue.eventId}，共 ${issue.sampleMessages.length} 則）`,
+            body: sampleMessagesBody(issue.sampleMessages),
+            size: 'modal-lg'
+        });
     });
 
     return trigger;
+}
+
+/** 逐則訊息各自成段落（等寬字型、保留原始換行）；textContent 純文字組裝，訊息是攻擊者可控字串，不解析 HTML */
+function sampleMessagesBody(messages) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-sample-messages';
+
+    for (const message of messages) {
+        const block = document.createElement('pre');
+        block.className = 'lf-sample-messages__item';
+        block.textContent = message;
+        wrap.appendChild(block);
+    }
+
+    return wrap;
 }
 
 /**

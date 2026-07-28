@@ -11,15 +11,17 @@ public static class KnownIssueSeed
     /// <summary>種子版本：每次調整 CreateRules() 的內容（新增規則、修訂知識庫文字）就遞增，
     /// `--import-rules` 依此判斷 rules.json 是否落後於程式內建的種子。
     /// v2（EventLogReader 遷移）：新增 Microsoft Defender 與 RDP TerminalServices 兩類 Operational
-    /// 頻道的規則（見 docs/RULES-PLAN.md 與 README「監控的危險訊號清單」）。</summary>
-    public const int Version = 2;
+    /// 頻道的規則（見 docs/RULES-PLAN.md 與 README「監控的危險訊號清單」）。
+    /// v3（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：原 Severity=Critical 的 7 條規則改為
+    /// High＋ElevatesDayRisk=true，行為不變（仍讓命中當天判定為高風險日），嚴重度顯示收斂為三級。</summary>
+    public const int Version = 3;
 
     public static List<KnownIssueRule> CreateRules() => new()
     {
         // ── 儲存裝置（硬碟故障最重要的前兆訊號）─────────────────────────
         new() { Id = "builtin-storage-disk-io", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "disk", EventIds = new[] { 7, 11, 51, 52, 153 },
-                Category = IssueCategory.Storage, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Storage, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "磁碟 I/O 錯誤或壞軌前兆，硬碟可能即將故障，應盡快備份並安排更換",
                 PlainExplanation = "這台伺服器的硬碟出現讀寫錯誤，是硬碟即將故障最直接的警訊。",
                 Impact = "硬碟繼續惡化可能導致資料損毀、系統當機，甚至硬碟完全故障、資料無法救回。",
@@ -30,7 +32,7 @@ public static class KnownIssueSeed
                     "安排更換硬碟，優先順序視錯誤頻率而定", "若為 RAID 陣列，確認其他磁碟健康、預留備援時間" } },
         new() { Id = "builtin-storage-ntfs-corruption", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Ntfs", EventIds = new[] { 55, 98, 130, 140, 141 },
-                Category = IssueCategory.Storage, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Storage, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "NTFS 檔案系統損毀跡象，需執行 chkdsk 並檢查底層磁碟健康",
                 PlainExplanation = "檔案系統本身的結構出現異常，代表磁碟上的資料組織方式可能已經受損。",
                 Impact = "檔案系統損毀若持續惡化，可能造成檔案讀取錯誤、資料遺失，甚至系統無法開機。",
@@ -64,7 +66,7 @@ public static class KnownIssueSeed
         // ── 硬體（CPU / 記憶體 / 電源）───────────────────────────────
         new() { Id = "builtin-hardware-whea-error", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = true, MatchFilter = null,
                 SourcePattern = "WHEA-Logger",
-                Category = IssueCategory.Hardware, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Hardware, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "WHEA 硬體錯誤 (CPU/記憶體/PCIe)。corrected error 次數上升是硬體劣化的典型前兆",
                 PlainExplanation = "CPU、記憶體或 PCIe 匯流排偵測到硬體層級的錯誤，這是硬體開始劣化的訊號。",
                 Impact = "corrected error（可修正錯誤）持續累積代表硬體正在劣化，若演變成 uncorrected error 可能直接導致當機或資料損毀。",
@@ -75,7 +77,7 @@ public static class KnownIssueSeed
                     "頻率持續上升時，安排在下個維護窗口更換可疑硬體元件" } },
         new() { Id = "builtin-hardware-kernel-power-41", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Kernel-Power", EventIds = new[] { 41 },
-                Category = IssueCategory.Hardware, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Hardware, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "非預期斷電或當機重開 (Kernel-Power 41)，可能為電源、過熱或硬體不穩",
                 PlainExplanation = "系統沒有正常關機程序就重新啟動了，通常代表突發斷電、當機或硬體異常。",
                 Impact = "重複發生代表電源、散熱或硬體有間歇性問題，可能導致資料未寫入完成而損毀，或演變成更嚴重的當機。",
@@ -286,7 +288,7 @@ public static class KnownIssueSeed
                     "若為攻擊，追查來源並考慮加強防護；若為誤鎖，依正常流程解鎖" } },
         new() { Id = "builtin-security-audit-log-cleared-1102", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Security-Auditing", EventIds = new[] { 1102 },
-                Category = IssueCategory.Security, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "安全稽核日誌被清除——入侵者滅跡的典型行為，應立即調查",
                 PlainExplanation = "伺服器的安全稽核日誌被清除了——這是攻擊者入侵後常見的滅跡行為。",
                 Impact = "日誌被清除代表清除時間點之前的活動紀錄已經遺失，會嚴重影響後續的入侵調查與鑑識工作。",
@@ -361,7 +363,7 @@ public static class KnownIssueSeed
                     "非預期時檢查該物件目前的存取權限是否合理，並追查異動來源" } },
         new() { Id = "builtin-security-sacl-changed-4907", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Security-Auditing", EventIds = new[] { 4907 },
-                Category = IssueCategory.Security, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "物件的稽核設定 (SACL) 被變更——可能是入侵者針對特定物件關閉稽核記錄以躲避偵測",
                 PlainExplanation = "某個物件的稽核設定被變更，可能導致該物件之後的存取行為不再被記錄。",
                 Impact = "這是針對性關閉稽核的手法，代表攻擊者可能已鎖定特定敏感物件（檔案、機碼），意圖在該處活動而不留紀錄。",
@@ -451,7 +453,7 @@ public static class KnownIssueSeed
                     "留意是否有其他主機出現同一惡意程式" } },
         new() { Id = "builtin-defender-malware-action-failed-1008-1118-1119", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,
                 SourcePattern = "Windows Defender", EventIds = new[] { 1008, 1118, 1119 },
-                Category = IssueCategory.Security, Severity = IssueSeverity.Critical,
+                Category = IssueCategory.Security, Severity = IssueSeverity.High, ElevatesDayRisk = true,
                 Description = "Microsoft Defender 對惡意程式的處置失敗（1008/1118/1119），惡意程式可能仍活躍",
                 PlainExplanation = "防毒軟體嘗試處置惡意程式但失敗了，威脅可能仍然存在於系統中。",
                 Impact = "處置失敗代表惡意程式可能仍在執行或潛伏，持續造成危害或作為入侵跳板。",
@@ -503,7 +505,8 @@ public static class KnownIssueSeed
         // ── RDP 遠端桌面（TerminalServices Operational 頻道）─────────────────
         // **這兩條規則刻意設為 Low：正常遠端桌面使用即會產生，本身不是告警訊號。** 收集目的是提供
         // 關聯分析（【破解得手】【暴力破解→RDP 得手】需要成功登入的帳號/IP）與趨勢基準。Low 不參與
-        // 風險判定（ComputeRuleBasedRisk 只看 High/Critical）、不觸發「首次出現」告警（門檻 ≥High），
+        // 風險判定（ComputeRuleBasedRisk 只看 ElevatesDayRisk 旗標與 High 嚴重度）、
+        // 不觸發「首次出現」告警（門檻 ≥High），
         // 所以日常 RDP 維運、重複登入、新員工首次登入都不會產生任何告警——入侵訊號一律經由「有錨點」
         // 的確定性關聯（暴力破解達門檻 + 帳號/IP 交集）才成立，見 CorrelationAnalyzer。
         new() { Id = "builtin-rdp-session-events-21-24-25", Origin = "builtin", Enabled = true, Scope = "all", MatchAllEventIds = false, MatchFilter = null,

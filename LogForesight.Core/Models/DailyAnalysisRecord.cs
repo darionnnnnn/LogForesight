@@ -35,6 +35,16 @@ public class DailyAnalysisRecord
 
     public string RiskLevel { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 日風險等級的判定依據代碼（docs/WEB-FEEDBACK-2-PLAN.md #11）：null＝本欄位問世前寫入的
+    /// 舊紀錄（同 <see cref="HostId"/>=0 的降級慣例，前端顯示通用說明）。
+    /// 值域：<c>rule:{Source} EventId {EventId}</c>（命中重大旗標規則）／<c>correlation</c>
+    /// （關聯訊號帶旗標）／<c>trend</c>（頻率異常）／<c>high_issue:{Source} EventId {EventId}</c>
+    /// （單純 High 嚴重度問題）／<c>medium</c>（中風險但無單一可指名依據）／<c>ai_raise</c>
+    /// （AI 判讀把程式判定的風險往上拉，見 RiskLevels.MoreSevere）。純顯示用途，不影響任何判定邏輯。
+    /// </summary>
+    public string? RiskBasis { get; set; }
+
     // AI 回傳的白話翻譯結果（JSON 契約解析後的欄位，2026-07-20 AI 角色轉換）。
     // 偵測與風險判定完全由規則/趨勢/關聯三層負責（見 KnownIssueCatalog／TrendAnalyzer／CorrelationAnalyzer），
     // 這裡是「把結論講成人話」的產出，AI 服務不可用時從缺不影響風險等級或處置建議
@@ -86,6 +96,16 @@ public class DailyAnalysisRecord
     /// </summary>
     [JsonIgnore]
     public bool HasCoverageGap => DataIncomplete || SecurityLogAvailable == false;
+
+    /// <summary>
+    /// 因全站嚴重度顯示設定（SiteHidden）被過濾掉的問題數（docs/WEB-FEEDBACK-2-PLAN.md #11）。
+    /// **不序列化、不持久化**——由 RecordRepository 在讀取當下計算填入，只有風險日詳情頁的
+    /// 單筆讀取路徑會設定它（見 IRecordRepository.GetOne），其餘查詢路徑維持預設值 0。
+    /// 風險等級判定不受顯示設定影響（見 SystemSettings.SeverityDisplayMode 文件），這個欄位
+    /// 只用來在畫面上解釋「為什麼看到的問題比判定依據少」。
+    /// </summary>
+    [JsonIgnore]
+    public int HiddenIssueCount { get; set; }
 
     /// <summary>
     /// 本日實際成功讀取的頻道全名清單。**null = 本欄位問世前寫入的舊紀錄**（同 <see cref="HostId"/>=0 的

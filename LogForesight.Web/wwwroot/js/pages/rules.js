@@ -9,20 +9,22 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips } from '../core/ui.js';
-import { severityBadge, statusBadge, formatDate, severityName } from '../core/format.js';
+import { severityBadge, elevatesBadge, statusBadge, formatDate, severityName } from '../core/format.js';
 
 const CATEGORY_NAMES = {
     Storage: '儲存裝置', Hardware: '硬體', Security: '安全', Service: '服務',
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
 };
 
-const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
+// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High
+const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
 
-// chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
+// chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
 const chipFilters = {
     status: '',
     origin: '',
     suppression: '',
+    elevates: '',
     severities: new Set(),
     categories: new Set()
 };
@@ -118,6 +120,19 @@ function setupToolbar() {
         }
     });
 
+    // docs/WEB-FEEDBACK-2-PLAN.md #1：「重大」快篩——命中即列為高風險日的規則
+    renderChips(document.getElementById('rule-elevates-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'yes', label: '重大' },
+            { value: 'no', label: '一般' }
+        ],
+        attr: 'elevates',
+        activeValues: [chipFilters.elevates],
+        multi: false,
+        onToggle: value => { chipFilters.elevates = value; renderRules(); }
+    });
+
     document.getElementById('rule-sort').addEventListener('change', renderRules);
 }
 
@@ -161,6 +176,8 @@ function renderRules() {
 
     if (chipFilters.severities.size > 0) filtered = filtered.filter(r => chipFilters.severities.has(r.severity));
     if (chipFilters.categories.size > 0) filtered = filtered.filter(r => chipFilters.categories.has(r.category));
+    if (chipFilters.elevates === 'yes') filtered = filtered.filter(r => r.elevatesDayRisk);
+    if (chipFilters.elevates === 'no') filtered = filtered.filter(r => !r.elevatesDayRisk);
 
     filtered = sortRules(filtered);
 
@@ -171,7 +188,7 @@ function renderRules() {
             { title: '規則', render: r => ruleCell(r) },
             { title: '比對', render: r => matchCell(r) },
             { title: '類別', render: r => CATEGORY_NAMES[r.category] ?? r.category },
-            { title: '嚴重度', render: r => severityBadge(r.severity) },
+            { title: '嚴重度', render: r => severityCell(r) },
             { title: '門檻', className: 'text-end', render: r => String(r.countThreshold) },
             { title: '狀態', render: r => statusCell(r) },
             { title: '', className: 'text-end', render: r => actionsCell(r) }
@@ -179,6 +196,15 @@ function renderRules() {
         rows: filtered,
         empty: { title: '沒有符合條件的規則', hint: '請調整搜尋或篩選條件。' }
     });
+}
+
+/** 嚴重度徽章＋「重大」旗標（docs/WEB-FEEDBACK-2-PLAN.md #1） */
+function severityCell(rule) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(rule.severity));
+    if (rule.elevatesDayRisk) wrap.appendChild(elevatesBadge());
+    return wrap;
 }
 
 function ruleCell(rule) {
@@ -287,6 +313,7 @@ function openRuleModal(rule) {
     document.getElementById('rule-match-all').checked = rule?.matchAllEventIds ?? false;
     document.getElementById('rule-category').value = rule?.category ?? 'Other';
     document.getElementById('rule-severity').value = rule?.severity ?? 'Medium';
+    document.getElementById('rule-elevates-day-risk').checked = rule?.elevatesDayRisk ?? false;
     document.getElementById('rule-description').value = rule?.description ?? '';
     document.getElementById('rule-threshold').value = rule?.countThreshold ?? 1;
     document.getElementById('rule-plain').value = rule?.plainExplanation ?? '';
@@ -320,6 +347,7 @@ function collectRule() {
         matchAllEventIds: document.getElementById('rule-match-all').checked,
         category: document.getElementById('rule-category').value,
         severity: document.getElementById('rule-severity').value,
+        elevatesDayRisk: document.getElementById('rule-elevates-day-risk').checked,
         description: document.getElementById('rule-description').value.trim(),
         countThreshold: Number(document.getElementById('rule-threshold').value) || 1,
         plainExplanation: document.getElementById('rule-plain').value.trim(),

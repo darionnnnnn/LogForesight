@@ -74,9 +74,13 @@ public class RecordRepository : IRecordRepository
     /// 的統計、下鑽、AI context（經 GetDetail／ClusterSignatures）全部繼承同一份結果，
     /// 不必（也不該）各自重覆判斷 SeverityDisplayMode——散落判斷正是先前查詢頁分組視圖／
     /// 簽章查詢漏掉這道過濾的原因。DefaultHidden 模式回 null，此處不過濾，交由前端顯示層決定。
+    /// 同一個咽喉點也是舊資料嚴重度正規化的落點（見 NormalizeLegacySeverity）——正規化必須
+    /// 先做，過濾條件（GetVisibleSeverities）比對的才是正規化後的層級名稱。
     /// </summary>
     private List<DailyAnalysisRecord> ApplySeverityVisibility(List<DailyAnalysisRecord> records)
     {
+        foreach (var record in records) NormalizeLegacySeverity(record);
+
         var visible = _settings.GetVisibleSeverities();
         if (visible == null) return records;
 
@@ -90,13 +94,38 @@ public class RecordRepository : IRecordRepository
 
     private DailyAnalysisRecord ApplySeverityVisibility(DailyAnalysisRecord record)
     {
+        NormalizeLegacySeverity(record);
+
         var visible = _settings.GetVisibleSeverities();
         if (visible != null)
         {
+            var before = record.TopIssues.Count;
             record.TopIssues = record.TopIssues.Where(i => visible.Contains(i.Severity.ToString())).ToList();
+            // 只有單筆讀取路徑（GetOne，即風險日詳情頁）需要這個數字——docs/WEB-FEEDBACK-2-PLAN.md #11
+            record.HiddenIssueCount = before - record.TopIssues.Count;
         }
 
         return record;
+    }
+
+    /// <summary>
+    /// 舊資料相容（docs/WEB-FEEDBACK-2-PLAN.md #1，B1 三級化）：三級化之前寫入的歷史紀錄
+    /// 若還是 Severity=Critical，讀取時一律正規化為 High＋ElevatesDayRisk=true——Critical
+    /// 原本唯一的實際作用就是「命中即列為高風險日」，正規化後可解釋性不變（「重大」標註沿用）。
+    /// 只在讀取時於記憶體正規化，不回寫資料庫——證據層是事後不可改寫的批次判定結果。
+    /// 這裡是全站唯一的正規化點，下游 CategoryAggregator／RecordQueryService／ReportService／
+    /// RecordStatsBuilder 全部只消費已經過 IRecordRepository 的紀錄，因此自動繼承正規化結果。
+    /// </summary>
+    private static void NormalizeLegacySeverity(DailyAnalysisRecord record)
+    {
+        foreach (var issue in record.TopIssues)
+        {
+            if (issue.Severity == IssueSeverity.Critical)
+            {
+                issue.Severity = IssueSeverity.High;
+                issue.ElevatesDayRisk = true;
+            }
+        }
     }
 
     /// <summary>

@@ -199,8 +199,66 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
 }
 
 /**
+ * 通用資訊 modal（骨架抽自 confirmAction，避免第三份動態 modal 複本）：純檢視用途，
+ * 沒有確認/取消語意，只有一個關閉鈕。body 收 DOM 節點而非 HTML 字串——內容常來自
+ * 事件原始訊息等攻擊者可控字串，維持 textContent 純文字組裝原則（S7）。
+ * size 可傳 'modal-lg' 等 Bootstrap modal-dialog 尺寸 class。
+ */
+export function showDetailModal({ title = '', body, size } = {}) {
+    const el = document.createElement('div');
+    el.className = 'modal fade';
+    el.innerHTML = `
+        <div class="modal-dialog modal-dialog-scrollable${size ? ` ${size}` : ''}">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">關閉</button>
+                </div>
+            </div>
+        </div>`;
+    el.querySelector('.modal-title').textContent = title;
+    if (body) el.querySelector('.modal-body').appendChild(body);
+
+    document.body.appendChild(el);
+    const modal = new bootstrap.Modal(el);
+    el.addEventListener('hidden.bs.modal', () => el.remove());
+    modal.show();
+}
+
+/**
+ * 表單未儲存變更追蹤（docs/WEB-FEEDBACK-2-PLAN.md #2）：離開頁面前跳出瀏覽器原生確認。
+ * MPA 站台下 beforeunload 這一個 handler 就涵蓋側欄跳轉、重新整理、關閉分頁，
+ * 不需要攔截個別連結。excludeSelector 可排除表單內不算「設定內容」的欄位
+ * （例如測完即丟的測試帳密）——這些欄位的變更不該觸發離開提醒。
+ */
+export function trackUnsaved(form, { excludeSelector } = {}) {
+    let dirty = false;
+
+    const markDirty = event => {
+        if (excludeSelector && event.target.closest(excludeSelector)) return;
+        dirty = true;
+    };
+    form.addEventListener('input', markDirty);
+    form.addEventListener('click', markDirty);
+
+    window.addEventListener('beforeunload', event => {
+        if (!dirty) return;
+        event.preventDefault();
+        event.returnValue = '';
+    });
+
+    return { clear: () => { dirty = false; } };
+}
+
+/**
  * 表格渲染：欄位定義 → <table>，含空狀態與載入中列。
- * columns: [{ key, title, className, render(row) }]
+ * columns: [{ key, title, className, render(row), renderHeader() }]
+ * renderHeader()（選填）：回傳 Node 時取代 title 文字作為表頭儲存格內容——
+ * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/WEB-FEEDBACK-2-PLAN.md #7）。
  * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
  * 仍照自己的行為，不被整列連結攔截。
  * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），
@@ -222,7 +280,8 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     const headRow = document.createElement('tr');
     for (const col of columns) {
         const th = document.createElement('th');
-        th.textContent = col.title;
+        if (col.renderHeader) th.appendChild(col.renderHeader());
+        else th.textContent = col.title;
         if (col.className) th.className = col.className;
         headRow.appendChild(th);
     }

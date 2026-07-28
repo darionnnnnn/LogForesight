@@ -102,6 +102,29 @@ public class RecordRepositorySeverityVisibilityTests : IDisposable
         // 紀錄本身（風險日）仍在——只有問題層級的可見性受影響，不影響紀錄是否存在
         Assert.Empty(result.Single().TopIssues);
     }
+
+    /// <summary>
+    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：舊資料相容的單一咽喉點——三級化之前
+    /// 寫入的 Severity=Critical，讀取時正規化為 High＋ElevatesDayRisk=true，可解釋性
+    /// （「重大」徽章）不因三級化而消失。只在讀取時於記憶體正規化，不回寫資料庫。
+    /// </summary>
+    [Fact]
+    public void 讀取時正規化舊Critical嚴重度為High並標記ElevatesDayRisk()
+    {
+        var repository = CreateRepository(visibleSeverities: null);
+
+        var record = repository.GetOne(_host.HostId, DateTime.Today);
+
+        Assert.NotNull(record);
+        var disk = record!.TopIssues.Single(i => i.Source == "disk");
+        Assert.Equal(IssueSeverity.High, disk.Severity);
+        Assert.True(disk.ElevatesDayRisk);
+
+        // 非 Critical 的問題不受影響
+        var app = record.TopIssues.Single(i => i.Source == "app");
+        Assert.Equal(IssueSeverity.Medium, app.Severity);
+        Assert.False(app.ElevatesDayRisk);
+    }
 }
 
 internal class FakeSystemSettingsService : ISystemSettingsService

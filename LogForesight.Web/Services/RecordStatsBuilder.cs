@@ -38,6 +38,7 @@ public static class RecordStatsBuilder
             HighCount = c.HighCount,
             MediumCount = c.MediumCount,
             LowCount = c.LowCount,
+            ElevatesCount = c.ElevatesCount,
             AffectedHosts = hostsPerCategory.TryGetValue(c.Category, out var count) ? count : 0
         }).ToList();
     }

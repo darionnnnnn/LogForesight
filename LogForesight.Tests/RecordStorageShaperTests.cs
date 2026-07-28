@@ -41,6 +41,25 @@ public class RecordStorageShaperTests
         Assert.True(issue.Suppressed);
     }
 
+    /// <summary>
+    /// ElevatesDayRisk（docs/WEB-FEEDBACK-2-PLAN.md #1）必須在低風險日精簡時保留，理由同 RuleId/Suppressed。
+    /// **低風險日確實可能帶這個旗標**：被抑制的簽章不參與風險判定（ComputeRuleBasedRisk 跳過
+    /// Suppressed），但旗標與趨勢升級照算——所以「命中重大規則但已抑制」的日子會是低風險日、
+    /// 且帶著旗標。漏掉這個欄位，那些日子的「重大」標記與頻率報表依據會靜默消失。
+    /// </summary>
+    [Fact]
+    public void 低風險日_保留ElevatesDayRisk旗標()
+    {
+        var record = LowRiskRecord();
+        record.TopIssues[0].ElevatesDayRisk = true;
+        record.TopIssues[0].Suppressed = true;
+
+        var shaped = RecordStorageShaper.ForStorage(record);
+        var issue = Assert.Single(shaped.TopIssues);
+
+        Assert.True(issue.ElevatesDayRisk);
+    }
+
     [Fact]
     public void 低風險日_Host與DeepDives原樣帶過()
     {
@@ -124,6 +143,8 @@ public class RecordStorageShaperTests
             TrendAlerts = new List<string> { "trend-alert" },
             CorrelationAlerts = new List<string> { "corr-alert" },
             RiskLevel = "低",
+            RiskBasis = "rule:disk EventId 153",
+            HiddenIssueCount = 2,
             Headline = "headline",
             Summary = "summary",
             TrendAssessment = "assessment",

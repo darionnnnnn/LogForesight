@@ -1,7 +1,7 @@
 /**
  * 總覽儀表板（docs/WEB-SPEC.md §9.1）。
  *
- * 排版遵循 §8.2 視覺層級：有 Critical 時該類別卡置頂加紅邊；
+ * 排版遵循 §8.2 視覺層級：有「重大」問題時該類別卡加紅邊；
  * 全數無風險時首屏顯示大字「無風險訊號」——沒事也要一眼確認是真的沒事。
  * 所有數字皆可下鑽（§8.4）。
  */
@@ -219,8 +219,9 @@ function renderCategories(data) {
         // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上
         link.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
 
-        // 嚴重度驅動顯著性：Critical 加紅邊、High 加黃邊（§8.2 原則 1）
-        const severityClass = category.criticalCount > 0 ? ' lf-card--critical'
+        // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
+        // docs/WEB-FEEDBACK-2-PLAN.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
+        const severityClass = category.elevatesCount > 0 ? ' lf-card--critical'
             : category.highCount > 0 ? ' lf-card--warning' : '';
 
         const card = document.createElement('div');
@@ -258,7 +259,6 @@ function renderCategories(data) {
 function severityBreakdown(category) {
     const wrap = document.createElement('span');
     const counts = {
-        Critical: category.criticalCount,
         High: category.highCount,
         Medium: category.mediumCount,
         Low: category.lowCount

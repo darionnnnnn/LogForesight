@@ -53,14 +53,18 @@ public class SystemSettingsServiceTests
     /// docs/SHARED-STANDARDS-PLAN.md S10：ValidSeverities 是手寫陣列（承載畫面勾選順序，
     /// 由重到輕，無法直接用 Enum.GetNames 因為那是宣告順序），IssueSeverity 加值時編譯器
     /// 不會提醒這裡要跟著加——用測試斷言集合一致，enum 漏改時這裡紅燈。
+    /// docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：IssueSeverity 列舉刻意保留 Critical
+    /// （舊資料反序列化相容用），但 ValidSeverities 是「使用者可勾選的層級」，三級化後
+    /// 不再包含它——兩者從此不再逐一對應，是設計選擇而非漏同步。
     /// </summary>
     [Fact]
-    public void ValidSeverities集合與IssueSeverity列舉一致()
+    public void ValidSeverities集合排除Critical但涵蓋其餘列舉值()
     {
         var enumNames = Enum.GetNames<IssueSeverity>().ToHashSet();
         var validSeverities = SystemSettingsService.ValidSeverities.ToHashSet();
 
-        Assert.Equal(enumNames, validSeverities);
+        Assert.DoesNotContain("Critical", validSeverities);
+        Assert.Equal(enumNames.Where(n => n != "Critical").ToHashSet(), validSeverities);
     }
 
     // ── P0-5：AI 金鑰加密路徑（動到 CryptoHelper 金鑰來源時一併補測） ─────────────────
@@ -179,8 +183,10 @@ public class SystemSettingsServiceTests
 
         var visible = service.GetVisibleSeverities();
 
+        // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：舊設定殘留的 "Critical" 正規化為 "High"，
+        // 與既有的 "High" 合併成同一個值——三級化前的兩個不同層級現在是同一層級
         Assert.NotNull(visible);
-        Assert.Equal(new HashSet<string> { "Critical", "High" }, visible);
+        Assert.Equal(new HashSet<string> { "High" }, visible);
     }
 
     [Fact]

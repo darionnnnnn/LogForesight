@@ -160,6 +160,26 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(HandlingStatuses.Resolved, result.Items[0].HandlingStatus);
     }
 
+    /// <summary>
+    /// docs/WEB-FEEDBACK-2-PLAN.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
+    /// 已知雜訊同理）時，清單的「已處理」chip 也要查得到，不能只精確比對 resolved。
+    /// </summary>
+    [Fact]
+    public void Search_依Statuses篩選_WontFix視同已處理()
+    {
+        var a = AddHost("HOST-A");
+        AddRecord(a, DateTime.Today, "高");
+        _handlingStore.Save(new RecordHandling { HostName = a.HostName, Date = DateTime.Today, Status = HandlingStatuses.WontFix });
+
+        var result = _service.Search(new RecordSearchRequest { Statuses = new List<string> { HandlingStatuses.Resolved } });
+
+        Assert.Single(result.Items);
+        Assert.Equal("HOST-A", result.Items[0].HostName);
+        // 對外三態：清單顯示的是收斂後的 resolved，不是原始的 wont_fix
+        Assert.Equal(HandlingStatuses.Resolved, result.Items[0].HandlingStatus);
+        Assert.Equal("已處理", result.Items[0].HandlingStatusText);
+    }
+
     /// <summary>日層級 DueDate 過期且未結案＝逾期；未過期或已結案都不算</summary>
     [Fact]
     public void Search_依Overdue篩選_走慢速路徑仍正確篩選()

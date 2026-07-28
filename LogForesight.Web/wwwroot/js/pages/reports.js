@@ -15,7 +15,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
-import { formatNumber, severityBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
+import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -264,7 +264,6 @@ function renderTrendChart() {
     });
 
     charts.attachToolbar(document.getElementById('trend-toolbar'), {
-        chart: chartInstances.trend,
         canvasWrapper: wrapper,
         title: '告警數量趨勢',
         tableColumns: ['日期', '高風險', '中風險', '錯誤數'],
@@ -317,13 +316,13 @@ function renderCategoryChart() {
     });
 
     charts.attachToolbar(document.getElementById('category-toolbar'), {
-        chart: chartInstances.category,
         canvasWrapper: wrapper,
         title: '風險類型分布',
-        tableColumns: ['類型', '嚴重', '高', '中', '低', '問題數', '主機數'],
+        // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：嚴重度欄位收斂為三級，「嚴重」欄移除
+        tableColumns: ['類型', '高', '中', '低', '問題數', '主機數'],
         tableRows: categories.map(c => [
             CATEGORY_NAMES[c.category] ?? c.category,
-            c.criticalCount, c.highCount, c.mediumCount, c.lowCount, c.issueCount, c.affectedHosts
+            c.highCount, c.mediumCount, c.lowCount, c.issueCount, c.affectedHosts
         ])
     });
 }
@@ -382,7 +381,6 @@ function renderHostChart() {
     }
 
     charts.attachToolbar(document.getElementById('host-toolbar'), {
-        chart: chartInstances.host,
         canvasWrapper: wrapper,
         title: '主機告警排行',
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
@@ -409,12 +407,13 @@ function renderHostRankMeta() {
 }
 
 function renderRiskChart() {
-    const kpi = currentData.kpi;
     const totalDays = currentData.trend.reduce((sum, p) => sum + p.highRisk + p.mediumRisk, 0);
     const wrapper = document.getElementById('risk-wrapper');
+    const legend = document.getElementById('risk-legend');
 
     if (totalDays === 0) {
         charts.renderNoData(wrapper, '此期間沒有風險日');
+        legend.replaceChildren();
         return;
     }
 
@@ -435,13 +434,12 @@ function renderRiskChart() {
         }
     });
 
-    charts.attachToolbar(document.getElementById('risk-toolbar'), {
-        chart: chartInstances.risk,
-        canvasWrapper: wrapper,
-        title: '風險層級占比',
-        tableColumns: ['風險層級', '日數'],
-        tableRows: [['高風險', high], ['中風險', medium]]
-    });
+    charts.attachDoughnutLegend(legend, [
+        { label: '高風險', value: high, color: risk['高'],
+            url: `/records?riskLevels=${encodeURIComponent('高')}&from=${currentData.from}&to=${currentData.to}` },
+        { label: '中風險', value: medium, color: risk['中'],
+            url: `/records?riskLevels=${encodeURIComponent('中')}&from=${currentData.from}&to=${currentData.to}` }
+    ]);
 }
 
 /**
@@ -450,11 +448,13 @@ function renderRiskChart() {
  */
 function renderAffectedHostsChart() {
     const wrapper = document.getElementById('affected-hosts-wrapper');
+    const legend = document.getElementById('affected-hosts-legend');
     const total = currentData.totalHosts;
     const affected = currentData.kpi.affectedHosts;
 
     if (total === 0) {
         charts.renderNoData(wrapper, '尚無主機資料');
+        legend.replaceChildren();
         return;
     }
 
@@ -476,13 +476,11 @@ function renderAffectedHostsChart() {
     });
     charts.setCenterText(wrapper, `${percent}%`);
 
-    charts.attachToolbar(document.getElementById('affected-hosts-toolbar'), {
-        chart: chartInstances.affectedHosts,
-        canvasWrapper: wrapper,
-        title: '受影響主機占比',
-        tableColumns: ['項目', '主機數'],
-        tableRows: [['受影響', affected], ['主機總數', total]]
-    });
+    charts.attachDoughnutLegend(legend, [
+        { label: '受影響', value: affected, color: risk['高'],
+            url: `/records?riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}` },
+        { label: '其餘', value: remaining, color: status.neutral, url: null }
+    ]);
 }
 
 /**
@@ -492,11 +490,13 @@ function renderAffectedHostsChart() {
  */
 function renderHandlingProgressChart() {
     const wrapper = document.getElementById('handling-progress-wrapper');
+    const legend = document.getElementById('handling-progress-legend');
     const handling = currentData.handling;
     const total = handling.totalCount;
 
     if (total === 0) {
         charts.renderNoData(wrapper, '此期間沒有高／中風險日');
+        legend.replaceChildren();
         return;
     }
 
@@ -517,13 +517,11 @@ function renderHandlingProgressChart() {
     });
     charts.setCenterText(wrapper, `${percent}%`);
 
-    charts.attachToolbar(document.getElementById('handling-progress-toolbar'), {
-        chart: chartInstances.handlingProgress,
-        canvasWrapper: wrapper,
-        title: '處理進度',
-        tableColumns: ['狀態', '風險日數'],
-        tableRows: [['已處理', handling.resolvedCount], ['未完成', remaining]]
-    });
+    charts.attachDoughnutLegend(legend, [
+        { label: '已處理', value: handling.resolvedCount, color: status.success, url: null },
+        { label: '未完成', value: remaining, color: status.neutral,
+            url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}` }
+    ]);
 }
 
 // ── 跨主機同簽章查詢 ─────────────────────────────────────────────────────────
@@ -549,7 +547,7 @@ document.getElementById('signature-form').addEventListener('submit', async event
             { title: '日期', render: h => dateLink(h) },
             { title: '主機', render: h => h.hostName },
             { title: '次數', className: 'text-end', render: h => formatNumber(h.count) },
-            { title: '嚴重度', render: h => severityBadge(h.severity) },
+            { title: '嚴重度', render: h => severityCell(h) },
             { title: '說明', render: h => h.knownIssue ?? '' }
         ],
         rows: hits,
@@ -559,6 +557,16 @@ document.getElementById('signature-form').addEventListener('submit', async event
         }
     });
 });
+
+/** 嚴重度徽章＋「重大」旗標（docs/WEB-FEEDBACK-2-PLAN.md #1）：跨主機同簽章查詢正是
+ * 「全環境共通重大問題」的主要排查入口，命中列同樣要看得出誰是「重大」 */
+function severityCell(hit) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(hit.severity));
+    if (hit.elevatesDayRisk) wrap.appendChild(elevatesBadge());
+    return wrap;
+}
 
 function dateLink(hit) {
     if (hit.hostId === 0) return hit.date;

@@ -94,7 +94,9 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.NotNull(rule);
         Assert.Equal(IssueCategory.Storage, rule!.Category);
-        Assert.Equal(IssueSeverity.Critical, rule.Severity);
+        // docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：原 Critical 改為 High＋ElevatesDayRisk=true
+        Assert.Equal(IssueSeverity.High, rule.Severity);
+        Assert.True(rule.ElevatesDayRisk);
     }
 
     [Fact]

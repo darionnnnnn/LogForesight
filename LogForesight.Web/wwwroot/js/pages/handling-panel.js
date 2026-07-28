@@ -10,7 +10,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal } from '../core/ui.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
@@ -75,10 +75,27 @@ async function loadAssignableUsers() {
     }
 }
 
+/**
+ * 由問題標記推導出的狀態文字（docs/WEB-FEEDBACK-2-PLAN.md #6）：與存的日層級快照
+ * （handling.statusText）不同——後者指派後會卡在「處理中」不再更新，這裡才是
+ * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
+ * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
+ */
+function derivedStatusLabel(handling) {
+    const text = handling.derivedStatusText ?? handling.statusText;
+    return handling.totalIssues > 0 ? `${text}（${handling.closedIssues}/${handling.totalIssues} 已結案）` : text;
+}
+
 function render() {
     const panel = document.getElementById('handling-panel');
     const { handling, users, hostId, date } = state;
     panel.replaceChildren();
+
+    panel.appendChild(readonlyField(
+        '目前狀態',
+        derivedStatusLabel(handling),
+        '由問題標記推導；與下方表單要儲存的日層級狀態是兩件事——沒有勾選問題逐項標記時兩者相同'
+    ));
 
     // ── 負責人（唯讀）：主機的長期屬性，改派處理人不會動到它 ──
     panel.appendChild(readonlyField(
@@ -101,7 +118,6 @@ function render() {
     panel.appendChild(document.createElement('hr'));
 
     if (!handling.canHandle) {
-        panel.appendChild(readonlyField('處理狀態', handling.statusText));
         if (handling.note) panel.appendChild(readonlyField('處理說明', handling.note));
         return;
     }
@@ -213,8 +229,9 @@ function handlingForm() {
         form.appendChild(info);
     }
 
-    // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選目前狀態
-    let selectedStatus = batchMode ? null : handling.status;
+    // 狀態直選（取代下拉）：批次模式不預選，逼使用者明確選一個；日層級模式預選推導出的
+    // 目前狀態（#6）——不用存的日層級快照，避免使用者一進面板就看到跟「目前狀態」欄位對不上的預選
+    let selectedStatus = batchMode ? null : (handling.derivedStatus ?? handling.status);
 
     const chipGroup = document.createElement('div');
     chipGroup.className = 'lf-toolbar__chips mb-3';
@@ -346,7 +363,7 @@ function handlingForm() {
         try {
             if (batchMode) {
                 const issueKeys = [...selection];
-                await api.put(`/api/records/${hostId}/${date}/handling/issues/batch`, {
+                const result = await api.put(`/api/records/${hostId}/${date}/handling/issues/batch`, {
                     issueKeys,
                     status: selectedStatus,
                     note: noteInput.value.trim() || null,
@@ -354,7 +371,10 @@ function handlingForm() {
                     forgetNoise: forgetNoiseCheck.checked
                 });
                 selection.clear();
-                toast('已套用處理狀態', 'success');
+                // 帶回套用後的日狀態（#6）：後端已算好 DayStatus/Total/Closed，直接顯示，
+                // 不必等頁面重載才看到「這次套用完，這天現在算什麼狀態」
+                const progress = result.totalIssues > 0 ? `（${result.closedIssues}/${result.totalIssues} 已結案）` : '';
+                toast(`已套用處理狀態；本日狀態：${result.dayStatusText}${progress}`, 'success');
                 // 把套用結果回報給頁面：已知雜訊等狀態的後續治本提議（建立抑制規則）由呼叫端接手
                 await state.onBatchSaved?.({ status: selectedStatus, issueKeys });
             } else {
@@ -381,61 +401,154 @@ function handlingForm() {
     return form;
 }
 
+const ISSUE_LOG_ACTIONS = new Set(['issue_status', 'issue_status_cleared']);
+
 /**
  * 處理歷程 timeline：完整敘事（指派 → 查修中 → 換了硬碟 → 結案）。
  * 這正是快照與歷程分兩份儲存的目的——單一說明欄位會把前面的過程蓋掉。
+ *
+ * D4（docs/WEB-FEEDBACK-2-PLAN.md #6）改為問題層級逐筆記錄後，卡片內固定高度＋
+ * 「放大檢視」modal（#13）：卡片內把同一次批次（同操作者＋同動作＋同時間戳，
+ * 見 HandlingService.SetIssueStatusBatch 的 occurredAt）收合成一條摘要，
+ * modal 內展開逐筆——資料本來就是逐筆的，只有呈現方式不同。
  */
 async function loadLogs(hostId, date) {
     const container = document.getElementById('handling-log');
+    const expandButton = document.getElementById('handling-log-expand');
+
     const logs = await api.get(`/api/records/${hostId}/${date}/handling/logs`);
 
+    renderTimeline(container, logs, { expanded: false });
+
+    if (expandButton) {
+        expandButton.classList.toggle('d-none', logs.length === 0);
+        expandButton.onclick = () => {
+            const body = document.createElement('div');
+            renderTimeline(body, logs, { expanded: true });
+            showDetailModal({ title: '處理歷程（完整明細）', body, size: 'modal-lg' });
+        };
+    }
+}
+
+function renderTimeline(container, logs, { expanded }) {
     if (logs.length === 0) {
         renderEmpty(container, { title: '尚無處理紀錄', hint: '更新處理狀態後，這裡會留下完整的處理過程。' });
         return;
     }
 
     const list = document.createElement('div');
+    for (const entry of groupLogs(logs)) {
+        if (entry.kind === 'single') {
+            list.appendChild(renderLogItem(entry.log));
+        } else if (expanded) {
+            for (const log of entry.logs) list.appendChild(renderLogItem(log));
+        } else {
+            list.appendChild(renderGroupSummary(entry));
+        }
+    }
+    container.replaceChildren(list);
+}
 
+/**
+ * 把連續的問題層級標記（同操作者＋同動作＋同時間戳）視覺分組——資料仍是逐筆的
+ * （見 groupLogs 回傳結構），只在卡片內的收合呈現才把一批合成一條。單筆日層級操作
+ * （指派/日層級狀態變更）維持個別顯示，不參與分組。
+ */
+function groupLogs(logs) {
+    const entries = [];
     for (const log of logs) {
-        const item = document.createElement('div');
-        item.className = 'border-start border-3 ps-3 pb-3 mb-1';
+        const last = entries[entries.length - 1];
+        const groupable = ISSUE_LOG_ACTIONS.has(log.action);
 
-        const head = document.createElement('div');
-        head.className = 'd-flex align-items-center gap-2 flex-wrap';
-
-        const action = document.createElement('span');
-        action.className = 'fw-semibold small';
-        action.textContent = log.actionText;
-
-        const status = document.createElement('span');
-        status.className = `lf-badge lf-badge--${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
-        status.textContent = log.statusText;
-
-        head.append(action, status);
-
-        if (log.handlerName) {
-            const handler = document.createElement('span');
-            handler.className = 'small text-muted';
-            handler.textContent = `處理人：${log.handlerName}`;
-            head.appendChild(handler);
+        if (groupable && last?.kind === 'group' &&
+            last.action === log.action && last.actorAccount === log.actorAccount && last.createdAt === log.createdAt) {
+            last.logs.push(log);
+            continue;
         }
 
-        item.appendChild(head);
+        entries.push(groupable
+            ? { kind: 'group', action: log.action, actorAccount: log.actorAccount, createdAt: log.createdAt, logs: [log] }
+            : { kind: 'single', log });
+    }
+    return entries;
+}
 
-        if (log.note) {
-            const note = document.createElement('div');
-            note.className = 'small mt-1';
-            note.textContent = log.note;
-            item.appendChild(note);
-        }
+function renderLogItem(log) {
+    const item = document.createElement('div');
+    item.className = 'border-start border-3 ps-3 pb-3 mb-1';
 
-        const meta = document.createElement('div');
-        meta.className = 'small text-muted mt-1';
-        meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${log.actorAccount || '（系統）'}`;
-        item.appendChild(meta);
+    const head = document.createElement('div');
+    head.className = 'd-flex align-items-center gap-2 flex-wrap';
 
-        list.appendChild(item);
+    const action = document.createElement('span');
+    action.className = 'fw-semibold small';
+    action.textContent = log.actionText;
+    head.appendChild(action);
+
+    if (log.issueLabel) {
+        const issue = document.createElement('span');
+        issue.className = 'small text-muted';
+        issue.textContent = `【${log.issueLabel}】`;
+        head.appendChild(issue);
     }
 
-    container.replaceChildren(list);
+    const status = document.createElement('span');
+    status.className = `lf-badge lf-badge--${STATUS_VARIANTS[log.status] ?? 'secondary'}`;
+    status.textContent = log.statusText;
+    head.appendChild(status);
+
+    if (log.handlerName) {
+        const handler = document.createElement('span');
+        handler.className = 'small text-muted';
+        handler.textContent = `處理人：${log.handlerName}`;
+        head.appendChild(handler);
+    }
+
+    item.appendChild(head);
+
+    if (log.note) {
+        const note = document.createElement('div');
+        note.className = 'small mt-1';
+        note.textContent = log.note;
+        item.appendChild(note);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'small text-muted mt-1';
+    meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${log.actorAccount || '（系統）'}`;
+    item.appendChild(meta);
+
+    return item;
+}
+
+/** 卡片內的批次摘要列（收合狀態）：一次批次一行，逐筆明細留給「放大檢視」modal */
+function renderGroupSummary(group) {
+    const item = document.createElement('div');
+    item.className = 'border-start border-3 ps-3 pb-3 mb-1';
+
+    const head = document.createElement('div');
+    head.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+    const verb = group.action === 'issue_status_cleared' ? '清除標記' : '標記';
+    const action = document.createElement('span');
+    action.className = 'fw-semibold small';
+    action.textContent = `${verb} ${group.logs.length} 個問題`;
+    head.appendChild(action);
+
+    if (group.action === 'issue_status') {
+        const status = document.createElement('span');
+        status.className = `lf-badge lf-badge--${STATUS_VARIANTS[group.logs[0].status] ?? 'secondary'}`;
+        status.textContent = group.logs[0].statusText;
+        head.appendChild(status);
+    }
+
+    item.appendChild(head);
+
+    const meta = document.createElement('div');
+    meta.className = 'small text-muted mt-1';
+    meta.textContent =
+        `${formatDateTime(group.createdAt)}　操作者：${group.actorAccount || '（系統）'}　點「放大檢視」看逐筆明細`;
+    item.appendChild(meta);
+
+    return item;
 }

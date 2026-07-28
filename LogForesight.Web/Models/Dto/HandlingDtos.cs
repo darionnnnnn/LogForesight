@@ -11,6 +11,18 @@ public class HandlingDto
     public string Status { get; set; } = string.Empty;
     public string StatusText { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 由問題標記推導出的日狀態（docs/WEB-FEEDBACK-2-PLAN.md #6）——與 Status 不同：
+    /// Status 是存的日層級快照，這個是「現在真正的狀態」，兩者在批次套用問題標記後可能不同步。
+    /// null＝呼叫端未補算（Update/Assign 的回傳值），前端應 fallback 用 Status/StatusText。
+    /// </summary>
+    public string? DerivedStatus { get; set; }
+    public string? DerivedStatusText { get; set; }
+
+    /// <summary>當日問題總數與已結案數（供「處理中（3/5 已結案）」這類提示使用）</summary>
+    public int TotalIssues { get; set; }
+    public int ClosedIssues { get; set; }
+
     /// <summary>處理人（事件層級，admin 可改派）</summary>
     public long? HandlerId { get; set; }
     public string? HandlerName { get; set; }
@@ -126,6 +138,10 @@ public class HandlingLogDto
     public string StatusText { get; set; } = string.Empty;
     public string? HandlerName { get; set; }
     public string? Note { get; set; }
+
+    /// <summary>問題層級操作才有值（「Source EventId」）——docs/WEB-FEEDBACK-2-PLAN.md #6</summary>
+    public string? IssueLabel { get; set; }
+
     public string ActorAccount { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
 }
@@ -136,9 +152,15 @@ public class HandlingTodoDto
     public int InProgressCount { get; set; }
     public int OverdueCount { get; set; }
 
-    /// <summary>真正結案（resolved）的風險日數——docs/WEB-FEEDBACK-PLAN.md #6 報表「處理進度」用；
-    /// 不含 wont_fix／false_positive／known_noise（那些是「已有結論」，不是「處理完成」，
-    /// 與 record-detail.js 問題層級「已處理」計數同一套哲學）</summary>
+    /// <summary>
+    /// 已處理的風險日數——docs/WEB-FEEDBACK-PLAN.md #6、docs/WEB-FEEDBACK-2-PLAN.md #12
+    /// 報表「處理進度」用。對外三態（<see cref="HandlingStatuses.ExternalOf"/>）：
+    /// 日層級 fallback 若為 wont_fix／false_positive／known_noise 也算已處理——這三態是
+    /// 「這天已有結論」，對外部檢視（report/dashboard 只看還有沒有事要做）而言等同已處理，
+    /// 不再像舊版那樣落在 Open/InProgress/Resolved 三個桶都數不到、讓「未完成」把已結案的
+    /// 日子誤算進去。**與問題層級（詳情頁）「已處理」計數是不同的哲學**：詳情頁的三段計數器
+    /// （見 record-detail.js renderProgress）刻意把 wont_fix/誤報/已知雜訊排除在「已處理」外，
+    /// 那是「這件事的處理方式」的細節，只在單筆問題層級才有意義。</summary>
     public int ResolvedCount { get; set; }
 
     /// <summary>母體：期間內高＋中風險日總數（分母）——docs/WEB-FEEDBACK-PLAN.md #6 報表「處理進度」用</summary>

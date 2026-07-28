@@ -410,20 +410,25 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 **視覺層級三原則（所有頁面的排版依據）**：
 
-1. **嚴重度驅動顯著性**：畫面上最醒目的元素必須是當前最嚴重的問題——Critical/高風險卡片
+1. **嚴重度驅動顯著性**：畫面上最醒目的元素必須是當前最嚴重的問題——「重大」/高風險卡片
    加粗左紅邊、排序置頂、數字放大；裝飾性元素（icon、插圖、漸層）不得比訊號更搶眼。
    介面本身維持低飽和（灰藍白），紅/黃只保留給風險訊號，異常自然從畫面裡跳出來。
 2. **數字優先**：統計卡採「大字數字（2rem+）＋小字標籤＋趨勢箭頭」結構，掃視即得；
    文字說明放次要層級。
 3. **語意色全站一致**（`format.js`/`site.css` 單點定義）：
-   風險「高」`danger`、「中」`warning`、「低」`secondary`；嚴重度 Critical `danger`、High `warning`、
-   Medium `info`、Low `secondary`；處理狀態 open `danger`、in_progress `primary`、resolved `success`、
-   wont_fix/false_positive/known_noise `secondary`；執行結果 成功 `success`、有警告 `warning`、
-   失敗/中斷 `danger`、未執行 `secondary`。同一個顏色在圖表、徽章、卡片、時間軸中意義相同。
+   風險「高」`danger`、「中」`warning`、「低」`secondary`；嚴重度 High `warning`、
+   Medium `info`、Low `neutral`；「重大」旗標徽章 `danger`；處理狀態 open `danger`、
+   in_progress `primary`、resolved `success`（對外三態，見下）；執行結果 成功 `success`、
+   有警告 `warning`、失敗/中斷 `danger`、未執行 `secondary`。同一個顏色在圖表、徽章、卡片、
+   時間軸中意義相同。
 
-   **嚴重度顯示名（2026-07-27 統一）**：Critical=嚴重、High=高、Medium=中、Low=低，單點定義於
-   `format.js` 的 `SEVERITY_NAMES`/`severityName()`。內部值（Set、URL 參數、API 欄位、
-   `<option value>`）一律維持英文，只有畫面文字轉中文。與日風險等級的「高風險/中風險/低風險」
+   **嚴重度顯示名（2026-07-28 三級化，docs/WEB-FEEDBACK-2-PLAN.md #1）**：High=高、Medium=中、
+   Low=低，單點定義於 `format.js` 的 `SEVERITY_NAMES`/`severityName()`。原第四級 `Critical`
+   已收斂進 High，其「命中即列為高風險日」的職責改由規則旗標 `ElevatesDayRisk` 承載，
+   畫面上以獨立的「**重大**」徽章（`format.js` 的 `elevatesBadge()`）呈現於嚴重度徽章旁——
+   詳情頁重點問題列、規則維護頁、跨主機同簽章查詢三處共用同一顆徽章。
+   內部值（Set、URL 參數、API 欄位、`<option value>`）一律維持英文，只有畫面文字轉中文。
+   與日風險等級的「高風險/中風險/低風險」
    （`riskBadge`）的區隔：日風險徽章一律帶「風險」後綴、色系不同（見上），嚴重度徽章不帶後綴。
 
 **版面骨架**：深色側欄（依能力**分組**顯示選單項——監控作業／系統管理／系統，空群組連
@@ -459,8 +464,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    （SOLID 的 O；也是防廢棄的保險）。
 3. 色彩：風險/嚴重度圖用 §8.2 語意色；8 種風險類型用固定分類色盤（token 定義），
    同一類別在所有圖表中同色。
-4. 可及性配套：每張圖卡右上角提供「表格」切換鈕，以資料表格呈現同一份數據
-   （色弱/精確讀值/複製需求一次滿足——資料本來就在前端，零後端成本）。
+4. 可及性配套：折線/長條圖卡右上角提供「表格」切換鈕，以資料表格呈現同一份數據
+   （色弱/精確讀值/複製需求一次滿足——資料本來就在前端，零後端成本）。**占比圓餅圖例外**
+   （2026-07-28 docs/WEB-FEEDBACK-2-PLAN.md #3）：圓餅圖本來就沒有 XY 軸，改左圖右文字
+   條列（`charts.attachDoughnutLegend`）常駐顯示數值與百分比，不需要再切換一次表格模式；
+   條列每列沿用該分段的下鑽 URL。**PNG 下載已移除**（#4）：需要圖檔的情境走既有
+   「列印 / 存成 PDF」，`attachToolbar` 不再提供 `toBase64Image()` 下載鈕。
 
 ### 8.4 下鑽（drill-down）規則——「報表關連到實際項目」的統一機制
 
@@ -469,7 +478,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 | 來源 | 點擊後導向 |
 |---|---|
-| 類型分布圖的某一段（如「儲存裝置×Critical」） | `/records?categories=Storage&severity=Critical&from=...&to=...` |
+| 類型分布圖的某一段（如「儲存裝置×高」） | `/records?categories=Storage&severity=High&from=...&to=...` |
 | 趨勢折線的某一個資料點（某日高風險數） | `/records?riskLevels=高&from=該日&to=該日` |
 | 儀表板統計卡（逾期未處理 N 件） | `/records?statuses=open,in_progress&overdue=1` |
 | 高風險主機排行的一列 | `/hosts/{id}`（時間軸） |
@@ -512,8 +521,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、高風險主機排行、
   待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、**依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
-- 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有 Critical 時該類別卡
-  置頂加紅邊，全綠時首屏顯示「今日無風險訊號」大字狀態（沒事也要一眼確認是真的沒事）。
+- 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
+  加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
+  （沒事也要一眼確認是真的沒事）。
 - **未回報主機改計數卡＋下鑽（2026-07-23 Phase D-4）**：兩千台規模下逐台列出可能數百筆，
   改成一個大數字卡（`SilentHostsCount`）＋連結到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
@@ -532,6 +542,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   解析回顯示名稱，下鑽連結才能正確還原成 chip。
 - **主機群組 chip（2026-07-23 Phase D-4）**：`GET api/hosts/groups`（只列出使用者看得到主機所屬的
   群組，不洩漏看不到的部門）；`GroupIds` 於 `RecordSearchRequest` 展開為主機集合後與 `HostIds` 取聯集。
+- **處理狀態對外一律三態（2026-07-28，docs/WEB-FEEDBACK-2-PLAN.md #12）**：清單、CSV、儀表板／
+  報表統計只呈現 **未處理／處理中／已處理**，六種內部狀態的結案類（`resolved`/`wont_fix`/
+  `false_positive`/`known_noise`）一律收斂為「已處理」——單點定義 `HandlingStatuses.ExternalOf()`。
+  「已處理」chip 因此查得到被標成「不處理」的日子（改版前精確比對 `resolved` 查不到）；
+  `HandlingService.GetTodo` 同步改用 ExternalOf 分桶，修掉「wont_fix 三個桶都數不到、
+  導致報表『未完成』把已結案日誤算進去」的缺口。**只在對外出口套用**——
+  `DayHandlingDerivation` 的推導本身與逾期判定仍看真正的 `open`/`in_progress`，不受收斂影響；
+  詳細結論（不處理/誤報/已知雜訊）只在風險日詳情頁的問題層級呈現。
 - API：`GET api/records?hostIds=&groupIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&page=`
   （`severity`/`overdue` 為下鑽用選用參數，§10.3；三視角端點 `api/records`、`api/records/by-host`、`api/records/by-date` 皆支援 `groupIds`）
 
@@ -541,7 +559,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   類型分布（頁內導航到對應問題分節）。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
 - **改版（2026-07-23 Phase D-1，七項；2026-07-27 批次套用改版再修訂第 2、6、7 項）**：
-  1. **報告全文預設收合**：報告卡標題可點擊展開/收合，展開狀態記 `localStorage`（常看全文的人不必每次重點）。
+  1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合（2026-07-28 修訂，原本只有標題那顆
+     btn-link 可點，右側空白區點了沒反應），展開狀態記 `localStorage`（常看全文的人不必每次重點）；
+     複製/列印鈕 `stopPropagation` 不被 header 攔截，header 補 `role=button`/`aria-expanded`/鍵盤支援。
   2. **未處理等級預設不處理**：`IssueDto.IsDefaultUnhandled`（未列入「系統管理 > 設定」頁
      `UnhandledSeverities` 的嚴重度、且從未標記時後端算出，預設等同原本寫死的 Low）→ 顯示
      「不處理（預設）」不落盤，提供「確認不處理」（落盤 wont_fix）與「調回未處理」（落盤明確 `open`）兩個動作。
@@ -550,8 +570,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      「調回未處理」用兩個誠實的循序對話框（是否繼續／是否順便刪記憶），不把「取消」誤讀成「確定」。
      與規則抑制並存：有 `RuleId` 走抑制（治本）、無 `RuleId` 靠記憶（治標，供未命中規則的 Other 類別）。
   4. **類別標題列依最高嚴重度加淡色底**（danger/warning/neutral soft），一眼區分分節輕重。
-  5. **趨勢欄與範例訊息**：`BuildTrendText` 首次出現時不再輸出「前一日 0 次」（贅述）；範例訊息由
-     展開式 `<pre>` 改 **hover 泡泡**（`bootstrap.Popover`，`html:false` 避免注入）；趨勢欄文字適度換行。
+  5. **趨勢欄與原始訊息**：`BuildTrendText` 首次出現時不再輸出「前一日 0 次」（贅述）；趨勢欄文字適度換行。
+     範例訊息歷經兩次改版：展開式 `<pre>` → hover 泡泡（2026-07-23）→ **「原始訊息 N 則」點擊開 modal**
+     （2026-07-28，docs/WEB-FEEDBACK-2-PLAN.md #14）——舊名「範例訊息」看不出指的是什麼，且 popover
+     受 Popper 定位空間壓縮導致內容擠成一團；改 modal 後每則訊息各自成段落（等寬、邊框分隔），
+     寬度不受定位限制。共用 `ui.js` 的 `showDetailModal()`，維持 `textContent` 純文字組裝（事件訊息
+     是攻擊者可控字串，不解析 HTML）。
   6. **處理欄改「純勾選＋右側批次套用」**（2026-07-27 修訂，取代原本的「勾選＋浮出面板」）：勾選
      只代表「這列要包含在下一次批次套用」，跟這列目前狀態脫鉤；右側「處理狀態」區塊改為狀態直選
      chip（取代原下拉／面板），值域含新增的 `in_progress`（處理中）；預計完成日 `DueDate` 只有選
@@ -559,8 +583,41 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      有勾選問題時送出套用到問題層級（批次 API），沒有勾選時沿用日層級狀態編輯（相容既有行為）。
      依狀態動態調整說明欄必填（不處理→必填）不變；治本提議隨批次化調整——誤報時面板內提示連到
      規則維護（批次無法指向單一規則），已知雜訊套用成功後一次確認是否抑制勾選問題命中的全部規則。
-  7. **計數器維持「已處理／未處理」**：只算 resolved 與真正未標記的（含明確 `open`），不處理/誤報/
-     已知雜訊/處理中/預設不處理**都不計**——回答「還剩幾件要動手」。
+     **2026-07-28 再修訂（#7）：勾選與狀態拆成獨立兩欄**——「選取」欄只放 checkbox（表頭有全選，
+     作用範圍是該張表目前顯示的列）、「處理狀態」欄只顯示狀態文字＋預計完成日；且
+     「不處理（預設）」「已知雜訊（自動）」兩種列**現在也有 checkbox**（後端批次 API 本來就不區分，
+     前端沒有理由把它們擋在批次選取之外）。「選取」欄刻意不排第一欄——`renderTable` 的處置參考
+     展開箭頭固定插在第一欄，兩者會擠在同一格。
+  7. **計數器改三段「已處理／處理中／未處理」**（2026-07-28 修訂，docs/WEB-FEEDBACK-2-PLAN.md #8/D3；
+     原為兩段「已處理／未處理」）：已處理＝`resolved`、處理中＝`in_progress`、未處理＝真正未標記的
+     （含明確 `open`）；不處理/誤報/已知雜訊/預設不處理**仍三邊都不計**——那些是「已經有結論」，
+     不是「還沒處理」。任一段為 0 時省略該段，避免「已處理 0／處理中 0／未處理 12」的噪音。
+  8. **已結案排序收合**（2026-07-28 新增，#8/D2，**僅風險日詳情**——問題查詢清單維持既有緊急程度
+     排序）：類別分節內未處理→處理中排最前面直接可見，其餘（已處理/不處理/誤報/已知雜訊/預設不處理/
+     自動雜訊）收合到分節底部的「已處理／已有結論 N 項」可展開列。展開狀態不持久化（每次進頁預設
+     收合）——批次套用後常有列從主表「搬」進這裡，維持收合預設值最不會讓人意外。
+  9. **處理狀態與歷程同步**（2026-07-28 新增，#6；修掉「儲存後歷程/清單對不上」的三個疊加缺口）：
+     - **問題層級標記逐筆寫入歷程**：`ApplyIssueStatus` 原本只寫 issue store＋稽核、完全不寫
+       `RecordHandlingLog`，歷程因此永遠停在較早的日層級操作。現在每標記**一個問題就寫一列**
+       （批次勾 10 項即 10 列，刻意不做彙總——「攏統的彙總標記沒有意義」，每一筆都要查得到
+       「誰、何時、對哪個問題、標成什麼」），新增 action `issue_status`／`issue_status_cleared`。
+       `IssueLabel`（「Source EventId」）**反正規化存下來**：歷程是追責紀錄，不能因為日後紀錄被
+       清理或規則改名就查不回當時標的是哪個問題。同一次批次共用一個 `occurredAt` 時間戳——
+       前端 timeline 靠「同操作者＋同時間戳」分組收合，逐次取 `DateTime.Now` 的微小時間差會讓分組失效。
+     - **面板顯示推導狀態**：面板頂端「目前狀態」顯示 `HandlingDto.DerivedStatus`（由問題標記推導，
+       與清單頁同源）＋「N/M 已結案」進度，而非存的日層級快照——指派處理人會把日層級自動推進成
+       `in_progress` 且之後不再改寫，只有推導值反映「現在真正的狀態」。日層級表單的狀態 chip
+       預選也改用推導值。批次套用後的 toast 一併帶回 `DayStatusText`＋結案進度。
+  10. **處理歷程限高＋放大檢視**（2026-07-28 新增，#13）：歷程卡 `max-height` 320px＋捲動
+     （#6 改逐問題逐筆記錄後歷程只會更長，不限高會把下方卡片推到很深的位置）；header 的
+     「放大檢視」開 `modal-lg` 顯示完整歷程，同一次批次的逐筆紀錄在卡片內收合成一條摘要、
+     modal 內展開逐筆（資料本來就是逐筆的，只有呈現方式不同）。共用 `ui.js` 的 `showDetailModal()`。
+  11. **風險等級判定依據**（2026-07-28 新增，#11）：風險徽章 tooltip 顯示
+     `RecordDetailDto.RiskBasisText`（由批次寫入的 `DailyAnalysisRecord.RiskBasis` 代碼轉白話），
+     解釋「為什麼是這個風險等級」——日風險等級與問題嚴重度是兩套不可互推的層級，高風險日不保證
+     看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號，或問題被顯示設定隱藏）。舊紀錄無此欄位時
+     顯示通用說明。SiteHidden 模式另在 header 補一行「另有 N 項問題已依全站顯示設定隱藏；
+     風險等級以完整資料判定」（`HiddenIssueCount`）。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
@@ -627,7 +684,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ```
 
 - KPI 卡帶**與前一期間的對比**（±% 與箭頭）——主管要的不是數字本身，是「變好還是變壞」。
-- 每張圖卡：標題＋期間副標＋右上工具鈕（表格切換／下載 PNG，`toBase64Image()` 零成本）。
+- 每張圖卡：標題＋期間副標；折線/長條圖有右上「表格」切換工具鈕，占比圓餅圖改左圖右
+  文字條列常駐顯示數值（見 §8.3 規則 4，2026-07-28 docs/WEB-FEEDBACK-2-PLAN.md #3/#4）。
 - **自訂圖表**（#6）：modal 逐圖勾選要顯示哪些圖表，狀態存 `localStorage`（預設全開）；
   隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
 - **占比小圖的資料來源與全站一致**（docs/SHARED-STANDARDS-PLAN.md）：受影響主機占比的分母
@@ -706,10 +764,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
-  1. **層級與顯示**（2026-07-27 自「未處理計算」擴充）：以按鈕反白選擇哪些嚴重度（Critical/High/Medium/Low）
-     納入未處理計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦（單點事實來源
-     `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。預設 Critical/High/Medium，
-     與改版前寫死的 Low 規則行為一致。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）二選一
+  1. **層級與顯示**（2026-07-27 自「未處理計算」擴充；2026-07-28 三級化）：以按鈕反白選擇
+     哪些嚴重度（High/Medium/Low）納入未處理計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦
+     （單點事實來源 `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。預設 High/Medium，
+     與改版前寫死的 Low 規則行為一致；既有設定殘留的 `Critical` 於讀取時正規化為 `High`
+     （`SystemSettingsService.NormalizeLegacySeverities`），既有部署不需手動改設定。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）二選一
      （docs/WEB-FEEDBACK-PLAN.md #5，2026-07-27 自三模式簡化；舊值 `Locked`／`GlobalFilter`
      讀取時正規化為 `SiteHidden`，不改寫 blob）：
      - `DefaultHidden`（預設）：詳情頁嚴重度篩選預設只亮勾選層級（初始值經 `RecordDetailDto.UnhandledSeverities`
@@ -798,7 +857,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `ISentinelStore`（docs/NETIQ-WEB-CONFIG-PLAN.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `INetiqOptionsStore`（2026-07-27） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數，`/admin/settings` 維護） | Web＋批次讀 |
-| `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append） | Web |
+| `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web |
 | `IIssueHandlingStore` | blob `issue_handling`（問題層級狀態，方案 B） | Web |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `IPermissionChangeStore` | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
