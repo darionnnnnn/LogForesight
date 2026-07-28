@@ -71,15 +71,8 @@ public class RecordQueryService
             DayHandlingDerivation.DayProgress PageProgress(DailyAnalysisRecord r) =>
                 DeriveProgress(r, pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
 
-            bool PageIsOverdue(DailyAnalysisRecord r)
-            {
-                var handling = FindHandling(pageHandlings, pageLookup, r);
-                var dayOverdue = handling?.DueDate.HasValue == true &&
-                                 handling.DueDate.Value.Date < DateTime.Today &&
-                                 PageProgress(r).IsUnresolved;
-                return dayOverdue ||
-                       DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(r, pageIssueHandlings, pageLookup), DateTime.Today);
-            }
+            bool PageIsOverdue(DailyAnalysisRecord r) =>
+                ComputeIsOverdue(r, pageHandlings, pageIssueHandlings, pageLookup, pageUnhandledSeverities);
 
             return new PagedResult<RecordListItemDto>
             {
@@ -109,15 +102,8 @@ public class RecordQueryService
 
         // 逾期＝日層級 DueDate 過期且未結案，或任一問題層級「處理中」的 DueDate 過期
         // （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）
-        bool IsOverdue(DailyAnalysisRecord r)
-        {
-            var handling = FindHandling(handlings, lookup, r);
-            var dayOverdue = handling?.DueDate.HasValue == true &&
-                             handling.DueDate.Value.Date < DateTime.Today &&
-                             Progress(r).IsUnresolved;
-            return dayOverdue ||
-                   DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(r, issueHandlings, lookup), DateTime.Today);
-        }
+        bool IsOverdue(DailyAnalysisRecord r) =>
+            ComputeIsOverdue(r, handlings, issueHandlings, lookup, unhandledSeverities);
 
         if (request.Statuses is { Count: > 0 })
         {
@@ -261,6 +247,26 @@ public class RecordQueryService
         var forDay = IssueHandlingsFor(record, issueHandlings, lookup);
 
         return DayHandlingDerivation.Derive(record.TopIssues, forDay, dayStatus, unhandledSeverities);
+    }
+
+    /// <summary>
+    /// 逾期＝日層級 DueDate 過期且未結案，或任一問題層級「處理中」的 DueDate 過期
+    /// （批次套用改版後，預計完成日主要落在問題層級，逾期判定兩層都要看）。
+    /// Search 的分頁快速路徑與完整路徑各自傳入自己那份 handlings/issueHandlings，共用同一份判定。
+    /// </summary>
+    private bool ComputeIsOverdue(
+        DailyAnalysisRecord record,
+        List<RecordHandling> handlings,
+        List<IssueHandling> issueHandlings,
+        HostLookup lookup,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
+    {
+        var handling = FindHandling(handlings, lookup, record);
+        var dayOverdue = handling?.DueDate.HasValue == true &&
+                         handling.DueDate.Value.Date < DateTime.Today &&
+                         DeriveProgress(record, handlings, issueHandlings, lookup, unhandledSeverities).IsUnresolved;
+        return dayOverdue ||
+               DayHandlingDerivation.HasOverdueIssue(IssueHandlingsFor(record, issueHandlings, lookup), DateTime.Today);
     }
 
     /// <summary>該紀錄當日的問題層級標記（以現行主機名稱為鍵，同 HostNameOf 的合併語意）</summary>
