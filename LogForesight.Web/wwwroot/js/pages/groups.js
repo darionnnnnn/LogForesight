@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs, checkboxList, button } from '../core/ui.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
@@ -183,21 +183,11 @@ function groupActions(kind, group) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-1 justify-content-end';
 
-    const edit = document.createElement('button');
-    edit.type = 'button';
-    edit.className = 'btn btn-sm btn-outline-primary';
-    edit.textContent = '編輯';
-    edit.addEventListener('click', () => openModal(kind, group));
-    wrap.appendChild(edit);
+    wrap.appendChild(button('編輯', { variant: 'outline-primary', onClick: () => openModal(kind, group) }));
 
     // 系統內建群組不顯示刪除鈕：整套授權建立在這些群組上，刪掉就沒有依據了
     if (!(kind === 'user' && group.builtin)) {
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'btn btn-sm btn-outline-danger';
-        remove.textContent = '刪除';
-        remove.addEventListener('click', () => onDelete(kind, group));
-        wrap.appendChild(remove);
+        wrap.appendChild(button('刪除', { variant: 'outline-danger', onClick: () => onDelete(kind, group) }));
     }
 
     return wrap;
@@ -239,36 +229,11 @@ function openModal(kind, group) {
 
 /** 使用者群組編輯內嵌的主機群組勾選（僅 Role=User 用得到，寫入走既有 access API） */
 function renderHostAccessChecks(grantedIds) {
-    const container = document.getElementById('group-host-access-checks');
-    container.replaceChildren();
-
-    if (hostGroups.length === 0) {
-        const hint = document.createElement('div');
-        hint.className = 'text-muted small';
-        hint.textContent = '尚無主機群組，請先於「主機群組」頁籤建立。';
-        container.appendChild(hint);
-        return;
-    }
-
-    for (const g of hostGroups) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'form-check';
-
-        const input = document.createElement('input');
-        input.className = 'form-check-input';
-        input.type = 'checkbox';
-        input.value = g.groupId;
-        input.id = `group-host-access-${g.groupId}`;
-        input.checked = grantedIds.has(g.groupId);
-
-        const label = document.createElement('label');
-        label.className = 'form-check-label';
-        label.htmlFor = input.id;
-        label.textContent = g.groupName;
-
-        wrapper.append(input, label);
-        container.appendChild(wrapper);
-    }
+    checkboxList(document.getElementById('group-host-access-checks'), hostGroups.map(g => ({
+        id: g.groupId,
+        label: g.groupName,
+        checked: grantedIds.has(g.groupId)
+    })), '尚無主機群組，請先於「主機群組」頁籤建立。');
 }
 
 /** 其他角色（Dev/Manager/Admin）本來就看得到全部主機，勾選對它們沒有意義，改顯示說明文字 */

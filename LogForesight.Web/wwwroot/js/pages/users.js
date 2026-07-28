@@ -3,7 +3,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, renderChips, confirmAction } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button } from '../core/ui.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -139,12 +139,7 @@ function renderActiveBadge(active) {
 }
 
 function renderEditButton(user) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = '編輯';
-    button.addEventListener('click', () => openModal(user));
-    return button;
+    return button('編輯', { variant: 'outline-primary', onClick: () => openModal(user) });
 }
 
 function openModal(user) {
@@ -187,38 +182,13 @@ for (const button of document.querySelectorAll('#user-mode-toggle button')) {
 }
 
 function renderGroupCheckboxes(user) {
-    const container = document.getElementById('user-groups');
-    container.replaceChildren();
-
-    if (groups.length === 0) {
-        const hint = document.createElement('div');
-        hint.className = 'text-muted small';
-        hint.textContent = '尚無群組，請先於「群組與授權」建立。';
-        container.appendChild(hint);
-        return;
-    }
-
-    for (const group of groups) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'form-check';
-
-        const input = document.createElement('input');
-        input.className = 'form-check-input';
-        input.type = 'checkbox';
-        input.value = group.groupId;
-        input.id = `group-${group.groupId}`;
-        input.checked = user?.groupIds?.includes(group.groupId) ?? false;
-
-        const label = document.createElement('label');
-        label.className = 'form-check-label';
-        label.htmlFor = input.id;
-        label.textContent = group.builtin
+    checkboxList(document.getElementById('user-groups'), groups.map(group => ({
+        id: group.groupId,
+        label: group.builtin
             ? `${group.groupName}（${group.role}．系統內建）`
-            : `${group.groupName}（${group.role}）`;
-
-        wrapper.append(input, label);
-        container.appendChild(wrapper);
-    }
+            : `${group.groupName}（${group.role}）`,
+        checked: user?.groupIds?.includes(group.groupId) ?? false
+    })), '尚無群組，請先於「群組與授權」建立。');
 }
 
 /** 多筆模式的帳號解析：一行一個，也接受同一行用逗號分隔多個——與後端 NormalizeBatchAccounts 對齊的寬鬆解析 */

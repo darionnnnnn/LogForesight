@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, labelValue } from '../core/ui.js';
 import { formatDateTime, formatNumber } from '../core/format.js';
 
 const STATUS_META = {
@@ -253,16 +253,7 @@ function renderStats(detail) {
     for (const stat of stats) {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-2';
-
-        const label = document.createElement('div');
-        label.className = 'lf-stat__label';
-        label.textContent = stat.label;
-
-        const value = document.createElement('div');
-        value.className = 'fw-semibold';
-        value.textContent = String(stat.value);
-
-        col.append(label, value);
+        col.append(...labelValue(stat.label, stat.value, { labelClass: 'lf-stat__label' }));
         container.appendChild(col);
     }
 }

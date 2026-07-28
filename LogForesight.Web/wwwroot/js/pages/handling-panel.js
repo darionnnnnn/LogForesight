@@ -10,7 +10,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button } from '../core/ui.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
@@ -128,16 +128,7 @@ function render() {
 function readonlyField(label, value, hint) {
     const wrap = document.createElement('div');
     wrap.className = 'mb-3';
-
-    const labelEl = document.createElement('div');
-    labelEl.className = 'form-label small mb-1 text-muted';
-    labelEl.textContent = label;
-
-    const valueEl = document.createElement('div');
-    valueEl.className = 'fw-semibold';
-    valueEl.textContent = value;
-
-    wrap.append(labelEl, valueEl);
+    wrap.append(...labelValue(label, value, { labelClass: 'form-label small mb-1 text-muted' }));
 
     if (hint) {
         const hintEl = document.createElement('div');
@@ -245,16 +236,13 @@ function handlingForm() {
     const quickRow = document.createElement('div');
     quickRow.className = 'd-flex gap-2 mb-2';
     for (const days of [3, 7, 14]) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'btn btn-sm btn-outline-secondary';
-        btn.textContent = `${days} 日`;
-        btn.addEventListener('click', () => {
-            const target = new Date();
-            target.setDate(target.getDate() + days);
-            dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
-        });
-        quickRow.appendChild(btn);
+        quickRow.appendChild(button(`${days} 日`, {
+            onClick: () => {
+                const target = new Date();
+                target.setDate(target.getDate() + days);
+                dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
+            }
+        }));
     }
 
     const dueInput = document.createElement('input');

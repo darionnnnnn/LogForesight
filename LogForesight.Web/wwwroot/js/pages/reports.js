@@ -14,7 +14,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, statCard } from '../core/ui.js';
 import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
@@ -154,35 +154,16 @@ function renderKpi() {
     for (const card of cards) {
         const col = document.createElement('div');
         col.className = 'col-6 col-lg-3';
-
-        const inner = document.createElement(card.url ? 'a' : 'div');
-        inner.className = 'lf-stat';
-        if (card.url) inner.href = card.url;
-
-        const box = document.createElement('div');
-        box.className = 'lf-card h-100' + (card.url ? ' lf-card--clickable' : '');
-
-        const body = document.createElement('div');
-        body.className = 'lf-card__body';
-
-        const value = document.createElement('div');
-        value.className = 'lf-stat__value';
-        value.textContent = formatNumber(card.value);
-
-        const label = document.createElement('div');
-        label.className = 'lf-stat__label';
-        label.textContent = card.label;
-
-        body.append(value, label);
-
-        if (card.previous !== null && card.previous !== undefined) {
-            body.appendChild(comparisonBadge(card.value, card.previous));
-        }
-        if (card.hint) box.title = card.hint;
-
-        box.appendChild(body);
-        inner.appendChild(box);
-        col.appendChild(inner);
+        col.appendChild(statCard({
+            value: formatNumber(card.value),
+            label: card.label,
+            url: card.url,
+            hint: card.hint,
+            centered: false,
+            extra: (card.previous !== null && card.previous !== undefined)
+                ? comparisonBadge(card.value, card.previous)
+                : undefined
+        }));
         container.appendChild(col);
     }
 }

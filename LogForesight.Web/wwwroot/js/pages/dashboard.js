@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, icon, statCard } from '../core/ui.js';
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
@@ -176,24 +176,13 @@ function renderKpi(data, user) {
     for (const card of cards) {
         const col = document.createElement('div');
         col.className = 'col-6 col-lg';
-
-        const inner = document.createElement(card.url ? 'a' : 'div');
-        inner.className = 'lf-stat';
-        if (card.url) inner.href = card.url;
-
-        const box = document.createElement('div');
-        box.className = 'lf-card h-100' + (card.url ? ' lf-card--clickable' : '');
-        box.innerHTML = `
-            <div class="lf-card__body text-center">
-                <div class="lf-stat__value text-${card.variant}"></div>
-                <div class="lf-stat__label"></div>
-            </div>`;
-        box.querySelector('.lf-stat__value').textContent = formatNumber(card.value);
-        box.querySelector('.lf-stat__label').textContent = card.label;
-        if (card.hint) box.title = card.hint;
-
-        inner.appendChild(box);
-        col.appendChild(inner);
+        col.appendChild(statCard({
+            value: formatNumber(card.value),
+            label: card.label,
+            variant: card.variant,
+            url: card.url,
+            hint: card.hint
+        }));
         container.appendChild(col);
     }
 }

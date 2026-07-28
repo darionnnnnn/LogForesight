@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination, checkboxList, button } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const listContainer = document.getElementById('host-list');
@@ -383,25 +383,16 @@ function actionsCell(host) {
     wrap.className = 'd-flex gap-1 justify-content-end';
 
     if (host.mergedInto) {
-        wrap.appendChild(actionButton('解除合併', 'outline-secondary', () => unmerge(host)));
+        wrap.appendChild(button('解除合併', { variant: 'outline-secondary', onClick: () => unmerge(host) }));
         return wrap;
     }
 
-    wrap.appendChild(actionButton('編輯', 'outline-primary', () => openModal(host)));
+    wrap.appendChild(button('編輯', { variant: 'outline-primary', onClick: () => openModal(host) }));
     wrap.appendChild(host.active
-        ? actionButton('停用', 'outline-secondary', () => setActive(host, false))
-        : actionButton('啟用', 'outline-success', () => setActive(host, true)));
+        ? button('停用', { variant: 'outline-secondary', onClick: () => setActive(host, false) })
+        : button('啟用', { variant: 'outline-success', onClick: () => setActive(host, true) }));
 
     return wrap;
-}
-
-function actionButton(text, variant, onClick) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `btn btn-sm btn-${variant}`;
-    button.textContent = text;
-    button.addEventListener('click', onClick);
-    return button;
 }
 
 async function setActive(host, active) {
@@ -454,52 +445,19 @@ function openModal(host) {
     document.getElementById('host-os').value = host?.os ?? 'windows';
     document.getElementById('host-active').checked = host?.active ?? true;
 
-    renderCheckboxes('host-groups', hostGroups.map(g => ({
+    checkboxList(document.getElementById('host-groups'), hostGroups.map(g => ({
         id: g.groupId,
         label: g.groupName,
         checked: host?.groupIds?.includes(g.groupId) ?? false
     })), '尚無主機群組，請先於「群組與授權」建立。');
 
-    renderCheckboxes('host-owners', users.filter(u => u.active).map(u => ({
+    checkboxList(document.getElementById('host-owners'), users.filter(u => u.active).map(u => ({
         id: u.userId,
         label: `${u.displayName}（${u.account}）`,
         checked: host?.ownerUserIds?.includes(u.userId) ?? false
     })), '尚無使用者，請先建立或匯入使用者。');
 
     modal.show();
-}
-
-function renderCheckboxes(containerId, items, emptyHint) {
-    const container = document.getElementById(containerId);
-    container.replaceChildren();
-
-    if (items.length === 0) {
-        const hint = document.createElement('div');
-        hint.className = 'text-muted small';
-        hint.textContent = emptyHint;
-        container.appendChild(hint);
-        return;
-    }
-
-    for (const item of items) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'form-check';
-
-        const input = document.createElement('input');
-        input.className = 'form-check-input';
-        input.type = 'checkbox';
-        input.value = item.id;
-        input.id = `${containerId}-${item.id}`;
-        input.checked = item.checked;
-
-        const label = document.createElement('label');
-        label.className = 'form-check-label';
-        label.htmlFor = input.id;
-        label.textContent = item.label;
-
-        wrapper.append(input, label);
-        container.appendChild(wrapper);
-    }
 }
 
 form.addEventListener('submit', async event => {

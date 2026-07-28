@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading } from '../core/ui.js';
+import { renderLoading, labelValue } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
@@ -66,16 +66,7 @@ function renderHeader(detail) {
     for (const [label, value] of fields) {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-4 col-lg-2';
-
-        const labelEl = document.createElement('div');
-        labelEl.className = 'text-muted';
-        labelEl.textContent = label;
-
-        const valueEl = document.createElement('div');
-        valueEl.className = 'fw-semibold';
-        valueEl.textContent = value;
-
-        col.append(labelEl, valueEl);
+        col.append(...labelValue(label, value));
         grid.appendChild(col);
     }
 

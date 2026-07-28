@@ -438,6 +438,93 @@ export function renderLoading(container, rows = 4) {
     container.replaceChildren(el);
 }
 
+/**
+ * 勾選清單（users.js/groups.js/hosts.js 原本各自手刻一份幾乎相同的 form-check 清單）：
+ * items: [{ id, label, checked }]。id 屬性組成 `${container.id}-${item.id}`，
+ * 供同一清單內 label 的 htmlFor 配對；清單為空時顯示 emptyHint 取代整份清單。
+ */
+export function checkboxList(container, items, emptyHint) {
+    container.replaceChildren();
+
+    if (items.length === 0) {
+        const hint = document.createElement('div');
+        hint.className = 'text-muted small';
+        hint.textContent = emptyHint;
+        container.appendChild(hint);
+        return;
+    }
+
+    for (const item of items) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-check';
+
+        const input = document.createElement('input');
+        input.className = 'form-check-input';
+        input.type = 'checkbox';
+        input.value = item.id;
+        input.id = `${container.id}-${item.id}`;
+        input.checked = item.checked;
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = item.label;
+
+        wrapper.append(input, label);
+        container.appendChild(wrapper);
+    }
+}
+
+/**
+ * 標籤／數值對（host-detail.js/runs.js 的資訊格、handling-panel.js 的唯讀欄共用的最小單位）：
+ * 回傳 [labelEl, valueEl]，由呼叫端自行決定外層容器（grid col、mb-3 區塊等各頁不同，不強求一致）。
+ * labelClass 各頁沿用原本的樣式，value 一律 fw-semibold（三處原本就相同）。
+ */
+export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
+    const labelEl = document.createElement('div');
+    labelEl.className = labelClass;
+    labelEl.textContent = label;
+
+    const valueEl = document.createElement('div');
+    valueEl.className = 'fw-semibold';
+    valueEl.textContent = value;
+
+    return [labelEl, valueEl];
+}
+
+/**
+ * KPI 統計卡（dashboard.js/reports.js 原本各自手刻一份）：col 內的可選連結卡片，
+ * 大數字＋說明文字，variant 控制數字顏色、hint 當 title 提示、extra 可附加額外內容
+ * （例如 reports.js 的與前期對比徽章）。centered=false 供 reports.js 的靠左版型使用。
+ */
+export function statCard({ value, label, variant, url, hint, centered = true, extra }) {
+    const inner = document.createElement(url ? 'a' : 'div');
+    inner.className = 'lf-stat';
+    if (url) inner.href = url;
+
+    const box = document.createElement('div');
+    box.className = 'lf-card h-100' + (url ? ' lf-card--clickable' : '');
+    if (hint) box.title = hint;
+
+    const body = document.createElement('div');
+    body.className = centered ? 'lf-card__body text-center' : 'lf-card__body';
+
+    const valueEl = document.createElement('div');
+    valueEl.className = variant ? `lf-stat__value text-${variant}` : 'lf-stat__value';
+    valueEl.textContent = value;
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'lf-stat__label';
+    labelEl.textContent = label;
+
+    body.append(valueEl, labelEl);
+    if (extra) body.appendChild(extra);
+
+    box.appendChild(body);
+    inner.appendChild(box);
+    return inner;
+}
+
 /** 送出中的按鈕狀態：disable 防連點（§8.6-6） */
 export function withBusy(button, busyText) {
     const original = button.innerHTML;
