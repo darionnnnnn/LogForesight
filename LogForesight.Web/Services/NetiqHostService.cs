@@ -239,27 +239,9 @@ public class NetiqHostService : INetiqHostService
 
     private HostDto ToDto(WebHost host)
     {
+        // 每次呼叫都重查 store（既有效能議題，記入 BACKLOG，取數策略此次不動）
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
-
-        return new HostDto
-        {
-            HostId = host.HostId,
-            HostName = host.HostName,
-            DisplayName = host.DisplayName,
-            IpAddress = host.IpAddress,
-            NetiqServer = host.NetiqServer,
-            RoleDesc = host.RoleDesc,
-            Source = host.Source,
-            Os = host.Os,
-            Active = host.Active,
-            MergedInto = host.MergedInto,
-            LastReportAt = host.LastReportAt,
-            CreatedAt = host.CreatedAt,
-            GroupIds = host.GroupIds,
-            GroupNames = NameFormat.ResolveNames(host.GroupIds, groups, g => g.GroupName),
-            OwnerUserIds = host.OwnerUserIds,
-            OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, users, u => u.DisplayName)
-        };
+        return HostDtoMapper.ToDto(host, groups, users);
     }
 }

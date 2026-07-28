@@ -135,7 +135,7 @@ public class HostAdminService
         var items = all
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(h => ToDto(h, groups, users))
+            .Select(h => HostDtoMapper.ToDto(h, groups, users))
             .ToList();
 
         return new PagedResult<HostDto> { Items = items, Page = page, PageSize = pageSize, Total = all.Count };
@@ -201,7 +201,7 @@ public class HostAdminService
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Active });
 
-        return ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId));
+        return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId));
     }
 
     public HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds)
@@ -226,7 +226,7 @@ public class HostAdminService
             targetId: hostId.ToString(),
             detail: new { Before = before, After = after });
 
-        return ToDto(_hosts.Get(hostId)!, allGroups, _users.GetAll().ToDictionary(u => u.UserId));
+        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, allGroups, _users.GetAll().ToDictionary(u => u.UserId));
     }
 
     public HostDto SetHostOwners(long hostId, IEnumerable<long> userIds)
@@ -250,7 +250,7 @@ public class HostAdminService
             targetId: hostId.ToString(),
             detail: new { Before = before, After = after });
 
-        return ToDto(_hosts.Get(hostId)!, _hostGroups.GetAll().ToDictionary(g => g.GroupId), allUsers);
+        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, _hostGroups.GetAll().ToDictionary(g => g.GroupId), allUsers);
     }
 
     public void MergeHost(long sourceHostId, long targetHostId)
@@ -302,27 +302,4 @@ public class HostAdminService
             targetId: hostId.ToString(),
             detail: new { Source = host.HostName, Target = target?.HostName });
     }
-
-    private static HostDto ToDto(
-        WebHost host,
-        IReadOnlyDictionary<long, HostGroup> groupsById,
-        IReadOnlyDictionary<long, WebUser> usersById) => new()
-    {
-        HostId = host.HostId,
-        HostName = host.HostName,
-        DisplayName = host.DisplayName,
-        IpAddress = host.IpAddress,
-        NetiqServer = host.NetiqServer,
-        RoleDesc = host.RoleDesc,
-        Source = host.Source,
-        Os = host.Os,
-        Active = host.Active,
-        MergedInto = host.MergedInto,
-        LastReportAt = host.LastReportAt,
-        CreatedAt = host.CreatedAt,
-        GroupIds = host.GroupIds,
-        GroupNames = NameFormat.ResolveNames(host.GroupIds, groupsById, g => g.GroupName),
-        OwnerUserIds = host.OwnerUserIds,
-        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => u.DisplayName)
-    };
 }
