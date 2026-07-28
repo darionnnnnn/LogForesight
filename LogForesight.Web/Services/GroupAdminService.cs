@@ -383,9 +383,7 @@ public class GroupAdminService
         var allHostGroups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var requested = hostGroupIds.Distinct().ToList();
 
-        var unknown = requested.Where(id => !allHostGroups.ContainsKey(id)).ToList();
-        if (unknown.Count > 0)
-            throw DomainException.Validation($"指定的主機群組不存在（ID：{string.Join("、", unknown)}）。");
+        NameFormat.EnsureAllKnown(requested, allHostGroups, "主機群組");
 
         var before = _access.GetAll()
             .Where(a => a.UserGroupId == userGroupId)

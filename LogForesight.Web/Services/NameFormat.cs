@@ -1,3 +1,5 @@
+using LogForesight.Web.Models;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>
@@ -18,4 +20,16 @@ internal static class NameFormat
     public static List<string> ResolveNames<T>(
         IEnumerable<long> ids, IReadOnlyDictionary<long, T> byId, Func<T, string> nameSelector) =>
         ids.Select(id => byId.TryGetValue(id, out var entity) ? nameSelector(entity) : $"(已刪除:{id})").ToList();
+
+    /// <summary>
+    /// 驗證 id 清單全部存在於 known 中，否則丟出驗證例外列出不存在的 id
+    /// （4 處「SetXxx」寫入方法逐字相同的前置檢查：UserAdminService.SetUserGroups／
+    /// HostAdminService.SetHostGroups／SetHostOwners／GroupAdminService.SetAccess）。
+    /// </summary>
+    public static void EnsureAllKnown<T>(List<long> requestedIds, IReadOnlyDictionary<long, T> known, string label)
+    {
+        var unknown = requestedIds.Where(id => !known.ContainsKey(id)).ToList();
+        if (unknown.Count > 0)
+            throw DomainException.Validation($"指定的{label}不存在（ID：{string.Join("、", unknown)}）。");
+    }
 }

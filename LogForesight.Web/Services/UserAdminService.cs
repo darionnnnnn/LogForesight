@@ -72,9 +72,7 @@ public class UserAdminService
         var allGroups = _groups.GetAll().ToDictionary(g => g.GroupId);
         var requested = groupIds.Distinct().ToList();
 
-        var unknown = requested.Where(id => !allGroups.ContainsKey(id)).ToList();
-        if (unknown.Count > 0)
-            throw DomainException.Validation($"指定的群組不存在（ID：{string.Join("、", unknown)}）。");
+        NameFormat.EnsureAllKnown(requested, allGroups, "群組");
 
         var before = user.GroupIds.Select(id => allGroups.TryGetValue(id, out var g) ? g.GroupName : id.ToString()).ToList();
         var after = requested.Select(id => allGroups[id].GroupName).ToList();

@@ -211,9 +211,7 @@ public class HostAdminService
         var allGroups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var requested = groupIds.Distinct().ToList();
 
-        var unknown = requested.Where(id => !allGroups.ContainsKey(id)).ToList();
-        if (unknown.Count > 0)
-            throw DomainException.Validation($"指定的主機群組不存在（ID：{string.Join("、", unknown)}）。");
+        NameFormat.EnsureAllKnown(requested, allGroups, "主機群組");
 
         var before = host.GroupIds.Select(id => allGroups.TryGetValue(id, out var g) ? g.GroupName : id.ToString()).ToList();
         var after = requested.Select(id => allGroups[id].GroupName).ToList();
@@ -238,9 +236,7 @@ public class HostAdminService
         var allUsers = _users.GetAll().ToDictionary(u => u.UserId);
         var requested = userIds.Distinct().ToList();
 
-        var unknown = requested.Where(id => !allUsers.ContainsKey(id)).ToList();
-        if (unknown.Count > 0)
-            throw DomainException.Validation($"指定的使用者不存在（ID：{string.Join("、", unknown)}）。");
+        NameFormat.EnsureAllKnown(requested, allUsers, "使用者");
 
         var before = host.OwnerUserIds.Select(id => allUsers.TryGetValue(id, out var u) ? u.Account : id.ToString()).ToList();
         var after = requested.Select(id => allUsers[id].Account).ToList();
