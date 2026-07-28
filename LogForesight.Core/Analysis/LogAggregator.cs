@@ -93,7 +93,7 @@ public static class LogAggregator
             .Select(g =>
             {
                 var distinctMessages = g
-                    .Select(e => Truncate(CleanMessage(e.Message), 200))
+                    .Select(e => TextTruncation.Truncate(CleanMessage(e.Message), 200))
                     .Distinct()
                     .ToList();
 
@@ -214,5 +214,4 @@ public static class LogAggregator
     private static string CleanMessage(string s) =>
         string.Join(' ', s.Split('\r', '\n', '\t').Where(p => p.Length > 0));
 
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
 }

@@ -153,7 +153,7 @@ public class WeeklyCheckupService
         if (lastCheckup != null)
         {
             sb.AppendLine();
-            sb.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）{Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)}");
+            sb.AppendLine($"【上次體檢結論】（{lastCheckup.CheckupDate:yyyy-MM-dd}）{TextTruncation.Truncate(lastCheckup.Conclusion, MaxLastConclusionChars)}");
         }
 
         sb.AppendLine();
@@ -161,7 +161,7 @@ public class WeeklyCheckupService
         foreach (var day in window)
         {
             sb.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
-                          (day.Summary.Length > 0 ? $"，結論：{Truncate(day.Summary, 60)}" : ""));
+                          (day.Summary.Length > 0 ? $"，結論：{TextTruncation.Truncate(day.Summary, 60)}" : ""));
         }
 
         // 每個簽章一行，含窗口內逐日次數——彙整由程式先算好（確定性計算），AI 只需解讀不需自己加總
@@ -281,8 +281,6 @@ public class WeeklyCheckupService
 
         return sb.ToString();
     }
-
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
 
     private class WeeklyCheckupAiResult
     {

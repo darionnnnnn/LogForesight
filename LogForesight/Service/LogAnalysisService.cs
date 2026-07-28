@@ -273,7 +273,7 @@ public class LogAnalysisService
                 // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
                 // 仍算完成 AI 分析（useAi 維持 true），只是白話翻譯品質降級
                 headline = "AI 回覆格式異常，以下為原始內容";
-                summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{Truncate(result.RawContent, MaxSummaryChars)}";
+                summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}";
                 riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
                 if (riskLevel != ruleRisk) riskBasis = "ai_raise";
                 Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", targetDate, result.Attempts);
@@ -634,7 +634,7 @@ public class LogAnalysisService
                 // 非低風險日附上當日 AI 結論，讓模型看得到先前判讀的語意脈絡（是否已知原因、是否已處理）
                 if (RiskLevels.IsActionable(h.RiskLevel) && h.AiAnalyzed && h.Summary.Length > 0)
                 {
-                    sb.Append($" 當日結論:{Truncate(h.Summary, 80)}");
+                    sb.Append($" 當日結論:{TextTruncation.Truncate(h.Summary, 80)}");
                 }
                 sb.AppendLine();
             }
@@ -691,8 +691,6 @@ public class LogAnalysisService
         DayOfWeek.Saturday => "週六",
         _ => "週日"
     };
-
-    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "...";
 
     /// <summary>把 TrendAnalyzer 算好的比對數字附註在事件行後面，模型只需解讀、不需自己算</summary>
     private static string TrendText(LogIssueSignature i, int historyDays)
