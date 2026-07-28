@@ -96,11 +96,7 @@ public class AdminController : ControllerBase
             Query = query,
             Status = status,
             Sentinel = sentinel,
-            GroupIds = string.IsNullOrWhiteSpace(groupIds)
-                ? null
-                : groupIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(s => long.TryParse(s, out var id) ? id : (long?)null)
-                    .Where(id => id.HasValue).Select(id => id!.Value).ToList(),
+            GroupIds = QueryStringParsing.ParseLongs(groupIds),
             Os = os,
             Sort = sort,
             Page = page,

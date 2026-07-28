@@ -1,4 +1,3 @@
-using System.Globalization;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -27,39 +26,33 @@ public class HandlingController : ControllerBase
 
     [HttpGet]
     public ApiResponse<HandlingDto> Get(long hostId, string date) =>
-        ApiResponse<HandlingDto>.Ok(_service.Get(hostId, RequireDate(date)));
+        ApiResponse<HandlingDto>.Ok(_service.Get(hostId, QueryStringParsing.ParseRequiredDate(date)));
 
     [HttpPut]
     [Permission(Capability.Handle)]
     public ApiResponse<HandlingDto> Update(long hostId, string date, [FromBody] UpdateHandlingRequest request) =>
-        ApiResponse<HandlingDto>.Ok(_service.Update(hostId, RequireDate(date), request));
+        ApiResponse<HandlingDto>.Ok(_service.Update(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     /// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）。與日層級更新同為 Handle 能力</summary>
     [HttpPut("issues")]
     [Permission(Capability.Handle)]
     public ApiResponse<IssueStatusResultDto> SetIssueStatus(long hostId, string date, [FromBody] SetIssueStatusRequest request) =>
-        ApiResponse<IssueStatusResultDto>.Ok(_service.SetIssueStatus(hostId, RequireDate(date), request));
+        ApiResponse<IssueStatusResultDto>.Ok(_service.SetIssueStatus(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     /// <summary>批次設定多個問題的處理狀態（勾選多個問題後在右側處理狀態區塊一次套用）</summary>
     [HttpPut("issues/batch")]
     [Permission(Capability.Handle)]
     public ApiResponse<BatchIssueStatusResultDto> SetIssueStatusBatch(long hostId, string date, [FromBody] BatchSetIssueStatusRequest request) =>
-        ApiResponse<BatchIssueStatusResultDto>.Ok(_service.SetIssueStatusBatch(hostId, RequireDate(date), request));
+        ApiResponse<BatchIssueStatusResultDto>.Ok(_service.SetIssueStatusBatch(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     [HttpPut("assign")]
     [Permission(Capability.Assign)]
     public ApiResponse<HandlingDto> Assign(long hostId, string date, [FromBody] AssignHandlerRequest request) =>
-        ApiResponse<HandlingDto>.Ok(_service.Assign(hostId, RequireDate(date), request.HandlerId));
+        ApiResponse<HandlingDto>.Ok(_service.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId));
 
     [HttpGet("logs")]
     public ApiResponse<List<HandlingLogDto>> GetLogs(long hostId, string date) =>
-        ApiResponse<List<HandlingLogDto>>.Ok(_service.GetLogs(hostId, RequireDate(date)));
-
-    private static DateTime RequireDate(string value) =>
-        DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var date)
-            ? date
-            : throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        ApiResponse<List<HandlingLogDto>>.Ok(_service.GetLogs(hostId, QueryStringParsing.ParseRequiredDate(date)));
 }
 
 /// <summary>權限異動待辦（§9.5）</summary>

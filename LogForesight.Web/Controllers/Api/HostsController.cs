@@ -36,13 +36,10 @@ public class HostsController : ControllerBase
     {
         var hosts = _visibility.GetVisibleHosts().Where(h => h.Active);
 
-        if (!string.IsNullOrWhiteSpace(ids))
+        var wantedIds = QueryStringParsing.ParseLongs(ids);
+        if (wantedIds != null)
         {
-            var wanted = ids.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(s => long.TryParse(s, out var id) ? id : (long?)null)
-                .Where(id => id.HasValue)
-                .Select(id => id!.Value)
-                .ToHashSet();
+            var wanted = wantedIds.ToHashSet();
             hosts = hosts.Where(h => wanted.Contains(h.HostId));
         }
         else if (!string.IsNullOrWhiteSpace(query))
