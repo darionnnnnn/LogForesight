@@ -1,4 +1,4 @@
-using LogForesight.Sql;
+﻿using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -125,18 +125,4 @@ public class RecordRepositorySeverityVisibilityTests : IDisposable
         Assert.Equal(IssueSeverity.Medium, app.Severity);
         Assert.False(app.ElevatesDayRisk);
     }
-}
-
-internal class FakeSystemSettingsService : ISystemSettingsService
-{
-    public HashSet<string>? VisibleSeverities { get; set; }
-
-    public SystemSettingsDto Get() => throw new NotSupportedException("測試未使用此方法");
-
-    public SystemSettingsDto Update(UpdateSystemSettingsRequest request) => throw new NotSupportedException("測試未使用此方法");
-
-    public HashSet<string>? GetVisibleSeverities() => VisibleSeverities;
-
-    public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) =>
-        throw new NotSupportedException("測試未使用此方法");
 }

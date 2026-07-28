@@ -13,7 +13,7 @@ public class UserAdminServiceTests
 {
     private readonly FakeUserStore _users = new();
     private readonly FakeUserGroupStore _groups = new();
-    private readonly FakeAuditService _audit = new();
+    private readonly RecordingAuditService _audit = new();
 
     private UserAdminService Create() => new(_users, _groups, _audit);
 

@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Services;
@@ -18,7 +18,7 @@ public class IdentityServiceTests
 
     private readonly FakeUserStore _users = new();
     private readonly FakeUserGroupStore _groups = new();
-    private readonly FakeAuditService _audit = new();
+    private readonly RecordingAuditService _audit = new();
 
     private IdentityService Create(IAuthenticationProvider? provider = null)
     {
@@ -289,89 +289,4 @@ public class IdentityServiceTests
         Assert.Equal("自訂顯示名稱", saved.DisplayName);
         Assert.Equal("wang@corp.local", saved.Email);
     }
-}
-
-// ── 測試替身 ─────────────────────────────────────────────────────────────────
-
-internal class FakeUserStore : IUserStore
-{
-    private readonly List<WebUser> _users = new();
-    private long _nextId = 1;
-
-    public List<WebUser> GetAll() => _users.ToList();
-
-    public WebUser? Get(long userId) => _users.FirstOrDefault(u => u.UserId == userId);
-
-    public WebUser? FindByAccount(string account) =>
-        _users.FirstOrDefault(u => string.Equals(u.Account, account, StringComparison.OrdinalIgnoreCase));
-
-    public WebUser Upsert(WebUser user)
-    {
-        var existing = FindByAccount(user.Account);
-        if (existing == null)
-        {
-            user.UserId = _nextId++;
-            _users.Add(user);
-            return user;
-        }
-
-        existing.DisplayName = user.DisplayName;
-        existing.Email = user.Email;
-        existing.Active = user.Active;
-        existing.GroupIds = user.GroupIds;
-        return existing;
-    }
-
-    public void SetGroups(long userId, IEnumerable<long> groupIds)
-    {
-        var user = Get(userId);
-        if (user != null) user.GroupIds = groupIds.Distinct().ToList();
-    }
-}
-
-internal class FakeUserGroupStore : IUserGroupStore
-{
-    private readonly List<UserGroup> _groups = new();
-    private long _nextId = 1;
-
-    public List<UserGroup> GetAll() => _groups.ToList();
-
-    public UserGroup? Get(long groupId) => _groups.FirstOrDefault(g => g.GroupId == groupId);
-
-    public UserGroup? FindByName(string groupName) =>
-        _groups.FirstOrDefault(g => string.Equals(g.GroupName, groupName, StringComparison.OrdinalIgnoreCase));
-
-    public UserGroup Upsert(UserGroup group)
-    {
-        var existing = group.GroupId == 0 ? null : Get(group.GroupId);
-        if (existing == null)
-        {
-            group.GroupId = _nextId++;
-            _groups.Add(group);
-            return group;
-        }
-
-        existing.GroupName = group.GroupName;
-        existing.Role = group.Role;
-        existing.Builtin = group.Builtin;
-        existing.Active = group.Active;
-        return existing;
-    }
-
-    public void Delete(long groupId) => _groups.RemoveAll(g => g.GroupId == groupId);
-}
-
-internal class FakeAuditService : IAuditService
-{
-    public List<AuditEntry> Entries { get; } = new();
-
-    public void Record(string action, string summary, string? targetKind = null, string? targetId = null,
-        object? detail = null, AuditResult result = AuditResult.Ok) =>
-        Entries.Add(new AuditEntry { Action = action, Summary = summary, TargetKind = targetKind, TargetId = targetId, Result = result });
-
-    public void RecordAuth(string action, string account, long? userId, string summary, AuditResult result) =>
-        Entries.Add(new AuditEntry { Action = action, Account = account, UserId = userId, Summary = summary, Result = result });
-
-    public void RecordSystem(string action, string summary, string? targetKind = null, string? targetId = null) =>
-        Entries.Add(new AuditEntry { Action = action, Account = AuditActions.SystemAccount, Summary = summary });
 }

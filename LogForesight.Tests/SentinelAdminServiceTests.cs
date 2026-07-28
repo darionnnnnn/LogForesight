@@ -1,5 +1,4 @@
-using System.Text.Json;
-using LogForesight.Web.Models;
+﻿using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
@@ -150,28 +149,4 @@ public class SentinelAdminServiceTests
 
         Assert.Equal(1, dto.HostCount);
     }
-}
-
-/// <summary>捕捉 detail 物件（真正的 IAuditService 只印摘要，測試需要驗證密碼真的沒進去）</summary>
-internal class RecordingAuditService : LogForesight.Web.Services.IAuditService
-{
-    public List<AuditEntry> Entries { get; } = new();
-
-    public void Record(string action, string summary, string? targetKind = null, string? targetId = null,
-        object? detail = null, AuditResult result = AuditResult.Ok) =>
-        Entries.Add(new AuditEntry
-        {
-            Action = action,
-            Summary = summary,
-            TargetKind = targetKind,
-            TargetId = targetId,
-            DetailJson = detail == null ? null : JsonSerializer.Serialize(detail),
-            Result = result
-        });
-
-    public void RecordAuth(string action, string account, long? userId, string summary, AuditResult result) =>
-        Entries.Add(new AuditEntry { Action = action, Account = account, UserId = userId, Summary = summary, Result = result });
-
-    public void RecordSystem(string action, string summary, string? targetKind = null, string? targetId = null) =>
-        Entries.Add(new AuditEntry { Action = action, Account = AuditActions.SystemAccount, Summary = summary });
 }

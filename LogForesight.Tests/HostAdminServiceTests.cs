@@ -18,7 +18,7 @@ public class HostAdminServiceTests
         new FakeUserStore(),
         new NetiqHostServiceTests.FakeNetiqServerCatalog("SENTINEL-A"),
         new FakeNetiqHostServiceForAdmin(),
-        new FakeAuditService());
+        new RecordingAuditService());
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //

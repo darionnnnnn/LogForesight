@@ -14,7 +14,7 @@ public class NetiqHostServiceTests
     private readonly FakeNetiqServerCatalog _servers = new("SENTINEL-A", "SENTINEL-B");
 
     private NetiqHostService Create() =>
-        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new FakeAuditService());
+        new(_hosts, new FakeHostGroupStore(), new FakeUserStore(), _servers, new RecordingAuditService());
 
     // ── 單筆登錄 ──────────────────────────────────────────────────────────────
 

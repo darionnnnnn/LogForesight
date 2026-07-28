@@ -89,7 +89,7 @@ public class NetiqDiscoveryServiceTests
     private readonly FakeHostGroupStore _hostGroups = new();
     private readonly FakeSentinelStore _sentinels = new();
     private readonly FakeImportLogStore _importLogs = new();
-    private readonly FakeAuditService _audit = new();
+    private readonly RecordingAuditService _audit = new();
 
     private sealed class FakeClient : INetiqDirectoryClient
     {

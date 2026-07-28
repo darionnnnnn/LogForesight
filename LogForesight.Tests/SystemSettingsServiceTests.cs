@@ -14,7 +14,7 @@ public class SystemSettingsServiceTests
     private readonly FakeSystemSettingsStore _store = new();
 
     private SystemSettingsService Create() =>
-        new(_store, FakeCurrentUser.WithCapabilities(), new FakeAuditService());
+        new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService());
 
     private static UpdateSystemSettingsRequest ValidRequest(int runLogRetentionDays = 90, int auditRetentionDays = 730) => new()
     {

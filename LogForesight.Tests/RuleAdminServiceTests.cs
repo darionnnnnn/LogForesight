@@ -18,7 +18,7 @@ public class RuleAdminServiceTests
     private readonly FakeRuleSeedStore _seeds = new();
     private readonly FakeSuppressionStore _suppressions = new();
     private readonly FakeUserStore _users = new();
-    private readonly FakeAuditService _audit = new();
+    private readonly RecordingAuditService _audit = new();
 
     private const string BuiltinId = "builtin-disk-153";
 

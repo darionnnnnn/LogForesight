@@ -21,7 +21,7 @@ public class HandlingServiceTests
     private readonly FakeHandlingStore _handlings = new();
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeNoiseMarkStore _noiseMarks = new();
-    private readonly FakeAuditService _audit = new();
+    private readonly RecordingAuditService _audit = new();
     private readonly FakeSystemSettingsStore _settings = new();
     private readonly FakeRecordRepository _repository;
 
@@ -810,19 +810,8 @@ public class HandlingServiceTests
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────
-
-internal class AlwaysVisibleService : IVisibilityService
-{
-    private readonly FakeHostStore _hosts;
-
-    public AlwaysVisibleService(FakeHostStore hosts) => _hosts = hosts;
-
-    public IReadOnlySet<long> GetVisibleHostIds() => _hosts.GetAll().Select(h => h.HostId).ToHashSet();
-
-    public List<WebHost> GetVisibleHosts() => _hosts.GetAll();
-
-    public void EnsureVisible(long hostId) { }
-}
+// FakeHostStore／FakeUserStore／AlwaysVisibleService／RecordingAuditService 已搬到
+// TestDoubles\ 底下（跨多個測試檔共用）；以下僅保留本檔專用的替身。
 
 internal class FakeRecordRepository : IRecordRepository
 {

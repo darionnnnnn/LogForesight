@@ -30,7 +30,7 @@ public class ReportServiceTests : IDisposable
 
         var handling = new HandlingService(
             _handlingStore, _issueHandlingStore, new FakeNoiseMarkStore(), repository, _hosts, _users,
-            visibility, FakeCurrentUser.WithCapabilities(), new FakeAuditService(), _settingsStore);
+            visibility, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), _settingsStore);
 
         _service = new ReportService(repository, _hosts, visibility, handling);
     }
