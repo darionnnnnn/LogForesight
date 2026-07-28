@@ -242,10 +242,10 @@ public class AdminController : ControllerBase
     // ── NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁）────────────────────
 
     [HttpGet("netiq/options")]
-    public ApiResponse<NetiqOptionsDto> GetNetiqOptions() =>
-        ApiResponse<NetiqOptionsDto>.Ok(_netiqOptions.Get());
+    public ApiResponse<NetiqOptions> GetNetiqOptions() =>
+        ApiResponse<NetiqOptions>.Ok(_netiqOptions.Get());
 
     [HttpPut("netiq/options")]
-    public ApiResponse<NetiqOptionsDto> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
-        ApiResponse<NetiqOptionsDto>.Ok(_netiqOptions.Update(request));
+    public ApiResponse<NetiqOptions> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
+        ApiResponse<NetiqOptions>.Ok(_netiqOptions.Update(request));
 }

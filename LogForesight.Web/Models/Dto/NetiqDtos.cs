@@ -208,19 +208,8 @@ public class NetiqImportResultDto
 }
 
 // ── 連線與節流參數（「系統管理 > NetIQ 維護」頁）───────────────────────────
-
-public class NetiqOptionsDto
-{
-    public string SampleFetchMode { get; set; } = "Full";
-    public int QueryDelayMs { get; set; }
-    public int PageSize { get; set; }
-    public int MaxResultsPerJob { get; set; }
-    public int TimeoutSeconds { get; set; }
-    public int RetryCount { get; set; }
-    public bool AllowInvalidCertificates { get; set; }
-    public DateTime? UpdatedAt { get; set; }
-    public string? UpdatedByAccount { get; set; }
-}
+// 讀取直接回傳 Core 的 NetiqOptions（欄位與原本的 NetiqOptionsDto 逐一相同、
+// 無需遮蔽敏感欄位，這層 DTO 只是零加值的複本，已移除）。
 
 public class UpdateNetiqOptionsRequest
 {

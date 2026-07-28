@@ -20,9 +20,9 @@ public class NetiqOptionsService
         _audit = audit;
     }
 
-    public NetiqOptionsDto Get() => ToDto(_store.Get());
+    public NetiqOptions Get() => _store.Get();
 
-    public NetiqOptionsDto Update(UpdateNetiqOptionsRequest request)
+    public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {
         if (!ValidFetchModes.Contains(request.SampleFetchMode, StringComparer.OrdinalIgnoreCase))
             throw DomainException.Validation($"未知的範例訊息查詢範圍「{request.SampleFetchMode}」，僅允許 Full 或 Reduced。");
@@ -48,19 +48,6 @@ public class NetiqOptionsService
             targetId: "netiq_options",
             detail: new { Before = before, After = saved });
 
-        return ToDto(saved);
+        return saved;
     }
-
-    private static NetiqOptionsDto ToDto(NetiqOptions o) => new()
-    {
-        SampleFetchMode = o.SampleFetchMode,
-        QueryDelayMs = o.QueryDelayMs,
-        PageSize = o.PageSize,
-        MaxResultsPerJob = o.MaxResultsPerJob,
-        TimeoutSeconds = o.TimeoutSeconds,
-        RetryCount = o.RetryCount,
-        AllowInvalidCertificates = o.AllowInvalidCertificates,
-        UpdatedAt = o.UpdatedAt,
-        UpdatedByAccount = o.UpdatedByAccount
-    };
 }
