@@ -1,4 +1,5 @@
 using LogForesight;
+using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -13,12 +14,12 @@ public class RuleBootstrapperContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
+    private EfJsonBlobStore? _blob;
+    private EfJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
 
     private KnownIssueRuleStore Store() => new(Blob);
 
-    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+    private static void WriteRaw(EfJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));
 
     // Run() 呼叫 KnownIssueCatalog.Initialize 覆寫共用靜態狀態；每個測試後重置回完整種子，

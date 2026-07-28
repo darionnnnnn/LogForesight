@@ -4,13 +4,18 @@ using NLog;
 namespace LogForesight.Sql;
 
 /// <summary>
-/// <see cref="IJsonBlobStore"/> 的資料庫後端：整份 JSON 存在 lf_blobs 的一列（key＝store 名稱）。
-/// 讀改寫以交易保證原子。webdata 各 store 的方法本體因此不必改，同一份邏輯跑在檔案或 DB 上。
+/// 「一團 JSON 文字」的原子讀寫（webdata 各 store 的儲存底層）：整份 JSON 存在 lf_blobs 的一列
+/// （key＝store 名稱）。把「文字放哪裡、怎麼原子更新」與「store 的業務邏輯」分開
+/// （docs/SCALE-2000-PLAN.md §4）。
+///
+/// <see cref="Mutate{TResult}"/> 是讀→改→寫的原子單位，以交易實作：呼叫端拿到目前內容、
+/// 算出新內容，底層保證中途不被別人插入寫入（避免更新遺失——hosts 是批次與 Web 共同
+/// 寫入的資料，這點是正確性關鍵）。
 ///
 /// SQLite（測試/開發）以資料庫級寫入鎖序列化寫入；SqlServer（正式）以交易。低寫入頻率的
 /// webdata 下更新遺失的風險小；真的撞上並發時記 log 並重試（見 Mutate）。
 /// </summary>
-public sealed class EfJsonBlobStore : IJsonBlobStore
+public sealed class EfJsonBlobStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
@@ -24,14 +29,17 @@ public sealed class EfJsonBlobStore : IJsonBlobStore
         _key = key;
     }
 
+    /// <summary>供 log／Location 顯示（如「sqlserver:users」）</summary>
     public string Location => $"db:{_key}";
 
+    /// <summary>目前內容；不存在回 null（首次執行的正常情況）</summary>
     public string? Read()
     {
         using var ctx = _contextFactory();
         return ctx.Blobs.AsNoTracking().FirstOrDefault(b => b.BlobKey == _key)?.Content;
     }
 
+    /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
     public TResult Mutate<TResult>(Func<string?, (string content, TResult result)> mutation)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）

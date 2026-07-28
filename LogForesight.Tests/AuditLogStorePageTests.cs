@@ -5,8 +5,8 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// P1-2：<see cref="AuditLogStore.Query"/>／<see cref="AuditLogStore.Count"/> 的分頁下推。
-/// 無篩選條件時走 SQL 端真分頁（<see cref="IJsonLogStore.ReadPage"/>）；有篩選條件時以日期範圍
-/// 先在 SQL 端窄化候選集（<see cref="IJsonLogStore.ReadLines(DateTime?,DateTime?)"/>），
+/// 無篩選條件時走 SQL 端真分頁（<see cref="EfJsonLogStore.ReadPage"/>）；有篩選條件時以日期範圍
+/// 先在 SQL 端窄化候選集（<see cref="EfJsonLogStore.ReadLines(DateTime?,DateTime?)"/>），
 /// 其餘欄位在記憶體精確過濾——兩條路徑都必須與「全撈再過濾」的舊行為逐位一致。
 /// </summary>
 public class AuditLogStorePageTests : IDisposable

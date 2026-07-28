@@ -1,4 +1,5 @@
 using LogForesight;
+using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -8,18 +9,18 @@ namespace LogForesight.Tests;
 /// 不覆寫使用者的壞檔；單一規則物件解析失敗只跳過該條，其餘規則照常載入；列舉值以字串儲存。
 ///
 /// 這些容錯邏輯全部寫在 <see cref="KnownIssueRuleStore"/> 本身（blob 無關），透過
-/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始（可能損毀的）內容即可驗證。
+/// <see cref="EfJsonBlobStore.Mutate{TResult}"/> 直接寫入原始（可能損毀的）內容即可驗證。
 /// </summary>
 public class KnownIssueRuleStoreTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
+    private EfJsonBlobStore? _blob;
+    private EfJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
 
     private KnownIssueRuleStore Store() => new(Blob);
 
-    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+    private static void WriteRaw(EfJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));
 
     public void Dispose()

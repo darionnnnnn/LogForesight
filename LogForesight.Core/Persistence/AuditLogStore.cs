@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -8,12 +9,12 @@ namespace LogForesight;
 /// 操作稽核的儲存（↔ lf_audit_logs，log key=audit，append-only）。
 /// **只有 Append 與 Query，沒有更新或刪除**——這是稽核資料的本質要求。
 ///
-/// 走逐列的 <see cref="IJsonLogStore"/> 而不是整份 blob：稽核是 append-only 的高頻寫入，
+/// 走逐列的 <see cref="EfJsonLogStore"/> 而不是整份 blob：稽核是 append-only 的高頻寫入，
 /// 每次都重寫整份文件會隨資料量線性變慢。
 /// </summary>
 public class AuditLogStore
 {
-    private readonly IJsonLogStore _log;
+    private readonly EfJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
 
@@ -24,7 +25,7 @@ public class AuditLogStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public AuditLogStore(IJsonLogStore log)
+    public AuditLogStore(EfJsonLogStore log)
     {
         _log = log;
         _lastId = ReadAll().LastOrDefault()?.AuditId ?? 0;

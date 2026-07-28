@@ -11,7 +11,7 @@ namespace LogForesight.Tests;
 /// </summary>
 public class EfWebdataStoreTests
 {
-    // ── 整份型（IJsonBlobStore）─────────────────────────────────────────────
+    // ── 整份型（EfJsonBlobStore）─────────────────────────────────────────────
 
     [Fact]
     public void 規則庫_EF往返()
@@ -63,7 +63,7 @@ public class EfWebdataStoreTests
         Assert.Equal("hunter2", CryptoHelper.Decrypt(reread.PasswordEnc));
     }
 
-    // ── append-only（IJsonLogStore）─────────────────────────────────────────
+    // ── append-only（EfJsonLogStore）─────────────────────────────────────────
 
     [Fact]
     public void 稽核_EF附加與查詢往返()

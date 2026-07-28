@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -16,11 +17,11 @@ namespace LogForesight;
 /// </summary>
 public class PermissionChangeStore
 {
-    private readonly IJsonLogStore _changes;
+    private readonly EfJsonLogStore _changes;
     private readonly JsonConfirmationFile _confirmations;
     private readonly object _lock = new();
 
-    public PermissionChangeStore(IJsonLogStore changes, IJsonBlobStore confirmations)
+    public PermissionChangeStore(EfJsonLogStore changes, EfJsonBlobStore confirmations)
     {
         _changes = changes;
         _confirmations = new JsonConfirmationFile(confirmations);
@@ -101,7 +102,7 @@ public class PermissionChangeStore
     /// <summary>確認狀態的整份型儲存（Web 單一寫入者，原子讀改寫）</summary>
     private class JsonConfirmationFile : JsonBlobCollection<PermissionChangeConfirmation>
     {
-        public JsonConfirmationFile(IJsonBlobStore blob) : base(blob) { }
+        public JsonConfirmationFile(EfJsonBlobStore blob) : base(blob) { }
 
         public new List<PermissionChangeConfirmation> Read() => base.Read();
 

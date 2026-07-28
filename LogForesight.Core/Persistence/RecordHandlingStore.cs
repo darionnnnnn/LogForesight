@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -10,11 +11,11 @@ namespace LogForesight;
 /// </summary>
 public class RecordHandlingStore : JsonBlobCollection<RecordHandling>, IRecordHandlingStore
 {
-    private readonly IJsonLogStore _logStore;
+    private readonly EfJsonLogStore _logStore;
     private readonly object _logLock = new();
     private long _lastLogId;
 
-    public RecordHandlingStore(IJsonBlobStore snapshotBlob, IJsonLogStore logStore) : base(snapshotBlob)
+    public RecordHandlingStore(EfJsonBlobStore snapshotBlob, EfJsonLogStore logStore) : base(snapshotBlob)
     {
         _logStore = logStore;
         _lastLogId = ReadAllLogs().LastOrDefault()?.LogId ?? 0;

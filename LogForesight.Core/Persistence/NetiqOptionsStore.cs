@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -9,9 +10,9 @@ namespace LogForesight;
 /// </summary>
 public class NetiqOptionsStore
 {
-    private readonly IJsonBlobStore _blob;
+    private readonly EfJsonBlobStore _blob;
 
-    public NetiqOptionsStore(IJsonBlobStore blob) => _blob = blob;
+    public NetiqOptionsStore(EfJsonBlobStore blob) => _blob = blob;
 
     public NetiqOptions Get() => Deserialize(_blob.Read());
 

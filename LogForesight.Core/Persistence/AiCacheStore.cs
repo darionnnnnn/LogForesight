@@ -1,3 +1,5 @@
+using LogForesight.Sql;
+
 namespace LogForesight;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace LogForesight;
 /// </summary>
 public class AiCacheStore : JsonBlobCollection<AiCacheEntry>
 {
-    public AiCacheStore(IJsonBlobStore blob) : base(blob) { }
+    public AiCacheStore(EfJsonBlobStore blob) : base(blob) { }
 
     /// <summary>取快取內容；查無回 null</summary>
     public string? Get(string key) =>

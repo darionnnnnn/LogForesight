@@ -1,9 +1,11 @@
+using LogForesight.Sql;
+
 namespace LogForesight;
 
 /// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
 public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 {
-    public HostStore(IJsonBlobStore blob) : base(blob) { }
+    public HostStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<WebHost> GetAll() => Read();
 
@@ -171,7 +173,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 /// <summary><see cref="IHostGroupStore"/> 的實作（blob key=host_groups，整份型）</summary>
 public class HostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 {
-    public HostGroupStore(IJsonBlobStore blob) : base(blob) { }
+    public HostGroupStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<HostGroup> GetAll() => Read();
 
@@ -205,7 +207,7 @@ public class HostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 /// <summary><see cref="IGroupAccessStore"/> 的實作（blob key=group_access，整份型）</summary>
 public class GroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessStore
 {
-    public GroupAccessStore(IJsonBlobStore blob) : base(blob) { }
+    public GroupAccessStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<GroupAccess> GetAll() => Read();
 

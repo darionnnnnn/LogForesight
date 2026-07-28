@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using LogForesight;
+using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -7,18 +8,18 @@ namespace LogForesight.Tests;
 /// <summary>
 /// <see cref="SuppressionStore"/> 的儲存層合約（見 docs/RULES-PLAN.md）：缺檔/損毀時降級為
 /// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
-/// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
+/// <see cref="EfJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
 /// </summary>
 public class SuppressionStoreContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= _fx.Blob("suppressions");
+    private EfJsonBlobStore? _blob;
+    private EfJsonBlobStore Blob => _blob ??= _fx.Blob("suppressions");
 
     private SuppressionStore Store() => new(Blob);
 
-    private static void WriteRaw(IJsonBlobStore blob, string text) =>
+    private static void WriteRaw(EfJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));
 
     public void Dispose()

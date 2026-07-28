@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -13,14 +14,14 @@ public interface ISystemSettingsStore
 
 /// <summary>
 /// <see cref="ISystemSettingsStore"/> 的實作：整份 JSON 存一筆 blob，與 <see cref="JsonBlobCollection{T}"/>
-/// 系列 store 同一套底層（<see cref="IJsonBlobStore"/>），但本體是單一物件而非清單，
+/// 系列 store 同一套底層（<see cref="EfJsonBlobStore"/>），但本體是單一物件而非清單，
 /// 故不繼承 JsonBlobCollection（它的 Read/Mutate 是針對 List&lt;T&gt; 設計的）。
 /// </summary>
 public class SystemSettingsStore : ISystemSettingsStore
 {
-    private readonly IJsonBlobStore _blob;
+    private readonly EfJsonBlobStore _blob;
 
-    public SystemSettingsStore(IJsonBlobStore blob) => _blob = blob;
+    public SystemSettingsStore(EfJsonBlobStore blob) => _blob = blob;
 
     public SystemSettings Get() => Deserialize(_blob.Read());
 

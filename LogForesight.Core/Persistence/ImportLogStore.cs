@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -40,11 +41,11 @@ public interface IImportLogStore
 /// <summary><see cref="IImportLogStore"/> 的實作（log key=import_logs，append-only）</summary>
 public class ImportLogStore : IImportLogStore
 {
-    private readonly IJsonLogStore _log;
+    private readonly EfJsonLogStore _log;
     private readonly object _lock = new();
     private long _lastId;
 
-    public ImportLogStore(IJsonLogStore log)
+    public ImportLogStore(EfJsonLogStore log)
     {
         _log = log;
         _lastId = ReadAll().LastOrDefault()?.ImportId ?? 0;

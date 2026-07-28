@@ -1,4 +1,5 @@
 using LogForesight;
+using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -232,7 +233,7 @@ public class RuleImporterRunContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
 
-    private IJsonBlobStore? _blob;
+    private EfJsonBlobStore? _blob;
     private KnownIssueRuleStore Store() => new(_blob ??= _fx.Blob("rules"));
 
     public void Dispose()

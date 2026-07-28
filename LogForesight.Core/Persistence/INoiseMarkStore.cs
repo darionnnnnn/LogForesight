@@ -1,3 +1,5 @@
+using LogForesight.Sql;
+
 namespace LogForesight;
 
 /// <summary>
@@ -20,7 +22,7 @@ public interface INoiseMarkStore
 
 public class NoiseMarkStore : JsonBlobCollection<NoiseMark>, INoiseMarkStore
 {
-    public NoiseMarkStore(IJsonBlobStore blob) : base(blob) { }
+    public NoiseMarkStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<NoiseMark> GetForHost(string hostName) =>
         Read().Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();

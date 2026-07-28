@@ -1,3 +1,5 @@
+using LogForesight.Sql;
+
 namespace LogForesight;
 
 /// <summary>Sentinel 連線設定的讀寫（↔ webdata blob，key=sentinels）</summary>
@@ -18,7 +20,7 @@ public interface ISentinelStore
 /// <summary><see cref="ISentinelStore"/> 的實作：整份 JSON 存一筆 blob，與其他 webdata store 同模式</summary>
 public class SentinelStore : JsonBlobCollection<Sentinel>, ISentinelStore
 {
-    public SentinelStore(IJsonBlobStore blob) : base(blob) { }
+    public SentinelStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<Sentinel> GetAll() => Read();
 

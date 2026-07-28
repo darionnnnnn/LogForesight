@@ -1,3 +1,5 @@
+using LogForesight.Sql;
+
 namespace LogForesight;
 
 /// <summary>
@@ -9,7 +11,7 @@ namespace LogForesight;
 /// </summary>
 public class IssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandlingStore
 {
-    public IssueHandlingStore(IJsonBlobStore blob) : base(blob) { }
+    public IssueHandlingStore(EfJsonBlobStore blob) : base(blob) { }
 
     public List<IssueHandling> GetForDay(string hostName, DateTime date) =>
         Read().Where(h => SameDay(h, hostName, date)).ToList();

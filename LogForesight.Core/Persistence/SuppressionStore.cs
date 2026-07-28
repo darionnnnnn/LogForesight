@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using NLog;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -13,10 +14,10 @@ public class SuppressionStore : ISuppressionStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    private readonly IJsonBlobStore _blob;
+    private readonly EfJsonBlobStore _blob;
     private readonly JsonSerializerOptions _options;
 
-    public SuppressionStore(IJsonBlobStore blob)
+    public SuppressionStore(EfJsonBlobStore blob)
     {
         _blob = blob;
         _options = new JsonSerializerOptions

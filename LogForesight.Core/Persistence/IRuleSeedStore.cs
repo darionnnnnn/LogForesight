@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -43,7 +44,7 @@ public class RuleSeedStore : JsonBlobCollection<RuleSeedSnapshot>, IRuleSeedStor
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
     };
 
-    public RuleSeedStore(IJsonBlobStore blob) : base(blob) { }
+    public RuleSeedStore(EfJsonBlobStore blob) : base(blob) { }
 
     public RuleSeedSnapshot? Get(string ruleId) =>
         Read().FirstOrDefault(s => string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase));

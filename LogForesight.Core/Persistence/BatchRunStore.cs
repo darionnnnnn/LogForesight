@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -59,13 +60,13 @@ public class BatchRunLog
 /// </summary>
 public class BatchRunStore
 {
-    private readonly IJsonLogStore _runs;
-    private readonly IJsonLogStore _logs;
+    private readonly EfJsonLogStore _runs;
+    private readonly EfJsonLogStore _logs;
     private readonly object _lock = new();
     private long _lastRunId;
     private long _lastLogId;
 
-    public BatchRunStore(IJsonLogStore runs, IJsonLogStore logs)
+    public BatchRunStore(EfJsonLogStore runs, EfJsonLogStore logs)
     {
         _runs = runs;
         _logs = logs;

@@ -11,7 +11,7 @@ namespace LogForesight;
 /// 新增後端時這裡是唯一需要改的地方，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改。
 ///
 /// **全部資料走 SQL，無檔案**：分析紀錄以正規化列＋JSON 存（lf_daily_records/lf_top_issues），
-/// webdata 各 store 透過 IJsonBlobStore（整份型 → lf_blobs）與 IJsonLogStore（append-only →
+/// webdata 各 store 透過 EfJsonBlobStore（整份型 → lf_blobs）與 EfJsonLogStore（append-only →
 /// lf_log_lines）走資料庫，store 業務邏輯不受後端影響。LINQ 保持 provider 中立，
 /// SQLite 上跑合約測試驗證語意。
 ///
@@ -80,11 +80,11 @@ public static class StorageFactory
     }
 
     /// <summary>store 的底層 blob（整份 JSON 存 lf_blobs 一列，key 為鍵）</summary>
-    private static IJsonBlobStore Blob(StorageSettings settings, string dataRoot, string key) =>
+    private static EfJsonBlobStore Blob(StorageSettings settings, string dataRoot, string key) =>
         new EfJsonBlobStore(GetDbFactory(settings, dataRoot), key);
 
     /// <summary>store 的底層 append-only 逐行資料（lf_log_lines，key 為鍵）</summary>
-    private static IJsonLogStore LogStore(StorageSettings settings, string dataRoot, string key) =>
+    private static EfJsonLogStore LogStore(StorageSettings settings, string dataRoot, string key) =>
         new EfJsonLogStore(GetDbFactory(settings, dataRoot), key);
 
     /// <summary>EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>

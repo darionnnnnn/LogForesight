@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using LogForesight.Sql;
 
 namespace LogForesight;
 
@@ -10,14 +11,14 @@ namespace LogForesight;
 /// 互斥（不遺失更新）」——如果讓每個 store 各自實作，遲早有人漏掉。規則寫在這裡一次，
 /// 所有 store 繼承取得，與 RecordStorageShaper「精簡策略單點化」是同一個理由。
 ///
-/// 底層一律走 <see cref="IJsonBlobStore"/>（SQLite 測試／SqlServer 正式），
+/// 底層一律走 <see cref="EfJsonBlobStore"/>（SQLite 測試／SqlServer 正式），
 /// store 的方法本體完全不受後端影響。
 /// </summary>
 public abstract class JsonBlobCollection<T> where T : class
 {
-    private readonly IJsonBlobStore _blob;
+    private readonly EfJsonBlobStore _blob;
 
-    protected JsonBlobCollection(IJsonBlobStore blob) => _blob = blob;
+    protected JsonBlobCollection(EfJsonBlobStore blob) => _blob = blob;
 
     /// <summary>供 log／Location 顯示（相容原本的名稱；DB 後端回傳的是位置描述而非真實路徑）</summary>
     protected string FilePath => _blob.Location;
@@ -26,7 +27,7 @@ public abstract class JsonBlobCollection<T> where T : class
     protected List<T> Read() => Deserialize(_blob.Read());
 
     /// <summary>
-    /// 讀→改→寫的原子更新（底層保證整段互斥、不留半截、不遺失更新，見 <see cref="IJsonBlobStore"/>）。
+    /// 讀→改→寫的原子更新（底層保證整段互斥、不留半截、不遺失更新，見 <see cref="EfJsonBlobStore"/>）。
     /// 為什麼要整段互斥而非只保證寫入原子：原子替換擋得住半截檔案，擋不住**更新遺失**——
     /// hosts.json 是批次與 Web 共同寫入的檔案，撞號等於紀錄歸錯主機、跨越授權邊界。
     /// </summary>
