@@ -10,21 +10,25 @@ namespace LogForesight.Tests;
 /// 這些容錯邏輯全部寫在 <see cref="JsonKnownIssueRuleStore"/> 本身（blob 無關），透過
 /// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始（可能損毀的）內容即可驗證。
 /// </summary>
-public abstract class KnownIssueRuleStoreContractTests : IDisposable
+public class KnownIssueRuleStoreTests : IDisposable
 {
-    protected abstract IJsonBlobStore CreateBlob();
+    private readonly EfSqliteFixture _fx = new();
 
     private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= CreateBlob();
+    private IJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
 
     private JsonKnownIssueRuleStore Store() => new(Blob);
 
     private static void WriteRaw(IJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));
 
-    public virtual void Dispose() { }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
-    protected static KnownIssueRule SampleRule(string id = "custom-sample") => new()
+    private static KnownIssueRule SampleRule(string id = "custom-sample") => new()
     {
         Id = id,
         Origin = "custom",
@@ -138,19 +142,5 @@ public abstract class KnownIssueRuleStoreContractTests : IDisposable
 
         Assert.False(outcome.Success);
         Assert.Contains("升級程式", outcome.Error);
-    }
-}
-
-/// <summary>SQLite（EF）後端，驗證規則檔容錯邏輯在 DB blob 上正確。</summary>
-public class EfKnownIssueRuleStoreTests : KnownIssueRuleStoreContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

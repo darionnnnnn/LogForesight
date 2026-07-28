@@ -228,14 +228,18 @@ public class RuleImporterTests
 /// `RuleImporter.Run` 的編排（預覽 vs --apply、既有檔案套用）跑在儲存 store 上——
 /// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
 /// </summary>
-public abstract class RuleImporterRunContractTests : IDisposable
+public class RuleImporterRunContractTests : IDisposable
 {
-    protected abstract IJsonBlobStore CreateBlob();
+    private readonly EfSqliteFixture _fx = new();
 
     private IJsonBlobStore? _blob;
-    private JsonKnownIssueRuleStore Store() => new(_blob ??= CreateBlob());
+    private JsonKnownIssueRuleStore Store() => new(_blob ??= _fx.Blob("rules"));
 
-    public virtual void Dispose() { }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     [Fact]
     public void Run_檔案不存在時預覽不寫檔_Apply才真正寫入完整種子()
@@ -280,19 +284,5 @@ public abstract class RuleImporterRunContractTests : IDisposable
         Assert.True(outcome.Success);
         Assert.Empty(outcome.Content!.Rules); // 預覽模式：規則清單仍是空的，SeedVersion 仍是舊的
         Assert.Equal(0, outcome.Content.SeedVersion);
-    }
-}
-
-/// <summary>SQLite（EF）後端</summary>
-public class EfRuleImporterRunTests : RuleImporterRunContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

@@ -10,20 +10,23 @@ namespace LogForesight.Tests;
 /// （示範資料、或多台共用同一資料根），全域的缺日判定會把「別台在這天有紀錄」誤當成
 /// 「本機已分析過」，於是本機整段被跳過、永遠不產生自己的分析——Web 儀表板就一直是空的。
 /// </summary>
-public abstract class AnalysisRecordStoreHostScopeContractTests : IDisposable
+public class AnalysisRecordStoreHostScopeContractTests : IDisposable
 {
     protected const long OwnerId = 4;
     protected const string OwnerName = "DESKTOP-LOCAL";
 
-    /// <summary>依 ownerHost 建立 store；null＝不分主機（用來讀回全部紀錄驗證別台資料仍在）</summary>
-    protected abstract IAnalysisRecordStore CreateStore(HostKey? ownerHost);
+    private readonly EfSqliteFixture _fx = new();
 
-    protected IAnalysisRecordStore OwnerStore() =>
+    /// <summary>依 ownerHost 建立 store；null＝不分主機（用來讀回全部紀錄驗證別台資料仍在）</summary>
+    private IAnalysisRecordStore CreateStore(HostKey? ownerHost) =>
+        new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test", ownerHost);
+
+    private IAnalysisRecordStore OwnerStore() =>
         CreateStore(new HostKey { HostId = OwnerId, HostName = OwnerName });
 
-    protected IAnalysisRecordStore UnscopedStore() => CreateStore(null);
+    private IAnalysisRecordStore UnscopedStore() => CreateStore(null);
 
-    protected static DailyAnalysisRecord Rec(DateTime date, long hostId, string host, string risk = "低") => new()
+    private static DailyAnalysisRecord Rec(DateTime date, long hostId, string host, string risk = "低") => new()
     {
         Date = date,
         HostId = hostId,
@@ -32,7 +35,11 @@ public abstract class AnalysisRecordStoreHostScopeContractTests : IDisposable
         Headline = $"{host} {date:MM-dd}"
     };
 
-    public virtual void Dispose() { }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     /// <summary>核心迴歸：別台主機在某天有紀錄，不能讓本機把那天當成「已分析過」。</summary>
     [Fact]
@@ -151,20 +158,5 @@ public abstract class AnalysisRecordStoreHostScopeContractTests : IDisposable
         var unscoped = UnscopedStore();
         var all = unscoped.ReadRecent(DateTime.Today, 365);
         Assert.Contains(all, r => r.Host == "SRV-OTHER");   // 別台的過期紀錄仍在
-    }
-}
-
-/// <summary>SQLite（EF）後端，驗證批次面 ownerHost 主機範圍語意。</summary>
-public class EfAnalysisRecordStoreHostScopeTests : AnalysisRecordStoreHostScopeContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IAnalysisRecordStore CreateStore(HostKey? ownerHost) =>
-        new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test", ownerHost);
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

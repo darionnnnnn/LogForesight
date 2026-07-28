@@ -3,17 +3,28 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="IAnalysisRecordQuery"/> 的合約測試基底（docs/WEB-SPEC.md §12）。
-/// JSONL 與未來的 SQL 實作跑同一組案例——尤其是 <see cref="RecordQueryFilter.Hosts"/>
-/// 空集合的語意與「PK 優先、舊紀錄退回名稱」的比對規則，那是授權正確性的關鍵，
-/// 兩個後端不容許有任何差異。
+/// <see cref="IAnalysisRecordQuery"/> 的測試（docs/WEB-SPEC.md §12）。
+/// 尤其是 <see cref="RecordQueryFilter.Hosts"/> 空集合的語意與「PK 優先、舊紀錄退回名稱」
+/// 的比對規則，那是授權正確性的關鍵。
 /// </summary>
-public abstract class AnalysisRecordQueryContractTests : IDisposable
+public class AnalysisRecordQueryContractTests : IDisposable
 {
-    protected abstract IAnalysisRecordStore CreateStore();
-    protected abstract IAnalysisRecordQuery Query { get; }
+    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
+    private readonly EfSqliteFixture _fx = new();
 
-    public virtual void Dispose() { }
+    public AnalysisRecordQueryContractTests()
+    {
+        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
+    }
+
+    private IAnalysisRecordStore CreateStore() => _store;
+    private IAnalysisRecordQuery Query => _store;
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     // 測試用的主機識別對應：Record 與 Key 共用同一份，測試才不必逐一傳 id 也能對得起來
     private static readonly Dictionary<string, long> HostIds = new(StringComparer.OrdinalIgnoreCase)
@@ -23,13 +34,13 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
         ["HOST-X"] = 99
     };
 
-    protected static long IdOf(string hostName) => HostIds[hostName];
+    private static long IdOf(string hostName) => HostIds[hostName];
 
-    protected static HostKey Key(string hostName) =>
+    private static HostKey Key(string hostName) =>
         new() { HostId = IdOf(hostName), HostName = hostName };
 
     /// <summary>現行紀錄：帶 HostId（關聯鍵）</summary>
-    protected static DailyAnalysisRecord Record(
+    private static DailyAnalysisRecord Record(
         string host, DateTime date, string risk = "低",
         params LogIssueSignature[] issues) => new()
     {
@@ -42,7 +53,7 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
     };
 
     /// <summary>HostId 欄位問世前寫入的舊紀錄：只有名稱快照，沒有關聯鍵</summary>
-    protected static DailyAnalysisRecord LegacyRecord(string host, DateTime date, string risk = "低") => new()
+    private static DailyAnalysisRecord LegacyRecord(string host, DateTime date, string risk = "低") => new()
     {
         HostId = 0,
         Host = host,
@@ -51,7 +62,7 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
         Headline = $"{host} {date:MM-dd}（舊紀錄）"
     };
 
-    protected static LogIssueSignature Issue(
+    private static LogIssueSignature Issue(
         IssueCategory category = IssueCategory.Other,
         IssueSeverity severity = IssueSeverity.Low,
         int eventId = 1,
@@ -458,28 +469,6 @@ public abstract class AnalysisRecordQueryContractTests : IDisposable
         Assert.Equal(
             expected.Select(r => r.Date.Date).OrderBy(d => d),
             collected.Select(r => r.Date.Date).OrderBy(d => d));
-    }
-}
-
-/// <summary>SQLite（EF）後端跑查詢合約，驗證 Web 查詢面（Query/GetOne 的 Hosts 授權語意、PK 優先比對）。</summary>
-public class EfAnalysisRecordQueryTests : AnalysisRecordQueryContractTests
-{
-    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
-    private readonly EfSqliteFixture _fx = new();
-
-    public EfAnalysisRecordQueryTests()
-    {
-        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
-    }
-
-    protected override IAnalysisRecordStore CreateStore() => _store;
-
-    protected override IAnalysisRecordQuery Query => _store;
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }
 

@@ -1,22 +1,45 @@
+using LogForesight.Sql;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="IAnalysisRecordStore"/> 的合約測試基底（docs/DB-PLAN.md 一致性機制 #3）。
-/// 見 <see cref="EfAnalysisRecordStoreContractTests"/>：SQL 實作跑同一組案例，
-/// 一致性由測試強制，不靠 code review 肉眼比對。
+/// <see cref="IAnalysisRecordStore"/> 的測試（docs/DB-PLAN.md 一致性機制 #3）。
 ///
 /// 尤其是 <see cref="IAnalysisRecordReader.ReadRecent"/> 的錨定窗語意：它決定趨勢基準的
-/// 計算範圍，兩個後端只要有一點差異，同一天的分析在換後端後就會得出不同的風險判定。
+/// 計算範圍，換一種算法就會讓同一天的分析得出不同的風險判定。
+///
+/// 用 SQLite in-memory：LINQ 保持 provider 中立，SQLite 上通過即代表 store 邏輯正確；
+/// SqlServer 專屬行為（migration、連線）在真實環境以 log 驗證。SQLite in-memory 的資料庫
+/// 生命週期綁在**開啟中的連線**，所以整個測試實例共用一條連線，每個 context 在其上建立。
 /// </summary>
-public abstract class AnalysisRecordStoreContractTests : IDisposable
+public class AnalysisRecordStoreContractTests : IDisposable
 {
-    protected abstract IAnalysisRecordStore CreateStore();
+    private readonly SqliteConnection _connection;
 
-    public virtual void Dispose() { }
+    public AnalysisRecordStoreContractTests()
+    {
+        _connection = new SqliteConnection("DataSource=:memory:");
+        _connection.Open();
+        using var ctx = NewContext();
+        ctx.Database.EnsureCreated();
+    }
 
-    protected static DailyAnalysisRecord Record(DateTime date, string risk = "低") => new()
+    private LfDbContext NewContext() =>
+        new(new DbContextOptionsBuilder<LfDbContext>().UseSqlite(_connection).Options);
+
+    private IAnalysisRecordStore CreateStore() =>
+        new EfAnalysisRecordStore(NewContext, "sqlite-in-memory");
+
+    public void Dispose()
+    {
+        _connection.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private static DailyAnalysisRecord Record(DateTime date, string risk = "低") => new()
     {
         Date = date,
         RiskLevel = risk,
@@ -211,7 +234,7 @@ public abstract class AnalysisRecordStoreContractTests : IDisposable
         Assert.Null(store.LastWeeklyCheckupDate());
     }
 
-    // ── 儲存整形（RecordStorageShaper 是共用規則，兩後端都必須一致）─────────
+    // ── 儲存整形（RecordStorageShaper 是共用規則）───────────────────────────
 
     [Fact]
     public void 無風險日精簡_保留計數與趨勢數字但砍除範例訊息與KeyDetails()

@@ -8,12 +8,13 @@ namespace LogForesight.Tests;
 /// 存在但損毀時降級用內建種子且不覆寫壞檔、驗證後只有 Enabled 的規則生效。
 /// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
 /// </summary>
-public abstract class RuleBootstrapperContractTests : IDisposable
+[Collection("KnownIssueCatalogState")]
+public class RuleBootstrapperContractTests : IDisposable
 {
-    protected abstract IJsonBlobStore CreateBlob();
+    private readonly EfSqliteFixture _fx = new();
 
     private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= CreateBlob();
+    private IJsonBlobStore Blob => _blob ??= _fx.Blob("rules");
 
     private JsonKnownIssueRuleStore Store() => new(Blob);
 
@@ -22,7 +23,12 @@ public abstract class RuleBootstrapperContractTests : IDisposable
 
     // Run() 呼叫 KnownIssueCatalog.Initialize 覆寫共用靜態狀態；每個測試後重置回完整種子，
     // 避免影響同 collection 內其他測試類別（如 RiskReportServiceTests 依賴預設完整規則表）。
-    public virtual void Dispose() => KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
+    public void Dispose()
+    {
+        KnownIssueCatalog.Initialize(KnownIssueSeed.CreateRules());
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     [Fact]
     public void 檔案不存在時寫入內建種子且回傳全部啟用()
@@ -98,21 +104,5 @@ public abstract class RuleBootstrapperContractTests : IDisposable
 
         Assert.NotNull(result.UpdateHint);
         Assert.Contains("--import-rules", result.UpdateHint);
-    }
-}
-
-/// <summary>SQLite（EF）後端</summary>
-[Collection("KnownIssueCatalogState")]
-public class EfRuleBootstrapperTests : RuleBootstrapperContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IJsonBlobStore CreateBlob() => _fx.Blob("rules");
-
-    public override void Dispose()
-    {
-        base.Dispose();
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

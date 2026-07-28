@@ -9,19 +9,23 @@ namespace LogForesight.Tests;
 /// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
 /// <see cref="IJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
 /// </summary>
-public abstract class SuppressionStoreContractTests : IDisposable
+public class SuppressionStoreContractTests : IDisposable
 {
-    protected abstract IJsonBlobStore CreateBlob();
+    private readonly EfSqliteFixture _fx = new();
 
     private IJsonBlobStore? _blob;
-    private IJsonBlobStore Blob => _blob ??= CreateBlob();
+    private IJsonBlobStore Blob => _blob ??= _fx.Blob("suppressions");
 
     private JsonSuppressionStore Store() => new(Blob);
 
     private static void WriteRaw(IJsonBlobStore blob, string text) =>
         blob.Mutate<object?>(_ => (text, null));
 
-    public virtual void Dispose() { }
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     [Fact]
     public void 檔案不存在時LoadAll回傳空清單()
@@ -62,20 +66,6 @@ public abstract class SuppressionStoreContractTests : IDisposable
         var store = Store();
 
         Assert.Empty(store.LoadAll());
-    }
-}
-
-/// <summary>SQLite（EF）後端，驗證抑制設定容錯邏輯在 DB blob 上正確。</summary>
-public class EfSuppressionStoreTests : SuppressionStoreContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IJsonBlobStore CreateBlob() => _fx.Blob("suppressions");
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }
 

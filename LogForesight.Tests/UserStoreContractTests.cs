@@ -3,15 +3,18 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>
-/// <see cref="IUserStore"/> 的**合約測試基底**（docs/WEB-SPEC.md §12、DB-PLAN 一致性機制 #3）。
-/// 測試案例寫在這裡、與實作無關，見 <see cref="EfUserStoreContractTests"/>。
-/// </summary>
-public abstract class UserStoreContractTests : IDisposable
+/// <summary><see cref="IUserStore"/> 的測試（docs/WEB-SPEC.md §12、DB-PLAN 一致性機制 #3）。</summary>
+public class UserStoreContractTests : IDisposable
 {
-    protected abstract IUserStore CreateStore();
+    private readonly EfSqliteFixture _fx = new();
 
-    public virtual void Dispose() { }
+    private IUserStore CreateStore() => new JsonUserStore(_fx.Blob("users"));
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     [Fact]
     public void Upsert_新帳號_配發識別碼並可查回()
@@ -97,19 +100,5 @@ public abstract class UserStoreContractTests : IDisposable
     public void GetAll_初始狀態_回傳空清單而非例外()
     {
         Assert.Empty(CreateStore().GetAll());
-    }
-}
-
-/// <summary>使用者 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）。</summary>
-public class EfUserStoreContractTests : UserStoreContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IUserStore CreateStore() => new JsonUserStore(_fx.Blob("users"));
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }

@@ -2,12 +2,18 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary><see cref="IHostStore"/> 的合約測試基底（docs/WEB-SPEC.md §12）。</summary>
-public abstract class HostStoreContractTests : IDisposable
+/// <summary><see cref="IHostStore"/> 的測試（docs/WEB-SPEC.md §12）。</summary>
+public class HostStoreContractTests : IDisposable
 {
-    protected abstract IHostStore CreateStore();
+    private readonly EfSqliteFixture _fx = new();
 
-    public virtual void Dispose() { }
+    private IHostStore CreateStore() => new JsonHostStore(_fx.Blob("hosts"));
+
+    public void Dispose()
+    {
+        _fx.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     [Fact]
     public void Upsert_新主機_配發識別碼()
@@ -297,19 +303,5 @@ public abstract class HostStoreContractTests : IDisposable
         Assert.Null(after.MergedInto);
         Assert.True(after.Active);
         Assert.Equal("舊的描述", after.RoleDesc);
-    }
-}
-
-/// <summary>主機 store 合約，跑在 EF 的 JSON blob 後端（SQLite in-memory）。</summary>
-public class EfHostStoreContractTests : HostStoreContractTests
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    protected override IHostStore CreateStore() => new JsonHostStore(_fx.Blob("hosts"));
-
-    public override void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
     }
 }
