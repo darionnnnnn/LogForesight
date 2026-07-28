@@ -71,6 +71,18 @@
 | `Scope` | 生效範圍，此版本只接受 `"all"`，為未來多主機/群組規則卡位（見下） |
 | `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，取代舊版「EventIds 空陣列＝全比對」的隱含語意 |
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
+| `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（2026-07-28 新增，見下） |
+
+### 雙平台（2026-07-28，docs/LINUX-RULES-PLAN.md）
+
+Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位與三個 Linux 專用比對欄位
+（`ProgramPattern`／`EventNamePattern`／`MessagePatterns`），**共用同一份規則儲存與同一套抑制、
+匯入、驗證、Web CRUD 機制**——不分兩套 store。兩個平台的比對欄位互斥（Windows 規則不可填 Linux
+欄位，反之亦然），由 `RuleValidator` 平台條件式驗證把關；`FindRule`／`FindLinuxRule` 依平台分路，
+遮蔽偵測也按平台分區（Windows 規則永遠不會遮蔽 Linux 規則）。完整語意見該文件 §1。
+
+一個容易踩的點：`ProgramPattern` 沿用 `SourcePattern` 的子字串比對語意，所以 program 名稱有包含
+關係時（`"sudo"` 包含 `"su"`）順序有意義，具體的必須排在泛用的前面。
 
 ### `MatchAllEventIds` 為什麼要顯式宣告
 

@@ -104,9 +104,12 @@ public class HostAdminService : IHostAdminService
             filtered = filtered.Where(h => h.GroupIds.Any(wantedGroups.Contains));
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Os))
+        // 篩選值不合法時（前端沒有這種按鈕，但 API 是公開的）當作沒篩，不是回空清單——
+        // 「打錯字就看不到任何主機」比忽略無效條件更難察覺
+        var osFilter = WebHost.NormalizeOs(request.Os);
+        if (osFilter != null)
         {
-            filtered = filtered.Where(h => string.Equals(h.Os, request.Os, StringComparison.OrdinalIgnoreCase));
+            filtered = filtered.Where(h => string.Equals(h.Os, osFilter, StringComparison.OrdinalIgnoreCase));
         }
 
         if (request.Status == "conflict")
@@ -177,8 +180,8 @@ public class HostAdminService : IHostAdminService
             }
         }
 
-        if (request.Os != "windows" && request.Os != "linux")
-            throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
+        var os = WebHost.NormalizeOs(request.Os)
+                 ?? throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
 
         var existing = _hosts.FindByName(hostName);
         var isNew = existing == null;
@@ -194,7 +197,7 @@ public class HostAdminService : IHostAdminService
             NetiqServer = sentinel?.Name,
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = existing?.Source ?? "local",
-            Os = request.Os,
+            Os = os,
             Active = request.Active,
             // 群組與負責人由專屬端點維護，避免「更新角色描述」意外清掉它們
             GroupIds = existing?.GroupIds ?? new List<long>(),

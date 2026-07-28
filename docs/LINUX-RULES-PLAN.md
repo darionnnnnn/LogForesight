@@ -1,6 +1,6 @@
 # Linux 規則與雙平台預警規劃（LINUX-RULES-PLAN）
 
-> 規劃日期：2026-07-28。狀態：**設計定案（六項核心決策已與使用者確認），實作未開始**；
+> 規劃日期：2026-07-28。狀態：**設計定案；P2（§1／§3／§5）已實作完成，P1/P3~P5 未動**（見 §10 與 §12）。
 > 種子規則的 pattern 字串與簽章鍵的正規化路線仍以 `--netiq-probe` Linux 擴充段的真實輸出為準（§4）。
 > 緣起：NetIQ Sentinel 上同時有 Windows 與 Linux 主機，預警規則目前只有 Windows 面
 > （`KnownIssueRule` 以 Source＋Event ID 比對，Linux syslog 沒有 Event ID）。本規劃讓 Linux 主機
@@ -292,7 +292,7 @@ Builtin 覆寫時 `lf_rule_message_patterns` 比照 causes/steps 全刪全插。
 |---|---|---|
 | **P1** | `--netiq-probe` 擴充 Linux 取樣段（§4.1） | 無；與 Windows probe 同一趟真實環境執行 |
 | —閘門— | **probe 真實輸出貼回**：定案欄位對應、正規化有無、pattern 校正、OS 判別欄位 | 使用者於真實環境執行 |
-| **P2** | 規則模型/驗證/seed v4/載入正規化＋`WebHost.Os`＋Web 三分頁與詳情頁顯示（§1/§3/§5） | 不依賴取數管線；pattern 可先以 §8 通用字串出貨，probe 後 v5 修訂 |
+| **P2** ✅ | 規則模型/驗證/seed v4/載入正規化＋`WebHost.Os`＋Web 三分頁與詳情頁顯示（§1/§3/§5）**已完成 2026-07-28，見 §12** | 不依賴取數管線；pattern 可先以 §8 通用字串出貨，probe 後 v5 修訂 |
 | **P3** | `SentinelStatsSource` 雙平台分支（Lucene 產生器、欄位對應、簽章聚合、覆蓋申報）＝ NETIQ-API-PLAN §8 步驟 3~4 的擴充版 | probe 閘門 |
 | **P4** | `--selftest` 增補＋文件收尾（README 規則章節加 Linux 訊號清單、WEB-SPEC §9.7 與詳情頁、RULES-PLAN 註記本文件） | P2/P3 |
 | **P5** | Linux 關聯鏈（SSH 暴力破解系列）——**獨立規劃，另開文件** | P3 上線後、帳號/IP 抽取穩定 |
@@ -302,6 +302,57 @@ P2 刻意設計成不被 probe 擋（模型的雙路比對語意已定，probe �
 
 ## 11. 開放事項（實作前確認）
 
-1. `LogName = "Linux"` 常數命名（vs `"Syslog"`）——實作時定，影響面僅顯示與簽章鍵前綴。
-2. Linux Q1 的 generic `sev ≥ err` 收集是否保留（§4.2 建議保留；量級超乎預期時降級並申報）。
+1. `LogName = "Linux"` 常數命名（vs `"Syslog"`）——實作時定，影響面僅顯示與簽章鍵前綴。**未定**，
+   隨 §2 的 `EventKey` 一起延到 P3（Linux 事件進得來時才有第一個使用者）。
+2. Linux Q1 的 generic `sev ≥ err` 收集是否保留（§4.2 建議保留；量級超乎預期時降級並申報）。**未定，屬 P3。**
 3. 兩個 SQL 後端的紀錄表若有簽章展開欄位，`EventKey` 需跟進加欄（實作時核對 DB-PLAN 現況）。
+   **已核對：不需要。** 規則與主機都存 JSON blob（`lf_blobs`，`EfJsonBlobStore`），紀錄的簽章也是
+   序列化欄位，沒有展開成資料表的欄位，所以 §7 的正規化表設計與 `EventKey` 都不觸發 schema 異動。
+
+## 12. P2 實作紀錄（2026-07-28）
+
+commit `4e79766`＋體檢修正，分支 `feature/linux-rules-platform`。**與規劃的差異與判斷，逐項列出：**
+
+### 已完成（§1／§3／§5 全部）
+
+規則模型四欄位＋`RuleSchemaLimits` 上限、平台條件式驗證＋平台分區遮蔽偵測、seed v3→v4
+（**17 條**，不是草案表的 14 條——見下）、`WebHost.Os` 與五條寫入路徑、Web 三分頁與詳情頁 IP/OS、
+`--selftest` Linux 段、`--host-list` OS 欄、NetIQ 掃描精靈 OS 選擇。
+
+### 與規劃的偏差
+
+1. **種子 17 條而非 14 條**：草案表把 `su／sudo`、`chronyd／ntpd`、`gpasswd／groupadd` 各併成一列，
+   但 `ProgramPattern` 是子字串比對，一條規則只能對應一個 program 探測字串（寫 `"su"` 會連
+   `sudo`、`subscription-manager` 都命中）。拆成獨立規則，總數 14→17。
+2. **`su`／`sudo` 的順序是有意義的**：`"sudo"` 包含 `"su"`，`su` 規則排在前面會把 sudo 的事件先攔走。
+   種子中 `sudo` 必須排在 `su` 之前，`--selftest` 的逐條命中驗證會抓到這個錯（實作時就是它抓到的）。
+   同理未來新增 program 有包含關係的規則時，具體的要排前面。
+3. **`Platform` 沒有寫「載入期正規化」程式碼**：§1.1 原本設想比照 `NormalizeLegacyCriticalSeverity`
+   加一段正規化。實際上 `Platform` 的屬性初始式就是 `"windows"`，`System.Text.Json` 對「JSON 中不存在
+   的屬性」不會賦值，初始式的值自然留著——舊檔零遷移的目標已達成，額外的正規化程式碼是多餘的。
+4. **`RuleFileContent.SchemaVersion` 維持 1，不遞增**：判斷理由寫在 `IKnownIssueRuleStore.cs` 的
+   註解裡——遞增會讓舊版程式整份拒絕載入而降級用內建種子，連使用者自訂的 Windows 規則也一起失效；
+   不遞增則只有 Linux 規則被舊版驗證跳過（帶警告），Windows 面完全不受影響，是比較好的降級行為。
+
+### 體檢時發現並修正的既有 bug（不是本次引入，但同一段程式碼）
+
+- `RuleImporter` 的 `--overwrite-builtin` 覆蓋路徑逐欄複製時**漏抄 `ElevatesDayRisk`**：覆蓋任何
+  builtin 規則都會把「重大」旗標清成 false，該規則從此不再把當天判定為高風險日——靜默的行為降級。
+  應是 docs/WEB-FEEDBACK-2-PLAN.md #1 三級化時漏的。
+- `RuleImporter.ContentEqualExceptEnabled` 同樣**沒比對 `ElevatesDayRisk`**：種子只改旗標時會被誤判
+  「內容相同、略過」。
+- 兩者的修法：複製邏輯改成 `KnownIssueRule.CloneForSeedOverwrite`（貼著欄位宣告放，新增欄位時看得到），
+  並加一個**反射逐欄比對**的回歸測試（`覆蓋builtin時除Enabled與修改追蹤外每一個欄位都取自種子`），
+  未來再漏抄任何欄位都會直接紅燈。這條路徑正是 §1.5 說的 probe→v5 pattern 校正所依賴的。
+
+### 刻意延後（不是缺漏）
+
+| 項目 | 延到 | 理由 |
+|---|---|---|
+| §2 `LogIssueSignature.EventKey`＋聚合鍵擴充 | P3 | Linux 事件要等取數管線才進得來，現在加是沒有寫入者的死欄位 |
+| §2.2 syslog priority→EntryType 映射 | P3 | 同上，且 `sev` 對應要等 probe 實測 |
+| §4 全章（Lucene 產生器、欄位對應、覆蓋率申報） | P3 | probe 閘門 |
+| §4.5 關聯層「Linux 不適用」申報 | P3 | 沒有 Linux 紀錄可申報，先加會是永遠不顯示的死程式碼 |
+| §5.3 Linux 詳情頁 `program（EventKey）` 顯示 | P3 | 依賴 `EventKey` |
+| §5.3 清單面 OS 徽章（Records／儀表板／報表） | 未定 | 規劃自身標「視空間加入」，使用者原話亦為「其餘視欄位大小與需要」；詳情頁的硬需求已完成 |
+| §6 EntryType 映射／Lucene 產生器的 selftest 檢查 | P3/P4 | 被驗證的東西還不存在 |

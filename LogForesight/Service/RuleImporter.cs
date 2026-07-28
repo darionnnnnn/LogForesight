@@ -97,26 +97,11 @@ public static class RuleImporter
             }
 
             // 覆蓋：內容改用種子最新版本，但保留使用者對 Enabled 的選擇——
-            // 停用某條 builtin 是操作決定，不是「內容被改過」，匯入不該把它悄悄打開
-            var updated = new KnownIssueRule
-            {
-                Id = seedRule.Id,
-                Origin = seedRule.Origin,
-                Enabled = existing.Enabled,
-                Scope = seedRule.Scope,
-                MatchAllEventIds = seedRule.MatchAllEventIds,
-                MatchFilter = seedRule.MatchFilter,
-                SourcePattern = seedRule.SourcePattern,
-                EventIds = seedRule.EventIds,
-                Category = seedRule.Category,
-                Severity = seedRule.Severity,
-                Description = seedRule.Description,
-                CountThreshold = seedRule.CountThreshold,
-                PlainExplanation = seedRule.PlainExplanation,
-                Impact = seedRule.Impact,
-                LikelyCauses = seedRule.LikelyCauses,
-                NextSteps = seedRule.NextSteps
-            };
+            // 停用某條 builtin 是操作決定，不是「內容被改過」，匯入不該把它悄悄打開。
+            // 逐欄複製改由 KnownIssueRule.CloneForSeedOverwrite 負責：這裡曾經漏抄欄位而造成
+            // 靜默的行為降級（漏 ElevatesDayRisk＝「重大」旗標被清掉、漏 Platform＝Linux 規則
+            // 變成無效的 Windows 規則被驗證跳過），複製邏輯放在欄位宣告旁邊才不會再漏。
+            var updated = seedRule.CloneForSeedOverwrite(existing.Enabled);
             plan.ResultingRules[resultingIndexById[seedRule.Id]] = updated;
             plan.Items.Add(new RuleImportItem
             {
@@ -212,15 +197,27 @@ public static class RuleImporter
         _ => action.ToString()
     };
 
+    /// <summary>
+    /// 比對「除了 Enabled 以外的內容是否相同」——決定一條 builtin 規則要不要列入「程式已更新此規則」。
+    /// **漏掉任何一個欄位的後果是靜默的**：種子明明改了，匯入卻回報「內容與內建種子相同，略過」，
+    /// 使用者照著做完 `--import-rules --apply` 也拿不到修正（docs/LINUX-RULES-PLAN.md §1.5 的
+    /// probe→v5 pattern 校正路徑正是靠這個比對）。新增規則欄位時務必同步這裡，
+    /// RuleImporterFieldCoverageTests 會以反射逐欄驗證，漏抄即紅燈。
+    /// </summary>
     private static bool ContentEqualExceptEnabled(KnownIssueRule a, KnownIssueRule b) =>
         a.Origin == b.Origin &&
         a.Scope == b.Scope &&
+        a.Platform == b.Platform &&
         a.MatchAllEventIds == b.MatchAllEventIds &&
         a.MatchFilter == b.MatchFilter &&
         a.SourcePattern == b.SourcePattern &&
         a.EventIds.SequenceEqual(b.EventIds) &&
+        a.ProgramPattern == b.ProgramPattern &&
+        a.EventNamePattern == b.EventNamePattern &&
+        a.MessagePatterns.SequenceEqual(b.MessagePatterns) &&
         a.Category == b.Category &&
         a.Severity == b.Severity &&
+        a.ElevatesDayRisk == b.ElevatesDayRisk &&
         a.Description == b.Description &&
         a.CountThreshold == b.CountThreshold &&
         a.PlainExplanation == b.PlainExplanation &&

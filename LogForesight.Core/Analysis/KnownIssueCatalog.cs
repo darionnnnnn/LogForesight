@@ -126,6 +126,42 @@ public class KnownIssueRule
     public long? ModifiedBy { get; init; }
 
     public DateTime? ModifiedAt { get; init; }
+
+    /// <summary>
+    /// 供 `--import-rules --overwrite-builtin` 使用：以「這條種子規則」為準複製出新規則，
+    /// 只保留呼叫端指定的 <paramref name="enabled"/>（使用者停用某條 builtin 是操作決定，
+    /// 不是「內容被改過」，匯入不該把它悄悄打開）。修改追蹤欄位刻意不複製——
+    /// 覆蓋後這條規則就等於原廠內容，不再是「已修改的 builtin」。
+    ///
+    /// **為什麼放在這裡而不是 RuleImporter**：逐欄複製散在別的檔案時，新增規則欄位的人不會
+    /// 想到要去同步它，而漏抄的後果是靜默的行為降級——曾經漏抄 <see cref="ElevatesDayRisk"/>
+    /// （覆蓋後「重大」旗標被清成 false，該規則從此不再把當天判定為高風險日）。
+    /// 複製邏輯貼著欄位宣告放，新增欄位時才看得到它。
+    /// </summary>
+    public KnownIssueRule CloneForSeedOverwrite(bool enabled) => new()
+    {
+        Id = Id,
+        Origin = Origin,
+        Enabled = enabled,
+        Scope = Scope,
+        Platform = Platform,
+        MatchAllEventIds = MatchAllEventIds,
+        MatchFilter = MatchFilter,
+        SourcePattern = SourcePattern,
+        EventIds = EventIds,
+        ProgramPattern = ProgramPattern,
+        EventNamePattern = EventNamePattern,
+        MessagePatterns = MessagePatterns,
+        Category = Category,
+        Severity = Severity,
+        ElevatesDayRisk = ElevatesDayRisk,
+        Description = Description,
+        CountThreshold = CountThreshold,
+        PlainExplanation = PlainExplanation,
+        Impact = Impact,
+        LikelyCauses = LikelyCauses,
+        NextSteps = NextSteps
+    };
 }
 
 /// <summary>

@@ -36,11 +36,16 @@ public static class HostListCli
             Console.WriteLine($"共 {list.TotalHosts} 台主機會被查詢：");
             foreach (var (server, targets) in list.ByServer.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
             {
-                Console.WriteLine($"  [{server}] {targets.Count} 台");
+                var osSummary = string.Join("、", targets
+                    .GroupBy(t => t.Os, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => $"{OsLabel(g.Key)} {g.Count()}"));
+                Console.WriteLine($"  [{server}] {targets.Count} 台（{osSummary}）");
                 foreach (var target in targets)
                 {
                     var role = string.IsNullOrWhiteSpace(target.RoleDesc) ? "" : $"（{target.RoleDesc}）";
-                    Console.WriteLine($"    #{target.HostId} {target.IpAddress}{role}");
+                    // OS 決定這台套哪個平台的規則面，選錯等於整台的偵測面配錯——列出來讓人核對
+                    Console.WriteLine($"    #{target.HostId} [{OsLabel(target.Os)}] {target.IpAddress}{role}");
                 }
             }
         }
@@ -48,6 +53,9 @@ public static class HostListCli
         PrintWarnings(list.Warnings);
         return true;
     }
+
+    private static string OsLabel(string os) =>
+        string.Equals(os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
 
     /// <summary>
     /// 警告以黃色顯示：每一條都代表某台主機不會被檢查，

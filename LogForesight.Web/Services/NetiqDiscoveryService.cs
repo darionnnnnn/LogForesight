@@ -193,7 +193,7 @@ public class NetiqDiscoveryService : INetiqDiscoveryService
             throw DomainException.Validation("請至少勾選一台主機。");
 
         var groupByIp = ResolveGroupAssignments(scan, request.GroupAssignments);
-        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp);
+        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os);
 
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次
         Pending.TryRemove(request.Token, out _);

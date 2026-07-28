@@ -557,6 +557,10 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
   報告全文（`<pre>`）、處理面板（負責人唯讀多人／處理人／狀態／預計完成日／說明／歷程 timeline）、
   類型分布（頁內導航到對應問題分節）。
+- **標題列的主機識別（2026-07-28，docs/LINUX-RULES-PLAN.md §5.3）**：除主機名稱外顯示
+  **Sentinel 回報的顯示名、作業系統徽章與 IP**（`RecordDetailDto` 的 `HostDisplayName`／`HostOs`／
+  `HostIpAddress`）。NetIQ 主機以 IP 登錄，只有一串 IP 的話看報告的人認不出是哪台機器；
+  OS 則決定這台套哪個平台的規則面，判讀問題時需要知道。
 - 處理面板權限：狀態/說明/完成日 = `Handle`（限授權主機）；處理人下拉 = `Assign`（負責人置頂）。
 - **改版（2026-07-23 Phase D-1，七項；2026-07-27 批次套用改版再修訂第 2、6、7 項）**：
   1. **報告全文預設收合**：報告卡**整個 header 可點擊**展開/收合（2026-07-28 修訂，原本只有標題那顆
@@ -656,8 +660,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   伺服器端驗證，AI 不可用或失敗回 `data:null`）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
-- 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/Sentinel/負責人/群組）、
-  最近體檢結論、權限異動紀錄、生效中抑制清單。
+- 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
+  最近體檢結論、權限異動紀錄、生效中抑制清單。標題同 9.3 一併顯示 Sentinel 回報的顯示名
+  （2026-07-28，docs/LINUX-RULES-PLAN.md §5.3）。
 - API：`GET api/hosts/{id}`、`GET api/hosts/{id}/timeline?days=`
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
@@ -704,8 +709,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **快速篩選 toolbar（2026-07-23 Phase D-2）**：狀態／來源／抑制單選 chip，嚴重度／類別多選 chip，
   排序＝嚴重度/類別/門檻。取代舊版單一下拉（一次只能選一種條件），chip 各自獨立可疊加。詳情頁「誤報」
   提示的 `?search=` deep-link 開頁自動帶入搜尋字。
+- **雙平台三分頁（2026-07-28，docs/LINUX-RULES-PLAN.md §5.1）**：頁內分頁由「規則｜告警抑制」
+  改為 **「Windows規則｜Linux規則｜告警抑制」**。兩個規則分頁共用同一套清單／篩選／排序／計數元件，
+  只差 `Platform` 過濾；搜尋 placeholder 依平台調整（Windows「來源、Event ID」／Linux「program、訊息關鍵字」）。
+  編輯彈窗的**比對欄位區塊依平台切換**（Windows：來源比對＋Event ID＋全部事件；Linux：Program 比對＋
+  正規化事件名＋訊息子字串），類別／嚴重度／門檻／重大／知識庫／啟用完全共用。新增規則的平台由所在分頁
+  決定且建立後不可變更（`Platform` 與 `Origin` 同屬身分欄位）。告警抑制分頁加「平台」欄與篩選，
+  「抑制此規則」的主機下拉**依規則平台過濾**（Linux 規則只列 Linux 主機）。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
-  `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`
+  `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`。
+  `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
+  由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
@@ -717,11 +731,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   上限 100 筆）。**AD 登入自動補資料（#8）**：只填帳號的使用者首次以 AD 登入時，用同一次驗證取得的
   AD 屬性補齊顯示名稱與 Email（只補「視同未填」的欄位——DisplayName 為空或等於帳號、Email 為 null；
   手動填過的值不覆寫），寫一筆「AD 登入自動同步」稽核。
-- 主機：清單（名稱/IP/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/群組/負責人）、
+- 主機：清單（名稱/IP/**OS**/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/**os**/群組/負責人）、
   新舊主機合併（自停用清單選取→確認→`merged_into` 墓碑）。
   **快速篩選 toolbar（Phase D-2）**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，排序＝名稱/最後回報。
+- **作業系統欄位（2026-07-28，docs/LINUX-RULES-PLAN.md §3）**：`WebHost.Os`（`windows` 預設／`linux`）
+  決定這台主機套用哪個平台的規則面。四條寫入路徑（主機頁編輯、NetIQ 單筆／批次登錄、CSV `os` 欄、
+  掃描精靈）一律經 `WebHost.NormalizeOs` 正規化（大小寫與空白不拘、不合法值擋下），儲存值恆為小寫。
+  清單加 OS 欄與單選 chip 篩選（`GET api/admin/hosts?os=`）。
+  **掃描精靈與 CSV 的 OS 只套用在本次新增的主機**——既有主機（含復活的孤兒）的 OS 一律不動，
+  與群組指派同一原則：匯入不是隱性改設定，而改 OS 等於把既有主機的偵測面整個換掉。
 - 主機清單**改伺服器端分頁＋搜尋＋篩選（2026-07-23 Phase D-4）**：`GET api/admin/hosts` 改參數化
-  （`HostSearchRequest`：query/status/sentinel/groupIds/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
+  （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
 - **NetIQ 匯入排程化（2026-07-23 Phase D-3）**：主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」

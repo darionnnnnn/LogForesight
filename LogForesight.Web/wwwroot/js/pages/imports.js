@@ -313,6 +313,9 @@ async function openWizard(sentinel) {
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
+    // 每次開精靈都回到 windows：OS 是「這一批」的屬性，沿用上一批的選擇會讓人不知不覺
+    // 把 Linux 主機匯成 Windows（規則面整個錯配，而且畫面上看不出來）
+    document.getElementById('wizard-os').value = 'windows';
 
     renderWizardPane();
     wizardModal.show();
@@ -386,7 +389,8 @@ async function wizardSubmitImport() {
         const result = await api.post('/api/admin/netiq/import', {
             token: wizardScan.token,
             selectedIps,
-            groupAssignments
+            groupAssignments,
+            os: document.getElementById('wizard-os').value
         });
         toast(`已匯入：新增 ${result.added}、更新 ${result.updated}` +
               (result.revived > 0 ? `、復活 ${result.revived}` : ''), 'success', 6000);

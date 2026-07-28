@@ -196,6 +196,20 @@
                 </div>
 
                 <div id="wizard-pane-groups" class="d-none">
+                    <div class="row g-2 align-items-center mb-3">
+                        <div class="col-4 small">作業系統</div>
+                        <div class="col-4">
+                            <select class="form-select form-select-sm" id="wizard-os">
+                                <option value="windows">Windows</option>
+                                <option value="linux">Linux</option>
+                            </select>
+                        </div>
+                        <div class="col-4 small text-muted">混合平台請分兩次掃描匯入</div>
+                    </div>
+                    <p class="small text-muted">
+                        作業系統決定這批主機套用哪個平台的規則面（規則維護頁的 Windows規則／Linux規則），
+                        同樣只影響本次<strong>新增</strong>的主機——既有主機的作業系統不會被改動。
+                    </p>
                     <p class="small text-muted">
                         各網段可選既有主機群組、建立新群組，或跳過（跳過＝未分組，只有 admin 看得到）。
                         只影響本次<strong>新增</strong>的主機，既有主機的群組不會被改動。

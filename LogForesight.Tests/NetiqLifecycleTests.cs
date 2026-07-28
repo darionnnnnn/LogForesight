@@ -224,6 +224,63 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { 9L }, revived.OwnerUserIds);   // 負責人保留
     }
 
+    // ── 掃描匯入的 OS（docs/LINUX-RULES-PLAN.md §3：只套用在本次新增的主機）──────
+
+    [Fact]
+    public void 套用_新主機採用精靈選定的OS()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.60" }, _hosts, sentinels, os: "linux");
+
+        Assert.Equal("linux", _hosts.FindByName("10.1.2.60")!.Os);
+    }
+
+    [Fact]
+    public void 套用_未指定OS時新主機預設windows()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.61" }, _hosts, sentinels);
+
+        Assert.Equal("windows", _hosts.FindByName("10.1.2.61")!.Os);
+    }
+
+    /// <summary>
+    /// 既有主機的 OS 一律不動——與群組指派同一原則：匯入不是隱性改設定。
+    /// 改 OS 等於把這台主機的偵測面整個換掉，靜默改掉是很難察覺的行為變更。
+    /// </summary>
+    [Fact]
+    public void 套用_既有主機的OS不被匯入改動()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.62", IpAddress = "10.1.2.62", Source = "netiq", Os = "linux" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.62" }, _hosts, sentinels, os: "windows");
+
+        Assert.Equal("linux", _hosts.FindByName("10.1.2.62")!.Os);
+    }
+
+    [Fact]
+    public void 套用_復活的孤兒主機OS也不被匯入改動()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "SENTINEL-NEW" });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.63", IpAddress = "10.1.2.63", Source = "netiq",
+            Active = false, OrphanedFromSentinel = "SENTINEL-OLD", Os = "linux"
+        });
+
+        var outcome = NetiqImportApplier.Apply("SENTINEL-NEW", new[] { "10.1.2.63" }, _hosts, sentinels, os: "windows");
+
+        Assert.Equal(1, outcome.Revived);
+        Assert.Equal("linux", _hosts.FindByName("10.1.2.63")!.Os);
+    }
+
     [Fact]
     public void 套用_新主機以IP為HostName登錄()
     {

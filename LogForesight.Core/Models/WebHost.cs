@@ -54,8 +54,25 @@ public class WebHost
     /// 'windows'（預設）| 'linux'。決定批次端套用哪個平台的規則面（docs/LINUX-RULES-PLAN.md §3）：
     /// 本機來源恆 windows（行為零改變）；NetIQ 來源由匯入精靈/主機頁維護，
     /// 能從 Sentinel 事件自動判別時預填，不能判別則需人工選擇，不做猜測預設。
+    /// 寫入前一律經 <see cref="NormalizeOs"/>，儲存值恆為小寫。
     /// </summary>
-    public string Os { get; set; } = "windows";
+    public string Os { get; set; } = OsWindows;
+
+    public const string OsWindows = "windows";
+    public const string OsLinux = "linux";
+
+    /// <summary>
+    /// 把外部輸入的 OS 值正規化成儲存用的小寫值；不合法時回 null 交由呼叫端擋下。
+    ///
+    /// **單點正規化的理由**：OS 值有四條寫入路徑（主機頁編輯、NetIQ 單筆/批次登錄、CSV 匯入、
+    /// 掃描精靈），各自比對字串就會出現「CSV 填 Windows 被拒、填 windows 才過」這種只有踩到才知道的差異；
+    /// 而且儲存值大小寫不一致會讓後續 <c>Os == "linux"</c> 的比對靜默失準。
+    /// </summary>
+    public static string? NormalizeOs(string? value)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized is OsWindows or OsLinux ? normalized : null;
+    }
 
     public bool Active { get; set; } = true;
 

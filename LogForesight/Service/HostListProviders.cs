@@ -1,7 +1,11 @@
 namespace LogForesight;
 
-/// <summary>今晚要向 Sentinel 查詢的一台主機。HostId 是寫入分析紀錄時的關聯鍵</summary>
-public record NetiqTarget(long HostId, string IpAddress, string RoleDesc);
+/// <summary>
+/// 今晚要向 Sentinel 查詢的一台主機。HostId 是寫入分析紀錄時的關聯鍵。
+/// <paramref name="Os"/>（windows/linux）決定這台套哪個平台的規則面與查詢形式
+/// （docs/LINUX-RULES-PLAN.md §3/§4.2）。
+/// </summary>
+public record NetiqTarget(long HostId, string IpAddress, string RoleDesc, string Os);
 
 public class HostListResult
 {
@@ -74,7 +78,7 @@ internal static class HostListSelection
                 result.ByServer[name] = list;
             }
 
-            list.Add(new NetiqTarget(host.HostId, host.IpAddress!, host.RoleDesc));
+            list.Add(new NetiqTarget(host.HostId, host.IpAddress!, host.RoleDesc, host.Os));
         }
 
         AddExclusionWarnings(allHosts, allSentinels, result);

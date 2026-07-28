@@ -1,6 +1,8 @@
 # LogForesight
 
-分析 Windows Server 的 Event Log，**提早發現硬體故障前兆與入侵跡象**，在問題擴大前示警。
+分析 Windows Server 的 Event Log（Linux syslog 規則面已就緒、取數管線建置中，見
+[docs/LINUX-RULES-PLAN.md](docs/LINUX-RULES-PLAN.md)），**提早發現硬體故障前兆與入侵跡象**，
+在問題擴大前示警。
 偵測與風險判定完全由確定性的規則/趨勢/慢速趨勢/關聯層負責；本機 AI 模型（llama.cpp + Gemma 26B/27B 級
 MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Log 的人也能一眼看懂狀況該怎麼處理
 （2026-07-20 AI 角色轉換，詳見 [docs/AI-ROLE-PLAN.md](docs/AI-ROLE-PLAN.md)）。
@@ -290,6 +292,47 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
+#### Linux syslog（seed v4，2026-07-28 新增；⏸ 規則面已就緒，取數管線未完成）
+
+Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
+Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md §1.2）。主機的
+`Os` 欄位（Web 主機頁維護）決定它套用哪個平台的規則面。
+
+| program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
+|---|---|---|---|
+| sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；**單日 ≥10 次**視為暴力破解 | High |
+| sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
+| sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
+| su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
+| useradd/usermod/userdel（`user`） | （不看訊息） | 帳號建立/修改/刪除 — 入侵者建立立足點 | High |
+| groupadd/groupmod/groupdel（`group`） | （不看訊息） | 群組異動 | High |
+| gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
+| auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |
+| kernel | I/O error / Buffer I/O error / EXT4-fs error / XFS internal error | 磁碟或檔案系統錯誤 | 高（重大） |
+| smartd | Prefailure / FAILED SMART self-check / predicted TO FAIL | S.M.A.R.T. 預警硬碟即將故障 | 高（重大） |
+| kernel | Hardware Error / Machine Check / mce: | CPU/記憶體/PCIe 硬體錯誤 | 高（重大） |
+| kernel | Out of memory / oom-kill / Killed process | 記憶體耗盡，核心強制終止程序 | High |
+| systemd | entered failed state / Failed to start / Main process exited | 服務啟動失敗或異常終止（≥3 次） | Medium |
+| kernel | segfault | 應用程式反覆區段錯誤（≥3 次） | Medium |
+| chronyd | Can't synchronise / no reachable sources | 時間同步失敗（≥3 次） | Medium |
+| ntpd | time reset / synchronisation lost / no servers reachable | 時間同步失敗（≥3 次） | Medium |
+| CRON | FAILED / (CRON) ERROR | 排程任務執行失敗（≥3 次） | Medium |
+
+> **比對順序有意義**：`ProgramPattern` 是子字串比對，`"sudo"` 包含 `"su"`，所以 sudo 規則必須排在
+> su 之前，否則 sudo 的事件會被 su 規則先攔走。`--selftest` 的逐條命中驗證會抓到這類錯誤。
+>
+> **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
+> 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
+>
+> **目前狀態（2026-07-28）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
+> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（卡在 `--netiq-probe` 的真實環境
+> 閘門，見 docs/LINUX-RULES-PLAN.md §10 的 P3）。也就是說現在可以維護 Linux 規則、把主機標成 Linux，
+> 但實際的每日分析還不會有 Linux 資料進來。上表的訊息關鍵字是 probe 前的通用草案，
+> 屆時會依真實環境輸出校正（seed v5）。
+>
+> **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
+> 不讓人以為有看過。
+
 ### 給 AI 判讀的輔助資訊（除了事件本身）
 
 | 資訊 | 來源 | 為什麼需要 |
@@ -390,8 +433,11 @@ LogForesight.exe --debug-dump
 1. 用文字編輯器打開 `rules.json`（**務必存成 UTF-8**——內容是中文長文字，記事本存檔時注意
    編碼，否則下次打開會看到亂碼）。
 2. 新增規則：複製一條現有規則當模板，改 `Id`（建議 `custom-` 開頭）、`Origin` 設成 `"custom"`、
-   填好 `SourcePattern`/`EventIds`/`Category`/`Severity` 與四個知識庫欄位
-   （`PlainExplanation`/`Impact`/`LikelyCauses`/`NextSteps`）。
+   填好 `Category`/`Severity` 與四個知識庫欄位
+   （`PlainExplanation`/`Impact`/`LikelyCauses`/`NextSteps`），比對欄位則**依平台二選一**：
+   Windows 規則（`Platform: "windows"`，省略時的預設）填 `SourcePattern`/`EventIds`；
+   Linux 規則（`Platform: "linux"`）填 `ProgramPattern`＋`MessagePatterns`（或 `EventNamePattern`），
+   兩組欄位不可混用（驗證會擋）。
    停用某條規則：把該條的 `Enabled` 改成 `false`（保留在檔案裡，不用刪除）。
 3. **改完存檔後跑一次 `LogForesight.exe --selftest`**，exit code 0 就是好的——它會唯讀載入
    你剛改的 `rules.json`，驗證欄位是否合格、有沒有規則彼此遮蔽、關聯層事件 ID 是否仍對得上，
@@ -404,6 +450,8 @@ LogForesight.exe --debug-dump
   改成 `custom-` 開頭的新規則再修改。
 - 規則的比對順序＝檔案裡的陣列順序（第一個命中的規則生效）；`--selftest` 會警告「永遠不會被
   命中」的規則（被排在前面、範圍更廣的規則遮蔽），照提示調整順序或縮小比對範圍即可。
+  **Windows 與 Linux 規則各自獨立排序**，不會互相遮蔽。Linux 規則要特別留意 program 名稱的
+  包含關係（`"sudo"` 包含 `"su"`），具體的要排在泛用的前面。
 - **停用規則不會讓對應事件從趨勢層/關聯層的偵測中消失**（只是不再有規則命中的分類與知識庫
   說明），這是刻意設計，見 docs/RULES-PLAN.md 的語意邊界說明。
 
@@ -425,6 +473,10 @@ LogForesight.exe --import-rules --apply --overwrite-builtin   # 連同「內容�
 > ——依序執行 `--import-rules`（預覽 v1→v2 差異）→ `--import-rules --apply`（補上 Defender/RDP
 > 規則）→ `--selftest`（exit code 0 即完成）。**未匯入前的行為是誠實申報的**：Defender/RDP 的
 > Information 等級事件不會被收集（沒有 watchlist），啟動時會警告並在當日申報，不會靜默漏偵測。
+>
+> **升級到 Linux 雙平台版（seed v4）的 SOP 完全相同**：`--import-rules`（預覽 v3→v4 差異）→
+> `--import-rules --apply`（補上 17 條 Linux 規則）→ `--selftest`。Linux 規則新增後不影響任何
+> Windows 主機的行為（規則面按主機的 `Os` 欄位分流，既有主機一律是 windows）。
 
 ### 主機級告警抑制（`--suppress` / `--unsuppress` / `--list-suppressions`）
 
@@ -453,7 +505,9 @@ LogForesight.exe --host-list      # 列出目前設定下實際會被查詢的�
 
 `--host-list` 會把**不會被查詢的主機逐一列出原因**（尚未確定所屬 Sentinel、IP 與其他主機衝突），
 而不是安靜地少幾台——與「沒告警 ≠ 沒問題」是同一個原則：沒查到不等於沒事，畫面上必須看得出來。
-IP 衝突時只查最早建立的那一台，行為才可預測。
+IP 衝突時只查最早建立的那一台，行為才可預測。每台主機會標出作業系統（`[Windows]`／`[Linux]`）、
+每台 Sentinel 標出兩種各幾台——OS 決定這台套哪個平台的規則面，標錯等於整台的偵測面配錯，
+在清單上看得到才好核對。
 
 ### NetIQ 主動探索匯入
 

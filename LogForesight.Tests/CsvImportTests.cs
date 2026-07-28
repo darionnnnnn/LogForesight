@@ -275,6 +275,56 @@ public class HostCsvImporterTests
     private static CsvTable Parse(string content) =>
         CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
 
+    // ── os 欄（docs/LINUX-RULES-PLAN.md §3：選填，缺值＝windows）────────────
+
+    [Theory]
+    [InlineData("linux", "linux")]
+    [InlineData("Linux", "linux")]      // CSV 由人手編輯，大小寫不該影響結果
+    [InlineData("  LINUX  ", "linux")]
+    [InlineData("Windows", "windows")]
+    public void os欄大小寫與空白不拘_儲存值一律正規化為小寫(string csvValue, string expected)
+    {
+        var table = Parse($"host_name,os\r\nSRV01,{csvValue}\r\n");
+        var plan = Importer.BuildPlan(table, "hosts.csv");
+        Assert.True(plan.CanApply);
+
+        Importer.Apply(plan, table);
+
+        Assert.Equal(expected, _hosts.FindByName("SRV01")!.Os);
+    }
+
+    [Fact]
+    public void os欄缺值時預設windows()
+    {
+        var table = Parse("host_name,role_desc\r\nSRV01,網站主機\r\n");
+        Importer.Apply(Importer.BuildPlan(table, "hosts.csv"), table);
+
+        Assert.Equal("windows", _hosts.FindByName("SRV01")!.Os);
+    }
+
+    [Fact]
+    public void os欄填不合法的值時標記錯誤()
+    {
+        var plan = Importer.BuildPlan(Parse("host_name,os\r\nSRV01,solaris\r\n"), "hosts.csv");
+
+        Assert.Equal(1, plan.ErrorCount);
+        Assert.Contains("windows 或 linux", plan.Rows[0].Error);
+    }
+
+    /// <summary>
+    /// 既有主機的 os 與 CSV 值只是大小寫不同時，不該被算成一筆變更——
+    /// 預覽畫面多出假異動會讓人以為匯入真的改了東西。
+    /// </summary>
+    [Fact]
+    public void os欄大小寫不同不算變更()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SRV01", Os = "linux" });
+
+        var plan = Importer.BuildPlan(Parse("host_name,os\r\nSRV01,Linux\r\n"), "hosts.csv");
+
+        Assert.Equal(ImportRowAction.Unchanged, plan.Rows[0].Action);
+    }
+
     /// <summary>
     /// 負責人帳號不存在時擋下——負責人打錯字會影響指派與未來的通知，
     /// 自動建立一個空殼帳號反而讓錯誤更難發現。

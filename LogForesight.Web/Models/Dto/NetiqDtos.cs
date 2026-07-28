@@ -154,6 +154,15 @@ public class NetiqImportRequest
     /// 群組一律不動。
     /// </summary>
     public List<NetiqSubnetGroupAssignment> GroupAssignments { get; set; } = new();
+
+    /// <summary>
+    /// 本次匯入的主機作業系統（docs/LINUX-RULES-PLAN.md §3）。**只套用在本次新增的主機**——
+    /// 既有主機（含復活的孤兒）的 OS 一律不動，與群組指派同一原則：匯入不是隱性改設定。
+    ///
+    /// 目前無法自 Sentinel 事件自動判別 OS（要等 probe 確認有無可判別欄位），所以由人在精靈
+    /// 上選；混合平台的網段請分兩次掃描匯入。
+    /// </summary>
+    public string Os { get; set; } = WebHost.OsWindows;
 }
 
 /// <summary>單一網段的群組指派方式</summary>

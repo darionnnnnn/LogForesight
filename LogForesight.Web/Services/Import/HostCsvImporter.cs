@@ -81,7 +81,9 @@ public class HostCsvImporter : ICsvImporter
                 continue;
             }
 
-            if (row.HasValue("os") && row.Get("os") is not ("windows" or "linux"))
+            // 大小寫不拘（CSV 由人手編輯，填 Windows 與 windows 都該通過），
+            // 但不合法的值要當場擋下——OS 決定這台主機套哪個平台的規則面，猜錯等於整台不被偵測
+            if (row.HasValue("os") && WebHost.NormalizeOs(row.Get("os")) == null)
             {
                 rowPlan.Action = ImportRowAction.Error;
                 rowPlan.Error = "os 只能填 windows 或 linux。";
@@ -242,7 +244,7 @@ public class HostCsvImporter : ICsvImporter
                 NetiqServer = row.HasValue("netiq_server") ? row.Get("netiq_server") : existing?.NetiqServer,
                 RoleDesc = row.HasValue("role_desc") ? row.Get("role_desc") : existing?.RoleDesc ?? "",
                 Source = existing?.Source ?? "local",
-                Os = row.HasValue("os") ? row.Get("os") : existing?.Os ?? "windows",
+                Os = (row.HasValue("os") ? WebHost.NormalizeOs(row.Get("os")) : null) ?? existing?.Os ?? WebHost.OsWindows,
                 Active = row.GetBool("active") ?? existing?.Active ?? true,
                 GroupIds = groupIds,
                 OwnerUserIds = ownerIds
@@ -271,7 +273,17 @@ public class HostCsvImporter : ICsvImporter
         CompareText("ip_address", "IP", existing.IpAddress);
         CompareText("netiq_server", "Sentinel", existing.NetiqServer);
         CompareText("role_desc", "角色描述", existing.RoleDesc);
-        CompareText("os", "作業系統", existing.Os);
+
+        // OS 比對正規化後才判定，否則 CSV 填「Windows」對上既有的「windows」會被算成一筆
+        // 實際不存在的變更，預覽畫面上多出一列假異動
+        if (row.HasValue("os"))
+        {
+            var afterOs = WebHost.NormalizeOs(row.Get("os"));
+            if (afterOs != null && afterOs != existing.Os)
+            {
+                changes.Add(new ImportFieldChange { Field = "作業系統", Before = existing.Os, After = afterOs });
+            }
+        }
 
         var active = row.GetBool("active");
         if (active.HasValue && active.Value != existing.Active)
