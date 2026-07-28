@@ -19,8 +19,11 @@
     <ItemGroup>
         <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
         <PackageReference Include="NLog.Web.AspNetCore" Version="6.0.4" />
-        <!-- AD 帳密驗證（LdapAuthenticationProvider）。Windows 專屬，與 net8.0-windows 一致 -->
+        <!-- AD 帳密驗證（LdapAuthenticationProvider／Auth/Ldap）。Windows 專屬，與 net8.0-windows 一致 -->
         <PackageReference Include="System.DirectoryServices.AccountManagement" Version="9.0.0" />
+        <!-- Auth/Ldap/LdapService：直接以 DirectoryEntry bind，取得比 AccountManagement 更細的
+             失敗原因（子錯誤碼）與使用者屬性（displayName／mail），docs/WEB-FEEDBACK-PLAN.md #9 -->
+        <PackageReference Include="System.DirectoryServices" Version="9.0.0" />
         <!-- 以 Windows 服務執行（docs/OPS-HARDENING-PLAN.md P1-3）。UseWindowsService() 對一般
              console/IIS 啟動無影響，只在偵測到以服務身分執行時才切換生命週期管理 -->
         <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />

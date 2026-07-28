@@ -1,4 +1,5 @@
 using LogForesight.Web.Auth;
+using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Services;
 using Xunit;
@@ -204,6 +205,89 @@ public class IdentityServiceTests
         public bool RequiresPassword => true;
         public CredentialCheckResult Verify(string account, string? password) =>
             CredentialCheckResult.Fail("測試用：一律失敗");
+    }
+
+    // ── docs/WEB-FEEDBACK-PLAN.md #8：AD 登入自動補顯示名稱與 Email ──────────────
+
+    private class FixedResultProvider : IAuthenticationProvider
+    {
+        public string Name => "Fixed";
+        public bool RequiresPassword => false;
+        public CredentialCheckResult Result { get; set; } = CredentialCheckResult.Ok;
+        public CredentialCheckResult Verify(string account, string? password) => Result;
+    }
+
+    private static LdapUserInfo AdUser(string displayName, string? email) =>
+        new("wang", displayName, email, "CN=wang,DC=corp,DC=local", IsLocked: false);
+
+    [Fact]
+    public void Login_AD補資料_顯示名稱等於帳號且Email為null時自動補上()
+    {
+        _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "DOMAIN\\wang", Email = null });
+        var provider = new FixedResultProvider { Result = new CredentialCheckResult(true, UserInfo: AdUser("王小明", "wang@corp.local")) };
+
+        var outcome = Create(provider).Login("DOMAIN\\wang", "any");
+
+        Assert.True(outcome.Success);
+        var saved = _users.FindByAccount("DOMAIN\\wang")!;
+        Assert.Equal("王小明", saved.DisplayName);
+        Assert.Equal("wang@corp.local", saved.Email);
+        Assert.Contains(_audit.Entries, e => e.Action == AuditActions.UserUpdate && e.Summary.Contains("AD 登入自動同步"));
+    }
+
+    /// <summary>DisplayName 為空（從未填過）與等於帳號（批次新增的預設值）都視同未填，一併補上</summary>
+    [Fact]
+    public void Login_AD補資料_顯示名稱為空字串時也視同未填()
+    {
+        _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "", Email = null });
+        var provider = new FixedResultProvider { Result = new CredentialCheckResult(true, UserInfo: AdUser("王小明", "wang@corp.local")) };
+
+        Create(provider).Login("DOMAIN\\wang", "any");
+
+        Assert.Equal("王小明", _users.FindByAccount("DOMAIN\\wang")!.DisplayName);
+    }
+
+    [Fact]
+    public void Login_已手動填過的顯示名稱與Email_不被AD覆寫()
+    {
+        _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "自訂顯示名稱", Email = "existing@corp.local" });
+        var provider = new FixedResultProvider { Result = new CredentialCheckResult(true, UserInfo: AdUser("AD上的名字", "ad@corp.local")) };
+
+        Create(provider).Login("DOMAIN\\wang", "any");
+
+        var saved = _users.FindByAccount("DOMAIN\\wang")!;
+        Assert.Equal("自訂顯示名稱", saved.DisplayName);
+        Assert.Equal("existing@corp.local", saved.Email);
+        Assert.DoesNotContain(_audit.Entries, e => e.Summary.Contains("AD 登入自動同步"));
+    }
+
+    /// <summary>AD 查詢失敗（Provider 驗證成功但查不到使用者屬性，UserInfo=null）不影響登入本身——補資料是加值不是門檻</summary>
+    [Fact]
+    public void Login_AD查詢失敗_UserInfo為null時仍登入成功且不動原資料()
+    {
+        _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "DOMAIN\\wang", Email = null });
+        var provider = new FixedResultProvider { Result = new CredentialCheckResult(true, UserInfo: null) };
+
+        var outcome = Create(provider).Login("DOMAIN\\wang", "any");
+
+        Assert.True(outcome.Success);
+        var saved = _users.FindByAccount("DOMAIN\\wang")!;
+        Assert.Equal("DOMAIN\\wang", saved.DisplayName);
+        Assert.Null(saved.Email);
+        Assert.DoesNotContain(_audit.Entries, e => e.Summary.Contains("AD 登入自動同步"));
+    }
+
+    [Fact]
+    public void Login_AD只提供Email沒有顯示名稱_只補Email()
+    {
+        _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "自訂顯示名稱", Email = null });
+        var provider = new FixedResultProvider { Result = new CredentialCheckResult(true, UserInfo: AdUser("", "wang@corp.local")) };
+
+        Create(provider).Login("DOMAIN\\wang", "any");
+
+        var saved = _users.FindByAccount("DOMAIN\\wang")!;
+        Assert.Equal("自訂顯示名稱", saved.DisplayName);
+        Assert.Equal("wang@corp.local", saved.Email);
     }
 }
 

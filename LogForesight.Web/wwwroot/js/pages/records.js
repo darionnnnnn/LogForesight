@@ -13,7 +13,8 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, toast, renderPagination, withBusy, renderChips } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES, severityName } from '../core/format.js';
+import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES, severityName, toLocalDateString, todayLocal } from '../core/format.js';
+import { renderAiText } from '../core/markdown-lite.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -68,12 +69,8 @@ async function initAiSummary() {
             }
             const box = document.createElement('div');
             box.className = 'alert alert-light border mb-0';
-            const label = document.createElement('span');
-            label.className = 'lf-badge lf-badge--secondary me-2';
-            label.textContent = 'AI 歸納';
-            const text = document.createElement('span');
-            text.textContent = result.text;   // AI 產出一律 textContent
-            box.append(label, text);
+            // AI 產出走 markdown-lite 唯一渲染出口（S7）：DOM 組裝、不解析 HTML
+            renderAiText(box, result.text, { badge: 'AI 歸納', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
             area.appendChild(box);
         } catch {
             // 靜默
@@ -614,8 +611,8 @@ for (const button of document.querySelectorAll('[data-range]')) {
         const from = new Date();
         from.setDate(from.getDate() - days + 1);
 
-        document.getElementById('filter-from').value = from.toISOString().slice(0, 10);
-        document.getElementById('filter-to').value = today();
+        document.getElementById('filter-from').value = toLocalDateString(from);
+        document.getElementById('filter-to').value = todayLocal();
         currentPage = 1;
         search();
     });
@@ -664,14 +661,15 @@ function quote(value) {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+// 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
 function today() {
-    return new Date().toISOString().slice(0, 10);
+    return todayLocal();
 }
 
 function defaultFrom() {
     const date = new Date();
     date.setDate(date.getDate() - 6);
-    return date.toISOString().slice(0, 10);
+    return toLocalDateString(date);
 }
 
 init();

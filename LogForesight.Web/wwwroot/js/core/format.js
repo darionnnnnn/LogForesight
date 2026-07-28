@@ -49,6 +49,21 @@ export function severityName(severity) {
     return SEVERITY_NAMES[severity] ?? severity;
 }
 
+/**
+ * 嚴重度合法值，由重到輕（docs/SHARED-STANDARDS-PLAN.md S11）。取代 record-detail.js／
+ * settings.js 各自維護的同值陣列——兩份copy遲早有一份漏改（新增嚴重度時尤其）。
+ */
+export const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
+
+/**
+ * 嚴重度計數徽章（顏色＋文字，如「高 3」）：dashboard.js 的分類卡曾自己拼一份，
+ * 把 Low 的底色寫成 secondary（其餘頁面都是 neutral）——同一個「低」在不同頁面
+ * 因此曾經是兩種顏色。改走這裡，SEVERITY_VARIANT 單一標準不會再走樣。
+ */
+export function severityCountBadge(severity, count) {
+    return statusBadge(`${severityName(severity)} ${count}`, SEVERITY_VARIANT[severity] ?? 'neutral');
+}
+
 /** 處理狀態 → { 顯示文字, 淡色徽章 variant } */
 const HANDLING_STATUS = {
     open: { text: '未處理', variant: 'danger' },
@@ -112,6 +127,21 @@ export function formatDateTime(value) {
     const pad = n => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
            `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * 本地日期字串 yyyy-MM-dd（docs/SHARED-STANDARDS-PLAN.md S12）。
+ * **不可用 `date.toISOString().slice(0, 10)`**——那取的是 UTC 日期，在台灣（UTC+8）
+ * 凌晨 0~8 點呼叫會少算一天；reports.js 曾經這樣寫，是這個共用函式要修掉的原始 bug。
+ */
+export function toLocalDateString(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** 今天的本地日期字串，等同 toLocalDateString(new Date()) */
+export function todayLocal() {
+    return toLocalDateString(new Date());
 }
 
 /** 千分位數字 */

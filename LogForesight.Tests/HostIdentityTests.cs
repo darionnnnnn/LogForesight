@@ -178,7 +178,7 @@ public class RecordRepositoryAliasTests : IDisposable
 
     /// <summary>只有存活主機在授權範圍內——墓碑本身不在任何群組裡</summary>
     private RecordRepository CreateRepository() =>
-        new(_store, _hosts, new FixedVisibility(_hosts, _newHost.HostId));
+        new(_store, _hosts, new FixedVisibility(_hosts, _newHost.HostId), new FakeSystemSettingsService());
 
     [Fact]
     public void 併入後_可見範圍涵蓋墓碑的歷史紀錄()

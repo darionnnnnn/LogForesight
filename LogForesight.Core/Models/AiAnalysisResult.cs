@@ -171,7 +171,7 @@ public static class AiJson
 /// 每日總覽分析（第一階段呼叫）的 JSON 契約。
 /// 2026-07-20 AI 角色轉換：AI 不再是分析引擎，是把程式已算好的結論翻譯成白話的角色
 /// （見 docs/AI-ROLE-PLAN.md）。risk_level 仍保留——AI 的判斷只能把風險等級往上拉，
-/// 不能往下壓（LogAnalysisService.MoreSevere），是零成本的安全網，機制不變。
+/// 不能往下壓（RiskLevels.MoreSevere），是零成本的安全網，機制不變。
 /// 結構化的目的：後續要接 Email / Telegram / webhook 等自動化動作時，
 /// 直接取欄位使用，不需要再從自然語言文字裡撈資訊。
 /// </summary>

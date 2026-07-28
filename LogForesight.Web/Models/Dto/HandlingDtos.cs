@@ -135,6 +135,14 @@ public class HandlingTodoDto
     public int OpenCount { get; set; }
     public int InProgressCount { get; set; }
     public int OverdueCount { get; set; }
+
+    /// <summary>真正結案（resolved）的風險日數——docs/WEB-FEEDBACK-PLAN.md #6 報表「處理進度」用；
+    /// 不含 wont_fix／false_positive／known_noise（那些是「已有結論」，不是「處理完成」，
+    /// 與 record-detail.js 問題層級「已處理」計數同一套哲學）</summary>
+    public int ResolvedCount { get; set; }
+
+    /// <summary>母體：期間內高＋中風險日總數（分母）——docs/WEB-FEEDBACK-PLAN.md #6 報表「處理進度」用</summary>
+    public int TotalCount { get; set; }
 }
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────

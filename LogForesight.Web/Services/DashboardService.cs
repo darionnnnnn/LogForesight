@@ -19,7 +19,6 @@ public class DashboardService : IDashboardService
     private readonly IHandlingService _handling;
     private readonly IPermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
-    private readonly ISystemSettingsService _settings;
 
     public DashboardService(
         IRecordRepository repository,
@@ -28,8 +27,7 @@ public class DashboardService : IDashboardService
         ICurrentUser currentUser,
         IHandlingService handling,
         IPermissionChangeService permissionChanges,
-        IHostGroupStore hostGroups,
-        ISystemSettingsService settings)
+        IHostGroupStore hostGroups)
     {
         _repository = repository;
         _visibility = visibility;
@@ -38,7 +36,6 @@ public class DashboardService : IDashboardService
         _handling = handling;
         _permissionChanges = permissionChanges;
         _hostGroups = hostGroups;
-        _settings = settings;
     }
 
     public DashboardDto GetSummary(int days)
@@ -55,18 +52,20 @@ public class DashboardService : IDashboardService
             TotalHosts = visibleHosts.Count
         };
 
-        BuildCategoryCards(dto, records, _settings.GetVisibleSeverities());
-        BuildHostRanking(dto, records, visibleHosts);
+        dto.Categories = RecordStatsBuilder.BuildCategoryCards(records);
+        dto.HostRanking = RecordStatsBuilder
+            .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
+            .Take(10)
+            .ToList();
         BuildSilentHosts(dto, visibleHosts);
         BuildGroupRisk(dto, records, visibleHosts);
 
-        dto.HighRiskDays = records.Count(r => r.RiskLevel == "高");
-        dto.MediumRiskDays = records.Count(r => r.RiskLevel == "中");
-        dto.CoverageGapDays = records.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
+        dto.HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High);
+        dto.MediumRiskDays = records.Count(r => r.RiskLevel == RiskLevels.Medium);
+        dto.CoverageGapDays = records.Count(r => r.HasCoverageGap);
 
-        // 主管看到「有哪些風險」後的下一句話幾乎必然是「那有人在處理嗎？」
-        // 待辦母體 = 本期的高＋中風險日：低風險日不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）
-        dto.Todo = _handling.GetTodo(records.Where(r => r.RiskLevel is "高" or "中").ToList());
+        // 待辦母體（高＋中風險日）由 GetTodo 內部強制套用，呼叫端傳整批紀錄即可
+        dto.Todo = _handling.GetTodo(records);
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
 
         // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
@@ -77,64 +76,6 @@ public class DashboardService : IDashboardService
         }
 
         return dto;
-    }
-
-    private static void BuildCategoryCards(DashboardDto dto, List<DailyAnalysisRecord> records, HashSet<string>? visibleSeverities)
-    {
-        // GlobalFilter 模式：未勾選層級的問題直接從聚合來源排除，卡片數字只計已勾選層級
-        List<LogIssueSignature> Visible(DailyAnalysisRecord r) =>
-            visibleSeverities == null ? r.TopIssues : r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity.ToString())).ToList();
-
-        // 逐日彙總後合併：CategoryAggregator 是兩個儲存後端共用的同一份規則（§10.3），
-        // 儀表板與明細頁因此不可能算出不同的數字
-        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(Visible(r)));
-        var merged = CategoryAggregator.Merge(perDay);
-
-        var hostsPerCategory = records
-            .SelectMany(r => Visible(r).Select(i => new { i.Category, r.Host }))
-            .GroupBy(x => x.Category)
-            .ToDictionary(
-                g => g.Key,
-                g => g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-
-        dto.Categories = merged.Select(c => new DashboardCategoryDto
-        {
-            Category = c.Category.ToString(),
-            IssueCount = c.IssueCount,
-            TotalEvents = c.TotalEvents,
-            MaxSeverity = c.MaxSeverity.ToString(),
-            CriticalCount = c.CriticalCount,
-            HighCount = c.HighCount,
-            MediumCount = c.MediumCount,
-            LowCount = c.LowCount,
-            AffectedHosts = hostsPerCategory.TryGetValue(c.Category, out var count) ? count : 0
-        }).ToList();
-    }
-
-    private static void BuildHostRanking(
-        DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts)
-    {
-        var hostsByName = visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
-        dto.HostRanking = records
-            .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new DashboardHostDto
-            {
-                HostId = hostsByName.TryGetValue(group.Key, out var host) ? host.HostId : 0,
-                HostName = group.Key,
-                HighRiskDays = group.Count(r => r.RiskLevel == "高"),
-                MediumRiskDays = group.Count(r => r.RiskLevel == "中"),
-                CorrelationDays = group.Count(r => r.CorrelationAlerts.Count > 0),
-                LatestRiskLevel = group.OrderByDescending(r => r.Date).First().RiskLevel,
-                LatestHeadline = group.OrderByDescending(r => r.Date).First().Headline
-            })
-            .Where(h => h.HighRiskDays > 0 || h.MediumRiskDays > 0)
-            // 緊急程度：高風險日數 → 有關聯訊號的日數 → 中風險日數（§DB-PLAN E 節）
-            .OrderByDescending(h => h.HighRiskDays)
-            .ThenByDescending(h => h.CorrelationDays)
-            .ThenByDescending(h => h.MediumRiskDays)
-            .Take(10)
-            .ToList();
     }
 
     /// <summary>
@@ -180,16 +121,16 @@ public class DashboardService : IDashboardService
                     .SelectMany(h => recordsByHost.TryGetValue(h.HostName, out var recs) ? recs : new List<DailyAnalysisRecord>())
                     .ToList();
 
-                // 待辦母體與儀表板整體待辦同一套規則：只算高／中風險日，低風險日不進待辦
-                var todo = _handling.GetTodo(memberRecords.Where(r => r.RiskLevel is "高" or "中").ToList());
+                // 待辦母體（高／中風險日）由 GetTodo 內部強制套用
+                var todo = _handling.GetTodo(memberRecords);
 
                 return new DashboardGroupRiskDto
                 {
                     GroupId = group.GroupId,
                     GroupName = group.GroupName,
                     HostCount = memberHosts.Count,
-                    HighRiskDays = memberRecords.Count(r => r.RiskLevel == "高"),
-                    MediumRiskDays = memberRecords.Count(r => r.RiskLevel == "中"),
+                    HighRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.High),
+                    MediumRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.Medium),
                     UnhandledCount = todo.OpenCount + todo.InProgressCount
                 };
             })

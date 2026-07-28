@@ -3,7 +3,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, renderChips } from '../core/ui.js';
+import { renderTable, renderLoading, toast, withBusy, renderChips, confirmAction } from '../core/ui.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -15,6 +15,10 @@ const modal = new bootstrap.Modal(modalElement);
 let users = [];
 let groups = [];
 let editingUser = null;
+
+// 新增筆數（docs/WEB-FEEDBACK-PLAN.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
+// 編輯既有使用者一律走單筆（帳號本來就不可改，多筆模式沒有意義）
+let createMode = 'single';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/角色單選，群組多選
 let statusFilter = '';
@@ -149,12 +153,37 @@ function openModal(user) {
     document.getElementById('user-modal-title').textContent = user ? `編輯 ${user.account}` : '新增使用者';
     document.getElementById('user-account').value = user?.account ?? '';
     document.getElementById('user-account').disabled = !!user;   // 帳號是自然鍵，建立後不可改
+    document.getElementById('user-accounts-batch').value = '';
     document.getElementById('user-display-name').value = user?.displayName ?? '';
     document.getElementById('user-email').value = user?.email ?? '';
     document.getElementById('user-active').checked = user?.active ?? true;
 
+    // 多筆模式只在「新增使用者」提供——編輯既有使用者的帳號本來就不可改，多筆沒有意義
+    const modeToggle = document.getElementById('user-mode-toggle');
+    modeToggle.classList.toggle('d-none', !!user);
+    setCreateMode('single');
+
     renderGroupCheckboxes(user);
     modal.show();
+}
+
+/** 切換單筆／多筆：多筆模式隱藏顯示名稱與 Email——後端固定顯示名稱＝帳號、Email 留空 */
+function setCreateMode(mode) {
+    createMode = mode;
+
+    for (const button of document.querySelectorAll('#user-mode-toggle button')) {
+        button.classList.toggle('active', button.dataset.mode === mode);
+    }
+
+    const isBatch = mode === 'batch';
+    document.getElementById('user-account-single-group').classList.toggle('d-none', isBatch);
+    document.getElementById('user-account-batch-group').classList.toggle('d-none', !isBatch);
+    document.getElementById('user-display-name-group').classList.toggle('d-none', isBatch);
+    document.getElementById('user-email-group').classList.toggle('d-none', isBatch);
+}
+
+for (const button of document.querySelectorAll('#user-mode-toggle button')) {
+    button.addEventListener('click', () => setCreateMode(button.dataset.mode));
 }
 
 function renderGroupCheckboxes(user) {
@@ -192,8 +221,26 @@ function renderGroupCheckboxes(user) {
     }
 }
 
+/** 多筆模式的帳號解析：一行一個，也接受同一行用逗號分隔多個——與後端 NormalizeBatchAccounts 對齊的寬鬆解析 */
+function parseBatchAccounts(text) {
+    return text
+        .split(/[\n,]/)
+        .map(a => a.trim())
+        .filter(a => a.length > 0);
+}
+
 form.addEventListener('submit', async event => {
     event.preventDefault();
+
+    const selectedGroupIds = Array.from(document.querySelectorAll('#user-groups input:checked'))
+        .map(input => Number(input.value));
+    const active = document.getElementById('user-active').checked;
+    const saveButton = document.getElementById('user-save');
+
+    if (createMode === 'batch' && !editingUser) {
+        await submitBatch(selectedGroupIds, active, saveButton);
+        return;
+    }
 
     const account = document.getElementById('user-account').value.trim();
     if (!account) {
@@ -201,10 +248,6 @@ form.addEventListener('submit', async event => {
         return;
     }
 
-    const selectedGroupIds = Array.from(document.querySelectorAll('#user-groups input:checked'))
-        .map(input => Number(input.value));
-
-    const saveButton = document.getElementById('user-save');
     const restore = withBusy(saveButton, '儲存中');
 
     try {
@@ -212,7 +255,7 @@ form.addEventListener('submit', async event => {
             account,
             displayName: document.getElementById('user-display-name').value.trim(),
             email: document.getElementById('user-email').value.trim() || null,
-            active: document.getElementById('user-active').checked
+            active
         });
 
         // 群組是獨立端點：儲存基本資料不會動到權限，權限異動一律留下自己的稽核紀錄
@@ -227,6 +270,56 @@ form.addEventListener('submit', async event => {
         restore();
     }
 });
+
+/**
+ * 多筆新增（docs/WEB-FEEDBACK-PLAN.md #7）：送出前先比對頁面已載入的使用者清單，
+ * 發現已存在帳號時跳確認，讓使用者決定「跳過已存在」或「以這次勾選的群組覆蓋其權限」；
+ * 前端這一步只是 UX 提示，後端仍以自己當下的查詢結果為準（避免兩人同時操作的競態）。
+ */
+async function submitBatch(groupIds, active, saveButton) {
+    const accounts = parseBatchAccounts(document.getElementById('user-accounts-batch').value);
+    if (accounts.length === 0) {
+        toast('請輸入至少一個帳號', 'warning');
+        return;
+    }
+
+    const existingAccounts = new Set(users.map(u => u.account.toLowerCase()));
+    const conflicts = [...new Set(accounts.filter(a => existingAccounts.has(a.toLowerCase())))];
+
+    let overwriteExisting = false;
+    if (conflicts.length > 0) {
+        overwriteExisting = await confirmAction({
+            title: '部分帳號已存在',
+            message: `以下帳號已存在：${conflicts.join('、')}。點「覆蓋權限」會用這次勾選的群組取代這些帳號原有的群組；` +
+                '點「取消」則保留原樣，只新增其餘尚未存在的帳號。',
+            confirmText: '覆蓋權限',
+            confirmVariant: 'primary'
+        });
+    }
+
+    const restore = withBusy(saveButton, '儲存中');
+    try {
+        const result = await api.post('/api/admin/users/batch', {
+            accounts,
+            groupIds,
+            active,
+            overwriteExisting
+        });
+
+        const parts = [`新增 ${result.created.length} 筆`];
+        if (result.overwritten.length > 0) parts.push(`覆蓋 ${result.overwritten.length} 筆（${result.overwritten.join('、')}）`);
+        if (result.skipped.length > 0) parts.push(`跳過 ${result.skipped.length} 筆（${result.skipped.join('、')}）`);
+        if (result.invalidCount > 0) parts.push(`格式不合 ${result.invalidCount} 筆`);
+
+        toast(parts.join('、'), 'success');
+        modal.hide();
+        await load();
+    } catch {
+        // 錯誤訊息已由 api.js 以 toast 顯示
+    } finally {
+        restore();
+    }
+}
 
 document.getElementById('btn-new-user').addEventListener('click', () => openModal(null));
 searchInput.addEventListener('input', render);

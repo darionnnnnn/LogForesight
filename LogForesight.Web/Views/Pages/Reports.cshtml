@@ -2,7 +2,8 @@
     ViewData["Title"] = "報表";
 }
 
-@* 版面依 docs/WEB-SPEC.md §9.6：期間列 → KPI 卡 → 2×2 圖表網格 → 明細 → 簽章查詢 *@
+@* 版面依 docs/WEB-SPEC.md §9.6：期間列 → KPI 卡 → 圖表區 → 明細 → 簽章查詢 *@
+@* 2026-07-27 改版（docs/WEB-FEEDBACK-PLAN.md #6）：占比圖表縮小為一列三顆＋自訂圖表 modal *@
 
 <div class="lf-card mb-3 lf-no-print">
     <div class="lf-card__body">
@@ -25,7 +26,8 @@
                     <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
                 </div>
             </div>
-            <div class="col-auto ms-auto">
+            <div class="col-auto ms-auto d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-customize-charts" data-bs-toggle="modal" data-bs-target="#chart-picker-modal">自訂圖表</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
             </div>
         </form>
@@ -37,7 +39,7 @@
 <div class="row g-3" id="report-kpi"></div>
 
 <div class="row g-3 mt-1">
-    <div class="col-lg-6">
+    <div class="col-lg-6" id="trend-section">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">告警數量趨勢</h2>
@@ -49,7 +51,7 @@
         </section>
     </div>
 
-    <div class="col-lg-6">
+    <div class="col-lg-6" id="category-section">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">風險類型分布</h2>
@@ -60,8 +62,10 @@
             </div>
         </section>
     </div>
+</div>
 
-    <div class="col-lg-6">
+<div class="row g-3 mt-1">
+    <div class="col-12" id="host-section">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <div class="d-flex align-items-center gap-2">
@@ -78,15 +82,42 @@
             </div>
         </section>
     </div>
+</div>
 
-    <div class="col-lg-6">
+@* 三顆占比小圖：原本「風險層級占比」獨占一張大卡，改與新增的兩顆指標並列（#6） *@
+<div class="row g-3 mt-1">
+    <div class="col-lg-4" id="risk-section">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">風險層級占比</h2>
                 <div id="risk-toolbar"></div>
             </div>
             <div class="lf-card__body">
-                <div class="lf-chart" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+                <div class="lf-chart lf-chart--sm" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-4" id="affected-hosts-section">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">受影響主機占比</h2>
+                <div id="affected-hosts-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart lf-chart--sm" id="affected-hosts-wrapper"><canvas id="affected-hosts-chart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <div class="col-lg-4" id="handling-progress-section">
+        <section class="lf-card h-100">
+            <div class="lf-card__header">
+                <h2 class="lf-card__title">處理進度</h2>
+                <div id="handling-progress-toolbar"></div>
+            </div>
+            <div class="lf-card__body">
+                <div class="lf-chart lf-chart--sm" id="handling-progress-wrapper"><canvas id="handling-progress-chart"></canvas></div>
             </div>
         </section>
     </div>
@@ -113,6 +144,22 @@
         <div id="signature-result"></div>
     </div>
 </section>
+
+@* 自訂圖表（docs/WEB-FEEDBACK-PLAN.md #6）：勾選狀態存 localStorage，預設全開 *@
+<div class="modal fade lf-no-print" id="chart-picker-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">自訂圖表</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body d-flex flex-column gap-2" id="chart-picker-body"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 @section Scripts {
     <script src="~/lib/chartjs/chart.umd.min.js"></script>

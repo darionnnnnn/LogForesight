@@ -9,6 +9,7 @@
 import { api } from '../core/api.js';
 import { toast, withBusy } from '../core/ui.js';
 import { severityName } from '../core/format.js';
+import { renderAiText } from '../core/markdown-lite.js';
 
 const MAX_TURNS = 10;
 
@@ -16,6 +17,7 @@ let hostId = null;
 let date = null;
 let messages = [];   // { role: 'user'|'assistant', content }
 let currentIssueKey = '';
+let pending = false;   // 送出後、收到回覆前——顯示「思考中」泡泡
 
 export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     hostId = hostIdParam;
@@ -34,6 +36,25 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     renderIssueOptions(topIssues);
     resetConversation();
     bindEvents();
+}
+
+/**
+ * 嚴重度篩選鈕切換時呼叫（record-detail.js renderSeverityFilter）：下拉選單只列出
+ * 目前篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）——不重新綁定事件，
+ * 只重建選項；目前選中的問題被篩掉時才重置選擇與對話，否則保留使用者正在進行的對話。
+ */
+export function updateIssueOptions(topIssues) {
+    renderIssueOptions(topIssues);
+
+    const select = document.getElementById('chat-issue-select');
+    const stillVisible = currentIssueKey && topIssues.some(i => i.issueKey === currentIssueKey);
+
+    if (stillVisible) {
+        select.value = currentIssueKey;
+    } else {
+        currentIssueKey = '';
+        resetConversation();
+    }
 }
 
 function renderIssueOptions(topIssues) {
@@ -77,6 +98,7 @@ function bindEvents() {
 
 function resetConversation() {
     messages = [];
+    pending = false;
     renderMessages();
     updateTurnCount();
 
@@ -109,11 +131,12 @@ async function onSubmit(event) {
     }
 
     messages.push({ role: 'user', content });
+    pending = true;
     renderMessages();
     updateTurnCount();
     input.value = '';
 
-    const restore = withBusy(send, '');
+    const restore = withBusy(send, '送出中');
     input.disabled = true;
     try {
         const result = await api.post('/api/ai/chat', { hostId, date, issueKey: currentIssueKey, messages }, { silent: true });
@@ -125,6 +148,7 @@ async function onSubmit(event) {
     } catch {
         messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
     } finally {
+        pending = false;
         restore();
         input.disabled = false;
         input.focus();
@@ -138,30 +162,59 @@ function renderMessages() {
     container.replaceChildren();
 
     for (const message of messages) {
-        const row = document.createElement('div');
-        row.className = `d-flex mb-2 ${message.role === 'user' ? 'justify-content-end' : 'justify-content-start'}`;
+        container.appendChild(renderBubble(message));
+    }
 
-        const bubble = document.createElement('div');
-        bubble.className = message.role === 'user'
-            ? 'p-2 rounded bg-primary text-white'
-            : 'lf-ai-block';
-        bubble.style.maxWidth = '85%';
+    if (pending) {
+        container.appendChild(renderThinkingBubble());
+    }
 
-        if (message.role === 'assistant' && !message.failed) {
-            const badge = document.createElement('div');
-            badge.className = 'lf-badge lf-badge--secondary mb-1';
-            badge.textContent = 'AI 回覆';
-            bubble.appendChild(badge);
-        }
+    container.scrollTop = container.scrollHeight;
+}
 
+function renderBubble(message) {
+    const row = document.createElement('div');
+    row.className = `d-flex mb-2 ${message.role === 'user' ? 'justify-content-end' : 'justify-content-start'}`;
+
+    const bubble = document.createElement('div');
+    bubble.style.maxWidth = '85%';
+
+    if (message.role === 'user') {
+        // 使用者自己輸入的文字，原樣呈現即可，不必解析 Markdown
+        bubble.className = 'p-2 rounded bg-primary text-white';
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.textContent = message.content;
+    } else if (message.failed) {
+        bubble.className = 'lf-ai-block';
         const text = document.createElement('div');
         text.style.whiteSpace = 'pre-wrap';
         text.textContent = message.content;
         bubble.appendChild(text);
-
-        row.appendChild(bubble);
-        container.appendChild(row);
+    } else {
+        // AI 回覆：安全子集 Markdown 渲染（**粗體**／清單等），取代原本星號原樣顯示
+        bubble.className = 'lf-ai-block';
+        renderAiText(bubble, message.content, { badge: 'AI 回覆', badgeClassName: 'lf-badge lf-badge--secondary mb-1' });
     }
 
-    container.scrollTop = container.scrollHeight;
+    row.appendChild(bubble);
+    return row;
+}
+
+function renderThinkingBubble() {
+    const row = document.createElement('div');
+    row.className = 'd-flex mb-2 justify-content-start';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'lf-ai-block';
+    bubble.style.maxWidth = '85%';
+
+    const typing = document.createElement('div');
+    typing.className = 'lf-typing';
+    for (let i = 0; i < 3; i++) {
+        typing.appendChild(document.createElement('span'));
+    }
+    bubble.appendChild(typing);
+
+    row.appendChild(bubble);
+    return row;
 }

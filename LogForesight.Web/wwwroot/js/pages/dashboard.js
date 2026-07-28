@@ -8,8 +8,9 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, severityName } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
+import { renderAiInline } from '../core/markdown-lite.js';
 
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
 
@@ -73,10 +74,9 @@ async function loadAiFocus() {
     for (const item of focus.items) {
         const li = document.createElement('li');
         li.className = 'mb-1';
-        // AI 文字一律 textContent（AI 產出不可信任為 HTML）
-        const text = document.createElement('span');
-        text.textContent = item.text;
-        li.appendChild(text);
+        // AI 文字走 markdown-lite 行內渲染（S7 唯一出口）：DOM 組裝、不解析 HTML，
+        // 「AI 產出不可信任為 HTML」的防線不變，只是 **粗體** 這類語法不再原樣顯示星號
+        renderAiInline(li, item.text);
         if (item.link) {
             const link = document.createElement('a');
             link.href = item.link;   // 後端已過白名單驗證
@@ -116,12 +116,15 @@ function renderKpi(data, user) {
             label: '高風險日',
             value: data.highRiskDays,
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
+            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/WEB-FEEDBACK-PLAN.md #5）
+            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('高')}&from=${data.from}&to=${data.to}`
         },
         {
             label: '中風險日',
             value: data.mediumRiskDays,
             variant: data.mediumRiskDays > 0 ? 'warning' : 'secondary',
+            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('中')}&from=${data.from}&to=${data.to}`
         },
         {
@@ -246,21 +249,25 @@ function renderCategories(data) {
     container.replaceChildren(grid);
 }
 
-/** 嚴重度分解：顏色＋文字，不做只靠顏色區分的 UI */
+/**
+ * 嚴重度分解：顏色＋文字，不做只靠顏色區分的 UI。
+ * 徽章顏色改走 format.js 的 severityCountBadge（單一標準）——這裡原本自己拼一份，
+ * 把 Low 的底色寫成 secondary，與其餘頁面（format.js 的 SEVERITY_VARIANT＝neutral）不同色，
+ * 是 docs/SHARED-STANDARDS-PLAN.md S11 記錄的實際分歧案例。
+ */
 function severityBreakdown(category) {
     const wrap = document.createElement('span');
-    const parts = [
-        { count: category.criticalCount, severity: 'Critical', variant: 'danger' },
-        { count: category.highCount, severity: 'High', variant: 'warning' },
-        { count: category.mediumCount, severity: 'Medium', variant: 'info' },
-        { count: category.lowCount, severity: 'Low', variant: 'secondary' }
-    ];
+    const counts = {
+        Critical: category.criticalCount,
+        High: category.highCount,
+        Medium: category.mediumCount,
+        Low: category.lowCount
+    };
 
-    for (const part of parts) {
-        if (part.count === 0) continue;
-        const badge = document.createElement('span');
-        badge.className = `lf-badge lf-badge--${part.variant} me-1`;
-        badge.textContent = `${severityName(part.severity)} ${part.count}`;
+    for (const severity of SEVERITY_ORDER) {
+        if (counts[severity] === 0) continue;
+        const badge = severityCountBadge(severity, counts[severity]);
+        badge.classList.add('me-1');
         wrap.appendChild(badge);
     }
     return wrap;

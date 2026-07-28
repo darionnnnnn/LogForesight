@@ -1,4 +1,6 @@
+using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
+using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -15,10 +17,18 @@ public interface ISystemSettingsService
     SystemSettingsDto Update(UpdateSystemSettingsRequest request);
 
     /// <summary>
-    /// 模式為 GlobalFilter 時回傳應顯示的嚴重度集合（查詢層據此過濾問題聚合）；
-    /// 其他模式回傳 null（表示不過濾，維持顯示層各自決定）。
+    /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合（RecordRepository 據此過濾問題聚合，
+    /// 這是全站唯一的過濾點，見 docs/SHARED-STANDARDS-PLAN.md S1）；
+    /// DefaultHidden 回傳 null（表示不過濾，維持顯示層各自決定）。
     /// </summary>
     HashSet<string>? GetVisibleSeverities();
+
+    /// <summary>
+    /// AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用管理者當場輸入的帳密，對表單目前填的
+    /// 伺服器清單試 bind——未儲存的值也能測。密碼不落盤、不進稽核 detail，稽核只記執行過測試
+    /// 與對象伺服器。這裡是管理者對自己測試，失敗原因可以顯示細節（與一般登入的規則不同）。
+    /// </summary>
+    TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request);
 }
 
 public class SystemSettingsService : ISystemSettingsService
@@ -26,8 +36,19 @@ public class SystemSettingsService : ISystemSettingsService
     /// <summary>合法嚴重度名稱，順序即畫面勾選順序（由重到輕）</summary>
     public static readonly string[] ValidSeverities = { "Critical", "High", "Medium", "Low" };
 
-    /// <summary>合法層級顯示模式（見 SystemSettings.SeverityDisplayMode）</summary>
-    public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "Locked", "GlobalFilter" };
+    /// <summary>
+    /// 合法層級顯示模式（見 SystemSettings.SeverityDisplayMode）。
+    /// docs/WEB-FEEDBACK-PLAN.md #5：原本三個模式（DefaultHidden／Locked／GlobalFilter）
+    /// 簡化為兩個——Locked 與 GlobalFilter 的差異只在於「詳情頁是否顯示已隱藏層級的按鈕」，
+    /// 而過濾機制已收斂到 RecordRepository 單一咽喉點（S1），沒有理由再分兩種嚴格程度不同的隱藏。
+    /// </summary>
+    public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "SiteHidden" };
+
+    /// <summary>舊值遷移：既存 blob 裡的 Locked／GlobalFilter 一律視同新的 SiteHidden——
+    /// 兩者語意都被新模式涵蓋（全站查詢層排除）且更嚴格一致，不需要区分。
+    /// 只在讀取／過濾判斷時正規化，不改寫 blob 本身，下次使用者存檔會自然寫入新值。</summary>
+    private static string NormalizeDisplayMode(string raw) =>
+        raw is "Locked" or "GlobalFilter" ? "SiteHidden" : raw;
 
     private readonly ISystemSettingsStore _store;
     private readonly ICurrentUser _currentUser;
@@ -45,7 +66,7 @@ public class SystemSettingsService : ISystemSettingsService
     public HashSet<string>? GetVisibleSeverities()
     {
         var settings = _store.Get();
-        return settings.SeverityDisplayMode == "GlobalFilter"
+        return NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
             ? settings.UnhandledSeverities.ToHashSet()
             : null;
     }
@@ -62,6 +83,10 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
 
+        var adServers = NormalizeAdServers(request.AdServers);
+        if (request.AdAuthEnabled && adServers.Count == 0)
+            throw DomainException.Validation("啟用 AD 驗證時，請至少輸入一台 AD 伺服器。");
+
         var before = _store.Get();
 
         var saved = _store.Update(s =>
@@ -77,6 +102,12 @@ public class SystemSettingsService : ISystemSettingsService
             s.RetentionDays = request.RetentionDays;
             s.RunLogRetentionDays = request.RunLogRetentionDays;
             s.AuditRetentionDays = request.AuditRetentionDays;
+            s.AdAuthEnabled = request.AdAuthEnabled;
+            s.AdServers = adServers;
+            s.AdSearchBase = request.AdSearchBase?.Trim() ?? "";
+            s.AdSearchFilter = string.IsNullOrWhiteSpace(request.AdSearchFilter)
+                ? "(sAMAccountName={0})"
+                : request.AdSearchFilter.Trim();
             s.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -85,16 +116,91 @@ public class SystemSettingsService : ISystemSettingsService
             summary: "更新系統設定",
             targetKind: "system_settings",
             targetId: "system_settings",
-            // API 金鑰是否變動只留布林，不留明碼/密文，比照 Sentinel 密碼的稽核原則
+            // API 金鑰是否變動只留布林，不留明碼/密文，比照 Sentinel 密碼的稽核原則；
+            // AD 設定不含任何機密（bind 用登入者自己的帳密），伺服器清單可以整份留稽核
             detail: new
             {
-                Before = new { before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl, before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays },
-                After = new { saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl, saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays },
+                Before = new
+                {
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl,
+                    before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
+                    before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter
+                },
+                After = new
+                {
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl,
+                    saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
+                    saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter
+                },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey)
             });
 
         return ToDto(saved);
     }
+
+    /// <summary>trim、去除空白行、去重——與 UserAdminService.NormalizeBatchAccounts 同樣的寬鬆解析慣例</summary>
+    private static List<string> NormalizeAdServers(List<string>? servers) =>
+        (servers ?? new List<string>())
+            .Select(s => s?.Trim() ?? "")
+            .Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    [SupportedOSPlatform("windows")]
+    public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request)
+    {
+        var servers = NormalizeAdServers(request.Servers);
+        if (servers.Count == 0)
+            throw DomainException.Validation("請至少輸入一台 AD 伺服器。");
+
+        // 稽核只記「執行過測試」與對象伺服器，密碼不落盤、不進稽核 detail
+        _audit.Record(
+            action: AuditActions.SettingsUpdate,
+            summary: $"執行 AD 測試連線（帳號 {request.Account}）",
+            targetKind: "system_settings",
+            targetId: "ad_test",
+            detail: new { Servers = servers, request.SearchBase, request.SearchFilter });
+
+        try
+        {
+            var ldap = new LdapService(new LdapOptions
+            {
+                Servers = servers.ToArray(),
+                SearchBase = string.IsNullOrWhiteSpace(request.SearchBase) ? null : request.SearchBase,
+                SearchFilter = string.IsNullOrWhiteSpace(request.SearchFilter) ? "(sAMAccountName={0})" : request.SearchFilter
+            });
+
+            var status = ldap.Authenticate(request.Account, request.Password);
+            return new TestAdConnectionResultDto
+            {
+                Success = status == LdapAuthStatus.Success,
+                Message = DescribeAdStatus(status)
+            };
+        }
+        catch (Exception ex)
+        {
+            return new TestAdConnectionResultDto { Success = false, Message = $"測試連線失敗：{ex.Message}" };
+        }
+    }
+
+    /// <summary>
+    /// 這裡是管理者對自己測試，細節可以顯示（與一般登入一律「帳號或密碼錯誤」不同，
+    /// 見 LdapCredentialVerifier 與定案 2026-07-27）。
+    /// </summary>
+    private static string DescribeAdStatus(LdapAuthStatus status) => status switch
+    {
+        LdapAuthStatus.Success => "驗證成功。",
+        LdapAuthStatus.InvalidCredentials => "帳號或密碼錯誤。",
+        LdapAuthStatus.UserNotFound => "找不到此帳號。",
+        LdapAuthStatus.AccountDisabled => "帳號已停用。",
+        LdapAuthStatus.AccountLocked => "帳號已被鎖定。",
+        LdapAuthStatus.AccountExpired => "帳號已到期。",
+        LdapAuthStatus.PasswordExpired => "密碼已過期。",
+        LdapAuthStatus.MustChangePassword => "需於下次登入時變更密碼。",
+        LdapAuthStatus.LogonNotAllowed => "不允許於此時間或此工作站登入。",
+        LdapAuthStatus.ServerUnavailable => "無法連線至任何 AD 伺服器，請確認伺服器位址是否正確。",
+        _ => "驗證失敗（未分類的錯誤）。"
+    };
 
     private static List<string> NormalizeSeverities(List<string>? values) =>
         (values ?? new List<string>())
@@ -107,13 +213,17 @@ public class SystemSettingsService : ISystemSettingsService
     private static SystemSettingsDto ToDto(SystemSettings s) => new()
     {
         UnhandledSeverities = s.UnhandledSeverities,
-        SeverityDisplayMode = s.SeverityDisplayMode,
+        SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
         InitialHistoryDays = s.InitialHistoryDays,
         RetentionDays = s.RetentionDays,
         RunLogRetentionDays = s.RunLogRetentionDays,
         AuditRetentionDays = s.AuditRetentionDays,
+        AdAuthEnabled = s.AdAuthEnabled,
+        AdServers = s.AdServers,
+        AdSearchBase = s.AdSearchBase,
+        AdSearchFilter = s.AdSearchFilter,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount
     };

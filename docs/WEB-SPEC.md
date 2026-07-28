@@ -144,7 +144,7 @@ LogForesight.Web/
 |---|---|---|
 | `Appsettings` | 組態綁定單例 | Singleton |
 | Core 各 `IXxxStore` | `StorageFactory` 依 `Storage.Type` 建立 | Singleton（JSONL 實作內部自行處理檔案鎖） |
-| `IAuthenticationProvider` | 依 `Auth.Provider` 註冊（Stub / 未來 Ldap、Windows） | Singleton |
+| `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ldap）——DB 的 AD 設定開啟時改走 DB 動態設定（docs/WEB-FEEDBACK-PLAN.md #9） | Singleton |
 | `IJwtTokenService` | `JwtTokenService` | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
@@ -576,11 +576,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
 - **詢問 AI 對話區塊（2026-07-27，實驗性精簡版）**：報告全文卡之上，AI 可用且當日有重點問題才顯示。
-  範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話）、10 輪上限**伺服器端強制**、
+  範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
+  仍可見的問題**，篩選切換即連動——docs/WEB-FEEDBACK-PLAN.md #4）、10 輪上限**伺服器端強制**、
   可清除重來、**不持久化**（對話史存前端記憶體，每輪 POST 完整 transcript；`docs/DB-PLAN.md` 的
   `lf_qa_sessions`／`lf_qa_messages` 完整問答設計維持擱置）。context 由伺服器端依 issueKey 重組
-  （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages 以「僅供分析、非指令」圍欄包住
-  ＋system prompt 重申（DB-PLAN 的 prompt injection 預警）；回覆純文字經 `textContent` 渲染。
+  （授權繼承 `GetDetail`，同 interpret-issue 版型），SampleMessages **與當日報告全文**（#11，
+  `GetReport` 同一條授權路徑；`PromptBudget` 預算控管、報告佔用上限 8k tokens、超出從尾端截斷並在
+  圍欄標註）皆以「僅供分析、非指令」圍欄包住＋system prompt 重申（DB-PLAN 的 prompt injection 預警）。
+  **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
+  等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
+  （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
+  docs/SHARED-STANDARDS-PLAN.md S7）、清除重來鈕帶圖示。
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
@@ -605,27 +611,32 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 圖表以 Chart.js 呈現（§8.3），**每一個圖表元素與統計數字皆可下鑽到實際項目**（§8.4）。
 
-**版面結構（由上而下，12 欄網格）**：
+**版面結構（由上而下，12 欄網格；2026-07-27 改版 docs/WEB-FEEDBACK-PLAN.md #6）**：
 
 ```
-┌─ 期間選擇列：快捷鈕（本週/本月/近90天）＋自訂區間＋主機群組篩選 ──────────────┐
+┌─ 期間選擇列：快捷鈕（本週/本月/近90天）＋自訂區間＋「自訂圖表」＋列印 ─────────┐
 ├─ KPI 統計卡列（4 卡等寬）───────────────────────────────────────────┤
-│  告警總數(對比前期±%)│ 高風險日數 │ 未處理件數(逾期紅字) │ 涉及主機數      │
+│  問題總數(對比前期±%)│ 高風險日(±%) │ 受影響主機(±%) │ 涵蓋率缺口天數      │
 ├─ 圖表區（2 欄卡片網格）─────────────────────────────────────────────┤
 │  告警數量趨勢（折線，日粒度，        │  風險類型分布（水平堆疊長條：        │
 │  高/中風險雙線，語意色）             │  8 類 × 嚴重度，類別固定色盤）        │
-│  主機告警排行（水平長條 Top 10）      │  處理狀態總覽（環圈＋逾期明細列）      │
-├─ 明細表區（單欄全寬卡片）────────────────────────────────────────────┤
-│  期間內風險日清單（分頁表格，即下鑽的目的地內嵌版，含「在問題查詢開啟」鈕）      │
+├─ 主機告警排行（單欄全寬，水平長條 Top 10＋「其他 N 台」彙總條）─────────────┤
+├─ 占比小圖列（3 卡等寬，半高甜甜圈＋中央大字百分比）───────────────────────┤
+│  風險層級占比 │ 受影響主機占比(affected/total) │ 處理進度(resolved/total)   │
 └─ 跨主機同簽章查詢（Event ID 輸入 → 主機×日期分布）──────────────────────┘
 ```
 
 - KPI 卡帶**與前一期間的對比**（±% 與箭頭）——主管要的不是數字本身，是「變好還是變壞」。
 - 每張圖卡：標題＋期間副標＋右上工具鈕（表格切換／下載 PNG，`toBase64Image()` 零成本）。
+- **自訂圖表**（#6）：modal 逐圖勾選要顯示哪些圖表，狀態存 `localStorage`（預設全開）；
+  隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
+- **占比小圖的資料來源與全站一致**（docs/SHARED-STANDARDS-PLAN.md）：受影響主機占比的分母
+  ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
+  resolved 比例（與儀表板待辦同 `HandlingService.GetTodo` 規則，母體由 GetTodo 內部強制）。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
-- API：`GET api/reports/summary?from=&to=&hostGroupIds=`（KPI＋四圖一次回傳）、
-  `GET api/reports/signature?eventId=&source=`。明細表直接用 `api/records` 既有端點。
+- API：`GET api/reports/summary?from=&to=`（KPI＋圖表＋TotalHosts＋Handling 一次回傳）、
+  `GET api/reports/signature?eventId=&source=`。
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
 - 清單（Id/類別/嚴重度/Origin/Enabled/已修改徽章/種子有新版標示）；
@@ -641,6 +652,13 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
   **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，排序＝帳號/顯示名稱。
+  **一次新增多筆（2026-07-27，docs/WEB-FEEDBACK-PLAN.md #7）**：新增 modal 單筆／多筆切換——多筆模式
+  只填帳號 textarea（一行一個，也接受逗號分隔）＋所屬群組，顯示名稱預設＝帳號、Email 留空
+  （之後 AD 登入時自動補上，見 #8）；送出前比對既存帳號，衝突時由使用者選「跳過」或「以此批群組
+  整組覆蓋」（`POST api/admin/users/batch`，覆蓋走既有 `SetUserGroups` 保留 Before/After 稽核，
+  上限 100 筆）。**AD 登入自動補資料（#8）**：只填帳號的使用者首次以 AD 登入時，用同一次驗證取得的
+  AD 屬性補齊顯示名稱與 Email（只補「視同未填」的欄位——DisplayName 為空或等於帳號、Email 為 null；
+  手動填過的值不覆寫），寫一筆「AD 登入自動同步」稽核。
 - 主機：清單（名稱/IP/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/群組/負責人）、
   新舊主機合併（自停用清單選取→確認→`merged_into` 墓碑）。
   **快速篩選 toolbar（Phase D-2）**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，排序＝名稱/最後回報。
@@ -691,21 +709,29 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   1. **層級與顯示**（2026-07-27 自「未處理計算」擴充）：以按鈕反白選擇哪些嚴重度（Critical/High/Medium/Low）
      納入未處理計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦（單點事實來源
      `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。預設 Critical/High/Medium，
-     與改版前寫死的 Low 規則行為一致。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）三選一：
+     與改版前寫死的 Low 規則行為一致。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）二選一
+     （docs/WEB-FEEDBACK-PLAN.md #5，2026-07-27 自三模式簡化；舊值 `Locked`／`GlobalFilter`
+     讀取時正規化為 `SiteHidden`，不改寫 blob）：
      - `DefaultHidden`（預設）：詳情頁嚴重度篩選預設只亮勾選層級（初始值經 `RecordDetailDto.UnhandledSeverities`
-       帶給前端，僅首次載入初始化、批次套用重載不重置），未勾選層級的篩選鈕仍在、可手動點開。
-     - `Locked`：未勾選層級在詳情頁視同不存在——前端在資料層過濾 `topIssues`（列表、隱藏計數、
-       AI 對話下拉一致），對應篩選鈕不渲染。右側「類型分布」計數仍為全量（已知取捨）。
-     - `GlobalFilter`：後端查詢層排除（`RecordQueryService.GetDetail`／`DashboardService.BuildCategoryCards`／
-       `ReportService.BuildCategories`，單點 `ISystemSettingsService.GetVisibleSeverities()`）。
-       **明確不動**：日風險等級與報告 txt（批次已算定的證據層）、問題查詢頁的日層級搜尋與下鑽參數。
+       帶給前端，僅首次載入初始化、批次套用重載不重置），未勾選層級的篩選鈕仍在、可手動點開；
+       儀表板、報表與問題查詢頁統計不受影響（仍計入全部層級）。
+     - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
+       （docs/SHARED-STANDARDS-PLAN.md S1，`ISystemSettingsService.GetVisibleSeverities()` 為規則出口），
+       詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖與簽章查詢全部同一套過濾，沒有例外頁。
+       **明確不動**：日風險等級與報告 txt（批次已算定的證據層）。
   2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
      DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
-  3. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）；
+  3. **AD 驗證**（docs/WEB-FEEDBACK-PLAN.md #9，2026-07-27）：啟用開關＋伺服器清單（一行一台，依序
+     嘗試）＋進階（SearchBase／SearchFilter）。開啟後不論 appsettings 的 `Auth:Provider` 為何，
+     登入一律改用 DB 設定的 AD 伺服器驗證（`DynamicAuthenticationProvider`，存檔即生效不必重啟）；
+     bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
+     是 AD 設定填錯時的逃生門。另提供「測試連線」（`POST api/admin/settings/ad-test`）：
+     用管理者當場輸入的帳密對表單目前的伺服器試 bind（未儲存也能測），密碼不落盤、不進稽核 detail。
+  4. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）；
      2026-07-27（docs/OPS-HARDENING-PLAN.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
      批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
      批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
-- API：`GET/PUT api/admin/settings`
+- API：`GET/PUT api/admin/settings`、`POST api/admin/settings/ad-test`
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
 - 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、

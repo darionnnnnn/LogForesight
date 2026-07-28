@@ -17,9 +17,12 @@ public class SystemSettings
     public List<string> UnhandledSeverities { get; set; } = new() { "Critical", "High", "Medium" };
 
     /// <summary>
-    /// 層級顯示模式，決定 <see cref="UnhandledSeverities"/> 以外的嚴重度在畫面上如何呈現：
-    /// <c>DefaultHidden</c>（預設隱藏但可手動開啟）／<c>Locked</c>（完全隱藏、無法開啟）／
-    /// <c>GlobalFilter</c>（後端查詢層直接排除，全站統計數字只計入已勾選層級）。
+    /// 層級顯示模式，決定 <see cref="UnhandledSeverities"/> 以外的嚴重度（問題嚴重度，
+    /// 非日風險等級）在全站如何呈現：<c>DefaultHidden</c>（預設隱藏但可手動開啟，純顯示層行為）／
+    /// <c>SiteHidden</c>（全站查詢層直接排除——詳情頁、AI 對話、儀表板、報表、問題查詢皆同一套過濾，
+    /// 見 docs/SHARED-STANDARDS-PLAN.md S1、RecordRepository）。
+    /// 舊值 <c>Locked</c>／<c>GlobalFilter</c>（docs/WEB-FEEDBACK-PLAN.md #5 簡化前的三模式設計）
+    /// 讀取時正規化為 <c>SiteHidden</c>，見 SystemSettingsService.NormalizeDisplayMode。
     /// 不影響風險等級判定與報告全文——那是批次時已算定的證據層，不受顯示設定影響。
     /// </summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
@@ -51,6 +54,23 @@ public class SystemSettings
     /// 稽核是合規／追責用途，保留期通常比業務資料更長，故獨立設定。
     /// </summary>
     public int AuditRetentionDays { get; set; } = 730;
+
+    /// <summary>
+    /// 是否啟用 DB 設定的 AD 驗證（docs/WEB-FEEDBACK-PLAN.md #9）。開啟後不論 appsettings 的
+    /// Auth:Provider 是 Stub 或 Ldap，一律改用 <see cref="AdServers"/> 等 DB 設定連線驗證——
+    /// 這正是「測試模式（Stub）開啟後也走 AD 驗證」的開關，見 DynamicAuthenticationProvider。
+    /// 不儲存任何 AD 服務帳號密碼：bind 一律用登入者自己的帳密，沒有新機密要保管。
+    /// </summary>
+    public bool AdAuthEnabled { get; set; }
+
+    /// <summary>AD 伺服器清單（IP 或 LDAP URL），依序嘗試第一個可連線者</summary>
+    public List<string> AdServers { get; set; } = new();
+
+    /// <summary>查詢基準 DN，選填（如 DC=corp,DC=com）；留空使用目錄預設根目錄</summary>
+    public string AdSearchBase { get; set; } = "";
+
+    /// <summary>查詢使用者的過濾器樣板，{0} 代入登入帳號</summary>
+    public string AdSearchFilter { get; set; } = "(sAMAccountName={0})";
 
     public DateTime? UpdatedAt { get; set; }
 

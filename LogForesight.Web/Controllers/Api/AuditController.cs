@@ -1,10 +1,10 @@
-using System.Globalization;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -44,12 +44,7 @@ public class AuditController : ControllerBase
             PageSize = pageSize
         };
 
-        if (!string.IsNullOrWhiteSpace(actions))
-        {
-            query.Actions = actions
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
-        }
+        query.Actions = ParseStrings(actions);
 
         if (!string.IsNullOrWhiteSpace(result) &&
             Enum.TryParse<AuditResult>(result, ignoreCase: true, out var auditResult))
@@ -63,10 +58,4 @@ public class AuditController : ControllerBase
     [HttpGet("actions")]
     public ApiResponse<Dictionary<string, string>> Actions() =>
         ApiResponse<Dictionary<string, string>>.Ok(_service.GetActionNames());
-
-    private static DateTime? ParseDate(string? value) =>
-        DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var date)
-            ? date
-            : null;
 }

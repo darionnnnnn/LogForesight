@@ -9,6 +9,10 @@ namespace LogForesight.Web.Repositories;
 /// 墓碑列（人工綁定新舊主機的結果）。查詢時必須把它們一起展開，否則合併之前的歷史
 /// 會從畫面上消失。這個展開如果散落在各個 Service，遲早有人忘了做。
 /// 集中在這裡，並且**強制**每次查詢都套用可見範圍——呼叫端拿不到「不過濾」的入口。
+///
+/// 同一個理由延伸到問題嚴重度可見性（docs/SHARED-STANDARDS-PLAN.md S1）：
+/// SiteHidden 模式下 TopIssues 的過濾也在這裡強制套用，所有呼叫端拿到的都是
+/// 已過濾的結果，不必也不該各自重覆判斷。
 /// </summary>
 public interface IRecordRepository
 {
@@ -39,24 +43,60 @@ public class RecordRepository : IRecordRepository
     private readonly IAnalysisRecordQuery _records;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
+    private readonly ISystemSettingsService _settings;
 
-    public RecordRepository(IAnalysisRecordQuery records, IHostStore hosts, IVisibilityService visibility)
+    public RecordRepository(
+        IAnalysisRecordQuery records, IHostStore hosts, IVisibilityService visibility, ISystemSettingsService settings)
     {
         _records = records;
         _hosts = hosts;
         _visibility = visibility;
+        _settings = settings;
     }
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
     {
         ApplyVisibility(filter);
-        return _records.Query(filter);
+        return ApplySeverityVisibility(_records.Query(filter));
     }
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
     {
         ApplyVisibility(filter);
-        return _records.QueryPage(filter, page, pageSize);
+        var paged = _records.QueryPage(filter, page, pageSize);
+        paged.Items = ApplySeverityVisibility(paged.Items);
+        return paged;
+    }
+
+    /// <summary>
+    /// 問題嚴重度可見性（docs/SHARED-STANDARDS-PLAN.md S1）：SiteHidden 模式下，未勾選層級的
+    /// 問題從 TopIssues 整批排除——這是全站唯一的過濾點。Dashboard／Report／RecordQueryService
+    /// 的統計、下鑽、AI context（經 GetDetail／ClusterSignatures）全部繼承同一份結果，
+    /// 不必（也不該）各自重覆判斷 SeverityDisplayMode——散落判斷正是先前查詢頁分組視圖／
+    /// 簽章查詢漏掉這道過濾的原因。DefaultHidden 模式回 null，此處不過濾，交由前端顯示層決定。
+    /// </summary>
+    private List<DailyAnalysisRecord> ApplySeverityVisibility(List<DailyAnalysisRecord> records)
+    {
+        var visible = _settings.GetVisibleSeverities();
+        if (visible == null) return records;
+
+        foreach (var record in records)
+        {
+            record.TopIssues = record.TopIssues.Where(i => visible.Contains(i.Severity.ToString())).ToList();
+        }
+
+        return records;
+    }
+
+    private DailyAnalysisRecord ApplySeverityVisibility(DailyAnalysisRecord record)
+    {
+        var visible = _settings.GetVisibleSeverities();
+        if (visible != null)
+        {
+            record.TopIssues = record.TopIssues.Where(i => visible.Contains(i.Severity.ToString())).ToList();
+        }
+
+        return record;
     }
 
     /// <summary>
@@ -77,7 +117,8 @@ public class RecordRepository : IRecordRepository
     {
         if (!_visibility.GetVisibleHostIds().Contains(hostId)) return null;
 
-        return _records.GetOne(ResolveHostKeys(hostId), date);
+        var record = _records.GetOne(ResolveHostKeys(hostId), date);
+        return record == null ? null : ApplySeverityVisibility(record);
     }
 
     public List<HostKey> ResolveHostKeys(long hostId) =>

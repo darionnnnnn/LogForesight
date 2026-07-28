@@ -1,7 +1,14 @@
+using LogForesight.Web.Auth.Ldap;
+
 namespace LogForesight.Web.Auth;
 
-/// <summary>憑證驗證的結果。失敗原因只寫入診斷 log 與稽核，不回傳給前端（避免帳號列舉）</summary>
-public record CredentialCheckResult(bool Success, string? FailureReason = null)
+/// <summary>
+/// 憑證驗證的結果。失敗原因只寫入診斷 log 與稽核，不回傳給前端（避免帳號列舉）。
+/// <paramref name="UserInfo"/>（docs/WEB-FEEDBACK-PLAN.md #8）：AD provider 驗證成功時
+/// 順手取得的使用者屬性（顯示名稱、Email），供 IdentityService 自動補齊 lf_users 的空欄位；
+/// Stub 與驗證失敗時一律為 null，純屬加值、不影響登入本身。
+/// </summary>
+public record CredentialCheckResult(bool Success, string? FailureReason = null, LdapUserInfo? UserInfo = null)
 {
     public static readonly CredentialCheckResult Ok = new(true);
 

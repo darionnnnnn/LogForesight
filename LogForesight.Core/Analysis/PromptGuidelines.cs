@@ -14,4 +14,13 @@ public static class PromptGuidelines
         "絕不使用簡體字或中國大陸用語（例如：内存/硬盘/网络/文件/默认/登录/数据/程序/队列/缓存/磁盘/该/导致/系统 等）；" +
         "Windows 與 NetIQ 的專有名詞沿用官方繁體譯名或保留英文原文" +
         "（如：事件檢視器、事件識別碼、應用程式、系統記錄檔、安全性記錄檔、工作排程器、Sentinel、Agent、Collector）。";
+
+    /// <summary>
+    /// 語言規範的尾端強化版（docs/SHARED-STANDARDS-PLAN.md S7）：接在 user prompt 最後一句之後，
+    /// 不是 system prompt。小模型對長 context／多輪攤平後的 prompt，對 system prompt 尾端規範的
+    /// 遵循度會下降，仍可能漏出簡體字；模型對 prompt **最尾端**的指令遵循度最高，
+    /// 所以在 user prompt 末尾重申一次，作為 <see cref="Language"/> 的第二道防線，不是取代它。
+    /// </summary>
+    public const string LanguageReminder =
+        "（請全程以台灣繁體中文與台灣資訊業界慣用術語回答，不要使用簡體字或中國大陸用語。）";
 }

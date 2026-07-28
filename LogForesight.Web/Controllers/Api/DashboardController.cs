@@ -1,9 +1,9 @@
-using System.Globalization;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -73,10 +73,4 @@ public class ReportsController : ControllerBase
 
         return ApiResponse<List<SignatureHitDto>>.Ok(_reports.FindSignature(eventId, source));
     }
-
-    private static DateTime? ParseDate(string? value) =>
-        DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var date)
-            ? date
-            : null;
 }

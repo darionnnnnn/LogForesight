@@ -47,6 +47,14 @@ export function riskColors() {
     };
 }
 
+/** 占比圖表用的中性色（docs/WEB-FEEDBACK-PLAN.md #6：受影響主機占比／處理進度） */
+export function statusColors() {
+    return {
+        success: token('--lf-success', '#16a34a'),
+        neutral: token('--lf-gray-300', '#cbd5e1')
+    };
+}
+
 const FONT_FAMILY = '"Segoe UI", "Microsoft JhengHei", system-ui, sans-serif';
 
 function baseOptions({ drillTo, onDrill }) {
@@ -205,4 +213,18 @@ export function renderNoData(container, message = '此期間沒有資料') {
     el.className = 'lf-empty';
     el.textContent = message;
     container.replaceChildren(el);
+}
+
+/**
+ * 甜甜圈中央疊加文字（docs/WEB-FEEDBACK-PLAN.md #6：受影響主機占比／處理進度的百分比）。
+ * canvasWrapper 需為 .lf-chart（position: relative）；文字絕對定位置中，不影響圖表本身。
+ */
+export function setCenterText(canvasWrapper, text) {
+    let label = canvasWrapper.querySelector('.lf-chart__center-text');
+    if (!label) {
+        label = document.createElement('div');
+        label.className = 'lf-chart__center-text';
+        canvasWrapper.appendChild(label);
+    }
+    label.textContent = text;
 }

@@ -44,7 +44,7 @@ public class LogAnalysisService
     /// 2026-07-20 AI 角色轉換（見 docs/AI-ROLE-PLAN.md）：AI 不再是判斷風險或找根因的分析引擎，
     /// 那些已由規則/趨勢/關聯三層與 KnownIssueCatalog 的靜態知識庫負責。AI 唯一的職責是把
     /// 這些已經算好的結論翻譯成不懂 Event Log 的人也能看懂的白話——risk_level 仍要填，但只作為
-    /// 安全網（只能把風險往上拉，不能往下壓，見 MoreSevere），不是重新判斷的依據。
+    /// 安全網（只能把風險往上拉，不能往下壓，見 RiskLevels.MoreSevere），不是重新判斷的依據。
     /// </summary>
     private const string SystemPrompt =
         "你是資深 Windows Server 維運與資安分析師，同時也是把技術判讀翻譯成白話的溝通者。" +
@@ -261,7 +261,7 @@ public class LogAnalysisService
                 trendAssessment = result.Value.TrendStory;
                 action = result.Value.Action;
                 // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
-                riskLevel = MoreSevere(NormalizeRisk(result.Value.RiskLevel), ruleRisk);
+                riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value.RiskLevel), ruleRisk);
             }
             else if (result.RawContent.Length > 0)
             {
@@ -269,7 +269,7 @@ public class LogAnalysisService
                 // 仍算完成 AI 分析（useAi 維持 true），只是白話翻譯品質降級
                 headline = "AI 回覆格式異常，以下為原始內容";
                 summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{Truncate(result.RawContent, MaxSummaryChars)}";
-                riskLevel = MoreSevere(NormalizeRisk(result.RawContent), ruleRisk);
+                riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
                 Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", targetDate, result.Attempts);
             }
             else
@@ -312,7 +312,7 @@ public class LogAnalysisService
         };
 
         // 風險「中」以上輸出報告檔（含第二階段 AI 深入分析與原始 log），路徑一併寫入歷史
-        if (_reportService != null && record.RiskLevel is "高" or "中")
+        if (_reportService != null && RiskLevels.IsActionable(record.RiskLevel))
         {
             try
             {
@@ -625,7 +625,7 @@ public class LogAnalysisService
                     sb.Append($" 重點:{topKeys}");
                 }
                 // 非低風險日附上當日 AI 結論，讓模型看得到先前判讀的語意脈絡（是否已知原因、是否已處理）
-                if (h.RiskLevel is "高" or "中" && h.AiAnalyzed && h.Summary.Length > 0)
+                if (RiskLevels.IsActionable(h.RiskLevel) && h.AiAnalyzed && h.Summary.Length > 0)
                 {
                     sb.Append($" 當日結論:{Truncate(h.Summary, 80)}");
                 }
@@ -712,35 +712,15 @@ public class LogAnalysisService
         if (issues.Any(i => !i.Suppressed && i.Severity == IssueSeverity.Critical) ||
             correlations.Any(c => c.Severity == IssueSeverity.Critical))
         {
-            return "高";
+            return RiskLevels.High;
         }
 
         if (trendAlerts.Count > 0 || correlations.Count > 0 || issues.Any(i => !i.Suppressed && i.Severity == IssueSeverity.High))
         {
-            return "中";
+            return RiskLevels.Medium;
         }
 
-        return "低";
-    }
-
-    private static string MoreSevere(string a, string b)
-    {
-        static int Rank(string level) => level switch { "高" => 3, "中" => 2, "低" => 1, _ => 0 };
-        return Rank(a) >= Rank(b) ? a : b;
-    }
-
-    /// <summary>從 AI 回傳的風險等級文字（或 JSON 解析失敗時的原文）歸一化為 高/中/低/未知</summary>
-    private static string NormalizeRisk(string text)
-    {
-        foreach (var level in new[] { "高", "中", "低" })
-        {
-            if (text.Contains(level))
-            {
-                return level;
-            }
-        }
-
-        return "未知";
+        return RiskLevels.Low;
     }
 
     /// <summary>前置掃描的彙總結果</summary>

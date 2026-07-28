@@ -1,8 +1,8 @@
-using System.Globalization;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -117,33 +117,10 @@ public class RecordsController : ControllerBase
 
     [HttpGet("{hostId:long}/{date}")]
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
-        ApiResponse<RecordDetailDto>.Ok(_service.GetDetail(hostId, RequireDate(date)));
+        ApiResponse<RecordDetailDto>.Ok(_service.GetDetail(hostId, ParseRequiredDate(date)));
 
     /// <summary>報告全文（純文字，前端以等寬字型原樣呈現）</summary>
     [HttpGet("{hostId:long}/{date}/report")]
     public ApiResponse<string?> GetReport(long hostId, string date) =>
-        ApiResponse<string?>.Ok(_service.GetReport(hostId, RequireDate(date)));
-
-    private static List<long>? ParseLongs(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? null
-            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(s => long.TryParse(s, out var value) ? value : (long?)null)
-                .Where(v => v.HasValue)
-                .Select(v => v!.Value)
-                .ToList();
-
-    private static List<string>? ParseStrings(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? null
-            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-
-    private static DateTime? ParseDate(string? value) =>
-        DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var date)
-            ? date
-            : null;
-
-    private static DateTime RequireDate(string value) =>
-        ParseDate(value) ?? throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        ApiResponse<string?>.Ok(_service.GetReport(hostId, ParseRequiredDate(date)));
 }

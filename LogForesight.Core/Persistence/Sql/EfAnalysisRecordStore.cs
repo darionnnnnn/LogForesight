@@ -279,9 +279,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             var total = q.Count();
 
             var items = q
-                // 與記憶體排序（RiskRank／CorrelationAlerts.Count>0／Date）語意一致的 SQL 版本；
-                // C# 巢狀三元運算式會被 EF Core 翻成 SQL CASE WHEN
-                .OrderByDescending(r => r.RiskLevel == "高" ? 3 : r.RiskLevel == "中" ? 2 : r.RiskLevel == "低" ? 1 : 0)
+                // 與記憶體排序（RiskLevels.Rank／CorrelationAlerts.Count>0／Date）語意一致的 SQL 版本；
+                // C# 巢狀三元運算式會被 EF Core 翻成 SQL CASE WHEN——無法呼叫 RiskLevels.Rank 本身
+                // （表達式樹不支援任意方法呼叫），只能內嵌，故引用其 const 值而非重新硬寫字面值；
+                // RiskRankConsistencyTests 斷言這裡的權重與 RiskLevels.Rank 一致
+                .OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
                 .ThenByDescending(r => r.HasCorrelation)
                 .ThenByDescending(r => r.RecordDate)
                 .Skip((page - 1) * pageSize)
@@ -309,7 +311,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         var ordered = records
             .Where(r => RecordFilterMatcher.Matches(r, filter))
-            .OrderByDescending(r => RiskRank(r.RiskLevel))
+            .OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
             .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
             .ThenByDescending(r => r.Date)
             .ToList();
@@ -325,20 +327,6 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             Total = ordered.Count
         };
     }
-
-    /// <summary>
-    /// 風險等級排序權重。與 <c>RecordQueryService.RiskRank</c>／<c>ReportService</c> 內幾乎相同的
-    /// 私有方法是同一份定義各自獨立維護的第三份複本（<see cref="QueryPage"/> 的 SQL CASE WHEN
-    /// 是第二份）——三處已各自維護多時、沒有共用單點，這裡沿用既有寫法，不把改動範圍蔓延到
-    /// 不相關的檔案去做抽象。
-    /// </summary>
-    private static int RiskRank(string riskLevel) => riskLevel switch
-    {
-        "高" => 3,
-        "中" => 2,
-        "低" => 1,
-        _ => 0
-    };
 
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
     {

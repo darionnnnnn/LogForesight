@@ -11,7 +11,7 @@
 
 import { api } from '../core/api.js';
 import { renderLoading, renderEmpty, toast, withBusy } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
 const STATUS_CHIPS = [
@@ -235,10 +235,7 @@ function handlingForm() {
         btn.addEventListener('click', () => {
             const target = new Date();
             target.setDate(target.getDate() + days);
-            // 用本地日期組字串，不用 toISOString()——那是 UTC 日期，
-            // 在 UTC 之後的時區（如台灣 UTC+8）近午夜時會早算成隔天
-            const pad = n => String(n).padStart(2, '0');
-            dueInput.value = `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}`;
+            dueInput.value = toLocalDateString(target);   // 本地日期（S12），不用 toISOString 的 UTC 日期
         });
         quickRow.appendChild(btn);
     }

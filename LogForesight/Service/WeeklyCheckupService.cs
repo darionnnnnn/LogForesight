@@ -135,7 +135,7 @@ public class WeeklyCheckupService
 
     /// <summary>窗口內任一天有風險、趨勢異常或關聯訊號，即視為「有訊號」——閘門判定的唯一依據</summary>
     private static bool HasSignal(List<DailyAnalysisRecord> window) =>
-        window.Any(d => d.RiskLevel != "低" || d.TrendAlerts.Count > 0 || d.CorrelationAlerts.Count > 0);
+        window.Any(d => d.RiskLevel != RiskLevels.Low || d.TrendAlerts.Count > 0 || d.CorrelationAlerts.Count > 0);
 
     private static string BuildPrompt(DateTime checkupDate, List<DailyAnalysisRecord> window, string serverDescription,
         WeeklyCheckupResult? lastCheckup)

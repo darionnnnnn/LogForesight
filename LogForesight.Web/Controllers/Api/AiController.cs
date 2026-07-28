@@ -1,9 +1,9 @@
-using System.Globalization;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Microsoft.AspNetCore.Mvc;
+using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 
 namespace LogForesight.Web.Controllers.Api;
 
@@ -74,7 +74,7 @@ public class AiController : ControllerBase
     {
         if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
 
-        var parsedDate = ParseDate(date) ?? throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        var parsedDate = ParseRequiredDate(date);
         var detail = _records.GetDetail(hostId, parsedDate);
         var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == issueKey);
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
@@ -92,14 +92,19 @@ public class AiController : ControllerBase
     {
         if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
 
-        var parsedDate = ParseDate(request.Date) ?? throw DomainException.Validation("日期格式必須為 yyyy-MM-dd。");
+        var parsedDate = ParseRequiredDate(request.Date);
         var detail = _records.GetDetail(request.HostId, parsedDate);
         var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == request.IssueKey);
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
         ValidateChatMessages(request.Messages);
 
-        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages));
+        // 當日分析報告全文一併餵給 AI（docs/WEB-FEEDBACK-PLAN.md #11）：與「報告全文」卡同一條路、
+        // 同一套授權（GetReport 內部同樣先 GetOne 驗證可見範圍）；無報告（低風險日）時為 null，
+        // ChatAsync 略過即可，不影響既有問答流程
+        var report = _records.GetReport(request.HostId, parsedDate);
+
+        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages, report));
     }
 
     private const int MaxChatTurns = 10;
@@ -131,21 +136,6 @@ public class AiController : ControllerBase
         }
     }
 
-    private static List<long>? ParseLongs(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? null
-            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(s => long.TryParse(s, out var v) ? v : (long?)null)
-                .Where(v => v.HasValue).Select(v => v!.Value).ToList();
-
-    private static List<string>? ParseStrings(string? csv) =>
-        string.IsNullOrWhiteSpace(csv)
-            ? null
-            : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-
-    private static DateTime? ParseDate(string? value) =>
-        DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
-            ? d : null;
 }
 
 public class AiStatusDto

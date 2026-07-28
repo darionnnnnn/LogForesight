@@ -515,7 +515,7 @@ public static class SelfTestRunner
         => new()
         {
             Date = date.Date,
-            RiskLevel = "低",
+            RiskLevel = RiskLevels.Low,
             TopIssues = new List<LogIssueSignature> { Sig(logName, source, eventId, count, severity, category, keyDetails) }
         };
 }

@@ -1,4 +1,5 @@
 using LogForesight.Web.Auth;
+using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Configuration;
 
 namespace LogForesight.Web.Services;
@@ -119,6 +120,8 @@ public class IdentityService : IIdentityService
             return LoginOutcome.Fail("此帳號已停用，請聯繫系統管理員。");
         }
 
+        user = SyncFromAdIfNeeded(user, credentials.UserInfo);
+
         var capabilities = ResolveCapabilities(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
             $"登入成功（{_provider.Name}）", AuditResult.Ok);
@@ -129,6 +132,54 @@ public class IdentityService : IIdentityService
             DisplayName: string.IsNullOrWhiteSpace(user.DisplayName) ? user.Account : user.DisplayName,
             Capabilities: capabilities,
             IsServerAdmin: false));
+    }
+
+    /// <summary>
+    /// AD 登入自動補顯示名稱與 Email（docs/WEB-FEEDBACK-PLAN.md #8）：批次新增使用者
+    /// （#7）只填帳號，顯示名稱預設＝帳號、Email 留空；使用者第一次以 AD 登入時，
+    /// 用同一次驗證取得的 AD 屬性補齊這兩個欄位。
+    ///
+    /// 只補「視同未填」的欄位——DisplayName 為空或等於帳號本身（批次新增的預設值）、
+    /// Email 為 null。使用者已手動填過的值一律尊重、不覆寫。已知取捨：使用者若手動把
+    /// 顯示名稱改成與帳號完全相同的字串，會被 AD 值覆寫——機率低、影響小，接受（見計畫書）。
+    ///
+    /// 只在登入當下同步，不做背景批次同步：沒有服務帳號，設計上就拿不到別人的資料，
+    /// 這也省掉保管服務帳號密碼的整包問題（見 credentials.UserInfo 的取得方式）。
+    /// </summary>
+    private WebUser SyncFromAdIfNeeded(WebUser user, LdapUserInfo? adInfo)
+    {
+        if (adInfo == null) return user;
+
+        var displayNameUnfilled = string.IsNullOrWhiteSpace(user.DisplayName) ||
+            string.Equals(user.DisplayName, user.Account, StringComparison.OrdinalIgnoreCase);
+        var newDisplayName = displayNameUnfilled && !string.IsNullOrWhiteSpace(adInfo.DisplayName)
+            ? adInfo.DisplayName
+            : null;
+
+        var newEmail = user.Email == null && !string.IsNullOrWhiteSpace(adInfo.Email)
+            ? adInfo.Email
+            : null;
+
+        if (newDisplayName == null && newEmail == null) return user;
+
+        var beforeDisplayName = user.DisplayName;
+        var beforeEmail = user.Email;
+
+        if (newDisplayName != null) user.DisplayName = newDisplayName;
+        if (newEmail != null) user.Email = newEmail;
+        var saved = _users.Upsert(user);
+
+        // 登入流程此時尚未建立已登入身分（Cookie 要到 Controller 回應才寫入），
+        // 用 RecordAuth（明確指定帳號／UserId）而非 Record（會讀「目前登入者」，此刻是 anonymous）
+        var changes = new List<string>();
+        if (newDisplayName != null) changes.Add($"顯示名稱「{beforeDisplayName}」→「{saved.DisplayName}」");
+        if (newEmail != null) changes.Add($"Email「{beforeEmail ?? "(無)"}」→「{saved.Email}」");
+
+        _audit.RecordAuth(
+            AuditActions.UserUpdate, saved.Account, saved.UserId,
+            $"AD 登入自動同步：{string.Join("、", changes)}", AuditResult.Ok);
+
+        return saved;
     }
 
     public IReadOnlySet<Capability> ResolveCapabilities(WebUser user)

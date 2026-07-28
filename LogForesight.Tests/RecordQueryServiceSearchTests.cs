@@ -25,13 +25,14 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeHandlingStore _handlingStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
+    private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly RecordQueryService _service;
 
     public RecordQueryServiceSearchTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
-        var repository = new RecordRepository(_recordStore, _hosts, visibility);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         _service = new RecordQueryService(
             repository,
@@ -195,6 +196,33 @@ public class RecordQueryServiceSearchTests : IDisposable
         var result = _service.Search(new RecordSearchRequest { Statuses = new List<string>() });
 
         Assert.Single(result.Items);
+    }
+
+    // ── 嚴重度可見性（docs/SHARED-STANDARDS-PLAN.md S1）：釘住查詢頁分組視圖的漏套修正 ──
+
+    private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity, IssueCategory category) =>
+        new() { LogName = "System", Source = source, EventId = eventId, Severity = severity, Category = category, Count = 1 };
+
+    /// <summary>
+    /// 修正前：SearchByHost／SearchByDate 的類別聚合完全不過濾嚴重度可見性，
+    /// SiteHidden 模式下這裡仍會列出未勾選層級的類別——這正是原本的漏套。
+    /// 過濾現由 RecordRepository 統一套用，SearchByHost 不必自己判斷即可繼承正確結果。
+    /// </summary>
+    [Fact]
+    public void SearchByHost_SiteHidden模式下類別聚合不含被隱藏層級()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", issues: new[]
+        {
+            Issue("disk", 153, IssueSeverity.Critical, IssueCategory.Storage),
+            Issue("app", 1000, IssueSeverity.Medium, IssueCategory.Resource)
+        });
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "Critical", "High" };
+
+        var result = _service.SearchByHost(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(new[] { "Storage" }, group.Categories);
     }
 }
 

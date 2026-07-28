@@ -7,7 +7,7 @@ public class SystemSettingsDto
     /// <summary>未處理計算納入的嚴重度（Critical/High/Medium/Low）</summary>
     public List<string> UnhandledSeverities { get; set; } = new();
 
-    /// <summary>層級顯示模式：DefaultHidden／Locked／GlobalFilter（見 SystemSettings.SeverityDisplayMode）</summary>
+    /// <summary>層級顯示模式：DefaultHidden／SiteHidden（見 SystemSettings.SeverityDisplayMode）</summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
     public string AiBaseUrl { get; set; } = "";
@@ -24,6 +24,15 @@ public class SystemSettingsDto
 
     /// <summary>稽核紀錄保留天數</summary>
     public int AuditRetentionDays { get; set; }
+
+    /// <summary>是否啟用 DB 設定的 AD 驗證（docs/WEB-FEEDBACK-PLAN.md #9）</summary>
+    public bool AdAuthEnabled { get; set; }
+
+    public List<string> AdServers { get; set; } = new();
+
+    public string AdSearchBase { get; set; } = "";
+
+    public string AdSearchFilter { get; set; } = "";
 
     public DateTime? UpdatedAt { get; set; }
 
@@ -59,4 +68,45 @@ public class UpdateSystemSettingsRequest
 
     [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
+
+    // ── AD 驗證（docs/WEB-FEEDBACK-PLAN.md #9）────────────────────────────────
+
+    public bool AdAuthEnabled { get; set; }
+
+    public List<string> AdServers { get; set; } = new();
+
+    [StringLength(500)]
+    public string AdSearchBase { get; set; } = "";
+
+    [StringLength(500)]
+    public string AdSearchFilter { get; set; } = "";
+}
+
+/// <summary>
+/// AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用管理者當場輸入的帳密，
+/// 對表單目前填的伺服器清單試 bind（不需先儲存）。密碼不落盤、不進稽核 detail。
+/// </summary>
+public class TestAdConnectionRequest
+{
+    [Required(ErrorMessage = "請至少輸入一台 AD 伺服器")]
+    [MinLength(1, ErrorMessage = "請至少輸入一台 AD 伺服器")]
+    public List<string> Servers { get; set; } = new();
+
+    public string? SearchBase { get; set; }
+
+    public string? SearchFilter { get; set; }
+
+    [Required(ErrorMessage = "請輸入測試用帳號")]
+    public string Account { get; set; } = "";
+
+    [Required(ErrorMessage = "請輸入測試用密碼")]
+    public string Password { get; set; } = "";
+}
+
+public class TestAdConnectionResultDto
+{
+    public bool Success { get; set; }
+
+    /// <summary>這裡是管理者對自己測試，可以顯示細節（與登入失敗一律「帳號或密碼錯誤」不同）</summary>
+    public string Message { get; set; } = "";
 }

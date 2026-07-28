@@ -303,6 +303,21 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.OverdueCount);
     }
 
+    /// <summary>
+    /// 待辦母體＝高＋中風險日（docs/SHARED-STANDARDS-PLAN.md S3）：低風險日即使從未處理過，
+    /// 也不進待辦——這條規則由 GetTodo 內部強制套用，呼叫端不必自己先過濾。
+    /// </summary>
+    [Fact]
+    public void 待辦統計_低風險日不計入母體()
+    {
+        _repository.AddRecord("SRV-LOW", Today, "低");
+
+        var todo = Create(Capability.Handle).GetTodo(_repository.Query(new RecordQueryFilter()));
+
+        // 建構式已預先加入一筆 _host 的高風險日；這裡只驗證新增的低風險日沒有讓計數增加
+        Assert.Equal(1, todo.OpenCount);
+    }
+
     // ── 問題層級處理狀態（方案 B）─────────────────────────────────────────────
 
     // 預設 Severity=High：落在 SystemSettings.UnhandledSeverities 的預設值內，
@@ -715,13 +730,16 @@ internal class FakeRecordRepository : IRecordRepository
 
     public FakeRecordRepository(FakeHostStore hosts) => _hosts = hosts;
 
-    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues)
+    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues) =>
+        AddRecord(hostName, date, "高", issues);
+
+    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, string risk, params LogIssueSignature[] issues)
     {
         var record = new DailyAnalysisRecord
         {
             Host = hostName,
             Date = date,
-            RiskLevel = "高",
+            RiskLevel = risk,
             TopIssues = issues.ToList()
         };
         _records.Add(record);

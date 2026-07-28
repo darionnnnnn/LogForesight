@@ -35,6 +35,37 @@ public class SetUserGroupsRequest
     public List<long> GroupIds { get; set; } = new();
 }
 
+/// <summary>
+/// 一次新增多個帳號（docs/WEB-FEEDBACK-PLAN.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
+/// 由伺服器端決定（顯示名稱＝帳號、Email 留空），前端多筆模式因此隱藏這兩個欄位。
+/// </summary>
+public class BatchCreateUsersRequest
+{
+    [Required(ErrorMessage = "請輸入至少一個帳號")]
+    public List<string> Accounts { get; set; } = new();
+
+    public List<long> GroupIds { get; set; } = new();
+
+    public bool Active { get; set; } = true;
+
+    /// <summary>已存在的帳號是否以這批勾選的群組覆蓋其權限；false（預設）＝跳過已存在帳號</summary>
+    public bool OverwriteExisting { get; set; }
+}
+
+public class BatchCreateUsersResultDto
+{
+    public List<string> Created { get; set; } = new();
+
+    /// <summary>已存在且 OverwriteExisting=true，群組已被整組取代</summary>
+    public List<string> Overwritten { get; set; } = new();
+
+    /// <summary>已存在但 OverwriteExisting=false，維持原樣未動</summary>
+    public List<string> Skipped { get; set; } = new();
+
+    /// <summary>去除空白行、去重後，因超長等原因不合格而被捨棄的筆數</summary>
+    public int InvalidCount { get; set; }
+}
+
 public class UserGroupDto
 {
     public long GroupId { get; set; }

@@ -5,16 +5,21 @@
 
 import { api } from '../core/api.js';
 import { toast, withBusy } from '../core/ui.js';
-import { formatDateTime, severityName } from '../core/format.js';
+import { formatDateTime, severityName, SEVERITY_ORDER } from '../core/format.js';
 
-// 由重到輕，與問題查詢／詳情頁的嚴重度篩選同一個順序
-const SEVERITIES = ['Critical', 'High', 'Medium', 'Low'];
-
-// 三段式：預設隱藏可手動開啟／完全隱藏無法開啟／全站徹底過濾（後端查詢層排除）
+// 兩段式（docs/WEB-FEEDBACK-PLAN.md #5，2026-07-27 簡化自三段式）：
+// 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁
 const DISPLAY_MODES = [
-    { value: 'DefaultHidden', label: '預設隱藏，仍可手動開啟', hint: '風險日詳情頁預設只顯示勾選層級，未勾選層級的篩選鈕仍在，使用者可自行點開查看。' },
-    { value: 'Locked', label: '完全隱藏，無法開啟', hint: '風險日詳情頁的重點問題列表完全不出現未勾選層級的問題，對應篩選鈕也不會顯示。' },
-    { value: 'GlobalFilter', label: '全站徹底過濾', hint: '風險日詳情、儀表板風險類型卡、報表統計全部只計入勾選層級；問題查詢頁的下鑽篩選不受此模式影響。' }
+    {
+        value: 'DefaultHidden', label: '預設隱藏，仍可手動開啟',
+        hint: '風險日詳情頁預設只顯示勾選層級，未勾選層級的篩選鈕仍在，使用者可自行點開查看；' +
+            '儀表板、報表與問題查詢頁的統計不受影響（仍計入全部層級）。'
+    },
+    {
+        value: 'SiteHidden', label: '全站隱藏',
+        hint: '未勾選層級的問題在全站一律不計入、不顯示：風險日詳情、詢問 AI 下拉、儀表板風險類型卡、' +
+            '報表統計、問題查詢頁的下鑽全部同一套過濾，沒有例外頁。'
+    }
 ];
 
 let current = null;
@@ -24,6 +29,7 @@ async function load() {
     renderSeverityChecks(current.unhandledSeverities);
     renderDisplayModeButtons(current.severityDisplayMode);
     renderAiFields(current);
+    renderAdFields(current);
     renderRetentionFields(current);
     renderUpdatedAt(current);
 }
@@ -35,7 +41,7 @@ function renderSeverityChecks(selected) {
     container.replaceChildren();
 
     const selectedSet = new Set(selected);
-    for (const severity of SEVERITIES) {
+    for (const severity of SEVERITY_ORDER) {
         const btn = document.createElement('button');
         btn.type = 'button'; // 按鈕在 <form> 內，不加 type=button 會被當成 submit 誤觸儲存
         btn.className = 'btn btn-outline-secondary' + (selectedSet.has(severity) ? ' active' : '');
@@ -94,6 +100,26 @@ function renderAiFields(settings) {
     document.getElementById('ai-api-key-clear').checked = false;
 }
 
+/** docs/WEB-FEEDBACK-PLAN.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
+function renderAdFields(settings) {
+    document.getElementById('ad-auth-enabled').checked = settings.adAuthEnabled;
+    document.getElementById('ad-servers').value = (settings.adServers ?? []).join('\n');
+    document.getElementById('ad-search-base').value = settings.adSearchBase ?? '';
+    document.getElementById('ad-search-filter').value = settings.adSearchFilter ?? '';
+
+    document.getElementById('ad-test-account').value = '';
+    document.getElementById('ad-test-password').value = '';
+    document.getElementById('ad-test-result').replaceChildren();
+}
+
+/** 一行一台，去除空白行——與後端 SystemSettingsService.NormalizeAdServers 對齊的寬鬆解析 */
+function collectAdServers() {
+    return document.getElementById('ad-servers').value
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+}
+
 function renderRetentionFields(settings) {
     document.getElementById('initial-history-days').value = settings.initialHistoryDays;
     document.getElementById('retention-days').value = settings.retentionDays;
@@ -142,6 +168,13 @@ function bindForm() {
         const apiKey = document.getElementById('ai-api-key').value;
         const clearApiKey = document.getElementById('ai-api-key-clear').checked;
 
+        const adAuthEnabled = document.getElementById('ad-auth-enabled').checked;
+        const adServers = collectAdServers();
+        if (adAuthEnabled && adServers.length === 0) {
+            toast('啟用 AD 驗證時，請至少輸入一台 AD 伺服器。', 'warning');
+            return;
+        }
+
         const restore = withBusy(saveButton, '儲存中');
         try {
             current = await api.put('/api/admin/settings', {
@@ -153,10 +186,15 @@ function bindForm() {
                 initialHistoryDays,
                 retentionDays,
                 runLogRetentionDays,
-                auditRetentionDays
+                auditRetentionDays,
+                adAuthEnabled,
+                adServers,
+                adSearchBase: document.getElementById('ad-search-base').value.trim(),
+                adSearchFilter: document.getElementById('ad-search-filter').value.trim()
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);
+            renderAdFields(current);
             renderUpdatedAt(current);
         } finally {
             restore();
@@ -164,5 +202,52 @@ function bindForm() {
     });
 }
 
+/**
+ * AD 測試連線（docs/WEB-FEEDBACK-PLAN.md #9）：用表單目前填的值（不需先儲存）＋
+ * 管理者當場輸入的帳密試 bind。這裡是管理者對自己測試，失敗訊息可以顯示細節
+ * （與一般登入一律「帳號或密碼錯誤」不同）。
+ */
+function bindAdTest() {
+    const button = document.getElementById('ad-test-btn');
+
+    button.addEventListener('click', async () => {
+        const servers = collectAdServers();
+        if (servers.length === 0) {
+            toast('請至少輸入一台 AD 伺服器。', 'warning');
+            return;
+        }
+
+        const account = document.getElementById('ad-test-account').value.trim();
+        const password = document.getElementById('ad-test-password').value;
+        if (!account || !password) {
+            toast('請輸入測試帳號與密碼。', 'warning');
+            return;
+        }
+
+        const resultEl = document.getElementById('ad-test-result');
+        const restore = withBusy(button, '測試中');
+        try {
+            const result = await api.post('/api/admin/settings/ad-test', {
+                servers,
+                searchBase: document.getElementById('ad-search-base').value.trim() || null,
+                searchFilter: document.getElementById('ad-search-filter').value.trim() || null,
+                account,
+                password
+            }, { silent: true });
+
+            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
+            resultEl.textContent = result.message;
+        } catch (error) {
+            resultEl.className = 'text-danger small';
+            resultEl.textContent = error?.message || '測試連線失敗。';
+        } finally {
+            // 密碼欄不保留：每次測試都要求重新輸入，降低殘留在畫面上的機會
+            document.getElementById('ad-test-password').value = '';
+            restore();
+        }
+    });
+}
+
 bindForm();
+bindAdTest();
 load();

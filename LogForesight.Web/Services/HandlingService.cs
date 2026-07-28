@@ -35,7 +35,10 @@ public interface IHandlingService
     List<HandlingLogDto> GetLogs(long hostId, DateTime date);
 
     /// <summary>
-    /// 儀表板待辦：未處理與逾期。母體是傳入的風險日紀錄——
+    /// 全站待辦（儀表板 KPI／報表處理進度共用，docs/SHARED-STANDARDS-PLAN.md S3）：未處理與逾期。
+    /// **母體（高＋中風險日）由本方法內部強制套用**——呼叫端傳整批候選紀錄即可，
+    /// 不必（也不應該）自己先過濾，否則「待辦只算高＋中風險日」這條規則遲早在某個新呼叫端漏掉。
+    /// 低風險日全站一律不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）。
     /// **沒有 handling 列的風險日也要算未處理**（與問題查詢清單同一套語意），
     /// 只數 handling.json 既有列會漏掉所有「從未被動過」的新問題。
     /// </summary>
@@ -334,22 +337,24 @@ public class HandlingService : IHandlingService
 
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)
     {
-        if (records.Count == 0) return new HandlingTodoDto();
+        // 待辦母體＝高＋中風險日，全站唯一定義（S3）：呼叫端不必也不應該自己先過濾
+        var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
+        if (actionable.Count == 0) return new HandlingTodoDto();
 
         // 紀錄 → 現行主機名稱：handling 以現行名稱為鍵（與 RecordQueryService 同一套規則）。
         // 可見範圍不在這裡過濾——傳入的紀錄已經過 RecordRepository 的可見範圍交集
         var lookup = new HostLookup(_hosts.GetAll());
         string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
 
-        var hostNames = records.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var from = records.Min(r => r.Date);
-        var to = records.Max(r => r.Date);
+        var hostNames = actionable.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var from = actionable.Min(r => r.Date);
+        var to = actionable.Max(r => r.Date);
         var handlings = _store.GetMany(hostNames, from, to);
         var issueHandlings = _issueStore.GetMany(hostNames, from, to);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
-        var todo = new HandlingTodoDto();
-        foreach (var record in records)
+        var todo = new HandlingTodoDto { TotalCount = actionable.Count };
+        foreach (var record in actionable)
         {
             var name = NameOf(record);
             var handling = handlings.FirstOrDefault(h =>
@@ -366,6 +371,7 @@ public class HandlingService : IHandlingService
 
             if (progress.DayStatus == HandlingStatuses.Open) todo.OpenCount++;
             else if (progress.DayStatus == HandlingStatuses.InProgress) todo.InProgressCount++;
+            else if (progress.DayStatus == HandlingStatuses.Resolved) todo.ResolvedCount++;
 
             // 逾期兩層都看：日層級 DueDate 過期且未結案，或任一問題層級「處理中」過期
             // （與問題查詢清單的 IsOverdue 同一套語意，來源同為 DayHandlingDerivation.HasOverdueIssue）

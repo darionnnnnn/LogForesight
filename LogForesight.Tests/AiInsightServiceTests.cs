@@ -16,18 +16,21 @@ public class AiInsightServiceTests
         public bool Available { get; set; } = true;
         public string? Response { get; set; }   // 要回的 JSON；null＝降級
         public int Calls { get; private set; }
+        public string? LastUserPrompt { get; private set; }
 
         private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
 
         public Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class
         {
             Calls++;
+            LastUserPrompt = userPrompt;
             return Task.FromResult(Response == null ? null : JsonSerializer.Deserialize<T>(Response, Opts));
         }
 
         public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)
         {
             Calls++;
+            LastUserPrompt = userPrompt;
             return Task.FromResult(Response);
         }
     }
@@ -128,5 +131,69 @@ public class AiInsightServiceTests
     {
         Assert.Equal(WebAiService.HashInput("abc"), WebAiService.HashInput("abc"));
         Assert.NotEqual(WebAiService.HashInput("abc"), WebAiService.HashInput("abd"));
+    }
+
+    // ── R7 對話：#11 報告全文餵入（docs/WEB-FEEDBACK-PLAN.md #11）──────────────
+
+    private static IssueDto Issue() => new()
+    {
+        Source = "disk", EventId = 153, LogName = "System", Severity = "Critical", Count = 5
+    };
+
+    private static List<ChatMessageDto> Messages(string question) =>
+        new() { new ChatMessageDto { Role = "user", Content = question } };
+
+    [Fact]
+    public async Task 對話_有報告全文_加入prompt且加圍欄()
+    {
+        var ai = new FakeWebAi { Response = "看起來是硬碟前兆。" };
+        var svc = new AiInsightService(ai);
+
+        await svc.ChatAsync(Issue(), "SRV-A", "2026-07-27", Messages("這個嚴重嗎？"), "報告全文：磁碟健康度下降。");
+
+        Assert.Contains("當日分析報告全文", ai.LastUserPrompt);
+        Assert.Contains("磁碟健康度下降", ai.LastUserPrompt);
+        Assert.DoesNotContain("已從尾端截斷", ai.LastUserPrompt);
+    }
+
+    [Fact]
+    public async Task 對話_無報告全文_不加報告區塊仍正常回答()
+    {
+        var ai = new FakeWebAi { Response = "看起來是硬碟前兆。" };
+        var svc = new AiInsightService(ai);
+
+        var result = await svc.ChatAsync(Issue(), "SRV-A", "2026-07-27", Messages("這個嚴重嗎？"), reportText: null);
+
+        Assert.NotNull(result);
+        Assert.DoesNotContain("當日分析報告全文", ai.LastUserPrompt);
+    }
+
+    [Fact]
+    public async Task 對話_報告過長_從尾端截斷並標註()
+    {
+        var ai = new FakeWebAi { Response = "看起來是硬碟前兆。" };
+        var svc = new AiInsightService(ai);
+
+        // 純 ASCII，約 3.5 字元 1 token；4 萬字元遠超過 8000 token 上限，必然觸發截斷
+        var hugeReport = "REPORT-HEAD-MARKER-" + new string('a', 40000) + "-REPORT-TAIL-MARKER";
+
+        await svc.ChatAsync(Issue(), "SRV-A", "2026-07-27", Messages("這個嚴重嗎？"), hugeReport);
+
+        Assert.Contains("已從尾端截斷", ai.LastUserPrompt);
+        Assert.Contains("REPORT-HEAD-MARKER", ai.LastUserPrompt);   // 保留開頭
+        Assert.DoesNotContain("REPORT-TAIL-MARKER", ai.LastUserPrompt);   // 尾端已被截掉
+    }
+
+    [Fact]
+    public async Task 對話_問題結構化欄位與新問題仍在prompt中()
+    {
+        var ai = new FakeWebAi { Response = "看起來是硬碟前兆。" };
+        var svc = new AiInsightService(ai);
+
+        await svc.ChatAsync(Issue(), "SRV-A", "2026-07-27", Messages("這個嚴重嗎？"), "報告內容");
+
+        Assert.Contains("SRV-A", ai.LastUserPrompt);
+        Assert.Contains("disk", ai.LastUserPrompt);
+        Assert.Contains("這個嚴重嗎？", ai.LastUserPrompt);
     }
 }

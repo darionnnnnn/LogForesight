@@ -52,6 +52,11 @@ public class AdminController : ControllerBase
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));
 
+    /// <summary>一次新增多個帳號（docs/WEB-FEEDBACK-PLAN.md #7）</summary>
+    [HttpPost("users/batch")]
+    public ApiResponse<BatchCreateUsersResultDto> BatchCreateUsers([FromBody] BatchCreateUsersRequest request) =>
+        ApiResponse<BatchCreateUsersResultDto>.Ok(_users.BatchCreateUsers(request));
+
     [HttpPut("users/{userId:long}/groups")]
     public ApiResponse<UserDto> SetUserGroups(long userId, [FromBody] SetUserGroupsRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SetUserGroups(userId, request.GroupIds));

@@ -16,7 +16,7 @@ public static class RecordStorageShaper
     /// </summary>
     public static DailyAnalysisRecord ForStorage(DailyAnalysisRecord record)
     {
-        if (record.RiskLevel != "低" || record.TopIssues.Count == 0)
+        if (record.RiskLevel != RiskLevels.Low || record.TopIssues.Count == 0)
         {
             return record;
         }

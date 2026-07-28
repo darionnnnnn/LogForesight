@@ -80,6 +80,14 @@ public class DailyAnalysisRecord
     public List<string> UncoveredChecks { get; set; } = new();
 
     /// <summary>
+    /// 涵蓋率缺口（docs/SHARED-STANDARDS-PLAN.md S6）：事件來源不完整，或 Security log 未能讀取。
+    /// 不序列化——由 <see cref="DataIncomplete"/>／<see cref="SecurityLogAvailable"/> 算出，
+    /// 避免另存一份可能與來源欄位漂移不同步的值。取代原本 Dashboard／Report 各自寫一次的判斷式。
+    /// </summary>
+    [JsonIgnore]
+    public bool HasCoverageGap => DataIncomplete || SecurityLogAvailable == false;
+
+    /// <summary>
     /// 本日實際成功讀取的頻道全名清單。**null = 本欄位問世前寫入的舊紀錄**（同 <see cref="HostId"/>=0 的
     /// 降級慣例）；趨勢層/慢速趨勢層以 <see cref="ChannelCoverage.WasRead"/> 判斷是否納入某頻道簽章的基準，
     /// 舊紀錄自動 fallback 到「三個傳統日誌 + SecurityLogAvailable」的既有語意，新頻道則不算入基準。

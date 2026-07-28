@@ -16,13 +16,16 @@ public class ReportService : IReportService
 {
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
-    private readonly ISystemSettingsService _settings;
+    private readonly IVisibilityService _visibility;
+    private readonly IHandlingService _handling;
 
-    public ReportService(IRecordRepository repository, IHostStore hosts, ISystemSettingsService settings)
+    public ReportService(
+        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, IHandlingService handling)
     {
         _repository = repository;
         _hosts = hosts;
-        _settings = settings;
+        _visibility = visibility;
+        _handling = handling;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to)
@@ -38,7 +41,8 @@ public class ReportService : IReportService
         var previousFrom = previousTo.AddDays(-span + 1);
         var previousRecords = _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo });
 
-        var ranked = BuildHostRanking(records);
+        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
+        var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
 
         var dto = new ReportSummaryDto
         {
@@ -46,10 +50,14 @@ public class ReportService : IReportService
             To = to.ToString("yyyy-MM-dd"),
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
-            Categories = BuildCategories(records, _settings.GetVisibleSeverities()),
+            Categories = RecordStatsBuilder.BuildCategoryCards(records),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
-            Others = BuildOthers(ranked)
+            Others = BuildOthers(ranked),
+            // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingService.GetTodo），
+            // 兩頁的「主機總數」「處理進度」數字才不會各算各的
+            TotalHosts = _visibility.GetVisibleHosts().Count,
+            Handling = _handling.GetTodo(records)
         };
 
         return dto;
@@ -108,17 +116,17 @@ public class ReportService : IReportService
         {
             TotalIssues = records.Sum(r => r.TopIssues.Count),
             TotalIssuesPrevious = previous.Sum(r => r.TopIssues.Count),
-            HighRiskDays = records.Count(r => r.RiskLevel == "高"),
-            HighRiskDaysPrevious = previous.Count(r => r.RiskLevel == "高"),
+            HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High),
+            HighRiskDaysPrevious = previous.Count(r => r.RiskLevel == RiskLevels.High),
             AffectedHosts = records
-                .Where(r => r.RiskLevel is "高" or "中")
+                .Where(r => RiskLevels.IsActionable(r.RiskLevel))
                 .Select(r => r.Host)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             AffectedHostsPrevious = previous
-                .Where(r => r.RiskLevel is "高" or "中")
+                .Where(r => RiskLevels.IsActionable(r.RiskLevel))
                 .Select(r => r.Host)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-            CoverageGapDays = records.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false)
+            CoverageGapDays = records.Count(r => r.HasCoverageGap)
         };
     }
 
@@ -135,8 +143,8 @@ public class ReportService : IReportService
             points.Add(new ReportTrendPointDto
             {
                 Date = date.ToString("yyyy-MM-dd"),
-                HighRisk = dayRecords?.Count(r => r.RiskLevel == "高") ?? 0,
-                MediumRisk = dayRecords?.Count(r => r.RiskLevel == "中") ?? 0,
+                HighRisk = dayRecords?.Count(r => r.RiskLevel == RiskLevels.High) ?? 0,
+                MediumRisk = dayRecords?.Count(r => r.RiskLevel == RiskLevels.Medium) ?? 0,
                 ErrorCount = dayRecords?.Sum(r => r.ErrorCount) ?? 0
             });
         }
@@ -144,54 +152,4 @@ public class ReportService : IReportService
         return points;
     }
 
-    private static List<DashboardCategoryDto> BuildCategories(List<DailyAnalysisRecord> records, HashSet<string>? visibleSeverities)
-    {
-        // GlobalFilter 模式：未勾選層級的問題直接從聚合來源排除，統計數字只計已勾選層級
-        List<LogIssueSignature> Visible(DailyAnalysisRecord r) =>
-            visibleSeverities == null ? r.TopIssues : r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity.ToString())).ToList();
-
-        var merged = CategoryAggregator.Merge(
-            records.SelectMany(r => CategoryAggregator.Aggregate(Visible(r))));
-
-        var hostsPerCategory = records
-            .SelectMany(r => Visible(r).Select(i => new { i.Category, r.Host }))
-            .GroupBy(x => x.Category)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-
-        return merged.Select(c => new DashboardCategoryDto
-        {
-            Category = c.Category.ToString(),
-            IssueCount = c.IssueCount,
-            TotalEvents = c.TotalEvents,
-            MaxSeverity = c.MaxSeverity.ToString(),
-            CriticalCount = c.CriticalCount,
-            HighCount = c.HighCount,
-            MediumCount = c.MediumCount,
-            LowCount = c.LowCount,
-            AffectedHosts = hostsPerCategory.TryGetValue(c.Category, out var count) ? count : 0
-        }).ToList();
-    }
-
-    private List<DashboardHostDto> BuildHostRanking(List<DailyAnalysisRecord> records)
-    {
-        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
-        return records
-            .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new DashboardHostDto
-            {
-                HostId = hostsByName.TryGetValue(group.Key, out var host) ? host.HostId : 0,
-                HostName = group.Key,
-                HighRiskDays = group.Count(r => r.RiskLevel == "高"),
-                MediumRiskDays = group.Count(r => r.RiskLevel == "中"),
-                CorrelationDays = group.Count(r => r.CorrelationAlerts.Count > 0),
-                LatestRiskLevel = group.OrderByDescending(r => r.Date).First().RiskLevel,
-                LatestHeadline = group.OrderByDescending(r => r.Date).First().Headline
-            })
-            .Where(h => h.HighRiskDays > 0 || h.MediumRiskDays > 0)
-            .OrderByDescending(h => h.HighRiskDays)
-            .ThenByDescending(h => h.CorrelationDays)
-            .ThenByDescending(h => h.MediumRiskDays)
-            .ToList();   // 全量回傳，Top N 與「其他」彙總在 GetSummary 切分
-    }
 }

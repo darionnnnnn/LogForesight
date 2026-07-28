@@ -8,19 +8,19 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy } from '../core/ui.js';
-import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES, severityName } from '../core/format.js';
+import { riskBadge, severityBadge, formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
-import { initChatPanel } from './chat-panel.js';
+import { initChatPanel, updateIssueOptions } from './chat-panel.js';
+import { renderAiText } from '../core/markdown-lite.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
 const date = root.dataset.date;
 
-// 嚴重度由重到輕；預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
+// 預設只顯示系統設定「未處理計算」勾選的層級——重點問題頁常被
 // 未勾選層級的雜訊淹沒，真正要看的反而被推到下面（與清單頁預設排除低風險同一個取捨）。
 // 只在頁面首次載入時初始化一次：批次套用觸發的重載（onBatchSaved → load()）不能
 // 把使用者手動調整過的篩選狀態蓋回預設值。
-const SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low'];
 let activeSeverities = null;
 let currentDetail = null;
 
@@ -43,14 +43,8 @@ async function load() {
         getCurrentUser(),
         api.get('/api/ai/status', { silent: true }).catch(() => null)
     ]);
-    // Locked 模式（完全隱藏）：未勾選層級的問題在這一頁視同不存在——先從資料層拿掉，
-    // 重點問題列表、「另有 N 項未顯示」計數、AI 對話下拉才會一致（不能只是不給篩選鈕，
-    // 否則隱藏計數會算入使用者永遠打不開的項目、對話下拉還列得出被鎖定的問題）
-    if (detail.severityDisplayMode === 'Locked') {
-        const allowed = new Set(detail.unhandledSeverities);
-        detail.topIssues = detail.topIssues.filter(i => allowed.has(i.severity));
-    }
-
+    // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/SHARED-STANDARDS-PLAN.md S1）：
+    // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
     aiAvailable = !!aiStatus?.available;
@@ -66,7 +60,8 @@ async function load() {
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
-    initChatPanel(hostId, date, currentDetail.topIssues, aiAvailable);
+    // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）
+    initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
 
@@ -346,10 +341,7 @@ function checkboxControl(issue) {
 
     if (issue.handlingStatus === 'in_progress' && issue.dueDate) {
         // yyyy-MM-dd 字串比大小即日期先後（本地日期字串，見 handling-panel 快速鈕的組法）
-        const pad = n => String(n).padStart(2, '0');
-        const now = new Date();
-        const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-        const isOverdue = issue.dueDate < todayStr;
+        const isOverdue = issue.dueDate < todayLocal();
 
         const due = document.createElement('div');
         due.className = `small lf-issue-status__due ${isOverdue ? 'text-danger fw-semibold' : 'text-muted'}`;
@@ -469,6 +461,14 @@ function highlightedCategories() {
 }
 
 /**
+ * 目前嚴重度篩選後仍可見的問題（docs/WEB-FEEDBACK-PLAN.md #4）：詢問 AI 下拉與
+ * 嚴重度篩選鈕切換時共用同一份判斷，避免兩處篩選邏輯各自維護後兜不起來。
+ */
+function visibleTopIssues() {
+    return currentDetail.topIssues.filter(i => activeSeverities.has(i.severity));
+}
+
+/**
  * 嚴重度篩選鈕：點選即重繪（免按查詢，比照儀表板期間鈕）。
  * 用 btn-group + active 沿用既有視覺語言，不另造樣式。
  */
@@ -496,6 +496,7 @@ function renderSeverityFilter(detail) {
             else activeSeverities.add(severity);
             btn.classList.toggle('active');
             renderIssues(currentDetail);
+            updateIssueOptions(visibleTopIssues());
         });
         container.appendChild(btn);
     }
@@ -870,7 +871,7 @@ function guidancePanel(issue) {
 
 /**
  * 未命中規則問題的「AI 判讀」面板（W2）：一顆按鈕，點了才呼叫 AI（不自動呼叫，
- * 避免展開就打 AI）。AI 產出以 textContent 呈現；失敗靜默提示。
+ * 避免展開就打 AI）。AI 產出走 renderAiText 唯一渲染出口（S7）；失敗靜默提示。
  */
 function aiInterpretPanel(issue) {
     const wrap = document.createElement('div');
@@ -894,13 +895,7 @@ function aiInterpretPanel(issue) {
                 output.textContent = 'AI 目前無法判讀這個問題。';
                 output.classList.add('text-muted');
             } else {
-                output.replaceChildren();
-                const label = document.createElement('span');
-                label.className = 'lf-badge lf-badge--secondary me-2';
-                label.textContent = 'AI 判讀';
-                const text = document.createElement('span');
-                text.textContent = result.text;
-                output.append(label, text);
+                renderAiText(output, result.text, { badge: 'AI 判讀', badgeClassName: 'lf-badge lf-badge--secondary me-2' });
             }
         } catch {
             output.textContent = 'AI 目前無法判讀這個問題。';

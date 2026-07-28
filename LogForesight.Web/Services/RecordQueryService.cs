@@ -155,7 +155,7 @@ public class RecordQueryService : IRecordQueryService
         // 緊急程度排序（§DB-PLAN E 節定案）：風險層級 → 有無關聯訊號 → 日期新到舊。
         // 全部可從既有欄位算出，不需要額外欄位
         var ordered = records
-            .OrderByDescending(r => RiskRank(r.RiskLevel))
+            .OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
             .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
             .ThenByDescending(r => r.Date)
             .ToList();
@@ -186,9 +186,9 @@ public class RecordQueryService : IRecordQueryService
                 {
                     HostId = latest.Host?.HostId ?? 0,
                     HostName = latest.Host?.HostName ?? latest.Record.Host,
-                    HighRiskDays = g.Count(x => x.Record.RiskLevel == "高"),
-                    MediumRiskDays = g.Count(x => x.Record.RiskLevel == "中"),
-                    LowRiskDays = g.Count(x => x.Record.RiskLevel == "低"),
+                    HighRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.High),
+                    MediumRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.Medium),
+                    LowRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.Low),
                     CorrelationDays = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
                     Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
                         .Select(c => c.Category.ToString()).ToList(),
@@ -217,9 +217,9 @@ public class RecordQueryService : IRecordQueryService
             .Select(g => new RecordDateGroupDto
             {
                 Date = g.Key.ToString("yyyy-MM-dd"),
-                HighRiskHosts = g.Count(x => x.Record.RiskLevel == "高"),
-                MediumRiskHosts = g.Count(x => x.Record.RiskLevel == "中"),
-                LowRiskHosts = g.Count(x => x.Record.RiskLevel == "低"),
+                HighRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.High),
+                MediumRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.Medium),
+                LowRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.Low),
                 CorrelationHosts = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
                 Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
                     .Select(c => c.Category.ToString()).ToList(),
@@ -336,11 +336,9 @@ public class RecordQueryService : IRecordQueryService
         var settings = _settings.Get();
         var unhandledSeverities = settings.ParseUnhandledSeverities();
 
-        // GlobalFilter 模式：未勾選層級直接從聚合來源排除，詳情頁的重點問題與類別統計
-        // 全部只計入已勾選層級；其他模式不過濾，交由前端依 SeverityDisplayMode 決定顯示方式
-        var visibleTopIssues = settings.SeverityDisplayMode == "GlobalFilter"
-            ? record.TopIssues.Where(i => settings.UnhandledSeverities.Contains(i.Severity.ToString())).ToList()
-            : record.TopIssues;
+        // 嚴重度可見性已由 RecordRepository.GetOne 強制套用（S1）：record.TopIssues 已是
+        // SiteHidden 模式下的可見子集，這裡不必也不該重覆判斷 SeverityDisplayMode
+        var visibleTopIssues = record.TopIssues;
 
         return new RecordDetailDto
         {
@@ -427,7 +425,7 @@ public class RecordQueryService : IRecordQueryService
                 HasRecord = record != null,
                 RiskLevel = record?.RiskLevel,
                 Headline = record?.Headline ?? "",
-                HasCoverageGap = record != null && HasCoverageGap(record)
+                HasCoverageGap = record != null && record.HasCoverageGap
             });
         }
 
@@ -560,7 +558,7 @@ public class RecordQueryService : IRecordQueryService
                 .Select(c => c.Category.ToString())
                 .ToList(),
             HasCorrelation = record.CorrelationAlerts.Count > 0,
-            HasCoverageGap = HasCoverageGap(record),
+            HasCoverageGap = record.HasCoverageGap,
             AiAnalyzed = record.AiAnalyzed,
             HandlingStatus = progress.DayStatus,
             HandlingStatusText = HandlingStatusText(progress.DayStatus),
@@ -583,14 +581,6 @@ public class RecordQueryService : IRecordQueryService
         HandlingStatuses.KnownNoise => "已知雜訊",
         _ => status
     };
-
-    /// <summary>
-    /// 涵蓋率缺口：資料不完整，或 Security log 沒讀到。
-    /// README 的「沒告警 ≠ 沒問題，是沒看」在 Web 上必須同樣顯眼，
-    /// 否則使用者會把「沒看到」誤讀成「沒發生」。
-    /// </summary>
-    private static bool HasCoverageGap(DailyAnalysisRecord record) =>
-        record.DataIncomplete || record.SecurityLogAvailable == false;
 
     /// <summary>
     /// 規則 Id → 規則 的處置參考索引。用當前 rules.json（反映 Web 編輯）；載入失敗時退回
@@ -740,14 +730,6 @@ public class RecordQueryService : IRecordQueryService
         HighCount = summary.HighCount,
         MediumCount = summary.MediumCount,
         LowCount = summary.LowCount
-    };
-
-    private static int RiskRank(string riskLevel) => riskLevel switch
-    {
-        "高" => 3,
-        "中" => 2,
-        "低" => 1,
-        _ => 0
     };
 }
 

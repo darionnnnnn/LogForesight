@@ -48,24 +48,68 @@ public class WebAiService : IWebAiService
     private readonly AiSettings? _batchSettings;
 
     // 本類別是 Singleton，但 AI 位址／金鑰可在設定頁隨時改：每次取用時比對 DB 目前值，
-    // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）。重建是低頻事件，
-    // 被汰換的舊 HttpClient 交給 GC 即可，不值得為它引入 IDisposable 的漣漪。
-    private readonly object _clientLock = new();
-    private AIService? _client;
-    private (string BaseUrl, string KeyEnc) _clientSnapshot;
-
+    // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）
+    // 統一處理快照比對與重建，取代原本互動／對話情境各自寫一份幾乎逐字相同的 lock+比對邏輯。
+    //
     // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
     // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
     // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
-    private readonly object _chatClientLock = new();
-    private AIService? _chatClient;
-    private (string BaseUrl, string KeyEnc) _chatClientSnapshot;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _interactiveClient;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _chatClient;
 
     public WebAiService(WebAppSettings settings, IAiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
         _systemSettings = systemSettings;
         _batchSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot());
+
+        _interactiveClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        {
+            var (baseUrl, keyEnc) = snapshot;
+            if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+
+            return new AIService(new AiSettings
+            {
+                BaseUrl = baseUrl,
+                ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                // 互動情境的參數覆寫——**不重試**：互動情境下重試只會把「失敗」拖成數十秒
+                // （逾時×嘗試＋退避），使用者早就不等了。一次打不到就降級，
+                // 讓卡片安靜消失比讓人盯著轉圈更好。
+                TimeoutSeconds = 8,
+                MaxTokens = 256,
+                RetryCount = 1,          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
+                RetryDelaySeconds = 0,
+                JsonRetryCount = 0,
+                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
+                PresencePenalty = _batchSettings?.PresencePenalty,
+                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+            });
+        });
+
+        _chatClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        {
+            var (baseUrl, keyEnc) = snapshot;
+            if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+
+            return new AIService(new AiSettings
+            {
+                BaseUrl = baseUrl,
+                ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                // 對話回覆比單一問題判讀長，token 上限拉高；地端模型回應快（實測 50~80 t/s），
+                // 逾時不必抓得像批次那麼保守，但仍給足餘裕避免正常對話被腰斬。不重試——
+                // 互動情境下重試只會把「失敗」拖得更久，一次打不到就讓使用者自己重問。
+                TimeoutSeconds = 60,
+                MaxTokens = 768,
+                RetryCount = 1,
+                RetryDelaySeconds = 0,
+                JsonRetryCount = 0,
+                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
+                PresencePenalty = _batchSettings?.PresencePenalty,
+                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+            });
+        });
     }
 
     /// <summary>
@@ -84,70 +128,14 @@ public class WebAiService : IWebAiService
     private AIService? GetClient()
     {
         var db = _systemSettings.Get();
-        var baseUrl = EffectiveBaseUrl(db);
-        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
-
-        lock (_clientLock)
-        {
-            if (_client != null && _clientSnapshot == (baseUrl, db.AiApiKeyEnc)) return _client;
-
-            // 互動情境的參數覆寫——**不重試**：互動情境下重試只會把「失敗」拖成數十秒
-            // （逾時×嘗試＋退避），使用者早就不等了。一次打不到就降級，
-            // 讓卡片安靜消失比讓人盯著轉圈更好。
-            var interactive = new AiSettings
-            {
-                BaseUrl = baseUrl,
-                ApiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) ? CryptoHelper.Decrypt(db.AiApiKeyEnc) : "",
-                TimeoutSeconds = 8,
-                MaxTokens = 256,
-                RetryCount = 1,          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
-                RetryDelaySeconds = 0,
-                JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
-                PresencePenalty = _batchSettings?.PresencePenalty,
-                ExtraRequestFields = _batchSettings?.ExtraRequestFields
-            };
-
-            _client = new AIService(interactive);
-            _clientSnapshot = (baseUrl, db.AiApiKeyEnc);
-            return _client;
-        }
+        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
     }
 
     /// <summary>依 DB 目前的位址／金鑰取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetChatClient()
     {
         var db = _systemSettings.Get();
-        var baseUrl = EffectiveBaseUrl(db);
-        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
-
-        lock (_chatClientLock)
-        {
-            if (_chatClient != null && _chatClientSnapshot == (baseUrl, db.AiApiKeyEnc)) return _chatClient;
-
-            // 對話回覆比單一問題判讀長，token 上限拉高；地端模型回應快（實測 50~80 t/s），
-            // 逾時不必抓得像批次那麼保守，但仍給足餘裕避免正常對話被腰斬。不重試——
-            // 互動情境下重試只會把「失敗」拖得更久，一次打不到就讓使用者自己重問。
-            var chat = new AiSettings
-            {
-                BaseUrl = baseUrl,
-                ApiKey = CryptoHelper.IsEncrypted(db.AiApiKeyEnc) ? CryptoHelper.Decrypt(db.AiApiKeyEnc) : "",
-                TimeoutSeconds = 60,
-                MaxTokens = 768,
-                RetryCount = 1,
-                RetryDelaySeconds = 0,
-                JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
-                PresencePenalty = _batchSettings?.PresencePenalty,
-                ExtraRequestFields = _batchSettings?.ExtraRequestFields
-            };
-
-            _chatClient = new AIService(chat);
-            _chatClientSnapshot = (baseUrl, db.AiApiKeyEnc);
-            return _chatClient;
-        }
+        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
     }
 
     public async Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)

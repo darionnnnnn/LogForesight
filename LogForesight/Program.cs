@@ -590,7 +590,7 @@ else
         // AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
         // 只有後者該計入 AI 失敗——把刻意跳過算成失敗，會讓執行監控在完全安靜的日子
         // 也顯示「有警告」，狼來了幾次之後就沒有人再看那個顏色了。
-        if (record.AiAnalyzed || record.RiskLevel != "低")
+        if (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low)
         {
             runRecorder.RecordAiCall(record.AiAnalyzed);
         }
@@ -745,7 +745,7 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
 
     // 高風險或命中 Critical 規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）
     var criticalIssues = record.TopIssues.Where(i => i.Severity == IssueSeverity.Critical && !i.Suppressed).ToList();
-    if (record.RiskLevel == "高" || criticalIssues.Count > 0)
+    if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)
     {
         var original = Console.ForegroundColor;
         Console.ForegroundColor = ConsoleColor.Red;
@@ -791,7 +791,7 @@ static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
         Console.ForegroundColor = original;
     }
 
-    if (record.AiAnalyzed && (verbose || record.RiskLevel == "高" || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
+    if (record.AiAnalyzed && (verbose || record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
     {
         Console.WriteLine($"\n  白話說明：{record.Summary}");
         if (record.TrendAssessment.Length > 0)

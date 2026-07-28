@@ -52,16 +52,28 @@
             </div>
             <form id="user-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
+                    <div class="btn-group btn-group-sm mb-3 d-none" id="user-mode-toggle" role="group" aria-label="新增筆數">
+                        <button type="button" class="btn btn-outline-secondary active" data-mode="single">單筆</button>
+                        <button type="button" class="btn btn-outline-secondary" data-mode="batch">多筆</button>
+                    </div>
+
+                    <div class="mb-3" id="user-account-single-group">
                         <label for="user-account" class="form-label">帳號 <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="user-account" required />
                         <div class="form-text">AD 帳號，例如 DOMAIN\wangxm。建立後不可修改。</div>
                     </div>
-                    <div class="mb-3">
+
+                    <div class="mb-3 d-none" id="user-account-batch-group">
+                        <label for="user-accounts-batch" class="form-label">帳號 <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="user-accounts-batch" rows="6" placeholder="一行一個帳號，也接受逗號分隔&#10;DOMAIN\wangxm&#10;DOMAIN\chenxy"></textarea>
+                        <div class="form-text">一行一個帳號（也接受逗號分隔）。顯示名稱預設為帳號本身，若之後以 AD 登入會自動補上真實姓名與 Email。</div>
+                    </div>
+
+                    <div class="mb-3" id="user-display-name-group">
                         <label for="user-display-name" class="form-label">顯示名稱</label>
                         <input type="text" class="form-control" id="user-display-name" />
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" id="user-email-group">
                         <label for="user-email" class="form-label">Email</label>
                         <input type="email" class="form-control" id="user-email" />
                     </div>

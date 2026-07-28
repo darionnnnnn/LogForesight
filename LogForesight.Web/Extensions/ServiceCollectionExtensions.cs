@@ -64,13 +64,21 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ServerAdminAuthenticator>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
-        // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分
-        services.AddSingleton<IAuthenticationProvider>(sp => settings.Auth.Provider.ToLowerInvariant() switch
+        // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
+        // DynamicAuthenticationProvider（docs/WEB-FEEDBACK-PLAN.md #9）包一層：DB 設定的
+        // AdAuthEnabled 開啟時改走 AD 動態設定，否則委派給 appsettings 決定的原 provider——
+        // 這裡的 switch 只決定「沒開啟 AD 動態設定時」的行為，語意與改版前完全一致。
+        services.AddSingleton<IAuthenticationProvider>(sp =>
         {
-            "ldap" => new LdapAuthenticationProvider(settings),
-            "stub" => new StubAuthenticationProvider(),
-            _ => throw new InvalidOperationException(
-                $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Stub 或 Ldap。")
+            IAuthenticationProvider fallback = settings.Auth.Provider.ToLowerInvariant() switch
+            {
+                "ldap" => new LdapAuthenticationProvider(settings),
+                "stub" => new StubAuthenticationProvider(),
+                _ => throw new InvalidOperationException(
+                    $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Stub 或 Ldap。")
+            };
+
+            return new DynamicAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback);
         });
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderPagination } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 const RESULT_META = {
     ok: { text: '成功', variant: 'light' },
@@ -24,8 +24,9 @@ async function init() {
     const to = new Date();
     const from = new Date();
     from.setDate(from.getDate() - 6);
-    document.getElementById('audit-from').value = from.toISOString().slice(0, 10);
-    document.getElementById('audit-to').value = to.toISOString().slice(0, 10);
+    // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
+    document.getElementById('audit-from').value = toLocalDateString(from);
+    document.getElementById('audit-to').value = toLocalDateString(to);
 
     // 套用 URL 帶入的篩選條件（§8.4 下鑽）：儀表板的登入失敗卡會導向
     // /audit?result=Denied，不讀 URL 的話下鑽連結等於壞的

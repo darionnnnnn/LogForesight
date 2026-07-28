@@ -4,15 +4,103 @@
  * §8.4 的驗收標準在這頁兌現：**任何一個數字，最多兩次點擊就能看到組成它的風險日清單**。
  * 實作方式是「組出帶篩選條件的網址再導頁」——問題查詢頁已支援 URL 同步，
  * 所以下鑽不需要在明細端寫任何程式碼。
+ *
+ * 2026-07-27 改版（docs/WEB-FEEDBACK-PLAN.md #6）：
+ *   - 原本獨占一張大卡的「風險層級占比」改與新增的「受影響主機占比」「處理進度」
+ *     並列成一列三顆小圖，騰出的版面讓主機告警排行放寬成整列。
+ *   - 圖表註冊表 + 自訂圖表 modal：使用者自行決定要顯示哪些圖表，勾選狀態存 localStorage，
+ *     隱藏的圖不呼叫 render（省一次 Chart.js 建構），重新勾選時才 lazy render。
+ *   - 列印沿用畫面狀態：隱藏的圖表卡片是 d-none，本來就不會出現在列印結果裡。
  */
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast } from '../core/ui.js';
-import { formatNumber, severityBadge, CATEGORY_NAMES, severityName } from '../core/format.js';
+import { formatNumber, severityBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
 const chartInstances = {};
+
+// ── 圖表可見性（自訂圖表 modal）──────────────────────────────────────────────
+
+const VISIBLE_CHARTS_STORAGE_KEY = 'lf.reports.visibleCharts';
+
+/** {id, title, sectionId, render}：id 是 localStorage 與 checkbox 的鍵，sectionId 是外層 col 的容器 id */
+const CHART_REGISTRY = [
+    { id: 'trend', title: '告警數量趨勢', sectionId: 'trend-section', render: renderTrendChart },
+    { id: 'category', title: '風險類型分布', sectionId: 'category-section', render: renderCategoryChart },
+    { id: 'host', title: '主機告警排行', sectionId: 'host-section', render: renderHostChart },
+    { id: 'risk', title: '風險層級占比', sectionId: 'risk-section', render: renderRiskChart },
+    { id: 'affected-hosts', title: '受影響主機占比', sectionId: 'affected-hosts-section', render: renderAffectedHostsChart },
+    { id: 'handling-progress', title: '處理進度', sectionId: 'handling-progress-section', render: renderHandlingProgressChart }
+];
+
+/** 壞資料（手改過的 localStorage、舊格式）一律當作未設定，退回全開，不讓一筆壞值把整頁圖表藏光 */
+function loadVisibleCharts() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(VISIBLE_CHARTS_STORAGE_KEY));
+        if (Array.isArray(stored)) return new Set(stored);
+    } catch { /* 忽略壞資料 */ }
+    return new Set(CHART_REGISTRY.map(c => c.id));
+}
+
+let visibleCharts = loadVisibleCharts();
+
+function saveVisibleCharts() {
+    localStorage.setItem(VISIBLE_CHARTS_STORAGE_KEY, JSON.stringify([...visibleCharts]));
+}
+
+function applyChartVisibility() {
+    for (const chart of CHART_REGISTRY) {
+        document.getElementById(chart.sectionId).classList.toggle('d-none', !visibleCharts.has(chart.id));
+    }
+}
+
+/** 只對目前可見的圖表呼叫 render——隱藏的圖不必花這次 Chart.js 建構的成本 */
+function renderVisibleCharts() {
+    applyChartVisibility();
+    for (const chart of CHART_REGISTRY) {
+        if (visibleCharts.has(chart.id)) chart.render();
+    }
+}
+
+/** 自訂圖表 modal：checkbox 逐圖勾選，切換即時生效（存 localStorage＋切換可見度＋新顯示的圖 lazy render） */
+function renderChartPickerBody() {
+    const body = document.getElementById('chart-picker-body');
+    body.replaceChildren();
+
+    for (const chart of CHART_REGISTRY) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'form-check-input';
+        input.id = `chart-picker-${chart.id}`;
+        input.checked = visibleCharts.has(chart.id);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label';
+        label.htmlFor = input.id;
+        label.textContent = chart.title;
+
+        input.addEventListener('change', () => {
+            if (input.checked) {
+                visibleCharts.add(chart.id);
+            } else {
+                visibleCharts.delete(chart.id);
+            }
+            saveVisibleCharts();
+            applyChartVisibility();
+            // 重新顯示時才 render：render 函式內部已對 chartInstances 做 destroy-then-create，
+            // 重複呼叫是安全的，不需要額外判斷「是否已建立過」
+            if (input.checked) chart.render();
+        });
+
+        wrap.append(input, label);
+        body.appendChild(wrap);
+    }
+}
 
 async function load() {
     const from = document.getElementById('report-from').value;
@@ -24,10 +112,7 @@ async function load() {
         `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}`;
 
     renderKpi();
-    renderTrendChart();
-    renderCategoryChart();
-    renderHostChart();
-    renderRiskChart();
+    renderVisibleCharts();
 }
 
 /** KPI 卡：帶與前一等長期間的對比——主管要的不是數字本身，是「變好還是變壞」 */
@@ -199,13 +284,9 @@ function renderCategoryChart() {
     const severity = charts.severityColors();
 
     // 類別 × 嚴重度的堆疊長條——這正是 lf_record_categories 需要嚴重度分解欄位的原因（§10.3）
-    // severity 存英文原值（下鑽 URL 參數、取色皆用它）；label 只用於畫面顯示
-    const severityKeys = [
-        { key: 'criticalCount', severity: 'Critical' },
-        { key: 'highCount', severity: 'High' },
-        { key: 'mediumCount', severity: 'Medium' },
-        { key: 'lowCount', severity: 'Low' }
-    ];
+    // severity 存英文原值（下鑽 URL 參數、取色皆用它）；label 只用於畫面顯示。
+    // 由共用的 SEVERITY_ORDER 推導（S11），不再各頁各寫一份同順序的清單
+    const severityKeys = SEVERITY_ORDER.map(s => ({ key: `${s[0].toLowerCase()}${s.slice(1)}Count`, severity: s }));
 
     chartInstances.category?.destroy();
     chartInstances.category = charts.bar(document.getElementById('category-chart'), {
@@ -347,7 +428,7 @@ function renderRiskChart() {
             labels: ['高風險', '中風險'],
             datasets: [{ data: [high, medium], backgroundColor: [risk['高'], risk['中']] }]
         },
-        options: { scales: {} },
+        options: { plugins: { legend: { display: false } } },
         drillTo: point => {
             const level = point.index === 0 ? '高' : '中';
             return `/records?riskLevels=${encodeURIComponent(level)}&from=${currentData.from}&to=${currentData.to}`;
@@ -360,6 +441,88 @@ function renderRiskChart() {
         title: '風險層級占比',
         tableColumns: ['風險層級', '日數'],
         tableRows: [['高風險', high], ['中風險', medium]]
+    });
+}
+
+/**
+ * 受影響主機占比（docs/WEB-FEEDBACK-PLAN.md #6）：本期高／中風險主機數 ÷ 可見主機總數。
+ * 分子（Kpi.AffectedHosts）與分母（TotalHosts）同一次回應取得，不會各自查詢對不上。
+ */
+function renderAffectedHostsChart() {
+    const wrapper = document.getElementById('affected-hosts-wrapper');
+    const total = currentData.totalHosts;
+    const affected = currentData.kpi.affectedHosts;
+
+    if (total === 0) {
+        charts.renderNoData(wrapper, '尚無主機資料');
+        return;
+    }
+
+    const status = charts.statusColors();
+    const risk = charts.riskColors();
+    const remaining = Math.max(total - affected, 0);
+    const percent = Math.round((affected / total) * 100);
+
+    chartInstances.affectedHosts?.destroy();
+    chartInstances.affectedHosts = charts.doughnut(document.getElementById('affected-hosts-chart'), {
+        data: {
+            labels: ['受影響', '其餘'],
+            datasets: [{ data: [affected, remaining], backgroundColor: [risk['高'], status.neutral] }]
+        },
+        options: { plugins: { legend: { display: false } } },
+        drillTo: point => point.index === 0
+            ? `/records?riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}`
+            : null   // 「其餘」是彙總（沒問題的主機），沒有對應的下鑽清單
+    });
+    charts.setCenterText(wrapper, `${percent}%`);
+
+    charts.attachToolbar(document.getElementById('affected-hosts-toolbar'), {
+        chart: chartInstances.affectedHosts,
+        canvasWrapper: wrapper,
+        title: '受影響主機占比',
+        tableColumns: ['項目', '主機數'],
+        tableRows: [['受影響', affected], ['主機總數', total]]
+    });
+}
+
+/**
+ * 處理進度（docs/WEB-FEEDBACK-PLAN.md #6）：期間內高／中風險日已結案（resolved）的比例。
+ * 母體與儀表板待辦同一套 HandlingService.GetTodo 規則（docs/SHARED-STANDARDS-PLAN.md S3），
+ * 不是問題層級的計數——兩個層級的「已處理」語意不同，不能混用。
+ */
+function renderHandlingProgressChart() {
+    const wrapper = document.getElementById('handling-progress-wrapper');
+    const handling = currentData.handling;
+    const total = handling.totalCount;
+
+    if (total === 0) {
+        charts.renderNoData(wrapper, '此期間沒有高／中風險日');
+        return;
+    }
+
+    const status = charts.statusColors();
+    const remaining = total - handling.resolvedCount;
+    const percent = Math.round((handling.resolvedCount / total) * 100);
+
+    chartInstances.handlingProgress?.destroy();
+    chartInstances.handlingProgress = charts.doughnut(document.getElementById('handling-progress-chart'), {
+        data: {
+            labels: ['已處理', '未完成'],
+            datasets: [{ data: [handling.resolvedCount, remaining], backgroundColor: [status.success, status.neutral] }]
+        },
+        options: { plugins: { legend: { display: false } } },
+        drillTo: point => point.index === 1
+            ? `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}`
+            : null   // 「已處理」分散在各日，沒有單一篩選條件可以精確對應回這個數字，不下鑽
+    });
+    charts.setCenterText(wrapper, `${percent}%`);
+
+    charts.attachToolbar(document.getElementById('handling-progress-toolbar'), {
+        chart: chartInstances.handlingProgress,
+        canvasWrapper: wrapper,
+        title: '處理進度',
+        tableColumns: ['狀態', '風險日數'],
+        tableRows: [['已處理', handling.resolvedCount], ['未完成', remaining]]
     });
 }
 
@@ -427,9 +590,12 @@ function setRange(days) {
     const from = new Date();
     from.setDate(from.getDate() - days + 1);
 
-    document.getElementById('report-from').value = from.toISOString().slice(0, 10);
-    document.getElementById('report-to').value = to.toISOString().slice(0, 10);
+    // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
+    document.getElementById('report-from').value = toLocalDateString(from);
+    document.getElementById('report-to').value = toLocalDateString(to);
 }
+
+document.getElementById('chart-picker-modal').addEventListener('show.bs.modal', renderChartPickerBody);
 
 setRange(30);
 load();

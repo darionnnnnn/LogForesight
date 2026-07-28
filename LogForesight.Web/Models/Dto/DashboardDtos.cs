@@ -92,6 +92,14 @@ public class ReportSummaryDto
 
     /// <summary>Top 10 以外主機的合計（高＋中風險日），供「其他 N 台」彙總條；無其他主機時為 null</summary>
     public HostRankingOthersDto? Others { get; set; }
+
+    /// <summary>可見且啟用的主機總數（docs/WEB-FEEDBACK-PLAN.md #6）——與儀表板 TotalHosts 同一來源，
+    /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>
+    public int TotalHosts { get; set; }
+
+    /// <summary>期間內高＋中風險日的處理彙總（docs/WEB-FEEDBACK-PLAN.md #6）——與儀表板待辦
+    /// 同一套 HandlingService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
+    public HandlingTodoDto Handling { get; set; } = new();
 }
 
 /// <summary>主機排行 Top 10 之外的彙總（避免主機量大時尾端主機完全隱形）</summary>
