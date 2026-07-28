@@ -11,7 +11,7 @@ namespace LogForesight.Web.Services.Import;
 /// </summary>
 public class ImportService
 {
-    private readonly IEnumerable<ICsvImporter> _importers;
+    private readonly IReadOnlyDictionary<ImportKind, ICsvImporter> _importers;
     private readonly IAuditService _audit;
     private readonly IImportLogStore _logs;
     private readonly Auth.ICurrentUser _currentUser;
@@ -33,7 +33,7 @@ public class ImportService
         Auth.ICurrentUser currentUser,
         WebAppSettings settings)
     {
-        _importers = importers;
+        _importers = importers.ToDictionary(i => i.Kind);
         _audit = audit;
         _logs = logs;
         _currentUser = currentUser;
@@ -142,8 +142,9 @@ public class ImportService
     }
 
     private ICsvImporter Resolve(ImportKind kind) =>
-        _importers.FirstOrDefault(i => i.Kind == kind)
-        ?? throw DomainException.Validation($"不支援的匯入類型：{kind}。");
+        _importers.TryGetValue(kind, out var importer)
+            ? importer
+            : throw DomainException.Validation($"不支援的匯入類型：{kind}。");
 
     private static string KindName(ImportKind kind) => kind switch
     {

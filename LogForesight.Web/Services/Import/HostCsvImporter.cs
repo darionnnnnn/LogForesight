@@ -262,13 +262,8 @@ public class HostCsvImporter : ICsvImporter
     {
         var changes = new List<ImportFieldChange>();
 
-        void CompareText(string header, string field, string? before)
-        {
-            if (!row.HasValue(header)) return;
-            var after = row.Get(header);
-            if (after == (before ?? "")) return;
-            changes.Add(new ImportFieldChange { Field = field, Before = string.IsNullOrEmpty(before) ? "（無）" : before, After = after });
-        }
+        void CompareText(string header, string field, string? before) =>
+            ImportChangeHelpers.CompareText(row, changes, header, field, before);
 
         CompareText("ip_address", "IP", existing.IpAddress);
         CompareText("netiq_server", "Sentinel", existing.NetiqServer);

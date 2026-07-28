@@ -172,13 +172,7 @@ public class UserCsvImporter : ICsvImporter
             });
         }
 
-        if (row.HasValue("email") && row.Get("email") != (existing.Email ?? ""))
-        {
-            changes.Add(new ImportFieldChange
-            {
-                Field = "Email", Before = existing.Email ?? "（無）", After = row.Get("email")
-            });
-        }
+        ImportChangeHelpers.CompareText(row, changes, "email", "Email", existing.Email);
 
         var active = row.GetBool("active");
         if (active.HasValue && active.Value != existing.Active)
