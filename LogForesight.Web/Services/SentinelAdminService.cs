@@ -183,9 +183,11 @@ public class SentinelAdminService
 
         var server = new SentinelServer { Name = "(測試連線)", BaseUrl = baseUrl, Username = username, Password = password };
 
-        await using var client = new SentinelClient(server, queryOptions);
+        // 建構子也在 try 內：位址格式不正確是 SentinelClient 建構期就擋下的（不是連線期），
+        // 而那同樣是「測試連線」該回報的結果之一，不該變成 500
         try
         {
+            await using var client = new SentinelClient(server, queryOptions);
             var elapsed = await client.TestConnectionAsync(ct);
             return new TestSentinelConnectionResultDto
             {

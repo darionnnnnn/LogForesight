@@ -426,6 +426,56 @@ public class SentinelClientTests
         Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: ""), Settings()));
     }
 
+    [Theory]
+    [InlineData("not a url")]
+    [InlineData("sentinel.corp.local:8443")]   // 少打 https://——自由文字欄位最常見的輸入錯誤
+    [InlineData("://bad")]
+    [InlineData("http://")]                    // 有 scheme 但沒有主機
+    [InlineData("ftp://sentinel.corp.local")]  // 非 http(s)
+    public void 建構子_連線位址格式不正確時擲出可顯示的例外(string badUrl)
+    {
+        // 這些輸入送進 HttpClient 會擲 InvalidOperationException／NotSupportedException——
+        // 不是 SentinelClientException，會穿透呼叫端「連線失敗就顯示訊息」的 catch 變成 500／中斷 probe。
+        // 這條測試釘住它們一律在建構期就轉成本類別的例外。
+        var ex = Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: badUrl), Settings()));
+
+        Assert.Contains("連線位址格式不正確", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("https://sentinel.local:8443")]
+    [InlineData("http://sentinel.local")]
+    [InlineData("https://sentinel.local:8443/")]   // 尾端斜線
+    public async Task 建構子_合法連線位址不被誤擋(string goodUrl)
+    {
+        await using var _ = new SentinelClient(Server(baseUrl: goodUrl), Settings());
+    }
+
+    [Fact]
+    public async Task 重試次數設為0_不擲例外且不重試()
+    {
+        // Polly 的 RetryStrategyOptions 要求 MaxRetryAttempts >= 1，傳 0 會在建構子擲
+        // ValidationException——而「NetIQ 維護」頁的失敗重試次數 min=0，管理員填 0（合理的
+        // 「不要重試」）會讓每一次 SentinelClient 建構直接爆掉。這條測試釘住 0 的正確行為。
+        var handler = new StubHandler();
+        var authCalls = 0;
+
+        handler.OnSend = (req, _) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri!.ToString() == AuthUrl())
+            {
+                authCalls++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            }
+            throw new InvalidOperationException("不該送出認證以外的請求");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 0), handler);
+        await Assert.ThrowsAsync<SentinelClientException>(() => client.TestConnectionAsync());
+
+        Assert.Equal(1, authCalls);   // 只打一次，沒有重試
+    }
+
     [Fact]
     public async Task 建立工作的請求本文_引號與非ASCII不得寫成Unicode轉義()
     {

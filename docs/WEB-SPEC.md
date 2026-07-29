@@ -745,7 +745,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
-- **NetIQ 匯入排程化（2026-07-23 Phase D-3）**：主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
+- ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
+  （`NetiqImportQueueStore`／`--apply-netiq-imports`）已整組刪除，改為勾選送出即時落盤；精靈本身
+  也已從主機頁搬到「資料匯入」頁（見 §9.9）。以下原文保留供歷史對照，**不代表現況**——
+  `NetiqImportApplier`（最後一行）是唯一沿用至今的部分。
+- 主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
   改「**排入匯入佇列**」（`webdata\netiq_import_queue.json`）——不再立即落盤主機異動。實際新增/更新/孤兒復活
   由批次執行處理（每次執行開頭自動處理待套用佇列，或手動 `LogForesight.exe --apply-netiq-imports`）。
   主機頁顯示佇列狀態（排程中可取消／已套用含結果數字／失敗含原因／已取消）。理由：兩千台規模下主機異動

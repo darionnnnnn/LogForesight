@@ -237,6 +237,31 @@ public class SentinelAdminServiceTests
     }
 
     [Fact]
+    public async Task TestConnection_連線位址格式不正確_回傳失敗結果而不是擲例外()
+    {
+        // 位址格式是 SentinelClient 建構期擋下的（不是連線期），但那同樣是「測試連線」
+        // 該回報的結果之一——擲出去會變成 500，畫面看到的是系統錯誤而不是可修的原因
+        var result = await Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "sentinel.corp.local:8443", Username = "svc", Password = "x" },
+            new NetiqOptions(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("連線位址格式不正確", result.Message);
+        Assert.Null(result.ElapsedMs);
+    }
+
+    [Fact]
+    public async Task TestConnection_失敗訊息不含密碼()
+    {
+        var result = await Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "not a url", Username = "svc", Password = "hunter2" },
+            new NetiqOptions(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.DoesNotContain("hunter2", result.Message);
+    }
+
+    [Fact]
     public async Task TestConnection_既有Sentinel尚無密碼且未填新密碼_擲例外()
     {
         var svc = Create();

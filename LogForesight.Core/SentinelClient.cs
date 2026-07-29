@@ -88,6 +88,20 @@ public sealed class SentinelClient : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。");
 
+        // 連線位址格式在這裡就擋下，而不是等送出請求時才炸：BaseUrl 是自由文字欄位，
+        // 少打 https://（「sentinel.corp.local:8443」）之類的輸入極常見，而 HttpClient 對它們擲的是
+        // InvalidOperationException／NotSupportedException——**不是** SentinelClientException，
+        // 會穿透所有呼叫端「連線失敗就顯示訊息」的 catch，變成 500 或中斷整趟 probe。
+        // 統一轉成本類別的例外，訊息直接可顯示給操作者。
+        if (!Uri.TryCreate(server.BaseUrl.TrimEnd('/'), UriKind.Absolute, out var parsed) ||
+            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) ||
+            string.IsNullOrEmpty(parsed.Host))
+        {
+            throw new SentinelClientException(
+                $"Sentinel「{server.Name}」的連線位址格式不正確：「{server.BaseUrl}」。" +
+                "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。");
+        }
+
         _server = server;
         _settings = settings;
 
@@ -106,11 +120,18 @@ public sealed class SentinelClient : IAsyncDisposable
         }
 
         // 重試：連線失敗／逾時／5xx（含 503）皆重試，指數退避；4xx 不重試（打錯就是打錯，
-        // 401/403 另有 SendAuthenticatedAsync 的一次性重新認證重放機制，不走這裡）
-        _retryPipeline = new ResiliencePipelineBuilder()
-            .AddRetry(new RetryStrategyOptions
+        // 401/403 另有 SendAuthenticatedAsync 的一次性重新認證重放機制，不走這裡）。
+        //
+        // RetryCount <= 0 時**完全不加重試策略**，而不是把它夾到 1：Polly 的 RetryStrategyOptions
+        // 要求 MaxRetryAttempts >= 1，傳 0 會在建構子就擲 ValidationException（「NetIQ 維護」頁的
+        // 失敗重試次數 min=0，管理員填 0 是合理的「不要重試」，卻會讓每一次 SentinelClient 建構
+        // 直接爆掉）；夾到 1 則是靜默違背設定值。不加策略才真的等於「不重試」。
+        var pipelineBuilder = new ResiliencePipelineBuilder();
+        if (settings.RetryCount > 0)
+        {
+            pipelineBuilder.AddRetry(new RetryStrategyOptions
             {
-                MaxRetryAttempts = Math.Max(settings.RetryCount, 0),
+                MaxRetryAttempts = settings.RetryCount,
                 Delay = TimeSpan.FromSeconds(1),
                 BackoffType = DelayBackoffType.Exponential,
                 ShouldHandle = new PredicateBuilder()
@@ -123,8 +144,9 @@ public sealed class SentinelClient : IAsyncDisposable
                         _server.Name, args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
-            })
-            .Build();
+            });
+        }
+        _retryPipeline = pipelineBuilder.Build();
     }
 
     private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings)

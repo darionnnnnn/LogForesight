@@ -324,11 +324,13 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態（2026-07-28）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
-> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（卡在 `--netiq-probe` 的真實環境
-> 閘門，見 docs/LINUX-RULES-PLAN.md §10 的 P3）。也就是說現在可以維護 Linux 規則、把主機標成 Linux，
-> 但實際的每日分析還不會有 Linux 資料進來。上表的訊息關鍵字是 probe 前的通用草案，
-> 屆時會依真實環境輸出校正（seed v5）。
+> **目前狀態（2026-07-29）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
+> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 docs/LINUX-RULES-PLAN.md §10 的 P3）。
+> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
+> 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
+> 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
+> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 `--netiq-probe` 即可定案欄位形狀。
+> 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
 >
 > **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
 > 不讓人以為有看過。
@@ -521,10 +523,16 @@ IP 衝突時只查最早建立的那一台，行為才可預測。每台主機�
 
 ### NetIQ 主動探索匯入
 
-Web 主機頁的「從 NetIQ 匯入」精靈：掃描 Sentinel → 依網段勾選 → **送出即立即新增/更新/孤兒復活**
-（docs/HISTORY.md 定案 7；早期版本曾排入佇列等批次執行時才套用，已改為即時落盤，
-批次端不需要任何指令介入）。結果記入「資料匯入」頁的匯入紀錄，與 CSV 匯入共用同一份稽核軌跡。
-當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——即時的只是「主機被收進清單」這件事本身。
+Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索帳密的 Sentinel → 掃描 → 依網段勾選
+→ 指派群組與作業系統 → **送出即立即新增/更新/孤兒復活**（docs/HISTORY.md 定案 7；早期版本曾
+排入佇列等批次執行時才套用，也曾放在主機頁，均已調整）。結果記入同一頁的匯入紀錄，
+與 CSV 匯入共用同一份稽核軌跡。當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——
+即時的只是「主機被收進清單」這件事本身。
+
+主機清單很長時的操作：每個網段可整段勾選，超過 20 台的網段預設收合（標題仍顯示總數、
+已登錄數與可復活數），另有「全選新主機」（回到預設勾選狀態：新主機與可復活的勾、
+既有使用中的不勾）與「全不選」兩個快捷。作業系統預設值取自該台 Sentinel 的設定
+（見「NetIQ 維護」頁），只套用在本次**新增**的主機。
 
 ### NetIQ 事件取數 API 驗證（`--netiq-probe`，2026-07-24 新增）
 
@@ -545,12 +553,21 @@ LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 `max-results` 一律壓在 3 筆以內或只取 found 計數），對 Sentinel 負擔可忽略。
 
 **目前狀態（2026-07-29）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
-`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**第一輪真實環境輸出已取得**——
-Windows 面的欄位對應大致定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`，完整對照見
-docs/NETIQ-API-PLAN.md §3.5），但同時發現事件量遠超原估計（單台 Sentinel 近 24h 約 2470 萬筆），
-原本規劃的探索方式因此不可行、且「主機歸屬鍵是哪個欄位」成為最關鍵未決項。已擴充 probe 的
-第二輪查詢（步驟 6～12）待真實環境執行；後續的 `SentinelFieldMap`、watchlist→Lucene 查詢產生器、
-`SentinelStatsSource`（實際取數邏輯）依賴第二輪輸出才能繼續，詳見 docs/NETIQ-API-PLAN.md §8、§9。
+`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**兩輪真實環境輸出皆已取得**：
+
+- Windows 面欄位對應定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`、訊息＝`msg`、
+  帳號＝`sun`，完整對照見 docs/NETIQ-API-PLAN.md §3.5）。
+- **主機歸屬鍵定案為 `repip`**（四台 DC 對到四個各自不同的 `repip`，一對一、非共用代理）；
+  `sip` 是用戶端來源 IP，不是主機自身。
+- 事件量遠超原估計（單台 Sentinel 近 24h 約 2470 萬筆），原規劃的「投影全事件本地 distinct」
+  探索方式因此不可行；ESM `eventsource` 端點又被權限拒絕，**探索方案尚未定案**
+  （要權限／窄窗投影／不做自動探索三選一，見 docs/NETIQ-API-PLAN.md §9）。
+- probe 過程揪出並修正一個會讓正式取數管線**全面失敗**的缺陷：Sentinel 的 JSON 解析器不接受
+  `\uXXXX` 轉義序列，而 .NET 預設編碼器正好那樣輸出，導致片語查詢（規則來源下推 Lucene 的
+  必要語法）整個被 400 拒絕。
+
+後續的 `SentinelFieldMap`、watchlist→Lucene 查詢產生器、`SentinelStatsSource`（實際取數邏輯）
+尚未實作，詳見 docs/NETIQ-API-PLAN.md §8、§9 與 docs/BACKLOG.md。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 

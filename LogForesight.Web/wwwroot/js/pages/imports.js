@@ -497,9 +497,17 @@ function wizardHostRow(host) {
     return row;
 }
 
+// 「全選新主機」＝回到預設勾選狀態（新主機與可復活的勾、既有使用中的不勾），不是無條件全選——
+// 無條件全選會把既有主機的歸屬一併改掉，那是另一件事，不該藏在「全選」這個字眼底下。
 document.getElementById('wizard-select-new').addEventListener('click', () => {
+    if (!wizardScan) return;
+
+    // 先建 IP → 主機的索引再跑迴圈：掃描結果可達數百上千台，
+    // 在迴圈內 flatMap+find 會是 O(n²) 且每輪重建一次完整陣列，大網段直接卡住畫面
+    const hostByIp = new Map(wizardScan.subnets.flatMap(s => s.hosts).map(h => [h.ipAddress, h]));
+
     for (const box of document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:not(:disabled)')) {
-        const host = wizardScan.subnets.flatMap(s => s.hosts).find(h => h.ipAddress === box.dataset.ip);
+        const host = hostByIp.get(box.dataset.ip);
         box.checked = host ? (host.orphanOverlap || !host.exists) : false;
     }
     updateSubnetSelectionHint();

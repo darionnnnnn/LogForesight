@@ -62,8 +62,17 @@ public static class NetiqProbeCli
             }
 
             var server = ToConnectable(sentinel);
-            var ok = await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp);
-            allOk &= ok;
+            try
+            {
+                allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp);
+            }
+            catch (Exception ex)
+            {
+                // 失敗隔離：一台的設定有問題（例如連線位址格式不正確，在建立 client 時就擲出）
+                // 不該讓其餘 Sentinel 完全沒被 probe 到——那正是這支工具要收集的資訊
+                Console.WriteLine($"   ✗ 這台 Sentinel 無法 probe：{ex.Message}\n");
+                allOk = false;
+            }
         }
 
         Console.WriteLine("══════════ Probe 結束 ══════════");
