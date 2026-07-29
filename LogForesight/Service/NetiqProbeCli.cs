@@ -61,7 +61,7 @@ public static class NetiqProbeCli
                 continue;
             }
 
-            var server = ToConnectable(sentinel);
+            var server = SentinelConnectionFactory.ToConnectable(sentinel);
             try
             {
                 allOk &= await ProbeOneAsync(server, settings, sampleIp, sampleLinuxIp);
@@ -78,17 +78,6 @@ public static class NetiqProbeCli
         Console.WriteLine("══════════ Probe 結束 ══════════");
         return allOk ? 0 : 1;
     }
-
-    /// <summary>密碼在這裡解密，僅存在於本行程記憶體，不落地、不進 log（同 Web 端
-    /// NetiqServerCatalog.ToProjection 的既有慣例）</summary>
-    private static SentinelServer ToConnectable(Sentinel s) => new()
-    {
-        Id = s.SentinelId,
-        Name = s.Name,
-        BaseUrl = s.BaseUrl,
-        Username = s.Username,
-        Password = CryptoHelper.IsEncrypted(s.PasswordEnc) ? CryptoHelper.Decrypt(s.PasswordEnc) : s.PasswordEnc
-    };
 
     private static async Task<bool> ProbeOneAsync(
         SentinelServer server, NetiqOptions settings, string? sampleIp, string? sampleLinuxIp)

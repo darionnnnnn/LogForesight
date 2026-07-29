@@ -622,6 +622,41 @@ else
     log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
 }
 
+// 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
+//    對 Web 主機頁登錄的 NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套
+//    LogAnalysisService。清單為空（尚未登錄任何 NetIQ 主機，或全部待歸屬/停用）時
+//    NetiqPipelineService.RunAsync 自己零副作用返回，這裡不另加開關判斷。
+var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
+if (netiqHostList.Warnings.Count > 0)
+{
+    WithColor(ConsoleColor.Yellow, () =>
+    {
+        Console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
+        foreach (var warning in netiqHostList.Warnings) Console.WriteLine($"    - {warning}");
+    });
+}
+if (netiqHostList.TotalHosts > 0)
+{
+    try
+    {
+        var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
+        var netiqPipeline = new NetiqPipelineService(
+            settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
+            eventLogService, aiService, suppressionStore, reportService, runRecorder);
+
+        var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
+        runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
+            $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日");
+    }
+    catch (Exception ex)
+    {
+        // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
+        // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
+        log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");
+        Console.WriteLine($"\n  ✗ NetIQ 機房分析失敗：{ex.Message}（本機分析結果不受影響，下次執行自動重試缺漏日）");
+    }
+}
+
 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
 //    （2026-07-20 重設計：due-date 輪巡取代固定星期幾，見 docs/PLAN.md「核心設計決策 B」）。
 //    以「昨天」為體檢基準日——那是最近一筆已完整分析並寫入歷史的一天。

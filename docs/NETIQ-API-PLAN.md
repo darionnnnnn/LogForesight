@@ -409,6 +409,27 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
 1008 個單元測試綠、`--selftest` 136 項全過（含新增的 `RunSentinelQueryChecks`），
 含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構（決策 B2 的實測驗證）。
 
+**2026-07-29 Phase 4 已實作**（`LogForesight/Service/NetiqPipelineService.cs`，機房 pipeline 本體）：
+`Program.cs` 本機分析完成後接機房迴圈，逐 Sentinel → 逐日（跨主機遞增、批次 IP≤50）→
+`SentinelQueryBuilder` 建 filter → `SentinelClient.SearchAsync` 取事件 → 依 `repip` 分桶 →
+`SentinelEventMapper` 映射 → 逐主機餵進與本機路徑相同的 `LogAnalysisService.AnalyzeDayAsync`。
+**只支援 Windows 主機**（Linux 明確標示「尚未支援」，不靜默略過）。當日續跑靠既有
+`HasRecord`（各主機 owner-host 隔離的 record store），凌晨排程跑到一半掛掉、白天重跑只補
+未完成的主機/日期。NetIQ 主機首次回補固定 14 天（`NetiqInitialLookbackDays`，不套本機模式的
+120 天）。失敗隔離兩層：單一批次查詢失敗只影響該批（其餘批次照跑）、單一 Sentinel 整體失敗
+不影響其他 Sentinel。截斷（`Truncated`）時整批主機統一標記 `dataIncomplete`（無法判斷截斷影響
+哪幾台，寧可全部誠實申報不完整）。
+
+**v1 已知限制**（刻意延後，非遺漏）：
+- `securityLogAvailable` 固定 true、`channels` 固定 null——Defender/RDP Operational 頻道在
+  Sentinel 端的覆蓋現況尚未驗證（§9 未決事項 #3），v1 不宣稱「已檢查且無異常」，但也還沒有
+  正式的「不適用」誠實申報；待試點確認覆蓋現況後再補。
+- 逐主機呼叫 `HasAnyRecord`/`HasRecord`（最多 14 次）屬 O(主機數×天數) 的個別查詢，
+  2~3 台試點量級無感，但**尚未針對兩千台規模做批次化優化**，全量放量前需評估。
+- 建置零警告、**既有 1008 個單元測試與 `--selftest` 136 項維持全綠**（Phase 4 本身是 I/O 導向的
+  orchestration 層，比照 `Program.cs` 既有的本機分析迴圈——不直接單元測試，靠
+  build/既有回歸測試/`--selftest` 撐住正確性，端到端驗證留給試點）。
+
 ## 9. 未決事項
 
 **已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`，term 不斷詞）／頻道（`rv150`）／
