@@ -533,17 +533,24 @@ Web 主機頁的「從 NetIQ 匯入」精靈：掃描 Sentinel → 依網段勾�
 IP 篩選批次上限、時區基準等都必須用真實輸出核對，不能憑文件猜。
 
 ```
-LogForesight.exe --netiq-probe    # 對已設定且啟用的 Sentinel 逐一跑 6 項小規模驗證查詢
+LogForesight.exe --netiq-probe    # 對已設定且啟用的 Sentinel 逐一跑 13 項小規模驗證查詢
+
+# 加上樣本主機可多跑第二輪的主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位核對（兩個參數都可省略）
+LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 ```
 
 輸出可直接複製貼回對話：含每台 Sentinel 的原始事件 JSON（用於核對欄位對應）、`dt` 時間邊界
-比對提示、不同 `pgsize` 的分頁耗時、IP 篩選批次大小測試、錯誤密碼／非法查詢語法的失敗路徑驗證。
-全程只發送約 15~20 個小查詢（單一佇列＋既有節流設定），對 Sentinel 負擔可忽略。
+比對提示（印絕對時間，可在 Web UI 重現同一段區間）、不同 `pgsize` 的分頁耗時、IP 篩選批次大小
+測試、錯誤密碼／非法查詢語法的失敗路徑驗證。全程只發送十幾個小查詢（單一佇列＋既有節流設定、
+`max-results` 一律壓在 3 筆以內或只取 found 計數），對 Sentinel 負擔可忽略。
 
-**目前狀態（2026-07-24）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
-`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**尚未在真實環境執行過**——
-後續的欄位對應（`SentinelFieldMap`）、watchlist→Lucene 查詢產生器、`SentinelStatsSource`
-（實際取數邏輯）全部依賴這次 probe 的真實輸出才能繼續，詳見 docs/NETIQ-API-PLAN.md §8。
+**目前狀態（2026-07-29）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
+`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**第一輪真實環境輸出已取得**——
+Windows 面的欄位對應大致定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`，完整對照見
+docs/NETIQ-API-PLAN.md §3.5），但同時發現事件量遠超原估計（單台 Sentinel 近 24h 約 2470 萬筆），
+原本規劃的探索方式因此不可行、且「主機歸屬鍵是哪個欄位」成為最關鍵未決項。已擴充 probe 的
+第二輪查詢（步驟 6～12）待真實環境執行；後續的 `SentinelFieldMap`、watchlist→Lucene 查詢產生器、
+`SentinelStatsSource`（實際取數邏輯）依賴第二輪輸出才能繼續，詳見 docs/NETIQ-API-PLAN.md §8、§9。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 

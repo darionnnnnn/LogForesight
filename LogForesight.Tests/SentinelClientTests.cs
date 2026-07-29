@@ -426,6 +426,87 @@ public class SentinelClientTests
         Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: ""), Settings()));
     }
 
+    // ── RawGetAsync：非 event-search job 的一般 REST 資源讀取（ESM eventsource 等） ──
+
+    [Fact]
+    public async Task RawGetAsync_認證後直接GET_不建立也不刪除job()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Get && url == "https://sentinel.local:8443/SentinelRESTServices/objects/eventsource")
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[{\"name\":\"srv1\"}]}"));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var body = await client.RawGetAsync("/SentinelRESTServices/objects/eventsource");
+
+        Assert.Contains("srv1", body);
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Delete);
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Post && r.Url == JobCollectionUrl());
+    }
+
+    [Fact]
+    public async Task RawGetAsync_非成功狀態碼_擲出可顯示的例外()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Get)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                { Content = new StringContent("no such resource") });
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() =>
+            client.RawGetAsync("/SentinelRESTServices/objects/eventsource"));
+
+        Assert.Contains("404", ex.Message);
+    }
+
+    [Fact]
+    public async Task RawGetAsync_token過期時_重新認證後重放()
+    {
+        var handler = new StubHandler();
+        var authCalls = 0;
+        var getCalls = 0;
+
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+            {
+                authCalls++;
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"Token\":\"tok-{authCalls}\"}}"));
+            }
+            if (req.Method == HttpMethod.Get)
+            {
+                getCalls++;
+                if (getCalls == 1) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                Assert.Equal("X-SAML tok-2", req.Headers.Authorization!.ToString());
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[]}"));
+            }
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var body = await client.RawGetAsync("/SentinelRESTServices/objects/eventsource");
+
+        Assert.Equal(2, authCalls);
+        Assert.Equal("{\"items\":[]}", body);
+    }
+
     // ── 純函數解析邏輯（internal，InternalsVisibleTo 見 LogForesight.Core.csproj） ──
 
     [Fact]

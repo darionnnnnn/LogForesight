@@ -474,6 +474,41 @@ public sealed class SentinelClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 對任意 REST 資源做認證過的 GET，不走 event-search job 生命週期
+    /// （docs/NETIQ-API-PLAN.md 2026-07-29 第二輪 probe：探索 ESM <c>/objects/eventsource</c> 等
+    /// 一般資源用，這些端點是單次讀取，沒有 job/輪詢/刪除的概念）。
+    /// 回傳原始 JSON 字串——解析交由呼叫端，不同端點形狀不一，這裡不假設任何結構。
+    /// </summary>
+    /// <param name="path">相對路徑（如 <c>/SentinelRESTServices/objects/eventsource</c>）或完整 URL</param>
+    public async Task<string> RawGetAsync(string path, CancellationToken ct = default)
+    {
+        await _queue.WaitAsync(ct);
+        try
+        {
+            await ThrottleAsync(ct);
+            var url = path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? path
+                : $"{BaseUrl}{(path.StartsWith('/') ? "" : "/")}{path}";
+
+            var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct);
+            using (resp)
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    throw new SentinelClientException(
+                        $"Sentinel「{_server.Name}」讀取「{path}」失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
+                }
+                return body;
+            }
+        }
+        finally
+        {
+            _queue.Release();
+        }
+    }
+
     // ── 結果分頁 ─────────────────────────────────────────────────────
 
     private async Task<List<SentinelEvent>> FetchAllPagesAsync(JobStatus status, SentinelSearchRequest request, CancellationToken ct)

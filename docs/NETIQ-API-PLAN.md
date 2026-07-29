@@ -212,19 +212,44 @@ Windows Event ID 在 Sentinel schema 的落點是 probe #2 的實測項。候選
 
 ### 3.5 `--netiq-probe`（Phase 1 閘門，輸出貼回對話定案）
 
-一鍵對每台設定的 Sentinel 依序執行、輸出成一份可貼回的報告（敏感值遮罩）：
+一鍵對每台設定的 Sentinel 依序執行、輸出成一份可貼回的報告（敏感值遮罩）。實際實作的步驟
+（`LogForesight/Service/NetiqProbeCli.cs`）：
 
-1. 認證：取 token 成功與否、耗時；token 重用第二次呼叫是否有效。
-2. 小範圍 event-search（近 1h、`max-results: 20`、全欄位）：傾印 3 筆原始 JSON
-   → 定案欄位對應（Windows EventID / 來源 / 主機名 / IP / 訊息 / dt 格式與時區）。
-3. apidoc 檢查提示：印出該台 `…/apidoc/en/index.html` 網址，人工確認有無聚合端點。
-4. `dt` 界線實測：同一事件以不同 start/end 查詢驗證含/不含語意與時區。
-5. 頻道覆蓋：Q4 單次版，列各主機頻道。
-6. 分頁：`pgsize` 大小 vs 回應耗時的三點採樣（100/500/1000）；job DELETE 後再 GET 確認 404。
-7. IP 篩選批次上限：以 10/50/100 個 IP 子句的 filter 各查一次，找出安全批次大小。
-8. 失敗路徑：錯誤密碼認證（預期 401）、非法 filter（預期 400）確認錯誤可辨識。
+1. 認證＋小範圍 event-search（近 1h、`max-results:3`、全欄位）：傾印原始 JSON → 定案欄位對應。
+2. `dt` 界線初測：近 2 小時拆兩段查 found 數，含/不含語意與時區人工核對。
+3. 分頁：`pgsize` 100/500/1000 三點採樣耗時。
+4. IP 篩選批次上限：以 10/50/100 個 IP 子句（`repip` 欄位）各查一次，找出安全批次大小。
+5. 失敗路徑：非法 filter（預期 400）。
+6~12. **第二輪（2026-07-29，第一輪真實輸出後新增）**：ESM `eventsource` 清單（探索備案／OS 判別）、
+   登入事件 4624/4625 取樣（主機歸屬鍵／`sun` 帳號語意）、Linux 主機樣本（`--sample-linux-ip`）、
+   System/Application 頻道覆蓋（`--sample-ip`）、generic `sev:[3 TO 5]` 量級、dt 邊界精確核對
+   （鎖單台主機、近 1 小時拆兩個 30 分鐘，把 found 壓到可人工比對的量級）、`obssvcname`
+   完整片語 vs 部分詞查詢行為。
+   步驟 8 需要 `--sample-linux-ip`、步驟 9／11 需要 `--sample-ip`，省略時明確標示略過；
+   其餘步驟（含步驟 6 的 eventsource 清單）不需要任何參數。
+   需人工核對的步驟（2／11）一律印出**絕對**時間區間（UTC＋本機並列），否則操作者無從在
+   Web UI 重現同一段區間。
+13. 失敗路徑：錯誤密碼認證（預期 401，獨立 client 執行、放在最後避免污染前面步驟的 token 狀態）。
 
-probe 全程遵守單一佇列＋節流，總量約 15~20 個小查詢，對 server 負擔可忽略。
+probe 全程遵守單一佇列＋節流，對 server 負擔可忽略。**第一輪真實輸出**（元大環境，Sentinel「162」）
+已推翻「日估數萬筆」的估計（近 24h found≈2470 萬筆），也推翻了 §3.4「探索走近 24h 全事件 distinct」
+的原設計；欄位對應大致定案見下表，主機歸屬鍵／探索方案／頻道覆蓋現況待第二輪輸出收斂
+（見 §9 未決事項）。
+
+**第一輪已定案的欄位對應**（Windows/AD 事件，取代本節與 §3.3 原先推測的 `shn`/`sip`/`evt`）：
+
+| 語意 | 欄位 | 備註 |
+|---|---|---|
+| Windows EventID | `rv40` | 以 4634＝「帳戶已登出」＋`xdastaxname=XDAS_AE_TERMINATE_SESSION` 交叉實證 |
+| 事件來源（provider） | `obssvcname` | 值如 `Microsoft-Windows-Security-Auditing`，`SourcePattern` 比對對象 |
+| 頻道（LogName） | `rv150` | 值如 `Security` |
+| 主機名 | `dhn`／`sn` | 本機事件兩者同值；跨主機事件是否分裂待第二輪步驟 7 核對 |
+| 回報者 IP | `repip` | 是否等同「主機自身」IP（vs collector 代理 IP）待第二輪核對 |
+| 時間 | `dt` | ISO-8601 UTC；`estz` 為事件來源時區（如 `Asia/Taipei`） |
+| 嚴重度 | `sev` | 樣本皆 0，與 Error/Warning 對應待第二輪步驟 10 用高嚴重度事件實證 |
+| 訊息／事件名 | `msg`／`evt` | 皆為繁中——AI 層與報告可直接使用 |
+| 帳號 | `sun`（候選）／`iuid`（SID，確認） | `sun` 語意待第二輪步驟 7 用登入事件核對 |
+| OS／collector 判別 | `pn`／`agent`／`port` | 目前只有 Windows 樣本值，Linux 對照值待第二輪步驟 8 |
 
 ## 4. 查詢 payload 草案（欄位名以 probe 定案後代入）
 
@@ -308,15 +333,35 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
 5. `SentinelRestDirectoryClient` 改寫（Web 探索走真 API，連線資訊來源不變只換 API 呼叫方式）
 6. 試點 → 全量（docs/HISTORY.md Phase 2→3 原路線）
 
-**2026-07-24 實作進度**：步驟 1～2 已完成（`SentinelClient`／`--netiq-probe`／設定欄位／單元測試），
-**步驟 2 的真實環境輸出尚未取得**——步驟 3～6 全部依賴 probe 定案的欄位對應，故本輪先停在這裡，
-待使用者在實際 Sentinel 環境跑過 `--netiq-probe` 並貼回輸出後再繼續。
+**2026-07-24 實作進度**：步驟 1～2 已完成（`SentinelClient`／`--netiq-probe`／設定欄位／單元測試）。
 
-## 9. 未決事項（全部由 probe 收斂）
+**2026-07-29 第一輪真實輸出已取得**（元大環境，Sentinel「162」）：§3.5 表格所列欄位對應已定案，
+但同時發現量級遠超估計（近 24h found≈2470 萬筆）、原探索設計（§3.4「近 24h 全事件 distinct」）不可行、
+且「主機歸屬鍵是哪個欄位」（`repip` 是否等於主機自身 IP）成為最關鍵未決項。當天已擴充
+`--netiq-probe` 加第二輪查詢（步驟 6～12，見 §3.5）＋`SentinelClient.RawGetAsync`（打 ESM
+`/objects/eventsource` 等一般資源用，不走 event-search job 生命週期），956 個單元測試綠、
+`--selftest` 131 項全過。**第二輪真實環境輸出尚未取得**——步驟 3～6 仍全部依賴其收斂的結果
+（主機歸屬鍵定案、探索方案是否走 eventsource、頻道覆蓋現況），故本輪先停在這裡，待使用者
+帶 `--sample-ip`／`--sample-linux-ip` 跑過第二輪並貼回輸出後再繼續。
 
-1. Windows EventID／來源／頻道在 8.5 schema 的欄位落點（§3.3 候選）。
-2. `dt` 時區與日切界實測。
-3. 8.5 apidoc 是否有聚合端點（有→Q1 改走聚合，§1.3 設計降為退路）。
-4. IP 篩選單一 filter 的安全批次大小（預設 50 待實測）。
-5. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，docs/HISTORY.md probe #7）。
-6. token 有效期長短（決定長輪收集中是否需要主動換發）。
+## 9. 未決事項
+
+**第一輪已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`）／頻道（`rv150`）／時間
+（`dt`，UTC）的欄位落點；`dt` 邊界語意（因 found 數過大尚未能人工逐筆核對，第二輪步驟 11
+用窄時間窗重測）。
+
+**仍待第二輪 probe 收斂**（見 §3.5 步驟 6～12）：
+
+1. **主機歸屬鍵**（最關鍵）：`repip` 是否等於主機自身 IP，或只是 collector 代理 IP；
+   跨主機事件時 `dhn`／`sn`／`repip` 是否分裂成不同語意。
+2. 探索方案：ESM `/objects/eventsource` 端點能否當主機目錄／OS 判別來源
+   （§3.4「近 24h 全事件 distinct」在 2470 萬筆/天的量級下已不可行，需要替代方案）。
+3. `sun` 欄位是否為帳號（樣本值是小整數，疑為員工編號數字型式帳號，待登入事件核對）。
+4. Linux 主機的欄位形狀（program 落點、`pn` 對照值、`sev`↔syslog priority 對應）。
+5. System／Application 頻道是否有轉送到 Sentinel（決定 Windows 非 Security 規則面是否有資料）。
+6. IP 篩選單一 filter 的安全批次大小（10/50/100 語法皆被接受，尚待真實 watchlist 形狀查詢的
+   耗時實測，見 §3.5 步驟 10）。
+7. `obssvcname` 欄位的 term 查詢行為（完整片語 vs 部分詞，決定規則來源能否下推 Lucene）。
+8. 8.5 apidoc 是否有聚合端點（有→Q1 改走聚合，§1.3 設計降為退路；尚待人工開啟 apidoc 頁面確認）。
+9. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，docs/HISTORY.md probe #7）。
+10. token 有效期長短（決定長輪收集中是否需要主動換發）。

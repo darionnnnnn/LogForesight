@@ -233,11 +233,15 @@ if (args.Contains("--host-list"))
 
 // --netiq-probe：對已設定的 Sentinel 跑一組小規模驗證查詢，輸出可貼回對話定案欄位對應
 // （docs/NETIQ-API-PLAN.md §3.5、§8 步驟 2 的閘門）。放在 mutex 保護內、跑完即結束，不進入每日分析流程。
+// 可選 --sample-ip <windows主機IP> --sample-linux-ip <linux主機IP> 加跑第二輪
+// （主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位形狀，2026-07-29 第一輪實測後新增）。
 if (args.Contains("--netiq-probe"))
 {
     var sentinelStoreForProbe = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
     var netiqOptionsForProbe = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
-    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, netiqOptionsForProbe);
+    var probeSampleIp = GetArgValue(args, "--sample-ip");
+    var probeSampleLinuxIp = GetArgValue(args, "--sample-linux-ip");
+    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, netiqOptionsForProbe, probeSampleIp, probeSampleLinuxIp);
 
     LogManager.Shutdown();
     return probeExitCode;
