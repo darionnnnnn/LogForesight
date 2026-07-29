@@ -313,9 +313,11 @@ async function openWizard(sentinel) {
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
-    // 每次開精靈都回到 windows：OS 是「這一批」的屬性，沿用上一批的選擇會讓人不知不覺
-    // 把 Linux 主機匯成 Windows（規則面整個錯配，而且畫面上看不出來）
-    document.getElementById('wizard-os').value = 'windows';
+    // 每次開精靈都依「這台 Sentinel」的 Os 重設，不沿用上一次開精靈時的選擇——
+    // OS 是「這一批」的屬性，此環境 Windows／Linux 的 NetIQ 本來就拆成不同 Sentinel（各自單一 OS），
+    // 沿用上一台的選擇會讓人不知不覺把 Linux 主機匯成 Windows（規則面整個錯配，畫面上還看不出來）。
+    // 下拉仍保留可改，當作混合環境（單一 Sentinel 同時有兩種 OS）的逃生門。
+    document.getElementById('wizard-os').value = sentinel.os === 'linux' ? 'linux' : 'windows';
 
     renderWizardPane();
     wizardModal.show();
@@ -406,6 +408,10 @@ async function wizardSubmitImport() {
 
 // ── 精靈步驟 2：網段主機勾選（掃描結果） ─────────────────────────────────────
 
+// 網段主機數超過這個門檻就預設收合——避免一次掃到的長清單把整個精靈撐到要一直捲動；
+// summary 上已有的計數（已登錄／可復活）維持可判斷，收合不影響資訊完整性
+const WIZARD_SUBNET_COLLAPSE_THRESHOLD = 20;
+
 function renderSubnetSelection() {
     const container = document.getElementById('wizard-scan-result');
     container.replaceChildren();
@@ -418,7 +424,7 @@ function renderSubnetSelection() {
     for (const subnet of wizardScan.subnets) {
         const details = document.createElement('details');
         details.className = 'mb-2 border rounded';
-        details.open = true;
+        details.open = subnet.hosts.length <= WIZARD_SUBNET_COLLAPSE_THRESHOLD;
 
         const summary = document.createElement('summary');
         summary.className = 'px-2 py-1 small';
@@ -442,7 +448,11 @@ function renderSubnetSelection() {
         details.appendChild(summary);
 
         const body = document.createElement('div');
+        // 多欄 grid 取代原本一台一列的直排——網段常有數十台，直排要捲很久
         body.className = 'px-2 pb-2';
+        body.style.display = 'grid';
+        body.style.gridTemplateColumns = 'repeat(auto-fill, minmax(240px, 1fr))';
+        body.style.columnGap = '0.75rem';
         for (const host of subnet.hosts) {
             body.appendChild(wizardHostRow(host));
         }
@@ -454,11 +464,11 @@ function renderSubnetSelection() {
 
 function wizardHostRow(host) {
     const row = document.createElement('div');
-    row.className = 'd-flex align-items-center gap-2 py-1 small';
+    row.className = 'd-flex align-items-center gap-1 py-1 small text-truncate';
 
     const box = document.createElement('input');
     box.type = 'checkbox';
-    box.className = 'form-check-input lf-wizard-host';
+    box.className = 'form-check-input lf-wizard-host flex-shrink-0';
     box.dataset.ip = host.ipAddress;
     // 新主機與可復活的預設勾選；使用中的既有主機預設不勾（再勾＝更新歸屬）
     box.checked = host.orphanOverlap || (!host.exists);
@@ -466,23 +476,41 @@ function wizardHostRow(host) {
     row.appendChild(box);
 
     const name = document.createElement('span');
+    name.className = 'text-truncate';
+    name.title = `${host.ipAddress}　${host.hostName}`;
     name.textContent = `${host.ipAddress}　${host.hostName}`;
     row.appendChild(name);
 
     if (host.exists) {
         const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
+        badge.className = 'lf-badge lf-badge--secondary flex-shrink-0';
         badge.textContent = '已登錄';
         row.appendChild(badge);
     }
     if (host.orphanOverlap) {
         const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--primary';
-        badge.textContent = `原屬 ${host.orphanedFrom}，因移除而停用`;
+        badge.className = 'lf-badge lf-badge--primary flex-shrink-0';
+        badge.textContent = '可復活';
+        badge.title = `原屬 ${host.orphanedFrom}，因移除而停用`;
         row.appendChild(badge);
     }
     return row;
 }
+
+document.getElementById('wizard-select-new').addEventListener('click', () => {
+    for (const box of document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:not(:disabled)')) {
+        const host = wizardScan.subnets.flatMap(s => s.hosts).find(h => h.ipAddress === box.dataset.ip);
+        box.checked = host ? (host.orphanOverlap || !host.exists) : false;
+    }
+    updateSubnetSelectionHint();
+});
+
+document.getElementById('wizard-select-none').addEventListener('click', () => {
+    for (const box of document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:not(:disabled)')) {
+        box.checked = false;
+    }
+    updateSubnetSelectionHint();
+});
 
 function selectedWizardIps() {
     return Array.from(document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:checked'))

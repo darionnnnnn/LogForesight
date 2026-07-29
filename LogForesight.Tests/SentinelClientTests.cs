@@ -461,6 +461,45 @@ public class SentinelClientTests
         Assert.Contains("帳戶已登出", createBody);              // 非 ASCII 原樣保留，不轉成 \uXXXX
     }
 
+    // ── TestConnectionAsync：只驗證認證，不建立 event-search job（項目 6，測試連線按鈕） ──
+
+    [Fact]
+    public async Task TestConnectionAsync_成功時只呼叫認證端點_不建立查詢工作()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var elapsed = await client.TestConnectionAsync();
+
+        Assert.True(elapsed >= TimeSpan.Zero);
+        Assert.DoesNotContain(handler.Requests, r => r.Url == JobCollectionUrl());
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_帳密錯誤_擲出可顯示的例外()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri!.ToString() == AuthUrl())
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+            throw new InvalidOperationException("不該送出認證以外的請求");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() => client.TestConnectionAsync());
+
+        Assert.Contains("帳號或密碼錯誤", ex.Message);
+    }
+
     // ── RawGetAsync：非 event-search job 的一般 REST 資源讀取（ESM eventsource 等） ──
 
     [Fact]

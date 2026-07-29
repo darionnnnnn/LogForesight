@@ -771,16 +771,29 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **NetIQ 掃描匯入分頁（2026-07-27 起精簡）**：Sentinel 連線設定（新增／編輯／停用／刪除）已搬到
   §9.9a `/admin/netiq`；本頁的「NetIQ 匯入」分頁只留「選擇一台已設定好探索帳密的 Sentinel → 掃描匯入」，
   精靈跳過原本的連線設定步驟直接進網段勾選。
+- **精靈主機清單排版（2026-07-29）**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
+  主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
+  預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
+  新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
 
 ### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
-- 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/探索帳密狀態/主機數/啟用狀態）
-  ＋新增／編輯（簡易表單，不含掃描）／停用（暫停輪巡，主機不動）／刪除（轄下主機停用並標記孤兒）。
+- 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/**作業系統**/探索帳密狀態/
+  主機數/啟用狀態）＋新增／編輯（簡易表單，不含掃描）／停用（暫停輪巡，主機不動）／刪除
+  （轄下主機停用並標記孤兒）。
+- **作業系統**（`Sentinel.Os`，2026-07-29）：這台 Sentinel 轄下主機的作業系統（`windows`／`linux`，
+  預設 windows）——此環境 Windows／Linux 的 NetIQ 已完全拆分成不同 Sentinel，同一台不混平台，
+  故 OS 判別的正確層級是 Sentinel 而非逐事件猜測（見 docs/LINUX-RULES-PLAN.md §3）。
+  掃描匯入精靈以此值預填整批 OS（可改，當混合環境的逃生門）。
+- **測試連線**（編輯/新增 modal 內按鈕，2026-07-29）：用表單目前輸入的網址／帳密（密碼留空＝
+  沿用這台既有密碼）呼叫 `SentinelClient` 只做認證不建查詢工作，就地顯示成功（含耗時）或失敗
+  原因；帳密僅過境不落地、不記稽核（唯讀操作）。
 - **連線與節流參數**：`SampleFetchMode`／`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
   直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
-  （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`（新增）
+  （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
+  （新增）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）

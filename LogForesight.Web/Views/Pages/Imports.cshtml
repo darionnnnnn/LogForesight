@@ -184,7 +184,7 @@
 
 <!-- 掃描匯入精靈（Sentinel 本身的新增／編輯在「NetIQ 維護」頁） -->
 <div class="modal fade" id="netiq-wizard-modal" tabindex="-1" data-bs-backdrop="static">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="wizard-title">從 NetIQ 匯入</h5>
@@ -192,6 +192,10 @@
             </div>
             <div class="modal-body">
                 <div id="wizard-pane-subnets">
+                    <div class="d-flex justify-content-end gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-new">全選新主機</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-none">全不選</button>
+                    </div>
                     <div id="wizard-scan-result"></div>
                 </div>
 

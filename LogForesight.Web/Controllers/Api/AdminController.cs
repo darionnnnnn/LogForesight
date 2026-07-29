@@ -239,6 +239,13 @@ public class AdminController : ControllerBase
     public ApiResponse<SentinelDto> SetSentinelActive(long sentinelId, [FromBody] SetSentinelActiveRequest request) =>
         ApiResponse<SentinelDto>.Ok(_sentinels.SetActive(sentinelId, request.Active));
 
+    /// <summary>測試連線（項目 6）：驗證網址／帳密是否正確，不落地任何東西</summary>
+    [HttpPost("sentinels/test-connection")]
+    public async Task<ApiResponse<TestSentinelConnectionResultDto>> TestSentinelConnection(
+        [FromBody] TestSentinelConnectionRequest request, CancellationToken ct) =>
+        ApiResponse<TestSentinelConnectionResultDto>.Ok(
+            await _sentinels.TestConnectionAsync(request, _netiqOptions.Get(), ct));
+
     // ── NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁）────────────────────
 
     [HttpGet("netiq/options")]

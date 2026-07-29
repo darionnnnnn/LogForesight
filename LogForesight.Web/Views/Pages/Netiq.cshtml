@@ -98,12 +98,22 @@
                         <div class="form-text">帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。</div>
                     </div>
                     <div class="mb-3">
+                        <label for="sentinel-os" class="form-label">作業系統</label>
+                        <select class="form-select" id="sentinel-os">
+                            <option value="windows">Windows</option>
+                            <option value="linux">Linux</option>
+                        </select>
+                        <div class="form-text">這台 Sentinel 轄下主機的作業系統；掃描匯入精靈以此預填整批 OS（可改）。</div>
+                    </div>
+                    <div class="mb-3">
                         <label for="sentinel-password" class="form-label">探索密碼</label>
                         <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
                         <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
                     </div>
+                    <div id="sentinel-test-result" class="small mb-0"></div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary me-auto" id="sentinel-test-connection">測試連線</button>
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary" id="sentinel-save">儲存</button>
                 </div>

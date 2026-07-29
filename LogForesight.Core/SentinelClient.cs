@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -168,6 +169,29 @@ public sealed class SentinelClient : IAsyncDisposable
                 using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 await TryDeleteJobAsync(jobHref, cleanupCts.Token);
             }
+            _queue.Release();
+        }
+    }
+
+    /// <summary>
+    /// 只做認證（取 token），不建立任何 event-search job——「網址／帳密是否正確」的最小驗證
+    /// （項目 6，docs/WEB-SPEC.md：Sentinel 維護頁的「測試連線」按鈕）。
+    /// 成功回傳耗時；失敗一律擲 <see cref="SentinelClientException"/>（訊息可直接顯示，
+    /// 錯誤分類沿用 <see cref="AuthenticateAsync"/> 既有的 401/其他 HTTP／連線失敗區分）。
+    /// </summary>
+    public async Task<TimeSpan> TestConnectionAsync(CancellationToken ct = default)
+    {
+        await _queue.WaitAsync(ct);
+        try
+        {
+            await ThrottleAsync(ct);
+            var sw = Stopwatch.StartNew();
+            await EnsureAuthenticatedAsync(ct);
+            sw.Stop();
+            return sw.Elapsed;
+        }
+        finally
+        {
             _queue.Release();
         }
     }

@@ -50,6 +50,7 @@ public class SentinelStore : JsonBlobCollection<Sentinel>, ISentinelStore
             existing.Username = sentinel.Username;
             existing.PasswordEnc = sentinel.PasswordEnc;
             existing.Active = sentinel.Active;
+            existing.Os = sentinel.Os;
             existing.UpdatedAt = DateTime.Now;
             return existing;
         });
