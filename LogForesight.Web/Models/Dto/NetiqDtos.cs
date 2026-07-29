@@ -213,10 +213,6 @@ public class NetiqImportResultDto
 
 public class UpdateNetiqOptionsRequest
 {
-    /// <summary>Full | Reduced</summary>
-    [Required]
-    public string SampleFetchMode { get; set; } = "Full";
-
     [Range(0, 60_000)]
     public int QueryDelayMs { get; set; }
 

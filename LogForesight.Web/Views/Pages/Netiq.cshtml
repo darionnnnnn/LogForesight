@@ -31,13 +31,6 @@
             <p class="text-muted small mb-3">套用於全部 Sentinel 的查詢行為，不是個別 Sentinel 的連線設定。</p>
             <div class="row g-3">
                 <div class="col-sm-6 col-lg-4">
-                    <label for="opt-sample-fetch-mode" class="form-label">範例訊息查詢範圍</label>
-                    <select class="form-select" id="opt-sample-fetch-mode">
-                        <option value="Full">Full（每個簽章都查）</option>
-                        <option value="Reduced">Reduced（僅 Security／Other 類簽章查）</option>
-                    </select>
-                </div>
-                <div class="col-sm-6 col-lg-4">
                     <label for="opt-query-delay" class="form-label">節流間隔（毫秒）</label>
                     <input type="number" class="form-control" id="opt-query-delay" min="0" max="60000" />
                     <div class="form-text">每次 REST 呼叫之間的間隔。0＝不節流。</div>

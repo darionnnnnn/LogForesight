@@ -234,7 +234,9 @@ public class NetiqPipelineService
                 .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
                 .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
-            await AnalyzeHostDayAsync(plan, date, mapped, searchResult.Truncated, displayName, trendWindowDays, result);
+            await AnalyzeHostDayAsync(
+                plan, date, mapped, searchResult.Truncated, displayName,
+                hostReported: hostRawEvents.Count > 0, trendWindowDays, result);
         }
 
         if (totalSkipped > 0)
@@ -245,7 +247,7 @@ public class NetiqPipelineService
 
     private async Task AnalyzeHostDayAsync(
         HostPlan plan, DateTime date, List<EventLogEntryData> events, bool dataIncomplete,
-        string? displayName, int trendWindowDays, NetiqPipelineResult result)
+        string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result)
     {
         var target = plan.Target;
 
@@ -271,7 +273,23 @@ public class NetiqPipelineService
             result.HostDaysAnalyzed++;
             _runRecorder.RecordDayAnalyzed();
 
-            _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
+            // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有
+            // 「低風險日刻意不呼叫」與「呼叫失敗降級」兩種意義，只有後者該計入失敗——
+            // 沒有這段，NetIQ 主機日的 AI 失敗不會反映在執行監控頁的 AI 欄位
+            if (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low)
+            {
+                _runRecorder.RecordAiCall(record.AiAnalyzed);
+            }
+
+            // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-PLAN.md §4.4：
+            // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
+            // 轉送已掛掉的主機會永遠顯示為正常回報，正是「沒查 ≠ 沒事」要防的靜默盲區。
+            // 代價是「當日剛好沒有任何 watchlist/錯誤事件」的安靜主機兩天後會被標無回報——
+            // 這個訊號值得人工看一眼（確認是真安靜還是轉送掛了），試點階段再依誤報率校準。
+            if (hostReported)
+            {
+                _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
+            }
 
             Console.WriteLine($"  [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
                               (record.ReportFile != null ? $" → {record.ReportFile}" : ""));

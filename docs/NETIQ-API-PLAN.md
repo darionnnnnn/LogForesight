@@ -173,7 +173,14 @@ public interface ISentinelClient : IAsyncDisposable
   （啟用時 log WARN），不做靜默放行。
 - **log 紅線**：密碼與 token 永不落 log；診斷 log 記「端點＋filter 長度＋耗時＋found」摘要。
 
-### 3.2 `SentinelStatsSource`（新，批次；實作 `IDailyStatsSource`）
+### 3.2 `SentinelStatsSource`（原設計；**實作已改走決策 B2**，見下）
+
+> **2026-07-29 實作註記**：本節的統計抽象層設計（`IDailyStatsSource`／`DailySignatureStats`）
+> **未依原樣實作**——實際落地是決策 B2：Sentinel 事件直接映射成 `EventLogEntryData`
+> （`SentinelEventMapper`），整條既有分析路徑零改動重用，實作為
+> `LogForesight/Service/NetiqPipelineService.cs`（Phase 4）。因此 **Q2 已取消**（msg 直接投影在
+> Q1 內，`SampleFetchMode` 設定隨之退役）；Q3 的角色由 Q1 已含 msg 的事件天然涵蓋；
+> Q4 頻道覆蓋申報延後（§9 未決事項 #3）。以下原文保留供設計脈絡對照，**不代表現況**。
 
 業務層：把 Q1~Q4 組裝成 `DailySignatureStats`（與 `LocalStatsSource` 同一輸出模型，
 下游五層偵測零改變——docs/HISTORY.md 抽象層「日統計」定案的兌現）。
@@ -294,8 +301,8 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
 | 8 | **`QueryDelayMs` 節流** | 呼叫間隔可調；哪台 Sentinel 反映負載即可單獨放慢 |
 | 9 | **`max-results` 安全閥** | 異常爆量日不無限制拉取；截斷誠實標 DataIncomplete |
 | 10 | **增量收集**（缺漏日回補機制沿用） | 已分析日永不重查；每天只查該查的日子 |
-| 11 | **Q4 降為每週** | 覆蓋狀態變化慢，不必每日全清單掃描 |
-| 12 | **Q2 可降級**（SampleFetchMode） | 負載敏感環境可只查 Security/Other 簽章範例 |
+| 11 | ~~**Q4 降為每週**~~ | Q4 覆蓋申報已延後（§9 未決事項 #3），此措施屆時再議 |
+| 12 | ~~**Q2 可降級**（SampleFetchMode）~~ | **已隨 Q2 取消一併退役（2026-07-29）**——msg 直接投影在 Q1 內，Q2 這類查詢不存在了 |
 | 13 | **退避重試（Polly）** | 503＝server 忙，指數退避讓路而不是重錘 |
 | 14 | **type:USER＋表明身分** | SIEM 管理者在 Active Searches 看得到、可管理可取消——當個好房客 |
 
@@ -304,11 +311,16 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
 > 2026-07-24 修正：`Servers` 欄位現況是「store 為空時的一次性種子」（見 §2.1），
 > 不再是連線資訊的日常事實來源，但仍是合法的種子輸入格式，故保留在範例中。
 > 下列**只有節流／行為欄位是本次新增**；`Servers` 本身結構不變。
+>
+> 2026-07-27 已再演進：整段移到 `NetiqOptions`（webdata blob，Web「NetIQ 維護」頁），
+> appsettings 的 `NetIq` 區段整個移除（見 §2 的修正註記）。
+> 2026-07-29：`SampleFetchMode` 隨 Q2 取消一併退役（「有設定無行為」紅線），
+> 下方範例保留當時樣貌供歷史對照。
 
 ```jsonc
 "NetIq": {
   "Servers": [ { "Name": "SENTINEL-A", "BaseUrl": "…", "Username": "…", "Password": "" } ],  // 既有欄位，現況見 §2.1
-  "SampleFetchMode": "Full",        // 新增：Full | Reduced
+  "SampleFetchMode": "Full",        // 已退役（2026-07-29，Q2 取消）
   "QueryDelayMs": 0,                // 新增
   "PageSize": 500,                  // 新增
   "MaxResultsPerJob": 100000,       // 新增

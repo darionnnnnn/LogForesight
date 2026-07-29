@@ -209,7 +209,6 @@ sentinelForm.addEventListener('submit', async event => {
 
 async function loadOptions() {
     const options = await api.get('/api/admin/netiq/options');
-    document.getElementById('opt-sample-fetch-mode').value = options.sampleFetchMode;
     document.getElementById('opt-query-delay').value = options.queryDelayMs;
     document.getElementById('opt-page-size').value = options.pageSize;
     document.getElementById('opt-max-results').value = options.maxResultsPerJob;
@@ -236,7 +235,6 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
     const restore = withBusy(saveButton, '儲存中');
     try {
         const options = await api.put('/api/admin/netiq/options', {
-            sampleFetchMode: document.getElementById('opt-sample-fetch-mode').value,
             queryDelayMs: Number(document.getElementById('opt-query-delay').value),
             pageSize: Number(document.getElementById('opt-page-size').value),
             maxResultsPerJob: Number(document.getElementById('opt-max-results').value),
