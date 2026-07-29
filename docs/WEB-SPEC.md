@@ -745,7 +745,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
-- **NetIQ 匯入排程化（2026-07-23 Phase D-3）**：主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
+- ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
+  （`NetiqImportQueueStore`／`--apply-netiq-imports`）已整組刪除，改為勾選送出即時落盤；精靈本身
+  也已從主機頁搬到「資料匯入」頁（見 §9.9）。以下原文保留供歷史對照，**不代表現況**——
+  `NetiqImportApplier`（最後一行）是唯一沿用至今的部分。
+- 主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
   改「**排入匯入佇列**」（`webdata\netiq_import_queue.json`）——不再立即落盤主機異動。實際新增/更新/孤兒復活
   由批次執行處理（每次執行開頭自動處理待套用佇列，或手動 `LogForesight.exe --apply-netiq-imports`）。
   主機頁顯示佇列狀態（排程中可取消／已套用含結果數字／失敗含原因／已取消）。理由：兩千台規模下主機異動
@@ -771,16 +775,40 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **NetIQ 掃描匯入分頁（2026-07-27 起精簡）**：Sentinel 連線設定（新增／編輯／停用／刪除）已搬到
   §9.9a `/admin/netiq`；本頁的「NetIQ 匯入」分頁只留「選擇一台已設定好探索帳密的 Sentinel → 掃描匯入」，
   精靈跳過原本的連線設定步驟直接進網段勾選。
+- **精靈主機清單排版（2026-07-29）**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
+  主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
+  預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
+  新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
+- **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `10.232.11`）或
+  CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
+  `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
+  掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
+  全事件 distinct」，見 docs/NETIQ-API-PLAN.md §3.4），結果只涵蓋掃描窗口內有事件回報的主機。
+  精靈的網段勾選面板上方顯示 `CoverageNote`（實際掃描窗口說明）與 `Warnings`（截斷等異常提示），
+  讓使用者知道這份清單涵蓋到哪裡、安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn`
+  欄位眾數）在匯入當下就寫入新主機的 `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的
+  `DisplayName` 一律不動。
 
 ### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
-- 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/探索帳密狀態/主機數/啟用狀態）
-  ＋新增／編輯（簡易表單，不含掃描）／停用（暫停輪巡，主機不動）／刪除（轄下主機停用並標記孤兒）。
-- **連線與節流參數**：`SampleFetchMode`／`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
+- 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/**作業系統**/探索帳密狀態/
+  主機數/啟用狀態）＋新增／編輯（簡易表單，不含掃描）／停用（暫停輪巡，主機不動）／刪除
+  （轄下主機停用並標記孤兒）。
+- **作業系統**（`Sentinel.Os`，2026-07-29）：這台 Sentinel 轄下主機的作業系統（`windows`／`linux`，
+  預設 windows）——此環境 Windows／Linux 的 NetIQ 已完全拆分成不同 Sentinel，同一台不混平台，
+  故 OS 判別的正確層級是 Sentinel 而非逐事件猜測（見 docs/LINUX-RULES-PLAN.md §3）。
+  掃描匯入精靈以此值預填整批 OS（可改，當混合環境的逃生門）。
+- **測試連線**（編輯/新增 modal 內按鈕，2026-07-29）：用表單目前輸入的網址／帳密（密碼留空＝
+  沿用這台既有密碼）呼叫 `SentinelClient` 只做認證不建查詢工作，就地顯示成功（含耗時）或失敗
+  原因；帳密僅過境不落地、不記稽核（唯讀操作）。
+- **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
-  直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。
+  直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。原本另有 `SampleFetchMode`（範例訊息 Q2
+  查詢範圍），2026-07-29 隨 Q2 取消一併退役（msg 已直接投影在 Q1 內，設定失去所有行為消費端，
+  「有設定無行為」紅線）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
-  （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`（新增）
+  （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
+  （新增）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）

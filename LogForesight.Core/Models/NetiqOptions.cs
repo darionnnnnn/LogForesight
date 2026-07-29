@@ -9,13 +9,10 @@ namespace LogForesight;
 /// </summary>
 public class NetiqOptions
 {
-    /// <summary>
-    /// 範例訊息（Q2）查詢範圍。<c>Full</c>＝進 prompt 的每個簽章都查範例訊息（預設，
-    /// 多台 Sentinel 分攤後負擔可接受，且範例訊息對規則/趨勢/關聯三層偵測零作用，
-    /// 縮減只會犧牲敘事具體性）；<c>Reduced</c>＝僅 Security 與 Other 類簽章查範例
-    /// （與 AI 白話翻譯角色一致的降級保險開關，供哪台 Sentinel 反映負載時單獨調整）。
-    /// </summary>
-    public string SampleFetchMode { get; set; } = "Full";
+    // SampleFetchMode（範例訊息 Q2 查詢範圍）已於 2026-07-29 退役：Phase 3 定案 msg 直接投影在
+    // Q1 內（docs/NETIQ-API-PLAN.md §4），Q2 這類查詢不存在了，設定跟著失去所有行為消費端——
+    // 「有設定無行為」是本專案紅線，故整欄移除。舊 blob 裡殘留的欄位值由 System.Text.Json
+    // 反序列化時自動忽略，零遷移。
 
     /// <summary>每次 REST 呼叫（含建立/輪詢/翻頁）之間的節流間隔毫秒數。0 = 不節流。</summary>
     public int QueryDelayMs { get; set; } = 0;

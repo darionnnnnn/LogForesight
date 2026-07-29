@@ -7,8 +7,6 @@ namespace LogForesight.Web.Services;
 /// <summary>NetIQ 連線與節流參數維護（「系統管理 > NetIQ 維護」頁）</summary>
 public class NetiqOptionsService
 {
-    private static readonly string[] ValidFetchModes = { "Full", "Reduced" };
-
     private readonly NetiqOptionsStore _store;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
@@ -24,14 +22,10 @@ public class NetiqOptionsService
 
     public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {
-        if (!ValidFetchModes.Contains(request.SampleFetchMode, StringComparer.OrdinalIgnoreCase))
-            throw DomainException.Validation($"未知的範例訊息查詢範圍「{request.SampleFetchMode}」，僅允許 Full 或 Reduced。");
-
         var before = _store.Get();
 
         var saved = _store.Update(o =>
         {
-            o.SampleFetchMode = request.SampleFetchMode;
             o.QueryDelayMs = request.QueryDelayMs;
             o.PageSize = request.PageSize;
             o.MaxResultsPerJob = request.MaxResultsPerJob;

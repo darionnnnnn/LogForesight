@@ -170,6 +170,10 @@
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">掃描匯入</h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="掃描是「查一個網段」，不是盲掃全站——請輸入網段前綴（如 10.232.11）或 CIDR（如 10.232.11.0/24）。結果只涵蓋掃描窗口內有事件回報的主機，涵蓋範圍會顯示在掃描結果上方，安靜的主機請改用主機頁或 CSV 手動登錄。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
         </div>
         <div class="lf-card__body" id="netiq-scan-picker"></div>
     </div>
@@ -184,7 +188,7 @@
 
 <!-- 掃描匯入精靈（Sentinel 本身的新增／編輯在「NetIQ 維護」頁） -->
 <div class="modal fade" id="netiq-wizard-modal" tabindex="-1" data-bs-backdrop="static">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="wizard-title">從 NetIQ 匯入</h5>
@@ -192,6 +196,12 @@
             </div>
             <div class="modal-body">
                 <div id="wizard-pane-subnets">
+                    <div id="wizard-coverage-note" class="small text-muted mb-2"></div>
+                    <div id="wizard-warnings" class="mb-2"></div>
+                    <div class="d-flex justify-content-end gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-new">全選新主機</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-none">全不選</button>
+                    </div>
                     <div id="wizard-scan-result"></div>
                 </div>
 

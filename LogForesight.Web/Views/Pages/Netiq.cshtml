@@ -31,13 +31,6 @@
             <p class="text-muted small mb-3">套用於全部 Sentinel 的查詢行為，不是個別 Sentinel 的連線設定。</p>
             <div class="row g-3">
                 <div class="col-sm-6 col-lg-4">
-                    <label for="opt-sample-fetch-mode" class="form-label">範例訊息查詢範圍</label>
-                    <select class="form-select" id="opt-sample-fetch-mode">
-                        <option value="Full">Full（每個簽章都查）</option>
-                        <option value="Reduced">Reduced（僅 Security／Other 類簽章查）</option>
-                    </select>
-                </div>
-                <div class="col-sm-6 col-lg-4">
                     <label for="opt-query-delay" class="form-label">節流間隔（毫秒）</label>
                     <input type="number" class="form-control" id="opt-query-delay" min="0" max="60000" />
                     <div class="form-text">每次 REST 呼叫之間的間隔。0＝不節流。</div>
@@ -98,12 +91,22 @@
                         <div class="form-text">帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。</div>
                     </div>
                     <div class="mb-3">
+                        <label for="sentinel-os" class="form-label">作業系統</label>
+                        <select class="form-select" id="sentinel-os">
+                            <option value="windows">Windows</option>
+                            <option value="linux">Linux</option>
+                        </select>
+                        <div class="form-text">這台 Sentinel 轄下主機的作業系統；掃描匯入精靈以此預填整批 OS（可改）。</div>
+                    </div>
+                    <div class="mb-3">
                         <label for="sentinel-password" class="form-label">探索密碼</label>
                         <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
                         <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
                     </div>
+                    <div id="sentinel-test-result" class="small mb-0"></div>
                 </div>
                 <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary me-auto" id="sentinel-test-connection">測試連線</button>
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary" id="sentinel-save">儲存</button>
                 </div>

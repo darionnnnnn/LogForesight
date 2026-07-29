@@ -116,8 +116,12 @@ Sentinel `sev`（0–5）與 syslog priority 的實際對應由 probe 核對後�
 - `WebHost.Os`（`"windows"`/`"linux"`）＋ `lf_hosts.os nvarchar(10) NOT NULL DEFAULT 'windows'`
   ＋ `CHECK (os IN ('windows','linux'))`。既有列與本機來源一律 windows。
 - **主機頁**：清單加 OS 徽章與篩選；編輯表單可改（改 OS 等於改這台套哪個規則面，寫操作稽核）。
-- **NetIQ 匯入精靈**：加 OS 欄。probe 會驗證 Sentinel 事件是否帶可判別 OS 的欄位（product name
-  等）——能自動判別就預填、人工可改；不能就人工必選，**不做猜測預設**。
+- **NetIQ 匯入精靈**：加 OS 欄，**預填來源改為 Sentinel 層級**（2026-07-29 環境事實：Windows／Linux
+  的 NetIQ 已完全拆分成不同 Sentinel，同一台不混平台）——`Sentinel.Os` 欄位＋NetIQ 維護頁可編輯，
+  精靈依所選 Sentinel 的 Os 預填整批（可改，當混合環境的逃生門）。原規劃「從事件欄位判別 OS
+  （product name 等）」在此環境下不需要——判別的正確層級是 Sentinel 而非事件，探索到的每台主機
+  OS 由所屬 Sentinel 決定，不必也不該逐事件猜測。**已實作**（`SentinelAdminService`／`Netiq.cshtml`／
+  `imports.js`，2026-07-29，commit 見 feature/netiq-probe-round2）。
 - **CSV 匯入**：選填 `os` 欄，缺值＝windows（相容既有檔）。
 - **`--host-list`**：輸出加 OS 欄。
 - 批次端 routing：依 `Os` 決定該主機套哪個平台規則子集、產哪種 Lucene 查詢（§4.2）、

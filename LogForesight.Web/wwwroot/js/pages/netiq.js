@@ -31,6 +31,7 @@ function renderSentinels() {
         columns: [
             { title: '名稱', render: s => s.name },
             { title: '連線位址', render: s => s.baseUrl || '' },
+            { title: '作業系統', render: s => s.os === 'linux' ? 'Linux' : 'Windows' },
             { title: '探索帳密', render: s => renderDiscoverBadge(s) },
             { title: '主機數', render: s => String(s.hostCount) },
             { title: '狀態', render: s => renderSentinelActiveBadge(s.active) },
@@ -124,15 +125,51 @@ function openSentinelModal(sentinel) {
     document.getElementById('sentinel-name').value = sentinel?.name ?? '';
     document.getElementById('sentinel-base-url').value = sentinel?.baseUrl ?? '';
     document.getElementById('sentinel-username').value = sentinel?.username ?? '';
+    document.getElementById('sentinel-os').value = sentinel?.os ?? 'windows';
     document.getElementById('sentinel-password').value = '';
     document.getElementById('sentinel-password-hint').textContent = sentinel?.hasPassword
         ? '已設定，留空＝不變更。'
         : '留空＝此 Sentinel 無法主動掃描。';
+    document.getElementById('sentinel-test-result').replaceChildren();   // 換一台編輯時不留上一台的測試結果
 
     sentinelModal.show();
 }
 
 document.getElementById('btn-new-sentinel').addEventListener('click', () => openSentinelModal(null));
+
+document.getElementById('sentinel-test-connection').addEventListener('click', async () => {
+    const baseUrl = document.getElementById('sentinel-base-url').value.trim();
+    const username = document.getElementById('sentinel-username').value.trim();
+    const password = document.getElementById('sentinel-password').value;
+    const resultEl = document.getElementById('sentinel-test-result');
+
+    if (!baseUrl) { toast('請先輸入連線位址', 'warning'); return; }
+    if (!username) { toast('請先輸入探索帳號', 'warning'); return; }
+    if (!password && !editingSentinel?.hasPassword) { toast('請先輸入探索密碼', 'warning'); return; }
+
+    const testButton = document.getElementById('sentinel-test-connection');
+    const restore = withBusy(testButton, '測試中');
+    resultEl.replaceChildren();
+
+    try {
+        // password 留空＝沿用既有密碼測試，與儲存時的 write-only 語意一致（僅編輯既有 Sentinel 時有效）
+        const result = await api.post('/api/admin/sentinels/test-connection', {
+            sentinelId: editingSentinel?.sentinelId ?? 0,
+            baseUrl,
+            username,
+            password: password || null
+        });
+
+        resultEl.textContent = result.success
+            ? `✓ ${result.message}（耗時 ${result.elapsedMs}ms）`
+            : `✗ ${result.message}`;
+        resultEl.className = `small mb-0 ${result.success ? 'text-success' : 'text-danger'}`;
+    } catch {
+        // 輸入不合法（如既有 Sentinel 找不到）由 api.js 以 toast 顯示；此處不用另外處理
+    } finally {
+        restore();
+    }
+});
 
 sentinelForm.addEventListener('submit', async event => {
     event.preventDefault();
@@ -152,6 +189,7 @@ sentinelForm.addEventListener('submit', async event => {
             name,
             baseUrl: document.getElementById('sentinel-base-url').value.trim(),
             username: document.getElementById('sentinel-username').value.trim(),
+            os: document.getElementById('sentinel-os').value,
             // 留空字串＝不變更（後端 write-only 語意）；沒有勾選清除密碼的介面，
             // 需要清空密碼的情境（例如帳密停用）改用「停用」而非清空密碼
             password: document.getElementById('sentinel-password').value || null
@@ -171,7 +209,6 @@ sentinelForm.addEventListener('submit', async event => {
 
 async function loadOptions() {
     const options = await api.get('/api/admin/netiq/options');
-    document.getElementById('opt-sample-fetch-mode').value = options.sampleFetchMode;
     document.getElementById('opt-query-delay').value = options.queryDelayMs;
     document.getElementById('opt-page-size').value = options.pageSize;
     document.getElementById('opt-max-results').value = options.maxResultsPerJob;
@@ -198,7 +235,6 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
     const restore = withBusy(saveButton, '儲存中');
     try {
         const options = await api.put('/api/admin/netiq/options', {
-            sampleFetchMode: document.getElementById('opt-sample-fetch-mode').value,
             queryDelayMs: Number(document.getElementById('opt-query-delay').value),
             pageSize: Number(document.getElementById('opt-page-size').value),
             maxResultsPerJob: Number(document.getElementById('opt-max-results').value),

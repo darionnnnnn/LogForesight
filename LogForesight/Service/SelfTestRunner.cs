@@ -25,6 +25,7 @@ public static class SelfTestRunner
         // 實際生效的規則/抑制設定存於資料庫，selftest 刻意不連 DB（連線＋EnsureCreated 是寫入
         // 副作用，違反「跑完不留副作用」的承諾），只驗證內建種子——見 RunRuleLoadingChecks 的說明。
         RunRuleLoadingChecks();
+        RunSentinelQueryChecks();
 
         RunRuleLayerChecks();
         RunLinuxRuleLayerChecks();
@@ -143,6 +144,43 @@ public static class SelfTestRunner
     {
         Console.WriteLine("\n-- 抑制設定（選用功能）--");
         Console.WriteLine("  設定存於資料庫，selftest 不連線；如需檢視請執行 --list-suppressions。");
+    }
+
+    /// <summary>
+    /// watchlist→Lucene 產生器（docs/NETIQ-API-PLAN.md §4）：規則表改了，Q1 查詢子句要跟著對。
+    /// 用目前生效的規則表（<see cref="RunRuleLoadingChecks"/> 已 Initialize）實際跑一次產生器，
+    /// 驗證結構性不變量——不驗證完整字串（filter 字面內容會隨規則表變動，鎖死字串比對太脆弱），
+    /// 而是驗證「已知一定要出現的子句/ID 有沒有出現」。
+    /// </summary>
+    private static void RunSentinelQueryChecks()
+    {
+        Console.WriteLine("\n-- Sentinel watchlist→Lucene 產生器（docs/NETIQ-API-PLAN.md §4）--");
+
+        var sampleIps = new[] { "10.1.2.11", "10.1.2.12" };
+        var filter = SentinelQueryBuilder.BuildWindowsFilter(sampleIps, KnownIssueCatalog.Rules);
+
+        Check("filter 含 IP 批次子句", sampleIps.All(ip => filter.Contains($"{SentinelFieldMap.HostIp}:{ip}")), filter);
+        Check("filter 含 generic 錯誤收集子句（System/Application）",
+            filter.Contains($"{SentinelFieldMap.LogName}:System") && filter.Contains($"{SentinelFieldMap.LogName}:Application"),
+            filter);
+
+        var eventIds = SentinelQueryBuilder.WindowsRuleEventIds(KnownIssueCatalog.Rules);
+        Check("規則表有 Windows Event ID 可下推 Lucene（非全部只能靠 generic 收集）", eventIds.Count > 0,
+            eventIds.Count == 0 ? "WindowsRuleEventIds 回傳空清單" : "");
+
+        // 基準清單裡任一 ID 若存在於目前規則表，就該出現在下推的 rv40 子句——用既有的
+        // LegacySecurityWatchlistBaseline 交叉驗證，不必為此另建一份清單
+        var expectedInFilter = LegacySecurityWatchlistBaseline.Intersect(eventIds).ToList();
+        Check($"規則表 Windows Event ID 聯集正確反映在 filter 的 rv40 子句（樣本 {expectedInFilter.Count} 項）",
+            expectedInFilter.All(id => filter.Contains($"{SentinelFieldMap.EventId}:(") && filter.Contains(id.ToString())),
+            filter);
+
+        // MatchAllEventIds 規則（WHEA-Logger／Resource-Exhaustion／VSS）沒有具體 EventId 可下推，
+        // 不該混進聯集——它們的事件靠 generic 分支撈、本地 Classify 精準比對
+        var matchAllRuleIds = KnownIssueCatalog.Rules.Where(r => r.MatchAllEventIds).SelectMany(r => r.EventIds).ToList();
+        Check("MatchAllEventIds 規則的 EventIds（理應為空）未混入下推聯集",
+            matchAllRuleIds.All(id => !eventIds.Contains(id) || KnownIssueCatalog.Rules.Any(r => !r.MatchAllEventIds && r.EventIds.Contains(id))),
+            "");
     }
 
     private static void Check(string name, bool condition, string detail = "")

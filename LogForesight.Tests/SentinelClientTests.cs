@@ -426,6 +426,211 @@ public class SentinelClientTests
         Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: ""), Settings()));
     }
 
+    [Theory]
+    [InlineData("not a url")]
+    [InlineData("sentinel.corp.local:8443")]   // 少打 https://——自由文字欄位最常見的輸入錯誤
+    [InlineData("://bad")]
+    [InlineData("http://")]                    // 有 scheme 但沒有主機
+    [InlineData("ftp://sentinel.corp.local")]  // 非 http(s)
+    public void 建構子_連線位址格式不正確時擲出可顯示的例外(string badUrl)
+    {
+        // 這些輸入送進 HttpClient 會擲 InvalidOperationException／NotSupportedException——
+        // 不是 SentinelClientException，會穿透呼叫端「連線失敗就顯示訊息」的 catch 變成 500／中斷 probe。
+        // 這條測試釘住它們一律在建構期就轉成本類別的例外。
+        var ex = Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: badUrl), Settings()));
+
+        Assert.Contains("連線位址格式不正確", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("https://sentinel.local:8443")]
+    [InlineData("http://sentinel.local")]
+    [InlineData("https://sentinel.local:8443/")]   // 尾端斜線
+    public async Task 建構子_合法連線位址不被誤擋(string goodUrl)
+    {
+        await using var _ = new SentinelClient(Server(baseUrl: goodUrl), Settings());
+    }
+
+    [Fact]
+    public async Task 重試次數設為0_不擲例外且不重試()
+    {
+        // Polly 的 RetryStrategyOptions 要求 MaxRetryAttempts >= 1，傳 0 會在建構子擲
+        // ValidationException——而「NetIQ 維護」頁的失敗重試次數 min=0，管理員填 0（合理的
+        // 「不要重試」）會讓每一次 SentinelClient 建構直接爆掉。這條測試釘住 0 的正確行為。
+        var handler = new StubHandler();
+        var authCalls = 0;
+
+        handler.OnSend = (req, _) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri!.ToString() == AuthUrl())
+            {
+                authCalls++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            }
+            throw new InvalidOperationException("不該送出認證以外的請求");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(retryCount: 0), handler);
+        await Assert.ThrowsAsync<SentinelClientException>(() => client.TestConnectionAsync());
+
+        Assert.Equal(1, authCalls);   // 只打一次，沒有重試
+    }
+
+    [Fact]
+    public async Task 建立工作的請求本文_引號與非ASCII不得寫成Unicode轉義()
+    {
+        // Sentinel 的 JSON 解析器不接受 \uXXXX 轉義序列，會回 400「invalid JSON value」
+        // （2026-07-29 第二輪 probe 實測：片語查詢 obssvcname:"..." 整個被拒）。
+        // System.Text.Json 預設編碼器正好會把 " 寫成 "、中文寫成 \uXXXX——
+        // 片語查詢是規則來源下推 Lucene 的必要語法，這條測試釘住不會改回預設編碼器。
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"status\":2,\"found\":0,\"avail\":0}"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        await client.SearchAsync(new SentinelSearchRequest(
+            "obssvcname:\"Microsoft-Windows-Security-Auditing\" AND evt:帳戶已登出",
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        var createBody = handler.Requests.Single(r => r.Method == HttpMethod.Post && r.Url == JobCollectionUrl()).Body!;
+
+        Assert.DoesNotContain("\\u0022", createBody);          // 引號不得寫成 "
+        Assert.Contains("\\\"Microsoft-Windows", createBody);  // 應為 JSON 標準的 \" 轉義
+        Assert.Contains("帳戶已登出", createBody);              // 非 ASCII 原樣保留，不轉成 \uXXXX
+    }
+
+    // ── TestConnectionAsync：只驗證認證，不建立 event-search job（項目 6，測試連線按鈕） ──
+
+    [Fact]
+    public async Task TestConnectionAsync_成功時只呼叫認證端點_不建立查詢工作()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var elapsed = await client.TestConnectionAsync();
+
+        Assert.True(elapsed >= TimeSpan.Zero);
+        Assert.DoesNotContain(handler.Requests, r => r.Url == JobCollectionUrl());
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_帳密錯誤_擲出可顯示的例外()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri!.ToString() == AuthUrl())
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+            throw new InvalidOperationException("不該送出認證以外的請求");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() => client.TestConnectionAsync());
+
+        Assert.Contains("帳號或密碼錯誤", ex.Message);
+    }
+
+    // ── RawGetAsync：非 event-search job 的一般 REST 資源讀取（ESM eventsource 等） ──
+
+    [Fact]
+    public async Task RawGetAsync_認證後直接GET_不建立也不刪除job()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Get && url == "https://sentinel.local:8443/SentinelRESTServices/objects/eventsource")
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[{\"name\":\"srv1\"}]}"));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var body = await client.RawGetAsync("/SentinelRESTServices/objects/eventsource");
+
+        Assert.Contains("srv1", body);
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Delete);
+        Assert.DoesNotContain(handler.Requests, r => r.Method == HttpMethod.Post && r.Url == JobCollectionUrl());
+    }
+
+    [Fact]
+    public async Task RawGetAsync_非成功狀態碼_擲出可顯示的例外()
+    {
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Get)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+                { Content = new StringContent("no such resource") });
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var ex = await Assert.ThrowsAsync<SentinelClientException>(() =>
+            client.RawGetAsync("/SentinelRESTServices/objects/eventsource"));
+
+        Assert.Contains("404", ex.Message);
+    }
+
+    [Fact]
+    public async Task RawGetAsync_token過期時_重新認證後重放()
+    {
+        var handler = new StubHandler();
+        var authCalls = 0;
+        var getCalls = 0;
+
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+            {
+                authCalls++;
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, $"{{\"Token\":\"tok-{authCalls}\"}}"));
+            }
+            if (req.Method == HttpMethod.Get)
+            {
+                getCalls++;
+                if (getCalls == 1) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+                Assert.Equal("X-SAML tok-2", req.Headers.Authorization!.ToString());
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[]}"));
+            }
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        var body = await client.RawGetAsync("/SentinelRESTServices/objects/eventsource");
+
+        Assert.Equal(2, authCalls);
+        Assert.Equal("{\"items\":[]}", body);
+    }
+
     // ── 純函數解析邏輯（internal，InternalsVisibleTo 見 LogForesight.Core.csproj） ──
 
     [Fact]

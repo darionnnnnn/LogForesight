@@ -233,11 +233,15 @@ if (args.Contains("--host-list"))
 
 // --netiq-probe：對已設定的 Sentinel 跑一組小規模驗證查詢，輸出可貼回對話定案欄位對應
 // （docs/NETIQ-API-PLAN.md §3.5、§8 步驟 2 的閘門）。放在 mutex 保護內、跑完即結束，不進入每日分析流程。
+// 可選 --sample-ip <windows主機IP> --sample-linux-ip <linux主機IP> 加跑第二輪
+// （主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位形狀，2026-07-29 第一輪實測後新增）。
 if (args.Contains("--netiq-probe"))
 {
     var sentinelStoreForProbe = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
     var netiqOptionsForProbe = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
-    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, netiqOptionsForProbe);
+    var probeSampleIp = GetArgValue(args, "--sample-ip");
+    var probeSampleLinuxIp = GetArgValue(args, "--sample-linux-ip");
+    var probeExitCode = await NetiqProbeCli.RunAsync(sentinelStoreForProbe, netiqOptionsForProbe, probeSampleIp, probeSampleLinuxIp);
 
     LogManager.Shutdown();
     return probeExitCode;
@@ -616,6 +620,41 @@ else
     }
 
     log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
+}
+
+// 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
+//    對 Web 主機頁登錄的 NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套
+//    LogAnalysisService。清單為空（尚未登錄任何 NetIQ 主機，或全部待歸屬/停用）時
+//    NetiqPipelineService.RunAsync 自己零副作用返回，這裡不另加開關判斷。
+var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
+if (netiqHostList.Warnings.Count > 0)
+{
+    WithColor(ConsoleColor.Yellow, () =>
+    {
+        Console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
+        foreach (var warning in netiqHostList.Warnings) Console.WriteLine($"    - {warning}");
+    });
+}
+if (netiqHostList.TotalHosts > 0)
+{
+    try
+    {
+        var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
+        var netiqPipeline = new NetiqPipelineService(
+            settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
+            eventLogService, aiService, suppressionStore, reportService, runRecorder);
+
+        var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
+        runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
+            $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日");
+    }
+    catch (Exception ex)
+    {
+        // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
+        // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
+        log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");
+        Console.WriteLine($"\n  ✗ NetIQ 機房分析失敗：{ex.Message}（本機分析結果不受影響，下次執行自動重試缺漏日）");
+    }
 }
 
 // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行

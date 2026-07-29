@@ -154,12 +154,7 @@ public class AdminController : ControllerBase
 
     [HttpPost("netiq/scan")]
     public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>
-        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, ct));
-
-    /// <summary>新增 Sentinel 精靈步驟 1：以尚未存檔的帳密掃描，成功才建立 Sentinel（定案 6）</summary>
-    [HttpPost("netiq/create-and-scan")]
-    public async Task<ApiResponse<NetiqScanResultDto>> CreateAndScan([FromBody] CreateAndScanSentinelRequest request, CancellationToken ct) =>
-        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.CreateAndScanAsync(request, ct));
+        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, request.SubnetPrefix, ct));
 
     [HttpPost("netiq/import")]
     public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
@@ -238,6 +233,13 @@ public class AdminController : ControllerBase
     [HttpPut("sentinels/{sentinelId:long}/active")]
     public ApiResponse<SentinelDto> SetSentinelActive(long sentinelId, [FromBody] SetSentinelActiveRequest request) =>
         ApiResponse<SentinelDto>.Ok(_sentinels.SetActive(sentinelId, request.Active));
+
+    /// <summary>測試連線（項目 6）：驗證網址／帳密是否正確，不落地任何東西</summary>
+    [HttpPost("sentinels/test-connection")]
+    public async Task<ApiResponse<TestSentinelConnectionResultDto>> TestSentinelConnection(
+        [FromBody] TestSentinelConnectionRequest request, CancellationToken ct) =>
+        ApiResponse<TestSentinelConnectionResultDto>.Ok(
+            await _sentinels.TestConnectionAsync(request, _netiqOptions.Get(), ct));
 
     // ── NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁）────────────────────
 

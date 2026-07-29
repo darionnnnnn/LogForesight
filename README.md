@@ -324,11 +324,13 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態（2026-07-28）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
-> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（卡在 `--netiq-probe` 的真實環境
-> 閘門，見 docs/LINUX-RULES-PLAN.md §10 的 P3）。也就是說現在可以維護 Linux 規則、把主機標成 Linux，
-> 但實際的每日分析還不會有 Linux 資料進來。上表的訊息關鍵字是 probe 前的通用草案，
-> 屆時會依真實環境輸出校正（seed v5）。
+> **目前狀態（2026-07-29）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
+> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 docs/LINUX-RULES-PLAN.md §10 的 P3）。
+> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
+> 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
+> 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
+> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 `--netiq-probe` 即可定案欄位形狀。
+> 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
 >
 > **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
 > 不讓人以為有看過。
@@ -521,10 +523,20 @@ IP 衝突時只查最早建立的那一台，行為才可預測。每台主機�
 
 ### NetIQ 主動探索匯入
 
-Web 主機頁的「從 NetIQ 匯入」精靈：掃描 Sentinel → 依網段勾選 → **送出即立即新增/更新/孤兒復活**
-（docs/HISTORY.md 定案 7；早期版本曾排入佇列等批次執行時才套用，已改為即時落盤，
-批次端不需要任何指令介入）。結果記入「資料匯入」頁的匯入紀錄，與 CSV 匯入共用同一份稽核軌跡。
-當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——即時的只是「主機被收進清單」這件事本身。
+Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索帳密的 Sentinel、**輸入要掃描的網段**
+（前綴如 `10.232.11` 或 CIDR `10.232.11.0/24`／`/16`）→ 掃描 → 依網段勾選 → 指派群組與作業系統
+→ **送出即立即新增/更新/孤兒復活**（docs/HISTORY.md 定案 7；早期版本曾排入佇列等批次執行時
+才套用，也曾放在主機頁，均已調整）。掃描是「查一個網段」不是盲掃全站——結果只涵蓋掃描窗口
+內有事件回報的主機，涵蓋範圍（實際掃描窗口、是否截斷）誠實顯示在掃描結果上方，安靜的主機
+請改用主機頁或 CSV 手動登錄（見下方「探索方案」段落的網段範圍掃描說明）。結果記入同一頁的
+匯入紀錄，與 CSV 匯入共用同一份稽核軌跡。當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——
+即時的只是「主機被收進清單」這件事本身，新主機的顯示名稱則在掃描當下就從 Sentinel 的 `sn`
+欄位帶入，不用等夜間批次回填。
+
+主機清單很長時的操作：每個網段可整段勾選，超過 20 台的網段預設收合（標題仍顯示總數、
+已登錄數與可復活數），另有「全選新主機」（回到預設勾選狀態：新主機與可復活的勾、
+既有使用中的不勾）與「全不選」兩個快捷。作業系統預設值取自該台 Sentinel 的設定
+（見「NetIQ 維護」頁），只套用在本次**新增**的主機。
 
 ### NetIQ 事件取數 API 驗證（`--netiq-probe`，2026-07-24 新增）
 
@@ -533,17 +545,48 @@ Web 主機頁的「從 NetIQ 匯入」精靈：掃描 Sentinel → 依網段勾�
 IP 篩選批次上限、時區基準等都必須用真實輸出核對，不能憑文件猜。
 
 ```
-LogForesight.exe --netiq-probe    # 對已設定且啟用的 Sentinel 逐一跑 6 項小規模驗證查詢
+LogForesight.exe --netiq-probe    # 對已設定且啟用的 Sentinel 逐一跑 13 項小規模驗證查詢
+
+# 加上樣本主機可多跑第二輪的主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位核對（兩個參數都可省略）
+LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 ```
 
 輸出可直接複製貼回對話：含每台 Sentinel 的原始事件 JSON（用於核對欄位對應）、`dt` 時間邊界
-比對提示、不同 `pgsize` 的分頁耗時、IP 篩選批次大小測試、錯誤密碼／非法查詢語法的失敗路徑驗證。
-全程只發送約 15~20 個小查詢（單一佇列＋既有節流設定），對 Sentinel 負擔可忽略。
+比對提示（印絕對時間，可在 Web UI 重現同一段區間）、不同 `pgsize` 的分頁耗時、IP 篩選批次大小
+測試、錯誤密碼／非法查詢語法的失敗路徑驗證。全程只發送十幾個小查詢（單一佇列＋既有節流設定、
+`max-results` 一律壓在 3 筆以內或只取 found 計數），對 Sentinel 負擔可忽略。
 
-**目前狀態（2026-07-24）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
-`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**尚未在真實環境執行過**——
-後續的欄位對應（`SentinelFieldMap`）、watchlist→Lucene 查詢產生器、`SentinelStatsSource`
-（實際取數邏輯）全部依賴這次 probe 的真實輸出才能繼續，詳見 docs/NETIQ-API-PLAN.md §8。
+**目前狀態（2026-07-29）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
+`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**三輪真實環境輸出皆已取得**，
+技術未決項幾乎全收斂：
+
+- Windows 面欄位對應定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`【term 不斷詞，
+  子字串查詢無法下推】、訊息＝`msg`、帳號＝`sun`，完整對照見 docs/NETIQ-API-PLAN.md §3.5）。
+- **主機歸屬鍵定案為 `repip`**（四台 DC 對到四個各自不同的 `repip`，一對一、非共用代理）；
+  `sip` 是用戶端來源 IP、`shn` 是發起端機器名，皆不是主機自身。
+- System/Application 頻道確實轉送 Information 級事件（原「只轉送 Error/Warning」的推論是錯的，
+  量少是主機本來就少）；sev 的 Warning/Error 確切門檻仍待試點核對。
+- probe 過程揪出並修正一個會讓正式取數管線**全面失敗**的缺陷：Sentinel 的 JSON 解析器不接受
+  `\uXXXX` 轉義序列，而 .NET 預設編碼器正好那樣輸出，導致片語查詢（規則來源下推 Lucene 的
+  必要語法）整個被 400 拒絕，第三輪已在真實環境實證修正有效。
+- ESM `eventsource` 端點被權限拒絕、全站 24h distinct 在 2470 萬筆/天下不可行，兩條原始路都
+  走不通。**探索方案已於 Phase 5（2026-07-29）解決**：使用者在 Sentinel Web UI 實測確認
+  `repip:{prefix}.*` 前綴萬用字元查詢有真實過濾效果（23,926 筆/1h vs 全站 150 萬筆/1h），
+  改採「輸入網段前綴 → 該網段自己的自適應時間窗查詢」，完全不碰 ESM API（見
+  docs/NETIQ-API-PLAN.md §3.4「Phase 5 定案」）。其餘未決項都移到試點階段核對，
+  不再開第四輪 probe。
+
+**`SentinelFieldMap`／事件映射器／watchlist→Lucene 查詢產生器已實作完成**
+（`LogForesight.Core/Analysis/`，2026-07-29，只有 Windows 分支——Linux 那台 Sentinel 尚未接入，
+沒有真實 probe 樣本可依據），含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構。
+
+**機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**（2026-07-29，
+`LogForesight/Service/`）：本機分析結束後接機房迴圈，逐 Sentinel、逐日、批次（≤50 台 IP）
+向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務；只支援 Windows 主機（Linux 主機
+明確標示「尚未支援」而不是靜默略過）；當日續跑（凌晨排程跑到一半掛掉、白天重跑只補未完成
+的主機/日期）靠既有的缺漏日回補機制，不是另外設計的功能。**尚未經過真實 Sentinel 端到端
+驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑幾晚，詳見 docs/NETIQ-API-PLAN.md
+§8、§9 與 docs/BACKLOG.md。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 
@@ -996,13 +1039,16 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
   重新編譯部署；規則的白話知識庫內容（處置參考）也建議一併調整成貴公司實際的處置流程。
   儲存時前後端都會跑規則驗證，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
   `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
-- **多台伺服器（NetIQ Sentinel 整合）**：批次分析引擎本身仍是單機直讀。**Sentinel 連線設定與主機清單
-  的管理已於 2026-07-24 完成搬進 Web**（多台 Sentinel、新增即掃描精靈、匯入即時落盤、依網段指派
-  主機群組，完整設計見 [docs/HISTORY.md](docs/HISTORY.md)）——這一層
-  解決的是「主機清單哪裡維護」，還不是「跨主機集中分析」。規劃中的下一階段才是接上多台 NetIQ Sentinel
-  （約 2000 台主機規模，共用查詢帳密）做**批次面**的集中分析——分級分析（規則/趨勢/慢速趨勢/
-  關聯全量跑，AI 只判讀有訊號的主機）、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等設計已在
-  `docs/HISTORY.md` 中規劃完成，`Persistence/` 的讀寫介面也已預留，實作時不需要更動既有分析邏輯的架構。
+- **多台伺服器（NetIQ Sentinel 整合）**：**Sentinel 連線設定與主機清單的管理已於 2026-07-24
+  完成搬進 Web**（多台 Sentinel、掃描匯入精靈、匯入即時落盤、依網段指派主機群組，完整設計見
+  [docs/HISTORY.md](docs/HISTORY.md)）；**跨主機集中分析的取數管線也已於 2026-07-29 實作完成**
+  （`SentinelClient`＋`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`＋
+  `NetiqPipelineService`，只支援 Windows 主機，見 docs/NETIQ-API-PLAN.md §8）——批次分析引擎
+  逐 Sentinel、逐日、批次取事件後餵進與本機路徑**完全相同**的分析服務（有合約測試證實兩條路徑
+  聚合分類結果同構）。**尚未經過真實 Sentinel 端到端驗證**，下一步是登錄 2~3 台實際主機試跑幾晚
+  （核對 sev 門檻、Defender/RDP 頻道覆蓋、真實批次耗時）；2000 台規模放量前另需評估逐主機
+  `HasRecord` 查詢的批次化。分級分析、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等其餘設計
+  仍在 `docs/HISTORY.md` 中待實作。
 - **DB 後端（2026-07-23 完成；2026-07-24 起 Sqlite 改為預設與主要測試方式，Jsonl 檔案後端全面退役）**：
   `Storage.Type` 二選一——`Sqlite`（測試/開發，預設）／`SqlServer`（正式，2000 台量級）；
   設成 `Jsonl` 一律於啟動時報錯，不再有檔案相容模式。**全部資料**（分析紀錄＋webdata）走資料庫：分析紀錄以

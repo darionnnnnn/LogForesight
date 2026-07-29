@@ -58,6 +58,10 @@ public class SentinelAdminService
             ? existing?.PasswordEnc ?? ""
             : CryptoHelper.Encrypt(request.Password);
 
+        // 新增時省略／不合法值＝windows（既有行為零改變）；編輯時省略＝沿用既有值，
+        // 不是靜默重置——精靈或既有主機不該因為一次改名之類的編輯就跟著換平台
+        var os = WebHost.NormalizeOs(request.Os) ?? existing?.Os ?? WebHost.OsWindows;
+
         var saved = _sentinels.Upsert(new Sentinel
         {
             SentinelId = request.SentinelId,
@@ -65,7 +69,8 @@ public class SentinelAdminService
             BaseUrl = request.BaseUrl?.Trim() ?? "",
             Username = request.Username?.Trim() ?? "",
             PasswordEnc = passwordEnc,
-            Active = existing?.Active ?? true
+            Active = existing?.Active ?? true,
+            Os = os
         });
 
         // 改名時同步所有掛在這台 Sentinel 下的主機顯示快照——不然要等下次批次/人工編輯才會更新，
@@ -124,7 +129,8 @@ public class SentinelAdminService
             BaseUrl = sentinel.BaseUrl,
             Username = sentinel.Username,
             PasswordEnc = sentinel.PasswordEnc,
-            Active = active
+            Active = active,
+            Os = sentinel.Os
         });
 
         _audit.Record(
@@ -137,6 +143,63 @@ public class SentinelAdminService
             detail: new { saved.Name, Active = active });
 
         return ToDto(saved, HostCount(saved.SentinelId));
+    }
+
+    /// <summary>
+    /// 測試連線（項目 6）：只驗證認證能否成功，不建立查詢工作、不寫入任何東西。
+    /// 帳密僅過境不落地，與 <see cref="LogForesight.Web.Services.NetiqDiscoveryService.CreateAndScanAsync"/>
+    /// 同一先例——連線失敗（含 401 帳密錯誤／逾時／憑證問題）**不是**例外，是這個功能本來就該回報的結果，
+    /// 回傳 <see cref="TestSentinelConnectionResultDto.Success"/>=false 讓畫面就地顯示，不當成系統錯誤 toast；
+    /// 只有輸入本身不合法（漏填欄位、既有 Sentinel 找不到、既有 Sentinel 尚無密碼可測）才擲例外。
+    /// </summary>
+    public async Task<TestSentinelConnectionResultDto> TestConnectionAsync(
+        TestSentinelConnectionRequest request, NetiqOptions queryOptions, CancellationToken ct)
+    {
+        var baseUrl = request.BaseUrl.Trim();
+        var username = request.Username.Trim();
+        if (baseUrl.Length == 0)
+            throw DomainException.Validation("請輸入連線位址。");
+        if (username.Length == 0)
+            throw DomainException.Validation("請輸入帳號。");
+
+        string password;
+        if (!string.IsNullOrEmpty(request.Password))
+        {
+            password = request.Password;
+        }
+        else if (request.SentinelId > 0)
+        {
+            var existing = _sentinels.Get(request.SentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
+            if (string.IsNullOrEmpty(existing.PasswordEnc))
+                throw DomainException.Validation("這台 Sentinel 尚未設定密碼，請先輸入密碼再測試連線。");
+            password = CryptoHelper.IsEncrypted(existing.PasswordEnc)
+                ? CryptoHelper.Decrypt(existing.PasswordEnc)
+                : existing.PasswordEnc;
+        }
+        else
+        {
+            throw DomainException.Validation("請輸入密碼。");
+        }
+
+        var server = new SentinelServer { Name = "(測試連線)", BaseUrl = baseUrl, Username = username, Password = password };
+
+        // 建構子也在 try 內：位址格式不正確是 SentinelClient 建構期就擋下的（不是連線期），
+        // 而那同樣是「測試連線」該回報的結果之一，不該變成 500
+        try
+        {
+            await using var client = new SentinelClient(server, queryOptions);
+            var elapsed = await client.TestConnectionAsync(ct);
+            return new TestSentinelConnectionResultDto
+            {
+                Success = true,
+                Message = "連線成功。",
+                ElapsedMs = (long)elapsed.TotalMilliseconds
+            };
+        }
+        catch (SentinelClientException ex)
+        {
+            return new TestSentinelConnectionResultDto { Success = false, Message = ex.Message };
+        }
     }
 
     private int HostCount(long sentinelId) =>
@@ -161,6 +224,7 @@ public class SentinelAdminService
         HasPassword = !string.IsNullOrEmpty(sentinel.PasswordEnc),
         CanDiscover = sentinel.CanDiscover,
         Active = sentinel.Active,
+        Os = sentinel.Os,
         CreatedAt = sentinel.CreatedAt,
         UpdatedAt = sentinel.UpdatedAt,
         HostCount = hostCount

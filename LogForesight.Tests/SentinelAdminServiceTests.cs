@@ -137,6 +137,143 @@ public class SentinelAdminServiceTests
         Assert.NotNull(_sentinels.Get(sentinel.SentinelId));   // Sentinel 列本身還在，只是 Active=false
     }
 
+    // ── Os（項目 4 的新設計：Sentinel 層級單一 OS，見 docs/LINUX-RULES-PLAN.md §3） ──
+
+    [Fact]
+    public void 新增_指定Os時儲存()
+    {
+        var dto = Create().SaveSentinel(new SaveSentinelRequest { Name = "S1", Os = "linux" });
+
+        Assert.Equal("linux", dto.Os);
+        Assert.Equal("linux", _sentinels.Get(dto.SentinelId)!.Os);
+    }
+
+    [Fact]
+    public void 新增_省略Os時預設windows()
+    {
+        var dto = Create().SaveSentinel(new SaveSentinelRequest { Name = "S1" });
+
+        Assert.Equal("windows", dto.Os);
+    }
+
+    [Fact]
+    public void 新增_不合法Os值時預設windows()
+    {
+        var dto = Create().SaveSentinel(new SaveSentinelRequest { Name = "S1", Os = "solaris" });
+
+        Assert.Equal("windows", dto.Os);
+    }
+
+    [Fact]
+    public void 編輯_省略Os時沿用既有值_不被靜默重置()
+    {
+        var svc = Create();
+        var created = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1", Os = "linux" });
+
+        // 只改連線位址，沒帶 Os——不該把這台從 linux 重設回 windows
+        var updated = svc.SaveSentinel(new SaveSentinelRequest
+        {
+            SentinelId = created.SentinelId, Name = "S1", BaseUrl = "https://new-url"
+        });
+
+        Assert.Equal("linux", updated.Os);
+        Assert.Equal("linux", _sentinels.Get(created.SentinelId)!.Os);
+    }
+
+    [Fact]
+    public void 停用_不影響Os()
+    {
+        var svc = Create();
+        var created = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1", Os = "linux" });
+
+        var updated = svc.SetActive(created.SentinelId, false);
+
+        Assert.Equal("linux", updated.Os);
+    }
+
+    // ── TestConnectionAsync（項目 6）：這裡只測「送出真正連線前」的驗證分支——
+    // 連線本身（成功/401/逾時等）是 SentinelClient 的協定層行為，已在 SentinelClientTests
+    // 用 StubHandler 覆蓋；SentinelAdminService 直接 new SentinelClient(...)，
+    // 沒有替身可插，故不在這裡重複測網路路徑。
+
+    [Fact]
+    public async Task TestConnection_連線位址空白_擲驗證例外()
+    {
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "", Username = "svc", Password = "x" },
+            new NetiqOptions(), CancellationToken.None));
+
+        Assert.Contains("連線位址", ex.Message);
+    }
+
+    [Fact]
+    public async Task TestConnection_帳號空白_擲驗證例外()
+    {
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "https://s1", Username = " ", Password = "x" },
+            new NetiqOptions(), CancellationToken.None));
+
+        Assert.Contains("帳號", ex.Message);
+    }
+
+    [Fact]
+    public async Task TestConnection_新增中且密碼空白_擲驗證例外()
+    {
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { SentinelId = 0, BaseUrl = "https://s1", Username = "svc", Password = "" },
+            new NetiqOptions(), CancellationToken.None));
+
+        Assert.Contains("密碼", ex.Message);
+    }
+
+    [Fact]
+    public async Task TestConnection_指定既有Sentinel但找不到_擲例外()
+    {
+        var ex = await Assert.ThrowsAsync<DomainException>(() => Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { SentinelId = 999, BaseUrl = "https://s1", Username = "svc", Password = "" },
+            new NetiqOptions(), CancellationToken.None));
+
+        Assert.Contains("找不到", ex.Message);
+    }
+
+    [Fact]
+    public async Task TestConnection_連線位址格式不正確_回傳失敗結果而不是擲例外()
+    {
+        // 位址格式是 SentinelClient 建構期擋下的（不是連線期），但那同樣是「測試連線」
+        // 該回報的結果之一——擲出去會變成 500，畫面看到的是系統錯誤而不是可修的原因
+        var result = await Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "sentinel.corp.local:8443", Username = "svc", Password = "x" },
+            new NetiqOptions(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("連線位址格式不正確", result.Message);
+        Assert.Null(result.ElapsedMs);
+    }
+
+    [Fact]
+    public async Task TestConnection_失敗訊息不含密碼()
+    {
+        var result = await Create().TestConnectionAsync(
+            new TestSentinelConnectionRequest { BaseUrl = "not a url", Username = "svc", Password = "hunter2" },
+            new NetiqOptions(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.DoesNotContain("hunter2", result.Message);
+    }
+
+    [Fact]
+    public async Task TestConnection_既有Sentinel尚無密碼且未填新密碼_擲例外()
+    {
+        var svc = Create();
+        var sentinel = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1" });   // 未帶密碼
+
+        var ex = await Assert.ThrowsAsync<DomainException>(() => svc.TestConnectionAsync(
+            new TestSentinelConnectionRequest { SentinelId = sentinel.SentinelId, BaseUrl = "https://s1", Username = "svc", Password = "" },
+            new NetiqOptions(), CancellationToken.None));
+
+        Assert.Contains("尚未設定密碼", ex.Message);
+    }
+
     [Fact]
     public void GetSentinels_主機數只算使用中且未併入的NetIQ主機()
     {

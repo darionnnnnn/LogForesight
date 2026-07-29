@@ -122,6 +122,7 @@ internal class FakeSentinelStore : ISentinelStore
         existing.Username = sentinel.Username;
         existing.PasswordEnc = sentinel.PasswordEnc;
         existing.Active = sentinel.Active;
+        existing.Os = sentinel.Os;
         existing.UpdatedAt = DateTime.Now;
         return existing;
     }

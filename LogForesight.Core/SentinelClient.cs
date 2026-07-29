@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -87,6 +88,20 @@ public sealed class SentinelClient : IAsyncDisposable
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new SentinelClientException($"Sentinel「{server.Name}」未設定 BaseUrl。");
 
+        // 連線位址格式在這裡就擋下，而不是等送出請求時才炸：BaseUrl 是自由文字欄位，
+        // 少打 https://（「sentinel.corp.local:8443」）之類的輸入極常見，而 HttpClient 對它們擲的是
+        // InvalidOperationException／NotSupportedException——**不是** SentinelClientException，
+        // 會穿透所有呼叫端「連線失敗就顯示訊息」的 catch，變成 500 或中斷整趟 probe。
+        // 統一轉成本類別的例外，訊息直接可顯示給操作者。
+        if (!Uri.TryCreate(server.BaseUrl.TrimEnd('/'), UriKind.Absolute, out var parsed) ||
+            (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) ||
+            string.IsNullOrEmpty(parsed.Host))
+        {
+            throw new SentinelClientException(
+                $"Sentinel「{server.Name}」的連線位址格式不正確：「{server.BaseUrl}」。" +
+                "請填寫完整網址，含 https:// 或 http://（例如 https://sentinel.corp.local:8443）。");
+        }
+
         _server = server;
         _settings = settings;
 
@@ -105,11 +120,18 @@ public sealed class SentinelClient : IAsyncDisposable
         }
 
         // 重試：連線失敗／逾時／5xx（含 503）皆重試，指數退避；4xx 不重試（打錯就是打錯，
-        // 401/403 另有 SendAuthenticatedAsync 的一次性重新認證重放機制，不走這裡）
-        _retryPipeline = new ResiliencePipelineBuilder()
-            .AddRetry(new RetryStrategyOptions
+        // 401/403 另有 SendAuthenticatedAsync 的一次性重新認證重放機制，不走這裡）。
+        //
+        // RetryCount <= 0 時**完全不加重試策略**，而不是把它夾到 1：Polly 的 RetryStrategyOptions
+        // 要求 MaxRetryAttempts >= 1，傳 0 會在建構子就擲 ValidationException（「NetIQ 維護」頁的
+        // 失敗重試次數 min=0，管理員填 0 是合理的「不要重試」，卻會讓每一次 SentinelClient 建構
+        // 直接爆掉）；夾到 1 則是靜默違背設定值。不加策略才真的等於「不重試」。
+        var pipelineBuilder = new ResiliencePipelineBuilder();
+        if (settings.RetryCount > 0)
+        {
+            pipelineBuilder.AddRetry(new RetryStrategyOptions
             {
-                MaxRetryAttempts = Math.Max(settings.RetryCount, 0),
+                MaxRetryAttempts = settings.RetryCount,
                 Delay = TimeSpan.FromSeconds(1),
                 BackoffType = DelayBackoffType.Exponential,
                 ShouldHandle = new PredicateBuilder()
@@ -122,8 +144,9 @@ public sealed class SentinelClient : IAsyncDisposable
                         _server.Name, args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
-            })
-            .Build();
+            });
+        }
+        _retryPipeline = pipelineBuilder.Build();
     }
 
     private static HttpMessageHandler CreateDefaultHandler(NetiqOptions settings)
@@ -168,6 +191,29 @@ public sealed class SentinelClient : IAsyncDisposable
                 using var cleanupCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 await TryDeleteJobAsync(jobHref, cleanupCts.Token);
             }
+            _queue.Release();
+        }
+    }
+
+    /// <summary>
+    /// 只做認證（取 token），不建立任何 event-search job——「網址／帳密是否正確」的最小驗證
+    /// （項目 6，docs/WEB-SPEC.md：Sentinel 維護頁的「測試連線」按鈕）。
+    /// 成功回傳耗時；失敗一律擲 <see cref="SentinelClientException"/>（訊息可直接顯示，
+    /// 錯誤分類沿用 <see cref="AuthenticateAsync"/> 既有的 401/其他 HTTP／連線失敗區分）。
+    /// </summary>
+    public async Task<TimeSpan> TestConnectionAsync(CancellationToken ct = default)
+    {
+        await _queue.WaitAsync(ct);
+        try
+        {
+            await ThrottleAsync(ct);
+            var sw = Stopwatch.StartNew();
+            await EnsureAuthenticatedAsync(ct);
+            sw.Stop();
+            return sw.Elapsed;
+        }
+        finally
+        {
             _queue.Release();
         }
     }
@@ -291,6 +337,22 @@ public sealed class SentinelClient : IAsyncDisposable
 
     // ── Job 生命週期 ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// 建立 job 的請求本文序列化選項。**必須用不轉義的編碼器**：`System.Text.Json` 預設會把
+    /// 雙引號寫成 <c>"</c>、非 ASCII 字元寫成 <c>\uXXXX</c>，而 **Sentinel 的 JSON 解析器
+    /// 不接受 <c>\uXXXX</c> 轉義序列**，會回 400「invalid JSON value」——
+    /// 2026-07-29 第二輪 probe 實測：片語查詢 <c>obssvcname:"Microsoft-Windows-Security-Auditing"</c>
+    /// 整個被拒，錯誤指向 filter 值的起始位置。片語查詢（帶引號）是規則來源下推 Lucene 的必要語法，
+    /// 沒有這個設定整條取數管線只要用到片語就會失敗。
+    /// <c>UnsafeRelaxedJsonEscaping</c> 只做 JSON 規格強制的最小轉義（<c>"</c> → <c>\"</c>），
+    /// 名稱裡的 Unsafe 指的是「不對 HTML 做額外防禦轉義」，這裡的輸出送往 REST API 不是網頁，
+    /// 且本文只由本程式組出（filter 內容非使用者自由輸入的 HTML），無 XSS 面。
+    /// </summary>
+    private static readonly JsonSerializerOptions JobBodyJsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private async Task<string> CreateJobAsync(SentinelSearchRequest request, CancellationToken ct)
     {
         var body = new JsonObject
@@ -308,7 +370,7 @@ public sealed class SentinelClient : IAsyncDisposable
         {
             body["fields"] = string.Join(",", request.Fields);
         }
-        var json = body.ToJsonString();
+        var json = body.ToJsonString(JobBodyJsonOptions);
 
         var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Post, EventSearchCollectionUrl)
         {
@@ -471,6 +533,41 @@ public sealed class SentinelClient : IAsyncDisposable
             // 用完即刪是負擔控制措施，失敗不該讓已經拿到的查詢結果報廢——記 WARN 讓人知道
             // server 端可能殘留一個 job，不中斷主流程。
             Log.Warn(ex, "[{Server}] 清理查詢工作失敗（可能造成 server 端殘留 job，非致命）：{Href}", _server.Name, jobHref);
+        }
+    }
+
+    /// <summary>
+    /// 對任意 REST 資源做認證過的 GET，不走 event-search job 生命週期
+    /// （docs/NETIQ-API-PLAN.md 2026-07-29 第二輪 probe：探索 ESM <c>/objects/eventsource</c> 等
+    /// 一般資源用，這些端點是單次讀取，沒有 job/輪詢/刪除的概念）。
+    /// 回傳原始 JSON 字串——解析交由呼叫端，不同端點形狀不一，這裡不假設任何結構。
+    /// </summary>
+    /// <param name="path">相對路徑（如 <c>/SentinelRESTServices/objects/eventsource</c>）或完整 URL</param>
+    public async Task<string> RawGetAsync(string path, CancellationToken ct = default)
+    {
+        await _queue.WaitAsync(ct);
+        try
+        {
+            await ThrottleAsync(ct);
+            var url = path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? path
+                : $"{BaseUrl}{(path.StartsWith('/') ? "" : "/")}{path}";
+
+            var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct);
+            using (resp)
+            {
+                var body = await resp.Content.ReadAsStringAsync(ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    throw new SentinelClientException(
+                        $"Sentinel「{_server.Name}」讀取「{path}」失敗：HTTP {(int)resp.StatusCode}｜{Truncate(body)}");
+                }
+                return body;
+            }
+        }
+        finally
+        {
+            _queue.Release();
         }
     }
 

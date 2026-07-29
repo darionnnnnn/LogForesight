@@ -277,12 +277,22 @@ function renderScanPicker(allSentinels) {
 
     const select = document.createElement('select');
     select.className = 'form-select';
-    select.style.maxWidth = '320px';
+    select.style.maxWidth = '240px';
     select.id = 'scan-sentinel-select';
     for (const sentinel of discoverableSentinels) {
         select.appendChild(new Option(sentinel.name, sentinel.name));
     }
     row.appendChild(select);
+
+    // 掃描是「查一個網段」不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4）——網段必填，
+    // 前端先擋空值，格式細節（CIDR 位元數等）交給後端 SentinelQueryBuilder 統一驗證
+    const subnetInput = document.createElement('input');
+    subnetInput.type = 'text';
+    subnetInput.className = 'form-control';
+    subnetInput.style.maxWidth = '220px';
+    subnetInput.id = 'scan-subnet-input';
+    subnetInput.placeholder = '網段，例：10.232.11';
+    row.appendChild(subnetInput);
 
     const scanButton = document.createElement('button');
     scanButton.type = 'button';
@@ -290,7 +300,12 @@ function renderScanPicker(allSentinels) {
     scanButton.textContent = '掃描匯入';
     scanButton.addEventListener('click', () => {
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
-        if (sentinel) openWizard(sentinel);
+        const subnetPrefix = subnetInput.value.trim();
+        if (!subnetPrefix) {
+            toast('請輸入要掃描的網段', 'warning');
+            return;
+        }
+        if (sentinel) openWizard(sentinel, subnetPrefix);
     });
     row.appendChild(scanButton);
 
@@ -309,26 +324,54 @@ let wizardPane = 'subnets';       // 'subnets' | 'groups'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
-async function openWizard(sentinel) {
+async function openWizard(sentinel, subnetPrefix) {
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
-    // 每次開精靈都回到 windows：OS 是「這一批」的屬性，沿用上一批的選擇會讓人不知不覺
-    // 把 Linux 主機匯成 Windows（規則面整個錯配，而且畫面上看不出來）
-    document.getElementById('wizard-os').value = 'windows';
+    // 每次開精靈都依「這台 Sentinel」的 Os 重設，不沿用上一次開精靈時的選擇——
+    // OS 是「這一批」的屬性，此環境 Windows／Linux 的 NetIQ 本來就拆成不同 Sentinel（各自單一 OS），
+    // 沿用上一台的選擇會讓人不知不覺把 Linux 主機匯成 Windows（規則面整個錯配，畫面上還看不出來）。
+    // 下拉仍保留可改，當作混合環境（單一 Sentinel 同時有兩種 OS）的逃生門。
+    document.getElementById('wizard-os').value = sentinel.os === 'linux' ? 'linux' : 'windows';
 
     renderWizardPane();
     wizardModal.show();
 
+    document.getElementById('wizard-coverage-note').replaceChildren();
+    document.getElementById('wizard-warnings').replaceChildren();
     document.getElementById('wizard-scan-result').replaceChildren(wizardNote('掃描中…'));
     wizardPrimaryButton.disabled = true;
     try {
-        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name });
+        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
+        renderCoverageNote();
         renderSubnetSelection();
     } catch {
         wizardModal.hide();
     } finally {
         wizardPrimaryButton.disabled = false;
+    }
+}
+
+// 涵蓋範圍是顯示出來的事實，不是隱藏假設（docs/NETIQ-API-PLAN.md §3.4）——
+// 網段範圍掃描只涵蓋窗口內有事件回報的主機，這句話必須在結果最上方，不能只藏在 tooltip 裡
+function renderCoverageNote() {
+    const noteEl = document.getElementById('wizard-coverage-note');
+    noteEl.textContent = wizardScan.coverageNote || '';
+
+    const warningsEl = document.getElementById('wizard-warnings');
+    warningsEl.replaceChildren();
+    if (wizardScan.warnings && wizardScan.warnings.length > 0) {
+        const box = document.createElement('div');
+        box.className = 'alert alert-warning small mb-0';
+        const list = document.createElement('ul');
+        list.className = 'mb-0 ps-3';
+        for (const warning of wizardScan.warnings) {
+            const item = document.createElement('li');
+            item.textContent = warning;
+            list.appendChild(item);
+        }
+        box.appendChild(list);
+        warningsEl.appendChild(box);
     }
 }
 
@@ -406,6 +449,10 @@ async function wizardSubmitImport() {
 
 // ── 精靈步驟 2：網段主機勾選（掃描結果） ─────────────────────────────────────
 
+// 網段主機數超過這個門檻就預設收合——避免一次掃到的長清單把整個精靈撐到要一直捲動；
+// summary 上已有的計數（已登錄／可復活）維持可判斷，收合不影響資訊完整性
+const WIZARD_SUBNET_COLLAPSE_THRESHOLD = 20;
+
 function renderSubnetSelection() {
     const container = document.getElementById('wizard-scan-result');
     container.replaceChildren();
@@ -418,7 +465,7 @@ function renderSubnetSelection() {
     for (const subnet of wizardScan.subnets) {
         const details = document.createElement('details');
         details.className = 'mb-2 border rounded';
-        details.open = true;
+        details.open = subnet.hosts.length <= WIZARD_SUBNET_COLLAPSE_THRESHOLD;
 
         const summary = document.createElement('summary');
         summary.className = 'px-2 py-1 small';
@@ -442,7 +489,11 @@ function renderSubnetSelection() {
         details.appendChild(summary);
 
         const body = document.createElement('div');
+        // 多欄 grid 取代原本一台一列的直排——網段常有數十台，直排要捲很久
         body.className = 'px-2 pb-2';
+        body.style.display = 'grid';
+        body.style.gridTemplateColumns = 'repeat(auto-fill, minmax(240px, 1fr))';
+        body.style.columnGap = '0.75rem';
         for (const host of subnet.hosts) {
             body.appendChild(wizardHostRow(host));
         }
@@ -454,11 +505,11 @@ function renderSubnetSelection() {
 
 function wizardHostRow(host) {
     const row = document.createElement('div');
-    row.className = 'd-flex align-items-center gap-2 py-1 small';
+    row.className = 'd-flex align-items-center gap-1 py-1 small text-truncate';
 
     const box = document.createElement('input');
     box.type = 'checkbox';
-    box.className = 'form-check-input lf-wizard-host';
+    box.className = 'form-check-input lf-wizard-host flex-shrink-0';
     box.dataset.ip = host.ipAddress;
     // 新主機與可復活的預設勾選；使用中的既有主機預設不勾（再勾＝更新歸屬）
     box.checked = host.orphanOverlap || (!host.exists);
@@ -466,23 +517,49 @@ function wizardHostRow(host) {
     row.appendChild(box);
 
     const name = document.createElement('span');
+    name.className = 'text-truncate';
+    name.title = `${host.ipAddress}　${host.hostName}`;
     name.textContent = `${host.ipAddress}　${host.hostName}`;
     row.appendChild(name);
 
     if (host.exists) {
         const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--secondary';
+        badge.className = 'lf-badge lf-badge--secondary flex-shrink-0';
         badge.textContent = '已登錄';
         row.appendChild(badge);
     }
     if (host.orphanOverlap) {
         const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--primary';
-        badge.textContent = `原屬 ${host.orphanedFrom}，因移除而停用`;
+        badge.className = 'lf-badge lf-badge--primary flex-shrink-0';
+        badge.textContent = '可復活';
+        badge.title = `原屬 ${host.orphanedFrom}，因移除而停用`;
         row.appendChild(badge);
     }
     return row;
 }
+
+// 「全選新主機」＝回到預設勾選狀態（新主機與可復活的勾、既有使用中的不勾），不是無條件全選——
+// 無條件全選會把既有主機的歸屬一併改掉，那是另一件事，不該藏在「全選」這個字眼底下。
+document.getElementById('wizard-select-new').addEventListener('click', () => {
+    if (!wizardScan) return;
+
+    // 先建 IP → 主機的索引再跑迴圈：掃描結果可達數百上千台，
+    // 在迴圈內 flatMap+find 會是 O(n²) 且每輪重建一次完整陣列，大網段直接卡住畫面
+    const hostByIp = new Map(wizardScan.subnets.flatMap(s => s.hosts).map(h => [h.ipAddress, h]));
+
+    for (const box of document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:not(:disabled)')) {
+        const host = hostByIp.get(box.dataset.ip);
+        box.checked = host ? (host.orphanOverlap || !host.exists) : false;
+    }
+    updateSubnetSelectionHint();
+});
+
+document.getElementById('wizard-select-none').addEventListener('click', () => {
+    for (const box of document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:not(:disabled)')) {
+        box.checked = false;
+    }
+    updateSubnetSelectionHint();
+});
 
 function selectedWizardIps() {
     return Array.from(document.querySelectorAll('#wizard-scan-result input.lf-wizard-host:checked'))

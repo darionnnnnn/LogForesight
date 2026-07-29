@@ -24,9 +24,22 @@
 
 ## 營運與規模擴充（原 OPS-HARDENING-PLAN §10 P2，未排期）
 
-- **NetIQ 接線**：`SentinelStatsSource` 的實際取數邏輯（欄位對應、watchlist→Lucene 產生器）
-  依賴 `--netiq-probe` 在真實 Sentinel 環境的輸出，目前尚未取得。見
-  [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §8、[docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門。
+- **NetIQ 接線**：`SentinelStatsSource` 的實際取數邏輯依賴 `--netiq-probe` 真實環境輸出。
+  **三輪皆已於 2026-07-29 取得**，技術未決項幾乎全收斂（主機歸屬鍵＝`repip`、`obssvcname` 不斷詞、
+  System/Application 確實轉送 Information 級事件），過程中修正一個會讓正式管線片語查詢全面失敗的
+  JSON 轉義 bug（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.5、§8、§9）。
+  **`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`（watchlist→Lucene 產生器）
+  已實作完成**（Phase 3，2026-07-29，`LogForesight.Core/Analysis/`，含合約測試證實 Sentinel 路徑
+  與本機路徑聚合分類結果同構）。**機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**
+  （Phase 4，2026-07-29，`LogForesight/Service/`，只支援 Windows 主機）——`Program.cs` 本機分析後
+  接機房迴圈，逐 Sentinel/逐日/批次取數，當日續跑靠既有 `HasRecord` 機制。**尚未經過真實
+  Sentinel 端到端驗證**（試點閘門：Web 主機頁登錄 2~3 台實際主機跑 2~3 晚，核對 sev 門檻、
+  Defender/RDP 頻道覆蓋、真實批次耗時；2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化）。
+  **探索方案已解決**（Phase 5，2026-07-29）：ESM 權限被拒、全站 24h distinct 不可行皆走不通，
+  改用使用者實測驗證過的「網段範圍掃描」——`repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗，
+  完全不碰 ESM API（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.4「Phase 5 定案」）。
+  見 [docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門（Linux 那台 Sentinel
+  尚未接入，此環境 Windows/Linux 已完全拆分成不同 Sentinel）。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
 - **伺服器端 CSV 匯出**：目前清單頁「複製為 CSV」為前端序列化當前頁；伺服器端全量匯出
   應與 `QueryPage` 下推查詢同路徑實作（避免匯出又走一次全撈）。
