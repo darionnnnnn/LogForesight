@@ -252,25 +252,33 @@ probe 全程遵守單一佇列＋節流，對 server 負擔可忽略。**第一�
 | 帳號 | `sun`／`dun` | **第二輪定案為帳號名**：已見 `vtit.brk`（具名帳號）、`13456`／`182713`（員工編號式帳號）、`-`（無）。`iuid`／`tuid` 為 SID |
 | OS／collector 判別 | `pn`／`agent`／`port` | 三者同值（`Microsoft Active Directory and Windows`）；Linux 對照值仍缺（本環境的 Sentinel「162」無 Linux 主機） |
 
-## 4. 查詢 payload 草案（欄位名以 probe 定案後代入）
+## 4. 查詢 payload（**已實作**，`SentinelQueryBuilder.BuildWindowsFilter`，2026-07-29）
+
+Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，不需要另查範例訊息，比原規劃少一類查詢。
 
 ```jsonc
-// Q1（每 IP 批次一個 job；<EVTID> 等欄位名 probe 後代入）
+// Q1（每 IP 批次一個 job，實際欄位名，三輪 probe 實證）
 {
-  "filter": "(sip:(10.1.2.11 OR 10.1.2.12 OR …)) AND ((<SRC>:disk AND <EVTID>:(7 OR 11 OR 51 OR 52 OR 153)) OR (<EVTID>:4625) OR …)",
+  "filter": "(repip:10.1.2.11 OR repip:10.1.2.12 OR …) AND ((rv40:(4625 OR 4720 OR …)) OR ((rv150:System OR rv150:Application) AND sev:[2 TO 5]))",
   "start": "<當地日00:00→UTC>", "end": "<翌日00:00→UTC>",
-  "fields": "shn,sip,<SRC>,<EVTID>,dt",
+  "fields": "repip,sn,rv40,obssvcname,rv150,dt,sev,msg,evt,sun,xdasoutcome",
   "pgsize": 500, "max-results": 100000, "type": "USER",
   "init-user": "svc-lfquery", "InitiatingHostName": "<批次主機名>"
 }
-
-// Q2（單簽章範例，每簽章一次）
-{ "filter": "(sip:10.1.2.11) AND (<SRC>:disk) AND (<EVTID>:153)",
-  "start": "…", "end": "…", "fields": "msg,dt,sun,sip", "pgsize": 3, "max-results": 3, "type": "USER" }
 ```
 
-watchlist Lucene 字串由 `KnownIssueCatalog`／rules.json **程式生成**（規則已外部化，
-watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函數，進單元測試與 `--selftest`）。
+- `rv40` 聯集只含**有明確 EventId 的 Windows 規則**；`MatchAllEventIds` 規則（WHEA-Logger／
+  Resource-Exhaustion／VSS，皆為 System 來源）沒有具體 ID 可下推，靠 generic 分支撈進來後
+  本地 `Classify` 精準比對——這條路徑本來就存在，零額外成本。
+- Security 頻道**沒有**獨立分支：規則命中的 Security 事件由 `rv40` 聯集涵蓋（種子規則本來就是
+  為高價值 Security EventId 寫的），未被任何規則覆蓋的「未知失敗 ID」在 v1 不會被撈入——
+  這是相對本機模式（FailureAudit 不論 ID 全收）的已知涵蓋縮小，原因是 Security 頻道「這是失敗
+  稽核」的可靠判定要靠 `xdasoutcome`（見 §3.5 表），而拿它組 Lucene 條件（`xdasoutcome:0` 取反）
+  的可行性未經 probe 驗證。留待試點階段决定是否值得補一條 `NOT xdasoutcome:0` 分支。
+- watchlist Lucene 字串由 `KnownIssueCatalog.Rules` **程式生成**
+  （`LogForesight.Core/Analysis/SentinelQueryBuilder.cs`，規則已外部化，watchlist 推導既有；
+  純函數不讀任何全域可變狀態，呼叫端傳入規則清單）；`--selftest` 新增 `RunSentinelQueryChecks`
+  驗證規則表改了、filter 的 `rv40` 子句跟著對。
 
 ## 5. 降低 Sentinel 負擔的措施總表
 
@@ -317,13 +325,23 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
 
 ## 7. 測試計畫
 
-- **單元**：watchlist→Lucene 產生器（含跳脫、IP 批次切分）；本地聚合純函數
-  （事件流→簽章統計，含 min/max dt）；欄位對應解讀（probe 真實回應存 fixture）；
-  token 過期重放、job 清理保證、max-results 截斷旗標（`HttpMessageHandler` stub）。
-- **合約**：`SentinelStatsSource` 與 `LocalStatsSource` 餵等價輸入 → `DailySignatureStats`
-  逐位一致（抽象層語意保證）。
-- **`--selftest`**：新增「規則表→Lucene 子句」推導檢查（規則改了、Lucene 跟著對）。
-- **閘門**：probe 輸出貼回對話定案欄位對應 → 2~3 台試點端到端（Phase 2）→ 全量。
+- **單元（已完成）**：`SentinelQueryBuilder`（IP 批次子句、規則 EventId 聯集去重排序、
+  停用/MatchAllEventIds/Linux 規則排除、空清單防呆）；`SentinelEventMapper`（欄位對應、
+  UTC→本機時區、msg 缺席退回 evt、數字欄位容錯、批次略過計數）；`SentinelFieldMap.MapEntryType`
+  （Security 頻道靠 xdasOutcome、非 Security 靠 sev 門檻）；`SentinelClient` 既有測試
+  （token 過期重放、job 清理保證、max-results 截斷旗標、`HttpMessageHandler` stub）。
+  fixture 依三輪 probe 真實輸出的欄位「形狀」建構，**值已去識別化**（真實 IP／主機名／網域
+  換成範例假值，不落地任何客戶識別資訊）。
+- **合約（已完成）**：`SentinelPipelineContractTests`——Sentinel 事件經 `SentinelEventMapper`
+  映射後餵進與本機路徑**完全相同**的 `LogAggregator.Aggregate`／`KnownIssueCatalog.Classify`，
+  驗證產出的 `LogIssueSignature`（RuleId／Category／Severity／ElevatesDayRisk／聚合分組鍵）
+  與本機路徑餵等價輸入的結果同構——這是「整條五層偵測零改動重用」設計主張（決策 B2）的
+  實測驗證，不是文件宣稱。
+- **`--selftest`（已完成）**：`RunSentinelQueryChecks`——用目前生效的規則表實際跑一次
+  `SentinelQueryBuilder`，驗證 IP 子句／generic 分支/rv40 聯集正確反映規則表、
+  MatchAllEventIds 規則不混入下推聯集。
+- **閘門**：probe 三輪已完成（欄位對應／主機歸屬鍵／量級／頻道覆蓋樣本皆已取得，見 §8）。
+  下一步是 2~3 台試點端到端（Phase 4，見 docs/BACKLOG.md）→ 全量。
 
 ## 8. 實作順序
 
@@ -364,26 +382,58 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
   一直**為了錯的理由通過**——原本用中文的測試字串是在 JSON 解析階段就被拒，根本沒走到 Lucene
   語法檢查，已改為純 ASCII 並加上「錯誤訊息若仍是 invalid JSON 就是轉義還有問題」的自我檢查。
 
+**2026-07-29 第三輪真實輸出已取得**（轉義修正後重跑同一支 `--sample-ip`）。技術未決項幾乎全收斂：
+
+- **主機名欄位鏈定案**：`sn`＝記錄這筆 log 的主機自己（觀察者，與 `repip` 成對，`DisplayName`
+  回填用它）；`dhn`＝目的地主機；**`shn` 存在**（跨主機認證事件出現，發起端機器名——第一輪
+  「本環境無 shn」是誤判，登出事件不帶而已）；`sip`＝發起端 IP。關聯層未來可用
+  `sun`/`sip`/`shn` 結構化欄位，不必解析 msg 文字。
+- **`obssvcname` 確定是 term 欄位、不斷詞**（步驟 12：完整片語 found=142205、部分詞 found=0）——
+  規則 `SourcePattern` 的子字串比對**不能**下推 Lucene，Q1 下推改為只靠 `rv40` 聯集＋generic
+  分支，來源比對留在本地 `Classify`（本來就是權威判定，見 §4）。
+  轉義修正在真實環境實證成功：步驟 5 這次真的收到 Lucene parse error、步驟 12 片語查詢可用。
+- **collector 有轉送 Information 級**（步驟 9 樣本：System 頻道 NTFS「磁碟區健康情況良好」sev=1、
+  Application 頻道 Security-SPP 通知 sev=1）——上一輪「只轉送 Error/Warning」的推論**是錯的**，
+  量少（3／152 筆/日）是主機本來就少，不是被過濾。sev 對應候選：0＝Security 成功稽核、
+  1＝Information、4＝稽核失敗（Kerberos 4771）；**Warning 是否＝2、Error 是否＝3 仍未實證**
+  （這 24h 剛好沒有真 Error 樣本），已在 `SentinelFieldMap.MapEntryType` 標註候選門檻，留待
+  試點核對，不影響規則命中（規則比對 Source＋EventId，與 EntryType 無關）。
+- 意外收穫：樣本主機其實是另一個網域的 DC——證實同一台 Sentinel 收多網域主機、`repip`
+  歸屬不受網域影響。
+
+**不再開第四輪 probe**——剩餘未決項全部移到試點階段核對（見下）。
+
+**2026-07-29 Phase 3 已實作**（`LogForesight.Core/Analysis/SentinelFieldMap.cs`／
+`SentinelEventMapper.cs`／`SentinelQueryBuilder.cs`，只有 Windows 分支——Linux 那台 Sentinel
+尚未接入，沒有真實 probe 樣本可依據，見 docs/LINUX-RULES-PLAN.md P3）：
+1008 個單元測試綠、`--selftest` 136 項全過（含新增的 `RunSentinelQueryChecks`），
+含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構（決策 B2 的實測驗證）。
+
 ## 9. 未決事項
 
-**已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`）／頻道（`rv150`）／時間（`dt`，UTC）／
-**主機歸屬鍵（`repip`）**／用戶端 IP（`sip`）／帳號（`sun`／`dun`）的欄位落點；System/Application
-頻道確實有資料；IP 篩選 10/50/100 子句語法皆被接受（約 1.7 秒，與子句數無明顯相關）。
+**已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`，term 不斷詞）／頻道（`rv150`）／
+時間（`dt`，UTC）／**主機歸屬鍵（`repip`）**／用戶端 IP（`sip`）／發起端機器名（`shn`）／
+帳號（`sun`／`dun`）／System/Application 頻道確實轉送 Information 級事件的欄位落點；
+IP 篩選 10/50/100 子句語法皆被接受（約 1.7 秒，與子句數無明顯相關）；片語查詢可用
+（轉義修正後實證）。`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder` 已依此實作。
 
-**仍未決**：
+**仍未決（全部移到試點階段核對，不再開第四輪 probe）**：
 
 1. **探索方案**：ESM `/objects/eventsource` 被權限拒絕，§3.4「近 24h 全事件 distinct」在
    2470 萬筆/天下不可行。三個選項待決：(a) 請 Sentinel 管理者授予探索帳號 ESM 讀取權限；
    (b) 窄時間窗只投影 `repip` 後本地 distinct（涵蓋不完整，需誠實申報）；
    (c) **放棄自動探索**，主機清單改由既有的 Web 主機頁／CSV 匯入維護（NetIQ 只負責取 log）。
    ——(c) 在功能上完全可行，自動探索本來就只是便利性功能，不是取數管線的前提。
-2. `obssvcname` 的 term 查詢行為（完整片語 vs 部分詞）——第二輪因上述 JSON 轉義 bug 未測到，
-   修正後需重跑步驟 12。
-3. System／Application 頻道實際涵蓋的嚴重度區間（只有 Error？含 Warning？）——步驟 9 已改為
-   傾印實際樣本，重跑即可確認；這決定磁碟／服務／硬體類規則有多少實際可觸發。
+2. **sev 的 Warning/Error 確切門檻**（`SentinelQueryBuilder.GenericErrorSeverityMin` 目前取 2，
+   `SentinelFieldMap.MapEntryType` 的 2/3 分界皆為候選值）——試點主機跑一晚，簽章的 EntryType
+   分布對照該主機本機 Event Viewer 核對。
+3. Defender/RDP Operational 頻道有無進 Sentinel——試點時查
+   `rv150:"Microsoft-Windows-Windows Defender/Operational"` found（片語查詢現在可用了）；
+   沒有＝該偵測面誠實申報不適用。
 4. Linux 主機的欄位形狀（program 落點、`pn` 對照值、`sev`↔syslog priority 對應）——
-   Sentinel「162」無 Linux 主機，需其他 Sentinel 或確認全環境皆無（若全無則
-   docs/LINUX-RULES-PLAN.md 的 P3 無資料來源，應標記暫停）。
+   使用者已確認此環境 Windows／Linux 的 NetIQ **已完全拆分成不同 Sentinel**，「162」上完全
+   沒有 Linux 主機。閘門因此是「Linux 那台 Sentinel 何時接入 LogForesight」，接入後對它跑一次
+   `--netiq-probe` 即可定案，不是本環境的資料缺口（見 docs/LINUX-RULES-PLAN.md §3、P3）。
 5. 真實 watchlist 形狀查詢（`rv40` 事件 ID 集合＋50 台 `repip`）的耗時與命中量——
    決定夜間窗時程與批次大小，待主機清單就緒後實測。
 6. `dt` 邊界的人工核對（步驟 11 已輸出可重現的絕對區間與可數的 found 值，待人工於 Web UI 比對）。

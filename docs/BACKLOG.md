@@ -24,15 +24,16 @@
 
 ## 營運與規模擴充（原 OPS-HARDENING-PLAN §10 P2，未排期）
 
-- **NetIQ 接線**：`SentinelStatsSource` 的實際取數邏輯（`SentinelFieldMap` 常數表、
-  watchlist→Lucene 產生器、機房 pipeline）依賴 `--netiq-probe` 真實環境輸出。**兩輪皆已於
-  2026-07-29 取得**：主機歸屬鍵定案為 `repip`、`sun`＝帳號、System/Application 頻道有資料但量少，
-  過程中修正一個會讓正式管線片語查詢全面失敗的 JSON 轉義 bug（見
-  [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.5、§8、§9）。**仍待辦**：`obssvcname` term 查詢行為
-  （因上述 bug 第二輪未測到，待重跑步驟 12）、真實 watchlist 形狀查詢耗時、探索方案三選一
-  （ESM 權限被拒／窄窗投影／放棄自動探索）尚待拍板、`SentinelFieldMap`／機房 pipeline 本體尚未實作。
-  見 [docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門（Linux 那台 Sentinel 尚未接入，
-  此環境 Windows/Linux 已完全拆分成不同 Sentinel）。
+- **NetIQ 接線**：`SentinelStatsSource` 的實際取數邏輯依賴 `--netiq-probe` 真實環境輸出。
+  **三輪皆已於 2026-07-29 取得**，技術未決項幾乎全收斂（主機歸屬鍵＝`repip`、`obssvcname` 不斷詞、
+  System/Application 確實轉送 Information 級事件），過程中修正一個會讓正式管線片語查詢全面失敗的
+  JSON 轉義 bug（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.5、§8、§9）。
+  **`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`（watchlist→Lucene 產生器）
+  已實作完成**（Phase 3，2026-07-29，`LogForesight.Core/Analysis/`，含合約測試證實 Sentinel 路徑
+  與本機路徑聚合分類結果同構）。**仍待辦**：機房 pipeline 本體（Phase 4，逐主機取數＋當日續跑）、
+  探索方案三選一（ESM 權限被拒／窄窗投影／放棄自動探索）尚待拍板、sev 的 Warning/Error 確切門檻
+  待試點核對。見 [docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門（Linux 那台 Sentinel
+  尚未接入，此環境 Windows/Linux 已完全拆分成不同 Sentinel）。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
 - **伺服器端 CSV 匯出**：目前清單頁「複製為 CSV」為前端序列化當前頁；伺服器端全量匯出
   應與 `QueryPage` 下推查詢同路徑實作（避免匯出又走一次全撈）。

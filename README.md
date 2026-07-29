@@ -553,21 +553,27 @@ LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 `max-results` 一律壓在 3 筆以內或只取 found 計數），對 Sentinel 負擔可忽略。
 
 **目前狀態（2026-07-29）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
-`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**兩輪真實環境輸出皆已取得**：
+`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**三輪真實環境輸出皆已取得**，
+技術未決項幾乎全收斂：
 
-- Windows 面欄位對應定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`、訊息＝`msg`、
-  帳號＝`sun`，完整對照見 docs/NETIQ-API-PLAN.md §3.5）。
+- Windows 面欄位對應定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`【term 不斷詞，
+  子字串查詢無法下推】、訊息＝`msg`、帳號＝`sun`，完整對照見 docs/NETIQ-API-PLAN.md §3.5）。
 - **主機歸屬鍵定案為 `repip`**（四台 DC 對到四個各自不同的 `repip`，一對一、非共用代理）；
-  `sip` 是用戶端來源 IP，不是主機自身。
-- 事件量遠超原估計（單台 Sentinel 近 24h 約 2470 萬筆），原規劃的「投影全事件本地 distinct」
-  探索方式因此不可行；ESM `eventsource` 端點又被權限拒絕，**探索方案尚未定案**
-  （要權限／窄窗投影／不做自動探索三選一，見 docs/NETIQ-API-PLAN.md §9）。
+  `sip` 是用戶端來源 IP、`shn` 是發起端機器名，皆不是主機自身。
+- System/Application 頻道確實轉送 Information 級事件（原「只轉送 Error/Warning」的推論是錯的，
+  量少是主機本來就少）；sev 的 Warning/Error 確切門檻仍待試點核對。
 - probe 過程揪出並修正一個會讓正式取數管線**全面失敗**的缺陷：Sentinel 的 JSON 解析器不接受
   `\uXXXX` 轉義序列，而 .NET 預設編碼器正好那樣輸出，導致片語查詢（規則來源下推 Lucene 的
-  必要語法）整個被 400 拒絕。
+  必要語法）整個被 400 拒絕，第三輪已在真實環境實證修正有效。
+- ESM `eventsource` 端點被權限拒絕，**探索方案尚未定案**（要權限／窄窗投影／不做自動探索
+  三選一，見 docs/NETIQ-API-PLAN.md §9）——這是唯一還需要真實環境資訊才能繼續的項目，
+  其餘未決項都移到試點階段核對，不再開第四輪 probe。
 
-後續的 `SentinelFieldMap`、watchlist→Lucene 查詢產生器、`SentinelStatsSource`（實際取數邏輯）
-尚未實作，詳見 docs/NETIQ-API-PLAN.md §8、§9 與 docs/BACKLOG.md。
+**`SentinelFieldMap`／事件映射器／watchlist→Lucene 查詢產生器已實作完成**
+（`LogForesight.Core/Analysis/`，2026-07-29，只有 Windows 分支——Linux 那台 Sentinel 尚未接入，
+沒有真實 probe 樣本可依據），含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構。
+`SentinelStatsSource`（機房 pipeline 本體）尚未實作，詳見 docs/NETIQ-API-PLAN.md §8、§9 與
+docs/BACKLOG.md。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 
