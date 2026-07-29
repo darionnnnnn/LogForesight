@@ -6,9 +6,10 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 6、7、8）：
-/// 新增 Sentinel（可選自動掃描）或選既有 Sentinel 掃描 → 網段分組 → 勾選 → （可選）指派群組 → 立即套用。
-/// 掃描結果暫存 token（30 分鐘），套用只接受掃描過的 IP，避免前端硬塞任意主機。
+/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 6、7、8；
+/// docs/NETIQ-API-PLAN.md §3.4 網段範圍掃描）：選既有 Sentinel、輸入網段 → 掃描 → 依網段分組 →
+/// 勾選 → （可選）指派群組 → 立即套用。掃描結果暫存 token（30 分鐘），套用只接受掃描過的 IP，
+/// 避免前端硬塞任意主機。
 ///
 /// **勾選送出即落盤**（定案 7，修訂 docs/HISTORY.md「2026-07-23」段 §5.3 原本的排入佇列設計）：
 /// 主機列新增/更新/孤兒復活直接透過 <see cref="NetiqImportApplier"/> 套用，不再等批次執行。
@@ -22,7 +23,6 @@ public class NetiqDiscoveryService
     private readonly IHostStore _hosts;
     private readonly IHostGroupStore _hostGroups;
     private readonly ISentinelStore _sentinels;
-    private readonly SentinelAdminService _sentinelAdmin;
     private readonly IImportLogStore _importLogs;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
@@ -36,7 +36,6 @@ public class NetiqDiscoveryService
         IHostStore hosts,
         IHostGroupStore hostGroups,
         ISentinelStore sentinels,
-        SentinelAdminService sentinelAdmin,
         IImportLogStore importLogs,
         ICurrentUser currentUser,
         IAuditService audit)
@@ -46,61 +45,27 @@ public class NetiqDiscoveryService
         _hosts = hosts;
         _hostGroups = hostGroups;
         _sentinels = sentinels;
-        _sentinelAdmin = sentinelAdmin;
         _importLogs = importLogs;
         _currentUser = currentUser;
         _audit = audit;
     }
 
-    public async Task<NetiqScanResultDto> ScanAsync(string serverName, CancellationToken ct)
+    public async Task<NetiqScanResultDto> ScanAsync(string serverName, string subnetPrefix, CancellationToken ct)
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
         if (!server.CanDiscover)
             throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
 
-        var discovered = await DiscoverAsync(server, ct);
+        var discovered = await DiscoverAsync(server, subnetPrefix, ct);
         return BuildScanResult(server.Name, discovered);
     }
 
-    public async Task<NetiqScanResultDto> CreateAndScanAsync(CreateAndScanSentinelRequest request, CancellationToken ct)
-    {
-        var name = request.Name?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(name))
-            throw DomainException.Validation("請輸入 Sentinel 名稱。");
-        if (_sentinels.FindByName(name) != null)
-            throw DomainException.Conflict($"已有名稱為「{name}」的 Sentinel。");
-        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-            throw DomainException.Validation("請輸入探索帳號與密碼才能掃描。");
-
-        // 用尚未存檔的帳密直接掃描——掃描本身就是連線驗證，失敗不留下任何東西
-        var probe = new SentinelServer
-        {
-            Name = name,
-            BaseUrl = request.BaseUrl?.Trim() ?? "",
-            Username = request.Username.Trim(),
-            Password = request.Password
-        };
-        var discovered = await DiscoverAsync(probe, ct);
-
-        // 掃描成功才建立（定案 6：中途取消＝沒建立，不留半成品）。
-        // 重用 SentinelAdminService 而不是在這裡另寫一份加密/驗證邏輯，兩條寫入路徑才不會漂移
-        var sentinel = _sentinelAdmin.SaveSentinel(new SaveSentinelRequest
-        {
-            Name = name,
-            BaseUrl = probe.BaseUrl,
-            Username = probe.Username,
-            Password = request.Password
-        });
-
-        return BuildScanResult(sentinel.Name, discovered);
-    }
-
-    private async Task<List<NetiqDiscoveredHost>> DiscoverAsync(SentinelServer server, CancellationToken ct)
+    private async Task<NetiqDiscoveryResult> DiscoverAsync(SentinelServer server, string subnetPrefix, CancellationToken ct)
     {
         try
         {
-            return await _client.ListHostsAsync(server, ct);
+            return await _client.ListHostsAsync(server, subnetPrefix, ct);
         }
         catch (NetiqDiscoveryException ex)
         {
@@ -108,11 +73,11 @@ public class NetiqDiscoveryService
         }
     }
 
-    /// <summary>掃描結果 → 網段分組 DTO，並暫存 token 供匯入時核對。掃描/新增精靈共用同一份，避免兩邊漂移</summary>
-    private NetiqScanResultDto BuildScanResult(string serverName, List<NetiqDiscoveredHost> discovered)
+    /// <summary>掃描結果 → 網段分組 DTO，並暫存 token 供匯入時核對。</summary>
+    private NetiqScanResultDto BuildScanResult(string serverName, NetiqDiscoveryResult discovery)
     {
         // 同 IP 去重（保留第一筆）
-        discovered = discovered
+        var discovered = discovery.Hosts
             .GroupBy(h => h.IpAddress, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
@@ -158,7 +123,9 @@ public class NetiqDiscoveryService
             Token = token,
             Server = serverName,
             TotalCount = discovered.Count,
-            Subnets = subnets
+            Subnets = subnets,
+            CoverageNote = discovery.CoverageNote,
+            Warnings = discovery.Warnings
         };
     }
 
@@ -179,7 +146,10 @@ public class NetiqDiscoveryService
             throw DomainException.Validation("請至少勾選一台主機。");
 
         var groupByIp = ResolveGroupAssignments(scan, request.GroupAssignments);
-        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os);
+        // 探索掃描已經拿到真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）——
+        // 新主機匯入當下就能有名字，不用等夜間批次的 TouchNetiq 才回填
+        var displayNameByIp = scan.Hosts.ToDictionary(h => h.IpAddress, h => h.HostName, StringComparer.OrdinalIgnoreCase);
+        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp);
 
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次
         Pending.TryRemove(request.Token, out _);

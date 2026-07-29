@@ -277,12 +277,22 @@ function renderScanPicker(allSentinels) {
 
     const select = document.createElement('select');
     select.className = 'form-select';
-    select.style.maxWidth = '320px';
+    select.style.maxWidth = '240px';
     select.id = 'scan-sentinel-select';
     for (const sentinel of discoverableSentinels) {
         select.appendChild(new Option(sentinel.name, sentinel.name));
     }
     row.appendChild(select);
+
+    // 掃描是「查一個網段」不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4）——網段必填，
+    // 前端先擋空值，格式細節（CIDR 位元數等）交給後端 SentinelQueryBuilder 統一驗證
+    const subnetInput = document.createElement('input');
+    subnetInput.type = 'text';
+    subnetInput.className = 'form-control';
+    subnetInput.style.maxWidth = '220px';
+    subnetInput.id = 'scan-subnet-input';
+    subnetInput.placeholder = '網段，例：10.232.11';
+    row.appendChild(subnetInput);
 
     const scanButton = document.createElement('button');
     scanButton.type = 'button';
@@ -290,7 +300,12 @@ function renderScanPicker(allSentinels) {
     scanButton.textContent = '掃描匯入';
     scanButton.addEventListener('click', () => {
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
-        if (sentinel) openWizard(sentinel);
+        const subnetPrefix = subnetInput.value.trim();
+        if (!subnetPrefix) {
+            toast('請輸入要掃描的網段', 'warning');
+            return;
+        }
+        if (sentinel) openWizard(sentinel, subnetPrefix);
     });
     row.appendChild(scanButton);
 
@@ -309,7 +324,7 @@ let wizardPane = 'subnets';       // 'subnets' | 'groups'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
-async function openWizard(sentinel) {
+async function openWizard(sentinel, subnetPrefix) {
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
@@ -322,15 +337,41 @@ async function openWizard(sentinel) {
     renderWizardPane();
     wizardModal.show();
 
+    document.getElementById('wizard-coverage-note').replaceChildren();
+    document.getElementById('wizard-warnings').replaceChildren();
     document.getElementById('wizard-scan-result').replaceChildren(wizardNote('掃描中…'));
     wizardPrimaryButton.disabled = true;
     try {
-        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name });
+        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
+        renderCoverageNote();
         renderSubnetSelection();
     } catch {
         wizardModal.hide();
     } finally {
         wizardPrimaryButton.disabled = false;
+    }
+}
+
+// 涵蓋範圍是顯示出來的事實，不是隱藏假設（docs/NETIQ-API-PLAN.md §3.4）——
+// 網段範圍掃描只涵蓋窗口內有事件回報的主機，這句話必須在結果最上方，不能只藏在 tooltip 裡
+function renderCoverageNote() {
+    const noteEl = document.getElementById('wizard-coverage-note');
+    noteEl.textContent = wizardScan.coverageNote || '';
+
+    const warningsEl = document.getElementById('wizard-warnings');
+    warningsEl.replaceChildren();
+    if (wizardScan.warnings && wizardScan.warnings.length > 0) {
+        const box = document.createElement('div');
+        box.className = 'alert alert-warning small mb-0';
+        const list = document.createElement('ul');
+        list.className = 'mb-0 ps-3';
+        for (const warning of wizardScan.warnings) {
+            const item = document.createElement('li');
+            item.textContent = warning;
+            list.appendChild(item);
+        }
+        box.appendChild(list);
+        warningsEl.appendChild(box);
     }
 }
 

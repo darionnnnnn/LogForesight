@@ -103,6 +103,14 @@ public class NetiqScanRequest
 {
     [Required]
     public string Server { get; set; } = string.Empty;
+
+    /// <summary>網段前綴（如「10.232.11」）或 CIDR（如「10.232.11.0/24」）。**必填**——
+    /// 探索是「掃一個網段」而不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4：全站事件量實測單台
+    /// Sentinel 近 24h 達 2400 萬筆，任何固定窗口涵蓋率都很差）。格式規則見
+    /// <c>SentinelQueryBuilder.NormalizeSubnetPrefix</c>。</summary>
+    [Required(ErrorMessage = "請輸入要掃描的網段")]
+    [StringLength(20)]
+    public string SubnetPrefix { get; set; } = string.Empty;
 }
 
 public class NetiqScanResultDto
@@ -111,6 +119,13 @@ public class NetiqScanResultDto
     public string Server { get; set; } = string.Empty;
     public int TotalCount { get; set; }
     public List<NetiqSubnetDto> Subnets { get; set; } = new();
+
+    /// <summary>人看的涵蓋範圍說明，精靈直接顯示——網段範圍掃描只涵蓋「窗口內有事件回報」的主機，
+    /// 這個限制必須顯性告知，不能讓人誤以為是網段的完整名單。</summary>
+    public string CoverageNote { get; set; } = string.Empty;
+
+    /// <summary>需要人工留意的異常（如查詢被截斷）。非空時精靈要以醒目樣式顯示。</summary>
+    public List<string> Warnings { get; set; } = new();
 }
 
 public class NetiqSubnetDto
@@ -178,24 +193,6 @@ public class NetiqSubnetGroupAssignment
 
     [StringLength(100)]
     public string? NewGroupName { get; set; }
-}
-
-/// <summary>「新增即掃描」精靈步驟 1：連線設定。掃描成功才建立 Sentinel（定案 6：掃描即帳密驗證）</summary>
-public class CreateAndScanSentinelRequest
-{
-    [Required(ErrorMessage = "請輸入 Sentinel 名稱")]
-    [StringLength(50)]
-    public string Name { get; set; } = string.Empty;
-
-    [StringLength(255)]
-    public string? BaseUrl { get; set; }
-
-    [Required(ErrorMessage = "請輸入探索帳號")]
-    [StringLength(100)]
-    public string Username { get; set; } = string.Empty;
-
-    [Required(ErrorMessage = "請輸入探索密碼")]
-    public string Password { get; set; } = string.Empty;
 }
 
 /// <summary>NetIQ 掃描匯入的即時套用結果（定案 7：不再有排入/取消的中間狀態）</summary>

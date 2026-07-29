@@ -202,13 +202,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
         services.AddScoped<NetiqOptionsService>();
 
-        // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線。
-        // 真連線的認證/回應解析待 Sentinel 環境驗證（見 SentinelRestDirectoryClient）
-        services.AddHttpClient();
+        // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線
+        // （SentinelRestDirectoryClient，走 SentinelClient 的網段範圍掃描，
+        // docs/NETIQ-API-PLAN.md §3.4，2026-07-29 定案）
         services.AddScoped<INetiqDirectoryClient>(sp =>
             sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment()
                 ? new StubNetiqDirectoryClient()
-                : new SentinelRestDirectoryClient(sp.GetRequiredService<IHttpClientFactory>()));
+                : new SentinelRestDirectoryClient(sp.GetRequiredService<NetiqOptionsStore>()));
         services.AddScoped<NetiqDiscoveryService>();
 
         // AI 加值層（純加值、失敗靜默降級）。WebAiService 讀批次 appsettings 的 AI 位址、

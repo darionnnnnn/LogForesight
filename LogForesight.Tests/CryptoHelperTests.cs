@@ -148,13 +148,25 @@ public class CryptoHelperKeyResolutionTests
         Assert.Equal("legacy-secret", result);
     }
 
-    /// <summary>兩把金鑰都解不開時（密文本身損毀／根本不是這系統加密的）仍要如實拋出，不能吞掉</summary>
+    /// <summary>
+    /// 兩把金鑰都解不開時（密文本身損毀／根本不是這系統加密的）仍要如實拋出，不能吞掉。
+    ///
+    /// 密文特意截斷成「長度不是 AES 區塊大小（16 bytes）倍數」——不能只是拿別把金鑰加密的合法密文
+    /// 來測，因為 CBC 用錯金鑰解密後得到的是偽隨機 bytes，約有 1/255 機率湊巧符合 PKCS7 padding
+    /// 格式而不拋例外（曾造成本測試偶發失敗，即使跟環境變數或其他測試類別完全無關：這個測試
+    /// 全程只用 EncryptWith／DecryptWith 帶入的參數金鑰，沒有讀寫 LF_CRYPTO_KEY）。長度不對則
+    /// 不管金鑰為何，TransformFinalBlock 一律直接拋例外，確定性地驗證「兩把金鑰都解不開」這件事。
+    /// </summary>
     [Fact]
     public void 兩把金鑰都解不開時_仍拋出例外()
     {
         var thirdKey = Enumerable.Range(100, 32).Select(i => (byte)i).ToArray();
-        var cipherWithThirdKey = CryptoHelper.EncryptWith(thirdKey, "x");
+        var validCipher = CryptoHelper.EncryptWith(thirdKey, "x");
 
-        Assert.ThrowsAny<Exception>(() => CryptoHelper.DecryptWith(OtherKey, cipherWithThirdKey));
+        var combined = Convert.FromBase64String(validCipher["enc:v1:".Length..]);
+        var truncated = combined[..^1];
+        var corruptedCipher = "enc:v1:" + Convert.ToBase64String(truncated);
+
+        Assert.ThrowsAny<Exception>(() => CryptoHelper.DecryptWith(OtherKey, corruptedCipher));
     }
 }

@@ -80,4 +80,114 @@ public static class SentinelQueryBuilder
             .Distinct()
             .OrderBy(id => id)
             .ToList();
+
+    // ── 網段範圍探索（新增主機，2026-07-29 定案）───────────────────────────────
+    //
+    // docs/NETIQ-API-PLAN.md §3.4：使用者在 Sentinel Web UI 實測 repip 支援前綴萬用字元
+    // （repip:10.232.11.* 有效過濾，近 1h 從全站 154 萬筆縮到 2.4 萬筆），探索因此改走
+    // 「網段範圍掃描」而不是 ESM 物件 API（一直被權限拒絕）——輸入網段前綴，
+    // 依實測量級自動決定窗口，投影兩欄本地 distinct 出主機清單。
+
+    /// <summary>網段前綴最少要幾個八位組——只給一段（如「10」）等於半個全站掃描，
+    /// 量級與全站同一數量級，不值得假裝是「網段」查詢。</summary>
+    internal const int MinPrefixOctets = 2;
+
+    /// <summary>
+    /// 把使用者輸入的網段字串（前綴「10.232.11」、CIDR「10.232.11.0/24」、
+    /// 單一 IP「10.232.11.5」皆可）正規化成 Lucene 前綴萬用字元查詢
+    /// （<c>repip:10.232.11.*</c>）。純格式驗證，不含任何比對 Sentinel 實際資料的邏輯。
+    /// </summary>
+    /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足
+    /// <see cref="MinPrefixOctets"/>（避免建出等同全站掃描的查詢）。</exception>
+    public static string BuildSubnetDiscoveryFilter(string subnetInput)
+    {
+        var prefix = NormalizeSubnetPrefix(subnetInput);
+        return $"{SentinelFieldMap.HostIp}:{prefix}.*";
+    }
+
+    /// <summary>
+    /// 正規化網段輸入為前綴八位組陣列的字串形式（如「10.232.11」，供
+    /// <see cref="BuildSubnetDiscoveryFilter"/> 接上 <c>.*</c> 組成前綴萬用字元查詢）。
+    /// 只允許數字與點——**天然免疫 Lucene 注入**，不需要另外跳脫特殊字元，因為根本不存在
+    /// 會被當成語法的字元能通過這道白名單。
+    ///
+    /// **只接受 2～3 段前綴**（選填 /16、/24 CIDR 寫法）：這是「掃一個網段」的探索功能，
+    /// 不是「查一台主機」——完整四段 IP 沒有對應的前綴萬用字元寫法（`repip:x.x.x.x.*`
+    /// 語法不合法，若改成精確比對又是另一種查詢語意），需要查單台主機請用主機頁/CSV。
+    ///
+    /// **public**（不是 internal）：Web 層（探索 client／精靈顯示）需要正規化後的人看字串
+    /// 本身（不只是組好的 filter），例如涵蓋範圍說明文字要顯示「10.232.11.*」而非原始輸入
+    /// 「10.232.11.0/24」，這是合法的獨立使用情境，不是內部實作細節外洩。
+    /// </summary>
+    public static string NormalizeSubnetPrefix(string subnetInput)
+    {
+        var trimmed = subnetInput?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            throw new ArgumentException("請輸入網段（如 10.232.11 或 10.232.11.0/24）。", nameof(subnetInput));
+        }
+
+        // CIDR：只接受 /16、/24（能對齊八位組邊界才轉得成前綴；/8 太籠統會被下面的量級守則
+        // 一併擋下，/25 這類跨八位組的遮罩沒有對應的前綴萬用字元寫法，此版本不支援）
+        var cidrSplit = trimmed.Split('/', 2);
+        var ipPart = cidrSplit[0];
+        int? cidrBits = null;
+        if (cidrSplit.Length == 2)
+        {
+            if (!int.TryParse(cidrSplit[1], out var bits) || bits is not (16 or 24))
+            {
+                throw new ArgumentException(
+                    $"CIDR 遮罩「/{cidrSplit[1]}」不支援，僅接受 /16、/24（能對齊八位組邊界）。",
+                    nameof(subnetInput));
+            }
+            cidrBits = bits;
+        }
+
+        var octets = ipPart.Split('.');
+        if (octets.Length is < 1 or > 4 || octets.Any(o => o.Length == 0))
+        {
+            throw new ArgumentException($"網段格式不正確：「{subnetInput}」。", nameof(subnetInput));
+        }
+
+        var parsed = new List<int>();
+        foreach (var octet in octets)
+        {
+            if (!int.TryParse(octet, out var value) || value is < 0 or > 255)
+            {
+                throw new ArgumentException($"網段格式不正確：「{subnetInput}」（「{octet}」不是合法的 0~255 數字）。", nameof(subnetInput));
+            }
+            parsed.Add(value);
+        }
+
+        if (cidrBits.HasValue)
+        {
+            // CIDR 指定的位元數決定要留幾段：/16 留 2 段、/24 留 3 段——
+            // 多打的段數（如 10.232.11.5/24）直接截斷，少打的視為輸入錯誤
+            var wantedOctets = cidrBits.Value / 8;
+            if (parsed.Count < wantedOctets)
+            {
+                throw new ArgumentException(
+                    $"「{subnetInput}」的位址段數不足以對應 /{cidrBits.Value}。", nameof(subnetInput));
+            }
+            parsed = parsed.Take(wantedOctets).ToList();
+        }
+        else if (parsed.Count == 4)
+        {
+            // 沒帶 CIDR 卻打了完整四段：這是單一 IP 而不是網段，不在這個函數的支援範圍——
+            // 明確拒絕比默默截成 /24 安全，使用者原意可能真的只想查一台
+            throw new ArgumentException(
+                $"「{subnetInput}」是完整的單一 IP，不是網段——查單一台主機請用主機頁或 CSV 匯入；" +
+                "要掃描它所在的網段請改輸入前三段（如 10.232.11 或 10.232.11.0/24）。",
+                nameof(subnetInput));
+        }
+
+        if (parsed.Count < MinPrefixOctets)
+        {
+            throw new ArgumentException(
+                $"網段太籠統：「{subnetInput}」只有 {parsed.Count} 段，至少需要 {MinPrefixOctets} 段" +
+                "（如 10.232），避免掃描範圍等同全站。", nameof(subnetInput));
+        }
+
+        return string.Join('.', parsed);
+    }
 }

@@ -208,6 +208,10 @@ Windows Event ID 在 Sentinel schema 的落點是 probe #2 的實測項。候選
 
 ### 3.4 `SentinelRestDirectoryClient` 補完（Web 探索）
 
+> **2026-07-29 Phase 5 已改為「網段範圍掃描」實作，以下為原始設計、僅留供對照，
+> 不代表現況**——原設計「近 24h 全事件 distinct」已被第一輪 probe（近 24h found≈2470 萬筆）
+> 推翻。實際做法見本節末的「Phase 5 定案」段落與 §9 未決事項 #1。
+
 改寫為走同一 `ISentinelClient`：探索＝「近 24h 對該 Sentinel 全事件做主機欄位投影
 ＋本地 distinct」（等同 Q4 的單次版）。注意：
 
@@ -216,6 +220,31 @@ Windows Event ID 在 Sentinel schema 的落點是 probe #2 的實測項。候選
 - 探索是互動操作：輪詢預算 30 秒（既有 UI 逾時），超時明確報錯（job 照樣 DELETE）。
 - Web 端與批次端共用 Core 的 client，但**各自實例**（批次夜間、Web 日間，天然錯開；
   同一 Sentinel 的併發上限仍由各實例的單一佇列保護，最壞 2 併發，可接受）。
+
+#### Phase 5 定案：網段範圍掃描（取代上述原設計）
+
+ESM `/objects/eventsource` 端點被權限拒絕（見 §8 第二輪輸出），且全站 24h distinct
+在 2470 萬筆/天下不可行，兩條路都走不通。使用者在 Sentinel Web UI 實測
+`repip:10.232.11.*` 這類**前綴萬用字元查詢確實有過濾效果**（23,926 筆/1h vs 全站
+150 萬筆/1h），因此改用「輸入網段前綴 → 該網段自己的自適應窗口查詢」，完全不碰 ESM API：
+
+- **輸入**：使用者輸入網段前綴（如 `10.232.11`）或 CIDR（`10.232.11.0/24`／`/16`），
+  由 `SentinelQueryBuilder.NormalizeSubnetPrefix` 驗證與正規化（至少 2 段，拒絕單段
+  「等同全站」與完整 4 段單一 IP）、`BuildSubnetDiscoveryFilter` 組出
+  `repip:{prefix}.*`（`SentinelQueryBuilder.cs`）。
+- **自適應時間窗**（`SentinelRestDirectoryClient.ListHostsAsync`）：先送一次
+  `max-results:1` 的計數查詢取得該網段近 24h found 數；found=0 直接短路回報「近 24 小時
+  無事件」；否則窗口＝`found ≤ 50000 ? 24h : max(5分鐘, 24h × 50000/found)`——
+  量級越高窗口越窄，讓查詢結果穩定落在可互動回應的範圍（真實 759,052 筆/24h 的探索用
+  probe 樣本換算約 1.6 小時窗口）。
+- **主查詢**只投影 `repip`／`sn` 兩欄（不含事件內容），依 `repip` 分桶、組內 `sn` 眾數
+  當作該主機顯示名稱（收斂 log 雜訊裡的微小拼寫差異）；掃描結果的顯示名稱直接帶進
+  匯入（`NetiqImportApplier.Apply` 的 `displayNameByIp` 參數），新主機當下就有名字，
+  不用等夜間批次 `TouchNetiq` 回填。
+- **誠實申報涵蓋範圍**：`NetiqDiscoveryResult.CoverageNote`／`Warnings` 說明實際掃描窗口
+  與截斷情形，安靜的主機（窗口內剛好沒事件回報）不在結果內，UI 提示改用主機頁／CSV 手動登錄。
+- 互動逾時 30 秒、`PageSize`/`MaxResultsPerJob` 覆寫為探索專用值，與批次夜間查詢的參數
+  互不影響（各自的 `NetiqOptions` 實例）。
 
 ### 3.5 `--netiq-probe`（Phase 1 閘門，輸出貼回對話定案）
 
@@ -442,6 +471,21 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
   orchestration 層，比照 `Program.cs` 既有的本機分析迴圈——不直接單元測試，靠
   build/既有回歸測試/`--selftest` 撐住正確性，端到端驗證留給試點）。
 
+**2026-07-29 Phase 5 已實作**（NetIQ 主機發現／新增，取代 §3.4 原設計，解除 §9 未決事項 #1）：
+使用者在 Sentinel Web UI 實測確認 `repip:{prefix}.*` 前綴萬用字元查詢有真實過濾效果，改為
+「網段範圍掃描」（見 §3.4「Phase 5 定案」）：`SentinelQueryBuilder.NormalizeSubnetPrefix`／
+`BuildSubnetDiscoveryFilter`（Core，網段輸入驗證與 filter 組出）＋`SentinelRestDirectoryClient`
+全面改寫（Web，計數查詢→自適應窗口→主查詢→依 `repip` 分桶、`sn` 眾數取顯示名稱）＋
+`NetiqImportApplier.Apply` 新增 `displayNameByIp` 參數（新主機匯入當下即帶入真實機器名，
+只套用在全新主機，既有主機/復活孤兒的 `DisplayName` 一律不動）。移除已死的
+`SentinelAdminService.CreateAndScanAsync`／`netiq/create-and-scan` 端點／
+`CreateAndScanSentinelRequest`（新增 Sentinel 與掃描已拆成兩個獨立操作，一鍵合併從未被
+UI 使用）。匯入精靈（`imports.js`／`Imports.cshtml`）新增網段輸入框與涵蓋範圍/警告訊息顯示。
+建置零警告、1037 個單元測試（含新增的 `SentinelRestDirectoryClientTests` 10 項 stub HTTP
+測試、`SentinelQueryBuilderTests` 網段正規化 10 餘項、`NetiqLifecycleTests` 顯示名稱透傳
+2 項）與 `--selftest` 136 項全綠；Dev/Stub 模式下端到端走過完整精靈流程
+（掃描→勾選→分組→匯入）並在真正執行的 Web 應用程式中核對匯入結果。
+
 ## 9. 未決事項
 
 **已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`，term 不斷詞）／頻道（`rv150`）／
@@ -452,11 +496,11 @@ IP 篩選 10/50/100 子句語法皆被接受（約 1.7 秒，與子句數無明�
 
 **仍未決（全部移到試點階段核對，不再開第四輪 probe）**：
 
-1. **探索方案**：ESM `/objects/eventsource` 被權限拒絕，§3.4「近 24h 全事件 distinct」在
-   2470 萬筆/天下不可行。三個選項待決：(a) 請 Sentinel 管理者授予探索帳號 ESM 讀取權限；
-   (b) 窄時間窗只投影 `repip` 後本地 distinct（涵蓋不完整，需誠實申報）；
-   (c) **放棄自動探索**，主機清單改由既有的 Web 主機頁／CSV 匯入維護（NetIQ 只負責取 log）。
-   ——(c) 在功能上完全可行，自動探索本來就只是便利性功能，不是取數管線的前提。
+1. ~~**探索方案**~~ **已解決（2026-07-29 Phase 5）**：ESM `/objects/eventsource` 被權限拒絕、
+   全站 24h distinct 不可行，兩條原始路都走不通。使用者實測確認 `repip:{prefix}.*` 前綴
+   萬用字元查詢有真實過濾效果，改為「網段範圍掃描＋自適應時間窗」，完全不碰 ESM API，
+   見 §3.4「Phase 5 定案」與 §8 Phase 5 段落。掃描結果的涵蓋範圍（時間窗、是否截斷）誠實
+   申報在 `CoverageNote`／`Warnings`，窗口內安靜的主機不在結果內、UI 提示改走主機頁／CSV。
 2. **sev 的 Warning/Error 確切門檻**（`SentinelQueryBuilder.GenericErrorSeverityMin` 目前取 2，
    `SentinelFieldMap.MapEntryType` 的 2/3 分界皆為候選值）——試點主機跑一晚，簽章的 EntryType
    分布對照該主機本機 Event Viewer 核對。

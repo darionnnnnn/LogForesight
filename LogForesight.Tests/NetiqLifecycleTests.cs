@@ -96,13 +96,15 @@ public class NetiqDiscoveryServiceTests
         private readonly List<NetiqDiscoveredHost> _hosts;
         public FakeClient(params (string name, string ip)[] hosts) =>
             _hosts = hosts.Select(h => new NetiqDiscoveredHost(h.name, h.ip)).ToList();
-        public System.Threading.Tasks.Task<List<NetiqDiscoveredHost>> ListHostsAsync(SentinelServer s, System.Threading.CancellationToken ct) =>
-            System.Threading.Tasks.Task.FromResult(_hosts);
+        public System.Threading.Tasks.Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer s, string subnetPrefix, System.Threading.CancellationToken ct) =>
+            System.Threading.Tasks.Task.FromResult(new NetiqDiscoveryResult { Hosts = _hosts, CoverageNote = "test" });
     }
 
     private NetiqDiscoveryService Create(FakeClient client, params SentinelServer[] servers) =>
         new(new NetiqHostServiceTests.FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
-            new SentinelAdminService(_sentinels, _hosts, _audit), _importLogs, new FakeCurrentUser(), _audit);
+            _importLogs, new FakeCurrentUser(), _audit);
+
+    private const string AnySubnet = "10.1.2";
 
     private static SentinelServer Discoverable(string name) =>
         new() { Name = name, BaseUrl = "https://x", Username = "u", Password = "p" };
@@ -114,7 +116,7 @@ public class NetiqDiscoveryServiceTests
 
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.11"), ("SRV-B", "10.1.2.12"), ("AP-1", "10.9.9.5")),
             Discoverable("S1"));
-        var result = await svc.ScanAsync("S1", default);
+        var result = await svc.ScanAsync("S1", AnySubnet, default);
 
         Assert.Equal(3, result.TotalCount);
         Assert.Equal(2, result.Subnets.Count);   // 10.1.2.0/24 與 10.9.9.0/24
@@ -134,7 +136,7 @@ public class NetiqDiscoveryServiceTests
         });
 
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.11")), Discoverable("S1"));
-        var result = await svc.ScanAsync("S1", default);
+        var result = await svc.ScanAsync("S1", AnySubnet, default);
 
         var host = result.Subnets[0].Hosts[0];
         Assert.True(host.OrphanOverlap);
@@ -147,7 +149,7 @@ public class NetiqDiscoveryServiceTests
     {
         var sentinel = _sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         var result = svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
 
@@ -162,7 +164,7 @@ public class NetiqDiscoveryServiceTests
     public async System.Threading.Tasks.Task 匯入_只接受掃描過的IP()
     {
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         // 塞一個沒掃描到的 IP，應被忽略；若因此變成空清單則直接擋下
         Assert.Throws<DomainException>(() =>
@@ -173,7 +175,7 @@ public class NetiqDiscoveryServiceTests
     public async System.Threading.Tasks.Task 匯入_記入匯入紀錄()
     {
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
 
@@ -189,7 +191,7 @@ public class NetiqDiscoveryServiceTests
     public async System.Threading.Tasks.Task 匯入_同一個token不能重複套用()
     {
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
         var request = new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } };
 
         svc.Import(request);
@@ -331,7 +333,7 @@ public class NetiqDiscoveryServiceTests
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")),
             new SentinelServer { Name = "S1" });   // 無帳密
 
-        await Assert.ThrowsAsync<DomainException>(() => svc.ScanAsync("S1", default));
+        await Assert.ThrowsAsync<DomainException>(() => svc.ScanAsync("S1", AnySubnet, default));
     }
 
     // ── 套用：網段群組指派（docs/HISTORY.md 定案 8） ─────────────
@@ -376,7 +378,7 @@ public class NetiqDiscoveryServiceTests
     {
         var groupId = _hostGroups.Upsert(new HostGroup { GroupName = "既有群組" }).GroupId;
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.11"), ("SRV-B", "10.9.9.5")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest
         {
@@ -397,7 +399,7 @@ public class NetiqDiscoveryServiceTests
     public async System.Threading.Tasks.Task 匯入_網段指派new自動建立群組()
     {
         var svc = Create(new FakeClient(("SRV-A", "10.1.2.11")), Discoverable("S1"));
-        var scan = await svc.ScanAsync("S1", default);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest
         {
@@ -414,54 +416,45 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { created!.GroupId }, _hosts.FindByName("10.1.2.11")!.GroupIds);
     }
 
-    // ── 新增即掃描精靈（定案 6：掃描即帳密驗證） ──────────────────────────────
-
-    private sealed class FailingClient : INetiqDirectoryClient
-    {
-        public System.Threading.Tasks.Task<List<NetiqDiscoveredHost>> ListHostsAsync(SentinelServer s, System.Threading.CancellationToken ct) =>
-            throw new NetiqDiscoveryException("連線失敗");
-    }
+    // ── 探索掃描回填真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）──
 
     [Fact]
-    public async System.Threading.Tasks.Task 新增即掃描_名稱重複則拒絕()
+    public async System.Threading.Tasks.Task 匯入_新主機帶入掃描時取得的真實機器名()
     {
-        _sentinels.Upsert(new Sentinel { Name = "S1" });
-        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")));
-
-        await Assert.ThrowsAsync<DomainException>(() => svc.CreateAndScanAsync(
-            new CreateAndScanSentinelRequest { Name = "S1", Username = "u", Password = "p" }, default));
-
-        Assert.Single(_sentinels.GetAll());   // 沒有多建立一筆
-    }
-
-    [Fact]
-    public async System.Threading.Tasks.Task 新增即掃描_掃描失敗不建立Sentinel()
-    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Array.Empty<SentinelServer>()), new FailingClient(), _hosts, _hostGroups, _sentinels,
-            new SentinelAdminService(_sentinels, _hosts, _audit), _importLogs, new FakeCurrentUser(), _audit);
+            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeClient(("tc-crecdc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
+            _importLogs, new FakeCurrentUser(), _audit);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
-        await Assert.ThrowsAsync<DomainException>(() => svc.CreateAndScanAsync(
-            new CreateAndScanSentinelRequest { Name = "新 Sentinel", Username = "u", Password = "p" }, default));
+        svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
 
-        Assert.Empty(_sentinels.GetAll());   // 掃描失敗＝什麼都不留下
+        Assert.Equal("tc-crecdc01", _hosts.FindByName("10.1.2.50")!.DisplayName);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task 新增即掃描_成功建立Sentinel並加密密碼()
+    public async System.Threading.Tasks.Task 匯入_既有主機的DisplayName不被掃描結果覆蓋()
     {
-        var svc = Create(new FakeClient(("SRV-A", "10.1.2.50")));
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.50", IpAddress = "10.1.2.50", Source = "netiq",
+            NetiqServer = "OLD", Active = false, DisplayName = "人工核對過的名稱"
+        });
+        var svc = new NetiqDiscoveryService(
+            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeClient(("掃描回報的不同名稱", "10.1.2.50")), _hosts, _hostGroups, sentinels,
+            _importLogs, new FakeCurrentUser(), _audit);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
-        var result = await svc.CreateAndScanAsync(
-            new CreateAndScanSentinelRequest { Name = "新 Sentinel", BaseUrl = "https://x", Username = "u", Password = "p" }, default);
+        svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
 
-        Assert.Equal("新 Sentinel", result.Server);
-        Assert.Equal(1, result.TotalCount);
-
-        var saved = _sentinels.FindByName("新 Sentinel");
-        Assert.NotNull(saved);
-        Assert.Equal("u", saved!.Username);
-        Assert.True(CryptoHelper.IsEncrypted(saved.PasswordEnc));
+        // 既有主機（含復活的孤兒）：更新只動 NetiqServer/SentinelId/Active，DisplayName 不動——
+        // 同 groupByIp/os 一致原則，匯入不隱性改既有主機欄位
+        Assert.Equal("人工核對過的名稱", _hosts.FindByName("10.1.2.50")!.DisplayName);
     }
 }
 

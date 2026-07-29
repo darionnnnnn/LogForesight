@@ -125,4 +125,77 @@ public class SentinelQueryBuilderTests
 
         Assert.Equal("(repip:10.1.2.11)", clause);
     }
+
+    // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-PLAN.md §3.4）──
+
+    [Theory]
+    [InlineData("10.232", "10.232")]
+    [InlineData("10.232.11", "10.232.11")]
+    [InlineData(" 10.232.11 ", "10.232.11")]         // 前後空白
+    [InlineData("10.232.0/16", "10.232")]             // CIDR /16 → 2 段
+    [InlineData("10.232.11.0/24", "10.232.11")]       // CIDR /24 → 3 段
+    [InlineData("10.232.11.99/24", "10.232.11")]      // CIDR 多打的第四段被截斷
+    public void NormalizeSubnetPrefix_合法輸入正確正規化(string input, string expected)
+    {
+        Assert.Equal(expected, SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+    }
+
+    [Fact]
+    public void BuildSubnetDiscoveryFilter_組出repip前綴萬用字元查詢()
+    {
+        var filter = SentinelQueryBuilder.BuildSubnetDiscoveryFilter("10.232.11.0/24");
+
+        Assert.Equal("repip:10.232.11.*", filter);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void NormalizeSubnetPrefix_空白輸入擲例外(string input)
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+    }
+
+    [Fact]
+    public void NormalizeSubnetPrefix_單段前綴太籠統擲例外()
+    {
+        // 只有一段等同「查所有 10.x.x.x」，量級與全站同一數量級
+        var ex = Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10"));
+        Assert.Contains("太籠統", ex.Message);
+    }
+
+    [Fact]
+    public void NormalizeSubnetPrefix_完整四段IP不帶CIDR時擲例外()
+    {
+        // 這是探索「網段」的功能，不是查單一台主機——repip:x.x.x.x.* 語法上也不合法
+        var ex = Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.232.11.5"));
+        Assert.Contains("單一 IP", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("10.232.11.0/25")]   // 不對齊八位組邊界
+    [InlineData("10.232.11.0/8")]    // 本函數不支援 /8（太籠統，交由段數檢查統一擋）
+    [InlineData("10.232.11.0/abc")]  // 非數字
+    public void NormalizeSubnetPrefix_不支援的CIDR遮罩擲例外(string input)
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+    }
+
+    [Theory]
+    [InlineData("10.256.11")]        // 八位組超過 255
+    [InlineData("10.-1.11")]         // 負數
+    [InlineData("abc.def.gh")]       // 非數字
+    [InlineData("10..11")]           // 空段
+    [InlineData("10.232.11; DROP")]  // 注入嘗試——白名單天然免疫，這裡驗證確實被擋下而不是被靜默接受
+    public void NormalizeSubnetPrefix_格式不正確擲例外(string input)
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix(input));
+    }
+
+    [Fact]
+    public void NormalizeSubnetPrefix_CIDR位元數大於實際段數時擲例外()
+    {
+        // /24 需要 3 段，只給 2 段
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.232/24"));
+    }
 }

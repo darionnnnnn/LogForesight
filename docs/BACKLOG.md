@@ -35,7 +35,9 @@
   接機房迴圈，逐 Sentinel/逐日/批次取數，當日續跑靠既有 `HasRecord` 機制。**尚未經過真實
   Sentinel 端到端驗證**（試點閘門：Web 主機頁登錄 2~3 台實際主機跑 2~3 晚，核對 sev 門檻、
   Defender/RDP 頻道覆蓋、真實批次耗時；2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化）。
-  **仍待拍板**：探索方案三選一（ESM 權限被拒／窄窗投影／放棄自動探索）。
+  **探索方案已解決**（Phase 5，2026-07-29）：ESM 權限被拒、全站 24h distinct 不可行皆走不通，
+  改用使用者實測驗證過的「網段範圍掃描」——`repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗，
+  完全不碰 ESM API（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.4「Phase 5 定案」）。
   見 [docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門（Linux 那台 Sentinel
   尚未接入，此環境 Windows/Linux 已完全拆分成不同 Sentinel）。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
