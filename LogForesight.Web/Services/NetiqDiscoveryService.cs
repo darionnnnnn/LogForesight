@@ -147,8 +147,16 @@ public class NetiqDiscoveryService
 
         var groupByIp = ResolveGroupAssignments(scan, request.GroupAssignments);
         // 探索掃描已經拿到真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）——
-        // 新主機匯入當下就能有名字，不用等夜間批次的 TouchNetiq 才回填
-        var displayNameByIp = scan.Hosts.ToDictionary(h => h.IpAddress, h => h.HostName, StringComparer.OrdinalIgnoreCase);
+        // 新主機匯入當下就能有名字，不用等夜間批次的 TouchNetiq 才回填。
+        //
+        // 掃描沒拿到 sn 的主機，NetiqDiscoveredHost.HostName 會退回 IP（精靈清單上顯示 IP 是對的），
+        // 但那**不是名字**，不能當 DisplayName 落盤：DisplayName 的存在意義就是「IP 之外還能認出
+        // 是哪台機器」（docs/WEB-SPEC.md §7），寫成與 HostName 相同的 IP 會讓主機頁顯示
+        // 「10.1.2.25（10.1.2.25）」這種廢話，也讓夜間批次 TouchNetiq 之後補到的真名看起來像被改過。
+        // 名字未知就維持 null，等 TouchNetiq 回填——與 NetiqPipelineService 同一套語意。
+        var displayNameByIp = scan.Hosts
+            .Where(h => !string.Equals(h.HostName, h.IpAddress, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(h => h.IpAddress, h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp);
 
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次

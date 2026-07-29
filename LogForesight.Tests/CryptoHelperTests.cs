@@ -132,18 +132,30 @@ public class CryptoHelperKeyResolutionTests
     }
 
     /// <summary>
+    /// 「內嵌金鑰時代」寫入的一筆固定密文（明碼為 <c>legacy-secret</c>），代表金鑰輪替前就已經躺在
+    /// DB 裡的舊資料。
+    ///
+    /// 用固定值而非現場呼叫 <c>CryptoHelper.Encrypt</c> 產生，是因為 CBC 用「錯的」金鑰解密會得到
+    /// 偽隨機 bytes，其中約 1/255 機率湊巧符合 PKCS7 padding 格式而**不**拋 CryptographicException。
+    /// 現場加密每次 IV 隨機，等於每跑一次就擲一次骰子（實測 10 萬次約 0.4% 會踩到），單獨跑很少遇到、
+    /// 跟著全套跑久了就會偶發失敗。固定密文則是確定性的：這筆值用 OtherKey 解必定失敗、退回內嵌
+    /// 金鑰必定成功。順帶也讓本測試不再經由 <c>Encrypt</c> 讀取真實環境變數。
+    ///
+    /// 日後若真的更換內嵌金鑰，本常數需一併重產（取一筆 <c>CryptoHelper.Encrypt("legacy-secret")</c>，
+    /// 確認 <c>DecryptWith(OtherKey, 該值)</c> 會回 <c>legacy-secret</c> 即可）；屆時測試失敗本身就是
+    /// 正確的警訊——換掉內嵌金鑰會讓既有 DB 裡的密文再也解不開。
+    /// </summary>
+    private const string LegacyCipherFromEmbeddedKeyEra = "enc:v1:I3Mnvp+FKKtlA+EfrWepjAB1NRzTwMwVntC7faKySAU=";
+
+    /// <summary>
     /// 金鑰輪替過渡期的核心行為：換了 LF_CRYPTO_KEY 之後，DB 裡舊金鑰（內嵌金鑰）時代寫入的
     /// 密文仍要解得開——不能因為換了金鑰就讓既有的 Sentinel 密碼／AI 金鑰全部變成打不開的密文。
     /// </summary>
     [Fact]
     public void 現用金鑰解不開時_退回內嵌金鑰再試()
     {
-        // 用「內嵌金鑰時代」的方式加密（CryptoHelper.Encrypt 在測試環境未設定 LF_CRYPTO_KEY 時
-        // 本來就走內嵌金鑰，這裡直接呼叫公開 API 即等同模擬舊密文）
-        var legacyCipher = CryptoHelper.Encrypt("legacy-secret");
-
         // 假設現在換了金鑰（OtherKey）：DecryptWith 用新金鑰解不開，應自動退回內嵌金鑰解密成功
-        var result = CryptoHelper.DecryptWith(OtherKey, legacyCipher);
+        var result = CryptoHelper.DecryptWith(OtherKey, LegacyCipherFromEmbeddedKeyEra);
 
         Assert.Equal("legacy-secret", result);
     }
@@ -151,11 +163,10 @@ public class CryptoHelperKeyResolutionTests
     /// <summary>
     /// 兩把金鑰都解不開時（密文本身損毀／根本不是這系統加密的）仍要如實拋出，不能吞掉。
     ///
-    /// 密文特意截斷成「長度不是 AES 區塊大小（16 bytes）倍數」——不能只是拿別把金鑰加密的合法密文
-    /// 來測，因為 CBC 用錯金鑰解密後得到的是偽隨機 bytes，約有 1/255 機率湊巧符合 PKCS7 padding
-    /// 格式而不拋例外（曾造成本測試偶發失敗，即使跟環境變數或其他測試類別完全無關：這個測試
-    /// 全程只用 EncryptWith／DecryptWith 帶入的參數金鑰，沒有讀寫 LF_CRYPTO_KEY）。長度不對則
-    /// 不管金鑰為何，TransformFinalBlock 一律直接拋例外，確定性地驗證「兩把金鑰都解不開」這件事。
+    /// 密文特意截斷成「長度不是 AES 區塊 16 bytes 的倍數」，這樣不管拿哪把金鑰解密都必定在
+    /// TransformFinalBlock 當場拋例外，避開 <see cref="LegacyCipherFromEmbeddedKeyEra"/> 說明的
+    /// PKCS7 padding 湊巧命中問題（原本改用「別把金鑰加密的合法密文」，實測約 0.8% 機率不拋例外
+    /// ——現用金鑰與內嵌金鑰各擲一次骰子，所以比單次的 0.4% 再高一倍）。
     /// </summary>
     [Fact]
     public void 兩把金鑰都解不開時_仍拋出例外()
@@ -164,8 +175,7 @@ public class CryptoHelperKeyResolutionTests
         var validCipher = CryptoHelper.EncryptWith(thirdKey, "x");
 
         var combined = Convert.FromBase64String(validCipher["enc:v1:".Length..]);
-        var truncated = combined[..^1];
-        var corruptedCipher = "enc:v1:" + Convert.ToBase64String(truncated);
+        var corruptedCipher = "enc:v1:" + Convert.ToBase64String(combined[..^1]);
 
         Assert.ThrowsAny<Exception>(() => CryptoHelper.DecryptWith(OtherKey, corruptedCipher));
     }

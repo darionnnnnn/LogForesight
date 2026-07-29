@@ -1039,13 +1039,16 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
   重新編譯部署；規則的白話知識庫內容（處置參考）也建議一併調整成貴公司實際的處置流程。
   儲存時前後端都會跑規則驗證，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
   `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
-- **多台伺服器（NetIQ Sentinel 整合）**：批次分析引擎本身仍是單機直讀。**Sentinel 連線設定與主機清單
-  的管理已於 2026-07-24 完成搬進 Web**（多台 Sentinel、新增即掃描精靈、匯入即時落盤、依網段指派
-  主機群組，完整設計見 [docs/HISTORY.md](docs/HISTORY.md)）——這一層
-  解決的是「主機清單哪裡維護」，還不是「跨主機集中分析」。規劃中的下一階段才是接上多台 NetIQ Sentinel
-  （約 2000 台主機規模，共用查詢帳密）做**批次面**的集中分析——分級分析（規則/趨勢/慢速趨勢/
-  關聯全量跑，AI 只判讀有訊號的主機）、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等設計已在
-  `docs/HISTORY.md` 中規劃完成，`Persistence/` 的讀寫介面也已預留，實作時不需要更動既有分析邏輯的架構。
+- **多台伺服器（NetIQ Sentinel 整合）**：**Sentinel 連線設定與主機清單的管理已於 2026-07-24
+  完成搬進 Web**（多台 Sentinel、掃描匯入精靈、匯入即時落盤、依網段指派主機群組，完整設計見
+  [docs/HISTORY.md](docs/HISTORY.md)）；**跨主機集中分析的取數管線也已於 2026-07-29 實作完成**
+  （`SentinelClient`＋`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`＋
+  `NetiqPipelineService`，只支援 Windows 主機，見 docs/NETIQ-API-PLAN.md §8）——批次分析引擎
+  逐 Sentinel、逐日、批次取事件後餵進與本機路徑**完全相同**的分析服務（有合約測試證實兩條路徑
+  聚合分類結果同構）。**尚未經過真實 Sentinel 端到端驗證**，下一步是登錄 2~3 台實際主機試跑幾晚
+  （核對 sev 門檻、Defender/RDP 頻道覆蓋、真實批次耗時）；2000 台規模放量前另需評估逐主機
+  `HasRecord` 查詢的批次化。分級分析、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等其餘設計
+  仍在 `docs/HISTORY.md` 中待實作。
 - **DB 後端（2026-07-23 完成；2026-07-24 起 Sqlite 改為預設與主要測試方式，Jsonl 檔案後端全面退役）**：
   `Storage.Type` 二選一——`Sqlite`（測試/開發，預設）／`SqlServer`（正式，2000 台量級）；
   設成 `Jsonl` 一律於啟動時報錯，不再有檔案相容模式。**全部資料**（分析紀錄＋webdata）走資料庫：分析紀錄以

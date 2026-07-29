@@ -434,6 +434,27 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal("tc-crecdc01", _hosts.FindByName("10.1.2.50")!.DisplayName);
     }
 
+    /// <summary>
+    /// 掃描沒拿到 sn 時 <c>NetiqDiscoveredHost.HostName</c> 會退回 IP，但那不是名字——寫成
+    /// DisplayName 會讓主機頁顯示「10.1.2.50（10.1.2.50）」這種廢話，也讓夜間批次 TouchNetiq
+    /// 之後補到的真名看起來像是被人改過。名字未知就維持 null，等批次回填。
+    /// </summary>
+    [Fact]
+    public async System.Threading.Tasks.Task 匯入_掃描未取得機器名時DisplayName維持空白而非填入IP()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        var svc = new NetiqDiscoveryService(
+            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeClient(("10.1.2.50", "10.1.2.50")), _hosts, _hostGroups, sentinels,
+            _importLogs, new FakeCurrentUser(), _audit);
+        var scan = await svc.ScanAsync("S1", AnySubnet, default);
+
+        svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
+
+        Assert.Null(_hosts.FindByName("10.1.2.50")!.DisplayName);
+    }
+
     [Fact]
     public async System.Threading.Tasks.Task 匯入_既有主機的DisplayName不被掃描結果覆蓋()
     {

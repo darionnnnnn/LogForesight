@@ -120,13 +120,25 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
     internal const double MaxWindowHours = 24.0;
 
-    /// <summary>互動掃描的逾時秒數，刻意不用 NetiqOptions 設定的批次逾時（可能長達數分鐘）——
+    /// <summary>單次 REST 呼叫的逾時秒數，刻意不用 NetiqOptions 設定的批次逾時（可能長達數分鐘）——
     /// 管理員盯著精靈畫面等，逾時要短，讓失敗訊息很快回來而不是乾等。</summary>
     internal const int InteractiveTimeoutSeconds = 30;
+
+    /// <summary>
+    /// **整趟掃描**的總預算秒數。<see cref="InteractiveTimeoutSeconds"/> 只約束單次 REST 呼叫與
+    /// job 輪詢階段（<c>SentinelClient.PollUntilTerminalAsync</c>），**分頁迴圈不受它約束**：
+    /// <see cref="CoverageTargetResults"/>÷1000 筆/頁＝最多 50 次連續翻頁請求，實測 Sentinel
+    /// 單次查詢往返約 1.7 秒（第一輪 probe），最壞情況可以讓管理員在精靈畫面前乾等一分半以上，
+    /// 沒有任何上限——「逾時要短」的承諾等於沒有兌現。這裡用一個涵蓋整個 <see cref="ListHostsAsync"/>
+    /// 的 deadline 補上，逾時就明確報錯並建議縮小網段，**不回傳半套結果**（半套清單會讓人以為
+    /// 那就是該網段的全部主機，違反本專案「沒查 ≠ 沒事」的誠實申報原則）。
+    /// </summary>
+    internal const int InteractiveTotalBudgetSeconds = 90;
 
     private readonly NetiqOptionsStore? _netiqOptionsStore;
     private readonly NetiqOptions? _optionsOverride;
     private readonly HttpMessageHandler? _handler;
+    private readonly int _totalBudgetSeconds = InteractiveTotalBudgetSeconds;
 
     public SentinelRestDirectoryClient(NetiqOptionsStore netiqOptionsStore)
     {
@@ -138,10 +150,13 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// <see cref="NetiqOptionsStore"/>（它背後是真實 DB，單元測試不需要為了幾個節流欄位
     /// 另外接一份資料庫——同 <see cref="SentinelClient"/> 自己的 handler 測試縫一樣的理由）。
     /// </summary>
-    public SentinelRestDirectoryClient(NetiqOptions options, HttpMessageHandler handler)
+    /// <param name="totalBudgetSeconds">覆寫 <see cref="InteractiveTotalBudgetSeconds"/>——
+    /// 驗證「總預算會中止掃描」的測試不該真的等 90 秒。</param>
+    public SentinelRestDirectoryClient(NetiqOptions options, HttpMessageHandler handler, int? totalBudgetSeconds = null)
     {
         _optionsOverride = options;
         _handler = handler;
+        if (totalBudgetSeconds is > 0) _totalBudgetSeconds = totalBudgetSeconds.Value;
     }
 
     public async Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer server, string subnetPrefix, CancellationToken ct)
@@ -174,13 +189,19 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             AllowInvalidCertificates = baseOptions.AllowInvalidCertificates
         };
 
+        // 整趟掃描的總預算（見 InteractiveTotalBudgetSeconds）——分頁迴圈本身不受單次逾時約束，
+        // 沒有這道 deadline 就沒有任何東西能保證互動操作會在可接受的時間內結束
+        using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budgetCts.CancelAfter(TimeSpan.FromSeconds(_totalBudgetSeconds));
+        var scanCt = budgetCts.Token;
+
         try
         {
             await using var client = new SentinelClient(server, interactiveOptions, _handler);
             var now = DateTimeOffset.UtcNow;
 
             var countResult = await client.SearchAsync(
-                new SentinelSearchRequest(filter, now.AddHours(-MaxWindowHours), now, MaxResults: 1), ct);
+                new SentinelSearchRequest(filter, now.AddHours(-MaxWindowHours), now, MaxResults: 1), scanCt);
             var found24h = countResult.Found;
 
             if (found24h == 0)
@@ -199,7 +220,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             var mainResult = await client.SearchAsync(new SentinelSearchRequest(
                 filter, start, now,
                 new[] { SentinelFieldMap.HostIp, SentinelFieldMap.HostName },
-                MaxResults: CoverageTargetResults), ct);
+                MaxResults: CoverageTargetResults), scanCt);
 
             var hosts = mainResult.Events
                 .GroupBy(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostIp, string.Empty), StringComparer.OrdinalIgnoreCase)
@@ -222,11 +243,28 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 Warnings = warnings
             };
         }
+        // 總預算用盡：只在「呼叫端自己沒取消」時才轉成可顯示的錯誤——呼叫端取消（管理員關掉分頁、
+        // 瀏覽器斷線）是正常的取消語意，不該被包裝成一則假的失敗訊息往上丟。
+        // SentinelClient 內部把逾時歸類為可重試例外，重試耗盡後會包成 SentinelClientException，
+        // 因此這裡兩種例外都要看 budgetCts 有沒有被觸發。
+        catch (OperationCanceledException) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, _totalBudgetSeconds));
+        }
+        catch (SentinelClientException ex) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, _totalBudgetSeconds), ex);
+        }
         catch (SentinelClientException ex)
         {
             throw new NetiqDiscoveryException($"掃描 Sentinel「{server.Name}」失敗：{ex.Message}", ex);
         }
     }
+
+    private static string BudgetExceededMessage(string normalizedPrefix, int budgetSeconds) =>
+        $"掃描「{normalizedPrefix}.*」超過 {budgetSeconds} 秒仍未完成，已中止。" +
+        "該網段的事件量可能過大——請改掃更小的網段（如把 /16 縮成 /24），或稍後離峰時段再試。" +
+        "（未回傳部分結果：半套清單會被誤認為該網段的完整主機名單。）";
 
     /// <summary>同一 IP 底下最常見的非空 sn 值——單一主機的事件不會每筆 sn 都不同，
     /// 取眾數比取第一筆更能防偶發的欄位缺席或雜訊值。</summary>

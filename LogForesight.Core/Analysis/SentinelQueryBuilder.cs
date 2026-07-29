@@ -93,9 +93,10 @@ public static class SentinelQueryBuilder
     internal const int MinPrefixOctets = 2;
 
     /// <summary>
-    /// 把使用者輸入的網段字串（前綴「10.232.11」、CIDR「10.232.11.0/24」、
-    /// 單一 IP「10.232.11.5」皆可）正規化成 Lucene 前綴萬用字元查詢
-    /// （<c>repip:10.232.11.*</c>）。純格式驗證，不含任何比對 Sentinel 實際資料的邏輯。
+    /// 把使用者輸入的網段字串（前綴「10.232.11」或 CIDR「10.232.11.0/24」）正規化成
+    /// Lucene 前綴萬用字元查詢（<c>repip:10.232.11.*</c>）。純格式驗證，不含任何比對
+    /// Sentinel 實際資料的邏輯。不帶 CIDR 的完整四段 IP **不接受**，理由見
+    /// <see cref="NormalizeSubnetPrefix"/>。
     /// </summary>
     /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足
     /// <see cref="MinPrefixOctets"/>（避免建出等同全站掃描的查詢）。</exception>
@@ -118,13 +119,19 @@ public static class SentinelQueryBuilder
     /// **public**（不是 internal）：Web 層（探索 client／精靈顯示）需要正規化後的人看字串
     /// 本身（不只是組好的 filter），例如涵蓋範圍說明文字要顯示「10.232.11.*」而非原始輸入
     /// 「10.232.11.0/24」，這是合法的獨立使用情境，不是內部實作細節外洩。
+    ///
+    /// **例外訊息刻意不帶 paramName**：這些訊息是設計來原樣顯示給管理員的（Web 層
+    /// <c>NetiqDiscoveryException</c> 直接轉傳 <c>ex.Message</c>），而
+    /// <c>ArgumentException(message, paramName)</c> 會在 Message 後面自動附上
+    /// 「(Parameter 'subnetInput')」——參數名對管理員毫無意義，只是把實作細節漏到畫面上。
+    /// 型別維持 <see cref="ArgumentException"/>（呼叫端的 catch 與既有測試都以它為準）。
     /// </summary>
     public static string NormalizeSubnetPrefix(string subnetInput)
     {
         var trimmed = subnetInput?.Trim() ?? string.Empty;
         if (trimmed.Length == 0)
         {
-            throw new ArgumentException("請輸入網段（如 10.232.11 或 10.232.11.0/24）。", nameof(subnetInput));
+            throw new ArgumentException("請輸入網段（如 10.232.11 或 10.232.11.0/24）。");
         }
 
         // CIDR：只接受 /16、/24（能對齊八位組邊界才轉得成前綴；/8 太籠統會被下面的量級守則
@@ -137,8 +144,7 @@ public static class SentinelQueryBuilder
             if (!int.TryParse(cidrSplit[1], out var bits) || bits is not (16 or 24))
             {
                 throw new ArgumentException(
-                    $"CIDR 遮罩「/{cidrSplit[1]}」不支援，僅接受 /16、/24（能對齊八位組邊界）。",
-                    nameof(subnetInput));
+                    $"CIDR 遮罩「/{cidrSplit[1]}」不支援，僅接受 /16、/24（能對齊八位組邊界）。");
             }
             cidrBits = bits;
         }
@@ -146,7 +152,7 @@ public static class SentinelQueryBuilder
         var octets = ipPart.Split('.');
         if (octets.Length is < 1 or > 4 || octets.Any(o => o.Length == 0))
         {
-            throw new ArgumentException($"網段格式不正確：「{subnetInput}」。", nameof(subnetInput));
+            throw new ArgumentException($"網段格式不正確：「{subnetInput}」。");
         }
 
         var parsed = new List<int>();
@@ -154,7 +160,7 @@ public static class SentinelQueryBuilder
         {
             if (!int.TryParse(octet, out var value) || value is < 0 or > 255)
             {
-                throw new ArgumentException($"網段格式不正確：「{subnetInput}」（「{octet}」不是合法的 0~255 數字）。", nameof(subnetInput));
+                throw new ArgumentException($"網段格式不正確：「{subnetInput}」（「{octet}」不是合法的 0~255 數字）。");
             }
             parsed.Add(value);
         }
@@ -167,7 +173,7 @@ public static class SentinelQueryBuilder
             if (parsed.Count < wantedOctets)
             {
                 throw new ArgumentException(
-                    $"「{subnetInput}」的位址段數不足以對應 /{cidrBits.Value}。", nameof(subnetInput));
+                    $"「{subnetInput}」的位址段數不足以對應 /{cidrBits.Value}。");
             }
             parsed = parsed.Take(wantedOctets).ToList();
         }
@@ -177,15 +183,14 @@ public static class SentinelQueryBuilder
             // 明確拒絕比默默截成 /24 安全，使用者原意可能真的只想查一台
             throw new ArgumentException(
                 $"「{subnetInput}」是完整的單一 IP，不是網段——查單一台主機請用主機頁或 CSV 匯入；" +
-                "要掃描它所在的網段請改輸入前三段（如 10.232.11 或 10.232.11.0/24）。",
-                nameof(subnetInput));
+                "要掃描它所在的網段請改輸入前三段（如 10.232.11 或 10.232.11.0/24）。");
         }
 
         if (parsed.Count < MinPrefixOctets)
         {
             throw new ArgumentException(
                 $"網段太籠統：「{subnetInput}」只有 {parsed.Count} 段，至少需要 {MinPrefixOctets} 段" +
-                "（如 10.232），避免掃描範圍等同全站。", nameof(subnetInput));
+                "（如 10.232），避免掃描範圍等同全站。");
         }
 
         return string.Join('.', parsed);

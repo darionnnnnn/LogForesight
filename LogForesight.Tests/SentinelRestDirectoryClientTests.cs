@@ -319,6 +319,84 @@ public class SentinelRestDirectoryClientTests
         Assert.DoesNotContain("pw", ex.Message);   // 密碼不得出現在例外訊息
     }
 
+    /// <summary>
+    /// 分頁迴圈不受單次逾時約束（SentinelClient 的 TimeoutSeconds 只管單次呼叫與 job 輪詢），
+    /// 50 頁×真實往返會讓管理員在精靈前乾等——整趟掃描必須有自己的總預算，
+    /// 且逾時要**明確報錯**而不是回傳半套清單（半套會被誤認為該網段的完整名單）。
+    /// </summary>
+    [Fact]
+    public async Task 整趟掃描超過總預算_明確報錯且不回傳半套結果()
+    {
+        var handler = new StubHandler();
+        var pageCalls = 0;
+        var jobsCreated = 0;
+        handler.OnSend = async (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl)
+                return Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}");
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
+            {
+                jobsCreated++;   // 1=計數查詢、2=主查詢（主查詢才有結果頁可翻）
+                return Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobsCreated}");
+            }
+            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
+                return Json(HttpStatusCode.OK, "{\"status\":2,\"found\":40000,\"avail\":40000}");
+            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
+                return Json(HttpStatusCode.OK,
+                    $"{{\"status\":2,\"found\":40000,\"avail\":40000,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}");
+            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
+            {
+                pageCalls++;
+                // 每頁都慢——模擬真實 Sentinel 往返（實測約 1.7 秒），讓分頁迴圈撞上總預算
+                await Task.Delay(TimeSpan.FromMilliseconds(400), CancellationToken.None);
+                var sb = new StringBuilder("[");
+                for (var i = 0; i < 1000; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    sb.Append($"{{\"repip\":\"10.232.11.{i % 250}\",\"sn\":\"h{i % 250}\"}}");
+                }
+                sb.Append(']');
+                return Json(HttpStatusCode.OK, sb.ToString());
+            }
+            if (req.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.OK);
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        // 總預算壓到 2 秒：驗證的是「有沒有這道 deadline」，不是正式值本身
+        var client = new SentinelRestDirectoryClient(Options(), handler, totalBudgetSeconds: 2);
+        var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
+            client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None));
+
+        Assert.Contains("超過 2 秒", ex.Message);
+        Assert.Contains("更小的網段", ex.Message);
+        Assert.True(pageCalls < 40, $"應在跑完全部 40 頁前就被總預算中止，實際翻了 {pageCalls} 頁");
+    }
+
+    /// <summary>呼叫端自己取消（管理員關掉分頁）不是掃描失敗，不該被包成假的錯誤訊息</summary>
+    [Fact]
+    public async Task 呼叫端取消_不轉成掃描失敗訊息()
+    {
+        var handler = new StubHandler();
+        using var cts = new CancellationTokenSource();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl)
+            {
+                cts.Cancel();   // 認證後管理員就關掉了分頁
+                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
+            }
+            if (req.Method == HttpMethod.Delete) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        var client = new SentinelRestDirectoryClient(Options(), handler);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.ListHostsAsync(Server(), "10.232.11", cts.Token));
+    }
+
     private static HttpResponseMessage Json(HttpStatusCode code, string json, string? locationHeader = null)
     {
         var resp = new HttpResponseMessage(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
