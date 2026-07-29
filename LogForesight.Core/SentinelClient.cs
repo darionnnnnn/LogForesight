@@ -291,6 +291,22 @@ public sealed class SentinelClient : IAsyncDisposable
 
     // ── Job 生命週期 ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// 建立 job 的請求本文序列化選項。**必須用不轉義的編碼器**：`System.Text.Json` 預設會把
+    /// 雙引號寫成 <c>"</c>、非 ASCII 字元寫成 <c>\uXXXX</c>，而 **Sentinel 的 JSON 解析器
+    /// 不接受 <c>\uXXXX</c> 轉義序列**，會回 400「invalid JSON value」——
+    /// 2026-07-29 第二輪 probe 實測：片語查詢 <c>obssvcname:"Microsoft-Windows-Security-Auditing"</c>
+    /// 整個被拒，錯誤指向 filter 值的起始位置。片語查詢（帶引號）是規則來源下推 Lucene 的必要語法，
+    /// 沒有這個設定整條取數管線只要用到片語就會失敗。
+    /// <c>UnsafeRelaxedJsonEscaping</c> 只做 JSON 規格強制的最小轉義（<c>"</c> → <c>\"</c>），
+    /// 名稱裡的 Unsafe 指的是「不對 HTML 做額外防禦轉義」，這裡的輸出送往 REST API 不是網頁，
+    /// 且本文只由本程式組出（filter 內容非使用者自由輸入的 HTML），無 XSS 面。
+    /// </summary>
+    private static readonly JsonSerializerOptions JobBodyJsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private async Task<string> CreateJobAsync(SentinelSearchRequest request, CancellationToken ct)
     {
         var body = new JsonObject
@@ -308,7 +324,7 @@ public sealed class SentinelClient : IAsyncDisposable
         {
             body["fields"] = string.Join(",", request.Fields);
         }
-        var json = body.ToJsonString();
+        var json = body.ToJsonString(JobBodyJsonOptions);
 
         var resp = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Post, EventSearchCollectionUrl)
         {

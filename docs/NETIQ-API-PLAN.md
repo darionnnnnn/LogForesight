@@ -240,16 +240,17 @@ probe 全程遵守單一佇列＋節流，對 server 負擔可忽略。**第一�
 
 | 語意 | 欄位 | 備註 |
 |---|---|---|
-| Windows EventID | `rv40` | 以 4634＝「帳戶已登出」＋`xdastaxname=XDAS_AE_TERMINATE_SESSION` 交叉實證 |
+| Windows EventID | `rv40` | 以 4634／4624／4771／4627 多筆交叉實證（配 `evt` 中文事件名一致） |
 | 事件來源（provider） | `obssvcname` | 值如 `Microsoft-Windows-Security-Auditing`，`SourcePattern` 比對對象 |
-| 頻道（LogName） | `rv150` | 值如 `Security` |
-| 主機名 | `dhn`／`sn` | 本機事件兩者同值；跨主機事件是否分裂待第二輪步驟 7 核對 |
-| 回報者 IP | `repip` | 是否等同「主機自身」IP（vs collector 代理 IP）待第二輪核對 |
-| 時間 | `dt` | ISO-8601 UTC；`estz` 為事件來源時區（如 `Asia/Taipei`） |
-| 嚴重度 | `sev` | 樣本皆 0，與 Error/Warning 對應待第二輪步驟 10 用高嚴重度事件實證 |
+| 頻道（LogName） | `rv150` | 值如 `Security`／`System`／`Application` |
+| **主機歸屬鍵** | **`repip`** | **第二輪定案**：四台 DC 對到四個各自不同的 `repip`（一對一，非共用代理），且 `--sample-ip` 以 `repip:` 查得到該台資料。**這是「這筆 log 屬於哪台主機」的鍵** |
+| 主機名 | `dhn`／`sn` | 兩者同值，即 `repip` 那台主機的名稱 |
+| 用戶端 IP | `sip` | **不是主機自身**——是發起連線的遠端來源（同一台 DC 的三筆登入事件有三個不同 `sip`）。第一輪誤判為「本環境不存在」，其實只是登出事件沒帶 |
+| 時間 | `dt` | ISO-8601 UTC；`estz` 為事件來源時區（`Asia/Taipei`，實測本機＝UTC+8 相符） |
+| 嚴重度 | `sev` | 0～5；已見 `sev=4`（Kerberos 預先驗證失敗）與 `sev=0`（成功登入），與 Error/Warning 的完整對應仍待更多樣本 |
 | 訊息／事件名 | `msg`／`evt` | 皆為繁中——AI 層與報告可直接使用 |
-| 帳號 | `sun`（候選）／`iuid`（SID，確認） | `sun` 語意待第二輪步驟 7 用登入事件核對 |
-| OS／collector 判別 | `pn`／`agent`／`port` | 目前只有 Windows 樣本值，Linux 對照值待第二輪步驟 8 |
+| 帳號 | `sun`／`dun` | **第二輪定案為帳號名**：已見 `vtit.brk`（具名帳號）、`13456`／`182713`（員工編號式帳號）、`-`（無）。`iuid`／`tuid` 為 SID |
+| OS／collector 判別 | `pn`／`agent`／`port` | 三者同值（`Microsoft Active Directory and Windows`）；Linux 對照值仍缺（本環境的 Sentinel「162」無 Linux 主機） |
 
 ## 4. 查詢 payload 草案（欄位名以 probe 定案後代入）
 
@@ -335,33 +336,57 @@ watchlist 推導既有；新增一個「規則表 → Lucene 子句」的純函�
 
 **2026-07-24 實作進度**：步驟 1～2 已完成（`SentinelClient`／`--netiq-probe`／設定欄位／單元測試）。
 
-**2026-07-29 第一輪真實輸出已取得**（元大環境，Sentinel「162」）：§3.5 表格所列欄位對應已定案，
+**2026-07-29 第一輪真實輸出已取得**（Sentinel「162」）：§3.5 表格所列欄位對應已定案，
 但同時發現量級遠超估計（近 24h found≈2470 萬筆）、原探索設計（§3.4「近 24h 全事件 distinct」）不可行、
 且「主機歸屬鍵是哪個欄位」（`repip` 是否等於主機自身 IP）成為最關鍵未決項。當天已擴充
 `--netiq-probe` 加第二輪查詢（步驟 6～12，見 §3.5）＋`SentinelClient.RawGetAsync`（打 ESM
-`/objects/eventsource` 等一般資源用，不走 event-search job 生命週期），956 個單元測試綠、
-`--selftest` 131 項全過。**第二輪真實環境輸出尚未取得**——步驟 3～6 仍全部依賴其收斂的結果
-（主機歸屬鍵定案、探索方案是否走 eventsource、頻道覆蓋現況），故本輪先停在這裡，待使用者
-帶 `--sample-ip`／`--sample-linux-ip` 跑過第二輪並貼回輸出後再繼續。
+`/objects/eventsource` 等一般資源用，不走 event-search job 生命週期）。
+
+**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.232.11.11`；該 Sentinel 無 Linux 主機
+故略過 Linux 段）。**最關鍵的閘門已解除**：
+
+- **主機歸屬鍵定案為 `repip`**——四台 DC（`tc-brkdc01`／`tp-brkdc12`／`tp-brkdc13`／`tp-brkdc21`）
+  對到四個各自不同的 `repip`（`10.218.9.1`／`10.216.9.2`／`10.216.9.3`／`10.220.8.100`），一對一、
+  非共用的 collector 代理 IP；`--sample-ip` 用 `repip:` 也確實查得到該台資料。同時釐清 `sip` 是
+  **用戶端來源 IP**（同一台 DC 的三筆登入事件有三個不同 `sip`），不是主機自身。
+- **`sun` 定案為帳號名**（見 §3.5 表）。
+- **System／Application 頻道有資料但量極少**：`repip:10.232.11.11` 近 24h System=3、Application=152，
+  而該主機總量約 31 萬筆/日（步驟 11 推算），即 **99.95% 是 Security**。研判 collector 對這兩個頻道
+  只轉送 Error/Warning 等級（恰與本機模式的 `ErrorWarningOnly` 同策略）。磁碟／服務／硬體類規則
+  **有**資料來源，但實際涵蓋的嚴重度區間待步驟 9 的樣本傾印確認。
+- **ESM `/objects/eventsource` 端點被拒（401/403）**：目前的探索帳號有 event-search 權限但無
+  ESM 物件讀取權限。探索方案因此仍未定（見 §9）。
+- **發現並修正 `SentinelClient` 的真實 bug**：Sentinel 的 JSON 解析器**不接受 `\uXXXX` 轉義序列**，
+  而 `System.Text.Json` 預設編碼器正好會把 `"` 寫成 `"`、非 ASCII 寫成 `\uXXXX`，導致
+  **片語查詢（`obssvcname:"…"`）整個被 400 拒絕**——片語是規則來源下推 Lucene 的必要語法，
+  這在正式取數管線會是全面性故障。已改用 `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
+  （`SentinelClient.JobBodyJsonOptions`）並加回歸測試。同一個 bug 也讓步驟 5（非法 filter 應被拒絕）
+  一直**為了錯的理由通過**——原本用中文的測試字串是在 JSON 解析階段就被拒，根本沒走到 Lucene
+  語法檢查，已改為純 ASCII 並加上「錯誤訊息若仍是 invalid JSON 就是轉義還有問題」的自我檢查。
 
 ## 9. 未決事項
 
-**第一輪已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`）／頻道（`rv150`）／時間
-（`dt`，UTC）的欄位落點；`dt` 邊界語意（因 found 數過大尚未能人工逐筆核對，第二輪步驟 11
-用窄時間窗重測）。
+**已收斂**：Windows EventID（`rv40`）／事件來源（`obssvcname`）／頻道（`rv150`）／時間（`dt`，UTC）／
+**主機歸屬鍵（`repip`）**／用戶端 IP（`sip`）／帳號（`sun`／`dun`）的欄位落點；System/Application
+頻道確實有資料；IP 篩選 10/50/100 子句語法皆被接受（約 1.7 秒，與子句數無明顯相關）。
 
-**仍待第二輪 probe 收斂**（見 §3.5 步驟 6～12）：
+**仍未決**：
 
-1. **主機歸屬鍵**（最關鍵）：`repip` 是否等於主機自身 IP，或只是 collector 代理 IP；
-   跨主機事件時 `dhn`／`sn`／`repip` 是否分裂成不同語意。
-2. 探索方案：ESM `/objects/eventsource` 端點能否當主機目錄／OS 判別來源
-   （§3.4「近 24h 全事件 distinct」在 2470 萬筆/天的量級下已不可行，需要替代方案）。
-3. `sun` 欄位是否為帳號（樣本值是小整數，疑為員工編號數字型式帳號，待登入事件核對）。
-4. Linux 主機的欄位形狀（program 落點、`pn` 對照值、`sev`↔syslog priority 對應）。
-5. System／Application 頻道是否有轉送到 Sentinel（決定 Windows 非 Security 規則面是否有資料）。
-6. IP 篩選單一 filter 的安全批次大小（10/50/100 語法皆被接受，尚待真實 watchlist 形狀查詢的
-   耗時實測，見 §3.5 步驟 10）。
-7. `obssvcname` 欄位的 term 查詢行為（完整片語 vs 部分詞，決定規則來源能否下推 Lucene）。
-8. 8.5 apidoc 是否有聚合端點（有→Q1 改走聚合，§1.3 設計降為退路；尚待人工開啟 apidoc 頁面確認）。
-9. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，docs/HISTORY.md probe #7）。
-10. token 有效期長短（決定長輪收集中是否需要主動換發）。
+1. **探索方案**：ESM `/objects/eventsource` 被權限拒絕，§3.4「近 24h 全事件 distinct」在
+   2470 萬筆/天下不可行。三個選項待決：(a) 請 Sentinel 管理者授予探索帳號 ESM 讀取權限；
+   (b) 窄時間窗只投影 `repip` 後本地 distinct（涵蓋不完整，需誠實申報）；
+   (c) **放棄自動探索**，主機清單改由既有的 Web 主機頁／CSV 匯入維護（NetIQ 只負責取 log）。
+   ——(c) 在功能上完全可行，自動探索本來就只是便利性功能，不是取數管線的前提。
+2. `obssvcname` 的 term 查詢行為（完整片語 vs 部分詞）——第二輪因上述 JSON 轉義 bug 未測到，
+   修正後需重跑步驟 12。
+3. System／Application 頻道實際涵蓋的嚴重度區間（只有 Error？含 Warning？）——步驟 9 已改為
+   傾印實際樣本，重跑即可確認；這決定磁碟／服務／硬體類規則有多少實際可觸發。
+4. Linux 主機的欄位形狀（program 落點、`pn` 對照值、`sev`↔syslog priority 對應）——
+   Sentinel「162」無 Linux 主機，需其他 Sentinel 或確認全環境皆無（若全無則
+   docs/LINUX-RULES-PLAN.md 的 P3 無資料來源，應標記暫停）。
+5. 真實 watchlist 形狀查詢（`rv40` 事件 ID 集合＋50 台 `repip`）的耗時與命中量——
+   決定夜間窗時程與批次大小，待主機清單就緒後實測。
+6. `dt` 邊界的人工核對（步驟 11 已輸出可重現的絕對區間與可數的 found 值，待人工於 Web UI 比對）。
+7. 8.5 apidoc 是否有聚合端點（有→Q1 改走聚合，§1.3 設計降為退路；尚待人工開啟 apidoc 頁面確認）。
+8. 多網卡主機以哪個 IP 回報（「查無資料」假象風險，docs/HISTORY.md probe #7）。
+9. token 有效期長短（決定長輪收集中是否需要主動換發）。

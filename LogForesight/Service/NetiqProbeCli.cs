@@ -154,16 +154,25 @@ public static class NetiqProbeCli
                 }
             });
 
-            ok &= await Step(5, "失敗路徑：非法 filter 語法應被拒絕", async () =>
+            // filter 內容刻意全用 ASCII：2026-07-29 第二輪實測發現 Sentinel 的 JSON 解析器
+            // 不吃 \uXXXX 轉義（已於 SentinelClient.JobBodyJsonOptions 修正），原本用中文的
+            // 「((( 語法錯誤」是在 **JSON 解析階段**就被拒，根本沒走到 Lucene 語法檢查——
+            // 這個步驟等於一直為了錯的理由通過。改成純 ASCII 的未閉合括號才真的測到 Lucene。
+            ok &= await Step(5, "失敗路徑：非法 Lucene 語法應被拒絕（錯誤訊息應指向查詢語法，不是 JSON 格式）", async () =>
             {
                 try
                 {
-                    await client.SearchAsync(new SentinelSearchRequest("((( 語法錯誤", now.AddMinutes(-5), now, MaxResults: 1));
+                    await client.SearchAsync(new SentinelSearchRequest("((( unclosed", now.AddMinutes(-5), now, MaxResults: 1));
                     Console.WriteLine("     ⚠ 非法 filter 卻沒有失敗——Sentinel 可能容忍此語法，或錯誤發生在非預期階段，請留意。");
                 }
                 catch (SentinelClientException ex)
                 {
                     Console.WriteLine($"     ✓ 非法 filter 如預期被拒絕：{ex.Message}");
+                    if (ex.Message.Contains("invalid JSON value", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine("     ⚠ 但錯誤是「invalid JSON value」＝卡在 JSON 解析、沒測到 Lucene 語法檢查，" +
+                                          "請回報這行（代表請求本文的轉義仍有問題）。");
+                    }
                 }
             });
 
@@ -233,17 +242,28 @@ public static class NetiqProbeCli
             }
             else
             {
-                ok &= await Step(9, $"頻道覆蓋（repip:{sampleIp} 的 System/Application 近 24h 是否有事件進 Sentinel）", async () =>
+                // 傾印實際事件而不只印 found 數：磁碟／服務／硬體類規則比對的就是 System 頻道，
+                // 但到目前為止一筆 System/Application 樣本都沒有（前兩輪抓到的全是 Security），
+                // SentinelFieldMap 對這兩個頻道等於零依據。順帶也核實 dhn/sn 是否確實等於
+                // 這台 sampleIp 的主機名（確認 repip 是主機自身而不是代收多台的 collector）。
+                ok &= await Step(9, $"頻道覆蓋＋樣本（repip:{sampleIp} 的 System/Application 近 24h）", async () =>
                 {
-                    var system = await client.SearchAsync(new SentinelSearchRequest(
-                        $"(repip:{sampleIp}) AND (rv150:System)", now.AddHours(-24), now, MaxResults: 1));
-                    var application = await client.SearchAsync(new SentinelSearchRequest(
-                        $"(repip:{sampleIp}) AND (rv150:Application)", now.AddHours(-24), now, MaxResults: 1));
-                    Console.WriteLine($"     System found={system.Found}｜Application found={application.Found}");
-                    if (system.Found == 0)
-                        Console.WriteLine("     ⚠ System 頻道近 24h 無事件——若這台主機平常確實有 System log，代表該頻道未轉送到 Sentinel，Windows 面此規則類別將全數不適用（需誠實申報，不是「沒告警」）。");
-                    if (application.Found == 0)
-                        Console.WriteLine("     ⚠ Application 頻道近 24h 無事件，同上。");
+                    foreach (var channel in new[] { "System", "Application" })
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest(
+                            $"(repip:{sampleIp}) AND (rv150:{channel})", now.AddHours(-24), now, MaxResults: 2));
+                        Console.WriteLine($"     {channel} found={result.Found}，取樣={result.Events.Count} 筆");
+
+                        foreach (var evt in result.Events)
+                        {
+                            Console.WriteLine($"       · {string.Join("，", evt.Fields.Select(kv => $"{kv.Key}={Preview(kv.Value)}"))}");
+                        }
+                        if (result.Found == 0)
+                        {
+                            Console.WriteLine($"     ⚠ {channel} 頻道近 24h 無事件——若這台主機平常確實有 {channel} log，" +
+                                              "代表該頻道未轉送到 Sentinel，Windows 面此規則類別將全數不適用（需誠實申報，不是「沒告警」）。");
+                        }
+                    }
                 });
             }
 

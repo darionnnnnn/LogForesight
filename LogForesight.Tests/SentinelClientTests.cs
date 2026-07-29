@@ -426,6 +426,41 @@ public class SentinelClientTests
         Assert.Throws<SentinelClientException>(() => new SentinelClient(Server(baseUrl: ""), Settings()));
     }
 
+    [Fact]
+    public async Task 建立工作的請求本文_引號與非ASCII不得寫成Unicode轉義()
+    {
+        // Sentinel 的 JSON 解析器不接受 \uXXXX 轉義序列，會回 400「invalid JSON value」
+        // （2026-07-29 第二輪 probe 實測：片語查詢 obssvcname:"..." 整個被拒）。
+        // System.Text.Json 預設編碼器正好會把 " 寫成 "、中文寫成 \uXXXX——
+        // 片語查詢是規則來源下推 Lucene 的必要語法，這條測試釘住不會改回預設編碼器。
+        var handler = new StubHandler();
+        handler.OnSend = (req, _) =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Post && url == AuthUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"Token\":\"tok-1\"}"));
+            if (req.Method == HttpMethod.Post && url == JobCollectionUrl())
+                return Task.FromResult(JsonResponse(HttpStatusCode.Created, "{}", locationHeader: JobUrl("1")));
+            if (req.Method == HttpMethod.Get && url == JobUrl("1"))
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, "{\"status\":2,\"found\":0,\"avail\":0}"));
+            if (req.Method == HttpMethod.Delete)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+
+            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        };
+
+        await using var client = new SentinelClient(Server(), Settings(), handler);
+        await client.SearchAsync(new SentinelSearchRequest(
+            "obssvcname:\"Microsoft-Windows-Security-Auditing\" AND evt:帳戶已登出",
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow));
+
+        var createBody = handler.Requests.Single(r => r.Method == HttpMethod.Post && r.Url == JobCollectionUrl()).Body!;
+
+        Assert.DoesNotContain("\\u0022", createBody);          // 引號不得寫成 "
+        Assert.Contains("\\\"Microsoft-Windows", createBody);  // 應為 JSON 標準的 \" 轉義
+        Assert.Contains("帳戶已登出", createBody);              // 非 ASCII 原樣保留，不轉成 \uXXXX
+    }
+
     // ── RawGetAsync：非 event-search job 的一般 REST 資源讀取（ESM eventsource 等） ──
 
     [Fact]
