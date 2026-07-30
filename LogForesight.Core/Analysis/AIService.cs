@@ -215,7 +215,16 @@ public class AIService
                     throw new EmptyAiResponseException();
                 }
 
-                return text;
+                // 清洗 channel 分段標記＋簡轉繁（docs/FEEDBACK-3-PLAN.md #7）：整段皆思考、
+                // final 段被 max_tokens 截斷等情況清洗後會變空，一併視為空回應觸發重試，
+                // 不把半截思考當成回覆流進分析結果
+                var sanitized = AiOutputSanitizer.Sanitize(text);
+                if (sanitized == null)
+                {
+                    throw new EmptyAiResponseException();
+                }
+
+                return sanitized;
             });
 
             Log.Info("Chat 完成：耗時={ElapsedMs}ms, 回應長度={ResponseChars} 字元", sw.ElapsedMilliseconds, content.Length);
