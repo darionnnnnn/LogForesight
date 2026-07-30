@@ -1092,6 +1092,26 @@ a.lf-stat:hover .lf-card,
     min-width: 8rem;
 }
 
+/* 勾選併入「處理狀態」欄右上角（docs/FEEDBACK-4-PLAN.md §1）：取代原本獨立、
+   偏窄不好點的「選取」欄。checkbox 絕對定位在右上角，內容（statusControl 的
+   輸出）保留原本的排版流；右側留白避免文字被壓到 checkbox 底下。 */
+.lf-status-cell__wrap {
+    position: relative;
+    padding-right: 1.75rem;
+}
+
+/* 加大點擊範圍：預設 checkbox 尺寸太小，2000 台規模下逐列勾選是高頻操作，
+   ~1.75rem 見方的可點區域比預設瀏覽器尺寸（約 1rem）好點得多 */
+.lf-status-cell__checkbox {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    cursor: pointer;
+}
+
 /* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
    取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
    （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
