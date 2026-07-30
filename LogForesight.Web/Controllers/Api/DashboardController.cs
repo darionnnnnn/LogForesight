@@ -42,6 +42,13 @@ public class HostDetailController : ControllerBase
     [HttpGet("{hostId:long}")]
     public ApiResponse<HostDetailDto> Get(long hostId, [FromQuery] int days = 30) =>
         ApiResponse<HostDetailDto>.Ok(_service.GetHostDetail(hostId, Math.Clamp(days, 7, 90)));
+
+    /// <summary>某個問題（Source+EventId）的逐日發生明細（docs/FEEDBACK-4-PLAN.md §3）：
+    /// 重點問題彙總表某一列展開時查詢，days 與外層時間軸期間一致</summary>
+    [HttpGet("{hostId:long}/issues")]
+    public ApiResponse<HostIssueOccurrenceDto> Issues(
+        long hostId, [FromQuery] string source, [FromQuery] int eventId, [FromQuery] int days = 30) =>
+        ApiResponse<HostIssueOccurrenceDto>.Ok(_service.GetHostIssueOccurrences(hostId, source, eventId, Math.Clamp(days, 7, 90)));
 }
 
 /// <summary>報表（§9.6）</summary>

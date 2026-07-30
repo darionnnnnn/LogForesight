@@ -645,6 +645,129 @@ public class RecordQueryService
     }
 
     /// <summary>
+    /// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/FEEDBACK-4-PLAN.md §3）：點某個
+    /// 問題（Source+EventId）看它在期間內逐日出現的頻率、間隔與各日處理狀態。與
+    /// <see cref="GetHostDetail"/> 共用同一套別名展開＋<c>applyDayRiskVisibility:false</c> 豁免
+    /// （時間軸與這裡都要看完整證據，不受「日風險等級顯示」設定影響）。
+    /// </summary>
+    public HostIssueOccurrenceDto GetHostIssueOccurrences(long hostId, string source, int eventId, int days)
+    {
+        _visibility.EnsureVisible(hostId);
+        var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
+
+        var from = DateTime.Today.AddDays(-days + 1);
+        var records = _repository.Query(new RecordQueryFilter
+        {
+            Hosts = _repository.ResolveHostKeys(hostId),
+            From = from,
+            Source = source,
+            EventId = eventId
+        }, applyDayRiskVisibility: false)
+            // 合併當天可能有存活主機與墓碑各一筆，取存活主機那筆（同 GetHostDetail 的既有處理）
+            .GroupBy(r => r.Date.Date)
+            .Select(g => g.FirstOrDefault(r => r.HostId == hostId) ?? g.First())
+            .Where(r => r.TopIssues.Any(i => i.Source == source && i.EventId == eventId))
+            .OrderBy(r => r.Date)
+            .ToList();
+
+        if (records.Count == 0) return new HostIssueOccurrenceDto();
+
+        var hostName = host.HostName;
+        // 一個 (Source,EventId) 可能對到多個完整 IssueKey（LogName/EntryType 不同）——
+        // 逐日取當天實際命中的那個簽章，狀態也各自對應那個簽章的標記，不強行假設全期間同一把鍵
+        var issueKeys = records
+            .SelectMany(r => r.TopIssues.Where(i => i.Source == source && i.EventId == eventId))
+            .Select(IssueSignatureKey.For)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet();
+
+        var issueHandlings = _issueHandlings.GetMany(new[] { hostName }, records.Min(r => r.Date), records.Max(r => r.Date));
+        var noiseMarks = _noiseMarks.GetForHost(hostName).ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var occurrences = new List<HostIssueOccurrenceDayDto>();
+        foreach (var record in records)
+        {
+            var issue = record.TopIssues.First(i => i.Source == source && i.EventId == eventId);
+            var key = IssueSignatureKey.For(issue);
+            var handling = issueHandlings.FirstOrDefault(h => h.Date.Date == record.Date.Date && string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+            var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
+
+            occurrences.Add(new HostIssueOccurrenceDayDto
+            {
+                Date = record.Date.ToString("yyyy-MM-dd"),
+                Count = issue.Count,
+                RiskLevel = record.RiskLevel,
+                StatusText = status.Length > 0 ? IssueStatusText(status)
+                    : isDefaultUnhandled ? "不處理（預設）"
+                    : noiseMark != null ? "已知雜訊（自動）"
+                    : "未處理",
+                FromCase = handling?.CaseId != null
+            });
+        }
+
+        // 案件行：有進行中或最近結案的案件時才顯示——「上次誰處理的、怎麼結的」，
+        // 即使案件已結案也保留（不是只顯示進行中）
+        var relevantCase = _cases.GetMany(new[] { hostName })
+            .Where(c => issueKeys.Contains(c.IssueKey))
+            .OrderByDescending(c => c.ClosedAt == null)
+            .ThenByDescending(c => c.UpdatedAt)
+            .FirstOrDefault();
+
+        var stats = BuildOccurrenceStats(records);
+        stats.TotalCount = occurrences.Sum(o => o.Count);
+
+        return new HostIssueOccurrenceDto
+        {
+            Stats = stats,
+            Case = relevantCase == null ? null : new HostIssueOccurrenceCaseDto
+            {
+                HandlerId = relevantCase.HandlerId,
+                HandlerName = relevantCase.HandlerId.HasValue ? _users.Get(relevantCase.HandlerId.Value)?.DisplayName : null,
+                Status = relevantCase.Status,
+                StatusText = IssueStatusText(relevantCase.Status),
+                FirstLinkedDate = relevantCase.FirstLinkedDate.ToString("yyyy-MM-dd"),
+                ClosedAt = relevantCase.ClosedAt
+            },
+            Occurrences = occurrences
+        };
+    }
+
+    /// <summary>出現頻率統計：平均間隔（只出現一天時無意義，回 null）、最長連續出現天數
+    /// （日曆日相鄰才算連續，缺一天就斷）</summary>
+    private static HostIssueOccurrenceStatsDto BuildOccurrenceStats(List<DailyAnalysisRecord> records)
+    {
+        var dates = records.Select(r => r.Date.Date).Distinct().OrderBy(d => d).ToList();
+
+        double? avgGapDays = null;
+        if (dates.Count > 1)
+        {
+            var gaps = new List<double>();
+            for (var i = 1; i < dates.Count; i++) gaps.Add((dates[i] - dates[i - 1]).TotalDays);
+            avgGapDays = gaps.Average();
+        }
+
+        var longestStreak = dates.Count > 0 ? 1 : 0;
+        var currentStreak = longestStreak;
+        for (var i = 1; i < dates.Count; i++)
+        {
+            currentStreak = (dates[i] - dates[i - 1]).Days == 1 ? currentStreak + 1 : 1;
+            longestStreak = Math.Max(longestStreak, currentStreak);
+        }
+
+        return new HostIssueOccurrenceStatsDto
+        {
+            DaysSeen = dates.Count,
+            // TotalCount 由呼叫端另外從逐日結果加總覆寫（BuildOccurrenceStats 這裡沒有
+            // Source/EventId 可篩選，records.TopIssues 是整日全部問題，不能直接加總）
+            AvgGapDays = avgGapDays,
+            LongestStreak = longestStreak,
+            FirstSeen = dates.Count > 0 ? dates[0].ToString("yyyy-MM-dd") : string.Empty,
+            LastSeen = dates.Count > 0 ? dates[^1].ToString("yyyy-MM-dd") : string.Empty
+        };
+    }
+
+    /// <summary>
     /// 主機詳情頁「重點問題（期間彙總）」（docs/FEEDBACK-3-PLAN.md #4）：依 Source+EventId
     /// 分組——與 <see cref="ClusterSignatures"/> 共用 <see cref="GroupIssuesBySignature"/>，
     /// 這裡關心「出現幾天」而不是「幾台主機」，維度不同故各自 Select，分組鍵定義只寫一次。
@@ -863,6 +986,27 @@ public class RecordQueryService
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// 問題層級狀態判定的單點邏輯（docs/FEEDBACK-4-PLAN.md §3）：未標記時看已知雜訊記憶／
+    /// 未處理計算等級推導出「不處理（預設）」「已知雜訊（自動）」；明確標記過（含 open）一律
+    /// 尊重使用者的判斷，不再套自動推導。ToIssueDto（詳情頁）與主機詳情問題發生明細
+    /// （GetHostIssueOccurrences）共用，避免兩處各自維護一份判定條件遲早漂移不一致。
+    /// </summary>
+    private static (string Status, bool IsDefaultUnhandled, NoiseMark? NoiseMark) ResolveIssueStatus(
+        LogIssueSignature issue, IssueHandling? handling, Dictionary<string, NoiseMark>? noiseMarks,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
+    {
+        var key = IssueSignatureKey.For(issue);
+        var status = handling?.Status ?? string.Empty;
+
+        // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
+        var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
+        // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
+        var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
+
+        return (status, isDefaultUnhandled, noiseMark);
+    }
+
     private static IssueDto ToIssueDto(
         LogIssueSignature issue,
         Dictionary<string, KnownIssueRule>? guidance,
@@ -873,12 +1017,7 @@ public class RecordQueryService
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
-        var status = handling?.Status ?? string.Empty;
-
-        // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
-        var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
-        // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
-        var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
+        var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
 
         (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)? openCase =
             openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
