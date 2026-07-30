@@ -23,7 +23,7 @@ public interface IRecordRepository
     /// 分頁查詢（已套用目前登入者的可見範圍）——docs/HISTORY.md P1-2。
     /// 可下推的條件盡量在 SQL 端完成排序與分頁，見 <see cref="IAnalysisRecordQuery.QueryPage"/>。
     /// </summary>
-    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize);
+    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false);
 
     /// <summary>單筆紀錄；不在可見範圍內回 null（不區分「不存在」與「沒權限」）</summary>
     DailyAnalysisRecord? GetOne(long hostId, DateTime date);
@@ -60,10 +60,10 @@ public class RecordRepository : IRecordRepository
         return ApplySeverityVisibility(_records.Query(filter));
     }
 
-    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         ApplyVisibility(filter);
-        var paged = _records.QueryPage(filter, page, pageSize);
+        var paged = _records.QueryPage(filter, page, pageSize, sortKey, ascending);
         paged.Items = ApplySeverityVisibility(paged.Items);
         return paged;
     }

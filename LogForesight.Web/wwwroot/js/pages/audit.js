@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderPagination } from '../core/ui.js';
+import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize } from '../core/ui.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 const RESULT_META = {
@@ -16,6 +16,8 @@ const RESULT_META = {
 };
 
 let currentPage = 1;
+let pageSize = loadPageSize('audit');
+let sort = { key: 'occurredAt', dir: 'desc' };   // 稽核頁原本恆為新到舊，維持同一預設
 let lastResult = null;
 
 async function init() {
@@ -71,7 +73,9 @@ async function search() {
     const result = document.getElementById('audit-result').value;
     if (result) params.set('result', result);
 
+    params.set('dir', sort.dir);
     params.set('page', String(currentPage));
+    params.set('pageSize', String(pageSize));
 
     lastResult = await api.get(`/api/audit?${params}`);
     render();
@@ -83,7 +87,7 @@ function render() {
 
     renderTable(document.getElementById('audit-list'), {
         columns: [
-            { title: '時間', render: e => formatDateTime(e.occurredAt) },
+            { title: '時間', sortKey: 'occurredAt', sortDefaultDir: 'desc', render: e => formatDateTime(e.occurredAt) },
             { title: '帳號', render: e => e.account },
             { title: '動作', render: e => e.actionText },
             { title: '結果', render: e => resultBadge(e.result) },
@@ -91,6 +95,12 @@ function render() {
             { title: '來源 IP', render: e => e.ipAddress ?? '' }
         ],
         rows: lastResult.items,
+        sort,
+        onSort: (key, dir) => {
+            sort = { key, dir };
+            currentPage = 1;
+            search();
+        },
         empty: { title: '沒有符合條件的操作紀錄', hint: '請調整日期區間或動作條件。' }
     });
 
@@ -143,6 +153,13 @@ function renderPager() {
             currentPage = page;
             search();
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        pageSize,
+        onPageSize: size => {
+            pageSize = size;
+            savePageSize('audit', size);
+            currentPage = 1;
+            search();
         }
     });
 }

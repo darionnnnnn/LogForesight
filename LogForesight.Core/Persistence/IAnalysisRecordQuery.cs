@@ -68,6 +68,18 @@ public interface IAnalysisRecordQuery
     /// 這是 2000 台規模下清單頁效能的關鍵。若篩選條件裡含有無法下推的殘餘（見
     /// <see cref="EfAnalysisRecordStore"/> 的實作說明），會退回「SQL 過濾＋整批撈回→記憶體排序與分頁」，
     /// 正確性優先，退化的只有效能。
+    ///
+    /// sortKey（選填，表格表頭排序，docs/WEB-SPEC.md §9.2）：date | host | risk。
+    /// null／不合法值＝維持預設的「風險→關聯→日期」緊急程度排序（既有行為不變）。
     /// </summary>
-    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize);
+    PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false);
+
+    /// <summary>
+    /// 窗口內「哪個主機（HostId）、哪一天有分析紀錄」的輕量投影（執行監控頁 NetIQ 主機專用，
+    /// docs/WEB-SPEC.md §9.10）。NetIQ 主機沒有個別的 <c>lf_batch_runs</c> 紀錄（管線只用主批次
+    /// 那一筆彙總計數，見 <c>NetiqPipelineService</c>），「當日是否有分析紀錄」是唯一可用的執行代理指標。
+    /// 只投影 HostId／RecordDate，不反序列化整份 ContentJson——避免逐格查詢在兩千台規模下退化成
+    /// 全量載入。HostId=0（舊列／無主機識別）不列入，NetIQ 紀錄必有真實 HostId。
+    /// </summary>
+    HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to);
 }

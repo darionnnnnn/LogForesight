@@ -159,6 +159,43 @@ public class HostAdminServiceTests
 
         Assert.Single(result.Items);
     }
+
+    // ── 表格排序（表頭點擊排序，取代原本獨立的排序下拉）─────────────────
+
+    [Fact]
+    public void GetHosts_依IP升冪排序()
+    {
+        _hosts.Upsert(new WebHost { HostName = "C", IpAddress = "10.0.0.30" });
+        _hosts.Upsert(new WebHost { HostName = "A", IpAddress = "10.0.0.10" });
+        _hosts.Upsert(new WebHost { HostName = "B", IpAddress = "10.0.0.20" });
+
+        var result = Create().GetHosts(new HostSearchRequest { Sort = "ip", Dir = "asc" });
+
+        Assert.Equal(new[] { "A", "B", "C" }, result.Items.Select(h => h.HostName));
+    }
+
+    [Fact]
+    public void GetHosts_Dir為desc時整體反轉()
+    {
+        _hosts.Upsert(new WebHost { HostName = "A" });
+        _hosts.Upsert(new WebHost { HostName = "B" });
+        _hosts.Upsert(new WebHost { HostName = "C" });
+
+        var result = Create().GetHosts(new HostSearchRequest { Sort = "name", Dir = "desc" });
+
+        Assert.Equal(new[] { "C", "B", "A" }, result.Items.Select(h => h.HostName));
+    }
+
+    [Fact]
+    public void GetHosts_依最近回報排序_null視為最舊()
+    {
+        _hosts.Upsert(new WebHost { HostName = "無回報" });
+        _hosts.Upsert(new WebHost { HostName = "有回報", LastReportAt = DateTime.Now });
+
+        var result = Create().GetHosts(new HostSearchRequest { Sort = "lastReport", Dir = "desc" });
+
+        Assert.Equal(new[] { "有回報", "無回報" }, result.Items.Select(h => h.HostName));
+    }
 }
 
 /// <summary>HostAdminService 只需要 GetOverview()（IP 衝突偵測，§5.4 D-4 的 conflict 篩選）——

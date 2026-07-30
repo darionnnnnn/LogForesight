@@ -58,7 +58,7 @@ public class AuditLogStore
 
         if (noFilter)
         {
-            var (lines, total) = _log.ReadPage((page - 1) * pageSize, pageSize);
+            var (lines, total) = _log.ReadPage((page - 1) * pageSize, pageSize, query.Ascending);
             return new PagedResult<AuditEntry>
             {
                 Items = JsonLogParser.Parse<AuditEntry>(lines, JsonOptions),
@@ -70,10 +70,11 @@ public class AuditLogStore
 
         // 有篩選條件：以日期範圍先在 SQL 端窄化候選集（沒有時間戳記的既存列一律視為候選，
         // 精確判斷交給下面的 Matches），其餘欄位在記憶體過濾——仍避免了讀回「範圍外」的舊資料
-        var filtered = JsonLogParser.Parse<AuditEntry>(_log.ReadLines(query.From, query.To), JsonOptions)
-            .Where(e => Matches(e, query))
-            .OrderByDescending(e => e.OccurredAt)
-            .ThenByDescending(e => e.AuditId)
+        var ordered = JsonLogParser.Parse<AuditEntry>(_log.ReadLines(query.From, query.To), JsonOptions)
+            .Where(e => Matches(e, query));
+        var filtered = (query.Ascending
+                ? ordered.OrderBy(e => e.OccurredAt).ThenBy(e => e.AuditId)
+                : ordered.OrderByDescending(e => e.OccurredAt).ThenByDescending(e => e.AuditId))
             .ToList();
 
         return new PagedResult<AuditEntry>

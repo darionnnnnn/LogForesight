@@ -29,6 +29,7 @@ public class AuditController : ControllerBase
         [FromQuery] string? actions,
         [FromQuery] string? targetKind,
         [FromQuery] string? result,
+        [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
@@ -40,6 +41,7 @@ public class AuditController : ControllerBase
             To = ParseDate(to)?.AddDays(1).AddSeconds(-1),
             UserId = userId,
             TargetKind = targetKind,
+            Ascending = dir == "asc",
             Page = page,
             PageSize = pageSize
         };

@@ -59,6 +59,19 @@ public class AuditLogStorePageTests : IDisposable
         Assert.Empty(result.Items);
     }
 
+    /// <summary>時間表頭排序（Ascending=true）：無篩選路徑走 SQL 端 ReadPage(ascending)</summary>
+    [Fact]
+    public void Query_無篩選條件_Ascending時舊到新()
+    {
+        var store = CreateStore();
+        for (var i = 0; i < 3; i++)
+            store.Append(Entry("x", DateTime.Today.AddMinutes(i)));
+
+        var result = store.Query(new AuditQuery { Ascending = true, PageSize = 3 });
+
+        Assert.Equal(new long[] { 1, 2, 3 }, result.Items.Select(e => e.AuditId));
+    }
+
     // ── 有篩選條件：日期範圍窄化＋記憶體精確過濾 ────────────────────────────────
 
     [Fact]
@@ -159,6 +172,20 @@ public class AuditLogStorePageTests : IDisposable
         // CreatedAt 為 null 時 SQL 端會保守地把這行也撈進候選集，但記憶體端的 Matches
         // 用的是精確的 OccurredAt，仍必須把它排除——這是本方案「窄化不保證精確、精確判斷靠記憶體」的驗收點
         Assert.Empty(result.Items);
+    }
+
+    /// <summary>時間表頭排序（Ascending=true）：有篩選路徑走記憶體排序</summary>
+    [Fact]
+    public void Query_有篩選條件_Ascending時舊到新()
+    {
+        var store = CreateStore();
+        store.Append(Entry("login", DateTime.Today.AddMinutes(0)));
+        store.Append(Entry("login", DateTime.Today.AddMinutes(1)));
+        store.Append(Entry("login", DateTime.Today.AddMinutes(2)));
+
+        var result = store.Query(new AuditQuery { UserId = null, Actions = new List<string> { "login" }, Ascending = true });
+
+        Assert.Equal(new long[] { 1, 2, 3 }, result.Items.Select(e => e.AuditId));
     }
 
     // ── Count ────────────────────────────────────────────────────────────────

@@ -12,7 +12,10 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, renderPagination, withBusy, renderChips } from '../core/ui.js';
+import {
+    renderTable, renderLoading, toast, renderPagination, withBusy, renderChips,
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
+} from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES, severityName, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
@@ -24,6 +27,10 @@ const listContainer = document.getElementById('record-list');
 
 let currentView = 'detail';
 let currentPage = 1;
+let pageSize = loadPageSize('records');
+// 表頭排序：key 隨視角而異（明細 date/host/risk；依主機 host/highRisk/...；依日期 date/hostCount/...），
+// 因此視角切換時重設（見 view-toggle 事件），不像篩選條件那樣沿用
+let sort = { key: '', dir: 'desc' };
 let lastResult = null;
 
 let aiAvailable = false;
@@ -237,6 +244,9 @@ function applyUrlToForm() {
     currentView = ['detail', 'host', 'date'].includes(params.get('view')) ? params.get('view') : 'detail';
     setActiveView(currentView);
     currentPage = Number(params.get('page')) || 1;
+    sort = { key: params.get('sort') ?? '', dir: params.get('dir') === 'asc' ? 'asc' : 'desc' };
+    const urlPageSize = Number(params.get('pageSize'));
+    pageSize = PAGE_SIZE_OPTIONS.includes(urlPageSize) ? urlPageSize : loadPageSize('records');
 }
 
 function splitCsv(csv) {
@@ -300,6 +310,13 @@ function buildQueryString(filters, page) {
     if (filters.statuses) params.set('statuses', filters.statuses);
     if (filters.overdue) params.set('overdue', filters.overdue);
     if (currentView !== 'detail') params.set('view', currentView);
+    if (sort.key) {
+        params.set('sort', sort.key);
+        params.set('dir', sort.dir);
+    }
+    // 一律明傳：後端 pageSize 預設 50，與這裡的預設 20（PAGE_SIZE_OPTIONS）不同，
+    // 省略此參數會讓 API 實際回 50 筆卻誤以為是 20
+    params.set('pageSize', String(pageSize));
     if (page > 1) params.set('page', String(page));
     return params.toString();
 }
@@ -379,21 +396,30 @@ function render() {
 function renderDetailView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', render: r => dateLink(r) },
-            { title: '主機', render: r => r.hostName },
-            { title: '風險', render: r => riskBadge(r.riskLevel) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => dateLink(r) },
+            { title: '主機', sortKey: 'host', render: r => r.hostName },
+            { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
             { title: '類型', render: r => categoryBadges(r.categories) },
             { title: '處理狀態', render: r => handlingCell(r) },
             { title: '處理人', render: r => r.handlerName ?? '' }
         ],
         rows: lastResult.items,
+        sort,
+        onSort: applySort,
         rowHref: r => `/records/${r.hostId}/${r.date}${detailQuery()}`,
         empty: {
             title: '沒有符合條件的資料',
             hint: '請調整日期區間或篩選條件；若剛部署，請先確認批次分析已執行過。'
         }
     });
+}
+
+/** 表頭排序共用（三個視角的 sortKey 命名空間各自獨立，見 sort 變數註解） */
+function applySort(key, dir) {
+    sort = { key, dir };
+    currentPage = 1;
+    search();
 }
 
 /** 類別條件跟著連結進明細（§8.4 下鑽上下文不中斷）：明細頁會高亮並捲到對應的問題分節 */
@@ -475,15 +501,17 @@ function handlingCell(record) {
 function renderHostView() {
     renderTable(listContainer, {
         columns: [
-            { title: '主機', render: h => textCell(h.hostName) },
-            { title: '高風險', className: 'text-end', render: h => String(h.highRiskDays) },
-            { title: '中風險', className: 'text-end', render: h => String(h.mediumRiskDays) },
-            { title: '低風險', className: 'text-end', render: h => String(h.lowRiskDays) },
-            { title: '關聯訊號', className: 'text-end', render: h => correlationCell(h.correlationDays) },
+            { title: '主機', sortKey: 'host', render: h => textCell(h.hostName) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: h => String(h.highRiskDays) },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: h => String(h.mediumRiskDays) },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: h => String(h.lowRiskDays) },
+            { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: h => correlationCell(h.correlationDays) },
             { title: '類型', render: h => categoryBadges(h.categories) },
             { title: '最新狀況', render: h => `${h.latestDate}　${h.latestHeadline}` }
         ],
         rows: lastResult.items,
+        sort,
+        onSort: applySort,
         rowHref: h => h.hostId > 0 ? `/hosts/${h.hostId}` : null,
         empty: { title: '沒有符合條件的主機', hint: '請調整篩選條件或日期區間。' }
     });
@@ -494,15 +522,17 @@ function renderHostView() {
 function renderDateView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', render: d => dateViewLink(d) },
-            { title: '主機數', className: 'text-end', render: d => String(d.hostCount) },
-            { title: '高風險', className: 'text-end', render: d => String(d.highRiskHosts) },
-            { title: '中風險', className: 'text-end', render: d => String(d.mediumRiskHosts) },
-            { title: '低風險', className: 'text-end', render: d => String(d.lowRiskHosts) },
-            { title: '關聯訊號', className: 'text-end', render: d => correlationCell(d.correlationHosts) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => dateViewLink(d) },
+            { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => String(d.hostCount) },
+            { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => String(d.highRiskHosts) },
+            { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => String(d.mediumRiskHosts) },
+            { title: '低風險', className: 'text-end', sortKey: 'lowRisk', sortDefaultDir: 'desc', render: d => String(d.lowRiskHosts) },
+            { title: '關聯訊號', className: 'text-end', sortKey: 'correlation', sortDefaultDir: 'desc', render: d => correlationCell(d.correlationHosts) },
             { title: '類型', render: d => categoryBadges(d.categories) }
         ],
         rows: lastResult.items,
+        sort,
+        onSort: applySort,
         // 點某天 → 切到明細視角並鎖定這天（單日區間）
         rowHref: d => detailForDate(d.date),
         empty: { title: '沒有符合條件的日期', hint: '請調整篩選條件或日期區間。' }
@@ -514,6 +544,9 @@ function detailForDate(date) {
     const params = new URLSearchParams(buildQueryString(collectFilters(), 1));
     params.delete('view');   // 明細是預設視角，不需要參數
     params.delete('page');
+    // 依日期視角的排序欄位（如 hostCount）在明細視角不存在，不該帶過去
+    params.delete('sort');
+    params.delete('dir');
     params.set('from', date);
     params.set('to', date);
     return `?${params.toString()}`;
@@ -567,6 +600,13 @@ function renderPager() {
             currentPage = page;
             search();
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        pageSize,
+        onPageSize: size => {
+            pageSize = size;
+            savePageSize('records', size);
+            currentPage = 1;
+            search();
         }
     });
 }
@@ -602,6 +642,7 @@ document.getElementById('view-toggle').addEventListener('click', event => {
     setActiveView(currentView);
     updateAiSummaryButton();
     currentPage = 1;
+    sort = { key: '', dir: 'desc' };   // 排序欄位命名空間隨視角而異，換視角不沿用
     search();
 });
 

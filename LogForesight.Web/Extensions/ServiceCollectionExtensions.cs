@@ -202,11 +202,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
         services.AddScoped<NetiqOptionsService>();
 
-        // NetIQ 主動探索：Development 用 Stub（離線可跑全流程），其餘用真連線
+        // NetIQ 主動探索：預設 Development 用 Stub（離線可跑全流程），其餘用真連線
         // （SentinelRestDirectoryClient，走 SentinelClient 的網段範圍掃描，
-        // docs/NETIQ-API-PLAN.md §3.4，2026-07-29 定案）
+        // docs/NETIQ-API-PLAN.md §3.4，2026-07-29 定案）；Netiq:DiscoveryClient=Stub/Real
+        // 可明確覆寫這個判斷（見 NetiqDiscoverySettings），開發機才連得到真實 Sentinel 試掃。
         services.AddScoped<INetiqDirectoryClient>(sp =>
-            sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment()
+            ShouldUseStubNetiqClient(
+                sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment(),
+                sp.GetRequiredService<WebAppSettings>().Netiq.DiscoveryClient)
                 ? new StubNetiqDirectoryClient()
                 : new SentinelRestDirectoryClient(sp.GetRequiredService<NetiqOptionsStore>()));
         services.AddScoped<NetiqDiscoveryService>();
@@ -240,5 +243,17 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ImportService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// NetIQ 主動探索要不要用 Stub（見 <see cref="NetiqDiscoverySettings"/>）。抽成純函數
+    /// 而不是內嵌在 DI lambda 裡——這條判斷本身值得單獨測試（尤其「Auto 遇到未知值時退回環境判斷」
+    /// 這種邊界情況），不必為了測它去起一個完整的 DI 容器。
+    /// </summary>
+    internal static bool ShouldUseStubNetiqClient(bool isDevelopment, string discoveryClient)
+    {
+        if (string.Equals(discoveryClient, "Stub", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(discoveryClient, "Real", StringComparison.OrdinalIgnoreCase)) return false;
+        return isDevelopment;   // "Auto" 或未知值（Validate() 已擋，這裡是防禦性穩妥）：沿用既有環境判斷
     }
 }

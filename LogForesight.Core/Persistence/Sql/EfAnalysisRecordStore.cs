@@ -259,7 +259,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
-    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var sw = Stopwatch.StartNew();
         page = Math.Max(page, 1);
@@ -278,22 +278,31 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             var total = q.Count();
 
-            var items = q
-                // 與記憶體排序（RiskLevels.Rank／CorrelationAlerts.Count>0／Date）語意一致的 SQL 版本；
-                // C# 巢狀三元運算式會被 EF Core 翻成 SQL CASE WHEN——無法呼叫 RiskLevels.Rank 本身
-                // （表達式樹不支援任意方法呼叫），只能內嵌，故引用其 const 值而非重新硬寫字面值；
-                // RiskRankConsistencyTests 斷言這裡的權重與 RiskLevels.Rank 一致
-                .OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
-                .ThenByDescending(r => r.HasCorrelation)
-                .ThenByDescending(r => r.RecordDate)
+            // 表頭排序（date/host/risk）與預設「風險→關聯→日期」緊急程度排序共用同一個下推點；
+            // C# 巢狀三元運算式會被 EF Core 翻成 SQL CASE WHEN——無法呼叫 RiskLevels.Rank 本身
+            // （表達式樹不支援任意方法呼叫），只能內嵌，故引用其 const 值而非重新硬寫字面值；
+            // RiskRankConsistencyTests 斷言這裡的權重與 RiskLevels.Rank 一致
+            IOrderedQueryable<DailyRecordRow> ordered = sortKey switch
+            {
+                "date" => ascending ? q.OrderBy(r => r.RecordDate) : q.OrderByDescending(r => r.RecordDate),
+                "host" => ascending ? q.OrderBy(r => r.HostName) : q.OrderByDescending(r => r.HostName),
+                "risk" => ascending
+                    ? q.OrderBy(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
+                    : q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0),
+                _ => q.OrderByDescending(r => r.RiskLevel == RiskLevels.High ? 3 : r.RiskLevel == RiskLevels.Medium ? 2 : r.RiskLevel == RiskLevels.Low ? 1 : 0)
+                    .ThenByDescending(r => r.HasCorrelation)
+                    .ThenByDescending(r => r.RecordDate)
+            };
+
+            var items = ordered
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToList()
                 .Select(Deserialize)
                 .ToList();
 
-            Log.Debug("[SQL] QueryPage（全下推，SQL 端分頁，page={Page} size={Size}）→ {Total} 筆符合、本頁 {Items} 筆、{Ms}ms",
-                page, pageSize, total, items.Count, sw.ElapsedMilliseconds);
+            Log.Debug("[SQL] QueryPage（全下推，SQL 端分頁，page={Page} size={Size} sort={Sort}）→ {Total} 筆符合、本頁 {Items} 筆、{Ms}ms",
+                page, pageSize, sortKey ?? "(預設)", total, items.Count, sw.ElapsedMilliseconds);
 
             return new PagedResult<DailyAnalysisRecord> { Items = items, Page = page, PageSize = pageSize, Total = total };
         }
@@ -309,23 +318,46 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             records = records.Where(matcher.Matches);
         }
 
-        var ordered = records
-            .Where(r => RecordFilterMatcher.Matches(r, filter))
-            .OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
-            .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
-            .ThenByDescending(r => r.Date)
-            .ToList();
+        var matched = records.Where(r => RecordFilterMatcher.Matches(r, filter));
+        var ordered2 = sortKey switch
+        {
+            "date" => ascending ? matched.OrderBy(r => r.Date) : matched.OrderByDescending(r => r.Date),
+            "host" => ascending
+                ? matched.OrderBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+                : matched.OrderByDescending(r => r.Host, StringComparer.OrdinalIgnoreCase),
+            "risk" => ascending
+                ? matched.OrderBy(r => RiskLevels.Rank(r.RiskLevel))
+                : matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)),
+            _ => matched.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
+                .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
+                .ThenByDescending(r => r.Date)
+        };
+        var finalOrdered = ordered2.ToList();
 
-        Log.Debug("[SQL] QueryPage（含 HostId=0 舊列，退回全窗撈回 {Rows} 列後於記憶體排序＋分頁）→ {Total} 筆符合、{Ms}ms",
-            rows.Count, ordered.Count, sw.ElapsedMilliseconds);
+        Log.Debug("[SQL] QueryPage（含 HostId=0 舊列，退回全窗撈回 {Rows} 列後於記憶體排序＋分頁，sort={Sort}）→ {Total} 筆符合、{Ms}ms",
+            rows.Count, sortKey ?? "(預設)", finalOrdered.Count, sw.ElapsedMilliseconds);
 
         return new PagedResult<DailyAnalysisRecord>
         {
-            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
+            Items = finalOrdered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
             Page = page,
             PageSize = pageSize,
-            Total = ordered.Count
+            Total = finalOrdered.Count
         };
+    }
+
+    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to)
+    {
+        var f = from.Date;
+        var t = to.Date;
+
+        using var ctx = _contextFactory();
+        return ctx.DailyRecords
+            .Where(r => r.RecordDate >= f && r.RecordDate <= t && r.HostId != 0)
+            .Select(r => new { r.HostId, r.RecordDate })
+            .ToList()
+            .Select(x => (x.HostId, x.RecordDate))
+            .ToHashSet();
     }
 
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)

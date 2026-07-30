@@ -968,6 +968,45 @@ a.lf-stat:hover .lf-card,
     white-space: nowrap;
 }
 
+/* 可排序表頭：表頭本身仍是純文字語意的按鈕，hover/active 才顯出可點感，
+   不排序的欄位維持原樣（無按鈕、無 caret） */
+.lf-th-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: .3em;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+.lf-th-sort:hover { color: var(--lf-primary-text); }
+.lf-th-sort--active { color: var(--lf-text); }
+
+.lf-th-sort__caret {
+    display: inline-flex;
+    opacity: .35;
+    transform: rotate(180deg);   /* 預設朝上，代表尚未排序／asc 的視覺基準 */
+    transition: transform .15s ease, opacity .15s ease;
+}
+.lf-th-sort--active .lf-th-sort__caret { opacity: 1; }
+.lf-th-sort__caret--desc { transform: rotate(0); }
+
+/* 分頁列：每頁筆數下拉＋頁碼導覽並排，下拉在有資料時恆顯示，頁碼僅多頁才出現 */
+.lf-pagination-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--lf-space-2);
+}
+.lf-page-size {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+}
+
 .table > tbody > tr > td {
     padding: var(--lf-space-3);
     border-bottom-color: var(--lf-border);

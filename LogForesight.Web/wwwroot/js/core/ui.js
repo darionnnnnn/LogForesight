@@ -70,16 +70,79 @@ export function bindTabs(tabsEl, { onChange } = {}) {
     });
 }
 
+/** 每頁筆數下拉的固定選項（需求：10/20/30/50/100，預設 20）*/
+export const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
+export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * 每頁筆數的偏好記憶（localStorage，per 呼叫端一把 key）：使用者選過一次後，
+ * 同一頁下次進來沿用，不必每次都重選。key 為呼叫端自訂字串（如 'records'／'hosts'），
+ * 内部統一加前綴避免與其他 localStorage 使用者衝突。
+ */
+export function loadPageSize(key, fallback = DEFAULT_PAGE_SIZE) {
+    const raw = localStorage.getItem(`lf.pageSize.${key}`);
+    const n = raw ? Number(raw) : NaN;
+    return PAGE_SIZE_OPTIONS.includes(n) ? n : fallback;
+}
+
+export function savePageSize(key, size) {
+    localStorage.setItem(`lf.pageSize.${key}`, String(size));
+}
+
 /**
  * 分頁列（§8.6-7）：抽出 records.js/audit.js 幾乎相同的手搓分頁。
- * page 為 1-based；onPage(n) 由呼叫端載入該頁。totalPages <= 1 時清空容器。
+ * page 為 1-based；onPage(n) 由呼叫端載入該頁。
+ * pageSize/onPageSize（選填）：加一個每頁筆數下拉（10/20/30/50/100）。
+ * totalPages === 0（無資料）時整個清空；否則至少畫出下拉（如有提供），
+ * 頁碼列僅在 totalPages > 1 時出現。
  */
-export function renderPagination(container, { page, totalPages, onPage }) {
-    if (!totalPages || totalPages <= 1) {
+export function renderPagination(container, { page, totalPages, onPage, pageSize, onPageSize, pageSizeOptions = PAGE_SIZE_OPTIONS }) {
+    const showPager = !!totalPages && totalPages > 1;
+    const showPageSize = !!onPageSize && !!totalPages;
+
+    if (!showPager && !showPageSize) {
         container.replaceChildren();
         return;
     }
 
+    const bar = document.createElement('div');
+    bar.className = 'lf-pagination-bar';
+
+    if (showPageSize) {
+        bar.appendChild(pageSizeSelect(pageSize, pageSizeOptions, onPageSize));
+    }
+    if (showPager) {
+        bar.appendChild(buildPageNav(page, totalPages, onPage));
+    }
+
+    container.replaceChildren(bar);
+}
+
+function pageSizeSelect(current, options, onChange) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-page-size';
+
+    const label = document.createElement('span');
+    label.className = 'text-muted small';
+    label.textContent = '每頁顯示';
+
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm d-inline-block w-auto';
+    select.setAttribute('aria-label', '每頁顯示筆數');
+    for (const size of options) {
+        const opt = document.createElement('option');
+        opt.value = String(size);
+        opt.textContent = `${size} 筆`;
+        if (size === current) opt.selected = true;
+        select.appendChild(opt);
+    }
+    select.addEventListener('change', () => onChange(Number(select.value)));
+
+    wrap.append(label, select);
+    return wrap;
+}
+
+function buildPageNav(page, totalPages, onPage) {
     const nav = document.createElement('nav');
     const ul = document.createElement('ul');
     ul.className = 'pagination pagination-sm mb-0';
@@ -124,7 +187,7 @@ export function renderPagination(container, { page, totalPages, onPage }) {
     addItem('›', page + 1, { disabled: page >= totalPages });
 
     nav.appendChild(ul);
-    container.replaceChildren(nav);
+    return nav;
 }
 
 /** 右下角提示。type: success | danger | warning | info */
@@ -256,15 +319,19 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
 
 /**
  * 表格渲染：欄位定義 → <table>，含空狀態與載入中列。
- * columns: [{ key, title, className, render(row), renderHeader() }]
+ * columns: [{ key, title, className, render(row), renderHeader(), sortKey, sortDefaultDir }]
  * renderHeader()（選填）：回傳 Node 時取代 title 文字作為表頭儲存格內容——
  * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/HISTORY.md #7）。
  * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
  * 仍照自己的行為，不被整列連結攔截。
  * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），
  * 點該列（避開列內連結/按鈕）即展開/收合，首欄前置一個展開箭頭。與 rowHref 互斥使用。
+ * sort/onSort（選填，表格排序）：有 sortKey 的欄位表頭變成可點按鈕；點擊時以目前
+ * sort（{key, dir}）算出下一個排序狀態（同欄切換 asc/desc，換欄回到 sortDefaultDir
+ * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
+ * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, sort, onSort }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -280,8 +347,15 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     const headRow = document.createElement('tr');
     for (const col of columns) {
         const th = document.createElement('th');
-        if (col.renderHeader) th.appendChild(col.renderHeader());
-        else th.textContent = col.title;
+        if (col.sortKey && onSort) {
+            th.appendChild(sortHeader(col, sort, onSort));
+            const active = sort && sort.key === col.sortKey;
+            th.setAttribute('aria-sort', active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none');
+        } else if (col.renderHeader) {
+            th.appendChild(col.renderHeader());
+        } else {
+            th.textContent = col.title;
+        }
         if (col.className) th.className = col.className;
         headRow.appendChild(th);
     }
@@ -351,6 +425,59 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     wrap.appendChild(table);
 
     container.replaceChildren(wrap);
+}
+
+function sortHeader(col, sort, onSort) {
+    const active = sort && sort.key === col.sortKey;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'lf-th-sort' + (active ? ' lf-th-sort--active' : '');
+
+    const text = document.createElement('span');
+    text.textContent = col.title;
+    btn.appendChild(text);
+
+    const caret = document.createElement('span');
+    caret.className = 'lf-th-sort__caret';
+    caret.classList.toggle('lf-th-sort__caret--desc', active && sort.dir === 'desc');
+    caret.appendChild(icon('chevron-down'));
+    btn.appendChild(caret);
+
+    btn.addEventListener('click', () => {
+        const nextDir = active ? (sort.dir === 'asc' ? 'desc' : 'asc') : (col.sortDefaultDir || 'asc');
+        onSort(col.sortKey, nextDir);
+    });
+
+    return btn;
+}
+
+/**
+ * 本地排序（表格清單頁：使用者、規則、告警抑制、執行監控單日明細／異常彙總）。
+ * columns 需在要排序的欄位上提供 sortKey；比較值優先取 col.sortValue(row)，
+ * 沒有則退回 row[col.key]（多數欄位 render() 回傳 DOM Node 無法直接比較，
+ * 因此不拿 render 的結果當排序依據，需要排序的欄位務必補 sortValue 或有對應的 key）。
+ * sort 為 null／key 對不到任何欄位時原樣回傳（不排序）。
+ */
+export function sortRows(rows, columns, sort) {
+    if (!sort || !sort.key) return rows;
+    const col = columns.find(c => c.sortKey === sort.key);
+    if (!col) return rows;
+
+    const valueOf = col.sortValue ?? (r => r[col.key]);
+    const sorted = [...rows].sort((a, b) => {
+        const va = valueOf(a);
+        const vb = valueOf(b);
+        if (va == null && vb == null) return 0;
+        if (va == null) return -1;
+        if (vb == null) return 1;
+        if (va < vb) return -1;
+        if (va > vb) return 1;
+        return 0;
+    });
+
+    if (sort.dir === 'desc') sorted.reverse();
+    return sorted;
 }
 
 /**

@@ -244,6 +244,72 @@ public class RecordQueryServiceSearchTests : IDisposable
         var group = Assert.Single(result.Items);
         Assert.Equal(new[] { "Storage" }, group.Categories);
     }
+
+    // ── 表頭排序（docs/WEB-SPEC.md §9.2）─────────────────────────────────────
+
+    [Fact]
+    public void Search_快速路徑_指定SortKey時覆蓋預設緊急程度排序()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, DateTime.Today.AddDays(-1), "高");
+        AddRecord(b, DateTime.Today, "低");
+
+        var result = _service.Search(new RecordSearchRequest { SortKey = "date", Ascending = true });
+
+        // 日期升冪：不管風險等級，最早的日期排最前面——證明 SortKey 真的覆蓋了預設排序
+        Assert.Equal("HOST-A", result.Items[0].HostName);
+    }
+
+    [Fact]
+    public void Search_慢速路徑_指定SortKey時覆蓋預設緊急程度排序()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, DateTime.Today.AddDays(-1), "高");
+        AddRecord(b, DateTime.Today, "低");
+        // Statuses 非空清單強制走慢速路徑（見類別註解）；未建立處理紀錄的日一律預設 open 外部狀態
+        var result = _service.Search(new RecordSearchRequest
+        {
+            Statuses = new List<string> { HandlingStatuses.Open },
+            SortKey = "date",
+            Ascending = true
+        });
+
+        Assert.Equal(2, result.Items.Count);
+        // 日期升冪：不管風險等級，最早的日期排最前面——證明 SortKey 真的覆蓋了預設排序
+        Assert.Equal("HOST-A", result.Items[0].HostName);
+    }
+
+    [Fact]
+    public void SearchByHost_依高風險日數升冪排序()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, DateTime.Today, "高");
+        AddRecord(a, DateTime.Today.AddDays(-1), "高");
+        AddRecord(b, DateTime.Today, "高");
+
+        var result = _service.SearchByHost(new RecordSearchRequest { SortKey = "highRisk", Ascending = true });
+
+        Assert.Equal("HOST-B", result.Items[0].HostName);   // 1 天高風險，排最前
+        Assert.Equal("HOST-A", result.Items[1].HostName);   // 2 天高風險
+    }
+
+    [Fact]
+    public void SearchByDate_依主機數降冪排序()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, DateTime.Today, "高");
+        AddRecord(a, DateTime.Today.AddDays(-1), "高");
+        AddRecord(b, DateTime.Today.AddDays(-1), "高");
+
+        var result = _service.SearchByDate(new RecordSearchRequest { SortKey = "hostCount", Ascending = false });
+
+        // AddDays(-1) 那天有 2 台主機、今天只有 1 台——降冪應把 2 台那天排最前
+        Assert.Equal(2, result.Items[0].HostCount);
+    }
 }
 
 /// <summary>永遠回 null——Search 不會實際讀報告全文，這裡只是滿足建構式依賴</summary>

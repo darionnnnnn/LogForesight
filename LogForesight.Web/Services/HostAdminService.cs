@@ -17,8 +17,11 @@ public class HostSearchRequest
     /// <summary>空白＝全部；'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
     public string? Os { get; set; }
 
-    /// <summary>name | lastReport</summary>
+    /// <summary>name | source | ip | os | roleDesc | lastReport</summary>
     public string Sort { get; set; } = "name";
+
+    /// <summary>asc | desc</summary>
+    public string Dir { get; set; } = "asc";
 
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
@@ -125,11 +128,18 @@ public class HostAdminService
             };
         }
 
-        var sorted = request.Sort == "lastReport"
-            ? filtered.OrderByDescending(h => h.LastReportAt ?? DateTime.MinValue)
-            : filtered.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase);
+        // 一律先建升冪排序，Dir=desc 時整體 Reverse——單一比較邏輯，不必每個欄位各寫一份升冪/降冪
+        IOrderedEnumerable<WebHost> sorted = request.Sort switch
+        {
+            "source" => filtered.OrderBy(h => h.Source, StringComparer.OrdinalIgnoreCase),
+            "ip" => filtered.OrderBy(h => h.IpAddress ?? "", StringComparer.OrdinalIgnoreCase),
+            "os" => filtered.OrderBy(h => h.Os, StringComparer.OrdinalIgnoreCase),
+            "roleDesc" => filtered.OrderBy(h => h.RoleDesc, StringComparer.OrdinalIgnoreCase),
+            "lastReport" => filtered.OrderBy(h => h.LastReportAt ?? DateTime.MinValue),
+            _ => filtered.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+        };
 
-        var all = sorted.ToList();
+        var all = (request.Dir == "desc" ? sorted.Reverse() : (IEnumerable<WebHost>)sorted).ToList();
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
         var items = all

@@ -3,11 +3,13 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button } from '../core/ui.js';
+import {
+    renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button,
+    renderPagination, sortRows, loadPageSize, savePageSize
+} from '../core/ui.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
-const sortSelect = document.getElementById('user-sort');
 const modalElement = document.getElementById('user-modal');
 const form = document.getElementById('user-form');
 const modal = new bootstrap.Modal(modalElement);
@@ -15,6 +17,9 @@ const modal = new bootstrap.Modal(modalElement);
 let users = [];
 let groups = [];
 let editingUser = null;
+let sort = { key: 'account', dir: 'asc' };   // 表頭點擊排序（取代原本的獨立排序下拉）
+let page = 1;
+let pageSize = loadPageSize('users');
 
 // 新增筆數（docs/HISTORY.md #7）：'single' | 'batch'，只在「新增使用者」時可切換，
 // 編輯既有使用者一律走單筆（帳號本來就不可改，多筆模式沒有意義）
@@ -44,7 +49,7 @@ function setupToolbar() {
         attr: 'status',
         activeValues: [statusFilter],
         multi: false,
-        onToggle: value => { statusFilter = value; render(); }
+        onToggle: value => { statusFilter = value; page = 1; render(); }
     });
 
     const roles = [...new Set(groups.map(g => g.role))];
@@ -53,7 +58,7 @@ function setupToolbar() {
         attr: 'role',
         activeValues: [roleFilter],
         multi: false,
-        onToggle: value => { roleFilter = value; render(); }
+        onToggle: value => { roleFilter = value; page = 1; render(); }
     });
 
     renderChips(document.getElementById('user-group-chips'), {
@@ -63,20 +68,20 @@ function setupToolbar() {
         multi: true,
         onToggle: (value, active) => {
             if (active) groupFilter.add(value); else groupFilter.delete(value);
+            page = 1;
             render();
         }
     });
 }
 
-function sortUsers(list) {
-    const sorted = [...list];
-    if (sortSelect.value === 'displayName') {
-        sorted.sort((a, b) => (a.displayName || a.account).localeCompare(b.displayName || b.account, 'zh-Hant'));
-    } else {
-        sorted.sort((a, b) => a.account.localeCompare(b.account));
-    }
-    return sorted;
-}
+const USER_COLUMNS = [
+    { title: '帳號', sortKey: 'account', sortValue: u => u.account, render: u => u.account },
+    { title: '顯示名稱', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => u.displayName },
+    { title: 'Email', render: u => u.email ?? '' },
+    { title: '群組', render: u => renderGroupBadges(u) },
+    { title: '狀態', sortKey: 'active', sortValue: u => u.active ? 1 : 0, render: u => renderActiveBadge(u.active) },
+    { title: '', className: 'text-end', render: u => renderEditButton(u) }
+];
 
 function render() {
     const keyword = searchInput.value.trim().toLowerCase();
@@ -93,22 +98,38 @@ function render() {
     if (roleFilter) rows = rows.filter(u => u.groupIds.some(id => groupRoleOf.get(id) === roleFilter));
     if (groupFilter.size > 0) rows = rows.filter(u => u.groupIds.some(id => groupFilter.has(String(id))));
 
-    rows = sortUsers(rows);
+    rows = sortRows(rows, USER_COLUMNS, sort);
     document.getElementById('user-count').textContent = `共 ${rows.length} 位`;
 
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+    if (page > totalPages) page = totalPages;
+    const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
+
     renderTable(listContainer, {
-        columns: [
-            { title: '帳號', render: u => u.account },
-            { title: '顯示名稱', render: u => u.displayName },
-            { title: 'Email', render: u => u.email ?? '' },
-            { title: '群組', render: u => renderGroupBadges(u) },
-            { title: '狀態', render: u => renderActiveBadge(u.active) },
-            { title: '', className: 'text-end', render: u => renderEditButton(u) }
-        ],
-        rows,
+        columns: USER_COLUMNS,
+        rows: pageRows,
+        sort,
+        onSort: (key, dir) => {
+            sort = { key, dir };
+            page = 1;
+            render();
+        },
         empty: users.length === 0
             ? { title: '尚無使用者', hint: '可於「CSV 匯入」批次建立，或用右上角的「新增使用者」逐筆新增。' }
             : { title: '沒有符合搜尋條件的使用者', hint: '請調整關鍵字後再試。' }
+    });
+
+    renderPagination(document.getElementById('user-pager'), {
+        page,
+        totalPages: rows.length ? totalPages : 0,
+        onPage: p => { page = p; render(); },
+        pageSize,
+        onPageSize: size => {
+            pageSize = size;
+            savePageSize('users', size);
+            page = 1;
+            render();
+        }
     });
 }
 
@@ -292,7 +313,6 @@ async function submitBatch(groupIds, active, saveButton) {
 }
 
 document.getElementById('btn-new-user').addEventListener('click', () => openModal(null));
-searchInput.addEventListener('input', render);
-sortSelect.addEventListener('change', render);
+searchInput.addEventListener('input', () => { page = 1; render(); });
 
 load();

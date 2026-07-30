@@ -120,4 +120,62 @@ public class EfRecordQueryTests : IDisposable
         store.Append(Rec(1, "A", DateTime.Today));
         Assert.Null(store.GetOne(System.Array.Empty<HostKey>(), DateTime.Today));
     }
+
+    // ── QueryPage 表頭排序（docs/WEB-SPEC.md §9.2）───────────────────────────
+
+    [Fact]
+    public void QueryPage_依日期升冪排序()
+    {
+        var store = Store();
+        store.Append(Rec(1, "A", new DateTime(2026, 7, 20)));
+        store.Append(Rec(1, "A", new DateTime(2026, 7, 10)));
+        store.Append(Rec(1, "A", new DateTime(2026, 7, 15)));
+
+        var page = store.QueryPage(new RecordQueryFilter(), page: 1, pageSize: 10, sortKey: "date", ascending: true);
+
+        Assert.Equal(new[] { 10, 15, 20 }, page.Items.Select(r => r.Date.Day));
+    }
+
+    [Fact]
+    public void QueryPage_依主機名降冪排序()
+    {
+        var store = Store();
+        store.Append(Rec(1, "A", DateTime.Today));
+        store.Append(Rec(2, "C", DateTime.Today));
+        store.Append(Rec(3, "B", DateTime.Today));
+
+        var page = store.QueryPage(new RecordQueryFilter(), page: 1, pageSize: 10, sortKey: "host", ascending: false);
+
+        Assert.Equal(new[] { "C", "B", "A" }, page.Items.Select(r => r.Host));
+    }
+
+    [Fact]
+    public void QueryPage_不合法SortKey_退回預設緊急程度排序()
+    {
+        var store = Store();
+        store.Append(Rec(1, "低", DateTime.Today, "低"));
+        store.Append(Rec(2, "高", DateTime.Today, "高"));
+
+        var page = store.QueryPage(new RecordQueryFilter(), page: 1, pageSize: 10, sortKey: "not-a-real-key");
+
+        Assert.Equal("高", page.Items[0].Host);
+    }
+
+    /// <summary>含 HostId=0 舊列時 QueryPage 退回記憶體排序路徑（見類別內 hasLegacyHostRows 分支），
+    /// 表頭排序在這條路徑也必須維持正確——這是唯二兩條實作路徑的另一條，不能只顧 SQL 全下推那條。</summary>
+    [Fact]
+    public void QueryPage_含舊列退回記憶體路徑_排序仍正確()
+    {
+        var store = Store();
+        store.Append(Rec(0, "舊列-無HostId", DateTime.Today));   // 觸發 hasLegacyHostRows
+        store.Append(Rec(1, "A", new DateTime(2026, 7, 20)));
+        store.Append(Rec(2, "B", new DateTime(2026, 7, 10)));
+
+        var page = store.QueryPage(new RecordQueryFilter { Hosts = new[]
+        {
+            new HostKey { HostId = 1, HostName = "A" }, new HostKey { HostId = 2, HostName = "B" }
+        } }, page: 1, pageSize: 10, sortKey: "date", ascending: true);
+
+        Assert.Equal(new[] { "B", "A" }, page.Items.Select(r => r.Host));
+    }
 }

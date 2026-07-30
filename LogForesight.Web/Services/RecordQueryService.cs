@@ -62,7 +62,7 @@ public class RecordQueryService
 
         if (!needsHandlingFilter)
         {
-            var paged = _repository.QueryPage(filter, page, pageSize);
+            var paged = _repository.QueryPage(filter, page, pageSize, request.SortKey, request.Ascending);
             var pageLookup = new HostLookup(_hosts.GetAll());
             var pageHandlings = LoadHandlings(paged.Items, pageLookup);
             var pageIssueHandlings = LoadIssueHandlings(paged.Items, pageLookup);
@@ -118,13 +118,21 @@ public class RecordQueryService
             records = records.Where(IsOverdue).ToList();
         }
 
-        // 緊急程度排序（§DB-PLAN E 節定案）：風險層級 → 有無關聯訊號 → 日期新到舊。
-        // 全部可從既有欄位算出，不需要額外欄位
-        var ordered = records
-            .OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
-            .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
-            .ThenByDescending(r => r.Date)
-            .ToList();
+        // 緊急程度排序（§DB-PLAN E 節定案）：風險層級 → 有無關聯訊號 → 日期新到舊——
+        // 表頭指定排序時整段改用單欄排序（與 EfAnalysisRecordStore.QueryPage 的下推路徑同一套規則）
+        var ordered = (request.SortKey switch
+        {
+            "date" => request.Ascending ? records.OrderBy(r => r.Date) : records.OrderByDescending(r => r.Date),
+            "host" => request.Ascending
+                ? records.OrderBy(r => lookup.For(r)?.HostName ?? r.Host, StringComparer.OrdinalIgnoreCase)
+                : records.OrderByDescending(r => lookup.For(r)?.HostName ?? r.Host, StringComparer.OrdinalIgnoreCase),
+            "risk" => request.Ascending
+                ? records.OrderBy(r => RiskLevels.Rank(r.RiskLevel))
+                : records.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)),
+            _ => records.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel))
+                .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
+                .ThenByDescending(r => r.Date)
+        }).ToList();
 
         return new PagedResult<RecordListItemDto>
         {
@@ -163,11 +171,23 @@ public class RecordQueryService
                     LatestHeadline = latest.Record.Headline
                 };
             })
-            // 緊急程度：高風險日 → 關聯訊號日 → 中風險日（與明細排序、儀表板排行同一套）
-            .OrderByDescending(h => h.HighRiskDays)
-            .ThenByDescending(h => h.CorrelationDays)
-            .ThenByDescending(h => h.MediumRiskDays)
             .ToList();
+
+        // 緊急程度：高風險日 → 關聯訊號日 → 中風險日（與明細排序、儀表板排行同一套）；
+        // 表頭指定排序時改用單欄排序
+        groups = (request.SortKey switch
+        {
+            "host" => request.Ascending
+                ? groups.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+                : groups.OrderByDescending(h => h.HostName, StringComparer.OrdinalIgnoreCase),
+            "highRisk" => request.Ascending ? groups.OrderBy(h => h.HighRiskDays) : groups.OrderByDescending(h => h.HighRiskDays),
+            "mediumRisk" => request.Ascending ? groups.OrderBy(h => h.MediumRiskDays) : groups.OrderByDescending(h => h.MediumRiskDays),
+            "lowRisk" => request.Ascending ? groups.OrderBy(h => h.LowRiskDays) : groups.OrderByDescending(h => h.LowRiskDays),
+            "correlation" => request.Ascending ? groups.OrderBy(h => h.CorrelationDays) : groups.OrderByDescending(h => h.CorrelationDays),
+            _ => groups.OrderByDescending(h => h.HighRiskDays)
+                .ThenByDescending(h => h.CorrelationDays)
+                .ThenByDescending(h => h.MediumRiskDays)
+        }).ToList();
 
         return Paginate(groups, request);
     }
@@ -191,8 +211,18 @@ public class RecordQueryService
                     .Select(c => c.Category.ToString()).ToList(),
                 HostCount = g.Select(x => x.HostName).Distinct(StringComparer.OrdinalIgnoreCase).Count()
             })
-            .OrderByDescending(d => d.Date)
             .ToList();
+
+        groups = (request.SortKey switch
+        {
+            "hostCount" => request.Ascending ? groups.OrderBy(d => d.HostCount) : groups.OrderByDescending(d => d.HostCount),
+            "highRisk" => request.Ascending ? groups.OrderBy(d => d.HighRiskHosts) : groups.OrderByDescending(d => d.HighRiskHosts),
+            "mediumRisk" => request.Ascending ? groups.OrderBy(d => d.MediumRiskHosts) : groups.OrderByDescending(d => d.MediumRiskHosts),
+            "lowRisk" => request.Ascending ? groups.OrderBy(d => d.LowRiskHosts) : groups.OrderByDescending(d => d.LowRiskHosts),
+            "correlation" => request.Ascending ? groups.OrderBy(d => d.CorrelationHosts) : groups.OrderByDescending(d => d.CorrelationHosts),
+            "date" when request.Ascending => groups.OrderBy(d => d.Date),
+            _ => groups.OrderByDescending(d => d.Date)
+        }).ToList();
 
         return Paginate(groups, request);
     }
@@ -763,6 +793,15 @@ public class RecordSearchRequest
 
     /// <summary>只看逾期未處理</summary>
     public bool? Overdue { get; set; }
+
+    /// <summary>
+    /// 表頭排序（docs/WEB-SPEC.md §9.2）。null／不合法值＝維持各視角原本的預設排序。
+    /// 明細視角：date | host | risk。依主機視角：host | highRisk | mediumRisk | lowRisk | correlation。
+    /// 依日期視角：date | hostCount | highRisk | mediumRisk | lowRisk | correlation。
+    /// </summary>
+    public string? SortKey { get; set; }
+
+    public bool Ascending { get; set; }
 
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;

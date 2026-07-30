@@ -40,6 +40,8 @@ public class RecordsController : ControllerBase
         [FromQuery] string? source,
         [FromQuery] string? statuses,
         [FromQuery] bool? overdue,
+        [FromQuery] string? sort,
+        [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
@@ -56,6 +58,8 @@ public class RecordsController : ControllerBase
             Source = source,
             Statuses = ParseStrings(statuses),
             Overdue = overdue,
+            SortKey = sort,
+            Ascending = dir == "asc",
             Page = page,
             PageSize = pageSize
         };
@@ -75,10 +79,12 @@ public class RecordsController : ControllerBase
         [FromQuery] string? severity,
         [FromQuery] int? eventId,
         [FromQuery] string? source,
+        [FromQuery] string? sort,
+        [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(
-            _service.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+            _service.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     /// <summary>依日期彙總（主機合併）</summary>
     [HttpGet("by-date")]
@@ -92,14 +98,16 @@ public class RecordsController : ControllerBase
         [FromQuery] string? severity,
         [FromQuery] int? eventId,
         [FromQuery] string? source,
+        [FromQuery] string? sort,
+        [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
-            _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, page, pageSize)));
+            _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     private static RecordSearchRequest BuildRequest(
         string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
-        string? severity, int? eventId, string? source, int page, int pageSize) =>
+        string? severity, int? eventId, string? source, string? sort, string dir, int page, int pageSize) =>
         new()
         {
             HostIds = ParseLongs(hostIds),
@@ -111,6 +119,8 @@ public class RecordsController : ControllerBase
             Severity = severity,
             EventId = eventId,
             Source = source,
+            SortKey = sort,
+            Ascending = dir == "asc",
             Page = page,
             PageSize = pageSize
         };

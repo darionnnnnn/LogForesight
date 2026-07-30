@@ -88,6 +88,7 @@ public class AdminController : ControllerBase
         [FromQuery] string? groupIds = null,
         [FromQuery] string? os = null,
         [FromQuery] string sort = "name",
+        [FromQuery] string dir = "asc",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
@@ -99,6 +100,7 @@ public class AdminController : ControllerBase
             GroupIds = QueryStringParsing.ParseLongs(groupIds),
             Os = os,
             Sort = sort,
+            Dir = dir,
             Page = page,
             PageSize = pageSize
         };

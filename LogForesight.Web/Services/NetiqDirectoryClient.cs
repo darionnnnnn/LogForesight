@@ -90,7 +90,16 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
         return Task.FromResult(new NetiqDiscoveryResult
         {
             Hosts = hosts,
-            CoverageNote = $"（開發環境示範資料）「{normalized}.*」共 {hosts.Count} 台"
+            CoverageNote = $"（開發環境示範資料）「{normalized}.*」共 {hosts.Count} 台",
+            // 固定台數／固定網段數是這份示範資料產生器本身的邏輯（見上方迴圈），不是掃描結果被截斷——
+            // 放進 Warnings 而不是只寫在 CoverageNote：前端已有現成的醒目警告框渲染這個欄位
+            // （imports.js renderCoverageNote），CoverageNote 是灰色小字很容易被忽略，
+            // 曾被誤以為「掃描功能有 bug」（單一網段恆 35 台、兩網段各恆 23 台、恆最多 2 個網段）。
+            Warnings = new List<string>
+            {
+                "這是開發環境的離線示範資料（固定台數與網段數，非真實 Sentinel 掃描結果）。" +
+                "要對真實 Sentinel 試掃，請設定 Netiq:DiscoveryClient=Real。"
+            }
         });
     }
 }

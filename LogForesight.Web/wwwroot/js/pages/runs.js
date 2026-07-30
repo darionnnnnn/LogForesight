@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, labelValue } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize } from '../core/ui.js';
 import { formatDateTime, formatNumber } from '../core/format.js';
 
 const STATUS_META = {
@@ -20,6 +20,16 @@ const STATUS_META = {
 
 let currentDays = 14;
 let currentLogs = [];
+
+// 單日主機明細（本地排序＋分頁）：2000 台規模下曾整表一次 render，改成與其他清單頁一致的體驗
+let dayDetailHosts = [];
+let dayDetailSort = { key: 'hostName', dir: 'asc' };
+let dayDetailPage = 1;
+let dayDetailPageSize = loadPageSize('runs-day-detail');
+
+// 異常彙總（本地排序，筆數通常不多，不加分頁）
+let currentErrors = [];
+let errorsSort = { key: 'count', dir: 'desc' };
 
 async function load() {
     renderLoading(document.getElementById('run-summary'), 4);
@@ -125,6 +135,22 @@ function failedHostsCell(summary) {
     return wrap;
 }
 
+const DAY_DETAIL_COLUMNS = [
+    { title: '主機', sortKey: 'hostName', sortValue: h => h.hostName, render: h => h.hostName },
+    { title: '狀態', sortKey: 'status', sortValue: h => h.status, render: h => statusBadgeCell(h.status) },
+    {
+        title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc',
+        sortValue: h => h.runId != null ? h.daysAnalyzed : -1,
+        render: h => h.runId != null ? String(h.daysAnalyzed) : ''
+    },
+    {
+        title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
+        sortValue: h => h.runId != null ? h.errorCount : -1,
+        render: h => h.runId != null ? `${h.warnCount} / ${h.errorCount}` : ''
+    },
+    { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
+];
+
 /** 點日期下鑽：該天每台主機的狀態，取代舊版矩陣的「一格看一次執行」 */
 async function showDayDetail(date) {
     const card = document.getElementById('run-day-detail-card');
@@ -133,18 +159,41 @@ async function showDayDetail(date) {
     document.getElementById('run-day-detail-title').textContent = `${date} 各主機狀態`;
 
     renderLoading(document.getElementById('run-day-detail-list'), 6);
-    const hosts = await api.get(`/api/runs/day/${date}`);
+    dayDetailHosts = await api.get(`/api/runs/day/${date}`);
+    dayDetailPage = 1;
+    renderDayDetail();
+}
+
+/** 2000 台規模下曾整表一次 render——改成本地排序＋分頁（資料已一次取回，不必重打 API） */
+function renderDayDetail() {
+    const sorted = sortRows(dayDetailHosts, DAY_DETAIL_COLUMNS, dayDetailSort);
+    const totalPages = Math.max(1, Math.ceil(sorted.length / dayDetailPageSize));
+    if (dayDetailPage > totalPages) dayDetailPage = totalPages;
+    const pageRows = sorted.slice((dayDetailPage - 1) * dayDetailPageSize, dayDetailPage * dayDetailPageSize);
 
     renderTable(document.getElementById('run-day-detail-list'), {
-        columns: [
-            { title: '主機', render: h => h.hostName },
-            { title: '狀態', render: h => statusBadgeCell(h.status) },
-            { title: '分析天數', className: 'text-end', render: h => h.runId != null ? String(h.daysAnalyzed) : '' },
-            { title: '警告 / 錯誤', className: 'text-end', render: h => h.runId != null ? `${h.warnCount} / ${h.errorCount}` : '' },
-            { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
-        ],
-        rows: hosts,
+        columns: DAY_DETAIL_COLUMNS,
+        rows: pageRows,
+        sort: dayDetailSort,
+        onSort: (key, dir) => {
+            dayDetailSort = { key, dir };
+            dayDetailPage = 1;
+            renderDayDetail();
+        },
         empty: { title: '這天沒有任何主機資料' }
+    });
+
+    renderPagination(document.getElementById('run-day-detail-pager'), {
+        page: dayDetailPage,
+        totalPages: dayDetailHosts.length ? totalPages : 0,
+        onPage: page => { dayDetailPage = page; renderDayDetail(); },
+        pageSize: dayDetailPageSize,
+        onPageSize: size => {
+            dayDetailPageSize = size;
+            savePageSize('runs-day-detail', size);
+            dayDetailPage = 1;
+            renderDayDetail();
+        }
     });
 }
 
@@ -179,17 +228,29 @@ document.getElementById('run-day-detail-close').addEventListener('click', () => 
     document.getElementById('run-day-detail-card').classList.add('d-none');
 });
 
+const ERROR_COLUMNS = [
+    { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => levelBadge(e.level) },
+    { title: '訊息', render: e => messageCell(e) },
+    { title: '次數', className: 'text-end', sortKey: 'count', sortDefaultDir: 'desc', sortValue: e => e.count, render: e => formatNumber(e.count) },
+    { title: '影響主機', sortKey: 'affectedHosts', sortDefaultDir: 'desc', sortValue: e => e.affectedHosts.length, render: e => e.affectedHosts.join('、') },
+    { title: '最近發生', sortKey: 'lastSeen', sortDefaultDir: 'desc', sortValue: e => e.lastSeen, render: e => formatDateTime(e.lastSeen) },
+    { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
+];
+
 function renderErrors(errors) {
+    currentErrors = errors;
+    renderErrorsTable();
+}
+
+function renderErrorsTable() {
     renderTable(document.getElementById('run-errors'), {
-        columns: [
-            { title: '等級', render: e => levelBadge(e.level) },
-            { title: '訊息', render: e => messageCell(e) },
-            { title: '次數', className: 'text-end', render: e => formatNumber(e.count) },
-            { title: '影響主機', render: e => e.affectedHosts.join('、') },
-            { title: '最近發生', render: e => formatDateTime(e.lastSeen) },
-            { title: '', className: 'text-end', render: e => detailButton(e.latestRunId) }
-        ],
-        rows: errors,
+        columns: ERROR_COLUMNS,
+        rows: sortRows(currentErrors, ERROR_COLUMNS, errorsSort),
+        sort: errorsSort,
+        onSort: (key, dir) => {
+            errorsSort = { key, dir };
+            renderErrorsTable();
+        },
         empty: { title: '此期間沒有錯誤紀錄', hint: '所有批次執行都沒有產生 Error 或 Fatal 等級的訊息。' }
     });
 }

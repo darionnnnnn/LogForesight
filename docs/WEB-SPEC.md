@@ -165,7 +165,11 @@ LogForesight.Web/
     "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
   "Import": { "MaxFileSizeKb": 2048, "MaxRows": 5000 },
-  "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 }
+  "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 },
+  // NetIQ 掃描匯入精靈的主機探索實作（2026-07-29）:Auto（預設,Development→離線示範資料、
+  // 其餘→真連線）| Stub（強制示範資料）| Real（強制真連線,開發機對真實 Sentinel 試掃用）。
+  // 正式環境設 Stub 會被 Validate 擋下（§9.9)。
+  "Netiq": { "DiscoveryClient": "Auto" }
 }
 ```
 
@@ -499,13 +503,20 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 8.6 使用者便利性規範（決策 #4 的具體化，逐條可驗收）
 
 1. 清單頁的篩選條件記憶於 `localStorage`，回到頁面自動還原（含儀表板時間窗）
-2. 所有清單支援欄位排序與 URL 查詢字串同步（篩選結果可以複製網址給同事）
+2. **所有清單支援表頭點擊排序**（2026-07-29）：`renderTable` 的欄位定義帶 `sortKey` 即可點擊，
+   同欄再點切換 asc/desc、換欄回到該欄的 `sortDefaultDir`（未指定則 asc），切換邏輯集中在
+   `core/ui.js`，呼叫端只需套用收到的 `{key, dir}`。伺服器端分頁頁（`records`／`hosts`／`audit`）
+   排序下推 API（`sort`/`dir` 查詢參數）；本地清單頁（`users`／`rules`／`suppressions`／執行監控
+   單日明細與異常彙總）用共用的 `sortRows()` 在瀏覽器內排序。與篩選同步 URL 查詢字串
+   （篩選結果可以複製網址給同事）——彙總視角切換時排序重設，因為欄位命名空間不同（見 records.js）。
 3. 破壞性操作（刪除規則、套用匯入、合併主機）一律二次確認，確認框內**具體描述影響**
    （「將刪除規則 custom-xxx 及其 3 筆抑制設定」，不是「確定嗎？」）
 4. 表單錯誤顯示在欄位旁（Bootstrap validation style），API 錯誤 message 直接顯示，不轉譯
 5. 空狀態要有指引（「尚無資料。請先於『CSV 匯入』建立使用者與主機」），不留白畫面
 6. 載入中一律有視覺回饋（表格 skeleton 列或 spinner），按鈕送出後 disable 防連點
-7. 長清單預設分頁 50 筆；表格提供「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
+7. **每頁筆數可選（2026-07-29）**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
+   預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
+   「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
 8. 日期區間提供快捷鈕：今天／近 7 天／近 30 天
 
 ## 9. 頁面規格
@@ -551,8 +562,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   導致報表『未完成』把已結案日誤算進去」的缺口。**只在對外出口套用**——
   `DayHandlingDerivation` 的推導本身與逾期判定仍看真正的 `open`/`in_progress`，不受收斂影響；
   詳細結論（不處理/誤報/已知雜訊）只在風險日詳情頁的問題層級呈現。
-- API：`GET api/records?hostIds=&groupIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&page=`
-  （`severity`/`overdue` 為下鑽用選用參數，§10.3；三視角端點 `api/records`、`api/records/by-host`、`api/records/by-date` 皆支援 `groupIds`）
+- API：`GET api/records?hostIds=&groupIds=&from=&to=&riskLevels=&categories=&severity=&eventId=&statuses=&overdue=&sort=&dir=&page=&pageSize=`
+  （`severity`/`overdue` 為下鑽用選用參數，§10.3；三視角端點 `api/records`、`api/records/by-host`、`api/records/by-date` 皆支援 `groupIds`／`sort`/`dir`——
+  明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
+  依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
+  「風險→關聯→日期」緊急程度排序，2026-07-29）
 
 ### 9.3 `/records/{hostId}/{date}` 風險日詳情
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
@@ -724,7 +738,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
-  **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，排序＝帳號/顯示名稱。
+  **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，
+  排序改表頭點擊（帳號/顯示名稱/狀態，2026-07-29 取代原本的獨立排序下拉，見 §8.6-2），本地分頁。
   **一次新增多筆（2026-07-27，docs/HISTORY.md #7）**：新增 modal 單筆／多筆切換——多筆模式
   只填帳號 textarea（一行一個，也接受逗號分隔）＋所屬群組，顯示名稱預設＝帳號、Email 留空
   （之後 AD 登入時自動補上，見 #8）；送出前比對既存帳號，衝突時由使用者選「跳過」或「以此批群組
@@ -734,7 +749,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   手動填過的值不覆寫），寫一筆「AD 登入自動同步」稽核。
 - 主機：清單（名稱/IP/**OS**/Sentinel/負責人/群組/last_report_at/active）、編輯（role_desc/**os**/群組/負責人）、
   新舊主機合併（自停用清單選取→確認→`merged_into` 墓碑）。
-  **快速篩選 toolbar（Phase D-2）**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，排序＝名稱/最後回報。
+  **快速篩選 toolbar（Phase D-2）**：狀態單選 chip（本機/NetIQ/待歸屬/IP衝突/未回報/未分組/已停用）＋群組多選 chip，
+  排序改表頭點擊（名稱/來源/IP/OS/角色描述/最後回報，2026-07-29 取代原本的獨立排序下拉，見 §8.6-2）。
 - **作業系統欄位（2026-07-28，docs/LINUX-RULES-PLAN.md §3）**：`WebHost.Os`（`windows` 預設／`linux`）
   決定這台主機套用哪個平台的規則面。四條寫入路徑（主機頁編輯、NetIQ 單筆／批次登錄、CSV `os` 欄、
   掃描精靈）一律經 `WebHost.NormalizeOs` 正規化（大小寫與空白不拘、不合法值擋下），儲存值恆為小寫。
@@ -742,7 +758,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   **掃描精靈與 CSV 的 OS 只套用在本次新增的主機**——既有主機（含復活的孤兒）的 OS 一律不動，
   與群組指派同一原則：匯入不是隱性改設定，而改 OS 等於把既有主機的偵測面整個換掉。
 - 主機清單**改伺服器端分頁＋搜尋＋篩選（2026-07-23 Phase D-4）**：`GET api/admin/hosts` 改參數化
-  （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/page/pageSize）回傳 `PagedResult<HostDto>`；
+  （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
 - ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
@@ -788,6 +804,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   讓使用者知道這份清單涵蓋到哪裡、安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn`
   欄位眾數）在匯入當下就寫入新主機的 `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的
   `DisplayName` 一律不動。
+- **開發環境的離線示範資料（`StubNetiqDirectoryClient`）曾被誤以為是掃描功能的 bug（2026-07-29 修正）**：
+  單一網段固定 35 台、兩網段各固定 23 台、恆最多 2 個網段——這些數字是示範資料產生器本身固定的
+  demo 迴圈範圍，不是真實掃描的限制（`SentinelRestDirectoryClient` 沒有這些上限，事件筆數上限
+  `CoverageTargetResults=50,000` 是「事件」不是「主機數」，截斷時會走 `Warnings` 顯性提示）。
+  修法：(1) `Netiq:DiscoveryClient` 設定（`Auto`／`Stub`／`Real`，見 §10.2 或 README）讓開發機能明確
+  覆寫「Development 一律 Stub」的環境判斷，改連真實 Sentinel 試掃；正式環境設為 `Stub` 會被
+  `WebAppSettings.Validate()` 擋下啟動（同 `Auth:Provider=Stub` 那道欄杆）。(2) Stub 的示範資料
+  提示改進 `Warnings`（精靈已有的醒目 alert-warning 框），不再只寫在容易被忽略的灰色 `CoverageNote` 小字裡。
+- **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
+  截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
+  完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是瀏覽器標準行為）。
 
 ### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
 - 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/**作業系統**/探索帳密狀態/
@@ -848,12 +875,21 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **矩陣改每日彙總（2026-07-23 Phase D-4）**：舊版「主機×日期」色格矩陣在兩千台 × 90 天下會炸出
   最多 18 萬格 DOM。改成每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
   點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。原 `BuildCell` 狀態判定邏輯保留。
+- **NetIQ 主機的執行狀態改以分析紀錄判定（2026-07-29 修正）**：NetIQ 主機沒有個別的
+  `lf_batch_runs` 紀錄（`NetiqPipelineService` 只以跑批次的那台機器名義登記彙總的一筆），
+  逐台比對 `BatchRun.HostName` 因此永遠比不到，恆顯示「未執行」。改為 `RunMonitorService`
+  依 `WebHost.Source` 分流：`local` 主機沿用原 `BuildCell` 邏輯；`netiq` 主機改查
+  `IAnalysisRecordQuery.ListHostDates`（只投影 HostId／RecordDate 的輕量查詢），
+  監控日 D 對應「D-1 是否有分析紀錄」（管線在晚上跑、回補的是昨天的缺漏日）。
+  只能判斷 success／none 兩態——分析失敗時管線刻意不寫入紀錄，與「沒跑」在資料面等價，
+  是誠實的合併不是遺漏。已知取捨：主機首次回補多天歷史時，過去日期的列會回溯顯示成功。
+  單日明細（本地排序＋分頁，2026-07-29）與異常彙總（本地排序）也改用 §8.6-2/7 的共用機制。
 - API：`GET api/runs/summary?days=`、`GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`
 
 ### 9.11 `/audit` 操作紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
-  展開 before/after 對照。
-- API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&page=`
+  展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉（2026-07-29）。
+- API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`
 
 ## 10. 資料模型與儲存層
 

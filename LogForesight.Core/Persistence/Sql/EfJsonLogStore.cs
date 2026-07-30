@@ -83,17 +83,19 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
-    /// 全表分頁讀取（依附加順序新到舊），SQL 端 OFFSET/FETCH，不必先讀全表。
+    /// 全表分頁讀取（依附加順序，預設新到舊），SQL 端 OFFSET/FETCH，不必先讀全表。
     /// 僅適合「完全不篩選、只是要分頁瀏覽全部」的情境——若還有其他篩選條件，
     /// 呼叫端應改用 <see cref="ReadLines(DateTime?,DateTime?)"/> 撈候選集後在記憶體精確過濾與分頁。
+    /// ascending：稽核頁「時間」表頭排序用（docs/WEB-SPEC.md §9.11），預設 false 維持既有新到舊。
     /// </summary>
-    public (IReadOnlyList<string> Items, int Total) ReadPage(int skip, int take)
+    public (IReadOnlyList<string> Items, int Total) ReadPage(int skip, int take, bool ascending = false)
     {
         using var ctx = _contextFactory();
         var q = ctx.LogLines.AsNoTracking().Where(l => l.LogKey == _key);
 
         var total = q.Count();
-        var items = q.OrderByDescending(l => l.Seq).Skip(skip).Take(take).Select(l => l.Line).ToList();
+        var ordered = ascending ? q.OrderBy(l => l.Seq) : q.OrderByDescending(l => l.Seq);
+        var items = ordered.Skip(skip).Take(take).Select(l => l.Line).ToList();
         return (items, total);
     }
 

@@ -6,14 +6,16 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination, checkboxList, button } from '../core/ui.js';
+import {
+    renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination,
+    checkboxList, button, loadPageSize, savePageSize
+} from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
 const searchInput = document.getElementById('host-search');
 const sentinelFilter = document.getElementById('sentinel-filter');
-const sortSelect = document.getElementById('host-sort');
 
 // chip 篩選狀態（§5.1 D-2）：狀態沿用舊版下拉的六個值改單選 chip；群組為新增的多選 chip。
 // URL 帶 ?status= 時預選（§5.4 D-4：儀表板「未回報主機」計數卡下鑽用）
@@ -36,6 +38,8 @@ let users = [];
 let overview = { sentinelNames: [], ipConflicts: [] };
 let editingHost = null;
 let currentPage = 1;
+let pageSize = loadPageSize('hosts');
+let sort = { key: 'name', dir: 'asc' };   // 表頭點擊排序（取代原本的獨立排序下拉）
 let lastResult = null;
 let searchDebounce = null;
 
@@ -218,8 +222,10 @@ async function search() {
     if (sentinelFilter.value) params.set('sentinel', sentinelFilter.value);
     if (groupFilter.size > 0) params.set('groupIds', [...groupFilter].join(','));
     if (osFilter) params.set('os', osFilter);
-    params.set('sort', sortSelect.value === 'lastReport' ? 'lastReport' : 'name');
+    params.set('sort', sort.key);
+    params.set('dir', sort.dir);
     params.set('page', String(currentPage));
+    params.set('pageSize', String(pageSize));
 
     renderLoading(listContainer, 5);
     lastResult = await api.get(`/api/admin/hosts?${params.toString()}`);
@@ -234,17 +240,23 @@ function render() {
 
     renderTable(listContainer, {
         columns: [
-            { title: '主機', render: hostNameCell },
-            { title: '來源', render: sourceCell },
-            { title: 'IP', render: h => h.ipAddress ?? '' },
-            { title: 'OS', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
-            { title: '角色描述', render: h => h.roleDesc },
+            { title: '主機', sortKey: 'name', render: hostNameCell },
+            { title: '來源', sortKey: 'source', render: sourceCell },
+            { title: 'IP', sortKey: 'ip', render: h => h.ipAddress ?? '' },
+            { title: 'OS', sortKey: 'os', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
+            { title: '角色描述', sortKey: 'roleDesc', render: h => h.roleDesc },
             { title: '主機群組', render: h => badges(h.groupNames, '未分組（只有 admin 看得到）') },
             { title: '負責人', render: h => badges(h.ownerNames, '未指定') },
-            { title: '最近回報', render: lastReportCell },
+            { title: '最近回報', sortKey: 'lastReport', sortDefaultDir: 'desc', render: lastReportCell },
             { title: '', className: 'text-end', render: actionsCell }
         ],
         rows: currentPageHosts,
+        sort,
+        onSort: (key, dir) => {
+            sort = { key, dir };
+            currentPage = 1;
+            search();
+        },
         empty: !hasFilter && lastResult.total === 0
             ? { title: '尚無主機', hint: '批次分析執行時會自動登記本機；NetIQ 主機請用「新增主機」或「批次貼上」建立。' }
             : { title: '沒有符合條件的主機', hint: '請調整搜尋或篩選條件後再試。' }
@@ -257,6 +269,13 @@ function render() {
             currentPage = page;
             search();
             window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+        pageSize,
+        onPageSize: size => {
+            pageSize = size;
+            savePageSize('hosts', size);
+            currentPage = 1;
+            search();
         }
     });
 }
@@ -591,7 +610,6 @@ searchInput.addEventListener('input', () => {
     searchDebounce = setTimeout(() => { currentPage = 1; search(); }, 300);
 });
 sentinelFilter.addEventListener('change', () => { currentPage = 1; search(); });
-sortSelect.addEventListener('change', () => { currentPage = 1; search(); });
 setupStatusChips();
 
 load();

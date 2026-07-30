@@ -13,6 +13,7 @@ public class RunMonitorService
 {
     private readonly BatchRunStore _runs;
     private readonly IHostStore _hosts;
+    private readonly IAnalysisRecordQuery _records;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -20,45 +21,62 @@ public class RunMonitorService
     /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
     private const int MaxFailedHostNames = 10;
 
-    public RunMonitorService(BatchRunStore runs, IHostStore hosts)
+    public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records)
     {
         _runs = runs;
         _hosts = hosts;
+        _records = records;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
     /// 只看已登記會漏掉尚未加入 Web 的主機，只看回報過的會漏掉「從來沒跑過」的主機——
-    /// 而後者正是最需要被看到的一種</summary>
-    private List<string> AllHostNames(List<BatchRun> runs) =>
-        _hosts.GetAll().Where(h => h.Active).Select(h => h.HostName)
+    /// 而後者正是最需要被看到的一種。回傳 HostRef 而非純名稱：NetIQ 主機沒有個別的
+    /// <see cref="BatchRun"/> 紀錄可比對（見 <see cref="StatusOf"/>），需要 HostId／Source 才能
+    /// 判斷要走哪一套狀態邏輯。</summary>
+    private List<HostRef> AllHosts(List<BatchRun> runs)
+    {
+        var activeHosts = _hosts.GetAll().Where(h => h.Active).ToList();
+        var byName = activeHosts
+            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        return activeHosts.Select(h => h.HostName)
             .Union(runs.Select(r => r.HostName), StringComparer.OrdinalIgnoreCase)
             .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Select(name => byName.TryGetValue(name, out var host)
+                ? new HostRef(name, host.HostId, host.Source)
+                : new HostRef(name, 0, "local"))
             .ToList();
+    }
 
     public List<RunDaySummaryDto> GetDaySummaries(int days)
     {
         var runs = _runs.GetRecentRuns(days, hostNames: null);
         var from = DateTime.Today.AddDays(-days + 1);
-        var hostNames = AllHostNames(runs);
+        var hosts = AllHosts(runs);
+
+        // NetIQ 主機的「執行日」對應「前一天的分析紀錄是否存在」（見 StatusOf），
+        // 窗口因此整體往前多帶一天
+        var netiqDates = _records.ListHostDates(from.AddDays(-1), DateTime.Today.AddDays(-1));
 
         var summaries = new List<RunDaySummaryDto>();
         for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
         {
             var dateStr = date.ToString("yyyy-MM-dd");
-            var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hostNames.Count };
+            var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hosts.Count };
             var failedHosts = new List<string>();
 
-            foreach (var hostName in hostNames)
+            foreach (var host in hosts)
             {
-                var dayRuns = RunsForHostOnDate(runs, hostName, dateStr);
-                var status = StatusOf(dayRuns);
+                var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
+                var status = StatusOf(host, dayRuns, date, netiqDates);
 
                 switch (status)
                 {
                     case "success": summary.SuccessCount++; break;
                     case "warning": summary.WarningCount++; break;
-                    case "failed": summary.FailedCount++; failedHosts.Add(hostName); break;
-                    case "stuck": summary.StuckCount++; failedHosts.Add(hostName); break;
+                    case "failed": summary.FailedCount++; failedHosts.Add(host.HostName); break;
+                    case "stuck": summary.StuckCount++; failedHosts.Add(host.HostName); break;
                     case "running": summary.RunningCount++; break;
                     default: summary.NotRunCount++; break;
                 }
@@ -79,15 +97,18 @@ public class RunMonitorService
         var windowDays = Math.Max(1, (DateTime.Today - date.Date).Days + 1);
         var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
         var dateStr = date.ToString("yyyy-MM-dd");
-        var hostNames = AllHostNames(runs);
+        var hosts = AllHosts(runs);
+        var netiqDates = _records.ListHostDates(date.AddDays(-1), date.AddDays(-1));
 
-        return hostNames.Select(hostName =>
+        return hosts.Select(host =>
         {
-            var dayRuns = RunsForHostOnDate(runs, hostName, dateStr);
-            var cell = BuildCell(dateStr, dayRuns);
+            var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
+            var cell = host.Source == "netiq"
+                ? NetiqCell(host, date, netiqDates)
+                : BuildCell(dateStr, dayRuns);
             return new RunDayHostStatusDto
             {
-                HostName = hostName,
+                HostName = host.HostName,
                 Status = cell.Status,
                 RunId = cell.RunId,
                 StartedAt = cell.StartedAt,
@@ -100,6 +121,22 @@ public class RunMonitorService
             };
         }).ToList();
     }
+
+    /// <summary>NetIQ 主機沒有個別 <see cref="BatchRun"/>（管線只登記彙總的一筆，見類別註解），
+    /// 「該日是否有分析紀錄」是唯一可用的執行代理指標：分析紀錄的日期是「執行日前一天」
+    /// （管線在晚上跑，回補的是昨天的缺漏日，見 <c>NetiqPipelineService</c>）。
+    /// 只能判斷 success／none 兩態——沒有個別失敗/警告訊號可用：分析失敗時管線刻意不寫入紀錄，
+    /// 下次自動重試（與「沒跑」在資料面完全等價，這是誠實的合併，不是遺漏）。</summary>
+    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
+        host.Source == "netiq" ? NetiqStatus(host, date, netiqDates) : StatusOf(dayRuns);
+
+    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
+        netiqDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "success" : "none";
+
+    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
+        new() { Status = NetiqStatus(host, date, netiqDates) };
+
+    private sealed record HostRef(string HostName, long HostId, string Source);
 
     private static List<BatchRun> RunsForHostOnDate(List<BatchRun> runs, string hostName, string dateStr) =>
         runs.Where(r => string.Equals(r.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&

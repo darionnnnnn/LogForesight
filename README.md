@@ -538,6 +538,11 @@ Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索�
 既有使用中的不勾）與「全不選」兩個快捷。作業系統預設值取自該台 Sentinel 的設定
 （見「NetIQ 維護」頁），只套用在本次**新增**的主機。
 
+**開發環境的示範資料與 `Netiq:DiscoveryClient` 設定（2026-07-29）**：Development 環境預設用
+離線示範資料跑掃描（固定台數／網段數，結果上方會有醒目警告標示），方便離線開發整條匯入流程；
+開發機要對真實 Sentinel 試掃時，在 Web 的 appsettings 設 `Netiq:DiscoveryClient=Real` 即可
+（值域 `Auto`（預設，依環境）／`Stub`／`Real`；正式環境設 `Stub` 會被啟動驗證擋下）。
+
 ### NetIQ 事件取數 API 驗證（`--netiq-probe`，2026-07-24 新增）
 
 多主機集中分析要從 Sentinel 取事件（docs/NETIQ-API-PLAN.md），實作前需要先用真實環境跑一輪

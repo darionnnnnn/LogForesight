@@ -35,4 +35,10 @@
         </None>
     </ItemGroup>
 
+    <!-- 同 LogForesight/LogForesight.Core 的既有慣例：測試可見 internal 細節（如
+         ServiceCollectionExtensions.ShouldUseStubNetiqClient），不必為了測試把 DI 決策邏輯改成 public。 -->
+    <ItemGroup>
+        <InternalsVisibleTo Include="LogForesight.Tests" />
+    </ItemGroup>
+
 </Project>

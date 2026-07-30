@@ -8,7 +8,10 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips } from '../core/ui.js';
+import {
+    renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips,
+    renderPagination, sortRows, loadPageSize, savePageSize
+} from '../core/ui.js';
 import { severityBadge, elevatesBadge, statusBadge, formatDate, severityName } from '../core/format.js';
 
 const CATEGORY_NAMES = {
@@ -34,6 +37,14 @@ const chipFilters = {
 let currentPlatform = 'windows';
 let suppressionPlatform = '';   // 告警抑制分頁的平台篩選；空字串＝全部
 
+// 表頭點擊排序（取代原本的獨立排序下拉）＋本地分頁
+let ruleSort = { key: 'id', dir: 'asc' };
+let rulePage = 1;
+let rulePageSize = loadPageSize('rules');
+let suppressionSort = { key: 'ruleId', dir: 'asc' };
+let suppressionPage = 1;
+let suppressionPageSize = loadPageSize('suppressions');
+
 const ruleModal = new bootstrap.Modal(document.getElementById('rule-modal'));
 const restoreModal = new bootstrap.Modal(document.getElementById('restore-modal'));
 const suppressModal = new bootstrap.Modal(document.getElementById('suppress-modal'));
@@ -56,6 +67,7 @@ ruleTabsEl.addEventListener('click', event => {
     if (!btn) return;
     currentPlatform = btn.dataset.platform;
     updateSearchPlaceholder();
+    rulePage = 1;
     renderRules();
 });
 
@@ -86,7 +98,7 @@ function setupToolbar() {
         attr: 'status',
         activeValues: [chipFilters.status],
         multi: false,
-        onToggle: value => { chipFilters.status = value; renderRules(); }
+        onToggle: value => { chipFilters.status = value; rulePage = 1; renderRules(); }
     });
 
     renderChips(document.getElementById('rule-origin-chips'), {
@@ -98,7 +110,7 @@ function setupToolbar() {
         attr: 'origin',
         activeValues: [chipFilters.origin],
         multi: false,
-        onToggle: value => { chipFilters.origin = value; renderRules(); }
+        onToggle: value => { chipFilters.origin = value; rulePage = 1; renderRules(); }
     });
 
     renderChips(document.getElementById('rule-suppression-chips'), {
@@ -110,7 +122,7 @@ function setupToolbar() {
         attr: 'suppression',
         activeValues: [chipFilters.suppression],
         multi: false,
-        onToggle: value => { chipFilters.suppression = value; renderRules(); }
+        onToggle: value => { chipFilters.suppression = value; rulePage = 1; renderRules(); }
     });
 
     renderChips(document.getElementById('rule-severity-chips'), {
@@ -120,6 +132,7 @@ function setupToolbar() {
         multi: true,
         onToggle: (value, active) => {
             if (active) chipFilters.severities.add(value); else chipFilters.severities.delete(value);
+            rulePage = 1;
             renderRules();
         }
     });
@@ -131,6 +144,7 @@ function setupToolbar() {
         multi: true,
         onToggle: (value, active) => {
             if (active) chipFilters.categories.add(value); else chipFilters.categories.delete(value);
+            rulePage = 1;
             renderRules();
         }
     });
@@ -145,7 +159,7 @@ function setupToolbar() {
         attr: 'elevates',
         activeValues: [chipFilters.elevates],
         multi: false,
-        onToggle: value => { chipFilters.elevates = value; renderRules(); }
+        onToggle: value => { chipFilters.elevates = value; rulePage = 1; renderRules(); }
     });
 
     renderChips(document.getElementById('suppression-platform-chips'), {
@@ -157,10 +171,8 @@ function setupToolbar() {
         attr: 'suppressionPlatform',
         activeValues: [suppressionPlatform],
         multi: false,
-        onToggle: value => { suppressionPlatform = value; renderSuppressions(); }
+        onToggle: value => { suppressionPlatform = value; suppressionPage = 1; renderSuppressions(); }
     });
-
-    document.getElementById('rule-sort').addEventListener('change', renderRules);
 }
 
 /** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES-PLAN.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息 */
@@ -170,21 +182,24 @@ function updateSearchPlaceholder() {
         : '搜尋來源、Event ID、說明';
 }
 
-function sortRules(list) {
-    const by = document.getElementById('rule-sort').value;
-    const sorted = [...list];
-
-    if (by === 'severity') {
-        sorted.sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
-    } else if (by === 'category') {
-        sorted.sort((a, b) => (CATEGORY_NAMES[a.category] ?? a.category).localeCompare(CATEGORY_NAMES[b.category] ?? b.category, 'zh-Hant'));
-    } else if (by === 'threshold') {
-        sorted.sort((a, b) => b.countThreshold - a.countThreshold);
-    } else {
-        sorted.sort((a, b) => a.id.localeCompare(b.id));
-    }
-    return sorted;
-}
+const RULE_COLUMNS = [
+    { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
+    { title: '比對', render: r => matchCell(r) },
+    {
+        title: '類別', sortKey: 'category', sortValue: r => CATEGORY_NAMES[r.category] ?? r.category,
+        render: r => CATEGORY_NAMES[r.category] ?? r.category
+    },
+    {
+        title: '嚴重度', sortKey: 'severity', sortDefaultDir: 'asc',
+        sortValue: r => SEVERITY_ORDER.indexOf(r.severity), render: r => severityCell(r)
+    },
+    {
+        title: '門檻', className: 'text-end', sortKey: 'threshold', sortDefaultDir: 'desc',
+        sortValue: r => r.countThreshold, render: r => String(r.countThreshold)
+    },
+    { title: '狀態', render: r => statusCell(r) },
+    { title: '', className: 'text-end', render: r => actionsCell(r) }
+];
 
 function renderRules() {
     const keyword = document.getElementById('rule-search').value.trim().toLowerCase();
@@ -217,22 +232,37 @@ function renderRules() {
     if (chipFilters.elevates === 'yes') filtered = filtered.filter(r => r.elevatesDayRisk);
     if (chipFilters.elevates === 'no') filtered = filtered.filter(r => !r.elevatesDayRisk);
 
-    filtered = sortRules(filtered);
+    filtered = sortRows(filtered, RULE_COLUMNS, ruleSort);
 
     document.getElementById('rule-count').textContent = `共 ${filtered.length} 條`;
 
+    const totalPages = Math.max(1, Math.ceil(filtered.length / rulePageSize));
+    if (rulePage > totalPages) rulePage = totalPages;
+    const pageRows = filtered.slice((rulePage - 1) * rulePageSize, rulePage * rulePageSize);
+
     renderTable(document.getElementById('rule-list'), {
-        columns: [
-            { title: '規則', render: r => ruleCell(r) },
-            { title: '比對', render: r => matchCell(r) },
-            { title: '類別', render: r => CATEGORY_NAMES[r.category] ?? r.category },
-            { title: '嚴重度', render: r => severityCell(r) },
-            { title: '門檻', className: 'text-end', render: r => String(r.countThreshold) },
-            { title: '狀態', render: r => statusCell(r) },
-            { title: '', className: 'text-end', render: r => actionsCell(r) }
-        ],
-        rows: filtered,
+        columns: RULE_COLUMNS,
+        rows: pageRows,
+        sort: ruleSort,
+        onSort: (key, dir) => {
+            ruleSort = { key, dir };
+            rulePage = 1;
+            renderRules();
+        },
         empty: { title: '沒有符合條件的規則', hint: '請調整搜尋或篩選條件。' }
+    });
+
+    renderPagination(document.getElementById('rule-pager'), {
+        page: rulePage,
+        totalPages: filtered.length ? totalPages : 0,
+        onPage: p => { rulePage = p; renderRules(); },
+        pageSize: rulePageSize,
+        onPageSize: size => {
+            rulePageSize = size;
+            savePageSize('rules', size);
+            rulePage = 1;
+            renderRules();
+        }
     });
 }
 
@@ -653,24 +683,49 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
     await load();
 });
 
+const SUPPRESSION_COLUMNS = [
+    { title: '規則', sortKey: 'ruleId', sortValue: s => s.ruleId, render: s => s.ruleId },
+    { title: '平台', sortKey: 'platform', sortValue: s => s.platform, render: s => s.platform === 'linux' ? 'Linux' : 'Windows' },
+    { title: '主機', sortKey: 'host', sortValue: s => s.host, render: s => s.host },
+    { title: '原因', render: s => s.reason },
+    { title: '到期', sortKey: 'expiresAt', sortValue: s => s.expiresAt ? new Date(s.expiresAt).getTime() : Infinity, render: s => expiryCell(s) },
+    { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
+];
+
 function renderSuppressions() {
-    const filtered = suppressionPlatform
-        ? suppressions.filter(s => s.platform === suppressionPlatform)
-        : suppressions;
+    const filtered = sortRows(
+        suppressionPlatform ? suppressions.filter(s => s.platform === suppressionPlatform) : suppressions,
+        SUPPRESSION_COLUMNS, suppressionSort);
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / suppressionPageSize));
+    if (suppressionPage > totalPages) suppressionPage = totalPages;
+    const pageRows = filtered.slice((suppressionPage - 1) * suppressionPageSize, suppressionPage * suppressionPageSize);
 
     renderTable(document.getElementById('suppression-list'), {
-        columns: [
-            { title: '規則', render: s => s.ruleId },
-            { title: '平台', render: s => s.platform === 'linux' ? 'Linux' : 'Windows' },
-            { title: '主機', render: s => s.host },
-            { title: '原因', render: s => s.reason },
-            { title: '到期', render: s => expiryCell(s) },
-            { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
-        ],
-        rows: filtered,
+        columns: SUPPRESSION_COLUMNS,
+        rows: pageRows,
+        sort: suppressionSort,
+        onSort: (key, dir) => {
+            suppressionSort = { key, dir };
+            suppressionPage = 1;
+            renderSuppressions();
+        },
         empty: {
             title: '目前沒有抑制設定',
             hint: '若某條規則在某台主機上已確認是已知雜訊，可於規則列表的「抑制」建立。'
+        }
+    });
+
+    renderPagination(document.getElementById('suppression-pager'), {
+        page: suppressionPage,
+        totalPages: filtered.length ? totalPages : 0,
+        onPage: p => { suppressionPage = p; renderSuppressions(); },
+        pageSize: suppressionPageSize,
+        onPageSize: size => {
+            suppressionPageSize = size;
+            savePageSize('suppressions', size);
+            suppressionPage = 1;
+            renderSuppressions();
         }
     });
 }
@@ -710,7 +765,7 @@ function removeSuppressionButton(suppression) {
 }
 
 document.getElementById('btn-new-rule').addEventListener('click', () => openRuleModal(null));
-document.getElementById('rule-search').addEventListener('input', renderRules);
+document.getElementById('rule-search').addEventListener('input', () => { rulePage = 1; renderRules(); });
 
 // 詳情頁「誤報」提示連結帶 ?search= 過來（§5.1 D-1 #6）：直接定位到那條規則
 const searchParam = new URLSearchParams(location.search).get('search');

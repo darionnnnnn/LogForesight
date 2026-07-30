@@ -506,6 +506,10 @@ function renderSubnetSelection() {
 function wizardHostRow(host) {
     const row = document.createElement('div');
     row.className = 'd-flex align-items-center gap-1 py-1 small text-truncate';
+    // title 掛在整列而非只掛名稱 span：名稱常被截斷但可視寬度只佔一小塊，
+    // 掛在單一 span 上要滑鼠精準停在文字正上方才會出現，掛整列讓滑到 checkbox 旁邊
+    // 空白處也看得到完整「IP＋主機名稱」（子元素如「可復活」徽章自己的 title 仍優先顯示，不受影響）。
+    row.title = `${host.ipAddress}　${host.hostName}`;
 
     const box = document.createElement('input');
     box.type = 'checkbox';
@@ -518,7 +522,6 @@ function wizardHostRow(host) {
 
     const name = document.createElement('span');
     name.className = 'text-truncate';
-    name.title = `${host.ipAddress}　${host.hostName}`;
     name.textContent = `${host.ipAddress}　${host.hostName}`;
     row.appendChild(name);
 

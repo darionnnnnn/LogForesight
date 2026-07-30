@@ -838,7 +838,7 @@ internal class FakeRecordRepository : IRecordRepository
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter) => _records.ToList();
 
-    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize)
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var ordered = _records
             .OrderByDescending(r => r.RiskLevel == "高" ? 3 : r.RiskLevel == "中" ? 2 : r.RiskLevel == "低" ? 1 : 0)

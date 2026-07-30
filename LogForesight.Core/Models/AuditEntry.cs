@@ -131,6 +131,10 @@ public class AuditQuery
     public List<string>? Actions { get; set; }
     public string? TargetKind { get; set; }
     public AuditResult? Result { get; set; }
+
+    /// <summary>時間欄表頭排序（預設 false＝新到舊，稽核頁原本恆有的排序）</summary>
+    public bool Ascending { get; set; }
+
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
 }

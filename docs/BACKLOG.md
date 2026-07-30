@@ -47,7 +47,8 @@
 ## 本次簡化重構（refactor/simplify-2026-07）遞延項
 
 - **`RecordsController` 的查詢參數尚未收斂為查詢模型類別**：`RecordsController.cs` 目前仍有
-  35 個 `[FromQuery]` 參數（3 個端點各約 11 個），Phase 6f 體檢時判斷「model binding 語意屬
+  41 個 `[FromQuery]` 參數（3 個端點各約 13～15 個；2026-07-29 表頭排序功能又加了 `sort`/`dir`
+  各三份，收斂的價值更高了），Phase 6f 體檢時判斷「model binding 語意屬
   行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
   釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
 
