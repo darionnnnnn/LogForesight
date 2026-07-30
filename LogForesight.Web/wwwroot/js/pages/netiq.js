@@ -215,6 +215,7 @@ async function loadOptions() {
     document.getElementById('opt-timeout').value = options.timeoutSeconds;
     document.getElementById('opt-retry-count').value = options.retryCount;
     document.getElementById('opt-allow-invalid-certs').checked = options.allowInvalidCertificates;
+    document.getElementById('opt-backfill-days').value = options.backfillDays;
     renderOptionsUpdated(options);
 }
 
@@ -240,7 +241,8 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
             maxResultsPerJob: Number(document.getElementById('opt-max-results').value),
             timeoutSeconds: Number(document.getElementById('opt-timeout').value),
             retryCount: Number(document.getElementById('opt-retry-count').value),
-            allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked
+            allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
+            backfillDays: Number(document.getElementById('opt-backfill-days').value)
         });
         toast('已儲存連線與節流參數', 'success');
         renderOptionsUpdated(options);

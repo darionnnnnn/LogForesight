@@ -226,4 +226,9 @@ public class UpdateNetiqOptionsRequest
     public int RetryCount { get; set; }
 
     public bool AllowInvalidCertificates { get; set; }
+
+    /// <summary>docs/FEEDBACK-3-PLAN.md #1：正式環境的預期值是 1（只查前一天），
+    /// 上限 14 與趨勢窗口天數對齊——回補比趨勢分析用得到的更多天沒有意義</summary>
+    [Range(1, 14)]
+    public int BackfillDays { get; set; }
 }

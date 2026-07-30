@@ -19,11 +19,6 @@ public class NetiqPipelineService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    /// <summary>NetIQ 主機首次執行（該主機 record store 全空）只回補這麼多天，不套本機模式的
-    /// InitialHistoryDays（預設 120）——2000 台規模下對 Sentinel 做 120 天全量回補不現實，
-    /// 且 NetIQ 主機通常是既有系統剛開始被監控，不像本機模式那樣需要深度歷史基準。</summary>
-    internal const int NetiqInitialLookbackDays = 14;
-
     /// <summary>單一 event-search job 的 IP 批次上限。第一、二輪 probe 實證 10/50/100 個
     /// repip 子句皆被接受、耗時無明顯差異，取中間值——批次越大單日查詢次數越少，
     /// 但單一 job 逾時/失敗時受影響的主機也越多，50 是安全邊際下的實務選擇。</summary>
@@ -125,17 +120,31 @@ public class NetiqPipelineService
         return result;
     }
 
+    /// <summary>
+    /// 回補天數計算（docs/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
+    /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
+    /// 若 BackfillDays 設得比趨勢窗口還大，仍以趨勢窗口為準——回補比趨勢分析
+    /// 實際會用到的更多天沒有意義，多查的天數只是白費 Sentinel 查詢額度。
+    /// 抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
+    /// </summary>
+    internal static int ResolveLookbackDays(int backfillDays, int trendWindowDays) =>
+        Math.Min(backfillDays, trendWindowDays);
+
     private async Task RunServerAsync(
         Sentinel sentinel, List<NetiqTarget> targets, int trendWindowDays, NetiqPipelineResult result, CancellationToken ct)
     {
         Console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 Windows 主機");
+
+        // 首次與非首次統一套用 BackfillDays（docs/FEEDBACK-3-PLAN.md #1）：不再區分
+        // 「該主機是否已有任何紀錄」——2000 台規模下不管是首次登錄還是排程漏跑，
+        // 對 Sentinel 做大量歷史日查詢都不現實，一律以管理者設定的回補窗口為準
+        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays, trendWindowDays);
 
         var plans = new List<HostPlan>();
         foreach (var target in targets)
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = StorageFactory.CreateRecordStore(_storage, _dataRoot, hostKey);
-            var lookback = store.HasAnyRecord() ? trendWindowDays : NetiqInitialLookbackDays;
             var missingDates = Enumerable.Range(1, lookback)
                 .Select(offset => DateTime.Today.AddDays(-offset))
                 .Where(date => !store.HasRecord(date))

@@ -52,6 +52,15 @@
                     <label for="opt-retry-count" class="form-label">失敗重試次數</label>
                     <input type="number" class="form-control" id="opt-retry-count" min="0" max="20" />
                 </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-backfill-days" class="form-label">每次執行回補天數</label>
+                    <input type="number" class="form-control" id="opt-backfill-days" min="1" max="14" />
+                    <div class="form-text">
+                        每台主機每次執行最多回補幾天的缺漏日。正式環境建議 1（只查前一天）——
+                        2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。
+                        排程漏跑的中間日子不會自動補齊，需要補歷史時可暫時調大此值、跑一次、再調回來。
+                    </div>
+                </div>
             </div>
             <div class="form-check mt-3">
                 <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />
