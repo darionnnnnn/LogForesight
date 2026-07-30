@@ -53,6 +53,16 @@ public class NetiqOptions
     /// </summary>
     public int BackfillDays { get; set; } = 1;
 
+    /// <summary>
+    /// 同時處理幾台 Sentinel（docs/FEEDBACK-3-PLAN.md #2）。各台 Sentinel 轄下主機互不重疊、
+    /// 各自獨立的 <see cref="SentinelClient"/> 連線，跨台平行不破壞「同一台主機同一天內
+    /// 依序處理」的趨勢比對前提（該限制只在單一主機內成立，一台主機只屬於一台 Sentinel）。
+    /// 預設 2；設 1 等同完全依序處理（既有行為的逃生門）。上限 8——平行度越高，
+    /// 單一 Sentinel 逾時／失敗互不拖累其他 Sentinel 的優勢越明顯，但同時發出的查詢
+    /// 也越多，過高可能造成多台 Sentinel 同時被拖慢。
+    /// </summary>
+    public int MaxParallelServers { get; set; } = 2;
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

@@ -61,6 +61,15 @@
                         排程漏跑的中間日子不會自動補齊，需要補歷史時可暫時調大此值、跑一次、再調回來。
                     </div>
                 </div>
+                <div class="col-sm-6 col-lg-4">
+                    <label for="opt-max-parallel-servers" class="form-label">同時處理幾台 Sentinel</label>
+                    <input type="number" class="form-control" id="opt-max-parallel-servers" min="1" max="8" />
+                    <div class="form-text">
+                        各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理
+                        （既有行為）。平行度越高，單一 Sentinel 逾時／失敗越不拖累其他台，
+                        但同時發出的查詢也越多。
+                    </div>
+                </div>
             </div>
             <div class="form-check mt-3">
                 <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />

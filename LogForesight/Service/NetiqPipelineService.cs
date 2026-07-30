@@ -66,25 +66,34 @@ public class NetiqPipelineService
             return result;
         }
 
+        var maxParallel = Math.Max(1, _netiqOptions.MaxParallelServers);
         Console.WriteLine($"\n══════════ NetIQ 機房分析（{hostList.TotalHosts} 台主機，" +
-                          $"{hostList.ByServer.Count} 台 Sentinel）══════════");
+                          $"{hostList.ByServer.Count} 台 Sentinel，平行度 {maxParallel}）══════════");
 
-        foreach (var (serverName, targets) in hostList.ByServer)
+        // 各台 Sentinel 轄下主機互不重疊、各自獨立的 SentinelClient 連線，跨台平行不破壞
+        // 「同一台主機同一天內依序處理」的趨勢比對前提（該限制只在單一主機內成立）。
+        // MaxDegreeOfParallelism 由管理者設定，設 1 等同完全依序處理（docs/FEEDBACK-3-PLAN.md #2）。
+        // 取消交給 ParallelOptions.CancellationToken 統一處理，body 內不必再自行檢查。
+        await Parallel.ForEachAsync(hostList.ByServer, new ParallelOptions
         {
-            ct.ThrowIfCancellationRequested();
+            MaxDegreeOfParallelism = maxParallel,
+            CancellationToken = ct
+        }, async (entry, serverCt) =>
+        {
+            var (serverName, targets) = entry;
 
             var sentinel = _sentinels.FindByName(serverName);
             if (sentinel == null)
             {
                 Console.WriteLine($"  ⚠ Sentinel「{serverName}」設定已消失，略過（轄下 {targets.Count} 台主機本次不查詢）");
-                result.Warnings.Add($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
-                continue;
+                result.AddWarning($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
+                return;
             }
             if (!sentinel.CanDiscover)
             {
                 Console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");
-                result.Warnings.Add($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
-                continue;
+                result.AddWarning($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
+                return;
             }
 
             var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -93,16 +102,16 @@ public class NetiqPipelineService
             {
                 Console.WriteLine($"  ℹ Sentinel「{serverName}」轄下 {linuxCount} 台 Linux 主機，" +
                                   "取數管線尚未支援，本次不查詢（見 docs/LINUX-RULES-PLAN.md P3）");
-                result.Warnings.Add($"Sentinel「{serverName}」的 {linuxCount} 台 Linux 主機本次不查詢（Linux 取數尚未支援）");
+                result.AddWarning($"Sentinel「{serverName}」的 {linuxCount} 台 Linux 主機本次不查詢（Linux 取數尚未支援）");
             }
             if (windowsTargets.Count == 0)
             {
-                continue;
+                return;
             }
 
             try
             {
-                await RunServerAsync(sentinel, windowsTargets, trendWindowDays, result, ct);
+                await RunServerAsync(sentinel, windowsTargets, trendWindowDays, result, serverCt);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -110,10 +119,10 @@ public class NetiqPipelineService
                 // 完全沒被查詢——這正是 HostListResult.Warnings 一貫的「不能靜默略過」原則
                 Log.Warn(ex, "[{Server}] NetIQ 分析失敗，轄下主機本次未完成", serverName);
                 Console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {windowsTargets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
-                result.Warnings.Add($"Sentinel「{serverName}」整體失敗：{ex.Message}");
-                result.HostsFailed += windowsTargets.Count;
+                result.AddWarning($"Sentinel「{serverName}」整體失敗：{ex.Message}");
+                result.AddFailed(windowsTargets.Count);
             }
-        }
+        });
 
         Console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
                           $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日 ──");
@@ -153,7 +162,7 @@ public class NetiqPipelineService
 
             if (missingDates.Count == 0)
             {
-                result.HostsSkippedUpToDate++;
+                result.AddSkipped();
                 continue;
             }
             plans.Add(new HostPlan(target, store, missingDates));
@@ -161,7 +170,7 @@ public class NetiqPipelineService
 
         if (plans.Count == 0)
         {
-            Console.WriteLine("  今日全數主機皆已有分析紀錄，跳過。");
+            Console.WriteLine($"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
             return;
         }
 
@@ -214,7 +223,7 @@ public class NetiqPipelineService
         {
             Console.WriteLine($"  ✗ [{sentinelName}] {date:yyyy-MM-dd} 批次查詢失敗（{batch.Length} 台）：{ex.Message}");
             Log.Warn(ex, "[{Server}] {Date} 批次查詢失敗", sentinelName, date);
-            result.HostsFailed += batch.Length;
+            result.AddFailed(batch.Length);
             return;
         }
 
@@ -245,7 +254,7 @@ public class NetiqPipelineService
 
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,
-                hostReported: hostRawEvents.Count > 0, trendWindowDays, result);
+                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName);
         }
 
         if (totalSkipped > 0)
@@ -256,7 +265,7 @@ public class NetiqPipelineService
 
     private async Task AnalyzeHostDayAsync(
         HostPlan plan, DateTime date, List<EventLogEntryData> events, bool dataIncomplete,
-        string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result)
+        string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName)
     {
         var target = plan.Target;
 
@@ -279,7 +288,7 @@ public class NetiqPipelineService
                 date, events, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null);
 
-            result.HostDaysAnalyzed++;
+            result.AddAnalyzed();
             _runRecorder.RecordDayAnalyzed();
 
             // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有
@@ -300,14 +309,14 @@ public class NetiqPipelineService
                 _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
             }
 
-            Console.WriteLine($"  [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
+            Console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
                               (record.ReportFile != null ? $" → {record.ReportFile}" : ""));
         }
         catch (Exception ex)
         {
-            result.HostsFailed++;
-            Log.Warn(ex, "[{Ip}] {Date} 分析失敗", target.IpAddress, date);
-            Console.WriteLine($"  ✗ [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
+            result.AddFailed();
+            Log.Warn(ex, "[{Server}] [{Ip}] {Date} 分析失敗", sentinelName, target.IpAddress, date);
+            Console.WriteLine($"  ✗ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 分析失敗：{ex.Message}" +
                               "（未寫入紀錄，下次執行自動重試）");
             // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
@@ -317,18 +326,40 @@ public class NetiqPipelineService
     private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates);
 }
 
-/// <summary>單次 NetIQ 機房分析的執行結果總結，供 console 輸出與 BatchRunRecorder 里程碑使用。</summary>
+/// <summary>
+/// 單次 NetIQ 機房分析的執行結果總結，供 console 輸出與 BatchRunRecorder 里程碑使用。
+///
+/// 多台 Sentinel 平行處理後（docs/FEEDBACK-3-PLAN.md #2），這幾個計數與 Warnings
+/// 會被多個平行執行的 Task 同時寫入——內部一律經 Interlocked／lock 更新，呼叫端不再
+/// 直接 ++/+=/Add，避免散落的非原子更新在平行情境下掉計數。
+/// </summary>
 public sealed class NetiqPipelineResult
 {
+    private int _hostsSkippedUpToDate;
+    private int _hostDaysAnalyzed;
+    private int _hostsFailed;
+    private readonly List<string> _warnings = new();
+
     /// <summary>今日已有分析紀錄、本次跳過的主機數（當日續跑的核心：不重複分析）</summary>
-    public int HostsSkippedUpToDate { get; set; }
+    public int HostsSkippedUpToDate => _hostsSkippedUpToDate;
 
     /// <summary>本次成功分析的「主機×日」次數（不是主機數——回補多天時一台主機可能算好幾次）</summary>
-    public int HostDaysAnalyzed { get; set; }
+    public int HostDaysAnalyzed => _hostDaysAnalyzed;
 
     /// <summary>失敗的「主機×日」次數（含批次查詢失敗與單台分析失敗）</summary>
-    public int HostsFailed { get; set; }
+    public int HostsFailed => _hostsFailed;
 
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
-    public List<string> Warnings { get; } = new();
+    public IReadOnlyList<string> Warnings => _warnings;
+
+    internal void AddSkipped() => Interlocked.Increment(ref _hostsSkippedUpToDate);
+
+    internal void AddAnalyzed() => Interlocked.Increment(ref _hostDaysAnalyzed);
+
+    internal void AddFailed(int count = 1) => Interlocked.Add(ref _hostsFailed, count);
+
+    internal void AddWarning(string message)
+    {
+        lock (_warnings) _warnings.Add(message);
+    }
 }
