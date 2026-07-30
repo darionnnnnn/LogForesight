@@ -187,6 +187,16 @@ body {
     color: var(--lf-gray-400);
 }
 
+/* 依問題視角批次指派 modal 的受影響主機清單（docs/FEEDBACK-4-PLAN.md §4）：
+   2000 台規模下單一問題可能影響數百台主機，限高＋捲動避免 modal 被撐爆版面 */
+.lf-bulk-assign-hosts {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
 /* 小型「說明」圖示鈕（開 popover）*/
 .lf-help {
     display: inline-flex;

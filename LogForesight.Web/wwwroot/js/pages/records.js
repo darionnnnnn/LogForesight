@@ -11,12 +11,12 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api, getDisplaySettings } from '../core/api.js';
+import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import {
-    renderTable, renderLoading, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
+    renderTable, renderLoading, renderEmpty, toast, renderPagination, withBusy, renderChips,
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, CATEGORY_NAMES, severityName, toLocalDateString, todayLocal } from '../core/format.js';
+import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
@@ -35,6 +35,9 @@ let lastResult = null;
 
 let aiAvailable = false;
 
+// 依問題視角批次指派（docs/FEEDBACK-4-PLAN.md §4）：只有 Assign 能力才顯示「指派」鈕
+let currentUser = null;
+
 // 主機篩選（§5.4 D-4）：兩千台規模下不能把全部主機灌進一個 <select>，
 // 改成搜尋式 autocomplete＋已選主機顯示為可移除 chip。key 用字串，與 URL/DOM dataset 一致
 const selectedHosts = new Map();   // hostId(string) → hostName
@@ -43,6 +46,7 @@ const activeGroupIds = new Set();  // groupId(string)
 
 async function init() {
     applyUrlToForm();
+    currentUser = await getCurrentUser();
     await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions(), applyDayRiskVisibility()]);
     await search();
     initAiSummary();
@@ -261,7 +265,7 @@ function applyUrlToForm() {
     document.getElementById('filter-to').value = params.get('to') ?? today();
     document.getElementById('filter-event-id').value = params.get('eventId') ?? '';
 
-    currentView = ['detail', 'host', 'date'].includes(params.get('view')) ? params.get('view') : 'detail';
+    currentView = ['detail', 'host', 'date', 'issue'].includes(params.get('view')) ? params.get('view') : 'detail';
     setActiveView(currentView);
     currentPage = Number(params.get('page')) || 1;
     sort = { key: params.get('sort') ?? '', dir: params.get('dir') === 'asc' ? 'asc' : 'desc' };
@@ -295,7 +299,7 @@ function setActiveView(view) {
     const supportsStatus = view === 'detail';
     for (const btn of document.querySelectorAll('#filter-status-chips button')) {
         btn.disabled = !supportsStatus;
-        btn.title = supportsStatus ? '' : '依主機／依日期視角不支援處理狀態篩選';
+        btn.title = supportsStatus ? '' : '彙總視角（依主機／依日期／依問題）不支援處理狀態篩選';
     }
 }
 
@@ -310,9 +314,11 @@ function collectFilters() {
         eventId: document.getElementById('filter-event-id').value,
         // 處理狀態現在是可見的 chip（不再只由下鑽網址帶入）
         statuses: activeChips('filter-status-chips', 'status').join(','),
-        // severity/overdue 仍只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）
+        // severity/overdue/source 只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）——
+        // source 沒有對應的表單欄位（依問題視角點列下鑽用，docs/FEEDBACK-4-PLAN.md §4）
         severity: new URLSearchParams(location.search).get('severity') ?? '',
-        overdue: new URLSearchParams(location.search).get('overdue') ?? ''
+        overdue: new URLSearchParams(location.search).get('overdue') ?? '',
+        source: new URLSearchParams(location.search).get('source') ?? ''
     };
 }
 
@@ -329,6 +335,7 @@ function buildQueryString(filters, page) {
     if (filters.severity) params.set('severity', filters.severity);
     if (filters.statuses) params.set('statuses', filters.statuses);
     if (filters.overdue) params.set('overdue', filters.overdue);
+    if (filters.source) params.set('source', filters.source);
     if (currentView !== 'detail') params.set('view', currentView);
     if (sort.key) {
         params.set('sort', sort.key);
@@ -342,7 +349,10 @@ function buildQueryString(filters, page) {
 }
 
 /** 明細視角才支援處理狀態／逾期篩選；彙總視角不帶這兩個參數 */
-const ENDPOINT = { detail: '/api/records', host: '/api/records/by-host', date: '/api/records/by-date' };
+const ENDPOINT = {
+    detail: '/api/records', host: '/api/records/by-host', date: '/api/records/by-date',
+    issue: '/api/records/by-issue'
+};
 
 async function search() {
     const filters = collectFilters();
@@ -359,7 +369,7 @@ async function search() {
 }
 
 /**
- * 下鑽帶入的隱藏條件（severity/overdue）顯性化為可移除標籤——否則使用者只看到
+ * 下鑽帶入的隱藏條件（severity/overdue/source）顯性化為可移除標籤——否則使用者只看到
  * 「為什麼只有這幾筆」卻在篩選列找不到原因。點 ✕ 移除該條件並重查。
  */
 function renderActiveConditions(filters) {
@@ -370,6 +380,8 @@ function renderActiveConditions(filters) {
     const tags = [];
     if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
+    // 依問題視角下鑽帶入（docs/FEEDBACK-4-PLAN.md §4）：source 沒有對應表單欄位，只能靠這裡顯性化
+    if (filters.source) tags.push({ label: `來源：${filters.source}`, param: 'source' });
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
     container.classList.toggle('d-none', tags.length === 0);
@@ -400,12 +412,15 @@ function renderActiveConditions(filters) {
     }
 }
 
+const VIEW_UNIT = { detail: '筆', host: '台主機', date: '天', issue: '個問題' };
+
 function render() {
     document.getElementById('result-count').textContent =
-        lastResult.total > 0 ? `共 ${lastResult.total} ${currentView === 'detail' ? '筆' : (currentView === 'host' ? '台主機' : '天')}` : '';
+        lastResult.total > 0 ? `共 ${lastResult.total} ${VIEW_UNIT[currentView] ?? '筆'}` : '';
 
     if (currentView === 'host') renderHostView();
     else if (currentView === 'date') renderDateView();
+    else if (currentView === 'issue') renderIssueView();
     else renderDetailView();
 
     renderPager();
@@ -579,6 +594,229 @@ function dateViewLink(row) {
     return link;
 }
 
+// ── 依問題視角（主機與日期都合併，docs/FEEDBACK-4-PLAN.md §4）──────────────────
+
+function renderIssueView() {
+    const canAssign = hasCapability(currentUser, 'Assign');
+
+    const columns = [
+        { title: '問題', render: i => issueGroupCell(i) },
+        { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
+        { title: '嚴重度', sortKey: 'severity', render: i => severityBadge(i.maxSeverity) },
+        { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
+        { title: '風險日數', className: 'text-end', sortKey: 'dayCount', sortDefaultDir: 'desc', render: i => String(i.dayCount) },
+        { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
+        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => i.lastSeen },
+        { title: '處理概況', render: i => i.handlingSummary },
+        { title: '處理人', render: i => (i.handlerNames ?? []).join('、') }
+    ];
+
+    if (canAssign) {
+        columns.push({ title: '', className: 'text-end lf-no-print', render: i => issueAssignButton(i) });
+    }
+
+    renderTable(listContainer, {
+        columns,
+        rows: lastResult.items,
+        sort,
+        onSort: applySort,
+        // 點列 → 切到明細視角並鎖定這個問題（source+eventId）
+        rowHref: i => detailForIssue(i),
+        empty: { title: '沒有符合條件的問題', hint: '請調整篩選條件或日期區間。' }
+    });
+}
+
+function issueGroupCell(group) {
+    const wrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'fw-semibold';
+    title.textContent = `${group.source} (${group.eventId})`;
+    wrap.appendChild(title);
+
+    if (group.knownIssue) {
+        const known = document.createElement('div');
+        known.className = 'small text-muted';
+        known.textContent = group.knownIssue;
+        wrap.appendChild(known);
+    }
+    return wrap;
+}
+
+/** 依問題視角下鑽到明細：沿用目前篩選，鎖定這個問題（source+eventId），排序欄位不帶過去 */
+function detailForIssue(group) {
+    const params = new URLSearchParams(buildQueryString(collectFilters(), 1));
+    params.delete('view');
+    params.delete('page');
+    params.delete('sort');
+    params.delete('dir');
+    params.set('eventId', String(group.eventId));
+    params.set('source', group.source);
+    return `?${params.toString()}`;
+}
+
+function issueAssignButton(group) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-primary';
+    btn.textContent = '指派';
+    btn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openBulkAssignModal(group);
+    });
+    return btn;
+}
+
+/**
+ * 跨主機批次指派 modal（docs/FEEDBACK-4-PLAN.md §4）：開啟時先載入受影響主機預覽
+ * （已由他人案件涵蓋的主機標出既有處理人、預設不勾），選處理人／說明／預計完成日後送出。
+ */
+function openBulkAssignModal(group) {
+    const body = document.createElement('div');
+    const loading = document.createElement('div');
+    loading.className = 'text-center py-3 text-muted';
+    loading.textContent = '載入受影響主機…';
+    body.appendChild(loading);
+
+    showDetailModal({ title: `批次指派：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadBulkAssignForm(group, body);
+}
+
+async function loadBulkAssignForm(group, body) {
+    const filters = collectFilters();
+    const params = new URLSearchParams({ source: group.source, eventId: String(group.eventId) });
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+
+    let hosts, users;
+    try {
+        [hosts, users] = await Promise.all([
+            api.get(`/api/handling/issue-cases/preview?${params.toString()}`, { silent: true }),
+            api.get('/api/admin/users', { silent: true })
+        ]);
+    } catch (error) {
+        body.replaceChildren();
+        const msg = document.createElement('div');
+        msg.className = 'text-danger';
+        msg.textContent = error?.message || '載入受影響主機失敗';
+        body.appendChild(msg);
+        return;
+    }
+
+    renderBulkAssignForm(body, group, hosts, users);
+}
+
+function renderBulkAssignForm(body, group, hosts, users) {
+    body.replaceChildren();
+
+    if (hosts.length === 0) {
+        renderEmpty(body, { title: '目前查詢範圍內沒有受影響的主機' });
+        return;
+    }
+
+    const form = document.createElement('form');
+
+    const handlerLabel = document.createElement('label');
+    handlerLabel.className = 'form-label small text-muted';
+    handlerLabel.textContent = '處理人';
+    const handlerSelect = document.createElement('select');
+    handlerSelect.className = 'form-select form-select-sm mb-3';
+    for (const user of [...users].filter(u => u.active).sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-TW'))) {
+        const option = document.createElement('option');
+        option.value = user.userId;
+        option.textContent = user.displayName;
+        handlerSelect.appendChild(option);
+    }
+    form.append(handlerLabel, handlerSelect);
+
+    const noteLabel = document.createElement('label');
+    noteLabel.className = 'form-label small text-muted';
+    noteLabel.textContent = '說明（選填）';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'form-control form-control-sm mb-3';
+    noteInput.rows = 2;
+    form.append(noteLabel, noteInput);
+
+    const dueLabel = document.createElement('label');
+    dueLabel.className = 'form-label small text-muted';
+    dueLabel.textContent = '預計完成日（選填）';
+    const dueInput = document.createElement('input');
+    dueInput.type = 'date';
+    dueInput.className = 'form-control form-control-sm mb-3';
+    form.append(dueLabel, dueInput);
+
+    const hostListLabel = document.createElement('div');
+    hostListLabel.className = 'form-label small text-muted';
+    hostListLabel.textContent = `受影響主機（${hosts.length} 台，已由他人案件涵蓋的預設不勾）`;
+    form.appendChild(hostListLabel);
+
+    const hostList = document.createElement('div');
+    hostList.className = 'lf-bulk-assign-hosts mb-3';
+    const checks = [];
+    for (const host of hosts) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check';
+
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.className = 'form-check-input';
+        // 已有他人案件的主機預設不勾——送出時仍會被後端保留原處理人跳過，但先不勾更誠實：
+        // 使用者一眼看得出「這台不會變」，不必等送出後才從略過清單得知
+        check.checked = !host.existingHandlerName;
+        check.dataset.hostId = host.hostId;
+        checks.push(check);
+
+        const label = document.createElement('label');
+        label.className = 'form-check-label small';
+        label.textContent = host.existingHandlerName
+            ? `${host.hostName}（已由 ${host.existingHandlerName} 處理中，未變更）`
+            : host.hostName;
+
+        wrap.append(check, label);
+        hostList.appendChild(wrap);
+    }
+    form.appendChild(hostList);
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn btn-sm btn-primary';
+    submit.textContent = '送出指派';
+    form.appendChild(submit);
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+
+        const hostIds = checks.filter(c => c.checked).map(c => Number(c.dataset.hostId));
+        if (hostIds.length === 0) {
+            toast('請至少勾選一台主機', 'warning');
+            return;
+        }
+
+        const restore = withBusy(submit, '送出中');
+        try {
+            const result = await api.post('/api/handling/issue-cases/bulk-assign', {
+                source: group.source,
+                eventId: group.eventId,
+                hostIds,
+                handlerId: Number(handlerSelect.value),
+                note: noteInput.value.trim() || null,
+                dueDate: dueInput.value || null
+            });
+
+            const skippedNote = result.skipped.length > 0 ? `；${result.skipped.length} 台已由他人案件涵蓋，未變更` : '';
+            toast(`已建立 ${result.created} 個案件${skippedNote}`, 'success');
+
+            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            currentPage = 1;
+            search();
+        } catch (error) {
+            restore();
+        }
+    });
+
+    body.appendChild(form);
+}
+
 // ── 共用元件 ─────────────────────────────────────────────────────────────────
 
 function textCell(value) {
@@ -700,6 +938,7 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
 function csvHeader() {
     if (currentView === 'host') return ['主機', '高風險', '中風險', '低風險', '關聯訊號', '類型', '最新日期', '最新狀況'];
     if (currentView === 'date') return ['日期', '主機數', '高風險', '中風險', '低風險', '關聯訊號', '類型'];
+    if (currentView === 'issue') return ['來源', 'Event ID', '分類', '嚴重度', '主機數', '風險日數', '總次數', '最近出現', '處理概況', '處理人'];
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
 }
 
@@ -712,6 +951,11 @@ function csvRow(item) {
     if (currentView === 'date') {
         return [item.date, item.hostCount, item.highRiskHosts, item.mediumRiskHosts, item.lowRiskHosts,
             item.correlationHosts, cats(item.categories)];
+    }
+    if (currentView === 'issue') {
+        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category, severityName(item.maxSeverity),
+            item.hostCount, item.dayCount, item.totalCount, item.lastSeen,
+            quote(item.handlingSummary), quote((item.handlerNames ?? []).join('、'))];
     }
     return [item.date, quote(item.hostName), item.riskLevel, quote(item.headline),
         cats(item.categories), quote(item.handlingStatusText), quote(item.handlerName ?? '')];
