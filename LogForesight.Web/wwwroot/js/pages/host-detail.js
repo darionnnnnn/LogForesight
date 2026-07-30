@@ -6,8 +6,8 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, labelValue } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { renderLoading, renderTable, labelValue } from '../core/ui.js';
+import { formatDateTime, formatNumber, severityBadge, CATEGORY_NAMES } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
@@ -23,11 +23,13 @@ const LEGEND = [
 
 async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
+    renderLoading(document.getElementById('host-issues'), 3);
 
     const detail = await api.get(`/api/host-detail/${hostId}?days=${currentDays}`);
 
     renderHeader(detail);
     renderTimeline(detail);
+    renderIssues(detail);
     renderCheckup(detail);
 }
 
@@ -132,6 +134,30 @@ function renderLegend() {
         wrap.append(swatch, label);
         legend.appendChild(wrap);
     }
+}
+
+/**
+ * 重點問題（期間彙總，docs/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」下鑽進來
+ * 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的問題，
+ * 每列連結到最近一次出現的那天詳情（該日詳情有完整處理動線）。
+ */
+function renderIssues(detail) {
+    renderTable(document.getElementById('host-issues'), {
+        columns: [
+            { title: '來源 / Event', render: s => `${s.source} (${s.eventId})` },
+            { title: '分類', render: s => CATEGORY_NAMES[s.category] ?? s.category },
+            { title: '嚴重度', render: s => severityBadge(s.maxSeverity) },
+            { title: '總次數', className: 'text-end', render: s => formatNumber(s.totalCount) },
+            { title: '出現天數', className: 'text-end', render: s => formatNumber(s.daysSeen) },
+            { title: '最近出現', className: 'text-nowrap', render: s => s.lastSeenDate },
+            { title: '說明', render: s => s.knownIssue || '' }
+        ],
+        rows: detail.topSignatures,
+        rowHref: s => `/records/${hostId}/${s.lastSeenDate}`,
+        // 時間軸的灰格＝「這天沒分析」，不是「沒問題」；空狀態的 hint 呼應同一個原則，
+        // 避免使用者把「期間內沒有重點問題」誤讀成「這台主機根本沒被監控」
+        empty: { title: '期間內未偵測到問題', hint: '時間軸灰格代表該日無分析紀錄，與「這天沒風險」是不同的意思。' }
+    });
 }
 
 function renderCheckup(detail) {

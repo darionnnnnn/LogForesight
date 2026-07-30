@@ -476,27 +476,69 @@ public class RecordQueryService
                 CheckupDate = latestCheckup.CheckupDate.ToString("yyyy-MM-dd"),
                 HasFindings = latestCheckup.HasFindings,
                 Conclusion = latestCheckup.Conclusion
-            }
+            },
+            TopSignatures = BuildIssueSummary(records.Values)
         };
     }
+
+    /// <summary>
+    /// 主機詳情頁「重點問題（期間彙總）」（docs/FEEDBACK-3-PLAN.md #4）：依 Source+EventId
+    /// 分組——與 <see cref="ClusterSignatures"/> 共用 <see cref="GroupIssuesBySignature"/>，
+    /// 這裡關心「出現幾天」而不是「幾台主機」，維度不同故各自 Select，分組鍵定義只寫一次。
+    /// 排序：最高嚴重度（重→輕）→ 總次數 desc。
+    /// </summary>
+    private static List<HostIssueSummaryDto> BuildIssueSummary(IEnumerable<DailyAnalysisRecord> records) =>
+        GroupIssuesBySignature(records)
+            .Select(g =>
+            {
+                // 說明／分類取最近一天的：規則的已知問題文字可能事後被編輯過，
+                // 各天的舊紀錄各自保留分析當下的快照，「最近一天最新」比任意挑一筆更有用
+                var latest = g.OrderByDescending(x => x.Record.Date).First();
+                return (MaxSeverity: g.Max(x => x.Issue.Severity), Dto: new HostIssueSummaryDto
+                {
+                    Source = g.Key.Source,
+                    EventId = g.Key.EventId,
+                    Category = latest.Issue.Category.ToString(),
+                    TotalCount = g.Sum(x => x.Issue.Count),
+                    DaysSeen = g.Select(x => x.Record.Date.Date).Distinct().Count(),
+                    LastSeenDate = latest.Record.Date.ToString("yyyy-MM-dd"),
+                    KnownIssue = latest.Issue.KnownIssue
+                });
+            })
+            // 排序用未字串化的 enum（High=2 > Medium=1 > Low=0），字串化只在最後賦值，
+            // 不繞「轉字串再解析回列舉」那種多此一舉的寫法
+            .OrderByDescending(x => x.MaxSeverity)
+            .ThenByDescending(x => x.Dto.TotalCount)
+            .Select(x =>
+            {
+                x.Dto.MaxSeverity = x.MaxSeverity.ToString();
+                return x.Dto;
+            })
+            .ToList();
+
+    /// <summary>
+    /// 攤平所有紀錄的 TopIssues，依 (Source, EventId) 分組——<see cref="ClusterSignatures"/>
+    /// （跨主機）與 <see cref="BuildIssueSummary"/>（單主機跨日）共用同一個分組鍵定義，
+    /// 避免兩處各自維護一份、遲早漂移不一致。
+    /// </summary>
+    private static IEnumerable<IGrouping<(string Source, int EventId), (DailyAnalysisRecord Record, LogIssueSignature Issue)>>
+        GroupIssuesBySignature(IEnumerable<DailyAnalysisRecord> records) =>
+        records
+            .SelectMany(r => r.TopIssues.Select(i => (Record: r, Issue: i)))
+            .GroupBy(x => (x.Issue.Source, x.Issue.EventId));
 
     public List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request)
     {
         var records = _repository.Query(BuildFilter(request));
         var lookup = new HostLookup(_hosts.GetAll());
 
-        return records
-            .SelectMany(r => r.TopIssues.Select(i => new
-            {
-                i.Source, i.EventId, i.Count, Host = HostNameOf(lookup, r)
-            }))
-            .GroupBy(x => new { x.Source, x.EventId })
+        return GroupIssuesBySignature(records)
             .Select(g => new IssueClusterDto
             {
                 Source = g.Key.Source,
                 EventId = g.Key.EventId,
-                HostCount = g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                TotalCount = g.Sum(x => x.Count)
+                HostCount = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                TotalCount = g.Sum(x => x.Issue.Count)
             })
             // 只保留跨主機的——單台出現的不叫「共通」，AI 歸納那些沒有價值
             .Where(c => c.HostCount > 1)
