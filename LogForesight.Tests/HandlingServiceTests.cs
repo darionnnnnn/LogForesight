@@ -900,6 +900,8 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
         existing.Note = handling.Note;
         existing.ActorId = handling.ActorId;
         existing.ActorAccount = handling.ActorAccount;
+        existing.DueDate = handling.DueDate;
+        existing.CaseId = handling.CaseId;
         existing.UpdatedAt = handling.UpdatedAt;
     }
 

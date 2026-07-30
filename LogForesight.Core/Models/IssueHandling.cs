@@ -33,6 +33,14 @@ public class IssueHandling
     /// <summary>預計完成日——只有 Status=in_progress 時才有意義，畫面上僅該狀態顯示此欄位</summary>
     public DateTime? DueDate { get; set; }
 
+    /// <summary>
+    /// 出處案件（docs/FEEDBACK-4-PLAN.md §0，2026-07-30 起）：由 <c>IssueCaseCoordinator</c>
+    /// 展開寫入的列帶值，使用者在個別日子手動標記的列維持 null。
+    /// 這是案件同步的邊界——同步只覆蓋 CaseId 屬於本案件與未標記的日子，
+    /// 使用者手動標的列（無論狀態）一律不受案件同步影響。舊資料反序列化為 null，零遷移。
+    /// </summary>
+    public string? CaseId { get; set; }
+
     public DateTime UpdatedAt { get; set; }
 }
 

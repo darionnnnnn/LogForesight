@@ -47,6 +47,8 @@ public class IssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandl
             existing.ActorId = handling.ActorId;
             existing.ActorAccount = handling.ActorAccount;
             existing.Note = handling.Note;
+            existing.DueDate = handling.DueDate;
+            existing.CaseId = handling.CaseId;
             existing.UpdatedAt = handling.UpdatedAt;
         });
     }

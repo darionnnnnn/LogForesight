@@ -124,6 +124,30 @@ public class EfWebdataStoreTests
         Assert.Equal(0, run.ExitCode);
     }
 
+    /// <summary>
+    /// 問題層級處理狀態的更新路徑（docs/FEEDBACK-4-PLAN.md §7 附帶修復）：先前 Save() 更新既有列時
+    /// 只抄 Status/ActorId/ActorAccount/Note/UpdatedAt，漏了 DueDate（與新增的 CaseId）——
+    /// 對已標記過的問題再標「處理中＋預計完成日」，期限不會落盤，逾期判定因此對這類列失效。
+    /// 這裡先標一次無期限的 in_progress，再標一次有期限，確認第二次的 DueDate/CaseId 真的更新到。
+    /// </summary>
+    [Fact]
+    public void 問題處理狀態_更新既有列補上DueDate與CaseId()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new IssueHandlingStore(fx.Blob("issue_handling"));
+        var date = DateTime.Today;
+
+        store.Save(new IssueHandling { HostName = "SRV-01", Date = date, IssueKey = "k1", Status = "in_progress", UpdatedAt = DateTime.Now });
+        Assert.Null(store.GetForDay("SRV-01", date).Single().DueDate);
+
+        var due = date.AddDays(7);
+        store.Save(new IssueHandling { HostName = "SRV-01", Date = date, IssueKey = "k1", Status = "in_progress", DueDate = due, CaseId = "case-1", UpdatedAt = DateTime.Now });
+
+        var updated = store.GetForDay("SRV-01", date).Single();
+        Assert.Equal(due, updated.DueDate);
+        Assert.Equal("case-1", updated.CaseId);
+    }
+
     // ── 並發保護（lf_blobs.UpdatedAt 為 ConcurrencyToken）──────────────────────
 
     /// <summary>
