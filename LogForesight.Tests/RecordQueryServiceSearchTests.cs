@@ -24,6 +24,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeUserStore _users = new();
     private readonly FakeHandlingStore _handlingStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
+    private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly RecordQueryService _service;
@@ -43,6 +44,7 @@ public class RecordQueryServiceSearchTests : IDisposable
             visibility,
             _handlingStore,
             _issueHandlingStore,
+            _caseStore,
             new FakeNoiseMarkStore(),
             new FakeRuleStore(),
             FakeCurrentUser.WithCapabilities(),
@@ -309,6 +311,57 @@ public class RecordQueryServiceSearchTests : IDisposable
 
         // AddDays(-1) 那天有 2 台主機、今天只有 1 台——降冪應把 2 台那天排最前
         Assert.Equal(2, result.Items[0].HostCount);
+    }
+
+    // ── 問題案件（docs/FEEDBACK-4-PLAN.md §2）───────────────────────────────────
+
+    /// <summary>詳情頁的問題列帶回進行中案件的處理人／狀態／起始日，前端據此顯示連動徽章</summary>
+    [Fact]
+    public void GetDetail_問題有進行中案件時帶回案件資訊()
+    {
+        var host = AddHost("HOST-A");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小明" });
+        var issue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = DateTime.Today.AddDays(-5), LastLinkedDate = DateTime.Today,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        var detail = _service.GetDetail(host.HostId, DateTime.Today);
+
+        var dto = detail.TopIssues.Single();
+        Assert.Equal("小明", dto.CaseHandlerName);
+        Assert.Equal(IssueHandlingStatuses.InProgress, dto.CaseStatus);
+        Assert.Equal(DateTime.Today.AddDays(-5).ToString("yyyy-MM-dd"), dto.CaseFirstLinkedDate);
+    }
+
+    /// <summary>沒有進行中案件時，案件欄位維持 null（既有行為不受影響）</summary>
+    [Fact]
+    public void GetDetail_問題無案件時案件欄位為null()
+    {
+        var host = AddHost("HOST-A");
+        var issue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+
+        var detail = _service.GetDetail(host.HostId, DateTime.Today);
+
+        var dto = detail.TopIssues.Single();
+        Assert.Null(dto.CaseHandlerName);
+        Assert.Null(dto.CaseStatus);
+        Assert.Null(dto.CaseFirstLinkedDate);
     }
 }
 

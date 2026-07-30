@@ -37,6 +37,7 @@ public class HostDetailIssueSummaryTests : IDisposable
             visibility,
             new FakeHandlingStore(),
             new FakeIssueHandlingStore(),
+            new FakeIssueCaseStore(),
             new FakeNoiseMarkStore(),
             new FakeRuleStore(),
             FakeCurrentUser.WithCapabilities(),

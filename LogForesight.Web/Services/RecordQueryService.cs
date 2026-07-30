@@ -16,6 +16,7 @@ public class RecordQueryService
     private readonly IVisibilityService _visibility;
     private readonly IRecordHandlingStore _handlings;
     private readonly IIssueHandlingStore _issueHandlings;
+    private readonly IIssueCaseStore _cases;
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IKnownIssueRuleStore _rules;
     private readonly ICurrentUser _currentUser;
@@ -30,6 +31,7 @@ public class RecordQueryService
         IVisibilityService visibility,
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
+        IIssueCaseStore cases,
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
@@ -43,6 +45,7 @@ public class RecordQueryService
         _visibility = visibility;
         _handlings = handlings;
         _issueHandlings = issueHandlings;
+        _cases = cases;
         _noiseMarks = noiseMarks;
         _rules = rules;
         _currentUser = currentUser;
@@ -348,6 +351,15 @@ public class RecordQueryService
         var noiseMarks = _noiseMarks.GetForHost(hostName)
             .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
+        // 問題案件（docs/FEEDBACK-4-PLAN.md §2）：進行中案件涵蓋的問題顯示「○○○ 處理中
+        // （1/10 起）」，解釋為什麼某些問題的狀態會被案件同步「自己動」
+        var openCases = _cases.GetOpenForHost(hostName)
+            .ToDictionary(
+                c => c.IssueKey,
+                c => (HandlerName: c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
+                      c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
+                StringComparer.Ordinal);
+
         var settings = _settings.Get();
         var unhandledSeverities = settings.ParseUnhandledSeverities();
 
@@ -375,7 +387,7 @@ public class RecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -688,7 +700,8 @@ public class RecordQueryService
         Dictionary<string, KnownIssueRule>? guidance,
         Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        Dictionary<string, (string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null)
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
@@ -698,6 +711,9 @@ public class RecordQueryService
         var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
         // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
         var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
+
+        (string? HandlerName, string Status, string FirstLinkedDate)? openCase =
+            openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
 
         return new IssueDto
         {
@@ -725,7 +741,10 @@ public class RecordQueryService
             IsDefaultUnhandled = isDefaultUnhandled,
             IsAutoNoise = noiseMark != null,
             NoiseNote = noiseMark?.Note,
-            DueDate = handling?.DueDate?.ToString("yyyy-MM-dd")
+            DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
+            CaseHandlerName = openCase?.HandlerName,
+            CaseStatus = openCase?.Status,
+            CaseFirstLinkedDate = openCase?.FirstLinkedDate
         };
     }
 

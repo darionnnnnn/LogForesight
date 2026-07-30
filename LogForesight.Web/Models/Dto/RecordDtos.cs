@@ -192,6 +192,15 @@ public class IssueDto
     public string? DueDate { get; set; }
 
     /// <summary>
+    /// 這個問題目前的進行中案件（docs/FEEDBACK-4-PLAN.md §2），null＝沒有進行中案件。
+    /// 案件涵蓋這個問題的其他日子也會同步這個狀態——前端據此顯示「○○○ 處理中（1/10 起）」，
+    /// 解釋為什麼某些問題的狀態會「自己動」。
+    /// </summary>
+    public string? CaseHandlerName { get; set; }
+    public string? CaseStatus { get; set; }
+    public string? CaseFirstLinkedDate { get; set; }
+
+    /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。
     /// 掛在問題列下方（可展開），讓「這個問題怎麼辦」與問題本身直接對齊，
     /// 不必再到獨立的深入分析卡玩多對多連連看。
