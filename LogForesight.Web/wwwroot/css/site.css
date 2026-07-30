@@ -1075,11 +1075,49 @@ a.lf-stat:hover .lf-card,
     flex-wrap: wrap;
 }
 
-/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀 */
+/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀。
+   min-width（docs/FEEDBACK-3-PLAN.md #5）：「問題」合併欄吃掉大部分寬度後，
+   趨勢欄仍需要一個底線寬度，否則長片語會被壓成逐字直排 */
 .lf-trend-cell {
     max-width: 180px;
+    min-width: 9rem;
     white-space: pre-line;
     line-height: 1.4;
+}
+
+/* 處理狀態欄底線寬度（docs/FEEDBACK-3-PLAN.md #5）：多數列走 .lf-issue-status
+   自己的 min-width，但唯讀徽章／「不處理（預設）」等短內容沒有這層包裝，
+   欄位本身仍需要一個底線避免被合併欄擠壓 */
+.lf-status-cell {
+    min-width: 8rem;
+}
+
+/* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
+   取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
+   （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
+   先以 line-clamp 收 3 行，超過才出現「顯示全部」（record-detail.js keyDetailsBlock）。 */
+.lf-issue-cell {
+    min-width: 20rem;
+}
+
+.lf-issue-cell__meta {
+    row-gap: .25rem;
+}
+
+.lf-issue-details--clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* 列印時一律看得到完整內容，紙本沒有「點擊展開」這回事 */
+@media print {
+    .lf-issue-details--clamped {
+        display: block;
+        -webkit-line-clamp: unset;
+        overflow: visible;
+    }
 }
 
 /* 原始訊息 modal（#14）：逐則訊息各自成段落，等寬字型、保留原始換行；

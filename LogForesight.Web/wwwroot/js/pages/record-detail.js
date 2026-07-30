@@ -268,16 +268,19 @@ function renderHeader(detail) {
 }
 
 /**
- * 表格欄位定義（docs/HISTORY.md #7）：勾選與處理狀態拆成獨立兩欄——
- * 舊版「處理」欄同時塞 checkbox＋狀態文字＋預計完成日，「不處理（預設）」「已知雜訊（自動）」
- * 兩種列還完全沒有 checkbox（不能參與批次套用）。sectionIssues 是這張表要渲染的那批問題
- * （用於「選取」欄全選 checkbox 的作用範圍）。
+ * 表格欄位定義（docs/HISTORY.md #7；docs/FEEDBACK-3-PLAN.md #5 欄位合併）：
+ * 原本「來源/Event」「次數」「嚴重度」「時段」「說明」五欄各自為政，keyDetails
+ * （4703 這類事件動輒數百字的帳號/IP 彙總）把其餘欄壓成逐字直排。合併為單一
+ * 「問題」欄（issueCell），趨勢與處理狀態維持獨立欄——使用者要看得到「這個問題
+ * 正在惡化」與「誰在處理」，這兩者不適合塞進合併欄。
+ * 勾選與處理狀態仍是獨立兩欄（docs/HISTORY.md #7 的既有理由不變）；sectionIssues
+ * 是這張表要渲染的那批問題（用於「選取」欄全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
     const columns = [
-        // 「來源 / Event」留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在
+        // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在
         // 第一欄最前面，「選取」欄若搶第一位，展開箭頭會跟 checkbox 擠在同一格
-        { title: '來源 / Event', render: i => sourceCell(i) }
+        { title: '問題', render: i => issueCell(i) }
     ];
 
     if (currentDetail.canHandle) {
@@ -290,12 +293,8 @@ function issueColumns(sectionIssues) {
     }
 
     columns.push(
-        { title: '次數', className: 'text-end', render: i => formatNumber(i.count) },
-        { title: '嚴重度', render: i => severityCell(i) },
-        { title: '時段', className: 'text-nowrap', render: i => `${i.firstSeen}~${i.lastSeen}` },
         { title: '趨勢', className: 'lf-trend-cell', render: i => i.trendText },
-        { title: '說明', render: i => knownIssueCell(i) },
-        { title: '處理狀態', render: i => statusControl(i) }
+        { title: '處理狀態', className: 'lf-status-cell', render: i => statusControl(i) }
     );
 
     return columns;
@@ -781,17 +780,25 @@ function collapsedRestSection(rest) {
     return wrap;
 }
 
-function sourceCell(issue) {
-    const wrap = document.createElement('span');
+/**
+ * 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）：取代原本各自獨立的來源/Event、
+ * 次數、嚴重度、時段、說明五欄。由上而下：標題行（來源/Event＋log 名＋已抑制徽章）、
+ * meta 行（嚴重度／重大徽章・次數・時段）、說明、keyDetails（見 keyDetailsBlock）、
+ * 相異訊息數／原始訊息連結。
+ */
+function issueCell(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-issue-cell';
 
-    const main = document.createElement('span');
-    main.textContent = `${issue.source} (${issue.eventId})`;
-    wrap.appendChild(main);
+    const title = document.createElement('div');
+    title.className = 'fw-semibold';
+    title.textContent = `${issue.source} (${issue.eventId})`;
+    wrap.appendChild(title);
 
-    const log = document.createElement('div');
-    log.className = 'small text-muted';
-    log.textContent = issue.logName;
-    wrap.appendChild(log);
+    const logName = document.createElement('div');
+    logName.className = 'small text-muted';
+    logName.textContent = issue.logName;
+    wrap.appendChild(logName);
 
     if (issue.suppressed) {
         const badge = document.createElement('span');
@@ -801,34 +808,79 @@ function sourceCell(issue) {
         wrap.appendChild(badge);
     }
 
-    return wrap;
-}
-
-function knownIssueCell(issue) {
-    const wrap = document.createElement('div');
+    const meta = document.createElement('div');
+    meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
+    meta.appendChild(severityCell(issue));
+    const count = document.createElement('span');
+    count.textContent = `次數 ${formatNumber(issue.count)}`;
+    meta.appendChild(count);
+    const period = document.createElement('span');
+    period.className = 'text-nowrap';
+    period.textContent = `${issue.firstSeen}~${issue.lastSeen}`;
+    meta.appendChild(period);
+    wrap.appendChild(meta);
 
     if (issue.knownIssue) {
         const text = document.createElement('div');
+        text.className = 'mt-1';
         text.textContent = issue.knownIssue;
         wrap.appendChild(text);
     }
 
-    // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能折疊起來
-    if (issue.keyDetails) {
-        const details = document.createElement('div');
-        details.className = 'small text-danger mt-1';
-        details.textContent = issue.keyDetails;
-        wrap.appendChild(details);
-    }
+    // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
+    // 超長時只是視覺上先收合（keyDetailsBlock），有明確的「顯示全部」可以展開，
+    // 不是把內容拿掉
+    if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
 
     if (issue.distinctMessageCount > 1) {
         const distinct = document.createElement('div');
-        distinct.className = 'small text-muted';
+        distinct.className = 'small text-muted mt-1';
         distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
         wrap.appendChild(distinct);
     }
 
     if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
+
+    return wrap;
+}
+
+/**
+ * keyDetails 收合（docs/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
+ * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，先用 CSS line-clamp
+ * 收 3 行，超過才出現「顯示全部」——沒被裁切的短內容不多一次點擊。
+ * scrollHeight 是否大於 clientHeight 是判斷有沒有被裁切的標準手法，line-clamp
+ * 要等這一輪繪製完成才量得準，故延到 requestAnimationFrame。
+ * 列印時 @media print 解除裁切（site.css）：紙本一律看得到完整內容。
+ */
+function keyDetailsBlock(keyDetails) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mt-1';
+
+    const clampedClass = 'lf-issue-details--clamped';
+    const details = document.createElement('div');
+    details.className = `small text-danger ${clampedClass}`;
+    details.textContent = keyDetails;
+    wrap.appendChild(details);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'btn btn-link btn-sm p-0 small lf-no-print d-none';
+    toggle.textContent = '顯示全部';
+    wrap.appendChild(toggle);
+
+    // 呼叫當下這個節點還沒接上文件（renderTable 會在整列組好後才一次性 replaceChildren），
+    // scrollHeight/clientHeight 量到的都是 0——延到下一輪事件迴圈（setTimeout 0）才量得準。
+    // 改用 setTimeout 而非 requestAnimationFrame：後者綁在合成/繪製管線上，分頁不在前景
+    // （背景分頁、預先渲染）時可能整批延後或不觸發，setTimeout(0) 不依賴畫面是否正在合成。
+    setTimeout(() => {
+        if (details.scrollHeight > details.clientHeight + 1) toggle.classList.remove('d-none');
+    }, 0);
+
+    toggle.addEventListener('click', event => {
+        event.stopPropagation();
+        const nowClamped = details.classList.toggle(clampedClass);
+        toggle.textContent = nowClamped ? '顯示全部' : '收合';
+    });
 
     return wrap;
 }
