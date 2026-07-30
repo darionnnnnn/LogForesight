@@ -34,6 +34,7 @@
                     <h2 class="lf-card__title">詢問 AI（實驗性）</h2>
                     <div class="d-flex align-items-center gap-2">
                         <span class="text-muted small" id="chat-turn-count"></span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="chat-expand">放大檢視</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="chat-clear">
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
                             清除重來
@@ -41,15 +42,19 @@
                     </div>
                 </div>
                 <div class="lf-card__body">
-                    <select class="form-select form-select-sm mb-2" id="chat-issue-select">
-                        <option value="">請先選擇要詢問的異常項目…</option>
-                    </select>
-                    <div id="chat-messages" class="mb-2 lf-chat-messages"></div>
-                    <form id="chat-form" class="d-flex gap-2">
-                        <input type="text" class="form-control form-control-sm" id="chat-input"
-                               placeholder="針對上面選的問題發問…" maxlength="500" disabled />
-                        <button type="submit" class="btn btn-sm btn-primary" id="chat-send" disabled>送出</button>
-                    </form>
+                    @* #chat-body 整組（下拉／訊息／輸入表單）在「放大檢視」時被搬移進全螢幕 modal，
+                       關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
+                    <div id="chat-body">
+                        <select class="form-select form-select-sm mb-2" id="chat-issue-select">
+                            <option value="">請先選擇要詢問的異常項目…</option>
+                        </select>
+                        <div id="chat-messages" class="mb-2 lf-chat-messages"></div>
+                        <form id="chat-form" class="d-flex gap-2">
+                            <input type="text" class="form-control form-control-sm" id="chat-input"
+                                   placeholder="針對上面選的問題發問…" maxlength="500" disabled />
+                            <button type="submit" class="btn btn-sm btn-primary" id="chat-send" disabled>送出</button>
+                        </form>
+                    </div>
                 </div>
             </section>
 

@@ -628,11 +628,14 @@ a.lf-stat:hover .lf-card,
     min-height: 7rem;
 }
 
-/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁；
-   auto-fill（非 auto-fit）讓卡少時維持合理寬度，不會被拉爆成半版寬 */
+/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁。
+   docs/FEEDBACK-3-PLAN.md #3：原本用 auto-fill 是想讓卡少時維持合理寬度、不被拉爆成
+   半版寬，但 auto-fill 會保留空軌道——卡片數少於可容納軌道數時，實卡被鎖在 minmax
+   下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）＋
+   上限 20rem（原意的「不被拉爆成半版寬」改由上限守住）。 */
 .lf-category-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 20rem));
     gap: var(--lf-space-3);
 }
 
@@ -799,6 +802,21 @@ a.lf-stat:hover .lf-card,
 .lf-chat-messages {
     max-height: 340px;
     overflow-y: auto;
+}
+
+/* 放大檢視全螢幕 modal（docs/FEEDBACK-3-PLAN.md #6）：#chat-body 被搬進 .modal-body 後
+   改撐滿可用高度——下拉與輸入表單維持原本高度釘在上下，訊息區用 flex:1 取代固定
+   340px，可視空間隨螢幕大小放大。id 選擇器的特異度足以覆蓋 .lf-chat-messages，
+   不需要 !important；搬回卡片原位後這兩條規則自然不再命中（選擇器要求 .modal-body 父層）。 */
+.modal-body #chat-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.modal-body #chat-messages {
+    flex: 1;
+    max-height: none;
 }
 
 /* 處理歷程卡固定高度（docs/WEB-FEEDBACK-2-PLAN.md #13）：D4 改逐問題逐筆記錄後歷程

@@ -246,7 +246,10 @@ function renderCategories(data) {
  * 是 docs/HISTORY.md S11 記錄的實際分歧案例。
  */
 function severityBreakdown(category) {
+    // gap（非 me-1 margin）：卡片變窄需要換行時，gap 在換行處也維持間距，
+    // margin 只顧橫向會在行尾留下不對稱空隙（docs/FEEDBACK-3-PLAN.md #3）
     const wrap = document.createElement('span');
+    wrap.className = 'd-flex flex-wrap gap-1';
     const counts = {
         High: category.highCount,
         Medium: category.mediumCount,
@@ -256,7 +259,6 @@ function severityBreakdown(category) {
     for (const severity of SEVERITY_ORDER) {
         if (counts[severity] === 0) continue;
         const badge = severityCountBadge(severity, counts[severity]);
-        badge.classList.add('me-1');
         wrap.appendChild(badge);
     }
     return wrap;
