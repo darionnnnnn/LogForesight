@@ -774,6 +774,14 @@ function collapsedRestSection(rest) {
     toggle.addEventListener('click', () => {
         const nowOpen = body.classList.toggle('d-none') === false;
         caret.classList.toggle('lf-collapse-caret--open', nowOpen);
+
+        // keyDetails 的「顯示全部」按鈕靠量測裁切狀態決定要不要出現，但這批列是在 d-none
+        // 容器裡建構的、當時量不到——展開（列第一次現身）時補量（見 keyDetailsBlock）
+        if (nowOpen) {
+            for (const details of body.querySelectorAll('.lf-issue-details--clamped')) {
+                details.dispatchEvent(new Event('lf-remeasure'));
+            }
+        }
     });
 
     wrap.append(toggle, body);
@@ -870,11 +878,20 @@ function keyDetailsBlock(keyDetails) {
 
     // 呼叫當下這個節點還沒接上文件（renderTable 會在整列組好後才一次性 replaceChildren），
     // scrollHeight/clientHeight 量到的都是 0——延到下一輪事件迴圈（setTimeout 0）才量得準。
-    // 改用 setTimeout 而非 requestAnimationFrame：後者綁在合成/繪製管線上，分頁不在前景
-    // （背景分頁、預先渲染）時可能整批延後或不觸發，setTimeout(0) 不依賴畫面是否正在合成。
-    setTimeout(() => {
+    // 用 setTimeout 而非 requestAnimationFrame：後者綁在合成/繪製管線上，分頁不在前景時
+    // 可能整批延後或不觸發（ResizeObserver 的回呼派發同樣綁在繪製步驟，一樣不可靠）。
+    //
+    // 「已處理／已有結論」收合區的列在 d-none 容器裡建構，setTimeout 量測時兩個高度都是 0
+    // （看起來像「沒被裁切」），按鈕會永遠不出現——收合區展開是這些列唯一的現身路徑，
+    // 由 collapsedRestSection 在展開時對區塊內的 keyDetails 派發 lf-remeasure 事件補量，
+    // 確定性觸發、不依賴任何繪製時機。evaluate 冪等：量得到就定案，重複呼叫無副作用。
+    const evaluate = () => {
+        if (details.clientHeight === 0) return;   // 仍隱藏中，等下一次 lf-remeasure
         if (details.scrollHeight > details.clientHeight + 1) toggle.classList.remove('d-none');
-    }, 0);
+    };
+
+    details.addEventListener('lf-remeasure', evaluate);
+    setTimeout(evaluate, 0);
 
     toggle.addEventListener('click', event => {
         event.stopPropagation();

@@ -465,7 +465,12 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
 未完成的主機/日期。**2026-07-30 修訂**（docs/FEEDBACK-3-PLAN.md #1）：回補天數改為可設定的
 `NetiqOptions.BackfillDays`（預設 1，「系統管理 > NetIQ 維護」可調，上限 14），首次執行與
 缺漏日回補統一套用同一個值——原本「首次深度回補 14 天」的例外路徑已移除，2000 台規模下
-不管是首次登錄還是排程漏跑，對 Sentinel 做大量歷史日查詢都不現實。失敗隔離兩層：單一批次查詢失敗只影響該批（其餘批次照跑）、單一 Sentinel 整體失敗
+不管是首次登錄還是排程漏跑，對 Sentinel 做大量歷史日查詢都不現實。
+**同日修訂**（docs/FEEDBACK-3-PLAN.md #2）：per-Sentinel 迴圈改 `Parallel.ForEachAsync`
+平行處理（`NetiqOptions.MaxParallelServers`，預設 2、設 1＝完全依序的逃生門）——各台
+Sentinel 轄下主機互不重疊、各自獨立連線，跨台平行不破壞「同一台主機不同日期依序」的趨勢
+比對前提（該限制只在單一主機內成立）；`NetiqPipelineResult` 計數與 `BatchRunRecorder`
+已改為執行緒安全更新。失敗隔離兩層：單一批次查詢失敗只影響該批（其餘批次照跑）、單一 Sentinel 整體失敗
 不影響其他 Sentinel。截斷（`Truncated`）時整批主機統一標記 `dataIncomplete`（無法判斷截斷影響
 哪幾台，寧可全部誠實申報不完整）。
 

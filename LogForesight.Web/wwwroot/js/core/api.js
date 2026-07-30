@@ -99,12 +99,19 @@ export function hasCapability(user, capability) {
  * 顯示層設定的公開子集（docs/FEEDBACK-3-PLAN.md #8）：目前哪些日風險等級顯示中。
  * 與 getCurrentUser 同樣的快取理由——多個頁面模組（儀表板、報表、問題查詢）都需要，
  * 避免每頁重複請求；此設定在單次頁面瀏覽期間不會變（管理者另開分頁改設定不影響本頁）。
+ *
+ * 失敗降級為「全顯示」而不是拋出：呼叫端都把它放進頁面初始化的 Promise.all，這是
+ * 純加值資訊，不能讓它的一次網路失敗拖垮整頁載入。失敗不寫入快取——下一頁還有機會取到。
  */
 let displaySettingsCache = null;
 
 export async function getDisplaySettings() {
     if (displaySettingsCache === null) {
-        displaySettingsCache = await api.get('/api/settings/display', { silent: true });
+        try {
+            displaySettingsCache = await api.get('/api/settings/display', { silent: true });
+        } catch {
+            return { visibleDayRiskLevels: ['高', '中', '低'] };
+        }
     }
     return displaySettingsCache;
 }
