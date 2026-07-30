@@ -69,6 +69,7 @@ public class RecordQueryService
             var pageLookup = new HostLookup(_hosts.GetAll());
             var pageHandlings = LoadHandlings(paged.Items, pageLookup);
             var pageIssueHandlings = LoadIssueHandlings(paged.Items, pageLookup);
+            var pageOpenCases = LoadOpenCases(paged.Items, pageLookup);
             var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
             DayHandlingDerivation.DayProgress PageProgress(DailyAnalysisRecord r) =>
@@ -80,7 +81,7 @@ public class RecordQueryService
             return new PagedResult<RecordListItemDto>
             {
                 Items = paged.Items
-                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r)))
+                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r), pageOpenCases))
                     .ToList(),
                 Page = page,
                 PageSize = pageSize,
@@ -137,15 +138,35 @@ public class RecordQueryService
                 .ThenByDescending(r => r.Date)
         }).ToList();
 
+        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        // 案件只為「這一頁」載入（同 handlings/issueHandlings 的既有取捨）：慢速路徑的候選集
+        // 可能是全部符合篩選的紀錄，逐筆載入案件會退化成全量掃描
+        var openCases = LoadOpenCases(pageItems, lookup);
+
         return new PagedResult<RecordListItemDto>
         {
-            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r)))
+            Items = pageItems
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r), openCases))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
             Total = ordered.Count
         };
+    }
+
+    /// <summary>
+    /// 本頁涉及主機的全部進行中案件（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：清單「處理人」欄
+    /// fallback 用——日層級從未指派、但當日問題屬進行中案件時，顯示案件處理人。
+    /// </summary>
+    private List<IssueCase> LoadOpenCases(List<DailyAnalysisRecord> records, HostLookup lookup)
+    {
+        if (records.Count == 0) return new List<IssueCase>();
+
+        var hostNames = records.Select(r => HostNameOf(lookup, r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return _cases.GetMany(hostNames).Where(c => c.ClosedAt == null).ToList();
     }
 
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request)
@@ -619,16 +640,38 @@ public class RecordQueryService
         HostLookup lookup,
         RecordHandling? handling,
         DayHandlingDerivation.DayProgress progress,
-        bool isOverdue)
+        bool isOverdue,
+        List<IssueCase>? openCases = null)
     {
         // 顯示與連結一律指向**存活**主機：合併之後，舊識別的紀錄若還掛著舊 id，
         // 使用者點進去會落到已停用的墓碑列
         var host = lookup.For(record);
+        var hostName = host?.HostName ?? record.Host;
+
+        // 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級有值時優先；否則若當日
+        // 有問題屬進行中案件，顯示案件處理人（後綴「（案件）」）——否則 2.3 情境下狀態同步了、
+        // 處理人卻空白，使用者會困惑。多個問題各自屬不同處理人的案件時取第一個命中的，
+        // 這種混合情境本就罕見（多半是同一次指派建的案），不特別處理
+        long? handlerId = handling?.HandlerId;
+        var handlerFromCase = false;
+        if (!handlerId.HasValue && openCases is { Count: > 0 } && record.TopIssues.Count > 0)
+        {
+            var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+            var openCase = openCases.FirstOrDefault(c =>
+                string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                issueKeys.Contains(c.IssueKey) && c.HandlerId.HasValue);
+            if (openCase != null)
+            {
+                handlerId = openCase.HandlerId;
+                handlerFromCase = true;
+            }
+        }
+        var handlerDisplayName = handlerId.HasValue ? _users.Get(handlerId.Value)?.DisplayName : null;
 
         return new RecordListItemDto
         {
             HostId = host?.HostId ?? 0,
-            HostName = host?.HostName ?? record.Host,
+            HostName = hostName,
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
             Headline = record.Headline,
@@ -645,9 +688,8 @@ public class RecordQueryService
             HandlingStatusText = HandlingStatusText(HandlingStatuses.ExternalOf(progress.DayStatus)),
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
-            HandlerName = handling?.HandlerId.HasValue == true
-                ? _users.Get(handling.HandlerId.Value)?.DisplayName
-                : null,
+            HandlerId = handlerId,
+            HandlerName = handlerFromCase && handlerDisplayName != null ? $"{handlerDisplayName}（案件）" : handlerDisplayName,
             IsOverdue = isOverdue
         };
     }

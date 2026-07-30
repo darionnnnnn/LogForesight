@@ -25,6 +25,14 @@ public class RecordListItemDto
     /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把處理人姓名連到
+    /// 「/handlers/{id}」工作頁；日層級未指派、案件 fallback 也沒有時為 null。
+    /// </summary>
+    public long? HandlerId { get; set; }
+
+    /// <summary>顯示名稱；由案件 fallback 帶出時後綴「（案件）」（Q5）</summary>
     public string? HandlerName { get; set; }
     public bool IsOverdue { get; set; }
 

@@ -125,6 +125,38 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("王小明", item.HandlerName);
     }
 
+    /// <summary>
+    /// 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級從未指派、但當日問題
+    /// 屬進行中案件時，清單顯示案件處理人（後綴「（案件）」）——否則使用者會看到狀態已同步、
+    /// 處理人卻空白的矛盾畫面。
+    /// </summary>
+    [Fact]
+    public void Search_日層級未指派時_處理人欄fallback案件處理人()
+    {
+        var host = AddHost("HOST-A");
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\li", DisplayName = "小李" });
+        var issue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = user.UserId,
+            FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.Search(new RecordSearchRequest());
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(user.UserId, item.HandlerId);
+        Assert.Equal("小李（案件）", item.HandlerName);
+    }
+
     [Fact]
     public void Search_無篩選條件_授權範圍以外的主機不出現()
     {
