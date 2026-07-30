@@ -34,12 +34,13 @@ public class NetiqPipelineService
     private readonly ISuppressionStore _suppressionStore;
     private readonly RiskReportService _reportService;
     private readonly BatchRunRecorder _runRecorder;
+    private readonly IssueCaseCoordinator _caseCoordinator;
 
     public NetiqPipelineService(
         StorageSettings storage, string dataRoot, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
-        BatchRunRecorder runRecorder)
+        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator)
     {
         _storage = storage;
         _dataRoot = dataRoot;
@@ -51,6 +52,7 @@ public class NetiqPipelineService
         _suppressionStore = suppressionStore;
         _reportService = reportService;
         _runRecorder = runRecorder;
+        _caseCoordinator = caseCoordinator;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="StoreHostListProvider"/>）；
@@ -290,6 +292,19 @@ public class NetiqPipelineService
 
             result.AddAnalyzed();
             _runRecorder.RecordDayAnalyzed();
+
+            // 問題案件批次逐日掛接（docs/FEEDBACK-4-PLAN.md §0.4-C/2.4）：與本機路徑
+            // （Program.cs）同一個失敗邊界哲學——掛接失敗不讓這台主機這天的分析結果作廢
+            try
+            {
+                var attach = _caseCoordinator.AttachNewDay(target.HostName, date, record.TopIssues, DateTime.Now);
+                if (attach.AttachedCount > 0)
+                    Log.Info("[{Server}] [{Ip}] {Date} 案件掛接：掛入 {Count} 個問題", sentinelName, target.IpAddress, date, attach.AttachedCount);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "[{Server}] [{Ip}] {Date} 案件掛接失敗（不影響分析結果，下次執行冪等補掛）", sentinelName, target.IpAddress, date);
+            }
 
             // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有
             // 「低風險日刻意不呼叫」與「呼叫失敗降級」兩種意義，只有後者該計入失敗——
