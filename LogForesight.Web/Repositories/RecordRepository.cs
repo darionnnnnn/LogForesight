@@ -13,11 +13,21 @@ namespace LogForesight.Web.Repositories;
 /// 同一個理由延伸到問題嚴重度可見性（docs/HISTORY.md S1）：
 /// SiteHidden 模式下 TopIssues 的過濾也在這裡強制套用，所有呼叫端拿到的都是
 /// 已過濾的結果，不必也不該各自重覆判斷。
+///
+/// 第二個全站咽喉是日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：與問題嚴重度可見性
+/// 是不同的兩套層級，套用點集中在 <see cref="Query"/>／<see cref="QueryPage"/>——
+/// 未勾選等級的風險日整筆從結果消失。兩個顯式豁免：<see cref="GetOne"/>（風險日詳情直連，
+/// 不走 filter 路徑，本來就不受影響）與主機詳情頁時間軸（<c>applyDayRiskVisibility=false</c>——
+/// 被藏的日子顯示成「無分析紀錄」灰格會說謊，時間軸必須看得到完整證據）。
 /// </summary>
 public interface IRecordRepository
 {
-    /// <summary>依條件查詢（已套用目前登入者的可見範圍）</summary>
-    List<DailyAnalysisRecord> Query(RecordQueryFilter filter);
+    /// <summary>
+    /// 依條件查詢（已套用目前登入者的可見範圍＋日風險等級顯示設定）。
+    /// <paramref name="applyDayRiskVisibility"/>＝false 時略過日風險等級顯示過濾——
+    /// 僅供主機詳情頁時間軸使用（見類別註解的豁免說明），其餘呼叫端一律用預設值。
+    /// </summary>
+    List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true);
 
     /// <summary>
     /// 分頁查詢（已套用目前登入者的可見範圍）——docs/HISTORY.md P1-2。
@@ -54,18 +64,49 @@ public class RecordRepository : IRecordRepository
         _settings = settings;
     }
 
-    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
+    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true)
     {
         ApplyVisibility(filter);
+        if (applyDayRiskVisibility && !TryApplyDayRiskVisibility(filter)) return new List<DailyAnalysisRecord>();
         return ApplySeverityVisibility(_records.Query(filter));
     }
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         ApplyVisibility(filter);
+        if (!TryApplyDayRiskVisibility(filter))
+        {
+            return new PagedResult<DailyAnalysisRecord> { Page = page, PageSize = pageSize, Total = 0, Items = new List<DailyAnalysisRecord>() };
+        }
+
         var paged = _records.QueryPage(filter, page, pageSize, sortKey, ascending);
         paged.Items = ApplySeverityVisibility(paged.Items);
         return paged;
+    }
+
+    /// <summary>
+    /// 日風險等級顯示過濾（docs/FEEDBACK-3-PLAN.md #8）：與可見範圍同樣的「只能縮小不能放大」
+    /// 語意——filter.RiskLevels 若已被呼叫端（或使用者篩選）設限，取交集；未設限則直接套用
+    /// 顯示範圍。回傳 false 時代表交集為空，呼叫端應直接回傳空結果。
+    ///
+    /// **不能把空交集原樣寫回 filter.RiskLevels 交給底層處理**：EfAnalysisRecordStore／
+    /// RecordFilterMatcher 對 RiskLevels 的語意是「非空集合才套用 WHERE 子句」，空集合等同
+    ///「不限制」——這與 Hosts 欄位「空集合＝零結果」的慣例恰好相反，直接沿用會讓交集為空時
+    /// 錯誤地回傳全部風險等級而不是零筆，因此空交集必須在這裡明確短路，不下推給底層判斷。
+    /// </summary>
+    private bool TryApplyDayRiskVisibility(RecordQueryFilter filter)
+    {
+        var visible = _settings.GetVisibleDayRiskLevels();
+        if (visible == null) return true;   // 全顯示（未設定或全勾），不過濾
+
+        var effective = filter.RiskLevels == null
+            ? visible.ToList()
+            : filter.RiskLevels.Where(visible.Contains).ToList();
+
+        if (effective.Count == 0) return false;
+
+        filter.RiskLevels = effective;
+        return true;
     }
 
     /// <summary>

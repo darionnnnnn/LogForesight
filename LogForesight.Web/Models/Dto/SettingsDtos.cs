@@ -10,6 +10,9 @@ public class SystemSettingsDto
     /// <summary>層級顯示模式：DefaultHidden／SiteHidden（見 SystemSettings.SeverityDisplayMode）</summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
+    /// <summary>顯示中的日風險等級（高/中/低，docs/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
+    public List<string> VisibleDayRiskLevels { get; set; } = new();
+
     public string AiBaseUrl { get; set; } = "";
 
     /// <summary>API 金鑰是否已設定；金鑰本身 write-only，絕不回傳明碼或密文</summary>
@@ -46,6 +49,10 @@ public class UpdateSystemSettingsRequest
     public List<string> UnhandledSeverities { get; set; } = new();
 
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
+
+    /// <summary>顯示中的日風險等級（docs/FEEDBACK-3-PLAN.md #8）；驗證要求必含「高」，
+    /// 見 SystemSettingsService.Update</summary>
+    public List<string> VisibleDayRiskLevels { get; set; } = new();
 
     /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]
@@ -109,4 +116,15 @@ public class TestAdConnectionResultDto
 
     /// <summary>這裡是管理者對自己測試，可以顯示細節（與登入失敗一律「帳號或密碼錯誤」不同）</summary>
     public string Message { get; set; } = "";
+}
+
+/// <summary>
+/// 顯示層設定的公開子集（docs/FEEDBACK-3-PLAN.md #8）：完整設定 API 需要 Maintain 能力，
+/// 但「哪些日風險等級目前顯示」是任何已登入者的前端都要知道的資訊（用來決定 KPI 卡、
+/// 趨勢線、篩選 chips 要不要出現），比照 HostsController 無 [Permission] 標註的先例——
+/// 答案本身就是顯示範圍，不是需要額外授權才能問的問題。
+/// </summary>
+public class DisplaySettingsDto
+{
+    public List<string> VisibleDayRiskLevels { get; set; } = new();
 }

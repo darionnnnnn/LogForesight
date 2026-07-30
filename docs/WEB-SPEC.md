@@ -853,7 +853,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
        （docs/HISTORY.md S1，`ISystemSettingsService.GetVisibleSeverities()` 為規則出口），
        詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖與簽章查詢全部同一套過濾，沒有例外頁。
-       **明確不動**：日風險等級與報告 txt（批次已算定的證據層）。
+       **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
+  1b. **日風險等級顯示**（2026-07-30，docs/FEEDBACK-3-PLAN.md #8；與 1. 是不同的兩套層級）：
+      高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
+      儀表板永遠空白）。未勾選等級的風險日**整筆**從查詢/統計消失——過濾點與問題嚴重度
+      可見性共用同一個咽喉（`RecordRepository`，`ApplyDayRiskVisibility`/`GetVisibleDayRiskLevels`），
+      套用於 `Query`/`QueryPage`（即儀表板 KPI／主機排行／群組概況、報表 KPI／趨勢／排行、
+      問題查詢三視角）。兩個顯式豁免：`GetOne`（風險日詳情直連，本來就不走 filter 路徑）與
+      `GetHostDetail` 時間軸（`applyDayRiskVisibility=false`——被藏的日子顯示成「無分析紀錄」
+      灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
+      `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
+      用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
   2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
      DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
   3. **AD 驗證**（docs/HISTORY.md #9，2026-07-27）：啟用開關＋伺服器清單（一行一台，依序
@@ -866,7 +876,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      2026-07-27（docs/HISTORY.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
      批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
      批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
-- API：`GET/PUT api/admin/settings`、`POST api/admin/settings/ad-test`
+- API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
+  `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
 - 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、

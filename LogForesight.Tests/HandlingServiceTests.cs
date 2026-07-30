@@ -836,7 +836,7 @@ internal class FakeRecordRepository : IRecordRepository
         return record;
     }
 
-    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter) => _records.ToList();
+    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {

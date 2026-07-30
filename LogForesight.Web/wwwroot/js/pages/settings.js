@@ -26,12 +26,16 @@ const DISPLAY_MODES = [
     }
 ];
 
+// 日風險等級（docs/FEEDBACK-3-PLAN.md #8）：中文順序對齊後端 RiskLevels.All（高/中/低，重到輕）
+const DAY_RISK_LEVELS = ['高', '中', '低'];
+
 let current = null;
 
 async function load() {
     current = await api.get('/api/admin/settings');
     renderSeverityChecks(current.unhandledSeverities);
     renderDisplayModeButtons(current.severityDisplayMode);
+    renderDayRiskLevelChecks(current.visibleDayRiskLevels);
     renderAiFields(current);
     renderAdFields(current);
     renderRetentionFields(current);
@@ -88,6 +92,43 @@ function renderDisplayModeButtons(selectedMode) {
 
 function collectDisplayMode() {
     return document.querySelector('#severity-display-mode button.active')?.dataset.mode ?? 'DefaultHidden';
+}
+
+/**
+ * 日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：與上方的問題嚴重度是不同的兩套層級，
+ * 按鈕視覺沿用同一套語彙（severity-checks 的樣式），但「高」鎖定為恆選——
+ * 全部隱藏會讓儀表板永遠空白，這裡直接用 disabled 擋掉互動，而不是等送出時才報錯。
+ */
+function renderDayRiskLevelChecks(selected) {
+    const container = document.getElementById('day-risk-level-checks');
+    container.replaceChildren();
+
+    const selectedSet = new Set(selected);
+    for (const level of DAY_RISK_LEVELS) {
+        const locked = level === '高';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary' + (selectedSet.has(level) || locked ? ' active' : '');
+        btn.setAttribute('aria-pressed', String(selectedSet.has(level) || locked));
+        btn.dataset.riskLevel = level;
+        btn.textContent = level;
+
+        if (locked) {
+            btn.disabled = true;
+            btn.title = '「高風險日」為必要顯示項目，無法取消勾選';
+        } else {
+            btn.addEventListener('click', () => {
+                const active = btn.classList.toggle('active');
+                btn.setAttribute('aria-pressed', String(active));
+            });
+        }
+        container.appendChild(btn);
+    }
+}
+
+function collectDayRiskLevels() {
+    return [...document.querySelectorAll('#day-risk-level-checks button.active')]
+        .map(btn => btn.dataset.riskLevel);
 }
 
 function renderAiFields(settings) {
@@ -184,6 +225,7 @@ function bindForm() {
             current = await api.put('/api/admin/settings', {
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
+                visibleDayRiskLevels: collectDayRiskLevels(),
                 aiBaseUrl: document.getElementById('ai-base-url').value.trim(),
                 aiApiKey: apiKey || null,
                 clearAiApiKey: clearApiKey,

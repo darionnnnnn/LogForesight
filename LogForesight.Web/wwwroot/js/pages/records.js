@@ -11,7 +11,7 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api } from '../core/api.js';
+import { api, getDisplaySettings } from '../core/api.js';
 import {
     renderTable, renderLoading, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
@@ -43,10 +43,23 @@ const activeGroupIds = new Set();  // groupId(string)
 
 async function init() {
     applyUrlToForm();
-    await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions()]);
+    await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions(), applyDayRiskVisibility()]);
     await search();
     initAiSummary();
     setupHostAutocomplete();
+}
+
+/**
+ * 日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：隱藏被全站「日風險等級顯示」設定藏起來的
+ * 篩選 chip——留著會讓使用者點選一個「選了也查不到東西」的條件（後端已在 RecordRepository
+ * 過濾掉該等級，勾選它只會得到空結果，卻看不出是「真的沒有」還是「被藏起來」）。
+ */
+async function applyDayRiskVisibility() {
+    const settings = await getDisplaySettings();
+    const visible = new Set(settings?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    for (const btn of document.querySelectorAll('#filter-risk-chips [data-risk]')) {
+        btn.classList.toggle('d-none', !visible.has(btn.dataset.risk));
+    }
 }
 
 /**

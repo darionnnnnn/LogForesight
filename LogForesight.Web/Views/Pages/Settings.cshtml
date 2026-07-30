@@ -17,14 +17,27 @@
             </p>
             <p class="text-muted small mb-2">
                 <strong>日風險等級</strong>（高／中／低風險日，儀表板與報表的「高風險日」等統計）
-                由批次分析綜合規則、趨勢、關聯訊號算定，是事後不可改寫的證據層，
-                <strong>不受此設定影響</strong>——不會因為這裡的勾選而改變。
+                由批次分析綜合規則、趨勢、關聯訊號算定，是事後不可改寫的證據層——
+                這裡的勾選不會改變任何一天的判定結果，只影響下方「日風險等級顯示」設定
+                控制的<strong>顯示範圍</strong>。
             </p>
             <div class="d-flex flex-wrap gap-2 mb-3" id="severity-checks"></div>
 
             <label class="form-label small fw-semibold">未勾選層級的顯示方式</label>
             <div class="d-flex flex-wrap gap-2 mb-1" id="severity-display-mode"></div>
-            <div class="form-text" id="severity-display-mode-hint"></div>
+            <div class="form-text mb-3" id="severity-display-mode-hint"></div>
+
+            <hr />
+
+            <label class="form-label small fw-semibold">日風險等級顯示</label>
+            <p class="text-muted small mb-2">
+                未勾選等級的風險日整批從儀表板 KPI、報表趨勢、問題查詢的統計與清單中消失
+                （上方說明的判定結果本身不受影響）。風險日詳情的直接連結與主機詳情頁的時間軸
+                不受此設定影響，兩處仍顯示完整證據——避免時間軸把「這天有分析但被藏起來」
+                誤顯示成「這天沒有分析紀錄」。
+            </p>
+            <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks"></div>
+            <div class="form-text">「高風險日」為必要顯示項目，無法取消勾選。</div>
         </div>
     </div>
 

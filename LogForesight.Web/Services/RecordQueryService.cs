@@ -422,12 +422,16 @@ public class RecordQueryService
 
         var from = DateTime.Today.AddDays(-days + 1);
         // 別名展開：這台主機若併入過其他主機，時間軸要涵蓋合併前的那段歷史，
-        // 否則「風險時間軸」會在合併日之前整片空白，看起來像沒有分析過
+        // 否則「風險時間軸」會在合併日之前整片空白，看起來像沒有分析過。
+        // applyDayRiskVisibility=false（docs/FEEDBACK-3-PLAN.md #8 豁免）：時間軸與下方的
+        // 重點問題彙總都要看完整證據——被「日風險等級顯示」設定藏起來的日子，時間軸若顯示成
+        // 「無分析紀錄」灰格就是說謊，這裡是全站唯二不受該設定影響的查詢路徑之一
+        // （另一個是 GetOne，本來就不走 filter 路徑）。
         var records = _repository.Query(new RecordQueryFilter
         {
             Hosts = _repository.ResolveHostKeys(hostId),
             From = from
-        })
+        }, applyDayRiskVisibility: false)
             // 一天可能有兩筆：合併當天存活主機與墓碑各分析過一次。時間軸一天一格，
             // 取存活主機那筆（沒有才退而取其一）——直接 ToDictionary 會因重複鍵整頁爆掉
             .GroupBy(r => r.Date.Date)

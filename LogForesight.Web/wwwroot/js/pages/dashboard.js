@@ -6,7 +6,7 @@
  * 所有數字皆可下鑽（§8.4）。
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard } from '../core/ui.js';
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
@@ -20,15 +20,16 @@ async function load() {
     renderLoading(document.getElementById('dashboard-silent'), 2);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
-    const [data, user] = await Promise.all([
+    const [data, user, displaySettings] = await Promise.all([
         api.get(`/api/dashboard/summary?days=${currentDays}`),
-        getCurrentUser()
+        getCurrentUser(),
+        getDisplaySettings()
     ]);
 
     document.getElementById('dashboard-range').textContent = `${data.from} ～ ${data.to}`;
 
     renderBanner(data);
-    renderKpi(data, user);
+    renderKpi(data, user, displaySettings);
     renderCategories(data);
     renderHosts(data);
     renderSilentHosts(data);
@@ -110,23 +111,35 @@ function renderBanner(data) {
     container.replaceChildren(banner);
 }
 
-function renderKpi(data, user) {
+function renderKpi(data, user, displaySettings) {
+    // docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定。後端已在 RecordRepository 這一咽喉
+    // 過濾掉被隱藏等級的紀錄，data.mediumRiskDays 本來就會是 0——但「0」與「被藏起來」是
+    // 兩件事，這裡整卡不顯示，不讓「0」被誤讀成「這期間真的沒有中風險日」
+    const visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
+
     const cards = [
         {
             label: '高風險日',
             value: data.highRiskDays,
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
-            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/HISTORY.md #5）
-            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響。',
+            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/HISTORY.md #5）；
+            // 顯示範圍另受「日風險等級顯示」設定影響（docs/FEEDBACK-3-PLAN.md #8）
+            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('高')}&from=${data.from}&to=${data.to}`
-        },
-        {
+        }
+    ];
+
+    if (visibleDayRisk.has('中')) {
+        cards.push({
             label: '中風險日',
             value: data.mediumRiskDays,
             variant: data.mediumRiskDays > 0 ? 'warning' : 'secondary',
-            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響。',
+            hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('中')}&from=${data.from}&to=${data.to}`
-        },
+        });
+    }
+
+    cards.push(
         {
             label: '監控主機數',
             value: data.totalHosts,
@@ -140,7 +153,7 @@ function renderKpi(data, user) {
             hint: '資料不完整或 Security log 未讀取的日子',
             url: null
         }
-    ];
+    );
 
     // 待辦：主管看到「有哪些風險」後的下一個問題是「有人在處理嗎」。
     // 後端只數本期的高＋中風險日，下鑽連結帶同一組條件，卡片數字與點進去的筆數才對得上

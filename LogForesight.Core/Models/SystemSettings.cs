@@ -29,6 +29,18 @@ public class SystemSettings
     /// </summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
+    /// <summary>
+    /// 日風險等級顯示設定（docs/FEEDBACK-3-PLAN.md #8）：與 <see cref="UnhandledSeverities"/>／
+    /// <see cref="SeverityDisplayMode"/> 是完全不同的兩套層級——那兩個管的是掛在單一問題上的
+    /// 嚴重度，這裡管的是「主機×日」整天的批次判定結果（<see cref="RiskLevels.High"/> 等）。
+    /// 未勾選的等級整筆從查詢/統計消失（套用點見 RecordRepository，與問題嚴重度可見性同一個
+    /// 咽喉——docs/HISTORY.md S1）；風險日詳情直連與主機時間軸豁免不過濾（見
+    /// RecordRepository 類別註解）。**「高」強制勾選**（SystemSettingsService.Update 驗證）：
+    /// 全部隱藏會讓儀表板永遠空白，違背產品目的。舊部署缺這個欄位時預設全顯示——
+    /// 風險日判定本身（批次算定的證據層）不受影響，只是顯示範圍，行為不變直到有人主動改設定。
+    /// </summary>
+    public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中", "低" };
+
     /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";
 
