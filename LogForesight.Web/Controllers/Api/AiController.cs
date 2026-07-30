@@ -19,17 +19,23 @@ public class AiController : ControllerBase
     private readonly DashboardService _dashboard;
     private readonly RecordQueryService _records;
     private readonly WebAppSettings _settings;
+    private readonly ISentinelEventFetcher _eventFetcher;
+    private readonly IHostStore _hosts;
 
     public AiController(
         AiInsightService ai,
         DashboardService dashboard,
         RecordQueryService records,
-        WebAppSettings settings)
+        WebAppSettings settings,
+        ISentinelEventFetcher eventFetcher,
+        IHostStore hosts)
     {
         _ai = ai;
         _dashboard = dashboard;
         _records = records;
         _settings = settings;
+        _eventFetcher = eventFetcher;
+        _hosts = hosts;
     }
 
     /// <summary>AI 是否可用——前端在渲染前先問一次，避免對每個功能各發一次註定失敗的請求</summary>
@@ -104,7 +110,17 @@ public class AiController : ControllerBase
         // ChatAsync 略過即可，不影響既有問答流程
         var report = _records.GetReport(request.HostId, parsedDate);
 
-        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages, report));
+        // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：只在第一輪（使用者剛選定這個問題、
+        // 還沒有對話歷史）取一次，後續輪次沿用同一份 context，不必每輪重打 Sentinel。
+        // 任何失敗／不符資格（開關關閉、非 NetIQ 主機……）一律回 null，靜默降級。
+        LiveEventFetchResult? liveEvents = null;
+        if (request.Messages.Count == 1)
+        {
+            var host = _hosts.Get(request.HostId);
+            if (host != null) liveEvents = await _eventFetcher.FetchAsync(host, parsedDate, issue.Source, issue.EventId);
+        }
+
+        return ApiResponse<AiTextDto?>.Ok(await _ai.ChatAsync(issue, detail.HostName, detail.Date, request.Messages, report, liveEvents));
     }
 
     private const int MaxChatTurns = 10;

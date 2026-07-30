@@ -34,6 +34,7 @@ public class NetiqOptionsService
             o.AllowInvalidCertificates = request.AllowInvalidCertificates;
             o.BackfillDays = request.BackfillDays;
             o.MaxParallelServers = request.MaxParallelServers;
+            o.ChatLiveFetchEnabled = request.ChatLiveFetchEnabled;
             o.UpdatedByAccount = _currentUser.Account;
         });
 

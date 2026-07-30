@@ -25,6 +25,14 @@ public class RecordListItemDto
     /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把處理人姓名連到
+    /// 「/handlers/{id}」工作頁；日層級未指派、案件 fallback 也沒有時為 null。
+    /// </summary>
+    public long? HandlerId { get; set; }
+
+    /// <summary>顯示名稱；由案件 fallback 帶出時後綴「（案件）」（Q5）</summary>
     public string? HandlerName { get; set; }
     public bool IsOverdue { get; set; }
 
@@ -75,6 +83,39 @@ public class RecordDateGroupDto
 
     /// <summary>當天有風險紀錄的主機數（去重）</summary>
     public int HostCount { get; set; }
+}
+
+/// <summary>
+/// 問題查詢「依問題」視角的彙總列（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題
+/// （Source＋EventId），回答「這個問題影響多大範圍、誰在處理」。
+/// </summary>
+public class IssueGroupDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>期間內這個問題出現過的最高嚴重度</summary>
+    public string MaxSeverity { get; set; } = string.Empty;
+
+    /// <summary>影響範圍：出現過這個問題的相異主機數</summary>
+    public int HostCount { get; set; }
+
+    /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
+    public int DayCount { get; set; }
+
+    /// <summary>全部主機加總的事件次數</summary>
+    public int TotalCount { get; set; }
+
+    public string LastSeen { get; set; } = string.Empty;
+    public string? KnownIssue { get; set; }
+
+    /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
+    /// 最近一次出現的標記彙總）</summary>
+    public string HandlingSummary { get; set; } = string.Empty;
+
+    /// <summary>進行中案件的處理人姓名（去重）；超過 3 人時收斂成「○○○ 等 N 人」</summary>
+    public List<string> HandlerNames { get; set; } = new();
 }
 
 /// <summary>風險日詳情</summary>
@@ -192,6 +233,17 @@ public class IssueDto
     public string? DueDate { get; set; }
 
     /// <summary>
+    /// 這個問題目前的進行中案件（docs/FEEDBACK-4-PLAN.md §2），null＝沒有進行中案件。
+    /// 案件涵蓋這個問題的其他日子也會同步這個狀態——前端據此顯示「○○○ 處理中（1/10 起）」，
+    /// 解釋為什麼某些問題的狀態會「自己動」。
+    /// </summary>
+    /// <summary>案件處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把案件徽章連到其工作頁</summary>
+    public long? CaseHandlerId { get; set; }
+    public string? CaseHandlerName { get; set; }
+    public string? CaseStatus { get; set; }
+    public string? CaseFirstLinkedDate { get; set; }
+
+    /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。
     /// 掛在問題列下方（可展開），讓「這個問題怎麼辦」與問題本身直接對齊，
     /// 不必再到獨立的深入分析卡玩多對多連連看。
@@ -302,4 +354,58 @@ public class HostIssueSummaryDto
     /// <summary>最近一次出現時的說明——規則的已知問題文字可能被管理者事後編輯過，
     /// 各天的舊紀錄各自保留分析當下的快照，取最近一天的最新</summary>
     public string? KnownIssue { get; set; }
+}
+
+/// <summary>
+/// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/FEEDBACK-4-PLAN.md §3）：
+/// 這個問題（Source+EventId）在期間內逐日出現的頻率、間隔與各日處理狀態。
+/// </summary>
+public class HostIssueOccurrenceDto
+{
+    public HostIssueOccurrenceStatsDto Stats { get; set; } = new();
+
+    /// <summary>有進行中或最近結案案件時才有值——上次（或目前）誰在處理、怎麼結的</summary>
+    public HostIssueOccurrenceCaseDto? Case { get; set; }
+
+    public List<HostIssueOccurrenceDayDto> Occurrences { get; set; } = new();
+}
+
+public class HostIssueOccurrenceStatsDto
+{
+    /// <summary>出現天數（不是次數）</summary>
+    public int DaysSeen { get; set; }
+
+    public int TotalCount { get; set; }
+
+    /// <summary>平均間隔天數；只出現過一天時無意義，回 null</summary>
+    public double? AvgGapDays { get; set; }
+
+    /// <summary>最長連續出現天數（日曆日相鄰才算連續）</summary>
+    public int LongestStreak { get; set; }
+
+    public string FirstSeen { get; set; } = string.Empty;
+    public string LastSeen { get; set; } = string.Empty;
+}
+
+public class HostIssueOccurrenceCaseDto
+{
+    public long? HandlerId { get; set; }
+    public string? HandlerName { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+    public string FirstLinkedDate { get; set; } = string.Empty;
+
+    /// <summary>null＝案件仍進行中</summary>
+    public DateTime? ClosedAt { get; set; }
+}
+
+public class HostIssueOccurrenceDayDto
+{
+    public string Date { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public string RiskLevel { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+
+    /// <summary>這個標記是不是案件同步展開寫入的（而非使用者當天手動標的）——前端顯示「案件同步」小字</summary>
+    public bool FromCase { get; set; }
 }

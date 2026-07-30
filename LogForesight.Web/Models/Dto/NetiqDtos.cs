@@ -235,4 +235,7 @@ public class UpdateNetiqOptionsRequest
     /// <summary>docs/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理</summary>
     [Range(1, 8)]
     public int MaxParallelServers { get; set; }
+
+    /// <summary>docs/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>
+    public bool ChatLiveFetchEnabled { get; set; }
 }

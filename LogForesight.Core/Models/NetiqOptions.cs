@@ -63,6 +63,15 @@ public class NetiqOptions
     /// </summary>
     public int MaxParallelServers { get; set; } = 2;
 
+    /// <summary>
+    /// 詢問 AI（實驗性）詢問當下是否向 Sentinel 即時查詢現場事件納入分析
+    /// （docs/FEEDBACK-4-PLAN.md §5）。**預設 false**：對 Sentinel 的白天即時查詢負載
+    /// 必須由管理者顯式開啟，不能因為 Web 加值功能就靜默對正式環境的 Sentinel 加壓。
+    /// 只對 NetIQ 主機生效——本機直讀主機在 Web 端沒有即時讀取 Event Log 的路徑，
+    /// 開關對它們沒有作用（前端不顯示任何取數跡象，不誤導）。
+    /// </summary>
+    public bool ChatLiveFetchEnabled { get; set; } = false;
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

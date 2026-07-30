@@ -38,6 +38,21 @@ public class HandlingDto
     /// <summary>前端據此決定處理人欄位是下拉還是唯讀文字（真正的防線在後端）</summary>
     public bool CanAssign { get; set; }
     public bool CanHandle { get; set; }
+
+    /// <summary>
+    /// 本日問題中屬進行中案件的數量（docs/FEEDBACK-4-PLAN.md §2）：「N 項屬進行中案件」提示，
+    /// 讓使用者知道為什麼某些問題狀態會「自己動」（案件同步的結果）。
+    /// </summary>
+    public int OpenCaseCount { get; set; }
+
+    /// <summary>本次指派新建立的案件數（僅 Assign 回應有意義，其餘呼叫端固定為 0）</summary>
+    public int CasesCreated { get; set; }
+
+    /// <summary>
+    /// 本次指派因該問題已有他人進行中案件而略過的處理人姓名（去重）——2.1「同主機同問題只由
+    /// 一個人處理」：不搶走既有案件，前端據此提示「N 個問題已由 ○○○ 的案件涵蓋，未變更」。
+    /// </summary>
+    public List<string> CasesSkippedHandlerNames { get; set; } = new();
 }
 
 public class UpdateHandlingRequest
@@ -112,6 +127,10 @@ public class BatchIssueStatusResultDto
     public int ClosedIssues { get; set; }
     public string DayStatus { get; set; } = string.Empty;
     public string DayStatusText { get; set; } = string.Empty;
+
+    /// <summary>本批次因案件同步而額外更新的天數總和（跨全部勾選問題加總，不含各自的觸發日）；
+    /// 0＝這批問題目前都沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    public int CaseSyncedDayCount { get; set; }
 }
 
 /// <summary>問題狀態更新後回傳的當日進度（讓前端就地更新「N/M 已處理」與日層級推導狀態）</summary>
@@ -128,6 +147,10 @@ public class IssueStatusResultDto
     /// <summary>由問題層推導出的日層級狀態（全結案＝resolved，否則沿用日層級 open/in_progress）</summary>
     public string DayStatus { get; set; } = string.Empty;
     public string DayStatusText { get; set; } = string.Empty;
+
+    /// <summary>這個問題若有進行中案件，這次標記同步展開到的天數（不含觸發日本身）；
+    /// 0＝目前沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    public int CaseSyncedDayCount { get; set; }
 }
 
 public class HandlingLogDto
@@ -165,6 +188,57 @@ public class HandlingTodoDto
 
     /// <summary>母體：期間內高＋中風險日總數（分母）——docs/HISTORY.md #6 報表「處理進度」用</summary>
     public int TotalCount { get; set; }
+}
+
+// ── 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）────────────────────────
+
+/// <summary>批次指派 modal 開啟時的受影響主機預覽——已有進行中案件的主機標出既有處理人，
+/// 讓使用者在送出前就知道哪些主機會被跳過（2.1，不搶走）</summary>
+public class IssueCasePreviewHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>null＝目前沒有進行中案件，可以指派</summary>
+    public string? ExistingHandlerName { get; set; }
+}
+
+public class BulkAssignIssueCaseRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+
+    /// <summary>使用者在預覽清單中勾選要指派的主機（可排除部分主機）</summary>
+    [Required]
+    [MinLength(1, ErrorMessage = "請至少選擇一台主機")]
+    public List<long> HostIds { get; set; } = new();
+
+    [Required]
+    public long HandlerId { get; set; }
+
+    [StringLength(1000, ErrorMessage = "說明長度不可超過 1000 字元")]
+    public string? Note { get; set; }
+
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>受影響主機認定的日期範圍（Q6：範圍認定與回溯深度是兩件事——
+    /// 建案後的回溯關聯仍走全部留存歷史，這裡只決定「查哪些主機」）</summary>
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+}
+
+public class BulkAssignSkippedDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string ExistingHandlerName { get; set; } = string.Empty;
+}
+
+public class BulkAssignIssueCaseResultDto
+{
+    public int Created { get; set; }
+    public List<BulkAssignSkippedDto> Skipped { get; set; } = new();
 }
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────
@@ -212,4 +286,53 @@ public class AuditEntryDto
     public string? DetailJson { get; set; }
     public string? IpAddress { get; set; }
     public string Result { get; set; } = string.Empty;
+}
+
+// ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）─────────────────────────────
+
+public class HandlerWorkloadDto
+{
+    public long UserId { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>被查看的使用者已停用時仍顯示交辦紀錄（歷史事實不因停用消失），前端後綴「（已停用）」</summary>
+    public bool Active { get; set; }
+
+    public int OpenCaseCount { get; set; }
+    public int UnresolvedDayCount { get; set; }
+    public int OverdueCount { get; set; }
+
+    /// <summary>名下進行中案件（資料以檢視者的可見範圍過濾）</summary>
+    public List<HandlerCaseItemDto> Cases { get; set; } = new();
+
+    /// <summary>名下被指派的風險日——預設只列推導後未結案，includeResolvedDays=true 時另含近 30 天已結案</summary>
+    public List<HandlerDayItemDto> Days { get; set; } = new();
+}
+
+public class HandlerCaseItemDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string IssueLabel { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+    public string? DueDate { get; set; }
+    public bool IsOverdue { get; set; }
+    public string FirstLinkedDate { get; set; } = string.Empty;
+    public string LastLinkedDate { get; set; } = string.Empty;
+}
+
+public class HandlerDayItemDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string Date { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = string.Empty;
+
+    /// <summary>由問題標記推導出的日狀態（同詳情頁 DerivedStatus）——日層級快照指派後恆為
+    /// in_progress，必須看推導值才知道「現在真正的狀態」</summary>
+    public string DerivedStatus { get; set; } = string.Empty;
+    public string DerivedStatusText { get; set; } = string.Empty;
+    public string? DueDate { get; set; }
+    public bool IsOverdue { get; set; }
 }

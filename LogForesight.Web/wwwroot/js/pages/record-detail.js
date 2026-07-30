@@ -268,47 +268,70 @@ function renderHeader(detail) {
 }
 
 /**
- * 表格欄位定義（docs/HISTORY.md #7；docs/FEEDBACK-3-PLAN.md #5 欄位合併）：
+ * 表格欄位定義（docs/HISTORY.md #7；docs/FEEDBACK-3-PLAN.md #5 欄位合併；
+ * docs/FEEDBACK-4-PLAN.md §1 再改版：勾選併入「處理狀態」欄右上角）：
  * 原本「來源/Event」「次數」「嚴重度」「時段」「說明」五欄各自為政，keyDetails
  * （4703 這類事件動輒數百字的帳號/IP 彙總）把其餘欄壓成逐字直排。合併為單一
  * 「問題」欄（issueCell），趨勢與處理狀態維持獨立欄——使用者要看得到「這個問題
  * 正在惡化」與「誰在處理」，這兩者不適合塞進合併欄。
- * 勾選與處理狀態仍是獨立兩欄（docs/HISTORY.md #7 的既有理由不變）；sectionIssues
- * 是這張表要渲染的那批問題（用於「選取」欄全選 checkbox 的作用範圍）。
+ * 「選取」不再獨立佔欄（原本欄寬窄、checkbox 不好點）：全選移到「處理狀態」表頭
+ * 右側，逐列 checkbox 移到「處理狀態」欄內容右上角、加大點擊範圍（見 statusCell／
+ * site.css .lf-status-cell__checkbox）。sectionIssues 是這張表要渲染的那批問題
+ * （全選 checkbox 的作用範圍）。
  */
 function issueColumns(sectionIssues) {
-    const columns = [
-        // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在
-        // 第一欄最前面，「選取」欄若搶第一位，展開箭頭會跟 checkbox 擠在同一格
-        { title: '問題', render: i => issueCell(i) }
-    ];
-
+    const statusColumn = {
+        title: '處理狀態',
+        className: 'lf-status-cell',
+        render: i => statusCell(i, sectionIssues)
+    };
     if (currentDetail.canHandle) {
-        columns.push({
-            title: '選取',
-            className: 'text-center lf-no-print',
-            renderHeader: () => selectAllCheckbox(sectionIssues),
-            render: i => selectCheckbox(i, sectionIssues)
-        });
+        statusColumn.renderHeader = () => statusHeader(sectionIssues);
     }
 
-    columns.push(
+    return [
+        // 「問題」合併欄留在第一欄：renderTable 的展開箭頭（guidancePanel）固定插在第一欄最前面
+        { title: '問題', render: i => issueCell(i) },
         { title: '趨勢', className: 'lf-trend-cell', render: i => i.trendText },
-        { title: '處理狀態', className: 'lf-status-cell', render: i => statusControl(i) }
-    );
+        statusColumn
+    ];
+}
 
-    return columns;
+/** 「處理狀態」表頭：欄名文字＋右側全選 checkbox（取代原獨立「選取」欄的表頭） */
+function statusHeader(sectionIssues) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center justify-content-between gap-2';
+
+    const label = document.createElement('span');
+    label.textContent = '處理狀態';
+    wrap.appendChild(label);
+    wrap.appendChild(selectAllCheckbox(sectionIssues));
+
+    return wrap;
 }
 
 /**
- * 「選取」欄的勾選 checkbox：批次套用允許覆蓋任何問題的狀態（後端 SetIssueStatusBatch
- * 不區分），前端沒理由把「不處理（預設）」「已知雜訊（自動）」擋在批次選取之外——
- * 這兩種列現在也有 checkbox，取代舊版完全沒有的狀況。
+ * 「處理狀態」欄內容：canHandle 時右上角疊一顆勾選 checkbox（絕對定位，見
+ * site.css .lf-status-cell__wrap），下方是既有的 statusControl 內容（狀態文字／
+ * 快速動作）。批次套用允許覆蓋任何問題的狀態（後端 SetIssueStatusBatch 不區分），
+ * 前端沒理由把「不處理（預設）」「已知雜訊（自動）」擋在批次選取之外。
  */
+function statusCell(issue, sectionIssues) {
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-status-cell__wrap';
+
+    if (currentDetail.canHandle) {
+        wrap.appendChild(selectCheckbox(issue, sectionIssues));
+    }
+    wrap.appendChild(statusControl(issue));
+
+    return wrap;
+}
+
 function selectCheckbox(issue, sectionIssues) {
     const check = document.createElement('input');
     check.type = 'checkbox';
-    check.className = 'form-check-input';
+    check.className = 'form-check-input lf-status-cell__checkbox lf-no-print';
     check.dataset.issueKey = issue.issueKey;
     check.checked = selectedIssueKeys.has(issue.issueKey);
     check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';
@@ -330,7 +353,7 @@ function selectCheckbox(issue, sectionIssues) {
 function selectAllCheckbox(sectionIssues) {
     const check = document.createElement('input');
     check.type = 'checkbox';
-    check.className = 'form-check-input';
+    check.className = 'form-check-input lf-no-print';
     check.title = '勾選／取消勾選這批問題';
     syncSelectAllCheckbox(check, sectionIssues);
 
@@ -497,7 +520,7 @@ function statusLabel(issue) {
  */
 async function setIssueStatus(issue, status, wrap, extra = {}) {
     try {
-        await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
+        const result = await api.put(`/api/records/${hostId}/${date}/handling/issues`, {
             issueKey: issue.issueKey,
             status,
             note: extra.note ?? null,
@@ -512,7 +535,10 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
         wrap.replaceWith(statusControl(issue));
         renderProgress();
 
-        toast(status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記', 'success');
+        // 案件同步提示（docs/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
+        // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
+        const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步案件涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
+        toast((status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記') + caseNote, 'success');
     } catch (error) {
         toast(error?.message || '更新失敗', 'danger');
     }
@@ -816,6 +842,8 @@ function issueCell(issue) {
         wrap.appendChild(badge);
     }
 
+    if (issue.caseHandlerName) wrap.appendChild(caseBadge(issue));
+
     const meta = document.createElement('div');
     meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
     meta.appendChild(severityCell(issue));
@@ -850,6 +878,26 @@ function issueCell(issue) {
     if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
 
     return wrap;
+}
+
+/**
+ * 案件徽章（docs/FEEDBACK-4-PLAN.md §2）：這個問題目前有進行中案件，狀態會跨日連動——
+ * 徽章解釋「為什麼這一列的狀態可能是別天標的、不是我剛動的」。案件狀態值只會是
+ * open／in_progress（後端只回傳進行中案件，結案類代表案件已結束、不會再出現在這裡），
+ * 不需要六態全表。
+ */
+function caseBadge(issue) {
+    const statusText = issue.caseStatus === 'open' ? '未處理' : '處理中';
+    // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/FEEDBACK-4-PLAN.md §6）
+    const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
+    badge.className = 'lf-badge lf-badge--primary';
+    if (issue.caseHandlerId) {
+        badge.href = `/handlers/${issue.caseHandlerId}`;
+        badge.addEventListener('click', event => event.stopPropagation());
+    }
+    badge.textContent = `${issue.caseHandlerName} ${statusText}`;
+    badge.title = `案件處理人：${issue.caseHandlerName}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
+    return badge;
 }
 
 /**

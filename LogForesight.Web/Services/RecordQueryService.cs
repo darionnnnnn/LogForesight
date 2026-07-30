@@ -16,6 +16,7 @@ public class RecordQueryService
     private readonly IVisibilityService _visibility;
     private readonly IRecordHandlingStore _handlings;
     private readonly IIssueHandlingStore _issueHandlings;
+    private readonly IIssueCaseStore _cases;
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IKnownIssueRuleStore _rules;
     private readonly ICurrentUser _currentUser;
@@ -30,6 +31,7 @@ public class RecordQueryService
         IVisibilityService visibility,
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
+        IIssueCaseStore cases,
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
@@ -43,6 +45,7 @@ public class RecordQueryService
         _visibility = visibility;
         _handlings = handlings;
         _issueHandlings = issueHandlings;
+        _cases = cases;
         _noiseMarks = noiseMarks;
         _rules = rules;
         _currentUser = currentUser;
@@ -66,6 +69,7 @@ public class RecordQueryService
             var pageLookup = new HostLookup(_hosts.GetAll());
             var pageHandlings = LoadHandlings(paged.Items, pageLookup);
             var pageIssueHandlings = LoadIssueHandlings(paged.Items, pageLookup);
+            var pageOpenCases = LoadOpenCases(paged.Items, pageLookup);
             var pageUnhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
             DayHandlingDerivation.DayProgress PageProgress(DailyAnalysisRecord r) =>
@@ -77,7 +81,7 @@ public class RecordQueryService
             return new PagedResult<RecordListItemDto>
             {
                 Items = paged.Items
-                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r)))
+                    .Select(r => ToListItem(r, pageLookup, FindHandling(pageHandlings, pageLookup, r), PageProgress(r), PageIsOverdue(r), pageOpenCases))
                     .ToList(),
                 Page = page,
                 PageSize = pageSize,
@@ -134,15 +138,35 @@ public class RecordQueryService
                 .ThenByDescending(r => r.Date)
         }).ToList();
 
+        var pageItems = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        // 案件只為「這一頁」載入（同 handlings/issueHandlings 的既有取捨）：慢速路徑的候選集
+        // 可能是全部符合篩選的紀錄，逐筆載入案件會退化成全量掃描
+        var openCases = LoadOpenCases(pageItems, lookup);
+
         return new PagedResult<RecordListItemDto>
         {
-            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r)))
+            Items = pageItems
+                .Select(r => ToListItem(r, lookup, FindHandling(handlings, lookup, r), Progress(r), IsOverdue(r), openCases))
                 .ToList(),
             Page = page,
             PageSize = pageSize,
             Total = ordered.Count
         };
+    }
+
+    /// <summary>
+    /// 本頁涉及主機的全部進行中案件（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：清單「處理人」欄
+    /// fallback 用——日層級從未指派、但當日問題屬進行中案件時，顯示案件處理人。
+    /// </summary>
+    private List<IssueCase> LoadOpenCases(List<DailyAnalysisRecord> records, HostLookup lookup)
+    {
+        if (records.Count == 0) return new List<IssueCase>();
+
+        var hostNames = records.Select(r => HostNameOf(lookup, r))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return _cases.GetMany(hostNames).Where(c => c.ClosedAt == null).ToList();
     }
 
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request)
@@ -225,6 +249,132 @@ public class RecordQueryService
         }).ToList();
 
         return Paginate(groups, request);
+    }
+
+    /// <summary>
+    /// 問題查詢「依問題」視角（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId，
+    /// 與 <see cref="GroupIssuesBySignature"/> 同一個分組鍵），回答「這個問題影響多大範圍、
+    /// 誰在處理」——依主機／依日期是「這台主機／這一天怎麼樣」，這裡反過來看「這個問題本身」。
+    /// </summary>
+    public PagedResult<IssueGroupDto> SearchByIssue(RecordSearchRequest request)
+    {
+        var records = _repository.Query(BuildFilter(request));
+        var lookup = new HostLookup(_hosts.GetAll());
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var groups = GroupIssuesBySignature(records)
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities))
+            .ToList();
+
+        groups = (request.SortKey switch
+        {
+            "severity" => request.Ascending
+                ? groups.OrderBy(i => SeverityRank(i.MaxSeverity))
+                : groups.OrderByDescending(i => SeverityRank(i.MaxSeverity)),
+            "hostCount" => request.Ascending ? groups.OrderBy(i => i.HostCount) : groups.OrderByDescending(i => i.HostCount),
+            "dayCount" => request.Ascending ? groups.OrderBy(i => i.DayCount) : groups.OrderByDescending(i => i.DayCount),
+            "totalCount" => request.Ascending ? groups.OrderBy(i => i.TotalCount) : groups.OrderByDescending(i => i.TotalCount),
+            "lastSeen" => request.Ascending ? groups.OrderBy(i => i.LastSeen) : groups.OrderByDescending(i => i.LastSeen),
+            // 預設：影響範圍優先——最高嚴重度 → 主機數 → 總次數（§4 定案）
+            _ => groups.OrderByDescending(i => SeverityRank(i.MaxSeverity))
+                .ThenByDescending(i => i.HostCount)
+                .ThenByDescending(i => i.TotalCount)
+        }).ToList();
+
+        return Paginate(groups, request);
+    }
+
+    private static int SeverityRank(string severity) =>
+        Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
+
+    /// <summary>
+    /// 單一問題分組的彙總 DTO。處理概況三態計算：主機有進行中案件 → 處理中；否則看該主機
+    /// 最近一次出現當天的問題層級標記——已結案 → 已處理；in_progress → 處理中；
+    /// 未標記且不在「未處理計算」等級內（低風險預設不處理）→ 已處理（有結論，非待辦）；
+    /// 其餘 → 未處理。與詳情頁問題層級的既有語意（IsDefaultUnhandled 等）保持一致，
+    /// 只是這裡看的是「跨主機彙總」而非單一問題列。
+    /// </summary>
+    private IssueGroupDto BuildIssueGroup(
+        IGrouping<(string Source, int EventId), (DailyAnalysisRecord Record, LogIssueSignature Issue)> g,
+        HostLookup lookup,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
+    {
+        var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var from = g.Min(x => x.Record.Date);
+        var to = g.Max(x => x.Record.Date);
+        var issueKeys = g.Select(x => IssueSignatureKey.For(x.Issue)).ToHashSet(StringComparer.Ordinal);
+
+        var issueHandlings = _issueHandlings.GetMany(hostNames, from, to)
+            .Where(h => issueKeys.Contains(h.IssueKey))
+            .ToList();
+        var openCases = _cases.GetMany(hostNames)
+            .Where(c => issueKeys.Contains(c.IssueKey) && c.ClosedAt == null)
+            .ToList();
+
+        var latest = g.OrderByDescending(x => x.Record.Date).First();
+
+        int processing = 0, resolved = 0, unhandled = 0;
+        var handlerIds = new HashSet<long>();
+
+        foreach (var hostName in hostNames)
+        {
+            var openCase = openCases.FirstOrDefault(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+            if (openCase != null)
+            {
+                processing++;
+                if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
+                continue;
+            }
+
+            var latestForHost = g
+                .Where(x => string.Equals(HostNameOf(lookup, x.Record), hostName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.Record.Date)
+                .First();
+            var key = IssueSignatureKey.For(latestForHost.Issue);
+            var handling = issueHandlings.FirstOrDefault(h =>
+                string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                h.Date.Date == latestForHost.Record.Date.Date &&
+                string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+
+            if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
+            else if (handling != null && handling.Status == IssueHandlingStatuses.InProgress) processing++;
+            else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
+            else unhandled++;
+        }
+
+        var handlerNames = handlerIds
+            .Select(id => _users.Get(id)?.DisplayName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .Select(n => n!)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new IssueGroupDto
+        {
+            Source = g.Key.Source,
+            EventId = g.Key.EventId,
+            Category = latest.Issue.Category.ToString(),
+            MaxSeverity = g.Max(x => x.Issue.Severity).ToString(),
+            HostCount = hostNames.Count,
+            DayCount = g.Select(x => (Host: HostNameOf(lookup, x.Record), Day: x.Record.Date.Date)).Distinct().Count(),
+            TotalCount = g.Sum(x => x.Issue.Count),
+            LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
+            KnownIssue = latest.Issue.KnownIssue,
+            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
+            HandlerNames = handlerNames.Count > 3
+                ? new List<string> { $"{handlerNames[0]} 等 {handlerNames.Count} 人" }
+                : handlerNames
+        };
+    }
+
+    /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
+    private static string BuildHandlingSummary(int unhandled, int processing, int resolved)
+    {
+        var parts = new List<string>();
+        if (unhandled > 0) parts.Add($"{unhandled} 台未處理");
+        if (processing > 0) parts.Add($"{processing} 台處理中");
+        if (resolved > 0) parts.Add($"{resolved} 台已處理");
+        return parts.Count > 0 ? string.Join("／", parts) : "—";
     }
 
     /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
@@ -348,6 +498,15 @@ public class RecordQueryService
         var noiseMarks = _noiseMarks.GetForHost(hostName)
             .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
+        // 問題案件（docs/FEEDBACK-4-PLAN.md §2）：進行中案件涵蓋的問題顯示「○○○ 處理中
+        // （1/10 起）」，解釋為什麼某些問題的狀態會被案件同步「自己動」
+        var openCases = _cases.GetOpenForHost(hostName)
+            .ToDictionary(
+                c => c.IssueKey,
+                c => (HandlerId: c.HandlerId, HandlerName: c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
+                      c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
+                StringComparer.Ordinal);
+
         var settings = _settings.Get();
         var unhandledSeverities = settings.ParseUnhandledSeverities();
 
@@ -375,7 +534,7 @@ public class RecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -482,6 +641,129 @@ public class RecordQueryService
                 Conclusion = latestCheckup.Conclusion
             },
             TopSignatures = BuildIssueSummary(records.Values)
+        };
+    }
+
+    /// <summary>
+    /// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/FEEDBACK-4-PLAN.md §3）：點某個
+    /// 問題（Source+EventId）看它在期間內逐日出現的頻率、間隔與各日處理狀態。與
+    /// <see cref="GetHostDetail"/> 共用同一套別名展開＋<c>applyDayRiskVisibility:false</c> 豁免
+    /// （時間軸與這裡都要看完整證據，不受「日風險等級顯示」設定影響）。
+    /// </summary>
+    public HostIssueOccurrenceDto GetHostIssueOccurrences(long hostId, string source, int eventId, int days)
+    {
+        _visibility.EnsureVisible(hostId);
+        var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
+
+        var from = DateTime.Today.AddDays(-days + 1);
+        var records = _repository.Query(new RecordQueryFilter
+        {
+            Hosts = _repository.ResolveHostKeys(hostId),
+            From = from,
+            Source = source,
+            EventId = eventId
+        }, applyDayRiskVisibility: false)
+            // 合併當天可能有存活主機與墓碑各一筆，取存活主機那筆（同 GetHostDetail 的既有處理）
+            .GroupBy(r => r.Date.Date)
+            .Select(g => g.FirstOrDefault(r => r.HostId == hostId) ?? g.First())
+            .Where(r => r.TopIssues.Any(i => i.Source == source && i.EventId == eventId))
+            .OrderBy(r => r.Date)
+            .ToList();
+
+        if (records.Count == 0) return new HostIssueOccurrenceDto();
+
+        var hostName = host.HostName;
+        // 一個 (Source,EventId) 可能對到多個完整 IssueKey（LogName/EntryType 不同）——
+        // 逐日取當天實際命中的那個簽章，狀態也各自對應那個簽章的標記，不強行假設全期間同一把鍵
+        var issueKeys = records
+            .SelectMany(r => r.TopIssues.Where(i => i.Source == source && i.EventId == eventId))
+            .Select(IssueSignatureKey.For)
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet();
+
+        var issueHandlings = _issueHandlings.GetMany(new[] { hostName }, records.Min(r => r.Date), records.Max(r => r.Date));
+        var noiseMarks = _noiseMarks.GetForHost(hostName).ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var occurrences = new List<HostIssueOccurrenceDayDto>();
+        foreach (var record in records)
+        {
+            var issue = record.TopIssues.First(i => i.Source == source && i.EventId == eventId);
+            var key = IssueSignatureKey.For(issue);
+            var handling = issueHandlings.FirstOrDefault(h => h.Date.Date == record.Date.Date && string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+            var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
+
+            occurrences.Add(new HostIssueOccurrenceDayDto
+            {
+                Date = record.Date.ToString("yyyy-MM-dd"),
+                Count = issue.Count,
+                RiskLevel = record.RiskLevel,
+                StatusText = status.Length > 0 ? IssueStatusText(status)
+                    : isDefaultUnhandled ? "不處理（預設）"
+                    : noiseMark != null ? "已知雜訊（自動）"
+                    : "未處理",
+                FromCase = handling?.CaseId != null
+            });
+        }
+
+        // 案件行：有進行中或最近結案的案件時才顯示——「上次誰處理的、怎麼結的」，
+        // 即使案件已結案也保留（不是只顯示進行中）
+        var relevantCase = _cases.GetMany(new[] { hostName })
+            .Where(c => issueKeys.Contains(c.IssueKey))
+            .OrderByDescending(c => c.ClosedAt == null)
+            .ThenByDescending(c => c.UpdatedAt)
+            .FirstOrDefault();
+
+        var stats = BuildOccurrenceStats(records);
+        stats.TotalCount = occurrences.Sum(o => o.Count);
+
+        return new HostIssueOccurrenceDto
+        {
+            Stats = stats,
+            Case = relevantCase == null ? null : new HostIssueOccurrenceCaseDto
+            {
+                HandlerId = relevantCase.HandlerId,
+                HandlerName = relevantCase.HandlerId.HasValue ? _users.Get(relevantCase.HandlerId.Value)?.DisplayName : null,
+                Status = relevantCase.Status,
+                StatusText = IssueStatusText(relevantCase.Status),
+                FirstLinkedDate = relevantCase.FirstLinkedDate.ToString("yyyy-MM-dd"),
+                ClosedAt = relevantCase.ClosedAt
+            },
+            Occurrences = occurrences
+        };
+    }
+
+    /// <summary>出現頻率統計：平均間隔（只出現一天時無意義，回 null）、最長連續出現天數
+    /// （日曆日相鄰才算連續，缺一天就斷）</summary>
+    private static HostIssueOccurrenceStatsDto BuildOccurrenceStats(List<DailyAnalysisRecord> records)
+    {
+        var dates = records.Select(r => r.Date.Date).Distinct().OrderBy(d => d).ToList();
+
+        double? avgGapDays = null;
+        if (dates.Count > 1)
+        {
+            var gaps = new List<double>();
+            for (var i = 1; i < dates.Count; i++) gaps.Add((dates[i] - dates[i - 1]).TotalDays);
+            avgGapDays = gaps.Average();
+        }
+
+        var longestStreak = dates.Count > 0 ? 1 : 0;
+        var currentStreak = longestStreak;
+        for (var i = 1; i < dates.Count; i++)
+        {
+            currentStreak = (dates[i] - dates[i - 1]).Days == 1 ? currentStreak + 1 : 1;
+            longestStreak = Math.Max(longestStreak, currentStreak);
+        }
+
+        return new HostIssueOccurrenceStatsDto
+        {
+            DaysSeen = dates.Count,
+            // TotalCount 由呼叫端另外從逐日結果加總覆寫（BuildOccurrenceStats 這裡沒有
+            // Source/EventId 可篩選，records.TopIssues 是整日全部問題，不能直接加總）
+            AvgGapDays = avgGapDays,
+            LongestStreak = longestStreak,
+            FirstSeen = dates.Count > 0 ? dates[0].ToString("yyyy-MM-dd") : string.Empty,
+            LastSeen = dates.Count > 0 ? dates[^1].ToString("yyyy-MM-dd") : string.Empty
         };
     }
 
@@ -607,16 +889,38 @@ public class RecordQueryService
         HostLookup lookup,
         RecordHandling? handling,
         DayHandlingDerivation.DayProgress progress,
-        bool isOverdue)
+        bool isOverdue,
+        List<IssueCase>? openCases = null)
     {
         // 顯示與連結一律指向**存活**主機：合併之後，舊識別的紀錄若還掛著舊 id，
         // 使用者點進去會落到已停用的墓碑列
         var host = lookup.For(record);
+        var hostName = host?.HostName ?? record.Host;
+
+        // 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級有值時優先；否則若當日
+        // 有問題屬進行中案件，顯示案件處理人（後綴「（案件）」）——否則 2.3 情境下狀態同步了、
+        // 處理人卻空白，使用者會困惑。多個問題各自屬不同處理人的案件時取第一個命中的，
+        // 這種混合情境本就罕見（多半是同一次指派建的案），不特別處理
+        long? handlerId = handling?.HandlerId;
+        var handlerFromCase = false;
+        if (!handlerId.HasValue && openCases is { Count: > 0 } && record.TopIssues.Count > 0)
+        {
+            var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+            var openCase = openCases.FirstOrDefault(c =>
+                string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                issueKeys.Contains(c.IssueKey) && c.HandlerId.HasValue);
+            if (openCase != null)
+            {
+                handlerId = openCase.HandlerId;
+                handlerFromCase = true;
+            }
+        }
+        var handlerDisplayName = handlerId.HasValue ? _users.Get(handlerId.Value)?.DisplayName : null;
 
         return new RecordListItemDto
         {
             HostId = host?.HostId ?? 0,
-            HostName = host?.HostName ?? record.Host,
+            HostName = hostName,
             Date = record.Date.ToString("yyyy-MM-dd"),
             RiskLevel = record.RiskLevel,
             Headline = record.Headline,
@@ -633,9 +937,8 @@ public class RecordQueryService
             HandlingStatusText = HandlingStatusText(HandlingStatuses.ExternalOf(progress.DayStatus)),
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
-            HandlerName = handling?.HandlerId.HasValue == true
-                ? _users.Get(handling.HandlerId.Value)?.DisplayName
-                : null,
+            HandlerId = handlerId,
+            HandlerName = handlerFromCase && handlerDisplayName != null ? $"{handlerDisplayName}（案件）" : handlerDisplayName,
             IsOverdue = isOverdue
         };
     }
@@ -683,21 +986,41 @@ public class RecordQueryService
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
     }
 
-    private static IssueDto ToIssueDto(
-        LogIssueSignature issue,
-        Dictionary<string, KnownIssueRule>? guidance,
-        Dictionary<string, IssueHandling>? issueHandlingByKey,
-        Dictionary<string, NoiseMark>? noiseMarks,
+    /// <summary>
+    /// 問題層級狀態判定的單點邏輯（docs/FEEDBACK-4-PLAN.md §3）：未標記時看已知雜訊記憶／
+    /// 未處理計算等級推導出「不處理（預設）」「已知雜訊（自動）」；明確標記過（含 open）一律
+    /// 尊重使用者的判斷，不再套自動推導。ToIssueDto（詳情頁）與主機詳情問題發生明細
+    /// （GetHostIssueOccurrences）共用，避免兩處各自維護一份判定條件遲早漂移不一致。
+    /// </summary>
+    private static (string Status, bool IsDefaultUnhandled, NoiseMark? NoiseMark) ResolveIssueStatus(
+        LogIssueSignature issue, IssueHandling? handling, Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities)
     {
         var key = IssueSignatureKey.For(issue);
-        var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
         var status = handling?.Status ?? string.Empty;
 
         // 未標記時才看得到自動判讀：明確標記過（含 open）一律尊重使用者的判斷，不再套自動推導
         var noiseMark = status.Length == 0 && noiseMarks != null && noiseMarks.TryGetValue(key, out var m) ? m : null;
         // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
         var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
+
+        return (status, isDefaultUnhandled, noiseMark);
+    }
+
+    private static IssueDto ToIssueDto(
+        LogIssueSignature issue,
+        Dictionary<string, KnownIssueRule>? guidance,
+        Dictionary<string, IssueHandling>? issueHandlingByKey,
+        Dictionary<string, NoiseMark>? noiseMarks,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        Dictionary<string, (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null)
+    {
+        var key = IssueSignatureKey.For(issue);
+        var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
+        var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
+
+        (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)? openCase =
+            openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
 
         return new IssueDto
         {
@@ -725,7 +1048,11 @@ public class RecordQueryService
             IsDefaultUnhandled = isDefaultUnhandled,
             IsAutoNoise = noiseMark != null,
             NoiseNote = noiseMark?.Note,
-            DueDate = handling?.DueDate?.ToString("yyyy-MM-dd")
+            DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
+            CaseHandlerId = openCase?.HandlerId,
+            CaseHandlerName = openCase?.HandlerName,
+            CaseStatus = openCase?.Status,
+            CaseFirstLinkedDate = openCase?.FirstLinkedDate
         };
     }
 

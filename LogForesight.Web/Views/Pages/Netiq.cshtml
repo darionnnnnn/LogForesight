@@ -75,6 +75,16 @@
                 <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />
                 <label class="form-check-label" for="opt-allow-invalid-certs">略過憑證驗證（Sentinel 使用自簽憑證時的逃生門）</label>
             </div>
+            <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" id="opt-chat-live-fetch" />
+                <label class="form-check-label" for="opt-chat-live-fetch">詢問 AI 詢問當下向 Sentinel 即時查詢現場事件（僅 NetIQ 主機）</label>
+                <div class="form-text">
+                    開啟後，風險日詳情「詢問 AI」對話的第一輪會對該主機所屬 Sentinel 發一次即時查詢，
+                    取回當日這個問題的實際事件納入分析，讓 AI 判讀更貼近現況。
+                    預設關閉——請評估白天對 Sentinel 的額外查詢負載後再開啟；全站併發上限 1、
+                    結果快取 10 分鐘，且只對 NetIQ 主機生效（本機直讀主機沒有這條路徑）。
+                </div>
+            </div>
         </div>
     </div>
 

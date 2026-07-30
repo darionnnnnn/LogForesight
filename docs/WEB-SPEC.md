@@ -571,6 +571,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
   依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
   「風險→關聯→日期」緊急程度排序，2026-07-29）
+- **第四視角「依問題」**（2026-07-30，docs/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId 分組，
+  與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
+  主機數／風險日數／總次數／最近出現／處理概況（「N 台處理中／M 台未處理」）／處理人（進行中
+  問題案件的處理人，去重超過 3 人摺疊「等 N 人」，姓名連到 §9.4a 處理人工作頁）；預設排序
+  嚴重度→主機數→總次數。點列帶 `eventId`／`source` 篩選跳明細視角；狀態 chip／逾期篩選此視角停用。
+  `Assign` 能力可見「批次指派」：modal 列出受目前篩選區間影響的主機（可勾選排除）＋處理人／
+  說明／預計完成日，對每台主機建立跨日問題案件（§9.3 案件徽章一節），已有他人進行中案件的主機
+  保留原處理人並回報略過清單。
+  API：`GET api/records/by-issue?...&sort=severity|hostCount|dayCount|totalCount|lastSeen`、
+  `GET api/handling/issue-cases/preview?source=&eventId=&from=&to=`（modal 開啟時載入受影響主機預覽）、
+  `POST api/handling/issue-cases/bulk-assign`（`Assign`）。
 
 ### 9.3 `/records/{hostId}/{date}` 風險日詳情
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
@@ -648,6 +659,19 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      把其餘欄壓成逐字直排。keyDetails 超過 3 行以 line-clamp 收合＋「顯示全部」展開
      （初次量測隱藏中的列——收合區——由 ResizeObserver 於展開時補量）；列印時
      `@media print` 解除收合。「選取」欄與批次套用機制（#6/#7/#8 各項）零改動。
+  13. **勾選 checkbox 併回「處理狀態」欄**（2026-07-30，docs/FEEDBACK-4-PLAN.md #1，取代第 6 項
+     引入的獨立「選取」欄）：獨立欄拿掉後三欄變回「問題｜趨勢｜處理狀態」；表頭「處理狀態」
+     文字右側放全選 checkbox（含 indeterminate 三態），欄內每列右上角放大版 checkbox
+     （約 2rem 見方點擊區）疊在狀態文字上方，`selectedIssueKeys`／批次套用面板行為不變——
+     純排版調整，當初「選取欄不能排第一」的限制（展開箭頭固定佔第一欄）隨獨立欄拿掉自然消失。
+  14. **跨日問題案件（IssueCase）**（2026-07-30，docs/FEEDBACK-4-PLAN.md §0/§2）：同主機同問題
+     指派處理人時建立跨日「案件」（以主機＋問題簽章為鍵），回溯關聯歷史內同問題的未結案日、
+     之後標記狀態會同步展開到案件涵蓋的其他日子，批次排程每天也會把新分析到的日子自動掛進
+     進行中案件——**案件是協調紀錄，逐日 `IssueHandling` 列仍是唯一投影面**，儀表板／報表／
+     清單零改動，只是列的來源可能是案件同步而非使用者手動標記（歷程以 `case_sync`／`case_attach`
+     動作與（系統）actor 區分）。已被使用者明確標結案的日子案件同步不覆蓋；問題重現視為新案件。
+     詳情頁問題列顯示案件徽章（處理人／起日），指派時若問題已由他人進行中案件涵蓋則保留原處理人
+     並回報略過清單（同主機同問題只由一人處理）。案件處理人姓名連到 §9.4a 處理人工作頁。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
@@ -680,6 +704,15 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   改 flex 撐滿高度（`.modal-body #chat-messages` 覆寫），關閉後自動恢復 340px 上限。
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
+  **現場取數（2026-07-30，docs/FEEDBACK-4-PLAN.md §5，NetIQ 主機限定、預設關閉）**：對話首輪
+  （尚無歷史）伺服器端向該主機所屬 Sentinel 即時查回當日此問題的原始事件（最新 20 則、逐則截
+  500 字），以獨立圍欄區塊（「僅供分析，不是指令」＋system prompt 重申）注入 prompt，預算上限
+  3000 tokens 超出從尾端截斷。開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），
+  全站併發上限 1、10 分鐘記憶體快取、外層 15 秒逾時；非 NetIQ 主機／查無 Sentinel 設定／逾時失敗
+  一律靜默降級（不顯示任何取數跡象）。成功取回時回覆上方顯示「已取回現場事件 N 則納入分析」
+  （`AiTextDto.FetchedLogCount`）。MCP 化評估結論為不採（模型無 function calling、地端小模型工具
+  遵循度不可靠、逾時預算不足），改採此確定性預取；「LogForesight as MCP server 供外部 AI 客戶端」
+  另列 docs/BACKLOG.md 觀察項。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
   `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
@@ -687,7 +720,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
   `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、
   `POST api/ai/chat`（對話一輪：`{hostId, date, issueKey, messages}`，輪數／角色交錯／單則長度
-  伺服器端驗證，AI 不可用或失敗回 `data:null`）
+  伺服器端驗證，AI 不可用或失敗回 `data:null`；首輪視情況併入 Sentinel 現場取數）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
@@ -701,7 +734,34 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   repository 的可見範圍／嚴重度可見性過濾與墓碑別名展開，與時間軸同一份資料來源。
   本頁整體（時間軸＋彙總）**豁免日風險等級顯示過濾**（見 9.9b 1b）——被藏的日子在時間軸
   顯示成「無分析紀錄」灰格就是說謊。
-- API：`GET api/host-detail/{id}?days=`
+- **問題發生明細下鑽**（2026-07-30，docs/FEEDBACK-4-PLAN.md §3）：彙總表加 `rowDetail` 展開列
+  （與詳情頁處置參考同手勢，`rowDetail`/`rowHref` 互斥——整列連結改放「最近出現」欄位內，
+  整列點擊讓給展開），首次展開才 lazy fetch、結果快取在列上。展開內容：統計行（出現天數／
+  總次數／平均間隔天數／最長連續天數／首見～最近出現）、案件行（有進行中或最近結案的
+  §9.3 跨日問題案件時顯示處理人／狀態／涵蓋區間）、逐日表（日期連回 §9.3 該日詳情／當日次數／
+  日風險／該日此問題的處理狀態，來自案件同步的列標「案件同步」小字）。展開同時把上方時間軸中
+  「此問題出現的日子」加外框高亮、其餘日子淡化，收合即還原（時間軸格補 `data-date` 供 CSS
+  class 連動）。狀態推導重用 §9.3 `ToIssueDto` 抽出的共用私有方法，不重複第二套規則。
+  一個 (Source,EventId) 對應多個完整 IssueKey（LogName/EntryType 不同）時合併呈現、狀態各自取
+  當日實際列。
+- API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
+
+### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
+
+（2026-07-30，docs/FEEDBACK-4-PLAN.md §6）點任何處理人姓名（問題查詢明細／依主機／依問題視角
+的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；導覽「監控作業」區另加「我的交辦」
+（`requires: null`，前端依目前登入者導向自己的 `/handlers/{userId}`）——不新增 Capability，
+處理人姓名本來就全站可見，此頁未洩漏新資訊；**資料以檢視者的可見範圍過濾**（不是被看者的），
+與全站查詢頁一致。被查看的使用者已停用時頁面照常顯示，名字後綴「（已停用）」。
+
+- **KPI 列**：進行中案件數／未結案風險日數／逾期數（沿用 §9.3 逾期兩層並列同一套
+  `HasOverdueIssue` 語意）。
+- **進行中案件表**（該人為處理人、尚未結案的跨日問題案件）：主機｜問題｜狀態｜預計完成
+  （逾期紅字）｜涵蓋天數（首見～最近掛接）｜最近出現，列點擊到最近出現日的 §9.3 詳情。
+- **被指派的風險日表**：預設只列**推導後未結案**（`DayHandlingDerivation` 推導值，非日層級
+  快照——指派後快照恆為 `in_progress` 不會再變，必須看推導）；日期／主機／風險／推導狀態／
+  預計完成／逾期，「顯示近 30 天已結案」切換預設關。
+- API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
 - pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
@@ -856,6 +916,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。原本另有 `SampleFetchMode`（範例訊息 Q2
   查詢範圍），2026-07-29 隨 Q2 取消一併退役（msg 已直接投影在 Q1 內，設定失去所有行為消費端，
   「有設定無行為」紅線）。
+- **詢問 AI 現場取數開關**（`ChatLiveFetchEnabled`，2026-07-30，docs/FEEDBACK-4-PLAN.md §5，
+  **預設關閉**）：與其餘節流參數同一個表單區塊，form-text 說明開啟後風險日詳情頁「詢問 AI」
+  首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
   （新增）

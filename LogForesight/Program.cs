@@ -357,6 +357,17 @@ var permissionMonitor = new PermissionMonitorService(settings.Permissions,
     StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
 var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
+// 問題案件批次逐日掛接（docs/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
+// 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。與 Web 共用同一套
+// IssueCaseCoordinator 規則，只是這裡的 IAnalysisRecordQuery 不綁 ownerHost——
+// 掛接查的是「這台主機全部留存歷史」，跟本機分析的缺日判定/趨勢基準是兩件事。
+var caseCoordinator = new IssueCaseCoordinator(
+    StorageFactory.CreateIssueCaseStore(settings.Storage, dataRoot),
+    StorageFactory.CreateIssueHandlingStore(settings.Storage, dataRoot),
+    StorageFactory.CreateHandlingStore(settings.Storage, dataRoot),
+    StorageFactory.CreateRecordQuery(settings.Storage, dataRoot),
+    hostStore);
+
 // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
 //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
 //    刻意不依賴 Security log／稽核政策，直接比對 ACL 與 Administrators 群組成員，
@@ -583,6 +594,19 @@ else
             dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
         results.Add(record);
 
+        // 問題案件批次逐日掛接（2.4）：失敗只記警告，不擋分析主流程——
+        // 同 NetIQ 段的失敗邊界哲學，缺掛的日子下次執行冪等補掛
+        try
+        {
+            var attach = caseCoordinator.AttachNewDay(currentHost, date, record.TopIssues, DateTime.Now);
+            if (attach.AttachedCount > 0)
+                log.Info("案件掛接：{Date:yyyy-MM-dd} 掛入 {Count} 個問題", date, attach.AttachedCount);
+        }
+        catch (Exception ex)
+        {
+            log.Warn(ex, "案件掛接失敗（不影響分析結果，下次執行冪等補掛）：{0}", ex.Message);
+        }
+
         dayStopwatch.Stop();
         elapsedByDate[date] = dayStopwatch.Elapsed;
         runRecorder.RecordDayAnalyzed();
@@ -642,7 +666,7 @@ if (netiqHostList.TotalHosts > 0)
         var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
         var netiqPipeline = new NetiqPipelineService(
             settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
-            eventLogService, aiService, suppressionStore, reportService, runRecorder);
+            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator);
 
         var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
         runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +

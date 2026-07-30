@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
         services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
+        services.AddSingleton<IIssueCaseStore>(_ => StorageFactory.CreateIssueCaseStore(storage, dataRoot));
         services.AddSingleton<INoiseMarkStore>(_ => StorageFactory.CreateNoiseMarkStore(storage, dataRoot));
         services.AddSingleton<AiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
         services.AddSingleton<PermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
@@ -219,13 +220,19 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebAiService, WebAiService>();
         services.AddScoped<AiInsightService>();
 
+        // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
+        // 要全站共用同一份，不能隨請求範圍各自持有
+        services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
+
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<RecordQueryService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
-        // 寫入面
+        // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/FEEDBACK-4-PLAN.md §0），
+        // 本身也可以是 Singleton——沒有請求範圍狀態
+        services.AddSingleton<IssueCaseCoordinator>();
         services.AddScoped<HandlingService>();
         services.AddScoped<PermissionChangeService>();
         services.AddScoped<AuditQueryService>();

@@ -20,6 +20,8 @@ public class HostDetailIssueSummaryTests : IDisposable
     private readonly FakeUserStore _users = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
+    private readonly FakeIssueHandlingStore _issueHandlingStore = new();
+    private readonly FakeIssueCaseStore _caseStore = new();
     private readonly RecordQueryService _service;
 
     public HostDetailIssueSummaryTests()
@@ -36,7 +38,8 @@ public class HostDetailIssueSummaryTests : IDisposable
             new FakeHostGroupStore(),
             visibility,
             new FakeHandlingStore(),
-            new FakeIssueHandlingStore(),
+            _issueHandlingStore,
+            _caseStore,
             new FakeNoiseMarkStore(),
             new FakeRuleStore(),
             FakeCurrentUser.WithCapabilities(),
@@ -161,5 +164,99 @@ public class HostDetailIssueSummaryTests : IDisposable
         var detail = _service.GetHostDetail(host.HostId, days: 30);
 
         Assert.Empty(detail.TopSignatures);
+    }
+
+    // ── 問題發生明細（docs/FEEDBACK-4-PLAN.md §3）───────────────────────────────
+
+    [Fact]
+    public void 發生明細_統計出現天數次數與最長連續()
+    {
+        var host = AddHost("HOST-A");
+        var d1 = DateTime.Today.AddDays(-4);
+        var d2 = DateTime.Today.AddDays(-3);   // 與 d1 連續
+        var d3 = DateTime.Today;               // 與 d2 不連續（中間空 2 天）
+        AddRecord(host, d1, "高", Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 2));
+        AddRecord(host, d2, "高", Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 3));
+        AddRecord(host, d3, "高", Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 5));
+
+        var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
+
+        Assert.Equal(3, result.Stats.DaysSeen);
+        Assert.Equal(10, result.Stats.TotalCount);
+        Assert.Equal(2, result.Stats.LongestStreak);   // d1,d2 連續兩天
+        Assert.Equal(d1.ToString("yyyy-MM-dd"), result.Stats.FirstSeen);
+        Assert.Equal(d3.ToString("yyyy-MM-dd"), result.Stats.LastSeen);
+        Assert.Equal(3, result.Occurrences.Count);
+    }
+
+    [Fact]
+    public void 發生明細_只出現一天時平均間隔為null()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 1));
+
+        var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
+
+        Assert.Null(result.Stats.AvgGapDays);
+        Assert.Equal(1, result.Stats.LongestStreak);
+    }
+
+    [Fact]
+    public void 發生明細_逐日狀態反映問題層級標記()
+    {
+        var host = AddHost("HOST-A");
+        var d1 = DateTime.Today.AddDays(-1);
+        var d2 = DateTime.Today;
+        var issue = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 1);
+        AddRecord(host, d1, "高", issue);
+        AddRecord(host, d2, "高", issue);
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = d1, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
+
+        var day1 = result.Occurrences.Single(o => o.Date == d1.ToString("yyyy-MM-dd"));
+        var day2 = result.Occurrences.Single(o => o.Date == d2.ToString("yyyy-MM-dd"));
+        Assert.Equal("已處理", day1.StatusText);
+        Assert.Equal("未處理", day2.StatusText);
+    }
+
+    [Fact]
+    public void 發生明細_有進行中案件時帶回案件資訊()
+    {
+        var host = AddHost("HOST-A");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小張" });
+        var day = DateTime.Today;
+        var issue = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage, count: 1);
+        AddRecord(host, day, "高", issue);
+
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = day, LastLinkedDate = day,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
+
+        Assert.NotNull(result.Case);
+        Assert.Equal("小張", result.Case!.HandlerName);
+        Assert.Null(result.Case.ClosedAt);
+    }
+
+    [Fact]
+    public void 發生明細_期間內無此問題時Occurrences為空()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", Issue("other", 1, IssueSeverity.High, IssueCategory.Other, count: 1));
+
+        var result = _service.GetHostIssueOccurrences(host.HostId, "disk", 153, days: 30);
+
+        Assert.Empty(result.Occurrences);
     }
 }

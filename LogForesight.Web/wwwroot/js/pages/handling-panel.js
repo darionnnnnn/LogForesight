@@ -97,6 +97,15 @@ function render() {
         '由問題標記推導；與下方表單要儲存的日層級狀態是兩件事——沒有勾選問題逐項標記時兩者相同'
     ));
 
+    // 案件連動提示（docs/FEEDBACK-4-PLAN.md §2）：本日有幾個問題屬進行中案件，
+    // 讓使用者知道為什麼那幾列的狀態會「自己動」（案件同步的結果，不是自己標的）
+    if (handling.openCaseCount > 0) {
+        const hint = document.createElement('div');
+        hint.className = 'lf-hint mb-3';
+        hint.textContent = `本日 ${handling.openCaseCount} 項問題屬進行中案件，狀態會跟著案件涵蓋的其他日子連動。`;
+        panel.appendChild(hint);
+    }
+
     // ── 負責人（唯讀）：主機的長期屬性，改派處理人不會動到它 ──
     panel.appendChild(readonlyField(
         '主機負責人',
@@ -182,7 +191,16 @@ function assignField(handling, users, hostId, date) {
             const updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, {
                 handlerId: select.value ? Number(select.value) : null
             });
-            toast(updated.handlerName ? `已指派給 ${updated.handlerName}` : '已取消指派', 'success');
+
+            // 建案提示（docs/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
+            // 回溯歷史；已有他人進行中案件的問題不搶走，讓使用者知道發生了什麼
+            const parts = [updated.handlerName ? `已指派給 ${updated.handlerName}` : '已取消指派'];
+            if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
+            if (updated.casesSkippedHandlerNames?.length) {
+                parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件涵蓋，未變更`);
+            }
+            toast(parts.join('；'), 'success');
+
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch {
             select.disabled = false;
@@ -362,7 +380,10 @@ function handlingForm() {
                 // 帶回套用後的日狀態（#6）：後端已算好 DayStatus/Total/Closed，直接顯示，
                 // 不必等頁面重載才看到「這次套用完，這天現在算什麼狀態」
                 const progress = result.totalIssues > 0 ? `（${result.closedIssues}/${result.totalIssues} 已結案）` : '';
-                toast(`已套用處理狀態；本日狀態：${result.dayStatusText}${progress}`, 'success');
+                // 案件同步提示（docs/FEEDBACK-4-PLAN.md §2）：這批問題中有屬進行中案件的，
+                // 這次套用也會連動到案件涵蓋的其他日子
+                const caseNote = result.caseSyncedDayCount > 0 ? `；已同步案件涵蓋的 ${result.caseSyncedDayCount} 天` : '';
+                toast(`已套用處理狀態；本日狀態：${result.dayStatusText}${progress}${caseNote}`, 'success');
                 // 把套用結果回報給頁面：已知雜訊等狀態的後續治本提議（建立抑制規則）由呼叫端接手
                 await state.onBatchSaved?.({ status: selectedStatus, issueKeys });
             } else {

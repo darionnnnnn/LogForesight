@@ -36,6 +36,9 @@ public class RecordHandlingStore : JsonBlobCollection<RecordHandling>, IRecordHa
     public List<RecordHandling> GetUnresolved() =>
         Read().Where(h => HandlingStatuses.Unresolved.Contains(h.Status)).ToList();
 
+    public List<RecordHandling> GetByHandler(long userId) =>
+        Read().Where(h => h.HandlerId == userId).ToList();
+
     public void Save(RecordHandling handling)
     {
         Mutate(items =>

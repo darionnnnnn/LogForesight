@@ -105,6 +105,25 @@ public class RecordsController : ControllerBase
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
             _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
+    /// <summary>依問題彙總（主機與日期都合併，docs/FEEDBACK-4-PLAN.md §4）</summary>
+    [HttpGet("by-issue")]
+    public ApiResponse<PagedResult<IssueGroupDto>> ByIssue(
+        [FromQuery] string? hostIds,
+        [FromQuery] string? groupIds,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string? riskLevels,
+        [FromQuery] string? categories,
+        [FromQuery] string? severity,
+        [FromQuery] int? eventId,
+        [FromQuery] string? source,
+        [FromQuery] string? sort,
+        [FromQuery] string dir = "desc",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50) =>
+        ApiResponse<PagedResult<IssueGroupDto>>.Ok(
+            _service.SearchByIssue(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+
     private static RecordSearchRequest BuildRequest(
         string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
         string? severity, int? eventId, string? source, string? sort, string dir, int page, int pageSize) =>

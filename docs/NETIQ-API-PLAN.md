@@ -8,6 +8,13 @@
 > 設計主軸：**盡可能降低 Sentinel server 負擔**（§5 有完整對策清單）。
 > 本文件與 docs/HISTORY.md「Sentinel 8.5 查詢設計」互補：docs/HISTORY.md 定了 Q1~Q4 的高階形式，
 > 本文件把「API 怎麼呼叫」落到端點、payload 與類別層級。
+>
+> **新消費端（2026-07-30，docs/FEEDBACK-4-PLAN.md §5）**：Web 端「詢問 AI 現場取數」新增了
+> 第三個呼叫 `SentinelClient.SearchAsync` 的路徑（前兩個是批次 pipeline 與 Web 匯入精靈掃描）——
+> 短生命週期建 client、走本文件 §1.2 同一套 event-search job 生命週期，查詢範圍窄（單一
+> 主機＋單一問題、當日一天）且有全站併發上限 1／10 分鐘快取／預設關閉三道閘，
+> 不需要另外的節流設計，沿用既有 `NetiqOptions` 節流參數。細節見 docs/WEB-SPEC.md §9.3
+> 「詢問 AI 對話區塊」一節，不在本文件重複。
 
 ## 0. 原廠文件依據
 
