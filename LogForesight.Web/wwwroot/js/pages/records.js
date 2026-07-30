@@ -11,7 +11,7 @@
  * 風險層級與風險類型是即點即篩的 chip；主機／日期／Event ID 走表單套用。
  */
 
-import { api } from '../core/api.js';
+import { api, getDisplaySettings } from '../core/api.js';
 import {
     renderTable, renderLoading, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS
@@ -43,10 +43,30 @@ const activeGroupIds = new Set();  // groupId(string)
 
 async function init() {
     applyUrlToForm();
-    await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions()]);
+    await Promise.all([resolveSelectedHostsFromUrl(), loadGroupOptions(), applyDayRiskVisibility()]);
     await search();
     initAiSummary();
     setupHostAutocomplete();
+}
+
+/**
+ * 日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：隱藏被全站「日風險等級顯示」設定藏起來的
+ * 篩選 chip——留著會讓使用者點選一個「選了也查不到東西」的條件（後端已在 RecordRepository
+ * 過濾掉該等級，勾選它只會得到空結果，卻看不出是「真的沒有」還是「被藏起來」）。
+ *
+ * 隱藏的同時**取消 active**：applyUrlToForm 可能已依 URL／預設值把被藏等級點亮
+ * （例如下鑽連結帶 riskLevels=中），只藏不取消會留下一個看不見卻仍生效的篩選——
+ * 使用者面對空清單、又沒有任何可點的東西能解除它，正是隱藏 chip 想避免的死路。
+ * 在 init 的首次 search() 之前執行，取消後的條件才是實際送出的查詢。
+ */
+async function applyDayRiskVisibility() {
+    const settings = await getDisplaySettings();
+    const visible = new Set(settings?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    for (const btn of document.querySelectorAll('#filter-risk-chips [data-risk]')) {
+        const hidden = !visible.has(btn.dataset.risk);
+        btn.classList.toggle('d-none', hidden);
+        if (hidden) btn.classList.remove('active');
+    }
 }
 
 /**

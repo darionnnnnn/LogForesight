@@ -271,4 +271,35 @@ public class HostDetailDto
     public List<string> OwnerNames { get; set; } = new();
     public List<TimelineDayDto> Timeline { get; set; } = new();
     public WeeklyCheckupDto? LatestCheckup { get; set; }
+
+    /// <summary>期間內問題彙總（docs/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」下鑽進來
+    /// 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的
+    /// 問題（依 Source+EventId 分組），每列連結到最近一次出現的那天詳情</summary>
+    public List<HostIssueSummaryDto> TopSignatures { get; set; } = new();
+}
+
+/// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/FEEDBACK-3-PLAN.md #4）。
+/// 與 <see cref="LogForesight.Web.Services.IssueClusterDto"/>（跨主機同簽章聚類，供 AI 歸納）
+/// 分組鍵相同（Source+EventId）但彙總維度不同——這裡是單一主機跨日，關心的是「出現幾天」
+/// 而不是「幾台主機」。</summary>
+public class HostIssueSummaryDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>期間內出現過的最高嚴重度（High/Medium/Low）</summary>
+    public string MaxSeverity { get; set; } = string.Empty;
+
+    public int TotalCount { get; set; }
+
+    /// <summary>出現過這個問題的天數（不是次數——一天出現多次只算一天）</summary>
+    public int DaysSeen { get; set; }
+
+    /// <summary>最近一次出現的日期（yyyy-MM-dd），連結到該日詳情</summary>
+    public string LastSeenDate { get; set; } = string.Empty;
+
+    /// <summary>最近一次出現時的說明——規則的已知問題文字可能被管理者事後編輯過，
+    /// 各天的舊紀錄各自保留分析當下的快照，取最近一天的最新</summary>
+    public string? KnownIssue { get; set; }
 }

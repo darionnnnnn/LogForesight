@@ -32,7 +32,9 @@
   已實作完成**（Phase 3，2026-07-29，`LogForesight.Core/Analysis/`，含合約測試證實 Sentinel 路徑
   與本機路徑聚合分類結果同構）。**機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**
   （Phase 4，2026-07-29，`LogForesight/Service/`，只支援 Windows 主機）——`Program.cs` 本機分析後
-  接機房迴圈，逐 Sentinel/逐日/批次取數，當日續跑靠既有 `HasRecord` 機制。**尚未經過真實
+  接機房迴圈，逐日/批次取數（2026-07-30 起多台 Sentinel 平行處理＋回補窗口可設定，
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`，docs/FEEDBACK-3-PLAN.md #1/#2），
+  當日續跑靠既有 `HasRecord` 機制。**尚未經過真實
   Sentinel 端到端驗證**（試點閘門：Web 主機頁登錄 2~3 台實際主機跑 2~3 晚，核對 sev 門檻、
   Defender/RDP 頻道覆蓋、真實批次耗時；2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化）。
   **探索方案已解決**（Phase 5，2026-07-29）：ESM 權限被拒、全站 24h distinct 不可行皆走不通，

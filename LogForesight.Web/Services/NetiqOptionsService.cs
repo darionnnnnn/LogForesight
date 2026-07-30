@@ -32,6 +32,8 @@ public class NetiqOptionsService
             o.TimeoutSeconds = request.TimeoutSeconds;
             o.RetryCount = request.RetryCount;
             o.AllowInvalidCertificates = request.AllowInvalidCertificates;
+            o.BackfillDays = request.BackfillDays;
+            o.MaxParallelServers = request.MaxParallelServers;
             o.UpdatedByAccount = _currentUser.Account;
         });
 

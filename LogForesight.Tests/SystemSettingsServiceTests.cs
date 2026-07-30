@@ -20,6 +20,7 @@ public class SystemSettingsServiceTests
     {
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
+        VisibleDayRiskLevels = new List<string> { "高", "中", "低" },
         AiBaseUrl = "",
         InitialHistoryDays = 120,
         RetentionDays = 120,
@@ -196,6 +197,62 @@ public class SystemSettingsServiceTests
         var service = Create();
 
         Assert.Null(service.GetVisibleSeverities());
+    }
+
+    // ── docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示 ──────────────────────
+
+    [Fact]
+    public void Update_日風險等級顯示未含高_丟例外()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.VisibleDayRiskLevels = new List<string> { "中", "低" };
+
+        Assert.Throws<DomainException>(() => service.Update(request));
+    }
+
+    [Fact]
+    public void Update_日風險等級顯示非法值被剔除且去重()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.VisibleDayRiskLevels = new List<string> { "高", "不存在的等級", "高" };
+
+        var saved = service.Update(request);
+
+        Assert.Equal(new[] { "高" }, saved.VisibleDayRiskLevels);
+    }
+
+    /// <summary>SystemSettings 模型的內建預設值已是全三級（見類別定義）——舊部署升級後
+    /// 這個欄位在資料庫尚未有值時，讀到的就是這個預設，不會突然全部隱藏</summary>
+    [Fact]
+    public void Get_未曾設定過時預設全顯示()
+    {
+        var service = Create();
+
+        var visible = service.Get().VisibleDayRiskLevels;
+
+        Assert.Equal(new HashSet<string> { "高", "中", "低" }, visible.ToHashSet());
+    }
+
+    [Fact]
+    public void GetVisibleDayRiskLevels_全勾時回null不過濾()
+    {
+        var service = Create();
+        service.Update(ValidRequest());   // ValidRequest 預設高中低全勾
+
+        Assert.Null(service.GetVisibleDayRiskLevels());
+    }
+
+    [Fact]
+    public void GetVisibleDayRiskLevels_只勾高時回傳單一集合()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.VisibleDayRiskLevels = new List<string> { "高" };
+        service.Update(request);
+
+        Assert.Equal(new HashSet<string> { "高" }, service.GetVisibleDayRiskLevels());
     }
 
     // ── docs/HISTORY.md #9：AD 驗證設定 ──────────────────────────────

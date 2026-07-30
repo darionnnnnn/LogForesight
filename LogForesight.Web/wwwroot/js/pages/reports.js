@@ -13,12 +13,16 @@
  *   - 列印沿用畫面狀態：隱藏的圖表卡片是 d-none，本來就不會出現在列印結果裡。
  */
 
-import { api } from '../core/api.js';
+import { api, getDisplaySettings } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, statCard } from '../core/ui.js';
 import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
+// docs/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
+// 本來就正確），只有趨勢圖需要主動隱藏被藏等級的 series——否則 legend 仍會列出一條
+// 圖例但整條線恆為 0，容易被誤讀成「這期間真的沒有中風險日」而不是「被設定藏起來」
+let visibleDayRisk = new Set(['高', '中', '低']);
 const chartInstances = {};
 
 // ── 圖表可見性（自訂圖表 modal）──────────────────────────────────────────────
@@ -106,7 +110,12 @@ async function load() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
 
-    currentData = await api.get(`/api/reports/summary?from=${from}&to=${to}`);
+    const [data, displaySettings] = await Promise.all([
+        api.get(`/api/reports/summary?from=${from}&to=${to}`),
+        getDisplaySettings()
+    ]);
+    currentData = data;
+    visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
 
     document.getElementById('print-title').textContent =
         `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}`;
@@ -215,28 +224,35 @@ function renderTrendChart() {
     }
 
     const risk = charts.riskColors();
+
+    // 中風險被顯示設定藏起來時整條 series 不畫——資料母體已在後端過濾，mediumRisk 恆為 0，
+    // 留著這條線只會是一條貼底的平線，圖例卻仍暗示「有這個類別」，容易誤讀成真的沒有中風險日
+    const datasets = [
+        {
+            label: '高風險',
+            data: points.map(p => p.highRisk),
+            borderColor: risk['高'],
+            backgroundColor: risk['高'],
+            tension: .3
+        }
+    ];
+    if (visibleDayRisk.has('中')) {
+        datasets.push({
+            label: '中風險',
+            data: points.map(p => p.mediumRisk),
+            borderColor: risk['中'],
+            backgroundColor: risk['中'],
+            tension: .3
+        });
+    }
+
     chartInstances.trend?.destroy();
     chartInstances.trend = charts.line(document.getElementById('trend-chart'), {
         data: {
             labels: points.map(p => p.date.slice(5)),
-            datasets: [
-                {
-                    label: '高風險',
-                    data: points.map(p => p.highRisk),
-                    borderColor: risk['高'],
-                    backgroundColor: risk['高'],
-                    tension: .3
-                },
-                {
-                    label: '中風險',
-                    data: points.map(p => p.mediumRisk),
-                    borderColor: risk['中'],
-                    backgroundColor: risk['中'],
-                    tension: .3
-                }
-            ]
+            datasets
         },
-        // 下鑽：點某天的資料點 → 該日該風險層級的清單
+        // 下鑽：點某天的資料點 → 該日該風險層級的清單（datasetIndex 1 只在中風險 series 存在時出現）
         drillTo: point => {
             const day = points[point.index];
             const level = point.datasetIndex === 0 ? '高' : '中';

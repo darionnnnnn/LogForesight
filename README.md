@@ -586,12 +586,15 @@ LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 沒有真實 probe 樣本可依據），含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構。
 
 **機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**（2026-07-29，
-`LogForesight/Service/`）：本機分析結束後接機房迴圈，逐 Sentinel、逐日、批次（≤50 台 IP）
+`LogForesight/Service/`）：本機分析結束後接機房迴圈，逐日、批次（≤50 台 IP）
 向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務；只支援 Windows 主機（Linux 主機
 明確標示「尚未支援」而不是靜默略過）；當日續跑（凌晨排程跑到一半掛掉、白天重跑只補未完成
-的主機/日期）靠既有的缺漏日回補機制，不是另外設計的功能。**尚未經過真實 Sentinel 端到端
-驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑幾晚，詳見 docs/NETIQ-API-PLAN.md
-§8、§9 與 docs/BACKLOG.md。
+的主機/日期）靠既有的缺漏日回補機制，不是另外設計的功能。2026-07-30 起
+（docs/FEEDBACK-3-PLAN.md #1/#2）：每台主機每次執行最多回補 `NetiqOptions.BackfillDays` 天
+（預設 1＝只查前一天，「系統管理 > NetIQ 維護」可調），多台 Sentinel 依
+`NetiqOptions.MaxParallelServers` 平行處理（預設 2，設 1＝完全依序）。**尚未經過真實
+Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑幾晚，
+詳見 docs/NETIQ-API-PLAN.md §8、§9 與 docs/BACKLOG.md。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 

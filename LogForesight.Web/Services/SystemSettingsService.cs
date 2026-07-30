@@ -24,6 +24,13 @@ public interface ISystemSettingsService
     HashSet<string>? GetVisibleSeverities();
 
     /// <summary>
+    /// 顯示中的日風險等級集合（docs/FEEDBACK-3-PLAN.md #8，RecordRepository 據此過濾）。
+    /// 全勾（高/中/低皆顯示，等同未設定過）回傳 null——與 <see cref="GetVisibleSeverities"/>
+    /// 同慣例，讓呼叫端可以跳過不必要的交集運算。
+    /// </summary>
+    IReadOnlySet<string>? GetVisibleDayRiskLevels();
+
+    /// <summary>
     /// AD 測試連線（docs/HISTORY.md #9）：用管理者當場輸入的帳密，對表單目前填的
     /// 伺服器清單試 bind——未儲存的值也能測。密碼不落盤、不進稽核 detail，稽核只記執行過測試
     /// 與對象伺服器。這裡是管理者對自己測試，失敗原因可以顯示細節（與一般登入的規則不同）。
@@ -78,6 +85,20 @@ public class SystemSettingsService : ISystemSettingsService
             : null;
     }
 
+    public IReadOnlySet<string>? GetVisibleDayRiskLevels()
+    {
+        var visible = NormalizeDayRiskLevels(_store.Get().VisibleDayRiskLevels);
+        return visible.Count == RiskLevels.All.Length ? null : visible.ToHashSet();
+    }
+
+    /// <summary>過濾掉非法值＋去重；不在這裡強制補回「高」——那是 Update 的寫入時驗證職責
+    /// （拒絕不合法的請求，比靜默改寫使用者的選擇更誠實），讀取路徑只需要防禦壞資料。</summary>
+    private static List<string> NormalizeDayRiskLevels(List<string>? values) =>
+        (values ?? new List<string>())
+            .Where(v => RiskLevels.All.Contains(v))
+            .Distinct()
+            .ToList();
+
     public SystemSettingsDto Update(UpdateSystemSettingsRequest request)
     {
         var severities = NormalizeSeverities(request.UnhandledSeverities);
@@ -86,6 +107,10 @@ public class SystemSettingsService : ISystemSettingsService
 
         if (!ValidSeverityDisplayModes.Contains(request.SeverityDisplayMode))
             throw DomainException.Validation("層級顯示模式不合法。");
+
+        var dayRiskLevels = NormalizeDayRiskLevels(request.VisibleDayRiskLevels);
+        if (!dayRiskLevels.Contains(RiskLevels.High))
+            throw DomainException.Validation("「高風險日」為必要顯示項目，無法取消勾選。");
 
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
@@ -100,6 +125,7 @@ public class SystemSettingsService : ISystemSettingsService
         {
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
+            s.VisibleDayRiskLevels = dayRiskLevels;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
                 s.AiApiKeyEnc = "";
@@ -129,13 +155,13 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.AiBaseUrl,
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.AiBaseUrl,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter
                 },
                 After = new
                 {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.AiBaseUrl,
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.AiBaseUrl,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter
                 },
@@ -221,6 +247,7 @@ public class SystemSettingsService : ISystemSettingsService
     {
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
+        VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
         InitialHistoryDays = s.InitialHistoryDays,

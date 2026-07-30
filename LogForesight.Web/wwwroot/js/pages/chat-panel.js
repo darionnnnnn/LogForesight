@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy } from '../core/ui.js';
+import { toast, withBusy, showDetailModal } from '../core/ui.js';
 import { severityName } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
@@ -78,14 +78,19 @@ function bindEvents() {
     const select = document.getElementById('chat-issue-select');
     const form = document.getElementById('chat-form');
     const clearBtn = document.getElementById('chat-clear');
+    const expandBtn = document.getElementById('chat-expand');
 
-    // replaceWith 拋棄舊節點連同其上的監聽器，避免每次 initChatPanel（例如批次套用後 load() 重呼）疊加重複綁定
+    // replaceWith 拋棄舊節點連同其上的監聽器，避免每次 initChatPanel（例如批次套用後 load() 重呼）疊加重複綁定。
+    // #chat-body（expandChat 搬移的對象）本身不在此列——它是穩定的容器節點，
+    // 內容物各自被替換，容器身分從不改變，expandChat 每次都能取到正確的即時容器。
     const freshSelect = select.cloneNode(true);
     select.replaceWith(freshSelect);
     const freshForm = form.cloneNode(true);
     form.replaceWith(freshForm);
     const freshClear = clearBtn.cloneNode(true);
     clearBtn.replaceWith(freshClear);
+    const freshExpand = expandBtn.cloneNode(true);
+    expandBtn.replaceWith(freshExpand);
 
     freshSelect.addEventListener('change', () => {
         currentIssueKey = freshSelect.value;
@@ -94,6 +99,37 @@ function bindEvents() {
 
     freshForm.addEventListener('submit', onSubmit);
     freshClear.addEventListener('click', resetConversation);
+    freshExpand.addEventListener('click', expandChat);
+}
+
+/**
+ * 放大檢視（docs/FEEDBACK-3-PLAN.md #6）：把 #chat-body（下拉／訊息／輸入表單整組）
+ * 搬移進全螢幕 modal——是搬移不是複製，節點上的事件監聽器與對話狀態原樣保留，
+ * chat-panel.js 其餘邏輯零改動。關閉時搬回原位置：insertBefore 用搬移前記下的
+ * 下一個兄弟節點還原確切順序（目前 chat-body 是 lf-card__body 裡唯一子節點，
+ * originalNextSibling 恆為 null，insertBefore(x, null) 等同 appendChild，寫法對未來
+ * 若在旁邊加其他節點時仍然正確）。
+ */
+function expandChat() {
+    const chatBody = document.getElementById('chat-body');
+    const originalParent = chatBody.parentElement;
+    const originalNextSibling = chatBody.nextSibling;
+
+    showDetailModal({
+        title: '詢問 AI（實驗性）',
+        body: chatBody,
+        fullscreen: true,
+        onClose: () => {
+            originalParent.insertBefore(chatBody, originalNextSibling);
+            scrollMessagesToBottom();
+        }
+    });
+    scrollMessagesToBottom();
+}
+
+function scrollMessagesToBottom() {
+    const container = document.getElementById('chat-messages');
+    container.scrollTop = container.scrollHeight;
 }
 
 function resetConversation() {

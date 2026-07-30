@@ -628,11 +628,14 @@ a.lf-stat:hover .lf-card,
     min-height: 7rem;
 }
 
-/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁；
-   auto-fill（非 auto-fit）讓卡少時維持合理寬度，不會被拉爆成半版寬 */
+/* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁。
+   docs/FEEDBACK-3-PLAN.md #3：原本用 auto-fill 是想讓卡少時維持合理寬度、不被拉爆成
+   半版寬，但 auto-fill 會保留空軌道——卡片數少於可容納軌道數時，實卡被鎖在 minmax
+   下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）＋
+   上限 20rem（原意的「不被拉爆成半版寬」改由上限守住）。 */
 .lf-category-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 20rem));
     gap: var(--lf-space-3);
 }
 
@@ -799,6 +802,21 @@ a.lf-stat:hover .lf-card,
 .lf-chat-messages {
     max-height: 340px;
     overflow-y: auto;
+}
+
+/* 放大檢視全螢幕 modal（docs/FEEDBACK-3-PLAN.md #6）：#chat-body 被搬進 .modal-body 後
+   改撐滿可用高度——下拉與輸入表單維持原本高度釘在上下，訊息區用 flex:1 取代固定
+   340px，可視空間隨螢幕大小放大。id 選擇器的特異度足以覆蓋 .lf-chat-messages，
+   不需要 !important；搬回卡片原位後這兩條規則自然不再命中（選擇器要求 .modal-body 父層）。 */
+.modal-body #chat-body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.modal-body #chat-messages {
+    flex: 1;
+    max-height: none;
 }
 
 /* 處理歷程卡固定高度（docs/WEB-FEEDBACK-2-PLAN.md #13）：D4 改逐問題逐筆記錄後歷程
@@ -1057,11 +1075,49 @@ a.lf-stat:hover .lf-card,
     flex-wrap: wrap;
 }
 
-/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀 */
+/* 趨勢欄文字每個片語各自成行（頻率上升、前一日 N 次…），比逗號分隔更易讀。
+   min-width（docs/FEEDBACK-3-PLAN.md #5）：「問題」合併欄吃掉大部分寬度後，
+   趨勢欄仍需要一個底線寬度，否則長片語會被壓成逐字直排 */
 .lf-trend-cell {
     max-width: 180px;
+    min-width: 9rem;
     white-space: pre-line;
     line-height: 1.4;
+}
+
+/* 處理狀態欄底線寬度（docs/FEEDBACK-3-PLAN.md #5）：多數列走 .lf-issue-status
+   自己的 min-width，但唯讀徽章／「不處理（預設）」等短內容沒有這層包裝，
+   欄位本身仍需要一個底線避免被合併欄擠壓 */
+.lf-status-cell {
+    min-width: 8rem;
+}
+
+/* ── 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）──────────────────────────────
+   取代原本各自獨立的來源/Event、次數、嚴重度、時段、說明五欄；keyDetails
+   （4703 這類事件動輒數百字的帳號/IP 彙總）是原本把其餘欄壓成逐字直排的主因，
+   先以 line-clamp 收 3 行，超過才出現「顯示全部」（record-detail.js keyDetailsBlock）。 */
+.lf-issue-cell {
+    min-width: 20rem;
+}
+
+.lf-issue-cell__meta {
+    row-gap: .25rem;
+}
+
+.lf-issue-details--clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* 列印時一律看得到完整內容，紙本沒有「點擊展開」這回事 */
+@media print {
+    .lf-issue-details--clamped {
+        display: block;
+        -webkit-line-clamp: unset;
+        overflow: visible;
+    }
 }
 
 /* 原始訊息 modal（#14）：逐則訊息各自成段落，等寬字型、保留原始換行；

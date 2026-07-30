@@ -541,6 +541,10 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
 - **依群組風險概況（2026-07-23 Phase D-4）**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
+- **日風險等級顯示設定的影響**（2026-07-30，docs/FEEDBACK-3-PLAN.md #8）：統計母體經
+  `RecordRepository` 已排除被隱藏等級的風險日（見 9.9b 1b）；前端另依
+  `GET api/settings/display` 把被隱藏等級的 KPI 卡整卡不顯示——「0」與「被藏起來」是兩件事，
+  不讓 0 被誤讀成「這期間真的沒有中風險日」。
 - API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
   注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingService.GetTodo` 同一套推導規則）。
 
@@ -637,6 +641,13 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號，或問題被顯示設定隱藏）。舊紀錄無此欄位時
      顯示通用說明。SiteHidden 模式另在 header 補一行「另有 N 項問題已依全站顯示設定隱藏；
      風險等級以完整資料判定」（`HiddenIssueCount`）。
+  12. **重點問題表格欄位合併**（2026-07-30，docs/FEEDBACK-3-PLAN.md #5）：原「來源/Event」
+     「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題行＋
+     嚴重度/次數/時段 meta 行＋說明＋keyDetails＋原始訊息連結），趨勢與處理狀態維持獨立欄
+     （補 `min-width` 防擠壓）——keyDetails（4703 這類事件動輒數百字的帳號/IP 彙總）原本
+     把其餘欄壓成逐字直排。keyDetails 超過 3 行以 line-clamp 收合＋「顯示全部」展開
+     （初次量測隱藏中的列——收合區——由 ResizeObserver 於展開時補量）；列印時
+     `@media print` 解除收合。「選取」欄與批次套用機制（#6/#7/#8 各項）零改動。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
@@ -662,7 +673,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
-  docs/HISTORY.md S7）、清除重來鈕帶圖示。
+  docs/HISTORY.md S7）、清除重來鈕帶圖示。**放大檢視**（2026-07-30，docs/FEEDBACK-3-PLAN.md #6）：
+  header 的「放大檢視」鈕把 `#chat-body`（下拉／訊息／輸入表單整組）**節點搬移**（非複製）進
+  全螢幕 modal（`showDetailModal` 擴充 `fullscreen`／`onClose`，關閉時於 modal 殼銷毀前搬回
+  原位）——監聽器與對話狀態隨節點保留，chat-panel.js 對話邏輯零改動；modal 內訊息區
+  改 flex 撐滿高度（`.modal-body #chat-messages` 覆寫），關閉後自動恢復 340px 上限。
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
@@ -678,7 +693,15 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
   最近體檢結論、權限異動紀錄、生效中抑制清單。標題同 9.3 一併顯示 Sentinel 回報的顯示名
   （2026-07-28，docs/LINUX-RULES-PLAN.md §5.3）。
-- API：`GET api/hosts/{id}`、`GET api/hosts/{id}/timeline?days=`
+- **重點問題（期間彙總）**（2026-07-30，docs/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」
+  下鑽進來原本只看得到時間軸色格、逐格點日期才看得到問題——時間軸卡下方新增期間內問題
+  彙總表（`HostDetailDto.TopSignatures`，依 Source+EventId 分組：最高嚴重度／總次數／
+  出現天數／最近出現日／說明），每列連到最近一次出現的當日詳情（9.3，該頁有完整處理動線）。
+  分組鍵定義與跨主機聚類 `ClusterSignatures` 共用（`GroupIssuesBySignature`）；彙總繼承
+  repository 的可見範圍／嚴重度可見性過濾與墓碑別名展開，與時間軸同一份資料來源。
+  本頁整體（時間軸＋彙總）**豁免日風險等級顯示過濾**（見 9.9b 1b）——被藏的日子在時間軸
+  顯示成「無分析紀錄」灰格就是說謊。
+- API：`GET api/host-detail/{id}?days=`
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
 - pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
@@ -853,7 +876,17 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
        （docs/HISTORY.md S1，`ISystemSettingsService.GetVisibleSeverities()` 為規則出口），
        詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖與簽章查詢全部同一套過濾，沒有例外頁。
-       **明確不動**：日風險等級與報告 txt（批次已算定的證據層）。
+       **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
+  1b. **日風險等級顯示**（2026-07-30，docs/FEEDBACK-3-PLAN.md #8；與 1. 是不同的兩套層級）：
+      高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
+      儀表板永遠空白）。未勾選等級的風險日**整筆**從查詢/統計消失——過濾點與問題嚴重度
+      可見性共用同一個咽喉（`RecordRepository`，`ApplyDayRiskVisibility`/`GetVisibleDayRiskLevels`），
+      套用於 `Query`/`QueryPage`（即儀表板 KPI／主機排行／群組概況、報表 KPI／趨勢／排行、
+      問題查詢三視角）。兩個顯式豁免：`GetOne`（風險日詳情直連，本來就不走 filter 路徑）與
+      `GetHostDetail` 時間軸（`applyDayRiskVisibility=false`——被藏的日子顯示成「無分析紀錄」
+      灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
+      `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
+      用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
   2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
      DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
   3. **AD 驗證**（docs/HISTORY.md #9，2026-07-27）：啟用開關＋伺服器清單（一行一台，依序
@@ -866,7 +899,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      2026-07-27（docs/HISTORY.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
      批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
      批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
-- API：`GET/PUT api/admin/settings`、`POST api/admin/settings/ad-test`
+- API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
+  `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 
 ### 9.10 `/runs` 執行監控（`DevMonitor`）
 - 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、

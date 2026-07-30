@@ -20,13 +20,14 @@ public class ReportServiceTests : IDisposable
     private readonly FakeHandlingStore _handlingStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
+    private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly ReportService _service;
 
     public ReportServiceTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
-        var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         var handling = new HandlingService(
             _handlingStore, _issueHandlingStore, new FakeNoiseMarkStore(), repository, _hosts, _users,
@@ -68,6 +69,25 @@ public class ReportServiceTests : IDisposable
 
         Assert.Equal(1, result.Handling.TotalCount);
         Assert.Equal(1, result.Handling.OpenCount);
+    }
+
+    /// <summary>docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定套用在 RecordRepository 單一咽喉，
+    /// ReportService 不自己過濾——這裡固定住「吃 repository 結果」的契約，KPI/趨勢母體
+    /// 隨顯示設定縮小，而不是報表自己額外判斷一次</summary>
+    [Fact]
+    public void GetSummary_中風險日被隱藏時KPI與趨勢母體縮小()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高");
+        AddRecord(host, DateTime.Today.AddDays(-1), "中");
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        // 中風險日已被顯示設定藏起來，趨勢圖對應日期的中風險計數應為 0
+        var hiddenDayPoint = result.Trend.Single(p => p.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
+        Assert.Equal(0, hiddenDayPoint.MediumRisk);
     }
 
     [Fact]

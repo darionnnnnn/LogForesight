@@ -50,17 +50,29 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
+    // NetIQ 多台 Sentinel 平行處理後（docs/FEEDBACK-3-PLAN.md #2），這幾個計數可能被多個
+    // 平行執行的 Task 同時呼叫；_run 的計數是屬性（不是欄位），無法用 Interlocked，改用 lock。
+    // OnLogRecorded 也在此列——NLog target 的 Write 可能被多執行緒同時觸發（平行任務各自
+    // 呼叫 Log.Warn 時），一併納入同一把鎖。
+    private readonly object _countLock = new();
+
     public long RunId => _run.RunId;
 
     /// <summary>里程碑：固定的 Info 級紀錄（開始/掃描完成/逐日分析完成/結束）</summary>
     public void Milestone(string message) => Append("Info", "Milestone", message, null);
 
-    public void RecordDayAnalyzed() => _run.DaysAnalyzed++;
+    public void RecordDayAnalyzed()
+    {
+        lock (_countLock) _run.DaysAnalyzed++;
+    }
 
     public void RecordAiCall(bool success)
     {
-        _run.AiCalls++;
-        if (!success) _run.AiFailures++;
+        lock (_countLock)
+        {
+            _run.AiCalls++;
+            if (!success) _run.AiFailures++;
+        }
     }
 
     public void Finish(int exitCode)
@@ -83,8 +95,11 @@ public class BatchRunRecorder : IDisposable
 
     private void OnLogRecorded(string level)
     {
-        if (level is "Error" or "Fatal") _run.ErrorCount++;
-        else if (level == "Warn") _run.WarnCount++;
+        lock (_countLock)
+        {
+            if (level is "Error" or "Fatal") _run.ErrorCount++;
+            else if (level == "Warn") _run.WarnCount++;
+        }
     }
 
     private void Append(string level, string logger, string message, string? exceptionText)

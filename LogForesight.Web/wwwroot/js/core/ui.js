@@ -265,13 +265,19 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
  * 通用資訊 modal（骨架抽自 confirmAction，避免第三份動態 modal 複本）：純檢視用途，
  * 沒有確認/取消語意，只有一個關閉鈕。body 收 DOM 節點而非 HTML 字串——內容常來自
  * 事件原始訊息等攻擊者可控字串，維持 textContent 純文字組裝原則（S7）。
- * size 可傳 'modal-lg' 等 Bootstrap modal-dialog 尺寸 class。
+ * size 可傳 'modal-lg' 等 Bootstrap modal-dialog 尺寸 class；fullscreen 為 true 時改用
+ * modal-fullscreen（兩者擇一，同時傳入以 fullscreen 優先）。
+ *
+ * body 若是呼叫端既有的 DOM 節點（而非新建立的），appendChild 會把它從原位置「搬移」
+ * 過來（節點的事件監聽器與內部狀態隨之保留，不是複製）——關閉時傳 onClose 把節點搬回原位，
+ * 在 el.remove() **之前**呼叫，讓節點回到 DOM 上有效位置後才銷毀 modal 殼
+ * （docs/FEEDBACK-3-PLAN.md #6：chat-panel.js 的放大檢視即用此手法）。
  */
-export function showDetailModal({ title = '', body, size } = {}) {
+export function showDetailModal({ title = '', body, size, fullscreen = false, onClose } = {}) {
     const el = document.createElement('div');
     el.className = 'modal fade';
     el.innerHTML = `
-        <div class="modal-dialog modal-dialog-scrollable${size ? ` ${size}` : ''}">
+        <div class="modal-dialog modal-dialog-scrollable${fullscreen ? ' modal-fullscreen' : (size ? ` ${size}` : '')}">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title"></h5>
@@ -288,7 +294,10 @@ export function showDetailModal({ title = '', body, size } = {}) {
 
     document.body.appendChild(el);
     const modal = new bootstrap.Modal(el);
-    el.addEventListener('hidden.bs.modal', () => el.remove());
+    el.addEventListener('hidden.bs.modal', () => {
+        onClose?.();
+        el.remove();
+    });
     modal.show();
 }
 
