@@ -504,6 +504,120 @@ public class HandlingService
         return todo;
     }
 
+    // ── 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）────────────────────
+
+    /// <summary>
+    /// 批次指派 modal 開啟時的受影響主機預覽：查詢天生受可見範圍限制（走 IRecordRepository.Query），
+    /// 使用者只會看到自己有權限的主機。已有進行中案件的主機標出既有處理人，讓使用者送出前
+    /// 就知道哪些會被跳過（2.1，不搶走）。
+    /// </summary>
+    public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to)
+    {
+        var occurrences = ResolveIssueOccurrences(source, eventId, from, to);
+
+        return occurrences.Values
+            .Select(o =>
+            {
+                var openCase = _cases.GetOpen(o.Host.HostName, IssueSignatureKey.For(o.Issue));
+                return new IssueCasePreviewHostDto
+                {
+                    HostId = o.Host.HostId,
+                    HostName = o.Host.HostName,
+                    ExistingHandlerName = openCase?.HandlerId.HasValue == true
+                        ? _users.Get(openCase.HandlerId.Value)?.DisplayName
+                        : null
+                };
+            })
+            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 跨主機批次建案：對每台勾選主機的這個問題（取該主機在篩選區間內最近一次出現的確切
+    /// 問題簽章）呼叫 BuildCase——已有他人進行中案件的主機依 2.1 保留原處理人、列入略過清單，
+    /// 建案本身仍走全部留存歷史回溯關聯（Q6：受影響主機的認定範圍與回溯深度是兩件事）。
+    /// </summary>
+    public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request)
+    {
+        var handler = _users.Get(request.HandlerId)
+                      ?? throw DomainException.NotFound("找不到指定的處理人。");
+        if (!handler.Active)
+            throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
+
+        var occurrences = ResolveIssueOccurrences(request.Source, request.EventId, request.From, request.To);
+        var wantedIds = request.HostIds.ToHashSet();
+        var targets = occurrences.Values.Where(o => wantedIds.Contains(o.Host.HostId)).ToList();
+        if (targets.Count == 0)
+            throw DomainException.Validation("找不到任何符合條件、且您有權限的主機。");
+
+        var occurredAt = DateTime.Now;
+        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+        var created = 0;
+        var skipped = new List<BulkAssignSkippedDto>();
+
+        foreach (var o in targets)
+        {
+            var key = IssueSignatureKey.For(o.Issue);
+            var result = _caseCoordinator.BuildCase(
+                o.Host.HostName, key, IssueLabel(o.Issue), o.Date,
+                request.HandlerId, request.Note, request.DueDate,
+                actorId, _currentUser.Account, occurredAt);
+
+            if (result.Created)
+            {
+                created++;
+            }
+            else if (result.ExistingHandlerId.HasValue)
+            {
+                skipped.Add(new BulkAssignSkippedDto
+                {
+                    HostName = o.Host.HostName,
+                    ExistingHandlerName = _users.Get(result.ExistingHandlerId.Value)?.DisplayName ?? "（已刪除）"
+                });
+            }
+        }
+
+        _audit.Record(
+            action: AuditActions.HandlingAssign,
+            summary: $"批次指派「{request.Source} {request.EventId}」給 {handler.DisplayName}：" +
+                     $"建立 {created} 個案件" + (skipped.Count > 0 ? $"，{skipped.Count} 台已由他人案件涵蓋" : ""),
+            targetKind: "issue_case",
+            targetId: $"{request.Source}/{request.EventId}",
+            detail: new
+            {
+                request.Source, request.EventId, HandlerId = request.HandlerId, HandlerName = handler.DisplayName,
+                request.HostIds, Created = created, Skipped = skipped
+            });
+
+        return new BulkAssignIssueCaseResultDto { Created = created, Skipped = skipped };
+    }
+
+    /// <summary>
+    /// 給定 Source+EventId（及可選日期區間），找出每台主機「最近一次出現」這個問題的確切
+    /// 問題簽章——同 Source+EventId 但不同 LogName/EntryType 時視為不同問題，取各主機最新一次
+    /// 出現的那個簽章最能代表「現在的狀態」。查詢天生受可見範圍限制（IRecordRepository.Query）。
+    /// </summary>
+    private Dictionary<string, (WebHost Host, LogIssueSignature Issue, DateTime Date)> ResolveIssueOccurrences(
+        string source, int eventId, DateTime? from, DateTime? to)
+    {
+        var filter = new RecordQueryFilter { Source = source, EventId = eventId, From = from, To = to };
+        var records = _repository.Query(filter);
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        var result = new Dictionary<string, (WebHost, LogIssueSignature, DateTime)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in records.OrderBy(r => r.Date))
+        {
+            var host = lookup.For(record);
+            if (host == null) continue;
+
+            var issue = record.TopIssues.FirstOrDefault(i => i.Source == source && i.EventId == eventId);
+            if (issue == null) continue;
+
+            result[host.HostName] = (host, issue, record.Date);   // 由舊到新覆寫，最後留下最新一次
+        }
+        return result;
+    }
+
     /// <summary>
     /// 風險日產生時的預設處理人：**負責人恰好一人時自動帶入，多人或無人則留空**。
     /// 多人時不猜——猜錯會讓真正該處理的人以為有別人在處理。

@@ -85,6 +85,39 @@ public class RecordDateGroupDto
     public int HostCount { get; set; }
 }
 
+/// <summary>
+/// 問題查詢「依問題」視角的彙總列（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題
+/// （Source＋EventId），回答「這個問題影響多大範圍、誰在處理」。
+/// </summary>
+public class IssueGroupDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>期間內這個問題出現過的最高嚴重度</summary>
+    public string MaxSeverity { get; set; } = string.Empty;
+
+    /// <summary>影響範圍：出現過這個問題的相異主機數</summary>
+    public int HostCount { get; set; }
+
+    /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
+    public int DayCount { get; set; }
+
+    /// <summary>全部主機加總的事件次數</summary>
+    public int TotalCount { get; set; }
+
+    public string LastSeen { get; set; } = string.Empty;
+    public string? KnownIssue { get; set; }
+
+    /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
+    /// 最近一次出現的標記彙總）</summary>
+    public string HandlingSummary { get; set; } = string.Empty;
+
+    /// <summary>進行中案件的處理人姓名（去重）；超過 3 人時收斂成「○○○ 等 N 人」</summary>
+    public List<string> HandlerNames { get; set; } = new();
+}
+
 /// <summary>風險日詳情</summary>
 public class RecordDetailDto
 {

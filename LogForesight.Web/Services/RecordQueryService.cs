@@ -251,6 +251,132 @@ public class RecordQueryService
         return Paginate(groups, request);
     }
 
+    /// <summary>
+    /// 問題查詢「依問題」視角（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId，
+    /// 與 <see cref="GroupIssuesBySignature"/> 同一個分組鍵），回答「這個問題影響多大範圍、
+    /// 誰在處理」——依主機／依日期是「這台主機／這一天怎麼樣」，這裡反過來看「這個問題本身」。
+    /// </summary>
+    public PagedResult<IssueGroupDto> SearchByIssue(RecordSearchRequest request)
+    {
+        var records = _repository.Query(BuildFilter(request));
+        var lookup = new HostLookup(_hosts.GetAll());
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var groups = GroupIssuesBySignature(records)
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities))
+            .ToList();
+
+        groups = (request.SortKey switch
+        {
+            "severity" => request.Ascending
+                ? groups.OrderBy(i => SeverityRank(i.MaxSeverity))
+                : groups.OrderByDescending(i => SeverityRank(i.MaxSeverity)),
+            "hostCount" => request.Ascending ? groups.OrderBy(i => i.HostCount) : groups.OrderByDescending(i => i.HostCount),
+            "dayCount" => request.Ascending ? groups.OrderBy(i => i.DayCount) : groups.OrderByDescending(i => i.DayCount),
+            "totalCount" => request.Ascending ? groups.OrderBy(i => i.TotalCount) : groups.OrderByDescending(i => i.TotalCount),
+            "lastSeen" => request.Ascending ? groups.OrderBy(i => i.LastSeen) : groups.OrderByDescending(i => i.LastSeen),
+            // 預設：影響範圍優先——最高嚴重度 → 主機數 → 總次數（§4 定案）
+            _ => groups.OrderByDescending(i => SeverityRank(i.MaxSeverity))
+                .ThenByDescending(i => i.HostCount)
+                .ThenByDescending(i => i.TotalCount)
+        }).ToList();
+
+        return Paginate(groups, request);
+    }
+
+    private static int SeverityRank(string severity) =>
+        Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
+
+    /// <summary>
+    /// 單一問題分組的彙總 DTO。處理概況三態計算：主機有進行中案件 → 處理中；否則看該主機
+    /// 最近一次出現當天的問題層級標記——已結案 → 已處理；in_progress → 處理中；
+    /// 未標記且不在「未處理計算」等級內（低風險預設不處理）→ 已處理（有結論，非待辦）；
+    /// 其餘 → 未處理。與詳情頁問題層級的既有語意（IsDefaultUnhandled 等）保持一致，
+    /// 只是這裡看的是「跨主機彙總」而非單一問題列。
+    /// </summary>
+    private IssueGroupDto BuildIssueGroup(
+        IGrouping<(string Source, int EventId), (DailyAnalysisRecord Record, LogIssueSignature Issue)> g,
+        HostLookup lookup,
+        IReadOnlySet<IssueSeverity> unhandledSeverities)
+    {
+        var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var from = g.Min(x => x.Record.Date);
+        var to = g.Max(x => x.Record.Date);
+        var issueKeys = g.Select(x => IssueSignatureKey.For(x.Issue)).ToHashSet(StringComparer.Ordinal);
+
+        var issueHandlings = _issueHandlings.GetMany(hostNames, from, to)
+            .Where(h => issueKeys.Contains(h.IssueKey))
+            .ToList();
+        var openCases = _cases.GetMany(hostNames)
+            .Where(c => issueKeys.Contains(c.IssueKey) && c.ClosedAt == null)
+            .ToList();
+
+        var latest = g.OrderByDescending(x => x.Record.Date).First();
+
+        int processing = 0, resolved = 0, unhandled = 0;
+        var handlerIds = new HashSet<long>();
+
+        foreach (var hostName in hostNames)
+        {
+            var openCase = openCases.FirstOrDefault(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+            if (openCase != null)
+            {
+                processing++;
+                if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
+                continue;
+            }
+
+            var latestForHost = g
+                .Where(x => string.Equals(HostNameOf(lookup, x.Record), hostName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.Record.Date)
+                .First();
+            var key = IssueSignatureKey.For(latestForHost.Issue);
+            var handling = issueHandlings.FirstOrDefault(h =>
+                string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                h.Date.Date == latestForHost.Record.Date.Date &&
+                string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+
+            if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
+            else if (handling != null && handling.Status == IssueHandlingStatuses.InProgress) processing++;
+            else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
+            else unhandled++;
+        }
+
+        var handlerNames = handlerIds
+            .Select(id => _users.Get(id)?.DisplayName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .Select(n => n!)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new IssueGroupDto
+        {
+            Source = g.Key.Source,
+            EventId = g.Key.EventId,
+            Category = latest.Issue.Category.ToString(),
+            MaxSeverity = g.Max(x => x.Issue.Severity).ToString(),
+            HostCount = hostNames.Count,
+            DayCount = g.Select(x => (Host: HostNameOf(lookup, x.Record), Day: x.Record.Date.Date)).Distinct().Count(),
+            TotalCount = g.Sum(x => x.Issue.Count),
+            LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
+            KnownIssue = latest.Issue.KnownIssue,
+            HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
+            HandlerNames = handlerNames.Count > 3
+                ? new List<string> { $"{handlerNames[0]} 等 {handlerNames.Count} 人" }
+                : handlerNames
+        };
+    }
+
+    /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
+    private static string BuildHandlingSummary(int unhandled, int processing, int resolved)
+    {
+        var parts = new List<string>();
+        if (unhandled > 0) parts.Add($"{unhandled} 台未處理");
+        if (processing > 0) parts.Add($"{processing} 台處理中");
+        if (resolved > 0) parts.Add($"{resolved} 台已處理");
+        return parts.Count > 0 ? string.Join("／", parts) : "—";
+    }
+
     /// <summary>彙總視角的分頁：先群組再分頁（分頁在記憶體，資料量與明細視角同級）</summary>
     private static PagedResult<T> Paginate<T>(List<T> items, RecordSearchRequest request)
     {

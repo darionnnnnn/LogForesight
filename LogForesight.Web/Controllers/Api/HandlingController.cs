@@ -55,6 +55,35 @@ public class HandlingController : ControllerBase
         ApiResponse<List<HandlingLogDto>>.Ok(_service.GetLogs(hostId, QueryStringParsing.ParseRequiredDate(date)));
 }
 
+/// <summary>
+/// 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
+/// 全部端點都是 <c>Assign</c> 能力——同單日詳情的指派，只有 admin 能做。
+/// </summary>
+[ApiController]
+[Route("api/handling/issue-cases")]
+[Permission(Capability.Assign)]
+public class IssueCasesController : ControllerBase
+{
+    private readonly HandlingService _service;
+
+    public IssueCasesController(HandlingService service)
+    {
+        _service = service;
+    }
+
+    /// <summary>批次指派 modal 開啟時的受影響主機預覽</summary>
+    [HttpGet("preview")]
+    public ApiResponse<List<IssueCasePreviewHostDto>> Preview(
+        [FromQuery] string source, [FromQuery] int eventId,
+        [FromQuery] string? from, [FromQuery] string? to) =>
+        ApiResponse<List<IssueCasePreviewHostDto>>.Ok(
+            _service.PreviewIssueCaseAssign(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
+
+    [HttpPost("bulk-assign")]
+    public ApiResponse<BulkAssignIssueCaseResultDto> BulkAssign([FromBody] BulkAssignIssueCaseRequest request) =>
+        ApiResponse<BulkAssignIssueCaseResultDto>.Ok(_service.BulkAssignIssueCase(request));
+}
+
 /// <summary>權限異動待辦（§9.5）</summary>
 [ApiController]
 [Route("api/permission-changes")]

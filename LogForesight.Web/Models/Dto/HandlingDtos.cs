@@ -190,6 +190,57 @@ public class HandlingTodoDto
     public int TotalCount { get; set; }
 }
 
+// ── 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）────────────────────────
+
+/// <summary>批次指派 modal 開啟時的受影響主機預覽——已有進行中案件的主機標出既有處理人，
+/// 讓使用者在送出前就知道哪些主機會被跳過（2.1，不搶走）</summary>
+public class IssueCasePreviewHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>null＝目前沒有進行中案件，可以指派</summary>
+    public string? ExistingHandlerName { get; set; }
+}
+
+public class BulkAssignIssueCaseRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+
+    /// <summary>使用者在預覽清單中勾選要指派的主機（可排除部分主機）</summary>
+    [Required]
+    [MinLength(1, ErrorMessage = "請至少選擇一台主機")]
+    public List<long> HostIds { get; set; } = new();
+
+    [Required]
+    public long HandlerId { get; set; }
+
+    [StringLength(1000, ErrorMessage = "說明長度不可超過 1000 字元")]
+    public string? Note { get; set; }
+
+    public DateTime? DueDate { get; set; }
+
+    /// <summary>受影響主機認定的日期範圍（Q6：範圍認定與回溯深度是兩件事——
+    /// 建案後的回溯關聯仍走全部留存歷史，這裡只決定「查哪些主機」）</summary>
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+}
+
+public class BulkAssignSkippedDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string ExistingHandlerName { get; set; } = string.Empty;
+}
+
+public class BulkAssignIssueCaseResultDto
+{
+    public int Created { get; set; }
+    public List<BulkAssignSkippedDto> Skipped { get; set; } = new();
+}
+
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────
 
 public class PermissionChangeDto
