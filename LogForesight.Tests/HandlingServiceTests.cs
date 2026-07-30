@@ -20,10 +20,12 @@ public class HandlingServiceTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeHandlingStore _handlings = new();
     private readonly FakeIssueHandlingStore _issueHandlings = new();
+    private readonly FakeIssueCaseStore _cases = new();
     private readonly FakeNoiseMarkStore _noiseMarks = new();
     private readonly RecordingAuditService _audit = new();
     private readonly FakeSystemSettingsStore _settings = new();
     private readonly FakeRecordRepository _repository;
+    private readonly IssueCaseCoordinator _caseCoordinator;
 
     private readonly WebUser _owner;
     private readonly WebUser _other;
@@ -42,6 +44,7 @@ public class HandlingServiceTests
 
         _repository = new FakeRecordRepository(_hosts);
         _repository.AddRecord(_host.HostName, Today);
+        _caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _repository, _hosts);
     }
 
     private static DateTime Today => DateTime.Today;
@@ -50,7 +53,7 @@ public class HandlingServiceTests
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
         return new HandlingService(
-            _handlings, _issueHandlings, _noiseMarks, _repository, _hosts, _users,
+            _handlings, _issueHandlings, _cases, _caseCoordinator, _noiseMarks, _repository, _hosts, _users,
             new AlwaysVisibleService(_hosts), currentUser, _audit, _settings);
     }
 
@@ -807,13 +810,136 @@ public class HandlingServiceTests
         Assert.Equal(1, todo.InProgressCount);
         Assert.Equal(0, todo.OverdueCount);
     }
+
+    // ── 問題案件（IssueCase，docs/FEEDBACK-4-PLAN.md §2）────────────────────────
+
+    /// <summary>指派處理人時，對當日未結案的問題自動建案（Q1）；低風險以下的問題不建案</summary>
+    [Fact]
+    public void 指派_對未結案問題自動建案_低風險預設不處理的問題不建案()
+    {
+        var day = Today.AddDays(-30);
+        var a = Issue("disk", 153);                                  // High，建案
+        var low = Issue("misc", 1, IssueSeverity.Low);                // Low，不在未處理計算等級，不建案
+        _repository.AddRecord(_host.HostName, day, a, low);
+
+        var result = Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _other.UserId);
+
+        Assert.Equal(1, result.CasesCreated);
+        Assert.Empty(result.CasesSkippedHandlerNames);
+        var openCase = _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a));
+        Assert.NotNull(openCase);
+        Assert.Equal(_other.UserId, openCase!.HandlerId);
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(low)));
+    }
+
+    /// <summary>已結案的問題不建案——那已經有結論了，不是「要有人處理的事」</summary>
+    [Fact]
+    public void 指派_已結案的問題不建案()
+    {
+        var day = Today.AddDays(-31);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = _host.HostName, Date = day, IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var result = Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _other.UserId);
+
+        Assert.Equal(0, result.CasesCreated);
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
+    }
+
+    /// <summary>已有他人進行中案件的問題：指派不搶走，回報既有處理人姓名供前端提示（Q2）</summary>
+    [Fact]
+    public void 指派_已有進行中案件時保留原處理人並回報姓名()
+    {
+        var day = Today.AddDays(-32);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);   // 先指派給 OOO，建案
+
+        var second = service.Assign(_host.HostId, day, _other.UserId);   // 改指派給 XXX
+
+        Assert.Equal(0, second.CasesCreated);
+        Assert.Equal(new[] { "OOO" }, second.CasesSkippedHandlerNames);
+        Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
+    }
+
+    /// <summary>取消指派（handlerId=null）不建案——那不是「開始有人處理」的動作</summary>
+    [Fact]
+    public void 取消指派_不建案()
+    {
+        var day = Today.AddDays(-33);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var result = Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, null);
+
+        Assert.Equal(0, result.CasesCreated);
+    }
+
+    /// <summary>有進行中案件的問題再次標記狀態時，DTO 帶回案件同步涵蓋的天數；面板 OpenCaseCount 反映進行中案件數</summary>
+    [Fact]
+    public void 標記狀態_有進行中案件時DTO帶回同步天數與OpenCaseCount()
+    {
+        var day1 = Today.AddDays(-40);
+        var day2 = Today.AddDays(-35);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day1, a);
+        _repository.AddRecord(_host.HostName, day2, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day1, _other.UserId);   // 建案，回溯涵蓋 day1+day2
+
+        var afterAssign = service.Get(_host.HostId, day2);
+        Assert.Equal(1, afterAssign.OpenCaseCount);
+
+        var result = service.SetIssueStatus(_host.HostId, day2, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        // 結案同步展開到 day1（觸發日 day2 本身不算在 SyncedDayCount 內）
+        Assert.Equal(1, result.CaseSyncedDayCount);
+        Assert.Equal(IssueHandlingStatuses.Resolved, _issueHandlings.GetForDay(_host.HostName, day1).Single().Status);
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));   // 案件已結案
+    }
+
+    /// <summary>沒有案件時，標記狀態的 DTO CaseSyncedDayCount 為 0（既有行為不受影響）</summary>
+    [Fact]
+    public void 標記狀態_無案件時CaseSyncedDayCount為零()
+    {
+        var day = Today.AddDays(-41);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var result = Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        Assert.Equal(0, result.CaseSyncedDayCount);
+    }
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────
 // FakeHostStore／FakeUserStore／AlwaysVisibleService／RecordingAuditService 已搬到
 // TestDoubles\ 底下（跨多個測試檔共用）；以下僅保留本檔專用的替身。
 
-internal class FakeRecordRepository : IRecordRepository
+/// <summary>
+/// 同時實作 <see cref="IAnalysisRecordQuery"/>（顯式介面實作）供 IssueCaseCoordinator 之類
+/// 只用得到 Core 層查詢介面的呼叫端測試——**與 <see cref="IRecordRepository.Query"/> 刻意分開**：
+/// 後者長期以來忽略 filter.Hosts（多個既有測試檔可能仰賴這個寬鬆行為），改動它有波及既有測試的風險；
+/// 前者是全新介面、沒有既有行為要保留，直接做正確的主機過濾（HostMatcher），讓 Coordinator 的
+/// 回溯關聯查詢在多主機測試情境下不會誤抓別台主機的紀錄。
+/// </summary>
+internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 {
     private readonly FakeHostStore _hosts;
     private readonly List<DailyAnalysisRecord> _records = new();
@@ -828,6 +954,7 @@ internal class FakeRecordRepository : IRecordRepository
         var record = new DailyAnalysisRecord
         {
             Host = hostName,
+            HostId = _hosts.FindByName(hostName)?.HostId ?? 0,
             Date = date,
             RiskLevel = risk,
             TopIssues = issues.ToList()
@@ -837,6 +964,26 @@ internal class FakeRecordRepository : IRecordRepository
     }
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
+
+    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts）─────────────────
+    List<DailyAnalysisRecord> IAnalysisRecordQuery.Query(RecordQueryFilter filter)
+    {
+        if (filter.Hosts == null) return _records.ToList();
+        var matcher = new HostMatcher(filter.Hosts);
+        return _records.Where(matcher.Matches).ToList();
+    }
+
+    DailyAnalysisRecord? IAnalysisRecordQuery.GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
+    {
+        var matcher = new HostMatcher(hosts);
+        return _records.FirstOrDefault(r => matcher.Matches(r) && r.Date.Date == date.Date);
+    }
+
+    PagedResult<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey, bool ascending) =>
+        throw new NotImplementedException();
+
+    HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to) =>
+        throw new NotImplementedException();
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {

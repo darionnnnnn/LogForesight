@@ -27,6 +27,8 @@ public class HandlingService
 {
     private readonly IRecordHandlingStore _store;
     private readonly IIssueHandlingStore _issueStore;
+    private readonly IIssueCaseStore _cases;
+    private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly INoiseMarkStore _noiseMarks;
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
@@ -39,6 +41,8 @@ public class HandlingService
     public HandlingService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
+        IIssueCaseStore cases,
+        IssueCaseCoordinator caseCoordinator,
         INoiseMarkStore noiseMarks,
         IRecordRepository repository,
         IHostStore hosts,
@@ -50,6 +54,8 @@ public class HandlingService
     {
         _store = store;
         _issueStore = issueStore;
+        _cases = cases;
+        _caseCoordinator = caseCoordinator;
         _noiseMarks = noiseMarks;
         _repository = repository;
         _hosts = hosts;
@@ -68,7 +74,21 @@ public class HandlingService
         // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步
         var record = _repository.GetOne(hostId, date);
 
-        return ToDto(host, date, handling, TryComputeProgress(host, date, record));
+        var dto = ToDto(host, date, handling, TryComputeProgress(host, date, record));
+        dto.OpenCaseCount = OpenCaseCount(host, record);
+        return dto;
+    }
+
+    /// <summary>
+    /// 本日問題中屬進行中案件的數量（docs/FEEDBACK-4-PLAN.md §2）：面板「目前狀態」下方顯示
+    /// 「N 項屬進行中案件」，讓使用者知道為什麼某些問題狀態會「自己動」（案件同步的結果）。
+    /// record 為 null（分析尚未跑過）時回 0。
+    /// </summary>
+    private int OpenCaseCount(WebHost host, DailyAnalysisRecord? record)
+    {
+        if (record == null || record.TopIssues.Count == 0) return 0;
+        var openKeys = _cases.GetOpenForHost(host.HostName).Select(c => c.IssueKey).ToHashSet(StringComparer.Ordinal);
+        return record.TopIssues.Count(i => openKeys.Contains(IssueSignatureKey.For(i)));
     }
 
     public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request)
@@ -126,13 +146,14 @@ public class HandlingService
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
                     ?? throw DomainException.Validation("找不到這個問題，可能紀錄已更新，請重新整理。");
 
-        ApplyIssueStatus(host, date, request.IssueKey, IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
+        var caseSync = ApplyIssueStatus(host, date, request.IssueKey, IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
             summary: clearing
                 ? $"清除 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】的處理標記"
-                : $"將 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】標為「{IssueStatusText(request.Status)}」",
+                : $"將 {host.HostName} {date:yyyy-MM-dd}【{issue.Source} {issue.EventId}】標為「{IssueStatusText(request.Status)}」" +
+                  (caseSync.Applied ? $"（已同步案件涵蓋的 {caseSync.SyncedDayCount} 天）" : ""),
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
             detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
@@ -148,7 +169,8 @@ public class HandlingService
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
             DayStatus = progress.DayStatus,
-            DayStatusText = StatusText(progress.DayStatus)
+            DayStatusText = StatusText(progress.DayStatus),
+            CaseSyncedDayCount = caseSync.Applied ? caseSync.SyncedDayCount : 0
         };
     }
 
@@ -174,14 +196,19 @@ public class HandlingService
         // 整批共用同一個 occurredAt（不是逐次呼叫 DateTime.Now）：前端 timeline 靠「同一操作者＋
         // 同一時間戳」把這批列視覺分組成一塊，時間戳若逐次取值會因執行順序產生極小差異而分不了組
         var occurredAt = DateTime.Now;
+        var totalSyncedDays = 0;
         foreach (var issueKey in appliedKeys)
-            ApplyIssueStatus(host, date, issueKey, labelByKey[issueKey], request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, occurredAt);
+        {
+            var caseSync = ApplyIssueStatus(host, date, issueKey, labelByKey[issueKey], request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, occurredAt);
+            if (caseSync.Applied) totalSyncedDays += caseSync.SyncedDayCount;
+        }
 
         _audit.Record(
             action: AuditActions.HandlingStatus,
             summary: clearing
                 ? $"批次清除 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題的處理標記"
-                : $"批次將 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題標為「{IssueStatusText(request.Status)}」",
+                : $"批次將 {host.HostName} {date:yyyy-MM-dd} 的 {appliedKeys.Count} 個問題標為「{IssueStatusText(request.Status)}」" +
+                  (totalSyncedDays > 0 ? $"（含案件同步共 {totalSyncedDays} 天）" : ""),
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
             detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
@@ -194,7 +221,8 @@ public class HandlingService
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
             DayStatus = progress.DayStatus,
-            DayStatusText = StatusText(progress.DayStatus)
+            DayStatusText = StatusText(progress.DayStatus),
+            CaseSyncedDayCount = totalSyncedDays
         };
     }
 
@@ -210,33 +238,58 @@ public class HandlingService
     /// <summary>
     /// 寫入單一問題的處理狀態，並成對寫入處理歷程（不含稽核記錄——單筆與批次的稽核摘要不同，
     /// 由呼叫端各自記）。批次呼叫端逐一呼叫本方法，天然逐問題各留一列歷程（D4）。
+    ///
+    /// docs/FEEDBACK-4-PLAN.md §0.4-B：先問 <see cref="IssueCaseCoordinator.SyncStatus"/> 這個
+    /// 問題目前有沒有進行中案件——**有的話這裡完全不寫**（含觸發日本身），寫入的主導權整個交給
+    /// Coordinator（它會把觸發日與案件涵蓋的其餘日子一起處理，觸發日記「標記問題」、其餘天記
+    /// 「案件同步」）；沒有案件時維持既有行為（只寫觸發日）。已知雜訊記憶／forgetNoise 這兩個
+    /// 副作用維持在這裡執行、只做一次——那是主機＋簽章跨日一筆的記憶，不隨案件同步逐日重複寫。
     /// </summary>
-    private void ApplyIssueStatus(
+    private CaseSyncResult ApplyIssueStatus(
         WebHost host, DateTime date, string issueKey, string issueLabel, string status, string? note, DateTime? dueDate, bool forgetNoise, bool clearing, DateTime occurredAt)
     {
-        if (clearing)
+        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+        var trimmedNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+
+        var caseSync = _caseCoordinator.SyncStatus(
+            host.HostName, issueKey, issueLabel, date,
+            status, trimmedNote, dueDate, clearing,
+            actorId, _currentUser.Account, occurredAt);
+
+        if (!caseSync.Applied)
         {
-            _issueStore.Clear(host.HostName, date, issueKey);
-            // 清除標記＝調回未處理，歷程狀態記 open 較有意義（而非空字串），STATUS_VARIANTS/StatusText 通用
-            AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatusCleared, status: HandlingStatuses.Open, note: null, occurredAt);
-            return;
+            if (clearing)
+            {
+                _issueStore.Clear(host.HostName, date, issueKey);
+                // 清除標記＝調回未處理，歷程狀態記 open 較有意義（而非空字串），STATUS_VARIANTS/StatusText 通用
+                AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatusCleared, status: HandlingStatuses.Open, note: null, occurredAt);
+            }
+            else
+            {
+                AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatus, status, trimmedNote, occurredAt);
+
+                _issueStore.Save(new IssueHandling
+                {
+                    HostName = host.HostName,
+                    Date = date.Date,
+                    IssueKey = issueKey,
+                    Status = status,
+                    Note = trimmedNote,
+                    // 預計完成日只在「處理中」才有意義，其餘狀態一律不存，避免舊資料殘留誤導
+                    DueDate = status == IssueHandlingStatuses.InProgress ? dueDate : null,
+                    ActorId = actorId,
+                    ActorAccount = _currentUser.Account,
+                    UpdatedAt = occurredAt
+                });
+            }
         }
+        // caseSync.Applied：Coordinator 已經把觸發日（含歷程）與案件涵蓋的其餘日子全部寫好，
+        // 這裡不重複寫——clearing 時 Coordinator 也已落盤明確 open（不缺列），行為同構於既有的
+        // IssueHandlingStatuses.Open 設計理由（缺列會被下次批次掛接自動蓋回，操作等於沒發生）。
 
-        AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatus, status, note, occurredAt);
-
-        _issueStore.Save(new IssueHandling
-        {
-            HostName = host.HostName,
-            Date = date.Date,
-            IssueKey = issueKey,
-            Status = status,
-            Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
-            // 預計完成日只在「處理中」才有意義，其餘狀態一律不存，避免舊資料殘留誤導
-            DueDate = status == IssueHandlingStatuses.InProgress ? dueDate : null,
-            ActorId = _currentUser.UserId > 0 ? _currentUser.UserId : null,
-            ActorAccount = _currentUser.Account,
-            UpdatedAt = occurredAt
-        });
+        // clearing 路徑到此結束（既有行為：forgetNoise 只在 status=open 顯式路徑才有意義，
+        // 契約見 SetIssueStatusRequest.ForgetNoise 的文件註解，這裡維持原樣不擴大解讀）
+        if (clearing) return caseSync;
 
         // 標「已知雜訊」＝寫入記憶，之後同主機同簽章的新問題自動判讀成雜訊（治標，供無規則命中的 Other 類別）
         if (status == IssueHandlingStatuses.KnownNoise)
@@ -247,7 +300,7 @@ public class HandlingService
                 IssueKey = issueKey,
                 MarkedByAccount = _currentUser.Account,
                 MarkedAt = DateTime.Now,
-                Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim()
+                Note = trimmedNote
             });
         }
         // 「調回未處理」且使用者選擇一併刪除記憶——之後同簽章不再自動判讀成雜訊
@@ -255,6 +308,8 @@ public class HandlingService
         {
             _noiseMarks.Delete(host.HostName, issueKey);
         }
+
+        return caseSync;
     }
 
     private DayHandlingDerivation.DayProgress ComputeProgress(WebHost host, DateTime date, DailyAnalysisRecord record)
@@ -271,7 +326,8 @@ public class HandlingService
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId)
     {
         var host = RequireVisibleHost(hostId);
-        RequireRecordExists(hostId, date);
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         WebUser? handler = null;
         if (handlerId.HasValue)
@@ -300,17 +356,71 @@ public class HandlingService
         var beforeName = previousHandler?.DisplayName ?? "（未指派）";
         var afterName = handler?.DisplayName ?? "（未指派）";
 
+        // 建案（docs/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
+        // 未結案、無進行中案件的每個問題建案並回溯關聯歷史——落實 2.1「同主機同問題只由
+        // 一個人處理」。取消指派（handlerId=null）不建案，那不是「開始有人處理」的動作。
+        var (casesCreated, skippedHandlerNames) = handlerId.HasValue
+            ? BuildCasesForDay(host, date, record, handlerId.Value)
+            : (0, new List<string>());
+
         _audit.Record(
             action: AuditActions.HandlingAssign,
             // 摘要要說清楚「負責人不變」——這正是負責人與處理人分離的意義，
             // 事後查稽核的人必須看得出這一點
             summary: $"將 {host.HostName} {date:yyyy-MM-dd} 的處理人由「{beforeName}」改為「{afterName}」" +
-                     $"（主機負責人不變：{OwnerNames(host)}）",
+                     $"（主機負責人不變：{OwnerNames(host)}）" +
+                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : ""),
             targetKind: "handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
-            detail: new { Before = beforeName, After = afterName, Owners = OwnerNames(host) });
+            detail: new { Before = beforeName, After = afterName, Owners = OwnerNames(host), CasesCreated = casesCreated, CasesSkipped = skippedHandlerNames });
 
-        return ToDto(host, date, existing);
+        var dto = ToDto(host, date, existing);
+        dto.CasesCreated = casesCreated;
+        dto.CasesSkippedHandlerNames = skippedHandlerNames;
+        dto.OpenCaseCount = OpenCaseCount(host, record);
+        return dto;
+    }
+
+    /// <summary>
+    /// 建案迴圈（Q1）：只對「未處理計算」等級內、未結案的問題建案——低風險預設不處理的問題
+    /// 不該自動變成有人要處理的案件，已結案的問題也不建案。已有進行中案件的問題保留原處理人
+    /// （Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示「已由 ○○○ 的案件涵蓋」。
+    /// </summary>
+    private (int Created, List<string> SkippedHandlerNames) BuildCasesForDay(
+        WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId)
+    {
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+        var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
+            .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+        var occurredAt = DateTime.Now;
+        var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
+
+        var created = 0;
+        var skippedHandlerIds = new HashSet<long>();
+
+        foreach (var issue in record.TopIssues)
+        {
+            if (!unhandledSeverities.Contains(issue.Severity)) continue;
+
+            var key = IssueSignatureKey.For(issue);
+            if (dayIssueHandlings.TryGetValue(key, out var existingHandling) &&
+                IssueHandlingStatuses.IsClosed(existingHandling.Status))
+                continue;
+
+            var result = _caseCoordinator.BuildCase(
+                host.HostName, key, IssueLabel(issue), date,
+                handlerId, note: null, dueDate: null,
+                actorId, _currentUser.Account, occurredAt);
+
+            if (result.Created) created++;
+            else if (result.ExistingHandlerId.HasValue) skippedHandlerIds.Add(result.ExistingHandlerId.Value);
+        }
+
+        var skippedNames = skippedHandlerIds
+            .Select(id => _users.Get(id)?.DisplayName ?? "（已刪除）")
+            .ToList();
+
+        return (created, skippedNames);
     }
 
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date)
@@ -575,6 +685,9 @@ public class HandlingService
         HandlingActions.NoteUpdate => "更新說明",
         HandlingActions.IssueStatus => "標記問題",
         HandlingActions.IssueStatusCleared => "清除問題標記",
+        HandlingActions.CaseAssign => "建立案件",
+        HandlingActions.CaseSync => "案件同步",
+        HandlingActions.CaseAttach => "排程掛接案件",
         _ => action
     };
 

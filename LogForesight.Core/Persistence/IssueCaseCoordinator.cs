@@ -172,7 +172,11 @@ public class IssueCaseCoordinator
         if (closing) openCase.ClosedAt = occurredAt;
         _cases.Save(openCase);
 
-        return new CaseSyncResult(Applied: true, SyncedDayCount: toSave.Count, CaseClosed: closing);
+        // SyncedDayCount 不含觸發日本身——呼叫端（HandlingService）用這個數字組「已同步案件涵蓋的
+        // N 天」提示，使用者剛剛標記的那一天不該算進「連動」的天數裡，否則單一問題、無案件回溯
+        // 涵蓋的最簡單情境也會顯示「已同步 1 天」，看起來像多做了什麼事
+        var syncedOtherDays = eligibleDays.Count(d => d.Date != triggerDate.Date);
+        return new CaseSyncResult(Applied: true, SyncedDayCount: syncedOtherDays, CaseClosed: closing);
     }
 
     /// <summary>

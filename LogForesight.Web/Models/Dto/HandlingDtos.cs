@@ -38,6 +38,21 @@ public class HandlingDto
     /// <summary>前端據此決定處理人欄位是下拉還是唯讀文字（真正的防線在後端）</summary>
     public bool CanAssign { get; set; }
     public bool CanHandle { get; set; }
+
+    /// <summary>
+    /// 本日問題中屬進行中案件的數量（docs/FEEDBACK-4-PLAN.md §2）：「N 項屬進行中案件」提示，
+    /// 讓使用者知道為什麼某些問題狀態會「自己動」（案件同步的結果）。
+    /// </summary>
+    public int OpenCaseCount { get; set; }
+
+    /// <summary>本次指派新建立的案件數（僅 Assign 回應有意義，其餘呼叫端固定為 0）</summary>
+    public int CasesCreated { get; set; }
+
+    /// <summary>
+    /// 本次指派因該問題已有他人進行中案件而略過的處理人姓名（去重）——2.1「同主機同問題只由
+    /// 一個人處理」：不搶走既有案件，前端據此提示「N 個問題已由 ○○○ 的案件涵蓋，未變更」。
+    /// </summary>
+    public List<string> CasesSkippedHandlerNames { get; set; } = new();
 }
 
 public class UpdateHandlingRequest
@@ -112,6 +127,10 @@ public class BatchIssueStatusResultDto
     public int ClosedIssues { get; set; }
     public string DayStatus { get; set; } = string.Empty;
     public string DayStatusText { get; set; } = string.Empty;
+
+    /// <summary>本批次因案件同步而額外更新的天數總和（跨全部勾選問題加總，不含各自的觸發日）；
+    /// 0＝這批問題目前都沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    public int CaseSyncedDayCount { get; set; }
 }
 
 /// <summary>問題狀態更新後回傳的當日進度（讓前端就地更新「N/M 已處理」與日層級推導狀態）</summary>
@@ -128,6 +147,10 @@ public class IssueStatusResultDto
     /// <summary>由問題層推導出的日層級狀態（全結案＝resolved，否則沿用日層級 open/in_progress）</summary>
     public string DayStatus { get; set; } = string.Empty;
     public string DayStatusText { get; set; } = string.Empty;
+
+    /// <summary>這個問題若有進行中案件，這次標記同步展開到的天數（不含觸發日本身）；
+    /// 0＝目前沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    public int CaseSyncedDayCount { get; set; }
 }
 
 public class HandlingLogDto

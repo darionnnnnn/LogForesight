@@ -226,7 +226,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
-        // 寫入面
+        // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/FEEDBACK-4-PLAN.md §0），
+        // 本身也可以是 Singleton——沒有請求範圍狀態
+        services.AddSingleton<IssueCaseCoordinator>();
         services.AddScoped<HandlingService>();
         services.AddScoped<PermissionChangeService>();
         services.AddScoped<AuditQueryService>();

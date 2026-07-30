@@ -19,6 +19,7 @@ public class ReportServiceTests : IDisposable
     private readonly FakeUserStore _users = new();
     private readonly FakeHandlingStore _handlingStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
+    private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
     private readonly ReportService _service;
@@ -28,9 +29,10 @@ public class ReportServiceTests : IDisposable
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
 
         var handling = new HandlingService(
-            _handlingStore, _issueHandlingStore, new FakeNoiseMarkStore(), repository, _hosts, _users,
+            _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, new FakeNoiseMarkStore(), repository, _hosts, _users,
             visibility, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), _settingsStore);
 
         _service = new ReportService(repository, _hosts, visibility, handling);
