@@ -148,6 +148,70 @@ public class EfWebdataStoreTests
         Assert.Equal("case-1", updated.CaseId);
     }
 
+    /// <summary>
+    /// SaveMany（docs/FEEDBACK-4-PLAN.md §0.5）：案件回溯關聯／狀態同步一次涉及多天，
+    /// 一次呼叫要能新增、更新、清除三種情況混合處理，且只走一次 Mutate（不逐筆整份讀改寫）。
+    /// </summary>
+    [Fact]
+    public void 問題處理狀態_SaveMany批次寫入新增更新與清除()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new IssueHandlingStore(fx.Blob("issue_handling"));
+        var d1 = DateTime.Today;
+        var d2 = d1.AddDays(1);
+        var d3 = d1.AddDays(2);
+
+        // 預先寫一筆，後面用 SaveMany 更新它
+        store.Save(new IssueHandling { HostName = "SRV-01", Date = d1, IssueKey = "k1", Status = "open", UpdatedAt = DateTime.Now });
+
+        store.SaveMany(new[]
+        {
+            new IssueHandling { HostName = "SRV-01", Date = d1, IssueKey = "k1", Status = "in_progress", CaseId = "case-1", UpdatedAt = DateTime.Now },
+            new IssueHandling { HostName = "SRV-01", Date = d2, IssueKey = "k1", Status = "in_progress", CaseId = "case-1", UpdatedAt = DateTime.Now },
+            new IssueHandling { HostName = "SRV-01", Date = d3, IssueKey = "k1", Status = "", UpdatedAt = DateTime.Now }   // 空狀態＝清除（本來就沒有列，應為 no-op）
+        });
+
+        Assert.Equal("in_progress", store.GetForDay("SRV-01", d1).Single().Status);
+        Assert.Equal("case-1", store.GetForDay("SRV-01", d1).Single().CaseId);
+        Assert.Single(store.GetForDay("SRV-01", d2));
+        Assert.Empty(store.GetForDay("SRV-01", d3));
+        Assert.Equal(2, store.GetByCase("case-1").Count);
+    }
+
+    /// <summary>問題案件（docs/FEEDBACK-4-PLAN.md §0）：GetOpen 只回進行中案件，結案後不再算「進行中」，
+    /// 但仍查得到歷史紀錄（GetMany）——「上次誰處理的、怎麼結的」不因結案消失。</summary>
+    [Fact]
+    public void 問題案件_EF往返_進行中與結案語意()
+    {
+        using var fx = new EfSqliteFixture();
+        var store = new IssueCaseStore(fx.Blob("issue_cases"));
+        var caseId = Guid.NewGuid().ToString();
+
+        store.Save(new IssueCase
+        {
+            CaseId = caseId, HostName = "SRV-01", IssueKey = "k1", IssueLabel = "Disk 153",
+            Status = "in_progress", HandlerId = 42, FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        var open = store.GetOpen("SRV-01", "k1");
+        Assert.NotNull(open);
+        Assert.Equal(42, open!.HandlerId);
+        Assert.Contains(store.GetOpenForHost("SRV-01"), c => c.CaseId == caseId);
+        Assert.Contains(store.GetOpenByHandler(42), c => c.CaseId == caseId);
+
+        // 結案：GetOpen 找不到了，但 Get/GetMany 仍能查到歷史
+        open.Status = "resolved";
+        open.ClosedAt = DateTime.Now;
+        open.UpdatedAt = DateTime.Now;
+        store.Save(open);
+
+        Assert.Null(store.GetOpen("SRV-01", "k1"));
+        Assert.Empty(store.GetOpenForHost("SRV-01"));
+        Assert.NotNull(store.Get(caseId));
+        Assert.Contains(store.GetMany(new[] { "SRV-01" }), c => c.CaseId == caseId && c.Status == "resolved");
+    }
+
     // ── 並發保護（lf_blobs.UpdatedAt 為 ConcurrencyToken）──────────────────────
 
     /// <summary>

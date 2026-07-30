@@ -177,6 +177,10 @@ public static class StorageFactory
     public static IIssueHandlingStore CreateIssueHandlingStore(StorageSettings settings, string dataRoot) =>
         new IssueHandlingStore(Blob(settings, dataRoot, "issue_handling"));
 
+    /// <summary>問題案件——跨日處理協調紀錄，Web 與批次皆讀寫（docs/FEEDBACK-4-PLAN.md §0）</summary>
+    public static IIssueCaseStore CreateIssueCaseStore(StorageSettings settings, string dataRoot) =>
+        new IssueCaseStore(Blob(settings, dataRoot, "issue_cases"));
+
     /// <summary>已知雜訊記憶（§5.1 D-1 #3）——同主機同簽章的自動雜訊判讀依據</summary>
     public static INoiseMarkStore CreateNoiseMarkStore(StorageSettings settings, string dataRoot) =>
         new NoiseMarkStore(Blob(settings, dataRoot, "noise_marks"));

@@ -243,3 +243,32 @@ internal class FakeUserGroupStore : IUserGroupStore
 
     public void Delete(long groupId) => _groups.RemoveAll(g => g.GroupId == groupId);
 }
+
+/// <summary>
+/// 最小可用的 IAnalysisRecordQuery 記憶體實作，供 IssueCaseCoordinator 之類只用得到
+/// Query() 的呼叫端測試——QueryPage／ListHostDates 目前無測試用到，故未實作。
+/// </summary>
+internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
+{
+    private readonly List<DailyAnalysisRecord> _records = new();
+
+    public void Add(DailyAnalysisRecord record) => _records.Add(record);
+
+    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
+    {
+        var matcher = filter.Hosts == null ? null : new HostMatcher(filter.Hosts);
+        return _records.Where(r => matcher == null || matcher.Matches(r)).ToList();
+    }
+
+    public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
+    {
+        var matcher = new HostMatcher(hosts);
+        return _records.FirstOrDefault(r => matcher.Matches(r) && r.Date.Date == date.Date);
+    }
+
+    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false) =>
+        throw new NotImplementedException();
+
+    public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
+        throw new NotImplementedException();
+}

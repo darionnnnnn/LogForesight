@@ -886,23 +886,31 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
                                  h.Date.Date >= from.Date && h.Date.Date <= to.Date).ToList();
     }
 
-    public void Save(IssueHandling handling)
-    {
-        if (string.IsNullOrWhiteSpace(handling.Status))
-        {
-            Clear(handling.HostName, handling.Date, handling.IssueKey);
-            return;
-        }
+    public List<IssueHandling> GetByCase(string caseId) =>
+        _items.Where(h => h.CaseId == caseId).ToList();
 
-        var existing = _items.FirstOrDefault(h => Same(h, handling.HostName, handling.Date, handling.IssueKey));
-        if (existing == null) { _items.Add(handling); return; }
-        existing.Status = handling.Status;
-        existing.Note = handling.Note;
-        existing.ActorId = handling.ActorId;
-        existing.ActorAccount = handling.ActorAccount;
-        existing.DueDate = handling.DueDate;
-        existing.CaseId = handling.CaseId;
-        existing.UpdatedAt = handling.UpdatedAt;
+    public void Save(IssueHandling handling) => SaveMany(new[] { handling });
+
+    public void SaveMany(IEnumerable<IssueHandling> handlings)
+    {
+        foreach (var handling in handlings)
+        {
+            if (string.IsNullOrWhiteSpace(handling.Status))
+            {
+                Clear(handling.HostName, handling.Date, handling.IssueKey);
+                continue;
+            }
+
+            var existing = _items.FirstOrDefault(h => Same(h, handling.HostName, handling.Date, handling.IssueKey));
+            if (existing == null) { _items.Add(handling); continue; }
+            existing.Status = handling.Status;
+            existing.Note = handling.Note;
+            existing.ActorId = handling.ActorId;
+            existing.ActorAccount = handling.ActorAccount;
+            existing.DueDate = handling.DueDate;
+            existing.CaseId = handling.CaseId;
+            existing.UpdatedAt = handling.UpdatedAt;
+        }
     }
 
     public void Clear(string hostName, DateTime date, string issueKey) =>
@@ -911,6 +919,44 @@ internal class FakeIssueHandlingStore : IIssueHandlingStore
     private static bool Same(IssueHandling h, string hostName, DateTime date, string issueKey) =>
         string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
         h.Date.Date == date.Date && h.IssueKey == issueKey;
+}
+
+internal class FakeIssueCaseStore : IIssueCaseStore
+{
+    private readonly List<IssueCase> _items = new();
+
+    public IssueCase? GetOpen(string hostName, string issueKey) =>
+        _items.FirstOrDefault(c =>
+            string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+            c.IssueKey == issueKey && c.ClosedAt == null);
+
+    public List<IssueCase> GetOpenForHost(string hostName) =>
+        _items.Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && c.ClosedAt == null).ToList();
+
+    public List<IssueCase> GetMany(IEnumerable<string> hostNames)
+    {
+        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return _items.Where(c => names.Contains(c.HostName)).ToList();
+    }
+
+    public List<IssueCase> GetOpenByHandler(long userId) =>
+        _items.Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
+
+    public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
+
+    public void Save(IssueCase issueCase)
+    {
+        var existing = _items.FirstOrDefault(c => c.CaseId == issueCase.CaseId);
+        if (existing == null) { _items.Add(issueCase); return; }
+        existing.Status = issueCase.Status;
+        existing.HandlerId = issueCase.HandlerId;
+        existing.Note = issueCase.Note;
+        existing.DueDate = issueCase.DueDate;
+        existing.FirstLinkedDate = issueCase.FirstLinkedDate;
+        existing.LastLinkedDate = issueCase.LastLinkedDate;
+        existing.ClosedAt = issueCase.ClosedAt;
+        existing.UpdatedAt = issueCase.UpdatedAt;
+    }
 }
 
 internal class FakeNoiseMarkStore : INoiseMarkStore

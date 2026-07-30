@@ -120,4 +120,13 @@ public static class HandlingActions
 
     /// <summary>問題層級清除標記（調回未處理）</summary>
     public const string IssueStatusCleared = "issue_status_cleared";
+
+    /// <summary>建立案件／改派案件處理人（docs/FEEDBACK-4-PLAN.md §0.4-A，記在觸發日的歷程）</summary>
+    public const string CaseAssign = "case_assign";
+
+    /// <summary>案件狀態同步展開到某日（逐日一列，actor＝觸發同步的使用者，§0.4-B）</summary>
+    public const string CaseSync = "case_sync";
+
+    /// <summary>批次排程把新的一天掛進進行中案件（逐日一列，actor＝系統，§0.4-C）</summary>
+    public const string CaseAttach = "case_attach";
 }

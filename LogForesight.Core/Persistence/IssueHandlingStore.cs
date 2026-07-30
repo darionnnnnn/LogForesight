@@ -25,31 +25,47 @@ public class IssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandl
             .ToList();
     }
 
-    public void Save(IssueHandling handling)
+    public List<IssueHandling> GetByCase(string caseId) =>
+        Read().Where(h => string.Equals(h.CaseId, caseId, StringComparison.Ordinal)).ToList();
+
+    public void Save(IssueHandling handling) => SaveMany(new[] { handling });
+
+    /// <summary>
+    /// 批次寫入／更新（docs/FEEDBACK-4-PLAN.md §0.5：案件回溯關聯／狀態同步一次可能涉及
+    /// 上百天）：走一次 Mutate，避免逐日呼叫造成 N 次整份 blob 讀改寫。
+    /// <see cref="Save"/> 委派到這裡，單筆與批次共用同一份合併邏輯，不留兩份會漂移的複製。
+    /// </summary>
+    public void SaveMany(IEnumerable<IssueHandling> handlings)
     {
-        // 空狀態＝清除標記：不留一列「狀態為空」的殭屍資料，直接回到未處理
-        if (string.IsNullOrWhiteSpace(handling.Status))
-        {
-            Clear(handling.HostName, handling.Date, handling.IssueKey);
-            return;
-        }
+        var list = handlings.ToList();
+        if (list.Count == 0) return;
 
         Mutate(items =>
         {
-            var existing = items.FirstOrDefault(h => SameIssue(h, handling.HostName, handling.Date, handling.IssueKey));
-            if (existing == null)
+            foreach (var handling in list)
             {
-                items.Add(handling);
-                return;
-            }
+                // 空狀態＝清除標記：不留一列「狀態為空」的殭屍資料，直接回到未處理
+                if (string.IsNullOrWhiteSpace(handling.Status))
+                {
+                    items.RemoveAll(h => SameIssue(h, handling.HostName, handling.Date, handling.IssueKey));
+                    continue;
+                }
 
-            existing.Status = handling.Status;
-            existing.ActorId = handling.ActorId;
-            existing.ActorAccount = handling.ActorAccount;
-            existing.Note = handling.Note;
-            existing.DueDate = handling.DueDate;
-            existing.CaseId = handling.CaseId;
-            existing.UpdatedAt = handling.UpdatedAt;
+                var existing = items.FirstOrDefault(h => SameIssue(h, handling.HostName, handling.Date, handling.IssueKey));
+                if (existing == null)
+                {
+                    items.Add(handling);
+                    continue;
+                }
+
+                existing.Status = handling.Status;
+                existing.ActorId = handling.ActorId;
+                existing.ActorAccount = handling.ActorAccount;
+                existing.Note = handling.Note;
+                existing.DueDate = handling.DueDate;
+                existing.CaseId = handling.CaseId;
+                existing.UpdatedAt = handling.UpdatedAt;
+            }
         });
     }
 
