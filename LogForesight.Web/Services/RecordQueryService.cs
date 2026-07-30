@@ -503,7 +503,7 @@ public class RecordQueryService
         var openCases = _cases.GetOpenForHost(hostName)
             .ToDictionary(
                 c => c.IssueKey,
-                c => (HandlerName: c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
+                c => (HandlerId: c.HandlerId, HandlerName: c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
                       c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
                 StringComparer.Ordinal);
 
@@ -869,7 +869,7 @@ public class RecordQueryService
         Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
-        Dictionary<string, (string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null)
+        Dictionary<string, (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null)
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
@@ -880,7 +880,7 @@ public class RecordQueryService
         // 未列入「未處理計算」等級的問題（「系統管理 > 設定」頁維護），未標記過時預設視為不處理
         var isDefaultUnhandled = status.Length == 0 && noiseMark == null && !unhandledSeverities.Contains(issue.Severity);
 
-        (string? HandlerName, string Status, string FirstLinkedDate)? openCase =
+        (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)? openCase =
             openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
 
         return new IssueDto
@@ -910,6 +910,7 @@ public class RecordQueryService
             IsAutoNoise = noiseMark != null,
             NoiseNote = noiseMark?.Note,
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
+            CaseHandlerId = openCase?.HandlerId,
             CaseHandlerName = openCase?.HandlerName,
             CaseStatus = openCase?.Status,
             CaseFirstLinkedDate = openCase?.FirstLinkedDate

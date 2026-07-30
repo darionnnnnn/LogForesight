@@ -1,0 +1,32 @@
+@{
+    ViewData["Title"] = "處理人員工作頁";
+}
+
+<div id="handler-detail" data-user-id="@ViewData["UserId"]">
+    <div id="handler-header"></div>
+
+    <div class="row g-3 mt-1" id="handler-kpi"></div>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">進行中案件</h2>
+            <span class="text-muted small">跨日追蹤的問題案件，狀態會隨案件同步連動</span>
+        </div>
+        <div class="lf-card__body p-0" id="handler-cases"></div>
+    </section>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">被指派的風險日</h2>
+            <div class="form-check form-switch lf-no-print">
+                <input class="form-check-input" type="checkbox" id="toggle-resolved-days">
+                <label class="form-check-label small text-muted" for="toggle-resolved-days">顯示近 30 天已結案</label>
+            </div>
+        </div>
+        <div class="lf-card__body p-0" id="handler-days"></div>
+    </section>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/handler-detail.js" asp-append-version="true"></script>
+}

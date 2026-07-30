@@ -237,6 +237,8 @@ public class IssueDto
     /// 案件涵蓋這個問題的其他日子也會同步這個狀態——前端據此顯示「○○○ 處理中（1/10 起）」，
     /// 解釋為什麼某些問題的狀態會「自己動」。
     /// </summary>
+    /// <summary>案件處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把案件徽章連到其工作頁</summary>
+    public long? CaseHandlerId { get; set; }
     public string? CaseHandlerName { get; set; }
     public string? CaseStatus { get; set; }
     public string? CaseFirstLinkedDate { get; set; }

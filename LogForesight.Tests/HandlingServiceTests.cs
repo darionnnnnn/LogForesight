@@ -926,6 +926,93 @@ public class HandlingServiceTests
 
         Assert.Equal(0, result.CaseSyncedDayCount);
     }
+
+    // ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）────────────────────────────
+
+    [Fact]
+    public void 工作頁_列出名下進行中案件與被指派的未結案風險日()
+    {
+        var day = Today.AddDays(-50);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);   // 建案＋日層級指派給 XXX
+
+        var workload = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false);
+
+        Assert.Equal("XXX", workload.DisplayName);
+        Assert.True(workload.Active);
+        Assert.Equal(1, workload.OpenCaseCount);
+        var caseItem = Assert.Single(workload.Cases);
+        Assert.Equal(_host.HostName, caseItem.HostName);
+        Assert.Equal("disk 153", caseItem.IssueLabel);
+
+        var dayItem = Assert.Single(workload.Days);
+        Assert.Equal(day.ToString("yyyy-MM-dd"), dayItem.Date);
+        Assert.Equal(HandlingStatuses.InProgress, dayItem.DerivedStatus);
+    }
+
+    /// <summary>已結案的風險日預設不顯示；includeResolvedDays=true 時才納入</summary>
+    [Fact]
+    public void 工作頁_已結案風險日預設不顯示_切換後才出現()
+    {
+        var day = Today.AddDays(-5);   // 30 天內，切換後應該看得到
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        var withoutResolved = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false);
+        Assert.Empty(withoutResolved.Days);
+        Assert.Empty(withoutResolved.Cases);   // 案件已結案，不再是「進行中」
+
+        var withResolved = service.GetHandlerWorkload(_other.UserId, includeResolvedDays: true);
+        Assert.Single(withResolved.Days);
+    }
+
+    /// <summary>資料以檢視者的可見範圍過濾——被看者的交辦項目在檢視者看不到的主機上時不列出</summary>
+    [Fact]
+    public void 工作頁_資料以檢視者可見範圍過濾()
+    {
+        var day = Today.AddDays(-52);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _other.UserId);
+
+        // 檢視者只看得到別的主機（AlwaysVisibleService 全可見，這裡改用受限的可見範圍服務）
+        var restrictedVisibility = new RestrictedVisibleService();
+        var restrictedService = new HandlingService(
+            _handlings, _issueHandlings, _cases, _caseCoordinator, _noiseMarks, _repository, _hosts, _users,
+            restrictedVisibility, FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle),
+            _audit, _settings);
+
+        var workload = restrictedService.GetHandlerWorkload(_other.UserId, includeResolvedDays: false);
+
+        Assert.Empty(workload.Cases);
+        Assert.Empty(workload.Days);
+    }
+
+    [Fact]
+    public void 工作頁_查無使用者時拋NotFound()
+    {
+        var ex = Assert.Throws<DomainException>(() =>
+            Create(Capability.Handle).GetHandlerWorkload(9999, includeResolvedDays: false));
+
+        Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+}
+
+/// <summary>可見範圍固定為空——供工作頁的「檢視者可見範圍過濾」測試使用</summary>
+internal class RestrictedVisibleService : IVisibilityService
+{
+    public IReadOnlySet<long> GetVisibleHostIds() => new HashSet<long>();
+    public List<WebHost> GetVisibleHosts() => new();
+    public void EnsureVisible(long hostId) => throw DomainException.NotFound("找不到這台主機。");
 }
 
 // ── 測試替身 ─────────────────────────────────────────────────────────────────
@@ -1164,6 +1251,9 @@ internal class FakeHandlingStore : IRecordHandlingStore
 
     public List<RecordHandling> GetUnresolved() =>
         _handlings.Where(h => HandlingStatuses.Unresolved.Contains(h.Status)).ToList();
+
+    public List<RecordHandling> GetByHandler(long userId) =>
+        _handlings.Where(h => h.HandlerId == userId).ToList();
 
     public void Save(RecordHandling handling)
     {

@@ -18,6 +18,10 @@ public interface IRecordHandlingStore
     /// <summary>所有未結案的處理狀態（儀表板待辦與逾期清單）</summary>
     List<RecordHandling> GetUnresolved();
 
+    /// <summary>指定處理人名下的全部日層級指派（不論結案與否；「近 N 天已結案」等篩選由呼叫端
+    /// 在記憶體處理——docs/FEEDBACK-4-PLAN.md §6 處理人員工作頁）</summary>
+    List<RecordHandling> GetByHandler(long userId);
+
     void Save(RecordHandling handling);
 
     void AppendLog(RecordHandlingLog log);

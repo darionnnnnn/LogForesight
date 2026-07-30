@@ -437,7 +437,7 @@ function renderDetailView() {
             { title: '狀況', render: r => headlineCell(r) },
             { title: '類型', render: r => categoryBadges(r.categories) },
             { title: '處理狀態', render: r => handlingCell(r) },
-            { title: '處理人', render: r => r.handlerName ?? '' }
+            { title: '處理人', render: r => handlerCell(r) }
         ],
         rows: lastResult.items,
         sort,
@@ -529,6 +529,17 @@ function handlingCell(record) {
     }
 
     return wrap;
+}
+
+/** 處理人姓名連到其工作頁（docs/FEEDBACK-4-PLAN.md §6）；無 HandlerId（從未指派）時純文字 */
+function handlerCell(record) {
+    if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
+
+    const link = document.createElement('a');
+    link.href = `/handlers/${record.handlerId}`;
+    link.textContent = record.handlerName;
+    link.addEventListener('click', event => event.stopPropagation());
+    return link;
 }
 
 // ── 依主機視角（日期合併）────────────────────────────────────────────────────

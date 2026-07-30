@@ -888,8 +888,13 @@ function issueCell(issue) {
  */
 function caseBadge(issue) {
     const statusText = issue.caseStatus === 'open' ? '未處理' : '處理中';
-    const badge = document.createElement('span');
+    // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/FEEDBACK-4-PLAN.md §6）
+    const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
     badge.className = 'lf-badge lf-badge--primary';
+    if (issue.caseHandlerId) {
+        badge.href = `/handlers/${issue.caseHandlerId}`;
+        badge.addEventListener('click', event => event.stopPropagation());
+    }
     badge.textContent = `${issue.caseHandlerName} ${statusText}`;
     badge.title = `案件處理人：${issue.caseHandlerName}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
     return badge;

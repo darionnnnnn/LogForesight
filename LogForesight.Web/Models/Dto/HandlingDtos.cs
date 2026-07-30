@@ -287,3 +287,52 @@ public class AuditEntryDto
     public string? IpAddress { get; set; }
     public string Result { get; set; } = string.Empty;
 }
+
+// ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）─────────────────────────────
+
+public class HandlerWorkloadDto
+{
+    public long UserId { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>被查看的使用者已停用時仍顯示交辦紀錄（歷史事實不因停用消失），前端後綴「（已停用）」</summary>
+    public bool Active { get; set; }
+
+    public int OpenCaseCount { get; set; }
+    public int UnresolvedDayCount { get; set; }
+    public int OverdueCount { get; set; }
+
+    /// <summary>名下進行中案件（資料以檢視者的可見範圍過濾）</summary>
+    public List<HandlerCaseItemDto> Cases { get; set; } = new();
+
+    /// <summary>名下被指派的風險日——預設只列推導後未結案，includeResolvedDays=true 時另含近 30 天已結案</summary>
+    public List<HandlerDayItemDto> Days { get; set; } = new();
+}
+
+public class HandlerCaseItemDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string IssueLabel { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+    public string? DueDate { get; set; }
+    public bool IsOverdue { get; set; }
+    public string FirstLinkedDate { get; set; } = string.Empty;
+    public string LastLinkedDate { get; set; } = string.Empty;
+}
+
+public class HandlerDayItemDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string Date { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = string.Empty;
+
+    /// <summary>由問題標記推導出的日狀態（同詳情頁 DerivedStatus）——日層級快照指派後恆為
+    /// in_progress，必須看推導值才知道「現在真正的狀態」</summary>
+    public string DerivedStatus { get; set; } = string.Empty;
+    public string DerivedStatusText { get; set; } = string.Empty;
+    public string? DueDate { get; set; }
+    public bool IsOverdue { get; set; }
+}

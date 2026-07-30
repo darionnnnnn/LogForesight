@@ -18,6 +18,10 @@ const NAV_SECTIONS = [
         items: [
             { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
             { href: '/records', label: '問題查詢', icon: 'search', requires: null },
+            // 動態 href（docs/FEEDBACK-4-PLAN.md §6）：連到「自己」的處理人工作頁——
+            // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
+            // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
+            { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
             { href: '/permission-changes', label: '權限異動待辦', icon: 'clipboard-check', requires: 'ConfirmPermission' },
             { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
         ]
@@ -77,9 +81,16 @@ function renderNav(user) {
     const currentPath = location.pathname;
 
     for (const section of NAV_SECTIONS) {
-        const visible = section.items.filter(item => {
+        // href 可以是函式（依目前使用者算出連結，例如「我的交辦」連到自己的處理人頁）——
+        // 先一次解析好存成 resolvedHref，下面的可見性判斷與實際渲染都用同一個值，
+        // 不必對同一個 item 呼叫函式兩次
+        const resolved = section.items.map(item => ({
+            ...item,
+            resolvedHref: typeof item.href === 'function' ? item.href(user) : item.href
+        }));
+        const visible = resolved.filter(item => {
             if (item.requires && !hasCapability(user, item.requires)) return false;
-            if (user.isServerAdmin && BUSINESS_PAGES.includes(item.href)) return false;
+            if (user.isServerAdmin && (BUSINESS_PAGES.includes(item.resolvedHref) || item.hideForServerAdmin)) return false;
             return true;
         });
         if (visible.length === 0) continue;   // 整組不可見就連標題一起省略
@@ -108,7 +119,7 @@ function renderNav(user) {
 
         for (const item of visible) {
             const link = document.createElement('a');
-            link.href = item.href;
+            link.href = item.resolvedHref;
             link.className = 'lf-sidebar__link';
             link.appendChild(icon(item.icon));
 
@@ -116,9 +127,9 @@ function renderNav(user) {
             label.textContent = item.label;
             link.appendChild(label);
 
-            const isActive = item.href === '/'
+            const isActive = item.resolvedHref === '/'
                 ? currentPath === '/'
-                : currentPath.startsWith(item.href);
+                : currentPath.startsWith(item.resolvedHref);
             if (isActive) link.classList.add('is-active');
 
             itemsWrap.appendChild(link);

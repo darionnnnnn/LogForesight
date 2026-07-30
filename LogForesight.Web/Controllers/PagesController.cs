@@ -41,6 +41,15 @@ public class PagesController : Controller
         return View();
     }
 
+    /// <summary>處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）：全登入角色可查看任何人，
+    /// 資料以檢視者的可見範圍過濾，不需要額外能力標註</summary>
+    [HttpGet("/handlers/{userId:long}")]
+    public IActionResult HandlerDetail(long userId)
+    {
+        ViewData["UserId"] = userId;
+        return View();
+    }
+
     [HttpGet("/reports")]
     public IActionResult Reports() => View();
 
