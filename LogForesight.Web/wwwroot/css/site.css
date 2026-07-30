@@ -1061,6 +1061,17 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* 主機詳情問題發生明細展開時的時間軸高亮連動（docs/FEEDBACK-4-PLAN.md §3）：
+   這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
+   只疊加外框/透明度，展開哪個問題一眼看得出來 */
+.lf-timeline-cell--highlight {
+    outline: 2px solid var(--lf-primary, #0d6efd);
+    outline-offset: 1px;
+}
+.lf-timeline-cell--dim {
+    opacity: .25;
+}
+
 /* ── 問題層級處理狀態：狀態文字＋右側批次套用（2026-07-27 改版；2026-07-28 #7 拆欄）─────
    勾選已獨立成「選取」欄的表頭全選 checkbox（見 issueColumns/selectCheckbox），
    這裡只顯示狀態文字＋預計完成日；狀態改到右側「處理狀態」區塊填一次、
