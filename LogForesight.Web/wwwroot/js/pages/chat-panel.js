@@ -177,7 +177,9 @@ async function onSubmit(event) {
     try {
         const result = await api.post('/api/ai/chat', { hostId, date, issueKey: currentIssueKey, messages }, { silent: true });
         if (result?.text) {
-            messages.push({ role: 'assistant', content: result.text });
+            // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：只有真的取到資料才顯示提示，
+            // 不誤導（開關關閉／非 NetIQ 主機／失敗時 fetchedLogCount 為 null，不顯示任何取數跡象）
+            messages.push({ role: 'assistant', content: result.text, fetchedLogCount: result.fetchedLogCount });
         } else {
             messages.push({ role: 'assistant', content: 'AI 目前忙碌或無法回應，稍後再試。', failed: true });
         }
@@ -229,6 +231,12 @@ function renderBubble(message) {
     } else {
         // AI 回覆：安全子集 Markdown 渲染（**粗體**／清單等），取代原本星號原樣顯示
         bubble.className = 'lf-ai-block';
+        if (message.fetchedLogCount > 0) {
+            const note = document.createElement('div');
+            note.className = 'small text-muted mb-1';
+            note.textContent = `已取回現場事件 ${message.fetchedLogCount} 則納入分析`;
+            bubble.appendChild(note);
+        }
         renderAiText(bubble, message.content, { badge: 'AI 回覆', badgeClassName: 'lf-badge lf-badge--secondary mb-1' });
     }
 
