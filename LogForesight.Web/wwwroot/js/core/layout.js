@@ -220,7 +220,9 @@ function debounce(fn, delayMs) {
 function initHelpPopovers() {
     const triggers = document.querySelectorAll('[data-bs-toggle="popover"]');
     for (const el of triggers) {
-        new bootstrap.Popover(el, { trigger: 'focus', html: false });
+        // hover 補 focus（原本只有 focus，需要點擊/Tab 到才看得到）——docs/FEEDBACK-5-PLAN.md §6：
+        // 常駐說明文字收斂進 icon 後，滑鼠滑過就要能看到，不能還要求使用者先點一下
+        new bootstrap.Popover(el, { trigger: 'hover focus', html: false });
     }
 }
 

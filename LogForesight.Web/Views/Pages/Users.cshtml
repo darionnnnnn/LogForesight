@@ -62,8 +62,11 @@
 
                         <div class="col-12 d-none" id="user-account-batch-group">
                             <label for="user-accounts-batch" class="form-label">帳號 <span class="text-danger">*</span></label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="一行一個帳號（也接受逗號分隔）。顯示名稱預設為帳號本身，若之後以 AD 登入會自動補上真實姓名與 Email。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                             <textarea class="form-control" id="user-accounts-batch" rows="6" placeholder="一行一個帳號，也接受逗號分隔&#10;DOMAIN\user1&#10;DOMAIN\user2"></textarea>
-                            <div class="form-text">一行一個帳號（也接受逗號分隔）。顯示名稱預設為帳號本身，若之後以 AD 登入會自動補上真實姓名與 Email。</div>
                         </div>
 
                         <div class="col-md-6" id="user-display-name-group">
@@ -87,8 +90,11 @@
 
                     <div class="mb-3">
                         <label class="form-label">所屬群組</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="群組決定這個人的角色與可看見的主機。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
                         <div id="user-groups" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;"></div>
-                        <div class="form-text">群組決定這個人的角色與可看見的主機。</div>
                     </div>
                 </div>
                 <div class="modal-footer">

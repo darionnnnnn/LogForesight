@@ -5,7 +5,7 @@
 <div class="lf-hint mb-3">
     <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
     <span>規則儲存前會自動驗證，不合格不會寫入。</span>
-    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
             data-bs-title="關於規則維護"
             data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。">
         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
@@ -113,8 +113,11 @@
                         </div>
                         <div class="col-md-6" id="rule-match-windows-source" data-platform-block="windows">
                             <label for="rule-source" class="form-label">來源比對 <span class="text-danger">*</span></label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="Event Log 的來源名稱，例如 disk、Ntfs。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                             <input type="text" class="form-control" id="rule-source" />
-                            <div class="form-text">Event Log 的來源名稱，例如 disk、Ntfs。</div>
                         </div>
 
                         <div class="col-md-6" id="rule-match-windows-ids" data-platform-block="windows">
@@ -135,8 +138,11 @@
                         </div>
                         <div class="col-md-6" id="rule-match-linux-eventname" data-platform-block="linux">
                             <label for="rule-event-name" class="form-label">正規化事件名（選填）</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="Sentinel 有做事件正規化時可用此欄，命中即算，不需再比對訊息。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                             <input type="text" class="form-control" id="rule-event-name" />
-                            <div class="form-text">Sentinel 有做事件正規化時可用此欄，命中即算，不需再比對訊息。</div>
                         </div>
                         <div class="col-12" id="rule-match-linux-messages" data-platform-block="linux">
                             <label for="rule-message-patterns" class="form-label">訊息子字串（一行一項，任一命中即算，最多 8 條）</label>
@@ -172,8 +178,11 @@
                         </div>
                         <div class="col-md-3">
                             <label for="rule-threshold" class="form-label">次數門檻</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="未達門檻降一級。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                             <input type="number" class="form-control" id="rule-threshold" min="1" value="1" />
-                            <div class="form-text">未達門檻降一級。</div>
                         </div>
                         <div class="col-md-9 d-flex align-items-end">
                             <div class="form-check">
@@ -196,7 +205,10 @@
                                 處置知識庫
                                 <span class="text-muted small" id="rule-kb-summary"></span>
                             </button>
-                            <div class="form-text">規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。（選填）</div>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。（選填）">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                         </div>
 
                         <div class="col-12 collapse" id="rule-kb">
@@ -268,7 +280,7 @@
                     <div class="lf-hint mb-3">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
                         <span>抑制只關掉通知與風險升級，事件仍照常聚合與紀錄。</span>
-                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-title="抑制的作用範圍"
                                 data-bs-content="抑制只關掉通知與風險升級，事件仍照常聚合、命中規則、寫入歷史——這樣體檢報告與頻率報表才看得到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的永久盲區。">
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
@@ -288,8 +300,11 @@
                     </div>
                     <div class="mb-3">
                         <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="日後回頭確認「當初為什麼關掉」的唯一依據。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
                         <textarea class="form-control" id="suppress-reason" rows="2" required></textarea>
-                        <div class="form-text">日後回頭確認「當初為什麼關掉」的唯一依據。</div>
                     </div>
                 </div>
                 <div class="modal-footer">

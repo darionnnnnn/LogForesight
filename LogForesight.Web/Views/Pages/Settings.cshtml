@@ -88,8 +88,11 @@
 
             <div class="mb-3">
                 <label for="ad-servers" class="form-label">AD 伺服器</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一行一台，依序嘗試第一個可連線者。可填 IP 或主機名稱／FQDN。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
                 <textarea class="form-control" id="ad-servers" rows="3" placeholder="一行一台，例如：&#10;dc1.corp.local&#10;dc2.corp.local"></textarea>
-                <div class="form-text">一行一台，依序嘗試第一個可連線者。可填 IP 或主機名稱／FQDN。</div>
             </div>
 
             <button type="button" class="btn btn-sm btn-outline-secondary mb-3" data-bs-toggle="collapse" data-bs-target="#ad-advanced">
@@ -98,13 +101,19 @@
             <div class="collapse mb-3" id="ad-advanced">
                 <div class="mb-3">
                     <label for="ad-search-base" class="form-label">查詢基準 DN（選填）</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="留空使用目錄預設根目錄。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="text" class="form-control" id="ad-search-base" placeholder="DC=corp,DC=local" />
-                    <div class="form-text">留空使用目錄預設根目錄。</div>
                 </div>
                 <div class="mb-3">
                     <label for="ad-search-filter" class="form-label">查詢過濾器</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="{0} 會被代入登入帳號。AD 預設 (sAMAccountName={0})。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="text" class="form-control" id="ad-search-filter" placeholder="(sAMAccountName={0})" />
-                    <div class="form-text">{0} 會被代入登入帳號。AD 預設 (sAMAccountName={0})。</div>
                 </div>
             </div>
 
@@ -139,8 +148,11 @@
             <div class="row g-3">
                 <div class="col-sm-6">
                     <label for="initial-history-days" class="form-label">首次執行回補天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="initial-history-days" min="1" max="3650" required />
-                    <div class="form-text">歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。</div>
                 </div>
                 <div class="col-sm-6">
                     <label for="retention-days" class="form-label">歷史資料保留天數</label>
@@ -149,13 +161,19 @@
                 </div>
                 <div class="col-sm-6">
                     <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除。資料只留在資料庫，不影響業務分析結果。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="run-log-retention-days" min="7" max="3650" required />
-                    <div class="form-text">批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除。資料只留在資料庫，不影響業務分析結果。</div>
                 </div>
                 <div class="col-sm-6">
                     <label for="audit-retention-days" class="form-label">稽核紀錄保留天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="操作稽核紀錄，超過此天數每次批次啟動時自動清除。合規／追責用途，保留期通常較長。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required />
-                    <div class="form-text">操作稽核紀錄，超過此天數每次批次啟動時自動清除。合規／追責用途，保留期通常較長。</div>
                 </div>
                 <div class="col-sm-6">
                     <label for="risky-event-retention-days" class="form-label">風險 log 暫存保留天數</label>
