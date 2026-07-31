@@ -16,11 +16,7 @@ public enum RunScope
     NetiqHosts
 }
 
-/// <summary>
-/// 一次執行的請求參數。<see cref="Args"/> 沿用既有 <see cref="BatchRunRecorder"/> 的
-/// 「執行時的命令列」欄位語意——console 傳入實際 args，Web 排程觸發時傳入描述性字串
-/// （如 "schedule" 或 "manual:{帳號}"，Phase 3 決定精確格式）。
-/// </summary>
+/// <summary>一次執行的請求參數。</summary>
 public class RunRequest
 {
     public RunScope Scope { get; init; } = RunScope.Full;
@@ -33,7 +29,14 @@ public class RunRequest
 
     public bool DebugDump { get; init; }
 
+    /// <summary>沿用既有 <see cref="BatchRunRecorder"/> 的「執行時的命令列」欄位語意——console 傳入實際 args。</summary>
     public string[] Args { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>｜<c>"console"</c>
+    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.4）。
+    /// </summary>
+    public string? Trigger { get; init; }
 }
 
 /// <summary>單次執行的結果摘要，供呼叫端（console exit code／Web BatchRun 回填）使用。</summary>
@@ -126,7 +129,7 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args);
+            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
 
             var eventLogService = new EventLogService();

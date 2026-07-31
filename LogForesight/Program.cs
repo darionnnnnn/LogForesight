@@ -115,45 +115,9 @@ if (!string.Equals(dataRoot, AppContext.BaseDirectory, StringComparison.OrdinalI
 
 // 「系統管理 > 設定」頁（DB）是 AI 位址／金鑰與補充／留存天數的事實來源；appsettings.json 的
 // Ai.BaseUrl 與內建預設值只是 DB 尚未設定時的退路（開箱即用，不強制先跑過 Web 設定頁）。
-var retention = new RetentionOptions();
-try
-{
-    var systemSettings = StorageFactory.CreateSystemSettingsStore(settings.Storage, dataRoot).Get();
-
-    // 「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：前者沿用
-    // appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI（設定頁明講留空停用），
-    // AI 呼叫失敗時各日自動降級為統計模式，規則/趨勢/關聯偵測不受影響
-    if (systemSettings.UpdatedAt != null)
-        settings.Ai.BaseUrl = systemSettings.AiBaseUrl.Trim();
-    if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
-        settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
-
-    if (systemSettings.RetentionDays >= systemSettings.InitialHistoryDays)
-    {
-        retention = retention with { InitialHistoryDays = systemSettings.InitialHistoryDays, RetentionDays = systemSettings.RetentionDays };
-    }
-    else
-    {
-        log.Warn("系統設定的歷史資料保留天數（{RetentionDays}）小於首次回補天數（{InitialHistoryDays}），改用內建預設值。",
-            systemSettings.RetentionDays, systemSettings.InitialHistoryDays);
-    }
-
-    retention = retention with { RunLogRetentionDays = systemSettings.RunLogRetentionDays, AuditRetentionDays = systemSettings.AuditRetentionDays };
-
-    if (systemSettings.RiskyEventRetentionDays >= 1 && systemSettings.RiskyEventRetentionDays <= retention.RetentionDays)
-    {
-        retention = retention with { RiskyEventRetentionDays = systemSettings.RiskyEventRetentionDays };
-    }
-    else
-    {
-        log.Warn("系統設定的風險 log 暫存保留天數（{RiskyEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
-            systemSettings.RiskyEventRetentionDays, retention.RetentionDays);
-    }
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "讀取系統設定（AI 位址／金鑰／補充留存天數）失敗，改用內建預設值：{0}", ex.Message);
-}
+// 共用邏輯見 RuntimeSettingsResolver（docs/WEB-SCHEDULER-PLAN.md §1.4.2，Web 排程每次觸發前也呼叫同一份）。
+var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(
+    settings, StorageFactory.CreateSystemSettingsStore(settings.Storage, dataRoot));
 
 Console.WriteLine($"AI API：{settings.Ai.BaseUrl}（逾時 {settings.Ai.TimeoutSeconds} 秒，失敗重試 {settings.Ai.RetryCount} 次）");
 log.Info("AI 設定：BaseUrl={BaseUrl}, Timeout={Timeout}s, RetryCount={RetryCount}, JsonRetryCount={JsonRetryCount}, " +
@@ -195,7 +159,7 @@ if (args.Contains("--netiq-probe"))
 // 主流程（權限檢查 → 清理 → 本機分析 → NetIQ → 體檢）已抽為 Core 的 AnalysisOrchestrator
 // （docs/WEB-SCHEDULER-PLAN.md §1.4.2），console 與 Web 排程共用同一份。
 var orchestrator = new AnalysisOrchestrator();
-var runRequest = new RunRequest { Scope = RunScope.Full, DebugDump = debugDump, Args = args };
+var runRequest = new RunRequest { Scope = RunScope.Full, DebugDump = debugDump, Args = args, Trigger = "console" };
 var result = await orchestrator.RunAsync(runRequest, settings, dataRoot, retention, new ConsoleRunConsole(), CancellationToken.None);
 
 LogManager.Shutdown(); // 確保緩衝的 log 都寫入檔案再結束程序

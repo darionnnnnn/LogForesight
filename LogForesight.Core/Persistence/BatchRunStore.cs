@@ -28,6 +28,13 @@ public class BatchRun
     public int AiFailures { get; set; }
     public int WarnCount { get; set; }
     public int ErrorCount { get; set; }
+
+    /// <summary>
+    /// 觸發來源（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：<c>schedule</c>｜<c>manual:{帳號}</c>｜
+    /// <c>console</c>。舊紀錄沒有這個欄位（JSON 反序列化容忍缺欄，null），Runs 頁顯示為
+    /// 「工作排程器」——那正是升級前唯一的觸發來源，語意上等價。
+    /// </summary>
+    public string? Trigger { get; set; }
 }
 
 /// <summary>

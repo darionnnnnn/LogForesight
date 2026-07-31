@@ -21,7 +21,7 @@ public class BatchRunRecorder : IDisposable
     private readonly BatchRunNLogTarget? _target;
     private bool _finished;
 
-    public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args)
+    public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null)
     {
         _store = store;
         _run = new BatchRun
@@ -29,7 +29,8 @@ public class BatchRunRecorder : IDisposable
             HostName = hostName,
             StartedAt = DateTime.Now,
             AppVersion = typeof(BatchRunRecorder).Assembly.GetName().Version?.ToString() ?? "unknown",
-            Args = string.Join(" ", args)
+            Args = string.Join(" ", args),
+            Trigger = trigger
         };
 
         if (_store == null) return;

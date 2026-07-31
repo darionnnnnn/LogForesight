@@ -200,6 +200,7 @@ public class RunMonitorService
             DurationSeconds = run.FinishedAt.HasValue
                 ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                 : null,
+            TriggerText = TriggerText(run.Trigger),
             Logs = logs.Select(l => new RunLogDto
             {
                 LoggedAt = l.LoggedAt,
@@ -210,6 +211,19 @@ public class RunMonitorService
             }).ToList()
         };
     }
+
+    /// <summary>
+    /// 「誰跑的」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：null／"console" 是舊紀錄或批次 exe
+    /// 直接執行（升級前唯一的觸發來源，統一顯示「工作排程器」，語意等價且不驚動既有部署）；
+    /// "schedule" 是 Web 排程觸發；"manual:{帳號}" 是 Web 手動觸發。
+    /// </summary>
+    private static string TriggerText(string? trigger) => trigger switch
+    {
+        null or "" or "console" => "工作排程器",
+        "schedule" => "排程",
+        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) => $"手動（{trigger["manual:".Length..]}）",
+        _ => trigger
+    };
 
     /// <summary>
     /// 異常彙總：把近 N 天的 Error/Fatal 依訊息聚合。
