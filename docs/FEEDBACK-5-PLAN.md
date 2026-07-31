@@ -8,7 +8,7 @@
 | # | 項目 | 層面 | 規模 |
 |---|------|------|------|
 | 1 ✅ | 登入／登出鈕文字置中 | Web 前端 CSS | 極小 |
-| 2 | 文件與程式碼中的真實環境內容全面通用化（IP／主機名／帳號） | 文件＋Core＋測試 | 中 |
+| 2 ✅ | 文件與程式碼中的真實環境內容全面通用化（IP／主機名／帳號） | 文件＋Core＋測試 | 中 |
 | 3 ✅ | 側欄使用者名稱被遮擋 | Web 前端 CSS | 小 |
 | 4 | 已處理過的問題再次發生：加「查看先前處理」按鈕＋modal | Web 前後端 | 中 |
 | 5 | 勾選 checkbox 併入處理狀態欄右上角 | — | **第四輪已完成**（§5） |
@@ -48,60 +48,59 @@
 
 ## 2. 真實環境內容通用化
 
-### 盤點結果（2026-07-31 全案掃描）
+### 盤點結果（2026-07-31 全案掃描；**已於同日實作完成，下方不再列出原始真實值**，
+見 §2 末段「實作紀錄」）
 
-**真實網段 `10.232.11`**（probe 實測環境）散落 11 個檔案：
+真實網段前綴（probe 實測環境）曾散落 11 個檔案：
 
 | 檔案 | 位置 |
 |------|------|
-| `LogForesight.Core/Analysis/SentinelQueryBuilder.cs` | 註解＋**使用者可見的錯誤訊息**共 8 處（87/96/97/110/120/121/134/171/186/193 行附近） |
+| `LogForesight.Core/Analysis/SentinelQueryBuilder.cs` | 註解＋**使用者可見的錯誤訊息**共 8 處 |
 | `LogForesight.Web/Models/Dto/NetiqDtos.cs` | 註解範例 |
 | `LogForesight.Web/Services/NetiqDirectoryClient.cs` | 註解範例 ×2 |
 | `LogForesight.Web/wwwroot/js/pages/imports.js` | 網段輸入框 placeholder |
 | `LogForesight.Web/Views/Pages/Imports.cshtml` | 掃描說明 popover |
 | `README.md` §NetIQ | 精靈流程說明 |
 | `docs/WEB-SPEC.md` §精靈 | 範例 |
-| `docs/WEB-SCHEDULER-PLAN.md` §193 | 範例 |
-| `docs/NETIQ-API-PLAN.md` | probe 紀錄多處（235/238/241/417/425 行附近） |
+| `docs/WEB-SCHEDULER-PLAN.md` §1.4.4 | 範例 |
+| `docs/NETIQ-API-PLAN.md` | probe 紀錄多處 |
 | `LogForesight.Tests/SentinelQueryBuilderTests.cs` | 測資 14 處 |
 | `LogForesight.Tests/SentinelRestDirectoryClientTests.cs` | 測資 22 處 |
 
-**真實 DC 主機名與 IP**（probe 第二輪實測輸出，寫進 `docs/NETIQ-API-PLAN.md` §417-455）：
-
-- 主機名 `tc-brkdc01`／`tp-brkdc12`／`tp-brkdc13`／`tp-brkdc21`
-- 對應 `repip`：`10.218.9.1`／`10.216.9.2`／`10.216.9.3`／`10.220.8.100`
-- 樣本 IP `10.232.11.11`（近 24h System=3、Application=152 等實測數字本身不敏感，IP 要換）
-
-**測試檔中的疑似真實主機名**：`SentinelRestDirectoryClientTests.cs` 的
-`tc-crecdc01`／`tp-brkdc01`（測資字串，assert 有比對到，要連動改）。
-
-**疑似真實帳號**：`DOMAIN\wangxm`／`lidh`／`chenyt`／`chenxy`——出現在
-`docs/HISTORY.md`（CSV 匯入範例 §1336-1338）與 `Users.cshtml`（form-text 與
-placeholder 範例）。是否為真實帳號待確認（§11 Q1），**建議不論真假一律通用化**。
+另有：probe 第二輪實測輸出中四台 DC 的真實主機名與其 `repip` IP（寫進
+`docs/NETIQ-API-PLAN.md` §417-455，含一個真實樣本 IP）；測試檔
+`SentinelRestDirectoryClientTests.cs`／`NetiqLifecycleTests.cs` 中兩個疑似真實
+DC 主機名（測資字串，assert 有比對到）；`docs/HISTORY.md`（CSV 匯入範例）與三個
+CSV 匯入範本（`UserCsvImporter`／`HostCsvImporter`／`OwnerCsvImporter` 的
+`BuildTemplate()`——這是**實際下載給使用者的範本內容**，非測試碼）與
+`Users.cshtml` 中的疑似真實帳號／真實姓名／email。是否為真實資料當時待確認
+（§11 Q1），**已定案不論真假一律通用化**。
 
 **確認過無問題**：兩份 `appsettings.json` 的 SecretKey／PasswordHash 皆為明確標註的
 「公開已知測試值」；`sentinel-a.corp.local`／`10.1.2.x`／`SRV-OO-WEB01` 等均為既有通用範例。
 
 ### 替換方案
 
-一律換成專案既有的通用範例體系，讓文件前後一致：
-
-| 真實值 | 替換為 |
-|--------|--------|
-| 網段 `10.232.11`（含 `.0/24`、`.*`、`.11`） | `10.1.2`（專案文件既有的範例網段） |
-| DC 主機名 `tc-brkdc01` 等四台 | `dc01`～`dc04` |
-| DC IP `10.218.9.1` 等四個 | `10.1.8.1`～`10.1.8.4` |
-| 測試檔 `tc-crecdc01`／`tp-brkdc01` | `srv-dc01`／`srv-dc02`（arrange 與 assert 同步改） |
-| `DOMAIN\wangxm` 等帳號 | `DOMAIN\user1`／`user2`…（HISTORY.md 範例的「同主機多列」語意保留） |
+一律換成專案既有的通用範例體系（`10.1.2` 網段、`dc01`～`dc04` 主機名、
+`10.1.8.x` IP、`srv-dc01`／`srv-dc02` 測資主機名、`user1`～`user4` 帳號、
+`example.com` 郵件網域），讓文件前後一致：
 
 - probe 的實測結論文字（欄位對應、筆數量級、耗時）**保留**——那是設計依據，
   只有可識別環境的 IP／主機名要換。
 - 測試改完跑整套測試確認綠（測資字串與 assert 是成對的，漏改會直接紅）。
-- **本文件自身也要清**：上方盤點表為了指認而列出了真實值，§2 實作的同一個
-  commit 內須把本文件的盤點表一併通用化（改為「真實網段」「DC 主機名 ×4」等
-  描述性文字＋檔案位置，不留原值）——否則等於把要清的東西集中抄一份進版控。
+- **本文件自身也要清**：原始盤點表列出的真實值已於實作當下一併清除，不再
+  出現在本文件裡（否則等於把要清的東西集中抄一份進版控）。
 - 盤點補充（2026-07-31，Phase 1 之後）：`docs/WEB-SCHEDULER-PLAN.md` 的出現處
   在 §1.4.4（網段輸入語法範例），一併替換。
+
+### 實作紀錄（2026-07-31）
+
+全部 14 個檔案（11 個原盤點＋`docs/HISTORY.md`＋3 個 CSV importer＋
+`NetiqLifecycleTests.cs`）已完成替換，1195 測試綠。與盤點階段的差異：
+CSV importer 的範本內容（含疑似真實姓名／email）是實作時展開盤點才發現的
+（原盤點只掃了帳號字串本身，沒注意到同一個範本裡還有搭配的姓名與 email），
+一併處理；`corp.com` 這個 email 網域雖未被原盤點標記為可疑，但基於「不論真假
+一律換」原則改用 IANA 保留的文件用網域 `example.com`。
 
 ### §2b 歷史徹底清除作業（Q2 定案：要清）
 
@@ -515,7 +514,7 @@ EnsureCreated 只建空表）必炸。
 
 | # | 問題 | 定案 |
 |---|------|------|
-| Q1 | `DOMAIN\wangxm` 等四個帳號是否真實？ | **不論真假一律換**成通用範例（`user1`～`user4`，§2 替換表） |
+| Q1 | 盤點到的疑似真實帳號是否真實？ | **不論真假一律換**成通用範例（`user1`～`user4`，見 §2） |
 | Q2 | Git 歷史中的真實值要不要徹底清除？ | **徹底清除、改為通用範例**——作業程序、時點約束與連帶後果見 §2b（於本輪全部併入 master、樹上無未合併分支後執行） |
 | Q3 | #5 是否為舊版部署造成的誤會？ | **等本輪全部修改完成後再一併測試確認**（不單獨驗證）；本輪不重做 #5 |
 | Q4 | #8 批次模式要不要第三種「移除指定群組」？ | **依建議**：只做加入／取代兩種，移除以「取代」達成 |
@@ -530,8 +529,7 @@ EnsureCreated 只建空表）必炸。
 4. ✅ §7 modal 寬版化（純前端，無 API 變動；6 個 modal 皆改 modal-lg 兩欄，
    chart-picker-modal 的選項清單由 JS 動態產生，額外改 reports.js 包 col）
 5. ✅ §6 說明收斂（依賴 §7／§9 定稿的排版；對照表已附於 §6 末段）
-6. §2 通用化（獨立、跨檔案多，單獨 commit 方便 review；測試須綠；含本文件
-   自身盤點表的通用化）
+6. ✅ §2 通用化（14 檔完成，含本文件自身盤點表；實作紀錄見 §2 末段）
 7. §4 先前處理 modal（前後端，含新端點與測試）
 8. §8 批次群組（前後端，含新端點與測試）
 9. 全案體檢 → 併 dev → **使用者一次性總驗證**（Q3 定案：#5 等全部改完再一併

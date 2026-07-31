@@ -194,7 +194,7 @@ public class ScheduleOptions
   `{ scope: "all" | "segment" | "host", segment?, hostId?, backfillDays? }`：
   - `all`：等同排程觸發的完整執行（含本機直讀＋全部 NetIQ 主機）。
   - `segment`：只跑 IP 落在指定網段的 NetIQ 主機。網段輸入語法**與 NetIQ 匯入
-    精靈一致**（前綴 `10.232.11` 或 CIDR `10.232.11.0/24`），解析邏輯共用同一
+    精靈一致**（前綴 `10.1.2` 或 CIDR `10.1.2.0/24`），解析邏輯共用同一
     份、不寫第二套；解析後無任何主機符合 → 拒絕並提示。本機直讀主機不參與
     網段範圍（它不在 NetIQ 清單，要單獨跑用 `host`）。
   - `host`：單一主機（本機直讀主機走 `LocalOnly`；NetIQ 主機走

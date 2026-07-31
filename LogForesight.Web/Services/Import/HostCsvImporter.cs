@@ -39,9 +39,9 @@ public class HostCsvImporter : ICsvImporter
 
     public string BuildTemplate() =>
         "host_name,ip_address,netiq_server,role_desc,os,groups,owners,active\r\n" +
-        "SRV-OO-WEB01,10.1.2.11,SENTINEL-A,OO部門網站主機,windows,OO部門主機,DOMAIN\\wangxm;DOMAIN\\lidh,1\r\n" +
-        "SRV-OO-DB01,10.1.2.12,SENTINEL-A,OO部門資料庫,windows,OO部門主機;DB伺服器,DOMAIN\\lidh,1\r\n" +
-        "SRV-XX-AP01,10.2.3.21,SENTINEL-B,XX部門AP,linux,XX部門主機,DOMAIN\\chenyt,1\r\n";
+        "SRV-OO-WEB01,10.1.2.11,SENTINEL-A,OO部門網站主機,windows,OO部門主機,DOMAIN\\user1;DOMAIN\\user2,1\r\n" +
+        "SRV-OO-DB01,10.1.2.12,SENTINEL-A,OO部門資料庫,windows,OO部門主機;DB伺服器,DOMAIN\\user2,1\r\n" +
+        "SRV-XX-AP01,10.2.3.21,SENTINEL-B,XX部門AP,linux,XX部門主機,DOMAIN\\user3,1\r\n";
 
     public ImportPlan BuildPlan(CsvTable table, string fileName)
     {

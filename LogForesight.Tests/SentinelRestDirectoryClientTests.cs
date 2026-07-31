@@ -46,7 +46,7 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Empty(result.Hosts);
         Assert.Contains("無任何事件回報", result.CoverageNote);
@@ -77,7 +77,7 @@ public class SentinelRestDirectoryClientTests
                     $"{{\"status\":2,\"found\":2,\"avail\":2,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
             if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
                 return Task.FromResult(Json(HttpStatusCode.OK,
-                    "[{\"repip\":\"10.232.11.5\",\"sn\":\"tc-crecdc01\"},{\"repip\":\"10.232.11.6\",\"sn\":\"tp-brkdc01\"}]"));
+                    "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"},{\"repip\":\"10.1.2.6\",\"sn\":\"srv-dc02\"}]"));
             if (req.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
@@ -85,15 +85,15 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Equal(2, result.Hosts.Count);
         Assert.Contains("24 小時", result.CoverageNote);
-        Assert.Contains("10.232.11.*", result.CoverageNote);
+        Assert.Contains("10.1.2.*", result.CoverageNote);
 
         // 主查詢的 start/end 應橫跨 24 小時（第二個 job 建立請求的本文）
         var mainJobBody = requestBodies[1];
-        Assert.Contains("\"filter\":\"repip:10.232.11.*\"", mainJobBody);
+        Assert.Contains("\"filter\":\"repip:10.1.2.*\"", mainJobBody);
     }
 
     [Fact]
@@ -122,7 +122,7 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         // 24h * 50000/759052 ≈ 1.6 小時——用「近24 小時內」這個完整片語排除（涵蓋範圍句），
         // 不能只查「24 小時」子字串，句子後段本來就會提到「該網段近 24 小時共 X 筆事件」
@@ -157,7 +157,7 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Contains("5 分鐘", result.CoverageNote);
     }
@@ -185,7 +185,7 @@ public class SentinelRestDirectoryClientTests
                 return Task.FromResult(Json(HttpStatusCode.OK,
                     $"{{\"status\":2,\"found\":999999,\"avail\":1,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
             if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.232.11.5\",\"sn\":\"srv1\"}]"));
+                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv1\"}]"));
             if (req.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
@@ -193,7 +193,7 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Single(result.Warnings);
         Assert.Contains("可能不完整", result.Warnings[0]);
@@ -220,11 +220,11 @@ public class SentinelRestDirectoryClientTests
                 return Task.FromResult(Json(HttpStatusCode.OK,
                     $"{{\"status\":2,\"found\":3,\"avail\":3,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
             if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                // 同一 IP 三筆事件，兩筆 sn=tc-crecdc01、一筆是雜訊值 sn=WEIRD——眾數應勝出
+                // 同一 IP 三筆事件，兩筆 sn=srv-dc01、一筆是雜訊值 sn=WEIRD——眾數應勝出
                 return Task.FromResult(Json(HttpStatusCode.OK,
-                    "[{\"repip\":\"10.232.11.5\",\"sn\":\"tc-crecdc01\"}," +
-                    "{\"repip\":\"10.232.11.5\",\"sn\":\"tc-crecdc01\"}," +
-                    "{\"repip\":\"10.232.11.5\",\"sn\":\"WEIRD\"}]"));
+                    "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"}," +
+                    "{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"}," +
+                    "{\"repip\":\"10.1.2.5\",\"sn\":\"WEIRD\"}]"));
             if (req.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
@@ -232,11 +232,11 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         var host = Assert.Single(result.Hosts);
-        Assert.Equal("tc-crecdc01", host.HostName);
-        Assert.Equal("10.232.11.5", host.IpAddress);
+        Assert.Equal("srv-dc01", host.HostName);
+        Assert.Equal("10.1.2.5", host.IpAddress);
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class SentinelRestDirectoryClientTests
                 return Task.FromResult(Json(HttpStatusCode.OK,
                     $"{{\"status\":2,\"found\":1,\"avail\":1,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
             if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.232.11.9\"}]"));   // 無 sn 欄位
+                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.1.2.9\"}]"));   // 無 sn 欄位
             if (req.Method == HttpMethod.Delete)
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
 
@@ -268,10 +268,10 @@ public class SentinelRestDirectoryClientTests
         };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None);
+        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         var host = Assert.Single(result.Hosts);
-        Assert.Equal("10.232.11.9", host.HostName);
+        Assert.Equal("10.1.2.9", host.HostName);
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public class SentinelRestDirectoryClientTests
         var server = new SentinelServer { Name = "S", BaseUrl = "", Username = "u", Password = "p" };
 
         await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
-            client.ListHostsAsync(server, "10.232.11", CancellationToken.None));
+            client.ListHostsAsync(server, "10.1.2", CancellationToken.None));
     }
 
     [Fact]
@@ -314,7 +314,7 @@ public class SentinelRestDirectoryClientTests
         var client = new SentinelRestDirectoryClient(Options(), handler);
 
         var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
-            client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None));
+            client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None));
         Assert.Contains("SENTINEL-A", ex.Message);
         Assert.DoesNotContain("pw", ex.Message);   // 密碼不得出現在例外訊息
     }
@@ -354,7 +354,7 @@ public class SentinelRestDirectoryClientTests
                 for (var i = 0; i < 1000; i++)
                 {
                     if (i > 0) sb.Append(',');
-                    sb.Append($"{{\"repip\":\"10.232.11.{i % 250}\",\"sn\":\"h{i % 250}\"}}");
+                    sb.Append($"{{\"repip\":\"10.1.2.{i % 250}\",\"sn\":\"h{i % 250}\"}}");
                 }
                 sb.Append(']');
                 return Json(HttpStatusCode.OK, sb.ToString());
@@ -366,7 +366,7 @@ public class SentinelRestDirectoryClientTests
         // 總預算壓到 2 秒：驗證的是「有沒有這道 deadline」，不是正式值本身
         var client = new SentinelRestDirectoryClient(Options(), handler, totalBudgetSeconds: 2);
         var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
-            client.ListHostsAsync(Server(), "10.232.11", CancellationToken.None));
+            client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None));
 
         Assert.Contains("超過 2 秒", ex.Message);
         Assert.Contains("更小的網段", ex.Message);
@@ -394,7 +394,7 @@ public class SentinelRestDirectoryClientTests
         var client = new SentinelRestDirectoryClient(Options(), handler);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            client.ListHostsAsync(Server(), "10.232.11", cts.Token));
+            client.ListHostsAsync(Server(), "10.1.2", cts.Token));
     }
 
     private static HttpResponseMessage Json(HttpStatusCode code, string json, string? locationHeader = null)

@@ -18,7 +18,7 @@ public sealed class NetiqDiscoveryResult
 {
     public List<NetiqDiscoveredHost> Hosts { get; init; } = new();
 
-    /// <summary>人看的涵蓋範圍說明，精靈直接顯示（如「掃描涵蓋『10.232.11.*』近 95 分鐘內有回報事件的主機」）</summary>
+    /// <summary>人看的涵蓋範圍說明，精靈直接顯示（如「掃描涵蓋『10.1.2.*』近 95 分鐘內有回報事件的主機」）</summary>
     public string CoverageNote { get; init; } = string.Empty;
 
     /// <summary>需要人工留意的異常（如查詢被截斷）——不是可以吞掉的雜訊，非空時精靈要顯示</summary>
@@ -35,7 +35,7 @@ public sealed class NetiqDiscoveryResult
 /// </summary>
 public interface INetiqDirectoryClient
 {
-    /// <param name="subnetPrefix">網段前綴（如「10.232.11」）或 CIDR（如「10.232.11.0/24」）——
+    /// <param name="subnetPrefix">網段前綴（如「10.1.2」）或 CIDR（如「10.1.2.0/24」）——
     /// 格式規則見 <see cref="SentinelQueryBuilder.NormalizeSubnetPrefix"/>，不合法時擲
     /// <see cref="NetiqDiscoveryException"/>。**必填**：探索是「掃一個網段」而不是「盲掃全站」，
     /// 全站事件量（實測單台 Sentinel 近 24h 達 2400 萬筆）下任何固定窗口設計涵蓋率都很差，

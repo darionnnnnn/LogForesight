@@ -232,10 +232,10 @@ Windows Event ID 在 Sentinel schema 的落點是 probe #2 的實測項。候選
 
 ESM `/objects/eventsource` 端點被權限拒絕（見 §8 第二輪輸出），且全站 24h distinct
 在 2470 萬筆/天下不可行，兩條路都走不通。使用者在 Sentinel Web UI 實測
-`repip:10.232.11.*` 這類**前綴萬用字元查詢確實有過濾效果**（23,926 筆/1h vs 全站
+`repip:10.1.2.*` 這類**前綴萬用字元查詢確實有過濾效果**（23,926 筆/1h vs 全站
 150 萬筆/1h），因此改用「輸入網段前綴 → 該網段自己的自適應窗口查詢」，完全不碰 ESM API：
 
-- **輸入**：使用者輸入網段前綴（如 `10.232.11`）或 CIDR（`10.232.11.0/24`／`/16`），
+- **輸入**：使用者輸入網段前綴（如 `10.1.2`）或 CIDR（`10.1.2.0/24`／`/16`），
   由 `SentinelQueryBuilder.NormalizeSubnetPrefix` 驗證與正規化（至少 2 段，拒絕單段
   「等同全站」與完整 4 段單一 IP）、`BuildSubnetDiscoveryFilter` 組出
   `repip:{prefix}.*`（`SentinelQueryBuilder.cs`）。
@@ -414,15 +414,15 @@ Q2（單簽章範例查詢）**已取消**——msg 已在 Q1 投影欄位內，
 `--netiq-probe` 加第二輪查詢（步驟 6～12，見 §3.5）＋`SentinelClient.RawGetAsync`（打 ESM
 `/objects/eventsource` 等一般資源用，不走 event-search job 生命週期）。
 
-**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.232.11.11`；該 Sentinel 無 Linux 主機
+**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.1.2.11`；該 Sentinel 無 Linux 主機
 故略過 Linux 段）。**最關鍵的閘門已解除**：
 
-- **主機歸屬鍵定案為 `repip`**——四台 DC（`tc-brkdc01`／`tp-brkdc12`／`tp-brkdc13`／`tp-brkdc21`）
-  對到四個各自不同的 `repip`（`10.218.9.1`／`10.216.9.2`／`10.216.9.3`／`10.220.8.100`），一對一、
+- **主機歸屬鍵定案為 `repip`**——四台 DC（`dc01`／`dc02`／`dc03`／`dc04`）
+  對到四個各自不同的 `repip`（`10.1.8.1`／`10.1.8.2`／`10.1.8.3`／`10.1.8.4`），一對一、
   非共用的 collector 代理 IP；`--sample-ip` 用 `repip:` 也確實查得到該台資料。同時釐清 `sip` 是
   **用戶端來源 IP**（同一台 DC 的三筆登入事件有三個不同 `sip`），不是主機自身。
 - **`sun` 定案為帳號名**（見 §3.5 表）。
-- **System／Application 頻道有資料但量極少**：`repip:10.232.11.11` 近 24h System=3、Application=152，
+- **System／Application 頻道有資料但量極少**：`repip:10.1.2.11` 近 24h System=3、Application=152，
   而該主機總量約 31 萬筆/日（步驟 11 推算），即 **99.95% 是 Security**。研判 collector 對這兩個頻道
   只轉送 Error/Warning 等級（恰與本機模式的 `ErrorWarningOnly` 同策略）。磁碟／服務／硬體類規則
   **有**資料來源，但實際涵蓋的嚴重度區間待步驟 9 的樣本傾印確認。

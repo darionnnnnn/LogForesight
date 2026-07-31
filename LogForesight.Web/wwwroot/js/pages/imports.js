@@ -291,7 +291,7 @@ function renderScanPicker(allSentinels) {
     subnetInput.className = 'form-control';
     subnetInput.style.maxWidth = '220px';
     subnetInput.id = 'scan-subnet-input';
-    subnetInput.placeholder = '網段，例：10.232.11';
+    subnetInput.placeholder = '網段，例：10.1.2';
     row.appendChild(subnetInput);
 
     const scanButton = document.createElement('button');
