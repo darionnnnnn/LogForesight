@@ -219,6 +219,10 @@ body {
     --bs-btn-font-weight: 500;
     display: inline-flex;
     align-items: center;
+    /* inline-flex 主軸預設 justify-content:flex-start，一般按鈕寬度貼齊內容看不出差異，
+       但滿寬（w-100）按鈕（登入送出鈕／側欄登出鈕／處理面板儲存鈕）內容會整排靠左——
+       docs/FEEDBACK-5-PLAN.md §1 */
+    justify-content: center;
     gap: .4em;
     /* withBusy() 把按鈕內容換成「spinner＋⋯中」文字後，Bootstrap 按鈕預設不禁止換行，
        在窄容器（如聊天輸入列）裡會醜陋地折成兩行（docs/WEB-FEEDBACK-2-PLAN.md #9） */
@@ -506,6 +510,11 @@ body {
 }
 
 .lf-sidebar__user .lf-icon { color: var(--lf-sidebar-section); width: 1.1rem; height: 1.1rem; }
+
+/* #lf-current-user 的 text-truncate 原本不會生效——flex 子項預設 min-width:auto，
+   不會縮到內容寬度以下；補 min-width:0 讓省略號真正出現，長名字不再把側欄撐爆
+   （docs/FEEDBACK-5-PLAN.md §3）*/
+.lf-sidebar__user #lf-current-user { min-width: 0; flex: 1 1 auto; }
 
 .lf-sidebar__version {
     margin-top: var(--lf-space-2);
