@@ -1,0 +1,24 @@
+namespace LogForesight;
+
+/// <summary>
+/// 風險 log 暫存讀寫（↔ lf_risky_events，docs/WEB-SCHEDULER-PLAN.md §2）。
+/// 批次寫、Web（AI 對話）讀；資格與呈現量上限見 <see cref="RiskyEventSelector"/>。
+/// </summary>
+public interface IRiskyEventStore
+{
+    /// <summary>
+    /// 覆寫「這台主機這一天」的暫存內容：先刪舊列再整批寫入。與
+    /// <see cref="IAnalysisRecordReader.HasRecord"/> 的缺日回補機制配合——正常不會重寫，
+    /// 但寫入本身天生冪等，重跑同一天不會殘留舊列。
+    /// </summary>
+    void ReplaceDay(long hostId, DateTime date, List<RiskyEvent> events);
+
+    /// <summary>
+    /// 依主機＋日期＋簽章（Source/EventId）查詢，依事件時間新到舊排序，取前 <paramref name="maxResults"/> 筆。
+    /// 查無資格內的簽章或已超出保留天數時回空清單（呼叫端據此 fallback 即時查詢）。
+    /// </summary>
+    List<RiskyEvent> Query(long hostId, DateTime date, string source, int eventId, int maxResults);
+
+    /// <summary>清除超過保留天數的暫存（以 <see cref="RiskyEvent.Date"/> 為基準，非寫入時間），回傳清除筆數</summary>
+    int Prune(int retentionDays);
+}

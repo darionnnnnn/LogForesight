@@ -70,6 +70,14 @@ public class SystemSettings
     public int AuditRetentionDays { get; set; } = 730;
 
     /// <summary>
+    /// 風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2.2.3，2026-07-31 定案）：規則命中或
+    /// 趨勢異常的問題簽章原始事件，暫存供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel。
+    /// 與業務資料的 <see cref="RetentionDays"/> 是不同性質的保留期（暫存 vs 長期分析紀錄），
+    /// 驗證要求 <c>1 &lt;= 值 &lt;= RetentionDays</c>——暫存活得比分析紀錄久沒有意義。
+    /// </summary>
+    public int RiskyEventRetentionDays { get; set; } = 14;
+
+    /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/HISTORY.md #9）。開啟後不論 appsettings 的
     /// Auth:Provider 是 Stub 或 Ldap，一律改用 <see cref="AdServers"/> 等 DB 設定連線驗證——
     /// 這正是「測試模式（Stub）開啟後也走 AD 驗證」的開關，見 DynamicAuthenticationProvider。

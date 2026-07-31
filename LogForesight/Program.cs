@@ -66,6 +66,8 @@ var RetentionDays = 120;
 var RunLogRetentionDays = 90;
 // 稽核紀錄保留天數；同上，DB 為事實來源。
 var AuditRetentionDays = 730;
+// 風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）；同上，DB 為事實來源。
+var RiskyEventRetentionDays = 14;
 
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
@@ -158,6 +160,16 @@ try
 
     RunLogRetentionDays = systemSettings.RunLogRetentionDays;
     AuditRetentionDays = systemSettings.AuditRetentionDays;
+
+    if (systemSettings.RiskyEventRetentionDays >= 1 && systemSettings.RiskyEventRetentionDays <= RetentionDays)
+    {
+        RiskyEventRetentionDays = systemSettings.RiskyEventRetentionDays;
+    }
+    else
+    {
+        log.Warn("系統設定的風險 log 暫存保留天數（{RiskyEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
+            systemSettings.RiskyEventRetentionDays, RetentionDays);
+    }
 }
 catch (Exception ex)
 {
@@ -353,6 +365,9 @@ var historyService = StorageFactory.CreateRecordStore(settings.Storage, dataRoot
 var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
 var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
     settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
+// 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
+// NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
+var riskyEventStore = StorageFactory.CreateRiskyEventStore(settings.Storage, dataRoot);
 var permissionMonitor = new PermissionMonitorService(settings.Permissions,
     StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
 var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
@@ -480,10 +495,16 @@ try
     var auditPruned = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot).Prune(AuditRetentionDays);
     if (auditPruned > 0)
         Console.WriteLine($"已清除 {auditPruned} 筆超過 {AuditRetentionDays} 天的稽核紀錄。");
+
+    // 風險 log 暫存清理（docs/WEB-SCHEDULER-PLAN.md §2.2.3）：獨立於業務紀錄的 RetentionDays，
+    // 保留期通常短得多（預設 14 天）
+    var riskyEventPruned = riskyEventStore.Prune(RiskyEventRetentionDays);
+    if (riskyEventPruned > 0)
+        Console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {RiskyEventRetentionDays} 天的風險 log 暫存。");
 }
 catch (Exception ex)
 {
-    log.Warn(ex, "執行歷程／匯入／稽核紀錄清理失敗（不影響本次分析）：{0}", ex.Message);
+    log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
 }
 
 // 1c. 清理過期的風險報告檔（docs/HISTORY.md P1-4）——與歷史紀錄同一個 RetentionDays，
@@ -607,6 +628,18 @@ else
             log.Warn(ex, "案件掛接失敗（不影響分析結果，下次執行冪等補掛）：{0}", ex.Message);
         }
 
+        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學——寫入失敗
+        // 不讓當日分析結果作廢，下次執行 ReplaceDay 冪等覆寫，不需要另外設計重試旗標
+        try
+        {
+            var riskyEvents = RiskyEventSelector.Select(record.TopIssues, logs, currentHostId, date);
+            riskyEventStore.ReplaceDay(currentHostId, date, riskyEvents);
+        }
+        catch (Exception ex)
+        {
+            log.Warn(ex, "風險 log 暫存寫入失敗（不影響分析結果）：{0}", ex.Message);
+        }
+
         dayStopwatch.Stop();
         elapsedByDate[date] = dayStopwatch.Elapsed;
         runRecorder.RecordDayAnalyzed();
@@ -666,7 +699,7 @@ if (netiqHostList.TotalHosts > 0)
         var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
         var netiqPipeline = new NetiqPipelineService(
             settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
-            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator);
+            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore);
 
         var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
         runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +

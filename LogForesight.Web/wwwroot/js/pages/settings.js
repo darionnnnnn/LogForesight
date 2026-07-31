@@ -170,6 +170,7 @@ function renderRetentionFields(settings) {
     document.getElementById('retention-days').value = settings.retentionDays;
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
+    document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
 }
 
 function renderUpdatedAt(settings) {
@@ -209,6 +210,11 @@ function bindForm() {
 
         const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
+        const riskyEventRetentionDays = Number(document.getElementById('risky-event-retention-days').value);
+        if (riskyEventRetentionDays > retentionDays) {
+            toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
 
         const apiKey = document.getElementById('ai-api-key').value;
         const clearApiKey = document.getElementById('ai-api-key-clear').checked;
@@ -233,6 +239,7 @@ function bindForm() {
                 retentionDays,
                 runLogRetentionDays,
                 auditRetentionDays,
+                riskyEventRetentionDays,
                 adAuthEnabled,
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),
