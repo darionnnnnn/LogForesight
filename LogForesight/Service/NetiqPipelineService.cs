@@ -35,12 +35,13 @@ public class NetiqPipelineService
     private readonly RiskReportService _reportService;
     private readonly BatchRunRecorder _runRecorder;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly IRiskyEventStore? _riskyEventStore;
 
     public NetiqPipelineService(
         StorageSettings storage, string dataRoot, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
-        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator)
+        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRiskyEventStore? riskyEventStore = null)
     {
         _storage = storage;
         _dataRoot = dataRoot;
@@ -53,6 +54,7 @@ public class NetiqPipelineService
         _reportService = reportService;
         _runRecorder = runRecorder;
         _caseCoordinator = caseCoordinator;
+        _riskyEventStore = riskyEventStore;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="StoreHostListProvider"/>）；
@@ -304,6 +306,21 @@ public class NetiqPipelineService
             catch (Exception ex)
             {
                 Log.Warn(ex, "[{Server}] [{Ip}] {Date} 案件掛接失敗（不影響分析結果，下次執行冪等補掛）", sentinelName, target.IpAddress, date);
+            }
+
+            // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：與本機路徑同一套選取邏輯
+            // （RiskyEventSelector），寫入失敗同樣不讓這台主機這天的分析結果作廢
+            if (_riskyEventStore != null)
+            {
+                try
+                {
+                    var riskyEvents = RiskyEventSelector.Select(record.TopIssues, events, target.HostId, date);
+                    _riskyEventStore.ReplaceDay(target.HostId, date, riskyEvents);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(ex, "[{Server}] [{Ip}] {Date} 風險 log 暫存寫入失敗（不影響分析結果）", sentinelName, target.IpAddress, date);
+                }
             }
 
             // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有

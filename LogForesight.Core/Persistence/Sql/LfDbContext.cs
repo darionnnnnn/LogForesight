@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Sql;
@@ -21,6 +22,9 @@ public class LfDbContext : DbContext
 
     public DbSet<DailyRecordRow> DailyRecords => Set<DailyRecordRow>();
     public DbSet<TopIssueRow> TopIssues => Set<TopIssueRow>();
+
+    /// <summary>風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2，↔ lf_risky_events）</summary>
+    public DbSet<RiskyEventRow> RiskyEvents => Set<RiskyEventRow>();
 
     /// <summary>webdata 各 store 的整份 JSON 內容（一個 key 一列，↔ EfJsonBlobStore）</summary>
     public DbSet<BlobRow> Blobs => Set<BlobRow>();
@@ -99,6 +103,27 @@ public class LfDbContext : DbContext
 
             e.HasOne<DailyRecordRow>().WithMany().HasForeignKey(x => x.RecordId).OnDelete(DeleteBehavior.Cascade);
         });
+
+        b.Entity<RiskyEventRow>(e =>
+        {
+            e.ToTable("lf_risky_events");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.HostId).HasColumnName("host_id");
+            e.Property(x => x.Date).HasColumnName("date");
+            e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255);
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(255);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.EntryType).HasColumnName("entry_type");
+            e.Property(x => x.EventTime).HasColumnName("event_time");
+            e.Property(x => x.Message).HasColumnName("message");
+            e.Property(x => x.RuleId).HasColumnName("rule_id").HasMaxLength(64);
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            // AI 對話查詢形狀（host_id+date+source+event_id）；date 單獨一支供 Prune 清理
+            e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId });
+            e.HasIndex(x => x.Date);
+        });
     }
 }
 
@@ -125,6 +150,22 @@ public class TopIssueRow
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
+}
+
+/// <summary>風險 log 暫存一列（docs/WEB-SCHEDULER-PLAN.md §2）。↔ lf_risky_events</summary>
+public class RiskyEventRow
+{
+    public long Id { get; set; }
+    public long HostId { get; set; }
+    public DateTime Date { get; set; }
+    public string LogName { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public EventLogEntryType EntryType { get; set; }
+    public DateTime EventTime { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? RuleId { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
 
 /// <summary>webdata 整份 JSON 內容的一列（key＝store 名稱，如 "users"）。↔ lf_blobs</summary>

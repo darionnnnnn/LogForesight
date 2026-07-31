@@ -28,6 +28,66 @@ public static class SchemaUpgrader
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+
+        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
+        // 「不是靠 EnsureCreated 建出來」的全新資料表——既有部署的 DB 已經存在，EnsureCreated
+        // 對它不會做任何事（只在資料庫整個不存在時建表），所以這裡要用跟補欄位/補索引同一套
+        // 「檢查缺什麼→缺才補」冪等 DDL 補上整張表，新 DB 則由 EnsureCreated 直接建好、這裡 no-op。
+        CreateTableIfMissing(ctx, isSqlite, "lf_risky_events",
+            isSqlite ? SqliteCreateRiskyEventsTable : SqlServerCreateRiskyEventsTable);
+        AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
+            "IX_lf_risky_events_host_id_date_source_event_id", "host_id, date, source, event_id");
+        AddIndexIfMissing(ctx, isSqlite, "lf_risky_events", "IX_lf_risky_events_date", "date");
+    }
+
+    private const string SqliteCreateRiskyEventsTable = """
+        CREATE TABLE lf_risky_events (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_risky_events PRIMARY KEY AUTOINCREMENT,
+            host_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            log_name TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            entry_type INTEGER NOT NULL,
+            event_time TEXT NOT NULL,
+            message TEXT NOT NULL,
+            rule_id TEXT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateRiskyEventsTable = """
+        CREATE TABLE lf_risky_events (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_risky_events PRIMARY KEY,
+            host_id bigint NOT NULL,
+            date datetime2 NOT NULL,
+            log_name nvarchar(255) NOT NULL,
+            source nvarchar(255) NOT NULL,
+            event_id int NOT NULL,
+            entry_type int NOT NULL,
+            event_time datetime2 NOT NULL,
+            message nvarchar(max) NOT NULL,
+            rule_id nvarchar(64) NULL,
+            created_at datetime2 NOT NULL
+        )
+        """;
+
+    private static void CreateTableIfMissing(LfDbContext ctx, bool isSqlite, string table, string createTableSql)
+    {
+        if (TableExists(ctx, isSqlite, table)) return;
+
+        Log.Info("[SQL] schema 升級：建立資料表 {Table}", table);
+        ctx.Database.ExecuteSqlRaw(createTableSql);
+    }
+
+    /// <summary>SQLite：<c>sqlite_master</c>；SqlServer：INFORMATION_SCHEMA.TABLES</summary>
+    private static bool TableExists(LfDbContext ctx, bool isSqlite, string table)
+    {
+        var names = isSqlite
+            ? ctx.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sqlite_master WHERE type = 'table' AND name = {0}", table).ToList()
+            : ctx.Database.SqlQueryRaw<string>(
+                "SELECT TABLE_NAME AS Value FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = {0}", table).ToList();
+        return names.Contains(table, StringComparer.OrdinalIgnoreCase);
     }
 
     private static void AddColumnIfMissing(LfDbContext ctx, bool isSqlite, string table, string column, string columnDefinition)

@@ -16,7 +16,8 @@ public class SystemSettingsServiceTests
     private SystemSettingsService Create() =>
         new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService());
 
-    private static UpdateSystemSettingsRequest ValidRequest(int runLogRetentionDays = 90, int auditRetentionDays = 730) => new()
+    private static UpdateSystemSettingsRequest ValidRequest(
+        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14) => new()
     {
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
@@ -25,7 +26,8 @@ public class SystemSettingsServiceTests
         InitialHistoryDays = 120,
         RetentionDays = 120,
         RunLogRetentionDays = runLogRetentionDays,
-        AuditRetentionDays = auditRetentionDays
+        AuditRetentionDays = auditRetentionDays,
+        RiskyEventRetentionDays = riskyEventRetentionDays
     };
 
     [Fact]
@@ -41,6 +43,38 @@ public class SystemSettingsServiceTests
         Assert.Equal(365, service.Get().AuditRetentionDays);
     }
 
+    // ── docs/WEB-SCHEDULER-PLAN.md §2：RiskyEventRetentionDays ──────────────────────
+
+    [Fact]
+    public void Update後_風險log暫存保留天數持久化()
+    {
+        var service = Create();
+
+        var saved = service.Update(ValidRequest(riskyEventRetentionDays: 7));
+
+        Assert.Equal(7, saved.RiskyEventRetentionDays);
+        Assert.Equal(7, service.Get().RiskyEventRetentionDays);
+    }
+
+    [Fact]
+    public void 風險log暫存保留天數大於歷史資料保留天數時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest(riskyEventRetentionDays: 200); // RetentionDays 固定為 120（ValidRequest）
+
+        Assert.Throws<DomainException>(() => service.Update(request));
+    }
+
+    [Fact]
+    public void 風險log暫存保留天數等於歷史資料保留天數時允許()
+    {
+        var service = Create();
+
+        var saved = service.Update(ValidRequest(riskyEventRetentionDays: 120));
+
+        Assert.Equal(120, saved.RiskyEventRetentionDays);
+    }
+
     [Fact]
     public void 預設值符合SystemSettings的內建預設()
     {
@@ -48,6 +82,7 @@ public class SystemSettingsServiceTests
 
         Assert.Equal(90, settings.RunLogRetentionDays);
         Assert.Equal(730, settings.AuditRetentionDays);
+        Assert.Equal(14, settings.RiskyEventRetentionDays);
     }
 
     /// <summary>

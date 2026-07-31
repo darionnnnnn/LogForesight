@@ -213,4 +213,8 @@ public static class StorageFactory
     /// <summary>NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁維護）</summary>
     public static NetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
         new NetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));
+
+    /// <summary>風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀</summary>
+    public static IRiskyEventStore CreateRiskyEventStore(StorageSettings settings, string dataRoot) =>
+        new EfRiskyEventStore(GetDbFactory(settings, dataRoot));
 }

@@ -115,6 +115,9 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
 
+        if (request.RiskyEventRetentionDays > request.RetentionDays)
+            throw DomainException.Validation("風險 log 暫存保留天數不可大於歷史資料保留天數。");
+
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
             throw DomainException.Validation("啟用 AD 驗證時，請至少輸入一台 AD 伺服器。");
@@ -135,6 +138,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.RetentionDays = request.RetentionDays;
             s.RunLogRetentionDays = request.RunLogRetentionDays;
             s.AuditRetentionDays = request.AuditRetentionDays;
+            s.RiskyEventRetentionDays = request.RiskyEventRetentionDays;
             s.AdAuthEnabled = request.AdAuthEnabled;
             s.AdServers = adServers;
             s.AdSearchBase = request.AdSearchBase?.Trim() ?? "";
@@ -157,12 +161,14 @@ public class SystemSettingsService : ISystemSettingsService
                 {
                     before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.AiBaseUrl,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
+                    before.RiskyEventRetentionDays,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter
                 },
                 After = new
                 {
                     saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.AiBaseUrl,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
+                    saved.RiskyEventRetentionDays,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter
                 },
                 AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey)
@@ -254,6 +260,7 @@ public class SystemSettingsService : ISystemSettingsService
         RetentionDays = s.RetentionDays,
         RunLogRetentionDays = s.RunLogRetentionDays,
         AuditRetentionDays = s.AuditRetentionDays,
+        RiskyEventRetentionDays = s.RiskyEventRetentionDays,
         AdAuthEnabled = s.AdAuthEnabled,
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,

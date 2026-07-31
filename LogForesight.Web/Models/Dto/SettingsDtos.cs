@@ -28,6 +28,9 @@ public class SystemSettingsDto
     /// <summary>稽核紀錄保留天數</summary>
     public int AuditRetentionDays { get; set; }
 
+    /// <summary>風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）</summary>
+    public int RiskyEventRetentionDays { get; set; }
+
     /// <summary>是否啟用 DB 設定的 AD 驗證（docs/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
 
@@ -75,6 +78,11 @@ public class UpdateSystemSettingsRequest
 
     [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
+
+    /// <summary>風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）；上限交由
+    /// SystemSettingsService.Update 對照 RetentionDays 驗證（暫存不可活得比分析紀錄久）</summary>
+    [Range(1, 3650, ErrorMessage = "風險 log 暫存保留天數必須介於 1~3650 天")]
+    public int RiskyEventRetentionDays { get; set; }
 
     // ── AD 驗證（docs/HISTORY.md #9）────────────────────────────────
 

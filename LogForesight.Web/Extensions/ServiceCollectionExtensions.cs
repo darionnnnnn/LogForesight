@@ -54,6 +54,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
         services.AddSingleton<BatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
+        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
+        services.AddSingleton<IRiskyEventStore>(_ => StorageFactory.CreateRiskyEventStore(storage, dataRoot));
+
         return services;
     }
 
@@ -223,6 +226,9 @@ public static class ServiceCollectionExtensions
         // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
+
+        // 風險 log 暫存優先、Sentinel 即時查詢 fallback（docs/WEB-SCHEDULER-PLAN.md §2.2.4）
+        services.AddScoped<IRiskyEventLookup, RiskyEventLookupService>();
 
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
