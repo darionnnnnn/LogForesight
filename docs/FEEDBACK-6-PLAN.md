@@ -16,7 +16,7 @@
 | # | 項目 | 對應 | 規模 |
 |---|------|------|------|
 | 1 | NetIQ 頁 ChatLiveFetch 設定文字過時 | Phase 1 收尾遺漏，本文件 §1 | 極小 |
-| 2 | 排程設定頁面＋手動觸發＋側欄入口「排程作業」 | WEB-SCHEDULER-PLAN **Phase 2＋3**，本文件 §2 | 大 |
+| 2 ✅ | 排程設定頁面＋手動觸發＋側欄入口「排程作業」 | WEB-SCHEDULER-PLAN **Phase 2＋3**，本文件 §2 | 大 |
 | 3 | 移除不使用的專案與檔案 | WEB-SCHEDULER-PLAN **Phase 4＋5**，本文件 §3 | 大 |
 | 4 | 說明文字二次收斂（非必要常駐 → icon） | 第五輪 §6 續作，本文件 §4 | 小中 |
 | 5 | 全站用詞檢視（官方用詞／台灣 IT 慣用詞） | 本文件 §5 | 小中 |
@@ -227,6 +227,40 @@ serverAdmin 的設計原則是「依用途給權」（救援＋初始設定）�
 設定的一部分，執行紀錄是確認排程活著的必要回饋，兩者都在用途內；業務資料
 （儀表板/問題查詢/報表）仍然一項都看不到，最小授權的實質未被稀釋。
 
+### Phase 3 全部完成（2026-07-31）
+
+`ScheduleOptions`／`ScheduleCalculator`（39 測試，格式/重疊/跨午夜/漏跑補償
+全涵蓋）／`NamedMutexGate`（5 測試，含跨執行緒續行與逾時競爭）／
+`SchedulerHostedService`／6 支 API（options GET/PUT、status、run-preview、
+run、cancel）／側欄改名與權限放寬／排程作業頁排程卡／主機詳情頁「指定主機
+更新」鈕，全部完成並提交（7 個 commit）。1258 測試綠（1214+44）。
+
+**與規劃的差異**（詳見各 commit message，此處彙總）：
+
+1. **API 從「4 支」變成「6 支」**：規劃 §1.4.4 只列 run-preview／run／cancel／
+   status 四支；實作時發現排程卡需要讀寫 `ScheduleOptions`（Enabled／
+   Windows／DebugDump），沒有對應端點就沒東西可存/讀，補上
+   `GET/PUT api/admin/schedule/options` 兩支，行為單純（CRUD＋驗證），
+   不影響原四支的設計。
+2. **`RunPreviewDto` 精簡為單一 `HostCount`**：規劃提到「排除統計」，實作
+   評估後判斷「這個範圍會跑幾台」才是使用者按下「立即執行」前真正要的
+   資訊，詳細排除清單（待歸屬/衝突/停用）已存在於主機頁，不重複呈現。
+3. **`host` 範圍在後端加了 Pollable 檢查**（規劃未提，實測時發現）：若不查
+   一台已停用/待歸屬的 NetIQ 主機，`run-preview` 會誠實顯示「1 台」但實際
+   觸發時 orchestrator 內部會把它濾掉、靜默變 0 台——這正是全案反覆強調的
+   「不靜默少幾台」的一個新違例，加驗證擋下並給出具體原因。
+4. **`BackfillOverride` 的實際套用**（Phase 2 記錄的待辦）：`RunRequest` 早在
+   Phase 2 就定義了這個欄位但沒接線，Phase 3 建 API 時順手把它套進
+   `NetiqPipelineService` 建構前的 `netiqOptions.BackfillDays` 覆寫。
+5. **具名 Mutex 的 Web 安全包裝**（Phase 2 明確記錄留給 Phase 3）：`NamedMutexGate`
+   把 acquire/release 整段包進單一 `Task.Run` 委派解決執行緒親和性問題，
+   已如期在本輪完成，見獨立 commit 的完整說明。
+6. **瀏覽器實測中途換測試帳號**：一開始用 serverAdmin（`svc-lfadmin`）測試
+   主機詳情頁的「指定主機更新」鈕，反覆 404 才想起 serverAdmin 依權限模型
+   本就沒有業務資料檢視能力——換成 admin 群組的一般帳號後恢復正常。
+   這不是本輪程式碼的缺陷，是測試步驟一開始選錯帳號，記錄下來避免下次
+   重蹈覆轍。
+
 ---
 
 ## 3. 移除不使用的專案與檔案（＝WEB-SCHEDULER-PLAN Phase 4＋5）
@@ -435,13 +469,13 @@ README 掃描零命中「查看」「點擊」。全站用詞一致性問題實�
 
 ## 7. 實作順序（已可開工）
 
-1. §1 NetIQ 頁文字修正＋§4 說明文字二次收斂＋§5 全站用詞檢視
-   （同屬前端文字面，合併為一批 1~3 個 commit；§5 涉及後端字串與測試同步修正）
-2. 刪 `SuppressionCli`／`HostListCli`＋README 對應兩節（Q1 定案）
-3. Phase 2 服務搬遷（只搬不改；1214 測試綠＋console 輸出逐字不變為閘門；
-   含 `System.IO.FileSystem.AccessControl` 套件移入 Core）
-4. Phase 3 排程引擎＋UI（`ScheduleCalculator` 純函數先行＋完整單測；含側欄
-   改名「排程作業」與 `PermissionAttribute` 多能力擴充、Runs API 權限放寬）
+1. ✅ §1 NetIQ 頁文字修正＋§4 說明文字二次收斂＋§5 全站用詞檢視
+2. ✅ 刪 `SuppressionCli`／`HostListCli`＋README 對應兩節（Q1 定案）
+3. ✅ Phase 2 服務搬遷（只搬不改；1214 測試綠＋console 輸出逐字不變，`git diff`
+   逐行核對確認；`AnalysisOrchestrator`／`IRunConsole` 抽取一併完成）
+4. ✅ Phase 3 排程引擎＋UI（`ScheduleOptions`／`ScheduleCalculator`／
+   `NamedMutexGate`／`SchedulerHostedService`／6 支 API／側欄改名＋權限放寬／
+   排程卡／主機詳情觸發鈕，全部完成，1258 測試綠，明細見 §2 末段）
 5. Phase 4 CLI 職責搬 Web（規則升級 → 傾印開關 → probe 診斷分頁，逐塊 commit）
 6. 全案體檢 → 併 dev → 使用者驗證（含排程實跑）
 7. Phase 5 退場步驟 1~2 由部署執行；**≥5 晚試點後**回頭做步驟 4~5
