@@ -6,8 +6,10 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy } from '../core/ui.js';
+import { renderTable, renderLoading, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
+
+bindTabs(document.getElementById('netiq-tabs'));
 
 // ── Sentinel 清單與編輯 ──────────────────────────────────────────────────────
 
@@ -26,6 +28,7 @@ async function loadSentinels() {
 
 function renderSentinels() {
     document.getElementById('sentinel-count').textContent = `共 ${sentinels.length} 台`;
+    renderProbeSentinelOptions();
 
     renderTable(sentinelListContainer, {
         columns: [
@@ -255,5 +258,118 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
     }
 });
 
+// ── NetIQ API 診斷（probe，「診斷」分頁）────────────────────────────────────
+
+const probeSentinelSelect = document.getElementById('probe-sentinel');
+const probeStartButton = document.getElementById('probe-start');
+const probeStateEl = document.getElementById('probe-state');
+const probeOutputEl = document.getElementById('probe-output');
+const probeCopyButton = document.getElementById('probe-copy');
+
+let probePollTimer = null;
+
+function renderProbeSentinelOptions() {
+    const previousValue = probeSentinelSelect.value;
+    probeSentinelSelect.replaceChildren();
+
+    if (sentinels.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '（尚無 Sentinel，請先在「設定」分頁新增）';
+        probeSentinelSelect.appendChild(option);
+        probeSentinelSelect.disabled = true;
+        return;
+    }
+
+    probeSentinelSelect.disabled = false;
+    for (const sentinel of sentinels) {
+        const option = document.createElement('option');
+        option.value = String(sentinel.sentinelId);
+        option.textContent = sentinel.canDiscover ? sentinel.name : `${sentinel.name}（帳密未設定）`;
+        probeSentinelSelect.appendChild(option);
+    }
+    if (previousValue && sentinels.some(s => String(s.sentinelId) === previousValue)) {
+        probeSentinelSelect.value = previousValue;
+    }
+}
+
+function renderProbeStatus(status) {
+    probeOutputEl.value = status.output || '';
+    if (status.output) {
+        probeOutputEl.scrollTop = probeOutputEl.scrollHeight;
+    }
+    probeCopyButton.disabled = !status.output;
+
+    if (status.isRunning) {
+        probeStartButton.disabled = true;
+        probeStateEl.textContent = `執行中（${status.sentinelName}）…${status.latestMessage ? '　' + status.latestMessage : ''}`;
+        return;
+    }
+
+    probeStartButton.disabled = false;
+    if (!status.completedAt) {
+        probeStateEl.textContent = '';
+        return;
+    }
+    probeStateEl.textContent = `上次執行：${formatDateTime(status.completedAt)}　` +
+        (status.success ? '✓ 完成（詳見下方輸出，個別步驟仍可能失敗，請自行檢視）' : '✗ 執行中發生錯誤，詳見下方輸出');
+}
+
+async function refreshProbeStatus() {
+    let status;
+    try {
+        status = await api.get('/api/admin/netiq/probe/status', { silent: true });
+    } catch {
+        return;
+    }
+    renderProbeStatus(status);
+
+    if (status.isRunning && !probePollTimer) {
+        probePollTimer = setInterval(async () => {
+            const latest = await api.get('/api/admin/netiq/probe/status', { silent: true }).catch(() => null);
+            if (!latest) return;
+            renderProbeStatus(latest);
+            if (!latest.isRunning) {
+                clearInterval(probePollTimer);
+                probePollTimer = null;
+            }
+        }, 2000);
+    }
+}
+
+probeStartButton.addEventListener('click', async () => {
+    const sentinelId = Number(probeSentinelSelect.value);
+    if (!sentinelId) {
+        toast('請先選擇要診斷的 Sentinel', 'warning');
+        return;
+    }
+
+    // 不用 withBusy：啟動成功後按鈕的 disabled 狀態要交給輪詢邏輯接管（診斷本身還在跑），
+    // withBusy 的 restore 會在這裡的 await 之後無條件把 disabled 改回 false，跟輪詢邏輯打架
+    probeStartButton.disabled = true;
+    try {
+        await api.post('/api/admin/netiq/probe/start', {
+            sentinelId,
+            sampleIp: document.getElementById('probe-sample-ip').value.trim() || null,
+            sampleLinuxIp: document.getElementById('probe-sample-linux-ip').value.trim() || null
+        });
+        toast('已開始診斷，完成前可切換分頁，稍後回來查看即可', 'success');
+        await refreshProbeStatus();
+    } catch {
+        // 錯誤訊息已由 api.js 以 toast 顯示；啟動失敗，交還控制權
+        probeStartButton.disabled = false;
+    }
+});
+
+probeCopyButton.addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(probeOutputEl.value);
+        toast('已複製診斷輸出', 'success');
+    } catch {
+        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
+    }
+});
+
 loadSentinels();
 loadOptions();
+refreshProbeStatus();

@@ -322,6 +322,56 @@ README 的 `--suppress`／`--host-list` 兩節屬現行操作指引，同 commit
 - 移除後回退只剩冷回退（git revert＋重建部署），已是定案 #9 的知情選擇；
   緩解措施（試點驗證、冷回退演練、分析冪等自癒）照 §1.5 原設計。
 
+### Phase 4 全部完成（2026-07-31）
+
+三個子項（§1.4.9 規則升級／§1.4.10 AI 診斷傾印開關／§1.4.11 probe 診斷分頁）
+全部完成，**Phase 4 結案，Phase 5 就緒**（實際移除仍卡使用者 ≥5 晚驗證，
+不在本輪範圍）。1258 測試綠（較 Phase 3 結束時持平，本輪未新增測試——
+理由見下方「與規劃的差異」第 3 點）。
+
+1. **§1.4.9 規則升級**：`RuleImportPlanner`（`BuildPlan`／`Apply`）拆到 Core，
+   console `RuleImporter.cs` 改為薄殼；Web 規則頁加 seed 版本橫幅、預覽/套用
+   對話框、三支 API（`import-status`／`import-preview`／`import-apply`）。
+   `RuleImporterTests` 10 處呼叫改指新類別，斷言不變。
+2. **§1.4.10 AI 診斷傾印開關**：實際上在 Phase 3 建排程卡（`ScheduleOptions.DebugDump`
+   ＋徽章）時已一併做完，本輪只需確認並補一個一致性修正——`ScheduleController.Run()`
+   手動觸發原本沒有套用 `DebugDump`，只有 `SchedulerHostedService.TickAsync`
+   （排程觸發）有套，造成手動「立即執行」／「指定主機更新」會靜默忽略這個
+   開關。修正把套用點統一移進 `SchedulerHostedService.TriggerRunAsync` 本身，
+   讓排程與手動兩條觸發路徑都以當下的排程設定為準（獨立 commit
+   `fix(web): AI 診斷傾印開關統一以排程設定為準，不受觸發來源影響`）。
+3. **§1.4.11 probe 診斷分頁**：`NetiqProbeCli.cs` 原本的 13 個驗證步驟＋輸出格式
+   逐字搬進 Core 的 `NetiqProbeRunner`（console 與 Web 共用同一份，任何一邊都
+   不再各自維護查詢邏輯）；`SentinelConnectionFactory` 順帶從 `internal` 改
+   `public`（本就是同一份解密邏輯，Web 沒理由再寫一份）。NetIQ 維護頁改成
+   「設定」／「診斷」兩分頁（`bindTabs`，沿用 Settings 頁既有模式）；「診斷」
+   分頁選一台 Sentinel＋選填 Windows／Linux 樣本 IP，觸發後背景執行、
+   2 秒輪詢、輸出即時累積到唯讀 textarea（「即時 tail」效果）＋複製鈕。
+   `NetiqProbeRunState` 是獨立的併發 1 gate，刻意與 `SchedulerRunState`
+   分開——不被夜間分析互斥擋住。瀏覽器實測：對假 Sentinel（`sentinel.test:8443`）
+   觸發診斷，13 個步驟逐一失敗隔離、正確跑完並顯示「✗ 執行中發生錯誤」，
+   稽核紀錄正確寫入且分頁切換不影響背景執行。
+
+**與規劃的差異**：
+
+1. **稽核動作代碼中文對照表有既有缺口，本輪一併補齊**：核對
+   `AuditQueryService.ActionNames` 時發現 Phase 3 新增的
+   `ScheduleOptionsUpdate`／`ScheduleManualRun`／`ScheduleManualCancel` 與
+   §1.4.9 新增的 `RuleSeedImport` 都沒有補進這張表（稽核頁會顯示原始代碼
+   字串而非中文），與本輪新增的 `NetiqProbeRun` 一起補上，不是新 bug、是
+   撿到既有遺漏順手修。
+2. **probe 稽核寫在 Controller 而非 Service**：`AdminController` 原本的慣例是
+   稽核寫在各自的 Scoped Service 內（`SentinelAdminService`／`NetiqOptionsService`）；
+   `NetiqProbeService` 因為要背景執行（`Task.Run`）必須是 Singleton，
+   而 `IAuditService` 是 Scoped、無法注入 Singleton，所以稽核呼叫留在
+   Controller——與 Phase 3 `ScheduleController.Run()` 手動觸發排程分析的
+   既有作法一致，不是本輪新發明的例外。
+3. **probe 沒有新增獨立單元測試**：規劃 §1.4.11 原文「既有 stub HTTP 單元測試
+   沿用」——`NetiqProbeRunner` 的查詢邏輯完全複用已受測的 `SentinelClient`
+   （`SentinelEventMapperTests`／`SentinelFieldMapTests` 等既有 stub HTTP
+   測試涵蓋），原 `NetiqProbeCli` 本身也從未有專屬單元測試（純輸出格式化，
+   靠瀏覽器/console 實測核對），拆分後維持同樣的驗證方式，未新增測試檔。
+
 ---
 
 ## 4. 說明文字二次收斂（非必要常駐 → icon）

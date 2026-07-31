@@ -2,27 +2,33 @@
     ViewData["Title"] = "NetIQ 維護";
 }
 
-<div class="lf-toolbar">
-    <div class="lf-toolbar__row">
-        <div class="lf-toolbar__spacer"></div>
-        <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
-    </div>
-</div>
+<ul class="nav nav-tabs mb-3" id="netiq-tabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">設定</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">診斷</button></li>
+</ul>
 
-<div class="lf-card mb-3">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title">
-            Sentinel <span class="text-muted small" id="sentinel-count"></span>
-        </h2>
-        <span tabindex="0" data-bs-toggle="popover"
-              data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
-            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
-        </span>
+<div data-panel="config">
+    <div class="lf-toolbar">
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__spacer"></div>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
+        </div>
     </div>
-    <div class="lf-card__body p-0" id="sentinel-list"></div>
-</div>
 
-<form id="netiq-options-form">
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">
+                Sentinel <span class="text-muted small" id="sentinel-count"></span>
+            </h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
+        </div>
+        <div class="lf-card__body p-0" id="sentinel-list"></div>
+    </div>
+
+    <form id="netiq-options-form">
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">連線與節流參數</h2>
@@ -94,7 +100,47 @@
         <button type="submit" class="btn btn-primary" id="netiq-options-save">儲存</button>
         <span class="text-muted small" id="netiq-options-updated"></span>
     </div>
-</form>
+    </form>
+</div>
+
+<div class="lf-card mb-3 d-none" data-panel="probe">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">NetIQ API 診斷</h2>
+        <span tabindex="0" data-bs-toggle="popover"
+              data-bs-content="對選定的 Sentinel 執行一組小規模驗證查詢（逐台十幾筆查詢，近 1～24 小時級距），用於核對欄位對應／時區／批次大小；不影響夜間排程分析（各自獨立執行、互不阻塞）。輸出可直接複製貼回對話討論。">
+            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+        </span>
+    </div>
+    <div class="lf-card__body">
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <label for="probe-sentinel" class="form-label">Sentinel <span class="text-danger">*</span></label>
+                <select class="form-select" id="probe-sentinel"></select>
+            </div>
+            <div class="col-md-4">
+                <label for="probe-sample-ip" class="form-label">樣本 IP（Windows，選填）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一台已知的 Windows 主機 IP，用於核對跨主機事件的主機歸屬鍵、頻道覆蓋、時間邊界。省略時對應的核對步驟會標示略過，不影響其餘步驟。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <input type="text" class="form-control" id="probe-sample-ip" placeholder="10.1.2.34" />
+            </div>
+            <div class="col-md-4">
+                <label for="probe-sample-linux-ip" class="form-label">樣本 IP（Linux，選填）</label>
+                <input type="text" class="form-control" id="probe-sample-linux-ip" placeholder="10.1.2.56" />
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-3 mb-3">
+            <button type="button" class="btn btn-primary" id="probe-start">執行診斷</button>
+            <span class="text-muted small" id="probe-state"></span>
+        </div>
+        <label for="probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+            診斷輸出
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="probe-copy" disabled>複製</button>
+        </label>
+        <textarea class="form-control font-monospace small" id="probe-output" rows="20" readonly placeholder="尚未執行過診斷。"></textarea>
+    </div>
+</div>
 
 <!-- Sentinel 編輯 -->
 <div class="modal fade" id="sentinel-modal" tabindex="-1">

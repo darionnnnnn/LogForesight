@@ -258,6 +258,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
+        // NetIQ API 診斷（probe，docs/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
+        // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用
+        services.AddSingleton<NetiqProbeRunState>();
+        services.AddSingleton<NetiqProbeService>();
+
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // 新增第四種匯入時只要多註冊一個實作，流程與 Controller 都不必改（OCP）
         services.AddScoped<ICsvImporter, UserCsvImporter>();

@@ -23,6 +23,8 @@ public class AdminController : ControllerBase
     private readonly GroupAdminService _groups;
     private readonly SentinelAdminService _sentinels;
     private readonly NetiqOptionsService _netiqOptions;
+    private readonly NetiqProbeService _probe;
+    private readonly IAuditService _audit;
 
     public AdminController(
         UserAdminService users,
@@ -31,7 +33,9 @@ public class AdminController : ControllerBase
         NetiqDiscoveryService discovery,
         GroupAdminService groups,
         SentinelAdminService sentinels,
-        NetiqOptionsService netiqOptions)
+        NetiqOptionsService netiqOptions,
+        NetiqProbeService probe,
+        IAuditService audit)
     {
         _users = users;
         _hosts = hosts;
@@ -40,6 +44,8 @@ public class AdminController : ControllerBase
         _groups = groups;
         _sentinels = sentinels;
         _netiqOptions = netiqOptions;
+        _probe = probe;
+        _audit = audit;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -257,4 +263,26 @@ public class AdminController : ControllerBase
     [HttpPut("netiq/options")]
     public ApiResponse<NetiqOptions> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
         ApiResponse<NetiqOptions>.Ok(_netiqOptions.Update(request));
+
+    // ── NetIQ API 診斷（probe，「診斷」分頁，docs/WEB-SCHEDULER-PLAN.md §1.4.11）──────────
+
+    [HttpGet("netiq/probe/status")]
+    public ApiResponse<NetiqProbeStatusDto> GetNetiqProbeStatus() =>
+        ApiResponse<NetiqProbeStatusDto>.Ok(_probe.GetStatus());
+
+    [HttpPost("netiq/probe/start")]
+    public ApiResponse<StartNetiqProbeResultDto> StartNetiqProbe([FromBody] StartNetiqProbeRequest request)
+    {
+        if (!_probe.TryStart(request.SentinelId, request.SampleIp, request.SampleLinuxIp, out var sentinel, out var error))
+            throw DomainException.Validation(error ?? "無法啟動診斷。");
+
+        _audit.Record(
+            action: AuditActions.NetiqProbeRun,
+            summary: $"對 Sentinel「{sentinel!.Name}」執行 API 診斷",
+            targetKind: "sentinel",
+            targetId: sentinel.SentinelId.ToString(),
+            detail: new { sentinel.Name, request.SampleIp, request.SampleLinuxIp });
+
+        return ApiResponse<StartNetiqProbeResultDto>.Ok(new StartNetiqProbeResultDto { Started = true });
+    }
 }
