@@ -1,7 +1,7 @@
 # Web 排程化與風險 log 暫存規劃（WEB-SCHEDULER-PLAN）
 
-> 規劃日期：2026-07-31。狀態：**規劃完成，未實作**（console 全退役方向已於
-> 2026-07-31 與使用者確認）。
+> 規劃日期：2026-07-31。狀態：**規劃完成、全部問題已定案（見 §3 定案紀錄
+> 1~9），未實作**。
 > 兩項需求：(1) 檢討 console 批次的去留，把排程職責搬進 Web（自訂排程時間、
 > 執行時間區間、手動觸發指定/全部主機、可設定回補天數）；(2) 取回並判定有風險的
 > log 暫存資料庫 14 天（設定頁可調），讓「詢問 AI」直接從資料庫取得原始事件。
@@ -10,23 +10,24 @@
 
 ## §0 結論先講
 
-- **Console 定案「終局完全退役、分兩階段退場」**（2026-07-31 使用者確認方向）：
+- **Console 定案「完全退役、直接移除」**（2026-07-31 使用者定案 #6/#9）：
   排程、時間區間、手動觸發、進度可視化全部搬進 Web（方案 A：Web 行程內
-  BackgroundService）。**過渡期保留薄殼 console**（行為逐字不變）作為試點期的
-  交叉驗證工具、緊急備援、與 Linux Sentinel probe 的載具；退役閘門（Web 排程
-  穩定＋Linux probe 定案＋Web 承接功能實際用過）全數通過後，自解決方案移除
-  console 專案。屆時各 CLI 的出路：`--import-rules` 搬 Web 規則頁（1.4.9）、
-  `--debug-dump` 搬排程設定開關（1.4.10）、`--suppress` 系列與 `--host-list`
-  本就被 Web 頁面涵蓋直接刪、`--selftest` 接受退役、`--netiq-probe` 於閘門時
-  依剩餘需求決定（1.4.11）。這會**推翻 docs/HISTORY.md 既有決策 20**（one-shot
-  ＋工作排程器、Web 不養常駐背景工作），須正式改決策——理由見 §1.2。
+  BackgroundService）；CLI 職責全數由 Web 承接後（Phase 4），**Phase 5 即自
+  解決方案移除 console 專案，不保留過渡期薄殼**。各 CLI 的出路：
+  `--import-rules` 搬 Web 規則頁（1.4.9）、`--debug-dump` 搬排程設定開關
+  （1.4.10）、`--netiq-probe` 搬 NetIQ 維護頁「診斷」分頁（**必做**——Linux
+  Sentinel P3 閘門的載具，1.4.11）、`--suppress` 系列與 `--host-list` 本就被
+  Web 頁面涵蓋直接刪、`--selftest` 接受退役（1.4.11）。代價：移除後只剩
+  「git revert＋重建部署」的冷回退，無 schtasks 熱回退——風險與緩解見 1.5。
+  這會**推翻 docs/HISTORY.md 既有決策 20**（one-shot＋工作排程器、Web 不養
+  常駐背景工作），須正式改決策——理由見 §1.2。
 - **需求二（風險 log 暫存 DB）合適且獨立**，不依賴需求一，改動面小、價值直接
   （AI 對話從 15 秒的 Sentinel 即時查詢變成毫秒級 DB 查詢，且**本機直讀主機
   首次獲得原始事件注入能力**——現行 live fetch 只支援 NetIQ 主機）。建議先做。
 - 實作順序：**Phase 1（需求二）→ Phase 2（服務搬遷重構，只搬不改）→
-  Phase 3（Web 排程引擎與 UI）→ Phase 4（CLI 職責搬 Web）→ Phase 5（試點與
-  schtasks 退場）→ Phase 6（console 正式退役）**。每個 Phase 獨立可發布、
-  獨立可回退，行為保護不變式見 §3.1。
+  Phase 3（Web 排程引擎與 UI）→ Phase 4（CLI 職責搬 Web，含 probe 診斷分頁）
+  → Phase 5（試點 ≥5 晚 → schtasks 退場＋console 移除）**。每個 Phase 獨立
+  可發布，Phase 5 的移除步驟前均可熱回退，行為保護不變式見 §3.1。
 
 ---
 
@@ -44,7 +45,7 @@
 | 4 | NetIQ 機房分析（Sentinel 取數） | `NetiqPipelineService` | 可，純網路 I/O，無本機權限需求 |
 | 5 | 體檢（due-date 輪巡） | `WeeklyCheckupService` | 可 |
 | 6 | 執行紀錄登記/回填（Runs 頁資料來源） | `BatchRunRecorder` | 可，沿用同一 store |
-| 7 | CLI 工具：`--selftest`／`--netiq-probe`／`--import-rules`／`--suppress` 系列／`--host-list`／`--debug-dump` | 各 CLI 類別 | **逐項處置，終局隨 console 全退役**：import-rules 搬 Web（1.4.9）、debug-dump 搬 Web（1.4.10）、suppress／host-list 已被 Web 規則頁「告警抑制」分頁與主機頁涵蓋（直接刪）、selftest 接受消失、probe 於退役閘門時決定（1.4.11） |
+| 7 | CLI 工具：`--selftest`／`--netiq-probe`／`--import-rules`／`--suppress` 系列／`--host-list`／`--debug-dump` | 各 CLI 類別 | **逐項處置後隨 console 移除**：import-rules 搬 Web（1.4.9）、debug-dump 搬 Web（1.4.10）、probe 搬 NetIQ 維護頁診斷分頁（必做，1.4.11）、suppress／host-list 已被 Web 規則頁「告警抑制」分頁與主機頁涵蓋（直接刪）、selftest 接受消失（1.4.11） |
 
 關鍵事實：**上述 3~5 的核心服務目前都在 console 專案**（`LogForesight/Service/`），
 Web 專案只引用 Core——要讓 Web 執行分析，這些服務必須搬進 Core（見 1.4.1）。
@@ -136,14 +137,20 @@ console 的 `Program.cs` 改為：CLI 分派（不變）＋`AnalysisOrchestrator
 Full, null, consoleAdapter, CancellationToken.None)`。**對既有部署，console 行為
 逐字不變**——這是 Phase 2 的驗收標準。
 
-#### 1.4.3 排程設定模型（新 blob：`schedule_options`）
+#### 1.4.3 排程設定模型（新 blob：`schedule_options`；2026-07-31 定案 #1：多執行窗口）
 
 ```csharp
+public class ScheduleWindow
+{
+    public string Start { get; set; } = "01:00";   // HH:mm，本地時區
+    public string End { get; set; } = "07:00";     // 支援跨午夜（22:00 → 06:00）
+}
+
 public class ScheduleOptions
 {
-    public bool Enabled { get; set; } = false;          // 預設關閉：升級後行為不變，schtasks 續用
-    public string StartTime { get; set; } = "01:00";    // 每日觸發時刻（HH:mm，本地時區）
-    public string WindowEnd { get; set; } = "07:00";    // 執行窗結束；到點要求優雅停止
+    public bool Enabled { get; set; } = false;      // 預設關閉：升級後行為不變，schtasks 續用
+    public List<ScheduleWindow> Windows { get; set; } = new() { new ScheduleWindow() };
+    public bool DebugDump { get; set; } = false;    // AI 診斷傾印，見 1.4.10
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 }
@@ -151,49 +158,79 @@ public class ScheduleOptions
 
 語意定案（皆為可測的純函數 `ScheduleCalculator`）：
 
-- **每日一次**，`StartTime` 到點且 `Enabled` 即觸發完整執行（`RunScope.Full`）。
-  不做 cron 表達式——本系統的分析單位是「日」，一天多次觸發只會撞上冪等跳過，
-  做了是假功能。
-- **時間窗跨午夜支援**（`22:00`→`06:00`）：`WindowEnd` 到點時對進行中的執行發
-  cancel，pipeline 停在主機日邊界；**未完成的主機/日期不需要任何補償機制**，
-  它們就是「缺漏日」，下個窗口的執行靠既有 `HasRecord` 回補自動續跑。這正是
-  1.2 說的「冪等是搬遷最大資產」。
-- **漏跑補償**：Web 服務重啟錯過 `StartTime` 時，若當下仍在窗內且今日尚未跑過
-  （查 BatchRun 當日紀錄），啟動後補觸發一次；已出窗則等明天——與工作排程器
-  「錯過即跳過」一致，不做更聰明的事。
+- **多窗口**：每個窗口的 `Start` 到點觸發一次完整執行（`RunScope.Full`），
+  `End` 到點對進行中的執行發 cancel（優雅停止，停在主機日邊界）。窗口數上限
+  **4**（後端常數）——分析單位是「日」，更多窗口沒有對應的工作量。仍不做
+  cron 表達式。
+- **第二個以後的窗口天生是「補跑窗口」，不需要任何簿記**：執行冪等——前一
+  窗口已完成的主機/日期在下一窗口被 `HasRecord` 跳過（NetIQ 主機的缺漏判定在
+  發 Sentinel 查詢**之前**，全數完成時連查詢都不會發）；權限異動檢查每窗口照做
+  一次（「每次執行都做」的既定語意，成本極低）；體檢 due-date 未到期或已完成
+  不重跑。因此工作全部做完時後續窗口是快速 no-op，前一窗口被 `End` 中斷時則
+  自動續跑剩餘主機/日期——這正是 1.2 說的「冪等是搬遷最大資產」。
+- **儲存驗證（後端強制，非僅 UI）**：`HH:mm` 格式、`Start != End`、至少一個
+  窗口、窗口間不重疊（跨午夜窗口先正規化成分鐘區間再驗）。重疊直接拒存並指出
+  哪兩組衝突——重疊會造成「一邊要停、一邊要跑」的矛盾，不做聰明合併。
+- **漏跑補償**：Web 服務啟動時，若當下位於某窗口內、且該窗口今日尚未觸發過
+  （查 BatchRun 當日 `Trigger=schedule` 紀錄），補觸發一次；已出窗則等下一
+  窗口——與工作排程器「錯過即跳過」一致，不做更聰明的事。
 - **`Enabled=false` 的部署仍走 schtasks**：兩軌並存靠具名 Mutex 保證不重疊，
   過渡期見 1.5。
 
-#### 1.4.4 手動觸發
+#### 1.4.4 手動觸發（2026-07-31 定案 #2：不受窗限、可手動停止、大量執行先確認、可選網段）
 
-新增 API（`Maintain` 能力，寫稽核）：
+新增 API（皆 `Maintain` 能力，寫稽核）：
 
-- `POST /api/admin/schedule/run`——全部主機（等同排程觸發，`RunScope.Full`）。
-- `POST /api/admin/schedule/run-host`——body：`hostId`＋可選 `backfillDays`
-  （1..14，一次性覆寫，不落地設定）。本機直讀主機走 `LocalOnly`；NetIQ 主機走
-  `NetiqHosts([hostId])`（orchestrator 把主機清單過濾到單台後跑同一條 pipeline）。
-- `POST /api/admin/schedule/cancel`——要求優雅停止進行中的執行。
-- `GET  /api/admin/schedule/status`——目前狀態（閒置/執行中＋當前 milestone、
-  是否排程觸發、預計下次觸發時刻）。
+- `GET  /api/admin/schedule/run-preview?scope=all|segment&segment=…`——執行前
+  預覽：回傳該範圍**實際會被查詢**的主機台數與排除統計（複用
+  `StoreHostListProvider` 的清單語意，與 `--host-list` 同一套「不靜默少幾台」
+  原則），供前端確認對話框顯示「目前有 XX 台，是否確定執行？」。
+- `POST /api/admin/schedule/run`——body
+  `{ scope: "all" | "segment" | "host", segment?, hostId?, backfillDays? }`：
+  - `all`：等同排程觸發的完整執行（含本機直讀＋全部 NetIQ 主機）。
+  - `segment`：只跑 IP 落在指定網段的 NetIQ 主機。網段輸入語法**與 NetIQ 匯入
+    精靈一致**（前綴 `10.232.11` 或 CIDR `10.232.11.0/24`），解析邏輯共用同一
+    份、不寫第二套；解析後無任何主機符合 → 拒絕並提示。本機直讀主機不參與
+    網段範圍（它不在 NetIQ 清單，要單獨跑用 `host`）。
+  - `host`：單一主機（本機直讀主機走 `LocalOnly`；NetIQ 主機走
+    `NetiqHosts([hostId])`，orchestrator 過濾清單後跑同一條 pipeline）。
+  - `backfillDays`（1..14）：一次性覆寫，不落地設定。
+- `POST /api/admin/schedule/cancel`——優雅停止進行中的執行（**排程觸發或手動
+  觸發皆可停**），停在主機日邊界；BatchRun 正常回填並記里程碑「使用者手動停止
+  （{帳號}）」——是「已停止」不是「失敗」，更不是卡「執行中」。
+- `GET  /api/admin/schedule/status`——閒置/執行中（觸發來源、當前 milestone、
+  可否停止）、下次窗口觸發時刻。
 
-定案點：
+確認機制（定案 #2「數量較多要先跳 alert」）：
 
-- **手動觸發不受時間窗限制**——管理者顯式按下按鈕就是明確意圖（白天對 Sentinel
-  加查詢負載是他知情的選擇）；UI 在窗外觸發時顯示提醒文字即可。
+- 前端**一律**先打 run-preview、在確認對話框顯示台數；台數 ≥ **50**（前端常數）
+  時對話框加強警示（紅字提醒白天對 Sentinel 的查詢負載，並建議改用網段範圍
+  縮小）。伺服器端不擋台數——管理者確認後就是明確意圖，真正的保護是全站單一
+  執行 gate 與既有 Sentinel 節流設定（`QueryDelayMs` 等）。
+- **手動觸發不受時間窗限制**；在窗外觸發時確認對話框附註提醒。
+
+其他定案點：
+
 - 手動觸發的執行同樣寫 BatchRun（`BatchRun` 模型增加 `Trigger` 欄位：
   `schedule`／`manual:{帳號}`／`console`；舊紀錄 null 顯示「工作排程器」），
-  Runs 頁 3 個字的欄位就能回答「昨晚那次是誰跑的」。
-- 使用者原話「手動觸發**更新**指定主機」＝重新分析該主機缺漏日；已分析日仍冪等
-  跳過。若要「強制重析今天已有紀錄的日子」屬另一個功能（要先刪紀錄），**本輪
-  不做**——與「同一天重複執行不產生重複紀錄」的承諾衝突，真有需求另案。
+  Runs 頁一個欄位就能回答「昨晚那次是誰跑的」。
+- 「手動觸發**更新**指定主機」＝重新分析該主機缺漏日；已分析日仍冪等跳過。
+  「強制重析已有紀錄的日子」屬另一個功能（要先刪紀錄），**本輪不做**——
+  與「同一天重複執行不產生重複紀錄」的承諾衝突，真有需求另案。
 
 #### 1.4.5 UI
 
 「系統管理 > 排程」不另開新頁，**併入既有「執行監控」（Runs）頁**頂部新增
-「排程設定」卡：Enabled 開關、StartTime/WindowEnd、下次觸發時刻、目前執行狀態
-（進行中顯示最新 milestone＋取消鈕）、「立即執行（全部）」。「指定主機更新」
-按鈕放**主機詳情頁**（就近原則：看著這台主機覺得資料舊了，當場按），帶
-`backfillDays` 輸入。
+「排程設定」卡：
+
+- Enabled 開關、窗口清單編輯（最多 4 組 Start/End，重疊即時提示）、
+  AI 診斷傾印開關（開啟時顯示 1.4.10 的警示徽章）、下次觸發時刻；
+- 目前執行狀態：進行中顯示觸發來源＋最新 milestone＋「停止」鈕；
+- 「立即執行」鈕開對話框：範圍二選一（全部主機／網段輸入框）、可選
+  `backfillDays`，即時顯示 run-preview 台數，≥50 台紅字加強警示，確認後送出。
+
+「指定主機更新」按鈕放**主機詳情頁**（就近原則：看著這台主機覺得資料舊了，
+當場按），帶 `backfillDays` 輸入，同樣先顯示確認。
 
 #### 1.4.6 Web 端設定來源整併
 
@@ -222,8 +259,10 @@ orchestrator 需要的批次 `appsettings.json` 區段（`Ai` 節流參數、
 console 排程可用 SYSTEM 跑；Web 服務帳號若沒進 Event Log Readers／管理員群組，
 本機直讀部分的 Security 頻道會讀取被拒。三個緩解層次：
 
-1. 部署文件指引：Web 服務帳號加入本機「Event Log Readers」群組（比 SYSTEM/管理員
-   權限小得多，符合最小權限）。
+1. 部署文件指引（2026-07-31 定案 #4）：對部署當下那組 Web 服務帳號設定使用者
+   權限——加入本機「Event Log Readers」群組即可（比 SYSTEM/管理員權限小得多，
+   符合最小權限）；其餘維運操作交由 Web 內 admin 群組使用者處理，不做程式面的
+   權限自檢。
 2. 讀不到時**既有誠實申報機制原樣生效**（`SecurityLogAvailable=false`、
    `UncoveredChecks` 逐條列出）——不會靜默漏偵測，這條防線 2026-07 就建好了。
 3. 真實環境本來就常以無管理員權限跑（README 明講），此變更沒有讓任何事變差。
@@ -284,55 +323,53 @@ prompt 與原始回應各輸出一檔到執行檔目錄 `diag\`；README 明講�
   雙重涵蓋；(3) 集中式架構下 exe 只部署在一台伺服器，「換機部署前先跑」的
   場景本身大幅縮水。退役時 README 的 selftest 章節改寫為指向測試套件與
   Web 儲存前驗證。
-- **`--netiq-probe`：留到退役閘門時決定**。Linux Sentinel 接入的 P3 閘門
-  要再跑一輪 probe（已排定的具體用途、輸出貼回對話定案欄位形狀，CLI 最省事）
-  ——所以「Linux probe 完成」列為 console 退役的前置閘門。閘門過後二擇一：
-  (a) 預期再無 probe 需求 → 隨 console 一起退役；(b) 預期仍要對新 Sentinel
-  驗欄位 → NetIQ 維護頁加「診斷」分頁，跑同一組查詢、輸出放可複製的文字區塊。
-  本規劃不預先實作，屆時依實際需求定。
+- **`--netiq-probe`：搬 Web，必做**（2026-07-31 定案 #9「直接移除 console」
+  的連帶必要條件——Linux Sentinel 接入的 P3 閘門還要再跑一輪 probe，console
+  移除後必須有替代載具）。設計：NetIQ 維護頁加「診斷」分頁——選一台已設定的
+  Sentinel、可選填樣本 IP（Windows/Linux 各一，對應 `--sample-ip`／
+  `--sample-linux-ip`）→ 執行同一組驗證查詢（`NetiqProbeCli` 的查詢邏輯拆成
+  Core 純服務 `NetiqProbeRunner`，過渡期 CLI 與 Web 共用同一份、既有 stub HTTP
+  單元測試沿用）→ 完整診斷文字放唯讀 textarea＋「複製」鈕（**輸出契約不變**，
+  仍是設計來貼回對話定案欄位形狀的純文字）。probe 屬長耗時操作（逐台 Sentinel
+  十幾個查詢），走「觸發→背景執行→輪詢結果」避免 HTTP 逾時；需 Maintain
+  能力、寫稽核（對 Sentinel 的主動查詢操作）；與排程/手動分析共用全站單一
+  執行 gate **之外**、自成一個 probe gate（併發 1）——probe 是小規模診斷查詢，
+  不該被夜間分析互斥擋住，但同時只允許一個 probe 在跑。
 
-### 1.5 兩階段退場
+### 1.5 退場（直接移除，2026-07-31 定案 #9）
 
-#### 階段一（過渡期，對應 Phase 3~5）：console 保留、行為逐字不變
+不保留過渡期薄殼：Phase 4 完成 CLI 職責搬 Web（含 probe 診斷分頁）後，
+Phase 5 一次完成切換與移除，依序執行：
 
-1. Phase 3 上線後 `ScheduleOptions.Enabled` 預設 false，schtasks 照舊——
-   零行為變化的發布。
-2. Phase 4 完成 CLI 職責搬 Web（規則升級橫幅/套用、診斷傾印開關）；console
-   對應 CLI 照舊可用（同一份 Core 邏輯，防漂移靠 1.4.9 的對等測試）。
-3. 試點：開 `Enabled`、**停用（不刪）schtasks**，連續觀察 **≥5 晚**：Runs 頁
-   紀錄完整且無卡「執行中」殘留、export 報告與過去格式一致、風險判定結果與
-   預期相符。期間 console 的角色：交叉驗證工具（手動跑一次比對輸出）與緊急
-   備援（Web 服務出狀況時上伺服器手動跑，具名 Mutex 保證與排程不重疊）。
-4. 穩定後刪 schtasks 工作；README「排程（正式環境）」章節改寫、部署文件更新；
-   docs/HISTORY.md 補「決策 20 修訂」條目。
+1. 部署含 Web 排程的版本，`Enabled` 仍 false → 確認發布本身零行為變化。
+2. 開 `Enabled`、**停用（暫不刪）schtasks**——此時 console exe 還在磁碟上，
+   是最後的熱回退窗口。
+3. 連續 **≥5 晚**驗證（定案 #5）：Runs 頁紀錄完整且無卡「執行中」殘留、
+   export 報告與過去格式一致、風險判定結果與預期相符。
+4. 驗證通過 → 刪 schtasks 工作；自解決方案移除 `LogForesight`（console）專案
+   （`SelfTestRunner`、各 CLI 類別隨之刪除，Core 內只被 console 用到的殘留
+   一併清理）；部署面移除 exe 與批次版 appsettings.json。
+5. 文件收尾：README 全面改寫（架構圖的 console 節點、「使用方式」、selftest
+   章節、部署章節、規則升級 SOP 改指 Web）；docs/HISTORY.md 補「決策 20 修訂」
+   條目；部署文件的目錄配置圖更新。
 
-#### 階段二（Phase 6）：正式退役
+**`Batch\` 目錄的資料不動**：`logforesight.db`（若 Sqlite）與 `export\` 是
+資料不是程式，`Storage:DataRoot` 指向不變，只移除執行檔。
 
-**閘門（全部滿足才動手）**：
+**回退路徑（誠實申報）**：
 
-- Web 排程已無雙軌依賴（階段一收尾完成後又穩定運行一段時間）；
-- Linux Sentinel 已接入並完成該輪 `--netiq-probe`（LINUX-RULES-PLAN P3 定案）；
-- 規則升級與診斷傾印的 Web 承接**實際被使用過至少一次**——不是「寫完沒人
-  用過」就刪掉備援。
+- 步驟 3 期間（exe 還在）：重啟 schtasks 即**熱回退**，零風險。
+- 步驟 4 之後：只剩**冷回退**——git revert 專案移除 commit＋重建部署 exe＋
+  重建 schtasks。資料層無任何需要回滾的遷移（JSON 反序列化容忍未知欄位、
+  SchemaUpgrader 只加不減），冷回退成本純粹是重建部署的工時。**Phase 5 收尾
+  前在測試環境做一次冷回退演練**（revert→build→跑一晚），確認這條路真的
+  走得通，不是紙上承諾。
+- 接受的殘餘風險（使用者知情選擇，定案 #9）：移除後 Web 排程出問題只能修、
+  不能熱退。緩解：步驟 3 的 ≥5 晚驗證把問題盡量擋在移除前；且分析冪等——
+  修復期間漏跑的日子靠缺漏回補自癒，不會永久缺資料。
 
-**動作**：
-
-- 解決方案移除 `LogForesight`（console）專案；`SelfTestRunner`、各 CLI 類別
-  隨之刪除；Core 內只被 console 用到的殘留（若有）一併清理。
-- **`Batch\` 目錄的資料不動**：`logforesight.db`（若 Sqlite）與 `export\` 是
-  資料不是程式，`Storage:DataRoot` 指向不變；只移除 exe 與批次版
-  appsettings.json。部署文件的目錄配置圖更新。
-- README 全面改寫：架構圖的 console 節點、「使用方式」、selftest 章節、
-  部署章節。
-- `--netiq-probe` 依 1.4.11 擇一處置。
-- 具名 Mutex（`Global\LogForesight`）**保留**在 orchestrator——成本趨近零，
-  防未來任何第二行程誤配置（例如兩個 Web 實例被誤設指向同一 DataRoot）。
-
-**回退路徑**：階段二之前的任何時點，重新啟用 schtasks 即回到現行模式
-（「console 行為從未被改變」是階段一的鐵律，所以回退零風險）；階段二之後
-回退＝git revert 專案移除的 commit＋重新部署 exe，**資料層無任何需要回滾的
-遷移**——新表/新 blob 對舊版程式不可見也不礙事（JSON 反序列化容忍未知欄位、
-SchemaUpgrader 只加不減）。
+具名 Mutex（`Global\LogForesight`）**保留**在 orchestrator——成本趨近零，
+防未來任何第二行程誤配置（例如兩個 Web 實例被誤設指向同一 DataRoot）。
 
 ### 1.6 影響面清單
 
@@ -344,8 +381,9 @@ SchemaUpgrader 只加不減）。
 | `LogForesight.Web` | 新 `BackgroundService`（`SchedulerHostedService`）、`ScheduleController`、Runs 頁排程卡（含 DebugDump 開關與徽章）、主機詳情頁觸發鈕、appsettings 新區段、DI 註冊 |
 | `BatchRun` 模型 | 加 `Trigger` 欄位（JSON 反序列化容忍缺欄，零遷移） |
 | Web 規則頁 | seed 版本橫幅＋「預覽差異/套用」對話框；`RuleImporter` 拆 Core 純函數 `RuleImportPlanner`（1.4.9） |
-| console（階段二） | 專案自解決方案移除、CLI 類別與 `SelfTestRunner` 刪除；`Batch\` 只移除 exe 與 appsettings，資料目錄不動 |
-| 測試 | 搬遷後全綠是 Phase 2 閘門；新增 `ScheduleCalculator`（時間窗/跨午夜/漏跑補償）、觸發 API 授權/驗證、取消停在日邊界（stub pipeline）、`RuleImportPlanner` 與 CLI 對等測試 |
+| Web NetIQ 維護頁 | 「診斷」分頁（probe Web 化，1.4.11）；`NetiqProbeCli` 查詢邏輯拆 Core `NetiqProbeRunner` |
+| console（Phase 5） | 專案自解決方案移除、CLI 類別與 `SelfTestRunner` 刪除；`Batch\` 只移除 exe 與 appsettings，資料目錄不動 |
+| 測試 | 搬遷後全綠是 Phase 2 閘門；新增 `ScheduleCalculator`（多窗口/跨午夜/重疊驗證/漏跑補償）、觸發 API 授權/驗證＋run-preview、取消停在日邊界（stub pipeline）、`RuleImportPlanner` 與 CLI 對等測試、`NetiqProbeRunner` 沿用既有 stub HTTP 測試 |
 | 文件 | README（架構圖、排程章節、使用方式、selftest、部署）、WEB-SPEC（新 API/頁面）、HISTORY（決策 20 修訂） |
 
 ### 1.7 風險與緩解
@@ -398,13 +436,18 @@ SchemaUpgrader 只加不減）。
 「有風險的 log」交給注入的 `IRiskyEventSink`（console/Web 都接 DB 實作；
 單元測試接 null sink）。
 
-「有風險」的簽章資格（任一命中）：
+「有風險」的簽章資格（2026-07-31 定案 #3＋邊界定案 #7/#8，任一命中即入庫）：
 
-1. 命中規則且嚴重度 Medium 以上（含被抑制的——抑制只關通知，紀錄照常的既有
-   語意延伸）；
-2. 出現在 `TrendAlerts` 的簽章（首次出現/頻率上升/總量突增的構成事件）；
-3. 出現在 `CorrelationAlerts` 的構成事件（攻擊鏈/故障鏈的原始證據——這是
-   入侵調查時最想看原文的一塊）。
+1. **命中規則表的簽章（含 Low「收集用」規則、含被抑制的）**——定案 #7 字面
+   套用「規則命中就存」：日常 RDP/SSH 成功登入也照存，量由每簽章/每主機日
+   上限與保留天數控制。好處是關聯訊號日（【破解得手】【暴力破解→RDP 得手】）
+   的成功登入面原文證據**永遠在庫**，不用碰運氣；代價是穩態體積上升，
+   估算見 2.3，收斂路徑也先講好在 2.3。
+2. **出現在 `TrendAlerts` 的簽章**（定案 #8）——補齊未命中規則的 Other 類
+   頻率異常的原文覆蓋；這類未知型態問題恰好最需要看原文。
+
+關聯訊號的構成事件本身都是規則表內的事件 ID，資格 1 已天然涵蓋攻擊鏈/故障鏈
+的原文證據，無缺口。
 
 呈現量硬上限（與小模型策略同一哲學，防爆量日灌爆 DB）：
 
@@ -445,10 +488,16 @@ SchemaUpgrader 只加不減）。
 ### 2.3 容量估算
 
 單筆上限約 4KB（2000 字 nvarchar）；最壞情境 2000 台全數當日 500 筆封頂
-＝100 萬列/日×4KB≈4GB/日——但那是「全站同日全部淪陷」的末日場景；典型情境
-（少數主機有風險、每台數十筆）≈ 每日數 MB，14 天合計數十 MB。SqlServer 無虞；
-SQLite（開發/測試）同樣可承受。若試點觀察到量超預期，先調小每簽章/每主機上限
-（常數），再考慮把上限開成設定。
+＝100 萬列/日×4KB≈4GB/日——但那是「全站同日全部淪陷」的末日場景。
+
+定案 #7（Low 收集用規則照存）後，**穩態體積的主要來源是 RDP/SSH 收集面**：
+有 RDP 維運活動的主機每天穩定寫入數十筆（四個 RDP 簽章合計、受每簽章 50
+上限管）。以 2000 台、平均 30 筆/日、單筆約 1KB 估算 ≈ 60MB/日 → 14 天穩態
+≈ **840MB**。SqlServer 可承受；SQLite（開發/測試）台數少、無虞。試點觀察若
+超出預期，收斂路徑依序是：(1) 把 Low 收集面改為「當日有關聯訊號才存」
+（`RiskyEventSelector` 一行資格判斷，已知的第一顆旋鈕）；(2) 調小每簽章/
+每主機日上限（常數）；(3) 把上限開成設定——不預先做，避免「有設定無行為」
+的紅線風險。
 
 ### 2.4 影響面清單
 
@@ -475,12 +524,12 @@ SQLite（開發/測試）同樣可承受。若試點觀察到量超預期，先�
 | 1 | 需求二全部（表/寫入/清理/設定/對話整合） | 測試全綠＋手動驗證一輪對話注入；未命中暫存時 fallback 行為與現行一致 |
 | 2 | 服務搬遷＋orchestrator 抽取（**只搬不改**） | 1163+ 測試全綠；console 輸出與現行逐字一致；`--selftest` 照常通過 |
 | 3 | Web 排程引擎＋設定/觸發 API＋UI＋稽核 | `Enabled=false` 發布零行為變化；schtasks 執行完全不受影響 |
-| 4 | CLI 職責搬 Web：規則升級橫幅/套用（1.4.9）＋AI 診斷傾印開關（1.4.10） | `RuleImportPlanner` 與 CLI 對等測試綠；console CLI 輸出逐字不變 |
-| 5 | 試點雙軌 → schtasks 退場＋文件收尾＋HISTORY 決策 20 修訂 | 連續 ≥5 晚 Runs 紀錄/報告與 schtasks 時代一致 |
-| 6 | console 正式退役（專案移除＋README 全面改寫＋probe 處置） | 三項退役閘門全過（見 1.5 階段二）；回退演練通過 |
+| 4 | CLI 職責搬 Web：規則升級橫幅/套用（1.4.9）＋AI 診斷傾印開關（1.4.10）＋NetIQ 診斷分頁（probe Web 化，1.4.11） | `RuleImportPlanner` 對等測試綠；probe Web 輸出與 CLI 輸出對同一 Sentinel 一致；console CLI 輸出逐字不變 |
+| 5 | 切換與移除：試點 ≥5 晚 → 刪 schtasks＋移除 console 專案＋README/HISTORY 收尾 | 試點通過；冷回退演練通過（見 1.5） |
 
-Phase 1 隨時可先行；Phase 2~6 嚴格依序。每個 Phase 各自是一個可獨立合併、
-可獨立回退的發布單位（依既有分支流程：feature → dev 驗證 → master）。
+Phase 1 隨時可先行；Phase 2~5 嚴格依序。每個 Phase 各自是一個可獨立合併的
+發布單位（依既有分支流程：feature → dev 驗證 → master）；Phase 5 的移除
+步驟前均可熱回退。
 
 ### §3.1 行為保護策略（「不影響現有功能」的不變式）
 
@@ -494,22 +543,29 @@ Phase 1 隨時可先行；Phase 2~6 嚴格依序。每個 Phase 各自是一個�
   零觸碰；任何 Phase 回退都不需要資料層回滾。
 - **預設值即現狀**：`ScheduleOptions.Enabled=false`、`DebugDump=false`、
   暫存保留 14 天——每個 Phase 發布當下，不動設定的部署行為與發布前逐位一致。
-- **console 行為凍結**：直到 Phase 6 移除前，console 的輸出、exit code、CLI
+- **console 行為凍結**：直到 Phase 5 移除前，console 的輸出、exit code、CLI
   介面一律不變（Phase 2 的「只搬不改」與 Phase 4 的薄包裝都以此為驗收線）；
-  這保證任何時點「重啟 schtasks」都是完整的回退路徑。
+  這保證移除前的任何時點「重啟 schtasks」都是完整的熱回退路徑；移除後轉為
+  冷回退（1.5 誠實申報＋演練要求）。
 - **雙軌互斥**：具名 Mutex `Global\LogForesight` 全程保留，Web 排程與 console
   手動/schtasks 執行永不重疊（後到者跳過並記警告，與現行行為一致）。
 
-### 待定案問題（實作前請確認）
+### 定案紀錄（2026-07-31 使用者回覆）
 
-1. **時間窗語意**：`WindowEnd` 到點優雅停止、未完成日子等下個窗口自動續跑
-   （本規劃的預設）——可接受？或希望同日窗口重新進入時就續跑？
-2. **手動觸發不受時間窗限制**——可接受？
-3. **需求二入庫資格**採簽章級（規則命中 Medium+／趨勢／關聯），不看日風險等級
-   ——可接受？（替代：只存風險「中」以上的日子，範圍更小但低風險日的趨勢異常
-   簽章就問不到原文）
-4. **Web 服務帳號**是否可加入本機 Event Log Readers 群組（影響本機直讀的
-   Security 覆蓋，不影響 NetIQ 主機）？
-5. **試點穩定閘門天數**：建議連續 ≥5 晚（Phase 5）——可接受？
-6. ~~Console 保留範圍~~ **已定案（2026-07-31）**：終局全退役、兩階段退場，
-   過渡期薄殼保留；`--netiq-probe` 的 Web 化與否留到退役閘門時依剩餘需求決定。
+1. **時間窗**：優雅停止＋下個窗口自動續跑，**並支援設定多個執行窗口**
+   （設計見 1.4.3：`ScheduleOptions.Windows`，上限 4 組、不重疊驗證）。
+2. **手動觸發**：不受時間窗限制、可手動停止；執行前一律顯示台數確認
+   （≥50 台加強警示）、支援網段範圍執行（設計見 1.4.4）。
+3. **暫存入庫資格**：規則命中就存（見 2.2.2；附兩個邊界待確認 #7/#8）。
+4. **Web 服務帳號**：對部署那組服務帳號設定使用者權限（Event Log Readers）
+   即可，其餘交 Web 內 admin 群組使用者維運（見 1.4.8）。
+5. **試點穩定閘門**：連續 ≥5 晚。
+6. **Console 完全退役**。
+7. **Low「收集用」規則命中照存**（全部規則命中都存，見 2.2.2；體積估算與
+   收斂路徑見 2.3）。
+8. **趨勢告警簽章納入暫存**（見 2.2.2）。
+9. **Console 直接移除，不保留過渡期薄殼**——連帶條件：`--netiq-probe` 必須
+   Web 化（1.4.11，Phase 4 必做項）；移除後僅冷回退（1.5 誠實申報＋Phase 5
+   收尾前的冷回退演練）。
+
+**全部問題已定案，無剩餘待確認項；可依本節順序開工。**
