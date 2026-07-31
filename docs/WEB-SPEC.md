@@ -940,6 +940,16 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （新增）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
+- **頁籤化（2026-07-31，docs/FEEDBACK-5-PLAN.md §9）**：設定項目多且長，四張卡（層級與顯示／
+  AI 服務／AD 驗證／資料保留）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
+  `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
+  `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
+  （`.lf-settings-footer`，`position: sticky; bottom: 0`），任何頁籤／捲動位置都看得到，不必
+  捲到頁尾。表單本身有 `novalidate`，`required`/`min`/`max` 不會攔截原生送出——既有的 JS 層
+  驗證（保留天數大小關係、AD 伺服器必填）在丟出 toast 前先切到欄位所在頁籤
+  （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
+  `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**（2026-07-27 自「未處理計算」擴充；2026-07-28 三級化）：以按鈕反白選擇

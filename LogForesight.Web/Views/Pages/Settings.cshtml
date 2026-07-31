@@ -2,8 +2,15 @@
     ViewData["Title"] = "設定";
 }
 
+<ul class="nav nav-tabs mb-3" id="settings-tabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="levels" type="button">層級與顯示</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="ai" type="button">AI 服務</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
+</ul>
+
 <form id="settings-form" novalidate>
-    <div class="lf-card mb-3">
+    <div class="lf-card mb-3" data-panel="levels">
         <div class="lf-card__header">
             <h2 class="lf-card__title">層級與顯示</h2>
         </div>
@@ -41,7 +48,7 @@
         </div>
     </div>
 
-    <div class="lf-card mb-3">
+    <div class="lf-card mb-3 d-none" data-panel="ai">
         <div class="lf-card__header">
             <h2 class="lf-card__title">AI 服務</h2>
         </div>
@@ -63,7 +70,7 @@
         </div>
     </div>
 
-    <div class="lf-card mb-3">
+    <div class="lf-card mb-3 d-none" data-panel="ad">
         <div class="lf-card__header">
             <h2 class="lf-card__title">AD 驗證</h2>
         </div>
@@ -124,7 +131,7 @@
         </div>
     </div>
 
-    <div class="lf-card mb-3">
+    <div class="lf-card mb-3 d-none" data-panel="retention">
         <div class="lf-card__header">
             <h2 class="lf-card__title">資料保留</h2>
         </div>
@@ -159,7 +166,7 @@
         </div>
     </div>
 
-    <div class="d-flex align-items-center gap-3">
+    <div class="d-flex align-items-center gap-3 lf-settings-footer">
         <button type="submit" class="btn btn-primary" id="settings-save">儲存</button>
         <span class="text-muted small" id="settings-updated"></span>
     </div>

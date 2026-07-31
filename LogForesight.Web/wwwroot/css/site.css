@@ -551,6 +551,19 @@ body {
     flex: 1 1 auto;
 }
 
+/* 頁籤化長表單的儲存列常駐畫面下方（docs/FEEDBACK-5-PLAN.md §9）：目前只有設定頁使用，
+   但寫成通用 class 供日後其他頁籤化的長表單沿用。sticky 相對視窗捲動（.lf-content 本身
+   無 overflow 設定），底部留白抵銷 .lf-content 的 padding-bottom，讓儲存列貼齊視窗底緣。 */
+.lf-settings-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 calc(var(--lf-space-5) * -1) calc(var(--lf-space-5) * -1);
+    padding: var(--lf-space-3) var(--lf-space-5);
+    background: var(--lf-content-bg);
+    border-top: 1px solid var(--lf-border);
+}
+
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */
 
 .lf-card {

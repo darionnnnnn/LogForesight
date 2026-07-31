@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved, bindTabs } from '../core/ui.js';
 import { formatDateTime, severityName, SEVERITY_ORDER } from '../core/format.js';
 
 // 未儲存提醒（docs/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
@@ -188,6 +188,17 @@ function collectSeverities() {
         .map(btn => btn.dataset.severity);
 }
 
+/**
+ * 頁籤化後（docs/FEEDBACK-5-PLAN.md §9），驗證失敗的欄位可能在非作用中頁籤——
+ * 先切過去再顯示 toast，否則使用者看不到出錯的欄位在哪。#settings-tabs 位於
+ * <form> 外（避免點頁籤誤觸 trackUnsaved 的未儲存提醒），用 data-panel 反查對應頁籤。
+ */
+function activateTabForElement(el) {
+    const panelName = el?.closest('[data-panel]')?.dataset.panel;
+    if (!panelName) return;
+    document.querySelector(`#settings-tabs [data-tab="${panelName}"]`)?.click();
+}
+
 function bindForm() {
     const form = document.getElementById('settings-form');
     const saveButton = document.getElementById('settings-save');
@@ -197,6 +208,7 @@ function bindForm() {
 
         const severities = collectSeverities();
         if (severities.length === 0) {
+            activateTabForElement(document.getElementById('severity-checks'));
             toast('請至少選擇一個層級。', 'warning');
             return;
         }
@@ -204,6 +216,7 @@ function bindForm() {
         const initialHistoryDays = Number(document.getElementById('initial-history-days').value);
         const retentionDays = Number(document.getElementById('retention-days').value);
         if (retentionDays < initialHistoryDays) {
+            activateTabForElement(document.getElementById('retention-days'));
             toast('歷史資料保留天數不可小於首次執行回補天數。', 'warning');
             return;
         }
@@ -212,6 +225,7 @@ function bindForm() {
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
         const riskyEventRetentionDays = Number(document.getElementById('risky-event-retention-days').value);
         if (riskyEventRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('risky-event-retention-days'));
             toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
             return;
         }
@@ -222,6 +236,7 @@ function bindForm() {
         const adAuthEnabled = document.getElementById('ad-auth-enabled').checked;
         const adServers = collectAdServers();
         if (adAuthEnabled && adServers.length === 0) {
+            activateTabForElement(document.getElementById('ad-servers'));
             toast('啟用 AD 驗證時，請至少輸入一台 AD 伺服器。', 'warning');
             return;
         }
@@ -304,6 +319,9 @@ function bindAdTest() {
 
 bindForm();
 bindAdTest();
+// #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
+// 不需要額外排除——見 activateTabForElement 的說明
+bindTabs(document.getElementById('settings-tabs'));
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
     excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result'
 });
