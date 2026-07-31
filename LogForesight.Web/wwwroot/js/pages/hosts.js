@@ -686,8 +686,10 @@ function openBatchGroupsModal() {
     for (const host of hosts) {
         const row = document.createElement('div');
         row.className = 'small mb-1';
-        row.appendChild(document.createTextNode(host.hostName));
-        row.appendChild(badges(host.groupNames, '未分組'));
+        const name = document.createElement('span');
+        name.className = 'me-2';
+        name.textContent = host.hostName;
+        row.append(name, badges(host.groupNames, '未分組'));
         list.appendChild(row);
     }
 
