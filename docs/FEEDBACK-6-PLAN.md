@@ -526,9 +526,29 @@ README 掃描零命中「查看」「點擊」。全站用詞一致性問題實�
 4. ✅ Phase 3 排程引擎＋UI（`ScheduleOptions`／`ScheduleCalculator`／
    `NamedMutexGate`／`SchedulerHostedService`／6 支 API／側欄改名＋權限放寬／
    排程卡／主機詳情觸發鈕，全部完成，1258 測試綠，明細見 §2 末段）
-5. Phase 4 CLI 職責搬 Web（規則升級 → 傾印開關 → probe 診斷分頁，逐塊 commit）
-6. 全案體檢 → 併 dev → 使用者驗證（含排程實跑）
+5. ✅ Phase 4 CLI 職責搬 Web（規則升級 → 傾印開關 → probe 診斷分頁，逐塊 commit，
+   明細見 §3「Phase 4 全部完成」）
+6. ✅ 全案體檢 → 併 dev（使用者驗證含排程實跑仍待使用者本人執行，見下方）
 7. Phase 5 退場步驟 1~2 由部署執行；**≥5 晚試點後**回頭做步驟 4~5
    （console 移除＋文件收尾，屆時另一個小輪收尾）
 
 每步維持既有流程：feature 分支、逐步 commit、測試綠才前進。
+
+### 全案體檢（2026-07-31）
+
+- **靜態掃描**：`git diff dev...feature/web-scheduler` 全文掃過（72 檔、
+  4593 插入/1560 刪除），檢查殘留除錯輸出／TODO／寫死密碼等紅旗字串，
+  無異常命中。
+- **稽核對照表缺口**：核對 `AuditQueryService.ActionNames` 時發現 Phase 3／
+  §1.4.9 新增的 4 個動作代碼沒有補上中文對照（見 §3「Phase 4 全部完成」
+  第 1 點），本輪一併修正。
+- **一致性瀏覽器實測**（單一登入 session 內連續走過三個本輪改動最集中的
+  頁面，確認彼此無互相影響）：排程作業頁（排程卡／執行總表／異常彙總
+  皆正常渲染，無主控台錯誤）→ 規則維護頁（`import-status` 正確回報
+  `hasUpdate:false`，橫幅正確隱藏）→ NetIQ 維護頁兩分頁（「設定」分頁
+  Sentinel 清單/選項表單正常；「診斷」分頁確認伺服器重啟後 `NetiqProbeRunState`
+  正確重置為乾淨狀態，不是殘留上次執行的假象）。
+- **測試**：1258 測試綠（`dotnet test` 完整跑過，非增量）。
+- **分支狀態**：`feature/web-scheduler` 的 merge-base 就是 `dev` 目前
+  HEAD（單線往前，dev 這段時間沒有其他人推新 commit），併入為乾淨的
+  fast-forward／無衝突合併。
