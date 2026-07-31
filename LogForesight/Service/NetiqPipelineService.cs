@@ -36,12 +36,17 @@ public class NetiqPipelineService
     private readonly BatchRunRecorder _runRecorder;
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRiskyEventStore? _riskyEventStore;
+    private readonly int _riskyEventRetentionDays;
 
+    /// <param name="riskyEventStore">風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）；null＝不寫暫存（測試情境）</param>
+    /// <param name="riskyEventRetentionDays">暫存保留天數——超過保留期的回補日跳過寫入
+    /// （見 <see cref="RiskyEventSelector.WithinRetention"/>），與本機路徑同一個閘門</param>
     public NetiqPipelineService(
         StorageSettings storage, string dataRoot, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
-        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRiskyEventStore? riskyEventStore = null)
+        BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator,
+        IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14)
     {
         _storage = storage;
         _dataRoot = dataRoot;
@@ -55,6 +60,7 @@ public class NetiqPipelineService
         _runRecorder = runRecorder;
         _caseCoordinator = caseCoordinator;
         _riskyEventStore = riskyEventStore;
+        _riskyEventRetentionDays = riskyEventRetentionDays;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="StoreHostListProvider"/>）；
@@ -308,9 +314,9 @@ public class NetiqPipelineService
                 Log.Warn(ex, "[{Server}] [{Ip}] {Date} 案件掛接失敗（不影響分析結果，下次執行冪等補掛）", sentinelName, target.IpAddress, date);
             }
 
-            // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：與本機路徑同一套選取邏輯
-            // （RiskyEventSelector），寫入失敗同樣不讓這台主機這天的分析結果作廢
-            if (_riskyEventStore != null)
+            // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：與本機路徑同一套選取邏輯與
+            // 保留期閘門（RiskyEventSelector），寫入失敗同樣不讓這台主機這天的分析結果作廢
+            if (_riskyEventStore != null && RiskyEventSelector.WithinRetention(date, _riskyEventRetentionDays, DateTime.Today))
             {
                 try
                 {

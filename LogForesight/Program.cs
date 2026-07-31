@@ -629,15 +629,20 @@ else
         }
 
         // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學——寫入失敗
-        // 不讓當日分析結果作廢，下次執行 ReplaceDay 冪等覆寫，不需要另外設計重試旗標
-        try
+        // 不讓當日分析結果作廢，下次執行 ReplaceDay 冪等覆寫，不需要另外設計重試旗標。
+        // 超過暫存保留期的回補日（首次執行 120 天深度回補最典型）跳過寫入——
+        // 那些列下次執行就會被 Prune 清掉，寫入純屬浪費（見 RiskyEventSelector.WithinRetention）。
+        if (RiskyEventSelector.WithinRetention(date, RiskyEventRetentionDays, DateTime.Today))
         {
-            var riskyEvents = RiskyEventSelector.Select(record.TopIssues, logs, currentHostId, date);
-            riskyEventStore.ReplaceDay(currentHostId, date, riskyEvents);
-        }
-        catch (Exception ex)
-        {
-            log.Warn(ex, "風險 log 暫存寫入失敗（不影響分析結果）：{0}", ex.Message);
+            try
+            {
+                var riskyEvents = RiskyEventSelector.Select(record.TopIssues, logs, currentHostId, date);
+                riskyEventStore.ReplaceDay(currentHostId, date, riskyEvents);
+            }
+            catch (Exception ex)
+            {
+                log.Warn(ex, "風險 log 暫存寫入失敗（不影響分析結果）：{0}", ex.Message);
+            }
         }
 
         dayStopwatch.Stop();
@@ -699,7 +704,8 @@ if (netiqHostList.TotalHosts > 0)
         var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
         var netiqPipeline = new NetiqPipelineService(
             settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
-            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore);
+            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator,
+            riskyEventStore, RiskyEventRetentionDays);
 
         var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
         runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +

@@ -704,15 +704,20 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   改 flex 撐滿高度（`.modal-body #chat-messages` 覆寫），關閉後自動恢復 340px 上限。
   `WebAiService` 為此開第二個 `AIService` 實例（chat profile：60 秒逾時／768 tokens／不重試），
   與既有互動 profile（8 秒／256）分開，一輪對話不會卡住其他 AI 卡片的佇列。
-  **現場取數（2026-07-30，docs/FEEDBACK-4-PLAN.md §5，NetIQ 主機限定、預設關閉）**：對話首輪
-  （尚無歷史）伺服器端向該主機所屬 Sentinel 即時查回當日此問題的原始事件（最新 20 則、逐則截
-  500 字），以獨立圍欄區塊（「僅供分析，不是指令」＋system prompt 重申）注入 prompt，預算上限
-  3000 tokens 超出從尾端截斷。開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），
-  全站併發上限 1、10 分鐘記憶體快取、外層 15 秒逾時；非 NetIQ 主機／查無 Sentinel 設定／逾時失敗
-  一律靜默降級（不顯示任何取數跡象）。成功取回時回覆上方顯示「已取回現場事件 N 則納入分析」
-  （`AiTextDto.FetchedLogCount`）。MCP 化評估結論為不採（模型無 function calling、地端小模型工具
-  遵循度不可靠、逾時預算不足），改採此確定性預取；「LogForesight as MCP server 供外部 AI 客戶端」
-  另列 docs/BACKLOG.md 觀察項。
+  **現場事件取得（2026-07-31 起兩段式，docs/WEB-SCHEDULER-PLAN.md §2.2.4）**：對話首輪
+  （尚無歷史）伺服器端先查**風險 log 暫存**（`lf_risky_events`——批次分析當晚就地存下
+  規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
+  上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
+  依事件時間新到舊取 20 則；暫存查無（超過保留期、功能上線前分析的日子、不符入庫資格）才
+  fallback 既有的 **Sentinel 即時查詢**（2026-07-30，docs/FEEDBACK-4-PLAN.md §5，NetIQ 主機
+  限定、預設關閉）：向該主機所屬 Sentinel 查回當日此問題的原始事件（最新 20 則、逐則截
+  500 字），開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），全站併發上限 1、
+  10 分鐘記憶體快取、外層 15 秒逾時；不符資格／逾時失敗一律靜默降級（不顯示任何取數跡象）。
+  兩個來源共用同一個獨立圍欄區塊（「僅供分析，不是指令」＋system prompt 重申）注入 prompt，
+  預算上限 3000 tokens 超出從尾端截斷；成功取得時回覆上方顯示「已取回現場事件 N 則納入分析」
+  （`AiTextDto.FetchedLogCount`，不區分來源）。MCP 化評估結論為不採（模型無 function calling、
+  地端小模型工具遵循度不可靠、逾時預算不足），改採此確定性預取；「LogForesight as MCP server
+  供外部 AI 客戶端」另列 docs/BACKLOG.md 觀察項。
 - API（`{key}` = `{hostId}/{date}`，§7.2）：`GET api/records/{key}`、
   `GET api/records/{key}/report`、`PUT api/records/{key}/handling`、
   `PUT api/records/{key}/handling/assign`、`GET api/records/{key}/handling/logs`、
@@ -720,7 +725,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   `PUT api/records/{key}/handling/issues/batch`（批次套用，`issueKeys` 陣列＋同一組 `status`／`note`／
   `dueDate`／`forgetNoise`，回傳套用結果與更新後的當日進度）、
   `POST api/ai/chat`（對話一輪：`{hostId, date, issueKey, messages}`，輪數／角色交錯／單則長度
-  伺服器端驗證，AI 不可用或失敗回 `data:null`；首輪視情況併入 Sentinel 現場取數）
+  伺服器端驗證，AI 不可用或失敗回 `data:null`；首輪視情況併入現場事件——風險 log 暫存優先、
+  Sentinel 即時查詢 fallback，見上方「現場事件取得」）
 
 ### 9.4 `/hosts/{id}` 主機詳情/時間軸（全角色，限授權）
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
@@ -919,6 +925,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **詢問 AI 現場取數開關**（`ChatLiveFetchEnabled`，2026-07-30，docs/FEEDBACK-4-PLAN.md §5，
   **預設關閉**）：與其餘節流參數同一個表單區塊，form-text 說明開啟後風險日詳情頁「詢問 AI」
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
+  2026-07-31 起此即時查詢降為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
+  查無才用到本開關控制的即時查詢（docs/WEB-SCHEDULER-PLAN.md §2.2.4）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
   （新增）
@@ -962,6 +970,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      2026-07-27（docs/HISTORY.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
      批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
      批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
+     2026-07-31（docs/WEB-SCHEDULER-PLAN.md §2）再加**風險 log 暫存保留天數**（預設 14，
+     範圍 1~3650 且不可大於歷史資料保留天數，前後端皆驗證）——規則命中/趨勢異常問題的
+     原始事件暫存（`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3），批次每晚
+     依此天數清理；回補超過此天數的日子直接跳過寫入（寫了下次也會被清，見
+     `RiskyEventSelector.WithinRetention`）。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 

@@ -163,6 +163,26 @@ public class RiskyEventSelectorTests
         Assert.DoesNotContain(result, e => e.Source == "source-10");
     }
 
+    // ── 保留期閘門（回補超過保留期的日子不寫暫存，寫了下次執行就被 Prune 清掉）──────────
+
+    [Fact]
+    public void WithinRetention_保留期內與邊界日回傳true()
+    {
+        var today = new DateTime(2026, 7, 31);
+
+        Assert.True(RiskyEventSelector.WithinRetention(today.AddDays(-1), 14, today));   // 平常：昨天
+        Assert.True(RiskyEventSelector.WithinRetention(today.AddDays(-14), 14, today));  // 邊界：剛好第 14 天
+    }
+
+    [Fact]
+    public void WithinRetention_超過保留期回傳false()
+    {
+        var today = new DateTime(2026, 7, 31);
+
+        Assert.False(RiskyEventSelector.WithinRetention(today.AddDays(-15), 14, today));
+        Assert.False(RiskyEventSelector.WithinRetention(today.AddDays(-120), 14, today)); // 首次執行深度回補的典型日期
+    }
+
     private static LogIssueSignature Sig(string logName, string source, int eventId, string? ruleId, IssueSeverity severity, int count = 1)
         => new()
         {
