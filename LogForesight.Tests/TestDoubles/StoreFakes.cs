@@ -59,6 +59,29 @@ internal class FakeHostStore : IHostStore
         if (host != null) host.GroupIds = groupIds.Distinct().ToList();
     }
 
+    public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace)
+    {
+        var wanted = groupIds.Distinct().ToList();
+        var result = new HostGroupsBatchResult();
+
+        foreach (var hostId in hostIds.Distinct())
+        {
+            var host = Get(hostId);
+            if (host == null) continue;
+
+            if (host.MergedInto != null)
+            {
+                result.Skipped.Add(host);
+                continue;
+            }
+
+            host.GroupIds = replace ? wanted.ToList() : host.GroupIds.Union(wanted).Distinct().ToList();
+            result.Updated.Add(host);
+        }
+
+        return result;
+    }
+
     public void SetOwners(long hostId, IEnumerable<long> userIds)
     {
         var host = Get(hostId);

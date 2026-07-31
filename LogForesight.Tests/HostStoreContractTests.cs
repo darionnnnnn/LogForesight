@@ -118,6 +118,49 @@ public class HostStoreContractTests : IDisposable
         Assert.Equal("改過的描述", after.RoleDesc);
     }
 
+    // ── SetGroupsBatch（docs/FEEDBACK-5-PLAN.md §8）────────────────────────────
+
+    [Fact]
+    public void SetGroupsBatch_加入模式_與既有群組取聯集()
+    {
+        var store = CreateStore();
+        var a = store.Upsert(new WebHost { HostName = "A", GroupIds = new List<long> { 1 } });
+        var b = store.Upsert(new WebHost { HostName = "B" });
+
+        var result = store.SetGroupsBatch(new[] { a.HostId, b.HostId }, new long[] { 2 }, replace: false);
+
+        Assert.Equal(2, result.Updated.Count);
+        Assert.Empty(result.Skipped);
+        Assert.Equal(new long[] { 1, 2 }, store.Get(a.HostId)!.GroupIds);
+        Assert.Equal(new long[] { 2 }, store.Get(b.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_取代模式_捨棄既有群組()
+    {
+        var store = CreateStore();
+        var a = store.Upsert(new WebHost { HostName = "A", GroupIds = new List<long> { 1, 3 } });
+
+        store.SetGroupsBatch(new[] { a.HostId }, new long[] { 2 }, replace: true);
+
+        Assert.Equal(new long[] { 2 }, store.Get(a.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_已併入其他主機的主機_略過不動群組()
+    {
+        var store = CreateStore();
+        var a = store.Upsert(new WebHost { HostName = "A" });
+        var b = store.Upsert(new WebHost { HostName = "B" });
+        store.Merge(a.HostId, b.HostId);
+
+        var result = store.SetGroupsBatch(new[] { a.HostId }, new long[] { 1 }, replace: false);
+
+        Assert.Empty(result.Updated);
+        Assert.Single(result.Skipped);
+        Assert.Empty(store.Get(a.HostId)!.GroupIds);
+    }
+
     [Fact]
     public void SetGroups_與SetOwners_各自獨立不互相影響()
     {

@@ -39,6 +39,13 @@
     </div>
 </div>
 
+@* 批次改群組（docs/FEEDBACK-5-PLAN.md §8）：勾選跨頁／篩選保留，這條列只在有勾選時出現 *@
+<div class="lf-toolbar mb-3 d-none" id="host-selection-bar">
+    <span class="fw-semibold" id="host-selection-count"></span>
+    <button type="button" class="btn btn-sm btn-primary" id="btn-batch-groups">批次設定群組</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
+</div>
+
 <div class="lf-card">
     <div class="lf-card__header">
         <h2 class="lf-card__title">主機 <span class="text-muted small" id="host-count"></span></h2>
@@ -174,6 +181,49 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">關閉</button>
                     <button type="submit" class="btn btn-primary" id="bulk-save">登錄</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batch-groups-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次設定群組</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="batch-groups-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <div class="form-label small text-muted" id="batch-groups-hosts-label"></div>
+                        <div id="batch-groups-hosts" class="lf-bulk-assign-hosts"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">模式</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="batch-groups-mode" id="batch-groups-mode-add" value="add" checked />
+                            <label class="form-check-label" for="batch-groups-mode-add">
+                                加入（保留每台既有群組，勾選的群組加上去）
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="batch-groups-mode" id="batch-groups-mode-replace" value="replace" />
+                            <label class="form-check-label" for="batch-groups-mode-replace">
+                                取代（改為僅勾選的群組）
+                            </label>
+                        </div>
+                        <div class="form-text text-danger d-none" id="batch-groups-replace-warning"></div>
+                    </div>
+                    <div>
+                        <label class="form-label">群組</label>
+                        <div id="batch-groups-checks" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="batch-groups-save">套用</button>
                 </div>
             </form>
         </div>

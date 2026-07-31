@@ -14,7 +14,7 @@
 | 5 | 勾選 checkbox 併入處理狀態欄右上角 | — | **第四輪已完成**（§5） |
 | 6 ✅ | 常駐說明文字收斂為 icon＋滑過顯示 | Web 前端 | 中 |
 | 7 ✅ | modal 全面寬版化與排版檢視 | Web 前端 | 中 |
-| 8 | 主機頁批次勾選多台一次加入／修改群組 | Web 前後端 | 中大 |
+| 8 ✅ | 主機頁批次勾選多台一次加入／修改群組 | Web 前後端 | 中大 |
 | 9 ✅ | 設定頁頁籤化＋儲存鈕常駐畫面下方 | Web 前端 | 中 |
 | 10 ✅ | 規則庫初始化缺口：全新環境規則頁 500（Web 啟動冪等 bootstrap） | Core＋Web 啟動 | 小 |
 
@@ -397,6 +397,41 @@ Groups 的角色說明（builtin 群組角色鎖定原因）留（解釋鎖定 U
 - 群組變更的下游（可見性、未分組告警、群組 chip 篩選）全部讀既有資料，零改動。
 - 與 NetIQ 匯入精靈的「依網段指派群組」不重疊：那是匯入時、這是事後維護。
 
+### 實作結果與驗收對照（2026-07-31）
+
+依規劃原樣完成，無設計變更：
+
+- **`IHostStore.SetGroupsBatch(hostIds, groupIds, replace)`**：`HostStore` 內
+  一次 `Mutate` 完成整批（不是逐台呼叫既有 `SetGroups`），回傳
+  `HostGroupsBatchResult { Updated, Skipped }`；`MergedInto` 非 null 的主機
+  歸入 `Skipped`。`FakeHostStore` 同步補上等價實作供服務層測試使用。
+- **`HostAdminService.SetGroupsBatch`**：驗證 `mode`（僅 `add`/`replace`）、
+  主機清單非空、群組 id 全部存在（`NameFormat.EnsureAllKnown`）；
+  寫入單筆彙總 audit（`targetKind: "host"`, `targetId: "batch"`，
+  `detail` 含 Mode／GroupIds／HostIds 等，供事後查核批次改了什麼）。
+- **`PUT /api/admin/hosts/groups/batch`**：沿用 `AdminController` 類別層級
+  `[Permission(Capability.Maintain)]`，未額外加註。
+- **前端（`Hosts.cshtml`／`hosts.js`）**：首欄勾選＋表頭全選（`renderTable`
+  的 `renderHeader`／`render` 機制，與 record-detail 的表頭全選 checkbox
+  同一套寫法）；`selectedHosts` 以 `Map<hostId, hostDto>` 儲存，勾選當下
+  就地保存主機物件供跨頁维持；批次設定群組 modal 沿用 `.lf-bulk-assign-hosts`
+  限高捲動樣式列出已勾選主機＋現有群組徽章，「取代」模式在勾選群組數為 0
+  時即時顯示紅字警告。
+- **瀏覽器實測**（dev 環境，2026-07-31）：勾選 2 台 → 開批次設定群組 modal
+  確認清單與名稱正確 → 切換「取代」模式且未勾群組 → 警告文字如預期出現
+  （「2 台將變成未分組，只有 admin 看得到。」）→ 勾選群組後警告消失 → 送出
+  → toast 顯示「已更新 2 台」→ modal 關閉＋選取清空 → 以 API 覆核兩台主機的
+  `groupNames` 已更新為勾選的群組 → 稽核紀錄確認為單筆彙總條目
+  （「批次取代群組「E2E新群組」：共 2 台主機（...）」），非逐台散列。
+  另以指令碼模擬「表頭全選」路徑（一次勾滿本頁 20 台）驗證選取計數與 modal
+  清單同步正確。**唯一未覆蓋的分支**：dev 資料目前沒有已併入（`MergedInto`
+  非 null）的主機可供互動測試「略過並跳過勾選框」的畫面行為；該分支已由
+  3 個後端測試（store 契約＋服務層）覆蓋邏輯正確性，前端 `isSelectable`
+  判斷式與其餘勾選/全選邏輯共用同一條件、無需另外分支處理。
+- **測試**：新增 3 個 `HostStoreContractTests`（加入聯集／取代／略過已併入）
+  ＋ 7 個 `HostAdminServiceTests`（含稽核彙總斷言）。全套 1214 測試綠燈
+  （較本輪起始的 1163 增加 51，含本輪 §4／§10／§8 三批新測試）。
+
 ---
 
 ## 9. 設定頁頁籤化＋儲存鈕常駐
@@ -532,7 +567,7 @@ EnsureCreated 只建空表）必炸。
 6. ✅ §2 通用化（14 檔完成，含本文件自身盤點表；實作紀錄見 §2 末段）
 7. ✅ §4 先前處理 modal（前後端，9 個新測試；未跑瀏覽器互動驗證——dev DB
    當前無分析紀錄可測，改以 JS 模組匯入零語法錯誤＋後端單元測試把關）
-8. §8 批次群組（前後端，含新端點與測試）
+8. ✅ §8 批次群組（前後端，含新端點與測試；瀏覽器實測見 §8 末段）
 9. 全案體檢 → 併 dev → **使用者一次性總驗證**（Q3 定案：#5 等全部改完再一併
    測，Phase 1 風險 log 暫存也在同一關）→ 併 master
 10. **§2b 歷史改寫作業**（獨立於本輪 commit 之外的一次性作業）：master 收齊、

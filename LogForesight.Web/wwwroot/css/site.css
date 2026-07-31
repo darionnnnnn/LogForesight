@@ -187,6 +187,11 @@ body {
     color: var(--lf-gray-400);
 }
 
+/* 主機頁批次改群組的勾選欄（docs/FEEDBACK-5-PLAN.md §8）：固定窄寬，不隨內容撐開 */
+.lf-checkbox-cell {
+    width: 2.5rem;
+}
+
 /* 依問題視角批次指派 modal 的受影響主機清單（docs/FEEDBACK-4-PLAN.md §4）：
    2000 台規模下單一問題可能影響數百台主機，限高＋捲動避免 modal 被撐爆版面 */
 .lf-bulk-assign-hosts {

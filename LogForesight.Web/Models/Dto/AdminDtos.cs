@@ -239,6 +239,28 @@ public class SetIdsRequest
     public List<long> Ids { get; set; } = new();
 }
 
+/// <summary>批次改群組（docs/FEEDBACK-5-PLAN.md §8）</summary>
+public class SetGroupsBatchRequest
+{
+    public List<long> HostIds { get; set; } = new();
+    public List<long> GroupIds { get; set; } = new();
+
+    /// <summary>"add"（加入，保留既有群組）｜ "replace"（取代，改為僅這些群組）</summary>
+    public string Mode { get; set; } = "add";
+}
+
+public class HostGroupsBatchResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<SkippedHostDto> Skipped { get; set; } = new();
+}
+
+public class SkippedHostDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
 public class MergeHostRequest
 {
     public long SourceHostId { get; set; }

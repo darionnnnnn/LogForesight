@@ -43,6 +43,17 @@ public interface IHostStore
 
     void SetGroups(long hostId, IEnumerable<long> groupIds);
 
+    /// <summary>
+    /// 批次專用：一次 Mutate 完成多台主機的群組指派（docs/FEEDBACK-5-PLAN.md §8）。
+    /// <paramref name="replace"/>=true 時整批改為僅 <paramref name="groupIds"/>；
+    /// false 時與既有群組取聯集（加入）。已併入其他主機（MergedInto 非 null）的
+    /// 主機略過（群組對墓碑紀錄無意義），回傳於結果的 Skipped。
+    ///
+    /// 不是逐台呼叫 <see cref="SetGroups"/> 的原因：那是 N 次獨立的 blob 讀改寫，
+    /// 批次端點要的是勾選 50 台時只有一次寫入。
+    /// </summary>
+    HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace);
+
     void SetOwners(long hostId, IEnumerable<long> userIds);
 
     /// <summary>
@@ -64,6 +75,13 @@ public interface IHostStore
     /// 「留墓碑不刪除」的設計要能真的救得回來，才不只是一句安慰。
     /// </summary>
     void Unmerge(long hostId);
+}
+
+/// <summary><see cref="IHostStore.SetGroupsBatch"/> 的結果：實際套用與略過的主機各自清單</summary>
+public class HostGroupsBatchResult
+{
+    public List<WebHost> Updated { get; set; } = new();
+    public List<WebHost> Skipped { get; set; } = new();
 }
 
 /// <summary>主機群組的讀寫（↔ lf_host_groups）</summary>
