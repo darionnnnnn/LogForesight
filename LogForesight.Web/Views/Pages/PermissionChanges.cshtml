@@ -5,7 +5,7 @@
 <div class="lf-hint mb-3">
     <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
     <span>系統負責發現異動，請逐筆確認每筆是否為授權操作。</span>
-    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" data-bs-trigger="focus"
+    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
             data-bs-title="為什麼要逐筆確認"
             data-bs-content="自動檢查負責發現有異動，逐筆確認讓了解環境的人判斷這筆是否正常——同一筆 ACL 新增，管理員自己設定的就是正常維運，非預期出現的就是入侵訊號。">
         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
@@ -22,7 +22,7 @@
 <div id="perm-list"></div>
 
 <div class="modal fade" id="confirm-modal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="confirm-modal-title">確認權限異動</h5>

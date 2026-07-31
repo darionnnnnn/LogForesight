@@ -27,6 +27,26 @@ export function icon(name, className) {
 }
 
 /**
+ * 說明 icon 鈕（滑過或 focus 顯示 popover），供 JS 動態產生欄位時使用——
+ * layout.js 的 initHelpPopovers 只在頁面載入當下掃描一次 DOM，涵蓋不到之後才建立的節點，
+ * 這裡自行初始化 popover 實例（docs/FEEDBACK-5-PLAN.md §6）。
+ * content/title 皆為開發者常數，不是使用者輸入，直接寫入 data 屬性無 XSS 疑慮。
+ */
+export function helpIcon(content, title) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'lf-help';
+    btn.tabIndex = 0;
+    btn.setAttribute('data-bs-toggle', 'popover');
+    btn.setAttribute('data-bs-trigger', 'hover focus');
+    if (title) btn.setAttribute('data-bs-title', title);
+    btn.setAttribute('data-bs-content', content);
+    btn.appendChild(icon('question-circle'));
+    new bootstrap.Popover(btn, { trigger: 'hover focus', html: false });
+    return btn;
+}
+
+/**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
  */

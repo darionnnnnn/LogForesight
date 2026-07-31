@@ -187,6 +187,11 @@ body {
     color: var(--lf-gray-400);
 }
 
+/* 主機頁批次改群組的勾選欄（docs/FEEDBACK-5-PLAN.md §8）：固定窄寬，不隨內容撐開 */
+.lf-checkbox-cell {
+    width: 2.5rem;
+}
+
 /* 依問題視角批次指派 modal 的受影響主機清單（docs/FEEDBACK-4-PLAN.md §4）：
    2000 台規模下單一問題可能影響數百台主機，限高＋捲動避免 modal 被撐爆版面 */
 .lf-bulk-assign-hosts {
@@ -219,6 +224,10 @@ body {
     --bs-btn-font-weight: 500;
     display: inline-flex;
     align-items: center;
+    /* inline-flex 主軸預設 justify-content:flex-start，一般按鈕寬度貼齊內容看不出差異，
+       但滿寬（w-100）按鈕（登入送出鈕／側欄登出鈕／處理面板儲存鈕）內容會整排靠左——
+       docs/FEEDBACK-5-PLAN.md §1 */
+    justify-content: center;
     gap: .4em;
     /* withBusy() 把按鈕內容換成「spinner＋⋯中」文字後，Bootstrap 按鈕預設不禁止換行，
        在窄容器（如聊天輸入列）裡會醜陋地折成兩行（docs/WEB-FEEDBACK-2-PLAN.md #9） */
@@ -507,6 +516,11 @@ body {
 
 .lf-sidebar__user .lf-icon { color: var(--lf-sidebar-section); width: 1.1rem; height: 1.1rem; }
 
+/* #lf-current-user 的 text-truncate 原本不會生效——flex 子項預設 min-width:auto，
+   不會縮到內容寬度以下；補 min-width:0 讓省略號真正出現，長名字不再把側欄撐爆
+   （docs/FEEDBACK-5-PLAN.md §3）*/
+.lf-sidebar__user #lf-current-user { min-width: 0; flex: 1 1 auto; }
+
 .lf-sidebar__version {
     margin-top: var(--lf-space-2);
     text-align: center;
@@ -540,6 +554,19 @@ body {
 .lf-content {
     padding: var(--lf-space-5);
     flex: 1 1 auto;
+}
+
+/* 頁籤化長表單的儲存列常駐畫面下方（docs/FEEDBACK-5-PLAN.md §9）：目前只有設定頁使用，
+   但寫成通用 class 供日後其他頁籤化的長表單沿用。sticky 相對視窗捲動（.lf-content 本身
+   無 overflow 設定），底部留白抵銷 .lf-content 的 padding-bottom，讓儲存列貼齊視窗底緣。 */
+.lf-settings-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    margin: 0 calc(var(--lf-space-5) * -1) calc(var(--lf-space-5) * -1);
+    padding: var(--lf-space-3) var(--lf-space-5);
+    background: var(--lf-content-bg);
+    border-top: 1px solid var(--lf-border);
 }
 
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */

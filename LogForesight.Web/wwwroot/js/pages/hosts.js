@@ -51,6 +51,16 @@ let searchDebounce = null;
 let conflictIds = new Set();   // 衝突組涵蓋的全部主機（處置時要看到整組）
 let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
 
+/**
+ * 批次改群組的勾選狀態（docs/FEEDBACK-5-PLAN.md §8）：hostId → host 物件。
+ * 伺服器端分頁下勾選要跨頁／跨篩選保留，所以不能只存 id——開 modal 時要顯示
+ * 主機名＋現有群組徽章，而那些主機未必在目前這一頁，只能靠勾選當下存下來的物件。
+ * 只在「清除選取」與套用成功後清空，翻頁／篩選不清空。
+ */
+const selectedHosts = new Map();
+const batchGroupsModal = new bootstrap.Modal(document.getElementById('batch-groups-modal'));
+let headerCheckboxEl = null;   // 表頭全選 checkbox 的 DOM 參照，供逐列勾選後同步狀態
+
 async function load() {
     renderLoading(listContainer, 5);
 
@@ -240,6 +250,7 @@ function render() {
 
     renderTable(listContainer, {
         columns: [
+            { title: '', className: 'lf-checkbox-cell', renderHeader: selectAllHeaderCheckbox, render: rowCheckboxCell },
             { title: '主機', sortKey: 'name', render: hostNameCell },
             { title: '來源', sortKey: 'source', render: sourceCell },
             { title: 'IP', sortKey: 'ip', render: h => h.ipAddress ?? '' },
@@ -278,6 +289,70 @@ function render() {
             search();
         }
     });
+
+    renderSelectionBar();
+}
+
+/** 已併入其他主機的列不給勾選——群組對墓碑紀錄無意義；停用主機可勾（改群組合理） */
+function isSelectable(host) {
+    return !host.mergedInto;
+}
+
+function rowCheckboxCell(host) {
+    if (!isSelectable(host)) return document.createTextNode('');
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.checked = selectedHosts.has(host.hostId);
+    check.title = '批次改群組';
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        if (check.checked) selectedHosts.set(host.hostId, host);
+        else selectedHosts.delete(host.hostId);
+        renderSelectionBar();
+        syncSelectAllHeaderCheckbox();
+    });
+
+    return check;
+}
+
+/** 表頭全選：只作用在目前這一頁可勾選的列（伺服器端分頁下沒有「全部主機」的概念） */
+function selectAllHeaderCheckbox() {
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.title = '全選本頁';
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        const selectable = currentPageHosts.filter(isSelectable);
+        if (check.checked) {
+            for (const host of selectable) selectedHosts.set(host.hostId, host);
+        } else {
+            for (const host of selectable) selectedHosts.delete(host.hostId);
+        }
+        render();
+    });
+
+    headerCheckboxEl = check;
+    syncSelectAllHeaderCheckbox();
+    return check;
+}
+
+/** 本頁可勾選列是否已全部勾選——翻頁、篩選、逐列勾選後都要重新同步表頭狀態 */
+function syncSelectAllHeaderCheckbox() {
+    if (!headerCheckboxEl) return;
+    const selectable = currentPageHosts.filter(isSelectable);
+    headerCheckboxEl.checked = selectable.length > 0 && selectable.every(h => selectedHosts.has(h.hostId));
+    headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(h => selectedHosts.has(h.hostId));
+}
+
+function renderSelectionBar() {
+    const bar = document.getElementById('host-selection-bar');
+    bar.classList.toggle('d-none', selectedHosts.size === 0);
+    document.getElementById('host-selection-count').textContent = `已選 ${selectedHosts.size} 台`;
 }
 
 function hostNameCell(host) {
@@ -594,6 +669,92 @@ function selectedIds(containerId) {
     return Array.from(document.querySelectorAll(`#${containerId} input:checked`))
         .map(input => Number(input.value));
 }
+
+/**
+ * 批次設定群組 modal（docs/FEEDBACK-5-PLAN.md §8）：頂部列出已勾選主機（沿用
+ * .lf-bulk-assign-hosts 限高捲動樣式）＋現有群組徽章，套用前先看得到「會動到誰」。
+ * 主機物件全部來自逐列勾選當下存下的 selectedHosts，不重新打 API——
+ * 這正是選取跨頁保留唯一需要付出的代價：徽章反映的是勾選當下的狀態，
+ * 不是即時最新值，但這裡的視窗極短（勾完就套用），可接受。
+ */
+function openBatchGroupsModal() {
+    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+
+    document.getElementById('batch-groups-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
+    const list = document.getElementById('batch-groups-hosts');
+    list.replaceChildren();
+    for (const host of hosts) {
+        const row = document.createElement('div');
+        row.className = 'small mb-1';
+        row.appendChild(document.createTextNode(host.hostName));
+        row.appendChild(badges(host.groupNames, '未分組'));
+        list.appendChild(row);
+    }
+
+    document.getElementById('batch-groups-mode-add').checked = true;
+    checkboxList(document.getElementById('batch-groups-checks'), hostGroups.map(g => ({
+        id: g.groupId,
+        label: g.groupName,
+        checked: false
+    })), '尚無主機群組，請先於「群組與授權」建立。');
+
+    updateReplaceWarning();
+    batchGroupsModal.show();
+}
+
+/** 「取代」模式下若沒勾任何群組，套用後這些主機會全部變成未分組——先警告 */
+function updateReplaceWarning() {
+    const mode = document.querySelector('input[name="batch-groups-mode"]:checked').value;
+    const warning = document.getElementById('batch-groups-replace-warning');
+
+    if (mode !== 'replace' || selectedIds('batch-groups-checks').length > 0) {
+        warning.classList.add('d-none');
+        return;
+    }
+
+    warning.textContent = `${selectedHosts.size} 台將變成未分組，只有 admin 看得到。`;
+    warning.classList.remove('d-none');
+}
+
+document.querySelectorAll('input[name="batch-groups-mode"]').forEach(el =>
+    el.addEventListener('change', updateReplaceWarning));
+document.getElementById('batch-groups-checks').addEventListener('change', updateReplaceWarning);
+
+document.getElementById('btn-batch-groups').addEventListener('click', openBatchGroupsModal);
+document.getElementById('btn-clear-selection').addEventListener('click', () => {
+    selectedHosts.clear();
+    render();
+});
+
+document.getElementById('batch-groups-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const groupIds = selectedIds('batch-groups-checks');
+    const mode = document.querySelector('input[name="batch-groups-mode"]:checked').value;
+
+    const saveButton = document.getElementById('batch-groups-save');
+    const restore = withBusy(saveButton, '套用中');
+
+    try {
+        const result = await api.put('/api/admin/hosts/groups/batch', {
+            hostIds: [...selectedHosts.keys()],
+            groupIds,
+            mode
+        });
+
+        toast(result.skipped.length > 0
+            ? `已更新 ${result.updatedCount} 台，略過 ${result.skipped.length} 台（已併入其他主機）`
+            : `已更新 ${result.updatedCount} 台`, 'success');
+
+        selectedHosts.clear();
+        batchGroupsModal.hide();
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
 
 document.getElementById('btn-new-host').addEventListener('click', () => openModal(null));
 document.getElementById('btn-bulk-hosts').addEventListener('click', () => {

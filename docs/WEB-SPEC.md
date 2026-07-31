@@ -518,6 +518,24 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
    「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
 8. 日期區間提供快捷鈕：今天／近 7 天／近 30 天
+9. **modal 寬度（2026-07-31，docs/FEEDBACK-5-PLAN.md §7）**：表單 modal 欄位 ≥3 組即
+   `modal-lg`＋`row g-3` 兩欄排列；檢視型 modal（唯讀展示內容，非表單）一律 `modal-lg`
+   起跳。避免「細細一長排」逼使用者在窄欄位裡一路往下捲；<992px（`modal-lg` 斷點以下）
+   兩欄自動退回單欄（Bootstrap grid 原生行為，不需額外處理）。內容仍可能超高者另加
+   `modal-dialog-scrollable`。短訊息的二次確認框（`confirmAction`）刻意不套用——
+   寬版對單句確認文字反而鬆散。
+10. **常駐說明文字收斂為 hover icon（2026-07-31，docs/FEEDBACK-5-PLAN.md §6）**：純描述性的
+    `.form-text`（說明「這欄位是什麼」但不影響能否送出）改為 `core/ui.js` 的 `helpIcon(content, title)`
+    ——小圖示鈕，`hover`/`focus` 觸發 `bootstrap.Popover`；放在 `<label>` **之後、`<input>` 之前的
+    同層 sibling**（不巢在 `<label>` 內——互動元素巢在 `<label>` 內在不同瀏覽器的點擊/焦點行為不一致，
+    專案內無此前例）。**保留常駐顯示**的判準：說明陳述的是不可逆或會擋住送出的後果（例如「未分組時
+    只有 admin 看得到」「建立後不可修改」「保留天數上限」），這類文字不該藏在要滑鼠移過去才看得到的
+    icon 裡；純描述性質（例如「用於向 Sentinel 查詢」）才收斂。
+11. **批次操作跨頁選取（2026-07-31，docs/FEEDBACK-5-PLAN.md §8）**：伺服器端分頁清單若支援批次
+    操作，勾選狀態存 `Map<id, rowDto>`（不是純 id 集合）——批次確認畫面通常要顯示「勾了哪些」的
+    名稱／摘要，而那些列未必在目前這一頁，只能靠勾選當下存下的物件；翻頁／篩選不清空，僅
+    「清除選取」與套用成功後清空。表頭全選只作用於目前這一頁（伺服器端分頁沒有「全部」的概念），
+    以 `indeterminate` 呈現「本頁部分已選」。首見於主機頁批次改群組，供之後其他清單頁比照。
 
 ## 9. 頁面規格
 
@@ -672,6 +690,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      動作與（系統）actor 區分）。已被使用者明確標結案的日子案件同步不覆蓋；問題重現視為新案件。
      詳情頁問題列顯示案件徽章（處理人／起日），指派時若問題已由他人進行中案件涵蓋則保留原處理人
      並回報略過清單（同主機同問題只由一人處理）。案件處理人姓名連到 §9.4a 處理人工作頁。
+  15. **查看先前處理**（2026-07-31，docs/FEEDBACK-5-PLAN.md §4）：問題再次發生時，「處理狀態」欄
+     多一顆「先前處理」按鈕（`IssueDto.HasPriorHandling`——早於本日、狀態為結案類的逐日標記或
+     已結案的 `IssueCase` 任一存在即為 true；唯讀角色也看得到，不限 `canHandle`）。點擊開
+     `GET api/records/{hostId}/{date}/handling/issue-history?issueKey=`（`issueKey` 走 query
+     string，內含 `|` 分隔字元的複合鍵不進路由樣板）→ `modal-lg` 顯示已結案案件摘要（處理人／
+     期間／說明）＋逐日結案標記時間軸，**刻意只列結案類（resolved/wont_fix/false_positive/
+     known_noise），不含處理中／未處理**——這顆按鈕要回答的是「上次怎麼解的」，處理中／未處理
+     不構成「先前處理方式」的答案。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
@@ -806,6 +832,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   `GET api/reports/signature?eventId=&source=`。
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
+- **規則庫初始化（2026-07-31，docs/FEEDBACK-5-PLAN.md §10）**：`rules` blob 原本只有
+  批次的 `RuleBootstrapper` 會初始化，全新環境（批次從未執行過）Web 開站即假設
+  「批次至少跑過一次」，本頁對著不存在的 blob 直接拋例外（500）。Web
+  `Program.cs` 啟動時現與批次共用同一份 `RuleBootstrapper.LoadContent`（搬至
+  Core）冪等初始化——已存在只載入不覆寫，不存在才寫入內建種子；同時同步原廠
+  種子鏡像（`IRuleSeedStore.Sync`），讓全新環境也能使用「回復預設」。不呼叫
+  `RuleBootstrapper.Run`（那會連帶初始化 `KnownIssueCatalog` 的全域分類狀態，
+  是批次分析時才用得到的，Web 不需要）。初始化失敗只記警告、不擋站台啟動。
 - 清單（Id/類別/嚴重度/Origin/Enabled/已修改徽章/種子有新版標示）；
   編輯表單（builtin 無刪除鈕、有「回復預設」含前後對照確認）；抑制管理頁籤（主機/規則/事由/到期）；
   規則異動史（稽核過濾 `target_kind=rule`）。**儲存前後端執行規則驗證**（欄位合格、遮蔽、關聯層覆蓋——
@@ -850,6 +884,13 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
+- **批次改群組（2026-07-31，FEEDBACK-5-PLAN §8）**：清單首欄勾選＋表頭全選，勾選跨頁／跨篩選保留
+  （前端 `Map<hostId, hostDto>`，翻頁不清空，僅「清除選取」與套用成功清空）；已併入其他主機的列
+  不給勾選。工具列「批次設定群組」開 modal：列出已勾主機＋現有群組徽章、模式單選（加入＝聯集、
+  取代＝僅勾選的群組，取代且未勾任何群組時警告會變成未分組）。
+  `PUT api/admin/hosts/groups/batch`（`{hostIds, groupIds, mode}`）→ `HostAdminService.SetGroupsBatch`
+  → `IHostStore.SetGroupsBatch` 一次 `Mutate` 完成整批（不逐台呼叫既有 `SetGroups`），略過已併入的
+  主機並回報；寫入單筆彙總 audit（不是逐台散列）。
 - ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
   （`NetiqImportQueueStore`／`--apply-netiq-imports`）已整組刪除，改為勾選送出即時落盤；精靈本身
   也已從主機頁搬到「資料匯入」頁（見 §9.9）。以下原文保留供歷史對照，**不代表現況**——
@@ -884,7 +925,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
   預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
   新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
-- **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `10.232.11`）或
+- **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `10.1.2`）或
   CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
   掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
@@ -932,6 +973,16 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （新增）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
+- **頁籤化（2026-07-31，docs/FEEDBACK-5-PLAN.md §9）**：設定項目多且長，四張卡（層級與顯示／
+  AI 服務／AD 驗證／資料保留）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+  （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
+  `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
+  `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
+  （`.lf-settings-footer`，`position: sticky; bottom: 0`），任何頁籤／捲動位置都看得到，不必
+  捲到頁尾。表單本身有 `novalidate`，`required`/`min`/`max` 不會攔截原生送出——既有的 JS 層
+  驗證（保留天數大小關係、AD 伺服器必填）在丟出 toast 前先切到欄位所在頁籤
+  （`activateTabForElement`），避免「錯誤欄位在隱藏頁籤裡看不到」。頁籤 `<ul>` 刻意放在
+  `<form>` **外面**：點頁籤的 click 事件不會冒泡進表單，不會誤觸 `trackUnsaved` 的未儲存提醒。
 - 取代原本分散在批次 appsettings.json（AI 位址）與程式碼寫死常數（未處理等級門檻、補充／留存天數）
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**（2026-07-27 自「未處理計算」擴充；2026-07-28 三級化）：以按鈕反白選擇

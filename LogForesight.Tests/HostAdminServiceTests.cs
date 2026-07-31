@@ -11,14 +11,16 @@ namespace LogForesight.Tests;
 public class HostAdminServiceTests
 {
     private readonly FakeHostStore _hosts = new();
+    private readonly FakeHostGroupStore _groups = new();
+    private readonly RecordingAuditService _audit = new();
 
     private HostAdminService Create() => new(
         _hosts,
-        new FakeHostGroupStore(),
+        _groups,
         new FakeUserStore(),
         new NetiqHostServiceTests.FakeNetiqServerCatalog("SENTINEL-A"),
         new FakeNetiqHostServiceForAdmin(),
-        new RecordingAuditService());
+        _audit);
 
     // ── 輸入驗證 ─────────────────────────────────────────────────────────────
     //
@@ -195,6 +197,89 @@ public class HostAdminServiceTests
         var result = Create().GetHosts(new HostSearchRequest { Sort = "lastReport", Dir = "desc" });
 
         Assert.Equal(new[] { "有回報", "無回報" }, result.Items.Select(h => h.HostName));
+    }
+
+    // ── 批次改群組（docs/FEEDBACK-5-PLAN.md §8）─────────────────────────────
+
+    [Fact]
+    public void SetGroupsBatch_加入模式_與既有群組取聯集()
+    {
+        var deptA = _groups.Upsert(new HostGroup { GroupName = "部門A" });
+        var deptB = _groups.Upsert(new HostGroup { GroupName = "部門B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", GroupIds = new List<long> { deptA.GroupId } });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        var result = Create().SetGroupsBatch(new[] { a.HostId, b.HostId }, new[] { deptB.GroupId }, "add");
+
+        Assert.Equal(2, result.UpdatedCount);
+        Assert.Empty(result.Skipped);
+        Assert.Equal(new[] { deptA.GroupId, deptB.GroupId }, _hosts.Get(a.HostId)!.GroupIds);
+        Assert.Equal(new[] { deptB.GroupId }, _hosts.Get(b.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_取代模式_改為僅勾選的群組()
+    {
+        var deptA = _groups.Upsert(new HostGroup { GroupName = "部門A" });
+        var deptB = _groups.Upsert(new HostGroup { GroupName = "部門B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", GroupIds = new List<long> { deptA.GroupId } });
+
+        Create().SetGroupsBatch(new[] { a.HostId }, new[] { deptB.GroupId }, "replace");
+
+        Assert.Equal(new[] { deptB.GroupId }, _hosts.Get(a.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_已併入其他主機的主機_略過並回報()
+    {
+        var service = Create();
+        var deptA = _groups.Upsert(new HostGroup { GroupName = "部門A" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        service.MergeHost(a.HostId, b.HostId);
+
+        var result = service.SetGroupsBatch(new[] { a.HostId, b.HostId }, new[] { deptA.GroupId }, "add");
+
+        Assert.Equal(1, result.UpdatedCount);
+        var skipped = Assert.Single(result.Skipped);
+        Assert.Equal("A", skipped.HostName);
+        Assert.Equal(new[] { deptA.GroupId }, _hosts.Get(b.HostId)!.GroupIds);
+    }
+
+    [Fact]
+    public void SetGroupsBatch_群組不存在_擋下()
+    {
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+
+        Assert.Throws<DomainException>(() => Create().SetGroupsBatch(new[] { a.HostId }, new long[] { 999 }, "add"));
+    }
+
+    [Fact]
+    public void SetGroupsBatch_模式不合法_擋下()
+    {
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+
+        Assert.Throws<DomainException>(() => Create().SetGroupsBatch(new[] { a.HostId }, Array.Empty<long>(), "remove"));
+    }
+
+    [Fact]
+    public void SetGroupsBatch_未勾選任何主機_擋下()
+    {
+        Assert.Throws<DomainException>(() => Create().SetGroupsBatch(Array.Empty<long>(), Array.Empty<long>(), "add"));
+    }
+
+    [Fact]
+    public void SetGroupsBatch_寫入一筆彙總稽核紀錄()
+    {
+        var deptA = _groups.Upsert(new HostGroup { GroupName = "部門A" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        Create().SetGroupsBatch(new[] { a.HostId, b.HostId }, new[] { deptA.GroupId }, "add");
+
+        var entry = Assert.Single(_audit.Entries);
+        Assert.Contains("部門A", entry.Summary);
+        Assert.Contains("2 台", entry.Summary);
     }
 }
 

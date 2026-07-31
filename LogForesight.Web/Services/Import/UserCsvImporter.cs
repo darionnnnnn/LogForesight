@@ -26,9 +26,9 @@ public class UserCsvImporter : ICsvImporter
 
     public string BuildTemplate() =>
         "account,display_name,email,groups,active\r\n" +
-        "DOMAIN\\wangxm,王小明,wang@corp.com,OO部門,1\r\n" +
-        "DOMAIN\\lidh,李大華,li@corp.com,OO部門;XX部門,1\r\n" +
-        "DOMAIN\\adminz,張管理,zhang@corp.com,admin,1\r\n";
+        "DOMAIN\\user1,使用者一,user1@example.com,OO部門,1\r\n" +
+        "DOMAIN\\user2,使用者二,user2@example.com,OO部門;XX部門,1\r\n" +
+        "DOMAIN\\admin1,系統管理員,admin1@example.com,admin,1\r\n";
 
     public ImportPlan BuildPlan(CsvTable table, string fileName)
     {

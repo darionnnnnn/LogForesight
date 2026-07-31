@@ -505,6 +505,19 @@ public class RecordQueryService
                       c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
                 StringComparer.Ordinal);
 
+        // 先前處理過（docs/FEEDBACK-5-PLAN.md §4）：本主機更早日期有結案類逐日標記，
+        // 或有已結案案件，任一命中即視為「這個問題之前處理過」——只算旗標，內容留給
+        // GetIssueHistory 端點按需查詢，避免詳情頁一次把全部問題的歷史都撈回來
+        var priorClosedIssueKeys = _issueHandlings
+            .GetMany(new[] { hostName }, DateTime.MinValue, date.Date.AddDays(-1))
+            .Where(h => IssueHandlingStatuses.IsClosed(h.Status))
+            .Select(h => h.IssueKey)
+            .ToHashSet(StringComparer.Ordinal);
+        priorClosedIssueKeys.UnionWith(
+            _cases.GetMany(new[] { hostName })
+                .Where(c => c.ClosedAt != null)
+                .Select(c => c.IssueKey));
+
         var settings = _settings.Get();
         var unhandledSeverities = settings.ParseUnhandledSeverities();
 
@@ -532,7 +545,7 @@ public class RecordQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases, priorClosedIssueKeys)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = record.TrendAlerts,
             CorrelationAlerts = record.CorrelationAlerts,
@@ -569,6 +582,51 @@ public class RecordQueryService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         return string.IsNullOrWhiteSpace(record.ReportFile) ? null : _reports.Read(record.ReportFile);
+    }
+
+    /// <summary>
+    /// 單一問題簽章在本主機的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）：只含結案類——
+    /// 「處理中」與「未處理」的歷史不列入，使用者要的是「上次怎麼解的」不是完整流水帳。
+    /// 授權沿用 GetDetail／GetReport 同一套（<see cref="IRecordRepository.GetOne"/> 先驗證可見範圍）。
+    /// </summary>
+    public IssueHistoryDto GetIssueHistory(long hostId, DateTime date, string issueKey)
+    {
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+
+        var hostName = _hosts.Get(hostId)?.HostName ?? record.Host;
+
+        var entries = _issueHandlings
+            .GetMany(new[] { hostName }, DateTime.MinValue, date.Date.AddDays(-1))
+            .Where(h => string.Equals(h.IssueKey, issueKey, StringComparison.Ordinal) && IssueHandlingStatuses.IsClosed(h.Status))
+            .OrderByDescending(h => h.Date)
+            .Select(h => new IssueHistoryEntryDto
+            {
+                Date = h.Date.ToString("yyyy-MM-dd"),
+                Status = h.Status,
+                StatusText = IssueStatusText(h.Status),
+                Note = h.Note,
+                ActorAccount = h.ActorAccount,
+                FromCase = !string.IsNullOrEmpty(h.CaseId)
+            })
+            .ToList();
+
+        var cases = _cases.GetMany(new[] { hostName })
+            .Where(c => string.Equals(c.IssueKey, issueKey, StringComparison.Ordinal) && c.ClosedAt != null)
+            .OrderByDescending(c => c.ClosedAt)
+            .Select(c => new IssueHistoryCaseDto
+            {
+                HandlerName = c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
+                FirstLinkedDate = c.FirstLinkedDate.ToString("yyyy-MM-dd"),
+                LastLinkedDate = c.LastLinkedDate.ToString("yyyy-MM-dd"),
+                ClosedAt = c.ClosedAt?.ToString("yyyy-MM-dd"),
+                Status = c.Status,
+                StatusText = IssueStatusText(c.Status),
+                Note = c.Note
+            })
+            .ToList();
+
+        return new IssueHistoryDto { Cases = cases, Entries = entries };
     }
 
     public HostDetailDto GetHostDetail(long hostId, int days)
@@ -1011,7 +1069,8 @@ public class RecordQueryService
         Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
-        Dictionary<string, (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null)
+        Dictionary<string, (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null,
+        HashSet<string>? priorClosedIssueKeys = null)
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
@@ -1050,7 +1109,8 @@ public class RecordQueryService
             CaseHandlerId = openCase?.HandlerId,
             CaseHandlerName = openCase?.HandlerName,
             CaseStatus = openCase?.Status,
-            CaseFirstLinkedDate = openCase?.FirstLinkedDate
+            CaseFirstLinkedDate = openCase?.FirstLinkedDate,
+            HasPriorHandling = priorClosedIssueKeys?.Contains(key) ?? false
         };
     }
 

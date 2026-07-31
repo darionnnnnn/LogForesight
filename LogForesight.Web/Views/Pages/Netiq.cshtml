@@ -32,8 +32,11 @@
             <div class="row g-3">
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-query-delay" class="form-label">節流間隔（毫秒）</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="每次 REST 呼叫之間的間隔。0＝不節流。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="opt-query-delay" min="0" max="60000" />
-                    <div class="form-text">每次 REST 呼叫之間的間隔。0＝不節流。</div>
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-page-size" class="form-label">單頁筆數</label>
@@ -41,8 +44,11 @@
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-max-results" class="form-label">單一查詢最多筆數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="超過時該批標記結果被截斷，防止異常爆量日無限制拉取。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="opt-max-results" min="1" max="10000000" />
-                    <div class="form-text">超過時該批標記結果被截斷，防止異常爆量日無限制拉取。</div>
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-timeout" class="form-label">逾時秒數</label>
@@ -96,7 +102,7 @@
 
 <!-- Sentinel 編輯 -->
 <div class="modal fade" id="sentinel-modal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="sentinel-modal-title">編輯 Sentinel</h5>
@@ -104,32 +110,45 @@
             </div>
             <form id="sentinel-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="sentinel-name" class="form-label">名稱 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="sentinel-name" required />
-                        <div class="form-text">主機頁「所屬 Sentinel」下拉會顯示這個名稱。</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="sentinel-name" class="form-label">名稱 <span class="text-danger">*</span></label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="主機頁「所屬 Sentinel」下拉會顯示這個名稱。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
+                            <input type="text" class="form-control" id="sentinel-name" required />
+                        </div>
+                        <div class="col-md-6">
+                            <label for="sentinel-base-url" class="form-label">連線位址</label>
+                            <input type="text" class="form-control" id="sentinel-base-url" placeholder="https://sentinel.corp.local" />
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="sentinel-base-url" class="form-label">連線位址</label>
-                        <input type="text" class="form-control" id="sentinel-base-url" placeholder="https://sentinel.corp.local" />
-                    </div>
-                    <div class="mb-3">
-                        <label for="sentinel-username" class="form-label">探索帳號</label>
-                        <input type="text" class="form-control" id="sentinel-username" />
-                        <div class="form-text">帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。</div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="sentinel-username" class="form-label">探索帳號</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
+                            <input type="text" class="form-control" id="sentinel-username" />
+                        </div>
+                        <div class="col-md-6">
+                            <label for="sentinel-password" class="form-label">探索密碼</label>
+                            <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
+                            <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="sentinel-os" class="form-label">作業系統</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="這台 Sentinel 轄下主機的作業系統；掃描匯入精靈以此預填整批 OS（可改）。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
                         <select class="form-select" id="sentinel-os">
                             <option value="windows">Windows</option>
                             <option value="linux">Linux</option>
                         </select>
-                        <div class="form-text">這台 Sentinel 轄下主機的作業系統；掃描匯入精靈以此預填整批 OS（可改）。</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="sentinel-password" class="form-label">探索密碼</label>
-                        <input type="password" class="form-control" id="sentinel-password" autocomplete="new-password" />
-                        <div class="form-text" id="sentinel-password-hint">留空＝不變更。</div>
                     </div>
                     <div id="sentinel-test-result" class="small mb-0"></div>
                 </div>

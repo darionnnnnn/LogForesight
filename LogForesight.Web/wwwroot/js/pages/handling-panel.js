@@ -10,7 +10,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon } from '../core/ui.js';
 import { formatDateTime, toLocalDateString } from '../core/format.js';
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
@@ -110,7 +110,8 @@ function render() {
     panel.appendChild(readonlyField(
         '主機負責人',
         handling.ownerNames.length ? handling.ownerNames.join('、') : '未指定',
-        '主機的長期屬性，於「主機」維護頁調整'
+        '主機的長期屬性，於「主機」維護頁調整',
+        true
     ));
 
     // ── 處理人：事件層級，只有 admin 能改 ──
@@ -134,12 +135,23 @@ function render() {
     panel.appendChild(handlingForm());
 }
 
-function readonlyField(label, value, hint) {
+/**
+ * hintAsIcon（docs/FEEDBACK-5-PLAN.md §6）：預設 false 沿用常駐 form-text——三個呼叫端裡
+ * 只有「主機負責人」的說明屬純描述性質（看過一次就記得），改收進 icon；其餘兩個
+ * （目前狀態的雙軌語意、處理人唯讀原因）填錯/看漏代價較高，維持常駐。
+ */
+function readonlyField(label, value, hint, hintAsIcon = false) {
     const wrap = document.createElement('div');
     wrap.className = 'mb-3';
-    wrap.append(...labelValue(label, value, { labelClass: 'form-label small mb-1 text-muted' }));
+    const [labelEl, valueEl] = labelValue(label, value, { labelClass: 'form-label small mb-1 text-muted' });
 
-    if (hint) {
+    if (hint && hintAsIcon) {
+        labelEl.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
+        labelEl.appendChild(helpIcon(hint));
+    }
+    wrap.append(labelEl, valueEl);
+
+    if (hint && !hintAsIcon) {
         const hintEl = document.createElement('div');
         hintEl.className = 'form-text';
         hintEl.textContent = hint;
@@ -207,11 +219,10 @@ function assignField(handling, users, hostId, date) {
         }
     });
 
-    const hint = document.createElement('div');
-    hint.className = 'form-text';
-    hint.textContent = '可指派給負責人以外的人；主機負責人不會因此改變。';
+    label.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
+    label.appendChild(helpIcon('可指派給負責人以外的人；主機負責人不會因此改變。'));
 
-    wrap.append(label, select, hint);
+    wrap.append(label, select);
     return wrap;
 }
 

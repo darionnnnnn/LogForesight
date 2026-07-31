@@ -239,6 +239,56 @@ public class HostAdminService
         return HostDtoMapper.ToDto(_hosts.Get(hostId)!, allGroups, _users.GetAll().ToDictionary(u => u.UserId));
     }
 
+    /// <summary>
+    /// 批次改群組（docs/FEEDBACK-5-PLAN.md §8）：一次 Mutate 完成，不逐台呼叫
+    /// <see cref="SetHostGroups"/>——50 台就是 50 個請求＋50 次 blob 讀改寫。
+    /// 已併入其他主機的主機由 <see cref="IHostStore.SetGroupsBatch"/> 略過並回報。
+    /// </summary>
+    public HostGroupsBatchResultDto SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, string mode)
+    {
+        if (mode != "add" && mode != "replace")
+            throw DomainException.Validation($"批次模式「{mode}」不合法，僅接受 add 或 replace。");
+
+        var requestedHostIds = hostIds.Distinct().ToList();
+        if (requestedHostIds.Count == 0)
+            throw DomainException.Validation("請至少選擇一台主機。");
+
+        var allGroups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
+        var requestedGroupIds = groupIds.Distinct().ToList();
+        NameFormat.EnsureAllKnown(requestedGroupIds, allGroups, "主機群組");
+
+        var replace = mode == "replace";
+        var result = _hosts.SetGroupsBatch(requestedHostIds, requestedGroupIds, replace);
+
+        if (result.Updated.Count > 0)
+        {
+            var groupNames = requestedGroupIds.Select(id => allGroups[id].GroupName).ToList();
+            var hostNames = result.Updated.Select(h => h.HostName).ToList();
+
+            _audit.Record(
+                action: AuditActions.HostUpdate,
+                summary: $"批次{(replace ? "取代" : "加入")}群組「{NameFormat.Join(groupNames)}」：" +
+                         $"共 {result.Updated.Count} 台主機（{NameFormat.Join(hostNames)}）" +
+                         "（會影響哪些使用者看得到這些主機）",
+                targetKind: "host",
+                targetId: "batch",
+                detail: new
+                {
+                    Mode = mode,
+                    GroupIds = requestedGroupIds,
+                    GroupNames = groupNames,
+                    HostIds = result.Updated.Select(h => h.HostId),
+                    HostNames = hostNames
+                });
+        }
+
+        return new HostGroupsBatchResultDto
+        {
+            UpdatedCount = result.Updated.Count,
+            Skipped = result.Skipped.Select(h => new SkippedHostDto { HostName = h.HostName, Reason = "已併入其他主機" }).ToList()
+        };
+    }
+
     public HostDto SetHostOwners(long hostId, IEnumerable<long> userIds)
     {
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");

@@ -1333,9 +1333,9 @@ public interface INetiqDirectoryClient
 
 ```
 host_name,ip_address,owner_account
-SRV-OO-WEB01,10.1.2.11,DOMAIN\wangxm
-SRV-OO-WEB01,10.1.2.11,DOMAIN\lidh      ← 同主機多列＝多位負責人
-,10.2.3.21,DOMAIN\chenyt                ← host_name 空白時以 IP 比對
+SRV-OO-WEB01,10.1.2.11,DOMAIN\user1
+SRV-OO-WEB01,10.1.2.11,DOMAIN\user2     ← 同主機多列＝多位負責人
+,10.2.3.21,DOMAIN\user3                 ← host_name 空白時以 IP 比對
 ```
 
 - RequiredHeaders：`owner_account` ＋（`host_name` 或 `ip_address` 至少一欄有值，逐列驗證）。

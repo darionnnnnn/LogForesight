@@ -425,13 +425,13 @@ public class NetiqDiscoveryServiceTests
         sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
             new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
-            new FakeClient(("tc-crecdc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
+            new FakeClient(("srv-dc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
 
         svc.Import(new NetiqImportRequest { Token = scan.Token, SelectedIps = new() { "10.1.2.50" } });
 
-        Assert.Equal("tc-crecdc01", _hosts.FindByName("10.1.2.50")!.DisplayName);
+        Assert.Equal("srv-dc01", _hosts.FindByName("10.1.2.50")!.DisplayName);
     }
 
     /// <summary>

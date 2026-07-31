@@ -116,6 +116,11 @@ public class AdminController : ControllerBase
     public ApiResponse<HostDto> SetHostGroups(long hostId, [FromBody] SetIdsRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SetHostGroups(hostId, request.Ids));
 
+    /// <summary>批次改群組（docs/FEEDBACK-5-PLAN.md §8）</summary>
+    [HttpPut("hosts/groups/batch")]
+    public ApiResponse<HostGroupsBatchResultDto> SetGroupsBatch([FromBody] SetGroupsBatchRequest request) =>
+        ApiResponse<HostGroupsBatchResultDto>.Ok(_hosts.SetGroupsBatch(request.HostIds, request.GroupIds, request.Mode));
+
     [HttpPut("hosts/{hostId:long}/owners")]
     public ApiResponse<HostDto> SetHostOwners(long hostId, [FromBody] SetIdsRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SetHostOwners(hostId, request.Ids));
