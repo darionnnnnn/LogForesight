@@ -100,7 +100,7 @@ function renderDays(days) {
         rowHref: d => `/records/${d.hostId}/${d.date}`,
         empty: {
             title: includeResolvedDays ? '沒有被指派的風險日' : '目前沒有未結案的風險日',
-            hint: includeResolvedDays ? '' : '勾選上方「顯示近 30 天已結案」查看回顧紀錄。'
+            hint: includeResolvedDays ? '' : '勾選上方「顯示近 30 天已結案」檢視回顧紀錄。'
         }
     });
 }

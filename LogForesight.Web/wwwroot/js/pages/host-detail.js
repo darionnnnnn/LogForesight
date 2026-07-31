@@ -186,7 +186,7 @@ function occurrenceDetailPanel(signature) {
 
     const placeholder = document.createElement('div');
     placeholder.className = 'text-muted small';
-    placeholder.textContent = '展開查看發生明細…';
+    placeholder.textContent = '展開檢視發生明細…';
     container.appendChild(placeholder);
 
     let cachedDates = null;

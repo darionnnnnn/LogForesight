@@ -219,7 +219,7 @@ function viewRunButton(runId) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = '查看執行';
+    button.textContent = '檢視執行';
     button.addEventListener('click', () => showDetail(runId));
     return button;
 }
@@ -274,7 +274,7 @@ function detailButton(runId) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = '查看執行';
+    button.textContent = '檢視執行';
     button.addEventListener('click', () => showDetail(runId));
     return button;
 }

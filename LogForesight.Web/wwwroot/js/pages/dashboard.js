@@ -82,7 +82,7 @@ async function loadAiFocus() {
             const link = document.createElement('a');
             link.href = item.link;   // 後端已過白名單驗證
             link.className = 'ms-2 small';
-            link.textContent = '查看 →';
+            link.textContent = '檢視 →';
             li.appendChild(link);
         }
         list.appendChild(li);
@@ -335,7 +335,7 @@ function renderSilentHosts(data) {
 
     const label = document.createElement('div');
     label.className = 'lf-stat__label';
-    label.textContent = '台主機超過 2 天未回報，點此查看';
+    label.textContent = '台主機超過 2 天未回報，點此檢視';
 
     link.append(value, label);
     container.appendChild(link);
