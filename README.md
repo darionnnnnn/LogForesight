@@ -434,6 +434,11 @@ LogForesight.exe --debug-dump
 定案 10）。完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
 
+**初始化不必先跑批次（2026-07-31 起）**：Web 站台啟動時也會冪等初始化規則庫
+（`rules` blob 不存在才寫入內建種子，已存在只載入不覆寫），全新環境即使還沒
+執行過批次 `LogForesight.exe`，`/admin/rules` 也能正常使用——批次與 Web 各自
+獨立、誰先啟動都行，見 docs/WEB-SPEC.md §9.7。
+
 ### 維護 SOP：走 Web 規則維護頁
 
 **`/admin/rules`（系統管理 > 規則維護，需 Maintain 能力）是日常維護規則的正式途徑**，

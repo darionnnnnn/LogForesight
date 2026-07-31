@@ -806,6 +806,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   `GET api/reports/signature?eventId=&source=`。
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
+- **規則庫初始化（2026-07-31，docs/FEEDBACK-5-PLAN.md §10）**：`rules` blob 原本只有
+  批次的 `RuleBootstrapper` 會初始化，全新環境（批次從未執行過）Web 開站即假設
+  「批次至少跑過一次」，本頁對著不存在的 blob 直接拋例外（500）。Web
+  `Program.cs` 啟動時現與批次共用同一份 `RuleBootstrapper.LoadContent`（搬至
+  Core）冪等初始化——已存在只載入不覆寫，不存在才寫入內建種子；同時同步原廠
+  種子鏡像（`IRuleSeedStore.Sync`），讓全新環境也能使用「回復預設」。不呼叫
+  `RuleBootstrapper.Run`（那會連帶初始化 `KnownIssueCatalog` 的全域分類狀態，
+  是批次分析時才用得到的，Web 不需要）。初始化失敗只記警告、不擋站台啟動。
 - 清單（Id/類別/嚴重度/Origin/Enabled/已修改徽章/種子有新版標示）；
   編輯表單（builtin 無刪除鈕、有「回復預設」含前後對照確認）；抑制管理頁籤（主機/規則/事由/到期）；
   規則異動史（稽核過濾 `target_kind=rule`）。**儲存前後端執行規則驗證**（欄位合格、遮蔽、關聯層覆蓋——

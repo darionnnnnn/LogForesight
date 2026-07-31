@@ -79,7 +79,8 @@ try
     {
         var names = string.Join(" / ", expectedDataFiles);
         logger.Warn("資料根目錄 {0} 底下找不到 {1}。若批次 LogForesight.exe 已執行過，" +
-            "代表 Storage:DataRoot 指錯目錄（應指向批次的資料目錄），規則頁與儀表板會因此空白。", dataRoot, names);
+            "代表 Storage:DataRoot 指錯目錄（應指向批次的資料目錄），儀表板與問題查詢會因此空白" +
+            "（規則維護頁不受影響——Web 啟動會自行初始化規則庫，見下方「啟動時的資料準備」）。", dataRoot, names);
         Console.Error.WriteLine($"⚠ 資料根目錄「{dataRoot}」底下找不到 {names}；" +
             "若批次已執行過，請確認 Storage:DataRoot 指向批次 LogForesight.exe 的資料目錄。");
     }
@@ -122,6 +123,27 @@ try
         if (backfill.BackfilledCount > 0)
             logger.Info("已回填 {0} 台主機的 SentinelId（{1} 台對不到現存 Sentinel，維持待歸屬）。",
                 backfill.BackfilledCount, backfill.UnresolvedCount);
+
+        // 規則庫初始化（docs/FEEDBACK-5-PLAN.md §10）：rules blob 原本只有批次的
+        // RuleBootstrapper 會初始化，全新環境（批次從未執行過）Web 開站即假設「批次至少
+        // 跑過一次」，規則維護頁因此對著不存在的 blob 直接拋例外。這裡冪等補上——
+        // 已存在只載入不覆寫，不存在才寫入內建種子；用 LoadContent 而非 Run，因為 Web
+        // 不需要（也不該）連帶初始化 KnownIssueCatalog 的全域分類狀態，那是批次分析時才用得到的。
+        // 失敗不擋站台啟動：規則頁在極端情況（DB 寫入失敗）仍會顯示原本的錯誤，其餘頁面不受影響。
+        try
+        {
+            var ruleStore = scope.ServiceProvider.GetRequiredService<IKnownIssueRuleStore>();
+            RuleBootstrapper.LoadContent(ruleStore);
+
+            // 原廠種子鏡像同步（與批次 Program.cs 同一份邏輯）：「回復預設」需要一份使用者
+            // 碰不到的原始內容才比較得出差異，全新環境沒有這份鏡像會導致該功能無法使用。
+            var ruleSeedStore = scope.ServiceProvider.GetRequiredService<IRuleSeedStore>();
+            ruleSeedStore.Sync(KnownIssueSeed.CreateRules(), KnownIssueSeed.Version);
+        }
+        catch (Exception ex)
+        {
+            logger.Warn(ex, "規則庫初始化失敗（不影響其餘頁面，規則維護頁本次可能無法使用）：{0}", ex.Message);
+        }
     }
 
     // ── 管線 ─────────────────────────────────────────────────────────────────

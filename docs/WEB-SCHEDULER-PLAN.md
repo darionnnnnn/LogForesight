@@ -89,10 +89,14 @@ Web 專案只引用 Core——要讓 Web 執行分析，這些服務必須搬進
 - `NetiqPipelineService`、`SentinelConnectionFactory`、`HostListProviders`
 - `WeeklyCheckupService`、`PermissionMonitorService`
 - `BatchRunRecorder`、`ExportReportPruner`
-- 不搬：`SelfTestRunner`、`RuleImporter`、`RuleBootstrapper`（RuleBootstrapper 其實
-  Web 啟動也需要？——現況 Web 假設批次已 bootstrap 過；排程搬 Web 後首次執行
-  bootstrap 也應由排程執行前置完成，**RuleBootstrapper 一併搬 Core**）、
-  各 CLI 類別（`HostListCli`／`SuppressionCli`／`NetiqProbeCli`）留在 console。
+- 不搬：`SelfTestRunner`、`RuleImporter`、各 CLI 類別（`HostListCli`／
+  `SuppressionCli`／`NetiqProbeCli`）留在 console。
+- **`RuleBootstrapper` 已提前搬 Core 並在 Web 端接線**（2026-07-31，
+  docs/FEEDBACK-5-PLAN.md §10）：全新環境 Web 開站原本假設「批次已 bootstrap
+  過」，規則維護頁對著空 blob 直接 500。Web `Program.cs` 啟動時現與批次共用
+  同一份 `RuleBootstrapper.LoadContent`（不呼叫 `Run`，避免無謂初始化
+  `KnownIssueCatalog` 全域分類狀態）＋種子鏡像同步，此段搬遷提前完成、
+  不需等 Phase 2 整批動。
 
 Core 目前已含 `AIService`、`SentinelClient`、分析五層、全部 store——搬遷主要是
 機械性移動＋console csproj 引用不變，風險低但檔案數多，**獨立成一個 phase、
