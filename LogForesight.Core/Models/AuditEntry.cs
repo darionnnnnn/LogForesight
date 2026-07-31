@@ -118,6 +118,11 @@ public static class AuditActions
     public const string SettingsUpdate = "settings_update";
     public const string NetiqOptionsUpdate = "netiq_options_update";
 
+    // 排程作業（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
+    public const string ScheduleOptionsUpdate = "schedule_options_update";
+    public const string ScheduleManualRun = "schedule_manual_run";
+    public const string ScheduleManualCancel = "schedule_manual_cancel";
+
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";
 }

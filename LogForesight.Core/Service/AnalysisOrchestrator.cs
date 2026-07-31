@@ -621,6 +621,12 @@ public class AnalysisOrchestrator
         try
         {
             var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
+            // 手動觸發的一次性回補天數覆寫（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：只影響這次執行，
+            // 不落地——netiqOptions 是本次呼叫剛從 store 讀出的獨立物件，就地覆寫不影響下次讀取的設定值
+            if (request.BackfillOverride is { } backfillOverride)
+            {
+                netiqOptions.BackfillDays = backfillOverride;
+            }
             var netiqPipeline = new NetiqPipelineService(
                 settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator,
