@@ -524,6 +524,18 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    兩欄自動退回單欄（Bootstrap grid 原生行為，不需額外處理）。內容仍可能超高者另加
    `modal-dialog-scrollable`。短訊息的二次確認框（`confirmAction`）刻意不套用——
    寬版對單句確認文字反而鬆散。
+10. **常駐說明文字收斂為 hover icon（2026-07-31，docs/FEEDBACK-5-PLAN.md §6）**：純描述性的
+    `.form-text`（說明「這欄位是什麼」但不影響能否送出）改為 `core/ui.js` 的 `helpIcon(content, title)`
+    ——小圖示鈕，`hover`/`focus` 觸發 `bootstrap.Popover`；放在 `<label>` **之後、`<input>` 之前的
+    同層 sibling**（不巢在 `<label>` 內——互動元素巢在 `<label>` 內在不同瀏覽器的點擊/焦點行為不一致，
+    專案內無此前例）。**保留常駐顯示**的判準：說明陳述的是不可逆或會擋住送出的後果（例如「未分組時
+    只有 admin 看得到」「建立後不可修改」「保留天數上限」），這類文字不該藏在要滑鼠移過去才看得到的
+    icon 裡；純描述性質（例如「用於向 Sentinel 查詢」）才收斂。
+11. **批次操作跨頁選取（2026-07-31，docs/FEEDBACK-5-PLAN.md §8）**：伺服器端分頁清單若支援批次
+    操作，勾選狀態存 `Map<id, rowDto>`（不是純 id 集合）——批次確認畫面通常要顯示「勾了哪些」的
+    名稱／摘要，而那些列未必在目前這一頁，只能靠勾選當下存下的物件；翻頁／篩選不清空，僅
+    「清除選取」與套用成功後清空。表頭全選只作用於目前這一頁（伺服器端分頁沒有「全部」的概念），
+    以 `indeterminate` 呈現「本頁部分已選」。首見於主機頁批次改群組，供之後其他清單頁比照。
 
 ## 9. 頁面規格
 
@@ -678,6 +690,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
      動作與（系統）actor 區分）。已被使用者明確標結案的日子案件同步不覆蓋；問題重現視為新案件。
      詳情頁問題列顯示案件徽章（處理人／起日），指派時若問題已由他人進行中案件涵蓋則保留原處理人
      並回報略過清單（同主機同問題只由一人處理）。案件處理人姓名連到 §9.4a 處理人工作頁。
+  15. **查看先前處理**（2026-07-31，docs/FEEDBACK-5-PLAN.md §4）：問題再次發生時，「處理狀態」欄
+     多一顆「先前處理」按鈕（`IssueDto.HasPriorHandling`——早於本日、狀態為結案類的逐日標記或
+     已結案的 `IssueCase` 任一存在即為 true；唯讀角色也看得到，不限 `canHandle`）。點擊開
+     `GET api/records/{hostId}/{date}/handling/issue-history?issueKey=`（`issueKey` 走 query
+     string，內含 `|` 分隔字元的複合鍵不進路由樣板）→ `modal-lg` 顯示已結案案件摘要（處理人／
+     期間／說明）＋逐日結案標記時間軸，**刻意只列結案類（resolved/wont_fix/false_positive/
+     known_noise），不含處理中／未處理**——這顆按鈕要回答的是「上次怎麼解的」，處理中／未處理
+     不構成「先前處理方式」的答案。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
@@ -864,6 +884,13 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
   chip/搜尋/排序/分頁全部觸發伺服器查詢，不再一次載入全部主機到瀏覽器二次篩選。搜尋輸入 300ms 防抖。
   IP 衝突偵測沿用 `INetiqHostService.GetOverview()`。「未回報」定義與儀表板計數卡同一套（兩天）。
+- **批次改群組（2026-07-31，FEEDBACK-5-PLAN §8）**：清單首欄勾選＋表頭全選，勾選跨頁／跨篩選保留
+  （前端 `Map<hostId, hostDto>`，翻頁不清空，僅「清除選取」與套用成功清空）；已併入其他主機的列
+  不給勾選。工具列「批次設定群組」開 modal：列出已勾主機＋現有群組徽章、模式單選（加入＝聯集、
+  取代＝僅勾選的群組，取代且未勾任何群組時警告會變成未分組）。
+  `PUT api/admin/hosts/groups/batch`（`{hostIds, groupIds, mode}`）→ `HostAdminService.SetGroupsBatch`
+  → `IHostStore.SetGroupsBatch` 一次 `Mutate` 完成整批（不逐台呼叫既有 `SetGroups`），略過已併入的
+  主機並回報；寫入單筆彙總 audit（不是逐台散列）。
 - ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
   （`NetiqImportQueueStore`／`--apply-netiq-imports`）已整組刪除，改為勾選送出即時落盤；精靈本身
   也已從主機頁搬到「資料匯入」頁（見 §9.9）。以下原文保留供歷史對照，**不代表現況**——
