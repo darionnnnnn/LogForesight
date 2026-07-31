@@ -484,7 +484,9 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Contains("1 台未處理", group.HandlingSummary);
         Assert.Contains("1 台處理中", group.HandlingSummary);
         Assert.Contains("1 台已處理", group.HandlingSummary);
-        Assert.Equal(new[] { "小陳" }, group.HandlerNames);
+        var groupHandler = Assert.Single(group.Handlers);
+        Assert.Equal("小陳", groupHandler.DisplayName);
+        Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
     }
 
     [Fact]

@@ -107,10 +107,12 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         await using var client = new SentinelClient(server, netiqOptions);
 
         var filter = $"{SentinelQueryBuilder.BuildIpClause(new[] { host.IpAddress! })} AND {SentinelFieldMap.EventId}:\"{eventId}\"";
+        // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient——與 NetiqPipelineService 的
+        // 日窗口同一套換算（TimeSpan.Zero 會把當地午夜當成 UTC 午夜，台灣環境整個窗口偏移 8 小時）
         var request = new SentinelSearchRequest(
             filter,
-            new DateTimeOffset(date.Date, TimeSpan.Zero),
-            new DateTimeOffset(date.Date.AddDays(1), TimeSpan.Zero),
+            new DateTimeOffset(date.Date, TimeZoneInfo.Local.GetUtcOffset(date.Date)),
+            new DateTimeOffset(date.Date.AddDays(1), TimeZoneInfo.Local.GetUtcOffset(date.Date.AddDays(1))),
             Fields: new[] { SentinelFieldMap.Timestamp, SentinelFieldMap.Message, SentinelFieldMap.Severity, SentinelFieldMap.Source, SentinelFieldMap.LogName },
             PageSize: MaxResults,
             MaxResults: MaxResults);

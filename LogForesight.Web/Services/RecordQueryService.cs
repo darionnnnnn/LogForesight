@@ -342,11 +342,11 @@ public class RecordQueryService
             else unhandled++;
         }
 
-        var handlerNames = handlerIds
-            .Select(id => _users.Get(id)?.DisplayName)
-            .Where(n => !string.IsNullOrEmpty(n))
-            .Select(n => n!)
-            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+        var handlers = handlerIds
+            .Select(id => new { Id = id, Name = _users.Get(id)?.DisplayName })
+            .Where(x => !string.IsNullOrEmpty(x.Name))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.Name! })
             .ToList();
 
         return new IssueGroupDto
@@ -361,9 +361,7 @@ public class RecordQueryService
             LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
             KnownIssue = latest.Issue.KnownIssue,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
-            HandlerNames = handlerNames.Count > 3
-                ? new List<string> { $"{handlerNames[0]} 等 {handlerNames.Count} 人" }
-                : handlerNames
+            Handlers = handlers
         };
     }
 

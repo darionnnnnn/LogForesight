@@ -114,8 +114,17 @@ public class IssueGroupDto
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
 
-    /// <summary>進行中案件的處理人姓名（去重）；超過 3 人時收斂成「○○○ 等 N 人」</summary>
-    public List<string> HandlerNames { get; set; } = new();
+    /// <summary>進行中案件的處理人（去重、依姓名排序）——帶 Id 讓前端把姓名連到
+    /// 處理人工作頁（docs/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
+    /// 由前端做（伺服器端收斂成純文字，收斂後的第一個名字就沒有 Id 可連了）</summary>
+    public List<IssueGroupHandlerDto> Handlers { get; set; } = new();
+}
+
+/// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>
+public class IssueGroupHandlerDto
+{
+    public long HandlerId { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
 }
 
 /// <summary>風險日詳情</summary>

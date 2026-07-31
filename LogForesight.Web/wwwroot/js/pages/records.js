@@ -619,7 +619,7 @@ function renderIssueView() {
         { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
         { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => i.lastSeen },
         { title: '處理概況', render: i => i.handlingSummary },
-        { title: '處理人', render: i => (i.handlerNames ?? []).join('、') }
+        { title: '處理人', render: i => issueHandlersCell(i) }
     ];
 
     if (canAssign) {
@@ -635,6 +635,31 @@ function renderIssueView() {
         rowHref: i => detailForIssue(i),
         empty: { title: '沒有符合條件的問題', hint: '請調整篩選條件或日期區間。' }
     });
+}
+
+/**
+ * 依問題視角「處理人」欄：每個名字連到其工作頁（docs/FEEDBACK-4-PLAN.md §4/§6）。
+ * 超過 3 人時收斂成「第一人 等 N 人」——第一個名字仍是連結，收斂在前端做
+ * 就是為了這個（伺服器端收斂成純文字，連結就斷了）。
+ */
+function issueHandlersCell(group) {
+    const handlers = group.handlers ?? [];
+    if (handlers.length === 0) return '';
+
+    const wrap = document.createElement('span');
+    const shown = handlers.length > 3 ? handlers.slice(0, 1) : handlers;
+    shown.forEach((h, index) => {
+        if (index > 0) wrap.appendChild(document.createTextNode('、'));
+        const link = document.createElement('a');
+        link.href = `/handlers/${h.handlerId}`;
+        link.textContent = h.displayName;
+        link.addEventListener('click', event => event.stopPropagation());
+        wrap.appendChild(link);
+    });
+    if (handlers.length > 3) {
+        wrap.appendChild(document.createTextNode(` 等 ${handlers.length} 人`));
+    }
+    return wrap;
 }
 
 function issueGroupCell(group) {
@@ -966,7 +991,7 @@ function csvRow(item) {
     if (currentView === 'issue') {
         return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category, severityName(item.maxSeverity),
             item.hostCount, item.dayCount, item.totalCount, item.lastSeen,
-            quote(item.handlingSummary), quote((item.handlerNames ?? []).join('、'))];
+            quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
     return [item.date, quote(item.hostName), item.riskLevel, quote(item.headline),
         cats(item.categories), quote(item.handlingStatusText), quote(item.handlerName ?? '')];
