@@ -774,3 +774,98 @@ if (searchParam) document.getElementById('rule-search').value = searchParam;
 updateSearchPlaceholder();
 setupToolbar();
 load();
+
+// ── 內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）──────
+
+const ruleImportModal = new bootstrap.Modal(document.getElementById('rule-import-modal'));
+
+async function checkRuleImportStatus() {
+    const status = await api.get('/api/rules/import-status', { silent: true }).catch(() => null);
+    if (!status) return;
+
+    const banner = document.getElementById('rule-import-banner');
+    if (status.hasUpdate) {
+        document.getElementById('rule-import-banner-text').textContent =
+            `內建規則有更新（v${status.currentSeedVersion} → v${status.latestSeedVersion}）`;
+        banner.classList.remove('d-none');
+    } else {
+        banner.classList.add('d-none');
+    }
+}
+
+document.getElementById('rule-import-preview-btn').addEventListener('click', () => {
+    document.getElementById('rule-import-overwrite').checked = false;
+    loadRuleImportPreview();
+    ruleImportModal.show();
+});
+
+document.getElementById('rule-import-overwrite').addEventListener('change', loadRuleImportPreview);
+
+async function loadRuleImportPreview() {
+    const overwrite = document.getElementById('rule-import-overwrite').checked;
+    const summaryEl = document.getElementById('rule-import-summary');
+    const itemsEl = document.getElementById('rule-import-items');
+    const applyButton = document.getElementById('rule-import-apply-btn');
+
+    summaryEl.textContent = '載入中…';
+    itemsEl.replaceChildren();
+    applyButton.disabled = true;
+
+    const preview = await api.get(`/api/rules/import-preview?overwriteBuiltin=${overwrite}`, { silent: true }).catch(() => null);
+    if (!preview) {
+        summaryEl.textContent = '載入預覽失敗，請重新開啟這個對話框再試一次。';
+        return;
+    }
+
+    summaryEl.textContent =
+        `將新增 ${preview.added}、將更新 ${preview.updated}、略過 ${preview.skipped}、衝突 ${preview.conflicts}`;
+
+    renderTable(itemsEl, {
+        columns: [
+            { title: 'Id', render: i => i.id },
+            { title: '動作', render: i => importActionBadge(i.action, i.actionText) },
+            { title: '說明', render: i => i.detail }
+        ],
+        rows: preview.items,
+        empty: { title: '目前規則庫已與內建種子完全一致', hint: '沒有任何規則需要新增或更新。' }
+    });
+
+    applyButton.disabled = preview.added === 0 && preview.updated === 0;
+}
+
+function importActionBadge(action, text) {
+    const variants = {
+        added: 'success', updated: 'primary', skipped_unchanged: 'light',
+        skipped_modified: 'warning', conflict: 'danger'
+    };
+    const span = document.createElement('span');
+    span.className = `lf-badge lf-badge--${variants[action] ?? 'secondary'}`;
+    span.textContent = text;
+    return span;
+}
+
+document.getElementById('rule-import-apply-btn').addEventListener('click', async () => {
+    const overwrite = document.getElementById('rule-import-overwrite').checked;
+    const applyButton = document.getElementById('rule-import-apply-btn');
+    const restore = withBusy(applyButton, '套用中');
+    try {
+        const result = await api.post('/api/rules/import-apply', { overwriteBuiltin: overwrite });
+        toast(
+            `已套用：新增 ${result.added}、更新 ${result.updated}` +
+            (result.warnings.length > 0 ? `（另有 ${result.warnings.length} 項驗證警告，詳見主控台）` : ''),
+            'success'
+        );
+        // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版，
+        // 有需要深入排查的人打開瀏覽器主控台看——與原本 console 版逐行印出 ⚠ 同一份內容
+        for (const warning of result.warnings) console.warn(warning);
+        ruleImportModal.hide();
+        await checkRuleImportStatus();
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+checkRuleImportStatus();

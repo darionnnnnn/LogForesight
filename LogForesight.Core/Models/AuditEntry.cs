@@ -86,6 +86,7 @@ public static class AuditActions
     public const string RuleDisable = "rule_disable";
     public const string RuleRestoreSeed = "rule_restore_seed";
     public const string RuleDelete = "rule_delete";
+    public const string RuleSeedImport = "rule_seed_import";
     public const string SuppressAdd = "suppress_add";
     public const string SuppressRemove = "suppress_remove";
 

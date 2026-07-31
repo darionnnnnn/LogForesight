@@ -12,6 +12,12 @@
     </button>
 </div>
 
+@* 內建規則升級橫幅（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）：只在庫內版本落後時出現 *@
+<div class="alert alert-info d-flex justify-content-between align-items-center d-none" id="rule-import-banner">
+    <span id="rule-import-banner-text"></span>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="rule-import-preview-btn">預覽差異</button>
+</div>
+
 <ul class="nav nav-tabs mb-3" id="rule-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="rules" data-platform="windows" type="button">Windows規則</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="rules" data-platform="linux" type="button">Linux規則</button></li>
@@ -312,6 +318,35 @@
                     <button type="submit" class="btn btn-primary">建立抑制</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="rule-import-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">內建規則升級預覽</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-check mb-3">
+                    <input class="form-check-input" type="checkbox" id="rule-import-overwrite" />
+                    <label class="form-check-label" for="rule-import-overwrite">
+                        連同已修改的內建規則一併覆蓋（保留原本的啟用/停用設定）
+                    </label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="預設只補上缺少的內建規則；若某條 builtin 規則的內容被你改過（且與新版種子不同），需要勾選這個才會覆蓋回種子最新內容。custom 規則永遠不受影響。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
+                </div>
+                <div class="mb-3" id="rule-import-summary"></div>
+                <div id="rule-import-items"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="rule-import-apply-btn">套用</button>
+            </div>
         </div>
     </div>
 </div>
