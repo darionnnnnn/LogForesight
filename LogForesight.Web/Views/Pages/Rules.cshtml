@@ -257,7 +257,7 @@
 
 <!-- 新增抑制 -->
 <div class="modal fade" id="suppress-modal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">抑制此規則的告警</h5>
@@ -274,20 +274,22 @@
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                         </button>
                     </div>
-                    <div class="mb-3">
-                        <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
-                        <select class="form-select" id="suppress-host" required>
-                            <option value="">請選擇主機…</option>
-                        </select>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="suppress-host" required>
+                                <option value="">請選擇主機…</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="suppress-days" class="form-label">生效天數</label>
+                            <input type="number" class="form-control" id="suppress-days" min="1" placeholder="留空 = 永久，直到手動解除" />
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
                         <textarea class="form-control" id="suppress-reason" rows="2" required></textarea>
                         <div class="form-text">日後回頭確認「當初為什麼關掉」的唯一依據。</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="suppress-days" class="form-label">生效天數</label>
-                        <input type="number" class="form-control" id="suppress-days" min="1" placeholder="留空 = 永久，直到手動解除" />
                     </div>
                 </div>
                 <div class="modal-footer">

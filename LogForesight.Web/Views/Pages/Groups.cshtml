@@ -52,7 +52,7 @@
 
 <!-- 群組編輯對話框 -->
 <div class="modal fade" id="group-modal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="group-modal-title">群組</h5>
@@ -60,19 +60,21 @@
             </div>
             <form id="group-form" novalidate>
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="group-name" class="form-label">群組名稱 <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="group-name" required />
-                    </div>
-                    <div class="mb-3" id="group-role-field">
-                        <label for="group-role" class="form-label">角色</label>
-                        <select class="form-select" id="group-role">
-                            <option value="User">User（一般使用者：只看被授權的主機，可維護處理狀態）</option>
-                            <option value="Dev">Dev（開發人員：執行監控＋全部主機唯讀）</option>
-                            <option value="Manager">Manager（主管：全部主機唯讀）</option>
-                            <option value="Admin">Admin（系統管理員：全部權限）</option>
-                        </select>
-                        <div class="form-text" id="group-role-hint"></div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="group-name" class="form-label">群組名稱 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="group-name" required />
+                        </div>
+                        <div class="col-md-6" id="group-role-field">
+                            <label for="group-role" class="form-label">角色</label>
+                            <select class="form-select" id="group-role">
+                                <option value="User">User（一般使用者：只看被授權的主機，可維護處理狀態）</option>
+                                <option value="Dev">Dev（開發人員：執行監控＋全部主機唯讀）</option>
+                                <option value="Manager">Manager（主管：全部主機唯讀）</option>
+                                <option value="Admin">Admin（系統管理員：全部權限）</option>
+                            </select>
+                            <div class="form-text" id="group-role-hint"></div>
+                        </div>
                     </div>
                     <div class="mb-3" id="group-host-access-field">
                         <label class="form-label">可檢視的主機群組</label>

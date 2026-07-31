@@ -74,6 +74,10 @@ function renderChartPickerBody() {
     body.replaceChildren();
 
     for (const chart of CHART_REGISTRY) {
+        // docs/FEEDBACK-5-PLAN.md §7：modal-body 是 row row-cols-2 grid，每個選項要包一層 col
+        const col = document.createElement('div');
+        col.className = 'col';
+
         const wrap = document.createElement('div');
         wrap.className = 'form-check';
 
@@ -102,7 +106,8 @@ function renderChartPickerBody() {
         });
 
         wrap.append(input, label);
-        body.appendChild(wrap);
+        col.appendChild(wrap);
+        body.appendChild(col);
     }
 }
 

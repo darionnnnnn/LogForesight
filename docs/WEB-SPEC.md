@@ -518,6 +518,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
    「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
 8. 日期區間提供快捷鈕：今天／近 7 天／近 30 天
+9. **modal 寬度（2026-07-31，docs/FEEDBACK-5-PLAN.md §7）**：表單 modal 欄位 ≥3 組即
+   `modal-lg`＋`row g-3` 兩欄排列；檢視型 modal（唯讀展示內容，非表單）一律 `modal-lg`
+   起跳。避免「細細一長排」逼使用者在窄欄位裡一路往下捲；<992px（`modal-lg` 斷點以下）
+   兩欄自動退回單欄（Bootstrap grid 原生行為，不需額外處理）。內容仍可能超高者另加
+   `modal-dialog-scrollable`。短訊息的二次確認框（`confirmAction`）刻意不套用——
+   寬版對單句確認文字反而鬆散。
 
 ## 9. 頁面規格
 
