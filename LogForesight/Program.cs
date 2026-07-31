@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using LogForesight;
 using NLog;
 
@@ -53,22 +52,6 @@ Console.WriteLine(File.Exists(expectedLogFile)
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
     log.Fatal(e.ExceptionObject as Exception, "未捕捉的例外導致程式終止");
 
-// ── 設定 ─────────────────────────────────────────────────────────
-// 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）——分析語意常數，不開放設定
-const int TrendWindowDays = 14;
-// 首次執行（歷史資料庫全空）時回補歷史的天數，讓趨勢分析一開始就有更充足的基準資料。
-// 事實來源是「系統管理 > 設定」頁（DB），這裡是 DB 尚未設定時的退路；實際生效值於讀取
-// dataRoot 後、DB 可用時覆寫（見下方 systemSettings 讀取區塊）。
-var InitialHistoryDays = 120;
-// 歷史資料庫保留天數（需 >= InitialHistoryDays），超過的舊紀錄於每次啟動時自動清除。同上，DB 為事實來源。
-var RetentionDays = 120;
-// 執行歷程（批次執行紀錄／診斷、匯入紀錄）保留天數；同上，DB 為事實來源（docs/HISTORY.md P0-3）。
-var RunLogRetentionDays = 90;
-// 稽核紀錄保留天數；同上，DB 為事實來源。
-var AuditRetentionDays = 730;
-// 風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）；同上，DB 為事實來源。
-var RiskyEventRetentionDays = 14;
-
 // 排程背景執行（無主控台）時設定編碼會擲例外，不能讓它擋下整個程式
 try
 {
@@ -92,7 +75,6 @@ if (!isFirstInstance)
 
 Console.WriteLine("--- LogForesight 啟動 ---");
 log.Info("===== LogForesight 啟動 =====");
-var runStopwatch = Stopwatch.StartNew();
 
 // AI API 設定由執行檔目錄的 appsettings.json 載入。
 // 設定檔存在但解析失敗＝致命錯誤（見 AppSettings.Load 的語意說明）：清楚印出原因與位置後
@@ -124,17 +106,16 @@ if (!settings.Storage.IsValidType)
 // 用 {DataRoot}\logforesight.db），Web 也讀同一個根。其餘資料（分析紀錄／規則／webdata）
 // 已全數入庫，不再是這個目錄下的檔案。
 // Storage:DataRoot 留空＝執行檔目錄（既有部署行為，逐位元組不變）；填了才把資料搬離建置輸出目錄。
-// 刻意不含 logs\／nlog.config／appsettings.json（那些是隨執行檔的基礎設施，不是資料），
-// 也不含 PermissionMonitor 對「執行檔自身目錄」的竄改監控（監控的是 exe 位置，非資料）。
 var dataRoot = settings.Storage.ResolveDataRoot();
 if (!string.Equals(dataRoot, AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase))
 {
     Console.WriteLine($"資料根目錄：{dataRoot}");
     log.Info("資料根目錄（Storage.DataRoot）：{DataRoot}", dataRoot);
 }
+
 // 「系統管理 > 設定」頁（DB）是 AI 位址／金鑰與補充／留存天數的事實來源；appsettings.json 的
-// Ai.BaseUrl 與上面兩個預設值只是 DB 尚未設定時的退路（開箱即用，不強制先跑過 Web 設定頁）。
-// TimeoutSeconds/RetryCount 等節流參數仍由 appsettings.json 控制，不在設定頁維護。
+// Ai.BaseUrl 與內建預設值只是 DB 尚未設定時的退路（開箱即用，不強制先跑過 Web 設定頁）。
+var retention = new RetentionOptions();
 try
 {
     var systemSettings = StorageFactory.CreateSystemSettingsStore(settings.Storage, dataRoot).Get();
@@ -149,8 +130,7 @@ try
 
     if (systemSettings.RetentionDays >= systemSettings.InitialHistoryDays)
     {
-        InitialHistoryDays = systemSettings.InitialHistoryDays;
-        RetentionDays = systemSettings.RetentionDays;
+        retention = retention with { InitialHistoryDays = systemSettings.InitialHistoryDays, RetentionDays = systemSettings.RetentionDays };
     }
     else
     {
@@ -158,17 +138,16 @@ try
             systemSettings.RetentionDays, systemSettings.InitialHistoryDays);
     }
 
-    RunLogRetentionDays = systemSettings.RunLogRetentionDays;
-    AuditRetentionDays = systemSettings.AuditRetentionDays;
+    retention = retention with { RunLogRetentionDays = systemSettings.RunLogRetentionDays, AuditRetentionDays = systemSettings.AuditRetentionDays };
 
-    if (systemSettings.RiskyEventRetentionDays >= 1 && systemSettings.RiskyEventRetentionDays <= RetentionDays)
+    if (systemSettings.RiskyEventRetentionDays >= 1 && systemSettings.RiskyEventRetentionDays <= retention.RetentionDays)
     {
-        RiskyEventRetentionDays = systemSettings.RiskyEventRetentionDays;
+        retention = retention with { RiskyEventRetentionDays = systemSettings.RiskyEventRetentionDays };
     }
     else
     {
         log.Warn("系統設定的風險 log 暫存保留天數（{RiskyEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
-            systemSettings.RiskyEventRetentionDays, RetentionDays);
+            systemSettings.RiskyEventRetentionDays, retention.RetentionDays);
     }
 }
 catch (Exception ex)
@@ -187,27 +166,20 @@ if (debugDump)
     Console.WriteLine("  🔍 --debug-dump 模式：完整 prompt 與 AI 回應將輸出到 diag\\ 目錄");
 }
 
-try
-{
-
-// 規則庫載入（見 docs/RULES-PLAN.md）：初次部署寫入內建種子、之後從 rules.json 載入並驗證，
-// 在建立任何分析服務之前完成——KnownIssueCatalog 的靜態規則表必須先就緒，後續的聚合/分類才有意義。
-var ruleStore = StorageFactory.CreateRuleStore(settings.Storage, dataRoot);
-
 // --import-rules：手動把內建種子的新增/修訂規則匯入 rules.json（預設只預覽，--apply 才寫檔），
 // 見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」的決定。放在 mutex 保護內執行，
 // 避免與排程執行中的分析流程同時寫規則檔；跑完直接結束，不進入每日分析流程。
 if (args.Contains("--import-rules"))
 {
-    RuleImporter.Run(ruleStore, apply: args.Contains("--apply"), overwriteBuiltin: args.Contains("--overwrite-builtin"));
+    var ruleStoreForCli = StorageFactory.CreateRuleStore(settings.Storage, dataRoot);
+    RuleImporter.Run(ruleStoreForCli, apply: args.Contains("--apply"), overwriteBuiltin: args.Contains("--overwrite-builtin"));
     LogManager.Shutdown();
     return 0;
 }
 
 // --netiq-probe：對已設定的 Sentinel 跑一組小規模驗證查詢，輸出可貼回對話定案欄位對應
 // （docs/NETIQ-API-PLAN.md §3.5、§8 步驟 2 的閘門）。放在 mutex 保護內、跑完即結束，不進入每日分析流程。
-// 可選 --sample-ip <windows主機IP> --sample-linux-ip <linux主機IP> 加跑第二輪
-// （主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位形狀，2026-07-29 第一輪實測後新增）。
+// 可選 --sample-ip <windows主機IP> --sample-linux-ip <linux主機IP> 加跑第二輪。
 if (args.Contains("--netiq-probe"))
 {
     var sentinelStoreForProbe = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
@@ -220,528 +192,14 @@ if (args.Contains("--netiq-probe"))
     return probeExitCode;
 }
 
-RuleBootstrapper.Run(ruleStore);
+// 主流程（權限檢查 → 清理 → 本機分析 → NetIQ → 體檢）已抽為 Core 的 AnalysisOrchestrator
+// （docs/WEB-SCHEDULER-PLAN.md §1.4.2），console 與 Web 排程共用同一份。
+var orchestrator = new AnalysisOrchestrator();
+var runRequest = new RunRequest { Scope = RunScope.Full, DebugDump = debugDump, Args = args };
+var result = await orchestrator.RunAsync(runRequest, settings, dataRoot, retention, new ConsoleRunConsole(), CancellationToken.None);
 
-// 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要一份
-// 使用者碰不到的原始內容才比較得出差異。放在 RuleBootstrapper 之後——那時規則庫已就緒。
-try
-{
-    StorageFactory.CreateRuleSeedStore(settings.Storage, dataRoot)
-        .Sync(KnownIssueSeed.CreateRules(), KnownIssueSeed.Version);
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage, dataRoot);
-var currentHost = Environment.MachineName;
-var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
-foreach (var expired in expiredSuppressions)
-{
-    Console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
-                      $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）");
-}
-
-// 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
-// 能回答「昨晚每台主機都跑了嗎、有沒有出問題」。掛上 NLog target 後 Warn 以上自動流入，
-// 不需要在既有程式碼各處加呼叫。建立失敗不影響分析（見 BatchRunRecorder）。
-BatchRunStore? batchRunStore = null;
-try
-{
-    batchRunStore = StorageFactory.CreateBatchRunStore(settings.Storage, dataRoot);
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, args);
-runRecorder.Milestone($"批次啟動（版本 {typeof(Program).Assembly.GetName().Version}）");
-
-var eventLogService = new EventLogService();
-IPromptDumper dumper = debugDump ? new FilePromptDumper() : new NullPromptDumper();
-var aiService = new AIService(settings.Ai, dumper);
-var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
-// 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
-// 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
-// 同時取回主機 PK——**那是分析紀錄與主機的關聯鍵**（docs/HISTORY.md），
-// 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
-// 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
-// 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
-// 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析整個停擺——
-// 此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
-//
-// 以下三段都操作同一批主機/Sentinel 資料，共用同一組 store 實例（原本各自呼叫
-// StorageFactory 建立，內容相同但白白多構造幾次 wrapper 物件）。
-var hostStore = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
-var sentinelStore = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
-
-// SentinelId 回填（docs/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
-// 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
-try
-{
-    var backfill = SentinelIdBackfiller.Run(hostStore, sentinelStore);
-    if (backfill.BackfilledCount > 0)
-        Console.WriteLine($"  已回填 {backfill.BackfilledCount} 台主機的 SentinelId" +
-            (backfill.UnresolvedCount > 0 ? $"（另有 {backfill.UnresolvedCount} 台對不到現存 Sentinel，維持待歸屬）" : "。"));
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "SentinelId 回填失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-// Sentinel 生命週期：Sentinel 被刪除時，停用其所屬 NetIQ 主機。
-// 排在 Touch 之前——不停用的孤兒主機會變成「看起來在監控、實際沒人看」的靜默黑洞。
-// 冪等（已停用不重複處理）、且有空名單安全欄杆（防種子尚未匯入演變成全站停用）。
-try
-{
-    var sentinelIds = sentinelStore.GetAll().Select(s => s.SentinelId).ToList();
-    var sweep = NetiqOrphanSweeper.Sweep(hostStore, sentinelIds);
-    if (sweep.OrphanedCount > 0)
-        Console.WriteLine($"  ⚠ 偵測到 Sentinel 已被刪除，已停用所屬 NetIQ 主機 {sweep.OrphanedCount} 台（可於 Web 重新綁定）");
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "Sentinel 孤兒主機掃描失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-long currentHostId = 0;
-try
-{
-    currentHostId = hostStore.Touch(currentHost, DateTime.Now).HostId;
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
-    Console.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
-}
-
-// 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄，
-// 同一份 history.txt 內別台主機（示範資料、或多台共用資料根）的紀錄不會害本機被誤判成
-// 「已分析過」而整段跳過，也不會混進趨勢基準。必須排在 Touch 取得 currentHostId 之後。
-var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
-var historyService = StorageFactory.CreateRecordStore(settings.Storage, dataRoot, ownerHost);
-
-var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
-var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
-    settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
-// 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
-// NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
-var riskyEventStore = StorageFactory.CreateRiskyEventStore(settings.Storage, dataRoot);
-var permissionMonitor = new PermissionMonitorService(settings.Permissions,
-    StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
-var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
-
-// 問題案件批次逐日掛接（docs/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
-// 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。與 Web 共用同一套
-// IssueCaseCoordinator 規則，只是這裡的 IAnalysisRecordQuery 不綁 ownerHost——
-// 掛接查的是「這台主機全部留存歷史」，跟本機分析的缺日判定/趨勢基準是兩件事。
-var caseCoordinator = new IssueCaseCoordinator(
-    StorageFactory.CreateIssueCaseStore(settings.Storage, dataRoot),
-    StorageFactory.CreateIssueHandlingStore(settings.Storage, dataRoot),
-    StorageFactory.CreateHandlingStore(settings.Storage, dataRoot),
-    StorageFactory.CreateRecordQuery(settings.Storage, dataRoot),
-    hostStore);
-
-// 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
-//    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
-//    刻意不依賴 Security log／稽核政策，直接比對 ACL 與 Administrators 群組成員，
-//    在目前沒有系統管理員權限讀取 Security log 的情況下仍能運作。
-Console.WriteLine($"\n檢查權限異動（監控 {permissionMonitor.WatchedFolders.Count} 個資料夾 + 本機 Administrators 群組）...");
-var permissionCheck = permissionMonitor.Check();
-if (permissionCheck.Alerts.Count > 0)
-{
-    WithColor(ConsoleColor.Magenta, () =>
-    {
-        Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-        Console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
-        foreach (var alert in permissionCheck.Alerts)
-        {
-            Console.WriteLine($"  ║  - {alert}");
-        }
-        Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-    });
-
-    // 被異動項目明細：獨立於自動檢查之外的人工防護層——逐項列出異動前後對照，
-    // 讓使用者自行判斷每一筆是否為正常/授權的異動
-    Console.WriteLine("\n  被異動項目明細（請逐項人工確認是否為正常異動）：");
-    for (int i = 0; i < permissionCheck.Details.Count; i++)
-    {
-        var d = permissionCheck.Details[i];
-        Console.WriteLine($"    {i + 1}. {d.Target}｜{d.ChangeType}");
-        Console.WriteLine($"       異動前：{d.Before}");
-        Console.WriteLine($"       異動後：{d.After}");
-    }
-
-    var reportSb = new System.Text.StringBuilder();
-    reportSb.AppendLine("LogForesight 權限異動報告");
-    reportSb.AppendLine($"檢查時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-    reportSb.AppendLine();
-    reportSb.AppendLine("■ 異動告警");
-    foreach (var alert in permissionCheck.Alerts)
-    {
-        reportSb.AppendLine($"- {alert}");
-    }
-    reportSb.AppendLine();
-    reportSb.AppendLine("■ 被異動項目明細（請逐項人工確認是否為正常/授權的異動）");
-    for (int i = 0; i < permissionCheck.Details.Count; i++)
-    {
-        var d = permissionCheck.Details[i];
-        reportSb.AppendLine($"{i + 1}. 對象：{d.Target}");
-        reportSb.AppendLine($"   異動類型：{d.ChangeType}");
-        reportSb.AppendLine($"   異動前：{d.Before}");
-        reportSb.AppendLine($"   異動後：{d.After}");
-        reportSb.AppendLine("   └ 請確認：此異動是否為您或授權人員的操作？若否，可能為入侵或誤設定，建議立即調查。");
-        reportSb.AppendLine();
-    }
-
-    var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
-    var permissionReportPath = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
-    Console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
-
-    // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
-    // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
-    // 沒有這一軌，那一頁在 JSONL 前期就沒有任何資料可顯示。
-    // 失敗不得中斷分析：Web 的附屬資料寫不進去，不該讓當晚的事件分析停擺。
-    try
-    {
-        var permissionChangeStore = StorageFactory.CreatePermissionChangeStore(settings.Storage, dataRoot);
-        var detectedAt = DateTime.Now;
-
-        permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
-        {
-            ChangeId = Guid.NewGuid().ToString("N"),
-            HostName = currentHost,
-            DetectedAt = detectedAt,
-            Target = detail.Target,
-            ChangeType = detail.ChangeType,
-            Before = detail.Before,
-            After = detail.After,
-            // Alerts 與 Details 由 PermissionCheckResult.Add 成對加入，索引一一對應
-            AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty
-        }));
-
-        Console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
-    }
-    catch (Exception ex)
-    {
-        log.Warn(ex, "權限異動的結構化寫入失敗（不影響本次分析與既有報告）：{0}", ex.Message);
-        Console.WriteLine($"  ⚠ 權限異動的結構化寫入失敗（既有報告不受影響）：{ex.Message}");
-    }
-}
-else
-{
-    Console.WriteLine("  未偵測到權限異動。");
-}
-
-// 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長
-var pruned = historyService.Prune(RetentionDays);
-if (pruned > 0)
-{
-    Console.WriteLine($"已清除 {pruned} 筆超過 {RetentionDays} 天的歷史紀錄。");
-}
-
-// 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/HISTORY.md P0-3）——
-// 排程屬於批次、Web 不養常駐背景工作是既定架構，這裡搭著既有的夜間清理一起做。
-// 處理歷程（handling_log）與權限異動確認（perm_changes）刻意不清：前者是業務敘事，
-// 後者有「待確認」狀態機，清理會湮滅告警——本輪只清「執行過程」性質的三個 log key。
-try
-{
-    var runLogPruned = (batchRunStore?.Prune(RunLogRetentionDays) ?? 0) +
-                        StorageFactory.CreateImportLogStore(settings.Storage, dataRoot).Prune(RunLogRetentionDays);
-    if (runLogPruned > 0)
-        Console.WriteLine($"已清除 {runLogPruned} 筆超過 {RunLogRetentionDays} 天的執行歷程／匯入紀錄。");
-
-    var auditPruned = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot).Prune(AuditRetentionDays);
-    if (auditPruned > 0)
-        Console.WriteLine($"已清除 {auditPruned} 筆超過 {AuditRetentionDays} 天的稽核紀錄。");
-
-    // 風險 log 暫存清理（docs/WEB-SCHEDULER-PLAN.md §2.2.3）：獨立於業務紀錄的 RetentionDays，
-    // 保留期通常短得多（預設 14 天）
-    var riskyEventPruned = riskyEventStore.Prune(RiskyEventRetentionDays);
-    if (riskyEventPruned > 0)
-        Console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {RiskyEventRetentionDays} 天的風險 log 暫存。");
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-// 1c. 清理過期的風險報告檔（docs/HISTORY.md P1-4）——與歷史紀錄同一個 RetentionDays，
-// 報告本來就是紀錄的交付物，沒有獨立設定的必要。
-try
-{
-    var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), RetentionDays);
-    if (reportsPruned > 0)
-        Console.WriteLine($"已清除 {reportsPruned} 份超過 {RetentionDays} 天的風險報告檔。");
-}
-catch (Exception ex)
-{
-    log.Warn(ex, "風險報告檔清理失敗（不影響本次分析）：{0}", ex.Message);
-}
-
-// 2. 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
-//    一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天（平常 = 只缺
-//    昨天，排程漏跑則連缺漏那幾天一起補）。以 HasAnyRecord() 判定首次執行——長時間漏跑（近
-//    TrendWindowDays 天恰好全缺、但更早仍有紀錄）不會被誤判成首次而觸發整段深度回補。
-var yesterday = DateTime.Today.AddDays(-1);
-var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : InitialHistoryDays;
-var missingDates = Enumerable.Range(1, lookbackDays)
-    .Select(offset => DateTime.Today.AddDays(-offset))
-    .Where(date => !historyService.HasRecord(date))
-    .OrderBy(date => date)
-    .ToList();
-
-if (missingDates.Count == 0)
-{
-    Console.WriteLine($"\n{yesterday:yyyy-MM-dd} 已有分析紀錄，跳過（同一天重複執行不會產生重複資料）。");
-    log.Info("{Date:yyyy-MM-dd} 已有分析紀錄，本次跳過", yesterday);
-}
-else
-{
-    // 3. 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料
-    //   （哪些來源保留的歷史不足以涵蓋整個區間、Security 本次是否可讀）。
-    //   抓取全部前置：後面的 AI 分析迴圈只從記憶體取資料，不會每分析完一天才回頭抓下一天。
-    var rangeStart = missingDates[0];
-
-    // 掃描頻道：設定未指定時用預設六頻道（三傳統日誌 + Defender/RDP 兩類 Operational 頻道）。
-    // 使用者手打的頻道名正規化為 canonical 大小寫（Windows 頻道名不分大小寫，但簽章的 LogName
-    // 與 TrendAnalyzer.SameIssue 的比對是逐字的——設定裡大小寫改一次，該頻道的趨勢歷史就斷一次）。
-    var channelNames = settings.Analysis.Channels.Count > 0
-        ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-        : ChannelCatalog.DefaultChannelNames;
-
-    // 啟動誠實申報：Operational 頻道已啟用、但規則表沒有對應規則時，其 Information 等級事件不會被
-    // 收集（掃了卻沒偵測）。舊 rules.json（seed v1）配新程式即屬此況，提示跑 --import-rules 匯入。
-    foreach (var name in channelNames)
-    {
-        var policy = ChannelCatalog.Resolve(name);
-        if (policy.Kind == ChannelInclusionKind.OperationalWatchlist && !KnownIssueCatalog.HasWatchlist(policy.ProviderProbe))
-        {
-            Console.WriteLine($"  ⚠ 頻道「{name}」已啟用，但目前規則表沒有對應規則，其 Information 等級事件不會被收集。" +
-                              "請執行 LogForesight.exe --import-rules --apply 匯入內建 Defender/RDP 規則。");
-            log.Warn("頻道 {Channel} 已啟用但無對應規則（watchlist 空），Information 事件未收集", name);
-        }
-    }
-
-    Console.WriteLine($"\n平行掃描頻道：{string.Join("、", channelNames)}，取得 {rangeStart:yyyy-MM-dd} ~ {yesterday:yyyy-MM-dd} 的事件...");
-    var scanResult = await eventLogService.ScanRangeFromAllAsync(rangeStart, DateTime.Today, channelNames);
-    var logsByDate = scanResult.Entries
-        .GroupBy(l => l.TimeGenerated.Date)
-        .ToDictionary(g => g.Key, g => g.ToList());
-    Console.WriteLine($"共取得 {scanResult.Entries.Count} 筆事件。");
-
-    if (scanResult.SecurityAvailable == false)
-    {
-        Console.WriteLine("  ⚠ Security log 本次無法讀取（需系統管理員權限），入侵跡象相關偵測將標記為未檢查。");
-    }
-
-    // 頻道三態誠實申報：不存在（該偵測不適用）與被拒（偵測盲區）用語明確區分，都印出來讓人看得到。
-    var missingChannels = scanResult.ChannelsMissing.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
-    if (missingChannels.Count > 0)
-    {
-        Console.WriteLine($"  · 下列頻道在本機不存在（未安裝對應角色，相關偵測不適用）：{string.Join("、", missingChannels)}");
-    }
-    var deniedChannels = scanResult.ChannelsDenied.Where(c => !c.Equals("Security", StringComparison.OrdinalIgnoreCase)).ToList();
-    if (deniedChannels.Count > 0)
-    {
-        Console.WriteLine($"  ⚠ 下列頻道存取被拒（需系統管理員權限，屬偵測盲區）：{string.Join("、", deniedChannels)}");
-    }
-
-    var channelAvailability = new ChannelAvailability
-    {
-        Read = scanResult.ChannelsRead,
-        Denied = scanResult.ChannelsDenied,
-        Missing = scanResult.ChannelsMissing
-    };
-
-    if (missingDates.Count > 1)
-    {
-        Console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（每天皆完整 AI 分析，由最舊到最新，後面的日期能參照前面累積的歷史）。");
-        Console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
-    }
-
-    // 4. 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行
-    var results = new List<DailyAnalysisRecord>();
-    var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
-    foreach (var date in missingDates)
-    {
-        Console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（含 AI 判讀）...");
-        var dayStopwatch = Stopwatch.StartNew();
-
-        var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
-        var dataIncomplete = scanResult.IsDateIncomplete(date);
-        var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays,
-            dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
-        results.Add(record);
-
-        // 問題案件批次逐日掛接（2.4）：失敗只記警告，不擋分析主流程——
-        // 同 NetIQ 段的失敗邊界哲學，缺掛的日子下次執行冪等補掛
-        try
-        {
-            var attach = caseCoordinator.AttachNewDay(currentHost, date, record.TopIssues, DateTime.Now);
-            if (attach.AttachedCount > 0)
-                log.Info("案件掛接：{Date:yyyy-MM-dd} 掛入 {Count} 個問題", date, attach.AttachedCount);
-        }
-        catch (Exception ex)
-        {
-            log.Warn(ex, "案件掛接失敗（不影響分析結果，下次執行冪等補掛）：{0}", ex.Message);
-        }
-
-        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學——寫入失敗
-        // 不讓當日分析結果作廢，下次執行 ReplaceDay 冪等覆寫，不需要另外設計重試旗標。
-        // 超過暫存保留期的回補日（首次執行 120 天深度回補最典型）跳過寫入——
-        // 那些列下次執行就會被 Prune 清掉，寫入純屬浪費（見 RiskyEventSelector.WithinRetention）。
-        if (RiskyEventSelector.WithinRetention(date, RiskyEventRetentionDays, DateTime.Today))
-        {
-            try
-            {
-                var riskyEvents = RiskyEventSelector.Select(record.TopIssues, logs, currentHostId, date);
-                riskyEventStore.ReplaceDay(currentHostId, date, riskyEvents);
-            }
-            catch (Exception ex)
-            {
-                log.Warn(ex, "風險 log 暫存寫入失敗（不影響分析結果）：{0}", ex.Message);
-            }
-        }
-
-        dayStopwatch.Stop();
-        elapsedByDate[date] = dayStopwatch.Elapsed;
-        runRecorder.RecordDayAnalyzed();
-
-        // AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
-        // 只有後者該計入 AI 失敗——把刻意跳過算成失敗，會讓執行監控在完全安靜的日子
-        // 也顯示「有警告」，狼來了幾次之後就沒有人再看那個顏色了。
-        if (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low)
-        {
-            runRecorder.RecordAiCall(record.AiAnalyzed);
-        }
-        PrintResult(record, verbose: date == yesterday);
-        Console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
-    }
-
-    runRecorder.Milestone($"逐日分析完成：{results.Count} 天");
-
-    // 5. 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
-    Console.WriteLine("\n══════════ 本次執行結果 ══════════");
-    foreach (var r in results)
-    {
-        Console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
-                          (r.ReportFile != null ? $"  → {r.ReportFile}" : ""));
-    }
-
-    var riskyCount = results.Count(r => r.ReportFile != null);
-    if (riskyCount > 0)
-    {
-        WithColor(ConsoleColor.Yellow, () => Console.WriteLine(
-            $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。"));
-    }
-    else
-    {
-        Console.WriteLine("\n  所有日期風險等級為低，無需特別處置。");
-    }
-
-    log.Info("本次執行結果：{Results}", string.Join(" | ", results.Select(r => $"{r.Date:MM-dd}={r.RiskLevel}")));
-}
-
-// 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
-//    對 Web 主機頁登錄的 NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套
-//    LogAnalysisService。清單為空（尚未登錄任何 NetIQ 主機，或全部待歸屬/停用）時
-//    NetiqPipelineService.RunAsync 自己零副作用返回，這裡不另加開關判斷。
-var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
-if (netiqHostList.Warnings.Count > 0)
-{
-    WithColor(ConsoleColor.Yellow, () =>
-    {
-        Console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
-        foreach (var warning in netiqHostList.Warnings) Console.WriteLine($"    - {warning}");
-    });
-}
-if (netiqHostList.TotalHosts > 0)
-{
-    try
-    {
-        var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
-        var netiqPipeline = new NetiqPipelineService(
-            settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
-            eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator,
-            riskyEventStore, RiskyEventRetentionDays);
-
-        var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays);
-        runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
-            $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日");
-    }
-    catch (Exception ex)
-    {
-        // 與本機分析的失敗邊界一致：NetIQ 這段出問題不該讓已經完成的本機分析與寫入作廢，
-        // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
-        log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");
-        Console.WriteLine($"\n  ✗ NetIQ 機房分析失敗：{ex.Message}（本機分析結果不受影響，下次執行自動重試缺漏日）");
-    }
-}
-
-// 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
-//    （2026-07-20 重設計：due-date 輪巡取代固定星期幾，見 docs/PLAN.md「核心設計決策 B」）。
-//    以「昨天」為體檢基準日——那是最近一筆已完整分析並寫入歷史的一天。
-if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
-{
-    Console.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
-    var checkupStopwatch = Stopwatch.StartNew();
-    var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays, settings.Analysis.ServerDescription);
-
-    if (!checkup.Completed)
-    {
-        // AI 失敗：不寫入歷史，下次執行時補跑機制會重試（不消耗本期體檢額度）
-        Console.WriteLine($"  ⚠ 體檢未完成（{checkup.Conclusion}），未寫入歷史，下次執行將自動重試。");
-    }
-    else
-    {
-        historyService.AttachWeeklyCheckup(yesterday, checkup);
-
-        if (checkup.HasFindings)
-        {
-            WithColor(ConsoleColor.Cyan, () =>
-            {
-                Console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
-                if (checkup.ReportFile != null)
-                {
-                    Console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
-                }
-            });
-        }
-        else
-        {
-            Console.WriteLine($"  體檢完成，無累積性異常。（{checkup.Conclusion}）");
-        }
-    }
-    Console.WriteLine($"  ⏱ 體檢耗時：{FormatElapsed(checkupStopwatch.Elapsed)}");
-    log.Info("體檢：基準日={Date:yyyy-MM-dd}, 完成={Completed}, 有發現={HasFindings}, 耗時={ElapsedMs}ms",
-        yesterday, checkup.Completed, checkup.HasFindings, checkupStopwatch.ElapsedMilliseconds);
-}
-
-    Console.WriteLine($"\n歷史資料庫：{historyService.Location}");
-    Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
-    Console.WriteLine("--- 執行結束 ---");
-    log.Info("===== 執行結束，總耗時 {ElapsedMs}ms =====", runStopwatch.ElapsedMilliseconds);
-    runRecorder.Milestone("執行結束");
-    runRecorder.Finish(exitCode: 0);
-    LogManager.Shutdown(); // 確保緩衝的 log 都寫入檔案再結束程序
-    return 0;
-}
-catch (Exception ex)
-{
-    // 執行紀錄的回填由 runRecorder 的 using 負責：例外往外傳時 using 產生的 finally
-    // 會先執行 Dispose()，以 exit code 1 回填。因此掛掉的執行在監控頁顯示為「失敗」
-    // 而不是停在「執行中」——後者正好會把最需要注意的狀態藏起來。
-    // 全域防護：任何未預期的錯誤都要留下訊息並回報非零 exit code，
-    // 讓工作排程器（勾選「工作失敗時通知」或檢查 LastTaskResult）能監控到
-    Console.WriteLine($"\n執行失敗：{ex}");
-    Console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
-    log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);
-    LogManager.Shutdown();
-    return 1;
-}
+LogManager.Shutdown(); // 確保緩衝的 log 都寫入檔案再結束程序
+return result.Success ? 0 : 1;
 
 /// <summary>取 --flag value 形式的參數值；flag 不存在或後面沒有值時回傳 null</summary>
 static string? GetArgValue(string[] args, string flag)
@@ -750,136 +208,11 @@ static string? GetArgValue(string[] args, string flag)
     return idx >= 0 && idx + 1 < args.Length ? args[idx + 1] : null;
 }
 
-/// <summary>暫時切換 console 前景色執行一段輸出，結束後還原——取代原本重複 10 次的存/切/還原三行式</summary>
+/// <summary>暫時切換 console 前景色執行一段輸出，結束後還原——取代原本重複多次的存/切/還原三行式</summary>
 static void WithColor(ConsoleColor color, Action write)
 {
     var original = Console.ForegroundColor;
     Console.ForegroundColor = color;
     try { write(); }
     finally { Console.ForegroundColor = original; }
-}
-
-static string FormatElapsed(TimeSpan span) =>
-    span.TotalHours >= 1 ? $"{(int)span.TotalHours} 小時 {span.Minutes} 分 {span.Seconds} 秒"
-    : span.TotalMinutes >= 1 ? $"{span.Minutes} 分 {span.Seconds} 秒"
-    : $"{span.Seconds} 秒";
-
-/// <summary>風險等級的行動語意對照，讓 console 不用另外解讀「中」「高」代表要做什麼（2026-07-20 AI 角色轉換）</summary>
-static string RiskActionZh(string riskLevel) => riskLevel switch
-{
-    "高" => "需要立即處理",
-    "中" => "本週內確認",
-    "低" => "無需動作",
-    _ => "狀態未知"
-};
-
-static void PrintResult(DailyAnalysisRecord record, bool verbose = false)
-{
-    Console.WriteLine($"  錯誤 {record.ErrorCount} 筆、警告 {record.WarningCount} 筆、稽核事件 {record.AuditEventCount} 筆，" +
-                      $"風險等級：{record.RiskLevel}（{RiskActionZh(record.RiskLevel)}）");
-    if (record.Headline.Length > 0)
-    {
-        Console.WriteLine($"  {record.Headline}");
-    }
-
-    if (record.DataIncomplete)
-    {
-        Console.WriteLine("  ⚠ 本日部分事件來源保留歷史不足以涵蓋整天，統計數字可能偏低（非真實反映當日狀況）。");
-    }
-
-    // Security 無權限時逐條列出因此停用的偵測項目——覆蓋率誠實申報，不是一句「讀取失敗」帶過
-    if (record.UncoveredChecks.Count > 0)
-    {
-        WithColor(ConsoleColor.DarkYellow, () =>
-        {
-            Console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
-            foreach (var check in record.UncoveredChecks)
-            {
-                Console.WriteLine($"    - {check}");
-            }
-        });
-    }
-
-    // 主機級抑制（見 docs/RULES-PLAN.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
-    // 而不是完全看不到——偵測與紀錄照常，只是不吵、不拉風險，摘要本身不受此限制
-    var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
-    if (suppressedIssues.Count > 0)
-    {
-        var summary = string.Join("、", suppressedIssues.Select(i => $"{i.RuleId} x{i.Count}"));
-        Console.WriteLine($"  🔕 本日 {suppressedIssues.Count} 條告警已抑制（{summary}）");
-    }
-
-    // 高風險或命中「重大」旗標規則時，用醒目的紅色橫幅提醒使用者（被抑制的問題不佔用這個橫幅）。
-    // docs/HISTORY.md #1（B1 三級化）：原本看 Severity==Critical，
-    // 三級化後嚴重度封頂 High，改看 ElevatesDayRisk 旗標——判定行為不變
-    var criticalIssues = record.TopIssues.Where(i => i.ElevatesDayRisk && !i.Suppressed).ToList();
-    if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)
-    {
-        WithColor(ConsoleColor.Red, () =>
-        {
-            Console.WriteLine();
-            Console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-            Console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
-            if (record.Headline.Length > 0)
-            {
-                Console.WriteLine($"  ║  {record.Headline}");
-            }
-            foreach (var issue in criticalIssues)
-            {
-                Console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
-                Console.WriteLine($"  ║    → {issue.KnownIssue}");
-            }
-            Console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-        });
-    }
-
-    // 跨 log 關聯訊號：已知攻擊鏈/故障鏈組合，最重要的線索，紅色醒目顯示
-    if (record.CorrelationAlerts.Count > 0)
-    {
-        WithColor(ConsoleColor.Red, () =>
-        {
-            Console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
-            foreach (var alert in record.CorrelationAlerts)
-            {
-                Console.WriteLine($"    - {alert}");
-            }
-        });
-    }
-
-    // 程式比對歷史後發現的頻率異常（首次出現、頻率上升、總量突增），用黃色提醒
-    if (record.TrendAlerts.Count > 0)
-    {
-        WithColor(ConsoleColor.Yellow, () =>
-        {
-            Console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
-            foreach (var alert in record.TrendAlerts)
-            {
-                Console.WriteLine($"    - {alert}");
-            }
-        });
-    }
-
-    if (record.AiAnalyzed && (verbose || record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
-    {
-        Console.WriteLine($"\n  白話說明：{record.Summary}");
-        if (record.TrendAssessment.Length > 0)
-        {
-            Console.WriteLine($"  趨勢：{record.TrendAssessment}");
-        }
-        if (record.Action.Length > 0)
-        {
-            Console.WriteLine($"  現在該做：{record.Action}");
-        }
-    }
-    else if (!record.AiAnalyzed && verbose)
-    {
-        Console.WriteLine($"  {record.Summary}");
-    }
-
-    // 有輸出風險報告時明確指引檔案位置，讓使用者知道去哪看細節
-    if (record.ReportFile != null)
-    {
-        WithColor(ConsoleColor.Cyan, () => Console.WriteLine(
-            $"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}"));
-    }
 }

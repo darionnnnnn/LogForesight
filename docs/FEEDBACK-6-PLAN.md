@@ -120,6 +120,58 @@ fallback 路徑——白天對 Sentinel 的額外查詢負載這個顧慮沒有�
 - **`Enabled` 預設 false**：部署本身零行為變化，schtasks 續用——使用者何時
   切換由 §3 的試點流程決定。
 
+### Phase 2 實作結果與規劃差異（2026-07-31）
+
+11 檔搬遷（`git mv`，namespace 不變、內容零改動）與 `AnalysisOrchestrator` 抽取
+皆已完成，`dotnet build`/`dotnet test` 全綠（1214），並以 `git diff` 逐行核對
+搬移前後的 Program.cs 主流程內容**逐字相同**（僅 `Console.WriteLine`→
+`console.WriteLine`、`WithColor`→`console.WithColor`、區域變數改讀
+`RetentionOptions` 記錄型別）確認零行為漂移。與規劃 §1.4.2 snippet 的差異：
+
+1. **`RunRequest`／`OrchestratorResult` 取代單純的 `(RunScope, backfillOverride)`
+   參數**：規劃的方法簽名只列 `RunScope scope, int? backfillOverride`，實作
+   時發現還需要 `DebugDump`（決定要不要掛 `FilePromptDumper`）與 `Args`
+   （`BatchRunRecorder` 的命令列欄位）才能重現現有行為，改用請求物件封裝，
+   `BackfillOverride` 欄位先留著（結構就位、尚未接線，Phase 3 手動觸發時才
+   會真正套用到 `NetiqPipelineService`）。
+2. **具名 Mutex 未搬進 orchestrator**：規劃寫「具名 Mutex 保留在 orchestrator」，
+   評估後改為**暫緩**——目前的 `using var instanceMutex` 是「整個 process
+   持有到結束、靠行程結束時 OS 自動釋放」的一次性鎖，console 的 one-shot
+   生命週期下這樣寫沒問題；但 Web 排程是長駐行程，同一個 `RunAsync` 會被
+   呼叫很多次，每次都要**明確** `ReleaseMutex()`，而 `Mutex.ReleaseMutex()`
+   要求呼叫執行緒與取得時同一條——`async/await` 底下延續執行緒不保證相同，
+   貿然搬會埋下難重現的 `ApplicationException`。這屬於 Web 排程器自身的
+   併發設計問題，不是「只搬不改」範圍內能安全處理的，留給 Phase 3 設計
+   `SchedulerHostedService` 時一併解決（可能改用單一背景執行緒跑排程迴圈，
+   或改用不受執行緒親和性限制的鎖原語）。console 端的既有 Mutex 保護不變。
+3. **`IRunConsole` 用兩個通用原語而非逐一對應的語意方法**：規劃提到
+   `IRunConsole` 輸出抽象時舉例「Info/Warn/Alert/Section 這類語意方法」；
+   實作改用 `WriteLine(string)`／`WithColor(ConsoleColor, Action)` 兩個更底層
+   的原語，`AnalysisOrchestrator` 內文保留與原本**逐字相同**的格式化邏輯
+   （框線字元、色彩區塊），只是呼叫對象從 `Console.*` 換成 `console.*`。
+   改用語意方法需要把每處輸出重新分類命名，風險是在分類過程中不小心改到
+   格式；兩個原語版本零風險，且 Web adapter（Phase 3）一樣能把
+   `WriteLine`→NLog info、`WithColor` 的顏色映射成訊息前綴或忽略。
+4. **`RunScope.LocalOnly`／`NetiqHosts` 的篩選語意是本次新設計，非既有行為**：
+   規劃只定義了列舉存在（給 Phase 3 手動觸發用），沒有規範細節。實作採
+   `LocalOnly`＝跳過整個 NetIQ 段、`NetiqHosts([ids])`＝跳過本機逐日分析段
+   且把 `HostListResult` 篩到只剩指定 HostId（不產生「被排除」警告，因為
+   那些主機本來就沒被要求這次更新）；`Full`（唯一現在會被呼叫到的分支）
+   行為與原本完全相同。權限檢查／清理／體檢三個維護性步驟在三種範圍下都
+   照跑不跳過——手動更新單一主機時仍一併做本來就會做的維護工作，避免
+   「小範圍手動觸發」與「排程完整執行」的維護頻率產生分歧。這組語意將在
+   Phase 3 設計手動觸發 API 時對照真正的 UI 需求覆核，必要時調整。
+5. **設定載入（`AppSettings.Load`／`SystemSettings` DB 覆寫合併）留在
+   Program.cs，未進 orchestrator**：規劃 §1.4.2「每次執行重建服務」是要求
+   Web 排程每次觸發都重讀設定，但沒規定「重讀」的程式碼要放在 orchestrator
+   內部或呼叫端。實作選擇留在呼叫端（`RunAsync` 收 `AppSettings settings,
+   string dataRoot, RetentionOptions retention` 三個已解析好的參數）——
+   console 本來就得在 orchestrator 呼叫**之前**载入設定（CLI 分派段
+   `--import-rules`／`--netiq-probe` 也需要），沒有理由在 orchestrator 內部
+   再重複一次；Phase 3 的 `SchedulerHostedService` 只要在每次觸發前呼叫同一段
+   設定載入邏輯（屆時視情況抽成共用靜態方法）即可達成「重新讀取」，不需要
+   把設定解析寫死進 orchestrator。
+
 ### 側欄入口與權限（2026-07-31 追加：回應「左側選單沒有排程入口」）
 
 使用者指出左側選單沒有排程設定相關入口。盤點後發現這不只是命名問題，
