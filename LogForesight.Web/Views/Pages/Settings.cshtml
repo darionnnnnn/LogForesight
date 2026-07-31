@@ -37,6 +37,10 @@
             <hr />
 
             <label class="form-label small fw-semibold">日風險等級顯示</label>
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                    data-bs-content="「高風險日」為必要顯示項目，無法取消勾選。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </button>
             <p class="text-muted small mb-2">
                 未勾選等級的風險日整批從儀表板 KPI、報表趨勢、問題查詢的統計與清單中消失
                 （上方說明的判定結果本身不受影響）。風險日詳情的直接連結與主機詳情頁的時間軸
@@ -44,7 +48,6 @@
                 誤顯示成「這天沒有分析紀錄」。
             </p>
             <div class="d-flex flex-wrap gap-2 mb-1" id="day-risk-level-checks"></div>
-            <div class="form-text">「高風險日」為必要顯示項目，無法取消勾選。</div>
         </div>
     </div>
 
@@ -55,13 +58,16 @@
         <div class="lf-card__body">
             <div class="mb-3">
                 <label for="ai-base-url" class="form-label">API 位址</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="OpenAI 相容端點（如 llama.cpp／KoboldCpp）。留空會停用 AI 分析與加值功能。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
                 <input type="text" class="form-control" id="ai-base-url" placeholder="http://localhost:8080" />
-                <div class="form-text">OpenAI 相容端點（如 llama.cpp／KoboldCpp）。留空會停用 AI 分析與加值功能。</div>
             </div>
             <div class="mb-2">
                 <label for="ai-api-key" class="form-label">API 金鑰</label>
                 <input type="password" class="form-control" id="ai-api-key" autocomplete="new-password" placeholder="留空＝沿用既有金鑰" />
-                <div class="form-text" id="ai-api-key-hint">地端無驗證的端點可留空；需驗證的端點會以 Authorization: Bearer 帶入。</div>
+                <div class="form-text" id="ai-api-key-hint"></div>
             </div>
             <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="ai-api-key-clear" />
@@ -156,8 +162,11 @@
                 </div>
                 <div class="col-sm-6">
                     <label for="retention-days" class="form-label">歷史資料保留天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="超過此天數的歷史紀錄，每次批次啟動時自動清除。不可小於首次執行回補天數。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="retention-days" min="1" max="3650" required />
-                    <div class="form-text">超過此天數的歷史紀錄，每次批次啟動時自動清除。不可小於首次執行回補天數。</div>
                 </div>
                 <div class="col-sm-6">
                     <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
@@ -177,8 +186,11 @@
                 </div>
                 <div class="col-sm-6">
                     <label for="risky-event-retention-days" class="form-label">風險 log 暫存保留天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除。不可大於歷史資料保留天數。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="risky-event-retention-days" min="1" max="3650" required />
-                    <div class="form-text">規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除。不可大於歷史資料保留天數。</div>
                 </div>
             </div>
         </div>

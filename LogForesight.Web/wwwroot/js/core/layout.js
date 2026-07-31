@@ -43,7 +43,10 @@ const NAV_SECTIONS = [
     {
         label: '系統',
         items: [
-            { href: '/runs', label: '執行監控', icon: 'activity', requires: 'DevMonitor' },
+            // 排程作業（docs/FEEDBACK-6-PLAN.md §2）：陣列＝任一能力即可見（dev 的執行監控與
+            // admin/serverAdmin 的排程設定共用同一頁，serverAdmin 有 Maintain 卻沒有 DevMonitor，
+            // 沒有這個入口就搆不到全新環境的排程初始設定）
+            { href: '/runs', label: '排程作業', icon: 'activity', requires: ['DevMonitor', 'Maintain'] },
             { href: '/audit', label: '操作紀錄', icon: 'journal-text', requires: 'ViewAudit' }
         ]
     }
@@ -89,7 +92,11 @@ function renderNav(user) {
             resolvedHref: typeof item.href === 'function' ? item.href(user) : item.href
         }));
         const visible = resolved.filter(item => {
-            if (item.requires && !hasCapability(user, item.requires)) return false;
+            // requires 可以是單一能力字串，也可以是能力陣列（任一命中即可見，見上方「排程作業」）
+            if (item.requires) {
+                const needed = Array.isArray(item.requires) ? item.requires : [item.requires];
+                if (!needed.some(cap => hasCapability(user, cap))) return false;
+            }
             if (user.isServerAdmin && (BUSINESS_PAGES.includes(item.resolvedHref) || item.hideForServerAdmin)) return false;
             return true;
         });

@@ -1,6 +1,68 @@
 @{
-    ViewData["Title"] = "執行監控";
+    ViewData["Title"] = "排程作業";
 }
+
+<section class="lf-card mb-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">排程設定</h2>
+        <div class="d-flex align-items-center gap-2">
+            <span id="schedule-debug-dump-badge" class="lf-badge lf-badge--warning d-none">AI 診斷傾印開啟中</span>
+            <span id="schedule-status-text" class="text-muted small"></span>
+        </div>
+    </div>
+    <div class="lf-card__body">
+        <form id="schedule-form" novalidate>
+            <div class="row g-3 align-items-start">
+                <div class="col-md-7">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="schedule-enabled" data-maintain-only />
+                        <label class="form-check-label" for="schedule-enabled">啟用排程</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="關閉時行為與升級前完全相同（沿用工作排程器／手動執行 console），不會有任何自動觸發。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                    </div>
+
+                    <label class="form-label small fw-semibold">執行窗口</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
+                    <div id="schedule-windows" class="mb-2"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="schedule-add-window" data-maintain-only>
+                        新增窗口
+                    </button>
+
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="schedule-debug-dump" data-maintain-only />
+                        <label class="form-check-label" for="schedule-debug-dump">AI 診斷傾印</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="開啟後下一次執行會把每次 AI 呼叫的完整 prompt 與原始回應輸出到資料根目錄的 diag\ 目錄，持續佔用磁碟。驗證完請記得關閉，不會自動關閉。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="col-md-5">
+                    <div class="lf-card p-3 h-100" style="background: var(--lf-gray-50);">
+                        <div class="small text-muted mb-1">下次觸發時刻</div>
+                        <div class="fw-semibold mb-3" id="schedule-next-trigger">—</div>
+                        <div class="small text-muted mb-1">目前狀態</div>
+                        <div class="fw-semibold mb-1" id="schedule-run-state">閒置</div>
+                        <div class="small text-muted mb-3" id="schedule-latest-message"></div>
+                        <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-stop" data-maintain-only>停止執行</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-3 mt-3" data-maintain-only>
+                <button type="submit" class="btn btn-primary btn-sm" id="schedule-save">儲存排程設定</button>
+                <button type="button" class="btn btn-outline-primary btn-sm" id="schedule-run-now">立即執行</button>
+                <span class="text-muted small" id="schedule-updated"></span>
+            </div>
+        </form>
+    </div>
+</section>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div class="btn-group btn-group-sm">
@@ -55,6 +117,48 @@
         <div id="run-detail-logs"></div>
     </div>
 </section>
+
+<div class="modal fade" id="run-now-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">立即執行</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="run-now-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">範圍</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-all" value="all" checked />
+                            <label class="form-check-label" for="run-now-scope-all">全部主機（等同排程觸發的完整執行）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-segment" value="segment" />
+                            <label class="form-check-label" for="run-now-scope-segment">網段範圍（僅 NetIQ 主機）</label>
+                        </div>
+                        <div class="ms-4 mb-2 d-none" id="run-now-segment-field">
+                            <input type="text" class="form-control form-control-sm" id="run-now-segment" placeholder="例如 10.1.2 或 10.1.2.0/24" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="run-now-backfill" class="form-label">回補天數（選填）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="只影響這次執行，不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                        <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="14" style="max-width: 120px;" />
+                    </div>
+                    <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="run-now-submit">開始執行</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 @section Scripts {
     <script type="module" src="~/js/pages/runs.js" asp-append-version="true"></script>

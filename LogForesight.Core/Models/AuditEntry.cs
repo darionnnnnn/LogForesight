@@ -86,6 +86,7 @@ public static class AuditActions
     public const string RuleDisable = "rule_disable";
     public const string RuleRestoreSeed = "rule_restore_seed";
     public const string RuleDelete = "rule_delete";
+    public const string RuleSeedImport = "rule_seed_import";
     public const string SuppressAdd = "suppress_add";
     public const string SuppressRemove = "suppress_remove";
 
@@ -117,6 +118,14 @@ public static class AuditActions
     // 系統設定：AI 金鑰欄位絕不進 DetailJson，只留「是否變動」的布林
     public const string SettingsUpdate = "settings_update";
     public const string NetiqOptionsUpdate = "netiq_options_update";
+
+    // 排程作業（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
+    public const string ScheduleOptionsUpdate = "schedule_options_update";
+    public const string ScheduleManualRun = "schedule_manual_run";
+    public const string ScheduleManualCancel = "schedule_manual_cancel";
+
+    // NetIQ API 診斷（docs/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
+    public const string NetiqProbeRun = "netiq_probe_run";
 
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
     public const string SystemAccount = "(system)";

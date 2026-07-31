@@ -54,6 +54,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
         services.AddSingleton<BatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
+        // 排程設定（docs/WEB-SCHEDULER-PLAN.md §1.4.3）
+        services.AddSingleton<IScheduleOptionsStore>(_ => StorageFactory.CreateScheduleOptionsStore(storage, dataRoot));
+
         // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
         services.AddSingleton<IRiskyEventStore>(_ => StorageFactory.CreateRiskyEventStore(storage, dataRoot));
 
@@ -246,6 +249,19 @@ public static class ServiceCollectionExtensions
         // 規則維護與執行監控
         services.AddScoped<RuleAdminService>();
         services.AddScoped<RunMonitorService>();
+
+        // 排程引擎（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
+        // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
+        // 為單例並讓 IHostedService 直接引用同一個實例——ScheduleController 需要呼叫它的
+        // TriggerRunAsync（手動觸發），不能只當背景服務、必須也能被其他地方解析取得。
+        services.AddSingleton<SchedulerRunState>();
+        services.AddSingleton<SchedulerHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
+
+        // NetIQ API 診斷（probe，docs/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
+        // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用
+        services.AddSingleton<NetiqProbeRunState>();
+        services.AddSingleton<NetiqProbeService>();
 
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
         // 新增第四種匯入時只要多註冊一個實作，流程與 Controller 都不必改（OCP）

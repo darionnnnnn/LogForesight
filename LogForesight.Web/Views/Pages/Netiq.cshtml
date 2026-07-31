@@ -2,27 +2,33 @@
     ViewData["Title"] = "NetIQ 維護";
 }
 
-<div class="lf-toolbar">
-    <div class="lf-toolbar__row">
-        <div class="lf-toolbar__spacer"></div>
-        <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
-    </div>
-</div>
+<ul class="nav nav-tabs mb-3" id="netiq-tabs">
+    <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">設定</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">診斷</button></li>
+</ul>
 
-<div class="lf-card mb-3">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title">
-            Sentinel <span class="text-muted small" id="sentinel-count"></span>
-        </h2>
-        <span tabindex="0" data-bs-toggle="popover"
-              data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
-            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
-        </span>
+<div data-panel="config">
+    <div class="lf-toolbar">
+        <div class="lf-toolbar__row">
+            <div class="lf-toolbar__spacer"></div>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-new-sentinel">新增 Sentinel</button>
+        </div>
     </div>
-    <div class="lf-card__body p-0" id="sentinel-list"></div>
-</div>
 
-<form id="netiq-options-form">
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">
+                Sentinel <span class="text-muted small" id="sentinel-count"></span>
+            </h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
+        </div>
+        <div class="lf-card__body p-0" id="sentinel-list"></div>
+    </div>
+
+    <form id="netiq-options-form">
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">連線與節流參數</h2>
@@ -60,21 +66,19 @@
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-backfill-days" class="form-label">每次執行回補天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="每台主機每次執行最多回補幾天的缺漏日。正式環境建議 1（只查前一天）——2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。排程漏跑的中間日子不會自動補齊，需要補歷史時可暫時調大此值、跑一次、再調回來。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="opt-backfill-days" min="1" max="14" />
-                    <div class="form-text">
-                        每台主機每次執行最多回補幾天的缺漏日。正式環境建議 1（只查前一天）——
-                        2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。
-                        排程漏跑的中間日子不會自動補齊，需要補歷史時可暫時調大此值、跑一次、再調回來。
-                    </div>
                 </div>
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-max-parallel-servers" class="form-label">同時處理幾台 Sentinel</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理（既有行為）。平行度越高，單一 Sentinel 逾時／失敗越不拖累其他台，但同時發出的查詢也越多。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
                     <input type="number" class="form-control" id="opt-max-parallel-servers" min="1" max="8" />
-                    <div class="form-text">
-                        各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理
-                        （既有行為）。平行度越高，單一 Sentinel 逾時／失敗越不拖累其他台，
-                        但同時發出的查詢也越多。
-                    </div>
                 </div>
             </div>
             <div class="form-check mt-3">
@@ -83,13 +87,11 @@
             </div>
             <div class="form-check mt-2">
                 <input class="form-check-input" type="checkbox" id="opt-chat-live-fetch" />
-                <label class="form-check-label" for="opt-chat-live-fetch">詢問 AI 詢問當下向 Sentinel 即時查詢現場事件（僅 NetIQ 主機）</label>
-                <div class="form-text">
-                    開啟後，風險日詳情「詢問 AI」對話的第一輪會對該主機所屬 Sentinel 發一次即時查詢，
-                    取回當日這個問題的實際事件納入分析，讓 AI 判讀更貼近現況。
-                    預設關閉——請評估白天對 Sentinel 的額外查詢負載後再開啟；全站併發上限 1、
-                    結果快取 10 分鐘，且只對 NetIQ 主機生效（本機直讀主機沒有這條路徑）。
-                </div>
+                <label class="form-check-label" for="opt-chat-live-fetch">詢問 AI 查無暫存資料時，向 Sentinel 即時查詢現場事件（僅 NetIQ 主機）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="風險日詳情「詢問 AI」對話第一輪一律先查風險 log 暫存資料庫（毫秒級，不打 Sentinel，本開關管不到）；只有暫存查無（超過保留天數、功能上線前分析的日子、或不屬風險簽章）才用到本開關——開啟時會 fallback 向該主機所屬 Sentinel 發一次即時查詢。預設關閉；全站併發上限 1、結果快取 10 分鐘，且只對 NetIQ 主機生效（本機直讀主機沒有這條路徑）。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
             </div>
         </div>
     </div>
@@ -98,7 +100,47 @@
         <button type="submit" class="btn btn-primary" id="netiq-options-save">儲存</button>
         <span class="text-muted small" id="netiq-options-updated"></span>
     </div>
-</form>
+    </form>
+</div>
+
+<div class="lf-card mb-3 d-none" data-panel="probe">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">NetIQ API 診斷</h2>
+        <span tabindex="0" data-bs-toggle="popover"
+              data-bs-content="對選定的 Sentinel 執行一組小規模驗證查詢（逐台十幾筆查詢，近 1～24 小時級距），用於核對欄位對應／時區／批次大小；不影響夜間排程分析（各自獨立執行、互不阻塞）。輸出可直接複製貼回對話討論。">
+            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+        </span>
+    </div>
+    <div class="lf-card__body">
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <label for="probe-sentinel" class="form-label">Sentinel <span class="text-danger">*</span></label>
+                <select class="form-select" id="probe-sentinel"></select>
+            </div>
+            <div class="col-md-4">
+                <label for="probe-sample-ip" class="form-label">樣本 IP（Windows，選填）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一台已知的 Windows 主機 IP，用於核對跨主機事件的主機歸屬鍵、頻道覆蓋、時間邊界。省略時對應的核對步驟會標示略過，不影響其餘步驟。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <input type="text" class="form-control" id="probe-sample-ip" placeholder="10.1.2.34" />
+            </div>
+            <div class="col-md-4">
+                <label for="probe-sample-linux-ip" class="form-label">樣本 IP（Linux，選填）</label>
+                <input type="text" class="form-control" id="probe-sample-linux-ip" placeholder="10.1.2.56" />
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-3 mb-3">
+            <button type="button" class="btn btn-primary" id="probe-start">執行診斷</button>
+            <span class="text-muted small" id="probe-state"></span>
+        </div>
+        <label for="probe-output" class="form-label small fw-semibold d-flex align-items-center gap-2">
+            診斷輸出
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="probe-copy" disabled>複製</button>
+        </label>
+        <textarea class="form-control font-monospace small" id="probe-output" rows="20" readonly placeholder="尚未執行過診斷。"></textarea>
+    </div>
+</div>
 
 <!-- Sentinel 編輯 -->
 <div class="modal fade" id="sentinel-modal" tabindex="-1">

@@ -74,12 +74,26 @@ public class RulesController : ControllerBase
         _service.RemoveSuppression(ruleId, host);
         return ApiResponse.Ok();
     }
+
+    /// <summary>內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
+    [HttpGet("import-status")]
+    public ApiResponse<RuleImportStatusDto> GetImportStatus() =>
+        ApiResponse<RuleImportStatusDto>.Ok(_service.GetImportStatus());
+
+    [HttpGet("import-preview")]
+    public ApiResponse<RuleImportPreviewDto> PreviewImport([FromQuery] bool overwriteBuiltin = false) =>
+        ApiResponse<RuleImportPreviewDto>.Ok(_service.PreviewImport(overwriteBuiltin));
+
+    [HttpPost("import-apply")]
+    public ApiResponse<RuleImportApplyResultDto> ApplyImport([FromBody] ApplyRuleImportRequest request) =>
+        ApiResponse<RuleImportApplyResultDto>.Ok(_service.ApplyImport(request.OverwriteBuiltin));
 }
 
-/// <summary>執行監控（§9.10）。需 DevMonitor 能力（dev / admin）</summary>
+/// <summary>執行監控（§9.10）。需 DevMonitor 或 Maintain 能力（dev / admin / serverAdmin，
+/// docs/FEEDBACK-6-PLAN.md §2——排程作業頁併入本頁後，serverAdmin 要能看見執行紀錄佐證排程活著）</summary>
 [ApiController]
 [Route("api/runs")]
-[Permission(Capability.DevMonitor)]
+[Permission(Capability.DevMonitor, Capability.Maintain)]
 public class RunsController : ControllerBase
 {
     private readonly RunMonitorService _service;

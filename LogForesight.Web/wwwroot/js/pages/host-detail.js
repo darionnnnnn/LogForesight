@@ -5,13 +5,15 @@
  * 沒有紀錄的日子刻意用不同顏色：「這天沒分析」與「這天沒風險」是完全不同的意思。
  */
 
-import { api } from '../core/api.js';
-import { renderLoading, renderTable, labelValue } from '../core/ui.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { renderLoading, renderTable, labelValue, toast, withBusy } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
 let currentDays = 30;
+let canMaintainHost = false;
+const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update-modal'));
 
 const LEGEND = [
     { key: 'high', label: '高風險', color: 'var(--lf-risk-high)' },
@@ -25,7 +27,11 @@ async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
     renderLoading(document.getElementById('host-issues'), 3);
 
-    const detail = await api.get(`/api/host-detail/${hostId}?days=${currentDays}`);
+    const [detail, user] = await Promise.all([
+        api.get(`/api/host-detail/${hostId}?days=${currentDays}`),
+        getCurrentUser()
+    ]);
+    canMaintainHost = hasCapability(user, 'Maintain');
 
     renderHeader(detail);
     renderTimeline(detail);
@@ -40,11 +46,27 @@ function renderHeader(detail) {
     const body = document.createElement('div');
     body.className = 'lf-card__body';
 
+    const titleRow = document.createElement('div');
+    titleRow.className = 'd-flex justify-content-between align-items-start mb-1';
+
     const title = document.createElement('div');
-    title.className = 'fs-5 fw-semibold mb-1';
+    title.className = 'fs-5 fw-semibold';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
-    body.appendChild(title);
+    titleRow.appendChild(title);
+
+    // 指定主機更新（docs/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
+    // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）
+    if (canMaintainHost) {
+        const updateButton = document.createElement('button');
+        updateButton.type = 'button';
+        updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';
+        updateButton.textContent = '指定主機更新';
+        updateButton.addEventListener('click', () => openHostUpdateModal(detail));
+        titleRow.appendChild(updateButton);
+    }
+
+    body.appendChild(titleRow);
 
     if (detail.roleDesc) {
         const role = document.createElement('div');
@@ -186,7 +208,7 @@ function occurrenceDetailPanel(signature) {
 
     const placeholder = document.createElement('div');
     placeholder.className = 'text-muted small';
-    placeholder.textContent = '展開查看發生明細…';
+    placeholder.textContent = '展開檢視發生明細…';
     container.appendChild(placeholder);
 
     let cachedDates = null;
@@ -361,5 +383,35 @@ for (const button of document.querySelectorAll('[data-days]')) {
         load();
     });
 }
+
+// ── 指定主機更新（docs/WEB-SCHEDULER-PLAN.md §1.4.5）─────────────────────────
+
+function openHostUpdateModal(detail) {
+    document.getElementById('host-update-message').textContent =
+        `重新分析「${detail.hostName}」的缺漏日；已分析過的日子仍會冪等跳過，不會重複產生紀錄。`;
+    document.getElementById('host-update-backfill').value = '';
+    hostUpdateModal.show();
+}
+
+document.getElementById('host-update-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const backfillDays = document.getElementById('host-update-backfill').value;
+    const submitButton = document.getElementById('host-update-submit');
+    const restore = withBusy(submitButton, '送出中');
+    try {
+        const result = await api.post('/api/admin/schedule/run', {
+            scope: 'host',
+            hostId,
+            backfillDays: backfillDays ? Number(backfillDays) : null
+        });
+        toast(result.message, result.started ? 'success' : 'warning');
+        if (result.started) hostUpdateModal.hide();
+    } catch {
+        // 錯誤已由 api.js 顯示（含「此主機目前不會被查詢」等驗證訊息）
+    } finally {
+        restore();
+    }
+});
 
 load();

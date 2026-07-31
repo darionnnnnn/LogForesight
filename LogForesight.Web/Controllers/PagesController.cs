@@ -61,8 +61,11 @@ public class PagesController : Controller
     [Permission(Capability.ViewAudit)]
     public IActionResult Audit() => View();
 
+    /// <summary>排程作業（docs/FEEDBACK-6-PLAN.md §2）：DevMonitor 或 Maintain 任一即可進入——
+    /// 排程設定與手動觸發屬 Maintain，執行紀錄唯讀屬 DevMonitor 既有範圍，serverAdmin 因此
+    /// 也能看見執行紀錄佐證排程活著（頁內仍依能力分層顯示可編輯區塊）</summary>
     [HttpGet("/runs")]
-    [Permission(Capability.DevMonitor)]
+    [Permission(Capability.DevMonitor, Capability.Maintain)]
     public IActionResult Runs() => View();
 
     [HttpGet("/admin/rules")]

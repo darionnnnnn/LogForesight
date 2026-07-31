@@ -52,6 +52,70 @@ public class RuleAdminService
         return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion)).ToList();
     }
 
+    /// <summary>內建規則升級橫幅（docs/WEB-SCHEDULER-PLAN.md §1.4.9）：庫內版本 &lt; 程式目前的種子版本時顯示</summary>
+    public RuleImportStatusDto GetImportStatus()
+    {
+        var current = LoadContent().SeedVersion;
+        var latest = KnownIssueSeed.Version;
+        return new RuleImportStatusDto { CurrentSeedVersion = current, LatestSeedVersion = latest, HasUpdate = current < latest };
+    }
+
+    public RuleImportPreviewDto PreviewImport(bool overwriteBuiltin) =>
+        ToImportPreviewDto(RuleImportPlanner.BuildPlan(LoadContent().Rules, KnownIssueSeed.CreateRules(), overwriteBuiltin));
+
+    public RuleImportApplyResultDto ApplyImport(bool overwriteBuiltin)
+    {
+        var plan = RuleImportPlanner.BuildPlan(LoadContent().Rules, KnownIssueSeed.CreateRules(), overwriteBuiltin);
+        if (plan.Added == 0 && plan.Updated == 0)
+            throw DomainException.Validation("沒有需要套用的變更（可能已經是最新版本，或未修改的 builtin 規則需要勾選「連同已修改的內建規則一併覆蓋」）。");
+
+        var validation = RuleImportPlanner.Apply(_rules, plan);
+
+        _audit.Record(
+            action: AuditActions.RuleSeedImport,
+            summary: $"匯入內建規則種子更新至 v{KnownIssueSeed.Version}：新增 {plan.Added} 條、更新 {plan.Updated} 條" +
+                     (overwriteBuiltin ? "（含覆蓋已修改的內建規則）" : ""),
+            targetKind: "rule",
+            detail: new { plan.Added, plan.Updated, OverwriteBuiltin = overwriteBuiltin, SeedVersion = KnownIssueSeed.Version });
+
+        var warnings = validation.ShadowWarnings
+            .Concat(validation.SkippedRules.Select(s => $"規則 {s.Rule.Id} 不合格：{s.Reason}（下次啟動時會被跳過，不影響其餘規則）"))
+            .ToList();
+
+        return new RuleImportApplyResultDto { Added = plan.Added, Updated = plan.Updated, Warnings = warnings };
+    }
+
+    private static RuleImportPreviewDto ToImportPreviewDto(RuleImportPlan plan) => new()
+    {
+        Added = plan.Added,
+        Updated = plan.Updated,
+        Skipped = plan.Skipped,
+        Conflicts = plan.Conflicts,
+        Items = plan.Items.Select(i => new RuleImportItemDto
+        {
+            Id = i.Id,
+            Action = i.Action switch
+            {
+                RuleImportAction.Added => "added",
+                RuleImportAction.UpdatedBuiltin => "updated",
+                RuleImportAction.SkippedUnchanged => "skipped_unchanged",
+                RuleImportAction.SkippedModifiedBuiltin => "skipped_modified",
+                RuleImportAction.Conflict => "conflict",
+                _ => "unknown"
+            },
+            ActionText = i.Action switch
+            {
+                RuleImportAction.Added => "新增",
+                RuleImportAction.UpdatedBuiltin => "更新",
+                RuleImportAction.SkippedUnchanged => "略過（未變更）",
+                RuleImportAction.SkippedModifiedBuiltin => "略過（已修改）",
+                RuleImportAction.Conflict => "衝突",
+                _ => i.Action.ToString()
+            },
+            Detail = i.Detail
+        }).ToList()
+    };
+
     public RuleValidationDto ValidateRule(SaveRuleRequest request)
     {
         var content = LoadContent();

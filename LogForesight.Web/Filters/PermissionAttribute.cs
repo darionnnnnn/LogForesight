@@ -8,7 +8,9 @@ namespace LogForesight.Web.Filters;
 
 /// <summary>
 /// 能力檢查（docs/WEB-SPEC.md §7.1 三層授權的第 2 層）。
-/// 用法：<c>[Permission(Capability.Assign)]</c>
+/// 用法：<c>[Permission(Capability.Assign)]</c>；可傳多個能力（任一持有即過，OR 語意——
+/// docs/FEEDBACK-6-PLAN.md §2「排程作業」頁面同時開放 DevMonitor 與 Maintain 進入的用例）：
+/// <c>[Permission(Capability.DevMonitor, Capability.Maintain)]</c>。
 ///
 /// 注意這只回答「能不能用這個功能」。**「能看哪些主機的資料」是 Service 層的職責**——
 /// 即使某個 API 忘了掛這個屬性，查詢仍只會回授權範圍內的資料，那是不可繞過的最後防線。
@@ -16,21 +18,21 @@ namespace LogForesight.Web.Filters;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
 public class PermissionAttribute : TypeFilterAttribute
 {
-    public PermissionAttribute(Capability capability) : base(typeof(PermissionFilter))
+    public PermissionAttribute(params Capability[] capabilities) : base(typeof(PermissionFilter))
     {
-        Arguments = new object[] { capability };
+        Arguments = new object[] { capabilities };
     }
 }
 
 public class PermissionFilter : IAuthorizationFilter
 {
-    private readonly Capability _capability;
+    private readonly Capability[] _capabilities;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
 
-    public PermissionFilter(Capability capability, ICurrentUser currentUser, IAuditService audit)
+    public PermissionFilter(Capability[] capabilities, ICurrentUser currentUser, IAuditService audit)
     {
-        _capability = capability;
+        _capabilities = capabilities;
         _currentUser = currentUser;
         _audit = audit;
     }
@@ -43,15 +45,16 @@ public class PermissionFilter : IAuthorizationFilter
             return;
         }
 
-        if (_currentUser.Has(_capability)) return;
+        if (_capabilities.Any(_currentUser.Has)) return;
 
         // 權限不足的嘗試要記錄：這是稽核上最有價值的行之一。
         // 一套專門偵測入侵跡象的系統，對「有人在試探自己的權限邊界」不該視而不見。
+        var capabilityLabel = string.Join("／", _capabilities);
         _audit.Record(
             action: "access_denied",
-            summary: $"權限不足：嘗試存取需要「{_capability}」能力的功能 {context.HttpContext.Request.Method} {context.HttpContext.Request.Path}",
+            summary: $"權限不足：嘗試存取需要「{capabilityLabel}」能力的功能 {context.HttpContext.Request.Method} {context.HttpContext.Request.Path}",
             targetKind: "auth",
-            targetId: _capability.ToString(),
+            targetId: capabilityLabel,
             result: AuditResult.Denied);
 
         // API 回信封讓前端處理；頁面導向說明頁——瀏覽器直接開一個沒權限的網址時

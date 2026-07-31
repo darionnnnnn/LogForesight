@@ -155,3 +155,46 @@ public class RuleFieldDiffDto
     public string Current { get; set; } = string.Empty;
     public string Seed { get; set; } = string.Empty;
 }
+
+/// <summary>內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
+public class RuleImportStatusDto
+{
+    public int CurrentSeedVersion { get; set; }
+    public int LatestSeedVersion { get; set; }
+    public bool HasUpdate { get; set; }
+}
+
+public class RuleImportItemDto
+{
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>added | updated | skipped_unchanged | skipped_modified | conflict</summary>
+    public string Action { get; set; } = string.Empty;
+
+    public string ActionText { get; set; } = string.Empty;
+    public string Detail { get; set; } = string.Empty;
+}
+
+public class RuleImportPreviewDto
+{
+    public int Added { get; set; }
+    public int Updated { get; set; }
+    public int Skipped { get; set; }
+    public int Conflicts { get; set; }
+    public List<RuleImportItemDto> Items { get; set; } = new();
+}
+
+public class ApplyRuleImportRequest
+{
+    /// <summary>連同已修改的內建規則一併覆蓋（保留 Enabled 設定）</summary>
+    public bool OverwriteBuiltin { get; set; }
+}
+
+public class RuleImportApplyResultDto
+{
+    public int Added { get; set; }
+    public int Updated { get; set; }
+
+    /// <summary>套用後重新驗證的警告（遮蔽偵測＋不合格被跳過的規則），非阻斷性</summary>
+    public List<string> Warnings { get; set; } = new();
+}

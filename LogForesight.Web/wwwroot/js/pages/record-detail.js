@@ -856,7 +856,7 @@ function renderIssues(detail) {
             // 規則命中問題掛「處置參考」可展開列，讓「這問題怎麼辦」與問題本身直接對齊
             renderTable(body, { columns: issueColumns(primary), rows: primary, rowDetail: guidancePanel });
         } else {
-            renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」查看。' });
+            renderEmpty(body, { title: '本類別問題皆已有結論', hint: '展開下方「已處理／已有結論」檢視。' });
         }
         section.appendChild(body);
 

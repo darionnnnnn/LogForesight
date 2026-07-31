@@ -76,7 +76,15 @@ public class AuditQueryService
         [AuditActions.SentinelSetActive] = "變更 Sentinel 啟用狀態",
 
         [AuditActions.SettingsUpdate] = "更新系統設定",
-        [AuditActions.NetiqOptionsUpdate] = "更新 NetIQ 連線與節流參數"
+        [AuditActions.NetiqOptionsUpdate] = "更新 NetIQ 連線與節流參數",
+
+        [AuditActions.RuleSeedImport] = "套用規則升級",
+
+        [AuditActions.ScheduleOptionsUpdate] = "更新排程設定",
+        [AuditActions.ScheduleManualRun] = "手動觸發分析",
+        [AuditActions.ScheduleManualCancel] = "取消執行中的分析",
+
+        [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷"
     };
 
     private static AuditEntryDto ToDto(AuditEntry entry) => new()

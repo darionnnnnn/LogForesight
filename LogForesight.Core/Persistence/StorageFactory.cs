@@ -210,6 +210,10 @@ public static class StorageFactory
     public static ISystemSettingsStore CreateSystemSettingsStore(StorageSettings settings, string dataRoot) =>
         new SystemSettingsStore(Blob(settings, dataRoot, "system_settings"));
 
+    /// <summary>排程設定（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：Web 排程卡讀寫，SchedulerHostedService 讀</summary>
+    public static IScheduleOptionsStore CreateScheduleOptionsStore(StorageSettings settings, string dataRoot) =>
+        new ScheduleOptionsStore(Blob(settings, dataRoot, "schedule_options"));
+
     /// <summary>NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁維護）</summary>
     public static NetiqOptionsStore CreateNetiqOptionsStore(StorageSettings settings, string dataRoot) =>
         new NetiqOptionsStore(Blob(settings, dataRoot, "netiq_options"));

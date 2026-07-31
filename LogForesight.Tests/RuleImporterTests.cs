@@ -8,7 +8,7 @@ namespace LogForesight.Tests;
 /// `--import-rules` 的合併邏輯（見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」）：
 /// builtin 預設只補缺，內容有異動需要 --overwrite-builtin 才覆蓋且保留使用者的 Enabled 選擇，
 /// custom 規則一律不受匯入影響，Id 相同但 Origin 不一致視為衝突不處理。
-/// <see cref="RuleImporter.BuildPlan"/> 是純函數，與儲存後端無關。
+/// <see cref="RuleImportPlanner.BuildPlan"/> 是純函數，與儲存後端無關。
 /// </summary>
 public class RuleImporterTests
 {
@@ -38,7 +38,7 @@ public class RuleImporterTests
     [Fact]
     public void 種子中existing沒有的builtin規則被新增()
     {
-        var plan = RuleImporter.BuildPlan(new List<KnownIssueRule>(), new List<KnownIssueRule> { Rule("builtin-new") }, overwriteBuiltin: false);
+        var plan = RuleImportPlanner.BuildPlan(new List<KnownIssueRule>(), new List<KnownIssueRule> { Rule("builtin-new") }, overwriteBuiltin: false);
 
         Assert.Equal(1, plan.Added);
         Assert.Equal(0, plan.Updated);
@@ -52,7 +52,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { Rule("builtin-a") };
         var seed = new List<KnownIssueRule> { Rule("builtin-a") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: false);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: false);
 
         Assert.Equal(0, plan.Added);
         Assert.Equal(0, plan.Updated);
@@ -66,7 +66,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { Rule("builtin-a", description: "舊內容") };
         var seed = new List<KnownIssueRule> { Rule("builtin-a", description: "新內容") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: false);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: false);
 
         Assert.Equal(0, plan.Updated);
         Assert.Equal(1, plan.Skipped);
@@ -80,7 +80,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { Rule("builtin-a", enabled: false, description: "舊內容") };
         var seed = new List<KnownIssueRule> { Rule("builtin-a", enabled: true, description: "新內容") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: true);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: true);
 
         Assert.Equal(1, plan.Updated);
         var updated = Assert.Single(plan.ResultingRules);
@@ -94,7 +94,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { Rule("builtin-a", origin: "custom", description: "使用者的版本") };
         var seed = new List<KnownIssueRule> { Rule("builtin-a", origin: "builtin", description: "種子版本") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: true);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: true);
 
         Assert.Equal(1, plan.Conflicts);
         Assert.Equal(RuleImportAction.Conflict, plan.Items[0].Action);
@@ -107,7 +107,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { Rule("custom-mine", origin: "custom") };
         var seed = new List<KnownIssueRule> { Rule("builtin-new") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: true);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: true);
 
         Assert.Equal(2, plan.ResultingRules.Count);
         Assert.Contains(plan.ResultingRules, r => r.Id == "custom-mine");
@@ -144,7 +144,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { LinuxRule("builtin-linux-a", messagePatterns: new[] { "舊 pattern" }) };
         var seed = new List<KnownIssueRule> { LinuxRule("builtin-linux-a", messagePatterns: new[] { "新 pattern" }) };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: false);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: false);
 
         Assert.Equal(RuleImportAction.SkippedModifiedBuiltin, plan.Items[0].Action);
     }
@@ -155,7 +155,7 @@ public class RuleImporterTests
         var existing = new List<KnownIssueRule> { LinuxRule("builtin-linux-a", programPattern: "sshd", enabled: false) };
         var seed = new List<KnownIssueRule> { LinuxRule("builtin-linux-a", programPattern: "sudo") };
 
-        var plan = RuleImporter.BuildPlan(existing, seed, overwriteBuiltin: true);
+        var plan = RuleImportPlanner.BuildPlan(existing, seed, overwriteBuiltin: true);
 
         var updated = Assert.Single(plan.ResultingRules);
         Assert.Equal("linux", updated.Platform);
@@ -194,7 +194,7 @@ public class RuleImporterTests
             LikelyCauses = new[] { "新c" }, NextSteps = new[] { "新s" }
         };
 
-        var plan = RuleImporter.BuildPlan(
+        var plan = RuleImportPlanner.BuildPlan(
             new List<KnownIssueRule> { existing }, new List<KnownIssueRule> { seed }, overwriteBuiltin: true);
         var updated = Assert.Single(plan.ResultingRules);
 
