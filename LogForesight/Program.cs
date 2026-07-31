@@ -204,45 +204,6 @@ if (args.Contains("--import-rules"))
     return 0;
 }
 
-// --suppress / --unsuppress / --list-suppressions：主機級告警抑制的最小維護指令（見 docs/RULES-PLAN.md）。
-// 同樣放在 mutex 保護內、跑完即結束，不進入每日分析流程。
-if (args.Contains("--suppress") || args.Contains("--unsuppress") || args.Contains("--list-suppressions"))
-{
-    var suppressionStoreForCli = StorageFactory.CreateSuppressionStore(settings.Storage, dataRoot);
-
-    if (args.Contains("--list-suppressions"))
-    {
-        SuppressionCli.List(suppressionStoreForCli);
-    }
-    else if (args.Contains("--unsuppress"))
-    {
-        SuppressionCli.Unsuppress(suppressionStoreForCli, GetArgValue(args, "--unsuppress"));
-    }
-    else
-    {
-        var (ruleContentForCli, _) = RuleBootstrapper.LoadContent(ruleStore);
-        var knownIds = RuleValidator.Validate(ruleContentForCli.Rules).ValidRules
-            .Select(r => r.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        SuppressionCli.Suppress(suppressionStoreForCli, knownIds,
-            GetArgValue(args, "--suppress"), GetArgValue(args, "--reason"), GetArgValue(args, "--days"));
-    }
-
-    LogManager.Shutdown();
-    return 0;
-}
-
-// --host-list：列出目前設定下實際會被查詢的主機（主機清單由 Web 主機頁維護）。
-// 放在 mutex 保護內、跑完即結束。
-if (args.Contains("--host-list"))
-{
-    var hostStoreForCli = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
-    var sentinelStoreForCli = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
-    var exitCode = HostListCli.List(hostStoreForCli, sentinelStoreForCli);
-
-    LogManager.Shutdown();
-    return exitCode;
-}
-
 // --netiq-probe：對已設定的 Sentinel 跑一組小規模驗證查詢，輸出可貼回對話定案欄位對應
 // （docs/NETIQ-API-PLAN.md §3.5、§8 步驟 2 的閘門）。放在 mutex 保護內、跑完即結束，不進入每日分析流程。
 // 可選 --sample-ip <windows主機IP> --sample-linux-ip <linux主機IP> 加跑第二輪
@@ -279,7 +240,7 @@ var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.Load
 foreach (var expired in expiredSuppressions)
 {
     Console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
-                      $"原因：{expired.Reason}；未自動清理，可用 --unsuppress 或編輯 suppressions.json）");
+                      $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）");
 }
 
 // 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
