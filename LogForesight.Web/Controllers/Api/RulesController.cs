@@ -76,10 +76,11 @@ public class RulesController : ControllerBase
     }
 }
 
-/// <summary>執行監控（§9.10）。需 DevMonitor 能力（dev / admin）</summary>
+/// <summary>執行監控（§9.10）。需 DevMonitor 或 Maintain 能力（dev / admin / serverAdmin，
+/// docs/FEEDBACK-6-PLAN.md §2——排程作業頁併入本頁後，serverAdmin 要能看見執行紀錄佐證排程活著）</summary>
 [ApiController]
 [Route("api/runs")]
-[Permission(Capability.DevMonitor)]
+[Permission(Capability.DevMonitor, Capability.Maintain)]
 public class RunsController : ControllerBase
 {
     private readonly RunMonitorService _service;
