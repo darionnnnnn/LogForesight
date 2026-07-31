@@ -5,8 +5,11 @@
  * 而「沒有紀錄」看起來跟「一切正常」一模一樣。
  */
 
-import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize } from '../core/ui.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import {
+    renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
+    toast, withBusy, confirmAction
+} from '../core/ui.js';
 import { formatDateTime, formatNumber } from '../core/format.js';
 
 const STATUS_META = {
@@ -400,4 +403,241 @@ for (const button of document.querySelectorAll('[data-days]')) {
     });
 }
 
+// ── 排程設定（docs/WEB-SCHEDULER-PLAN.md §1.4.5）──────────────────────────────
+// 這頁的權限是 DevMonitor 或 Maintain 任一（見 PagesController.Runs）：dev 進得來但只能看，
+// 排程設定/立即執行/停止這些會動到系統的操作只給 Maintain——data-maintain-only 標記的元素
+// 在沒有 Maintain 時整批隱藏，而不是逐一判斷。
+
+let scheduleWindows = [];
+let canMaintainSchedule = false;
+const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
+
+async function loadSchedule() {
+    const user = await getCurrentUser();
+    canMaintainSchedule = hasCapability(user, 'Maintain');
+    if (!canMaintainSchedule) {
+        for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
+    }
+
+    const options = await api.get('/api/admin/schedule/options');
+    applyScheduleOptions(options);
+    await refreshScheduleStatus();
+
+    // 簡單輪詢：這頁常開著看排程有沒有在跑，10 秒一次足夠即時又不必為此另外接 SSE/WebSocket
+    setInterval(refreshScheduleStatus, 10000);
+}
+
+function applyScheduleOptions(options) {
+    scheduleWindows = options.windows.map(w => ({ ...w }));
+    document.getElementById('schedule-enabled').checked = options.enabled;
+    document.getElementById('schedule-debug-dump').checked = options.debugDump;
+    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump);
+    renderScheduleWindows();
+
+    document.getElementById('schedule-updated').textContent = options.updatedAt
+        ? `最後更新：${formatDateTime(options.updatedAt)}${options.updatedByAccount ? `（${options.updatedByAccount}）` : ''}`
+        : '尚未設定過（沿用預設：關閉）';
+
+    if (!options.enabled) {
+        document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+    } else if (options.nextTriggerTime) {
+        document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
+    }
+}
+
+function renderScheduleWindows() {
+    const container = document.getElementById('schedule-windows');
+    container.replaceChildren();
+
+    scheduleWindows.forEach((window_, index) => {
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-center gap-2 mb-2';
+
+        const start = document.createElement('input');
+        start.type = 'time';
+        start.className = 'form-control form-control-sm';
+        start.style.maxWidth = '130px';
+        start.value = window_.start;
+        start.disabled = !canMaintainSchedule;
+        start.addEventListener('change', () => { window_.start = start.value; });
+
+        const arrow = document.createElement('span');
+        arrow.className = 'text-muted';
+        arrow.textContent = '→';
+
+        const end = document.createElement('input');
+        end.type = 'time';
+        end.className = 'form-control form-control-sm';
+        end.style.maxWidth = '130px';
+        end.value = window_.end;
+        end.disabled = !canMaintainSchedule;
+        end.addEventListener('change', () => { window_.end = end.value; });
+
+        row.append(start, arrow, end);
+
+        if (canMaintainSchedule) {
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-sm btn-outline-danger';
+            remove.textContent = '移除';
+            remove.disabled = scheduleWindows.length <= 1;
+            remove.title = scheduleWindows.length <= 1 ? '至少要保留一個窗口' : '';
+            remove.addEventListener('click', () => {
+                scheduleWindows.splice(index, 1);
+                renderScheduleWindows();
+            });
+            row.appendChild(remove);
+        }
+
+        container.appendChild(row);
+    });
+}
+
+document.getElementById('schedule-add-window')?.addEventListener('click', () => {
+    if (scheduleWindows.length >= 4) {
+        toast('執行窗口最多 4 組', 'warning');
+        return;
+    }
+    scheduleWindows.push({ start: '01:00', end: '07:00' });
+    renderScheduleWindows();
+});
+
+document.getElementById('schedule-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const saveButton = document.getElementById('schedule-save');
+    const restore = withBusy(saveButton, '儲存中');
+    try {
+        const saved = await api.put('/api/admin/schedule/options', {
+            enabled: document.getElementById('schedule-enabled').checked,
+            windows: scheduleWindows,
+            debugDump: document.getElementById('schedule-debug-dump').checked
+        });
+        applyScheduleOptions(saved);
+        toast('已儲存排程設定', 'success');
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+async function refreshScheduleStatus() {
+    const status = await api.get('/api/admin/schedule/status', { silent: true }).catch(() => null);
+    if (!status) return;
+
+    document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
+    document.getElementById('schedule-run-state').textContent = status.isRunning
+        ? `執行中（${status.triggerText}）`
+        : '閒置';
+    document.getElementById('schedule-latest-message').textContent = status.isRunning ? (status.latestMessage ?? '') : '';
+
+    const stopButton = document.getElementById('schedule-stop');
+    if (canMaintainSchedule) stopButton.classList.toggle('d-none', !status.canStop);
+
+    if (status.scheduleEnabled && status.nextTriggerTime) {
+        document.getElementById('schedule-next-trigger').textContent = formatDateTime(status.nextTriggerTime);
+    } else if (!status.scheduleEnabled) {
+        document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+    }
+}
+
+document.getElementById('schedule-stop')?.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+        title: '停止執行',
+        message: '將優雅停止目前進行中的分析（停在主機日邊界，已完成的部分保留，不會產生殘缺紀錄）。要繼續嗎？',
+        confirmText: '停止',
+        confirmVariant: 'danger'
+    });
+    if (!confirmed) return;
+
+    try {
+        await api.post('/api/admin/schedule/cancel', {});
+        toast('已送出停止要求', 'success');
+        await refreshScheduleStatus();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    }
+});
+
+// ── 立即執行（docs/WEB-SCHEDULER-PLAN.md §1.4.4，「host」範圍另放在主機詳情頁）──────
+
+let runNowPreviewDebounce = null;
+
+document.getElementById('schedule-run-now')?.addEventListener('click', () => {
+    document.getElementById('run-now-form').reset();
+    document.getElementById('run-now-scope-all').checked = true;
+    document.getElementById('run-now-segment-field').classList.add('d-none');
+    updateRunNowPreview();
+    runNowModal.show();
+});
+
+for (const radio of document.querySelectorAll('input[name="run-now-scope"]')) {
+    radio.addEventListener('change', () => {
+        document.getElementById('run-now-segment-field').classList.toggle('d-none', radio.value !== 'segment');
+        updateRunNowPreview();
+    });
+}
+
+document.getElementById('run-now-segment').addEventListener('input', () => {
+    clearTimeout(runNowPreviewDebounce);
+    runNowPreviewDebounce = setTimeout(updateRunNowPreview, 400);
+});
+
+async function updateRunNowPreview() {
+    const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
+    const segment = document.getElementById('run-now-segment').value.trim();
+    const previewEl = document.getElementById('run-now-preview');
+
+    if (scope === 'segment' && !segment) {
+        previewEl.textContent = '請輸入要執行的網段（如 10.1.2 或 10.1.2.0/24）。';
+        previewEl.className = 'alert alert-secondary py-2 px-3 mb-0';
+        return;
+    }
+
+    const params = new URLSearchParams({ scope });
+    if (scope === 'segment') params.set('segment', segment);
+
+    try {
+        const result = await api.get(`/api/admin/schedule/run-preview?${params}`, { silent: true });
+        const heavy = result.hostCount >= 50;
+        previewEl.textContent = heavy
+            ? `目前有 ${result.hostCount} 台主機符合條件，數量較多——請留意白天對 Sentinel 的查詢負載，` +
+              '必要時改用網段範圍縮小。'
+            : `目前有 ${result.hostCount} 台主機符合條件。`;
+        previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
+    } catch (err) {
+        previewEl.textContent = err?.message || '無法預覽，請確認網段格式。';
+        previewEl.className = 'alert alert-danger py-2 px-3 mb-0';
+    }
+}
+
+document.getElementById('run-now-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
+    const segment = document.getElementById('run-now-segment').value.trim();
+    const backfillDays = document.getElementById('run-now-backfill').value;
+
+    const submitButton = document.getElementById('run-now-submit');
+    const restore = withBusy(submitButton, '送出中');
+    try {
+        const result = await api.post('/api/admin/schedule/run', {
+            scope,
+            segment: scope === 'segment' ? segment : null,
+            backfillDays: backfillDays ? Number(backfillDays) : null
+        });
+        toast(result.message, result.started ? 'success' : 'warning');
+        if (result.started) {
+            runNowModal.hide();
+            await refreshScheduleStatus();
+        }
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+loadSchedule();
 load();
