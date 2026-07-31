@@ -152,4 +152,12 @@ public class RecordsController : ControllerBase
     [HttpGet("{hostId:long}/{date}/report")]
     public ApiResponse<string?> GetReport(long hostId, string date) =>
         ApiResponse<string?>.Ok(_service.GetReport(hostId, ParseRequiredDate(date)));
+
+    /// <summary>
+    /// 單一問題簽章的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）。issueKey 含 <c>|</c>，
+    /// 走 query string 不進路由（路由樣板對 <c>|</c> 的處理因 routing 設定而異，query string 天生無此問題）。
+    /// </summary>
+    [HttpGet("{hostId:long}/{date}/handling/issue-history")]
+    public ApiResponse<IssueHistoryDto> GetIssueHistory(long hostId, string date, [FromQuery] string issueKey) =>
+        ApiResponse<IssueHistoryDto>.Ok(_service.GetIssueHistory(hostId, ParseRequiredDate(date), issueKey));
 }

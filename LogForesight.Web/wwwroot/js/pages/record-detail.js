@@ -324,8 +324,131 @@ function statusCell(issue, sectionIssues) {
         wrap.appendChild(selectCheckbox(issue, sectionIssues));
     }
     wrap.appendChild(statusControl(issue));
+    // 先前處理過（docs/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
+    // 同樣需要參考上次怎麼解的，不是只有能操作的人才看得到
+    if (issue.hasPriorHandling) wrap.appendChild(priorHandlingTrigger(issue));
 
     return wrap;
+}
+
+/**
+ * 「先前處理」按鈕（docs/FEEDBACK-5-PLAN.md §4）：這個問題簽章之前結案過，
+ * 點開 modal 看上次案件摘要＋逐日結案標記（只含結案類，處理中／未處理的歷史不列入）。
+ */
+function priorHandlingTrigger(issue) {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'btn btn-link btn-sm p-0 lf-no-print mt-1';
+    trigger.textContent = '先前處理';
+    trigger.title = '這個問題之前結案過，點開看上次怎麼處理的';
+
+    trigger.addEventListener('click', async event => {
+        event.stopPropagation();
+        const restore = withBusy(trigger, '載入中');
+        try {
+            const history = await api.get(
+                `/api/records/${hostId}/${date}/handling/issue-history?issueKey=${encodeURIComponent(issue.issueKey)}`);
+            showDetailModal({
+                title: `先前處理（${issue.source} ${issue.eventId}）`,
+                body: issueHistoryBody(history),
+                size: 'modal-lg'
+            });
+        } finally {
+            restore();
+        }
+    });
+
+    return trigger;
+}
+
+const ISSUE_HISTORY_STATUS_VARIANTS = {
+    resolved: 'success', wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary'
+};
+
+/** modal 內容：已結案案件摘要（較接近「上次怎麼解的」）＋逐日結案標記，兩者可能重疊，分開呈現不強行去重 */
+function issueHistoryBody(history) {
+    const wrap = document.createElement('div');
+
+    if (history.cases.length > 0) {
+        const heading = document.createElement('h6');
+        heading.textContent = '上次案件';
+        wrap.appendChild(heading);
+        for (const c of history.cases) wrap.appendChild(issueHistoryCaseItem(c));
+    }
+
+    if (history.entries.length > 0) {
+        const heading = document.createElement('h6');
+        heading.className = history.cases.length > 0 ? 'mt-3' : '';
+        heading.textContent = '逐日結案標記';
+        wrap.appendChild(heading);
+        for (const entry of history.entries) wrap.appendChild(issueHistoryEntryItem(entry));
+    }
+
+    if (history.cases.length === 0 && history.entries.length === 0) {
+        renderEmpty(wrap, { title: '查無先前處理紀錄' });
+    }
+
+    return wrap;
+}
+
+function issueHistoryCaseItem(c) {
+    const item = document.createElement('div');
+    item.className = 'border-start border-3 ps-3 pb-3 mb-1';
+
+    const head = document.createElement('div');
+    head.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+    const status = document.createElement('span');
+    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[c.status] ?? 'secondary'}`;
+    status.textContent = c.statusText;
+    head.appendChild(status);
+
+    const summary = document.createElement('span');
+    summary.className = 'small';
+    summary.textContent = c.handlerName
+        ? `由 ${c.handlerName} 處理，${c.firstLinkedDate}～${c.lastLinkedDate}，${c.closedAt} 結案`
+        : `${c.firstLinkedDate}～${c.lastLinkedDate}，${c.closedAt} 結案`;
+    head.appendChild(summary);
+
+    item.appendChild(head);
+
+    if (c.note) {
+        const note = document.createElement('div');
+        note.className = 'small text-muted mt-1';
+        note.textContent = c.note;
+        item.appendChild(note);
+    }
+
+    return item;
+}
+
+function issueHistoryEntryItem(entry) {
+    const item = document.createElement('div');
+    item.className = 'border-start border-3 ps-3 pb-3 mb-1';
+
+    const head = document.createElement('div');
+    head.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+    const status = document.createElement('span');
+    status.className = `lf-badge lf-badge--${ISSUE_HISTORY_STATUS_VARIANTS[entry.status] ?? 'secondary'}`;
+    status.textContent = entry.statusText;
+    head.appendChild(status);
+
+    const date = document.createElement('span');
+    date.className = 'small text-muted';
+    date.textContent = `${entry.date}　${entry.actorAccount}${entry.fromCase ? '（案件同步）' : ''}`;
+    head.appendChild(date);
+
+    item.appendChild(head);
+
+    if (entry.note) {
+        const note = document.createElement('div');
+        note.className = 'small text-muted mt-1';
+        note.textContent = entry.note;
+        item.appendChild(note);
+    }
+
+    return item;
 }
 
 function selectCheckbox(issue, sectionIssues) {

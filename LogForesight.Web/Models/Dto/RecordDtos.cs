@@ -253,6 +253,14 @@ public class IssueDto
     public string? CaseFirstLinkedDate { get; set; }
 
     /// <summary>
+    /// true＝這個問題簽章在本主機更早的日期有結案過的紀錄（逐日標記或已結案案件皆算）
+    /// ——docs/FEEDBACK-5-PLAN.md §4「之前處理過的問題再次發生」。前端據此顯示「先前處理」
+    /// 按鈕，點開 modal 打 <c>issue-history</c> 端點查詳情；本欄只是「有沒有」的旗標，
+    /// 不帶內容，避免每個問題都攜帶一份可能用不到的歷史清單。
+    /// </summary>
+    public bool HasPriorHandling { get; set; }
+
+    /// <summary>
     /// 規則命中問題的處置參考（知識庫），null＝未命中規則或該規則無知識內容。
     /// 掛在問題列下方（可展開），讓「這個問題怎麼辦」與問題本身直接對齊，
     /// 不必再到獨立的深入分析卡玩多對多連連看。
@@ -267,6 +275,42 @@ public class IssueGuidanceDto
     public string Impact { get; set; } = string.Empty;
     public List<string> LikelyCauses { get; set; } = new();
     public List<string> NextSteps { get; set; } = new();
+}
+
+/// <summary>
+/// 單一問題簽章在本主機的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）：
+/// <c>Cases</c> 是已結案案件摘要（較接近「上次怎麼解的」的答案），
+/// <c>Entries</c> 是逐日結案標記（只含結案類，倒序）。兩者可能重疊
+/// （案件同步時會把逐日列的 CaseId 標起來，見 <see cref="IssueHistoryEntryDto.FromCase"/>），
+/// 前端分開呈現不強行去重——案件摘要答「這個問題的處理協調史」，逐日列答「哪幾天發生過」。
+/// </summary>
+public class IssueHistoryDto
+{
+    public List<IssueHistoryCaseDto> Cases { get; set; } = new();
+    public List<IssueHistoryEntryDto> Entries { get; set; } = new();
+}
+
+public class IssueHistoryCaseDto
+{
+    public string? HandlerName { get; set; }
+    public string FirstLinkedDate { get; set; } = string.Empty;
+    public string LastLinkedDate { get; set; } = string.Empty;
+    public string? ClosedAt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+    public string? Note { get; set; }
+}
+
+public class IssueHistoryEntryDto
+{
+    public string Date { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public string ActorAccount { get; set; } = string.Empty;
+
+    /// <summary>true＝這筆標記出自案件同步（非人工逐日手動標的）</summary>
+    public bool FromCase { get; set; }
 }
 
 public class CategorySummaryDto
