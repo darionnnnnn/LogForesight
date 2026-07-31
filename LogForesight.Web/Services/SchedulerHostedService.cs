@@ -97,8 +97,7 @@ public class SchedulerHostedService : BackgroundService
 
         if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
 
-        var request = new RunRequest { Scope = RunScope.Full, Trigger = "schedule", DebugDump = options.DebugDump };
-        await TriggerRunAsync(request);
+        await TriggerRunAsync(new RunRequest { Scope = RunScope.Full, Trigger = "schedule" });
     }
 
     /// <summary>
@@ -107,7 +106,20 @@ public class SchedulerHostedService : BackgroundService
     /// </summary>
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
-        if (!_runState.TryBeginRun(request.Trigger ?? "manual", out var runCts))
+        // AI 診斷傾印一律以目前的排程設定為準（docs/WEB-SCHEDULER-PLAN.md §1.4.10）：
+        // 排程輪詢與手動觸發共用同一個開關，這裡統一覆寫呼叫端傳入的值，
+        // 不然「排程開了傾印、手動觸發卻沒開」的不一致會讓人以為傾印沒生效。
+        var effectiveRequest = new RunRequest
+        {
+            Scope = request.Scope,
+            HostIds = request.HostIds,
+            BackfillOverride = request.BackfillOverride,
+            DebugDump = _scheduleOptionsStore.Get().DebugDump,
+            Args = request.Args,
+            Trigger = request.Trigger
+        };
+
+        if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts))
         {
             return false;
         }
@@ -122,15 +134,15 @@ public class SchedulerHostedService : BackgroundService
 
                 var orchestrator = new AnalysisOrchestrator();
                 var console = new WebRunConsole(_runState);
-                var result = await orchestrator.RunAsync(request, settings, dataRoot, retention, console, runCts.Token);
+                var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token);
 
                 if (!result.Success)
-                    Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", request.Trigger, result.FailureMessage);
+                    Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
             }, MutexTimeout);
 
             if (!acquired)
             {
-                Log.Warn("取得執行鎖逾時（可能有 console 執行個體正在跑），本次觸發（{Trigger}）略過。", request.Trigger);
+                Log.Warn("取得執行鎖逾時（可能有 console 執行個體正在跑），本次觸發（{Trigger}）略過。", effectiveRequest.Trigger);
             }
             return acquired;
         }
