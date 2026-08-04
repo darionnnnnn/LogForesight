@@ -19,7 +19,7 @@ LogForesight.Core/     Web 共用的類別庫（原批次與 Web 共用，批次
 ├── Models/             資料模型：分析紀錄、AI 回應契約與容錯解析、權限快照、
 │                        Web 身分/主機/處理狀態/權限異動確認/稽核/執行紀錄
 ├── Persistence/        持久層抽象：讀寫介面＋兩種後端實作（Sqlite/SqlServer，見下）。
-│                        `StorageFactory` 是唯一路由點，分析邏輯與 Web 皆不需修改
+│                        `StorageBackend` 是唯一路由點，分析邏輯與 Web 皆不需修改
 ├── Configuration/      appsettings.json 對應的設定類別
 └── Service/            AnalysisOrchestrator（分析主流程單一入口）、排程計算、NetIQ 機房分析
                          pipeline、體檢——Web 排程與立即執行皆呼叫同一份
@@ -801,7 +801,7 @@ schtasks 或安裝其他執行檔：
 | `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
 | `Analysis.CheckupIntervalDays` | `7` | 體檢間隔天數（2026-07-20 由固定星期六改為 due-date 輪巡）；距上次體檢達此天數即到期，錯過會在下次執行自動補跑，不會消失 |
 | `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
-| `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
+| `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/archive/FEEDBACK-8-PLAN.md #7 |
 

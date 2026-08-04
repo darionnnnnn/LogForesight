@@ -136,7 +136,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 
 ## 7. 設定（`NetiqOptions`，Web「NetIQ 維護」頁維護）
 
-節流／行為參數（批次與 Web 皆從 `StorageFactory.CreateNetiqOptionsStore` 讀同一份）：
+節流／行為參數（各處皆經 `NetiqOptionsStore`——DB blob `netiq_options`——讀同一份）：
 `QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／`RetryCount`／
 `AllowInvalidCertificates`（自簽憑證環境的顯式逃生門，啟用即 WARN）。連線帳密另存
 `ISentinelStore`（每台 Sentinel 各自一組，密碼以 `CryptoHelper` AES-256 加密）。

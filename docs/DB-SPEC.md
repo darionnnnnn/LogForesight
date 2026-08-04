@@ -360,8 +360,8 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 長期成本，對這個專案的變更頻率不成比例；自製 DDL 檢查腳本反而更貼近現有「`EnsureCreated`
 全有全無」的簡單心智模型，只是把它從「只在全新庫做一次」延伸成「每次啟動都補差異」。
 
-實作：`LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs`，於 `StorageFactory.GetDbFactory`
-的 `EnsureCreated()` 之後呼叫（同一把 `_schemaLock` 內，批次與 Web 啟動時都會跑到）。
+實作：`LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs`，於 `StorageBackend` 建構時
+的 `EnsureCreated()` 之後呼叫（Web 啟動建立 singleton backend 時就會跑到）。
 每一步是「檢查缺什麼（SQLite 查 `pragma_table_info`/`pragma_index_list`，SqlServer 查
 `INFORMATION_SCHEMA.COLUMNS`/`sys.indexes`）→ 缺才補（`ALTER TABLE ADD`／`CREATE INDEX`）」，
 新建的 DB 因 `EnsureCreated` 已建好最新 schema，每一步在新 DB 上都是 no-op。

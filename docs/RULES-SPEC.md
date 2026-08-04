@@ -129,8 +129,8 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
   └ SuppressionStore     （唯一實作，DB blob，key=suppressions）
 ```
 
-`StorageFactory.CreateRuleStore`/`CreateSuppressionStore` 是唯一路由點，與 `CreateRecordStore`
-同一開關；`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端只認介面。
+Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 store（單一路由點，
+與分析紀錄同一開關）；`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端只認介面。
 
 > **2026-07-24 起規則存資料庫**：Jsonl 檔案後端已全面退役（見 docs/archive/HISTORY.md「2026-07-24」段
 > 定案 10），`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，兩者都是 DB。原本的

@@ -126,7 +126,7 @@ LogForesight.Web/
 | 介面 | 實作 | 生命週期 |
 |---|---|---|
 | `Appsettings` | 組態綁定單例 | Singleton |
-| Core 各 `IXxxStore`（有測試假件依賴者） | `StorageFactory` 依 `Storage.Type` 建立 | Singleton |
+| Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
 | `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ldap）——DB 的 AD 設定開啟時改走 DB 動態設定（docs/archive/HISTORY.md #9） | Singleton |
 | `JwtTokenService` | 直接注入具體類別（`IJwtTokenService` 介面因測試零引用，簡化重構時已移除） | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
@@ -611,7 +611,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `GET api/settings/display` 把被隱藏等級的 KPI 卡整卡不顯示——「0」與「被藏起來」是兩件事，
   不讓 0 被誤讀成「這期間真的沒有中風險日」。
 - API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
-  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingService.GetTodo` 同一套推導規則）。
+  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）。
 
 ### 9.2 `/records` 問題查詢（全角色）
 - 主篩選列：主機（**搜尋式 autocomplete**，授權範圍）／**主機群組 chip**／日期區間／風險層級／
@@ -627,7 +627,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   報表統計只呈現 **未處理／處理中／已處理**，六種內部狀態的結案類（`resolved`/`wont_fix`/
   `false_positive`/`known_noise`）一律收斂為「已處理」——單點定義 `HandlingStatuses.ExternalOf()`。
   「已處理」chip 因此查得到被標成「不處理」的日子（改版前精確比對 `resolved` 查不到）；
-  `HandlingService.GetTodo` 同步改用 ExternalOf 分桶，修掉「wont_fix 三個桶都數不到、
+  `HandlingHistoryQueryService.GetTodo` 同步改用 ExternalOf 分桶，修掉「wont_fix 三個桶都數不到、
   導致報表『未完成』把已結案日誤算進去」的缺口。**只在對外出口套用**——
   `DayHandlingDerivation` 的推導本身與逾期判定仍看真正的 `open`/`in_progress`，不受收斂影響；
   詳細結論（不處理/誤報/已知雜訊）只在風險日詳情頁的問題層級呈現。
@@ -942,7 +942,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
 - **占比小圖的資料來源與全站一致**（docs/archive/HISTORY.md）：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
-  resolved 比例（與儀表板待辦同 `HandlingService.GetTodo` 規則，母體由 GetTodo 內部強制）。
+  resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
 - API：`GET api/reports/summary?from=&to=`（KPI＋圖表＋TotalHosts＋Handling 一次回傳）、
@@ -1124,7 +1124,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   的可調整項目，單一表單對應同一份 `SystemSettingsDto`：
   1. **層級與顯示**（2026-07-27 自「未處理計算」擴充；2026-07-28 三級化）：以按鈕反白選擇
      哪些嚴重度（High/Medium/Low）納入未處理計算，套用於問題查詢頁、風險日詳情頁與儀表板待辦
-     （單點事實來源 `DayHandlingDerivation`／`RecordQueryService.ToIssueDto`）。預設 High/Medium，
+     （單點事實來源 `DayHandlingDerivation`／`RecordDetailQueryService.ToIssueDto`）。預設 High/Medium，
      與改版前寫死的 Low 規則行為一致；既有設定殘留的 `Critical` 於讀取時正規化為 `High`
      （`SystemSettingsService.NormalizeLegacySeverities`），既有部署不需手動改設定。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）二選一
      （docs/archive/HISTORY.md #5，2026-07-27 自三模式簡化；舊值 `Locked`／`GlobalFilter`
@@ -1259,7 +1259,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 
 **（2026-07-24 改寫）Jsonl 檔案後端已退役**，下表的「儲存 key」一律指 `lf_blobs`（整份 JSON
 文件，一列一 key）或 `lf_log_lines`（append-only，同 key 多列）裡的 `BlobKey`，不再有實體檔案；
-`StorageFactory` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
+`StorageBackend` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
 
 | 介面 | 儲存 key（blob＝整份型／log＝append-only） | 寫入者 |
 |---|---|---|
@@ -1341,7 +1341,7 @@ temp 檔＋`File.Replace` 手法。
 
 ### 10.5 SQL 後端（Phase C 完成 2026-07-23，全資料走 SQL；2026-07-24 起 Sqlite 為預設、Jsonl 退役）
 
-`Storage.Type` **二選一**，`StorageFactory` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
+`Storage.Type` **二選一**，`StorageBackend` 是唯一路由點，呼叫端（Program.cs／LogAnalysisService／Web DI）不需修改：
 
 - **`Sqlite`**（預設）：測試/開發用的單一 `.db` 檔真資料庫，不寫任何 JSON 檔——現為主要測試方式，
   批次與 Web 的 `appsettings.json` 皆預設此值。
