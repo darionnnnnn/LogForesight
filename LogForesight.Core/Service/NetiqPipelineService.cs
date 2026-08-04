@@ -319,42 +319,13 @@ public class NetiqPipelineService
             result.AddAnalyzed();
             _runRecorder.RecordDayAnalyzed();
 
-            // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C/2.4）：與本機路徑
-            // （Program.cs）同一個失敗邊界哲學——掛接失敗不讓這台主機這天的分析結果作廢
-            try
-            {
-                var attach = _caseCoordinator.AttachNewDay(target.HostName, date, record.TopIssues, DateTime.Now);
-                if (attach.AttachedCount > 0)
-                    Log.Info("[{Server}] [{Ip}] {Date} 案件掛接：掛入 {Count} 個問題", sentinelName, target.IpAddress, date, attach.AttachedCount);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "[{Server}] [{Ip}] {Date} 案件掛接失敗（不影響分析結果，下次執行冪等補掛）", sentinelName, target.IpAddress, date);
-            }
-
-            // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：與本機路徑同一套選取邏輯與
-            // 保留期閘門（RiskyEventSelector），寫入失敗同樣不讓這台主機這天的分析結果作廢
-            if (_riskyEventStore != null && RiskyEventSelector.WithinRetention(date, _riskyEventRetentionDays, DateTime.Today))
-            {
-                try
-                {
-                    var riskyEvents = RiskyEventSelector.Select(record.TopIssues, events, target.HostId, date);
-                    _riskyEventStore.ReplaceDay(target.HostId, date, riskyEvents);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn(ex, "[{Server}] [{Ip}] {Date} 風險 log 暫存寫入失敗（不影響分析結果）", sentinelName, target.IpAddress, date);
-                }
-            }
-
-            // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有
-            // 「低風險日刻意不呼叫」與「呼叫失敗降級」兩種意義，只有後者該計入失敗——
-            // 沒有這段，NetIQ 主機日的 AI 失敗不會反映在執行監控頁的 AI 欄位。
-            // _useAi=false（AI 未設定）時本來就不會呼叫，不該被記成失敗。
-            if (_useAi && (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low))
-            {
-                _runRecorder.RecordAiCall(record.AiAnalyzed);
-            }
+            // 問題案件批次逐日掛接、風險 log 暫存、AI 呼叫計數：與本機路徑同一個失敗邊界哲學，
+            // 任一步失敗只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）
+            var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
+            HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
+            HostDayPostProcessor.ReplaceRiskyEvents(
+                _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+            HostDayPostProcessor.RecordAiCallIfApplicable(_runRecorder, _useAi, record);
 
             // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
             // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，

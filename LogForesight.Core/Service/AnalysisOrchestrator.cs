@@ -554,42 +554,17 @@ public class AnalysisOrchestrator
                 dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
             result.LocalResults.Add(record);
 
-            // 問題案件批次逐日掛接（2.4）：失敗只記警告，不擋分析主流程
-            try
-            {
-                var attach = caseCoordinator.AttachNewDay(currentHost, date, record.TopIssues, DateTime.Now);
-                if (attach.AttachedCount > 0)
-                    Log.Info("案件掛接：{Date:yyyy-MM-dd} 掛入 {Count} 個問題", date, attach.AttachedCount);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(ex, "案件掛接失敗（不影響分析結果，下次執行冪等補掛）：{0}", ex.Message);
-            }
-
-            // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學。
-            if (RiskyEventSelector.WithinRetention(date, retention.RiskyEventRetentionDays, DateTime.Today))
-            {
-                try
-                {
-                    var riskyEvents = RiskyEventSelector.Select(record.TopIssues, logs, currentHostId, date);
-                    riskyEventStore.ReplaceDay(currentHostId, date, riskyEvents);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn(ex, "風險 log 暫存寫入失敗（不影響分析結果）：{0}", ex.Message);
-                }
-            }
+            // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
+            // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
+            HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
+            HostDayPostProcessor.ReplaceRiskyEvents(
+                riskyEventStore, retention.RiskyEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 
             dayStopwatch.Stop();
             elapsedByDate[date] = dayStopwatch.Elapsed;
             runRecorder.RecordDayAnalyzed();
 
-            // AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
-            // useAi=false（AI 未設定）時這天本來就不會呼叫 AI，不該被記成「AI 呼叫失敗」。
-            if (useAi && (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low))
-            {
-                runRecorder.RecordAiCall(record.AiAnalyzed);
-            }
+            HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
             PrintResult(console, record, verbose: date == yesterday);
             console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
             progress?.Report("local", ++localDone, missingDates.Count);
