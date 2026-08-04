@@ -29,7 +29,8 @@ public class SchedulerHostedService : BackgroundService
     private readonly ISystemSettingsStore _systemSettingsStore;
     private readonly BatchRunStore _batchRunStore;
     private readonly SchedulerRunState _runState;
-    private readonly NamedMutexGate _mutexGate = new();
+    private readonly AnalysisOrchestrator _orchestrator;
+    private readonly NamedMutexGate _mutexGate;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -37,6 +38,8 @@ public class SchedulerHostedService : BackgroundService
         ISystemSettingsStore systemSettingsStore,
         BatchRunStore batchRunStore,
         SchedulerRunState runState,
+        AnalysisOrchestrator orchestrator,
+        NamedMutexGate mutexGate,
         IHostApplicationLifetime lifetime)
     {
         _webSettings = webSettings;
@@ -44,6 +47,8 @@ public class SchedulerHostedService : BackgroundService
         _systemSettingsStore = systemSettingsStore;
         _batchRunStore = batchRunStore;
         _runState = runState;
+        _orchestrator = orchestrator;
+        _mutexGate = mutexGate;
 
         // 站台關閉時比照「使用者手動停止」：優雅停在主機日邊界，不留執行中的殘留紀錄
         lifetime.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -162,10 +167,9 @@ public class SchedulerHostedService : BackgroundService
                     var dataRoot = settings.Storage.ResolveDataRoot();
                     var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
 
-                    var orchestrator = new AnalysisOrchestrator();
                     var console = new WebRunConsole(_runState);
                     var progress = new WebRunProgress(_runState);
-                    var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress);
+                    var result = await _orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);

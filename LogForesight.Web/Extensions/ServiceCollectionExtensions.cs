@@ -268,6 +268,10 @@ public static class ServiceCollectionExtensions
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
         // 為單例並讓 IHostedService 直接引用同一個實例——ScheduleController 需要呼叫它的
         // TriggerRunAsync（手動觸發），不能只當背景服務、必須也能被其他地方解析取得。
+        // AnalysisOrchestrator／NamedMutexGate 皆無狀態依賴，改由 DI 注入而非各自 new——
+        // 讓 SchedulerHostedService 的執行路徑可用測試替身注入驗證。
+        services.AddSingleton<AnalysisOrchestrator>();
+        services.AddSingleton<NamedMutexGate>();
         services.AddSingleton<SchedulerRunState>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
