@@ -32,9 +32,9 @@ public class DashboardController : ControllerBase
 [Route("api/host-detail")]
 public class HostDetailController : ControllerBase
 {
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
-    public HostDetailController(RecordQueryService service)
+    public HostDetailController(RecordDetailQueryService service)
     {
         _service = service;
     }

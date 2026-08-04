@@ -7,12 +7,12 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// P1-2：<see cref="RecordQueryService.Search"/> 的兩條路徑——
+/// P1-2：<see cref="RecordListQueryService.Search"/> 的兩條路徑——
 /// 沒有 Statuses/Overdue 篩選時走 <see cref="IRecordRepository.QueryPage"/>（SQL 端排序＋分頁，
 /// 只為當頁載入處理狀態）；有篩選時退回既有的「全撈→算處理狀態→篩選→排序→分頁」邏輯
 /// （那段邏輯本身不是這次改動的對象，這裡只驗證分支沒有把它弄壞）。
 ///
-/// 這是 <see cref="RecordQueryService.Search"/> 第一次有專屬測試——實際串接真正的
+/// 這是 <see cref="RecordListQueryService.Search"/> 第一次有專屬測試——實際串接真正的
 /// <see cref="EfAnalysisRecordStore"/>＋<see cref="RecordRepository"/>，而非重新實作一份簡化邏輯，
 /// 這樣測到的是真正會跑進 SQL 分頁下推的那條路徑。
 /// </summary>
@@ -27,7 +27,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
-    private readonly RecordQueryService _service;
+    private readonly RecordQueryServiceFacade _service;
     private readonly HandlingServiceFacade _handlingService;
 
     public RecordQueryServiceSearchTests()
@@ -36,7 +36,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
-        _service = new RecordQueryService(
+        _service = new RecordQueryServiceFacade(
             repository: repository,
             reports: new NullReportReader(),
             hosts: _hosts,

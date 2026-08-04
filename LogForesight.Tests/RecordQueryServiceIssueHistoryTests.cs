@@ -17,7 +17,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
     private readonly FakeUserStore _users = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeIssueCaseStore _caseStore = new();
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
     private const string Source = "disk";
     private const int EventId = 153;
@@ -29,14 +29,13 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
 
-        _service = new RecordQueryService(
+        _service = new RecordDetailQueryService(
             repository,
             new NullReportReader(),
             _hosts,
             _users,
             new FakeHostGroupStore(),
             visibility,
-            new FakeHandlingStore(),
             _issueHandlingStore,
             _caseStore,
             new FakeNoiseMarkStore(),

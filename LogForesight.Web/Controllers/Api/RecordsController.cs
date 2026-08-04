@@ -20,11 +20,13 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/records")]
 public class RecordsController : ControllerBase
 {
-    private readonly RecordQueryService _service;
+    private readonly RecordListQueryService _list;
+    private readonly RecordDetailQueryService _detail;
 
-    public RecordsController(RecordQueryService service)
+    public RecordsController(RecordListQueryService list, RecordDetailQueryService detail)
     {
-        _service = service;
+        _list = list;
+        _detail = detail;
     }
 
     [HttpGet]
@@ -64,7 +66,7 @@ public class RecordsController : ControllerBase
             PageSize = pageSize
         };
 
-        return ApiResponse<PagedResult<RecordListItemDto>>.Ok(_service.Search(request));
+        return ApiResponse<PagedResult<RecordListItemDto>>.Ok(_list.Search(request));
     }
 
     /// <summary>依主機彙總（日期合併）。篩選參數與 <see cref="Search"/> 同義，只是換視角</summary>
@@ -84,7 +86,7 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordHostGroupDto>>.Ok(
-            _service.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+            _list.SearchByHost(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     /// <summary>依日期彙總（主機合併）</summary>
     [HttpGet("by-date")]
@@ -103,7 +105,7 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
-            _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+            _list.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）</summary>
     [HttpGet("by-issue")]
@@ -122,7 +124,7 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50) =>
         ApiResponse<PagedResult<IssueGroupDto>>.Ok(
-            _service.SearchByIssue(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+            _list.SearchByIssue(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
     private static RecordSearchRequest BuildRequest(
         string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
@@ -146,12 +148,12 @@ public class RecordsController : ControllerBase
 
     [HttpGet("{hostId:long}/{date}")]
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
-        ApiResponse<RecordDetailDto>.Ok(_service.GetDetail(hostId, ParseRequiredDate(date)));
+        ApiResponse<RecordDetailDto>.Ok(_detail.GetDetail(hostId, ParseRequiredDate(date)));
 
     /// <summary>報告全文（純文字，前端以等寬字型原樣呈現）</summary>
     [HttpGet("{hostId:long}/{date}/report")]
     public ApiResponse<string?> GetReport(long hostId, string date) =>
-        ApiResponse<string?>.Ok(_service.GetReport(hostId, ParseRequiredDate(date)));
+        ApiResponse<string?>.Ok(_detail.GetReport(hostId, ParseRequiredDate(date)));
 
     /// <summary>
     /// 單一問題簽章的先前處理歷史（docs/archive/FEEDBACK-5-PLAN.md §4）。issueKey 含 <c>|</c>，
@@ -159,5 +161,5 @@ public class RecordsController : ControllerBase
     /// </summary>
     [HttpGet("{hostId:long}/{date}/handling/issue-history")]
     public ApiResponse<IssueHistoryDto> GetIssueHistory(long hostId, string date, [FromQuery] string issueKey) =>
-        ApiResponse<IssueHistoryDto>.Ok(_service.GetIssueHistory(hostId, ParseRequiredDate(date), issueKey));
+        ApiResponse<IssueHistoryDto>.Ok(_detail.GetIssueHistory(hostId, ParseRequiredDate(date), issueKey));
 }

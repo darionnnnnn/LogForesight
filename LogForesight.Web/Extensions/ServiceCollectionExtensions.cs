@@ -249,7 +249,8 @@ public static class ServiceCollectionExtensions
 
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();
-        services.AddScoped<RecordQueryService>();
+        services.AddScoped<RecordListQueryService>();
+        services.AddScoped<RecordDetailQueryService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 

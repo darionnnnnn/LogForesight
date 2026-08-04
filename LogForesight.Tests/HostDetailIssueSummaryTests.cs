@@ -21,7 +21,7 @@ public class HostDetailIssueSummaryTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeIssueCaseStore _caseStore = new();
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
     public HostDetailIssueSummaryTests()
     {
@@ -29,14 +29,13 @@ public class HostDetailIssueSummaryTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
-        _service = new RecordQueryService(
+        _service = new RecordDetailQueryService(
             repository,
             new NullReportReader(),
             _hosts,
             _users,
             new FakeHostGroupStore(),
             visibility,
-            new FakeHandlingStore(),
             _issueHandlingStore,
             _caseStore,
             new FakeNoiseMarkStore(),

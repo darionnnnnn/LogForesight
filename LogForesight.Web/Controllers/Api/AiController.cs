@@ -17,7 +17,8 @@ public class AiController : ControllerBase
 {
     private readonly AiInsightService _ai;
     private readonly DashboardService _dashboard;
-    private readonly RecordQueryService _records;
+    private readonly RecordListQueryService _recordsList;
+    private readonly RecordDetailQueryService _recordsDetail;
     private readonly WebAppSettings _settings;
     private readonly RiskyEventLookupService _eventLookup;
     private readonly IHostStore _hosts;
@@ -25,14 +26,16 @@ public class AiController : ControllerBase
     public AiController(
         AiInsightService ai,
         DashboardService dashboard,
-        RecordQueryService records,
+        RecordListQueryService recordsList,
+        RecordDetailQueryService recordsDetail,
         WebAppSettings settings,
         RiskyEventLookupService eventLookup,
         IHostStore hosts)
     {
         _ai = ai;
         _dashboard = dashboard;
-        _records = records;
+        _recordsList = recordsList;
+        _recordsDetail = recordsDetail;
         _settings = settings;
         _eventLookup = eventLookup;
         _hosts = hosts;
@@ -68,7 +71,7 @@ public class AiController : ControllerBase
             RiskLevels = ParseStrings(riskLevels),
             Categories = ParseStrings(categories)
         };
-        var clusters = _records.ClusterSignatures(request);
+        var clusters = _recordsList.ClusterSignatures(request);
         var salt = $"{from}|{to}|{riskLevels}|{categories}|{hostIds}";
         return ApiResponse<AiTextDto?>.Ok(await _ai.SummarizeQueryAsync(clusters, salt));
     }
@@ -81,7 +84,7 @@ public class AiController : ControllerBase
         if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
 
         var parsedDate = ParseRequiredDate(date);
-        var detail = _records.GetDetail(hostId, parsedDate);
+        var detail = _recordsDetail.GetDetail(hostId, parsedDate);
         var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == issueKey);
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
@@ -99,7 +102,7 @@ public class AiController : ControllerBase
         if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
 
         var parsedDate = ParseRequiredDate(request.Date);
-        var detail = _records.GetDetail(request.HostId, parsedDate);
+        var detail = _recordsDetail.GetDetail(request.HostId, parsedDate);
         var issue = detail.TopIssues.FirstOrDefault(i => i.IssueKey == request.IssueKey);
         if (issue == null) return ApiResponse<AiTextDto?>.Ok(null);
 
@@ -108,7 +111,7 @@ public class AiController : ControllerBase
         // 當日分析報告全文一併餵給 AI（docs/archive/HISTORY.md #11）：與「報告全文」卡同一條路、
         // 同一套授權（GetReport 內部同樣先 GetOne 驗證可見範圍）；無報告（低風險日）時為 null，
         // ChatAsync 略過即可，不影響既有問答流程
-        var report = _records.GetReport(request.HostId, parsedDate);
+        var report = _recordsDetail.GetReport(request.HostId, parsedDate);
 
         // 詢問 AI 現場事件取得：只在第一輪（使用者剛選定這個問題、還沒有對話歷史）取一次，
         // 後續輪次沿用同一份 context，不必每輪重查。RiskyEventLookupService 內部先查風險 log
