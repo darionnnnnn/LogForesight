@@ -68,7 +68,7 @@ try
     // docs/archive/WEB-SCHEDULER-PLAN.md §1.5），或是換過機器/目錄但設定沒跟著改。
     // 那正是「規則維護頁報『載入規則失敗』、儀表板一片空白」的來源。
     // 只有「Sqlite 用預設連線」時才在 DataRoot 底下有檔案足跡可查（.db 落點）；
-    // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageFactory 首次連線 fail-fast 把關，這裡不重複檢查。
+    // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageBackend 建構時連線 fail-fast 把關，這裡不重複檢查。
     // 刻意不 fail-fast：排程還沒首次執行過是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
     var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)

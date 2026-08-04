@@ -11,7 +11,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 這裡補上那個缺口：逐步「檢查缺什麼 → 缺才補」，每一步都可重複執行不出錯——
 /// 新建的 DB 因為 EnsureCreated 已經建好最新 schema，每一步在新 DB 上都是 no-op。
 ///
-/// 於 <see cref="StorageFactory"/> 建連線、EnsureCreated 之後呼叫，批次與 Web 啟動時都會跑到。
+/// 於 <see cref="StorageBackend"/> 建連線、EnsureCreated 之後呼叫，批次與 Web 啟動時都會跑到。
 /// </summary>
 public static class SchemaUpgrader
 {

@@ -24,41 +24,55 @@ public static class ServiceCollectionExtensions
         var storage = settings.Storage;
         var dataRoot = storage.ResolveDataRoot();
 
-        // Singleton：DbContext 工廠內部快取，共用一個實例避免重複解析連線設定
-        services.AddSingleton<IUserStore>(_ => StorageFactory.CreateUserStore(storage, dataRoot));
-        services.AddSingleton<IUserGroupStore>(_ => StorageFactory.CreateUserGroupStore(storage, dataRoot));
-        services.AddSingleton<IHostStore>(_ => StorageFactory.CreateHostStore(storage, dataRoot));
-        services.AddSingleton<IHostGroupStore>(_ => StorageFactory.CreateHostGroupStore(storage, dataRoot));
-        services.AddSingleton<IGroupAccessStore>(_ => StorageFactory.CreateGroupAccessStore(storage, dataRoot));
-        services.AddSingleton<AuditLogStore>(_ => StorageFactory.CreateAuditLogStore(storage, dataRoot));
-        services.AddSingleton<IImportLogStore>(_ => StorageFactory.CreateImportLogStore(storage, dataRoot));
-        services.AddSingleton<ISentinelStore>(_ => StorageFactory.CreateSentinelStore(storage, dataRoot));
-        services.AddSingleton<ISystemSettingsStore>(_ => StorageFactory.CreateSystemSettingsStore(storage, dataRoot));
-        services.AddSingleton<NetiqOptionsStore>(_ => StorageFactory.CreateNetiqOptionsStore(storage, dataRoot));
+        // Singleton：全站共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
+        services.AddSingleton(_ => new StorageBackend(storage, dataRoot));
+
+        services.AddSingleton<IUserStore>(sp => new UserStore(sp.GetRequiredService<StorageBackend>().Blob("users")));
+        services.AddSingleton<IUserGroupStore>(sp => new UserGroupStore(sp.GetRequiredService<StorageBackend>().Blob("user_groups")));
+        services.AddSingleton<IHostStore>(sp => new HostStore(sp.GetRequiredService<StorageBackend>().Blob("hosts")));
+        services.AddSingleton<IHostGroupStore>(sp => new HostGroupStore(sp.GetRequiredService<StorageBackend>().Blob("host_groups")));
+        services.AddSingleton<IGroupAccessStore>(sp => new GroupAccessStore(sp.GetRequiredService<StorageBackend>().Blob("group_access")));
+        services.AddSingleton<AuditLogStore>(sp => new AuditLogStore(sp.GetRequiredService<StorageBackend>().LogStore("audit")));
+        services.AddSingleton<IImportLogStore>(sp => new ImportLogStore(sp.GetRequiredService<StorageBackend>().LogStore("import_logs")));
+        services.AddSingleton<ISentinelStore>(sp => new SentinelStore(sp.GetRequiredService<StorageBackend>().Blob("sentinels")));
+        services.AddSingleton<ISystemSettingsStore>(sp => new SystemSettingsStore(sp.GetRequiredService<StorageBackend>().Blob("system_settings")));
+        services.AddSingleton<NetiqOptionsStore>(sp => new NetiqOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("netiq_options")));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
-        services.AddSingleton<IAnalysisRecordQuery>(_ => StorageFactory.CreateRecordQuery(storage, dataRoot));
-        services.AddSingleton<IReportReader>(_ => StorageFactory.CreateReportReader(storage, dataRoot));
+        services.AddSingleton<IAnalysisRecordQuery>(sp => sp.GetRequiredService<StorageBackend>().RecordStore());
+        services.AddSingleton<IReportReader>(_ => new FileReportReader(dataRoot));
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
-        services.AddSingleton<IRecordHandlingStore>(_ => StorageFactory.CreateHandlingStore(storage, dataRoot));
-        services.AddSingleton<IIssueHandlingStore>(_ => StorageFactory.CreateIssueHandlingStore(storage, dataRoot));
-        services.AddSingleton<IIssueCaseStore>(_ => StorageFactory.CreateIssueCaseStore(storage, dataRoot));
-        services.AddSingleton<INoiseMarkStore>(_ => StorageFactory.CreateNoiseMarkStore(storage, dataRoot));
-        services.AddSingleton<AiCacheStore>(_ => StorageFactory.CreateAiCacheStore(storage, dataRoot));
-        services.AddSingleton<PermissionChangeStore>(_ => StorageFactory.CreatePermissionChangeStore(storage, dataRoot));
+        services.AddSingleton<IRecordHandlingStore>(sp =>
+        {
+            var backend = sp.GetRequiredService<StorageBackend>();
+            return new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log"));
+        });
+        services.AddSingleton<IIssueHandlingStore>(sp => new IssueHandlingStore(sp.GetRequiredService<StorageBackend>().Blob("issue_handling")));
+        services.AddSingleton<IIssueCaseStore>(sp => new IssueCaseStore(sp.GetRequiredService<StorageBackend>().Blob("issue_cases")));
+        services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
+        services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
+        services.AddSingleton<PermissionChangeStore>(sp =>
+        {
+            var backend = sp.GetRequiredService<StorageBackend>();
+            return new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
+        });
 
         // 規則維護與執行監控
-        services.AddSingleton<IKnownIssueRuleStore>(_ => StorageFactory.CreateRuleStore(storage, dataRoot));
-        services.AddSingleton<IRuleSeedStore>(_ => StorageFactory.CreateRuleSeedStore(storage, dataRoot));
-        services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
-        services.AddSingleton<BatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
+        services.AddSingleton<IKnownIssueRuleStore>(sp => new KnownIssueRuleStore(sp.GetRequiredService<StorageBackend>().Blob("rules")));
+        services.AddSingleton<IRuleSeedStore>(sp => new RuleSeedStore(sp.GetRequiredService<StorageBackend>().Blob("rule_seeds")));
+        services.AddSingleton<ISuppressionStore>(sp => new SuppressionStore(sp.GetRequiredService<StorageBackend>().Blob("suppressions")));
+        services.AddSingleton<BatchRunStore>(sp =>
+        {
+            var backend = sp.GetRequiredService<StorageBackend>();
+            return new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
+        });
 
         // 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）
-        services.AddSingleton<ScheduleOptionsStore>(_ => StorageFactory.CreateScheduleOptionsStore(storage, dataRoot));
+        services.AddSingleton<ScheduleOptionsStore>(sp => new ScheduleOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("schedule_options")));
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
-        services.AddSingleton<IRiskyEventStore>(_ => StorageFactory.CreateRiskyEventStore(storage, dataRoot));
+        services.AddSingleton<IRiskyEventStore>(sp => sp.GetRequiredService<StorageBackend>().RiskyEventStore());
 
         return services;
     }

@@ -95,14 +95,17 @@ public class AnalysisOrchestrator
 
         try
         {
-            var ruleStore = StorageFactory.CreateRuleStore(settings.Storage, dataRoot);
+            // 本次執行共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
+            var backend = new StorageBackend(settings.Storage, dataRoot);
+
+            var ruleStore = new KnownIssueRuleStore(backend.Blob("rules"));
             RuleBootstrapper.Run(ruleStore);
 
             // 同步內建規則的原廠種子鏡像（docs/WEB-SPEC.md §2.1 Phase 4）：Web 的「回復預設」需要
             // 一份使用者碰不到的原始內容才比較得出差異。放在 RuleBootstrapper 之後——那時規則庫已就緒。
             try
             {
-                StorageFactory.CreateRuleSeedStore(settings.Storage, dataRoot)
+                new RuleSeedStore(backend.Blob("rule_seeds"))
                     .Sync(KnownIssueSeed.CreateRules(), KnownIssueSeed.Version);
             }
             catch (Exception ex)
@@ -110,7 +113,7 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "規則種子鏡像同步失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            var suppressionStore = StorageFactory.CreateSuppressionStore(settings.Storage, dataRoot);
+            var suppressionStore = new SuppressionStore(backend.Blob("suppressions"));
             var currentHost = Environment.MachineName;
             var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
             foreach (var expired in expiredSuppressions)
@@ -125,7 +128,7 @@ public class AnalysisOrchestrator
             BatchRunStore? batchRunStore = null;
             try
             {
-                batchRunStore = StorageFactory.CreateBatchRunStore(settings.Storage, dataRoot);
+                batchRunStore = new BatchRunStore(backend.LogStore("batch_runs"), backend.LogStore("batch_run_logs"));
             }
             catch (Exception ex)
             {
@@ -168,8 +171,8 @@ public class AnalysisOrchestrator
             // 失敗不得中斷分析：此時 hostId 維持 0，當晚的紀錄改由主機名稱歸戶（查詢端的 fallback 路徑）。
             //
             // 以下三段都操作同一批主機/Sentinel 資料，共用同一組 store 實例。
-            var hostStore = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
-            var sentinelStore = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
+            var hostStore = new HostStore(backend.Blob("hosts"));
+            var sentinelStore = new SentinelStore(backend.Blob("sentinels"));
 
             // SentinelId 回填（docs/archive/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
             // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
@@ -212,25 +215,25 @@ public class AnalysisOrchestrator
 
             // 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄。
             var ownerHost = new HostKey { HostId = currentHostId, HostName = currentHost };
-            var historyService = StorageFactory.CreateRecordStore(settings.Storage, dataRoot, ownerHost);
+            var historyService = backend.RecordStore(ownerHost);
 
             var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
             var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
                 settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
             // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
             // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
-            var riskyEventStore = StorageFactory.CreateRiskyEventStore(settings.Storage, dataRoot);
+            var riskyEventStore = backend.RiskyEventStore();
             var permissionMonitor = new PermissionMonitorService(settings.Permissions,
-                StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
+                new PermissionSnapshotStore(backend.Blob("permission_snapshot")));
             var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
             // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
             // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
             var caseCoordinator = new IssueCaseCoordinator(
-                StorageFactory.CreateIssueCaseStore(settings.Storage, dataRoot),
-                StorageFactory.CreateIssueHandlingStore(settings.Storage, dataRoot),
-                StorageFactory.CreateHandlingStore(settings.Storage, dataRoot),
-                StorageFactory.CreateRecordQuery(settings.Storage, dataRoot),
+                new IssueCaseStore(backend.Blob("issue_cases")),
+                new IssueHandlingStore(backend.Blob("issue_handling")),
+                new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log")),
+                backend.RecordStore(),
                 hostStore);
 
             // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
@@ -286,7 +289,7 @@ public class AnalysisOrchestrator
                 // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
                 try
                 {
-                    var permissionChangeStore = StorageFactory.CreatePermissionChangeStore(settings.Storage, dataRoot);
+                    var permissionChangeStore = new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
                     var detectedAt = DateTime.Now;
 
                     permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
@@ -325,11 +328,11 @@ public class AnalysisOrchestrator
             try
             {
                 var runLogPruned = (batchRunStore?.Prune(retention.RunLogRetentionDays) ?? 0) +
-                                    StorageFactory.CreateImportLogStore(settings.Storage, dataRoot).Prune(retention.RunLogRetentionDays);
+                                    new ImportLogStore(backend.LogStore("import_logs")).Prune(retention.RunLogRetentionDays);
                 if (runLogPruned > 0)
                     console.WriteLine($"已清除 {runLogPruned} 筆超過 {retention.RunLogRetentionDays} 天的執行歷程／匯入紀錄。");
 
-                var auditPruned = StorageFactory.CreateAuditLogStore(settings.Storage, dataRoot).Prune(retention.AuditRetentionDays);
+                var auditPruned = new AuditLogStore(backend.LogStore("audit")).Prune(retention.AuditRetentionDays);
                 if (auditPruned > 0)
                     console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
 
@@ -373,7 +376,7 @@ public class AnalysisOrchestrator
             {
                 ct.ThrowIfCancellationRequested();
                 await RunNetiqAnalysisAsync(
-                    request, settings, dataRoot, console, ct, hostStore, sentinelStore, eventLogService, aiService,
+                    request, settings, backend, console, ct, hostStore, sentinelStore, eventLogService, aiService,
                     suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result, useAi,
                     progress);
             }
@@ -617,7 +620,7 @@ public class AnalysisOrchestrator
     }
 
     private async Task RunNetiqAnalysisAsync(
-        RunRequest request, AppSettings settings, string dataRoot, IRunConsole console, CancellationToken ct,
+        RunRequest request, AppSettings settings, StorageBackend backend, IRunConsole console, CancellationToken ct,
         IHostStore hostStore, ISentinelStore sentinelStore, EventLogService eventLogService, AIService aiService,
         ISuppressionStore suppressionStore, RiskReportService reportService, BatchRunRecorder runRecorder,
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, RetentionOptions retention,
@@ -648,7 +651,7 @@ public class AnalysisOrchestrator
 
         try
         {
-            var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
+            var netiqOptions = new NetiqOptionsStore(backend.Blob("netiq_options")).Get();
             // 手動觸發的一次性回補天數覆寫（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：只影響這次執行，
             // 不落地——netiqOptions 是本次呼叫剛從 store 讀出的獨立物件，就地覆寫不影響下次讀取的設定值
             if (request.BackfillOverride is { } backfillOverride)
@@ -656,7 +659,7 @@ public class AnalysisOrchestrator
                 netiqOptions.BackfillDays = backfillOverride;
             }
             var netiqPipeline = new NetiqPipelineService(
-                settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
+                backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
                 riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress);
 

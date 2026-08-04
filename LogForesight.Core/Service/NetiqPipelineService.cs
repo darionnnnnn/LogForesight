@@ -24,8 +24,7 @@ public class NetiqPipelineService
     /// 但單一 job 逾時/失敗時受影響的主機也越多，50 是安全邊際下的實務選擇。</summary>
     internal const int IpBatchSize = 50;
 
-    private readonly StorageSettings _storage;
-    private readonly string _dataRoot;
+    private readonly StorageBackend _backend;
     private readonly NetiqOptions _netiqOptions;
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;
@@ -52,15 +51,14 @@ public class NetiqPipelineService
     /// 每個方法都加一個參數傳遞</param>
     /// <param name="progress">進度回報（docs/archive/FEEDBACK-8-PLAN.md #2）；null＝不回報（測試預設不傳）</param>
     public NetiqPipelineService(
-        StorageSettings storage, string dataRoot, NetiqOptions netiqOptions,
+        StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
         IRunProgress? progress = null)
     {
-        _storage = storage;
-        _dataRoot = dataRoot;
+        _backend = backend;
         _netiqOptions = netiqOptions;
         _sentinels = sentinels;
         _hosts = hosts;
@@ -177,7 +175,7 @@ public class NetiqPipelineService
         foreach (var target in targets)
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
-            var store = StorageFactory.CreateRecordStore(_storage, _dataRoot, hostKey);
+            var store = _backend.RecordStore(hostKey);
             var missingDates = Enumerable.Range(1, lookback)
                 .Select(offset => DateTime.Today.AddDays(-offset))
                 .Where(date => !store.HasRecord(date))
