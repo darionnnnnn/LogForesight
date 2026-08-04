@@ -9,7 +9,7 @@
 
 import { api } from '../core/api.js';
 import {
-    renderTable, renderLoading, toast, confirmAction, withBusy, button, bindTabs, renderChips,
+    renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, button, bindTabs, renderChips,
     renderPagination, sortRows, loadPageSize, savePageSize
 } from '../core/ui.js';
 import { severityBadge, elevatesBadge, statusBadge, formatDate, severityName } from '../core/format.js';
@@ -807,7 +807,7 @@ async function loadRuleImportPreview() {
     const itemsEl = document.getElementById('rule-import-items');
     const applyButton = document.getElementById('rule-import-apply-btn');
 
-    summaryEl.textContent = '載入中…';
+    renderSpinner(summaryEl, '載入中…');
     itemsEl.replaceChildren();
     applyButton.disabled = true;
 

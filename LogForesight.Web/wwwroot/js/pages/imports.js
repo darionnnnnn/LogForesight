@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 bindTabs(document.getElementById('import-tabs'));
@@ -339,7 +339,7 @@ async function openWizard(sentinel, subnetPrefix) {
 
     document.getElementById('wizard-coverage-note').replaceChildren();
     document.getElementById('wizard-warnings').replaceChildren();
-    document.getElementById('wizard-scan-result').replaceChildren(wizardNote('掃描中…'));
+    renderSpinner(document.getElementById('wizard-scan-result'), '掃描中…');
     wizardPrimaryButton.disabled = true;
     try {
         wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });

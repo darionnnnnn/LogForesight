@@ -13,7 +13,7 @@
 
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import {
-    renderTable, renderLoading, renderEmpty, toast, renderPagination, withBusy, renderChips,
+    renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal
 } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, toLocalDateString, todayLocal } from '../core/format.js';
@@ -709,10 +709,10 @@ function issueAssignButton(group) {
  */
 function openBulkAssignModal(group) {
     const body = document.createElement('div');
-    const loading = document.createElement('div');
-    loading.className = 'text-center py-3 text-muted';
-    loading.textContent = '載入受影響主機…';
-    body.appendChild(loading);
+    const loadingWrap = document.createElement('div');
+    loadingWrap.className = 'd-flex justify-content-center py-3';
+    body.appendChild(loadingWrap);
+    renderSpinner(loadingWrap, '載入受影響主機…');
 
     showDetailModal({ title: `批次指派：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
     loadBulkAssignForm(group, body);
