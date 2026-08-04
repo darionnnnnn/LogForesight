@@ -14,8 +14,8 @@ public class ScheduleWindow
 
 /// <summary>
 /// 排程設定（↔ webdata blob，key=schedule_options，單一物件）。<see cref="Enabled"/>＝false
-/// 時行為與升級前完全相同（沿用 schtasks），開啟後由 Web 的 <c>SchedulerHostedService</c> 依
-/// <see cref="Windows"/> 觸發／停止 <see cref="AnalysisOrchestrator"/>。
+/// 時不會有任何自動觸發（僅能於「排程作業」頁手動立即執行），開啟後由 Web 的
+/// <c>SchedulerHostedService</c> 依 <see cref="Windows"/> 觸發／停止 <see cref="AnalysisOrchestrator"/>。
 /// </summary>
 public class ScheduleOptions
 {
