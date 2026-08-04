@@ -5,7 +5,7 @@
 
 import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved, bindTabs } from '../core/ui.js';
-import { formatDateTime, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 
 // 未儲存提醒（docs/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
@@ -180,7 +180,7 @@ function renderUpdatedAt(settings) {
         return;
     }
     el.textContent = `最後更新：${formatDateTime(settings.updatedAt)}` +
-        (settings.updatedByAccount ? `　更新者：${settings.updatedByAccount}` : '');
+        (settings.updatedByAccount ? `　更新者：${formatUserName(settings.updatedByDisplayName, settings.updatedByAccount)}` : '');
 }
 
 function collectSeverities() {

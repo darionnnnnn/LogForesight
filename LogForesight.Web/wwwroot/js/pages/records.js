@@ -16,7 +16,7 @@ import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, toLocalDateString, todayLocal } from '../core/format.js';
+import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
@@ -652,7 +652,7 @@ function issueHandlersCell(group) {
         if (index > 0) wrap.appendChild(document.createTextNode('、'));
         const link = document.createElement('a');
         link.href = `/handlers/${h.handlerId}`;
-        link.textContent = h.displayName;
+        link.textContent = formatUserName(h.displayName, h.account);
         link.addEventListener('click', event => event.stopPropagation());
         wrap.appendChild(link);
     });
@@ -760,7 +760,7 @@ function renderBulkAssignForm(body, group, hosts, users) {
     for (const user of [...users].filter(u => u.active).sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-TW'))) {
         const option = document.createElement('option');
         option.value = user.userId;
-        option.textContent = user.displayName;
+        option.textContent = formatUserName(user.displayName, user.account);
         handlerSelect.appendChild(option);
     }
     form.append(handlerLabel, handlerSelect);

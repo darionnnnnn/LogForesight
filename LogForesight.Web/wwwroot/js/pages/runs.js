@@ -10,7 +10,7 @@ import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
     toast, withBusy, confirmAction
 } from '../core/ui.js';
-import { formatDateTime, formatNumber } from '../core/format.js';
+import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
 const STATUS_META = {
     success: { label: '成功', color: '#198754' },
@@ -449,7 +449,7 @@ function applyScheduleOptions(options) {
     renderScheduleWindows();
 
     document.getElementById('schedule-updated').textContent = options.updatedAt
-        ? `最後更新：${formatDateTime(options.updatedAt)}${options.updatedByAccount ? `（${options.updatedByAccount}）` : ''}`
+        ? `最後更新：${formatDateTime(options.updatedAt)}${options.updatedByAccount ? `（${formatUserName(options.updatedByDisplayName, options.updatedByAccount)}）` : ''}`
         : '尚未設定過（沿用預設：關閉）';
 
     if (!options.enabled) {

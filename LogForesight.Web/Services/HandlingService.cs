@@ -440,6 +440,7 @@ public class HandlingService
                 Note = log.Note,
                 IssueLabel = log.IssueLabel,
                 ActorAccount = log.ActorAccount,
+                ActorDisplayName = _users.FindByAccount(log.ActorAccount)?.DisplayName,
                 CreatedAt = log.CreatedAt
             })
             .ToList();

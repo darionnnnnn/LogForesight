@@ -10,7 +10,7 @@ import {
     renderTable, renderLoading, toast, withBusy, confirmAction, renderChips, renderPagination,
     checkboxList, button, loadPageSize, savePageSize
 } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, formatUserName } from '../core/format.js';
 
 const listContainer = document.getElementById('host-list');
 const queueContainer = document.getElementById('netiq-queues');
@@ -547,7 +547,7 @@ function openModal(host) {
 
     checkboxList(document.getElementById('host-owners'), users.filter(u => u.active).map(u => ({
         id: u.userId,
-        label: `${u.displayName}（${u.account}）`,
+        label: formatUserName(u.displayName, u.account),
         checked: host?.ownerUserIds?.includes(u.userId) ?? false
     })), '尚無使用者，請先建立或匯入使用者。');
 

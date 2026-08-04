@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, showDetailModal } from '../core/ui.js';
-import { riskBadge, severityBadge, elevatesBadge, formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
+import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -436,7 +436,7 @@ function issueHistoryEntryItem(entry) {
 
     const date = document.createElement('span');
     date.className = 'small text-muted';
-    date.textContent = `${entry.date}　${entry.actorAccount}${entry.fromCase ? '（案件同步）' : ''}`;
+    date.textContent = `${entry.date}　${formatUserName(entry.actorDisplayName, entry.actorAccount)}${entry.fromCase ? '（案件同步）' : ''}`;
     head.appendChild(date);
 
     item.appendChild(head);

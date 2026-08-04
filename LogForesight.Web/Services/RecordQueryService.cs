@@ -368,10 +368,10 @@ public class RecordQueryService
         }
 
         var handlers = handlerIds
-            .Select(id => new { Id = id, Name = _users.Get(id)?.DisplayName })
-            .Where(x => !string.IsNullOrEmpty(x.Name))
-            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.Name! })
+            .Select(id => new { Id = id, User = _users.Get(id) })
+            .Where(x => !string.IsNullOrEmpty(x.User?.DisplayName))
+            .OrderBy(x => x.User!.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.User!.DisplayName, Account = x.User.Account })
             .ToList();
 
         return new IssueGroupDto
@@ -632,6 +632,7 @@ public class RecordQueryService
                 StatusText = IssueStatusText(h.Status),
                 Note = h.Note,
                 ActorAccount = h.ActorAccount,
+                ActorDisplayName = _users.FindByAccount(h.ActorAccount)?.DisplayName,
                 FromCase = !string.IsNullOrEmpty(h.CaseId)
             })
             .ToList();

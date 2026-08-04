@@ -487,6 +487,8 @@ public class RecordQueryServiceSearchTests : IDisposable
         var groupHandler = Assert.Single(group.Handlers);
         Assert.Equal("小陳", groupHandler.DisplayName);
         Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
+        // docs/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
+        Assert.Equal("DOMAIN\\h", groupHandler.Account);
     }
 
     /// <summary>

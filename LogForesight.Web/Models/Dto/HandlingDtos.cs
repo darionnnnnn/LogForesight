@@ -166,6 +166,11 @@ public class HandlingLogDto
     public string? IssueLabel { get; set; }
 
     public string ActorAccount { get; set; } = string.Empty;
+
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// 查無對應使用者（帳號已刪除等）時為 null，前端退回只顯示帳號</summary>
+    public string? ActorDisplayName { get; set; }
+
     public DateTime CreatedAt { get; set; }
 }
 
@@ -278,6 +283,11 @@ public class AuditEntryDto
     public long AuditId { get; set; }
     public DateTime OccurredAt { get; set; }
     public string Account { get; set; } = string.Empty;
+
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// 查無對應使用者（登入失敗打錯帳號、外部帳號等）時為 null，前端退回只顯示帳號</summary>
+    public string? AccountDisplayName { get; set; }
+
     public string Action { get; set; } = string.Empty;
     public string ActionText { get; set; } = string.Empty;
     public string? TargetKind { get; set; }

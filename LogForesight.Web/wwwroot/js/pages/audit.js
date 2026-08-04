@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize } from '../core/ui.js';
-import { formatDateTime, toLocalDateString } from '../core/format.js';
+import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
 const RESULT_META = {
     ok: { text: '成功', variant: 'light' },
@@ -88,7 +88,7 @@ function render() {
     renderTable(document.getElementById('audit-list'), {
         columns: [
             { title: '時間', sortKey: 'occurredAt', sortDefaultDir: 'desc', render: e => formatDateTime(e.occurredAt) },
-            { title: '帳號', render: e => e.account },
+            { title: '帳號', render: e => formatUserName(e.accountDisplayName, e.account) },
             { title: '動作', render: e => e.actionText },
             { title: '結果', render: e => resultBadge(e.result) },
             { title: '內容', render: e => summaryCell(e) },

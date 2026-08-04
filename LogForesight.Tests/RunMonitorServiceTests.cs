@@ -20,7 +20,7 @@ public class RunMonitorServiceTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private RunMonitorService Create() => new(Runs(), _hosts, Records());
+    private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore());
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date) =>
         new() { HostId = hostId, Host = host, Date = date, RiskLevel = "低" };
@@ -62,7 +62,7 @@ public class RunMonitorServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.7", Source = "netiq" });
         Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, Records()).GetDaySummaries(3);
+        var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDaySummaries(3);
         var today = summaries.Single(s => s.Date == DateTime.Today.ToString("yyyy-MM-dd"));
 
         // DEV-BATCH-HOST（跑批次的機器本身）與 10.0.0.7（NetIQ 主機）都算成功——
@@ -90,7 +90,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var detail = new RunMonitorService(runs, _hosts, Records()).GetDayDetail(DateTime.Today);
+        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today);
 
         var row = Assert.Single(detail, d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
@@ -111,7 +111,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records());
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore());
 
         var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("stopped", row.Status);
@@ -135,7 +135,7 @@ public class RunMonitorServiceTests : IDisposable
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }
@@ -192,11 +192,51 @@ public class RunMonitorServiceTests : IDisposable
         var records = Records();
         records.Append(Rec(netiqOk.HostId, netiqOk.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, records).GetDaySummaries(1);
+        var summaries = new RunMonitorService(runs, _hosts, records, new FakeUserStore()).GetDaySummaries(1);
         var today = Assert.Single(summaries);
 
         Assert.Equal(3, today.TotalHosts);
         Assert.Equal(2, today.SuccessCount);   // netiqOk + SRV-LOCAL
         Assert.Equal(1, today.NotRunCount);    // 10.0.0.9
+    }
+
+    /// <summary>docs/FEEDBACK-8-PLAN.md #6：「誰跑的」統一顯示格式「顯示名稱(帳號)」；
+    /// 查無對應使用者（帳號已刪除等）時退回只顯示帳號，不因此整筆出錯。</summary>
+    [Fact]
+    public void 手動觸發的執行紀錄_TriggerText顯示顯示名稱與帳號()
+    {
+        var users = new FakeUserStore();
+        users.Upsert(new WebUser { Account = "DOMAIN\\svc-lfadmin", DisplayName = "系統維護" });
+
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now, Trigger = "manual:DOMAIN\\svc-lfadmin" });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now,
+            ExitCode = 0, Trigger = "manual:DOMAIN\\svc-lfadmin"
+        });
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+
+        var service = new RunMonitorService(runs, _hosts, Records(), users);
+
+        Assert.Equal("手動（系統維護(DOMAIN\\svc-lfadmin)）", service.GetDetail(runId).TriggerText);
+    }
+
+    /// <summary>查無對應使用者時退回只顯示帳號，不拋例外</summary>
+    [Fact]
+    public void 手動觸發的執行紀錄_帳號查無使用者時只顯示帳號()
+    {
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now, Trigger = "manual:DOMAIN\\deleted-user" });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now,
+            ExitCode = 0, Trigger = "manual:DOMAIN\\deleted-user"
+        });
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore());
+
+        Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
     }
 }

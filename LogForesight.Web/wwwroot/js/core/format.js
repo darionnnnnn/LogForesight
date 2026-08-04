@@ -22,6 +22,16 @@ export function categoryName(category) {
     return CATEGORY_NAMES[category] ?? category;
 }
 
+/**
+ * 使用者名稱的唯一顯示格式（docs/FEEDBACK-8-PLAN.md #6）：「顯示名稱(帳號)」（半形括號）。
+ * 全站只要是使用者名稱欄位一律走這裡——分散各頁各自組字串遲早有一處漏改或用了全形括號。
+ * 只有帳號（查無顯示名稱）→ 顯示帳號；只有顯示名稱（無帳號可比對）→ 顯示名稱本身。
+ */
+export function formatUserName(displayName, account) {
+    if (displayName && account) return `${displayName}(${account})`;
+    return displayName || account || '';
+}
+
 /** 風險等級 → 徽章 CSS class（後端回傳中文「高/中/低」） */
 const RISK_CLASS = {
     '高': 'lf-badge--high',

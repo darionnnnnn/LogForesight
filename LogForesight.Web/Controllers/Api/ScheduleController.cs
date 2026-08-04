@@ -25,10 +25,11 @@ public class ScheduleController : ControllerBase
     private readonly ISentinelStore _sentinels;
     private readonly IAuditService _audit;
     private readonly ICurrentUser _currentUser;
+    private readonly IUserStore _users;
 
     public ScheduleController(
         IScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
-        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser)
+        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -37,6 +38,7 @@ public class ScheduleController : ControllerBase
         _sentinels = sentinels;
         _audit = audit;
         _currentUser = currentUser;
+        _users = users;
     }
 
     [HttpGet("options")]
@@ -222,21 +224,25 @@ public class ScheduleController : ControllerBase
         _ => scope
     };
 
-    private static string TriggerText(string? trigger) => trigger switch
+    private string TriggerText(string? trigger) => trigger switch
     {
         null => "閒置",
         "schedule" => "排程",
-        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) => $"手動（{trigger["manual:".Length..]}）",
+        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
+            $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
 
-    private static ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
+    private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
     {
         Enabled = options.Enabled,
         Windows = options.Windows.Select(w => new ScheduleWindowDto { Start = w.Start, End = w.End }).ToList(),
         DebugDump = options.DebugDump,
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,
+        UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)
+            ? null
+            : _users.FindByAccount(options.UpdatedByAccount)?.DisplayName,
         NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null
     };
 }

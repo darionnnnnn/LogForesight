@@ -11,7 +11,12 @@
 
 import { api } from '../core/api.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon } from '../core/ui.js';
-import { formatDateTime, toLocalDateString } from '../core/format.js';
+import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+
+/** 操作者顯示：帳號空＝系統動作（docs/FEEDBACK-8-PLAN.md #6） */
+function operatorLabel(actorDisplayName, actorAccount) {
+    return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
+}
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
 const STATUS_CHIPS = [
@@ -191,8 +196,8 @@ function assignField(handling, users, hostId, date) {
         const option = document.createElement('option');
         option.value = user.userId;
         option.textContent = ownerNames.has(user.displayName)
-            ? `${user.displayName}（負責人）`
-            : user.displayName;
+            ? `${formatUserName(user.displayName, user.account)}（負責人）`
+            : formatUserName(user.displayName, user.account);
         option.selected = user.userId === handling.handlerId;
         select.appendChild(option);
     }
@@ -487,7 +492,10 @@ function groupLogs(logs) {
         }
 
         entries.push(groupable
-            ? { kind: 'group', action: log.action, actorAccount: log.actorAccount, createdAt: log.createdAt, logs: [log] }
+            ? {
+                kind: 'group', action: log.action, actorAccount: log.actorAccount,
+                actorDisplayName: log.actorDisplayName, createdAt: log.createdAt, logs: [log]
+            }
             : { kind: 'single', log });
     }
     return entries;
@@ -535,7 +543,7 @@ function renderLogItem(log) {
 
     const meta = document.createElement('div');
     meta.className = 'small text-muted mt-1';
-    meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${log.actorAccount || '（系統）'}`;
+    meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${operatorLabel(log.actorDisplayName, log.actorAccount)}`;
     item.appendChild(meta);
 
     return item;
@@ -567,7 +575,7 @@ function renderGroupSummary(group) {
     const meta = document.createElement('div');
     meta.className = 'small text-muted mt-1';
     meta.textContent =
-        `${formatDateTime(group.createdAt)}　操作者：${group.actorAccount || '（系統）'}　點「放大檢視」看逐筆明細`;
+        `${formatDateTime(group.createdAt)}　操作者：${operatorLabel(group.actorDisplayName, group.actorAccount)}　點「放大檢視」看逐筆明細`;
     item.appendChild(meta);
 
     return item;

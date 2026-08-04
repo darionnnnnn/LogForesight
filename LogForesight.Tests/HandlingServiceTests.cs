@@ -185,6 +185,24 @@ public class HandlingServiceTests
         Assert.Contains(logs, l => l.Note == "已聯絡機房安排停機");
     }
 
+    /// <summary>docs/FEEDBACK-8-PLAN.md #6：操作歷程補上操作者的顯示名稱素材，
+    /// 讓前端能統一顯示「顯示名稱(帳號)」而不只是帳號</summary>
+    [Fact]
+    public void 更新處理狀態_歷程DTO帶操作者顯示名稱()
+    {
+        // FakeCurrentUser 固定回報 Account="test-user"（與傳入的 userId 無關），這裡註冊
+        // 同帳號的使用者以驗證 ActorDisplayName 解析路徑
+        _users.Upsert(new WebUser { Account = "test-user", DisplayName = "測試操作者" });
+        var service = Create(Capability.Handle);
+
+        service.Update(_host.HostId, Today, new UpdateHandlingRequest
+        { Status = HandlingStatuses.InProgress, Note = "已聯絡機房" });
+
+        var log = Assert.Single(service.GetLogs(_host.HostId, Today));
+        Assert.Equal("test-user", log.ActorAccount);
+        Assert.Equal("測試操作者", log.ActorDisplayName);
+    }
+
     /// <summary>歷程是 append-only：後續更新不會蓋掉先前的說明，完整敘事才留得下來</summary>
     [Fact]
     public void 多次更新_歷程保留完整敘事()
