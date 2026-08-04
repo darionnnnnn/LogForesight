@@ -6,7 +6,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderLoading, renderTable, labelValue, toast, withBusy } from '../core/ui.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
@@ -219,11 +219,7 @@ function occurrenceDetailPanel(signature) {
             return;
         }
 
-        container.replaceChildren();
-        const loading = document.createElement('div');
-        loading.className = 'text-muted small';
-        loading.textContent = '載入中…';
-        container.appendChild(loading);
+        renderSpinner(container, '載入中…');
 
         try {
             const params = new URLSearchParams({ source: signature.source, eventId: String(signature.eventId), days: String(currentDays) });

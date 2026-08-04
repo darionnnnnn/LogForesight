@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Sql;
 using NLog;
@@ -42,6 +43,7 @@ public static class StorageFactory
                 var cs = string.IsNullOrWhiteSpace(settings.ConnectionString)
                     ? $"Data Source={Path.Combine(fallbackDir, "logforesight.db")}"
                     : settings.ConnectionString;
+                cs = DisableSqlitePoolingIfUnset(cs);
                 options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(cs).Options;
                 _dbDesc = $"Sqlite（{cs}）";
             }
@@ -90,6 +92,25 @@ public static class StorageFactory
     /// <summary>EF 分析紀錄 store。ownerHost 由批次傳入；fallbackDir 供 Sqlite 預設 db 路徑</summary>
     private static EfAnalysisRecordStore CreateEfRecordStore(StorageSettings settings, HostKey? ownerHost, string fallbackDir) =>
         new(GetDbFactory(settings, fallbackDir), _dbDesc, ownerHost);
+
+    /// <summary>
+    /// 關閉 Sqlite 連線池（docs/FEEDBACK-8-PLAN.md #7）：Microsoft.Data.Sqlite 預設開啟連線池，
+    /// 連線 Close() 回池前的 Deactivate() 要把 EF Core 註冊在該實體連線上的 user function
+    /// 移除；併發下若同一顆實體連線還有其他 statement 未 finalize，會撞
+    /// SQLiteException「unable to delete/modify user-function due to active statements」
+    /// （排程背景讀寫＋Web 前景查詢同時發生時最容易觸發）。關閉池化後 Close() 直接關實體連線，
+    /// 沒有「清乾淨還池」這一步，此錯誤的根因隨之消失。使用者若已在 ConnectionString 明寫
+    /// Pooling，尊重其設定、不覆寫。
+    /// </summary>
+    internal static string DisableSqlitePoolingIfUnset(string connectionString)
+    {
+        var alreadySet = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .Any(p => p.TrimStart().StartsWith("Pooling", StringComparison.OrdinalIgnoreCase));
+        if (alreadySet) return connectionString;
+
+        var builder = new SqliteConnectionStringBuilder(connectionString) { Pooling = false };
+        return builder.ConnectionString;
+    }
 
     /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>
     private static string MaskConnectionString(string cs)

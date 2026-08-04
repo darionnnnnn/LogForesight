@@ -67,12 +67,14 @@ public class SystemSettingsService : ISystemSettingsService
     private readonly ISystemSettingsStore _store;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
+    private readonly IUserStore _users;
 
-    public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit)
+    public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit, IUserStore users)
     {
         _store = store;
         _currentUser = currentUser;
         _audit = audit;
+        _users = users;
     }
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
@@ -249,7 +251,7 @@ public class SystemSettingsService : ISystemSettingsService
             .Distinct()
             .ToList();
 
-    private static SystemSettingsDto ToDto(SystemSettings s) => new()
+    private SystemSettingsDto ToDto(SystemSettings s) => new()
     {
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
@@ -266,6 +268,9 @@ public class SystemSettingsService : ISystemSettingsService
         AdSearchBase = s.AdSearchBase,
         AdSearchFilter = s.AdSearchFilter,
         UpdatedAt = s.UpdatedAt,
-        UpdatedByAccount = s.UpdatedByAccount
+        UpdatedByAccount = s.UpdatedByAccount,
+        UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)
+            ? null
+            : _users.FindByAccount(s.UpdatedByAccount)?.DisplayName
     };
 }

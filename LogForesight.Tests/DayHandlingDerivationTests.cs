@@ -139,4 +139,78 @@ public class DayHandlingDerivationTests
         Assert.Equal(1, result.Total);
         Assert.Equal(0, result.Closed);
     }
+
+    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）────────────────────────────────────
+
+    [Fact]
+    public void 問題標為觀察中_日狀態為處理中而非未處理()
+    {
+        var a = Issue("disk", 153);
+        var handlings = new[] { new IssueHandling
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(7)
+        } };
+
+        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities);
+
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+        Assert.True(result.IsUnresolved);   // 處理中仍算未結案，只是不再是 open
+    }
+
+    /// <summary>觀察到期後日狀態不倒退回 open——「有人在管」這件事不因到期而消失，
+    /// 到期只透過 HasOverdueIssue 疊加逾期提示（見下方測試）</summary>
+    [Fact]
+    public void 觀察到期_日狀態仍為處理中不倒退回未處理()
+    {
+        var a = Issue("disk", 153);
+        var handlings = new[] { new IssueHandling
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1)   // 昨天到期
+        } };
+
+        var result = DayHandlingDerivation.Derive(new[] { a }, handlings, HandlingStatuses.Open, DefaultSeverities);
+
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+    }
+
+    [Fact]
+    public void HasOverdueIssue_觀察到期視為逾期()
+    {
+        var a = Issue("disk", 153);
+        var expired = new IssueHandling
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1)
+        };
+
+        Assert.True(DayHandlingDerivation.HasOverdueIssue(new[] { expired }, DateTime.Today));
+    }
+
+    [Fact]
+    public void HasOverdueIssue_觀察中未到期不算逾期()
+    {
+        var a = Issue("disk", 153);
+        var active = new IssueHandling
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(7)
+        };
+
+        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { active }, DateTime.Today));
+    }
+
+    [Fact]
+    public void HasOverdueIssue_觀察至今天當天不算逾期()
+    {
+        var a = Issue("disk", 153);
+        var dueToday = new IssueHandling
+        {
+            IssueKey = IssueSignatureKey.For(a), Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today
+        };
+
+        Assert.False(DayHandlingDerivation.HasOverdueIssue(new[] { dueToday }, DateTime.Today));
+    }
 }

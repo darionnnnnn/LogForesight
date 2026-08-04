@@ -16,6 +16,17 @@ internal static class NameFormat
     /// <summary>單一 id 查無對應名稱時的顯示回退</summary>
     public static string OrDeleted(string? name, long id) => name ?? $"(已刪除:{id})";
 
+    /// <summary>
+    /// 使用者名稱的唯一顯示格式：顯示名稱(帳號)（docs/FEEDBACK-8-PLAN.md #6）——半形括號，
+    /// 前端 format.js 的 formatUserName() 是同一個規則的瀏覽器端版本，後端組字串的出口
+    /// （TriggerText 之類「誰做的」敘述句）統一走這裡。查無對應使用者時退回只顯示帳號。
+    /// </summary>
+    public static string FormatAccount(IUserStore users, string account)
+    {
+        var displayName = users.FindByAccount(account)?.DisplayName;
+        return string.IsNullOrEmpty(displayName) ? account : $"{displayName}({account})";
+    }
+
     /// <summary>id 清單逐一解析為名稱清單，查無對應項目時以「(已刪除:{id})」回退</summary>
     public static List<string> ResolveNames<T>(
         IEnumerable<long> ids, IReadOnlyDictionary<long, T> byId, Func<T, string> nameSelector) =>

@@ -6,19 +6,24 @@ namespace LogForesight.Web.Services;
 public class AuditQueryService
 {
     private readonly AuditLogStore _store;
+    private readonly IUserStore _users;
 
-    public AuditQueryService(AuditLogStore store)
+    public AuditQueryService(AuditLogStore store, IUserStore users)
     {
         _store = store;
+        _users = users;
     }
 
     public PagedResult<AuditEntryDto> Query(AuditQuery query)
     {
         var result = _store.Query(query);
 
+        // 一次載入做字典（docs/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
+        var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
+
         return new PagedResult<AuditEntryDto>
         {
-            Items = result.Items.Select(ToDto).ToList(),
+            Items = result.Items.Select(e => ToDto(e, byAccount)).ToList(),
             Page = result.Page,
             PageSize = result.PageSize,
             Total = result.Total
@@ -87,11 +92,14 @@ public class AuditQueryService
         [AuditActions.NetiqProbeRun] = "執行 NetIQ API 診斷"
     };
 
-    private static AuditEntryDto ToDto(AuditEntry entry) => new()
+    private static AuditEntryDto ToDto(AuditEntry entry, IReadOnlyDictionary<string, string> displayNameByAccount) => new()
     {
         AuditId = entry.AuditId,
         OccurredAt = entry.OccurredAt,
         Account = entry.Account,
+        // 查無對應使用者（登入失敗的帳號打錯、外部帳號等）時為 null，前端退回只顯示帳號——
+        // 這正是登入失敗稽核最常見的情境，不能因為查不到就整列出錯（docs/FEEDBACK-8-PLAN.md #6）
+        AccountDisplayName = displayNameByAccount.TryGetValue(entry.Account, out var displayName) ? displayName : null,
         Action = entry.Action,
         ActionText = ActionNames.TryGetValue(entry.Action, out var name) ? name : entry.Action,
         TargetKind = entry.TargetKind,

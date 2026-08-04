@@ -1246,7 +1246,11 @@ a.lf-stat:hover .lf-card,
     margin-bottom: 0;
 }
 
-/* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）─────────── */
+/* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────
+   全站等待動畫只有三種出口（docs/FEEDBACK-8-PLAN.md #1），不要再長出第四種寫法：
+     - 整塊清單載入 → ui.js renderLoading()（骨架列）
+     - 按鈕忙碌 → ui.js withBusy()（按鈕內文字換成 spinner＋「⋯中」）
+     - 其餘區塊內等待（精靈步驟、輪詢中的狀態文字等）→ ui.js renderSpinner() */
 
 .lf-empty {
     padding: var(--lf-space-6) var(--lf-space-4);

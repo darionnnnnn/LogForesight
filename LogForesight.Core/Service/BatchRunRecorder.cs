@@ -26,8 +26,14 @@ public class BatchRunRecorder : IDisposable
     /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
     /// 這裡收下權杖，讓 Dispose 分得出「使用者停止」（記「已停止」）與「異常中斷」（exit 1）。
     /// console 傳 <see cref="CancellationToken.None"/>，行為與加入此參數前完全相同。</param>
+    /// <param name="onRegistrationFailed">
+    /// 登記失敗時的可見回報（docs/FEEDBACK-8-PLAN.md #3）：原本只寫 NLog，Web 排程執行時
+    /// 這趟執行在執行監控頁會整筆「消失」（不是顯示失敗，是完全查不到這次執行發生過），
+    /// 使用者只能翻 log 檔才查得到。呼叫端（Web）可傳入把這句話送進 <c>IRunConsole</c>，
+    /// 讓狀態卡與執行明細看得到「這趟執行本次不會出現在執行監控」；null＝維持原本只寫 log。
+    /// </param>
     public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, Action<string>? onRegistrationFailed = null)
     {
         _store = store;
         _ct = ct;
@@ -54,6 +60,7 @@ public class BatchRunRecorder : IDisposable
         catch (Exception ex)
         {
             Log.Warn(ex, "批次執行紀錄登記失敗（不影響本次分析）：{0}", ex.Message);
+            onRegistrationFailed?.Invoke($"執行紀錄登記失敗（不影響本次分析，但這趟執行本次不會出現在執行監控）：{ex.Message}");
             _store = null;
         }
     }

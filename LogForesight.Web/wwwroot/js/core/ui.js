@@ -595,6 +595,32 @@ export function renderLoading(container, rows = 4) {
 }
 
 /**
+ * 區塊內等待指示（§8.6-6 的行內版，docs/FEEDBACK-8-PLAN.md #1）：spinner＋文字，取代各頁
+ * 過去各自手刻的純文字「載入中…」「掃描中…」——那些等待動作可能長達數十秒（NetIQ 掃描、
+ * probe 執行中），純文字讓人分不清是卡住了還是真的在跑。
+ *
+ * 全站等待動畫的三種出口到此收斂完畢，不要再長出第四種寫法：
+ *   - 整塊清單載入 → renderLoading（骨架列）
+ *   - 按鈕忙碌 → withBusy（按鈕內文字換成 spinner＋「⋯中」）
+ *   - 其餘區塊內等待（精靈步驟、輪詢中的狀態文字等）→ 這裡
+ */
+export function renderSpinner(container, text = '載入中…') {
+    const el = document.createElement('div');
+    el.className = 'text-muted small d-flex align-items-center gap-2';
+
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm';
+    spinner.setAttribute('role', 'status');
+    spinner.setAttribute('aria-hidden', 'true');
+
+    const label = document.createElement('span');
+    label.textContent = text;
+
+    el.append(spinner, label);
+    container.replaceChildren(el);
+}
+
+/**
  * 勾選清單（users.js/groups.js/hosts.js 原本各自手刻一份幾乎相同的 form-check 清單）：
  * items: [{ id, label, checked }]。id 屬性組成 `${container.id}-${item.id}`，
  * 供同一清單內 label 的 htmlFor 配對；清單為空時顯示 emptyHint 取代整份清單。

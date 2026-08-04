@@ -43,6 +43,10 @@ public class SystemSettingsDto
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
+
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
+    public string? UpdatedByDisplayName { get; set; }
 }
 
 public class UpdateSystemSettingsRequest

@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
 import { formatDateTime } from '../core/format.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
@@ -299,6 +299,15 @@ function renderProbeSentinelOptions() {
     }
 }
 
+/** 輪詢更新時只換文字節點、不重建 spinner（避免每次輪詢動畫重置閃爍） */
+function setProbeSpinnerText(text) {
+    if (!probeStateEl.querySelector('.spinner-border')) {
+        renderSpinner(probeStateEl, text);
+        return;
+    }
+    probeStateEl.querySelector('span:last-child').textContent = text;
+}
+
 function renderProbeStatus(status) {
     probeOutputEl.value = status.output || '';
     if (status.output) {
@@ -308,7 +317,7 @@ function renderProbeStatus(status) {
 
     if (status.isRunning) {
         probeStartButton.disabled = true;
-        probeStateEl.textContent = `執行中（${status.sentinelName}）…${status.latestMessage ? '　' + status.latestMessage : ''}`;
+        setProbeSpinnerText(`執行中（${status.sentinelName}）…${status.latestMessage ? '　' + status.latestMessage : ''}`);
         return;
     }
 

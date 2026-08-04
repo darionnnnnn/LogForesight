@@ -30,7 +30,13 @@ public class IssueHandling
 
     public string? Note { get; set; }
 
-    /// <summary>預計完成日——只有 Status=in_progress 時才有意義，畫面上僅該狀態顯示此欄位</summary>
+    /// <summary>
+    /// 預計完成日——Status=in_progress 時才有意義，畫面上僅該狀態顯示此欄位。
+    /// Status=observing（觀察中，docs/FEEDBACK-8-PLAN.md #4）時**沿用同一欄位**當「觀察至」日期，
+    /// 不另開一欄——語意是同一件事的推廣（「這個狀態何時需要重新處理」），不是硬湊；
+    /// 到期後仍是這個日期，只是解讀從「該完成了」變成「該回頭看了」，見
+    /// <see cref="IssueHandlingStatuses.IsObservationExpired"/>。
+    /// </summary>
     public DateTime? DueDate { get; set; }
 
     /// <summary>
@@ -58,12 +64,19 @@ public static class IssueSignatureKey
 }
 
 /// <summary>
-/// 問題層級的處理狀態集合。結案類（Closed）四種＋一個未結案但需要明確持久化的 in_progress。
+/// 問題層級的處理狀態集合。結案類（Closed）四種＋兩個未結案但需要明確持久化的狀態
+/// （in_progress／observing）。
 ///
 /// <see cref="InProgress"/>（2026-07-27 起，風險日詳情批次套用改版）：問題層級現在也能標
 /// 「處理中」並帶 <see cref="IssueHandling.DueDate"/>——批次勾選多個問題、在右側處理狀態
 /// 區塊填一次即可套用，不用再逐項各自填。非結案類，但一旦有任一問題被標成 in_progress，
 /// 當日狀態即推導為 in_progress（見 DayHandlingDerivation）。
+///
+/// <see cref="Observing"/>（docs/FEEDBACK-8-PLAN.md #4）：處理人判斷「先看幾天再說」——
+/// 觀察期間這個問題不再進入待辦／告警（跟 in_progress 一樣不算 open），但處理中的人隨時
+/// 查得到、確認得了。到期語意**讀取時推導**，不跑背景作業（同「缺列即未處理」的哲學）：
+/// 到期＝視同 in_progress 且逾期，自然回到既有的待辦／逾期通道現身，不必另建通知機制
+/// （見 <see cref="IsObservationActive"/>／<see cref="IsObservationExpired"/>）。
 ///
 /// <see cref="Open"/> 是唯一另一個非結案類、但仍需要**明確持久化**的狀態：
 /// 用在使用者要蓋掉畫面自動推導的預設值時（低風險預設不處理／已知雜訊記憶自動判讀），
@@ -77,6 +90,7 @@ public static class IssueHandlingStatuses
     public const string FalsePositive = "false_positive";
     public const string KnownNoise = "known_noise";
     public const string InProgress = "in_progress";
+    public const string Observing = "observing";
     public const string Open = "open";
 
     public static readonly string[] Closed =
@@ -86,12 +100,20 @@ public static class IssueHandlingStatuses
 
     public static readonly string[] All =
     {
-        Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Open
+        Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Observing, Open
     };
 
     /// <summary>是否為結案類狀態</summary>
     public static bool IsClosed(string status) => Closed.Contains(status);
 
-    /// <summary>是否為合法的問題層級狀態（結案類 或 明確 open）</summary>
+    /// <summary>是否為合法的問題層級狀態（結案類、明確 open、或 in_progress/observing）</summary>
     public static bool IsValid(string status) => All.Contains(status);
+
+    /// <summary>觀察中且尚未到期——<see cref="IssueHandling.DueDate"/> 在此狀態下代表「觀察至」</summary>
+    public static bool IsObservationActive(string status, DateTime? dueDate, DateTime today) =>
+        status == Observing && dueDate.HasValue && today.Date <= dueDate.Value.Date;
+
+    /// <summary>觀察期滿、問題仍在——回到「處理中逾期」的既有通道現身，不是新狀態</summary>
+    public static bool IsObservationExpired(string status, DateTime? dueDate, DateTime today) =>
+        status == Observing && dueDate.HasValue && dueDate.Value.Date < today.Date;
 }

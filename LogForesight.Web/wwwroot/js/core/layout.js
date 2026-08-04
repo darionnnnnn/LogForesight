@@ -7,6 +7,7 @@
 
 import { api, getCurrentUser, hasCapability } from './api.js';
 import { icon } from './ui.js';
+import { formatUserName } from './format.js';
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -241,7 +242,7 @@ function renderCurrentUser(user) {
     // title 補完整資訊（displayName 與 text-truncate 的省略號互補，滑過即可看到完整內容，
     // 見 docs/FEEDBACK-5-PLAN.md §3）：有顯示名稱時一併帶帳號，避免兩者相同時顯得多餘
     el.title = user.displayName && user.displayName !== user.account
-        ? `${user.displayName}（${user.account}）`
+        ? formatUserName(user.displayName, user.account)
         : user.account;
 }
 

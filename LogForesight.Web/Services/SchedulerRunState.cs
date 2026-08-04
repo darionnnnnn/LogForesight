@@ -23,6 +23,12 @@ public class SchedulerRunState
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
+    /// <summary>執行進度（docs/FEEDBACK-8-PLAN.md #2）：local｜netiq；done/total 為主機日粒度。
+    /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。</summary>
+    public string? ProgressPhase { get; private set; }
+    public int ProgressDone { get; private set; }
+    public int ProgressTotal { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -42,6 +48,9 @@ public class SchedulerRunState
             Trigger = trigger;
             StartedAt = DateTime.Now;
             LatestMessage = null;
+            ProgressPhase = null;
+            ProgressDone = 0;
+            ProgressTotal = 0;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -58,6 +67,19 @@ public class SchedulerRunState
         }
     }
 
+    /// <summary>IRunProgress 的落地點（docs/FEEDBACK-8-PLAN.md #2）：本機／NetIQ 兩階段各自的
+    /// 主機日進度，供狀態 API 畫進度條。</summary>
+    public void ReportProgress(string phase, int done, int total)
+    {
+        lock (_lock)
+        {
+            if (!IsRunning) return;
+            ProgressPhase = phase;
+            ProgressDone = done;
+            ProgressTotal = total;
+        }
+    }
+
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>
     public void EndRun(RunOutcome? outcome = null)
@@ -67,6 +89,9 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             StartedAt = null;
+            ProgressPhase = null;
+            ProgressDone = 0;
+            ProgressTotal = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

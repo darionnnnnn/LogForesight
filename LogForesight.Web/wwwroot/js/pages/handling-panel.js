@@ -11,7 +11,12 @@
 
 import { api } from '../core/api.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon } from '../core/ui.js';
-import { formatDateTime, toLocalDateString } from '../core/format.js';
+import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
+
+/** 操作者顯示：帳號空＝系統動作（docs/FEEDBACK-8-PLAN.md #6） */
+function operatorLabel(actorDisplayName, actorAccount) {
+    return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
+}
 
 // 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
 const STATUS_CHIPS = [
@@ -23,9 +28,15 @@ const STATUS_CHIPS = [
     { value: 'known_noise', text: '已知雜訊' }
 ];
 
+// 「觀察中」只在問題層級（批次模式）提供（docs/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
+// 沒有這個值域，觀察的對象是「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API
+// 回一個看不懂的驗證錯誤
+const OBSERVING_CHIP = { value: 'observing', text: '觀察中' };
+
 const NOTE_FIELD_BY_STATUS = {
     open: { label: '說明（選填）', required: false },
     in_progress: { label: '處理說明（選填）', required: false },
+    observing: { label: '觀察備註（選填）', required: false },
     resolved: { label: '處理說明（選填）', required: false },
     wont_fix: { label: '不處理原因（必填）', required: true },
     false_positive: { label: '備註（選填）', required: false },
@@ -33,7 +44,7 @@ const NOTE_FIELD_BY_STATUS = {
 };
 
 const STATUS_VARIANTS = {
-    open: 'danger', in_progress: 'primary', resolved: 'success',
+    open: 'danger', in_progress: 'primary', observing: 'info', resolved: 'success',
     wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary'
 };
 
@@ -191,8 +202,8 @@ function assignField(handling, users, hostId, date) {
         const option = document.createElement('option');
         option.value = user.userId;
         option.textContent = ownerNames.has(user.displayName)
-            ? `${user.displayName}（負責人）`
-            : user.displayName;
+            ? `${formatUserName(user.displayName, user.account)}（負責人）`
+            : formatUserName(user.displayName, user.account);
         option.selected = user.userId === handling.handlerId;
         select.appendChild(option);
     }
@@ -289,6 +300,41 @@ function handlingForm() {
         dueWrap.appendChild(overdue);
     }
 
+    // 觀察天數（只有「觀察中」才顯示，批次模式限定，docs/FEEDBACK-8-PLAN.md #4）：輸入天數而非
+    // 直接選日期——「觀察 N 天」是使用者的心智模型，換算成日期送給後端（沿用 DueDate 欄位）
+    const observeWrap = document.createElement('div');
+    observeWrap.className = 'mb-3 d-none';
+    const observeLabel = document.createElement('label');
+    observeLabel.className = 'form-label small mb-1 text-muted';
+    observeLabel.htmlFor = 'observe-days';
+    observeLabel.textContent = '觀察天數';
+    const observeInput = document.createElement('input');
+    observeInput.type = 'number';
+    observeInput.className = 'form-control form-control-sm';
+    observeInput.id = 'observe-days';
+    observeInput.min = '1';
+    observeInput.max = '90';
+    observeInput.value = '7';
+    const observeHint = document.createElement('div');
+    observeHint.className = 'form-text';
+    observeHint.textContent = '觀察期間這個問題不再進入待辦，觀察到期後若仍在發生，會回到「處理中逾期」提醒。';
+    observeWrap.append(observeLabel, observeInput, observeHint);
+    form.appendChild(observeWrap);
+
+    function observeUntilDate() {
+        const days = Math.min(90, Math.max(1, Number(observeInput.value) || 7));
+        const target = new Date();
+        target.setDate(target.getDate() + days);
+        return toLocalDateString(target);
+    }
+
+    /** 送出用的 dueDate：in_progress 用日期選擇器的值，observing 用天數換算的日期，其餘不存 */
+    function resolveDueDate() {
+        if (selectedStatus === 'in_progress') return dueInput.value || null;
+        if (selectedStatus === 'observing') return observeUntilDate();
+        return null;
+    }
+
     // 調回未處理時，批次模式下可選是否一併清除已知雜訊記憶（同主機同簽章之後不再自動判讀成雜訊）
     const forgetNoiseWrap = document.createElement('div');
     forgetNoiseWrap.className = 'form-check mb-3';
@@ -328,9 +374,12 @@ function handlingForm() {
     ruleHint.appendChild(ruleLink);
     form.appendChild(ruleHint);
 
+    // 觀察中只在批次（問題層級）模式提供，見 OBSERVING_CHIP 的宣告理由
+    const availableChips = batchMode ? [...STATUS_CHIPS, OBSERVING_CHIP] : STATUS_CHIPS;
+
     function renderChips() {
         chipGroup.replaceChildren();
-        for (const chip of STATUS_CHIPS) {
+        for (const chip of availableChips) {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'lf-chip' + (selectedStatus === chip.value ? ' active' : '');
@@ -346,6 +395,7 @@ function handlingForm() {
 
     function updateFieldsForStatus() {
         dueWrap.classList.toggle('d-none', selectedStatus !== 'in_progress');
+        observeWrap.classList.toggle('d-none', selectedStatus !== 'observing');
         forgetNoiseWrap.classList.toggle('d-none', selectedStatus !== 'open');
         ruleHint.classList.toggle('d-none', !(selectedStatus === 'false_positive' && state.options.canMaintainRules));
 
@@ -384,7 +434,7 @@ function handlingForm() {
                     issueKeys,
                     status: selectedStatus,
                     note: noteInput.value.trim() || null,
-                    dueDate: selectedStatus === 'in_progress' ? (dueInput.value || null) : null,
+                    dueDate: resolveDueDate(),
                     forgetNoise: forgetNoiseCheck.checked
                 });
                 selection.clear();
@@ -401,7 +451,7 @@ function handlingForm() {
                 await api.put(`/api/records/${hostId}/${date}/handling`, {
                     status: selectedStatus,
                     note: noteInput.value.trim() || null,
-                    dueDate: selectedStatus === 'in_progress' ? (dueInput.value || null) : null
+                    dueDate: resolveDueDate()
                 });
                 toast('已更新處理狀態', 'success');
                 await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
@@ -487,7 +537,10 @@ function groupLogs(logs) {
         }
 
         entries.push(groupable
-            ? { kind: 'group', action: log.action, actorAccount: log.actorAccount, createdAt: log.createdAt, logs: [log] }
+            ? {
+                kind: 'group', action: log.action, actorAccount: log.actorAccount,
+                actorDisplayName: log.actorDisplayName, createdAt: log.createdAt, logs: [log]
+            }
             : { kind: 'single', log });
     }
     return entries;
@@ -535,7 +588,7 @@ function renderLogItem(log) {
 
     const meta = document.createElement('div');
     meta.className = 'small text-muted mt-1';
-    meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${log.actorAccount || '（系統）'}`;
+    meta.textContent = `${formatDateTime(log.createdAt)}　操作者：${operatorLabel(log.actorDisplayName, log.actorAccount)}`;
     item.appendChild(meta);
 
     return item;
@@ -567,7 +620,7 @@ function renderGroupSummary(group) {
     const meta = document.createElement('div');
     meta.className = 'small text-muted mt-1';
     meta.textContent =
-        `${formatDateTime(group.createdAt)}　操作者：${group.actorAccount || '（系統）'}　點「放大檢視」看逐筆明細`;
+        `${formatDateTime(group.createdAt)}　操作者：${operatorLabel(group.actorDisplayName, group.actorAccount)}　點「放大檢視」看逐筆明細`;
     item.appendChild(meta);
 
     return item;

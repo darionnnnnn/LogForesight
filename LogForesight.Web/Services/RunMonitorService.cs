@@ -14,6 +14,7 @@ public class RunMonitorService
     private readonly BatchRunStore _runs;
     private readonly IHostStore _hosts;
     private readonly IAnalysisRecordQuery _records;
+    private readonly IUserStore _users;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -21,11 +22,12 @@ public class RunMonitorService
     /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
     private const int MaxFailedHostNames = 10;
 
-    public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records)
+    public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users)
     {
         _runs = runs;
         _hosts = hosts;
         _records = records;
+        _users = users;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -223,11 +225,12 @@ public class RunMonitorService
     /// 直接執行（升級前唯一的觸發來源，統一顯示「工作排程器」，語意等價且不驚動既有部署）；
     /// "schedule" 是 Web 排程觸發；"manual:{帳號}" 是 Web 手動觸發。
     /// </summary>
-    private static string TriggerText(string? trigger) => trigger switch
+    private string TriggerText(string? trigger) => trigger switch
     {
         null or "" or "console" => "工作排程器",
         "schedule" => "排程",
-        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) => $"手動（{trigger["manual:".Length..]}）",
+        _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
+            $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
 

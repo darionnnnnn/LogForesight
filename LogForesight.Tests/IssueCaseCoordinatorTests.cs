@@ -256,4 +256,63 @@ public class IssueCaseCoordinatorTests
 
         Assert.Equal(0, result.AttachedCount);
     }
+
+    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
+
+    /// <summary>同步標成觀察中時，DueDate（觀察至）比照 InProgress 一併落盤——沿用同一欄位，
+    /// 不是硬湊而是語意的推廣，見 IssueHandling.DueDate 的文件註解</summary>
+    [Fact]
+    public void 同步_標成觀察中時觀察至日期一併落盤()
+    {
+        var trigger = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        var observeUntil = DateTime.Today.AddDays(7);
+        var sync = coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Observing, note: "先觀察幾天", dueDate: observeUntil, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        Assert.True(sync.Applied);
+        Assert.False(sync.CaseClosed);   // 觀察中非結案類，案件仍進行中
+        var row = _issueHandlings.GetForDay(Host, trigger).Single();
+        Assert.Equal(IssueHandlingStatuses.Observing, row.Status);
+        Assert.Equal(observeUntil, row.DueDate);
+        Assert.Equal(observeUntil, _cases.GetOpen(Host, IssueKey)!.DueDate);
+    }
+
+    /// <summary>
+    /// 「排程掛新日」劇本（docs/FEEDBACK-8-PLAN.md #4）：案件狀態為觀察中時，批次排程
+    /// 隔天掛接的新風險日要自動繼承觀察中狀態與觀察至日期——觀察期間新出現的日子
+    /// 不會變成新告警，這正是要的行為（AttachNewDay 對 DueDate 本來就是無條件複製 openCase.DueDate，
+    /// 這裡驗證 observing 案件下也走同一條路徑，不需要另外改動 AttachNewDay 本身）。
+    /// </summary>
+    [Fact]
+    public void 掛接_觀察中案件的新日子繼承觀察狀態與觀察至日期()
+    {
+        var trigger = DateTime.Today.AddDays(-1);
+        var newDay = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: null, dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        var observeUntil = DateTime.Today.AddDays(7);
+        coordinator.SyncStatus(Host, IssueKey, IssueLabel, trigger,
+            status: IssueHandlingStatuses.Observing, note: null, dueDate: observeUntil, clearing: false,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var result = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
+
+        Assert.Equal(1, result.AttachedCount);
+        var row = _issueHandlings.GetForDay(Host, newDay).Single();
+        Assert.Equal(IssueHandlingStatuses.Observing, row.Status);
+        Assert.Equal(observeUntil, row.DueDate);
+    }
 }

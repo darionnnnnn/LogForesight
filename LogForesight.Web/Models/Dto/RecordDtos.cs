@@ -125,6 +125,10 @@ public class IssueGroupHandlerDto
 {
     public long HandlerId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）——
+    /// 格式化本身是前端的事，這裡只補齊素材</summary>
+    public string Account { get; set; } = string.Empty;
 }
 
 /// <summary>風險日詳情</summary>
@@ -308,6 +312,10 @@ public class IssueHistoryEntryDto
     public string StatusText { get; set; } = string.Empty;
     public string? Note { get; set; }
     public string ActorAccount { get; set; } = string.Empty;
+
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
+    public string? ActorDisplayName { get; set; }
 
     /// <summary>true＝這筆標記出自案件同步（非人工逐日手動標的）</summary>
     public bool FromCase { get; set; }

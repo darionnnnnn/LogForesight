@@ -266,6 +266,17 @@ public class RecordQueryService
             .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities))
             .ToList();
 
+        // 問題嚴重度過濾（docs/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
+        // （已在 BuildFilter 套用到 records），但依問題視角一列一個問題，顯示的「嚴重度」是
+        // 問題層級的 High/Medium/Low——高風險日裡本來就可能同時有低嚴重度的問題，不疊加這層
+        // 過濾的話，使用者勾選「高＋中」後清單仍會看到「低」，觀感就是「篩選沒生效」。
+        // 疊加而非取代：日風險過濾維持不變，這裡只讓結果更窄，不會撈回被日風險濾掉的問題。
+        if (request.RiskLevels is { Count: > 0 } riskLevels)
+        {
+            var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
+            groups = groups.Where(g => Enum.TryParse<IssueSeverity>(g.MaxSeverity, out var s) && allowedSeverities.Contains(s)).ToList();
+        }
+
         groups = (request.SortKey switch
         {
             "severity" => request.Ascending
@@ -286,6 +297,20 @@ public class RecordQueryService
 
     private static int SeverityRank(string severity) =>
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
+
+    /// <summary>
+    /// 日風險等級（高/中/低）→ 問題嚴重度集合（docs/FEEDBACK-8-PLAN.md #5）。Critical 併入
+    /// 「高」：docs/HISTORY.md #1（B1 三級化）後規則不再產出 Critical（嚴重度封頂 High，
+    /// 改看 ElevatesDayRisk 旗標判定高風險日），Critical 只可能是三級化前的歷史資料——
+    /// 概念上等同今日的「高」，勾選「高」時仍要看得到。
+    /// </summary>
+    private static IEnumerable<IssueSeverity> MapRiskLevelToSeverities(string riskLevel) => riskLevel switch
+    {
+        RiskLevels.High => new[] { IssueSeverity.High, IssueSeverity.Critical },
+        RiskLevels.Medium => new[] { IssueSeverity.Medium },
+        RiskLevels.Low => new[] { IssueSeverity.Low },
+        _ => Array.Empty<IssueSeverity>()
+    };
 
     /// <summary>
     /// 單一問題分組的彙總 DTO。處理概況三態計算：主機有進行中案件 → 處理中；否則看該主機
@@ -321,8 +346,13 @@ public class RecordQueryService
             var openCase = openCases.FirstOrDefault(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
             if (openCase != null)
             {
-                processing++;
                 if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
+                // 觀察到期（docs/FEEDBACK-8-PLAN.md #4）：問題仍在發生，計入未處理——處理人仍留在
+                // Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，不是「沒人管」）
+                if (IssueHandlingStatuses.IsObservationExpired(openCase.Status, openCase.DueDate, DateTime.Today))
+                    unhandled++;
+                else
+                    processing++;
                 continue;
             }
 
@@ -338,15 +368,17 @@ public class RecordQueryService
 
             if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
             else if (handling != null && handling.Status == IssueHandlingStatuses.InProgress) processing++;
+            else if (handling != null && IssueHandlingStatuses.IsObservationActive(handling.Status, handling.DueDate, DateTime.Today)) processing++;
+            else if (handling != null && IssueHandlingStatuses.IsObservationExpired(handling.Status, handling.DueDate, DateTime.Today)) unhandled++;
             else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
             else unhandled++;
         }
 
         var handlers = handlerIds
-            .Select(id => new { Id = id, Name = _users.Get(id)?.DisplayName })
-            .Where(x => !string.IsNullOrEmpty(x.Name))
-            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.Name! })
+            .Select(id => new { Id = id, User = _users.Get(id) })
+            .Where(x => !string.IsNullOrEmpty(x.User?.DisplayName))
+            .OrderBy(x => x.User!.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.User!.DisplayName, Account = x.User.Account })
             .ToList();
 
         return new IssueGroupDto
@@ -607,6 +639,7 @@ public class RecordQueryService
                 StatusText = IssueStatusText(h.Status),
                 Note = h.Note,
                 ActorAccount = h.ActorAccount,
+                ActorDisplayName = _users.FindByAccount(h.ActorAccount)?.DisplayName,
                 FromCase = !string.IsNullOrEmpty(h.CaseId)
             })
             .ToList();
@@ -1121,6 +1154,7 @@ public class RecordQueryService
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
         IssueHandlingStatuses.InProgress => "處理中",
+        IssueHandlingStatuses.Observing => "觀察中",
         IssueHandlingStatuses.Open => string.Empty,
         _ => string.Empty
     };

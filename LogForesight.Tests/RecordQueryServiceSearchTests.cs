@@ -487,6 +487,66 @@ public class RecordQueryServiceSearchTests : IDisposable
         var groupHandler = Assert.Single(group.Handlers);
         Assert.Equal("小陳", groupHandler.DisplayName);
         Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
+        // docs/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
+        Assert.Equal("DOMAIN\\h", groupHandler.Account);
+    }
+
+    /// <summary>
+    /// docs/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
+    /// 觀察到期算未處理（問題仍在發生，不是「有結論」）。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_觀察中未到期算處理中_到期算未處理()
+    {
+        var observingHost = AddHost("HOST-OBSERVING");
+        var expiredHost = AddHost("HOST-EXPIRED");
+        var issue = DiskIssue();
+
+        AddRecord(observingHost, DateTime.Today, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = observingHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(7), UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(expiredHost, DateTime.Today, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = expiredHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(-1), UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Contains("1 台處理中", group.HandlingSummary);
+        Assert.Contains("1 台未處理", group.HandlingSummary);
+    }
+
+    /// <summary>
+    /// docs/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
+    /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
+    /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
+    {
+        var host = AddHost("HOST-A");
+        var lowIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "noisy", EventId = 111,
+            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+        };
+        AddRecord(host, DateTime.Today, "高", issues: new[] { lowIssue });
+
+        var filtered = _service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { "高", "中" } });
+        Assert.Empty(filtered.Items);
+
+        var withLow = _service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { "高", "中", "低" } });
+        Assert.Single(withLow.Items);
+
+        var unfiltered = _service.SearchByIssue(new RecordSearchRequest());
+        Assert.Single(unfiltered.Items);
     }
 
     [Fact]

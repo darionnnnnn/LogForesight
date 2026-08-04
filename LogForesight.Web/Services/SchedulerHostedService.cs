@@ -165,7 +165,8 @@ public class SchedulerHostedService : BackgroundService
 
                     var orchestrator = new AnalysisOrchestrator();
                     var console = new WebRunConsole(_runState);
-                    var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token);
+                    var progress = new WebRunProgress(_runState);
+                    var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token, progress);
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);

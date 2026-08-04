@@ -14,6 +14,10 @@ public class ScheduleOptionsDto
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
+    public string? UpdatedByDisplayName { get; set; }
+
     /// <summary>Enabled=false 時為 null（沒有下一次）</summary>
     public DateTime? NextTriggerTime { get; set; }
 }
@@ -35,6 +39,13 @@ public class ScheduleStatusDto
     public string? TriggerText { get; set; }
     public DateTime? StartedAt { get; set; }
     public string? LatestMessage { get; set; }
+
+    /// <summary>執行進度（docs/FEEDBACK-8-PLAN.md #2）：local｜netiq；ProgressTotal=0 代表尚未有
+    /// 量化進度可畫（清理／掃描中），前端改顯示不定進度。</summary>
+    public string? ProgressPhase { get; set; }
+    public int ProgressDone { get; set; }
+    public int ProgressTotal { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }

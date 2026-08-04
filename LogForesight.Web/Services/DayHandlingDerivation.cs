@@ -43,8 +43,11 @@ public static class DayHandlingDerivation
             .ToHashSet(StringComparer.Ordinal);
 
         // 問題層級也能明確標成「處理中」（批次套用改版）：即使還沒有任何問題結案，
-        // 只要有一個被標成 in_progress，這一天就不該再算 open——有人已經在動它了
-        var anyInProgress = issueHandlings.Any(h => h.Status == IssueHandlingStatuses.InProgress);
+        // 只要有一個被標成 in_progress，這一天就不該再算 open——有人已經在動它了。
+        // observing（docs/FEEDBACK-8-PLAN.md #4）同樣算——不論觀察中或已到期都是「有人在管」，
+        // 到期只是加上逾期提示（HasOverdueIssue），不會把日子打回 open
+        var anyInProgress = issueHandlings.Any(h =>
+            h.Status == IssueHandlingStatuses.InProgress || h.Status == IssueHandlingStatuses.Observing);
 
         var total = counted.Count;
         var closed = counted.Count(i => closedKeys.Contains(IssueSignatureKey.For(i)));
@@ -58,13 +61,17 @@ public static class DayHandlingDerivation
     }
 
     /// <summary>
-    /// 問題層級是否有已逾期的「處理中」標記。逾期語意的問題層來源，與日層級的
+    /// 問題層級是否有已逾期的「處理中」或「觀察到期」標記。逾期語意的問題層來源，與日層級的
     /// <see cref="RecordHandling.DueDate"/> 並列（兩者任一逾期，該風險日即算逾期）——
     /// 規則同樣單點定義在這裡，清單篩選、清單標記與儀表板逾期計數共用。
-    /// 只看 in_progress：其他狀態不會存 DueDate（HandlingService.ApplyIssueStatus 落盤時已清空），
-    /// 結案類就算殘留日期也不構成「逾期未處理」。
+    /// 只看 in_progress／observing：其他狀態不會存 DueDate（HandlingService.ApplyIssueStatus
+    /// 落盤時已清空），結案類就算殘留日期也不構成「逾期未處理」。觀察到期
+    /// （docs/FEEDBACK-8-PLAN.md #4）刻意併入同一個逾期通道——「觀察期滿問題仍在」本質上
+    /// 就是需要重新處理，不必另開一種告警機制。
     /// </summary>
     public static bool HasOverdueIssue(IEnumerable<IssueHandling> issueHandlings, DateTime today) =>
-        issueHandlings.Any(h => h.Status == IssueHandlingStatuses.InProgress &&
-                                h.DueDate.HasValue && h.DueDate.Value.Date < today.Date);
+        issueHandlings.Any(h =>
+            (h.Status == IssueHandlingStatuses.InProgress &&
+             h.DueDate.HasValue && h.DueDate.Value.Date < today.Date) ||
+            IssueHandlingStatuses.IsObservationExpired(h.Status, h.DueDate, today));
 }

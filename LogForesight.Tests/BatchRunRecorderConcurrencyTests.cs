@@ -45,4 +45,24 @@ public class BatchRunRecorderConcurrencyTests
         Assert.Equal(successCount + failureCount, run!.AiCalls);
         Assert.Equal(failureCount, run.AiFailures);
     }
+
+    /// <summary>
+    /// docs/FEEDBACK-8-PLAN.md #3：StartRun 失敗（原本只寫 NLog）現在也要透過
+    /// onRegistrationFailed 讓呼叫端（Web）把警告送進執行狀態——否則這趟執行會在
+    /// 執行監控頁整筆「消失」而使用者毫無所覺。
+    /// </summary>
+    [Fact]
+    public void 執行紀錄登記失敗時觸發onRegistrationFailed回報()
+    {
+        var fixture = new EfSqliteFixture();
+        var store = new BatchRunStore(fixture.LogStore("runs"), fixture.LogStore("run_logs"));
+        fixture.Dispose(); // 底層連線關閉後，StartRun 的寫入會失敗
+
+        string? warning = null;
+        using var recorder = new BatchRunRecorder(store, "test-host", Array.Empty<string>(),
+            onRegistrationFailed: msg => warning = msg);
+
+        Assert.NotNull(warning);
+        Assert.Contains("登記失敗", warning);
+    }
 }
