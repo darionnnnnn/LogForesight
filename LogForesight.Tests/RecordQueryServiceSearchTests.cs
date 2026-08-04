@@ -492,6 +492,38 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
+    /// docs/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
+    /// 觀察到期算未處理（問題仍在發生，不是「有結論」）。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_觀察中未到期算處理中_到期算未處理()
+    {
+        var observingHost = AddHost("HOST-OBSERVING");
+        var expiredHost = AddHost("HOST-EXPIRED");
+        var issue = DiskIssue();
+
+        AddRecord(observingHost, DateTime.Today, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = observingHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(7), UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(expiredHost, DateTime.Today, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = expiredHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(-1), UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Contains("1 台處理中", group.HandlingSummary);
+        Assert.Contains("1 台未處理", group.HandlingSummary);
+    }
+
+    /// <summary>
     /// docs/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
     /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
     /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。

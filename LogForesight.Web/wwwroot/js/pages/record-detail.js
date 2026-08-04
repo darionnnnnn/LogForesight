@@ -632,6 +632,22 @@ function statusLabel(issue) {
         wrap.appendChild(due);
     }
 
+    // 觀察中／觀察到期（docs/FEEDBACK-8-PLAN.md #4）：DueDate 在此狀態下代表「觀察至」，
+    // 到期後問題仍在發生，比照逾期用紅字提醒（不是新告警機制，是既有逾期通道的延伸）
+    if (issue.handlingStatus === 'observing' && issue.dueDate) {
+        const isExpired = issue.dueDate < todayLocal();
+
+        const observe = document.createElement('div');
+        observe.className = `small lf-issue-status__due ${isExpired ? 'text-danger fw-semibold' : 'text-muted'}`;
+        if (isExpired) {
+            observe.textContent = `觀察到期 ${issue.dueDate.slice(5)}，問題仍在發生`;
+        } else {
+            const remainingDays = Math.round((new Date(issue.dueDate) - new Date(todayLocal())) / 86400000);
+            observe.textContent = `觀察至 ${issue.dueDate.slice(5)}（剩 ${remainingDays} 天）`;
+        }
+        wrap.appendChild(observe);
+    }
+
     return wrap;
 }
 
@@ -1006,11 +1022,12 @@ function issueCell(issue) {
 /**
  * 案件徽章（docs/FEEDBACK-4-PLAN.md §2）：這個問題目前有進行中案件，狀態會跨日連動——
  * 徽章解釋「為什麼這一列的狀態可能是別天標的、不是我剛動的」。案件狀態值只會是
- * open／in_progress（後端只回傳進行中案件，結案類代表案件已結束、不會再出現在這裡），
+ * open／in_progress／observing（後端只回傳進行中案件，結案類代表案件已結束、不會再出現在這裡），
  * 不需要六態全表。
  */
 function caseBadge(issue) {
-    const statusText = issue.caseStatus === 'open' ? '未處理' : '處理中';
+    const statusText = issue.caseStatus === 'open' ? '未處理'
+        : issue.caseStatus === 'observing' ? '觀察中' : '處理中';
     // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/FEEDBACK-4-PLAN.md §6）
     const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
     badge.className = 'lf-badge lf-badge--primary';

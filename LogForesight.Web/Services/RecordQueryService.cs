@@ -346,8 +346,13 @@ public class RecordQueryService
             var openCase = openCases.FirstOrDefault(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
             if (openCase != null)
             {
-                processing++;
                 if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
+                // 觀察到期（docs/FEEDBACK-8-PLAN.md #4）：問題仍在發生，計入未處理——處理人仍留在
+                // Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，不是「沒人管」）
+                if (IssueHandlingStatuses.IsObservationExpired(openCase.Status, openCase.DueDate, DateTime.Today))
+                    unhandled++;
+                else
+                    processing++;
                 continue;
             }
 
@@ -363,6 +368,8 @@ public class RecordQueryService
 
             if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
             else if (handling != null && handling.Status == IssueHandlingStatuses.InProgress) processing++;
+            else if (handling != null && IssueHandlingStatuses.IsObservationActive(handling.Status, handling.DueDate, DateTime.Today)) processing++;
+            else if (handling != null && IssueHandlingStatuses.IsObservationExpired(handling.Status, handling.DueDate, DateTime.Today)) unhandled++;
             else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
             else unhandled++;
         }
@@ -1147,6 +1154,7 @@ public class RecordQueryService
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
         IssueHandlingStatuses.InProgress => "處理中",
+        IssueHandlingStatuses.Observing => "觀察中",
         IssueHandlingStatuses.Open => string.Empty,
         _ => string.Empty
     };

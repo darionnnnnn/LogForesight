@@ -233,6 +233,16 @@ public class HandlingService
 
         if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
+
+        // 觀察中一定要有觀察至日期（docs/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
+        // 前端固定送「今天 + N 天」，這裡仍防禦性驗證不早於今天
+        if (status == IssueHandlingStatuses.Observing)
+        {
+            if (!dueDate.HasValue)
+                throw DomainException.Validation("標記為觀察中時必須指定觀察至日期。");
+            if (dueDate.Value.Date < DateTime.Today)
+                throw DomainException.Validation("觀察至日期不可早於今天。");
+        }
     }
 
     /// <summary>
@@ -275,8 +285,9 @@ public class HandlingService
                     IssueKey = issueKey,
                     Status = status,
                     Note = trimmedNote,
-                    // 預計完成日只在「處理中」才有意義，其餘狀態一律不存，避免舊資料殘留誤導
-                    DueDate = status == IssueHandlingStatuses.InProgress ? dueDate : null,
+                    // 預計完成日只在「處理中」／「觀察中」（觀察至，docs/FEEDBACK-8-PLAN.md #4）
+                    // 才有意義，其餘狀態一律不存，避免舊資料殘留誤導
+                    DueDate = status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null,
                     ActorId = actorId,
                     ActorAccount = _currentUser.Account,
                     UpdatedAt = occurredAt
@@ -657,8 +668,9 @@ public class HandlingService
             var host = _hosts.FindByName(c.HostName);
             if (host == null || !visibleHostIds.Contains(host.HostId)) continue;
 
-            var isOverdue = c.Status == IssueHandlingStatuses.InProgress &&
-                             c.DueDate.HasValue && c.DueDate.Value.Date < DateTime.Today;
+            var isOverdue = (c.Status == IssueHandlingStatuses.InProgress &&
+                              c.DueDate.HasValue && c.DueDate.Value.Date < DateTime.Today) ||
+                             IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, DateTime.Today);
 
             items.Add(new HandlerCaseItemDto
             {
@@ -894,6 +906,7 @@ public class HandlingService
         IssueHandlingStatuses.FalsePositive => "誤報",
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
         IssueHandlingStatuses.InProgress => "處理中",
+        IssueHandlingStatuses.Observing => "觀察中",
         IssueHandlingStatuses.Open => "未處理",
         _ => status
     };

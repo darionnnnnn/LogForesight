@@ -133,7 +133,9 @@ public class IssueCaseCoordinator
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
-        var effectiveDueDate = effectiveStatus == IssueHandlingStatuses.InProgress ? dueDate : null;
+        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/FEEDBACK-8-PLAN.md #4）
+        var effectiveDueDate = effectiveStatus is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
+            ? dueDate : null;
 
         var eligibleDays = ResolveEligibleDays(host, hostName, issueKey);
         if (!eligibleDays.Contains(triggerDate.Date)) eligibleDays.Add(triggerDate.Date);

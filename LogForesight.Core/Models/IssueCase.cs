@@ -40,7 +40,8 @@ public class IssueCase
     /// <summary>最近一次說明快照；完整敘事仍在 RecordHandlingLog（案件同步逐日寫一列）</summary>
     public string? Note { get; set; }
 
-    /// <summary>預計完成日——只在 Status=in_progress 時有意義（同問題層級規則）</summary>
+    /// <summary>預計完成日——Status=in_progress 時有意義；Status=observing（docs/FEEDBACK-8-PLAN.md #4）
+    /// 時沿用同一欄位當「觀察至」日期，同問題層級 <see cref="IssueHandling.DueDate"/> 的規則</summary>
     public DateTime? DueDate { get; set; }
 
     /// <summary>回溯關聯到的最早風險日</summary>

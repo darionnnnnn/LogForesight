@@ -829,6 +829,66 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.OverdueCount);
     }
 
+    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
+
+    /// <summary>標為觀察中時必須指定觀察至日期，否則拒絕——沒有終點的「觀察」沒有意義</summary>
+    [Fact]
+    public void 標記觀察中_未指定觀察至日期時拒絕()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        var ex = Assert.Throws<DomainException>(() => service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Observing
+        }));
+        Assert.Contains("觀察至", ex.Message);
+    }
+
+    /// <summary>
+    /// 完整劇本（docs/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
+    /// → 模擬到期（直接落一筆已過期的觀察紀錄，同其餘逾期測試的既有手法）→ 逾期現身。
+    /// </summary>
+    [Fact]
+    public void 標記觀察中_觀察期間不進待辦_到期後以逾期現身()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = Today.AddDays(7)
+        });
+
+        var duringObservation = service.GetTodo(new[] { record });
+        Assert.Equal(0, duringObservation.OpenCount);         // 不再是「未處理」
+        Assert.Equal(1, duringObservation.InProgressCount);   // 視同處理中
+        Assert.Equal(0, duringObservation.OverdueCount);      // 觀察期間不逾期，不吵
+
+        // 模擬到期：寫入驗證擋下過去日期，這裡直接落一筆已過期的觀察紀錄
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = _host.HostName,
+            Date = day,
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var afterExpiry = service.GetTodo(new[] { record });
+        Assert.Equal(0, afterExpiry.OpenCount);
+        Assert.Equal(1, afterExpiry.InProgressCount);   // 仍是處理中，不倒退回未處理
+        Assert.Equal(1, afterExpiry.OverdueCount);      // 但現在算逾期——這就是「問題仍在發生」的提示
+    }
+
     // ── 問題案件（IssueCase，docs/FEEDBACK-4-PLAN.md §2）────────────────────────
 
     /// <summary>指派處理人時，對當日未結案的問題自動建案（Q1）；低風險以下的問題不建案</summary>
