@@ -776,6 +776,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   class 連動）。狀態推導重用 §9.3 `ToIssueDto` 抽出的共用私有方法，不重複第二套規則。
   一個 (Source,EventId) 對應多個完整 IssueKey（LogName/EntryType 不同）時合併呈現、狀態各自取
   當日實際列。
+- **指定主機更新鈕**（2026-07-31，docs/WEB-SCHEDULER-PLAN.md §1.4.5，需 `Maintain`，其他角色
+  不顯示）：就近原則——看著這台主機覺得資料舊了當場按。開確認 modal（可選一次性回補天數
+  1~14，不落地設定）後送 `POST api/admin/schedule/run`（scope=host）；本機直讀主機走
+  LocalOnly、NetIQ 主機走 NetiqHosts 單台。後端先驗證主機目前確實在「會被查詢」的清單內
+  （Pollable——停用／待歸屬／IP 衝突／所屬 Sentinel 停用都會被 orchestrator 靜默濾掉，
+  預覽顯示「1 台」會是假象），不符合時拒絕並給出具體原因。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
 
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
@@ -854,10 +860,18 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   正規化事件名＋訊息子字串），類別／嚴重度／門檻／重大／知識庫／啟用完全共用。新增規則的平台由所在分頁
   決定且建立後不可變更（`Platform` 與 `Origin` 同屬身分欄位）。告警抑制分頁加「平台」欄與篩選，
   「抑制此規則」的主機下拉**依規則平台過濾**（Linux 規則只列 Linux 主機）。
+- **內建規則升級（2026-07-31，docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 `--import-rules`）**：
+  庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
+  新增／更新／略過／衝突（衝突＝使用者改過的 builtin）→「套用」（附 checkbox「連同已修改的
+  內建規則一併覆蓋（保留啟用狀態）」＝`--overwrite-builtin` 語意；custom 規則永不觸碰）。
+  分類與套用邏輯拆到 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`，過渡期 console CLI 改為
+  薄包裝共用同一份（輸出格式逐字不變）；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
   `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`。
   `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
   由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
+  規則升級另有 `GET api/rules/import-status`、`GET api/rules/import-preview?overwriteBuiltin=`、
+  `POST api/rules/import-apply`（2026-07-31）。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
@@ -968,9 +982,19 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
   2026-07-31 起此即時查詢降為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
   查無才用到本開關控制的即時查詢（docs/WEB-SCHEDULER-PLAN.md §2.2.4）。
+- **頁面分頁化（2026-07-31，docs/WEB-SCHEDULER-PLAN.md §1.4.11）**：改「設定｜診斷」兩分頁
+  （沿用 `bindTabs` 手作頁籤模式）——原本的 Sentinel 清單與連線節流參數整批放「設定」分頁。
+- **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
+  選填 Windows／Linux 樣本 IP（對應 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
+  （欄位對應／dt 邊界／分頁效能／IP 批次上限／頻道覆蓋等，是 Linux Sentinel 接入 P3 閘門的
+  載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`（過渡期 console CLI 薄殼共用同一份，
+  輸出契約不變——仍是可直接複製貼回對話定案欄位的純文字）。長耗時操作走「觸發→背景執行→
+  輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
+  probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
+  需 `Maintain`、寫稽核 `netiq_probe_run`（帳密未設定的 Sentinel 拒絕啟動）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
-  （新增）
+  （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁，2026-07-31）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
 - **頁籤化（2026-07-31，docs/FEEDBACK-5-PLAN.md §9）**：設定項目多且長，四張卡（層級與顯示／
@@ -1029,10 +1053,30 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 
-### 9.10 `/runs` 執行監控（`DevMonitor`）
-- 總表（**每日一列彙總**：成功/有警告/失敗/異常中斷/執行中/未執行計數＋失敗主機清單）、
+### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
+- **改名與權限放寬（2026-07-31，docs/FEEDBACK-6-PLAN.md §2）**：側欄由「執行監控」改名
+  「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
+  `PermissionAttribute` 擴為 `params Capability[]`）——修正 serverAdmin 有 Maintain 卻進不了
+  排程設定所在頁面的缺口。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
+  僅 `Maintain`（前端以 `data-maintain-only` 整批隱藏，後端各 API 逐一標註）。
+- **排程設定卡（2026-07-31，docs/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.5）**：頁頂新增——
+  Enabled 開關（預設關，升級後零行為變化）、執行窗口清單編輯（最多 4 組 Start→End，支援
+  跨午夜，儲存時後端 `ScheduleCalculator.Validate` 強制驗證格式/重疊）、AI 診斷傾印開關
+  （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
+  `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
+  （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。窗口 End 到點時排程引擎
+  對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
+- **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
+  繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
+- 總表（**每日一列彙總**：成功/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
   單日主機明細（點日期下鑽的逐主機狀態）、單次執行詳情（統計＋逐條 log，等級篩選、exception 展開）、
   異常彙總（Error/Fatal 按訊息聚合）。
+- **「已停止」狀態（2026-07-31，§1.4.4）**：手動停止或窗口 End 的優雅停止回填
+  `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
+  不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。
+- **觸發來源欄**：`BatchRun.Trigger`（`schedule`／`manual:{帳號}`／`console`；舊紀錄 null
+  與 console 統一顯示「工作排程器」——升級前唯一的觸發來源，語意等價）。
 - **矩陣改每日彙總（2026-07-23 Phase D-4）**：舊版「主機×日期」色格矩陣在兩千台 × 90 天下會炸出
   最多 18 萬格 DOM。改成每日一列（`RunDaySummaryDto`：各狀態計數＋失敗主機清單**上限 10 台＋「其他 N 台」**），
   點日期下鑽該天逐主機明細（`RunDayHostStatusDto`），再點主機看單次執行詳情。原 `BuildCell` 狀態判定邏輯保留。
@@ -1046,6 +1090,10 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   是誠實的合併不是遺漏。已知取捨：主機首次回補多天歷史時，過去日期的列會回溯顯示成功。
   單日明細（本地排序＋分頁，2026-07-29）與異常彙總（本地排序）也改用 §8.6-2/7 的共用機制。
 - API：`GET api/runs/summary?days=`、`GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`
+  （DevMonitor 或 Maintain）；排程（`api/admin/schedule`，2026-07-31）：`GET/PUT options`、
+  `GET status`（讀端 DevMonitor 或 Maintain）、`GET run-preview?scope=all|segment|host`、
+  `POST run`、`POST cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ
+  匯入精靈一致（`NormalizeSubnetPrefix` 共用同一份，比對用 `CidrMatcher`）。
 
 ### 9.11 `/audit` 操作紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
@@ -1203,7 +1251,10 @@ temp 檔＋`File.Replace` 手法。
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）
 
 1. 所有**寫入類** Service 方法完成業務寫入後呼叫 `IAuditService.Append(...)`；動作代碼清單
-   依前期定案（auth/handling/perm_confirm/rule/admin/import 六類）。查詢/瀏覽不記。
+   依前期定案（auth/handling/perm_confirm/rule/admin/import 六類；2026-07-31 增排程作業
+   `schedule_*` 與 NetIQ 診斷 `netiq_probe_run`——後者雖是查詢，但屬對 Sentinel 的主動查詢
+   操作，比照寫入記錄）。查詢/瀏覽不記。新增動作代碼時 `AuditQueryService.ActionNames`
+   的中文對照表**必須同 commit 補上**——漏了不會壞，但稽核頁會顯示原始代碼字串。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。
 4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web.log`），照常回應。

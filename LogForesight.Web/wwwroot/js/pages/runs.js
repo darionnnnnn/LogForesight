@@ -16,6 +16,7 @@ const STATUS_META = {
     success: { label: '成功', color: '#198754' },
     warning: { label: '有警告', color: '#ffc107' },
     failed: { label: '失敗', color: '#dc3545' },
+    stopped: { label: '已停止', color: '#fd7e14' },   // 優雅停止（手動或窗口結束）——不是失敗
     running: { label: '執行中', color: '#0d6efd' },
     stuck: { label: '異常中斷', color: '#6f42c1' },
     none: { label: '未執行', color: '#e9ecef' }
@@ -91,6 +92,7 @@ function renderSummary(summaries) {
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
             { title: '失敗', className: 'text-end', render: s => countCell(s.failedCount, 'failed') },
+            { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
@@ -324,6 +326,7 @@ function renderStats(detail) {
 
 function statusText(detail) {
     if (detail.finishedAt == null) return '未回報結束';
+    if (detail.stopped) return '已停止（手動停止或執行窗口結束）';
     return detail.exitCode === 0 ? '成功' : `失敗（exit ${detail.exitCode}）`;
 }
 

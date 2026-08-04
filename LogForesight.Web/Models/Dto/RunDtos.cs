@@ -17,6 +17,9 @@ public class RunDaySummaryDto
     public int RunningCount { get; set; }
     public int NotRunCount { get; set; }
 
+    /// <summary>優雅停止（手動停止或執行窗口 End 到點）——不算失敗，見 <c>BatchRun.Stopped</c></summary>
+    public int StoppedCount { get; set; }
+
     /// <summary>失敗（含異常中斷）的主機名，最多 10 台；其餘用 OtherFailedCount 表示</summary>
     public List<string> FailedHostNames { get; set; } = new();
     public int OtherFailedCount { get; set; }
@@ -27,7 +30,7 @@ public class RunDayHostStatusDto
 {
     public string HostName { get; set; } = string.Empty;
 
-    /// <summary>success | warning | failed | running | stuck | none</summary>
+    /// <summary>success | warning | failed | stopped | running | stuck | none</summary>
     public string Status { get; set; } = string.Empty;
 
     public long? RunId { get; set; }
@@ -50,6 +53,10 @@ public class RunDetailDto
     public DateTime? FinishedAt { get; set; }
     public int? DurationSeconds { get; set; }
     public int? ExitCode { get; set; }
+
+    /// <summary>優雅停止（手動停止或窗口 End 到點）——詳情頁狀態顯示「已停止」而非以 exit code 判定</summary>
+    public bool Stopped { get; set; }
+
     public string AppVersion { get; set; } = string.Empty;
     public string Args { get; set; } = string.Empty;
     public int DaysAnalyzed { get; set; }

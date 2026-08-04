@@ -552,3 +552,48 @@ README 掃描零命中「查看」「點擊」。全站用詞一致性問題實�
 - **分支狀態**：`feature/web-scheduler` 的 merge-base 就是 `dev` 目前
   HEAD（單線往前，dev 這段時間沒有其他人推新 commit），併入為乾淨的
   fast-forward／無衝突合併。
+
+### 二輪體檢（2026-08-04，逐條對照規劃驗收條款重掃）
+
+併 dev 後依使用者要求對全部 Phase 修改重新逐條對照規劃，**揪出三處
+Phase 3 排程引擎的規劃落差**（Phase 4 的規則升級／probe 部分乾淨），
+已全部修正並於 dev 上直接補 commit：
+
+1. **窗口 End 的優雅停止沒有實作**（規劃 §1.4.3 明文「End 到點對進行中的
+   執行發 cancel」）：`ScheduleCalculator.IsWithinAnyWindow` 寫好了、測試也
+   綠，但生產程式零呼叫端。修正：`SchedulerHostedService.TickAsync` 執行中
+   時檢查——排程觸發的執行落在所有窗口之外即 `TryCancel()`（手動觸發不受
+   窗限、不在此停；刻意放在 Enabled 檢查之前，執行中途關掉 Enabled 這次
+   仍按窗口停）。
+2. **`TriggerRunAsync` 同步等完整趟分析**：`POST api/admin/schedule/run` 的
+   HTTP 請求會被掛住直到分析結束（可能數小時），回應訊息「已開始執行」
+   名不符實；排程觸發時輪詢迴圈也被卡死——這正是缺陷 1 無從實作的根因。
+   之前瀏覽器實測刻意未真正送出 POST run（避免對 dev DB 寫入分析資料），
+   所以沒被抓到。修正：改「確定開始就返回」——`TryBeginRun` gate 照舊，
+   分析移入背景工作（只依賴 Singleton，與 `NetiqProbeService` 同款），
+   `TaskCompletionSource` 只等「進入 Mutex 保護區（＝真的開始）或逾時拿
+   不到鎖」，最久 5 秒。實測 POST run 33ms 返回。
+3. **取消的執行被記成「失敗」**（規劃 §1.4.4 明文「是『已停止』不是
+   『失敗』，更不是卡『執行中』」，且要記里程碑）：OCE 展開時
+   `BatchRunRecorder.Dispose` 一律回填 exit 1，Runs 頁顯示「失敗」。修正：
+   recorder 收下 CancellationToken（console 傳 None 行為不變），Dispose 分
+   得出「取消權杖已觸發＝優雅停止」——記里程碑「執行已優雅停止…」＋
+   `BatchRun.Stopped = true`（JSON 缺欄容忍，零遷移）＋exit 0；
+   `RunMonitorService`／Runs 頁新增獨立「已停止」狀態（總表新欄＋圖例＋
+   詳情狀態文字），不列失敗主機清單。**與規劃的差異**：規劃的里程碑文字
+   含停止者帳號「使用者手動停止（{帳號}）」，但里程碑由 Core 的
+   orchestrator/recorder 寫入、取消可能來自手動／窗口 End／站台關閉三種
+   來源，Core 拿不到（也不該拿）Web 的登入身分——改用中性文字，停止者
+   帳號已在稽核 `schedule_manual_cancel` 紀錄裡，不重複第二份。
+4. 順帶補齊 **WEB-SPEC.md 規格記錄缺漏**（§1.6 影響面清單本就列了
+   「WEB-SPEC（新 API/頁面）」但首輪漏做）：§9.4 指定主機更新鈕、§9.7
+   規則升級、§9.9a 診斷分頁＋probe API、§9.10 改名/權限放寬/排程卡/
+   排程 API/「已停止」狀態/觸發來源欄、§11-1 動作代碼類別與中文對照表
+   同 commit 規則。README/HISTORY 的全面改寫仍屬 Phase 5 文件收尾，
+   不在本輪。
+
+驗證：新增 4 條測試（stopped 狀態判定優先於錯誤計數、舊紀錄缺欄容忍、
+recorder 取消/未取消 Dispose 對照組），1262 全綠；瀏覽器實測
+「觸發 33ms 返回 → status 顯示執行中（手動 d1tester）→ cancel → 總表
+『已停止』欄計 1、失敗 0、失敗主機清單空、詳情顯示已停止＋優雅停止
+里程碑」全程通過，無主控台錯誤。

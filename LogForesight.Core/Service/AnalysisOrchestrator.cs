@@ -129,7 +129,9 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger);
+            // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
+            // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
+            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger, ct);
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
 
             var eventLogService = new EventLogService();

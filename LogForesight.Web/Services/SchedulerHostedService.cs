@@ -86,8 +86,22 @@ public class SchedulerHostedService : BackgroundService
     private async Task TickAsync()
     {
         var options = _scheduleOptionsStore.Get();
+
+        if (_runState.IsRunning)
+        {
+            // 窗口 End 到點（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
+            // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
+            // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
+            if (_runState.Trigger == "schedule" &&
+                !ScheduleCalculator.IsWithinAnyWindow(DateTime.Now, options.Windows) &&
+                _runState.TryCancel())
+            {
+                Log.Info("執行窗口已結束，對排程觸發的執行發出優雅停止（停在主機日邊界）。");
+            }
+            return; // 執行中不再觸發新的執行，不排隊
+        }
+
         if (!options.Enabled) return;
-        if (_runState.IsRunning) return; // 手動觸發正在跑，本次輪詢略過，不排隊
 
         var now = DateTime.Now;
         var recentScheduleTriggerTimes = _batchRunStore
@@ -103,6 +117,11 @@ public class SchedulerHostedService : BackgroundService
     /// <summary>
     /// 觸發一次執行（排程輪詢與手動觸發 API 共用）。已有執行中時回 false（拒絕，不排隊）；
     /// 跨行程 Mutex 逾時內拿不到（有 console 執行個體正在跑）也回 false。
+    ///
+    /// **只等到「確定開始」就返回**（最久 <see cref="MutexTimeout"/>）：分析本身在背景繼續，
+    /// 進度由 <see cref="SchedulerRunState"/> 供狀態 API 輪詢。不能等整趟跑完——手動觸發的
+    /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
+    /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
     /// </summary>
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
@@ -124,32 +143,48 @@ public class SchedulerHostedService : BackgroundService
             return false;
         }
 
-        try
+        // 只回報「有沒有真的開始」：進到 mutex 保護區＝開始（set true）；逾時拿不到鎖＝沒開始（set false）
+        var startSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _ = Task.Run(async () =>
         {
-            var acquired = await _mutexGate.RunExclusiveAsync(async () =>
+            try
             {
-                var settings = BuildAppSettings();
-                var dataRoot = settings.Storage.ResolveDataRoot();
-                var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
+                var acquired = await _mutexGate.RunExclusiveAsync(async () =>
+                {
+                    startSignal.TrySetResult(true);
 
-                var orchestrator = new AnalysisOrchestrator();
-                var console = new WebRunConsole(_runState);
-                var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token);
+                    var settings = BuildAppSettings();
+                    var dataRoot = settings.Storage.ResolveDataRoot();
+                    var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _systemSettingsStore);
 
-                if (!result.Success)
-                    Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
-            }, MutexTimeout);
+                    var orchestrator = new AnalysisOrchestrator();
+                    var console = new WebRunConsole(_runState);
+                    var result = await orchestrator.RunAsync(effectiveRequest, settings, dataRoot, retention, console, runCts.Token);
 
-            if (!acquired)
-            {
-                Log.Warn("取得執行鎖逾時（可能有 console 執行個體正在跑），本次觸發（{Trigger}）略過。", effectiveRequest.Trigger);
+                    if (!result.Success)
+                        Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
+                }, MutexTimeout);
+
+                if (!acquired)
+                {
+                    Log.Warn("取得執行鎖逾時（可能有 console 執行個體正在跑），本次觸發（{Trigger}）略過。", effectiveRequest.Trigger);
+                    startSignal.TrySetResult(false);
+                }
             }
-            return acquired;
-        }
-        finally
-        {
-            _runState.EndRun();
-        }
+            catch (Exception ex)
+            {
+                // orchestrator 內部已有全域 catch，會走到這裡的是執行環境層級的意外（儲存初始化失敗等）
+                Log.Error(ex, "觸發來源 {Trigger} 的執行發生未預期錯誤", effectiveRequest.Trigger);
+                startSignal.TrySetResult(false);
+            }
+            finally
+            {
+                _runState.EndRun();
+            }
+        });
+
+        return await startSignal.Task;
     }
 
     private AppSettings BuildAppSettings() => new()

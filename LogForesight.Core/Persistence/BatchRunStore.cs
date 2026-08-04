@@ -35,6 +35,14 @@ public class BatchRun
     /// 「工作排程器」——那正是升級前唯一的觸發來源，語意上等價。
     /// </summary>
     public string? Trigger { get; set; }
+
+    /// <summary>
+    /// 優雅停止（docs/WEB-SCHEDULER-PLAN.md §1.4.4：使用者手動停止或執行窗口 End 到點）：
+    /// 是「已停止」不是「失敗」——已完成的部分照常保留，剩餘日子由下次執行的缺漏回補自癒，
+    /// 執行監控頁據此顯示獨立的「已停止」狀態。舊紀錄缺欄反序列化為 false，語意正確
+    /// （過去沒有停止機制）。
+    /// </summary>
+    public bool Stopped { get; set; }
 }
 
 /// <summary>

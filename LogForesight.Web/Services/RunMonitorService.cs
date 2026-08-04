@@ -78,6 +78,8 @@ public class RunMonitorService
                     case "failed": summary.FailedCount++; failedHosts.Add(host.HostName); break;
                     case "stuck": summary.StuckCount++; failedHosts.Add(host.HostName); break;
                     case "running": summary.RunningCount++; break;
+                    // 已停止不列失敗主機清單——那是使用者的明確操作，缺漏日下次執行自動回補
+                    case "stopped": summary.StoppedCount++; break;
                     default: summary.NotRunCount++; break;
                 }
             }
@@ -157,8 +159,11 @@ public class RunMonitorService
 
         var latest = dayRuns[0];
 
+        // Stopped 優先於 exit code／錯誤計數判定（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：
+        // 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來
         var status = latest.FinishedAt == null
             ? (DateTime.Now - latest.StartedAt > StuckThreshold ? "stuck" : "running")
+            : latest.Stopped ? "stopped"
             : latest.ExitCode != 0 ? "failed"
             : latest.ErrorCount > 0 ? "failed"
             : latest.WarnCount > 0 || latest.AiFailures > 0 ? "warning"
@@ -190,6 +195,7 @@ public class RunMonitorService
             StartedAt = run.StartedAt,
             FinishedAt = run.FinishedAt,
             ExitCode = run.ExitCode,
+            Stopped = run.Stopped,
             AppVersion = run.AppVersion,
             Args = run.Args,
             DaysAnalyzed = run.DaysAnalyzed,

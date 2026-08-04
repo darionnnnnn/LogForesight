@@ -98,6 +98,88 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void 優雅停止的執行_列為已停止而非失敗()
+    {
+        // docs/WEB-SCHEDULER-PLAN.md §1.4.4：手動停止或窗口 End 的優雅停止「是已停止不是失敗」。
+        // Stopped 優先於錯誤計數——停止前累積的警告/錯誤仍在計數欄，但狀態不因此變失敗
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now });
+        runs.FinishRun(new BatchRun
+        {
+            RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now,
+            ExitCode = 0, Stopped = true, ErrorCount = 2
+        });
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+
+        var service = new RunMonitorService(runs, _hosts, Records());
+
+        var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("stopped", row.Status);
+
+        var today = service.GetDaySummaries(1).Single();
+        Assert.Equal(1, today.StoppedCount);
+        Assert.Equal(0, today.FailedCount);
+        Assert.Empty(today.FailedHostNames);   // 已停止不列失敗主機清單
+
+        Assert.True(service.GetDetail(runId).Stopped);
+    }
+
+    [Fact]
+    public void 舊紀錄缺Stopped欄位_反序列化為未停止_狀態判定不變()
+    {
+        // Trigger 欄位同款零遷移保證：舊 JSON 行沒有 Stopped 欄，讀出來是 false，
+        // exit 0 無錯誤照舊列為成功
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now });
+        runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+
+        var row = Assert.Single(
+            new RunMonitorService(runs, _hosts, Records()).GetDayDetail(DateTime.Today),
+            d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("success", row.Status);
+    }
+
+    [Fact]
+    public void BatchRunRecorder_取消權杖已觸發時Dispose_回填為已停止而非exit1()
+    {
+        // AnalysisOrchestrator 的優雅停止路徑：OperationCanceledException 離開 using 範圍時
+        // 由 Dispose 回填——取消權杖已觸發＝使用者停止（Stopped＋exit 0），不是異常中斷（exit 1）
+        var runs = Runs();
+        using var cts = new CancellationTokenSource();
+        long runId;
+
+        using (var recorder = new BatchRunRecorder(runs, "SRV-LOCAL", Array.Empty<string>(), "manual:tester", cts.Token))
+        {
+            runId = recorder.RunId;
+            cts.Cancel();
+        }   // 未呼叫 Finish 就 Dispose——模擬 OCE 展開堆疊
+
+        var run = runs.GetRun(runId)!;
+        Assert.True(run.Stopped);
+        Assert.Equal(0, run.ExitCode);
+        Assert.NotNull(run.FinishedAt);
+        Assert.Contains(runs.GetLogs(runId), l => l.Message.Contains("優雅停止"));
+    }
+
+    [Fact]
+    public void BatchRunRecorder_未取消時Dispose_仍回填exit1異常中斷()
+    {
+        // 對照組：沒有取消訊號的意外 Dispose（未預期例外）維持既有語意——exit 1、非 Stopped
+        var runs = Runs();
+        long runId;
+
+        using (var recorder = new BatchRunRecorder(runs, "SRV-LOCAL", Array.Empty<string>(), "console"))
+        {
+            runId = recorder.RunId;
+        }
+
+        var run = runs.GetRun(runId)!;
+        Assert.False(run.Stopped);
+        Assert.Equal(1, run.ExitCode);
+    }
+
+    [Fact]
     public void 混合清單_計數正確()
     {
         var netiqOk = _hosts.Upsert(new WebHost { HostName = "10.0.0.8", Source = "netiq" });

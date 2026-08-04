@@ -19,11 +19,18 @@ public class BatchRunRecorder : IDisposable
     private readonly BatchRunStore? _store;
     private readonly BatchRun _run;
     private readonly BatchRunNLogTarget? _target;
+    private readonly CancellationToken _ct;
     private bool _finished;
 
-    public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null)
+    /// <param name="ct">執行用的取消權杖（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
+    /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
+    /// 這裡收下權杖，讓 Dispose 分得出「使用者停止」（記「已停止」）與「異常中斷」（exit 1）。
+    /// console 傳 <see cref="CancellationToken.None"/>，行為與加入此參數前完全相同。</param>
+    public BatchRunRecorder(BatchRunStore? store, string hostName, string[] args, string? trigger = null,
+        CancellationToken ct = default)
     {
         _store = store;
+        _ct = ct;
         _run = new BatchRun
         {
             HostName = hostName,
@@ -125,7 +132,22 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    public void Dispose() => Finish(_run.ExitCode ?? 1);
+    /// <summary>
+    /// 正常結束時 <see cref="Finish"/> 已先執行、這裡是 no-op；帶著未回填的紀錄走到這裡只有兩種情況：
+    /// 優雅停止（取消權杖已觸發 → 記里程碑並標記「已停止」，不是失敗）或未預期例外（exit 1）。
+    /// </summary>
+    public void Dispose()
+    {
+        if (!_finished && _ct.IsCancellationRequested)
+        {
+            Milestone("執行已優雅停止（手動停止或執行窗口結束，已停在主機日邊界；剩餘缺漏日由下次執行自動回補）");
+            _run.Stopped = true;
+            Finish(exitCode: 0);
+            return;
+        }
+
+        Finish(_run.ExitCode ?? 1);
+    }
 
     /// <summary>
     /// 把 NLog 的 Warn 以上事件轉寫進執行紀錄。
