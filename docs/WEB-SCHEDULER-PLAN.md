@@ -4,8 +4,11 @@
 > 完成並通過全案體檢（實作與規劃的差異註記見 §2.2.5）；Phase 2（服務搬遷）／
 > Phase 3（排程引擎＋UI）／Phase 4（CLI 職責搬 Web：規則升級／AI 診斷傾印
 > 開關／probe 診斷分頁）已於 2026-07-31 實作完成（詳見 docs/FEEDBACK-6-PLAN.md
-> §2、§3「實作結果與規劃差異」）；**Phase 5（console 退場）就緒但未執行，
-> 卡使用者 ≥5 晚實際環境驗證（定案 #5）**。
+> §2、§3「實作結果與規劃差異」）；**Phase 5（console 退場）已於 2026-08-04
+> （回饋第七輪）執行完成，console 專案已自解決方案移除**——**決策修訂**：
+> 原定案 #5 要求 ≥5 晚實際環境驗證通過才移除，本次執行時使用者知情改為
+> 立即執行（見 docs/HISTORY.md「決策 20 修訂」），提前接受§1.5 所述的冷回退
+> 風險（無 schtasks 熱回退），緩解仍是「分析冪等、缺漏日自動回補」。
 > 全部問題已定案（見 §3 定案紀錄 1~9）。
 > 兩項需求：(1) 檢討 console 批次的去留，把排程職責搬進 Web（自訂排程時間、
 > 執行時間區間、手動觸發指定/全部主機、可設定回補天數）；(2) 取回並判定有風險的
@@ -345,10 +348,10 @@ prompt 與原始回應各輸出一檔到執行檔目錄 `diag\`；README 明講�
   執行 gate **之外**、自成一個 probe gate（併發 1）——probe 是小規模診斷查詢，
   不該被夜間分析互斥擋住，但同時只允許一個 probe 在跑。
 
-### 1.5 退場（直接移除，2026-07-31 定案 #9）
+### 1.5 退場（直接移除，2026-07-31 定案 #9；2026-08-04 提前執行）
 
 不保留過渡期薄殼：Phase 4 完成 CLI 職責搬 Web（含 probe 診斷分頁）後，
-Phase 5 一次完成切換與移除，依序執行：
+Phase 5 一次完成切換與移除，原定依序執行：
 
 1. 部署含 Web 排程的版本，`Enabled` 仍 false → 確認發布本身零行為變化。
 2. 開 `Enabled`、**停用（暫不刪）schtasks**——此時 console exe 還在磁碟上，
@@ -361,6 +364,17 @@ Phase 5 一次完成切換與移除，依序執行：
 5. 文件收尾：README 全面改寫（架構圖的 console 節點、「使用方式」、selftest
    章節、部署章節、規則升級 SOP 改指 Web）；docs/HISTORY.md 補「決策 20 修訂」
    條目；部署文件的目錄配置圖更新。
+
+> **決策修訂（2026-08-04，回饋第七輪）**：步驟 3 的 ≥5 晚實際環境驗證由使用者
+> 知情豁免，提前執行步驟 4~5——原因與風險評估見 docs/FEEDBACK-7-PLAN.md、
+> docs/HISTORY.md「決策 20 修訂」。**步驟 4~5 已於此時完成**：`LogForesight`
+> 專案（`SelfTestRunner`／`ConsoleRunConsole`／`NetiqProbeCli`／`RuleImporter`
+> 四個薄殼類別）已自解決方案與 Git 移除，`.sln`／`LogForesight.Tests.csproj`／
+> `InternalsVisibleTo` 一併清理，`CorrelationAnalyzer` 的關聯 ID 對齊檢查已從
+> `SelfTestRunner` 手動驗證改為自動化測試 `CorrelationAnalyzerRuleAlignmentTests`
+> （覆蓋不打折）；README 已依步驟 5 改寫。**步驟 1~2 的 schtasks 刪除與部署面
+> exe／批次 appsettings 移除仍是使用者在實際部署主機上的動作**，本次退場只涵蓋
+> 原始碼與文件層面。
 
 **`Batch\` 目錄的資料不動**：`logforesight.db`（若 Sqlite）與 `export\` 是
 資料不是程式，`Storage:DataRoot` 指向不變，只移除執行檔。
@@ -391,7 +405,7 @@ Phase 5 一次完成切換與移除，依序執行：
 | `BatchRun` 模型 | 加 `Trigger` 欄位（JSON 反序列化容忍缺欄，零遷移） |
 | Web 規則頁 | seed 版本橫幅＋「預覽差異/套用」對話框；`RuleImporter` 拆 Core 純函數 `RuleImportPlanner`（1.4.9） |
 | Web NetIQ 維護頁 | 「診斷」分頁（probe Web 化，1.4.11）；`NetiqProbeCli` 查詢邏輯拆 Core `NetiqProbeRunner` |
-| console（Phase 5） | 專案自解決方案移除、CLI 類別與 `SelfTestRunner` 刪除；`Batch\` 只移除 exe 與 appsettings，資料目錄不動 |
+| console（Phase 5） | ✅ **已完成（2026-08-04）**：專案自解決方案移除、CLI 類別與 `SelfTestRunner` 刪除（關聯 ID 對齊檢查改自動化測試接手）；部署面的 `Batch\` exe／appsettings 移除仍待使用者在實際主機上執行 |
 | 測試 | 搬遷後全綠是 Phase 2 閘門；新增 `ScheduleCalculator`（多窗口/跨午夜/重疊驗證/漏跑補償）、觸發 API 授權/驗證＋run-preview、取消停在日邊界（stub pipeline）、`RuleImportPlanner` 與 CLI 對等測試、`NetiqProbeRunner` 沿用既有 stub HTTP 測試 |
 | 文件 | README（架構圖、排程章節、使用方式、selftest、部署）、WEB-SPEC（新 API/頁面）、HISTORY（決策 20 修訂） |
 

@@ -274,13 +274,13 @@ console 專案整體「看起來不使用」但**還不能刪**——它目前�
 | 候選 | 判定 | 依據 |
 |---|---|---|
 | `SuppressionCli.cs`／`HostListCli.cs` | **可立即刪**（見下方建議） | 功能已被 Web 規則頁「告警抑制」分頁與主機頁完全涵蓋，WEB-SCHEDULER-PLAN 定案 #9 本就判「直接刪」；留著是第二套會漂移的入口 |
-| console 專案（`LogForesight`） | **Phase 5 才能刪** | 排程/分析還在它身上；移除閘門＝Web 排程試點 ≥5 晚驗證通過（定案 #5） |
-| `SelfTestRunner.cs` | 隨 console 刪（Phase 5） | 定案 #9：selftest 接受退役；退役前仍是部署驗證工具 |
-| `NetiqProbeCli.cs` | Phase 4 搬 Web 後隨 console 刪 | probe 是 Linux Sentinel P3 閘門的載具，**必須先有 Web 替代**（診斷分頁）才能刪 |
-| `RuleImporter.cs` | Phase 4 拆 Core 純函數後，CLI 薄殼隨 console 刪 | 規則升級 SOP 的現行入口，先建 Web 入口再退 |
+| console 專案（`LogForesight`） | ✅ **已刪（回饋第七輪，2026-08-04）** | 原定 Phase 5 才能刪（排程/分析還在它身上，移除閘門＝Web 排程試點 ≥5 晚驗證通過，定案 #5）；本輪由使用者知情豁免該閘門提前執行，見 docs/HISTORY.md「決策 20 修訂」與 docs/FEEDBACK-7-PLAN.md |
+| `SelfTestRunner.cs` | ✅ **已刪** | 定案 #9：selftest 接受退役；關聯 ID 對齊檢查改由 `CorrelationAnalyzerRuleAlignmentTests`（自動化測試）接手，覆蓋不打折 |
+| `NetiqProbeCli.cs` | ✅ **已刪** | probe 已 Web 化（NetIQ 維護頁「診斷」分頁），Core `NetiqProbeRunner` 邏輯不受影響 |
+| `RuleImporter.cs` | ✅ **已刪** | 規則升級 SOP 已完全 Web 化（規則頁橫幅＋預覽/套用對話框），直接刪、未搬 Core（Web `RuleAdminService` 已用 `RuleImportPlanner` 涵蓋同等功能） |
 | 19 個頁面 JS／wwwroot 靜態資源 | 無孤兒 | 逐檔核對：每個 pages/*.js 都被 cshtml 或其他模組引用；css/img/lib 皆在用 |
 | docs/ 11 份文件 | 全數保留 | 逐份核對引用數（RULES-PLAN 51 處、DB-PLAN 22 處、NETIQ-API-PLAN 31 處、LINUX-RULES-PLAN 34 處、FEEDBACK-3/4 各 34/41 處——程式碼註解大量指回這些文件，是活的參照不是遺物） |
-| 兩份 `appsettings.json`（批次/Web） | 過渡期並存，Phase 5 移除批次那份 | §1.4.6 定案：隨部署的基礎設施參數，維持檔案配置 |
+| 兩份 `appsettings.json`（批次/Web） | ✅ 批次那份已隨 console 專案刪除 | §1.4.6 定案：隨部署的基礎設施參數，維持檔案配置 |
 
 ### `SuppressionCli`／`HostListCli` 提前到本輪首段刪除（Q1 已定案：提前刪）
 

@@ -3,8 +3,8 @@
     View 只有結構、沒有資料——側欄選單由 core/layout.js 依 /api/auth/me 回傳的能力渲染。
 *@
 @{
-    // 頁尾顯示版本號（docs/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本，
-    // 與批次端 --selftest 輸出的版本號同一個來源（Directory.Build.props 的 <Version>）。
+    // 頁尾顯示版本號（docs/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本
+    // （Directory.Build.props 的 <Version>，全專案共用同一個版本號）。
     var appVersion = typeof(LogForesight.Web.Configuration.WebAppSettings).Assembly.GetName().Version;
 }
 <!DOCTYPE html>

@@ -74,7 +74,7 @@ public class WebAppSettings
 
         var dataRoot = Storage.ResolveDataRoot();
         if (!Directory.Exists(dataRoot))
-            errors.Add($"Storage:DataRoot 不存在：{dataRoot}（應指向批次 LogForesight.exe 的執行檔目錄）。");
+            errors.Add($"Storage:DataRoot 不存在：{dataRoot}（應指向資料所在的目錄；留空則預設為本站台的執行檔目錄）。");
 
         if (string.IsNullOrWhiteSpace(Auth.ServerAdmin.Account))
             errors.Add("Auth:ServerAdmin:Account 未設定（本地救援帳號，用於指派 admin 群組成員）。");

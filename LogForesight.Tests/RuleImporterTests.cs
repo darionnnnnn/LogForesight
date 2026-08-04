@@ -1,5 +1,4 @@
 using LogForesight;
-using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -222,68 +221,5 @@ public class RuleImporterTests
         Assert.False(updated.Enabled);
         Assert.Null(updated.ModifiedBy);
         Assert.Null(updated.ModifiedAt);
-    }
-}
-
-/// <summary>
-/// `RuleImporter.Run` 的編排（預覽 vs --apply、既有檔案套用）跑在儲存 store 上——
-/// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
-/// </summary>
-public class RuleImporterRunContractTests : IDisposable
-{
-    private readonly EfSqliteFixture _fx = new();
-
-    private EfJsonBlobStore? _blob;
-    private KnownIssueRuleStore Store() => new(_blob ??= _fx.Blob("rules"));
-
-    public void Dispose()
-    {
-        _fx.Dispose();
-        GC.SuppressFinalize(this);
-    }
-
-    [Fact]
-    public void Run_檔案不存在時預覽不寫檔_Apply才真正寫入完整種子()
-    {
-        var store = Store();
-
-        RuleImporter.Run(store, apply: false, overwriteBuiltin: false);
-        Assert.False(store.Exists);
-
-        RuleImporter.Run(store, apply: true, overwriteBuiltin: false);
-        Assert.True(store.Exists);
-
-        var outcome = store.Load();
-        Assert.True(outcome.Success);
-        Assert.Equal(KnownIssueSeed.CreateRules().Count, outcome.Content!.Rules.Count);
-        Assert.Equal(KnownIssueSeed.Version, outcome.Content.SeedVersion);
-    }
-
-    [Fact]
-    public void Run_既有檔案套用後更新SeedVersion且補上缺少的builtin規則()
-    {
-        var store = Store();
-        store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = 0, Rules = new List<KnownIssueRule>() });
-
-        RuleImporter.Run(store, apply: true, overwriteBuiltin: false);
-
-        var outcome = store.Load();
-        Assert.True(outcome.Success);
-        Assert.Equal(KnownIssueSeed.Version, outcome.Content!.SeedVersion);
-        Assert.Equal(KnownIssueSeed.CreateRules().Count, outcome.Content.Rules.Count);
-    }
-
-    [Fact]
-    public void Run_預覽模式不寫入任何檔案內容變更()
-    {
-        var store = Store();
-        store.Save(new RuleFileContent { SchemaVersion = 1, SeedVersion = 0, Rules = new List<KnownIssueRule>() });
-
-        RuleImporter.Run(store, apply: false, overwriteBuiltin: false);
-
-        var outcome = store.Load();
-        Assert.True(outcome.Success);
-        Assert.Empty(outcome.Content!.Rules); // 預覽模式：規則清單仍是空的，SeedVersion 仍是舊的
-        Assert.Equal(0, outcome.Content.SeedVersion);
     }
 }

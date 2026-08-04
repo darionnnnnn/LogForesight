@@ -178,9 +178,9 @@ public class KnownIssueCatalogTests : IDisposable
     /// <summary>
     /// 推導出的 watchlist（KnownIssueCatalog.SecurityAuditWatchlist，見 docs/RULES-PLAN.md 陷阱 1）
     /// 至少要涵蓋規則外部化前寫死維護的原始清單——這是確保「改用推導」沒有不小心漏掉的唯一保障，
-    /// 與 SelfTestRunner 執行期驗證用同一份基準集、同一種「涵蓋」語意（不要求逐項相等：
-    /// 推導改成以 EventId 為準、不再區分 FailureAudit/SuccessAudit 型別，比原始清單多涵蓋
-    /// 4625 屬無害的超集，不是漏算）。
+    /// 與 <see cref="CorrelationAnalyzerRuleAlignmentTests"/> 用同一份基準集、同一種「涵蓋」語意
+    /// （不要求逐項相等：推導改成以 EventId 為準、不再區分 FailureAudit/SuccessAudit 型別，
+    /// 比原始清單多涵蓋 4625 屬無害的超集，不是漏算）。
     /// </summary>
     [Fact]
     public void 推導出的SecurityAuditWatchlist涵蓋原始寫死清單()

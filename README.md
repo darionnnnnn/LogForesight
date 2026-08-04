@@ -9,35 +9,36 @@ MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Lo
 
 ## 專案結構
 
-```
-LogForesight/          批次分析主程式（console exe）：讀 Event Log、呼叫 AI、體檢、權限監控，
-│                       並回報執行紀錄與權限異動明細供 Web 使用（2026-07-21 Phase 1–4 配合項）
-├── Program.cs
-└── Service/           有狀態、會做 I/O 的服務
+> 早期版本另有一個批次分析 console exe（`LogForesight` 專案），Web 排程化（Phase 2~4）完成、
+> 職責全數搬進 Web 之後，該專案已於 Phase 5（`docs/WEB-SCHEDULER-PLAN.md` §1.5）自解決方案移除。
+> **現在唯一的分析執行途徑是 Web 的排程／立即執行**（見下方「使用方式」）。
 
-LogForesight.Core/     批次與 Web 共用的類別庫（2026-07-21 自批次專案抽出，行為零改變）
+```
+LogForesight.Core/     Web 共用的類別庫（原批次與 Web 共用，批次退場後仍是分析邏輯的所在地）
 ├── Analysis/           無狀態的純規則/分析邏輯：規則表、趨勢比對、跨 log 關聯分析、聚合統計、prompt 預算
 ├── Models/             資料模型：分析紀錄、AI 回應契約與容錯解析、權限快照、
 │                        Web 身分/主機/處理狀態/權限異動確認/稽核/執行紀錄
 ├── Persistence/        持久層抽象：讀寫介面＋兩種後端實作（Sqlite/SqlServer，見下）。
 │                        `StorageFactory` 是唯一路由點，分析邏輯與 Web 皆不需修改
-└── Configuration/      appsettings.json 對應的設定類別
+├── Configuration/      appsettings.json 對應的設定類別
+└── Service/            AnalysisOrchestrator（分析主流程單一入口）、排程計算、NetIQ 機房分析
+                         pipeline、體檢——Web 排程與立即執行皆呼叫同一份
 
-LogForesight.Web/      Web 查詢/維護介面（ASP.NET Core MVC，.NET 8，2026-07-21 Phase 0–4 完成）：
-│                       儀表板、問題查詢、風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、
-│                       權限異動逐筆確認、規則維護（builtin 可改可回復不可刪）、CSV 匯入、
-│                       執行監控、操作稽核。群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
+LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC，.NET 8）：
+│                       排程設定＋立即執行（AnalysisOrchestrator 的呼叫端）、儀表板、問題查詢、
+│                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動逐筆確認、
+│                       規則維護（builtin 可改可回復不可刪）、CSV／NetIQ 掃描匯入、執行監控、操作稽核。
+│                       群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
-│                       前期與批次共用同一資料目錄（Storage.DataRoot 指向批次執行檔目錄），
 │                       儲存後端二選一（Sqlite 預設/SqlServer，見 docs/WEB-SPEC.md §10.5）
 └── （appsettings.json 已內含開箱即測的測試登入 svc-lfadmin / LogForesight-dev；
                         正式環境務必依檔內【正式環境需修改】說明改用環境變數與 Ldap，見 docs/WEB-SPEC.md §5）
 
 LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（SQLite 後端）、
-                        Web 授權範圍/處理流程/規則保護/CSV 匯入
+                        Web 授權範圍/處理流程/規則保護/CSV 匯入/排程與立即執行
 ```
 
-C# 專案採檔案掃描（非資料夾對應命名空間），批次與 Core 統一 `namespace LogForesight`
+C# 專案採檔案掃描（非資料夾對應命名空間），Core 沿用批次時期的 `namespace LogForesight`
 （資料夾純粹是實體檔案的分類）；Web 專案依 ASP.NET 慣例採資料夾對應命名空間（`LogForesight.Web.*`）。
 
 ## 架構
@@ -79,7 +80,7 @@ flowchart TD
 規則標記已知危險訊號（規則命中的問題同時查得靜態知識庫）→ 與歷史做頻率比對
 （首次出現/頻率上升自動升級嚴重度）→ 慢速趨勢偵測（近 7 天 vs 前 7 天總量比較）→
 風險等級確定性判定 → 低風險日直接寫模板句、其餘連同比對結果與近 14 天歷史組成 prompt →
-AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史資料庫 → console 示警**。
+AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史資料庫 → Web 執行監控頁與儀表板示警**。
 
 ## 提早發現問題的邏輯
 
@@ -124,7 +125,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 | 【時間偏移→驗證失敗】 | 時間同步失敗＋登入失敗同日 | 時鐘偏移造成的假性攻擊訊號（仍需排除真攻擊） |
 
 關聯訊號在 prompt 中以獨立區塊呈現並明確標注「由程式確定性比對，不是猜測」，
-console 以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
+執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
 
 ### 正常 RDP 使用不會誤報的設計（2026-07 RDP 頻道擴充）
 
@@ -360,7 +361,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
   這幾天的紀錄會標記 `DataIncomplete = true`，`TrendAnalyzer` 計算 14 日基準時排除這些日子，
   避免不完整的一天把平均值墊低/墊高，讓之後的正常量被誤判為異常（或反過來蓋掉真異常）。
 - **Security log 本次無法讀取**（無系統管理員權限）：紀錄標記 `SecurityLogAvailable = false`，
-  console 與風險報告會逐條列出因此停用的偵測項目（入侵跡象規則表、涉及 Security 的關聯模式、
+  執行輸出與風險報告會逐條列出因此停用的偵測項目（入侵跡象規則表、涉及 Security 的關聯模式、
   4624 破解得手比對、安全稽核事件總量趨勢），而不是一句「讀取失敗」帶過——讓看報告的人知道
   「沒告警 ≠ 沒問題，是沒看」。趨勢基準計算也會排除這些日子的 Security 簽章，避免權限恢復後
   的正常量被誤判成「首次出現」或「頻率上升」。
@@ -390,38 +391,22 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 - **輸出**：結論寫入當日歷史紀錄的 `WeeklyCheckup` 欄位；**有發現才**輸出
   `export\{日期}_週檢.txt`（檔名沿用既有慣例），無累積性異常的期間不產生檔案。
 
-## 部署驗證（--selftest / --debug-dump）
+## 部署驗證
 
-換一台主機部署前，建議先跑：
+早期版本有獨立的 `--selftest`／`--debug-dump` console 旗標，隨批次 console 專案於 Phase 5
+退場（`docs/WEB-SCHEDULER-PLAN.md` §1.5）一併移除，對應的驗證方式改為：
 
-```
-LogForesight.exe --selftest
-```
-
-不需要設定檔、不呼叫 AI、不讀真實 Event Log、不寫 history，注入合成事件跑完整的規則層/趨勢層/
-慢速趨勢層/關聯層純函數邏輯，印出每一條規則、每個趨勢分支、每個關聯模式的「應命中/實際命中」
-比對結果，一分鐘內確認五層偵測邏輯在新環境正常，而不是等真的出事才發現某條規則沒動。
-exit code 0 = 全部通過。
-
-**驗證對象是內建種子，不是資料庫裡實際生效的規則**（Jsonl 後端於 2026-07-24 退役、規則改存
-資料庫後的刻意取捨）：`--selftest` **完全不連資料庫**——連線就可能在乾淨環境建出空的 `.db` 檔，
-違背「反覆執行不留任何副作用」這個承諾。輸出開頭會明白標示「驗證對象：內建種子（實際生效的
-規則在資料庫；selftest 不連 DB 以免留下建檔副作用）」，不會讓人誤以為驗的是線上規則。
-
-因此它驗的是**這個版本的程式內建了什麼規則**：規則驗證有無不合格項目、是否有規則被排序在
-前面的規則遮蔽（永遠不會命中）、推導出的 Security 稽核 watchlist 是否涵蓋齊全、關聯層引用的
-事件 ID 是否都存在於種子規則表。要驗證「你改過的規則」有沒有問題，走 Web 規則維護頁的
-儲存前驗證（見下方「規則庫與抑制設定」），那一層擋的才是實際生效的內容。
-
-驗證期需要看到完整 prompt 與 AI 原始回應（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
-Log」章節）時，加上 `--debug-dump`：
-
-```
-LogForesight.exe --debug-dump
-```
-
-每次 AI 呼叫（含 JSON 重試的每次嘗試）會各輸出一個檔案到執行檔目錄的 `diag\`，驗證完可以直接
-刪除整個資料夾，平常執行不要加這個參數（會持續佔用磁碟空間）。
+- **內建規則的合法性**（有無不合格項目、是否有規則被排序在前面的規則遮蔽、推導出的 Security
+  稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：現在是
+  `LogForesight.Tests` 的自動化測試（`KnownIssueCatalogTests`、
+  `CorrelationAnalyzerRuleAlignmentTests`），換一台主機部署前跑 `dotnet test` 全綠即可，
+  比手動執行一次性 CLI 驗證更不容易被忘記跑。
+- **你改過的規則**（透過 Web 規則維護頁新增/修改）：儲存前一律經過 `RuleValidator`（見下方
+  「規則庫與抑制設定」），驗證不過直接拒絕寫入，不需要另外手動驗證。
+- **AI 呼叫的完整 prompt 與原始回應**（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
+  Log」章節）：Web「排程作業」頁排程設定卡的「AI 診斷傾印」開關（僅 AI 已設定時顯示），
+  開啟後下一次執行會把每次 AI 呼叫的完整內容輸出到資料根目錄的 `diag\`，驗證完記得關閉
+  （不會自動關閉，會持續佔用磁碟空間）。
 
 ## 規則庫與抑制設定
 
@@ -434,10 +419,8 @@ LogForesight.exe --debug-dump
 定案 10）。完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
 
-**初始化不必先跑批次（2026-07-31 起）**：Web 站台啟動時也會冪等初始化規則庫
-（`rules` blob 不存在才寫入內建種子，已存在只載入不覆寫），全新環境即使還沒
-執行過批次 `LogForesight.exe`，`/admin/rules` 也能正常使用——批次與 Web 各自
-獨立、誰先啟動都行，見 docs/WEB-SPEC.md §9.7。
+**Web 站台啟動時會冪等初始化規則庫**（`rules` blob 不存在才寫入內建種子，已存在只載入不覆寫），
+全新環境開站即可直接使用 `/admin/rules`，不需要任何額外步驟，見 docs/WEB-SPEC.md §9.7。
 
 ### 維護 SOP：走 Web 規則維護頁
 
@@ -451,17 +434,17 @@ LogForesight.exe --debug-dump
    Windows 填來源比對＋Event ID；Linux 填 Program 比對＋訊息子字串（或正規化事件名）。
    平台與 `Origin` 同屬身分欄位，建立後不可變更。
 3. 停用規則：清單上直接切換 `Enabled`，不必刪除（保留紀錄才查得回歷史）。
-4. **儲存前後端都會跑規則驗證**（欄位合格、遮蔽偵測、關聯層事件 ID 覆蓋——與 `--selftest`
-   共用位於 Core 的同一套驗證邏輯），驗證不過會拒絕儲存並逐條列出問題。這一層擋的就是
-   實際生效的內容，所以改完**不需要**再跑 `--selftest` 確認（後者驗的是程式內建種子，見上節）。
+4. **儲存前後端都會跑規則驗證**（欄位合格、遮蔽偵測、關聯層事件 ID 覆蓋，`RuleValidator`），
+   驗證不過會拒絕儲存並逐條列出問題。這一層擋的就是實際生效的內容，改完不需要另外跑
+   任何驗證步驟。
 
-批次端另提供 `--import-rules`（匯入程式新版內建規則）CLI 指令，見下面章節；
+規則頁本身也是「內建規則有更新時匯入新版種子」的入口（見下面章節）；
 主機級抑制的維護入口是 Web `/admin/rules` 的「告警抑制」分頁（見下方章節）。
 
 ### 已知限制與注意事項
 
-- 想微調某條 `builtin` 規則的內容（改門檻、改處置文字）？**不要直接改那條**——程式改版後的
-  `--import-rules --overwrite-builtin` 可能會覆蓋回去（見下）。正確做法：把該條停用，
+- 想微調某條 `builtin` 規則的內容（改門檻、改處置文字）？**不要直接改那條**——程式改版後若在
+  規則頁勾選「覆蓋已修改的內建規則」套用升級，可能會覆蓋回去（見下）。正確做法：把該條停用，
   複製一條改成 `custom-` 開頭的新規則再修改。（規則維護頁的「回復預設」可把改壞的 builtin
   規則還原成原廠內容，含前後對照確認。）
 - 規則的比對順序＝清單順序（第一個命中的規則生效）；儲存時的遮蔽偵測會警告「永遠不會被
@@ -471,28 +454,28 @@ LogForesight.exe --debug-dump
 - **停用規則不會讓對應事件從趨勢層/關聯層的偵測中消失**（只是不再有規則命中的分類與知識庫
   說明），這是刻意設計，見 docs/RULES-PLAN.md 的語意邊界說明。
 
-### 匯入程式內建的新規則／更新（`--import-rules`）
+### 匯入程式內建的新規則／更新
 
-程式改版後若內建規則有新增或修訂，啟動時會提示「內建規則有更新（vX→vY）」。要套用：
+程式改版後若內建規則有新增或修訂，`/admin/rules` 規則維護頁頂端會出現橫幅提示「內建規則有更新
+（vX → vY）」。要套用：
 
-```
-LogForesight.exe --import-rules                          # 預覽：列出將新增/更新/略過/衝突的規則，不寫檔
-LogForesight.exe --import-rules --apply                  # 套用：新增缺少的 builtin 規則
-LogForesight.exe --import-rules --apply --overwrite-builtin   # 連同「內容被程式更新過」的既有 builtin 規則一併覆蓋
-```
+1. 按橫幅上的「預覽差異」，對話框會列出將新增/更新/略過/衝突的規則清單，不勾選「覆蓋已修改的
+   內建規則」時只會新增缺少的 builtin 規則。
+2. 需要連同「內容被程式更新過」的既有 builtin 規則一併覆蓋，勾選「覆蓋已修改的內建規則」——
+   預覽會即時重新整理，確認清單無誤後按「套用」。
 
-你自訂的 `custom` 規則永遠不會被這個指令碰到；`--overwrite-builtin` 覆蓋時也會保留你對該條
-`Enabled` 的設定（停用不會被悄悄打開）。
+你自訂的 `custom` 規則永遠不會被這個流程碰到；勾選覆蓋時也會保留你對該條 `Enabled` 的設定
+（停用不會被悄悄打開）。
 
 > **既有部署升級到 EventLogReader 版（seed v2）的 SOP**：seed v2 新增了 Defender/RDP 規則。
-> 規則庫仍停在 seed v1 的主機換上新執行檔後，啟動會提示「頻道已啟用但規則表沒有對應規則」
-> ——依序執行 `--import-rules`（預覽 v1→v2 差異）→ `--import-rules --apply`（補上 Defender/RDP
-> 規則）→ `--selftest`（exit code 0 即完成）。**未匯入前的行為是誠實申報的**：Defender/RDP 的
-> Information 等級事件不會被收集（沒有 watchlist），啟動時會警告並在當日申報，不會靜默漏偵測。
+> 規則庫仍停在 seed v1 的主機升級後，分析執行會提示「頻道已啟用但規則表沒有對應規則」——
+> 到規則頁按橫幅提示的「預覽差異」→「套用」補上 Defender/RDP 規則即可。**未匯入前的行為是
+> 誠實申報的**：Defender/RDP 的 Information 等級事件不會被收集（沒有 watchlist），執行時會
+> 警告並在當日申報，不會靜默漏偵測。
 >
-> **升級到 Linux 雙平台版（seed v4）的 SOP 完全相同**：`--import-rules`（預覽 v3→v4 差異）→
-> `--import-rules --apply`（補上 17 條 Linux 規則）→ `--selftest`。Linux 規則新增後不影響任何
-> Windows 主機的行為（規則面按主機的 `Os` 欄位分流，既有主機一律是 windows）。
+> **升級到 Linux 雙平台版（seed v4）的 SOP 完全相同**：規則頁「預覽差異」（v3→v4）→「套用」
+> 補上 17 條 Linux 規則。Linux 規則新增後不影響任何 Windows 主機的行為（規則面按主機的 `Os`
+> 欄位分流，既有主機一律是 windows）。
 
 ### 主機級告警抑制
 
@@ -503,7 +486,7 @@ LogForesight.exe --import-rules --apply --overwrite-builtin   # 連同「內容�
 **抑制只關掉通知與風險升級，事件仍會照常聚合、命中規則、寫入歷史**——這樣才能在體檢報告與
 管理頁看到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的
 永久盲區。到期天數可省略（永久生效直到手動解除）；到期後不會自動清理，只是恢復告警，
-執行時 console 會提示。抑制設定與規則同樣存在資料庫（`lf_blobs` 的 `suppressions` key）。
+執行時會在分析輸出提示。抑制設定與規則同樣存在資料庫（`lf_blobs` 的 `suppressions` key）。
 
 ## NetIQ 主機清單
 
@@ -536,18 +519,17 @@ Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索�
 開發機要對真實 Sentinel 試掃時，在 Web 的 appsettings 設 `Netiq:DiscoveryClient=Real` 即可
 （值域 `Auto`（預設，依環境）／`Stub`／`Real`；正式環境設 `Stub` 會被啟動驗證擋下）。
 
-### NetIQ 事件取數 API 驗證（`--netiq-probe`，2026-07-24 新增）
+### NetIQ 事件取數 API 驗證（NetIQ 維護頁「診斷」分頁）
 
 多主機集中分析要從 Sentinel 取事件（docs/NETIQ-API-PLAN.md），實作前需要先用真實環境跑一輪
 驗證——公開的 Sentinel REST API 文件沒有提供事件查詢結果頁的確切 JSON 結構範例，欄位對應、
 IP 篩選批次上限、時區基準等都必須用真實輸出核對，不能憑文件猜。
 
-```
-LogForesight.exe --netiq-probe    # 對已設定且啟用的 Sentinel 逐一跑 13 項小規模驗證查詢
-
-# 加上樣本主機可多跑第二輪的主機歸屬鍵／頻道覆蓋／dt 邊界／Linux 欄位核對（兩個參數都可省略）
-LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
-```
+早期版本以 `--netiq-probe` CLI 旗標執行，隨批次 console 專案於 Phase 5 退場
+（docs/WEB-SCHEDULER-PLAN.md §1.5）一併移除；相同的驗證查詢已 Web 化，見「系統管理 > NetIQ
+維護」頁的「診斷」分頁：選一台已設定的 Sentinel、選填樣本 IP（Windows／Linux 各一），按
+「執行診斷」即可跑同一組小規模驗證查詢（13 項；有樣本 IP 時另跑主機歸屬鍵／頻道覆蓋／
+dt 邊界／Linux 欄位核對）。
 
 輸出可直接複製貼回對話：含每台 Sentinel 的原始事件 JSON（用於核對欄位對應）、`dt` 時間邊界
 比對提示（印絕對時間，可在 Web UI 重現同一段區間）、不同 `pgsize` 的分頁耗時、IP 篩選批次大小
@@ -579,7 +561,7 @@ LogForesight.exe --netiq-probe --sample-ip 10.1.2.34 --sample-linux-ip 10.1.2.56
 沒有真實 probe 樣本可依據），含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構。
 
 **機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**（2026-07-29，
-`LogForesight/Service/`）：本機分析結束後接機房迴圈，逐日、批次（≤50 台 IP）
+`LogForesight.Core/Service/`）：本機分析結束後接機房迴圈，逐日、批次（≤50 台 IP）
 向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務；只支援 Windows 主機（Linux 主機
 明確標示「尚未支援」而不是靜默略過）；當日續跑（凌晨排程跑到一半掛掉、白天重跑只補未完成
 的主機/日期）靠既有的缺漏日回補機制，不是另外設計的功能。2026-07-30 起
@@ -621,11 +603,11 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 快照存於執行檔目錄的 `permission_snapshot.json`，每次執行讀取目前狀態、與快照比對出異動、
 再覆寫快照。首次執行沒有快照可比對，只建立基準、不產生告警。
 
-發現異動時 console 印出洋紅色告警框（與 Critical/頻率異常的紅/黃色區隔），
+發現異動時執行輸出印出洋紅色告警框（與 Critical/頻率異常的紅/黃色區隔），
 並輸出 `export\{today}_權限異動.txt`，不含 AI 分析——
 這類發現本身已經是明確事實陳述，不需要 AI 解讀，也讓這個檢查完全不依賴 AI 服務是否可用。
 
-**被異動項目明細（人工防護層）**：console 與報告檔的最後都會逐項列出每一筆異動的
+**被異動項目明細（人工防護層）**：執行輸出與報告檔的最後都會逐項列出每一筆異動的
 「對象／異動類型／異動前／異動後」對照，並附上確認提示
 （「此異動是否為您或授權人員的操作？」）。這是獨立於自動檢查之外的一層人工防護——
 自動檢查負責「發現有異動」，明細清單讓使用者能逐筆判斷「這筆異動是否正常」，
@@ -697,11 +679,13 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 
 ## 使用方式
 
-```
-LogForesight.exe
-```
+分析執行由 Web 觸發，兩種方式擇一或並用（見「系統管理 > 排程作業」頁）：
 
-只有一種執行方式，程式自動處理所有情境，**第一次執行就可用**：
+- **排程**：設定每日執行窗口（最多 4 組，支援跨午夜），到點自動觸發一次完整執行。
+- **立即執行**：頁面按鈕手動觸發，範圍可選全部主機、網段範圍（僅 NetIQ 主機），或到主機詳情頁
+  針對單一主機觸發。
+
+兩者都呼叫同一個 `AnalysisOrchestrator`，行為完全一致、**第一次執行就可用**：
 
 1. **清理**：刪除超過 120 天的歷史紀錄
 2. **找缺漏**：檢查有哪些日子沒有紀錄
@@ -722,9 +706,10 @@ LogForesight.exe
   規則與趨勢告警照常運作：規則命中「重大」旗標 → 風險「高」+ 紅色橫幅；
   High 問題或頻率異常 → 風險「中」+ 黃色提醒。
 
-發現高風險或「重大」事件時，console 會以紅色橫幅提醒並列出命中的問題與建議；
+發現高風險或「重大」事件時，執行輸出會以紅色橫幅提醒並列出命中的問題與建議；
 頻率異常（首次出現、頻率上升、總量突增）則以黃色列出比對數字。
-執行結束會輸出**結果總表**：每個日期的風險等級與對應報告檔，一眼看到該打開哪個檔案。
+執行結束會輸出**結果總表**：每個日期的風險等級與對應報告檔，於 Web「執行監控」頁可直接查看
+（點日期看該天每台主機的狀態），一眼看到該打開哪個檔案。
 
 ## 風險報告（export/{日期}_{類別}.txt）
 
@@ -778,12 +763,14 @@ Other 類別內的事件本來就是同一個故事該一起看，跨類別的�
 
 ### 排程（正式環境）
 
-用 Windows 工作排程器每天固定時間執行一次：
+早期版本用 Windows 工作排程器另外排一個批次 exe；批次 console 專案已隨 Phase 5 退場
+（docs/WEB-SCHEDULER-PLAN.md §1.5），**現在排程內建在 Web 站台本身**，不需要另外設定
+schtasks 或安裝其他執行檔：
 
-```
-schtasks /create /tn "LogForesight-DailyAnalysis" ^
-  /tr "C:\path\to\LogForesight.exe" /sc daily /st 07:00 /ru SYSTEM
-```
+1. Web 站台以 Windows 服務或 IIS 常駐執行（見下方「Web 部署」）。
+2. 到「系統管理 > 排程作業」頁，設定執行窗口（Start 到點觸發一次完整執行，End 到點對進行中
+   的執行發出優雅停止，最多 4 組，支援跨午夜），勾選「啟用排程」並儲存。
+3. 需要立即跑一次（驗證部署、補跑缺漏日）時，同頁按「立即執行」手動觸發，不受時間窗限制。
 
 ### 權限
 
@@ -792,7 +779,7 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 
 ### 設定檔（appsettings.json / nlog.config）
 
-執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端（`--selftest` 不受此限，設定檔壞掉仍可執行）：
+執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端：
 
 ```json
 {
@@ -843,8 +830,8 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 | `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
 | `Analysis.CheckupIntervalDays` | `7` | 體檢間隔天數（2026-07-20 由固定星期六改為 due-date 輪巡）；距上次體檢達此天數即到期，錯過會在下次執行自動補跑，不會消失 |
 | `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
-| `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。批次與 Web 兩端須設相同值。詳見 docs/WEB-SPEC.md §10.5 |
-| `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在）。批次與 Web 填同一路徑共用資料 |
+| `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
+| `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控 |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
@@ -852,8 +839,9 @@ schtasks /create /tn "LogForesight-DailyAnalysis" ^
 
 ## Web 部署（docs/HISTORY.md P1-3）
 
-Web（`LogForesight.Web`）與批次（`LogForesight.exe`）通常部署在同一台伺服器：批次夜間跑分析寫入資料庫，
-Web 提供查詢介面；兩者的 `Storage:*` 設定必須指向同一份資料（見上方「設定檔」表格）。
+**只需要部署 `LogForesight.Web` 一個執行檔**——早期版本另需與批次 `LogForesight.exe` 部署在
+同一台伺服器並共用資料目錄，批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md §1.5），
+現在 Web 站台本身就是分析執行與查詢介面的唯一部署單位。
 
 ### 以 Windows 服務執行
 
@@ -868,8 +856,7 @@ sc description LogForesightWeb "LogForesight 查詢介面（Web）"
 sc start LogForesightWeb
 ```
 
-服務帳號需要對 `Storage:DataRoot`（含批次資料庫檔案，若用 Sqlite）與自己的 `logs\` 目錄有讀寫權限；
-若批次與 Web 用不同服務帳號執行，記得兩邊都要對共用的資料目錄有權限。
+服務帳號需要對 `Storage:DataRoot`（含資料庫檔案，若用 Sqlite）與自己的 `logs\` 目錄有讀寫權限。
 
 ### HTTPS（Kestrel）
 
@@ -904,7 +891,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 | `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
 | `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
-| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，且**批次與 Web 必須設同一把**，兩邊才讀得懂彼此寫入的密文 |
+| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
 
@@ -913,23 +900,24 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可，不需要 IIS 反向代理：只開放 Web 站台埠號（如 8443）
 給實際會用到的內網範圍，不對外網開放。
 
-### 目錄配置（與批次同機）
+### 目錄配置
 
 ```
 D:\LogForesight\
-├─ Batch\                  ← LogForesight.exe 與其 appsettings.json（含 logforesight.db，若用 Sqlite）
-│   └─ export\             ← 風險報告全文
 └─ Web\                    ← LogForesight.Web.exe 與其 appsettings.json
+    ├─ logforesight.db     ← Storage:DataRoot 下的 SQLite 檔（若用 Sqlite；留空預設為執行檔目錄）
+    ├─ export\              ← 風險報告全文
+    └─ logs\                ← 診斷檔案 log（nlog.config）
 ```
 
-Web 的 `Storage:DataRoot` 指向 `Batch\` 目錄（同一份 `Storage:Type`/`ConnectionString`），
-才讀得到批次寫入的分析結果；Web 自己的 `logs\`／`nlog.config` 留在 `Web\` 目錄下，不與批次共用。
+單一部署單位，`Storage:DataRoot` 留空即可（預設為執行檔目錄），不需要另外規劃第二個目錄
+給批次程式使用。
 
 ## 正式環境穩定性設計
 
 | 機制 | 說明 |
 |---|---|
-| **Polly 網路重試** | 連線失敗、HTTP 錯誤、逾時、**空回應**皆自動重試（預設 3 次、指數退避），涵蓋模型剛重啟或瞬間過載等暫時性失敗；console 會印出每次重試 |
+| **Polly 網路重試** | 連線失敗、HTTP 錯誤、逾時、**空回應**皆自動重試（預設 3 次、指數退避），涵蓋模型剛重啟或瞬間過載等暫時性失敗；每次重試皆記錄於執行輸出 |
 | **停用連線池** | `SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.Zero`，每次呼叫都用全新連線。從實際 log 的時間戳確認：「The response ended prematurely.」幾乎都發生在前一次呼叫剛結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，用戶端還不知道就拿去重用」的典型特徵。**曾經以為是 HTTP/2 協商問題、加了固定 HTTP/1.1 版本，但實測沒解決**，故已排除該假設並移除；每次呼叫間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的握手成本相對生成時間微乎其微，直接停用連線池換取穩定性更划算 |
 | **抑制退化重複輸出** | `FrequencyPenalty`/`PresencePenalty`（預設 0.8）+ `ExtraRequestFields` 的原生 `repeat_penalty`（1.3）送給模型，抑制生成過程中卡進重複迴圈的退化輸出（實際觀察到摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類重複垃圾）。從 0.3 一路調到 0.8 仍未完全根除，屬於持續觀察中的調校項目，不是保證解 |
 | **依用途分開 token 上限** | 終端 JSON 較短的呼叫（每日總覽、前置掃描）用 `Ai.MaxTokens`（預設 1536，故意抓緊），篇幅天生較長的深入分析用 `Ai.DeepDiveMaxTokens`（預設 8192）。單一全域上限會逼你在「精簡呼叫退化時拖很久才觸頂」和「深入分析被截斷」之間二選一，拆開後兩邊都能設到剛好 |
@@ -940,19 +928,19 @@ Web 的 `Storage:DataRoot` 指向 `Batch\` 目錄（同一份 `Storage:Type`/`Co
 | **System prompt 明確禁止前言** | 兩個系統提示都要求「直接以 `{` 開始輸出，不要有任何前言、推理過程或說明文字」，減少 MoE 模型在正式輸出前先寫一段推理文字、把 `max_tokens` 額度耗在 JSON 本體之外的情況 |
 | **失敗降級** | 網路層與 JSON 層重試皆耗盡仍失敗時，當日降級為統計模式紀錄（`AiAnalyzed=false`），規則與趨勢告警照常運作，不會整天沒有紀錄；若有拿到內容只是格式不合格，會保留原文（截斷）供人工參考，不遺失資訊 |
 | **結構化錯誤協定** | AI 呼叫回傳 `AiResponse { Success, Content, Error }` / `AiJsonResult<T> { Success, Value, RawContent, Error, Attempts }`，錯誤與正常內容分離，不靠字串前綴判斷 |
-| **單一執行個體** | 具名 Mutex（`Global\LogForesight`）：排程與手動執行重疊時後啟動者直接退出，避免兩個程序同時寫歷史檔造成損毀 |
-| **Exit code** | 成功 0、失敗 1，且全域 try/catch 保證失敗有訊息；工作排程器可用 LastTaskResult 監控 |
+| **單一執行個體** | 行程內以 `SchedulerRunState` 做單一執行 gate（排程與立即執行共用，重疊時後者直接拒絕、不排隊），另保留具名 Mutex（`Global\LogForesight`）防未來任何第二行程誤配置指向同一 `DataRoot` |
+| **執行結果可見** | 每次執行的成功/失敗與訊息寫入 `BatchRun` 紀錄（「執行監控」頁可查完整歷史），排程狀態卡另外顯示「上次執行」的即時結果，不需要翻 log 檔才知道有沒有跑成功 |
 | **無主控台相容** | 排程背景執行時 `Console.OutputEncoding` 設定失敗自動忽略，不會擋下程式 |
 | **時鐘回撥容錯** | Event Log 倒序掃描多掃 1 小時緩衝才停止，時間同步回撥造成的事件亂序不會漏抓 |
-| **歷史紀錄併發保護** | webdata 的整份 JSON 內容存於 `lf_blobs`，`UpdatedAt` 為樂觀鎖權杖；批次與 Web 併發寫入時，帶著過期內容的一方會被資料庫拒絕並自動重試，不會靜默蓋掉對方剛寫入的內容 |
-| **診斷檔案 Log（NLog）** | console 訊息不夠判斷問題細節時（重試原因、AI 回覆內容、完整例外堆疊），到 `logs\logforesight.log` 查——詳見下方獨立章節 |
+| **歷史紀錄併發保護** | webdata 的整份 JSON 內容存於 `lf_blobs`，`UpdatedAt` 為樂觀鎖權杖；排程與立即執行／多個管理者操作併發寫入時，帶著過期內容的一方會被資料庫拒絕並自動重試，不會靜默蓋掉對方剛寫入的內容 |
+| **診斷檔案 Log（NLog）** | 執行輸出不夠判斷問題細節時（重試原因、AI 回覆內容、完整例外堆疊），到 `logs\web.log` 查——詳見下方獨立章節 |
 
 ## 診斷用檔案 Log（NLog）
 
-console 輸出是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位、或程式意外中斷但排程執行沒人在看 console）時常常不夠。`logs\logforesight.log`（執行檔同目錄）補這塊，記錄比 console 更細的診斷資訊：
+執行輸出（執行監控頁、排程狀態卡）是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位）時常常不夠。`logs\web.log`（執行檔同目錄）補這塊，記錄比執行輸出更細的診斷資訊：
 
 - 每次 AI 呼叫的耗時、回應長度、重試原因
-- **JSON 解析/內容檢查失敗時的具體診斷**：解析失敗會記錄回覆預覽（頭尾各一截）；內容檢查沒過（如摘要超長、必填欄位空白）會記錄**解析出的結構化物件本身**，才看得出究竟是哪個欄位不合理——這是 console 完全沒有的資訊
+- **JSON 解析/內容檢查失敗時的具體診斷**：解析失敗會記錄回覆預覽（頭尾各一截）；內容檢查沒過（如摘要超長、必填欄位空白）會記錄**解析出的結構化物件本身**，才看得出究竟是哪個欄位不合理——這是執行輸出完全沒有的資訊
 - 每日分析的完整結果（風險等級、各項計數、耗時、報告檔路徑）
 - 頻率異常、關聯訊號、權限異動的完整清單
 - 未預期例外的**完整堆疊**（含 `AppDomain.UnhandledException` 兜底，背景執行緒的例外也不會無聲消失）
@@ -973,20 +961,17 @@ console 輸出是給人即時看的摘要，遇到需要深入排查的問題（
 
 只寫 `Info` 以上到檔案（`Debug` 用於更細的追蹤，預設不輸出）。`Warn` 是重試/降級等需要留意但已有備援處理的情況，`Error`/`Fatal` 是分析失敗或程式中斷。要排查問題時建議直接找 `WARN`/`ERROR`/`FATAL` 開頭的行。
 
-### 目錄一定寫在執行檔目錄，不靠 NLog 自己判斷
+### 目錄解析交給 ASP.NET Core 的 NLog 整合
 
-`nlog.config` 內建的 `${basedir}` 是 NLog 自己判斷的基準目錄，跟專案其他地方（`logforesight.db`、
-`export\`、`appsettings.json`）統一使用的 `AppContext.BaseDirectory` 不是同一套邏輯，
-不同啟動方式（捷徑、排程工作、工作目錄不同）可能讓兩者兜不上。`Program.cs` 啟動時
-**明確**用 `AppContext.BaseDirectory` 組出 `nlog.config` 的完整路徑載入，並強制覆寫 `logDir`
-變數，不依賴 NLog 自動搜尋設定檔或判斷基準目錄。
+`nlog.config` 的 `${basedir}` 由 `NLog.Web.AspNetCore`（`builder.Host.UseNLog()`）正確解析為
+本站台的內容根目錄，不受服務啟動方式（SCM、`dotnet run`、工作目錄不同）影響——這正是這個
+套件存在的目的，不需要像早期批次 console 版本那樣手動用 `AppContext.BaseDirectory` 組路徑
+覆寫（該手動兜底邏輯隨批次專案於 Phase 5 一併退場，docs/WEB-SCHEDULER-PLAN.md §1.5）。
 
-啟動時也會自我檢查並印到 console：成功會顯示 log 檔案完整路徑，失敗會印出明確警告
-（`⚠ 診斷 log 未寫入 ...`），不用再靠猜的。`nlog.config` 也開啟了
-`internalLogToConsole="true"`——NLog 自己的設定解析錯誤（例如版本不相容的屬性）會直接印在
-console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLog 6.x 的 `FileTarget` 已不支援
-`concurrentWrites` 屬性，設定解析會拋例外，已從設定檔移除（本程式用具名 Mutex 保證同時間
-只有一個執行個體，本來就不需要這個屬性）。
+`nlog.config` 開啟了 `internalLogToConsole="true"`——NLog 自己的設定解析錯誤（例如版本不
+相容的屬性）會直接印在 console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLog 6.x 的
+`FileTarget` 已不支援 `concurrentWrites` 屬性，設定解析會拋例外，已從設定檔移除（本程式用
+具名 Mutex 保證同時間只有一個執行個體，本來就不需要這個屬性）。
 
 ### llama.cpp / KoboldCpp
 
@@ -1017,7 +1002,9 @@ console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLo
 - **AI 角色轉換（2026-07-20 已完成）**：AI 從分析引擎轉為白話翻譯層，規則命中問題改查靜態知識庫，
   完整設計與階段記錄見 [docs/HISTORY.md](docs/HISTORY.md)；這是多主機規模下 AI 時間預算
   能否成立的前提，詳見 `docs/HISTORY.md` 的時間預算估算。
-- **通知管道**：目前只寫 console。排程執行時沒人盯著畫面，建議下一步接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位為第二層縱深防禦，即時性要求不如第一層監控，見 `docs/HISTORY.md`。
+- **通知管道**：目前只在 Web「執行監控」頁與排程狀態卡顯示，需要主動查看才會發現。排程執行時
+  沒人盯著畫面，建議下一步接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位
+  為第二層縱深防禦，即時性要求不如第一層監控，見 `docs/HISTORY.md`。
 - **EventLogReader 讀取新式頻道＋Operational 頻道擴充（2026-07 已完成）**：新增以
   `EventLogReader`（`System.Diagnostics.Eventing.Reader`）讀取 `Microsoft-Windows-*/Operational`
   新式頻道——classic `System.Diagnostics.EventLog` 只能讀傳統三大日誌。預設已納入
