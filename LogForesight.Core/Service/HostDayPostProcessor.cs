@@ -3,6 +3,21 @@ using NLog;
 namespace LogForesight.Core.Service;
 
 /// <summary>
+/// 缺漏日計算：本機與 NetIQ 路徑都要「回望 N 天，挑出還沒有分析紀錄的日期」，
+/// 邏輯完全相同，只有回望天數的決定方式不同（本機視是否為首次執行決定天數，
+/// NetIQ 固定用管理者設定的回補窗口）。
+/// </summary>
+internal static class MissingDateFinder
+{
+    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays) =>
+        Enumerable.Range(1, lookbackDays)
+            .Select(offset => DateTime.Today.AddDays(-offset))
+            .Where(date => !store.HasRecord(date))
+            .OrderBy(date => date)
+            .ToList();
+}
+
+/// <summary>
 /// 單一主機日分析完成後的共通後續處理：問題案件掛接、風險 log 暫存寫入、AI 呼叫計數——
 /// 本機路徑（<see cref="AnalysisOrchestrator"/>）與 NetIQ 機房路徑（<see cref="NetiqPipelineService"/>）
 /// 逐日/逐主機分析完成後都要做同一組動作，任一步失敗都不讓這個主機日的分析結果作廢

@@ -459,11 +459,7 @@ public class AnalysisOrchestrator
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
-        var missingDates = Enumerable.Range(1, lookbackDays)
-            .Select(offset => DateTime.Today.AddDays(-offset))
-            .Where(date => !historyService.HasRecord(date))
-            .OrderBy(date => date)
-            .ToList();
+        var missingDates = MissingDateFinder.Find(historyService, lookbackDays);
 
         if (missingDates.Count == 0)
         {

@@ -176,11 +176,7 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = Enumerable.Range(1, lookback)
-                .Select(offset => DateTime.Today.AddDays(-offset))
-                .Where(date => !store.HasRecord(date))
-                .OrderBy(date => date)
-                .ToList();
+            var missingDates = MissingDateFinder.Find(store, lookback);
 
             if (missingDates.Count == 0)
             {
