@@ -149,6 +149,12 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
 
 ## Seed／匯入政策
 
+> **修訂（2026-08-04，console 退場後）**：下文的 `--import-rules`／`--apply`／
+> `--overwrite-builtin` CLI 已隨批次 console 專案於 Phase 5 移除
+> （docs/WEB-SCHEDULER-PLAN.md §1.5），現行入口是 **Web 規則維護頁的「內建規則升級」
+> 橫幅**（預覽差異 modal＋「覆蓋已修改的內建規則」勾選＝同一套語意，分類/套用邏輯
+> 在 Core 純函數 `RuleImportPlanner`）。本節描述的**合併語意逐條不變**，原文保留。
+
 **初次部署寫入、後續手動匯入**（已與使用者確認的決定）：
 
 - `rules.json` 不存在時，`RuleBootstrapper` 寫入完整內建種子，僅此一次。

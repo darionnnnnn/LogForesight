@@ -4,8 +4,9 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// `--import-rules` 的合併邏輯（見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」）：
-/// builtin 預設只補缺，內容有異動需要 --overwrite-builtin 才覆蓋且保留使用者的 Enabled 選擇，
+/// 內建規則升級的合併邏輯（見 docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」；入口是
+/// Web 規則維護頁的升級橫幅，早期的 `--import-rules` CLI 已隨 Phase 5 退場）：
+/// builtin 預設只補缺，內容有異動需要「覆蓋已修改的內建規則」才覆蓋且保留使用者的 Enabled 選擇，
 /// custom 規則一律不受匯入影響，Id 相同但 Origin 不一致視為衝突不處理。
 /// <see cref="RuleImportPlanner.BuildPlan"/> 是純函數，與儲存後端無關。
 /// </summary>

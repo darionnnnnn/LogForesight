@@ -83,7 +83,9 @@ MessagePatternsMaxCount    = 8
   現行 `builtin-` Id 不動（等同隱含 windows），不做 `builtin-win-` 改名——Id 出貨永不改名。
 - `KnownIssueSeed.Version` 3→4：新增 §8 的 Linux 種子。既有部署升級 SOP 與 seed v2 前例完全相同：
   啟動提示 → `--import-rules` 預覽 → `--apply` → `--selftest`。
-- probe 之後若需修訂 pattern 字串：seed v4→v5 再走一次 `--import-rules`，機制既有、零新設計。
+  （**修訂 2026-08-04**：CLI 已隨 console 退場，現行 SOP＝Web 規則維護頁升級橫幅的
+  「預覽差異」→「套用」，語意不變，見 docs/WEB-SCHEDULER-PLAN.md §1.5。）
+- probe 之後若需修訂 pattern 字串：seed v4→v5 再走一次同一套升級流程，機制既有、零新設計。
 
 ## 2. 簽章鍵與資料模型
 

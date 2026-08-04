@@ -10,7 +10,7 @@ namespace LogForesight.Tests;
 /// 規則維護（docs/WEB-SPEC.md §9.7）。
 ///
 /// 釘住 2026-07-21 定案的四層保護：builtin 可停用、可修改、**不可刪除**、可回復預設；
-/// custom 全權。以及「儲存前驗證擋壞資料」——把 --selftest 的檢查內建進儲存路徑。
+/// custom 全權。以及「儲存前驗證擋壞資料」——把規則驗證（RuleValidator）內建進儲存路徑。
 /// </summary>
 public class RuleAdminServiceTests
 {
@@ -136,7 +136,7 @@ public class RuleAdminServiceTests
 
         Assert.True(result.IsModified);
         Assert.Equal("改過的說明", _rules.Content.Rules.Single().Description);
-        // Origin 不可被修改——它決定這條規則會不會被 --import-rules 覆寫
+        // Origin 不可被修改——它決定這條規則會不會被「內建規則升級」覆寫
         Assert.Equal("builtin", _rules.Content.Rules.Single().Origin);
     }
 

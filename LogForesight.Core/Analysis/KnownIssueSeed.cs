@@ -2,14 +2,14 @@ namespace LogForesight;
 
 /// <summary>
 /// 內建規則種子：初次部署時寫入外部儲存（DB blob，key=rules）的起始內容，也是
-/// <see cref="KnownIssueCatalog.Rules"/> 在未呼叫 Initialize 前的預設值（單元測試/selftest 降級路徑）。
-/// 這裡不再是唯一的規則來源——使用者可在 rules.json 停用/新增規則；`--import-rules` 用
-/// <see cref="Version"/> 判斷是否有新版種子內容可匯入。Id 一經出貨永不改名（見 docs/RULES-PLAN.md）。
+/// <see cref="KnownIssueCatalog.Rules"/> 在未呼叫 Initialize 前的預設值（單元測試降級路徑）。
+/// 這裡不再是唯一的規則來源——使用者可在規則庫停用/新增規則；Web 規則維護頁的「內建規則升級」
+/// 用 <see cref="Version"/> 判斷是否有新版種子內容可匯入。Id 一經出貨永不改名（見 docs/RULES-PLAN.md）。
 /// </summary>
 public static class KnownIssueSeed
 {
     /// <summary>種子版本：每次調整 CreateRules() 的內容（新增規則、修訂知識庫文字）就遞增，
-    /// `--import-rules` 依此判斷 rules.json 是否落後於程式內建的種子。
+    /// Web 規則維護頁的「內建規則升級」依此判斷規則庫是否落後於程式內建的種子。
     /// v2（EventLogReader 遷移）：新增 Microsoft Defender 與 RDP TerminalServices 兩類 Operational
     /// 頻道的規則（見 docs/RULES-PLAN.md 與 README「監控的危險訊號清單」）。
     /// v3（docs/HISTORY.md #1，B1 三級化）：原 Severity=Critical 的 7 條規則改為
@@ -531,7 +531,7 @@ public static class KnownIssueSeed
 
         // ── Linux（docs/LINUX-RULES-PLAN.md，seed v4）──────────────────────
         // 比對走 Platform="linux" 的 ProgramPattern＋MessagePatterns 路（EventNamePattern 留空，
-        // 待 --netiq-probe 在真實環境確認 Sentinel 有無做事件正規化後補上，見規劃文件 §1.2/§8）。
+        // 待 NetIQ 診斷分頁的 probe 在真實環境確認 Sentinel 有無做事件正規化後補上，見規劃文件 §1.2/§8）。
         // ProgramPattern 沿用 SourcePattern 同樣的 Contains 語意，因此同一規則只精準對應
         // 一個實際的 syslog identifier（不像規劃草案表格把 su／sudo、chronyd／ntpd 等不同程式
         // 併成一列）——分成獨立規則，避免用寬鬆子字串（如 "su"）意外命中不相關的程式名稱。

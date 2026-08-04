@@ -234,6 +234,40 @@ console 專案除 `Program.cs`／csproj／`nlog.config`／`appsettings.json` 外
 
 ---
 
+## 全案體檢（2026-08-04，兩分支併入 dev 後逐項對照規劃重掃）
+
+體檢揪出並修正四類問題（合為 dev 上的體檢 commit）：
+
+1. **規劃缺漏——分支二第 6 步「WebAiService 協調」漏做**（唯一漏掉的規劃項）：
+   `_batchSettings = LoadBatchAiSettings(...) ?? settings.Ai;`——console 退場後
+   `LoadBatchAiSettings` 讀 `{DataRoot}\appsettings.json`，預設情況（DataRoot＝Web
+   自己的目錄）碰巧讀得到 Web 的 appsettings 所以能動，但部署面把 DataRoot 指到
+   獨立資料目錄時該檔不存在，AI 進階參數（逾時/ExtraRequestFields/懲罰參數）與
+   `UpdatedAt==null` 的 BaseUrl 退路會靜默退回型別預設值。補上後 `_batchSettings`
+   保證非 null（三處 `?.` 用法一併收斂），`Available` 與排程路徑的 `IsConfigured`
+   收斂到同一份設定來源。
+2. **覆蓋缺口——`SelfTestRunner.RunSentinelQueryChecks` 沒有對等測試**：該檢查
+   （真實種子規則表建出的 Sentinel filter 結構驗證）隨 console 刪除後就沒有任何
+   自動化驗證。移植為 `SentinelQueryBuilderTests` 檔尾的 4 個新測試（IP 批次與
+   generic 子句、Windows 事件 ID 可下推、基準 Security ID 反映在 rv40 子句、
+   MatchAllEventIds 不混入聯集）。
+3. **使用者可見的殘留**——`RuleBootstrapper` 的 UpdateHint 仍教使用者「可執行
+   --import-rules」（已刪除的 CLI）：改指 Web 規則維護頁的升級橫幅，
+   `RuleBootstrapperTests` 的字面斷言同步更新。
+4. **過時註解清理**（describing console/CLI 為現行狀態的註解，歷史事實陳述不動）：
+   `AnalysisOrchestrator`（類別頭注/RunScope/Args/Trigger/OrchestratorResult/全域
+   catch）、`IPromptDumper`（--debug-dump → AI 診斷傾印）、`SlowTrendAnalyzer`、
+   `KnownIssueSeed`、`IKnownIssueRuleStore`、`RuleBootstrapper`（含移除一段指涉
+   已刪 `--suppress` CLI 的重複 summary）、`SentinelClient`（欄位對應已定案）、
+   `RuleAdminServiceTests`／`RuleImporterTests`／`SentinelQueryBuilderTests` 檔頭。
+
+**體檢後的實機煙霧測試**（console 退場後 Web 首次冷啟動——DataRoot 預設值改變是
+本輪最大的執行環境改動）：全新環境啟動 → DataRoot 正確落在 Web 自己的輸出目錄、
+自動建 schema＋種子群組＋64 條規則、首次執行警告以新措辭正確顯示 → 清空 AI →
+「立即執行」全新 DB 的 120 天首次回補以統計模式 **8 秒完成**、逐日輸出「統計模式，
+AI 未設定」、體檢正確回報「未完成待補跑」、零 error → 狀態卡顯示「上次執行：成功
+（手動（svc-lfadmin），13:11）」、「AI 診斷傾印」正確隱藏 → AI 設定還原。
+
 ## 測試變化總計
 
 - 分支一新增：`AIServiceExtraRequestFieldsTests`（3）、`AiExtraFieldsLoaderTests`
@@ -241,9 +275,12 @@ console 專案除 `Program.cs`／csproj／`nlog.config`／`appsettings.json` 外
   `AppSettingsLoadTests` 新增 `IsConfigured` 3 案例（Theory）。
 - 分支二新增：`CorrelationAnalyzerRuleAlignmentTests`（8）。
 - 分支二移除：`RuleImporterRunContractTests`（3）。
-- 基線 1262 → 分支一合併後 1281 → 分支二合併後 **1286**，全綠。
+- 體檢新增：`SentinelQueryBuilderTests` 種子規則表結構性驗證（4，自
+  `RunSentinelQueryChecks` 移植）。
+- 基線 1262 → 分支一合併後 1281 → 分支二合併後 1286 → 體檢後 **1290**，全綠。
 
 ## Git 流程
 
 `feature/feedback-7`（項目 1~4）→ 併 `dev` → `feature/console-retirement`（項目 5，
-自併入後的 `dev` 開）→ 併 `dev`。依既有慣例，`dev` 驗證無誤後才併 `master`。
+自併入後的 `dev` 開）→ 併 `dev` → 全案體檢 commit（dev）。依既有慣例，
+`dev` 驗證無誤後才併 `master`。

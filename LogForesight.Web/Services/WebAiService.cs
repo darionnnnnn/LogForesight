@@ -15,8 +15,10 @@ namespace LogForesight.Web.Services;
 ///   2. 逾時獨立設短（互動情境，10 秒），與批次的 600 秒不同。
 ///   3. 輸出永遠由呼叫端以 textContent 呈現；AI 回傳的下鑽參數必須過白名單驗證才組連結。
 ///
-/// AI 位址／金鑰的事實來源是「系統管理 > 設定」頁（DB，2026-07-27 起），批次 appsettings 的
-/// Ai.BaseUrl 降為 DB 未設定時的退路；進階參數（Timeout/Retry/Tokens）仍讀批次 appsettings。
+/// AI 位址／金鑰的事實來源是「系統管理 > 設定」頁（DB，2026-07-27 起），appsettings 的
+/// Ai.BaseUrl 降為 DB 未設定時的退路；進階參數（Timeout/Retry/Tokens/ExtraRequestFields）
+/// 讀 {DataRoot} 下的 appsettings（舊部署殘留的批次版設定檔優先，讀不到退回 Web 自己的
+/// Ai 區段，見 <c>_batchSettings</c> 欄位註解）。
 /// </summary>
 public interface IWebAiService
 {
@@ -44,8 +46,15 @@ public class WebAiService : IWebAiService
     private readonly AiCacheStore _cache;
     private readonly ISystemSettingsStore _systemSettings;
 
-    /// <summary>批次 appsettings.json 的 Ai 區段（進階參數來源＋BaseUrl 退路）；讀不到為 null，啟動後不變</summary>
-    private readonly AiSettings? _batchSettings;
+    /// <summary>
+    /// AI 進階參數來源＋DB 未設定位址時的 BaseUrl 退路；啟動後不變。
+    /// 優先讀 {DataRoot}\appsettings.json 的 Ai 區段（既有部署升級後行為不變——批次 console
+    /// 專案已隨 Phase 5 退場，但舊部署的資料目錄可能還留著批次版設定檔），讀不到就退回
+    /// Web 自己的 Ai 區段（<see cref="WebAppSettings.Ai"/>，其 ExtraRequestFields 已由
+    /// AiExtraFieldsLoader 修正，見 Program.cs）——這也讓本類別的 Available 與排程路徑的
+    /// AiSettings.IsConfigured 收斂到同一份設定來源（docs/FEEDBACK-7-PLAN.md）。
+    /// </summary>
+    private readonly AiSettings _batchSettings;
 
     // 本類別是 Singleton，但 AI 位址／金鑰可在設定頁隨時改：每次取用時比對 DB 目前值，
     // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）
@@ -61,7 +70,7 @@ public class WebAiService : IWebAiService
     {
         _cache = cache;
         _systemSettings = systemSettings;
-        _batchSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot());
+        _batchSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot()) ?? settings.Ai;
 
         _interactiveClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
         {
@@ -80,10 +89,10 @@ public class WebAiService : IWebAiService
                 RetryCount = 1,          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
                 RetryDelaySeconds = 0,
                 JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
-                PresencePenalty = _batchSettings?.PresencePenalty,
-                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+                DeepDiveMaxTokens = _batchSettings.DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings.FrequencyPenalty,
+                PresencePenalty = _batchSettings.PresencePenalty,
+                ExtraRequestFields = _batchSettings.ExtraRequestFields
             });
         });
 
@@ -104,22 +113,22 @@ public class WebAiService : IWebAiService
                 RetryCount = 1,
                 RetryDelaySeconds = 0,
                 JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings?.DeepDiveMaxTokens ?? new AiSettings().DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings?.FrequencyPenalty,
-                PresencePenalty = _batchSettings?.PresencePenalty,
-                ExtraRequestFields = _batchSettings?.ExtraRequestFields
+                DeepDiveMaxTokens = _batchSettings.DeepDiveMaxTokens,
+                FrequencyPenalty = _batchSettings.FrequencyPenalty,
+                PresencePenalty = _batchSettings.PresencePenalty,
+                ExtraRequestFields = _batchSettings.ExtraRequestFields
             });
         });
     }
 
     /// <summary>
     /// 目前生效的 AI 位址。「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：
-    /// 前者退回批次 appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI——
+    /// 前者退回 appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI——
     /// 設定頁明講「留空會停用」，不能被退路悄悄接手。
     /// </summary>
     private string EffectiveBaseUrl(SystemSettings db) =>
         db.UpdatedAt == null
-            ? (_batchSettings?.BaseUrl ?? db.AiBaseUrl).Trim()
+            ? _batchSettings.BaseUrl.Trim()
             : db.AiBaseUrl.Trim();
 
     public bool Available => !string.IsNullOrWhiteSpace(EffectiveBaseUrl(_systemSettings.Get()));
@@ -197,8 +206,11 @@ public class WebAiService : IWebAiService
     }
 
     /// <summary>
-    /// 讀批次 appsettings.json 的 Ai 區段（進階參數來源＋DB 未設定位址時的退路）。
-    /// 讀不到就回 null——AI 是加值層，設定缺失只該讓加值功能降級，不影響其餘。
+    /// 讀 {DataRoot}\appsettings.json 的 Ai 區段（進階參數來源＋DB 未設定位址時的退路）。
+    /// DataRoot 指向 Web 自己的執行檔目錄（預設）時讀到的就是 Web 的 appsettings；指向舊部署
+    /// 的獨立資料目錄且該處留有批次版設定檔時沿用之（升級後行為不變）。讀不到回 null，
+    /// 由建構子退回 <see cref="WebAppSettings.Ai"/>——AI 是加值層，設定缺失只該讓加值功能
+    /// 降級，不影響其餘。
     /// </summary>
     private static AiSettings? LoadBatchAiSettings(string dataRoot)
     {

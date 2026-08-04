@@ -21,19 +21,13 @@ public class RuleBootstrapperResult
 /// 啟動流程的規則載入編排（見 docs/RULES-PLAN.md）：
 /// 規則檔不存在 → 寫入內建種子（初次部署）；存在但載入失敗 → 降級用內建種子且不覆寫壞檔；
 /// 載入成功 → 驗證（單條不合格跳過、遮蔽偵測只警告）→ 呼叫 KnownIssueCatalog.Initialize。
-/// 全程只在「不存在」時寫入一次，後續規則調整靠使用者手動編輯規則檔或 `--import-rules`，
+/// 全程只在「不存在」時寫入一次，後續規則調整靠 Web「規則維護」頁（編輯／內建規則升級），
 /// 不會每次啟動都覆寫使用者的自訂內容。
 /// </summary>
 public static class RuleBootstrapper
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    /// <summary>
-    /// 載入規則內容（不驗證、不呼叫 KnownIssueCatalog.Initialize）：初次部署時寫入內建種子，
-    /// 存在但載入失敗時降級回傳內建種子（不覆寫壞檔）。抽出成獨立方法供 Run() 與
-    /// 需要「知道目前有哪些規則 Id」但不想動 KnownIssueCatalog 全域狀態的 CLI 指令
-    /// （如 --suppress 驗證 ruleId 是否存在）共用，避免兩處各自維護一份載入/降級邏輯。
-    /// </summary>
     /// <summary>目前程式內建種子的完整內容（初次部署寫入的起始內容，也是載入失敗時的降級來源）</summary>
     private static RuleFileContent BuiltInSeedContent() => new()
     {
@@ -42,6 +36,12 @@ public static class RuleBootstrapper
         Rules = KnownIssueSeed.CreateRules()
     };
 
+    /// <summary>
+    /// 載入規則內容（不驗證、不呼叫 KnownIssueCatalog.Initialize）：初次部署時寫入內建種子，
+    /// 存在但載入失敗時降級回傳內建種子（不覆寫壞檔）。抽出成獨立方法供 Run() 與
+    /// Web 端（RuleAdminService／站台啟動的規則庫初始化，見 docs/WEB-SPEC.md §9.7）共用——
+    /// Web 不需要（也不該）連帶初始化 KnownIssueCatalog 的全域分類狀態，那是分析執行時才用得到的。
+    /// </summary>
     public static (RuleFileContent Content, bool UsedFallback) LoadContent(IKnownIssueRuleStore store)
     {
         if (!store.Exists)
@@ -101,7 +101,7 @@ public static class RuleBootstrapper
         // 只在「本次確實用了規則檔（非降級）且內建種子版本較新」時提示——降級時記憶體裡的
         // 內容本身就已經是最新種子，不需要提示匯入
         string? updateHint = !usedFallback && KnownIssueSeed.Version > content.SeedVersion
-            ? $"內建規則有更新（v{content.SeedVersion} → v{KnownIssueSeed.Version}），可執行 --import-rules 檢視新增/修改的內容。"
+            ? $"內建規則有更新（v{content.SeedVersion} → v{KnownIssueSeed.Version}），可至 Web「規則維護」頁的升級橫幅檢視並套用新增/修改的內容。"
             : null;
 
         var result = new RuleBootstrapperResult

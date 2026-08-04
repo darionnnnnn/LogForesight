@@ -4,8 +4,9 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// SentinelQueryBuilder：規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-PLAN.md §4）。
-/// 全部用建構出來的規則清單測試，不碰 KnownIssueCatalog 共用靜態狀態
-/// （--selftest 的 RunSentinelQueryChecks 另外對真實種子規則表做結構性驗證）。
+/// 多數案例用建構出來的規則清單測試，不碰 KnownIssueCatalog 共用靜態狀態；
+/// 檔尾另有一組對真實種子規則表的結構性驗證（自已退場的 console selftest
+/// RunSentinelQueryChecks 移植而來，docs/WEB-SCHEDULER-PLAN.md §1.5）。
 /// </summary>
 public class SentinelQueryBuilderTests
 {
@@ -197,5 +198,63 @@ public class SentinelQueryBuilderTests
     {
         // /24 需要 3 段，只給 2 段
         Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.NormalizeSubnetPrefix("10.1/24"));
+    }
+
+    // ── 真實種子規則表的結構性驗證（自已退場的 console selftest RunSentinelQueryChecks
+    //    移植而來，docs/WEB-SCHEDULER-PLAN.md §1.5）：上面的案例用合成規則驗產生器邏輯，
+    //    這組驗「目前這個版本的種子規則表」建出的 filter 結構正確——規則表演進時的護欄。──
+
+    /// <summary>Security-Auditing 規則的原始寫死清單（規則外部化前的版本），與
+    /// KnownIssueCatalogTests／CorrelationAnalyzerRuleAlignmentTests 用同一份基準集。</summary>
+    private static readonly int[] LegacySecurityWatchlistBaseline =
+    {
+        1102, 4719, 4720, 4722, 4724, 4728, 4732, 4756, 4729, 4733, 4757,
+        4697, 4698, 4740, 4670, 4907, 4717, 4718, 4704, 4705, 4703, 4735, 4739, 4731, 4734
+    };
+
+    [Fact]
+    public void 種子規則表建出的filter含IP批次與generic收集子句()
+    {
+        var sampleIps = new[] { "192.168.0.11", "192.168.0.12" };
+        var filter = SentinelQueryBuilder.BuildWindowsFilter(sampleIps, KnownIssueSeed.CreateRules());
+
+        Assert.All(sampleIps, ip => Assert.Contains($"{SentinelFieldMap.HostIp}:{ip}", filter));
+        Assert.Contains($"{SentinelFieldMap.LogName}:System", filter);
+        Assert.Contains($"{SentinelFieldMap.LogName}:Application", filter);
+    }
+
+    [Fact]
+    public void 種子規則表有Windows事件ID可下推Lucene()
+    {
+        // 空清單＝全部只能靠 generic 收集，規則來源下推整個失效
+        var eventIds = SentinelQueryBuilder.WindowsRuleEventIds(KnownIssueSeed.CreateRules());
+
+        Assert.NotEmpty(eventIds);
+    }
+
+    [Fact]
+    public void 基準SecurityID存在於種子規則表者皆反映在filter的rv40子句()
+    {
+        var seedRules = KnownIssueSeed.CreateRules();
+        var eventIds = SentinelQueryBuilder.WindowsRuleEventIds(seedRules);
+        var filter = SentinelQueryBuilder.BuildWindowsFilter(new[] { "192.168.0.11" }, seedRules);
+
+        var expectedInFilter = LegacySecurityWatchlistBaseline.Intersect(eventIds).ToList();
+        Assert.NotEmpty(expectedInFilter); // 交集空了代表基準清單與規則表已嚴重脫節，本測試失去意義
+        Assert.Contains($"{SentinelFieldMap.EventId}:(", filter);
+        Assert.All(expectedInFilter, id => Assert.Contains(id.ToString(), filter));
+    }
+
+    [Fact]
+    public void MatchAllEventIds規則的事件ID未混入下推聯集()
+    {
+        // MatchAllEventIds 規則（WHEA-Logger／Resource-Exhaustion／VSS）沒有具體 EventId 可下推，
+        // 不該混進聯集——它們的事件靠 generic 分支撈、本地 Classify 精準比對
+        var seedRules = KnownIssueSeed.CreateRules();
+        var eventIds = SentinelQueryBuilder.WindowsRuleEventIds(seedRules);
+        var matchAllOnlyIds = seedRules.Where(r => r.MatchAllEventIds).SelectMany(r => r.EventIds)
+            .Where(id => !seedRules.Any(r => !r.MatchAllEventIds && r.EventIds.Contains(id)));
+
+        Assert.All(matchAllOnlyIds, id => Assert.DoesNotContain(id, eventIds));
     }
 }

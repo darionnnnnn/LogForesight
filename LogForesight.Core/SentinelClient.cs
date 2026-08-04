@@ -27,7 +27,7 @@ public enum SentinelJobState
 }
 
 /// <summary>單筆事件的投影結果：欄位名（Sentinel schema 短名）→ 值。欄位對應交由呼叫端解讀
-/// （docs/NETIQ-API-PLAN.md §3.3，待 --netiq-probe 定案）</summary>
+/// （docs/NETIQ-API-PLAN.md §3.3，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
 public sealed record SentinelEvent(IReadOnlyDictionary<string, string> Fields);
 
 /// <summary>建立一個 event-search job 的查詢條件</summary>
@@ -634,8 +634,9 @@ public sealed class SentinelClient : IAsyncDisposable
     /// **best-effort 通用解析**：官方文件未提供結果頁的確切 JSON 結構範例
     /// （docs/NETIQ-API-PLAN.md §9 未決事項）。依序嘗試常見形狀：純陣列、或物件中常見鍵名的陣列屬性，
     /// 找不到時保底取第一個陣列型別的屬性。解析失敗回傳空清單而非擲例外——呼叫端
-    /// （尤其 --netiq-probe）應另外印出原始 body 供人工核對真實結構，不能讓「格式猜錯」
-    /// 讓整條查詢鏈斷裂。真實環境的 probe 輸出定案欄位對應後，這裡再依實測結果收斂。
+    /// （尤其 NetIQ 診斷分頁的 <see cref="NetiqProbeRunner"/>）應另外印出原始 body 供人工核對
+    /// 真實結構，不能讓「格式猜錯」讓整條查詢鏈斷裂。真實環境的 probe 輸出定案欄位對應後，
+    /// 這裡再依實測結果收斂。
     /// </summary>
     internal static List<SentinelEvent> ParseEventsPage(string json)
     {

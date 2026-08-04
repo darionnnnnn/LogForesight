@@ -1,7 +1,8 @@
 namespace LogForesight;
 
 /// <summary>
-/// 驗證期用的 prompt/回應完整輸出（--debug-dump 模式）。刻意跟平常的診斷 log（NLog）分開：
+/// 驗證期用的 prompt/回應完整輸出（排程設定的「AI 診斷傾印」開關，
+/// docs/WEB-SCHEDULER-PLAN.md §1.4.10）。刻意跟平常的診斷 log（NLog）分開：
 /// nlog.config 刻意不記錄完整 prompt 與 AI 回應全文（避免 log 檔隨呼叫次數線性增長），
 /// 但驗證新環境時常常需要看到完整內容，所以另開一個明確、預設關閉的輸出管道。
 /// </summary>
@@ -18,7 +19,7 @@ public class NullPromptDumper : IPromptDumper
     }
 }
 
-/// <summary>--debug-dump 模式使用：每次 AI 呼叫（含 JSON 重試的每次嘗試）各輸出一個檔案到 diag/</summary>
+/// <summary>「AI 診斷傾印」開啟時使用：每次 AI 呼叫（含 JSON 重試的每次嘗試）各輸出一個檔案到 diag/</summary>
 public class FilePromptDumper : IPromptDumper
 {
     private readonly string _dir;

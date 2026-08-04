@@ -5,7 +5,7 @@ namespace LogForesight;
 /// 取代原「週六全量體檢找慢速斜線」的偵測職責：<see cref="TrendAnalyzer"/> 只比對「今日 vs 歷史平均」，
 /// 若攻擊者或硬體劣化採取每天小幅加量的節奏，會一直躲在單日 2 倍門檻之下，但拉長到「近一週 vs 前一週」
 /// 的總量比較就看得出斜線。原本這件事交給每週一次的 AI 體檢判讀，偵測延遲最壞達 7 天且依賴 AI 召回率；
-/// 現在改為每日純算術比對，可單元測試、進 --selftest，偵測延遲縮到 1 天，AI 體檢（見
+/// 現在改為每日純算術比對，可單元測試，偵測延遲縮到 1 天，AI 體檢（見
 /// <see cref="WeeklyCheckupService"/>）只需要負責「講這段期間的故事」，不再是慢速訊號能否被發現的關鍵。
 /// </summary>
 public static class SlowTrendAnalyzer

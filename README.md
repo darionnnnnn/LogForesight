@@ -330,7 +330,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 > 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
 > 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
 > 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
-> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 `--netiq-probe` 即可定案欄位形狀。
+> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 NetIQ 維護頁「診斷」分頁的 probe 即可定案欄位形狀。
 > 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
 >
 > **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，

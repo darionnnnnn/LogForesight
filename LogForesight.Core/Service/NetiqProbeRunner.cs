@@ -5,8 +5,8 @@ namespace LogForesight;
 /// <summary>
 /// 對已設定的 Sentinel 逐一執行一組小規模驗證查詢，把原始回應與時間量測輸出成可直接複製貼回
 /// 對話的報告（docs/NETIQ-API-PLAN.md §3.5）。**輸出格式是設計來貼回對話定案欄位的純文字契約，
-/// 不可隨意改寫**——console CLI（<c>--netiq-probe</c>）與 Web「NetIQ 維護」頁的「診斷」分頁
-/// （docs/WEB-SCHEDULER-PLAN.md §1.4.11）共用同一份，任何一邊都不得再各自維護一份查詢邏輯。
+/// 不可隨意改寫**——入口是 Web「NetIQ 維護」頁的「診斷」分頁（docs/WEB-SCHEDULER-PLAN.md
+/// §1.4.11；早期的 console CLI <c>--netiq-probe</c> 已隨 Phase 5 退場，輸出契約沿用不變）。
 ///
 /// 這是欄位對應／IP 篩選批次大小／時區等未決事項（docs/NETIQ-API-PLAN.md §9）唯一的定案依據——
 /// 公開文件沒有提供 event-search 結果頁的確切 JSON 結構範例，<see cref="SentinelClient"/> 的

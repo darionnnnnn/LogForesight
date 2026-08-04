@@ -104,6 +104,6 @@ public class RuleBootstrapperContractTests : IDisposable
         var result = RuleBootstrapper.Run(store);
 
         Assert.NotNull(result.UpdateHint);
-        Assert.Contains("--import-rules", result.UpdateHint);
+        Assert.Contains("規則維護", result.UpdateHint); // 升級入口是 Web 規則頁（--import-rules CLI 已隨 Phase 5 退場）
     }
 }

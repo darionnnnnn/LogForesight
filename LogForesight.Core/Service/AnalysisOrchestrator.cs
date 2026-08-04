@@ -4,10 +4,9 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 執行範圍（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：Full＝排程／console 的完整執行
+/// 執行範圍（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：Full＝排程觸發的完整執行
 /// （本機＋全部 NetIQ 主機）；LocalOnly＝只跑本機；NetiqHosts＝只跑指定的 NetIQ 主機
-/// （<see cref="RunRequest.HostIds"/>）。後兩者是 Phase 3 手動觸發的載體，Phase 2
-/// 先把列舉值定義好，實際觸發入口（API／UI）於 Phase 3 建立。
+/// （<see cref="RunRequest.HostIds"/>）。後兩者是手動觸發（立即執行／指定主機更新）的載體。
 /// </summary>
 public enum RunScope
 {
@@ -29,17 +28,18 @@ public class RunRequest
 
     public bool DebugDump { get; init; }
 
-    /// <summary>沿用既有 <see cref="BatchRunRecorder"/> 的「執行時的命令列」欄位語意——console 傳入實際 args。</summary>
+    /// <summary>沿用既有 <see cref="BatchRunRecorder"/> 的「執行時的命令列」欄位語意——
+    /// Web 觸發固定為空（早期 console 批次時代傳實際 args，該值仍存在於歷史執行紀錄）。</summary>
     public string[] Args { get; init; } = Array.Empty<string>();
 
     /// <summary>
-    /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>｜<c>"console"</c>
-    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.4）。
+    /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
+    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.4；歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
     public string? Trigger { get; init; }
 }
 
-/// <summary>單次執行的結果摘要，供呼叫端（console exit code／Web BatchRun 回填）使用。</summary>
+/// <summary>單次執行的結果摘要，供呼叫端（Web 的 BatchRun 回填與失敗回饋）使用。</summary>
 public class OrchestratorResult
 {
     public bool Success { get; set; } = true;
@@ -64,16 +64,15 @@ public interface IRunConsole
 
 /// <summary>
 /// 分析主流程的單一入口（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：權限檢查 → 清理 → 本機逐日分析 →
-/// NetIQ 機房分析 → 體檢，原本寫在批次 <c>Program.cs</c>，抽出後 console 與 Web 排程共用同一份。
+/// NetIQ 機房分析 → 體檢。原本寫在批次 console 的 <c>Program.cs</c>，Phase 2 抽出成共用單一入口，
+/// console 專案退場（Phase 5，§1.5）後唯一的呼叫端是 Web 排程（<c>SchedulerHostedService</c>）。
 ///
-/// **刻意不在這裡做的事**（維持 Program.cs 的職責）：
-/// - <see cref="AppSettings"/> 載入與 <c>SystemSettings</c> DB 覆寫合併——呼叫端各自負責，
-///   Web 排程每次觸發前重新讀取即可達成「每次執行重建服務」，不需要把設定來源焦點寫死在這裡。
-/// - 具名 Mutex（<c>Global\LogForesight</c>）——console 端在呼叫本類別前已經持有；
-///   Web 排程的併發保護是 Phase 3 的設計項目（長駐行程下 Mutex 的執行緒親和性需要另外處理，
-///   不是本次搬遷「只搬不改」的範圍，故意保留給 Phase 3 一併解決）。
-/// - CLI 專屬分派（--import-rules／--netiq-probe／--selftest／--debug-dump 旗標判讀）——那些
-///   是「要不要跑」的決定，跑不跑都與這裡的「怎麼跑」無關。
+/// **刻意不在這裡做的事**（維持呼叫端的職責）：
+/// - <see cref="AppSettings"/> 載入與 <c>SystemSettings</c> DB 覆寫合併——呼叫端負責，
+///   Web 排程每次觸發前重新讀取即可達成「每次執行重建服務」，不需要把設定來源寫死在這裡。
+/// - 併發保護——行程內單一執行 gate（<c>SchedulerRunState</c>）與跨行程具名 Mutex
+///   （<c>Global\LogForesight</c>，<c>NamedMutexGate</c>）都在呼叫端，本類別假設同一時間
+///   只有一個執行個體在跑。
 /// </summary>
 public class AnalysisOrchestrator
 {
@@ -430,8 +429,8 @@ public class AnalysisOrchestrator
         }
         catch (Exception ex)
         {
-            // 全域防護：任何未預期的錯誤都要留下訊息並回報失敗，讓呼叫端（console exit code／
-            // Web BatchRun 回填）能監控到。
+            // 全域防護：任何未預期的錯誤都要留下訊息並回報失敗，讓呼叫端（Web 的 BatchRun
+            // 回填與排程狀態卡的「上次執行結果」）能監控到。
             console.WriteLine($"\n執行失敗：{ex}");
             console.WriteLine($"總執行時間：{FormatElapsed(runStopwatch.Elapsed)}");
             Log.Fatal(ex, "執行失敗，總耗時 {ElapsedMs}ms", runStopwatch.ElapsedMilliseconds);

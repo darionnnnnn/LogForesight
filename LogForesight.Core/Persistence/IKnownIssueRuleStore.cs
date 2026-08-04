@@ -3,7 +3,7 @@ namespace LogForesight;
 /// <summary>
 /// 規則檔的完整內容：規則清單＋兩個版本號。SchemaVersion 是「檔案結構」的版本（供載入端判斷
 /// 相容性）；SeedVersion 是「內建種子內容」的版本（對應 <see cref="KnownIssueSeed.Version"/>，
-/// `--import-rules` 依此判斷是否有新內容可匯入）。
+/// Web 規則維護頁的「內建規則升級」依此判斷是否有新內容可匯入）。
 /// 兩者分開是因為升級節奏不同：改規則內容很常見，改檔案結構很少見。
 ///
 /// **什麼時候該遞增 SchemaVersion**：只有當「舊版程式讀到新檔會做出錯誤的事」時才遞增，
@@ -55,7 +55,7 @@ public interface IKnownIssueRuleStore
     /// 單條規則物件解析失敗會被跳過並記入警告，不影響其餘規則載入。</summary>
     RuleLoadOutcome Load();
 
-    /// <summary>寫入規則檔內容（初次部署種子、或 --import-rules 套用後）。實作應採原子寫入
+    /// <summary>寫入規則檔內容（初次部署種子、或規則維護頁「內建規則升級」套用後）。實作應採原子寫入
     /// （寫暫存檔後改名），避免程式在寫入途中被中斷留下半個損毀的檔案。</summary>
     void Save(RuleFileContent content);
 }
