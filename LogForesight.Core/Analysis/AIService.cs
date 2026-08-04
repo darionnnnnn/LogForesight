@@ -8,7 +8,7 @@ using NLog;
 using Polly;
 using Polly.Retry;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>AI 呼叫的結構化結果：錯誤與正常內容分離，呼叫端不需靠字串前綴判斷失敗</summary>
 public class AiResponse

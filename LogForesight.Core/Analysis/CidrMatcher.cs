@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>解析後的 IPv4 網段：以「網路位址 ＋ 遮罩」表示，比對只是一次位元 AND。</summary>
 public sealed class CidrRange

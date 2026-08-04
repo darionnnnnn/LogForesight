@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 本次執行各頻道的讀取狀態三態分類，供 <see cref="LogAnalysisService"/> 誠實申報未檢查項目、

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 今晚要向 Sentinel 查詢的一台主機。<paramref name="HostId"/> 是寫入分析紀錄時的關聯鍵；

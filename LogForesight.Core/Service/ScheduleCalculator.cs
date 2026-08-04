@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 public class ScheduleValidationResult
 {

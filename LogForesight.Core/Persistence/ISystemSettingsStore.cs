@@ -1,7 +1,6 @@
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>全站系統設定的讀寫（↔ webdata blob，key=system_settings）。單一物件，非清單</summary>
 public interface ISystemSettingsStore

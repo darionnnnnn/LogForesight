@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// Sentinel 連線資訊組裝，批次端（<see cref="NetiqProbeRunner"/>／<see cref="NetiqPipelineService"/>）

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 每日、全主機、確定性的慢速趨勢偵測（2026-07-20 新增，見 docs/PLAN.md「核心設計決策 B」）。

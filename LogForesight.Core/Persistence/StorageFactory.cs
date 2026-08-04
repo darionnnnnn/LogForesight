@@ -1,9 +1,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using LogForesight.Sql;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 依設定選擇儲存後端（Strategy + Factory）。兩種 provider：

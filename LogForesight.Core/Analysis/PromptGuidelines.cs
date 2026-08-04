@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// AI 產出文字的共用語言規範。三支呼叫（每日白話總覽、深入分析、週體檢）共用同一段，

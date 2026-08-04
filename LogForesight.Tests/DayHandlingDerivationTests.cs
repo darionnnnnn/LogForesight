@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using LogForesight;
 using LogForesight.Web.Services;
 using Xunit;
 using static LogForesight.Tests.TestData;

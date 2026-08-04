@@ -1,6 +1,5 @@
 using System.Threading;
 using System.Threading.Tasks;
-using LogForesight;
 using LogForesight.Web.Services;
 
 namespace LogForesight.Tests;

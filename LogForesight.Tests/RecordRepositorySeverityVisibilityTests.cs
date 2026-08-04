@@ -1,4 +1,3 @@
-﻿using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;

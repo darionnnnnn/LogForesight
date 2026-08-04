@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// 密文欄位的加解密（用途：<see cref="Sentinel.PasswordEnc"/>、<see cref="SystemSettings.AiApiKeyEnc"/>）。

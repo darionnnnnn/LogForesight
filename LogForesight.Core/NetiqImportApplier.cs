@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// 套用一批 NetIQ 掃描勾選結果：落盤成主機異動（新增/更新/孤兒復活三態）。

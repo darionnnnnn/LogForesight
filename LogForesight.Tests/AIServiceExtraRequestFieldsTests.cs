@@ -1,5 +1,4 @@
 using System.Text.Json;
-using LogForesight;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 

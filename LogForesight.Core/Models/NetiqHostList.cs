@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// NetIQ 主機清單的領域規則（純函數）。

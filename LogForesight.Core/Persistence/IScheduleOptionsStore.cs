@@ -1,7 +1,6 @@
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>排程設定的讀寫（↔ webdata blob，key=schedule_options）。單一物件，非清單</summary>
 public interface IScheduleOptionsStore

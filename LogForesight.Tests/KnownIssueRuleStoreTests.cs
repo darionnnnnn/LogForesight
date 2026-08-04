@@ -1,5 +1,3 @@
-using LogForesight;
-using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;

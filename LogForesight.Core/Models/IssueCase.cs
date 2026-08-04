@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 問題案件（↔ 未來 lf_issue_cases，docs/archive/FEEDBACK-4-PLAN.md §0）：以（主機、問題簽章）為鍵的

@@ -1,6 +1,6 @@
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 「系統管理 > 設定」頁（DB）覆寫 <see cref="AppSettings"/> 的共用邏輯（docs/archive/WEB-SCHEDULER-PLAN.md

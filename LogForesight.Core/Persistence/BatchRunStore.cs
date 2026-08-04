@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 一次批次執行的紀錄（↔ lf_batch_runs）。

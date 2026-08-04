@@ -3,7 +3,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>單筆權限異動的明細（異動前/後對照），供人工逐項判斷是否為正常/授權的異動</summary>
 public class PermissionChangeDetail

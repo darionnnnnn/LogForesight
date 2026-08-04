@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 單一類別在某一天的彙總（↔ lf_record_categories）。

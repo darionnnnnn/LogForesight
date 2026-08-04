@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Models;
 using LogForesight.Web.Services;
 using Xunit;

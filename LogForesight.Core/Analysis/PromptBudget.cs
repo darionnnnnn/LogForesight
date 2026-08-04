@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 小模型（實測環境：Gemma 4 26B、context 20480）context 預算的保守估算與截斷防線。

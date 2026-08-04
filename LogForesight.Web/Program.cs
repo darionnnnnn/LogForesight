@@ -1,4 +1,3 @@
-using LogForesight;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;

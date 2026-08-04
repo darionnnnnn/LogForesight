@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// AI 回傳 JSON 的容錯解析。即使 response_format 已在 server 端強制 JSON，實務上仍會遇到：

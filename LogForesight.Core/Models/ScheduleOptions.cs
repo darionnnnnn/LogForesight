@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 一個排程執行窗口（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：<see cref="Start"/> 到點觸發一次完整

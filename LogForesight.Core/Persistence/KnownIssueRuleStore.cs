@@ -2,9 +2,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using NLog;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 規則表的儲存邏輯（容錯解析／原子寫入語意）。這是 <see cref="IKnownIssueRuleStore"/> 的實作，

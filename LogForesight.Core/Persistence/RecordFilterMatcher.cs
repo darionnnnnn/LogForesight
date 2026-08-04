@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 分析紀錄對查詢條件的比對（<see cref="RecordQueryFilter"/> 中除了 Hosts 以外的欄位）。

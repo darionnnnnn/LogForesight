@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// Web AI 加值輸出的快取項（blob key=ai_cache）。鍵＝功能＋日期＋輸入雜湊，

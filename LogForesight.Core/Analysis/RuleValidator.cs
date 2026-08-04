@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>驗證後的結果：合格規則、逐條不合格原因、遮蔽警告（見 docs/RULES-SPEC.md）</summary>
 public class RuleValidationOutcome

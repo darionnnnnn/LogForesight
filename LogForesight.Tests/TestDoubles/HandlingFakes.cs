@@ -1,4 +1,3 @@
-using LogForesight;
 using LogForesight.Web.Models;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;

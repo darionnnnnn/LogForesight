@@ -1,7 +1,6 @@
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>單條內建規則的原廠快照（↔ lf_rule_seeds）</summary>
 public class RuleSeedSnapshot

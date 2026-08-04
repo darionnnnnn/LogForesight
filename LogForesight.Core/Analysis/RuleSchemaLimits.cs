@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 規則欄位的長度上限：單點定義，與 DB schema 的 nvarchar 上限使用同一組數字

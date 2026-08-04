@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 「已知雜訊」記憶（↔ blob key=noise_marks，docs/archive/HISTORY.md §5.1 D-1 #3）。

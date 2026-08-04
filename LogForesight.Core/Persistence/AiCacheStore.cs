@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// Web AI 加值輸出的快取存取（blob key=ai_cache，整份型，原子讀改寫）。

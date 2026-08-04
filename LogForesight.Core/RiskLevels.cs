@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// 日風險等級（高/中/低）的單一事實來源（docs/archive/HISTORY.md S2）。

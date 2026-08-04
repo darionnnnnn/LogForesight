@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 體檢：獨立於每日分析的週期性回顧。2026-07-20 重設計（見 docs/PLAN.md「核心設計決策 B」與

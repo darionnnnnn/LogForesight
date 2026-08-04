@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 一次性遷移：把既有主機的 <see cref="WebHost.NetiqServer"/> 名稱字串回填成

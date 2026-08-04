@@ -1,6 +1,6 @@
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 啟動時載入規則的結果摘要。Run() 本身已把警告與摘要印到 console／NLog，這個物件的用途是讓

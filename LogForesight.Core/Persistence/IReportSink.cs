@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>報告種類，供後端分類儲存（如檔案系統的子目錄、或未來 DB 的分類欄位），不影響內容本身</summary>
 public enum ReportKind

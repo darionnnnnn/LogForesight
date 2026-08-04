@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary><see cref="IRiskyEventStore"/> 的 SQL 後端實作（docs/archive/WEB-SCHEDULER-PLAN.md §2）。</summary>
 public class EfRiskyEventStore : IRiskyEventStore

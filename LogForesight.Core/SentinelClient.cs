@@ -9,7 +9,7 @@ using NLog;
 using Polly;
 using Polly.Retry;
 
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// event-search job 的狀態（Sentinel REST API 文件定義，見 docs/NETIQ-API-REFERENCE.md §1.2）。

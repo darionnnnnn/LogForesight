@@ -9,12 +9,12 @@ namespace LogForesight.Tests;
 /// </summary>
 public class AnalysisRecordQueryContractTests : IDisposable
 {
-    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
+    private readonly EfAnalysisRecordStore _store;
     private readonly EfSqliteFixture _fx = new();
 
     public AnalysisRecordQueryContractTests()
     {
-        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
+        _store = new EfAnalysisRecordStore(_fx.NewContext, "test");
     }
 
     private IAnalysisRecordStore CreateStore() => _store;

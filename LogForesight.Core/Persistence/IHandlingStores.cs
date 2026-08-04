@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 風險日處理狀態的讀寫（↔ lf_record_handling ＋ lf_record_handling_log）。

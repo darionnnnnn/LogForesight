@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 主機的讀寫（↔ lf_hosts ＋ lf_host_group_members ＋ lf_host_owners）。

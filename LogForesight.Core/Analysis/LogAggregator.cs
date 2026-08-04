@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 public class LogIssueSignature
 {

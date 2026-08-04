@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 查詢條件。全部欄位為選用（null／空 = 不限），組合起來就是 Web 的主篩選列

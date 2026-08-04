@@ -1,5 +1,3 @@
-using LogForesight;
-using LogForesight.Sql;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 

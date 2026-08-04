@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 分析紀錄的儲存前整形規則：純函數，確保「無風險日精簡策略」只有一份定義

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 主機的識別組合：<see cref="HostId"/> 是關聯鍵，<see cref="HostName"/> 僅供

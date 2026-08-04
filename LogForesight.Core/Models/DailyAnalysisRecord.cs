@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 public class DailyAnalysisRecord
 {

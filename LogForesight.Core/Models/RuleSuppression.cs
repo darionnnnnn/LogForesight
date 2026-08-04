@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 主機級的告警抑制項目：維護者判斷某規則在某主機上的告警不需要繼續吵，關閉通知。

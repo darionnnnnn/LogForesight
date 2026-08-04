@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 每日分析流程：取多來源 log → 聚合 → 規則分類 → 帶入近期歷史 → 呼叫 AI 白話翻譯 → 寫回歷史。

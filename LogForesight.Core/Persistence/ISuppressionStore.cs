@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 抑制設定的儲存後端抽象。與規則庫（IKnownIssueRuleStore）分開儲存：抑制是各主機的營運狀態，

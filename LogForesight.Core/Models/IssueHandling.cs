@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 單一問題（事件簽章）在某個風險日的處理狀態（↔ 未來 lf_issue_handling）。

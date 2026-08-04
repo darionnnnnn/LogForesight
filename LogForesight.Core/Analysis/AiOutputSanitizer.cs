@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// AI 原始回覆的清洗（docs/archive/FEEDBACK-3-PLAN.md #7）：地端推理型模型偶爾漏出內部的

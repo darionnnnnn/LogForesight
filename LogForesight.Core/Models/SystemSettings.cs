@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 全站系統設定（↔ webdata blob，key=system_settings）。**單一物件，非清單**——全站只有一份。

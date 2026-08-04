@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 純函數：從完整的抑制清單篩出「本機、現在生效中」的規則 Id 集合，以及「本機已到期」的項目

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace LogForesight;
+namespace LogForesight.Core.Configuration;
 
 /// <summary>
 /// Ai／Permissions／Analysis／Storage 各設定區段的型別定義，供 Web 端 <c>WebAppSettings</c> 沿用

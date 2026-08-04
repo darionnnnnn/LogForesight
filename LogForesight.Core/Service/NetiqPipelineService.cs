@@ -1,6 +1,6 @@
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 機房分析 pipeline（docs/archive/HISTORY.md 決策 B2、§4；docs/BACKLOG.md Phase 4）：

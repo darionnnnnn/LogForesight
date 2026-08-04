@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 規則檔的完整內容：規則清單＋兩個版本號。SchemaVersion 是「檔案結構」的版本（供載入端判斷

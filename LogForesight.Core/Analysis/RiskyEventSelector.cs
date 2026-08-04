@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 風險 log 暫存的入庫資格與呈現量上限（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.2，2026-07-31 定案）：

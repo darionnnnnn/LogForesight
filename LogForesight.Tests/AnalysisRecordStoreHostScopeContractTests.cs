@@ -19,7 +19,7 @@ public class AnalysisRecordStoreHostScopeContractTests : IDisposable
 
     /// <summary>依 ownerHost 建立 store；null＝不分主機（用來讀回全部紀錄驗證別台資料仍在）</summary>
     private IAnalysisRecordStore CreateStore(HostKey? ownerHost) =>
-        new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test", ownerHost);
+        new EfAnalysisRecordStore(_fx.NewContext, "test", ownerHost);
 
     private IAnalysisRecordStore OwnerStore() =>
         CreateStore(new HostKey { HostId = OwnerId, HostName = OwnerName });

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 清理超過保留天數的風險報告檔（docs/archive/HISTORY.md P1-4）。

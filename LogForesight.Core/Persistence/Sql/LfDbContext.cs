@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// SQL 後端的 EF Core 內容（docs/DB-SPEC.md、docs/archive/HISTORY.md「2026-07-23」段 §4）。

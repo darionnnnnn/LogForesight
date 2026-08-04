@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// NetIQ Sentinel 連線設定（↔ webdata blob，key=sentinels）。

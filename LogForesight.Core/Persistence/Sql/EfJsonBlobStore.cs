@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// 「一團 JSON 文字」的原子讀寫（webdata 各 store 的儲存底層）：整份 JSON 存在 lf_blobs 的一列

@@ -1,4 +1,3 @@
-using LogForesight;
 using Xunit;
 using static LogForesight.Tests.TestData;
 

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// append-only 逐行紀錄的讀寫底層（稽核、執行紀錄、匯入紀錄、處理歷程…）：逐行存 lf_log_lines

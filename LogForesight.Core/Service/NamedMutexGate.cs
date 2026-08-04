@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 跨行程互斥的安全包裝（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2／§1.5）：Web 排程與「有人在伺服器上

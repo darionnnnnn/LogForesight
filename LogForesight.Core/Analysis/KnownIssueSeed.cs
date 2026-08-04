@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 內建規則種子：初次部署時寫入外部儲存（DB blob，key=rules）的起始內容，也是

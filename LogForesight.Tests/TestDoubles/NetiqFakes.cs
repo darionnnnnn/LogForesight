@@ -1,6 +1,5 @@
 using System.Threading;
 using System.Threading.Tasks;
-using LogForesight;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 

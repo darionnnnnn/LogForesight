@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// Sentinel 事件欄位鍵的單一事實來源（docs/NETIQ-API-REFERENCE.md §3.3、§9）。

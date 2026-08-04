@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 驗證期用的 prompt/回應完整輸出（排程設定的「AI 診斷傾印」開關，

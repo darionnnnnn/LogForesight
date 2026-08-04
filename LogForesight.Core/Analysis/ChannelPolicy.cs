@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 一個 Event Log 頻道的事件納入政策。決定 <see cref="EventLogService"/> 掃描該頻道時

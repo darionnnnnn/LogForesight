@@ -131,7 +131,7 @@ public class WebAppSettingsValidationTests
             Provider = "Ldap",
             ServerAdmin = new ServerAdminSettings { Account = "svc-lfadmin", PasswordHash = KnownDevPasswordHash }
         },
-        Storage = new LogForesight.StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory }
+        Storage = new StorageSettings { Type = "Sqlite", DataRoot = AppContext.BaseDirectory }
     };
 
     [Fact]

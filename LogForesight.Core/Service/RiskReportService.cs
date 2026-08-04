@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 風險日報告：當日風險等級「中」以上時輸出報告檔，讓使用者聚焦問題點。

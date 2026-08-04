@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>操作的結果。denied（權限不足被擋下）刻意一併記錄——見 <see cref="AuditEntry"/></summary>
 public enum AuditResult

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 // EventLogEntryData 已移至 LogForesight.Core 的 Models/EventLogEntryData.cs（Analysis 層依賴它）。
 

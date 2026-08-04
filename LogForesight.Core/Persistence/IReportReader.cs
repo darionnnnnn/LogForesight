@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 報告全文的讀取（<see cref="IReportSink"/> 的對應讀取端）。

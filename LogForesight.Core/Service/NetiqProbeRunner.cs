@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 對已設定的 Sentinel 逐一執行一組小規模驗證查詢，把原始回應與時間量測輸出成可直接複製貼回

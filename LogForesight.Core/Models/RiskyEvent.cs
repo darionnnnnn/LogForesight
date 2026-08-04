@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 風險 log 暫存（↔ lf_risky_events）：規則命中或趨勢異常的問題簽章，保留一段時間內的原始事件，

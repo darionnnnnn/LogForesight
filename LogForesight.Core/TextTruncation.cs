@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// 純文字截斷（供 AI prompt／報告輸出控制長度）。原本 LogAnalysisService／WeeklyCheckupService／

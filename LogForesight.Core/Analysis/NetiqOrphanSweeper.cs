@@ -1,6 +1,6 @@
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// Sentinel 被刪除時，停用其所屬的 NetIQ 主機（docs/archive/HISTORY.md §1.7；

@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>匯入紀錄（↔ lf_import_logs）：誰、何時、匯了什麼</summary>
 public class ImportLogEntry

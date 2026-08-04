@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 風險 log 暫存讀寫（↔ lf_risky_events，docs/archive/WEB-SCHEDULER-PLAN.md §2）。

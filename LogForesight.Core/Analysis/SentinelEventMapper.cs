@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// <see cref="SentinelEvent"/>（<see cref="SentinelClient"/> 的原始投影）→ <see cref="EventLogEntryData"/>

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 判斷某筆歷史紀錄當天是否讀取了某個頻道——趨勢層與慢速趨勢層用它把「當天沒讀到該頻道」的
