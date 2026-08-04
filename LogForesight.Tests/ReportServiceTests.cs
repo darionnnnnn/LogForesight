@@ -28,11 +28,10 @@ public class ReportServiceTests : IDisposable
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
-        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
 
-        var handling = new HandlingService(
-            _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, new FakeNoiseMarkStore(), repository, _hosts, _users,
-            visibility, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), _settingsStore);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress);
 
         _service = new ReportService(repository, _hosts, visibility, handling);
     }

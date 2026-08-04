@@ -50,10 +50,10 @@ public class HandlingServiceTests
 
     private static DateTime Today => DateTime.Today;
 
-    private HandlingService Create(params Capability[] capabilities)
+    private HandlingServiceFacade Create(params Capability[] capabilities)
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
-        return new HandlingService(
+        return new HandlingServiceFacade(
             store: _handlings,
             issueStore: _issueHandlings,
             cases: _cases,
@@ -1105,7 +1105,7 @@ public class HandlingServiceTests
 
         // 檢視者只看得到別的主機（AlwaysVisibleService 全可見，這裡改用受限的可見範圍服務）
         var restrictedVisibility = new RestrictedVisibleService();
-        var restrictedService = new HandlingService(
+        var restrictedService = new HandlingServiceFacade(
             store: _handlings,
             issueStore: _issueHandlings,
             cases: _cases,

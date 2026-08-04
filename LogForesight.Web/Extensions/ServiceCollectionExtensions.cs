@@ -256,7 +256,14 @@ public static class ServiceCollectionExtensions
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
-        services.AddScoped<HandlingService>();
+
+        // 處理狀態（原 HandlingService，依關注點拆為日層級／問題層級／查詢三個服務，
+        // 共用 HandlingProgressCalculator 推導進度）
+        services.AddScoped<HandlingProgressCalculator>();
+        services.AddScoped<DayHandlingCommandService>();
+        services.AddScoped<IssueHandlingCommandService>();
+        services.AddScoped<HandlingHistoryQueryService>();
+
         services.AddScoped<PermissionChangeService>();
         services.AddScoped<AuditQueryService>();
 

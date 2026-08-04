@@ -11,7 +11,7 @@ public class DashboardService
     private readonly IVisibilityService _visibility;
     private readonly AuditLogStore _audit;
     private readonly ICurrentUser _currentUser;
-    private readonly HandlingService _handling;
+    private readonly HandlingHistoryQueryService _handling;
     private readonly PermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
 
@@ -20,7 +20,7 @@ public class DashboardService
         IVisibilityService visibility,
         AuditLogStore audit,
         ICurrentUser currentUser,
-        HandlingService handling,
+        HandlingHistoryQueryService handling,
         PermissionChangeService permissionChanges,
         IHostGroupStore hostGroups)
     {

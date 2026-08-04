@@ -1,4 +1,6 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 
@@ -7,6 +9,55 @@ namespace LogForesight.Tests;
 // ── 測試替身：HandlingService 相關 ───────────────────────────────────────────
 // 原本都定義在 HandlingServiceTests.cs 檔尾，搬到這裡是因為之後 HandlingService
 // 建構式改動（Phase 6-7 拆分 god class）時，改動範圍要集中在這一個檔案。
+
+/// <summary>
+/// 測試專用組裝門面：HandlingService 已依關注點拆成 DayHandlingCommandService／
+/// IssueHandlingCommandService／HandlingHistoryQueryService＋共用的
+/// HandlingProgressCalculator。既有測試大量呼叫「單一物件橫跨日/問題/查詢三種方法」
+/// （例如同一個 fixture 先 Assign 再 GetLogs），這裡組裝成單一門面、保留原本
+/// HandlingService 的建構參數與方法簽章，讓既有測試呼叫端零改動。
+/// **僅供測試使用**，production 端一律直接注入拆分後的三個服務。
+/// </summary>
+internal class HandlingServiceFacade
+{
+    private readonly DayHandlingCommandService _day;
+    private readonly IssueHandlingCommandService _issue;
+    private readonly HandlingHistoryQueryService _history;
+
+    public HandlingServiceFacade(
+        IRecordHandlingStore store,
+        IIssueHandlingStore issueStore,
+        IIssueCaseStore cases,
+        IssueCaseCoordinator caseCoordinator,
+        INoiseMarkStore noiseMarks,
+        IRecordRepository repository,
+        IHostStore hosts,
+        IUserStore users,
+        IVisibilityService visibility,
+        ICurrentUser currentUser,
+        IAuditService audit,
+        ISystemSettingsStore settings)
+    {
+        var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
+        _day = new DayHandlingCommandService(
+            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress);
+        _issue = new IssueHandlingCommandService(
+            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress);
+        _history = new HandlingHistoryQueryService(
+            store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
+    }
+
+    public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
+    public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request) => _day.Update(hostId, date, request);
+    public HandlingDto Assign(long hostId, DateTime date, long? handlerId) => _day.Assign(hostId, date, handlerId);
+    public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
+    public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
+    public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
+    public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
+    public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
+    public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
+    public HandlerWorkloadDto GetHandlerWorkload(long userId, bool includeResolvedDays) => _history.GetHandlerWorkload(userId, includeResolvedDays);
+}
 
 /// <summary>可見範圍固定為空——供工作頁的「檢視者可見範圍過濾」測試使用</summary>
 internal class RestrictedVisibleService : IVisibilityService
