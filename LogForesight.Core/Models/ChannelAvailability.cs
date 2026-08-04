@@ -20,5 +20,4 @@ public class ChannelAvailability
 
     public bool WasRead(string channelName) => Read.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
     public bool WasDenied(string channelName) => Denied.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
-    public bool WasMissing(string channelName) => Missing.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
 }

@@ -230,8 +230,8 @@ public static class ServiceCollectionExtensions
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
 
-        // 風險 log 暫存優先、Sentinel 即時查詢 fallback（docs/WEB-SCHEDULER-PLAN.md §2.2.4）
-        services.AddScoped<IRiskyEventLookup, RiskyEventLookupService>();
+        // 風險 log 暫存優先、Sentinel 即時查詢 fallback
+        services.AddScoped<RiskyEventLookupService>();
 
         // 查詢面：Repository 負責主機識別展開與可見範圍強制套用
         services.AddScoped<IRecordRepository, RecordRepository>();

@@ -28,13 +28,9 @@ public class RunRequest
 
     public bool DebugDump { get; init; }
 
-    /// <summary>沿用既有 <see cref="BatchRunRecorder"/> 的「執行時的命令列」欄位語意——
-    /// Web 觸發固定為空（早期 console 批次時代傳實際 args，該值仍存在於歷史執行紀錄）。</summary>
-    public string[] Args { get; init; } = Array.Empty<string>();
-
     /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
-    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.4；歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
+    /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
     public string? Trigger { get; init; }
 }
@@ -50,16 +46,14 @@ public class OrchestratorResult
 }
 
 /// <summary>
-/// 執行輸出的抽象（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：只抽「輸出去哪裡」，不抽「輸出什麼」——
-/// <see cref="AnalysisOrchestrator"/> 內文保留與早期 console 批次逐字相同的格式化邏輯（框線、
-/// 色彩分段），呼叫 <see cref="WriteLine"/>／<see cref="WithColor"/> 取代直接呼叫 <c>Console.*</c>。
-/// console 批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md §1.5），現在唯一的實作是
-/// Web 端 adapter（<c>WebRunConsole</c>），落地 NLog／<see cref="BatchRunRecorder"/> milestone。
+/// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
+/// 內文保留原本的格式化邏輯（框線、emoji 分段），呼叫 <see cref="WriteLine"/> 取代直接呼叫
+/// <c>Console.*</c>。唯一的實作是 Web 端 adapter（<c>WebRunConsole</c>），落地 NLog／
+/// <see cref="BatchRunRecorder"/> milestone。
 /// </summary>
 public interface IRunConsole
 {
     void WriteLine(string message = "");
-    void WithColor(ConsoleColor color, Action write);
 }
 
 /// <summary>
@@ -143,7 +137,7 @@ public class AnalysisOrchestrator
 
             // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
-            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger, ct,
+            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"));
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
 
@@ -245,16 +239,13 @@ public class AnalysisOrchestrator
             var permissionCheck = permissionMonitor.Check();
             if (permissionCheck.Alerts.Count > 0)
             {
-                console.WithColor(ConsoleColor.Magenta, () =>
+                console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+                console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
+                foreach (var alert in permissionCheck.Alerts)
                 {
-                    console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-                    console.WriteLine($"  ║  🔑 偵測到 {permissionCheck.Alerts.Count} 項權限／角色異動，請立即確認是否為授權操作！");
-                    foreach (var alert in permissionCheck.Alerts)
-                    {
-                        console.WriteLine($"  ║  - {alert}");
-                    }
-                    console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-                });
+                    console.WriteLine($"  ║  - {alert}");
+                }
+                console.WriteLine("  ╚══════════════════════════════════════════════════╝");
 
                 console.WriteLine("\n  被異動項目明細（請逐項人工確認是否為正常異動）：");
                 for (int i = 0; i < permissionCheck.Details.Count; i++)
@@ -404,14 +395,11 @@ public class AnalysisOrchestrator
 
                     if (checkup.HasFindings)
                     {
-                        console.WithColor(ConsoleColor.Cyan, () =>
+                        console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
+                        if (checkup.ReportFile != null)
                         {
-                            console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
-                            if (checkup.ReportFile != null)
-                            {
-                                console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
-                            }
-                        });
+                            console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
+                        }
                     }
                     else
                     {
@@ -617,8 +605,8 @@ public class AnalysisOrchestrator
         var riskyCount = result.LocalResults.Count(r => r.ReportFile != null);
         if (riskyCount > 0)
         {
-            console.WithColor(ConsoleColor.Yellow, () => console.WriteLine(
-                $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。"));
+            console.WriteLine(
+                $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。");
         }
         else
         {
@@ -653,11 +641,8 @@ public class AnalysisOrchestrator
 
         if (netiqHostList.Warnings.Count > 0)
         {
-            console.WithColor(ConsoleColor.Yellow, () =>
-            {
-                console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
-                foreach (var warning in netiqHostList.Warnings) console.WriteLine($"    - {warning}");
-            });
+            console.WriteLine($"\n  ⚠ NetIQ 主機清單有 {netiqHostList.Warnings.Count} 項需要注意：");
+            foreach (var warning in netiqHostList.Warnings) console.WriteLine($"    - {warning}");
         }
         if (netiqHostList.TotalHosts == 0) return;
 
@@ -724,14 +709,11 @@ public class AnalysisOrchestrator
         // Security 無權限時逐條列出因此停用的偵測項目——覆蓋率誠實申報，不是一句「讀取失敗」帶過
         if (record.UncoveredChecks.Count > 0)
         {
-            console.WithColor(ConsoleColor.DarkYellow, () =>
+            console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
+            foreach (var check in record.UncoveredChecks)
             {
-                console.WriteLine("  ⚠ 本次未能檢查的項目（權限或來源限制，非「已檢查且無異常」）：");
-                foreach (var check in record.UncoveredChecks)
-                {
-                    console.WriteLine($"    - {check}");
-                }
-            });
+                console.WriteLine($"    - {check}");
+            }
         }
 
         // 主機級抑制（見 docs/RULES-PLAN.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
@@ -746,48 +728,39 @@ public class AnalysisOrchestrator
         var criticalIssues = record.TopIssues.Where(i => i.ElevatesDayRisk && !i.Suppressed).ToList();
         if (record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0)
         {
-            console.WithColor(ConsoleColor.Red, () =>
+            console.WriteLine();
+            console.WriteLine("  ╔══════════════════════════════════════════════════╗");
+            console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
+            if (record.Headline.Length > 0)
             {
-                console.WriteLine();
-                console.WriteLine("  ╔══════════════════════════════════════════════════╗");
-                console.WriteLine($"  ║  ⚠ 警告：{record.Date:yyyy-MM-dd} 偵測到需要立即關注的問題！");
-                if (record.Headline.Length > 0)
-                {
-                    console.WriteLine($"  ║  {record.Headline}");
-                }
-                foreach (var issue in criticalIssues)
-                {
-                    console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
-                    console.WriteLine($"  ║    → {issue.KnownIssue}");
-                }
-                console.WriteLine("  ╚══════════════════════════════════════════════════╝");
-            });
+                console.WriteLine($"  ║  {record.Headline}");
+            }
+            foreach (var issue in criticalIssues)
+            {
+                console.WriteLine($"  ║  [{issue.Category}] {issue.Source} EventId {issue.EventId} x{issue.Count}");
+                console.WriteLine($"  ║    → {issue.KnownIssue}");
+            }
+            console.WriteLine("  ╚══════════════════════════════════════════════════╝");
         }
 
         // 跨 log 關聯訊號：已知攻擊鏈/故障鏈組合，最重要的線索，紅色醒目顯示
         if (record.CorrelationAlerts.Count > 0)
         {
-            console.WithColor(ConsoleColor.Red, () =>
+            console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
+            foreach (var alert in record.CorrelationAlerts)
             {
-                console.WriteLine($"\n  🔗 關聯訊號（程式比對出的攻擊鏈/故障鏈組合）：");
-                foreach (var alert in record.CorrelationAlerts)
-                {
-                    console.WriteLine($"    - {alert}");
-                }
-            });
+                console.WriteLine($"    - {alert}");
+            }
         }
 
         // 程式比對歷史後發現的頻率異常（首次出現、頻率上升、總量突增），用黃色提醒
         if (record.TrendAlerts.Count > 0)
         {
-            console.WithColor(ConsoleColor.Yellow, () =>
+            console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
+            foreach (var alert in record.TrendAlerts)
             {
-                console.WriteLine($"\n  ⚠ 頻率異常／慢速惡化（與近期歷史比對）：");
-                foreach (var alert in record.TrendAlerts)
-                {
-                    console.WriteLine($"    - {alert}");
-                }
-            });
+                console.WriteLine($"    - {alert}");
+            }
         }
 
         if (record.AiAnalyzed && (verbose || record.RiskLevel == RiskLevels.High || criticalIssues.Count > 0 || record.TrendAlerts.Count > 0))
@@ -810,8 +783,8 @@ public class AnalysisOrchestrator
         // 有輸出風險報告時明確指引檔案位置，讓使用者知道去哪看細節
         if (record.ReportFile != null)
         {
-            console.WithColor(ConsoleColor.Cyan, () => console.WriteLine(
-                $"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}"));
+            console.WriteLine(
+                $"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}");
         }
     }
 }

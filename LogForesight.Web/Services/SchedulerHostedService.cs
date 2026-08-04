@@ -134,7 +134,6 @@ public class SchedulerHostedService : BackgroundService
             HostIds = request.HostIds,
             BackfillOverride = request.BackfillOverride,
             DebugDump = _scheduleOptionsStore.Get().DebugDump,
-            Args = request.Args,
             Trigger = request.Trigger
         };
 

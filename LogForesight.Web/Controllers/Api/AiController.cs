@@ -19,7 +19,7 @@ public class AiController : ControllerBase
     private readonly DashboardService _dashboard;
     private readonly RecordQueryService _records;
     private readonly WebAppSettings _settings;
-    private readonly IRiskyEventLookup _eventLookup;
+    private readonly RiskyEventLookupService _eventLookup;
     private readonly IHostStore _hosts;
 
     public AiController(
@@ -27,7 +27,7 @@ public class AiController : ControllerBase
         DashboardService dashboard,
         RecordQueryService records,
         WebAppSettings settings,
-        IRiskyEventLookup eventLookup,
+        RiskyEventLookupService eventLookup,
         IHostStore hosts)
     {
         _ai = ai;
@@ -110,10 +110,10 @@ public class AiController : ControllerBase
         // ChatAsync 略過即可，不影響既有問答流程
         var report = _records.GetReport(request.HostId, parsedDate);
 
-        // 詢問 AI 現場事件取得（docs/WEB-SCHEDULER-PLAN.md §2.2.4）：只在第一輪（使用者剛選定這個
-        // 問題、還沒有對話歷史）取一次，後續輪次沿用同一份 context，不必每輪重查。
-        // IRiskyEventLookup 內部先查風險 log 暫存（本機與 NetIQ 主機皆有）、查無才 fallback 既有的
-        // Sentinel 即時查詢（僅 NetIQ 主機、開關/節流語意不變）。任何失敗／不符資格一律回 null，靜默降級。
+        // 詢問 AI 現場事件取得：只在第一輪（使用者剛選定這個問題、還沒有對話歷史）取一次，
+        // 後續輪次沿用同一份 context，不必每輪重查。RiskyEventLookupService 內部先查風險 log
+        // 暫存（本機與 NetIQ 主機皆有）、查無才 fallback 既有的 Sentinel 即時查詢（僅 NetIQ 主機、
+        // 開關/節流語意不變）。任何失敗／不符資格一律回 null，靜默降級。
         LiveEventFetchResult? liveEvents = null;
         if (request.Messages.Count == 1)
         {

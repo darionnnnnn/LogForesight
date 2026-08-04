@@ -3,8 +3,8 @@ using System.Text.Json;
 namespace LogForesight;
 
 /// <summary>
-/// 從執行檔目錄的 appsettings.json 載入設定。
-/// 檔案不存在時使用預設值（開箱即用）；存在但解析失敗時擲例外中止啟動（見 Load 的語意說明）。
+/// Ai／Permissions／Analysis／Storage 各設定區段的型別定義，供 Web 端 <c>WebAppSettings</c> 沿用
+/// （欄位只定義一份，Web 與 Core 不會各自漂移）。
 /// </summary>
 public class AppSettings
 {
@@ -12,51 +12,6 @@ public class AppSettings
     public PermissionSettings Permissions { get; set; } = new();
     public AnalysisSettings Analysis { get; set; } = new();
     public StorageSettings Storage { get; set; } = new();
-
-    // 讀執行檔所在目錄（排程執行時 CurrentDirectory 可能是 system32，不可靠）
-    public static AppSettings Load() =>
-        Load(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
-
-    /// <summary>
-    /// 兩種缺席語意刻意不同（2026-07-23 定案，起因：Storage 段一個括號錯誤讓整份設定
-    /// ——含 AI 位址——被靜默丟棄，使用者只看到「AI 抓到預設值」卻找不到原因）：
-    ///   - 檔案**不存在** → 用預設值（開箱即用，測試情境不必先寫設定檔）
-    ///   - 檔案**存在但解析失敗** → 擲 <see cref="AppSettingsLoadException"/> 中止啟動。
-    ///     檔案存在代表使用者有明確的設定意圖，靜默退回預設值會讓批次照著「不是使用者要的
-    ///     設定」跑——比「不跑」嚴重得多。與「正式環境用 Stub 驗證直接擋下」同一個原則。
-    /// </summary>
-    public static AppSettings Load(string path)
-    {
-        if (!File.Exists(path))
-        {
-            Console.WriteLine($"找不到 {path}，使用預設設定。");
-            return new AppSettings();
-        }
-
-        try
-        {
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true
-            };
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), options) ?? new AppSettings();
-        }
-        catch (JsonException ex)
-        {
-            throw new AppSettingsLoadException(
-                $"appsettings.json 格式錯誤，無法啟動：{ex.Message}｜檔案位置：{path}｜" +
-                "請修正 JSON 語法（常見：漏掉大括號、引號或逗號）後再執行。" +
-                "刻意不以預設值繼續：設定檔存在代表有明確設定意圖，照預設值跑可能寫進錯誤的儲存後端。", ex);
-        }
-    }
-}
-
-/// <summary>設定檔存在但無法解析——啟動必須中止（語意見 <see cref="AppSettings.Load(string)"/>）</summary>
-public class AppSettingsLoadException : Exception
-{
-    public AppSettingsLoadException(string message, Exception inner) : base(message, inner) { }
 }
 
 public class AiSettings
@@ -218,13 +173,11 @@ public class SentinelServer
 }
 
 /// <summary>
-/// 儲存後端設定。**批次 exe 與 Web 共用同一個類別**（docs/WEB-SPEC.md §5）：
-/// 兩個應用各有自己的 appsettings.json，但 Storage 區段必須指向同一個後端，
-/// 欄位定義只有一份才不會兩邊各自漂移。
+/// 儲存後端設定（docs/WEB-SPEC.md §5）：欄位定義集中在 Core，供 Web 端 <c>WebAppSettings.Storage</c> 沿用。
 /// </summary>
 public class StorageSettings
 {
-    /// <summary>受支援的儲存後端。Jsonl 檔案格式已於 2026-07-24 退役，見 docs/HISTORY.md 定案 10。</summary>
+    /// <summary>受支援的儲存後端。</summary>
     public static readonly string[] ValidTypes = { "Sqlite", "SqlServer" };
 
     /// <summary>
@@ -234,9 +187,7 @@ public class StorageSettings
 
     /// <summary>
     /// 資料根目錄：Sqlite 未設定 ConnectionString 時，預設 db 檔位置的退路；
-    /// export\ 報告全文等交付檔案的所在。
-    /// **批次與 Web 都吃這個設定**：空字串 = 各自的執行檔目錄（批次的既有預設行為）；
-    /// 要共用資料時兩邊填同一個路徑——Web 與批次是不同的執行檔目錄，Web 留空會讀不到批次的資料。
+    /// export\ 報告全文等交付檔案的所在。空字串＝執行檔自身目錄。
     /// </summary>
     public string DataRoot { get; set; } = "";
 

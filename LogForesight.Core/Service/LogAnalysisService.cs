@@ -85,10 +85,6 @@ public class LogAnalysisService
         _hostId = hostId;
     }
 
-    /// <summary>自行抓取當日 log 後分析（單日情境用）</summary>
-    public Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, bool useAi = true, string[]? logNames = null, int historyDays = 14)
-        => AnalyzeDayAsync(targetDate, _eventLogService.GetEventLogsFromAll(targetDate, logNames), useAi, historyDays);
-
     /// <summary>
     /// 分析已抓取好的當日 log（回補多天時用：log 由呼叫端一次掃描、預先分桶，
     /// 分析迴圈不需等待任何 Event Log I/O，只等 AI 推論）
