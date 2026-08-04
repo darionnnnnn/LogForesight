@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace LogForesight.Core.Persistence;
 
 /// <summary>排程設定的讀寫（↔ webdata blob，key=schedule_options）。單一物件，非清單</summary>
@@ -11,27 +9,11 @@ public interface IScheduleOptionsStore
     ScheduleOptions Update(Action<ScheduleOptions> mutation);
 }
 
-/// <summary><see cref="IScheduleOptionsStore"/> 的實作：整份 JSON 存一筆 blob，同 <see cref="SystemSettingsStore"/> 的作法</summary>
-public class ScheduleOptionsStore : IScheduleOptionsStore
+/// <summary><see cref="IScheduleOptionsStore"/> 的實作，共用邏輯見 <see cref="JsonBlobSingleton{T}"/>。
+/// 內容不存在（首次執行）時回預設值——Enabled=false，行為與升級前相同。</summary>
+public class ScheduleOptionsStore : JsonBlobSingleton<ScheduleOptions>, IScheduleOptionsStore
 {
-    private readonly EfJsonBlobStore _blob;
+    public ScheduleOptionsStore(EfJsonBlobStore blob) : base(blob) { }
 
-    public ScheduleOptionsStore(EfJsonBlobStore blob) => _blob = blob;
-
-    public ScheduleOptions Get() => Deserialize(_blob.Read());
-
-    public ScheduleOptions Update(Action<ScheduleOptions> mutation) =>
-        _blob.Mutate(raw =>
-        {
-            var options = Deserialize(raw);
-            mutation(options);
-            options.UpdatedAt = DateTime.Now;
-            return (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options);
-        });
-
-    /// <summary>內容不存在（首次執行，或尚未有人存過設定）時回預設值——Enabled=false，行為與升級前相同</summary>
-    private static ScheduleOptions Deserialize(string? json) =>
-        string.IsNullOrWhiteSpace(json)
-            ? new ScheduleOptions()
-            : JsonSerializer.Deserialize<ScheduleOptions>(json, LfJsonOptions.Pretty) ?? new ScheduleOptions();
+    protected override void Touch(ScheduleOptions value) => value.UpdatedAt = DateTime.Now;
 }
