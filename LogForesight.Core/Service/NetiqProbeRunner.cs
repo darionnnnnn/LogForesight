@@ -4,18 +4,18 @@ namespace LogForesight;
 
 /// <summary>
 /// 對已設定的 Sentinel 逐一執行一組小規模驗證查詢，把原始回應與時間量測輸出成可直接複製貼回
-/// 對話的報告（docs/NETIQ-API-PLAN.md §3.5）。**輸出格式是設計來貼回對話定案欄位的純文字契約，
-/// 不可隨意改寫**——入口是 Web「NetIQ 維護」頁的「診斷」分頁（docs/WEB-SCHEDULER-PLAN.md
+/// 對話的報告（docs/NETIQ-API-REFERENCE.md §3.5）。**輸出格式是設計來貼回對話定案欄位的純文字契約，
+/// 不可隨意改寫**——入口是 Web「NetIQ 維護」頁的「診斷」分頁（docs/archive/WEB-SCHEDULER-PLAN.md
 /// §1.4.11；早期的 console CLI <c>--netiq-probe</c> 已隨 Phase 5 退場，輸出契約沿用不變）。
 ///
-/// 這是欄位對應／IP 篩選批次大小／時區等未決事項（docs/NETIQ-API-PLAN.md §9）唯一的定案依據——
+/// 這是欄位對應／IP 篩選批次大小／時區等未決事項（docs/BACKLOG.md）唯一的定案依據——
 /// 公開文件沒有提供 event-search 結果頁的確切 JSON 結構範例，<see cref="SentinelClient"/> 的
-/// <c>ParseEventsPage</c> 目前只能 best-effort 通用解析（docs/NETIQ-API-PLAN.md §3.3、§4 未決欄位），
+/// <c>ParseEventsPage</c> 目前只能 best-effort 通用解析（docs/NETIQ-API-REFERENCE.md §3.3、§4 未決欄位），
 /// 必須用真實環境的原始輸出核對後才能繼續實作 SentinelFieldMap／SentinelStatsSource
-/// （docs/NETIQ-API-PLAN.md §8 步驟 3 起）。
+/// （docs/archive/HISTORY.md 步驟 3 起）。
 ///
 /// 全程透過 <see cref="SentinelClient"/> 既有的單一佇列＋節流執行，對 server 負擔可忽略
-/// （docs/NETIQ-API-PLAN.md §5）。
+/// （docs/NETIQ-API-REFERENCE.md §5）。
 ///
 /// **第二輪（2026-07-29）**：第一輪真實輸出（Sentinel「162」）量級遠超原估計
 /// （近 24h found≈2470 萬筆），推翻了「探索走近 24h 全事件投影＋本地 distinct」的原設計，
@@ -38,7 +38,7 @@ public static class NetiqProbeRunner
     /// <param name="sampleLinuxIp">一台已知的 Linux 主機 IP，用於核對 Linux 事件的欄位形狀
     /// （program／sev↔syslog priority／OS 判別候選值）。省略時對應步驟標示略過。</param>
     /// <param name="console">輸出目的地——Web 用累積到記憶體緩衝供輪詢讀取的 adapter
-    /// （console CLI 版本已隨 Phase 5 退場，docs/WEB-SCHEDULER-PLAN.md §1.5）。</param>
+    /// （console CLI 版本已隨 Phase 5 退場，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）。</param>
     public static async Task<bool> RunAsync(
         IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
         string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default)
@@ -50,7 +50,7 @@ public static class NetiqProbeRunner
         }
 
         console.WriteLine("══════════ NetIQ Sentinel API Probe ══════════");
-        console.WriteLine("以下輸出可直接複製貼回對話，用於定案欄位對應／批次大小／時區（docs/NETIQ-API-PLAN.md §9）。");
+        console.WriteLine("以下輸出可直接複製貼回對話，用於定案欄位對應／批次大小／時區（docs/BACKLOG.md）。");
         if (string.IsNullOrWhiteSpace(sampleIp) && string.IsNullOrWhiteSpace(sampleLinuxIp))
         {
             console.WriteLine("（未提供樣本 IP：加上樣本 IP 可多跑第二輪的主機歸屬鍵／頻道覆蓋／dt 邊界核對）");

@@ -1,5 +1,5 @@
 /**
- * AI 產出文字的單一渲染入口（docs/HISTORY.md S7）。
+ * AI 產出文字的單一渲染入口（docs/archive/HISTORY.md S7）。
  *
  * AI 回覆常帶 `**粗體**`／`- 清單` 之類的 Markdown 語法，但畫面上一直是 textContent 原樣呈現
  * （星號原樣顯示）——這是刻意的安全設計：AI 產出不可信任為 HTML，過去沒有引入任何 Markdown

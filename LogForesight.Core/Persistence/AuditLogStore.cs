@@ -48,7 +48,7 @@ public class AuditLogStore
         var page = Math.Max(query.Page, 1);
 
         // 完全沒有篩選條件：純粹分頁瀏覽全部，SQL 端直接分頁，不必先讀全表
-        // （docs/HISTORY.md P1-2——稽核頁預設檢視就是這個情境，2000 台規模下
+        // （docs/archive/HISTORY.md P1-2——稽核頁預設檢視就是這個情境，2000 台規模下
         // 稽核表可能有數十萬列，每次開頁都整表讀回記憶體會是第一個效能瓶頸）。
         // 只要有任何篩選條件就不走這條路：From/To 篩選涉及 CreatedAt 為 null 的既存列
         // （schema 升級前寫入）在 SQL 端無法精確判斷是否落在範圍內，全表無篩選時這個顧慮不存在。
@@ -92,7 +92,7 @@ public class AuditLogStore
             .Count(e => e.OccurredAt >= from && e.OccurredAt <= to &&
                         string.Equals(e.Action, action, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/HISTORY.md P0-3）</summary>
+    /// <summary>清除超過保留天數的稽核紀錄，回傳刪除筆數（docs/archive/HISTORY.md P0-3）</summary>
     public int Prune(int retentionDays) => _log.Prune(DateTime.Today.AddDays(-retentionDays));
 
     private static bool Matches(AuditEntry entry, AuditQuery query)

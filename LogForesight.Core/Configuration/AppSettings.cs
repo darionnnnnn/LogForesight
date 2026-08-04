@@ -21,7 +21,7 @@ public class AiSettings
 
     /// <summary>
     /// AI 是否已設定（BaseUrl 有值）——批次／排程執行以此判斷要不要呼叫 AI，未設定時
-    /// 自動短路成統計模式，不必逐一嘗試打逾時（docs/FEEDBACK-7-PLAN.md）。
+    /// 自動短路成統計模式，不必逐一嘗試打逾時（docs/archive/FEEDBACK-7-PLAN.md）。
     /// 呼叫前提：本值需在 <c>RuntimeSettingsResolver.ApplySystemSettingsOverrides</c> 套用
     /// DB 覆寫之後讀取才是事實——DB 存過但刻意清空 BaseUrl 時會覆寫成空字串，即「刻意停用」。
     /// </summary>
@@ -150,7 +150,7 @@ public class AnalysisSettings
 /// Sentinel 連線的**明碼、可直接連線**投影（給 <see cref="SentinelClient"/> 用）。
 /// 事實來源是 Web 維護的 <see cref="ISentinelStore"/>（DB，密碼以密文存放）；
 /// 這個型別是呼叫端解密後、僅存在於執行期記憶體的連線用副本，不落地、不進 log
-/// （docs/HISTORY.md 定案 1）。連線與節流參數見 <see cref="NetiqOptions"/>。
+/// （docs/archive/HISTORY.md 定案 1）。連線與節流參數見 <see cref="NetiqOptions"/>。
 /// </summary>
 public class SentinelServer
 {
@@ -162,7 +162,7 @@ public class SentinelServer
 
     public string BaseUrl { get; set; } = string.Empty;
 
-    /// <summary>探索連線帳號（docs/HISTORY.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
+    /// <summary>探索連線帳號（docs/archive/HISTORY.md §1.1）。空白＝此 Sentinel 無法主動掃描</summary>
     public string Username { get; set; } = string.Empty;
 
     /// <summary>探索連線密碼（明碼，由 <see cref="Sentinel.PasswordEnc"/> 解密而來）</summary>

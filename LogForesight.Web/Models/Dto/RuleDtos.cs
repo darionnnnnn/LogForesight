@@ -8,7 +8,7 @@ public class RuleDto
     public string Origin { get; set; } = string.Empty;
     public bool Enabled { get; set; }
 
-    /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES-PLAN.md）</summary>
+    /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES.md）</summary>
     public string Platform { get; set; } = "windows";
 
     public string SourcePattern { get; set; } = string.Empty;
@@ -23,7 +23,7 @@ public class RuleDto
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
+    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
     public bool ElevatesDayRisk { get; set; }
 
     public string Description { get; set; } = string.Empty;
@@ -84,7 +84,7 @@ public class SaveRuleRequest
     [Required]
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
+    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化，取代原「嚴重」等級）</summary>
     public bool ElevatesDayRisk { get; set; }
 
     [Required(ErrorMessage = "請輸入規則說明")]
@@ -124,7 +124,7 @@ public class RuleSuppressionDto
     public bool IsExpired { get; set; }
 
     /// <summary>所屬規則的平台（'windows'/'linux'），由 RuleId 反查帶出——
-    /// 抑制清單依平台篩選、「抑制此規則」的主機下拉也依此過濾（docs/LINUX-RULES-PLAN.md §5.1）</summary>
+    /// 抑制清單依平台篩選、「抑制此規則」的主機下拉也依此過濾（docs/LINUX-RULES.md §5.1）</summary>
     public string Platform { get; set; } = "windows";
 }
 
@@ -156,7 +156,7 @@ public class RuleFieldDiffDto
     public string Seed { get; set; } = string.Empty;
 }
 
-/// <summary>內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
+/// <summary>內建規則升級（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
 public class RuleImportStatusDto
 {
     public int CurrentSeedVersion { get; set; }

@@ -54,10 +54,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISuppressionStore>(_ => StorageFactory.CreateSuppressionStore(storage, dataRoot));
         services.AddSingleton<BatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
-        // 排程設定（docs/WEB-SCHEDULER-PLAN.md §1.4.3）
+        // 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）
         services.AddSingleton<IScheduleOptionsStore>(_ => StorageFactory.CreateScheduleOptionsStore(storage, dataRoot));
 
-        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
+        // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
         services.AddSingleton<IRiskyEventStore>(_ => StorageFactory.CreateRiskyEventStore(storage, dataRoot));
 
         return services;
@@ -72,7 +72,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
-        // DynamicAuthenticationProvider（docs/HISTORY.md #9）包一層：DB 設定的
+        // DynamicAuthenticationProvider（docs/archive/HISTORY.md #9）包一層：DB 設定的
         // AdAuthEnabled 開啟時改走 AD 動態設定，否則委派給 appsettings 決定的原 provider——
         // 這裡的 switch 只決定「沒開啟 AD 動態設定時」的行為，語意與改版前完全一致。
         services.AddSingleton<IAuthenticationProvider>(sp =>
@@ -201,7 +201,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
 
-        // Sentinel 名單改由 Web 維護（docs/HISTORY.md 定案 1），讀寫都經 ISentinelStore
+        // Sentinel 名單改由 Web 維護（docs/archive/HISTORY.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();
         services.AddScoped<SentinelAdminService>();
 
@@ -211,7 +211,7 @@ public static class ServiceCollectionExtensions
 
         // NetIQ 主動探索：預設 Development 用 Stub（離線可跑全流程），其餘用真連線
         // （SentinelRestDirectoryClient，走 SentinelClient 的網段範圍掃描，
-        // docs/NETIQ-API-PLAN.md §3.4，2026-07-29 定案）；Netiq:DiscoveryClient=Stub/Real
+        // docs/NETIQ-API-REFERENCE.md §3.4，2026-07-29 定案）；Netiq:DiscoveryClient=Stub/Real
         // 可明確覆寫這個判斷（見 NetiqDiscoverySettings），開發機才連得到真實 Sentinel 試掃。
         services.AddScoped<INetiqDirectoryClient>(sp =>
             ShouldUseStubNetiqClient(
@@ -226,7 +226,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebAiService, WebAiService>();
         services.AddScoped<AiInsightService>();
 
-        // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
+        // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
 
@@ -239,7 +239,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
-        // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/FEEDBACK-4-PLAN.md §0），
+        // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();
         services.AddScoped<HandlingService>();
@@ -250,7 +250,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RuleAdminService>();
         services.AddScoped<RunMonitorService>();
 
-        // 排程引擎（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
+        // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊
         // 為單例並讓 IHostedService 直接引用同一個實例——ScheduleController 需要呼叫它的
         // TriggerRunAsync（手動觸發），不能只當背景服務、必須也能被其他地方解析取得。
@@ -258,7 +258,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
-        // NetIQ API 診斷（probe，docs/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
+        // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用
         services.AddSingleton<NetiqProbeRunState>();
         services.AddSingleton<NetiqProbeService>();

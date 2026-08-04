@@ -10,7 +10,7 @@ public readonly record struct CaseSyncResult(bool Applied, int SyncedDayCount, b
 public readonly record struct CaseAttachResult(int AttachedCount);
 
 /// <summary>
-/// 問題案件的建案／同步／掛接規則單點定義（docs/FEEDBACK-4-PLAN.md §0.4）。
+/// 問題案件的建案／同步／掛接規則單點定義（docs/archive/FEEDBACK-4-PLAN.md §0.4）。
 ///
 /// 放 Core 而非 Web：console 批次（Program.cs 本機路徑、NetiqPipelineService）與 Web
 /// （HandlingService）都要呼叫同一套規則——理由同 <c>DayHandlingDerivation</c>，
@@ -133,7 +133,7 @@ public class IssueCaseCoordinator
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
-        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/FEEDBACK-8-PLAN.md #4）
+        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）
         var effectiveDueDate = effectiveStatus is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
             ? dueDate : null;
 

@@ -56,7 +56,7 @@ public class HandlingController : ControllerBase
 }
 
 /// <summary>
-/// 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
+/// 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
 /// 全部端點都是 <c>Assign</c> 能力——同單日詳情的指派，只有 admin 能做。
 /// </summary>
 [ApiController]

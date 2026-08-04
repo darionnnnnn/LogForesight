@@ -100,7 +100,7 @@ public class RunMonitorServiceTests : IDisposable
     [Fact]
     public void 優雅停止的執行_列為已停止而非失敗()
     {
-        // docs/WEB-SCHEDULER-PLAN.md §1.4.4：手動停止或窗口 End 的優雅停止「是已停止不是失敗」。
+        // docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4：手動停止或窗口 End 的優雅停止「是已停止不是失敗」。
         // Stopped 優先於錯誤計數——停止前累積的警告/錯誤仍在計數欄，但狀態不因此變失敗
         var runs = Runs();
         var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now });
@@ -200,7 +200,7 @@ public class RunMonitorServiceTests : IDisposable
         Assert.Equal(1, today.NotRunCount);    // 10.0.0.9
     }
 
-    /// <summary>docs/FEEDBACK-8-PLAN.md #6：「誰跑的」統一顯示格式「顯示名稱(帳號)」；
+    /// <summary>docs/archive/FEEDBACK-8-PLAN.md #6：「誰跑的」統一顯示格式「顯示名稱(帳號)」；
     /// 查無對應使用者（帳號已刪除等）時退回只顯示帳號，不因此整筆出錯。</summary>
     [Fact]
     public void 手動觸發的執行紀錄_TriggerText顯示顯示名稱與帳號()

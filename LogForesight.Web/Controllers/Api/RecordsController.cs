@@ -105,7 +105,7 @@ public class RecordsController : ControllerBase
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
             _service.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
-    /// <summary>依問題彙總（主機與日期都合併，docs/FEEDBACK-4-PLAN.md §4）</summary>
+    /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）</summary>
     [HttpGet("by-issue")]
     public ApiResponse<PagedResult<IssueGroupDto>> ByIssue(
         [FromQuery] string? hostIds,
@@ -154,7 +154,7 @@ public class RecordsController : ControllerBase
         ApiResponse<string?>.Ok(_service.GetReport(hostId, ParseRequiredDate(date)));
 
     /// <summary>
-    /// 單一問題簽章的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）。issueKey 含 <c>|</c>，
+    /// 單一問題簽章的先前處理歷史（docs/archive/FEEDBACK-5-PLAN.md §4）。issueKey 含 <c>|</c>，
     /// 走 query string 不進路由（路由樣板對 <c>|</c> 的處理因 routing 設定而異，query string 天生無此問題）。
     /// </summary>
     [HttpGet("{hostId:long}/{date}/handling/issue-history")]

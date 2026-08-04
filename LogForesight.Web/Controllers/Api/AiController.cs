@@ -8,7 +8,7 @@ using static LogForesight.Web.Controllers.Api.QueryStringParsing;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// AI 加值層（docs/HISTORY.md §6）。純加值：AI 不可用或失敗時一律回 data:null，
+/// AI 加值層（docs/archive/HISTORY.md §6）。純加值：AI 不可用或失敗時一律回 data:null，
 /// 前端據此隱藏對應 UI，其餘功能不受影響。所有查詢都經既有 Service，繼承其可見範圍過濾。
 /// </summary>
 [ApiController]
@@ -105,7 +105,7 @@ public class AiController : ControllerBase
 
         ValidateChatMessages(request.Messages);
 
-        // 當日分析報告全文一併餵給 AI（docs/HISTORY.md #11）：與「報告全文」卡同一條路、
+        // 當日分析報告全文一併餵給 AI（docs/archive/HISTORY.md #11）：與「報告全文」卡同一條路、
         // 同一套授權（GetReport 內部同樣先 GetOne 驗證可見範圍）；無報告（低風險日）時為 null，
         // ChatAsync 略過即可，不影響既有問答流程
         var report = _records.GetReport(request.HostId, parsedDate);

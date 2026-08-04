@@ -29,7 +29,7 @@ public class KnownIssueCatalogTests : IDisposable
     public static IEnumerable<object[]> WindowsRules() =>
         KnownIssueSeed.CreateRules().Where(r => r.Platform == "windows").Select(r => new object[] { r });
 
-    /// <summary>Linux 規則子集（docs/LINUX-RULES-PLAN.md）：比對走 KnownIssueCatalog.FindLinuxRule。</summary>
+    /// <summary>Linux 規則子集（docs/LINUX-RULES.md）：比對走 KnownIssueCatalog.FindLinuxRule。</summary>
     public static IEnumerable<object[]> LinuxRules() =>
         KnownIssueSeed.CreateRules().Where(r => r.Platform == "linux").Select(r => new object[] { r });
 
@@ -103,7 +103,7 @@ public class KnownIssueCatalogTests : IDisposable
 
         Assert.NotNull(rule);
         Assert.Equal(IssueCategory.Storage, rule!.Category);
-        // docs/HISTORY.md #1（B1 三級化）：原 Critical 改為 High＋ElevatesDayRisk=true
+        // docs/archive/HISTORY.md #1（B1 三級化）：原 Critical 改為 High＋ElevatesDayRisk=true
         Assert.Equal(IssueSeverity.High, rule.Severity);
         Assert.True(rule.ElevatesDayRisk);
     }
@@ -114,7 +114,7 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.Null(KnownIssueCatalog.FindRule("TotallyUnknownSource", 1));
     }
 
-    // ── Linux 規則（docs/LINUX-RULES-PLAN.md）：比對走 FindLinuxRule，不經 LogAggregator ──
+    // ── Linux 規則（docs/LINUX-RULES.md）：比對走 FindLinuxRule，不經 LogAggregator ──
 
     [Theory]
     [MemberData(nameof(LinuxRules))]
@@ -146,7 +146,7 @@ public class KnownIssueCatalogTests : IDisposable
     public void FindRule明確排除Linux規則_即使SourcePattern為空字串也不會意外命中()
     {
         // Linux 規則的 SourcePattern 恆空；FindRule 若不顯式排除 Platform，"".Contains("") 恆真
-        // 會是地雷（見 docs/LINUX-RULES-PLAN.md §1.2）。用空字串來源直接戳這個邊界。
+        // 會是地雷（見 docs/LINUX-RULES.md §1.2）。用空字串來源直接戳這個邊界。
         Assert.Null(KnownIssueCatalog.FindRule("", 1));
     }
 
@@ -176,7 +176,7 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     /// <summary>
-    /// 推導出的 watchlist（KnownIssueCatalog.SecurityAuditWatchlist，見 docs/RULES-PLAN.md 陷阱 1）
+    /// 推導出的 watchlist（KnownIssueCatalog.SecurityAuditWatchlist，見 docs/RULES-SPEC.md 陷阱 1）
     /// 至少要涵蓋規則外部化前寫死維護的原始清單——這是確保「改用推導」沒有不小心漏掉的唯一保障，
     /// 與 <see cref="CorrelationAnalyzerRuleAlignmentTests"/> 用同一份基準集、同一種「涵蓋」語意
     /// （不要求逐項相等：推導改成以 EventId 為準、不再區分 FailureAudit/SuccessAudit 型別，

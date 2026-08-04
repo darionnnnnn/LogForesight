@@ -226,7 +226,7 @@ public class AIService
                     throw new EmptyAiResponseException();
                 }
 
-                // 清洗 channel 分段標記＋簡轉繁（docs/FEEDBACK-3-PLAN.md #7）：整段皆思考、
+                // 清洗 channel 分段標記＋簡轉繁（docs/archive/FEEDBACK-3-PLAN.md #7）：整段皆思考、
                 // final 段被 max_tokens 截斷等情況清洗後會變空，一併視為空回應觸發重試，
                 // 不把半截思考當成回覆流進分析結果
                 var sanitized = AiOutputSanitizer.Sanitize(text);

@@ -14,7 +14,7 @@ public class HostSearchRequest
     public string? Sentinel { get; set; }
     public List<long>? GroupIds { get; set; }
 
-    /// <summary>空白＝全部；'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    /// <summary>空白＝全部；'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string? Os { get; set; }
 
     /// <summary>name | source | ip | os | roleDesc | lastReport</summary>
@@ -41,7 +41,7 @@ public class HostAdminService
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
 
     /// <summary>
-    /// 新主機豁免無回報告警的寬限期（docs/HISTORY.md 定案 9）：一個批次週期
+    /// 新主機豁免無回報告警的寬限期（docs/archive/HISTORY.md 定案 9）：一個批次週期
     /// （批次通常每天跑一次）。剛匯入的主機在第一次批次跑完前 LastReportAt 必為空，
     /// 沒有寬限期的話一次匯入一批就會立刻在儀表板與這裡的「未回報」篩選觸發告警洪水。
     /// public 讓 DashboardService 引用同一個值——兩邊都用這個定義,不是各自寫一份數字。
@@ -240,7 +240,7 @@ public class HostAdminService
     }
 
     /// <summary>
-    /// 批次改群組（docs/FEEDBACK-5-PLAN.md §8）：一次 Mutate 完成，不逐台呼叫
+    /// 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）：一次 Mutate 完成，不逐台呼叫
     /// <see cref="SetHostGroups"/>——50 台就是 50 個請求＋50 次 blob 讀改寫。
     /// 已併入其他主機的主機由 <see cref="IHostStore.SetGroupsBatch"/> 略過並回報。
     /// </summary>

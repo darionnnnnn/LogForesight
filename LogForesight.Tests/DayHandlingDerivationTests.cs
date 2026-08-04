@@ -134,7 +134,7 @@ public class DayHandlingDerivationTests
         Assert.Equal(0, result.Closed);
     }
 
-    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）────────────────────────────────────
+    // ── 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）────────────────────────────────────
 
     [Fact]
     public void 問題標為觀察中_日狀態為處理中而非未處理()

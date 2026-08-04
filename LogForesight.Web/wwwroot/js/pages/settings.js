@@ -7,11 +7,11 @@ import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved, bindTabs } from '../core/ui.js';
 import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 
-// 未儲存提醒（docs/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
+// 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
 let unsaved = null;
 
-// 兩段式（docs/HISTORY.md #5，2026-07-27 簡化自三段式）：
+// 兩段式（docs/archive/HISTORY.md #5，2026-07-27 簡化自三段式）：
 // 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁
 const DISPLAY_MODES = [
     {
@@ -26,7 +26,7 @@ const DISPLAY_MODES = [
     }
 ];
 
-// 日風險等級（docs/FEEDBACK-3-PLAN.md #8）：中文順序對齊後端 RiskLevels.All（高/中/低，重到輕）
+// 日風險等級（docs/archive/FEEDBACK-3-PLAN.md #8）：中文順序對齊後端 RiskLevels.All（高/中/低，重到輕）
 const DAY_RISK_LEVELS = ['高', '中', '低'];
 
 let current = null;
@@ -95,7 +95,7 @@ function collectDisplayMode() {
 }
 
 /**
- * 日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：與上方的問題嚴重度是不同的兩套層級，
+ * 日風險等級顯示（docs/archive/FEEDBACK-3-PLAN.md #8）：與上方的問題嚴重度是不同的兩套層級，
  * 按鈕視覺沿用同一套語彙（severity-checks 的樣式），但「高」鎖定為恆選——
  * 全部隱藏會讓儀表板永遠空白，這裡直接用 disabled 擋掉互動，而不是等送出時才報錯。
  */
@@ -145,7 +145,7 @@ function renderAiFields(settings) {
     document.getElementById('ai-api-key-clear').checked = false;
 }
 
-/** docs/HISTORY.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
+/** docs/archive/HISTORY.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
 function renderAdFields(settings) {
     document.getElementById('ad-auth-enabled').checked = settings.adAuthEnabled;
     document.getElementById('ad-servers').value = (settings.adServers ?? []).join('\n');
@@ -189,7 +189,7 @@ function collectSeverities() {
 }
 
 /**
- * 頁籤化後（docs/FEEDBACK-5-PLAN.md §9），驗證失敗的欄位可能在非作用中頁籤——
+ * 頁籤化後（docs/archive/FEEDBACK-5-PLAN.md §9），驗證失敗的欄位可能在非作用中頁籤——
  * 先切過去再顯示 toast，否則使用者看不到出錯的欄位在哪。#settings-tabs 位於
  * <form> 外（避免點頁籤誤觸 trackUnsaved 的未儲存提醒），用 data-panel 反查對應頁籤。
  */
@@ -272,7 +272,7 @@ function bindForm() {
 }
 
 /**
- * AD 測試連線（docs/HISTORY.md #9）：用表單目前填的值（不需先儲存）＋
+ * AD 測試連線（docs/archive/HISTORY.md #9）：用表單目前填的值（不需先儲存）＋
  * 管理者當場輸入的帳密試 bind。這裡是管理者對自己測試，失敗訊息可以顯示細節
  * （與一般登入一律「帳號或密碼錯誤」不同）。
  */

@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AI 加值層的**確定性部分**（docs/HISTORY.md §6）：下鑽參數白名單驗證、
+/// AI 加值層的**確定性部分**（docs/archive/HISTORY.md §6）：下鑽參數白名單驗證、
 /// 靜默降級、無風險不呼叫。AI 實際輸出品質需 koboldcpp 才驗得到，不在單元測試範圍。
 /// </summary>
 public class AiInsightServiceTests
@@ -110,7 +110,7 @@ public class AiInsightServiceTests
         Assert.NotEqual(WebAiService.HashInput("abc"), WebAiService.HashInput("abd"));
     }
 
-    // ── R7 對話：#11 報告全文餵入（docs/HISTORY.md #11）──────────────
+    // ── R7 對話：#11 報告全文餵入（docs/archive/HISTORY.md #11）──────────────
 
     private static IssueDto Issue() => new()
     {
@@ -174,7 +174,7 @@ public class AiInsightServiceTests
         Assert.Contains("這個嚴重嗎？", ai.LastUserPrompt);
     }
 
-    // ── 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）─────────────────────────
+    // ── 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）─────────────────────────
 
     [Fact]
     public async Task 對話_有現場取回事件_加入prompt且加圍欄並回報則數()

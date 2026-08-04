@@ -9,7 +9,7 @@ namespace LogForesight.Web.Filters;
 /// <summary>
 /// 能力檢查（docs/WEB-SPEC.md §7.1 三層授權的第 2 層）。
 /// 用法：<c>[Permission(Capability.Assign)]</c>；可傳多個能力（任一持有即過，OR 語意——
-/// docs/FEEDBACK-6-PLAN.md §2「排程作業」頁面同時開放 DevMonitor 與 Maintain 進入的用例）：
+/// docs/archive/FEEDBACK-6-PLAN.md §2「排程作業」頁面同時開放 DevMonitor 與 Maintain 進入的用例）：
 /// <c>[Permission(Capability.DevMonitor, Capability.Maintain)]</c>。
 ///
 /// 注意這只回答「能不能用這個功能」。**「能看哪些主機的資料」是 Service 層的職責**——

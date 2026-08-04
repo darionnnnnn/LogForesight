@@ -59,7 +59,7 @@ public class RecordQueryService
 
         // Statuses／Overdue 篩選依賴處理狀態（handling.json／issue_handling.json），那不在 SQL 裡，
         // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
-        // 才能把排序＋分頁整個下推給 SQL（docs/HISTORY.md P1-2），只為「這一頁」載入
+        // 才能把排序＋分頁整個下推給 SQL（docs/archive/HISTORY.md P1-2），只為「這一頁」載入
         // 處理狀態，這是 2000 台規模下清單頁最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑。
         var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true;
 
@@ -155,7 +155,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 本頁涉及主機的全部進行中案件（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：清單「處理人」欄
+    /// 本頁涉及主機的全部進行中案件（docs/archive/FEEDBACK-4-PLAN.md §0.4-D／Q5）：清單「處理人」欄
     /// fallback 用——日層級從未指派、但當日問題屬進行中案件時，顯示案件處理人。
     /// </summary>
     private List<IssueCase> LoadOpenCases(List<DailyAnalysisRecord> records, HostLookup lookup)
@@ -252,7 +252,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 問題查詢「依問題」視角（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId，
+    /// 問題查詢「依問題」視角（docs/archive/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId，
     /// 與 <see cref="GroupIssuesBySignature"/> 同一個分組鍵），回答「這個問題影響多大範圍、
     /// 誰在處理」——依主機／依日期是「這台主機／這一天怎麼樣」，這裡反過來看「這個問題本身」。
     /// </summary>
@@ -266,7 +266,7 @@ public class RecordQueryService
             .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities))
             .ToList();
 
-        // 問題嚴重度過濾（docs/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
+        // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
         // （已在 BuildFilter 套用到 records），但依問題視角一列一個問題，顯示的「嚴重度」是
         // 問題層級的 High/Medium/Low——高風險日裡本來就可能同時有低嚴重度的問題，不疊加這層
         // 過濾的話，使用者勾選「高＋中」後清單仍會看到「低」，觀感就是「篩選沒生效」。
@@ -299,8 +299,8 @@ public class RecordQueryService
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
 
     /// <summary>
-    /// 日風險等級（高/中/低）→ 問題嚴重度集合（docs/FEEDBACK-8-PLAN.md #5）。Critical 併入
-    /// 「高」：docs/HISTORY.md #1（B1 三級化）後規則不再產出 Critical（嚴重度封頂 High，
+    /// 日風險等級（高/中/低）→ 問題嚴重度集合（docs/archive/FEEDBACK-8-PLAN.md #5）。Critical 併入
+    /// 「高」：docs/archive/HISTORY.md #1（B1 三級化）後規則不再產出 Critical（嚴重度封頂 High，
     /// 改看 ElevatesDayRisk 旗標判定高風險日），Critical 只可能是三級化前的歷史資料——
     /// 概念上等同今日的「高」，勾選「高」時仍要看得到。
     /// </summary>
@@ -347,7 +347,7 @@ public class RecordQueryService
             if (openCase != null)
             {
                 if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
-                // 觀察到期（docs/FEEDBACK-8-PLAN.md #4）：問題仍在發生，計入未處理——處理人仍留在
+                // 觀察到期（docs/archive/FEEDBACK-8-PLAN.md #4）：問題仍在發生，計入未處理——處理人仍留在
                 // Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，不是「沒人管」）
                 if (IssueHandlingStatuses.IsObservationExpired(openCase.Status, openCase.DueDate, DateTime.Today))
                     unhandled++;
@@ -528,7 +528,7 @@ public class RecordQueryService
         var noiseMarks = _noiseMarks.GetForHost(hostName)
             .ToDictionary(m => m.IssueKey, StringComparer.Ordinal);
 
-        // 問題案件（docs/FEEDBACK-4-PLAN.md §2）：進行中案件涵蓋的問題顯示「○○○ 處理中
+        // 問題案件（docs/archive/FEEDBACK-4-PLAN.md §2）：進行中案件涵蓋的問題顯示「○○○ 處理中
         // （1/10 起）」，解釋為什麼某些問題的狀態會被案件同步「自己動」
         var openCases = _cases.GetOpenForHost(hostName)
             .ToDictionary(
@@ -537,7 +537,7 @@ public class RecordQueryService
                       c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
                 StringComparer.Ordinal);
 
-        // 先前處理過（docs/FEEDBACK-5-PLAN.md §4）：本主機更早日期有結案類逐日標記，
+        // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：本主機更早日期有結案類逐日標記，
         // 或有已結案案件，任一命中即視為「這個問題之前處理過」——只算旗標，內容留給
         // GetIssueHistory 端點按需查詢，避免詳情頁一次把全部問題的歷史都撈回來
         var priorClosedIssueKeys = _issueHandlings
@@ -617,7 +617,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 單一問題簽章在本主機的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）：只含結案類——
+    /// 單一問題簽章在本主機的先前處理歷史（docs/archive/FEEDBACK-5-PLAN.md §4）：只含結案類——
     /// 「處理中」與「未處理」的歷史不列入，使用者要的是「上次怎麼解的」不是完整流水帳。
     /// 授權沿用 GetDetail／GetReport 同一套（<see cref="IRecordRepository.GetOne"/> 先驗證可見範圍）。
     /// </summary>
@@ -671,7 +671,7 @@ public class RecordQueryService
         var from = DateTime.Today.AddDays(-days + 1);
         // 別名展開：這台主機若併入過其他主機，時間軸要涵蓋合併前的那段歷史，
         // 否則「風險時間軸」會在合併日之前整片空白，看起來像沒有分析過。
-        // applyDayRiskVisibility=false（docs/FEEDBACK-3-PLAN.md #8 豁免）：時間軸與下方的
+        // applyDayRiskVisibility=false（docs/archive/FEEDBACK-3-PLAN.md #8 豁免）：時間軸與下方的
         // 重點問題彙總都要看完整證據——被「日風險等級顯示」設定藏起來的日子，時間軸若顯示成
         // 「無分析紀錄」灰格就是說謊，這裡是全站唯二不受該設定影響的查詢路徑之一
         // （另一個是 GetOne，本來就不走 filter 路徑）。
@@ -734,7 +734,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/FEEDBACK-4-PLAN.md §3）：點某個
+    /// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/archive/FEEDBACK-4-PLAN.md §3）：點某個
     /// 問題（Source+EventId）看它在期間內逐日出現的頻率、間隔與各日處理狀態。與
     /// <see cref="GetHostDetail"/> 共用同一套別名展開＋<c>applyDayRiskVisibility:false</c> 豁免
     /// （時間軸與這裡都要看完整證據，不受「日風險等級顯示」設定影響）。
@@ -857,7 +857,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 主機詳情頁「重點問題（期間彙總）」（docs/FEEDBACK-3-PLAN.md #4）：依 Source+EventId
+    /// 主機詳情頁「重點問題（期間彙總）」（docs/archive/FEEDBACK-3-PLAN.md #4）：依 Source+EventId
     /// 分組——與 <see cref="ClusterSignatures"/> 共用 <see cref="GroupIssuesBySignature"/>，
     /// 這裡關心「出現幾天」而不是「幾台主機」，維度不同故各自 Select，分組鍵定義只寫一次。
     /// 排序：最高嚴重度（重→輕）→ 總次數 desc。
@@ -986,7 +986,7 @@ public class RecordQueryService
         var host = lookup.For(record);
         var hostName = host?.HostName ?? record.Host;
 
-        // 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級有值時優先；否則若當日
+        // 處理人 fallback（docs/archive/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級有值時優先；否則若當日
         // 有問題屬進行中案件，顯示案件處理人（後綴「（案件）」）——否則 2.3 情境下狀態同步了、
         // 處理人卻空白，使用者會困惑。多個問題各自屬不同處理人的案件時取第一個命中的，
         // 這種混合情境本就罕見（多半是同一次指派建的案），不特別處理
@@ -1034,7 +1034,7 @@ public class RecordQueryService
 
     /// <summary>對外三態文字（#12）：呼叫端一律先經 HandlingStatuses.ExternalOf，這裡只需覆蓋三態</summary>
     /// <summary>
-    /// 判定依據代碼 → 白話文字（docs/HISTORY.md #11）：與 LogAnalysisService
+    /// 判定依據代碼 → 白話文字（docs/archive/HISTORY.md #11）：與 LogAnalysisService
     /// 寫入的代碼格式對應（rule:.../correlation/trend/high_issue:.../medium/ai_raise）。
     /// null／未知代碼一律回 null，前端顯示通用說明，不強行湊一句解釋不出來的話。
     /// </summary>
@@ -1076,7 +1076,7 @@ public class RecordQueryService
     }
 
     /// <summary>
-    /// 問題層級狀態判定的單點邏輯（docs/FEEDBACK-4-PLAN.md §3）：未標記時看已知雜訊記憶／
+    /// 問題層級狀態判定的單點邏輯（docs/archive/FEEDBACK-4-PLAN.md §3）：未標記時看已知雜訊記憶／
     /// 未處理計算等級推導出「不處理（預設）」「已知雜訊（自動）」；明確標記過（含 open）一律
     /// 尊重使用者的判斷，不再套自動推導。ToIssueDto（詳情頁）與主機詳情問題發生明細
     /// （GetHostIssueOccurrences）共用，避免兩處各自維護一份判定條件遲早漂移不一致。

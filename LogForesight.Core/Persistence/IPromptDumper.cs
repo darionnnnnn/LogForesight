@@ -2,7 +2,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 驗證期用的 prompt/回應完整輸出（排程設定的「AI 診斷傾印」開關，
-/// docs/WEB-SCHEDULER-PLAN.md §1.4.10）。刻意跟平常的診斷 log（NLog）分開：
+/// docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）。刻意跟平常的診斷 log（NLog）分開：
 /// nlog.config 刻意不記錄完整 prompt 與 AI 回應全文（避免 log 檔隨呼叫次數線性增長），
 /// 但驗證新環境時常常需要看到完整內容，所以另開一個明確、預設關閉的輸出管道。
 /// </summary>

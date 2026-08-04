@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace LogForesight;
 
 /// <summary>
-/// AI 原始回覆的清洗（docs/FEEDBACK-3-PLAN.md #7）：地端推理型模型偶爾漏出內部的
+/// AI 原始回覆的清洗（docs/archive/FEEDBACK-3-PLAN.md #7）：地端推理型模型偶爾漏出內部的
 /// channel 分段標記（思考過程／最終回覆），且思考與回覆常夾雜簡體中文——
 /// PromptGuidelines 的提示詞約束擋不住模型的內在行為，這裡是輸出端的第二道防線。
 ///

@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AiOutputSanitizer（docs/FEEDBACK-3-PLAN.md #7）：channel 標記清洗＋OpenCC 簡轉繁。
+/// AiOutputSanitizer（docs/archive/FEEDBACK-3-PLAN.md #7）：channel 標記清洗＋OpenCC 簡轉繁。
 /// </summary>
 public class AiOutputSanitizerTests
 {

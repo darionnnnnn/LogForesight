@@ -17,7 +17,7 @@ internal static class NameFormat
     public static string OrDeleted(string? name, long id) => name ?? $"(已刪除:{id})";
 
     /// <summary>
-    /// 使用者名稱的唯一顯示格式：顯示名稱(帳號)（docs/FEEDBACK-8-PLAN.md #6）——半形括號，
+    /// 使用者名稱的唯一顯示格式：顯示名稱(帳號)（docs/archive/FEEDBACK-8-PLAN.md #6）——半形括號，
     /// 前端 format.js 的 formatUserName() 是同一個規則的瀏覽器端版本，後端組字串的出口
     /// （TriggerText 之類「誰做的」敘述句）統一走這裡。查無對應使用者時退回只顯示帳號。
     /// </summary>

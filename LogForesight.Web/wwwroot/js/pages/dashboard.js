@@ -39,14 +39,14 @@ async function load() {
 }
 
 /**
- * AI 今日焦點（docs/HISTORY.md §6 W1-1）：純加值。
+ * AI 今日焦點（docs/archive/HISTORY.md §6 W1-1）：純加值。
  * AI 不可用或回空時整卡不顯示——不留「載入失敗」的殘影。
  */
 async function loadAiFocus() {
     const container = document.getElementById('dashboard-ai-focus');
     container.replaceChildren();
 
-    // AI 未設定時直接不打 today-focus（避免每次進儀表板都白發一次請求，docs/FEEDBACK-7-PLAN.md）
+    // AI 未設定時直接不打 today-focus（避免每次進儀表板都白發一次請求，docs/archive/FEEDBACK-7-PLAN.md）
     let status;
     try {
         status = await api.get('/api/ai/status', { silent: true });
@@ -121,7 +121,7 @@ function renderBanner(data) {
 }
 
 function renderKpi(data, user, displaySettings) {
-    // docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定。後端已在 RecordRepository 這一咽喉
+    // docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定。後端已在 RecordRepository 這一咽喉
     // 過濾掉被隱藏等級的紀錄，data.mediumRiskDays 本來就會是 0——但「0」與「被藏起來」是
     // 兩件事，這裡整卡不顯示，不讓「0」被誤讀成「這期間真的沒有中風險日」
     const visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
@@ -131,8 +131,8 @@ function renderKpi(data, user, displaySettings) {
             label: '高風險日',
             value: data.highRiskDays,
             variant: data.highRiskDays > 0 ? 'danger' : 'secondary',
-            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/HISTORY.md #5）；
-            // 顯示範圍另受「日風險等級顯示」設定影響（docs/FEEDBACK-3-PLAN.md #8）
+            // 日風險等級由批次分析算定，不受「設定 > 層級與顯示」的問題嚴重度設定影響（docs/archive/HISTORY.md #5）；
+            // 顯示範圍另受「日風險等級顯示」設定影響（docs/archive/FEEDBACK-3-PLAN.md #8）
             hint: '日風險等級由批次分析（規則／趨勢／關聯訊號）算定，不受「層級與顯示」設定影響；顯示範圍受「日風險等級顯示」設定影響。',
             url: `/records?riskLevels=${encodeURIComponent('高')}&from=${data.from}&to=${data.to}`
         }
@@ -231,7 +231,7 @@ function renderCategories(data) {
         link.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
 
         // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
-        // docs/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
+        // docs/archive/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
         const severityClass = category.elevatesCount > 0 ? ' lf-card--critical'
             : category.highCount > 0 ? ' lf-card--warning' : '';
 
@@ -265,11 +265,11 @@ function renderCategories(data) {
  * 嚴重度分解：顏色＋文字，不做只靠顏色區分的 UI。
  * 徽章顏色改走 format.js 的 severityCountBadge（單一標準）——這裡原本自己拼一份，
  * 把 Low 的底色寫成 secondary，與其餘頁面（format.js 的 SEVERITY_VARIANT＝neutral）不同色，
- * 是 docs/HISTORY.md S11 記錄的實際分歧案例。
+ * 是 docs/archive/HISTORY.md S11 記錄的實際分歧案例。
  */
 function severityBreakdown(category) {
     // gap（非 me-1 margin）：卡片變窄需要換行時，gap 在換行處也維持間距，
-    // margin 只顧橫向會在行尾留下不對稱空隙（docs/FEEDBACK-3-PLAN.md #3）
+    // margin 只顧橫向會在行尾留下不對稱空隙（docs/archive/FEEDBACK-3-PLAN.md #3）
     const wrap = document.createElement('span');
     wrap.className = 'd-flex flex-wrap gap-1';
     const counts = {

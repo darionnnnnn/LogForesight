@@ -43,7 +43,7 @@ async function load() {
         getCurrentUser(),
         api.get('/api/ai/status', { silent: true }).catch(() => null)
     ]);
-    // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/HISTORY.md S1）：
+    // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/archive/HISTORY.md S1）：
     // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
@@ -60,7 +60,7 @@ async function load() {
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
     renderCoverage(currentDetail);
-    // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/HISTORY.md #4）
+    // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）
     initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
     await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
@@ -81,7 +81,7 @@ async function onBatchSaved(result) {
  * 重點問題，全文留給少數需要逐字核對的場合。展開狀態記 localStorage——
  * 常看全文的人不必每次進來都重新展開。
  *
- * 整個 header 都可點開合（docs/HISTORY.md #10）：原本只有標題那顆
+ * 整個 header 都可點開合（docs/archive/HISTORY.md #10）：原本只有標題那顆
  * btn-link 可點，右側複製/列印鈕之外的空白區點了沒反應。複製/列印鈕各自
  * stopPropagation，不被 header 的點擊攔截。
  */
@@ -171,14 +171,14 @@ function renderHeader(detail) {
     dateSpan.className = 'text-muted';
     dateSpan.textContent = detail.date;
 
-    // 判定依據（docs/HISTORY.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
+    // 判定依據（docs/archive/HISTORY.md #11）：日風險等級與問題嚴重度是刻意分開的兩套層級，
     // 高風險日不保證看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號、或問題被顯示設定隱藏）——
     // 沒有明確依據（舊紀錄／低風險日）時給通用說明，不留使用者自己猜
     const riskBasisTitle = detail.riskBasisText ??
         '日風險等級由規則命中／趨勢異常／關聯訊號／AI 判讀綜合判定，與單一問題嚴重度非同一套層級。';
     top.append(hostLink, dateSpan, riskBadge(detail.riskLevel, { title: riskBasisTitle }));
 
-    // docs/LINUX-RULES-PLAN.md：詳情頁除 hostname 外，加 IP 與作業系統類型
+    // docs/LINUX-RULES.md：詳情頁除 hostname 外，加 IP 與作業系統類型
     const osBadge = document.createElement('span');
     osBadge.className = 'lf-badge lf-badge--light border';
     osBadge.textContent = detail.hostOs === 'linux' ? 'Linux' : 'Windows';
@@ -253,7 +253,7 @@ function renderHeader(detail) {
         body.appendChild(role);
     }
 
-    // docs/HISTORY.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
+    // docs/archive/HISTORY.md #11：SiteHidden 模式下部分問題被全站顯示設定隱藏時要明講，
     // 否則使用者會誤以為「風險等級判定的依據」就是眼前看到的這些問題
     if (detail.hiddenIssueCount > 0) {
         const hiddenNote = document.createElement('div');
@@ -268,8 +268,8 @@ function renderHeader(detail) {
 }
 
 /**
- * 表格欄位定義（docs/HISTORY.md #7；docs/FEEDBACK-3-PLAN.md #5 欄位合併；
- * docs/FEEDBACK-4-PLAN.md §1 再改版：勾選併入「處理狀態」欄右上角）：
+ * 表格欄位定義（docs/archive/HISTORY.md #7；docs/archive/FEEDBACK-3-PLAN.md #5 欄位合併；
+ * docs/archive/FEEDBACK-4-PLAN.md §1 再改版：勾選併入「處理狀態」欄右上角）：
  * 原本「來源/Event」「次數」「嚴重度」「時段」「說明」五欄各自為政，keyDetails
  * （4703 這類事件動輒數百字的帳號/IP 彙總）把其餘欄壓成逐字直排。合併為單一
  * 「問題」欄（issueCell），趨勢與處理狀態維持獨立欄——使用者要看得到「這個問題
@@ -324,7 +324,7 @@ function statusCell(issue, sectionIssues) {
         wrap.appendChild(selectCheckbox(issue, sectionIssues));
     }
     wrap.appendChild(statusControl(issue));
-    // 先前處理過（docs/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
+    // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
     // 同樣需要參考上次怎麼解的，不是只有能操作的人才看得到
     if (issue.hasPriorHandling) wrap.appendChild(priorHandlingTrigger(issue));
 
@@ -332,7 +332,7 @@ function statusCell(issue, sectionIssues) {
 }
 
 /**
- * 「先前處理」按鈕（docs/FEEDBACK-5-PLAN.md §4）：這個問題簽章之前結案過，
+ * 「先前處理」按鈕（docs/archive/FEEDBACK-5-PLAN.md §4）：這個問題簽章之前結案過，
  * 點開 modal 看上次案件摘要＋逐日結案標記（只含結案類，處理中／未處理的歷史不列入）。
  */
 function priorHandlingTrigger(issue) {
@@ -513,7 +513,7 @@ function severityNeutralBadge(text) {
 }
 
 /**
- * 嚴重度徽章＋「重大」旗標（docs/HISTORY.md #1，B1 三級化）：命中帶
+ * 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1，B1 三級化）：命中帶
  * ElevatesDayRisk 旗標規則的問題，一眼看得出「這條問題特別嚴重、是它讓今天變高風險日」。
  */
 function severityCell(issue) {
@@ -632,7 +632,7 @@ function statusLabel(issue) {
         wrap.appendChild(due);
     }
 
-    // 觀察中／觀察到期（docs/FEEDBACK-8-PLAN.md #4）：DueDate 在此狀態下代表「觀察至」，
+    // 觀察中／觀察到期（docs/archive/FEEDBACK-8-PLAN.md #4）：DueDate 在此狀態下代表「觀察至」，
     // 到期後問題仍在發生，比照逾期用紅字提醒（不是新告警機制，是既有逾期通道的延伸）
     if (issue.handlingStatus === 'observing' && issue.dueDate) {
         const isExpired = issue.dueDate < todayLocal();
@@ -674,7 +674,7 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
         wrap.replaceWith(statusControl(issue));
         renderProgress();
 
-        // 案件同步提示（docs/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
+        // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
         const caseNote = result?.caseSyncedDayCount > 0 ? `（已同步案件涵蓋的 ${result.caseSyncedDayCount} 天）` : '';
         toast((status ? `已標為「${issue.handlingStatusText || '未處理'}」` : '已清除處理標記') + caseNote, 'success');
@@ -737,7 +737,7 @@ function isInProgressIssue(issue) {
 }
 
 /**
- * 重點問題旁的計數器（docs/HISTORY.md #8/D3）：三段「已處理／處理中／未處理」，
+ * 重點問題旁的計數器（docs/archive/HISTORY.md #8/D3）：三段「已處理／處理中／未處理」，
  * 忽略其他標籤——這顆計數器要回答的是「還剩幾件要動手、進度到哪」，不是「標了幾件」：
  *   已處理＝真的標成 resolved 的問題數
  *   處理中＝標成 in_progress 的問題數
@@ -772,7 +772,7 @@ function highlightedCategories() {
 }
 
 /**
- * 目前嚴重度篩選後仍可見的問題（docs/HISTORY.md #4）：詢問 AI 下拉與
+ * 目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）：詢問 AI 下拉與
  * 嚴重度篩選鈕切換時共用同一份判斷，避免兩處篩選邏輯各自維護後兜不起來。
  */
 function visibleTopIssues() {
@@ -861,7 +861,7 @@ function renderIssues(detail) {
         header.append(title, severityBadge(category.maxSeverity));
         section.appendChild(header);
 
-        // 已結案排序收合（docs/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
+        // 已結案排序收合（docs/archive/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
         // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
         // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
         const primary = issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i));
@@ -954,7 +954,7 @@ function collapsedRestSection(rest) {
 }
 
 /**
- * 「問題」合併欄（docs/FEEDBACK-3-PLAN.md #5）：取代原本各自獨立的來源/Event、
+ * 「問題」合併欄（docs/archive/FEEDBACK-3-PLAN.md #5）：取代原本各自獨立的來源/Event、
  * 次數、嚴重度、時段、說明五欄。由上而下：標題行（來源/Event＋log 名＋已抑制徽章）、
  * meta 行（嚴重度／重大徽章・次數・時段）、說明、keyDetails（見 keyDetailsBlock）、
  * 相異訊息數／原始訊息連結。
@@ -1020,7 +1020,7 @@ function issueCell(issue) {
 }
 
 /**
- * 案件徽章（docs/FEEDBACK-4-PLAN.md §2）：這個問題目前有進行中案件，狀態會跨日連動——
+ * 案件徽章（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題目前有進行中案件，狀態會跨日連動——
  * 徽章解釋「為什麼這一列的狀態可能是別天標的、不是我剛動的」。案件狀態值只會是
  * open／in_progress／observing（後端只回傳進行中案件，結案類代表案件已結束、不會再出現在這裡），
  * 不需要六態全表。
@@ -1028,7 +1028,7 @@ function issueCell(issue) {
 function caseBadge(issue) {
     const statusText = issue.caseStatus === 'open' ? '未處理'
         : issue.caseStatus === 'observing' ? '觀察中' : '處理中';
-    // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/FEEDBACK-4-PLAN.md §6）
+    // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）
     const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
     badge.className = 'lf-badge lf-badge--primary';
     if (issue.caseHandlerId) {
@@ -1041,7 +1041,7 @@ function caseBadge(issue) {
 }
 
 /**
- * keyDetails 收合（docs/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
+ * keyDetails 收合（docs/archive/FEEDBACK-3-PLAN.md #5）：常見數百字的帳號/IP 彙總
  * （4703 這類事件動輒 11 個帳號欄位）會把合併欄撐得極長，先用 CSS line-clamp
  * 收 3 行，超過才出現「顯示全部」——沒被裁切的短內容不多一次點擊。
  * scrollHeight 是否大於 clientHeight 是判斷有沒有被裁切的標準手法，line-clamp
@@ -1091,7 +1091,7 @@ function keyDetailsBlock(keyDetails) {
 }
 
 /**
- * 原始訊息（docs/HISTORY.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
+ * 原始訊息（docs/archive/HISTORY.md #14，取代舊「範例訊息」名稱與 hover 泡泡）：
  * 這個問題實際觸發的事件訊息樣本，供比對確認——舊名稱「範例訊息」看不出指的是什麼。
  * hover popover 在窄欄位下常被 Popper 定位空間壓縮、內容擠成一團，且與點擊維持顯示
  * 兩套手勢並存會曖昧；改為點擊開 modal，寬度不受定位限制，逐則訊息各自成段落，

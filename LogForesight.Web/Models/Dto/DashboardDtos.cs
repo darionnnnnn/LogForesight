@@ -44,7 +44,7 @@ public class DashboardCategoryDto
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
-    /// <summary>命中「重大」旗標的問題數（docs/HISTORY.md #1）：分類卡的紅框顯著性
+    /// <summary>命中「重大」旗標的問題數（docs/archive/HISTORY.md #1）：分類卡的紅框顯著性
     /// 判定改看這個，取代三級化後恆為 0 的 CriticalCount</summary>
     public int ElevatesCount { get; set; }
 
@@ -98,11 +98,11 @@ public class ReportSummaryDto
     /// <summary>Top 10 以外主機的合計（高＋中風險日），供「其他 N 台」彙總條；無其他主機時為 null</summary>
     public HostRankingOthersDto? Others { get; set; }
 
-    /// <summary>可見且啟用的主機總數（docs/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
+    /// <summary>可見且啟用的主機總數（docs/archive/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
     /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>
     public int TotalHosts { get; set; }
 
-    /// <summary>期間內高＋中風險日的處理彙總（docs/HISTORY.md #6）——與儀表板待辦
+    /// <summary>期間內高＋中風險日的處理彙總（docs/archive/HISTORY.md #6）——與儀表板待辦
     /// 同一套 HandlingService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
     public HandlingTodoDto Handling { get; set; } = new();
 }
@@ -143,7 +143,7 @@ public class SignatureHitDto
     public int Count { get; set; }
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/HISTORY.md #1）：前端顯示「重大」徽章——
+    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1）：前端顯示「重大」徽章——
     /// 跨主機同簽章查詢正是「全環境共通重大問題」的主要排查入口。</summary>
     public bool ElevatesDayRisk { get; set; }
 

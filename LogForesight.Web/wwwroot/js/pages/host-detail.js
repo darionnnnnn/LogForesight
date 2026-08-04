@@ -55,7 +55,7 @@ function renderHeader(detail) {
     title.textContent = detail.displayName ? `${detail.hostName}（${detail.displayName}）` : detail.hostName;
     titleRow.appendChild(title);
 
-    // 指定主機更新（docs/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
+    // 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
     // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）
     if (canMaintainHost) {
         const updateButton = document.createElement('button');
@@ -108,7 +108,7 @@ function renderTimeline(detail) {
     for (const day of detail.timeline) {
         const cell = document.createElement(day.hasRecord ? 'a' : 'div');
         cell.className = 'rounded lf-timeline-cell';
-        cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/FEEDBACK-4-PLAN.md §3）
+        cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/archive/FEEDBACK-4-PLAN.md §3）
         cell.style.width = '22px';
         cell.style.height = '22px';
         cell.style.background = cellColor(day);
@@ -160,7 +160,7 @@ function renderLegend() {
 }
 
 /**
- * 重點問題（期間彙總，docs/FEEDBACK-3-PLAN.md #4；docs/FEEDBACK-4-PLAN.md §3 再改版）：
+ * 重點問題（期間彙總，docs/archive/FEEDBACK-3-PLAN.md #4；docs/archive/FEEDBACK-4-PLAN.md §3 再改版）：
  * 問題查詢「依主機」下鑽進來原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接
  * 列出期間內出現過的問題。點列展開發生明細（rowDetail，不離頁）：頻率統計／案件資訊／
  * 逐日狀態，並把時間軸上這個問題出現過的日子高亮連動。「最近出現」欄的日期連結
@@ -195,7 +195,7 @@ function lastSeenLink(signature) {
 }
 
 /**
- * 問題發生明細展開列（docs/FEEDBACK-4-PLAN.md §3）：lazy fetch——renderTable 的展開/收合
+ * 問題發生明細展開列（docs/archive/FEEDBACK-4-PLAN.md §3）：lazy fetch——renderTable 的展開/收合
  * 由外層 <tr> 的 click 監聽器控制（見 ui.js renderTable），這個節點本身沒有「被展開」的
  * 事件可掛，改用 setTimeout(0) 延到節點插入 DOM 後才找得到外層 <tr>，掛一個額外的 click
  * 監聽器判斷當下是展開還是收合（同一輪 click 兩個監聽器都會跑，順序即註冊順序，
@@ -337,7 +337,7 @@ function renderOccurrencePanel(container, data) {
     container.appendChild(table);
 }
 
-/** 時間軸連動高亮：這個問題出現過的日子加外框，其餘日子淡化（docs/FEEDBACK-4-PLAN.md §3） */
+/** 時間軸連動高亮：這個問題出現過的日子加外框，其餘日子淡化（docs/archive/FEEDBACK-4-PLAN.md §3） */
 function highlightTimeline(dates) {
     const set = new Set(dates);
     for (const cell of document.querySelectorAll('#host-timeline [data-date]')) {
@@ -380,7 +380,7 @@ for (const button of document.querySelectorAll('[data-days]')) {
     });
 }
 
-// ── 指定主機更新（docs/WEB-SCHEDULER-PLAN.md §1.4.5）─────────────────────────
+// ── 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）─────────────────────────
 
 function openHostUpdateModal(detail) {
     document.getElementById('host-update-message').textContent =

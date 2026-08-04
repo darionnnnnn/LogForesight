@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// rules.json 的讀寫容錯（見 docs/RULES-PLAN.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且
+/// rules.json 的讀寫容錯（見 docs/RULES-SPEC.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且
 /// 不覆寫使用者的壞檔；單一規則物件解析失敗只跳過該條，其餘規則照常載入；列舉值以字串儲存。
 ///
 /// 這些容錯邏輯全部寫在 <see cref="KnownIssueRuleStore"/> 本身（blob 無關），透過

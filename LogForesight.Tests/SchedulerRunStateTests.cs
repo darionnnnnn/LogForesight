@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="SchedulerRunState"/> 的 <see cref="RunOutcome"/> 記錄（docs/FEEDBACK-7-PLAN.md）：
+/// <see cref="SchedulerRunState"/> 的 <see cref="RunOutcome"/> 記錄（docs/archive/FEEDBACK-7-PLAN.md）：
 /// 立即執行／排程觸發失敗時，狀態卡要能顯示「上次執行到底成不成功」，不能只靠 log 檔。
 /// </summary>
 public class SchedulerRunStateTests
@@ -59,7 +59,7 @@ public class SchedulerRunStateTests
         Assert.Null(state.LastOutcome);
     }
 
-    /// <summary>docs/FEEDBACK-8-PLAN.md #2：EndRun 要把進度歸零，不留上一趟執行的殘留數字——
+    /// <summary>docs/archive/FEEDBACK-8-PLAN.md #2：EndRun 要把進度歸零，不留上一趟執行的殘留數字——
     /// 目前前端只在 isRunning 時畫進度條所以不會顯示出來，但欄位本身該是乾淨的，
     /// 不能依賴呼叫端的顯示邏輯剛好把髒資料蓋住。</summary>
     [Fact]

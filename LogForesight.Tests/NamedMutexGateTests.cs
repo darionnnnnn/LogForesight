@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/WEB-SCHEDULER-PLAN.md §1.4.2：Web 長駐行程下具名 Mutex 的 acquire/release 安全包裝。
+/// docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2：Web 長駐行程下具名 Mutex 的 acquire/release 安全包裝。
 /// 用隨機名稱（非真正的 Global\LogForesight）避免跟其他測試或真的跑著的 console 撞名。
 /// </summary>
 public class NamedMutexGateTests

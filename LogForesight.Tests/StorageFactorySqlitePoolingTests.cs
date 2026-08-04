@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-8-PLAN.md #7：Sqlite 連線池關閉的連線字串處理——單純字串轉換，
+/// docs/archive/FEEDBACK-8-PLAN.md #7：Sqlite 連線池關閉的連線字串處理——單純字串轉換，
 /// 不需要真的開連線驗證（連線池行為本身是 Microsoft.Data.Sqlite 內部機制）。
 /// </summary>
 public class StorageFactorySqlitePoolingTests

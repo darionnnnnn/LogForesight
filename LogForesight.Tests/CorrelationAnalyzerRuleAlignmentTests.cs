@@ -8,7 +8,7 @@ namespace LogForesight.Tests;
 /// 一份清單，規則表演進（如使用者停用/修改某條規則）後容易與這份清單悄悄漂移不同步。
 ///
 /// 這項檢查原本是 console 專案 <c>SelfTestRunner.CheckCorrelationIdsExistInRules</c> 的一部分
-/// （<c>--selftest</c> 手動執行），console 專案隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md §1.5）
+/// （<c>--selftest</c> 手動執行），console 專案隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md §1.5）
 /// 一併移除；移到這裡等於是把「手動跑才檢查」升級成「每次建置都檢查」，覆蓋不打折。
 ///
 /// ID 層級的粗略比對（不比對來源字串），用意是抓明顯的漂移，不是精確驗證比對邏輯——

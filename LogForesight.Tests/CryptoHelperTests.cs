@@ -2,7 +2,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel 密碼欄位的加解密（docs/HISTORY.md 定案 3）。</summary>
+/// <summary>Sentinel 密碼欄位的加解密（docs/archive/HISTORY.md 定案 3）。</summary>
 public class CryptoHelperTests
 {
     [Fact]

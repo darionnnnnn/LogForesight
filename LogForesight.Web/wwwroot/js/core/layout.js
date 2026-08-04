@@ -19,7 +19,7 @@ const NAV_SECTIONS = [
         items: [
             { href: '/', label: '總覽儀表板', icon: 'speedometer2', requires: null },
             { href: '/records', label: '問題查詢', icon: 'search', requires: null },
-            // 動態 href（docs/FEEDBACK-4-PLAN.md §6）：連到「自己」的處理人工作頁——
+            // 動態 href（docs/archive/FEEDBACK-4-PLAN.md §6）：連到「自己」的處理人工作頁——
             // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
             // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
             { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
@@ -44,7 +44,7 @@ const NAV_SECTIONS = [
     {
         label: '系統',
         items: [
-            // 排程作業（docs/FEEDBACK-6-PLAN.md §2）：陣列＝任一能力即可見（dev 的執行監控與
+            // 排程作業（docs/archive/FEEDBACK-6-PLAN.md §2）：陣列＝任一能力即可見（dev 的執行監控與
             // admin/serverAdmin 的排程設定共用同一頁，serverAdmin 有 Maintain 卻沒有 DevMonitor，
             // 沒有這個入口就搆不到全新環境的排程初始設定）
             { href: '/runs', label: '排程作業', icon: 'activity', requires: ['DevMonitor', 'Maintain'] },
@@ -228,7 +228,7 @@ function debounce(fn, delayMs) {
 function initHelpPopovers() {
     const triggers = document.querySelectorAll('[data-bs-toggle="popover"]');
     for (const el of triggers) {
-        // hover 補 focus（原本只有 focus，需要點擊/Tab 到才看得到）——docs/FEEDBACK-5-PLAN.md §6：
+        // hover 補 focus（原本只有 focus，需要點擊/Tab 到才看得到）——docs/archive/FEEDBACK-5-PLAN.md §6：
         // 常駐說明文字收斂進 icon 後，滑鼠滑過就要能看到，不能還要求使用者先點一下
         new bootstrap.Popover(el, { trigger: 'hover focus', html: false });
     }
@@ -240,7 +240,7 @@ function renderCurrentUser(user) {
 
     el.textContent = user.displayName || user.account;
     // title 補完整資訊（displayName 與 text-truncate 的省略號互補，滑過即可看到完整內容，
-    // 見 docs/FEEDBACK-5-PLAN.md §3）：有顯示名稱時一併帶帳號，避免兩者相同時顯得多餘
+    // 見 docs/archive/FEEDBACK-5-PLAN.md §3）：有顯示名稱時一併帶帳號，避免兩者相同時顯得多餘
     el.title = user.displayName && user.displayName !== user.account
         ? formatUserName(user.displayName, user.account)
         : user.account;

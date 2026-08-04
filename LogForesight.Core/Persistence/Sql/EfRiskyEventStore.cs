@@ -3,7 +3,7 @@ using NLog;
 
 namespace LogForesight.Sql;
 
-/// <summary><see cref="IRiskyEventStore"/> 的 SQL 後端實作（docs/WEB-SCHEDULER-PLAN.md §2）。</summary>
+/// <summary><see cref="IRiskyEventStore"/> 的 SQL 後端實作（docs/archive/WEB-SCHEDULER-PLAN.md §2）。</summary>
 public class EfRiskyEventStore : IRiskyEventStore
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();

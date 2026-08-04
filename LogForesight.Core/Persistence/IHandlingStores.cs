@@ -19,7 +19,7 @@ public interface IRecordHandlingStore
     List<RecordHandling> GetUnresolved();
 
     /// <summary>指定處理人名下的全部日層級指派（不論結案與否；「近 N 天已結案」等篩選由呼叫端
-    /// 在記憶體處理——docs/FEEDBACK-4-PLAN.md §6 處理人員工作頁）</summary>
+    /// 在記憶體處理——docs/archive/FEEDBACK-4-PLAN.md §6 處理人員工作頁）</summary>
     List<RecordHandling> GetByHandler(long userId);
 
     void Save(RecordHandling handling);
@@ -43,14 +43,14 @@ public interface IIssueHandlingStore
     /// <summary>批次取得多筆（清單／儀表板彙總避免 N 次查詢）</summary>
     List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to);
 
-    /// <summary>某案件展開寫入的全部逐日列（案件同步展開時定位既有列用，docs/FEEDBACK-4-PLAN.md §0.5）</summary>
+    /// <summary>某案件展開寫入的全部逐日列（案件同步展開時定位既有列用，docs/archive/FEEDBACK-4-PLAN.md §0.5）</summary>
     List<IssueHandling> GetByCase(string caseId);
 
     /// <summary>寫入／更新單一問題的狀態；status 為 null／空字串代表清除該問題的標記（回到未處理）</summary>
     void Save(IssueHandling handling);
 
     /// <summary>
-    /// 批次寫入／更新多筆（案件回溯關聯／狀態同步一次可能涉及上百天，docs/FEEDBACK-4-PLAN.md §0.4）：
+    /// 批次寫入／更新多筆（案件回溯關聯／狀態同步一次可能涉及上百天，docs/archive/FEEDBACK-4-PLAN.md §0.4）：
     /// 走一次 Mutate，避免逐日呼叫 <see cref="Save"/> 造成 N 次整份 blob 讀改寫。
     /// 與 Save 同語意：單筆 Status 為 null／空字串代表清除。
     /// </summary>
@@ -61,7 +61,7 @@ public interface IIssueHandlingStore
 }
 
 /// <summary>
-/// 問題案件的讀寫（↔ 未來 lf_issue_cases，docs/FEEDBACK-4-PLAN.md §0）。
+/// 問題案件的讀寫（↔ 未來 lf_issue_cases，docs/archive/FEEDBACK-4-PLAN.md §0）。
 /// 案件是（主機、問題簽章）跨日的處理協調紀錄；逐日結案狀態仍在 <see cref="IIssueHandlingStore"/>，
 /// 兩者的關係與職責邊界見 <see cref="IssueCase"/> 類別註解。
 /// </summary>
@@ -70,13 +70,13 @@ public interface IIssueCaseStore
     /// <summary>單一（主機, 問題簽章）目前的進行中案件；沒有進行中案件回 null</summary>
     IssueCase? GetOpen(string hostName, string issueKey);
 
-    /// <summary>單一主機全部進行中案件（批次逐日掛接一次撈，docs/FEEDBACK-4-PLAN.md §0.4-C）</summary>
+    /// <summary>單一主機全部進行中案件（批次逐日掛接一次撈，docs/archive/FEEDBACK-4-PLAN.md §0.4-C）</summary>
     List<IssueCase> GetOpenForHost(string hostName);
 
     /// <summary>多台主機的全部案件（含已結案，供依問題視角彙總／處理人工作頁）</summary>
     List<IssueCase> GetMany(IEnumerable<string> hostNames);
 
-    /// <summary>指定處理人名下的全部進行中案件（處理人員工作頁，docs/FEEDBACK-4-PLAN.md §6）</summary>
+    /// <summary>指定處理人名下的全部進行中案件（處理人員工作頁，docs/archive/FEEDBACK-4-PLAN.md §6）</summary>
     List<IssueCase> GetOpenByHandler(long userId);
 
     IssueCase? Get(string caseId);

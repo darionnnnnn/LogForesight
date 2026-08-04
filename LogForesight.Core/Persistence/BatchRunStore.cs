@@ -30,14 +30,14 @@ public class BatchRun
     public int ErrorCount { get; set; }
 
     /// <summary>
-    /// 觸發來源（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：<c>schedule</c>｜<c>manual:{帳號}</c>｜
+    /// 觸發來源（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：<c>schedule</c>｜<c>manual:{帳號}</c>｜
     /// <c>console</c>。舊紀錄沒有這個欄位（JSON 反序列化容忍缺欄，null），Runs 頁顯示為
     /// 「工作排程器」——那正是升級前唯一的觸發來源，語意上等價。
     /// </summary>
     public string? Trigger { get; set; }
 
     /// <summary>
-    /// 優雅停止（docs/WEB-SCHEDULER-PLAN.md §1.4.4：使用者手動停止或執行窗口 End 到點）：
+    /// 優雅停止（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4：使用者手動停止或執行窗口 End 到點）：
     /// 是「已停止」不是「失敗」——已完成的部分照常保留，剩餘日子由下次執行的缺漏回補自癒，
     /// 執行監控頁據此顯示獨立的「已停止」狀態。舊紀錄缺欄反序列化為 false，語意正確
     /// （過去沒有停止機制）。
@@ -154,7 +154,7 @@ public class BatchRunStore
     }
 
     /// <summary>
-    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/HISTORY.md P0-3）。
+    /// 清除超過保留天數的執行紀錄與診斷紀錄，回傳合計刪除筆數（docs/archive/HISTORY.md P0-3）。
     /// 依附加時間（非 StartedAt/LoggedAt 業務時間）判斷——批次每日執行，兩者實務上等價，
     /// 且直接用附加時間可讓底層 SQL 端整批刪，不必逐行反序列化 JSON 比對業務日期。
     /// </summary>

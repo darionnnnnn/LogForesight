@@ -5,7 +5,7 @@ public class CorrelationFinding
     public IssueSeverity Severity { get; init; }
 
     /// <summary>
-    /// 命中即列為高風險日（docs/HISTORY.md #1，B1 三級化前這裡的 Severity 是 Critical）：
+    /// 命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化前這裡的 Severity 是 Critical）：
     /// 攻擊鏈/故障鏈組合本身就是明確的高風險訊號，三級化後嚴重度封頂 High，改用旗標維持
     /// 「這個組合一命中，當天就是高風險日」的行為（見 LogAnalysisService.ComputeRuleBasedRisk）。
     /// </summary>
@@ -40,7 +40,7 @@ public static class CorrelationAnalyzer
     // 事件群組定義（與 KnownIssueCatalog 的規則對齊）。internal（非 private）是刻意的：
     // CorrelationAnalyzerRuleAlignmentTests 會逐一驗證這些 ID 都存在於目前生效的規則表，
     // 防止規則表演進後兩邊悄悄漂移——關聯層的組合模式仍是程式碼邏輯、不搬進 rules.json
-    // （見 docs/RULES-PLAN.md 語意邊界），但它引用的事件 ID 應該要跟規則表對得上。
+    // （見 docs/RULES-SPEC.md 語意邊界），但它引用的事件 ID 應該要跟規則表對得上。
     internal static readonly int[] AccountChangeIds = { 4720, 4722, 4724, 4728, 4732, 4756 };
     internal static readonly int[] PersistenceSecurityIds = { 4697, 4698 };
     internal static readonly int[] AuditTamperIds = { 1102, 4719, 4907 };

@@ -35,7 +35,7 @@ let lastResult = null;
 
 let aiAvailable = false;
 
-// 依問題視角批次指派（docs/FEEDBACK-4-PLAN.md §4）：只有 Assign 能力才顯示「指派」鈕
+// 依問題視角批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）：只有 Assign 能力才顯示「指派」鈕
 let currentUser = null;
 
 // 主機篩選（§5.4 D-4）：兩千台規模下不能把全部主機灌進一個 <select>，
@@ -54,7 +54,7 @@ async function init() {
 }
 
 /**
- * 日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：隱藏被全站「日風險等級顯示」設定藏起來的
+ * 日風險等級顯示（docs/archive/FEEDBACK-3-PLAN.md #8）：隱藏被全站「日風險等級顯示」設定藏起來的
  * 篩選 chip——留著會讓使用者點選一個「選了也查不到東西」的條件（後端已在 RecordRepository
  * 過濾掉該等級，勾選它只會得到空結果，卻看不出是「真的沒有」還是「被藏起來」）。
  *
@@ -74,7 +74,7 @@ async function applyDayRiskVisibility() {
 }
 
 /**
- * AI 歸納（docs/HISTORY.md §6 W1-2）：使用者主動點才呼叫（查詢頁高頻，
+ * AI 歸納（docs/archive/HISTORY.md §6 W1-2）：使用者主動點才呼叫（查詢頁高頻，
  * 自動呼叫會塞爆 AI 佇列）。只在明細視角、且 AI 可用時顯示按鈕。
  */
 async function initAiSummary() {
@@ -315,7 +315,7 @@ function collectFilters() {
         // 處理狀態現在是可見的 chip（不再只由下鑽網址帶入）
         statuses: activeChips('filter-status-chips', 'status').join(','),
         // severity/overdue/source 只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）——
-        // source 沒有對應的表單欄位（依問題視角點列下鑽用，docs/FEEDBACK-4-PLAN.md §4）
+        // source 沒有對應的表單欄位（依問題視角點列下鑽用，docs/archive/FEEDBACK-4-PLAN.md §4）
         severity: new URLSearchParams(location.search).get('severity') ?? '',
         overdue: new URLSearchParams(location.search).get('overdue') ?? '',
         source: new URLSearchParams(location.search).get('source') ?? ''
@@ -380,7 +380,7 @@ function renderActiveConditions(filters) {
     const tags = [];
     if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
-    // 依問題視角下鑽帶入（docs/FEEDBACK-4-PLAN.md §4）：source 沒有對應表單欄位，只能靠這裡顯性化
+    // 依問題視角下鑽帶入（docs/archive/FEEDBACK-4-PLAN.md §4）：source 沒有對應表單欄位，只能靠這裡顯性化
     if (filters.source) tags.push({ label: `來源：${filters.source}`, param: 'source' });
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
@@ -531,7 +531,7 @@ function handlingCell(record) {
     return wrap;
 }
 
-/** 處理人姓名連到其工作頁（docs/FEEDBACK-4-PLAN.md §6）；無 HandlerId（從未指派）時純文字 */
+/** 處理人姓名連到其工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）；無 HandlerId（從未指派）時純文字 */
 function handlerCell(record) {
     if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
 
@@ -605,7 +605,7 @@ function dateViewLink(row) {
     return link;
 }
 
-// ── 依問題視角（主機與日期都合併，docs/FEEDBACK-4-PLAN.md §4）──────────────────
+// ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
     const canAssign = hasCapability(currentUser, 'Assign');
@@ -638,7 +638,7 @@ function renderIssueView() {
 }
 
 /**
- * 依問題視角「處理人」欄：每個名字連到其工作頁（docs/FEEDBACK-4-PLAN.md §4/§6）。
+ * 依問題視角「處理人」欄：每個名字連到其工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）。
  * 超過 3 人時收斂成「第一人 等 N 人」——第一個名字仍是連結，收斂在前端做
  * 就是為了這個（伺服器端收斂成純文字，連結就斷了）。
  */
@@ -704,7 +704,7 @@ function issueAssignButton(group) {
 }
 
 /**
- * 跨主機批次指派 modal（docs/FEEDBACK-4-PLAN.md §4）：開啟時先載入受影響主機預覽
+ * 跨主機批次指派 modal（docs/archive/FEEDBACK-4-PLAN.md §4）：開啟時先載入受影響主機預覽
  * （已由他人案件涵蓋的主機標出既有處理人、預設不勾），選處理人／說明／預計完成日後送出。
  */
 function openBulkAssignModal(group) {

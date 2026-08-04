@@ -5,7 +5,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// SentinelEventMapper：SentinelEvent（Sentinel 原始投影）→ EventLogEntryData（既有五層偵測吃的模型）
-/// 的映射。fixture 依三輪 --netiq-probe 真實環境輸出的欄位形狀建構（docs/NETIQ-API-PLAN.md §3.5），
+/// 的映射。fixture 依三輪 --netiq-probe 真實環境輸出的欄位形狀建構（docs/NETIQ-API-REFERENCE.md §3.5），
 /// **值已去識別化**（真實 IP／主機名／網域名換成範例用假值，欄位鍵與值的「形狀」保持真實）。
 /// </summary>
 public class SentinelEventMapperTests

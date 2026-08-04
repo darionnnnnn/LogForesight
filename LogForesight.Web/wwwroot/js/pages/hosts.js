@@ -1,5 +1,5 @@
 /**
- * 主機維護（docs/WEB-SPEC.md §9.8、docs/HISTORY.md 步驟 3）。
+ * 主機維護（docs/WEB-SPEC.md §9.8、docs/archive/HISTORY.md 步驟 3）。
  *
  * 這一頁除了 CRUD 還負責一件事：把「哪些主機今晚不會被檢查」講出來。
  * 待歸屬、IP 衝突、未分組各自代表一種靜默的失效，藏起來就會變成沒人記得的盲區。
@@ -21,7 +21,7 @@ const sentinelFilter = document.getElementById('sentinel-filter');
 // URL 帶 ?status= 時預選（§5.4 D-4：儀表板「未回報主機」計數卡下鑽用）
 let statusMode = new URLSearchParams(location.search).get('status') ?? '';
 const groupFilter = new Set();
-let osFilter = '';   // 空白＝全部；'windows' | 'linux'（docs/LINUX-RULES-PLAN.md §3）
+let osFilter = '';   // 空白＝全部；'windows' | 'linux'（docs/LINUX-RULES.md §3）
 
 // 未回報定義（§5.4 D-4）：只用來顯示 chip 標籤文字，實際篩選在伺服器端（HostAdminService 同一套規則）
 const SILENT_CUTOFF_DAYS = 2;
@@ -52,7 +52,7 @@ let conflictIds = new Set();   // 衝突組涵蓋的全部主機（處置時要�
 let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
 
 /**
- * 批次改群組的勾選狀態（docs/FEEDBACK-5-PLAN.md §8）：hostId → host 物件。
+ * 批次改群組的勾選狀態（docs/archive/FEEDBACK-5-PLAN.md §8）：hostId → host 物件。
  * 伺服器端分頁下勾選要跨頁／跨篩選保留，所以不能只存 id——開 modal 時要顯示
  * 主機名＋現有群組徽章，而那些主機未必在目前這一頁，只能靠勾選當下存下來的物件。
  * 只在「清除選取」與套用成功後清空，翻頁／篩選不清空。
@@ -671,7 +671,7 @@ function selectedIds(containerId) {
 }
 
 /**
- * 批次設定群組 modal（docs/FEEDBACK-5-PLAN.md §8）：頂部列出已勾選主機（沿用
+ * 批次設定群組 modal（docs/archive/FEEDBACK-5-PLAN.md §8）：頂部列出已勾選主機（沿用
  * .lf-bulk-assign-hosts 限高捲動樣式）＋現有群組徽章，套用前先看得到「會動到誰」。
  * 主機物件全部來自逐列勾選當下存下的 selectedHosts，不重新打 API——
  * 這正是選取跨頁保留唯一需要付出的代價：徽章反映的是勾選當下的狀態，

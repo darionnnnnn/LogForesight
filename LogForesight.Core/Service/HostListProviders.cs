@@ -7,7 +7,7 @@ namespace LogForesight;
 /// <c>WebHost.IpAddress</c> 是「最近已知」的查詢用線索，機房 pipeline 建立歷史紀錄的
 /// owner-host 識別要用前者，向 Sentinel 查詢要用後者）。
 /// <paramref name="Os"/>（windows/linux）決定這台套哪個平台的規則面與查詢形式
-/// （docs/LINUX-RULES-PLAN.md §3/§4.2）。
+/// （docs/LINUX-RULES.md §3/§4.2）。
 /// </summary>
 public record NetiqTarget(long HostId, string HostName, string IpAddress, string RoleDesc, string Os);
 
@@ -26,7 +26,7 @@ public class HostListResult
 }
 
 /// <summary>
-/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/HISTORY.md 定案 12），
+/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/archive/HISTORY.md 定案 12），
 /// 直接讀主機清單資料，不做任何同步。
 /// </summary>
 public class StoreHostListProvider

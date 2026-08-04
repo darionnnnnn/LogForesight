@@ -10,11 +10,11 @@ namespace LogForesight.Web.Repositories;
 /// 會從畫面上消失。這個展開如果散落在各個 Service，遲早有人忘了做。
 /// 集中在這裡，並且**強制**每次查詢都套用可見範圍——呼叫端拿不到「不過濾」的入口。
 ///
-/// 同一個理由延伸到問題嚴重度可見性（docs/HISTORY.md S1）：
+/// 同一個理由延伸到問題嚴重度可見性（docs/archive/HISTORY.md S1）：
 /// SiteHidden 模式下 TopIssues 的過濾也在這裡強制套用，所有呼叫端拿到的都是
 /// 已過濾的結果，不必也不該各自重覆判斷。
 ///
-/// 第二個全站咽喉是日風險等級顯示（docs/FEEDBACK-3-PLAN.md #8）：與問題嚴重度可見性
+/// 第二個全站咽喉是日風險等級顯示（docs/archive/FEEDBACK-3-PLAN.md #8）：與問題嚴重度可見性
 /// 是不同的兩套層級，套用點集中在 <see cref="Query"/>／<see cref="QueryPage"/>——
 /// 未勾選等級的風險日整筆從結果消失。兩個顯式豁免：<see cref="GetOne"/>（風險日詳情直連，
 /// 不走 filter 路徑，本來就不受影響）與主機詳情頁時間軸（<c>applyDayRiskVisibility=false</c>——
@@ -30,7 +30,7 @@ public interface IRecordRepository
     List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true);
 
     /// <summary>
-    /// 分頁查詢（已套用目前登入者的可見範圍）——docs/HISTORY.md P1-2。
+    /// 分頁查詢（已套用目前登入者的可見範圍）——docs/archive/HISTORY.md P1-2。
     /// 可下推的條件盡量在 SQL 端完成排序與分頁，見 <see cref="IAnalysisRecordQuery.QueryPage"/>。
     /// </summary>
     PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false);
@@ -85,7 +85,7 @@ public class RecordRepository : IRecordRepository
     }
 
     /// <summary>
-    /// 日風險等級顯示過濾（docs/FEEDBACK-3-PLAN.md #8）：與可見範圍同樣的「只能縮小不能放大」
+    /// 日風險等級顯示過濾（docs/archive/FEEDBACK-3-PLAN.md #8）：與可見範圍同樣的「只能縮小不能放大」
     /// 語意——filter.RiskLevels 若已被呼叫端（或使用者篩選）設限，取交集；未設限則直接套用
     /// 顯示範圍。回傳 false 時代表交集為空，呼叫端應直接回傳空結果。
     ///
@@ -110,7 +110,7 @@ public class RecordRepository : IRecordRepository
     }
 
     /// <summary>
-    /// 問題嚴重度可見性（docs/HISTORY.md S1）：SiteHidden 模式下，未勾選層級的
+    /// 問題嚴重度可見性（docs/archive/HISTORY.md S1）：SiteHidden 模式下，未勾選層級的
     /// 問題從 TopIssues 整批排除——這是全站唯一的過濾點。Dashboard／Report／RecordQueryService
     /// 的統計、下鑽、AI context（經 GetDetail／ClusterSignatures）全部繼承同一份結果，
     /// 不必（也不該）各自重覆判斷 SeverityDisplayMode——散落判斷正是先前查詢頁分組視圖／
@@ -142,7 +142,7 @@ public class RecordRepository : IRecordRepository
         {
             var before = record.TopIssues.Count;
             record.TopIssues = record.TopIssues.Where(i => visible.Contains(i.Severity.ToString())).ToList();
-            // 只有單筆讀取路徑（GetOne，即風險日詳情頁）需要這個數字——docs/HISTORY.md #11
+            // 只有單筆讀取路徑（GetOne，即風險日詳情頁）需要這個數字——docs/archive/HISTORY.md #11
             record.HiddenIssueCount = before - record.TopIssues.Count;
         }
 
@@ -150,7 +150,7 @@ public class RecordRepository : IRecordRepository
     }
 
     /// <summary>
-    /// 舊資料相容（docs/HISTORY.md #1，B1 三級化）：三級化之前寫入的歷史紀錄
+    /// 舊資料相容（docs/archive/HISTORY.md #1，B1 三級化）：三級化之前寫入的歷史紀錄
     /// 若還是 Severity=Critical，讀取時一律正規化為 High＋ElevatesDayRisk=true——Critical
     /// 原本唯一的實際作用就是「命中即列為高風險日」，正規化後可解釋性不變（「重大」標註沿用）。
     /// 只在讀取時於記憶體正規化，不回寫資料庫——證據層是事後不可改寫的批次判定結果。

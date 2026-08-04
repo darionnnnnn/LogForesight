@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-8-PLAN.md #6：稽核紀錄「帳號」欄補上顯示名稱素材，讓前端能統一顯示
+/// docs/archive/FEEDBACK-8-PLAN.md #6：稽核紀錄「帳號」欄補上顯示名稱素材，讓前端能統一顯示
 /// 「顯示名稱(帳號)」。登入失敗等情境常見帳號打錯／查無使用者，必須優雅退回、不出錯。
 /// </summary>
 public class AuditQueryServiceTests : IDisposable

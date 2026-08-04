@@ -10,7 +10,7 @@ namespace LogForesight;
 /// 規則表的儲存邏輯（容錯解析／原子寫入語意）。這是 <see cref="IKnownIssueRuleStore"/> 的實作，
 /// 透過注入的 <see cref="EfJsonBlobStore"/> 不受底層是檔案或 DB blob 影響。
 ///
-/// 容錯設計（見 docs/RULES-PLAN.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且**不覆寫使用者的壞檔**，
+/// 容錯設計（見 docs/RULES-SPEC.md 陷阱 3）：整檔 JSON 語法錯誤時 Load 失敗且**不覆寫使用者的壞檔**，
 /// 讓使用者能看著原檔修正；單一規則物件解析失敗（欄位型別不合、enum 打錯字）只跳過該條，
 /// 其餘規則照常載入——手動編輯打錯一條不該讓整份規則表失效。
 /// </summary>
@@ -108,7 +108,7 @@ public class KnownIssueRuleStore : IKnownIssueRuleStore
                     skipped.Count, string.Join("；", skipped));
             }
 
-            // 舊資料相容（docs/HISTORY.md #1，B1 三級化）：單一咽喉點，批次的
+            // 舊資料相容（docs/archive/HISTORY.md #1，B1 三級化）：單一咽喉點，批次的
             // RuleBootstrapper 與 Web 的 RuleAdminService/RecordQueryService 都經由 Load() 讀取，
             // 在這裡正規化一次即可涵蓋全部呼叫端，不必各自記得處理舊值
             KnownIssueCatalog.NormalizeLegacyCriticalSeverity(rules);

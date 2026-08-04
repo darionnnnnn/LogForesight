@@ -7,7 +7,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 「查看先前處理」（docs/FEEDBACK-5-PLAN.md §4）：<see cref="RecordQueryService.GetDetail"/>
+/// 「查看先前處理」（docs/archive/FEEDBACK-5-PLAN.md §4）：<see cref="RecordQueryService.GetDetail"/>
 /// 的 <c>HasPriorHandling</c> 旗標與 <see cref="RecordQueryService.GetIssueHistory"/> 端點。
 /// </summary>
 public class RecordQueryServiceIssueHistoryTests : IDisposable

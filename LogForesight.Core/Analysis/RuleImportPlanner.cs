@@ -29,8 +29,8 @@ public class RuleImportPlan
 }
 
 /// <summary>
-/// 內建規則種子的匯入計畫與套用（docs/RULES-PLAN.md「初次部署寫入、後續手動匯入」；
-/// docs/WEB-SCHEDULER-PLAN.md §1.4.9 自 console 的 RuleImporter 拆出，console／Web 共用同一份，
+/// 內建規則種子的匯入計畫與套用（docs/RULES-SPEC.md「初次部署寫入、後續手動匯入」；
+/// docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9 自 console 的 RuleImporter 拆出，console／Web 共用同一份，
 /// 不寫兩套會漂移的分類邏輯）。以 Id 為鍵去重，custom 規則一律不碰；builtin 規則預設只補缺，
 /// 內容有異動需要 overwriteBuiltin 才會覆蓋——覆蓋時保留使用者對 Enabled 的選擇（使用者停用
 /// 某條 builtin 不是「修改內容」，是操作決定，匯入不應該把它打開）。

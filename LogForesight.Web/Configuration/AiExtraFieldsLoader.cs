@@ -6,7 +6,7 @@ namespace LogForesight.Web.Configuration;
 /// <summary>
 /// 繞過 <c>IConfiguration</c> binder，直接讀 appsettings.json 的 <c>Ai:ExtraRequestFields</c> 節點。
 ///
-/// 背景（docs/FEEDBACK-7-PLAN.md）：<c>ConfigurationBinder</c> 綁不出
+/// 背景（docs/archive/FEEDBACK-7-PLAN.md）：<c>ConfigurationBinder</c> 綁不出
 /// <c>Dictionary&lt;string, JsonElement&gt;</c>——<see cref="JsonElement"/> 沒有可寫屬性、也沒有
 /// <c>TypeConverter</c>，binder 對這個型別的欄位只能產生 <c>default(JsonElement)</c>
 /// （<c>ValueKind=Undefined</c>）。<see cref="AIService"/> 建構子對這種空值呼叫

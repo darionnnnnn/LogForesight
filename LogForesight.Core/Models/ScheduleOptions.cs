@@ -1,7 +1,7 @@
 namespace LogForesight;
 
 /// <summary>
-/// 一個排程執行窗口（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：<see cref="Start"/> 到點觸發一次完整
+/// 一個排程執行窗口（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：<see cref="Start"/> 到點觸發一次完整
 /// 執行（<see cref="RunScope.Full"/>），<see cref="End"/> 到點對進行中的執行發 cancel（優雅停止，
 /// 停在主機日邊界）。<see cref="Start"/>／<see cref="End"/> 皆為 <c>HH:mm</c> 格式、本地時區；
 /// <c>Start &gt; End</c> 表示跨午夜（例如 22:00 → 06:00）。
@@ -25,7 +25,7 @@ public class ScheduleOptions
     public List<ScheduleWindow> Windows { get; set; } = new() { new ScheduleWindow() };
 
     /// <summary>
-    /// AI 診斷傾印開關（承接批次 --debug-dump，docs/WEB-SCHEDULER-PLAN.md §1.4.10）：作用於「下一次
+    /// AI 診斷傾印開關（承接批次 --debug-dump，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：作用於「下一次
     /// 排程／手動觸發的執行」，與排程設定同一生命週期，不放 SystemSettings。
     /// </summary>
     public bool DebugDump { get; set; } = false;

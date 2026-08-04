@@ -41,7 +41,7 @@ public class PagesController : Controller
         return View();
     }
 
-    /// <summary>處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）：全登入角色可查看任何人，
+    /// <summary>處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：全登入角色可查看任何人，
     /// 資料以檢視者的可見範圍過濾，不需要額外能力標註</summary>
     [HttpGet("/handlers/{userId:long}")]
     public IActionResult HandlerDetail(long userId)
@@ -61,7 +61,7 @@ public class PagesController : Controller
     [Permission(Capability.ViewAudit)]
     public IActionResult Audit() => View();
 
-    /// <summary>排程作業（docs/FEEDBACK-6-PLAN.md §2）：DevMonitor 或 Maintain 任一即可進入——
+    /// <summary>排程作業（docs/archive/FEEDBACK-6-PLAN.md §2）：DevMonitor 或 Maintain 任一即可進入——
     /// 排程設定與手動觸發屬 Maintain，執行紀錄唯讀屬 DevMonitor 既有範圍，serverAdmin 因此
     /// 也能看見執行紀錄佐證排程活著（頁內仍依能力分層顯示可編輯區塊）</summary>
     [HttpGet("/runs")]

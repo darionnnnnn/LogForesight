@@ -4,7 +4,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary><see cref="IRiskyEventStore"/> 的合約測試（docs/WEB-SCHEDULER-PLAN.md §2）。</summary>
+/// <summary><see cref="IRiskyEventStore"/> 的合約測試（docs/archive/WEB-SCHEDULER-PLAN.md §2）。</summary>
 public class RiskyEventStoreContractTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();

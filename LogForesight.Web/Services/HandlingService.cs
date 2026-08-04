@@ -16,7 +16,7 @@ namespace LogForesight.Web.Services;
 /// 先交給 XXX 處理——此時**負責人不變**（那是主機的長期屬性），
 /// 變的是這個風險日的處理人。
 ///
-/// <see cref="GetTodo"/>：全站待辦（儀表板 KPI／報表處理進度共用，docs/HISTORY.md S3）：
+/// <see cref="GetTodo"/>：全站待辦（儀表板 KPI／報表處理進度共用，docs/archive/HISTORY.md S3）：
 /// 未處理與逾期。**母體（高＋中風險日）由本方法內部強制套用**——呼叫端傳整批候選紀錄即可，
 /// 不必（也不應該）自己先過濾，否則「待辦只算高＋中風險日」這條規則遲早在某個新呼叫端漏掉。
 /// 低風險日全站一律不進待辦（全塞進來待辦永遠爆量，等於沒有待辦）。
@@ -70,7 +70,7 @@ public class HandlingService
     {
         var host = RequireVisibleHost(hostId);
         var handling = _store.Get(host.HostName, date);
-        // 補撈 record 算推導狀態（docs/HISTORY.md #6）：處理面板要顯示的是
+        // 補撈 record 算推導狀態（docs/archive/HISTORY.md #6）：處理面板要顯示的是
         // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步
         var record = _repository.GetOne(hostId, date);
 
@@ -80,7 +80,7 @@ public class HandlingService
     }
 
     /// <summary>
-    /// 本日問題中屬進行中案件的數量（docs/FEEDBACK-4-PLAN.md §2）：面板「目前狀態」下方顯示
+    /// 本日問題中屬進行中案件的數量（docs/archive/FEEDBACK-4-PLAN.md §2）：面板「目前狀態」下方顯示
     /// 「N 項屬進行中案件」，讓使用者知道為什麼某些問題狀態會「自己動」（案件同步的結果）。
     /// record 為 null（分析尚未跑過）時回 0。
     /// </summary>
@@ -234,7 +234,7 @@ public class HandlingService
         if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
 
-        // 觀察中一定要有觀察至日期（docs/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
+        // 觀察中一定要有觀察至日期（docs/archive/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
         // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
         if (status == IssueHandlingStatuses.Observing)
         {
@@ -251,7 +251,7 @@ public class HandlingService
     /// 寫入單一問題的處理狀態，並成對寫入處理歷程（不含稽核記錄——單筆與批次的稽核摘要不同，
     /// 由呼叫端各自記）。批次呼叫端逐一呼叫本方法，天然逐問題各留一列歷程（D4）。
     ///
-    /// docs/FEEDBACK-4-PLAN.md §0.4-B：先問 <see cref="IssueCaseCoordinator.SyncStatus"/> 這個
+    /// docs/archive/FEEDBACK-4-PLAN.md §0.4-B：先問 <see cref="IssueCaseCoordinator.SyncStatus"/> 這個
     /// 問題目前有沒有進行中案件——**有的話這裡完全不寫**（含觸發日本身），寫入的主導權整個交給
     /// Coordinator（它會把觸發日與案件涵蓋的其餘日子一起處理，觸發日記「標記問題」、其餘天記
     /// 「案件同步」）；沒有案件時維持既有行為（只寫觸發日）。已知雜訊記憶／forgetNoise 這兩個
@@ -289,7 +289,7 @@ public class HandlingService
                     IssueKey = issueKey,
                     Status = status,
                     Note = trimmedNote,
-                    // 預計完成日只在「處理中」／「觀察中」（觀察至，docs/FEEDBACK-8-PLAN.md #4）
+                    // 預計完成日只在「處理中」／「觀察中」（觀察至，docs/archive/FEEDBACK-8-PLAN.md #4）
                     // 才有意義，其餘狀態一律不存，避免舊資料殘留誤導
                     DueDate = status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing ? dueDate : null,
                     ActorId = actorId,
@@ -371,7 +371,7 @@ public class HandlingService
         var beforeName = previousHandler?.DisplayName ?? "（未指派）";
         var afterName = handler?.DisplayName ?? "（未指派）";
 
-        // 建案（docs/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
+        // 建案（docs/archive/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
         // 未結案、無進行中案件的每個問題建案並回溯關聯歷史——落實 2.1「同主機同問題只由
         // 一個人處理」。取消指派（handlerId=null）不建案，那不是「開始有人處理」的動作。
         var (casesCreated, skippedHandlerNames) = handlerId.HasValue
@@ -520,7 +520,7 @@ public class HandlingService
         return todo;
     }
 
-    // ── 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）────────────────────
+    // ── 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）────────────────────
 
     /// <summary>
     /// 批次指派 modal 開啟時的受影響主機預覽：查詢天生受可見範圍限制（走 IRecordRepository.Query），
@@ -634,7 +634,7 @@ public class HandlingService
         return result;
     }
 
-    // ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）────────────────────────────
+    // ── 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）────────────────────────────
 
     /// <summary>
     /// 全登入角色可查看任何人的工作頁，但**資料以檢視者的可見範圍過濾**（不是被看者的）——
@@ -804,7 +804,7 @@ public class HandlingService
     }
 
     /// <summary>
-    /// 問題層級的歷程列（docs/HISTORY.md #6/D4）：與日層級的 <see cref="AppendLog"/>
+    /// 問題層級的歷程列（docs/archive/HISTORY.md #6/D4）：與日層級的 <see cref="AppendLog"/>
     /// 分開——問題層級沒有「處理人」（那是日層級概念），且需要 IssueKey/IssueLabel 定位是哪個問題。
     /// </summary>
     private void AppendIssueLog(WebHost host, DateTime date, string issueKey, string issueLabel, string action, string status, string? note, DateTime occurredAt)

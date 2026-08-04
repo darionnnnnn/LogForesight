@@ -26,7 +26,7 @@ public class TrendAnalyzerTests
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
 
         Assert.Equal(IssueTrend.Rising, sig.Trend);
-        // docs/HISTORY.md #1（B1 三級化）：嚴重度封頂 High（原本 High 升一級到 Critical），
+        // docs/archive/HISTORY.md #1（B1 三級化）：嚴重度封頂 High（原本 High 升一級到 Critical），
         // 改用旗標達成同樣的「直接判定高風險日」效果
         Assert.Equal(IssueSeverity.High, sig.Severity);
         Assert.True(sig.ElevatesDayRisk);

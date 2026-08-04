@@ -4,7 +4,7 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// 執行範圍（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：Full＝排程觸發的完整執行
+/// 執行範圍（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2）：Full＝排程觸發的完整執行
 /// （本機＋全部 NetIQ 主機）；LocalOnly＝只跑本機；NetiqHosts＝只跑指定的 NetIQ 主機
 /// （<see cref="RunRequest.HostIds"/>）。後兩者是手動觸發（立即執行／指定主機更新）的載體。
 /// </summary>
@@ -57,7 +57,7 @@ public interface IRunConsole
 }
 
 /// <summary>
-/// 執行進度回報（docs/FEEDBACK-8-PLAN.md #2）：粒度是「主機日」（done/total），分本機／NetIQ
+/// 執行進度回報（docs/archive/FEEDBACK-8-PLAN.md #2）：粒度是「主機日」（done/total），分本機／NetIQ
 /// 兩階段回報，取代原本只有一行 <see cref="IRunConsole.WriteLine"/> 訊息、看不出量化進度的狀況。
 /// NetIQ 段 total 隨平行掃描各 Sentinel 逐步累加（見 <c>NetiqPipelineService</c>）——只會變大、
 /// 不會倒退，呼叫端（Web 狀態卡）據此畫進度條；null＝不回報（測試預設不傳）。
@@ -68,7 +68,7 @@ public interface IRunProgress
 }
 
 /// <summary>
-/// 分析主流程的單一入口（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：權限檢查 → 清理 → 本機逐日分析 →
+/// 分析主流程的單一入口（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2）：權限檢查 → 清理 → 本機逐日分析 →
 /// NetIQ 機房分析 → 體檢。原本寫在批次 console 的 <c>Program.cs</c>，Phase 2 抽出成共用單一入口，
 /// console 專案退場（Phase 5，§1.5）後唯一的呼叫端是 Web 排程（<c>SchedulerHostedService</c>）。
 ///
@@ -130,13 +130,13 @@ public class AnalysisOrchestrator
             catch (Exception ex)
             {
                 Log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
-                // 可見回報（docs/FEEDBACK-8-PLAN.md #3）：原本只寫 log，這趟執行會在執行監控頁
+                // 可見回報（docs/archive/FEEDBACK-8-PLAN.md #3）：原本只寫 log，這趟執行會在執行監控頁
                 // 整筆「消失」（不是顯示失敗，是查不到發生過），使用者只能翻 log 檔才查得到
                 console.WriteLine($"  ⚠ 執行紀錄儲存初始化失敗（不影響本次分析，但這趟執行本次不會出現在執行監控）：{ex.Message}");
             }
 
             // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
-            // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
+            // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
             using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, Array.Empty<string>(), request.Trigger, ct,
                 onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"));
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
@@ -146,7 +146,7 @@ public class AnalysisOrchestrator
             var aiService = new AIService(settings.Ai, dumper);
             var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
 
-            // AI 是否已設定（docs/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
+            // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
             // 照常執行，只是不呼叫 AI），不再逐日嘗試打逾時再降級——那樣會讓整晚的排程被逾時
             // ×重試拖得又慢又沒意義。settings.Ai 在呼叫本方法前已套用過 DB 覆寫
             // （RuntimeSettingsResolver.ApplySystemSettingsOverrides，見呼叫端），此處讀到的
@@ -161,7 +161,7 @@ public class AnalysisOrchestrator
 
             // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
             // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
-            // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/HISTORY.md），
+            // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/archive/HISTORY.md），
             // 所以這段必須排在分析服務、以及本機歸戶的歷史 store 建立之前。
             // 刻意只呼叫 Touch——它只建立缺少的主機並更新回報時間，不碰 Web 維護的角色描述、
             // 群組與負責人（批次不知道那些欄位，用空值蓋掉會把人工設定清光）。
@@ -171,7 +171,7 @@ public class AnalysisOrchestrator
             var hostStore = StorageFactory.CreateHostStore(settings.Storage, dataRoot);
             var sentinelStore = StorageFactory.CreateSentinelStore(settings.Storage, dataRoot);
 
-            // SentinelId 回填（docs/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
+            // SentinelId 回填（docs/archive/HISTORY.md 定案 4）：一次性遷移，冪等，排最前面——
             // 後面的孤兒掃描與 Pollable 判定都改看 SentinelId，沒先回填的話舊資料會被誤判成待歸屬。
             try
             {
@@ -217,14 +217,14 @@ public class AnalysisOrchestrator
             var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
             var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
                 settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
-            // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
+            // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
             // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
             var riskyEventStore = StorageFactory.CreateRiskyEventStore(settings.Storage, dataRoot);
             var permissionMonitor = new PermissionMonitorService(settings.Permissions,
                 StorageFactory.CreatePermissionSnapshotStore(settings.Storage, dataRoot));
             var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
 
-            // 問題案件批次逐日掛接（docs/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
+            // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
             // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
             var caseCoordinator = new IssueCaseCoordinator(
                 StorageFactory.CreateIssueCaseStore(settings.Storage, dataRoot),
@@ -321,7 +321,7 @@ public class AnalysisOrchestrator
                 console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
             }
 
-            // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/HISTORY.md P0-3）
+            // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
             try
             {
                 var runLogPruned = (batchRunStore?.Prune(retention.RunLogRetentionDays) ?? 0) +
@@ -333,7 +333,7 @@ public class AnalysisOrchestrator
                 if (auditPruned > 0)
                     console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
 
-                // 風險 log 暫存清理（docs/WEB-SCHEDULER-PLAN.md §2.2.3）
+                // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
                 var riskyEventPruned = riskyEventStore.Prune(retention.RiskyEventRetentionDays);
                 if (riskyEventPruned > 0)
                     console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RiskyEventRetentionDays} 天的風險 log 暫存。");
@@ -343,7 +343,7 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            // 1c. 清理過期的風險報告檔（docs/HISTORY.md P1-4）
+            // 1c. 清理過期的風險報告檔（docs/archive/HISTORY.md P1-4）
             try
             {
                 var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.RetentionDays);
@@ -366,7 +366,7 @@ public class AnalysisOrchestrator
                     progress);
             }
 
-            // 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
+            // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：本機分析完成後，
             //    對 Web 主機頁登錄的 NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套
             //    LogAnalysisService。LocalOnly 範圍（Phase 3 手動觸發只跑本機）跳過這段。
             if (request.Scope != RunScope.LocalOnly)
@@ -465,7 +465,7 @@ public class AnalysisOrchestrator
         if (missingDates.Count == 0)
         {
             // 白天手動執行時這是最常見的路徑（昨晚排程已分析過昨天）：措辭刻意講清楚
-            // 「本機無需回補、不是本機未執行」（docs/FEEDBACK-8-PLAN.md #3），
+            // 「本機無需回補、不是本機未執行」（docs/archive/FEEDBACK-8-PLAN.md #3），
             // 避免與「本機根本沒被排進這次執行」混淆。Milestone 落地——NLog target 只收
             // Warn 以上，不記 Milestone 的話這句話不會出現在執行詳情，使用者事後查不到
             var skipMessage = $"本機近 {lookbackDays} 天皆已有分析紀錄，本次無需回補（非未執行；" +
@@ -563,7 +563,7 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "案件掛接失敗（不影響分析結果，下次執行冪等補掛）：{0}", ex.Message);
             }
 
-            // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學。
+            // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：同一失敗邊界哲學。
             if (RiskyEventSelector.WithinRetention(date, retention.RiskyEventRetentionDays, DateTime.Today))
             {
                 try
@@ -649,7 +649,7 @@ public class AnalysisOrchestrator
         try
         {
             var netiqOptions = StorageFactory.CreateNetiqOptionsStore(settings.Storage, dataRoot).Get();
-            // 手動觸發的一次性回補天數覆寫（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：只影響這次執行，
+            // 手動觸發的一次性回補天數覆寫（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：只影響這次執行，
             // 不落地——netiqOptions 是本次呼叫剛從 store 讀出的獨立物件，就地覆寫不影響下次讀取的設定值
             if (request.BackfillOverride is { } backfillOverride)
             {
@@ -716,7 +716,7 @@ public class AnalysisOrchestrator
             }
         }
 
-        // 主機級抑制（見 docs/RULES-PLAN.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
+        // 主機級抑制（見 docs/RULES-SPEC.md）：本日有告警被抑制時列出摘要，讓使用者知道「有東西被關掉了」
         var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
         if (suppressedIssues.Count > 0)
         {
@@ -790,7 +790,7 @@ public class AnalysisOrchestrator
 }
 
 /// <summary>
-/// 保留天數的一次性快照（docs/WEB-SCHEDULER-PLAN.md §1.4.2「每次執行重建服務」）：
+/// 保留天數的一次性快照（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2「每次執行重建服務」）：
 /// 由呼叫端在讀取 <c>SystemSettings</c> 後組出，<see cref="AnalysisOrchestrator"/> 本身
 /// 不碰設定來源（DB 或 appsettings 預設值），維持「設定解析在呼叫端、執行邏輯在這裡」的分工。
 /// </summary>

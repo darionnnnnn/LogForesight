@@ -1,7 +1,7 @@
 namespace LogForesight;
 
 /// <summary>
-/// 風險 log 暫存的入庫資格與呈現量上限（docs/WEB-SCHEDULER-PLAN.md §2.2.2，2026-07-31 定案）：
+/// 風險 log 暫存的入庫資格與呈現量上限（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.2，2026-07-31 定案）：
 /// 純函數，不做 I/O——呼叫端（批次的每日分析迴圈與 NetiqPipelineService，與案件掛接
 /// AttachNewDay 同一個掛接模式）在每日分析返回後，用回傳的 <c>record.TopIssues</c>
 /// （已經過規則分類與趨勢比對）與當日原始 <c>logs</c> 呼叫本函數，再交給

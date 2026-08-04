@@ -309,7 +309,7 @@ function renderStats(detail) {
         { label: '耗時', value: detail.durationSeconds != null ? formatDuration(detail.durationSeconds) : '—' },
         { label: '分析天數', value: detail.daysAnalyzed },
         // AI 未設定時這欄多半是「0（失敗 0）」的雜訊；歷史上真的呼叫過 AI 的執行紀錄仍如實顯示
-        // （docs/FEEDBACK-7-PLAN.md）
+        // （docs/archive/FEEDBACK-7-PLAN.md）
         ...(aiAvailable || detail.aiCalls > 0
             ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
             : []),
@@ -410,14 +410,14 @@ for (const button of document.querySelectorAll('[data-days]')) {
     });
 }
 
-// ── 排程設定（docs/WEB-SCHEDULER-PLAN.md §1.4.5）──────────────────────────────
+// ── 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）──────────────────────────────
 // 這頁的權限是 DevMonitor 或 Maintain 任一（見 PagesController.Runs）：dev 進得來但只能看，
 // 排程設定/立即執行/停止這些會動到系統的操作只給 Maintain——data-maintain-only 標記的元素
 // 在沒有 Maintain 時整批隱藏，而不是逐一判斷。
 
 let scheduleWindows = [];
 let canMaintainSchedule = false;
-// AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/FEEDBACK-7-PLAN.md）：這是除錯用的手動
+// AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/archive/FEEDBACK-7-PLAN.md）：這是除錯用的手動
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
 let aiAvailable = false;
@@ -538,7 +538,7 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
     }
 });
 
-// 執行中／閒置輪詢間隔不同（docs/FEEDBACK-8-PLAN.md #2）：執行中要讓進度條「看得出在動」，
+// 執行中／閒置輪詢間隔不同（docs/archive/FEEDBACK-8-PLAN.md #2）：執行中要讓進度條「看得出在動」，
 // 閒置時沒有進度可看，維持原本的低頻率即可。自我重新排程（而非 setInterval）方便依上一次
 // 拿到的狀態決定下一輪間隔。
 let wasScheduleRunning = false;
@@ -567,7 +567,7 @@ function applyScheduleStatus(status) {
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
     } else {
-        // 閒置時顯示「上次執行到底成不成功」（docs/FEEDBACK-7-PLAN.md）：原本失敗只寫 log，
+        // 閒置時顯示「上次執行到底成不成功」（docs/archive/FEEDBACK-7-PLAN.md）：原本失敗只寫 log，
         // 使用者看到「已開始執行」的 toast 之後就再也沒有回饋，只能翻 log 檔才知道其實炸了。
         renderLastRunOutcome(messageEl, status);
     }
@@ -581,7 +581,7 @@ function applyScheduleStatus(status) {
         document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
     }
 
-    // 執行完自動刷新總表（docs/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，
+    // 執行完自動刷新總表（docs/archive/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，
     // 使用者不必手動重新整理才看得到剛跑完的這趟（手動與排程觸發都經過這條輪詢，天然涵蓋兩者）
     if (wasScheduleRunning && !status.isRunning) {
         toast('執行已結束，執行總表已刷新', 'info');
@@ -594,7 +594,7 @@ const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
- * （docs/FEEDBACK-8-PLAN.md #2） */
+ * （docs/archive/FEEDBACK-8-PLAN.md #2） */
 function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
@@ -624,7 +624,7 @@ function renderScheduleProgress(status) {
 }
 
 /**
- * 閒置時的「上次執行結果」（docs/FEEDBACK-7-PLAN.md）：站台重啟後 lastRunEndedAt 為 null，
+ * 閒置時的「上次執行結果」（docs/archive/FEEDBACK-7-PLAN.md）：站台重啟後 lastRunEndedAt 為 null，
  * 顯示「—」即可——完整歷史查執行總表，這裡只回答「剛剛那次到底成不成功」。
  * 使用者手動取消不算失敗（AnalysisOrchestrator 把取消也回報成 Success=false，
  * FailureMessage="使用者取消"），這裡特判成中性語氣，不用紅字嚇人。
@@ -671,7 +671,7 @@ document.getElementById('schedule-stop')?.addEventListener('click', async () => 
     }
 });
 
-// ── 立即執行（docs/WEB-SCHEDULER-PLAN.md §1.4.4，「host」範圍另放在主機詳情頁）──────
+// ── 立即執行（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，「host」範圍另放在主機詳情頁）──────
 
 let runNowPreviewDebounce = null;
 

@@ -12,7 +12,7 @@ public class HandlingDto
     public string StatusText { get; set; } = string.Empty;
 
     /// <summary>
-    /// 由問題標記推導出的日狀態（docs/HISTORY.md #6）——與 Status 不同：
+    /// 由問題標記推導出的日狀態（docs/archive/HISTORY.md #6）——與 Status 不同：
     /// Status 是存的日層級快照，這個是「現在真正的狀態」，兩者在批次套用問題標記後可能不同步。
     /// null＝呼叫端未補算（Update/Assign 的回傳值），前端應 fallback 用 Status/StatusText。
     /// </summary>
@@ -40,7 +40,7 @@ public class HandlingDto
     public bool CanHandle { get; set; }
 
     /// <summary>
-    /// 本日問題中屬進行中案件的數量（docs/FEEDBACK-4-PLAN.md §2）：「N 項屬進行中案件」提示，
+    /// 本日問題中屬進行中案件的數量（docs/archive/FEEDBACK-4-PLAN.md §2）：「N 項屬進行中案件」提示，
     /// 讓使用者知道為什麼某些問題狀態會「自己動」（案件同步的結果）。
     /// </summary>
     public int OpenCaseCount { get; set; }
@@ -129,7 +129,7 @@ public class BatchIssueStatusResultDto
     public string DayStatusText { get; set; } = string.Empty;
 
     /// <summary>本批次因案件同步而額外更新的天數總和（跨全部勾選問題加總，不含各自的觸發日）；
-    /// 0＝這批問題目前都沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    /// 0＝這批問題目前都沒有進行中案件（docs/archive/FEEDBACK-4-PLAN.md §2）</summary>
     public int CaseSyncedDayCount { get; set; }
 }
 
@@ -149,7 +149,7 @@ public class IssueStatusResultDto
     public string DayStatusText { get; set; } = string.Empty;
 
     /// <summary>這個問題若有進行中案件，這次標記同步展開到的天數（不含觸發日本身）；
-    /// 0＝目前沒有進行中案件（docs/FEEDBACK-4-PLAN.md §2）</summary>
+    /// 0＝目前沒有進行中案件（docs/archive/FEEDBACK-4-PLAN.md §2）</summary>
     public int CaseSyncedDayCount { get; set; }
 }
 
@@ -162,12 +162,12 @@ public class HandlingLogDto
     public string? HandlerName { get; set; }
     public string? Note { get; set; }
 
-    /// <summary>問題層級操作才有值（「Source EventId」）——docs/HISTORY.md #6</summary>
+    /// <summary>問題層級操作才有值（「Source EventId」）——docs/archive/HISTORY.md #6</summary>
     public string? IssueLabel { get; set; }
 
     public string ActorAccount { get; set; } = string.Empty;
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者（帳號已刪除等）時為 null，前端退回只顯示帳號</summary>
     public string? ActorDisplayName { get; set; }
 
@@ -181,7 +181,7 @@ public class HandlingTodoDto
     public int OverdueCount { get; set; }
 
     /// <summary>
-    /// 已處理的風險日數——docs/HISTORY.md #6、docs/HISTORY.md #12
+    /// 已處理的風險日數——docs/archive/HISTORY.md #6、docs/archive/HISTORY.md #12
     /// 報表「處理進度」用。對外三態（<see cref="HandlingStatuses.ExternalOf"/>）：
     /// 日層級 fallback 若為 wont_fix／false_positive／known_noise 也算已處理——這三態是
     /// 「這天已有結論」，對外部檢視（report/dashboard 只看還有沒有事要做）而言等同已處理，
@@ -191,11 +191,11 @@ public class HandlingTodoDto
     /// 那是「這件事的處理方式」的細節，只在單筆問題層級才有意義。</summary>
     public int ResolvedCount { get; set; }
 
-    /// <summary>母體：期間內高＋中風險日總數（分母）——docs/HISTORY.md #6 報表「處理進度」用</summary>
+    /// <summary>母體：期間內高＋中風險日總數（分母）——docs/archive/HISTORY.md #6 報表「處理進度」用</summary>
     public int TotalCount { get; set; }
 }
 
-// ── 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）────────────────────────
+// ── 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）────────────────────────
 
 /// <summary>批次指派 modal 開啟時的受影響主機預覽——已有進行中案件的主機標出既有處理人，
 /// 讓使用者在送出前就知道哪些主機會被跳過（2.1，不搶走）</summary>
@@ -284,7 +284,7 @@ public class AuditEntryDto
     public DateTime OccurredAt { get; set; }
     public string Account { get; set; } = string.Empty;
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者（登入失敗打錯帳號、外部帳號等）時為 null，前端退回只顯示帳號</summary>
     public string? AccountDisplayName { get; set; }
 
@@ -298,14 +298,14 @@ public class AuditEntryDto
     public string Result { get; set; } = string.Empty;
 }
 
-// ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）─────────────────────────────
+// ── 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）─────────────────────────────
 
 public class HandlerWorkloadDto
 {
     public long UserId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）——
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）——
     /// 格式化本身是前端的事，這裡只補齊素材</summary>
     public string Account { get; set; } = string.Empty;
 

@@ -7,7 +7,7 @@ namespace LogForesight;
 /// <summary>
 /// 風險日報告：當日風險等級「中」以上時輸出報告檔，讓使用者聚焦問題點。
 /// 報告依問題類別分區塊（儲存裝置、硬體、安全、服務、備份、設定、資源）。
-/// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/HISTORY.md）：
+/// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/archive/HISTORY.md）：
 /// 規則已命中的類別（Category ≠ Other）直接查 <see cref="KnownIssueCatalog"/> 的靜態知識庫，
 /// 零 AI 呼叫、零延遲、零幻覺；只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）
 /// 才發一次獨立的 AI 深入分析呼叫——類別內的事件彼此相關該一起看
@@ -81,7 +81,7 @@ public class RiskReportService
 
             var categoryLogs = SelectRawLogs(logs, issues, logQuotaPerCategory);
 
-            // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/HISTORY.md）；
+            // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/archive/HISTORY.md）；
             // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
             var outcome = group.Key == IssueCategory.Other
                 ? (record.AiAnalyzed
@@ -302,7 +302,7 @@ public class RiskReportService
         sb.AppendLine($"  產生時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine("══════════════════════════════════════════════════════════");
 
-        // 白話總覽：置頂，主管/非技術讀者看完這段即可結束（2026-07-20 AI 角色轉換，見 docs/HISTORY.md）。
+        // 白話總覽：置頂，主管/非技術讀者看完這段即可結束（2026-07-20 AI 角色轉換，見 docs/archive/HISTORY.md）。
         // 技術細節（趨勢數字、關聯訊號、原始 log）全部保留在下方區塊，供維運人員查證。
         sb.AppendLine();
         sb.AppendLine(record.AiAnalyzed ? "■ 白話總覽（AI 產出）" : "■ 白話總覽");
@@ -419,7 +419,7 @@ public class RiskReportService
         }
 
         // 已抑制的告警：本機維護者關閉通知的規則，仍列出讓看報告的人知道「有東西被關掉了」——
-        // 偵測與紀錄照常，只是不吵、不拉風險（見 docs/RULES-PLAN.md 語意邊界）
+        // 偵測與紀錄照常，只是不吵、不拉風險（見 docs/RULES-SPEC.md 語意邊界）
         var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
         if (suppressedIssues.Count > 0)
         {

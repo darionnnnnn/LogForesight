@@ -32,7 +32,7 @@ public class IssueHandling
 
     /// <summary>
     /// 預計完成日——Status=in_progress 時才有意義，畫面上僅該狀態顯示此欄位。
-    /// Status=observing（觀察中，docs/FEEDBACK-8-PLAN.md #4）時**沿用同一欄位**當「觀察至」日期，
+    /// Status=observing（觀察中，docs/archive/FEEDBACK-8-PLAN.md #4）時**沿用同一欄位**當「觀察至」日期，
     /// 不另開一欄——語意是同一件事的推廣（「這個狀態何時需要重新處理」），不是硬湊；
     /// 到期後仍是這個日期，只是解讀從「該完成了」變成「該回頭看了」，見
     /// <see cref="IssueHandlingStatuses.IsObservationExpired"/>。
@@ -40,7 +40,7 @@ public class IssueHandling
     public DateTime? DueDate { get; set; }
 
     /// <summary>
-    /// 出處案件（docs/FEEDBACK-4-PLAN.md §0，2026-07-30 起）：由 <c>IssueCaseCoordinator</c>
+    /// 出處案件（docs/archive/FEEDBACK-4-PLAN.md §0，2026-07-30 起）：由 <c>IssueCaseCoordinator</c>
     /// 展開寫入的列帶值，使用者在個別日子手動標記的列維持 null。
     /// 這是案件同步的邊界——同步只覆蓋 CaseId 屬於本案件與未標記的日子，
     /// 使用者手動標的列（無論狀態）一律不受案件同步影響。舊資料反序列化為 null，零遷移。
@@ -72,7 +72,7 @@ public static class IssueSignatureKey
 /// 區塊填一次即可套用，不用再逐項各自填。非結案類，但一旦有任一問題被標成 in_progress，
 /// 當日狀態即推導為 in_progress（見 DayHandlingDerivation）。
 ///
-/// <see cref="Observing"/>（docs/FEEDBACK-8-PLAN.md #4）：處理人判斷「先看幾天再說」——
+/// <see cref="Observing"/>（docs/archive/FEEDBACK-8-PLAN.md #4）：處理人判斷「先看幾天再說」——
 /// 觀察期間這個問題不再進入待辦／告警（跟 in_progress 一樣不算 open），但處理中的人隨時
 /// 查得到、確認得了。到期語意**讀取時推導**，不跑背景作業（同「缺列即未處理」的哲學）：
 /// 到期＝視同 in_progress 且逾期，自然回到既有的待辦／逾期通道現身，不必另建通知機制
@@ -118,7 +118,7 @@ public static class IssueHandlingStatuses
         status == Observing && dueDate.HasValue && dueDate.Value.Date < today.Date;
 
     /// <summary>
-    /// 歷程列的說明文字：觀察中時自動補「（觀察至 yyyy-MM-dd）」（docs/FEEDBACK-8-PLAN.md #4）——
+    /// 歷程列的說明文字：觀察中時自動補「（觀察至 yyyy-MM-dd）」（docs/archive/FEEDBACK-8-PLAN.md #4）——
     /// 歷程列（RecordHandlingLog）沒有 DueDate 欄位，不補的話事後翻歷程看不出當初訂的觀察終點。
     /// 只動歷程、不動 <see cref="IssueHandling.Note"/> 本身（那一列有 DueDate 欄位，畫面上
     /// 已用徽章顯示，寫進 Note 會重複）。三個歷程寫入點（Web 單日標記、案件同步、批次掛接）

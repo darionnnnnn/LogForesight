@@ -4,7 +4,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 批次歷史 store 綁定「本機」識別（ownerHost）後，缺日判定與趨勢基準只看本機自己的紀錄
-/// （docs/DB-PLAN.md 一致性機制 #3）。
+/// （docs/DB-SPEC.md 一致性機制 #3）。
 ///
 /// 這組測試釘住的是實際踩到的 bug：同一份資料（history.txt 或 DB）內若含別台主機的紀錄
 /// （示範資料、或多台共用同一資料根），全域的缺日判定會把「別台在這天有紀錄」誤當成

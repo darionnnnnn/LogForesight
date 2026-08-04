@@ -4,7 +4,7 @@ using LogForesight.Web.Models;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// Controller 查詢字串解析的單一事實來源（docs/HISTORY.md S9）。
+/// Controller 查詢字串解析的單一事實來源（docs/archive/HISTORY.md S9）。
 /// 取代原本在 RecordsController／AiController／AuditController／DashboardController(含
 /// ReportsController) 各自維護的四份逐字相同的 ParseDate/ParseLongs/ParseStrings。
 /// </summary>

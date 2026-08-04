@@ -6,12 +6,12 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 6、7、8；
-/// docs/NETIQ-API-PLAN.md §3.4 網段範圍掃描）：選既有 Sentinel、輸入網段 → 掃描 → 依網段分組 →
+/// NetIQ 主動探索匯入（docs/archive/HISTORY.md §1；docs/archive/HISTORY.md 定案 6、7、8；
+/// docs/NETIQ-API-REFERENCE.md §3.4 網段範圍掃描）：選既有 Sentinel、輸入網段 → 掃描 → 依網段分組 →
 /// 勾選 → （可選）指派群組 → 立即套用。掃描結果暫存 token（30 分鐘），套用只接受掃描過的 IP，
 /// 避免前端硬塞任意主機。
 ///
-/// **勾選送出即落盤**（定案 7，修訂 docs/HISTORY.md「2026-07-23」段 §5.3 原本的排入佇列設計）：
+/// **勾選送出即落盤**（定案 7，修訂 docs/archive/HISTORY.md「2026-07-23」段 §5.3 原本的排入佇列設計）：
 /// 主機列新增/更新/孤兒復活直接透過 <see cref="NetiqImportApplier"/> 套用，不再等批次執行。
 /// 兩千台量級下這一步本身很輕量（純粹是 upsert 幾十到幾百列），真正重的規則檢查本來就
 /// 要等下次批次才有——即時落盤只是讓「這台主機被收進清單」這件事本身不用等到隔天。
@@ -146,7 +146,7 @@ public class NetiqDiscoveryService
             throw DomainException.Validation("請至少勾選一台主機。");
 
         var groupByIp = ResolveGroupAssignments(scan, request.GroupAssignments);
-        // 探索掃描已經拿到真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）——
+        // 探索掃描已經拿到真實機器名（docs/NETIQ-API-REFERENCE.md §3.4：網段範圍掃描投影 sn 欄位）——
         // 新主機匯入當下就能有名字，不用等夜間批次的 TouchNetiq 才回填。
         //
         // 掃描沒拿到 sn 的主機，NetiqDiscoveredHost.HostName 會退回 IP（精靈清單上顯示 IP 是對的），

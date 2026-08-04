@@ -7,7 +7,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定收斂到 RecordRepository 單一咽喉點——
+/// docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定收斂到 RecordRepository 單一咽喉點——
 /// 與問題嚴重度可見性（<see cref="RecordRepositorySeverityVisibilityTests"/>）是不同的兩套
 /// 過濾機制，這裡是獨立測試檔（不共用建構子種子資料，避免兩組斷言互相干擾）。
 ///
@@ -105,7 +105,7 @@ public class RecordRepositoryDayRiskVisibilityTests : IDisposable
         Assert.Empty(page.Items);
     }
 
-    /// <summary>豁免（docs/FEEDBACK-3-PLAN.md #8）：主機詳情頁時間軸專用，applyDayRiskVisibility=false
+    /// <summary>豁免（docs/archive/FEEDBACK-3-PLAN.md #8）：主機詳情頁時間軸專用，applyDayRiskVisibility=false
     /// 時完整看到證據，不受顯示設定影響——避免時間軸把「有分析但被藏」誤顯示成「無分析紀錄」</summary>
     [Fact]
     public void applyDayRiskVisibility為false時完全不過濾()

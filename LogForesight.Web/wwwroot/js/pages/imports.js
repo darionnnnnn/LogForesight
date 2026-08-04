@@ -1,5 +1,5 @@
 /**
- * 資料匯入（docs/WEB-SPEC.md §9.9、docs/HISTORY.md）。
+ * 資料匯入（docs/WEB-SPEC.md §9.9、docs/archive/HISTORY.md）。
  *
  * CSV 匯入（上傳→預覽→套用）與 NetIQ 匯入（從既有 Sentinel 掃描並匯入主機）合併在同一頁，
  * 因為兩者最終都寫進同一份「匯入紀錄」，拆成兩頁只會讓使用者要來回找歷史紀錄。
@@ -284,7 +284,7 @@ function renderScanPicker(allSentinels) {
     }
     row.appendChild(select);
 
-    // 掃描是「查一個網段」不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4）——網段必填，
+    // 掃描是「查一個網段」不是盲掃全站（docs/NETIQ-API-REFERENCE.md §3.4）——網段必填，
     // 前端先擋空值，格式細節（CIDR 位元數等）交給後端 SentinelQueryBuilder 統一驗證
     const subnetInput = document.createElement('input');
     subnetInput.type = 'text';
@@ -312,7 +312,7 @@ function renderScanPicker(allSentinels) {
     scanPicker.appendChild(row);
 }
 
-// ── 掃描精靈（docs/HISTORY.md 定案 7-8） ───────────────────────
+// ── 掃描精靈（docs/archive/HISTORY.md 定案 7-8） ───────────────────────
 
 const wizardModal = new bootstrap.Modal(document.getElementById('netiq-wizard-modal'));
 const wizardTitle = document.getElementById('wizard-title');
@@ -352,7 +352,7 @@ async function openWizard(sentinel, subnetPrefix) {
     }
 }
 
-// 涵蓋範圍是顯示出來的事實，不是隱藏假設（docs/NETIQ-API-PLAN.md §3.4）——
+// 涵蓋範圍是顯示出來的事實，不是隱藏假設（docs/NETIQ-API-REFERENCE.md §3.4）——
 // 網段範圍掃描只涵蓋窗口內有事件回報的主機，這句話必須在結果最上方，不能只藏在 tooltip 裡
 function renderCoverageNote() {
     const noteEl = document.getElementById('wizard-coverage-note');

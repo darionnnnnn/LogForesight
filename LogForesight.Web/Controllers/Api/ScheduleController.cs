@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// 排程設定與手動觸發（docs/WEB-SCHEDULER-PLAN.md §1.4.4，「排程作業」頁）。
+/// 排程設定與手動觸發（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，「排程作業」頁）。
 ///
 /// 讀端（<see cref="GetOptions"/>／<see cref="GetStatus"/>）開放 DevMonitor 或 Maintain，寫端
 /// （設定／預覽／觸發／停止）僅 Maintain——與側欄「排程作業」入口、頁面權限（PagesController.Runs）
@@ -99,7 +99,7 @@ public class ScheduleController : ControllerBase
         });
     }
 
-    /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
+    /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
     [HttpGet("run-preview")]
     [Permission(Capability.Maintain)]
     public ApiResponse<RunPreviewDto> RunPreview([FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId)

@@ -4,7 +4,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 排程引擎（docs/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.4）：週期輪詢
+/// 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.4）：週期輪詢
 /// <see cref="IScheduleOptionsStore"/>，命中執行窗口且該窗口本次尚未觸發過
 /// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，同一函式天生涵蓋服務啟動時的漏跑補償——
 /// 啟動後第一次輪詢就是在檢查「現在是否該觸發」，跟平常輪詢問的是同一個問題）時觸發一次
@@ -89,7 +89,7 @@ public class SchedulerHostedService : BackgroundService
 
         if (_runState.IsRunning)
         {
-            // 窗口 End 到點（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
+            // 窗口 End 到點（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：對「排程觸發」的進行中執行發
             // 優雅停止（停在主機日邊界）。手動觸發不受時間窗限制（§1.4.4），不在這裡停。
             // 刻意放在 Enabled 檢查之前——執行中途被關掉 Enabled，這次排程執行仍該按窗口停。
             if (_runState.Trigger == "schedule" &&
@@ -125,7 +125,7 @@ public class SchedulerHostedService : BackgroundService
     /// </summary>
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
-        // AI 診斷傾印一律以目前的排程設定為準（docs/WEB-SCHEDULER-PLAN.md §1.4.10）：
+        // AI 診斷傾印一律以目前的排程設定為準（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：
         // 排程輪詢與手動觸發共用同一個開關，這裡統一覆寫呼叫端傳入的值，
         // 不然「排程開了傾印、手動觸發卻沒開」的不一致會讓人以為傾印沒生效。
         var effectiveRequest = new RunRequest
@@ -147,7 +147,7 @@ public class SchedulerHostedService : BackgroundService
 
         _ = Task.Run(async () =>
         {
-            // 給使用者「看得見」的失敗回饋（docs/FEEDBACK-7-PLAN.md）：原本失敗只寫 NLog，
+            // 給使用者「看得見」的失敗回饋（docs/archive/FEEDBACK-7-PLAN.md）：原本失敗只寫 NLog，
             // 狀態 API／畫面只在 IsRunning=true 時顯示訊息，執行一旦炸掉，使用者看到的最後
             // 印象停留在「已開始執行」的 toast，只能翻 log 檔才知道其實失敗了。
             // null＝這次沒有真的開始過（mutex 逾時），不覆蓋上一筆真正跑過的結果。

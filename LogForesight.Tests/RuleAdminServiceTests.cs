@@ -158,7 +158,7 @@ public class RuleAdminServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md #1（B1 三級化）：原廠鏡像是**批次啟動時**才同步的，站台升級後到
+    /// docs/archive/HISTORY.md #1（B1 三級化）：原廠鏡像是**批次啟動時**才同步的，站台升級後到
     /// 下一次批次執行之間，鏡像裡仍是三級化之前的 Severity=Critical 快照（本測試 fixture 正是這個狀態）。
     /// 回復預設必須把它正規化為 High＋ElevatesDayRisk——否則不只是嚴重度顯示不出中文名，
     /// **旗標消失會讓這條規則從此不再把當天判定為高風險日**，是靜默的行為降級。

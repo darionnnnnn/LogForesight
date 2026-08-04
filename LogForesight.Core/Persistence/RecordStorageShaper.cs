@@ -2,7 +2,7 @@ namespace LogForesight;
 
 /// <summary>
 /// 分析紀錄的儲存前整形規則：純函數，確保「無風險日精簡策略」只有一份定義
-/// （docs/DB-PLAN.md 一致性機制 #4：精簡策略單點化）。
+/// （docs/DB-SPEC.md 一致性機制 #4：精簡策略單點化）。
 /// </summary>
 public static class RecordStorageShaper
 {

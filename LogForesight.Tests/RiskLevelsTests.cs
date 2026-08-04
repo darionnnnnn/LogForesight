@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// Core.RiskLevels（docs/HISTORY.md S2）：日風險等級的單一事實來源。
+/// Core.RiskLevels（docs/archive/HISTORY.md S2）：日風險等級的單一事實來源。
 /// </summary>
 public class RiskLevelsTests
 {

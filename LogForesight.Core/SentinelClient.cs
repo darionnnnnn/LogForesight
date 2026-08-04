@@ -12,7 +12,7 @@ using Polly.Retry;
 namespace LogForesight;
 
 /// <summary>
-/// event-search job 的狀態（Sentinel REST API 文件定義，見 docs/NETIQ-API-PLAN.md §1.2）。
+/// event-search job 的狀態（Sentinel REST API 文件定義，見 docs/NETIQ-API-REFERENCE.md §1.2）。
 /// 數值與原廠文件的 <c>status</c> 欄位一一對應。
 /// </summary>
 public enum SentinelJobState
@@ -27,7 +27,7 @@ public enum SentinelJobState
 }
 
 /// <summary>單筆事件的投影結果：欄位名（Sentinel schema 短名）→ 值。欄位對應交由呼叫端解讀
-/// （docs/NETIQ-API-PLAN.md §3.3，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
+/// （docs/NETIQ-API-REFERENCE.md §3.3，已由三輪 probe 實測定案，見 <see cref="SentinelFieldMap"/>）</summary>
 public sealed record SentinelEvent(IReadOnlyDictionary<string, string> Fields);
 
 /// <summary>建立一個 event-search job 的查詢條件</summary>
@@ -62,14 +62,14 @@ public class SentinelClientException : Exception
 
 /// <summary>
 /// Sentinel REST API 封裝：SAML token 認證生命週期＋event-search job 生命週期
-/// （docs/NETIQ-API-PLAN.md §1、§3.1）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
+/// （docs/NETIQ-API-REFERENCE.md §1、§3.1）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
 ///
 /// 單一 instance＝單一併發佇列（同 <see cref="AIService"/> 慣例）：同一時間只有一個 job 在跑，
 /// 跨 Sentinel 平行由呼叫端各自建立一個 client 實例達成。token 整個 instance 生命週期內重用，
 /// <see cref="DisposeAsync"/> 時登出。
 ///
 /// 建立 job → 輪詢至終態 → 逐頁取回結果 → 刪除 job 的完整生命週期（<see cref="SearchAsync"/>）。
-/// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-PLAN.md §5「job 用完即刪」）。
+/// 任何中途失敗（含呼叫端取消）都保證嘗試刪除已建立的 job（docs/NETIQ-API-REFERENCE.md §5「job 用完即刪」）。
 /// </summary>
 public sealed class SentinelClient : IAsyncDisposable
 {
@@ -272,7 +272,7 @@ public sealed class SentinelClient : IAsyncDisposable
         }
     }
 
-    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-PLAN.md §1.1），
+    /// <summary>原廠文件範例回應為 <c>{"Token":"…"}</c>（見 docs/NETIQ-API-REFERENCE.md §1.1），
     /// 大小寫容忍以防實際環境版本差異</summary>
     private static string? TryExtractToken(string json)
     {
@@ -538,7 +538,7 @@ public sealed class SentinelClient : IAsyncDisposable
 
     /// <summary>
     /// 對任意 REST 資源做認證過的 GET，不走 event-search job 生命週期
-    /// （docs/NETIQ-API-PLAN.md 2026-07-29 第二輪 probe：探索 ESM <c>/objects/eventsource</c> 等
+    /// （docs/archive/HISTORY.md 2026-07-29 第二輪 probe：探索 ESM <c>/objects/eventsource</c> 等
     /// 一般資源用，這些端點是單次讀取，沒有 job/輪詢/刪除的概念）。
     /// 回傳原始 JSON 字串——解析交由呼叫端，不同端點形狀不一，這裡不假設任何結構。
     /// </summary>
@@ -600,7 +600,7 @@ public sealed class SentinelClient : IAsyncDisposable
     }
 
     /// <summary>把 results 連結的 <c>page=</c> 參數改成指定頁碼。避免依賴未文件化的「下一頁連結」
-    /// 慣例（docs/NETIQ-API-PLAN.md §9 未決事項）——已知第一頁 href 帶 <c>page=1</c>，往後頁碼自己算。</summary>
+    /// 慣例（docs/BACKLOG.md 未決事項）——已知第一頁 href 帶 <c>page=1</c>，往後頁碼自己算。</summary>
     internal static string SetPageQueryParam(string href, int page)
     {
         if (Regex.IsMatch(href, @"([?&])page=\d+"))
@@ -632,7 +632,7 @@ public sealed class SentinelClient : IAsyncDisposable
 
     /// <summary>
     /// **best-effort 通用解析**：官方文件未提供結果頁的確切 JSON 結構範例
-    /// （docs/NETIQ-API-PLAN.md §9 未決事項）。依序嘗試常見形狀：純陣列、或物件中常見鍵名的陣列屬性，
+    /// （docs/BACKLOG.md 未決事項）。依序嘗試常見形狀：純陣列、或物件中常見鍵名的陣列屬性，
     /// 找不到時保底取第一個陣列型別的屬性。解析失敗回傳空清單而非擲例外——呼叫端
     /// （尤其 NetIQ 診斷分頁的 <see cref="NetiqProbeRunner"/>）應另外印出原始 body 供人工核對
     /// 真實結構，不能讓「格式猜錯」讓整條查詢鏈斷裂。真實環境的 probe 輸出定案欄位對應後，

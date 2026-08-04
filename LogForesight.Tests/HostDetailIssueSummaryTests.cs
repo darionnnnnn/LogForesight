@@ -7,7 +7,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #4：<see cref="RecordQueryService.GetHostDetail"/> 的
+/// docs/archive/FEEDBACK-3-PLAN.md #4：<see cref="RecordQueryService.GetHostDetail"/> 的
 /// 「重點問題（期間彙總）」（<see cref="LogForesight.Web.Models.Dto.HostDetailDto.TopSignatures"/>）。
 /// 依 Source+EventId 分組，與 <see cref="RecordQueryServiceSearchTests"/> 同樣的實測套接方式
 /// （真正的 EfAnalysisRecordStore＋RecordRepository，不重新實作一份簡化邏輯）。
@@ -166,7 +166,7 @@ public class HostDetailIssueSummaryTests : IDisposable
         Assert.Empty(detail.TopSignatures);
     }
 
-    // ── 問題發生明細（docs/FEEDBACK-4-PLAN.md §3）───────────────────────────────
+    // ── 問題發生明細（docs/archive/FEEDBACK-4-PLAN.md §3）───────────────────────────────
 
     [Fact]
     public void 發生明細_統計出現天數次數與最長連續()

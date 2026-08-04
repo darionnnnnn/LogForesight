@@ -196,7 +196,7 @@ public class HandlingServiceTests
         Assert.Contains(logs, l => l.Note == "已聯絡機房安排停機");
     }
 
-    /// <summary>docs/FEEDBACK-8-PLAN.md #6：操作歷程補上操作者的顯示名稱素材，
+    /// <summary>docs/archive/FEEDBACK-8-PLAN.md #6：操作歷程補上操作者的顯示名稱素材，
     /// 讓前端能統一顯示「顯示名稱(帳號)」而不只是帳號</summary>
     [Fact]
     public void 更新處理狀態_歷程DTO帶操作者顯示名稱()
@@ -336,7 +336,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// 待辦母體＝高＋中風險日（docs/HISTORY.md S3）：低風險日即使從未處理過，
+    /// 待辦母體＝高＋中風險日（docs/archive/HISTORY.md S3）：低風險日即使從未處理過，
     /// 也不進待辦——這條規則由 GetTodo 內部強制套用，呼叫端不必自己先過濾。
     /// </summary>
     [Fact]
@@ -455,7 +455,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
+    /// docs/archive/HISTORY.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
     /// 當天沒有問題層級標記）時，對外三態要算作「已處理」。這是原始 bug 的釘樁——舊版
     /// GetTodo 的三個桶（Open/InProgress/Resolved）都數不到 wont_fix，讓「未完成」
     /// （Total－Resolved）把已結案的日子誤算成未完成。
@@ -602,7 +602,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
+    /// docs/archive/HISTORY.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
     /// （不是一筆彙總）——每一筆都查得到「對哪個問題、標成什麼」，含反正規化的 IssueLabel。
     /// </summary>
     [Fact]
@@ -833,7 +833,7 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.OverdueCount);
     }
 
-    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
+    // ── 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
 
     /// <summary>標為觀察中時必須指定觀察至日期，否則拒絕——沒有終點的「觀察」沒有意義</summary>
     [Fact]
@@ -890,7 +890,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// 完整劇本（docs/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
+    /// 完整劇本（docs/archive/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
     /// → 模擬到期（直接落一筆已過期的觀察紀錄，同其餘逾期測試的既有手法）→ 逾期現身。
     /// </summary>
     [Fact]
@@ -930,7 +930,7 @@ public class HandlingServiceTests
         Assert.Equal(1, afterExpiry.OverdueCount);      // 但現在算逾期——這就是「問題仍在發生」的提示
     }
 
-    // ── 問題案件（IssueCase，docs/FEEDBACK-4-PLAN.md §2）────────────────────────
+    // ── 問題案件（IssueCase，docs/archive/FEEDBACK-4-PLAN.md §2）────────────────────────
 
     /// <summary>指派處理人時，對當日未結案的問題自動建案（Q1）；低風險以下的問題不建案</summary>
     [Fact]
@@ -1046,7 +1046,7 @@ public class HandlingServiceTests
         Assert.Equal(0, result.CaseSyncedDayCount);
     }
 
-    // ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）────────────────────────────
+    // ── 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）────────────────────────────
 
     [Fact]
     public void 工作頁_列出名下進行中案件與被指派的未結案風險日()

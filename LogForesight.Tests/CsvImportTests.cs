@@ -275,7 +275,7 @@ public class HostCsvImporterTests
     private static CsvTable Parse(string content) =>
         CsvParser.Parse(new MemoryStream(Encoding.UTF8.GetBytes(content)), 5000);
 
-    // ── os 欄（docs/LINUX-RULES-PLAN.md §3：選填，缺值＝windows）────────────
+    // ── os 欄（docs/LINUX-RULES.md §3：選填，缺值＝windows）────────────
 
     [Theory]
     [InlineData("linux", "linux")]

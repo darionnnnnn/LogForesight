@@ -4,7 +4,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 主機清單維護（docs/HISTORY.md 決策 A）。
+/// NetIQ 主機清單維護（docs/archive/HISTORY.md 決策 A）。
 ///
 /// **清單項目就是 <see cref="WebHost"/> 列**（`Source='netiq'`），不另建實體：
 /// 群組、負責人、合併、CSV 匯入、授權全部直接重用，也不會多出一層
@@ -180,7 +180,7 @@ public class NetiqHostService : INetiqHostService
     ///
     /// **刻意不傳 <c>OrphanedFromSentinel</c>（不是漏抄）**：`Upsert` 的既存分支會用傳入物件
     /// 覆寫該欄位，因此這裡不填＝標記被清除，而這正是要的行為——設計明訂「手動重新啟用一台
-    /// 孤兒主機時一併清除 OrphanedFromSentinel（人已表態，標記使命結束）」，見 docs/HISTORY.md
+    /// 孤兒主機時一併清除 OrphanedFromSentinel（人已表態，標記使命結束）」，見 docs/archive/HISTORY.md
     /// 「2026-07-23」段 §1.7。孤兒標記的用途只是讓汰換 Sentinel 時能在掃描精靈裡認出「這台
     /// 原屬某台已移除的 Sentinel」，人一旦自己動手處置過，這個標記就沒有意義了。
     ///

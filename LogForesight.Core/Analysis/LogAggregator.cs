@@ -36,7 +36,7 @@ public class LogIssueSignature
     public IssueSeverity Severity { get; set; } = IssueSeverity.Low;
 
     /// <summary>
-    /// 命中即列為高風險日（docs/HISTORY.md #1，B1 三級化）：由
+    /// 命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化）：由
     /// <see cref="KnownIssueCatalog.Classify"/> 依命中規則的旗標帶入，或由
     /// <see cref="TrendAnalyzer"/> 在 High 嚴重度問題頻率上升時設為 true
     /// （舊制下這種情況會把嚴重度升到 Critical，直接讓當天判定為高風險日；
@@ -53,7 +53,7 @@ public class LogIssueSignature
     public string? RuleId { get; set; }
 
     /// <summary>true = 此簽章命中的規則已被本機的 suppressions 設定抑制——只影響「要不要吵」
-    /// （通知、風險升級），偵測與紀錄照常，見 docs/RULES-PLAN.md 的語意邊界</summary>
+    /// （通知、風險升級），偵測與紀錄照常，見 docs/RULES-SPEC.md 的語意邊界</summary>
     public bool Suppressed { get; set; }
 
     // 以下由 TrendAnalyzer.Apply 填入（與歷史紀錄比對後的頻率趨勢）

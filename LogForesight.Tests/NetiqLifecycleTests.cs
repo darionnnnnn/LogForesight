@@ -6,7 +6,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel 孤兒主機停用（docs/HISTORY.md §1.7）。</summary>
+/// <summary>Sentinel 孤兒主機停用（docs/archive/HISTORY.md §1.7）。</summary>
 public class NetiqOrphanSweeperTests
 {
     private readonly FakeHostStore _hosts = new();
@@ -80,7 +80,7 @@ public class NetiqOrphanSweeperTests
 }
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 7）。
+/// NetIQ 主動探索匯入（docs/archive/HISTORY.md §1；docs/archive/HISTORY.md 定案 7）。
 /// 勾選送出即立即落盤，不再有排入佇列/取消的中間狀態。
 /// </summary>
 public class NetiqDiscoveryServiceTests
@@ -219,7 +219,7 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { 9L }, revived.OwnerUserIds);   // 負責人保留
     }
 
-    // ── 掃描匯入的 OS（docs/LINUX-RULES-PLAN.md §3：只套用在本次新增的主機）──────
+    // ── 掃描匯入的 OS（docs/LINUX-RULES.md §3：只套用在本次新增的主機）──────
 
     [Fact]
     public void 套用_新主機採用精靈選定的OS()
@@ -329,7 +329,7 @@ public class NetiqDiscoveryServiceTests
         await Assert.ThrowsAsync<DomainException>(() => svc.ScanAsync("S1", AnySubnet, default));
     }
 
-    // ── 套用：網段群組指派（docs/HISTORY.md 定案 8） ─────────────
+    // ── 套用：網段群組指派（docs/archive/HISTORY.md 定案 8） ─────────────
 
     [Fact]
     public void 套用_新主機依網段指派套用群組()
@@ -409,7 +409,7 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { created!.GroupId }, _hosts.FindByName("10.1.2.11")!.GroupIds);
     }
 
-    // ── 探索掃描回填真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）──
+    // ── 探索掃描回填真實機器名（docs/NETIQ-API-REFERENCE.md §3.4：網段範圍掃描投影 sn 欄位）──
 
     [Fact]
     public async System.Threading.Tasks.Task 匯入_新主機帶入掃描時取得的真實機器名()

@@ -14,7 +14,7 @@ public static class RuleSchemaLimits
     public const int ImpactMaxLength = 1000;
     public const int CauseOrStepMaxLength = 500;
 
-    // ── Linux 規則比對欄位（docs/LINUX-RULES-PLAN.md §1.4）─────────────────
+    // ── Linux 規則比對欄位（docs/LINUX-RULES.md §1.4）─────────────────
     public const int ProgramPatternMaxLength = 100;
     public const int EventNamePatternMaxLength = 200;
     public const int MessagePatternMaxLength = 200;

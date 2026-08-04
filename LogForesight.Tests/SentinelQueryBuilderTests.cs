@@ -3,10 +3,10 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelQueryBuilder：規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-PLAN.md §4）。
+/// SentinelQueryBuilder：規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4）。
 /// 多數案例用建構出來的規則清單測試，不碰 KnownIssueCatalog 共用靜態狀態；
 /// 檔尾另有一組對真實種子規則表的結構性驗證（自已退場的 console selftest
-/// RunSentinelQueryChecks 移植而來，docs/WEB-SCHEDULER-PLAN.md §1.5）。
+/// RunSentinelQueryChecks 移植而來，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）。
 /// </summary>
 public class SentinelQueryBuilderTests
 {
@@ -127,7 +127,7 @@ public class SentinelQueryBuilderTests
         Assert.Equal("(repip:10.1.2.11)", clause);
     }
 
-    // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-PLAN.md §3.4）──
+    // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-REFERENCE.md §3.4）──
 
     [Theory]
     [InlineData("10.1", "10.1")]
@@ -201,7 +201,7 @@ public class SentinelQueryBuilderTests
     }
 
     // ── 真實種子規則表的結構性驗證（自已退場的 console selftest RunSentinelQueryChecks
-    //    移植而來，docs/WEB-SCHEDULER-PLAN.md §1.5）：上面的案例用合成規則驗產生器邏輯，
+    //    移植而來，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）：上面的案例用合成規則驗產生器邏輯，
     //    這組驗「目前這個版本的種子規則表」建出的 filter 結構正確——規則表演進時的護欄。──
 
     /// <summary>Security-Auditing 規則的原始寫死清單（規則外部化前的版本），與

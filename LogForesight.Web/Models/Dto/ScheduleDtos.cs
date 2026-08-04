@@ -14,7 +14,7 @@ public class ScheduleOptionsDto
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
     public string? UpdatedByDisplayName { get; set; }
 
@@ -29,8 +29,8 @@ public class SaveScheduleOptionsRequest
     public bool DebugDump { get; set; }
 }
 
-/// <summary>docs/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻。
-/// LastRun* 系列（docs/FEEDBACK-7-PLAN.md）：閒置時顯示「上次執行到底成不成功」，
+/// <summary>docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻。
+/// LastRun* 系列（docs/archive/FEEDBACK-7-PLAN.md）：閒置時顯示「上次執行到底成不成功」，
 /// 不然失敗只留在 log 檔，使用者只看過「已開始執行」的 toast 就再也沒有回饋。
 /// 站台重啟後 LastRun* 全部為 null（行程內狀態），完整歷史請查執行總表。</summary>
 public class ScheduleStatusDto
@@ -40,7 +40,7 @@ public class ScheduleStatusDto
     public DateTime? StartedAt { get; set; }
     public string? LatestMessage { get; set; }
 
-    /// <summary>執行進度（docs/FEEDBACK-8-PLAN.md #2）：local｜netiq；ProgressTotal=0 代表尚未有
+    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：local｜netiq；ProgressTotal=0 代表尚未有
     /// 量化進度可畫（清理／掃描中），前端改顯示不定進度。</summary>
     public string? ProgressPhase { get; set; }
     public int ProgressDone { get; set; }
@@ -55,7 +55,7 @@ public class ScheduleStatusDto
     public DateTime? LastRunEndedAt { get; set; }
 }
 
-/// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/WEB-SCHEDULER-PLAN.md §1.4.4，複用
+/// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用
 /// StoreHostListProvider 的清單語意，與主機頁「不靜默少幾台」同一原則）</summary>
 public class RunPreviewDto
 {

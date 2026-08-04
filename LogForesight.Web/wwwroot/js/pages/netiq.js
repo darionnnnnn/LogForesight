@@ -225,7 +225,7 @@ async function loadOptions() {
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
     document.getElementById('opt-chat-live-fetch').checked = options.chatLiveFetchEnabled;
     // 這個選項只服務「詢問 AI」對話的 fallback 路徑，AI 未設定時整條路徑無意義，隱藏但保留值
-    // （docs/FEEDBACK-7-PLAN.md）
+    // （docs/archive/FEEDBACK-7-PLAN.md）
     document.getElementById('opt-chat-live-fetch-wrap').classList.toggle('d-none', !aiStatus?.available);
     renderOptionsUpdated(options);
 }

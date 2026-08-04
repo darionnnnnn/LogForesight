@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// 顯示層設定的公開子集（docs/FEEDBACK-3-PLAN.md #8）。
+/// 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）。
 ///
 /// **沒有 [Permission] 標註是刻意的**：完整設定 API（SettingsController，需要 Maintain 能力）
 /// 一般使用者拿不到，但「哪些日風險等級目前顯示」是任何已登入者的前端都要知道的資訊——

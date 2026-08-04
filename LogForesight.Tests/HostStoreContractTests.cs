@@ -26,7 +26,7 @@ public class HostStoreContractTests : IDisposable
         Assert.Equal("網站主機", store.Get(saved.HostId)!.RoleDesc);
     }
 
-    /// <summary>docs/LINUX-RULES-PLAN.md：Os 未指定時預設 windows；Upsert 更新既有主機時 Os 隨之更新。</summary>
+    /// <summary>docs/LINUX-RULES.md：Os 未指定時預設 windows；Upsert 更新既有主機時 Os 隨之更新。</summary>
     [Fact]
     public void Os_預設windows_且Upsert可更新()
     {
@@ -118,7 +118,7 @@ public class HostStoreContractTests : IDisposable
         Assert.Equal("改過的描述", after.RoleDesc);
     }
 
-    // ── SetGroupsBatch（docs/FEEDBACK-5-PLAN.md §8）────────────────────────────
+    // ── SetGroupsBatch（docs/archive/FEEDBACK-5-PLAN.md §8）────────────────────────────
 
     [Fact]
     public void SetGroupsBatch_加入模式_與既有群組取聯集()

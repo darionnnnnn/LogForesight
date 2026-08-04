@@ -4,7 +4,7 @@ namespace LogForesight;
 
 /// <summary>
 /// <see cref="SentinelEvent"/>（<see cref="SentinelClient"/> 的原始投影）→ <see cref="EventLogEntryData"/>
-/// （既有五層偵測/聚合/AI/報告吃的模型）的映射器（docs/NETIQ-API-PLAN.md 決策 B2）。
+/// （既有五層偵測/聚合/AI/報告吃的模型）的映射器（docs/archive/HISTORY.md 決策 B2）。
 ///
 /// 這是整條 Sentinel 取數路徑唯一的轉換點：映射完成後，下游 <see cref="LogAggregator"/>／
 /// <see cref="KnownIssueCatalog"/>／<see cref="TrendAnalyzer"/>／<see cref="CorrelationAnalyzer"/>／

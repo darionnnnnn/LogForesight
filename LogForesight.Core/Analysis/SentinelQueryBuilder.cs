@@ -1,10 +1,10 @@
 namespace LogForesight;
 
 /// <summary>
-/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-PLAN.md §4「watchlist→Lucene 產生器」）。
+/// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4「watchlist→Lucene 產生器」）。
 ///
 /// 只有 Windows 分支：Linux 那台 Sentinel 尚未接入 LogForesight，沒有任何真實 probe 樣本可依據
-/// （docs/LINUX-RULES-PLAN.md P3 閘門）。強行寫一份沒有實據的 Linux 產生器只是把猜測換個地方藏，
+/// （docs/BACKLOG.md 閘門）。強行寫一份沒有實據的 Linux 產生器只是把猜測換個地方藏，
 /// 等 Linux Sentinel 接入、對它跑過 probe 後再補這個分支，屆時介面照這份的形狀加，不是新設計。
 /// </summary>
 public static class SentinelQueryBuilder
@@ -83,7 +83,7 @@ public static class SentinelQueryBuilder
 
     // ── 網段範圍探索（新增主機，2026-07-29 定案）───────────────────────────────
     //
-    // docs/NETIQ-API-PLAN.md §3.4：使用者在 Sentinel Web UI 實測 repip 支援前綴萬用字元
+    // docs/NETIQ-API-REFERENCE.md §3.4：使用者在 Sentinel Web UI 實測 repip 支援前綴萬用字元
     // （repip:10.1.2.* 有效過濾，近 1h 從全站 154 萬筆縮到 2.4 萬筆），探索因此改走
     // 「網段範圍掃描」而不是 ESM 物件 API（一直被權限拒絕）——輸入網段前綴，
     // 依實測量級自動決定窗口，投影兩欄本地 distinct 出主機清單。

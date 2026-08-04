@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="IAnalysisRecordStore"/> 的測試（docs/DB-PLAN.md 一致性機制 #3）。
+/// <see cref="IAnalysisRecordStore"/> 的測試（docs/DB-SPEC.md 一致性機制 #3）。
 ///
 /// 尤其是 <see cref="IAnalysisRecordReader.ReadRecent"/> 的錨定窗語意：它決定趨勢基準的
 /// 計算範圍，換一種算法就會讓同一天的分析得出不同的風險判定。

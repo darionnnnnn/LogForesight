@@ -6,7 +6,7 @@ using static LogForesight.Tests.TestData;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="SuppressionStore"/> 的儲存層合約（見 docs/RULES-PLAN.md）：缺檔/損毀時降級為
+/// <see cref="SuppressionStore"/> 的儲存層合約（見 docs/RULES-SPEC.md）：缺檔/損毀時降級為
 /// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
 /// <see cref="EfJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
 /// </summary>
@@ -129,7 +129,7 @@ public class SuppressionTests
     public void 被抑制的Critical不強制拉高風險()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
-        // 模擬命中「重大」旗標規則（docs/HISTORY.md #1，B1 三級化後判定看旗標不看 Severity）
+        // 模擬命中「重大」旗標規則（docs/archive/HISTORY.md #1，B1 三級化後判定看旗標不看 Severity）
         issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
 

@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="SchemaUpgrader"/> 的 lf_risky_events 建表步驟（docs/WEB-SCHEDULER-PLAN.md §2）：
+/// <see cref="SchemaUpgrader"/> 的 lf_risky_events 建表步驟（docs/archive/WEB-SCHEDULER-PLAN.md §2）：
 /// 這是 SQL 後端上線以來第一張不是靠 EnsureCreated 建出來的全新資料表——EnsureCreated
 /// 只在資料庫整個不存在時建表，既有部署的 DB 需要靠這個冪等 DDL 步驟補上整張表，
 /// 值得直接測（既有的補欄位/補索引步驟沒有專屬測試，但那些改動面小，這個是新能力）。

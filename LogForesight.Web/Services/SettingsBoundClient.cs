@@ -1,7 +1,7 @@
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 「設定快照 → 比對 → 重建客戶端」的共用模式（docs/HISTORY.md S8）。
+/// 「設定快照 → 比對 → 重建客戶端」的共用模式（docs/archive/HISTORY.md S8）。
 ///
 /// 背景：外部服務的位址／憑證存在 DB（「系統管理 > 設定」頁隨時可改），但客戶端物件
 /// （HttpClient、LdapService 等）不宜每次請求都重建。做法是快取一個實例＋記住建構時用的

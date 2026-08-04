@@ -23,7 +23,7 @@ export function categoryName(category) {
 }
 
 /**
- * 使用者名稱的唯一顯示格式（docs/FEEDBACK-8-PLAN.md #6）：「顯示名稱(帳號)」（半形括號）。
+ * 使用者名稱的唯一顯示格式（docs/archive/FEEDBACK-8-PLAN.md #6）：「顯示名稱(帳號)」（半形括號）。
  * 全站只要是使用者名稱欄位一律走這裡——分散各頁各自組字串遲早有一處漏改或用了全形括號。
  * 只有帳號（查無顯示名稱）→ 顯示帳號；只有顯示名稱（無帳號可比對）→ 顯示名稱本身。
  */
@@ -41,7 +41,7 @@ const RISK_CLASS = {
 
 /**
  * 嚴重度 → 淡色徽章 variant（對應 site.css 的 lf-badge--*）。
- * docs/HISTORY.md #1（B1 三級化）：Critical 已收斂進 High，不再是獨立層級——
+ * docs/archive/HISTORY.md #1（B1 三級化）：Critical 已收斂進 High，不再是獨立層級——
  * 原本「特別嚴重」的意義改由 elevatesBadge() 的「重大」徽章承接，不再靠嚴重度本身多分一級。
  */
 const SEVERITY_VARIANT = {
@@ -63,13 +63,13 @@ export function severityName(severity) {
 }
 
 /**
- * 嚴重度合法值，由重到輕（docs/HISTORY.md S11）。取代 record-detail.js／
+ * 嚴重度合法值，由重到輕（docs/archive/HISTORY.md S11）。取代 record-detail.js／
  * settings.js 各自維護的同值陣列——兩份copy遲早有一份漏改（新增嚴重度時尤其）。
  */
 export const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
 
 /**
- * 「重大」徽章（docs/HISTORY.md #1，B1 三級化）：命中規則帶
+ * 「重大」徽章（docs/archive/HISTORY.md #1，B1 三級化）：命中規則帶
  * ElevatesDayRisk 旗標的問題——這類問題出現當天就直接判定為高風險日，是原「嚴重」等級
  * 唯一的實際作用。詳情頁重點問題列、規則維護頁、跨主機同簽章查詢三處共用同一顆徽章
  * （§8.2 顏色＋文字單一定義原則）。
@@ -90,7 +90,7 @@ export function severityCountBadge(severity, count) {
 }
 
 /**
- * 處理狀態 → { 顯示文字, 淡色徽章 variant }。對外一律三態（docs/HISTORY.md #12）：
+ * 處理狀態 → { 顯示文字, 淡色徽章 variant }。對外一律三態（docs/archive/HISTORY.md #12）：
  * 後端 RecordListItemDto 的 handlingStatus 已先經 HandlingStatuses.ExternalOf 收斂
  * （不處理/誤報/已知雜訊…併入「已處理」），這裡只需覆蓋三態；未知值一律回退顯示原字串。
  * 詳細結論只在風險日詳情頁呈現（issue 層級走 IssueHandlingStatuses 的六態原樣顯示，
@@ -120,7 +120,7 @@ export function statusBadge(text, variant = 'neutral', { title, icon: iconName }
 }
 
 /**
- * 風險等級徽章元素。title（選填，docs/HISTORY.md #11）：日風險等級的判定依據，
+ * 風險等級徽章元素。title（選填，docs/archive/HISTORY.md #11）：日風險等級的判定依據，
  * 解釋「為什麼是這個風險等級」——日風險等級與問題嚴重度是刻意分開的兩套層級，
  * 高風險日不保證看得到高嚴重度問題（見 record-detail.js renderHeader）。
  */
@@ -163,7 +163,7 @@ export function formatDateTime(value) {
 }
 
 /**
- * 本地日期字串 yyyy-MM-dd（docs/HISTORY.md S12）。
+ * 本地日期字串 yyyy-MM-dd（docs/archive/HISTORY.md S12）。
  * **不可用 `date.toISOString().slice(0, 10)`**——那取的是 UTC 日期，在台灣（UTC+8）
  * 凌晨 0~8 點呼叫會少算一天；reports.js 曾經這樣寫，是這個共用函式要修掉的原始 bug。
  */

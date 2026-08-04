@@ -3,7 +3,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>IPv4 網段比對（docs/HISTORY.md §3）。邊界釘死，避免打錯的網段靜默命中錯的範圍。</summary>
+/// <summary>IPv4 網段比對（docs/archive/HISTORY.md §3）。邊界釘死，避免打錯的網段靜默命中錯的範圍。</summary>
 public class CidrMatcherTests
 {
     [Theory]

@@ -7,7 +7,7 @@ namespace LogForesight;
 /// <summary>
 /// 密文欄位的加解密（用途：<see cref="Sentinel.PasswordEnc"/>、<see cref="SystemSettings.AiApiKeyEnc"/>）。
 ///
-/// AES-256-CBC。金鑰來源（docs/HISTORY.md P0-5，取代 docs/HISTORY.md
+/// AES-256-CBC。金鑰來源（docs/archive/HISTORY.md P0-5，取代 docs/archive/HISTORY.md
 /// 定案 3 原本「金鑰內嵌於程式」的做法）：優先讀環境變數 <c>LF_CRYPTO_KEY</c>（base64，解碼後
 /// 需恰為 32 bytes）；未設定時沿用內嵌金鑰並記一次 WARN。批次與 Web 需設定**同一把**機器層級
 /// 環境變數才能互相讀懂對方寫入的密文。

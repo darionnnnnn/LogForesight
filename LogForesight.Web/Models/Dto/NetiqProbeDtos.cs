@@ -1,6 +1,6 @@
 namespace LogForesight.Web.Models.Dto;
 
-/// <summary>NetIQ 診斷（probe，docs/WEB-SCHEDULER-PLAN.md §1.4.11）狀態，供輪詢用</summary>
+/// <summary>NetIQ 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）狀態，供輪詢用</summary>
 public class NetiqProbeStatusDto
 {
     public bool IsRunning { get; set; }

@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelRestDirectoryClient：網段範圍掃描的真實 client（docs/NETIQ-API-PLAN.md §3.4，
+/// SentinelRestDirectoryClient：網段範圍掃描的真實 client（docs/NETIQ-API-REFERENCE.md §3.4，
 /// 2026-07-29 定案）。用 <see cref="StubHandler"/> 模擬 Sentinel 回應，驗證自適應窗口計算、
 /// 零事件短路、截斷警告、sn 取眾數、IP fallback——不需要真 Sentinel 環境。
 /// </summary>

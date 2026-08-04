@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// P0-1／docs/DB-PLAN.md 定案 13：自製冪等 DDL 升級（不用 EF Core Migrations）。
+/// P0-1／docs/DB-SPEC.md 定案 13：自製冪等 DDL 升級（不用 EF Core Migrations）。
 ///
 /// 核心驗收：模擬「既有 DB 是升級前建的舊 schema（lf_log_lines 沒有 created_at 欄）」，
 /// 驗證 <see cref="SchemaUpgrader.Upgrade"/> 補上欄位與索引後可正常讀寫；

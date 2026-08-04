@@ -338,7 +338,7 @@ public class AnalysisRecordQueryContractTests : IDisposable
         Assert.Equal("高", result!.RiskLevel);
     }
 
-    // ── QueryPage（docs/HISTORY.md P1-2）─────────────────────────────
+    // ── QueryPage（docs/archive/HISTORY.md P1-2）─────────────────────────────
 
     private static DailyAnalysisRecord RecordWithCorrelation(string host, DateTime date, string risk, bool hasCorrelation) => new()
     {

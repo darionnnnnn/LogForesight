@@ -5,7 +5,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// <see cref="RiskyEventLookupService"/>：風險 log 暫存優先、Sentinel 即時查詢 fallback
-/// （docs/WEB-SCHEDULER-PLAN.md §2.2.4）。
+/// （docs/archive/WEB-SCHEDULER-PLAN.md §2.2.4）。
 /// </summary>
 public class RiskyEventLookupServiceTests
 {

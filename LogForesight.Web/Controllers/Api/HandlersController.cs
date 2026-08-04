@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）：查看某個人目前被交辦哪些項目
+/// 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：查看某個人目前被交辦哪些項目
 /// （進行中案件＋被指派的風險日）。沒有 [Permission] 標註是刻意的——全登入角色可查看任何人，
 /// 資料以檢視者的可見範圍過濾（走 HandlingService 內部的 IVisibilityService），與全站查詢頁
 /// 同一套授權模型，不新增能力。

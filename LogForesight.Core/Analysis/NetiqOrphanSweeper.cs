@@ -3,8 +3,8 @@ using NLog;
 namespace LogForesight;
 
 /// <summary>
-/// Sentinel 被刪除時，停用其所屬的 NetIQ 主機（docs/HISTORY.md §1.7；
-/// docs/HISTORY.md 定案 5：Sentinel 改 Web 維護後，判定依據從
+/// Sentinel 被刪除時，停用其所屬的 NetIQ 主機（docs/archive/HISTORY.md §1.7；
+/// docs/archive/HISTORY.md 定案 5：Sentinel 改 Web 維護後，判定依據從
 /// 「appsettings.NetIq.Servers 名單」改為「Sentinel store 現存的 SentinelId 集合」）。
 ///
 /// 批次啟動時、主機登記（Touch）之前跑一次。不停用的後果是這些主機永遠不會被任何一輪

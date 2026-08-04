@@ -8,7 +8,7 @@ namespace LogForesight.Web.Auth;
 /// 正式環境的 AD 驗證（appsettings 的 Auth:Provider=Ldap；docs/WEB-SPEC.md §6.2）：
 /// 以使用者輸入的帳密向網域 bind，驗證通過即代表本人。
 ///
-/// 2026-07-27 改寫（docs/HISTORY.md #9）：底層改用 <see cref="Ldap.LdapService"/>
+/// 2026-07-27 改寫（docs/archive/HISTORY.md #9）：底層改用 <see cref="Ldap.LdapService"/>
 /// （直接 DirectoryEntry bind），取代原本的 PrincipalContext——appsettings 的
 /// Auth:Ldap:Domain 對應成 LdapService 的單一伺服器（LDAP:// + 網域 FQDN，Windows 會透過
 /// DNS SRV 紀錄自動解析到某台網域控制站，行為與原本的 PrincipalContext(ContextType.Domain) 等價）。

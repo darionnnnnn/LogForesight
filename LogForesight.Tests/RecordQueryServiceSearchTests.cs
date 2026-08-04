@@ -145,7 +145,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級從未指派、但當日問題
+    /// 處理人 fallback（docs/archive/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級從未指派、但當日問題
     /// 屬進行中案件時，清單顯示案件處理人（後綴「（案件）」）——否則使用者會看到狀態已同步、
     /// 處理人卻空白的矛盾畫面。
     /// </summary>
@@ -214,7 +214,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/HISTORY.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
+    /// docs/archive/HISTORY.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
     /// 已知雜訊同理）時，清單的「已處理」chip 也要查得到，不能只精確比對 resolved。
     /// </summary>
     [Fact]
@@ -271,7 +271,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Single(result.Items);
     }
 
-    // ── 嚴重度可見性（docs/HISTORY.md S1）：釘住查詢頁分組視圖的漏套修正 ──
+    // ── 嚴重度可見性（docs/archive/HISTORY.md S1）：釘住查詢頁分組視圖的漏套修正 ──
 
     private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity, IssueCategory category) =>
         new() { LogName = "System", Source = source, EventId = eventId, Severity = severity, Category = category, Count = 1 };
@@ -364,7 +364,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(2, result.Items[0].HostCount);
     }
 
-    // ── 問題案件（docs/FEEDBACK-4-PLAN.md §2）───────────────────────────────────
+    // ── 問題案件（docs/archive/FEEDBACK-4-PLAN.md §2）───────────────────────────────────
 
     /// <summary>詳情頁的問題列帶回進行中案件的處理人／狀態／起始日，前端據此顯示連動徽章</summary>
     [Fact]
@@ -415,7 +415,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Null(dto.CaseFirstLinkedDate);
     }
 
-    // ── 依問題視角（docs/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
+    // ── 依問題視角（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
 
     private static LogIssueSignature DiskIssue(IssueSeverity severity = IssueSeverity.High) => new()
     {
@@ -495,12 +495,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var groupHandler = Assert.Single(group.Handlers);
         Assert.Equal("小陳", groupHandler.DisplayName);
         Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
-        // docs/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
+        // docs/archive/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
         Assert.Equal("DOMAIN\\h", groupHandler.Account);
     }
 
     /// <summary>
-    /// docs/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
+    /// docs/archive/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
     /// 觀察到期算未處理（問題仍在發生，不是「有結論」）。
     /// </summary>
     [Fact]
@@ -532,7 +532,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
+    /// docs/archive/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
     /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
     /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
     /// </summary>
@@ -577,7 +577,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("disk", result.Items[1].Source);    // 2 台
     }
 
-    // ── 跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）─────────────────────────────
+    // ── 跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────
 
     [Fact]
     public void BulkAssignIssueCase_對每台主機建案_已有案件的保留原處理人並列入略過()

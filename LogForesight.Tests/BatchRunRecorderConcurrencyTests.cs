@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #2：多台 Sentinel 平行處理後，<see cref="BatchRunRecorder"/> 的計數
+/// docs/archive/FEEDBACK-3-PLAN.md #2：多台 Sentinel 平行處理後，<see cref="BatchRunRecorder"/> 的計數
 /// 方法可能被多個平行執行的 Task 同時呼叫——驗證 lock 保護後併發呼叫不掉計數。
 /// _run 的計數是屬性（不是欄位），無法用 Interlocked，這正是要驗證 lock 確實生效的理由。
 /// </summary>
@@ -47,7 +47,7 @@ public class BatchRunRecorderConcurrencyTests
     }
 
     /// <summary>
-    /// docs/FEEDBACK-8-PLAN.md #3：StartRun 失敗（原本只寫 NLog）現在也要透過
+    /// docs/archive/FEEDBACK-8-PLAN.md #3：StartRun 失敗（原本只寫 NLog）現在也要透過
     /// onRegistrationFailed 讓呼叫端（Web）把警告送進執行狀態——否則這趟執行會在
     /// 執行監控頁整筆「消失」而使用者毫無所覺。
     /// </summary>

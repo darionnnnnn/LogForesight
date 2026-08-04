@@ -6,7 +6,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 驗證 2026-07-20 體檢重設計的兩個確定性行為：due-date 到期判斷（ShouldRun）與
 /// 窗口內三層皆無訊號時的閘門（RunAsync 早退路徑）。AI 敘事成功路徑本身無法在不啟動真實
-/// AI 服務下測試（AIService 目前是具體類別、未抽介面，是已知的覆蓋缺口，見 docs/DB-PLAN.md）；
+/// AI 服務下測試（AIService 目前是具體類別、未抽介面，是已知的覆蓋缺口，見 docs/DB-SPEC.md）；
 /// 這裡改用「有訊號時會嘗試呼叫 AI（因而在無法連線時失敗）」間接驗證閘門正確地沒有短路。
 /// </summary>
 public class WeeklyCheckupServiceTests
@@ -113,7 +113,7 @@ public class WeeklyCheckupServiceTests
         Assert.False(outcome.Completed); // 同上：進入 AI 呼叫分支後因無法連線而失敗，證明閘門判定為「有訊號」
     }
 
-    // ── RunAsync：useAi 短路（docs/FEEDBACK-7-PLAN.md，AI 未設定時的行為）───────
+    // ── RunAsync：useAi 短路（docs/archive/FEEDBACK-7-PLAN.md，AI 未設定時的行為）───────
 
     [Fact]
     public async Task 有訊號且AI未設定_不嘗試呼叫且未完成待補跑()

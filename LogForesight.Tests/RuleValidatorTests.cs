@@ -243,7 +243,7 @@ public class RuleValidatorTests
         Assert.Empty(outcome.ShadowWarnings);
     }
 
-    // ── Linux 規則（docs/LINUX-RULES-PLAN.md §1.3）──────────────────────
+    // ── Linux 規則（docs/LINUX-RULES.md §1.3）──────────────────────
 
     private static KnownIssueRule LinuxRule(
         string id = "custom-linux-test-rule",

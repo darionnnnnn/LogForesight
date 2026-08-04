@@ -5,7 +5,7 @@ using LogForesight.Web.Services;
 namespace LogForesight.Web.Auth;
 
 /// <summary>
-/// 動態驗證 Provider（docs/HISTORY.md #9）：取代 DI 裡依 appsettings 二選一
+/// 動態驗證 Provider（docs/archive/HISTORY.md #9）：取代 DI 裡依 appsettings 二選一
 /// （Stub／Ldap）的固定註冊。每次驗證時讀 DB 的「系統管理 > 設定」：
 /// <c>AdAuthEnabled</c> 且 <c>AdServers</c> 非空 → 用 DB 設定建 <see cref="LdapService"/> 驗證
 /// （設定頁存檔即生效，不必重啟站台）；否則委派給 appsettings 決定的原 provider（Stub 或 Ldap）。
