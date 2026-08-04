@@ -2,7 +2,7 @@
 
 > 本文件彙整目前**已知但刻意未做**的項目，收斂自 2026-07-28 的文件整併（原散落在
 > SHARED-STANDARDS-PLAN、OPS-HARDENING-PLAN 與 refactor/simplify-2026-07 簡化重構分支的
-> 體檢紀錄，這些來源文件已歸檔至 [docs/HISTORY.md](HISTORY.md)）。
+> 體檢紀錄，這些來源文件已歸檔至 [docs/archive/HISTORY.md](archive/HISTORY.md)）。
 > 每項附觸發條件或建議時機；沒有時程表——遇到相關需求或有餘裕時再排入。
 
 ## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
@@ -24,29 +24,43 @@
 
 ## 營運與規模擴充（原 OPS-HARDENING-PLAN §10 P2，未排期）
 
-- **NetIQ 接線**：`SentinelStatsSource` 的實際取數邏輯依賴 `--netiq-probe` 真實環境輸出。
-  **三輪皆已於 2026-07-29 取得**，技術未決項幾乎全收斂（主機歸屬鍵＝`repip`、`obssvcname` 不斷詞、
-  System/Application 確實轉送 Information 級事件），過程中修正一個會讓正式管線片語查詢全面失敗的
-  JSON 轉義 bug（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.5、§8、§9）。
-  **`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`（watchlist→Lucene 產生器）
-  已實作完成**（Phase 3，2026-07-29，`LogForesight.Core/Analysis/`，含合約測試證實 Sentinel 路徑
-  與本機路徑聚合分類結果同構）。**機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**
-  （Phase 4，2026-07-29，`LogForesight/Service/`，只支援 Windows 主機）——`Program.cs` 本機分析後
-  接機房迴圈，逐日/批次取數（2026-07-30 起多台 Sentinel 平行處理＋回補窗口可設定，
-  `NetiqOptions.MaxParallelServers`／`BackfillDays`，docs/FEEDBACK-3-PLAN.md #1/#2），
-  當日續跑靠既有 `HasRecord` 機制。**尚未經過真實
-  Sentinel 端到端驗證**（試點閘門：Web 主機頁登錄 2~3 台實際主機跑 2~3 晚，核對 sev 門檻、
-  Defender/RDP 頻道覆蓋、真實批次耗時；2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化）。
-  **探索方案已解決**（Phase 5，2026-07-29）：ESM 權限被拒、全站 24h distinct 不可行皆走不通，
-  改用使用者實測驗證過的「網段範圍掃描」——`repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗，
-  完全不碰 ESM API（見 [docs/NETIQ-API-PLAN.md](NETIQ-API-PLAN.md) §3.4「Phase 5 定案」）。
-  見 [docs/LINUX-RULES-PLAN.md](LINUX-RULES-PLAN.md) §10 的 P3 閘門（Linux 那台 Sentinel
-  尚未接入，此環境 Windows/Linux 已完全拆分成不同 Sentinel）。
+- **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／
+  `SentinelQueryBuilder`，watchlist→Lucene 產生器）與機房 pipeline 本體
+  （`NetiqPipelineService`，`LogForesight.Core/Service/`，只支援 Windows 主機）皆已實作完成，
+  欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
+  分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
+  `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
+  探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」——`repip:{prefix}.*`
+  前綴萬用字元查詢＋自適應時間窗，完全不碰 ESM API（權限被拒）與全站 24h distinct（不可行）。
+  **尚未經過真實 Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑
+  2~3 晚，核對下列尚未實證的細節：
+  1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
+  2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
+  3. Linux 主機的欄位形狀（program 落點、`sev`↔syslog priority 對應）——閘門是「Linux 那台
+     Sentinel 何時接入」，此環境 Windows/Linux 已完全拆分成不同 Sentinel，接入後對它跑一次
+     NetIQ 維護頁「診斷」分頁即可定案欄位（見 [docs/LINUX-RULES.md](LINUX-RULES.md)）。
+  4. 真實 watchlist 形狀查詢（事件 ID 集合＋50 台 IP 批次）的耗時與命中量，決定夜間窗時程與
+     批次大小。
+  5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
+  6. 8.5 apidoc 是否有伺服器端聚合端點（有的話 Q1 查詢可以改走聚合，目前是本地聚合的退路）。
+  7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
+  8. token 有效期長短（決定長輪收集中是否需要主動換發）。
+  9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
+  10. Security 頻道規則未涵蓋的「未知失敗 ID」目前不會被撈入 Sentinel 路徑（相對本機模式的
+      已知涵蓋縮小）；是否值得靠 `xdasoutcome` 補一條 `NOT xdasoutcome:0` 分支待評估。
+- **Linux 事件取數管線**：Linux 規則面（模型／種子／Web 維護頁）已完成，但 Linux 主機的事件
+  尚未接進分析管線——需要在「NetIQ 接線」試點閘門解除、且有 Linux 主機所屬的 Sentinel 接入後，
+  比照 Windows 的 `SentinelFieldMap`／`SentinelQueryBuilder` 做 Linux 分支（欄位對應、Lucene
+  產生器、簽章聚合、覆蓋率申報），並補齊對應的自動化測試。
+- **Linux 攻擊鏈關聯層**：目前 Linux 主機的分析結果固定申報「關聯層不適用」（見
+  [docs/LINUX-RULES.md](LINUX-RULES.md)）。待 Linux 事件取數管線上線、帳號/IP 抽取穩定後，
+  可補至少一條【SSH 暴力破解→得手】關聯規則（同日 failed password 達門檻＋同帳號/IP 成功登入，
+  與 Windows【破解得手】同構）——這是獨立於取數管線之外的規劃項目，尚未排期。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
 - **伺服器端 CSV 匯出**：目前清單頁「複製為 CSV」為前端序列化當前頁；伺服器端全量匯出
   應與 `QueryPage` 下推查詢同路徑實作（避免匯出又走一次全撈）。
 
-## AI 整合觀察項（原 FEEDBACK-4-PLAN.md §5 MCP 評估，2026-07-30）
+## AI 整合觀察項（原 docs/archive/FEEDBACK-4-PLAN.md §5 MCP 評估，2026-07-30）
 
 - **LogForesight as MCP server（供外部 AI 客戶端使用，非內建小模型）**：評估「詢問 AI 現場取數」
   該不該讓地端小模型透過 MCP 自主決定查什麼時，結論是不採（模型無 function calling、地端小模型
@@ -65,7 +79,7 @@
   行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
   釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
 
-## 回饋第八輪遞延項（docs/FEEDBACK-8-PLAN.md，2026-08-04）
+## 回饋第八輪遞延項（docs/archive/FEEDBACK-8-PLAN.md，2026-08-04）
 
 - **使用者名稱「顯示名稱(帳號)」格式的全面套用**：本輪依規劃盤點清單收斂了主要顯示點
   （處理人連結欄、指派下拉、操作者、稽核帳號欄、各設定頁更新者、TriggerText、工作頁標題），
@@ -80,5 +94,5 @@
 ## 使用方式
 
 發現新的「已知但不做」項目時，加進本檔對應分類（或新增分類）；解決後移除該條目，
-不需要保留刪除紀錄——本檔只反映**現況待辦**，歷史脈絡查 [docs/HISTORY.md](HISTORY.md)
+不需要保留刪除紀錄——本檔只反映**現況待辦**，歷史脈絡查 [docs/archive/HISTORY.md](archive/HISTORY.md)
 或 git log。

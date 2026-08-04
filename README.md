@@ -1,16 +1,16 @@
 # LogForesight
 
-分析 Windows Server 的 Event Log（Linux syslog 規則面已就緒、取數管線建置中，見
-[docs/LINUX-RULES-PLAN.md](docs/LINUX-RULES-PLAN.md)），**提早發現硬體故障前兆與入侵跡象**，
+分析 Windows Server 的 Event Log（Linux syslog 規則面已就緒、取數管線尚未串接，見
+[docs/LINUX-RULES.md](docs/LINUX-RULES.md)），**提早發現硬體故障前兆與入侵跡象**，
 在問題擴大前示警。
 偵測與風險判定完全由確定性的規則/趨勢/慢速趨勢/關聯層負責；本機 AI 模型（llama.cpp + Gemma 26B/27B 級
 MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Log 的人也能一眼看懂狀況該怎麼處理
-（2026-07-20 AI 角色轉換，詳見 [docs/HISTORY.md](docs/HISTORY.md)）。
+（2026-07-20 AI 角色轉換，詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
 
 ## 專案結構
 
 > 早期版本另有一個批次分析 console exe（`LogForesight` 專案），Web 排程化（Phase 2~4）完成、
-> 職責全數搬進 Web 之後，該專案已於 Phase 5（`docs/WEB-SCHEDULER-PLAN.md` §1.5）自解決方案移除。
+> 職責全數搬進 Web 之後，該專案已於 Phase 5（`docs/archive/WEB-SCHEDULER-PLAN.md` §1.5）自解決方案移除。
 > **現在唯一的分析執行途徑是 Web 的排程／立即執行**（見下方「使用方式」）。
 
 ```
@@ -80,7 +80,7 @@ flowchart TD
 規則標記已知危險訊號（規則命中的問題同時查得靜態知識庫）→ 與歷史做頻率比對
 （首次出現/頻率上升自動升級嚴重度）→ 慢速趨勢偵測（近 7 天 vs 前 7 天總量比較）→
 風險等級確定性判定 → 低風險日直接寫模板句、其餘連同比對結果與近 14 天歷史組成 prompt →
-AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史資料庫 → Web 執行監控頁與儀表板示警**。
+AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史資料庫 → Web 排程作業頁與儀表板示警**。
 
 ## 提早發現問題的邏輯
 
@@ -93,7 +93,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 |---|---|---|
 | **規則層** (`KnownIssueCatalog`) | 比對已知危險事件（Source + Event ID + 次數門檻），確定性命中；規則命中的問題同時附帶靜態知識庫內容（白話說明／常見原因／處置步驟），不需要 AI 深入分析 | 已知模式用規則抓，100% 召回、零成本，不賭小模型會不會漏看；同一 Event ID 的原因/處置幾乎不變，寫死比每次重新生成更快、更一致、零幻覺 |
 | **趨勢層** (`TrendAnalyzer`) | 當日各事件的次數 vs 前一日 vs 近 14 日平均，程式直接算出「首次出現 / 頻率上升 / 重複發生 / 下降」 | 數字比較程式做得又快又準，不該指望模型在腦中做算術 |
-| **慢速趨勢層** (`SlowTrendAnalyzer`，2026-07-20 新增) | 近 7 天 vs 前 7 天總量比較，每日、全主機、確定性執行，捕捉躲在趨勢層單日門檻下的緩慢惡化訊號 | 取代原本「每週體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天，且是純算術、可單元測試、進 `--selftest` |
+| **慢速趨勢層** (`SlowTrendAnalyzer`，2026-07-20 新增) | 近 7 天 vs 前 7 天總量比較，每日、全主機、確定性執行，捕捉躲在趨勢層單日門檻下的緩慢惡化訊號 | 取代原本「每週體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天，且是純算術，單元測試完整涵蓋 |
 | **關聯層** (`CorrelationAnalyzer`) | 比對「多個獨立事件的已知組合模式」：攻擊鏈、故障連鎖、跨日推進（見下方清單） | 單一事件各自不嚴重、組合起來卻是明確故事——這種跨 log 關聯判讀正是小模型最容易漏掉的，必須程式先比對好 |
 | **AI 層** (Gemma) | 把前四層已確定的結論（風險等級、趨勢、關聯訊號）翻譯成白話標題與敘述，讓不懂 Event Log 的人也能看懂該怎麼處理；只有規則未涵蓋的 Other 類問題才由 AI 判讀根因與處置建議 | AI 不是判斷風險或找根因的引擎（那是前四層與靜態知識庫的職責），語意轉譯與白話敘事才是規則做不到、AI 真正擅長的部分 |
 
@@ -101,7 +101,7 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 → 風險強制「高」；
 趨勢層（含慢速趨勢）有頻率異常或關聯層有任何訊號 → 風險至少「中」。AI 判斷只能把風險往上拉、
 不能往下壓，即使 AI 判斷輕忽或 AI 服務不可用也不影響告警與處置建議（詳見
-[docs/HISTORY.md](docs/HISTORY.md)）。
+[docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
 
 ### 關聯層偵測的組合模式（`CorrelationAnalyzer`）
 
@@ -147,6 +147,22 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 出現成功登入，成功面現含 RDP 工作階段）與**【暴力破解→RDP 得手】**（昨日暴力破解的來源 IP、
 今日以 RDP 成功登入同一 IP）。兩者都需要「暴力破解達門檻」加「帳號/IP 交集」，正常使用不會命中。
 
+### 讀取方式：傳統日誌走 classic API，Operational 頻道走 EventLogReader
+
+Defender／RDP 這類新式 `Microsoft-Windows-*/Operational` 頻道要靠 `EventLogReader`
+（`System.Diagnostics.Eventing.Reader`）才能讀到——classic `System.Diagnostics.EventLog` 只能讀
+`System`／`Application`／`Security` 三大傳統日誌。**採混合式讀取**：傳統三個日誌仍走 classic
+`EventLog` API，新式 Operational 頻道才走 `EventLogReader`。原因是 `EventLogReader.ProviderName`
+回傳完整 manifest 名（如 `Microsoft-Windows-DistributedCOM`），與 classic `EventLogEntry.Source`
+的註冊短來源名（如 `DCOM`）不同——若把三大日誌也改用 reader，聚合鍵 `(LogName, Source, EventId,
+EntryType)` 會全面漂移、既有歷史的趨勢比對全數斷成「首次出現」。混合式讓既有日誌識別鍵零改變、
+新頻道又能讀進來。
+
+新頻道有 **3 天暖身期**（`ChannelCoverage.WarmupDays`）：上線首日所有簽章都是「首次出現」，暖身
+期內不產生 New/Rising 告警、不升級嚴重度，避免切換日的告警風暴；規則層與關聯層不受影響（Defender
+真驗出病毒照樣拉高風險）。掃描頻道可在 `appsettings.json` 的 `Analysis.Channels` 調整（見下方
+設定表）。
+
 ### 頻率趨勢比對的判定規則（`TrendAnalyzer`）
 
 每個事件簽章 `(LogName, Source, EventId, EntryType)` 逐一與歷史比對：
@@ -185,11 +201,10 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 **這類問題只要出現（且未被抑制），當天就直接判定為高風險日**，例如磁碟故障、
 安全稽核日誌被清除。畫面上以「高＋重大」兩顆徽章並列呈現，規則維護頁可逐條調整。
 
-> 2026-07-28 之前另有第四級 `Critical`，它的實際作用**就只是**「命中即列為高風險日」。
-> 四級嚴重度與三級日風險等級（高/中/低風險日）字面相撞、卻是兩套不可互推的層級，
-> 造成「詳情頁顯示高風險、但最嚴重的問題只有中」這類困惑。改以顯性旗標承載該職責後，
-> 判定行為完全不變，嚴重度與日風險等級統一為三級。舊資料的 `Critical` 於**讀取時**
-> 正規化為「高＋重大」（不回寫證據層），詳見 docs/HISTORY.md #1。
+嚴重度刻意只維持三級、不疊加第四級：「命中即列為高風險日」這個職責完全交給獨立的
+「重大」旗標承載，避免嚴重度（問題層級）與日風險等級（高/中/低風險日）這兩套不可互推的
+層級字面相撞，造成「詳情頁顯示高風險、但最嚴重的問題只有中」這類困惑（歷史沿革見
+docs/archive/HISTORY.md #1）。
 
 **日風險等級**（高/中/低風險日）是「主機×日期」整天的批次判定結果，不是任何單一問題
 嚴重度的別名，兩者不可互相推導（`RiskLevels` 與 `IssueSeverity` 是兩個獨立列舉）。
@@ -250,7 +265,7 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 | Windows Defender | 2001, 2003, 2004 | 病毒碼/引擎更新失敗；**單日 ≥3 次**才升 Medium（偶發網路失敗屬雜訊） | Medium |
 
 > Defender 事件天生低誤報——偵測到惡意程式本身就是訊號。分級的關鍵在「已處置（Medium）vs
-> 處置失敗（Critical）」，刻意**不做**「1116 之後沒看到 1117」這類缺席推論（資料不完整時會誤報）。
+> 處置失敗（高＋重大）」，刻意**不做**「1116 之後沒看到 1117」這類缺席推論（資料不完整時會誤報）。
 > 主機未安裝 Defender（如第三方防毒取代）時該頻道不存在，程式申報「不適用」而非錯誤。
 
 #### 遠端桌面連線（RDP TerminalServices Operational 頻道，2026-07 新增）
@@ -296,8 +311,9 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 #### Linux syslog（seed v4，2026-07-28 新增；⏸ 規則面已就緒，取數管線未完成）
 
 Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
-Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md §1.2）。主機的
-`Os` 欄位（Web 主機頁維護）決定它套用哪個平台的規則面。
+Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
+[docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。主機的 `Os` 欄位（Web 主機頁維護）決定它套用
+哪個平台的規則面。
 
 | program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
 |---|---|---|---|
@@ -320,13 +336,13 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 | CRON | FAILED / (CRON) ERROR | 排程任務執行失敗（≥3 次） | Medium |
 
 > **比對順序有意義**：`ProgramPattern` 是子字串比對，`"sudo"` 包含 `"su"`，所以 sudo 規則必須排在
-> su 之前，否則 sudo 的事件會被 su 規則先攔走。`--selftest` 的逐條命中驗證會抓到這類錯誤。
+> su 之前，否則 sudo 的事件會被 su 規則先攔走。單元測試的逐條命中驗證會抓到這類錯誤。
 >
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態（2026-07-29）**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）
-> 都已完成；但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 docs/LINUX-RULES-PLAN.md §10 的 P3）。
+> **目前狀態**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）都已完成；
+> 但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
 > 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
 > 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
 > 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
@@ -381,7 +397,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 - **確定性閘門**：窗口內任一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
   三層皆無訊號的窗口直接寫固定結論「本期無累積性異常，程式比對通過」，不消耗 AI 呼叫——
   安靜的期間本來就沒有故事可講，這是多主機規模下 AI 時間預算能否成立的關鍵之一
-  （詳見 [docs/HISTORY.md](docs/HISTORY.md)）。
+  （詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
 - **AI 失敗不消耗額度**：閘門判定有訊號、實際呼叫 AI 卻失敗時，該次**不寫入歷史**
   （`WeeklyCheckupResult.Completed = false`），讓下次執行的補跑機制重試，而不是把這一期的
   體檢額度用掉。
@@ -394,7 +410,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 ## 部署驗證
 
 早期版本有獨立的 `--selftest`／`--debug-dump` console 旗標，隨批次 console 專案於 Phase 5
-退場（`docs/WEB-SCHEDULER-PLAN.md` §1.5）一併移除，對應的驗證方式改為：
+退場（`docs/archive/WEB-SCHEDULER-PLAN.md` §1.5）一併移除，對應的驗證方式改為：
 
 - **內建規則的合法性**（有無不合格項目、是否有規則被排序在前面的規則遮蔽、推導出的 Security
   稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：現在是
@@ -415,9 +431,9 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 
 **存放位置（2026-07-24 起）**：規則與抑制設定存在**資料庫**裡（`lf_blobs` 的 `rules`／
 `suppressions` 兩個 key），不是可以直接開啟編輯的檔案——`rules.json`／`suppressions.json`
-是 Jsonl 檔案後端時代的產物，該後端已於 2026-07-24 全面退役（見 docs/HISTORY.md「2026-07-24」段
+是 Jsonl 檔案後端時代的產物，該後端已於 2026-07-24 全面退役（見 docs/archive/HISTORY.md「2026-07-24」段
 定案 10）。完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
-[docs/RULES-PLAN.md](docs/RULES-PLAN.md)，這裡只說日常維護怎麼做。
+[docs/RULES-SPEC.md](docs/RULES-SPEC.md)，這裡只說日常維護怎麼做。
 
 **Web 站台啟動時會冪等初始化規則庫**（`rules` blob 不存在才寫入內建種子，已存在只載入不覆寫），
 全新環境開站即可直接使用 `/admin/rules`，不需要任何額外步驟，見 docs/WEB-SPEC.md §9.7。
@@ -452,7 +468,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
   **Windows 與 Linux 規則各自獨立排序**，不會互相遮蔽。Linux 規則要特別留意 program 名稱的
   包含關係（`"sudo"` 包含 `"su"`），具體的要排在泛用的前面。
 - **停用規則不會讓對應事件從趨勢層/關聯層的偵測中消失**（只是不再有規則命中的分類與知識庫
-  說明），這是刻意設計，見 docs/RULES-PLAN.md 的語意邊界說明。
+  說明），這是刻意設計，見 docs/RULES-SPEC.md 的語意邊界說明。
 
 ### 匯入程式內建的新規則／更新
 
@@ -465,17 +481,8 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
    預覽會即時重新整理，確認清單無誤後按「套用」。
 
 你自訂的 `custom` 規則永遠不會被這個流程碰到；勾選覆蓋時也會保留你對該條 `Enabled` 的設定
-（停用不會被悄悄打開）。
-
-> **既有部署升級到 EventLogReader 版（seed v2）的 SOP**：seed v2 新增了 Defender/RDP 規則。
-> 規則庫仍停在 seed v1 的主機升級後，分析執行會提示「頻道已啟用但規則表沒有對應規則」——
-> 到規則頁按橫幅提示的「預覽差異」→「套用」補上 Defender/RDP 規則即可。**未匯入前的行為是
-> 誠實申報的**：Defender/RDP 的 Information 等級事件不會被收集（沒有 watchlist），執行時會
-> 警告並在當日申報，不會靜默漏偵測。
->
-> **升級到 Linux 雙平台版（seed v4）的 SOP 完全相同**：規則頁「預覽差異」（v3→v4）→「套用」
-> 補上 17 條 Linux 規則。Linux 規則新增後不影響任何 Windows 主機的行為（規則面按主機的 `Os`
-> 欄位分流，既有主機一律是 windows）。
+（停用不會被悄悄打開）。**匯入前的行為是誠實申報的**：規則庫版本落後、頻道已啟用但規則表
+沒有對應規則時，分析執行會提示並在當日申報，不會靜默漏偵測。
 
 ### 主機級告警抑制
 
@@ -491,7 +498,7 @@ Sentinel 正規化後的事件名（兩條路 OR，見 docs/LINUX-RULES-PLAN.md 
 ## NetIQ 主機清單
 
 多主機階段要處理哪些主機，由「主機清單」決定，固定由 **Web 主機頁維護**
-（admin 在畫面上新增/停用/批次貼上；docs/HISTORY.md 定案 12）。實際會被查詢的主機清單與
+（admin 在畫面上新增/停用/批次貼上；docs/archive/HISTORY.md 定案 12）。實際會被查詢的主機清單與
 排除原因（尚未確定所屬 Sentinel、IP 與其他主機衝突）顯示在 Web 主機頁——不是安靜地少幾台，
 與「沒告警 ≠ 沒問題」是同一個原則：沒查到不等於沒事，畫面上必須看得出來。
 IP 衝突時只查最早建立的那一台，行為才可預測。每台主機會標出作業系統（`[Windows]`／`[Linux]`）
@@ -501,10 +508,10 @@ IP 衝突時只查最早建立的那一台，行為才可預測。每台主機�
 
 Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索帳密的 Sentinel、**輸入要掃描的網段**
 （前綴如 `192.168.0` 或 CIDR `192.168.0.0/24`／`/16`）→ 掃描 → 依網段勾選 → 指派群組與作業系統
-→ **送出即立即新增/更新/孤兒復活**（docs/HISTORY.md 定案 7；早期版本曾排入佇列等批次執行時
-才套用，也曾放在主機頁，均已調整）。掃描是「查一個網段」不是盲掃全站——結果只涵蓋掃描窗口
-內有事件回報的主機，涵蓋範圍（實際掃描窗口、是否截斷）誠實顯示在掃描結果上方，安靜的主機
-請改用主機頁或 CSV 手動登錄（見下方「探索方案」段落的網段範圍掃描說明）。結果記入同一頁的
+→ **送出即立即新增/更新/孤兒復活**。掃描是「查一個網段」不是盲掃全站——結果只涵蓋掃描窗口
+內有事件回報的主機（`repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗，完全不碰 ESM API，
+細節見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md)），涵蓋範圍（實際掃描窗口、
+是否截斷）誠實顯示在掃描結果上方，安靜的主機請改用主機頁或 CSV 手動登錄。結果記入同一頁的
 匯入紀錄，與 CSV 匯入共用同一份稽核軌跡。當晚的規則檢查與趨勢分析仍要等下次批次執行才有結果——
 即時的只是「主機被收進清單」這件事本身，新主機的顯示名稱則在掃描當下就從 Sentinel 的 `sn`
 欄位帶入，不用等夜間批次回填。
@@ -519,57 +526,21 @@ Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索�
 開發機要對真實 Sentinel 試掃時，在 Web 的 appsettings 設 `Netiq:DiscoveryClient=Real` 即可
 （值域 `Auto`（預設，依環境）／`Stub`／`Real`；正式環境設 `Stub` 會被啟動驗證擋下）。
 
-### NetIQ 事件取數 API 驗證（NetIQ 維護頁「診斷」分頁）
+### NetIQ 事件取數與 API 驗證
 
-多主機集中分析要從 Sentinel 取事件（docs/NETIQ-API-PLAN.md），實作前需要先用真實環境跑一輪
-驗證——公開的 Sentinel REST API 文件沒有提供事件查詢結果頁的確切 JSON 結構範例，欄位對應、
-IP 篩選批次上限、時區基準等都必須用真實輸出核對，不能憑文件猜。
+多主機集中分析從各 Sentinel 取事件（`SentinelClient`／`SentinelFieldMap`／
+`SentinelEventMapper`／`SentinelQueryBuilder`，`LogForesight.Core/Analysis/`）；機房 pipeline
+本體（`NetiqPipelineService`，`LogForesight.Core/Service/`）在本機分析結束後接機房迴圈，
+逐日、批次（≤50 台 IP）向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務——只支援
+Windows 主機（Linux 主機明確標示「尚未支援」而不是靜默略過）；當日續跑靠既有的缺漏日回補
+機制。每台主機每次執行最多回補 `NetiqOptions.BackfillDays` 天（預設 1，「系統管理 > NetIQ
+維護」頁可調），多台 Sentinel 依 `NetiqOptions.MaxParallelServers` 平行處理。
 
-早期版本以 `--netiq-probe` CLI 旗標執行，隨批次 console 專案於 Phase 5 退場
-（docs/WEB-SCHEDULER-PLAN.md §1.5）一併移除；相同的驗證查詢已 Web 化，見「系統管理 > NetIQ
-維護」頁的「診斷」分頁：選一台已設定的 Sentinel、選填樣本 IP（Windows／Linux 各一），按
-「執行診斷」即可跑同一組小規模驗證查詢（13 項；有樣本 IP 時另跑主機歸屬鍵／頻道覆蓋／
-dt 邊界／Linux 欄位核對）。
-
-輸出可直接複製貼回對話：含每台 Sentinel 的原始事件 JSON（用於核對欄位對應）、`dt` 時間邊界
-比對提示（印絕對時間，可在 Web UI 重現同一段區間）、不同 `pgsize` 的分頁耗時、IP 篩選批次大小
-測試、錯誤密碼／非法查詢語法的失敗路徑驗證。全程只發送十幾個小查詢（單一佇列＋既有節流設定、
-`max-results` 一律壓在 3 筆以內或只取 found 計數），對 Sentinel 負擔可忽略。
-
-**目前狀態（2026-07-29）**：`SentinelClient`（Core，SAML 認證＋event-search job 生命週期）與
-`--netiq-probe` 已完成並通過單元測試（stub HTTP，不需真 Sentinel）。**三輪真實環境輸出皆已取得**，
-技術未決項幾乎全收斂：
-
-- Windows 面欄位對應定案（Event ID＝`rv40`、頻道＝`rv150`、來源＝`obssvcname`【term 不斷詞，
-  子字串查詢無法下推】、訊息＝`msg`、帳號＝`sun`，完整對照見 docs/NETIQ-API-PLAN.md §3.5）。
-- **主機歸屬鍵定案為 `repip`**（四台 DC 對到四個各自不同的 `repip`，一對一、非共用代理）；
-  `sip` 是用戶端來源 IP、`shn` 是發起端機器名，皆不是主機自身。
-- System/Application 頻道確實轉送 Information 級事件（原「只轉送 Error/Warning」的推論是錯的，
-  量少是主機本來就少）；sev 的 Warning/Error 確切門檻仍待試點核對。
-- probe 過程揪出並修正一個會讓正式取數管線**全面失敗**的缺陷：Sentinel 的 JSON 解析器不接受
-  `\uXXXX` 轉義序列，而 .NET 預設編碼器正好那樣輸出，導致片語查詢（規則來源下推 Lucene 的
-  必要語法）整個被 400 拒絕，第三輪已在真實環境實證修正有效。
-- ESM `eventsource` 端點被權限拒絕、全站 24h distinct 在 2470 萬筆/天下不可行，兩條原始路都
-  走不通。**探索方案已於 Phase 5（2026-07-29）解決**：使用者在 Sentinel Web UI 實測確認
-  `repip:{prefix}.*` 前綴萬用字元查詢有真實過濾效果（23,926 筆/1h vs 全站 150 萬筆/1h），
-  改採「輸入網段前綴 → 該網段自己的自適應時間窗查詢」，完全不碰 ESM API（見
-  docs/NETIQ-API-PLAN.md §3.4「Phase 5 定案」）。其餘未決項都移到試點階段核對，
-  不再開第四輪 probe。
-
-**`SentinelFieldMap`／事件映射器／watchlist→Lucene 查詢產生器已實作完成**
-（`LogForesight.Core/Analysis/`，2026-07-29，只有 Windows 分支——Linux 那台 Sentinel 尚未接入，
-沒有真實 probe 樣本可依據），含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構。
-
-**機房 pipeline 本體（`NetiqPipelineService`）也已實作完成**（2026-07-29，
-`LogForesight.Core/Service/`）：本機分析結束後接機房迴圈，逐日、批次（≤50 台 IP）
-向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務；只支援 Windows 主機（Linux 主機
-明確標示「尚未支援」而不是靜默略過）；當日續跑（凌晨排程跑到一半掛掉、白天重跑只補未完成
-的主機/日期）靠既有的缺漏日回補機制，不是另外設計的功能。2026-07-30 起
-（docs/FEEDBACK-3-PLAN.md #1/#2）：每台主機每次執行最多回補 `NetiqOptions.BackfillDays` 天
-（預設 1＝只查前一天，「系統管理 > NetIQ 維護」可調），多台 Sentinel 依
-`NetiqOptions.MaxParallelServers` 平行處理（預設 2，設 1＝完全依序）。**尚未經過真實
-Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑幾晚，
-詳見 docs/NETIQ-API-PLAN.md §8、§9 與 docs/BACKLOG.md。
+**API 欄位對應驗證**：需要換一套 Sentinel 環境、或懷疑欄位對應跟現場不符時，到「系統管理 >
+NetIQ 維護」頁的「診斷」分頁，選一台 Sentinel、選填樣本 IP，按「執行診斷」即可跑一組小規模
+驗證查詢並直接複製輸出核對。完整的 API 事實、欄位對應與查詢 payload 見
+[docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md)；**尚未經過真實 Sentinel
+端到端驗證**與其餘試點階段待核對項目見 [docs/BACKLOG.md](docs/BACKLOG.md)。
 
 ## 權限/角色異動監控（PermissionMonitorService）
 
@@ -603,7 +574,7 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 快照存於執行檔目錄的 `permission_snapshot.json`，每次執行讀取目前狀態、與快照比對出異動、
 再覆寫快照。首次執行沒有快照可比對，只建立基準、不產生告警。
 
-發現異動時執行輸出印出洋紅色告警框（與 Critical/頻率異常的紅/黃色區隔），
+發現異動時「排程作業」頁的執行輸出會標示明顯的異動警示（與風險等級的紅/黃色徽章區隔），
 並輸出 `export\{today}_權限異動.txt`，不含 AI 分析——
 這類發現本身已經是明確事實陳述，不需要 AI 解讀，也讓這個檢查完全不依賴 AI 服務是否可用。
 
@@ -703,13 +674,13 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 - 已分析過的日期自動跳過，同一天重複執行不會產生重複紀錄。
 - 回補能抓到多久以前，取決於各 Event Log 的設定大小，太舊的事件可能已被覆蓋。
 - AI 呼叫失敗（如 llama.cpp 未啟動）時該日自動降級為統計模式紀錄（`AiAnalyzed = false`），
-  規則與趨勢告警照常運作：規則命中「重大」旗標 → 風險「高」+ 紅色橫幅；
-  High 問題或頻率異常 → 風險「中」+ 黃色提醒。
+  規則與趨勢告警照常運作：規則命中「重大」旗標 → 風險「高」；High 問題或頻率異常 → 風險「中」。
 
-發現高風險或「重大」事件時，執行輸出會以紅色橫幅提醒並列出命中的問題與建議；
-頻率異常（首次出現、頻率上升、總量突增）則以黃色列出比對數字。
-執行結束會輸出**結果總表**：每個日期的風險等級與對應報告檔，於 Web「執行監控」頁可直接查看
-（點日期看該天每台主機的狀態），一眼看到該打開哪個檔案。
+發現高風險或「重大」事件時，執行輸出會明顯提醒並列出命中的問題與建議；頻率異常（首次出現、
+頻率上升、總量突增）則列出比對數字。執行結束會輸出**結果總表**：每個日期的風險等級與對應
+報告檔，於 Web「排程作業」頁可直接查看（點日期看該天每台主機的狀態），一眼看到該打開哪個
+檔案；風險等級以紅（高）/黃（中）/灰（低）三色徽章呈現，全站語意色一致（見「Web 部署」與
+文件地圖中的 WEB-SPEC.md）。
 
 ## 風險報告（export/{日期}_{類別}.txt）
 
@@ -764,7 +735,7 @@ Other 類別內的事件本來就是同一個故事該一起看，跨類別的�
 ### 排程（正式環境）
 
 早期版本用 Windows 工作排程器另外排一個批次 exe；批次 console 專案已隨 Phase 5 退場
-（docs/WEB-SCHEDULER-PLAN.md §1.5），**現在排程內建在 Web 站台本身**，不需要另外設定
+（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），**現在排程內建在 Web 站台本身**，不需要另外設定
 schtasks 或安裝其他執行檔：
 
 1. Web 站台以 Windows 服務或 IIS 常駐執行（見下方「Web 部署」）。
@@ -832,15 +803,15 @@ schtasks 或安裝其他執行檔：
 | `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/FEEDBACK-8-PLAN.md #7 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/archive/FEEDBACK-8-PLAN.md #7 |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
-## Web 部署（docs/HISTORY.md P1-3）
+## Web 部署（docs/archive/HISTORY.md P1-3）
 
 **只需要部署 `LogForesight.Web` 一個執行檔**——早期版本另需與批次 `LogForesight.exe` 部署在
-同一台伺服器並共用資料目錄，批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md §1.5），
+同一台伺服器並共用資料目錄，批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），
 現在 Web 站台本身就是分析執行與查詢介面的唯一部署單位。
 
 ### 以 Windows 服務執行
@@ -918,7 +889,7 @@ D:\LogForesight\
 | 機制 | 說明 |
 |---|---|
 | **Polly 網路重試** | 連線失敗、HTTP 錯誤、逾時、**空回應**皆自動重試（預設 3 次、指數退避），涵蓋模型剛重啟或瞬間過載等暫時性失敗；每次重試皆記錄於執行輸出 |
-| **停用連線池** | `SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.Zero`，每次呼叫都用全新連線。從實際 log 的時間戳確認：「The response ended prematurely.」幾乎都發生在前一次呼叫剛結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，用戶端還不知道就拿去重用」的典型特徵。**曾經以為是 HTTP/2 協商問題、加了固定 HTTP/1.1 版本，但實測沒解決**，故已排除該假設並移除；每次呼叫間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的握手成本相對生成時間微乎其微，直接停用連線池換取穩定性更划算 |
+| **停用連線池** | `SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.Zero`，每次呼叫都用全新連線。連線池已停用，因為「連線池裡的連線其實已被對方關閉，用戶端還不知道就拿去重用」會導致「The response ended prematurely.」——這類錯誤幾乎都發生在前一次呼叫剛結束後幾十毫秒內，不是生成到一半斷線，是典型的連線重用問題（與 HTTP 版本協商無關）；每次呼叫間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的握手成本相對生成時間微乎其微，直接停用連線池換取穩定性更划算 |
 | **抑制退化重複輸出** | `FrequencyPenalty`/`PresencePenalty`（預設 0.8）+ `ExtraRequestFields` 的原生 `repeat_penalty`（1.3）送給模型，抑制生成過程中卡進重複迴圈的退化輸出（實際觀察到摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類重複垃圾）。從 0.3 一路調到 0.8 仍未完全根除，屬於持續觀察中的調校項目，不是保證解 |
 | **依用途分開 token 上限** | 終端 JSON 較短的呼叫（每日總覽、前置掃描）用 `Ai.MaxTokens`（預設 1536，故意抓緊），篇幅天生較長的深入分析用 `Ai.DeepDiveMaxTokens`（預設 8192）。單一全域上限會逼你在「精簡呼叫退化時拖很久才觸頂」和「深入分析被截斷」之間二選一，拆開後兩邊都能設到剛好 |
 | **context 預算共用防線** | `PromptBudget`（`Analysis/PromptBudget.cs`）依實測環境 Gemma 4 26B、context 20480 保守估算（CJK 約 1:1、其餘約 3.5 字元 1 token，留 10% 餘裕）。檢查點放在 `AIService.ChatAsync`——所有 AI 呼叫的單一咽喉點，同時知道 prompt 與該次輸出上限，任何一次呼叫送出前若估計會超出可用預算就記 WARN。小模型爆 context 時 server 端行為不可靠（可能靜默截頭、可能報錯），這道防線負責在各呼叫類型自己的截斷（深入分析 16KB 字元硬上限、週體檢 40 行輸入塑形、主分析結構性上限）萬一失效時把問題顯性化，而不是等 server 端悄悄吞掉一段輸入 |
@@ -929,7 +900,7 @@ D:\LogForesight\
 | **失敗降級** | 網路層與 JSON 層重試皆耗盡仍失敗時，當日降級為統計模式紀錄（`AiAnalyzed=false`），規則與趨勢告警照常運作，不會整天沒有紀錄；若有拿到內容只是格式不合格，會保留原文（截斷）供人工參考，不遺失資訊 |
 | **結構化錯誤協定** | AI 呼叫回傳 `AiResponse { Success, Content, Error }` / `AiJsonResult<T> { Success, Value, RawContent, Error, Attempts }`，錯誤與正常內容分離，不靠字串前綴判斷 |
 | **單一執行個體** | 行程內以 `SchedulerRunState` 做單一執行 gate（排程與立即執行共用，重疊時後者直接拒絕、不排隊），另保留具名 Mutex（`Global\LogForesight`）防未來任何第二行程誤配置指向同一 `DataRoot` |
-| **執行結果可見** | 每次執行的成功/失敗與訊息寫入 `BatchRun` 紀錄（「執行監控」頁可查完整歷史），排程狀態卡另外顯示「上次執行」的即時結果，不需要翻 log 檔才知道有沒有跑成功 |
+| **執行結果可見** | 每次執行的成功/失敗與訊息寫入 `BatchRun` 紀錄（「排程作業」頁可查完整歷史），排程狀態卡另外顯示「上次執行」的即時結果，不需要翻 log 檔才知道有沒有跑成功 |
 | **無主控台相容** | 排程背景執行時 `Console.OutputEncoding` 設定失敗自動忽略，不會擋下程式 |
 | **時鐘回撥容錯** | Event Log 倒序掃描多掃 1 小時緩衝才停止，時間同步回撥造成的事件亂序不會漏抓 |
 | **歷史紀錄併發保護** | webdata 的整份 JSON 內容存於 `lf_blobs`，`UpdatedAt` 為樂觀鎖權杖；排程與立即執行／多個管理者操作併發寫入時，帶著過期內容的一方會被資料庫拒絕並自動重試，不會靜默蓋掉對方剛寫入的內容 |
@@ -937,7 +908,7 @@ D:\LogForesight\
 
 ## 診斷用檔案 Log（NLog）
 
-執行輸出（執行監控頁、排程狀態卡）是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位）時常常不夠。`logs\web.log`（執行檔同目錄）補這塊，記錄比執行輸出更細的診斷資訊：
+執行輸出（排程作業頁、排程狀態卡）是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位）時常常不夠。`logs\web.log`（執行檔同目錄）補這塊，記錄比執行輸出更細的診斷資訊：
 
 - 每次 AI 呼叫的耗時、回應長度、重試原因
 - **JSON 解析/內容檢查失敗時的具體診斷**：解析失敗會記錄回覆預覽（頭尾各一截）；內容檢查沒過（如摘要超長、必填欄位空白）會記錄**解析出的結構化物件本身**，才看得出究竟是哪個欄位不合理——這是執行輸出完全沒有的資訊
@@ -966,7 +937,7 @@ D:\LogForesight\
 `nlog.config` 的 `${basedir}` 由 `NLog.Web.AspNetCore`（`builder.Host.UseNLog()`）正確解析為
 本站台的內容根目錄，不受服務啟動方式（SCM、`dotnet run`、工作目錄不同）影響——這正是這個
 套件存在的目的，不需要像早期批次 console 版本那樣手動用 `AppContext.BaseDirectory` 組路徑
-覆寫（該手動兜底邏輯隨批次專案於 Phase 5 一併退場，docs/WEB-SCHEDULER-PLAN.md §1.5）。
+覆寫（該手動兜底邏輯隨批次專案於 Phase 5 一併退場，docs/archive/WEB-SCHEDULER-PLAN.md §1.5）。
 
 `nlog.config` 開啟了 `internalLogToConsole="true"`——NLog 自己的設定解析錯誤（例如版本不
 相容的屬性）會直接印在 console，不會悄悄吞掉；這個機制實際抓到過一個真的 bug：NLog 6.x 的
@@ -997,51 +968,28 @@ D:\LogForesight\
   KoboldCpp 用 `rep_pen`，原生 llama.cpp server 用 `repeat_penalty`，兩者送錯地方
   都是靜默無效、不會報錯，所以效果不彰時不能只靠猜，务必查對方的啟動設定或文件。
 
-## 限制與後續方向
+## 後續方向
 
-- **AI 角色轉換（2026-07-20 已完成）**：AI 從分析引擎轉為白話翻譯層，規則命中問題改查靜態知識庫，
-  完整設計與階段記錄見 [docs/HISTORY.md](docs/HISTORY.md)；這是多主機規模下 AI 時間預算
-  能否成立的前提，詳見 `docs/HISTORY.md` 的時間預算估算。
-- **通知管道**：目前只在 Web「執行監控」頁與排程狀態卡顯示，需要主動查看才會發現。排程執行時
-  沒人盯著畫面，建議下一步接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位
-  為第二層縱深防禦，即時性要求不如第一層監控，見 `docs/HISTORY.md`。
-- **EventLogReader 讀取新式頻道＋Operational 頻道擴充（2026-07 已完成）**：新增以
-  `EventLogReader`（`System.Diagnostics.Eventing.Reader`）讀取 `Microsoft-Windows-*/Operational`
-  新式頻道——classic `System.Diagnostics.EventLog` 只能讀傳統三大日誌。預設已納入
-  **Microsoft Defender**（惡意程式偵測、防護遭關閉）與 **RDP TerminalServices** 兩類頻道，
-  入侵偵測面擴大（見下方「監控的危險訊號清單」新增的 Defender/RDP 章節與「正常 RDP 使用不會誤報
-  的設計」）。
-  - **採混合式讀取**：**傳統三個日誌（System/Application/Security）仍走 classic `EventLog` API**，
-    新式 Operational 頻道才走 `EventLogReader`。原因是實測發現 `EventLogReader.ProviderName`
-    回傳完整 manifest 名（如 `Microsoft-Windows-DistributedCOM`），與 classic `EventLogEntry.Source`
-    的註冊短來源名（如 `DCOM`）不同——若把三大日誌也改用 reader，聚合鍵 `(LogName, Source,
-    EventId, EntryType)` 會全面漂移、舊 `history.txt` 的趨勢比對全數斷成「首次出現」。混合式讓
-    既有日誌識別鍵零改變、新頻道又能讀進來；新頻道沒有遷移前的歷史，用完整 provider 名不影響任何舊資料。
-  - 新頻道有 **3 天暖身期**（`ChannelCoverage.WarmupDays`）：上線首日所有簽章都是「首次出現」，
-    暖身期內不產生 New/Rising 告警、不升級嚴重度，避免切換日的告警風暴；規則層與關聯層不受影響
-    （Defender 真驗出病毒照樣拉高風險）。掃描頻道可在 `appsettings.json` 的 `Analysis.Channels`
-    調整（見設定表）。
-- **規則表維護（2026-07-21 已完成外部化）**：規則表已從程式碼搬到資料庫（見「規則庫與抑制設定」
-  章節），觀察一段時間後可在 Web `/admin/rules` 頁調整，把貴公司環境特有的
-  雜訊（可忽略，或於「告警抑制」分頁關通知）與重要訊號（新增規則或調嚴重度）補進去，不需要
-  重新編譯部署；規則的白話知識庫內容（處置參考）也建議一併調整成貴公司實際的處置流程。
-  儲存時前後端都會跑規則驗證，完整設計見 [docs/RULES-PLAN.md](docs/RULES-PLAN.md)。
-  `LogForesight.Tests` 仍對內建種子逐條規則自動產生測試案例，新增內建規則時測試自動涵蓋。
-- **多台伺服器（NetIQ Sentinel 整合）**：**Sentinel 連線設定與主機清單的管理已於 2026-07-24
-  完成搬進 Web**（多台 Sentinel、掃描匯入精靈、匯入即時落盤、依網段指派主機群組，完整設計見
-  [docs/HISTORY.md](docs/HISTORY.md)）；**跨主機集中分析的取數管線也已於 2026-07-29 實作完成**
-  （`SentinelClient`＋`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`＋
-  `NetiqPipelineService`，只支援 Windows 主機，見 docs/NETIQ-API-PLAN.md §8）——批次分析引擎
-  逐 Sentinel、逐日、批次取事件後餵進與本機路徑**完全相同**的分析服務（有合約測試證實兩條路徑
-  聚合分類結果同構）。**尚未經過真實 Sentinel 端到端驗證**，下一步是登錄 2~3 台實際主機試跑幾晚
-  （核對 sev 門檻、Defender/RDP 頻道覆蓋、真實批次耗時）；2000 台規模放量前另需評估逐主機
-  `HasRecord` 查詢的批次化。分級分析、體檢 due-date 輪巡、跨主機關聯層、機房總覽報告等其餘設計
-  仍在 `docs/HISTORY.md` 中待實作。
-- **DB 後端（2026-07-23 完成；2026-07-24 起 Sqlite 改為預設與主要測試方式，Jsonl 檔案後端全面退役）**：
-  `Storage.Type` 二選一——`Sqlite`（測試/開發，預設）／`SqlServer`（正式，2000 台量級）；
-  設成 `Jsonl` 一律於啟動時報錯，不再有檔案相容模式。**全部資料**（分析紀錄＋webdata）走資料庫：分析紀錄以
-  正規化列＋JSON 存（`lf_daily_records`/`lf_top_issues`），webdata 各 store 透過 `EfJsonBlobStore`
-  （整份型 → `lf_blobs`）與 `EfJsonLogStore`（append-only → `lf_log_lines`）改走 DB，store 業務邏輯
-  完全沒改。`StorageFactory` 是唯一路由點，分析邏輯不需異動。provider 中立 LINQ 讓 SQLite in-memory
-  上跑同一組合約測試驗證兩後端語意逐位一致。完整設計見 `docs/WEB-SPEC.md §10.5` 與 `docs/DB-PLAN.md`；
-  規則庫（`IKnownIssueRuleStore`）與抑制設定（`ISuppressionStore`）同一套 Strategy + Factory 模式。
+- **通知管道**：目前只在 Web「排程作業」頁與排程狀態卡顯示，需要主動查看才會發現。排程執行時
+  沒人盯著畫面，下一步可考慮接 Email / Telegram / Teams webhook，高風險時主動推播；本系統定位
+  為第二層縱深防禦，即時性要求不如第一層監控，故未列為優先項。
+- **多台伺服器（NetIQ Sentinel 整合）**：連線設定、主機清單管理與跨主機集中分析的取數管線皆已
+  完成（見上方「NetIQ 主機清單」章節），**尚未經過真實 Sentinel 端到端驗證**；分級分析、體檢
+  due-date 輪巡、跨主機關聯層、機房總覽報告等規劃仍待實作。工程層級的待辦細節見
+  [docs/BACKLOG.md](docs/BACKLOG.md)。
+
+## 文件地圖
+
+`docs/` 目前的現況文件（描述「現在的行為是什麼」，操作者/開發者日常查閱）：
+
+| 文件 | 內容 |
+|---|---|
+| [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
+| [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
+| [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |
+| [docs/RULES-SPEC.md](docs/RULES-SPEC.md) | 規則外部化與主機級告警抑制機制：語意邊界、規則模型、seed／匯入政策 |
+| [docs/LINUX-RULES.md](docs/LINUX-RULES.md) | Linux 規則面現況：規則模型、主機 OS 標記、目前的種子規則清單 |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | 現況待辦清單（已知但刻意未做的項目），問題解決後即從文件移除 |
+
+`docs/archive/` 是已完成規劃案與開發歷程的存放處——記錄「當時如何決策、如何實作」，
+一般情況不需要打開；要追溯某個現況決策的來龍去脈時才查閱。

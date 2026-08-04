@@ -1,12 +1,13 @@
-# 規則外部化＋主機級抑制機制（設計定案，2026-07-21）
+# 規則外部化＋主機級抑制機制（現況規格）
 
-> 規劃日期：2026-07-21。緣起：`KnownIssueCatalog.Rules` 原本寫死在程式碼，規則調整（環境特有雜訊、
-> 新增偵測項目）需要重新編譯部署，維護門檻過高。本文件是這次調整的完整設計定案，實作見
-> `Analysis/KnownIssueCatalog.cs`（`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、
-> `Analysis/RuleValidator.cs`、`Analysis/SuppressionFilter.cs`、
-> `Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、`Service/RuleBootstrapper.cs`、
-> `Service/RuleImporter.cs`、`Models/RuleSuppression.cs`、`Persistence/ISuppressionStore.cs`／
-> `SuppressionStore.cs`、`Service/SuppressionCli.cs`。
+> 本文件是規則庫（含 Windows／Linux 雙平台）與主機級告警抑制機制的現況設計規格：規則不寫死在
+> 程式碼、可在 Web 規則維護頁調整，不需重新編譯部署。實作見 `Analysis/KnownIssueCatalog.cs`
+> （`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、`Analysis/RuleValidator.cs`、
+> `Analysis/SuppressionFilter.cs`、`Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、
+> `Service/RuleBootstrapper.cs`、`Service/RuleImporter.cs`、`Models/RuleSuppression.cs`、
+> `Persistence/ISuppressionStore.cs`／`SuppressionStore.cs`。起草緣起與各輪決策過程見
+> docs/archive/HISTORY.md「規則外部化＋主機級抑制機制」段；Linux 雙平台規則面的完整種子清單見
+> [docs/LINUX-RULES.md](LINUX-RULES.md)。
 
 ## 目標與整體流程
 
@@ -73,7 +74,7 @@
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
 | `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（2026-07-28 新增，見下） |
 
-### 雙平台（2026-07-28，docs/LINUX-RULES-PLAN.md）
+### 雙平台（2026-07-28，docs/LINUX-RULES.md）
 
 Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位與三個 Linux 專用比對欄位
 （`ProgramPattern`／`EventNamePattern`／`MessagePatterns`），**共用同一份規則儲存與同一套抑制、
@@ -131,7 +132,7 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
 `StorageFactory.CreateRuleStore`/`CreateSuppressionStore` 是唯一路由點，與 `CreateRecordStore`
 同一開關；`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端只認介面。
 
-> **2026-07-24 起規則存資料庫**：Jsonl 檔案後端已全面退役（見 docs/HISTORY.md「2026-07-24」段
+> **2026-07-24 起規則存資料庫**：Jsonl 檔案後端已全面退役（見 docs/archive/HISTORY.md「2026-07-24」段
 > 定案 10），`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，兩者都是 DB。原本的
 > `JsonKnownIssueRuleStore`／`JsonSuppressionStore` 已於 2026-07-28 的簡化重構改名為
 > `KnownIssueRuleStore`／`SuppressionStore`（名稱裡的 Json 早已名不符實——底層一律走
@@ -149,9 +150,8 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
 
 ## Seed／匯入政策
 
-> **修訂（2026-08-04，console 退場後）**：下文的 `--import-rules`／`--apply`／
-> `--overwrite-builtin` CLI 已隨批次 console 專案於 Phase 5 移除
-> （docs/WEB-SCHEDULER-PLAN.md §1.5），現行入口是 **Web 規則維護頁的「內建規則升級」
+> **現況（console 退場後）**：下文的 `--import-rules`／`--apply`／`--overwrite-builtin` 這組
+> CLI 旗標已隨批次 console 專案退場移除，現行入口是 **Web 規則維護頁的「內建規則升級」
 > 橫幅**（預覽差異 modal＋「覆蓋已修改的內建規則」勾選＝同一套語意，分類/套用邏輯
 > 在 Core 純函數 `RuleImportPlanner`）。本節描述的**合併語意逐條不變**，原文保留。
 
@@ -190,25 +190,17 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
 `Environment.MachineName`；`ExpiresAt` 已到期的項目不生效，但**不自動刪除**——不留痕跡地
 讓抑制過期會讓人以為「已經處理好了」，實際上只是靜默恢復告警。到期後：
 
-- 每次執行的啟動階段列出「已到期、恢復告警」的提示（`Program.cs`）。
-- `--list-suppressions` 與 `SelfTestRunner` 都會列出到期狀態。
-- 需要人工用 `--unsuppress` 或直接編輯 `suppressions.json` 清理，這是刻意的：到期後的
-  清理需要人判斷「這個問題後來到底處理了沒有」，不該由程式自動猜測。
+- 每次執行的啟動階段（排程／立即執行）列出「已到期、恢復告警」的提示。
+- 需要人工到 Web `/admin/rules`「告警抑制」分頁清理，這是刻意的：到期後的清理需要人判斷
+  「這個問題後來到底處理了沒有」，不該由程式自動猜測。
 
 **體檢固定提醒**（`WeeklyCheckupService`）：只要體檢確實產生報告（窗口內有訊號、AI 敘事成功），
 就固定列出本機生效中的抑制清單＋窗口期間各自的發生次數——防止「暫時關掉」變成永久盲區。
 不會為了顯示這個清單而強制觸發原本因「三層皆無訊號」而省略的 AI 呼叫，維持既有的成本控制設計。
 
-**CLI**（`Service/SuppressionCli.cs`，`Program.cs` 接線）：
-
-```
-LogForesight.exe --suppress <ruleId> --reason "<文字>" [--days N]
-LogForesight.exe --unsuppress <ruleId>
-LogForesight.exe --list-suppressions
-```
-
-提供 CLI 是因為手編 JSON 的中文 `reason` 容易打錯逗號/引號；`--suppress` 會驗證 `ruleId`
-是否存在於目前生效的規則庫，避免抑制一個打錯字的 Id 而悄悄無效。
+**維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選規則＋主機＋
+事由＋選填到期天數）、查詢（可依主機/規則/平台過濾）、解除，皆走既有儲存前驗證與稽核管線
+（見 docs/WEB-SPEC.md §9.7）。
 
 ## `RuleId` 落紀錄
 
@@ -220,8 +212,8 @@ LogForesight.exe --list-suppressions
 
 ## 未來擴充卡位（此版本不實作，只預留欄位/語意）
 
-- **`Scope`**：目前只接受 `"all"`（全域規則）。多主機/群組規模化時（見 `docs/HISTORY.md` 的
-  NetIQ Sentinel 規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。
+- **`Scope`**：目前只接受 `"all"`（全域規則）。多主機/群組規模化時（見 `docs/archive/HISTORY.md`
+  的 NetIQ Sentinel 規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。
   欄位已卡位，屆時只需要在 `RuleValidator` 放寬檢查、在 `FindRule`/`Classify` 加入呼叫端
   的主機身分比對，不需要動 schema。
 - **`MatchFilter`**（規則與抑制皆有）：為「同一條規則、同一台主機下，只想關閉其中一部分
@@ -229,7 +221,7 @@ LogForesight.exe --list-suppressions
   此版本刻意不實作——這個粒度的比對語意會顯著複雜化，且需求尚未被證實，欄位先卡位、
   語意留待需求出現再定義。
 
-## 未來 DB 映射（欄位級草案，遵守 `docs/DB-PLAN.md` 的雙 DB 可移植規則）
+## 未來 DB 映射（欄位級草案，遵守 `docs/DB-SPEC.md` 的雙 DB 可移植規則）
 
 `rules.json` 是巢狀 JSON，但 DB 階段**不做「序列化成 JSON 字串塞進 nvarchar 欄位」**——那只是
 把檔案格式的習慣搬進關聯式資料庫，改一條處置步驟要整包字串解析/編輯/跳脫，DB 的型別檢查與
@@ -301,6 +293,6 @@ lf_rule_suppressions
 - Builtin 覆寫（`--overwrite-builtin` 對應的 DB 版本）：一個交易內 upsert `lf_rules` 主表列 →
   刪除 `lf_rule_event_ids`/`lf_rule_causes`/`lf_rule_steps` 的舊列 → 重插新列。子表全刪全插
   而非逐列 diff——builtin 內容以程式內建種子為準，diff 沒有意義，全換最不容易出錯。
-- `lf_rule_suppressions` 的 `(rule_id, host)` 複合主鍵天然去重，`--suppress` 對同一鍵覆寫即可。
+- `lf_rule_suppressions` 的 `(rule_id, host)` 複合主鍵天然去重，新增抑制對同一鍵覆寫即可。
 - 欄位長度全部對齊 `RuleSchemaLimits`（`Analysis/RuleSchemaLimits.cs`）——JSON 階段與 DB 階段
   用同一組數字，換後端時不會出現「JSON 階段能存、DB 階段塞不進欄位」的落差。

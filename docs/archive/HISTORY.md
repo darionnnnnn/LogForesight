@@ -3369,4 +3369,256 @@ SQL 階段 N 次讀取問題已隨 Phase C 完成而消失。）
 | 5 | 正式驗證方式 | ✅ 定案 AD LDAP（2026-07-21）；失敗鎖定交由 AD 帳戶鎖定原則，Web 端不重複建置（§6.2） |
 | 6 | 測試期 Stub 免密碼 | ✅ 已接受（2026-07-21，測試環境不含核心重要主機）；**2026-07-23 起涵蓋 serverAdmin（Stub 下所有帳號一致免密碼，§6.2）**；Production+Stub fail fast 欄杆維持 |
 | 7 | serverAdmin 本地救援帳號 | ✅ 定案（2026-07-21）：appsettings 定義、密碼封存定期輪替（PBKDF2 雜湊存放）、最小授權（Maintain+ViewAudit）、Web 端 5 次失敗鎖 15 分鐘（§6.2）；**Stub 模式免密碼、不套鎖定（僅 Ldap 驗密碼時適用）** |
+
+---
+
+## 2026-07-29 — NetIQ Sentinel 取數 API 三輪 probe 實測（原 docs/NETIQ-API-PLAN.md §8/§9）
+
+> 文件收斂（2026-08-04）併入：原文件 §8「實作順序」與 §9「未決事項」中屬於實測過程與已解決
+> 決策的敘事部分，逐字保留。技術性定案（欄位對應、payload、降低負擔措施）已改寫為現況參考，
+> 移至 [docs/NETIQ-API-REFERENCE.md](../NETIQ-API-REFERENCE.md)；試點階段仍待核對的開放項已
+> 併入 [docs/BACKLOG.md](../BACKLOG.md)。
+
+**2026-07-24 實作進度**：步驟 1～2 已完成（`SentinelClient`／`--netiq-probe`／設定欄位／單元測試，
+此處的 `--netiq-probe` 為當時的批次 console CLI 旗標，該 CLI 已隨批次 console 專案退場移除，
+驗證查詢現以 Web「NetIQ 維護」頁「診斷」分頁執行，見 docs/WEB-SPEC.md §9.9a）。
+
+**2026-07-29 第一輪真實輸出已取得**（Sentinel「162」）：欄位對應已定案，但同時發現量級遠超
+估計（近 24h found≈2470 萬筆）、原探索設計（近 24h 全事件 distinct）不可行、且「主機歸屬鍵是
+哪個欄位」（`repip` 是否等於主機自身 IP）成為最關鍵未決項。當天已擴充 probe 加第二輪查詢
+（ESM `eventsource` 清單、登入事件 4624/4625 取樣、Linux 主機樣本、System/Application 頻道
+覆蓋、generic `sev:[3 TO 5]` 量級、dt 邊界精確核對、`obssvcname` 完整片語 vs 部分詞查詢行為）＋
+`SentinelClient.RawGetAsync`（打 ESM `/objects/eventsource` 等一般資源用，不走 event-search
+job 生命週期）。
+
+**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.1.2.11`；該 Sentinel 無 Linux 主機
+故略過 Linux 段）。**最關鍵的閘門已解除**：
+
+- **主機歸屬鍵定案為 `repip`**——四台 DC（`dc01`／`dc02`／`dc03`／`dc04`）對到四個各自不同的
+  `repip`（`10.1.8.1`／`10.1.8.2`／`10.1.8.3`／`10.1.8.4`），一對一、非共用的 collector 代理
+  IP；`--sample-ip` 用 `repip:` 也確實查得到該台資料。同時釐清 `sip` 是**用戶端來源 IP**
+  （同一台 DC 的三筆登入事件有三個不同 `sip`），不是主機自身。
+- **`sun` 定案為帳號名**。
+- **System／Application 頻道有資料但量極少**：`repip:10.1.2.11` 近 24h System=3、
+  Application=152，而該主機總量約 31 萬筆/日，即 **99.95% 是 Security**。研判 collector 對
+  這兩個頻道只轉送 Error/Warning 等級（恰與本機模式的 `ErrorWarningOnly` 同策略）。磁碟／
+  服務／硬體類規則**有**資料來源，但實際涵蓋的嚴重度區間待後續樣本傾印確認。
+- **ESM `/objects/eventsource` 端點被拒（401/403）**：當時的探索帳號有 event-search 權限但無
+  ESM 物件讀取權限。探索方案因此仍未定（詳下方 Phase 5 段落）。
+- **發現並修正 `SentinelClient` 的真實 bug**：Sentinel 的 JSON 解析器**不接受 `\uXXXX` 轉義
+  序列**，而 `System.Text.Json` 預設編碼器正好會把 `"` 寫成 `\"`、非 ASCII 寫成 `\uXXXX`，
+  導致**片語查詢（`obssvcname:"…"`）整個被 400 拒絕**——片語是規則來源下推 Lucene 的必要
+  語法，這在正式取數管線會是全面性故障。已改用 `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
+  （`SentinelClient.JobBodyJsonOptions`）並加回歸測試。同一個 bug 也讓「非法 filter 應被拒絕」
+  這條測試**一直為了錯的理由通過**——原本用中文的測試字串是在 JSON 解析階段就被拒，根本沒走
+  到 Lucene 語法檢查，已改為純 ASCII 並加上「錯誤訊息若仍是 invalid JSON 就是轉義還有問題」
+  的自我檢查。
+
+**2026-07-29 第三輪真實輸出已取得**（轉義修正後重跑同一支 `--sample-ip`）。技術未決項幾乎
+全收斂：
+
+- **主機名欄位鏈定案**：`sn`＝記錄這筆 log 的主機自己（觀察者，與 `repip` 成對，`DisplayName`
+  回填用它）；`dhn`＝目的地主機；**`shn` 存在**（跨主機認證事件出現，發起端機器名——第一輪
+  「本環境無 shn」是誤判，登出事件不帶而已）；`sip`＝發起端 IP。
+- **`obssvcname` 確定是 term 欄位、不斷詞**（完整片語 found=142205、部分詞 found=0）——規則
+  `SourcePattern` 的子字串比對**不能**下推 Lucene，Q1 下推改為只靠 `rv40` 聯集＋generic 分支，
+  來源比對留在本地 `Classify`（本來就是權威判定）。轉義修正在真實環境實證成功：非法 filter
+  這次真的收到 Lucene parse error、片語查詢可用。
+- **collector 有轉送 Information 級**（樣本：System 頻道 NTFS「磁碟區健康情況良好」sev=1、
+  Application 頻道 Security-SPP 通知 sev=1）——上一輪「只轉送 Error/Warning」的推論**是錯的**，
+  量少（3／152 筆/日）是主機本來就少，不是被過濾。sev 對應候選：0＝Security 成功稽核、
+  1＝Information、4＝稽核失敗（Kerberos 4771）；Warning 是否＝2、Error 是否＝3 仍未實證
+  （這 24h 剛好沒有真 Error 樣本），已在 `SentinelFieldMap.MapEntryType` 標註候選門檻，留待
+  試點核對，不影響規則命中（規則比對 Source＋EventId，與 EntryType 無關）。
+- 意外收穫：樣本主機其實是另一個網域的 DC——證實同一台 Sentinel 收多網域主機、`repip` 歸屬
+  不受網域影響。
+
+**不再開第四輪 probe**——剩餘未決項全部移到試點階段核對。
+
+**2026-07-29 Phase 3 已實作**（`SentinelFieldMap.cs`／`SentinelEventMapper.cs`／
+`SentinelQueryBuilder.cs`，只有 Windows 分支——Linux 那台 Sentinel 尚未接入，沒有真實 probe
+樣本可依據）：含合約測試證實 Sentinel 路徑與本機路徑聚合分類結果同構（決策 B2 的實測驗證）。
+
+**2026-07-29 Phase 4 已實作**（機房 pipeline 本體）：本機分析完成後接機房迴圈，逐 Sentinel →
+逐日（跨主機遞增、批次 IP≤50）→ `SentinelQueryBuilder` 建 filter → `SentinelClient.SearchAsync`
+取事件 → 依 `repip` 分桶 → `SentinelEventMapper` 映射 → 逐主機餵進與本機路徑相同的分析服務。
+只支援 Windows 主機（Linux 明確標示「尚未支援」，不靜默略過）。當日續跑靠既有 `HasRecord`
+（各主機 owner-host 隔離的 record store）機制，凌晨排程跑到一半掛掉、白天重跑只補未完成的
+主機/日期。2026-07-30 起（docs/archive/FEEDBACK-3-PLAN.md #1/#2）：回補天數改為可設定的
+`NetiqOptions.BackfillDays`（預設 1）；per-Sentinel 迴圈改平行處理
+（`NetiqOptions.MaxParallelServers`，預設 2）。
+
+**2026-07-29 Phase 5 已實作**（NetIQ 主機發現／新增，解除探索方案未決項）：ESM
+`/objects/eventsource` 端點被拒、全站 24h distinct 在 2470 萬筆/天下不可行，兩條原始路都走
+不通。使用者在 Sentinel Web UI 實測確認 `repip:{prefix}.*` 這類前綴萬用字元查詢確實有過濾
+效果（23,926 筆/1h vs 全站 150 萬筆/1h），因此改用「輸入網段前綴 → 該網段自己的自適應時間窗
+查詢」，完全不碰 ESM API：`SentinelQueryBuilder.NormalizeSubnetPrefix`／
+`BuildSubnetDiscoveryFilter`（網段輸入驗證與 filter 組出）＋`SentinelRestDirectoryClient`
+全面改寫（計數查詢→自適應窗口→主查詢→依 `repip` 分桶、`sn` 眾數取顯示名稱）＋
+`NetiqImportApplier.Apply` 新增 `displayNameByIp` 參數（新主機匯入當下即帶入真實機器名）。
+移除已死的「新增 Sentinel 與掃描一鍵合併」端點（從未被 UI 使用）。建置零警告，含新增測試與
+`--selftest`（當時的批次驗收機制）全綠；Dev/Stub 模式下端到端走過完整精靈流程並在真正執行的
+Web 應用程式中核對匯入結果。現行的取數管線設計見 [docs/NETIQ-API-REFERENCE.md](../NETIQ-API-REFERENCE.md)。
+
+---
+
+## 2026-07-28 — Linux 規則 P2 實作紀錄（原 docs/LINUX-RULES-PLAN.md §12）
+
+> 文件收斂（2026-08-04）併入：規則模型、種子與 Web 三分頁等已完成的現況設計已移至
+> [docs/LINUX-RULES.md](../LINUX-RULES.md)；本段是實作當下與規劃草案的差異記錄，逐字保留。
+
+commit `4e79766`＋體檢修正，分支 `feature/linux-rules-platform`。**與規劃的差異與判斷，
+逐項列出：**
+
+### 已完成（§1／§3／§5 全部）
+
+規則模型四欄位＋`RuleSchemaLimits` 上限、平台條件式驗證＋平台分區遮蔽偵測、seed v3→v4
+（**17 條**，不是草案表的 14 條——見下）、`WebHost.Os` 與五條寫入路徑、Web 三分頁與詳情頁
+IP/OS、`--selftest`（當時的批次驗收機制）Linux 段、`--host-list` OS 欄、NetIQ 掃描精靈 OS
+選擇。
+
+### 與規劃的偏差
+
+1. **種子 17 條而非 14 條**：草案表把 `su／sudo`、`chronyd／ntpd`、`gpasswd／groupadd` 各併成
+   一列，但 `ProgramPattern` 是子字串比對，一條規則只能對應一個 program 探測字串（寫 `"su"`
+   會連 `sudo`、`subscription-manager` 都命中）。拆成獨立規則，總數 14→17。
+2. **`su`／`sudo` 的順序是有意義的**：`"sudo"` 包含 `"su"`，`su` 規則排在前面會把 sudo 的事件
+   先攔走。種子中 `sudo` 必須排在 `su` 之前，`--selftest` 的逐條命中驗證會抓到這個錯（實作時
+   就是它抓到的）。同理未來新增 program 有包含關係的規則時，具體的要排前面。
+3. **`Platform` 沒有寫「載入期正規化」程式碼**：原本設想比照 `NormalizeLegacyCriticalSeverity`
+   加一段正規化。實際上 `Platform` 的屬性初始式就是 `"windows"`，`System.Text.Json` 對「JSON
+   中不存在的屬性」不會賦值，初始式的值自然留著——舊檔零遷移的目標已達成，額外的正規化程式碼
+   是多餘的。
+4. **`RuleFileContent.SchemaVersion` 維持 1，不遞增**：判斷理由寫在 `IKnownIssueRuleStore.cs`
+   的註解裡——遞增會讓舊版程式整份拒絕載入而降級用內建種子，連使用者自訂的 Windows 規則也
+   一起失效；不遞增則只有 Linux 規則被舊版驗證跳過（帶警告），Windows 面完全不受影響，是
+   比較好的降級行為。
+
+### 體檢時發現並修正的既有 bug（不是本次引入，但同一段程式碼）
+
+- `RuleImporter` 的 `--overwrite-builtin` 覆蓋路徑逐欄複製時**漏抄 `ElevatesDayRisk`**：覆蓋
+  任何 builtin 規則都會把「重大」旗標清成 false，該規則從此不再把當天判定為高風險日——靜默
+  的行為降級。應是三級化時漏的。
+- `RuleImporter.ContentEqualExceptEnabled` 同樣**沒比對 `ElevatesDayRisk`**：種子只改旗標時會
+  被誤判「內容相同、略過」。
+- 兩者的修法：複製邏輯改成 `KnownIssueRule.CloneForSeedOverwrite`（貼著欄位宣告放，新增欄位
+  時看得到），並加一個**反射逐欄比對**的回歸測試（`覆蓋builtin時除Enabled與修改追蹤外每一個
+  欄位都取自種子`），未來再漏抄任何欄位都會直接紅燈。
+
+### 刻意延後（不是缺漏）
+
+| 項目 | 延到 | 理由 |
+|---|---|---|
+| `LogIssueSignature.EventKey`＋聚合鍵擴充 | P3 | Linux 事件要等取數管線才進得來，現在加是沒有寫入者的死欄位 |
+| syslog priority→EntryType 映射 | P3 | 同上，且 `sev` 對應要等 probe 實測 |
+| Lucene 產生器、欄位對應、覆蓋率申報 | P3 | probe 閘門 |
+| 關聯層「Linux 不適用」申報 | P3 | 沒有 Linux 紀錄可申報，先加會是永遠不顯示的死程式碼 |
+| Linux 詳情頁 `program（EventKey）` 顯示 | P3 | 依賴 `EventKey` |
+| 清單面 OS 徽章（Records／儀表板／報表） | 未定 | 規劃自身標「視空間加入」，詳情頁的硬需求已完成 |
+| `--selftest` 的 EntryType 映射／Lucene 產生器檢查 | P3/P4 | 被驗證的東西還不存在 |
+
+---
+
+## 2026-07-21 — 規則外部化＋主機級抑制機制（原 docs/RULES-PLAN.md 起草緣起）
+
+> 文件收斂（2026-08-04）併入：現況設計（語意邊界、規則模型、儲存、seed／匯入政策、抑制機制、
+> DB 映射草案）已移至 [docs/RULES-SPEC.md](../RULES-SPEC.md)；本段是起草當下的緣起與背景，
+> 逐字保留。
+
+緣起：`KnownIssueCatalog.Rules` 原本寫死在程式碼，規則調整（環境特有雜訊、新增偵測項目）需要
+重新編譯部署，維護門檻過高。規則外部化的目標與整體流程：
+
+1. **規則從寫死改為外部維護**：初次部署時把內建種子（`KnownIssueSeed.CreateRules()`）寫入
+   `rules.json`（未來 DB 後端則寫入資料表），之後在該檔案/資料表直接維護，不需要重新編譯部署。
+2. **啟動流程**：`rules.json` 不存在 → 寫入種子（僅此一次）；存在 → 載入＋驗證（單條不合格
+   跳過、遮蔽偵測只警告）→ 呼叫 `KnownIssueCatalog.Initialize` 生效。
+3. **後續更新走手動匯入**：程式改版新增/訂正 builtin 規則後，**不會自動覆寫**使用者的
+   `rules.json`（避免「排程執行悄悄改變偵測行為」），而是啟動時提示、由維護者主動決定是否套用。
+4. **主機級告警抑制**：獨立於規則本身，讓維護者能對「已知雜訊」的規則在特定主機關閉通知，
+   同時不犧牲偵測與歷史資料的完整性。
+
+當時的 CLI 維護入口（`LogForesight.exe --suppress/--unsuppress/--list-suppressions`）已隨
+批次 console 專案退場移除，現行維護入口是 Web `/admin/rules`「告警抑制」分頁，見
+docs/RULES-SPEC.md 與 docs/WEB-SPEC.md §9.7。
+
+---
+
+## 2026-07-20 — 資料庫與 Web 查詢／AI 問答規劃（原 docs/DB-PLAN.md 過渡期機制）
+
+> 文件收斂（2026-08-04）併入：欄位級 schema 定案已移至 [docs/DB-SPEC.md](../DB-SPEC.md)；
+> 本段是 JSONL→DB 切換期間已達成目的的過渡機制與前置準備事項，逐字保留，供還原「txt 是臨時
+> 資料庫、之後換正式 DB」這個決策當時是如何被工程化保證的。
+
+### DB 就緒後的實作形狀（規劃當下的施工設想）
+
+- **ORM 建議 EF Core**：`Microsoft.EntityFrameworkCore.SqlServer` 與 `Oracle.EntityFrameworkCore`
+  都成熟，同一套 LINQ 程式碼靠 provider 切換——這是「不確定哪家 DB」成本最低的路線。
+  接入點維持 `IAnalysisRecordStore`/`IReportSink`（EF 是實作細節，分析層看不到）。
+- 新增 `SqlAnalysisRecordStore`、`DbReportSink`；`StorageFactory` 加 case；設定
+  `"Storage": { "Type": "SqlServer" | "Oracle", "ConnectionString": "..." }`
+- **過渡期 `CompositeReportSink`**：檔案＋DB 同時寫（單機部署不看 Web 的人仍有 txt 可看）
+- **匯入器**：~~`--import-history` 讀 `history.txt`（結構化紀錄）＋ `export\*.txt`（報告全文，
+  檔名還原日期/風險/類別）→ 入庫，舊資料不流失~~——**（2026-07-24 定案 10）確定不做**：
+  SQL 後端上線時沒有服役中的 Jsonl 正式資料需要遷移，這支工具從未被建立也不再需要
+- **Web 應用**：獨立 ASP.NET Core 專案，讀同一 DB；批次 exe 職責不變（規劃當下的架構，
+  批次 exe 已於後續 Phase 5 隨 console 專案退場整併進 Web，見本檔 Web 排程化相關段落）
+
+**專案結構調整（實作時）**：抽 `LogForesight.Core` 類別庫（Models、Analysis、Persistence 介面、
+`AIService`、`PromptBudget`），exe 與 Web 專案都引用——現在不動，DB 階段的第一步。
+
+### txt ↔ DB 一致性保證（2026-07-20 新增——降低切換與雙軌維護成本的具體機制）
+
+「txt 是臨時資料庫、之後換正式 DB」要順利，靠的不是宣示而是下列機制，每一項都指名由誰保證：
+
+| # | 機制 | 說明 |
+|---|---|---|
+| 1 | **單一模型契約** | JSONL 序列化的就是 `DailyAnalysisRecord` 等 C# 模型；DB 每張表是同一模型的欄位投影（機械對應：PascalCase → snake_case，僅保留字改名例外：`Count`→`event_count`、`Source`→`source_name`）。**模型改欄位＝兩個後端同時改**，不存在只改一邊的路徑 |
+| 2 | **介面語意即規格** ✅ 已落實（2026-07-21） | 兩個後端都實作 `IAnalysisRecordStore`。`ReadRecent(anchorDate, days)`（**顯式錨定**日期區間 `[anchor-(days-1), anchor]`、升冪、錨定日之後不回傳，DB 對應 `WHERE date BETWEEN`）、`HasAnyRecord`（DB 對應 `EXISTS`）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離 |
+| 3 | **合約測試（contract tests）** ✅ 已落實（2026-07-21） | `AnalysisRecordStoreContractTests` 抽象基底已建立（`JsonlAnalysisRecordStoreContractTests` 為其第一個實作）：同一組案例分別跑在 Jsonl 與未來的 DB 實作上，**DB 實作必須通過與 txt 完全相同的測試**才算完成——一致性由測試強制，不靠 code review 肉眼比對。JSONL 特有的壞行容錯與原子重寫案例留在 `JsonlAnalysisRecordStoreTests`，不進基底 |
+| 4 | **精簡策略單點化**（pre-work #3） | 「無風險日砍範例訊息、留全部數字」目前是 `JsonlAnalysisRecordStore` 的私有方法——規則長在單一實作裡，DB 實作就得複製一份，遲早漂移。抽成共用的 `RecordStorageShaper`（純函數），兩個後端都呼叫同一份規則 |
+| 5 | **同一份 JSON 序列化設定** | DB 的 `*_json` 欄位用與 JSONL 相同的 System.Text.Json 選項與同一批模型類別序列化；列舉存字串（`JsonStringEnumConverter`）、風險等級存中文字串，兩邊逐字一致 |
+| 6 | **匯入後抽樣核對** | JSONL → DB 匯入器跑完後，自動抽 N 天以 `ReadRecent` 分別從兩後端讀回、逐欄位比對，一致才算匯入成功（驗收內建，不靠人工抽查） |
+| 7 | **雙寫過渡期**（`CompositeReportSink`／雙 store） | 切換初期檔案與 DB 同時寫，任何不一致當天就會被發現（而不是檔案停用後才發現 DB 少了東西），穩定後再停檔案端 |
+
+### 現在就能做的準備（DB 未定也不受影響）
+
+> 原第 1 項「檔案保留 90 → 365 天」**已被否決**（2026-07-20 決策：txt 定位為臨時資料庫，
+> 90 天即可，DB 上線時只匯入近 90 天的限制已接受），自清單移除。
+
+| # | 事項 | 狀態 |
+|---|---|---|
+| 1 | **深析結構化結果存進 JSONL**：`DailyAnalysisRecord` 加 `DeepDives` 欄位（`CategoryDeepDive`/`DeepDiveFinding`），`RiskReportService.GenerateAsync` 每類別深析成功後同步寫入 `record.DeepDives`（渲染邏輯不變、報告全文照舊） | ✅ 已完成（2026-07-20）。低風險日恆為空清單（未觸發深析），已有測試覆蓋 |
+| 2 | **紀錄加 `Host` 欄位**：`LogAnalysisService` 新增 `host` 建構參數，未指定時預設 `Environment.MachineName` | ✅ 已完成（2026-07-20） |
+| 3 | **精簡策略抽成共用 `RecordStorageShaper`**：自 `JsonlAnalysisRecordStore` 私有方法抽出至 `Persistence/RecordStorageShaper.cs`（純函數，行為零改變），`Append` 改呼叫它 | ✅ 已完成（2026-07-20），獨立單元測試（`RecordStorageShaperTests`） |
+| 4 | Schema 欄位級定案 | ✅ 已完成 |
+
+驗證：建置零警告，112 個單元測試與 64 項 `--selftest`（當時的批次驗收機制）全數通過。
+
+審查後加固兩項（2026-07-20）：
+- **列舉存字串一致性**：`CategoryDeepDive.Category` 補上 `JsonStringEnumConverter`，與
+  `LogIssueSignature` 及一致性機制 #5 對齊（存 `"Storage"` 非整數），未來 DB 匯入直接對應字串。
+- **精簡策略防漏欄位**：`RecordStorageShaper` 是逐欄位手動複製，「未來加欄位忘了複製 →
+  低風險日靜默掉資料」是真實陷阱（本次加 `Host`/`DeepDives` 時就得手動補）。新增反射式測試
+  把每個頂層欄位設非預設值後比對，漏複製即測試失敗（已實測拿掉一欄會 FAIL）。
+
+**已知覆蓋缺口**：`RiskReportService.GenerateAsync` 內「深析結果寫入 `record.DeepDives`」這段
+接線本身沒有自動化測試（`AIService` 目前是具體類別、未抽介面，缺 mock 基礎設施；新增這層
+mock 對一個 15 行直線邏輯不成比例）——已用 `RecordStorageShaper`／`JsonlAnalysisRecordStore`
+兩層測試涵蓋資料模型的序列化/精簡正確性，接線本身靠程式碼審閱與建置驗證。
+
+### 決策狀態彙整（2026-07-20 第三輪後）
+
+| # | 決策點 | 狀態 |
+|---|---|---|
+| 1 | 檔案保留天數 | ✅ 120 天（2026-07-24 由 90 天調整；txt=臨時資料庫，DB 上線僅匯入近 120 天，已接受） |
+| 2 | 處理狀態追蹤 | ✅ 納入：狀態＋預計完成日＋處理說明＋處理人員（可指派/自動帶入負責人）＋歷程 log |
+| 3 | 主機識別 | ✅ 存 IP（顯示用線索）；**純人工綁定**——輸入/選取舊主機 ID 即合併，`merged_into` 留墓碑；hw_uuid 與程式建議機制已因 VM 環境簡化移除 |
+| 4 | Security 長期保存 | ⏳ 兩步走：先確認抓得到什麼（本機權限＋試點階段），再決定保存政策 |
+| 5 | 自由文字搜尋 | ✅ 不做（欄位主體不明確；主篩選＋Event ID 已涵蓋） |
+| 6 | Web 驗證/細節 | ⏸ 後議（lf_users 表按 AD 假設設計，屆時可改） |
+| 7 | DB 保留年限 | ✅ 統一 `DbRetentionDays`=730（未來三年改 1095）；全表適用含權限異動/處理歷程，到期直接刪；應用層每晚滾動清理（2026-07-20） |
+| 8 | 多 Sentinel 主機歸屬 | ✅ `lf_hosts.netiq_server` 記錄所屬 Sentinel（路由/顯示屬性）；IP 全域唯一維持識別鍵（2026-07-20） |
+| 9 | Jsonl 檔案後端 | ✅ **已退役**（2026-07-24，定案 10）：`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，設成 `Jsonl` 啟動即報錯 |
+| 10 | `--import-history` 匯入器 | ✅ **確定不做**（2026-07-24，定案 10）：沒有服役中的 Jsonl 正式資料需要遷移 |
+| 11 | Schema 升級機制 | ✅ 本輪零 DDL，暫不建機制；方針已定案（定案 13）——未來採自製冪等 DDL，不用 EF Migrations |
 </content>
