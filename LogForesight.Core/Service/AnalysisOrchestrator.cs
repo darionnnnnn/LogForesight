@@ -46,6 +46,17 @@ public class OrchestratorResult
 }
 
 /// <summary>
+/// RunLocalAnalysisAsync／RunNetiqAnalysisAsync 共用的參數集合（12 個原本各自逐一傳遞，
+/// 兩個方法因此暴增到 16/17 個參數）。集中成一個 record 一次建構、貫穿本次執行，
+/// 各方法只在額外需要自己專屬的依賴（如 analysisService／backend）時另外收參數。
+/// </summary>
+internal sealed record AnalysisRunContext(
+    RunRequest Request, AppSettings Settings, RetentionOptions Retention, IRunConsole Console,
+    CancellationToken Ct, EventLogService EventLogService, IssueCaseCoordinator CaseCoordinator,
+    IRiskyEventStore RiskyEventStore, BatchRunRecorder RunRecorder, OrchestratorResult Result,
+    bool UseAi, IRunProgress? Progress);
+
+/// <summary>
 /// 執行輸出的抽象：只抽「輸出去哪裡」，不抽「輸出什麼」——<see cref="AnalysisOrchestrator"/>
 /// 內文保留原本的格式化邏輯（框線、emoji 分段），呼叫 <see cref="WriteLine"/> 取代直接呼叫
 /// <c>Console.*</c>。唯一的實作是 Web 端 adapter（<c>WebRunConsole</c>），落地 NLog／
@@ -360,13 +371,14 @@ public class AnalysisOrchestrator
 
             var yesterday = DateTime.Today.AddDays(-1);
 
+            var runCtx = new AnalysisRunContext(
+                request, settings, retention, console, ct, eventLogService, caseCoordinator,
+                riskyEventStore, runRecorder, result, useAi, progress);
+
             // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料
             if (request.Scope != RunScope.NetiqHosts)
             {
-                await RunLocalAnalysisAsync(
-                    request, settings, retention, console, ct, analysisService, historyService, eventLogService,
-                    caseCoordinator, riskyEventStore, runRecorder, currentHost, currentHostId, yesterday, result, useAi,
-                    progress);
+                await RunLocalAnalysisAsync(runCtx, analysisService, historyService, currentHost, currentHostId, yesterday);
             }
 
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：本機分析完成後，
@@ -375,10 +387,7 @@ public class AnalysisOrchestrator
             if (request.Scope != RunScope.LocalOnly)
             {
                 ct.ThrowIfCancellationRequested();
-                await RunNetiqAnalysisAsync(
-                    request, settings, backend, console, ct, hostStore, sentinelStore, eventLogService, aiService,
-                    suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result, useAi,
-                    progress);
+                await RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService);
             }
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
@@ -450,12 +459,12 @@ public class AnalysisOrchestrator
     }
 
     private async Task RunLocalAnalysisAsync(
-        RunRequest request, AppSettings settings, RetentionOptions retention, IRunConsole console, CancellationToken ct,
-        LogAnalysisService analysisService, IAnalysisRecordStore historyService, EventLogService eventLogService,
-        IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, BatchRunRecorder runRecorder,
-        string currentHost, long currentHostId, DateTime yesterday, OrchestratorResult result, bool useAi,
-        IRunProgress? progress)
+        AnalysisRunContext ctx, LogAnalysisService analysisService, IAnalysisRecordStore historyService,
+        string currentHost, long currentHostId, DateTime yesterday)
     {
+        var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
+            runRecorder, result, useAi, progress) = ctx;
+
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
@@ -591,12 +600,12 @@ public class AnalysisOrchestrator
     }
 
     private async Task RunNetiqAnalysisAsync(
-        RunRequest request, AppSettings settings, StorageBackend backend, IRunConsole console, CancellationToken ct,
-        IHostStore hostStore, ISentinelStore sentinelStore, EventLogService eventLogService, AIService aiService,
-        ISuppressionStore suppressionStore, RiskReportService reportService, BatchRunRecorder runRecorder,
-        IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, RetentionOptions retention,
-        OrchestratorResult result, bool useAi, IRunProgress? progress)
+        AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, ISentinelStore sentinelStore,
+        AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService)
     {
+        var (request, _, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
+            runRecorder, result, useAi, progress) = ctx;
+
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
         // NetiqHosts 範圍（Phase 3 手動觸發指定主機）：篩到只剩請求的 HostId，其餘略過不查、不警告
