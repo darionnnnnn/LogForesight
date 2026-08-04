@@ -125,11 +125,15 @@ public class AnalysisOrchestrator
             catch (Exception ex)
             {
                 Log.Warn(ex, "執行紀錄儲存初始化失敗（不影響本次分析）：{0}", ex.Message);
+                // 可見回報（docs/FEEDBACK-8-PLAN.md #3）：原本只寫 log，這趟執行會在執行監控頁
+                // 整筆「消失」（不是顯示失敗，是查不到發生過），使用者只能翻 log 檔才查得到
+                console.WriteLine($"  ⚠ 執行紀錄儲存初始化失敗（不影響本次分析，但這趟執行本次不會出現在執行監控）：{ex.Message}");
             }
 
             // 把取消權杖交給 recorder：優雅停止時 OperationCanceledException 會直接離開本 using 範圍，
             // Dispose 據此把這次執行回填成「已停止」而不是「異常中斷」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
-            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger, ct);
+            using var runRecorder = new BatchRunRecorder(batchRunStore, currentHost, request.Args, request.Trigger, ct,
+                onRegistrationFailed: msg => console.WriteLine($"  ⚠ {msg}"));
             runRecorder.Milestone($"批次啟動（版本 {typeof(AnalysisOrchestrator).Assembly.GetName().Version}）");
 
             var eventLogService = new EventLogService();
@@ -458,7 +462,11 @@ public class AnalysisOrchestrator
 
         if (missingDates.Count == 0)
         {
-            console.WriteLine($"\n{yesterday:yyyy-MM-dd} 已有分析紀錄，跳過（同一天重複執行不會產生重複資料）。");
+            // 白天手動執行時這是最常見的路徑（昨晚排程已分析過昨天）：措辭刻意講清楚
+            // 「本機無需回補、不是本機未執行」（docs/FEEDBACK-8-PLAN.md #3），
+            // 避免與「本機根本沒被排進這次執行」混淆
+            console.WriteLine($"\n本機近 {lookbackDays} 天皆已有分析紀錄，本次無需回補（非未執行；" +
+                               $"最新至 {yesterday:yyyy-MM-dd}，同一天重複執行不會產生重複資料）。");
             Log.Info("{Date:yyyy-MM-dd} 已有分析紀錄，本次跳過", yesterday);
             return;
         }
