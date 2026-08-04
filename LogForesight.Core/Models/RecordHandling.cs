@@ -104,6 +104,11 @@ public static class HandlingStatuses
     {
         Open => Open,
         InProgress => InProgress,
+        // 觀察中（docs/FEEDBACK-8-PLAN.md #4）：對外三態收斂為「處理中」——有人在管，不是有結論。
+        // 日層級推導（DayHandlingDerivation.Derive）已把 observing 映成 in_progress，正常路徑
+        // 走不到這個分支；這裡是防禦——沒有它，任何未來漏進來的 observing 會掉進 default
+        // 被誤歸「已處理」，觀察中的日子就從待辦統計裡消失了
+        IssueHandlingStatuses.Observing => InProgress,
         _ => Resolved
     };
 }

@@ -305,6 +305,10 @@ public class HandlerWorkloadDto
     public long UserId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
 
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）——
+    /// 格式化本身是前端的事，這裡只補齊素材</summary>
+    public string Account { get; set; } = string.Empty;
+
     /// <summary>被查看的使用者已停用時仍顯示交辦紀錄（歷史事實不因停用消失），前端後綴「（已停用）」</summary>
     public bool Active { get; set; }
 

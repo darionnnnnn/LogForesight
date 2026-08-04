@@ -278,7 +278,9 @@ public class HandlingService
             }
             else
             {
-                AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatus, status, trimmedNote, occurredAt);
+                // 觀察中的歷程自動補「（觀察至 yyyy-MM-dd）」——歷程列沒有 DueDate 欄位（#4）
+                AppendIssueLog(host, date, issueKey, issueLabel, HandlingActions.IssueStatus, status,
+                    IssueHandlingStatuses.ComposeLogNote(status, trimmedNote, dueDate), occurredAt);
 
                 _issueStore.Save(new IssueHandling
                 {
@@ -652,6 +654,7 @@ public class HandlingService
         {
             UserId = user.UserId,
             DisplayName = user.DisplayName,
+            Account = user.Account,
             Active = user.Active,
             OpenCaseCount = caseItems.Count,
             UnresolvedDayCount = dayItems.Count(d => HandlingStatuses.Unresolved.Contains(d.DerivedStatus)),

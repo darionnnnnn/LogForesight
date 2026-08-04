@@ -116,4 +116,18 @@ public static class IssueHandlingStatuses
     /// <summary>觀察期滿、問題仍在——回到「處理中逾期」的既有通道現身，不是新狀態</summary>
     public static bool IsObservationExpired(string status, DateTime? dueDate, DateTime today) =>
         status == Observing && dueDate.HasValue && dueDate.Value.Date < today.Date;
+
+    /// <summary>
+    /// 歷程列的說明文字：觀察中時自動補「（觀察至 yyyy-MM-dd）」（docs/FEEDBACK-8-PLAN.md #4）——
+    /// 歷程列（RecordHandlingLog）沒有 DueDate 欄位，不補的話事後翻歷程看不出當初訂的觀察終點。
+    /// 只動歷程、不動 <see cref="IssueHandling.Note"/> 本身（那一列有 DueDate 欄位，畫面上
+    /// 已用徽章顯示，寫進 Note 會重複）。三個歷程寫入點（Web 單日標記、案件同步、批次掛接）
+    /// 共用這一個出口。
+    /// </summary>
+    public static string? ComposeLogNote(string status, string? note, DateTime? dueDate)
+    {
+        if (status != Observing || !dueDate.HasValue) return note;
+        var suffix = $"（觀察至 {dueDate.Value:yyyy-MM-dd}）";
+        return string.IsNullOrEmpty(note) ? suffix : $"{note}{suffix}";
+    }
 }

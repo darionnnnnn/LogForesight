@@ -9,7 +9,7 @@
 
 import { api } from '../core/api.js';
 import { renderLoading, renderTable, statCard } from '../core/ui.js';
-import { formatNumber, riskBadge } from '../core/format.js';
+import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
 
 const root = document.getElementById('handler-detail');
 const userId = Number(root.dataset.userId);
@@ -38,7 +38,8 @@ function renderHeader(data) {
 
     const title = document.createElement('div');
     title.className = 'fs-5 fw-semibold';
-    title.textContent = data.active ? data.displayName : `${data.displayName}（已停用）`;
+    const name = formatUserName(data.displayName, data.account);
+    title.textContent = data.active ? name : `${name}（已停用）`;
     body.appendChild(title);
 
     if (!data.active) {

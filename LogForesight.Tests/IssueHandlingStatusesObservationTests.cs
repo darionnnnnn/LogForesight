@@ -52,4 +52,41 @@ public class IssueHandlingStatusesObservationTests
         Assert.False(IssueHandlingStatuses.IsClosed(IssueHandlingStatuses.Observing));
         Assert.Contains(IssueHandlingStatuses.Observing, IssueHandlingStatuses.All);
     }
+
+    /// <summary>對外三態把 observing 收斂為處理中——防禦性映射：沒有它的話 observing 掉進
+    /// default 被誤歸「已處理」，觀察中的日子就從待辦統計裡消失了</summary>
+    [Fact]
+    public void ExternalOf_觀察中收斂為處理中而非已處理()
+    {
+        Assert.Equal(HandlingStatuses.InProgress, HandlingStatuses.ExternalOf(IssueHandlingStatuses.Observing));
+    }
+
+    // ── 歷程說明的觀察至後綴（ComposeLogNote）───────────────────────────────
+
+    [Fact]
+    public void ComposeLogNote_觀察中時補觀察至後綴()
+    {
+        var result = IssueHandlingStatuses.ComposeLogNote(
+            IssueHandlingStatuses.Observing, "先看幾天", new DateTime(2026, 8, 11));
+
+        Assert.Equal("先看幾天（觀察至 2026-08-11）", result);
+    }
+
+    [Fact]
+    public void ComposeLogNote_觀察中且無說明時只留觀察至()
+    {
+        var result = IssueHandlingStatuses.ComposeLogNote(
+            IssueHandlingStatuses.Observing, null, new DateTime(2026, 8, 11));
+
+        Assert.Equal("（觀察至 2026-08-11）", result);
+    }
+
+    [Fact]
+    public void ComposeLogNote_非觀察中狀態原樣回傳不加後綴()
+    {
+        Assert.Equal("已聯絡機房", IssueHandlingStatuses.ComposeLogNote(
+            IssueHandlingStatuses.InProgress, "已聯絡機房", new DateTime(2026, 8, 11)));
+        Assert.Null(IssueHandlingStatuses.ComposeLogNote(
+            IssueHandlingStatuses.Resolved, null, null));
+    }
 }

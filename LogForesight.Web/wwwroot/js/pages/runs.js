@@ -592,27 +592,34 @@ function applyScheduleStatus(status) {
 
 const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析' };
 
-/** 執行中且有量化進度（total>0）畫百分比進度條；剛啟動／清理階段（total=0）畫不定進度；
- * 閒置時整組隱藏。（docs/FEEDBACK-8-PLAN.md #2） */
+/** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
+ * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
+ * （docs/FEEDBACK-8-PLAN.md #2） */
 function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
+    const text = document.getElementById('schedule-progress-text');
 
     if (!status.isRunning) {
         wrap.classList.add('d-none');
+        text.classList.add('d-none');
         return;
     }
     wrap.classList.remove('d-none');
+    text.classList.remove('d-none');
 
     if (status.progressTotal > 0) {
         const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
+        const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal} 主機日`;
         bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
         bar.style.width = `${pct}%`;
-        bar.title = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal}`;
+        bar.title = label;
+        text.textContent = label;
     } else {
         bar.classList.add('progress-bar-striped', 'progress-bar-animated');
         bar.style.width = '100%';
         bar.title = '準備中…';
+        text.textContent = '準備中…';
     }
 }
 

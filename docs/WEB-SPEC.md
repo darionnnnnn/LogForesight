@@ -513,7 +513,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    （「將刪除規則 custom-xxx 及其 3 筆抑制設定」，不是「確定嗎？」）
 4. 表單錯誤顯示在欄位旁（Bootstrap validation style），API 錯誤 message 直接顯示，不轉譯
 5. 空狀態要有指引（「尚無資料。請先於『CSV 匯入』建立使用者與主機」），不留白畫面
-6. 載入中一律有視覺回饋（表格 skeleton 列或 spinner），按鈕送出後 disable 防連點
+6. 載入中一律有視覺回饋（表格 skeleton 列或 spinner），按鈕送出後 disable 防連點。
+   **等待動畫只有三種出口（2026-08-04，docs/FEEDBACK-8-PLAN.md #1），不要再長出第四種寫法**：
+   整塊清單載入 → `ui.js renderLoading()`（骨架列）；按鈕忙碌 → `withBusy()`（按鈕內
+   spinner＋「⋯中」）；其餘區塊內等待（精靈步驟、輪詢中的狀態文字等）→ `renderSpinner()`
+   （spinner＋文字，輪詢更新時只換文字節點、不重建 spinner 避免動畫重置閃爍）。
+   聊天泡泡的三點跳動（`.lf-typing`）是對話情境的既有專屬樣式，不在此收斂範圍
 7. **每頁筆數可選（2026-07-29）**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
    預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
    「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
@@ -536,6 +541,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     名稱／摘要，而那些列未必在目前這一頁，只能靠勾選當下存下的物件；翻頁／篩選不清空，僅
     「清除選取」與套用成功後清空。表頭全選只作用於目前這一頁（伺服器端分頁沒有「全部」的概念），
     以 `indeterminate` 呈現「本頁部分已選」。首見於主機頁批次改群組，供之後其他清單頁比照。
+12. **使用者名稱欄位固定顯示「顯示名稱(帳號)」（2026-08-04，docs/FEEDBACK-8-PLAN.md #6）**：
+    半形括號；前端唯一出口 `format.js formatUserName()`（查無顯示名稱退回帳號），後端組字串的
+    出口（TriggerText 之類「誰做的」敘述句）走 `NameFormat.FormatAccount()`。DTO 只補
+    displayName／account 素材、不在後端組顯示字串（格式是前端的事）；查無對應使用者
+    （登入失敗打錯帳號、serverAdmin 本地帳號、已刪除帳號）一律優雅退回只顯示帳號。
+    **例外**：使用者管理頁維持「帳號／顯示名稱」兩欄（表格語意已清楚，不合併）；右上角目前
+    使用者顯示名稱為主、完整格式放 title（空間有限）；NetIQ 維護頁更新者維持帳號
+    （`NetiqOptions` 是直接回傳的 Core 儲存模型，不為單一欄位重造零加值 DTO 複本）。
 
 ## 9. 頁面規格
 
@@ -600,6 +613,12 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   API：`GET api/records/by-issue?...&sort=severity|hostCount|dayCount|totalCount|lastSeen`、
   `GET api/handling/issue-cases/preview?source=&eventId=&from=&to=`（modal 開啟時載入受影響主機預覽）、
   `POST api/handling/issue-cases/bulk-assign`（`Assign`）。
+  **依問題視角的風險層級 chips 同時過濾問題嚴重度（2026-08-04，docs/FEEDBACK-8-PLAN.md #5）**：
+  chips 篩的本是日風險等級（記錄層），但此視角一列一個問題、顯示的「嚴重度」是問題層級——
+  高風險日裡本就可能同時有低嚴重度問題，預設「高＋中」下清單仍會出現「低」，觀感是篩選失效。
+  `SearchByIssue` 在既有日風險過濾之上**疊加**同一組選擇映射到問題嚴重度（高→High＋Critical
+  〔三級化前的歷史資料〕、中→Medium、低→Low），只讓結果更窄；未勾任何等級＝不過濾，行為不變。
+  依主機／依日期視角不動——它們的高/中/低欄位是日風險計數，語意本來就對。
 
 ### 9.3 `/records/{hostId}/{date}` 風險日詳情
 - 區塊：結構化層（重點問題含趨勢註記、關聯訊號、深入分析、資料完整性申報）、
@@ -702,8 +721,20 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
   - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
     `in_progress`，日狀態推導（`DayHandlingDerivation`）即提前進入 `in_progress`，不必等到有問題結案。
+  - **問題層級狀態再新增 `observing`（觀察中，2026-08-04，docs/FEEDBACK-8-PLAN.md #4）**：處理人判斷
+    「先看幾天再說」——非結案類，`DueDate` 在此狀態下代表「觀察至」（沿用同一欄位，不另開一欄；
+    UI 輸入觀察天數 1~90、預設 7，換算成日期送出，伺服器端驗證同一範圍）。觀察期間該問題不進待辦
+    （日推導視同 `in_progress`）；**到期語意讀取時推導、不跑背景作業**：到期＝視同處理中且逾期，
+    以既有逾期通道現身（`IssueHandlingStatuses.IsObservationActive/IsObservationExpired` 單點定義）。
+    觀察中只在問題層級提供（日層級值域不含它——觀察的對象是「這個問題」不是「這一天」）；案件狀態
+    為 observing 時批次掛接的新日子自動繼承觀察狀態與觀察至日期；歷程 Note 自動補「（觀察至
+    yyyy-MM-dd）」（`ComposeLogNote`——歷程列沒有 DueDate 欄位）。**與告警抑制（RuleSuppression）
+    的分工**：抑制是規則×主機層級、影響批次分析的告警呈現與日風險拉抬；觀察是問題×主機層級、
+    只影響 Web 的待辦／處理狀態呈現，**不動分析、不動風險等級、不動報告**——事件照常偵測與寫入，
+    這正是「觀察」的意義（要看它還發不發生）。兩者職責不重疊。
   - **逾期語意兩層並列**（2026-07-27）：日層級 `RecordHandling.DueDate` 過期且未結案，**或**任一問題層級
-    「處理中」的 `DueDate` 過期，該風險日即算逾期——問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
+    「處理中」的 `DueDate` 過期**或「觀察中」的觀察至日期過期**（2026-08-04），該風險日即算逾期——
+    問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註（2026-07-27 統一）**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
   `.lf-ai-block`（左邊框＋淡底）標出——詳情頁頂部的白話總覽四段（headline／狀況／趨勢／建議處置，
@@ -1071,6 +1102,15 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
+- **執行進度條（2026-08-04，docs/FEEDBACK-8-PLAN.md #2）**：狀態卡在執行中顯示進度條＋
+  「本機分析／NetIQ 機房分析　x / y 主機日」文字；粒度為主機日，經 Core 的 `IRunProgress`
+  介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
+  ——分母隨掃描逐步變大、只增不減），Web 端 `WebRunProgress` 落地 `SchedulerRunState`，
+  status API 帶 `progressPhase/progressDone/progressTotal`。total=0（清理／掃描階段）顯示
+  不定進度動畫。同輪把 `NetiqPipelineService` 整支從 `Console.WriteLine` 改走 `IRunConsole`
+  ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
+  其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
+  自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
 - 總表（**每日一列彙總**：成功/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
   單日主機明細（點日期下鑽的逐主機狀態）、單次執行詳情（統計＋逐條 log，等級篩選、exception 展開）、
   異常彙總（Error/Fatal 按訊息聚合）。

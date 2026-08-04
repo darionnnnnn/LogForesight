@@ -832,7 +832,7 @@ schtasks 或安裝其他執行檔：
 | `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageFactory` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/FEEDBACK-8-PLAN.md #7 |
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。

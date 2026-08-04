@@ -478,9 +478,12 @@ public class AnalysisOrchestrator
         {
             // 白天手動執行時這是最常見的路徑（昨晚排程已分析過昨天）：措辭刻意講清楚
             // 「本機無需回補、不是本機未執行」（docs/FEEDBACK-8-PLAN.md #3），
-            // 避免與「本機根本沒被排進這次執行」混淆
-            console.WriteLine($"\n本機近 {lookbackDays} 天皆已有分析紀錄，本次無需回補（非未執行；" +
-                               $"最新至 {yesterday:yyyy-MM-dd}，同一天重複執行不會產生重複資料）。");
+            // 避免與「本機根本沒被排進這次執行」混淆。Milestone 落地——NLog target 只收
+            // Warn 以上，不記 Milestone 的話這句話不會出現在執行詳情，使用者事後查不到
+            var skipMessage = $"本機近 {lookbackDays} 天皆已有分析紀錄，本次無需回補（非未執行；" +
+                              $"最新至 {yesterday:yyyy-MM-dd}，同一天重複執行不會產生重複資料）。";
+            console.WriteLine($"\n{skipMessage}");
+            runRecorder.Milestone(skipMessage);
             Log.Info("{Date:yyyy-MM-dd} 已有分析紀錄，本次跳過", yesterday);
             return;
         }

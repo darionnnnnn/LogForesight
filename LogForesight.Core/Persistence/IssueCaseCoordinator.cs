@@ -159,7 +159,8 @@ public class IssueCaseCoordinator
             _handlingLog.AppendLog(new RecordHandlingLog
             {
                 HostName = hostName, Date = date, Status = effectiveStatus, IssueKey = issueKey, IssueLabel = issueLabel,
-                Note = effectiveNote, ActorId = actorId, ActorAccount = actorAccount,
+                Note = IssueHandlingStatuses.ComposeLogNote(effectiveStatus, effectiveNote, effectiveDueDate),
+                ActorId = actorId, ActorAccount = actorAccount,
                 Action = action, CreatedAt = occurredAt
             });
         }
@@ -213,7 +214,8 @@ public class IssueCaseCoordinator
             _handlingLog.AppendLog(new RecordHandlingLog
             {
                 HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
-                Note = openCase.Note, ActorId = null, ActorAccount = string.Empty,
+                Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
+                ActorId = null, ActorAccount = string.Empty,
                 Action = HandlingActions.CaseAttach, CreatedAt = occurredAt
             });
 
