@@ -65,6 +65,14 @@ public class AiSettings
     public string BaseUrl { get; set; } = "http://localhost:8080";
 
     /// <summary>
+    /// AI 是否已設定（BaseUrl 有值）——批次／排程執行以此判斷要不要呼叫 AI，未設定時
+    /// 自動短路成統計模式，不必逐一嘗試打逾時（docs/FEEDBACK-7-PLAN.md）。
+    /// 呼叫前提：本值需在 <c>RuntimeSettingsResolver.ApplySystemSettingsOverrides</c> 套用
+    /// DB 覆寫之後讀取才是事實——DB 存過但刻意清空 BaseUrl 時會覆寫成空字串，即「刻意停用」。
+    /// </summary>
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl);
+
+    /// <summary>
     /// 需驗證的 API 端點所需金鑰（明碼，僅存在於執行期記憶體），發送時以 Authorization: Bearer 帶入。
     /// 地端無驗證的端點留空即可。**唯一事實來源是「系統管理 > 設定」頁**（<see cref="SystemSettings.AiApiKeyEnc"/>
     /// 解密後填入），appsettings.json 不提供這個欄位。

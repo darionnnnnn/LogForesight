@@ -76,6 +76,8 @@ public class ScheduleController : ControllerBase
     {
         var options = _optionsStore.Get();
 
+        var lastOutcome = _runState.LastOutcome;
+
         return ApiResponse<ScheduleStatusDto>.Ok(new ScheduleStatusDto
         {
             IsRunning = _runState.IsRunning,
@@ -84,7 +86,11 @@ public class ScheduleController : ControllerBase
             LatestMessage = _runState.LatestMessage,
             CanStop = _runState.IsRunning,
             ScheduleEnabled = options.Enabled,
-            NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null
+            NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
+            LastRunSuccess = lastOutcome?.Success,
+            LastRunMessage = lastOutcome?.Message,
+            LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
+            LastRunEndedAt = lastOutcome?.EndedAt
         });
     }
 

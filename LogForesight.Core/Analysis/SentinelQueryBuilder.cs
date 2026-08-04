@@ -93,8 +93,8 @@ public static class SentinelQueryBuilder
     internal const int MinPrefixOctets = 2;
 
     /// <summary>
-    /// 把使用者輸入的網段字串（前綴「10.1.2」或 CIDR「10.1.2.0/24」）正規化成
-    /// Lucene 前綴萬用字元查詢（<c>repip:10.1.2.*</c>）。純格式驗證，不含任何比對
+    /// 把使用者輸入的網段字串（前綴「192.168.0」或 CIDR「192.168.0.0/24」）正規化成
+    /// Lucene 前綴萬用字元查詢（<c>repip:192.168.0.*</c>）。純格式驗證，不含任何比對
     /// Sentinel 實際資料的邏輯。不帶 CIDR 的完整四段 IP **不接受**，理由見
     /// <see cref="NormalizeSubnetPrefix"/>。
     /// </summary>
@@ -107,7 +107,7 @@ public static class SentinelQueryBuilder
     }
 
     /// <summary>
-    /// 正規化網段輸入為前綴八位組陣列的字串形式（如「10.1.2」，供
+    /// 正規化網段輸入為前綴八位組陣列的字串形式（如「192.168.0」，供
     /// <see cref="BuildSubnetDiscoveryFilter"/> 接上 <c>.*</c> 組成前綴萬用字元查詢）。
     /// 只允許數字與點——**天然免疫 Lucene 注入**，不需要另外跳脫特殊字元，因為根本不存在
     /// 會被當成語法的字元能通過這道白名單。
@@ -117,8 +117,8 @@ public static class SentinelQueryBuilder
     /// 語法不合法，若改成精確比對又是另一種查詢語意），需要查單台主機請用主機頁/CSV。
     ///
     /// **public**（不是 internal）：Web 層（探索 client／精靈顯示）需要正規化後的人看字串
-    /// 本身（不只是組好的 filter），例如涵蓋範圍說明文字要顯示「10.1.2.*」而非原始輸入
-    /// 「10.1.2.0/24」，這是合法的獨立使用情境，不是內部實作細節外洩。
+    /// 本身（不只是組好的 filter），例如涵蓋範圍說明文字要顯示「192.168.0.*」而非原始輸入
+    /// 「192.168.0.0/24」，這是合法的獨立使用情境，不是內部實作細節外洩。
     ///
     /// **例外訊息刻意不帶 paramName**：這些訊息是設計來原樣顯示給管理員的（Web 層
     /// <c>NetiqDiscoveryException</c> 直接轉傳 <c>ex.Message</c>），而
@@ -131,7 +131,7 @@ public static class SentinelQueryBuilder
         var trimmed = subnetInput?.Trim() ?? string.Empty;
         if (trimmed.Length == 0)
         {
-            throw new ArgumentException("請輸入網段（如 10.1.2 或 10.1.2.0/24）。");
+            throw new ArgumentException("請輸入網段（如 192.168.0 或 192.168.0.0/24）。");
         }
 
         // CIDR：只接受 /16、/24（能對齊八位組邊界才轉得成前綴；/8 太籠統會被下面的量級守則
@@ -183,14 +183,14 @@ public static class SentinelQueryBuilder
             // 明確拒絕比默默截成 /24 安全，使用者原意可能真的只想查一台
             throw new ArgumentException(
                 $"「{subnetInput}」是完整的單一 IP，不是網段——查單一台主機請用主機頁或 CSV 匯入；" +
-                "要掃描它所在的網段請改輸入前三段（如 10.1.2 或 10.1.2.0/24）。");
+                "要掃描它所在的網段請改輸入前三段（如 192.168.0 或 192.168.0.0/24）。");
         }
 
         if (parsed.Count < MinPrefixOctets)
         {
             throw new ArgumentException(
                 $"網段太籠統：「{subnetInput}」只有 {parsed.Count} 段，至少需要 {MinPrefixOctets} 段" +
-                "（如 10.1），避免掃描範圍等同全站。");
+                "（如 192.168），避免掃描範圍等同全站。");
         }
 
         return string.Join('.', parsed);

@@ -148,6 +148,11 @@ public class SchedulerHostedService : BackgroundService
 
         _ = Task.Run(async () =>
         {
+            // 給使用者「看得見」的失敗回饋（docs/FEEDBACK-7-PLAN.md）：原本失敗只寫 NLog，
+            // 狀態 API／畫面只在 IsRunning=true 時顯示訊息，執行一旦炸掉，使用者看到的最後
+            // 印象停留在「已開始執行」的 toast，只能翻 log 檔才知道其實失敗了。
+            // null＝這次沒有真的開始過（mutex 逾時），不覆蓋上一筆真正跑過的結果。
+            RunOutcome? outcome = null;
             try
             {
                 var acquired = await _mutexGate.RunExclusiveAsync(async () =>
@@ -164,6 +169,9 @@ public class SchedulerHostedService : BackgroundService
 
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
+
+                    outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
+                        effectiveRequest.Trigger ?? "manual", DateTime.Now);
                 }, MutexTimeout);
 
                 if (!acquired)
@@ -177,10 +185,11 @@ public class SchedulerHostedService : BackgroundService
                 // orchestrator 內部已有全域 catch，會走到這裡的是執行環境層級的意外（儲存初始化失敗等）
                 Log.Error(ex, "觸發來源 {Trigger} 的執行發生未預期錯誤", effectiveRequest.Trigger);
                 startSignal.TrySetResult(false);
+                outcome = new RunOutcome(false, ex.Message, effectiveRequest.Trigger ?? "manual", DateTime.Now);
             }
             finally
             {
-                _runState.EndRun();
+                _runState.EndRun(outcome);
             }
         });
 

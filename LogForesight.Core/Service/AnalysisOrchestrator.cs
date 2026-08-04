@@ -139,6 +139,19 @@ public class AnalysisOrchestrator
             var aiService = new AIService(settings.Ai, dumper);
             var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
 
+            // AI 是否已設定（docs/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
+            // 照常執行，只是不呼叫 AI），不再逐日嘗試打逾時再降級——那樣會讓整晚的排程被逾時
+            // ×重試拖得又慢又沒意義。settings.Ai 在呼叫本方法前已套用過 DB 覆寫
+            // （RuntimeSettingsResolver.ApplySystemSettingsOverrides，見呼叫端），此處讀到的
+            // BaseUrl 就是本次執行的事實值。
+            var useAi = settings.Ai.IsConfigured;
+            if (!useAi)
+            {
+                console.WriteLine("\nℹ AI 未設定：本次以統計模式執行（規則分類、趨勢比對、跨 log 關聯照常進行，" +
+                                   "僅白話摘要與體檢敘事從缺；設定「系統管理 > 設定 > AI 服務」後下次執行自動恢復）。");
+                runRecorder.Milestone("AI 未設定，本次以統計模式執行");
+            }
+
             // 登記本機於主機清單（docs/WEB-SPEC.md §2.1 Phase 1）：Web 的儀表板要能指出
             // 「哪些主機已經好幾天沒回報了」，而那個判斷需要一筆「這台主機最近何時執行過」的紀錄。
             // 同時取回主機 PK——那是分析紀錄與主機的關聯鍵（docs/HISTORY.md），
@@ -345,7 +358,7 @@ public class AnalysisOrchestrator
             {
                 await RunLocalAnalysisAsync(
                     request, settings, retention, console, ct, analysisService, historyService, eventLogService,
-                    caseCoordinator, riskyEventStore, runRecorder, currentHost, currentHostId, yesterday, result);
+                    caseCoordinator, riskyEventStore, runRecorder, currentHost, currentHostId, yesterday, result, useAi);
             }
 
             // 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
@@ -356,7 +369,7 @@ public class AnalysisOrchestrator
                 ct.ThrowIfCancellationRequested();
                 await RunNetiqAnalysisAsync(
                     request, settings, dataRoot, console, ct, hostStore, sentinelStore, eventLogService, aiService,
-                    suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result);
+                    suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result, useAi);
             }
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
@@ -364,7 +377,7 @@ public class AnalysisOrchestrator
             {
                 console.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
                 var checkupStopwatch = Stopwatch.StartNew();
-                var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays, settings.Analysis.ServerDescription);
+                var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays, settings.Analysis.ServerDescription, useAi: useAi);
 
                 if (!checkup.Completed)
                 {
@@ -434,7 +447,7 @@ public class AnalysisOrchestrator
         RunRequest request, AppSettings settings, RetentionOptions retention, IRunConsole console, CancellationToken ct,
         LogAnalysisService analysisService, IAnalysisRecordStore historyService, EventLogService eventLogService,
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, BatchRunRecorder runRecorder,
-        string currentHost, long currentHostId, DateTime yesterday, OrchestratorResult result)
+        string currentHost, long currentHostId, DateTime yesterday, OrchestratorResult result, bool useAi)
     {
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
@@ -504,7 +517,8 @@ public class AnalysisOrchestrator
 
         if (missingDates.Count > 1)
         {
-            console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（每天皆完整 AI 分析，由最舊到最新，後面的日期能參照前面累積的歷史）。");
+            var aiClause = useAi ? "每天皆完整 AI 分析，" : "統計模式（AI 未設定），";
+            console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
             console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
         }
 
@@ -515,12 +529,12 @@ public class AnalysisOrchestrator
             // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
             ct.ThrowIfCancellationRequested();
 
-            console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（含 AI 判讀）...");
+            console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
             var dayStopwatch = Stopwatch.StartNew();
 
             var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
             var dataIncomplete = scanResult.IsDateIncomplete(date);
-            var record = await analysisService.AnalyzeDayAsync(date, logs, historyDays: TrendWindowDays,
+            var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
                 dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
             result.LocalResults.Add(record);
 
@@ -555,7 +569,8 @@ public class AnalysisOrchestrator
             runRecorder.RecordDayAnalyzed();
 
             // AiAnalyzed=false 有兩種意義：低風險日「刻意不呼叫」（正常）與呼叫失敗的降級（異常）。
-            if (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low)
+            // useAi=false（AI 未設定）時這天本來就不會呼叫 AI，不該被記成「AI 呼叫失敗」。
+            if (useAi && (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low))
             {
                 runRecorder.RecordAiCall(record.AiAnalyzed);
             }
@@ -592,7 +607,7 @@ public class AnalysisOrchestrator
         IHostStore hostStore, ISentinelStore sentinelStore, EventLogService eventLogService, AIService aiService,
         ISuppressionStore suppressionStore, RiskReportService reportService, BatchRunRecorder runRecorder,
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, RetentionOptions retention,
-        OrchestratorResult result)
+        OrchestratorResult result, bool useAi)
     {
         var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
 
@@ -632,7 +647,7 @@ public class AnalysisOrchestrator
             var netiqPipeline = new NetiqPipelineService(
                 settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator,
-                riskyEventStore, retention.RiskyEventRetentionDays);
+                riskyEventStore, retention.RiskyEventRetentionDays, useAi);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

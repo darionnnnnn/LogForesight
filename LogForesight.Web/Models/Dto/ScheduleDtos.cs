@@ -25,7 +25,10 @@ public class SaveScheduleOptionsRequest
     public bool DebugDump { get; set; }
 }
 
-/// <summary>docs/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻</summary>
+/// <summary>docs/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻。
+/// LastRun* 系列（docs/FEEDBACK-7-PLAN.md）：閒置時顯示「上次執行到底成不成功」，
+/// 不然失敗只留在 log 檔，使用者只看過「已開始執行」的 toast 就再也沒有回饋。
+/// 站台重啟後 LastRun* 全部為 null（行程內狀態），完整歷史請查執行總表。</summary>
 public class ScheduleStatusDto
 {
     public bool IsRunning { get; set; }
@@ -35,6 +38,10 @@ public class ScheduleStatusDto
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }
+    public bool? LastRunSuccess { get; set; }
+    public string? LastRunMessage { get; set; }
+    public string? LastRunTriggerText { get; set; }
+    public DateTime? LastRunEndedAt { get; set; }
 }
 
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/WEB-SCHEDULER-PLAN.md §1.4.4，複用

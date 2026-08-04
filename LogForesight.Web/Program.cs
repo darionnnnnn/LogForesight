@@ -47,6 +47,15 @@ try
     // ── 組態：全部集中在強型別的 WebAppSettings（§5）────────────────────────
     var settings = builder.Configuration.Get<WebAppSettings>() ?? new WebAppSettings();
 
+    // ConfigurationBinder 綁不出 Ai:ExtraRequestFields（Dictionary<string, JsonElement>）——
+    // 綁出來的元素是 default(JsonElement)（ValueKind=Undefined），AIService 建構子對其呼叫
+    // GetRawText() 會丟例外，導致排程／立即執行在分析開始前就整個中止（docs/FEEDBACK-7-PLAN.md）。
+    // 改用 AiExtraFieldsLoader 直接重讀該節點；兩份設定檔皆無節點時回復型別預設值，
+    // 避免沿用 binder 產生的壞值。
+    settings.Ai.ExtraRequestFields =
+        AiExtraFieldsLoader.Load(builder.Environment.ContentRootPath, builder.Environment.EnvironmentName)
+        ?? new AiSettings().ExtraRequestFields;
+
     // 開發／測試環境：DataRoot 未明確指定時，改用「相對於本站台輸出目錄推算出的批次輸出目錄」，
     // 不再寫死絕對路徑（見 appsettings.Development.json 的說明）。這樣不綁使用者名稱，
     // 也會自動跟著 Debug/Release 與 TFM 變動。開發者若在設定檔明確填了 DataRoot，則尊重其值、不推算。

@@ -94,6 +94,17 @@ public class AIService
             _extraRequestFields = new JsonObject();
             foreach (var (key, value) in settings.ExtraRequestFields)
             {
+                // 防禦組態綁定層留下的空值：ASP.NET Core 的 IConfiguration binder 綁不出
+                // JsonElement（沒有可寫屬性、無 TypeConverter），綁到這個型別的欄位時只能
+                // 產生 default(JsonElement)（ValueKind=Undefined）。對它呼叫 GetRawText()
+                // 會丟 InvalidOperationException，略過即可——正常來源（JsonSerializer 反
+                // 序列化）不會產生 Undefined。
+                if (value.ValueKind == JsonValueKind.Undefined)
+                {
+                    Log.Warn("[AI] ExtraRequestFields 欄位 {Key} 是空值（組態綁定層產生，可能是 " +
+                        "ConfigurationBinder 綁不動 JsonElement），已略過。", key);
+                    continue;
+                }
                 _extraRequestFields[key] = JsonNode.Parse(value.GetRawText());
             }
         }
