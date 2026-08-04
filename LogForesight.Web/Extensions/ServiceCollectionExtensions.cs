@@ -55,7 +55,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<BatchRunStore>(_ => StorageFactory.CreateBatchRunStore(storage, dataRoot));
 
         // 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）
-        services.AddSingleton<IScheduleOptionsStore>(_ => StorageFactory.CreateScheduleOptionsStore(storage, dataRoot));
+        services.AddSingleton<ScheduleOptionsStore>(_ => StorageFactory.CreateScheduleOptionsStore(storage, dataRoot));
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
         services.AddSingleton<IRiskyEventStore>(_ => StorageFactory.CreateRiskyEventStore(storage, dataRoot));

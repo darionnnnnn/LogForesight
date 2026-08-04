@@ -5,7 +5,7 @@ namespace LogForesight.Web.Services;
 
 /// <summary>
 /// 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.4）：週期輪詢
-/// <see cref="IScheduleOptionsStore"/>，命中執行窗口且該窗口本次尚未觸發過
+/// <see cref="ScheduleOptionsStore"/>，命中執行窗口且該窗口本次尚未觸發過
 /// （<see cref="ScheduleCalculator.ShouldTriggerNow"/>，同一函式天生涵蓋服務啟動時的漏跑補償——
 /// 啟動後第一次輪詢就是在檢查「現在是否該觸發」，跟平常輪詢問的是同一個問題）時觸發一次
 /// <see cref="AnalysisOrchestrator"/> 完整執行。也是手動觸發 API（<see cref="TriggerRunAsync"/>）
@@ -25,7 +25,7 @@ public class SchedulerHostedService : BackgroundService
     private const int RecentRunsLookbackDays = 2;
 
     private readonly WebAppSettings _webSettings;
-    private readonly IScheduleOptionsStore _scheduleOptionsStore;
+    private readonly ScheduleOptionsStore _scheduleOptionsStore;
     private readonly ISystemSettingsStore _systemSettingsStore;
     private readonly BatchRunStore _batchRunStore;
     private readonly SchedulerRunState _runState;
@@ -33,7 +33,7 @@ public class SchedulerHostedService : BackgroundService
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
-        IScheduleOptionsStore scheduleOptionsStore,
+        ScheduleOptionsStore scheduleOptionsStore,
         ISystemSettingsStore systemSettingsStore,
         BatchRunStore batchRunStore,
         SchedulerRunState runState,

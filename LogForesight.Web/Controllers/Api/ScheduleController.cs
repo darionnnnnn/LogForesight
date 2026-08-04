@@ -18,7 +18,7 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/admin/schedule")]
 public class ScheduleController : ControllerBase
 {
-    private readonly IScheduleOptionsStore _optionsStore;
+    private readonly ScheduleOptionsStore _optionsStore;
     private readonly SchedulerHostedService _scheduler;
     private readonly SchedulerRunState _runState;
     private readonly IHostStore _hosts;
@@ -28,7 +28,7 @@ public class ScheduleController : ControllerBase
     private readonly IUserStore _users;
 
     public ScheduleController(
-        IScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
+        ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users)
     {
         _optionsStore = optionsStore;
