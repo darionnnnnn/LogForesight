@@ -13,7 +13,7 @@ namespace LogForesight.Core.Persistence.Sql;
 ///
 /// 於 <see cref="StorageBackend"/> 建連線、EnsureCreated 之後呼叫，批次與 Web 啟動時都會跑到。
 /// </summary>
-public static class SchemaUpgrader
+internal static class SchemaUpgrader
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

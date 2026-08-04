@@ -7,7 +7,7 @@ namespace LogForesight.Core.Service;
 /// 遞迴掃描：報告可能落在 export\ 直接底下（單機批次），也可能在 export\{host}\ 子目錄下
 /// （NetIQ 多主機情境，見 FileReportSink）。
 /// </summary>
-public static class ExportReportPruner
+internal static class ExportReportPruner
 {
     public static int Prune(string exportDir, int retentionDays)
     {

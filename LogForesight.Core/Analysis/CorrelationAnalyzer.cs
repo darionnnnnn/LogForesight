@@ -1,6 +1,6 @@
 namespace LogForesight.Core.Analysis;
 
-public class CorrelationFinding
+internal class CorrelationFinding
 {
     public IssueSeverity Severity { get; init; }
 
@@ -19,7 +19,7 @@ public class CorrelationFinding
 /// 這個比對需要原始事件內容（帳號/IP 從訊息全文抽取），CorrelationAnalyzer 只吃聚合後的簽章，
 /// 所以比對本身在 Service 層做、結果以這個小物件傳入，Detect 本身維持純函數、不做 I/O。
 /// </summary>
-public class SuccessfulLogonMatch
+internal class SuccessfulLogonMatch
 {
     public List<string> MatchedAccounts { get; init; } = new();
     public List<string> MatchedIps { get; init; } = new();
@@ -35,7 +35,7 @@ public class SuccessfulLogonMatch
 /// 正是小模型最容易漏掉的部分，所以由程式確定性比對，AI 只負責解讀比對結果。
 /// 比對範圍：當日各事件簽章的共現、時間先後（FirstSeen），以及與前一日紀錄的跨日組合。
 /// </summary>
-public static class CorrelationAnalyzer
+internal static class CorrelationAnalyzer
 {
     // 事件群組定義（與 KnownIssueCatalog 的規則對齊）。internal（非 private）是刻意的：
     // CorrelationAnalyzerRuleAlignmentTests 會逐一驗證這些 ID 都存在於目前生效的規則表，

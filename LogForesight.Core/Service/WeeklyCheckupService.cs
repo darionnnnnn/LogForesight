@@ -19,7 +19,7 @@ namespace LogForesight.Core.Service;
 /// **確定性閘門**：窗口內任何一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
 /// 三層皆無訊號的窗口直接寫固定結論，不消耗 AI 呼叫——安靜的期間本來就沒有故事可講。
 /// </summary>
-public class WeeklyCheckupService
+internal class WeeklyCheckupService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

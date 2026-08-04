@@ -5,7 +5,7 @@ namespace LogForesight.Core.Analysis;
 /// （到期不自動刪除，只是不再生效——由人工用 --unsuppress 或編輯 suppressions.json 清理，
 /// 見 docs/RULES-SPEC.md）。比對時間點固定用呼叫端傳入的 now，不使用 DateTime.Now 讓判斷可測試。
 /// </summary>
-public static class SuppressionFilter
+internal static class SuppressionFilter
 {
     /// <summary>本機、現在生效中的完整抑制項目（含 Reason，供報告/體檢顯示用）</summary>
     public static List<RuleSuppression> ActiveForHost(List<RuleSuppression> all, string host, DateTime now) =>

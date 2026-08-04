@@ -4,7 +4,7 @@ namespace LogForesight.Core.Persistence;
 /// 分析紀錄的儲存前整形規則：純函數，確保「無風險日精簡策略」只有一份定義
 /// （docs/DB-SPEC.md 一致性機制 #4：精簡策略單點化）。
 /// </summary>
-public static class RecordStorageShaper
+internal static class RecordStorageShaper
 {
     /// <summary>
     /// 無風險（低）日的精簡策略：全部簽章的次數/嚴重度/趨勢數字/發生時段完整保留

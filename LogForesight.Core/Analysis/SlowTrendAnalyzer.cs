@@ -8,7 +8,7 @@ namespace LogForesight.Core.Analysis;
 /// 現在改為每日純算術比對，可單元測試，偵測延遲縮到 1 天，AI 體檢（見
 /// <see cref="WeeklyCheckupService"/>）只需要負責「講這段期間的故事」，不再是慢速訊號能否被發現的關鍵。
 /// </summary>
-public static class SlowTrendAnalyzer
+internal static class SlowTrendAnalyzer
 {
     /// <summary>單一比較窗口的天數。近期窗口＝今日＋前 6 天，前期窗口＝再往前 7 天，兩側等長</summary>
     public const int WindowDays = 7;

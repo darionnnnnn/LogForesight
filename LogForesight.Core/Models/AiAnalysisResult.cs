@@ -10,7 +10,7 @@ namespace LogForesight.Core.Models;
 ///     而不是天真地抓「第一個 { 到最後一個 }」（前言或雜訊中若混有其他大括號會直接抓錯範圍）；
 /// (2) 回覆在 max_tokens 用盡時被攔腰截斷，JSON 物件缺收尾括號 → 嘗試自動補上括號後再解析一次。
 /// </summary>
-public static class AiJson
+internal static class AiJson
 {
     public static T? TryParse<T>(string raw) where T : class
     {
@@ -175,7 +175,7 @@ public static class AiJson
 /// 結構化的目的：後續要接 Email / Telegram / webhook 等自動化動作時，
 /// 直接取欄位使用，不需要再從自然語言文字裡撈資訊。
 /// </summary>
-public class AiAnalysisResult
+internal class AiAnalysisResult
 {
     [JsonPropertyName("risk_level")]
     public string RiskLevel { get; set; } = string.Empty;

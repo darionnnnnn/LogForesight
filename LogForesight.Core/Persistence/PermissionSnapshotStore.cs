@@ -6,7 +6,7 @@ namespace LogForesight.Core.Persistence;
 /// 權限/角色異動監控的快照存取，與分析紀錄分開（不同的生命週期與存取模式：這裡只需要「最新一份」）。
 /// 整份快照存一筆 <see cref="EfJsonBlobStore"/>（key=permission_snapshot）。
 /// </summary>
-public class PermissionSnapshotStore
+internal class PermissionSnapshotStore
 {
     private readonly EfJsonBlobStore _blob;
 

@@ -12,7 +12,7 @@ public interface IPromptDumper
 }
 
 /// <summary>預設實作：不做任何事。平常執行走這個，完全零成本</summary>
-public class NullPromptDumper : IPromptDumper
+internal class NullPromptDumper : IPromptDumper
 {
     public void Dump(string label, string systemPrompt, string prompt, string response)
     {
@@ -20,7 +20,7 @@ public class NullPromptDumper : IPromptDumper
 }
 
 /// <summary>「AI 診斷傾印」開啟時使用：每次 AI 呼叫（含 JSON 重試的每次嘗試）各輸出一個檔案到 diag/</summary>
-public class FilePromptDumper : IPromptDumper
+internal class FilePromptDumper : IPromptDumper
 {
     private readonly string _dir;
     private int _sequence;

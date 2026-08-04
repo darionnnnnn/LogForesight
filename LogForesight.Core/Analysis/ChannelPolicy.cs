@@ -4,7 +4,7 @@ namespace LogForesight.Core.Analysis;
 /// 一個 Event Log 頻道的事件納入政策。決定 <see cref="EventLogService"/> 掃描該頻道時
 /// 哪些等級/事件要收進分析——不同頻道的雜訊特性差很多，用同一套規則會不是漏抓就是灌爆。
 /// </summary>
-public enum ChannelInclusionKind
+internal enum ChannelInclusionKind
 {
     /// <summary>傳統 System/Application：只收 Error/Warning/Critical，Information 一律不收（量太大且多為正常運作紀錄）。</summary>
     ErrorWarningOnly,
@@ -21,7 +21,7 @@ public enum ChannelInclusionKind
 }
 
 /// <summary>單一頻道的名稱、納入政策與 watchlist 推導用的 provider 探測字串。</summary>
-public sealed class ChannelPolicy
+internal sealed class ChannelPolicy
 {
     /// <summary>Event Log 頻道全名（如 "Security"、"Microsoft-Windows-Windows Defender/Operational"）。</summary>
     public string ChannelName { get; init; } = string.Empty;
@@ -40,7 +40,7 @@ public sealed class ChannelPolicy
 /// 預設頻道目錄。三個傳統日誌 + Defender / RDP 兩類 Operational 頻道。
 /// appsettings.json 的 <c>Analysis.Channels</c> 未設定時即用這份預設。
 /// </summary>
-public static class ChannelCatalog
+internal static class ChannelCatalog
 {
     public const string SystemChannel = "System";
     public const string ApplicationChannel = "Application";

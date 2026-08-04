@@ -10,7 +10,7 @@ namespace LogForesight.Core.Analysis;
 /// <see cref="KnownIssueCatalog"/>／<see cref="TrendAnalyzer"/>／<see cref="CorrelationAnalyzer"/>／
 /// AI 層／報告全部**零改動重用**——不需要為 Sentinel 路徑另外實作一套統計聚合。
 /// </summary>
-public static class SentinelEventMapper
+internal static class SentinelEventMapper
 {
     /// <summary>
     /// 映射單筆事件。時間或必要欄位缺席/無法解析時回傳 null，呼叫端應計入略過筆數

@@ -22,7 +22,7 @@ public class HostKey
 /// <c>WHERE host_id IN (...) OR (host_id = 0 AND host_name IN (...))</c>，語意同一份。
 /// 大量紀錄逐筆比對，所以先建索引而不是每筆線性搜尋識別清單。
 /// </summary>
-public sealed class HostMatcher
+internal sealed class HostMatcher
 {
     private readonly HashSet<long> _hostIds;
     private readonly HashSet<string> _hostNames;

@@ -10,7 +10,7 @@ namespace LogForesight.Core.Analysis;
 /// <see cref="AIService.ChatAsync"/> 是唯一呼叫點：批次五層分析、Web 互動卡、
 /// 詳情頁對話全部經此清洗，不需要各自處理。
 /// </summary>
-public static class AiOutputSanitizer
+internal static class AiOutputSanitizer
 {
     // 實測看過 <|channel|>thought 與缺結尾豎線的 <|channel>thought 兩種變體，
     // 第二個豎線設為可選（\|?）才能同時接住兩種格式

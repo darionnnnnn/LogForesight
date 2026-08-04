@@ -70,7 +70,7 @@ public class LogIssueSignature
     public int DaysSeenInHistory { get; set; }
 }
 
-public static class LogAggregator
+internal static class LogAggregator
 {
     private static readonly Regex Ipv4Regex = new(@"\b\d{1,3}(\.\d{1,3}){3}\b", RegexOptions.Compiled);
 
