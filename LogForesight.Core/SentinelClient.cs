@@ -46,7 +46,7 @@ public sealed class SentinelSearchResult
     public required SentinelJobState State { get; init; }
 
     /// <summary>實際取回筆數少於 Found——受 max-results 上限或分頁提前中止影響，
-    /// 呼叫端應比照 DataIncomplete 的基準排除邏輯處理（docs/PLAN.md）</summary>
+    /// 呼叫端應比照 DataIncomplete 的基準排除邏輯處理（docs/archive/HISTORY.md）</summary>
     public bool Truncated => Events.Count < Found;
 }
 

@@ -148,7 +148,7 @@ public class DeepDiveFinding
 /// <summary>
 /// 體檢（週期性回顧，補「慢速趨勢躲在每日 2 倍門檻下」的盲點）的結論。
 /// 2026-07-20 重設計：「發現」職責已移交每日確定性的 SlowTrendAnalyzer，體檢只負責「講故事」——
-/// 詳見 docs/PLAN.md「核心設計決策 B」與 docs/archive/HISTORY.md。
+/// 詳見 docs/archive/HISTORY.md「核心設計決策 B」。
 /// </summary>
 public class WeeklyCheckupResult
 {

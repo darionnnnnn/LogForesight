@@ -126,7 +126,7 @@ public class AnalysisSettings
     public string ServerDescription { get; set; } = "";
 
     /// <summary>
-    /// 體檢間隔天數（2026-07-20 重設計，取代原「固定星期六全量」，見 docs/PLAN.md「核心設計決策 B」）。
+    /// 體檢間隔天數（2026-07-20 重設計，取代原「固定星期六全量」，見 docs/archive/HISTORY.md「核心設計決策 B」）。
     /// 「發現慢速斜線」已改由每日確定性的 <see cref="SlowTrendAnalyzer"/> 負責，體檢只剩「講這段期間的
     /// 故事」——採 due-date 輪巡：每台主機距上次體檢達此天數即到期，不綁固定星期幾、不需要 cohort 分桶，
     /// 首次接觸主機時錯峰虛擬回填上次體檢日，多主機規模下自然攤平、不會在某一天集中尖峰。
