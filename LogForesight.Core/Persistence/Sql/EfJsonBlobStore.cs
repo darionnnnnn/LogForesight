@@ -93,8 +93,11 @@ public sealed class EfJsonBlobStore
 
     private static bool IsTransient(Exception ex)
     {
-        // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試
+        // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試。
+        // user-function：連線池關閉後（見 StorageFactory.DisableSqlitePoolingIfUnset）此錯誤的
+        // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
         var msg = ex.Message.ToLowerInvariant();
-        return ex is DbUpdateException || msg.Contains("busy") || msg.Contains("locked") || msg.Contains("deadlock");
+        return ex is DbUpdateException || msg.Contains("busy") || msg.Contains("locked") ||
+               msg.Contains("deadlock") || msg.Contains("user-function");
     }
 }
