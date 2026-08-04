@@ -63,6 +63,17 @@ public interface IRunConsole
 }
 
 /// <summary>
+/// 執行進度回報（docs/FEEDBACK-8-PLAN.md #2）：粒度是「主機日」（done/total），分本機／NetIQ
+/// 兩階段回報，取代原本只有一行 <see cref="IRunConsole.WriteLine"/> 訊息、看不出量化進度的狀況。
+/// NetIQ 段 total 隨平行掃描各 Sentinel 逐步累加（見 <c>NetiqPipelineService</c>）——只會變大、
+/// 不會倒退，呼叫端（Web 狀態卡）據此畫進度條；null＝不回報（測試預設不傳）。
+/// </summary>
+public interface IRunProgress
+{
+    void Report(string phase, int done, int total);
+}
+
+/// <summary>
 /// 分析主流程的單一入口（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：權限檢查 → 清理 → 本機逐日分析 →
 /// NetIQ 機房分析 → 體檢。原本寫在批次 console 的 <c>Program.cs</c>，Phase 2 抽出成共用單一入口，
 /// console 專案退場（Phase 5，§1.5）後唯一的呼叫端是 Web 排程（<c>SchedulerHostedService</c>）。
@@ -83,7 +94,7 @@ public class AnalysisOrchestrator
 
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
-        RetentionOptions retention, IRunConsole console, CancellationToken ct)
+        RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null)
     {
         var runStopwatch = Stopwatch.StartNew();
         var result = new OrchestratorResult();
@@ -360,7 +371,8 @@ public class AnalysisOrchestrator
             {
                 await RunLocalAnalysisAsync(
                     request, settings, retention, console, ct, analysisService, historyService, eventLogService,
-                    caseCoordinator, riskyEventStore, runRecorder, currentHost, currentHostId, yesterday, result, useAi);
+                    caseCoordinator, riskyEventStore, runRecorder, currentHost, currentHostId, yesterday, result, useAi,
+                    progress);
             }
 
             // 5b. NetIQ 機房分析（docs/NETIQ-API-PLAN.md 決策 B2、§4；Phase 4）：本機分析完成後，
@@ -371,7 +383,8 @@ public class AnalysisOrchestrator
                 ct.ThrowIfCancellationRequested();
                 await RunNetiqAnalysisAsync(
                     request, settings, dataRoot, console, ct, hostStore, sentinelStore, eventLogService, aiService,
-                    suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result, useAi);
+                    suppressionStore, reportService, runRecorder, caseCoordinator, riskyEventStore, retention, result, useAi,
+                    progress);
             }
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
@@ -449,7 +462,8 @@ public class AnalysisOrchestrator
         RunRequest request, AppSettings settings, RetentionOptions retention, IRunConsole console, CancellationToken ct,
         LogAnalysisService analysisService, IAnalysisRecordStore historyService, EventLogService eventLogService,
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, BatchRunRecorder runRecorder,
-        string currentHost, long currentHostId, DateTime yesterday, OrchestratorResult result, bool useAi)
+        string currentHost, long currentHostId, DateTime yesterday, OrchestratorResult result, bool useAi,
+        IRunProgress? progress)
     {
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
@@ -530,6 +544,8 @@ public class AnalysisOrchestrator
 
         // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
         var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
+        progress?.Report("local", 0, missingDates.Count);
+        var localDone = 0;
         foreach (var date in missingDates)
         {
             // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
@@ -582,6 +598,7 @@ public class AnalysisOrchestrator
             }
             PrintResult(console, record, verbose: date == yesterday);
             console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
+            progress?.Report("local", ++localDone, missingDates.Count);
         }
 
         runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
@@ -613,7 +630,7 @@ public class AnalysisOrchestrator
         IHostStore hostStore, ISentinelStore sentinelStore, EventLogService eventLogService, AIService aiService,
         ISuppressionStore suppressionStore, RiskReportService reportService, BatchRunRecorder runRecorder,
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, RetentionOptions retention,
-        OrchestratorResult result, bool useAi)
+        OrchestratorResult result, bool useAi, IRunProgress? progress)
     {
         var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
 
@@ -652,8 +669,8 @@ public class AnalysisOrchestrator
             }
             var netiqPipeline = new NetiqPipelineService(
                 settings.Storage, dataRoot, netiqOptions, sentinelStore, hostStore,
-                eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator,
-                riskyEventStore, retention.RiskyEventRetentionDays, useAi);
+                eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
+                riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

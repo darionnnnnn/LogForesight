@@ -47,4 +47,21 @@ public class NetiqPipelineResultConcurrencyTests
         Assert.Equal(iterations, result.Warnings.Count);
         Assert.Equal(iterations, result.Warnings.Distinct().Count());
     }
+
+    /// <summary>docs/FEEDBACK-8-PLAN.md #2：進度條分母（AddToTotal）與分子
+    /// （HostDaysDone = HostDaysAnalyzed + HostsFailed）——各 Sentinel 平行掃描時累加不掉數。</summary>
+    [Fact]
+    public void AddToTotal並發呼叫不掉數且HostDaysDone等於成功加失敗()
+    {
+        var result = new NetiqPipelineResult();
+        const int iterations = 300;
+
+        Parallel.Invoke(
+            () => Parallel.For(0, iterations, _ => result.AddToTotal(1)),
+            () => Parallel.For(0, iterations, _ => result.AddAnalyzed()),
+            () => Parallel.For(0, iterations, _ => result.AddFailed()));
+
+        Assert.Equal(iterations, result.HostDaysTotal);
+        Assert.Equal(iterations * 2, result.HostDaysDone);
+    }
 }

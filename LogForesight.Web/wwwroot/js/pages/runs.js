@@ -439,9 +439,6 @@ async function loadSchedule() {
 
     applyScheduleOptions(options);
     await refreshScheduleStatus();
-
-    // 簡單輪詢：這頁常開著看排程有沒有在跑，10 秒一次足夠即時又不必為此另外接 SSE/WebSocket
-    setInterval(refreshScheduleStatus, 10000);
 }
 
 function applyScheduleOptions(options) {
@@ -541,14 +538,28 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
     }
 });
 
+// 執行中／閒置輪詢間隔不同（docs/FEEDBACK-8-PLAN.md #2）：執行中要讓進度條「看得出在動」，
+// 閒置時沒有進度可看，維持原本的低頻率即可。自我重新排程（而非 setInterval）方便依上一次
+// 拿到的狀態決定下一輪間隔。
+let wasScheduleRunning = false;
+let scheduleStatusTimer = null;
+
 async function refreshScheduleStatus() {
     const status = await api.get('/api/admin/schedule/status', { silent: true }).catch(() => null);
-    if (!status) return;
+    if (status) applyScheduleStatus(status);
 
+    clearTimeout(scheduleStatusTimer);
+    const interval = status?.isRunning ? 3000 : 10000;
+    scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
+}
+
+function applyScheduleStatus(status) {
     document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
     document.getElementById('schedule-run-state').textContent = status.isRunning
         ? `執行中（${status.triggerText}）`
         : '閒置';
+
+    renderScheduleProgress(status);
 
     const messageEl = document.getElementById('schedule-latest-message');
     if (status.isRunning) {
@@ -568,6 +579,40 @@ async function refreshScheduleStatus() {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(status.nextTriggerTime);
     } else if (!status.scheduleEnabled) {
         document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+    }
+
+    // 執行完自動刷新總表（docs/FEEDBACK-8-PLAN.md #2）：isRunning 由 true → false 時，
+    // 使用者不必手動重新整理才看得到剛跑完的這趟（手動與排程觸發都經過這條輪詢，天然涵蓋兩者）
+    if (wasScheduleRunning && !status.isRunning) {
+        toast('執行已結束，執行總表已刷新', 'info');
+        load();
+    }
+    wasScheduleRunning = status.isRunning;
+}
+
+const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析' };
+
+/** 執行中且有量化進度（total>0）畫百分比進度條；剛啟動／清理階段（total=0）畫不定進度；
+ * 閒置時整組隱藏。（docs/FEEDBACK-8-PLAN.md #2） */
+function renderScheduleProgress(status) {
+    const wrap = document.getElementById('schedule-progress-wrap');
+    const bar = document.getElementById('schedule-progress-bar');
+
+    if (!status.isRunning) {
+        wrap.classList.add('d-none');
+        return;
+    }
+    wrap.classList.remove('d-none');
+
+    if (status.progressTotal > 0) {
+        const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
+        bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+        bar.style.width = `${pct}%`;
+        bar.title = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal}`;
+    } else {
+        bar.classList.add('progress-bar-striped', 'progress-bar-animated');
+        bar.style.width = '100%';
+        bar.title = '準備中…';
     }
 }
 

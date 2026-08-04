@@ -35,6 +35,13 @@ public class ScheduleStatusDto
     public string? TriggerText { get; set; }
     public DateTime? StartedAt { get; set; }
     public string? LatestMessage { get; set; }
+
+    /// <summary>執行進度（docs/FEEDBACK-8-PLAN.md #2）：local｜netiq；ProgressTotal=0 代表尚未有
+    /// 量化進度可畫（清理／掃描中），前端改顯示不定進度。</summary>
+    public string? ProgressPhase { get; set; }
+    public int ProgressDone { get; set; }
+    public int ProgressTotal { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }
