@@ -81,7 +81,7 @@ function renderSummary(summaries) {
     if (summaries.every(s => s.totalHosts === 0)) {
         renderEmpty(container, {
             title: '尚無執行紀錄',
-            hint: '批次程式執行後會自動登記；請確認 LogForesight.exe 的排程已設定。'
+            hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。'
         });
         return;
     }

@@ -56,29 +56,21 @@ try
         AiExtraFieldsLoader.Load(builder.Environment.ContentRootPath, builder.Environment.EnvironmentName)
         ?? new AiSettings().ExtraRequestFields;
 
-    // 開發／測試環境：DataRoot 未明確指定時，改用「相對於本站台輸出目錄推算出的批次輸出目錄」，
-    // 不再寫死絕對路徑（見 appsettings.Development.json 的說明）。這樣不綁使用者名稱，
-    // 也會自動跟著 Debug/Release 與 TFM 變動。開發者若在設定檔明確填了 DataRoot，則尊重其值、不推算。
-    if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(settings.Storage.DataRoot))
-    {
-        var computed = TryResolveSiblingBatchDataRoot();
-        if (computed is not null)
-        {
-            settings.Storage.DataRoot = computed;
-            logger.Info("開發環境自動推算批次資料根目錄（Storage.DataRoot）：{0}", computed);
-        }
-    }
-
+    // DataRoot 未明確指定時，StorageSettings.ResolveDataRoot() 退回 AppContext.BaseDirectory
+    // （本站台自己的輸出目錄）——console 批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md
+    // §1.5），Web 排程／立即執行是現在唯一的分析執行途徑，資料本來就該落在 Web 自己的目錄下，
+    // 不需要再另外推算「批次輸出目錄」。開發者若要讀別處的資料，在設定檔明確填 DataRoot 即可。
     settings.Validate(builder.Environment.IsProduction());
     builder.Services.AddSingleton(settings);
 
-    // 資料根目錄健檢（誠實申報，沿用批次端「沒告警 ≠ 沒問題」的原則）：
-    // DataRoot 存在（Validate 已檢查）但底下沒有該儲存後端的資料足跡，最常見的成因是
-    // Storage:DataRoot 指錯了——指到 Web 自己的執行檔目錄、而不是批次 LogForesight.exe 的資料目錄。
+    // 資料根目錄健檢（誠實申報，「沒告警 ≠ 沒問題」的原則）：
+    // DataRoot 存在（Validate 已檢查）但底下沒有該儲存後端的資料足跡，最常見的成因是舊部署
+    // 升級時 Storage:DataRoot 還指著升級前批次獨立部署時的資料目錄（console 已隨 Phase 5 退場，
+    // docs/WEB-SCHEDULER-PLAN.md §1.5），或是換過機器/目錄但設定沒跟著改。
     // 那正是「規則維護頁報『載入規則失敗』、儀表板一片空白」的來源。
     // 只有「Sqlite 用預設連線」時才在 DataRoot 底下有檔案足跡可查（.db 落點）；
     // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageFactory 首次連線 fail-fast 把關，這裡不重複檢查。
-    // 刻意不 fail-fast：批次還沒首次執行是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
+    // 刻意不 fail-fast：排程還沒首次執行過是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
     var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
         ? new[] { "logforesight.db" }
@@ -87,11 +79,11 @@ try
         !expectedDataFiles.Any(f => File.Exists(Path.Combine(dataRoot, f))))
     {
         var names = string.Join(" / ", expectedDataFiles);
-        logger.Warn("資料根目錄 {0} 底下找不到 {1}。若批次 LogForesight.exe 已執行過，" +
-            "代表 Storage:DataRoot 指錯目錄（應指向批次的資料目錄），儀表板與問題查詢會因此空白" +
+        logger.Warn("資料根目錄 {0} 底下找不到 {1}。若排程/立即執行已跑過至少一次，" +
+            "代表 Storage:DataRoot 指錯目錄，儀表板與問題查詢會因此空白" +
             "（規則維護頁不受影響——Web 啟動會自行初始化規則庫，見下方「啟動時的資料準備」）。", dataRoot, names);
         Console.Error.WriteLine($"⚠ 資料根目錄「{dataRoot}」底下找不到 {names}；" +
-            "若批次已執行過，請確認 Storage:DataRoot 指向批次 LogForesight.exe 的資料目錄。");
+            "若排程/立即執行已跑過，請確認 Storage:DataRoot 指向正確的資料目錄。");
     }
 
     // ── DI（§4.3）─────────────────────────────────────────────────────────────
@@ -202,30 +194,6 @@ catch (Exception ex)
 finally
 {
     LogManager.Shutdown();
-}
-
-/// <summary>
-/// 開發／測試環境用：從本站台的輸出目錄推算同一個 repo 內批次 LogForesight.exe 的輸出目錄，
-/// 取代 appsettings.Development.json 中原本寫死的絕對路徑。
-///
-/// 兩個專案的輸出結構相同（{repo}\{專案}\bin\{Config}\{TFM}），差別只在專案資料夾名稱，
-/// 所以把本站台輸出目錄尾端的 bin\{Config}\{TFM} 原樣接到批次專案資料夾（LogForesight）下即可——
-/// 自動跟著 Debug/Release 與 TFM 變動，且不含任何使用者相關的絕對路徑。
-/// （"LogForesight" 是批次專案的資料夾名稱，屬 repo 結構常數，非使用者路徑。）
-///
-/// 推算不出（目錄結構非預期）時回 null，交由呼叫端維持原值、後續 Validate 顯性報錯，
-/// 不猜一個可能錯的路徑蓋掉設定。
-/// </summary>
-static string? TryResolveSiblingBatchDataRoot()
-{
-    var webBinTfm = new DirectoryInfo(AppContext.BaseDirectory); // …\LogForesight.Web\bin\{Config}\{TFM}
-    var webProjectDir = webBinTfm.Parent?.Parent?.Parent;        // …\LogForesight.Web
-    var repoRoot = webProjectDir?.Parent;                        // repo 根目錄
-    if (webProjectDir is null || repoRoot is null) return null;
-
-    // bin\{Config}\{TFM}——本站台與批次相同，原樣沿用即可跟著建置設定與 TFM 變動
-    var tail = Path.GetRelativePath(webProjectDir.FullName, webBinTfm.FullName);
-    return Path.Combine(repoRoot.FullName, "LogForesight", tail);
 }
 
 /// <summary>讀取密碼但不回顯（避免密碼留在畫面與終端機的捲動紀錄裡）</summary>

@@ -51,11 +51,10 @@ public class OrchestratorResult
 
 /// <summary>
 /// 執行輸出的抽象（docs/WEB-SCHEDULER-PLAN.md §1.4.2）：只抽「輸出去哪裡」，不抽「輸出什麼」——
-/// <see cref="AnalysisOrchestrator"/> 內文保留與 console 逐字相同的格式化邏輯（框線、色彩分段），
-/// 呼叫 <see cref="WriteLine"/>／<see cref="WithColor"/> 取代直接呼叫 <c>Console.*</c>。
-/// console 端 adapter（<c>ConsoleRunConsole</c>，留在批次專案）就是把這兩個方法轉呼叫
-/// <see cref="Console"/>，逐字重現既有輸出；Web 端 adapter（Phase 3）改落地 NLog／
-/// <see cref="BatchRunRecorder"/> milestone。
+/// <see cref="AnalysisOrchestrator"/> 內文保留與早期 console 批次逐字相同的格式化邏輯（框線、
+/// 色彩分段），呼叫 <see cref="WriteLine"/>／<see cref="WithColor"/> 取代直接呼叫 <c>Console.*</c>。
+/// console 批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md §1.5），現在唯一的實作是
+/// Web 端 adapter（<c>WebRunConsole</c>），落地 NLog／<see cref="BatchRunRecorder"/> milestone。
 /// </summary>
 public interface IRunConsole
 {

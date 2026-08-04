@@ -15,8 +15,8 @@ namespace LogForesight.Web.Services;
 /// | 刪除 | ❌ | ✅ |
 /// | 回復預設 | ✅（自原廠種子還原） | — |
 ///
-/// **儲存前一律跑 <see cref="RuleValidator"/>**——把 `--selftest` 的規則驗證內建進儲存路徑，
-/// 而不是指望使用者改完記得去跑一次。驗證不過就拒絕寫入，rules.json 永遠是合格的。
+/// **儲存前一律跑 <see cref="RuleValidator"/>**——把規則驗證內建進儲存路徑，
+/// 而不是指望使用者改完記得另外去驗證。驗證不過就拒絕寫入，rules.json 永遠是合格的。
 /// </summary>
 public class RuleAdminService
 {
@@ -161,13 +161,13 @@ public class RuleAdminService
         if (isNew && !request.Id.StartsWith("custom-", StringComparison.OrdinalIgnoreCase))
         {
             // 新規則一律 custom- 前綴：builtin 的命名空間屬於程式內建種子，
-            // 讓使用者能造出 builtin- 開頭的規則，日後 --import-rules 比對時會產生無解的衝突
+            // 讓使用者能造出 builtin- 開頭的規則，日後內建規則升級比對時會產生無解的衝突
             throw DomainException.Validation("新增的規則 Id 必須以「custom-」開頭，以區別於程式內建規則。");
         }
 
         var rule = BuildRule(request, existing);
 
-        // 儲存前驗證：把 --selftest 的檢查內建進儲存路徑（§9.7）
+        // 儲存前驗證：把規則驗證內建進儲存路徑（§9.7）
         var validation = ValidateRule(request);
         if (!validation.IsValid)
             throw DomainException.Validation("規則不合格，未儲存：" + string.Join("；", validation.Errors));
@@ -390,7 +390,7 @@ public class RuleAdminService
         return new KnownIssueRule
         {
             Id = request.Id.Trim(),
-            // Origin 一經建立不可變更：它決定了這條規則會不會被 --import-rules 覆寫
+            // Origin 一經建立不可變更：它決定了這條規則會不會被內建規則升級覆寫
             Origin = existing?.Origin ?? "custom",
             Enabled = request.Enabled,
             Scope = existing?.Scope ?? "all",

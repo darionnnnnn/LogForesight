@@ -13,20 +13,8 @@
 # Claude Code local session config
 .claude/
 
-# LogForesight 執行期產生的資料——內含真實伺服器的 Event Log 分析結果，絕不能進版本控制
-LogForesight/history.txt
-LogForesight/export/
-LogForesight/logs/
-LogForesight/permission_snapshot.json
-
-# 規則庫／抑制設定（2026-07-21 規則外部化，見 docs/RULES-PLAN.md）：初次執行時自動寫入種子，
-# 之後由各環境自行維護；跟 history.txt 一樣是執行期產生/維護的資料，不進版本控制，
-# 避免不同機器的規則調整互相覆蓋
-LogForesight/rules.json
-LogForesight/suppressions.json
-LogForesight/rule_seeds.json
-LogForesight/rundata/
-LogForesight/webdata/
+# 批次 console 專案（LogForesight/）已隨 Phase 5 退場移除（docs/WEB-SCHEDULER-PLAN.md §1.5），
+# 其執行期資料目錄規則（history.txt／export／rules.json 等）一併清理。
 
 # Web 本機開發設定——內含開發用 JWT 簽章金鑰與 serverAdmin 密碼雜湊，絕不能進版本控制
 # （正式環境以環境變數 Jwt__SecretKey 等覆寫，見 docs/WEB-SPEC.md §5）

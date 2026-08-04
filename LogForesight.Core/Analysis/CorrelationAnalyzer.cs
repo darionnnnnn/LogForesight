@@ -38,9 +38,9 @@ public class SuccessfulLogonMatch
 public static class CorrelationAnalyzer
 {
     // 事件群組定義（與 KnownIssueCatalog 的規則對齊）。internal（非 private）是刻意的：
-    // SelfTestRunner 會逐一驗證這些 ID 都存在於目前生效的規則表，防止規則表演進後兩邊悄悄漂移
-    // ——關聯層的組合模式仍是程式碼邏輯、不搬進 rules.json（見 docs/RULES-PLAN.md 語意邊界），
-    // 但它引用的事件 ID 應該要跟規則表對得上。
+    // CorrelationAnalyzerRuleAlignmentTests 會逐一驗證這些 ID 都存在於目前生效的規則表，
+    // 防止規則表演進後兩邊悄悄漂移——關聯層的組合模式仍是程式碼邏輯、不搬進 rules.json
+    // （見 docs/RULES-PLAN.md 語意邊界），但它引用的事件 ID 應該要跟規則表對得上。
     internal static readonly int[] AccountChangeIds = { 4720, 4722, 4724, 4728, 4732, 4756 };
     internal static readonly int[] PersistenceSecurityIds = { 4697, 4698 };
     internal static readonly int[] AuditTamperIds = { 1102, 4719, 4907 };

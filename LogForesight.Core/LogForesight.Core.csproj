@@ -41,13 +41,12 @@
 
     <ItemGroup>
         <!--
-          抽 Core 前這些檔案與 Service/、Program.cs 同屬一個組件，internal 成員（如
-          CorrelationAnalyzer 的事件 ID 常數，供 SelfTestRunner 驗證關聯層引用的 ID
-          是否都存在於規則表）本來就互相可見。拆組件後以 InternalsVisibleTo 恢復原本的
-          可見範圍，而不是把這些實作細節改成 public API——重構的要求是行為零改變，
-          不該順手擴大公開介面。
+          抽 Core 前這些檔案與批次 console 專案（已隨 Phase 5 退場，docs/WEB-SCHEDULER-PLAN.md
+          §1.5）同屬一個組件，internal 成員（如 CorrelationAnalyzer 的事件 ID 常數，供
+          CorrelationAnalyzerRuleAlignmentTests 驗證關聯層引用的 ID 是否都存在於規則表）
+          本來就互相可見。拆組件後以 InternalsVisibleTo 恢復原本的可見範圍，而不是把這些
+          實作細節改成 public API——重構的要求是行為零改變，不該順手擴大公開介面。
         -->
-        <InternalsVisibleTo Include="LogForesight" />
         <InternalsVisibleTo Include="LogForesight.Tests" />
     </ItemGroup>
 

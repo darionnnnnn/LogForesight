@@ -37,8 +37,8 @@ public static class NetiqProbeRunner
     /// 主機歸屬鍵、頻道覆蓋、dt 邊界）。省略時對應步驟標示略過。</param>
     /// <param name="sampleLinuxIp">一台已知的 Linux 主機 IP，用於核對 Linux 事件的欄位形狀
     /// （program／sev↔syslog priority／OS 判別候選值）。省略時對應步驟標示略過。</param>
-    /// <param name="console">輸出目的地——console CLI 用 <c>ConsoleRunConsole</c>，Web 用
-    /// 累積到記憶體緩衝供輪詢讀取的 adapter。</param>
+    /// <param name="console">輸出目的地——Web 用累積到記憶體緩衝供輪詢讀取的 adapter
+    /// （console CLI 版本已隨 Phase 5 退場，docs/WEB-SCHEDULER-PLAN.md §1.5）。</param>
     public static async Task<bool> RunAsync(
         IReadOnlyList<Sentinel> sentinels, NetiqOptions settings,
         string? sampleIp, string? sampleLinuxIp, IRunConsole console, CancellationToken ct = default)

@@ -864,8 +864,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
   庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
   新增／更新／略過／衝突（衝突＝使用者改過的 builtin）→「套用」（附 checkbox「連同已修改的
   內建規則一併覆蓋（保留啟用狀態）」＝`--overwrite-builtin` 語意；custom 規則永不觸碰）。
-  分類與套用邏輯拆到 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`，過渡期 console CLI 改為
-  薄包裝共用同一份（輸出格式逐字不變）；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
+  分類與套用邏輯拆到 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`；批次 console CLI（`--import-rules`，
+  當時薄包裝共用同一份邏輯）已隨 Phase 5 退場移除（docs/WEB-SCHEDULER-PLAN.md §1.5），Web 是現在
+  唯一的入口；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
   `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`。
   `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
@@ -985,10 +986,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - **頁面分頁化（2026-07-31，docs/WEB-SCHEDULER-PLAN.md §1.4.11）**：改「設定｜診斷」兩分頁
   （沿用 `bindTabs` 手作頁籤模式）——原本的 Sentinel 清單與連線節流參數整批放「設定」分頁。
 - **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
-  選填 Windows／Linux 樣本 IP（對應 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
+  選填 Windows／Linux 樣本 IP（對應原 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
   （欄位對應／dt 邊界／分頁效能／IP 批次上限／頻道覆蓋等，是 Linux Sentinel 接入 P3 閘門的
-  載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`（過渡期 console CLI 薄殼共用同一份，
-  輸出契約不變——仍是可直接複製貼回對話定案欄位的純文字）。長耗時操作走「觸發→背景執行→
+  載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`；批次 console CLI 薄殼已隨 Phase 5 退場
+  移除（docs/WEB-SCHEDULER-PLAN.md §1.5），Web 是現在唯一的入口，輸出契約不變——仍是可直接
+  複製貼回對話定案欄位的純文字。長耗時操作走「觸發→背景執行→
   輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
   probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
   需 `Maintain`、寫稽核 `netiq_probe_run`（帳密未設定的 Sentinel 拒絕啟動）。
@@ -1239,8 +1241,9 @@ temp 檔＋`File.Replace` 手法。
   `AnalysisRecordStoreContractTests`（批次讀寫）、`AnalysisRecordQueryContractTests`（Web 查詢）、
   `AnalysisRecordStoreHostScopeContractTests`（ownerHost 歸戶）、`HostStoreContractTests`／
   `UserStoreContractTests`（webdata）、`KnownIssueRuleStoreContractTests`／
-  `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`／`RuleImporterRunContractTests`
-  （規則與抑制），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
+  `SuppressionStoreContractTests`／`RuleBootstrapperContractTests`
+  （規則與抑制；`RuleImporterRunContractTests` 隨批次 console CLI 於 Phase 5 退場一併移除，
+  見 docs/WEB-SCHEDULER-PLAN.md §1.5），另有 `EfWebdataStoreTests` 驗 blob/log 代表型往返。**新增 store 時，
   SQLite 合約子類為必要項**（Jsonl 合約實作已隨檔案後端一併退役，見 §10.4）。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立；對**既有** DB 的欄位/索引增補由 `SchemaUpgrader`
   （自製冪等 DDL，2026-07-27 落實定案 13，見 docs/DB-PLAN.md「Schema 升級機制」）在 EnsureCreated
