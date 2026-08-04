@@ -623,7 +623,7 @@ public class AnalysisOrchestrator
         IssueCaseCoordinator caseCoordinator, IRiskyEventStore riskyEventStore, RetentionOptions retention,
         OrchestratorResult result, bool useAi, IRunProgress? progress)
     {
-        var netiqHostList = new StoreHostListProvider(hostStore, sentinelStore).GetHostList();
+        var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
 
         // NetiqHosts 範圍（Phase 3 手動觸發指定主機）：篩到只剩請求的 HostId，其餘略過不查、不警告
         // ——那些主機本來就沒被要求這次更新，不是「被排除」。

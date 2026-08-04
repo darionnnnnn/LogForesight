@@ -50,7 +50,7 @@ public class ScheduleStatusDto
 }
 
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用
-/// StoreHostListProvider 的清單語意，與主機頁「不靜默少幾台」同一原則）</summary>
+/// HostListSelection 的清單語意，與主機頁「不靜默少幾台」同一原則）</summary>
 public class RunPreviewDto
 {
     public int HostCount { get; set; }

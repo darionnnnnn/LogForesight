@@ -25,29 +25,10 @@ public class HostListResult
     public int TotalHosts => ByServer.Values.Sum(list => list.Count);
 }
 
-/// <summary>
-/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/archive/HISTORY.md 定案 12），
-/// 直接讀主機清單資料，不做任何同步。
-/// </summary>
-public class StoreHostListProvider
-{
-    private readonly IHostStore _hosts;
-    private readonly ISentinelStore _sentinels;
-
-    public StoreHostListProvider(IHostStore hosts, ISentinelStore sentinels)
-    {
-        _hosts = hosts;
-        _sentinels = sentinels;
-    }
-
-    public string Description => "Web 維護的主機清單";
-
-    public HostListResult GetHostList() => HostListSelection.FromStore(_hosts, _sentinels);
-}
-
-/// <summary>「從主機清單資料挑出今晚要查的主機」。挑選規則本身在 <see cref="NetiqHostList"/>（Core），
-/// Web 畫面用的是同一份，所以畫面標示與批次行為不會分歧。</summary>
-internal static class HostListSelection
+/// <summary>「機房分析的主機清單來源：從 Web 主機頁維護的主機清單資料挑出今晚要查的主機」。
+/// 挑選規則本身在 <see cref="NetiqHostList"/>（Core），Web 畫面用的是同一份，所以畫面標示與
+/// 排程分析行為不會分歧。</summary>
+public static class HostListSelection
 {
     public static HostListResult FromStore(IHostStore hosts, ISentinelStore sentinels)
     {

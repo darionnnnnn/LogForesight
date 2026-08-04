@@ -31,7 +31,9 @@ public class NetiqServerCatalog : INetiqServerCatalog
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var sentinel = _sentinels.FindByName(name.Trim());
-        return sentinel == null ? null : ToProjection(sentinel);
+        // 密碼解密邏輯與 Core 端共用（SentinelConnectionFactory.ToConnectable）：探索用戶端需要
+        // 明碼才能認證，解密結果只留在 Web 行程內、絕不序列化回前端。
+        return sentinel == null ? null : SentinelConnectionFactory.ToConnectable(sentinel);
     }
 
     public List<string> GetServerNames() =>
@@ -39,16 +41,4 @@ public class NetiqServerCatalog : INetiqServerCatalog
 
     public bool IsKnownServer(string? name) =>
         !string.IsNullOrWhiteSpace(name) && _sentinels.FindByName(name.Trim()) != null;
-
-    /// <summary>密碼在這裡解密：探索用戶端需要明碼才能認證,解密結果只留在 Web 行程內、絕不序列化回前端</summary>
-    private static SentinelServer ToProjection(Sentinel sentinel) => new()
-    {
-        Id = sentinel.SentinelId,
-        Name = sentinel.Name,
-        BaseUrl = sentinel.BaseUrl,
-        Username = sentinel.Username,
-        Password = CryptoHelper.IsEncrypted(sentinel.PasswordEnc)
-            ? CryptoHelper.Decrypt(sentinel.PasswordEnc)
-            : sentinel.PasswordEnc
-    };
 }

@@ -77,7 +77,7 @@ public class NetiqPipelineService
         _progress = progress;
     }
 
-    /// <param name="hostList">今晚要查詢的主機（<see cref="StoreHostListProvider"/>）；
+    /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
     /// <see cref="HostListResult.Warnings"/> 已在呼叫端印過，這裡不重複。</param>
     /// <param name="trendWindowDays">已有歷史紀錄的主機，正常情況下只檢查這麼多天內的缺漏
     /// （與本機模式同一個 TrendWindowDays 常數，由呼叫端傳入避免整個程式碼庫出現第二個
