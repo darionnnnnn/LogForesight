@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-8-PLAN.md #4：觀察中狀態的到期判定——沿用 IssueHandling.DueDate 當「觀察至」，
+/// docs/archive/FEEDBACK-8-PLAN.md #4：觀察中狀態的到期判定——沿用 IssueHandling.DueDate 當「觀察至」，
 /// 讀取時推導，不跑背景作業。
 /// </summary>
 public class IssueHandlingStatusesObservationTests

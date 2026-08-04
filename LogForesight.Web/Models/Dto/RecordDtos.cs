@@ -27,7 +27,7 @@ public class RecordListItemDto
     public string HandlingStatusText { get; set; } = string.Empty;
 
     /// <summary>
-    /// 處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把處理人姓名連到
+    /// 處理人 Id（docs/archive/FEEDBACK-4-PLAN.md §6）——供前端把處理人姓名連到
     /// 「/handlers/{id}」工作頁；日層級未指派、案件 fallback 也沒有時為 null。
     /// </summary>
     public long? HandlerId { get; set; }
@@ -86,7 +86,7 @@ public class RecordDateGroupDto
 }
 
 /// <summary>
-/// 問題查詢「依問題」視角的彙總列（docs/FEEDBACK-4-PLAN.md §4）：一列一個問題
+/// 問題查詢「依問題」視角的彙總列（docs/archive/FEEDBACK-4-PLAN.md §4）：一列一個問題
 /// （Source＋EventId），回答「這個問題影響多大範圍、誰在處理」。
 /// </summary>
 public class IssueGroupDto
@@ -115,7 +115,7 @@ public class IssueGroupDto
     public string HandlingSummary { get; set; } = string.Empty;
 
     /// <summary>進行中案件的處理人（去重、依姓名排序）——帶 Id 讓前端把姓名連到
-    /// 處理人工作頁（docs/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
+    /// 處理人工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
     /// 由前端做（伺服器端收斂成純文字，收斂後的第一個名字就沒有 Id 可連了）</summary>
     public List<IssueGroupHandlerDto> Handlers { get; set; } = new();
 }
@@ -126,7 +126,7 @@ public class IssueGroupHandlerDto
     public long HandlerId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）——
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）——
     /// 格式化本身是前端的事，這裡只補齊素材</summary>
     public string Account { get; set; } = string.Empty;
 }
@@ -142,14 +142,14 @@ public class RecordDetailDto
 
     public string? HostIpAddress { get; set; }
 
-    /// <summary>'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string HostOs { get; set; } = "windows";
 
     public string HostRoleDesc { get; set; } = string.Empty;
     public string Date { get; set; } = string.Empty;
     public string RiskLevel { get; set; } = string.Empty;
 
-    /// <summary>日風險等級的判定依據說明（docs/HISTORY.md #11），已轉為白話文字；
+    /// <summary>日風險等級的判定依據說明（docs/archive/HISTORY.md #11），已轉為白話文字；
     /// null＝舊紀錄（本欄位問世前寫入），前端顯示通用說明。</summary>
     public string? RiskBasisText { get; set; }
 
@@ -200,7 +200,7 @@ public class IssueDto
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
-    /// <summary>命中即列為高風險日（docs/HISTORY.md #1，B1 三級化）：前端顯示「重大」
+    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化）：前端顯示「重大」
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
     public bool ElevatesDayRisk { get; set; }
 
@@ -246,11 +246,11 @@ public class IssueDto
     public string? DueDate { get; set; }
 
     /// <summary>
-    /// 這個問題目前的進行中案件（docs/FEEDBACK-4-PLAN.md §2），null＝沒有進行中案件。
+    /// 這個問題目前的進行中案件（docs/archive/FEEDBACK-4-PLAN.md §2），null＝沒有進行中案件。
     /// 案件涵蓋這個問題的其他日子也會同步這個狀態——前端據此顯示「○○○ 處理中（1/10 起）」，
     /// 解釋為什麼某些問題的狀態會「自己動」。
     /// </summary>
-    /// <summary>案件處理人 Id（docs/FEEDBACK-4-PLAN.md §6）——供前端把案件徽章連到其工作頁</summary>
+    /// <summary>案件處理人 Id（docs/archive/FEEDBACK-4-PLAN.md §6）——供前端把案件徽章連到其工作頁</summary>
     public long? CaseHandlerId { get; set; }
     public string? CaseHandlerName { get; set; }
     public string? CaseStatus { get; set; }
@@ -258,7 +258,7 @@ public class IssueDto
 
     /// <summary>
     /// true＝這個問題簽章在本主機更早的日期有結案過的紀錄（逐日標記或已結案案件皆算）
-    /// ——docs/FEEDBACK-5-PLAN.md §4「之前處理過的問題再次發生」。前端據此顯示「先前處理」
+    /// ——docs/archive/FEEDBACK-5-PLAN.md §4「之前處理過的問題再次發生」。前端據此顯示「先前處理」
     /// 按鈕，點開 modal 打 <c>issue-history</c> 端點查詳情；本欄只是「有沒有」的旗標，
     /// 不帶內容，避免每個問題都攜帶一份可能用不到的歷史清單。
     /// </summary>
@@ -282,7 +282,7 @@ public class IssueGuidanceDto
 }
 
 /// <summary>
-/// 單一問題簽章在本主機的先前處理歷史（docs/FEEDBACK-5-PLAN.md §4）：
+/// 單一問題簽章在本主機的先前處理歷史（docs/archive/FEEDBACK-5-PLAN.md §4）：
 /// <c>Cases</c> 是已結案案件摘要（較接近「上次怎麼解的」的答案），
 /// <c>Entries</c> 是逐日結案標記（只含結案類，倒序）。兩者可能重疊
 /// （案件同步時會把逐日列的 CaseId 標起來，見 <see cref="IssueHistoryEntryDto.FromCase"/>），
@@ -313,7 +313,7 @@ public class IssueHistoryEntryDto
     public string? Note { get; set; }
     public string ActorAccount { get; set; } = string.Empty;
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
     public string? ActorDisplayName { get; set; }
 
@@ -332,7 +332,7 @@ public class CategorySummaryDto
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
-    /// <summary>命中「重大」旗標的問題數（docs/HISTORY.md #1）</summary>
+    /// <summary>命中「重大」旗標的問題數（docs/archive/HISTORY.md #1）</summary>
     public int ElevatesCount { get; set; }
 }
 
@@ -375,7 +375,7 @@ public class HostDetailDto
     public string RoleDesc { get; set; } = string.Empty;
     public string? IpAddress { get; set; }
 
-    /// <summary>'windows' | 'linux'（docs/LINUX-RULES-PLAN.md）</summary>
+    /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
     public string? NetiqServer { get; set; }
@@ -385,13 +385,13 @@ public class HostDetailDto
     public List<TimelineDayDto> Timeline { get; set; } = new();
     public WeeklyCheckupDto? LatestCheckup { get; set; }
 
-    /// <summary>期間內問題彙總（docs/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」下鑽進來
+    /// <summary>期間內問題彙總（docs/archive/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」下鑽進來
     /// 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的
     /// 問題（依 Source+EventId 分組），每列連結到最近一次出現的那天詳情</summary>
     public List<HostIssueSummaryDto> TopSignatures { get; set; } = new();
 }
 
-/// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/FEEDBACK-3-PLAN.md #4）。
+/// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/archive/FEEDBACK-3-PLAN.md #4）。
 /// 與 <see cref="LogForesight.Web.Services.IssueClusterDto"/>（跨主機同簽章聚類，供 AI 歸納）
 /// 分組鍵相同（Source+EventId）但彙總維度不同——這裡是單一主機跨日，關心的是「出現幾天」
 /// 而不是「幾台主機」。</summary>
@@ -418,7 +418,7 @@ public class HostIssueSummaryDto
 }
 
 /// <summary>
-/// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/FEEDBACK-4-PLAN.md §3）：
+/// 主機詳情頁「重點問題」某一列展開後的發生明細（docs/archive/FEEDBACK-4-PLAN.md §3）：
 /// 這個問題（Source+EventId）在期間內逐日出現的頻率、間隔與各日處理狀態。
 /// </summary>
 public class HostIssueOccurrenceDto
@@ -469,4 +469,38 @@ public class HostIssueOccurrenceDayDto
 
     /// <summary>這個標記是不是案件同步展開寫入的（而非使用者當天手動標的）——前端顯示「案件同步」小字</summary>
     public bool FromCase { get; set; }
+}
+
+public class RecordSearchRequest
+{
+    public List<long>? HostIds { get; set; }
+
+    /// <summary>主機群組篩選（§5.4 D-4）：展開為主機集合後與 HostIds 取聯集，
+    /// 兩千台規模下「看某個部門的主機」比一台台勾選實際得多</summary>
+    public List<long>? GroupIds { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public List<string>? RiskLevels { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Severity { get; set; }
+    public int? EventId { get; set; }
+    public string? Source { get; set; }
+
+    /// <summary>處理狀態篩選（待辦清單的下鑽目標）</summary>
+    public List<string>? Statuses { get; set; }
+
+    /// <summary>只看逾期未處理</summary>
+    public bool? Overdue { get; set; }
+
+    /// <summary>
+    /// 表頭排序（docs/WEB-SPEC.md §9.2）。null／不合法值＝維持各視角原本的預設排序。
+    /// 明細視角：date | host | risk。依主機視角：host | highRisk | mediumRisk | lowRisk | correlation。
+    /// 依日期視角：date | hostCount | highRisk | mediumRisk | lowRisk | correlation。
+    /// </summary>
+    public string? SortKey { get; set; }
+
+    public bool Ascending { get; set; }
+
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
 }

@@ -2,7 +2,7 @@ using System.Text;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>單次 probe 的快照（docs/WEB-SCHEDULER-PLAN.md §1.4.11），供狀態 API 一次性讀出，避免呼叫端分次讀取多個屬性時看到不一致的中間狀態</summary>
+/// <summary>單次 probe 的快照（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11），供狀態 API 一次性讀出，避免呼叫端分次讀取多個屬性時看到不一致的中間狀態</summary>
 public record NetiqProbeSnapshot(
     bool IsRunning, long? SentinelId, string? SentinelName,
     DateTime? StartedAt, DateTime? CompletedAt, bool? Success,
@@ -10,7 +10,7 @@ public record NetiqProbeSnapshot(
 
 /// <summary>
 /// probe 的行程內單例執行狀態＋**自成一個併發 1 的 gate**——與排程/手動分析的
-/// <see cref="SchedulerRunState"/> 完全分開（docs/WEB-SCHEDULER-PLAN.md §1.4.11：
+/// <see cref="SchedulerRunState"/> 完全分開（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11：
 /// probe 是小規模診斷查詢，不該被夜間分析互斥擋住，但同時只允許一個 probe 在跑）。
 /// </summary>
 public class NetiqProbeRunState

@@ -1,7 +1,7 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 跨行程互斥的安全包裝（docs/WEB-SCHEDULER-PLAN.md §1.4.2／§1.5）：Web 排程與「有人在伺服器上
+/// 跨行程互斥的安全包裝（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2／§1.5）：Web 排程與「有人在伺服器上
 /// 手動跑 console」之間唯一的跨行程互斥，取不到就記警告並跳過本次。
 ///
 /// **為什麼不是單純 `using var mutex = new Mutex(...)`（console 的既有寫法）**：console 是

@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -7,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #4：<see cref="RecordQueryService.GetHostDetail"/> 的
+/// docs/archive/FEEDBACK-3-PLAN.md #4：<see cref="RecordQueryService.GetHostDetail"/> 的
 /// 「重點問題（期間彙總）」（<see cref="LogForesight.Web.Models.Dto.HostDetailDto.TopSignatures"/>）。
 /// 依 Source+EventId 分組，與 <see cref="RecordQueryServiceSearchTests"/> 同樣的實測套接方式
 /// （真正的 EfAnalysisRecordStore＋RecordRepository，不重新實作一份簡化邏輯）。
@@ -22,7 +21,7 @@ public class HostDetailIssueSummaryTests : IDisposable
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeIssueCaseStore _caseStore = new();
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
     public HostDetailIssueSummaryTests()
     {
@@ -30,14 +29,13 @@ public class HostDetailIssueSummaryTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
-        _service = new RecordQueryService(
+        _service = new RecordDetailQueryService(
             repository,
             new NullReportReader(),
             _hosts,
             _users,
             new FakeHostGroupStore(),
             visibility,
-            new FakeHandlingStore(),
             _issueHandlingStore,
             _caseStore,
             new FakeNoiseMarkStore(),
@@ -48,7 +46,7 @@ public class HostDetailIssueSummaryTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
@@ -166,7 +164,7 @@ public class HostDetailIssueSummaryTests : IDisposable
         Assert.Empty(detail.TopSignatures);
     }
 
-    // ── 問題發生明細（docs/FEEDBACK-4-PLAN.md §3）───────────────────────────────
+    // ── 問題發生明細（docs/archive/FEEDBACK-4-PLAN.md §3）───────────────────────────────
 
     [Fact]
     public void 發生明細_統計出現天數次數與最長連續()

@@ -4,6 +4,7 @@ using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
@@ -49,12 +50,22 @@ public class HandlingServiceTests
 
     private static DateTime Today => DateTime.Today;
 
-    private HandlingService Create(params Capability[] capabilities)
+    private HandlingServiceFacade Create(params Capability[] capabilities)
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
-        return new HandlingService(
-            _handlings, _issueHandlings, _cases, _caseCoordinator, _noiseMarks, _repository, _hosts, _users,
-            new AlwaysVisibleService(_hosts), currentUser, _audit, _settings);
+        return new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: _cases,
+            caseCoordinator: _caseCoordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: new AlwaysVisibleService(_hosts),
+            currentUser: currentUser,
+            audit: _audit,
+            settings: _settings);
     }
 
     /// <summary>
@@ -185,7 +196,7 @@ public class HandlingServiceTests
         Assert.Contains(logs, l => l.Note == "已聯絡機房安排停機");
     }
 
-    /// <summary>docs/FEEDBACK-8-PLAN.md #6：操作歷程補上操作者的顯示名稱素材，
+    /// <summary>docs/archive/FEEDBACK-8-PLAN.md #6：操作歷程補上操作者的顯示名稱素材，
     /// 讓前端能統一顯示「顯示名稱(帳號)」而不只是帳號</summary>
     [Fact]
     public void 更新處理狀態_歷程DTO帶操作者顯示名稱()
@@ -325,7 +336,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// 待辦母體＝高＋中風險日（docs/HISTORY.md S3）：低風險日即使從未處理過，
+    /// 待辦母體＝高＋中風險日（docs/archive/HISTORY.md S3）：低風險日即使從未處理過，
     /// 也不進待辦——這條規則由 GetTodo 內部強制套用，呼叫端不必自己先過濾。
     /// </summary>
     [Fact]
@@ -344,14 +355,7 @@ public class HandlingServiceTests
     // 預設 Severity=High：落在 SystemSettings.UnhandledSeverities 的預設值內，
     // 讓這裡的測試專注在結案狀態組合的計算邏輯，不受未處理等級篩選影響
     // （等級篩選本身的行為由 DayHandlingDerivationTests 專門釘住）
-    private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity = IssueSeverity.High) => new()
-    {
-        LogName = "System",
-        Source = source,
-        EventId = eventId,
-        EntryType = System.Diagnostics.EventLogEntryType.Error,
-        Severity = severity
-    };
+    // Issue(...) 已搬到 TestDoubles\TestData.cs（與 DayHandlingDerivationTests 原本逐字相同，已合併）。
 
     [Fact]
     public void 標記部分問題_日進度反映已結案數與處理中()
@@ -451,7 +455,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
+    /// docs/archive/HISTORY.md #12：日層級 fallback 為 wont_fix（使用者把整天標成這個狀態、
     /// 當天沒有問題層級標記）時，對外三態要算作「已處理」。這是原始 bug 的釘樁——舊版
     /// GetTodo 的三個桶（Open/InProgress/Resolved）都數不到 wont_fix，讓「未完成」
     /// （Total－Resolved）把已結案的日子誤算成未完成。
@@ -598,7 +602,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
+    /// docs/archive/HISTORY.md #6/D4：批次勾選 N 個問題套用，歷程要留下 N 筆逐一紀錄
     /// （不是一筆彙總）——每一筆都查得到「對哪個問題、標成什麼」，含反正規化的 IssueLabel。
     /// </summary>
     [Fact]
@@ -829,7 +833,7 @@ public class HandlingServiceTests
         Assert.Equal(0, todo.OverdueCount);
     }
 
-    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
+    // ── 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────
 
     /// <summary>標為觀察中時必須指定觀察至日期，否則拒絕——沒有終點的「觀察」沒有意義</summary>
     [Fact]
@@ -886,7 +890,7 @@ public class HandlingServiceTests
     }
 
     /// <summary>
-    /// 完整劇本（docs/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
+    /// 完整劇本（docs/archive/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
     /// → 模擬到期（直接落一筆已過期的觀察紀錄，同其餘逾期測試的既有手法）→ 逾期現身。
     /// </summary>
     [Fact]
@@ -926,7 +930,7 @@ public class HandlingServiceTests
         Assert.Equal(1, afterExpiry.OverdueCount);      // 但現在算逾期——這就是「問題仍在發生」的提示
     }
 
-    // ── 問題案件（IssueCase，docs/FEEDBACK-4-PLAN.md §2）────────────────────────
+    // ── 問題案件（IssueCase，docs/archive/FEEDBACK-4-PLAN.md §2）────────────────────────
 
     /// <summary>指派處理人時，對當日未結案的問題自動建案（Q1）；低風險以下的問題不建案</summary>
     [Fact]
@@ -1042,7 +1046,7 @@ public class HandlingServiceTests
         Assert.Equal(0, result.CaseSyncedDayCount);
     }
 
-    // ── 處理人員工作頁（docs/FEEDBACK-4-PLAN.md §6）────────────────────────────
+    // ── 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）────────────────────────────
 
     [Fact]
     public void 工作頁_列出名下進行中案件與被指派的未結案風險日()
@@ -1101,10 +1105,19 @@ public class HandlingServiceTests
 
         // 檢視者只看得到別的主機（AlwaysVisibleService 全可見，這裡改用受限的可見範圍服務）
         var restrictedVisibility = new RestrictedVisibleService();
-        var restrictedService = new HandlingService(
-            _handlings, _issueHandlings, _cases, _caseCoordinator, _noiseMarks, _repository, _hosts, _users,
-            restrictedVisibility, FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle),
-            _audit, _settings);
+        var restrictedService = new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: _cases,
+            caseCoordinator: _caseCoordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: restrictedVisibility,
+            currentUser: FakeCurrentUser.ForUser(_other.UserId, Capability.Assign, Capability.Handle),
+            audit: _audit,
+            settings: _settings);
 
         var workload = restrictedService.GetHandlerWorkload(_other.UserId, includeResolvedDays: false);
 
@@ -1120,283 +1133,4 @@ public class HandlingServiceTests
 
         Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
     }
-}
-
-/// <summary>可見範圍固定為空——供工作頁的「檢視者可見範圍過濾」測試使用</summary>
-internal class RestrictedVisibleService : IVisibilityService
-{
-    public IReadOnlySet<long> GetVisibleHostIds() => new HashSet<long>();
-    public List<WebHost> GetVisibleHosts() => new();
-    public void EnsureVisible(long hostId) => throw DomainException.NotFound("找不到這台主機。");
-}
-
-// ── 測試替身 ─────────────────────────────────────────────────────────────────
-// FakeHostStore／FakeUserStore／AlwaysVisibleService／RecordingAuditService 已搬到
-// TestDoubles\ 底下（跨多個測試檔共用）；以下僅保留本檔專用的替身。
-
-/// <summary>
-/// 同時實作 <see cref="IAnalysisRecordQuery"/>（顯式介面實作）供 IssueCaseCoordinator 之類
-/// 只用得到 Core 層查詢介面的呼叫端測試——**與 <see cref="IRecordRepository.Query"/> 刻意分開**：
-/// 後者長期以來忽略 filter.Hosts（多個既有測試檔可能仰賴這個寬鬆行為），改動它有波及既有測試的風險；
-/// 前者是全新介面、沒有既有行為要保留，直接做正確的主機過濾（HostMatcher），讓 Coordinator 的
-/// 回溯關聯查詢在多主機測試情境下不會誤抓別台主機的紀錄。
-/// </summary>
-internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
-{
-    private readonly FakeHostStore _hosts;
-    private readonly List<DailyAnalysisRecord> _records = new();
-
-    public FakeRecordRepository(FakeHostStore hosts) => _hosts = hosts;
-
-    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues) =>
-        AddRecord(hostName, date, "高", issues);
-
-    public DailyAnalysisRecord AddRecord(string hostName, DateTime date, string risk, params LogIssueSignature[] issues)
-    {
-        var record = new DailyAnalysisRecord
-        {
-            Host = hostName,
-            HostId = _hosts.FindByName(hostName)?.HostId ?? 0,
-            Date = date,
-            RiskLevel = risk,
-            TopIssues = issues.ToList()
-        };
-        _records.Add(record);
-        return record;
-    }
-
-    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
-
-    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts）─────────────────
-    List<DailyAnalysisRecord> IAnalysisRecordQuery.Query(RecordQueryFilter filter)
-    {
-        if (filter.Hosts == null) return _records.ToList();
-        var matcher = new HostMatcher(filter.Hosts);
-        return _records.Where(matcher.Matches).ToList();
-    }
-
-    DailyAnalysisRecord? IAnalysisRecordQuery.GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
-    {
-        var matcher = new HostMatcher(hosts);
-        return _records.FirstOrDefault(r => matcher.Matches(r) && r.Date.Date == date.Date);
-    }
-
-    PagedResult<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey, bool ascending) =>
-        throw new NotImplementedException();
-
-    HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to) =>
-        throw new NotImplementedException();
-
-    public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
-    {
-        var ordered = _records
-            .OrderByDescending(r => r.RiskLevel == "高" ? 3 : r.RiskLevel == "中" ? 2 : r.RiskLevel == "低" ? 1 : 0)
-            .ThenByDescending(r => r.CorrelationAlerts.Count > 0)
-            .ThenByDescending(r => r.Date)
-            .ToList();
-
-        return new PagedResult<DailyAnalysisRecord>
-        {
-            Items = ordered.Skip((page - 1) * pageSize).Take(pageSize).ToList(),
-            Page = page,
-            PageSize = pageSize,
-            Total = ordered.Count
-        };
-    }
-
-    public DailyAnalysisRecord? GetOne(long hostId, DateTime date)
-    {
-        var host = _hosts.Get(hostId);
-        return host == null
-            ? null
-            : _records.FirstOrDefault(r =>
-                string.Equals(r.Host, host.HostName, StringComparison.OrdinalIgnoreCase) &&
-                r.Date.Date == date.Date);
-    }
-
-    public List<HostKey> ResolveHostKeys(long hostId) =>
-        HostIdentityResolver.Expand(_hosts.GetAll(), hostId);
-
-    public WebHost? ResolveHost(string hostName) => _hosts.FindByName(hostName);
-}
-
-internal class FakeIssueHandlingStore : IIssueHandlingStore
-{
-    private readonly List<IssueHandling> _items = new();
-
-    public List<IssueHandling> GetForDay(string hostName, DateTime date) =>
-        _items.Where(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-                          h.Date.Date == date.Date).ToList();
-
-    public List<IssueHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to)
-    {
-        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _items.Where(h => names.Contains(h.HostName) &&
-                                 h.Date.Date >= from.Date && h.Date.Date <= to.Date).ToList();
-    }
-
-    public List<IssueHandling> GetByCase(string caseId) =>
-        _items.Where(h => h.CaseId == caseId).ToList();
-
-    public void Save(IssueHandling handling) => SaveMany(new[] { handling });
-
-    public void SaveMany(IEnumerable<IssueHandling> handlings)
-    {
-        foreach (var handling in handlings)
-        {
-            if (string.IsNullOrWhiteSpace(handling.Status))
-            {
-                Clear(handling.HostName, handling.Date, handling.IssueKey);
-                continue;
-            }
-
-            var existing = _items.FirstOrDefault(h => Same(h, handling.HostName, handling.Date, handling.IssueKey));
-            if (existing == null) { _items.Add(handling); continue; }
-            existing.Status = handling.Status;
-            existing.Note = handling.Note;
-            existing.ActorId = handling.ActorId;
-            existing.ActorAccount = handling.ActorAccount;
-            existing.DueDate = handling.DueDate;
-            existing.CaseId = handling.CaseId;
-            existing.UpdatedAt = handling.UpdatedAt;
-        }
-    }
-
-    public void Clear(string hostName, DateTime date, string issueKey) =>
-        _items.RemoveAll(h => Same(h, hostName, date, issueKey));
-
-    private static bool Same(IssueHandling h, string hostName, DateTime date, string issueKey) =>
-        string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-        h.Date.Date == date.Date && h.IssueKey == issueKey;
-}
-
-internal class FakeIssueCaseStore : IIssueCaseStore
-{
-    private readonly List<IssueCase> _items = new();
-
-    public IssueCase? GetOpen(string hostName, string issueKey) =>
-        _items.FirstOrDefault(c =>
-            string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-            c.IssueKey == issueKey && c.ClosedAt == null);
-
-    public List<IssueCase> GetOpenForHost(string hostName) =>
-        _items.Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && c.ClosedAt == null).ToList();
-
-    public List<IssueCase> GetMany(IEnumerable<string> hostNames)
-    {
-        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _items.Where(c => names.Contains(c.HostName)).ToList();
-    }
-
-    public List<IssueCase> GetOpenByHandler(long userId) =>
-        _items.Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
-
-    public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
-
-    public void Save(IssueCase issueCase)
-    {
-        var existing = _items.FirstOrDefault(c => c.CaseId == issueCase.CaseId);
-        if (existing == null) { _items.Add(issueCase); return; }
-        existing.Status = issueCase.Status;
-        existing.HandlerId = issueCase.HandlerId;
-        existing.Note = issueCase.Note;
-        existing.DueDate = issueCase.DueDate;
-        existing.FirstLinkedDate = issueCase.FirstLinkedDate;
-        existing.LastLinkedDate = issueCase.LastLinkedDate;
-        existing.ClosedAt = issueCase.ClosedAt;
-        existing.UpdatedAt = issueCase.UpdatedAt;
-    }
-}
-
-internal class FakeNoiseMarkStore : INoiseMarkStore
-{
-    private readonly List<NoiseMark> _items = new();
-
-    public List<NoiseMark> GetForHost(string hostName) =>
-        _items.Where(m => string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase)).ToList();
-
-    public NoiseMark? Get(string hostName, string issueKey) =>
-        _items.FirstOrDefault(m => Same(m, hostName, issueKey));
-
-    public void Save(NoiseMark mark)
-    {
-        var existing = _items.FirstOrDefault(m => Same(m, mark.HostName, mark.IssueKey));
-        if (existing == null) { _items.Add(mark); return; }
-        existing.MarkedByAccount = mark.MarkedByAccount;
-        existing.MarkedAt = mark.MarkedAt;
-        existing.Note = mark.Note;
-    }
-
-    public void Delete(string hostName, string issueKey) =>
-        _items.RemoveAll(m => Same(m, hostName, issueKey));
-
-    private static bool Same(NoiseMark m, string hostName, string issueKey) =>
-        string.Equals(m.HostName, hostName, StringComparison.OrdinalIgnoreCase) && m.IssueKey == issueKey;
-}
-
-internal class FakeSystemSettingsStore : ISystemSettingsStore
-{
-    private SystemSettings _settings = new();
-
-    public SystemSettings Get() => _settings;
-
-    public SystemSettings Update(Action<SystemSettings> mutation)
-    {
-        mutation(_settings);
-        return _settings;
-    }
-}
-
-internal class FakeHandlingStore : IRecordHandlingStore
-{
-    private readonly List<RecordHandling> _handlings = new();
-    private readonly List<RecordHandlingLog> _logs = new();
-    private long _nextLogId = 1;
-
-    public RecordHandling? Get(string hostName, DateTime date) =>
-        _handlings.FirstOrDefault(h =>
-            string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-            h.Date.Date == date.Date);
-
-    public List<RecordHandling> GetMany(IEnumerable<string> hostNames, DateTime from, DateTime to)
-    {
-        var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _handlings.Where(h => names.Contains(h.HostName)).ToList();
-    }
-
-    public List<RecordHandling> GetUnresolved() =>
-        _handlings.Where(h => HandlingStatuses.Unresolved.Contains(h.Status)).ToList();
-
-    public List<RecordHandling> GetByHandler(long userId) =>
-        _handlings.Where(h => h.HandlerId == userId).ToList();
-
-    public void Save(RecordHandling handling)
-    {
-        var existing = Get(handling.HostName, handling.Date);
-        if (existing == null)
-        {
-            _handlings.Add(handling);
-            return;
-        }
-
-        existing.Status = handling.Status;
-        existing.HandlerId = handling.HandlerId;
-        existing.DueDate = handling.DueDate;
-        existing.Note = handling.Note;
-        existing.UpdatedAt = handling.UpdatedAt;
-    }
-
-    public void AppendLog(RecordHandlingLog log)
-    {
-        log.LogId = _nextLogId++;
-        if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
-        _logs.Add(log);
-    }
-
-    public List<RecordHandlingLog> GetLogs(string hostName, DateTime date) =>
-        _logs.Where(l =>
-                string.Equals(l.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-                l.Date.Date == date.Date)
-            .OrderBy(l => l.LogId)
-            .ToList();
 }

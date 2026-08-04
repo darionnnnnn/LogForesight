@@ -3,7 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// <see cref="IAnalysisRecordStore"/> ＋ <see cref="IAnalysisRecordQuery"/> 的 SQL 後端實作。
@@ -175,10 +175,10 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// <summary>
     /// 下推 <see cref="RecordQueryFilter"/> 除主機名稱 fallback 外的欄位到 SQL 端——
     /// <see cref="Query"/> 與 <see cref="QueryPage"/> 共用的單點，篩選語意不會因為兩處各自維護
-    /// 一份而漂移（docs/HISTORY.md P1-2）。
+    /// 一份而漂移（docs/archive/HISTORY.md P1-2）。
     ///
     /// Category／MinSeverity／EventId／Source 以 <c>lf_top_issues</c> 的 EXISTS 子查詢下推——
-    /// 這張維度表當初就是為 filter-only 設計、索引已建（docs/DB-PLAN.md），此前一直沒有查詢端用到。
+    /// 這張維度表當初就是為 filter-only 設計、索引已建（docs/DB-SPEC.md），此前一直沒有查詢端用到。
     /// </summary>
     private static IQueryable<DailyRecordRow> ApplyPushableFilters(
         LfDbContext ctx, IQueryable<DailyRecordRow> q, RecordQueryFilter filter)

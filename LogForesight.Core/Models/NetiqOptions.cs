@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// NetIQ Sentinel 查詢的節流／逃生門設定（↔ webdata blob，key=netiq_options）。單一物件，非清單。
@@ -10,7 +10,7 @@ namespace LogForesight;
 public class NetiqOptions
 {
     // SampleFetchMode（範例訊息 Q2 查詢範圍）已於 2026-07-29 退役：Phase 3 定案 msg 直接投影在
-    // Q1 內（docs/NETIQ-API-PLAN.md §4），Q2 這類查詢不存在了，設定跟著失去所有行為消費端——
+    // Q1 內（docs/NETIQ-API-REFERENCE.md §4），Q2 這類查詢不存在了，設定跟著失去所有行為消費端——
     // 「有設定無行為」是本專案紅線，故整欄移除。舊 blob 裡殘留的欄位值由 System.Text.Json
     // 反序列化時自動忽略，零遷移。
 
@@ -40,7 +40,7 @@ public class NetiqOptions
     public bool AllowInvalidCertificates { get; set; } = false;
 
     /// <summary>
-    /// 每台主機每次執行最多回補幾天（docs/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
+    /// 每台主機每次執行最多回補幾天（docs/archive/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
     /// 14 天、非首次檢查 14 天內缺漏的雙軌設計——2000 台規模下對 Sentinel 做大量歷史日查詢
     /// 不現實，正式環境的預期行為是「只查前一天」。首次與非首次統一套用同一個值
     /// （<c>Math.Min(BackfillDays, trendWindowDays)</c>，見 NetiqPipelineService）。
@@ -54,7 +54,7 @@ public class NetiqOptions
     public int BackfillDays { get; set; } = 1;
 
     /// <summary>
-    /// 同時處理幾台 Sentinel（docs/FEEDBACK-3-PLAN.md #2）。各台 Sentinel 轄下主機互不重疊、
+    /// 同時處理幾台 Sentinel（docs/archive/FEEDBACK-3-PLAN.md #2）。各台 Sentinel 轄下主機互不重疊、
     /// 各自獨立的 <see cref="SentinelClient"/> 連線，跨台平行不破壞「同一台主機同一天內
     /// 依序處理」的趨勢比對前提（該限制只在單一主機內成立，一台主機只屬於一台 Sentinel）。
     /// 預設 2；設 1 等同完全依序處理（既有行為的逃生門）。上限 8——平行度越高，
@@ -65,7 +65,7 @@ public class NetiqOptions
 
     /// <summary>
     /// 詢問 AI（實驗性）詢問當下是否向 Sentinel 即時查詢現場事件納入分析
-    /// （docs/FEEDBACK-4-PLAN.md §5）。**預設 false**：對 Sentinel 的白天即時查詢負載
+    /// （docs/archive/FEEDBACK-4-PLAN.md §5）。**預設 false**：對 Sentinel 的白天即時查詢負載
     /// 必須由管理者顯式開啟，不能因為 Web 加值功能就靜默對正式環境的 Sentinel 加壓。
     /// 只對 NetIQ 主機生效——本機直讀主機在 Web 端沒有即時讀取 Event Log 的路徑，
     /// 開關對它們沒有作用（前端不顯示任何取數跡象，不誤導）。

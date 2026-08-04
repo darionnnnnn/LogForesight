@@ -17,46 +17,51 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/records/{hostId:long}/{date}/handling")]
 public class HandlingController : ControllerBase
 {
-    private readonly HandlingService _service;
+    private readonly DayHandlingCommandService _day;
+    private readonly IssueHandlingCommandService _issue;
+    private readonly HandlingHistoryQueryService _history;
 
-    public HandlingController(HandlingService service)
+    public HandlingController(
+        DayHandlingCommandService day, IssueHandlingCommandService issue, HandlingHistoryQueryService history)
     {
-        _service = service;
+        _day = day;
+        _issue = issue;
+        _history = history;
     }
 
     [HttpGet]
     public ApiResponse<HandlingDto> Get(long hostId, string date) =>
-        ApiResponse<HandlingDto>.Ok(_service.Get(hostId, QueryStringParsing.ParseRequiredDate(date)));
+        ApiResponse<HandlingDto>.Ok(_day.Get(hostId, QueryStringParsing.ParseRequiredDate(date)));
 
     [HttpPut]
     [Permission(Capability.Handle)]
     public ApiResponse<HandlingDto> Update(long hostId, string date, [FromBody] UpdateHandlingRequest request) =>
-        ApiResponse<HandlingDto>.Ok(_service.Update(hostId, QueryStringParsing.ParseRequiredDate(date), request));
+        ApiResponse<HandlingDto>.Ok(_day.Update(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     /// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）。與日層級更新同為 Handle 能力</summary>
     [HttpPut("issues")]
     [Permission(Capability.Handle)]
     public ApiResponse<IssueStatusResultDto> SetIssueStatus(long hostId, string date, [FromBody] SetIssueStatusRequest request) =>
-        ApiResponse<IssueStatusResultDto>.Ok(_service.SetIssueStatus(hostId, QueryStringParsing.ParseRequiredDate(date), request));
+        ApiResponse<IssueStatusResultDto>.Ok(_issue.SetIssueStatus(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     /// <summary>批次設定多個問題的處理狀態（勾選多個問題後在右側處理狀態區塊一次套用）</summary>
     [HttpPut("issues/batch")]
     [Permission(Capability.Handle)]
     public ApiResponse<BatchIssueStatusResultDto> SetIssueStatusBatch(long hostId, string date, [FromBody] BatchSetIssueStatusRequest request) =>
-        ApiResponse<BatchIssueStatusResultDto>.Ok(_service.SetIssueStatusBatch(hostId, QueryStringParsing.ParseRequiredDate(date), request));
+        ApiResponse<BatchIssueStatusResultDto>.Ok(_issue.SetIssueStatusBatch(hostId, QueryStringParsing.ParseRequiredDate(date), request));
 
     [HttpPut("assign")]
     [Permission(Capability.Assign)]
     public ApiResponse<HandlingDto> Assign(long hostId, string date, [FromBody] AssignHandlerRequest request) =>
-        ApiResponse<HandlingDto>.Ok(_service.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId));
+        ApiResponse<HandlingDto>.Ok(_day.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId));
 
     [HttpGet("logs")]
     public ApiResponse<List<HandlingLogDto>> GetLogs(long hostId, string date) =>
-        ApiResponse<List<HandlingLogDto>>.Ok(_service.GetLogs(hostId, QueryStringParsing.ParseRequiredDate(date)));
+        ApiResponse<List<HandlingLogDto>>.Ok(_history.GetLogs(hostId, QueryStringParsing.ParseRequiredDate(date)));
 }
 
 /// <summary>
-/// 問題案件跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
+/// 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）：問題查詢「依問題」視角的指派入口，
 /// 全部端點都是 <c>Assign</c> 能力——同單日詳情的指派，只有 admin 能做。
 /// </summary>
 [ApiController]
@@ -64,9 +69,9 @@ public class HandlingController : ControllerBase
 [Permission(Capability.Assign)]
 public class IssueCasesController : ControllerBase
 {
-    private readonly HandlingService _service;
+    private readonly IssueHandlingCommandService _service;
 
-    public IssueCasesController(HandlingService service)
+    public IssueCasesController(IssueHandlingCommandService service)
     {
         _service = service;
     }

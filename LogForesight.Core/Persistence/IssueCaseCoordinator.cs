@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>建案結果：Created=false 時代表該問題已有他人的進行中案件，未變更（2.1「只由一個人處理」）</summary>
 public readonly record struct CaseBuildResult(bool Created, string? CaseId, long? ExistingHandlerId, int LinkedDayCount);
@@ -10,7 +10,7 @@ public readonly record struct CaseSyncResult(bool Applied, int SyncedDayCount, b
 public readonly record struct CaseAttachResult(int AttachedCount);
 
 /// <summary>
-/// 問題案件的建案／同步／掛接規則單點定義（docs/FEEDBACK-4-PLAN.md §0.4）。
+/// 問題案件的建案／同步／掛接規則單點定義（docs/archive/FEEDBACK-4-PLAN.md §0.4）。
 ///
 /// 放 Core 而非 Web：console 批次（Program.cs 本機路徑、NetiqPipelineService）與 Web
 /// （HandlingService）都要呼叫同一套規則——理由同 <c>DayHandlingDerivation</c>，
@@ -107,7 +107,7 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 狀態同步（§0.4-B）：Applied=false 代表該問題目前沒有進行中案件，呼叫端（HandlingService.
+    /// 狀態同步（§0.4-B）：Applied=false 代表該問題目前沒有進行中案件，呼叫端（IssueHandlingCommandService.
     /// ApplyIssueStatus）應維持既有的「只寫觸發日」行為不變。Applied=true 時**這裡取得觸發日
     /// 寫入的完整主導權**——呼叫端不應該再自己寫 IssueHandling／歷程，包含觸發日本身：
     /// 觸發日與其餘合格日一起走同一份 <see cref="ResolveEligibleDays"/>，只是動作名稱不同
@@ -133,7 +133,7 @@ public class IssueCaseCoordinator
 
         var effectiveStatus = clearing ? IssueHandlingStatuses.Open : status;
         var effectiveNote = clearing ? null : note;
-        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/FEEDBACK-8-PLAN.md #4）
+        // DueDate 只在 InProgress／Observing 才有意義（後者是「觀察至」，docs/archive/FEEDBACK-8-PLAN.md #4）
         var effectiveDueDate = effectiveStatus is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing
             ? dueDate : null;
 

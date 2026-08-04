@@ -9,10 +9,10 @@ public class ReportService
     private readonly IRecordRepository _repository;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
-    private readonly HandlingService _handling;
+    private readonly HandlingHistoryQueryService _handling;
 
     public ReportService(
-        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, HandlingService handling)
+        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, HandlingHistoryQueryService handling)
     {
         _repository = repository;
         _hosts = hosts;
@@ -46,7 +46,7 @@ public class ReportService
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
-            // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingService.GetTodo），
+            // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = _visibility.GetVisibleHosts().Count,
             Handling = _handling.GetTodo(records)

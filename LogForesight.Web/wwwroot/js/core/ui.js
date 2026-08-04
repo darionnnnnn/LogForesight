@@ -29,7 +29,7 @@ export function icon(name, className) {
 /**
  * 說明 icon 鈕（滑過或 focus 顯示 popover），供 JS 動態產生欄位時使用——
  * layout.js 的 initHelpPopovers 只在頁面載入當下掃描一次 DOM，涵蓋不到之後才建立的節點，
- * 這裡自行初始化 popover 實例（docs/FEEDBACK-5-PLAN.md §6）。
+ * 這裡自行初始化 popover 實例（docs/archive/FEEDBACK-5-PLAN.md §6）。
  * content/title 皆為開發者常數，不是使用者輸入，直接寫入 data 屬性無 XSS 疑慮。
  */
 export function helpIcon(content, title) {
@@ -291,7 +291,7 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
  * body 若是呼叫端既有的 DOM 節點（而非新建立的），appendChild 會把它從原位置「搬移」
  * 過來（節點的事件監聽器與內部狀態隨之保留，不是複製）——關閉時傳 onClose 把節點搬回原位，
  * 在 el.remove() **之前**呼叫，讓節點回到 DOM 上有效位置後才銷毀 modal 殼
- * （docs/FEEDBACK-3-PLAN.md #6：chat-panel.js 的放大檢視即用此手法）。
+ * （docs/archive/FEEDBACK-3-PLAN.md #6：chat-panel.js 的放大檢視即用此手法）。
  */
 export function showDetailModal({ title = '', body, size, fullscreen = false, onClose } = {}) {
     const el = document.createElement('div');
@@ -322,7 +322,7 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
 }
 
 /**
- * 表單未儲存變更追蹤（docs/HISTORY.md #2）：離開頁面前跳出瀏覽器原生確認。
+ * 表單未儲存變更追蹤（docs/archive/HISTORY.md #2）：離開頁面前跳出瀏覽器原生確認。
  * MPA 站台下 beforeunload 這一個 handler 就涵蓋側欄跳轉、重新整理、關閉分頁，
  * 不需要攔截個別連結。excludeSelector 可排除表單內不算「設定內容」的欄位
  * （例如測完即丟的測試帳密）——這些欄位的變更不該觸發離開提醒。
@@ -350,7 +350,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * 表格渲染：欄位定義 → <table>，含空狀態與載入中列。
  * columns: [{ key, title, className, render(row), renderHeader(), sortKey, sortDefaultDir }]
  * renderHeader()（選填）：回傳 Node 時取代 title 文字作為表頭儲存格內容——
- * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/HISTORY.md #7）。
+ * 目前唯一用途是風險日詳情重點問題表的「選取」欄全選 checkbox（docs/archive/HISTORY.md #7）。
  * rowHref(row)（選填）：回傳非空字串時整列可點導向該網址——列內既有的 <a>/<button>
  * 仍照自己的行為，不被整列連結攔截。
  * rowDetail(row)（選填）：回傳 Node 時，該列下方多一條可展開的細節列（跨欄），
@@ -595,7 +595,7 @@ export function renderLoading(container, rows = 4) {
 }
 
 /**
- * 區塊內等待指示（§8.6-6 的行內版，docs/FEEDBACK-8-PLAN.md #1）：spinner＋文字，取代各頁
+ * 區塊內等待指示（§8.6-6 的行內版，docs/archive/FEEDBACK-8-PLAN.md #1）：spinner＋文字，取代各頁
  * 過去各自手刻的純文字「載入中…」「掃描中…」——那些等待動作可能長達數十秒（NetIQ 掃描、
  * probe 執行中），純文字讓人分不清是卡住了還是真的在跑。
  *

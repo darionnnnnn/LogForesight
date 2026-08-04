@@ -75,7 +75,7 @@ public class RulesController : ControllerBase
         return ApiResponse.Ok();
     }
 
-    /// <summary>內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
+    /// <summary>內建規則升級（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
     [HttpGet("import-status")]
     public ApiResponse<RuleImportStatusDto> GetImportStatus() =>
         ApiResponse<RuleImportStatusDto>.Ok(_service.GetImportStatus());
@@ -90,7 +90,7 @@ public class RulesController : ControllerBase
 }
 
 /// <summary>執行監控（§9.10）。需 DevMonitor 或 Maintain 能力（dev / admin / serverAdmin，
-/// docs/FEEDBACK-6-PLAN.md §2——排程作業頁併入本頁後，serverAdmin 要能看見執行紀錄佐證排程活著）</summary>
+/// docs/archive/FEEDBACK-6-PLAN.md §2——排程作業頁併入本頁後，serverAdmin 要能看見執行紀錄佐證排程活著）</summary>
 [ApiController]
 [Route("api/runs")]
 [Permission(Capability.DevMonitor, Capability.Maintain)]

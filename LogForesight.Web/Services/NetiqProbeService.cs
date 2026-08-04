@@ -3,7 +3,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// NetIQ 維護頁「診斷」分頁的背景執行入口（docs/WEB-SCHEDULER-PLAN.md §1.4.11）。
+/// NetIQ 維護頁「診斷」分頁的背景執行入口（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）。
 /// Singleton——內部只依賴同為 Singleton 的 store／<see cref="NetiqProbeRunState"/>，
 /// 才能安全地在 <see cref="Task.Run(Func{Task})"/> 背景工作中使用，不受呼叫端請求範圍
 /// （Scoped DbContext 等）生命週期影響。稽核寫入留在 Controller（<see cref="Auth.IAuditService"/>

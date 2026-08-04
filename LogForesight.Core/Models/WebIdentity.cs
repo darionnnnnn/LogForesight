@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 使用者群組的角色。角色掛在**群組**上而不是使用者上（docs/WEB-SPEC.md §7.1）：

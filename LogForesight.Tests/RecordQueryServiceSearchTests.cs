@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -8,12 +7,12 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// P1-2：<see cref="RecordQueryService.Search"/> 的兩條路徑——
+/// P1-2：<see cref="RecordListQueryService.Search"/> 的兩條路徑——
 /// 沒有 Statuses/Overdue 篩選時走 <see cref="IRecordRepository.QueryPage"/>（SQL 端排序＋分頁，
 /// 只為當頁載入處理狀態）；有篩選時退回既有的「全撈→算處理狀態→篩選→排序→分頁」邏輯
 /// （那段邏輯本身不是這次改動的對象，這裡只驗證分支沒有把它弄壞）。
 ///
-/// 這是 <see cref="RecordQueryService.Search"/> 第一次有專屬測試——實際串接真正的
+/// 這是 <see cref="RecordListQueryService.Search"/> 第一次有專屬測試——實際串接真正的
 /// <see cref="EfAnalysisRecordStore"/>＋<see cref="RecordRepository"/>，而非重新實作一份簡化邏輯，
 /// 這樣測到的是真正會跑進 SQL 分頁下推的那條路徑。
 /// </summary>
@@ -28,8 +27,8 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
-    private readonly RecordQueryService _service;
-    private readonly HandlingService _handlingService;
+    private readonly RecordQueryServiceFacade _service;
+    private readonly HandlingServiceFacade _handlingService;
 
     public RecordQueryServiceSearchTests()
     {
@@ -37,34 +36,42 @@ public class RecordQueryServiceSearchTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
-        _service = new RecordQueryService(
-            repository,
-            new NullReportReader(),
-            _hosts,
-            _users,
-            new FakeHostGroupStore(),
-            visibility,
-            _handlingStore,
-            _issueHandlingStore,
-            _caseStore,
-            new FakeNoiseMarkStore(),
-            new FakeRuleStore(),
-            FakeCurrentUser.WithCapabilities(),
-            _settingsStore);
+        _service = new RecordQueryServiceFacade(
+            repository: repository,
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
-        _handlingService = new HandlingService(
-            _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, new FakeNoiseMarkStore(),
-            repository, _hosts, _users, visibility,
-            FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            new RecordingAuditService(), _settingsStore);
+        _handlingService = new HandlingServiceFacade(
+            store: _handlingStore,
+            issueStore: _issueHandlingStore,
+            cases: _caseStore,
+            caseCoordinator: caseCoordinator,
+            noiseMarks: new FakeNoiseMarkStore(),
+            repository: repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: visibility,
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
+            audit: new RecordingAuditService(),
+            settings: _settingsStore);
     }
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk, bool correlation = false, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
@@ -137,7 +144,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// 處理人 fallback（docs/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級從未指派、但當日問題
+    /// 處理人 fallback（docs/archive/FEEDBACK-4-PLAN.md §0.4-D／Q5）：日層級從未指派、但當日問題
     /// 屬進行中案件時，清單顯示案件處理人（後綴「（案件）」）——否則使用者會看到狀態已同步、
     /// 處理人卻空白的矛盾畫面。
     /// </summary>
@@ -206,7 +213,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/HISTORY.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
+    /// docs/archive/HISTORY.md #12：對外一律三態——日層級狀態為 wont_fix（不處理/誤報/
     /// 已知雜訊同理）時，清單的「已處理」chip 也要查得到，不能只精確比對 resolved。
     /// </summary>
     [Fact]
@@ -263,7 +270,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Single(result.Items);
     }
 
-    // ── 嚴重度可見性（docs/HISTORY.md S1）：釘住查詢頁分組視圖的漏套修正 ──
+    // ── 嚴重度可見性（docs/archive/HISTORY.md S1）：釘住查詢頁分組視圖的漏套修正 ──
 
     private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity, IssueCategory category) =>
         new() { LogName = "System", Source = source, EventId = eventId, Severity = severity, Category = category, Count = 1 };
@@ -356,7 +363,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(2, result.Items[0].HostCount);
     }
 
-    // ── 問題案件（docs/FEEDBACK-4-PLAN.md §2）───────────────────────────────────
+    // ── 問題案件（docs/archive/FEEDBACK-4-PLAN.md §2）───────────────────────────────────
 
     /// <summary>詳情頁的問題列帶回進行中案件的處理人／狀態／起始日，前端據此顯示連動徽章</summary>
     [Fact]
@@ -407,7 +414,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Null(dto.CaseFirstLinkedDate);
     }
 
-    // ── 依問題視角（docs/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
+    // ── 依問題視角（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────────
 
     private static LogIssueSignature DiskIssue(IssueSeverity severity = IssueSeverity.High) => new()
     {
@@ -487,12 +494,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var groupHandler = Assert.Single(group.Handlers);
         Assert.Equal("小陳", groupHandler.DisplayName);
         Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
-        // docs/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
+        // docs/archive/FEEDBACK-8-PLAN.md #6：帳號素材供前端組「顯示名稱(帳號)」
         Assert.Equal("DOMAIN\\h", groupHandler.Account);
     }
 
     /// <summary>
-    /// docs/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
+    /// docs/archive/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
     /// 觀察到期算未處理（問題仍在發生，不是「有結論」）。
     /// </summary>
     [Fact]
@@ -524,7 +531,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
+    /// docs/archive/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
     /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
     /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
     /// </summary>
@@ -569,7 +576,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("disk", result.Items[1].Source);    // 2 台
     }
 
-    // ── 跨主機批次指派（docs/FEEDBACK-4-PLAN.md §4）─────────────────────────────
+    // ── 跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）─────────────────────────────
 
     [Fact]
     public void BulkAssignIssueCase_對每台主機建案_已有案件的保留原處理人並列入略過()

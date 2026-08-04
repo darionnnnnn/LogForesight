@@ -7,7 +7,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Web 的 AI 加值層（docs/HISTORY.md §6）。原則：**程式能確定性算的不交給 AI**，
+/// Web 的 AI 加值層（docs/archive/HISTORY.md §6）。原則：**程式能確定性算的不交給 AI**，
 /// AI 只做「幫人看懂、幫人排序」。輸入是已彙總的結構化統計（prompt 小），輸出短。
 ///
 /// 三條鐵律：
@@ -52,7 +52,7 @@ public class WebAiService : IWebAiService
     /// 專案已隨 Phase 5 退場，但舊部署的資料目錄可能還留著批次版設定檔），讀不到就退回
     /// Web 自己的 Ai 區段（<see cref="WebAppSettings.Ai"/>，其 ExtraRequestFields 已由
     /// AiExtraFieldsLoader 修正，見 Program.cs）——這也讓本類別的 Available 與排程路徑的
-    /// AiSettings.IsConfigured 收斂到同一份設定來源（docs/FEEDBACK-7-PLAN.md）。
+    /// AiSettings.IsConfigured 收斂到同一份設定來源（docs/archive/FEEDBACK-7-PLAN.md）。
     /// </summary>
     private readonly AiSettings _batchSettings;
 

@@ -1,13 +1,13 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
-public class PermissionSnapshot
+internal class PermissionSnapshot
 {
     public DateTime CapturedAt { get; set; }
     public List<string>? AdministratorsMembers { get; set; }
     public Dictionary<string, FolderAclSnapshot> Folders { get; set; } = new();
 }
 
-public class FolderAclSnapshot
+internal class FolderAclSnapshot
 {
     public bool Accessible { get; set; }
     public string? Owner { get; set; }

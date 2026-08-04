@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -7,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/HISTORY.md #6：報表新增的管理者指標（TotalHosts／Handling）。
+/// docs/archive/HISTORY.md #6：報表新增的管理者指標（TotalHosts／Handling）。
 /// 與 <see cref="RecordQueryServiceSearchTests"/> 同一套慣例——串接真正的
 /// EfAnalysisRecordStore＋RecordRepository，而非重新實作一份簡化邏輯。
 /// </summary>
@@ -29,18 +28,17 @@ public class ReportServiceTests : IDisposable
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
-        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
 
-        var handling = new HandlingService(
-            _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, new FakeNoiseMarkStore(), repository, _hosts, _users,
-            visibility, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), _settingsStore);
+        var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
+        var handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress);
 
         _service = new ReportService(repository, _hosts, visibility, handling);
     }
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
@@ -73,7 +71,7 @@ public class ReportServiceTests : IDisposable
         Assert.Equal(1, result.Handling.OpenCount);
     }
 
-    /// <summary>docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定套用在 RecordRepository 單一咽喉，
+    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示設定套用在 RecordRepository 單一咽喉，
     /// ReportService 不自己過濾——這裡固定住「吃 repository 結果」的契約，KPI/趨勢母體
     /// 隨顯示設定縮小，而不是報表自己額外判斷一次</summary>
     [Fact]

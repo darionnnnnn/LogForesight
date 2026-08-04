@@ -18,7 +18,7 @@ public class AuditQueryService
     {
         var result = _store.Query(query);
 
-        // 一次載入做字典（docs/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
+        // 一次載入做字典（docs/archive/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
         var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
 
         return new PagedResult<AuditEntryDto>
@@ -98,7 +98,7 @@ public class AuditQueryService
         OccurredAt = entry.OccurredAt,
         Account = entry.Account,
         // 查無對應使用者（登入失敗的帳號打錯、外部帳號等）時為 null，前端退回只顯示帳號——
-        // 這正是登入失敗稽核最常見的情境，不能因為查不到就整列出錯（docs/FEEDBACK-8-PLAN.md #6）
+        // 這正是登入失敗稽核最常見的情境，不能因為查不到就整列出錯（docs/archive/FEEDBACK-8-PLAN.md #6）
         AccountDisplayName = displayNameByAccount.TryGetValue(entry.Account, out var displayName) ? displayName : null,
         Action = entry.Action,
         ActionText = ActionNames.TryGetValue(entry.Action, out var name) ? name : entry.Action,

@@ -1,12 +1,10 @@
-using System.Diagnostics;
-using LogForesight;
-using LogForesight.Sql;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// <see cref="SuppressionStore"/> 的儲存層合約（見 docs/RULES-PLAN.md）：缺檔/損毀時降級為
+/// <see cref="SuppressionStore"/> 的儲存層合約（見 docs/RULES-SPEC.md）：缺檔/損毀時降級為
 /// 空清單而不拋例外、round-trip 保留欄位。容錯邏輯寫在 store 本身（blob 無關），透過
 /// <see cref="EfJsonBlobStore.Mutate{TResult}"/> 直接寫入原始內容即可驗證，跑在 SQLite（EF）上。
 /// </summary>
@@ -129,7 +127,7 @@ public class SuppressionTests
     public void 被抑制的Critical不強制拉高風險()
     {
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
-        // 模擬命中「重大」旗標規則（docs/HISTORY.md #1，B1 三級化後判定看旗標不看 Severity）
+        // 模擬命中「重大」旗標規則（docs/archive/HISTORY.md #1，B1 三級化後判定看旗標不看 Severity）
         issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
 
@@ -209,20 +207,8 @@ public class SuppressionTests
         Assert.Contains(alerts, a => a.Contains("頻率上升"));
     }
 
-    private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
-        IssueCategory category = IssueCategory.Other)
-        => new()
-        {
-            LogName = logName,
-            Source = source,
-            EventId = eventId,
-            EntryType = EventLogEntryType.Error,
-            Count = count,
-            Severity = severity,
-            Category = category,
-            FirstSeen = "00:00",
-            LastSeen = "23:59"
-        };
+    // Sig(...) 已搬到 TestDoubles\TestData.cs（與 TrendAnalyzerTests 原本逐字相同，已合併；
+    // CorrelationAnalyzerTests 原本多帶的 keyDetails 參數也一併合併進共用版本）。
 
     private static DailyAnalysisRecord HistoryDay(DateTime date, string source, int eventId, int count, IssueSeverity severity,
         string logName = "System", IssueCategory category = IssueCategory.Other)

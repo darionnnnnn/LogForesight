@@ -5,7 +5,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel CRUD（docs/HISTORY.md 定案 1）：密碼 write-only、
+/// <summary>Sentinel CRUD（docs/archive/HISTORY.md 定案 1）：密碼 write-only、
 /// 刪除觸發孤兒流程、停用不動主機、改名同步主機顯示快照。</summary>
 public class SentinelAdminServiceTests
 {
@@ -137,7 +137,7 @@ public class SentinelAdminServiceTests
         Assert.NotNull(_sentinels.Get(sentinel.SentinelId));   // Sentinel 列本身還在，只是 Active=false
     }
 
-    // ── Os（項目 4 的新設計：Sentinel 層級單一 OS，見 docs/LINUX-RULES-PLAN.md §3） ──
+    // ── Os（項目 4 的新設計：Sentinel 層級單一 OS，見 docs/LINUX-RULES.md §3） ──
 
     [Fact]
     public void 新增_指定Os時儲存()

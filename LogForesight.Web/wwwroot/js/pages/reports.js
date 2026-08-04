@@ -5,7 +5,7 @@
  * 實作方式是「組出帶篩選條件的網址再導頁」——問題查詢頁已支援 URL 同步，
  * 所以下鑽不需要在明細端寫任何程式碼。
  *
- * 2026-07-27 改版（docs/HISTORY.md #6）：
+ * 2026-07-27 改版（docs/archive/HISTORY.md #6）：
  *   - 原本獨占一張大卡的「風險層級占比」改與新增的「受影響主機占比」「處理進度」
  *     並列成一列三顆小圖，騰出的版面讓主機告警排行放寬成整列。
  *   - 圖表註冊表 + 自訂圖表 modal：使用者自行決定要顯示哪些圖表，勾選狀態存 localStorage，
@@ -19,7 +19,7 @@ import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityNam
 import * as charts from '../core/charts.js';
 
 let currentData = null;
-// docs/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
+// docs/archive/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
 // 本來就正確），只有趨勢圖需要主動隱藏被藏等級的 series——否則 legend 仍會列出一條
 // 圖例但整條線恆為 0，容易被誤讀成「這期間真的沒有中風險日」而不是「被設定藏起來」
 let visibleDayRisk = new Set(['高', '中', '低']);
@@ -74,7 +74,7 @@ function renderChartPickerBody() {
     body.replaceChildren();
 
     for (const chart of CHART_REGISTRY) {
-        // docs/FEEDBACK-5-PLAN.md §7：modal-body 是 row row-cols-2 grid，每個選項要包一層 col
+        // docs/archive/FEEDBACK-5-PLAN.md §7：modal-body 是 row row-cols-2 grid，每個選項要包一層 col
         const col = document.createElement('div');
         col.className = 'col';
 
@@ -320,7 +320,7 @@ function renderCategoryChart() {
     charts.attachToolbar(document.getElementById('category-toolbar'), {
         canvasWrapper: wrapper,
         title: '風險類型分布',
-        // docs/HISTORY.md #1（B1 三級化）：嚴重度欄位收斂為三級，「嚴重」欄移除
+        // docs/archive/HISTORY.md #1（B1 三級化）：嚴重度欄位收斂為三級，「嚴重」欄移除
         tableColumns: ['類型', '高', '中', '低', '問題數', '主機數'],
         tableRows: categories.map(c => [
             CATEGORY_NAMES[c.category] ?? c.category,
@@ -445,7 +445,7 @@ function renderRiskChart() {
 }
 
 /**
- * 受影響主機占比（docs/HISTORY.md #6）：本期高／中風險主機數 ÷ 可見主機總數。
+ * 受影響主機占比（docs/archive/HISTORY.md #6）：本期高／中風險主機數 ÷ 可見主機總數。
  * 分子（Kpi.AffectedHosts）與分母（TotalHosts）同一次回應取得，不會各自查詢對不上。
  */
 function renderAffectedHostsChart() {
@@ -486,8 +486,8 @@ function renderAffectedHostsChart() {
 }
 
 /**
- * 處理進度（docs/HISTORY.md #6）：期間內高／中風險日已結案（resolved）的比例。
- * 母體與儀表板待辦同一套 HandlingService.GetTodo 規則（docs/HISTORY.md S3），
+ * 處理進度（docs/archive/HISTORY.md #6）：期間內高／中風險日已結案（resolved）的比例。
+ * 母體與儀表板待辦同一套 HandlingService.GetTodo 規則（docs/archive/HISTORY.md S3），
  * 不是問題層級的計數——兩個層級的「已處理」語意不同，不能混用。
  */
 function renderHandlingProgressChart() {
@@ -560,7 +560,7 @@ document.getElementById('signature-form').addEventListener('submit', async event
     });
 });
 
-/** 嚴重度徽章＋「重大」旗標（docs/HISTORY.md #1）：跨主機同簽章查詢正是
+/** 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1）：跨主機同簽章查詢正是
  * 「全環境共通重大問題」的主要排查入口，命中列同樣要看得出誰是「重大」 */
 function severityCell(hit) {
     const wrap = document.createElement('span');

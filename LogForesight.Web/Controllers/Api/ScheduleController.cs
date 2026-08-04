@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// 排程設定與手動觸發（docs/WEB-SCHEDULER-PLAN.md §1.4.4，「排程作業」頁）。
+/// 排程設定與手動觸發（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，「排程作業」頁）。
 ///
 /// 讀端（<see cref="GetOptions"/>／<see cref="GetStatus"/>）開放 DevMonitor 或 Maintain，寫端
 /// （設定／預覽／觸發／停止）僅 Maintain——與側欄「排程作業」入口、頁面權限（PagesController.Runs）
@@ -18,7 +18,7 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/admin/schedule")]
 public class ScheduleController : ControllerBase
 {
-    private readonly IScheduleOptionsStore _optionsStore;
+    private readonly ScheduleOptionsStore _optionsStore;
     private readonly SchedulerHostedService _scheduler;
     private readonly SchedulerRunState _runState;
     private readonly IHostStore _hosts;
@@ -28,7 +28,7 @@ public class ScheduleController : ControllerBase
     private readonly IUserStore _users;
 
     public ScheduleController(
-        IScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
+        ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users)
     {
         _optionsStore = optionsStore;
@@ -49,15 +49,14 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse<ScheduleOptionsDto> SaveOptions([FromBody] SaveScheduleOptionsRequest request)
     {
-        var windows = request.Windows.Select(w => new ScheduleWindow { Start = w.Start, End = w.End }).ToList();
-        var validation = ScheduleCalculator.Validate(windows);
+        var validation = ScheduleCalculator.Validate(request.Windows);
         if (!validation.IsValid)
             throw DomainException.Validation(string.Join("；", validation.Errors));
 
         var saved = _optionsStore.Update(o =>
         {
             o.Enabled = request.Enabled;
-            o.Windows = windows;
+            o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.UpdatedByAccount = _currentUser.Account;
         });
@@ -99,7 +98,7 @@ public class ScheduleController : ControllerBase
         });
     }
 
-    /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
+    /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
     [HttpGet("run-preview")]
     [Permission(Capability.Maintain)]
     public ApiResponse<RunPreviewDto> RunPreview([FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId)
@@ -157,7 +156,7 @@ public class ScheduleController : ControllerBase
     /// <summary>
     /// scope=all/segment/host 解析成 orchestrator 看得懂的 RunScope＋主機清單。
     /// 網段解析與比對複用 <see cref="CidrMatcher"/>（與 NetIQ 匯入精靈同一套，不寫第二份）；
-    /// 主機清單複用 <see cref="StoreHostListProvider"/>（與 --host-list／NetIQ 機房分析同一份
+    /// 主機清單複用 <see cref="HostListSelection"/>（與 NetIQ 機房分析同一份
     /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉）。
     /// </summary>
     private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId)
@@ -165,7 +164,7 @@ public class ScheduleController : ControllerBase
         switch (scope)
         {
             case "all":
-                var allTargets = new StoreHostListProvider(_hosts, _sentinels).GetHostList();
+                var allTargets = HostListSelection.FromStore(_hosts, _sentinels);
                 return (RunScope.Full, allTargets.ByServer.Values.SelectMany(v => v).Select(t => t.HostId).ToList(), true);
 
             case "segment":
@@ -186,7 +185,7 @@ public class ScheduleController : ControllerBase
                 }
                 var range = CidrMatcher.Parse($"{normalizedPrefix}.*")!;
 
-                var netiqList = new StoreHostListProvider(_hosts, _sentinels).GetHostList();
+                var netiqList = HostListSelection.FromStore(_hosts, _sentinels);
                 var matched = netiqList.ByServer.Values
                     .SelectMany(v => v)
                     .Where(t => CidrMatcher.Matches(range, t.IpAddress))
@@ -202,7 +201,7 @@ public class ScheduleController : ControllerBase
                 // NetIQ 主機：確認目前真的在會被查詢的清單內（Pollable），不然「1 台」的預覽會是假象——
                 // 停用／待歸屬／IP 衝突／所屬 Sentinel 停用的主機實際執行時會被 orchestrator 濾掉、
                 // 靜默變成 0 台，跟「不靜默少幾台」原則相悖，這裡先擋下並給出明確理由
-                var pollableIds = new StoreHostListProvider(_hosts, _sentinels).GetHostList()
+                var pollableIds = HostListSelection.FromStore(_hosts, _sentinels)
                     .ByServer.Values.SelectMany(v => v).Select(t => t.HostId).ToHashSet();
                 if (!pollableIds.Contains(id))
                     throw DomainException.Validation(
@@ -236,7 +235,7 @@ public class ScheduleController : ControllerBase
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
     {
         Enabled = options.Enabled,
-        Windows = options.Windows.Select(w => new ScheduleWindowDto { Start = w.Start, End = w.End }).ToList(),
+        Windows = options.Windows,
         DebugDump = options.DebugDump,
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,

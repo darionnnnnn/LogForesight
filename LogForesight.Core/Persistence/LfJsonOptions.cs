@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// webdata 儲存層共用的 <see cref="JsonSerializerOptions"/>。原本每個 store 各自 new 一份，

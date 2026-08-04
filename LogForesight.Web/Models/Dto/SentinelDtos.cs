@@ -55,7 +55,7 @@ public class SetSentinelActiveRequest
 
 /// <summary>
 /// 測試連線（項目 6）：驗證網址／帳密是否正確，不落地任何東西。帳密僅過境不落地——
-/// 與 create-and-scan 同一先例（docs/HISTORY.md 定案 6）。
+/// 與 create-and-scan 同一先例（docs/archive/HISTORY.md 定案 6）。
 /// </summary>
 public class TestSentinelConnectionRequest
 {

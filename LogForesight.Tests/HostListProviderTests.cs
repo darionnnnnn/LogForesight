@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 主機清單來源（docs/HISTORY.md）：主機清單的主人固定為 Web 主機頁維護
+/// 主機清單來源（docs/archive/HISTORY.md）：主機清單的主人固定為 Web 主機頁維護
 /// （Txt 清單模式已退役，定案 12）——這裡驗證挑選規則（待歸屬／IP 衝突／Sentinel 停用排除警告）。
 /// </summary>
 public class HostListProviderTests
@@ -11,7 +11,7 @@ public class HostListProviderTests
     private readonly FakeHostStore _hosts = new();
     private readonly FakeSentinelStore _sentinels = new();
 
-    private StoreHostListProvider Provider() => new(_hosts, _sentinels);
+    private HostListResult GetHostList() => HostListSelection.FromStore(_hosts, _sentinels);
 
     [Fact]
     public void 待歸屬主機_不查詢並列出原因()
@@ -21,7 +21,7 @@ public class HostListProviderTests
             HostName = "10.0.0.9", IpAddress = "10.0.0.9", Source = "netiq", Active = true
         });
 
-        var result = Provider().GetHostList();
+        var result = GetHostList();
 
         Assert.Equal(0, result.TotalHosts);
         Assert.Contains(result.Warnings, w => w.Contains("尚未確定所屬 Sentinel"));
@@ -41,7 +41,7 @@ public class HostListProviderTests
             });
         }
 
-        var result = Provider().GetHostList();
+        var result = GetHostList();
 
         Assert.Equal(1, result.TotalHosts);
         Assert.Contains(result.Warnings, w => w.Contains("衝突"));
@@ -61,7 +61,7 @@ public class HostListProviderTests
         // 會同步，這裡刻意製造落後來驗證分組鍵不依賴這份快照）
         _sentinels.Upsert(new Sentinel { SentinelId = sentinel.SentinelId, Name = "改名後" });
 
-        var result = Provider().GetHostList();
+        var result = GetHostList();
 
         Assert.Equal(new[] { "改名後" }, result.ByServer.Keys);
     }
@@ -76,7 +76,7 @@ public class HostListProviderTests
             SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
         });
 
-        var result = Provider().GetHostList();
+        var result = GetHostList();
 
         Assert.Equal(0, result.TotalHosts);
         Assert.Contains(result.Warnings, w => w.Contains("已停用"));

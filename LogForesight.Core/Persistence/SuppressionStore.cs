@@ -1,9 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using NLog;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 以 suppressions.json 儲存主機級抑制設定。缺檔＝空清單（不是錯誤）；整檔損毀時同樣降級為

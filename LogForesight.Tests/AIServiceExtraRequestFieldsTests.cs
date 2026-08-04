@@ -1,12 +1,11 @@
 using System.Text.Json;
-using LogForesight;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 回歸測試（docs/FEEDBACK-7-PLAN.md）：Web 排程／立即執行原本必炸的 bug。
+/// 回歸測試（docs/archive/FEEDBACK-7-PLAN.md）：Web 排程／立即執行原本必炸的 bug。
 ///
 /// 根因：<c>IConfiguration</c> 的 <c>ConfigurationBinder</c> 綁不出
 /// <c>Dictionary&lt;string, JsonElement&gt;</c>——JsonElement 沒有可寫屬性、也沒有

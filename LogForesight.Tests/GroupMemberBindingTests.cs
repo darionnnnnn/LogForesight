@@ -1,4 +1,3 @@
-using LogForesight;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -6,7 +5,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>批次加入主機群組成員（網段／關鍵字，docs/HISTORY.md §3）。</summary>
+/// <summary>批次加入主機群組成員（網段／關鍵字，docs/archive/HISTORY.md §3）。</summary>
 public class GroupMemberBindingTests
 {
     private readonly FakeHostStore _hosts = new();
@@ -133,7 +132,7 @@ public class GroupMemberBindingTests
         Assert.Equal("SRV-NEW", preview.Candidates[0].HostName);
     }
 
-    // ── 目前成員（docs/HISTORY.md Phase 5）─────────────────────────
+    // ── 目前成員（docs/archive/HISTORY.md Phase 5）─────────────────────────
 
     [Fact]
     public void 目前成員_只列本群組且算OtherGroupCount()

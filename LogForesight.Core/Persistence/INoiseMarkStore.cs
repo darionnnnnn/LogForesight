@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 已知雜訊記憶的讀寫（↔ <see cref="NoiseMark"/>）。整份型（會更新，走

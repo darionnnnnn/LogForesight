@@ -1,10 +1,10 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 風險 log 暫存（↔ lf_risky_events）：規則命中或趨勢異常的問題簽章，保留一段時間內的原始事件，
-/// 供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel（docs/WEB-SCHEDULER-PLAN.md §2）。
+/// 供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel（docs/archive/WEB-SCHEDULER-PLAN.md §2）。
 ///
 /// 入庫資格與上限由 <see cref="RiskyEventSelector"/> 決定；本模型只是資料形狀。
 /// 與 <see cref="LogIssueSignature.SampleMessages"/>（3 則、200 字，隨每日分析紀錄長期保存）

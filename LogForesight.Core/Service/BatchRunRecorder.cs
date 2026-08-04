@@ -1,7 +1,7 @@
 using NLog;
 using NLog.Targets;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 批次執行紀錄的收集（docs/WEB-SPEC.md §2.1 Phase 4、§11-5）。
@@ -22,12 +22,12 @@ public class BatchRunRecorder : IDisposable
     private readonly CancellationToken _ct;
     private bool _finished;
 
-    /// <param name="ct">執行用的取消權杖（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
+    /// <param name="ct">執行用的取消權杖（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：優雅停止時
     /// <see cref="OperationCanceledException"/> 會在 using 範圍結束時經 <see cref="Dispose"/> 回填——
     /// 這裡收下權杖，讓 Dispose 分得出「使用者停止」（記「已停止」）與「異常中斷」（exit 1）。
     /// console 傳 <see cref="CancellationToken.None"/>，行為與加入此參數前完全相同。</param>
     /// <param name="onRegistrationFailed">
-    /// 登記失敗時的可見回報（docs/FEEDBACK-8-PLAN.md #3）：原本只寫 NLog，Web 排程執行時
+    /// 登記失敗時的可見回報（docs/archive/FEEDBACK-8-PLAN.md #3）：原本只寫 NLog，Web 排程執行時
     /// 這趟執行在執行監控頁會整筆「消失」（不是顯示失敗，是完全查不到這次執行發生過），
     /// 使用者只能翻 log 檔才查得到。呼叫端（Web）可傳入把這句話送進 <c>IRunConsole</c>，
     /// 讓狀態卡與執行明細看得到「這趟執行本次不會出現在執行監控」；null＝維持原本只寫 log。
@@ -65,7 +65,7 @@ public class BatchRunRecorder : IDisposable
         }
     }
 
-    // NetIQ 多台 Sentinel 平行處理後（docs/FEEDBACK-3-PLAN.md #2），這幾個計數可能被多個
+    // NetIQ 多台 Sentinel 平行處理後（docs/archive/FEEDBACK-3-PLAN.md #2），這幾個計數可能被多個
     // 平行執行的 Task 同時呼叫；_run 的計數是屬性（不是欄位），無法用 Interlocked，改用 lock。
     // OnLogRecorded 也在此列——NLog target 的 Write 可能被多執行緒同時觸發（平行任務各自
     // 呼叫 Log.Warn 時），一併納入同一把鎖。

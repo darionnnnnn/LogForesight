@@ -43,7 +43,7 @@ public class SystemSettingsServiceTests
         Assert.Equal(365, service.Get().AuditRetentionDays);
     }
 
-    // ── docs/WEB-SCHEDULER-PLAN.md §2：RiskyEventRetentionDays ──────────────────────
+    // ── docs/archive/WEB-SCHEDULER-PLAN.md §2：RiskyEventRetentionDays ──────────────────────
 
     [Fact]
     public void Update後_風險log暫存保留天數持久化()
@@ -86,10 +86,10 @@ public class SystemSettingsServiceTests
     }
 
     /// <summary>
-    /// docs/HISTORY.md S10：ValidSeverities 是手寫陣列（承載畫面勾選順序，
+    /// docs/archive/HISTORY.md S10：ValidSeverities 是手寫陣列（承載畫面勾選順序，
     /// 由重到輕，無法直接用 Enum.GetNames 因為那是宣告順序），IssueSeverity 加值時編譯器
     /// 不會提醒這裡要跟著加——用測試斷言集合一致，enum 漏改時這裡紅燈。
-    /// docs/HISTORY.md #1（B1 三級化）：IssueSeverity 列舉刻意保留 Critical
+    /// docs/archive/HISTORY.md #1（B1 三級化）：IssueSeverity 列舉刻意保留 Critical
     /// （舊資料反序列化相容用），但 ValidSeverities 是「使用者可勾選的層級」，三級化後
     /// 不再包含它——兩者從此不再逐一對應，是設計選擇而非漏同步。
     /// </summary>
@@ -167,7 +167,7 @@ public class SystemSettingsServiceTests
         Assert.False(saved.AiHasApiKey);
     }
 
-    // ── docs/HISTORY.md #5：三模式簡化為兩個（DefaultHidden／SiteHidden）──────
+    // ── docs/archive/HISTORY.md #5：三模式簡化為兩個（DefaultHidden／SiteHidden）──────
 
     [Theory]
     [InlineData("Locked")]
@@ -219,7 +219,7 @@ public class SystemSettingsServiceTests
 
         var visible = service.GetVisibleSeverities();
 
-        // docs/HISTORY.md #1（B1 三級化）：舊設定殘留的 "Critical" 正規化為 "High"，
+        // docs/archive/HISTORY.md #1（B1 三級化）：舊設定殘留的 "Critical" 正規化為 "High"，
         // 與既有的 "High" 合併成同一個值——三級化前的兩個不同層級現在是同一層級
         Assert.NotNull(visible);
         Assert.Equal(new HashSet<string> { "High" }, visible);
@@ -234,7 +234,7 @@ public class SystemSettingsServiceTests
         Assert.Null(service.GetVisibleSeverities());
     }
 
-    // ── docs/FEEDBACK-3-PLAN.md #8：日風險等級顯示 ──────────────────────
+    // ── docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示 ──────────────────────
 
     [Fact]
     public void Update_日風險等級顯示未含高_丟例外()
@@ -290,7 +290,7 @@ public class SystemSettingsServiceTests
         Assert.Equal(new HashSet<string> { "高" }, service.GetVisibleDayRiskLevels());
     }
 
-    // ── docs/HISTORY.md #9：AD 驗證設定 ──────────────────────────────
+    // ── docs/archive/HISTORY.md #9：AD 驗證設定 ──────────────────────────────
 
     [Fact]
     public void Update_AD啟用但伺服器清單為空_丟例外()

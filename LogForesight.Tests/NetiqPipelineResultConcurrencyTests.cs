@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #2：<see cref="NetiqPipelineResult"/> 的計數與 Warnings
+/// docs/archive/FEEDBACK-3-PLAN.md #2：<see cref="NetiqPipelineResult"/> 的計數與 Warnings
 /// 在多台 Sentinel 平行處理下會被多個 Task 同時寫入——驗證內部方法（Interlocked／lock）
 /// 併發呼叫不掉計數、不遺失 Warning。
 /// </summary>
@@ -48,7 +48,7 @@ public class NetiqPipelineResultConcurrencyTests
         Assert.Equal(iterations, result.Warnings.Distinct().Count());
     }
 
-    /// <summary>docs/FEEDBACK-8-PLAN.md #2：進度條分母（AddToTotal）與分子
+    /// <summary>docs/archive/FEEDBACK-8-PLAN.md #2：進度條分母（AddToTotal）與分子
     /// （HostDaysDone = HostDaysAnalyzed + HostsFailed）——各 Sentinel 平行掃描時累加不掉數。</summary>
     [Fact]
     public void AddToTotal並發呼叫不掉數且HostDaysDone等於成功加失敗()

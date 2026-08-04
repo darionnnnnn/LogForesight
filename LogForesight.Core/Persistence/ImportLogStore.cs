@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>匯入紀錄（↔ lf_import_logs）：誰、何時、匯了什麼</summary>
 public class ImportLogEntry
@@ -34,7 +33,7 @@ public interface IImportLogStore
     /// <summary>近期匯入紀錄，新到舊</summary>
     List<ImportLogEntry> GetRecent(int count);
 
-    /// <summary>清除超過保留天數的匯入紀錄，回傳刪除筆數（docs/HISTORY.md P0-3）</summary>
+    /// <summary>清除超過保留天數的匯入紀錄，回傳刪除筆數（docs/archive/HISTORY.md P0-3）</summary>
     int Prune(int retentionDays);
 }
 

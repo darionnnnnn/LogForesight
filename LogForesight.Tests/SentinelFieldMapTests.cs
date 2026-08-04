@@ -5,7 +5,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// SentinelFieldMap.MapEntryType：sev/xdasOutcome → EventLogEntryType 的推導
-/// （docs/NETIQ-API-PLAN.md §3.3，三輪 --netiq-probe 真實輸出實證的部分見各測試註解）。
+/// （docs/NETIQ-API-REFERENCE.md §3.3，三輪 --netiq-probe 真實輸出實證的部分見各測試註解）。
 /// </summary>
 public class SentinelFieldMapTests
 {

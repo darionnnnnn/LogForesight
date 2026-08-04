@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 把新式 <see cref="EventRecord"/>（EventLogReader）映射成 <see cref="EventLogEntryData"/>，

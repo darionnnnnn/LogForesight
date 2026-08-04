@@ -1,4 +1,3 @@
-using System.Text.Json;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
@@ -6,34 +5,12 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AI 加值層的**確定性部分**（docs/HISTORY.md §6）：下鑽參數白名單驗證、
+/// AI 加值層的**確定性部分**（docs/archive/HISTORY.md §6）：下鑽參數白名單驗證、
 /// 靜默降級、無風險不呼叫。AI 實際輸出品質需 koboldcpp 才驗得到，不在單元測試範圍。
 /// </summary>
 public class AiInsightServiceTests
 {
-    private sealed class FakeWebAi : IWebAiService
-    {
-        public bool Available { get; set; } = true;
-        public string? Response { get; set; }   // 要回的 JSON；null＝降級
-        public int Calls { get; private set; }
-        public string? LastUserPrompt { get; private set; }
-
-        private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
-
-        public Task<T?> GenerateAsync<T>(string cacheKey, string systemPrompt, string userPrompt) where T : class
-        {
-            Calls++;
-            LastUserPrompt = userPrompt;
-            return Task.FromResult(Response == null ? null : JsonSerializer.Deserialize<T>(Response, Opts));
-        }
-
-        public Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)
-        {
-            Calls++;
-            LastUserPrompt = userPrompt;
-            return Task.FromResult(Response);
-        }
-    }
+    // FakeWebAi 已搬到 TestDoubles\AiFakes.cs。
 
     private static DashboardDto Dashboard(int high, int medium) => new()
     {
@@ -133,7 +110,7 @@ public class AiInsightServiceTests
         Assert.NotEqual(WebAiService.HashInput("abc"), WebAiService.HashInput("abd"));
     }
 
-    // ── R7 對話：#11 報告全文餵入（docs/HISTORY.md #11）──────────────
+    // ── R7 對話：#11 報告全文餵入（docs/archive/HISTORY.md #11）──────────────
 
     private static IssueDto Issue() => new()
     {
@@ -197,7 +174,7 @@ public class AiInsightServiceTests
         Assert.Contains("這個嚴重嗎？", ai.LastUserPrompt);
     }
 
-    // ── 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）─────────────────────────
+    // ── 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）─────────────────────────
 
     [Fact]
     public async Task 對話_有現場取回事件_加入prompt且加圍欄並回報則數()

@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using LogForesight;
 using LogForesight.Web.Services;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
@@ -18,14 +18,7 @@ public class DayHandlingDerivationTests
     private static readonly IReadOnlySet<IssueSeverity> AllSeverities =
         new HashSet<IssueSeverity> { IssueSeverity.Critical, IssueSeverity.High, IssueSeverity.Medium, IssueSeverity.Low };
 
-    private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity = IssueSeverity.High) => new()
-    {
-        LogName = "System",
-        Source = source,
-        EventId = eventId,
-        EntryType = EventLogEntryType.Error,
-        Severity = severity
-    };
+    // Issue(...) 已搬到 TestDoubles\TestData.cs（與 HandlingServiceTests 原本逐字相同，已合併）。
 
     private static IssueHandling Mark(LogIssueSignature issue, string status) => new()
     {
@@ -140,7 +133,7 @@ public class DayHandlingDerivationTests
         Assert.Equal(0, result.Closed);
     }
 
-    // ── 觀察中（docs/FEEDBACK-8-PLAN.md #4）────────────────────────────────────
+    // ── 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）────────────────────────────────────
 
     [Fact]
     public void 問題標為觀察中_日狀態為處理中而非未處理()

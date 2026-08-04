@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// AI 回傳 JSON 的容錯解析。即使 response_format 已在 server 端強制 JSON，實務上仍會遇到：
@@ -10,7 +10,7 @@ namespace LogForesight;
 ///     而不是天真地抓「第一個 { 到最後一個 }」（前言或雜訊中若混有其他大括號會直接抓錯範圍）；
 /// (2) 回覆在 max_tokens 用盡時被攔腰截斷，JSON 物件缺收尾括號 → 嘗試自動補上括號後再解析一次。
 /// </summary>
-public static class AiJson
+internal static class AiJson
 {
     public static T? TryParse<T>(string raw) where T : class
     {
@@ -170,12 +170,12 @@ public static class AiJson
 /// <summary>
 /// 每日總覽分析（第一階段呼叫）的 JSON 契約。
 /// 2026-07-20 AI 角色轉換：AI 不再是分析引擎，是把程式已算好的結論翻譯成白話的角色
-/// （見 docs/HISTORY.md）。risk_level 仍保留——AI 的判斷只能把風險等級往上拉，
+/// （見 docs/archive/HISTORY.md）。risk_level 仍保留——AI 的判斷只能把風險等級往上拉，
 /// 不能往下壓（RiskLevels.MoreSevere），是零成本的安全網，機制不變。
 /// 結構化的目的：後續要接 Email / Telegram / webhook 等自動化動作時，
 /// 直接取欄位使用，不需要再從自然語言文字裡撈資訊。
 /// </summary>
-public class AiAnalysisResult
+internal class AiAnalysisResult
 {
     [JsonPropertyName("risk_level")]
     public string RiskLevel { get; set; } = string.Empty;

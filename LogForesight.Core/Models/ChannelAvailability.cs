@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 本次執行各頻道的讀取狀態三態分類，供 <see cref="LogAnalysisService"/> 誠實申報未檢查項目、
@@ -20,5 +20,4 @@ public class ChannelAvailability
 
     public bool WasRead(string channelName) => Read.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
     public bool WasDenied(string channelName) => Denied.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
-    public bool WasMissing(string channelName) => Missing.Any(c => c.Equals(channelName, StringComparison.OrdinalIgnoreCase));
 }

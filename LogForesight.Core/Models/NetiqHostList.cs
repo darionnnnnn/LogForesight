@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// NetIQ 主機清單的領域規則（純函數）。
@@ -23,7 +23,7 @@ public static class NetiqHostList
 
     /// <summary>
     /// 待歸屬：尚未確定在哪一台 Sentinel 上。登錄時允許不填，由批次自動確認
-    /// （見 docs/HISTORY.md「Sentinel 歸屬自動確認」），確認前不進日常輪巡。
+    /// （見 docs/archive/HISTORY.md「Sentinel 歸屬自動確認」），確認前不進日常輪巡。
     /// </summary>
     public static IEnumerable<WebHost> PendingAssignment(IEnumerable<WebHost> allHosts) =>
         Listed(allHosts).Where(h => h.SentinelId == null);
@@ -54,7 +54,7 @@ public static class NetiqHostList
     /// <param name="isSentinelActive">
     /// 給定 SentinelId 是否為啟用中的 Sentinel；null＝不篩（相容既有呼叫端，測試與不涉及
     /// Sentinel 停用情境時可省略）。傳入時，主機所屬 Sentinel 已停用＝暫停輪巡但主機本身不動
-    /// （與刪除 Sentinel 觸發的孤兒流程刻意分開，見 docs/HISTORY.md 定案 5）。
+    /// （與刪除 Sentinel 觸發的孤兒流程刻意分開，見 docs/archive/HISTORY.md 定案 5）。
     /// </param>
     public static List<WebHost> Pollable(IEnumerable<WebHost> allHosts, Func<long, bool>? isSentinelActive = null)
     {

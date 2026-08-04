@@ -3,11 +3,11 @@ using NLog;
 
 namespace LogForesight.Web.Services;
 
-/// <summary>詢問 AI 詢問當下即時取回的現場事件（docs/FEEDBACK-4-PLAN.md §5）</summary>
+/// <summary>詢問 AI 詢問當下即時取回的現場事件（docs/archive/FEEDBACK-4-PLAN.md §5）</summary>
 public record LiveEventFetchResult(List<string> Messages);
 
 /// <summary>
-/// 詢問 AI（實驗性）詢問當下向 Sentinel 即時查詢現場事件（docs/FEEDBACK-4-PLAN.md §5）。
+/// 詢問 AI（實驗性）詢問當下向 Sentinel 即時查詢現場事件（docs/archive/FEEDBACK-4-PLAN.md §5）。
 ///
 /// **確定性預取，不是 MCP**：查詢參數（IP＋EventId＋當日時間窗）完全由伺服器端從
 /// issueKey 推導，模型不參與「查什麼」的決策——理由見規劃文件 §5 的 MCP 評估：
@@ -41,7 +41,7 @@ public class SentinelEventFetchService : ISentinelEventFetcher
     private static readonly ConcurrentDictionary<string, (DateTime Expiry, LiveEventFetchResult? Result)> Cache = new();
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
-    /// <summary>取數本身的硬逾時——對話整體 60 秒，取數不能吃掉大半（docs/FEEDBACK-4-PLAN.md §5 D4）</summary>
+    /// <summary>取數本身的硬逾時——對話整體 60 秒，取數不能吃掉大半（docs/archive/FEEDBACK-4-PLAN.md §5 D4）</summary>
     private const int FetchTimeoutSeconds = 15;
 
     /// <summary>Sentinel 查詢上限（這是「部分關鍵 log」，不是把整天搬回來）</summary>

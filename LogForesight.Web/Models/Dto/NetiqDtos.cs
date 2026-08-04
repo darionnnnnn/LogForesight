@@ -97,7 +97,7 @@ public class SetHostActiveRequest
     public bool Active { get; set; }
 }
 
-// ── 主動探索匯入（docs/HISTORY.md §1）───────────────────────────────
+// ── 主動探索匯入（docs/archive/HISTORY.md §1）───────────────────────────────
 
 public class NetiqScanRequest
 {
@@ -105,7 +105,7 @@ public class NetiqScanRequest
     public string Server { get; set; } = string.Empty;
 
     /// <summary>網段前綴（如「192.168.0」）或 CIDR（如「192.168.0.0/24」）。**必填**——
-    /// 探索是「掃一個網段」而不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4：全站事件量實測單台
+    /// 探索是「掃一個網段」而不是盲掃全站（docs/NETIQ-API-REFERENCE.md §3.4：全站事件量實測單台
     /// Sentinel 近 24h 達 2400 萬筆，任何固定窗口涵蓋率都很差）。格式規則見
     /// <c>SentinelQueryBuilder.NormalizeSubnetPrefix</c>。</summary>
     [Required(ErrorMessage = "請輸入要掃描的網段")]
@@ -164,14 +164,14 @@ public class NetiqImportRequest
     public List<string> SelectedIps { get; set; } = new();
 
     /// <summary>
-    /// 各網段的群組指派（docs/HISTORY.md 定案 8）。省略/空清單＝維持
+    /// 各網段的群組指派（docs/archive/HISTORY.md 定案 8）。省略/空清單＝維持
     /// Phase 3 的行為（全部落在未分組安全預設）；只影響本次新增的主機，既有主機的
     /// 群組一律不動。
     /// </summary>
     public List<NetiqSubnetGroupAssignment> GroupAssignments { get; set; } = new();
 
     /// <summary>
-    /// 本次匯入的主機作業系統（docs/LINUX-RULES-PLAN.md §3）。**只套用在本次新增的主機**——
+    /// 本次匯入的主機作業系統（docs/LINUX-RULES.md §3）。**只套用在本次新增的主機**——
     /// 既有主機（含復活的孤兒）的 OS 一律不動，與群組指派同一原則：匯入不是隱性改設定。
     ///
     /// 目前無法自 Sentinel 事件自動判別 OS（要等 probe 確認有無可判別欄位），所以由人在精靈
@@ -227,15 +227,15 @@ public class UpdateNetiqOptionsRequest
 
     public bool AllowInvalidCertificates { get; set; }
 
-    /// <summary>docs/FEEDBACK-3-PLAN.md #1：正式環境的預期值是 1（只查前一天），
+    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #1：正式環境的預期值是 1（只查前一天），
     /// 上限 14 與趨勢窗口天數對齊——回補比趨勢分析用得到的更多天沒有意義</summary>
     [Range(1, 14)]
     public int BackfillDays { get; set; }
 
-    /// <summary>docs/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理</summary>
+    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理</summary>
     [Range(1, 8)]
     public int MaxParallelServers { get; set; }
 
-    /// <summary>docs/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>
+    /// <summary>docs/archive/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>
     public bool ChatLiveFetchEnabled { get; set; }
 }

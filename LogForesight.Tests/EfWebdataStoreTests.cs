@@ -1,5 +1,3 @@
-using LogForesight;
-using LogForesight.Sql;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -125,7 +123,7 @@ public class EfWebdataStoreTests
     }
 
     /// <summary>
-    /// 問題層級處理狀態的更新路徑（docs/FEEDBACK-4-PLAN.md §7 附帶修復）：先前 Save() 更新既有列時
+    /// 問題層級處理狀態的更新路徑（docs/archive/FEEDBACK-4-PLAN.md §7 附帶修復）：先前 Save() 更新既有列時
     /// 只抄 Status/ActorId/ActorAccount/Note/UpdatedAt，漏了 DueDate（與新增的 CaseId）——
     /// 對已標記過的問題再標「處理中＋預計完成日」，期限不會落盤，逾期判定因此對這類列失效。
     /// 這裡先標一次無期限的 in_progress，再標一次有期限，確認第二次的 DueDate/CaseId 真的更新到。
@@ -149,7 +147,7 @@ public class EfWebdataStoreTests
     }
 
     /// <summary>
-    /// SaveMany（docs/FEEDBACK-4-PLAN.md §0.5）：案件回溯關聯／狀態同步一次涉及多天，
+    /// SaveMany（docs/archive/FEEDBACK-4-PLAN.md §0.5）：案件回溯關聯／狀態同步一次涉及多天，
     /// 一次呼叫要能新增、更新、清除三種情況混合處理，且只走一次 Mutate（不逐筆整份讀改寫）。
     /// </summary>
     [Fact]
@@ -178,7 +176,7 @@ public class EfWebdataStoreTests
         Assert.Equal(2, store.GetByCase("case-1").Count);
     }
 
-    /// <summary>問題案件（docs/FEEDBACK-4-PLAN.md §0）：GetOpen 只回進行中案件，結案後不再算「進行中」，
+    /// <summary>問題案件（docs/archive/FEEDBACK-4-PLAN.md §0）：GetOpen 只回進行中案件，結案後不再算「進行中」，
     /// 但仍查得到歷史紀錄（GetMany）——「上次誰處理的、怎麼結的」不因結案消失。</summary>
     [Fact]
     public void 問題案件_EF往返_進行中與結案語意()

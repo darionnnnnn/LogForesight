@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// append-only 逐行紀錄的讀寫底層（稽核、執行紀錄、匯入紀錄、處理歷程…）：逐行存 lf_log_lines
@@ -45,7 +45,7 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
-    /// 刪除附加時間早於 cutoff 的行，回傳刪除筆數（docs/HISTORY.md P0-3）。
+    /// 刪除附加時間早於 cutoff 的行，回傳刪除筆數（docs/archive/HISTORY.md P0-3）。
     /// 附加時間是**寫入時的插入時間戳記**，不是行內容解析出的業務日期——這批資料多是
     /// append-only 執行歷程，插入時間就是事件發生時間，不必逐行解析 JSON。
     /// schema 升級前寫入的既存列沒有時間戳記，一律保留（無法判斷年代，寧可留著）。
@@ -69,7 +69,7 @@ public sealed class EfJsonLogStore
 
     /// <summary>
     /// 依附加時間範圍讀取（不分頁，依附加順序），供呼叫端先在 SQL 端窄化候選集再於記憶體精確過濾
-    /// （docs/HISTORY.md P1-2）。from/to 為 null 代表不限；沒有時間戳記的既存列
+    /// （docs/archive/HISTORY.md P1-2）。from/to 為 null 代表不限；沒有時間戳記的既存列
     /// （schema 升級前寫入）一律視為在範圍內——**這裡的窄化不保證絕對精確**，呼叫端仍須對
     /// 精確欄位做最終判斷（見 <c>AuditLogStore.Count</c> 的用法）。
     /// </summary>

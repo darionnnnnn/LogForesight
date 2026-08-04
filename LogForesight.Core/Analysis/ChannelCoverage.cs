@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 判斷某筆歷史紀錄當天是否讀取了某個頻道——趨勢層與慢速趨勢層用它把「當天沒讀到該頻道」的
@@ -6,7 +6,7 @@ namespace LogForesight;
 /// 「首次出現」或「頻率上升」）。這是既有 Security 特例（<c>SecurityLogAvailable != false</c>）
 /// 的一般化，讓新頻道（Defender/RDP）自動享有同一套保護。
 /// </summary>
-public static class ChannelCoverage
+internal static class ChannelCoverage
 {
     /// <summary>
     /// 新頻道要累積幾天可靠歷史後，趨勢層才開始對它產生 New/Rising 告警與嚴重度升級（暖身期）。

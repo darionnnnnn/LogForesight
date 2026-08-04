@@ -1,4 +1,3 @@
-using LogForesight;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -6,44 +5,13 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 驗證 2026-07-20 體檢重設計的兩個確定性行為：due-date 到期判斷（ShouldRun）與
 /// 窗口內三層皆無訊號時的閘門（RunAsync 早退路徑）。AI 敘事成功路徑本身無法在不啟動真實
-/// AI 服務下測試（AIService 目前是具體類別、未抽介面，是已知的覆蓋缺口，見 docs/DB-PLAN.md）；
+/// AI 服務下測試（AIService 目前是具體類別、未抽介面，是已知的覆蓋缺口，見 docs/DB-SPEC.md）；
 /// 這裡改用「有訊號時會嘗試呼叫 AI（因而在無法連線時失敗）」間接驗證閘門正確地沒有短路。
 /// </summary>
 public class WeeklyCheckupServiceTests
 {
-    private sealed class FakeReader : IAnalysisRecordReader
-    {
-        private readonly List<DailyAnalysisRecord> _records;
-        private readonly DateTime? _lastCheckup;
-
-        public FakeReader(List<DailyAnalysisRecord> records, DateTime? lastCheckup = null)
-        {
-            _records = records;
-            _lastCheckup = lastCheckup;
-        }
-
-        // 替身照實作錨定窗語意過濾，否則測試會在「未來紀錄混入窗口」這件事上失去防護
-        public List<DailyAnalysisRecord> ReadRecent(DateTime anchorDate, int days) =>
-            _records
-                .Where(r => r.Date.Date >= anchorDate.Date.AddDays(-(days - 1)) && r.Date.Date <= anchorDate.Date)
-                .OrderBy(r => r.Date)
-                .ToList();
-
-        public bool HasAnyRecord() => _records.Count > 0;
-        public bool HasRecord(DateTime date) => _records.Any(r => r.Date.Date == date.Date);
-        public DateTime? LastWeeklyCheckupDate() => _lastCheckup;
-    }
-
-    private sealed class FakeReportSink : IReportSink
-    {
-        public bool Called { get; private set; }
-
-        public Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
-        {
-            Called = true;
-            return Task.FromResult($"fake/{fileName}");
-        }
-    }
+    // FakeReader／FakeReportSink 已搬到 TestDoubles\ReportingFakes.cs（FakeReportSink 與
+    // RiskReportServiceTests 共用）。
 
     private static WeeklyCheckupService MakeService(FakeReader reader, out FakeReportSink sink)
     {
@@ -144,7 +112,7 @@ public class WeeklyCheckupServiceTests
         Assert.False(outcome.Completed); // 同上：進入 AI 呼叫分支後因無法連線而失敗，證明閘門判定為「有訊號」
     }
 
-    // ── RunAsync：useAi 短路（docs/FEEDBACK-7-PLAN.md，AI 未設定時的行為）───────
+    // ── RunAsync：useAi 短路（docs/archive/FEEDBACK-7-PLAN.md，AI 未設定時的行為）───────
 
     [Fact]
     public async Task 有訊號且AI未設定_不嘗試呼叫且未完成待補跑()

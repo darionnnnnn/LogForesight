@@ -2,24 +2,24 @@ using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 體檢：獨立於每日分析的週期性回顧。2026-07-20 重設計（見 docs/PLAN.md「核心設計決策 B」與
-/// docs/HISTORY.md）：原本「找出單看每天都不明顯、但整週合起來是持續累積或緩慢惡化的訊號」
+/// 體檢：獨立於每日分析的週期性回顧。2026-07-20 重設計（見 docs/archive/HISTORY.md「核心設計決策 B」）：
+/// 原本「找出單看每天都不明顯、但整週合起來是持續累積或緩慢惡化的訊號」
 /// 這件「發現」的工作，已改由每日全主機執行的確定性 <see cref="SlowTrendAnalyzer"/> 負責
 /// （近 7 天 vs 前 7 天總量比較），偵測延遲從最壞一整個週期縮短到 1 天。體檢因此只剩下
 /// 「講這段期間的故事」——把窗口內已經確定有訊號的日子，接續上次體檢的結論寫成一段回顧。
 ///
 /// **due-date 輪巡取代固定星期**：不綁定「每週六」，改為「距上次體檢達 <see cref="AnalysisSettings.CheckupIntervalDays"/>
 /// 天即到期」，是既有「距上次體檢 &gt;7 天自動補跑」機制的一般化——單機情境下等同「每 N 天做一次」；
-/// 多主機規模下（見 docs/PLAN.md）到期主機會用主機識別雜湊錯峰虛擬回填上次體檢日，自然攤平不會集中尖峰，
+/// 多主機規模下（見 docs/archive/HISTORY.md）到期主機會用主機識別雜湊錯峰虛擬回填上次體檢日，自然攤平不會集中尖峰，
 /// 但那是機隊管理層的職責，不影響這裡的單機邏輯。
 ///
 /// **確定性閘門**：窗口內任何一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
 /// 三層皆無訊號的窗口直接寫固定結論，不消耗 AI 呼叫——安靜的期間本來就沒有故事可講。
 /// </summary>
-public class WeeklyCheckupService
+internal class WeeklyCheckupService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
@@ -41,7 +41,7 @@ public class WeeklyCheckupService
     private readonly ISuppressionStore? _suppressionStore;
 
     /// <param name="suppressionStore">提供時，體檢報告固定列出本機生效中的抑制清單＋窗口期間各自的
-    /// 發生次數（見 docs/RULES-PLAN.md 陷阱 4：暫時關閉的告警不該變成永久盲區）；null 時略過該區塊。</param>
+    /// 發生次數（見 docs/RULES-SPEC.md 陷阱 4：暫時關閉的告警不該變成永久盲區）；null 時略過該區塊。</param>
     public WeeklyCheckupService(AIService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink, ISuppressionStore? suppressionStore = null)
     {
         _aiService = aiService;
@@ -68,7 +68,7 @@ public class WeeklyCheckupService
 
     /// <param name="intervalDays">體檢窗口天數，通常等於 <see cref="AnalysisSettings.CheckupIntervalDays"/></param>
     /// <param name="host">主機識別，單機情境留空即可</param>
-    /// <param name="useAi">false＝AI 未設定（docs/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
+    /// <param name="useAi">false＝AI 未設定（docs/archive/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
     /// （本來就不呼叫 AI）；有訊號時不嘗試呼叫，回傳 Completed=false 讓呼叫端沿用既有
     /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
     public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", string host = "", bool useAi = true)
@@ -135,7 +135,7 @@ public class WeeklyCheckupService
         outcome.HasFindings = true;
         outcome.Conclusion = result.Value!.Conclusion;
 
-        // 檔名沿用既有 "_週檢.txt" 慣例（docs/PLAN.md 已承諾「輸出不變」），內部語意雖已從
+        // 檔名沿用既有 "_週檢.txt" 慣例（docs/archive/HISTORY.md 已承諾「輸出不變」），內部語意雖已從
         // 固定星期改為 due-date 輪巡，但對外的檔案格式與既有部署/查閱習慣不需要跟著變動
         var fileName = $"{checkupDate:yyyy-MM-dd}_週檢.txt";
         var activeSuppressions = _suppressionStore != null
@@ -279,7 +279,7 @@ public class WeeklyCheckupService
         }
 
         // 固定列出生效中的抑制設定＋本期發生次數：防止「暫時關掉」變成永久盲區
-        // （見 docs/RULES-PLAN.md 陷阱 4）——只要體檢確實有產生報告，這個提醒就一定在
+        // （見 docs/RULES-SPEC.md 陷阱 4）——只要體檢確實有產生報告，這個提醒就一定在
         if (activeSuppressions.Count > 0)
         {
             sb.AppendLine();

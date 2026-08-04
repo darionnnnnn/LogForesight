@@ -1,19 +1,19 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 開機時的冪等 DDL 升級（docs/DB-PLAN.md 定案 13：自製冪等 DDL，不用 EF Core Migrations——
+/// 開機時的冪等 DDL 升級（docs/DB-SPEC.md 定案 13：自製冪等 DDL，不用 EF Core Migrations——
 /// 雙 provider 各自維護一份 migration 歷史的長期成本，對這個專案的變更頻率不成比例）。
 ///
 /// <see cref="Database.EnsureCreated"/> 只在資料庫不存在時建表，對既有 DB 不補欄不補索引；
 /// 這裡補上那個缺口：逐步「檢查缺什麼 → 缺才補」，每一步都可重複執行不出錯——
 /// 新建的 DB 因為 EnsureCreated 已經建好最新 schema，每一步在新 DB 上都是 no-op。
 ///
-/// 於 <see cref="StorageFactory"/> 建連線、EnsureCreated 之後呼叫，批次與 Web 啟動時都會跑到。
+/// 於 <see cref="StorageBackend"/> 建連線、EnsureCreated 之後呼叫，批次與 Web 啟動時都會跑到。
 /// </summary>
-public static class SchemaUpgrader
+internal static class SchemaUpgrader
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
@@ -29,7 +29,7 @@ public static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
 
-        // 風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
+        // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：這是 SQL 後端上線以來第一張
         // 「不是靠 EnsureCreated 建出來」的全新資料表——既有部署的 DB 已經存在，EnsureCreated
         // 對它不會做任何事（只在資料庫整個不存在時建表），所以這裡要用跟補欄位/補索引同一套
         // 「檢查缺什麼→缺才補」冪等 DDL 補上整張表，新 DB 則由 EnsureCreated 直接建好、這裡 no-op。

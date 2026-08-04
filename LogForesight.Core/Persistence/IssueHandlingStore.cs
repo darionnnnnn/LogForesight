@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// <see cref="IIssueHandlingStore"/> 的實作（blob key=issue_handling）。
@@ -31,7 +30,7 @@ public class IssueHandlingStore : JsonBlobCollection<IssueHandling>, IIssueHandl
     public void Save(IssueHandling handling) => SaveMany(new[] { handling });
 
     /// <summary>
-    /// 批次寫入／更新（docs/FEEDBACK-4-PLAN.md §0.5：案件回溯關聯／狀態同步一次可能涉及
+    /// 批次寫入／更新（docs/archive/FEEDBACK-4-PLAN.md §0.5：案件回溯關聯／狀態同步一次可能涉及
     /// 上百天）：走一次 Mutate，避免逐日呼叫造成 N 次整份 blob 讀改寫。
     /// <see cref="Save"/> 委派到這裡，單筆與批次共用同一份合併邏輯，不留兩份會漂移的複製。
     /// </summary>

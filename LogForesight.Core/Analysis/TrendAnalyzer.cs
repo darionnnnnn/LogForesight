@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 public enum IssueTrend
 {
@@ -81,7 +81,7 @@ public static class TrendAnalyzer
                                              h.TopIssues.Any(i => SameIssue(i, sig)));
 
             // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警文字——
-            // 抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-PLAN.md 的語意邊界）
+            // 抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-SPEC.md 的語意邊界）
             if (pastCounts.Count == 0)
             {
                 if (everSeen)
@@ -105,7 +105,7 @@ public static class TrendAnalyzer
                 // 暖身期不升級嚴重度、不告警——新頻道歷史太短，倍率比較還不可靠
                 if (!channelWarmingUp)
                 {
-                    // 三級化前（docs/HISTORY.md #1，B1）：High 頻率上升會升級成 Critical，
+                    // 三級化前（docs/archive/HISTORY.md #1，B1）：High 頻率上升會升級成 Critical，
                     // 直接讓當天判定為高風險日。嚴重度現在封頂 High，改用旗標達成同樣效果——
                     // 判定時機要在 Escalate 之前（看「升級前」是不是 High），
                     // 否則 Medium→High 這種正常升一級也會被誤判成「原本就是 High」
@@ -157,7 +157,7 @@ public static class TrendAnalyzer
         a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId && a.EntryType == b.EntryType;
 
     /// <summary>
-    /// 封頂 High（docs/HISTORY.md #1，B1 三級化前可升到 Critical）：
+    /// 封頂 High（docs/archive/HISTORY.md #1，B1 三級化前可升到 Critical）：
     /// 呼叫端在升級前先看「原本是不是 High」來決定要不要設 ElevatesDayRisk，
     /// 這裡只管數值本身不再往上跳。
     /// </summary>

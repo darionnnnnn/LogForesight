@@ -11,7 +11,7 @@ public class NetiqDiscoveryException : Exception
 
 /// <summary>
 /// 一次探索掃描的完整結果：主機清單＋**涵蓋範圍是顯示出來的事實，不是隱藏假設**
-/// （docs/NETIQ-API-PLAN.md §3.4）。網段範圍掃描只涵蓋「窗口內有事件回報」的主機，
+/// （docs/NETIQ-API-REFERENCE.md §3.4）。網段範圍掃描只涵蓋「窗口內有事件回報」的主機，
 /// 精靈必須把這個限制講清楚，不能讓人以為結果是網段的完整名單。
 /// </summary>
 public sealed class NetiqDiscoveryResult
@@ -26,8 +26,8 @@ public sealed class NetiqDiscoveryResult
 }
 
 /// <summary>
-/// 向 Sentinel 主動查詢一個網段內有事件回報的主機（docs/HISTORY.md §1.2；
-/// docs/NETIQ-API-PLAN.md §3.4「網段範圍掃描」，2026-07-29 定案）。
+/// 向 Sentinel 主動查詢一個網段內有事件回報的主機（docs/archive/HISTORY.md §1.2；
+/// docs/NETIQ-API-REFERENCE.md §3.4「網段範圍掃描」，2026-07-29 定案）。
 ///
 /// 真實 API 的認證方式與回應格式屬環境細節，因此隔離在介面後：<see cref="SentinelRestDirectoryClient"/>
 /// 真連線、<see cref="StubNetiqDirectoryClient"/> 給開發與測試用固定資料，整條匯入 UI 流程
@@ -105,7 +105,7 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 }
 
 /// <summary>
-/// Sentinel REST API 真連線：網段範圍掃描（docs/NETIQ-API-PLAN.md §3.4）。
+/// Sentinel REST API 真連線：網段範圍掃描（docs/NETIQ-API-REFERENCE.md §3.4）。
 ///
 /// 流程：(1) 計數查詢（`max-results:1`）拿該網段近 24h 的 `found`；(2) 依 found 與
 /// <see cref="CoverageTargetResults"/> 算出實際掃描窗口——found 在目標值內就掃整整 24 小時

@@ -1,9 +1,9 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 分析紀錄對查詢條件的比對（<see cref="RecordQueryFilter"/> 中除了 Hosts 以外的欄位）。
 ///
-/// **單點規則**（docs/DB-PLAN.md 一致性機制 #3）：SQL 端以日期/主機在資料庫預篩後，
+/// **單點規則**（docs/DB-SPEC.md 一致性機制 #3）：SQL 端以日期/主機在資料庫預篩後，
 /// 其餘欄位一律套用同一個函數比對——篩選語意只有一份定義，不靠 code review 肉眼比對。
 /// 與 <see cref="RecordStorageShaper"/>、<see cref="CategoryAggregator"/> 同一套
 /// 「規則不長在單一呼叫端裡」的原則。

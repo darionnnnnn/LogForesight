@@ -6,7 +6,7 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// <see cref="AiExtraFieldsLoader"/>：繞過 ConfigurationBinder 直接重讀
-/// Ai:ExtraRequestFields（docs/FEEDBACK-7-PLAN.md，見 <see cref="AIServiceExtraRequestFieldsTests"/>
+/// Ai:ExtraRequestFields（docs/archive/FEEDBACK-7-PLAN.md，見 <see cref="AIServiceExtraRequestFieldsTests"/>
 /// 對炸點本身的重現）。
 /// </summary>
 public class AiExtraFieldsLoaderTests : IDisposable

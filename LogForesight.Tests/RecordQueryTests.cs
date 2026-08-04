@@ -9,12 +9,12 @@ namespace LogForesight.Tests;
 /// </summary>
 public class AnalysisRecordQueryContractTests : IDisposable
 {
-    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
+    private readonly EfAnalysisRecordStore _store;
     private readonly EfSqliteFixture _fx = new();
 
     public AnalysisRecordQueryContractTests()
     {
-        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
+        _store = new EfAnalysisRecordStore(_fx.NewContext, "test");
     }
 
     private IAnalysisRecordStore CreateStore() => _store;
@@ -338,7 +338,7 @@ public class AnalysisRecordQueryContractTests : IDisposable
         Assert.Equal("高", result!.RiskLevel);
     }
 
-    // ── QueryPage（docs/HISTORY.md P1-2）─────────────────────────────
+    // ── QueryPage（docs/archive/HISTORY.md P1-2）─────────────────────────────
 
     private static DailyAnalysisRecord RecordWithCorrelation(string host, DateTime date, string risk, bool hasCorrelation) => new()
     {

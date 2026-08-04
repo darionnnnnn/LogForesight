@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 權限異動的讀寫（↔ lf_permission_changes）。
@@ -76,11 +75,6 @@ public class PermissionChangeStore
 
     public PermissionChangeRecord? Get(string changeId) =>
         ReadAllChanges().FirstOrDefault(c =>
-            string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>確認狀態；未確認過的異動回 null（呼叫端視為 pending）</summary>
-    public PermissionChangeConfirmation? GetConfirmation(string changeId) =>
-        _confirmations.Read().FirstOrDefault(c =>
             string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
 
     public List<PermissionChangeConfirmation> GetConfirmations(IEnumerable<string> changeIds)

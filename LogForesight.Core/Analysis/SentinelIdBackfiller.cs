@@ -1,8 +1,8 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 一次性遷移：把既有主機的 <see cref="WebHost.NetiqServer"/> 名稱字串回填成
-/// <see cref="WebHost.SentinelId"/>（docs/HISTORY.md 定案 4）。
+/// <see cref="WebHost.SentinelId"/>（docs/archive/HISTORY.md 定案 4）。
 ///
 /// **冪等**：只處理 SentinelId 仍是 null 但 NetiqServer 有值的主機，回填完成後自然變成
 /// no-op（一次查詢，無異動），可以放心每次啟動都跑，不需要額外的「是否已執行過」旗標。

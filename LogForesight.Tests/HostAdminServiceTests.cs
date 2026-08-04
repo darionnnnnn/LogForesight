@@ -18,7 +18,7 @@ public class HostAdminServiceTests
         _hosts,
         _groups,
         new FakeUserStore(),
-        new NetiqHostServiceTests.FakeNetiqServerCatalog("SENTINEL-A"),
+        new FakeNetiqServerCatalog("SENTINEL-A"),
         new FakeNetiqHostServiceForAdmin(),
         _audit);
 
@@ -119,7 +119,7 @@ public class HostAdminServiceTests
         Assert.Throws<DomainException>(() => Create().UnmergeHost(host.HostId));
     }
 
-    // ── 未回報篩選（docs/HISTORY.md 定案 9：新主機寬限期）───────────
+    // ── 未回報篩選（docs/archive/HISTORY.md 定案 9：新主機寬限期）───────────
 
     [Fact]
     public void GetHosts_剛匯入未滿寬限期的主機_不算未回報()
@@ -199,7 +199,7 @@ public class HostAdminServiceTests
         Assert.Equal(new[] { "有回報", "無回報" }, result.Items.Select(h => h.HostName));
     }
 
-    // ── 批次改群組（docs/FEEDBACK-5-PLAN.md §8）─────────────────────────────
+    // ── 批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）─────────────────────────────
 
     [Fact]
     public void SetGroupsBatch_加入模式_與既有群組取聯集()
@@ -283,12 +283,4 @@ public class HostAdminServiceTests
     }
 }
 
-/// <summary>HostAdminService 只需要 GetOverview()（IP 衝突偵測，§5.4 D-4 的 conflict 篩選）——
-/// 這裡的測試不涉及 conflict 狀態篩選，回空清單即可</summary>
-internal class FakeNetiqHostServiceForAdmin : INetiqHostService
-{
-    public NetiqOverviewDto GetOverview() => new();
-    public HostDto AddHost(AddNetiqHostRequest request) => throw new NotSupportedException();
-    public BulkAddResultDto BulkAddHosts(BulkAddNetiqHostsRequest request) => throw new NotSupportedException();
-    public HostDto SetActive(long hostId, bool active) => throw new NotSupportedException();
-}
+// FakeNetiqHostServiceForAdmin／FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs。

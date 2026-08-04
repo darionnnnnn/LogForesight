@@ -1,7 +1,7 @@
 namespace LogForesight.Web.Auth.Ldap;
 
 /// <summary>
-/// 「用一個已建好的 LdapService 驗證帳密」的共用邏輯（docs/HISTORY.md #9）。
+/// 「用一個已建好的 LdapService 驗證帳密」的共用邏輯（docs/archive/HISTORY.md #9）。
 /// <see cref="LdapAuthenticationProvider"/>（appsettings 固定設定）與
 /// <see cref="DynamicAuthenticationProvider"/>（DB 動態設定）都需要同一套流程：
 /// 空密碼先擋、去除網域前綴、bind、成功後順手查使用者屬性（#8）、統一的例外處理——

@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary><see cref="IUserStore"/> 的實作（blob key=users，整份型）</summary>
 public class UserStore : JsonBlobCollection<WebUser>, IUserStore

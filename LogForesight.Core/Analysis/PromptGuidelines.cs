@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// AI 產出文字的共用語言規範。三支呼叫（每日白話總覽、深入分析、週體檢）共用同一段，
@@ -16,7 +16,7 @@ public static class PromptGuidelines
         "（如：事件檢視器、事件識別碼、應用程式、系統記錄檔、安全性記錄檔、工作排程器、Sentinel、Agent、Collector）。";
 
     /// <summary>
-    /// 語言規範的尾端強化版（docs/HISTORY.md S7）：接在 user prompt 最後一句之後，
+    /// 語言規範的尾端強化版（docs/archive/HISTORY.md S7）：接在 user prompt 最後一句之後，
     /// 不是 system prompt。小模型對長 context／多輪攤平後的 prompt，對 system prompt 尾端規範的
     /// 遵循度會下降，仍可能漏出簡體字；模型對 prompt **最尾端**的指令遵循度最高，
     /// 所以在 user prompt 末尾重申一次，作為 <see cref="Language"/> 的第二道防線，不是取代它。

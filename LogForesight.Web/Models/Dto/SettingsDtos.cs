@@ -10,7 +10,7 @@ public class SystemSettingsDto
     /// <summary>層級顯示模式：DefaultHidden／SiteHidden（見 SystemSettings.SeverityDisplayMode）</summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
-    /// <summary>顯示中的日風險等級（高/中/低，docs/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
+    /// <summary>顯示中的日風險等級（高/中/低，docs/archive/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
     public string AiBaseUrl { get; set; } = "";
@@ -28,10 +28,10 @@ public class SystemSettingsDto
     /// <summary>稽核紀錄保留天數</summary>
     public int AuditRetentionDays { get; set; }
 
-    /// <summary>風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）</summary>
+    /// <summary>風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2）</summary>
     public int RiskyEventRetentionDays { get; set; }
 
-    /// <summary>是否啟用 DB 設定的 AD 驗證（docs/HISTORY.md #9）</summary>
+    /// <summary>是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
 
     public List<string> AdServers { get; set; } = new();
@@ -44,7 +44,7 @@ public class SystemSettingsDto
 
     public string? UpdatedByAccount { get; set; }
 
-    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/FEEDBACK-8-PLAN.md #6）；
+    /// <summary>顯示格式統一「顯示名稱(帳號)」的素材（docs/archive/FEEDBACK-8-PLAN.md #6）；
     /// 查無對應使用者時為 null，前端退回只顯示帳號</summary>
     public string? UpdatedByDisplayName { get; set; }
 }
@@ -57,7 +57,7 @@ public class UpdateSystemSettingsRequest
 
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
-    /// <summary>顯示中的日風險等級（docs/FEEDBACK-3-PLAN.md #8）；驗證要求必含「高」，
+    /// <summary>顯示中的日風險等級（docs/archive/FEEDBACK-3-PLAN.md #8）；驗證要求必含「高」，
     /// 見 SystemSettingsService.Update</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
@@ -83,12 +83,12 @@ public class UpdateSystemSettingsRequest
     [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
 
-    /// <summary>風險 log 暫存保留天數（docs/WEB-SCHEDULER-PLAN.md §2）；上限交由
+    /// <summary>風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2）；上限交由
     /// SystemSettingsService.Update 對照 RetentionDays 驗證（暫存不可活得比分析紀錄久）</summary>
     [Range(1, 3650, ErrorMessage = "風險 log 暫存保留天數必須介於 1~3650 天")]
     public int RiskyEventRetentionDays { get; set; }
 
-    // ── AD 驗證（docs/HISTORY.md #9）────────────────────────────────
+    // ── AD 驗證（docs/archive/HISTORY.md #9）────────────────────────────────
 
     public bool AdAuthEnabled { get; set; }
 
@@ -102,7 +102,7 @@ public class UpdateSystemSettingsRequest
 }
 
 /// <summary>
-/// AD 測試連線（docs/HISTORY.md #9）：用管理者當場輸入的帳密，
+/// AD 測試連線（docs/archive/HISTORY.md #9）：用管理者當場輸入的帳密，
 /// 對表單目前填的伺服器清單試 bind（不需先儲存）。密碼不落盤、不進稽核 detail。
 /// </summary>
 public class TestAdConnectionRequest
@@ -131,7 +131,7 @@ public class TestAdConnectionResultDto
 }
 
 /// <summary>
-/// 顯示層設定的公開子集（docs/FEEDBACK-3-PLAN.md #8）：完整設定 API 需要 Maintain 能力，
+/// 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）：完整設定 API 需要 Maintain 能力，
 /// 但「哪些日風險等級目前顯示」是任何已登入者的前端都要知道的資訊（用來決定 KPI 卡、
 /// 趨勢線、篩選 chips 要不要出現），比照 HostsController 無 [Permission] 標註的先例——
 /// 答案本身就是顯示範圍，不是需要額外授權才能問的問題。

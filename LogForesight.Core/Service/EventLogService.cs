@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Eventing.Reader;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 // EventLogEntryData 已移至 LogForesight.Core 的 Models/EventLogEntryData.cs（Analysis 層依賴它）。
 
@@ -86,20 +86,6 @@ public class EventLogService
     /// </summary>
     private static readonly HashSet<string> ClassicApiLogs =
         new(StringComparer.OrdinalIgnoreCase) { "System", "Application", "Security" };
-
-    /// <summary>取得單一日期的 Event Log（區間掃描的特例）</summary>
-    public List<EventLogEntryData> GetEventLogs(DateTime targetDate, string logName = "System")
-        => GetEventLogsRange(targetDate.Date, targetDate.Date.AddDays(1), logName);
-
-    /// <summary>
-    /// 單次倒序掃描取回 [startDate, endDateExclusive) 區間內的事件。
-    /// 回補多天時用這個：同一份日誌只掃一次，而不是每個日期各倒序掃一遍。
-    /// System/Application 取 Error 與 Warning；
-    /// Security 取 FailureAudit（如登入失敗），以及觀察清單內的 SuccessAudit 高價值事件
-    /// （帳號建立、日誌被清除等入侵跡象——這類事件不是錯誤，但必須納入分析）。
-    /// </summary>
-    public List<EventLogEntryData> GetEventLogsRange(DateTime startDate, DateTime endDateExclusive, string logName)
-        => ScanRange(startDate, endDateExclusive, logName).Entries;
 
     /// <summary>
     /// 與 <see cref="GetEventLogsRange"/> 相同的掃描邏輯，額外回傳資料完整性中繼資料
@@ -290,23 +276,6 @@ public class EventLogService
             return new EventLogScanResult { Entries = logs, Complete = false, ReadFailed = true };
         }
     }
-
-    /// <summary>從多個日誌來源取得指定日期的事件</summary>
-    public List<EventLogEntryData> GetEventLogsFromAll(DateTime targetDate, string[]? logNames = null)
-    {
-        return (logNames ?? DefaultLogNames)
-            .SelectMany(name => GetEventLogs(targetDate, name))
-            .OrderBy(l => l.TimeGenerated)
-            .ToList();
-    }
-
-    /// <summary>
-    /// 平行掃描多個日誌來源，一次取回整個日期區間的事件。
-    /// 三個日誌各自獨立，同時掃描；抓取全部前置完成後，AI 分析迴圈就不需要再等任何 I/O。
-    /// </summary>
-    public async Task<List<EventLogEntryData>> GetEventLogsRangeFromAllAsync(
-        DateTime startDate, DateTime endDateExclusive, string[]? logNames = null)
-        => (await ScanRangeFromAllAsync(startDate, endDateExclusive, logNames)).Entries;
 
     /// <summary>
     /// 與 <see cref="GetEventLogsRangeFromAllAsync"/> 相同的平行掃描，額外回傳每個來源的完整性中繼資料，

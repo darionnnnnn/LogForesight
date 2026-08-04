@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -7,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 「查看先前處理」（docs/FEEDBACK-5-PLAN.md §4）：<see cref="RecordQueryService.GetDetail"/>
+/// 「查看先前處理」（docs/archive/FEEDBACK-5-PLAN.md §4）：<see cref="RecordQueryService.GetDetail"/>
 /// 的 <c>HasPriorHandling</c> 旗標與 <see cref="RecordQueryService.GetIssueHistory"/> 端點。
 /// </summary>
 public class RecordQueryServiceIssueHistoryTests : IDisposable
@@ -18,7 +17,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
     private readonly FakeUserStore _users = new();
     private readonly FakeIssueHandlingStore _issueHandlingStore = new();
     private readonly FakeIssueCaseStore _caseStore = new();
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
     private const string Source = "disk";
     private const int EventId = 153;
@@ -30,14 +29,13 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
 
-        _service = new RecordQueryService(
+        _service = new RecordDetailQueryService(
             repository,
             new NullReportReader(),
             _hosts,
             _users,
             new FakeHostGroupStore(),
             visibility,
-            new FakeHandlingStore(),
             _issueHandlingStore,
             _caseStore,
             new FakeNoiseMarkStore(),
@@ -48,7 +46,7 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk = "低") =>
         _recordStore.Append(new DailyAnalysisRecord

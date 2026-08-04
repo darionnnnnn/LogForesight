@@ -161,7 +161,7 @@ public class RunMonitorService
 
         var latest = dayRuns[0];
 
-        // Stopped 優先於 exit code／錯誤計數判定（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：
+        // Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
         // 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來
         var status = latest.FinishedAt == null
             ? (DateTime.Now - latest.StartedAt > StuckThreshold ? "stuck" : "running")
@@ -221,7 +221,7 @@ public class RunMonitorService
     }
 
     /// <summary>
-    /// 「誰跑的」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：null／"console" 是舊紀錄或批次 exe
+    /// 「誰跑的」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：null／"console" 是舊紀錄或批次 exe
     /// 直接執行（升級前唯一的觸發來源，統一顯示「工作排程器」，語意等價且不驚動既有部署）；
     /// "schedule" 是 Web 排程觸發；"manual:{帳號}" 是 Web 手動觸發。
     /// </summary>

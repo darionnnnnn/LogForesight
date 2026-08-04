@@ -1,7 +1,7 @@
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
-/// 日風險等級（高/中/低）的單一事實來源（docs/HISTORY.md S2）。
+/// 日風險等級（高/中/低）的單一事實來源（docs/archive/HISTORY.md S2）。
 /// 取代原本散落在 Web／批次／Core 各處的字面值與三份幾乎相同的排序權重複本。
 ///
 /// 與問題嚴重度（<see cref="IssueSeverity"/>：Critical/High/Medium/Low）是不同的兩套層級——
@@ -33,7 +33,7 @@ public static class RiskLevels
     /// <summary>待辦／受影響主機等「需要處理」統計的母體判定：高或中風險日</summary>
     public static bool IsActionable(string riskLevel) => riskLevel is High or Medium;
 
-    /// <summary>兩者取風險較高者（不能往下壓，只能往上拉——見 docs/HISTORY.md）</summary>
+    /// <summary>兩者取風險較高者（不能往下壓，只能往上拉——見 docs/archive/HISTORY.md）</summary>
     public static string MoreSevere(string a, string b) => Rank(a) >= Rank(b) ? a : b;
 
     /// <summary>從 AI 回傳的風險等級文字（或 JSON 解析失敗時的原文）歸一化為 高/中/低/未知</summary>

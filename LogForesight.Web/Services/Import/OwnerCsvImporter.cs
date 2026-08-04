@@ -8,7 +8,7 @@ namespace LogForesight.Web.Services.Import;
 ///   而不是逐列——一列一列看「新增負責人 X」無法表達「這台的負責人整組換成 A、B」的取代語意。
 /// - **帳號不存在時自動建立**（User 角色、無群組）。與 hosts.csv 的「擋下」刻意不同：
 ///   兩千台情境手動先建幾百個帳號不現實，且帳號真偽在 LDAP 登入時自然驗證
-///   （見 docs/HISTORY.md §2）。主機則**不**自動建立——主機的建立途徑是
+///   （見 docs/archive/HISTORY.md §2）。主機則**不**自動建立——主機的建立途徑是
 ///   批次 Touch／NetIQ 匯入／hosts.csv，負責人檔不該成為第四條。
 /// </summary>
 public class OwnerCsvImporter : ICsvImporter
@@ -161,7 +161,7 @@ public class OwnerCsvImporter : ICsvImporter
             // 一整組欄位——漏抄的三個（SentinelId、Os、OrphanedFromSentinel）於是被靜默重置：
             // SentinelId 掉成 null 讓主機落入「待歸屬」、從此不進日常輪巡（畫面上還在，實際沒人在看），
             // Os 退回 windows 讓 Linux 主機套錯規則面，OrphanedFromSentinel 遺失則讓孤兒主機無法復活。
-            // 逐欄複製漏抄在本專案已有前例（RuleImporter 漏抄 ElevatesDayRisk，見 docs/HISTORY.md），
+            // 逐欄複製漏抄在本專案已有前例（RuleImporter 漏抄 ElevatesDayRisk，見 docs/archive/HISTORY.md），
             // 改用意圖精準的 SetOwners 就不必再維護那份清單，WebHost 日後新增欄位也不會再漏。
             _hosts.SetOwners(host.HostId, ownerIds);
             result.Updated++;

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 public class ScheduleValidationResult
 {
@@ -7,7 +7,7 @@ public class ScheduleValidationResult
 }
 
 /// <summary>
-/// 排程時間窗計算（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：純函數，不碰任何 I/O，方便單測。
+/// 排程時間窗計算（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：純函數，不碰任何 I/O，方便單測。
 /// 全部以「一天內的分鐘數」（0~1439）運算，跨午夜窗口（<c>Start &gt; End</c>）在需要比較區間時
 /// 正規化成兩段（<c>[Start,1440)</c>＋<c>[0,End)</c>），其餘情況直接用 <see cref="IsWithinWindow"/>
 /// 的環狀比較，不用真的拆兩段物件。
@@ -18,7 +18,7 @@ public static class ScheduleCalculator
     public const int MaxWindows = 4;
 
     /// <summary>
-    /// 儲存驗證（docs/WEB-SCHEDULER-PLAN.md §1.4.3「儲存驗證，後端強制非僅 UI」）：
+    /// 儲存驗證（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3「儲存驗證，後端強制非僅 UI」）：
     /// HH:mm 格式、Start != End、至少一個窗口、上限 <see cref="MaxWindows"/> 組、窗口間不重疊
     /// （跨午夜窗口先正規化成分鐘區間再驗）。重疊直接列出衝突的組別，不做聰明合併。
     /// </summary>
@@ -156,7 +156,7 @@ public static class ScheduleCalculator
     /// 現在是否該觸發一次排程執行：now 落在某個窗口內，且**那個窗口目前這次的實例**還沒有觸發過
     /// （<paramref name="recentScheduledTriggerTimes"/> 裡沒有任何一筆落在該實例的起訖區間）。
     /// 同一個函式服務兩個呼叫端：常態輪詢（週期性檢查是否該觸發）與服務啟動時的漏跑補償
-    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.3）——語意完全相同，不需要兩套邏輯。
+    /// （docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）——語意完全相同，不需要兩套邏輯。
     /// </summary>
     public static bool ShouldTriggerNow(DateTime now, IEnumerable<ScheduleWindow> windows, IEnumerable<DateTime> recentScheduledTriggerTimes)
     {

@@ -9,6 +9,4 @@ public class WebProbeConsole : IRunConsole
     public WebProbeConsole(NetiqProbeRunState state) => _state = state;
 
     public void WriteLine(string message = "") => _state.AppendLine(message);
-
-    public void WithColor(ConsoleColor color, Action write) => write();
 }

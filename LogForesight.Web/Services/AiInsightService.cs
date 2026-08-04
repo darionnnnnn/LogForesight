@@ -22,27 +22,27 @@ public class AiTextDto
 {
     public string Text { get; set; } = string.Empty;
 
-    /// <summary>詢問 AI 現場事件（docs/FEEDBACK-4-PLAN.md §5、docs/WEB-SCHEDULER-PLAN.md §2.2.4）：
+    /// <summary>詢問 AI 現場事件（docs/archive/FEEDBACK-4-PLAN.md §5、docs/archive/WEB-SCHEDULER-PLAN.md §2.2.4）：
     /// 這輪回覆納入分析的原始事件則數（來源為風險 log 暫存或 Sentinel 即時查詢）；
     /// null＝沒有事件可注入（暫存查無且即時查詢不符資格/失敗、或非首輪對話）</summary>
     public int? FetchedLogCount { get; set; }
 }
 
 /// <summary>
-/// AI 加值功能（docs/HISTORY.md §6 W1＋W2）。
+/// AI 加值功能（docs/archive/HISTORY.md §6 W1＋W2）。
 /// 每個功能：把**已彙總的結構化統計**餵給 AI，要一段短輸出。程式先算好確定性的部分，
 /// AI 只做「講白話、排順序」。AI 不可用時一律回 null（呼叫端隱藏對應 UI）。
 ///
 /// <see cref="ChatAsync"/>：詳情頁對話（R7 精簡版）一輪回覆。messages 是已通過伺服器端輪數／
 /// 格式驗證的完整對話歷史（含最新一則使用者訊息），不走快取——每輪內容都不同。
-/// reportText 為當日分析報告全文（docs/HISTORY.md #11），
+/// reportText 為當日分析報告全文（docs/archive/HISTORY.md #11），
 /// 無報告（低風險日）時為 null，此時對話僅依問題結構化欄位回答（既有行為不變）。
 /// </summary>
 public class AiInsightService
 {
     private readonly IWebAiService _ai;
 
-    // 由 enum 推導而非手寫清單（docs/HISTORY.md S10）：IssueCategory 加值時
+    // 由 enum 推導而非手寫清單（docs/archive/HISTORY.md S10）：IssueCategory 加值時
     // 這裡自動涵蓋，不會有「加了類別、白名單忘了跟著加」的靜默漏網
     private static readonly HashSet<string> KnownCategories =
         new(Enum.GetNames<IssueCategory>(), StringComparer.OrdinalIgnoreCase);
@@ -193,7 +193,7 @@ public class AiInsightService
         return sb.ToString();
     }
 
-    /// <summary>報告全文在對話 prompt 中的佔用上限（docs/HISTORY.md #11）。
+    /// <summary>報告全文在對話 prompt 中的佔用上限（docs/archive/HISTORY.md #11）。
     /// 不是有多少預算就填多少——地端模型 prefill 一萬多 token 要數十秒，60 秒逾時會開始不夠；
     /// 8k 涵蓋絕大多數報告，延遲仍可控。之後換更快硬體只需調這一個數字。</summary>
     private const int ReportMaxTokens = 8000;
@@ -202,7 +202,7 @@ public class AiInsightService
     /// 這裡只是估算報告可用空間的保守假設，不是真正送出的請求參數，兩處數字各自維護但意義相同。</summary>
     private const int ChatOutputTokens = 768;
 
-    /// <summary>現場取回事件在對話 prompt 中的佔用上限（docs/FEEDBACK-4-PLAN.md §5 D4）：
+    /// <summary>現場取回事件在對話 prompt 中的佔用上限（docs/archive/FEEDBACK-4-PLAN.md §5 D4）：
     /// 這是「部分關鍵 log」而非報告全文，預算給得比 ReportMaxTokens 小很多</summary>
     private const int LiveLogMaxTokens = 3000;
 
@@ -238,7 +238,7 @@ public class AiInsightService
     }
 
     /// <summary>
-    /// 詢問 AI 現場事件（docs/FEEDBACK-4-PLAN.md §5、docs/WEB-SCHEDULER-PLAN.md §2.2.4）：
+    /// 詢問 AI 現場事件（docs/archive/FEEDBACK-4-PLAN.md §5、docs/archive/WEB-SCHEDULER-PLAN.md §2.2.4）：
     /// 來源可能是風險 log 暫存（優先）或 Sentinel 即時查詢（fallback），圍欄文字因此不標注
     /// 來源。與事件原始訊息（BuildChatTail）同樣的雙重防線——圍欄聲明＋system prompt 重申，
     /// 因為內容同樣是攻擊者可控字串。null／空清單時回空字串（呼叫端不必另外判斷）。

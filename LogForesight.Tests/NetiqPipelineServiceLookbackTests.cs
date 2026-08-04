@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/FEEDBACK-3-PLAN.md #1：<see cref="NetiqPipelineService.ResolveLookbackDays"/>——
+/// docs/archive/FEEDBACK-3-PLAN.md #1：<see cref="NetiqPipelineService.ResolveLookbackDays"/>——
 /// 首次執行與缺漏日回補統一套用 BackfillDays，取代原本「首次深度回補 14 天」的例外路徑。
 /// </summary>
 public class NetiqPipelineServiceLookbackTests

@@ -1,5 +1,4 @@
-using LogForesight;
-using LogForesight.Web.Auth;
+using LogForesight.Web;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
 using LogForesight.Web.Filters;
@@ -8,27 +7,9 @@ using LogForesight.Web.Services;
 using NLog;
 using NLog.Web;
 
-// ── 命令列工具：--hash-password ───────────────────────────────────────────────
-// serverAdmin 的密碼以 PBKDF2 雜湊存放（docs/WEB-SPEC.md §6.2），這裡提供產生雜湊的方式。
-// 輪替 SOP：跑這個指令 → 把輸出貼進 appsettings.json 的 Auth:ServerAdmin:PasswordHash → 重啟站台。
 if (args.Length > 0 && args[0] == "--hash-password")
 {
-    Console.Write("請輸入要雜湊的密碼：");
-    var password = ReadPasswordMasked();
-    Console.WriteLine();
-
-    if (string.IsNullOrWhiteSpace(password))
-    {
-        Console.WriteLine("密碼不可為空。");
-        return 1;
-    }
-
-    Console.WriteLine();
-    Console.WriteLine("請將下面這行填入 appsettings.json 的 Auth:ServerAdmin:PasswordHash：");
-    Console.WriteLine();
-    Console.WriteLine(PasswordHasher.Hash(password));
-    Console.WriteLine();
-    return 0;
+    return HashPasswordCommand.Run();
 }
 
 var logger = LogManager.Setup().LoadConfigurationFromAppSettings().GetCurrentClassLogger();
@@ -37,7 +18,7 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // 以 Windows 服務執行（docs/HISTORY.md P1-3）：只在真的被服務控制管理器啟動時
+    // 以 Windows 服務執行（docs/archive/HISTORY.md P1-3）：只在真的被服務控制管理器啟動時
     // 才切換生命週期管理，一般用 `dotnet run`／console 啟動不受影響
     builder.Host.UseWindowsService();
 
@@ -49,7 +30,7 @@ try
 
     // ConfigurationBinder 綁不出 Ai:ExtraRequestFields（Dictionary<string, JsonElement>）——
     // 綁出來的元素是 default(JsonElement)（ValueKind=Undefined），AIService 建構子對其呼叫
-    // GetRawText() 會丟例外，導致排程／立即執行在分析開始前就整個中止（docs/FEEDBACK-7-PLAN.md）。
+    // GetRawText() 會丟例外，導致排程／立即執行在分析開始前就整個中止（docs/archive/FEEDBACK-7-PLAN.md）。
     // 改用 AiExtraFieldsLoader 直接重讀該節點；兩份設定檔皆無節點時回復型別預設值，
     // 避免沿用 binder 產生的壞值。
     settings.Ai.ExtraRequestFields =
@@ -57,7 +38,7 @@ try
         ?? new AiSettings().ExtraRequestFields;
 
     // DataRoot 未明確指定時，StorageSettings.ResolveDataRoot() 退回 AppContext.BaseDirectory
-    // （本站台自己的輸出目錄）——console 批次專案已隨 Phase 5 退場（docs/WEB-SCHEDULER-PLAN.md
+    // （本站台自己的輸出目錄）——console 批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md
     // §1.5），Web 排程／立即執行是現在唯一的分析執行途徑，資料本來就該落在 Web 自己的目錄下，
     // 不需要再另外推算「批次輸出目錄」。開發者若要讀別處的資料，在設定檔明確填 DataRoot 即可。
     settings.Validate(builder.Environment.IsProduction());
@@ -66,10 +47,10 @@ try
     // 資料根目錄健檢（誠實申報，「沒告警 ≠ 沒問題」的原則）：
     // DataRoot 存在（Validate 已檢查）但底下沒有該儲存後端的資料足跡，最常見的成因是舊部署
     // 升級時 Storage:DataRoot 還指著升級前批次獨立部署時的資料目錄（console 已隨 Phase 5 退場，
-    // docs/WEB-SCHEDULER-PLAN.md §1.5），或是換過機器/目錄但設定沒跟著改。
+    // docs/archive/WEB-SCHEDULER-PLAN.md §1.5），或是換過機器/目錄但設定沒跟著改。
     // 那正是「規則維護頁報『載入規則失敗』、儀表板一片空白」的來源。
     // 只有「Sqlite 用預設連線」時才在 DataRoot 底下有檔案足跡可查（.db 落點）；
-    // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageFactory 首次連線 fail-fast 把關，這裡不重複檢查。
+    // Sqlite 自訂 ConnectionString 與 SqlServer 的可用性由 StorageBackend 建構時連線 fail-fast 把關，這裡不重複檢查。
     // 刻意不 fail-fast：排程還沒首次執行過是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
     var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
@@ -114,7 +95,7 @@ try
                 settings.Auth.ServerAdmin.Account);
         }
 
-        // Sentinel 一律由 Web「系統管理 > NetIQ 維護」頁維護（docs/HISTORY.md 定案 1），
+        // Sentinel 一律由 Web「系統管理 > NetIQ 維護」頁維護（docs/archive/HISTORY.md 定案 1），
         // appsettings.json 不再提供種子——全新環境部署後直接在維護頁新增伺服器。
         var sentinelStore = scope.ServiceProvider.GetRequiredService<ISentinelStore>();
 
@@ -125,7 +106,7 @@ try
             logger.Info("已回填 {0} 台主機的 SentinelId（{1} 台對不到現存 Sentinel，維持待歸屬）。",
                 backfill.BackfilledCount, backfill.UnresolvedCount);
 
-        // 規則庫初始化（docs/FEEDBACK-5-PLAN.md §10）：rules blob 原本只有批次的
+        // 規則庫初始化（docs/archive/FEEDBACK-5-PLAN.md §10）：rules blob 原本只有批次的
         // RuleBootstrapper 會初始化，全新環境（批次從未執行過）Web 開站即假設「批次至少
         // 跑過一次」，規則維護頁因此對著不存在的 blob 直接拋例外。這裡冪等補上——
         // 已存在只載入不覆寫，不存在才寫入內建種子；用 LoadContent 而非 Run，因為 Web
@@ -194,32 +175,4 @@ catch (Exception ex)
 finally
 {
     LogManager.Shutdown();
-}
-
-/// <summary>讀取密碼但不回顯（避免密碼留在畫面與終端機的捲動紀錄裡）</summary>
-static string ReadPasswordMasked()
-{
-    var password = new System.Text.StringBuilder();
-    while (true)
-    {
-        var key = Console.ReadKey(intercept: true);
-        if (key.Key == ConsoleKey.Enter) break;
-
-        if (key.Key == ConsoleKey.Backspace)
-        {
-            if (password.Length > 0)
-            {
-                password.Length--;
-                Console.Write("\b \b");
-            }
-            continue;
-        }
-
-        if (!char.IsControl(key.KeyChar))
-        {
-            password.Append(key.KeyChar);
-            Console.Write("*");
-        }
-    }
-    return password.ToString();
 }

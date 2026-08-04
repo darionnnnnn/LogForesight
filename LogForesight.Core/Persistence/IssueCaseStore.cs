@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// <see cref="IIssueCaseStore"/> 的實作（blob key=issue_cases）。

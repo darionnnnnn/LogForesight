@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/HISTORY.md #9：DynamicAuthenticationProvider 的切換邏輯。
+/// docs/archive/HISTORY.md #9：DynamicAuthenticationProvider 的切換邏輯。
 /// LdapService 本體依賴 DirectoryEntry／實際網路 bind，難以單元測試（也不該測，見計畫書）；
 /// 這裡只測「AD 開關開/關、伺服器清單空/非空」時是否正確路由到 AD 路徑或 fallback，
 /// 不觸發任何實際網路連線——用空密碼讓 LdapCredentialVerifier 在碰網路前就短路回傳，
@@ -125,19 +125,4 @@ public class DynamicAuthenticationProviderTests
     }
 }
 
-internal class FakeAuthenticationProvider : IAuthenticationProvider
-{
-    public string NameValue { get; set; } = "Fake";
-    public bool RequiresPasswordValue { get; set; } = true;
-    public CredentialCheckResult ResultToReturn { get; set; } = CredentialCheckResult.Ok;
-    public int VerifyCalls { get; private set; }
-
-    public string Name => NameValue;
-    public bool RequiresPassword => RequiresPasswordValue;
-
-    public CredentialCheckResult Verify(string account, string? password)
-    {
-        VerifyCalls++;
-        return ResultToReturn;
-    }
-}
+// FakeAuthenticationProvider 已搬到 TestDoubles\CurrentUserFake.cs。

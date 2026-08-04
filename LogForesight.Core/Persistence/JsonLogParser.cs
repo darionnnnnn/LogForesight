@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// append-only log（<see cref="EfJsonLogStore"/>）逐行反序列化的共用邏輯：略過空白行、

@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 排程時間窗純函數（docs/WEB-SCHEDULER-PLAN.md §1.4.3）：格式驗證、重疊偵測（含跨午夜）、
+/// 排程時間窗純函數（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：格式驗證、重疊偵測（含跨午夜）、
 /// 命中判斷、下一次觸發時刻、漏跑補償語意。
 /// </summary>
 public class ScheduleCalculatorTests

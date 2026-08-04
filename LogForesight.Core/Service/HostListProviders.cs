@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 今晚要向 Sentinel 查詢的一台主機。<paramref name="HostId"/> 是寫入分析紀錄時的關聯鍵；
@@ -7,7 +7,7 @@ namespace LogForesight;
 /// <c>WebHost.IpAddress</c> 是「最近已知」的查詢用線索，機房 pipeline 建立歷史紀錄的
 /// owner-host 識別要用前者，向 Sentinel 查詢要用後者）。
 /// <paramref name="Os"/>（windows/linux）決定這台套哪個平台的規則面與查詢形式
-/// （docs/LINUX-RULES-PLAN.md §3/§4.2）。
+/// （docs/LINUX-RULES.md §3/§4.2）。
 /// </summary>
 public record NetiqTarget(long HostId, string HostName, string IpAddress, string RoleDesc, string Os);
 
@@ -25,29 +25,10 @@ public class HostListResult
     public int TotalHosts => ByServer.Values.Sum(list => list.Count);
 }
 
-/// <summary>
-/// 機房分析的主機清單來源：Web 主機頁維護（Txt 清單模式已退役，見 docs/HISTORY.md 定案 12），
-/// 直接讀主機清單資料，不做任何同步。
-/// </summary>
-public class StoreHostListProvider
-{
-    private readonly IHostStore _hosts;
-    private readonly ISentinelStore _sentinels;
-
-    public StoreHostListProvider(IHostStore hosts, ISentinelStore sentinels)
-    {
-        _hosts = hosts;
-        _sentinels = sentinels;
-    }
-
-    public string Description => "Web 維護的主機清單";
-
-    public HostListResult GetHostList() => HostListSelection.FromStore(_hosts, _sentinels);
-}
-
-/// <summary>「從主機清單資料挑出今晚要查的主機」。挑選規則本身在 <see cref="NetiqHostList"/>（Core），
-/// Web 畫面用的是同一份，所以畫面標示與批次行為不會分歧。</summary>
-internal static class HostListSelection
+/// <summary>「機房分析的主機清單來源：從 Web 主機頁維護的主機清單資料挑出今晚要查的主機」。
+/// 挑選規則本身在 <see cref="NetiqHostList"/>（Core），Web 畫面用的是同一份，所以畫面標示與
+/// 排程分析行為不會分歧。</summary>
+public static class HostListSelection
 {
     public static HostListResult FromStore(IHostStore hosts, ISentinelStore sentinels)
     {

@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 合約測試（docs/NETIQ-API-PLAN.md 決策 B2）：Sentinel 事件經 <see cref="SentinelEventMapper"/>
+/// 合約測試（docs/archive/HISTORY.md 決策 B2）：Sentinel 事件經 <see cref="SentinelEventMapper"/>
 /// 映射後，餵進與本機路徑完全相同的 <see cref="LogAggregator"/>／<see cref="KnownIssueCatalog"/>，
 /// 必須產出結構相同的 <see cref="LogIssueSignature"/>——這是「整條五層偵測零改動重用」設計主張
 /// 的實際驗證，不是文件宣稱。同一邏輯事件分別以「本機路徑會產出的 EventLogEntryData」與

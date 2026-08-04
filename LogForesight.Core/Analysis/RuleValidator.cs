@@ -1,6 +1,6 @@
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
-/// <summary>驗證後的結果：合格規則、逐條不合格原因、遮蔽警告（見 docs/RULES-PLAN.md）</summary>
+/// <summary>驗證後的結果：合格規則、逐條不合格原因、遮蔽警告（見 docs/RULES-SPEC.md）</summary>
 public class RuleValidationOutcome
 {
     /// <summary>通過驗證的規則，保留原始順序（比對順序＝清單順序，與 FindRule 的語意一致）</summary>
@@ -15,7 +15,7 @@ public class RuleValidationOutcome
 
 /// <summary>
 /// 規則載入後的驗證：純函數，不做任何 I/O。單條規則的欄位/長度不合格就跳過該條、其餘規則
-/// 照常載入——手動編輯 rules.json 打錯一條不該讓整份規則失效（見 docs/RULES-PLAN.md 陷阱 3）。
+/// 照常載入——手動編輯 rules.json 打錯一條不該讓整份規則失效（見 docs/RULES-SPEC.md 陷阱 3）。
 /// </summary>
 public static class RuleValidator
 {
@@ -134,7 +134,7 @@ public static class RuleValidator
         return null;
     }
 
-    /// <summary>Windows 規則欄位（docs/RULES-PLAN.md 陷阱說明）：Linux 專用三欄必空，
+    /// <summary>Windows 規則欄位（docs/RULES-SPEC.md 陷阱說明）：Linux 專用三欄必空，
     /// SourcePattern 必填，EventIds 非空或 MatchAllEventIds 二擇一成立。</summary>
     private static string? CheckWindowsFields(KnownIssueRule rule)
     {
@@ -152,7 +152,7 @@ public static class RuleValidator
         }
         if (!rule.MatchAllEventIds && rule.EventIds.Length == 0)
         {
-            return "EventIds 為空但 MatchAllEventIds 未設為 true（全比對必須顯式宣告，見 docs/RULES-PLAN.md）";
+            return "EventIds 為空但 MatchAllEventIds 未設為 true（全比對必須顯式宣告，見 docs/RULES-SPEC.md）";
         }
         if (rule.EventIds.Any(id => id <= 0))
         {
@@ -161,7 +161,7 @@ public static class RuleValidator
         return null;
     }
 
-    /// <summary>Linux 規則欄位（docs/LINUX-RULES-PLAN.md §1.3）：Windows 專用欄位必空，
+    /// <summary>Linux 規則欄位（docs/LINUX-RULES.md §1.3）：Windows 專用欄位必空，
     /// ProgramPattern／EventNamePattern 至少一個非空（兩條比對路至少通一條），
     /// MessagePatterns 每條非空白、不過長、最多 8 條（超過代表規則想做的事太多，該拆條）。</summary>
     private static string? CheckLinuxFields(KnownIssueRule rule)
@@ -201,7 +201,7 @@ public static class RuleValidator
     /// 遮蔽偵測入口：Windows 與 Linux 規則各自的比對邏輯完全獨立（FindRule／FindLinuxRule
     /// 明確按 Platform 分路，見 KnownIssueCatalog），一個平台的規則不可能遮蔽另一個平台的規則，
     /// 所以分區偵測——Windows 規則永遠不會被判定遮蔽 Linux 規則，反之亦然
-    /// （docs/LINUX-RULES-PLAN.md §1.3）。Where 保留原始清單的相對順序，
+    /// （docs/LINUX-RULES.md §1.3）。Where 保留原始清單的相對順序，
     /// 「比對順序＝清單順序」的語意在各自分區內成立。
     /// </summary>
     private static List<string> DetectShadowing(List<KnownIssueRule> validRules)
@@ -269,7 +269,7 @@ public static class RuleValidator
     /// Linux 版遮蔽偵測，充分條件更保守：只有 earlier 的 <c>MessagePatterns</c> 為空
     /// （program 命中即算，不篩訊息）時，才可能完全涵蓋 later 的 program 範圍——
     /// 訊息子字串之間的涵蓋關係不做精確判定，比對成本高，且誤報遮蔽警告比漏報更擾人
-    /// （docs/LINUX-RULES-PLAN.md §1.3）。EventNamePattern 路徑同理不參與涵蓋判定，
+    /// （docs/LINUX-RULES.md §1.3）。EventNamePattern 路徑同理不參與涵蓋判定，
     /// 事件名比對與 program 比對是獨立的兩條路，沒有清楚的「涵蓋」語意可用。
     /// </summary>
     private static List<string> DetectLinuxShadowing(List<KnownIssueRule> validRules)

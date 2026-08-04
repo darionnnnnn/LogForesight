@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>解析後的 IPv4 網段：以「網路位址 ＋ 遮罩」表示，比對只是一次位元 AND。</summary>
 public sealed class CidrRange
@@ -13,7 +13,7 @@ public sealed class CidrRange
 }
 
 /// <summary>
-/// IPv4 網段比對（docs/HISTORY.md §3）。支援三種輸入：
+/// IPv4 網段比對（docs/archive/HISTORY.md §3）。支援三種輸入：
 ///   - CIDR：<c>10.1.2.0/24</c>
 ///   - 萬用字元（只允許尾端連續段）：<c>10.1.2.*</c>（＝/24）、<c>10.1.*</c>（＝/16）
 ///   - 單一 IP：<c>10.1.2.15</c>（＝/32）

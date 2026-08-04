@@ -1,11 +1,10 @@
-using LogForesight.Sql;
 using LogForesight.Web.Services;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 詢問 AI 現場取數的節流閘（docs/FEEDBACK-4-PLAN.md §5）：這裡只釘住「不符資格時
+/// 詢問 AI 現場取數的節流閘（docs/archive/FEEDBACK-4-PLAN.md §5）：這裡只釘住「不符資格時
 /// 提早回 null、完全不嘗試連線」的三道防線——開關關閉、非 NetIQ 主機（無 NetiqServer／
 /// IpAddress）、Sentinel 設定查無資料。實際的 Sentinel HTTP 查詢行為由
 /// <see cref="SentinelClient"/> 自己的測試（SentinelClientTests）覆蓋，這裡不重複。
@@ -14,7 +13,7 @@ public class SentinelEventFetchServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fixture = new();
     private readonly NetiqOptionsStore _optionsStore;
-    private readonly NetiqHostServiceTests.FakeNetiqServerCatalog _catalog = new(Array.Empty<string>());
+    private readonly FakeNetiqServerCatalog _catalog = new(Array.Empty<string>());
     private readonly SentinelEventFetchService _service;
 
     public SentinelEventFetchServiceTests()

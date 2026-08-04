@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// <see cref="IRecordHandlingStore"/> 的實作。

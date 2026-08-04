@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 風險日的處理狀態（↔ lf_record_handling）。
@@ -58,7 +58,7 @@ public class RecordHandlingLog
     public string Action { get; set; } = string.Empty;
 
     /// <summary>
-    /// 問題層級操作才有值（docs/HISTORY.md #6/D4）：日層級操作（指派/日層級狀態變更）
+    /// 問題層級操作才有值（docs/archive/HISTORY.md #6/D4）：日層級操作（指派/日層級狀態變更）
     /// 維持 null。問題層級標記逐筆記錄——「攏統的彙總標記沒有意義」，批次勾 N 項就要留下 N 列，
     /// 每一列都查得到「誰、何時、對哪個問題、標成什麼」。
     /// </summary>
@@ -93,7 +93,7 @@ public static class HandlingStatuses
     public static bool IsValid(string status) => All.Contains(status);
 
     /// <summary>
-    /// 對外一律三態（docs/HISTORY.md #12）：問題查詢清單、CSV、儀表板／報表
+    /// 對外一律三態（docs/archive/HISTORY.md #12）：問題查詢清單、CSV、儀表板／報表
     /// 統計只呈現 未處理／處理中／已處理，六種結案類細節（不處理/誤報/已知雜訊…）
     /// 一律收斂為「已處理」——那些是「已經有結論」，對外部檢視而言就是不再需要動作了。
     /// **只在對外出口套用，不動 DayHandlingDerivation 的內部推導**：Unresolved/逾期判定
@@ -104,7 +104,7 @@ public static class HandlingStatuses
     {
         Open => Open,
         InProgress => InProgress,
-        // 觀察中（docs/FEEDBACK-8-PLAN.md #4）：對外三態收斂為「處理中」——有人在管，不是有結論。
+        // 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）：對外三態收斂為「處理中」——有人在管，不是有結論。
         // 日層級推導（DayHandlingDerivation.Derive）已把 observing 映成 in_progress，正常路徑
         // 走不到這個分支；這裡是防禦——沒有它，任何未來漏進來的 observing 會掉進 default
         // 被誤歸「已處理」，觀察中的日子就從待辦統計裡消失了
@@ -120,13 +120,13 @@ public static class HandlingActions
     public const string NoteUpdate = "note";
     public const string AutoAssign = "auto_assign";
 
-    /// <summary>問題層級標記狀態（含批次套用，逐問題一列）——docs/HISTORY.md #6/D4</summary>
+    /// <summary>問題層級標記狀態（含批次套用，逐問題一列）——docs/archive/HISTORY.md #6/D4</summary>
     public const string IssueStatus = "issue_status";
 
     /// <summary>問題層級清除標記（調回未處理）</summary>
     public const string IssueStatusCleared = "issue_status_cleared";
 
-    /// <summary>建立案件／改派案件處理人（docs/FEEDBACK-4-PLAN.md §0.4-A，記在觸發日的歷程）</summary>
+    /// <summary>建立案件／改派案件處理人（docs/archive/FEEDBACK-4-PLAN.md §0.4-A，記在觸發日的歷程）</summary>
     public const string CaseAssign = "case_assign";
 
     /// <summary>案件狀態同步展開到某日（逐日一列，actor＝觸發同步的使用者，§0.4-B）</summary>

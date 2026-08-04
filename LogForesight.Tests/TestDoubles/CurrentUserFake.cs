@@ -26,3 +26,24 @@ internal class FakeCurrentUser : ICurrentUser
 
     public static FakeCurrentUser Anonymous() => new() { IsAuthenticated = false, UserId = 0 };
 }
+
+// ── 測試替身：IAuthenticationProvider ────────────────────────────────────────
+// 原本定義在 DynamicAuthenticationProviderTests.cs 檔尾，搬到這裡與同屬 Web.Auth
+// 領域的 FakeCurrentUser 放在一起。
+
+internal class FakeAuthenticationProvider : IAuthenticationProvider
+{
+    public string NameValue { get; set; } = "Fake";
+    public bool RequiresPasswordValue { get; set; } = true;
+    public CredentialCheckResult ResultToReturn { get; set; } = CredentialCheckResult.Ok;
+    public int VerifyCalls { get; private set; }
+
+    public string Name => NameValue;
+    public bool RequiresPassword => RequiresPasswordValue;
+
+    public CredentialCheckResult Verify(string account, string? password)
+    {
+        VerifyCalls++;
+        return ResultToReturn;
+    }
+}

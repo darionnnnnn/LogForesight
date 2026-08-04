@@ -1,5 +1,5 @@
-using LogForesight;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
@@ -25,7 +25,7 @@ public class TrendAnalyzerTests
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
 
         Assert.Equal(IssueTrend.Rising, sig.Trend);
-        // docs/HISTORY.md #1（B1 三級化）：嚴重度封頂 High（原本 High 升一級到 Critical），
+        // docs/archive/HISTORY.md #1（B1 三級化）：嚴重度封頂 High（原本 High 升一級到 Critical），
         // 改用旗標達成同樣的「直接判定高風險日」效果
         Assert.Equal(IssueSeverity.High, sig.Severity);
         Assert.True(sig.ElevatesDayRisk);
@@ -208,20 +208,7 @@ public class TrendAnalyzerTests
             }
         };
 
-    private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
-        IssueCategory category = IssueCategory.Other)
-        => new()
-        {
-            LogName = logName,
-            Source = source,
-            EventId = eventId,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
-            Count = count,
-            Severity = severity,
-            Category = category,
-            FirstSeen = "00:00",
-            LastSeen = "23:59"
-        };
+    // Sig(...) 已搬到 TestDoubles\TestData.cs（與 SuppressionTests 原本逐字相同，已合併）。
 
     private static DailyAnalysisRecord HistoryDay(DateTime date, string source, int eventId, int count, IssueSeverity severity,
         string logName = "System", IssueCategory category = IssueCategory.Other)

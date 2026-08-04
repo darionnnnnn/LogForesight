@@ -2,12 +2,12 @@ using System.Text;
 using System.Text.Json.Serialization;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>
 /// 風險日報告：當日風險等級「中」以上時輸出報告檔，讓使用者聚焦問題點。
 /// 報告依問題類別分區塊（儲存裝置、硬體、安全、服務、備份、設定、資源）。
-/// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/HISTORY.md）：
+/// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/archive/HISTORY.md）：
 /// 規則已命中的類別（Category ≠ Other）直接查 <see cref="KnownIssueCatalog"/> 的靜態知識庫，
 /// 零 AI 呼叫、零延遲、零幻覺；只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）
 /// 才發一次獨立的 AI 深入分析呼叫——類別內的事件彼此相關該一起看
@@ -81,7 +81,7 @@ public class RiskReportService
 
             var categoryLogs = SelectRawLogs(logs, issues, logQuotaPerCategory);
 
-            // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/HISTORY.md）；
+            // 規則已命中的類別直接查表渲染靜態知識庫內容，零 AI 呼叫（見 docs/archive/HISTORY.md）；
             // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
             var outcome = group.Key == IssueCategory.Other
                 ? (record.AiAnalyzed
@@ -296,14 +296,30 @@ public class RiskReportService
     private static string BuildReport(DailyAnalysisRecord record, List<CategorySection> sections, List<RuleSuppression>? activeSuppressions)
     {
         var sb = new StringBuilder();
+        AppendHeader(sb, record, sections);
+        AppendOverview(sb, record);
+        foreach (var section in sections)
+        {
+            AppendCategorySection(sb, section);
+        }
+        AppendSuppressedIssues(sb, record, activeSuppressions);
+        AppendScreeningTail(sb, record);
+        return sb.ToString();
+    }
+
+    private static void AppendHeader(StringBuilder sb, DailyAnalysisRecord record, List<CategorySection> sections)
+    {
         sb.AppendLine("══════════════════════════════════════════════════════════");
         sb.AppendLine($"  LogForesight 風險報告  {record.Date:yyyy-MM-dd}    風險等級：{record.RiskLevel}");
         sb.AppendLine($"  問題類別：{(sections.Count > 0 ? string.Join("、", sections.Select(s => CategoryZh(s.Category))) : "（無重點類別）")}");
         sb.AppendLine($"  產生時間：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine("══════════════════════════════════════════════════════════");
+    }
 
-        // 白話總覽：置頂，主管/非技術讀者看完這段即可結束（2026-07-20 AI 角色轉換，見 docs/HISTORY.md）。
-        // 技術細節（趨勢數字、關聯訊號、原始 log）全部保留在下方區塊，供維運人員查證。
+    /// <summary>白話總覽（置頂，主管/非技術讀者看完即可結束）＋技術摘要（趨勢數字、關聯訊號、覆蓋率申報，
+    /// 供維運人員查證；2026-07-20 AI 角色轉換，見 docs/archive/HISTORY.md）</summary>
+    private static void AppendOverview(StringBuilder sb, DailyAnalysisRecord record)
+    {
         sb.AppendLine();
         sb.AppendLine(record.AiAnalyzed ? "■ 白話總覽（AI 產出）" : "■ 白話總覽");
         if (record.Headline.Length > 0)
@@ -317,7 +333,6 @@ public class RiskReportService
         }
         sb.AppendLine();
 
-        // 技術摘要：趨勢數字、關聯訊號、覆蓋率申報——供查證與後續調查
         sb.AppendLine("■ 技術摘要");
         if (record.UncoveredChecks.Count > 0)
         {
@@ -346,111 +361,113 @@ public class RiskReportService
             sb.AppendLine($"  ⚠ {alert}");
         }
         sb.AppendLine();
+    }
 
-        // 各類別區塊：問題清單 → 該類別的 AI 深入分析 → 該類別的原始 log
-        foreach (var section in sections)
+    /// <summary>單一類別區塊：問題清單 → 該類別的處置參考（知識庫或 AI 深入分析） → 該類別的原始 log</summary>
+    private static void AppendCategorySection(StringBuilder sb, CategorySection section)
+    {
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        sb.AppendLine($"■【{CategoryZh(section.Category)}】重點問題 {section.Issues.Count} 項");
+        sb.AppendLine();
+        foreach (var issue in section.Issues)
         {
-            sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            sb.AppendLine($"■【{CategoryZh(section.Category)}】重點問題 {section.Issues.Count} 項");
-            sb.AppendLine();
-            foreach (var issue in section.Issues)
-            {
-                sb.AppendLine(FormatIssue(issue));
-            }
+            sb.AppendLine(FormatIssue(issue));
+        }
 
-            // Other 以外的類別已由規則命中，處置參考直接查靜態知識庫（零 AI 呼叫）；
-            // 只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）才是真正的 AI 深入分析
-            bool isStaticSection = section.Category != IssueCategory.Other;
-            sb.AppendLine();
+        // Other 以外的類別已由規則命中，處置參考直接查靜態知識庫（零 AI 呼叫）；
+        // 只有 Other 類別（未命中規則、AI 唯一還需要判讀的地方）才是真正的 AI 深入分析
+        bool isStaticSection = section.Category != IssueCategory.Other;
+        sb.AppendLine();
+        sb.AppendLine(isStaticSection
+            ? "  ── 處置參考（知識庫） ──"
+            : $"  ── AI 深入分析（{CategoryZh(section.Category)}） ──");
+        if (section.LogsTruncatedInPrompt)
+        {
+            sb.AppendLine($"  （原始 log 篇幅超出深入分析 prompt 上限，AI 僅參考其中 {section.LogsIncludedInPrompt}/{section.Logs.Count} 筆；" +
+                          "下方「相關原始 Log」仍完整列出全部證據）");
+        }
+        if (section.DeepDive == null || section.DeepDive.Analyses.Count == 0)
+        {
             sb.AppendLine(isStaticSection
-                ? "  ── 處置參考（知識庫） ──"
-                : $"  ── AI 深入分析（{CategoryZh(section.Category)}） ──");
-            if (section.LogsTruncatedInPrompt)
+                ? "  （知識庫查無對應處置參考）"
+                : "  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
+        }
+        else
+        {
+            for (int i = 0; i < section.DeepDive.Analyses.Count; i++)
             {
-                sb.AppendLine($"  （原始 log 篇幅超出深入分析 prompt 上限，AI 僅參考其中 {section.LogsIncludedInPrompt}/{section.Logs.Count} 筆；" +
-                              "下方「相關原始 Log」仍完整列出全部證據）");
-            }
-            if (section.DeepDive == null || section.DeepDive.Analyses.Count == 0)
-            {
-                sb.AppendLine(isStaticSection
-                    ? "  （知識庫查無對應處置參考）"
-                    : "  （AI 深入分析未能執行：模型未啟動、呼叫失敗或回覆無法解析）");
-            }
-            else
-            {
-                for (int i = 0; i < section.DeepDive.Analyses.Count; i++)
+                var item = section.DeepDive.Analyses[i];
+                sb.AppendLine($"  {i + 1}. {item.Problem}");
+                if (item.LikelyCauses.Count > 0)
                 {
-                    var item = section.DeepDive.Analyses[i];
-                    sb.AppendLine($"  {i + 1}. {item.Problem}");
-                    if (item.LikelyCauses.Count > 0)
+                    sb.AppendLine("     可能原因：");
+                    foreach (var cause in item.LikelyCauses)
                     {
-                        sb.AppendLine("     可能原因：");
-                        foreach (var cause in item.LikelyCauses)
-                        {
-                            sb.AppendLine($"       - {cause}");
-                        }
+                        sb.AppendLine($"       - {cause}");
                     }
-                    if (item.Impact.Length > 0)
-                    {
-                        sb.AppendLine($"     影響：{item.Impact}");
-                    }
-                    if (item.NextSteps.Count > 0)
-                    {
-                        sb.AppendLine("     建議步驟：");
-                        foreach (var step in item.NextSteps)
-                        {
-                            sb.AppendLine($"       - {step}");
-                        }
-                    }
-                    sb.AppendLine();
                 }
+                if (item.Impact.Length > 0)
+                {
+                    sb.AppendLine($"     影響：{item.Impact}");
+                }
+                if (item.NextSteps.Count > 0)
+                {
+                    sb.AppendLine("     建議步驟：");
+                    foreach (var step in item.NextSteps)
+                    {
+                        sb.AppendLine($"       - {step}");
+                    }
+                }
+                sb.AppendLine();
             }
-
-            sb.AppendLine($"  ── 相關原始 Log（{section.Logs.Count} 筆，供人工比對） ──");
-            if (section.Logs.Count == 0)
-            {
-                sb.AppendLine("  （無對應的原始 log）");
-            }
-            foreach (var log in section.Logs)
-            {
-                sb.AppendLine(FormatRawLog(log, maxMessageLength: 500));
-            }
-            sb.AppendLine();
         }
 
-        // 已抑制的告警：本機維護者關閉通知的規則，仍列出讓看報告的人知道「有東西被關掉了」——
-        // 偵測與紀錄照常，只是不吵、不拉風險（見 docs/RULES-PLAN.md 語意邊界）
+        sb.AppendLine($"  ── 相關原始 Log（{section.Logs.Count} 筆，供人工比對） ──");
+        if (section.Logs.Count == 0)
+        {
+            sb.AppendLine("  （無對應的原始 log）");
+        }
+        foreach (var log in section.Logs)
+        {
+            sb.AppendLine(FormatRawLog(log, maxMessageLength: 500));
+        }
+        sb.AppendLine();
+    }
+
+    /// <summary>已抑制的告警：本機維護者關閉通知的規則，仍列出讓看報告的人知道「有東西被關掉了」——
+    /// 偵測與紀錄照常，只是不吵、不拉風險（見 docs/RULES-SPEC.md 語意邊界）</summary>
+    private static void AppendSuppressedIssues(StringBuilder sb, DailyAnalysisRecord record, List<RuleSuppression>? activeSuppressions)
+    {
         var suppressedIssues = record.TopIssues.Where(i => i.Suppressed).ToList();
-        if (suppressedIssues.Count > 0)
-        {
-            sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            sb.AppendLine($"■ 已抑制的告警 {suppressedIssues.Count} 項（通知已關閉，偵測與紀錄照常）");
-            foreach (var issue in suppressedIssues)
-            {
-                var reason = activeSuppressions?.FirstOrDefault(s =>
-                    s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
-                sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.Source} EventId {issue.EventId} x{issue.Count}" +
-                              $"：{issue.KnownIssue}");
-                sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");
-            }
-        }
+        if (suppressedIssues.Count == 0) return;
 
-        // 前置掃描結果：主分析前已由獨立 AI 呼叫篩選過的低嚴重度項目
-        if (record.ScreenedTailCount > 0)
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        sb.AppendLine($"■ 已抑制的告警 {suppressedIssues.Count} 項（通知已關閉，偵測與紀錄照常）");
+        foreach (var issue in suppressedIssues)
         {
-            sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            sb.AppendLine($"■ 前置掃描（主分析篇幅外的 {record.ScreenedTailCount} 項較低嚴重度事件，已由獨立 AI 呼叫先行篩選）");
-            if (record.ScreeningNotes.Count == 0)
-            {
-                sb.AppendLine("  AI 檢視後未發現隱藏異常，皆屬一般事件。");
-            }
-            foreach (var note in record.ScreeningNotes)
-            {
-                sb.AppendLine($"  - {note}");
-            }
+            var reason = activeSuppressions?.FirstOrDefault(s =>
+                s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
+            sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.Source} EventId {issue.EventId} x{issue.Count}" +
+                          $"：{issue.KnownIssue}");
+            sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");
         }
+    }
 
-        return sb.ToString();
+    /// <summary>前置掃描結果：主分析前已由獨立 AI 呼叫篩選過的低嚴重度項目</summary>
+    private static void AppendScreeningTail(StringBuilder sb, DailyAnalysisRecord record)
+    {
+        if (record.ScreenedTailCount == 0) return;
+
+        sb.AppendLine($"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        sb.AppendLine($"■ 前置掃描（主分析篇幅外的 {record.ScreenedTailCount} 項較低嚴重度事件，已由獨立 AI 呼叫先行篩選）");
+        if (record.ScreeningNotes.Count == 0)
+        {
+            sb.AppendLine("  AI 檢視後未發現隱藏異常，皆屬一般事件。");
+        }
+        foreach (var note in record.ScreeningNotes)
+        {
+            sb.AppendLine($"  - {note}");
+        }
     }
 
     private static string FormatIssue(LogIssueSignature i)

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>操作的結果。denied（權限不足被擋下）刻意一併記錄——見 <see cref="AuditEntry"/></summary>
 public enum AuditResult
@@ -109,7 +109,7 @@ public static class AuditActions
     // 不沿用 ImportApply——那個字面是給 CSV 匯入用的，混用會讓稽核清單的動作標籤說謊
     public const string NetiqImportApplied = "netiq_import_applied";
 
-    // Sentinel 維護（docs/HISTORY.md 定案 1）：密碼欄位絕不進 DetailJson
+    // Sentinel 維護（docs/archive/HISTORY.md 定案 1）：密碼欄位絕不進 DetailJson
     public const string SentinelCreate = "sentinel_create";
     public const string SentinelUpdate = "sentinel_update";
     public const string SentinelDelete = "sentinel_delete";
@@ -119,12 +119,12 @@ public static class AuditActions
     public const string SettingsUpdate = "settings_update";
     public const string NetiqOptionsUpdate = "netiq_options_update";
 
-    // 排程作業（docs/WEB-SCHEDULER-PLAN.md §1.4.4）
+    // 排程作業（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）
     public const string ScheduleOptionsUpdate = "schedule_options_update";
     public const string ScheduleManualRun = "schedule_manual_run";
     public const string ScheduleManualCancel = "schedule_manual_cancel";
 
-    // NetIQ API 診斷（docs/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
+    // NetIQ API 診斷（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：對 Sentinel 的主動查詢操作
     public const string NetiqProbeRun = "netiq_probe_run";
 
     /// <summary>系統自動行為的帳號值（如負責人唯一時自動帶入處理人）</summary>
@@ -146,13 +146,4 @@ public class AuditQuery
 
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
-}
-
-/// <summary>分頁結果</summary>
-public class PagedResult<T>
-{
-    public List<T> Items { get; set; } = new();
-    public int Page { get; set; }
-    public int PageSize { get; set; }
-    public int Total { get; set; }
 }

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using LogForesight;
 using LogForesight.Web.Services;
 
 namespace LogForesight.Tests;

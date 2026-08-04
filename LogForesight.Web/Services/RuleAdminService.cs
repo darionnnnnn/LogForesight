@@ -52,7 +52,7 @@ public class RuleAdminService
         return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion)).ToList();
     }
 
-    /// <summary>內建規則升級橫幅（docs/WEB-SCHEDULER-PLAN.md §1.4.9）：庫內版本 &lt; 程式目前的種子版本時顯示</summary>
+    /// <summary>內建規則升級橫幅（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9）：庫內版本 &lt; 程式目前的種子版本時顯示</summary>
     public RuleImportStatusDto GetImportStatus()
     {
         var current = LoadContent().SeedVersion;

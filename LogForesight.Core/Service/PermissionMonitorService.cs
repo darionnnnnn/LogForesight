@@ -3,10 +3,10 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Service;
 
 /// <summary>單筆權限異動的明細（異動前/後對照），供人工逐項判斷是否為正常/授權的異動</summary>
-public class PermissionChangeDetail
+internal class PermissionChangeDetail
 {
     public string Target { get; init; } = string.Empty;      // 資料夾路徑或群組名稱
     public string ChangeType { get; init; } = string.Empty;  // 成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取
@@ -15,7 +15,7 @@ public class PermissionChangeDetail
 }
 
 /// <summary>權限檢查結果：告警行（自動檢查用）＋異動明細（人工確認用），兩者一一對應</summary>
-public class PermissionCheckResult
+internal class PermissionCheckResult
 {
     public List<string> Alerts { get; } = new();
     public List<PermissionChangeDetail> Details { get; } = new();
@@ -36,7 +36,7 @@ public class PermissionCheckResult
 /// 與 Security log 事件規則（KnownIssueCatalog 的 4670/4907/4717 等）互為備援：
 /// 有 Security log 權限時兩者都會觸發，形成雙重確認。
 /// </summary>
-public class PermissionMonitorService
+internal class PermissionMonitorService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

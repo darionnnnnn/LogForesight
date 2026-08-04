@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 權限異動的結構化紀錄（↔ lf_permission_changes）。

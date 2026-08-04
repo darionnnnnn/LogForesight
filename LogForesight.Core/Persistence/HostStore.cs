@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
 public class HostStore : JsonBlobCollection<WebHost>, IHostStore

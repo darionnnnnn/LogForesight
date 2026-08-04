@@ -36,7 +36,7 @@ public class SetUserGroupsRequest
 }
 
 /// <summary>
-/// 一次新增多個帳號（docs/HISTORY.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
+/// 一次新增多個帳號（docs/archive/HISTORY.md #7）。只填帳號＋所屬群組——顯示名稱與 Email
 /// 由伺服器端決定（顯示名稱＝帳號、Email 留空），前端多筆模式因此隱藏這兩個欄位。
 /// </summary>
 public class BatchCreateUsersRequest
@@ -109,7 +109,7 @@ public class SaveHostGroupRequest
     public bool Active { get; set; } = true;
 }
 
-// ── 批次加入群組成員（網段／關鍵字，docs/HISTORY.md §3）─────────────
+// ── 批次加入群組成員（網段／關鍵字，docs/archive/HISTORY.md §3）─────────────
 
 public class HostGroupMemberQueryRequest
 {
@@ -197,7 +197,7 @@ public class HostDto
     public string RoleDesc { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
 
-    /// <summary>'windows' | 'linux'——決定套用哪個平台的規則面（docs/LINUX-RULES-PLAN.md）</summary>
+    /// <summary>'windows' | 'linux'——決定套用哪個平台的規則面（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
     public bool Active { get; set; }
@@ -239,7 +239,7 @@ public class SetIdsRequest
     public List<long> Ids { get; set; } = new();
 }
 
-/// <summary>批次改群組（docs/FEEDBACK-5-PLAN.md §8）</summary>
+/// <summary>批次改群組（docs/archive/FEEDBACK-5-PLAN.md §8）</summary>
 public class SetGroupsBatchRequest
 {
     public List<long> HostIds { get; set; } = new();

@@ -1,8 +1,8 @@
-namespace LogForesight;
+namespace LogForesight.Core;
 
 /// <summary>
 /// 套用一批 NetIQ 掃描勾選結果：落盤成主機異動（新增/更新/孤兒復活三態）。
-/// 掃描精靈勾選送出後直接呼叫（docs/HISTORY.md 定案 7:排入佇列已退役,
+/// 掃描精靈勾選送出後直接呼叫（docs/archive/HISTORY.md 定案 7:排入佇列已退役,
 /// 改即時落盤——2000 台量級下這一步本身很輕量,真正重的規則檢查本來就要等下次批次)。
 /// </summary>
 public static class NetiqImportApplier
@@ -24,13 +24,13 @@ public static class NetiqImportApplier
     /// 省略此參數＝維持 Phase 3 的行為(全部落在未分組安全預設)。
     /// </param>
     /// <param name="os">
-    /// 本次新增主機的作業系統（docs/LINUX-RULES-PLAN.md §3）。與 <paramref name="groupByIp"/> 同一原則：
+    /// 本次新增主機的作業系統（docs/LINUX-RULES.md §3）。與 <paramref name="groupByIp"/> 同一原則：
     /// **只套用在全新主機**，既有主機（含復活的孤兒）的 OS 一律不動——匯入不是隱性改設定，
     /// 而改 OS 等於改這台套哪個平台的規則面，靜默改掉會讓既有主機的偵測面整個換掉。
     /// 省略＝windows（既有行為）。
     /// </param>
     /// <param name="displayNameByIp">
-    /// 探索掃描時已知的真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位，
+    /// 探索掃描時已知的真實機器名（docs/NETIQ-API-REFERENCE.md §3.4：網段範圍掃描投影 sn 欄位，
     /// 匯入當下就有名字，不用等夜間批次的 TouchNetiq 才回填）。**只套用在全新主機**，
     /// 同 <paramref name="groupByIp"/>／<paramref name="os"/> 的一致原則：匯入不隱性改既有主機的
     /// 任何欄位。省略或某 IP 沒有對應名稱＝該欄位維持既有行為（新主機 DisplayName 為 null，

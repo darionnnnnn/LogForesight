@@ -1,11 +1,9 @@
-using LogForesight;
-using LogForesight.Sql;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 啟動流程的規則載入編排（見 docs/RULES-PLAN.md）：不存在時寫入種子（僅此一次）、
+/// 啟動流程的規則載入編排（見 docs/RULES-SPEC.md）：不存在時寫入種子（僅此一次）、
 /// 存在但損毀時降級用內建種子且不覆寫壞檔、驗證後只有 Enabled 的規則生效。
 /// 邏輯本身與 blob 底層無關，跑在 SQLite（EF）上驗證。
 /// </summary>

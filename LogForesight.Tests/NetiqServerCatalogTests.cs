@@ -3,7 +3,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel 名單改由 ISentinelStore 供應（docs/HISTORY.md 定案 1）。</summary>
+/// <summary>Sentinel 名單改由 ISentinelStore 供應（docs/archive/HISTORY.md 定案 1）。</summary>
 public class NetiqServerCatalogTests
 {
     private readonly FakeSentinelStore _sentinels = new();

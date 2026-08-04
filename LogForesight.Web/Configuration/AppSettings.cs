@@ -29,7 +29,7 @@ public class WebAppSettings
 
     /// <summary>
     /// AI 節流參數、權限監控資料夾、分析頻道設定——型別皆取自 Core，與批次 exe 共用同一份定義
-    /// （docs/WEB-SCHEDULER-PLAN.md §1.4.6）：Web 排程觸發 <see cref="AnalysisOrchestrator"/> 時
+    /// （docs/archive/WEB-SCHEDULER-PLAN.md §1.4.6）：Web 排程觸發 <see cref="AnalysisOrchestrator"/> 時
     /// 需要這些參數，行為上等同批次的 appsettings.json 同名區段。AI 位址／金鑰本身仍以
     /// 「系統管理 > 設定」頁（DB）為事實來源，這裡只是 DB 尚未設定時的退路，不受影響。
     /// </summary>
@@ -60,7 +60,7 @@ public class WebAppSettings
 
         if (!Storage.IsValidType)
             errors.Add($"Storage:Type「{Storage.Type}」不受支援，僅允許 " +
-                       $"{string.Join(" / ", StorageSettings.ValidTypes)}（Jsonl 檔案格式已於 2026-07-24 退役）。");
+                       $"{string.Join(" / ", StorageSettings.ValidTypes)}。");
 
         if (string.IsNullOrWhiteSpace(Jwt.SecretKey))
             errors.Add("Jwt:SecretKey 未設定（正式環境請用環境變數 Jwt__SecretKey 或 user-secrets 提供，不要進版控）。");

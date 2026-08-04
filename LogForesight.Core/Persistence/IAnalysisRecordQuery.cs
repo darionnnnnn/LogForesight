@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 查詢條件。全部欄位為選用（null／空 = 不限），組合起來就是 Web 的主篩選列
@@ -60,8 +60,8 @@ public interface IAnalysisRecordQuery
     DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date);
 
     /// <summary>
-    /// 分頁查詢（docs/HISTORY.md P1-2），依「風險等級→有無關聯訊號→日期」新到舊排序——
-    /// 與 <c>RecordQueryService.Search</c> 清單頁的排序同一套規則。
+    /// 分頁查詢（docs/archive/HISTORY.md P1-2），依「風險等級→有無關聯訊號→日期」新到舊排序——
+    /// 與 <c>RecordListQueryService.Search</c> 清單頁的排序同一套規則。
     ///
     /// 與 <see cref="Query"/> 不同：<see cref="Query"/> 撈回全部符合條件的紀錄（批次與不分頁呼叫端用），
     /// 這個方法在條件允許時直接在 SQL 端排序＋分頁，不必先把全部符合條件的紀錄撈進記憶體——

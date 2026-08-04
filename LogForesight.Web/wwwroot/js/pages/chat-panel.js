@@ -40,7 +40,7 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
 
 /**
  * 嚴重度篩選鈕切換時呼叫（record-detail.js renderSeverityFilter）：下拉選單只列出
- * 目前篩選後仍可見的問題（docs/HISTORY.md #4）——不重新綁定事件，
+ * 目前篩選後仍可見的問題（docs/archive/HISTORY.md #4）——不重新綁定事件，
  * 只重建選項；目前選中的問題被篩掉時才重置選擇與對話，否則保留使用者正在進行的對話。
  */
 export function updateIssueOptions(topIssues) {
@@ -103,7 +103,7 @@ function bindEvents() {
 }
 
 /**
- * 放大檢視（docs/FEEDBACK-3-PLAN.md #6）：把 #chat-body（下拉／訊息／輸入表單整組）
+ * 放大檢視（docs/archive/FEEDBACK-3-PLAN.md #6）：把 #chat-body（下拉／訊息／輸入表單整組）
  * 搬移進全螢幕 modal——是搬移不是複製，節點上的事件監聽器與對話狀態原樣保留，
  * chat-panel.js 其餘邏輯零改動。關閉時搬回原位置：insertBefore 用搬移前記下的
  * 下一個兄弟節點還原確切順序（目前 chat-body 是 lf-card__body 裡唯一子節點，
@@ -177,7 +177,7 @@ async function onSubmit(event) {
     try {
         const result = await api.post('/api/ai/chat', { hostId, date, issueKey: currentIssueKey, messages }, { silent: true });
         if (result?.text) {
-            // 詢問 AI 現場取數（docs/FEEDBACK-4-PLAN.md §5）：只有真的取到資料才顯示提示，
+            // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：只有真的取到資料才顯示提示，
             // 不誤導（開關關閉／非 NetIQ 主機／失敗時 fetchedLogCount 為 null，不顯示任何取數跡象）
             messages.push({ role: 'assistant', content: result.text, fetchedLogCount: result.fetchedLogCount });
         } else {

@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 規則檔的完整內容：規則清單＋兩個版本號。SchemaVersion 是「檔案結構」的版本（供載入端判斷
@@ -9,7 +9,7 @@ namespace LogForesight;
 /// **什麼時候該遞增 SchemaVersion**：只有當「舊版程式讀到新檔會做出錯誤的事」時才遞增，
 /// 不是「只要加欄位就遞增」。單純新增可選欄位不必遞增——舊程式讀新檔時未知欄位會被忽略，
 /// 既有規則照常運作。2026-07-28 的 Linux 規則欄位（Platform／ProgramPattern／EventNamePattern／
-/// MessagePatterns，見 docs/LINUX-RULES-PLAN.md §1.1）就是這種情況，刻意維持 SchemaVersion=1：
+/// MessagePatterns，見 docs/LINUX-RULES.md §1.1）就是這種情況，刻意維持 SchemaVersion=1：
 /// 遞增反而更糟——舊程式會因為「SchemaVersion 過新」整份拒絕載入而降級用內建種子，
 /// 連使用者自訂的 Windows 規則都一起失效；不遞增則只有 Linux 規則被舊版的 RuleValidator
 /// 判為不合格而跳過（帶警告），Windows 面完全不受影響，是比較好的降級行為。

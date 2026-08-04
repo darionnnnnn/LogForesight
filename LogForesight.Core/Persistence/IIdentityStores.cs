@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 使用者的讀寫（↔ lf_users ＋ lf_user_group_members）。

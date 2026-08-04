@@ -19,7 +19,7 @@ const CATEGORY_NAMES = {
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
 };
 
-// docs/HISTORY.md #1（B1 三級化）：Critical 收斂進 High
+// docs/archive/HISTORY.md #1（B1 三級化）：Critical 收斂進 High
 const SEVERITY_ORDER = ['High', 'Medium', 'Low'];
 
 // chip 篩選狀態（§5.1 D-2）：狀態/來源/抑制/重大為單選（含「全部」＝空字串），嚴重度/類別為多選（空集合＝不限）
@@ -32,7 +32,7 @@ const chipFilters = {
     categories: new Set()
 };
 
-// docs/LINUX-RULES-PLAN.md §5.1：Windows規則／Linux規則兩個 tab 共用同一套清單/篩選/排序，
+// docs/LINUX-RULES.md §5.1：Windows規則／Linux規則兩個 tab 共用同一套清單/篩選/排序，
 // 只差 Platform 過濾——currentPlatform 由 tab 上的 data-platform 決定，不是獨立的分頁狀態。
 let currentPlatform = 'windows';
 let suppressionPlatform = '';   // 告警抑制分頁的平台篩選；空字串＝全部
@@ -149,7 +149,7 @@ function setupToolbar() {
         }
     });
 
-    // docs/HISTORY.md #1：「重大」快篩——命中即列為高風險日的規則
+    // docs/archive/HISTORY.md #1：「重大」快篩——命中即列為高風險日的規則
     renderChips(document.getElementById('rule-elevates-chips'), {
         items: [
             { value: '', label: '全部' },
@@ -175,7 +175,7 @@ function setupToolbar() {
     });
 }
 
-/** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES-PLAN.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息 */
+/** 搜尋框 placeholder 依平台調整（docs/LINUX-RULES.md §5.1）：Windows 找來源/Event ID，Linux 找 program/訊息 */
 function updateSearchPlaceholder() {
     document.getElementById('rule-search').placeholder = currentPlatform === 'linux'
         ? '搜尋 program、訊息關鍵字、說明'
@@ -266,7 +266,7 @@ function renderRules() {
     });
 }
 
-/** 嚴重度徽章＋「重大」旗標（docs/HISTORY.md #1） */
+/** 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1） */
 function severityCell(rule) {
     const wrap = document.createElement('span');
     wrap.className = 'd-inline-flex align-items-center gap-1';
@@ -643,7 +643,7 @@ async function ensureHostOptions() {
     }
 }
 
-/** 依規則平台過濾主機下拉（docs/LINUX-RULES-PLAN.md §5.1）：Linux 規則只列 Linux 主機，反之亦然 */
+/** 依規則平台過濾主機下拉（docs/LINUX-RULES.md §5.1）：Linux 規則只列 Linux 主機，反之亦然 */
 function populateHostOptions(platform) {
     const select = document.getElementById('suppress-host');
     select.replaceChildren();
@@ -775,7 +775,7 @@ updateSearchPlaceholder();
 setupToolbar();
 load();
 
-// ── 內建規則升級（docs/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）──────
+// ── 內建規則升級（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）──────
 
 const ruleImportModal = new bootstrap.Modal(document.getElementById('rule-import-modal'));
 

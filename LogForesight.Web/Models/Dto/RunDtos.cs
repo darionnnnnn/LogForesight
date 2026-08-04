@@ -65,7 +65,7 @@ public class RunDetailDto
     public int WarnCount { get; set; }
     public int ErrorCount { get; set; }
 
-    /// <summary>「誰跑的」（docs/WEB-SCHEDULER-PLAN.md §1.4.4）：排程／手動（含帳號）／工作排程器
+    /// <summary>「誰跑的」（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：排程／手動（含帳號）／工作排程器
     /// （console，含舊紀錄沒有 Trigger 欄位的情況——那正是升級前唯一的觸發來源）</summary>
     public string TriggerText { get; set; } = string.Empty;
 

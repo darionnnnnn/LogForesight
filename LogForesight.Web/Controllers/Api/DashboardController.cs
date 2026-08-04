@@ -32,9 +32,9 @@ public class DashboardController : ControllerBase
 [Route("api/host-detail")]
 public class HostDetailController : ControllerBase
 {
-    private readonly RecordQueryService _service;
+    private readonly RecordDetailQueryService _service;
 
-    public HostDetailController(RecordQueryService service)
+    public HostDetailController(RecordDetailQueryService service)
     {
         _service = service;
     }
@@ -43,7 +43,7 @@ public class HostDetailController : ControllerBase
     public ApiResponse<HostDetailDto> Get(long hostId, [FromQuery] int days = 30) =>
         ApiResponse<HostDetailDto>.Ok(_service.GetHostDetail(hostId, Math.Clamp(days, 7, 90)));
 
-    /// <summary>某個問題（Source+EventId）的逐日發生明細（docs/FEEDBACK-4-PLAN.md §3）：
+    /// <summary>某個問題（Source+EventId）的逐日發生明細（docs/archive/FEEDBACK-4-PLAN.md §3）：
     /// 重點問題彙總表某一列展開時查詢，days 與外層時間軸期間一致</summary>
     [HttpGet("{hostId:long}/issues")]
     public ApiResponse<HostIssueOccurrenceDto> Issues(

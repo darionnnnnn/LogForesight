@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 單筆 Event Log 事件的資料模型。

@@ -1,4 +1,3 @@
-using LogForesight;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -6,7 +5,7 @@ using Xunit;
 
 namespace LogForesight.Tests;
 
-/// <summary>Sentinel 孤兒主機停用（docs/HISTORY.md §1.7）。</summary>
+/// <summary>Sentinel 孤兒主機停用（docs/archive/HISTORY.md §1.7）。</summary>
 public class NetiqOrphanSweeperTests
 {
     private readonly FakeHostStore _hosts = new();
@@ -80,7 +79,7 @@ public class NetiqOrphanSweeperTests
 }
 
 /// <summary>
-/// NetIQ 主動探索匯入（docs/HISTORY.md §1；docs/HISTORY.md 定案 7）。
+/// NetIQ 主動探索匯入（docs/archive/HISTORY.md §1；docs/archive/HISTORY.md 定案 7）。
 /// 勾選送出即立即落盤，不再有排入佇列/取消的中間狀態。
 /// </summary>
 public class NetiqDiscoveryServiceTests
@@ -91,17 +90,10 @@ public class NetiqDiscoveryServiceTests
     private readonly FakeImportLogStore _importLogs = new();
     private readonly RecordingAuditService _audit = new();
 
-    private sealed class FakeClient : INetiqDirectoryClient
-    {
-        private readonly List<NetiqDiscoveredHost> _hosts;
-        public FakeClient(params (string name, string ip)[] hosts) =>
-            _hosts = hosts.Select(h => new NetiqDiscoveredHost(h.name, h.ip)).ToList();
-        public System.Threading.Tasks.Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer s, string subnetPrefix, System.Threading.CancellationToken ct) =>
-            System.Threading.Tasks.Task.FromResult(new NetiqDiscoveryResult { Hosts = _hosts, CoverageNote = "test" });
-    }
+    // FakeClient 已搬到 TestDoubles\NetiqFakes.cs。
 
     private NetiqDiscoveryService Create(FakeClient client, params SentinelServer[] servers) =>
-        new(new NetiqHostServiceTests.FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
+        new(new FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
 
     private const string AnySubnet = "10.1.2";
@@ -226,7 +218,7 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { 9L }, revived.OwnerUserIds);   // 負責人保留
     }
 
-    // ── 掃描匯入的 OS（docs/LINUX-RULES-PLAN.md §3：只套用在本次新增的主機）──────
+    // ── 掃描匯入的 OS（docs/LINUX-RULES.md §3：只套用在本次新增的主機）──────
 
     [Fact]
     public void 套用_新主機採用精靈選定的OS()
@@ -336,7 +328,7 @@ public class NetiqDiscoveryServiceTests
         await Assert.ThrowsAsync<DomainException>(() => svc.ScanAsync("S1", AnySubnet, default));
     }
 
-    // ── 套用：網段群組指派（docs/HISTORY.md 定案 8） ─────────────
+    // ── 套用：網段群組指派（docs/archive/HISTORY.md 定案 8） ─────────────
 
     [Fact]
     public void 套用_新主機依網段指派套用群組()
@@ -416,7 +408,7 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(new[] { created!.GroupId }, _hosts.FindByName("10.1.2.11")!.GroupIds);
     }
 
-    // ── 探索掃描回填真實機器名（docs/NETIQ-API-PLAN.md §3.4：網段範圍掃描投影 sn 欄位）──
+    // ── 探索掃描回填真實機器名（docs/NETIQ-API-REFERENCE.md §3.4：網段範圍掃描投影 sn 欄位）──
 
     [Fact]
     public async System.Threading.Tasks.Task 匯入_新主機帶入掃描時取得的真實機器名()
@@ -424,7 +416,7 @@ public class NetiqDiscoveryServiceTests
         var sentinels = new FakeSentinelStore();
         sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("srv-dc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -445,7 +437,7 @@ public class NetiqDiscoveryServiceTests
         var sentinels = new FakeSentinelStore();
         sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("10.1.2.50", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -466,7 +458,7 @@ public class NetiqDiscoveryServiceTests
             NetiqServer = "OLD", Active = false, DisplayName = "人工核對過的名稱"
         });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("掃描回報的不同名稱", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -476,22 +468,5 @@ public class NetiqDiscoveryServiceTests
         // 既有主機（含復活的孤兒）：更新只動 NetiqServer/SentinelId/Active，DisplayName 不動——
         // 同 groupByIp/os 一致原則，匯入不隱性改既有主機欄位
         Assert.Equal("人工核對過的名稱", _hosts.FindByName("10.1.2.50")!.DisplayName);
-    }
-}
-
-internal class FakeImportLogStore : IImportLogStore
-{
-    public readonly List<ImportLogEntry> Entries = new();
-
-    public void Append(ImportLogEntry entry) => Entries.Add(entry);
-
-    public List<ImportLogEntry> GetRecent(int count) =>
-        Entries.OrderByDescending(e => e.CreatedAt).Take(count).ToList();
-
-    public int Prune(int retentionDays)
-    {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
-        var removed = Entries.RemoveAll(e => e.CreatedAt < cutoff);
-        return removed;
     }
 }

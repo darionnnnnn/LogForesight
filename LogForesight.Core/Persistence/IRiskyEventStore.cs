@@ -1,7 +1,7 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
-/// 風險 log 暫存讀寫（↔ lf_risky_events，docs/WEB-SCHEDULER-PLAN.md §2）。
+/// 風險 log 暫存讀寫（↔ lf_risky_events，docs/archive/WEB-SCHEDULER-PLAN.md §2）。
 /// 批次寫、Web（AI 對話）讀；資格與呈現量上限見 <see cref="RiskyEventSelector"/>。
 /// </summary>
 public interface IRiskyEventStore

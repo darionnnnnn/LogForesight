@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelClient 的 REST 協定層測試（docs/NETIQ-API-PLAN.md §3.1、§7）：認證生命週期、
+/// SentinelClient 的 REST 協定層測試（docs/NETIQ-API-REFERENCE.md §3.1、§7）：認證生命週期、
 /// event-search job 生命週期、清理保證、重試/不重試邊界。用 <see cref="StubHandler"/> 取代真實
 /// HTTP 連線，不需要真 Sentinel 環境。
 /// </summary>

@@ -1,33 +1,12 @@
-using System.Text.Json;
-using LogForesight.Sql;
-
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
-/// NetIQ 連線與節流參數的讀寫（↔ webdata blob，key=netiq_options）。單一物件，非清單。
-/// 整份 JSON 存一筆 blob，與 <see cref="SystemSettingsStore"/> 同一套模式
-/// （單一物件而非清單，故不繼承 <see cref="JsonBlobCollection{T}"/>）。
+/// NetIQ 連線與節流參數的讀寫（↔ webdata blob，key=netiq_options）。單一物件，非清單，
+/// 共用邏輯見 <see cref="JsonBlobSingleton{T}"/>。
 /// </summary>
-public class NetiqOptionsStore
+public class NetiqOptionsStore : JsonBlobSingleton<NetiqOptions>
 {
-    private readonly EfJsonBlobStore _blob;
+    public NetiqOptionsStore(EfJsonBlobStore blob) : base(blob) { }
 
-    public NetiqOptionsStore(EfJsonBlobStore blob) => _blob = blob;
-
-    public NetiqOptions Get() => Deserialize(_blob.Read());
-
-    /// <summary>讀→改→寫的原子更新（同 <see cref="JsonBlobCollection{T}.Mutate"/> 的互斥保證），mutation 直接修改傳入的物件</summary>
-    public NetiqOptions Update(Action<NetiqOptions> mutation) =>
-        _blob.Mutate(raw =>
-        {
-            var options = Deserialize(raw);
-            mutation(options);
-            options.UpdatedAt = DateTime.Now;
-            return (JsonSerializer.Serialize(options, LfJsonOptions.Pretty), options);
-        });
-
-    private static NetiqOptions Deserialize(string? json) =>
-        string.IsNullOrWhiteSpace(json)
-            ? new NetiqOptions()
-            : JsonSerializer.Deserialize<NetiqOptions>(json, LfJsonOptions.Pretty) ?? new NetiqOptions();
+    protected override void Touch(NetiqOptions value) => value.UpdatedAt = DateTime.Now;
 }

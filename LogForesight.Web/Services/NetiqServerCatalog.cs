@@ -1,10 +1,10 @@
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// Sentinel 名單的讀取層（docs/HISTORY.md 定案 1）。
+/// Sentinel 名單的讀取層（docs/archive/HISTORY.md 定案 1）。
 ///
 /// **單一事實來源現在是共用的 <see cref="ISentinelStore"/>**（批次與 Web 都讀寫同一份資料庫）。
-/// 這是既有決策（docs/HISTORY.md「2026-07-21」段 NetIQ 主機清單規劃的決策 E：曾以批次 appsettings.json 為唯一事實來源）
+/// 這是既有決策（docs/archive/HISTORY.md「2026-07-21」段 NetIQ 主機清單規劃的決策 E：曾以批次 appsettings.json 為唯一事實來源）
 /// 的修訂——當時的前提是「批次與 Web 靠 DataRoot 共用檔案」，Phase C 之後共用點已是資料庫，
 /// 讓 Web 直接管理 Sentinel 反而消除了「畫面選得到、批次卻查不到」的分歧風險。
 /// 介面維持原樣，呼叫端（NetiqDiscoveryService／NetiqHostService／HostAdminService）零改動。
@@ -31,7 +31,9 @@ public class NetiqServerCatalog : INetiqServerCatalog
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var sentinel = _sentinels.FindByName(name.Trim());
-        return sentinel == null ? null : ToProjection(sentinel);
+        // 密碼解密邏輯與 Core 端共用（SentinelConnectionFactory.ToConnectable）：探索用戶端需要
+        // 明碼才能認證，解密結果只留在 Web 行程內、絕不序列化回前端。
+        return sentinel == null ? null : SentinelConnectionFactory.ToConnectable(sentinel);
     }
 
     public List<string> GetServerNames() =>
@@ -39,16 +41,4 @@ public class NetiqServerCatalog : INetiqServerCatalog
 
     public bool IsKnownServer(string? name) =>
         !string.IsNullOrWhiteSpace(name) && _sentinels.FindByName(name.Trim()) != null;
-
-    /// <summary>密碼在這裡解密：探索用戶端需要明碼才能認證,解密結果只留在 Web 行程內、絕不序列化回前端</summary>
-    private static SentinelServer ToProjection(Sentinel sentinel) => new()
-    {
-        Id = sentinel.SentinelId,
-        Name = sentinel.Name,
-        BaseUrl = sentinel.BaseUrl,
-        Username = sentinel.Username,
-        Password = CryptoHelper.IsEncrypted(sentinel.PasswordEnc)
-            ? CryptoHelper.Decrypt(sentinel.PasswordEnc)
-            : sentinel.PasswordEnc
-    };
 }

@@ -1,4 +1,3 @@
-using LogForesight.Sql;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Services;
 using Xunit;
@@ -6,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 規則庫初始化缺口的迴歸測試（docs/FEEDBACK-5-PLAN.md §10）：全新環境（rules blob
+/// 規則庫初始化缺口的迴歸測試（docs/archive/FEEDBACK-5-PLAN.md §10）：全新環境（rules blob
 /// 從未被任何一端寫入過，批次從未執行過）時，Web 端的 <see cref="RuleBootstrapper.LoadContent"/>
 /// 必須能自行補上內建種子，讓 <see cref="RuleAdminService"/> 正常運作——不像既有的
 /// <c>FakeRuleStore</c>（<c>Exists</c> 恆 true，見 RuleAdminServiceTests）那樣掩蓋這個案例，

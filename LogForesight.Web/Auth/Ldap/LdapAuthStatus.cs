@@ -1,7 +1,7 @@
 namespace LogForesight.Web.Auth.Ldap;
 
 /// <summary>
-/// LDAP 帳密驗證結果（docs/HISTORY.md #9）。
+/// LDAP 帳密驗證結果（docs/archive/HISTORY.md #9）。
 /// AD 對多種情況都回傳同一個錯誤碼 (0x52E)，需再解析伺服器端子錯誤碼才能區分。
 ///
 /// 這些細分只進診斷 log 與稽核 detail，**不對一般使用者顯示**（定案 2026-07-27）——

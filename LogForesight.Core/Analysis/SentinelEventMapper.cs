@@ -1,16 +1,16 @@
 using System.Globalization;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// <see cref="SentinelEvent"/>（<see cref="SentinelClient"/> 的原始投影）→ <see cref="EventLogEntryData"/>
-/// （既有五層偵測/聚合/AI/報告吃的模型）的映射器（docs/NETIQ-API-PLAN.md 決策 B2）。
+/// （既有五層偵測/聚合/AI/報告吃的模型）的映射器（docs/archive/HISTORY.md 決策 B2）。
 ///
 /// 這是整條 Sentinel 取數路徑唯一的轉換點：映射完成後，下游 <see cref="LogAggregator"/>／
 /// <see cref="KnownIssueCatalog"/>／<see cref="TrendAnalyzer"/>／<see cref="CorrelationAnalyzer"/>／
 /// AI 層／報告全部**零改動重用**——不需要為 Sentinel 路徑另外實作一套統計聚合。
 /// </summary>
-public static class SentinelEventMapper
+internal static class SentinelEventMapper
 {
     /// <summary>
     /// 映射單筆事件。時間或必要欄位缺席/無法解析時回傳 null，呼叫端應計入略過筆數

@@ -1,8 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 「整份 JSON 陣列」的共用存取基底（users、hosts、host_groups… 等 webdata blob）。

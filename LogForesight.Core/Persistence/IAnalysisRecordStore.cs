@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>唯讀存取每日分析紀錄。未來查詢/UI 專案只依賴這個介面（ISP），不會被迫依賴寫入或清理能力</summary>
 public interface IAnalysisRecordReader

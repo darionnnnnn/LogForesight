@@ -1,16 +1,16 @@
 using System.Text.RegularExpressions;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// AI 原始回覆的清洗（docs/FEEDBACK-3-PLAN.md #7）：地端推理型模型偶爾漏出內部的
+/// AI 原始回覆的清洗（docs/archive/FEEDBACK-3-PLAN.md #7）：地端推理型模型偶爾漏出內部的
 /// channel 分段標記（思考過程／最終回覆），且思考與回覆常夾雜簡體中文——
 /// PromptGuidelines 的提示詞約束擋不住模型的內在行為，這裡是輸出端的第二道防線。
 ///
 /// <see cref="AIService.ChatAsync"/> 是唯一呼叫點：批次五層分析、Web 互動卡、
 /// 詳情頁對話全部經此清洗，不需要各自處理。
 /// </summary>
-public static class AiOutputSanitizer
+internal static class AiOutputSanitizer
 {
     // 實測看過 <|channel|>thought 與缺結尾豎線的 <|channel>thought 兩種變體，
     // 第二個豎線設為可選（\|?）才能同時接住兩種格式

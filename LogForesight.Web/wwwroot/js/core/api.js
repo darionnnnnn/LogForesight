@@ -96,7 +96,7 @@ export function hasCapability(user, capability) {
 }
 
 /**
- * 顯示層設定的公開子集（docs/FEEDBACK-3-PLAN.md #8）：目前哪些日風險等級顯示中。
+ * 顯示層設定的公開子集（docs/archive/FEEDBACK-3-PLAN.md #8）：目前哪些日風險等級顯示中。
  * 與 getCurrentUser 同樣的快取理由——多個頁面模組（儀表板、報表、問題查詢）都需要，
  * 避免每頁重複請求；此設定在單次頁面瀏覽期間不會變（管理者另開分頁改設定不影響本頁）。
  *

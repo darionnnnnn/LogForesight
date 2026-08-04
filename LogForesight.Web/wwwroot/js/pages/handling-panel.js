@@ -13,7 +13,7 @@ import { api } from '../core/api.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
-/** 操作者顯示：帳號空＝系統動作（docs/FEEDBACK-8-PLAN.md #6） */
+/** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
 function operatorLabel(actorDisplayName, actorAccount) {
     return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
 }
@@ -28,7 +28,7 @@ const STATUS_CHIPS = [
     { value: 'known_noise', text: '已知雜訊' }
 ];
 
-// 「觀察中」只在問題層級（批次模式）提供（docs/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
+// 「觀察中」只在問題層級（批次模式）提供（docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
 // 沒有這個值域，觀察的對象是「這個問題」而不是「這一天」，硬加進日層級只會讓 Update API
 // 回一個看不懂的驗證錯誤
 const OBSERVING_CHIP = { value: 'observing', text: '觀察中' };
@@ -87,7 +87,7 @@ async function loadAssignableUsers() {
 }
 
 /**
- * 由問題標記推導出的狀態文字（docs/HISTORY.md #6）：與存的日層級快照
+ * 由問題標記推導出的狀態文字（docs/archive/HISTORY.md #6）：與存的日層級快照
  * （handling.statusText）不同——後者指派後會卡在「處理中」不再更新，這裡才是
  * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
  * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
@@ -108,7 +108,7 @@ function render() {
         '由問題標記推導；與下方表單要儲存的日層級狀態是兩件事——沒有勾選問題逐項標記時兩者相同'
     ));
 
-    // 案件連動提示（docs/FEEDBACK-4-PLAN.md §2）：本日有幾個問題屬進行中案件，
+    // 案件連動提示（docs/archive/FEEDBACK-4-PLAN.md §2）：本日有幾個問題屬進行中案件，
     // 讓使用者知道為什麼那幾列的狀態會「自己動」（案件同步的結果，不是自己標的）
     if (handling.openCaseCount > 0) {
         const hint = document.createElement('div');
@@ -147,7 +147,7 @@ function render() {
 }
 
 /**
- * hintAsIcon（docs/FEEDBACK-5-PLAN.md §6）：預設 false 沿用常駐 form-text——三個呼叫端裡
+ * hintAsIcon（docs/archive/FEEDBACK-5-PLAN.md §6）：預設 false 沿用常駐 form-text——三個呼叫端裡
  * 只有「主機負責人」的說明屬純描述性質（看過一次就記得），改收進 icon；其餘兩個
  * （目前狀態的雙軌語意、處理人唯讀原因）填錯/看漏代價較高，維持常駐。
  */
@@ -215,7 +215,7 @@ function assignField(handling, users, hostId, date) {
                 handlerId: select.value ? Number(select.value) : null
             });
 
-            // 建案提示（docs/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
+            // 建案提示（docs/archive/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
             // 回溯歷史；已有他人進行中案件的問題不搶走，讓使用者知道發生了什麼
             const parts = [updated.handlerName ? `已指派給 ${updated.handlerName}` : '已取消指派'];
             if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
@@ -300,7 +300,7 @@ function handlingForm() {
         dueWrap.appendChild(overdue);
     }
 
-    // 觀察天數（只有「觀察中」才顯示，批次模式限定，docs/FEEDBACK-8-PLAN.md #4）：輸入天數而非
+    // 觀察天數（只有「觀察中」才顯示，批次模式限定，docs/archive/FEEDBACK-8-PLAN.md #4）：輸入天數而非
     // 直接選日期——「觀察 N 天」是使用者的心智模型，換算成日期送給後端（沿用 DueDate 欄位）
     const observeWrap = document.createElement('div');
     observeWrap.className = 'mb-3 d-none';
@@ -441,7 +441,7 @@ function handlingForm() {
                 // 帶回套用後的日狀態（#6）：後端已算好 DayStatus/Total/Closed，直接顯示，
                 // 不必等頁面重載才看到「這次套用完，這天現在算什麼狀態」
                 const progress = result.totalIssues > 0 ? `（${result.closedIssues}/${result.totalIssues} 已結案）` : '';
-                // 案件同步提示（docs/FEEDBACK-4-PLAN.md §2）：這批問題中有屬進行中案件的，
+                // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這批問題中有屬進行中案件的，
                 // 這次套用也會連動到案件涵蓋的其他日子
                 const caseNote = result.caseSyncedDayCount > 0 ? `；已同步案件涵蓋的 ${result.caseSyncedDayCount} 天` : '';
                 toast(`已套用處理狀態；本日狀態：${result.dayStatusText}${progress}${caseNote}`, 'success');
@@ -477,7 +477,7 @@ const ISSUE_LOG_ACTIONS = new Set(['issue_status', 'issue_status_cleared']);
  * 處理歷程 timeline：完整敘事（指派 → 查修中 → 換了硬碟 → 結案）。
  * 這正是快照與歷程分兩份儲存的目的——單一說明欄位會把前面的過程蓋掉。
  *
- * D4（docs/HISTORY.md #6）改為問題層級逐筆記錄後，卡片內固定高度＋
+ * D4（docs/archive/HISTORY.md #6）改為問題層級逐筆記錄後，卡片內固定高度＋
  * 「放大檢視」modal（#13）：卡片內把同一次批次（同操作者＋同動作＋同時間戳，
  * 見 HandlingService.SetIssueStatusBatch 的 occurredAt）收合成一條摘要，
  * modal 內展開逐筆——資料本來就是逐筆的，只有呈現方式不同。

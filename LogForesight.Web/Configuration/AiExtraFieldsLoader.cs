@@ -6,14 +6,13 @@ namespace LogForesight.Web.Configuration;
 /// <summary>
 /// 繞過 <c>IConfiguration</c> binder，直接讀 appsettings.json 的 <c>Ai:ExtraRequestFields</c> 節點。
 ///
-/// 背景（docs/FEEDBACK-7-PLAN.md）：<c>ConfigurationBinder</c> 綁不出
+/// 背景（docs/archive/FEEDBACK-7-PLAN.md）：<c>ConfigurationBinder</c> 綁不出
 /// <c>Dictionary&lt;string, JsonElement&gt;</c>——<see cref="JsonElement"/> 沒有可寫屬性、也沒有
 /// <c>TypeConverter</c>，binder 對這個型別的欄位只能產生 <c>default(JsonElement)</c>
 /// （<c>ValueKind=Undefined</c>）。<see cref="AIService"/> 建構子對這種空值呼叫
 /// <c>GetRawText()</c> 會丟 <see cref="InvalidOperationException"/>，導致 Web 觸發的排程／立即
 /// 執行必定在分析開始前就中止。改用 <see cref="JsonSerializer"/> 直接反序列化該節點即可正確
-/// 產生 JsonElement——與批次 exe（<c>AppSettings.Load</c>）、<c>WebAiService.LoadBatchAiSettings</c>
-/// 走的是同一種正確路徑。
+/// 產生 JsonElement——與 <c>WebAiService.LoadBatchAiSettings</c> 走的是同一種正確路徑。
 /// </summary>
 public static class AiExtraFieldsLoader
 {

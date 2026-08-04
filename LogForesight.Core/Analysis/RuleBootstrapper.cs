@@ -1,6 +1,6 @@
 using NLog;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 啟動時載入規則的結果摘要。Run() 本身已把警告與摘要印到 console／NLog，這個物件的用途是讓
@@ -18,7 +18,7 @@ public class RuleBootstrapperResult
 }
 
 /// <summary>
-/// 啟動流程的規則載入編排（見 docs/RULES-PLAN.md）：
+/// 啟動流程的規則載入編排（見 docs/RULES-SPEC.md）：
 /// 規則檔不存在 → 寫入內建種子（初次部署）；存在但載入失敗 → 降級用內建種子且不覆寫壞檔；
 /// 載入成功 → 驗證（單條不合格跳過、遮蔽偵測只警告）→ 呼叫 KnownIssueCatalog.Initialize。
 /// 全程只在「不存在」時寫入一次，後續規則調整靠 Web「規則維護」頁（編輯／內建規則升級），

@@ -149,7 +149,7 @@ public class HostLookupTests
 public class RecordRepositoryAliasTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
-    private readonly LogForesight.Sql.EfAnalysisRecordStore _store;
+    private readonly EfAnalysisRecordStore _store;
     private readonly FakeHostStore _hosts = new();
     private readonly WebHost _oldHost;
     private readonly WebHost _newHost;
@@ -159,7 +159,7 @@ public class RecordRepositoryAliasTests : IDisposable
 
     public RecordRepositoryAliasTests()
     {
-        _store = new LogForesight.Sql.EfAnalysisRecordStore(_fx.NewContext, "test");
+        _store = new EfAnalysisRecordStore(_fx.NewContext, "test");
 
         _oldHost = _hosts.Upsert(new WebHost { HostName = "SRV-OLD" });
         _newHost = _hosts.Upsert(new WebHost { HostName = "SRV-NEW" });

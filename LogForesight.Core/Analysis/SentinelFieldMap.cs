@@ -1,9 +1,9 @@
 using System.Diagnostics;
 
-namespace LogForesight;
+namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// Sentinel 事件欄位鍵的單一事實來源（docs/NETIQ-API-PLAN.md §3.3、§9）。
+/// Sentinel 事件欄位鍵的單一事實來源（docs/NETIQ-API-REFERENCE.md §3.3、§9）。
 ///
 /// 這些鍵名是三輪 <c>--netiq-probe</c> 真實環境輸出實證定案的（元大環境，Sentinel「162」，
 /// 2026-07-29），**不是**官方文件推測——欄位「鍵」是 Sentinel schema 固定的，隨 collector 變的
@@ -80,7 +80,7 @@ public static class SentinelFieldMap
     /// Security 頻道靠 <see cref="XdasOutcome"/>（廠商固定分類，比 sev 門檻可靠）判斷成功/失敗稽核；
     /// 非 Security 頻道目前只有 sev=1（Information）與 sev=4（對應本機 Error 等級的失敗事件）兩個錨點，
     /// 2／3 的 Warning/Error 分界是依常見遞增嚴重度量表（0-1 低、2-3 中、4-5 高）的合理猜測，
-    /// **需要試點階段用該主機本機 Event Viewer 對照確認**（見 docs/NETIQ-API-PLAN.md §9）。
+    /// **需要試點階段用該主機本機 Event Viewer 對照確認**（見 docs/BACKLOG.md）。
     /// 猜錯的後果僅止於報告上的等級徽章與分組粒度顯示不夠精確，不影響規則命中（規則比對的是
     /// Source＋EventId，與 EntryType 無關）。
     /// </summary>

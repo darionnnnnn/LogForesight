@@ -1,6 +1,5 @@
-using LogForesight.Sql;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>Sentinel 連線設定的讀寫（↔ webdata blob，key=sentinels）</summary>
 public interface ISentinelStore

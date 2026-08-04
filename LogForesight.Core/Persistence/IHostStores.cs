@@ -1,4 +1,4 @@
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 主機的讀寫（↔ lf_hosts ＋ lf_host_group_members ＋ lf_host_owners）。
@@ -44,7 +44,7 @@ public interface IHostStore
     void SetGroups(long hostId, IEnumerable<long> groupIds);
 
     /// <summary>
-    /// 批次專用：一次 Mutate 完成多台主機的群組指派（docs/FEEDBACK-5-PLAN.md §8）。
+    /// 批次專用：一次 Mutate 完成多台主機的群組指派（docs/archive/FEEDBACK-5-PLAN.md §8）。
     /// <paramref name="replace"/>=true 時整批改為僅 <paramref name="groupIds"/>；
     /// false 時與既有群組取聯集（加入）。已併入其他主機（MergedInto 非 null）的
     /// 主機略過（群組對墓碑紀錄無意義），回傳於結果的 Skipped。

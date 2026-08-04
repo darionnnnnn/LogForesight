@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 namespace LogForesight.Web.Auth.Ldap;
 
 /// <summary>
-/// LDAP 共用服務（docs/HISTORY.md #9）：以使用者自己的帳號密碼進行驗證，並可取得其資訊。
+/// LDAP 共用服務（docs/archive/HISTORY.md #9）：以使用者自己的帳號密碼進行驗證，並可取得其資訊。
 /// 移植自使用者提供的參考實作，調整為專案慣例（NLog、命名空間）；邏輯不變。
 ///
 /// **不需要儲存任何 AD 服務帳號密碼**——bind 一律用登入者自己的帳密，這也是「查得到自己的

@@ -1,18 +1,11 @@
-# 資料庫與 Web 查詢／AI 問答規劃（欄位級定案）
+# 資料庫欄位級規格（DB-SPEC）
 
-> 規劃日期：2026-07-20。本文件是 PLAN.md Phase 5 的展開，因新需求（Web 查詢＋AI 問答）提前細化。
-> 原則：**現在把欄位與介面定案到「DB 一到手就能直接建表接上」的程度**，並先做好資料保全
-> （見「現在就能做的準備」），DB 選型（SQL Server 或 Oracle）不影響任何已定案內容。
->
-> **實作狀態（2026-07-23）：SQL 後端已完成**（SCALE-2000-PLAN Phase C）。本文件為欄位級定案的
-> **設計依據**，仍然有效；實際落地的 provider 架構（**Sqlite/SqlServer 二選一**、EF Core、
-> `lf_blobs`/`lf_log_lines` 抽象）與現況說明見 WEB-SPEC.md §10.5。本文以下的「待 DB 就緒」語句
-> 指的是規劃當下的時序，非現況。
->
-> **（2026-07-24 補記）Jsonl 檔案後端已全面退役**（docs/HISTORY.md 定案 10）：
-> 沒有服役中的 Jsonl 正式資料需要遷移，`--import-history` 匯入器確定**不做**（定案 10）；
-> `Storage.Type` 設成 `Jsonl` 一律於啟動時報錯。本文件下方仍以「txt/JSONL」描述當初從檔案
-> 過渡到 DB 的機制設計，是規劃當下已達成目的的歷史記錄，不代表現行架構仍有 Jsonl 選項。
+> 本文件是資料庫 schema 的現況欄位級定案：資料表設計、索引、保留策略、Web 查詢情境對應、
+> Schema 升級機制。**全部資料走 SQL**（`Storage.Type` 為 `Sqlite`／`SqlServer` 二選一，
+> 無檔案後端）；實際落地的 provider 架構（EF Core、`lf_blobs`/`lf_log_lines` 抽象）見
+> WEB-SPEC.md §10.5。DB 選型與雙 DB 可移植規則不影響本文件任何已定案欄位。
+> 起草緣起、JSONL→DB 切換期的過渡機制與已完成的前置準備事項，見
+> docs/archive/HISTORY.md「資料庫與 Web 查詢／AI 問答規劃」段。
 
 ## 需求（2026-07-20 第二輪更新）
 
@@ -353,66 +346,6 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 **安全**：Web 用的 DB 帳號唯讀（`qa_*` 表除外）；授權過濾在查詢層，AI 拿到的 context
 永遠只來自該使用者有權的主機；AI 沒有任何工具/行動能力，純問答。
 
-## DB 就緒後的實作形狀
-
-- **ORM 建議 EF Core**：`Microsoft.EntityFrameworkCore.SqlServer` 與 `Oracle.EntityFrameworkCore`
-  都成熟，同一套 LINQ 程式碼靠 provider 切換——這是「不確定哪家 DB」成本最低的路線。
-  接入點維持 `IAnalysisRecordStore`/`IReportSink`（EF 是實作細節，分析層看不到）。
-- 新增 `SqlAnalysisRecordStore`、`DbReportSink`；`StorageFactory` 加 case；設定
-  `"Storage": { "Type": "SqlServer" | "Oracle", "ConnectionString": "..." }`
-- **過渡期 `CompositeReportSink`**：檔案＋DB 同時寫（單機部署不看 Web 的人仍有 txt 可看）
-- **匯入器**：~~`--import-history` 讀 `history.txt`（結構化紀錄）＋ `export\*.txt`（報告全文，
-  檔名還原日期/風險/類別）→ 入庫，舊資料不流失~~——**（2026-07-24 定案 10）確定不做**：
-  SQL 後端上線時沒有服役中的 Jsonl 正式資料需要遷移，這支工具從未被建立也不再需要
-- **Web 應用**：獨立 ASP.NET Core 專案，讀同一 DB；批次 exe 職責不變
-
-**專案結構調整（實作時）**：抽 `LogForesight.Core` 類別庫（Models、Analysis、Persistence 介面、
-`AIService`、`PromptBudget`），exe 與 Web 專案都引用——現在不動，DB 階段的第一步。
-
-## txt ↔ DB 一致性保證（2026-07-20 新增——降低切換與雙軌維護成本的具體機制）
-
-「txt 是臨時資料庫、之後換正式 DB」要順利，靠的不是宣示而是下列機制，
-每一項都指名由誰保證：
-
-| # | 機制 | 說明 |
-|---|---|---|
-| 1 | **單一模型契約** | JSONL 序列化的就是 `DailyAnalysisRecord` 等 C# 模型；DB 每張表是同一模型的欄位投影（機械對應：PascalCase → snake_case，僅保留字改名例外：`Count`→`event_count`、`Source`→`source_name`）。**模型改欄位＝兩個後端同時改**，不存在只改一邊的路徑 |
-| 2 | **介面語意即規格** ✅ 已落實（2026-07-21） | 兩個後端都實作 `IAnalysisRecordStore`。`ReadRecent(anchorDate, days)`（**顯式錨定**日期區間 `[anchor-(days-1), anchor]`、升冪、錨定日之後不回傳，DB 對應 `WHERE date BETWEEN`）、`HasAnyRecord`（DB 對應 `EXISTS`）、`HasRecord`（同日冪等防護）、`Prune`、`AttachWeeklyCheckup`（更新既有列）的語意寫在介面註解，實作不得偏離。詳見 docs/HISTORY.md |
-| 3 | **合約測試（contract tests）** ✅ 已落實（2026-07-21） | `AnalysisRecordStoreContractTests` 抽象基底已建立（`JsonlAnalysisRecordStoreContractTests` 為其第一個實作）：同一組案例分別跑在 Jsonl 與未來的 DB 實作上，**DB 實作必須通過與 txt 完全相同的測試**才算完成——一致性由測試強制，不靠 code review 肉眼比對。JSONL 特有的壞行容錯與原子重寫案例留在 `JsonlAnalysisRecordStoreTests`，不進基底 |
-| 4 | **精簡策略單點化**（pre-work #3） | 「無風險日砍範例訊息、留全部數字」目前是 `JsonlAnalysisRecordStore` 的私有方法——規則長在單一實作裡，DB 實作就得複製一份，遲早漂移。抽成共用的 `RecordStorageShaper`（純函數），兩個後端都呼叫同一份規則 |
-| 5 | **同一份 JSON 序列化設定** | DB 的 `*_json` 欄位用與 JSONL 相同的 System.Text.Json 選項與同一批模型類別序列化；列舉存字串（`JsonStringEnumConverter`）、風險等級存中文字串，兩邊逐字一致 |
-| 6 | **匯入後抽樣核對** | JSONL → DB 匯入器跑完後，自動抽 N 天以 `ReadRecent` 分別從兩後端讀回、逐欄位比對，一致才算匯入成功（驗收內建，不靠人工抽查） |
-| 7 | **雙寫過渡期**（`CompositeReportSink`／雙 store） | 切換初期檔案與 DB 同時寫，任何不一致當天就會被發現（而不是檔案停用後才發現 DB 少了東西），穩定後再停檔案端 |
-
-## 現在就能做的準備（DB 未定也不受影響）
-
-> 原第 1 項「檔案保留 90 → 365 天」**已被否決**（2026-07-20 決策：txt 定位為臨時資料庫，
-> 90 天即可，DB 上線時只匯入近 90 天的限制已接受），自清單移除。
-
-| # | 事項 | 狀態 |
-|---|---|---|
-| 1 | **深析結構化結果存進 JSONL**：`DailyAnalysisRecord` 加 `DeepDives` 欄位（`CategoryDeepDive`/`DeepDiveFinding`），`RiskReportService.GenerateAsync` 每類別深析成功後同步寫入 `record.DeepDives`（渲染邏輯不變、報告全文照舊） | ✅ 已完成（2026-07-20）。低風險日恆為空清單（未觸發深析），已有測試覆蓋 |
-| 2 | **紀錄加 `Host` 欄位**：`LogAnalysisService` 新增 `host` 建構參數，未指定時預設 `Environment.MachineName` | ✅ 已完成（2026-07-20） |
-| 3 | **精簡策略抽成共用 `RecordStorageShaper`**：自 `JsonlAnalysisRecordStore` 私有方法抽出至 `Persistence/RecordStorageShaper.cs`（純函數，行為零改變），`Append` 改呼叫它 | ✅ 已完成（2026-07-20），獨立單元測試（`RecordStorageShaperTests`） |
-| 4 | Schema 欄位級定案（本文件） | ✅ 已完成 |
-
-驗證：建置零警告，112 個單元測試與 64 項 `--selftest` 全數通過。
-
-審查後加固兩項（2026-07-20）：
-- **列舉存字串一致性**：`CategoryDeepDive.Category` 補上 `JsonStringEnumConverter`，與
-  `LogIssueSignature` 及一致性機制 #5 對齊（存 `"Storage"` 非整數），未來 DB 匯入直接對應字串。
-- **精簡策略防漏欄位**：`RecordStorageShaper` 是逐欄位手動複製，「未來加欄位忘了複製 →
-  低風險日靜默掉資料」是真實陷阱（本次加 `Host`/`DeepDives` 時就得手動補）。新增反射式測試
-  把每個頂層欄位設非預設值後比對，漏複製即測試失敗（已實測拿掉一欄會 FAIL）。
-
-**已知覆蓋缺口**：`RiskReportService.GenerateAsync` 內「深析結果寫入 `record.DeepDives`」
-這段接線本身沒有自動化測試（`AIService` 目前是具體類別、未抽介面，缺 mock 基礎設施；
-新增這層 mock 對一個 15 行直線邏輯不成比例）——已用 `RecordStorageShaper`／
-`JsonlAnalysisRecordStore` 兩層測試涵蓋資料模型的序列化/精簡正確性，接線本身靠程式碼審閱
-與建置驗證，未來要補測試時要先解決 AIService 缺乏介面的問題。
-（本機 IP 的收集屬 DB 階段——它是 host 層級的一次性資訊，匯入時當場收集即可，
-不需要跟著每日紀錄存。）
-
 ## Schema 升級機制（定案 13，2026-07-24；**已落實 2026-07-27**）
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
@@ -427,13 +360,13 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 長期成本，對這個專案的變更頻率不成比例；自製 DDL 檢查腳本反而更貼近現有「`EnsureCreated`
 全有全無」的簡單心智模型，只是把它從「只在全新庫做一次」延伸成「每次啟動都補差異」。
 
-實作：`LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs`，於 `StorageFactory.GetDbFactory`
-的 `EnsureCreated()` 之後呼叫（同一把 `_schemaLock` 內，批次與 Web 啟動時都會跑到）。
+實作：`LogForesight.Core/Persistence/Sql/SchemaUpgrader.cs`，於 `StorageBackend` 建構時
+的 `EnsureCreated()` 之後呼叫（Web 啟動建立 singleton backend 時就會跑到）。
 每一步是「檢查缺什麼（SQLite 查 `pragma_table_info`/`pragma_index_list`，SqlServer 查
 `INFORMATION_SCHEMA.COLUMNS`/`sys.indexes`）→ 缺才補（`ALTER TABLE ADD`／`CREATE INDEX`）」，
 新建的 DB 因 `EnsureCreated` 已建好最新 schema，每一步在新 DB 上都是 no-op。
 首個落地案例：`lf_log_lines` 補 `created_at` 欄＋`(log_key, created_at)` 索引
-（docs/HISTORY.md P0-3 的前置需求）。未建 `lf_schema_version` 版本表——
+（docs/archive/HISTORY.md P0-3 的前置需求）。未建 `lf_schema_version` 版本表——
 冪等檢查本身就是狀態，步驟數量還不到需要額外版本追蹤的規模。
 
 ## 使用場景盤點與待討論細節（2026-07-20 第二輪，續規劃）
@@ -494,11 +427,11 @@ hw_uuid 在 VM 重建時會變，所謂強證據並不強，為它建收集與�
 
 ### C. Security 資料的長期保存政策（⏳ 分兩步，2026-07-20 決策）
 
-決策：**先確認 Security 資料實際抓得到什麼**（本機看正式環境的執行權限、NetIQ 看 Phase 1
-probe 的頻道覆蓋結果），**再決定長期保存政策**。schema 不需為此改動（`key_details` 本來就
+決策：**先確認 Security 資料實際抓得到什麼**（本機看正式環境的執行權限、NetIQ 看試點階段的
+頻道覆蓋結果），**再決定長期保存政策**。schema 不需為此改動（`key_details` 本來就
 nullable），屆時若要限制，方案備選：(a) `key_details` 單獨設保留年限（到期置 NULL，
 統計數字不動）；(b) Web 查閱 Security 類資料時寫存取稽核。
-→ 追蹤點：Phase 1 probe 結果出來後回到本節做第二步決定。
+→ 追蹤點：試點階段（docs/BACKLOG.md 的 NetIQ 接線試點閘門）核對頻道覆蓋現況後回到本節做第二步決定。
 
 ### D. 文字搜尋的範圍（✅ 已決：不做自由文字搜尋，2026-07-20）
 
@@ -519,20 +452,5 @@ nullable），屆時若要限制，方案備選：(a) `key_details` 單獨設保
 | 時區 | `record_date` 為主機當地日期；全部主機同在台灣時區的前提下無議題（跨時區部署時再議） |
 | 報告顯示格式 | `lf_reports.content` 純文字直接 `<pre>` 顯示（含框線符號）；未來要好看的 HTML 版，從結構化層渲染，不動全文層 |
 
-## 決策狀態彙整（2026-07-20 第三輪後）
-
-| # | 決策點 | 狀態 |
-|---|---|---|
-| 1 | 檔案保留天數 | ✅ 120 天（2026-07-24 由 90 天調整；txt=臨時資料庫，DB 上線僅匯入近 120 天，已接受） |
-| 2 | 處理狀態追蹤 | ✅ 納入：狀態＋預計完成日＋處理說明＋處理人員（可指派/自動帶入負責人）＋歷程 log |
-| 3 | 主機識別 | ✅ 存 IP（顯示用線索）；**純人工綁定**——輸入/選取舊主機 ID 即合併，`merged_into` 留墓碑；hw_uuid 與程式建議機制已因 VM 環境簡化移除 |
-| 4 | Security 長期保存 | ⏳ 兩步走：先確認抓得到什麼（本機權限＋Phase 1 probe），再決定保存政策 |
-| 5 | 自由文字搜尋 | ✅ 不做（欄位主體不明確；主篩選＋Event ID 已涵蓋） |
-| 6 | Web 驗證/細節 | ⏸ 後議（lf_users 表按 AD 假設設計，屆時可改） |
-| 7 | DB 保留年限 | ✅ 統一 `DbRetentionDays`=730（未來三年改 1095）；全表適用含權限異動/處理歷程，到期直接刪；應用層每晚滾動清理（2026-07-20） |
-| 8 | 多 Sentinel 主機歸屬 | ✅ `lf_hosts.netiq_server` 記錄所屬 Sentinel（路由/顯示屬性）；IP 全域唯一維持識別鍵（2026-07-20） |
-| 9 | Jsonl 檔案後端 | ✅ **已退役**（2026-07-24，定案 10）：`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，設成 `Jsonl` 啟動即報錯 |
-| 10 | `--import-history` 匯入器 | ✅ **確定不做**（2026-07-24，定案 10）：沒有服役中的 Jsonl 正式資料需要遷移 |
-| 11 | Schema 升級機制 | ✅ 本輪零 DDL，暫不建機制；方針已定案（定案 13，見上節）——未來採自製冪等 DDL，不用 EF Migrations |
-
-**唯一留待後續的開放項**：#4 的第二步（probe 後回到本節 C）。schema 本身已無開放問題。
+**唯一留待後續的開放項**：C 節 Security 長期保存政策的第二步（試點階段核對抓得到什麼後回頭決定，
+見 docs/BACKLOG.md）。schema 本身已無開放問題。

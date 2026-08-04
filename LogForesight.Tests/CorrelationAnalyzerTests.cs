@@ -1,5 +1,5 @@
-using LogForesight;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
@@ -306,21 +306,8 @@ public class CorrelationAnalyzerTests
         Assert.Contains(findings, f => f.Description.Contains(pattern));
     }
 
-    private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
-        IssueCategory category = IssueCategory.Other, string? keyDetails = null)
-        => new()
-        {
-            LogName = logName,
-            Source = source,
-            EventId = eventId,
-            EntryType = System.Diagnostics.EventLogEntryType.Error,
-            Count = count,
-            Severity = severity,
-            Category = category,
-            FirstSeen = "00:00",
-            LastSeen = "23:59",
-            KeyDetails = keyDetails
-        };
+    // Sig(...) 已搬到 TestDoubles\TestData.cs（原本多帶的 keyDetails 參數已合併進共用版本，
+    // SuppressionTests／TrendAnalyzerTests 未傳入時行為不變）。
 
     private static DailyAnalysisRecord HistoryDay(DateTime date, string source, int eventId, int count, IssueSeverity severity,
         string logName = "System", IssueCategory category = IssueCategory.Other, string? keyDetails = null)

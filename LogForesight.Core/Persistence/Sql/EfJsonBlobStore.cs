@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
-namespace LogForesight.Sql;
+namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// 「一團 JSON 文字」的原子讀寫（webdata 各 store 的儲存底層）：整份 JSON 存在 lf_blobs 的一列
 /// （key＝store 名稱）。把「文字放哪裡、怎麼原子更新」與「store 的業務邏輯」分開
-/// （docs/HISTORY.md §4）。
+/// （docs/archive/HISTORY.md §4）。
 ///
 /// <see cref="Mutate{TResult}"/> 是讀→改→寫的原子單位，以交易實作：呼叫端拿到目前內容、
 /// 算出新內容，底層保證中途不被別人插入寫入（避免更新遺失——hosts 是批次與 Web 共同
@@ -94,7 +94,7 @@ public sealed class EfJsonBlobStore
     private static bool IsTransient(Exception ex)
     {
         // SQLite busy / SqlServer deadlock 等暫時性衝突：訊息含 busy/locked/deadlock 即重試。
-        // user-function：連線池關閉後（見 StorageFactory.DisableSqlitePoolingIfUnset）此錯誤的
+        // user-function：連線池關閉後（見 StorageBackend.DisableSqlitePoolingIfUnset）此錯誤的
         // 根因已除，這裡留作第二道保險（如使用者自行在 ConnectionString 開回 Pooling）。
         var msg = ex.Message.ToLowerInvariant();
         return ex is DbUpdateException || msg.Contains("busy") || msg.Contains("locked") ||

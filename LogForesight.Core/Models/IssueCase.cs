@@ -1,7 +1,7 @@
-namespace LogForesight;
+namespace LogForesight.Core.Models;
 
 /// <summary>
-/// 問題案件（↔ 未來 lf_issue_cases，docs/FEEDBACK-4-PLAN.md §0）：以（主機、問題簽章）為鍵的
+/// 問題案件（↔ 未來 lf_issue_cases，docs/archive/FEEDBACK-4-PLAN.md §0）：以（主機、問題簽章）為鍵的
 /// 跨日處理協調紀錄——回答「同一台主機的同一個問題，跨越多天，現在歸誰處理、處理到哪」。
 ///
 /// **案件只是協調紀錄，逐日 <see cref="IssueHandling"/> 列仍是唯一投影面**：案件的每個動作
@@ -32,7 +32,7 @@ public class IssueCase
     /// <summary>IssueHandlingStatuses 值域（open/in_progress/結案四種）</summary>
     public string Status { get; set; } = string.Empty;
 
-    /// <summary>案件處理人（單人，docs/FEEDBACK-4-PLAN.md 2.1「同主機同問題只由一個人處理」）。
+    /// <summary>案件處理人（單人，docs/archive/FEEDBACK-4-PLAN.md 2.1「同主機同問題只由一個人處理」）。
     /// 與日層級 RecordHandling.HandlerId 是兩件事——後者是「這一天」的案件層概念，
     /// 這裡是「這個問題跨日歸誰」，兩者並存</summary>
     public long? HandlerId { get; set; }
@@ -40,7 +40,7 @@ public class IssueCase
     /// <summary>最近一次說明快照；完整敘事仍在 RecordHandlingLog（案件同步逐日寫一列）</summary>
     public string? Note { get; set; }
 
-    /// <summary>預計完成日——Status=in_progress 時有意義；Status=observing（docs/FEEDBACK-8-PLAN.md #4）
+    /// <summary>預計完成日——Status=in_progress 時有意義；Status=observing（docs/archive/FEEDBACK-8-PLAN.md #4）
     /// 時沿用同一欄位當「觀察至」日期，同問題層級 <see cref="IssueHandling.DueDate"/> 的規則</summary>
     public DateTime? DueDate { get; set; }
 

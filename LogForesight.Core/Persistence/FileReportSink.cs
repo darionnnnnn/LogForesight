@@ -1,9 +1,9 @@
 using System.Text;
 
-namespace LogForesight;
+namespace LogForesight.Core.Persistence;
 
 /// <summary>預設的報告輸出實作：寫到執行檔目錄下的 export（單機/多機共用一個實作，host 有值時分子目錄）</summary>
-public class FileReportSink : IReportSink
+internal class FileReportSink : IReportSink
 {
     private readonly string _exportDir;
 
