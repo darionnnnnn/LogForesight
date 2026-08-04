@@ -1237,37 +1237,3 @@ public class RecordQueryService
         ElevatesCount = summary.ElevatesCount
     };
 }
-
-public class RecordSearchRequest
-{
-    public List<long>? HostIds { get; set; }
-
-    /// <summary>主機群組篩選（§5.4 D-4）：展開為主機集合後與 HostIds 取聯集，
-    /// 兩千台規模下「看某個部門的主機」比一台台勾選實際得多</summary>
-    public List<long>? GroupIds { get; set; }
-    public DateTime? From { get; set; }
-    public DateTime? To { get; set; }
-    public List<string>? RiskLevels { get; set; }
-    public List<string>? Categories { get; set; }
-    public string? Severity { get; set; }
-    public int? EventId { get; set; }
-    public string? Source { get; set; }
-
-    /// <summary>處理狀態篩選（待辦清單的下鑽目標）</summary>
-    public List<string>? Statuses { get; set; }
-
-    /// <summary>只看逾期未處理</summary>
-    public bool? Overdue { get; set; }
-
-    /// <summary>
-    /// 表頭排序（docs/WEB-SPEC.md §9.2）。null／不合法值＝維持各視角原本的預設排序。
-    /// 明細視角：date | host | risk。依主機視角：host | highRisk | mediumRisk | lowRisk | correlation。
-    /// 依日期視角：date | hostCount | highRisk | mediumRisk | lowRisk | correlation。
-    /// </summary>
-    public string? SortKey { get; set; }
-
-    public bool Ascending { get; set; }
-
-    public int Page { get; set; } = 1;
-    public int PageSize { get; set; } = 50;
-}
