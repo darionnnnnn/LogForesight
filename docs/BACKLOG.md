@@ -79,6 +79,20 @@
   行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
   釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
 
+## 架構重構（feature/arch-refactor）遞延項
+
+- **`KnownIssueCatalog` 的 static 可變狀態改實例化**：`Rules`／`SecurityAuditWatchlist`／
+  `ChannelWatchlists` 是三個獨立的 static 可變屬性，`RuleBootstrapper.Run` 呼叫
+  `Initialize(...)` 依序覆寫——非原子（理論上讀者可能讀到 Rules 已更新但 Watchlist 還沒
+  更新的中間態）。12 個檔案直接引用（貫穿 LogAnalysisService／CorrelationAnalyzer／
+  RuleValidator／RiskReportService 等整條分析管線），且測試已必須在建構式/Dispose 手動呼叫
+  `Initialize(KnownIssueSeed.CreateRules())` 重置共用靜態狀態，避免測試間互相汙染
+  （ChannelWatchlistTests／KnownIssueCatalogTests／RuleBootstrapperTests／
+  SentinelPipelineContractTests 等）。改為實例注入需要貫穿整條分析管線的建構式，
+  風險與範圍等同 god class 拆分（Phase 7 等級），不是收斂性質的小清理，故不在本次
+  架構重構範圍內處理。折衷方案（三個屬性包成一個不可變快照、用單次原子替換取代逐一
+  覆寫）可以先解決「非原子」的理論風險且不需要動呼叫端，若之後要做可從這裡切入。
+
 ## 回饋第八輪遞延項（docs/archive/FEEDBACK-8-PLAN.md，2026-08-04）
 
 - **使用者名稱「顯示名稱(帳號)」格式的全面套用**：本輪依規劃盤點清單收斂了主要顯示點
