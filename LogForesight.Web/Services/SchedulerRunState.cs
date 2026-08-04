@@ -89,6 +89,9 @@ public class SchedulerRunState
             IsRunning = false;
             Trigger = null;
             StartedAt = null;
+            ProgressPhase = null;
+            ProgressDone = 0;
+            ProgressTotal = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

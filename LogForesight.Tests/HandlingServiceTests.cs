@@ -848,6 +848,43 @@ public class HandlingServiceTests
         Assert.Contains("觀察至", ex.Message);
     }
 
+    /// <summary>觀察至日期不可超過 90 天——伺服器端防禦性驗證，不只信前端的天數上限</summary>
+    [Fact]
+    public void 標記觀察中_觀察至日期超過90天時拒絕()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        var ex = Assert.Throws<DomainException>(() => service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = Today.AddDays(91)
+        }));
+        Assert.Contains("90 天", ex.Message);
+    }
+
+    /// <summary>剛好 90 天是合法邊界，不該被拒絕</summary>
+    [Fact]
+    public void 標記觀察中_觀察至日期恰為90天時允許()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = Today.AddDays(90)
+        });
+
+        Assert.Equal(IssueHandlingStatuses.Observing, result.Status);
+    }
+
     /// <summary>
     /// 完整劇本（docs/FEEDBACK-8-PLAN.md #4）：標觀察 → 儀表板不吵（不算 open，也不算逾期）
     /// → 模擬到期（直接落一筆已過期的觀察紀錄，同其餘逾期測試的既有手法）→ 逾期現身。

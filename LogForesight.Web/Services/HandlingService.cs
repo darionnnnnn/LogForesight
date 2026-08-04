@@ -235,13 +235,15 @@ public class HandlingService
             throw DomainException.Validation("預計完成日不可早於今天。");
 
         // 觀察中一定要有觀察至日期（docs/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
-        // 前端固定送「今天 + N 天」，這裡仍防禦性驗證不早於今天
+        // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
         if (status == IssueHandlingStatuses.Observing)
         {
             if (!dueDate.HasValue)
                 throw DomainException.Validation("標記為觀察中時必須指定觀察至日期。");
             if (dueDate.Value.Date < DateTime.Today)
                 throw DomainException.Validation("觀察至日期不可早於今天。");
+            if (dueDate.Value.Date > DateTime.Today.AddDays(90))
+                throw DomainException.Validation("觀察至日期不可超過 90 天。");
         }
     }
 

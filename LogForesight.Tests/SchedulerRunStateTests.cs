@@ -59,6 +59,24 @@ public class SchedulerRunStateTests
         Assert.Null(state.LastOutcome);
     }
 
+    /// <summary>docs/FEEDBACK-8-PLAN.md #2：EndRun 要把進度歸零，不留上一趟執行的殘留數字——
+    /// 目前前端只在 isRunning 時畫進度條所以不會顯示出來，但欄位本身該是乾淨的，
+    /// 不能依賴呼叫端的顯示邏輯剛好把髒資料蓋住。</summary>
+    [Fact]
+    public void EndRun後進度欄位歸零()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress("netiq", 5, 10);
+        Assert.Equal(10, state.ProgressTotal);
+
+        state.EndRun();
+
+        Assert.Null(state.ProgressPhase);
+        Assert.Equal(0, state.ProgressDone);
+        Assert.Equal(0, state.ProgressTotal);
+    }
+
     [Fact]
     public void EndRun不帶參數_預設等同null不覆蓋前一筆()
     {
