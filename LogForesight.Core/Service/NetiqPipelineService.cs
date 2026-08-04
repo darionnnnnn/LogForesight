@@ -37,16 +37,20 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly int _riskyEventRetentionDays;
+    private readonly bool _useAi;
 
     /// <param name="riskyEventStore">風險 log 暫存（docs/WEB-SCHEDULER-PLAN.md §2）；null＝不寫暫存（測試情境）</param>
     /// <param name="riskyEventRetentionDays">暫存保留天數——超過保留期的回補日跳過寫入
     /// （見 <see cref="RiskyEventSelector.WithinRetention"/>），與本機路徑同一個閘門</param>
+    /// <param name="useAi">false＝AI 未設定，本次以統計模式跑（不呼叫 AI），與本機路徑同一個
+    /// 開關（docs/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
+    /// 每個方法都加一個參數傳遞</param>
     public NetiqPipelineService(
         StorageSettings storage, string dataRoot, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator,
-        IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14)
+        IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true)
     {
         _storage = storage;
         _dataRoot = dataRoot;
@@ -61,6 +65,7 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _riskyEventStore = riskyEventStore;
         _riskyEventRetentionDays = riskyEventRetentionDays;
+        _useAi = useAi;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="StoreHostListProvider"/>）；
@@ -295,7 +300,7 @@ public class NetiqPipelineService
             // 「已檢查且無異常」——channels=null 时 UncoveredChecks 不會列出這兩個頻道，
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
             var record = await analysisService.AnalyzeDayAsync(
-                date, events, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
+                date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null);
 
             result.AddAnalyzed();
@@ -331,8 +336,9 @@ public class NetiqPipelineService
 
             // AI 呼叫計數與本機迴圈同一條件（Program.cs 步驟 4 的原話）：AiAnalyzed=false 有
             // 「低風險日刻意不呼叫」與「呼叫失敗降級」兩種意義，只有後者該計入失敗——
-            // 沒有這段，NetIQ 主機日的 AI 失敗不會反映在執行監控頁的 AI 欄位
-            if (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low)
+            // 沒有這段，NetIQ 主機日的 AI 失敗不會反映在執行監控頁的 AI 欄位。
+            // _useAi=false（AI 未設定）時本來就不會呼叫，不該被記成失敗。
+            if (_useAi && (record.AiAnalyzed || record.RiskLevel != RiskLevels.Low))
             {
                 _runRecorder.RecordAiCall(record.AiAnalyzed);
             }

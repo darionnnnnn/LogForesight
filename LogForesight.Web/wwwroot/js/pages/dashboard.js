@@ -46,6 +46,15 @@ async function loadAiFocus() {
     const container = document.getElementById('dashboard-ai-focus');
     container.replaceChildren();
 
+    // AI 未設定時直接不打 today-focus（避免每次進儀表板都白發一次請求，docs/FEEDBACK-7-PLAN.md）
+    let status;
+    try {
+        status = await api.get('/api/ai/status', { silent: true });
+    } catch {
+        return;
+    }
+    if (!status?.available) return;
+
     let focus;
     try {
         focus = await api.get(`/api/ai/today-focus?days=${currentDays}`, { silent: true });

@@ -143,4 +143,37 @@ public class WeeklyCheckupServiceTests
 
         Assert.False(outcome.Completed); // 同上：進入 AI 呼叫分支後因無法連線而失敗，證明閘門判定為「有訊號」
     }
+
+    // ── RunAsync：useAi 短路（docs/FEEDBACK-7-PLAN.md，AI 未設定時的行為）───────
+
+    [Fact]
+    public async Task 有訊號且AI未設定_不嘗試呼叫且未完成待補跑()
+    {
+        var window = new List<DailyAnalysisRecord> { new() { Date = DateTime.Today.AddDays(-1), RiskLevel = "高" } };
+        var service = MakeService(new FakeReader(window), out var sink);
+
+        var outcome = await service.RunAsync(DateTime.Today, intervalDays: 7, useAi: false);
+
+        Assert.False(outcome.Completed);
+        Assert.False(outcome.HasFindings);
+        Assert.Contains("AI 未設定", outcome.Conclusion);
+        Assert.Null(outcome.ReportFile);
+        Assert.False(sink.Called); // 不嘗試呼叫 AI，也不產生報告檔
+    }
+
+    [Fact]
+    public async Task 無訊號且AI未設定_不受影響照常完成()
+    {
+        var window = Enumerable.Range(1, 7)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), RiskLevel = "低" })
+            .ToList();
+        var service = MakeService(new FakeReader(window), out var sink);
+
+        var outcome = await service.RunAsync(DateTime.Today, intervalDays: 7, useAi: false);
+
+        Assert.True(outcome.Completed);
+        Assert.False(outcome.HasFindings);
+        Assert.Equal("本期無累積性異常，程式比對通過。", outcome.Conclusion);
+        Assert.False(sink.Called);
+    }
 }

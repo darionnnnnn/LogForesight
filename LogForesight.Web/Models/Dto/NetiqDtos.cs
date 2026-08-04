@@ -104,7 +104,7 @@ public class NetiqScanRequest
     [Required]
     public string Server { get; set; } = string.Empty;
 
-    /// <summary>網段前綴（如「10.1.2」）或 CIDR（如「10.1.2.0/24」）。**必填**——
+    /// <summary>網段前綴（如「192.168.0」）或 CIDR（如「192.168.0.0/24」）。**必填**——
     /// 探索是「掃一個網段」而不是盲掃全站（docs/NETIQ-API-PLAN.md §3.4：全站事件量實測單台
     /// Sentinel 近 24h 達 2400 萬筆，任何固定窗口涵蓋率都很差）。格式規則見
     /// <c>SentinelQueryBuilder.NormalizeSubnetPrefix</c>。</summary>

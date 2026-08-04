@@ -308,7 +308,11 @@ function renderStats(detail) {
         { label: '狀態', value: statusText(detail) },
         { label: '耗時', value: detail.durationSeconds != null ? formatDuration(detail.durationSeconds) : '—' },
         { label: '分析天數', value: detail.daysAnalyzed },
-        { label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` },
+        // AI 未設定時這欄多半是「0（失敗 0）」的雜訊；歷史上真的呼叫過 AI 的執行紀錄仍如實顯示
+        // （docs/FEEDBACK-7-PLAN.md）
+        ...(aiAvailable || detail.aiCalls > 0
+            ? [{ label: 'AI 呼叫', value: `${detail.aiCalls}（失敗 ${detail.aiFailures}）` }]
+            : []),
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
         { label: '版本', value: detail.appVersion }
     ];
@@ -413,6 +417,10 @@ for (const button of document.querySelectorAll('[data-days]')) {
 
 let scheduleWindows = [];
 let canMaintainSchedule = false;
+// AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/FEEDBACK-7-PLAN.md）：這是除錯用的手動
+// 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
+// 只是不顯示——避免隱藏期間存檔把設定意外歸零。
+let aiAvailable = false;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
 
 async function loadSchedule() {
@@ -422,7 +430,13 @@ async function loadSchedule() {
         for (const el of document.querySelectorAll('[data-maintain-only]')) el.classList.add('d-none');
     }
 
-    const options = await api.get('/api/admin/schedule/options');
+    const [options, aiStatus] = await Promise.all([
+        api.get('/api/admin/schedule/options'),
+        api.get('/api/ai/status', { silent: true }).catch(() => null)
+    ]);
+    aiAvailable = !!aiStatus?.available;
+    document.getElementById('schedule-debug-dump-wrap').classList.toggle('d-none', !aiAvailable);
+
     applyScheduleOptions(options);
     await refreshScheduleStatus();
 
@@ -434,7 +448,7 @@ function applyScheduleOptions(options) {
     scheduleWindows = options.windows.map(w => ({ ...w }));
     document.getElementById('schedule-enabled').checked = options.enabled;
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
-    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump);
+    document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || !aiAvailable);
     renderScheduleWindows();
 
     document.getElementById('schedule-updated').textContent = options.updatedAt
@@ -459,7 +473,9 @@ function renderScheduleWindows() {
         const start = document.createElement('input');
         start.type = 'time';
         start.className = 'form-control form-control-sm';
-        start.style.maxWidth = '130px';
+        // 固定寬度而非上限：瀏覽器原生 time picker（HH:MM + 時鐘圖示）實測約需 140~150px，
+        // 130px 的上限會把數字擠掉（使用者回報時間被遮擋）。
+        start.style.width = '150px';
         start.value = window_.start;
         start.disabled = !canMaintainSchedule;
         start.addEventListener('change', () => { window_.start = start.value; });
@@ -471,7 +487,7 @@ function renderScheduleWindows() {
         const end = document.createElement('input');
         end.type = 'time';
         end.className = 'form-control form-control-sm';
-        end.style.maxWidth = '130px';
+        end.style.width = '150px';
         end.value = window_.end;
         end.disabled = !canMaintainSchedule;
         end.addEventListener('change', () => { window_.end = end.value; });
@@ -533,7 +549,17 @@ async function refreshScheduleStatus() {
     document.getElementById('schedule-run-state').textContent = status.isRunning
         ? `執行中（${status.triggerText}）`
         : '閒置';
-    document.getElementById('schedule-latest-message').textContent = status.isRunning ? (status.latestMessage ?? '') : '';
+
+    const messageEl = document.getElementById('schedule-latest-message');
+    if (status.isRunning) {
+        messageEl.textContent = status.latestMessage ?? '';
+        messageEl.classList.remove('text-danger');
+        messageEl.classList.add('text-muted');
+    } else {
+        // 閒置時顯示「上次執行到底成不成功」（docs/FEEDBACK-7-PLAN.md）：原本失敗只寫 log，
+        // 使用者看到「已開始執行」的 toast 之後就再也沒有回饋，只能翻 log 檔才知道其實炸了。
+        renderLastRunOutcome(messageEl, status);
+    }
 
     const stopButton = document.getElementById('schedule-stop');
     if (canMaintainSchedule) stopButton.classList.toggle('d-none', !status.canStop);
@@ -542,6 +568,36 @@ async function refreshScheduleStatus() {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(status.nextTriggerTime);
     } else if (!status.scheduleEnabled) {
         document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
+    }
+}
+
+/**
+ * 閒置時的「上次執行結果」（docs/FEEDBACK-7-PLAN.md）：站台重啟後 lastRunEndedAt 為 null，
+ * 顯示「—」即可——完整歷史查執行總表，這裡只回答「剛剛那次到底成不成功」。
+ * 使用者手動取消不算失敗（AnalysisOrchestrator 把取消也回報成 Success=false，
+ * FailureMessage="使用者取消"），這裡特判成中性語氣，不用紅字嚇人。
+ */
+function renderLastRunOutcome(messageEl, status) {
+    if (!status.lastRunEndedAt) {
+        messageEl.textContent = '';
+        messageEl.classList.remove('text-danger');
+        messageEl.classList.add('text-muted');
+        return;
+    }
+
+    const when = formatDateTime(status.lastRunEndedAt);
+    if (status.lastRunSuccess) {
+        messageEl.textContent = `上次執行：成功（${status.lastRunTriggerText}，${when}）`;
+        messageEl.classList.remove('text-danger');
+        messageEl.classList.add('text-muted');
+    } else if (status.lastRunMessage === '使用者取消') {
+        messageEl.textContent = `上次執行：已停止（${status.lastRunTriggerText}，${when}）`;
+        messageEl.classList.remove('text-danger');
+        messageEl.classList.add('text-muted');
+    } else {
+        messageEl.textContent = `上次執行：失敗（${status.lastRunTriggerText}，${when}）— ${status.lastRunMessage ?? ''}`;
+        messageEl.classList.remove('text-muted');
+        messageEl.classList.add('text-danger');
     }
 }
 
@@ -593,7 +649,7 @@ async function updateRunNowPreview() {
     const previewEl = document.getElementById('run-now-preview');
 
     if (scope === 'segment' && !segment) {
-        previewEl.textContent = '請輸入要執行的網段（如 10.1.2 或 10.1.2.0/24）。';
+        previewEl.textContent = '請輸入要執行的網段（如 192.168.0 或 192.168.0.0/24）。';
         previewEl.className = 'alert alert-secondary py-2 px-3 mb-0';
         return;
     }

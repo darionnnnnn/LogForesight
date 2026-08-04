@@ -68,7 +68,10 @@ public class WeeklyCheckupService
 
     /// <param name="intervalDays">體檢窗口天數，通常等於 <see cref="AnalysisSettings.CheckupIntervalDays"/></param>
     /// <param name="host">主機識別，單機情境留空即可</param>
-    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", string host = "")
+    /// <param name="useAi">false＝AI 未設定（docs/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
+    /// （本來就不呼叫 AI）；有訊號時不嘗試呼叫，回傳 Completed=false 讓呼叫端沿用既有
+    /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
+    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", string host = "", bool useAi = true)
     {
         var window = _historyReader.ReadRecent(checkupDate, intervalDays);
 
@@ -84,6 +87,18 @@ public class WeeklyCheckupService
                 Completed = true,
                 HasFindings = false,
                 Conclusion = "本期無累積性異常，程式比對通過。"
+            };
+        }
+
+        if (!useAi)
+        {
+            Log.Info("{Date:yyyy-MM-dd} 體檢窗口內有訊號，但 AI 未設定，本次不寫入歷史、下次執行自動補跑", checkupDate);
+            return new WeeklyCheckupResult
+            {
+                CheckupDate = checkupDate,
+                Completed = false,
+                HasFindings = false,
+                Conclusion = "（AI 未設定，體檢敘事暫缺，設定後下次執行自動補跑）"
             };
         }
 

@@ -211,7 +211,10 @@ sentinelForm.addEventListener('submit', async event => {
 // ── 連線與節流參數 ───────────────────────────────────────────────────────────
 
 async function loadOptions() {
-    const options = await api.get('/api/admin/netiq/options');
+    const [options, aiStatus] = await Promise.all([
+        api.get('/api/admin/netiq/options'),
+        api.get('/api/ai/status', { silent: true }).catch(() => null)
+    ]);
     document.getElementById('opt-query-delay').value = options.queryDelayMs;
     document.getElementById('opt-page-size').value = options.pageSize;
     document.getElementById('opt-max-results').value = options.maxResultsPerJob;
@@ -221,6 +224,9 @@ async function loadOptions() {
     document.getElementById('opt-backfill-days').value = options.backfillDays;
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
     document.getElementById('opt-chat-live-fetch').checked = options.chatLiveFetchEnabled;
+    // 這個選項只服務「詢問 AI」對話的 fallback 路徑，AI 未設定時整條路徑無意義，隱藏但保留值
+    // （docs/FEEDBACK-7-PLAN.md）
+    document.getElementById('opt-chat-live-fetch-wrap').classList.toggle('d-none', !aiStatus?.available);
     renderOptionsUpdated(options);
 }
 
