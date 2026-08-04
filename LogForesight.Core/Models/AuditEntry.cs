@@ -147,12 +147,3 @@ public class AuditQuery
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 50;
 }
-
-/// <summary>分頁結果</summary>
-public class PagedResult<T>
-{
-    public List<T> Items { get; set; } = new();
-    public int Page { get; set; }
-    public int PageSize { get; set; }
-    public int Total { get; set; }
-}

@@ -49,15 +49,14 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse<ScheduleOptionsDto> SaveOptions([FromBody] SaveScheduleOptionsRequest request)
     {
-        var windows = request.Windows.Select(w => new ScheduleWindow { Start = w.Start, End = w.End }).ToList();
-        var validation = ScheduleCalculator.Validate(windows);
+        var validation = ScheduleCalculator.Validate(request.Windows);
         if (!validation.IsValid)
             throw DomainException.Validation(string.Join("；", validation.Errors));
 
         var saved = _optionsStore.Update(o =>
         {
             o.Enabled = request.Enabled;
-            o.Windows = windows;
+            o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.UpdatedByAccount = _currentUser.Account;
         });
@@ -236,7 +235,7 @@ public class ScheduleController : ControllerBase
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
     {
         Enabled = options.Enabled,
-        Windows = options.Windows.Select(w => new ScheduleWindowDto { Start = w.Start, End = w.End }).ToList(),
+        Windows = options.Windows,
         DebugDump = options.DebugDump,
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,

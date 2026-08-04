@@ -1,15 +1,9 @@
 namespace LogForesight.Web.Models.Dto;
 
-public class ScheduleWindowDto
-{
-    public string Start { get; set; } = string.Empty;
-    public string End { get; set; } = string.Empty;
-}
-
 public class ScheduleOptionsDto
 {
     public bool Enabled { get; set; }
-    public List<ScheduleWindowDto> Windows { get; set; } = new();
+    public List<ScheduleWindow> Windows { get; set; } = new();
     public bool DebugDump { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
@@ -25,7 +19,7 @@ public class ScheduleOptionsDto
 public class SaveScheduleOptionsRequest
 {
     public bool Enabled { get; set; }
-    public List<ScheduleWindowDto> Windows { get; set; } = new();
+    public List<ScheduleWindow> Windows { get; set; } = new();
     public bool DebugDump { get; set; }
 }
 
