@@ -16,16 +16,7 @@ namespace LogForesight.Tests;
 [Collection("KnownIssueCatalogState")]
 public class RiskReportServiceTests
 {
-    private sealed class FakeReportSink : IReportSink
-    {
-        public string? LastContent { get; private set; }
-
-        public Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
-        {
-            LastContent = content;
-            return Task.FromResult($"fake/{fileName}");
-        }
-    }
+    // FakeReportSink 已搬到 TestDoubles\ReportingFakes.cs（與 WeeklyCheckupServiceTests 共用）。
 
     private static RiskReportService MakeService(FakeReportSink sink)
     {

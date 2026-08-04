@@ -11,39 +11,8 @@ namespace LogForesight.Tests;
 /// </summary>
 public class WeeklyCheckupServiceTests
 {
-    private sealed class FakeReader : IAnalysisRecordReader
-    {
-        private readonly List<DailyAnalysisRecord> _records;
-        private readonly DateTime? _lastCheckup;
-
-        public FakeReader(List<DailyAnalysisRecord> records, DateTime? lastCheckup = null)
-        {
-            _records = records;
-            _lastCheckup = lastCheckup;
-        }
-
-        // 替身照實作錨定窗語意過濾，否則測試會在「未來紀錄混入窗口」這件事上失去防護
-        public List<DailyAnalysisRecord> ReadRecent(DateTime anchorDate, int days) =>
-            _records
-                .Where(r => r.Date.Date >= anchorDate.Date.AddDays(-(days - 1)) && r.Date.Date <= anchorDate.Date)
-                .OrderBy(r => r.Date)
-                .ToList();
-
-        public bool HasAnyRecord() => _records.Count > 0;
-        public bool HasRecord(DateTime date) => _records.Any(r => r.Date.Date == date.Date);
-        public DateTime? LastWeeklyCheckupDate() => _lastCheckup;
-    }
-
-    private sealed class FakeReportSink : IReportSink
-    {
-        public bool Called { get; private set; }
-
-        public Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
-        {
-            Called = true;
-            return Task.FromResult($"fake/{fileName}");
-        }
-    }
+    // FakeReader／FakeReportSink 已搬到 TestDoubles\ReportingFakes.cs（FakeReportSink 與
+    // RiskReportServiceTests 共用）。
 
     private static WeeklyCheckupService MakeService(FakeReader reader, out FakeReportSink sink)
     {

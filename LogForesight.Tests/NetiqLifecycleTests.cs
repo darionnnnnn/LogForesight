@@ -91,17 +91,10 @@ public class NetiqDiscoveryServiceTests
     private readonly FakeImportLogStore _importLogs = new();
     private readonly RecordingAuditService _audit = new();
 
-    private sealed class FakeClient : INetiqDirectoryClient
-    {
-        private readonly List<NetiqDiscoveredHost> _hosts;
-        public FakeClient(params (string name, string ip)[] hosts) =>
-            _hosts = hosts.Select(h => new NetiqDiscoveredHost(h.name, h.ip)).ToList();
-        public System.Threading.Tasks.Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer s, string subnetPrefix, System.Threading.CancellationToken ct) =>
-            System.Threading.Tasks.Task.FromResult(new NetiqDiscoveryResult { Hosts = _hosts, CoverageNote = "test" });
-    }
+    // FakeClient 已搬到 TestDoubles\NetiqFakes.cs。
 
     private NetiqDiscoveryService Create(FakeClient client, params SentinelServer[] servers) =>
-        new(new NetiqHostServiceTests.FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
+        new(new FakeNetiqServerCatalog(servers), client, _hosts, _hostGroups, _sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
 
     private const string AnySubnet = "10.1.2";
@@ -424,7 +417,7 @@ public class NetiqDiscoveryServiceTests
         var sentinels = new FakeSentinelStore();
         sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("srv-dc01", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -445,7 +438,7 @@ public class NetiqDiscoveryServiceTests
         var sentinels = new FakeSentinelStore();
         sentinels.Upsert(new Sentinel { Name = "S1" });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("10.1.2.50", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -466,7 +459,7 @@ public class NetiqDiscoveryServiceTests
             NetiqServer = "OLD", Active = false, DisplayName = "人工核對過的名稱"
         });
         var svc = new NetiqDiscoveryService(
-            new NetiqHostServiceTests.FakeNetiqServerCatalog(Discoverable("S1")),
+            new FakeNetiqServerCatalog(Discoverable("S1")),
             new FakeClient(("掃描回報的不同名稱", "10.1.2.50")), _hosts, _hostGroups, sentinels,
             _importLogs, new FakeCurrentUser(), _audit);
         var scan = await svc.ScanAsync("S1", AnySubnet, default);
@@ -476,22 +469,5 @@ public class NetiqDiscoveryServiceTests
         // 既有主機（含復活的孤兒）：更新只動 NetiqServer/SentinelId/Active，DisplayName 不動——
         // 同 groupByIp/os 一致原則，匯入不隱性改既有主機欄位
         Assert.Equal("人工核對過的名稱", _hosts.FindByName("10.1.2.50")!.DisplayName);
-    }
-}
-
-internal class FakeImportLogStore : IImportLogStore
-{
-    public readonly List<ImportLogEntry> Entries = new();
-
-    public void Append(ImportLogEntry entry) => Entries.Add(entry);
-
-    public List<ImportLogEntry> GetRecent(int count) =>
-        Entries.OrderByDescending(e => e.CreatedAt).Take(count).ToList();
-
-    public int Prune(int retentionDays)
-    {
-        var cutoff = DateTime.Today.AddDays(-retentionDays);
-        var removed = Entries.RemoveAll(e => e.CreatedAt < cutoff);
-        return removed;
     }
 }

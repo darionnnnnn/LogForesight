@@ -40,7 +40,7 @@ public class ReportServiceTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord

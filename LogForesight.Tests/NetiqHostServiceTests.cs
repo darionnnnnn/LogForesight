@@ -197,24 +197,7 @@ public class NetiqHostServiceTests
         Assert.False(group.Hosts[1].IsPolled);
     }
 
-    internal sealed class FakeNetiqServerCatalog : INetiqServerCatalog
-    {
-        private readonly List<SentinelServer> _servers;
-
-        public FakeNetiqServerCatalog(params string[] names) =>
-            _servers = names.Select((n, i) => new SentinelServer { Id = i + 1, Name = n }).ToList();
-
-        public FakeNetiqServerCatalog(params SentinelServer[] servers) => _servers = servers.ToList();
-
-        public SentinelServer? GetServer(string? name) =>
-            string.IsNullOrWhiteSpace(name)
-                ? null
-                : _servers.FirstOrDefault(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
-
-        public List<string> GetServerNames() => _servers.Select(s => s.Name).ToList();
-
-        public bool IsKnownServer(string? name) =>
-            !string.IsNullOrWhiteSpace(name) &&
-            _servers.Any(s => string.Equals(s.Name, name.Trim(), StringComparison.OrdinalIgnoreCase));
-    }
+    // FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs（HostAdminServiceTests／
+    // NetiqLifecycleTests／SentinelEventFetchServiceTests 都要共用，搬出去後不再需要
+    // NetiqHostServiceTests.FakeNetiqServerCatalog 這種跨類別限定名稱）。
 }

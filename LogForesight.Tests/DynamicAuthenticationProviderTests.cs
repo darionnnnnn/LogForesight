@@ -125,19 +125,4 @@ public class DynamicAuthenticationProviderTests
     }
 }
 
-internal class FakeAuthenticationProvider : IAuthenticationProvider
-{
-    public string NameValue { get; set; } = "Fake";
-    public bool RequiresPasswordValue { get; set; } = true;
-    public CredentialCheckResult ResultToReturn { get; set; } = CredentialCheckResult.Ok;
-    public int VerifyCalls { get; private set; }
-
-    public string Name => NameValue;
-    public bool RequiresPassword => RequiresPasswordValue;
-
-    public CredentialCheckResult Verify(string account, string? password)
-    {
-        VerifyCalls++;
-        return ResultToReturn;
-    }
-}
+// FakeAuthenticationProvider 已搬到 TestDoubles\CurrentUserFake.cs。

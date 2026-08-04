@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using LogForesight;
 using LogForesight.Sql;
 using Xunit;
+using static LogForesight.Tests.TestData;
 
 namespace LogForesight.Tests;
 
@@ -209,20 +209,8 @@ public class SuppressionTests
         Assert.Contains(alerts, a => a.Contains("頻率上升"));
     }
 
-    private static LogIssueSignature Sig(string logName, string source, int eventId, int count, IssueSeverity severity,
-        IssueCategory category = IssueCategory.Other)
-        => new()
-        {
-            LogName = logName,
-            Source = source,
-            EventId = eventId,
-            EntryType = EventLogEntryType.Error,
-            Count = count,
-            Severity = severity,
-            Category = category,
-            FirstSeen = "00:00",
-            LastSeen = "23:59"
-        };
+    // Sig(...) 已搬到 TestDoubles\TestData.cs（與 TrendAnalyzerTests 原本逐字相同，已合併；
+    // CorrelationAnalyzerTests 原本多帶的 keyDetails 參數也一併合併進共用版本）。
 
     private static DailyAnalysisRecord HistoryDay(DateTime date, string source, int eventId, int count, IssueSeverity severity,
         string logName = "System", IssueCategory category = IssueCategory.Other)

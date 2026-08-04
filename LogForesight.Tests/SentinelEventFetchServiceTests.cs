@@ -14,7 +14,7 @@ public class SentinelEventFetchServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fixture = new();
     private readonly NetiqOptionsStore _optionsStore;
-    private readonly NetiqHostServiceTests.FakeNetiqServerCatalog _catalog = new(Array.Empty<string>());
+    private readonly FakeNetiqServerCatalog _catalog = new(Array.Empty<string>());
     private readonly SentinelEventFetchService _service;
 
     public SentinelEventFetchServiceTests()

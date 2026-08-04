@@ -38,33 +38,41 @@ public class RecordQueryServiceSearchTests : IDisposable
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         _service = new RecordQueryService(
-            repository,
-            new NullReportReader(),
-            _hosts,
-            _users,
-            new FakeHostGroupStore(),
-            visibility,
-            _handlingStore,
-            _issueHandlingStore,
-            _caseStore,
-            new FakeNoiseMarkStore(),
-            new FakeRuleStore(),
-            FakeCurrentUser.WithCapabilities(),
-            _settingsStore);
+            repository: repository,
+            reports: new NullReportReader(),
+            hosts: _hosts,
+            users: _users,
+            hostGroups: new FakeHostGroupStore(),
+            visibility: visibility,
+            handlings: _handlingStore,
+            issueHandlings: _issueHandlingStore,
+            cases: _caseStore,
+            noiseMarks: new FakeNoiseMarkStore(),
+            rules: new FakeRuleStore(),
+            currentUser: FakeCurrentUser.WithCapabilities(),
+            settings: _settingsStore);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到
         var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
         _handlingService = new HandlingService(
-            _handlingStore, _issueHandlingStore, _caseStore, caseCoordinator, new FakeNoiseMarkStore(),
-            repository, _hosts, _users, visibility,
-            FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
-            new RecordingAuditService(), _settingsStore);
+            store: _handlingStore,
+            issueStore: _issueHandlingStore,
+            cases: _caseStore,
+            caseCoordinator: caseCoordinator,
+            noiseMarks: new FakeNoiseMarkStore(),
+            repository: repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: visibility,
+            currentUser: FakeCurrentUser.WithCapabilities(Capability.Assign, Capability.Handle),
+            audit: new RecordingAuditService(),
+            settings: _settingsStore);
     }
 
     public void Dispose() => _fixture.Dispose();
 
-    private WebHost AddHost(string name) => _hosts.Upsert(new WebHost { HostName = name });
+    private WebHost AddHost(string name) => TestData.AddHost(_hosts, name);
 
     private void AddRecord(WebHost host, DateTime date, string risk, bool correlation = false, params LogIssueSignature[] issues) =>
         _recordStore.Append(new DailyAnalysisRecord
