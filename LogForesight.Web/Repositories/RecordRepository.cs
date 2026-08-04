@@ -111,8 +111,8 @@ public class RecordRepository : IRecordRepository
 
     /// <summary>
     /// 問題嚴重度可見性（docs/archive/HISTORY.md S1）：SiteHidden 模式下，未勾選層級的
-    /// 問題從 TopIssues 整批排除——這是全站唯一的過濾點。Dashboard／Report／RecordQueryService
-    /// 的統計、下鑽、AI context（經 GetDetail／ClusterSignatures）全部繼承同一份結果，
+    /// 問題從 TopIssues 整批排除——這是全站唯一的過濾點。Dashboard／Report／RecordListQueryService／
+    /// RecordDetailQueryService 的統計、下鑽、AI context（經 GetDetail／ClusterSignatures）全部繼承同一份結果，
     /// 不必（也不該）各自重覆判斷 SeverityDisplayMode——散落判斷正是先前查詢頁分組視圖／
     /// 簽章查詢漏掉這道過濾的原因。DefaultHidden 模式回 null，此處不過濾，交由前端顯示層決定。
     /// 同一個咽喉點也是舊資料嚴重度正規化的落點（見 NormalizeLegacySeverity）——正規化必須

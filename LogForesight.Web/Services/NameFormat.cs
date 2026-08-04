@@ -5,7 +5,7 @@ namespace LogForesight.Web.Services;
 /// <summary>
 /// 名稱清單顯示的共用小工具（原本各 Service 各自寫一份逐字相同的版本）。
 ///
-/// <see cref="HandlingService"/> 的「未指定」與匯入器（UserCsvImporter／HostCsvImporter）
+/// <see cref="DayHandlingCommandService"/> 的「未指定」與匯入器（UserCsvImporter／HostCsvImporter）
 /// 的「(未知:{id})」是刻意不同的文字，不在此統一——那是各自情境的既有措辭，不是疏漏。
 /// </summary>
 internal static class NameFormat

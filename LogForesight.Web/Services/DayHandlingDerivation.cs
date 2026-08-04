@@ -64,7 +64,7 @@ public static class DayHandlingDerivation
     /// 問題層級是否有已逾期的「處理中」或「觀察到期」標記。逾期語意的問題層來源，與日層級的
     /// <see cref="RecordHandling.DueDate"/> 並列（兩者任一逾期，該風險日即算逾期）——
     /// 規則同樣單點定義在這裡，清單篩選、清單標記與儀表板逾期計數共用。
-    /// 只看 in_progress／observing：其他狀態不會存 DueDate（HandlingService.ApplyIssueStatus
+    /// 只看 in_progress／observing：其他狀態不會存 DueDate（IssueHandlingCommandService.ApplyIssueStatus
     /// 落盤時已清空），結案類就算殘留日期也不構成「逾期未處理」。觀察到期
     /// （docs/archive/FEEDBACK-8-PLAN.md #4）刻意併入同一個逾期通道——「觀察期滿問題仍在」本質上
     /// 就是需要重新處理，不必另開一種告警機制。

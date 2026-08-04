@@ -103,7 +103,7 @@ public class ReportSummaryDto
     public int TotalHosts { get; set; }
 
     /// <summary>期間內高＋中風險日的處理彙總（docs/archive/HISTORY.md #6）——與儀表板待辦
-    /// 同一套 HandlingService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
+    /// 同一套 HandlingHistoryQueryService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
     public HandlingTodoDto Handling { get; set; } = new();
 }
 

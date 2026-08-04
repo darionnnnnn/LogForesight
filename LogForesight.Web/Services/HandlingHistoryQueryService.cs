@@ -79,7 +79,7 @@ public class HandlingHistoryQueryService
         var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
         if (actionable.Count == 0) return new HandlingTodoDto();
 
-        // 紀錄 → 現行主機名稱：handling 以現行名稱為鍵（與 RecordQueryService 同一套規則）。
+        // 紀錄 → 現行主機名稱：handling 以現行名稱為鍵（與 RecordListQueryService 同一套規則）。
         // 可見範圍不在這裡過濾——傳入的紀錄已經過 RecordRepository 的可見範圍交集
         var lookup = new HostLookup(_hosts.GetAll());
         string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;

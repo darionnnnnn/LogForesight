@@ -107,7 +107,7 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 狀態同步（§0.4-B）：Applied=false 代表該問題目前沒有進行中案件，呼叫端（HandlingService.
+    /// 狀態同步（§0.4-B）：Applied=false 代表該問題目前沒有進行中案件，呼叫端（IssueHandlingCommandService.
     /// ApplyIssueStatus）應維持既有的「只寫觸發日」行為不變。Applied=true 時**這裡取得觸發日
     /// 寫入的完整主導權**——呼叫端不應該再自己寫 IssueHandling／歷程，包含觸發日本身：
     /// 觸發日與其餘合格日一起走同一份 <see cref="ResolveEligibleDays"/>，只是動作名稱不同

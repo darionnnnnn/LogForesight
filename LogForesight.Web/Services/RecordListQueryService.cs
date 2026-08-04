@@ -475,7 +475,7 @@ public class RecordListQueryService
     }
 
     /// <summary>
-    /// 紀錄對應的**現行**主機名稱——處理狀態以現行名稱為鍵（HandlingService 一律由 hostId 解析），
+    /// 紀錄對應的**現行**主機名稱——處理狀態以現行名稱為鍵（DayHandlingCommandService 一律由 hostId 解析），
     /// 所以合併前寫在舊識別下的紀錄要用存活主機的名稱去找，否則它們的處理狀態會全部看起來像未處理。
     /// 主機列查無對應時退回紀錄自帶的名稱快照。
     /// </summary>
