@@ -489,6 +489,32 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(handler.UserId, groupHandler.HandlerId);   // 前端靠 Id 把姓名連到工作頁
     }
 
+    /// <summary>
+    /// docs/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
+    /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
+    /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
+    {
+        var host = AddHost("HOST-A");
+        var lowIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "noisy", EventId = 111,
+            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+        };
+        AddRecord(host, DateTime.Today, "高", issues: new[] { lowIssue });
+
+        var filtered = _service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { "高", "中" } });
+        Assert.Empty(filtered.Items);
+
+        var withLow = _service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { "高", "中", "低" } });
+        Assert.Single(withLow.Items);
+
+        var unfiltered = _service.SearchByIssue(new RecordSearchRequest());
+        Assert.Single(unfiltered.Items);
+    }
+
     [Fact]
     public void SearchByIssue_依主機數排序()
     {
