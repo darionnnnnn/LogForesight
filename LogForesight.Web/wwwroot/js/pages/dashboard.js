@@ -248,7 +248,7 @@ function renderCategories(data) {
                 <div class="small"></div>
             </div>`;
 
-        card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? '#adb5bd';
+        card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
         card.querySelector('.lf-stat__value').textContent = formatNumber(category.issueCount);
         card.querySelector('.lf-stat__label').textContent = `個問題．${category.affectedHosts} 台主機`;

@@ -22,31 +22,31 @@ function token(name, fallback) {
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
 export function categoryColors() {
     return {
-        Storage: token('--lf-cat-storage', '#1e40af'),
-        Hardware: token('--lf-cat-hardware', '#6f42c1'),
-        Security: token('--lf-cat-security', '#dc3545'),
-        Service: token('--lf-cat-service', '#fd7e14'),
-        Backup: token('--lf-cat-backup', '#20c997'),
-        Config: token('--lf-cat-config', '#6c757d'),
-        Resource: token('--lf-cat-resource', '#d63384'),
-        Other: token('--lf-cat-other', '#adb5bd')
+        Storage: token('--lf-cat-storage', '#1d4ed8'),
+        Hardware: token('--lf-cat-hardware', '#7c3aed'),
+        Security: token('--lf-cat-security', '#dc2626'),
+        Service: token('--lf-cat-service', '#ea580c'),
+        Backup: token('--lf-cat-backup', '#0d9488'),
+        Config: token('--lf-cat-config', '#64748b'),
+        Resource: token('--lf-cat-resource', '#db2777'),
+        Other: token('--lf-cat-other', '#94a3b8')
     };
 }
 
 /** docs/archive/HISTORY.md #1（B1 三級化）：Critical 收斂進 High，色盤剩三級 */
 export function severityColors() {
     return {
-        High: token('--lf-severity-high', '#fd7e14'),
-        Medium: token('--lf-severity-medium', '#0dcaf0'),
-        Low: token('--lf-severity-low', '#adb5bd')
+        High: token('--lf-severity-high', '#ea580c'),
+        Medium: token('--lf-severity-medium', '#0284c7'),
+        Low: token('--lf-severity-low', '#94a3b8')
     };
 }
 
 export function riskColors() {
     return {
-        高: token('--lf-risk-high', '#dc3545'),
-        中: token('--lf-risk-mid', '#ffc107'),
-        低: token('--lf-risk-low', '#6c757d')
+        高: token('--lf-risk-high', '#dc2626'),
+        中: token('--lf-risk-mid', '#d97706'),
+        低: token('--lf-risk-low', '#64748b')
     };
 }
 

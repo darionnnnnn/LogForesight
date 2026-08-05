@@ -27,7 +27,9 @@
 
 ### 中性色階與版面
 
-- `--lf-gray-50` ~ `--lf-gray-900`：**不變**（既有 cool slate 即 Tailwind slate，與新藍同溫層）。
+- `--lf-gray-50` ~ `--lf-gray-900`：除 `--lf-gray-200` 由 `#e5e9f0` 對齊為 slate-200 `#e2e8f0`
+  （與 `--lf-border` 同值，消除「幾乎一樣的兩個 200」）外**皆不變**（既有 cool slate 即
+  Tailwind slate，與新藍同溫層）。
 - 版面色：
 
 | token | v1 | v2 | 說明 |

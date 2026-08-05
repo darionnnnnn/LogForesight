@@ -175,6 +175,13 @@
     --lf-dark-soft: #e2e6ee;
     --lf-dark-text: #334155;
 
+    /* 主機時間軸熱圖的輔助格色（host-detail.js cellColor/LEGEND 讀取）：
+       低風險/涵蓋不完整/無紀錄。比 -soft 系再深一階，熱圖小格才辨識得出彼此差別；
+       色相對齊 success 綠/warning 琥珀/gray-200 */
+    --lf-timeline-low: #bbe7c9;
+    --lf-timeline-gap: #f6dca6;
+    --lf-timeline-none: #e2e8f0;
+
     /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
     --lf-cat-storage: #1d4ed8;
     --lf-cat-hardware: #7c3aed;
@@ -860,7 +867,7 @@ a.lf-stat:hover .lf-card,
 .lf-badge--danger { background: var(--lf-danger-soft); color: var(--lf-danger-text); border-color: #f6cccc; }
 .lf-badge--warning { background: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: #f6dca6; }
 .lf-badge--success { background: var(--lf-success-soft); color: var(--lf-success-text); border-color: #bbe7c9; }
-.lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #b9e4ee; }
+.lf-badge--info { background: var(--lf-info-soft); color: var(--lf-info-text); border-color: #bae6fd; }
 .lf-badge--primary { background: var(--lf-primary-soft); color: var(--lf-primary-text); border-color: var(--lf-primary-soft-border); }
 .lf-badge--neutral,
 .lf-badge--secondary,
@@ -1143,6 +1150,8 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-3);
     border-bottom-color: var(--lf-border);
     vertical-align: middle;
+    /* 數字欄上下列對齊（DESIGN-SYSTEM.md §3）：等寬數字對純文字欄無影響 */
+    font-variant-numeric: tabular-nums;
 }
 
 .table > tbody > tr:last-child > td { border-bottom: none; }
@@ -1372,7 +1381,8 @@ a.lf-stat:hover .lf-card,
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #2a2f52 55%, var(--lf-primary-dark) 130%);
+    /* 中間色跟隨 v2 海軍藍→企業藍的過渡（介於 --lf-sidebar-bg 與 --lf-primary-dark 之間） */
+    background: linear-gradient(135deg, var(--lf-sidebar-bg) 0%, #16294f 55%, var(--lf-primary-dark) 130%);
     padding: var(--lf-space-4);
 }
 

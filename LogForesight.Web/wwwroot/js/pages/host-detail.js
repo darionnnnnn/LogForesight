@@ -18,9 +18,9 @@ const hostUpdateModal = new bootstrap.Modal(document.getElementById('host-update
 const LEGEND = [
     { key: 'high', label: '高風險', color: 'var(--lf-risk-high)' },
     { key: 'mid', label: '中風險', color: 'var(--lf-risk-mid)' },
-    { key: 'low', label: '低風險', color: '#c8e6c9' },
-    { key: 'gap', label: '涵蓋不完整', color: '#ffe0b2' },
-    { key: 'none', label: '無分析紀錄', color: '#e9ecef' }
+    { key: 'low', label: '低風險', color: 'var(--lf-timeline-low)' },
+    { key: 'gap', label: '涵蓋不完整', color: 'var(--lf-timeline-gap)' },
+    { key: 'none', label: '無分析紀錄', color: 'var(--lf-timeline-none)' }
 ];
 
 async function load() {
@@ -130,11 +130,11 @@ function renderTimeline(detail) {
 }
 
 function cellColor(day) {
-    if (!day.hasRecord) return '#e9ecef';
+    if (!day.hasRecord) return 'var(--lf-timeline-none)';
     if (day.riskLevel === '高') return 'var(--lf-risk-high)';
     if (day.riskLevel === '中') return 'var(--lf-risk-mid)';
-    if (day.hasCoverageGap) return '#ffe0b2';
-    return '#c8e6c9';
+    if (day.hasCoverageGap) return 'var(--lf-timeline-gap)';
+    return 'var(--lf-timeline-low)';
 }
 
 function renderLegend() {

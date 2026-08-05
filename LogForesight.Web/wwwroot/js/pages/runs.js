@@ -12,14 +12,18 @@ import {
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
+/* 色值對齊 site.css 語意 token（§8.2 原則 3：同一語意全站同色）——圖例色塊/狀態字
+   是 style 直塗、吃不到 CSS class，故以字面值對齊：success=--lf-success、
+   warning=--lf-warning、failed=--lf-danger、stopped=--lf-severity-high、
+   running=--lf-primary、stuck=--lf-cat-hardware、none=--lf-gray-200 */
 const STATUS_META = {
-    success: { label: '成功', color: '#198754' },
-    warning: { label: '有警告', color: '#ffc107' },
-    failed: { label: '失敗', color: '#dc3545' },
-    stopped: { label: '已停止', color: '#fd7e14' },   // 優雅停止（手動或窗口結束）——不是失敗
+    success: { label: '成功', color: '#16a34a' },
+    warning: { label: '有警告', color: '#d97706' },
+    failed: { label: '失敗', color: '#dc2626' },
+    stopped: { label: '已停止', color: '#ea580c' },   // 優雅停止（手動或窗口結束）——不是失敗
     running: { label: '執行中', color: '#1e40af' },
-    stuck: { label: '異常中斷', color: '#6f42c1' },
-    none: { label: '未執行', color: '#e9ecef' }
+    stuck: { label: '異常中斷', color: '#7c3aed' },
+    none: { label: '未執行', color: '#e2e8f0' }
 };
 
 let currentDays = 14;
