@@ -338,6 +338,11 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 - **圖示資產白名單**：Bootstrap Icons（MIT，2026-07-22 加入）——**僅手動複製約 24 個 symbol**
   到 `wwwroot/img/icons.svg` 單一 sprite，屬純靜態 SVG 資產、**無任何執行程式碼**、零外部請求、
   不引入字型檔，故不受上面「前端套件」的執行風險限制；用法見 §8.2「圖示」。
+- **字型資產白名單**（2026-08-05 v2 加入，見 docs/DESIGN-SYSTEM.md §3）：Fira Sans／Fira Code
+  （SIL OFL，Mozilla 出品）——**self-host 的 latin subset woff2**（`wwwroot/fonts/`，共 5 檔約
+  134KB），屬純靜態字型資產、零外部請求、**不透過 CDN／Google Fonts**（違反上面的無外部請求原則）。
+  拉丁字由 `@font-face` + `unicode-range` 接管，**中文一律走系統字 fallback**（微軟正黑）——
+  不引入 MB 級中文 webfont，維持零依賴精神。
 
 ### 8.2 設計系統（Bootstrap 為基底、功能取向的自訂外觀）
 
@@ -345,16 +350,20 @@ Bootstrap 提供柵格、表單元件與可及性行為；**頁面外觀不受�
 設計目標只有一個：**維運人員打開頁面 3 秒內看到最該看的東西**，美化是為這個目標服務。
 
 **設計 token（`site.css` 的 `:root` 自訂變數，全站樣式的唯一取值來源）**：
+具體取值與 v1→v2 對照一律查 **docs/DESIGN-SYSTEM.md**，本節只記原則。
 
 ```css
 :root {
-  --lf-primary: #4f46e5;          /* 主色＝靛藍（indigo-600），見下方 retheme 說明 */
-  --lf-sidebar-bg: #161d2e;       /* 深藍灰側欄 */
-  --lf-content-bg: #f6f7fb;       /* 淺灰內容區 */
+  --lf-primary: #1e40af;          /* v2 主色＝企業藍（blue-800），見下方 retheme 說明 */
+  --lf-accent: #d97706;           /* v2 琥珀強調（KPI 亮點／需注意），剋制使用 */
+  --lf-sidebar-bg: #0f1d3a;       /* 深海軍藍側欄（與主色同族） */
+  --lf-content-bg: #f8fafc;       /* 淺灰內容區（slate-50） */
   --lf-card-bg: #ffffff;          /* 白卡片 */
+  --lf-font-family: "Fira Sans", …;   /* 拉丁自架 Fira，中文系統字 fallback */
+  --lf-font-mono: "Fira Code", …;     /* 技術值等寬字（事件ID/主機名/路徑） */
   /* 字級（--lf-font-size-xs~2xl/stat）、間距（--lf-space-1~6）、圓角
-     （--lf-radius-sm/base/lg/pill）、陰影（--lf-shadow-xs/sm/md/lg）、focus ring 皆成 token */
-  --lf-risk-high: #dc2626;  --lf-risk-mid: #f59e0b;  --lf-risk-low: #64748b;
+     （--lf-radius-sm/base/lg/pill，v2 收緊一階）、陰影（--lf-shadow-xs~lg）、focus ring 皆成 token */
+  --lf-risk-high: #dc2626;  --lf-risk-mid: #d97706;  --lf-risk-low: #64748b;
   /* 每個語意色另備 -soft companion（如 --lf-risk-mid-soft）供淡色徽章使用 */
   /* 圖表分類色盤（8 類風險類型固定對應，見 §8.3） */
 }
@@ -363,13 +372,21 @@ Bootstrap 提供柵格、表單元件與可及性行為；**頁面外觀不受�
 元件樣式只引用 token、不散落 magic value——調整外觀改一處全站生效，這是「不用標準
 Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
+**v2 視覺改版（2026-08-05，依 ui-ux-pro-max-skill 檢索產生，見 DESIGN-SYSTEM.md）**：
+風格定位為 **Data-Dense Dashboard × Swiss 極簡**；主色靛藍→企業藍 `#1e40af` + 琥珀強調，
+導入自架 Fira 字型，圓角收緊一階，並補齊 `prefers-reduced-motion` 支援。中性階與語意色
+維持 slate/紅琥珀系不變，圖表 8 類固定色盤僅 storage 跟隨主色換族。
+
 **Bootstrap 元件級變數 retheme（2026-07-22 決策，取代舊版「不覆寫 --bs-primary」）**：
-舊版讓 `--lf-primary` 維持 Bootstrap 預設藍以求升級零成本，代價是自訂靛藍與 Bootstrap 藍
+舊版讓 `--lf-primary` 維持 Bootstrap 預設藍以求升級零成本，代價是自訂色與 Bootstrap 藍
 並存、外觀不一致。現改為透過 Bootstrap 5.3 的**元件級 CSS 變數**（如 `.btn-primary` 的
 `--bs-btn-bg`、`.pagination` 的 `--bs-pagination-active-bg`、`--bs-link-color` 等）把按鈕/表單/
-分頁/頁籤統一 retheme 成靛藍——**只覆寫 CSS 變數、不改 Bootstrap 原始碼**，升級 Bootstrap
+分頁/頁籤統一 retheme 成主色——**只覆寫 CSS 變數、不改 Bootstrap 原始碼**，升級 Bootstrap
 仍零成本，且全站外觀一致。`.nav-tabs` 一併改為**底線式頁籤**（無外框），三個用 `nav-tabs`
 的頁面零 markup 變更即生效。
+（2026-08-05 修：vendored Bootstrap 原為 5.1.0，元件級變數是 5.3 才引入，故上述 retheme
+規則長期失效、主按鈕/分頁/連結實際仍是 Bootstrap 預設藍；已升級 vendored dist 至 5.3.8，
+純靜態檔置換、無 build step，retheme 全數生效。）
 
 **共用篩選工具列與 chip（2026-07-23 Phase D-0，視覺基盤）**：問題查詢／規則維護／主機／
 使用者頁的搜尋＋快速篩選原本各頁各自手排 flex 列與裸 `btn-group`，間距配色零散。改為一組
