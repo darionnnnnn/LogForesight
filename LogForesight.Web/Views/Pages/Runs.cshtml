@@ -80,20 +80,9 @@
 <section class="lf-card mb-3">
     <div class="lf-card__header">
         <h2 class="lf-card__title">執行總表</h2>
-        <span class="text-muted small">每日一列；點日期看該天每台主機的狀態</span>
+        <span class="text-muted small">每日一列；點列在該日下方展開每台主機的狀態</span>
     </div>
     <div class="lf-card__body p-0" id="run-summary"></div>
-</section>
-
-<section class="lf-card d-none mb-3" id="run-day-detail-card">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title" id="run-day-detail-title">當日主機狀態</h2>
-        <button type="button" class="btn btn-sm btn-outline-secondary" id="run-day-detail-close">關閉</button>
-    </div>
-    <div class="lf-card__body p-0" id="run-day-detail-list"></div>
-    <div class="lf-card__body pt-0">
-        <nav id="run-day-detail-pager"></nav>
-    </div>
 </section>
 
 <section class="lf-card mb-3">
@@ -102,24 +91,6 @@
         <span class="text-muted small">同一錯誤在幾台主機出現——判斷是個案還是通案</span>
     </div>
     <div class="lf-card__body p-0" id="run-errors"></div>
-</section>
-
-<section class="lf-card d-none" id="run-detail-card">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title" id="run-detail-title">執行詳情</h2>
-        <div class="d-flex gap-2 align-items-center">
-            <select class="form-select form-select-sm" id="log-level-filter" style="width: 130px;">
-                <option value="">全部等級</option>
-                <option value="Warn">Warn 以上</option>
-                <option value="Error">Error 以上</option>
-            </select>
-            <button type="button" class="btn btn-sm btn-outline-secondary" id="run-detail-close">關閉</button>
-        </div>
-    </div>
-    <div class="lf-card__body">
-        <div id="run-detail-stats" class="row g-3 mb-3"></div>
-        <div id="run-detail-logs"></div>
-    </div>
 </section>
 
 <div class="modal fade" id="run-now-modal" tabindex="-1">
@@ -148,7 +119,7 @@
                     <div class="mb-3">
                         <label for="run-now-backfill" class="form-label">回補天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="只影響這次執行，不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。">
+                                data-bs-content="僅影響 NetIQ 主機的回補窗口，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。本機主機每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                         </button>
                         <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="14" style="max-width: 120px;" />

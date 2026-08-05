@@ -57,9 +57,9 @@ public class RunMonitorService
         var from = DateTime.Today.AddDays(-days + 1);
         var hosts = AllHosts(runs);
 
-        // NetIQ 主機的「執行日」對應「前一天的分析紀錄是否存在」（見 StatusOf），
-        // 窗口因此整體往前多帶一天
-        var netiqDates = _records.ListHostDates(from.AddDays(-1), DateTime.Today.AddDays(-1));
+        // 「執行日 D」對應「D-1 的分析紀錄是否存在」（NetIQ 與本機回補共用同一套對應，見 StatusOf），
+        // 窗口因此整體往前多帶一天。涵蓋全部主機（不只 NetIQ）——本機主機的回補 fallback 也要用
+        var recordDates = _records.ListHostDates(from.AddDays(-1), DateTime.Today.AddDays(-1));
 
         var summaries = new List<RunDaySummaryDto>();
         for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
@@ -71,11 +71,12 @@ public class RunMonitorService
             foreach (var host in hosts)
             {
                 var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
-                var status = StatusOf(host, dayRuns, date, netiqDates);
+                var status = StatusOf(host, dayRuns, date, recordDates);
 
                 switch (status)
                 {
                     case "success": summary.SuccessCount++; break;
+                    case "backfilled": summary.BackfilledCount++; break;
                     case "warning": summary.WarningCount++; break;
                     case "failed": summary.FailedCount++; failedHosts.Add(host.HostName); break;
                     case "stuck": summary.StuckCount++; failedHosts.Add(host.HostName); break;
@@ -102,14 +103,14 @@ public class RunMonitorService
         var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
         var dateStr = date.ToString("yyyy-MM-dd");
         var hosts = AllHosts(runs);
-        var netiqDates = _records.ListHostDates(date.AddDays(-1), date.AddDays(-1));
+        var recordDates = _records.ListHostDates(date.AddDays(-1), date.AddDays(-1));
 
         return hosts.Select(host =>
         {
             var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
             var cell = host.Source == "netiq"
-                ? NetiqCell(host, date, netiqDates)
-                : BuildCell(dateStr, dayRuns);
+                ? NetiqCell(host, date, recordDates)
+                : LocalCell(host, dateStr, dayRuns, date, recordDates);
             return new RunDayHostStatusDto
             {
                 HostName = host.HostName,
@@ -131,14 +132,39 @@ public class RunMonitorService
     /// （管線在晚上跑，回補的是昨天的缺漏日，見 <c>NetiqPipelineService</c>）。
     /// 只能判斷 success／none 兩態——沒有個別失敗/警告訊號可用：分析失敗時管線刻意不寫入紀錄，
     /// 下次自動重試（與「沒跑」在資料面完全等價，這是誠實的合併，不是遺漏）。</summary>
-    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
-        host.Source == "netiq" ? NetiqStatus(host, date, netiqDates) : StatusOf(dayRuns);
+    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
+        host.Source == "netiq" ? NetiqStatus(host, date, recordDates) : LocalStatus(host, dayRuns, date, recordDates);
 
-    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
-        netiqDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "success" : "none";
+    private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
+        recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "success" : "none";
 
-    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> netiqDates) =>
-        new() { Status = NetiqStatus(host, date, netiqDates) };
+    private static RunDayHostStatusDto NetiqCell(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
+        new() { Status = NetiqStatus(host, date, recordDates) };
+
+    /// <summary>
+    /// 本機主機的執行日狀態（§3）：有 BatchRun 時照原本的 exit code／錯誤計數判定；
+    /// 當天沒有 BatchRun 時，改看「D-1 的分析紀錄是否存在」——立即執行回補會把缺漏日的分析
+    /// 紀錄補上（執行日 D 分析的是 D-1，與 NetIQ 同一套日期對應），但 BatchRun 只登記在觸發當天，
+    /// 於是被回補的其他日期原本會誤顯示「未執行」。存在則標「backfilled」（已回補），不冒充
+    /// success——「當天真的有跑」與「後來補的資料」要分得出來，符合本頁誠實原則。
+    /// </summary>
+    private static string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates)
+    {
+        if (dayRuns.Count > 0) return StatusOf(dayRuns);
+        return recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "backfilled" : "none";
+    }
+
+    private static RunDayHostStatusDto LocalCell(
+        HostRef host, string dateStr, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates)
+    {
+        // 有 BatchRun：完整 cell（含 runId／計數，供「檢視執行」）。沒有：回補 fallback 只有狀態，
+        // 沒有可連到的單次執行紀錄（回補的執行紀錄掛在觸發當天那台，不是這個日期格）
+        if (dayRuns.Count > 0) return BuildCell(dateStr, dayRuns);
+        return new RunDayHostStatusDto
+        {
+            Status = recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "backfilled" : "none"
+        };
+    }
 
     private sealed record HostRef(string HostName, long HostId, string Source);
 

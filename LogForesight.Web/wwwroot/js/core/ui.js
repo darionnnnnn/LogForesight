@@ -365,7 +365,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, sort, onSort }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -410,14 +410,17 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             });
         }
 
+        // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
+        // docs/FEEDBACK-9-PLAN.md §2）——大資料量（14 天×2000 台的執行明細）不能進頁全抓。
         const detail = rowDetail ? rowDetail(row) : null;
+        const expandable = !!detail || !!onRowExpand;
 
         for (const [index, col] of columns.entries()) {
             const td = document.createElement('td');
             if (col.className) td.className = col.className;
 
             // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示
-            if (detail && index === 0) {
+            if (expandable && index === 0) {
                 const caret = document.createElement('span');
                 caret.className = 'lf-row-caret';
                 caret.appendChild(icon('chevron-down'));
@@ -438,20 +441,26 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         }
         tbody.appendChild(tr);
 
-        if (detail) {
+        if (expandable) {
             const detailRow = document.createElement('tr');
             detailRow.className = 'lf-row-detail d-none';
             const cell = document.createElement('td');
             cell.colSpan = columns.length;
-            cell.appendChild(detail);
+            if (detail) cell.appendChild(detail);
             detailRow.appendChild(cell);
             tbody.appendChild(detailRow);
 
+            let populated = !!detail;   // eager 版本一開始就已填好；lazy 版本首次展開才填
             tr.classList.add('lf-row-expandable');
             tr.addEventListener('click', event => {
                 if (event.target.closest('a, button')) return;
                 const open = detailRow.classList.toggle('d-none');
                 tr.classList.toggle('lf-row-open', !open);
+                // 首次展開才呼叫 onRowExpand 填內容（之後展開/收合重用同一份 DOM）
+                if (!open && !populated && onRowExpand) {
+                    populated = true;
+                    onRowExpand(row, cell);
+                }
             });
         }
     }

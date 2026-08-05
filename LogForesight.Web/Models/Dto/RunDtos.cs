@@ -11,6 +11,11 @@ public class RunDaySummaryDto
 
     public int TotalHosts { get; set; }
     public int SuccessCount { get; set; }
+
+    /// <summary>已回補（§3）：當天無 BatchRun，但事後回補的分析紀錄補上了這天。與 SuccessCount
+    /// 分開——「當天真的有跑」與「後來補的資料」是不同狀態，見 RunMonitorService.LocalStatus</summary>
+    public int BackfilledCount { get; set; }
+
     public int WarningCount { get; set; }
     public int FailedCount { get; set; }
     public int StuckCount { get; set; }
@@ -30,7 +35,7 @@ public class RunDayHostStatusDto
 {
     public string HostName { get; set; } = string.Empty;
 
-    /// <summary>success | warning | failed | stopped | running | stuck | none</summary>
+    /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none</summary>
     public string Status { get; set; } = string.Empty;
 
     public long? RunId { get; set; }
