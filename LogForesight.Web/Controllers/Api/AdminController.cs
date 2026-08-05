@@ -60,6 +60,11 @@ public class AdminController : ControllerBase
     public ApiResponse<List<UserDto>> GetUsers() =>
         ApiResponse<List<UserDto>>.Ok(_users.GetUsers());
 
+    /// <summary>使用者詳細（docs/archive/FEEDBACK-11-PLAN.md §3）：可見主機、能力、被指派歷程</summary>
+    [HttpGet("users/{userId:long}/detail")]
+    public ApiResponse<UserDetailDto> GetUserDetail(long userId) =>
+        ApiResponse<UserDetailDto>.Ok(_users.GetUserDetail(userId));
+
     [HttpPost("users")]
     public ApiResponse<UserDto> SaveUser([FromBody] SaveUserRequest request) =>
         ApiResponse<UserDto>.Ok(_users.SaveUser(request));

@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -24,6 +24,7 @@ async function load() {
     }
 
     renderLoading(document.getElementById('dashboard-categories'), 3);
+    renderLoading(document.getElementById('dashboard-issues'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-silent'), 2);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
@@ -39,6 +40,7 @@ async function load() {
     renderBanner(data);
     renderKpi(data, user, displaySettings);
     renderCategories(data);
+    renderTopIssues(data);
     renderHosts(data);
     renderSilentHosts(data);
     renderGroupRisk(data);
@@ -343,6 +345,29 @@ function severityBreakdown(category) {
         wrap.appendChild(badge);
     }
     return wrap;
+}
+
+/**
+ * 重點問題 Top 5（docs/archive/FEEDBACK-11-PLAN.md §8-1）：儀表板原本只有「類別」與「主機」兩個維度，
+ * 看不出「現在最該處理哪幾個問題」。點列下鑽問題查詢的**依問題**視角（帶 source＋eventId），
+ * 那裡有處理概況、指派與統一標記——這張卡只負責把注意力導過去。
+ */
+function renderTopIssues(data) {
+    renderTable(document.getElementById('dashboard-issues'), {
+        columns: [
+            { title: '問題', render: i => `${i.source} (${i.eventId})` },
+            { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
+            { title: '嚴重度', render: i => severityBadge(i.maxSeverity) },
+            { title: '主機數', className: 'text-end', render: i => formatNumber(i.hostCount) },
+            { title: '風險日數', className: 'text-end', render: i => formatNumber(i.dayCount) },
+            { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
+        ],
+        rows: data.topIssues,
+        // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
+        rowHref: i => `/records?view=issue&source=${encodeURIComponent(i.source)}&eventId=${i.eventId}` +
+                      `&from=${data.from}&to=${data.to}`,
+        empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
+    });
 }
 
 function renderHosts(data) {

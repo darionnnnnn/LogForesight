@@ -25,12 +25,45 @@ public class DashboardDto
     public List<DashboardCategoryDto> Categories { get; set; } = new();
     public List<DashboardHostDto> HostRanking { get; set; } = new();
 
+    /// <summary>
+    /// 重點問題 Top N（docs/archive/FEEDBACK-11-PLAN.md §8-1）：儀表板原本只有「類別」與「主機」
+    /// 兩個維度，看不出「現在最該處理的是哪幾個問題」——而問題是全站的第一視角（§8）。
+    /// 點列下鑽問題查詢的依問題視角（帶 source＋eventId）。
+    /// </summary>
+    public List<IssueRankingDto> TopIssues { get; set; } = new();
+
     /// <summary>未回報主機數（§5.4 D-4：計數卡＋下鑽，不再整表渲染逐台清單——
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
 
     /// <summary>依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽」是主要動線</summary>
     public List<DashboardGroupRiskDto> GroupRisk { get; set; } = new();
+}
+
+/// <summary>
+/// 問題排行的一列（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」
+/// 共用同一個投影（<c>RecordStatsBuilder.BuildIssueRanking</c>），兩邊的數字因此必然一致。
+///
+/// 刻意**不含處理狀態**：處理概況要逐問題查 handling 標記（依問題視角才做的事），
+/// 排行卡回答的是「哪幾個問題影響最大」；點進去的依問題視角就有完整的處理概況。
+/// </summary>
+public class IssueRankingDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>期間內這個問題出現過的最高嚴重度</summary>
+    public string MaxSeverity { get; set; } = string.Empty;
+
+    /// <summary>出現過這個問題的相異主機數</summary>
+    public int HostCount { get; set; }
+
+    /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
+    public int DayCount { get; set; }
+
+    /// <summary>全部主機加總的事件次數</summary>
+    public int TotalCount { get; set; }
 }
 
 public class DashboardCategoryDto
@@ -102,6 +135,19 @@ public class ReportSummaryDto
     /// <summary>Top 10 以外主機的合計（高＋中風險日），供「其他 N 台」彙總條；無其他主機時為 null</summary>
     public HostRankingOthersDto? Others { get; set; }
 
+    /// <summary>
+    /// 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8-2）：與主機排行**同一張卡的另一個模式**
+    /// （卡 header 的「主機｜問題」切換），不另開第五張卡——報表一頁化的高度是由外而內
+    /// 分配的（docs/archive/FEEDBACK-10-PLAN.md §5），多一張常駐卡會讓整組高度重算。
+    /// </summary>
+    public List<IssueRankingDto> IssueRanking { get; set; } = new();
+
+    /// <summary>本期出現過的相異問題總數——Top 10 之外還有多少個，畫面要說得出來</summary>
+    public int RankedIssueCount { get; set; }
+
+    /// <summary>Top 10 以外問題的合計；無其他問題時為 null</summary>
+    public IssueRankingOthersDto? IssueOthers { get; set; }
+
     /// <summary>可見且啟用的主機總數（docs/archive/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
     /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>
     public int TotalHosts { get; set; }
@@ -117,6 +163,14 @@ public class HostRankingOthersDto
     public int HostCount { get; set; }
     public int HighRiskDays { get; set; }
     public int MediumRiskDays { get; set; }
+}
+
+/// <summary>問題排行 Top 10 之外的彙總（§8-2，同主機排行的理由：尾端不隱形）</summary>
+public class IssueRankingOthersDto
+{
+    public int IssueCount { get; set; }
+    public int TotalCount { get; set; }
+    public int HostCount { get; set; }
 }
 
 public class ReportKpiDto

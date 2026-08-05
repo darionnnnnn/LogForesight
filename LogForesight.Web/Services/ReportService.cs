@@ -37,6 +37,7 @@ public class ReportService
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
+        var issueRanked = RecordStatsBuilder.BuildIssueRanking(records);
 
         var dto = new ReportSummaryDto
         {
@@ -49,6 +50,11 @@ public class ReportService
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
+            // 問題排行（§8-2）：與主機排行同一張卡的另一個模式，同一份聚合投影（儀表板也用它），
+            // 兩頁的數字因此必然一致。上限與主機排行同 10 筆＋「其他」彙總
+            IssueRanking = issueRanked.Take(HostRankingLimit).ToList(),
+            RankedIssueCount = issueRanked.Count,
+            IssueOthers = BuildIssueOthers(issueRanked),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = _visibility.GetVisibleHosts().Count,
@@ -71,6 +77,20 @@ public class ReportService
             HostCount = others.Count,
             HighRiskDays = others.Sum(h => h.HighRiskDays),
             MediumRiskDays = others.Sum(h => h.MediumRiskDays)
+        };
+    }
+
+    /// <summary>問題排行的「其他 N 個問題」彙總（§8-2）：尾端問題不隱形，同主機排行的作法</summary>
+    private static IssueRankingOthersDto? BuildIssueOthers(List<IssueRankingDto> ranked)
+    {
+        var others = ranked.Skip(HostRankingLimit).ToList();
+        if (others.Count == 0) return null;
+
+        return new IssueRankingOthersDto
+        {
+            IssueCount = others.Count,
+            TotalCount = others.Sum(i => i.TotalCount),
+            HostCount = others.Sum(i => i.HostCount)
         };
     }
 

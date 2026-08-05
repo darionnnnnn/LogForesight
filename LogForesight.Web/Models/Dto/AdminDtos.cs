@@ -13,6 +13,84 @@ public class UserDto
 
     /// <summary>群組名稱（清單畫面直接顯示，前端不必自己 join）</summary>
     public List<string> GroupNames { get; set; } = new();
+
+    /// <summary>最近一次登入時間；null＝從未登入（docs/archive/FEEDBACK-11-PLAN.md §3）</summary>
+    public DateTime? LastLoginAt { get; set; }
+}
+
+/// <summary>
+/// 使用者詳細（docs/archive/FEEDBACK-11-PLAN.md §3）：管理視角的單一使用者全貌。
+/// 工作負載（進行中案件／被指派風險日）**不在這裡**——前端另打既有的
+/// `api/handlers/{id}/workload`，不重複第二套投影規則。
+/// </summary>
+public class UserDetailDto
+{
+    public UserDto User { get; set; } = new();
+
+    /// <summary>所屬群組（含角色，用來說明「他能用哪些功能」）</summary>
+    public List<UserGroupDto> Groups { get; set; } = new();
+
+    /// <summary>
+    /// 由所屬群組角色推導的能力字串；**含負責人隱含能力**（§2b）——
+    /// 「他為什麼能標記處理狀態」在這裡看得到答案。
+    /// </summary>
+    public List<string> Capabilities { get; set; } = new();
+
+    /// <summary>此人（不是檢視者）看得到的主機，含來源標示</summary>
+    public List<UserVisibleHostDto> VisibleHosts { get; set; } = new();
+
+    /// <summary>
+    /// 被指派歷程：以問題案件（<c>IssueCase</c>）為事實來源，新到舊。
+    /// **刻意不用稽核表反查**——稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
+    /// 誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現在這裡
+    /// （那次改派記在該主機的處理歷程 `case_reassign`）。
+    /// </summary>
+    public List<UserAssignmentHistoryDto> AssignmentHistory { get; set; } = new();
+}
+
+/// <summary>
+/// 此人看得到的一台主機。<see cref="ViaOwner"/>／<see cref="ViaGroup"/> 是「為什麼看得到」——
+/// 兩條路徑可同時成立（既是負責人、部門群組也被授權），因此不是二選一的列舉。
+/// </summary>
+public class UserVisibleHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string? IpAddress { get; set; }
+    public string? Os { get; set; }
+    public List<string> GroupNames { get; set; } = new();
+
+    /// <summary>經群組授權矩陣看得到</summary>
+    public bool ViaGroup { get; set; }
+
+    /// <summary>身為這台主機的負責人而看得到（§2b）</summary>
+    public bool ViaOwner { get; set; }
+}
+
+/// <summary>被指派歷程的一列（案件生命週期事件）</summary>
+public class UserAssignmentHistoryDto
+{
+    public string CaseId { get; set; } = string.Empty;
+    public long? HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string IssueLabel { get; set; } = string.Empty;
+
+    /// <summary>案件目前狀態（含結案類）</summary>
+    public string Status { get; set; } = string.Empty;
+    public string StatusText { get; set; } = string.Empty;
+
+    /// <summary>true＝案件已結案；false＝仍在此人名下進行中</summary>
+    public bool Closed { get; set; }
+
+    /// <summary>建案時間與建案者帳號（誰把這件事交辦給他）</summary>
+    public DateTime CreatedAt { get; set; }
+    public string CreatedByAccount { get; set; } = string.Empty;
+
+    public DateTime? ClosedAt { get; set; }
+
+    /// <summary>案件涵蓋的風險日區間（首見～最近掛接）</summary>
+    public string FirstLinkedDate { get; set; } = string.Empty;
+    public string LastLinkedDate { get; set; } = string.Empty;
 }
 
 public class SaveUserRequest

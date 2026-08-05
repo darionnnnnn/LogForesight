@@ -19,6 +19,13 @@ internal class AlwaysVisibleService : IVisibilityService
     /// <summary>不限制可見範圍的替身：對誰都回全部主機（指派前的可見性檢查因此永遠通過）</summary>
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
 
+    /// <summary>負責人路徑（§2b）以實際的 OwnerUserIds 回答——這個替身放寬的是授權，不是資料</summary>
+    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) =>
+        _hosts.GetAll().Where(h => h.OwnerUserIds.Contains(userId)).Select(h => h.HostId).ToHashSet();
+
+    /// <summary>不限制可見範圍的替身：群組路徑一律回全部主機</summary>
+    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => GetVisibleHostIds();
+
     // 全部主機本來就可見，沒有「只靠案件授與才看得到」的情況（§7）
     public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
     public bool IsCaseGrantOnly(long hostId) => false;

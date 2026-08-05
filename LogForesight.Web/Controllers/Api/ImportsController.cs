@@ -26,19 +26,15 @@ public class ImportsController : ControllerBase
         _users = users;
     }
 
-    /// <summary>下載範本（含範例列）</summary>
+    /// <summary>
+    /// 下載範本（含範例列）。已退役的 kind（Users／Hosts／GroupAccess，§2a）在
+    /// <c>GetTemplate</c> 就會拋驗證錯誤，走不到檔名對應——因此這裡只列還在的種類。
+    /// </summary>
     [HttpGet("{kind}/template")]
     public IActionResult Template(ImportKind kind)
     {
         var content = _imports.GetTemplate(kind);
-        var fileName = kind switch
-        {
-            ImportKind.Users => "users.csv",
-            ImportKind.Hosts => "hosts.csv",
-            ImportKind.GroupAccess => "group_access.csv",
-            ImportKind.Owners => "owners.csv",
-            _ => "template.csv"
-        };
+        var fileName = kind == ImportKind.Owners ? "owners.csv" : "template.csv";
 
         return File(content, "text/csv", fileName);
     }

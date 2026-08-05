@@ -14,14 +14,36 @@ namespace LogForesight.Web.Services;
 /// 範圍**不進 JWT**：調部門後不該還看得到前部門的主機，所以每次請求即時解析
 /// （能力可以接受 token 效期內的延遲，範圍不行）。
 ///
-/// **案件授與**（docs/archive/FEEDBACK-10-PLAN.md §7）是這條授權鏈之外、刻意更窄的第二條路徑：
+/// **負責人路徑**（docs/archive/FEEDBACK-11-PLAN.md §2b）與群組授權鏈**取聯集**：主機的
+/// <see cref="WebHost.OwnerUserIds"/> 含此人時直接可見那台主機。理由是負責人匯入
+/// （owners.csv）是主機歸屬的第一手資料，卻與部門群組授權完全脫鉤——改版前「這台出事、
+/// 負責人卻打不開」是常態，要靠管理員另外去授權矩陣補一刀才會通。負責人給的是**整台**
+/// 可見（與群組授權同級），不是案件授與那種問題層級的窄授與。
+///
+/// **案件授與**（docs/archive/FEEDBACK-10-PLAN.md §7）是這兩條路徑之外、刻意更窄的第三條路徑：
 /// 被指派為某個問題案件的處理人時，取得「那台主機的那個問題」的檢視權，其餘一律不可見。
 /// 沒有這條路徑，把問題交辦給不在該主機授權範圍內的人＝對方打不開，等於白指派。
 /// </summary>
 public interface IVisibilityService
 {
-    /// <summary>目前登入者可見的主機 ID。持有 ViewAll 能力者為全部主機</summary>
+    /// <summary>
+    /// 目前登入者可見的主機 ID。持有 ViewAll 能力者為全部主機；
+    /// 其餘人為「群組授權 ∪ 自己是負責人的主機」（docs/archive/FEEDBACK-11-PLAN.md §2b）。
+    /// </summary>
     IReadOnlySet<long> GetVisibleHostIds();
+
+    /// <summary>
+    /// 指定使用者**因負責人身分**而可見的主機 ID（docs/archive/FEEDBACK-11-PLAN.md §2b／§3）。
+    /// 與 <see cref="GetGroupVisibleHostIdsFor"/> 一起回答使用者詳細頁的
+    /// 「他為什麼看得到這台」——兩條路徑可同時成立，所以分成兩個集合而不是一個列舉。
+    /// </summary>
+    IReadOnlySet<long> GetOwnedHostIdsFor(long userId);
+
+    /// <summary>
+    /// 指定使用者**經群組授權鏈**而可見的主機 ID（含 ViewAll 角色的全部主機）。
+    /// <see cref="GetVisibleHostIdsFor"/> ＝ 本集合 ∪ <see cref="GetOwnedHostIdsFor"/>。
+    /// </summary>
+    IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId);
 
     /// <summary>目前登入者可見的主機（已依名稱排序）</summary>
     List<WebHost> GetVisibleHosts();
@@ -136,15 +158,37 @@ public class VisibilityService : IVisibilityService
             .Select(a => a.HostGroupId)
             .ToHashSet();
 
+        // 群組授權 ∪ 負責人（§2b）：負責人是主機歸屬的第一手資料，不該還要另外去授權矩陣補一刀
         _cached = allHosts
-            .Where(h => h.GroupIds.Any(hostGroupIds.Contains))
+            .Where(h => h.GroupIds.Any(hostGroupIds.Contains) || h.OwnerUserIds.Contains(user.UserId))
             .Select(h => h.HostId)
             .ToHashSet();
 
         return _cached;
     }
 
+    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId)
+    {
+        // 停用的使用者不因負責人身分取得任何範圍（停用優先於一切授權路徑，同 GetVisibleHostIds）
+        var user = _users.Get(userId);
+        if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
+
+        return _hosts.GetAll()
+            .Where(h => h.Active && h.OwnerUserIds.Contains(userId))
+            .Select(h => h.HostId)
+            .ToHashSet();
+    }
+
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId)
+    {
+        // 與 GetVisibleHostIds 同一套規則（群組授權 ∪ 負責人，§2b）——兩邊漂移的話，
+        // 指派前的「他看得到這台嗎」提示就會說謊
+        var visible = GetGroupVisibleHostIdsFor(userId).ToHashSet();
+        visible.UnionWith(GetOwnedHostIdsFor(userId));
+        return visible;
+    }
+
+    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId)
     {
         var user = _users.Get(userId);
         if (user == null || !user.Active) return new HashSet<long>();

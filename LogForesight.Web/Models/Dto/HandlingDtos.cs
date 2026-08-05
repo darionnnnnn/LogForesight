@@ -306,6 +306,73 @@ public class BulkIssueStatusRequest
     public DateTime? DueDate { get; set; }
 }
 
+/// <summary>
+/// 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）：admin 直接把一個問題在**尚未有人接手**的主機上
+/// 標成結論。與 <see cref="BulkIssueStatusRequest"/>（處理人回覆自己名下的案件）刻意分開：
+/// 對象不同（無案件的主機 vs 自己的案件）、值域不同（只收結案四態）、原因必填。
+/// </summary>
+public class BulkCloseIssueRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+
+    /// <summary>期間（依問題視角目前的篩選區間）。null＝不設邊界，但前端一律帶值</summary>
+    public DateTime? From { get; set; }
+
+    public DateTime? To { get; set; }
+
+    /// <summary>只收結案四態（resolved／wont_fix／false_positive／known_noise）</summary>
+    [Required]
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>原因**必填**——這是代全體下結論的操作，理由是紀錄的一部分</summary>
+    [Required(ErrorMessage = "請填寫原因")]
+    [StringLength(1000, ErrorMessage = "原因長度不可超過 1000 字元")]
+    public string Note { get; set; } = string.Empty;
+}
+
+/// <summary>統一標記的預覽／結果共用的逐主機列</summary>
+public class IssueBulkCloseHostDto
+{
+    public long HostId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>將被（或已被）標記的日數</summary>
+    public int DayCount { get; set; }
+
+    /// <summary>其中原本標著「處理中／觀察中」、會被本次結論覆蓋的日數（定案 6-3）</summary>
+    public int OverwriteDayCount { get; set; }
+
+    /// <summary>已有結論、本次不動的日數</summary>
+    public int AlreadyClosedDayCount { get; set; }
+
+    /// <summary>非 null＝這台主機整台略過，值是可直接顯示的原因</summary>
+    public string? SkipReason { get; set; }
+}
+
+public class IssueBulkClosePreviewDto
+{
+    /// <summary>期間（回顯給 modal，讓操作者看得到「本次只處理這段」）</summary>
+    public string? From { get; set; }
+    public string? To { get; set; }
+
+    public List<IssueBulkCloseHostDto> Hosts { get; set; } = new();
+}
+
+public class BulkCloseIssueResultDto
+{
+    /// <summary>實際被標記的主機數</summary>
+    public int UpdatedHostCount { get; set; }
+
+    /// <summary>實際被標記的主機日數</summary>
+    public int UpdatedDayCount { get; set; }
+
+    /// <summary>整台略過的主機（含原因）</summary>
+    public List<IssueBulkCloseHostDto> Skipped { get; set; } = new();
+}
+
 public class BulkIssueStatusResultDto
 {
     /// <summary>實際套用的案件數（＝主機數，同主機同問題只有一個進行中案件）</summary>
@@ -453,6 +520,15 @@ public class HandlerCaseItemDto
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
     public string IssueLabel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 問題簽章的來源與 Event ID（docs/archive/FEEDBACK-11-PLAN.md §7）：工作頁「依問題」視角用這兩個
+    /// 欄位分組，與問題查詢 by-issue 視角同一把分組鍵；也是「回覆處理狀態」端點的參數。
+    /// 由 <c>IssueCase.IssueKey</c> 解析而來（見 <c>IssueSignatureKey.TryParse</c>），非新儲存欄位。
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+
     public string Status { get; set; } = string.Empty;
     public string StatusText { get; set; } = string.Empty;
     public string? DueDate { get; set; }

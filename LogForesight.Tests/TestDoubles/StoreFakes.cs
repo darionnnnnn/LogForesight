@@ -232,6 +232,12 @@ internal class FakeUserStore : IUserStore
         var user = Get(userId);
         if (user != null) user.GroupIds = groupIds.Distinct().ToList();
     }
+
+    public void TouchLogin(long userId, DateTime at)
+    {
+        var user = Get(userId);
+        if (user != null) user.LastLoginAt = at;
+    }
 }
 
 internal class FakeUserGroupStore : IUserGroupStore

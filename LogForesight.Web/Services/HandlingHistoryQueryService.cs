@@ -266,11 +266,16 @@ public class HandlingHistoryQueryService
                               c.DueDate.HasValue && c.DueDate.Value.Date < DateTime.Today) ||
                              IssueHandlingStatuses.IsObservationExpired(c.Status, c.DueDate, DateTime.Today);
 
+            // 依問題視角（§7）的分組鍵與「回覆處理狀態」端點的參數，自 IssueKey 反解
+            var signature = IssueSignatureKey.TryParseSignature(c.IssueKey);
+
             items.Add(new HandlerCaseItemDto
             {
                 HostId = host.HostId,
                 HostName = host.HostName,
                 IssueLabel = c.IssueLabel,
+                Source = signature?.Source ?? string.Empty,
+                EventId = signature?.EventId ?? 0,
                 Status = c.Status,
                 StatusText = HandlingTextHelpers.IssueStatusText(c.Status),
                 DueDate = c.DueDate?.ToString("yyyy-MM-dd"),

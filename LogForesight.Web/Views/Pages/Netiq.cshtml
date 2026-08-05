@@ -4,6 +4,7 @@
 
 <ul class="nav nav-tabs mb-3" id="netiq-tabs">
     <li class="nav-item"><button class="nav-link active" data-tab="config" type="button">設定</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="import" type="button">匯入</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="probe" type="button">診斷</button></li>
 </ul>
 
@@ -21,7 +22,7 @@
                 Sentinel <span class="text-muted small" id="sentinel-count"></span>
             </h2>
             <span tabindex="0" data-bs-toggle="popover"
-                  data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請至「資料匯入」頁。">
+                  data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請切到本頁的「匯入」分頁。">
                 <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
             </span>
         </div>
@@ -115,6 +116,29 @@
     </form>
 </div>
 
+@* §1（回饋第十一輪）：掃描匯入自「資料匯入」頁搬來——Sentinel 的設定與掃描是同一件事的兩半，
+   分在兩頁會讓「補完探索帳密之後要去哪裡掃」變成一段要記住的路徑。 *@
+<div data-panel="import" class="d-none">
+    <div class="lf-card mb-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">掃描匯入</h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="掃描是「查一個網段」，不是盲掃全站——請輸入網段前綴（如 192.168.0）或 CIDR（如 192.168.0.0/24）。結果只涵蓋掃描窗口內有事件回報的主機，涵蓋範圍會顯示在掃描結果上方，安靜的主機請至主機頁手動登錄。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
+        </div>
+        <div class="lf-card__body" id="netiq-scan-picker"></div>
+    </div>
+
+    <div class="lf-card">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">最近的掃描匯入紀錄</h2>
+            <a class="btn btn-sm btn-outline-secondary" href="/admin/imports">全部匯入紀錄</a>
+        </div>
+        <div class="lf-card__body p-0" id="netiq-import-logs"></div>
+    </div>
+</div>
+
 <div class="lf-card mb-3 d-none" data-panel="probe">
     <div class="lf-card__header">
         <h2 class="lf-card__title">NetIQ API 診斷</h2>
@@ -182,7 +206,7 @@
                         <div class="col-md-6">
                             <label for="sentinel-username" class="form-label">探索帳號</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                    data-bs-content="帳號密碼齊備才能在「資料匯入」頁對這台 Sentinel 掃描匯入主機。">
+                                    data-bs-content="帳號密碼齊備才能在本頁的「匯入」分頁對這台 Sentinel 掃描匯入主機。">
                                 <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="sentinel-username" />
@@ -212,6 +236,57 @@
                     <button type="submit" class="btn btn-primary" id="sentinel-save">儲存</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- 掃描匯入精靈（§1：自「資料匯入」頁搬來，內容與行為不變） -->
+<div class="modal fade" id="netiq-wizard-modal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="wizard-title">從 NetIQ 匯入</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div id="wizard-pane-subnets">
+                    <div id="wizard-coverage-note" class="small text-muted mb-2"></div>
+                    <div id="wizard-warnings" class="mb-2"></div>
+                    <div class="d-flex justify-content-end gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-new">全選新主機</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="wizard-select-none">全不選</button>
+                    </div>
+                    <div id="wizard-scan-result"></div>
+                </div>
+
+                <div id="wizard-pane-groups" class="d-none">
+                    <div class="row g-2 align-items-center mb-3">
+                        <div class="col-4 small">作業系統</div>
+                        <div class="col-4">
+                            <select class="form-select form-select-sm" id="wizard-os">
+                                <option value="windows">Windows</option>
+                                <option value="linux">Linux</option>
+                            </select>
+                        </div>
+                        <div class="col-4 small text-muted">混合平台請分兩次掃描匯入</div>
+                    </div>
+                    <p class="small text-muted">
+                        作業系統決定這批主機套用哪個平台的規則面（規則維護頁的 Windows規則／Linux規則），
+                        同樣只影響本次<strong>新增</strong>的主機——既有主機的作業系統不會被改動。
+                    </p>
+                    <p class="small text-muted">
+                        各網段可選既有主機群組、建立新群組，或跳過（跳過＝未分組，只有 admin 看得到）。
+                        只影響本次<strong>新增</strong>的主機，既有主機的群組不會被改動。
+                    </p>
+                    <div id="wizard-group-assign"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="me-auto small text-muted" id="wizard-hint"></div>
+                <button type="button" class="btn btn-outline-secondary d-none" id="wizard-back">上一步</button>
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="wizard-primary">下一步</button>
+            </div>
         </div>
     </div>
 </div>

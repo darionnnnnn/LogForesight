@@ -44,6 +44,15 @@ public class WebUser
     /// 呼叫端看到的都是這份清單。
     /// </summary>
     public List<long> GroupIds { get; set; } = new();
+
+    /// <summary>
+    /// 最近一次登入成功的時間；null＝從未登入過（docs/archive/FEEDBACK-11-PLAN.md §3）。
+    ///
+    /// **不從稽核紀錄反推**：稽核有保留天數（預設 730 天，可調低），到期清理後會變成
+    /// 「明明登入過卻顯示從未登入」；且使用者清單逐人掃稽核是 N 次查詢。
+    /// 寫入點只有 <see cref="IUserStore.TouchLogin"/> 一處。
+    /// </summary>
+    public DateTime? LastLoginAt { get; set; }
 }
 
 /// <summary>

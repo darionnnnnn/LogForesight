@@ -1,15 +1,18 @@
 /**
- * NetIQ 維護（「系統管理 > NetIQ 維護」頁）：Sentinel 連線設定 CRUD ＋ 查詢節流參數。
+ * NetIQ 維護（「系統管理 > NetIQ 維護」頁）：Sentinel 連線設定 CRUD ＋ 查詢節流參數
+ * ＋ 掃描匯入（§1，回饋第十一輪自「資料匯入」頁搬來）＋ API 診斷，共三個分頁。
  *
- * 「掃描匯入」是匯入動作，留在「資料匯入」頁；這裡只管「有哪些 Sentinel、怎麼連、
- * 查詢行為多節制」，取代原本寫死在批次 appsettings.json 的 NetIq 區段。
+ * 掃描精靈自成一個模組（`netiq-import-wizard.js`）：本檔已 400 行，把精靈整段搬進來
+ * 會變成千行檔案，而精靈本身是完整獨立的一段流程（掃描→勾選→分組→匯入）。
  */
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
+initNetiqImportTab({ reloadSentinels: () => loadSentinels() });
 
 // ── Sentinel 清單與編輯 ──────────────────────────────────────────────────────
 
@@ -24,6 +27,10 @@ async function loadSentinels() {
     renderLoading(sentinelListContainer, 3);
     sentinels = await api.get('/api/admin/sentinels');
     renderSentinels();
+
+    // 設定與匯入現在同一頁（§1）：剛補完探索帳密的 Sentinel 要立刻出現在「匯入」分頁的
+    // 掃描下拉裡，否則使用者切過去看不到、以為沒存成功。傳已取回的清單，不讓它再查一次
+    refreshScanPicker(sentinels);
 }
 
 function renderSentinels() {
@@ -41,7 +48,7 @@ function renderSentinels() {
             { title: '', className: 'text-end', render: s => renderSentinelActions(s) }
         ],
         rows: sentinels,
-        empty: { title: '尚無 Sentinel', hint: '用右上角的「新增 Sentinel」建立第一台，之後可在「資料匯入」頁對它掃描匯入主機。' }
+        empty: { title: '尚無 Sentinel', hint: '用右上角的「新增 Sentinel」建立第一台，之後可在本頁的「匯入」分頁對它掃描匯入主機。' }
     });
 }
 

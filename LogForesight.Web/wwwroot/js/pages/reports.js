@@ -357,7 +357,39 @@ function renderCategoryChart() {
     });
 }
 
+/**
+ * 排行卡的視角（docs/archive/FEEDBACK-11-PLAN.md §8-2）：'host' ｜ 'issue'。
+ * 狀態存 localStorage，預設主機——既有畫面零變化，要看問題排行的人切一次就記住。
+ */
+const RANK_MODE_KEY = 'lf.reports.rankMode';
+let rankMode = localStorage.getItem(RANK_MODE_KEY) === 'issue' ? 'issue' : 'host';
+
+function bindRankModeToggle() {
+    const toggle = document.getElementById('rank-mode-toggle');
+    if (!toggle) return;
+
+    for (const btn of toggle.querySelectorAll('[data-rank-mode]')) {
+        btn.classList.toggle('active', btn.dataset.rankMode === rankMode);
+        btn.addEventListener('click', () => {
+            if (rankMode === btn.dataset.rankMode) return;
+            rankMode = btn.dataset.rankMode;
+            localStorage.setItem(RANK_MODE_KEY, rankMode);
+            for (const other of toggle.querySelectorAll('[data-rank-mode]')) {
+                other.classList.toggle('active', other.dataset.rankMode === rankMode);
+            }
+            renderHostChart();
+        });
+    }
+}
+
+/** 排行卡：依 rankMode 分派給主機或問題兩種呈現（同一張卡、同一個 canvas 容器） */
 function renderHostChart() {
+    document.getElementById('rank-title').textContent = rankMode === 'issue' ? '問題排行' : '主機告警排行';
+    if (rankMode === 'issue') {
+        renderIssueRankChart();
+        return;
+    }
+
     const hosts = currentData.hostRanking;
     const others = currentData.others;
     const wrapper = document.getElementById('host-wrapper');
@@ -416,6 +448,82 @@ function renderHostChart() {
         tableColumns: ['主機', '高風險日', '中風險日', '關聯訊號日', '最新狀況'],
         tableRows
     });
+}
+
+/**
+ * 問題排行（§8-2）：一條長條＝一個問題（Source＋EventId，與依問題視角同一把分組鍵），
+ * 長度＝期間內的事件總次數，下鑽到問題查詢的依問題視角。
+ */
+function renderIssueRankChart() {
+    const issues = currentData.issueRanking ?? [];
+    const others = currentData.issueOthers;
+    const wrapper = document.getElementById('host-wrapper');
+
+    renderIssueRankMeta();
+
+    if (issues.length === 0) {
+        charts.renderNoData(wrapper, '此期間沒有問題事件');
+        return;
+    }
+
+    const labels = issues.map(i => `${i.source} (${i.eventId})`);
+    const counts = issues.map(i => i.totalCount);
+    if (others) {
+        labels.push(`其他 ${others.issueCount} 個問題`);
+        counts.push(others.totalCount);
+    }
+
+    chartInstances.host?.destroy();
+    chartInstances.host = charts.bar(document.getElementById('host-chart'), {
+        data: {
+            labels,
+            datasets: [{ label: '事件次數', data: counts, backgroundColor: charts.riskColors()['高'] }]
+        },
+        options: {
+            indexAxis: 'y',
+            scales: {
+                x: { beginAtZero: true, ticks: { precision: 0 } },
+                y: { grid: { display: false } }
+            }
+        },
+        drillTo: point => {
+            const issue = issues[point.index];   // 「其他」條是彙總，不下鑽
+            return issue
+                ? `/records?view=issue&source=${encodeURIComponent(issue.source)}&eventId=${issue.eventId}` +
+                  `&from=${currentData.from}&to=${currentData.to}`
+                : null;
+        }
+    });
+
+    const tableRows = issues.map(i => [
+        `${i.source} (${i.eventId})`, CATEGORY_NAMES[i.category] ?? i.category,
+        severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount
+    ]);
+    if (others) {
+        tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', others.hostCount, '', others.totalCount]);
+    }
+
+    charts.attachToolbar(document.getElementById('host-toolbar'), {
+        canvasWrapper: wrapper,
+        title: '問題排行',
+        tableColumns: ['問題', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數'],
+        tableRows
+    });
+}
+
+function renderIssueRankMeta() {
+    const subtitle = document.getElementById('host-rank-subtitle');
+    const viewAll = document.getElementById('host-view-all');
+
+    const count = currentData.rankedIssueCount ?? 0;
+    subtitle.textContent = count > 0 ? `共 ${count} 個問題` : '';
+
+    if (currentData.issueOthers) {
+        viewAll.href = `/records?view=issue&from=${currentData.from}&to=${currentData.to}`;
+        viewAll.classList.remove('d-none');
+    } else {
+        viewAll.classList.add('d-none');
+    }
 }
 
 /** 排行榜標題副說明（共 N 台）與「查看全部」連結——連到問題查詢的依主機視角，同一段期間 */
@@ -598,5 +706,6 @@ function setRange(days) {
 
 document.getElementById('chart-picker-modal').addEventListener('show.bs.modal', renderChartPickerBody);
 
+bindRankModeToggle();
 setRange(30);
 load();

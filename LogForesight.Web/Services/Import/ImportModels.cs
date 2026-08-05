@@ -1,24 +1,36 @@
 namespace LogForesight.Web.Services.Import;
 
+/// <summary>
+/// CSV 匯入類型。**§2a（回饋第十一輪）起只有 <see cref="Owners"/> 有實作**——
+/// 前三種連同 Importer 與範本一併退役（替代動線見 docs/archive/FEEDBACK-11-PLAN.md §2a 對照表）。
+/// 列舉值刻意保留：歷次匯入紀錄（`lf_import_logs`）存的是字串 Kind，
+/// 拿掉列舉值會讓過去那些紀錄失去顯示名稱，而匯入紀錄是稽核性質的歷史事實。
+/// </summary>
 public enum ImportKind
 {
+    /// <summary>【已退役】使用者匯入。替代動線：使用者頁「一次新增多筆」</summary>
     Users,
+
+    /// <summary>【已退役】主機匯入。替代：NetIQ 掃描匯入／批次自動登錄＋主機頁批次設定群組</summary>
     Hosts,
+
+    /// <summary>【已退役】群組授權匯入。替代動線：群組頁「授權矩陣」</summary>
     GroupAccess,
 
     /// <summary>負責人指派（owners.csv）：host 對 owner 帳號，帳號不存在時自動建立</summary>
     Owners
 }
 
+/// <summary>
+/// 預覽列的判定。原有的 <c>Remove</c>（全量取代語意下將被移除的既有授權）隨
+/// group_access.csv 退役一併移除（§2a）——負責人匯入的取代是「這台主機的負責人整組換掉」，
+/// 表達成 Update 而非逐筆 Remove。
+/// </summary>
 public enum ImportRowAction
 {
     Add,
     Update,
     Unchanged,
-
-    /// <summary>全量取代語意下將被移除的既有資料（目前只有 GroupAccess 會出現）</summary>
-    Remove,
-
     Error
 }
 
@@ -64,19 +76,15 @@ public class ImportPlan
 
     public List<ImportRowPlan> Rows { get; init; } = new();
 
-    /// <summary>將自動建立的群組名稱（使用者群組或主機群組，依 Kind 而定）</summary>
-    public List<string> NewGroups { get; init; } = new();
-
-    /// <summary>將自動建立的使用者帳號（負責人匯入專用；owners.csv 引用不存在的帳號時自動建）</summary>
+    /// <summary>將自動建立的使用者帳號（負責人匯入：owners.csv 引用不存在的帳號時自動建）</summary>
     public List<string> NewUsers { get; init; } = new();
 
-    /// <summary>不擋下但需要提醒的事項（如負責人看不到自己負責的主機）</summary>
+    /// <summary>不擋下但需要提醒的事項（如套用後負責人會取得哪些權限）</summary>
     public List<string> Warnings { get; init; } = new();
 
     public int AddCount => Rows.Count(r => r.Action == ImportRowAction.Add);
     public int UpdateCount => Rows.Count(r => r.Action == ImportRowAction.Update);
     public int UnchangedCount => Rows.Count(r => r.Action == ImportRowAction.Unchanged);
-    public int RemoveCount => Rows.Count(r => r.Action == ImportRowAction.Remove);
     public int ErrorCount => Rows.Count(r => r.Action == ImportRowAction.Error);
 
     /// <summary>
@@ -87,13 +95,15 @@ public class ImportPlan
     public bool CanApply => ErrorCount == 0;
 }
 
-/// <summary>套用結果</summary>
+/// <summary>
+/// 套用結果。原有的 <c>Removed</c>／<c>CreatedGroups</c> 隨三種 CSV 退役一併移除（§2a）——
+/// 唯一留下的負責人匯入既不移除資料也不建群組，留著會是「永遠為 0 的欄位」寫進稽核明細。
+/// 歷史匯入紀錄（`lf_import_logs`）的對應欄位不動，舊資料照常顯示。
+/// </summary>
 public class ImportResult
 {
     public int Added { get; set; }
     public int Updated { get; set; }
-    public int Removed { get; set; }
-    public List<string> CreatedGroups { get; } = new();
 
     /// <summary>本次自動建立的使用者帳號（負責人匯入）</summary>
     public List<string> CreatedUsers { get; } = new();

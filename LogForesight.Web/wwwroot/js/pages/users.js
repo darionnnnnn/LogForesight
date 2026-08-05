@@ -7,6 +7,7 @@ import {
     renderTable, renderLoading, toast, withBusy, renderChips, confirmAction, checkboxList, button,
     renderPagination, sortRows, loadPageSize, savePageSize
 } from '../core/ui.js';
+import { formatDateTime } from '../core/format.js';
 
 const listContainer = document.getElementById('user-list');
 const searchInput = document.getElementById('user-search');
@@ -26,7 +27,9 @@ let pageSize = loadPageSize('users');
 let createMode = 'single';
 
 // chip 篩選狀態（§5.1 D-2）：狀態/角色單選，群組多選
-let statusFilter = '';
+// 狀態預設 'active'（§4，回饋第十一輪）：日常維護看的是「現在還在職的人」，
+// 停用帳號是歷史事實、只在查舊帳號時才需要——chip 仍可切「全部／停用」，不是藏起來
+let statusFilter = 'active';
 let roleFilter = '';
 const groupFilter = new Set();
 
@@ -79,6 +82,15 @@ const USER_COLUMNS = [
     { title: '顯示名稱', sortKey: 'displayName', sortValue: u => u.displayName || u.account, render: u => u.displayName },
     { title: 'Email', render: u => u.email ?? '' },
     { title: '群組', render: u => renderGroupBadges(u) },
+    {
+        title: '上次登入',
+        className: 'text-nowrap',
+        sortKey: 'lastLoginAt',
+        // 從未登入排在最後（不是最前）：null 當成極早的時間，遞減排序時自然沉底
+        sortValue: u => (u.lastLoginAt ? new Date(u.lastLoginAt).getTime() : 0),
+        sortDefaultDir: 'desc',
+        render: u => renderLastLogin(u.lastLoginAt)
+    },
     { title: '狀態', sortKey: 'active', sortValue: u => u.active ? 1 : 0, render: u => renderActiveBadge(u.active) },
     { title: '', className: 'text-end', render: u => renderEditButton(u) }
 ];
@@ -109,13 +121,16 @@ function render() {
         columns: USER_COLUMNS,
         rows: pageRows,
         sort,
+        // 點列 → 使用者詳細（§3）：可見主機、處理中／已處理項目、被指派歷程。
+        // 「編輯」鈕在列內，renderTable 讓列內按鈕保有自己的行為，不會被整列連結攔截
+        rowHref: u => `/admin/users/${u.userId}`,
         onSort: (key, dir) => {
             sort = { key, dir };
             page = 1;
             render();
         },
         empty: users.length === 0
-            ? { title: '尚無使用者', hint: '可於「CSV 匯入」批次建立，或用右上角的「新增使用者」逐筆新增。' }
+            ? { title: '尚無使用者', hint: '用右上角的「新增使用者」建立（支援一次貼上多筆帳號）。' }
             : { title: '沒有符合搜尋條件的使用者', hint: '請調整關鍵字後再試。' }
     });
 
@@ -150,6 +165,17 @@ function renderGroupBadges(user) {
         wrap.appendChild(badge);
     }
     return wrap;
+}
+
+/** 從未登入是需要被看見的狀態（帳號建了但人沒來過），不是普通空值 */
+function renderLastLogin(lastLoginAt) {
+    if (!lastLoginAt) {
+        const span = document.createElement('span');
+        span.className = 'text-muted small';
+        span.textContent = '從未登入';
+        return span;
+    }
+    return formatDateTime(lastLoginAt);
 }
 
 function renderActiveBadge(active) {

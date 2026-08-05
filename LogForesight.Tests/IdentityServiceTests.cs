@@ -18,6 +18,7 @@ public class IdentityServiceTests
 
     private readonly FakeUserStore _users = new();
     private readonly FakeUserGroupStore _groups = new();
+    private readonly FakeHostStore _hosts = new();
     private readonly RecordingAuditService _audit = new();
 
     private IdentityService Create(IAuthenticationProvider? provider = null)
@@ -35,7 +36,7 @@ public class IdentityServiceTests
         };
 
         return new IdentityService(
-            _users, _groups,
+            _users, _groups, _hosts,
             provider ?? new StubAuthenticationProvider(),
             new ServerAdminAuthenticator(settings),
             _audit);
@@ -201,6 +202,98 @@ public class IdentityServiceTests
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\chang", GroupIds = new List<long> { adminGroup.GroupId } });
 
         Assert.Empty(service.ResolveCapabilities(user));
+    }
+
+    // ── 負責人隱含能力（docs/archive/FEEDBACK-11-PLAN.md §2b）────────────────────────────
+
+    /// <summary>
+    /// 負責人匯入自動建立的帳號沒有群組＝沒有任何能力，看得到主機卻標不了處理狀態。
+    /// 是任一啟用主機的負責人即隱含 User 角色能力，補上這個半套。
+    /// </summary>
+    [Fact]
+    public void ResolveCapabilities_無群組的負責人_取得Handle與ConfirmPermission()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { user.UserId } });
+
+        var caps = service.ResolveCapabilities(user);
+
+        Assert.Contains(Capability.Handle, caps);
+        Assert.Contains(Capability.ConfirmPermission, caps);
+    }
+
+    /// <summary>隱含的是 User 角色，不是全站唯讀——負責人看得到的是自己那幾台</summary>
+    [Fact]
+    public void ResolveCapabilities_負責人_不因此取得ViewAll或Maintain()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { user.UserId } });
+
+        var caps = service.ResolveCapabilities(user);
+
+        Assert.DoesNotContain(Capability.ViewAll, caps);
+        Assert.DoesNotContain(Capability.Maintain, caps);
+        Assert.DoesNotContain(Capability.Assign, caps);
+    }
+
+    [Fact]
+    public void ResolveCapabilities_非負責人_不受影響()
+    {
+        var service = Create();
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
+        var other = _users.Upsert(new WebUser { Account = "DOMAIN\\other" });
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { owner.UserId } });
+
+        Assert.Empty(service.ResolveCapabilities(other));
+    }
+
+    /// <summary>停用主機已整批退出可見範圍，拿它當能力來源會給出看不到任何東西的空殼權限</summary>
+    [Fact]
+    public void ResolveCapabilities_只負責已停用主機_不給予能力()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "SRV-01", Active = false, OwnerUserIds = new List<long> { user.UserId }
+        });
+
+        Assert.Empty(service.ResolveCapabilities(user));
+    }
+
+    /// <summary>既有角色與隱含能力取聯集，不是覆蓋——manager 兼任負責人時兩邊都要有</summary>
+    [Fact]
+    public void ResolveCapabilities_主管兼負責人_能力取聯集()
+    {
+        var service = Create();
+        service.EnsureSeedGroups();
+        var managerGroup = _groups.GetAll().First(g => g.Role == UserRole.Manager);
+        var user = _users.Upsert(new WebUser
+        {
+            Account = "DOMAIN\\boss", GroupIds = new List<long> { managerGroup.GroupId }
+        });
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { user.UserId } });
+
+        var caps = service.ResolveCapabilities(user);
+
+        Assert.Contains(Capability.ViewAll, caps);   // 來自 manager 群組
+        Assert.Contains(Capability.Handle, caps);    // 來自負責人隱含
+    }
+
+    /// <summary>登入取得的能力集合就是解析結果——隱含能力要真的進 token，不能只在解析函式裡對</summary>
+    [Fact]
+    public void Login_負責人_token能力含Handle()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
+        _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { user.UserId } });
+
+        var outcome = service.Login("DOMAIN\\owner", null);
+
+        Assert.True(outcome.Success);
+        Assert.Contains(Capability.Handle, outcome.Identity!.Capabilities);
     }
 
     [Fact]

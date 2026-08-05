@@ -1,10 +1,11 @@
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 使用者與群組維護（docs/WEB-SPEC.md §9.8）。
+/// 使用者與群組維護（docs/WEB-SPEC.md §9.8、§9.8a 使用者詳細）。
 ///
 /// 業務規則集中在這裡，不在 Controller 也不在 Repository：
 /// builtin 群組的保護、稽核寫入、群組存在性驗證。
@@ -13,12 +14,27 @@ public class UserAdminService
 {
     private readonly IUserStore _users;
     private readonly IUserGroupStore _groups;
+    private readonly IHostStore _hosts;
+    private readonly IHostGroupStore _hostGroups;
+    private readonly IIssueCaseStore _cases;
+    private readonly IVisibilityService _visibility;
     private readonly IAuditService _audit;
 
-    public UserAdminService(IUserStore users, IUserGroupStore groups, IAuditService audit)
+    public UserAdminService(
+        IUserStore users,
+        IUserGroupStore groups,
+        IHostStore hosts,
+        IHostGroupStore hostGroups,
+        IIssueCaseStore cases,
+        IVisibilityService visibility,
+        IAuditService audit)
     {
         _users = users;
         _groups = groups;
+        _hosts = hosts;
+        _hostGroups = hostGroups;
+        _cases = cases;
+        _visibility = visibility;
         _audit = audit;
     }
 
@@ -29,6 +45,102 @@ public class UserAdminService
         return _users.GetAll()
             .OrderBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
             .Select(u => ToDto(u, groupsById))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 使用者詳細（docs/archive/FEEDBACK-11-PLAN.md §3）：基本資料＋所屬群組＋**此人**的可見主機
+    /// （含「為什麼看得到」）＋被指派歷程。
+    ///
+    /// 可見範圍以**被查看者**為準（`GetVisibleHostIdsFor`），與處理人工作頁「以檢視者為準」
+    /// 的規則刻意不同——這頁要回答的是「這個人看得到什麼」，用檢視者的範圍算會答非所問。
+    /// 能檢視本頁的前提是 Maintain（頁面與 API 皆標註），不會因此讓一般角色查到別人的授權面。
+    /// </summary>
+    public UserDetailDto GetUserDetail(long userId)
+    {
+        var user = _users.Get(userId)
+                   ?? throw DomainException.NotFound("找不到這個使用者，可能已被刪除。");
+
+        var allGroups = _groups.GetAll();
+        var groupsById = allGroups.ToDictionary(g => g.GroupId);
+        var memberGroups = allGroups.Where(g => user.GroupIds.Contains(g.GroupId)).ToList();
+
+        // 能力＝啟用中群組的角色聯集（停用群組不給能力，同 IdentityService.ResolveCapabilities）
+        // ＋負責人隱含的 User 角色（§2b）。
+        // **停用帳號一律顯示為無能力**：它連登入都進不來（IdentityService 擋、
+        // ActiveUserMiddleware 逐請求 401），列出「他可以標記處理狀態」是誤導；
+        // 與下方可見主機為空同一個判斷，畫面上兩者要一致。
+        var ownedHostIds = _visibility.GetOwnedHostIdsFor(userId);
+        var roles = new List<UserRole>();
+        if (user.Active)
+        {
+            roles.AddRange(memberGroups.Where(g => g.Active).Select(g => g.Role));
+            if (ownedHostIds.Count > 0) roles.Add(UserRole.User);
+        }
+
+        // 兩條路徑分開問（§2b）：一台主機可能既是他負責的、部門群組也被授權，
+        // 「為什麼看得到」因此是兩個獨立的是非題，不是二選一
+        var groupVisibleHostIds = _visibility.GetGroupVisibleHostIdsFor(userId);
+        var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
+        var hostGroupsById = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
+
+        var visibleHosts = ownedHostIds.Union(groupVisibleHostIds)
+            .Where(hostsById.ContainsKey)
+            .Select(id => hostsById[id])
+            .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .Select(h => new UserVisibleHostDto
+            {
+                HostId = h.HostId,
+                HostName = h.HostName,
+                IpAddress = h.IpAddress,
+                Os = h.Os,
+                GroupNames = NameFormat.ResolveNames(h.GroupIds, hostGroupsById, g => g.GroupName),
+                ViaOwner = ownedHostIds.Contains(h.HostId),
+                ViaGroup = groupVisibleHostIds.Contains(h.HostId)
+            })
+            .ToList();
+
+        return new UserDetailDto
+        {
+            User = ToDto(user, groupsById),
+            Groups = memberGroups.Select(g => new UserGroupDto
+            {
+                GroupId = g.GroupId,
+                GroupName = g.GroupName,
+                Role = g.Role.ToString(),
+                Builtin = g.Builtin,
+                Active = g.Active,
+                MemberCount = _users.GetAll().Count(u => u.GroupIds.Contains(g.GroupId))
+            }).ToList(),
+            Capabilities = RoleCapabilityMap.For(roles).Select(c => c.ToString()).OrderBy(c => c).ToList(),
+            VisibleHosts = visibleHosts,
+            AssignmentHistory = BuildAssignmentHistory(userId, hostsById)
+        };
+    }
+
+    private List<UserAssignmentHistoryDto> BuildAssignmentHistory(long userId, IReadOnlyDictionary<long, WebHost> hostsById)
+    {
+        var hostIdByName = hostsById.Values
+            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().HostId, StringComparer.OrdinalIgnoreCase);
+
+        return _cases.GetByHandler(userId)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new UserAssignmentHistoryDto
+            {
+                CaseId = c.CaseId,
+                HostId = hostIdByName.TryGetValue(c.HostName, out var id) ? id : null,
+                HostName = c.HostName,
+                IssueLabel = c.IssueLabel,
+                Status = c.Status,
+                StatusText = HandlingTextHelpers.IssueStatusText(c.Status),
+                Closed = c.ClosedAt != null,
+                CreatedAt = c.CreatedAt,
+                CreatedByAccount = c.CreatedByAccount,
+                ClosedAt = c.ClosedAt,
+                FirstLinkedDate = c.FirstLinkedDate.ToString("yyyy-MM-dd"),
+                LastLinkedDate = c.LastLinkedDate.ToString("yyyy-MM-dd")
+            })
             .ToList();
     }
 
@@ -190,6 +302,7 @@ public class UserAdminService
         Email = user.Email,
         Active = user.Active,
         GroupIds = user.GroupIds,
-        GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName)
+        GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName),
+        LastLoginAt = user.LastLoginAt
     };
 }

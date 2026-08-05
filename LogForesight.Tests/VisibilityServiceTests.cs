@@ -199,6 +199,97 @@ public class VisibilityServiceTests
         Assert.Contains(ooHost.HostId, visible);
     }
 
+    // ── 負責人路徑（docs/archive/FEEDBACK-11-PLAN.md §2b）─────────────────────────────────
+
+    /// <summary>
+    /// 負責人匯入是主機歸屬的第一手資料，卻與部門群組授權完全脫鉤——改版前
+    /// 「這台出事、負責人卻打不開」是常態。負責人與群組授權取聯集。
+    /// </summary>
+    [Fact]
+    public void 負責人_看得到自己負責的主機即使不屬於授權群組()
+    {
+        var (user, ooHost, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        _hosts.Upsert(xxHost);
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.Contains(ooHost.HostId, visible);   // 群組授權來的
+        Assert.Contains(xxHost.HostId, visible);   // 負責人來的
+    }
+
+    /// <summary>負責人給的是整台可見（與群組授權同級），不是案件授與那種問題層級的窄授與</summary>
+    [Fact]
+    public void 負責人_不視為案件授與而是完整可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        _hosts.Upsert(xxHost);
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        service.EnsureVisible(xxHost.HostId);   // 不應拋例外
+        Assert.False(service.IsCaseGrantOnly(xxHost.HostId));
+        Assert.Null(service.GetIssueKeyRestriction(xxHost.HostId));
+    }
+
+    /// <summary>停用主機的整批排除優先於負責人路徑——資料只留在資料庫，重新啟用即復原</summary>
+    [Fact]
+    public void 負責人_主機已停用時仍不可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        xxHost.Active = false;
+        _hosts.Upsert(xxHost);
+
+        Assert.DoesNotContain(xxHost.HostId, Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds());
+    }
+
+    /// <summary>停用的使用者不因負責人身分取得任何範圍（停用是安全事件，優先於一切授權路徑）</summary>
+    [Fact]
+    public void 負責人_使用者已停用時可見範圍為空()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        _hosts.Upsert(xxHost);
+        user.Active = false;
+        _users.Upsert(user);
+
+        Assert.Empty(Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds());
+    }
+
+    /// <summary>指派前的檢查也要含負責人路徑，否則「他看得到這台嗎」的提示會說謊</summary>
+    [Fact]
+    public void 指定使用者的可見範圍_含負責人路徑()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        _hosts.Upsert(xxHost);
+
+        var visible = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIdsFor(user.UserId);
+
+        Assert.Contains(xxHost.HostId, visible);
+    }
+
+    /// <summary>使用者詳細頁要能區分「群組授權來的」與「負責人來的」，這個投影是那個徽章的來源</summary>
+    [Fact]
+    public void GetOwnedHostIdsFor_只回負責的啟用主機()
+    {
+        var (user, ooHost, xxHost) = SetupTwoDepartments();
+        xxHost.OwnerUserIds = new List<long> { user.UserId };
+        _hosts.Upsert(xxHost);
+        var stopped = _hosts.Upsert(new WebHost
+        {
+            HostName = "SRV-STOPPED", Active = false, OwnerUserIds = new List<long> { user.UserId }
+        });
+
+        var owned = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetOwnedHostIdsFor(user.UserId);
+
+        Assert.Contains(xxHost.HostId, owned);
+        Assert.DoesNotContain(ooHost.HostId, owned);     // 群組授權來的不算負責人
+        Assert.DoesNotContain(stopped.HostId, owned);    // 停用主機不算
+    }
+
     [Fact]
     public void GetVisibleHosts_依主機名稱排序()
     {

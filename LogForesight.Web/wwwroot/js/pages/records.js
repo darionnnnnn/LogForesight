@@ -18,6 +18,7 @@ import {
 } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
+import { openIssueStatusReplyModal } from './issue-status-reply.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -785,8 +786,8 @@ function detailForIssue(group) {
 }
 
 /**
- * 依問題視角的動作欄：admin 可指派（§4）；處理人清單含自己時可一次回覆處理狀態（§11）。
- * 兩者都沒有時回空字串——不留一顆按不下去的按鈕。
+ * 依問題視角的動作欄：admin 可指派（§4）與統一標記（§6，回饋第十一輪）；
+ * 處理人清單含自己時可一次回覆處理狀態（§11）。都沒有時回空字串——不留一顆按不下去的按鈕。
  */
 function issueActionsCell(group) {
     const wrap = document.createElement('div');
@@ -794,9 +795,43 @@ function issueActionsCell(group) {
 
     const isMyIssue = (group.handlers ?? []).some(h => h.handlerId === currentUser?.userId);
     if (isMyIssue) wrap.appendChild(issueReplyButton(group));
+    // 統一標記要 Assign＋Handle 兩者（後端同一條規則）——實務上就是 admin
+    if (hasCapability(currentUser, 'Assign') && hasCapability(currentUser, 'Handle')) {
+        wrap.appendChild(issueBulkCloseButton(group));
+    }
     if (hasCapability(currentUser, 'Assign')) wrap.appendChild(issueAssignButton(group));
 
     return wrap.children.length > 0 ? wrap : '';
+}
+
+/** 統一標記（§6）：把這個問題在還沒有人接手的主機上一次標成結論 */
+function issueBulkCloseButton(group) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary';
+    btn.textContent = '統一標記';
+    btn.title = '把這個問題在尚未有人接手的主機上一次標成結論';
+    btn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openBulkCloseModal(group);
+    });
+    return btn;
+}
+
+/** 回覆處理狀態（§11）：modal 本身是共用元件（處理人工作頁的依問題視角也用同一個） */
+function issueReplyButton(group) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary';
+    btn.textContent = '回覆處理狀態';
+    btn.title = '一次回覆這個問題在所有指派給您的主機上的處理狀態';
+    btn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openIssueStatusReplyModal(group, search);
+    });
+    return btn;
 }
 
 function issueAssignButton(group) {
@@ -810,6 +845,174 @@ function issueAssignButton(group) {
         openBulkAssignModal(group);
     });
     return btn;
+}
+
+/**
+ * 統一標記 modal（docs/archive/FEEDBACK-11-PLAN.md §6）：admin 把這個問題在**尚未有人接手**的主機上
+ * 一次標成結論（結案四態），原因必填。
+ *
+ * 三件事一定要在按下去之前看得到（定案 6-2／6-3）：套用的**期間**、哪些主機會被**略過**
+ * 及原因、哪些天的「處理中／觀察中」標記會被**覆蓋**。預覽端點與落盤走同一份計畫規則。
+ */
+function openBulkCloseModal(group) {
+    const body = document.createElement('div');
+    const loadingWrap = document.createElement('div');
+    loadingWrap.className = 'd-flex justify-content-center py-3';
+    body.appendChild(loadingWrap);
+    renderSpinner(loadingWrap, '載入受影響主機…');
+
+    showDetailModal({ title: `統一標記：${group.source} (${group.eventId})`, body, size: 'modal-lg' });
+    loadBulkCloseForm(group, body);
+}
+
+async function loadBulkCloseForm(group, body) {
+    const filters = collectFilters();
+    const params = new URLSearchParams({ source: group.source, eventId: String(group.eventId) });
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+
+    let preview;
+    try {
+        preview = await api.get(`/api/handling/issue-cases/close-preview?${params.toString()}`, { silent: true });
+    } catch (error) {
+        body.replaceChildren();
+        const msg = document.createElement('div');
+        msg.className = 'text-danger';
+        msg.textContent = error?.message || '載入受影響主機失敗';
+        body.appendChild(msg);
+        return;
+    }
+
+    renderBulkCloseForm(body, group, preview);
+}
+
+function renderBulkCloseForm(body, group, preview) {
+    body.replaceChildren();
+
+    const targets = preview.hosts.filter(h => !h.skipReason && h.dayCount > 0);
+    const skipped = preview.hosts.filter(h => h.skipReason);
+    const form = document.createElement('form');
+
+    // 期間：定案 6-2 要求「正在處理的使用者」看得到本次的邊界，不能只寫在說明裡
+    const rangeNote = document.createElement('div');
+    rangeNote.className = 'alert alert-warning py-2 mb-3';
+    rangeNote.textContent = preview.from || preview.to
+        ? `本次僅處理 ${preview.from ?? '（不限）'} ～ ${preview.to ?? '（不限）'} 期間內的紀錄。`
+        : '本次處理目前查詢範圍內的全部紀錄。';
+    form.appendChild(rangeNote);
+
+    const scopeNote = document.createElement('div');
+    scopeNote.className = 'lf-hint mb-3';
+    scopeNote.textContent = '只套用到「尚未有人接手」的主機——已建立案件的主機一律略過（要換結論請由處理人回覆或先改派）。' +
+        '本操作只對上列期間內的既有紀錄下結論；規則未調整前，之後的新日子仍會產生同類問題' +
+        '（標「已知雜訊」除外——會為這些主機寫入雜訊記憶，之後同問題自動標示）。';
+    form.appendChild(scopeNote);
+
+    const summary = document.createElement('div');
+    summary.className = 'mb-3 small';
+    const overwriteDays = targets.reduce((sum, h) => sum + h.overwriteDayCount, 0);
+    summary.textContent = `將標記 ${targets.length} 台主機、共 ${targets.reduce((sum, h) => sum + h.dayCount, 0)} 天` +
+        (overwriteDays > 0 ? `（其中 ${overwriteDays} 天原本標著處理中／觀察中，會被覆蓋）` : '') +
+        (skipped.length > 0 ? `；${skipped.length} 台略過` : '');
+    form.appendChild(summary);
+
+    // 逐主機明細：略過的也列出來，「沒被處理到」與「不存在」要分得清楚
+    const table = document.createElement('div');
+    table.className = 'mb-3';
+    renderTable(table, {
+        columns: [
+            { title: '主機', render: h => h.hostName },
+            { title: '將標記天數', className: 'text-end', render: h => (h.skipReason ? '—' : String(h.dayCount)) },
+            { title: '覆蓋處理中', className: 'text-end', render: h => (h.overwriteDayCount > 0 ? `${h.overwriteDayCount} 天` : '') },
+            { title: '已有結論', className: 'text-end', render: h => (h.alreadyClosedDayCount > 0 ? `${h.alreadyClosedDayCount} 天` : '') },
+            { title: '狀態', render: h => bulkCloseStatusCell(h) }
+        ],
+        rows: preview.hosts,
+        empty: { title: '目前查詢範圍內沒有受影響的主機' }
+    });
+    form.appendChild(table);
+
+    const statusLabel = document.createElement('label');
+    statusLabel.className = 'form-label small text-muted';
+    statusLabel.textContent = '結論';
+    const statusSelect = document.createElement('select');
+    statusSelect.className = 'form-select form-select-sm mb-3';
+    for (const option of [
+        { value: 'resolved', label: '已處理' },
+        { value: 'wont_fix', label: '不處理' },
+        { value: 'false_positive', label: '誤報' },
+        { value: 'known_noise', label: '已知雜訊' }
+    ]) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        statusSelect.appendChild(el);
+    }
+    form.append(statusLabel, statusSelect);
+
+    const noteLabel = document.createElement('label');
+    noteLabel.className = 'form-label small text-muted';
+    noteLabel.textContent = '原因（必填）';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'form-control form-control-sm mb-3';
+    noteInput.rows = 3;
+    noteInput.placeholder = '例：確認為週期性維護作業產生，非異常。';
+    form.append(noteLabel, noteInput);
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn btn-sm btn-primary';
+    submit.textContent = '套用';
+    submit.disabled = targets.length === 0;
+    form.appendChild(submit);
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+
+        if (!noteInput.value.trim()) {
+            toast('請填寫原因', 'warning');
+            return;
+        }
+
+        const filters = collectFilters();
+        const restore = withBusy(submit, '套用中');
+        try {
+            const result = await api.post('/api/handling/issue-cases/bulk-close', {
+                source: group.source,
+                eventId: group.eventId,
+                from: filters.from || null,
+                to: filters.to || null,
+                status: statusSelect.value,
+                note: noteInput.value.trim()
+            });
+
+            toast(`已標記 ${result.updatedHostCount} 台主機、共 ${result.updatedDayCount} 天` +
+                  (result.skipped.length > 0 ? `；${result.skipped.length} 台略過` : ''), 'success', 6000);
+
+            if (statusSelect.value === 'false_positive') {
+                toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
+            }
+
+            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            search();
+        } catch {
+            restore();
+        }
+    });
+
+    body.appendChild(form);
+}
+
+function bulkCloseStatusCell(host) {
+    const span = document.createElement('span');
+    if (host.skipReason) {
+        span.className = 'text-muted small';
+        span.textContent = `略過：${host.skipReason}`;
+    } else {
+        span.className = 'text-success small';
+        span.textContent = '將標記';
+    }
+    return span;
 }
 
 /**
@@ -1191,122 +1394,6 @@ function renderBulkAssignForm(body, group, hosts, users, groups) {
 
     body.appendChild(form);
     setMode('user');
-}
-
-/**
- * 跨主機回覆處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）：同一個問題被指派到多台主機時，
- * 處理人在這裡填一次就套用到自己名下的全部進行中案件，不必逐台進詳情頁標一樣的狀態。
- * 只有「這個問題的處理人包含自己」時才出現入口（後端另有同一條限制）。
- */
-function issueReplyButton(group) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-outline-secondary';
-    btn.textContent = '回覆處理狀態';
-    btn.title = '一次回覆這個問題在所有指派給您的主機上的處理狀態';
-    btn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        openBulkStatusModal(group);
-    });
-    return btn;
-}
-
-function openBulkStatusModal(group) {
-    const body = document.createElement('div');
-    const form = document.createElement('form');
-
-    const hint = document.createElement('div');
-    hint.className = 'lf-hint mb-3';
-    hint.textContent = '套用對象是這個問題目前指派給您、且尚未結案的全部主機；' +
-        '每台主機的案件會連同它涵蓋的日期一起更新。';
-    form.appendChild(hint);
-
-    const statusLabel = document.createElement('label');
-    statusLabel.className = 'form-label small text-muted';
-    statusLabel.textContent = '處理狀態';
-    const statusSelect = document.createElement('select');
-    statusSelect.className = 'form-select form-select-sm mb-3';
-    // 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses）
-    for (const option of [
-        { value: 'in_progress', label: '處理中' },
-        { value: 'observing', label: '觀察中' },
-        { value: 'resolved', label: '已處理' },
-        { value: 'wont_fix', label: '不處理' },
-        { value: 'false_positive', label: '誤報' },
-        { value: 'known_noise', label: '已知雜訊' }
-    ]) {
-        const el = document.createElement('option');
-        el.value = option.value;
-        el.textContent = option.label;
-        statusSelect.appendChild(el);
-    }
-    form.append(statusLabel, statusSelect);
-
-    const noteLabel = document.createElement('label');
-    noteLabel.className = 'form-label small text-muted';
-    noteLabel.textContent = '處理說明';
-    const noteInput = document.createElement('textarea');
-    noteInput.className = 'form-control form-control-sm mb-3';
-    noteInput.rows = 3;
-    form.append(noteLabel, noteInput);
-
-    // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
-    const dueLabel = document.createElement('label');
-    dueLabel.className = 'form-label small text-muted';
-    dueLabel.textContent = '預計完成日／觀察至';
-    const dueInput = document.createElement('input');
-    dueInput.type = 'date';
-    dueInput.className = 'form-control form-control-sm mb-3';
-    form.append(dueLabel, dueInput);
-
-    function syncDueVisibility() {
-        const needsDue = statusSelect.value === 'in_progress' || statusSelect.value === 'observing';
-        dueLabel.classList.toggle('d-none', !needsDue);
-        dueInput.classList.toggle('d-none', !needsDue);
-    }
-    statusSelect.addEventListener('change', syncDueVisibility);
-    syncDueVisibility();
-
-    const submit = document.createElement('button');
-    submit.type = 'submit';
-    submit.className = 'btn btn-sm btn-primary';
-    submit.textContent = '送出';
-    form.appendChild(submit);
-
-    form.addEventListener('submit', async event => {
-        event.preventDefault();
-
-        // 「不處理」必須說明理由——與風險日詳情的規則一致（那裡也是不處理→說明必填）
-        if (statusSelect.value === 'wont_fix' && !noteInput.value.trim()) {
-            toast('標記為「不處理」時請填寫說明', 'warning');
-            return;
-        }
-        if (statusSelect.value === 'observing' && !dueInput.value) {
-            toast('標記為「觀察中」時請指定觀察至日期', 'warning');
-            return;
-        }
-
-        const restore = withBusy(submit, '送出中');
-        try {
-            const result = await api.post('/api/handling/issue-cases/bulk-status', {
-                source: group.source,
-                eventId: group.eventId,
-                status: statusSelect.value,
-                note: noteInput.value.trim() || null,
-                dueDate: dueInput.value || null
-            });
-
-            toast(`已更新 ${result.updatedCaseCount} 台主機、共 ${result.updatedDayCount} 天`, 'success');
-            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
-            search();
-        } catch {
-            restore();
-        }
-    });
-
-    body.appendChild(form);
-    showDetailModal({ title: `回覆處理狀態：${group.source} (${group.eventId})`, body });
 }
 
 // ── 共用元件 ─────────────────────────────────────────────────────────────────

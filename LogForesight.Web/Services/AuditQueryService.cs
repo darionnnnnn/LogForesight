@@ -47,6 +47,7 @@ public class AuditQueryService
         [AuditActions.HandlingAssign] = "指派處理人",
         [AuditActions.HandlingStatus] = "變更處理狀態",
         [AuditActions.HandlingNote] = "更新處理說明",
+        [AuditActions.IssueBulkClose] = "統一標記問題",
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
         [AuditActions.PermConfirmSuspicious] = "標記權限異動可疑",

@@ -45,6 +45,16 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
             user.GroupIds = groupIds.Distinct().ToList();
         });
     }
+
+    public void TouchLogin(long userId, DateTime at)
+    {
+        Mutate(users =>
+        {
+            var user = users.FirstOrDefault(u => u.UserId == userId);
+            if (user == null) return;
+            user.LastLoginAt = at;
+        });
+    }
 }
 
 /// <summary><see cref="IUserGroupStore"/> 的實作（blob key=user_groups，整份型）</summary>

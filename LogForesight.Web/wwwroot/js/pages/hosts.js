@@ -107,7 +107,7 @@ function fillSentinelOptions() {
     const hint = document.getElementById('host-netiq-hint');
     const noSentinel = overview.sentinelNames.length === 0;
     hint.textContent = noSentinel
-        ? '尚未於「資料匯入／NetIQ」頁新增任何 Sentinel，目前只能登錄為待歸屬。'
+        ? '尚未於「NetIQ 維護」頁新增任何 Sentinel，目前只能登錄為待歸屬。'
         : '';
     // text-warning 在白底上對比不足（約 1.6:1），改用 danger 的深紅——這是「填了也沒用」的
     // 提示，需要被看見；語意色的取值見 docs/DESIGN-SYSTEM.md

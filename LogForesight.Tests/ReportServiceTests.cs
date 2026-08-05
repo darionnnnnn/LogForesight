@@ -158,4 +158,57 @@ public class ReportServiceTests : IDisposable
         Assert.Equal(1, result.Handling.TotalCount);
         Assert.Equal(0, result.Handling.OpenCount);
     }
+
+    // ── 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8-2）───────────────────────────────
+
+    private static LogIssueSignature Issue(string source, int eventId, IssueSeverity severity, int count) => new()
+    {
+        LogName = "System", Source = source, EventId = eventId, Severity = severity, Count = count
+    };
+
+    /// <summary>
+    /// 依 Source＋EventId 聚合（與依問題視角同一把鍵）：跨主機跨日的次數加總、
+    /// 相異主機數、相異主機日數；排序＝最高嚴重度 → 主機數 → 總次數。
+    /// </summary>
+    [Fact]
+    public void GetSummary_問題排行跨主機跨日聚合()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        AddRecord(a, DateTime.Today, "高", Issue("disk", 153, IssueSeverity.High, 3));
+        AddRecord(a, DateTime.Today.AddDays(-1), "高", Issue("disk", 153, IssueSeverity.High, 2));
+        AddRecord(b, DateTime.Today, "中", Issue("disk", 153, IssueSeverity.Medium, 5),
+                                           Issue("svc", 7031, IssueSeverity.Medium, 1));
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        var top = result.IssueRanking[0];
+        Assert.Equal("disk", top.Source);
+        Assert.Equal(153, top.EventId);
+        Assert.Equal("High", top.MaxSeverity);   // 期間內出現過的最高嚴重度
+        Assert.Equal(2, top.HostCount);
+        Assert.Equal(3, top.DayCount);           // 主機日：A 兩天＋B 一天
+        Assert.Equal(10, top.TotalCount);
+        Assert.Equal(2, result.RankedIssueCount);
+        Assert.Null(result.IssueOthers);         // 只有兩個問題，沒有 Top 10 之外的
+    }
+
+    /// <summary>可見範圍過濾天生繼承自 repository——排行不是另一條繞過授權的查詢路徑</summary>
+    [Fact]
+    public void GetSummary_問題排行只含可見主機()
+    {
+        var visible = AddHost("HOST-A");
+        AddRecord(visible, DateTime.Today, "高", Issue("disk", 153, IssueSeverity.High, 1));
+
+        // 未登錄於主機清單的紀錄（等同不可見）不該出現在排行中
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = 9999, Host = "HOST-GHOST", Date = DateTime.Today, RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature> { Issue("ghost", 1, IssueSeverity.High, 99) }
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.DoesNotContain(result.IssueRanking, i => i.Source == "ghost");
+    }
 }

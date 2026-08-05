@@ -75,6 +75,13 @@ public static class AuditActions
     public const string HandlingStatus = "handling_status";
     public const string HandlingNote = "handling_note";
 
+    /// <summary>
+    /// 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）：把一個問題在尚未有人接手的主機上一次標成結論。
+    /// 刻意與 <see cref="HandlingStatus"/> 分開——它的影響範圍是「跨主機跨日」，
+    /// 稽核查詢要能單獨篩出這種大範圍操作。
+    /// </summary>
+    public const string IssueBulkClose = "issue_bulk_close";
+
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";
     public const string PermConfirmSuspicious = "perm_confirm_suspicious";
