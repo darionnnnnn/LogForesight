@@ -45,7 +45,7 @@ public class RecordListQueryService
         // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
         // 才能把排序＋分頁整個下推給 SQL（docs/archive/HISTORY.md P1-2），只為「這一頁」載入
         // 處理狀態，這是 2000 台規模下清單頁最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑。
-        var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true;
+        var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true || request.Unassigned;
 
         if (!needsHandlingFilter)
         {
@@ -104,6 +104,14 @@ public class RecordListQueryService
         if (request.Overdue == true)
         {
             records = records.Where(IsOverdue).ToList();
+        }
+
+        if (request.Unassigned)
+        {
+            // 未指派（§5/§10）：無有效處理人＝日層級無 HandlerId 且無案件涵蓋（與清單處理人欄
+            // 的 case fallback 同語意）。案件為整個候選集載入（未指派是刻意的窄查詢，非常見瀏覽路徑）
+            var allOpenCases = LoadOpenCases(records, lookup);
+            records = records.Where(r => IsUnassigned(r, lookup, handlings, allOpenCases)).ToList();
         }
 
         // 緊急程度排序（§DB-PLAN E 節定案）：風險層級 → 有無關聯訊號 → 日期新到舊——
@@ -261,6 +269,19 @@ public class RecordListQueryService
             groups = groups.Where(g => Enum.TryParse<IssueSeverity>(g.MaxSeverity, out var s) && allowedSeverities.Contains(s)).ToList();
         }
 
+        // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
+        if (request.Statuses is { Count: > 0 } statuses)
+        {
+            var wanted = statuses.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            groups = groups.Where(g => wanted.Contains(g.GroupStatus)).ToList();
+        }
+
+        // 未指派過濾（§5/§10）：處理人清單為空＝這個問題沒有任何主機被指派
+        if (request.Unassigned)
+        {
+            groups = groups.Where(g => g.Handlers.Count == 0).ToList();
+        }
+
         groups = (request.SortKey switch
         {
             "severity" => request.Ascending
@@ -377,6 +398,10 @@ public class RecordListQueryService
             LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
             KnownIssue = latest.Issue.KnownIssue,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
+            // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
+            GroupStatus = unhandled > 0 ? HandlingStatuses.Open
+                : processing > 0 ? HandlingStatuses.InProgress
+                : HandlingStatuses.Resolved,
             Handlers = handlers
         };
     }
@@ -507,6 +532,20 @@ public class RecordListQueryService
             .ThenByDescending(c => c.TotalCount)
             .Take(5)
             .ToList();
+    }
+
+    /// <summary>未指派（§5/§10）：日層級無處理人且無進行中案件涵蓋當日任一問題——與清單處理人欄
+    /// 的案件 fallback（ToListItem）同語意，只是這裡回布林用於過濾。</summary>
+    private bool IsUnassigned(DailyAnalysisRecord record, HostLookup lookup, List<RecordHandling> handlings, List<IssueCase> openCases)
+    {
+        if (FindHandling(handlings, lookup, record)?.HandlerId != null) return false;
+        if (record.TopIssues.Count == 0) return true;
+        var name = lookup.For(record)?.HostName ?? record.Host;
+        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+        return !openCases.Any(c =>
+            c.HandlerId.HasValue &&
+            string.Equals(c.HostName, name, StringComparison.OrdinalIgnoreCase) &&
+            issueKeys.Contains(c.IssueKey));
     }
 
     private RecordQueryFilter BuildFilter(RecordSearchRequest request)

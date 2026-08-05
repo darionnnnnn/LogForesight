@@ -121,6 +121,10 @@ public class IssueGroupDto
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
 
+    /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
+    /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>
+    public string GroupStatus { get; set; } = string.Empty;
+
     /// <summary>進行中案件的處理人（去重、依姓名排序）——帶 Id 讓前端把姓名連到
     /// 處理人工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
     /// 由前端做（伺服器端收斂成純文字，收斂後的第一個名字就沒有 Id 可連了）</summary>
@@ -498,6 +502,10 @@ public class RecordSearchRequest
 
     /// <summary>只看逾期未處理</summary>
     public bool? Overdue { get; set; }
+
+    /// <summary>只看未指派（§5/§10）：無有效處理人（日層級無處理人且無案件涵蓋）。
+    /// 明細視角依此過濾風險日；依問題視角依「處理人清單為空」過濾。</summary>
+    public bool Unassigned { get; set; }
 
     /// <summary>
     /// 表頭排序（docs/WEB-SPEC.md §9.2）。null／不合法值＝維持各視角原本的預設排序。

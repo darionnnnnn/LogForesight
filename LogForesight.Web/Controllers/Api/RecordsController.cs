@@ -42,6 +42,7 @@ public class RecordsController : ControllerBase
         [FromQuery] string? source,
         [FromQuery] string? statuses,
         [FromQuery] bool? overdue,
+        [FromQuery] bool? unassigned,
         [FromQuery] string? sort,
         [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
@@ -60,6 +61,7 @@ public class RecordsController : ControllerBase
             Source = source,
             Statuses = ParseStrings(statuses),
             Overdue = overdue,
+            Unassigned = unassigned == true,
             SortKey = sort,
             Ascending = dir == "asc",
             Page = page,
@@ -107,7 +109,8 @@ public class RecordsController : ControllerBase
         ApiResponse<PagedResult<RecordDateGroupDto>>.Ok(
             _list.SearchByDate(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
 
-    /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）</summary>
+    /// <summary>依問題彙總（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）。
+    /// §10：支援處理狀態（處理概況三態）與未指派過濾。</summary>
     [HttpGet("by-issue")]
     public ApiResponse<PagedResult<IssueGroupDto>> ByIssue(
         [FromQuery] string? hostIds,
@@ -119,12 +122,18 @@ public class RecordsController : ControllerBase
         [FromQuery] string? severity,
         [FromQuery] int? eventId,
         [FromQuery] string? source,
+        [FromQuery] string? statuses,
+        [FromQuery] bool? unassigned,
         [FromQuery] string? sort,
         [FromQuery] string dir = "desc",
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50) =>
-        ApiResponse<PagedResult<IssueGroupDto>>.Ok(
-            _list.SearchByIssue(BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize)));
+        [FromQuery] int pageSize = 50)
+    {
+        var request = BuildRequest(hostIds, groupIds, from, to, riskLevels, categories, severity, eventId, source, sort, dir, page, pageSize);
+        request.Statuses = ParseStrings(statuses);
+        request.Unassigned = unassigned == true;
+        return ApiResponse<PagedResult<IssueGroupDto>>.Ok(_list.SearchByIssue(request));
+    }
 
     private static RecordSearchRequest BuildRequest(
         string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,

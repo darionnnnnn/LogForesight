@@ -20,18 +20,20 @@ public class ReportService
         _handling = handling;
     }
 
-    public ReportSummaryDto GetSummary(DateTime from, DateTime to)
+    public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
     {
         if (to < from) (from, to) = (to, from);
 
-        var records = _repository.Query(new RecordQueryFilter { From = from, To = to });
+        var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
+        var records = _handling.FilterByScope(_repository.Query(new RecordQueryFilter { From = from, To = to }), scope);
 
         // 與前一個「等長」期間比較：主管要的不是數字本身，是「變好還是變壞」。
-        // 等長才可比——拿一週跟一個月比毫無意義
+        // 等長才可比——拿一週跟一個月比毫無意義。前期套用同一 scope，比較才有意義（§5）
         var span = (to.Date - from.Date).Days + 1;
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-span + 1);
-        var previousRecords = _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo });
+        var previousRecords = _handling.FilterByScope(
+            _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
@@ -40,6 +42,7 @@ public class ReportService
         {
             From = from.ToString("yyyy-MM-dd"),
             To = to.ToString("yyyy-MM-dd"),
+            HandlingScope = scope,
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
             Categories = RecordStatsBuilder.BuildCategoryCards(records),

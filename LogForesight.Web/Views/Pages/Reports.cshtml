@@ -31,6 +31,17 @@
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
             </div>
         </form>
+
+        @* 處理狀態顯示範圍（§5）：單選——一個母體對應一組明確語意，取代語意重疊的多選 checkbox *@
+        <div class="d-flex align-items-center gap-2 mt-2 lf-no-print">
+            <span class="lf-toolbar__group-label">顯示範圍</span>
+            <div class="lf-toolbar__chips" id="report-scope-chips">
+                <button type="button" class="lf-chip active" data-scope="all">全部</button>
+                <button type="button" class="lf-chip" data-scope="unresolved">未結案</button>
+                <button type="button" class="lf-chip" data-scope="open">未處理</button>
+                <button type="button" class="lf-chip" data-scope="unassigned">未指派</button>
+            </div>
+        </div>
     </div>
 </div>
 

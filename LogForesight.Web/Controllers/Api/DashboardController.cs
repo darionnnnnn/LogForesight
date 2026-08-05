@@ -64,12 +64,13 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("summary")]
-    public ApiResponse<ReportSummaryDto> Summary([FromQuery] string? from, [FromQuery] string? to)
+    public ApiResponse<ReportSummaryDto> Summary(
+        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope)
     {
         var toDate = ParseDate(to) ?? DateTime.Today;
         var fromDate = ParseDate(from) ?? toDate.AddDays(-29);
 
-        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate));
+        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope));
     }
     // 跨主機同簽章查詢（原 GET signature）已於 §4 併入「問題查詢」（eventId＋source＋依問題視角
     // 為嚴格超集），端點與 ReportService.FindSignature／SignatureHitDto 一併移除。

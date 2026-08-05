@@ -80,6 +80,10 @@ public class ReportSummaryDto
     public string From { get; set; } = string.Empty;
     public string To { get; set; } = string.Empty;
 
+    /// <summary>套用的處理狀態顯示範圍（§5）：all｜unresolved｜open｜unassigned。前端據此
+    /// 隱藏「處理進度」小圖（scope≠all 時母體已抽掉，恆 0%／100% 無資訊量）。</summary>
+    public string HandlingScope { get; set; } = "all";
+
     /// <summary>KPI 卡：本期數字＋與前一個等長期間的對比</summary>
     public ReportKpiDto Kpi { get; set; } = new();
 

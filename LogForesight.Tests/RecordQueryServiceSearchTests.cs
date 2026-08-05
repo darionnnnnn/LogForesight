@@ -502,6 +502,99 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("DOMAIN\\h", groupHandler.Account);
     }
 
+    [Fact]
+    public void SearchByIssue_未指派過濾_只留處理人清單為空的問題()
+    {
+        // §10：未指派＝這個問題沒有任何主機被指派（Handlers 為空）
+        var assignedHost = AddHost("HOST-ASSIGNED");
+        var unassignedHost = AddHost("HOST-UNASSIGNED");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
+        var assignedIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        var unassignedIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "Ntfs", EventId = 55,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+
+        AddRecord(assignedHost, DateTime.Today, "高", issues: new[] { assignedIssue });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = assignedHost.HostName, IssueKey = IssueSignatureKey.For(assignedIssue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+        AddRecord(unassignedHost, DateTime.Today, "高", issues: new[] { unassignedIssue });
+
+        var all = _service.SearchByIssue(new RecordSearchRequest());
+        Assert.Equal(2, all.Items.Count);
+
+        var unassignedOnly = _service.SearchByIssue(new RecordSearchRequest { Unassigned = true });
+        var group = Assert.Single(unassignedOnly.Items);
+        Assert.Equal("Ntfs", group.Source);
+        Assert.Empty(group.Handlers);
+    }
+
+    [Fact]
+    public void SearchByIssue_處理概況三態篩選_只留符合狀態的問題()
+    {
+        // §10：by-issue 支援 statuses（群組層級 GroupStatus 三態）
+        var openHost = AddHost("HOST-OPEN");
+        var resolvedHost = AddHost("HOST-RES");
+        var openIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 153,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        var resolvedIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "Ntfs", EventId = 55,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(openHost, DateTime.Today, "高", issues: new[] { openIssue });   // 從未標記＝未處理
+        AddRecord(resolvedHost, DateTime.Today, "高", issues: new[] { resolvedIssue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = resolvedHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(resolvedIssue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        var openOnly = _service.SearchByIssue(new RecordSearchRequest { Statuses = new() { "open" } });
+        var group = Assert.Single(openOnly.Items);
+        Assert.Equal("disk", group.Source);
+        Assert.Equal("open", group.GroupStatus);
+    }
+
+    [Fact]
+    public void Search_未指派過濾_只留無有效處理人的風險日()
+    {
+        // §5/§10：明細視角未指派＝日層級無處理人且無案件涵蓋
+        var assignedHost = AddHost("HOST-ASSIGNED");
+        var unassignedHost = AddHost("HOST-UNASSIGNED");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
+        var issue = DiskIssue();
+
+        AddRecord(assignedHost, DateTime.Today, "高", issues: new[] { issue });
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = assignedHost.HostName, Date = DateTime.Today,
+            Status = HandlingStatuses.InProgress, HandlerId = handler.UserId, UpdatedAt = DateTime.Now
+        });
+        AddRecord(unassignedHost, DateTime.Today, "高", issues: new[] { issue });
+
+        var all = _service.Search(new RecordSearchRequest());
+        Assert.Equal(2, all.Items.Count);
+
+        var unassignedOnly = _service.Search(new RecordSearchRequest { Unassigned = true });
+        var item = Assert.Single(unassignedOnly.Items);
+        Assert.Equal("HOST-UNASSIGNED", item.HostName);
+        Assert.Null(item.HandlerId);
+    }
+
     /// <summary>
     /// docs/archive/FEEDBACK-8-PLAN.md #4：依問題視角的處理概況——觀察中（未到期）算處理中，
     /// 觀察到期算未處理（問題仍在發生，不是「有結論」）。
