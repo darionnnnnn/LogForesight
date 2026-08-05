@@ -172,7 +172,11 @@ public class RecordQueryServiceSearchTests : IDisposable
 
         var item = Assert.Single(result.Items);
         Assert.Equal(user.UserId, item.HandlerId);
-        Assert.Equal("小李（案件）", item.HandlerName);
+        // §9：HandlerName 改為純顯示名，「（案件）」標記改由 HandlerFromCase 旗標帶（前端組後綴），
+        // 帳號另走 HandlerAccount（前端 formatUserName 組「顯示名稱(帳號)」）
+        Assert.Equal("小李", item.HandlerName);
+        Assert.Equal("DOMAIN\\li", item.HandlerAccount);
+        Assert.True(item.HandlerFromCase);
     }
 
     [Fact]

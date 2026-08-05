@@ -8,7 +8,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('import-tabs'));
 
@@ -227,7 +227,7 @@ async function loadLogs() {
             { title: '時間', render: l => formatDateTime(l.createdAt) },
             { title: '類型', render: l => KIND_NAMES[l.kind] ?? l.kind },
             { title: '檔案／來源', render: l => l.fileName },
-            { title: '操作者', render: l => l.account },
+            { title: '操作者', render: l => formatUserName(l.displayName, l.account) },
             {
                 title: '結果',
                 render: l => `新增 ${l.addedCount}、更新 ${l.updatedCount}` +

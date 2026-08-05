@@ -131,7 +131,7 @@ function render() {
     } else {
         panel.appendChild(readonlyField(
             '處理人',
-            handling.handlerName ?? '未指派',
+            handling.handlerName ? formatUserName(handling.handlerName, handling.handlerAccount) : '未指派',
             '僅系統管理員可指派或改派'
         ));
     }

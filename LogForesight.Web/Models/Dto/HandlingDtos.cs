@@ -26,6 +26,8 @@ public class HandlingDto
     /// <summary>處理人（事件層級，admin 可改派）</summary>
     public long? HandlerId { get; set; }
     public string? HandlerName { get; set; }
+    /// <summary>處理人帳號（§9：唯讀顯示時前端以 formatUserName 組「顯示名稱(帳號)」）</summary>
+    public string? HandlerAccount { get; set; }
 
     public string? DueDate { get; set; }
     public bool IsOverdue { get; set; }
@@ -262,6 +264,8 @@ public class PermissionChangeDto
 
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
     public string? ConfirmedByAccount { get; set; }
+    /// <summary>確認者顯示名稱（§9：前端以 formatUserName 組「顯示名稱(帳號)」）</summary>
+    public string? ConfirmedByDisplayName { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public string? ConfirmNote { get; set; }
 }

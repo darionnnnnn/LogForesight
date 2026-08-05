@@ -590,7 +590,8 @@ public class RecordListQueryService
                 handlerFromCase = true;
             }
         }
-        var handlerDisplayName = handlerId.HasValue ? _users.Get(handlerId.Value)?.DisplayName : null;
+        var handlerUser = handlerId.HasValue ? _users.Get(handlerId.Value) : null;
+        var handlerDisplayName = handlerUser?.DisplayName;
 
         return new RecordListItemDto
         {
@@ -613,7 +614,9 @@ public class RecordListQueryService
             TotalIssues = progress.Total,
             ClosedIssues = progress.Closed,
             HandlerId = handlerId,
-            HandlerName = handlerFromCase && handlerDisplayName != null ? $"{handlerDisplayName}（案件）" : handlerDisplayName,
+            HandlerName = handlerDisplayName,
+            HandlerAccount = handlerUser?.Account,
+            HandlerFromCase = handlerFromCase,
             IsOverdue = isOverdue
         };
     }

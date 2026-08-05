@@ -7,6 +7,27 @@ namespace LogForesight.Web.Models.Dto;
 /// 佇列數不是統計儀表，是**待辦**——每一項都代表某些主機今晚不會被檢查、
 /// 或檢查了卻沒有人看得到。
 /// </summary>
+/// <summary>
+/// NetIQ 連線與節流參數的顯示 DTO（§9）：對應 <see cref="LogForesight.Core.Models.NetiqOptions"/>
+/// 的可調欄位，另補上更新者顯示名稱（即時解析，前端以 formatUserName 組「顯示名稱(帳號)」）。
+/// 寫入走 <see cref="UpdateNetiqOptionsRequest"/>，與此 DTO 分開。
+/// </summary>
+public class NetiqOptionsDto
+{
+    public int QueryDelayMs { get; set; }
+    public int PageSize { get; set; }
+    public int MaxResultsPerJob { get; set; }
+    public int TimeoutSeconds { get; set; }
+    public int RetryCount { get; set; }
+    public bool AllowInvalidCertificates { get; set; }
+    public int BackfillDays { get; set; }
+    public int MaxParallelServers { get; set; }
+    public bool ChatLiveFetchEnabled { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedByAccount { get; set; }
+    public string? UpdatedByDisplayName { get; set; }
+}
+
 public class NetiqOverviewDto
 {
     public List<string> SentinelNames { get; set; } = new();

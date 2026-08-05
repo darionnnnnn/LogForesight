@@ -25,6 +25,7 @@ public class AdminController : ControllerBase
     private readonly NetiqOptionsService _netiqOptions;
     private readonly NetiqProbeService _probe;
     private readonly IAuditService _audit;
+    private readonly IUserStore _userStore;
 
     public AdminController(
         UserAdminService users,
@@ -35,7 +36,8 @@ public class AdminController : ControllerBase
         SentinelAdminService sentinels,
         NetiqOptionsService netiqOptions,
         NetiqProbeService probe,
-        IAuditService audit)
+        IAuditService audit,
+        IUserStore userStore)
     {
         _users = users;
         _hosts = hosts;
@@ -46,6 +48,7 @@ public class AdminController : ControllerBase
         _netiqOptions = netiqOptions;
         _probe = probe;
         _audit = audit;
+        _userStore = userStore;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -257,12 +260,31 @@ public class AdminController : ControllerBase
     // ── NetIQ 連線與節流參數（「系統管理 > NetIQ 維護」頁）────────────────────
 
     [HttpGet("netiq/options")]
-    public ApiResponse<NetiqOptions> GetNetiqOptions() =>
-        ApiResponse<NetiqOptions>.Ok(_netiqOptions.Get());
+    public ApiResponse<NetiqOptionsDto> GetNetiqOptions() =>
+        ApiResponse<NetiqOptionsDto>.Ok(ToNetiqDto(_netiqOptions.Get()));
 
     [HttpPut("netiq/options")]
-    public ApiResponse<NetiqOptions> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
-        ApiResponse<NetiqOptions>.Ok(_netiqOptions.Update(request));
+    public ApiResponse<NetiqOptionsDto> UpdateNetiqOptions([FromBody] UpdateNetiqOptionsRequest request) =>
+        ApiResponse<NetiqOptionsDto>.Ok(ToNetiqDto(_netiqOptions.Update(request)));
+
+    /// <summary>NetiqOptions → 顯示 DTO：補上更新者顯示名稱（§9，即時解析）</summary>
+    private NetiqOptionsDto ToNetiqDto(NetiqOptions o) => new()
+    {
+        QueryDelayMs = o.QueryDelayMs,
+        PageSize = o.PageSize,
+        MaxResultsPerJob = o.MaxResultsPerJob,
+        TimeoutSeconds = o.TimeoutSeconds,
+        RetryCount = o.RetryCount,
+        AllowInvalidCertificates = o.AllowInvalidCertificates,
+        BackfillDays = o.BackfillDays,
+        MaxParallelServers = o.MaxParallelServers,
+        ChatLiveFetchEnabled = o.ChatLiveFetchEnabled,
+        UpdatedAt = o.UpdatedAt,
+        UpdatedByAccount = o.UpdatedByAccount,
+        UpdatedByDisplayName = string.IsNullOrEmpty(o.UpdatedByAccount)
+            ? null
+            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName
+    };
 
     // ── NetIQ API 診斷（probe，「診斷」分頁，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）──────────
 

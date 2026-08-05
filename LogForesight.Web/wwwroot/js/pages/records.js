@@ -531,13 +531,15 @@ function handlingCell(record) {
     return wrap;
 }
 
-/** 處理人姓名連到其工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）；無 HandlerId（從未指派）時純文字 */
+/** 處理人姓名連到其工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）；無 HandlerId（從未指派）時純文字。
+ *  §9：顯示「顯示名稱(帳號)」；來自案件 fallback 時後綴「（案件）」（原後端組字，改由前端組） */
 function handlerCell(record) {
     if (!record.handlerId || !record.handlerName) return record.handlerName ?? '';
 
+    const suffix = record.handlerFromCase ? '（案件）' : '';
     const link = document.createElement('a');
     link.href = `/handlers/${record.handlerId}`;
-    link.textContent = record.handlerName;
+    link.textContent = formatUserName(record.handlerName, record.handlerAccount) + suffix;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
 }
@@ -993,8 +995,11 @@ function csvRow(item) {
             item.hostCount, item.dayCount, item.totalCount, item.lastSeen,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
+    const handler = item.handlerName
+        ? formatUserName(item.handlerName, item.handlerAccount) + (item.handlerFromCase ? '（案件）' : '')
+        : '';
     return [item.date, quote(item.hostName), item.riskLevel, quote(item.headline),
-        cats(item.categories), quote(item.handlingStatusText), quote(item.handlerName ?? '')];
+        cats(item.categories), quote(item.handlingStatusText), quote(handler)];
 }
 
 function quote(value) {

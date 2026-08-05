@@ -29,6 +29,8 @@ internal static class HostDtoMapper
         GroupIds = host.GroupIds,
         GroupNames = NameFormat.ResolveNames(host.GroupIds, groupsById, g => g.GroupName),
         OwnerUserIds = host.OwnerUserIds,
-        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => u.DisplayName)
+        // §9：負責人欄顯示「顯示名稱(帳號)」。此清單為顯示用途（主機頁 badges），
+        // 與 HandlingDto.OwnerNames（另兼作指派下拉的置頂比對鍵）刻意不同源，故可在此組帳號
+        OwnerNames = NameFormat.ResolveNames(host.OwnerUserIds, usersById, u => NameFormat.WithAccount(u.DisplayName, u.Account))
     };
 }

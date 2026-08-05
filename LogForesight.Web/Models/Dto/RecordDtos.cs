@@ -32,8 +32,15 @@ public class RecordListItemDto
     /// </summary>
     public long? HandlerId { get; set; }
 
-    /// <summary>顯示名稱；由案件 fallback 帶出時後綴「（案件）」（Q5）</summary>
+    /// <summary>處理人顯示名稱（§9 起為純顯示名，不含後綴；(帳號) 與「（案件）」由前端組）</summary>
     public string? HandlerName { get; set; }
+
+    /// <summary>處理人帳號（§9：前端以 formatUserName 組「顯示名稱(帳號)」）</summary>
+    public string? HandlerAccount { get; set; }
+
+    /// <summary>處理人來自案件 fallback（Q5）：前端於名稱後加「（案件）」標示</summary>
+    public bool HandlerFromCase { get; set; }
+
     public bool IsOverdue { get; set; }
 
     /// <summary>當日問題結案進度（清單顯示 N/M 已處理）；TotalIssues 為 0 時前端不顯示</summary>

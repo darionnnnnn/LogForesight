@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
 
@@ -237,7 +237,7 @@ function renderOptionsUpdated(options) {
         return;
     }
     el.textContent = `最後更新：${formatDateTime(options.updatedAt)}` +
-        (options.updatedByAccount ? `　更新者：${options.updatedByAccount}` : '');
+        (options.updatedByAccount ? `　更新者：${formatUserName(options.updatedByDisplayName, options.updatedByAccount)}` : '');
 }
 
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
