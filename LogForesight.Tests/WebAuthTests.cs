@@ -171,51 +171,8 @@ public class WebAppSettingsValidationTests
         settings.Validate(isProduction: true);   // 不應拋例外
     }
 
-    // ── Netiq:DiscoveryClient（2026-07-29：離線示範資料不得帶上正式環境）───────
-
-    [Fact]
-    public void Production且DiscoveryClient為Stub_啟動失敗()
-    {
-        var settings = Baseline();
-        settings.Netiq.DiscoveryClient = "Stub";
-
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: true));
-        Assert.Contains("Netiq:DiscoveryClient", ex.Message);
-    }
-
-    [Fact]
-    public void 非Production且DiscoveryClient為Stub_通過()
-    {
-        var settings = Baseline();
-        settings.Netiq.DiscoveryClient = "Stub";
-
-        settings.Validate(isProduction: false);   // 不應拋例外——開發期本來就該能用示範資料
-    }
-
-    [Theory]
-    [InlineData("Auto")]
-    [InlineData("Real")]
-    public void Production且DiscoveryClient為Auto或Real_通過(string value)
-    {
-        var settings = Baseline();
-        // Baseline() 的 Jwt/PasswordHash 是已知測試值，Production 下會先被那兩項擋下——
-        // 這裡只想單獨驗證 Netiq:DiscoveryClient 這條，所以連同覆寫成合格值（同「已覆寫成非已知值」測試）
-        settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
-        settings.Auth.ServerAdmin.PasswordHash = "PBKDF2$210000$另一組真正產生的雜湊$不是已知測試值==";
-        settings.Netiq.DiscoveryClient = value;
-
-        settings.Validate(isProduction: true);   // 不應拋例外
-    }
-
-    [Fact]
-    public void DiscoveryClient為不合法值_啟動失敗()
-    {
-        var settings = Baseline();
-        settings.Netiq.DiscoveryClient = "Fake";
-
-        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: false));
-        Assert.Contains("Netiq:DiscoveryClient", ex.Message);
-    }
+    // §13：Netiq:DiscoveryClient 已退役（離線示範資料改由 DB 開關＋非 Production 限定控制），
+    // 對應的啟動驗證測試一併移除；選型邏輯改測 NetiqDiscoveryClientSelectionTests.UseStubNetiqClient。
 }
 
 public class ServerAdminAuthenticatorTests

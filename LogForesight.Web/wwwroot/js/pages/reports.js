@@ -14,8 +14,8 @@
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, statCard } from '../core/ui.js';
-import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
+import { statCard } from '../core/ui.js';
+import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -54,9 +54,15 @@ function saveVisibleCharts() {
     localStorage.setItem(VISIBLE_CHARTS_STORAGE_KEY, JSON.stringify([...visibleCharts]));
 }
 
+/** scope≠all 時「處理進度」無資訊量（母體已抽掉已處理，恆 0%/100%）——不論自訂圖表是否勾選都隱藏 */
+function isChartHidden(chart) {
+    if (chart.id === 'handling-progress' && currentScope !== 'all') return true;
+    return !visibleCharts.has(chart.id);
+}
+
 function applyChartVisibility() {
     for (const chart of CHART_REGISTRY) {
-        document.getElementById(chart.sectionId).classList.toggle('d-none', !visibleCharts.has(chart.id));
+        document.getElementById(chart.sectionId).classList.toggle('d-none', isChartHidden(chart));
     }
 }
 
@@ -64,7 +70,7 @@ function applyChartVisibility() {
 function renderVisibleCharts() {
     applyChartVisibility();
     for (const chart of CHART_REGISTRY) {
-        if (visibleCharts.has(chart.id)) chart.render();
+        if (!isChartHidden(chart)) chart.render();
     }
 }
 
@@ -111,22 +117,43 @@ function renderChartPickerBody() {
     }
 }
 
+// 處理狀態顯示範圍（§5）：單選，存 URL（可分享）；不入 localStorage——報表以「全部」為誠實預設
+let currentScope = new URLSearchParams(location.search).get('handlingScope') || 'all';
+
 async function load() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
 
     const [data, displaySettings] = await Promise.all([
-        api.get(`/api/reports/summary?from=${from}&to=${to}`),
+        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}`),
         getDisplaySettings()
     ]);
     currentData = data;
+    currentScope = data.handlingScope || 'all';
     visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
 
-    document.getElementById('print-title').textContent =
-        `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}`;
+    // 同步 URL（可複製分享）：scope=all 時不留參數，保持網址乾淨
+    const params = new URLSearchParams(location.search);
+    if (currentScope === 'all') params.delete('handlingScope'); else params.set('handlingScope', currentScope);
+    history.replaceState(null, '', params.toString() ? `?${params}` : location.pathname);
 
+    document.getElementById('print-title').textContent =
+        `LogForesight 風險報表　${currentData.from} ～ ${currentData.to}` +
+        (currentScope !== 'all' ? `（${SCOPE_LABEL[currentScope]}）` : '');
+
+    // scope≠all 時「處理進度」小圖無資訊量（母體已抽掉已處理）——由 applyChartVisibility 統一隱藏
     renderKpi();
     renderVisibleCharts();
+}
+
+const SCOPE_LABEL = { unresolved: '未結案', open: '未處理', unassigned: '未指派' };
+
+/** 依 scope 附加到下鑽 URL 的處理狀態條件——點進去的清單筆數與卡片數字對得上（§5） */
+function scopeDrillParams() {
+    if (currentScope === 'unresolved') return '&statuses=open,in_progress';
+    if (currentScope === 'open') return '&statuses=open';
+    if (currentScope === 'unassigned') return '&unassigned=true';
+    return '';
 }
 
 /** KPI 卡：帶與前一等長期間的對比——主管要的不是數字本身，是「變好還是變壞」 */
@@ -171,7 +198,8 @@ function renderKpi() {
         col.appendChild(statCard({
             value: formatNumber(card.value),
             label: card.label,
-            url: card.url,
+            // 下鑽帶上目前顯示範圍（§5）：點進去的清單與卡片數字對得上（KPI 卡本身不帶 statuses，附加不衝突）
+            url: card.url ? card.url + scopeDrillParams() : null,
             hint: card.hint,
             centered: false,
             extra: (card.previous !== null && card.previous !== undefined)
@@ -526,59 +554,6 @@ function renderHandlingProgressChart() {
     ]);
 }
 
-// ── 跨主機同簽章查詢 ─────────────────────────────────────────────────────────
-
-document.getElementById('signature-form').addEventListener('submit', async event => {
-    event.preventDefault();
-
-    const eventId = document.getElementById('signature-event-id').value;
-    if (!eventId) {
-        toast('請輸入 Event ID', 'warning');
-        return;
-    }
-
-    const container = document.getElementById('signature-result');
-    renderLoading(container, 3);
-
-    const source = document.getElementById('signature-source').value.trim();
-    const hits = await api.get(
-        `/api/reports/signature?eventId=${eventId}${source ? `&source=${encodeURIComponent(source)}` : ''}`);
-
-    renderTable(container, {
-        columns: [
-            { title: '日期', render: h => dateLink(h) },
-            { title: '主機', render: h => h.hostName },
-            { title: '次數', className: 'text-end', render: h => formatNumber(h.count) },
-            { title: '嚴重度', render: h => severityCell(h) },
-            { title: '說明', render: h => h.knownIssue ?? '' }
-        ],
-        rows: hits,
-        empty: {
-            title: '沒有找到這個事件簽章',
-            hint: '請確認 Event ID 是否正確，或該事件是否出現在您有權檢視的主機上。'
-        }
-    });
-});
-
-/** 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1）：跨主機同簽章查詢正是
- * 「全環境共通重大問題」的主要排查入口，命中列同樣要看得出誰是「重大」 */
-function severityCell(hit) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(hit.severity));
-    if (hit.elevatesDayRisk) wrap.appendChild(elevatesBadge());
-    return wrap;
-}
-
-function dateLink(hit) {
-    if (hit.hostId === 0) return hit.date;
-
-    const link = document.createElement('a');
-    link.href = `/records/${hit.hostId}/${hit.date}`;
-    link.textContent = hit.date;
-    return link;
-}
-
 // ── 期間控制 ─────────────────────────────────────────────────────────────────
 
 document.getElementById('report-form').addEventListener('submit', event => {
@@ -594,6 +569,22 @@ for (const button of document.querySelectorAll('[data-range]')) {
 }
 
 document.getElementById('btn-print-report').addEventListener('click', () => window.print());
+
+// 處理狀態顯示範圍（§5）：單選 chip，切換即重載（母體改變，全圖表跟著變）
+document.getElementById('report-scope-chips').addEventListener('click', event => {
+    const btn = event.target.closest('button[data-scope]');
+    if (!btn || btn.classList.contains('active')) return;
+    for (const other of document.querySelectorAll('#report-scope-chips button')) {
+        other.classList.toggle('active', other === btn);
+    }
+    currentScope = btn.dataset.scope;
+    load();
+});
+
+// 進頁時把 active chip 對齊 URL 帶入的 scope
+for (const btn of document.querySelectorAll('#report-scope-chips button')) {
+    btn.classList.toggle('active', btn.dataset.scope === currentScope);
+}
 
 function setRange(days) {
     const to = new Date();

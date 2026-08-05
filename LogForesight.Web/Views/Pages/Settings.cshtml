@@ -6,6 +6,7 @@
     <li class="nav-item"><button class="nav-link active" data-tab="levels" type="button">層級與顯示</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="ai" type="button">AI 服務</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
 </ul>
 
@@ -72,6 +73,124 @@
             <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="ai-api-key-clear" />
                 <label class="form-check-label" for="ai-api-key-clear">清除目前的 API 金鑰</label>
+            </div>
+
+            @* AI 進階參數（§12：自 appsettings 的 Ai 區段遷入）：折疊區，平常不必動 *@
+            <hr />
+            <details id="ai-advanced">
+                <summary class="fw-semibold">進階參數（逾時／重試／token 上限／取樣）</summary>
+                <p class="text-muted small mt-2 mb-3">
+                    預設值即原本 appsettings 的出廠值，平常不需調整。改動只影響**排程／立即執行**的批次分析
+                    與 Web 互動情境共用的取樣參數；逾時與重試在互動情境另有更短的固定值（避免使用者盯著轉圈）。
+                </p>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="ai-timeout-seconds" class="form-label">單次呼叫逾時（秒）</label>
+                        <input type="number" class="form-control" id="ai-timeout-seconds" min="1" max="3600" />
+                        <div class="form-text">本機 27B 級模型單次回應可能需數分鐘</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-retry-count" class="form-label">網路層重試次數</label>
+                        <input type="number" class="form-control" id="ai-retry-count" min="1" max="10" />
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-retry-delay-seconds" class="form-label">首次重試等待（秒）</label>
+                        <input type="number" class="form-control" id="ai-retry-delay-seconds" min="0" max="300" />
+                        <div class="form-text">之後指數遞增（10 → 20 → 40）</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-json-retry-count" class="form-label">JSON 檢查未過重問次數</label>
+                        <input type="number" class="form-control" id="ai-json-retry-count" min="0" max="10" />
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-max-tokens" class="form-label">一般呼叫 token 上限</label>
+                        <input type="number" class="form-control" id="ai-max-tokens" min="0" max="131072" />
+                        <div class="form-text">0＝不設上限；抓緊可讓退化輸出更快觸頂</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-deep-dive-max-tokens" class="form-label">深入分析 token 上限</label>
+                        <input type="number" class="form-control" id="ai-deep-dive-max-tokens" min="0" max="131072" />
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-frequency-penalty" class="form-label">頻率懲罰</label>
+                        <input type="number" class="form-control" id="ai-frequency-penalty" min="0" max="2" step="0.1" />
+                        <div class="form-text">抑制反覆重複的退化輸出</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ai-presence-penalty" class="form-label">存在懲罰</label>
+                        <input type="number" class="form-control" id="ai-presence-penalty" min="0" max="2" step="0.1" />
+                    </div>
+                    <div class="col-12">
+                        <label for="ai-extra-request-fields" class="form-label">額外請求欄位（JSON）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="原封不動合併進送給 AI 的請求 JSON。伺服器不認得的欄位通常會被忽略、不會報錯，所以換 server/模型時務必對照對方的啟動設定或文件確認參數名稱（本專案實測的 KoboldCpp 認 rep_pen 與聊天範本的 enable_thinking 布林開關；原生 llama.cpp server 則是 repeat_penalty）。留空＝不附加任何欄位。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                        <textarea class="form-control lf-mono" id="ai-extra-request-fields" rows="3"
+                                  placeholder='{"rep_pen": 1.3}'></textarea>
+                        <div class="form-text">必須是 JSON 物件；存檔時會驗證格式。</div>
+                    </div>
+                </div>
+            </details>
+        </div>
+    </div>
+
+    @* 分析參數（§12：自 appsettings 的 Permissions／Analysis／Import 區段遷入）*@
+    <div class="lf-card mb-3 d-none" data-panel="analysis">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">分析參數</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="mb-3">
+                <label for="server-description" class="form-label">伺服器角色描述</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="會帶入 prompt 讓 AI 依環境判讀——同一個事件在網域控制站與一般檔案伺服器上的嚴重性不同。留空＝略過。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <input type="text" class="form-control" id="server-description" placeholder="例如：公司機房的 AD 網域控制站" />
+            </div>
+
+            <div class="mb-3">
+                <label for="checkup-interval-days" class="form-label">體檢間隔天數</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="距上次體檢達此天數即到期執行（due-date 輪巡，不綁固定星期幾）。漏跑時下次執行自動補上，體檢不會因此消失。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <input type="number" class="form-control" id="checkup-interval-days" min="1" max="365" style="max-width: 12rem;" />
+            </div>
+
+            <div class="mb-3">
+                <label for="watched-folders" class="form-label">額外監控權限異動的資料夾</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一行一個路徑，支援環境變數（如 %ProgramFiles%\YourApp）。本站台執行檔自身目錄一律自動監控，不必列在此。建議加入網站根目錄、應用程式安裝目錄等重要位置。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <textarea class="form-control lf-mono" id="watched-folders" rows="3"
+                          placeholder="C:\inetpub\wwwroot&#10;%ProgramFiles%\YourApp"></textarea>
+                <div class="form-text">一行一個路徑；留空＝只監控本站台執行檔目錄。</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="analysis-channels" class="form-label">要掃描的 Event Log 頻道</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一行一個頻道全名。留空＝使用預設六頻道（System／Application／Security 三個傳統日誌，加上 Defender 與兩個 RDP TerminalServices Operational 頻道）。主機上不存在的頻道會誠實申報「不適用」，不會當成錯誤。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <textarea class="form-control lf-mono" id="analysis-channels" rows="3"
+                          placeholder="留空＝預設六頻道"></textarea>
+                <div class="form-text">一行一個頻道全名；留空＝預設六頻道。</div>
+            </div>
+
+            <hr />
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="import-max-file-size-kb" class="form-label">CSV 匯入檔案大小上限（KB）</label>
+                    <input type="number" class="form-control" id="import-max-file-size-kb" min="1" max="102400" />
+                </div>
+                <div class="col-md-6">
+                    <label for="import-max-rows" class="form-label">CSV 匯入資料列上限</label>
+                    <input type="number" class="form-control" id="import-max-rows" min="1" max="1000000" />
+                </div>
             </div>
         </div>
     </div>

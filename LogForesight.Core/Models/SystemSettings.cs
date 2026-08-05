@@ -44,6 +44,66 @@ public class SystemSettings
     /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";
 
+    // ── AI 進階參數（§12，回饋第九輪：自 appsettings 的 Ai 區段遷入）──────────────────
+    // 各欄位預設值＝原 appsettings.json 的出廠值，舊部署升級後行為不變（零遷移）。
+    // 套用點：RuntimeSettingsResolver.ApplySystemSettingsOverrides（排程/立即執行每次重建設定）。
+
+    /// <summary>單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘）</summary>
+    public int AiTimeoutSeconds { get; set; } = 600;
+
+    /// <summary>網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應）</summary>
+    public int AiRetryCount { get; set; } = 3;
+
+    /// <summary>第一次重試的等待秒數，之後指數遞增（10 → 20 → 40）</summary>
+    public int AiRetryDelaySeconds { get; set; } = 10;
+
+    /// <summary>AI 回覆未通過 JSON 格式/內容檢查時的額外重問次數（不計入網路層重試）</summary>
+    public int AiJsonRetryCount { get; set; } = 2;
+
+    /// <summary>一般呼叫（每日總覽、前置掃描）的 token 上限，0＝不設上限</summary>
+    public int AiMaxTokens { get; set; } = 1536;
+
+    /// <summary>深入分析呼叫的 token 上限（天生比終端摘要長，故與 <see cref="AiMaxTokens"/> 分開）</summary>
+    public int AiDeepDiveMaxTokens { get; set; } = 8192;
+
+    /// <summary>頻率懲罰：抑制「同一段文字反覆重複」的退化輸出</summary>
+    public double AiFrequencyPenalty { get; set; } = 0.8;
+
+    /// <summary>存在懲罰：與頻率懲罰互補，一起抑制退化重複</summary>
+    public double AiPresencePenalty { get; set; } = 0.8;
+
+    /// <summary>
+    /// 原封不動合併進 AI 請求 JSON 的額外欄位（JSON 物件文字）。伺服器不認得的欄位通常會被忽略，
+    /// 換 server/模型時請對照對方啟動設定重新確認（本專案實測的 KoboldCpp 認 <c>rep_pen</c> 與
+    /// 聊天範本的 <c>enable_thinking</c> 布林開關）。空字串＝不附加任何欄位。
+    /// 存文字而非結構：這是「原樣轉發」的逃生門，值域由對方 server 決定，不該被我們的型別限制住。
+    /// </summary>
+    public string AiExtraRequestFieldsJson { get; set; } =
+        """{"chat_template_kwargs":{"enable_thinking":false},"rep_pen":1.3}""";
+
+    // ── 分析參數（§12：自 appsettings 的 Permissions／Analysis 區段遷入）─────────────
+
+    /// <summary>額外要監控權限異動的資料夾（支援環境變數如 %ProgramFiles%）。
+    /// 執行檔自身目錄一律自動監控，不需列在此。</summary>
+    public List<string> WatchedFolders { get; set; } = new();
+
+    /// <summary>伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀。留空＝略過</summary>
+    public string ServerDescription { get; set; } = "";
+
+    /// <summary>體檢間隔天數（due-date 輪巡）：距上次體檢達此天數即到期</summary>
+    public int CheckupIntervalDays { get; set; } = 7;
+
+    /// <summary>要掃描的 Event Log 頻道全名清單。空清單＝使用預設六頻道</summary>
+    public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）───────────────────────────
+
+    /// <summary>CSV 匯入單檔大小上限（KB）</summary>
+    public int ImportMaxFileSizeKb { get; set; } = 2048;
+
+    /// <summary>CSV 匯入單檔資料列上限</summary>
+    public int ImportMaxRows { get; set; } = 5000;
+
     /// <summary>
     /// AI API 金鑰的密文（<see cref="CryptoHelper.Encrypt"/> 產生）。地端無驗證的端點留空即可；
     /// 需驗證的雲端／內部代理端點才需要設定，發送時以 <c>Authorization: Bearer</c> 帶入。

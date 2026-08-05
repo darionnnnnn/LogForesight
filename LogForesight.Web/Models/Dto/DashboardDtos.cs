@@ -80,6 +80,10 @@ public class ReportSummaryDto
     public string From { get; set; } = string.Empty;
     public string To { get; set; } = string.Empty;
 
+    /// <summary>套用的處理狀態顯示範圍（§5）：all｜unresolved｜open｜unassigned。前端據此
+    /// 隱藏「處理進度」小圖（scope≠all 時母體已抽掉，恆 0%／100% 無資訊量）。</summary>
+    public string HandlingScope { get; set; } = "all";
+
     /// <summary>KPI 卡：本期數字＋與前一個等長期間的對比</summary>
     public ReportKpiDto Kpi { get; set; } = new();
 
@@ -132,21 +136,4 @@ public class ReportTrendPointDto
     public int HighRisk { get; set; }
     public int MediumRisk { get; set; }
     public int ErrorCount { get; set; }
-}
-
-/// <summary>跨主機同簽章查詢的結果列</summary>
-public class SignatureHitDto
-{
-    public long HostId { get; set; }
-    public string HostName { get; set; } = string.Empty;
-    public string Date { get; set; } = string.Empty;
-    public int Count { get; set; }
-    public string Severity { get; set; } = string.Empty;
-
-    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1）：前端顯示「重大」徽章——
-    /// 跨主機同簽章查詢正是「全環境共通重大問題」的主要排查入口。</summary>
-    public bool ElevatesDayRisk { get; set; }
-
-    public string Category { get; set; } = string.Empty;
-    public string? KnownIssue { get; set; }
 }

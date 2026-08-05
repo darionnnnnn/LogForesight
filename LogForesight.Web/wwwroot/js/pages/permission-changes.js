@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { renderLoading, renderEmpty, toast, withBusy } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, formatUserName } from '../core/format.js';
 
 const modal = new bootstrap.Modal(document.getElementById('confirm-modal'));
 const form = document.getElementById('confirm-form');
@@ -101,7 +101,7 @@ function changeCard(change) {
         confirmed.className = 'small text-muted mt-3 pt-3 border-top';
         confirmed.textContent =
             `${change.status === 'authorized' ? '確認為授權操作' : '標記為可疑'}` +
-            `　${change.confirmedByAccount}　${formatDateTime(change.confirmedAt)}` +
+            `　${formatUserName(change.confirmedByDisplayName, change.confirmedByAccount)}　${formatDateTime(change.confirmedAt)}` +
             (change.confirmNote ? `　說明：${change.confirmNote}` : '');
         body.appendChild(confirmed);
     }

@@ -12,19 +12,20 @@ namespace LogForesight.Web.Controllers.Api;
 [Route("api/dashboard")]
 public class DashboardController : ControllerBase
 {
-    private readonly DashboardService _dashboard;
-    private readonly WebAppSettings _settings;
+    /// <summary>days 未指定時的預設期間（§12：原 appsettings 的 Ui:DashboardDefaultDays，
+    /// 前端另有 localStorage 期間記憶，這個值只是 API 的 fallback，改為常數）</summary>
+    public const int DefaultDays = 7;
 
-    public DashboardController(DashboardService dashboard, WebAppSettings settings)
+    private readonly DashboardService _dashboard;
+
+    public DashboardController(DashboardService dashboard)
     {
         _dashboard = dashboard;
-        _settings = settings;
     }
 
     [HttpGet("summary")]
     public ApiResponse<DashboardDto> Summary([FromQuery] int? days) =>
-        ApiResponse<DashboardDto>.Ok(
-            _dashboard.GetSummary(days ?? _settings.Ui.DashboardDefaultDays));
+        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(days ?? DefaultDays));
 }
 
 /// <summary>主機詳情／時間軸（§9.4）</summary>
@@ -64,20 +65,14 @@ public class ReportsController : ControllerBase
     }
 
     [HttpGet("summary")]
-    public ApiResponse<ReportSummaryDto> Summary([FromQuery] string? from, [FromQuery] string? to)
+    public ApiResponse<ReportSummaryDto> Summary(
+        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope)
     {
         var toDate = ParseDate(to) ?? DateTime.Today;
         var fromDate = ParseDate(from) ?? toDate.AddDays(-29);
 
-        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate));
+        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope));
     }
-
-    [HttpGet("signature")]
-    public ApiResponse<List<SignatureHitDto>> Signature([FromQuery] int eventId, [FromQuery] string? source)
-    {
-        if (eventId <= 0)
-            throw DomainException.Validation("請輸入要查詢的 Event ID。");
-
-        return ApiResponse<List<SignatureHitDto>>.Ok(_reports.FindSignature(eventId, source));
-    }
+    // 跨主機同簽章查詢（原 GET signature）已於 §4 併入「問題查詢」（eventId＋source＋依問題視角
+    // 為嚴格超集），端點與 ReportService.FindSignature／SignatureHitDto 一併移除。
 }

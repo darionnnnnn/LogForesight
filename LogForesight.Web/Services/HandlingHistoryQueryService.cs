@@ -73,6 +73,75 @@ public class HandlingHistoryQueryService
             .ToList();
     }
 
+    /// <summary>報表顯示範圍（§5）：單選過濾——一個母體對應一組明確語意。</summary>
+    public static class HandlingScopes
+    {
+        public const string All = "all";               // 全部（不過濾）
+        public const string Unresolved = "unresolved"; // 未結案（排除已結案）
+        public const string Open = "open";             // 未處理（再排除處理中）
+        public const string Unassigned = "unassigned"; // 未指派
+
+        public static readonly string[] Valid = { All, Unresolved, Open, Unassigned };
+        public static string Normalize(string? scope) =>
+            scope != null && Valid.Contains(scope) ? scope : All;
+    }
+
+    /// <summary>
+    /// 報表顯示範圍過濾（§5）：先過濾再聚合，KPI／趨勢／類型分布／排行／占比全部反映同一範圍。
+    /// 範圍只對「需注意的」高＋中風險日有意義——scope≠all 時低風險日一律排除（它們不在待辦
+    /// 語意內），使用者要看全部就選「全部」。狀態推導與 <see cref="GetTodo"/>／問題查詢清單同一套
+    /// （DayHandlingDerivation），不另發明第二份語意；未指派＝日層級無處理人且無案件涵蓋。
+    /// </summary>
+    public List<DailyAnalysisRecord> FilterByScope(IReadOnlyCollection<DailyAnalysisRecord> records, string scope)
+    {
+        scope = HandlingScopes.Normalize(scope);
+        if (scope == HandlingScopes.All) return records.ToList();
+
+        var actionable = records.Where(r => RiskLevels.IsActionable(r.RiskLevel)).ToList();
+        if (actionable.Count == 0) return new List<DailyAnalysisRecord>();
+
+        var lookup = new HostLookup(_hosts.GetAll());
+        string NameOf(DailyAnalysisRecord record) => lookup.For(record)?.HostName ?? record.Host;
+
+        var hostNames = actionable.Select(NameOf).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var from = actionable.Min(r => r.Date);
+        var to = actionable.Max(r => r.Date);
+        var handlings = _store.GetMany(hostNames, from, to);
+        var issueHandlings = _issueStore.GetMany(hostNames, from, to);
+        var openCases = _cases.GetMany(hostNames).Where(c => c.ClosedAt == null && c.HandlerId.HasValue).ToList();
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        return actionable.Where(record =>
+        {
+            var name = NameOf(record);
+            var handling = handlings.FirstOrDefault(h =>
+                string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) && h.Date.Date == record.Date.Date);
+            var forDay = issueHandlings
+                .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) && h.Date.Date == record.Date.Date)
+                .ToList();
+            var external = HandlingStatuses.ExternalOf(
+                DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities).DayStatus);
+
+            return scope switch
+            {
+                HandlingScopes.Unresolved => external != HandlingStatuses.Resolved,
+                HandlingScopes.Open => external == HandlingStatuses.Open,
+                HandlingScopes.Unassigned => !HasHandler(record, name, handling, openCases),
+                _ => true
+            };
+        }).ToList();
+    }
+
+    /// <summary>是否有處理人：日層級 HandlerId，或當日問題屬某進行中案件（與清單頁 fallback 同語意）。</summary>
+    private static bool HasHandler(DailyAnalysisRecord record, string hostName, RecordHandling? handling, List<IssueCase> openCases)
+    {
+        if (handling?.HandlerId != null) return true;
+        if (record.TopIssues.Count == 0) return false;
+        var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
+        return openCases.Any(c =>
+            string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && issueKeys.Contains(c.IssueKey));
+    }
+
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)
     {
         // 待辦母體＝高＋中風險日，全站唯一定義（S3）：呼叫端不必也不應該自己先過濾

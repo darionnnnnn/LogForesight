@@ -82,6 +82,43 @@ public class RunMonitorServiceTests : IDisposable
     }
 
     [Fact]
+    public void 本機主機_當天無執行但昨日有分析紀錄_列為已回補()
+    {
+        // §3：立即執行回補會補上缺漏日的分析紀錄，但 BatchRun 只登記在觸發當天——
+        // 被回補的其他日期原本誤顯示「未執行」。有 D-1 分析紀錄時改標「已回補」（不冒充 success）。
+        var host = _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+        Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
+
+        var service = Create();
+
+        var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("backfilled", row.Status);
+        Assert.Null(row.RunId);   // 回補 fallback 沒有可連到的單次執行紀錄
+
+        var today = service.GetDaySummaries(1).Single();
+        Assert.Equal(1, today.BackfilledCount);
+        Assert.Equal(0, today.SuccessCount);
+        Assert.Equal(0, today.NotRunCount);
+    }
+
+    [Fact]
+    public void 本機主機_有BatchRun時_不走回補fallback仍以執行紀錄判定()
+    {
+        // 有 BatchRun 就照 exit code／計數判定，即使當天也存在 D-1 分析紀錄也不降級成「已回補」
+        var host = _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+        Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now });
+        runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
+
+        var row = Assert.Single(
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today),
+            d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("success", row.Status);
+        Assert.Equal(runId, row.RunId);
+    }
+
+    [Fact]
     public void 本機主機_有成功執行紀錄_列為成功()
     {
         var runs = Runs();

@@ -7,7 +7,7 @@
 
 import { api } from '../core/api.js';
 import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
-import { formatDateTime } from '../core/format.js';
+import { formatDateTime, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
 
@@ -227,6 +227,12 @@ async function loadOptions() {
     // 這個選項只服務「詢問 AI」對話的 fallback 路徑，AI 未設定時整條路徑無意義，隱藏但保留值
     // （docs/archive/FEEDBACK-7-PLAN.md）
     document.getElementById('opt-chat-live-fetch-wrap').classList.toggle('d-none', !aiStatus?.available);
+
+    // 離線示範資料開關（§13）：僅非 Production 顯示（canUseOfflineDemo）；開啟時亮警示徽章
+    document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
+    document.getElementById('opt-offline-demo-wrap').classList.toggle('d-none', !options.canUseOfflineDemo);
+    document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
+
     renderOptionsUpdated(options);
 }
 
@@ -237,7 +243,7 @@ function renderOptionsUpdated(options) {
         return;
     }
     el.textContent = `最後更新：${formatDateTime(options.updatedAt)}` +
-        (options.updatedByAccount ? `　更新者：${options.updatedByAccount}` : '');
+        (options.updatedByAccount ? `　更新者：${formatUserName(options.updatedByDisplayName, options.updatedByAccount)}` : '');
 }
 
 document.getElementById('netiq-options-form').addEventListener('submit', async event => {
@@ -255,9 +261,13 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
             allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
             backfillDays: Number(document.getElementById('opt-backfill-days').value),
             maxParallelServers: Number(document.getElementById('opt-max-parallel-servers').value),
-            chatLiveFetchEnabled: document.getElementById('opt-chat-live-fetch').checked
+            chatLiveFetchEnabled: document.getElementById('opt-chat-live-fetch').checked,
+            useOfflineDemoData: document.getElementById('opt-offline-demo').checked
         });
         toast('已儲存連線與節流參數', 'success');
+        // 重新套用（含離線示範徽章）——儲存後徽章要即時反映
+        document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
+        document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
         renderOptionsUpdated(options);
     } finally {
         restore();

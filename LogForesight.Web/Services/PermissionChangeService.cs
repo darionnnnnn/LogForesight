@@ -17,19 +17,22 @@ public class PermissionChangeService
     private readonly IVisibilityService _visibility;
     private readonly Auth.ICurrentUser _currentUser;
     private readonly IAuditService _audit;
+    private readonly IUserStore _users;
 
     public PermissionChangeService(
         PermissionChangeStore store,
         IHostStore hosts,
         IVisibilityService visibility,
         Auth.ICurrentUser currentUser,
-        IAuditService audit)
+        IAuditService audit,
+        IUserStore users)
     {
         _store = store;
         _hosts = hosts;
         _visibility = visibility;
         _currentUser = currentUser;
         _audit = audit;
+        _users = users;
     }
 
     public List<PermissionChangeDto> Query(string? status, int maxCount)
@@ -60,6 +63,9 @@ public class PermissionChangeService
                 AlertText = change.AlertText,
                 Status = confirmation?.Status ?? PermissionConfirmStatuses.Pending,
                 ConfirmedByAccount = confirmation?.ConfirmedByAccount,
+                ConfirmedByDisplayName = string.IsNullOrEmpty(confirmation?.ConfirmedByAccount)
+                    ? null
+                    : _users.FindByAccount(confirmation.ConfirmedByAccount)?.DisplayName,
                 ConfirmedAt = confirmation?.ConfirmedAt,
                 ConfirmNote = confirmation?.Note
             };

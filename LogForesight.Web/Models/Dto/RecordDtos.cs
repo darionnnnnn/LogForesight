@@ -32,8 +32,15 @@ public class RecordListItemDto
     /// </summary>
     public long? HandlerId { get; set; }
 
-    /// <summary>顯示名稱；由案件 fallback 帶出時後綴「（案件）」（Q5）</summary>
+    /// <summary>處理人顯示名稱（§9 起為純顯示名，不含後綴；(帳號) 與「（案件）」由前端組）</summary>
     public string? HandlerName { get; set; }
+
+    /// <summary>處理人帳號（§9：前端以 formatUserName 組「顯示名稱(帳號)」）</summary>
+    public string? HandlerAccount { get; set; }
+
+    /// <summary>處理人來自案件 fallback（Q5）：前端於名稱後加「（案件）」標示</summary>
+    public bool HandlerFromCase { get; set; }
+
     public bool IsOverdue { get; set; }
 
     /// <summary>當日問題結案進度（清單顯示 N/M 已處理）；TotalIssues 為 0 時前端不顯示</summary>
@@ -113,6 +120,10 @@ public class IssueGroupDto
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
+
+    /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
+    /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>
+    public string GroupStatus { get; set; } = string.Empty;
 
     /// <summary>進行中案件的處理人（去重、依姓名排序）——帶 Id 讓前端把姓名連到
     /// 處理人工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
@@ -491,6 +502,10 @@ public class RecordSearchRequest
 
     /// <summary>只看逾期未處理</summary>
     public bool? Overdue { get; set; }
+
+    /// <summary>只看未指派（§5/§10）：無有效處理人（日層級無處理人且無案件涵蓋）。
+    /// 明細視角依此過濾風險日；依問題視角依「處理人清單為空」過濾。</summary>
+    public bool Unassigned { get; set; }
 
     /// <summary>
     /// 表頭排序（docs/WEB-SPEC.md §9.2）。null／不合法值＝維持各視角原本的預設排序。

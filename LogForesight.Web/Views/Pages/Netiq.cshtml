@@ -85,6 +85,18 @@
                 <input class="form-check-input" type="checkbox" id="opt-allow-invalid-certs" />
                 <label class="form-check-label" for="opt-allow-invalid-certs">略過憑證驗證（Sentinel 使用自簽憑證時的逃生門）</label>
             </div>
+            @* 離線示範資料（§13）：僅非 Production 顯示；預設關閉＝真實連線 *@
+            <div class="form-check mt-2 d-none" id="opt-offline-demo-wrap">
+                <input class="form-check-input" type="checkbox" id="opt-offline-demo" />
+                <label class="form-check-label" for="opt-offline-demo">
+                    使用離線示範資料（固定台數／網段，非真實掃描）
+                    <span class="lf-badge lf-badge--warning ms-1 d-none" id="opt-offline-demo-badge">示範資料開啟中</span>
+                </label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="開啟後掃描匯入精靈改用離線示範資料（固定台數/網段，不連 Sentinel），供沒有可連 Sentinel 的開發/展示環境跑完整流程。掃描結果會顯著標示「示範資料」，切勿當成真實掃描。預設關閉（真實連線）；正式環境不允許開啟。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+            </div>
             <div class="form-check mt-2 d-none" id="opt-chat-live-fetch-wrap">
                 <input class="form-check-input" type="checkbox" id="opt-chat-live-fetch" />
                 <label class="form-check-label" for="opt-chat-live-fetch">詢問 AI 查無暫存資料時，向 Sentinel 即時查詢現場事件（僅 NetIQ 主機）</label>

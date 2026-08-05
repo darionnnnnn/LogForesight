@@ -31,8 +31,9 @@ LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC�
 │                       群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
 │                       儲存後端二選一（Sqlite 預設/SqlServer，見 docs/WEB-SPEC.md §10.5）
-└── （appsettings.json 已內含開箱即測的測試登入 svc-lfadmin / LogForesight-dev；
-                        正式環境務必依檔內【正式環境需修改】說明改用環境變數與 Ldap，見 docs/WEB-SPEC.md §5）
+└── （appsettings.json 已內含開箱即測的測試登入：demo-admin＝全功能測試管理員（自動 seed）、
+                        svc-lfadmin＝本地救援帳號（僅維護頁）；正式環境務必依檔內【正式環境需修改】
+                        說明改用環境變數與 Provider=Ad（AD 伺服器在設定頁設定），見 docs/WEB-SPEC.md §5）
 
 LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（SQLite 後端）、
                         Web 授權範圍/處理流程/規則保護/CSV 匯入/排程與立即執行
@@ -82,330 +83,11 @@ flowchart TD
 風險等級確定性判定 → 低風險日直接寫模板句、其餘連同比對結果與近 14 天歷史組成 prompt →
 AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史資料庫 → Web 排程作業頁與儀表板示警**。
 
-## 提早發現問題的邏輯
+## 提早發現問題的邏輯 · 監控訊號清單 · 體檢
 
-### 核心設計：五層偵測
-
-「偵測」和「判讀」分開，各用擅長的工具（使用的是地端 Gemma 26B/27B 級小模型，
-所有能確定性計算的判斷都由程式先做掉，模型只負責把結論翻譯成白話）：
-
-| 層 | 負責 | 為什麼 |
-|---|---|---|
-| **規則層** (`KnownIssueCatalog`) | 比對已知危險事件（Source + Event ID + 次數門檻），確定性命中；規則命中的問題同時附帶靜態知識庫內容（白話說明／常見原因／處置步驟），不需要 AI 深入分析 | 已知模式用規則抓，100% 召回、零成本，不賭小模型會不會漏看；同一 Event ID 的原因/處置幾乎不變，寫死比每次重新生成更快、更一致、零幻覺 |
-| **趨勢層** (`TrendAnalyzer`) | 當日各事件的次數 vs 前一日 vs 近 14 日平均，程式直接算出「首次出現 / 頻率上升 / 重複發生 / 下降」 | 數字比較程式做得又快又準，不該指望模型在腦中做算術 |
-| **慢速趨勢層** (`SlowTrendAnalyzer`，2026-07-20 新增) | 近 7 天 vs 前 7 天總量比較，每日、全主機、確定性執行，捕捉躲在趨勢層單日門檻下的緩慢惡化訊號 | 取代原本「每週體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天，且是純算術，單元測試完整涵蓋 |
-| **關聯層** (`CorrelationAnalyzer`) | 比對「多個獨立事件的已知組合模式」：攻擊鏈、故障連鎖、跨日推進（見下方清單） | 單一事件各自不嚴重、組合起來卻是明確故事——這種跨 log 關聯判讀正是小模型最容易漏掉的，必須程式先比對好 |
-| **AI 層** (Gemma) | 把前四層已確定的結論（風險等級、趨勢、關聯訊號）翻譯成白話標題與敘述，讓不懂 Event Log 的人也能看懂該怎麼處理；只有規則未涵蓋的 Other 類問題才由 AI 判讀根因與處置建議 | AI 不是判斷風險或找根因的引擎（那是前四層與靜態知識庫的職責），語意轉譯與白話敘事才是規則做不到、AI 真正擅長的部分 |
-
-五層結論取較嚴重者：規則或關聯鏈命中**「重大」旗標**（見下方「問題嚴重度與『重大』標註」）
-→ 風險強制「高」；
-趨勢層（含慢速趨勢）有頻率異常或關聯層有任何訊號 → 風險至少「中」。AI 判斷只能把風險往上拉、
-不能往下壓，即使 AI 判斷輕忽或 AI 服務不可用也不影響告警與處置建議（詳見
-[docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
-
-### 關聯層偵測的組合模式（`CorrelationAnalyzer`）
-
-| 模式 | 組合條件 | 意義 |
-|---|---|---|
-| 【入侵鏈】 | 大量 4625（≥10）＋帳號建立/提權（4720/4732 等）同日 | 暴力破解得手後建立立足點；有時間先後可判斷時會標注時序是否符合攻擊推進 |
-| 【破解得手】 | 大量 4625（≥10）＋條件式撈取的 4624（成功登入）與失敗記錄同一組帳號/IP | 比帳號建立/提權更早、更直接的得手證據——暴力破解攻擊者未必馬上建帳號提權，可能先潛伏 |
-| 【持久化】 | 帳號異動或攻擊嘗試＋新服務/排程任務（7045/4697/4698）同日 | 入侵後植入後門 |
-| 【滅跡】 | 稽核清除/變更（1102/4719/4907）＋同日其他安全事件 | 入侵者清除操作痕跡 |
-| 【提權→植入】 | 權限/特權異動（4670/4703 等）＋新服務/排程任務同日 | 先取得權限再植入執行體 |
-| 【暴力破解→RDP 得手】 | **昨日**大量 4625（≥10）的來源 IP，**今日**以 RDP 成功登入（21/25/1149）同一 IP | 暴力破解跨日以遠端桌面得手；純以 IP 交集判定，無交集不觸發 |
-| 【防護遭關閉→惡意程式】 | Defender 防護被關閉/停用（5001/5010/5012）＋同日惡意程式偵測或攻擊訊號（也含跨日：昨日關防護、今日驗出惡意程式） | 入侵者常在植入前先解除防護；單獨關防護只走規則層、不觸發關聯 |
-| 【惡意程式→持久化】 | Defender 惡意程式偵測（1006/1116 等）＋新服務/排程任務同日 | 惡意程式建立持久化立足點 |
-| 【跨日入侵鏈】 | **昨日**大量登入失敗＋**今日**帳號/權限/服務異動 | 攻擊者跨日推進，比單日訊號更值得警戒 |
-| 【儲存連鎖】 | disk/Ntfs/storahci 三類儲存訊號同日命中 ≥2 類 | 硬碟故障連鎖反應，故障迫在眉睫 |
-| 【儲存→當機】 | 儲存錯誤＋非預期關機（41/6008）同日 | 儲存故障已導致系統崩潰 |
-| 【儲存持續劣化】 | 儲存錯誤連續兩日出現 | 不是偶發抖動，硬碟剩餘壽命可能以天計 |
-| 【硬體不穩】 | WHEA 硬體錯誤＋非預期重開同日 | 硬體劣化已實際影響穩定性 |
-| 【崩潰→服務失敗】 | 應用程式崩潰（1000/1026）＋服務異常終止（7031/7034）同日 | 可能為同一應用的崩潰導致服務失敗 |
-| 【崩潰循環→資源耗盡】 | 服務高頻異常終止（≥100 次）＋資源耗盡（2004）同日 | 崩潰重啟循環正在拖垮整機 |
-| 【時間偏移→驗證失敗】 | 時間同步失敗＋登入失敗同日 | 時鐘偏移造成的假性攻擊訊號（仍需排除真攻擊） |
-
-關聯訊號在 prompt 中以獨立區塊呈現並明確標注「由程式確定性比對，不是猜測」，
-執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
-
-### 正常 RDP 使用不會誤報的設計（2026-07 RDP 頻道擴充）
-
-納入 RDP 連線紀錄擴大了入侵偵測面，但**日常遠端維運絕不能被誤判成入侵**。防誤報靠三道設計：
-RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」告警）、無任何 RDP 單獨告警規則、
-入侵訊號一律經由「有錨點」的確定性關聯才成立。下列正常情境保證**不產生任何告警**：
-
-| 情境 | 結果 |
-|---|---|
-| 管理員每天 RDP 維運（21/24/25/1149 數十筆） | Low 簽章、趨勢 Recurring，零告警、零風險拉升 |
-| 新員工第一次 RDP 登入 | 簽章鍵不含帳號，非新簽章，無變化 |
-| 同一天大量正常重連（會議室機、跳板機） | 需達「今日 ≥5 且 ≥ 頻道歷史平均 2 倍」才出頻率上升告警（既有 TrendAnalyzer 門檻，且新頻道暖身 3 天內不吵）——RDP 用量真暴增本來就值得看一眼，屬預期而非誤報 |
-| 正常成功登入 4624 | 平日完全不收集；只在同日 4625 ≥ 10 的嫌疑日才條件式撈取，且需帳號/IP 交集才成立訊號 |
-| 零星登入失敗（< 10 次/日） | 4625 規則門檻 10、未達降級，無關聯錨點 |
-| 管理員 RDP 登入後建帳號/裝服務 | **刻意不建**「RDP 登入＋帳號建立」這類無錨點模式——管理員遠端建帳號是日常維運，必誤報 |
-| 頻道上線第一天 | 全部趨勢 Unknown、前 3 天暖身期不產生 New/Rising 告警 |
-
-只有兩種有錨點的組合才把 RDP 成功登入判成入侵：**【破解得手】**（同日 4625 ≥ 10 且相同帳號/IP
-出現成功登入，成功面現含 RDP 工作階段）與**【暴力破解→RDP 得手】**（昨日暴力破解的來源 IP、
-今日以 RDP 成功登入同一 IP）。兩者都需要「暴力破解達門檻」加「帳號/IP 交集」，正常使用不會命中。
-
-### 讀取方式：傳統日誌走 classic API，Operational 頻道走 EventLogReader
-
-Defender／RDP 這類新式 `Microsoft-Windows-*/Operational` 頻道要靠 `EventLogReader`
-（`System.Diagnostics.Eventing.Reader`）才能讀到——classic `System.Diagnostics.EventLog` 只能讀
-`System`／`Application`／`Security` 三大傳統日誌。**採混合式讀取**：傳統三個日誌仍走 classic
-`EventLog` API，新式 Operational 頻道才走 `EventLogReader`。原因是 `EventLogReader.ProviderName`
-回傳完整 manifest 名（如 `Microsoft-Windows-DistributedCOM`），與 classic `EventLogEntry.Source`
-的註冊短來源名（如 `DCOM`）不同——若把三大日誌也改用 reader，聚合鍵 `(LogName, Source, EventId,
-EntryType)` 會全面漂移、既有歷史的趨勢比對全數斷成「首次出現」。混合式讓既有日誌識別鍵零改變、
-新頻道又能讀進來。
-
-新頻道有 **3 天暖身期**（`ChannelCoverage.WarmupDays`）：上線首日所有簽章都是「首次出現」，暖身
-期內不產生 New/Rising 告警、不升級嚴重度，避免切換日的告警風暴；規則層與關聯層不受影響（Defender
-真驗出病毒照樣拉高風險）。掃描頻道可在 `appsettings.json` 的 `Analysis.Channels` 調整（見下方
-設定表）。
-
-### 頻率趨勢比對的判定規則（`TrendAnalyzer`）
-
-每個事件簽章 `(LogName, Source, EventId, EntryType)` 逐一與歷史比對：
-
-| 趨勢 | 判定條件 | 後續動作 |
-|---|---|---|
-| **首次出現 (New)** | 近 14 日歷史中從未發生 | 嚴重度 High 以上者列入頻率異常告警 |
-| **頻率上升 (Rising)** | 今日次數 ≥ 5 **且** ≥ 歷史平均 2 倍 | **嚴重度自動升一級**（封頂「高」；原本就是「高」的改標記「重大」旗標 → 觸發紅色告警），列入頻率異常告警 |
-| **重複出現 (Recurring)** | 歷史中出現過、頻率相近 | 附註出現天數與平均次數供 AI 判讀 |
-| **頻率下降 (Declining)** | 歷史平均 ≥ 5 且今日次數 ≤ 平均一半 | 附註（問題可能已緩解） |
-
-另外比對**整體錯誤總量**：今日錯誤 ≥ 10 筆且 ≥ 近 14 日平均 2 倍時，即使個別事件都不顯眼也會告警
-（多個不同來源同時出錯常是連鎖故障的開端）。
-
-「今日次數 ≥ 5」的最低門檻是為了避免 1 次變 2 次這種統計雜訊觸發告警；
-所有比對結果（前一日次數、歷史平均、出現天數）都會附註在 prompt 的事件行上，
-並存入歷史紀錄的 `TopIssues` 與 `TrendAlerts` 欄位。
-
-### 為什麼歷史紀錄能「提早」發現問題
-
-很多故障不是突然發生的，而是**訊號頻率逐漸上升**：
-
-- 硬碟壞掉前幾週，`disk` Event 153 / `storahci` Event 129 會從偶發變成每天數十次
-- 記憶體劣化時，WHEA corrected error 次數會持續攀升（系統還能自我修正，所以不會當機，但這是換料的最佳時機）
-- 暴力破解通常先有低頻率的探測（每天幾次 4625），確認服務存在後才開始大量嘗試
-
-單看一天的 log 看不出這些，所以每天的分析結果（錯誤數、警告數、重點問題簽章與次數、風險等級）
-會壓縮成一行 JSON 存入歷史。**這是新問題、重複發生、還是正在惡化**，由 `TrendAnalyzer`
-（單日 vs 歷史平均）與 `SlowTrendAnalyzer`（近 7 天 vs 前 7 天總量，2026-07-20 新增）兩層
-確定性判定，AI 只負責把已經判定好的結論接續前幾天脈絡講成白話（`trend_story` 欄位）。
-
-### 問題嚴重度與「重大」標註
-
-**問題嚴重度只有三級：高／中／低**（`IssueSeverity`，掛在單一問題簽章上）。
-在此之上，部分規則帶「**重大**」旗標（`KnownIssueRule.ElevatesDayRisk`）——
-**這類問題只要出現（且未被抑制），當天就直接判定為高風險日**，例如磁碟故障、
-安全稽核日誌被清除。畫面上以「高＋重大」兩顆徽章並列呈現，規則維護頁可逐條調整。
-
-嚴重度刻意只維持三級、不疊加第四級：「命中即列為高風險日」這個職責完全交給獨立的
-「重大」旗標承載，避免嚴重度（問題層級）與日風險等級（高/中/低風險日）這兩套不可互推的
-層級字面相撞，造成「詳情頁顯示高風險、但最嚴重的問題只有中」這類困惑（歷史沿革見
-docs/archive/HISTORY.md #1）。
-
-**日風險等級**（高/中/低風險日）是「主機×日期」整天的批次判定結果，不是任何單一問題
-嚴重度的別名，兩者不可互相推導（`RiskLevels` 與 `IssueSeverity` 是兩個獨立列舉）。
-
-### 監控的危險訊號清單
-
-下表「嚴重度」欄的「高（重大）」＝ 高嚴重度且帶「重大」旗標（命中即列為高風險日）。
-
-#### 硬體故障前兆（System log）
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| disk | 7, 11, 51, 52, 153 | 磁碟 I/O 錯誤、壞軌前兆 — **硬碟即將故障最直接的訊號** | 高（重大） |
-| Ntfs | 55, 98, 130, 140, 141 | 檔案系統損毀跡象 | 高（重大） |
-| storahci / stornvme | 129 | 儲存控制器逾時重置，常見於硬碟劣化、線材或背板異常 | High |
-| WHEA-Logger | （全部） | CPU / 記憶體 / PCIe 硬體錯誤；corrected error 上升＝硬體劣化中 | 高（重大） |
-| Kernel-Power | 41 | 非預期斷電或當機重開（電源、過熱、硬體不穩） | 高（重大） |
-| EventLog | 6008 | 非預期關機 | High |
-| Resource-Exhaustion-Detector | 2004 | 虛擬記憶體即將耗盡（可能有程式記憶體洩漏） | High |
-| srv | 2013 | 磁碟空間即將不足 | Medium |
-
-#### 入侵跡象（Security log + System log）
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| Security-Auditing | 4625 | 登入失敗；**單日 ≥10 次**視為暴力破解攻擊 | High |
-| Security-Auditing | 4740 | 帳戶被鎖定（通常是暴力破解的結果） | High |
-| Security-Auditing | 1102 | **安全稽核日誌被清除 — 入侵者滅跡的典型行為，應立即調查** | 高（重大） |
-| Security-Auditing | 4719 | 稽核原則被變更（關閉記錄以躲避偵測） | High |
-| Security-Auditing | 4720, 4722, 4724 | 帳戶建立 / 啟用 / 密碼被重設 — 入侵者建立立足點 | High |
-| Security-Auditing | 4728, 4732, 4756 | 帳戶被加入特權群組（如 Administrators）— 典型提權手法 | High |
-| Security-Auditing | 4729, 4733, 4757 | 帳戶被**移出**特權群組 — 也可能是提權得手後清除紀錄 | High |
-| Security-Auditing | 4697, 4698 | 安裝服務 / 建立排程任務 — 常見持久化手法 | High |
-| Security-Auditing | 4670 | 檔案/資料夾/登錄物件的**權限 (ACL) 被變更** | High |
-| Security-Auditing | 4907 | 物件的**稽核設定 (SACL) 被變更** — 針對性關閉稽核以躲避偵測 | 高（重大） |
-| Security-Auditing | 4717, 4718 | 系統存取權限被授予/移除（User Rights Assignment） | High |
-| Security-Auditing | 4704, 4705 | 使用者權限指派被新增/移除 | High |
-| Security-Auditing | 4703 | 權杖 (token) 特殊權限於執行期間被調整 — 常見提權攻擊手法 | High |
-| Security-Auditing | 4735 | 安全群組的內容或權限被變更 | High |
-| Security-Auditing | 4739 | 網域原則被變更（僅網域控制站） | High |
-| Security-Auditing | 4731, 4734 | 本機安全群組被建立/刪除 | Medium |
-| Service Control Manager | 7045 | 安裝新服務 — 非預期時可能是後門植入 | High |
-
-> 上表的權限/角色事件無論是「授予」還是「移除」都收錄——移除同樣值得關注
-> （可能是入侵者提權得手後清除操作紀錄）。這些事件都需要 Security log 讀取權限；
-> 若無法以系統管理員權限執行，改用下方「權限/角色異動監控」章節的機制。
-
-#### 惡意程式與防護狀態（Microsoft Defender Operational 頻道，2026-07 EventLogReader 遷移後可讀）
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| Windows Defender | 1006, 1116 | 偵測到惡意程式（偵測本身即明確訊號） | High |
-| Windows Defender | 1007, 1117 | 已對惡意程式採取處置（隔離/移除） | Medium |
-| Windows Defender | 1008, 1118, 1119 | **處置失敗，惡意程式可能仍活躍** — 應立即隔離主機 | 高（重大） |
-| Windows Defender | 5001 | 即時防護被關閉（管理員合法操作 vs 入侵者解除防護，需確認來源） | High |
-| Windows Defender | 5010, 5012 | 防毒/掃描被停用（第三方防毒接管屬正常情境） | Medium |
-| Windows Defender | 1005 | 排程掃描失敗，防護涵蓋率可能不完整 | Medium |
-| Windows Defender | 2001, 2003, 2004 | 病毒碼/引擎更新失敗；**單日 ≥3 次**才升 Medium（偶發網路失敗屬雜訊） | Medium |
-
-> Defender 事件天生低誤報——偵測到惡意程式本身就是訊號。分級的關鍵在「已處置（Medium）vs
-> 處置失敗（高＋重大）」，刻意**不做**「1116 之後沒看到 1117」這類缺席推論（資料不完整時會誤報）。
-> 主機未安裝 Defender（如第三方防毒取代）時該頻道不存在，程式申報「不適用」而非錯誤。
-
-#### 遠端桌面連線（RDP TerminalServices Operational 頻道，2026-07 新增）
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| TerminalServices-LocalSessionManager | 21, 24, 25 | RDP 工作階段登入/中斷/重連 | **Low（收集用，非告警）** |
-| TerminalServices-RemoteConnectionManager | 1149 | RDP 驗證成功 | **Low（收集用，非告警）** |
-
-> **這兩條規則刻意設為 Low：正常遠端桌面使用即會產生，本身不是告警訊號。** 收集目的是提供
-> 關聯分析（【破解得手】【暴力破解→RDP 得手】需要成功登入的帳號/IP）與趨勢基準。入侵訊號一律
-> 經由「有錨點」的確定性關聯（暴力破解達門檻、帳號/IP 交集）才成立，見下方「正常 RDP 使用不會
-> 誤報的設計」。RDP 訊息的帳號（`User: DOMAIN\user`）會同時抽出純帳號，才能與 4625 的純帳號對得上。
-
-#### 服務穩定性（System / Application log）
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| Service Control Manager | 7031, 7034 | 服務異常終止；單日 ≥3 次才升為 Medium（偶發屬正常雜訊） | Medium |
-| Service Control Manager | 7000, 7001 | 服務啟動失敗 | Medium |
-| Application Error | 1000 | 應用程式反覆崩潰（≥3 次）——服務完全掛掉前的先兆 | Medium |
-| .NET Runtime | 1026 | .NET 未處理例外反覆發生（≥3 次） | Medium |
-
-#### 營運健康（備份 / 時間 / 憑證 / 網域）
-
-不是硬體壞、也不是被入侵，但放著不管就會演變成停機或災難的訊號：
-
-| 來源 | Event ID | 意義 | 嚴重度 |
-|---|---|---|---|
-| Microsoft-Windows-Backup | 517 | **備份失敗**——備份損壞往往到需要還原時才發現 | High |
-| VSS | （全部錯誤） | 陰影複製錯誤，會導致備份失敗或不完整 | Medium |
-| Time-Service | 29, 36, 47, 50 | 時間同步失敗；偏移 >5 分鐘 Kerberos 驗證全面失敗 | Medium |
-| CertificateServicesClient-AutoEnrollment | 64 | **憑證即將到期**——最容易預防的停機原因 | Medium |
-| Schannel | 36870 | TLS 憑證私鑰存取失敗（憑證過期或權限異常） | Medium |
-| GroupPolicy | 1030, 1058 | 群組原則套用失敗（≥3 次），SYSVOL/DC 連線問題先兆 | Medium |
-| NETLOGON | 5719 | 無法連上網域控制站（≥3 次） | Medium |
-| DhcpServer | 1020 | DHCP 位址池即將耗盡（僅 DHCP 角色會出現） | Medium |
-| WindowsUpdateClient | 20 | 更新安裝失敗，持續失敗累積未修補的安全風險 | Low |
-
-> Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
-> `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
-
-#### Linux syslog（seed v4，2026-07-28 新增；⏸ 規則面已就緒，取數管線未完成）
-
-Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
-Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
-[docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。主機的 `Os` 欄位（Web 主機頁維護）決定它套用
-哪個平台的規則面。
-
-| program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
-|---|---|---|---|
-| sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；**單日 ≥10 次**視為暴力破解 | High |
-| sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
-| sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
-| su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
-| useradd/usermod/userdel（`user`） | （不看訊息） | 帳號建立/修改/刪除 — 入侵者建立立足點 | High |
-| groupadd/groupmod/groupdel（`group`） | （不看訊息） | 群組異動 | High |
-| gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
-| auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |
-| kernel | I/O error / Buffer I/O error / EXT4-fs error / XFS internal error | 磁碟或檔案系統錯誤 | 高（重大） |
-| smartd | Prefailure / FAILED SMART self-check / predicted TO FAIL | S.M.A.R.T. 預警硬碟即將故障 | 高（重大） |
-| kernel | Hardware Error / Machine Check / mce: | CPU/記憶體/PCIe 硬體錯誤 | 高（重大） |
-| kernel | Out of memory / oom-kill / Killed process | 記憶體耗盡，核心強制終止程序 | High |
-| systemd | entered failed state / Failed to start / Main process exited | 服務啟動失敗或異常終止（≥3 次） | Medium |
-| kernel | segfault | 應用程式反覆區段錯誤（≥3 次） | Medium |
-| chronyd | Can't synchronise / no reachable sources | 時間同步失敗（≥3 次） | Medium |
-| ntpd | time reset / synchronisation lost / no servers reachable | 時間同步失敗（≥3 次） | Medium |
-| CRON | FAILED / (CRON) ERROR | 排程任務執行失敗（≥3 次） | Medium |
-
-> **比對順序有意義**：`ProgramPattern` 是子字串比對，`"sudo"` 包含 `"su"`，所以 sudo 規則必須排在
-> su 之前，否則 sudo 的事件會被 su 規則先攔走。單元測試的逐條命中驗證會抓到這類錯誤。
->
-> **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
-> 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
->
-> **目前狀態**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）都已完成；
-> 但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
-> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
-> 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
-> 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
-> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 NetIQ 維護頁「診斷」分頁的 probe 即可定案欄位形狀。
-> 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
->
-> **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
-> 不讓人以為有看過。
-
-### 給 AI 判讀的輔助資訊（除了事件本身）
-
-| 資訊 | 來源 | 為什麼需要 |
-|---|---|---|
-| 發生時段 `FirstSeen`~`LastSeen` | 聚合時計算 | 「4625 x50 集中在凌晨 03:00~03:10」和「分散全天」意義完全不同 |
-| 訊息多樣性（相異內容數 + 3 則範例） | 聚合時計算 | 區分「同一服務掛 10 次」（服務有問題）和「10 個服務各掛一次」（系統層問題） |
-| Security 事件的帳號/IP 彙總 | 從完整訊息抽取（範例訊息 200 字常截不到這些欄位） | 判斷是「單一 IP 打單一帳號」還是「掃描多帳號」——入侵分析最關鍵的依據 |
-| 星期幾 | 日期換算 | 讓模型認出「每週日固定維護重開機」這類正常規律 |
-| 非低風險歷史日的當日結論 | 歷史紀錄的 `Summary` | 模型看得到先前判讀脈絡：這問題之前判定過什麼、是否已知原因 |
-| 伺服器角色描述 | `Program.cs` 的 `ServerDescription`（自行填寫） | 同一事件在 AD 網域控制站和一般檔案伺服器上的嚴重性不同 |
-| 稽核事件總量趨勢 | `TrendAnalyzer` 獨立比對（4625 等稽核事件不計入錯誤數） | 安全事件總量暴增時即使個別簽章不顯眼也會告警 |
-
-> 注意：classic EventLog API 讀取新式 **Critical 等級**事件（如 Kernel-Power 41）時，
-> `EntryType` 可能為 0（列舉中沒有 Critical 值）。程式已特別納入這類事件並計入錯誤數，
-> 避免最嚴重的事件反而被過濾掉。
-
-## 資料完整性與涵蓋率誠實申報
-
-兩個容易被忽略、卻會讓「沒告警」被誤讀成「沒問題」的情況，程式已明確標注：
-
-- **回補時 Event Log 已被覆蓋**：`EventLogService` 倒序掃描到日誌最舊一筆仍未低於請求區間起點時，
-  代表該來源保留的歷史不足以涵蓋整個回補區間（較舊的事件已被系統覆蓋，不是真的沒事件）。
-  這幾天的紀錄會標記 `DataIncomplete = true`，`TrendAnalyzer` 計算 14 日基準時排除這些日子，
-  避免不完整的一天把平均值墊低/墊高，讓之後的正常量被誤判為異常（或反過來蓋掉真異常）。
-- **Security log 本次無法讀取**（無系統管理員權限）：紀錄標記 `SecurityLogAvailable = false`，
-  執行輸出與風險報告會逐條列出因此停用的偵測項目（入侵跡象規則表、涉及 Security 的關聯模式、
-  4624 破解得手比對、安全稽核事件總量趨勢），而不是一句「讀取失敗」帶過——讓看報告的人知道
-  「沒告警 ≠ 沒問題，是沒看」。趨勢基準計算也會排除這些日子的 Security 簽章，避免權限恢復後
-  的正常量被誤判成「首次出現」或「頻率上升」。
-
-## 體檢（WeeklyCheckupService，2026-07-20 重設計：due-date 輪巡＋確定性閘門）
-
-除了每日分析，另外做週期性的「期間回顧」。原本「找出單看每天都不明顯、但整週合起來是持續
-累積或緩慢惡化的訊號」這件**發現**的工作，已改由每日全主機執行的確定性 `SlowTrendAnalyzer`
-（近 7 天 vs 前 7 天總量比較，見上方「五層偵測」）負責——偵測延遲從最壞一整個週期縮短到 1 天。
-體檢因此只剩下**講這段期間的故事**：把窗口內已經確定有訊號的日子，接續上次體檢的結論寫成
-一段白話回顧。
-
-- **觸發時機（due-date 輪巡，取代原固定星期六）**：`appsettings.json` 的
-  `Analysis.CheckupIntervalDays`（預設 7 天）；距上次體檢達此天數即到期執行，不綁定固定星期幾，
-  是既有「距上次體檢 > 7 天自動補跑」機制的一般化——單機情境下等同「每 N 天做一次」，
-  漏跑（機器關機、排程失敗）時下次執行自動補上，體檢不會因此消失。
-- **確定性閘門**：窗口內任一天有風險（非「低」）、趨勢異常或關聯訊號，才呼叫 AI 敘事；
-  三層皆無訊號的窗口直接寫固定結論「本期無累積性異常，程式比對通過」，不消耗 AI 呼叫——
-  安靜的期間本來就沒有故事可講，這是多主機規模下 AI 時間預算能否成立的關鍵之一
-  （詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
-- **AI 失敗不消耗額度**：閘門判定有訊號、實際呼叫 AI 卻失敗時，該次**不寫入歷史**
-  （`WeeklyCheckupResult.Completed = false`），讓下次執行的補跑機制重試，而不是把這一期的
-  體檢額度用掉。
-- **輸入塑形**：不是把窗口內歷史原樣塞給模型——程式先彙整成「每個問題簽章一行、含期內逐日
-  次數」，依嚴重度取前 40 行，控制 prompt 在小模型可負擔的範圍內；同時帶入上次體檢結論，
-  讓模型知道「上次說要觀察的那件事後來如何」。
-- **輸出**：結論寫入當日歷史紀錄的 `WeeklyCheckup` 欄位；**有發現才**輸出
-  `export\{日期}_週檢.txt`（檔名沿用既有慣例），無累積性異常的期間不產生檔案。
+五層偵測（規則／趨勢／慢速趨勢／關聯／AI）、監控的危險訊號清單（Windows／Linux 各 Event ID
+與嚴重度）、RDP 防誤報設計、趨勢與關聯判定規則、給 AI 的輔助資訊、資料完整性誠實申報、
+體檢機制——完整內容見 **[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)**。
 
 ## 部署驗證
 
@@ -426,8 +108,8 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 
 ## 規則庫與抑制設定
 
-2026-07-21 規則外部化：`KnownIssueCatalog` 的規則表（本文件「監控的危險訊號清單」列出的
-那些規則）不再寫死在程式碼裡，調整規則**不需要重新編譯部署**。
+2026-07-21 規則外部化：`KnownIssueCatalog` 的規則表（[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)
+「監控的危險訊號清單」列出的那些規則）不再寫死在程式碼裡，調整規則**不需要重新編譯部署**。
 
 **存放位置（2026-07-24 起）**：規則與抑制設定存在**資料庫**裡（`lf_blobs` 的 `rules`／
 `suppressions` 兩個 key），不是可以直接開啟編輯的檔案——`rules.json`／`suppressions.json`
@@ -521,10 +203,12 @@ Web「資料匯入」頁的「NetIQ 匯入」分頁：選一台已設好探索�
 既有使用中的不勾）與「全不選」兩個快捷。作業系統預設值取自該台 Sentinel 的設定
 （見「NetIQ 維護」頁），只套用在本次**新增**的主機。
 
-**開發環境的示範資料與 `Netiq:DiscoveryClient` 設定（2026-07-29）**：Development 環境預設用
-離線示範資料跑掃描（固定台數／網段數，結果上方會有醒目警告標示），方便離線開發整條匯入流程；
-開發機要對真實 Sentinel 試掃時，在 Web 的 appsettings 設 `Netiq:DiscoveryClient=Real` 即可
-（值域 `Auto`（預設，依環境）／`Stub`／`Real`；正式環境設 `Stub` 會被啟動驗證擋下）。
+**掃描一律真實連線；離線示範資料是顯式開關（2026-08-05 §13）**：不論哪個環境，掃描預設都連
+真實 Sentinel——沒有可連的 Sentinel 時精靈會誠實回報連線錯誤，而不是默默給假資料。需要離線
+跑完整匯入流程（開發／展示）時，到「系統管理 > NetIQ 維護」頁開啟**「使用離線示範資料」**
+開關（固定台數／網段數，掃描結果上方會有醒目警告標示，頁面另有常駐徽章）。
+**正式環境不允許開啟**：開關只在非 Production 顯示，後端寫入端也會拒絕，DI 選型層同樣不理會
+（三道保險，沿用「假資料不得上正式」原則）。
 
 ### NetIQ 事件取數與 API 驗證
 
@@ -565,8 +249,8 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
   移出成員標記【權限變更】（移除同樣要關注——可能是入侵者提權得手後清除紀錄）
 - **監控資料夾的 ACL**：擁有者變更、任何權限規則的新增或移除，一律列出、不判斷合理性，
   交給人工確認。執行檔自身所在目錄**一律自動監控**（防止程式本身被竄改），
-  可在 `appsettings.json` 的 `Permissions.WatchedFolders` 加入其他要監控的資料夾
-  （支援環境變數，如 `%ProgramFiles%`）
+  其他要監控的資料夾在 Web「系統管理 > 設定 > 分析參數」頁加入（一行一個路徑，
+  支援環境變數如 `%ProgramFiles%`）
 - 資料夾從「可存取」變成「無法存取」也會告警（可能已被刪除，或權限被鎖死以阻擋存取／掩蓋內容）
 
 ### 運作方式
@@ -607,46 +291,8 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 
 ## 小模型（Gemma 27B/31B 級）最大化效能的策略
 
-小模型的限制：context 有效長度短、大海撈針能力弱、格式遵循不穩定、長輸入時容易「迷失在中間」。
-對策全部落實在程式裡：
-
-1. **餵摘要不餵原文，且呈現量有硬上限** — `LogAggregator` 把上千筆原始 log 依
-   `(LogName, Source, EventId, EntryType)` 分組成最多 50 組統計；主 prompt 呈現層再設上限：
-   規則命中問題最多逐項列 12 個（各附 2 則 200 字範例）、其他事件最多 10 個（各 1 則）、
-   頻率異常最多 15 行。超出上限的項目**不是折疊消失，而是走前置掃描**（見第 10 點），
-   所以主 prompt 有確定的長度上限（約 10KB），又不會有 AI 沒看過的事件。
-   平常日通常只有 1~3K token。歷史資料庫與風險報告仍保存完整資訊（每組 3 則範例）。
-2. **規則先標記重點** — prompt 中把「規則已命中的問題」和「其他事件」分區呈現，並附上規則的中文說明。
-   模型不需要自己知道 Event 153 代表什麼，只需要在已標記的基礎上判讀，大幅降低知識面要求。
-3. **歷史壓縮成統計行** — 每天歷史只佔一行（日期、錯誤/警告數、風險、前三大問題簽章），
-   14 天歷史約 500 token，趨勢資訊完整但不吃 context。
-4. **趨勢數字程式先算好** — LLM 不擅長算術，「昨日幾次、平均幾次、是不是兩倍」由 `TrendAnalyzer`
-   預先算好，以「（頻率上升：近14日平均 x2.1、昨日 x3）」的形式附註在事件行上，模型只解讀不計算。
-5. **JSON 契約 + grammar 強制 + 低溫度** — prompt 指定回傳
-   `{risk_level, headline, story, trend_story, action}` 的 JSON 結構（2026-07-20 AI 角色轉換：
-   欄位語意從「AI 判斷結果」改為「AI 的白話翻譯」，risk_level 仍保留但只作為向上拉的安全網），
-   並透過 llama.cpp 的 `response_format: json_object`（grammar 約束解碼）從 server 端**保證**
-   輸出合法 JSON，temperature 0.2 降低發散。解析端仍有容錯（剝除圍欄、擷取大括號區段），雙保險。
-6. **System prompt 限定角色與範圍** — 明確要求「只根據提供的資料判斷、不要臆測」，抑制小模型的幻覺傾向。
-7. **單一職責** — 一次呼叫只做一件事（判讀當日 + 對照歷史），不要求模型同時做分類、去重、統計
-   （那些程式做得又快又準）。
-8. **重大問題永不被截斷** — 聚合結果依嚴重度排序後才取 top 30，最高嚴重度的問題一定進 prompt。
-9. **不信任模型的下限** — 規則命中「重大」旗標時風險強制「高」、趨勢層有頻率異常時至少「中」，模型漏判也不影響告警。
-10. **依任務性質拆分呼叫，而不是把 prompt 對半切** — 拆分的原則：
-    「逐項判斷是否為雜訊」彼此獨立、可以拆；「全局風險判讀」需要跨訊號關聯、不能拆。
-    - **前置掃描**（Other 類事件種類超過主 prompt 上限時才觸發，2026-07-20 限縮）：規則已命中
-      的尾巴不再掃描（靜態知識庫已涵蓋處置建議），只掃超出上限的 Other 類項目，分批（每批 20 項）
-      給獨立呼叫逐項篩選，值得注意的帶著「掃描意見」回流主分析、其餘以「已檢視 N 項屬雜訊」一行
-      帶過；掃描發生在主判斷**之前**，發現的異常能影響當日風險等級。
-      低風險日（四層皆無訊號）原則上完全不呼叫 AI，但未分類事件種類達 20 種以上時仍執行掃描——
-      那些事件規則層依定義沒看過，不掃就沒有任何一層檢視過它們；掃描若有發現則照常執行主分析，
-      讓發現能拉高當日風險等級
-    - **主呼叫**（每日一次，低風險日不觸發）：把前四層已確定的結論翻譯成白話標題與敘述
-    - **深入分析呼叫**（風險日才觸發，**僅 Other 類別**，2026-07-20 限縮）：只帶該類別已確認的問題＋
-      原始 log 證據，聚焦根因與處置；規則已命中的類別改查靜態知識庫，不再呼叫 AI；
-      主分析摘要作為全局脈絡帶入，跨類別資訊不遺失
-    把 prompt 對半切的做法則不採用：跨訊號關聯（如新服務安裝＋服務崩潰＋帳號建立）
-    會被切斷，還要合併兩份可能矛盾的結論。
+餵摘要不餵原文、規則先標記重點、歷史壓縮成統計行、趨勢數字程式先算、JSON 契約＋grammar
+強制、依任務性質拆分呼叫等十項對策——見 **[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)**。
 
 ## 使用方式
 
@@ -750,60 +396,37 @@ schtasks 或安裝其他執行檔：
 
 ### 設定檔（appsettings.json / nlog.config）
 
-執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端：
+執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端。
+
+**本檔只保留「站台還沒起來、資料庫還沒連上之前就必須知道」的啟動與安全前提**（2026-08-05 §12 精簡）：
 
 ```json
 {
-  "Ai": {
-    "BaseUrl": "http://localhost:8080",
-    "TimeoutSeconds": 600,
-    "RetryCount": 3,
-    "RetryDelaySeconds": 10,
-    "JsonRetryCount": 2,
-    "MaxTokens": 1536,
-    "DeepDiveMaxTokens": 8192,
-    "FrequencyPenalty": 0.8,
-    "PresencePenalty": 0.8,
-    "ExtraRequestFields": {
-      "chat_template_kwargs": { "enable_thinking": false },
-      "rep_pen": 1.3
-    }
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },
+  "Jwt": { "SecretKey": "<測試值，正式環境以環境變數覆寫>", "ExpireHours": 8 },
+  "Auth": {
+    "Provider": "Stub",
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值>" }
   },
-  "Permissions": {
-    "WatchedFolders": []
-  },
-  "Analysis": {
-    "ServerDescription": "",
-    "CheckupIntervalDays": 7,
-    "Channels": []
-  },
-  "Storage": {
-    "Type": "Sqlite",
-    "DataRoot": "",
-    "ConnectionString": ""
-  }
+  "AllowedHosts": "*"
 }
 ```
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
-| `Ai.BaseUrl` | `http://localhost:8080` | OpenAI 相容 API 位址（實測環境為 KoboldCpp，也適用其他 llama.cpp 系 server）。**事實來源是 Web「系統管理 > 設定」頁**（DB，可一併設定需驗證端點用的 API 金鑰），這裡的值只是設定頁尚未設定時的退路 |
-| `Ai.TimeoutSeconds` | `600` | 單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘） |
-| `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
-| `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
-| `Ai.JsonRetryCount` | `2` | 網路正常但 JSON 格式/內容檢查未過時的額外重問次數 |
-| `Ai.MaxTokens` | `1536` | 一般（終端 JSON 較短）呼叫的上限，用於每日總覽分析與前置掃描，`0` = 不設上限。故意抓緊：這類回應正常只有幾百字元，模型退化重複輸出時會一路生成到頂到上限才停，上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂 |
-| `Ai.DeepDiveMaxTokens` | `8192` | 深入分析呼叫（`RiskReportService` 逐類別分析）的上限，獨立於 `MaxTokens` 之外——這類回應天生比終端摘要長得多（一次分析多個問題的原因/影響/處置步驟），用同一個上限會逼你在「精簡呼叫失敗時拖太久」和「深入分析被截斷」之間二選一 |
-| `Ai.FrequencyPenalty` | `0.8` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類反覆片語）。OpenAI 相容標準欄位，理論上 KoboldCpp 的相容層會轉譯成內部取樣參數；從 0.3 一路調到 0.8 仍未完全根除，實際效果請對照 `Ai.ExtraRequestFields` 的 `rep_pen`（KoboldCpp 原生參數，見下） |
-| `Ai.PresencePenalty` | `0.8` | 存在懲罰，跟 FrequencyPenalty 互補，一起抑制退化重複 |
-| `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON。**已從實際的 KoboldCpp 啟動設定檔（kcpps）確認**：`chat_template_kwargs.enable_thinking` 是這個模型的聊天範本認得的**布林**思考開關（先前猜測的數字預算 `thinking_budget` 這個 key 範本根本不認得，等於沒作用），伺服器層級預設整台開著（true），故意設 `false` 關閉；`rep_pen` 是 KoboldCpp（KoboldAI 系譜）**原生**的重複懲罰參數名稱，不是原生 llama.cpp server 慣例的 `repeat_penalty`——先前那個 key 這台伺服器很可能不認得。都送不會互相干擾，伺服器不認得的欄位通常直接忽略、不會報錯——換了不同 server/模型時請對照它自己的啟動設定或文件重新確認 |
-| `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
-| `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
-| `Analysis.CheckupIntervalDays` | `7` | 體檢間隔天數（2026-07-20 由固定星期六改為 due-date 輪巡）；距上次體檢達此天數即到期，錯過會在下次執行自動補跑，不會消失 |
-| `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/archive/FEEDBACK-8-PLAN.md #7 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
+| `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
+| `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
+| `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
+
+**其餘設定都在 Web 的「系統管理 > 設定」頁（資料庫）**，改完即時生效、不必重啟站台：
+AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲罰、額外請求欄位）、
+權限監控資料夾、分析參數（伺服器角色描述、體檢間隔、掃描頻道）、CSV 匯入上限、
+各項保留天數、AD 驗證伺服器。NetIQ 連線與節流參數則在「系統管理 > NetIQ 維護」頁。
+（原本散在 appsettings 的 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段
+皆於 §12 遷入或退役；每個欄位的預設值＝原出廠值，升級後行為不變。）
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
@@ -886,25 +509,9 @@ D:\LogForesight\
 
 ## 正式環境穩定性設計
 
-| 機制 | 說明 |
-|---|---|
-| **Polly 網路重試** | 連線失敗、HTTP 錯誤、逾時、**空回應**皆自動重試（預設 3 次、指數退避），涵蓋模型剛重啟或瞬間過載等暫時性失敗；每次重試皆記錄於執行輸出 |
-| **停用連線池** | `SocketsHttpHandler.PooledConnectionLifetime = TimeSpan.Zero`，每次呼叫都用全新連線。連線池已停用，因為「連線池裡的連線其實已被對方關閉，用戶端還不知道就拿去重用」會導致「The response ended prematurely.」——這類錯誤幾乎都發生在前一次呼叫剛結束後幾十毫秒內，不是生成到一半斷線，是典型的連線重用問題（與 HTTP 版本協商無關）；每次呼叫間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的握手成本相對生成時間微乎其微，直接停用連線池換取穩定性更划算 |
-| **抑制退化重複輸出** | `FrequencyPenalty`/`PresencePenalty`（預設 0.8）+ `ExtraRequestFields` 的原生 `repeat_penalty`（1.3）送給模型，抑制生成過程中卡進重複迴圈的退化輸出（實際觀察到摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類重複垃圾）。從 0.3 一路調到 0.8 仍未完全根除，屬於持續觀察中的調校項目，不是保證解 |
-| **依用途分開 token 上限** | 終端 JSON 較短的呼叫（每日總覽、前置掃描）用 `Ai.MaxTokens`（預設 1536，故意抓緊），篇幅天生較長的深入分析用 `Ai.DeepDiveMaxTokens`（預設 8192）。單一全域上限會逼你在「精簡呼叫退化時拖很久才觸頂」和「深入分析被截斷」之間二選一，拆開後兩邊都能設到剛好 |
-| **context 預算共用防線** | `PromptBudget`（`Analysis/PromptBudget.cs`）依實測環境 Gemma 4 26B、context 20480 保守估算（CJK 約 1:1、其餘約 3.5 字元 1 token，留 10% 餘裕）。檢查點放在 `AIService.ChatAsync`——所有 AI 呼叫的單一咽喉點，同時知道 prompt 與該次輸出上限，任何一次呼叫送出前若估計會超出可用預算就記 WARN。小模型爆 context 時 server 端行為不可靠（可能靜默截頭、可能報錯），這道防線負責在各呼叫類型自己的截斷（深入分析 16KB 字元硬上限、週體檢 40 行輸入塑形、主分析結構性上限）萬一失效時把問題顯性化，而不是等 server 端悄悄吞掉一段輸入 |
-| **回應信封也做容錯 + 記錄原始內容** | `ChatAsync` 先把 HTTP 回應讀成字串再自行解析，不直接 `ReadFromJsonAsync`——曾觀察到 HTTP 狀態碼是成功、但回應本體不是 JSON（`'H' is an invalid start of a value`），可能是中間 proxy/gateway 用 200 回傳純文字/HTML 錯誤頁。解析失敗時記錄回應預覽（此前完全是黑盒，看不到內容）並拋出 `AiEnvelopeParseException` 交給 Polly 重試——原本這類失敗完全沒有走 Polly 重試、直接判定整次呼叫失敗，白白浪費一次 `JsonRetryCount` 名額 |
-| **AI JSON 容錯解析** | `AiJson`（`Models/AiAnalysisResult.cs`）用括號配對掃描（正確跳過字串內容中的括號）取出真正的 JSON 物件，比天真的「第一個 `{` 到最後一個 `}`」精準——前言文字混有大括號、或模型多回了一個陣列包裹都能正確抓出。若輸出被 `max_tokens` 攔腰截斷，另外用堆疊追蹤 `{}`/`[]` 的巢狀順序，依正確的後進先出順序補上缺少的收尾符號（只算深度不記順序的話，物件裡包陣列會補錯括號種類，产生語法仍不合法的「修復」）後再解析一次。全部候選都失敗時印出回覆預覽方便診斷，而非直接吞掉黑盒子 |
-| **AI JSON 格式/內容重試** | `response_format=json_object` 只保證輸出是「合法 JSON」，不保證是預期的物件形狀——模型可能回傳陣列包多個物件、或欄位塞入異常冗長的重複文字，兩者語法都合法但不符期望。`ChatJsonAsync<T>` 解析後再檢查內容合理性（必填欄位非空、長度未超出正常摘要範圍），檢查未過就重新請求（預設 2 次），失敗原因與嘗試次數皆印出 |
-| **System prompt 明確禁止前言** | 兩個系統提示都要求「直接以 `{` 開始輸出，不要有任何前言、推理過程或說明文字」，減少 MoE 模型在正式輸出前先寫一段推理文字、把 `max_tokens` 額度耗在 JSON 本體之外的情況 |
-| **失敗降級** | 網路層與 JSON 層重試皆耗盡仍失敗時，當日降級為統計模式紀錄（`AiAnalyzed=false`），規則與趨勢告警照常運作，不會整天沒有紀錄；若有拿到內容只是格式不合格，會保留原文（截斷）供人工參考，不遺失資訊 |
-| **結構化錯誤協定** | AI 呼叫回傳 `AiResponse { Success, Content, Error }` / `AiJsonResult<T> { Success, Value, RawContent, Error, Attempts }`，錯誤與正常內容分離，不靠字串前綴判斷 |
-| **單一執行個體** | 行程內以 `SchedulerRunState` 做單一執行 gate（排程與立即執行共用，重疊時後者直接拒絕、不排隊），另保留具名 Mutex（`Global\LogForesight`）防未來任何第二行程誤配置指向同一 `DataRoot` |
-| **執行結果可見** | 每次執行的成功/失敗與訊息寫入 `BatchRun` 紀錄（「排程作業」頁可查完整歷史），排程狀態卡另外顯示「上次執行」的即時結果，不需要翻 log 檔才知道有沒有跑成功 |
-| **無主控台相容** | 排程背景執行時 `Console.OutputEncoding` 設定失敗自動忽略，不會擋下程式 |
-| **時鐘回撥容錯** | Event Log 倒序掃描多掃 1 小時緩衝才停止，時間同步回撥造成的事件亂序不會漏抓 |
-| **歷史紀錄併發保護** | webdata 的整份 JSON 內容存於 `lf_blobs`，`UpdatedAt` 為樂觀鎖權杖；排程與立即執行／多個管理者操作併發寫入時，帶著過期內容的一方會被資料庫拒絕並自動重試，不會靜默蓋掉對方剛寫入的內容 |
-| **診斷檔案 Log（NLog）** | 執行輸出不夠判斷問題細節時（重試原因、AI 回覆內容、完整例外堆疊），到 `logs\web.log` 查——詳見下方獨立章節 |
+Polly 網路重試、停用連線池、退化重複輸出抑制、context 預算防線、AI JSON 容錯解析、
+失敗降級、單一執行個體 gate、歷史併發樂觀鎖等機制——見
+**[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)**。
 
 ## 診斷用檔案 Log（NLog）
 
@@ -984,6 +591,7 @@ D:\LogForesight\
 
 | 文件 | 內容 |
 |---|---|
+| [docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md) | 偵測與 AI 內部規格：五層偵測、監控訊號清單、趨勢／關聯判定、體檢、小模型策略、AI 穩定性設計 |
 | [docs/WEB-SPEC.md](docs/WEB-SPEC.md) | Web 查詢/維護介面的完整規格：架構、分層、驗證授權、API 慣例、前端慣例、各頁面規格 |
 | [docs/DB-SPEC.md](docs/DB-SPEC.md) | 資料庫欄位級規格：資料表設計、索引、保留策略、Schema 升級機制 |
 | [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) | Sentinel REST API 參考：認證、事件查詢、欄位對應、查詢 payload |

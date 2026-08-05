@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction
+    toast, withBusy, confirmAction, showDetailModal
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -18,6 +18,9 @@ import { formatDateTime, formatNumber, formatUserName } from '../core/format.js'
    running=--lf-primary、stuck=--lf-cat-hardware、none=--lf-gray-200 */
 const STATUS_META = {
     success: { label: '成功', color: '#16a34a' },
+    // 已回補（§3）：當天沒有 BatchRun，但事後回補的分析紀錄補上了這天——與「當天真的有跑」
+    // 分色（淺綠），符合本頁「沒跑不能冒充有跑」的誠實原則
+    backfilled: { label: '已回補', color: '#65a30d' },
     warning: { label: '有警告', color: '#d97706' },
     failed: { label: '失敗', color: '#dc2626' },
     stopped: { label: '已停止', color: '#ea580c' },   // 優雅停止（手動或窗口結束）——不是失敗
@@ -27,13 +30,6 @@ const STATUS_META = {
 };
 
 let currentDays = 14;
-let currentLogs = [];
-
-// 單日主機明細（本地排序＋分頁）：2000 台規模下曾整表一次 render，改成與其他清單頁一致的體驗
-let dayDetailHosts = [];
-let dayDetailSort = { key: 'hostName', dir: 'asc' };
-let dayDetailPage = 1;
-let dayDetailPageSize = loadPageSize('runs-day-detail');
 
 // 異常彙總（本地排序，筆數通常不多，不加分頁）
 let currentErrors = [];
@@ -92,8 +88,9 @@ function renderSummary(summaries) {
 
     renderTable(container, {
         columns: [
-            { title: '日期', render: s => dateLink(s.date) },
+            { title: '日期', render: s => s.date },
             { title: '成功', className: 'text-end', render: s => countCell(s.successCount, 'success') },
+            { title: '已回補', className: 'text-end', render: s => countCell(s.backfilledCount, 'backfilled') },
             { title: '有警告', className: 'text-end', render: s => countCell(s.warningCount, 'warning') },
             { title: '失敗', className: 'text-end', render: s => countCell(s.failedCount, 'failed') },
             { title: '已停止', className: 'text-end', render: s => countCell(s.stoppedCount, 'stopped') },
@@ -103,19 +100,10 @@ function renderSummary(summaries) {
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致
+        // 點日期就地展開該天每台主機的狀態（§2）：懶載入，展開才 fetch，各列狀態獨立
+        onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
         empty: { title: '尚無執行紀錄' }
     });
-}
-
-function dateLink(date) {
-    const link = document.createElement('a');
-    link.href = '#';
-    link.textContent = date;
-    link.addEventListener('click', event => {
-        event.preventDefault();
-        showDayDetail(date);
-    });
-    return link;
 }
 
 function countCell(count, status) {
@@ -160,50 +148,59 @@ const DAY_DETAIL_COLUMNS = [
     { title: '', className: 'text-end', render: h => h.runId != null ? viewRunButton(h.runId) : '' }
 ];
 
-/** 點日期下鑽：該天每台主機的狀態，取代舊版矩陣的「一格看一次執行」 */
-async function showDayDetail(date) {
-    const card = document.getElementById('run-day-detail-card');
-    card.classList.remove('d-none');
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    document.getElementById('run-day-detail-title').textContent = `${date} 各主機狀態`;
+/**
+ * 日期列就地展開（§2）：懶載入該天每台主機的狀態，render 進展開列。
+ * 每個日期各持有獨立的排序/分頁狀態（允許同時展開多天，互不干擾）——
+ * 2000 台規模下曾整表一次 render，這裡沿用本地排序＋分頁（資料一次取回，不重打 API）。
+ */
+async function renderDayDetailInto(cell, date) {
+    cell.replaceChildren();
+    const listEl = document.createElement('div');
+    const pagerEl = document.createElement('nav');
+    pagerEl.className = 'mt-2';
+    cell.append(listEl, pagerEl);
 
-    renderLoading(document.getElementById('run-day-detail-list'), 6);
-    dayDetailHosts = await api.get(`/api/runs/day/${date}`);
-    dayDetailPage = 1;
-    renderDayDetail();
-}
+    renderLoading(listEl, 6);
 
-/** 2000 台規模下曾整表一次 render——改成本地排序＋分頁（資料已一次取回，不必重打 API） */
-function renderDayDetail() {
-    const sorted = sortRows(dayDetailHosts, DAY_DETAIL_COLUMNS, dayDetailSort);
-    const totalPages = Math.max(1, Math.ceil(sorted.length / dayDetailPageSize));
-    if (dayDetailPage > totalPages) dayDetailPage = totalPages;
-    const pageRows = sorted.slice((dayDetailPage - 1) * dayDetailPageSize, dayDetailPage * dayDetailPageSize);
+    let hosts;
+    try {
+        hosts = await api.get(`/api/runs/day/${date}`);
+    } catch {
+        renderEmpty(listEl, { title: '載入當日明細失敗' });
+        return;
+    }
 
-    renderTable(document.getElementById('run-day-detail-list'), {
-        columns: DAY_DETAIL_COLUMNS,
-        rows: pageRows,
-        sort: dayDetailSort,
-        onSort: (key, dir) => {
-            dayDetailSort = { key, dir };
-            dayDetailPage = 1;
-            renderDayDetail();
-        },
-        empty: { title: '這天沒有任何主機資料' }
-    });
+    const state = { sort: { key: 'hostName', dir: 'asc' }, page: 1, pageSize: loadPageSize('runs-day-detail') };
 
-    renderPagination(document.getElementById('run-day-detail-pager'), {
-        page: dayDetailPage,
-        totalPages: dayDetailHosts.length ? totalPages : 0,
-        onPage: page => { dayDetailPage = page; renderDayDetail(); },
-        pageSize: dayDetailPageSize,
-        onPageSize: size => {
-            dayDetailPageSize = size;
-            savePageSize('runs-day-detail', size);
-            dayDetailPage = 1;
-            renderDayDetail();
-        }
-    });
+    function render() {
+        const sorted = sortRows(hosts, DAY_DETAIL_COLUMNS, state.sort);
+        const totalPages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
+        if (state.page > totalPages) state.page = totalPages;
+        const pageRows = sorted.slice((state.page - 1) * state.pageSize, state.page * state.pageSize);
+
+        renderTable(listEl, {
+            columns: DAY_DETAIL_COLUMNS,
+            rows: pageRows,
+            sort: state.sort,
+            onSort: (key, dir) => { state.sort = { key, dir }; state.page = 1; render(); },
+            empty: { title: '這天沒有任何主機資料' }
+        });
+
+        renderPagination(pagerEl, {
+            page: state.page,
+            totalPages: hosts.length ? totalPages : 0,
+            onPage: page => { state.page = page; render(); },
+            pageSize: state.pageSize,
+            onPageSize: size => {
+                state.pageSize = size;
+                savePageSize('runs-day-detail', size);
+                state.page = 1;
+                render();
+            }
+        });
+    }
+
+    render();
 }
 
 function statusBadgeCell(status) {
@@ -232,10 +229,6 @@ function viewRunButton(runId) {
     button.addEventListener('click', () => showDetail(runId));
     return button;
 }
-
-document.getElementById('run-day-detail-close').addEventListener('click', () => {
-    document.getElementById('run-day-detail-card').classList.add('d-none');
-});
 
 const ERROR_COLUMNS = [
     { title: '等級', sortKey: 'level', sortValue: e => e.level, render: e => levelBadge(e.level) },
@@ -288,26 +281,77 @@ function detailButton(runId) {
     return button;
 }
 
-// ── 執行詳情 ─────────────────────────────────────────────────────────────────
+// ── 執行詳情（改 modal，§2：取代舊版跳到頁面最下方的 run-detail-card）──────────────
 
 async function showDetail(runId) {
-    const card = document.getElementById('run-detail-card');
-    card.classList.remove('d-none');
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const body = document.createElement('div');
+    renderLoading(body, 5);
+    showDetailModal({ title: '執行詳情', body, size: 'modal-xl' });
 
-    renderLoading(document.getElementById('run-detail-logs'), 5);
+    let detail;
+    try {
+        detail = await api.get(`/api/runs/${runId}`);
+    } catch {
+        body.replaceChildren();
+        renderEmpty(body, { title: '載入執行詳情失敗' });
+        return;
+    }
 
-    const detail = await api.get(`/api/runs/${runId}`);
-    currentLogs = detail.logs;
+    body.replaceChildren();
 
-    document.getElementById('run-detail-title').textContent =
-        `執行詳情　${detail.hostName}　${formatDateTime(detail.startedAt)}`;
+    // 主機＋起始時間放在 body 標頭（modal 標題已固定「執行詳情」）
+    const heading = document.createElement('div');
+    heading.className = 'fw-semibold mb-3';
+    heading.textContent = `${detail.hostName}　${formatDateTime(detail.startedAt)}`;
+    body.appendChild(heading);
 
-    renderStats(detail);
+    const statsRow = document.createElement('div');
+    statsRow.className = 'row g-3 mb-3';
+    renderStats(statsRow, detail);
+    body.appendChild(statsRow);
+
+    // 等級過濾（原本在 cshtml 的 log-level-filter，改建在 modal 內）
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'd-flex justify-content-end mb-2';
+    const levelSelect = document.createElement('select');
+    levelSelect.className = 'form-select form-select-sm';
+    levelSelect.style.width = '130px';
+    for (const [value, text] of [['', '全部等級'], ['Warn', 'Warn 以上'], ['Error', 'Error 以上']]) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        levelSelect.appendChild(option);
+    }
+    filterWrap.appendChild(levelSelect);
+    body.appendChild(filterWrap);
+
+    const logsEl = document.createElement('div');
+    body.appendChild(logsEl);
+
+    function renderLogs() {
+        const level = levelSelect.value;
+        const order = { Info: 0, Warn: 1, Error: 2, Fatal: 3 };
+        const filtered = level
+            ? detail.logs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
+            : detail.logs;
+
+        renderTable(logsEl, {
+            columns: [
+                { title: '時間', render: l => formatDateTime(l.loggedAt) },
+                { title: '等級', render: l => logLevelBadge(l.level) },
+                { title: '來源', render: l => l.logger },
+                { title: '訊息', render: l => logMessageCell(l) }
+            ],
+            rows: filtered,
+            empty: { title: '沒有符合等級的紀錄', hint: '此次執行未產生該等級以上的訊息。' }
+        });
+    }
+
+    levelSelect.addEventListener('change', renderLogs);
     renderLogs();
 }
 
-function renderStats(detail) {
+function renderStats(container, detail) {
     const stats = [
         { label: '狀態', value: statusText(detail) },
         { label: '耗時', value: detail.durationSeconds != null ? formatDuration(detail.durationSeconds) : '—' },
@@ -320,9 +364,6 @@ function renderStats(detail) {
         { label: '警告 / 錯誤', value: `${detail.warnCount} / ${detail.errorCount}` },
         { label: '版本', value: detail.appVersion }
     ];
-
-    const container = document.getElementById('run-detail-stats');
-    container.replaceChildren();
 
     for (const stat of stats) {
         const col = document.createElement('div');
@@ -343,26 +384,6 @@ function formatDuration(seconds) {
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
     return `${Math.floor(minutes / 60)} 時 ${minutes % 60} 分`;
-}
-
-function renderLogs() {
-    const level = document.getElementById('log-level-filter').value;
-    const order = { Info: 0, Warn: 1, Error: 2, Fatal: 3 };
-
-    const filtered = level
-        ? currentLogs.filter(l => (order[l.level] ?? 0) >= (order[level] ?? 0))
-        : currentLogs;
-
-    renderTable(document.getElementById('run-detail-logs'), {
-        columns: [
-            { title: '時間', render: l => formatDateTime(l.loggedAt) },
-            { title: '等級', render: l => logLevelBadge(l.level) },
-            { title: '來源', render: l => l.logger },
-            { title: '訊息', render: l => logMessageCell(l) }
-        ],
-        rows: filtered,
-        empty: { title: '沒有符合等級的紀錄', hint: '此次執行未產生該等級以上的訊息。' }
-    });
 }
 
 function logLevelBadge(level) {
@@ -398,11 +419,6 @@ function logMessageCell(log) {
 
     return wrap;
 }
-
-document.getElementById('log-level-filter').addEventListener('change', renderLogs);
-document.getElementById('run-detail-close').addEventListener('click', () => {
-    document.getElementById('run-detail-card').classList.add('d-none');
-});
 
 for (const button of document.querySelectorAll('[data-days]')) {
     button.addEventListener('click', () => {

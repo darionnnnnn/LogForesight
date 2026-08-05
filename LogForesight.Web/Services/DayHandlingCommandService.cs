@@ -317,6 +317,7 @@ public class DayHandlingCommandService
             ClosedIssues = progress?.Closed ?? 0,
             HandlerId = handlerId,
             HandlerName = handler?.DisplayName,
+            HandlerAccount = handler?.Account,
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
             IsOverdue = handling?.DueDate.HasValue == true &&
                         handling.DueDate.Value.Date < DateTime.Today &&

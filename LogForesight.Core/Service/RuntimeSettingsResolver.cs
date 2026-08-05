@@ -1,3 +1,4 @@
+using System.Text.Json;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -15,8 +16,12 @@ public static class RuntimeSettingsResolver
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>
-    /// 就地覆寫 <paramref name="settings"/>.Ai 的 BaseUrl／ApiKey，並回傳依 DB 值算出的保留天數。
-    /// DB 讀取失敗（例如尚未初始化）時安靜回退到 appsettings.json 內建預設值，不擋執行。
+    /// 就地覆寫 <paramref name="settings"/> 的 AI／權限監控／分析參數，並回傳依 DB 值算出的保留天數。
+    /// DB 讀取失敗（例如尚未初始化）時安靜回退到程式內建預設值，不擋執行。
+    ///
+    /// §12（回饋第九輪）起，這些參數的**唯一事實來源是 DB**（「系統管理 > 設定」頁）——
+    /// appsettings.json 的 Ai／Permissions／Analysis 區段已退役，傳入的 <paramref name="settings"/>
+    /// 帶的是程式內建出廠值（＝原 appsettings 的值），本方法把 DB 值疊上去。
     /// </summary>
     public static RetentionOptions ApplySystemSettingsOverrides(AppSettings settings, ISystemSettingsStore systemSettingsStore)
     {
@@ -26,12 +31,21 @@ public static class RuntimeSettingsResolver
             var systemSettings = systemSettingsStore.Get();
 
             // 「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：前者沿用
-            // appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI（設定頁明講留空停用），
+            // 內建預設值（既有部署升級後行為不變），後者空字串＝真的停用 AI（設定頁明講留空停用），
             // AI 呼叫失敗時各日自動降級為統計模式，規則/趨勢/關聯偵測不受影響
             if (systemSettings.UpdatedAt != null)
                 settings.Ai.BaseUrl = systemSettings.AiBaseUrl.Trim();
             if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
                 settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
+
+            ApplyAiAdvanced(settings.Ai, systemSettings);
+
+            // 權限監控資料夾與分析參數（§12）：DB 是唯一事實來源
+            settings.Permissions.WatchedFolders = new List<string>(systemSettings.WatchedFolders);
+            settings.Analysis.ServerDescription = systemSettings.ServerDescription;
+            if (systemSettings.CheckupIntervalDays >= 1)
+                settings.Analysis.CheckupIntervalDays = systemSettings.CheckupIntervalDays;
+            settings.Analysis.Channels = new List<string>(systemSettings.AnalysisChannels);
 
             if (systemSettings.RetentionDays >= systemSettings.InitialHistoryDays)
             {
@@ -57,9 +71,50 @@ public static class RuntimeSettingsResolver
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "讀取系統設定（AI 位址／金鑰／補充留存天數）失敗，改用內建預設值：{0}", ex.Message);
+            Log.Warn(ex, "讀取系統設定（AI 參數／權限監控／分析參數／保留天數）失敗，改用內建預設值：{0}", ex.Message);
         }
 
         return retention;
+    }
+
+    /// <summary>
+    /// AI 進階參數（§12：自 appsettings 的 Ai 區段遷入 DB）。各值只在合理範圍內才套用——
+    /// 設定損毀（手改 DB、舊 blob 缺欄位反序列化成 0）不該讓 AI 呼叫變成 0 秒逾時這種更糟的狀態，
+    /// 越界時保留內建出廠值並記警告，與其餘設定「壞值不擋執行」的一貫作法一致。
+    ///
+    /// public：Web 的互動情境（<c>WebAiService</c>）也要用同一份 DB 值，避免批次與互動兩處
+    /// 各自解讀同一組設定而漂移。
+    /// </summary>
+    public static void ApplyAiAdvanced(AiSettings ai, SystemSettings db)
+    {
+        if (db.AiTimeoutSeconds >= 1) ai.TimeoutSeconds = db.AiTimeoutSeconds;
+        if (db.AiRetryCount >= 0) ai.RetryCount = db.AiRetryCount;
+        if (db.AiRetryDelaySeconds >= 0) ai.RetryDelaySeconds = db.AiRetryDelaySeconds;
+        if (db.AiJsonRetryCount >= 0) ai.JsonRetryCount = db.AiJsonRetryCount;
+        if (db.AiMaxTokens >= 0) ai.MaxTokens = db.AiMaxTokens;
+        if (db.AiDeepDiveMaxTokens >= 0) ai.DeepDiveMaxTokens = db.AiDeepDiveMaxTokens;
+        if (db.AiFrequencyPenalty >= 0) ai.FrequencyPenalty = db.AiFrequencyPenalty;
+        if (db.AiPresencePenalty >= 0) ai.PresencePenalty = db.AiPresencePenalty;
+
+        ai.ExtraRequestFields = ParseExtraRequestFields(db.AiExtraRequestFieldsJson);
+    }
+
+    /// <summary>
+    /// 額外請求欄位的 JSON 文字 → 字典。空字串＝不附加任何欄位（合法的「清空」意圖，非錯誤）；
+    /// 格式壞掉時記警告並回 null（等同不附加），不讓一段壞設定把整次分析擋下來。
+    /// 設定頁存檔時已先驗證過格式，這裡是防禦性解析（手改 DB／舊資料）。
+    /// </summary>
+    private static Dictionary<string, JsonElement>? ParseExtraRequestFields(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+        }
+        catch (JsonException ex)
+        {
+            Log.Warn("系統設定的「AI 額外請求欄位」不是合法的 JSON 物件，本次不附加任何欄位：{0}", ex.Message);
+            return null;
+        }
     }
 }

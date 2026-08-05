@@ -10,6 +10,11 @@
  * 不接受使用者資料——因此以 setAttribute 組 href 無 XSS 疑慮。
  * SVG 元素必須用 createElementNS 建立，一般 createElement 會靜默失效。
  */
+// formatUserName 是使用者顯示的單一格式出口（§9）。format.js 也 import 本檔的 icon()，
+// 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
+// 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
+import { formatUserName } from './format.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
@@ -360,7 +365,7 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, sort, onSort }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
@@ -405,14 +410,17 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             });
         }
 
+        // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
+        // docs/archive/FEEDBACK-9-PLAN.md §2）——大資料量（14 天×2000 台的執行明細）不能進頁全抓。
         const detail = rowDetail ? rowDetail(row) : null;
+        const expandable = !!detail || !!onRowExpand;
 
         for (const [index, col] of columns.entries()) {
             const td = document.createElement('td');
             if (col.className) td.className = col.className;
 
             // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示
-            if (detail && index === 0) {
+            if (expandable && index === 0) {
                 const caret = document.createElement('span');
                 caret.className = 'lf-row-caret';
                 caret.appendChild(icon('chevron-down'));
@@ -433,20 +441,26 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         }
         tbody.appendChild(tr);
 
-        if (detail) {
+        if (expandable) {
             const detailRow = document.createElement('tr');
             detailRow.className = 'lf-row-detail d-none';
             const cell = document.createElement('td');
             cell.colSpan = columns.length;
-            cell.appendChild(detail);
+            if (detail) cell.appendChild(detail);
             detailRow.appendChild(cell);
             tbody.appendChild(detailRow);
 
+            let populated = !!detail;   // eager 版本一開始就已填好；lazy 版本首次展開才填
             tr.classList.add('lf-row-expandable');
             tr.addEventListener('click', event => {
                 if (event.target.closest('a, button')) return;
                 const open = detailRow.classList.toggle('d-none');
                 tr.classList.toggle('lf-row-open', !open);
+                // 首次展開才呼叫 onRowExpand 填內容（之後展開/收合重用同一份 DOM）
+                if (!open && !populated && onRowExpand) {
+                    populated = true;
+                    onRowExpand(row, cell);
+                }
             });
         }
     }
@@ -655,6 +669,84 @@ export function checkboxList(container, items, emptyHint) {
         wrapper.append(input, label);
         container.appendChild(wrapper);
     }
+}
+
+/**
+ * 可搜尋的使用者選單（docs/archive/FEEDBACK-9-PLAN.md §8）：文字框即時篩選＋原生 select。
+ * 處理面板指派、跨主機批次指派共用同一份，不各寫一份。
+ *
+ * 篩選比對顯示名稱＋帳號（不分大小寫）；選項文字一律走 formatUserName()（§9 單一格式出口）。
+ * 純前端過濾，使用者清單由呼叫端一次載入（不新增 API）。
+ *
+ * @param {Array} users `/api/admin/users` 的清單（含 userId/account/displayName/active）
+ * @param {object} opts
+ *   selectedId  預選的 userId（null＝不預選）
+ *   includeNone 是否加「（未指派）」空選項（值＝''）
+ *   noneLabel   空選項文字
+ *   pinnedNames 置頂並標「（負責人）」的 displayName 集合（改派最常選負責人）
+ *   onChange    select 值變更時回呼（帶新的 value 字串；篩選本身不觸發）
+ * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement }}
+ */
+export function searchableUserSelect(users, { selectedId = null, includeNone = false, noneLabel = '（未指派）', pinnedNames = [], onChange } = {}) {
+    const wrap = document.createElement('div');
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'form-control form-control-sm mb-1';
+    search.placeholder = '輸入帳號或顯示名稱篩選…';
+    search.autocomplete = 'off';
+
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm';
+
+    const pinned = new Set(pinnedNames);
+    const sorted = [...users].filter(u => u.active).sort((a, b) => {
+        const ap = pinned.has(a.displayName) ? 0 : 1;
+        const bp = pinned.has(b.displayName) ? 0 : 1;
+        return ap - bp || a.displayName.localeCompare(b.displayName, 'zh-TW');
+    });
+
+    let currentValue = selectedId != null ? String(selectedId) : '';
+
+    function optionLabel(user) {
+        const base = formatUserName(user.displayName, user.account);
+        return pinned.has(user.displayName) ? `${base}（負責人）` : base;
+    }
+
+    function renderOptions() {
+        const f = search.value.trim().toLowerCase();
+        select.replaceChildren();
+
+        if (includeNone) {
+            const none = document.createElement('option');
+            none.value = '';
+            none.textContent = noneLabel;
+            select.appendChild(none);
+        }
+
+        for (const user of sorted) {
+            const matches = !f || `${user.displayName} ${user.account}`.toLowerCase().includes(f);
+            // 目前選中的人即使被篩掉也保留其選項——否則 select.value 會被靜默改成第一項，
+            // 使用者一打字就意外「改派」給名單第一人
+            if (!matches && String(user.userId) !== currentValue) continue;
+            const opt = document.createElement('option');
+            opt.value = String(user.userId);
+            opt.textContent = optionLabel(user);
+            select.appendChild(opt);
+        }
+
+        select.value = currentValue;
+    }
+
+    search.addEventListener('input', renderOptions);
+    select.addEventListener('change', () => {
+        currentValue = select.value;
+        onChange?.(currentValue);
+    });
+
+    renderOptions();
+    wrap.append(search, select);
+    return { element: wrap, getValue: () => select.value, select };
 }
 
 /**

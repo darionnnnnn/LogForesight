@@ -28,14 +28,10 @@ try
     // ── 組態：全部集中在強型別的 WebAppSettings（§5）────────────────────────
     var settings = builder.Configuration.Get<WebAppSettings>() ?? new WebAppSettings();
 
-    // ConfigurationBinder 綁不出 Ai:ExtraRequestFields（Dictionary<string, JsonElement>）——
-    // 綁出來的元素是 default(JsonElement)（ValueKind=Undefined），AIService 建構子對其呼叫
-    // GetRawText() 會丟例外，導致排程／立即執行在分析開始前就整個中止（docs/archive/FEEDBACK-7-PLAN.md）。
-    // 改用 AiExtraFieldsLoader 直接重讀該節點；兩份設定檔皆無節點時回復型別預設值，
-    // 避免沿用 binder 產生的壞值。
-    settings.Ai.ExtraRequestFields =
-        AiExtraFieldsLoader.Load(builder.Environment.ContentRootPath, builder.Environment.EnvironmentName)
-        ?? new AiSettings().ExtraRequestFields;
+    // §12（回饋第九輪）：AI 進階參數（含 ExtraRequestFields）已自 appsettings 移入 DB 設定頁，
+    // 原本為了修 ConfigurationBinder 綁不出 Dictionary<string, JsonElement> 而存在的
+    // AiExtraFieldsLoader workaround 隨之退場——DB 存的是 JSON 文字，由
+    // RuntimeSettingsResolver 解析，沒有 binder 的型別問題。
 
     // DataRoot 未明確指定時，StorageSettings.ResolveDataRoot() 退回 AppContext.BaseDirectory
     // （本站台自己的輸出目錄）——console 批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md
@@ -88,6 +84,15 @@ try
     {
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
+
+        // 開箱測試管理員（§1）：僅測試模式（Provider=Stub）且非 Production 才 seed——Stub 免密碼，
+        // 建一個 admin 成員即可直接登入測全站，補足「只能以最小權限的 serverAdmin 登入」的落差。
+        // Production 用 Stub 啟動會被 Validate 擋下，這裡的環境判斷是第二道保險。
+        if (string.Equals(settings.Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase)
+            && !app.Environment.IsProduction())
+        {
+            identity.SeedTestAdmin("demo-admin", "測試管理員");
+        }
 
         if (identity.HasNoAdmins())
         {

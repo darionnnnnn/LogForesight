@@ -87,16 +87,18 @@ public static class ServiceCollectionExtensions
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
         // DynamicAuthenticationProvider（docs/archive/HISTORY.md #9）包一層：DB 設定的
-        // AdAuthEnabled 開啟時改走 AD 動態設定，否則委派給 appsettings 決定的原 provider——
-        // 這裡的 switch 只決定「沒開啟 AD 動態設定時」的行為，語意與改版前完全一致。
+        // AdAuthEnabled 開啟時走設定頁的 AD 設定，否則落到下面的 fallback。
+        // §12：AD 驗證的唯一事實來源是設定頁——appsettings 的 Auth:Ldap:Domain 與
+        // LdapAuthenticationProvider 已退役，"Ad"（含舊值 "Ldap"）的 fallback 改為
+        // UnconfiguredAdAuthenticationProvider（明講「AD 尚未設定，請以 serverAdmin 登入後設定」）。
         services.AddSingleton<IAuthenticationProvider>(sp =>
         {
             IAuthenticationProvider fallback = settings.Auth.Provider.ToLowerInvariant() switch
             {
-                "ldap" => new LdapAuthenticationProvider(settings),
+                "ad" or "ldap" => new UnconfiguredAdAuthenticationProvider(),
                 "stub" => new StubAuthenticationProvider(),
                 _ => throw new InvalidOperationException(
-                    $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Stub 或 Ldap。")
+                    $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Ad 或 Stub。")
             };
 
             return new DynamicAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback);
@@ -223,14 +225,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
         services.AddScoped<NetiqOptionsService>();
 
-        // NetIQ 主動探索：預設 Development 用 Stub（離線可跑全流程），其餘用真連線
-        // （SentinelRestDirectoryClient，走 SentinelClient 的網段範圍掃描，
-        // docs/NETIQ-API-REFERENCE.md §3.4，2026-07-29 定案）；Netiq:DiscoveryClient=Stub/Real
-        // 可明確覆寫這個判斷（見 NetiqDiscoverySettings），開發機才連得到真實 Sentinel 試掃。
+        // NetIQ 主動探索（§13，回饋第九輪）：**預設真連線**（SentinelRestDirectoryClient，走
+        // SentinelClient 的網段範圍掃描，docs/NETIQ-API-REFERENCE.md §3.4）。離線示範資料改由
+        // 「NetIQ 維護」頁的 NetiqOptions.UseOfflineDemoData 開關控制，且僅非 Production 生效——
+        // 執行期解析（讀 DB 開關＋環境），不再由啟動時的 appsettings 決定。
         services.AddScoped<INetiqDirectoryClient>(sp =>
-            ShouldUseStubNetiqClient(
-                sp.GetRequiredService<IWebHostEnvironment>().IsDevelopment(),
-                sp.GetRequiredService<WebAppSettings>().Netiq.DiscoveryClient)
+            UseStubNetiqClient(
+                sp.GetRequiredService<IWebHostEnvironment>().IsProduction(),
+                sp.GetRequiredService<NetiqOptionsStore>().Get().UseOfflineDemoData)
                 ? new StubNetiqDirectoryClient()
                 : new SentinelRestDirectoryClient(sp.GetRequiredService<NetiqOptionsStore>()));
         services.AddScoped<NetiqDiscoveryService>();
@@ -301,14 +303,9 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// NetIQ 主動探索要不要用 Stub（見 <see cref="NetiqDiscoverySettings"/>）。抽成純函數
-    /// 而不是內嵌在 DI lambda 裡——這條判斷本身值得單獨測試（尤其「Auto 遇到未知值時退回環境判斷」
-    /// 這種邊界情況），不必為了測它去起一個完整的 DI 容器。
+    /// NetIQ 主動探索要不要用 Stub（§13）：僅「非 Production 且開關開啟」才用離線示範資料，
+    /// Production 一律真連線（假資料不得上正式）。抽成純函數方便單獨測試邊界，不必起完整 DI 容器。
     /// </summary>
-    internal static bool ShouldUseStubNetiqClient(bool isDevelopment, string discoveryClient)
-    {
-        if (string.Equals(discoveryClient, "Stub", StringComparison.OrdinalIgnoreCase)) return true;
-        if (string.Equals(discoveryClient, "Real", StringComparison.OrdinalIgnoreCase)) return false;
-        return isDevelopment;   // "Auto" 或未知值（Validate() 已擋，這裡是防禦性穩妥）：沿用既有環境判斷
-    }
+    internal static bool UseStubNetiqClient(bool isProduction, bool useOfflineDemoData) =>
+        !isProduction && useOfflineDemoData;
 }

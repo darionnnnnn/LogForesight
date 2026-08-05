@@ -27,6 +27,13 @@ internal static class NameFormat
         return string.IsNullOrEmpty(displayName) ? account : $"{displayName}({account})";
     }
 
+    /// <summary>
+    /// 已知顯示名稱與帳號時的「顯示名稱(帳號)」（§9）——與 <see cref="FormatAccount"/> 同規則，
+    /// 但不需再查 IUserStore（呼叫端已握有 WebUser）。顯示名稱空時退回只顯示帳號。
+    /// </summary>
+    public static string WithAccount(string? displayName, string account) =>
+        string.IsNullOrEmpty(displayName) ? account : $"{displayName}({account})";
+
     /// <summary>id 清單逐一解析為名稱清單，查無對應項目時以「(已刪除:{id})」回退</summary>
     public static List<string> ResolveNames<T>(
         IEnumerable<long> ids, IReadOnlyDictionary<long, T> byId, Func<T, string> nameSelector) =>

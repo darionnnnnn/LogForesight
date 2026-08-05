@@ -15,7 +15,8 @@ public class ImportService
     private readonly IAuditService _audit;
     private readonly IImportLogStore _logs;
     private readonly Auth.ICurrentUser _currentUser;
-    private readonly ImportSettings _settings;
+    /// <summary>§12：資料列上限的事實來源改為 DB（設定頁），每次解析即時讀取</summary>
+    private readonly ISystemSettingsStore _systemSettings;
 
     /// <summary>
     /// 預覽計畫的暫存（token → 計畫＋原始資料）。
@@ -31,13 +32,13 @@ public class ImportService
         IAuditService audit,
         IImportLogStore logs,
         Auth.ICurrentUser currentUser,
-        WebAppSettings settings)
+        ISystemSettingsStore systemSettings)
     {
         _importers = importers.ToDictionary(i => i.Kind);
         _audit = audit;
         _logs = logs;
         _currentUser = currentUser;
-        _settings = settings.Import;
+        _systemSettings = systemSettings;
     }
 
     public byte[] GetTemplate(ImportKind kind)
@@ -56,7 +57,7 @@ public class ImportService
         CsvTable table;
         try
         {
-            table = CsvParser.Parse(content, _settings.MaxRows);
+            table = CsvParser.Parse(content, _systemSettings.Get().ImportMaxRows);
         }
         catch (CsvParseException ex)
         {

@@ -124,6 +124,28 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.AdAuthEnabled && adServers.Count == 0)
             throw DomainException.Validation("啟用 AD 驗證時，請至少輸入一台 AD 伺服器。");
 
+        // §12：AI 額外請求欄位——必須是 JSON **物件**（要合併進請求本體）。空字串＝不附加。
+        var extraFieldsJson = (request.AiExtraRequestFieldsJson ?? "").Trim();
+        if (extraFieldsJson.Length > 0)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(extraFieldsJson);
+                if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    throw DomainException.Validation("「AI 額外請求欄位」必須是 JSON 物件（例如 {\"rep_pen\": 1.3}）。");
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                throw DomainException.Validation($"「AI 額外請求欄位」不是合法的 JSON：{ex.Message}");
+            }
+        }
+
+        // §12：掃描頻道只做正規化，**不驗證是否為已知頻道**——ChannelCatalog.Resolve 對未知頻道
+        // 保守以 ErrorWarningOnly 處理，是「使用者可自行加自訂頻道」的既有設計；拼錯的頻道
+        // 在分析時會誠實申報「頻道不存在／不適用」，不會靜默假裝掃過。
+        var channels = NormalizeLines(request.AnalysisChannels);
+        var watchedFolders = NormalizeLines(request.WatchedFolders);
+
         var before = _store.Get();
 
         var saved = _store.Update(s =>
@@ -147,6 +169,24 @@ public class SystemSettingsService : ISystemSettingsService
             s.AdSearchFilter = string.IsNullOrWhiteSpace(request.AdSearchFilter)
                 ? "(sAMAccountName={0})"
                 : request.AdSearchFilter.Trim();
+
+            // §12：自 appsettings 遷入的參數
+            s.AiTimeoutSeconds = request.AiTimeoutSeconds;
+            s.AiRetryCount = request.AiRetryCount;
+            s.AiRetryDelaySeconds = request.AiRetryDelaySeconds;
+            s.AiJsonRetryCount = request.AiJsonRetryCount;
+            s.AiMaxTokens = request.AiMaxTokens;
+            s.AiDeepDiveMaxTokens = request.AiDeepDiveMaxTokens;
+            s.AiFrequencyPenalty = request.AiFrequencyPenalty;
+            s.AiPresencePenalty = request.AiPresencePenalty;
+            s.AiExtraRequestFieldsJson = extraFieldsJson;
+            s.WatchedFolders = watchedFolders;
+            s.ServerDescription = request.ServerDescription?.Trim() ?? "";
+            s.CheckupIntervalDays = request.CheckupIntervalDays;
+            s.AnalysisChannels = channels;
+            s.ImportMaxFileSizeKb = request.ImportMaxFileSizeKb;
+            s.ImportMaxRows = request.ImportMaxRows;
+
             s.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -180,8 +220,11 @@ public class SystemSettingsService : ISystemSettingsService
     }
 
     /// <summary>trim、去除空白行、去重——與 UserAdminService.NormalizeBatchAccounts 同樣的寬鬆解析慣例</summary>
-    private static List<string> NormalizeAdServers(List<string>? servers) =>
-        (servers ?? new List<string>())
+    private static List<string> NormalizeAdServers(List<string>? servers) => NormalizeLines(servers);
+
+    /// <summary>多行文字輸入的共用正規化（§12 的監控資料夾／掃描頻道與 AD 伺服器同一套慣例）</summary>
+    private static List<string> NormalizeLines(List<string>? lines) =>
+        (lines ?? new List<string>())
             .Select(s => s?.Trim() ?? "")
             .Where(s => s.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -267,6 +310,22 @@ public class SystemSettingsService : ISystemSettingsService
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,
         AdSearchFilter = s.AdSearchFilter,
+        // §12：自 appsettings 遷入的參數
+        AiTimeoutSeconds = s.AiTimeoutSeconds,
+        AiRetryCount = s.AiRetryCount,
+        AiRetryDelaySeconds = s.AiRetryDelaySeconds,
+        AiJsonRetryCount = s.AiJsonRetryCount,
+        AiMaxTokens = s.AiMaxTokens,
+        AiDeepDiveMaxTokens = s.AiDeepDiveMaxTokens,
+        AiFrequencyPenalty = s.AiFrequencyPenalty,
+        AiPresencePenalty = s.AiPresencePenalty,
+        AiExtraRequestFieldsJson = s.AiExtraRequestFieldsJson,
+        WatchedFolders = s.WatchedFolders,
+        ServerDescription = s.ServerDescription,
+        CheckupIntervalDays = s.CheckupIntervalDays,
+        AnalysisChannels = s.AnalysisChannels,
+        ImportMaxFileSizeKb = s.ImportMaxFileSizeKb,
+        ImportMaxRows = s.ImportMaxRows,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

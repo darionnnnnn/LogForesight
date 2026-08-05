@@ -23,6 +23,10 @@
             <label for="filter-event-id" class="form-label small mb-1">Event ID</label>
             <input type="number" class="form-control form-control-sm" id="filter-event-id" />
         </div>
+        <div class="lf-toolbar__field" style="min-width: 120px;">
+            <label for="filter-source" class="form-label small mb-1">來源（選填）</label>
+            <input type="text" class="form-control form-control-sm" id="filter-source" placeholder="如 disk" autocomplete="off" />
+        </div>
         <div class="d-flex gap-2 align-self-end">
             <button type="submit" class="btn btn-sm btn-primary">套用</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset">清除條件</button>
@@ -70,6 +74,12 @@
                 <button type="button" class="lf-chip" data-status="open">未處理</button>
                 <button type="button" class="lf-chip" data-status="in_progress">處理中</button>
                 <button type="button" class="lf-chip" data-status="resolved">已處理</button>
+            </div>
+        </div>
+        @* 未指派（§10）：僅「依問題」視角顯示——問題角度的 admin 分派入口 *@
+        <div class="lf-toolbar__group d-none" id="filter-unassigned-group">
+            <div class="lf-toolbar__chips">
+                <button type="button" class="lf-chip" id="filter-unassigned-chip">未指派</button>
             </div>
         </div>
     </div>

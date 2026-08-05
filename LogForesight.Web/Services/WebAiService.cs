@@ -15,10 +15,10 @@ namespace LogForesight.Web.Services;
 ///   2. 逾時獨立設短（互動情境，10 秒），與批次的 600 秒不同。
 ///   3. 輸出永遠由呼叫端以 textContent 呈現；AI 回傳的下鑽參數必須過白名單驗證才組連結。
 ///
-/// AI 位址／金鑰的事實來源是「系統管理 > 設定」頁（DB，2026-07-27 起），appsettings 的
-/// Ai.BaseUrl 降為 DB 未設定時的退路；進階參數（Timeout/Retry/Tokens/ExtraRequestFields）
-/// 讀 {DataRoot} 下的 appsettings（舊部署殘留的批次版設定檔優先，讀不到退回 Web 自己的
-/// Ai 區段，見 <c>_batchSettings</c> 欄位註解）。
+/// AI 位址／金鑰／進階參數（Timeout/Retry/Tokens/penalties/ExtraRequestFields）的事實來源
+/// **一律是「系統管理 > 設定」頁（DB）**——§12（回饋第九輪）起 appsettings 的 Ai 區段已退役，
+/// 互動情境與排程路徑共用同一份 DB 值（進階參數的解讀共用
+/// <see cref="RuntimeSettingsResolver.ApplyAiAdvanced"/>，不各寫一份會漂移的版本）。
 /// </summary>
 public interface IWebAiService
 {
@@ -47,36 +47,46 @@ public class WebAiService : IWebAiService
     private readonly ISystemSettingsStore _systemSettings;
 
     /// <summary>
-    /// AI 進階參數來源＋DB 未設定位址時的 BaseUrl 退路；啟動後不變。
-    /// 優先讀 {DataRoot}\appsettings.json 的 Ai 區段（既有部署升級後行為不變——批次 console
-    /// 專案已隨 Phase 5 退場，但舊部署的資料目錄可能還留著批次版設定檔），讀不到就退回
-    /// Web 自己的 Ai 區段（<see cref="WebAppSettings.Ai"/>，其 ExtraRequestFields 已由
-    /// AiExtraFieldsLoader 修正，見 Program.cs）——這也讓本類別的 Available 與排程路徑的
-    /// AiSettings.IsConfigured 收斂到同一份設定來源（docs/archive/FEEDBACK-7-PLAN.md）。
+    /// 目前 DB 設定推導出的 AI 進階參數（§12）。與批次路徑共用同一份解讀
+    /// （<see cref="RuntimeSettingsResolver.ApplyAiAdvanced"/>），不各寫一份會漂移的版本。
     /// </summary>
-    private readonly AiSettings _batchSettings;
+    private AiSettings AdvancedFromDb()
+    {
+        var ai = new AiSettings();
+        RuntimeSettingsResolver.ApplyAiAdvanced(ai, _systemSettings.Get());
+        return ai;
+    }
 
-    // 本類別是 Singleton，但 AI 位址／金鑰可在設定頁隨時改：每次取用時比對 DB 目前值，
+    /// <summary>
+    /// 互動情境會用到的進階參數指紋（§12）：進快照參與比對，設定頁改了這些值也會觸發重建、
+    /// 即時生效——快照只比對 (BaseUrl, KeyEnc) 的話，進階參數要等位址變更或重啟才生效，
+    /// 與「設定頁存檔即生效」的既有行為矛盾。只涵蓋互動客戶端實際使用的欄位
+    /// （DeepDive/penalty/ExtraFields；逾時與重試在互動情境是固定覆寫值，不受設定頁影響）。
+    /// </summary>
+    private static string AdvancedFingerprint(SystemSettings db) =>
+        $"{db.AiDeepDiveMaxTokens}|{db.AiFrequencyPenalty}|{db.AiPresencePenalty}|{db.AiExtraRequestFieldsJson}";
+
+    // 本類別是 Singleton，但 AI 位址／金鑰／進階參數可在設定頁隨時改：每次取用時比對 DB 目前值，
     // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）
     // 統一處理快照比對與重建，取代原本互動／對話情境各自寫一份幾乎逐字相同的 lock+比對邏輯。
     //
     // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
     // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
     // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _interactiveClient;
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _chatClient;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _interactiveClient;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _chatClient;
 
-    public WebAiService(WebAppSettings settings, AiCacheStore cache, ISystemSettingsStore systemSettings)
+    public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
         _systemSettings = systemSettings;
-        _batchSettings = LoadBatchAiSettings(settings.Storage.ResolveDataRoot()) ?? settings.Ai;
 
-        _interactiveClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        _interactiveClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc) = snapshot;
+            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
             if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
+            var advanced = AdvancedFromDb();
             return new AIService(new AiSettings
             {
                 BaseUrl = baseUrl,
@@ -89,18 +99,19 @@ public class WebAiService : IWebAiService
                 RetryCount = 1,          // Polly 要求 ≥1；退避設 0 讓失敗不再被拖長
                 RetryDelaySeconds = 0,
                 JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings.DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings.FrequencyPenalty,
-                PresencePenalty = _batchSettings.PresencePenalty,
-                ExtraRequestFields = _batchSettings.ExtraRequestFields
+                DeepDiveMaxTokens = advanced.DeepDiveMaxTokens,
+                FrequencyPenalty = advanced.FrequencyPenalty,
+                PresencePenalty = advanced.PresencePenalty,
+                ExtraRequestFields = advanced.ExtraRequestFields
             });
         });
 
-        _chatClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        _chatClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc) = snapshot;
+            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
             if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
+            var advanced = AdvancedFromDb();
             return new AIService(new AiSettings
             {
                 BaseUrl = baseUrl,
@@ -113,38 +124,35 @@ public class WebAiService : IWebAiService
                 RetryCount = 1,
                 RetryDelaySeconds = 0,
                 JsonRetryCount = 0,
-                DeepDiveMaxTokens = _batchSettings.DeepDiveMaxTokens,
-                FrequencyPenalty = _batchSettings.FrequencyPenalty,
-                PresencePenalty = _batchSettings.PresencePenalty,
-                ExtraRequestFields = _batchSettings.ExtraRequestFields
+                DeepDiveMaxTokens = advanced.DeepDiveMaxTokens,
+                FrequencyPenalty = advanced.FrequencyPenalty,
+                PresencePenalty = advanced.PresencePenalty,
+                ExtraRequestFields = advanced.ExtraRequestFields
             });
         });
     }
 
     /// <summary>
-    /// 目前生效的 AI 位址。「從未在設定頁存過」（UpdatedAt==null）與「存過但刻意清空」要分開：
-    /// 前者退回 appsettings 的值（既有部署升級後行為不變），後者空字串＝真的停用 AI——
-    /// 設定頁明講「留空會停用」，不能被退路悄悄接手。
+    /// 目前生效的 AI 位址（§12：唯一來源是 DB）。空字串＝刻意停用 AI——設定頁明講「留空會停用」，
+    /// 不能被任何退路悄悄接手；從未存過時 <see cref="SystemSettings.AiBaseUrl"/> 本身就是
+    /// 出廠預設（http://localhost:8080），與退役前的 appsettings 退路值相同，升級後行為不變。
     /// </summary>
-    private string EffectiveBaseUrl(SystemSettings db) =>
-        db.UpdatedAt == null
-            ? _batchSettings.BaseUrl.Trim()
-            : db.AiBaseUrl.Trim();
+    private static string EffectiveBaseUrl(SystemSettings db) => db.AiBaseUrl.Trim();
 
     public bool Available => !string.IsNullOrWhiteSpace(EffectiveBaseUrl(_systemSettings.Get()));
 
-    /// <summary>依 DB 目前的位址／金鑰取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
+    /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetClient()
     {
         var db = _systemSettings.Get();
-        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
+        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
     }
 
-    /// <summary>依 DB 目前的位址／金鑰取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
+    /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetChatClient()
     {
         var db = _systemSettings.Get();
-        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
+        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
     }
 
     public async Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)
@@ -205,39 +213,4 @@ public class WebAiService : IWebAiService
         catch (JsonException) { return null; }
     }
 
-    /// <summary>
-    /// 讀 {DataRoot}\appsettings.json 的 Ai 區段（進階參數來源＋DB 未設定位址時的退路）。
-    /// DataRoot 指向 Web 自己的執行檔目錄（預設）時讀到的就是 Web 的 appsettings；指向舊部署
-    /// 的獨立資料目錄且該處留有批次版設定檔時沿用之（升級後行為不變）。讀不到回 null，
-    /// 由建構子退回 <see cref="WebAppSettings.Ai"/>——AI 是加值層，設定缺失只該讓加值功能
-    /// 降級，不影響其餘。
-    /// </summary>
-    private static AiSettings? LoadBatchAiSettings(string dataRoot)
-    {
-        var path = Path.Combine(dataRoot, "appsettings.json");
-        if (!File.Exists(path)) return null;
-
-        try
-        {
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                ReadCommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true
-            };
-            using var doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions
-            {
-                CommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true
-            });
-            if (!doc.RootElement.TryGetProperty("Ai", out var ai)) return null;
-
-            return JsonSerializer.Deserialize<AiSettings>(ai.GetRawText(), options);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException)
-        {
-            Log.Warn(ex, "解析批次 appsettings 的 Ai 區段失敗，Web AI 加值功能停用：{0}", ex.Message);
-            return null;
-        }
-    }
 }
