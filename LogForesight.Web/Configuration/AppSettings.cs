@@ -47,8 +47,6 @@ public class WebAppSettings
 
     public UiSettings Ui { get; set; } = new();
 
-    public NetiqDiscoverySettings Netiq { get; set; } = new();
-
     /// <summary>
     /// 啟動時的組態驗證：不合格直接拋例外中止啟動（fail fast），不讓站台帶病執行。
     /// 沿用批次端「設定錯誤要顯性化」的原則——設定寫錯時最糟的結果是「看起來正常但行為不對」，
@@ -89,14 +87,8 @@ public class WebAppSettings
         if (isProduction && string.Equals(Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase))
             errors.Add("正式環境不允許 Auth:Provider=Stub（Stub 不驗證密碼）。請改用 Ldap。");
 
-        if (!NetiqDiscoverySettings.ValidValues.Contains(Netiq.DiscoveryClient, StringComparer.OrdinalIgnoreCase))
-            errors.Add($"Netiq:DiscoveryClient「{Netiq.DiscoveryClient}」不受支援，僅允許 " +
-                       $"{string.Join(" / ", NetiqDiscoverySettings.ValidValues)}。");
-        // Stub 是離線示範資料（固定台數／網段數，非真實 Sentinel 掃描），跟 Auth:Provider=Stub
-        // 同一個危險方向：假資料在正式環境會被人當成真實掃描結果，比連不上更糟——同樣只擋
-        // 「忘了改回 Auto/Real」的部署疏忽，不擋開發期使用。
-        else if (isProduction && string.Equals(Netiq.DiscoveryClient, "Stub", StringComparison.OrdinalIgnoreCase))
-            errors.Add("正式環境不允許 Netiq:DiscoveryClient=Stub（那是離線示範資料，不是真實 Sentinel 掃描）。請改用 Auto 或 Real。");
+        // NetIQ 離線示範資料（§13）改由 DB「NetIQ 維護」頁的 UseOfflineDemoData 開關控制（僅非
+        // Production 生效），appsettings 不再有 Netiq:DiscoveryClient，這裡因此不需要對應的啟動驗證。
 
         if (errors.Count > 0)
             throw new InvalidOperationException("appsettings.json 設定不合格：" + Environment.NewLine + string.Join(Environment.NewLine, errors.Select(e => "  - " + e)));
@@ -169,21 +161,3 @@ public class UiSettings
     public int RunMatrixDays { get; set; } = 14;
 }
 
-/// <summary>
-/// NetIQ 主動探索（掃描匯入精靈）要用哪個 <see cref="LogForesight.Web.Services.INetiqDirectoryClient"/>
-/// 實作（2026-07-29 定案）。原本固定「Development 用 Stub、其餘用真連線」，開發機因此永遠連不到
-/// 真實 Sentinel 做試掃——這個設定讓環境判斷可被明確覆寫，不必為了試掃真連線而整套切換
-/// Auth/儲存等其他設定。
-/// </summary>
-public class NetiqDiscoverySettings
-{
-    internal static readonly string[] ValidValues = { "Auto", "Stub", "Real" };
-
-    /// <summary>
-    /// Auto（預設）：沿用原本的環境判斷（Development→Stub、其餘→Real）。
-    /// Stub：強制離線示範資料（固定台數／網段數，非真實掃描），開發機仍想離線示範時用。
-    /// Real：強制真連線 <see cref="LogForesight.Web.Services.SentinelRestDirectoryClient"/>，
-    /// 開發機要對真實 Sentinel 試掃時用。
-    /// </summary>
-    public string DiscoveryClient { get; set; } = "Auto";
-}

@@ -72,6 +72,15 @@ public class NetiqOptions
     /// </summary>
     public bool ChatLiveFetchEnabled { get; set; } = false;
 
+    /// <summary>
+    /// 掃描匯入精靈是否使用離線示範資料（§13，回饋第九輪）。**預設 false＝真實連線**：
+    /// 取代原本 appsettings 的 Netiq:DiscoveryClient（Auto 讓 Development 預設假資料、方向顛倒）。
+    /// 只有「非 Production 環境」才允許開啟——Production 一律真連線（NetiqOptionsService.Update
+    /// 在 Production 拒絕開啟，DI factory 也不理會，雙保險，沿用「假資料不得上正式」原則）。
+    /// 開啟時掃描結果顯著標示「示範資料」，避免被誤認為真實掃描（2026-07-30 曾發生誤認 bug）。
+    /// </summary>
+    public bool UseOfflineDemoData { get; set; } = false;
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

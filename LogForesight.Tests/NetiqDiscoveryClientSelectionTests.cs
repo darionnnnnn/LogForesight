@@ -5,55 +5,25 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// NetIQ 掃描匯入精靈選 Stub／真連線的判斷（2026-07-29）：原本寫死「Development 用 Stub」，
-/// 開發機因此永遠連不到真實 Sentinel 試掃；<c>Netiq:DiscoveryClient</c> 讓這個判斷可被明確覆寫。
-/// 抽成純函數 <see cref="ServiceCollectionExtensions.ShouldUseStubNetiqClient"/> 單獨測試，
-/// 不必為了測 DI 選型跑一個完整的 WebApplicationFactory。
+/// NetIQ 掃描匯入精靈選 Stub／真連線的判斷（§13，回饋第九輪）：**預設真連線**，離線示範資料
+/// 只在「非 Production 且 DB 開關 UseOfflineDemoData 開啟」時採用——取代原本 appsettings
+/// Netiq:DiscoveryClient（Auto 讓 Development 預設假資料、方向顛倒）。純函數
+/// <see cref="ServiceCollectionExtensions.UseStubNetiqClient"/> 單獨測試，不必跑完整 DI 容器。
 /// </summary>
 public class NetiqDiscoveryClientSelectionTests
 {
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void DiscoveryClient為Stub_一律用Stub_不論環境(bool isDevelopment)
+    [Fact]
+    public void Production_一律真連線_即使開關開啟()
     {
-        Assert.True(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment, "Stub"));
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void DiscoveryClient為Real_一律用真連線_不論環境(bool isDevelopment)
-    {
-        Assert.False(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment, "Real"));
+        Assert.False(ServiceCollectionExtensions.UseStubNetiqClient(isProduction: true, useOfflineDemoData: true));
+        Assert.False(ServiceCollectionExtensions.UseStubNetiqClient(isProduction: true, useOfflineDemoData: false));
     }
 
     [Fact]
-    public void DiscoveryClient為Auto_Development用Stub()
+    public void 非Production_依開關決定()
     {
-        Assert.True(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: true, "Auto"));
-    }
-
-    [Fact]
-    public void DiscoveryClient為Auto_非Development用真連線()
-    {
-        Assert.False(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: false, "Auto"));
-    }
-
-    /// <summary>不合法值理論上被 Validate() 擋在啟動之前，這裡驗證的是防禦性穩妥：
-    /// 萬一漏網，退回環境判斷而不是拋例外或恆真恆假。</summary>
-    [Fact]
-    public void DiscoveryClient為未知值_退回環境判斷()
-    {
-        Assert.True(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: true, "不合法的值"));
-        Assert.False(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: false, "不合法的值"));
-    }
-
-    [Fact]
-    public void 大小寫不拘()
-    {
-        Assert.True(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: false, "stub"));
-        Assert.False(ServiceCollectionExtensions.ShouldUseStubNetiqClient(isDevelopment: true, "REAL"));
+        Assert.True(ServiceCollectionExtensions.UseStubNetiqClient(isProduction: false, useOfflineDemoData: true));
+        Assert.False(ServiceCollectionExtensions.UseStubNetiqClient(isProduction: false, useOfflineDemoData: false));
     }
 }
 

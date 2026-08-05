@@ -26,6 +26,7 @@ public class AdminController : ControllerBase
     private readonly NetiqProbeService _probe;
     private readonly IAuditService _audit;
     private readonly IUserStore _userStore;
+    private readonly IWebHostEnvironment _env;
 
     public AdminController(
         UserAdminService users,
@@ -37,7 +38,8 @@ public class AdminController : ControllerBase
         NetiqOptionsService netiqOptions,
         NetiqProbeService probe,
         IAuditService audit,
-        IUserStore userStore)
+        IUserStore userStore,
+        IWebHostEnvironment env)
     {
         _users = users;
         _hosts = hosts;
@@ -49,6 +51,7 @@ public class AdminController : ControllerBase
         _probe = probe;
         _audit = audit;
         _userStore = userStore;
+        _env = env;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -279,6 +282,8 @@ public class AdminController : ControllerBase
         BackfillDays = o.BackfillDays,
         MaxParallelServers = o.MaxParallelServers,
         ChatLiveFetchEnabled = o.ChatLiveFetchEnabled,
+        UseOfflineDemoData = o.UseOfflineDemoData,
+        CanUseOfflineDemo = !_env.IsProduction(),
         UpdatedAt = o.UpdatedAt,
         UpdatedByAccount = o.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(o.UpdatedByAccount)

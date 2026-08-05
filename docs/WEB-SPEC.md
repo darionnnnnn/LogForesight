@@ -147,11 +147,9 @@ LogForesight.Web/
     "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
   "Import": { "MaxFileSizeKb": 2048, "MaxRows": 5000 },
-  "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 },
-  // NetIQ 掃描匯入精靈的主機探索實作（2026-07-29）:Auto（預設,Development→離線示範資料、
-  // 其餘→真連線）| Stub（強制示範資料）| Real（強制真連線,開發機對真實 Sentinel 試掃用）。
-  // 正式環境設 Stub 會被 Validate 擋下（§9.9)。
-  "Netiq": { "DiscoveryClient": "Auto" }
+  "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 }
+  // NetIQ 掃描匯入一律真實連線（§13,回饋第九輪）:原 "Netiq": { "DiscoveryClient" } 已退役,
+  // 離線示範資料改由「NetIQ 維護」頁的 UseOfflineDemoData 開關控制（僅非 Production 可開）。
 }
 ```
 
@@ -1089,14 +1087,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   讓使用者知道這份清單涵蓋到哪裡、安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn`
   欄位眾數）在匯入當下就寫入新主機的 `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的
   `DisplayName` 一律不動。
-- **開發環境的離線示範資料（`StubNetiqDirectoryClient`）曾被誤以為是掃描功能的 bug（2026-07-29 修正）**：
-  單一網段固定 35 台、兩網段各固定 23 台、恆最多 2 個網段——這些數字是示範資料產生器本身固定的
-  demo 迴圈範圍，不是真實掃描的限制（`SentinelRestDirectoryClient` 沒有這些上限，事件筆數上限
-  `CoverageTargetResults=50,000` 是「事件」不是「主機數」，截斷時會走 `Warnings` 顯性提示）。
-  修法：(1) `Netiq:DiscoveryClient` 設定（`Auto`／`Stub`／`Real`，見 §10.2 或 README）讓開發機能明確
-  覆寫「Development 一律 Stub」的環境判斷，改連真實 Sentinel 試掃；正式環境設為 `Stub` 會被
-  `WebAppSettings.Validate()` 擋下啟動（同 `Auth:Provider=Stub` 那道欄杆）。(2) Stub 的示範資料
-  提示改進 `Warnings`（精靈已有的醒目 alert-warning 框），不再只寫在容易被忽略的灰色 `CoverageNote` 小字裡。
+- **離線示範資料（`StubNetiqDirectoryClient`）曾被誤以為是掃描功能的 bug（2026-07-29 修正，
+  2026-08-05 §13 改為顯式開關）**：單一網段固定 35 台、兩網段各固定 23 台、恆最多 2 個網段——
+  這些數字是示範資料產生器本身固定的 demo 迴圈範圍，不是真實掃描的限制
+  （`SentinelRestDirectoryClient` 沒有這些上限，事件筆數上限 `CoverageTargetResults=50,000`
+  是「事件」不是「主機數」，截斷時會走 `Warnings` 顯性提示）。現行修法：
+  **(1) 掃描一律預設真實連線**（§13）——原本「Development 一律 Stub」的環境判斷方向顛倒，
+  開發機預設就拿到假資料；改由 `NetiqOptions.UseOfflineDemoData`（「NetIQ 維護」頁開關）
+  顯式開啟，預設 `false`。三道保險擋住正式環境：開關僅非 Production 顯示、
+  `NetiqOptionsService.Update` 在 Production 拒絕開啟、DI 選型
+  （`ServiceCollectionExtensions.UseStubNetiqClient`）在 Production 一律回真連線。
+  **(2)** Stub 的示範資料提示走 `Warnings`（精靈已有的醒目 alert-warning 框）與頁面常駐徽章，
+  不再只寫在容易被忽略的灰色 `CoverageNote` 小字裡。
 - **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
   截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
   完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是瀏覽器標準行為）。

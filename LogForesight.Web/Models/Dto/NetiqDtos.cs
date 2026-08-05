@@ -23,6 +23,13 @@ public class NetiqOptionsDto
     public int BackfillDays { get; set; }
     public int MaxParallelServers { get; set; }
     public bool ChatLiveFetchEnabled { get; set; }
+
+    /// <summary>§13：掃描匯入使用離線示範資料（預設 false＝真實連線）</summary>
+    public bool UseOfflineDemoData { get; set; }
+
+    /// <summary>§13：此環境是否允許開啟離線示範資料（＝非 Production）。前端據此決定是否顯示開關。</summary>
+    public bool CanUseOfflineDemo { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
     public string? UpdatedByDisplayName { get; set; }
@@ -259,4 +266,7 @@ public class UpdateNetiqOptionsRequest
 
     /// <summary>docs/archive/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>
     public bool ChatLiveFetchEnabled { get; set; }
+
+    /// <summary>§13：掃描匯入使用離線示範資料（僅非 Production 可開，Update 在 Production 拒絕）</summary>
+    public bool UseOfflineDemoData { get; set; }
 }
