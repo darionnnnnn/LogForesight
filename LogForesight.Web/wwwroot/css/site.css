@@ -752,11 +752,14 @@ a.lf-stat:hover .lf-card,
 /* 風險類型卡：CSS Grid 同列天生等高，不需要 min-height 補丁。
    docs/FEEDBACK-3-PLAN.md #3：原本用 auto-fill 是想讓卡少時維持合理寬度、不被拉爆成
    半版寬，但 auto-fill 會保留空軌道——卡片數少於可容納軌道數時，實卡被鎖在 minmax
-   下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）＋
-   上限 20rem（原意的「不被拉爆成半版寬」改由上限守住）。 */
+   下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）。
+   docs/FEEDBACK-9-PLAN.md §7：上限由 20rem 改為 1fr——20rem 固定上限在寬容器/類別少時
+   右側留大片空白，換行末列也不伸展，觀感「缺乏內容」。1fr 讓 auto-fit 摺疊空軌後卡片
+   平均撐滿整列，每列都填滿。類別最多 8 個（固定值域），卡片極少時偏寬屬可接受
+   （資訊密度低本來就該讓卡片大）。 */
 .lf-category-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(13rem, 20rem));
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     gap: var(--lf-space-3);
 }
 

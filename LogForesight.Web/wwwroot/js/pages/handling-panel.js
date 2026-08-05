@@ -10,7 +10,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
@@ -181,32 +181,13 @@ function assignField(handling, users, hostId, date) {
     label.textContent = '處理人';
     label.htmlFor = 'handler-select';
 
-    const select = document.createElement('select');
-    select.className = 'form-select form-select-sm';
-    select.id = 'handler-select';
-
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = '（未指派）';
-    select.appendChild(none);
-
-    // 負責人置頂：改派時最常選的還是負責人，放在最上面省一次捲動
-    const ownerNames = new Set(handling.ownerNames);
-    const sorted = [...users].filter(u => u.active).sort((a, b) => {
-        const aOwner = ownerNames.has(a.displayName) ? 0 : 1;
-        const bOwner = ownerNames.has(b.displayName) ? 0 : 1;
-        return aOwner - bOwner || a.displayName.localeCompare(b.displayName, 'zh-TW');
+    // 可搜尋選單（§8）：文字框篩帳號/顯示名稱＋原生 select；負責人置頂並標「（負責人）」
+    const { element: selectWrap, select } = searchableUserSelect(users, {
+        selectedId: handling.handlerId,
+        includeNone: true,
+        pinnedNames: handling.ownerNames
     });
-
-    for (const user of sorted) {
-        const option = document.createElement('option');
-        option.value = user.userId;
-        option.textContent = ownerNames.has(user.displayName)
-            ? `${formatUserName(user.displayName, user.account)}（負責人）`
-            : formatUserName(user.displayName, user.account);
-        option.selected = user.userId === handling.handlerId;
-        select.appendChild(option);
-    }
+    select.id = 'handler-select';
 
     select.addEventListener('change', async () => {
         select.disabled = true;
@@ -233,7 +214,7 @@ function assignField(handling, users, hostId, date) {
     label.classList.add('d-inline-flex', 'align-items-center', 'gap-1');
     label.appendChild(helpIcon('可指派給負責人以外的人；主機負責人不會因此改變。'));
 
-    wrap.append(label, select);
+    wrap.append(label, selectWrap);
     return wrap;
 }
 
