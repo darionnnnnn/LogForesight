@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize } from '../core/ui.js';
+import { renderTable, renderLoading, renderPagination, loadPageSize, savePageSize, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
 const RESULT_META = {
@@ -177,4 +177,5 @@ document.getElementById('btn-denied').addEventListener('click', () => {
     search();
 });
 
-init();
+// 失敗收斂（docs/archive/FEEDBACK-10-PLAN.md §4）：載入中途出錯時把骨架列換成失敗狀態，不留無限載入
+guardLoad(document.getElementById('audit-list'), init);

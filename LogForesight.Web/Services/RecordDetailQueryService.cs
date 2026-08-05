@@ -81,8 +81,14 @@ public class RecordDetailQueryService
         var openCases = _cases.GetOpenForHost(hostName)
             .ToDictionary(
                 c => c.IssueKey,
-                c => (HandlerId: c.HandlerId, HandlerName: c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value)?.DisplayName : null,
-                      c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd")),
+                c =>
+                {
+                    // 帳號與顯示名稱一起帶出（docs/archive/FEEDBACK-10-PLAN.md §6）：徽章要組成
+                    // 「顯示名稱(帳號)」，同一次 Get 拿齊，不為了帳號再查一次
+                    var handler = c.HandlerId.HasValue ? _users.Get(c.HandlerId.Value) : null;
+                    return (HandlerId: c.HandlerId, HandlerName: handler?.DisplayName, HandlerAccount: handler?.Account,
+                            c.Status, FirstLinkedDate: c.FirstLinkedDate.ToString("yyyy-MM-dd"));
+                },
                 StringComparer.Ordinal);
 
         // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：本主機更早日期有結案類逐日標記，
@@ -105,6 +111,19 @@ public class RecordDetailQueryService
         // SiteHidden 模式下的可見子集，這裡不必也不該重覆判斷 SeverityDisplayMode
         var visibleTopIssues = record.TopIssues;
 
+        // 案件授與的裁剪（docs/archive/FEEDBACK-10-PLAN.md §7）：這台主機不在使用者的授權範圍內，
+        // 只因為他是某些問題的案件處理人才進得來——那就只給他那些問題。
+        // 整日敘事（白話總覽四段、關聯訊號、深入分析、報告全文）一律不給：那些是「整台主機
+        // 這一天發生什麼事」的內容，交辦一個問題不等於交出整天的狀況。
+        var grantedKeys = _visibility.GetIssueKeyRestriction(hostId);
+        var caseGrantOnly = grantedKeys != null;
+        if (grantedKeys != null)
+        {
+            visibleTopIssues = visibleTopIssues
+                .Where(i => grantedKeys.Contains(IssueSignatureKey.For(i)))
+                .ToList();
+        }
+
         return new RecordDetailDto
         {
             HostId = hostId,
@@ -117,19 +136,20 @@ public class RecordDetailQueryService
             RiskLevel = record.RiskLevel,
             RiskBasisText = FormatRiskBasis(record.RiskBasis),
             HiddenIssueCount = record.HiddenIssueCount,
-            Headline = record.Headline,
-            Summary = record.Summary,
-            TrendAssessment = record.TrendAssessment,
-            Action = record.Action,
-            AiAnalyzed = record.AiAnalyzed,
+            // 以下整日敘事在案件授與模式下一律清空（§7）——見上方裁剪處的說明
+            Headline = caseGrantOnly ? "" : record.Headline,
+            Summary = caseGrantOnly ? "" : record.Summary,
+            TrendAssessment = caseGrantOnly ? "" : record.TrendAssessment,
+            Action = caseGrantOnly ? "" : record.Action,
+            AiAnalyzed = !caseGrantOnly && record.AiAnalyzed,
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
             TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases, priorClosedIssueKeys)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
-            TrendAlerts = record.TrendAlerts,
-            CorrelationAlerts = record.CorrelationAlerts,
-            DeepDives = record.DeepDives.Select(d => new DeepDiveDto
+            TrendAlerts = caseGrantOnly ? new List<string>() : record.TrendAlerts,
+            CorrelationAlerts = caseGrantOnly ? new List<string>() : record.CorrelationAlerts,
+            DeepDives = caseGrantOnly ? new List<DeepDiveDto>() : record.DeepDives.Select(d => new DeepDiveDto
             {
                 Category = d.Category.ToString(),
                 Findings = d.Findings.Select(f => new DeepDiveFindingDto
@@ -143,7 +163,8 @@ public class RecordDetailQueryService
             DataIncomplete = record.DataIncomplete,
             SecurityLogAvailable = record.SecurityLogAvailable,
             UncoveredChecks = record.UncoveredChecks,
-            HasReport = !string.IsNullOrWhiteSpace(record.ReportFile),
+            HasReport = !caseGrantOnly && !string.IsNullOrWhiteSpace(record.ReportFile),
+            CaseGrantOnly = caseGrantOnly,
             WeeklyCheckup = record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
             {
                 CheckupDate = record.WeeklyCheckup.CheckupDate.ToString("yyyy-MM-dd"),
@@ -161,6 +182,13 @@ public class RecordDetailQueryService
         var record = _repository.GetOne(hostId, date)
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
+        // 報告全文是整台主機當日的完整敘事，案件授與者不得取得（§7）。前端已不顯示入口，
+        // 這裡是防直接打端點——授權判斷不能只長在畫面上。
+        // **回 null 而不是拋例外**：「詢問 AI」會把報告一併餵給模型（AiController.Chat），
+        // 拋例外會讓整個對話端點 404；回 null 是既有的「這天沒有報告」路徑，對話照常進行、
+        // 只是不含報告內容
+        if (_visibility.IsCaseGrantOnly(hostId)) return null;
+
         return string.IsNullOrWhiteSpace(record.ReportFile) ? null : _reports.Read(record.ReportFile);
     }
 
@@ -173,6 +201,12 @@ public class RecordDetailQueryService
     {
         var record = _repository.GetOne(hostId, date)
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+
+        // 案件授與者只能查被交辦問題的歷史（§7）——這支端點以 issueKey 為參數，
+        // 不擋的話換個 key 就能讀到同一台主機其他問題的處理過程
+        var allowed = _visibility.GetIssueKeyRestriction(hostId);
+        if (allowed != null && !allowed.Contains(issueKey))
+            throw DomainException.NotFound("找不到這個問題，或您沒有檢視權限。");
 
         var hostName = _hosts.Get(hostId)?.HostName ?? record.Host;
 
@@ -500,14 +534,14 @@ public class RecordDetailQueryService
         Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
-        Dictionary<string, (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)>? openCases = null,
+        Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate)>? openCases = null,
         HashSet<string>? priorClosedIssueKeys = null)
     {
         var key = IssueSignatureKey.For(issue);
         var handling = issueHandlingByKey != null && issueHandlingByKey.TryGetValue(key, out var h) ? h : null;
         var (status, isDefaultUnhandled, noiseMark) = ResolveIssueStatus(issue, handling, noiseMarks, unhandledSeverities);
 
-        (long? HandlerId, string? HandlerName, string Status, string FirstLinkedDate)? openCase =
+        (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate)? openCase =
             openCases != null && openCases.TryGetValue(key, out var c) ? c : null;
 
         return new IssueDto
@@ -539,6 +573,7 @@ public class RecordDetailQueryService
             DueDate = handling?.DueDate?.ToString("yyyy-MM-dd"),
             CaseHandlerId = openCase?.HandlerId,
             CaseHandlerName = openCase?.HandlerName,
+            CaseHandlerAccount = openCase?.HandlerAccount,
             CaseStatus = openCase?.Status,
             CaseFirstLinkedDate = openCase?.FirstLinkedDate,
             HasPriorHandling = priorClosedIssueKeys?.Contains(key) ?? false

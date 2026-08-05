@@ -225,6 +225,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISystemSettingsService, SystemSettingsService>();
         services.AddScoped<NetiqOptionsService>();
 
+        // 版面的品牌三元素（docs/archive/FEEDBACK-10-PLAN.md §1）：主版面與登入頁伺服器端渲染時注入，
+        // View 只看得到品牌欄位，不必碰整份設定或 Persistence 層
+        services.AddScoped<IBrandProvider, BrandProvider>();
+
         // NetIQ 主動探索（§13，回饋第九輪）：**預設真連線**（SentinelRestDirectoryClient，走
         // SentinelClient 的網段範圍掃描，docs/NETIQ-API-REFERENCE.md §3.4）。離線示範資料改由
         // 「NetIQ 維護」頁的 NetiqOptions.UseOfflineDemoData 開關控制，且僅非 Production 生效——

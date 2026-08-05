@@ -4,6 +4,13 @@ namespace LogForesight.Web.Models.Dto;
 
 public class SystemSettingsDto
 {
+    // ── 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────────────────
+    public string BrandName { get; set; } = "";
+    public string BrandSubtitle { get; set; } = "";
+
+    /// <summary>自訂圖示的 data URI，空＝沿用內建向量圖示</summary>
+    public string BrandIconDataUri { get; set; } = "";
+
     /// <summary>未處理計算納入的嚴重度（Critical/High/Medium/Low）</summary>
     public List<string> UnhandledSeverities { get; set; } = new();
 
@@ -51,6 +58,13 @@ public class SystemSettingsDto
     public double AiPresencePenalty { get; set; }
     public string AiExtraRequestFieldsJson { get; set; } = "";
 
+    /// <summary>
+    /// AI 進階參數的出廠預設值（docs/archive/FEEDBACK-10-PLAN.md §3）：供設定頁「還原預設值」按鈕填回欄位。
+    /// 值取自 <c>new SystemSettings()</c> 的屬性初始器——**單一事實來源仍在 Core 的模型**，
+    /// 前端不硬編第二份，改了預設值兩邊自動一致。
+    /// </summary>
+    public AiAdvancedDefaultsDto AiAdvancedDefaults { get; set; } = new();
+
     // ── 分析參數（§12：自 appsettings 的 Permissions／Analysis 區段遷入）──────────
     public List<string> WatchedFolders { get; set; } = new();
     public string ServerDescription { get; set; } = "";
@@ -70,8 +84,39 @@ public class SystemSettingsDto
     public string? UpdatedByDisplayName { get; set; }
 }
 
+/// <summary>
+/// AI 進階參數的出廠預設值（docs/archive/FEEDBACK-10-PLAN.md §3）。欄位與 <see cref="SystemSettingsDto"/>
+/// 的九個 Ai* 進階欄位一一對應，只讀不寫——「還原」是前端把值填回表單，仍需使用者按儲存才生效
+/// （與整頁單一 form 的語意一致，不做偷偷落盤）。
+/// </summary>
+public class AiAdvancedDefaultsDto
+{
+    public int TimeoutSeconds { get; set; }
+    public int RetryCount { get; set; }
+    public int RetryDelaySeconds { get; set; }
+    public int JsonRetryCount { get; set; }
+    public int MaxTokens { get; set; }
+    public int DeepDiveMaxTokens { get; set; }
+    public double FrequencyPenalty { get; set; }
+    public double PresencePenalty { get; set; }
+    public string ExtraRequestFieldsJson { get; set; } = "";
+}
+
 public class UpdateSystemSettingsRequest
 {
+    // ── 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────────────────
+    // 長度與圖示格式的實質驗證在 SystemSettingsService.Update（要回可讀的繁中訊息、
+    // 且圖示要驗 base64 解碼後的真實大小，DataAnnotations 表達不了）。
+
+    /// <summary>空白＝回退出廠名稱，不是驗證錯誤</summary>
+    public string BrandName { get; set; } = "";
+
+    /// <summary>空＝不顯示副標（刻意只留產品名是合法選擇）</summary>
+    public string BrandSubtitle { get; set; } = "";
+
+    /// <summary>PNG／JPG 的 data URI；空＝沿用內建向量圖示</summary>
+    public string BrandIconDataUri { get; set; } = "";
+
     [Required(ErrorMessage = "請至少勾選一個未處理等級")]
     [MinLength(1, ErrorMessage = "請至少勾選一個未處理等級")]
     public List<string> UnhandledSeverities { get; set; } = new();

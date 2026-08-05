@@ -192,6 +192,14 @@ public class RecordDetailDto
     public bool HasReport { get; set; }
     public WeeklyCheckupDto? WeeklyCheckup { get; set; }
 
+    /// <summary>
+    /// true＝檢視者只因為是案件處理人才看得到這一頁（docs/archive/FEEDBACK-10-PLAN.md §7）：
+    /// 重點問題只剩被交辦的那些，整日敘事（白話總覽／關聯訊號／深入分析／報告全文）
+    /// 已在後端清空。前端據此顯示「您以案件處理人身分檢視，僅顯示被指派的問題」，
+    /// 讓使用者知道畫面是被裁剪過的，而不是這天真的只有這些事。
+    /// </summary>
+    public bool CaseGrantOnly { get; set; }
+
     /// <summary>目前登入者是否可維護處理狀態——前端據此決定逐列狀態是可操作還是唯讀（防線在後端）</summary>
     public bool CanHandle { get; set; }
 
@@ -264,6 +272,10 @@ public class IssueDto
     /// <summary>案件處理人 Id（docs/archive/FEEDBACK-4-PLAN.md §6）——供前端把案件徽章連到其工作頁</summary>
     public long? CaseHandlerId { get; set; }
     public string? CaseHandlerName { get; set; }
+
+    /// <summary>案件處理人帳號（docs/archive/FEEDBACK-10-PLAN.md §6）：徽章顯示全站統一的
+    /// 「顯示名稱(帳號)」格式，只給 DisplayName 組不出來</summary>
+    public string? CaseHandlerAccount { get; set; }
     public string? CaseStatus { get; set; }
     public string? CaseFirstLinkedDate { get; set; }
 

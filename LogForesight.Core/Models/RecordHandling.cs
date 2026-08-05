@@ -134,4 +134,11 @@ public static class HandlingActions
 
     /// <summary>批次排程把新的一天掛進進行中案件（逐日一列，actor＝系統，§0.4-C）</summary>
     public const string CaseAttach = "case_attach";
+
+    /// <summary>
+    /// 改派進行中案件的處理人（docs/archive/FEEDBACK-10-PLAN.md §9）。與 <see cref="CaseAssign"/> 分開是
+    /// 因為要回答的問題不同：CaseAssign 是「這個問題開始有人處理」，這個是「換人處理」——
+    /// 追責時「原本誰、後來誰、誰換的」必須查得到，混進建案動作就分不出來了。
+    /// </summary>
+    public const string CaseReassign = "case_reassign";
 }

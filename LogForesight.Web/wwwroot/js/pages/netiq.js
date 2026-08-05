@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('netiq-tabs'));
@@ -395,6 +395,6 @@ probeCopyButton.addEventListener('click', async () => {
     }
 });
 
-loadSentinels();
+guardLoad(sentinelListContainer, loadSentinels);
 loadOptions();
 refreshProbeStatus();

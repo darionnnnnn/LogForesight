@@ -89,6 +89,11 @@
                             <select class="form-select" id="host-netiq">
                                 <option value="">（待歸屬，由批次自動確認）</option>
                             </select>
+                            @* 尚未設定任何 Sentinel 時的提示（docs/archive/FEEDBACK-10-PLAN.md §4）：
+                               這個節點原本不存在，但 hosts.js 的 fillSentinelOptions 一直在寫它的
+                               textContent——沒有 Sentinel 的全新環境因此丟 TypeError 中斷整個 load()，
+                               主機清單就永遠停在載入骨架。文字由 JS 依有無 Sentinel 填入 *@
+                            <div class="form-text" id="host-netiq-hint"></div>
                         </div>
                         <div class="col-md-6">
                             <label for="host-role-desc" class="form-label">角色描述</label>

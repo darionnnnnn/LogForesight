@@ -8,7 +8,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderTable, statCard } from '../core/ui.js';
+import { renderLoading, renderTable, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
 
 const root = document.getElementById('handler-detail');
@@ -142,4 +142,8 @@ document.getElementById('toggle-resolved-days').addEventListener('change', event
     load();
 });
 
-load();
+guardLoad([
+    document.getElementById('handler-kpi'),
+    document.getElementById('handler-cases'),
+    document.getElementById('handler-days')
+], load);

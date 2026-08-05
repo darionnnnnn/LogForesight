@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
 bindTabs(document.getElementById('import-tabs'));
@@ -652,5 +652,5 @@ function collectGroupAssignments() {
     return assignments;
 }
 
-loadLogs();
-loadScanPicker();
+guardLoad(document.getElementById('import-logs'), loadLogs);
+guardLoad(scanPicker, loadScanPicker);

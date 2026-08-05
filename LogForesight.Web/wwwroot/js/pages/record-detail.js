@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, showDetailModal } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, showDetailModal, guardLoad } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
@@ -34,6 +34,57 @@ let canMaintainRules = false;
 // AI 判讀（W2）只在 AI 可用時提供
 let aiAvailable = false;
 
+/**
+ * 顯示範圍（docs/archive/FEEDBACK-10-PLAN.md §8）。每個問題先歸入四個互斥的桶：
+ *
+ *   pending    未處理：沒有結案標記、也沒有人在處理
+ *   mine       我處理中：進行中案件的處理人是我，或我把它標成處理中／觀察中
+ *   others     他人處理中：進行中案件的處理人是別人
+ *   done       已完成：結案四態＋「不處理（預設）」＋「已知雜訊（自動）」
+ *
+ * 四個選項是這四個桶的組合。**預設不顯示他人處理中**——同一個問題同時有兩個人在動，
+ * 後標的會蓋掉先標的，那是這個功能要防的事（後端另有一道拒絕，見 IssueHandlingCommandService）。
+ * 「已完成」平常維持既有的「分節底部收合列」呈現，只有選「僅已完成」時才平鋪出來。
+ */
+const SCOPE_OPTIONS = [
+    { value: 'pending', label: '待處理', buckets: ['pending', 'mine'], collapseDone: true },
+    { value: 'all', label: '顯示所有問題', buckets: ['pending', 'mine', 'others'], collapseDone: true },
+    { value: 'hide-done', label: '隱藏已完成', buckets: ['pending', 'mine', 'others'], collapseDone: false },
+    { value: 'done-only', label: '僅已完成', buckets: ['done'], collapseDone: false }
+];
+
+let currentScope = 'pending';
+let currentUserId = null;
+
+/** 結案類：與後端 IssueHandlingStatuses.IsClosed 同一組值 */
+const CLOSED_STATUSES = new Set(['resolved', 'wont_fix', 'false_positive', 'known_noise']);
+
+/** 單一問題屬於哪個桶（四桶互斥，判定順序即優先序：已完成 → 誰在處理 → 未處理） */
+function issueBucket(issue) {
+    if (CLOSED_STATUSES.has(issue.handlingStatus) || issue.isDefaultUnhandled || issue.isAutoNoise) return 'done';
+
+    if (issue.caseHandlerId) {
+        return issue.caseHandlerId === currentUserId ? 'mine' : 'others';
+    }
+    if (issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing') return 'mine';
+
+    return 'pending';
+}
+
+/** 這個問題是不是「別人正在處理」——決定能不能被勾選／改狀態 */
+function isHandledByOthers(issue) {
+    return issueBucket(issue) === 'others';
+}
+
+function currentScopeOption() {
+    return SCOPE_OPTIONS.find(o => o.value === currentScope) ?? SCOPE_OPTIONS[0];
+}
+
+/** 通過顯示範圍篩選（與嚴重度篩選是 AND 關係，兩者都在 visibleTopIssues 套用） */
+function inCurrentScope(issue) {
+    return currentScopeOption().buckets.includes(issueBucket(issue));
+}
+
 async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
@@ -47,6 +98,9 @@ async function load() {
     // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
     canMaintainRules = hasCapability(user, 'Maintain');
+    // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
+    // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
+    currentUserId = user.userId;
     aiAvailable = !!aiStatus?.available;
 
     if (activeSeverities === null) {
@@ -56,6 +110,7 @@ async function load() {
 
     renderHeader(currentDetail);
     renderSeverityFilter(currentDetail);
+    renderScopeFilter(currentDetail);
     renderIssues(currentDetail);
     renderAlerts(currentDetail);
     renderCategories(currentDetail);
@@ -63,7 +118,11 @@ async function load() {
     // 詢問 AI 的下拉只列出目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）
     initChatPanel(hostId, date, visibleTopIssues(), aiAvailable);
 
-    await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, { canMaintainRules });
+    await initHandlingPanel(hostId, date, () => selectedIssueKeys, onBatchSaved, {
+        canMaintainRules,
+        // §7：案件授與檢視時，處理面板收斂成「只標記自己被交辦的問題」
+        caseGrantOnly: currentDetail.caseGrantOnly
+    });
 
     if (currentDetail.hasReport) await loadReport();
 
@@ -157,6 +216,16 @@ function renderHeader(detail) {
 
     const body = document.createElement('div');
     body.className = 'lf-card__body';
+
+    // 案件授與檢視（docs/archive/FEEDBACK-10-PLAN.md §7）：這一頁被裁剪成只剩被交辦的問題，
+    // 一定要講出來——否則使用者會以為這台主機這天真的只發生了這一件事
+    if (detail.caseGrantOnly) {
+        const notice = document.createElement('div');
+        notice.className = 'alert alert-info py-2 px-3 mb-3';
+        notice.textContent = '您以案件處理人的身分檢視這一頁：僅顯示指派給您的問題，' +
+            '這台主機當日的其他問題、白話總覽與報告全文不在您的檢視範圍內。';
+        body.appendChild(notice);
+    }
 
     const top = document.createElement('div');
     top.className = 'd-flex align-items-center gap-3 mb-2 flex-wrap';
@@ -324,6 +393,9 @@ function statusCell(issue, sectionIssues) {
         wrap.appendChild(selectCheckbox(issue, sectionIssues));
     }
     wrap.appendChild(statusControl(issue));
+    // 案件徽章（docs/archive/FEEDBACK-10-PLAN.md §6）：「誰在處理」是處理狀態資訊，放這一欄
+    // 才和狀態文字、預計完成日在一起——原本掛在「問題」欄，跟問題本身的識別資訊混雜
+    if (issue.caseHandlerName) wrap.appendChild(caseBadge(issue));
     // 先前處理過（docs/archive/FEEDBACK-5-PLAN.md §4）：canHandle 與否都顯示——唯讀角色
     // 同樣需要參考上次怎麼解的，不是只有能操作的人才看得到
     if (issue.hasPriorHandling) wrap.appendChild(priorHandlingTrigger(issue));
@@ -457,6 +529,16 @@ function selectCheckbox(issue, sectionIssues) {
     check.className = 'form-check-input lf-status-cell__checkbox lf-no-print';
     check.dataset.issueKey = issue.issueKey;
     check.checked = selectedIssueKeys.has(issue.issueKey);
+
+    // 別人的案件正在處理的問題不給動（docs/archive/FEEDBACK-10-PLAN.md §8）：兩個人同時標同一個
+    // 問題，後標的會蓋掉先標的。要換人處理走「指派」的改派流程，不從狀態標記側繞過去
+    // （後端 IssueHandlingCommandService 另有一道拒絕，前端只是不讓人白按）
+    if (isHandledByOthers(issue)) {
+        check.disabled = true;
+        check.title = `此問題由 ${formatUserName(issue.caseHandlerName, issue.caseHandlerAccount)} 的案件處理中，如需接手請由管理者改派`;
+        return check;
+    }
+
     check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';
 
     check.addEventListener('click', event => event.stopPropagation());
@@ -482,14 +564,16 @@ function selectAllCheckbox(sectionIssues) {
 
     check.addEventListener('click', event => event.stopPropagation());
     check.addEventListener('change', () => {
-        for (const issue of sectionIssues) {
+        // 全選跳過他人案件處理中的問題（§8）——那些列的 checkbox 是 disabled，
+        // 全選若把它們也加進來，送出時會被後端整批拒絕
+        for (const issue of selectableIssues(sectionIssues)) {
             if (check.checked) selectedIssueKeys.add(issue.issueKey);
             else selectedIssueKeys.delete(issue.issueKey);
         }
 
         const table = check.closest('table');
         if (table) {
-            for (const rowCheck of table.querySelectorAll('tbody input[type="checkbox"][data-issue-key]')) {
+            for (const rowCheck of table.querySelectorAll('tbody input[type="checkbox"][data-issue-key]:not(:disabled)')) {
                 rowCheck.checked = check.checked;
             }
         }
@@ -499,10 +583,19 @@ function selectAllCheckbox(sectionIssues) {
     return check;
 }
 
+/** 可被批次套用的問題（§8）：他人案件處理中的排除在外 */
+function selectableIssues(issues) {
+    return issues.filter(i => !isHandledByOthers(i));
+}
+
 function syncSelectAllCheckbox(check, sectionIssues) {
-    const selectedCount = sectionIssues.filter(i => selectedIssueKeys.has(i.issueKey)).length;
-    check.checked = selectedCount > 0 && selectedCount === sectionIssues.length;
-    check.indeterminate = selectedCount > 0 && selectedCount < sectionIssues.length;
+    // 母體是「可勾選的列」而非整批（§8）：否則有他人案件的分節永遠停在 indeterminate，
+    // 全選看起來像壞掉
+    const selectable = selectableIssues(sectionIssues);
+    const selectedCount = selectable.filter(i => selectedIssueKeys.has(i.issueKey)).length;
+    check.disabled = selectable.length === 0;
+    check.checked = selectedCount > 0 && selectedCount === selectable.length;
+    check.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
 function severityNeutralBadge(text) {
@@ -533,6 +626,12 @@ function severityCell(issue) {
  *   4. 其餘（含明確 open 與已結案）→ 狀態文字＋預計完成日
  */
 function statusControl(issue) {
+    // 他人案件處理中：一律唯讀呈現（§8），不給「確認不處理」「調回未處理」這些動作按鈕——
+    // 那會繞過批次套用直接改到別人正在處理的問題
+    if (isHandledByOthers(issue)) {
+        return severityNeutralBadge(issue.handlingStatusText || '處理中');
+    }
+
     if (!currentDetail.canHandle) {
         if (issue.handlingStatus === 'open' || (!issue.handlingStatus && !issue.isDefaultUnhandled && !issue.isAutoNoise))
             return document.createTextNode('未處理');
@@ -733,7 +832,11 @@ function isUnresolvedIssue(issue) {
 }
 
 function isInProgressIssue(issue) {
-    return issue.handlingStatus === 'in_progress';
+    // 觀察中一併算「還在進行」（docs/archive/FEEDBACK-10-PLAN.md §8 體檢）：它是非結案類，
+    // 日層級推導本來就把它視同處理中（docs/archive/FEEDBACK-8-PLAN.md #4）。
+    // 少了它，觀察中的問題會被收進標示「已處理／已有結論」的收合區——標籤與內容不符，
+    // 而且顯示範圍下拉把它算進「待處理」，數字對得上、卻要展開「已有結論」才找得到。
+    return issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing';
 }
 
 /**
@@ -772,11 +875,46 @@ function highlightedCategories() {
 }
 
 /**
- * 目前嚴重度篩選後仍可見的問題（docs/archive/HISTORY.md #4）：詢問 AI 下拉與
- * 嚴重度篩選鈕切換時共用同一份判斷，避免兩處篩選邏輯各自維護後兜不起來。
+ * 目前篩選後仍可見的問題（docs/archive/HISTORY.md #4）：詢問 AI 下拉與嚴重度／顯示範圍
+ * 切換時共用同一份判斷，避免多處篩選邏輯各自維護後兜不起來。
+ * 嚴重度與顯示範圍（§8）是 AND 關係——兩個條件都通過才看得到。
  */
 function visibleTopIssues() {
-    return currentDetail.topIssues.filter(i => activeSeverities.has(i.severity));
+    return currentDetail.topIssues.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
+}
+
+/**
+ * 顯示範圍下拉（docs/archive/FEEDBACK-10-PLAN.md §8）：選項附上該範圍實際會顯示的問題數，
+ * 切之前就知道會多／少幾列。**狀態不持久化**——每次進頁回到「待處理」，
+ * 與「已結案收合」同一個誠實預設的原則（上次的篩選不該悄悄決定這次看到什麼）。
+ */
+function renderScopeFilter(detail) {
+    const select = document.getElementById('detail-scope');
+    if (!select) return;
+
+    // 只算嚴重度篩選後的問題：下拉顯示的數字要與切過去之後真正看得到的列數一致
+    const bySeverity = detail.topIssues.filter(i => activeSeverities.has(i.severity));
+    const counts = { pending: 0, mine: 0, others: 0, done: 0 };
+    for (const issue of bySeverity) counts[issueBucket(issue)]++;
+
+    select.replaceChildren();
+    for (const option of SCOPE_OPTIONS) {
+        const count = option.buckets.reduce((sum, bucket) => sum + counts[bucket], 0);
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = `${option.label}（${count}）`;
+        el.selected = option.value === currentScope;
+        select.appendChild(el);
+    }
+
+    // 沒有任何他人處理中的問題時，「待處理」與「顯示所有問題」看到的東西完全一樣——
+    // 下拉仍保留（選項數固定比較好預期），但預設值不需要使用者操心
+    select.onchange = () => {
+        currentScope = select.value;
+        renderIssues(currentDetail);
+        renderScopeFilter(currentDetail);
+        updateIssueOptions(visibleTopIssues());
+    };
 }
 
 /**
@@ -807,6 +945,9 @@ function renderSeverityFilter(detail) {
             else activeSeverities.add(severity);
             btn.classList.toggle('active');
             renderIssues(currentDetail);
+            // 顯示範圍下拉的數量是「嚴重度篩選後」的數量（§8），改嚴重度就要重算，
+            // 否則下拉會停在舊數字、與實際看到的列數對不起來
+            renderScopeFilter(currentDetail);
             updateIssueOptions(visibleTopIssues());
         });
         container.appendChild(btn);
@@ -838,11 +979,17 @@ function renderIssues(detail) {
     let shown = 0;
     let hidden = 0;
 
+    // 顯示範圍（§8）：collapseDone 決定「已完成」是維持既有的分節底部收合列（待處理／
+    // 顯示所有問題），還是整組不出現（隱藏已完成）／整組平鋪（僅已完成）
+    const { collapseDone } = currentScopeOption();
+
     for (const category of detail.categories) {
         const all = detail.topIssues.filter(i => i.category === category.category);
         if (all.length === 0) continue;
 
-        const issues = all.filter(i => activeSeverities.has(i.severity));
+        // 嚴重度與顯示範圍兩道篩選（§8）：兩者都要通過才顯示，被篩掉的併入底部的
+        // 「另有 N 項未顯示」提示——「沒看到」與「不存在」必須分得清楚
+        const issues = all.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
         hidden += all.length - issues.length;
         if (issues.length === 0) continue;
         shown += issues.length;
@@ -864,8 +1011,14 @@ function renderIssues(detail) {
         // 已結案排序收合（docs/archive/HISTORY.md #8/D2，僅風險日詳情——問題查詢清單
         // 維持既有緊急程度排序不動）：未處理→處理中排在最前面直接可見，其餘（已處理/
         // 不處理/誤報/已知雜訊/預設不處理/自動雜訊——已經有結論的）收合到分節底部。
-        const primary = issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i));
-        const rest = issues.filter(i => !isUnresolvedIssue(i) && !isInProgressIssue(i));
+        // 顯示範圍為「隱藏已完成」「僅已完成」時不再分主表／收合區（§8）：前者已經沒有
+        // 已完成的列可收，後者整張表就是已完成的列——再收合一次等於什麼都看不到
+        const primary = collapseDone
+            ? issues.filter(i => isUnresolvedIssue(i) || isInProgressIssue(i))
+            : issues;
+        const rest = collapseDone
+            ? issues.filter(i => !isUnresolvedIssue(i) && !isInProgressIssue(i))
+            : [];
 
         const body = document.createElement('div');
         if (primary.length > 0) {
@@ -894,7 +1047,7 @@ function renderIssues(detail) {
     if (shown === 0) {
         renderEmpty(container, {
             title: `已隱藏全部 ${hidden} 項`,
-            hint: '目前的嚴重度篩選未包含任何一項，點上方的嚴重度鈕加回。'
+            hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
         });
         return;
     }
@@ -903,7 +1056,7 @@ function renderIssues(detail) {
     if (hidden > 0) {
         const note = document.createElement('div');
         note.className = 'text-muted small px-3 py-2 border-top';
-        note.textContent = `另有 ${hidden} 項因嚴重度篩選未顯示。`;
+        note.textContent = `另有 ${hidden} 項因嚴重度篩選或顯示範圍未顯示。`;
         container.appendChild(note);
     }
 
@@ -981,8 +1134,6 @@ function issueCell(issue) {
         wrap.appendChild(badge);
     }
 
-    if (issue.caseHandlerName) wrap.appendChild(caseBadge(issue));
-
     const meta = document.createElement('div');
     meta.className = 'lf-issue-cell__meta d-flex flex-wrap align-items-center gap-2 small text-muted mt-1';
     meta.appendChild(severityCell(issue));
@@ -1020,23 +1171,26 @@ function issueCell(issue) {
 }
 
 /**
- * 案件徽章（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題目前有進行中案件，狀態會跨日連動——
- * 徽章解釋「為什麼這一列的狀態可能是別天標的、不是我剛動的」。案件狀態值只會是
- * open／in_progress／observing（後端只回傳進行中案件，結案類代表案件已結束、不會再出現在這裡），
- * 不需要六態全表。
+ * 案件徽章（docs/archive/FEEDBACK-4-PLAN.md §2；docs/archive/FEEDBACK-10-PLAN.md §6 改格式與位置）：
+ * 這個問題目前有進行中案件，狀態會跨日連動——徽章解釋「為什麼這一列的狀態可能是別天標的、
+ * 不是我剛動的」。案件狀態值只會是 open／in_progress／observing（後端只回傳進行中案件，
+ * 結案類代表案件已結束、不會再出現在這裡），不需要六態全表。
+ * 人名走全站統一的「顯示名稱(帳號)」（§6）——同名同姓在企業環境不罕見，只有顯示名稱認不出是誰。
  */
 function caseBadge(issue) {
     const statusText = issue.caseStatus === 'open' ? '未處理'
         : issue.caseStatus === 'observing' ? '觀察中' : '處理中';
+    const handlerText = formatUserName(issue.caseHandlerName, issue.caseHandlerAccount);
     // 有處理人 Id 時做成連結，點了直接看這個人的工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）
     const badge = document.createElement(issue.caseHandlerId ? 'a' : 'span');
-    badge.className = 'lf-badge lf-badge--primary';
+    // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
+    badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
     if (issue.caseHandlerId) {
         badge.href = `/handlers/${issue.caseHandlerId}`;
         badge.addEventListener('click', event => event.stopPropagation());
     }
-    badge.textContent = `${issue.caseHandlerName} ${statusText}`;
-    badge.title = `案件處理人：${issue.caseHandlerName}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
+    badge.textContent = `${handlerText} ${statusText}`;
+    badge.title = `案件處理人：${handlerText}（自 ${issue.caseFirstLinkedDate} 起追蹤，跨日同步狀態）`;
     return badge;
 }
 
@@ -1458,4 +1612,4 @@ document.getElementById('btn-copy-report').addEventListener('click', async () =>
 
 document.getElementById('btn-print').addEventListener('click', () => window.print());
 
-load();
+guardLoad(document.getElementById('detail-issues'), load);

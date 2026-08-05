@@ -4,8 +4,18 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon } from '../core/ui.js';
 import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+
+// 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
+// 不放在表單欄位裡——<input type="file"> 的值無法用程式設定，載入既有圖示時填不回去
+let brandIconDataUri = '';
+
+/** 與後端 SystemSettingsService.BrandIconMaxKb 同一個門檻（前端先擋是體驗，後端才是防線） */
+const BRAND_ICON_MAX_KB = 64;
+
+/** 「還原預設外觀」填回的副標——與 Core 的 SystemSettings.BrandSubtitle 出廠值一致 */
+const BRAND_DEFAULT_SUBTITLE = '事件日誌預警';
 
 // 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
@@ -40,6 +50,7 @@ async function load() {
     renderAdFields(current);
     renderAnalysisFields(current);
     renderRetentionFields(current);
+    renderBrandFields(current);
     renderUpdatedAt(current);
 }
 
@@ -204,6 +215,89 @@ function renderRetentionFields(settings) {
     document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
 }
 
+/**
+ * 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：名稱、副標與圖示。
+ * 圖示以 data URI 存在 brandIconDataUri 這個模組狀態裡（不是表單欄位）——
+ * <input type="file"> 的值不能用程式設定，載入既有圖示時無從「填回」檔案輸入框，
+ * 只能把當前值另外記著，送出時一起帶上。
+ */
+function renderBrandFields(settings) {
+    document.getElementById('brand-name').value = settings.brandName ?? '';
+    document.getElementById('brand-subtitle').value = settings.brandSubtitle ?? '';
+    setBrandIcon(settings.brandIconDataUri ?? '');
+    document.getElementById('brand-icon-file').value = '';
+}
+
+function setBrandIcon(dataUri) {
+    brandIconDataUri = dataUri ?? '';
+
+    const preview = document.getElementById('brand-icon-preview');
+    preview.replaceChildren();
+
+    if (brandIconDataUri) {
+        const img = document.createElement('img');
+        img.src = brandIconDataUri;
+        img.alt = '';   // 純預覽，旁邊的欄位標籤已說明這是什麼
+        preview.appendChild(img);
+    } else {
+        // 沒有自訂圖示時顯示內建圖示，讓預覽格永遠有東西（空框看起來像壞掉）
+        preview.appendChild(icon('speedometer2'));
+    }
+
+    document.getElementById('brand-icon-hint').textContent = brandIconDataUri
+        ? '已設定自訂圖示；重新選擇檔案即可更換。'
+        : '目前使用內建圖示。';
+}
+
+/**
+ * 圖示上傳：在瀏覽器端讀成 data URI 後隨整份設定一起送（不另開上傳端點——
+ * 這是一張 64KB 以內的小圖，為它建一條 multipart 路徑不划算）。
+ * 前端先擋大小與格式，後端 SystemSettingsService.ValidateBrandIcon 仍會再驗一次
+ * （前端驗證是體驗，不是防線）。
+ */
+function bindBrandIcon() {
+    const fileInput = document.getElementById('brand-icon-file');
+
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+
+        if (!['image/png', 'image/jpeg'].includes(file.type)) {
+            toast('圖示只接受 PNG 或 JPG。', 'warning');
+            fileInput.value = '';
+            return;
+        }
+        if (file.size > BRAND_ICON_MAX_KB * 1024) {
+            toast(`圖示不可超過 ${BRAND_ICON_MAX_KB} KB（目前 ${Math.ceil(file.size / 1024)} KB）。`, 'warning');
+            fileInput.value = '';
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            setBrandIcon(String(reader.result));
+            toast('已選擇圖示，按「儲存」後才會套用。', 'info');
+        };
+        reader.onerror = () => toast('讀取圖片失敗，請換一張圖片再試。', 'error');
+        reader.readAsDataURL(file);
+    });
+
+    document.getElementById('brand-icon-clear').addEventListener('click', () => {
+        setBrandIcon('');
+        fileInput.value = '';
+    });
+
+    document.getElementById('brand-reset').addEventListener('click', () => {
+        // 還原＝清空三個欄位，讓後端各自回退到出廠值（名稱空白會被回填為 LogForesight）。
+        // 同 AI 進階參數的還原：只填表單、不直接落盤
+        document.getElementById('brand-name').value = '';
+        document.getElementById('brand-subtitle').value = BRAND_DEFAULT_SUBTITLE;
+        setBrandIcon('');
+        fileInput.value = '';
+        toast('已還原預設外觀，按「儲存」後才會生效。', 'info');
+    });
+}
+
 function renderUpdatedAt(settings) {
     const el = document.getElementById('settings-updated');
     if (!settings.updatedAt) {
@@ -306,12 +400,17 @@ function bindForm() {
                 watchedFolders: collectLines('watched-folders'),
                 analysisChannels: collectLines('analysis-channels'),
                 importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
-                importMaxRows: Number(document.getElementById('import-max-rows').value)
+                importMaxRows: Number(document.getElementById('import-max-rows').value),
+                // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
+                brandName: document.getElementById('brand-name').value.trim(),
+                brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
+                brandIconDataUri: brandIconDataUri
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);
             renderAdFields(current);
             renderAnalysisFields(current);
+            renderBrandFields(current);
             renderUpdatedAt(current);
             unsaved?.clear();
         } catch {
@@ -369,8 +468,42 @@ function bindAdTest() {
     });
 }
 
+/**
+ * AI 進階參數「還原預設值」（docs/archive/FEEDBACK-10-PLAN.md §3）：出廠值由後端隨設定一起送來
+ * （`aiAdvancedDefaults`，源頭是 Core 的 SystemSettings 屬性初始器），前端不硬編第二份數字。
+ * 只填回欄位、不直接存檔——存檔仍走整頁單一 form 的「儲存」，未儲存提醒（trackUnsaved）
+ * 因此會照常亮起，使用者反悔可以直接離開不套用。
+ */
+function bindAiAdvancedReset() {
+    const button = document.getElementById('btn-ai-advanced-reset');
+
+    button.addEventListener('click', () => {
+        const defaults = current?.aiAdvancedDefaults;
+        if (!defaults) {
+            toast('尚未載入預設值，請重新整理頁面後再試。', 'warning');
+            return;
+        }
+
+        setNumber('ai-timeout-seconds', defaults.timeoutSeconds);
+        setNumber('ai-retry-count', defaults.retryCount);
+        setNumber('ai-retry-delay-seconds', defaults.retryDelaySeconds);
+        setNumber('ai-json-retry-count', defaults.jsonRetryCount);
+        setNumber('ai-max-tokens', defaults.maxTokens);
+        setNumber('ai-deep-dive-max-tokens', defaults.deepDiveMaxTokens);
+        setNumber('ai-frequency-penalty', defaults.frequencyPenalty);
+        setNumber('ai-presence-penalty', defaults.presencePenalty);
+        document.getElementById('ai-extra-request-fields').value = defaults.extraRequestFieldsJson ?? '';
+
+        // 未儲存提醒不必手動觸發：這顆按鈕在 #settings-form 內，trackUnsaved 監聽的是表單的
+        // click（不只 input），按下去本身就已標記為未儲存
+        toast('已填入出廠預設值，按「儲存」後才會生效。', 'info');
+    });
+}
+
 bindForm();
 bindAdTest();
+bindAiAdvancedReset();
+bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
 bindTabs(document.getElementById('settings-tabs'));

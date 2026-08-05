@@ -267,6 +267,14 @@ public class RecordRepositoryAliasTests : IDisposable
 
         public IReadOnlySet<long> GetVisibleHostIds() => _visible;
 
+        public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => _visible;
+
+        public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+
+        public bool IsCaseGrantOnly(long hostId) => false;
+
+        public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
+
         public List<WebHost> GetVisibleHosts() =>
             _hosts.GetAll().Where(h => _visible.Contains(h.HostId)).ToList();
 

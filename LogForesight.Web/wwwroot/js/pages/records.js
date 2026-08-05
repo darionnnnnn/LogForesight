@@ -14,7 +14,7 @@
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
 } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -631,8 +631,6 @@ function dateViewLink(row) {
 // ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
-    const canAssign = hasCapability(currentUser, 'Assign');
-
     const columns = [
         { title: '問題', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
@@ -645,9 +643,13 @@ function renderIssueView() {
         { title: '處理人', render: i => issueHandlersCell(i) }
     ];
 
-    if (canAssign) {
-        columns.push({ title: '', className: 'text-end lf-no-print', render: i => issueAssignButton(i) });
-    }
+    // 動作欄：admin 的「指派」與處理人自己的「回覆處理狀態」（§11）共用同一欄——
+    // 兩者都是「對這個問題做點什麼」，分兩欄會讓表格在沒有權限的角色眼中出現空欄
+    columns.push({
+        title: '',
+        className: 'text-end lf-no-print',
+        render: i => issueActionsCell(i)
+    });
 
     renderTable(listContainer, {
         columns,
@@ -782,6 +784,21 @@ function detailForIssue(group) {
     return `?${params.toString()}`;
 }
 
+/**
+ * 依問題視角的動作欄：admin 可指派（§4）；處理人清單含自己時可一次回覆處理狀態（§11）。
+ * 兩者都沒有時回空字串——不留一顆按不下去的按鈕。
+ */
+function issueActionsCell(group) {
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex gap-2 justify-content-end';
+
+    const isMyIssue = (group.handlers ?? []).some(h => h.handlerId === currentUser?.userId);
+    if (isMyIssue) wrap.appendChild(issueReplyButton(group));
+    if (hasCapability(currentUser, 'Assign')) wrap.appendChild(issueAssignButton(group));
+
+    return wrap.children.length > 0 ? wrap : '';
+}
+
 function issueAssignButton(group) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -816,11 +833,13 @@ async function loadBulkAssignForm(group, body) {
     if (filters.from) params.set('from', filters.from);
     if (filters.to) params.set('to', filters.to);
 
-    let hosts, users;
+    let hosts, users, groups;
     try {
-        [hosts, users] = await Promise.all([
+        [hosts, users, groups] = await Promise.all([
             api.get(`/api/handling/issue-cases/preview?${params.toString()}`, { silent: true }),
-            api.get('/api/admin/users', { silent: true })
+            api.get('/api/admin/users', { silent: true }),
+            // 群組指派（docs/archive/FEEDBACK-10-PLAN.md §12）：一次把整個問題的主機分攤給一個群組的成員
+            api.get('/api/admin/groups', { silent: true })
         ]);
     } catch (error) {
         body.replaceChildren();
@@ -831,10 +850,18 @@ async function loadBulkAssignForm(group, body) {
         return;
     }
 
-    renderBulkAssignForm(body, group, hosts, users);
+    renderBulkAssignForm(body, group, hosts, users, groups);
 }
 
-function renderBulkAssignForm(body, group, hosts, users) {
+/**
+ * 批次指派 modal（docs/archive/FEEDBACK-4-PLAN.md §4；docs/archive/FEEDBACK-10-PLAN.md §9／§12 擴充）。
+ *
+ * 三件事在同一張預覽表上完成，因為它們回答的是同一個問題「每一台主機由誰處理」：
+ *   - 指派：沒有既有處理人的主機 → 建案
+ *   - 改派（§9）：已有他人進行中案件的主機，勾「改派」才換人，否則維持原處理人
+ *   - 分攤（§12）：指派對象選「使用者群組」時，把主機分給群組成員（輪流或依負載）
+ */
+function renderBulkAssignForm(body, group, hosts, users, groups) {
     body.replaceChildren();
 
     if (hosts.length === 0) {
@@ -851,13 +878,60 @@ function renderBulkAssignForm(body, group, hosts, users) {
     persistNote.textContent = '指派會為勾選的主機建立案件；這些主機之後同一問題的新風險日會自動掛進案件並同步處理狀態，直到結案。';
     form.appendChild(persistNote);
 
-    const handlerLabel = document.createElement('label');
-    handlerLabel.className = 'form-label small text-muted';
-    handlerLabel.textContent = '處理人';
-    // §6：可搜尋處理人選單（帳號/顯示名稱關鍵字過濾），與處理面板共用同一元件
+    // ── 指派對象：單一使用者／使用者群組（§12）──────────────────────────────
+    const modeWrap = document.createElement('div');
+    modeWrap.className = 'mb-3';
+    const modeLabel = document.createElement('div');
+    modeLabel.className = 'form-label small text-muted';
+    modeLabel.textContent = '指派給';
+    const modeGroup = document.createElement('div');
+    modeGroup.className = 'btn-group btn-group-sm mb-2';
+    const modeUserBtn = button('單一使用者', { variant: 'outline-secondary', onClick: () => setMode('user') });
+    const modeGroupBtn = button('使用者群組（平均分攤）', { variant: 'outline-secondary', onClick: () => setMode('group') });
+    modeGroup.append(modeUserBtn, modeGroupBtn);
+    modeWrap.append(modeLabel, modeGroup);
+    form.appendChild(modeWrap);
+
+    // 單一使用者：可搜尋處理人選單（帳號/顯示名稱關鍵字過濾），與處理面板共用同一元件
     const { element: handlerSelectWrap, select: handlerSelect } = searchableUserSelect(users);
     handlerSelectWrap.classList.add('mb-3');
-    form.append(handlerLabel, handlerSelectWrap);
+    form.appendChild(handlerSelectWrap);
+
+    // 群組模式：選群組＋分攤方式
+    const groupWrap = document.createElement('div');
+    groupWrap.className = 'mb-3 d-none';
+
+    const groupSelect = document.createElement('select');
+    groupSelect.className = 'form-select form-select-sm mb-2';
+    for (const g of groups) {
+        const option = document.createElement('option');
+        option.value = String(g.groupId);
+        option.textContent = `${g.groupName}（${g.role}）`;
+        groupSelect.appendChild(option);
+    }
+
+    const splitWrap = document.createElement('div');
+    splitWrap.className = 'd-flex align-items-center gap-2 flex-wrap';
+    const splitLabel = document.createElement('span');
+    splitLabel.className = 'small text-muted';
+    splitLabel.textContent = '分攤方式';
+    const splitSelect = document.createElement('select');
+    splitSelect.className = 'form-select form-select-sm w-auto';
+    for (const option of [
+        { value: 'round-robin', label: '平均輪流（每人台數盡量相同）' },
+        { value: 'load', label: '依現有負載（手上案件少的人多分）' }
+    ]) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        splitSelect.appendChild(el);
+    }
+    const memberHint = document.createElement('span');
+    memberHint.className = 'small text-muted';
+    splitWrap.append(splitLabel, splitSelect, memberHint);
+
+    groupWrap.append(groupSelect, splitWrap);
+    form.appendChild(groupWrap);
 
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small text-muted';
@@ -895,32 +969,68 @@ function renderBulkAssignForm(body, group, hosts, users) {
 
     const hostList = document.createElement('div');
     hostList.className = 'lf-bulk-assign-hosts mb-3';
-    const checks = [];
     const rows = [];
     for (const host of hosts) {
         const wrap = document.createElement('div');
-        wrap.className = 'form-check';
+        wrap.className = 'd-flex align-items-center gap-2 py-1';
 
         const check = document.createElement('input');
         check.type = 'checkbox';
-        check.className = 'form-check-input';
-        // 已有他人案件的主機預設不勾——送出時仍會被後端保留原處理人跳過，但先不勾更誠實：
-        // 使用者一眼看得出「這台不會變」，不必等送出後才從略過清單得知
+        check.className = 'form-check-input mt-0';
+        // 已有他人案件的主機預設不勾——先不勾更誠實：使用者一眼看得出「這台不會變」，
+        // 要換人就勾旁邊的「改派」（§9）
         check.checked = !host.existingHandlerName;
         check.dataset.hostId = host.hostId;
-        checks.push(check);
 
-        const label = document.createElement('label');
-        label.className = 'form-check-label small';
-        label.textContent = host.existingHandlerName
-            ? `${host.hostName}（已由 ${host.existingHandlerName} 處理中，未變更）`
-            : host.hostName;
+        const name = document.createElement('span');
+        name.className = 'small flex-grow-1';
+        name.textContent = host.hostName;
 
-        wrap.append(check, label);
+        wrap.append(check, name);
+
+        // 已有處理人的主機多一個「改派」勾（§9）：不勾＝維持原處理人（既有語意）
+        let reassignCheck = null;
+        if (host.existingHandlerName) {
+            const existing = document.createElement('span');
+            existing.className = 'small text-muted';
+            existing.textContent = `目前：${formatUserName(host.existingHandlerName, host.existingHandlerAccount)}`;
+
+            const reassignLabel = document.createElement('label');
+            reassignLabel.className = 'form-check-label small d-flex align-items-center gap-1 text-nowrap';
+            reassignCheck = document.createElement('input');
+            reassignCheck.type = 'checkbox';
+            reassignCheck.className = 'form-check-input mt-0';
+            reassignCheck.dataset.hostId = host.hostId;
+            reassignLabel.append(reassignCheck, document.createTextNode('改派'));
+
+            // 勾了改派就必須連帶勾選這台主機，否則送出時它根本不在名單裡、改派不會發生
+            reassignCheck.addEventListener('change', () => {
+                if (reassignCheck.checked) check.checked = true;
+                renderPlanHint();
+            });
+
+            wrap.append(existing, reassignLabel);
+        }
+
+        // 群組分攤模式下顯示這台會分給誰（可個別改人）
+        const assigneeSelect = document.createElement('select');
+        assigneeSelect.className = 'form-select form-select-sm w-auto d-none';
+        for (const user of users.filter(u => u.active)) {
+            const option = document.createElement('option');
+            option.value = String(user.userId);
+            option.textContent = formatUserName(user.displayName, user.account);
+            assigneeSelect.appendChild(option);
+        }
+        wrap.appendChild(assigneeSelect);
+
         hostList.appendChild(wrap);
-        rows.push({ wrap, check, name: host.hostName.toLowerCase() });
+        rows.push({ wrap, check, reassignCheck, assigneeSelect, host, name: host.hostName.toLowerCase() });
     }
     form.appendChild(hostList);
+
+    const planHint = document.createElement('div');
+    planHint.className = 'small text-muted mb-3';
+    form.appendChild(planHint);
 
     function applyHostFilter() {
         const f = hostFilter.value.trim().toLowerCase();
@@ -930,8 +1040,99 @@ function renderBulkAssignForm(body, group, hosts, users) {
         for (const row of rows) {
             if (!row.wrap.classList.contains('d-none')) row.check.checked = checked;
         }
+        onSelectionChanged();
     }
     hostFilter.addEventListener('input', applyHostFilter);
+    for (const row of rows) row.check.addEventListener('change', onSelectionChanged);
+
+    /**
+     * 勾選變動後：群組模式要**重算分攤**而不只是重畫提示——新勾進來的主機若沿用下拉的
+     * 預設值（清單第一個人），會讓實際落盤與「平均分攤」的承諾不符，而且畫面上看不出來。
+     */
+    function onSelectionChanged() {
+        if (mode === 'group') applySplit();
+        else renderPlanHint();
+    }
+
+    // ── 指派對象模式切換與分攤計算（§12）────────────────────────────────────
+    let mode = 'user';
+    let candidates = [];
+
+    function setMode(next) {
+        mode = next;
+        modeUserBtn.classList.toggle('active', mode === 'user');
+        modeGroupBtn.classList.toggle('active', mode === 'group');
+        handlerSelectWrap.classList.toggle('d-none', mode !== 'user');
+        groupWrap.classList.toggle('d-none', mode !== 'group');
+        for (const row of rows) row.assigneeSelect.classList.toggle('d-none', mode !== 'group');
+        if (mode === 'group') loadCandidates();
+        else renderPlanHint();
+    }
+
+    async function loadCandidates() {
+        memberHint.textContent = '載入成員…';
+        try {
+            candidates = await api.get(`/api/handling/issue-cases/handler-candidates?groupId=${groupSelect.value}`, { silent: true });
+        } catch {
+            candidates = [];
+        }
+        memberHint.textContent = candidates.length > 0
+            ? `${candidates.length} 位啟用中的成員`
+            : '這個群組沒有啟用中的成員';
+        applySplit();
+    }
+
+    /**
+     * 分攤計算（§12），兩種模式都是**確定性**的——同一組輸入永遠得到同一個結果，
+     * 預覽看到的就是實際會落盤的分配：
+     *   round-robin：主機依名稱排序、成員依帳號排序，逐台輪流
+     *   load：每次分給「既有案件數＋本次已分到的台數」最少的人，同分時帳號序決勝
+     */
+    function applySplit() {
+        if (mode !== 'group' || candidates.length === 0) {
+            renderPlanHint();
+            return;
+        }
+
+        const selected = rows.filter(r => r.check.checked)
+            .sort((a, b) => a.host.hostName.localeCompare(b.host.hostName, 'en'));
+        const load = new Map(candidates.map(c => [c.userId, c.openCaseCount]));
+
+        selected.forEach((row, index) => {
+            let target;
+            if (splitSelect.value === 'round-robin') {
+                target = candidates[index % candidates.length];
+            } else {
+                target = candidates.reduce((best, c) => (load.get(c.userId) < load.get(best.userId) ? c : best), candidates[0]);
+                load.set(target.userId, load.get(target.userId) + 1);
+            }
+            row.assigneeSelect.value = String(target.userId);
+        });
+
+        renderPlanHint();
+    }
+
+    groupSelect.addEventListener('change', loadCandidates);
+    splitSelect.addEventListener('change', applySplit);
+
+    /** 送出前把「誰分到幾台」講出來——分攤規則再確定，看不到結果的人也不會信任它 */
+    function renderPlanHint() {
+        const selected = rows.filter(r => r.check.checked);
+        if (mode !== 'group' || candidates.length === 0) {
+            planHint.textContent = selected.length > 0 ? `將指派 ${selected.length} 台主機。` : '';
+            return;
+        }
+
+        const counts = new Map();
+        for (const row of selected) {
+            const id = Number(row.assigneeSelect.value);
+            counts.set(id, (counts.get(id) ?? 0) + 1);
+        }
+        const parts = candidates
+            .filter(c => counts.has(c.userId))
+            .map(c => `${formatUserName(c.displayName, c.account)} ${counts.get(c.userId)} 台`);
+        planHint.textContent = parts.length > 0 ? `分攤結果：${parts.join('、')}` : '';
+    }
 
     const submit = document.createElement('button');
     submit.type = 'submit';
@@ -942,9 +1143,13 @@ function renderBulkAssignForm(body, group, hosts, users) {
     form.addEventListener('submit', async event => {
         event.preventDefault();
 
-        const hostIds = checks.filter(c => c.checked).map(c => Number(c.dataset.hostId));
-        if (hostIds.length === 0) {
+        const selected = rows.filter(r => r.check.checked);
+        if (selected.length === 0) {
             toast('請至少勾選一台主機', 'warning');
+            return;
+        }
+        if (mode === 'group' && candidates.length === 0) {
+            toast('這個群組沒有啟用中的成員，無法分攤', 'warning');
             return;
         }
 
@@ -953,14 +1158,28 @@ function renderBulkAssignForm(body, group, hosts, users) {
             const result = await api.post('/api/handling/issue-cases/bulk-assign', {
                 source: group.source,
                 eventId: group.eventId,
-                hostIds,
-                handlerId: Number(handlerSelect.value),
+                hostIds: selected.map(r => Number(r.check.dataset.hostId)),
+                // 單人模式送 handlerId，群組模式逐台送 assignments（後端一支 API 兩用）
+                handlerId: mode === 'user' ? Number(handlerSelect.value) : 0,
+                assignments: mode === 'group'
+                    ? selected.map(r => ({ hostId: r.host.hostId, handlerId: Number(r.assigneeSelect.value) }))
+                    : [],
+                reassignHostIds: selected.filter(r => r.reassignCheck?.checked).map(r => r.host.hostId),
                 note: noteInput.value.trim() || null,
                 dueDate: dueInput.value || null
             });
 
-            const skippedNote = result.skipped.length > 0 ? `；${result.skipped.length} 台已由他人案件涵蓋，未變更` : '';
-            toast(`已建立 ${result.created} 個案件${skippedNote}`, 'success');
+            const parts = [`已建立 ${result.created} 個案件`];
+            if (result.reassigned?.length) parts.push(`改派 ${result.reassigned.length} 台`);
+            if (result.skipped?.length) parts.push(`${result.skipped.length} 台已由他人案件涵蓋，未變更`);
+            toast(parts.join('；'), 'success');
+
+            // 被指派者看不到主機時提醒指派的人（§7）：指派成立，但對方只看得到這個問題
+            if (result.assigneeNoAccess?.length) {
+                const names = [...new Set(result.assigneeNoAccess.map(a => a.handlerName))];
+                toast(`${names.join('、')} 沒有部分主機的檢視權限（${result.assigneeNoAccess.length} 台），` +
+                    '只看得到被指派的這個問題。若需要完整權限，請至「群組與授權」調整。', 'warning', 10000);
+            }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
             currentPage = 1;
@@ -971,6 +1190,123 @@ function renderBulkAssignForm(body, group, hosts, users) {
     });
 
     body.appendChild(form);
+    setMode('user');
+}
+
+/**
+ * 跨主機回覆處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）：同一個問題被指派到多台主機時，
+ * 處理人在這裡填一次就套用到自己名下的全部進行中案件，不必逐台進詳情頁標一樣的狀態。
+ * 只有「這個問題的處理人包含自己」時才出現入口（後端另有同一條限制）。
+ */
+function issueReplyButton(group) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-outline-secondary';
+    btn.textContent = '回覆處理狀態';
+    btn.title = '一次回覆這個問題在所有指派給您的主機上的處理狀態';
+    btn.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openBulkStatusModal(group);
+    });
+    return btn;
+}
+
+function openBulkStatusModal(group) {
+    const body = document.createElement('div');
+    const form = document.createElement('form');
+
+    const hint = document.createElement('div');
+    hint.className = 'lf-hint mb-3';
+    hint.textContent = '套用對象是這個問題目前指派給您、且尚未結案的全部主機；' +
+        '每台主機的案件會連同它涵蓋的日期一起更新。';
+    form.appendChild(hint);
+
+    const statusLabel = document.createElement('label');
+    statusLabel.className = 'form-label small text-muted';
+    statusLabel.textContent = '處理狀態';
+    const statusSelect = document.createElement('select');
+    statusSelect.className = 'form-select form-select-sm mb-3';
+    // 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses）
+    for (const option of [
+        { value: 'in_progress', label: '處理中' },
+        { value: 'observing', label: '觀察中' },
+        { value: 'resolved', label: '已處理' },
+        { value: 'wont_fix', label: '不處理' },
+        { value: 'false_positive', label: '誤報' },
+        { value: 'known_noise', label: '已知雜訊' }
+    ]) {
+        const el = document.createElement('option');
+        el.value = option.value;
+        el.textContent = option.label;
+        statusSelect.appendChild(el);
+    }
+    form.append(statusLabel, statusSelect);
+
+    const noteLabel = document.createElement('label');
+    noteLabel.className = 'form-label small text-muted';
+    noteLabel.textContent = '處理說明';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'form-control form-control-sm mb-3';
+    noteInput.rows = 3;
+    form.append(noteLabel, noteInput);
+
+    // 處理中的預計完成日／觀察中的觀察至日期共用同一個欄位（後端同一個 DueDate）
+    const dueLabel = document.createElement('label');
+    dueLabel.className = 'form-label small text-muted';
+    dueLabel.textContent = '預計完成日／觀察至';
+    const dueInput = document.createElement('input');
+    dueInput.type = 'date';
+    dueInput.className = 'form-control form-control-sm mb-3';
+    form.append(dueLabel, dueInput);
+
+    function syncDueVisibility() {
+        const needsDue = statusSelect.value === 'in_progress' || statusSelect.value === 'observing';
+        dueLabel.classList.toggle('d-none', !needsDue);
+        dueInput.classList.toggle('d-none', !needsDue);
+    }
+    statusSelect.addEventListener('change', syncDueVisibility);
+    syncDueVisibility();
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn btn-sm btn-primary';
+    submit.textContent = '送出';
+    form.appendChild(submit);
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+
+        // 「不處理」必須說明理由——與風險日詳情的規則一致（那裡也是不處理→說明必填）
+        if (statusSelect.value === 'wont_fix' && !noteInput.value.trim()) {
+            toast('標記為「不處理」時請填寫說明', 'warning');
+            return;
+        }
+        if (statusSelect.value === 'observing' && !dueInput.value) {
+            toast('標記為「觀察中」時請指定觀察至日期', 'warning');
+            return;
+        }
+
+        const restore = withBusy(submit, '送出中');
+        try {
+            const result = await api.post('/api/handling/issue-cases/bulk-status', {
+                source: group.source,
+                eventId: group.eventId,
+                status: statusSelect.value,
+                note: noteInput.value.trim() || null,
+                dueDate: dueInput.value || null
+            });
+
+            toast(`已更新 ${result.updatedCaseCount} 台主機、共 ${result.updatedDayCount} 天`, 'success');
+            body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            search();
+        } catch {
+            restore();
+        }
+    });
+
+    body.appendChild(form);
+    showDetailModal({ title: `回覆處理狀態：${group.source} (${group.eventId})`, body });
 }
 
 // ── 共用元件 ─────────────────────────────────────────────────────────────────
@@ -1143,4 +1479,4 @@ function defaultFrom() {
     return toLocalDateString(date);
 }
 
-init();
+guardLoad(listContainer, init);

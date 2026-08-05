@@ -24,7 +24,12 @@
                         <h2 class="lf-card__title mb-0">重點問題</h2>
                         <span class="text-muted small" id="detail-progress"></span>
                     </div>
-                    <div class="btn-group btn-group-sm lf-no-print" id="detail-severity-filter" role="group" aria-label="依嚴重度篩選"></div>
+                    <div class="d-flex align-items-center gap-2 lf-no-print">
+                        <div class="btn-group btn-group-sm" id="detail-severity-filter" role="group" aria-label="依嚴重度篩選"></div>
+                        @* 顯示範圍（docs/archive/FEEDBACK-10-PLAN.md §8）：與嚴重度篩選 AND 疊加。
+                           預設「待處理」隱藏他人處理中的問題——避免兩個人同時動同一個問題 *@
+                        <select class="form-select form-select-sm w-auto" id="detail-scope" aria-label="顯示範圍"></select>
+                    </div>
                 </div>
                 <div class="lf-card__body p-0" id="detail-issues"></div>
             </section>

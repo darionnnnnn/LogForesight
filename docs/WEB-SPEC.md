@@ -311,6 +311,38 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 **Service 層的資料範圍過濾是不可繞過的最後防線**：即使某個 API 忘了掛 Filter，
 查詢仍只回授權範圍的資料。
 
+**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：第 3 層之外、刻意更窄的第二條路徑。
+被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
+`IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
+等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
+只授與那個問題，因此 `RecordDetailQueryService` 對這類檢視者**裁剪**：重點問題只留被授與的、
+整日敘事（白話總覽四段／關聯訊號／深入分析）清空、報告全文 `GetReport` 回 null
+（**回 null 不拋例外**——「詢問 AI」會一併餵報告給模型，拋例外會讓整個對話端點 404）。
+`CaseGrantOnly=true` 讓前端顯示「您以案件處理人身分檢視」，處理面板同步收斂成
+「只標記自己被交辦的問題」（日層級的推導狀態／負責人／處理人／日狀態表單全部不顯示）。
+**不進一般可見清單**：問題查詢／儀表板／報表的統計語意不變，動線走「我的交辦」與直連
+（`HandlerWorkloadDto` 的可見範圍＝檢視者可見主機 ∪ 自己的案件授與）。
+
+授與的**實際邊界由兩個咽喉點守住**，缺一不可（兩者都是本輪體檢補上的——放行與裁剪各自寫對、
+串起來卻有缺口，是這類授權功能最典型的失敗方式）：
+
+1. **`RecordRepository.GetOne` 一併放行案件授與主機**。它原本只認 `GetVisibleHostIds()`，
+   於是 `EnsureVisible` 放行、資料卻查不出來——被指派的人根本打不開自己的問題，整個功能不成立。
+2. **`IVisibilityService.GetIssueKeyRestriction(hostId)`：問題簽章白名單**（null＝不限制）。
+   放行主機之後，任何「以 issueKey 為參數」的入口都必須先問過它，否則換一個 key 直接打 API
+   就能碰到同一天其他不屬於他的問題。套用點：問題層級標記（單筆／批次）、問題歷史
+   （`issue-history`）、處理歷程（`GetLogs`，日層級的列一併排除——那是整天的敘事）。
+   日層級的狀態與指派則整個拒絕（`DayHandlingCommandService.RequireNotCaseGrantOnly`）：
+   他被交辦的是「這台主機的這個問題」，不是這一天。
+   端到端驗收見 `LogForesight.Tests/CaseGrantVisibilityTests.cs`（刻意串真實服務，不用替身）。
+
+**角色與群組的分工**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §10——回答「兩者是否重複」）：
+不重複，是同一個機制的兩種用途。**角色掛在群組上**（`UserGroup.Role`），使用者藉由加入群組
+取得角色，多群組時能力取聯集；群組同時是**可見範圍單位**（只有 `Role=User` 的部門群組進授權矩陣，
+ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。角色回答「能用哪些功能」（第 2 層），
+群組回答「能看哪些主機」（第 3 層），拆掉任一邊都表達不了現有語意。群組頁與使用者頁的
+分段標題與 popover 就是在畫面上講出這個區別。
+
 **停用主機不在可見範圍**（2026-07-27，docs/archive/HISTORY.md N-1）：`Active=false` 的主機
 （管理員手動停用或 Sentinel 移除觸發的系統停用）一律排除在 `GetVisibleHostIds()` 之外——
 含 ViewAll 分支。其歷史紀錄因此不出現在問題查詢/儀表板/報表的任何計數，資料只留在資料庫，
@@ -562,6 +594,14 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     使用者顯示名稱為主、完整格式放 title（空間有限）；NetIQ 維護頁更新者維持帳號
     （`NetiqOptions` 是直接回傳的 Core 儲存模型，不為單一欄位重造零加值 DTO 複本）。
 
+- **載入失敗的收斂**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §4）：骨架列（`renderLoading`）是
+  「等一下就會有東西」的承諾，但各頁的 `load()`／`init()` 過去沒有頂層 catch——中途任何一支 API
+  失敗或前端例外，骨架列就**永遠**留在畫面上（錯誤 toast 幾秒後消失，使用者看到的是「一直載入」）。
+  `ui.js` 的 `guardLoad(containers, fn)` 包住各頁載入流程，失敗時把骨架列換成「載入失敗」空狀態；
+  全部頁面的進入點皆已套用。實際踩到的案例：主機維護頁在**沒有任何 Sentinel 的全新環境**下，
+  `fillSentinelOptions` 寫一個不存在節點的 textContent 而丟 TypeError，整頁清單就此卡住
+  （根因是 `host-netiq-hint` 節點被漏在 view 之外，已補回並讓提示文字在有無 Sentinel 時都正確切換）。
+
 ### 8.6a 說明文字顯示原則與全站用詞規範
 
 **常駐顯示 vs 收進 icon 的分類基準**：頁面上的欄位說明文字分兩類——
@@ -666,7 +706,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **依問題視角的處理（§10）**：狀態 chip 篩「處理概況」三態（`by-issue` 的 `statuses`，
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
-  admin 另有列內「指派」批次分派（§6）。
+  admin 另有列內「指派」批次分派（§6）；處理人清單含自己時另有「回覆處理狀態」
+  （2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §11）——同一個問題被指派到 N 台主機時，
+  在這裡填一次即套用到**自己名下**該問題的全部進行中案件（`POST api/handling/issue-cases/bulk-status`，
+  能力 `Handle`；逐案走既有 `IssueCaseCoordinator.SyncStatus`，跨日展開／歷程／結案語意完全沿用，
+  不是第二套狀態機）。別人名下的案件不受影響——這是「回覆自己手上的工作」，不是代人回覆。
 - **主機篩選改 autocomplete（2026-07-23 Phase D-4）**：兩千台規模下不能把全部主機灌進一個
   `<select multiple>`。輸入 2 字元後查 `GET api/hosts?query=`（伺服器端包含比對、上限 20 筆），
   已選主機顯示為可移除 chip；URL 帶入的 `hostIds` 以 `GET api/hosts?ids=`（精確取回、不受上限）
@@ -694,9 +738,20 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `Assign` 能力可見「批次指派」：modal 列出受目前篩選區間影響的主機（可勾選排除）＋處理人／
   說明／預計完成日，對每台主機建立跨日問題案件（§9.3 案件徽章一節），已有他人進行中案件的主機
   保留原處理人並回報略過清單。
+  **群組指派與分攤**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §12）：批次指派 modal 的指派對象可選
+  「單一使用者」或「使用者群組」——選群組時把勾選的主機分攤給群組內**啟用中**的成員，
+  兩種模式由 admin 當場選：**平均輪流**（主機依名稱、成員依帳號排序，round-robin）或
+  **依現有負載**（每次分給「既有進行中案件數＋本次已分到台數」最少的人，同分時帳號序決勝）。
+  兩者皆**確定性**（同輸入同結果，預覽看到的就是會落盤的分配），預覽表每列可個別改人。
+  API 形狀因此從單一 `HandlerId` 擴充為 `Assignments: [{hostId, handlerId}]`（空＝全部給
+  `HandlerId`，單人／群組共用一支端點）。
   API：`GET api/records/by-issue?...&sort=severity|hostCount|dayCount|totalCount|lastSeen`、
   `GET api/handling/issue-cases/preview?source=&eventId=&from=&to=`（modal 開啟時載入受影響主機預覽）、
-  `POST api/handling/issue-cases/bulk-assign`（`Assign`）。
+  `GET api/handling/issue-cases/handler-candidates?groupId=`（群組成員＋各自現有負載，`Assign`）、
+  `POST api/handling/issue-cases/bulk-assign`（`Assign`）、
+  `POST api/handling/issue-cases/bulk-status`（`Handle`，§11 跨主機回覆；
+  **刻意放在另一個 controller**——`[Permission]` 是 `AllowMultiple`，類別與方法上的標註是
+  「都要滿足」而非「就近覆寫」，寫在 `Assign` 類別裡會把只有 `Handle` 的處理人擋掉）。
   **依問題視角的風險層級 chips 同時過濾問題嚴重度（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #5）**：
   chips 篩的本是日風險等級（記錄層），但此視角一列一個問題、顯示的「嚴重度」是問題層級——
   高風險日裡本就可能同時有低嚴重度問題，預設「高＋中」下清單仍會出現「低」，觀感是篩選失效。
@@ -839,6 +894,25 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      - 日層級 `RecordHandling.HandlerId`（這一天的處理人）與案件處理人（這個問題跨日歸誰）
        兩者並存、分開顯示；清單「處理人」欄日層級有值時優先，否則 fallback 顯示該日問題所屬
        進行中案件的處理人（後綴「（案件）」）。
+  16. **顯示範圍下拉**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §8）：嚴重度篩選旁一個**單選**下拉，
+     與嚴重度是 AND 關係。每個問題先歸入四個互斥的桶——未處理／我處理中／**他人處理中**
+     （進行中案件的處理人不是自己）／已完成（結案四態＋預設不處理＋自動雜訊）——四個選項是
+     這些桶的組合：「待處理」（預設，隱藏他人處理中）／「顯示所有問題」／「隱藏已完成」／
+     「僅已完成」（平鋪，不再收合）。選項附當前數量、狀態不持久化（每次進頁回預設，同已結案
+     收合的誠實預設原則）；被篩掉的項數在底部說明，「沒看到」與「不存在」必須分得清楚。
+     **他人處理中的問題不可勾選、不可改狀態**：checkbox `disabled`、全選跳過、狀態欄唯讀，
+     後端 `IssueHandlingCommandService.RequireNotHandledByOthers` 是實際防線（**admin 也擋**——
+     admin 的正確動作是改派，不是繞過協調機制直接寫）。要換人處理走第 17 項的改派。
+  17. **案件改派**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §9）：`IssueCaseCoordinator.ReassignCase`
+     轉移進行中案件的 `HandlerId`，**不結案重開**——案件是「這個問題這一輪處理」的連續紀錄，
+     重開會把回溯關聯過的日子重算、也會讓「先前處理」誤以為這輪已結束；逐日 `IssueHandling`
+     列完全不動（狀態沒變），只寫一列 `case_reassign` 歷程（記在案件最近掛接的那一天）＋稽核。
+     日層級指派（`PUT …/handling/assign`）預設維持既有的「不搶走、回報略過清單」語意，
+     前端據此問使用者「要不要改派」，確認後帶 `reassign=true` 重送；依問題批次指派則以
+     逐列的「改派」勾選表達（`ReassignHostIds`）。
+  18. **案件徽章格式與位置**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §6）：徽章自「問題」欄移到
+     **「處理狀態」欄**（誰在處理是處理狀態資訊，不是問題的識別資訊），人名改全站統一的
+     「顯示名稱(帳號)」（`IssueDto.CaseHandlerAccount` 新增）。
   15. **查看先前處理**（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §4）：問題再次發生時，「處理狀態」欄
      多一顆「先前處理」按鈕（`IssueDto.HasPriorHandling`——早於本日、狀態為結案類的逐日標記或
      已結案的 `IssueCase` 任一存在即為 true；唯讀角色也看得到，不限 `canHandle`）。點擊開
@@ -973,31 +1047,45 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 **版面結構（由上而下，12 欄網格；2026-07-27 改版 docs/archive/HISTORY.md #6）**：
 
 ```
-┌─ 期間選擇列：快捷鈕（本週/本月/近90天）＋自訂區間＋「自訂圖表」＋列印 ─────────┐
+┌─ 期間列：快捷鈕＋自訂區間＋顯示範圍 chips＋「自訂圖表」＋列印（同一列）───────┐
 ├─ KPI 統計卡列（4 卡等寬）───────────────────────────────────────────┤
 │  問題總數(對比前期±%)│ 高風險日(±%) │ 受影響主機(±%) │ 涵蓋率缺口天數      │
-├─ 圖表區（2 欄卡片網格）─────────────────────────────────────────────┤
+├─ 圖表區第一列（2 欄卡片網格，與第二列均分剩餘高度）──────────────────────┤
 │  告警數量趨勢（折線，日粒度，        │  風險類型分布（水平堆疊長條：        │
 │  高/中風險雙線，語意色）             │  8 類 × 嚴重度，類別固定色盤）        │
-├─ 主機告警排行（半寬 col-6）│ 占比小圖（右半 col-6，三顆直向堆疊）──────────┤
-│  水平長條 Top 10＋「其他N台」  │ 風險層級占比／受影響主機占比／處理進度        │
+├─ 圖表區第二列：主機告警排行（col-6）│ 三顆占比小圖並排（右半 col-6，各 col-4）┤
+│  水平長條 Top 10＋「其他N台」  │ 風險層級占比│受影響主機占比│處理進度（圖上文下）│
 └──────────────────────────────────────────────────────────┘
 ```
 
-> §4（回饋第九輪）**一頁化**：桌面預設全開時 KPI＋六圖一屏內呈現、頁面不出現垂直捲軸
-> （`.lf-chart` 280→230px、主機排行由全寬改半寬與三顆占比小圖並列）。
+> §4（回饋第九輪）**一頁化**；**2026-08-05（docs/archive/FEEDBACK-10-PLAN.md §5）改為隨視窗自動縮放**：
+> 原本靠把 `.lf-chart` 砍到 230px 硬擠，等於押注「使用者的可用高度剛好是我猜的數字」——
+> 瀏覽器邊框、工具列、字級偏好任一項不同就破功。改為由外而內分配高度：
+> `.lf-layout:has(.lf-report-page)` 綁 `100dvh`（`:has` 讓這組規則只作用於報表頁）→
+> 圖表區 `flex:1` 吃掉扣除期間列與 KPI 後的剩餘 → 每張卡的 `.lf-chart` 填滿卡片。
+> Chart.js 本就 `responsive + maintainAspectRatio:false`，容器多高圖就多高，圖表程式碼零改動。
+> 四個實作要點（都是實測踩到才發現的）：canvas 絕對定位（否則 canvas 高度回饋撐大容器形成震盪）、
+> 圖表下限用 **px 不用 rem**（rem 會隨字級偏好膨脹 25%，選「大」字級反而逼出捲軸）、
+> Bootstrap `.row` 不直接當 flex 子項（負 margin 讓高度算錯、多出幾像素的捲軸）、
+> 三顆占比小圖由**直向堆疊改並排**（堆疊時三張卡最小高度合計約 640px，半欄容不下）。
+> `.lf-content` 用 `overflow:auto` 而非 `hidden`：視窗矮到觸發下限時仍捲得到，不會被裁掉。
+> 期間列與「顯示範圍」chips 併成同一列、頁底簽章查詢導引收進 popover，都是為了把固定高度
+> 讓給圖表。列印與窄螢幕（≤768px）整組解除綁定，回到「內容多長排多長」。
 > **跨主機同簽章查詢已移除**——問題查詢的 Event ID＋來源欄位＋「依問題」視角是其嚴格超集
-> （可下鑽、可指派），報表頁只留一行指標連結導向問題查詢。
+> （可下鑽、可指派），報表頁只留一個導向問題查詢的按鈕＋說明 popover（2026-08-05 §5
+> 自頁底整段文字收斂而來，把固定高度讓給圖表）。
 
 - KPI 卡帶**與前一期間的對比**（±% 與箭頭）——主管要的不是數字本身，是「變好還是變壞」。
-- 每張圖卡：標題＋期間副標；折線/長條圖有右上「表格」切換工具鈕，占比圓餅圖改左圖右
-  文字條列常駐顯示數值（見 §8.3 規則 4，2026-07-28 docs/archive/HISTORY.md #3/#4）。
+- 每張圖卡：標題＋期間副標；折線/長條圖有右上「表格」切換工具鈕，占比圓餅圖以文字條列
+  常駐顯示數值（見 §8.3 規則 4，2026-07-28 docs/archive/HISTORY.md #3/#4）——
+  2026-08-05 三顆並排後欄寬變窄，條列由圓餅右側改到**下方**（`.lf-chart-stack`），
+  並排時擠在右側會把文字壓成逐字直排。
 - **自訂圖表**（#6）：modal 逐圖勾選要顯示哪些圖表，狀態存 `localStorage`（預設全開）；
   隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
 - **占比小圖的資料來源與全站一致**（docs/archive/HISTORY.md）：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
-- **處理狀態顯示範圍（§5，回饋第九輪）**：期間列下方一組**單選** chip——全部（預設）／未結案
+- **處理狀態顯示範圍（§5，回饋第九輪；2026-08-05 併入期間列同一行）**：一組**單選** chip——全部（預設）／未結案
   ／未處理／未指派（單選讓每個數字都有明確母體，取代語意重疊的多 checkbox）。
   `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、類型分布、排行、
   占比全部反映同一範圍；前期對比套同一 scope 才可比。狀態推導與 `GetTodo`／問題查詢清單同源
@@ -1183,8 +1271,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁，2026-07-31）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
-- **頁籤化（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §9）**：設定項目多且長，四張卡（層級與顯示／
-  AI 服務／AD 驗證／資料保留）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
+- **頁籤化（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §9；2026-08-05 增「外觀」分頁）**：設定項目多且長，
+  六張卡（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／外觀）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
   `PUT api/admin/settings` 更新，頁籤只是顯示分區，避免半套儲存語意。**儲存鈕列常駐視窗下方**
@@ -1231,6 +1319,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      一行一路徑）、掃描頻道（`AnalysisChannels`，一行一頻道全名、空＝預設六頻道；只正規化
      不驗證已知性——自訂頻道是既有設計，拼錯會在分析時誠實申報「不存在／不適用」）、
      CSV 匯入上限（`ImportMaxFileSizeKb`/`ImportMaxRows`，每次上傳即時讀取）。
+  2c. **AI 進階參數的「還原預設值」**（docs/archive/FEEDBACK-10-PLAN.md §3）：`GET api/admin/settings`
+     多回一個 `AiAdvancedDefaults` 子物件，值由 `new SystemSettings()` 取得——**出廠值的單一
+     事實來源仍是 Core 模型的屬性初始器**，前端不硬編第二份。按鈕只把九個欄位填回表單、
+     **不直接落盤**（仍走整頁單一 form 的「儲存」，未儲存提醒照常亮起）。
+  2d. **外觀／品牌**（docs/archive/FEEDBACK-10-PLAN.md §1，2026-08-05 新分頁）：產品名稱
+     （`BrandName`，空＝回退 `LogForesight`）、副標（`BrandSubtitle`，**出廠值
+     「事件日誌預警」不含「Windows」**——Linux 規則面已就緒，寫死 Windows 名不符實；
+     空＝不顯示副標）、自訂圖示（`BrandIconDataUri`，**只收 PNG／JPG** 的 data URI、
+     解碼後上限 64KB，**刻意不收 SVG**：SVG 可內嵌 script，不為單一裝飾功能開驗證面）。
+     **消費端是伺服器端渲染**：`_Layout.cshtml` 與 `Login.cshtml` 經 `IBrandProvider`
+     （Services，只暴露品牌三欄給 View，不讓 View 碰 Persistence）直接輸出——側欄品牌是
+     每頁第一眼，等前端 fetch 回來才替換會閃動。
   3. **AD 驗證**（docs/archive/HISTORY.md #9，2026-07-27；§12 起為 AD 設定的**唯一**來源，
      appsettings 的 `Auth:Ldap:Domain` 退役）：啟用開關＋伺服器清單（一行一台，依序
      嘗試）＋進階（SearchBase／SearchFilter）。開啟後不論 appsettings 的 `Auth:Provider` 為何，

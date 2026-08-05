@@ -232,6 +232,48 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
+    /// 改派進行中案件的處理人（docs/archive/FEEDBACK-10-PLAN.md §9）。
+    ///
+    /// **不結案重開**：案件是「這個問題這一輪處理」的連續紀錄，換人只是換掛名的人。
+    /// 結案再開會把回溯關聯過的日子重算一遍，也會讓「上次怎麼解的」（§9.3 第 15 項的
+    /// 先前處理）誤以為這一輪已經結束過。逐日的 <c>IssueHandling</c> 列因此完全不動——
+    /// 狀態沒變，變的只有案件層的 <c>HandlerId</c>。
+    ///
+    /// 回傳原處理人 Id 供呼叫端寫稽核與提示；沒有進行中案件時回 null（呼叫端應改走
+    /// <see cref="BuildCase"/>——那是「開始有人處理」，與換人是不同的動作）。
+    /// </summary>
+    public long? ReassignCase(
+        string hostName, string issueKey, long newHandlerId,
+        long? actorId, string actorAccount, DateTime occurredAt)
+    {
+        var openCase = _cases.GetOpen(hostName, issueKey);
+        if (openCase == null) return null;
+
+        var previousHandlerId = openCase.HandlerId;
+        openCase.HandlerId = newHandlerId;
+        openCase.UpdatedAt = occurredAt;
+        _cases.Save(openCase);
+
+        // 歷程記在案件最近掛接的那一天：改派不是針對某一天的動作，沒有天然的「觸發日」，
+        // 記在最新的一天最容易被看到——處理人打開的通常就是最近那筆風險日
+        _handlingLog.AppendLog(new RecordHandlingLog
+        {
+            HostName = hostName,
+            Date = openCase.LastLinkedDate,
+            Status = openCase.Status,
+            IssueKey = issueKey,
+            IssueLabel = openCase.IssueLabel,
+            Note = "變更案件處理人",
+            ActorId = actorId,
+            ActorAccount = actorAccount,
+            Action = HandlingActions.CaseReassign,
+            CreatedAt = occurredAt
+        });
+
+        return previousHandlerId;
+    }
+
+    /// <summary>
     /// 合格日：主機全部留存歷史中含此問題簽章的風險日（<see cref="FindCandidateDays"/>），
     /// 扣掉已被使用者明確標成結案類的日子——結案就是結案，不論該列的 CaseId 是否屬於
     /// 更早、已經結案的舊案件（同問題重現後開新案件不該讓舊案件的結案紀錄復活）。

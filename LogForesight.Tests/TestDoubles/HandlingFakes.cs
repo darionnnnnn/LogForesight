@@ -49,11 +49,13 @@ internal class HandlingServiceFacade
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
     public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request) => _day.Update(hostId, date, request);
-    public HandlingDto Assign(long hostId, DateTime date, long? handlerId) => _day.Assign(hostId, date, handlerId);
+    public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false) => _day.Assign(hostId, date, handlerId, reassign);
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
     public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
     public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
     public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
+    public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request) => _issue.BulkSetIssueStatusByHandler(request);
+    public List<HandlerCandidateDto> GetHandlerCandidates(long userGroupId) => _issue.GetHandlerCandidates(userGroupId);
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
     public HandlerWorkloadDto GetHandlerWorkload(long userId, bool includeResolvedDays) => _history.GetHandlerWorkload(userId, includeResolvedDays);
@@ -63,6 +65,10 @@ internal class HandlingServiceFacade
 internal class RestrictedVisibleService : IVisibilityService
 {
     public IReadOnlySet<long> GetVisibleHostIds() => new HashSet<long>();
+    public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => new HashSet<long>();
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public bool IsCaseGrantOnly(long hostId) => false;
+    public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
     public List<WebHost> GetVisibleHosts() => new();
     public void EnsureVisible(long hostId) => throw DomainException.NotFound("找不到這台主機。");
 }
@@ -211,6 +217,8 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         _items.FirstOrDefault(c =>
             string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
             c.IssueKey == issueKey && c.ClosedAt == null);
+
+    public List<IssueCase> GetByHandler(long userId) => _items.Where(c => c.HandlerId == userId).ToList();
 
     public List<IssueCase> GetOpenForHost(string hostName) =>
         _items.Where(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && c.ClosedAt == null).ToList();

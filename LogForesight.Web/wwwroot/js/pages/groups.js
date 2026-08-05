@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs, checkboxList, button } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, confirmAction, withBusy, bindTabs, checkboxList, button, guardLoad } from '../core/ui.js';
 
 const modal = new bootstrap.Modal(document.getElementById('group-modal'));
 const form = document.getElementById('group-form');
@@ -48,8 +48,70 @@ async function load() {
     renderMatrix();
 }
 
+/**
+ * 使用者群組清單（docs/archive/FEEDBACK-10-PLAN.md §10）：分成「角色群組」與「部門群組」兩段。
+ *
+ * 這一頁最容易被誤讀的地方是「角色跟群組是不是重複了」。兩者管的是不同的事：
+ *   - 角色群組（builtin admin/manager/dev）回答「能用哪些功能」——角色掛在群組上，
+ *     一人多群組時能力取聯集（見 Core 的 UserRole 註解）
+ *   - 部門群組（Role=User）回答「能看見哪些主機」——只有這種群組會進授權矩陣
+ * 模型不動，只把這個區別在畫面上講出來（方案 A）。
+ */
 function renderUserGroups() {
-    renderTable(document.getElementById('user-group-list'), {
+    const container = document.getElementById('user-group-list');
+    container.replaceChildren();
+
+    const roleGroups = userGroups.filter(g => g.role !== 'User');
+    const deptGroups = userGroups.filter(g => g.role === 'User');
+
+    if (userGroups.length === 0) {
+        renderEmpty(container, {
+            title: '尚無使用者群組',
+            hint: '系統內建的 admin / manager / dev 會在站台啟動時自動建立。'
+        });
+        return;
+    }
+
+    appendUserGroupSection(container, {
+        title: '角色群組',
+        hint: '決定成員能使用哪些功能。角色掛在群組上，一個人屬於多個群組時，能力取各群組的聯集。',
+        groups: roleGroups,
+        empty: '目前沒有角色群組（系統內建的 admin / manager / dev 會在啟動時建立）。'
+    });
+
+    appendUserGroupSection(container, {
+        title: '部門群組',
+        hint: '決定成員能看見哪些主機——實際授權在「授權矩陣」頁籤勾選。不影響可使用的功能。',
+        groups: deptGroups,
+        empty: '目前沒有部門群組。建立後即可在「授權矩陣」指定它看得到哪些主機群組。'
+    });
+}
+
+function appendUserGroupSection(container, { title, hint, groups, empty }) {
+    const heading = document.createElement('div');
+    heading.className = 'px-3 pt-3';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'fw-semibold';
+    titleEl.textContent = title;
+
+    const hintEl = document.createElement('div');
+    hintEl.className = 'small text-muted mb-2';
+    hintEl.textContent = hint;
+
+    heading.append(titleEl, hintEl);
+    container.appendChild(heading);
+
+    if (groups.length === 0) {
+        const emptyEl = document.createElement('div');
+        emptyEl.className = 'small text-muted px-3 pb-3';
+        emptyEl.textContent = empty;
+        container.appendChild(emptyEl);
+        return;
+    }
+
+    const table = document.createElement('div');
+    renderTable(table, {
         columns: [
             { title: '群組名稱', render: g => g.groupName },
             { title: '角色', render: g => roleBadge(g.role) },
@@ -57,9 +119,10 @@ function renderUserGroups() {
             { title: '狀態', render: g => activeBadge(g.active) },
             { title: '', className: 'text-end', render: g => groupActions('user', g) }
         ],
-        rows: userGroups,
-        empty: { title: '尚無使用者群組', hint: '系統內建的 admin / manager / dev 會在站台啟動時自動建立。' }
+        rows: groups,
+        empty: { title: '（無）' }
     });
+    container.appendChild(table);
 }
 
 function renderHostGroups() {
@@ -628,4 +691,7 @@ function activeBadge(active) {
     return span;
 }
 
-load();
+guardLoad([
+    document.getElementById('user-group-list'),
+    document.getElementById('host-group-list')
+], load);

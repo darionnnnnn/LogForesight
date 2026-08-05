@@ -9,6 +9,27 @@ namespace LogForesight.Core.Models;
 /// </summary>
 public class SystemSettings
 {
+    // ── 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）────────────────────────────────
+    // 消費端＝_Layout.cshtml 與 Login.cshtml 的伺服器端渲染（不走前端 fetch：側欄品牌是
+    // 每頁第一眼，等 API 回來才換會閃動）。
+
+    /// <summary>側欄與登入頁的產品名稱。空字串＝回退預設值</summary>
+    public string BrandName { get; set; } = "LogForesight";
+
+    /// <summary>
+    /// 產品名稱下方的副標。預設**不含「Windows」**——Linux 規則面已就緒（docs/LINUX-RULES.md），
+    /// 寫死 Windows 名不符實。空字串＝不顯示副標（使用者可以刻意只留產品名）。
+    /// </summary>
+    public string BrandSubtitle { get; set; } = "事件日誌預警";
+
+    /// <summary>
+    /// 自訂品牌圖示，`data:image/png;base64,...`／`data:image/jpeg;base64,...`。
+    /// 空字串＝沿用內建的 speedometer2 向量圖示。**只收點陣圖不收 SVG**：SVG 可內嵌 script，
+    /// 即使以 img 載入不會執行，也不值得為單一裝飾性功能開這個驗證面。
+    /// 大小上限由 SystemSettingsService 驗證（本設定整包是一份 blob，塞大圖會拖慢每次設定讀寫）。
+    /// </summary>
+    public string BrandIconDataUri { get; set; } = "";
+
     /// <summary>
     /// 未處理計算納入哪些嚴重度（<see cref="IssueSeverity"/> 名稱：High/Medium/Low——
     /// docs/archive/HISTORY.md #1，B1 三級化後 Critical 不再是可選層級，

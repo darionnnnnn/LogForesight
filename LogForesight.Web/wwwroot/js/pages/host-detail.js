@@ -6,7 +6,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy } from '../core/ui.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
@@ -410,4 +410,7 @@ document.getElementById('host-update-form').addEventListener('submit', async eve
     }
 });
 
-load();
+guardLoad([
+    document.getElementById('host-timeline'),
+    document.getElementById('host-issues')
+], load);

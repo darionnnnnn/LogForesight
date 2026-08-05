@@ -1,18 +1,22 @@
 @*
     主版面（docs/WEB-SPEC.md §8.2 版面骨架、§8.5 頁面殼）。
     View 只有結構、沒有資料——側欄選單由 core/layout.js 依 /api/auth/me 回傳的能力渲染。
+    唯一的例外是品牌三元素（docs/archive/FEEDBACK-10-PLAN.md §1）：那是每頁第一眼看到的東西，
+    等前端 fetch 回來才替換會閃動，所以伺服器端就渲染好。
 *@
+@inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     // 頁尾顯示版本號（docs/archive/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本
     // （Directory.Build.props 的 <Version>，全專案共用同一個版本號）。
     var appVersion = typeof(LogForesight.Web.Configuration.WebAppSettings).Assembly.GetName().Version;
+    var brand = Brand.Get();
 }
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@ViewData["Title"] - LogForesight</title>
+    <title>@ViewData["Title"] - @brand.Name</title>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
@@ -21,11 +25,23 @@
         <aside class="lf-sidebar lf-no-print">
             <div class="lf-sidebar__brand">
                 <span class="lf-sidebar__brand-mark">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
+                    @if (brand.IconDataUri != null)
+                    {
+                        @* 自訂圖示（§1）：alt 留空——它旁邊就是產品名稱文字，
+                           讀屏再念一次圖片等於重複，屬純裝飾 *@
+                        <img src="@brand.IconDataUri" alt="" class="lf-sidebar__brand-img" />
+                    }
+                    else
+                    {
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
+                    }
                 </span>
-                <span>
-                    LogForesight
-                    <small>Windows 事件日誌預警</small>
+                <span class="text-truncate">
+                    @brand.Name
+                    @if (brand.Subtitle != null)
+                    {
+                        <small>@brand.Subtitle</small>
+                    }
                 </span>
             </div>
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>

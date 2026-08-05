@@ -16,6 +16,16 @@ internal class AlwaysVisibleService : IVisibilityService
 
     public IReadOnlySet<long> GetVisibleHostIds() => _hosts.GetAll().Select(h => h.HostId).ToHashSet();
 
+    /// <summary>不限制可見範圍的替身：對誰都回全部主機（指派前的可見性檢查因此永遠通過）</summary>
+    public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => GetVisibleHostIds();
+
+    // 全部主機本來就可見，沒有「只靠案件授與才看得到」的情況（§7）
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
+    public bool IsCaseGrantOnly(long hostId) => false;
+
+    /// <summary>null＝不限制問題（這個替身對全部主機都有一般檢視權）</summary>
+    public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;
+
     public List<WebHost> GetVisibleHosts() => _hosts.GetAll();
 
     public void EnsureVisible(long hostId) { }
