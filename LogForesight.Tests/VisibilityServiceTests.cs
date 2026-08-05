@@ -17,9 +17,10 @@ public class VisibilityServiceTests
     private readonly FakeUserGroupStore _userGroups = new();
     private readonly FakeGroupAccessStore _access = new();
     private readonly FakeHostStore _hosts = new();
+    private readonly FakeIssueCaseStore _cases = new();
 
     private VisibilityService Create(ICurrentUser currentUser) =>
-        new(currentUser, _users, _userGroups, _access, _hosts);
+        new(currentUser, _users, _userGroups, _access, _hosts, _cases);
 
     /// <summary>建立「OO 部門使用者 → OO 部門主機」的完整授權鏈，並額外建立一台 XX 部門主機</summary>
     private (WebUser user, WebHost ooHost, WebHost xxHost) SetupTwoDepartments()
@@ -207,5 +208,113 @@ public class VisibilityServiceTests
         var hosts = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHosts();
 
         Assert.Equal(new[] { "SRV-A", "SRV-Z" }, hosts.Select(h => h.HostName));
+    }
+    // ── 案件授與（docs/archive/FEEDBACK-10-PLAN.md §7）────────────────────────────────
+
+    /// <summary>
+    /// 被指派為某個問題的案件處理人時，該主機從「完全看不到」變成「只看得到這個問題」——
+    /// EnsureVisible 放行，但 IsCaseGrantOnly 為 true，查詢端據此把內容裁剪到被授與的問題。
+    /// </summary>
+    [Fact]
+    public void 案件處理人_對未授權主機取得範圍限定可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        // 指派前：XX 部門主機完全看不到
+        Assert.Throws<DomainException>(() => service.EnsureVisible(xxHost.HostId));
+
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress
+        });
+
+        var granted = Create(FakeCurrentUser.ForUser(user.UserId));
+        granted.EnsureVisible(xxHost.HostId);   // 不再拋例外
+        Assert.True(granted.IsCaseGrantOnly(xxHost.HostId));
+        Assert.Equal(new[] { "App|disk|153|1" }, granted.GetCaseGrants()[xxHost.HostName]);
+
+        // **範圍限定**：授與不會讓主機混進一般可見清單，統計與清單頁因此不受影響
+        Assert.DoesNotContain(xxHost.HostId, granted.GetVisibleHostIds());
+    }
+
+    /// <summary>
+    /// 結案後仍看得到自己處理過的問題（Q3b 定案）——授與以「現在或曾經是處理人」為準，
+    /// 否則使用者剛按下結案就再也打不開自己寫的處理紀錄。
+    /// </summary>
+    [Fact]
+    public void 案件結案後_處理人仍看得到該問題()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.Resolved,
+            ClosedAt = DateTime.Now
+        });
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        service.EnsureVisible(xxHost.HostId);
+        Assert.True(service.IsCaseGrantOnly(xxHost.HostId));
+    }
+
+    /// <summary>別人名下的案件不會授與可見性——授與的對象是處理人本人</summary>
+    [Fact]
+    public void 他人案件_不授與可見性()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = xxHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId + 999, Status = IssueHandlingStatuses.InProgress
+        });
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        Assert.Throws<DomainException>(() => service.EnsureVisible(xxHost.HostId));
+        Assert.Empty(service.GetCaseGrants());
+    }
+
+    /// <summary>
+    /// 已在授權範圍內的主機不算「案件授與」——IsCaseGrantOnly 為 false，
+    /// 查詢端因此不會對本來就有完整權限的人裁剪畫面。
+    /// </summary>
+    [Fact]
+    public void 已授權主機_不視為案件授與()
+    {
+        var (user, ooHost, _) = SetupTwoDepartments();
+        _cases.Save(new IssueCase
+        {
+            CaseId = "c1", HostName = ooHost.HostName, IssueKey = "App|disk|153|1",
+            HandlerId = user.UserId, Status = IssueHandlingStatuses.InProgress
+        });
+
+        Assert.False(Create(FakeCurrentUser.ForUser(user.UserId)).IsCaseGrantOnly(ooHost.HostId));
+    }
+
+    /// <summary>指派前的檢查（§7）：問「別人」看不看得到某台主機，用來提示執行指派的人</summary>
+    [Fact]
+    public void 指定使用者的可見範圍_依其所屬群組解析()
+    {
+        var (user, ooHost, xxHost) = SetupTwoDepartments();
+        var service = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll));
+
+        var visible = service.GetVisibleHostIdsFor(user.UserId);
+
+        Assert.Contains(ooHost.HostId, visible);
+        Assert.DoesNotContain(xxHost.HostId, visible);
+    }
+
+    /// <summary>停用的使用者不看任何主機——指派給停用帳號的提示因此會標出「看不到」</summary>
+    [Fact]
+    public void 指定使用者的可見範圍_停用者為空()
+    {
+        var (user, _, _) = SetupTwoDepartments();
+        user.Active = false;
+        _users.Upsert(user);
+
+        Assert.Empty(Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIdsFor(user.UserId));
     }
 }

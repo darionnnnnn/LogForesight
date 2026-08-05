@@ -984,7 +984,9 @@ public class HandlingServiceTests
         var second = service.Assign(_host.HostId, day, _other.UserId);   // 改指派給 XXX
 
         Assert.Equal(0, second.CasesCreated);
-        Assert.Equal(new[] { "OOO" }, second.CasesSkippedHandlerNames);
+        // 顯示名稱(帳號)（docs/archive/FEEDBACK-10-PLAN.md §6）：略過清單會直接顯示給使用者看，
+        // 走與全站一致的人名格式
+        Assert.Equal(new[] { "OOO(DOMAIN\\ooo)" }, second.CasesSkippedHandlerNames);
         Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
     }
 
@@ -1132,5 +1134,142 @@ public class HandlingServiceTests
             Create(Capability.Handle).GetHandlerWorkload(9999, includeResolvedDays: false));
 
         Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+    // ── 回饋第十輪 §8／§9／§11（docs/archive/FEEDBACK-10-PLAN.md）─────────────────────
+
+    /// <summary>
+    /// §8：別人的案件正在處理的問題不接受直接改狀態——要換人得走改派，
+    /// 否則兩個人先後標記，後標的會靜默蓋掉先標的判斷。
+    /// </summary>
+    [Fact]
+    public void 標記問題_他人案件處理中時拒絕()
+    {
+        var day = Today.AddDays(-40);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        // _owner 先取得案件（Create 的目前使用者是 _other）
+        Create(Capability.Assign, Capability.Handle).Assign(_host.HostId, day, _owner.UserId);
+
+        var ex = Assert.Throws<DomainException>(() =>
+            Create(Capability.Handle).SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+            {
+                IssueKey = IssueSignatureKey.For(a),
+                Status = IssueHandlingStatuses.Resolved
+            }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("案件處理中", ex.Message);
+    }
+
+    /// <summary>§8：自己的案件照常可以標記（限制的是「別人的」，不是「有案件的」）</summary>
+    [Fact]
+    public void 標記問題_自己的案件可以標()
+    {
+        var day = Today.AddDays(-41);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);   // 目前使用者就是 _other
+
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        Assert.Equal(IssueHandlingStatuses.Resolved, result.Status);
+    }
+
+    /// <summary>
+    /// §9：帶 reassign 時改派他人的進行中案件——案件**不結案重開**（同一個 CaseId 換人），
+    /// 這樣「這個問題這一輪處理」的歷程才是連續的。
+    /// </summary>
+    [Fact]
+    public void 指派_帶改派旗標時換掉他人案件的處理人()
+    {
+        var day = Today.AddDays(-42);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);
+        var caseIdBefore = _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.CaseId;
+
+        var result = service.Assign(_host.HostId, day, _other.UserId, reassign: true);
+
+        Assert.Equal(1, result.CasesReassigned);
+        Assert.Empty(result.CasesSkippedHandlerNames);
+
+        var after = _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!;
+        Assert.Equal(_other.UserId, after.HandlerId);
+        Assert.Equal(caseIdBefore, after.CaseId);   // 同一個案件，不是重開的
+        Assert.Null(after.ClosedAt);
+    }
+
+    /// <summary>§9：改派留下 case_reassign 歷程——事後查得到「誰把誰換掉」</summary>
+    [Fact]
+    public void 改派_留下改派歷程()
+    {
+        var day = Today.AddDays(-43);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);
+        service.Assign(_host.HostId, day, _other.UserId, reassign: true);
+
+        Assert.Contains(_handlings.GetLogs(_host.HostName, day), l => l.Action == HandlingActions.CaseReassign);
+    }
+
+    /// <summary>§11：跨主機一次回覆——自己名下的全部進行中案件同步更新</summary>
+    [Fact]
+    public void 跨主機回覆_更新自己名下的全部案件()
+    {
+        var day = Today.AddDays(-44);
+        var a = Issue("disk", 153);
+        var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(second.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);     // 目前使用者
+        service.Assign(second.HostId, day, _other.UserId);
+
+        var result = service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153,
+            Status = IssueHandlingStatuses.Resolved,
+            Note = "已更換硬碟"
+        });
+
+        Assert.Equal(2, result.UpdatedCaseCount);
+        Assert.Equal(new[] { "SRV-A", "SRV-B" }, result.HostNames);
+        // 結案類會讓案件本身結案（沿用 SyncStatus 既有語意）
+        Assert.Null(_cases.GetOpen(_host.HostName, IssueSignatureKey.For(a)));
+        Assert.Null(_cases.GetOpen(second.HostName, IssueSignatureKey.For(a)));
+    }
+
+    /// <summary>§11：別人名下的案件不受影響——這是「回覆自己手上的工作」，不是代人回覆</summary>
+    [Fact]
+    public void 跨主機回覆_不動別人名下的案件()
+    {
+        var day = Today.AddDays(-45);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);   // 指派給別人
+
+        var ex = Assert.Throws<DomainException>(() =>
+            service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+            {
+                Source = "disk", EventId = 153,
+                Status = IssueHandlingStatuses.Resolved
+            }));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
     }
 }

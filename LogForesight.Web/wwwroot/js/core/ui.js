@@ -595,6 +595,37 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
     container.replaceChildren(el);
 }
 
+/**
+ * 頁面載入流程的失敗收斂（docs/archive/FEEDBACK-10-PLAN.md §4）。
+ *
+ * 骨架列（renderLoading）是「等一下就會有東西」的承諾，但各頁的 load()／init() 過去沒有
+ * 頂層 catch：中間任何一支 API 失敗或前端例外拋出，流程就中斷在那裡，骨架列**永遠**留在
+ * 畫面上——api.js 的錯誤 toast 幾秒後消失，使用者看到的就是「一直在載入」。
+ * （實例：主機頁在全新環境沒有任何 Sentinel 時，fillSentinelOptions 寫一個不存在節點的
+ * textContent 而丟 TypeError，整頁清單就此卡住。）
+ *
+ * 用法：把整段載入流程包起來，失敗時把骨架列換成可理解的失敗狀態。
+ * containers 可給單一容器或容器陣列（一頁多塊骨架時全部一起收掉）。
+ */
+export async function guardLoad(containers, fn) {
+    try {
+        return await fn();
+    } catch (error) {
+        for (const container of [containers].flat()) {
+            if (container) {
+                renderEmpty(container, {
+                    title: '載入失敗',
+                    hint: '請重新整理頁面後再試；若持續失敗請聯絡系統管理員。',
+                    icon: 'exclamation-triangle'
+                });
+            }
+        }
+        // 不吞掉：錯誤細節仍要進 console 供排查（api.js 已負責顯示給使用者看的 toast）
+        console.error('[load]', error);
+        return undefined;
+    }
+}
+
 /** 載入中的骨架列（§8.6-6） */
 export function renderLoading(container, rows = 4) {
     const el = document.createElement('div');

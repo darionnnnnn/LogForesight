@@ -6,7 +6,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, guardLoad } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
 const modal = new bootstrap.Modal(document.getElementById('confirm-modal'));
@@ -215,4 +215,4 @@ form.addEventListener('submit', async event => {
     }
 });
 
-load();
+guardLoad(document.getElementById('perm-list'), load);

@@ -79,6 +79,13 @@ public interface IIssueCaseStore
     /// <summary>指定處理人名下的全部進行中案件（處理人員工作頁，docs/archive/FEEDBACK-4-PLAN.md §6）</summary>
     List<IssueCase> GetOpenByHandler(long userId);
 
+    /// <summary>
+    /// 指定處理人名下的全部案件**含已結案**（docs/archive/FEEDBACK-10-PLAN.md §7）：
+    /// 案件授與的可見性以「現在或曾經是處理人」為準——處理過的問題結案後仍要看得到，
+    /// 否則使用者剛結案就再也打不開自己寫的處理紀錄。
+    /// </summary>
+    List<IssueCase> GetByHandler(long userId);
+
     IssueCase? Get(string caseId);
 
     void Save(IssueCase issueCase);

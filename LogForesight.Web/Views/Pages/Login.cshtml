@@ -1,21 +1,34 @@
+@inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     ViewData["Title"] = "登入";
     Layout = null;   // 登入頁不套主版面（沒有側欄與選單）
+
+    // 品牌自訂（docs/archive/FEEDBACK-10-PLAN.md §1）：登入頁雖是匿名頁，但品牌不是機密
+    // （產品名稱、副標與圖示，任何看得到登入畫面的人本來就看得到），照樣套設定值
+    var brand = Brand.Get();
 }
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>登入 - LogForesight</title>
+    <title>登入 - @brand.Name</title>
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
 <body>
     <div class="lf-login">
         <div class="lf-login__card">
-            <div class="lf-login__title">LogForesight</div>
-            <div class="lf-login__subtitle">Windows 事件日誌預警系統</div>
+            @if (brand.IconDataUri != null)
+            {
+                @* alt 留空：緊接著的標題就是產品名稱，讀屏再念一次等於重複（純裝飾） *@
+                <img src="@brand.IconDataUri" alt="" class="lf-login__logo" />
+            }
+            <div class="lf-login__title">@brand.Name</div>
+            @if (brand.Subtitle != null)
+            {
+                <div class="lf-login__subtitle">@brand.Subtitle</div>
+            }
 
             <form id="lf-login-form" novalidate>
                 <div class="mb-3">

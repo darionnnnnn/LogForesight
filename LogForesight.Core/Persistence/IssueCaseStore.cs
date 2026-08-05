@@ -33,6 +33,9 @@ public class IssueCaseStore : JsonBlobCollection<IssueCase>, IIssueCaseStore
     public List<IssueCase> GetOpenByHandler(long userId) =>
         Read().Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
 
+    public List<IssueCase> GetByHandler(long userId) =>
+        Read().Where(c => c.HandlerId == userId).ToList();
+
     public IssueCase? Get(string caseId) =>
         Read().FirstOrDefault(c => string.Equals(c.CaseId, caseId, StringComparison.Ordinal));
 

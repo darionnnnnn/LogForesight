@@ -10,7 +10,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect } from '../core/ui.js';
+import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
 /** 操作者顯示：帳號空＝系統動作（docs/archive/FEEDBACK-8-PLAN.md #6） */
@@ -92,6 +92,14 @@ async function loadAssignableUsers() {
  * 「現在真正的狀態」，與清單頁看到的完全同源。derivedStatus 為 null（Update/Assign
  * 呼叫端未補算）時 fallback 用 statusText，不帶結案進度。
  */
+/** 面板內的一句提示（lf-hint 是全站既有的提示樣式） */
+function hintText(text) {
+    const el = document.createElement('div');
+    el.className = 'lf-hint';
+    el.textContent = text;
+    return el;
+}
+
 function derivedStatusLabel(handling) {
     const text = handling.derivedStatusText ?? handling.statusText;
     return handling.totalIssues > 0 ? `${text}（${handling.closedIssues}/${handling.totalIssues} 已結案）` : text;
@@ -99,8 +107,29 @@ function derivedStatusLabel(handling) {
 
 function render() {
     const panel = document.getElementById('handling-panel');
-    const { handling, users, hostId, date } = state;
+    const { handling, users, hostId, date, options } = state;
     panel.replaceChildren();
+
+    // 案件授與檢視（docs/archive/FEEDBACK-10-PLAN.md §7）：這個人被交辦的是「這台主機的某個問題」，
+    // 不是這一天。日層級的一切（整天的推導狀態、主機負責人、處理人、日狀態表單）
+    // 全部不顯示——那些是整天的結論，由有完整權限的人負責；他只保留「標記自己那些問題」
+    // 的批次套用區（後端 DayHandlingCommandService 對日層級寫入另有一道拒絕）
+    if (options?.caseGrantOnly) {
+        const notice = document.createElement('div');
+        notice.className = 'lf-hint mb-3';
+        notice.textContent = '您以案件處理人身分檢視：可標記指派給您的問題，這一天的整體處理狀態由主機的負責單位維護。';
+        panel.appendChild(notice);
+
+        // handlingForm 沒有勾選任何問題時會退回「編輯日層級狀態」，那條路對案件授與者
+        // 是被後端拒絕的（見 DayHandlingCommandService.RequireNotCaseGrantOnly）——
+        // 所以只在確實有勾選（批次套用模式）時才給表單，沒勾選時提示要先勾
+        if (handling.canHandle) {
+            panel.appendChild(state.getSelection().size > 0
+                ? handlingForm()
+                : hintText('請先勾選要標記的問題，再於此填寫處理狀態。'));
+        }
+        return;
+    }
 
     panel.appendChild(readonlyField(
         '目前狀態',
@@ -192,18 +221,40 @@ function assignField(handling, users, hostId, date) {
     select.addEventListener('change', async () => {
         select.disabled = true;
         try {
-            const updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, {
-                handlerId: select.value ? Number(select.value) : null
-            });
+            const handlerId = select.value ? Number(select.value) : null;
+            let updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId });
+
+            // 已由他人案件處理中的問題（docs/archive/FEEDBACK-10-PLAN.md §9）：後端預設不搶走，
+            // 改回報略過清單。問過使用者要不要改派，確認後帶 reassign 重送一次——
+            // 「不問就換人」會讓原處理人手上的工作在他不知情的狀況下被抽走
+            if (updated.casesSkippedHandlerNames?.length) {
+                const confirmed = await confirmAction({
+                    title: '這些問題已有人在處理',
+                    message: `${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件處理中，` +
+                        `尚未變更。要改由 ${updated.handlerName ?? '新的處理人'} 接手嗎？`,
+                    confirmText: '改派給新的處理人'
+                });
+                if (confirmed) {
+                    updated = await api.put(`/api/records/${hostId}/${date}/handling/assign`, { handlerId, reassign: true });
+                }
+            }
 
             // 建案提示（docs/archive/FEEDBACK-4-PLAN.md §2/Q1/Q2）：指派會對本日未結案問題建立案件並
             // 回溯歷史；已有他人進行中案件的問題不搶走，讓使用者知道發生了什麼
-            const parts = [updated.handlerName ? `已指派給 ${updated.handlerName}` : '已取消指派'];
+            const parts = [updated.handlerName ? `已指派給 ${formatUserName(updated.handlerName, updated.handlerAccount)}` : '已取消指派'];
             if (updated.casesCreated > 0) parts.push(`已為 ${updated.casesCreated} 個問題建立案件`);
+            if (updated.casesReassigned > 0) parts.push(`改派 ${updated.casesReassigned} 個他人處理中的問題`);
             if (updated.casesSkippedHandlerNames?.length) {
                 parts.push(`${updated.casesSkippedHandlerNames.length} 個問題已由 ${updated.casesSkippedHandlerNames.join('、')} 的案件涵蓋，未變更`);
             }
             toast(parts.join('；'), 'success');
+
+            // 被指派者沒有這台主機的檢視權（§7）：指派成立，但對方只看得到被交辦的問題——
+            // 交辦的人現在就要知道，不要等對方回報「我點進去是空的」
+            if (updated.assigneeHasNoHostAccess) {
+                toast(`${formatUserName(updated.handlerName, updated.handlerAccount)} 沒有這台主機的檢視權限，` +
+                    '只看得到被指派的問題。若需要完整權限，請至「群組與授權」調整。', 'warning', 10000);
+            }
 
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch {

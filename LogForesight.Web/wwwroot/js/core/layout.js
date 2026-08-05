@@ -238,12 +238,11 @@ function renderCurrentUser(user) {
     const el = document.getElementById('lf-current-user');
     if (!el) return;
 
-    el.textContent = user.displayName || user.account;
-    // title 補完整資訊（displayName 與 text-truncate 的省略號互補，滑過即可看到完整內容，
-    // 見 docs/archive/FEEDBACK-5-PLAN.md §3）：有顯示名稱時一併帶帳號，避免兩者相同時顯得多餘
-    el.title = user.displayName && user.displayName !== user.account
-        ? formatUserName(user.displayName, user.account)
-        : user.account;
+    // 「顯示名稱(帳號)」是全站唯一的使用者顯示格式（docs/archive/FEEDBACK-10-PLAN.md §2）——
+    // 這裡原本只顯示 displayName、把完整格式藏在 title 裡，是全站唯一的例外，已對齊。
+    // 側欄寬度有限，過長由既有的 text-truncate 收尾，title 保留同值供滑過查看
+    el.textContent = formatUserName(user.displayName, user.account);
+    el.title = el.textContent;
 }
 
 function bindLogout() {

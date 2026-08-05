@@ -185,7 +185,12 @@ public class RecordRepository : IRecordRepository
 
     public DailyAnalysisRecord? GetOne(long hostId, DateTime date)
     {
-        if (!_visibility.GetVisibleHostIds().Contains(hostId)) return null;
+        // 案件授與（docs/archive/FEEDBACK-10-PLAN.md §7）：被交辦問題所在的主機也要讀得到這一天，
+        // 否則處理人連自己被指派的問題都打不開（EnsureVisible 放行了，資料卻查不出來）。
+        // **放行的只是「讀得到這筆紀錄」**——能碰哪些問題由 GetIssueKeyRestriction 收斂，
+        // 呼叫端（RecordDetailQueryService 等）負責裁剪，不在這裡做。
+        if (!_visibility.GetVisibleHostIds().Contains(hostId) && !_visibility.IsCaseGrantOnly(hostId))
+            return null;
 
         var record = _records.GetOne(ResolveHostKeys(hostId), date);
         return record == null ? null : ApplySeverityVisibility(record);

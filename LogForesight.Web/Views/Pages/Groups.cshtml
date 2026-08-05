@@ -67,6 +67,12 @@
                         </div>
                         <div class="col-md-6" id="group-role-field">
                             <label for="group-role" class="form-label">角色</label>
+                            @* 角色 vs 群組的關係（docs/archive/FEEDBACK-10-PLAN.md §10）：這是整個授權模型
+                               唯一沒被 UI 說出來的事實，也是「角色跟群組是不是重複了」的來源 *@
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="角色掛在群組上，不掛在個別使用者身上：使用者藉由加入群組取得角色。一個人可同時屬於多個群組（例如「OO部門」＋「admin」），能力取各群組角色的聯集，不是取最高的那個。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
                             <select class="form-select" id="group-role">
                                 <option value="User">User（一般使用者：只看被授權的主機，可維護處理狀態）</option>
                                 <option value="Dev">Dev（開發人員：執行監控＋全部主機唯讀）</option>

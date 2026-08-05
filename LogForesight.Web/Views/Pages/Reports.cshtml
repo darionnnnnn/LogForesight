@@ -2,141 +2,174 @@
     ViewData["Title"] = "報表";
 }
 
-@* 版面依 docs/WEB-SPEC.md §9.6：期間列 → KPI 卡 → 圖表區 → 明細 → 簽章查詢 *@
+@* 版面依 docs/WEB-SPEC.md §9.6：期間列 → KPI 卡 → 圖表區 *@
 @* 2026-07-27 改版（docs/archive/HISTORY.md #6）：占比圖表縮小為一列三顆＋自訂圖表 modal *@
+@* 2026-08-05（docs/archive/FEEDBACK-10-PLAN.md §5）一屏化改為**隨視窗自動縮放**：
+   外層 .lf-report-page 佔滿可用高度，圖表區分配剩餘空間（fr），不再靠寫死的圖表像素高度
+   去猜「扣掉瀏覽器邊框與側欄後還剩多少」——那個猜測在每台螢幕上都會猜錯。 *@
 
-<div class="lf-card mb-3 lf-no-print">
-    <div class="lf-card__body">
-        <form id="report-form" class="row g-2 align-items-end">
-            <div class="col-auto">
-                <label for="report-from" class="form-label small mb-1">起始日期</label>
-                <input type="date" class="form-control form-control-sm" id="report-from" />
+<div class="lf-report-page">
+    <div class="lf-card lf-no-print lf-report-page__fixed">
+        <div class="lf-card__body">
+            @* 期間與顯示範圍併成同一列（§5）：兩者都是「這份報表在講哪些資料」的條件，
+               分兩列只是白白吃掉一整列高度。視窗窄時自動換行，小螢幕不受影響 *@
+            <form id="report-form" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label for="report-from" class="form-label small mb-1">起始日期</label>
+                    <input type="date" class="form-control form-control-sm" id="report-from" />
+                </div>
+                <div class="col-auto">
+                    <label for="report-to" class="form-label small mb-1">結束日期</label>
+                    <input type="date" class="form-control form-control-sm" id="report-to" />
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-primary">套用</button>
+                </div>
+                <div class="col-auto">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" data-range="7">本週</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="30">本月</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
+                    </div>
+                </div>
+
+                @* 處理狀態顯示範圍（§5，回饋第九輪）：單選——一個母體對應一組明確語意 *@
+                <div class="col-auto d-flex align-items-center gap-2">
+                    <span class="lf-toolbar__group-label">顯示範圍</span>
+                    <div class="lf-toolbar__chips" id="report-scope-chips">
+                        <button type="button" class="lf-chip active" data-scope="all">全部</button>
+                        <button type="button" class="lf-chip" data-scope="unresolved">未結案</button>
+                        <button type="button" class="lf-chip" data-scope="open">未處理</button>
+                        <button type="button" class="lf-chip" data-scope="unassigned">未指派</button>
+                    </div>
+                </div>
+
+                <div class="col-auto ms-auto d-flex gap-2 align-items-center">
+                    @* 跨主機同簽章查詢已併入「問題查詢」（§4）：原本是頁底一整段說明文字，
+                       docs/archive/FEEDBACK-10-PLAN.md §5 收進 popover——一次性的導引不值得每次都佔一段版面 *@
+                    <a class="btn btn-sm btn-outline-secondary" href="/records">
+                        查同一問題的其他主機
+                    </a>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="要查同一事件簽章出現在哪些主機／日子（判斷是單機個案還是全環境共通），請到問題查詢頁輸入 Event ID／來源，切「依問題」視角即可，還能直接下鑽與指派。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-customize-charts" data-bs-toggle="modal" data-bs-target="#chart-picker-modal">自訂圖表</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <h1 class="h5 d-none d-print-block" id="print-title"></h1>
+
+    @* KPI 列外面多包一層（docs/archive/FEEDBACK-10-PLAN.md §5）：Bootstrap 的 .row 帶負的
+       margin-top（配合子項 padding-top 抵銷），直接當 flex 子項時那個負邊距會讓
+       高度計算多出十幾像素、逼出一條只捲得動幾像素的捲軸。包一層普通 div 隔開即可 *@
+    <div class="lf-report-page__fixed">
+        <div class="row g-3" id="report-kpi"></div>
+    </div>
+
+    @* 圖表區：兩列均分剩餘高度（見 site.css .lf-report-page__charts），
+       每張卡的 .lf-chart 因此由容器決定高度，Chart.js 的 responsive 天然跟著縮放 *@
+    <div class="lf-report-page__charts">
+        <div class="lf-report-page__row">
+        <div class="row g-3 h-100">
+            <div class="col-lg-6" id="trend-section">
+                <section class="lf-card h-100">
+                    <div class="lf-card__header">
+                        <h2 class="lf-card__title">告警數量趨勢</h2>
+                        <div id="trend-toolbar"></div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="trend-wrapper"><canvas id="trend-chart"></canvas></div>
+                    </div>
+                </section>
             </div>
-            <div class="col-auto">
-                <label for="report-to" class="form-label small mb-1">結束日期</label>
-                <input type="date" class="form-control form-control-sm" id="report-to" />
+
+            <div class="col-lg-6" id="category-section">
+                <section class="lf-card h-100">
+                    <div class="lf-card__header">
+                        <h2 class="lf-card__title">風險類型分布</h2>
+                        <div id="category-toolbar"></div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="category-wrapper"><canvas id="category-chart"></canvas></div>
+                    </div>
+                </section>
             </div>
-            <div class="col-auto">
-                <button type="submit" class="btn btn-sm btn-primary">套用</button>
+        </div>
+
+        </div>
+
+        @* 主機告警排行半寬，與三顆占比小圖並列 *@
+        <div class="lf-report-page__row">
+        <div class="row g-3 h-100">
+            <div class="col-lg-6" id="host-section">
+                <section class="lf-card h-100">
+                    <div class="lf-card__header">
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">主機告警排行</h2>
+                            <span class="text-muted small" id="host-rank-subtitle"></span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="host-view-all">檢視全部</a>
+                            <div id="host-toolbar"></div>
+                        </div>
+                    </div>
+                    <div class="lf-card__body">
+                        <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
+                    </div>
+                </section>
             </div>
-            <div class="col-auto">
-                <div class="btn-group btn-group-sm">
-                    <button type="button" class="btn btn-outline-secondary" data-range="7">本週</button>
-                    <button type="button" class="btn btn-outline-secondary" data-range="30">本月</button>
-                    <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
+
+            @* 三顆占比小圖改「並排」而非直向堆疊（docs/archive/FEEDBACK-10-PLAN.md §5）：
+               直向堆疊時每張卡的最小高度（標題＋甜甜圈＋圖例）約 210px，三張就要 640px，
+               半欄根本容不下，一屏化必然破功。並排後整組只需要一張卡的高度，
+               圖例改放甜甜圈下方（欄位變窄，並排會把文字擠成逐字直排）。 *@
+            <div class="col-lg-6">
+                <div class="row g-3 h-100">
+                    <div class="col-4" id="risk-section">
+                        <section class="lf-card h-100">
+                            <div class="lf-card__header">
+                                <h2 class="lf-card__title">風險層級占比</h2>
+                            </div>
+                            <div class="lf-card__body lf-chart-stack">
+                                <div class="lf-chart lf-chart--sm" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
+                                <div class="w-100" id="risk-legend"></div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="col-4" id="affected-hosts-section">
+                        <section class="lf-card h-100">
+                            <div class="lf-card__header">
+                                <h2 class="lf-card__title">受影響主機占比</h2>
+                            </div>
+                            <div class="lf-card__body lf-chart-stack">
+                                <div class="lf-chart lf-chart--sm" id="affected-hosts-wrapper"><canvas id="affected-hosts-chart"></canvas></div>
+                                <div class="w-100" id="affected-hosts-legend"></div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="col-4" id="handling-progress-section">
+                        <section class="lf-card h-100">
+                            <div class="lf-card__header">
+                                <h2 class="lf-card__title">處理進度</h2>
+                            </div>
+                            <div class="lf-card__body lf-chart-stack">
+                                <div class="lf-chart lf-chart--sm" id="handling-progress-wrapper"><canvas id="handling-progress-chart"></canvas></div>
+                                <div class="w-100" id="handling-progress-legend"></div>
+                            </div>
+                        </section>
+                    </div>
                 </div>
             </div>
-            <div class="col-auto ms-auto d-flex gap-2">
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-customize-charts" data-bs-toggle="modal" data-bs-target="#chart-picker-modal">自訂圖表</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
-            </div>
-        </form>
-
-        @* 處理狀態顯示範圍（§5）：單選——一個母體對應一組明確語意，取代語意重疊的多選 checkbox *@
-        <div class="d-flex align-items-center gap-2 mt-2 lf-no-print">
-            <span class="lf-toolbar__group-label">顯示範圍</span>
-            <div class="lf-toolbar__chips" id="report-scope-chips">
-                <button type="button" class="lf-chip active" data-scope="all">全部</button>
-                <button type="button" class="lf-chip" data-scope="unresolved">未結案</button>
-                <button type="button" class="lf-chip" data-scope="open">未處理</button>
-                <button type="button" class="lf-chip" data-scope="unassigned">未指派</button>
-            </div>
+        </div>
         </div>
     </div>
 </div>
-
-<h1 class="h5 d-none d-print-block mb-3" id="print-title"></h1>
-
-<div class="row g-3" id="report-kpi"></div>
-
-<div class="row g-3 mt-1">
-    <div class="col-lg-6" id="trend-section">
-        <section class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">告警數量趨勢</h2>
-                <div id="trend-toolbar"></div>
-            </div>
-            <div class="lf-card__body">
-                <div class="lf-chart" id="trend-wrapper"><canvas id="trend-chart"></canvas></div>
-            </div>
-        </section>
-    </div>
-
-    <div class="col-lg-6" id="category-section">
-        <section class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">風險類型分布</h2>
-                <div id="category-toolbar"></div>
-            </div>
-            <div class="lf-card__body">
-                <div class="lf-chart" id="category-wrapper"><canvas id="category-chart"></canvas></div>
-            </div>
-        </section>
-    </div>
-</div>
-
-@* 一頁化（§4）：主機告警排行改半寬，與三顆占比小圖（右半直向堆疊）並列——
-   桌面預設全開時 KPI＋六張圖一屏內呈現，不必捲動。占比圓餅圖左圖右文字條列。 *@
-<div class="row g-3 mt-1">
-    <div class="col-lg-6" id="host-section">
-        <section class="lf-card h-100">
-            <div class="lf-card__header">
-                <div class="d-flex align-items-center gap-2">
-                    <h2 class="lf-card__title mb-0">主機告警排行</h2>
-                    <span class="text-muted small" id="host-rank-subtitle"></span>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <a class="btn btn-sm btn-outline-secondary lf-no-print d-none" id="host-view-all">檢視全部</a>
-                    <div id="host-toolbar"></div>
-                </div>
-            </div>
-            <div class="lf-card__body">
-                <div class="lf-chart" id="host-wrapper"><canvas id="host-chart"></canvas></div>
-            </div>
-        </section>
-    </div>
-
-    <div class="col-lg-6">
-        <div class="d-flex flex-column gap-3 h-100">
-            <section class="lf-card" id="risk-section">
-                <div class="lf-card__header">
-                    <h2 class="lf-card__title">風險層級占比</h2>
-                </div>
-                <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
-                    <div class="lf-chart lf-chart--sm flex-shrink-0" id="risk-wrapper"><canvas id="risk-chart"></canvas></div>
-                    <div class="flex-grow-1" id="risk-legend"></div>
-                </div>
-            </section>
-
-            <section class="lf-card" id="affected-hosts-section">
-                <div class="lf-card__header">
-                    <h2 class="lf-card__title">受影響主機占比</h2>
-                </div>
-                <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
-                    <div class="lf-chart lf-chart--sm flex-shrink-0" id="affected-hosts-wrapper"><canvas id="affected-hosts-chart"></canvas></div>
-                    <div class="flex-grow-1" id="affected-hosts-legend"></div>
-                </div>
-            </section>
-
-            <section class="lf-card" id="handling-progress-section">
-                <div class="lf-card__header">
-                    <h2 class="lf-card__title">處理進度</h2>
-                </div>
-                <div class="lf-card__body d-flex flex-wrap gap-3 align-items-center">
-                    <div class="lf-chart lf-chart--sm flex-shrink-0" id="handling-progress-wrapper"><canvas id="handling-progress-chart"></canvas></div>
-                    <div class="flex-grow-1" id="handling-progress-legend"></div>
-                </div>
-            </section>
-        </div>
-    </div>
-</div>
-
-@* 跨主機同簽章查詢已併入「問題查詢」（§4）：問題查詢的 Event ID＋來源欄位＋「依問題」
-   視角即為同一功能的嚴格超集（可下鑽、可指派）。查全保留期時把日期區間拉大即可。 *@
-<p class="text-muted small mt-3 lf-no-print">
-    要查<strong>同一事件簽章出現在哪些主機／日子</strong>（判斷單機個案或全環境共通），
-    請至 <a href="/records">問題查詢</a>——輸入 Event ID／來源，切「依問題」視角即可，還能直接下鑽與指派。
-</p>
 
 @* 自訂圖表（docs/archive/HISTORY.md #6）：勾選狀態存 localStorage，預設全開 *@
 <div class="modal fade lf-no-print" id="chart-picker-modal" tabindex="-1" aria-hidden="true">

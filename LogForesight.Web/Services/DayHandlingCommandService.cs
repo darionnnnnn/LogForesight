@@ -75,6 +75,7 @@ public class DayHandlingCommandService
     public HandlingDto Update(long hostId, DateTime date, UpdateHandlingRequest request)
     {
         var host = RequireVisibleHost(hostId);
+        RequireNotCaseGrantOnly(hostId);
         RequireRecordExists(hostId, date);
 
         if (!HandlingStatuses.IsValid(request.Status))
@@ -114,9 +115,14 @@ public class DayHandlingCommandService
         return ToDto(host, date, existing);
     }
 
-    public HandlingDto Assign(long hostId, DateTime date, long? handlerId)
+    /// <summary>
+    /// 指派／改派這一天的處理人。<paramref name="reassign"/> 見
+    /// <see cref="AssignHandlerRequest.Reassign"/>（docs/archive/FEEDBACK-10-PLAN.md §9）。
+    /// </summary>
+    public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false)
     {
         var host = RequireVisibleHost(hostId);
+        RequireNotCaseGrantOnly(hostId);
         var record = _repository.GetOne(hostId, date)
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
@@ -150,9 +156,9 @@ public class DayHandlingCommandService
         // 建案（docs/archive/FEEDBACK-4-PLAN.md §2/Q1）：指派給人時，對當日「未處理計算」等級內、
         // 未結案、無進行中案件的每個問題建案並回溯關聯歷史——落實 2.1「同主機同問題只由
         // 一個人處理」。取消指派（handlerId=null）不建案，那不是「開始有人處理」的動作。
-        var (casesCreated, skippedHandlerNames) = handlerId.HasValue
-            ? BuildCasesForDay(host, date, record, handlerId.Value)
-            : (0, new List<string>());
+        var (casesCreated, skippedHandlerNames, reassignedCount) = handlerId.HasValue
+            ? BuildCasesForDay(host, date, record, handlerId.Value, reassign)
+            : (0, new List<string>(), 0);
 
         _audit.Record(
             action: AuditActions.HandlingAssign,
@@ -160,15 +166,28 @@ public class DayHandlingCommandService
             // 事後查稽核的人必須看得出這一點
             summary: $"將 {host.HostName} {date:yyyy-MM-dd} 的處理人由「{beforeName}」改為「{afterName}」" +
                      $"（主機負責人不變：{OwnerNames(host)}）" +
-                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : ""),
+                     (casesCreated > 0 ? $"；建立 {casesCreated} 個問題案件並回溯關聯歷史" : "") +
+                     (reassignedCount > 0 ? $"；改派 {reassignedCount} 個他人進行中的問題案件" : ""),
             targetKind: "handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
-            detail: new { Before = beforeName, After = afterName, Owners = OwnerNames(host), CasesCreated = casesCreated, CasesSkipped = skippedHandlerNames });
+            detail: new
+            {
+                Before = beforeName, After = afterName, Owners = OwnerNames(host),
+                CasesCreated = casesCreated, CasesSkipped = skippedHandlerNames, CasesReassigned = reassignedCount
+            });
 
         var dto = ToDto(host, date, existing);
         dto.CasesCreated = casesCreated;
         dto.CasesSkippedHandlerNames = skippedHandlerNames;
+        dto.CasesReassigned = reassignedCount;
         dto.OpenCaseCount = _progress.OpenCaseCount(host, record);
+
+        // 被指派者看不到這台主機時告知執行指派的人（docs/archive/FEEDBACK-10-PLAN.md §7）：
+        // 指派仍然成立——對方會以案件處理人的身分取得「這台主機的這些問題」的檢視權，
+        // 但看不到這台主機的其他任何東西，交辦時講清楚比事後被問「我點進去是空的」好
+        if (handler != null && !_visibility.GetVisibleHostIdsFor(handler.UserId).Contains(host.HostId))
+            dto.AssigneeHasNoHostAccess = true;
+
         return dto;
     }
 
@@ -177,8 +196,8 @@ public class DayHandlingCommandService
     /// 不該自動變成有人要處理的案件，已結案的問題也不建案。已有進行中案件的問題保留原處理人
     /// （Q2），回傳略過清單（去重的處理人姓名）供呼叫端提示「已由 ○○○ 的案件涵蓋」。
     /// </summary>
-    private (int Created, List<string> SkippedHandlerNames) BuildCasesForDay(
-        WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId)
+    private (int Created, List<string> SkippedHandlerNames, int Reassigned) BuildCasesForDay(
+        WebHost host, DateTime date, DailyAnalysisRecord record, long handlerId, bool reassign)
     {
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var dayIssueHandlings = _issueStore.GetForDay(host.HostName, date)
@@ -187,6 +206,7 @@ public class DayHandlingCommandService
         var actorId = _currentUser.UserId > 0 ? (long?)_currentUser.UserId : null;
 
         var created = 0;
+        var reassigned = 0;
         var skippedHandlerIds = new HashSet<long>();
 
         foreach (var issue in record.TopIssues)
@@ -203,15 +223,35 @@ public class DayHandlingCommandService
                 handlerId, note: null, dueDate: null,
                 actorId, _currentUser.Account, occurredAt);
 
-            if (result.Created) created++;
-            else if (result.ExistingHandlerId.HasValue) skippedHandlerIds.Add(result.ExistingHandlerId.Value);
+            if (result.Created)
+            {
+                created++;
+            }
+            else if (result.ExistingHandlerId is { } existingHandlerId && existingHandlerId != handlerId)
+            {
+                // 已由他人的進行中案件涵蓋：預設保留原處理人並回報（既有語意，不搶走）；
+                // 使用者在前端確認過「要改派」才換人（§9），改派留下 case_reassign 歷程
+                if (reassign)
+                {
+                    _caseCoordinator.ReassignCase(host.HostName, key, handlerId, actorId, _currentUser.Account, occurredAt);
+                    reassigned++;
+                }
+                else
+                {
+                    skippedHandlerIds.Add(existingHandlerId);
+                }
+            }
         }
 
         var skippedNames = skippedHandlerIds
-            .Select(id => _users.Get(id)?.DisplayName ?? "（已刪除）")
+            .Select(id =>
+            {
+                var user = _users.Get(id);
+                return user == null ? "（已刪除）" : NameFormat.WithAccount(user.DisplayName, user.Account);
+            })
             .ToList();
 
-        return (created, skippedNames);
+        return (created, skippedNames, reassigned);
     }
 
     /// <summary>
@@ -281,6 +321,18 @@ public class DayHandlingCommandService
         return _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
     }
 
+    /// <summary>
+    /// 日層級的狀態與指派**不開放給案件授與者**（docs/archive/FEEDBACK-10-PLAN.md §7）：
+    /// 他被交辦的是「這台主機的這個問題」，不是這一天。日層級狀態是整天的結論
+    /// （由當天全部問題推導），改它等於代替有完整權限的人對整天下判斷。
+    /// 前端已隱藏這一區（`RecordDetailDto.CaseGrantOnly`），這裡是防直接打端點。
+    /// </summary>
+    private void RequireNotCaseGrantOnly(long hostId)
+    {
+        if (_visibility.IsCaseGrantOnly(hostId))
+            throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
+    }
+
     /// <summary>不允許對不存在的分析紀錄建立處理狀態——那會產生指向空白的待辦事項</summary>
     private void RequireRecordExists(long hostId, DateTime date)
     {
@@ -325,7 +377,12 @@ public class DayHandlingCommandService
             Note = handling?.Note,
             UpdatedAt = handling?.UpdatedAt,
 
-            // 負責人是主機的長期屬性，處理面板上唯讀顯示——改派不會動到它
+            // 負責人是主機的長期屬性，處理面板上唯讀顯示——改派不會動到它。
+            // **這裡刻意不加帳號**，是全站「顯示名稱(帳號)」規範的已知例外
+            // （docs/archive/FEEDBACK-10-PLAN.md §6 體檢確認）：這份清單同時是指派下拉的
+            // 「置頂＋標（負責人）」比對鍵，而比對是拿 user.displayName 逐字比對
+            // （ui.js searchableUserSelect），加上帳號會讓比對永遠不成立、置頂靜默失效。
+            // 帶帳號的版本在主機清單另有一份（HostDtoMapper.OwnerNames）。
             OwnerNames = host.OwnerUserIds
                 .Select(id => _users.Get(id)?.DisplayName ?? "（已刪除）")
                 .ToList(),

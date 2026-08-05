@@ -54,16 +54,23 @@ public class HandlingHistoryQueryService
     {
         var host = RequireVisibleHost(hostId);
 
+        // 案件授與者只看得到自己被交辦問題的歷程（docs/archive/FEEDBACK-10-PLAN.md §7）：
+        // 歷程列含 IssueLabel（「Source EventId」）與處理說明，不過濾等於把同一天其他問題的
+        // 處理過程一起交出去。**日層級的列（IssueKey 為空）也一併排除**——那是整天的狀態敘事，
+        // 不屬於單一問題的交辦範圍
+        var allowed = _visibility.GetIssueKeyRestriction(hostId);
+
         return _store.GetLogs(host.HostName, date)
+            .Where(log => allowed == null || (log.IssueKey != null && allowed.Contains(log.IssueKey)))
             .Select(log => new HandlingLogDto
             {
                 Action = log.Action,
                 ActionText = HandlingTextHelpers.ActionText(log.Action),
                 Status = log.Status,
                 StatusText = HandlingTextHelpers.StatusText(log.Status),
-                HandlerName = log.HandlerId.HasValue
-                    ? _users.Get(log.HandlerId.Value)?.DisplayName ?? "（已刪除）"
-                    : null,
+                // 純顯示字串（歷程列的「處理人：X」），走全站統一的「顯示名稱(帳號)」
+                // ——docs/archive/FEEDBACK-10-PLAN.md §6
+                HandlerName = log.HandlerId.HasValue ? ResolveHandlerName(log.HandlerId.Value) : null,
                 Note = log.Note,
                 IssueLabel = log.IssueLabel,
                 ActorAccount = log.ActorAccount,
@@ -71,6 +78,12 @@ public class HandlingHistoryQueryService
                 CreatedAt = log.CreatedAt
             })
             .ToList();
+    }
+
+    private string ResolveHandlerName(long userId)
+    {
+        var user = _users.Get(userId);
+        return user == null ? "（已刪除）" : NameFormat.WithAccount(user.DisplayName, user.Account);
     }
 
     /// <summary>報表顯示範圍（§5）：單選過濾——一個母體對應一組明確語意。</summary>
@@ -212,7 +225,16 @@ public class HandlingHistoryQueryService
     public HandlerWorkloadDto GetHandlerWorkload(long userId, bool includeResolvedDays)
     {
         var user = _users.Get(userId) ?? throw DomainException.NotFound("找不到這位使用者。");
-        var visibleHostIds = _visibility.GetVisibleHostIds();
+
+        // 可見範圍以**檢視者**為準（§9.4a 既有規則），但要聯集檢視者自己的案件授與
+        // （docs/archive/FEEDBACK-10-PLAN.md §7）：被交辦到授權範圍外的主機時，「我的交辦」
+        // 若還是看不到那些案件，等於被指派了卻找不到工作在哪
+        var visibleHostIds = _visibility.GetVisibleHostIds().ToHashSet();
+        foreach (var hostName in _visibility.GetCaseGrants().Keys)
+        {
+            var granted = _hosts.FindByName(hostName);
+            if (granted != null) visibleHostIds.Add(granted.HostId);
+        }
 
         var caseItems = BuildHandlerCaseItems(userId, visibleHostIds);
         var dayItems = BuildHandlerDayItems(userId, visibleHostIds, includeResolvedDays);

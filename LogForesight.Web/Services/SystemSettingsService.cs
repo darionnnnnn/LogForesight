@@ -146,10 +146,24 @@ public class SystemSettingsService : ISystemSettingsService
         var channels = NormalizeLines(request.AnalysisChannels);
         var watchedFolders = NormalizeLines(request.WatchedFolders);
 
+        // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
+        var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
+        if (brandName.Length > BrandTextMaxLength)
+            throw DomainException.Validation($"產品名稱不可超過 {BrandTextMaxLength} 個字。");
+
+        var brandSubtitle = (request.BrandSubtitle ?? "").Trim();
+        if (brandSubtitle.Length > BrandTextMaxLength)
+            throw DomainException.Validation($"副標文字不可超過 {BrandTextMaxLength} 個字。");
+
+        var brandIcon = ValidateBrandIcon(request.BrandIconDataUri);
+
         var before = _store.Get();
 
         var saved = _store.Update(s =>
         {
+            s.BrandName = brandName;
+            s.BrandSubtitle = brandSubtitle;
+            s.BrandIconDataUri = brandIcon;
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.VisibleDayRiskLevels = dayRiskLevels;
@@ -217,6 +231,58 @@ public class SystemSettingsService : ISystemSettingsService
             });
 
         return ToDto(saved);
+    }
+
+    // ── 品牌自訂的驗證常數與規則（docs/archive/FEEDBACK-10-PLAN.md §1）──────────────────
+
+    /// <summary>名稱空白時回退的出廠名（與 <see cref="SystemSettings.BrandName"/> 初始值同源）</summary>
+    private static readonly string DefaultBrandName = new SystemSettings().BrandName;
+
+    /// <summary>產品名稱／副標的長度上限：側欄寬度固定，再長也只會被 text-truncate 切掉</summary>
+    private const int BrandTextMaxLength = 40;
+
+    /// <summary>自訂圖示解碼後的大小上限（KB）。側欄顯示尺寸約 30px，64KB 綽綽有餘；
+    /// 設定是整包 blob，塞大圖會拖慢每一次設定讀寫</summary>
+    private const int BrandIconMaxKb = 64;
+
+    /// <summary>
+    /// 允許的圖示 data URI 前綴。**刻意不含 SVG**：SVG 可內嵌 script，即使以 img 載入不會執行，
+    /// 也不值得為單一裝飾性功能開這個驗證面（見 SystemSettings.BrandIconDataUri）。
+    /// </summary>
+    private static readonly string[] BrandIconPrefixes =
+    {
+        "data:image/png;base64,",
+        "data:image/jpeg;base64,"
+    };
+
+    /// <summary>
+    /// 品牌圖示驗證：空＝沿用內建向量圖示；否則必須是允許的 data URI 前綴、base64 可解碼、
+    /// 且解碼後不超過上限。**驗證解碼後的真實大小**而非字串長度——base64 會膨脹約 1/3，
+    /// 用字串長度當門檻等於實際只放行 3/4 的量。
+    /// </summary>
+    private static string ValidateBrandIcon(string? raw)
+    {
+        var value = (raw ?? "").Trim();
+        if (value.Length == 0) return "";
+
+        var prefix = BrandIconPrefixes.FirstOrDefault(p => value.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        if (prefix == null)
+            throw DomainException.Validation("品牌圖示只接受 PNG 或 JPG 圖片。");
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(value[prefix.Length..]);
+        }
+        catch (FormatException)
+        {
+            throw DomainException.Validation("品牌圖示的內容無法解讀，請重新選擇圖片。");
+        }
+
+        if (bytes.Length > BrandIconMaxKb * 1024)
+            throw DomainException.Validation($"品牌圖示不可超過 {BrandIconMaxKb} KB（目前 {bytes.Length / 1024} KB）。");
+
+        return value;
     }
 
     /// <summary>trim、去除空白行、去重——與 UserAdminService.NormalizeBatchAccounts 同樣的寬鬆解析慣例</summary>
@@ -294,8 +360,35 @@ public class SystemSettingsService : ISystemSettingsService
             .Distinct()
             .ToList();
 
+    /// <summary>
+    /// AI 進階參數的出廠值（docs/archive/FEEDBACK-10-PLAN.md §3）：直接讀 <see cref="SystemSettings"/> 的
+    /// 屬性初始器，不在這裡抄第二份數字——改 Core 的預設值，設定頁的「還原預設值」自動跟上。
+    /// static readonly 而非每次 new：這是不變的常數集合。
+    /// </summary>
+    private static readonly AiAdvancedDefaultsDto AiAdvancedDefaults = BuildAiAdvancedDefaults();
+
+    private static AiAdvancedDefaultsDto BuildAiAdvancedDefaults()
+    {
+        var factory = new SystemSettings();
+        return new AiAdvancedDefaultsDto
+        {
+            TimeoutSeconds = factory.AiTimeoutSeconds,
+            RetryCount = factory.AiRetryCount,
+            RetryDelaySeconds = factory.AiRetryDelaySeconds,
+            JsonRetryCount = factory.AiJsonRetryCount,
+            MaxTokens = factory.AiMaxTokens,
+            DeepDiveMaxTokens = factory.AiDeepDiveMaxTokens,
+            FrequencyPenalty = factory.AiFrequencyPenalty,
+            PresencePenalty = factory.AiPresencePenalty,
+            ExtraRequestFieldsJson = factory.AiExtraRequestFieldsJson
+        };
+    }
+
     private SystemSettingsDto ToDto(SystemSettings s) => new()
     {
+        BrandName = s.BrandName,
+        BrandSubtitle = s.BrandSubtitle,
+        BrandIconDataUri = s.BrandIconDataUri,
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
@@ -320,6 +413,7 @@ public class SystemSettingsService : ISystemSettingsService
         AiFrequencyPenalty = s.AiFrequencyPenalty,
         AiPresencePenalty = s.AiPresencePenalty,
         AiExtraRequestFieldsJson = s.AiExtraRequestFieldsJson,
+        AiAdvancedDefaults = AiAdvancedDefaults,
         WatchedFolders = s.WatchedFolders,
         ServerDescription = s.ServerDescription,
         CheckupIntervalDays = s.CheckupIntervalDays,

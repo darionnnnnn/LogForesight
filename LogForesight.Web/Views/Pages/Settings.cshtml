@@ -8,6 +8,9 @@
     <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
+    @* 外觀（docs/archive/FEEDBACK-10-PLAN.md §1）：放最後一個頁籤——找 logo／名稱的人會直覺點「外觀」，
+       塞進「層級與顯示」反而找不到；擺最後則不動預設落地頁籤（層級與顯示仍是主要入口） *@
+    <li class="nav-item"><button class="nav-link" data-tab="brand" type="button">外觀</button></li>
 </ul>
 
 <form id="settings-form" novalidate>
@@ -79,6 +82,14 @@
             <hr />
             <details id="ai-advanced">
                 <summary class="fw-semibold">進階參數（逾時／重試／token 上限／取樣）</summary>
+                @* 還原預設值（docs/archive/FEEDBACK-10-PLAN.md §3）：只把欄位填回出廠值，仍需按「儲存」才生效
+                   （整頁單一 form 語意，不做偷偷落盤）。放 summary 外側，避免點按鈕誤觸折疊 *@
+                <div class="mt-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-ai-advanced-reset">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
+                        還原預設值
+                    </button>
+                </div>
                 <p class="text-muted small mt-2 mb-3">
                     預設值即原本 appsettings 的出廠值，平常不需調整。改動只影響**排程／立即執行**的批次分析
                     與 Web 互動情境共用的取樣參數；逾時與重試在互動情境另有更短的固定值（避免使用者盯著轉圈）。
@@ -310,6 +321,57 @@
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="risky-event-retention-days" min="1" max="3650" required />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：側欄與登入頁的產品名稱、副標與圖示。
+       伺服器端渲染，存檔後重新整理即生效 *@
+    <div class="lf-card mb-3 d-none" data-panel="brand">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">外觀</h2>
+        </div>
+        <div class="lf-card__body">
+            <p class="text-muted small mb-3">
+                套用於左側選單頂端與登入頁。改動存檔後<strong>重新整理頁面</strong>即可看到。
+            </p>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="brand-name" class="form-label">產品名稱</label>
+                    <input type="text" class="form-control" id="brand-name" maxlength="40" placeholder="LogForesight" />
+                    <div class="form-text">留空＝使用出廠名稱 LogForesight。</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="brand-subtitle" class="form-label">副標文字</label>
+                    <input type="text" class="form-control" id="brand-subtitle" maxlength="40" placeholder="事件日誌預警" />
+                    <div class="form-text">留空＝不顯示副標，只留產品名稱。</div>
+                </div>
+
+                <div class="col-12">
+                    <label for="brand-icon-file" class="form-label">圖示</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="PNG 或 JPG，64KB 以內。顯示尺寸只有約 30 像素，不需要大圖。未上傳時使用內建圖示。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="lf-brand-preview" id="brand-icon-preview"></span>
+                        <div class="flex-grow-1">
+                            <input type="file" class="form-control" id="brand-icon-file" accept="image/png,image/jpeg" />
+                            <div class="form-text" id="brand-icon-hint"></div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="brand-icon-clear">
+                            移除圖示
+                        </button>
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="brand-reset">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
+                        還原預設外觀
+                    </button>
                 </div>
             </div>
         </div>

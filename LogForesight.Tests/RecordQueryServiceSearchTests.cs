@@ -699,7 +699,86 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(1, result.Created);   // 只有 host2 真的建案
         var skipped = Assert.Single(result.Skipped);
         Assert.Equal("HOST-A", skipped.HostName);
-        Assert.Equal("原處理人", skipped.ExistingHandlerName);
+        // 全站統一的「顯示名稱(帳號)」（docs/archive/FEEDBACK-10-PLAN.md §6）
+        Assert.Equal("原處理人(DOMAIN\\owner)", skipped.ExistingHandlerName);
+    }
+
+    // ── 回饋第十輪 §9（改派）／§12（分攤）────────────────────────────────────
+
+    /// <summary>§12：Assignments 讓每台主機各有處理人——群組分攤靠這個欄位落盤</summary>
+    [Fact]
+    public void BulkAssignIssueCase_逐台指派不同處理人()
+    {
+        var host1 = AddHost("HOST-A");
+        var host2 = AddHost("HOST-B");
+        var first = _users.Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
+        var second = _users.Upsert(new WebUser { Account = "DOMAIN\\b", DisplayName = "乙" });
+        var issue = DiskIssue();
+        AddRecord(host1, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host2, DateTime.Today, "高", issues: new[] { issue });
+
+        var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        {
+            Source = "disk", EventId = 153,
+            HostIds = new List<long> { host1.HostId, host2.HostId },
+            Assignments = new List<IssueCaseAssignmentDto>
+            {
+                new() { HostId = host1.HostId, HandlerId = first.UserId },
+                new() { HostId = host2.HostId, HandlerId = second.UserId }
+            }
+        });
+
+        Assert.Equal(2, result.Created);
+        Assert.Equal(first.UserId, _caseStore.GetOpen("HOST-A", IssueSignatureKey.For(issue))!.HandlerId);
+        Assert.Equal(second.UserId, _caseStore.GetOpen("HOST-B", IssueSignatureKey.For(issue))!.HandlerId);
+    }
+
+    /// <summary>
+    /// §9：勾了「改派」的主機才換人，其餘維持既有的「保留原處理人並列入略過」語意——
+    /// 沒有這個分野，一次批次指派就會把別人手上的工作全部靜默搶走。
+    /// </summary>
+    [Fact]
+    public void BulkAssignIssueCase_只改派勾選的主機()
+    {
+        var host1 = AddHost("HOST-A");
+        var host2 = AddHost("HOST-B");
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
+        var newHandler = _users.Upsert(new WebUser { Account = "DOMAIN\\new", DisplayName = "新處理人" });
+        var issue = DiskIssue();
+        AddRecord(host1, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host2, DateTime.Today, "高", issues: new[] { issue });
+
+        // 兩台都先有 owner 的案件
+        _handlingService.Assign(host1.HostId, DateTime.Today, owner.UserId);
+        _handlingService.Assign(host2.HostId, DateTime.Today, owner.UserId);
+
+        var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        {
+            Source = "disk", EventId = 153,
+            HostIds = new List<long> { host1.HostId, host2.HostId },
+            HandlerId = newHandler.UserId,
+            ReassignHostIds = new List<long> { host1.HostId }
+        });
+
+        Assert.Equal(0, result.Created);
+        var reassigned = Assert.Single(result.Reassigned);
+        Assert.Equal("HOST-A", reassigned.HostName);
+        Assert.Equal("HOST-B", Assert.Single(result.Skipped).HostName);
+
+        Assert.Equal(newHandler.UserId, _caseStore.GetOpen("HOST-A", IssueSignatureKey.For(issue))!.HandlerId);
+        Assert.Equal(owner.UserId, _caseStore.GetOpen("HOST-B", IssueSignatureKey.For(issue))!.HandlerId);
+    }
+
+    /// <summary>§12：群組候選人只列啟用中的成員——分攤給停用帳號等於那幾台沒人處理</summary>
+    [Fact]
+    public void GetHandlerCandidates_排除停用成員()
+    {
+        var active = _users.Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲", GroupIds = new List<long> { 7 } });
+        _users.Upsert(new WebUser { Account = "DOMAIN\\b", DisplayName = "乙", GroupIds = new List<long> { 7 }, Active = false });
+
+        var candidates = _handlingService.GetHandlerCandidates(7);
+
+        Assert.Equal(active.UserId, Assert.Single(candidates).UserId);
     }
 
     [Fact]

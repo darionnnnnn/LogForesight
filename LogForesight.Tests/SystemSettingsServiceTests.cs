@@ -446,4 +446,93 @@ public class SystemSettingsServiceTests
             Password = "pass"
         }));
     }
+    // ── 回饋第十輪 §1（品牌自訂）／§3（進階參數出廠值）────────────────────────
+
+    /// <summary>
+    /// §3：設定頁的「還原預設值」用的是後端送來的出廠值，而出廠值必須與 Core 模型的
+    /// 屬性初始器同源——這條測試就是在盯「有人改了 SystemSettings 卻忘了同步別處」。
+    /// </summary>
+    [Fact]
+    public void Get_帶出AI進階參數的出廠預設值()
+    {
+        var factory = new SystemSettings();
+        var defaults = Create().Get().AiAdvancedDefaults;
+
+        Assert.Equal(factory.AiTimeoutSeconds, defaults.TimeoutSeconds);
+        Assert.Equal(factory.AiRetryCount, defaults.RetryCount);
+        Assert.Equal(factory.AiRetryDelaySeconds, defaults.RetryDelaySeconds);
+        Assert.Equal(factory.AiJsonRetryCount, defaults.JsonRetryCount);
+        Assert.Equal(factory.AiMaxTokens, defaults.MaxTokens);
+        Assert.Equal(factory.AiDeepDiveMaxTokens, defaults.DeepDiveMaxTokens);
+        Assert.Equal(factory.AiFrequencyPenalty, defaults.FrequencyPenalty);
+        Assert.Equal(factory.AiPresencePenalty, defaults.PresencePenalty);
+        Assert.Equal(factory.AiExtraRequestFieldsJson, defaults.ExtraRequestFieldsJson);
+    }
+
+    /// <summary>§1：品牌預設副標不含「Windows」——Linux 規則面已就緒，寫死 Windows 名不符實</summary>
+    [Fact]
+    public void 品牌副標預設值_不含Windows()
+    {
+        Assert.Equal("事件日誌預警", new SystemSettings().BrandSubtitle);
+    }
+
+    [Fact]
+    public void Update_品牌三欄持久化()
+    {
+        var request = ValidRequest();
+        request.BrandName = "  資安監控平台  ";
+        request.BrandSubtitle = "全廠事件日誌";
+        request.BrandIconDataUri = "data:image/png;base64,aGVsbG8=";
+
+        var saved = Create().Update(request);
+
+        Assert.Equal("資安監控平台", saved.BrandName);   // 前後空白會被 trim
+        Assert.Equal("全廠事件日誌", saved.BrandSubtitle);
+        Assert.Equal("data:image/png;base64,aGVsbG8=", saved.BrandIconDataUri);
+    }
+
+    /// <summary>名稱留空＝回退出廠名稱，不是驗證錯誤（使用者只是不想自訂）</summary>
+    [Fact]
+    public void Update_品牌名稱留空時回退出廠值()
+    {
+        var request = ValidRequest();
+        request.BrandName = "   ";
+
+        Assert.Equal("LogForesight", Create().Update(request).BrandName);
+    }
+
+    /// <summary>§1：只收 PNG／JPG——SVG 可內嵌 script，不為單一裝飾功能開這個驗證面</summary>
+    [Fact]
+    public void Update_品牌圖示非PNG或JPG時擋下()
+    {
+        var request = ValidRequest();
+        request.BrandIconDataUri = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("PNG", ex.Message);
+    }
+
+    /// <summary>大小上限驗的是 base64 **解碼後**的真實位元組數，不是字串長度</summary>
+    [Fact]
+    public void Update_品牌圖示超過上限時擋下()
+    {
+        var request = ValidRequest();
+        request.BrandIconDataUri = "data:image/png;base64," + Convert.ToBase64String(new byte[65 * 1024]);
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+
+        Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
+        Assert.Contains("KB", ex.Message);
+    }
+
+    [Fact]
+    public void Update_品牌圖示內容無法解碼時擋下()
+    {
+        var request = ValidRequest();
+        request.BrandIconDataUri = "data:image/png;base64,!!!not-base64!!!";
+
+        Assert.Throws<DomainException>(() => Create().Update(request));
+    }
 }

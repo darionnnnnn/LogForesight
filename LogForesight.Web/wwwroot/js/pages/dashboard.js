@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, icon, statCard } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
@@ -442,4 +442,9 @@ for (const button of document.querySelectorAll('[data-days]')) {
     button.classList.toggle('active', Number(button.dataset.days) === currentDays);
 }
 
-load();
+guardLoad([
+    document.getElementById('dashboard-categories'),
+    document.getElementById('dashboard-hosts'),
+    document.getElementById('dashboard-silent'),
+    document.getElementById('dashboard-group-risk')
+], load);

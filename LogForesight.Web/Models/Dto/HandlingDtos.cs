@@ -55,6 +55,16 @@ public class HandlingDto
     /// 一個人處理」：不搶走既有案件，前端據此提示「N 個問題已由 ○○○ 的案件涵蓋，未變更」。
     /// </summary>
     public List<string> CasesSkippedHandlerNames { get; set; } = new();
+
+    /// <summary>本次指派改派掉的他人案件數（docs/archive/FEEDBACK-10-PLAN.md §9，只有帶 reassign 才會 &gt; 0）</summary>
+    public int CasesReassigned { get; set; }
+
+    /// <summary>
+    /// true＝被指派的人沒有這台主機的一般檢視權（docs/archive/FEEDBACK-10-PLAN.md §7）。
+    /// 指派**仍然成立**——對方以案件處理人身分取得該問題的範圍限定檢視權；
+    /// 這個旗標是講給執行指派的人聽的，讓他知道對方看得到的只有被交辦的問題。
+    /// </summary>
+    public bool AssigneeHasNoHostAccess { get; set; }
 }
 
 public class UpdateHandlingRequest
@@ -72,6 +82,14 @@ public class AssignHandlerRequest
 {
     /// <summary>null = 取消指派</summary>
     public long? HandlerId { get; set; }
+
+    /// <summary>
+    /// 確認要改派已由他人案件處理中的問題（docs/archive/FEEDBACK-10-PLAN.md §9）。
+    /// false（預設）時，若當日有問題已被別人的進行中案件涵蓋，後端**不動它們**並回 conflict，
+    /// 由前端問過使用者「要不要改派」再帶 true 重送——不確認就靜默搶走別人手上的工作，
+    /// 是原本這個機制刻意避免的事。
+    /// </summary>
+    public bool Reassign { get; set; }
 }
 
 /// <summary>設定單一問題的處理狀態（低風險預設不處理／已知雜訊自動判讀的快速動作用）</summary>
@@ -208,6 +226,22 @@ public class IssueCasePreviewHostDto
 
     /// <summary>null＝目前沒有進行中案件，可以指派</summary>
     public string? ExistingHandlerName { get; set; }
+
+    /// <summary>既有處理人的帳號與 Id（docs/archive/FEEDBACK-10-PLAN.md §6／§9）：
+    /// 顯示要「顯示名稱(帳號)」，勾「改派」時前端也要判斷是不是換了人</summary>
+    public string? ExistingHandlerAccount { get; set; }
+    public long? ExistingHandlerId { get; set; }
+}
+
+/// <summary>
+/// 單台主機的指派對象（docs/archive/FEEDBACK-10-PLAN.md §12）：群組分攤時每台主機各有處理人，
+/// 單人指派時全部都是同一個人。API 因此只有一種形狀，不必為「指派一個人」與
+/// 「指派一群人」各開一支端點。
+/// </summary>
+public class IssueCaseAssignmentDto
+{
+    public long HostId { get; set; }
+    public long HandlerId { get; set; }
 }
 
 public class BulkAssignIssueCaseRequest
@@ -222,8 +256,22 @@ public class BulkAssignIssueCaseRequest
     [MinLength(1, ErrorMessage = "請至少選擇一台主機")]
     public List<long> HostIds { get; set; } = new();
 
-    [Required]
+    /// <summary>單人指派的處理人。<see cref="Assignments"/> 有值時忽略此欄位</summary>
     public long HandlerId { get; set; }
+
+    /// <summary>
+    /// 逐台指派明細（§12 群組分攤）。空＝全部指派給 <see cref="HandlerId"/>。
+    /// 只有列在 <see cref="HostIds"/> 裡的主機會被套用——預覽表可以逐列改人，
+    /// 但不能靠這個欄位偷偷加進沒勾選的主機。
+    /// </summary>
+    public List<IssueCaseAssignmentDto> Assignments { get; set; } = new();
+
+    /// <summary>
+    /// 明確要改派（換掉既有處理人）的主機（docs/archive/FEEDBACK-10-PLAN.md §9）。
+    /// 不在此清單、卻已有他人進行中案件的主機維持既有語意——**保留原處理人、列入略過清單**，
+    /// 不會被靜默搶走。預設空＝完全維持改版前的行為。
+    /// </summary>
+    public List<long> ReassignHostIds { get; set; } = new();
 
     [StringLength(1000, ErrorMessage = "說明長度不可超過 1000 字元")]
     public string? Note { get; set; }
@@ -236,16 +284,89 @@ public class BulkAssignIssueCaseRequest
     public DateTime? To { get; set; }
 }
 
+/// <summary>
+/// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
+/// 對象是**目前使用者名下**、這個問題的全部進行中案件——同一個硬體問題被指派到十台主機時，
+/// 處理人不必進十次詳情頁標十次一樣的狀態。
+/// </summary>
+public class BulkIssueStatusRequest
+{
+    [Required]
+    public string Source { get; set; } = string.Empty;
+
+    public int EventId { get; set; }
+
+    /// <summary>值域同問題層級狀態（含 observing）；空字串＝清除標記（調回未處理）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(1000, ErrorMessage = "處理說明長度不可超過 1000 字元")]
+    public string? Note { get; set; }
+
+    /// <summary>處理中的預計完成日／觀察中的觀察至日期，其餘狀態忽略</summary>
+    public DateTime? DueDate { get; set; }
+}
+
+public class BulkIssueStatusResultDto
+{
+    /// <summary>實際套用的案件數（＝主機數，同主機同問題只有一個進行中案件）</summary>
+    public int UpdatedCaseCount { get; set; }
+
+    /// <summary>連同案件涵蓋的其他日子一起更新的天數合計（含觸發日）</summary>
+    public int UpdatedDayCount { get; set; }
+
+    /// <summary>套用到的主機名稱（前端回報用）</summary>
+    public List<string> HostNames { get; set; } = new();
+}
+
 public class BulkAssignSkippedDto
 {
     public string HostName { get; set; } = string.Empty;
     public string ExistingHandlerName { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// 群組指派的候選處理人（docs/archive/FEEDBACK-10-PLAN.md §12）：群組內啟用中的成員，
+/// 帶上目前手上的進行中案件數——「依現有負載分攤」需要這個數字，
+/// 畫面上也直接顯示，讓 admin 看得出為什麼某個人被分到比較少台。
+/// </summary>
+public class HandlerCandidateDto
+{
+    public long UserId { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
+    public string Account { get; set; } = string.Empty;
+
+    /// <summary>目前名下的進行中案件數（跨主機、跨問題）</summary>
+    public int OpenCaseCount { get; set; }
+}
+
+/// <summary>改派結果的一列（§9）：誰換成誰，供前端組回報訊息</summary>
+public class BulkAssignReassignedDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string PreviousHandlerName { get; set; } = string.Empty;
+}
+
 public class BulkAssignIssueCaseResultDto
 {
     public int Created { get; set; }
     public List<BulkAssignSkippedDto> Skipped { get; set; } = new();
+
+    /// <summary>實際改派掉的主機（§9）</summary>
+    public List<BulkAssignReassignedDto> Reassigned { get; set; } = new();
+
+    /// <summary>
+    /// 被指派者看不到的主機（docs/archive/FEEDBACK-10-PLAN.md §7）：指派本身仍然成立
+    /// （對方會以案件處理人的身分取得該問題的範圍限定檢視權），但**執行指派的人要知道**
+    /// 對方不是這台主機的一般授權對象，看到的只有被指派的那個問題。
+    /// </summary>
+    public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
+}
+
+/// <summary>「這位處理人看不到這台主機」的提示素材（§7）</summary>
+public class AssigneeNoAccessDto
+{
+    public string HostName { get; set; } = string.Empty;
+    public string HandlerName { get; set; } = string.Empty;
 }
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────

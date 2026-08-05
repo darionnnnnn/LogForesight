@@ -53,7 +53,8 @@ public class HandlingController : ControllerBase
     [HttpPut("assign")]
     [Permission(Capability.Assign)]
     public ApiResponse<HandlingDto> Assign(long hostId, string date, [FromBody] AssignHandlerRequest request) =>
-        ApiResponse<HandlingDto>.Ok(_day.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId));
+        ApiResponse<HandlingDto>.Ok(
+            _day.Assign(hostId, QueryStringParsing.ParseRequiredDate(date), request.HandlerId, request.Reassign));
 
     [HttpGet("logs")]
     public ApiResponse<List<HandlingLogDto>> GetLogs(long hostId, string date) =>
@@ -87,6 +88,38 @@ public class IssueCasesController : ControllerBase
     [HttpPost("bulk-assign")]
     public ApiResponse<BulkAssignIssueCaseResultDto> BulkAssign([FromBody] BulkAssignIssueCaseRequest request) =>
         ApiResponse<BulkAssignIssueCaseResultDto>.Ok(_service.BulkAssignIssueCase(request));
+
+    /// <summary>群組指派時的候選處理人＋各自現有負載（docs/archive/FEEDBACK-10-PLAN.md §12）</summary>
+    [HttpGet("handler-candidates")]
+    public ApiResponse<List<HandlerCandidateDto>> HandlerCandidates([FromQuery] long groupId) =>
+        ApiResponse<List<HandlerCandidateDto>>.Ok(_service.GetHandlerCandidates(groupId));
+}
+
+/// <summary>
+/// 跨主機一次回覆同一個問題的處理狀態（docs/archive/FEEDBACK-10-PLAN.md §11）。
+///
+/// **刻意與 <see cref="IssueCasesController"/> 分開**，雖然路由前綴相同：那個類別掛的是
+/// 類別層 <c>Assign</c>，而 <c>[Permission]</c> 是 <c>AllowMultiple</c>——類別與方法上的
+/// 標註是「都要滿足」而不是「就近覆寫」。這支端點是**處理人回覆自己手上的案件**
+/// （user 角色有 Handle 沒有 Assign），寫在那個類別裡會被類別層的 Assign 擋掉。
+///
+/// 對象限定「自己名下的進行中案件」由服務層強制，不靠端點能力區分。
+/// </summary>
+[ApiController]
+[Route("api/handling/issue-cases")]
+[Permission(Capability.Handle)]
+public class IssueCaseStatusController : ControllerBase
+{
+    private readonly IssueHandlingCommandService _service;
+
+    public IssueCaseStatusController(IssueHandlingCommandService service)
+    {
+        _service = service;
+    }
+
+    [HttpPost("bulk-status")]
+    public ApiResponse<BulkIssueStatusResultDto> BulkStatus([FromBody] BulkIssueStatusRequest request) =>
+        ApiResponse<BulkIssueStatusResultDto>.Ok(_service.BulkSetIssueStatusByHandler(request));
 }
 
 /// <summary>權限異動待辦（§9.5）</summary>

@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal
+    toast, withBusy, confirmAction, showDetailModal, guardLoad
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -771,4 +771,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
 });
 
 loadSchedule();
-load();
+guardLoad([
+    document.getElementById('run-summary'),
+    document.getElementById('run-errors')
+], load);

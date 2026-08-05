@@ -510,6 +510,15 @@ body {
 
 .lf-sidebar__brand-mark .lf-icon { width: 1.05rem; height: 1.05rem; }
 
+/* 自訂品牌圖示（docs/archive/FEEDBACK-10-PLAN.md §1）：上傳的圖片比例不一，contain 保證整張看得到
+   （cover 會裁掉邊角，logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
+.lf-sidebar__brand-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: inherit;
+}
+
 .lf-sidebar__nav {
     padding: var(--lf-space-2) var(--lf-space-2) var(--lf-space-4);
     flex: 1 1 auto;
@@ -789,6 +798,137 @@ a.lf-stat:hover .lf-card,
 .lf-chart--sm {
     width: 160px;
     height: 160px;
+}
+
+/* ── 報表一屏化：隨視窗自動縮放（docs/archive/FEEDBACK-10-PLAN.md §5）────────────────
+   前一版（回饋第九輪 §4）靠把 .lf-chart 從 280px 砍到 230px 硬擠出一屏，等於押注
+   「使用者的可用高度剛好是我猜的那個數字」——瀏覽器邊框、工具列、字級偏好任何一項不同
+   就破功。改成由外而內分配：頁面佔滿可用高度 → 圖表區吃掉扣除期間列與 KPI 後的剩餘 →
+   每張圖卡的畫布容器填滿卡片。Chart.js 本來就是 responsive + maintainAspectRatio:false
+   （core/charts.js），容器多高圖就多高，不需要為此改任何圖表程式碼。
+
+   :has() 是頁面範圍的關鍵：只有含 .lf-report-page 的版面被綁成視窗高度，其他頁維持
+   原本「內容多長就多長」的捲動行為。舊瀏覽器不支援 :has 時整組規則失效，
+   報表頁退回可捲動的一般版面——功能不壞，只是不再保證一屏。 */
+
+.lf-layout:has(.lf-report-page) {
+    height: 100dvh;
+}
+
+.lf-layout:has(.lf-report-page) .lf-content {
+    min-height: 0;      /* flex 子項的預設 min-height:auto 會讓內容撐破容器，這行是收斂的前提 */
+    /* 上下留白減半：內容區的 24px 上下留白在其他頁是呼吸空間，在這一頁是直接從圖表身上
+       扣掉的 48px。左右維持原值，橫向沒有擁擠問題 */
+    padding-block: var(--lf-space-3);
+    /* auto 而非 hidden：正常情況下沒有東西可捲（版面剛好填滿），但視窗矮到觸發圖表的
+       min-height 下限時，內容必須還捲得到——hidden 會把超出的部分直接裁掉且救不回來 */
+    overflow: auto;
+}
+
+.lf-report-page {
+    display: flex;
+    flex-direction: column;
+    /* 區塊間距用 space-2 而非其他頁的 space-3：這一頁的每一列都在跟圖表搶高度，
+       四個區塊間各省 4px 就足以讓 1536×864 從「差一點」變成「剛好放得下」 */
+    gap: var(--lf-space-2);
+    height: 100%;
+    min-height: 0;
+}
+
+/* 期間列與 KPI 列：內容多高就多高，不參與剩餘空間的分配 */
+.lf-report-page__fixed {
+    flex: 0 0 auto;
+}
+
+/* 圖表區吃掉剩餘高度，內部兩列再均分 */
+.lf-report-page__charts {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-2);
+}
+
+/* 每一列圖表外面包一層普通 div（見 Reports.cshtml 的說明）：Bootstrap .row 的負 margin-top
+   直接當 flex 子項時會讓高度算錯，多出一條只捲得動幾像素的捲軸 */
+.lf-report-page__row {
+    flex: 1 1 0;
+    min-height: 0;
+}
+
+.lf-report-page__charts .lf-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.lf-report-page__charts .lf-card__body {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* 圖卡的畫布容器改為填滿卡片。min-height 是可讀性下限：視窗矮到連這個高度都排不下時，
+   寧可讓頁面出現捲軸，也不要把圖壓成一條看不懂的色帶。
+   **用 px 不用 rem**：這是圖看不看得懂的物理下限，不該跟著使用者的字級偏好放大——
+   選「大」字級時 rem 下限會連帶膨脹 25%，反而在同一台螢幕上逼出捲軸。
+   96px 是實測值：1536×864（常見筆電全螢幕、已扣掉瀏覽器邊框）剛好容得下期間列＋KPI＋六張圖。
+   實際高度通常遠大於此（1920×1080 約 220px），下限只在最擠的情況下才生效 */
+.lf-report-page .lf-chart {
+    height: 100%;
+    min-height: 96px;
+}
+
+/* 「此期間沒有資料」的替代文字（charts.js renderNoData）：.lf-empty 帶的是給整頁空狀態
+   設計的大留白，塞進被版面壓縮過的圖卡裡會頂破容器（實測在全新環境逼出捲軸）。
+   收掉留白並置中，讓它安分待在圖表原本的位置 */
+.lf-report-page .lf-chart .lf-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: var(--lf-space-2);
+}
+
+/* canvas 絕對定位（docs/archive/FEEDBACK-10-PLAN.md §5）：容器高度改由版面決定後，
+   如果 canvas 還留在文件流裡，它的高度會回過頭撐大容器 → 容器變高 → Chart.js 再放大
+   canvas，形成量測震盪（實測會讓同一個視窗尺寸每次載入算出不同高度）。
+   絕對定位讓 canvas 只「填滿」容器、不再參與撐高，尺寸單向由版面流向圖表。 */
+.lf-report-page .lf-chart > canvas {
+    position: absolute;
+    inset: 0;
+}
+
+/* KPI 卡在報表頁壓縮留白（docs/archive/FEEDBACK-10-PLAN.md §5）：它是固定高度的一列，
+   省下來的每一像素都直接變成圖表的高度。數字本身的字級不動——那是主管一眼要看的東西，
+   縮的是四周留白與「與前期對比」那行的上方間距 */
+.lf-report-page__fixed .lf-card__body {
+    padding: var(--lf-space-3);
+}
+
+.lf-report-page__fixed .lf-card__body > .small.mt-2 {
+    margin-top: .125rem !important;
+}
+
+/* 占比小圖卡的內容：甜甜圈在上、圖例在下（欄位窄，左右並排會把圖例文字擠成逐字直排）。
+   甜甜圈吃掉扣除圖例後的剩餘高度並維持正圓（aspect-ratio） */
+.lf-chart-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--lf-space-2);
+    min-height: 0;
+}
+
+/* 甜甜圈容器**不用 aspect-ratio**（docs/archive/FEEDBACK-10-PLAN.md §5）：aspect-ratio 會由寬度
+   反推高度，在半欄寬 230px 的卡片裡等於強制 230px 高，整張卡的最小高度因此爆掉、
+   一屏化破功。改成填滿寬度、由 flex 分配高度——Chart.js 的甜甜圈本來就取容器長短邊的
+   較小值畫圓並置中，扁容器裡畫出來仍是正圓，不需要我們自己維持比例。 */
+.lf-report-page .lf-chart--sm {
+    width: 100%;
+    height: auto;
+    flex: 1 1 0;
+    min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
 }
 
 /* 甜甜圈中央的百分比文字（charts.js setCenterText） */
@@ -1421,6 +1561,38 @@ a.lf-stat:hover .lf-card,
     margin-bottom: var(--lf-space-5);
 }
 
+/* 設定頁的圖示預覽格（docs/archive/FEEDBACK-10-PLAN.md §1）：尺寸刻意接近側欄實際顯示大小，
+   讓管理者上傳前就看得出「縮到這麼小還認得出來嗎」 */
+.lf-brand-preview {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-50);
+    color: var(--lf-text-muted);
+}
+
+.lf-brand-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: inherit;
+}
+
+/* 自訂品牌圖示的登入頁版本（docs/archive/FEEDBACK-10-PLAN.md §1）：比側欄大一些（這裡是品牌的
+   主場），contain 保留原比例。沒有自訂圖示時整個節點不輸出，不會留下空白 */
+.lf-login__logo {
+    display: block;
+    max-width: 3.5rem;
+    max-height: 3.5rem;
+    object-fit: contain;
+    margin-bottom: var(--lf-space-3);
+}
+
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
 
 @media print {
@@ -1442,6 +1614,31 @@ a.lf-stat:hover .lf-card,
 
     /* 淡色徽章在灰階列印仍靠邊框與文字辨識 */
     .lf-badge { border-color: #bbb !important; }
+
+    /* 報表的視窗高度綁定只對螢幕有意義（docs/archive/FEEDBACK-10-PLAN.md §5）：紙張是分頁的，
+       綁死一個視窗高度會讓內容被裁在第一頁。列印時整組解除，回到「內容多長印多長」 */
+    .lf-layout:has(.lf-report-page),
+    .lf-report-page {
+        height: auto;
+    }
+
+    .lf-layout:has(.lf-report-page) .lf-content {
+        overflow: visible;
+    }
+
+    .lf-report-page__charts,
+    .lf-report-page__row {
+        height: auto;
+        flex: none;
+    }
+
+    .lf-report-page__charts .lf-card {
+        height: auto;
+    }
+
+    /* 紙本回到固定高度：印出來的圖需要足夠的絕對尺寸才看得清楚 */
+    .lf-report-page .lf-chart { height: 230px; }
+    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
 }
 
 /* ── 窄螢幕：側欄收合為頂部橫向捲動列 ───────────────────────────────────── */
@@ -1450,6 +1647,30 @@ a.lf-stat:hover .lf-card,
     .lf-layout {
         flex-direction: column;
     }
+
+    /* 手機上不綁視窗高度（docs/archive/FEEDBACK-10-PLAN.md §5）：側欄已變成頂部橫列，
+       六張圖硬塞進一屏只會每張都小到看不懂——窄螢幕本來就是捲動閱讀 */
+    .lf-layout:has(.lf-report-page) {
+        height: auto;
+    }
+
+    .lf-layout:has(.lf-report-page) .lf-content {
+        overflow: visible;
+    }
+
+    .lf-report-page,
+    .lf-report-page__charts,
+    .lf-report-page__row {
+        height: auto;
+        flex: none;
+    }
+
+    .lf-report-page__charts .lf-card {
+        height: auto;
+    }
+
+    .lf-report-page .lf-chart { height: 230px; }
+    .lf-report-page .lf-chart--sm { width: 160px; height: 160px; aspect-ratio: auto; }
 
     .lf-sidebar {
         width: 100%;

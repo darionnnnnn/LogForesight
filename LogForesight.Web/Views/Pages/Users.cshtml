@@ -18,6 +18,11 @@
         <div class="lf-toolbar__divider"></div>
         <div class="lf-toolbar__group">
             <span class="lf-toolbar__group-label">角色</span>
+            @* docs/archive/FEEDBACK-10-PLAN.md §10：角色不是使用者自己的屬性，是所屬群組帶來的 *@
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                    data-bs-content="角色來自使用者所屬的群組（見「群組與授權」頁）。一個人屬於多個群組時，這裡會同時符合多個角色的篩選。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </button>
             <div class="lf-toolbar__chips" id="user-role-chips"></div>
         </div>
         <div class="lf-toolbar__divider"></div>
