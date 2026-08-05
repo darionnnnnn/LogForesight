@@ -114,10 +114,12 @@ async function loadAiFocus() {
  * 不看業務資料。說明用途、如何測全站（測試模式下用 demo-admin 免密碼登入）、正式環境建帳號步驟。
  */
 function renderServerAdminGuide() {
-    // 清掉其他區塊的容器（避免殘留載入骨架）
-    for (const id of ['dashboard-kpi', 'dashboard-categories', 'dashboard-hosts',
-        'dashboard-silent', 'dashboard-group-risk', 'dashboard-banner', 'dashboard-ai-focus']) {
+    // 隱藏其他區塊（連同靜態卡片標題），只留引導卡——否則會殘留「風險類型」等空標頭
+    for (const id of ['dashboard-kpi', 'dashboard-ai-focus']) {
         document.getElementById(id)?.replaceChildren();
+    }
+    for (const id of ['dashboard-categories', 'dashboard-hosts', 'dashboard-group-risk']) {
+        document.getElementById(id)?.closest('.row')?.classList.add('d-none');
     }
     for (const el of document.querySelectorAll('[data-days]')) el.closest('.btn-group')?.classList.add('d-none');
 
