@@ -14,7 +14,7 @@
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect
 } from '../core/ui.js';
 import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -754,18 +754,20 @@ function renderBulkAssignForm(body, group, hosts, users) {
 
     const form = document.createElement('form');
 
+    // §6：講清楚「一次性 vs 持續」——指派會建立案件，這些主機之後同問題的新風險日會自動掛進
+    // 案件並同步狀態，直到結案（不是只處理當下這些日子）
+    const persistNote = document.createElement('div');
+    persistNote.className = 'lf-hint mb-3';
+    persistNote.textContent = '指派會為勾選的主機建立案件；這些主機之後同一問題的新風險日會自動掛進案件並同步處理狀態，直到結案。';
+    form.appendChild(persistNote);
+
     const handlerLabel = document.createElement('label');
     handlerLabel.className = 'form-label small text-muted';
     handlerLabel.textContent = '處理人';
-    const handlerSelect = document.createElement('select');
-    handlerSelect.className = 'form-select form-select-sm mb-3';
-    for (const user of [...users].filter(u => u.active).sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-TW'))) {
-        const option = document.createElement('option');
-        option.value = user.userId;
-        option.textContent = formatUserName(user.displayName, user.account);
-        handlerSelect.appendChild(option);
-    }
-    form.append(handlerLabel, handlerSelect);
+    // §6：可搜尋處理人選單（帳號/顯示名稱關鍵字過濾），與處理面板共用同一元件
+    const { element: handlerSelectWrap, select: handlerSelect } = searchableUserSelect(users);
+    handlerSelectWrap.classList.add('mb-3');
+    form.append(handlerLabel, handlerSelectWrap);
 
     const noteLabel = document.createElement('label');
     noteLabel.className = 'form-label small text-muted';
@@ -788,9 +790,23 @@ function renderBulkAssignForm(body, group, hosts, users) {
     hostListLabel.textContent = `受影響主機（${hosts.length} 台，已由他人案件涵蓋的預設不勾）`;
     form.appendChild(hostListLabel);
 
+    // §6：台數多時的操作——主機名關鍵字過濾＋全選/全不選（只作用於目前過濾可見的項目）
+    const hostTools = document.createElement('div');
+    hostTools.className = 'd-flex gap-2 align-items-center mb-2';
+    const hostFilter = document.createElement('input');
+    hostFilter.type = 'text';
+    hostFilter.className = 'form-control form-control-sm';
+    hostFilter.placeholder = '過濾主機名稱…';
+    hostFilter.autocomplete = 'off';
+    const selectAllBtn = button('全選', { onClick: () => setAllVisible(true) });
+    const selectNoneBtn = button('全不選', { onClick: () => setAllVisible(false) });
+    hostTools.append(hostFilter, selectAllBtn, selectNoneBtn);
+    form.appendChild(hostTools);
+
     const hostList = document.createElement('div');
     hostList.className = 'lf-bulk-assign-hosts mb-3';
     const checks = [];
+    const rows = [];
     for (const host of hosts) {
         const wrap = document.createElement('div');
         wrap.className = 'form-check';
@@ -812,8 +828,20 @@ function renderBulkAssignForm(body, group, hosts, users) {
 
         wrap.append(check, label);
         hostList.appendChild(wrap);
+        rows.push({ wrap, check, name: host.hostName.toLowerCase() });
     }
     form.appendChild(hostList);
+
+    function applyHostFilter() {
+        const f = hostFilter.value.trim().toLowerCase();
+        for (const row of rows) row.wrap.classList.toggle('d-none', !!f && !row.name.includes(f));
+    }
+    function setAllVisible(checked) {
+        for (const row of rows) {
+            if (!row.wrap.classList.contains('d-none')) row.check.checked = checked;
+        }
+    }
+    hostFilter.addEventListener('input', applyHostFilter);
 
     const submit = document.createElement('button');
     submit.type = 'submit';
