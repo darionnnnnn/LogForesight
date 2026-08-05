@@ -69,6 +69,10 @@ lf_users
   email          nvarchar(255)
   is_admin       bool NOT NULL                    -- true = 可看全部主機（維運主管/資安）
   active         bool NOT NULL
+  last_login_at  timestamp NULL                   -- 最近一次登入成功；null = 從未登入
+                                                  -- （2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3；
+                                                  --  JSON 後端缺欄容忍、零遷移。唯一寫入點
+                                                  --  IUserStore.TouchLogin，刻意不走 Upsert）
 
 lf_user_host_map                                     -- 使用者負責哪些主機
   user_id        bigint FK → lf_users

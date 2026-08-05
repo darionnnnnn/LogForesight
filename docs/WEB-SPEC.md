@@ -267,6 +267,13 @@ JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣�
 **能力進 token、主機授權範圍不進 token**——範圍每次請求由 `IVisibilityService` 即時解析
 （群組異動即時生效；能力異動最遲於 token 過期時生效，接受此延遲）。
 
+**上次登入時間**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3）：登入成功時 `IdentityService`
+呼叫 `IUserStore.TouchLogin` 寫入 `WebUser.LastLoginAt`（唯一寫入點）。
+**刻意不併進 `Upsert`**——各處建構 `WebUser` 的呼叫端都不帶這個欄位，交給 Upsert 的逐欄
+覆寫會在每次編輯使用者時把它靜默清成 null（同 owners.csv 曾漏抄 SentinelId 的失敗模式）。
+**刻意不從稽核反推**：稽核有保留天數，到期清理後會變成「登入過卻顯示從未登入」。
+serverAdmin 不在 `lf_users`，沒有這個欄位。
+
 ### 6.3 逾期與登出
 
 - 效期 `Jwt.ExpireHours`（預設 8 小時），不做 refresh token（內網工具，過期重登入即可）。
@@ -291,7 +298,7 @@ SameSite=Strict 已擋跨站帶 Cookie；再加一層防禦深度：`CsrfHeaderM
 |---|---|---|
 | 1. Middleware | JWT Bearer 驗證（自 Cookie 取 token） | 你是誰？（未登入 → 401） |
 | 2. ActionFilter | `[Permission(Capability.X)]` 讀 `cap` claim | 你能不能用這個功能？（不足 → 403 ＋稽核 `denied`） |
-| 3. Service | `IVisibilityService.GetVisibleHostIdsAsync()` | 你能看哪些主機的資料？（查詢一律先過濾） |
+| 3. Service | `IVisibilityService.GetVisibleHostIds()` | 你能看哪些主機的資料？（查詢一律先過濾） |
 
 ```csharp
 public enum Capability { ViewAll, Handle, Assign, ConfirmPermission, Maintain, DevMonitor, ViewAudit }
@@ -311,7 +318,27 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 **Service 層的資料範圍過濾是不可繞過的最後防線**：即使某個 API 忘了掛 Filter，
 查詢仍只回授權範圍的資料。
 
-**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：第 3 層之外、刻意更窄的第二條路徑。
+**同一個 `[Permission]` 內的多個能力是「任一」，兩個標註疊加是「都要」**——類別層與方法層
+不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
+表達「兩者兼具」（實務上即 admin）。
+
+**負責人隱含能力**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §2b）：是任一**啟用中**主機的負責人時，
+`IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
+**不含 `ViewAll`**。理由：負責人匯入（owners.csv）會自動建立沒有群組的帳號，沒有這一段的話
+對方登入後看得到自己負責的主機、卻連處理狀態都標不了，被交辦也回覆不了——「有可見範圍
+無處置能力」是半套。能力進 JWT，已在線上的人最遲重新登入才取得（可見範圍則即時生效）。
+停用帳號一律視為無能力（登入本來就進不來，見 §6.3）。
+
+**負責人路徑**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §2b）：第 3 層的授權鏈**擴充為聯集**——
+`WebHost.OwnerUserIds` 含此人的（啟用中）主機直接可見，與群組授權同級（整台可見，
+不是問題層級的窄授與），`GetVisibleHostIds`／`GetVisibleHostIdsFor` 兩邊同一套規則。
+理由：負責人是主機歸屬的第一手資料，改版前卻與部門群組授權完全脫鉤，「這台出事、
+負責人卻打不開」是常態，要管理員另外去授權矩陣補一刀才會通。
+停用主機與停用使用者的排除優先於本路徑。使用者詳細頁（§9.8a）以
+`GetOwnedHostIdsFor`／`GetGroupVisibleHostIdsFor` 兩個投影分別回答「為什麼看得到這台」——
+兩條路徑可同時成立，因此是兩顆徽章而不是一個列舉值。
+
+**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：前兩條路徑之外、刻意更窄的第三條路徑。
 被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
 `IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
 等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
@@ -675,8 +702,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （回傳 display_name、能力集合、所屬群組——側欄選單與功能鈕的顯示依據）。
 
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
-- 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、高風險主機排行、
-  待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、**依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
+- 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、**重點問題 Top 5**、
+  高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、
+  **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
+- **重點問題 Top 5（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §8-1）**：位置在主機排行**之前**
+  ——全站主視角是問題事件、第二視角才是主機（§8 視角盤點）。一列一個問題（Source＋EventId，
+  與依問題視角同一把分組鍵）：問題／分類／最高嚴重度／主機數／風險日數／總次數，
+  點列下鑽 `/records?view=issue&source=&eventId=&from=&to=`。資料由
+  `RecordStatsBuilder.BuildIssueRanking`（與報表問題排行同一份投影，兩頁數字必然一致）
+  在既有的 `GET api/dashboard/summary` 內一併回傳，不另開請求。
+  **刻意不含處理狀態**：那要逐問題查 handling 標記，是依問題視角才做的事；這張卡回答的是
+  「哪幾個問題影響最大」，點進去就看得到處理概況。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
   加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
@@ -745,7 +781,28 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   兩者皆**確定性**（同輸入同結果，預覽看到的就是會落盤的分配），預覽表每列可個別改人。
   API 形狀因此從單一 `HandlerId` 擴充為 `Assignments: [{hostId, handlerId}]`（空＝全部給
   `HandlerId`，單人／群組共用一支端點）。
+  **統一標記（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §6）**：列內第三顆動作鈕（需 `Assign`
+  **且** `Handle`，兩個標註疊加＝都要滿足；實務上即 admin），把這個問題在**尚未有人接手**的
+  主機上一次標成結論（僅結案四態，**原因必填**——代全體下結論的操作，理由是紀錄的一部分）。
+  - **「尚未有人接手」＝該（主機, 問題）沒有進行中案件**，這是唯一的略過條件（定案 6-1）：
+    已有案件者不論處理人是誰（含 admin 自己）一律略過並回報，要動別人的案件走改派（§9.3-17）
+    或由處理人自己回覆（bulk-status）。**無案件時**，期間內即使有人標了處理中／觀察中也
+    一併覆蓋（定案 6-3，admin 的統一標記為主）——覆蓋照樣逐日寫歷程，原標記者查得到
+    「誰、何時、把處理中改成什麼結論、原因」；已是結案類的日子不動（已有結論不重寫）。
+  - **範圍＝依問題視角目前的篩選期間**（定案 6-2），modal 以醒目提示列明
+    「本次僅處理 yyyy-MM-dd ～ yyyy-MM-dd 期間內的紀錄」；不提供全歷史結案。
+  - modal 開啟時載入 `close-preview`（與落盤共用同一份 `PlanBulkClose` 計畫規則，
+    畫面說會跳過的主機不可能實際被寫入）：逐主機顯示將標記天數／將覆蓋處理中天數／
+    已有結論天數／略過原因——「沒被處理到」與「不存在」要分得清楚。
+  - 落盤走既有 `ApplyIssueStatus`（逐筆歷程、同批共用時間戳、已知雜訊寫 `NoiseMark` 記憶），
+    **不是第二套狀態機**；誤報套用後 toast 導引到規則維護（治本在規則）。
+    modal 常駐說明「規則未調整前，之後的新日子仍會產生同類問題（已知雜訊除外）」——
+    誠實邊界，不做「未來自動套用」的隱形規則。稽核動作 `issue_bulk_close`（與逐筆的
+    `handling_status` 分開，稽核查詢要能單獨篩出這種跨主機跨日的大範圍操作）。
   API：`GET api/records/by-issue?...&sort=severity|hostCount|dayCount|totalCount|lastSeen`、
+  `GET api/handling/issue-cases/close-preview?source=&eventId=&from=&to=`＋
+  `POST api/handling/issue-cases/bulk-close`（統一標記，`Assign`＋`Handle`，
+  **刻意獨立成第三個 controller**——另兩個類別各有自己的類別層能力，混進去會把對象搞混）、
   `GET api/handling/issue-cases/preview?source=&eventId=&from=&to=`（modal 開啟時載入受影響主機預覽）、
   `GET api/handling/issue-cases/handler-candidates?groupId=`（群組成員＋各自現有負載，`Assign`）、
   `POST api/handling/issue-cases/bulk-assign`（`Assign`）、
@@ -1029,8 +1086,20 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 - **KPI 列**：進行中案件數／未結案風險日數／逾期數（沿用 §9.3 逾期兩層並列同一套
   `HasOverdueIssue` 語意）。
-- **進行中案件表**（該人為處理人、尚未結案的跨日問題案件）：主機｜問題｜狀態｜預計完成
-  （逾期紅字）｜涵蓋天數（首見～最近掛接）｜最近出現，列點擊到最近出現日的 §9.3 詳情。
+- **進行中案件表**（該人為處理人、尚未結案的跨日問題案件）。
+  **視角切換（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §7）——預設「依問題」**：
+  被交辦同一類問題橫跨多台主機時，主要動線是「一次看完、一次回覆」，逐台一列反而要來回比對。
+  - **依問題**（預設）：一列一個問題（Source＋EventId，同 §9.2 by-issue 的分組鍵）——
+    問題｜主機數｜狀態彙總（「N 台處理中／M 台觀察中」）｜涵蓋範圍｜逾期台數；
+    **點列就地展開**受影響主機（主機名連主機頁、每列「去處理」連該主機最近掛接日的 §9.3）。
+    看**自己**的工作頁時每列多一顆「回覆處理狀態」，直接重用既有
+    `POST api/handling/issue-cases/bulk-status`（modal 抽成共用元件 `issue-status-reply.js`，
+    與問題查詢頁同一組必填規則）；看別人的頁不顯示——那支端點的語意就是「自己名下」。
+  - **依主機**：改版前的逐案件列表（主機｜問題｜狀態｜涵蓋範圍｜預計完成），列點擊到
+    最近出現日的 §9.3 詳情。
+  - 分組在**前端**完成：`HandlerCaseItemDto` 新增 `Source`／`EventId`（自 `IssueCase.IssueKey`
+    以 `IssueSignatureKey.TryParseSignature` 反解，非新儲存欄位），換個排版不必多打一支 API。
+  - 「被指派的風險日」表兩視角共用，維持在頁面下半（日層級指派沒有問題維度可分組）。
 - **被指派的風險日表**：預設只列**推導後未結案**（`DayHandlingDerivation` 推導值，非日層級
   快照——指派後快照恆為 `in_progress` 不會再變，必須看推導）；日期／主機／風險／推導狀態／
   預計完成／逾期，「顯示近 30 天已結案」切換預設關。
@@ -1053,8 +1122,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 ├─ 圖表區第一列（2 欄卡片網格，與第二列均分剩餘高度）──────────────────────┤
 │  告警數量趨勢（折線，日粒度，        │  風險類型分布（水平堆疊長條：        │
 │  高/中風險雙線，語意色）             │  8 類 × 嚴重度，類別固定色盤）        │
-├─ 圖表區第二列：主機告警排行（col-6）│ 三顆占比小圖並排（右半 col-6，各 col-4）┤
-│  水平長條 Top 10＋「其他N台」  │ 風險層級占比│受影響主機占比│處理進度（圖上文下）│
+├─ 圖表區第二列：排行卡（col-6，主機｜問題切換）│ 三顆占比小圖並排（右半 col-6，各 col-4）┤
+│  水平長條 Top 10＋「其他N筆」  │ 風險層級占比│受影響主機占比│處理進度（圖上文下）│
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -1082,6 +1151,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   並排時擠在右側會把文字壓成逐字直排。
 - **自訂圖表**（#6）：modal 逐圖勾選要顯示哪些圖表，狀態存 `localStorage`（預設全開）；
   隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
+- **排行卡的「主機｜問題」切換（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §8-2）**：卡 header 的 toggle
+  切換同一張卡的兩個視角——主機告警排行（高／中風險日堆疊）或問題排行（事件次數，
+  Source＋EventId 分組，下鑽問題查詢的依問題視角）。狀態存 `localStorage`，**預設主機**
+  （既有畫面零變化）。**刻意不另開第五張卡**：報表一頁化的高度是由外而內分配的（§5，
+  回饋第十輪），多一張常駐或可開啟的卡都會逼整組高度重算；同卡切換不動任何高度計算，
+  也正好是「同一個排行、兩種視角」。資料 `RecordStatsBuilder.BuildIssueRanking`
+  ——與儀表板「重點問題」卡同一份投影，兩頁數字必然一致；Top 10 之外併成「其他 N 個問題」
+  彙總條（同主機排行的理由：尾端不隱形），「檢視全部」連問題查詢的依問題視角。
 - **占比小圖的資料來源與全站一致**（docs/archive/HISTORY.md）：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
@@ -1137,9 +1214,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `POST api/rules/import-apply`（2026-07-31）。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
-- 使用者：清單/編輯/停用、所屬群組指派、個人操作紀錄與最近登入頁籤。
+- 使用者：清單/編輯/停用、所屬群組指派；**點列進入使用者詳細頁（§9.8a）**。
+  清單欄位含**上次登入**（`WebUser.LastLoginAt`，可排序；null 顯示「從未登入」——
+  帳號建了但人沒來過是需要被看見的狀態，不是普通空值）。
   **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，
-  排序改表頭點擊（帳號/顯示名稱/狀態，2026-07-29 取代原本的獨立排序下拉，見 §8.6-2），本地分頁。
+  排序改表頭點擊（帳號/顯示名稱/上次登入/狀態，2026-07-29 取代原本的獨立排序下拉，見 §8.6-2），本地分頁。
+  **狀態預設「啟用」（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §4）**：日常維護看的是現在還在職的人，
+  停用帳號是歷史事實、只在查舊帳號時才需要；chip 仍可切「全部／停用」，不是藏起來。
   **一次新增多筆（2026-07-27，docs/archive/HISTORY.md #7）**：新增 modal 單筆／多筆切換——多筆模式
   只填帳號 textarea（一行一個，也接受逗號分隔）＋所屬群組，顯示名稱預設＝帳號、Email 留空
   （之後 AD 登入時自動補上，見 #8）；送出前比對既存帳號，衝突時由使用者選「跳過」或「以此批群組
@@ -1170,7 +1251,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   主機並回報；寫入單筆彙總 audit（不是逐台散列）。
 - ~~**NetIQ 匯入排程化（2026-07-23 Phase D-3）**~~ **【已廢止，2026-07-24 定案 7】**：佇列機制
   （`NetiqImportQueueStore`／`--apply-netiq-imports`）已整組刪除，改為勾選送出即時落盤；精靈本身
-  也已從主機頁搬到「資料匯入」頁（見 §9.9）。以下原文保留供歷史對照，**不代表現況**——
+  也已從主機頁搬走（先到資料匯入頁，2026-08-05 起在 §9.9a「匯入」分頁）。
+  以下原文保留供歷史對照，**不代表現況**——
   `NetiqImportApplier`（最後一行）是唯一沿用至今的部分。
 - 主機頁的「從 NetIQ 匯入」精靈掃描/勾選流程不變，但「套用」
   改「**排入匯入佇列**」（`webdata\netiq_import_queue.json`）——不再立即落盤主機異動。實際新增/更新/孤兒復活
@@ -1184,48 +1266,58 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - API：`api/admin/users*`、`api/admin/hosts*`（分頁）、`api/admin/netiq/import`（排入）／`import-queue`（查詢）／
   `import-queue/{id}/cancel`（取消）、`api/admin/groups*`、`api/admin/access*`；`api/hosts?query=`／`?ids=`／`/groups`（§9.2）
 
-### 9.9 `/admin/imports` CSV 匯入（`Maintain`）
-- 三卡片（使用者/主機/群組授權）：範本下載、格式說明表、上傳 → 預覽（摘要＋逐列動作/錯誤＋
-  異動前後展開）→ 套用 → 結果；歷次匯入紀錄清單。
+### 9.8a `/admin/users/{id}` 使用者詳細（`Maintain`）
+
+（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3）自使用者清單點列進入，回答「這個人是誰、看得到什麼、
+手上有什麼、被交辦過什麼」。**與 §9.4a 處理人工作頁刻意分開**：那頁是全角色頁、資料以
+**檢視者**的可見範圍過濾；本頁的可見主機與上次登入以**被查看者**為準，是管理視角資訊，
+兩者混在同一頁會讓「這頁的資料以誰的範圍過濾」變成兩套規則疊在一起。頁頂有連往工作頁的連結。
+
+- **基本資料列**：顯示名稱(帳號)／狀態／所屬群組（含角色，停用群組加刪除線）／Email／
+  **上次登入**（§6.2）／**能力**（含負責人隱含能力，§7.1——「他為什麼能標記處理狀態」在這裡看得到答案）。
+  停用帳號顯示為無能力且可見主機為空（登入本來就進不來，列出能力是誤導），
+  但交辦紀錄照常保留（歷史事實）。
+- **KPI**：可見主機／處理中案件／已結案案件／逾期。
+- **可見主機**：`GetGroupVisibleHostIdsFor` ∪ `GetOwnedHostIdsFor`，每列標「可見來源」——
+  **群組授權**與**負責人**兩顆獨立徽章（可同時成立，§7.1）。列點擊到主機詳情。
+- **處理中／已處理項目**：工作負載直接打既有 `GET api/handlers/{id}/workload?includeResolvedDays=true`，
+  **不重複第二套投影規則**；未結案風險日以 `open`／`in_progress` 判定（同後端
+  `HandlingStatuses.Unresolved`，不是「不是 resolved 就算未結案」——結案有四種狀態）。
+- **被指派歷程**：以 `IssueCase` 為事實來源（建案時間／交辦者／主機／問題／目前狀態／涵蓋區間），
+  新到舊。**刻意不用稽核表反查**：稽核有保留天數且要比對 detail JSON，案件本身就是指派的第一手紀錄。
+  誠實邊界：案件只保存**目前**處理人，被改派走的案件不再出現於此（那次改派記在該主機的
+  處理歷程 `case_reassign`）。
+- API：`GET api/admin/users/{id}/detail`（基本資料＋群組＋能力＋可見主機＋被指派歷程）
+  ＋前端另打 `api/handlers/{id}/workload`。
+
+### 9.9 `/admin/imports` 資料匯入（`Maintain`）
+**§2a（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md）本頁收斂為單一卡片「負責人」**：使用者／主機／
+群組授權三種 CSV 連同 Importer、範本與測試**整組退役**（主機的主要來源是 NetIQ 掃描匯入）。
+`ImportKind` 保留那三個列舉值——歷次匯入紀錄存的是字串 Kind，拿掉會讓過去的紀錄失去顯示名稱，
+而匯入紀錄是稽核性質的歷史事實；未註冊的 Kind 由 `ImportService.Resolve` 回
+「不支援的匯入類型」（舊網址打進來是可讀的 400，不是 500）。替代動線：
+
+| 退役的 | 替代 |
+|---|---|
+| users.csv | 使用者頁「一次新增多筆」＋ owners.csv 自動建帳號 |
+| hosts.csv | NetIQ 掃描匯入（§9.9a）／批次自動 Touch 登錄＋主機頁批次設定群組 |
+| group_access.csv | 群組頁「授權矩陣」 |
+
+**已知損失**：本機主機失去「第一次分析前預先建檔＋分組」的批次途徑，上線初期要等第一晚批次
+Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描匯入，本機主機量少，接受。
+
+- 單一卡片（負責人）：範本下載、格式說明表、上傳 → 預覽（摘要＋逐列動作/錯誤）→ 套用 → 結果；
+  歷次匯入紀錄清單（**含全部來源**，CSV 與 NetIQ 掃描匯入、含已退役類型的歷史列）。
 - API：`GET api/imports/{kind}/template`（回 CSV 檔，UTF-8 BOM）、
   `POST api/imports/{kind}/preview`（multipart 上傳，回逐列判定，**不寫入**）、
   `POST api/imports/{kind}/apply`（帶 preview 回傳的 token 套用，防止「預覽 A 檔套用 B 檔」）、
   `GET api/imports/logs`
-- CSV 格式（編碼/分隔/upsert 鍵/groups 與 owners 欄語意/自動建群組/all-or-nothing）依前期定案；
-  owners 引用帳號必須已存在（先匯使用者再匯主機），負責人無檢視權時預覽出警告不擋。
-- **群組授權（全量取代語意）的預覽必須明列「將被移除」的授權清單**——上傳漏列/空檔
-  會清掉既有授權，移除項目必須在套用前顯性可見並二次確認，不可只顯示新增與更新。
-- **NetIQ 掃描匯入分頁（2026-07-27 起精簡）**：Sentinel 連線設定（新增／編輯／停用／刪除）已搬到
-  §9.9a `/admin/netiq`；本頁的「NetIQ 匯入」分頁只留「選擇一台已設定好探索帳密的 Sentinel → 掃描匯入」，
-  精靈跳過原本的連線設定步驟直接進網段勾選。
-- **精靈主機清單排版（2026-07-29）**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
-  主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
-  預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
-  新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
-- **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `192.168.0`）或
-  CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
-  `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
-  掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
-  全事件 distinct」，見 docs/archive/HISTORY.md「NetIQ Sentinel 取數 API 三輪 probe 實測」段），結果只涵蓋掃描窗口內有事件回報的主機。
-  精靈的網段勾選面板上方顯示 `CoverageNote`（實際掃描窗口說明）與 `Warnings`（截斷等異常提示），
-  讓使用者知道這份清單涵蓋到哪裡、安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn`
-  欄位眾數）在匯入當下就寫入新主機的 `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的
-  `DisplayName` 一律不動。
-- **離線示範資料（`StubNetiqDirectoryClient`）曾被誤以為是掃描功能的 bug（2026-07-29 修正，
-  2026-08-05 §13 改為顯式開關）**：單一網段固定 35 台、兩網段各固定 23 台、恆最多 2 個網段——
-  這些數字是示範資料產生器本身固定的 demo 迴圈範圍，不是真實掃描的限制
-  （`SentinelRestDirectoryClient` 沒有這些上限，事件筆數上限 `CoverageTargetResults=50,000`
-  是「事件」不是「主機數」，截斷時會走 `Warnings` 顯性提示）。現行修法：
-  **(1) 掃描一律預設真實連線**（§13）——原本「Development 一律 Stub」的環境判斷方向顛倒，
-  開發機預設就拿到假資料；改由 `NetiqOptions.UseOfflineDemoData`（「NetIQ 維護」頁開關）
-  顯式開啟，預設 `false`。三道保險擋住正式環境：開關僅非 Production 顯示、
-  `NetiqOptionsService.Update` 在 Production 拒絕開啟、DI 選型
-  （`ServiceCollectionExtensions.UseStubNetiqClient`）在 Production 一律回真連線。
-  **(2)** Stub 的示範資料提示走 `Warnings`（精靈已有的醒目 alert-warning 框）與頁面常駐徽章，
-  不再只寫在容易被忽略的灰色 `CoverageNote` 小字裡。
-- **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
-  截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
-  完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是瀏覽器標準行為）。
+- owners.csv：一台主機多列＝多位負責人，檔案中出現的主機**負責人整組取代**；帳號不存在
+  **自動建立**（User 角色、無群組，AD 登入時補齊其他資訊）。預覽的提醒文字自「負責人不會
+  自動取得檢視權限」**改寫**為「套用後負責人會自動取得檢視權與處理狀態維護權限；已在線上的
+  使用者需重新登入才會取得處理權限（檢視範圍即時生效）」——§2b 起負責人本身即授權路徑與
+  能力來源（§7.1），留著舊警告會讓管理員以為還要去授權矩陣補一刀。
+- **NetIQ 掃描匯入已搬離本頁（§1，2026-08-05）**：見 §9.9a 的「匯入」分頁。
 
 ### 9.9a `/admin/netiq` NetIQ 維護（`Maintain`）
 - 取代原本散落在資料匯入頁的 Sentinel 管理：Sentinel 清單（名稱/連線位址/**作業系統**/探索帳密狀態/
@@ -1255,8 +1347,33 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `NetiqOptionsService.Update` 在 Production 拒絕開啟並強制關閉、DI 選型
   （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
   掃描精靈結果的 `Warnings` 也顯著標示「示範資料」（2026-07-30 誤認 bug 的既有防線）。
-- **頁面分頁化（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）**：改「設定｜診斷」兩分頁
-  （沿用 `bindTabs` 手作頁籤模式）——原本的 Sentinel 清單與連線節流參數整批放「設定」分頁。
+- **頁面分頁化（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11；2026-08-05 增「匯入」分頁）**：
+  現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 手作頁籤模式）——Sentinel 清單與連線
+  節流參數在「設定」。
+- **「匯入」分頁（§1，2026-08-05，docs/archive/FEEDBACK-11-PLAN.md）**：掃描匯入自「資料匯入」頁整批搬來
+  ——Sentinel 的設定與掃描是同一件事的兩半，分在兩頁會讓「補完探索帳密之後要去哪裡掃」
+  變成一段要記住的路徑。內容：選一台已設定探索帳密的 Sentinel ＋輸入網段 → 掃描精靈
+  （行為與 API 零改動）；下方另有只列 `Netiq` 來源的匯入紀錄（完整紀錄仍在 §9.9）。
+  前端拆成獨立模組 `pages/netiq-import-wizard.js`（`netiq.js` 本就 400 行，整段併入會變千行檔），
+  由 `netiq.js` 呼叫 `initNetiqImportTab()` 掛載；掃描下拉的資料**由 `netiq.js` 已取回的
+  Sentinel 清單傳入**（`refreshScanPicker(sentinels)`），不各自再查一次——同頁兩個分頁
+  各打一次同一支 API 是白費往返，而剛補完帳密的 Sentinel 也必須立刻出現在下拉裡。
+- **精靈主機清單排版（2026-07-29）**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
+  主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
+  預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
+  新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
+- **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `192.168.0`）或
+  CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
+  `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
+  掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
+  全事件 distinct」，見 docs/archive/HISTORY.md「NetIQ Sentinel 取數 API 三輪 probe 實測」段），
+  結果只涵蓋掃描窗口內有事件回報的主機。精靈的網段勾選面板上方顯示 `CoverageNote`
+  （實際掃描窗口說明）與 `Warnings`（截斷等異常提示），讓使用者知道這份清單涵蓋到哪裡、
+  安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
+  `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的 `DisplayName` 一律不動。
+- **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
+  截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
+  完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是瀏覽器標準行為）。
 - **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
   選填 Windows／Linux 樣本 IP（對應原 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
   （欄位對應／dt 邊界／分頁效能／IP 批次上限／頻道覆蓋等，是 Linux Sentinel 接入 P3 閘門的

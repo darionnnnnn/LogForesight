@@ -55,6 +55,8 @@ internal class HandlingServiceFacade
     public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
     public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
     public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request) => _issue.BulkSetIssueStatusByHandler(request);
+    public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewBulkClose(source, eventId, from, to);
+    public BulkCloseIssueResultDto BulkCloseIssue(BulkCloseIssueRequest request) => _issue.BulkCloseIssue(request);
     public List<HandlerCandidateDto> GetHandlerCandidates(long userGroupId) => _issue.GetHandlerCandidates(userGroupId);
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date) => _history.GetLogs(hostId, date);
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records) => _history.GetTodo(records);
@@ -66,6 +68,8 @@ internal class RestrictedVisibleService : IVisibilityService
 {
     public IReadOnlySet<long> GetVisibleHostIds() => new HashSet<long>();
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) => new HashSet<long>();
+    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) => new HashSet<long>();
+    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) => new HashSet<long>();
     public IReadOnlyDictionary<string, IReadOnlySet<string>> GetCaseGrants() => new Dictionary<string, IReadOnlySet<string>>();
     public bool IsCaseGrantOnly(long hostId) => false;
     public IReadOnlySet<string>? GetIssueKeyRestriction(long hostId) => null;

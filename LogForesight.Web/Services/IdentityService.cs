@@ -23,6 +23,7 @@ public class IdentityService
 {
     private readonly IUserStore _users;
     private readonly IUserGroupStore _groups;
+    private readonly IHostStore _hosts;
     private readonly IAuthenticationProvider _provider;
     private readonly ServerAdminAuthenticator _serverAdmin;
     private readonly IAuditService _audit;
@@ -39,12 +40,14 @@ public class IdentityService
     public IdentityService(
         IUserStore users,
         IUserGroupStore groups,
+        IHostStore hosts,
         IAuthenticationProvider provider,
         ServerAdminAuthenticator serverAdmin,
         IAuditService audit)
     {
         _users = users;
         _groups = groups;
+        _hosts = hosts;
         _provider = provider;
         _serverAdmin = serverAdmin;
         _audit = audit;
@@ -106,6 +109,9 @@ public class IdentityService
         }
 
         user = SyncFromAdIfNeeded(user, credentials.UserInfo);
+
+        // 上次登入時間（§3）：只有這一個寫入點。serverAdmin 不經這裡（它不在 lf_users）
+        _users.TouchLogin(user.UserId, DateTime.Now);
 
         var capabilities = ResolveCapabilities(user);
         _audit.RecordAuth(AuditActions.Login, account, user.UserId,
@@ -178,8 +184,22 @@ public class IdentityService
             .Select(g => g.Role)
             .ToList();
 
+        // 負責人隱含 User 角色能力（docs/archive/FEEDBACK-11-PLAN.md §2b）：負責人匯入會自動建立
+        // 沒有群組的帳號，沒有這一段的話對方登入後看得到自己負責的主機、卻連處理狀態都標不了
+        // （Handle 來自群組角色），被交辦也回覆不了——「有可見範圍無處置能力」是半套。
+        // 刻意只補 User 角色（Handle＋ConfirmPermission），**不含 ViewAll**：
+        // 負責人看得到的是自己那幾台，不是全站。
+        if (IsHostOwner(user.UserId)) roles.Add(UserRole.User);
+
         return RoleCapabilityMap.For(roles);
     }
+
+    /// <summary>
+    /// 是不是任一**啟用中**主機的負責人。停用主機不算——停用主機的資料已整批退出可見範圍
+    /// （§7.1），拿它當能力來源會出現「看不到任何東西卻有 Handle」的空殼權限。
+    /// </summary>
+    private bool IsHostOwner(long userId) =>
+        userId > 0 && _hosts.GetAll().Any(h => h.Active && h.OwnerUserIds.Contains(userId));
 
     public void EnsureSeedGroups()
     {

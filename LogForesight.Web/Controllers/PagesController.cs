@@ -76,6 +76,20 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Users() => View();
 
+    /// <summary>
+    /// 使用者詳細（docs/archive/FEEDBACK-11-PLAN.md §3）：管理視角的單一使用者全貌——
+    /// 可見主機（含「為什麼看得到」）、上次登入、處理中／已處理項目、被指派歷程。
+    /// 與 <see cref="HandlerDetail"/> 刻意分開：那頁是全角色的工作頁、資料以**檢視者**
+    /// 可見範圍過濾；這頁以**被查看者**為準，是 Maintain 專屬的管理資訊。
+    /// </summary>
+    [HttpGet("/admin/users/{userId:long}")]
+    [Permission(Capability.Maintain)]
+    public IActionResult UserDetail(long userId)
+    {
+        ViewData["UserId"] = userId;
+        return View();
+    }
+
     [HttpGet("/admin/hosts")]
     [Permission(Capability.Maintain)]
     public IActionResult Hosts() => View();

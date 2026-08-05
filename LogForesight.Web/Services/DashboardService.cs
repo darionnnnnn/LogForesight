@@ -52,6 +52,8 @@ public class DashboardService
             .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
             .Take(10)
             .ToList();
+        // 重點問題（§8-1）：五筆足以回答「現在最該處理哪幾個問題」，再多就變成第二張清單頁
+        dto.TopIssues = RecordStatsBuilder.BuildIssueRanking(records).Take(5).ToList();
         BuildSilentHosts(dto, visibleHosts);
         BuildGroupRisk(dto, records, visibleHosts);
 

@@ -1048,6 +1048,197 @@ public class HandlingServiceTests
         Assert.Equal(0, result.CaseSyncedDayCount);
     }
 
+    // ── 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）─────────────────────────────────────
+    //
+    // 註：期間（from/to）的過濾由 IRecordRepository.Query 負責，而 FakeRecordRepository
+    // 刻意忽略 filter（見它的類別註解），因此這組測試釘的是「哪些主機／哪些天會被標」
+    // 的規則本身；期間過濾另由 RecordRepository 的查詢測試涵蓋。
+
+    /// <summary>無人接手的主機：期間內每一天都標成結論，逐日各留一列歷程</summary>
+    [Fact]
+    public void 統一標記_無案件的主機_逐日標記並寫歷程()
+    {
+        var a = Issue("disk", 153);
+        var day1 = Today.AddDays(-3);
+        var day2 = Today.AddDays(-2);
+        _repository.AddRecord(_host.HostName, day1, a);
+        _repository.AddRecord(_host.HostName, day2, a);
+
+        var result = Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "週期性維護"
+        });
+
+        Assert.Equal(1, result.UpdatedHostCount);
+        Assert.Equal(2, result.UpdatedDayCount);
+        Assert.Empty(result.Skipped);
+
+        foreach (var day in new[] { day1, day2 })
+        {
+            var handling = Assert.Single(_issueHandlings.GetForDay(_host.HostName, day));
+            Assert.Equal(IssueHandlingStatuses.Resolved, handling.Status);
+            Assert.Equal("週期性維護", handling.Note);
+        }
+
+        // 逐問題逐日各一列歷程（同批次套用的規則，不做彙總）
+        foreach (var day in new[] { day1, day2 })
+        {
+            Assert.Single(_handlings.GetLogs(_host.HostName, day), l => l.Action == HandlingActions.IssueStatus);
+        }
+    }
+
+    /// <summary>
+    /// 已有進行中案件的主機整台略過（定案 6-1）——不論處理人是誰。要動別人的案件，
+    /// 正規路徑是改派或由處理人自己回覆。
+    /// </summary>
+    [Fact]
+    public void 統一標記_已有案件的主機_略過並回報處理人()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-4);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _owner.UserId);   // 建案，處理人＝OOO
+
+        var ex = Assert.Throws<DomainException>(() => service.BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "理由"
+        }));
+
+        // 全部主機都被略過時擋下整批（沒有可標的東西，不該回一個「成功 0 台」）
+        Assert.Contains("已有人處理", ex.Message);
+
+        var preview = service.PreviewBulkClose("disk", 153, null, null);
+        var row = Assert.Single(preview.Hosts);
+        Assert.Contains("OOO", row.SkipReason);
+        Assert.Equal(0, row.DayCount);
+    }
+
+    /// <summary>
+    /// 無案件但有人標了處理中／觀察中：一併覆蓋（定案 6-3，admin 的統一標記為主），
+    /// 且預覽要先講明會覆蓋幾天——按下去之前看得到。
+    /// </summary>
+    [Fact]
+    public void 統一標記_無案件的處理中標記_被覆蓋且預覽先告知()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-5);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.InProgress
+        });
+
+        var preview = service.PreviewBulkClose("disk", 153, null, null);
+        Assert.Equal(1, Assert.Single(preview.Hosts).OverwriteDayCount);
+
+        service.BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.WontFix, Note = "已知行為"
+        });
+
+        Assert.Equal(IssueHandlingStatuses.WontFix,
+            Assert.Single(_issueHandlings.GetForDay(_host.HostName, day)).Status);
+    }
+
+    /// <summary>已有結論的日子不重寫——重寫只會多一列沒意義的歷程，還會蓋掉當初的判斷</summary>
+    [Fact]
+    public void 統一標記_已有結論的日子_不動也不重寫歷程()
+    {
+        var a = Issue("disk", 153);
+        var closedDay = Today.AddDays(-7);
+        var openDay = Today.AddDays(-6);
+        _repository.AddRecord(_host.HostName, closedDay, a);
+        _repository.AddRecord(_host.HostName, openDay, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.SetIssueStatus(_host.HostId, closedDay, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.FalsePositive,
+            Note = "先前判定"
+        });
+        var closedDayLogsBefore = _handlings.GetLogs(_host.HostName, closedDay).Count;
+
+        var result = service.BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "統一標記"
+        });
+
+        Assert.Equal(1, result.UpdatedDayCount);   // 只有 openDay
+        Assert.Equal(IssueHandlingStatuses.FalsePositive,
+            Assert.Single(_issueHandlings.GetForDay(_host.HostName, closedDay)).Status);
+        Assert.Equal(closedDayLogsBefore, _handlings.GetLogs(_host.HostName, closedDay).Count);
+    }
+
+    /// <summary>標「已知雜訊」要寫入雜訊記憶（與詳情頁一致）——這是四態中唯一有後續效果的</summary>
+    [Fact]
+    public void 統一標記_已知雜訊_寫入雜訊記憶()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-8);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知雜訊"
+        });
+
+        Assert.NotNull(_noiseMarks.Get(_host.HostName, IssueSignatureKey.For(a)));
+    }
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.InProgress)]
+    [InlineData(IssueHandlingStatuses.Observing)]
+    [InlineData(IssueHandlingStatuses.Open)]
+    public void 統一標記_非結案狀態_擋下(string status)
+    {
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, Today.AddDays(-9), a);
+
+        var ex = Assert.Throws<DomainException>(() =>
+            Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+            {
+                Source = "disk", EventId = 153, Status = status, Note = "理由"
+            }));
+
+        Assert.Contains("四種結論", ex.Message);
+    }
+
+    /// <summary>原因必填：這是代全體下結論的操作，理由是紀錄的一部分</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void 統一標記_原因未填_擋下(string note)
+    {
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, Today.AddDays(-10), a);
+
+        var ex = Assert.Throws<DomainException>(() =>
+            Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+            {
+                Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = note
+            }));
+
+        Assert.Contains("原因", ex.Message);
+    }
+
+    [Fact]
+    public void 統一標記_寫入專屬稽核動作()
+    {
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, Today.AddDays(-11), a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "理由"
+        });
+
+        var entry = Assert.Single(_audit.Entries, e => e.Action == AuditActions.IssueBulkClose);
+        Assert.Contains("統一標記", entry.Summary);
+    }
+
     // ── 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）────────────────────────────
 
     [Fact]
@@ -1071,6 +1262,51 @@ public class HandlingServiceTests
         var dayItem = Assert.Single(workload.Days);
         Assert.Equal(day.ToString("yyyy-MM-dd"), dayItem.Date);
         Assert.Equal(HandlingStatuses.InProgress, dayItem.DerivedStatus);
+    }
+
+    /// <summary>
+    /// 問題簽章鍵的反解（§7）。與 <c>For</c> 對稱，格式壞掉時回 null 而不是拋例外——
+    /// 舊資料或人為改壞的 blob 不該讓整個工作頁 500。
+    /// </summary>
+    [Theory]
+    [InlineData("Application|disk|153|1", "disk", 153)]
+    [InlineData("System|Service Control Manager|7031|1", "Service Control Manager", 7031)]
+    public void 問題簽章鍵_可反解出來源與EventId(string key, string expectedSource, int expectedEventId)
+    {
+        var parsed = IssueSignatureKey.TryParseSignature(key);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(expectedSource, parsed!.Value.Source);
+        Assert.Equal(expectedEventId, parsed.Value.EventId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Application|disk|153")]
+    [InlineData("Application|disk|not-a-number|1")]
+    public void 問題簽章鍵_格式不符回null不拋例外(string? key)
+    {
+        Assert.Null(IssueSignatureKey.TryParseSignature(key));
+    }
+
+    /// <summary>
+    /// 工作頁「依問題」視角（docs/archive/FEEDBACK-11-PLAN.md §7）在前端分組，靠的是這兩個欄位：
+    /// 沒有它們就分不了組，「回覆處理狀態」也送不出參數（端點吃 source＋eventId）。
+    /// </summary>
+    [Fact]
+    public void 工作頁_案件帶出問題簽章的來源與EventId()
+    {
+        var day = Today.AddDays(-51);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+
+        var caseItem = Assert.Single(service.GetHandlerWorkload(_other.UserId, includeResolvedDays: false).Cases);
+
+        Assert.Equal("disk", caseItem.Source);
+        Assert.Equal(153, caseItem.EventId);
     }
 
     /// <summary>已結案的風險日預設不顯示；includeResolvedDays=true 時才納入</summary>

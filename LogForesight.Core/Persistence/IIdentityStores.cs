@@ -26,6 +26,15 @@ public interface IUserStore
 
     /// <summary>整組取代某使用者的群組成員資格（CSV 匯入的 groups 欄語意）</summary>
     void SetGroups(long userId, IEnumerable<long> groupIds);
+
+    /// <summary>
+    /// 記錄一次成功登入的時間（docs/archive/FEEDBACK-11-PLAN.md §3）。
+    /// **刻意不併進 <see cref="Upsert"/>**：Upsert 的既存分支逐欄覆寫，而各處建構
+    /// <see cref="WebUser"/> 的呼叫端（使用者頁儲存、批次新增）都不會帶這個欄位，
+    /// 交給 Upsert 就會在每次編輯使用者時把上次登入時間靜默清掉——
+    /// 與 owners.csv 曾漏抄 SentinelId 同一種失敗模式，用意圖精準的方法避開。
+    /// </summary>
+    void TouchLogin(long userId, DateTime at);
 }
 
 /// <summary>

@@ -134,7 +134,7 @@ function renderHostGroups() {
             { title: '', className: 'text-end', render: g => groupActions('host', g) }
         ],
         rows: hostGroups,
-        empty: { title: '尚無主機群組', hint: '可於「資料匯入」上傳主機時自動建立，或用右上角的「新增群組」建立。' }
+        empty: { title: '尚無主機群組', hint: '可於「NetIQ 維護 > 匯入」掃描匯入時建立，或用右上角的「新增群組」建立。' }
     });
 }
 

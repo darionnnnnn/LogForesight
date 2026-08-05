@@ -44,6 +44,33 @@ public static class RecordStatsBuilder
     }
 
     /// <summary>
+    /// 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」共用。
+    ///
+    /// 分組鍵沿用 <see cref="RecordQueryHelpers.GroupIssuesBySignature"/>（Source＋EventId），
+    /// 與問題查詢「依問題」視角是同一把鍵——下鑽過去看到的必須是同一個問題，不能這裡分一種、
+    /// 那裡分另一種。排序＝最高嚴重度 → 主機數 → 總次數，同依問題視角的預設排序。
+    ///
+    /// 與 <see cref="BuildHostRanking"/> 同樣**回傳完整排序清單**，Top N 的切法留給呼叫端
+    /// （儀表板取 5、報表取 10＋「其他」彙總）。
+    /// </summary>
+    public static List<IssueRankingDto> BuildIssueRanking(List<DailyAnalysisRecord> records) =>
+        RecordQueryHelpers.GroupIssuesBySignature(records)
+            .Select(g => new IssueRankingDto
+            {
+                Source = g.Key.Source,
+                EventId = g.Key.EventId,
+                Category = g.First().Issue.Category.ToString(),
+                MaxSeverity = g.Max(x => x.Issue.Severity).ToString(),
+                HostCount = g.Select(x => x.Record.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                DayCount = g.Select(x => (x.Record.Host, x.Record.Date)).Distinct().Count(),
+                TotalCount = g.Sum(x => x.Issue.Count)
+            })
+            .OrderByDescending(i => Enum.TryParse<IssueSeverity>(i.MaxSeverity, out var s) ? (int)s : -1)
+            .ThenByDescending(i => i.HostCount)
+            .ThenByDescending(i => i.TotalCount)
+            .ToList();
+
+    /// <summary>
     /// 主機告警排行：緊急程度＝高風險日數 → 有關聯訊號的日數 → 中風險日數（§DB-PLAN E 節）。
     /// 回傳**完整排序清單**，不做 Top N 切分——儀表板只取前 10，報表另切 Top10＋「其他」彙總，
     /// 兩邊切分方式不同，留給呼叫端自行決定。

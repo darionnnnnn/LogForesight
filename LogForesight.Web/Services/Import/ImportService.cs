@@ -100,20 +100,16 @@ public class ImportService
             FileName = pending.Plan.FileName,
             AddedCount = result.Added,
             UpdatedCount = result.Updated,
-            RemovedCount = result.Removed,
-            CreatedGroups = result.CreatedGroups,
             CreatedAt = DateTime.Now
         });
 
         _audit.Record(
             action: AuditActions.ImportApply,
             summary: $"匯入 {KindName(kind)}（{pending.Plan.FileName}）：新增 {result.Added}、更新 {result.Updated}" +
-                     (result.Removed > 0 ? $"、移除 {result.Removed}" : "") +
-                     (result.CreatedGroups.Count > 0 ? $"，新建群組 {string.Join("、", result.CreatedGroups)}" : "") +
                      (result.CreatedUsers.Count > 0 ? $"，新建帳號 {string.Join("、", result.CreatedUsers)}" : ""),
             targetKind: "import",
             targetId: kind.ToString(),
-            detail: new { result.Added, result.Updated, result.Removed, result.CreatedGroups, result.CreatedUsers, pending.Plan.FileName });
+            detail: new { result.Added, result.Updated, result.CreatedUsers, pending.Plan.FileName });
 
         return result;
     }
@@ -147,6 +143,7 @@ public class ImportService
             ? importer
             : throw DomainException.Validation($"不支援的匯入類型：{kind}。");
 
+    /// <summary>顯示名稱。已退役的三種仍列出——歷史匯入紀錄裡還查得到它們（§2a）</summary>
     private static string KindName(ImportKind kind) => kind switch
     {
         ImportKind.Users => "使用者",

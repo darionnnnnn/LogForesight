@@ -7,10 +7,15 @@
 
     <div class="row g-3 mt-1" id="handler-kpi"></div>
 
+    @* §7（回饋第十一輪）：預設「依問題」——同一類問題被交辦到多台主機時，一次看完、
+       一次回覆才是主要動線；「依主機」是原本的逐案件列表，隨時可切回。 *@
     <section class="lf-card mt-3">
         <div class="lf-card__header">
             <h2 class="lf-card__title">進行中案件</h2>
-            <span class="text-muted small">跨日追蹤的問題案件，狀態會隨案件同步連動</span>
+            <div class="d-flex align-items-center gap-3">
+                <span class="text-muted small">跨日追蹤的問題案件，狀態會隨案件同步連動</span>
+                <div id="handler-view-chips"></div>
+            </div>
         </div>
         <div class="lf-card__body p-0" id="handler-cases"></div>
     </section>

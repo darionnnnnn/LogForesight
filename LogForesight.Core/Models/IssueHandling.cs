@@ -61,6 +61,20 @@ public static class IssueSignatureKey
 
     public static string For(LogIssueSignature signature) =>
         For(signature.LogName, signature.Source, signature.EventId, signature.EntryType);
+
+    /// <summary>
+    /// 反解出 (Source, EventId)——「依問題」分組用的鍵（docs/archive/FEEDBACK-11-PLAN.md §7）。
+    /// 格式不符時回 null（防禦：舊資料或人為改壞的 blob 不該讓整頁 500）。
+    /// 與 <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType)"/> 對稱，
+    /// 分隔字元的定義因此只有這一份。
+    /// </summary>
+    public static (string Source, int EventId)? TryParseSignature(string? key)
+    {
+        var parts = key?.Split('|');
+        if (parts is not { Length: 4 } || !int.TryParse(parts[2], out var eventId)) return null;
+
+        return (parts[1], eventId);
+    }
 }
 
 /// <summary>

@@ -537,6 +537,179 @@ public class IssueHandlingCommandService
         };
     }
 
+    // ── 統一標記（docs/archive/FEEDBACK-11-PLAN.md §6）────────────────────────────────────
+
+    /// <summary>
+    /// 統一標記的預覽：逐主機列出「會標幾天、其中幾天覆蓋處理中標記、幾天已有結論不動」，
+    /// 以及整台被略過的原因。**預覽與落盤共用 <see cref="PlanBulkClose"/> 同一份規則**——
+    /// 兩邊各算一次的話，畫面上說會跳過的主機實際可能被寫進去。
+    /// </summary>
+    public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) =>
+        new()
+        {
+            From = from?.ToString("yyyy-MM-dd"),
+            To = to?.ToString("yyyy-MM-dd"),
+            Hosts = PlanBulkClose(source, eventId, from, to).Select(p => p.Row).ToList()
+        };
+
+    /// <summary>
+    /// 統一標記（§6）：把一個問題在**尚未有人接手**的主機上一次標成結論。
+    ///
+    /// 「尚未有人接手」＝該（主機, 問題）沒有進行中案件——案件是指派的事實來源，這是唯一的
+    /// 略過條件（定案 6-1／6-3）。已有案件者不論處理人是誰一律略過並回報：要動別人的案件，
+    /// 正規路徑是改派或由處理人自己回覆（§8／§9 既有定案）。無案件時，期間內即使有人把它
+    /// 標成處理中／觀察中也一併覆蓋——admin 的統一標記為主，覆蓋會逐日留下歷程可追。
+    ///
+    /// 落盤完全走既有的 <see cref="ApplyIssueStatus"/>：逐筆歷程、已知雜訊記憶、案件協調
+    /// 全部沿用同一套規則，這裡只是「一次呼叫多台多天」，不是第二套狀態機。
+    /// </summary>
+    public BulkCloseIssueResultDto BulkCloseIssue(BulkCloseIssueRequest request)
+    {
+        if (!IssueHandlingStatuses.IsClosed(request.Status))
+            throw DomainException.Validation("統一標記只接受「已處理／不處理／誤報／已知雜訊」四種結論。");
+
+        var note = request.Note?.Trim();
+        if (string.IsNullOrEmpty(note))
+            throw DomainException.Validation("請填寫原因——統一標記是代全體下結論，理由要留在紀錄裡。");
+
+        var plan = PlanBulkClose(request.Source, request.EventId, request.From, request.To);
+        var targets = plan.Where(p => p.Row.SkipReason == null && p.Days.Count > 0).ToList();
+        var skipped = plan.Where(p => p.Row.SkipReason != null).Select(p => p.Row).ToList();
+
+        if (targets.Count == 0)
+            throw DomainException.Validation(skipped.Count > 0
+                ? "這個問題在期間內的主機都已有人處理或已有結論，沒有可統一標記的項目。"
+                : "找不到任何符合條件、且您有權限的主機。");
+
+        // 整批共用同一個時間戳：前端 timeline 靠「同操作者＋同時間戳」把一次操作分組成一塊
+        var occurredAt = DateTime.Now;
+        var updatedDays = 0;
+
+        foreach (var (host, days, _) in targets)
+        {
+            foreach (var (date, issueKey, issueLabel) in days)
+            {
+                ApplyIssueStatus(host, date, issueKey, issueLabel, request.Status, note,
+                    dueDate: null, forgetNoise: false, clearing: false, occurredAt);
+                updatedDays++;
+            }
+        }
+
+        _audit.Record(
+            action: AuditActions.IssueBulkClose,
+            summary: $"統一標記「{request.Source} {request.EventId}」為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
+                     $"{targets.Count} 台主機、共 {updatedDays} 天" +
+                     (skipped.Count > 0 ? $"，{skipped.Count} 台略過" : ""),
+            targetKind: "issue_case",
+            targetId: $"{request.Source}/{request.EventId}",
+            detail: new
+            {
+                request.Source, request.EventId, request.Status, Note = note,
+                From = request.From?.ToString("yyyy-MM-dd"), To = request.To?.ToString("yyyy-MM-dd"),
+                Hosts = targets.Select(t => new { t.Host.HostName, DayCount = t.Days.Count }),
+                Skipped = skipped.Select(s => new { s.HostName, s.SkipReason })
+            });
+
+        return new BulkCloseIssueResultDto
+        {
+            UpdatedHostCount = targets.Count,
+            UpdatedDayCount = updatedDays,
+            Skipped = skipped
+        };
+    }
+
+    /// <summary>
+    /// 統一標記的計畫（預覽與落盤共用）：逐主機決定要標哪些日子、略過的原因是什麼。
+    /// 查詢走 <see cref="IRecordRepository.Query"/>，天生受可見範圍限制。
+    /// </summary>
+    private List<(WebHost Host, List<(DateTime Date, string IssueKey, string IssueLabel)> Days, IssueBulkCloseHostDto Row)>
+        PlanBulkClose(string source, int eventId, DateTime? from, DateTime? to)
+    {
+        var filter = new RecordQueryFilter { Source = source, EventId = eventId, From = from, To = to };
+        var records = _repository.Query(filter);
+        var lookup = new HostLookup(_hosts.GetAll());
+
+        var byHost = new Dictionary<string, (WebHost Host, List<(DateTime, LogIssueSignature)> Occurrences)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in records)
+        {
+            var host = lookup.For(record);
+            if (host == null) continue;
+
+            foreach (var issue in record.TopIssues.Where(i => i.Source == source && i.EventId == eventId))
+            {
+                if (!byHost.TryGetValue(host.HostName, out var entry))
+                {
+                    entry = (host, new List<(DateTime, LogIssueSignature)>());
+                    byHost[host.HostName] = entry;
+                }
+                entry.Occurrences.Add((record.Date, issue));
+            }
+        }
+
+        var plan = new List<(WebHost, List<(DateTime, string, string)>, IssueBulkCloseHostDto)>();
+        if (byHost.Count == 0) return plan;
+
+        // 既有標記一次撈完（不是逐台呼叫）：整份 blob 型的 store 每次 GetMany 都是一次
+        // 讀取＋反序列化，兩千台的問題會變成兩千次全表掃描。同 GetTodo 的作法
+        var allOccurrences = byHost.Values.SelectMany(e => e.Occurrences).ToList();
+        var existingByHost = _issueStore
+            .GetMany(byHost.Keys, allOccurrences.Min(o => o.Item1), allOccurrences.Max(o => o.Item1))
+            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(h => (h.Date.Date, h.IssueKey))
+                      .ToDictionary(x => x.Key, x => x.Last().Status),
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (host, occurrences) in byHost.Values.OrderBy(e => e.Host.HostName, StringComparer.OrdinalIgnoreCase))
+        {
+            var row = new IssueBulkCloseHostDto { HostId = host.HostId, HostName = host.HostName };
+
+            // 已有進行中案件＝有人接手（不論是誰，含 admin 自己）：整台略過（定案 6-1）。
+            // 同一個 Source+EventId 可能對應多個完整簽章，任一個有案件就算有人在處理這件事。
+            var owner = occurrences
+                .Select(o => _cases.GetOpen(host.HostName, IssueSignatureKey.For(o.Item2)))
+                .FirstOrDefault(c => c?.HandlerId != null);
+            if (owner != null)
+            {
+                row.SkipReason = $"已由 {ResolveDisplayName(owner.HandlerId!.Value)} 的案件處理中";
+                plan.Add((host, new List<(DateTime, string, string)>(), row));
+                continue;
+            }
+
+            var existing = existingByHost.TryGetValue(host.HostName, out var marks)
+                ? marks
+                : new Dictionary<(DateTime, string), string>();
+
+            var days = new List<(DateTime, string, string)>();
+            foreach (var (date, issue) in occurrences.OrderBy(o => o.Item1))
+            {
+                var issueKey = IssueSignatureKey.For(issue);
+                existing.TryGetValue((date.Date, issueKey), out var current);
+
+                // 已有結論的日子不動——重寫只會多出一列沒有意義的歷程，還會蓋掉當初的判斷
+                if (current != null && IssueHandlingStatuses.IsClosed(current))
+                {
+                    row.AlreadyClosedDayCount++;
+                    continue;
+                }
+
+                if (current is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing)
+                    row.OverwriteDayCount++;
+
+                days.Add((date, issueKey, HandlingTextHelpers.IssueLabel(issue)));
+            }
+
+            row.DayCount = days.Count;
+            if (days.Count == 0 && row.SkipReason == null && row.AlreadyClosedDayCount > 0)
+                row.SkipReason = "期間內每一天都已有結論";
+
+            plan.Add((host, days, row));
+        }
+
+        return plan;
+    }
+
     /// <summary>
     /// 問題簽章鍵（<c>LogName|Source|EventId|EntryType</c>）是否屬於這個 Source＋EventId。
     /// 依問題視角以 Source＋EventId 分組，同組可能含多個完整簽章（不同 LogName／EntryType），

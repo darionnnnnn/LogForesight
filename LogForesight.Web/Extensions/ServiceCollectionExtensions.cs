@@ -296,10 +296,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<NetiqProbeService>();
 
         // CSV 匯入：每種類型一個 ICsvImporter 實作，ImportService 依 Kind 解析。
-        // 新增第四種匯入時只要多註冊一個實作，流程與 Controller 都不必改（OCP）
-        services.AddScoped<ICsvImporter, UserCsvImporter>();
-        services.AddScoped<ICsvImporter, HostCsvImporter>();
-        services.AddScoped<ICsvImporter, GroupAccessCsvImporter>();
+        // **§2a（回饋第十一輪）起只剩負責人一種**——使用者／主機／群組授權三種已退役
+        // （主機主要來源是 NetIQ 掃描匯入，其餘動線見 docs/archive/FEEDBACK-11-PLAN.md §2a 對照表）。
+        // 未註冊的 Kind 由 ImportService.Resolve 回「不支援的匯入類型」，舊網址打進來不會 500。
         services.AddScoped<ICsvImporter, OwnerCsvImporter>();
         services.AddScoped<ImportService>();
 

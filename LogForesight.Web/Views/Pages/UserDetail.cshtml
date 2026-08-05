@@ -1,0 +1,53 @@
+@{
+    ViewData["Title"] = "使用者詳細";
+}
+
+@* docs/archive/FEEDBACK-11-PLAN.md §3：管理視角的單一使用者全貌。資料以**被查看者**為準，
+   與 /handlers/{userId}（以檢視者可見範圍過濾的全角色工作頁）刻意分開。 *@
+<div id="user-detail" data-user-id="@ViewData["UserId"]">
+    <div id="user-detail-header"></div>
+
+    <div class="row g-3 mt-1" id="user-detail-kpi"></div>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">可見主機 <span class="text-muted small" id="visible-host-count"></span></h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="這個人看得到的主機，以及「為什麼看得到」：群組授權（部門群組經授權矩陣對應到主機群組）或負責人（被指派為該主機的負責人，自動取得檢視權）。兩者可同時成立。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
+        </div>
+        <div class="lf-card__body p-0" id="user-visible-hosts"></div>
+    </section>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">處理中項目</h2>
+            <span class="text-muted small">進行中的跨日問題案件與尚未結案的風險日</span>
+        </div>
+        <div class="lf-card__body p-0" id="user-open-work"></div>
+    </section>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">已處理項目</h2>
+            <span class="text-muted small">已結案的問題案件（新到舊）</span>
+        </div>
+        <div class="lf-card__body p-0" id="user-closed-work"></div>
+    </section>
+
+    <section class="lf-card mt-3">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">被指派歷程</h2>
+            <span tabindex="0" data-bs-toggle="popover"
+                  data-bs-content="以問題案件為事實來源：誰在什麼時候把哪台主機的哪個問題交辦給他、涵蓋哪些風險日、結案了沒。案件被改派給別人之後不再列於此（那次改派記在該主機當日的處理歷程）。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </span>
+        </div>
+        <div class="lf-card__body p-0" id="user-assignment-history"></div>
+    </section>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/user-detail.js" asp-append-version="true"></script>
+}
