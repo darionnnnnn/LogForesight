@@ -261,12 +261,19 @@ function applyUrlToForm() {
         params.has('riskLevels') ? splitCsv(params.get('riskLevels')) : DEFAULT_RISKS);
     setChips('filter-category-chips', 'category', splitCsv(params.get('categories')));
     setChips('filter-status-chips', 'status', splitCsv(params.get('statuses')));
+    document.getElementById('filter-unassigned-chip').classList.toggle('active', params.get('unassigned') === 'true');
     document.getElementById('filter-from').value = params.get('from') ?? defaultFrom();
     document.getElementById('filter-to').value = params.get('to') ?? today();
     document.getElementById('filter-event-id').value = params.get('eventId') ?? '';
     document.getElementById('filter-source').value = params.get('source') ?? '';
 
-    currentView = ['detail', 'host', 'date', 'issue'].includes(params.get('view')) ? params.get('view') : 'detail';
+    // 預設視角（§10）：URL 完全沒有查詢參數（從側欄直接進頁）→ 依問題；帶任何參數（下鑽連結
+    // 帶 statuses/severity 等明細專屬條件）→ 維持明細，下鑽連結零改動、數字對得上
+    const viewParam = params.get('view');
+    const hasAnyParam = [...params.keys()].length > 0;
+    currentView = ['detail', 'host', 'date', 'issue'].includes(viewParam)
+        ? viewParam
+        : (hasAnyParam ? 'detail' : 'issue');
     setActiveView(currentView);
     currentPage = Number(params.get('page')) || 1;
     sort = { key: params.get('sort') ?? '', dir: params.get('dir') === 'asc' ? 'asc' : 'desc' };
@@ -295,13 +302,18 @@ function setActiveView(view) {
         btn.classList.toggle('active', btn.dataset.view === view);
     }
 
-    // 彙總視角的 API 不支援處理狀態篩選——chip 停用而不是默默忽略，
-    // 否則使用者選了「未處理」卻看到全部，會以為篩選壞掉
-    const supportsStatus = view === 'detail';
+    // 明細與依問題視角支援處理狀態篩選（§10：依問題篩的是「處理概況」三態）；依主機／依日期不支援
+    const supportsStatus = view === 'detail' || view === 'issue';
     for (const btn of document.querySelectorAll('#filter-status-chips button')) {
         btn.disabled = !supportsStatus;
-        btn.title = supportsStatus ? '' : '彙總視角（依主機／依日期／依問題）不支援處理狀態篩選';
+        btn.title = supportsStatus
+            ? (view === 'issue' ? '依問題視角篩的是各問題的處理概況（未處理／處理中／已處理）' : '')
+            : '依主機／依日期視角不支援處理狀態篩選';
     }
+
+    // 未指派 chip 僅「依問題」視角顯示（§10）：問題角度的分派入口
+    document.getElementById('filter-unassigned-group').classList.toggle('d-none', view !== 'issue');
+    if (view !== 'issue') document.getElementById('filter-unassigned-chip').classList.remove('active');
 }
 
 function collectFilters() {
@@ -318,6 +330,9 @@ function collectFilters() {
         // 來源現在是可見的表單欄位（§4：跨主機同簽章查詢併入問題查詢），與 eventId 同款；
         // severity/overdue 仍只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）
         source: document.getElementById('filter-source').value.trim(),
+        // 未指派（§10）：依問題視角的 chip；下鑽也可由 URL 帶入（§5 報表未指派範圍）
+        unassigned: document.getElementById('filter-unassigned-chip').classList.contains('active')
+            || new URLSearchParams(location.search).get('unassigned') === 'true',
         severity: new URLSearchParams(location.search).get('severity') ?? '',
         overdue: new URLSearchParams(location.search).get('overdue') ?? ''
     };
@@ -336,6 +351,7 @@ function buildQueryString(filters, page) {
     if (filters.severity) params.set('severity', filters.severity);
     if (filters.statuses) params.set('statuses', filters.statuses);
     if (filters.overdue) params.set('overdue', filters.overdue);
+    if (filters.unassigned) params.set('unassigned', 'true');
     if (filters.source) params.set('source', filters.source);
     if (currentView !== 'detail') params.set('view', currentView);
     if (sort.key) {
@@ -633,10 +649,79 @@ function renderIssueView() {
         rows: lastResult.items,
         sort,
         onSort: applySort,
-        // 點列 → 切到明細視角並鎖定這個問題（source+eventId）
-        rowHref: i => detailForIssue(i),
+        // §10：點列就地展開該問題的受影響主機×日期，每列直連風險日詳情去處理——
+        // 把「看到問題→去處理」從「下鑽明細→點日期→找問題」縮短（取代原本整列導向明細視角）
+        onRowExpand: (group, cell) => renderIssueOccurrences(cell, group),
         empty: { title: '沒有符合條件的問題', hint: '請調整篩選條件或日期區間。' }
     });
+}
+
+/**
+ * 依問題視角的列展開（§10）：列出該問題目前查詢範圍內的受影響主機×日期，每列直連該主機
+ * 該日的風險日詳情。重用明細端點（/api/records，全角色、可見範圍已過濾），不另建 API。
+ */
+async function renderIssueOccurrences(cell, group) {
+    cell.replaceChildren();
+    const wrap = document.createElement('div');
+    wrap.className = 'p-2';
+    renderLoading(wrap, 3);
+    cell.appendChild(wrap);
+
+    const filters = collectFilters();
+    const params = new URLSearchParams();
+    params.set('source', group.source);
+    params.set('eventId', String(group.eventId));
+    if (filters.from) params.set('from', filters.from);
+    if (filters.to) params.set('to', filters.to);
+    params.set('riskLevels', '高,中,低');   // 問題的出現橫跨各風險層級，不套當前風險 chip
+    params.set('pageSize', '100');
+
+    let result;
+    try {
+        result = await api.get(`/api/records?${params}`, { silent: true });
+    } catch {
+        renderEmpty(wrap, { title: '載入受影響主機失敗' });
+        return;
+    }
+
+    if (!result.items.length) {
+        renderEmpty(wrap, { title: '此範圍內沒有可展開的主機日' });
+        return;
+    }
+
+    const inner = document.createElement('div');
+    renderTable(inner, {
+        columns: [
+            { title: '主機', render: r => r.hostName },
+            { title: '日期', render: r => r.date },
+            { title: '風險', render: r => riskBadge(r.riskLevel) },
+            { title: '處理狀態', render: r => handlingCell(r) },
+            { title: '處理人', render: r => handlerCell(r) },
+            { title: '', className: 'text-end', render: r => goHandleLink(r) }
+        ],
+        rows: result.items,
+        rowHref: r => `/records/${r.hostId}/${r.date}`,
+        empty: { title: '沒有資料' }
+    });
+
+    // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
+    const foot = document.createElement('div');
+    foot.className = 'small mt-2';
+    const allLink = document.createElement('a');
+    allLink.href = detailForIssue(group);
+    allLink.textContent = '在明細視角檢視這個問題的全部風險日 →';
+    foot.appendChild(allLink);
+
+    wrap.replaceChildren(inner, foot);
+}
+
+/** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
+function goHandleLink(record) {
+    const link = document.createElement('a');
+    link.href = `/records/${record.hostId}/${record.date}`;
+    link.className = 'btn btn-sm btn-outline-primary';
+    link.textContent = '去處理';
+    return link;
 }
 
 /**
@@ -951,12 +1036,19 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 for (const container of ['filter-risk-chips', 'filter-category-chips', 'filter-status-chips']) {
     document.getElementById(container).addEventListener('click', event => {
         const btn = event.target.closest('button[data-risk], button[data-category], button[data-status]');
-        if (!btn) return;
+        if (!btn || btn.disabled) return;
         btn.classList.toggle('active');
         currentPage = 1;
         search();
     });
 }
+
+// 未指派 chip（§10，僅依問題視角）：即點即篩
+document.getElementById('filter-unassigned-chip').addEventListener('click', event => {
+    event.currentTarget.classList.toggle('active');
+    currentPage = 1;
+    search();
+});
 
 // 視角切換：換 endpoint 重查，篩選條件不變
 document.getElementById('view-toggle').addEventListener('click', event => {

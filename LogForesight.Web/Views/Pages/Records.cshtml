@@ -76,6 +76,12 @@
                 <button type="button" class="lf-chip" data-status="resolved">已處理</button>
             </div>
         </div>
+        @* 未指派（§10）：僅「依問題」視角顯示——問題角度的 admin 分派入口 *@
+        <div class="lf-toolbar__group d-none" id="filter-unassigned-group">
+            <div class="lf-toolbar__chips">
+                <button type="button" class="lf-chip" id="filter-unassigned-chip">未指派</button>
+            </div>
+        </div>
     </div>
 
     <div class="lf-toolbar__row" id="filter-group-row">
