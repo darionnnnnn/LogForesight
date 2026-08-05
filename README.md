@@ -31,8 +31,9 @@ LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC�
 │                       群組制授權（部門↔主機群組）＋JWT（HttpOnly Cookie）。
 │                       完整規格與各期實作/驗收紀錄見 docs/WEB-SPEC.md；
 │                       儲存後端二選一（Sqlite 預設/SqlServer，見 docs/WEB-SPEC.md §10.5）
-└── （appsettings.json 已內含開箱即測的測試登入 svc-lfadmin / LogForesight-dev；
-                        正式環境務必依檔內【正式環境需修改】說明改用環境變數與 Ldap，見 docs/WEB-SPEC.md §5）
+└── （appsettings.json 已內含開箱即測的測試登入：demo-admin＝全功能測試管理員（自動 seed）、
+                        svc-lfadmin＝本地救援帳號（僅維護頁）；正式環境務必依檔內【正式環境需修改】
+                        說明改用環境變數與 Provider=Ad（AD 伺服器在設定頁設定），見 docs/WEB-SPEC.md §5）
 
 LogForesight.Tests/    單元測試（xUnit）：五層偵測邏輯、儲存合約測試（SQLite 後端）、
                         Web 授權範圍/處理流程/規則保護/CSV 匯入/排程與立即執行

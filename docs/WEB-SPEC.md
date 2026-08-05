@@ -192,7 +192,8 @@ LogForesight.Web/
   （帳號 `svc-lfadmin` / 密碼 `LogForesight-dev`），讓開發者 clone 後 `dotnet run` 即可登入測試,不必先做設定。
   這些值會進版控與 GitHub、任何人都看得到,**因此絕不能沿用到正式環境**：正式環境一律用環境變數覆寫
   （`Jwt__SecretKey`、`Auth__ServerAdmin__PasswordHash`,或 user-secrets），並把 `Auth.Provider` 改成
-  `Ldap`（`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
+  `Ad`（§12 起舊值 `Ldap` 視同 `Ad`；`Provider=Stub` 且 `ASPNETCORE_ENVIRONMENT=Production` 時
+  啟動 fail fast 的欄杆會擋下帶著測試設定上線的失誤）。
   想覆寫本機測試值可用 `appsettings.Development.json`（gitignore）。
 - `Storage.DataRoot`：JSONL 後端的資料根目錄＝批次執行檔目錄（`history.txt`、`rules.json` 所在），
   Web 的自有資料寫入其下 `webdata\`（§10.3）。
@@ -218,8 +219,10 @@ LogForesight.Web/
 登入頁 POST /api/auth/login { account, password? }
   → IAuthenticationProvider.AuthenticateAsync(account, password)
       serverAdmin 帳號比對（任何 Provider 下優先檢查，見下方專節）
-      Stub 實作（第一版）：lf_users 存在且 active 即通過（password 忽略）——僅供開發/前期測試
-      正式（已定案）：LdapAuthenticationProvider（AD 帳密 bind 驗證，見下方專節）
+      Stub 實作：lf_users 存在且 active 即通過（password 忽略）——僅供開發/前期測試
+      正式（§12 起）：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
+        bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider（明講請以
+        serverAdmin 登入後至設定頁設定）
   → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
   → 稽核 login / login_failed（§13）
 ```
@@ -229,7 +232,7 @@ LogForesight.Web/
 - `Auth.ServerAdmin` 定義一個**不存在於 `lf_users`** 的本地帳號，密碼由管理單位
   **封存保管並定期變更**。用途：指派/移除 admin 群組成員——解掉「匯入使用者需要 admin、
   admin 又來自匯入」的引導問題，也是日後 **AD 停擺時的救援入口**（不依賴任何 Provider，
-  Stub 或 Ldap 模式下皆可登入）。
+  Stub 或 Ad 模式下皆可登入；AD 尚未於設定頁設定時，它是唯一進得來的帳號）。
 - **最小授權**：登入後能力僅 `Maintain`＋`ViewAudit`（使用者/群組/主機維護與稽核查閱），
   **不含任何業務資料檢視**——依「設定 admin 角色成員」的用途給權，不是萬能帳號。
 - **密碼以雜湊存放**（PBKDF2，不存明文——設定檔會進備份/複本，明文密碼會跟著擴散）。
@@ -646,6 +649,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RecordRepository` 已排除被隱藏等級的風險日（見 9.9b 1b）；前端另依
   `GET api/settings/display` 把被隱藏等級的 KPI 卡整卡不顯示——「0」與「被藏起來」是兩件事，
   不讓 0 被誤讀成「這期間真的沒有中風險日」。
+- **serverAdmin 引導卡（§1，回饋第九輪）**：serverAdmin 登入時本頁不打 summary API，改顯示
+  引導卡（說明救援帳號用途、測試模式可用 demo-admin 測全站、正式建帳號步驟），其餘區塊
+  連同靜態卡片標題一併隱藏——業務資料對它本來就是空的（§6.2 最小授權），空白畫面會被誤讀成壞掉。
 - API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
   注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）。
 
@@ -991,9 +997,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **占比小圖的資料來源與全站一致**（docs/archive/HISTORY.md）：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
+- **處理狀態顯示範圍（§5，回饋第九輪）**：期間列下方一組**單選** chip——全部（預設）／未結案
+  ／未處理／未指派（單選讓每個數字都有明確母體，取代語意重疊的多 checkbox）。
+  `HandlingHistoryQueryService.FilterByScope` **先過濾再聚合**：KPI、趨勢、類型分布、排行、
+  占比全部反映同一範圍；前期對比套同一 scope 才可比。狀態推導與 `GetTodo`／問題查詢清單同源
+  （`DayHandlingDerivation`）；「未指派」＝日層級無處理人且無進行中案件涵蓋。scope≠all 時
+  低風險日一律排除（不在待辦語意內）、「處理進度」小圖隱藏（母體已抽掉已處理，恆 0%/100%
+  無資訊量）。scope 存 URL（可分享；all 不留參數）、不入 localStorage（誠實預設）；
+  KPI 下鑽 URL 附帶對應 `statuses=`／`unassigned=true`，點進去的筆數與卡片數字對得上。
 - **列印/匯出**：`@media print` 樣式（隱藏側欄與工具鈕、卡片不裁切）——主管列印或另存 PDF
   給上級是真實使用情境，排版好看必須含列印版面。
-- API：`GET api/reports/summary?from=&to=`（KPI＋圖表＋TotalHosts＋Handling 一次回傳）。
+- API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned`
+  （KPI＋圖表＋TotalHosts＋Handling＋套用的 HandlingScope 一次回傳）。
   （原 `GET api/reports/signature` 於 §4 隨簽章查詢併入問題查詢一併移除。）
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
@@ -1146,6 +1161,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
   2026-07-31 起此即時查詢降為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
   查無才用到本開關控制的即時查詢（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.4）。
+- **離線示範資料開關**（`UseOfflineDemoData`，§13 回饋第九輪，**預設關閉＝真實連線**）：
+  取代原 appsettings 的 `Netiq:DiscoveryClient`（Auto 讓 Development 預設假資料、方向顛倒）。
+  開關**僅非 Production 顯示**（DTO 的 `CanUseOfflineDemo`）；三道保險擋正式環境——前端不顯示、
+  `NetiqOptionsService.Update` 在 Production 拒絕開啟並強制關閉、DI 選型
+  （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
+  掃描精靈結果的 `Warnings` 也顯著標示「示範資料」（2026-07-30 誤認 bug 的既有防線）。
 - **頁面分頁化（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）**：改「設定｜診斷」兩分頁
   （沿用 `bindTabs` 手作頁籤模式）——原本的 Sentinel 清單與連線節流參數整批放「設定」分頁。
 - **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
@@ -1198,9 +1219,20 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
       灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
       `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
       用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
-  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。appsettings.json 的 `Ai.BaseUrl` 降為
-     DB 尚未設定時的退路；`TimeoutSeconds`/`RetryCount`/`MaxTokens` 等節流參數仍在 appsettings.json。
-  3. **AD 驗證**（docs/archive/HISTORY.md #9，2026-07-27）：啟用開關＋伺服器清單（一行一台，依序
+  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。**§12（回饋第九輪）起本頁是 AI
+     全部參數的唯一事實來源**——原 appsettings 的 `Ai` 區段整段退役，`TimeoutSeconds`/`RetryCount`/
+     `RetryDelaySeconds`/`JsonRetryCount`/`MaxTokens`/`DeepDiveMaxTokens`/兩個 penalty/
+     `ExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**
+     （`<details>`，出廠值＝原 appsettings 值）。生效路徑：批次經 `RuntimeSettingsResolver.
+     ApplyAiAdvanced`（每次執行重讀）；Web 互動情境把進階參數指紋納入 `SettingsBoundClient`
+     快照，存檔即重建客戶端。位址留空＝刻意停用 AI（無任何退路悄悄接手）。
+  2b. **分析參數**（§12 新分頁）：伺服器角色描述（`ServerDescription`，帶入 prompt）、
+     體檢間隔天數（`CheckupIntervalDays`）、額外監控權限異動的資料夾（`WatchedFolders`，
+     一行一路徑）、掃描頻道（`AnalysisChannels`，一行一頻道全名、空＝預設六頻道；只正規化
+     不驗證已知性——自訂頻道是既有設計，拼錯會在分析時誠實申報「不存在／不適用」）、
+     CSV 匯入上限（`ImportMaxFileSizeKb`/`ImportMaxRows`，每次上傳即時讀取）。
+  3. **AD 驗證**（docs/archive/HISTORY.md #9，2026-07-27；§12 起為 AD 設定的**唯一**來源，
+     appsettings 的 `Auth:Ldap:Domain` 退役）：啟用開關＋伺服器清單（一行一台，依序
      嘗試）＋進階（SearchBase／SearchFilter）。開啟後不論 appsettings 的 `Auth:Provider` 為何，
      登入一律改用 DB 設定的 AD 伺服器驗證（`DynamicAuthenticationProvider`，存檔即生效不必重啟）；
      bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
@@ -1243,9 +1275,19 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
-- 總表（**每日一列彙總**：成功/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
-  單日主機明細（點日期下鑽的逐主機狀態）、單次執行詳情（統計＋逐條 log，等級篩選、exception 展開）、
+- 總表（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
+  單日主機明細（**點日期列就地展開**該天逐主機狀態，§2 回饋第九輪——懶載入 `onRowExpand`，
+  各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面最下方的下鑽卡）、
+  單次執行詳情（改 `showDetailModal`，統計＋逐條 log，等級篩選、exception 展開）、
   異常彙總（Error/Fatal 按訊息聚合）。
+- **本機主機的「已回補」狀態（§3，回饋第九輪）**：立即執行回補會把缺漏日的分析紀錄補到
+  被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期原本誤顯示「未執行」。
+  `RunMonitorService` 對 local 主機在當日無 BatchRun 時 fallback 查「D-1 是否有分析紀錄」
+  （與 NetIQ 同一套日期對應、同一次 `ListHostDates` 查詢），存在則標新狀態 `backfilled`
+  （「已回補」淺綠）——刻意不冒充 success，「當天真的有跑」與「後來補的資料」要分得出來。
+  未登記主機（HostId=0）不走 fallback（舊紀錄 HostId 也可能為 0，跨主機誤配比顯示未執行更糟）。
+  立即執行 modal 的「回補天數」文案同輪講明：僅影響 NetIQ 回補窗口，本機一律自動回補
+  趨勢窗口內的缺漏日。
 - **「已停止」狀態（2026-07-31，§1.4.4）**：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
   不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。

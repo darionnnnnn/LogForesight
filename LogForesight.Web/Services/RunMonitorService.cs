@@ -151,7 +151,7 @@ public class RunMonitorService
     private static string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates)
     {
         if (dayRuns.Count > 0) return StatusOf(dayRuns);
-        return recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "backfilled" : "none";
+        return HasBackfilledRecord(host, date, recordDates) ? "backfilled" : "none";
     }
 
     private static RunDayHostStatusDto LocalCell(
@@ -162,9 +162,15 @@ public class RunMonitorService
         if (dayRuns.Count > 0) return BuildCell(dateStr, dayRuns);
         return new RunDayHostStatusDto
         {
-            Status = recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "backfilled" : "none"
+            Status = HasBackfilledRecord(host, date, recordDates) ? "backfilled" : "none"
         };
     }
+
+    /// <summary>回補 fallback 的比對鍵防護：未登記主機（HostId=0，AllHosts 的 fallback 值）不走
+    /// 紀錄比對——舊紀錄的 HostId 也可能是 0（Touch 失敗時以名稱歸戶），(0, date) 會跨主機誤配，
+    /// 寧可顯示「未執行」也不冒認別台主機的回補。</summary>
+    private static bool HasBackfilledRecord(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
+        host.HostId > 0 && recordDates.Contains((host.HostId, date.AddDays(-1).Date));
 
     private sealed record HostRef(string HostName, long HostId, string Source);
 

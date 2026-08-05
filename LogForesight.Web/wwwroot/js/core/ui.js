@@ -411,7 +411,7 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         }
 
         // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
-        // docs/FEEDBACK-9-PLAN.md §2）——大資料量（14 天×2000 台的執行明細）不能進頁全抓。
+        // docs/archive/FEEDBACK-9-PLAN.md §2）——大資料量（14 天×2000 台的執行明細）不能進頁全抓。
         const detail = rowDetail ? rowDetail(row) : null;
         const expandable = !!detail || !!onRowExpand;
 
@@ -672,7 +672,7 @@ export function checkboxList(container, items, emptyHint) {
 }
 
 /**
- * 可搜尋的使用者選單（docs/FEEDBACK-9-PLAN.md §8）：文字框即時篩選＋原生 select。
+ * 可搜尋的使用者選單（docs/archive/FEEDBACK-9-PLAN.md §8）：文字框即時篩選＋原生 select。
  * 處理面板指派、跨主機批次指派共用同一份，不各寫一份。
  *
  * 篩選比對顯示名稱＋帳號（不分大小寫）；選項文字一律走 formatUserName()（§9 單一格式出口）。

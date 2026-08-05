@@ -32,10 +32,7 @@
       // 以 LogForesight.Web.exe --hash-password 產生（測試可用任意自訂的已知密碼）
       "PasswordHash": "<PBKDF2 雜湊>"
     }
-  },
-  "Netiq": {
-    // Development 環境預設 "Auto" 會用離線示範資料（固定台數/網段數）跑 NetIQ 掃描匯入精靈。
-    // 開發機要對真實 Sentinel 試掃時，在這裡覆寫成 "Real"（appsettings.json 的預設值是 "Auto"）。
-    "DiscoveryClient": "Auto"
   }
+  // NetIQ 掃描一律預設真實連線（回饋第九輪 §13 起 appsettings 不再有 Netiq 區段）：
+  // 需要離線示範資料時到「系統管理 > NetIQ 維護」頁開啟「使用離線示範資料」開關（僅非 Production 可開）。
 }

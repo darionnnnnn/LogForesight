@@ -330,9 +330,12 @@ function collectFilters() {
         // 來源現在是可見的表單欄位（§4：跨主機同簽章查詢併入問題查詢），與 eventId 同款；
         // severity/overdue 仍只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）
         source: document.getElementById('filter-source').value.trim(),
-        // 未指派（§10）：依問題視角的 chip；下鑽也可由 URL 帶入（§5 報表未指派範圍）
-        unassigned: document.getElementById('filter-unassigned-chip').classList.contains('active')
-            || new URLSearchParams(location.search).get('unassigned') === 'true',
+        // 未指派（§10）：依問題視角看 chip；其餘視角只由 URL 帶入（§5 報表未指派下鑽）——
+        // chip 在非 issue 視角隱藏，若仍讀 chip 之外又讀 URL，會變成看不見卻仍生效的篩選，
+        // 因此非 issue 視角一律以 URL 為準，並由 renderActiveConditions 顯性化成可移除標籤
+        unassigned: currentView === 'issue'
+            ? document.getElementById('filter-unassigned-chip').classList.contains('active')
+            : new URLSearchParams(location.search).get('unassigned') === 'true',
         severity: new URLSearchParams(location.search).get('severity') ?? '',
         overdue: new URLSearchParams(location.search).get('overdue') ?? ''
     };
@@ -397,6 +400,8 @@ function renderActiveConditions(filters) {
     const tags = [];
     if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
+    // 未指派在非 issue 視角沒有 chip 可解除（§5 報表下鑽帶入）——顯性化成可移除標籤
+    if (filters.unassigned && currentView !== 'issue') tags.push({ label: '僅未指派', param: 'unassigned' });
     // 來源（§4 起）已是可見表單欄位，不再作為可移除條件標籤——清空欄位即可
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行

@@ -47,8 +47,8 @@ public class WebAiService : IWebAiService
     private readonly ISystemSettingsStore _systemSettings;
 
     /// <summary>
-    /// 目前 DB 設定推導出的 AI 進階參數（§12）。每次建立客戶端時重讀——設定頁改完即生效，
-    /// 不必重啟站台，與位址／金鑰的既有行為一致。
+    /// 目前 DB 設定推導出的 AI 進階參數（§12）。與批次路徑共用同一份解讀
+    /// （<see cref="RuntimeSettingsResolver.ApplyAiAdvanced"/>），不各寫一份會漂移的版本。
     /// </summary>
     private AiSettings AdvancedFromDb()
     {
@@ -57,24 +57,33 @@ public class WebAiService : IWebAiService
         return ai;
     }
 
-    // 本類別是 Singleton，但 AI 位址／金鑰可在設定頁隨時改：每次取用時比對 DB 目前值，
+    /// <summary>
+    /// 互動情境會用到的進階參數指紋（§12）：進快照參與比對，設定頁改了這些值也會觸發重建、
+    /// 即時生效——快照只比對 (BaseUrl, KeyEnc) 的話，進階參數要等位址變更或重啟才生效，
+    /// 與「設定頁存檔即生效」的既有行為矛盾。只涵蓋互動客戶端實際使用的欄位
+    /// （DeepDive/penalty/ExtraFields；逾時與重試在互動情境是固定覆寫值，不受設定頁影響）。
+    /// </summary>
+    private static string AdvancedFingerprint(SystemSettings db) =>
+        $"{db.AiDeepDiveMaxTokens}|{db.AiFrequencyPenalty}|{db.AiPresencePenalty}|{db.AiExtraRequestFieldsJson}";
+
+    // 本類別是 Singleton，但 AI 位址／金鑰／進階參數可在設定頁隨時改：每次取用時比對 DB 目前值，
     // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）
     // 統一處理快照比對與重建，取代原本互動／對話情境各自寫一份幾乎逐字相同的 lock+比對邏輯。
     //
     // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
     // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
     // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _interactiveClient;
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc), AIService> _chatClient;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _interactiveClient;
+    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _chatClient;
 
     public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
         _systemSettings = systemSettings;
 
-        _interactiveClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        _interactiveClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc) = snapshot;
+            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
             if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
             var advanced = AdvancedFromDb();
@@ -97,9 +106,9 @@ public class WebAiService : IWebAiService
             });
         });
 
-        _chatClient = new SettingsBoundClient<(string, string), AIService>(snapshot =>
+        _chatClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc) = snapshot;
+            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
             if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
             var advanced = AdvancedFromDb();
@@ -132,18 +141,18 @@ public class WebAiService : IWebAiService
 
     public bool Available => !string.IsNullOrWhiteSpace(EffectiveBaseUrl(_systemSettings.Get()));
 
-    /// <summary>依 DB 目前的位址／金鑰取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
+    /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetClient()
     {
         var db = _systemSettings.Get();
-        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
+        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
     }
 
-    /// <summary>依 DB 目前的位址／金鑰取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
+    /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetChatClient()
     {
         var db = _systemSettings.Get();
-        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc));
+        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
     }
 
     public async Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)

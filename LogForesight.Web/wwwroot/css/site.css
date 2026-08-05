@@ -753,7 +753,7 @@ a.lf-stat:hover .lf-card,
    docs/FEEDBACK-3-PLAN.md #3：原本用 auto-fill 是想讓卡少時維持合理寬度、不被拉爆成
    半版寬，但 auto-fill 會保留空軌道——卡片數少於可容納軌道數時，實卡被鎖在 minmax
    下限寬，徽章與統計數字擠壓換行。改 auto-fit（收合空軌道，實卡才能撐開）。
-   docs/FEEDBACK-9-PLAN.md §7：上限由 20rem 改為 1fr——20rem 固定上限在寬容器/類別少時
+   docs/archive/FEEDBACK-9-PLAN.md §7：上限由 20rem 改為 1fr——20rem 固定上限在寬容器/類別少時
    右側留大片空白，換行末列也不伸展，觀感「缺乏內容」。1fr 讓 auto-fit 摺疊空軌後卡片
    平均撐滿整列，每列都填滿。類別最多 8 個（固定值域），卡片極少時偏寬屬可接受
    （資訊密度低本來就該讓卡片大）。 */
@@ -777,7 +777,7 @@ a.lf-stat:hover .lf-card,
 }
 
 /* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據。
-   docs/FEEDBACK-9-PLAN.md §4：280→230px，配合報表一頁化（KPI＋六圖一屏內不捲動）。 */
+   docs/archive/FEEDBACK-9-PLAN.md §4：280→230px，配合報表一頁化（KPI＋六圖一屏內不捲動）。 */
 .lf-chart {
     position: relative;
     height: 230px;
