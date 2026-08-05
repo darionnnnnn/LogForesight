@@ -192,6 +192,7 @@
     --bs-link-hover-color: var(--lf-primary-dark);
     --bs-body-color: var(--lf-text);
     --bs-border-color: var(--lf-border);
+    --bs-font-monospace: var(--lf-font-mono);
 }
 
 /*
@@ -214,6 +215,28 @@ body {
     font-family: var(--lf-font-family);
     font-size: var(--lf-font-size-base);
     line-height: var(--lf-line-base);
+}
+
+/* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源
+   （DESIGN-SYSTEM.md §3）。Bootstrap 的 .font-monospace 已改吃 --lf-font-mono，
+   此別名供 cshtml 靜態骨架語意標示用。 */
+.lf-mono {
+    font-family: var(--lf-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/*
+  尊重系統「減少動態效果」偏好（DESIGN-SYSTEM.md §6、skill UX 指南）：
+  關閉動畫、把轉場壓到近乎瞬時。前庭功能敏感的使用者不會被卡片抬升、
+  caret 旋轉、skeleton 脈動等效果影響，但版面與功能完全不變。
+*/
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
 
 /* ── 共用小元件 ────────────────────────────────────────────────────────── */
@@ -1146,7 +1169,7 @@ a.lf-stat:hover .lf-card,
    這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
    只疊加外框/透明度，展開哪個問題一眼看得出來 */
 .lf-timeline-cell--highlight {
-    outline: 2px solid var(--lf-primary, #0d6efd);
+    outline: 2px solid var(--lf-primary, #1e40af);
     outline-offset: 1px;
 }
 .lf-timeline-cell--dim {
@@ -1245,7 +1268,7 @@ a.lf-stat:hover .lf-card,
 /* 原始訊息 modal（#14）：逐則訊息各自成段落，等寬字型、保留原始換行；
    邊框分隔取代舊版把 `---` 塞進同一段文字的做法 */
 .lf-sample-messages__item {
-    font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
+    font-family: var(--lf-font-mono);
     font-size: var(--lf-font-size-sm);
     white-space: pre-wrap;
     word-break: break-word;
@@ -1280,6 +1303,8 @@ a.lf-stat:hover .lf-card,
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 
 .report-text {
+    /* 不用 --lf-font-mono：報告全文含框線符號（U+2500 區），不在 Fira Code 的
+       latin subset 內，混排兩種等寬字型會讓框線與文字的欄位對不齊 */
     font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
     font-size: var(--lf-font-size-sm);
     line-height: 1.6;

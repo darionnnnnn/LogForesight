@@ -22,7 +22,7 @@ function token(name, fallback) {
 /** 8 類風險類型的固定色盤：同一類別在所有圖表中同色 */
 export function categoryColors() {
     return {
-        Storage: token('--lf-cat-storage', '#0d6efd'),
+        Storage: token('--lf-cat-storage', '#1e40af'),
         Hardware: token('--lf-cat-hardware', '#6f42c1'),
         Security: token('--lf-cat-security', '#dc3545'),
         Service: token('--lf-cat-service', '#fd7e14'),
