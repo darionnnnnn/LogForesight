@@ -17,7 +17,7 @@ const STATUS_META = {
     warning: { label: '有警告', color: '#ffc107' },
     failed: { label: '失敗', color: '#dc3545' },
     stopped: { label: '已停止', color: '#fd7e14' },   // 優雅停止（手動或窗口結束）——不是失敗
-    running: { label: '執行中', color: '#0d6efd' },
+    running: { label: '執行中', color: '#1e40af' },
     stuck: { label: '異常中斷', color: '#6f42c1' },
     none: { label: '未執行', color: '#e9ecef' }
 };

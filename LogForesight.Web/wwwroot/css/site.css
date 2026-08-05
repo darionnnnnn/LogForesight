@@ -1,28 +1,78 @@
 /*
-  LogForesight 設計系統（docs/WEB-SPEC.md §8.2）
+  LogForesight 設計系統（docs/DESIGN-SYSTEM.md、docs/WEB-SPEC.md §8.2）
 
   Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
   所有樣式取值一律引用下面的 token，元件樣式裡不出現寫死的顏色/圓角/陰影/間距——
   這是「自訂外觀」與「維護成本最小化」能同時成立的前提：調整外觀改這一段，全站生效。
 
-  2026-07-22 專業化改版：品牌色改靛藍系，補齊字級/間距/圓角/陰影/focus token，
-  並透過 Bootstrap 5.3 的元件級 CSS 變數把按鈕/表單/分頁/頁籤等 retheme 成同一套外觀
-  （取代舊版「不覆寫 --bs-primary」的決策——那讓 Bootstrap 藍與自訂靛藍並存，外觀不一致）。
+  2026-08-05 v2 視覺改版（docs/DESIGN-SYSTEM.md）：品牌色靛藍→企業藍 + 琥珀強調，
+  字型導入 self-host Fira Sans/Fira Code（latin；中文維持系統字），圓角收緊一階。
+  取值理由與 v1→v2 對照表一律查 DESIGN-SYSTEM.md，這裡不重複。
 */
 
+/* ── 自架字型（wwwroot/fonts，latin subset；無外部請求）───────────────────
+   Fira Code 為可變字型（wght 軸），一個檔案涵蓋所需字重。 */
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/fonts/fira-sans-400-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("/fonts/fira-sans-500-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("/fonts/fira-sans-600-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Sans";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("/fonts/fira-sans-700-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+    font-family: "Fira Code";
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+    src: url("/fonts/fira-code-latin.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
+}
+
 :root {
-    /* ── 品牌色（靛藍系，取代 Bootstrap 預設藍）─────────────────────────── */
-    --lf-primary: #4f46e5;
-    --lf-primary-dark: #4338ca;
-    --lf-primary-hover: #6366f1;
-    --lf-primary-soft: #eef2ff;
-    --lf-primary-soft-border: #dfe3fb;
-    --lf-primary-text: #3730a3;
+    /* ── 品牌色（企業藍 + 琥珀強調，DESIGN-SYSTEM.md §2）────────────────── */
+    --lf-primary: #1e40af;
+    --lf-primary-dark: #1e3a8a;
+    --lf-primary-hover: #2563eb;
+    --lf-primary-soft: #eff6ff;
+    --lf-primary-soft-border: #dbeafe;
+    --lf-primary-text: #1e3a8a;
+    --lf-accent: #d97706;
+    --lf-accent-soft: #fef3e2;
+    --lf-accent-text: #92400e;
 
     /* ── 中性色階（cool slate，符合「灰藍白」低彩度基調）──────────────── */
     --lf-gray-50: #f8fafc;
     --lf-gray-100: #f1f5f9;
-    --lf-gray-200: #e5e9f0;
+    --lf-gray-200: #e2e8f0;
     --lf-gray-300: #cbd5e1;
     --lf-gray-400: #94a3b8;
     --lf-gray-500: #64748b;
@@ -32,19 +82,23 @@
     --lf-gray-900: #0f172a;
 
     /* ── 版面 ─────────────────────────────────────────────────────────── */
-    --lf-sidebar-bg: #161d2e;
-    --lf-sidebar-fg: #a9b4c7;
+    --lf-sidebar-bg: #0f1d3a;
+    --lf-sidebar-fg: #9fb0cc;
     --lf-sidebar-fg-strong: #f1f4fa;
-    --lf-sidebar-section: #6f7c93;
-    --lf-sidebar-active-bg: rgba(99, 102, 241, .22);
+    --lf-sidebar-section: #68799a;
+    --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     --lf-sidebar-width: 244px;
-    --lf-content-bg: #f6f7fb;
+    --lf-content-bg: #f8fafc;
     --lf-card-bg: #ffffff;
-    --lf-border: #e5e9f0;
-    --lf-border-strong: #d5dbe6;
-    --lf-text: #1e293b;
+    --lf-border: #e2e8f0;
+    --lf-border-strong: #cbd5e1;
+    --lf-text: #0f172a;
     --lf-text-muted: #64748b;
+
+    /* ── 字族（拉丁用自架 Fira，中文 fallback 系統字；DESIGN-SYSTEM.md §3）── */
+    --lf-font-family: "Fira Sans", "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    --lf-font-mono: "Fira Code", "Cascadia Mono", Consolas, "Microsoft JhengHei", monospace;
 
     /* ── 字級階層 ─────────────────────────────────────────────────────── */
     /* 全部用 rem，跟隨 html 根字級（見下方 html 規則）等比縮放；base 較舊版提一階 */
@@ -66,10 +120,10 @@
     --lf-space-5: 1.5rem;
     --lf-space-6: 2rem;
 
-    /* ── 圓角 ─────────────────────────────────────────────────────────── */
-    --lf-radius-sm: .375rem;
-    --lf-radius: .625rem;
-    --lf-radius-lg: .875rem;
+    /* ── 圓角（v2 收緊一階：data-dense 專業感）────────────────────────── */
+    --lf-radius-sm: .25rem;
+    --lf-radius: .5rem;
+    --lf-radius-lg: .75rem;
     --lf-radius-pill: 100px;
 
     /* ── 陰影 ─────────────────────────────────────────────────────────── */
@@ -79,7 +133,7 @@
     --lf-shadow-lg: 0 14px 40px rgba(15, 23, 42, .18);
 
     /* ── 互動 ─────────────────────────────────────────────────────────── */
-    --lf-focus-ring: 0 0 0 .2rem rgba(79, 70, 229, .22);
+    --lf-focus-ring: 0 0 0 .2rem rgba(30, 64, 175, .22);
     --lf-transition: .15s ease;
 
     /* 舊 token 別名（保留既有元件引用，升級零成本）*/
@@ -93,23 +147,23 @@
     --lf-risk-high: #dc2626;
     --lf-risk-high-soft: #fdecec;
     --lf-risk-high-text: #991b1b;
-    --lf-risk-mid: #f59e0b;
+    --lf-risk-mid: #d97706;
     --lf-risk-mid-soft: #fef4e2;
     --lf-risk-mid-text: #92400e;
     --lf-risk-low: #64748b;
 
     /* docs/WEB-FEEDBACK-2-PLAN.md #1（B1 三級化）：Critical 收斂進 High，token 剩三級 */
     --lf-severity-high: #ea580c;
-    --lf-severity-medium: #0891b2;
+    --lf-severity-medium: #0284c7;
     --lf-severity-low: #94a3b8;
 
     /* 一般狀態語意色（供 statusBadge 淡色徽章）*/
     --lf-success: #16a34a;
     --lf-success-soft: #e8f6ec;
     --lf-success-text: #166534;
-    --lf-info: #0891b2;
-    --lf-info-soft: #e4f6fa;
-    --lf-info-text: #155e75;
+    --lf-info: #0284c7;
+    --lf-info-soft: #e0f2fe;
+    --lf-info-text: #075985;
     --lf-warning: #d97706;
     --lf-warning-soft: #fef4e2;
     --lf-warning-text: #92400e;
@@ -122,7 +176,7 @@
     --lf-dark-text: #334155;
 
     /* 圖表的 8 類風險類型固定色盤（§8.3 規則 3：同一類別在所有圖表中同色）*/
-    --lf-cat-storage: #4f46e5;
+    --lf-cat-storage: #1d4ed8;
     --lf-cat-hardware: #7c3aed;
     --lf-cat-security: #dc2626;
     --lf-cat-service: #ea580c;
@@ -133,11 +187,12 @@
 
     /* ── Bootstrap 元件級變數 retheme（不動 lib，只覆寫 CSS 變數）─────── */
     --bs-primary: var(--lf-primary);
-    --bs-primary-rgb: 79, 70, 229;
+    --bs-primary-rgb: 30, 64, 175;
     --bs-link-color: var(--lf-primary);
     --bs-link-hover-color: var(--lf-primary-dark);
     --bs-body-color: var(--lf-text);
     --bs-border-color: var(--lf-border);
+    --bs-font-monospace: var(--lf-font-mono);
 }
 
 /*
@@ -157,9 +212,31 @@ html {
 body {
     background: var(--lf-content-bg);
     color: var(--lf-text);
-    font-family: "Segoe UI", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    font-family: var(--lf-font-family);
     font-size: var(--lf-font-size-base);
     line-height: var(--lf-line-base);
+}
+
+/* 技術值（事件 ID、主機名、路徑等）用等寬字，data-dense 的「精確感」來源
+   （DESIGN-SYSTEM.md §3）。Bootstrap 的 .font-monospace 已改吃 --lf-font-mono，
+   此別名供 cshtml 靜態骨架語意標示用。 */
+.lf-mono {
+    font-family: var(--lf-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/*
+  尊重系統「減少動態效果」偏好（DESIGN-SYSTEM.md §6、skill UX 指南）：
+  關閉動畫、把轉場壓到近乎瞬時。前庭功能敏感的使用者不會被卡片抬升、
+  caret 旋轉、skeleton 脈動等效果影響，但版面與功能完全不變。
+*/
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
 
 /* ── 共用小元件 ────────────────────────────────────────────────────────── */
@@ -1092,7 +1169,7 @@ a.lf-stat:hover .lf-card,
    這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
    只疊加外框/透明度，展開哪個問題一眼看得出來 */
 .lf-timeline-cell--highlight {
-    outline: 2px solid var(--lf-primary, #0d6efd);
+    outline: 2px solid var(--lf-primary, #1e40af);
     outline-offset: 1px;
 }
 .lf-timeline-cell--dim {
@@ -1191,7 +1268,7 @@ a.lf-stat:hover .lf-card,
 /* 原始訊息 modal（#14）：逐則訊息各自成段落，等寬字型、保留原始換行；
    邊框分隔取代舊版把 `---` 塞進同一段文字的做法 */
 .lf-sample-messages__item {
-    font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
+    font-family: var(--lf-font-mono);
     font-size: var(--lf-font-size-sm);
     white-space: pre-wrap;
     word-break: break-word;
@@ -1226,6 +1303,8 @@ a.lf-stat:hover .lf-card,
 /* ── 報告全文：等寬原樣呈現（含框線符號），外層給足留白 ─────────────────── */
 
 .report-text {
+    /* 不用 --lf-font-mono：報告全文含框線符號（U+2500 區），不在 Fira Code 的
+       latin subset 內，混排兩種等寬字型會讓框線與文字的欄位對不齊 */
     font-family: Consolas, "Cascadia Mono", "Microsoft JhengHei", monospace;
     font-size: var(--lf-font-size-sm);
     line-height: 1.6;
