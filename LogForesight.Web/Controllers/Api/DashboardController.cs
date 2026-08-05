@@ -71,13 +71,6 @@ public class ReportsController : ControllerBase
 
         return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate));
     }
-
-    [HttpGet("signature")]
-    public ApiResponse<List<SignatureHitDto>> Signature([FromQuery] int eventId, [FromQuery] string? source)
-    {
-        if (eventId <= 0)
-            throw DomainException.Validation("請輸入要查詢的 Event ID。");
-
-        return ApiResponse<List<SignatureHitDto>>.Ok(_reports.FindSignature(eventId, source));
-    }
+    // 跨主機同簽章查詢（原 GET signature）已於 §4 併入「問題查詢」（eventId＋source＋依問題視角
+    // 為嚴格超集），端點與 ReportService.FindSignature／SignatureHitDto 一併移除。
 }

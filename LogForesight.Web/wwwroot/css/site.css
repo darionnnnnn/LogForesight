@@ -776,10 +776,11 @@ a.lf-stat:hover .lf-card,
     border-left: 3px solid var(--lf-success);
 }
 
-/* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據 */
+/* 圖卡的畫布容器：固定高度讓 Chart.js 的 responsive 有依據。
+   docs/FEEDBACK-9-PLAN.md §4：280→230px，配合報表一頁化（KPI＋六圖一屏內不捲動）。 */
 .lf-chart {
     position: relative;
-    height: 280px;
+    height: 230px;
 }
 
 /* 占比小圖（docs/WEB-FEEDBACK-PLAN.md #6）：三顆一列，不需要跟趨勢/類型分布圖同樣高度。

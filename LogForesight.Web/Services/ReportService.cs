@@ -71,37 +71,6 @@ public class ReportService
         };
     }
 
-    public List<SignatureHitDto> FindSignature(int eventId, string? source)
-    {
-        var records = _repository.Query(new RecordQueryFilter
-        {
-            EventId = eventId,
-            Source = string.IsNullOrWhiteSpace(source) ? null : source
-        });
-
-        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-
-        return records
-            .SelectMany(record => record.TopIssues
-                .Where(i => i.EventId == eventId &&
-                            (string.IsNullOrWhiteSpace(source) ||
-                             string.Equals(i.Source, source, StringComparison.OrdinalIgnoreCase)))
-                .Select(issue => new SignatureHitDto
-                {
-                    HostId = hostsByName.TryGetValue(record.Host, out var host) ? host.HostId : 0,
-                    HostName = record.Host,
-                    Date = record.Date.ToString("yyyy-MM-dd"),
-                    Count = issue.Count,
-                    Severity = issue.Severity.ToString(),
-                    ElevatesDayRisk = issue.ElevatesDayRisk,
-                    Category = issue.Category.ToString(),
-                    KnownIssue = issue.KnownIssue
-                }))
-            .OrderByDescending(h => h.Date)
-            .ThenBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
     private static ReportKpiDto BuildKpi(
         List<DailyAnalysisRecord> records, List<DailyAnalysisRecord> previous)
     {

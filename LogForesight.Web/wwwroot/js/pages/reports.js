@@ -14,8 +14,8 @@
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, statCard } from '../core/ui.js';
-import { formatNumber, severityBadge, elevatesBadge, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
+import { statCard } from '../core/ui.js';
+import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -524,59 +524,6 @@ function renderHandlingProgressChart() {
         { label: '未完成', value: remaining, color: status.neutral,
             url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${currentData.from}&to=${currentData.to}` }
     ]);
-}
-
-// ── 跨主機同簽章查詢 ─────────────────────────────────────────────────────────
-
-document.getElementById('signature-form').addEventListener('submit', async event => {
-    event.preventDefault();
-
-    const eventId = document.getElementById('signature-event-id').value;
-    if (!eventId) {
-        toast('請輸入 Event ID', 'warning');
-        return;
-    }
-
-    const container = document.getElementById('signature-result');
-    renderLoading(container, 3);
-
-    const source = document.getElementById('signature-source').value.trim();
-    const hits = await api.get(
-        `/api/reports/signature?eventId=${eventId}${source ? `&source=${encodeURIComponent(source)}` : ''}`);
-
-    renderTable(container, {
-        columns: [
-            { title: '日期', render: h => dateLink(h) },
-            { title: '主機', render: h => h.hostName },
-            { title: '次數', className: 'text-end', render: h => formatNumber(h.count) },
-            { title: '嚴重度', render: h => severityCell(h) },
-            { title: '說明', render: h => h.knownIssue ?? '' }
-        ],
-        rows: hits,
-        empty: {
-            title: '沒有找到這個事件簽章',
-            hint: '請確認 Event ID 是否正確，或該事件是否出現在您有權檢視的主機上。'
-        }
-    });
-});
-
-/** 嚴重度徽章＋「重大」旗標（docs/archive/HISTORY.md #1）：跨主機同簽章查詢正是
- * 「全環境共通重大問題」的主要排查入口，命中列同樣要看得出誰是「重大」 */
-function severityCell(hit) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1';
-    wrap.appendChild(severityBadge(hit.severity));
-    if (hit.elevatesDayRisk) wrap.appendChild(elevatesBadge());
-    return wrap;
-}
-
-function dateLink(hit) {
-    if (hit.hostId === 0) return hit.date;
-
-    const link = document.createElement('a');
-    link.href = `/records/${hit.hostId}/${hit.date}`;
-    link.textContent = hit.date;
-    return link;
 }
 
 // ── 期間控制 ─────────────────────────────────────────────────────────────────

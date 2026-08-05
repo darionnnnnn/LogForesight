@@ -133,20 +133,3 @@ public class ReportTrendPointDto
     public int MediumRisk { get; set; }
     public int ErrorCount { get; set; }
 }
-
-/// <summary>跨主機同簽章查詢的結果列</summary>
-public class SignatureHitDto
-{
-    public long HostId { get; set; }
-    public string HostName { get; set; } = string.Empty;
-    public string Date { get; set; } = string.Empty;
-    public int Count { get; set; }
-    public string Severity { get; set; } = string.Empty;
-
-    /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1）：前端顯示「重大」徽章——
-    /// 跨主機同簽章查詢正是「全環境共通重大問題」的主要排查入口。</summary>
-    public bool ElevatesDayRisk { get; set; }
-
-    public string Category { get; set; } = string.Empty;
-    public string? KnownIssue { get; set; }
-}

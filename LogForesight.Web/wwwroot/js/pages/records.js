@@ -264,6 +264,7 @@ function applyUrlToForm() {
     document.getElementById('filter-from').value = params.get('from') ?? defaultFrom();
     document.getElementById('filter-to').value = params.get('to') ?? today();
     document.getElementById('filter-event-id').value = params.get('eventId') ?? '';
+    document.getElementById('filter-source').value = params.get('source') ?? '';
 
     currentView = ['detail', 'host', 'date', 'issue'].includes(params.get('view')) ? params.get('view') : 'detail';
     setActiveView(currentView);
@@ -314,11 +315,11 @@ function collectFilters() {
         eventId: document.getElementById('filter-event-id').value,
         // 處理狀態現在是可見的 chip（不再只由下鑽網址帶入）
         statuses: activeChips('filter-status-chips', 'status').join(','),
-        // severity/overdue/source 只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）——
-        // source 沒有對應的表單欄位（依問題視角點列下鑽用，docs/archive/FEEDBACK-4-PLAN.md §4）
+        // 來源現在是可見的表單欄位（§4：跨主機同簽章查詢併入問題查詢），與 eventId 同款；
+        // severity/overdue 仍只由下鑽帶入，畫面以可移除的條件標籤顯示（見 renderActiveConditions）
+        source: document.getElementById('filter-source').value.trim(),
         severity: new URLSearchParams(location.search).get('severity') ?? '',
-        overdue: new URLSearchParams(location.search).get('overdue') ?? '',
-        source: new URLSearchParams(location.search).get('source') ?? ''
+        overdue: new URLSearchParams(location.search).get('overdue') ?? ''
     };
 }
 
@@ -380,8 +381,7 @@ function renderActiveConditions(filters) {
     const tags = [];
     if (filters.severity) tags.push({ label: `嚴重度：${severityName(filters.severity)}`, param: 'severity' });
     if (filters.overdue === 'true') tags.push({ label: '只看逾期', param: 'overdue' });
-    // 依問題視角下鑽帶入（docs/archive/FEEDBACK-4-PLAN.md §4）：source 沒有對應表單欄位，只能靠這裡顯性化
-    if (filters.source) tags.push({ label: `來源：${filters.source}`, param: 'source' });
+    // 來源（§4 起）已是可見表單欄位，不再作為可移除條件標籤——清空欄位即可
 
     // 空白時整列連同上邊界一起隱藏，不留一條沒東西的空行
     container.classList.toggle('d-none', tags.length === 0);
