@@ -58,6 +58,34 @@ public class IdentityServiceTests
     }
 
     [Fact]
+    public void SeedTestAdmin_建立admin群組成員且可重複執行()
+    {
+        // §1：測試模式開箱 admin。冪等——已存在同帳號不重複建立
+        var service = Create();
+        service.EnsureSeedGroups();
+
+        service.SeedTestAdmin("demo-admin", "測試管理員");
+        service.SeedTestAdmin("demo-admin", "測試管理員");   // 再跑一次不重複
+
+        var user = Assert.Single(_users.GetAll(), u => u.Account == "demo-admin");
+        Assert.Equal("測試管理員", user.DisplayName);
+        Assert.True(user.Active);
+        var adminGroup = Assert.Single(_groups.GetAll(), g => g.Role == UserRole.Admin);
+        Assert.Contains(adminGroup.GroupId, user.GroupIds);
+        // 有了 admin 成員後不再是「無 admin」狀態
+        Assert.False(service.HasNoAdmins());
+    }
+
+    [Fact]
+    public void SeedTestAdmin_無admin群組時略過不拋例外()
+    {
+        // EnsureSeedGroups 未先執行（防禦性）：略過而非炸掉啟動
+        var service = Create();
+        service.SeedTestAdmin("demo-admin", "測試管理員");
+        Assert.Empty(_users.GetAll());
+    }
+
+    [Fact]
     public void Login_serverAdmin正確密碼_取得最小授權()
     {
         var outcome = Create().Login(ServerAdminAccount, ServerAdminPassword);

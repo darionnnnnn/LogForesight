@@ -89,6 +89,15 @@ try
         var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
         identity.EnsureSeedGroups();
 
+        // 開箱測試管理員（§1）：僅測試模式（Provider=Stub）且非 Production 才 seed——Stub 免密碼，
+        // 建一個 admin 成員即可直接登入測全站，補足「只能以最小權限的 serverAdmin 登入」的落差。
+        // Production 用 Stub 啟動會被 Validate 擋下，這裡的環境判斷是第二道保險。
+        if (string.Equals(settings.Auth.Provider, "Stub", StringComparison.OrdinalIgnoreCase)
+            && !app.Environment.IsProduction())
+        {
+            identity.SeedTestAdmin("demo-admin", "測試管理員");
+        }
+
         if (identity.HasNoAdmins())
         {
             logger.Warn("目前沒有任何 admin 群組成員。請以 serverAdmin 帳號（{0}）登入後指派。",

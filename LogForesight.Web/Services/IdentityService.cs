@@ -199,6 +199,33 @@ public class IdentityService
         }
     }
 
+    /// <summary>
+    /// 測試模式（Auth:Provider=Stub，僅非 Production）的開箱 seed（§1，回饋第九輪）：建立一個
+    /// admin 群組成員，Stub 不驗密碼即可直接登入測全站功能——避免「只能以 serverAdmin 登入、
+    /// 卻只看得到維護頁」的落差（serverAdmin 依 §6.2 刻意只有維護＋稽核，不看業務資料）。
+    /// 冪等：已存在同帳號即跳過；不動 §6.2 權限模型，正式環境（Production）不呼叫本方法。
+    /// </summary>
+    public void SeedTestAdmin(string account, string displayName)
+    {
+        if (_users.FindByAccount(account) != null) return;
+
+        var adminGroup = _groups.GetAll().FirstOrDefault(g => g.Role == UserRole.Admin && g.Active);
+        if (adminGroup == null)
+        {
+            Log.Warn("測試 admin seed 略過：找不到啟用中的 admin 群組（EnsureSeedGroups 應先執行）。");
+            return;
+        }
+
+        _users.Upsert(new WebUser
+        {
+            Account = account,
+            DisplayName = displayName,
+            Active = true,
+            GroupIds = new List<long> { adminGroup.GroupId }
+        });
+        Log.Info("測試模式：已建立開箱測試管理員 {0}（{1}），可直接登入測試全站功能。", displayName, account);
+    }
+
     public bool HasNoAdmins()
     {
         var adminGroupIds = _groups.GetAll()

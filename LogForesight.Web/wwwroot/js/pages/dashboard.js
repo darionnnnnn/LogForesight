@@ -15,6 +15,14 @@ import { renderAiInline } from '../core/markdown-lite.js';
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
 
 async function load() {
+    // serverAdmin 沒有業務資料檢視能力（§6.2 最小授權），儀表板會是一片空白——
+    // 改顯示引導卡說明用途，而不是讓人以為壞掉（§1）
+    const currentUser = await getCurrentUser();
+    if (currentUser.isServerAdmin) {
+        renderServerAdminGuide();
+        return;
+    }
+
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
     renderLoading(document.getElementById('dashboard-silent'), 2);
@@ -99,6 +107,55 @@ async function loadAiFocus() {
     body.appendChild(list);
     card.appendChild(body);
     container.appendChild(card);
+}
+
+/**
+ * serverAdmin 引導卡（§1）：這個帳號是本地救援/引導帳號，依 §6.2 刻意只有維護與稽核能力、
+ * 不看業務資料。說明用途、如何測全站（測試模式下用 demo-admin 免密碼登入）、正式環境建帳號步驟。
+ */
+function renderServerAdminGuide() {
+    // 清掉其他區塊的容器（避免殘留載入骨架）
+    for (const id of ['dashboard-kpi', 'dashboard-categories', 'dashboard-hosts',
+        'dashboard-silent', 'dashboard-group-risk', 'dashboard-banner', 'dashboard-ai-focus']) {
+        document.getElementById(id)?.replaceChildren();
+    }
+    for (const el of document.querySelectorAll('[data-days]')) el.closest('.btn-group')?.classList.add('d-none');
+
+    const container = document.getElementById('dashboard-banner');
+    const card = document.createElement('div');
+    card.className = 'lf-card';
+    const body = document.createElement('div');
+    body.className = 'lf-card__body';
+
+    const title = document.createElement('div');
+    title.className = 'fs-5 fw-semibold mb-2';
+    title.textContent = '您以本機救援帳號（serverAdmin）登入';
+    body.appendChild(title);
+
+    const intro = document.createElement('p');
+    intro.className = 'text-muted mb-3';
+    intro.textContent = '此帳號的用途是「指派 admin 成員」與「AD／資料庫停擺時的救援入口」，'
+        + '依最小授權原則刻意只有維護與稽核能力，不檢視業務資料——所以儀表板、問題查詢、報表對它是空白，這是正常的。';
+    body.appendChild(intro);
+
+    const list = document.createElement('ul');
+    list.className = 'mb-0';
+    for (const [strongText, rest] of [
+        ['要檢視業務資料（儀表板／問題查詢／報表）：', '請以具 admin 權限的帳號登入。測試模式下可用帳號 demo-admin（顯示名稱「測試管理員」）直接登入，免密碼。'],
+        ['要指派正式管理者：', '到左側「系統管理 › 使用者」新增或編輯帳號，將對象加入 admin 群組後，即可用該帳號登入操作全站。'],
+        ['正式環境：', '請將 Auth:Provider 改為 Ldap 並依 docs/WEB-SPEC.md §5／§6.2 設定，本測試管理員不會在正式模式下建立。']
+    ]) {
+        const li = document.createElement('li');
+        li.className = 'mb-2';
+        const strong = document.createElement('strong');
+        strong.textContent = strongText;
+        li.append(strong, document.createTextNode(rest));
+        list.appendChild(li);
+    }
+    body.appendChild(list);
+
+    card.appendChild(body);
+    container.replaceChildren(card);
 }
 
 /** 全綠時明確說「沒事」——空白畫面無法讓人分辨「沒問題」與「沒載入」 */
