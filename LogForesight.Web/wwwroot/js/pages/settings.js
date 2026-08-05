@@ -38,6 +38,7 @@ async function load() {
     renderDayRiskLevelChecks(current.visibleDayRiskLevels);
     renderAiFields(current);
     renderAdFields(current);
+    renderAnalysisFields(current);
     renderRetentionFields(current);
     renderUpdatedAt(current);
 }
@@ -143,6 +144,39 @@ function renderAiFields(settings) {
         : '尚未設定金鑰；地端無驗證的端點可留空。';
 
     document.getElementById('ai-api-key-clear').checked = false;
+
+    // AI 進階參數（§12：自 appsettings 遷入）
+    setNumber('ai-timeout-seconds', settings.aiTimeoutSeconds);
+    setNumber('ai-retry-count', settings.aiRetryCount);
+    setNumber('ai-retry-delay-seconds', settings.aiRetryDelaySeconds);
+    setNumber('ai-json-retry-count', settings.aiJsonRetryCount);
+    setNumber('ai-max-tokens', settings.aiMaxTokens);
+    setNumber('ai-deep-dive-max-tokens', settings.aiDeepDiveMaxTokens);
+    setNumber('ai-frequency-penalty', settings.aiFrequencyPenalty);
+    setNumber('ai-presence-penalty', settings.aiPresencePenalty);
+    document.getElementById('ai-extra-request-fields').value = settings.aiExtraRequestFieldsJson ?? '';
+}
+
+/** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／匯入上限） */
+function renderAnalysisFields(settings) {
+    document.getElementById('server-description').value = settings.serverDescription ?? '';
+    setNumber('checkup-interval-days', settings.checkupIntervalDays);
+    document.getElementById('watched-folders').value = (settings.watchedFolders ?? []).join('\n');
+    document.getElementById('analysis-channels').value = (settings.analysisChannels ?? []).join('\n');
+    setNumber('import-max-file-size-kb', settings.importMaxFileSizeKb);
+    setNumber('import-max-rows', settings.importMaxRows);
+}
+
+function setNumber(id, value) {
+    document.getElementById(id).value = value ?? '';
+}
+
+/** 一行一項、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
+function collectLines(id) {
+    return document.getElementById(id).value
+        .split('\n')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
 }
 
 /** docs/archive/HISTORY.md #9：AD 驗證設定——伺服器一行一台，測試帳密欄位不預填（每次都要重新輸入） */
@@ -159,10 +193,7 @@ function renderAdFields(settings) {
 
 /** 一行一台，去除空白行——與後端 SystemSettingsService.NormalizeAdServers 對齊的寬鬆解析 */
 function collectAdServers() {
-    return document.getElementById('ad-servers').value
-        .split('\n')
-        .map(s => s.trim())
-        .filter(s => s.length > 0);
+    return collectLines('ad-servers');
 }
 
 function renderRetentionFields(settings) {
@@ -258,13 +289,34 @@ function bindForm() {
                 adAuthEnabled,
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),
-                adSearchFilter: document.getElementById('ad-search-filter').value.trim()
+                adSearchFilter: document.getElementById('ad-search-filter').value.trim(),
+                // AI 進階參數（§12）
+                aiTimeoutSeconds: Number(document.getElementById('ai-timeout-seconds').value),
+                aiRetryCount: Number(document.getElementById('ai-retry-count').value),
+                aiRetryDelaySeconds: Number(document.getElementById('ai-retry-delay-seconds').value),
+                aiJsonRetryCount: Number(document.getElementById('ai-json-retry-count').value),
+                aiMaxTokens: Number(document.getElementById('ai-max-tokens').value),
+                aiDeepDiveMaxTokens: Number(document.getElementById('ai-deep-dive-max-tokens').value),
+                aiFrequencyPenalty: Number(document.getElementById('ai-frequency-penalty').value),
+                aiPresencePenalty: Number(document.getElementById('ai-presence-penalty').value),
+                aiExtraRequestFieldsJson: document.getElementById('ai-extra-request-fields').value.trim(),
+                // 分析參數（§12）
+                serverDescription: document.getElementById('server-description').value.trim(),
+                checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
+                watchedFolders: collectLines('watched-folders'),
+                analysisChannels: collectLines('analysis-channels'),
+                importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
+                importMaxRows: Number(document.getElementById('import-max-rows').value)
             });
             toast('已儲存設定', 'success');
             renderAiFields(current);
             renderAdFields(current);
+            renderAnalysisFields(current);
             renderUpdatedAt(current);
             unsaved?.clear();
+        } catch {
+            // 錯誤訊息已由 api.js 以 toast 顯示（與其餘頁面同一套）；這裡吞掉是為了不留下
+            // uncaught promise rejection 的 console 雜訊——驗證失敗是預期路徑，不是程式錯誤
         } finally {
             restore();
         }

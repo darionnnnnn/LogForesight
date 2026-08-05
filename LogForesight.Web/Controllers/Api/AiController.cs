@@ -19,7 +19,6 @@ public class AiController : ControllerBase
     private readonly DashboardService _dashboard;
     private readonly RecordListQueryService _recordsList;
     private readonly RecordDetailQueryService _recordsDetail;
-    private readonly WebAppSettings _settings;
     private readonly RiskyEventLookupService _eventLookup;
     private readonly IHostStore _hosts;
 
@@ -28,7 +27,6 @@ public class AiController : ControllerBase
         DashboardService dashboard,
         RecordListQueryService recordsList,
         RecordDetailQueryService recordsDetail,
-        WebAppSettings settings,
         RiskyEventLookupService eventLookup,
         IHostStore hosts)
     {
@@ -36,7 +34,6 @@ public class AiController : ControllerBase
         _dashboard = dashboard;
         _recordsList = recordsList;
         _recordsDetail = recordsDetail;
-        _settings = settings;
         _eventLookup = eventLookup;
         _hosts = hosts;
     }
@@ -51,7 +48,7 @@ public class AiController : ControllerBase
     public async Task<ApiResponse<AiFocusDto?>> TodayFocus([FromQuery] int? days)
     {
         if (!_ai.Available) return ApiResponse<AiFocusDto?>.Ok(null);
-        var dashboard = _dashboard.GetSummary(days ?? _settings.Ui.DashboardDefaultDays);
+        var dashboard = _dashboard.GetSummary(days ?? DashboardController.DefaultDays);
         return ApiResponse<AiFocusDto?>.Ok(await _ai.TodayFocusAsync(dashboard));
     }
 

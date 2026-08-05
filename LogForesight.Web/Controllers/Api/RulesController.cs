@@ -96,19 +96,21 @@ public class RulesController : ControllerBase
 [Permission(Capability.DevMonitor, Capability.Maintain)]
 public class RunsController : ControllerBase
 {
-    private readonly RunMonitorService _service;
-    private readonly WebAppSettings _settings;
+    /// <summary>days 未指定時的預設天數（§12：原 appsettings 的 Ui:RunMatrixDays，
+    /// 前端期間鈕本來就明傳 days，這個值只是 API 的 fallback，改為常數）</summary>
+    public const int DefaultRunSummaryDays = 14;
 
-    public RunsController(RunMonitorService service, WebAppSettings settings)
+    private readonly RunMonitorService _service;
+
+    public RunsController(RunMonitorService service)
     {
         _service = service;
-        _settings = settings;
     }
 
     [HttpGet("summary")]
     public ApiResponse<List<RunDaySummaryDto>> Summary([FromQuery] int? days) =>
         ApiResponse<List<RunDaySummaryDto>>.Ok(
-            _service.GetDaySummaries(Math.Clamp(days ?? _settings.Ui.RunMatrixDays, 1, 90)));
+            _service.GetDaySummaries(Math.Clamp(days ?? DefaultRunSummaryDays, 1, 90)));
 
     [HttpGet("day/{date}")]
     public ApiResponse<List<RunDayHostStatusDto>> DayDetail(string date)

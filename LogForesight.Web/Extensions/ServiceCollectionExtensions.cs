@@ -87,16 +87,18 @@ public static class ServiceCollectionExtensions
 
         // 驗證方式可抽換（開放封閉）：換 Provider 不影響登入流程的其餘部分。
         // DynamicAuthenticationProvider（docs/archive/HISTORY.md #9）包一層：DB 設定的
-        // AdAuthEnabled 開啟時改走 AD 動態設定，否則委派給 appsettings 決定的原 provider——
-        // 這裡的 switch 只決定「沒開啟 AD 動態設定時」的行為，語意與改版前完全一致。
+        // AdAuthEnabled 開啟時走設定頁的 AD 設定，否則落到下面的 fallback。
+        // §12：AD 驗證的唯一事實來源是設定頁——appsettings 的 Auth:Ldap:Domain 與
+        // LdapAuthenticationProvider 已退役，"Ad"（含舊值 "Ldap"）的 fallback 改為
+        // UnconfiguredAdAuthenticationProvider（明講「AD 尚未設定，請以 serverAdmin 登入後設定」）。
         services.AddSingleton<IAuthenticationProvider>(sp =>
         {
             IAuthenticationProvider fallback = settings.Auth.Provider.ToLowerInvariant() switch
             {
-                "ldap" => new LdapAuthenticationProvider(settings),
+                "ad" or "ldap" => new UnconfiguredAdAuthenticationProvider(),
                 "stub" => new StubAuthenticationProvider(),
                 _ => throw new InvalidOperationException(
-                    $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Stub 或 Ldap。")
+                    $"未知的 Auth:Provider「{settings.Auth.Provider}」，可用值為 Ad 或 Stub。")
             };
 
             return new DynamicAuthenticationProvider(sp.GetRequiredService<ISystemSettingsStore>(), fallback);

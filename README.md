@@ -248,8 +248,8 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
   移出成員標記【權限變更】（移除同樣要關注——可能是入侵者提權得手後清除紀錄）
 - **監控資料夾的 ACL**：擁有者變更、任何權限規則的新增或移除，一律列出、不判斷合理性，
   交給人工確認。執行檔自身所在目錄**一律自動監控**（防止程式本身被竄改），
-  可在 `appsettings.json` 的 `Permissions.WatchedFolders` 加入其他要監控的資料夾
-  （支援環境變數，如 `%ProgramFiles%`）
+  其他要監控的資料夾在 Web「系統管理 > 設定 > 分析參數」頁加入（一行一個路徑，
+  支援環境變數如 `%ProgramFiles%`）
 - 資料夾從「可存取」變成「無法存取」也會告警（可能已被刪除，或權限被鎖死以阻擋存取／掩蓋內容）
 
 ### 運作方式
@@ -395,60 +395,37 @@ schtasks 或安裝其他執行檔：
 
 ### 設定檔（appsettings.json / nlog.config）
 
-執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端：
+執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端。
+
+**本檔只保留「站台還沒起來、資料庫還沒連上之前就必須知道」的啟動與安全前提**（2026-08-05 §12 精簡）：
 
 ```json
 {
-  "Ai": {
-    "BaseUrl": "http://localhost:8080",
-    "TimeoutSeconds": 600,
-    "RetryCount": 3,
-    "RetryDelaySeconds": 10,
-    "JsonRetryCount": 2,
-    "MaxTokens": 1536,
-    "DeepDiveMaxTokens": 8192,
-    "FrequencyPenalty": 0.8,
-    "PresencePenalty": 0.8,
-    "ExtraRequestFields": {
-      "chat_template_kwargs": { "enable_thinking": false },
-      "rep_pen": 1.3
-    }
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },
+  "Jwt": { "SecretKey": "<測試值，正式環境以環境變數覆寫>", "ExpireHours": 8 },
+  "Auth": {
+    "Provider": "Stub",
+    "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值>" }
   },
-  "Permissions": {
-    "WatchedFolders": []
-  },
-  "Analysis": {
-    "ServerDescription": "",
-    "CheckupIntervalDays": 7,
-    "Channels": []
-  },
-  "Storage": {
-    "Type": "Sqlite",
-    "DataRoot": "",
-    "ConnectionString": ""
-  }
+  "AllowedHosts": "*"
 }
 ```
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
-| `Ai.BaseUrl` | `http://localhost:8080` | OpenAI 相容 API 位址（實測環境為 KoboldCpp，也適用其他 llama.cpp 系 server）。**事實來源是 Web「系統管理 > 設定」頁**（DB，可一併設定需驗證端點用的 API 金鑰），這裡的值只是設定頁尚未設定時的退路 |
-| `Ai.TimeoutSeconds` | `600` | 單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘） |
-| `Ai.RetryCount` | `3` | 網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應） |
-| `Ai.RetryDelaySeconds` | `10` | 第一次重試等待秒數，之後指數遞增（10 → 20 → 40） |
-| `Ai.JsonRetryCount` | `2` | 網路正常但 JSON 格式/內容檢查未過時的額外重問次數 |
-| `Ai.MaxTokens` | `1536` | 一般（終端 JSON 較短）呼叫的上限，用於每日總覽分析與前置掃描，`0` = 不設上限。故意抓緊：這類回應正常只有幾百字元，模型退化重複輸出時會一路生成到頂到上限才停，上限越大不會讓成功率變高，只會讓失敗的嘗試多跑幾十秒才觸頂 |
-| `Ai.DeepDiveMaxTokens` | `8192` | 深入分析呼叫（`RiskReportService` 逐類別分析）的上限，獨立於 `MaxTokens` 之外——這類回應天生比終端摘要長得多（一次分析多個問題的原因/影響/處置步驟），用同一個上限會逼你在「精簡呼叫失敗時拖太久」和「深入分析被截斷」之間二選一 |
-| `Ai.FrequencyPenalty` | `0.8` | 頻率懲罰，對已出現過的 token 依出現次數累加懲罰，抑制「同一段文字反覆重複」的退化輸出（實際觀察到的失敗模式：摘要欄位塞滿 `-1-1-1-1...`、`process 45312 process 45312...` 這類反覆片語）。OpenAI 相容標準欄位，理論上 KoboldCpp 的相容層會轉譯成內部取樣參數；從 0.3 一路調到 0.8 仍未完全根除，實際效果請對照 `Ai.ExtraRequestFields` 的 `rep_pen`（KoboldCpp 原生參數，見下） |
-| `Ai.PresencePenalty` | `0.8` | 存在懲罰，跟 FrequencyPenalty 互補，一起抑制退化重複 |
-| `Ai.ExtraRequestFields` | 見上 | 原封不動合併進送給 AI 的請求 JSON。**已從實際的 KoboldCpp 啟動設定檔（kcpps）確認**：`chat_template_kwargs.enable_thinking` 是這個模型的聊天範本認得的**布林**思考開關（先前猜測的數字預算 `thinking_budget` 這個 key 範本根本不認得，等於沒作用），伺服器層級預設整台開著（true），故意設 `false` 關閉；`rep_pen` 是 KoboldCpp（KoboldAI 系譜）**原生**的重複懲罰參數名稱，不是原生 llama.cpp server 慣例的 `repeat_penalty`——先前那個 key 這台伺服器很可能不認得。都送不會互相干擾，伺服器不認得的欄位通常直接忽略、不會報錯——換了不同 server/模型時請對照它自己的啟動設定或文件重新確認 |
-| `Permissions.WatchedFolders` | `[]` | 額外監控權限異動的資料夾（執行檔自身目錄一律監控，不需加入） |
-| `Analysis.ServerDescription` | `""` | 伺服器角色描述，會帶入 prompt 讓 AI 依環境判讀（原為 `Program.cs` 常數，已搬進設定檔） |
-| `Analysis.CheckupIntervalDays` | `7` | 體檢間隔天數（2026-07-20 由固定星期六改為 due-date 輪巡）；距上次體檢達此天數即到期，錯過會在下次執行自動補跑，不會消失 |
-| `Analysis.Channels` | `[]`（＝預設六頻道） | 要掃描的 Event Log 頻道全名清單。空清單使用預設六頻道：`System`、`Application`、`Security` 三個傳統日誌，加上 `Microsoft-Windows-Windows Defender/Operational` 與兩個 RDP TerminalServices Operational 頻道。主機上不存在的頻道（未安裝 Defender、未啟用 RDP 角色）會自動申報「不適用」而非錯誤。要縮小/擴充範圍時在此列出頻道全名 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」，見 docs/archive/FEEDBACK-8-PLAN.md #7 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
+| `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
+| `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
+| `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
+
+**其餘設定都在 Web 的「系統管理 > 設定」頁（資料庫）**，改完即時生效、不必重啟站台：
+AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲罰、額外請求欄位）、
+權限監控資料夾、分析參數（伺服器角色描述、體檢間隔、掃描頻道）、CSV 匯入上限、
+各項保留天數、AD 驗證伺服器。NetIQ 連線與節流參數則在「系統管理 > NetIQ 維護」頁。
+（原本散在 appsettings 的 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段
+皆於 §12 遷入或退役；每個欄位的預設值＝原出廠值，升級後行為不變。）
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。

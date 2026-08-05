@@ -15,14 +15,14 @@ public class ImportsController : ControllerBase
 {
     private readonly ImportService _imports;
     private readonly IImportLogStore _logs;
-    private readonly WebAppSettings _settings;
+    private readonly ISystemSettingsStore _systemSettings;
     private readonly IUserStore _users;
 
-    public ImportsController(ImportService imports, IImportLogStore logs, WebAppSettings settings, IUserStore users)
+    public ImportsController(ImportService imports, IImportLogStore logs, ISystemSettingsStore systemSettings, IUserStore users)
     {
         _imports = imports;
         _logs = logs;
-        _settings = settings;
+        _systemSettings = systemSettings;
         _users = users;
     }
 
@@ -50,9 +50,11 @@ public class ImportsController : ControllerBase
         if (file == null || file.Length == 0)
             throw DomainException.Validation("請選擇要上傳的 CSV 檔案。");
 
-        var maxBytes = _settings.Import.MaxFileSizeKb * 1024L;
-        if (file.Length > maxBytes)
-            throw DomainException.Validation($"檔案大小超過上限 {_settings.Import.MaxFileSizeKb} KB。");
+        // §12：上限的事實來源改為 DB（「系統管理 > 設定」頁），每次上傳即時讀取——
+        // 管理者調整後不必重啟站台
+        var maxFileSizeKb = _systemSettings.Get().ImportMaxFileSizeKb;
+        if (file.Length > maxFileSizeKb * 1024L)
+            throw DomainException.Validation($"檔案大小超過上限 {maxFileSizeKb} KB。");
 
         using var stream = file.OpenReadStream();
         return ApiResponse<ImportPlan>.Ok(_imports.Preview(kind, stream, file.FileName));

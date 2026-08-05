@@ -40,6 +40,27 @@ public class SystemSettingsDto
 
     public string AdSearchFilter { get; set; } = "";
 
+    // ── AI 進階參數（§12：自 appsettings 的 Ai 區段遷入）─────────────────────────
+    public int AiTimeoutSeconds { get; set; }
+    public int AiRetryCount { get; set; }
+    public int AiRetryDelaySeconds { get; set; }
+    public int AiJsonRetryCount { get; set; }
+    public int AiMaxTokens { get; set; }
+    public int AiDeepDiveMaxTokens { get; set; }
+    public double AiFrequencyPenalty { get; set; }
+    public double AiPresencePenalty { get; set; }
+    public string AiExtraRequestFieldsJson { get; set; } = "";
+
+    // ── 分析參數（§12：自 appsettings 的 Permissions／Analysis 區段遷入）──────────
+    public List<string> WatchedFolders { get; set; } = new();
+    public string ServerDescription { get; set; } = "";
+    public int CheckupIntervalDays { get; set; }
+    public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）────────────────────────
+    public int ImportMaxFileSizeKb { get; set; }
+    public int ImportMaxRows { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
@@ -99,6 +120,57 @@ public class UpdateSystemSettingsRequest
 
     [StringLength(500)]
     public string AdSearchFilter { get; set; } = "";
+
+    // ── AI 進階參數（§12）：範圍取自原 appsettings 各欄位的實務上下限 ─────────────
+
+    [Range(1, 3600, ErrorMessage = "AI 逾時秒數必須介於 1~3600 秒")]
+    public int AiTimeoutSeconds { get; set; }
+
+    [Range(1, 10, ErrorMessage = "網路層重試次數必須介於 1~10（Polly 要求至少 1）")]
+    public int AiRetryCount { get; set; }
+
+    [Range(0, 300, ErrorMessage = "重試等待秒數必須介於 0~300 秒")]
+    public int AiRetryDelaySeconds { get; set; }
+
+    [Range(0, 10, ErrorMessage = "JSON 重問次數必須介於 0~10")]
+    public int AiJsonRetryCount { get; set; }
+
+    [Range(0, 131072, ErrorMessage = "一般呼叫 token 上限必須介於 0~131072（0＝不設上限）")]
+    public int AiMaxTokens { get; set; }
+
+    [Range(0, 131072, ErrorMessage = "深入分析 token 上限必須介於 0~131072（0＝不設上限）")]
+    public int AiDeepDiveMaxTokens { get; set; }
+
+    [Range(0, 2, ErrorMessage = "頻率懲罰必須介於 0~2")]
+    public double AiFrequencyPenalty { get; set; }
+
+    [Range(0, 2, ErrorMessage = "存在懲罰必須介於 0~2")]
+    public double AiPresencePenalty { get; set; }
+
+    /// <summary>JSON 物件文字；格式由 SystemSettingsService.Update 驗證（空字串＝不附加任何欄位）</summary>
+    [StringLength(4000)]
+    public string AiExtraRequestFieldsJson { get; set; } = "";
+
+    // ── 分析參數（§12）───────────────────────────────────────────────────────
+
+    public List<string> WatchedFolders { get; set; } = new();
+
+    [StringLength(500)]
+    public string ServerDescription { get; set; } = "";
+
+    [Range(1, 365, ErrorMessage = "體檢間隔天數必須介於 1~365 天")]
+    public int CheckupIntervalDays { get; set; }
+
+    /// <summary>空清單＝使用預設六頻道；頻道名可解析性由 SystemSettingsService.Update 驗證</summary>
+    public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 匯入限制（§12）───────────────────────────────────────────────────────
+
+    [Range(1, 102400, ErrorMessage = "匯入檔案大小上限必須介於 1~102400 KB")]
+    public int ImportMaxFileSizeKb { get; set; }
+
+    [Range(1, 1000000, ErrorMessage = "匯入資料列上限必須介於 1~1000000 列")]
+    public int ImportMaxRows { get; set; }
 }
 
 /// <summary>

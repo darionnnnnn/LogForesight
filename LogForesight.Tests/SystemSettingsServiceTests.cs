@@ -27,8 +27,82 @@ public class SystemSettingsServiceTests
         RetentionDays = 120,
         RunLogRetentionDays = runLogRetentionDays,
         AuditRetentionDays = auditRetentionDays,
-        RiskyEventRetentionDays = riskyEventRetentionDays
+        RiskyEventRetentionDays = riskyEventRetentionDays,
+        // §12：自 appsettings 遷入的參數（各欄位的 [Range] 由 API 邊界的模型驗證負責，
+        // 服務層只做跨欄位規則；這裡帶出廠值，讓既有測試不會存進一堆 0）
+        AiTimeoutSeconds = 600,
+        AiRetryCount = 3,
+        AiRetryDelaySeconds = 10,
+        AiJsonRetryCount = 2,
+        AiMaxTokens = 1536,
+        AiDeepDiveMaxTokens = 8192,
+        AiFrequencyPenalty = 0.8,
+        AiPresencePenalty = 0.8,
+        AiExtraRequestFieldsJson = """{"rep_pen":1.3}""",
+        CheckupIntervalDays = 7,
+        ImportMaxFileSizeKb = 2048,
+        ImportMaxRows = 5000
     };
+
+    // ── §12：自 appsettings 遷入設定頁的參數 ────────────────────────────────
+
+    [Fact]
+    public void Update後_AI進階參數與分析參數持久化()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.AiTimeoutSeconds = 300;
+        request.AiMaxTokens = 2048;
+        request.AiFrequencyPenalty = 1.2;
+        request.ServerDescription = "  公司機房的 AD 網域控制站  ";
+        request.CheckupIntervalDays = 14;
+        request.WatchedFolders = new List<string> { " C:\\inetpub\\wwwroot ", "", "C:\\inetpub\\wwwroot" };
+        request.AnalysisChannels = new List<string> { "System", "Application" };
+        request.ImportMaxFileSizeKb = 4096;
+        request.ImportMaxRows = 10000;
+
+        var saved = service.Update(request);
+
+        Assert.Equal(300, saved.AiTimeoutSeconds);
+        Assert.Equal(2048, saved.AiMaxTokens);
+        Assert.Equal(1.2, saved.AiFrequencyPenalty);
+        Assert.Equal("公司機房的 AD 網域控制站", saved.ServerDescription);   // trim
+        Assert.Equal(14, saved.CheckupIntervalDays);
+        Assert.Equal(new[] { "C:\\inetpub\\wwwroot" }, saved.WatchedFolders);   // trim＋去空行＋去重
+        Assert.Equal(new[] { "System", "Application" }, saved.AnalysisChannels);
+        Assert.Equal(4096, saved.ImportMaxFileSizeKb);
+        Assert.Equal(10000, saved.ImportMaxRows);
+
+        // 重讀確認落地（不是只有回傳值對）
+        var reread = service.Get();
+        Assert.Equal(300, reread.AiTimeoutSeconds);
+        Assert.Equal(14, reread.CheckupIntervalDays);
+    }
+
+    [Fact]
+    public void Update_額外請求欄位非JSON物件時拒絕()
+    {
+        var service = Create();
+
+        var notJson = ValidRequest();
+        notJson.AiExtraRequestFieldsJson = "{ 這不是 JSON";
+        Assert.Throws<DomainException>(() => service.Update(notJson));
+
+        // 合法 JSON 但不是物件（無法合併進請求本體）也要擋
+        var notObject = ValidRequest();
+        notObject.AiExtraRequestFieldsJson = "[1, 2, 3]";
+        Assert.Throws<DomainException>(() => service.Update(notObject));
+    }
+
+    [Fact]
+    public void Update_額外請求欄位可留空表示不附加()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.AiExtraRequestFieldsJson = "   ";
+
+        Assert.Equal("", service.Update(request).AiExtraRequestFieldsJson);
+    }
 
     [Fact]
     public void Update後_RunLog與Audit保留天數持久化()

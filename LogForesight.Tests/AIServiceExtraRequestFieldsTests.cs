@@ -57,9 +57,9 @@ public class AIServiceExtraRequestFieldsTests
     }
 
     /// <summary>
-    /// 本次修復的主張：即使 ExtraRequestFields 裡混著 ConfigurationBinder 產生的
-    /// Undefined 元素，AIService 建構子也不應該擲例外——這是縱深防禦（治本在 Web 端
-    /// 改用 AiExtraFieldsLoader 重讀該欄位，但 AIService 本身也不該對壞組態束手無策）。
+    /// 本次修復的主張：即使 ExtraRequestFields 裡混著 Undefined 元素，AIService 建構子
+    /// 也不應該擲例外——這是縱深防禦。（§12 起這個欄位改存 DB 的 JSON 文字、由
+    /// RuntimeSettingsResolver 解析，不再經 ConfigurationBinder，但壞值防線仍該留著。）
     /// </summary>
     [Fact]
     public void ExtraRequestFields含Undefined元素_建構不擲例外()

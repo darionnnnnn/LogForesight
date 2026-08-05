@@ -85,8 +85,8 @@ EntryType)` 會全面漂移、既有歷史的趨勢比對全數斷成「首次�
 
 新頻道有 **3 天暖身期**（`ChannelCoverage.WarmupDays`）：上線首日所有簽章都是「首次出現」，暖身
 期內不產生 New/Rising 告警、不升級嚴重度，避免切換日的告警風暴；規則層與關聯層不受影響（Defender
-真驗出病毒照樣拉高風險）。掃描頻道可在 `appsettings.json` 的 `Analysis.Channels` 調整（見下方
-設定表）。
+真驗出病毒照樣拉高風險）。掃描頻道可在 Web「系統管理 > 設定 > 分析參數」頁調整（2026-08-05 §12
+起以資料庫為唯一事實來源，原 `appsettings.json` 的 `Analysis.Channels` 已退役）。
 
 ### 頻率趨勢比對的判定規則（`TrendAnalyzer`）
 

@@ -200,11 +200,14 @@ public class SchedulerHostedService : BackgroundService
         return await startSignal.Task;
     }
 
+    /// <summary>
+    /// 每次執行重建設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.2）。§12 起 Ai／Analysis／
+    /// Permissions 不再來自 appsettings——這裡帶的是程式內建出廠值，實際生效值由
+    /// <see cref="RuntimeSettingsResolver.ApplySystemSettingsOverrides"/> 從 DB（設定頁）疊上去；
+    /// Storage 仍來自 appsettings（DB 的位置不可能存在 DB 裡）。
+    /// </summary>
     private AppSettings BuildAppSettings() => new()
     {
-        Storage = _webSettings.Storage,
-        Ai = _webSettings.Ai,
-        Analysis = _webSettings.Analysis,
-        Permissions = _webSettings.Permissions
+        Storage = _webSettings.Storage
     };
 }

@@ -136,22 +136,41 @@ LogForesight.Web/
 
 ## 5. 組態（appsettings.json ↔ Appsettings.cs）
 
+**§12（回饋第九輪）appsettings 精簡**：本檔**只保留「站台還沒起來、資料庫還沒連上之前就必須
+知道」的啟動與安全前提**，其餘一律以 DB（「系統管理 > 設定」頁）為唯一事實來源——改完即時生效、
+不必重啟站台，也不會出現「檔案一份、DB 一份」的漂移。
+
 ```json
 {
   "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已於 2026-07-24 退役）
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
-  // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ldap。
+  // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
   "Auth": {
+    // Ad（正式;AD 伺服器設定在設定頁）| Stub（測試,不驗密碼;Production 啟動會被擋下）
     "Provider": "Stub",
     "ServerAdmin": { "Account": "svc-lfadmin", "PasswordHash": "<測試值,對應密碼 LogForesight-dev>" }
   },
-  "Import": { "MaxFileSizeKb": 2048, "MaxRows": 5000 },
-  "Ui": { "DefaultPageSize": 50, "DashboardDefaultDays": 7, "RunMatrixDays": 14 }
-  // NetIQ 掃描匯入一律真實連線（§13,回饋第九輪）:原 "Netiq": { "DiscoveryClient" } 已退役,
-  // 離線示範資料改由「NetIQ 維護」頁的 UseOfflineDemoData 開關控制（僅非 Production 可開）。
+  "AllowedHosts": "*"
 }
 ```
+
+**已自 appsettings 退役的區段（§12／§13）與其新家**：
+
+| 原區段 | 現在在哪 |
+|---|---|
+| `Ai`（位址＋逾時/重試/token/penalty/ExtraRequestFields） | 設定頁「AI 服務」（進階參數在折疊區）→ `SystemSettings.Ai*`；由 `RuntimeSettingsResolver.ApplySystemSettingsOverrides` 套進 `AppSettings`（批次與 Web 互動情境共用同一份解讀） |
+| `Permissions:WatchedFolders` | 設定頁「分析參數」→ `SystemSettings.WatchedFolders` |
+| `Analysis`（ServerDescription／CheckupIntervalDays／Channels） | 設定頁「分析參數」→ `SystemSettings.ServerDescription`／`CheckupIntervalDays`／`AnalysisChannels` |
+| `Import`（MaxFileSizeKb／MaxRows） | 設定頁「分析參數」→ `SystemSettings.ImportMaxFileSizeKb`／`ImportMaxRows`（每次上傳即時讀取） |
+| `Ui:DashboardDefaultDays`／`RunMatrixDays` | 程式常數 `DashboardController.DefaultDays`／`RunsController.DefaultRunSummaryDays`（前端本來就明傳期間，這只是 API fallback） |
+| `Ui:DefaultPageSize` | **直接刪除**——盤點後無任何消費端（「有設定無行為」是本專案紅線） |
+| `Auth:Ldap:Domain` | **退役**：AD 驗證的唯一事實來源是設定頁（`AdAuthEnabled`／`AdServers`）；`LdapAuthenticationProvider` 一併移除，`Provider=Ad` 在 AD 未設定時的 fallback 為 `UnconfiguredAdAuthenticationProvider`（明講「請以 serverAdmin 登入後設定」） |
+| `Netiq:DiscoveryClient` | **退役**（§13）：改為「NetIQ 維護」頁的 `UseOfflineDemoData` 開關，僅非 Production 可開 |
+
+> **升級零遷移**：每個新 `SystemSettings` 欄位的程式內建預設值＝原 appsettings 的出廠值，
+> 舊部署升級後行為不變，直到管理者主動在設定頁調整。壞值（手改 DB、舊 blob 缺欄位反序列化成 0）
+> 由 `RuntimeSettingsResolver` 擋掉並保留出廠值——「0 秒逾時」比不改更糟。
 
 - `Appsettings.cs` 是巢狀類別的單一根（`Appsettings.Storage.Type` 這樣取用），
   `Program.cs` 以 `Configuration.Get<Appsettings>()` 綁定並註冊 Singleton，任何類別建構式注入取得。
@@ -159,6 +178,8 @@ LogForesight.Web/
 - **啟動時驗證**：`Appsettings.Validate()` 檢查必填（如 `Jwt.SecretKey` 非空、`Storage.DataRoot`
   存在、`Auth.ServerAdmin` 帳號與雜湊非空、`Auth.Provider=Stub` 時環境不得為 Production），
   不合格直接 fail fast 拋例外，不讓站台帶病啟動——沿用批次端「設定錯誤要顯性化」的原則。
+- **新增設定必須有消費端**：「有設定無行為」是本專案紅線（§12 刪掉的 `Ui:DefaultPageSize`
+  正是這種殘留）。新增可調整項目時預設放 DB 設定頁，只有啟動前提才進 appsettings。
 - **與批次設定的一致性**：Web 與批次 exe 各有自己的 appsettings.json，但 `Storage` 區段
   （Type/DataRoot/ConnectionString）**兩邊必須指向同一後端**——欄位定義放 Core 的
   `StorageSettings` 共用類別，語意只有一份；部署文件需註明兩份設定同步調整。
