@@ -30,11 +30,17 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// </summary>
     private readonly HostKey? _ownerHost;
 
-    public EfAnalysisRecordStore(Func<LfDbContext> contextFactory, string location, HostKey? ownerHost = null)
+    /// <summary>慢操作統計（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）；測試直接建構時可不傳</summary>
+    private readonly SqlPerformanceMonitor? _performance;
+
+    public EfAnalysisRecordStore(
+        Func<LfDbContext> contextFactory, string location, HostKey? ownerHost = null,
+        SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
         _location = location;
         _ownerHost = ownerHost;
+        _performance = performance;
     }
 
     public string Location => _location;
@@ -112,22 +118,70 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         Log.Info("[SQL] AttachWeeklyCheckup {Date:yyyy-MM-dd}（結論長度 {Len}）", date, checkup.Conclusion.Length);
     }
 
-    public int Prune(int retentionDays)
+    /// <summary>
+    /// 單次清理的列數上限（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
+    ///
+    /// 為什麼要有上限：正常每晚只有一天份過期（2000~6000 列），但**只要停機幾天沒跑、
+    /// 或管理者把保留天數調短**，一次要刪的就是數十萬列。無上限時那會變成一筆超長交易——
+    /// 交易日誌暴增、鎖住整張表、夜間批次卡在清理階段出不來。
+    /// 超過的部分留給下一次執行（清理天生冪等，分幾晚刪完不影響正確性）。
+    /// </summary>
+    private const int MaxPruneRowsPerRun = 50_000;
+
+    /// <summary>一批刪除的列數：夠大到不會來回太多次，夠小到單筆交易不會過長</summary>
+    private const int PruneBatchSize = 2_000;
+
+    public int Prune(int retentionDays) => Prune(retentionDays, MaxPruneRowsPerRun, PruneBatchSize);
+
+    /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為（不必真的造五萬列）</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);
+        var sw = Stopwatch.StartNew();
         using var ctx = _contextFactory();
-        var stale = OwnedRows(ctx).Where(r => r.RecordDate < cutoff).ToList();
-        if (stale.Count == 0)
+
+        var total = 0;
+        while (total < maxRows)
+        {
+            // **只撈主鍵，不撈實體**：舊寫法是 `.ToList()` 整批載入（含完整 ContentJson，
+            // 每列數 KB）再 RemoveRange——刪 50 萬列等於先把數 GB 的 JSON 讀進記憶體。
+            // 這裡只取 record_id（8 bytes/列），實際刪除交給 ExecuteDelete 在 DB 端完成。
+            var batch = Math.Min(batchSize, maxRows - total);
+            var recordIds = OwnedRows(ctx)
+                .Where(r => r.RecordDate < cutoff)
+                .OrderBy(r => r.RecordDate)
+                .Select(r => r.RecordId)
+                .Take(batch)
+                .ToList();
+            if (recordIds.Count == 0) break;
+
+            // **先刪子表再刪主表，不依賴 FK cascade**：cascade 是否真的生效取決於 provider
+            // 與連線設定（SQLite 需 PRAGMA foreign_keys=ON），兩個後端不保證一致。
+            // 顯式刪除的語意在哪個後端都一樣，也不會留下孤兒的 top_issues 列。
+            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+        }
+
+        if (total == 0)
         {
             Log.Info("[SQL] Prune（保留 {Days} 天）：無可清除紀錄", retentionDays);
             return 0;
         }
 
-        ctx.DailyRecords.RemoveRange(stale);   // top_issues 由 FK cascade 一併刪除
-        ctx.SaveChanges();
+        var remaining = OwnedRows(ctx).Count(r => r.RecordDate < cutoff);
+        if (remaining > 0)
+        {
+            Log.Info("[SQL] Prune（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms，" +
+                     "另有 {Remaining} 筆超過本次上限 {Max}，留待下次執行",
+                retentionDays, cutoff, total, sw.ElapsedMilliseconds, remaining, maxRows);
+        }
+        else
+        {
+            Log.Info("[SQL] Prune（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms",
+                retentionDays, cutoff, total, sw.ElapsedMilliseconds);
+        }
 
-        Log.Info("[SQL] Prune（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆", retentionDays, cutoff, stale.Count);
-        return stale.Count;
+        return total;
     }
 
     // ── 讀取（批次面）─────────────────────────────────────────────────────────
@@ -256,6 +310,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         Log.Debug("[SQL] Query（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts} risk={Risk} cat={Cat} event={Event}）→ DB {Rows} 列、篩後 {Result} 筆、{Ms}ms",
             filter.From, filter.To, filter.Hosts?.Count, filter.RiskLevels?.Count, filter.Categories?.Count, filter.EventId, rows.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:Query", sw.ElapsedMilliseconds);
         return result;
     }
 
@@ -303,6 +358,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
             Log.Debug("[SQL] QueryPage（全下推，SQL 端分頁，page={Page} size={Size} sort={Sort}）→ {Total} 筆符合、本頁 {Items} 筆、{Ms}ms",
                 page, pageSize, sortKey ?? "(預設)", total, items.Count, sw.ElapsedMilliseconds);
+            _performance?.Record("records:QueryPage", sw.ElapsedMilliseconds);
 
             return new PagedResult<DailyAnalysisRecord> { Items = items, Page = page, PageSize = pageSize, Total = total };
         }
@@ -336,6 +392,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         Log.Debug("[SQL] QueryPage（含 HostId=0 舊列，退回全窗撈回 {Rows} 列後於記憶體排序＋分頁，sort={Sort}）→ {Total} 筆符合、{Ms}ms",
             rows.Count, sortKey ?? "(預設)", finalOrdered.Count, sw.ElapsedMilliseconds);
+        // 退回路徑（N5）獨立命名：慢的時候要一眼看出是不是踩到了 HostId=0 舊列的全窗撈回
+        _performance?.Record("records:QueryPage(legacy-fallback)", sw.ElapsedMilliseconds);
 
         return new PagedResult<DailyAnalysisRecord>
         {

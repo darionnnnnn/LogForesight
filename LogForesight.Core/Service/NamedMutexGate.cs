@@ -67,4 +67,43 @@ public class NamedMutexGate
         if (captured != null) throw captured;
         return acquired;
     }
+
+    /// <summary>
+    /// 同步版本（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：供**啟動路徑**的 schema 建立／升級使用。
+    ///
+    /// 為什麼可以直接 WaitOne／ReleaseMutex 而不必像 <see cref="RunExclusiveAsync"/> 那樣包
+    /// <see cref="Task.Run(Action)"/>：整段完全同步、沒有 await，取得與釋放天生在同一條執行緒上，
+    /// 上面那個 thread-affinity 的問題不存在。
+    ///
+    /// 逾時的處置與排程相反——排程取不到鎖就跳過本次，schema **不能跳過**（跳過等於帶著
+    /// 不完整的 schema 上線）。因此逾時後回 <c>false</c> 但**仍然執行** <paramref name="action"/>，
+    /// 由呼叫端的冪等 DDL 自行承受「兩個行程同時建同一張表」的殘餘風險。
+    /// 回傳值供呼叫端記 log，讓這種情況在事後查得到。
+    /// </summary>
+    public bool RunExclusive(Action action, TimeSpan timeout)
+    {
+        using var mutex = new Mutex(initiallyOwned: false, _name);
+
+        var acquired = false;
+        try
+        {
+            acquired = mutex.WaitOne(timeout);
+        }
+        catch (AbandonedMutexException)
+        {
+            // 同 RunExclusiveAsync：前一個持有者異常終止，鎖仍視為取得
+            acquired = true;
+        }
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            if (acquired) mutex.ReleaseMutex();
+        }
+
+        return acquired;
+    }
 }

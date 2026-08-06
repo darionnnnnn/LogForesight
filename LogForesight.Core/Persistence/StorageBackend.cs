@@ -53,11 +53,31 @@ public class StorageBackend
         Log.Info("[SQL] 啟用 {Desc} 後端（全資料走 SQL，無檔案）。正在確保 schema…", _dbDesc);
         try
         {
-            using var ctx = _dbFactory();
-            ctx.Database.EnsureCreated();
-            // EnsureCreated 只在資料庫不存在時建表，對既有 DB 什麼都不做——
-            // 這裡補上既有 DB 缺的欄位/索引（自製冪等 DDL）
-            SchemaUpgrader.Upgrade(ctx);
+            // 跨行程互斥（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：EnsureCreated 與 SchemaUpgrader
+            // 都是「檢查缺什麼→缺才補」，這個序列**不是原子的**——Web 與批次（或多個 Web 實例）
+            // 同時啟動時可能同時判定「缺」而重複執行 DDL，後者會撞「已存在」錯誤。
+            //
+            // 用**獨立的** mutex 名稱（不是排程那把 Global\LogForesight）：schema 確認不該排在
+            // 一場正在跑的夜間分析後面等，那會讓站台啟動被分析時間綁架。
+            var gate = new NamedMutexGate(SchemaMutexName);
+            var exclusive = gate.RunExclusive(() =>
+            {
+                using var ctx = _dbFactory();
+                ctx.Database.EnsureCreated();
+                // EnsureCreated 只在資料庫不存在時建表，對既有 DB 什麼都不做——
+                // 這裡補上既有 DB 缺的欄位/索引（自製冪等 DDL）
+                SchemaUpgrader.Upgrade(ctx);
+            }, SchemaMutexTimeout);
+
+            if (!exclusive)
+            {
+                // 沒拿到鎖仍然執行了（schema 不能跳過，見 NamedMutexGate.RunExclusive 的說明）；
+                // 記下來讓「兩個行程同時建表」的殘餘風險在事後查得到
+                Log.Warn("[SQL] schema 確認未取得跨行程互斥（{Timeout} 秒內），已逕行執行——" +
+                         "若同時有另一個行程正在啟動，請確認兩邊的 schema 升級 log 沒有異常",
+                    SchemaMutexTimeout.TotalSeconds);
+            }
+
             Log.Info("[SQL] schema 確認完成");
         }
         catch (Exception ex)
@@ -68,15 +88,32 @@ public class StorageBackend
         }
     }
 
+    /// <summary>schema 建立/升級的跨行程互斥名稱——刻意與排程的 <c>Global\LogForesight</c> 分開</summary>
+    private const string SchemaMutexName = @"Global\LogForesight-Schema";
+
+    /// <summary>
+    /// schema 互斥的等待上限。取不到不會跳過（見 <see cref="NamedMutexGate.RunExclusive"/>），
+    /// 所以這個值只決定「願意為另一個行程的 schema 升級等多久」，設太長會拖慢
+    /// Windows 服務啟動（預設 30 秒逾時），設太短則失去互斥的意義。
+    /// </summary>
+    private static readonly TimeSpan SchemaMutexTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// 資料層慢操作統計（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。每行程一份，
+    /// 由本類別產生的所有 store 共用同一個實例——分散成多份就答不出「整站有幾次慢操作」。
+    /// </summary>
+    public SqlPerformanceMonitor Performance { get; } = new();
+
     /// <summary>store 的底層 blob（整份 JSON 存 lf_blobs 一列，key 為鍵）</summary>
-    public EfJsonBlobStore Blob(string key) => new(_dbFactory, key);
+    public EfJsonBlobStore Blob(string key) => new(_dbFactory, key, Performance);
 
     /// <summary>store 的底層 append-only 逐行資料（lf_log_lines，key 為鍵）</summary>
     public EfJsonLogStore LogStore(string key) => new(_dbFactory, key);
 
     /// <summary>EF 分析紀錄 store。ownerHost 由批次傳入（缺日判定與趨勢基準只看這台主機自己的
     /// 紀錄），Web 查詢端不傳（維持不分主機）</summary>
-    public EfAnalysisRecordStore RecordStore(HostKey? ownerHost = null) => new(_dbFactory, _dbDesc, ownerHost);
+    public EfAnalysisRecordStore RecordStore(HostKey? ownerHost = null) =>
+        new(_dbFactory, _dbDesc, ownerHost, Performance);
 
     /// <summary>風險 log 暫存 store</summary>
     public EfRiskyEventStore RiskyEventStore() => new(_dbFactory);

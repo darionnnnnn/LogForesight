@@ -260,6 +260,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
+        // 健康檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
+        // 與 SchedulerRunState 兩個既有的行程內單例，沒有請求範圍狀態
+        services.AddSingleton<HealthService>();
+
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
         services.AddSingleton<IssueCaseCoordinator>();

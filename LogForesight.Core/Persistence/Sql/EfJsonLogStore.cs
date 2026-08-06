@@ -50,20 +50,43 @@ public sealed class EfJsonLogStore
     /// append-only 執行歷程，插入時間就是事件發生時間，不必逐行解析 JSON。
     /// schema 升級前寫入的既存列沒有時間戳記，一律保留（無法判斷年代，寧可留著）。
     /// </summary>
-    public int Prune(DateTime cutoff)
+    /// <summary>
+    /// 單次清理的列數上限與批次大小（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
+    /// 稽核保留 730 天、處理歷程隨主機數×天數成長，兩千台以上這張表是千萬列級——
+    /// 舊寫法把過期列整批 <c>ToList()</c> 載入再 RemoveRange，等於把數百萬行 JSON
+    /// 文字讀進記憶體只為了刪掉它們。上限超過的部分留待下次執行（清理天生冪等）。
+    /// </summary>
+    private const int MaxPruneRowsPerRun = 200_000;
+
+    private const int PruneBatchSize = 5_000;
+
+    public int Prune(DateTime cutoff) => Prune(cutoff, MaxPruneRowsPerRun, PruneBatchSize);
+
+    /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為（不必真的造二十萬列）</summary>
+    internal int Prune(DateTime cutoff, int maxRows, int batchSize)
     {
         lock (_lock)
         {
             using var ctx = _contextFactory();
-            // CreatedAt == null 的既存列（schema 升級前寫入）不受影響地保留——無法判斷年代，寧可留著
-            var stale = ctx.LogLines
-                .Where(l => l.LogKey == _key && l.CreatedAt != null && l.CreatedAt < cutoff)
-                .ToList();
-            if (stale.Count == 0) return 0;
 
-            ctx.LogLines.RemoveRange(stale);
-            ctx.SaveChanges();
-            return stale.Count;
+            var total = 0;
+            while (total < maxRows)
+            {
+                // 只撈主鍵（seq），不撈 line 內容——這是與舊寫法的關鍵差別
+                var batch = Math.Min(batchSize, maxRows - total);
+                var seqs = ctx.LogLines
+                    // CreatedAt == null 的既存列（schema 升級前寫入）不受影響地保留——無法判斷年代，寧可留著
+                    .Where(l => l.LogKey == _key && l.CreatedAt != null && l.CreatedAt < cutoff)
+                    .OrderBy(l => l.Seq)
+                    .Select(l => l.Seq)
+                    .Take(batch)
+                    .ToList();
+                if (seqs.Count == 0) break;
+
+                total += ctx.LogLines.Where(l => seqs.Contains(l.Seq)).ExecuteDelete();
+            }
+
+            return total;
         }
     }
 
