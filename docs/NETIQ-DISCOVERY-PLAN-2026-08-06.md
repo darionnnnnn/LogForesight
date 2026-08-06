@@ -496,3 +496,39 @@ Global Encoding 設 UTF-8；仍不行則 Help → Edit Custom VM Options 加
 語境，保留）。
 
 最終狀態：建置零警告、**1535 測試綠**（體檢輪 +4）。
+
+### 8.5 全部 blob store 的欄位漂移普查（2026-08-06 後續）
+
+§8.2／§8.4 指出「其他 `JsonBlobCollection` store 尚未掃」，已補做。
+逐一對照**模型欄位 × store 的 Upsert × 測試替身 × Service 層重建點**：
+
+| Store | Upsert 更新分支 | 結論 |
+|---|---|---|
+| `SentinelStore` | 已於 §8.2／§8.4 修 | ✅ |
+| `HostStore` | 12 欄全覆蓋；`DisplayName`／`LastReportAt`／`MergedInto`／`CreatedAt` 刻意不覆寫（原本就有註解說明） | ✅ 無漏 |
+| `UserStore` | 5 欄全覆蓋；**`LastLoginAt` 刻意不覆寫**（唯一寫入點是 `TouchLogin`，照抄會被 Upsert 呼叫端的 null 清掉）——原本只有模型上有說明，已補到 store | ✅ 無漏 |
+| `UserGroupStore` | 4 欄全覆蓋 | ✅ |
+| `HostGroupStore` | 2 欄全覆蓋 | ✅ |
+| `NoiseMarkStore` | 3 欄全覆蓋（HostName＋IssueKey 是比對鍵） | ✅ |
+| `GroupAccessStore`／`RuleSeedStore`／`AiCacheStore`／`PermissionChangeStore` | 全是 replace-all／append 語意，**沒有逐欄更新分支** | N/A |
+
+**真正抓到的漂移在測試替身**（正是這個 bug 家族最危險的形態——替身漏抄不會讓
+測試失敗，只會讓測試**失去偵測能力**）：
+
+- `FakeHostStore.Upsert` 少抄 **`HostName`／`IpUpdatedAt`／`Source`／`Os`** 四欄
+  （真實 store 有抄）。`Os` 尤其要命：Linux 主機經任何走 Upsert 的編輯後在替身裡
+  仍是 windows，靠替身驗證「Linux 套對規則面」的測試等於白測。
+- `FakeUserStore.Upsert` 少抄 **`Account`**。
+
+Service 層的「逐欄重建再 Upsert」全數複查，**沒有新的漏抄**。其中兩處是
+**刻意不傳**、語意相反、不可一併「修」掉，已就地註明：
+
+- `NetiqHostService.SetActive`：不傳 `OrphanedFromSentinel` ＝要清除（人已表態），原有長註解。
+- `HostAdminService.SaveHost`：同上語意，**原本沒有註解**，本輪補上——
+  否則下一個做逐欄比對的人很可能把它「修」成保留，反而破壞既有設計。
+
+新增 `BlobStoreRoundTripTests`（8 項）：對**真實 store** 做整物件往返，
+刻意不覆寫的欄位逐案排除並註明理由。已實測「移掉 `HostStore` 的 `Os` 複製 → 失敗」
+與「移掉 `UserStore` 的 `Email` 複製 → 失敗」，確認守得住。
+
+測試 1543 綠。

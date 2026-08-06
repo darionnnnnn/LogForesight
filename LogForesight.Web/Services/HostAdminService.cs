@@ -243,6 +243,11 @@ public class HostAdminService
             // 群組與負責人由專屬端點維護，避免「更新角色描述」意外清掉它們
             GroupIds = existing?.GroupIds ?? new List<long>(),
             OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
+            // **刻意不傳 OrphanedFromSentinel（不是漏抄）**：Upsert 的既存分支會用傳入物件
+            // 覆寫該欄位，不填＝標記被清除，而這正是要的行為——admin 在這裡明確編輯過這台
+            // 主機（含重新指定所屬 Sentinel），人已表態，孤兒標記的使命就結束了。
+            // 語意與 NetiqHostService.SetActive 同源（見該處長註解），與 OwnerCsvImporter
+            // 「不該覆寫」的情況相反；做逐欄比對體檢時別把這裡一併「修」掉。
         });
 
         _audit.Record(

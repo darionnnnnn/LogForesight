@@ -27,14 +27,23 @@ internal class FakeHostStore : IHostStore
             return host;
         }
 
+        // **逐欄與 HostStore.Upsert 對齊**：替身漏抄的後果不是測試失敗，而是測試
+        // 綠燈卻蓋掉正式環境的 bug（Sentinel 那組就是這樣漏過去的）。
+        // 這裡原本少了 HostName／IpUpdatedAt／Source／Os 四欄。
+        existing.HostName = host.HostName;
         existing.IpAddress = host.IpAddress;
+        existing.IpUpdatedAt = host.IpUpdatedAt;
         existing.SentinelId = host.SentinelId;
         existing.NetiqServer = host.NetiqServer;
         existing.RoleDesc = host.RoleDesc;
+        existing.Source = host.Source;
+        existing.Os = host.Os;
         existing.Active = host.Active;
         existing.GroupIds = host.GroupIds;
         existing.OwnerUserIds = host.OwnerUserIds;
         existing.OrphanedFromSentinel = host.OrphanedFromSentinel;
+        // LastReportAt／DisplayName／MergedInto 刻意不覆寫（同 HostStore）：
+        // 前兩者是批次的職責、後者只能經 Merge/Unmerge
         return existing;
     }
 
@@ -223,6 +232,10 @@ internal class FakeUserStore : IUserStore
             return user;
         }
 
+        // 逐欄與 UserStore.Upsert 對齊（Account 原本漏抄）。
+        // LastLoginAt 刻意不覆寫：唯一寫入點是 TouchLogin，
+        // 讓 Upsert 帶進來的 null 蓋掉真實登入時間會讓「最近登入」永遠是空的
+        existing.Account = user.Account;
         existing.DisplayName = user.DisplayName;
         existing.Email = user.Email;
         existing.Active = user.Active;

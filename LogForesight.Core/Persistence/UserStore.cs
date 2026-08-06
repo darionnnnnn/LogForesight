@@ -27,6 +27,12 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
                 return user;
             }
 
+            // 逐欄複製：**新增模型欄位時這裡要跟著加**（漏抄的症狀是「新增存得進去、
+            // 編輯被靜默還原」，BlobStoreRoundTripTests 守住這件事）。
+            //
+            // LastLoginAt 刻意不覆寫：唯一寫入點是 TouchLogin。Upsert 的呼叫端
+            // （admin 編輯、負責人匯入）建的是不帶登入時間的物件，照抄會把真實登入時間
+            // 清成 null，讓使用者清單的「最近登入」每編輯一次就歸零。
             existing.Account = user.Account;
             existing.DisplayName = user.DisplayName;
             existing.Email = user.Email;
