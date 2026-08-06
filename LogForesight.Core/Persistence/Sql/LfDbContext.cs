@@ -32,6 +32,25 @@ public class LfDbContext : DbContext
     /// <summary>append-only 逐行 JSONL（稽核/執行/匯入/處理歷程，↔ EfJsonLogStore）</summary>
     public DbSet<LogLineRow> LogLines => Set<LogLineRow>();
 
+    // ── 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）──────────────
+    //
+    // 這三份資料原本各是一個整份 JSON blob（lf_blobs 的一列）。它們與 hosts／users 的差別在於
+    // **會隨「主機數 × 天數」成長**：6000 台 × 90 天下 issue_handling 約 324 萬列，
+    // 序列化後的 C# string 逼近 .NET 的 2 GB 單一物件上限（實測見規劃 §8.5.1，
+    // 100 萬列時單次標記已需 6.8 秒、配置 2.4 GB）——那是硬失敗而不是線性劣化。
+    //
+    // hosts／users／groups 這類「隨組織規模成長」的資料維持 blob（數千筆上限內），
+    // 這一刀刻意只切會隨天數成長的三份。
+
+    /// <summary>問題層級處理狀態（↔ lf_issue_handling，原 blob key=issue_handling）</summary>
+    public DbSet<IssueHandlingRow> IssueHandlings => Set<IssueHandlingRow>();
+
+    /// <summary>問題案件（↔ lf_issue_cases，原 blob key=issue_cases）</summary>
+    public DbSet<IssueCaseRow> IssueCases => Set<IssueCaseRow>();
+
+    /// <summary>日層級處理狀態快照（↔ lf_record_handling，原 blob key=record_handling）</summary>
+    public DbSet<RecordHandlingRow> RecordHandlings => Set<RecordHandlingRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -104,6 +123,92 @@ public class LfDbContext : DbContext
             e.HasOne<DailyRecordRow>().WithMany().HasForeignKey(x => x.RecordId).OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ── 處理狀態三表 ──────────────────────────────────────────────────────
+        //
+        // **主機以 host_name_key（大寫正規化）為比對鍵**，不是 host_name 原值，也不是 host_id：
+        //   - 用原值不行：C# 全站以 OrdinalIgnoreCase 比對主機名，但 SQL 的 `=` 大小寫語意
+        //     依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、SqlServer 常見 CI）。
+        //     同一份資料在兩個後端會有不同行為——EfAnalysisRecordStore.OwnedRows 已經為此
+        //     踩過一次坑（用 UPPER() 正規化），不該在新表再踩一次。存正規化欄位比每次
+        //     查詢都 UPPER() 更好：它走得到索引。
+        //   - 刻意**不改用 host_id**（規劃 §8.1 缺陷 3 原本提議 host_id，實作時改回）：
+        //     處理狀態的既有語意是「以**現行主機名稱**為鍵」，合併由呼叫端映射到存活主機處理
+        //     （RecordListQueryService.HostNameOf）。改鍵會連帶改變改名時的行為，
+        //     且遷移需要 name→id 解析與孤兒處理——那是另一個題目，不該夾在儲存層置換裡做。
+        //     正規化欄位已經解掉 collation 這個真正的跨後端風險。
+        //
+        // **updated_at 是並發權杖**：換掉整份 blob 之後，原本靠 lf_blobs.UpdatedAt
+        // （WEB-SPEC §10.4 的樂觀鎖）擋下的「兩個人同時標記同一個問題、後寫的靜默蓋掉先寫的」
+        // 就沒有防線了。體檢 §0 把併發衝突列為未驗證項目，若不補這一層，它會從
+        // 「未驗證」變成「確定會發生」。
+
+        b.Entity<IssueHandlingRow>(e =>
+        {
+            e.ToTable("lf_issue_handling");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.IssueKey).HasColumnName("issue_key").HasMaxLength(512);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.ActorId).HasColumnName("actor_id");
+            e.Property(x => x.ActorAccount).HasColumnName("actor_account").HasMaxLength(255);
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.CaseId).HasColumnName("case_id").HasMaxLength(64);
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            // 唯一鍵＝原 blob 的「同一 (主機, 日期, 問題) 只有一列」語意，由資料庫保證
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique();
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate });   // GetForDay
+            e.HasIndex(x => x.CaseId);                              // GetByCase
+        });
+
+        b.Entity<IssueCaseRow>(e =>
+        {
+            e.ToTable("lf_issue_cases");
+            e.HasKey(x => x.CaseId);
+            e.Property(x => x.CaseId).HasColumnName("case_id").HasMaxLength(64);
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.IssueKey).HasColumnName("issue_key").HasMaxLength(512);
+            e.Property(x => x.IssueLabel).HasColumnName("issue_label").HasMaxLength(512);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.FirstLinkedDate).HasColumnName("first_linked_date");
+            e.Property(x => x.LastLinkedDate).HasColumnName("last_linked_date");
+            e.Property(x => x.ClosedAt).HasColumnName("closed_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.CreatedByAccount).HasColumnName("created_by_account").HasMaxLength(255);
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            // GetOpen／GetOpenForHost：同一 (主機, 問題簽章) 至多一個進行中案件的查詢形狀
+            e.HasIndex(x => new { x.HostNameKey, x.IssueKey, x.ClosedAt });
+            e.HasIndex(x => new { x.HandlerId, x.ClosedAt });   // GetOpenByHandler／GetByHandler
+        });
+
+        b.Entity<RecordHandlingRow>(e =>
+        {
+            e.ToTable("lf_record_handling");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).IsUnique();
+            e.HasIndex(x => x.HandlerId);   // GetByHandler
+            e.HasIndex(x => x.Status);      // GetUnresolved
+        });
+
         b.Entity<RiskyEventRow>(e =>
         {
             e.ToTable("lf_risky_events");
@@ -166,6 +271,68 @@ public class RiskyEventRow
     public string Message { get; set; } = string.Empty;
     public string? RuleId { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// 主機名稱的正規化鍵：全站以 <see cref="StringComparer.OrdinalIgnoreCase"/> 比對主機名，
+/// 但 SQL 的大小寫語意依 provider collation 而異。存正規化欄位讓兩個後端行為一致，
+/// 且比每次查詢都 <c>UPPER()</c> 更好——它走得到索引。
+/// 主機名為 ASCII，<c>ToUpperInvariant</c> 等價 OrdinalIgnoreCase。
+/// </summary>
+public static class HostNameKey
+{
+    public static string Of(string hostName) => (hostName ?? string.Empty).ToUpperInvariant();
+}
+
+/// <summary>問題層級處理狀態的一列。↔ lf_issue_handling</summary>
+public class IssueHandlingRow
+{
+    public long Id { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime RecordDate { get; set; }
+    public string IssueKey { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long? ActorId { get; set; }
+    public string ActorAccount { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? CaseId { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>問題案件的一列。↔ lf_issue_cases</summary>
+public class IssueCaseRow
+{
+    public string CaseId { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public string IssueKey { get; set; } = string.Empty;
+    public string IssueLabel { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long? HandlerId { get; set; }
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+    public DateTime FirstLinkedDate { get; set; }
+    public DateTime LastLinkedDate { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string CreatedByAccount { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>日層級處理狀態快照的一列。↔ lf_record_handling</summary>
+public class RecordHandlingRow
+{
+    public long Id { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime RecordDate { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public long? HandlerId { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? Note { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 /// <summary>webdata 整份 JSON 內容的一列（key＝store 名稱，如 "users"）。↔ lf_blobs</summary>

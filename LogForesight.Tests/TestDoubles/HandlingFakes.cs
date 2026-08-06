@@ -238,6 +238,12 @@ internal class FakeIssueCaseStore : IIssueCaseStore
 
     public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
 
+    /// <summary>批次入口與逐筆同語意——假實作沒有「整份讀改寫」的成本，行為一致即可</summary>
+    public void SaveMany(IEnumerable<IssueCase> cases)
+    {
+        foreach (var issueCase in cases) Save(issueCase);
+    }
+
     public void Save(IssueCase issueCase)
     {
         var existing = _items.FirstOrDefault(c => c.CaseId == issueCase.CaseId);

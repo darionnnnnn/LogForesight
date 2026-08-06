@@ -43,13 +43,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReportReader>(_ => new FileReportReader(dataRoot));
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
-        services.AddSingleton<IRecordHandlingStore>(sp =>
-        {
-            var backend = sp.GetRequiredService<StorageBackend>();
-            return new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log"));
-        });
-        services.AddSingleton<IIssueHandlingStore>(sp => new IssueHandlingStore(sp.GetRequiredService<StorageBackend>().Blob("issue_handling")));
-        services.AddSingleton<IIssueCaseStore>(sp => new IssueCaseStore(sp.GetRequiredService<StorageBackend>().Blob("issue_cases")));
+        //
+        // 這三個自 P3 起走**真表**而非整份 blob（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B）：
+        // 它們會隨「主機數 × 天數」成長，6000 台 × 90 天下 issue_handling 的整份序列化
+        // 會撞上 .NET 的 2 GB 單一物件上限。介面不變，呼叫端零修改。
+        services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
+        services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
+        services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<PermissionChangeStore>(sp =>

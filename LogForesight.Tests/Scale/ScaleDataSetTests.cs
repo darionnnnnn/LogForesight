@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace LogForesight.Tests;
 
@@ -50,8 +50,8 @@ public class ScaleDataSetTests
     {
         using var data = ScaleDataSet.Generate(ScaleProfile.Small);
 
-        var handlings = new IssueHandlingStore(data.Backend.Blob("issue_handling"));
-        var cases = new IssueCaseStore(data.Backend.Blob("issue_cases"));
+        var handlings = data.Backend.IssueHandlingStore();
+        var cases = data.Backend.IssueCaseStore();
 
         Assert.Equal(ScaleProfile.Small.OpenCaseCount, cases.GetOpenByHandler(2).Count);
 

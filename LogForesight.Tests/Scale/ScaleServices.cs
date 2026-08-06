@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 
@@ -35,9 +35,9 @@ internal sealed class ScaleServices
         var userGroups = new UserGroupStore(backend.Blob("user_groups"));
         var hostGroups = new HostGroupStore(backend.Blob("host_groups"));
         var access = new GroupAccessStore(backend.Blob("group_access"));
-        IssueHandlings = new IssueHandlingStore(backend.Blob("issue_handling"));
-        Cases = new IssueCaseStore(backend.Blob("issue_cases"));
-        var recordHandling = new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log"));
+        IssueHandlings = backend.IssueHandlingStore();
+        Cases = backend.IssueCaseStore();
+        var recordHandling = backend.RecordHandlingStore();
         var noiseMarks = new NoiseMarkStore(backend.Blob("noise_marks"));
         var settingsStore = new SystemSettingsStore(backend.Blob("system_settings"));
         var audit = new AuditLogStore(backend.LogStore("audit"));

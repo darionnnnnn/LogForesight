@@ -38,7 +38,134 @@ internal static class SchemaUpgrader
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events",
             "IX_lf_risky_events_host_id_date_source_event_id", "host_id, date, source, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events", "IX_lf_risky_events_date", "date");
+
+        // 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：與 lf_risky_events 完全同一套
+        // 「檢查缺什麼→缺才補」的冪等 DDL——既有部署的 DB 已經存在，EnsureCreated 對它
+        // 什麼都不做，新 DB 則由 EnsureCreated 建好、這裡 no-op。
+        CreateTableIfMissing(ctx, isSqlite, "lf_issue_handling",
+            isSqlite ? SqliteCreateIssueHandling : SqlServerCreateIssueHandling);
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
+            "IX_lf_issue_handling_unique", "host_name_key, record_date, issue_key", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling",
+            "IX_lf_issue_handling_host_date", "host_name_key, record_date");
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_handling", "IX_lf_issue_handling_case_id", "case_id");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_issue_cases",
+            isSqlite ? SqliteCreateIssueCases : SqlServerCreateIssueCases);
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
+            "IX_lf_issue_cases_host_issue_closed", "host_name_key, issue_key, closed_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_issue_cases",
+            "IX_lf_issue_cases_handler_closed", "handler_id, closed_at");
+
+        CreateTableIfMissing(ctx, isSqlite, "lf_record_handling",
+            isSqlite ? SqliteCreateRecordHandling : SqlServerCreateRecordHandling);
+        AddIndexIfMissing(ctx, isSqlite, "lf_record_handling",
+            "IX_lf_record_handling_unique", "host_name_key, record_date", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_handler", "handler_id");
+        AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_status", "status");
     }
+
+    private const string SqliteCreateIssueHandling = """
+        CREATE TABLE lf_issue_handling (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_issue_handling PRIMARY KEY AUTOINCREMENT,
+            host_name TEXT NOT NULL,
+            host_name_key TEXT NOT NULL,
+            record_date TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            status TEXT NOT NULL,
+            actor_id INTEGER NULL,
+            actor_account TEXT NOT NULL,
+            note TEXT NULL,
+            due_date TEXT NULL,
+            case_id TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateIssueHandling = """
+        CREATE TABLE lf_issue_handling (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_issue_handling PRIMARY KEY,
+            host_name nvarchar(255) NOT NULL,
+            host_name_key nvarchar(255) NOT NULL,
+            record_date datetime2 NOT NULL,
+            issue_key nvarchar(512) NOT NULL,
+            status nvarchar(30) NOT NULL,
+            actor_id bigint NULL,
+            actor_account nvarchar(255) NOT NULL,
+            note nvarchar(max) NULL,
+            due_date datetime2 NULL,
+            case_id nvarchar(64) NULL,
+            updated_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreateIssueCases = """
+        CREATE TABLE lf_issue_cases (
+            case_id TEXT NOT NULL CONSTRAINT PK_lf_issue_cases PRIMARY KEY,
+            host_name TEXT NOT NULL,
+            host_name_key TEXT NOT NULL,
+            issue_key TEXT NOT NULL,
+            issue_label TEXT NOT NULL,
+            status TEXT NOT NULL,
+            handler_id INTEGER NULL,
+            note TEXT NULL,
+            due_date TEXT NULL,
+            first_linked_date TEXT NOT NULL,
+            last_linked_date TEXT NOT NULL,
+            closed_at TEXT NULL,
+            created_at TEXT NOT NULL,
+            created_by_account TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateIssueCases = """
+        CREATE TABLE lf_issue_cases (
+            case_id nvarchar(64) NOT NULL CONSTRAINT PK_lf_issue_cases PRIMARY KEY,
+            host_name nvarchar(255) NOT NULL,
+            host_name_key nvarchar(255) NOT NULL,
+            issue_key nvarchar(512) NOT NULL,
+            issue_label nvarchar(512) NOT NULL,
+            status nvarchar(30) NOT NULL,
+            handler_id bigint NULL,
+            note nvarchar(max) NULL,
+            due_date datetime2 NULL,
+            first_linked_date datetime2 NOT NULL,
+            last_linked_date datetime2 NOT NULL,
+            closed_at datetime2 NULL,
+            created_at datetime2 NOT NULL,
+            created_by_account nvarchar(255) NOT NULL,
+            updated_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreateRecordHandling = """
+        CREATE TABLE lf_record_handling (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_record_handling PRIMARY KEY AUTOINCREMENT,
+            host_name TEXT NOT NULL,
+            host_name_key TEXT NOT NULL,
+            record_date TEXT NOT NULL,
+            status TEXT NOT NULL,
+            handler_id INTEGER NULL,
+            due_date TEXT NULL,
+            note TEXT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateRecordHandling = """
+        CREATE TABLE lf_record_handling (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_record_handling PRIMARY KEY,
+            host_name nvarchar(255) NOT NULL,
+            host_name_key nvarchar(255) NOT NULL,
+            record_date datetime2 NOT NULL,
+            status nvarchar(30) NOT NULL,
+            handler_id bigint NULL,
+            due_date datetime2 NULL,
+            note nvarchar(max) NULL,
+            updated_at datetime2 NOT NULL
+        )
+        """;
 
     private const string SqliteCreateRiskyEventsTable = """
         CREATE TABLE lf_risky_events (
@@ -101,12 +228,13 @@ internal static class SchemaUpgrader
         ctx.Database.ExecuteSqlRaw(sql);
     }
 
-    private static void AddIndexIfMissing(LfDbContext ctx, bool isSqlite, string table, string indexName, string columns)
+    private static void AddIndexIfMissing(
+        LfDbContext ctx, bool isSqlite, string table, string indexName, string columns, bool unique = false)
     {
         if (IndexExists(ctx, isSqlite, table, indexName)) return;
 
         Log.Info("[SQL] schema 升級：{Table} 補索引 {Index}", table, indexName);
-        var sql = "CREATE INDEX " + indexName + " ON " + table + " (" + columns + ")";
+        var sql = "CREATE " + (unique ? "UNIQUE " : "") + "INDEX " + indexName + " ON " + table + " (" + columns + ")";
         ctx.Database.ExecuteSqlRaw(sql);
     }
 

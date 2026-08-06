@@ -67,6 +67,11 @@ public class StorageBackend
                 // EnsureCreated 只在資料庫不存在時建表，對既有 DB 什麼都不做——
                 // 這裡補上既有 DB 缺的欄位/索引（自製冪等 DDL）
                 SchemaUpgrader.Upgrade(ctx);
+
+                // 處理狀態自 blob 遷入真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：
+                // 冪等（目標表非空即跳過）、不刪舊 blob、解析失敗直接拋。
+                // 放在互斥區內與 DDL 同一把鎖——兩個行程同時啟動時只有一個會搬
+                HandlingBlobMigrator.MigrateIfNeeded(ctx, key => Blob(key).Read());
             }, SchemaMutexTimeout);
 
             if (!exclusive)
@@ -117,6 +122,16 @@ public class StorageBackend
 
     /// <summary>風險 log 暫存 store</summary>
     public EfRiskyEventStore RiskyEventStore() => new(_dbFactory);
+
+    // ── 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）──────────────────────
+    // 這三個過去是 Blob("issue_handling") 等整份型 store，現在走真表；
+    // 介面不變，呼叫端與 DI 註冊只換建構方式。
+
+    public EfIssueHandlingStore IssueHandlingStore() => new(_dbFactory, Performance);
+
+    public EfIssueCaseStore IssueCaseStore() => new(_dbFactory);
+
+    public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
     /// <summary>
     /// 關閉 Sqlite 連線池：Microsoft.Data.Sqlite 預設開啟連線池，連線 Close() 回池前的

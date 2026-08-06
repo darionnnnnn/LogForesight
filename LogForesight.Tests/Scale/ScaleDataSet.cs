@@ -491,9 +491,15 @@ public sealed class ScaleDataSet : IDisposable
             }
         }
 
-        var handlingBytes = WriteBlob("issue_handling", handlings);
-        var caseBytes = WriteBlob("issue_cases", cases);
-        return (handlings.Count, handlingBytes, cases.Count, caseBytes);
+        // P3 起這兩份走真表（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B），不再是整份 blob。
+        // 產生器改走 store 的批次入口——它現在是「本批次涉及的列建索引後合併」，
+        // 不是舊實作的 O(既有列 × 本次列)，灌資料不再是瓶頸
+        Backend.IssueHandlingStore().SaveMany(handlings);
+        Backend.IssueCaseStore().SaveMany(cases);
+
+        // 真表沒有「整份 JSON 大小」這個概念了；回傳 0 保留欄位形狀，
+        // 量測報告改看列數與 DB 檔案大小
+        return (handlings.Count, 0, cases.Count, 0);
     }
 
     // ── 共用 ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using LogForesight.Web.Models.Dto;
 using Xunit;
 using Xunit.Abstractions;
@@ -32,33 +32,37 @@ public class ScaleBenchmarks
     public void 基準_6000台90天() => RunProfile(ScaleProfile.Target6000);
 
     /// <summary>
-    /// 整份 blob 的成長曲線（規劃 §零 修正 2）：逐步加大 <c>issue_handling</c> 的列數，
-    /// 量單次 <c>Mutate</c>（＝標記一個問題的實際成本）的耗時與配置量。
+    /// 「標記一個問題」的成長曲線（規劃 §8.5.1 的**改版後**對照）。
     ///
-    /// 這是驗證「S2 是硬失敗而非線性劣化」的關鍵：序列化後的 C# string 逼近 .NET 的
-    /// 2 GB 單一物件上限時會直接拋例外。**刻意不一路衝到炸**——量到明確的成長趨勢與
-    /// 單次成本超過門檻即停，並把外推結果印出來，不必真的把測試機的記憶體吃光。
+    /// 改版前這份資料是整份 JSON blob，每標記一次就要讀出整份、反序列化、改一筆、
+    /// 再整份序列化寫回。實測（記錄於 docs/SCALE-ISSUE-FIRST-PLAN.md §8.5.1）：
+    ///   1 萬列 113ms／10 萬列 987ms／50 萬列 3,320ms／100 萬列 6,841ms（配置 2.4 GB），
+    /// 完全線性，外推 6000 台 × 90 天的 324 萬列會撞上 .NET 的 2 GB 單一物件上限。
+    ///
+    /// P3 之後改真表，單筆標記是一列 UPDATE，這條曲線應該**與列數無關**（平的）。
+    /// 若哪天有人把它改回整份讀改寫，這裡會立刻重新變成線性成長。
     /// </summary>
     [ScaleFact]
-    public void 整份blob成長曲線()
+    public void 單筆標記成本不隨資料量成長()
     {
         using var data = ScaleDataSet.Generate(ScaleProfile.Small, _out.WriteLine);
-        var store = new IssueHandlingStore(data.Backend.Blob("issue_handling"));
+        var store = data.Backend.IssueHandlingStore();
         var host = data.LivingHosts[0];
 
         _out.WriteLine("");
-        _out.WriteLine("== issue_handling 整份 blob 成長曲線 ==");
-        _out.WriteLine($"{"列數",12} | {"blob MB",10} | {"單次標記 ms",12} | {"配置 MB",10}");
+        _out.WriteLine("== issue_handling：單筆標記成本 vs 資料量（改版後應為平線）==");
+        _out.WriteLine($"{"表內列數",12} | {"單次標記 ms",12} | {"配置 MB",10} | {"SaveMany 90 列 ms",18}");
 
-        var rows = new List<IssueHandling>();
         var baseDate = DateTime.Today.AddDays(-3000);
+        var written = 0;
 
         foreach (var target in new[] { 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000 })
         {
-            while (rows.Count < target)
+            // 補到目標列數（只寫新增的部分）
+            var batch = new List<IssueHandling>(target - written);
+            for (var i = written; i < target; i++)
             {
-                var i = rows.Count;
-                rows.Add(new IssueHandling
+                batch.Add(new IssueHandling
                 {
                     HostName = data.LivingHosts[i % data.LivingHosts.Count].HostName,
                     Date = baseDate.AddDays(i % 2000),
@@ -70,14 +74,10 @@ public class ScaleBenchmarks
                     UpdatedAt = DateTime.Now
                 });
             }
+            store.SaveMany(batch);
+            written = target;
 
-            // **刻意不用 SaveMany 建量**：SaveMany 的合併是 O(既有列 × 本次列)（規劃 N2），
-            // 用它把 blob 灌到 25 萬列要跑數小時——那是另一個要修的問題，不該卡住這裡要量的東西。
-            // 直接寫整份 JSON 建立量級，再量「使用者標記一個問題」的真實成本。
-            data.Backend.Blob("issue_handling")
-                .Mutate<object?>(_ => (System.Text.Json.JsonSerializer.Serialize(rows, LfJsonOptions.Pretty), null));
-
-            // 一筆 Save → SaveMany(1 筆) → 一次整份讀→反序列化→合併→序列化→寫回
+            // 使用者標記一個問題的實際成本
             var before = GC.GetTotalAllocatedBytes();
             var sw = Stopwatch.StartNew();
             store.Save(new IssueHandling
@@ -92,35 +92,26 @@ public class ScaleBenchmarks
             });
             sw.Stop();
             var allocated = GC.GetTotalAllocatedBytes() - before;
-            var blobMb = (data.Backend.Blob("issue_handling").Read()?.Length ?? 0) / 1024.0 / 1024.0;
 
-            _out.WriteLine($"{target,12:N0} | {blobMb,10:N1} | {sw.ElapsedMilliseconds,12:N0} | {allocated / 1024.0 / 1024.0,10:N1}");
-
-            // 單次標記已經超過 10 秒就沒有必要再往上量——結論已經成立
-            if (sw.ElapsedMilliseconds > 10_000)
+            // N2 的對照：一次「案件建案回溯 90 天」規模的批次寫。改版前在 100 萬列的 blob 上
+            // 要 11.3 秒（合併是 O(既有列 × 本次列)），改版後合併走索引、應與資料量無關
+            var caseBatch = Enumerable.Range(0, 90).Select(d => new IssueHandling
             {
-                _out.WriteLine($"  → 單次標記已達 {sw.ElapsedMilliseconds:N0} ms，停止加量。");
-                break;
-            }
+                HostName = host.HostName,
+                Date = DateTime.Today.AddDays(-d),
+                IssueKey = "System|Probe|8888|1",
+                Status = IssueHandlingStatuses.InProgress,
+                ActorId = 1,
+                ActorAccount = "scale-admin",
+                UpdatedAt = DateTime.Now
+            }).ToList();
+
+            var batchSw = Stopwatch.StartNew();
+            store.SaveMany(caseBatch);
+            batchSw.Stop();
+
+            _out.WriteLine($"{target,12:N0} | {sw.ElapsedMilliseconds,12:N0} | {allocated / 1024.0 / 1024.0,10:N1} | {batchSw.ElapsedMilliseconds,18:N0}");
         }
-
-        // N2 的獨立佐證：同一個 blob 上做一次「案件建案」規模的批次寫（90 天），
-        // 量的是 SaveMany 的 O(既有列 × 本次列) 合併成本
-        var batch = Enumerable.Range(0, 90).Select(d => new IssueHandling
-        {
-            HostName = host.HostName,
-            Date = DateTime.Today.AddDays(-d),
-            IssueKey = "System|Probe|8888|1",
-            Status = IssueHandlingStatuses.InProgress,
-            ActorId = 1,
-            ActorAccount = "scale-admin",
-            UpdatedAt = DateTime.Now
-        }).ToList();
-
-        var batchSw = Stopwatch.StartNew();
-        store.SaveMany(batch);
-        batchSw.Stop();
-        _out.WriteLine($"  SaveMany（90 列，模擬 BuildCase 回溯 90 天）於 {rows.Count:N0} 列的 blob 上：{batchSw.ElapsedMilliseconds:N0} ms");
     }
 
     /// <summary>

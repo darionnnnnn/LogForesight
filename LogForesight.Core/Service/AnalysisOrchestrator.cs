@@ -240,10 +240,13 @@ public class AnalysisOrchestrator
 
             // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
             // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
+            // 走與 Web 端**同一組真表 store**（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：
+            // 這三份自 blob 改真表之後，批次端若還構造舊的 blob store，就會變成
+            // 「批次寫 blob、Web 讀資料表」——兩邊各看到一半的處理狀態，而且不會報錯。
             var caseCoordinator = new IssueCaseCoordinator(
-                new IssueCaseStore(backend.Blob("issue_cases")),
-                new IssueHandlingStore(backend.Blob("issue_handling")),
-                new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log")),
+                backend.IssueCaseStore(),
+                backend.IssueHandlingStore(),
+                backend.RecordHandlingStore(),
                 backend.RecordStore(),
                 hostStore);
 

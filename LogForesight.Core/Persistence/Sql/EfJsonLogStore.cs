@@ -33,6 +33,23 @@ public sealed class EfJsonLogStore
             .ToList();
     }
 
+    /// <summary>
+    /// 最後附加的一行；沒有任何行時回 null（docs/SCALE-ISSUE-FIRST-PLAN.md N4）。
+    ///
+    /// 存在的理由：續號用的「上一個 id」過去靠 <see cref="ReadLines()"/> 整份讀回再取最後一筆，
+    /// 而那個呼叫在 Singleton store 的建構式裡——等於**站台啟動時同步讀千萬列並逐行解析**，
+    /// 第一個觸發它的請求會長時間無回應。這裡是索引 (log_key, seq) 的一次反向 seek。
+    /// </summary>
+    public string? ReadLastLine()
+    {
+        using var ctx = _contextFactory();
+        return ctx.LogLines.AsNoTracking()
+            .Where(l => l.LogKey == _key)
+            .OrderByDescending(l => l.Seq)
+            .Select(l => l.Line)
+            .FirstOrDefault();
+    }
+
     /// <summary>附加一行（O(1)）</summary>
     public void AppendLine(string line)
     {
