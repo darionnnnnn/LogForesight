@@ -1,3 +1,4 @@
+using System.Text;
 using LogForesight.Web;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Extensions;
@@ -6,6 +7,26 @@ using LogForesight.Web.Middleware;
 using LogForesight.Web.Services;
 using NLog;
 using NLog.Web;
+
+// console 輸出一律 UTF-8（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §6）：本專案的
+// console 訊息全是繁體中文，而 Windows 的主控台預設代碼頁是系統地區設定（繁中為 950），
+// 與讀取端（Rider 執行視窗、CI log 收集器）的預期編碼不一致時整片變亂碼。
+// 在這裡釘死成 UTF-8，輸出端就不再取決於誰來啟動這個行程。
+//
+// 兩個刻意：
+//   1. UTF8Encoding(false)＝不寫 BOM——寫了的話部分終端會把 BOM 顯示成開頭的怪字元；
+//   2. 吞掉 IOException——以 Windows 服務身分執行時沒有附掛主控台，設定這個屬性會擲例外。
+//      沒有主控台就沒有畫面可亂，這件事失敗不該讓服務起不來（診斷 log 走 nlog 檔案目標，
+//      不受影響）。nlog.config 的 Console target 走 Console.Out，自然跟著這裡的設定，
+//      不另外標 encoding——同一件事寫兩個地方，日後只改一處就會分歧。
+try
+{
+    Console.OutputEncoding = new UTF8Encoding(false);
+}
+catch (IOException)
+{
+    // 無主控台（Windows 服務）——維持預設，不影響任何功能
+}
 
 if (args.Length > 0 && args[0] == "--hash-password")
 {
