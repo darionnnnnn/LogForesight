@@ -24,6 +24,10 @@ public class SentinelDto
 
     /// <summary>目前掛在這台 Sentinel 下的使用中 NetIQ 主機數——刪除前的確認視窗直接用這個數字</summary>
     public int HostCount { get; set; }
+
+    /// <summary>以 ESM 事件來源目錄探索（需 ESM 唯讀權限）。預設 false，
+    /// 語意見 <see cref="LogForesight.Core.Models.Sentinel.UseEsmDirectory"/></summary>
+    public bool UseEsmDirectory { get; set; }
 }
 
 public class SaveSentinelRequest
@@ -46,6 +50,11 @@ public class SaveSentinelRequest
 
     /// <summary>'windows'／'linux'。省略或不合法值＝windows（新增時的既有行為零改變）</summary>
     public string? Os { get; set; }
+
+    /// <summary>以 ESM 事件來源目錄探索。**省略＝沿用既有值**（新增時＝false）——
+    /// 與 <see cref="Os"/> 同一個語意：編輯不帶某欄位不代表要重置它，
+    /// API 呼叫端漏帶就把開關靜默關掉是另一種形式的欄位漂移</summary>
+    public bool? UseEsmDirectory { get; set; }
 }
 
 public class SetSentinelActiveRequest

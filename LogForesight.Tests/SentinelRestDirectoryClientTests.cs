@@ -1,14 +1,24 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using LogForesight.Web.Services;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// SentinelRestDirectoryClient：網段範圍掃描的真實 client（docs/NETIQ-API-REFERENCE.md §3.4，
-/// 2026-07-29 定案）。用 <see cref="StubHandler"/> 模擬 Sentinel 回應，驗證自適應窗口計算、
-/// 零事件短路、截斷警告、sn 取眾數、IP fallback——不需要真 Sentinel 環境。
+/// SentinelRestDirectoryClient：網段範圍掃描的真實 client
+/// （docs/NETIQ-API-REFERENCE.md §3.4；**2026-08-06 涵蓋保證改版**
+/// docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
+///
+/// <para><b>這組測試守的是「涵蓋保證」</b>：掃描結果只有三種——完整、
+/// 顯性警告不完整、顯性失敗。被消滅的是第四種：**靜默漏掉主機**。
+/// 舊版用「事件越多、掃描窗口越短」控制取回筆數，被裁掉的時間裡安靜主機的
+/// 少數幾筆事件就這樣消失，而畫面上看不出來——那些「窗口依比例縮短」的舊測試
+/// 因此連同該行為一起移除，不是忘了搬。</para>
+///
+/// 用 <see cref="ScriptedHandler"/> 依 job 建立順序給定回應，
+/// 並保留每個 job 的 filter 供斷言（驗證排除子句真的送出去了）。
 /// </summary>
 public class SentinelRestDirectoryClientTests
 {
@@ -22,217 +32,264 @@ public class SentinelRestDirectoryClientTests
     private const string AuthUrl = "https://sentinel.local:8443/SentinelAuthServices/auth/tokens";
     private const string JobCollectionUrl = "https://sentinel.local:8443/SentinelRESTServices/objects/event-search";
 
+    /// <summary>一個 job 的模擬回應：found 與實際回傳的事件。
+    /// truncated 由 <c>found &gt; 事件數</c> 自然成立，與真實 client 的判斷同源。</summary>
+    private sealed record JobScript(int Found, params (string Ip, string? Name)[] Events);
+
+    private static JobScript Empty() => new(0);
+
+    // ── 主掃描：一輪掃完 ────────────────────────────────────────────────────
+
     [Fact]
-    public async Task 網段近24h無事件_回空清單不發第二個查詢()
+    public async Task 一輪掃完_主掃描與補充掃描各發一個job()
     {
-        var handler = new StubHandler();
-        var jobCalls = 0;
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobCalls++;
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job1"));
-            }
-            if (req.Method == HttpMethod.Get && url == $"{JobCollectionUrl}/job1")
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":0,\"avail\":0}"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        var handler = new ScriptedHandler(
+            new JobScript(2, ("10.1.2.5", "srv-dc01"), ("10.1.2.6", "srv-dc02")),   // 主掃描
+            Empty());                                                               // 補充掃描
 
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Empty(result.Warnings);
+        Assert.Equal(2, handler.Filters.Count);
+
+        // 主掃描窄化到低量頻道（成本正比主機數而非事件量）；補充掃描是全事件短窗
+        Assert.Contains("rv150:System", handler.Filters[0]);
+        Assert.DoesNotContain("rv150:System", handler.Filters[1]);
+    }
+
+    /// <summary>
+    /// 掃描窗口固定 24 小時，**不再隨事件量縮短**——那正是舊版靜默漏機的機制
+    /// （事件越多窗口越短，被裁掉的時間裡安靜主機的少數幾筆事件就這樣消失，且無警告）。
+    /// 這裡直接斷言送出去的時間區間，不是斷言文案；而且每一輪殘差輪掃都要維持 24 小時，
+    /// 不能「第一輪 24 小時、後面偷偷縮短」。
+    /// </summary>
+    [Fact]
+    public async Task 主掃描窗口固定24小時_不因事件量縮短()
+    {
+        // 每輪都給極大的 found（＝每輪都觸頂），把殘差輪掃全部跑滿
+        var scripts = Enumerable.Range(0, SentinelRestDirectoryClient.MaxResidualRounds)
+            .Select(i => new JobScript(9_999_999, ($"10.1.2.{i}", $"srv{i}")))
+            .Append(Empty())   // 補充掃描
+            .ToArray();
+        var handler = new ScriptedHandler(scripts);
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        var mainWindows = handler.Windows.Take(SentinelRestDirectoryClient.MaxResidualRounds);
+        Assert.All(mainWindows, w => Assert.Equal(24, (w.End - w.Start).TotalHours, precision: 1));
+    }
+
+    [Fact]
+    public async Task 補充掃描用短窗且排除主掃描已見的主機()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1, ("10.1.2.5", "srv1")),
+            new JobScript(1, ("10.1.2.9", "srv9")));
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        // 短窗
+        var (start, end) = handler.Windows[1];
+        Assert.Equal(SentinelRestDirectoryClient.SupplementWindowMinutes, (end - start).TotalMinutes, precision: 1);
+
+        // 排除主掃描已見：不排除的話取回的絕大多數是已知主機的 Security 洪流，純浪費
+        Assert.Contains("NOT (repip:10.1.2.5)", handler.Filters[1]);
+
+        // 兩段聯集
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.2.9");
+    }
+
+    // ── 殘差輪掃：涵蓋保證的核心 ────────────────────────────────────────────
+
+    /// <summary>
+    /// 單輪取回觸頂時**不縮短窗口**，改為排除已發現的主機後重查——
+    /// 下一輪取回的只有還沒見過的主機。這是「上限有限、但不會漏機」的關鍵。
+    /// </summary>
+    [Fact]
+    public async Task 主掃描觸頂_排除已見主機後重查直到掃完()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(500, ("10.1.2.5", "srv5")),                   // 第 1 輪：found > 取回 → 觸頂
+            new JobScript(2, ("10.1.2.6", "srv6"), ("10.1.2.7", "srv7")), // 第 2 輪：殘差掃完
+            Empty());                                                    // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(3, result.Hosts.Count);
+        Assert.Empty(result.Warnings);   // 掃完了就不該有「可能不完整」的警告
+
+        // 第 2 輪把第 1 輪見到的主機排除掉
+        Assert.DoesNotContain("NOT", handler.Filters[0]);
+        Assert.Contains("NOT (repip:10.1.2.5)", handler.Filters[1]);
+    }
+
+    /// <summary>輪數用盡仍未掃完＝**可能漏**，必須警告——涵蓋保證的三種結果之一</summary>
+    [Fact]
+    public async Task 輪數用盡仍未掃完_顯性警告而不是靜默回傳()
+    {
+        // 每輪都觸頂（found 恆大於取回筆數）
+        var scripts = Enumerable.Range(0, SentinelRestDirectoryClient.MaxResidualRounds)
+            .Select(i => new JobScript(9999, ($"10.1.2.{i}", $"srv{i}")))
+            .Append(Empty())   // 補充掃描
+            .ToArray();
+        var handler = new ScriptedHandler(scripts);
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(SentinelRestDirectoryClient.MaxResidualRounds, result.Hosts.Count);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("主掃描", warning);
+        Assert.Contains("清單可能不完整", warning);
+        Assert.Contains("更小的網段", warning);   // 訊息要說得出下一步怎麼辦
+    }
+
+    /// <summary>
+    /// NOT 子句在本環境**尚未實測**（probe 驗過 OR／片語／前綴萬用字元，沒驗過 NOT）。
+    /// 萬一被 Sentinel 忽略，每輪都會取回同一批主機、白燒完輪數，而使用者只看到「掃很久」。
+    /// 當場偵測、立刻停止、講清楚——不讓壞掉的機制安靜地假裝在工作。
+    /// </summary>
+    [Fact]
+    public async Task 排除語法未生效_當場偵測並停止輪掃()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(9999, ("10.1.2.5", "srv5")),   // 第 1 輪觸頂
+            new JobScript(9999, ("10.1.2.5", "srv5")),   // 第 2 輪又回同一台＝NOT 沒生效
+            Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Single(result.Hosts);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("排除語法", warning);
+        Assert.Contains("未生效", warning);
+
+        // 偵測到就停：不該把 5 輪燒完（2 輪主掃描 + 1 輪補充掃描）
+        Assert.Equal(3, handler.Filters.Count);
+    }
+
+    /// <summary>
+    /// 主掃描發現的主機超過排除子句上限時，補充掃描**退回無排除照掃**（規劃 §3.2）——
+    /// 跳過它等於把「撈 Security-only 漏網主機」整段棄守；無排除地掃雖會混入已知主機的
+    /// 事件（Absorb 去重吸掉），但仍可能在 cap 內補到未知主機，比不掃好。
+    /// </summary>
+    [Fact]
+    public async Task 已見主機超過排除上限_補充掃描退回無排除照掃而不是跳過()
+    {
+        // 主掃描一輪回超過上限（501 台）且未截斷 → 補充掃描的排除清單放不進子句
+        var manyHosts = Enumerable.Range(0, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
+            .Select(i => ($"10.1.{i / 250}.{i % 250}", (string?)$"srv{i}"))
+            .ToArray();
+        var handler = new ScriptedHandler(
+            new JobScript(manyHosts.Length, manyHosts),
+            new JobScript(1, ("10.1.9.9", "supp")));
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1", CancellationToken.None);
+
+        Assert.Equal(2, handler.Filters.Count);                 // 補充掃描真的跑了
+        Assert.DoesNotContain("NOT", handler.Filters[1]);       // 而且是無排除版
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.9.9");
+        // 兩段都掃完（未截斷）→ 不該有「排除上限」的警告
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("排除上限"));
+    }
+
+    // ── 重掃增量：已登錄主機在 server 端就排除 ──────────────────────────────
+
+    [Fact]
+    public async Task 帶已登錄主機_第一輪就排除且結果不含它們()
+    {
+        var handler = new ScriptedHandler(Empty(), Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None,
+                knownIps: new[] { "10.1.2.11", "10.1.2.12" });
+
+        Assert.Contains("NOT (repip:10.1.2.11 OR repip:10.1.2.12)", handler.Filters[0]);
+        Assert.Empty(result.Hosts);   // 沒有新主機——重掃的正常結果
+        Assert.Contains("已登錄 2 台未重查", result.CoverageNote);
+    }
+
+    /// <summary>已登錄數超過子句上限就整組放棄排除：退回一般掃描只是慢，
+    /// 送出超長 filter 會被 Sentinel 整個拒絕——寧可慢也不要整趟失敗</summary>
+    [Fact]
+    public async Task 已登錄主機數超過子句上限_退回不排除的一般掃描()
+    {
+        var tooMany = Enumerable.Range(1, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
+            .Select(i => $"10.1.{i / 256}.{i % 256}")
+            .ToList();
+        var handler = new ScriptedHandler(Empty(), Empty());
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1", CancellationToken.None, knownIps: tooMany);
+
+        Assert.DoesNotContain("NOT", handler.Filters[0]);
+    }
+
+    // ── 誠實申報 ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task 兩段皆無事件_講明白沒有回報而不是假裝掃到空網段()
+    {
+        var handler = new ScriptedHandler(Empty(), Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Empty(result.Hosts);
         Assert.Contains("無任何事件回報", result.CoverageNote);
-        Assert.Equal(1, jobCalls);   // 只發了計數查詢，沒有浪費第二次查詢
     }
 
     [Fact]
-    public async Task 量級低於目標值_掃描窗口取滿24小時()
+    public async Task CoverageNote講明兩個窗口與看不到的那一類主機()
     {
-        var handler = new StubHandler();
-        var requestBodies = new List<string>();
-        handler.OnSend = (req, body) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (body != null) requestBodies.Add(body);
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty());
 
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                var jobId = requestBodies.Count;   // 遞增區分計數查詢/主查詢
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobId}"));
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":1000,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    $"{{\"status\":2,\"found\":2,\"avail\":2,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
-            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"},{\"repip\":\"10.1.2.6\",\"sn\":\"srv-dc02\"}]"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
-
-        Assert.Equal(2, result.Hosts.Count);
         Assert.Contains("24 小時", result.CoverageNote);
-        Assert.Contains("10.1.2.*", result.CoverageNote);
-
-        // 主查詢的 start/end 應橫跨 24 小時（第二個 job 建立請求的本文）
-        var mainJobBody = requestBodies[1];
-        Assert.Contains("\"filter\":\"repip:10.1.2.*\"", mainJobBody);
+        Assert.Contains($"{SentinelRestDirectoryClient.SupplementWindowMinutes} 分鐘", result.CoverageNote);
+        // 事件掃描原理上看不到「完全沒講話」的主機——這是資料源極限，不能不講
+        Assert.Contains("原理上看不到", result.CoverageNote);
     }
 
+    /// <summary>
+    /// 主掃描 0 台、補充掃描有台數＝這台 Sentinel 的 collector 可能不轉送
+    /// System/Application，窄化 filter 因此失效。說出來讓人去查，不要長期靠短窗硬撐
+    /// 而沒有人知道涵蓋率為什麼偏低。
+    /// </summary>
     [Fact]
-    public async Task 量級高於目標值_窗口依比例縮短()
+    public async Task 主掃描零台但補充掃描有台數_提示頻道覆蓋可能有問題()
     {
-        var handler = new StubHandler();
-        var requestBodies = new List<string>();
-        handler.OnSend = (req, body) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (body != null) requestBodies.Add(body);
+        var handler = new ScriptedHandler(
+            Empty(),
+            new JobScript(1, ("10.1.2.9", "srv9")));
 
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{requestBodies.Count}"));
-            // found=759052（第二輪 probe 實測數字）遠大於 CoverageTargetResults=50000
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":759052,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":0,\"avail\":0}"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
-
-        // 24h * 50000/759052 ≈ 1.6 小時——用「近24 小時內」這個完整片語排除（涵蓋範圍句），
-        // 不能只查「24 小時」子字串，句子後段本來就會提到「該網段近 24 小時共 X 筆事件」
-        Assert.DoesNotContain("近24 小時內", result.CoverageNote);
-        Assert.Contains("近1.6 小時內", result.CoverageNote);
-        Assert.Contains("759,052", result.CoverageNote);
-    }
-
-    [Fact]
-    public async Task 極端量級_窗口不會小於下限五分鐘()
-    {
-        var handler = new StubHandler();
-        var jobCount = 0;
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobCount++;
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobCount}"));
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":50000000,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":0,\"avail\":0}"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
-
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
-
-        Assert.Contains("5 分鐘", result.CoverageNote);
-    }
-
-    [Fact]
-    public async Task 主查詢被截斷_回傳警告()
-    {
-        var handler = new StubHandler();
-        var jobCount = 0;
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobCount++;
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobCount}"));
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":1000,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                // found 遠大於實際取回：avail 只給 1 筆，MaxResultsPerJob 又被 CoverageTargetResults 限制，
-                // 用小 avail 模擬取回筆數少於 found 的截斷情境
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    $"{{\"status\":2,\"found\":999999,\"avail\":1,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
-            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv1\"}]"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
-
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
-
-        Assert.Single(result.Warnings);
-        Assert.Contains("可能不完整", result.Warnings[0]);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("collector 可能不轉送", warning);
+        Assert.Contains("診斷", warning);
     }
 
     [Fact]
     public async Task HostName取同一IP最常見的sn值()
     {
-        var handler = new StubHandler();
-        var jobCount = 0;
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobCount++;
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobCount}"));
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":100,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    $"{{\"status\":2,\"found\":3,\"avail\":3,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
-            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                // 同一 IP 三筆事件，兩筆 sn=srv-dc01、一筆是雜訊值 sn=WEIRD——眾數應勝出
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    "[{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"}," +
-                    "{\"repip\":\"10.1.2.5\",\"sn\":\"srv-dc01\"}," +
-                    "{\"repip\":\"10.1.2.5\",\"sn\":\"WEIRD\"}]"));
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        var handler = new ScriptedHandler(
+            new JobScript(3, ("10.1.2.5", "srv-dc01"), ("10.1.2.5", "srv-dc01"), ("10.1.2.5", "WEIRD")),
+            Empty());
 
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         var host = Assert.Single(result.Hosts);
         Assert.Equal("srv-dc01", host.HostName);
@@ -242,58 +299,133 @@ public class SentinelRestDirectoryClientTests
     [Fact]
     public async Task sn缺席時HostName退回IP()
     {
-        var handler = new StubHandler();
-        var jobCount = 0;
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobCount++;
-                return Task.FromResult(Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobCount}"));
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"status\":2,\"found\":10,\"avail\":0}"));
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Task.FromResult(Json(HttpStatusCode.OK,
-                    $"{{\"status\":2,\"found\":1,\"avail\":1,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}"));
-            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-                return Task.FromResult(Json(HttpStatusCode.OK, "[{\"repip\":\"10.1.2.9\"}]"));   // 無 sn 欄位
-            if (req.Method == HttpMethod.Delete)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.9", null)), Empty());
 
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal("10.1.2.9", Assert.Single(result.Hosts).HostName);
+    }
+
+    // ── ESM 事件來源目錄（§五）：開關預設關、失敗一律退回事件掃描且要吵 ────────
+
+    private static SentinelServer EsmServer() => new()
+    {
+        Name = "SENTINEL-A", BaseUrl = "https://sentinel.local:8443",
+        Username = "svc", Password = "pw", UseEsmDirectory = true
+    };
+
+    /// <summary>開關關閉（預設）時**完全不碰** ESM 端點——既有環境零行為差異</summary>
+    [Fact]
+    public async Task ESM開關關閉_不打目錄端點()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty());
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.False(handler.EsmRequested);
+    }
+
+    [Fact]
+    public async Task ESM可用_直接回目錄結果且不發任何事件查詢()
+    {
+        var handler = new ScriptedHandler
+        {
+            // 三筆條目，其中 10.9.9.9 不在掃描的網段內——驗證前綴過濾
+            EsmResponse = ("""[{"name":"SRV-A","ipAddress":"10.1.2.5"},{"name":"SRV-B","ipAddress":"10.1.2.6"},{"name":"OTHER","ipAddress":"10.9.9.9"}]""", HttpStatusCode.OK)
         };
 
-        var client = new SentinelRestDirectoryClient(Options(), handler);
-        var result = await client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
 
-        var host = Assert.Single(result.Hosts);
-        Assert.Equal("10.1.2.9", host.HostName);
+        // 只回本網段的兩台（10.9.9.9 被前綴過濾掉）
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Empty(handler.Filters);   // 一個事件查詢都沒發——這正是 ESM 的價值
+        Assert.Empty(result.Warnings);
+
+        // 涵蓋語意不同於事件掃描，要講明白
+        Assert.Contains("事件來源目錄", result.CoverageNote);
+        Assert.Contains("沒有事件回報的主機", result.CoverageNote);
+        Assert.Contains("目錄共 3 筆條目", result.CoverageNote);
     }
+
+    [Fact]
+    public async Task ESM可用_已登錄主機仍被排除在結果外()
+    {
+        var handler = new ScriptedHandler
+        {
+            EsmResponse = ("""[{"name":"SRV-A","ipAddress":"10.1.2.5"},{"name":"SRV-B","ipAddress":"10.1.2.6"}]""",
+                HttpStatusCode.OK)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None, knownIps: new[] { "10.1.2.5" });
+
+        Assert.Equal("10.1.2.6", Assert.Single(result.Hosts).IpAddress);
+        Assert.Contains("已登錄的 1 台", result.CoverageNote);
+    }
+
+    /// <summary>無權限＝最可能發生的情況（本環境正是如此）：退回事件掃描，
+    /// 並且告訴管理員該做什麼——關掉開關或去要權限</summary>
+    [Fact]
+    public async Task ESM無權限_退回事件掃描並顯性警告()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty())
+        {
+            EsmResponse = ("Forbidden", HttpStatusCode.Forbidden)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
+
+        Assert.Single(result.Hosts);            // 事件掃描接手，結果照樣有
+        Assert.Equal(2, handler.Filters.Count); // 主掃描＋補充掃描都跑了
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("ESM 唯讀權限", warning);
+        Assert.Contains("關閉此開關", warning);   // 訊息要說得出下一步
+    }
+
+    /// <summary>
+    /// 回應解析不出主機時，**絕不能**當成「這台 Sentinel 沒有主機」——那會讓管理員以為
+    /// 機房空了。退回事件掃描，並要求把回應貼回來定案格式。
+    /// </summary>
+    [Fact]
+    public async Task ESM回應格式不符_退回事件掃描而不是回報零台()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty())
+        {
+            EsmResponse = ("""[{"unexpected":"shape"},{"also":"unexpected"}]""", HttpStatusCode.OK)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
+
+        Assert.Single(result.Hosts);   // 不是 0 台
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("格式與預期不符", warning);
+        Assert.Contains("收到 2 筆條目", warning);
+        Assert.Contains("診斷", warning);   // 要人回報輸出以便定案
+    }
+
+    // ── 輸入與失敗路徑（行為不變，沿用改版前的守則）────────────────────────
 
     [Fact]
     public async Task BaseUrl未設定_立即擲例外不發任何請求()
     {
-        var handler = new StubHandler();
-        handler.OnSend = (req, _) => throw new InvalidOperationException($"不該送出任何請求：{req.RequestUri}");
-
+        var handler = new ScriptedHandler();
         var client = new SentinelRestDirectoryClient(Options(), handler);
         var server = new SentinelServer { Name = "S", BaseUrl = "", Username = "u", Password = "p" };
 
         await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
             client.ListHostsAsync(server, "10.1.2", CancellationToken.None));
+        Assert.Empty(handler.Filters);
     }
 
     [Fact]
     public async Task 網段格式不正確_轉成NetiqDiscoveryException()
     {
-        var handler = new StubHandler();
-        handler.OnSend = (req, _) => throw new InvalidOperationException($"不該送出任何請求：{req.RequestUri}");
-
-        var client = new SentinelRestDirectoryClient(Options(), handler);
+        var client = new SentinelRestDirectoryClient(Options(), new ScriptedHandler());
 
         var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
             client.ListHostsAsync(Server(), "not-a-subnet", CancellationToken.None));
@@ -303,14 +435,7 @@ public class SentinelRestDirectoryClientTests
     [Fact]
     public async Task Sentinel回應錯誤_轉成可顯示的NetiqDiscoveryException()
     {
-        var handler = new StubHandler();
-        handler.OnSend = (req, _) =>
-        {
-            if (req.Method == HttpMethod.Post && req.RequestUri!.ToString() == AuthUrl)
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
-            throw new InvalidOperationException("不該送出認證以外的請求");
-        };
-
+        var handler = new ScriptedHandler { AuthStatus = HttpStatusCode.Unauthorized };
         var client = new SentinelRestDirectoryClient(Options(), handler);
 
         var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
@@ -321,46 +446,16 @@ public class SentinelRestDirectoryClientTests
 
     /// <summary>
     /// 分頁迴圈不受單次逾時約束（SentinelClient 的 TimeoutSeconds 只管單次呼叫與 job 輪詢），
-    /// 50 頁×真實往返會讓管理員在精靈前乾等——整趟掃描必須有自己的總預算，
-    /// 且逾時要**明確報錯**而不是回傳半套清單（半套會被誤認為該網段的完整名單）。
+    /// 整趟掃描必須有自己的總預算，且逾時要**明確報錯**而不是回傳半套清單
+    /// （半套會被誤認為該網段的完整名單）。殘差輪掃讓查詢次數變多，這道防線更重要。
     /// </summary>
     [Fact]
     public async Task 整趟掃描超過總預算_明確報錯且不回傳半套結果()
     {
-        var handler = new StubHandler();
-        var pageCalls = 0;
-        var jobsCreated = 0;
-        handler.OnSend = async (req, _) =>
+        var handler = new ScriptedHandler(
+            Enumerable.Range(0, 20).Select(i => new JobScript(9999, ($"10.1.2.{i}", $"h{i}"))).ToArray())
         {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-                return Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}");
-            if (req.Method == HttpMethod.Post && url == JobCollectionUrl)
-            {
-                jobsCreated++;   // 1=計數查詢、2=主查詢（主查詢才有結果頁可翻）
-                return Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{jobsCreated}");
-            }
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job1"))
-                return Json(HttpStatusCode.OK, "{\"status\":2,\"found\":40000,\"avail\":40000}");
-            if (req.Method == HttpMethod.Get && url.EndsWith("/job2"))
-                return Json(HttpStatusCode.OK,
-                    $"{{\"status\":2,\"found\":40000,\"avail\":40000,\"results\":{{\"@href\":\"{JobCollectionUrl}/job2/results\"}}}}");
-            if (req.Method == HttpMethod.Get && url.Contains("/job2/results"))
-            {
-                pageCalls++;
-                // 每頁都慢——模擬真實 Sentinel 往返（實測約 1.7 秒），讓分頁迴圈撞上總預算
-                await Task.Delay(TimeSpan.FromMilliseconds(400), CancellationToken.None);
-                var sb = new StringBuilder("[");
-                for (var i = 0; i < 1000; i++)
-                {
-                    if (i > 0) sb.Append(',');
-                    sb.Append($"{{\"repip\":\"10.1.2.{i % 250}\",\"sn\":\"h{i % 250}\"}}");
-                }
-                sb.Append(']');
-                return Json(HttpStatusCode.OK, sb.ToString());
-            }
-            if (req.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.OK);
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
+            PageDelay = TimeSpan.FromMilliseconds(400)
         };
 
         // 總預算壓到 2 秒：驗證的是「有沒有這道 deadline」，不是正式值本身
@@ -370,26 +465,14 @@ public class SentinelRestDirectoryClientTests
 
         Assert.Contains("超過 2 秒", ex.Message);
         Assert.Contains("更小的網段", ex.Message);
-        Assert.True(pageCalls < 40, $"應在跑完全部 40 頁前就被總預算中止，實際翻了 {pageCalls} 頁");
     }
 
     /// <summary>呼叫端自己取消（管理員關掉分頁）不是掃描失敗，不該被包成假的錯誤訊息</summary>
     [Fact]
     public async Task 呼叫端取消_不轉成掃描失敗訊息()
     {
-        var handler = new StubHandler();
         using var cts = new CancellationTokenSource();
-        handler.OnSend = (req, _) =>
-        {
-            var url = req.RequestUri!.ToString();
-            if (req.Method == HttpMethod.Post && url == AuthUrl)
-            {
-                cts.Cancel();   // 認證後管理員就關掉了分頁
-                return Task.FromResult(Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}"));
-            }
-            if (req.Method == HttpMethod.Delete) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
-            throw new InvalidOperationException($"未預期的請求：{req.Method} {url}");
-        };
+        var handler = new ScriptedHandler(Empty()) { OnAuth = () => cts.Cancel() };
 
         var client = new SentinelRestDirectoryClient(Options(), handler);
 
@@ -397,24 +480,132 @@ public class SentinelRestDirectoryClientTests
             client.ListHostsAsync(Server(), "10.1.2", cts.Token));
     }
 
-    private static HttpResponseMessage Json(HttpStatusCode code, string json, string? locationHeader = null)
+    /// <summary>
+    /// 依 job 建立順序回應的 Sentinel 替身：第 n 個建立的 job 套用第 n 個 <see cref="JobScript"/>。
+    /// 同時記下每個 job 的 filter 與時間區間——殘差輪掃的斷言全部落在「送出去的查詢長什麼樣」，
+    /// 那才是行為本身，比斷言文案穩固。
+    /// </summary>
+    private sealed class ScriptedHandler : HttpMessageHandler
     {
-        var resp = new HttpResponseMessage(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
-        if (locationHeader != null) resp.Headers.Location = new Uri(locationHeader);
-        return resp;
-    }
+        private readonly JobScript[] _scripts;
+        private int _jobsCreated;
 
-    /// <summary>同 SentinelClientTests 的 StubHandler，這裡另建一份是因為那個是 private 巢狀類別，
-    /// 兩邊各自獨立測試檔本來就該各自擁有測試替身，不值得為此拉一個共用基底。</summary>
-    private sealed class StubHandler : HttpMessageHandler
-    {
-        public Func<HttpRequestMessage, string?, Task<HttpResponseMessage>> OnSend { get; set; } =
-            (_, _) => throw new InvalidOperationException("測試未設定 OnSend");
+        public ScriptedHandler(params JobScript[] scripts) => _scripts = scripts;
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        /// <summary>每個 job 送出的 filter，依建立順序</summary>
+        public List<string> Filters { get; } = new();
+
+        /// <summary>每個 job 的查詢時間區間，依建立順序</summary>
+        public List<(DateTimeOffset Start, DateTimeOffset End)> Windows { get; } = new();
+
+        public HttpStatusCode AuthStatus { get; init; } = HttpStatusCode.OK;
+
+        /// <summary>模擬真實 Sentinel 的每頁往返延遲（實測約 1.7 秒），驗證總預算用</summary>
+        public TimeSpan PageDelay { get; init; } = TimeSpan.Zero;
+
+        public Action? OnAuth { get; init; }
+
+        /// <summary>ESM 目錄端點的回應；null＝測試不預期它被呼叫（被呼叫會擲例外）</summary>
+        public (string Body, HttpStatusCode Status)? EsmResponse { get; init; }
+
+        /// <summary>ESM 端點有沒有被打過——驗證「開關關閉時完全不碰」</summary>
+        public bool EsmRequested { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            var body = request.Content != null ? await request.Content.ReadAsStringAsync(cancellationToken) : null;
-            return await OnSend(request, body);
+            var url = request.RequestUri!.ToString();
+
+            if (request.Method == HttpMethod.Post && url == AuthUrl)
+            {
+                OnAuth?.Invoke();
+                return AuthStatus == HttpStatusCode.OK
+                    ? Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}")
+                    : new HttpResponseMessage(AuthStatus);
+            }
+
+            if (request.Method == HttpMethod.Get && url.EndsWith(SentinelRestDirectoryClient.EsmEventSourcePath))
+            {
+                EsmRequested = true;
+                if (EsmResponse == null)
+                    throw new InvalidOperationException("本測試不預期 ESM 端點被呼叫（開關應為關閉）");
+
+                var (body, status) = EsmResponse.Value;
+                return status == HttpStatusCode.OK
+                    ? Json(HttpStatusCode.OK, body)
+                    : new HttpResponseMessage(status) { Content = new StringContent(body) };
+            }
+
+            if (request.Method == HttpMethod.Post && url == JobCollectionUrl)
+            {
+                var body = await request.Content!.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(body);
+                Filters.Add(doc.RootElement.GetProperty("filter").GetString()!);
+                Windows.Add((
+                    DateTimeOffset.Parse(doc.RootElement.GetProperty("start").GetString()!),
+                    DateTimeOffset.Parse(doc.RootElement.GetProperty("end").GetString()!)));
+
+                _jobsCreated++;
+                return Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{_jobsCreated}");
+            }
+
+            if (request.Method == HttpMethod.Get && url.Contains("/results"))
+            {
+                if (PageDelay > TimeSpan.Zero) await Task.Delay(PageDelay, CancellationToken.None);
+                var index = JobIndex(url);
+                return Json(HttpStatusCode.OK, EventsJson(_scripts[index]));
+            }
+
+            if (request.Method == HttpMethod.Get && url.StartsWith($"{JobCollectionUrl}/job"))
+            {
+                var index = JobIndex(url);
+                if (index >= _scripts.Length)
+                    throw new InvalidOperationException($"測試腳本只給了 {_scripts.Length} 個 job，實際建立了第 {index + 1} 個");
+
+                var script = _scripts[index];
+                var avail = script.Events.Length;
+                if (avail == 0)
+                    return Json(HttpStatusCode.OK, $"{{\"status\":2,\"found\":{script.Found},\"avail\":0}}");
+
+                return Json(HttpStatusCode.OK,
+                    $"{{\"status\":2,\"found\":{script.Found},\"avail\":{avail}," +
+                    $"\"results\":{{\"@href\":\"{JobCollectionUrl}/job{index + 1}/results\"}}}}");
+            }
+
+            if (request.Method == HttpMethod.Delete) return new HttpResponseMessage(HttpStatusCode.OK);
+
+            throw new InvalidOperationException($"未預期的請求：{request.Method} {url}");
+        }
+
+        /// <summary>從 .../jobN 或 .../jobN/results 取出 0-based 索引</summary>
+        private static int JobIndex(string url)
+        {
+            var afterJob = url[(url.IndexOf("/job", StringComparison.Ordinal) + 4)..];
+            var digits = new string(afterJob.TakeWhile(char.IsDigit).ToArray());
+            return int.Parse(digits) - 1;
+        }
+
+        private static string EventsJson(JobScript script)
+        {
+            var sb = new StringBuilder("[");
+            for (var i = 0; i < script.Events.Length; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var (ip, name) = script.Events[i];
+                sb.Append($"{{\"repip\":\"{ip}\"");
+                if (name != null) sb.Append($",\"sn\":\"{name}\"");
+                sb.Append('}');
+            }
+            return sb.Append(']').ToString();
+        }
+
+        private static HttpResponseMessage Json(HttpStatusCode code, string json, string? location = null)
+        {
+            var resp = new HttpResponseMessage(code)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+            if (location != null) resp.Headers.Location = new Uri(location);
+            return resp;
         }
     }
 }

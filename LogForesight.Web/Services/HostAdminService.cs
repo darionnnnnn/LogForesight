@@ -69,6 +69,52 @@ public class HostAdminService
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
 
+        var all = SortHosts(FilterHosts(request), request).ToList();
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
+
+        return new PagedResult<HostDto>
+        {
+            Items = all.Skip((page - 1) * pageSize).Take(pageSize)
+                .Select(h => HostDtoMapper.ToDto(h, groups, users)).ToList(),
+            Page = page,
+            PageSize = pageSize,
+            Total = all.Count
+        };
+    }
+
+    /// <summary>
+    /// 「全選符合目前篩選的主機」（體檢 X3）。
+    ///
+    /// 為什麼需要一支專門的端點：批次改群組過去**只能逐筆勾**，而勾選狀態雖然跨頁保留，
+    /// 「把某個網段的 500 台加進新群組」仍然是翻 50 頁、勾 500 次。實務上使用者會放棄，
+    /// 改回去用 CSV——但 hosts.csv 已於回饋第十一輪 §2a 退役，退路被拿掉了。
+    ///
+    /// **與清單頁共用同一份 <see cref="FilterHosts"/>**：畫面說「符合 N 台」與實際選到的
+    /// 必須是同一批，兩邊各寫一份篩選遲早漂移成不同結果。
+    /// </summary>
+    public HostIdListDto MatchingHostIds(HostSearchRequest request)
+    {
+        // 已併入其他主機的主機不能改群組（SetGroupsBatch 會略過並回報），
+        // 全選時就先排除——讓「選了 N 台」與「實際會改 N 台」對得起來
+        var matched = FilterHosts(request).Where(h => h.MergedInto == null).ToList();
+
+        return new HostIdListDto
+        {
+            Total = matched.Count,
+            Truncated = matched.Count > MaxSelectAllHosts,
+            HostIds = SortHosts(matched, request).Take(MaxSelectAllHosts).Select(h => h.HostId).ToList()
+        };
+    }
+
+    /// <summary>
+    /// 單次「全選」的上限。取捨：體檢 X3 的實際情境是「一個網段 500 台」，2000 綽綽有餘；
+    /// 上限存在的理由是讓請求主體與單次寫入量有界，超過時明確告知要分批，
+    /// 而不是讓一次操作把整個機房掃進去卻沒人知道範圍。
+    /// </summary>
+    public const int MaxSelectAllHosts = 2000;
+
+    private IEnumerable<WebHost> FilterHosts(HostSearchRequest request)
+    {
         IEnumerable<WebHost> filtered = _hosts.GetAll();
 
         if (!string.IsNullOrWhiteSpace(request.Query))
@@ -128,6 +174,12 @@ public class HostAdminService
             };
         }
 
+        return filtered;
+    }
+
+    /// <summary>清單頁與「全選符合篩選」共用同一份排序——全選的截斷順序才與畫面一致</summary>
+    private static IEnumerable<WebHost> SortHosts(IEnumerable<WebHost> filtered, HostSearchRequest request)
+    {
         // 一律先建升冪排序，Dir=desc 時整體 Reverse——單一比較邏輯，不必每個欄位各寫一份升冪/降冪
         IOrderedEnumerable<WebHost> sorted = request.Sort switch
         {
@@ -139,16 +191,7 @@ public class HostAdminService
             _ => filtered.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
         };
 
-        var all = (request.Dir == "desc" ? sorted.Reverse() : (IEnumerable<WebHost>)sorted).ToList();
-        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
-
-        var items = all
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(h => HostDtoMapper.ToDto(h, groups, users))
-            .ToList();
-
-        return new PagedResult<HostDto> { Items = items, Page = page, PageSize = pageSize, Total = all.Count };
+        return request.Dir == "desc" ? sorted.Reverse() : sorted;
     }
 
     public HostDto SaveHost(SaveHostRequest request)
@@ -200,6 +243,11 @@ public class HostAdminService
             // 群組與負責人由專屬端點維護，避免「更新角色描述」意外清掉它們
             GroupIds = existing?.GroupIds ?? new List<long>(),
             OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
+            // **刻意不傳 OrphanedFromSentinel（不是漏抄）**：Upsert 的既存分支會用傳入物件
+            // 覆寫該欄位，不填＝標記被清除，而這正是要的行為——admin 在這裡明確編輯過這台
+            // 主機（含重新指定所屬 Sentinel），人已表態，孤兒標記的使命就結束了。
+            // 語意與 NetiqHostService.SetActive 同源（見該處長註解），與 OwnerCsvImporter
+            // 「不該覆寫」的情況相反；做逐欄比對體檢時別把這裡一併「修」掉。
         });
 
         _audit.Record(

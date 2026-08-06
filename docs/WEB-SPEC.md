@@ -397,6 +397,10 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
+  **樂觀鎖衝突另有一支**（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md D3）：處理狀態三表以
+  `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
+  `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
+  多人同時操作是正常情境不是故障；風險日詳情的處理面板收到 409 後自動重載當日資料。
 - 分頁：請求 `page`（1 起）、`pageSize`（上限 200）；回應 `data: { items, page, pageSize, total }`。
 - 日期格式：`yyyy-MM-dd`（date）／ISO 8601（timestamp），前後端一致，不做隱式時區轉換。
 
@@ -713,6 +717,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在既有的 `GET api/dashboard/summary` 內一併回傳，不另開請求。
   **刻意不含處理狀態**：那要逐問題查 handling 標記，是依問題視角才做的事；這張卡回答的是
   「哪幾個問題影響最大」，點進去就看得到處理概況。
+- **改以「問題的重要性」而非數量呈現（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P4／P5）**：
+  純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
+  恆在第 1（資訊量為零），而 `disk 153`（3 台、都在近 3 天、高嚴重度＋重大）排在很後面。
+  欄位因此改為 問題（含「新」徽章）／嚴重度（含「重大」旗標）／主機數（含**影響率**）／
+  **涵蓋範圍**（首見 ~ 最近出現）／**出現密度**（N/M 天）／**變化幅度**（與前一等長期間比）／總次數。
+  - 影響率＝主機數 ÷ 可見主機總數：「600 台」在 2000 台環境是 30%、在 50 台是全滅，
+    絕對值無法跨環境解讀。
+  - 資料來源改為 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不再把整段期間的
+    紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
+  - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台（此前儀表板與依問題視角
+    在有合併主機時會對不上，而本節原本宣稱「必然一致」）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
   加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
@@ -728,8 +743,16 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **serverAdmin 引導卡（§1，回饋第九輪）**：serverAdmin 登入時本頁不打 summary API，改顯示
   引導卡（說明救援帳號用途、測試模式可用 demo-admin 測全站、正式建帳號步驟），其餘區塊
   連同靜態卡片標題一併隱藏——業務資料對它本來就是空的（§6.2 最小授權），空白畫面會被誤讀成壞掉。
+- **分析執行中告示（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md S-3）**：夜間分析與站台跑在
+  同一個行程（本輪定案不拆 worker），分析期間整站回應變慢是設計上接受的代價——這行告示是
+  代價的配套：頂部一行「分析進行中（第 N／M 台），畫面回應可能較慢」，30 秒輪詢
+  `GET api/run-activity`，沒在跑就整行不出現。該端點**任何登入者可讀**（刻意不掛
+  `[Permission]`、也刻意不放 `api/admin/` 前綴）：變慢的是所有人的畫面，只讓維運看得到原因
+  等於沒有配套；內容只有「在不在跑、跑到哪」，排程設定與上次成敗仍在
+  `GET api/admin/schedule/status`（維運視角，DevMonitor/Maintain）。
 - API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
-  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）。
+  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）、
+  `GET api/run-activity`（執行中告示，見上）。
 
 ### 9.2 `/records` 問題查詢（全角色）
 - 主篩選列：主機（**搜尋式 autocomplete**，授權範圍）／**主機群組 chip**／日期區間／風險層級／
@@ -766,6 +789,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
   依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
   「風險→關聯→日期」緊急程度排序，2026-07-29）
+- **依問題視角補上「時間形狀」（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P5）**：
+  原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
+  新增三欄——**涵蓋範圍**（首見 ~ 最近出現，即需求的「期間跨度」）、**出現密度**（N/M 天＋密度條，
+  文字為主、圖為輔，不可只留圖）、**最近出現**改為「日期＋是否仍在發生」；
+  嚴重度欄另補「重大」旗標（過去只在風險日詳情看得到）。
+  三者皆由該群組既有紀錄推導，不額外查詢。
+  同時修掉 N3：`BuildIssueGroup` 過去是逐群組呼叫、內部各查一次處理狀態與案件
+  （1000 種問題＝2000 次查詢），改為整批載入一次後建索引。
 - **第四視角「依問題」**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId 分組，
   與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
   主機數／風險日數／總次數／最近出現／處理概況（「N 台處理中／M 台未處理」）／處理人（進行中
@@ -1330,6 +1361,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **測試連線**（編輯/新增 modal 內按鈕，2026-07-29）：用表單目前輸入的網址／帳密（密碼留空＝
   沿用這台既有密碼）呼叫 `SentinelClient` 只做認證不建查詢工作，就地顯示成功（含耗時）或失敗
   原因；帳密僅過境不落地、不記稽核（唯讀操作）。
+- **以 ESM 事件來源目錄探索**（`Sentinel.UseEsmDirectory`，2026-08-06，**預設關閉**，
+  編輯/新增 modal 內）：開啟後探索改打 `/SentinelRESTServices/objects/eventsource`——
+  那是**已註冊主機的完整清單**，包含目前沒有事件回報的主機（事件掃描原理上看不到那些）。
+  但多數環境的探索帳號沒有 ESM 讀取權限（本環境即 401/403），且**回應格式因此無法在本環境
+  驗證**，所以刻意做成 per-Sentinel 的手動開關而不是自動嘗試——自動信任沒驗證過的解析，
+  錯了會讓主機清單靜默變形。form-text 要求「開啟前先到『診斷』分頁執行一次診斷」，
+  把驗證閘門放在人的流程裡。取不到或格式不符時自動改用事件掃描並在掃描結果顯示警告
+  （警告文字要說得出下一步：關開關、要權限、或回報輸出以定案格式）。
+  設計與退路詳見 docs/NETIQ-API-REFERENCE.md §3.5。
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
@@ -1365,11 +1405,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `192.168.0`）或
   CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
-  掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
-  全事件 distinct」，見 docs/archive/HISTORY.md「NetIQ Sentinel 取數 API 三輪 probe 實測」段），
-  結果只涵蓋掃描窗口內有事件回報的主機。精靈的網段勾選面板上方顯示 `CoverageNote`
-  （實際掃描窗口說明）與 `Warnings`（截斷等異常提示），讓使用者知道這份清單涵蓋到哪裡、
-  安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
+  掃描機制 **2026-08-06 涵蓋保證改版**（docs/NETIQ-API-REFERENCE.md §3.4；原「自適應時間窗」
+  已移除——事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失）：主掃描窄化到
+  System/Application 頻道（成本正比主機數而非事件量、24h 全窗口）＋全事件 60 分鐘補充掃描
+  ＋觸頂時殘差輪掃（server 端排除已見主機重查）；結果只有「完整／顯性警告不完整／顯性失敗」
+  三種，靜默漏掉被消滅。重掃時該 Sentinel×網段的已登錄主機在 server 端直接排除
+  （無新機的重掃趨近免費），由 Service 合成回清單（`Exists=true`、名稱取 `DisplayName`），
+  精靈畫面分組不變。精靈的網段勾選面板上方顯示 `CoverageNote`（涵蓋語意說明）與
+  `Warnings`（超出掃描能力／排除語法未生效／頻道覆蓋疑慮等，每則都說得出下一步動作）。
+  掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
   `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的 `DisplayName` 一律不動。
 - **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
   截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
@@ -1572,9 +1616,16 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 文件，一列一 key）或 `lf_log_lines`（append-only，同 key 多列）裡的 `BlobKey`，不再有實體檔案；
 `StorageBackend` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
 
-| 介面 | 儲存 key（blob＝整份型／log＝append-only） | 寫入者 |
+**（2026-08-06 改寫，docs/SCALE-ISSUE-FIRST-PLAN.md P3）處理狀態三份改走真表**：
+`record_handling`／`issue_handling`／`issue_cases` 自整份 blob 改為
+`lf_record_handling`／`lf_issue_handling`／`lf_issue_cases`。判準是**成長維度**——
+這三份隨「主機數 × 天數」成長（6000 台 × 90 天下 issue_handling 約 324 萬列，
+整份序列化會撞上 .NET 的 2 GB 單一物件上限），其餘 blob 隨組織規模成長（數千筆上限內），
+維持整份型不變。介面未變，呼叫端零修改；舊 blob 於首次啟動自動遷入並**保留未刪**。
+
+| 介面 | 儲存 key（blob＝整份型／log＝append-only／表＝正規化真表） | 寫入者 |
 |---|---|---|
-| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；唯一走真表的分析資料） | 批次 |
+| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者自 2026-08-06 起同時是問題聚合的事實表） | 批次 |
 | `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」） | 批次 |
 | `IUserStore` | blob `users` | Web |
 | `IUserGroupStore` | blob `user_groups` | Web |
@@ -1584,8 +1635,10 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `ISentinelStore`（docs/archive/HISTORY.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（2026-07-27；介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數，`/admin/settings` 維護） | Web＋批次讀 |
-| `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web |
-| `IIssueHandlingStore` | blob `issue_handling`（問題層級狀態，方案 B） | Web |
+| `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
+| `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
+| `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
+| `IIssueAggregateQuery`（2026-08-06） | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |

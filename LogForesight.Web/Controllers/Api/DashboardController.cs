@@ -28,6 +28,43 @@ public class DashboardController : ControllerBase
         ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(days ?? DefaultDays));
 }
 
+/// <summary>
+/// 執行中告示（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：**任何登入者**都讀得到，
+/// 刻意不掛 <c>[Permission]</c>——分析與站台跑在同一個行程，變慢的是所有人的畫面，
+/// 只讓維運看得到原因等於沒有配套。回傳只有「在不在跑、跑到哪」，不含排程設定、
+/// 觸發來源與上次成敗（那些在 <c>/api/admin/schedule/status</c>，維運視角）。
+///
+/// 路由刻意不放在 <c>api/admin/</c> 底下：那個前綴在本專案是「需要管理權限」的訊號，
+/// 一般使用者讀得到的東西擺進去，只會讓下一個人誤判這支的權限範圍。
+/// </summary>
+[ApiController]
+[Route("api/run-activity")]
+public class RunActivityController : ControllerBase
+{
+    private readonly SchedulerRunState _runState;
+
+    public RunActivityController(SchedulerRunState runState)
+    {
+        _runState = runState;
+    }
+
+    [HttpGet]
+    public ApiResponse<RunActivityDto> Get() => ApiResponse<RunActivityDto>.Ok(new RunActivityDto
+    {
+        IsRunning = _runState.IsRunning,
+        Done = _runState.ProgressDone,
+        Total = _runState.ProgressTotal,
+        // 兩個階段的分母都是「主機日」，但一般使用者對這個單位沒有概念——
+        // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台），各用看得懂的量詞
+        UnitText = _runState.ProgressPhase switch
+        {
+            "local" => "天",
+            "netiq" => "台",
+            _ => null
+        }
+    });
+}
+
 /// <summary>主機詳情／時間軸（§9.4）</summary>
 [ApiController]
 [Route("api/host-detail")]

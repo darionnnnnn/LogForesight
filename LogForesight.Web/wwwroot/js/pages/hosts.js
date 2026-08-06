@@ -228,8 +228,11 @@ function setupGroupChips() {
     });
 }
 
-/** 伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：任何篩選條件改變都重新呼叫伺服器，不在瀏覽器內二次篩選 */
-async function search() {
+/**
+ * 目前的篩選條件（不含分頁）。清單查詢與「全選符合篩選」共用同一份組裝——
+ * 兩邊各組一次的話，畫面說「符合 N 台」與實際全選到的可能是不同的一批（體檢 X3）。
+ */
+function currentFilterParams() {
     const params = new URLSearchParams();
     const keyword = searchInput.value.trim();
     if (keyword) params.set('query', keyword);
@@ -239,6 +242,12 @@ async function search() {
     if (osFilter) params.set('os', osFilter);
     params.set('sort', sort.key);
     params.set('dir', sort.dir);
+    return params;
+}
+
+/** 伺服器端分頁＋搜尋＋篩選（§5.4 D-4）：任何篩選條件改變都重新呼叫伺服器，不在瀏覽器內二次篩選 */
+async function search() {
+    const params = currentFilterParams();
     params.set('page', String(currentPage));
     params.set('pageSize', String(pageSize));
 
@@ -246,6 +255,38 @@ async function search() {
     lastResult = await api.get(`/api/admin/hosts?${params.toString()}`);
     currentPageHosts = lastResult.items;
     render();
+}
+
+/**
+ * 全選符合目前篩選的主機（體檢 X3）。
+ *
+ * 為什麼需要：批次改群組過去只能逐筆勾，「把某個網段的 500 台加進新群組」＝翻 50 頁、
+ * 勾 500 次；實務上使用者會放棄改用 CSV，但 hosts.csv 已於回饋第十一輪 §2a 退役。
+ * 伺服器端以**篩選條件**解析出 id 清單，不需要使用者逐頁翻過去。
+ */
+async function selectAllMatching(button) {
+    const restore = withBusy(button, '選取中');
+    try {
+        const result = await api.get(`/api/admin/hosts/ids?${currentFilterParams().toString()}`);
+
+        // 只知道 id 還不夠：選取列要顯示主機名。已在本頁載入過的用現成物件，
+        // 其餘先以 id 佔位，送出時只會用到 id
+        for (const hostId of result.hostIds) {
+            if (selectedHosts.has(hostId)) continue;
+            const known = currentPageHosts.find(h => h.hostId === hostId);
+            selectedHosts.set(hostId, known ?? { hostId, hostName: `#${hostId}` });
+        }
+
+        if (result.truncated) {
+            toast(`符合條件共 ${result.total} 台，本次選取上限 ${result.hostIds.length} 台，` +
+                  '請於套用後調整篩選再選取其餘主機。', 'warning', 8000);
+        } else {
+            toast(`已選取符合目前篩選的 ${result.hostIds.length} 台主機。`, 'success');
+        }
+        render();
+    } finally {
+        restore();
+    }
 }
 
 function render() {
@@ -728,6 +769,8 @@ document.querySelectorAll('input[name="batch-groups-mode"]').forEach(el =>
 document.getElementById('batch-groups-checks').addEventListener('change', updateReplaceWarning);
 
 document.getElementById('btn-batch-groups').addEventListener('click', openBatchGroupsModal);
+document.getElementById('btn-select-all-matching')
+    .addEventListener('click', event => selectAllMatching(event.currentTarget));
 document.getElementById('btn-clear-selection').addEventListener('click', () => {
     selectedHosts.clear();
     render();

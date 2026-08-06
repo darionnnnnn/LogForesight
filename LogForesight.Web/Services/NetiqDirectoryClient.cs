@@ -40,7 +40,14 @@ public interface INetiqDirectoryClient
     /// <see cref="NetiqDiscoveryException"/>。**必填**：探索是「掃一個網段」而不是「盲掃全站」，
     /// 全站事件量（實測單台 Sentinel 近 24h 達 2400 萬筆）下任何固定窗口設計涵蓋率都很差，
     /// 不如強制要求網段換來明確的涵蓋語意。</param>
-    Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer server, string subnetPrefix, CancellationToken ct);
+    /// <param name="knownIps">已登錄、**不需要重新發現**的主機 IP
+    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）。在 server 端就被排除，
+    /// 沒有新主機時 found=0、一次查詢即結束——重掃因此從「又拉數萬筆」變成趨近免費。
+    /// null／空＝首掃行為（不排除）。**回傳結果不含這些主機**，呼叫端自行合成
+    /// （它們的名稱以主機清單為準，比事件裡的 sn 更可靠）。</param>
+    Task<NetiqDiscoveryResult> ListHostsAsync(
+        SentinelServer server, string subnetPrefix, CancellationToken ct,
+        IReadOnlyCollection<string>? knownIps = null);
 }
 
 /// <summary>
@@ -49,7 +56,11 @@ public interface INetiqDirectoryClient
 /// </summary>
 public class StubNetiqDirectoryClient : INetiqDirectoryClient
 {
-    public Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer server, string subnetPrefix, CancellationToken ct)
+    /// <param name="knownIps">**刻意忽略**：示範資料的價值就在於「已登錄／重疊復活」等分類
+    /// 在 demo 下也走得到，把已登錄的濾掉等於把要示範的東西刪光。真實 client 才排除。</param>
+    public Task<NetiqDiscoveryResult> ListHostsAsync(
+        SentinelServer server, string subnetPrefix, CancellationToken ct,
+        IReadOnlyCollection<string>? knownIps = null)
     {
         string normalized;
         try
@@ -105,13 +116,30 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 }
 
 /// <summary>
-/// Sentinel REST API 真連線：網段範圍掃描（docs/NETIQ-API-REFERENCE.md §3.4）。
+/// Sentinel REST API 真連線：網段範圍掃描（docs/NETIQ-API-REFERENCE.md §3.4；
+/// **2026-08-06 涵蓋保證改版** docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
 ///
-/// 流程：(1) 計數查詢（`max-results:1`）拿該網段近 24h 的 `found`；(2) 依 found 與
-/// <see cref="CoverageTargetResults"/> 算出實際掃描窗口——found 在目標值內就掃整整 24 小時
-/// （涵蓋最好），事件量大的網段自動按比例縮短窗口（下限 <see cref="MinWindowHours"/>），
-/// 讓互動掃描維持在可接受的等待時間；(3) 用該窗口只投影 repip／sn 兩欄，本地依 repip
-/// distinct 出主機清單，HostName 取每個 IP 最常見的 sn 值（真實機器名）。
+/// <para><b>涵蓋保證（本類別存在的意義，改版的核心）</b>：掃描結束時，
+/// (a) 近 24 小時內有 ≥1 筆 System/Application 事件的主機、
+/// (b) 近 <see cref="SupplementWindowMinutes"/> 分鐘內有 ≥1 筆任何頻道事件的主機——
+/// **保證入列，或明確警告「清單可能不完整」，二者必居其一**。
+/// 兩個窗口都完全沒講話的主機是事件掃描原理上看不到的（它沒發事件），
+/// 那是資料源的極限而不是實作缺陷，<see cref="NetiqDiscoveryResult.CoverageNote"/>
+/// 永遠把這件事講明。</para>
+///
+/// <para><b>與舊版的本質差異</b>：舊版用「自適應窗口」控制取回筆數——事件越多窗口越短
+/// （下限曾是 5 分鐘），而縮掉的那段時間裡安靜主機的事件一併消失，**且不觸發任何警告**。
+/// 那是靜默漏機。新版窗口固定 24 小時，改用「窄化 filter ＋ 殘差輪掃」控制筆數：
+/// 觸頂時把已發現的主機排除後重查，每輪取回的只有還沒見過的主機，數學上保證收斂；
+/// 輪數或子句用盡才停，並且**一定發警告**。</para>
+///
+/// <para><b>三段掃描</b>：
+/// (1) 主掃描 <see cref="SentinelQueryBuilder.BuildSubnetProbeFilter"/>——窄化到
+/// System/Application 頻道（probe 實測佔 0.05%，每台約 155 筆/日），
+/// 取回量正比於主機數而非事件量；
+/// (2) 補充掃描——全事件、固定短窗，撈「主掃描漏掉的 Security-only 主機」，
+/// 並排除主掃描已見（否則取回的絕大多數是已知主機的 Security 洪流）；
+/// (3) 兩段各自的殘差輪掃。結果依 repip 聯集。</para>
 ///
 /// 逾時／頁數／併發全部沿用 <see cref="SentinelClient"/> 既有機制（單一佇列、token 重用登出、
 /// job 用完即刪），只是把 <see cref="NetiqOptions"/> 的逾時／單頁筆數／單次上限換成互動掃描
@@ -119,15 +147,48 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 /// </summary>
 public class SentinelRestDirectoryClient : INetiqDirectoryClient
 {
-    /// <summary>單次掃描目標取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h
-    /// 從幾萬到近 76 萬筆都有，這個值是「翻頁數（上限約 50 頁）」與「涵蓋率」的折衷。</summary>
+    /// <summary>單輪掃描取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h
+    /// 從幾萬到近 76 萬筆都有，這個值是「翻頁數（上限約 50 頁）」與「單輪涵蓋」的折衷。
+    /// **觸頂不再代表漏機**——觸頂會進殘差輪掃（見 <see cref="MaxResidualRounds"/>）。</summary>
     internal const int CoverageTargetResults = 50_000;
 
-    /// <summary>掃描窗口下限（小時）。事件量極大的網段縮到這裡就不再縮，避免窗口小到
-    /// 連零星活動的主機都掃不到——涵蓋率再差也要有個底線。</summary>
-    internal const double MinWindowHours = 5.0 / 60.0;
+    /// <summary>
+    /// 掃描窗口固定 24 小時。**刻意不再自適應縮短**——舊版「事件越多窗口越短」正是
+    /// 靜默漏機的機制：被縮掉的時間裡，安靜主機的少數幾筆事件一併消失，而畫面上
+    /// 沒有任何跡象顯示這件事發生過。控制取回量改用窄化 filter＋殘差輪掃，
+    /// 那兩者都不會犧牲時間涵蓋。
+    /// </summary>
+    internal const double WindowHours = 24.0;
 
-    internal const double MaxWindowHours = 24.0;
+    /// <summary>
+    /// 殘差輪掃的輪數上限。每輪把已發現的主機排除後重查，取回的只有還沒見過的主機，
+    /// 因此新主機數嚴格遞增、殘差嚴格遞減——收斂是必然的，這個上限只是防止
+    /// 極端情況下無限迴圈。5 輪 × 50,000 筆 ÷ 155 筆/台/日 ≈ 1,600 台/網段，
+    /// 遠超單一網段的實務規模（/24 最多 254 台）。
+    /// </summary>
+    internal const int MaxResidualRounds = 5;
+
+    /// <summary>補充掃描的殘差輪數上限。比主掃描少，因為它的職責只是「補主掃描的漏」，
+    /// 殘差本來就小；真的連 2 輪都填不滿代表該網段主機數已超出掃描能力，該警告了。</summary>
+    internal const int SupplementResidualRounds = 2;
+
+    /// <summary>
+    /// 排除子句的 IP 數上限。Lucene 預設 <c>maxClauseCount</c> 是 1024，
+    /// 留一半餘裕給窄化子句與未來擴充。/24 全滿 254 台也在限內；
+    /// 超過就停止排除（並依情境警告或退回無排除版）——寧可多取回一些，
+    /// 也不要送出一個會被 Sentinel 整個拒絕的查詢。
+    /// </summary>
+    internal const int ExclusionClauseLimit = 500;
+
+    /// <summary>補充掃描的窗口（分鐘）。短窗對 Security 的涵蓋率天生高——
+    /// 只要主機活著，60 分鐘內幾乎必有 Security 事件（登入、稽核、票證），
+    /// 而 Security 正是主掃描刻意排除掉的那一塊。兩段各用自己擅長的頻道×窗口組合。</summary>
+    internal const int SupplementWindowMinutes = 60;
+
+    /// <summary>補充掃描的單輪取回上限。比主掃描小一個量級：它掃的是殘差
+    /// （已排除主掃描發現的全部主機），量本來就該很小；真的填滿代表殘差主機很多，
+    /// 殘差輪掃會接手。</summary>
+    internal const int SupplementMaxResults = 10_000;
 
     /// <summary>單次 REST 呼叫的逾時秒數，刻意不用 NetiqOptions 設定的批次逾時（可能長達數分鐘）——
     /// 管理員盯著精靈畫面等，逾時要短，讓失敗訊息很快回來而不是乾等。</summary>
@@ -168,17 +229,19 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         if (totalBudgetSeconds is > 0) _totalBudgetSeconds = totalBudgetSeconds.Value;
     }
 
-    public async Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer server, string subnetPrefix, CancellationToken ct)
+    public async Task<NetiqDiscoveryResult> ListHostsAsync(
+        SentinelServer server, string subnetPrefix, CancellationToken ct,
+        IReadOnlyCollection<string>? knownIps = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new NetiqDiscoveryException($"Sentinel「{server.Name}」未設定 BaseUrl。");
 
-        string filter;
         string normalizedPrefix;
         try
         {
             normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix);
-            filter = SentinelQueryBuilder.BuildSubnetDiscoveryFilter(subnetPrefix);
+            // 只為了驗證輸入格式——實際的 filter 每輪各自組（帶不同的排除清單）
+            SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix);
         }
         catch (ArgumentException ex)
         {
@@ -209,46 +272,68 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             await using var client = new SentinelClient(server, interactiveOptions, _handler);
             var now = DateTimeOffset.UtcNow;
 
-            var countResult = await client.SearchAsync(
-                new SentinelSearchRequest(filter, now.AddHours(-MaxWindowHours), now, MaxResults: 1), scanCt);
-            var found24h = countResult.Found;
+            // 重掃時已登錄主機在 server 端就被排除（§3.3）——沒有新主機時 found=0，
+            // 一次查詢就結束。它們不需要被「重新發現」，呼叫端自己合成回結果。
+            var alreadyKnown = NormalizeKnownIps(knownIps);
+            var warnings = new List<string>();
 
-            if (found24h == 0)
+            // ESM 事件來源目錄（§五）：開關預設關，開著才試。成功就直接回——
+            // 它是「已註冊主機」而不是「窗口內講過話的主機」，涵蓋語意嚴格較好。
+            // 失敗（無權限／格式不符）落到下面的事件掃描，並把原因講出來。
+            if (server.UseEsmDirectory)
+            {
+                var esm = await TryEsmDirectoryAsync(client, normalizedPrefix, alreadyKnown, warnings, scanCt);
+                if (esm != null) return esm;
+            }
+
+            var scan = new ScanState(alreadyKnown);
+
+            // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
+            var mainOutcome = await RunResidualRoundsAsync(
+                client, scanCt,
+                exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix, exclude),
+                now.AddHours(-WindowHours), now,
+                CoverageTargetResults, MaxResidualRounds, scan, warnings, "主掃描");
+
+            // ── 補充掃描：全事件短窗，撈主掃描漏掉的 Security-only 主機 ──────────
+            // 排除主掃描已見是關鍵（§3.2）：不排除的話取回的絕大多數是已知主機的
+            // Security 洪流，純浪費；排除後殘差極小，短窗的涵蓋承諾才在 cap 內成立。
+            var supplementOutcome = await RunResidualRoundsAsync(
+                client, scanCt,
+                exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(subnetPrefix, exclude),
+                now.AddMinutes(-SupplementWindowMinutes), now,
+                SupplementMaxResults, SupplementResidualRounds, scan, warnings, "補充掃描",
+                // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
+                // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
+                fallbackToUnexcludedFirstRound: true);
+
+            var hosts = scan.DiscoveredHosts();
+
+            if (hosts.Count == 0 && warnings.Count == 0)
             {
                 return new NetiqDiscoveryResult
                 {
-                    CoverageNote = $"「{normalizedPrefix}.*」近 24 小時無任何事件回報，請確認網段是否正確，或稍後再試。"
+                    CoverageNote = alreadyKnown.Count > 0
+                        ? $"「{normalizedPrefix}.*」近 24 小時沒有已登錄主機以外的事件回報（已登錄 {alreadyKnown.Count} 台未重查）。"
+                        : $"「{normalizedPrefix}.*」近 24 小時無任何事件回報，請確認網段是否正確，或稍後再試。"
                 };
             }
 
-            var windowHours = found24h <= CoverageTargetResults
-                ? MaxWindowHours
-                : Math.Max(MinWindowHours, MaxWindowHours * ((double)CoverageTargetResults / found24h));
-            var start = now.AddHours(-windowHours);
-
-            var mainResult = await client.SearchAsync(new SentinelSearchRequest(
-                filter, start, now,
-                new[] { SentinelFieldMap.HostIp, SentinelFieldMap.HostName },
-                MaxResults: CoverageTargetResults), scanCt);
-
-            var hosts = mainResult.Events
-                .GroupBy(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostIp, string.Empty), StringComparer.OrdinalIgnoreCase)
-                .Where(g => !string.IsNullOrEmpty(g.Key))
-                .Select(g => new NetiqDiscoveredHost(PickMostCommonHostName(g) ?? g.Key, g.Key))
-                .ToList();
-
-            var warnings = new List<string>();
-            if (mainResult.Truncated)
+            // 主掃描 0 台但補充掃描有台數＝這個環境的 collector 可能不轉送 System/Application，
+            // 窄化 filter 因此失效（規劃 §3.8 的已知風險）。說出來讓人去查，不要靜靜地
+            // 每次都靠補充掃描的短窗硬撐——那樣涵蓋率會長期偏低而沒有人知道原因。
+            if (mainOutcome.NewHosts == 0 && supplementOutcome.NewHosts > 0)
             {
-                warnings.Add($"事件量高於預估（found={mainResult.Found:N0}，僅取回 {mainResult.Events.Count:N0} 筆），" +
-                             "本次掃描結果可能不完整，建議改掃更小的網段（如縮到 /24）。");
+                warnings.Add(
+                    "主掃描（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
+                    "這台 Sentinel 的 collector 可能不轉送這兩個頻道，掃描涵蓋率會因此偏低。" +
+                    "請至「診斷」分頁執行一次診斷確認頻道覆蓋情形。");
             }
 
             return new NetiqDiscoveryResult
             {
                 Hosts = hosts,
-                CoverageNote = $"掃描涵蓋「{normalizedPrefix}.*」近{FormatWindow(windowHours)}內有回報事件的主機，" +
-                               $"共 {hosts.Count} 台（該網段近 24 小時共 {found24h:N0} 筆事件，已依量級自動決定掃描窗口）。",
+                CoverageNote = BuildCoverageNote(normalizedPrefix, hosts.Count, alreadyKnown.Count),
                 Warnings = warnings
             };
         }
@@ -270,24 +355,254 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         }
     }
 
+    /// <summary>ESM 事件來源目錄的端點路徑（一般 REST 資源，不走 event-search job 生命週期）</summary>
+    internal const string EsmEventSourcePath = "/SentinelRESTServices/objects/eventsource";
+
+    /// <summary>
+    /// 嘗試以 ESM 目錄探索（§五）。成功回傳結果、失敗回 null 並在 <paramref name="warnings"/>
+    /// 留下**可行動**的說明，由呼叫端落回事件掃描。
+    ///
+    /// <para><b>三種失敗都要吵</b>：開關是人開的，開著卻每次都走退路代表這個環境不支援——
+    /// 訊息要能讓人決定「把開關關掉」或「把回應貼回來定案格式」。安靜地退路等於讓一個
+    /// 壞掉的捷徑假裝在工作，下次還是有人踩。</para>
+    /// </summary>
+    private static async Task<NetiqDiscoveryResult?> TryEsmDirectoryAsync(
+        SentinelClient client, string normalizedPrefix, IReadOnlyList<string> alreadyKnown,
+        List<string> warnings, CancellationToken ct)
+    {
+        string body;
+        try
+        {
+            body = await client.RawGetAsync(EsmEventSourcePath, ct);
+        }
+        catch (SentinelClientException ex)
+        {
+            warnings.Add(
+                "已開啟「以 ESM 事件來源目錄探索」，但這個帳號讀不到目錄" +
+                $"（{ex.Message}），本次已改用事件掃描。" +
+                "請確認該帳號具備 ESM 唯讀權限，或關閉此開關。");
+            return null;
+        }
+
+        var parsed = SentinelEsmDirectory.Parse(body);
+        if (!parsed.Usable)
+        {
+            // **關鍵區分**：解析不出來 ≠ 這台 Sentinel 沒有主機。後者會讓管理員以為機房空了。
+            warnings.Add(
+                $"ESM 事件來源目錄的回應格式與預期不符（收到 {parsed.RawEntryCount} 筆條目，" +
+                "無法解析出任何主機），本次已改用事件掃描。" +
+                "請至「診斷」分頁執行診斷並回報步驟 6 的輸出，以便定案欄位對應。");
+            return null;
+        }
+
+        var known = new HashSet<string>(alreadyKnown, StringComparer.OrdinalIgnoreCase);
+        var prefix = normalizedPrefix + ".";
+        var hosts = parsed.Sources
+            .Where(s => s.IpAddress.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Where(s => !known.Contains(s.IpAddress))
+            .Select(s => new NetiqDiscoveredHost(s.Name, s.IpAddress))
+            .ToList();
+
+        var knownNote = alreadyKnown.Count > 0 ? $"，另有已登錄的 {alreadyKnown.Count} 台未重新列出" : string.Empty;
+        return new NetiqDiscoveryResult
+        {
+            Hosts = hosts,
+            CoverageNote =
+                $"來源：Sentinel 事件來源目錄（已註冊主機的完整清單，**含目前沒有事件回報的主機**）。" +
+                $"目錄共 {parsed.RawEntryCount} 筆條目、可解析 {parsed.Sources.Count} 台，" +
+                $"其中屬於「{normalizedPrefix}.*」的有 {hosts.Count} 台{knownNote}。",
+            Warnings = warnings
+        };
+    }
+
+    /// <summary>
+    /// 殘差輪掃：同一個窗口反覆查詢，每輪把**已發現的主機**排除掉，直到某一輪沒有觸頂為止。
+    ///
+    /// <para>這是「取回筆數有上限」與「不可以靜默漏掉主機」兩個要求的交集解。
+    /// 舊版遇到量太大是縮短窗口——那等於用時間換筆數，而被裁掉的時間裡安靜主機的
+    /// 少數幾筆事件就這樣消失了，畫面上還看不出來。改成排除已見主機之後，
+    /// 每一輪取回的事件全部來自「還沒見過的主機」，新主機數嚴格遞增、殘差嚴格遞減，
+    /// 收斂是必然的；窗口自始至終不動。</para>
+    ///
+    /// <para>停止條件三選一：(1) 某輪未觸頂＝殘差已掃完，**完整**；
+    /// (2) 輪數用盡；(3) 排除清單超過 <see cref="ExclusionClauseLimit"/>。
+    /// 後兩者都會加一則 Warning——**知道可能漏，就一定要說**。</para>
+    /// </summary>
+    /// <param name="fallbackToUnexcludedFirstRound">排除清單超過子句上限時，第一輪改以
+    /// **無排除**方式照掃（規劃 §3.2：補充掃描的職責是撈漏網主機，跳過它等於整段棄守；
+    /// 無排除地掃仍可能在 cap 內撈到部分未知主機，比不掃好）。主掃描不用這個退路——
+    /// 它自己就是排除清單的來源，第一輪本來就從空清單開始。</param>
+    private async Task<RoundsOutcome> RunResidualRoundsAsync(
+        SentinelClient client, CancellationToken ct,
+        Func<IReadOnlyCollection<string>, string> filterFactory,
+        DateTimeOffset start, DateTimeOffset end,
+        int maxResults, int maxRounds, ScanState scan, List<string> warnings, string stageName,
+        bool fallbackToUnexcludedFirstRound = false)
+    {
+        var newHosts = 0;
+
+        for (var round = 0; round < maxRounds; round++)
+        {
+            var exclusion = scan.ExclusionOrNull();
+            // 排除清單已超出子句上限：再送出去會被 Sentinel 整個拒絕。
+            // 第一輪且允許退路 → 無排除照掃（取回會混入已知主機的事件，Absorb 自然去重）；
+            // 其餘情況只能停在這裡——這是「可能漏」的情況之一，必須警告。
+            if (exclusion is null)
+            {
+                if (round == 0 && fallbackToUnexcludedFirstRound)
+                {
+                    exclusion = Array.Empty<string>();
+                }
+                else
+                {
+                    warnings.Add(
+                        $"{stageName}：已發現的主機數超過單次查詢的排除上限（{ExclusionClauseLimit} 台），" +
+                        "無法繼續縮小查詢範圍，清單可能不完整——請改掃更小的網段（如把 /16 拆成數個 /24 分次掃）。");
+                    return new RoundsOutcome(newHosts, Complete: false);
+                }
+            }
+
+            var result = await client.SearchAsync(new SentinelSearchRequest(
+                filterFactory(exclusion), start, end,
+                new[] { SentinelFieldMap.HostIp, SentinelFieldMap.HostName },
+                MaxResults: maxResults), ct);
+
+            // NOT 子句在本環境**尚未實測**（probe 驗過 OR 50~100 子句、片語、前綴萬用字元，
+            // 沒驗過 NOT）。萬一這個語法被忽略，每輪都會取回同一批已知主機、白白燒完輪數，
+            // 而使用者只會看到「掃很久」不知道原因。這裡當場驗證：取回的事件若含
+            // 已排除的 repip，就是排除沒生效——立刻停止輪掃並說明白。
+            if (exclusion.Count > 0 && scan.ContainsExcluded(result.Events))
+            {
+                warnings.Add(
+                    $"{stageName}：查詢的排除語法（NOT）在這台 Sentinel 上未生效，已停止逐輪縮小範圍，" +
+                    "清單可能不完整。請回報此訊息以便調整查詢寫法。");
+                return new RoundsOutcome(newHosts, Complete: false);
+            }
+
+            newHosts += scan.Absorb(result.Events);
+
+            if (!result.Truncated)
+            {
+                // 沒觸頂＝這一輪把殘差掃乾淨了，涵蓋保證成立
+                return new RoundsOutcome(newHosts, Complete: true);
+            }
+        }
+
+        warnings.Add(
+            $"{stageName}：這個網段的主機數超出單次掃描能力（已掃 {maxRounds} 輪仍未取完），" +
+            "清單可能不完整——請改掃更小的網段（如把 /16 拆成數個 /24 分次掃）。");
+        return new RoundsOutcome(newHosts, Complete: false);
+    }
+
     private static string BudgetExceededMessage(string normalizedPrefix, int budgetSeconds) =>
         $"掃描「{normalizedPrefix}.*」超過 {budgetSeconds} 秒仍未完成，已中止。" +
         "該網段的事件量可能過大——請改掃更小的網段（如把 /16 縮成 /24），或稍後離峰時段再試。" +
         "（未回傳部分結果：半套清單會被誤認為該網段的完整主機名單。）";
 
-    /// <summary>同一 IP 底下最常見的非空 sn 值——單一主機的事件不會每筆 sn 都不同，
-    /// 取眾數比取第一筆更能防偶發的欄位缺席或雜訊值。</summary>
-    private static string? PickMostCommonHostName(IEnumerable<SentinelEvent> events) =>
-        events
-            .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .GroupBy(v => v, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(g => g.Count())
-            .Select(g => g.Key)
-            .FirstOrDefault();
+    private static string BuildCoverageNote(string normalizedPrefix, int hostCount, int knownCount)
+    {
+        var known = knownCount > 0 ? $"，另有已登錄的 {knownCount} 台未重新查詢" : string.Empty;
+        return $"掃描涵蓋「{normalizedPrefix}.*」近 24 小時內有 System/Application 事件、" +
+               $"或近 {SupplementWindowMinutes} 分鐘內有任何事件回報的主機，共 {hostCount} 台{known}。" +
+               "（兩個窗口內都完全沒有事件回報的主機，事件掃描原理上看不到。）";
+    }
 
-    private static string FormatWindow(double hours) =>
-        hours >= 1
-            ? $"{hours:0.#} 小時"
-            : $"{Math.Max(1, (int)Math.Round(hours * 60))} 分鐘";
+    /// <summary>合法且去重的已登錄 IP；超過子句上限就整組放棄排除——
+    /// 退回一般掃描只是比較慢，送出超長 filter 則是整趟失敗。</summary>
+    private static IReadOnlyList<string> NormalizeKnownIps(IReadOnlyCollection<string>? knownIps)
+    {
+        if (knownIps is null || knownIps.Count == 0) return Array.Empty<string>();
+
+        var normalized = knownIps
+            .Where(ip => !string.IsNullOrWhiteSpace(ip))
+            .Select(ip => ip.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return normalized.Count > ExclusionClauseLimit ? Array.Empty<string>() : normalized;
+    }
+
+    /// <summary>單輪掃描的結果：這一段新發現幾台、以及殘差是否已掃乾淨</summary>
+    private sealed record RoundsOutcome(int NewHosts, bool Complete);
+
+    /// <summary>
+    /// 一次探索過程中的累積狀態：已見過哪些 IP（排除清單的來源）、各 IP 的候選主機名。
+    /// 跨主掃描與補充掃描共用同一份——補充掃描要排除主掃描已見的主機，
+    /// 兩段的結果也要聯集，都靠這裡。
+    /// </summary>
+    private sealed class ScanState
+    {
+        private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, List<string>> _nameCandidates = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>本次掃描**新發現**的 IP，依發現順序。刻意不從 <c>_seen</c> 推導——
+        /// HashSet 的列舉順序不是契約，靠它「跳過前 N 筆」在雜湊重整後就會錯。</summary>
+        private readonly List<string> _discovered = new();
+
+        public ScanState(IReadOnlyList<string> alreadyKnown)
+        {
+            foreach (var ip in alreadyKnown) _seen.Add(ip);
+        }
+
+        /// <summary>這一輪要排除的 IP（已見過的全部）；超過子句上限回 null，
+        /// 呼叫端據此停止並警告——送出超長 filter 會被 Sentinel 整個拒絕。</summary>
+        public IReadOnlyCollection<string>? ExclusionOrNull() =>
+            _seen.Count > ExclusionClauseLimit ? null : _seen.ToList();
+
+        /// <summary>取回的事件裡有沒有「應該已被排除」的主機——有就代表 NOT 沒生效</summary>
+        public bool ContainsExcluded(IReadOnlyList<SentinelEvent> events) =>
+            events.Any(e =>
+            {
+                var ip = e.Fields.GetValueOrDefault(SentinelFieldMap.HostIp);
+                return !string.IsNullOrEmpty(ip) && _seen.Contains(ip);
+            });
+
+        /// <summary>吸收一輪的事件，回傳這一輪新發現幾台主機</summary>
+        public int Absorb(IReadOnlyList<SentinelEvent> events)
+        {
+            var added = 0;
+            foreach (var evt in events)
+            {
+                var ip = evt.Fields.GetValueOrDefault(SentinelFieldMap.HostIp);
+                if (string.IsNullOrEmpty(ip)) continue;
+
+                if (_seen.Add(ip))
+                {
+                    _discovered.Add(ip);
+                    added++;
+                }
+
+                var name = evt.Fields.GetValueOrDefault(SentinelFieldMap.HostName);
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                if (!_nameCandidates.TryGetValue(ip, out var names))
+                {
+                    names = new List<string>();
+                    _nameCandidates[ip] = names;
+                }
+                names.Add(name);
+            }
+            return added;
+        }
+
+        /// <summary>
+        /// 本次掃描**新發現**的主機（不含建構時帶入的已登錄主機——那些由呼叫端合成，
+        /// 名稱以主機清單為準比事件裡的 sn 更可靠）。
+        /// 顯示名稱取該 IP 出現最多次的 sn 值：單一主機的事件不會每筆 sn 都不同，
+        /// 取眾數比取第一筆更能防偶發的欄位缺席或雜訊值。
+        /// </summary>
+        public List<NetiqDiscoveredHost> DiscoveredHosts() =>
+            _discovered
+                .Select(ip => new NetiqDiscoveredHost(PickMostCommonName(ip) ?? ip, ip))
+                .ToList();
+
+        private string? PickMostCommonName(string ip) =>
+            _nameCandidates.TryGetValue(ip, out var names)
+                ? names.GroupBy(n => n, StringComparer.OrdinalIgnoreCase)
+                       .OrderByDescending(g => g.Count())
+                       .Select(g => g.Key)
+                       .FirstOrDefault()
+                : null;
+    }
+
 }

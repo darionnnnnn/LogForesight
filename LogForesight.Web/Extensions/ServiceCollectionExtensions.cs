@@ -43,13 +43,18 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReportReader>(_ => new FileReportReader(dataRoot));
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
-        services.AddSingleton<IRecordHandlingStore>(sp =>
-        {
-            var backend = sp.GetRequiredService<StorageBackend>();
-            return new RecordHandlingStore(backend.Blob("record_handling"), backend.LogStore("handling_log"));
-        });
-        services.AddSingleton<IIssueHandlingStore>(sp => new IssueHandlingStore(sp.GetRequiredService<StorageBackend>().Blob("issue_handling")));
-        services.AddSingleton<IIssueCaseStore>(sp => new IssueCaseStore(sp.GetRequiredService<StorageBackend>().Blob("issue_cases")));
+        //
+        // 這三個自 P3 起走**真表**而非整份 blob（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B）：
+        // 它們會隨「主機數 × 天數」成長，6000 台 × 90 天下 issue_handling 的整份序列化
+        // 會撞上 .NET 的 2 GB 單一物件上限。介面不變，呼叫端零修改。
+        services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
+        services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
+        services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
+
+        // 問題聚合（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
+        // 「撈回整段期間的紀錄再於記憶體 GroupBy」
+        services.AddSingleton<IIssueAggregateQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueAggregateQuery());
+        services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<PermissionChangeStore>(sp =>
@@ -210,6 +215,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLogForesightServices(this IServiceCollection services)
     {
         services.AddScoped<IAuditService, AuditService>();
+        // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
+        services.AddScoped<UserCapabilityResolver>();
         services.AddScoped<IdentityService>();
         services.AddScoped<IVisibilityService, VisibilityService>();
         services.AddScoped<UserAdminService>();
@@ -257,8 +264,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<RecordListQueryService>();
         services.AddScoped<RecordDetailQueryService>();
+        // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
+        services.AddScoped<IssueRankingBuilder>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
+
+        // 健康檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
+        // 與 SchedulerRunState 兩個既有的行程內單例，沒有請求範圍狀態
+        services.AddSingleton<HealthService>();
 
         // 寫入面：IssueCaseCoordinator 依賴的四個 store 全是 Singleton（docs/archive/FEEDBACK-4-PLAN.md §0），
         // 本身也可以是 Singleton——沒有請求範圍狀態
@@ -289,6 +302,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerRunState>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
+
+        // 處理狀態自 blob 搬進真表（docs/SCALE-FIX-PLAN-2026-08-06.md §三）：
+        // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
+        // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
+        services.AddHostedService<HandlingMigrationHostedService>();
+
+        // lf_top_issues 聚合欄的背景回填（docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
+        // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
+        services.AddHostedService<TopIssueBackfillHostedService>();
 
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用

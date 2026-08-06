@@ -546,6 +546,13 @@ body {
     cursor: pointer;
 }
 
+/* 鍵盤焦點（體檢 L9）：深色側欄上用主色陰影看不出來，改用亮色描邊 */
+.lf-sidebar__section--toggle:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: 2px;
+    border-radius: var(--lf-radius-sm);
+}
+
 .lf-sidebar__section--toggle .lf-icon {
     width: .85rem;
     height: .85rem;
@@ -578,6 +585,27 @@ body {
     width: 1.1rem;
     height: 1.1rem;
     opacity: .75;
+}
+
+/* 「我的交辦」未結案數（體檢 M7）：靠右、不搶標籤的視覺位置。
+   逾期時轉紅——那是唯一需要「今天就處理」的狀態，其餘只是待辦量。 */
+.lf-sidebar__badge {
+    margin-left: auto;
+    min-width: 1.4rem;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .16);
+    color: var(--lf-sidebar-fg-strong);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.lf-sidebar__badge--overdue {
+    background: var(--lf-risk-high);
+    color: #fff;
 }
 
 .lf-sidebar__link:hover {
@@ -1215,6 +1243,16 @@ a.lf-stat:hover .lf-card,
 
 .lf-chip:hover { border-color: var(--lf-primary-hover); color: var(--lf-primary-text); }
 
+/* 鍵盤焦點（體檢 H6）：chip 是全站最主要的篩選元件（問題查詢、主機、規則、使用者、
+   報表、我的交辦視角切換），過去 :focus 量到 outline:none + box-shadow:none——
+   鍵盤使用者 Tab 過去看不到自己在哪裡。.btn:focus-visible 的既有規則選不到 chip
+   （它不是 .btn），所以要自己一條。 */
+.lf-chip:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+    border-color: var(--lf-primary);
+}
+
 .lf-chip.active {
     background: var(--lf-primary);
     border-color: var(--lf-primary);
@@ -1300,11 +1338,41 @@ a.lf-stat:hover .lf-card,
 
 .table > tbody > tr:last-child > td { border-bottom: none; }
 
+/* 出現密度條（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3）：文字「2/90」是主要資訊，
+   這條只是讓比例一眼可辨的輔助——**不可拿掉文字只留圖**，那會讓精確值消失，
+   也讓輔助技術讀不到（圖表準則：資訊不得只靠視覺傳達）。 */
+.lf-density {
+    display: inline-block;
+    width: 3rem;
+    height: .4rem;
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-200);
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+.lf-density__fill {
+    display: block;
+    height: 100%;
+    background: var(--lf-primary);
+}
+
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
 
 /* 可展開列：首欄展開箭頭，收合時朝右、展開時朝下 */
 .table > tbody > tr.lf-row-expandable { cursor: pointer; }
+
+/* 整列可點的鍵盤焦點（體檢 H5）：這些列現在有 role="button" + tabindex="0"，
+   Tab 得到就必須看得見。用 inset 陰影而不是 outline——<tr> 的 outline 在部分瀏覽器
+   會被相鄰儲存格的邊框裁掉，內陰影畫在儲存格背景上不會有這個問題。 */
+.table > tbody > tr.lf-row-link:focus-visible > td,
+.table > tbody > tr.lf-row-expandable:focus-visible > td {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--lf-primary);
+}
+.table > tbody > tr.lf-row-link:focus-visible,
+.table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
 .lf-row-caret {
     display: inline-flex;
     margin-right: .4em;
@@ -1472,10 +1540,57 @@ a.lf-stat:hover .lf-card,
 .lf-table-wrap {
     overflow-x: auto;
     scrollbar-width: thin;
+    position: relative;
 }
 
 .lf-table-wrap > table {
     margin-bottom: 0;
+}
+
+/* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
+   1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
+   沒有提示的話，第一次使用的人會認定「這個視角沒有指派功能」。
+   陰影用 sticky 而不是 fixed/absolute：它要跟著捲動容器的右緣，不是頁面的。 */
+.lf-table-wrap--scrollable::after {
+    content: '← 可左右捲動';
+    position: sticky;
+    right: 0;
+    bottom: 0;
+    float: right;
+    z-index: 2;
+    padding: .15rem .5rem;
+    border-radius: var(--lf-radius-sm) 0 0 0;
+    background: var(--lf-card-bg);
+    border-top: 1px solid var(--lf-border);
+    border-left: 1px solid var(--lf-border);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-xs);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。 */
+.lf-table-wrap--sticky-action th:last-child,
+.lf-table-wrap--sticky-action td:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+    /* 與左側內容的分界：捲動時才看得出這一欄是浮在上面的 */
+    box-shadow: -6px 0 6px -6px rgba(15, 23, 42, .18);
+}
+
+/* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
+.lf-table-wrap--sticky-action tbody tr:hover td:last-child {
+    background: var(--bs-table-hover-bg, var(--lf-gray-50));
+}
+
+/* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
+@media print {
+    .lf-table-wrap--scrollable::after { display: none; }
+    .lf-table-wrap--sticky-action th:last-child,
+    .lf-table-wrap--sticky-action td:last-child { position: static; box-shadow: none; }
 }
 
 /* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────

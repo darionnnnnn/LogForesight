@@ -228,6 +228,21 @@
                             <option value="linux">Linux</option>
                         </select>
                     </div>
+                    @* ESM 事件來源目錄（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）：預設關。
+                       回應格式在本環境無法驗證（探索帳號被 401/403 拒絕），因此不自動啟用，
+                       並把「先跑診斷確認」這道人工閘門寫進說明文字。 *@
+                    <div class="mb-3 form-check">
+                        <input class="form-check-input" type="checkbox" id="sentinel-use-esm" />
+                        <label class="form-check-label" for="sentinel-use-esm">
+                            以 ESM 事件來源目錄探索（需 ESM 唯讀權限）
+                        </label>
+                        <div class="form-text">
+                            目錄是<strong>已註冊主機的完整清單</strong>，包含目前沒有事件回報的主機——
+                            事件掃描原理上看不到那些。但多數環境的探索帳號沒有 ESM 讀取權限，
+                            <strong>開啟前請先到「診斷」分頁執行一次診斷</strong>確認取得得到事件來源清單；
+                            取不到或格式不符時會自動改用事件掃描，並在掃描結果顯示警告。
+                        </div>
+                    </div>
                     <div id="sentinel-test-result" class="small mb-0"></div>
                 </div>
                 <div class="modal-footer">

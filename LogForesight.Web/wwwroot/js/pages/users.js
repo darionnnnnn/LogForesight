@@ -149,21 +149,34 @@ function render() {
 }
 
 function renderGroupBadges(user) {
+    const wrap = document.createElement('span');
+
     if (!user.groupNames || user.groupNames.length === 0) {
         const span = document.createElement('span');
         span.className = 'text-muted';
-        // 沒有群組 = 登入後什麼都看不到，這是需要被注意的狀態而不是普通的空值
-        span.textContent = '未指派（無任何權限）';
-        return span;
+        // **只陳述事實，不下權限結論**（體檢 H3）：回饋第十一輪 §2b 讓負責人成為
+        // 群組之外的第二條授權路徑之後，「沒有群組」不再等於「沒有任何權限」——
+        // 舊文案會讓管理者盤點時誤判「這個人沒權限，可以不用管」。
+        span.textContent = '未指派群組';
+        wrap.appendChild(span);
+    } else {
+        for (const name of user.groupNames) {
+            const badge = document.createElement('span');
+            badge.className = 'lf-badge lf-badge--light border me-1';
+            badge.textContent = name;
+            wrap.appendChild(badge);
+        }
     }
 
-    const wrap = document.createElement('span');
-    for (const name of user.groupNames) {
-        const badge = document.createElement('span');
-        badge.className = 'lf-badge lf-badge--light border me-1';
-        badge.textContent = name;
-        wrap.appendChild(badge);
+    // 第二條授權路徑要在同一張表上看得見，否則兩條路徑只有一條被盤點得到
+    if (user.ownedHostCount > 0) {
+        const owner = document.createElement('span');
+        owner.className = 'lf-badge lf-badge--info me-1';
+        owner.textContent = `負責 ${user.ownedHostCount} 台`;
+        owner.title = '身為主機負責人而取得的可見範圍與處理能力（不需要在授權矩陣勾選）';
+        wrap.appendChild(owner);
     }
+
     return wrap;
 }
 

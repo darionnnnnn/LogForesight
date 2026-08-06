@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -96,7 +96,7 @@ public class EfWebdataStoreTests
     public void 處理狀態_快照與歷程_EF往返()
     {
         using var fx = new EfSqliteFixture();
-        var store = new RecordHandlingStore(fx.Blob("handling"), fx.LogStore("handling_log"));
+        var store = new EfRecordHandlingStore(fx.NewContext, fx.LogStore("handling_log"));
         var date = DateTime.Today;
 
         store.Save(new RecordHandling { HostName = "SRV-01", Date = date, Status = "in_progress" });
@@ -132,7 +132,7 @@ public class EfWebdataStoreTests
     public void 問題處理狀態_更新既有列補上DueDate與CaseId()
     {
         using var fx = new EfSqliteFixture();
-        var store = new IssueHandlingStore(fx.Blob("issue_handling"));
+        var store = new EfIssueHandlingStore(fx.NewContext);
         var date = DateTime.Today;
 
         store.Save(new IssueHandling { HostName = "SRV-01", Date = date, IssueKey = "k1", Status = "in_progress", UpdatedAt = DateTime.Now });
@@ -154,7 +154,7 @@ public class EfWebdataStoreTests
     public void 問題處理狀態_SaveMany批次寫入新增更新與清除()
     {
         using var fx = new EfSqliteFixture();
-        var store = new IssueHandlingStore(fx.Blob("issue_handling"));
+        var store = new EfIssueHandlingStore(fx.NewContext);
         var d1 = DateTime.Today;
         var d2 = d1.AddDays(1);
         var d3 = d1.AddDays(2);
@@ -182,7 +182,7 @@ public class EfWebdataStoreTests
     public void 問題案件_EF往返_進行中與結案語意()
     {
         using var fx = new EfSqliteFixture();
-        var store = new IssueCaseStore(fx.Blob("issue_cases"));
+        var store = new EfIssueCaseStore(fx.NewContext);
         var caseId = Guid.NewGuid().ToString();
 
         store.Save(new IssueCase

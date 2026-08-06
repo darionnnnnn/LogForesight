@@ -32,6 +32,19 @@ public class DashboardDto
     /// </summary>
     public List<IssueRankingDto> TopIssues { get; set; } = new();
 
+    /// <summary>
+    /// 問題統計是否還在背景整理（回填或搬移中，docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+    ///
+    /// **為什麼放在這裡而不是 /api/health/detail**：那支需要 <c>Maintain</c>，
+    /// 而看排行的是全部角色；而且「這張卡的數字準不準」本來就是這張卡的資料，
+    /// 放同一份 DTO 就不可能有人忘了查。未完成時數字**偏低但看起來完全正常**——
+    /// 那正是本專案最忌諱的「靜默給錯數字」。
+    /// </summary>
+    public bool IssueStatsPending { get; set; }
+
+    /// <summary>可直接顯示的說明（非 pending 時為 null）</summary>
+    public string? IssueStatsPendingHint { get; set; }
+
     /// <summary>未回報主機數（§5.4 D-4：計數卡＋下鑽，不再整表渲染逐台清單——
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
@@ -56,7 +69,7 @@ public class IssueRankingDto
     /// <summary>期間內這個問題出現過的最高嚴重度</summary>
     public string MaxSeverity { get; set; } = string.Empty;
 
-    /// <summary>出現過這個問題的相異主機數</summary>
+    /// <summary>出現過這個問題的相異主機數（需求：包含此問題的主機數量）</summary>
     public int HostCount { get; set; }
 
     /// <summary>出現過的主機日總數（同一台主機多天各算一次）</summary>
@@ -64,6 +77,50 @@ public class IssueRankingDto
 
     /// <summary>全部主機加總的事件次數</summary>
     public int TotalCount { get; set; }
+
+    // ── 時間形狀（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3／P4）──────────────────
+    //
+    // 這些是「今天該先看哪一個」的唯一來源。改版前排行只看數量，結果是 2000 台環境下
+    // DCOM 10016 這種「每台都有、每天都一樣」的雜訊恆在第一名（資訊量為零），
+    // 而 disk 153 這種「3 台、都在近 3 天、高嚴重度」的硬碟前兆排在很後面。
+    // 全部由既有資料推導，不需要新的儲存。
+
+    /// <summary>期間內最早出現的日期（需求：期間跨度的起點）</summary>
+    public string FirstSeen { get; set; } = string.Empty;
+
+    /// <summary>期間內最近出現的日期（需求：期間跨度的終點）</summary>
+    public string LastSeen { get; set; } = string.Empty;
+
+    /// <summary>相異出現日數——與 <see cref="PeriodDays"/> 相除即出現密度（「2/90 天」）</summary>
+    public int ActiveDays { get; set; }
+
+    /// <summary>查詢期間的天數（密度的分母）</summary>
+    public int PeriodDays { get; set; }
+
+    /// <summary>距今幾天沒再出現（0＝今天還在發生）。回答「還要不要處理，還是已經自己好了」</summary>
+    public int DaysSinceLastSeen { get; set; }
+
+    /// <summary>影響率＝主機數 ÷ 可見主機總數。「600 台」在 2000 台環境是 30%、
+    /// 在 50 台環境是全滅——絕對值無法跨環境解讀（§10.2 維度 2）</summary>
+    public double HostRatio { get; set; }
+
+    /// <summary>期間內是否曾命中「重大」旗標（過去只在詳情頁看得到，排行清單上缺這個維度）</summary>
+    public bool ElevatesDayRisk { get; set; }
+
+    /// <summary>前一個等長期間的主機數（變化幅度的基準；0＝本期新出現）</summary>
+    public int PreviousHostCount { get; set; }
+
+    /// <summary>前一個等長期間的總次數</summary>
+    public int PreviousTotalCount { get; set; }
+
+    /// <summary>本期新出現＝前一個等長期間完全沒有出現過。回答「今天有什麼不一樣」</summary>
+    public bool IsNew { get; set; }
+
+    /// <summary>未處理的主機數（§10.6）：全部主機都已有結論的問題不該霸佔重點清單</summary>
+    public int OpenHostCount { get; set; }
+
+    /// <summary>已有結論的主機數</summary>
+    public int ResolvedHostCount { get; set; }
 }
 
 public class DashboardCategoryDto
@@ -147,6 +204,11 @@ public class ReportSummaryDto
 
     /// <summary>Top 10 以外問題的合計；無其他問題時為 null</summary>
     public IssueRankingOthersDto? IssueOthers { get; set; }
+
+    /// <summary>問題統計是否還在背景整理——與 <see cref="DashboardDto.IssueStatsPending"/> 同一件事</summary>
+    public bool IssueStatsPending { get; set; }
+
+    public string? IssueStatsPendingHint { get; set; }
 
     /// <summary>可見且啟用的主機總數（docs/archive/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
     /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>

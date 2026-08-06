@@ -81,6 +81,14 @@ export const api = {
 
 /**
  * 目前登入者。多個頁面模組都需要（側欄、功能鈕顯示），快取避免每頁重複請求。
+ *
+ * **這是 async，呼叫端一定要 await。** 忘了 await 不會報錯——拿到的是 Promise，
+ * 而 `promise.isServerAdmin`／`promise.capabilities` 都是 `undefined`，
+ * 任何比較都恆為 false，判斷因此**靜默失效**（user-detail.js 曾因此讓整個
+ * serverAdmin 的可見範圍修正完全沒有生效）。
+ *
+ * 頁面模組的既有慣例是把它放進 `load()` 的 `Promise.all` 一起取、存成模組變數，
+ * 同步的渲染函式再讀那個變數——它有快取，這樣做是零額外成本。
  */
 let currentUserCache = null;
 

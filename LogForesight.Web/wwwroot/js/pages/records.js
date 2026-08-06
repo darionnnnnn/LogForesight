@@ -128,8 +128,8 @@ async function resolveSelectedHostsFromUrl() {
     if (!csv) return;
 
     try {
-        const hosts = await api.get(`/api/hosts?ids=${encodeURIComponent(csv)}`, { silent: true });
-        for (const host of hosts) selectedHosts.set(String(host.hostId), host.hostName);
+        const result = await api.get(`/api/hosts?ids=${encodeURIComponent(csv)}`, { silent: true });
+        for (const host of result.items) selectedHosts.set(String(host.hostId), host.hostName);
     } catch {
         // 解析失敗就不顯示 chip；篩選條件本身仍在 URL 上，重新查詢不受影響
     }
@@ -186,14 +186,14 @@ function setupHostAutocomplete() {
     });
 
     async function loadHostSuggestions(query) {
-        let hosts;
+        let result;
         try {
-            hosts = await api.get(`/api/hosts?query=${encodeURIComponent(query)}`, { silent: true });
+            result = await api.get(`/api/hosts?query=${encodeURIComponent(query)}`, { silent: true });
         } catch {
             return;
         }
 
-        const candidates = hosts.filter(h => !selectedHosts.has(String(h.hostId)));
+        const candidates = result.items.filter(h => !selectedHosts.has(String(h.hostId)));
         suggestions.replaceChildren();
 
         if (candidates.length === 0) {
@@ -216,6 +216,16 @@ function setupHostAutocomplete() {
             });
             suggestions.appendChild(item);
         }
+
+        // 截斷要說出來（體檢 X4）：2000 台環境輸入常見前綴可能有數百台符合，
+        // 只出現 20 筆而不說明，使用者會合理地認為「就只有這 20 台」
+        if (result.truncated) {
+            const note = document.createElement('div');
+            note.className = 'dropdown-item-text small text-muted border-top';
+            note.textContent = `顯示前 ${result.items.length} 筆，共 ${result.total} 筆符合，請再輸入以縮小範圍`;
+            suggestions.appendChild(note);
+        }
+
         suggestions.classList.add('show');
     }
 
@@ -632,14 +642,18 @@ function dateViewLink(row) {
 // ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
+    // 欄位順序＝「這個問題有多嚴重／影響多廣／什麼形狀／誰在處理」（規劃 §10.2 的四個維度）。
+    // 「涵蓋範圍」與「出現密度」是需求「期間跨度」的落地：只有「最近出現」看不出
+    // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
         { title: '問題', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
-        { title: '嚴重度', sortKey: 'severity', render: i => severityBadge(i.maxSeverity) },
+        { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: '風險日數', className: 'text-end', sortKey: 'dayCount', sortDefaultDir: 'desc', render: i => String(i.dayCount) },
+        { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
         { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
-        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => i.lastSeen },
+        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
         { title: '處理概況', render: i => i.handlingSummary },
         { title: '處理人', render: i => issueHandlersCell(i) }
     ];
@@ -657,6 +671,9 @@ function renderIssueView() {
         rows: lastResult.items,
         sort,
         onSort: applySort,
+        // 動作欄固定在列末（體檢 W1）：1024px 下這一欄整段在畫面外，
+        // 而它正是 admin 在這個視角要用的東西（指派／統一標記／回覆狀態）
+        stickyLastColumn: true,
         // §10：點列就地展開該問題的受影響主機×日期，每列直連風險日詳情去處理——
         // 把「看到問題→去處理」從「下鑽明細→點日期→找問題」縮短（取代原本整列導向明細視角）
         onRowExpand: (group, cell) => renderIssueOccurrences(cell, group),
@@ -757,6 +774,92 @@ function issueHandlersCell(group) {
     return wrap;
 }
 
+/**
+ * 嚴重度欄：徽章＋「重大」旗標（規劃 §10.2 維度 1 的既有缺口——這個旗標過去只在
+ * 風險日詳情看得到，而它正是「disk 153 該排第一」的理由之一）。
+ */
+function issueSeverityCell(group) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(group.maxSeverity));
+
+    if (group.elevatesDayRisk) {
+        const flag = document.createElement('span');
+        flag.className = 'lf-badge lf-badge--danger';
+        flag.textContent = '重大';
+        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
+        wrap.appendChild(flag);
+    }
+    return wrap;
+}
+
+/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）。同一天時只顯示一次，不寫成「X ~ X」 */
+function issueSpanCell(group) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = group.firstSeen === group.lastSeen
+        ? group.firstSeen
+        : `${group.firstSeen} ~ ${group.lastSeen}`;
+    return span;
+}
+
+/**
+ * 出現密度：出現天數 ÷ 期間天數（§10.3）。
+ * 「2/90」與「90/90」是完全不同的問題——前者是零星爆發、後者是天天都有的背景值，
+ * 而數量排序看不出這件事。附一條密度條讓比例一眼可辨（文字仍是主要資訊，圖只是輔助）。
+ */
+function issueDensityCell(group) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
+
+    const text = document.createElement('span');
+    text.className = 'lf-mono small';
+    text.textContent = `${group.activeDays}/${group.periodDays}`;
+    wrap.appendChild(text);
+
+    const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
+    const bar = document.createElement('span');
+    bar.className = 'lf-density';
+    bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
+    const fill = document.createElement('span');
+    fill.className = 'lf-density__fill';
+    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+
+    return wrap;
+}
+
+/**
+ * 最近出現：日期＋「還在不在發生」（§10.3）。
+ * 目前的排行把「90 天前爆發過、之後再也沒出現」與「今天正在發生」視為同等——
+ * 前者其實該自動退場，而使用者只看日期得自己心算。
+ */
+function issueLastSeenCell(group) {
+    const wrap = document.createElement('div');
+
+    const date = document.createElement('div');
+    date.className = 'lf-mono small';
+    date.textContent = group.lastSeen;
+    wrap.appendChild(date);
+
+    const hint = document.createElement('div');
+    hint.className = 'small';
+    if (group.daysSinceLastSeen === 0) {
+        hint.className += ' text-danger fw-semibold';
+        hint.textContent = '今天仍在發生';
+    } else if (group.daysSinceLastSeen <= 3) {
+        hint.className += ' text-danger';
+        hint.textContent = `${group.daysSinceLastSeen} 天前`;
+    } else {
+        hint.className += ' text-muted';
+        hint.textContent = `已 ${group.daysSinceLastSeen} 天未再出現`;
+    }
+    wrap.appendChild(hint);
+
+    return wrap;
+}
+
 function issueGroupCell(group) {
     const wrap = document.createElement('div');
     const title = document.createElement('div');
@@ -793,8 +896,11 @@ function issueActionsCell(group) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-2 justify-content-end';
 
+    // 「是我的案件」還不夠，還要「動得了」（體檢 H2）：被指派但沒有 Handle 能力的人
+    // （manager／dev／未分群組且非負責人）過去看得到這顆按鈕，按下去必定 403。
+    // 後端才是真正的防線，但前端不該擺一顆一定失敗的按鈕。
     const isMyIssue = (group.handlers ?? []).some(h => h.handlerId === currentUser?.userId);
-    if (isMyIssue) wrap.appendChild(issueReplyButton(group));
+    if (isMyIssue && hasCapability(currentUser, 'Handle')) wrap.appendChild(issueReplyButton(group));
     // 統一標記要 Assign＋Handle 兩者（後端同一條規則）——實務上就是 admin
     if (hasCapability(currentUser, 'Assign') && hasCapability(currentUser, 'Handle')) {
         wrap.appendChild(issueBulkCloseButton(group));
@@ -908,13 +1014,24 @@ function renderBulkCloseForm(body, group, preview) {
         '（標「已知雜訊」除外——會為這些主機寫入雜訊記憶，之後同問題自動標示）。';
     form.appendChild(scopeNote);
 
+    // 摘要一律用**總數**而不是本頁列出的筆數（體檢 M10）：逐台清單有 200 筆上限，
+    // 拿截斷後的長度當摘要會讓「我到底影響了多少」少報，而那正是這個操作最需要準確的數字
     const summary = document.createElement('div');
-    summary.className = 'mb-3 small';
+    summary.className = 'mb-3 small fw-semibold';
     const overwriteDays = targets.reduce((sum, h) => sum + h.overwriteDayCount, 0);
-    summary.textContent = `將標記 ${targets.length} 台主機、共 ${targets.reduce((sum, h) => sum + h.dayCount, 0)} 天` +
-        (overwriteDays > 0 ? `（其中 ${overwriteDays} 天原本標著處理中／觀察中，會被覆蓋）` : '') +
-        (skipped.length > 0 ? `；${skipped.length} 台略過` : '');
+    const affectedHosts = preview.totalHostCount - preview.skippedHostCount;
+    summary.textContent = `將標記 ${formatNumber(affectedHosts)} 台主機、共 ${formatNumber(preview.totalDayCount)} 天` +
+        (overwriteDays > 0 ? `（列出的主機中有 ${overwriteDays} 天原本標著處理中／觀察中，會被覆蓋）` : '') +
+        (preview.skippedHostCount > 0 ? `；${formatNumber(preview.skippedHostCount)} 台略過` : '');
     form.appendChild(summary);
+
+    if (preview.truncated) {
+        const truncNote = document.createElement('div');
+        truncNote.className = 'lf-hint mb-3';
+        truncNote.textContent = `下方只列出前 ${preview.hosts.length} 台（共 ${formatNumber(preview.totalHostCount)} 台）——`
+            + '清單僅供抽查，實際套用範圍以上方數字為準。';
+        form.appendChild(truncNote);
+    }
 
     // 逐主機明細：略過的也列出來，「沒被處理到」與「不存在」要分得清楚
     const table = document.createElement('div');
@@ -963,8 +1080,18 @@ function renderBulkCloseForm(body, group, preview) {
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary';
     submit.textContent = '套用';
-    submit.disabled = targets.length === 0;
+    // 上限用總數判斷，不是本頁列出的筆數——列表被截斷不代表可以送出更多
+    const overLimit = preview.totalDayCount > BULK_CLOSE_DAY_LIMIT;
+    submit.disabled = targets.length === 0 || overLimit;
     form.appendChild(submit);
+
+    if (overLimit) {
+        const limitNote = document.createElement('div');
+        limitNote.className = 'alert alert-danger py-2 mt-3 mb-0 small';
+        limitNote.textContent = `本次將寫入 ${formatNumber(preview.totalDayCount)} 筆，超過單次上限 `
+            + `${formatNumber(BULK_CLOSE_DAY_LIMIT)} 筆。請縮小日期區間或改用更精確的問題條件，分次執行。`;
+        form.appendChild(limitNote);
+    }
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -986,14 +1113,17 @@ function renderBulkCloseForm(body, group, preview) {
                 note: noteInput.value.trim()
             });
 
-            toast(`已標記 ${result.updatedHostCount} 台主機、共 ${result.updatedDayCount} 天` +
-                  (result.skipped.length > 0 ? `；${result.skipped.length} 台略過` : ''), 'success', 6000);
+            toast(`已標記 ${formatNumber(result.updatedHostCount)} 台主機、共 ${formatNumber(result.updatedDayCount)} 天` +
+                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : ''), 'success', 6000);
 
             if (statusSelect.value === 'false_positive') {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
             }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            // 影響範圍的追溯出口（體檢 X6）：批次寫入沒有復原機制，至少要查得到影響了哪些。
+            // 導向依問題視角並鎖定同一個問題與期間，剛寫入的結論就在那裡逐台可查
+            showBulkCloseTraceLink(result);
             search();
         } catch {
             restore();
@@ -1001,6 +1131,29 @@ function renderBulkCloseForm(body, group, preview) {
     });
 
     body.appendChild(form);
+}
+
+/**
+ * 統一標記單次可寫入的主機日上限——與後端 IssueHandlingCommandService.MaxBulkCloseDayWrites
+ * 同一個數字。**前端擋是為了在按下去之前就講清楚**（後端仍會擋，那是防繞過的實際防線）：
+ * 讓使用者填完原因、按下套用之後才收到「超過上限」，等於白填一次。
+ */
+const BULK_CLOSE_DAY_LIMIT = 5000;
+
+/**
+ * 影響範圍的追溯連結（體檢 X6）：批次寫入沒有「上一步／復原」，成本高不做；
+ * 但「影響了哪些」必須查得回去。這裡給一個帶問題與期間的依問題視角連結，
+ * 點進去展開就是剛才被寫入的那些主機日。
+ */
+function showBulkCloseTraceLink(result) {
+    const params = new URLSearchParams({ view: 'issue', source: result.source, eventId: String(result.eventId) });
+    if (result.from) params.set('from', result.from);
+    if (result.to) params.set('to', result.to);
+
+    const link = document.createElement('a');
+    link.href = `/records?${params.toString()}`;
+    link.textContent = '檢視這次影響的清單';
+    toast(link, 'info', 10000);
 }
 
 function bulkCloseStatusCell(host) {
@@ -1036,9 +1189,9 @@ async function loadBulkAssignForm(group, body) {
     if (filters.from) params.set('from', filters.from);
     if (filters.to) params.set('to', filters.to);
 
-    let hosts, users, groups;
+    let preview, users, groups;
     try {
-        [hosts, users, groups] = await Promise.all([
+        [preview, users, groups] = await Promise.all([
             api.get(`/api/handling/issue-cases/preview?${params.toString()}`, { silent: true }),
             api.get('/api/admin/users', { silent: true }),
             // 群組指派（docs/archive/FEEDBACK-10-PLAN.md §12）：一次把整個問題的主機分攤給一個群組的成員
@@ -1053,7 +1206,7 @@ async function loadBulkAssignForm(group, body) {
         return;
     }
 
-    renderBulkAssignForm(body, group, hosts, users, groups);
+    renderBulkAssignForm(body, group, preview, users, groups);
 }
 
 /**
@@ -1064,15 +1217,27 @@ async function loadBulkAssignForm(group, body) {
  *   - 改派（§9）：已有他人進行中案件的主機，勾「改派」才換人，否則維持原處理人
  *   - 分攤（§12）：指派對象選「使用者群組」時，把主機分給群組成員（輪流或依負載）
  */
-function renderBulkAssignForm(body, group, hosts, users, groups) {
+function renderBulkAssignForm(body, group, preview, users, groups) {
     body.replaceChildren();
 
+    const hosts = preview.hosts;
     if (hosts.length === 0) {
         renderEmpty(body, { title: '目前查詢範圍內沒有受影響的主機' });
         return;
     }
 
     const form = document.createElement('form');
+
+    // 逐台清單有 200 筆上限（體檢 M10）：常見問題在 6000 台環境會把 modal 塞爆。
+    // 截斷必須說出來，而且要講清楚「本次只會指派列出的這些」——
+    // 靜默截斷會讓使用者以為整批都指派了
+    if (preview.truncated) {
+        const truncNote = document.createElement('div');
+        truncNote.className = 'alert alert-warning py-2 mb-3';
+        truncNote.textContent = `這個問題共影響 ${formatNumber(preview.totalHostCount)} 台主機，`
+            + `本次只列出並指派前 ${hosts.length} 台。其餘主機請調整篩選條件後分批指派。`;
+        form.appendChild(truncNote);
+    }
 
     // §6：講清楚「一次性 vs 持續」——指派會建立案件，這些主機之後同問題的新風險日會自動掛進
     // 案件並同步狀態，直到結案（不是只處理當下這些日子）
@@ -1384,6 +1549,18 @@ function renderBulkAssignForm(body, group, hosts, users, groups) {
                     '只看得到被指派的這個問題。若需要完整權限，請至「群組與授權」調整。', 'warning', 10000);
             }
 
+            // 被指派者**動不了**（體檢 H1）：與「看不到」是兩件事，分開講。
+            // 看不到還能被授與範圍；動不了則是工作進了對方清單、對方做不了任何事，
+            // 而指派的人過去完全不知情
+            if (result.assigneeCannotHandle?.length) {
+                const detail = result.assigneeCannotHandle
+                    .map(a => `${a.handlerName}（${a.hostCount} 台）`)
+                    .join('、');
+                toast(`${detail} 沒有「處理」能力，收到交辦後無法回覆處理狀態。` +
+                    '指派已完成；若要讓對方能處理，請至「群組與授權」把他加入具處理能力的群組，' +
+                    '或在主機頁指定為負責人。', 'warning', 12000);
+            }
+
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
             currentPage = 1;
             search();
@@ -1524,7 +1701,14 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
 function csvHeader() {
     if (currentView === 'host') return ['主機', '高風險', '中風險', '低風險', '關聯訊號', '類型', '最新日期', '最新狀況'];
     if (currentView === 'date') return ['日期', '主機數', '高風險', '中風險', '低風險', '關聯訊號', '類型'];
-    if (currentView === 'issue') return ['來源', 'Event ID', '分類', '嚴重度', '主機數', '風險日數', '總次數', '最近出現', '處理概況', '處理人'];
+    // 依問題視角（§10.3）：「涵蓋範圍」與「出現密度」在畫面上是合併字串（好讀），
+    // 匯出時**拆成獨立欄位**——CSV 是給人貼進試算表再排序／樞紐的，
+    // `2026-05-06 ~ 2026-07-28` 與 `3/98` 這種合併字串在 Excel 裡是死的
+    if (currentView === 'issue') {
+        return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
+            '首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '風險日數', '總次數', '處理概況', '處理人'];
+    }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
 }
 
@@ -1539,8 +1723,12 @@ function csvRow(item) {
             item.correlationHosts, cats(item.categories)];
     }
     if (currentView === 'issue') {
-        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category, severityName(item.maxSeverity),
-            item.hostCount, item.dayCount, item.totalCount, item.lastSeen,
+        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category,
+            severityName(item.maxSeverity), item.elevatesDayRisk ? '是' : '',
+            item.hostCount,
+            item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
+            item.activeDays, item.periodDays,
+            item.dayCount, item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
     const handler = item.handlerName

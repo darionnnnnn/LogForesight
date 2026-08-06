@@ -31,8 +31,11 @@ public class HostsController : ControllerBase
     /// ids：依主機 Id 精確取回（不受 20 筆上限），供已選主機（例如網址帶入的 hostIds）
     /// 解析回顯示名稱使用。兩者皆未提供時回全部（既有行為，向下相容）。
     /// </summary>
+    /// <summary>autocomplete 的顯示上限（§5.4 D-4）</summary>
+    public const int AutocompleteLimit = 20;
+
     [HttpGet]
-    public ApiResponse<List<VisibleHostDto>> GetVisibleHosts([FromQuery] string? query = null, [FromQuery] string? ids = null)
+    public ApiResponse<VisibleHostListDto> GetVisibleHosts([FromQuery] string? query = null, [FromQuery] string? ids = null)
     {
         var hosts = _visibility.GetVisibleHosts().Where(h => h.Active);
 
@@ -47,20 +50,27 @@ public class HostsController : ControllerBase
             hosts = hosts.Where(h => h.HostName.Contains(query, StringComparison.OrdinalIgnoreCase));
         }
 
-        IEnumerable<WebHost> ordered = hosts.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrWhiteSpace(query)) ordered = ordered.Take(20);
+        var matched = hosts.OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase).ToList();
 
-        var result = ordered
-            .Select(h => new VisibleHostDto
-            {
-                HostId = h.HostId,
-                HostName = h.HostName,
-                RoleDesc = h.RoleDesc,
-                LastReportAt = h.LastReportAt
-            })
-            .ToList();
+        // 總數在截斷**之前**算（體檢 X4）：畫面要能說出「顯示前 20 筆，共 N 筆符合」，
+        // 只回截斷後的清單等於讓使用者以為符合的就只有這些
+        var truncate = !string.IsNullOrWhiteSpace(query) && matched.Count > AutocompleteLimit;
+        var shown = truncate ? matched.Take(AutocompleteLimit) : matched;
 
-        return ApiResponse<List<VisibleHostDto>>.Ok(result);
+        return ApiResponse<VisibleHostListDto>.Ok(new VisibleHostListDto
+        {
+            Total = matched.Count,
+            Truncated = truncate,
+            Items = shown
+                .Select(h => new VisibleHostDto
+                {
+                    HostId = h.HostId,
+                    HostName = h.HostName,
+                    RoleDesc = h.RoleDesc,
+                    LastReportAt = h.LastReportAt
+                })
+                .ToList()
+        });
     }
 
     /// <summary>

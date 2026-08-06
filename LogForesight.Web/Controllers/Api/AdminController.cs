@@ -125,6 +125,35 @@ public class AdminController : ControllerBase
         return ApiResponse<PagedResult<HostDto>>.Ok(_hosts.GetHosts(request));
     }
 
+    /// <summary>
+    /// 「全選符合目前篩選的主機」（體檢 X3）：與清單頁共用同一組篩選參數與同一份篩選實作，
+    /// 因此畫面說「符合 N 台」與實際選到的必然是同一批。回 id 清單讓寫入仍走既有的
+    /// 批次改群組端點（同一份逐台檢查與同一份彙總稽核）。
+    /// </summary>
+    [HttpGet("hosts/ids")]
+    public ApiResponse<HostIdListDto> GetMatchingHostIds(
+        [FromQuery] string? query,
+        [FromQuery] string status = "",
+        [FromQuery] string? sentinel = null,
+        [FromQuery] string? groupIds = null,
+        [FromQuery] string? os = null,
+        [FromQuery] string sort = "name",
+        [FromQuery] string dir = "asc")
+    {
+        var request = new HostSearchRequest
+        {
+            Query = query,
+            Status = status,
+            Sentinel = sentinel,
+            GroupIds = QueryStringParsing.ParseLongs(groupIds),
+            Os = os,
+            Sort = sort,
+            Dir = dir
+        };
+
+        return ApiResponse<HostIdListDto>.Ok(_hosts.MatchingHostIds(request));
+    }
+
     [HttpPost("hosts")]
     public ApiResponse<HostDto> SaveHost([FromBody] SaveHostRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SaveHost(request));

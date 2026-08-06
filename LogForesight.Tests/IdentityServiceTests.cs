@@ -39,7 +39,8 @@ public class IdentityServiceTests
             _users, _groups, _hosts,
             provider ?? new StubAuthenticationProvider(),
             new ServerAdminAuthenticator(settings),
-            _audit);
+            _audit,
+            new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
     }
 
     [Fact]

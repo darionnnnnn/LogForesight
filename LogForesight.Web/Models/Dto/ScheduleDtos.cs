@@ -49,6 +49,28 @@ public class ScheduleStatusDto
     public DateTime? LastRunEndedAt { get; set; }
 }
 
+/// <summary>
+/// 給**一般使用者**看的執行中告示（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+///
+/// 與 <see cref="ScheduleStatusDto"/> 刻意不共用：那個是維運視角（觸發來源、下次觸發時間、
+/// 上次成敗、可否停止），需要 DevMonitor／Maintain；這個只回答「現在慢是不是因為在跑分析、
+/// 跑到哪了」，任何登入者都看得到，也不透露排程設定。
+///
+/// 分析跑在站台同一個行程（本輪定案不拆 worker），畫面在分析期間變慢是**預期內的代價**——
+/// 這一行告示是那個代價的配套，不是加值功能：使用者知道原因就不會把它當故障回報。
+/// </summary>
+public class RunActivityDto
+{
+    public bool IsRunning { get; set; }
+
+    /// <summary>已完成／總數。Total=0＝還沒有量化進度可講（掃描中／清理中），前端只講「進行中」</summary>
+    public int Done { get; set; }
+    public int Total { get; set; }
+
+    /// <summary>進度的量詞（「台」／「天」）——由後端依階段決定，前端不猜</summary>
+    public string? UnitText { get; set; }
+}
+
 /// <summary>執行前預覽：範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4，複用
 /// HostListSelection 的清單語意，與主機頁「不靜默少幾台」同一原則）</summary>
 public class RunPreviewDto

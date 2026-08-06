@@ -44,6 +44,23 @@ public class Sentinel
     /// </summary>
     public string Os { get; set; } = WebHost.OsWindows;
 
+    /// <summary>
+    /// 以 ESM 事件來源目錄（<c>/SentinelRESTServices/objects/eventsource</c>）取代事件掃描來探索主機
+    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）。**預設 false**。
+    ///
+    /// ESM 目錄本來是探索的正解——一次唯讀查詢就拿到已註冊主機清單，而且包含
+    /// **目前完全沒在回報的主機**（事件掃描原理上看不到那些，見 §3.4 的涵蓋保證）。
+    /// 但本環境的探索帳號被 401/403 拒絕（權限問題，不是 API 不存在），
+    /// 因此**回應格式在本環境無法驗證**——不能自動信任一個沒驗證過的解析結果，
+    /// 錯了會讓主機清單靜默變形。
+    ///
+    /// 所以做成 per-Sentinel 的開關（不同 Sentinel 的帳號權限本來就可能不同），
+    /// 預設關閉、有權限的環境自行開啟；開啟前應先在「診斷」分頁確認步驟 6
+    /// 取得得到事件來源清單。開著但每次都退回事件掃描時會持續發出警告——
+    /// 刻意吵，逼人把開關關掉或把回應格式回報回來定案。
+    /// </summary>
+    public bool UseEsmDirectory { get; set; }
+
     /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>
     public bool CanDiscover => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(PasswordEnc);
 }

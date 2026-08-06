@@ -22,11 +22,13 @@ public sealed class EfJsonBlobStore
     private readonly Func<LfDbContext> _contextFactory;
     private readonly string _key;
     private readonly object _lock = new();
+    private readonly SqlPerformanceMonitor? _performance;
 
-    public EfJsonBlobStore(Func<LfDbContext> contextFactory, string key)
+    public EfJsonBlobStore(Func<LfDbContext> contextFactory, string key, SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
         _key = key;
+        _performance = performance;
     }
 
     /// <summary>供 log／Location 顯示（如「sqlserver:users」）</summary>
@@ -35,14 +37,22 @@ public sealed class EfJsonBlobStore
     /// <summary>目前內容；不存在回 null（首次執行的正常情況）</summary>
     public string? Read()
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         using var ctx = _contextFactory();
-        return ctx.Blobs.AsNoTracking().FirstOrDefault(b => b.BlobKey == _key)?.Content;
+        var content = ctx.Blobs.AsNoTracking().FirstOrDefault(b => b.BlobKey == _key)?.Content;
+        _performance?.Record($"blob:{_key}:Read", sw.ElapsedMilliseconds);
+        return content;
     }
 
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
     public TResult Mutate<TResult>(Func<string?, (string content, TResult result)> mutation)
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
+        //
+        // 這把鎖是全站寫入處理狀態時的實際排隊點（docs/SCALE-ISSUE-FIRST-PLAN.md §8.4）：
+        // 整份 blob 越大，持有時間越長，其他請求就排得越久。量測涵蓋「等鎖＋讀改寫」
+        // 整段——只量鎖內時間會漏掉真正讓使用者感覺卡住的那一半。
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         lock (_lock)
         {
             const int maxAttempts = 5;
@@ -58,7 +68,7 @@ public sealed class EfJsonBlobStore
                     using var probe = _contextFactory();
                     var strategy = probe.Database.CreateExecutionStrategy();
 
-                    return strategy.Execute(() =>
+                    var outcome = strategy.Execute(() =>
                     {
                         // 重試時必須用全新 context——同一個 context 的變更追蹤會殘留上一次嘗試
                         // 加入的列，重試時再 Add 一次會造成重複追蹤
@@ -80,6 +90,9 @@ public sealed class EfJsonBlobStore
                         tx.Commit();
                         return result;
                     });
+
+                    _performance?.Record($"blob:{_key}:Mutate", sw.ElapsedMilliseconds);
+                    return outcome;
                 }
                 catch (Exception ex) when (attempt < maxAttempts && IsTransient(ex))
                 {

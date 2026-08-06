@@ -16,6 +16,14 @@ public class UserDto
 
     /// <summary>最近一次登入時間；null＝從未登入（docs/archive/FEEDBACK-11-PLAN.md §3）</summary>
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// 身為負責人的主機數（體檢 H3）。**清單頁必須看得見這條授權路徑**——
+    /// 回饋第十一輪 §2b 讓負責人成為群組之外的第二條授權路徑之後，
+    /// 「沒有群組」不再等於「沒有權限」，只看群組欄的管理者會誤判
+    /// 「這個人沒權限，可以不用管」。
+    /// </summary>
+    public int OwnedHostCount { get; set; }
 }
 
 /// <summary>
@@ -352,6 +360,39 @@ public class VisibleHostDto
     public string HostName { get; set; } = string.Empty;
     public string RoleDesc { get; set; } = string.Empty;
     public DateTime? LastReportAt { get; set; }
+}
+
+/// <summary>
+/// 主機查詢結果（體檢 X4）。**為什麼不直接回一個陣列**：autocomplete 的結果有 20 筆上限，
+/// 只回陣列的話畫面無從得知「還有更多」——2000 台環境輸入「SRV」可能有 500 台符合，
+/// 使用者看到 20 筆會合理地認為只有這些。這與本專案自己的「涵蓋範圍要誠實顯示」原則相牴觸
+/// （掃描結果、隱藏問題數都有誠實申報，唯獨這裡沒有）。
+/// </summary>
+/// <summary>
+/// 「全選符合目前篩選的主機」的結果（體檢 X3）。回 id 清單而不是直接執行寫入：
+/// 批次改群組的既有端點會逐台檢查（已併入的主機略過並回報）並寫一筆彙總稽核，
+/// 讓全選走同一條寫入路徑，就不會有第二套規則與第二份稽核格式。
+/// </summary>
+public class HostIdListDto
+{
+    public List<long> HostIds { get; set; } = new();
+
+    /// <summary>符合篩選的主機總數（截斷前）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝超過單次上限，畫面必須說明要分批</summary>
+    public bool Truncated { get; set; }
+}
+
+public class VisibleHostListDto
+{
+    public List<VisibleHostDto> Items { get; set; } = new();
+
+    /// <summary>符合條件的總數（未受上限截斷）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝顯示的筆數少於 Total，畫面必須說出來</summary>
+    public bool Truncated { get; set; }
 }
 
 /// <summary>主機群組篩選選項（§5.4 D-4）——比完整 HostGroupDto 精簡，一般使用者用不到 MemberCount/Active</summary>

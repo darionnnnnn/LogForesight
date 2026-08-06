@@ -30,8 +30,11 @@
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
-  探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」——`repip:{prefix}.*`
-  前綴萬用字元查詢＋自適應時間窗，完全不碰 ESM API（權限被拒）與全站 24h distinct（不可行）。
+  探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
+  （權限被拒）與全站 24h distinct（不可行）。**2026-08-06 涵蓋保證改版**：移除自適應時間窗
+  （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
+  （限 System/Application 頻道，成本正比主機數而非事件量）＋殘差輪掃（觸頂時排除已見主機重查）
+  ＋全事件短窗補充掃描，見 docs/NETIQ-API-REFERENCE.md §3.4。
   **尚未經過真實 Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
@@ -43,6 +46,11 @@
      批次大小。
   5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
   6. 8.5 apidoc 是否有伺服器端聚合端點（有的話 Q1 查詢可以改走聚合，目前是本地聚合的退路）。
+  6b. **`NOT` 子句（`AND NOT (repip:a OR repip:b …)`）是否被此環境的 Lucene 接受**——
+      探索的殘差輪掃與重掃增量都靠它（docs/NETIQ-API-REFERENCE.md §3.4）。
+      probe 只驗過 OR 子句、片語、前綴萬用字元，沒驗過 NOT。實作已加偵測
+      （取回事件含已排除的 repip 即判定未生效、停止輪掃並顯性警告），
+      試點時核對是否曾出現該警告。
   7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
   8. token 有效期長短（決定長輪收集中是否需要主動換發）。
   9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
@@ -129,11 +137,14 @@
   或改由 `RecordHandlingLog` 的 `case_reassign` 反查——兩種作法都要先想清楚
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
-- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合（主機數／風險日數／
-  總次數／最高嚴重度），與 `BuildHostRanking` 同一層級；處理概況要逐問題查 handling 標記，
-  那是依問題視角才做的事（點列下鑽就看得到）。觸發條件：若使用者實測後認為儀表板就該
-  直接看到「幾台還沒處理」，應在 `DashboardService` 既有的 `GetTodo` 標記查詢上共用一份
-  逐問題投影，而不是為這張卡另外再撈一次跨期間的標記。
+- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合，處理概況要逐問題查
+  handling 標記。**2026-08-06 更新**：`IssueRankingDto` 已備妥 `OpenHostCount`／
+  `ResolvedHostCount` 兩個欄位與 `IssueRankingBuilder` 的 rollup 參數，
+  `IIssueAggregateQuery` 也已回傳該群組的相異完整簽章（join 處理狀態的鍵）——
+  剩下的只是把 `lf_issue_handling` 的逐簽章彙總接上去，並依 §10.6 讓「全部主機都已有結論」
+  的問題退出重點清單（含卡底「另有 N 個問題已有結論（未列入）」的誠實出口）。
+  屆時一併做 **D6 乙案**（SCALE-FIX-PLAN-2026-08-06.md）：報表問題排行套用「顯示範圍」
+  選擇器——同一次 join 的事，甲案的常駐說明文字屆時移除。
 
 ## 使用方式
 

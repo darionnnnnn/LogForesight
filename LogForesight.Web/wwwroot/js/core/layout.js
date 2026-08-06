@@ -140,11 +140,20 @@ function renderNav(user) {
                 : currentPath.startsWith(item.resolvedHref);
             if (isActive) link.classList.add('is-active');
 
+            // 「我的交辦」未結案數（體檢 M7）：一般使用者是每天用得最頻繁的角色，
+            // 但過去唯一知道自己有工作的方法是主動點進去——首頁 KPI 顯示的是全站待辦，
+            // 指派之後日狀態已推進成處理中，他手上有幾件在畫面上完全看不出來
+            if (item.label === '我的交辦' && user?.userId > 0) {
+                link.dataset.badgeSource = 'my-work';
+            }
+
             itemsWrap.appendChild(link);
         }
 
         nav.appendChild(itemsWrap);
     }
+
+    loadMyWorkBadge(user);
 
     if (document.querySelector('.lf-sidebar__section--toggle')) {
         autoCollapseIfNeeded();
@@ -171,7 +180,42 @@ function sectionStorageKey(label) {
     return `lf.sidebar.collapsed.${label}`;
 }
 
+/**
+ * 側欄「我的交辦」的未結案數徽章（體檢 M7）。
+ *
+ * 資料現成——`handlers/{id}/workload` 的 KPI 就是這個數字，不必新增端點。
+ * **失敗完全靜默**：徽章是加值資訊，載不到就不顯示；為了一個數字讓側欄出現錯誤提示
+ * （或更糟：擋住選單渲染）是本末倒置。
+ */
+async function loadMyWorkBadge(user) {
+    const link = document.querySelector('[data-badge-source="my-work"]');
+    if (!link || !user?.userId) return;
+
+    try {
+        const workload = await api.get(`/api/handlers/${user.userId}/workload`, { silent: true });
+        const count = (workload.openCaseCount ?? 0) + (workload.unresolvedDayCount ?? 0);
+        if (count <= 0) return;
+
+        const badge = document.createElement('span');
+        badge.className = 'lf-sidebar__badge';
+        badge.textContent = String(count);
+        badge.title = `未結案：進行中案件 ${workload.openCaseCount} 件、未結案風險日 ${workload.unresolvedDayCount} 天`;
+        link.appendChild(badge);
+
+        if (workload.overdueCount > 0) badge.classList.add('lf-sidebar__badge--overdue');
+    } catch {
+        // 靜默：見函式註解
+    }
+}
+
 function bindSectionToggle(toggle, itemsWrap, label) {
+    // aria-controls／aria-expanded（體檢 L9）：過去只在點擊後才設 aria-expanded，
+    // 預設展開時屬性根本不存在——螢幕閱讀器讀到的是一顆沒有狀態的按鈕。
+    // 這裡先給明確的初始值，並把按鈕與它控制的區塊關聯起來。
+    if (!itemsWrap.id) itemsWrap.id = `lf-nav-section-${Math.random().toString(36).slice(2, 8)}`;
+    toggle.setAttribute('aria-controls', itemsWrap.id);
+    toggle.setAttribute('aria-expanded', 'true');
+
     const manual = localStorage.getItem(sectionStorageKey(label));
     if (manual === 'true') setSectionCollapsed(toggle, itemsWrap, true);
 

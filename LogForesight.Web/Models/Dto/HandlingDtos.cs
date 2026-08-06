@@ -234,6 +234,22 @@ public class IssueCasePreviewHostDto
 }
 
 /// <summary>
+/// 批次指派 modal 的受影響主機預覽（體檢 M10）。與統一標記同一個理由改成有上限的結構：
+/// DCOM 10016 這種問題在 6000 台環境幾乎每台都有，直接回全部會把 modal 塞爆。
+/// </summary>
+public class IssueCaseAssignPreviewDto
+{
+    /// <summary>本次顯示的主機（可能被截斷）</summary>
+    public List<IssueCasePreviewHostDto> Hosts { get; set; } = new();
+
+    /// <summary>受影響主機總數（截斷前）</summary>
+    public int TotalHostCount { get; set; }
+
+    /// <summary>true＝ <see cref="Hosts"/> 少於 <see cref="TotalHostCount"/>，畫面必須說明</summary>
+    public bool Truncated { get; set; }
+}
+
+/// <summary>
 /// 單台主機的指派對象（docs/archive/FEEDBACK-10-PLAN.md §12）：群組分攤時每台主機各有處理人，
 /// 單人指派時全部都是同一個人。API 因此只有一種形狀，不必為「指派一個人」與
 /// 「指派一群人」各開一支端點。
@@ -358,7 +374,24 @@ public class IssueBulkClosePreviewDto
     public string? From { get; set; }
     public string? To { get; set; }
 
+    /// <summary>本次顯示的主機（可能被 <see cref="Truncated"/> 截斷）</summary>
     public List<IssueBulkCloseHostDto> Hosts { get; set; } = new();
+
+    /// <summary>
+    /// 受影響主機總數（截斷前，體檢 M10）。**統一標記尤其需要這個數字**：
+    /// 它按下去是跨主機跨日的寫入，使用者需要的是「我到底影響了多少」的正確感知，
+    /// 而不是一份捲不完、還可能把瀏覽器塞爆的清單。
+    /// </summary>
+    public int TotalHostCount { get; set; }
+
+    /// <summary>將被標記的總日數（截斷前）——比主機數更能反映實際寫入規模</summary>
+    public int TotalDayCount { get; set; }
+
+    /// <summary>true＝<see cref="Hosts"/> 少於 <see cref="TotalHostCount"/>，畫面必須說明</summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>整台被略過的主機數（截斷前）</summary>
+    public int SkippedHostCount { get; set; }
 }
 
 public class BulkCloseIssueResultDto
@@ -369,8 +402,20 @@ public class BulkCloseIssueResultDto
     /// <summary>實際被標記的主機日數</summary>
     public int UpdatedDayCount { get; set; }
 
-    /// <summary>整台略過的主機（含原因）</summary>
+    /// <summary>整台略過的主機（含原因；同預覽，逐台清單受上限截斷）</summary>
     public List<IssueBulkCloseHostDto> Skipped { get; set; } = new();
+
+    /// <summary>略過的主機總數（截斷前）</summary>
+    public int SkippedHostCount { get; set; }
+
+    /// <summary>
+    /// 這次操作的稽核追溯連結參數（體檢 X6）：批次寫入沒有復原機制，
+    /// 但**至少要查得到影響了哪些**。前端據此組成「檢視這次影響的清單」連結。
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string? From { get; set; }
+    public string? To { get; set; }
 }
 
 public class BulkIssueStatusResultDto
@@ -427,6 +472,12 @@ public class BulkAssignIssueCaseResultDto
     /// 對方不是這台主機的一般授權對象，看到的只有被指派的那個問題。
     /// </summary>
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
+
+    /// <summary>
+    /// 被指派者**沒有處理能力**（體檢 H1）：指派前的檢查過去只做了「他看得到這台主機嗎」，
+    /// 沒做「他動得了嗎」。交辦出去的工作進了對方清單、對方做不了任何事，指派的人也不知情。
+    /// </summary>
+    public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
 }
 
 /// <summary>「這位處理人看不到這台主機」的提示素材（§7）</summary>
@@ -434,6 +485,26 @@ public class AssigneeNoAccessDto
 {
     public string HostName { get; set; } = string.Empty;
     public string HandlerName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 被指派者**沒有處理能力**（體檢 H1）。
+///
+/// 與 <see cref="AssigneeNoAccessDto"/> 是兩件不同的事，刻意分開回報：
+///   - NoAccess＝「他看不到這台主機」——指派仍成立，他會取得案件範圍的檢視權；
+///   - CannotHandle＝「他動不了」——工作進了對方清單、對方**做不了任何事**，
+///     而指派的人完全不知情。
+///
+/// **不擋**：把工作知會給主管是合理用法。問題不在能不能指派，
+/// 而在於指派的人不知道對方動不了——所以要講。
+/// 一個處理人只回報一次（不逐台重複），清單會很長時對決策沒有幫助。
+/// </summary>
+public class AssigneeCannotHandleDto
+{
+    public string HandlerName { get; set; } = string.Empty;
+
+    /// <summary>指派給他的主機數（讓操作者判斷影響多大）</summary>
+    public int HostCount { get; set; }
 }
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────

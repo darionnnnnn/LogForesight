@@ -29,7 +29,8 @@ public class UserAdminServiceTests
         new VisibilityService(
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
             _users, _groups, _access, _hosts, _cases),
-        _audit);
+        _audit,
+        new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
 
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 
@@ -291,6 +292,37 @@ public class UserAdminServiceTests
         Assert.Empty(detail.VisibleHosts);
         Assert.Empty(detail.Capabilities);
         Assert.Single(detail.AssignmentHistory);
+    }
+
+    /// <summary>
+    /// 體檢 H3：清單頁必須看得見「負責人」這條授權路徑。
+    /// 回饋第十一輪 §2b 讓負責人成為群組之外的第二條授權路徑之後，「沒有群組」不再等於
+    /// 「沒有權限」——只看群組欄的管理者會誤判「這個人沒權限，可以不用管」。
+    /// </summary>
+    [Fact]
+    public void GetUsers_帶出負責主機數()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", Active = true });
+        var other = _users.Upsert(new WebUser { Account = "DOMAIN\\other", Active = true });
+
+        _hosts.Upsert(new WebHost { HostName = "SRV-A", Active = true, OwnerUserIds = new List<long> { owner.UserId } });
+        _hosts.Upsert(new WebHost { HostName = "SRV-B", Active = true, OwnerUserIds = new List<long> { owner.UserId } });
+
+        var users = Create().GetUsers().ToDictionary(u => u.UserId);
+
+        Assert.Equal(2, users[owner.UserId].OwnedHostCount);
+        Assert.Equal(0, users[other.UserId].OwnedHostCount);
+    }
+
+    /// <summary>停用主機不算——它已從全站可見範圍排除，算進去會讓盤點數字虛高</summary>
+    [Fact]
+    public void GetUsers_負責主機數不含停用主機()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "SRV-A", Active = true, OwnerUserIds = new List<long> { owner.UserId } });
+        _hosts.Upsert(new WebHost { HostName = "SRV-OFF", Active = false, OwnerUserIds = new List<long> { owner.UserId } });
+
+        Assert.Equal(1, Create().GetUsers().Single(u => u.UserId == owner.UserId).OwnedHostCount);
     }
 
     [Fact]

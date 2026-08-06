@@ -32,6 +32,25 @@ public class LfDbContext : DbContext
     /// <summary>append-only 逐行 JSONL（稽核/執行/匯入/處理歷程，↔ EfJsonLogStore）</summary>
     public DbSet<LogLineRow> LogLines => Set<LogLineRow>();
 
+    // ── 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）──────────────
+    //
+    // 這三份資料原本各是一個整份 JSON blob（lf_blobs 的一列）。它們與 hosts／users 的差別在於
+    // **會隨「主機數 × 天數」成長**：6000 台 × 90 天下 issue_handling 約 324 萬列，
+    // 序列化後的 C# string 逼近 .NET 的 2 GB 單一物件上限（實測見規劃 §8.5.1，
+    // 100 萬列時單次標記已需 6.8 秒、配置 2.4 GB）——那是硬失敗而不是線性劣化。
+    //
+    // hosts／users／groups 這類「隨組織規模成長」的資料維持 blob（數千筆上限內），
+    // 這一刀刻意只切會隨天數成長的三份。
+
+    /// <summary>問題層級處理狀態（↔ lf_issue_handling，原 blob key=issue_handling）</summary>
+    public DbSet<IssueHandlingRow> IssueHandlings => Set<IssueHandlingRow>();
+
+    /// <summary>問題案件（↔ lf_issue_cases，原 blob key=issue_cases）</summary>
+    public DbSet<IssueCaseRow> IssueCases => Set<IssueCaseRow>();
+
+    /// <summary>日層級處理狀態快照（↔ lf_record_handling，原 blob key=record_handling）</summary>
+    public DbSet<RecordHandlingRow> RecordHandlings => Set<RecordHandlingRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -97,11 +116,115 @@ public class LfDbContext : DbContext
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20);
             e.Property(x => x.SeverityRank).HasColumnName("severity_rank");
 
+            // 問題事實表的聚合維度（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：
+            // 這張表原本只當「篩選子表」用（EXISTS 子查詢），拿不到主機與日期就無法在 SQL 端
+            // 回答「這個問題影響幾台、跨哪段期間」——那正是需求「主視角改成問題」要的兩個數字。
+            // 這四欄自父列與問題本身去正規化而來，寫入時一併填好（同 lf_record_categories
+            // 「寫入時算好、查詢端直接讀」的既有分工，WEB-SPEC §10.3）。
+            e.Property(x => x.HostId).HasColumnName("host_id").HasDefaultValue(0L);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);
+            e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
+            // 完整簽章的另外兩段：依問題視角以 (Source, EventId) 分組，但處理狀態是以
+            // **完整簽章**（LogName|Source|EventId|EntryType）為鍵——少了這兩欄就 join 不到
+            // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
+            e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255).HasDefaultValue(string.Empty);
+            e.Property(x => x.EntryType).HasColumnName("entry_type").HasDefaultValue(0);
+
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
             e.HasIndex(x => x.Category);
+            // 問題聚合的查詢形狀：期間 → 依簽章 GROUP BY
+            e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId });
+            e.HasIndex(x => new { x.HostId, x.RecordDate });
 
             e.HasOne<DailyRecordRow>().WithMany().HasForeignKey(x => x.RecordId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── 處理狀態三表 ──────────────────────────────────────────────────────
+        //
+        // **主機以 host_name_key（大寫正規化）為比對鍵**，不是 host_name 原值，也不是 host_id：
+        //   - 用原值不行：C# 全站以 OrdinalIgnoreCase 比對主機名，但 SQL 的 `=` 大小寫語意
+        //     依 provider collation 而異（SQLite 預設 BINARY 區分大小寫、SqlServer 常見 CI）。
+        //     同一份資料在兩個後端會有不同行為——EfAnalysisRecordStore.OwnedRows 已經為此
+        //     踩過一次坑（用 UPPER() 正規化），不該在新表再踩一次。存正規化欄位比每次
+        //     查詢都 UPPER() 更好：它走得到索引。
+        //   - 刻意**不改用 host_id**（規劃 §8.1 缺陷 3 原本提議 host_id，實作時改回）：
+        //     處理狀態的既有語意是「以**現行主機名稱**為鍵」，合併由呼叫端映射到存活主機處理
+        //     （RecordListQueryService.HostNameOf）。改鍵會連帶改變改名時的行為，
+        //     且遷移需要 name→id 解析與孤兒處理——那是另一個題目，不該夾在儲存層置換裡做。
+        //     正規化欄位已經解掉 collation 這個真正的跨後端風險。
+        //
+        // **updated_at 是並發權杖**：換掉整份 blob 之後，原本靠 lf_blobs.UpdatedAt
+        // （WEB-SPEC §10.4 的樂觀鎖）擋下的「兩個人同時標記同一個問題、後寫的靜默蓋掉先寫的」
+        // 就沒有防線了。體檢 §0 把併發衝突列為未驗證項目，若不補這一層，它會從
+        // 「未驗證」變成「確定會發生」。
+
+        b.Entity<IssueHandlingRow>(e =>
+        {
+            e.ToTable("lf_issue_handling");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.IssueKey).HasColumnName("issue_key").HasMaxLength(512);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.ActorId).HasColumnName("actor_id");
+            e.Property(x => x.ActorAccount).HasColumnName("actor_account").HasMaxLength(255);
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.CaseId).HasColumnName("case_id").HasMaxLength(64);
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            // 唯一鍵＝原 blob 的「同一 (主機, 日期, 問題) 只有一列」語意，由資料庫保證
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique();
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate });   // GetForDay
+            e.HasIndex(x => x.CaseId);                              // GetByCase
+        });
+
+        b.Entity<IssueCaseRow>(e =>
+        {
+            e.ToTable("lf_issue_cases");
+            e.HasKey(x => x.CaseId);
+            e.Property(x => x.CaseId).HasColumnName("case_id").HasMaxLength(64);
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.IssueKey).HasColumnName("issue_key").HasMaxLength(512);
+            e.Property(x => x.IssueLabel).HasColumnName("issue_label").HasMaxLength(512);
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.FirstLinkedDate).HasColumnName("first_linked_date");
+            e.Property(x => x.LastLinkedDate).HasColumnName("last_linked_date");
+            e.Property(x => x.ClosedAt).HasColumnName("closed_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.CreatedByAccount).HasColumnName("created_by_account").HasMaxLength(255);
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            // GetOpen／GetOpenForHost：同一 (主機, 問題簽章) 至多一個進行中案件的查詢形狀
+            e.HasIndex(x => new { x.HostNameKey, x.IssueKey, x.ClosedAt });
+            e.HasIndex(x => new { x.HandlerId, x.ClosedAt });   // GetOpenByHandler／GetByHandler
+        });
+
+        b.Entity<RecordHandlingRow>(e =>
+        {
+            e.ToTable("lf_record_handling");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.HandlerId).HasColumnName("handler_id");
+            e.Property(x => x.DueDate).HasColumnName("due_date");
+            e.Property(x => x.Note).HasColumnName("note");
+            e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+
+            e.HasIndex(x => new { x.HostNameKey, x.RecordDate }).IsUnique();
+            e.HasIndex(x => x.HandlerId);   // GetByHandler
+            e.HasIndex(x => x.Status);      // GetUnresolved
         });
 
         b.Entity<RiskyEventRow>(e =>
@@ -141,7 +264,13 @@ public class DailyRecordRow
     public DateTime CreatedAt { get; set; }
 }
 
-/// <summary>問題簽章列（僅供過濾的抽出欄；讀取的權威來源是 DailyRecordRow.ContentJson）。↔ lf_top_issues</summary>
+/// <summary>
+/// 問題簽章列。原本只是「供過濾的抽出欄」，自 P4 起同時是**問題聚合的事實表**
+/// （docs/SCALE-ISSUE-FIRST-PLAN.md 根因 C）——讀取單筆紀錄的權威來源仍是
+/// <see cref="DailyRecordRow.ContentJson"/>，但「這個問題影響幾台、跨哪段期間、
+/// 出現幾天」改由這張表 GROUP BY 直接回答，不再把整段期間的紀錄撈回記憶體。
+/// ↔ lf_top_issues
+/// </summary>
 public class TopIssueRow
 {
     public long IssueId { get; set; }
@@ -150,6 +279,26 @@ public class TopIssueRow
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
+
+    // ── 聚合維度（P4 新增，自父列與問題本身去正規化）──────────────────────
+
+    /// <summary>**存活主機** id（合併過的主機以 HostLookup 映射後寫入）——
+    /// 直接用紀錄自帶的 host_id 會讓同一台實體機器的墓碑列與存活列各算一台（規劃 §8.1 缺陷 2）</summary>
+    public long HostId { get; set; }
+
+    public DateTime RecordDate { get; set; }
+
+    /// <summary>當日該問題的事件次數（<see cref="LogIssueSignature.Count"/>）</summary>
+    public int EventCount { get; set; }
+
+    /// <summary>命中「重大」旗標（規劃 §10.2 維度 1 的既有缺口：這個旗標過去只在詳情頁看得到）</summary>
+    public bool ElevatesDayRisk { get; set; }
+
+    /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
+    public string LogName { get; set; } = string.Empty;
+
+    /// <summary>完整簽章的第四段（<see cref="System.Diagnostics.EventLogEntryType"/> 的整數值）</summary>
+    public int EntryType { get; set; }
 }
 
 /// <summary>風險 log 暫存一列（docs/archive/WEB-SCHEDULER-PLAN.md §2）。↔ lf_risky_events</summary>
@@ -166,6 +315,68 @@ public class RiskyEventRow
     public string Message { get; set; } = string.Empty;
     public string? RuleId { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// 主機名稱的正規化鍵：全站以 <see cref="StringComparer.OrdinalIgnoreCase"/> 比對主機名，
+/// 但 SQL 的大小寫語意依 provider collation 而異。存正規化欄位讓兩個後端行為一致，
+/// 且比每次查詢都 <c>UPPER()</c> 更好——它走得到索引。
+/// 主機名為 ASCII，<c>ToUpperInvariant</c> 等價 OrdinalIgnoreCase。
+/// </summary>
+public static class HostNameKey
+{
+    public static string Of(string hostName) => (hostName ?? string.Empty).ToUpperInvariant();
+}
+
+/// <summary>問題層級處理狀態的一列。↔ lf_issue_handling</summary>
+public class IssueHandlingRow
+{
+    public long Id { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime RecordDate { get; set; }
+    public string IssueKey { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long? ActorId { get; set; }
+    public string ActorAccount { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? CaseId { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>問題案件的一列。↔ lf_issue_cases</summary>
+public class IssueCaseRow
+{
+    public string CaseId { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public string IssueKey { get; set; } = string.Empty;
+    public string IssueLabel { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public long? HandlerId { get; set; }
+    public string? Note { get; set; }
+    public DateTime? DueDate { get; set; }
+    public DateTime FirstLinkedDate { get; set; }
+    public DateTime LastLinkedDate { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string CreatedByAccount { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>日層級處理狀態快照的一列。↔ lf_record_handling</summary>
+public class RecordHandlingRow
+{
+    public long Id { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime RecordDate { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public long? HandlerId { get; set; }
+    public DateTime? DueDate { get; set; }
+    public string? Note { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 /// <summary>webdata 整份 JSON 內容的一列（key＝store 名稱，如 "users"）。↔ lf_blobs</summary>

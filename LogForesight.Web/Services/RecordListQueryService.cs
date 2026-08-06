@@ -254,8 +254,31 @@ public class RecordListQueryService
         var lookup = new HostLookup(_hosts.GetAll());
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
+        // 處理狀態與案件**整批載入一次**（docs/SCALE-ISSUE-FIRST-PLAN.md N3）。
+        //
+        // 改版前 BuildIssueGroup 是逐群組呼叫的，而它內部各有一次 GetMany——
+        // 1000 種問題就是 2000 次查詢（blob 時代更是 2000 次整份反序列化，
+        // 2000 台環境下實測單次查詢超過 45 分鐘未返回）。
+        // **這正是需求「主視角改成問題」要用的那個畫面**，卻是全站最慢的一條路徑。
+        var allHandlings = LoadIssueHandlings(records, lookup);
+        var allCases = LoadOpenCases(records, lookup);
+
+        // 逐群組再從整批結果裡取——以 (主機, 問題鍵) 建索引，群組內查找 O(1)
+        var handlingsByHost = allHandlings
+            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var casesByHost = allCases
+            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        // 密度的分母＝查詢期間天數。篩選未指定日期時退回紀錄本身的跨度——
+        // 「2/90 天」的意義完全取決於分母是什麼，不能讓它變成一個沒有定義的數字
+        var periodDays = request.From.HasValue && request.To.HasValue
+            ? Math.Max(1, (request.To.Value.Date - request.From.Value.Date).Days + 1)
+            : records.Count == 0 ? 1 : Math.Max(1, (records.Max(r => r.Date.Date) - records.Min(r => r.Date.Date)).Days + 1);
+
         var groups = RecordQueryHelpers.GroupIssuesBySignature(records)
-            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities))
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays))
             .ToList();
 
         // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
@@ -327,17 +350,24 @@ public class RecordListQueryService
     private IssueGroupDto BuildIssueGroup(
         IGrouping<(string Source, int EventId), (DailyAnalysisRecord Record, LogIssueSignature Issue)> g,
         HostLookup lookup,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyDictionary<string, List<IssueHandling>> handlingsByHost,
+        IReadOnlyDictionary<string, List<IssueCase>> casesByHost,
+        int periodDays)
     {
         var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = g.Min(x => x.Record.Date);
         var to = g.Max(x => x.Record.Date);
         var issueKeys = g.Select(x => IssueSignatureKey.For(x.Issue)).ToHashSet(StringComparer.Ordinal);
 
-        var issueHandlings = _issueHandlings.GetMany(hostNames, from, to)
-            .Where(h => issueKeys.Contains(h.IssueKey))
+        // 自整批結果過濾，不再逐群組打 store（N3）——語意與改版前逐群組查詢逐位相同：
+        // 同樣是「這些主機、這個期間、這些問題鍵」的交集
+        var issueHandlings = hostNames
+            .SelectMany(name => handlingsByHost.TryGetValue(name, out var rows) ? rows : Enumerable.Empty<IssueHandling>())
+            .Where(h => issueKeys.Contains(h.IssueKey) && h.Date.Date >= from.Date && h.Date.Date <= to.Date)
             .ToList();
-        var openCases = _cases.GetMany(hostNames)
+        var openCases = hostNames
+            .SelectMany(name => casesByHost.TryGetValue(name, out var rows) ? rows : Enumerable.Empty<IssueCase>())
             .Where(c => issueKeys.Contains(c.IssueKey) && c.ClosedAt == null)
             .ToList();
 
@@ -396,6 +426,14 @@ public class RecordListQueryService
             DayCount = g.Select(x => (Host: HostNameOf(lookup, x.Record), Day: x.Record.Date.Date)).Distinct().Count(),
             TotalCount = g.Sum(x => x.Issue.Count),
             LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
+
+            // 時間形狀（§10.3）：全由本群組既有的紀錄推導，不必額外查詢
+            FirstSeen = from.ToString("yyyy-MM-dd"),
+            ActiveDays = g.Select(x => x.Record.Date.Date).Distinct().Count(),
+            PeriodDays = periodDays,
+            DaysSinceLastSeen = Math.Max(0, (DateTime.Today - latest.Record.Date.Date).Days),
+            ElevatesDayRisk = g.Any(x => x.Issue.ElevatesDayRisk),
+
             KnownIssue = latest.Issue.KnownIssue,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved

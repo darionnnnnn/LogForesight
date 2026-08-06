@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -36,13 +36,17 @@ internal class HandlingServiceFacade
         IVisibilityService visibility,
         ICurrentUser currentUser,
         IAuditService audit,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IUserGroupStore? groups = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
+        // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
+        // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
+        var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts);
         _day = new DayHandlingCommandService(
             store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress);
         _issue = new IssueHandlingCommandService(
-            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress);
+            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
     }
@@ -52,7 +56,7 @@ internal class HandlingServiceFacade
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false) => _day.Assign(hostId, date, handlerId, reassign);
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
     public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
-    public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
+    public IssueCaseAssignPreviewDto PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
     public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
     public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request) => _issue.BulkSetIssueStatusByHandler(request);
     public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewBulkClose(source, eventId, from, to);
@@ -237,6 +241,12 @@ internal class FakeIssueCaseStore : IIssueCaseStore
         _items.Where(c => c.HandlerId == userId && c.ClosedAt == null).ToList();
 
     public IssueCase? Get(string caseId) => _items.FirstOrDefault(c => c.CaseId == caseId);
+
+    /// <summary>批次入口與逐筆同語意——假實作沒有「整份讀改寫」的成本，行為一致即可</summary>
+    public void SaveMany(IEnumerable<IssueCase> cases)
+    {
+        foreach (var issueCase in cases) Save(issueCase);
+    }
 
     public void Save(IssueCase issueCase)
     {

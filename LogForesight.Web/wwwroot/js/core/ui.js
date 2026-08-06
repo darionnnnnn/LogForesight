@@ -234,7 +234,13 @@ export function toast(message, type = 'info', delay = 4000) {
             <div class="toast-body"></div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="關閉"></button>
         </div>`;
-    el.querySelector('.toast-body').textContent = message;
+    // message 可以是字串或 Node——後者供「操作完成後給一個追溯／下一步連結」的情境使用
+    // （例如統一標記完成後的「檢視這次影響的清單」，體檢 X6）。
+    // 一律用 textContent／appendChild，**絕不 innerHTML**：toast 內容可能含主機名或
+    // 問題描述，那是攻擊者可控的字串
+    const bodyEl = el.querySelector('.toast-body');
+    if (message instanceof Node) bodyEl.appendChild(message);
+    else bodyEl.textContent = message;
     container.appendChild(el);
 
     const toastInstance = new bootstrap.Toast(el, { delay });
@@ -301,11 +307,15 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
 export function showDetailModal({ title = '', body, size, fullscreen = false, onClose } = {}) {
     const el = document.createElement('div');
     el.className = 'modal fade';
+    // 標題與對話框的關聯（體檢 M6）：沒有 aria-labelledby 時螢幕閱讀器只會唸「對話方塊」，
+    // 不會唸出它是什麼對話方塊。id 必須唯一——全站 modal 共用這個工廠，同時開兩個並非不可能
+    const titleId = `lf-modal-title-${Math.random().toString(36).slice(2, 10)}`;
+    el.setAttribute('aria-labelledby', titleId);
     el.innerHTML = `
         <div class="modal-dialog modal-dialog-scrollable${fullscreen ? ' modal-fullscreen' : (size ? ` ${size}` : '')}">
-            <div class="modal-content">
+            <div class="modal-content" tabindex="-1">
                 <div class="modal-header">
-                    <h5 class="modal-title"></h5>
+                    <h5 class="modal-title" id="${titleId}"></h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body"></div>
@@ -319,9 +329,24 @@ export function showDetailModal({ title = '', body, size, fullscreen = false, on
 
     document.body.appendChild(el);
     const modal = new bootstrap.Modal(el);
+
+    // 開啟後把焦點移進對話框（體檢 M6）：不做的話 document.activeElement 仍是 <body>，
+    // 鍵盤使用者按 Tab 是從整個頁面最上方開始，而不是從 modal 內開始。
+    // 選第一個可聚焦元素而非固定聚焦關閉鈕——使用者要做的事在 body 裡，不是關掉它。
+    el.addEventListener('shown.bs.modal', () => {
+        const focusable = el.querySelector(
+            '.modal-body button:not([disabled]), .modal-body a[href], .modal-body input:not([disabled]), ' +
+            '.modal-body select:not([disabled]), .modal-body textarea:not([disabled])');
+        (focusable ?? el.querySelector('.modal-content')).focus?.();
+    });
+
+    // 關閉時把焦點還給觸發它的元素——不還的話焦點落回 <body>，等於又回到頁面最上方。
+    // Bootstrap 只在自己管理 focus 時處理這件事，程式化建立的 modal 要自己記
+    const opener = document.activeElement;
     el.addEventListener('hidden.bs.modal', () => {
         onClose?.();
         el.remove();
+        if (opener instanceof HTMLElement && document.contains(opener)) opener.focus();
     });
     modal.show();
 }
@@ -365,14 +390,16 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
     }
 
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
+    // stickyLastColumn：末欄（動作欄）在橫向捲動時固定在右緣（體檢 W1）。
+    // 只有真的有動作欄的表格才開——對一般表格套用會讓最後一欄無謂地浮起來
+    wrap.className = 'lf-table-wrap' + (stickyLastColumn ? ' lf-table-wrap--sticky-action' : '');
 
     const table = document.createElement('table');
     table.className = 'table table-hover align-middle mb-0';
@@ -403,11 +430,11 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
         const href = rowHref ? rowHref(row) : null;
         if (href) {
             tr.classList.add('lf-row-link');
-            tr.addEventListener('click', event => {
-                // 讓列內的連結／按鈕保有自己的行為，只有點到空白處才走整列導向
-                if (event.target.closest('a, button')) return;
-                location.href = href;
-            });
+            // 鍵盤可達（體檢 H5）：整列可點是全站主要的下鑽動線（儀表板重點問題卡、
+            // 依問題視角展開列都**沒有列內連結**），只有 click 監聽等於這些功能對
+            // 鍵盤／輔助技術使用者不存在。範本取自風險日詳情已經做對的
+            // lf-card__header--clickable（role + tabindex + Enter/Space + :focus-visible）。
+            makeRowActivatable(tr, () => { location.href = href; });
         }
 
         // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
@@ -452,10 +479,13 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
 
             let populated = !!detail;   // eager 版本一開始就已填好；lazy 版本首次展開才填
             tr.classList.add('lf-row-expandable');
-            tr.addEventListener('click', event => {
-                if (event.target.closest('a, button')) return;
+            // 展開列同樣要鍵盤可達（體檢 H5），另外補 aria-expanded 讓螢幕閱讀器
+            // 知道現在是展開還是收合——只有視覺上的箭頭對輔助技術等於沒有狀態
+            tr.setAttribute('aria-expanded', 'false');
+            makeRowActivatable(tr, () => {
                 const open = detailRow.classList.toggle('d-none');
                 tr.classList.toggle('lf-row-open', !open);
+                tr.setAttribute('aria-expanded', String(!open));
                 // 首次展開才呼叫 onRowExpand 填內容（之後展開/收合重用同一份 DOM）
                 if (!open && !populated && onRowExpand) {
                     populated = true;
@@ -468,6 +498,76 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     wrap.appendChild(table);
 
     container.replaceChildren(wrap);
+    bindScrollAffordance(wrap);
+}
+
+/**
+ * 橫向捲動的可見提示（體檢 M2／W1）。
+ *
+ * `.lf-table-wrap` 早就有 `overflow-x: auto`（頁面本身不溢出 ✅），但**沒有任何視覺提示**——
+ * 1024×768（遠端桌面、投影、舊筆電的常見解析度）下依問題視角的內容寬 1512px、
+ * 可視寬僅 709px，右側的「處理概況／處理人／動作」整段在畫面外，
+ * 第一次使用的人會直接認定「這個視角沒有指派功能」。
+ *
+ * 作法是右緣漸層陰影＋一行文字提示，捲到底自動消失。**一處改、全站表格受惠**。
+ * 用 class 切換而不是直接改 style：視覺細節留在 CSS，這裡只負責狀態。
+ */
+function bindScrollAffordance(wrap) {
+    const update = () => {
+        // 1px 容差：捲到底時 scrollLeft 可能因為小數寬度差一點點
+        const more = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft > 1;
+        wrap.classList.toggle('lf-table-wrap--scrollable', more);
+    };
+
+    wrap.addEventListener('scroll', update, { passive: true });
+
+    // 容器寬度會隨側欄收合、字級切換、視窗縮放改變——只綁 window resize 抓不到前兩者
+    if (window.ResizeObserver) {
+        const observer = new ResizeObserver(update);
+        observer.observe(wrap);
+        // **表格本身也要觀察**：wrap 的寬度由版面決定，內容再寬它都不會變，
+        // 只觀察 wrap 的話「內容變寬」這個真正的觸發條件永遠偵測不到
+        // （欄位展開、字級切換、延遲載入的內容都屬於這一類）。
+        const table = wrap.querySelector('table');
+        if (table) observer.observe(table);
+    } else {
+        window.addEventListener('resize', update);
+    }
+
+    // 立即量一次，不等 requestAnimationFrame：呼叫端已經把 wrap 掛進 DOM，
+    // 讀 scrollWidth 會強制重排，量到的就是最終值。
+    // 原本用 rAF 是想「等佈局穩定」，但 rAF 在**非前景分頁**會被延後到分頁可見為止——
+    // 使用者在背景分頁開啟頁面、切回來時提示不會出現（wrap 寬度沒變，
+    // ResizeObserver 也不會再補一次），提示就這樣永久缺席。
+    update();
+}
+
+/**
+ * 讓一整列（<tr>）成為可用鍵盤操作的觸發器（體檢 H5）。
+ *
+ * 為什麼是 `role="button"` 而不是把整列包成 <a>：表格列裡本來就可能有自己的連結與按鈕，
+ * 巢狀互動元素是無效的 HTML，螢幕閱讀器的行為也不可預期。給列一個明確的按鈕語意，
+ * 列內元素保有自己的行為（下面的 closest 判斷），是既有 lf-card__header--clickable
+ * 已經驗證過的作法。
+ *
+ * Space 要 preventDefault：不擋的話瀏覽器會把它當成捲動頁面，使用者按下去畫面往下跳一屏。
+ */
+function makeRowActivatable(tr, activate) {
+    tr.setAttribute('role', 'button');
+    tr.setAttribute('tabindex', '0');
+
+    tr.addEventListener('click', event => {
+        // 讓列內的連結／按鈕／表單控制項保有自己的行為，只有點到空白處才觸發整列動作
+        if (event.target.closest('a, button, input, select, textarea, label')) return;
+        activate();
+    });
+
+    tr.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        if (event.target !== tr) return;   // 焦點在列內元素上時交給那個元素處理
+        event.preventDefault();
+        activate();
+    });
 }
 
 function sortHeader(col, sort, onSort) {
@@ -607,23 +707,54 @@ export function renderEmpty(container, { title = '尚無資料', hint = '', icon
  * 用法：把整段載入流程包起來，失敗時把骨架列換成可理解的失敗狀態。
  * containers 可給單一容器或容器陣列（一頁多塊骨架時全部一起收掉）。
  */
-export async function guardLoad(containers, fn) {
+export async function guardLoad(containers, fn, { backLink } = {}) {
     try {
         return await fn();
     } catch (error) {
-        for (const container of [containers].flat()) {
-            if (container) {
-                renderEmpty(container, {
-                    title: '載入失敗',
-                    hint: '請重新整理頁面後再試；若持續失敗請聯絡系統管理員。',
-                    icon: 'exclamation-triangle'
-                });
+        // 404 與其他失敗要分開講（體檢 M1）：「請重新整理再試」對「這筆不存在」永遠不會成功，
+        // 是誤導。後端一律回可直接顯示的中文（如「找不到這個使用者，可能已被刪除。」），
+        // 過去被一視同仁的文案吞掉、只剩幾秒就消失的 toast。
+        const notFound = error?.status === 404;
+        const state = notFound
+            ? {
+                title: '找不到資料',
+                hint: error.message || '這筆資料可能已被刪除。',
+                icon: 'exclamation-triangle'
             }
-        }
+            : {
+                title: '載入失敗',
+                hint: '請重新整理頁面後再試；若持續失敗請聯絡系統管理員。',
+                icon: 'exclamation-triangle'
+            };
+
+        // 一次載入失敗只呈現一塊訊息（體檢 M1 後半）：三個區塊各喊一次「載入失敗」
+        // 會讓人以為壞了三個地方，其餘容器清空即可
+        const targets = [containers].flat().filter(Boolean);
+        targets.forEach((container, index) => {
+            if (index === 0) {
+                renderEmpty(container, state);
+                if (notFound && backLink) container.appendChild(backLinkNode(backLink));
+            } else {
+                container.replaceChildren();
+            }
+        });
+
         // 不吞掉：錯誤細節仍要進 console 供排查（api.js 已負責顯示給使用者看的 toast）
         console.error('[load]', error);
         return undefined;
     }
+}
+
+/** 404 空狀態底下的「返回清單」出口——錯誤狀態一定要給得出下一步（優先序 8 Error Recovery） */
+function backLinkNode({ href, text = '返回清單' }) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mt-3';
+    const link = document.createElement('a');
+    link.className = 'btn btn-sm btn-outline-secondary';
+    link.href = href;
+    link.textContent = text;
+    wrap.appendChild(link);
+    return wrap;
 }
 
 /** 載入中的骨架列（§8.6-6） */

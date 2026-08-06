@@ -168,6 +168,10 @@ public class SentinelServer
     /// <summary>探索連線密碼（明碼，由 <see cref="Sentinel.PasswordEnc"/> 解密而來）</summary>
     public string Password { get; set; } = string.Empty;
 
+    /// <summary>以 ESM 事件來源目錄探索（需 ESM 唯讀權限）。預設 false，
+    /// 語意與注意事項見 <see cref="Sentinel.UseEsmDirectory"/>。</summary>
+    public bool UseEsmDirectory { get; set; }
+
     /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>
     public bool CanDiscover => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
 }
