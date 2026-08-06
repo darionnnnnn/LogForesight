@@ -1,4 +1,4 @@
-using LogForesight.Core.Persistence.Sql;
+﻿using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -85,7 +85,7 @@ public class HealthServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private HealthService NewService() => new(_backend, new SchedulerRunState());
+    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller());
 
     [Fact]
     public void 存活檢查_資料庫可達時回ok()
@@ -147,7 +147,7 @@ public class HealthServiceTests : IDisposable
         Assert.True(runState.TryBeginRun("manual", out _));
         runState.ReportProgress("分析主機", 30, 100);
 
-        var dto = new HealthService(_backend, runState).GetDetail();
+        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller()).GetDetail();
 
         Assert.True(dto.AnalysisRunning);
         Assert.Equal("manual", dto.AnalysisTrigger);

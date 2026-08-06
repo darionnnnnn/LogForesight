@@ -116,9 +116,27 @@ public class LfDbContext : DbContext
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20);
             e.Property(x => x.SeverityRank).HasColumnName("severity_rank");
 
+            // 問題事實表的聚合維度（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：
+            // 這張表原本只當「篩選子表」用（EXISTS 子查詢），拿不到主機與日期就無法在 SQL 端
+            // 回答「這個問題影響幾台、跨哪段期間」——那正是需求「主視角改成問題」要的兩個數字。
+            // 這四欄自父列與問題本身去正規化而來，寫入時一併填好（同 lf_record_categories
+            // 「寫入時算好、查詢端直接讀」的既有分工，WEB-SPEC §10.3）。
+            e.Property(x => x.HostId).HasColumnName("host_id").HasDefaultValue(0L);
+            e.Property(x => x.RecordDate).HasColumnName("record_date");
+            e.Property(x => x.EventCount).HasColumnName("event_count").HasDefaultValue(0);
+            e.Property(x => x.ElevatesDayRisk).HasColumnName("elevates_day_risk").HasDefaultValue(false);
+            // 完整簽章的另外兩段：依問題視角以 (Source, EventId) 分組，但處理狀態是以
+            // **完整簽章**（LogName|Source|EventId|EntryType）為鍵——少了這兩欄就 join 不到
+            // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
+            e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255).HasDefaultValue(string.Empty);
+            e.Property(x => x.EntryType).HasColumnName("entry_type").HasDefaultValue(0);
+
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
             e.HasIndex(x => x.Category);
+            // 問題聚合的查詢形狀：期間 → 依簽章 GROUP BY
+            e.HasIndex(x => new { x.RecordDate, x.SourceName, x.EventId });
+            e.HasIndex(x => new { x.HostId, x.RecordDate });
 
             e.HasOne<DailyRecordRow>().WithMany().HasForeignKey(x => x.RecordId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -246,7 +264,13 @@ public class DailyRecordRow
     public DateTime CreatedAt { get; set; }
 }
 
-/// <summary>問題簽章列（僅供過濾的抽出欄；讀取的權威來源是 DailyRecordRow.ContentJson）。↔ lf_top_issues</summary>
+/// <summary>
+/// 問題簽章列。原本只是「供過濾的抽出欄」，自 P4 起同時是**問題聚合的事實表**
+/// （docs/SCALE-ISSUE-FIRST-PLAN.md 根因 C）——讀取單筆紀錄的權威來源仍是
+/// <see cref="DailyRecordRow.ContentJson"/>，但「這個問題影響幾台、跨哪段期間、
+/// 出現幾天」改由這張表 GROUP BY 直接回答，不再把整段期間的紀錄撈回記憶體。
+/// ↔ lf_top_issues
+/// </summary>
 public class TopIssueRow
 {
     public long IssueId { get; set; }
@@ -255,6 +279,26 @@ public class TopIssueRow
     public int EventId { get; set; }
     public string Category { get; set; } = string.Empty;
     public int SeverityRank { get; set; }
+
+    // ── 聚合維度（P4 新增，自父列與問題本身去正規化）──────────────────────
+
+    /// <summary>**存活主機** id（合併過的主機以 HostLookup 映射後寫入）——
+    /// 直接用紀錄自帶的 host_id 會讓同一台實體機器的墓碑列與存活列各算一台（規劃 §8.1 缺陷 2）</summary>
+    public long HostId { get; set; }
+
+    public DateTime RecordDate { get; set; }
+
+    /// <summary>當日該問題的事件次數（<see cref="LogIssueSignature.Count"/>）</summary>
+    public int EventCount { get; set; }
+
+    /// <summary>命中「重大」旗標（規劃 §10.2 維度 1 的既有缺口：這個旗標過去只在詳情頁看得到）</summary>
+    public bool ElevatesDayRisk { get; set; }
+
+    /// <summary>完整簽章的第一段——與 <see cref="EntryType"/> 一起才能組回 IssueSignatureKey 去 join 處理狀態</summary>
+    public string LogName { get; set; } = string.Empty;
+
+    /// <summary>完整簽章的第四段（<see cref="System.Diagnostics.EventLogEntryType"/> 的整數值）</summary>
+    public int EntryType { get; set; }
 }
 
 /// <summary>風險 log 暫存一列（docs/archive/WEB-SCHEDULER-PLAN.md §2）。↔ lf_risky_events</summary>

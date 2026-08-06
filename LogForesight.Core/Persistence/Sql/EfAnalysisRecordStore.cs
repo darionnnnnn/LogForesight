@@ -89,7 +89,16 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 SourceName = issue.Source,
                 EventId = issue.EventId,
                 Category = issue.Category.ToString(),
-                SeverityRank = (int)issue.Severity
+                SeverityRank = (int)issue.Severity,
+                // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
+                // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
+                // 分析層看不到這張表，批次的分析邏輯零修改
+                HostId = shaped.HostId,
+                RecordDate = shaped.Date.Date,
+                EventCount = issue.Count,
+                ElevatesDayRisk = issue.ElevatesDayRisk,
+                LogName = issue.LogName,
+                EntryType = (int)issue.EntryType
             });
         }
         ctx.SaveChanges();

@@ -283,7 +283,7 @@ public sealed class ScaleDataSet : IDisposable
 
                     foreach (var issue in shaped.TopIssues)
                     {
-                        BindIssue(issueCmd, recordId, issue);
+                        BindIssue(issueCmd, recordId, shaped, issue);
                         issueCmd.ExecuteNonQuery();
                         topIssueRows++;
                     }
@@ -328,11 +328,18 @@ public sealed class ScaleDataSet : IDisposable
     {
         var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
+        // 含 P4 的聚合維度（host_id／record_date／event_count／elevates_day_risk／log_name／entry_type）：
+        // 問題聚合改由這張表 GROUP BY 回答之後，產生器不填這些欄位就等於造出一份
+        // 「回填未完成」的資料，量測到的會是空的聚合結果
         cmd.CommandText = """
-            INSERT INTO lf_top_issues (record_id, source_name, event_id, category, severity_rank)
-            VALUES ($recordId, $source, $eventId, $category, $rank)
+            INSERT INTO lf_top_issues
+                (record_id, source_name, event_id, category, severity_rank,
+                 host_id, record_date, event_count, elevates_day_risk, log_name, entry_type)
+            VALUES ($recordId, $source, $eventId, $category, $rank,
+                    $hostId, $date, $count, $elevates, $logName, $entryType)
             """;
-        AddParameters(cmd, "$recordId", "$source", "$eventId", "$category", "$rank");
+        AddParameters(cmd, "$recordId", "$source", "$eventId", "$category", "$rank",
+            "$hostId", "$date", "$count", "$elevates", "$logName", "$entryType");
         return cmd;
     }
 
@@ -359,13 +366,19 @@ public sealed class ScaleDataSet : IDisposable
         cmd.Parameters["$created"].Value = DateTime.Now;
     }
 
-    private static void BindIssue(SqliteCommand cmd, long recordId, LogIssueSignature issue)
+    private static void BindIssue(SqliteCommand cmd, long recordId, DailyAnalysisRecord record, LogIssueSignature issue)
     {
         cmd.Parameters["$recordId"].Value = recordId;
         cmd.Parameters["$source"].Value = issue.Source;
         cmd.Parameters["$eventId"].Value = issue.EventId;
         cmd.Parameters["$category"].Value = issue.Category.ToString();
         cmd.Parameters["$rank"].Value = (int)issue.Severity;
+        cmd.Parameters["$hostId"].Value = record.HostId;
+        cmd.Parameters["$date"].Value = record.Date.Date;
+        cmd.Parameters["$count"].Value = issue.Count;
+        cmd.Parameters["$elevates"].Value = issue.ElevatesDayRisk;
+        cmd.Parameters["$logName"].Value = issue.LogName;
+        cmd.Parameters["$entryType"].Value = (int)issue.EntryType;
     }
 
     private static List<LogIssueSignature> PickIssues(

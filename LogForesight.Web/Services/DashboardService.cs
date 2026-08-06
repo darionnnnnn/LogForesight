@@ -14,6 +14,7 @@ public class DashboardService
     private readonly HandlingHistoryQueryService _handling;
     private readonly PermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
+    private readonly IssueRankingBuilder _issueRanking;
 
     public DashboardService(
         IRecordRepository repository,
@@ -22,7 +23,8 @@ public class DashboardService
         ICurrentUser currentUser,
         HandlingHistoryQueryService handling,
         PermissionChangeService permissionChanges,
-        IHostGroupStore hostGroups)
+        IHostGroupStore hostGroups,
+        IssueRankingBuilder issueRanking)
     {
         _repository = repository;
         _visibility = visibility;
@@ -31,6 +33,7 @@ public class DashboardService
         _handling = handling;
         _permissionChanges = permissionChanges;
         _hostGroups = hostGroups;
+        _issueRanking = issueRanking;
     }
 
     public DashboardDto GetSummary(int days)
@@ -52,8 +55,17 @@ public class DashboardService
             .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
             .Take(10)
             .ToList();
-        // 重點問題（§8-1）：五筆足以回答「現在最該處理哪幾個問題」，再多就變成第二張清單頁
-        dto.TopIssues = RecordStatsBuilder.BuildIssueRanking(records).Take(5).ToList();
+        // 重點問題（§8-1）：五筆足以回答「現在最該處理哪幾個問題」，再多就變成第二張清單頁。
+        //
+        // 自 P4 起走 SQL 端聚合（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 C）而不是對 records
+        // 在記憶體 GroupBy——6000 台 × 7 天約 4.2 萬筆紀錄、數十萬個問題物件，
+        // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
+        // 那是「今天有什麼不一樣」的唯一來源。
+        var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
+        dto.TopIssues = _issueRanking
+            .Build(from, DateTime.Today, visibleHostIds, visibleHosts.Count)
+            .Take(5)
+            .ToList();
         BuildSilentHosts(dto, visibleHosts);
         BuildGroupRisk(dto, records, visibleHosts);
 

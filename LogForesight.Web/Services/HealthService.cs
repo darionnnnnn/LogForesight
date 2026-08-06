@@ -20,11 +20,13 @@ public class HealthService
 {
     private readonly StorageBackend _backend;
     private readonly SchedulerRunState _runState;
+    private readonly TopIssueBackfiller _backfiller;
 
-    public HealthService(StorageBackend backend, SchedulerRunState runState)
+    public HealthService(StorageBackend backend, SchedulerRunState runState, TopIssueBackfiller backfiller)
     {
         _backend = backend;
         _runState = runState;
+        _backfiller = backfiller;
     }
 
     /// <summary>組建版本（Directory.Build.props 的 Version＋commit）</summary>
@@ -72,7 +74,12 @@ public class HealthService
             AnalysisDone = _runState.ProgressDone,
             AnalysisTotal = _runState.ProgressTotal,
             LastRunSucceeded = _runState.LastOutcome?.Success,
-            LastRunEndedAt = _runState.LastOutcome?.EndedAt
+            LastRunEndedAt = _runState.LastOutcome?.EndedAt,
+
+            // 回填未完成期間問題聚合的數字會偏低但看起來正常——必須看得到（P4）
+            BackfillInProgress = _backfiller.Progress.InProgress,
+            BackfillDone = _backfiller.Progress.Done,
+            BackfillTotal = _backfiller.Progress.Total
         };
     }
 

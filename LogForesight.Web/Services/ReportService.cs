@@ -10,14 +10,17 @@ public class ReportService
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
     private readonly HandlingHistoryQueryService _handling;
+    private readonly IssueRankingBuilder _issueRanking;
 
     public ReportService(
-        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility, HandlingHistoryQueryService handling)
+        IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
+        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking)
     {
         _repository = repository;
         _hosts = hosts;
         _visibility = visibility;
         _handling = handling;
+        _issueRanking = issueRanking;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
@@ -37,7 +40,14 @@ public class ReportService
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
-        var issueRanked = RecordStatsBuilder.BuildIssueRanking(records);
+
+        // 問題排行走 SQL 端聚合（P4）：與儀表板同一個 IssueRankingBuilder，兩頁數字必然一致。
+        // **不受 handlingScope 篩選影響**——scope 是日層級的過濾（先過濾再聚合），
+        // 而問題聚合是跨主機跨日的獨立投影；把 scope 套上去會讓「這個問題影響幾台」
+        // 變成「符合這個處理狀態的日子裡影響幾台」，那是另一個問題的答案
+        var visibleHosts = _visibility.GetVisibleHosts();
+        var issueRanked = _issueRanking.Build(
+            from, to, visibleHosts.Select(h => h.HostId).ToList(), visibleHosts.Count);
 
         var dto = new ReportSummaryDto
         {
@@ -57,7 +67,7 @@ public class ReportService
             IssueOthers = BuildIssueOthers(issueRanked),
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
-            TotalHosts = _visibility.GetVisibleHosts().Count,
+            TotalHosts = visibleHosts.Count,
             Handling = _handling.GetTodo(records)
         };
 

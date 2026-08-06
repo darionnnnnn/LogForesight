@@ -40,4 +40,12 @@ public class HealthDetailDto : HealthDto
     public int AnalysisTotal { get; set; }
     public bool? LastRunSucceeded { get; set; }
     public DateTime? LastRunEndedAt { get; set; }
+
+    // ── 問題聚合欄的背景回填（P4）────────────────────────────────────────
+    // 回填未完成時，問題排行的次數與影響範圍會偏低但看起來正常——
+    // 這是唯一能發現「數字還不準」的地方
+
+    public bool BackfillInProgress { get; set; }
+    public int BackfillDone { get; set; }
+    public int BackfillTotal { get; set; }
 }

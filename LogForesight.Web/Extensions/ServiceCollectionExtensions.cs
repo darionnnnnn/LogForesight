@@ -50,6 +50,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
         services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
         services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
+
+        // 問題聚合（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
+        // 「撈回整段期間的紀錄再於記憶體 GroupBy」
+        services.AddSingleton<IIssueAggregateQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueAggregateQuery());
+        services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<PermissionChangeStore>(sp =>
@@ -257,6 +262,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRecordRepository, RecordRepository>();
         services.AddScoped<RecordListQueryService>();
         services.AddScoped<RecordDetailQueryService>();
+        // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
+        services.AddScoped<IssueRankingBuilder>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
@@ -293,6 +300,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerRunState>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
+
+        // lf_top_issues 聚合欄的背景回填（docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
+        // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
+        services.AddHostedService<TopIssueBackfillHostedService>();
 
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用
