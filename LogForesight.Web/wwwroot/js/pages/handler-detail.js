@@ -12,7 +12,7 @@
  * 分組在前端做：workload 已帶回逐案件的 source／eventId，不必為了換個排版多打一支 API。
  */
 
-import { api, getCurrentUser } from '../core/api.js';
+import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { renderLoading, renderTable, renderChips, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -129,7 +129,10 @@ function renderCases(cases) {
  */
 function renderCasesByIssue(cases) {
     const groups = groupCasesByIssue(cases);
-    const isSelf = currentUser?.userId === userId;
+    // 「是自己的頁面」還不夠，還要「動得了」（體檢 H2）：manager 被指派後進自己的工作頁，
+    // 過去看得到「回覆處理狀態」，按下去必定 403 並留下一筆 denied 稽核。
+    // 與 records.js 的依問題視角是同一條規則，兩處要一起改才不會又漏一個入口。
+    const isSelf = currentUser?.userId === userId && hasCapability(currentUser, 'Handle');
 
     renderTable(document.getElementById('handler-cases'), {
         columns: [

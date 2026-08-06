@@ -172,6 +172,13 @@ function sectionStorageKey(label) {
 }
 
 function bindSectionToggle(toggle, itemsWrap, label) {
+    // aria-controls／aria-expanded（體檢 L9）：過去只在點擊後才設 aria-expanded，
+    // 預設展開時屬性根本不存在——螢幕閱讀器讀到的是一顆沒有狀態的按鈕。
+    // 這裡先給明確的初始值，並把按鈕與它控制的區塊關聯起來。
+    if (!itemsWrap.id) itemsWrap.id = `lf-nav-section-${Math.random().toString(36).slice(2, 8)}`;
+    toggle.setAttribute('aria-controls', itemsWrap.id);
+    toggle.setAttribute('aria-expanded', 'true');
+
     const manual = localStorage.getItem(sectionStorageKey(label));
     if (manual === 'true') setSectionCollapsed(toggle, itemsWrap, true);
 

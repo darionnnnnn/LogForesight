@@ -16,6 +16,14 @@ public class UserDto
 
     /// <summary>最近一次登入時間；null＝從未登入（docs/archive/FEEDBACK-11-PLAN.md §3）</summary>
     public DateTime? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// 身為負責人的主機數（體檢 H3）。**清單頁必須看得見這條授權路徑**——
+    /// 回饋第十一輪 §2b 讓負責人成為群組之外的第二條授權路徑之後，
+    /// 「沒有群組」不再等於「沒有權限」，只看群組欄的管理者會誤判
+    /// 「這個人沒權限，可以不用管」。
+    /// </summary>
+    public int OwnedHostCount { get; set; }
 }
 
 /// <summary>

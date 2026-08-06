@@ -42,9 +42,18 @@ public class UserAdminService
     {
         var groupsById = _groups.GetAll().ToDictionary(g => g.GroupId);
 
+        // 負責主機數（體檢 H3）：一次掃過主機清單建索引，不要逐使用者呼叫
+        // GetOwnedHostIdsFor——那是 N 次整份 hosts blob 讀取（規模化規劃根因 A）
+        var ownedCounts = new Dictionary<long, int>();
+        foreach (var host in _hosts.GetAll().Where(h => h.Active))
+        {
+            foreach (var ownerId in host.OwnerUserIds)
+                ownedCounts[ownerId] = ownedCounts.GetValueOrDefault(ownerId) + 1;
+        }
+
         return _users.GetAll()
             .OrderBy(u => u.Account, StringComparer.OrdinalIgnoreCase)
-            .Select(u => ToDto(u, groupsById))
+            .Select(u => ToDto(u, groupsById, ownedCounts.GetValueOrDefault(u.UserId)))
             .ToList();
     }
 
@@ -294,7 +303,8 @@ public class UserAdminService
         return (accounts, invalidCount);
     }
 
-    private static UserDto ToDto(WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById) => new()
+    private static UserDto ToDto(
+        WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById, int ownedHostCount = 0) => new()
     {
         UserId = user.UserId,
         Account = user.Account,
@@ -303,6 +313,7 @@ public class UserAdminService
         Active = user.Active,
         GroupIds = user.GroupIds,
         GroupNames = NameFormat.ResolveNames(user.GroupIds, groupsById, g => g.GroupName),
-        LastLoginAt = user.LastLoginAt
+        LastLoginAt = user.LastLoginAt,
+        OwnedHostCount = ownedHostCount
     };
 }

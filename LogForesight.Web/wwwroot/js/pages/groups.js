@@ -81,7 +81,10 @@ function renderUserGroups() {
 
     appendUserGroupSection(container, {
         title: '部門群組',
-        hint: '決定成員能看見哪些主機——實際授權在「授權矩陣」頁籤勾選。不影響可使用的功能。',
+        // 負責人是第二條授權路徑（體檢 M9）：不講的話，管理者依矩陣盤點「誰看得到哪些主機」
+        // 會漏算負責人那一條，得到錯誤的結論
+        hint: '決定成員能看見哪些主機——實際授權在「授權矩陣」頁籤勾選。不影響可使用的功能。'
+            + '注意：主機的「負責人」不必進矩陣也看得到那台主機，並自動取得處理能力。',
         groups: deptGroups,
         empty: '目前沒有部門群組。建立後即可在「授權矩陣」指定它看得到哪些主機群組。'
     });
@@ -164,7 +167,17 @@ function renderMatrix() {
     }
 
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
+
+    // 矩陣不是授權的全貌（體檢 M9）：負責人路徑不經過這裡，只看矩陣會盤點錯
+    const note = document.createElement('div');
+    note.className = 'small text-muted px-3 pt-3 pb-2';
+    note.textContent = '勾選＝該部門可看見該群組的主機。此矩陣不含「負責人」路徑——'
+        + '主機一旦指定負責人，那個人不必在這裡被勾選也看得到該主機，並自動取得處理能力'
+        + '（負責人於「主機」頁維護）。';
+    wrap.appendChild(note);
+
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'lf-table-wrap';
 
     const table = document.createElement('table');
     table.className = 'table table-bordered align-middle mb-0';
@@ -215,7 +228,8 @@ function renderMatrix() {
         tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    wrap.appendChild(table);
+    tableWrap.appendChild(table);
+    wrap.appendChild(tableWrap);
     container.replaceChildren(wrap);
 }
 

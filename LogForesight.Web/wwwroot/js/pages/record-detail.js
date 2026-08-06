@@ -535,8 +535,20 @@ function selectCheckbox(issue, sectionIssues) {
     // （後端 IssueHandlingCommandService 另有一道拒絕，前端只是不讓人白按）
     if (isHandledByOthers(issue)) {
         check.disabled = true;
-        check.title = `此問題由 ${formatUserName(issue.caseHandlerName, issue.caseHandlerAccount)} 的案件處理中，如需接手請由管理者改派`;
-        return check;
+
+        // tooltip 必須掛在**非 disabled** 的外層（體檢 M4）：瀏覽器不對 disabled 元素派送
+        // 滑鼠事件，title 寫在 checkbox 上永遠不會出現——使用者看到的就是一個勾不動、
+        // 也沒有解釋的 checkbox。文案本身沒問題，問題只在掛載點。
+        const reason = `此問題由 ${formatUserName(issue.caseHandlerName, issue.caseHandlerAccount)} 的案件處理中，如需接手請由管理者改派`;
+        const lock = document.createElement('span');
+        lock.className = 'lf-status-cell__checkbox lf-no-print';
+        lock.title = reason;
+        // 螢幕閱讀器讀不到 title 以外的線索——disabled checkbox 只會被唸成「已停用」，
+        // 不會說明為什麼
+        lock.setAttribute('aria-label', reason);
+        check.classList.remove('lf-status-cell__checkbox');
+        lock.appendChild(check);
+        return lock;
     }
 
     check.title = '勾選後於右側「處理狀態」區塊填寫，可一次套用到所有勾選的問題';

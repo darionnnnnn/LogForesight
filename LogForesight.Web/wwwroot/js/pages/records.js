@@ -793,8 +793,11 @@ function issueActionsCell(group) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-2 justify-content-end';
 
+    // 「是我的案件」還不夠，還要「動得了」（體檢 H2）：被指派但沒有 Handle 能力的人
+    // （manager／dev／未分群組且非負責人）過去看得到這顆按鈕，按下去必定 403。
+    // 後端才是真正的防線，但前端不該擺一顆一定失敗的按鈕。
     const isMyIssue = (group.handlers ?? []).some(h => h.handlerId === currentUser?.userId);
-    if (isMyIssue) wrap.appendChild(issueReplyButton(group));
+    if (isMyIssue && hasCapability(currentUser, 'Handle')) wrap.appendChild(issueReplyButton(group));
     // 統一標記要 Assign＋Handle 兩者（後端同一條規則）——實務上就是 admin
     if (hasCapability(currentUser, 'Assign') && hasCapability(currentUser, 'Handle')) {
         wrap.appendChild(issueBulkCloseButton(group));

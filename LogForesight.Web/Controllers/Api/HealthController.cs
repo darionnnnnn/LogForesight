@@ -3,6 +3,7 @@ using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace LogForesight.Web.Controllers.Api;
@@ -30,8 +31,14 @@ public class HealthController : ControllerBase
     /// <summary>
     /// 存活檢查。**資料庫不可達時回 503 而不是 200＋down**——監控系統與負載平衡器
     /// 判讀的是 HTTP 狀態碼，用 200 包一個 down 的 body 等於在說「我很好」。
+    ///
+    /// <c>[AllowAnonymous]</c> 是必要的：全站 FallbackPolicy 預設要求已登入
+    /// （見 ServiceCollectionExtensions 的「安全的預設值」），不明確標註的話這支端點
+    /// 會回 401——而資料庫掛掉時最需要它，那時多半也登不進去。
+    /// 回傳內容因此收斂到不含任何內部細節（見 <see cref="HealthDto"/>）。
     /// </summary>
     [HttpGet]
+    [AllowAnonymous]
     public ActionResult<ApiResponse<HealthDto>> Live()
     {
         var dto = _health.GetLiveness();

@@ -546,6 +546,13 @@ body {
     cursor: pointer;
 }
 
+/* 鍵盤焦點（體檢 L9）：深色側欄上用主色陰影看不出來，改用亮色描邊 */
+.lf-sidebar__section--toggle:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: 2px;
+    border-radius: var(--lf-radius-sm);
+}
+
 .lf-sidebar__section--toggle .lf-icon {
     width: .85rem;
     height: .85rem;
@@ -1215,6 +1222,16 @@ a.lf-stat:hover .lf-card,
 
 .lf-chip:hover { border-color: var(--lf-primary-hover); color: var(--lf-primary-text); }
 
+/* 鍵盤焦點（體檢 H6）：chip 是全站最主要的篩選元件（問題查詢、主機、規則、使用者、
+   報表、我的交辦視角切換），過去 :focus 量到 outline:none + box-shadow:none——
+   鍵盤使用者 Tab 過去看不到自己在哪裡。.btn:focus-visible 的既有規則選不到 chip
+   （它不是 .btn），所以要自己一條。 */
+.lf-chip:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
+    border-color: var(--lf-primary);
+}
+
 .lf-chip.active {
     background: var(--lf-primary);
     border-color: var(--lf-primary);
@@ -1305,6 +1322,17 @@ a.lf-stat:hover .lf-card,
 
 /* 可展開列：首欄展開箭頭，收合時朝右、展開時朝下 */
 .table > tbody > tr.lf-row-expandable { cursor: pointer; }
+
+/* 整列可點的鍵盤焦點（體檢 H5）：這些列現在有 role="button" + tabindex="0"，
+   Tab 得到就必須看得見。用 inset 陰影而不是 outline——<tr> 的 outline 在部分瀏覽器
+   會被相鄰儲存格的邊框裁掉，內陰影畫在儲存格背景上不會有這個問題。 */
+.table > tbody > tr.lf-row-link:focus-visible > td,
+.table > tbody > tr.lf-row-expandable:focus-visible > td {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--lf-primary);
+}
+.table > tbody > tr.lf-row-link:focus-visible,
+.table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
 .lf-row-caret {
     display: inline-flex;
     margin-right: .4em;

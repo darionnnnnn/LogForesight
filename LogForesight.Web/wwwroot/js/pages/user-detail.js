@@ -8,7 +8,7 @@
  * 可見主機以**被查看者**為準，與 handler-detail.js（以檢視者可見範圍過濾）刻意不同。
  */
 
-import { api } from '../core/api.js';
+import { api, getCurrentUser } from '../core/api.js';
 import { renderTable, renderLoading, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
 
@@ -98,21 +98,54 @@ function badge(text, variant, muted = false) {
     return span;
 }
 
+/**
+ * 這一頁同時呈現兩種可見範圍規則的資料（體檢 H4）：
+ *   - `detail`（可見主機／被指派歷程）以**被查看者**為準
+ *   - `workload`（處理中案件／逾期）以**檢視者**為準（§9.4a 既有規則）
+ *
+ * ViewAll 帳號下兩者結果相同，矛盾看不出來；但 serverAdmin 依 §6.2 沒有任何業務資料範圍，
+ * 於是上方 KPI 顯示「處理中案件 0」、下方歷程卻列出 2 筆處理中——畫面在說謊。
+ * serverAdmin 正好是正式部署第一天唯一能登入的帳號，也是 AD 停擺時的救援入口。
+ *
+ * 採體檢建議的第 2 案：**維持兩支 API 各司其職，但畫面要誠實**——標示工作負載是以
+ * 檢視者範圍呈現；檢視者完全沒有業務範圍時直接換成說明卡，不顯示會被誤讀的「0」。
+ */
+function viewerHasNoBusinessScope() {
+    return getCurrentUser()?.isServerAdmin === true;
+}
+
 function renderKpi(detail, workload) {
     const container = document.getElementById('user-detail-kpi');
     container.replaceChildren();
 
+    const scopeNote = '以您的可見範圍計算，可能不完整';
+    const noScope = viewerHasNoBusinessScope();
+
     const cards = [
         { value: detail.visibleHosts.length, label: '可見主機' },
-        { value: workload.openCaseCount, label: '處理中案件' },
+        // 這兩張來自 workload（檢視者範圍），與左右兩張的母體不同，必須講出來
+        { value: workload.openCaseCount, label: '處理中案件', hint: scopeNote, viewerScoped: true },
         { value: detail.assignmentHistory.filter(h => h.closed).length, label: '已結案案件' },
-        { value: workload.overdueCount, label: '逾期', variant: workload.overdueCount > 0 ? 'danger' : 'secondary' }
+        {
+            value: workload.overdueCount,
+            label: '逾期',
+            variant: workload.overdueCount > 0 ? 'danger' : 'secondary',
+            hint: scopeNote,
+            viewerScoped: true
+        }
     ];
 
     for (const c of cards) {
         const col = document.createElement('div');
         col.className = 'col-6 col-lg-3';
-        col.appendChild(statCard({ value: formatNumber(c.value), label: c.label, variant: c.variant }));
+        // 檢視者沒有任何業務範圍時，「0」是規則的產物而不是事實——顯示「—」並說明
+        const noValue = c.viewerScoped && noScope;
+        col.appendChild(statCard({
+            value: noValue ? '—' : formatNumber(c.value),
+            label: c.label,
+            variant: noValue ? undefined : c.variant,
+            hint: noValue ? '您的帳號沒有業務資料範圍，無法計算' : c.hint
+        }));
         container.appendChild(col);
     }
 }
@@ -149,6 +182,23 @@ function visibilitySourceCell(host) {
 function renderOpenWork(workload) {
     const container = document.getElementById('user-open-work');
     container.replaceChildren();
+
+    // 檢視者沒有業務範圍時，這一區塊必然是空的——顯示空表格會被讀成「這個人沒有工作」，
+    // 而下方「被指派歷程」（以被查看者為準）同時列著處理中的案件，畫面自相矛盾（體檢 H4）
+    if (viewerHasNoBusinessScope()) {
+        const card = document.createElement('div');
+        card.className = 'alert alert-secondary mb-0';
+        card.textContent = '「處理中項目」以您的可見範圍計算，而您的帳號沒有業務資料範圍，'
+            + '因此這裡不顯示任何項目。此人實際的交辦狀況請看下方「被指派歷程」，'
+            + '或改用具備資料範圍的管理者帳號檢視。';
+        container.appendChild(card);
+        return;
+    }
+
+    const scopeNote = document.createElement('div');
+    scopeNote.className = 'small text-muted mb-2';
+    scopeNote.textContent = '以下項目以您的可見範圍顯示，可能不完整（下方「被指派歷程」以此人為準）。';
+    container.appendChild(scopeNote);
 
     const casesTitle = sectionLabel(`進行中案件（${workload.cases.length}）`);
     container.appendChild(casesTitle);
@@ -260,8 +310,10 @@ function dueCell(item) {
     return span;
 }
 
+// backLink 只在 404 時出現（體檢 M1）：使用者打錯 id 或該帳號已被刪除時，
+// 「請重新整理再試」永遠不會成功，要給的是回得去的出口
 guardLoad([
     document.getElementById('user-visible-hosts'),
     document.getElementById('user-open-work'),
     document.getElementById('user-assignment-history')
-], load);
+], load, { backLink: { href: '/admin/users', text: '返回使用者清單' } });
