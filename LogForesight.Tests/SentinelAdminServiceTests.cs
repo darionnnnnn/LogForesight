@@ -137,6 +137,58 @@ public class SentinelAdminServiceTests
         Assert.NotNull(_sentinels.Get(sentinel.SentinelId));   // Sentinel 列本身還在，只是 Active=false
     }
 
+    // ── UseEsmDirectory（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）────────────
+
+    [Fact]
+    public void ESM開關_預設關閉_儲存後可開啟並持久化()
+    {
+        var svc = Create();
+        var created = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1" });
+        Assert.False(created.UseEsmDirectory);
+
+        var enabled = svc.SaveSentinel(new SaveSentinelRequest
+        {
+            SentinelId = created.SentinelId, Name = "S1", UseEsmDirectory = true
+        });
+
+        Assert.True(enabled.UseEsmDirectory);
+        Assert.True(_sentinels.Get(created.SentinelId)!.UseEsmDirectory);
+    }
+
+    /// <summary>編輯時省略欄位＝沿用既有值（同 Os 的語意）——API 呼叫端漏帶
+    /// 不該把已開啟的開關靜默關掉</summary>
+    [Fact]
+    public void 編輯_未帶ESM欄位時沿用既有值()
+    {
+        var svc = Create();
+        var created = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1", UseEsmDirectory = true });
+
+        // 只改名，不帶 UseEsmDirectory
+        var renamed = svc.SaveSentinel(new SaveSentinelRequest
+        {
+            SentinelId = created.SentinelId, Name = "S1-renamed"
+        });
+
+        Assert.True(renamed.UseEsmDirectory);
+    }
+
+    /// <summary>
+    /// SetActive 走「逐欄重建」的路——新增模型欄位漏抄的症狀是
+    /// 「停用再啟用，該欄位被靜默重置」。UseEsmDirectory 曾在這裡漏過，釘住。
+    /// </summary>
+    [Fact]
+    public void 停用再啟用_不重置ESM開關()
+    {
+        var svc = Create();
+        var created = svc.SaveSentinel(new SaveSentinelRequest { Name = "S1", UseEsmDirectory = true });
+
+        svc.SetActive(created.SentinelId, false);
+        var reactivated = svc.SetActive(created.SentinelId, true);
+
+        Assert.True(reactivated.UseEsmDirectory);
+        Assert.True(_sentinels.Get(created.SentinelId)!.UseEsmDirectory);
+    }
+
     // ── Os（項目 4 的新設計：Sentinel 層級單一 OS，見 docs/LINUX-RULES.md §3） ──
 
     [Fact]

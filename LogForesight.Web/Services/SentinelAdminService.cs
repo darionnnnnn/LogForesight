@@ -71,7 +71,8 @@ public class SentinelAdminService
             PasswordEnc = passwordEnc,
             Active = existing?.Active ?? true,
             Os = os,
-            UseEsmDirectory = request.UseEsmDirectory
+            // 省略＝沿用既有值（同 Os）：編輯不帶這個欄位不代表要重置它
+            UseEsmDirectory = request.UseEsmDirectory ?? existing?.UseEsmDirectory ?? false
         });
 
         // 改名時同步所有掛在這台 Sentinel 下的主機顯示快照——不然要等下次批次/人工編輯才會更新，
@@ -123,6 +124,9 @@ public class SentinelAdminService
     {
         var sentinel = _sentinels.Get(sentinelId) ?? throw DomainException.NotFound("找不到這台 Sentinel。");
 
+        // 逐欄重建（只有 Active 是要改的）：**新增模型欄位時這裡必須跟著加**，
+        // 漏抄的症狀是「停用再啟用，該欄位被靜默重置」——UseEsmDirectory 曾在這裡漏過，
+        // SentinelAdminServiceTests 的 SetActive 保留欄位測試守住這件事
         var saved = _sentinels.Upsert(new Sentinel
         {
             SentinelId = sentinel.SentinelId,
@@ -131,7 +135,8 @@ public class SentinelAdminService
             Username = sentinel.Username,
             PasswordEnc = sentinel.PasswordEnc,
             Active = active,
-            Os = sentinel.Os
+            Os = sentinel.Os,
+            UseEsmDirectory = sentinel.UseEsmDirectory
         });
 
         _audit.Record(

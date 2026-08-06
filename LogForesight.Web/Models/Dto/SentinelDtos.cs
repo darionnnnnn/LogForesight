@@ -51,8 +51,10 @@ public class SaveSentinelRequest
     /// <summary>'windows'／'linux'。省略或不合法值＝windows（新增時的既有行為零改變）</summary>
     public string? Os { get; set; }
 
-    /// <summary>以 ESM 事件來源目錄探索。省略＝false（既有行為零改變）</summary>
-    public bool UseEsmDirectory { get; set; }
+    /// <summary>以 ESM 事件來源目錄探索。**省略＝沿用既有值**（新增時＝false）——
+    /// 與 <see cref="Os"/> 同一個語意：編輯不帶某欄位不代表要重置它，
+    /// API 呼叫端漏帶就把開關靜默關掉是另一種形式的欄位漂移</summary>
+    public bool? UseEsmDirectory { get; set; }
 }
 
 public class SetSentinelActiveRequest

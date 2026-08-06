@@ -1405,11 +1405,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **網段範圍掃描（Phase 5，2026-07-29）**：掃描前必須輸入要掃描的網段前綴（如 `192.168.0`）或
   CIDR（`/16`／`/24`），前端在呼叫 API 前先擋空白輸入（toast 提示）；後端
   `SentinelQueryBuilder.NormalizeSubnetPrefix` 再次驗證（拒絕單段「等同全站」與完整 4 段單一 IP）。
-  掃描走 `repip:{prefix}.*` 前綴萬用字元查詢＋自適應時間窗（取代原本規劃但不可行的「近 24h
-  全事件 distinct」，見 docs/archive/HISTORY.md「NetIQ Sentinel 取數 API 三輪 probe 實測」段），
-  結果只涵蓋掃描窗口內有事件回報的主機。精靈的網段勾選面板上方顯示 `CoverageNote`
-  （實際掃描窗口說明）與 `Warnings`（截斷等異常提示），讓使用者知道這份清單涵蓋到哪裡、
-  安靜的主機不在裡面。掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
+  掃描機制 **2026-08-06 涵蓋保證改版**（docs/NETIQ-API-REFERENCE.md §3.4；原「自適應時間窗」
+  已移除——事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失）：主掃描窄化到
+  System/Application 頻道（成本正比主機數而非事件量、24h 全窗口）＋全事件 60 分鐘補充掃描
+  ＋觸頂時殘差輪掃（server 端排除已見主機重查）；結果只有「完整／顯性警告不完整／顯性失敗」
+  三種，靜默漏掉被消滅。重掃時該 Sentinel×網段的已登錄主機在 server 端直接排除
+  （無新機的重掃趨近免費），由 Service 合成回清單（`Exists=true`、名稱取 `DisplayName`），
+  精靈畫面分組不變。精靈的網段勾選面板上方顯示 `CoverageNote`（涵蓋語意說明）與
+  `Warnings`（超出掃描能力／排除語法未生效／頻道覆蓋疑慮等，每則都說得出下一步動作）。
+  掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
   `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的 `DisplayName` 一律不動。
 - **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
   截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到

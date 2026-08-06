@@ -302,7 +302,10 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 client, scanCt,
                 exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(subnetPrefix, exclude),
                 now.AddMinutes(-SupplementWindowMinutes), now,
-                SupplementMaxResults, SupplementResidualRounds, scan, warnings, "補充掃描");
+                SupplementMaxResults, SupplementResidualRounds, scan, warnings, "補充掃描",
+                // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
+                // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
+                fallbackToUnexcludedFirstRound: true);
 
             var hosts = scan.DiscoveredHosts();
 
@@ -425,25 +428,38 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// (2) 輪數用盡；(3) 排除清單超過 <see cref="ExclusionClauseLimit"/>。
     /// 後兩者都會加一則 Warning——**知道可能漏，就一定要說**。</para>
     /// </summary>
+    /// <param name="fallbackToUnexcludedFirstRound">排除清單超過子句上限時，第一輪改以
+    /// **無排除**方式照掃（規劃 §3.2：補充掃描的職責是撈漏網主機，跳過它等於整段棄守；
+    /// 無排除地掃仍可能在 cap 內撈到部分未知主機，比不掃好）。主掃描不用這個退路——
+    /// 它自己就是排除清單的來源，第一輪本來就從空清單開始。</param>
     private async Task<RoundsOutcome> RunResidualRoundsAsync(
         SentinelClient client, CancellationToken ct,
         Func<IReadOnlyCollection<string>, string> filterFactory,
         DateTimeOffset start, DateTimeOffset end,
-        int maxResults, int maxRounds, ScanState scan, List<string> warnings, string stageName)
+        int maxResults, int maxRounds, ScanState scan, List<string> warnings, string stageName,
+        bool fallbackToUnexcludedFirstRound = false)
     {
         var newHosts = 0;
 
         for (var round = 0; round < maxRounds; round++)
         {
             var exclusion = scan.ExclusionOrNull();
-            // 排除清單已超出子句上限：再送出去會被 Sentinel 整個拒絕，只能停在這裡。
-            // 這是「可能漏」的情況之一，必須警告。
+            // 排除清單已超出子句上限：再送出去會被 Sentinel 整個拒絕。
+            // 第一輪且允許退路 → 無排除照掃（取回會混入已知主機的事件，Absorb 自然去重）；
+            // 其餘情況只能停在這裡——這是「可能漏」的情況之一，必須警告。
             if (exclusion is null)
             {
-                warnings.Add(
-                    $"{stageName}：已發現的主機數超過單次查詢的排除上限（{ExclusionClauseLimit} 台），" +
-                    "無法繼續縮小查詢範圍，清單可能不完整——請改掃更小的網段（如把 /16 拆成數個 /24 分次掃）。");
-                return new RoundsOutcome(newHosts, Complete: false);
+                if (round == 0 && fallbackToUnexcludedFirstRound)
+                {
+                    exclusion = Array.Empty<string>();
+                }
+                else
+                {
+                    warnings.Add(
+                        $"{stageName}：已發現的主機數超過單次查詢的排除上限（{ExclusionClauseLimit} 台），" +
+                        "無法繼續縮小查詢範圍，清單可能不完整——請改掃更小的網段（如把 /16 拆成數個 /24 分次掃）。");
+                    return new RoundsOutcome(newHosts, Complete: false);
+                }
             }
 
             var result = await client.SearchAsync(new SentinelSearchRequest(
@@ -589,19 +605,4 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 : null;
     }
 
-    /// <summary>同一 IP 底下最常見的非空 sn 值——單一主機的事件不會每筆 sn 都不同，
-    /// 取眾數比取第一筆更能防偶發的欄位缺席或雜訊值。</summary>
-    private static string? PickMostCommonHostName(IEnumerable<SentinelEvent> events) =>
-        events
-            .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .GroupBy(v => v, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(g => g.Count())
-            .Select(g => g.Key)
-            .FirstOrDefault();
-
-    private static string FormatWindow(double hours) =>
-        hours >= 1
-            ? $"{hours:0.#} 小時"
-            : $"{Math.Max(1, (int)Math.Round(hours * 60))} 分鐘";
 }

@@ -175,6 +175,32 @@ public class SentinelRestDirectoryClientTests
         Assert.Equal(3, handler.Filters.Count);
     }
 
+    /// <summary>
+    /// 主掃描發現的主機超過排除子句上限時，補充掃描**退回無排除照掃**（規劃 §3.2）——
+    /// 跳過它等於把「撈 Security-only 漏網主機」整段棄守；無排除地掃雖會混入已知主機的
+    /// 事件（Absorb 去重吸掉），但仍可能在 cap 內補到未知主機，比不掃好。
+    /// </summary>
+    [Fact]
+    public async Task 已見主機超過排除上限_補充掃描退回無排除照掃而不是跳過()
+    {
+        // 主掃描一輪回超過上限（501 台）且未截斷 → 補充掃描的排除清單放不進子句
+        var manyHosts = Enumerable.Range(0, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
+            .Select(i => ($"10.1.{i / 250}.{i % 250}", (string?)$"srv{i}"))
+            .ToArray();
+        var handler = new ScriptedHandler(
+            new JobScript(manyHosts.Length, manyHosts),
+            new JobScript(1, ("10.1.9.9", "supp")));
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1", CancellationToken.None);
+
+        Assert.Equal(2, handler.Filters.Count);                 // 補充掃描真的跑了
+        Assert.DoesNotContain("NOT", handler.Filters[1]);       // 而且是無排除版
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.9.9");
+        // 兩段都掃完（未截斷）→ 不該有「排除上限」的警告
+        Assert.DoesNotContain(result.Warnings, w => w.Contains("排除上限"));
+    }
+
     // ── 重掃增量：已登錄主機在 server 端就排除 ──────────────────────────────
 
     [Fact]
