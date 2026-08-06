@@ -68,10 +68,12 @@ public class StorageBackend
                 // 這裡補上既有 DB 缺的欄位/索引（自製冪等 DDL）
                 SchemaUpgrader.Upgrade(ctx);
 
-                // 處理狀態自 blob 遷入真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：
-                // 冪等（目標表非空即跳過）、不刪舊 blob、解析失敗直接拋。
-                // 放在互斥區內與 DDL 同一把鎖——兩個行程同時啟動時只有一個會搬
-                HandlingBlobMigrator.MigrateIfNeeded(ctx, key => Blob(key).Read());
+                // 處理狀態的遷移**只在這裡做判定，不在這裡搬**
+                // （docs/SCALE-FIX-PLAN-2026-08-06.md §三／G1）：
+                // 實際搬移可能是數分鐘（2000 台約 108 萬列／350 MB），
+                // 掛在啟動路徑上會直接撞 Windows 服務 30 秒的啟動逾時而被 SCM 砍掉。
+                // 這裡只做毫秒級的「需不需要搬」判定並寫下狀態，搬移交給背景服務。
+                HandlingMigrator.Evaluate();
             }, SchemaMutexTimeout);
 
             if (!exclusive)
@@ -135,6 +137,15 @@ public class StorageBackend
 
     /// <summary>問題聚合查詢（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）</summary>
     public EfIssueAggregateQuery IssueAggregateQuery() => new(_dbFactory, Performance);
+
+    /// <summary>
+    /// 處理狀態自 blob 搬進真表的遷移器（docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
+    /// **每個後端一份**：遷移狀態要跨呼叫共享，不能每次都 new 一個新的。
+    /// </summary>
+    public HandlingBlobMigrator HandlingMigrator => _handlingMigrator ??=
+        new HandlingBlobMigrator(_dbFactory, Blob, new HandlingMigrationStateStore(Blob("handling_migration")));
+
+    private HandlingBlobMigrator? _handlingMigrator;
 
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);

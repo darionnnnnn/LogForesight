@@ -32,6 +32,19 @@ public class DashboardDto
     /// </summary>
     public List<IssueRankingDto> TopIssues { get; set; } = new();
 
+    /// <summary>
+    /// 問題統計是否還在背景整理（回填或搬移中，docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+    ///
+    /// **為什麼放在這裡而不是 /api/health/detail**：那支需要 <c>Maintain</c>，
+    /// 而看排行的是全部角色；而且「這張卡的數字準不準」本來就是這張卡的資料，
+    /// 放同一份 DTO 就不可能有人忘了查。未完成時數字**偏低但看起來完全正常**——
+    /// 那正是本專案最忌諱的「靜默給錯數字」。
+    /// </summary>
+    public bool IssueStatsPending { get; set; }
+
+    /// <summary>可直接顯示的說明（非 pending 時為 null）</summary>
+    public string? IssueStatsPendingHint { get; set; }
+
     /// <summary>未回報主機數（§5.4 D-4：計數卡＋下鑽，不再整表渲染逐台清單——
     /// 兩千台規模下這個清單可能本身就有數百筆）。點卡片導向主機頁的「未回報」篩選</summary>
     public int SilentHostsCount { get; set; }
@@ -191,6 +204,11 @@ public class ReportSummaryDto
 
     /// <summary>Top 10 以外問題的合計；無其他問題時為 null</summary>
     public IssueRankingOthersDto? IssueOthers { get; set; }
+
+    /// <summary>問題統計是否還在背景整理——與 <see cref="DashboardDto.IssueStatsPending"/> 同一件事</summary>
+    public bool IssueStatsPending { get; set; }
+
+    public string? IssueStatsPendingHint { get; set; }
 
     /// <summary>可見且啟用的主機總數（docs/archive/HISTORY.md #6）——與儀表板 TotalHosts 同一來源，
     /// 供「受影響主機占比」圖表當分母（Kpi.AffectedHosts / TotalHosts）</summary>

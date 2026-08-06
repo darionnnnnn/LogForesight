@@ -159,6 +159,10 @@ try
     app.UseAuthentication();
     app.UseMiddleware<ActiveUserMiddleware>();   // 停用帳號即時生效（§6.3），必須在驗證之後
     app.UseAuthorization();
+    // 處理狀態搬移中擋下寫入（docs/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+    // 位置有要求：在 UseAuthorization 之後（不擋登入），在 CsrfHeaderMiddleware 之前
+    //（先回明確的「搬移中」，不要讓使用者收到看似「請求來源驗證失敗」的誤導訊息）
+    app.UseMiddleware<MigrationGateMiddleware>();
     app.UseMiddleware<CsrfHeaderMiddleware>();   // 非 GET 的 API 需帶 X-Requested-By（§6.4）
 
     app.MapControllers();

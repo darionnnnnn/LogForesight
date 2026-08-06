@@ -49,6 +49,7 @@ public class HealthService
     {
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
+        var migration = _backend.HandlingMigrator.State;
 
         // 「慢操作占比過高」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
         // 因此獨立成 degraded 狀態，而不是併進 ok
@@ -79,7 +80,14 @@ public class HealthService
             // 回填未完成期間問題聚合的數字會偏低但看起來正常——必須看得到（P4）
             BackfillInProgress = _backfiller.Progress.InProgress,
             BackfillDone = _backfiller.Progress.Done,
-            BackfillTotal = _backfiller.Progress.Total
+            BackfillTotal = _backfiller.Progress.Total,
+
+            // 遷移未完成時處理狀態是唯讀的——這是唯一能看出「為什麼標記不了」的地方
+            MigrationState = migration.State,
+            MigrationBlocksWrites = migration.ShouldBlockWrites,
+            MigrationDoneParts = new[] { migration.IssueHandlingDone, migration.IssueCasesDone, migration.RecordHandlingDone }
+                .Count(x => x),
+            MigrationError = migration.LastError
         };
     }
 

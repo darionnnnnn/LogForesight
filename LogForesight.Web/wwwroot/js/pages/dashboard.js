@@ -353,6 +353,10 @@ function severityBreakdown(category) {
  * 那裡有處理概況、指派與統一標記——這張卡只負責把注意力導過去。
  */
 function renderTopIssues(data) {
+    // 背景整理中的提示放在**表格容器之外**——renderTable 會 replaceChildren，
+    // 塞在同一個容器裡會被下一次渲染吃掉
+    renderStatsPendingNote('dashboard-issues-pending', data);
+
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
             { title: '問題', render: i => issueNameCell(i) },
@@ -369,6 +373,27 @@ function renderTopIssues(data) {
                       `&from=${data.from}&to=${data.to}`,
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
+}
+
+/**
+ * 「統計中」提示（docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+ *
+ * 遷移或回填未完成時，問題排行的數字**偏低但看起來完全正常**——那是本專案最忌諱的
+ * 「靜默給錯數字」。旗標與說明由後端合成（使用者不必分辨是哪一種背景工作），
+ * 這裡只負責顯示；沒有 pending 時不留任何殘留節點。
+ */
+function renderStatsPendingNote(containerId, data) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    el.replaceChildren();
+    if (!data.issueStatsPending) {
+        el.classList.add('d-none');
+        return;
+    }
+
+    el.className = 'alert alert-warning py-2 mb-2 small';
+    el.textContent = data.issueStatsPendingHint ?? '問題統計整理中，數字可能不完整。';
 }
 
 /** 問題名稱＋「新」徽章：本期新出現是「今天有什麼不一樣」最直接的訊號（§10.3） */

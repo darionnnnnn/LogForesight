@@ -48,4 +48,20 @@ public class HealthDetailDto : HealthDto
     public bool BackfillInProgress { get; set; }
     public int BackfillDone { get; set; }
     public int BackfillTotal { get; set; }
+
+    // ── 處理狀態的 blob → 真表遷移（升級時才會發生一次）────────────────────
+    // 未完成時處理狀態是**唯讀**的（寫入被 MigrationGateMiddleware 擋下），
+    // 這是唯一能看出「為什麼標記不了」的地方
+
+    /// <summary>unknown｜pending｜running｜completed</summary>
+    public string MigrationState { get; set; } = string.Empty;
+
+    /// <summary>未完成時處理狀態為唯讀</summary>
+    public bool MigrationBlocksWrites { get; set; }
+
+    /// <summary>三份中已完成的份數</summary>
+    public int MigrationDoneParts { get; set; }
+
+    /// <summary>最後一次搬移失敗的原因（成功為 null）</summary>
+    public string? MigrationError { get; set; }
 }

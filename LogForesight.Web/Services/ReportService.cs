@@ -68,6 +68,9 @@ public class ReportService
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,
+            // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
+            IssueStatsPending = _issueRanking.StatsPending().Pending,
+            IssueStatsPendingHint = _issueRanking.StatsPending().Hint,
             Handling = _handling.GetTodo(records)
         };
 

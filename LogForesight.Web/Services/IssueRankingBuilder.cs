@@ -20,10 +20,46 @@ namespace LogForesight.Web.Services;
 public class IssueRankingBuilder
 {
     private readonly IIssueAggregateQuery _aggregates;
+    private readonly TopIssueBackfiller? _backfiller;
+    private readonly StorageBackend? _backend;
 
-    public IssueRankingBuilder(IIssueAggregateQuery aggregates)
+    public IssueRankingBuilder(
+        IIssueAggregateQuery aggregates,
+        TopIssueBackfiller? backfiller = null,
+        StorageBackend? backend = null)
     {
         _aggregates = aggregates;
+        _backfiller = backfiller;
+        _backend = backend;
+    }
+
+    /// <summary>
+    /// 問題統計目前準不準（docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+    ///
+    /// 兩種背景工作都會讓聚合數字**偏低但看起來完全正常**：
+    ///   - 遷移未完成：處理狀態還沒搬完（連帶影響處理概況）；
+    ///   - 回填未完成：舊的 lf_top_issues 列還沒有聚合維度，不會被計入。
+    /// 使用者不需要分辨是哪一種，他只需要知道「現在看到的還不是最終值」——
+    /// 所以合成同一個旗標與同一句說明，由儀表板與報表共用。
+    /// </summary>
+    public (bool Pending, string? Hint) StatsPending()
+    {
+        var migration = _backend?.HandlingMigrator.State;
+        if (migration is { ShouldBlockWrites: true })
+        {
+            var done = new[] { migration.IssueHandlingDone, migration.IssueCasesDone, migration.RecordHandlingDone }
+                .Count(x => x);
+            return (true, $"處理狀態的資料搬移中（已完成 {done}/3），統計數字可能不完整。");
+        }
+
+        var progress = _backfiller?.Progress;
+        if (progress is { InProgress: true })
+        {
+            return (true, $"問題統計回填中（已完成 {progress.Done:N0}/{progress.Total:N0}），" +
+                          "次數與影響範圍可能偏低。");
+        }
+
+        return (false, null);
     }
 
     /// <summary>

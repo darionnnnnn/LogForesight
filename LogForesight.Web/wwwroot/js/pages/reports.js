@@ -524,7 +524,14 @@ function renderIssueRankMeta() {
     // 選了「未處理」看到 KPI 歸零、問題排行卻仍是全部時，畫面等於在說謊。
     // 在能以「未處理主機數」正確套用之前（§10.6），至少要誠實說明。
     const scopeNote = currentScope !== 'all' ? '；不受「顯示範圍」篩選影響' : '';
-    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}` : '';
+
+    // 背景整理中時數字偏低但看起來正常（G2）——與 scope 說明合併在同一行副標題，
+    // 不另外插入節點（這張卡的容器由圖表渲染接管，多插的節點會被蓋掉）
+    const pendingNote = currentData.issueStatsPending
+        ? `；${currentData.issueStatsPendingHint ?? '統計整理中，數字可能不完整'}`
+        : '';
+
+    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}` : '';
 
     if (currentData.issueOthers) {
         viewAll.href = `/records?view=issue&from=${currentData.from}&to=${currentData.to}`;

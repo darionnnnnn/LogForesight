@@ -301,6 +301,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
+        // 處理狀態自 blob 搬進真表（docs/SCALE-FIX-PLAN-2026-08-06.md §三）：
+        // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
+        // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
+        services.AddHostedService<HandlingMigrationHostedService>();
+
         // lf_top_issues 聚合欄的背景回填（docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();

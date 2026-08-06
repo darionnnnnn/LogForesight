@@ -66,6 +66,9 @@ public class DashboardService
             .Build(from, DateTime.Today, visibleHostIds, visibleHosts.Count)
             .Take(5)
             .ToList();
+
+        // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
+        (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();
         BuildSilentHosts(dto, visibleHosts);
         BuildGroupRisk(dto, records, visibleHosts);
 

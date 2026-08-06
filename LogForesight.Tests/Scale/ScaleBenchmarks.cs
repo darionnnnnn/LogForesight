@@ -155,6 +155,92 @@ public class ScaleBenchmarks
         }
     }
 
+    /// <summary>
+    /// **升級路徑的實測**（docs/SCALE-FIX-PLAN-2026-08-06.md §三、體檢 S-1／G1）。
+    ///
+    /// 造一份 100 萬列的**舊格式** issue_handling blob，走完整的升級流程：
+    ///   1. 建立後端（＝服務啟動）必須在**秒級**完成，不能被搬移拖住（G1）；
+    ///   2. 此時處理狀態應為唯讀（寫入被擋）；
+    ///   3. 背景搬移完成後解除唯讀，且筆數正確。
+    ///
+    /// 沒有這條測試，S-1 與 G1 的修復都只是推論——而這一組正是全案唯一會丟資料的部分。
+    /// </summary>
+    [ScaleFact]
+    public void 升級路徑_百萬列blob的遷移()
+    {
+        const int rows = 1_000_000;
+        var dir = Path.Combine(Path.GetTempPath(), "lf-upgrade-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var dbPath = Path.Combine(dir, "upgrade.db");
+
+        StorageBackend NewBackend() => new(
+            new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={dbPath}" }, dir);
+
+        try
+        {
+            _out.WriteLine($"== 升級路徑實測（舊格式 blob {rows:N0} 列）==");
+
+            var sw = Stopwatch.StartNew();
+            var legacy = new List<IssueHandling>(rows);
+            var baseDate = DateTime.Today.AddDays(-3000);
+            for (var i = 0; i < rows; i++)
+            {
+                // 鍵必須真的相異：(host, date, issueKey) 是唯一鍵，遷移會去重。
+                // 用 i%6000／i%2000／i%1200 這種寫法會因為整除關係只產生 6000 種組合
+                // （2000 與 1200 都整除 6000，後兩者完全由 i%6000 決定）——
+                // 造出來的「100 萬列」會被正確地去重成 6000 列，測到的就不是規模。
+                // 這裡讓主機取餘、日期取商，6000 × 167 ≈ 100 萬個相異 (主機, 日期) 組合。
+                legacy.Add(new IssueHandling
+                {
+                    HostName = $"SRV-{i % 6000:D5}",
+                    Date = baseDate.AddDays(i / 6000),
+                    IssueKey = "System|Source-0001|1001|1",
+                    Status = IssueHandlingStatuses.KnownNoise,
+                    ActorId = 1, ActorAccount = "admin", Note = "舊資料", UpdatedAt = DateTime.Now
+                });
+            }
+
+            var seeding = NewBackend();
+            var json = System.Text.Json.JsonSerializer.Serialize(legacy, LfJsonOptions.Pretty);
+            seeding.Blob("issue_handling").Mutate<object?>(_ => (json, null));
+            // 還原成「舊版本的資料庫沒有遷移標記」
+            seeding.Blob("handling_migration").Mutate<object?>(_ => (string.Empty, null));
+            _out.WriteLine($"  造資料：blob {json.Length / 1024 / 1024:N0} MB（{json.Length:N0} 字元）— {sw.Elapsed.TotalSeconds:N1} 秒");
+            legacy.Clear();
+
+            // 1) 啟動必須是秒級（舊實作在這裡同步搬完，會撞服務 30 秒逾時）
+            sw.Restart();
+            var backend = NewBackend();
+            sw.Stop();
+            var startupMs = sw.ElapsedMilliseconds;
+
+            var afterStartup = backend.HandlingMigrator.State;
+            _out.WriteLine($"  啟動耗時：{startupMs:N0} ms；狀態＝{afterStartup.State}；擋寫入＝{afterStartup.ShouldBlockWrites}");
+            Assert.Equal(HandlingMigrationState.Pending, afterStartup.State);
+            Assert.True(afterStartup.ShouldBlockWrites);
+            Assert.True(startupMs < 10_000, $"啟動花了 {startupMs} ms——遷移不該卡在啟動路徑上");
+
+            // 2) 背景搬移
+            sw.Restart();
+            backend.HandlingMigrator.Run(CancellationToken.None);
+            sw.Stop();
+
+            var done = backend.HandlingMigrator.State;
+            _out.WriteLine($"  搬移耗時：{sw.Elapsed.TotalSeconds:N1} 秒；狀態＝{done.State}；" +
+                           $"issue_handling {done.IssueHandlingRows:N0} 列");
+
+            Assert.Equal(HandlingMigrationState.Completed, done.State);
+            Assert.False(done.ShouldBlockWrites);
+            Assert.Equal(rows, done.IssueHandlingRows);
+            Assert.False(string.IsNullOrWhiteSpace(backend.Blob("issue_handling").Read()));   // 搬完不刪
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* 暫存刪不掉不影響結論 */ }
+        }
+    }
+
     private void RunProfile(ScaleProfile profile)
     {
         _out.WriteLine($"===== {profile} =====");

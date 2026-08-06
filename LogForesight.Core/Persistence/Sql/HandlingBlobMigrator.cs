@@ -5,38 +5,171 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 把三份處理狀態自整份 JSON blob 搬進真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）。
+/// 把三份處理狀態自整份 JSON blob 搬進真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3、
+/// 修復規劃 docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
-/// **設計約束**（這是全案唯一會動到既有資料的一步，三條都不可退讓）：
-///   1. **冪等可重跑**：以「目標表是空的」為執行條件。搬過就不再搬，重啟站台不會重複匯入。
-///   2. **失敗不破壞舊資料**：整段包在一個交易裡；**搬完不刪 blob**，只記 log。
-///      舊 blob 留著當備份，真的出事時資料還在原地，不必從備份還原。
-///   3. **不靜默丟資料**：解析失敗直接拋，讓啟動失敗而不是「安靜地少了一半處理狀態」——
-///      後者要好幾天後才會有人發現，而那時新舊資料已經混在一起。
+/// **這是全案唯一會動到既有資料的一步**，四條約束：
 ///
-/// 於 <see cref="StorageBackend"/> 的 schema 確認之後執行，與 DDL 共用同一把跨行程互斥
-/// （兩個行程同時啟動時只有一個會搬）。
+/// 1. **中斷後可安全重來**：每一份的「讀 blob → 寫表 → 記錄完成」包在**單一交易**內。
+///    被強制中止（服務啟動逾時被 SCM 砍掉）就整份回滾、表仍為空，下次啟動重搬。
+///    **刻意不分批 commit**——blob 是無序的整份 JSON，沒有穩定的續跑游標，
+///    分批就會留下「搬到一半、但不知道搬到哪」的狀態，那正是原本要修掉的問題。
+/// 2. **完成與否是被寫下的事實**（<see cref="HandlingMigrationState"/>），
+///    不是從「目標表空不空」反推——後者在中斷後會誤判成「已搬完」而靜默丟資料。
+/// 3. **不刪舊 blob**：搬完保留當備份，由遷移狀態擔任它的失效標記。
+/// 4. **不靜默丟資料**：解析失敗直接拋，讓遷移標記為失敗並在畫面上看得見，
+///    而不是安靜地少了一半處理狀態——後者要好幾天後才會有人發現。
+///
+/// **不在啟動路徑上執行**：由背景服務驅動（見 Web 端 HandlingMigrationHostedService）。
+/// 2000 台約 108 萬列／350 MB，同步搬會直接撞上 Windows 服務 30 秒的啟動逾時。
 /// </summary>
-internal static class HandlingBlobMigrator
+public sealed class HandlingBlobMigrator
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
-    public static void MigrateIfNeeded(LfDbContext ctx, Func<string, string?> readBlob)
+    private readonly Func<LfDbContext> _contextFactory;
+    private readonly Func<string, EfJsonBlobStore> _blobFactory;
+    private readonly HandlingMigrationStateStore _stateStore;
+
+    public HandlingBlobMigrator(
+        Func<LfDbContext> contextFactory,
+        Func<string, EfJsonBlobStore> blobFactory,
+        HandlingMigrationStateStore stateStore)
     {
-        MigrateIssueHandlings(ctx, readBlob);
-        MigrateIssueCases(ctx, readBlob);
-        MigrateRecordHandlings(ctx, readBlob);
+        _contextFactory = contextFactory;
+        _blobFactory = blobFactory;
+        _stateStore = stateStore;
     }
 
-    private static void MigrateIssueHandlings(LfDbContext ctx, Func<string, string?> readBlob)
+    public HandlingMigrationState State => _stateStore.Get();
+
+    /// <summary>
+    /// 啟動時的**輕量**判定（毫秒級，可留在啟動路徑）：決定這個資料庫需不需要遷移。
+    ///
+    /// 判準刻意用「blob 有內容」而不是「表是空的」——表可能因為上次中斷而有部分資料，
+    /// 那正是需要**繼續**搬的情況。實際搬移交給 <see cref="Run"/>。
+    /// </summary>
+    public void Evaluate()
     {
-        if (ctx.IssueHandlings.Any()) return;
+        var state = _stateStore.Get();
+        if (state.State == HandlingMigrationState.Completed) return;
 
-        var items = Deserialize<IssueHandling>(readBlob("issue_handling"), "issue_handling");
-        if (items.Count == 0) return;
+        var needed = HasBlobContent("issue_handling") || HasBlobContent("issue_cases") || HasBlobContent("record_handling");
 
-        // 舊 blob 理論上不會有重複鍵（SaveMany 的合併保證），但真要有的話新表的唯一索引會擋下——
-        // 這裡先去重並記 log，讓遷移不會因為一筆歷史髒資料而整個失敗
+        _stateStore.Update(s =>
+        {
+            if (!needed)
+            {
+                // 全新安裝（或本來就沒有舊資料）：直接標完成，寫入不必被擋
+                s.State = HandlingMigrationState.Completed;
+                s.IssueHandlingDone = s.IssueCasesDone = s.RecordHandlingDone = true;
+                s.CompletedAt = DateTime.Now;
+                return;
+            }
+
+            if (s.State == HandlingMigrationState.Unknown) s.State = HandlingMigrationState.Pending;
+            // 上次卡在 running（行程被砍）→ 退回 pending 重來；未完成的那一份表已被交易回滾成空
+            if (s.State == HandlingMigrationState.Running) s.State = HandlingMigrationState.Pending;
+        });
+
+        if (needed) Log.Info("[SQL] 偵測到舊格式的處理狀態 blob，將於背景搬移至資料表");
+    }
+
+    /// <summary>
+    /// 實際搬移（背景執行）。逐份進行、逐份記錄完成；已完成的份不重做。
+    /// 失敗時把訊息寫進遷移狀態並重新拋出——呼叫端負責記 log，畫面則從狀態讀得到。
+    /// </summary>
+    public void Run(CancellationToken cancellationToken)
+    {
+        var state = _stateStore.Get();
+        if (state.State == HandlingMigrationState.Completed) return;
+
+        _stateStore.Update(s =>
+        {
+            s.State = HandlingMigrationState.Running;
+            s.StartedAt ??= DateTime.Now;
+            s.LastError = null;
+        });
+
+        try
+        {
+            if (!state.IssueHandlingDone && !cancellationToken.IsCancellationRequested)
+            {
+                var rows = MigrateOne("issue_handling", MigrateIssueHandlings);
+                _stateStore.Update(s => { s.IssueHandlingDone = true; s.IssueHandlingRows = rows; });
+            }
+
+            if (!state.IssueCasesDone && !cancellationToken.IsCancellationRequested)
+            {
+                var rows = MigrateOne("issue_cases", MigrateIssueCases);
+                _stateStore.Update(s => { s.IssueCasesDone = true; s.IssueCasesRows = rows; });
+            }
+
+            if (!state.RecordHandlingDone && !cancellationToken.IsCancellationRequested)
+            {
+                var rows = MigrateOne("record_handling", MigrateRecordHandlings);
+                _stateStore.Update(s => { s.RecordHandlingDone = true; s.RecordHandlingRows = rows; });
+            }
+        }
+        catch (Exception ex)
+        {
+            // 失敗要看得見：留在狀態裡，畫面與 /api/health/detail 都讀得到。
+            // 狀態退回 pending（不是 completed）——寫入繼續被擋，避免落進半搬完的表
+            _stateStore.Update(s =>
+            {
+                s.State = HandlingMigrationState.Pending;
+                s.LastError = ex.Message;
+            });
+            throw;
+        }
+
+        var current = _stateStore.Get();
+        if (!current.AllDone) return;   // 被取消（站台關閉）：維持 running/pending，下次啟動接續
+
+        _stateStore.Update(s =>
+        {
+            s.State = HandlingMigrationState.Completed;
+            s.CompletedAt = DateTime.Now;
+            s.LastError = null;
+        });
+
+        Log.Info("[SQL] 處理狀態遷移完成：issue_handling {A} 列、issue_cases {B} 列、record_handling {C} 列" +
+                 "（原 blob 全部保留未刪，僅作備份）",
+            current.IssueHandlingRows, current.IssueCasesRows, current.RecordHandlingRows);
+    }
+
+    /// <summary>
+    /// 單一份的搬移：**整份包在一個交易裡**。中途被砍＝整份回滾，表回到空的狀態，
+    /// 下次啟動重搬——這是「中斷可安全重來」的實作核心。
+    /// </summary>
+    private int MigrateOne(string blobKey, Func<LfDbContext, string?, int> migrate)
+    {
+        using var ctx = _contextFactory();
+        var strategy = ctx.Database.CreateExecutionStrategy();
+
+        return strategy.Execute(() =>
+        {
+            using var inner = _contextFactory();
+            using var tx = inner.Database.BeginTransaction();
+
+            var count = migrate(inner, _blobFactory(blobKey).Read());
+            inner.SaveChanges();
+            tx.Commit();
+
+            if (count > 0) Log.Info("[SQL] {Key} 已自 blob 遷入資料表：{Count} 列", blobKey, count);
+            return count;
+        });
+    }
+
+    private static int MigrateIssueHandlings(LfDbContext ctx, string? json)
+    {
+        // 表已有資料代表上次的交易已 commit（正常情況下不會走到，除非狀態 blob 被手動改過）——
+        // 不重複匯入，避免撞唯一索引
+        if (ctx.IssueHandlings.Any()) return ctx.IssueHandlings.Count();
+
+        var items = Deserialize<IssueHandling>(json, "issue_handling");
+        if (items.Count == 0) return 0;
+
         var deduped = items
             .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date, h.IssueKey))
             .Select(g => g.Last())
@@ -59,16 +192,15 @@ internal static class HandlingBlobMigrator
             UpdatedAt = h.UpdatedAt
         }));
 
-        ctx.SaveChanges();
-        Log.Info("[SQL] issue_handling 已自 blob 遷入 lf_issue_handling：{Count} 列（原 blob 保留未刪）", deduped.Count);
+        return deduped.Count;
     }
 
-    private static void MigrateIssueCases(LfDbContext ctx, Func<string, string?> readBlob)
+    private static int MigrateIssueCases(LfDbContext ctx, string? json)
     {
-        if (ctx.IssueCases.Any()) return;
+        if (ctx.IssueCases.Any()) return ctx.IssueCases.Count();
 
-        var items = Deserialize<IssueCase>(readBlob("issue_cases"), "issue_cases");
-        if (items.Count == 0) return;
+        var items = Deserialize<IssueCase>(json, "issue_cases");
+        if (items.Count == 0) return 0;
 
         var deduped = items.GroupBy(c => c.CaseId).Select(g => g.Last()).ToList();
         if (deduped.Count != items.Count)
@@ -93,16 +225,15 @@ internal static class HandlingBlobMigrator
             UpdatedAt = c.UpdatedAt
         }));
 
-        ctx.SaveChanges();
-        Log.Info("[SQL] issue_cases 已自 blob 遷入 lf_issue_cases：{Count} 列（原 blob 保留未刪）", deduped.Count);
+        return deduped.Count;
     }
 
-    private static void MigrateRecordHandlings(LfDbContext ctx, Func<string, string?> readBlob)
+    private static int MigrateRecordHandlings(LfDbContext ctx, string? json)
     {
-        if (ctx.RecordHandlings.Any()) return;
+        if (ctx.RecordHandlings.Any()) return ctx.RecordHandlings.Count();
 
-        var items = Deserialize<RecordHandling>(readBlob("record_handling"), "record_handling");
-        if (items.Count == 0) return;
+        var items = Deserialize<RecordHandling>(json, "record_handling");
+        if (items.Count == 0) return 0;
 
         var deduped = items
             .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date))
@@ -123,13 +254,14 @@ internal static class HandlingBlobMigrator
             UpdatedAt = h.UpdatedAt
         }));
 
-        ctx.SaveChanges();
-        Log.Info("[SQL] record_handling 已自 blob 遷入 lf_record_handling：{Count} 列（原 blob 保留未刪）", deduped.Count);
+        return deduped.Count;
     }
+
+    private bool HasBlobContent(string key) => !string.IsNullOrWhiteSpace(_blobFactory(key).Read());
 
     /// <summary>
     /// 解析失敗**不吞**：處理狀態靜默當空會讓整站看起來「所有問題都沒人處理過」，
-    /// 比啟動報錯難查得多——與 <see cref="JsonBlobCollection{T}"/> 的既有取捨一致。
+    /// 比顯性失敗難查得多——與 <see cref="JsonBlobCollection{T}"/> 的既有取捨一致。
     /// </summary>
     private static List<T> Deserialize<T>(string? json, string key)
     {
@@ -143,7 +275,7 @@ internal static class HandlingBlobMigrator
         {
             throw new InvalidOperationException(
                 $"處理狀態遷移失敗：blob「{key}」無法解析（{ex.Message}）。" +
-                "資料未被修改，請確認 lf_blobs 的內容後再啟動。", ex);
+                "資料未被修改，請確認 lf_blobs 的內容後重新啟動。", ex);
         }
     }
 }

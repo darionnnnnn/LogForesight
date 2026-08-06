@@ -4,13 +4,17 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 處理狀態自整份 blob 遷入真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）。
+/// 處理狀態自整份 blob 遷入真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3、
+/// 修復規劃 docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
-/// **這是全案唯一會動到既有資料的一步**，三條約束逐一釘住：
-///   1. 冪等可重跑——搬過就不再搬，站台重啟不會重複匯入。
-///   2. 失敗不破壞舊資料——搬完**不刪** blob，舊資料留在原地當備份。
-///   3. 不靜默丟資料——解析失敗直接拋，讓啟動失敗而不是「安靜地少了一半處理狀態」。
-///      後者要好幾天後才會有人發現，而那時新舊資料已經混在一起。
+/// **這是全案唯一會動到既有資料的一步**，四條約束逐一釘住：
+///   1. 中斷後可安全重來——每一份包在單一交易內，被砍就整份回滾、表仍為空。
+///   2. 完成與否是**被寫下的事實**（HandlingMigrationState），不是從「表空不空」反推。
+///      體檢 S-1：全表判斷在中斷後會誤判成「已搬完」而**靜默丟資料**。
+///   3. 搬完不刪 blob，遷移狀態即為它的失效標記。
+///   4. 解析失敗顯性失敗，不靜默當空。
+///
+/// 另外釘住「不在啟動路徑上」：建立 StorageBackend **不會**自己搬資料（G1）。
 /// </summary>
 public class HandlingBlobMigrationTests : IDisposable
 {
@@ -51,12 +55,13 @@ public class HandlingBlobMigrationTests : IDisposable
         CreatedAt = DateTime.Now, CreatedByAccount = "admin", UpdatedAt = DateTime.Now
     };
 
-    [Fact]
-    public void 首次啟動_三份blob全部遷入真表()
+    /// <summary>
+    /// 造出一個**升級前**的資料庫：三份處理狀態在 blob 裡，且**沒有遷移狀態標記**
+    /// ——舊版本根本不知道有這個 key，那正是真實升級情境的形狀。
+    /// 回傳重新建立的後端＝模擬新版本的第一次啟動（只做判定，不搬）。
+    /// </summary>
+    private StorageBackend SeedLegacyDatabase(DateTime date)
     {
-        var date = DateTime.Today;
-
-        // 第一次建立後端只是為了寫入舊格式資料（此時表是空的，遷移不做事）
         var seeding = NewBackend();
         SeedBlob(seeding, "issue_handling", new List<IssueHandling>
         {
@@ -69,88 +74,176 @@ public class HandlingBlobMigrationTests : IDisposable
             new() { HostName = "SRV-01", Date = date, Status = "in_progress", HandlerId = 7, UpdatedAt = DateTime.Now }
         });
 
-        // 第二次建立後端＝模擬升級後的啟動，遷移在此發生
-        var backend = NewBackend();
+        // 清掉建立 seeding 後端時寫下的遷移狀態：那一次的判定看到的是「還沒有 blob」，
+        // 因而標成 completed。真實的升級前資料庫沒有這個標記，清空即等於還原成 Unknown
+        seeding.Blob("handling_migration").Mutate<object?>(_ => (string.Empty, null));
+
+        return NewBackend();
+    }
+
+    // ── G1：不在啟動路徑上 ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// 建立後端**不會**自己搬資料——搬移是分鐘級的工作，掛在啟動路徑上會撞
+    /// Windows 服務 30 秒的啟動逾時（體檢 G1）。啟動時只做毫秒級的判定。
+    /// </summary>
+    [Fact]
+    public void 建立後端不會搬資料_只標記為待搬移()
+    {
+        var date = DateTime.Today;
+        var backend = SeedLegacyDatabase(date);
+
+        Assert.Equal(HandlingMigrationState.Pending, backend.HandlingMigrator.State.State);
+        Assert.Empty(backend.IssueHandlingStore().GetForDay("SRV-01", date));
+    }
+
+    /// <summary>待搬移期間處理狀態必須是唯讀的——寫入會落進一個馬上要被覆蓋的表</summary>
+    [Fact]
+    public void 未搬移完成前_應擋下處理狀態的寫入()
+    {
+        var backend = SeedLegacyDatabase(DateTime.Today);
+
+        Assert.True(backend.HandlingMigrator.State.ShouldBlockWrites);
+    }
+
+    // ── 搬移本身 ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void 搬移後_三份資料都在真表且狀態為完成()
+    {
+        var date = DateTime.Today;
+        var backend = SeedLegacyDatabase(date);
+
+        backend.HandlingMigrator.Run(CancellationToken.None);
 
         Assert.Equal(2, backend.IssueHandlingStore().GetMany(new[] { "SRV-01", "SRV-02" }, date, date).Count);
         Assert.Equal("resolved", backend.IssueHandlingStore().GetForDay("SRV-01", date).Single().Status);
         Assert.NotNull(backend.IssueCaseStore().GetOpen("SRV-01", "k1"));
         Assert.Equal(7, backend.RecordHandlingStore().Get("SRV-01", date)!.HandlerId);
+
+        var state = backend.HandlingMigrator.State;
+        Assert.Equal(HandlingMigrationState.Completed, state.State);
+        Assert.True(state.AllDone);
+        Assert.False(state.ShouldBlockWrites);
+        Assert.Equal(2, state.IssueHandlingRows);
+        Assert.Equal(1, state.IssueCasesRows);
+        Assert.Equal(1, state.RecordHandlingRows);
     }
 
     /// <summary>搬完不刪 blob——真的出事時資料還在原地，不必從備份還原</summary>
     [Fact]
-    public void 遷移後_舊blob保留未刪()
+    public void 搬移後_舊blob保留未刪()
+    {
+        var backend = SeedLegacyDatabase(DateTime.Today);
+        backend.HandlingMigrator.Run(CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(backend.Blob("issue_handling").Read()));
+        Assert.False(string.IsNullOrWhiteSpace(backend.Blob("issue_cases").Read()));
+        Assert.False(string.IsNullOrWhiteSpace(backend.Blob("record_handling").Read()));
+    }
+
+    [Fact]
+    public void 重複執行_不重複匯入()
     {
         var date = DateTime.Today;
-        var seeding = NewBackend();
-        SeedBlob(seeding, "issue_handling", new List<IssueHandling> { Handling("SRV-01", date, "k1", "resolved") });
+        var backend = SeedLegacyDatabase(date);
 
-        var backend = NewBackend();
+        backend.HandlingMigrator.Run(CancellationToken.None);
+        backend.HandlingMigrator.Run(CancellationToken.None);   // 再跑一次
 
         Assert.Single(backend.IssueHandlingStore().GetForDay("SRV-01", date));
-        Assert.False(string.IsNullOrWhiteSpace(backend.Blob("issue_handling").Read()));
     }
 
     /// <summary>
-    /// 冪等：第二次啟動時目標表已非空，不再匯入。若不擋，每次重啟都會把 blob 再搬一次，
-    /// 而唯一索引會讓第二次直接失敗——站台從此起不來。
+    /// 重啟後不再搬：狀態已是 completed，`Evaluate()` 直接返回，
+    /// 也不會因為「blob 還在」而重新標記為 pending（S-2：blob 已是唯讀備份）。
     /// </summary>
     [Fact]
-    public void 重複啟動_不重複匯入()
+    public void 搬移完成後重啟_不再標記為待搬移()
     {
         var date = DateTime.Today;
-        var seeding = NewBackend();
-        SeedBlob(seeding, "issue_handling", new List<IssueHandling> { Handling("SRV-01", date, "k1", "resolved") });
+        SeedLegacyDatabase(date).HandlingMigrator.Run(CancellationToken.None);
 
-        NewBackend();   // 第一次遷移
-        var backend = NewBackend();   // 第二次啟動：不該再搬
+        var restarted = NewBackend();
 
-        Assert.Single(backend.IssueHandlingStore().GetForDay("SRV-01", date));
+        Assert.Equal(HandlingMigrationState.Completed, restarted.HandlingMigrator.State.State);
+        Assert.False(restarted.HandlingMigrator.State.ShouldBlockWrites);
     }
 
-    /// <summary>
-    /// 遷移之後在新表寫入的資料，不會被下一次啟動用舊 blob 蓋掉——
-    /// 「表非空即跳過」這條規則保護的正是這件事（blob 停留在遷移當下的內容，不再更新）。
-    /// </summary>
+    /// <summary>遷移之後在新表寫入的資料，不會被下一次啟動用舊 blob 蓋掉</summary>
     [Fact]
     public void 遷移後的新寫入_不被舊blob覆蓋()
     {
         var date = DateTime.Today;
-        var seeding = NewBackend();
-        SeedBlob(seeding, "issue_handling", new List<IssueHandling> { Handling("SRV-01", date, "k1", "resolved") });
-
-        var migrated = NewBackend();
+        var migrated = SeedLegacyDatabase(date);
+        migrated.HandlingMigrator.Run(CancellationToken.None);
         migrated.IssueHandlingStore().Save(Handling("SRV-01", date, "k1", "wont_fix"));
 
         var restarted = NewBackend();
+        restarted.HandlingMigrator.Run(CancellationToken.None);
 
         Assert.Equal("wont_fix", restarted.IssueHandlingStore().GetForDay("SRV-01", date).Single().Status);
     }
 
+    // ── 全新安裝 ────────────────────────────────────────────────────────────
+
+    /// <summary>沒有任何舊 blob＝全新安裝：直接標完成，寫入不該被擋</summary>
+    [Fact]
+    public void 全新安裝_直接標記完成且不擋寫入()
+    {
+        var backend = NewBackend();
+
+        Assert.Equal(HandlingMigrationState.Completed, backend.HandlingMigrator.State.State);
+        Assert.False(backend.HandlingMigrator.State.ShouldBlockWrites);
+        Assert.Empty(backend.IssueHandlingStore().GetForDay("SRV-01", DateTime.Today));
+    }
+
+    // ── 失敗處理 ────────────────────────────────────────────────────────────
+
     /// <summary>
-    /// blob 損毀時**啟動失敗**而不是靜默當空。處理狀態靜默消失會讓整站看起來
-    /// 「所有問題都沒人處理過」，比啟動報錯難查得多——與 JsonBlobCollection 的既有取捨一致。
+    /// blob 損毀時**顯性失敗**而不是靜默當空：處理狀態靜默消失會讓整站看起來
+    /// 「所有問題都沒人處理過」，比失敗難查得多。失敗後狀態退回 pending
+    /// （不是 completed）——寫入**繼續被擋**，不會落進半搬完的表。
     /// </summary>
     [Fact]
-    public void blob損毀_啟動直接失敗而非靜默丟資料()
+    public void blob損毀_搬移失敗且維持唯讀()
     {
         var seeding = NewBackend();
         seeding.Blob("issue_handling").Mutate<object?>(_ => ("{ 這不是合法的 JSON", null));
+        seeding.Blob("handling_migration").Mutate<object?>(_ => (string.Empty, null));   // 見 SeedLegacyDatabase
 
-        var ex = Assert.Throws<InvalidOperationException>(() => NewBackend());
+        var backend = NewBackend();
+        var ex = Assert.Throws<InvalidOperationException>(() => backend.HandlingMigrator.Run(CancellationToken.None));
 
         Assert.Contains("issue_handling", ex.Message);
         Assert.Contains("資料未被修改", ex.Message);
+
+        var state = backend.HandlingMigrator.State;
+        Assert.Equal(HandlingMigrationState.Pending, state.State);
+        Assert.True(state.ShouldBlockWrites);
+        Assert.False(string.IsNullOrWhiteSpace(state.LastError));
     }
 
+    /// <summary>
+    /// 取消（站台關閉）時不標記完成——下次啟動要能接續。
+    /// 這是體檢 S-1 的核心：舊實作以「目標表非空」判斷，中斷後會誤判成已搬完而丟資料。
+    /// </summary>
     [Fact]
-    public void 空blob_不影響啟動()
+    public void 取消時不標記完成_下次啟動可接續()
     {
-        // 全新環境沒有任何舊 blob——遷移應該安靜地什麼都不做
-        var backend = NewBackend();
+        var date = DateTime.Today;
+        var backend = SeedLegacyDatabase(date);
 
-        Assert.Empty(backend.IssueHandlingStore().GetForDay("SRV-01", DateTime.Today));
-        Assert.Empty(backend.IssueCaseStore().GetOpenByHandler(1));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        backend.HandlingMigrator.Run(cts.Token);
+
+        Assert.NotEqual(HandlingMigrationState.Completed, backend.HandlingMigrator.State.State);
+        Assert.True(backend.HandlingMigrator.State.ShouldBlockWrites);
+
+        // 接續：重新執行應該把三份都搬完
+        backend.HandlingMigrator.Run(CancellationToken.None);
+        Assert.Equal(HandlingMigrationState.Completed, backend.HandlingMigrator.State.State);
+        Assert.Equal(2, backend.IssueHandlingStore().GetMany(new[] { "SRV-01", "SRV-02" }, date, date).Count);
     }
 }
