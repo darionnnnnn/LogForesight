@@ -50,8 +50,24 @@ internal sealed class FakeClient : INetiqDirectoryClient
     public FakeClient(params (string name, string ip)[] hosts) =>
         _hosts = hosts.Select(h => new NetiqDiscoveredHost(h.name, h.ip)).ToList();
 
-    public Task<NetiqDiscoveryResult> ListHostsAsync(SentinelServer s, string subnetPrefix, CancellationToken ct) =>
-        Task.FromResult(new NetiqDiscoveryResult { Hosts = _hosts, CoverageNote = "test" });
+    /// <summary>最後一次收到的已登錄 IP——驗證重掃時 Service 有把它們傳下去（§3.3）</summary>
+    public IReadOnlyCollection<string>? LastKnownIps { get; private set; }
+
+    public Task<NetiqDiscoveryResult> ListHostsAsync(
+        SentinelServer s, string subnetPrefix, CancellationToken ct,
+        IReadOnlyCollection<string>? knownIps = null)
+    {
+        LastKnownIps = knownIps;
+
+        // 真實 client 在 server 端就排除已登錄主機，回傳裡不含它們——替身照做。
+        // 不然「Service 端合成已登錄主機回結果」的行為會被替身的寬鬆回傳掩蓋，
+        // 測試就驗不到那段。
+        var hosts = knownIps is { Count: > 0 }
+            ? _hosts.Where(h => !knownIps.Contains(h.IpAddress, StringComparer.OrdinalIgnoreCase)).ToList()
+            : _hosts;
+
+        return Task.FromResult(new NetiqDiscoveryResult { Hosts = hosts, CoverageNote = "test" });
+    }
 }
 
 internal class FakeImportLogStore : IImportLogStore

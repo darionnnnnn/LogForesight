@@ -149,6 +149,76 @@ public class SentinelQueryBuilderTests
         Assert.Equal("repip:10.1.2.*", filter);
     }
 
+    // ── 探索窄化與排除（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）──────────
+
+    /// <summary>
+    /// 主掃描窄化到低量頻道：探索要的是「每台主機至少一筆事件」，不是「所有事件」。
+    /// probe 實測 Security 佔單台日量的 99.95%，排除它之後取回量從正比於事件量
+    /// 變成正比於主機數——這正是不必再壓縮掃描窗口（＝不再靜默漏機）的前提。
+    /// </summary>
+    [Fact]
+    public void BuildSubnetProbeFilter_網段前綴加上低量頻道限定()
+    {
+        var filter = SentinelQueryBuilder.BuildSubnetProbeFilter("10.1.2.0/24");
+
+        Assert.Equal("(repip:10.1.2.* AND (rv150:System OR rv150:Application))", filter);
+    }
+
+    [Fact]
+    public void BuildSubnetProbeFilter_帶排除清單時附加NOT子句()
+    {
+        var filter = SentinelQueryBuilder.BuildSubnetProbeFilter("10.1.2", new[] { "10.1.2.11", "10.1.2.12" });
+
+        Assert.Equal(
+            "(repip:10.1.2.* AND (rv150:System OR rv150:Application)) AND NOT (repip:10.1.2.11 OR repip:10.1.2.12)",
+            filter);
+    }
+
+    [Fact]
+    public void BuildSubnetDiscoveryFilter_帶排除清單時附加NOT子句()
+    {
+        var filter = SentinelQueryBuilder.BuildSubnetDiscoveryFilter("10.1.2", new[] { "10.1.2.11" });
+
+        Assert.Equal("repip:10.1.2.* AND NOT (repip:10.1.2.11)", filter);
+    }
+
+    [Fact]
+    public void BuildExclusionSuffix_空清單不產生子句()
+    {
+        Assert.Equal(string.Empty, SentinelQueryBuilder.BuildExclusionSuffix(null));
+        Assert.Equal(string.Empty, SentinelQueryBuilder.BuildExclusionSuffix(Array.Empty<string>()));
+    }
+
+    /// <summary>
+    /// 髒資料略過而不是擲例外：排除清單來自既有主機資料，一筆壞的不該讓整趟探索失敗。
+    /// 漏排除的後果只是多取回一點事件（不影響正確性）；擲例外的後果是探索整個不能用。
+    /// </summary>
+    [Theory]
+    [InlineData("10.1.2")]              // 段數不足
+    [InlineData("10.1.2.300")]          // 超出 0~255
+    [InlineData("10.1.2.*")]            // 萬用字元不是一台明確的主機
+    [InlineData("host-a")]              // 根本不是 IP
+    [InlineData("")]
+    public void BuildExclusionSuffix_不合法IP直接略過(string ip)
+    {
+        Assert.Equal(string.Empty, SentinelQueryBuilder.BuildExclusionSuffix(new[] { ip }));
+    }
+
+    [Fact]
+    public void BuildExclusionSuffix_混合清單只留合法的且去重()
+    {
+        var suffix = SentinelQueryBuilder.BuildExclusionSuffix(
+            new[] { "10.1.2.11", "壞資料", "10.1.2.11", "10.1.2.12" });
+
+        Assert.Equal(" AND NOT (repip:10.1.2.11 OR repip:10.1.2.12)", suffix);
+    }
+
+    [Fact]
+    public void BuildSubnetProbeFilter_非法網段仍擲ArgumentException()
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.BuildSubnetProbeFilter("10"));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

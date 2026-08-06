@@ -100,10 +100,76 @@ public static class SentinelQueryBuilder
     /// </summary>
     /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足
     /// <see cref="MinPrefixOctets"/>（避免建出等同全站掃描的查詢）。</exception>
-    public static string BuildSubnetDiscoveryFilter(string subnetInput)
+    public static string BuildSubnetDiscoveryFilter(string subnetInput) =>
+        BuildSubnetDiscoveryFilter(subnetInput, null);
+
+    /// <inheritdoc cref="BuildSubnetDiscoveryFilter(string)"/>
+    /// <param name="excludeIps">要排除的 IP（<c>AND NOT (repip:a OR repip:b …)</c>）。
+    /// null／空＝不排除。見 <see cref="BuildExclusionSuffix"/> 的用途說明。</param>
+    public static string BuildSubnetDiscoveryFilter(string subnetInput, IReadOnlyCollection<string>? excludeIps)
     {
         var prefix = NormalizeSubnetPrefix(subnetInput);
-        return $"{SentinelFieldMap.HostIp}:{prefix}.*";
+        return $"{SentinelFieldMap.HostIp}:{prefix}.*{BuildExclusionSuffix(excludeIps)}";
+    }
+
+    /// <summary>
+    /// 探索主掃描的 filter：網段前綴**再限定低量頻道**
+    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）。
+    ///
+    /// **為什麼要窄化**：探索要的是「每台主機至少一筆事件」，不是「所有事件」。
+    /// 第三輪 probe 實測單台主機日量約 31 萬筆，其中 Security 佔 99.95%
+    /// （System=3、Application=152）——把 Security 排除在外，每台主機只貢獻約 155 筆/日。
+    /// 取回量因此**從正比於「事件量」變成正比於「主機數」**：前者不可控且與探索目的無關，
+    /// 後者可預期，也才是我們真正想量的東西。
+    ///
+    /// 直接後果是掃描窗口不必再為了控制筆數而縮短——原設計「事件越多窗口越短」
+    /// 會把安靜主機連同時間一起裁掉，而那正是最需要被發現的那種主機。
+    /// </summary>
+    /// <param name="excludeIps">要排除的 IP（殘差輪掃的已見主機、重掃的已登錄主機）。</param>
+    public static string BuildSubnetProbeFilter(string subnetInput, IReadOnlyCollection<string>? excludeIps = null)
+    {
+        var prefix = NormalizeSubnetPrefix(subnetInput);
+        var channelClause = $"({SentinelFieldMap.LogName}:System OR {SentinelFieldMap.LogName}:Application)";
+        return $"({SentinelFieldMap.HostIp}:{prefix}.* AND {channelClause}){BuildExclusionSuffix(excludeIps)}";
+    }
+
+    /// <summary>
+    /// 排除子句 <c> AND NOT (repip:a OR repip:b …)</c>——空清單回空字串。
+    ///
+    /// **兩個用途，同一個機制**（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1／§3.3）：
+    ///   1. **殘差輪掃**：單輪取回筆數觸頂時，把已發現的主機排除後重查，
+    ///      下一輪取回的就只有還沒見過的主機——這是「上限觸頂不會靜默漏機」的關鍵，
+    ///      取代原設計「超量就縮短窗口」（縮掉的時間裡安靜主機的事件一併消失，且無警告）。
+    ///   2. **重掃增量**：已登錄的主機不需要被重新「發現」，直接在 server 端濾掉，
+    ///      沒有新主機時 found=0，一次查詢就結束。
+    ///
+    /// IP 逐個過白名單驗證（僅數字與點、四段、0~255）——與
+    /// <see cref="NormalizeSubnetPrefix"/> 同一個理由：**天然免疫 Lucene 注入**，
+    /// 不合格的直接略過而不是擲例外（呼叫端傳進來的是既有資料，
+    /// 一筆髒資料不該讓整趟探索失敗；漏排除只會多取回一點，不影響正確性）。
+    /// </summary>
+    public static string BuildExclusionSuffix(IReadOnlyCollection<string>? excludeIps)
+    {
+        if (excludeIps is null || excludeIps.Count == 0) return string.Empty;
+
+        var valid = excludeIps
+            .Where(IsValidIpv4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (valid.Count == 0) return string.Empty;
+
+        return $" AND NOT ({string.Join(" OR ", valid.Select(ip => $"{SentinelFieldMap.HostIp}:{ip}"))})";
+    }
+
+    /// <summary>完整四段 IPv4 且每段 0~255。刻意不接受簡寫或前綴——排除清單的每一筆
+    /// 都該是一台明確的主機，模糊的排除會讓涵蓋保證失去意義。</summary>
+    private static bool IsValidIpv4(string? ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) return false;
+
+        var octets = ip.Split('.');
+        return octets.Length == 4 &&
+               octets.All(o => o.Length > 0 && int.TryParse(o, out var v) && v is >= 0 and <= 255);
     }
 
     /// <summary>

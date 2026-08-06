@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -57,15 +58,55 @@ public class NetiqDiscoveryService
         if (!server.CanDiscover)
             throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
 
-        var discovered = await DiscoverAsync(server, subnetPrefix, ct);
-        return BuildScanResult(server.Name, discovered);
+        // 已登錄主機不必重新「發現」（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）：
+        // 在 Sentinel 端就排除掉，沒有新主機時 found=0、一次查詢即結束。
+        // 它們在下面被合成回結果，精靈畫面的「既有／新發現」分組完全不變。
+        var alreadyRegistered = AlreadyRegisteredInSubnet(server.Name, subnetPrefix);
+
+        var discovered = await DiscoverAsync(server, subnetPrefix, alreadyRegistered.Keys.ToList(), ct);
+        return BuildScanResult(server.Name, discovered, alreadyRegistered);
     }
 
-    private async Task<NetiqDiscoveryResult> DiscoverAsync(SentinelServer server, string subnetPrefix, CancellationToken ct)
+    /// <summary>
+    /// 這台 Sentinel 轄下、IP 落在本次掃描網段內、且**乾淨登錄**的主機（IP → 顯示名稱）。
+    ///
+    /// **孤兒與已合併的主機刻意不算在內**：它們出現在掃描結果裡是有意義的訊號——
+    /// 「這台被標為孤兒的主機又在回報事件了」正是精靈「重疊復活」分類要抓的東西。
+    /// 把它們排除掉再合成回去，等於無條件宣稱它們還活著，那是假訊息。
+    /// 這個判準與 <see cref="BuildScanResult"/> 裡 <c>Exists</c> 的算法刻意一致。
+    /// </summary>
+    private Dictionary<string, string?> AlreadyRegisteredInSubnet(string serverName, string subnetPrefix)
+    {
+        var sentinel = _sentinels.FindByName(serverName);
+        if (sentinel == null) return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        string prefix;
+        try
+        {
+            prefix = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix) + ".";
+        }
+        catch (ArgumentException)
+        {
+            // 格式錯誤交給下游 client 擲出可顯示的訊息（那裡的文案已經寫好），這裡只是不排除
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return _hosts.GetAll()
+            .Where(h => h.SentinelId == sentinel.SentinelId &&
+                        h.OrphanedFromSentinel == null &&
+                        h.MergedInto == null &&
+                        !string.IsNullOrWhiteSpace(h.IpAddress) &&
+                        h.IpAddress!.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(h => h.IpAddress!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().DisplayName, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<NetiqDiscoveryResult> DiscoverAsync(
+        SentinelServer server, string subnetPrefix, IReadOnlyCollection<string> knownIps, CancellationToken ct)
     {
         try
         {
-            return await _client.ListHostsAsync(server, subnetPrefix, ct);
+            return await _client.ListHostsAsync(server, subnetPrefix, ct, knownIps);
         }
         catch (NetiqDiscoveryException ex)
         {
@@ -74,10 +115,19 @@ public class NetiqDiscoveryService
     }
 
     /// <summary>掃描結果 → 網段分組 DTO，並暫存 token 供匯入時核對。</summary>
-    private NetiqScanResultDto BuildScanResult(string serverName, NetiqDiscoveryResult discovery)
+    private NetiqScanResultDto BuildScanResult(
+        string serverName, NetiqDiscoveryResult discovery, Dictionary<string, string?> alreadyRegistered)
     {
-        // 同 IP 去重（保留第一筆）
+        // 已登錄主機合成回清單：它們沒有被重新掃描（在 server 端就排除了），
+        // 但精靈畫面要照樣看得到「這個網段目前有哪些主機、哪些是新的」。
+        // 顯示名稱取主機清單裡的 DisplayName——那比事件裡的 sn 更可靠（人工確認過、
+        // 也不會因為某天事件欄位缺席而變回 IP）。
+        var synthesized = alreadyRegistered
+            .Select(kv => new NetiqDiscoveredHost(kv.Value ?? kv.Key, kv.Key));
+
+        // 同 IP 去重（保留第一筆）——掃描結果優先於合成的已登錄項
         var discovered = discovery.Hosts
+            .Concat(synthesized)
             .GroupBy(h => h.IpAddress, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();

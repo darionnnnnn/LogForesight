@@ -118,6 +118,94 @@ public class NetiqDiscoveryServiceTests
         Assert.False(sub.Hosts.First(h => h.IpAddress == "10.1.2.12").Exists);
     }
 
+    // ── 重掃增量：已登錄主機在 Sentinel 端就排除（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）──
+
+    /// <summary>
+    /// 重掃時已登錄主機不必重新「發現」——在 server 端排除掉，沒有新主機時一次查詢就結束。
+    /// 它們由 Service 合成回結果，所以精靈畫面的「既有／新發現」分組完全不變。
+    /// </summary>
+    [Fact]
+    public async System.Threading.Tasks.Task 重掃_已登錄主機不重查但仍出現在結果中()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://x", Active = true });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.11", IpAddress = "10.1.2.11", DisplayName = "SRV-A",
+            Source = "netiq", NetiqServer = "S1", SentinelId = sentinel.SentinelId
+        });
+
+        // client 只回新主機（真實 client 因 NOT 子句本來就查不到已登錄的那台）
+        var client = new FakeClient(("SRV-A", "10.1.2.11"), ("SRV-B", "10.1.2.12"));
+        var result = await Create(client, Discoverable("S1")).ScanAsync("S1", AnySubnet, default);
+
+        // 已登錄的那台被當成 knownIps 傳下去
+        Assert.Equal(new[] { "10.1.2.11" }, client.LastKnownIps);
+
+        // 但畫面上兩台都在，且已登錄的那台標為既有
+        var sub = Assert.Single(result.Subnets);
+        Assert.Equal(2, sub.Hosts.Count);
+        Assert.True(sub.Hosts.First(h => h.IpAddress == "10.1.2.11").Exists);
+        Assert.False(sub.Hosts.First(h => h.IpAddress == "10.1.2.12").Exists);
+        // 合成回來的顯示名稱取主機清單的 DisplayName（比事件裡的 sn 可靠）
+        Assert.Equal("SRV-A", sub.Hosts.First(h => h.IpAddress == "10.1.2.11").HostName);
+    }
+
+    /// <summary>
+    /// **孤兒主機不算已登錄**：它出現在掃描結果裡是有意義的訊號（「被標為孤兒的主機
+    /// 又在回報事件了」正是「重疊復活」要抓的）。把它排除掉再無條件合成回去，
+    /// 等於宣稱它還活著——那是假訊息。
+    /// </summary>
+    [Fact]
+    public async System.Threading.Tasks.Task 重掃_孤兒主機不列入排除清單()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://x", Active = true });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.11", IpAddress = "10.1.2.11", Source = "netiq",
+            SentinelId = sentinel.SentinelId, Active = false, OrphanedFromSentinel = "SENTINEL-OLD"
+        });
+
+        var client = new FakeClient(("SRV-A", "10.1.2.11"));
+        var result = await Create(client, Discoverable("S1")).ScanAsync("S1", AnySubnet, default);
+
+        Assert.Empty(client.LastKnownIps!);
+        // 真的掃到了才標重疊復活
+        Assert.True(result.Subnets[0].Hosts[0].OrphanOverlap);
+    }
+
+    /// <summary>其他 Sentinel 轄下的主機不該被排除——它們對這台而言就是未知主機</summary>
+    [Fact]
+    public async System.Threading.Tasks.Task 重掃_別台Sentinel的主機不列入排除清單()
+    {
+        _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://x", Active = true });
+        var s2 = _sentinels.Upsert(new Sentinel { Name = "S2", BaseUrl = "https://y", Active = true });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.1.2.11", IpAddress = "10.1.2.11", Source = "netiq", SentinelId = s2.SentinelId
+        });
+
+        var client = new FakeClient(("SRV-A", "10.1.2.11"));
+        await Create(client, Discoverable("S1")).ScanAsync("S1", AnySubnet, default);
+
+        Assert.Empty(client.LastKnownIps!);
+    }
+
+    /// <summary>不同網段的已登錄主機不列入排除——排除清單只該涵蓋本次掃描的網段</summary>
+    [Fact]
+    public async System.Threading.Tasks.Task 重掃_網段外的已登錄主機不列入排除清單()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel { Name = "S1", BaseUrl = "https://x", Active = true });
+        _hosts.Upsert(new WebHost
+        {
+            HostName = "10.9.9.5", IpAddress = "10.9.9.5", Source = "netiq", SentinelId = sentinel.SentinelId
+        });
+
+        var client = new FakeClient(("SRV-B", "10.1.2.12"));
+        await Create(client, Discoverable("S1")).ScanAsync("S1", AnySubnet, default);
+
+        Assert.Empty(client.LastKnownIps!);
+    }
+
     [Fact]
     public async System.Threading.Tasks.Task 掃描_孤兒主機標記重疊()
     {

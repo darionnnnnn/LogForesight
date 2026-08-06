@@ -30,8 +30,11 @@
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
-  探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」——`repip:{prefix}.*`
-  前綴萬用字元查詢＋自適應時間窗，完全不碰 ESM API（權限被拒）與全站 24h distinct（不可行）。
+  探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
+  （權限被拒）與全站 24h distinct（不可行）。**2026-08-06 涵蓋保證改版**：移除自適應時間窗
+  （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
+  （限 System/Application 頻道，成本正比主機數而非事件量）＋殘差輪掃（觸頂時排除已見主機重查）
+  ＋全事件短窗補充掃描，見 docs/NETIQ-API-REFERENCE.md §3.4。
   **尚未經過真實 Sentinel 端到端驗證**——下一步是在 Web 主機頁登錄 2~3 台實際主機試跑
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
@@ -43,6 +46,11 @@
      批次大小。
   5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
   6. 8.5 apidoc 是否有伺服器端聚合端點（有的話 Q1 查詢可以改走聚合，目前是本地聚合的退路）。
+  6b. **`NOT` 子句（`AND NOT (repip:a OR repip:b …)`）是否被此環境的 Lucene 接受**——
+      探索的殘差輪掃與重掃增量都靠它（docs/NETIQ-API-REFERENCE.md §3.4）。
+      probe 只驗過 OR 子句、片語、前綴萬用字元，沒驗過 NOT。實作已加偵測
+      （取回事件含已排除的 repip 即判定未生效、停止輪掃並顯性警告），
+      試點時核對是否曾出現該警告。
   7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
   8. token 有效期長短（決定長輪收集中是否需要主動換發）。
   9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
