@@ -111,8 +111,18 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   UNIQUE (host_id, record_date)
 
 lf_top_issues                                        -- ↔ LogIssueSignature（欄位一比一，趨勢數字全保留）
+                                                     -- 2026-08-06 起同時是**問題聚合的事實表**
+                                                     -- （docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
+                                                     -- 「這個問題影響幾台、跨哪段期間、出現幾天」
+                                                     -- 由本表 GROUP BY 直接回答，不再把整段期間的
+                                                     -- 紀錄撈回記憶體聚合。
   issue_id         bigint PK
   record_id        bigint FK → lf_daily_records NOT NULL
+  host_id          bigint NOT NULL DEFAULT 0         -- 去正規化自父列，且映射為**存活主機**：
+                                                     -- 直接用紀錄的 host_id 會讓合併過的機器
+                                                     -- （墓碑列＋存活列）被算成兩台
+  record_date      date NOT NULL                     -- 去正規化自父列（期間跨度／出現密度）
+  elevates_day_risk bit NOT NULL DEFAULT 0           -- 「重大」旗標（排行清單的嚴重度維度）
   log_name         nvarchar(50) NOT NULL
   source_name      nvarchar(255) NOT NULL         -- 'source' 是 Oracle 慣用字，改名避開
   event_id         int NOT NULL
@@ -263,7 +273,11 @@ lf_qa_messages
 
 ```
 lf_daily_records:  UNIQUE(host_id, record_date)；(record_date, risk_level) —「今天全機房哪些主機有風險」
-lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章（join lf_daily_records 取主機/日期）
+lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
+                   (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合（2026-08-06）
+lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
+lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)
+lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
 lf_deep_dive_analyses: (record_id)
 lf_record_alerts:  (record_id)
 lf_reports:        (host_id, report_date)

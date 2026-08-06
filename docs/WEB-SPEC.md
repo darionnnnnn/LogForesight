@@ -713,6 +713,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在既有的 `GET api/dashboard/summary` 內一併回傳，不另開請求。
   **刻意不含處理狀態**：那要逐問題查 handling 標記，是依問題視角才做的事；這張卡回答的是
   「哪幾個問題影響最大」，點進去就看得到處理概況。
+- **改以「問題的重要性」而非數量呈現（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P4／P5）**：
+  純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
+  恆在第 1（資訊量為零），而 `disk 153`（3 台、都在近 3 天、高嚴重度＋重大）排在很後面。
+  欄位因此改為 問題（含「新」徽章）／嚴重度（含「重大」旗標）／主機數（含**影響率**）／
+  **涵蓋範圍**（首見 ~ 最近出現）／**出現密度**（N/M 天）／**變化幅度**（與前一等長期間比）／總次數。
+  - 影響率＝主機數 ÷ 可見主機總數：「600 台」在 2000 台環境是 30%、在 50 台是全滅，
+    絕對值無法跨環境解讀。
+  - 資料來源改為 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不再把整段期間的
+    紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
+  - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台（此前儀表板與依問題視角
+    在有合併主機時會對不上，而本節原本宣稱「必然一致」）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
   加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
@@ -766,6 +777,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
   依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
   「風險→關聯→日期」緊急程度排序，2026-07-29）
+- **依問題視角補上「時間形狀」（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P5）**：
+  原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
+  新增三欄——**涵蓋範圍**（首見 ~ 最近出現，即需求的「期間跨度」）、**出現密度**（N/M 天＋密度條，
+  文字為主、圖為輔，不可只留圖）、**最近出現**改為「日期＋是否仍在發生」；
+  嚴重度欄另補「重大」旗標（過去只在風險日詳情看得到）。
+  三者皆由該群組既有紀錄推導，不額外查詢。
+  同時修掉 N3：`BuildIssueGroup` 過去是逐群組呼叫、內部各查一次處理狀態與案件
+  （1000 種問題＝2000 次查詢），改為整批載入一次後建索引。
 - **第四視角「依問題」**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId 分組，
   與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
   主機數／風險日數／總次數／最近出現／處理概況（「N 台處理中／M 台未處理」）／處理人（進行中
@@ -1572,9 +1591,16 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 文件，一列一 key）或 `lf_log_lines`（append-only，同 key 多列）裡的 `BlobKey`，不再有實體檔案；
 `StorageBackend` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
 
-| 介面 | 儲存 key（blob＝整份型／log＝append-only） | 寫入者 |
+**（2026-08-06 改寫，docs/SCALE-ISSUE-FIRST-PLAN.md P3）處理狀態三份改走真表**：
+`record_handling`／`issue_handling`／`issue_cases` 自整份 blob 改為
+`lf_record_handling`／`lf_issue_handling`／`lf_issue_cases`。判準是**成長維度**——
+這三份隨「主機數 × 天數」成長（6000 台 × 90 天下 issue_handling 約 324 萬列，
+整份序列化會撞上 .NET 的 2 GB 單一物件上限），其餘 blob 隨組織規模成長（數千筆上限內），
+維持整份型不變。介面未變，呼叫端零修改；舊 blob 於首次啟動自動遷入並**保留未刪**。
+
+| 介面 | 儲存 key（blob＝整份型／log＝append-only／表＝正規化真表） | 寫入者 |
 |---|---|---|
-| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；唯一走真表的分析資料） | 批次 |
+| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者自 2026-08-06 起同時是問題聚合的事實表） | 批次 |
 | `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」） | 批次 |
 | `IUserStore` | blob `users` | Web |
 | `IUserGroupStore` | blob `user_groups` | Web |
@@ -1584,8 +1610,10 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `ISentinelStore`（docs/archive/HISTORY.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（2026-07-27；介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數，`/admin/settings` 維護） | Web＋批次讀 |
-| `IRecordHandlingStore` | blob `record_handling`（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web |
-| `IIssueHandlingStore` | blob `issue_handling`（問題層級狀態，方案 B） | Web |
+| `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
+| `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
+| `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
+| `IIssueAggregateQuery`（2026-08-06） | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |

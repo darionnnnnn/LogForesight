@@ -129,11 +129,12 @@
   或改由 `RecordHandlingLog` 的 `case_reassign` 反查——兩種作法都要先想清楚
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
-- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合（主機數／風險日數／
-  總次數／最高嚴重度），與 `BuildHostRanking` 同一層級；處理概況要逐問題查 handling 標記，
-  那是依問題視角才做的事（點列下鑽就看得到）。觸發條件：若使用者實測後認為儀表板就該
-  直接看到「幾台還沒處理」，應在 `DashboardService` 既有的 `GetTodo` 標記查詢上共用一份
-  逐問題投影，而不是為這張卡另外再撈一次跨期間的標記。
+- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合，處理概況要逐問題查
+  handling 標記。**2026-08-06 更新**：`IssueRankingDto` 已備妥 `OpenHostCount`／
+  `ResolvedHostCount` 兩個欄位與 `IssueRankingBuilder` 的 rollup 參數，
+  `IIssueAggregateQuery` 也已回傳該群組的相異完整簽章（join 處理狀態的鍵）——
+  剩下的只是把 `lf_issue_handling` 的逐簽章彙總接上去，並依 §10.6 讓「全部主機都已有結論」
+  的問題退出重點清單（含卡底「另有 N 個問題已有結論（未列入）」的誠實出口）。
 
 ## 使用方式
 
