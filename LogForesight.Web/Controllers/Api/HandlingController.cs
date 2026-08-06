@@ -77,12 +77,12 @@ public class IssueCasesController : ControllerBase
         _service = service;
     }
 
-    /// <summary>批次指派 modal 開啟時的受影響主機預覽</summary>
+    /// <summary>批次指派 modal 開啟時的受影響主機預覽（逐台清單有上限，總數另外誠實回報——體檢 M10）</summary>
     [HttpGet("preview")]
-    public ApiResponse<List<IssueCasePreviewHostDto>> Preview(
+    public ApiResponse<IssueCaseAssignPreviewDto> Preview(
         [FromQuery] string source, [FromQuery] int eventId,
         [FromQuery] string? from, [FromQuery] string? to) =>
-        ApiResponse<List<IssueCasePreviewHostDto>>.Ok(
+        ApiResponse<IssueCaseAssignPreviewDto>.Ok(
             _service.PreviewIssueCaseAssign(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
 
     [HttpPost("bulk-assign")]

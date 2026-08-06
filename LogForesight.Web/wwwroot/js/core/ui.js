@@ -234,7 +234,13 @@ export function toast(message, type = 'info', delay = 4000) {
             <div class="toast-body"></div>
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="關閉"></button>
         </div>`;
-    el.querySelector('.toast-body').textContent = message;
+    // message 可以是字串或 Node——後者供「操作完成後給一個追溯／下一步連結」的情境使用
+    // （例如統一標記完成後的「檢視這次影響的清單」，體檢 X6）。
+    // 一律用 textContent／appendChild，**絕不 innerHTML**：toast 內容可能含主機名或
+    // 問題描述，那是攻擊者可控的字串
+    const bodyEl = el.querySelector('.toast-body');
+    if (message instanceof Node) bodyEl.appendChild(message);
+    else bodyEl.textContent = message;
     container.appendChild(el);
 
     const toastInstance = new bootstrap.Toast(el, { delay });

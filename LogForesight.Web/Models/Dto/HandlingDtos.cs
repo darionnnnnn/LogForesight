@@ -234,6 +234,22 @@ public class IssueCasePreviewHostDto
 }
 
 /// <summary>
+/// 批次指派 modal 的受影響主機預覽（體檢 M10）。與統一標記同一個理由改成有上限的結構：
+/// DCOM 10016 這種問題在 6000 台環境幾乎每台都有，直接回全部會把 modal 塞爆。
+/// </summary>
+public class IssueCaseAssignPreviewDto
+{
+    /// <summary>本次顯示的主機（可能被截斷）</summary>
+    public List<IssueCasePreviewHostDto> Hosts { get; set; } = new();
+
+    /// <summary>受影響主機總數（截斷前）</summary>
+    public int TotalHostCount { get; set; }
+
+    /// <summary>true＝ <see cref="Hosts"/> 少於 <see cref="TotalHostCount"/>，畫面必須說明</summary>
+    public bool Truncated { get; set; }
+}
+
+/// <summary>
 /// 單台主機的指派對象（docs/archive/FEEDBACK-10-PLAN.md §12）：群組分攤時每台主機各有處理人，
 /// 單人指派時全部都是同一個人。API 因此只有一種形狀，不必為「指派一個人」與
 /// 「指派一群人」各開一支端點。
@@ -358,7 +374,24 @@ public class IssueBulkClosePreviewDto
     public string? From { get; set; }
     public string? To { get; set; }
 
+    /// <summary>本次顯示的主機（可能被 <see cref="Truncated"/> 截斷）</summary>
     public List<IssueBulkCloseHostDto> Hosts { get; set; } = new();
+
+    /// <summary>
+    /// 受影響主機總數（截斷前，體檢 M10）。**統一標記尤其需要這個數字**：
+    /// 它按下去是跨主機跨日的寫入，使用者需要的是「我到底影響了多少」的正確感知，
+    /// 而不是一份捲不完、還可能把瀏覽器塞爆的清單。
+    /// </summary>
+    public int TotalHostCount { get; set; }
+
+    /// <summary>將被標記的總日數（截斷前）——比主機數更能反映實際寫入規模</summary>
+    public int TotalDayCount { get; set; }
+
+    /// <summary>true＝<see cref="Hosts"/> 少於 <see cref="TotalHostCount"/>，畫面必須說明</summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>整台被略過的主機數（截斷前）</summary>
+    public int SkippedHostCount { get; set; }
 }
 
 public class BulkCloseIssueResultDto
@@ -369,8 +402,20 @@ public class BulkCloseIssueResultDto
     /// <summary>實際被標記的主機日數</summary>
     public int UpdatedDayCount { get; set; }
 
-    /// <summary>整台略過的主機（含原因）</summary>
+    /// <summary>整台略過的主機（含原因；同預覽，逐台清單受上限截斷）</summary>
     public List<IssueBulkCloseHostDto> Skipped { get; set; } = new();
+
+    /// <summary>略過的主機總數（截斷前）</summary>
+    public int SkippedHostCount { get; set; }
+
+    /// <summary>
+    /// 這次操作的稽核追溯連結參數（體檢 X6）：批次寫入沒有復原機制，
+    /// 但**至少要查得到影響了哪些**。前端據此組成「檢視這次影響的清單」連結。
+    /// </summary>
+    public string Source { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string? From { get; set; }
+    public string? To { get; set; }
 }
 
 public class BulkIssueStatusResultDto

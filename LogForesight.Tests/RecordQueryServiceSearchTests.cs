@@ -792,9 +792,11 @@ public class RecordQueryServiceSearchTests : IDisposable
 
         var preview = _handlingService.PreviewIssueCaseAssign("disk", 153, null, null);
 
-        var item = Assert.Single(preview);
+        var item = Assert.Single(preview.Hosts);
         Assert.Equal("HOST-A", item.HostName);
         Assert.Equal("原處理人", item.ExistingHandlerName);
+        Assert.Equal(1, preview.TotalHostCount);
+        Assert.False(preview.Truncated);
     }
 }
 

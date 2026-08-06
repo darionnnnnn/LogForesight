@@ -921,13 +921,24 @@ function renderBulkCloseForm(body, group, preview) {
         '（標「已知雜訊」除外——會為這些主機寫入雜訊記憶，之後同問題自動標示）。';
     form.appendChild(scopeNote);
 
+    // 摘要一律用**總數**而不是本頁列出的筆數（體檢 M10）：逐台清單有 200 筆上限，
+    // 拿截斷後的長度當摘要會讓「我到底影響了多少」少報，而那正是這個操作最需要準確的數字
     const summary = document.createElement('div');
-    summary.className = 'mb-3 small';
+    summary.className = 'mb-3 small fw-semibold';
     const overwriteDays = targets.reduce((sum, h) => sum + h.overwriteDayCount, 0);
-    summary.textContent = `將標記 ${targets.length} 台主機、共 ${targets.reduce((sum, h) => sum + h.dayCount, 0)} 天` +
-        (overwriteDays > 0 ? `（其中 ${overwriteDays} 天原本標著處理中／觀察中，會被覆蓋）` : '') +
-        (skipped.length > 0 ? `；${skipped.length} 台略過` : '');
+    const affectedHosts = preview.totalHostCount - preview.skippedHostCount;
+    summary.textContent = `將標記 ${formatNumber(affectedHosts)} 台主機、共 ${formatNumber(preview.totalDayCount)} 天` +
+        (overwriteDays > 0 ? `（列出的主機中有 ${overwriteDays} 天原本標著處理中／觀察中，會被覆蓋）` : '') +
+        (preview.skippedHostCount > 0 ? `；${formatNumber(preview.skippedHostCount)} 台略過` : '');
     form.appendChild(summary);
+
+    if (preview.truncated) {
+        const truncNote = document.createElement('div');
+        truncNote.className = 'lf-hint mb-3';
+        truncNote.textContent = `下方只列出前 ${preview.hosts.length} 台（共 ${formatNumber(preview.totalHostCount)} 台）——`
+            + '清單僅供抽查，實際套用範圍以上方數字為準。';
+        form.appendChild(truncNote);
+    }
 
     // 逐主機明細：略過的也列出來，「沒被處理到」與「不存在」要分得清楚
     const table = document.createElement('div');
@@ -976,8 +987,18 @@ function renderBulkCloseForm(body, group, preview) {
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary';
     submit.textContent = '套用';
-    submit.disabled = targets.length === 0;
+    // 上限用總數判斷，不是本頁列出的筆數——列表被截斷不代表可以送出更多
+    const overLimit = preview.totalDayCount > BULK_CLOSE_DAY_LIMIT;
+    submit.disabled = targets.length === 0 || overLimit;
     form.appendChild(submit);
+
+    if (overLimit) {
+        const limitNote = document.createElement('div');
+        limitNote.className = 'alert alert-danger py-2 mt-3 mb-0 small';
+        limitNote.textContent = `本次將寫入 ${formatNumber(preview.totalDayCount)} 筆，超過單次上限 `
+            + `${formatNumber(BULK_CLOSE_DAY_LIMIT)} 筆。請縮小日期區間或改用更精確的問題條件，分次執行。`;
+        form.appendChild(limitNote);
+    }
 
     form.addEventListener('submit', async event => {
         event.preventDefault();
@@ -999,14 +1020,17 @@ function renderBulkCloseForm(body, group, preview) {
                 note: noteInput.value.trim()
             });
 
-            toast(`已標記 ${result.updatedHostCount} 台主機、共 ${result.updatedDayCount} 天` +
-                  (result.skipped.length > 0 ? `；${result.skipped.length} 台略過` : ''), 'success', 6000);
+            toast(`已標記 ${formatNumber(result.updatedHostCount)} 台主機、共 ${formatNumber(result.updatedDayCount)} 天` +
+                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : ''), 'success', 6000);
 
             if (statusSelect.value === 'false_positive') {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
             }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();
+            // 影響範圍的追溯出口（體檢 X6）：批次寫入沒有復原機制，至少要查得到影響了哪些。
+            // 導向依問題視角並鎖定同一個問題與期間，剛寫入的結論就在那裡逐台可查
+            showBulkCloseTraceLink(result);
             search();
         } catch {
             restore();
@@ -1014,6 +1038,29 @@ function renderBulkCloseForm(body, group, preview) {
     });
 
     body.appendChild(form);
+}
+
+/**
+ * 統一標記單次可寫入的主機日上限——與後端 IssueHandlingCommandService.MaxBulkCloseDayWrites
+ * 同一個數字。**前端擋是為了在按下去之前就講清楚**（後端仍會擋，那是防繞過的實際防線）：
+ * 讓使用者填完原因、按下套用之後才收到「超過上限」，等於白填一次。
+ */
+const BULK_CLOSE_DAY_LIMIT = 5000;
+
+/**
+ * 影響範圍的追溯連結（體檢 X6）：批次寫入沒有「上一步／復原」，成本高不做；
+ * 但「影響了哪些」必須查得回去。這裡給一個帶問題與期間的依問題視角連結，
+ * 點進去展開就是剛才被寫入的那些主機日。
+ */
+function showBulkCloseTraceLink(result) {
+    const params = new URLSearchParams({ view: 'issue', source: result.source, eventId: String(result.eventId) });
+    if (result.from) params.set('from', result.from);
+    if (result.to) params.set('to', result.to);
+
+    const link = document.createElement('a');
+    link.href = `/records?${params.toString()}`;
+    link.textContent = '檢視這次影響的清單';
+    toast(link, 'info', 10000);
 }
 
 function bulkCloseStatusCell(host) {
@@ -1049,9 +1096,9 @@ async function loadBulkAssignForm(group, body) {
     if (filters.from) params.set('from', filters.from);
     if (filters.to) params.set('to', filters.to);
 
-    let hosts, users, groups;
+    let preview, users, groups;
     try {
-        [hosts, users, groups] = await Promise.all([
+        [preview, users, groups] = await Promise.all([
             api.get(`/api/handling/issue-cases/preview?${params.toString()}`, { silent: true }),
             api.get('/api/admin/users', { silent: true }),
             // 群組指派（docs/archive/FEEDBACK-10-PLAN.md §12）：一次把整個問題的主機分攤給一個群組的成員
@@ -1066,7 +1113,7 @@ async function loadBulkAssignForm(group, body) {
         return;
     }
 
-    renderBulkAssignForm(body, group, hosts, users, groups);
+    renderBulkAssignForm(body, group, preview, users, groups);
 }
 
 /**
@@ -1077,15 +1124,27 @@ async function loadBulkAssignForm(group, body) {
  *   - 改派（§9）：已有他人進行中案件的主機，勾「改派」才換人，否則維持原處理人
  *   - 分攤（§12）：指派對象選「使用者群組」時，把主機分給群組成員（輪流或依負載）
  */
-function renderBulkAssignForm(body, group, hosts, users, groups) {
+function renderBulkAssignForm(body, group, preview, users, groups) {
     body.replaceChildren();
 
+    const hosts = preview.hosts;
     if (hosts.length === 0) {
         renderEmpty(body, { title: '目前查詢範圍內沒有受影響的主機' });
         return;
     }
 
     const form = document.createElement('form');
+
+    // 逐台清單有 200 筆上限（體檢 M10）：常見問題在 6000 台環境會把 modal 塞爆。
+    // 截斷必須說出來，而且要講清楚「本次只會指派列出的這些」——
+    // 靜默截斷會讓使用者以為整批都指派了
+    if (preview.truncated) {
+        const truncNote = document.createElement('div');
+        truncNote.className = 'alert alert-warning py-2 mb-3';
+        truncNote.textContent = `這個問題共影響 ${formatNumber(preview.totalHostCount)} 台主機，`
+            + `本次只列出並指派前 ${hosts.length} 台。其餘主機請調整篩選條件後分批指派。`;
+        form.appendChild(truncNote);
+    }
 
     // §6：講清楚「一次性 vs 持續」——指派會建立案件，這些主機之後同問題的新風險日會自動掛進
     // 案件並同步狀態，直到結案（不是只處理當下這些日子）

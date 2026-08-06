@@ -52,7 +52,7 @@ internal class HandlingServiceFacade
     public HandlingDto Assign(long hostId, DateTime date, long? handlerId, bool reassign = false) => _day.Assign(hostId, date, handlerId, reassign);
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request) => _issue.SetIssueStatus(hostId, date, request);
     public BatchIssueStatusResultDto SetIssueStatusBatch(long hostId, DateTime date, BatchSetIssueStatusRequest request) => _issue.SetIssueStatusBatch(hostId, date, request);
-    public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
+    public IssueCaseAssignPreviewDto PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewIssueCaseAssign(source, eventId, from, to);
     public BulkAssignIssueCaseResultDto BulkAssignIssueCase(BulkAssignIssueCaseRequest request) => _issue.BulkAssignIssueCase(request);
     public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request) => _issue.BulkSetIssueStatusByHandler(request);
     public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) => _issue.PreviewBulkClose(source, eventId, from, to);

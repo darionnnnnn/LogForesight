@@ -368,6 +368,22 @@ public class VisibleHostDto
 /// 使用者看到 20 筆會合理地認為只有這些。這與本專案自己的「涵蓋範圍要誠實顯示」原則相牴觸
 /// （掃描結果、隱藏問題數都有誠實申報，唯獨這裡沒有）。
 /// </summary>
+/// <summary>
+/// 「全選符合目前篩選的主機」的結果（體檢 X3）。回 id 清單而不是直接執行寫入：
+/// 批次改群組的既有端點會逐台檢查（已併入的主機略過並回報）並寫一筆彙總稽核，
+/// 讓全選走同一條寫入路徑，就不會有第二套規則與第二份稽核格式。
+/// </summary>
+public class HostIdListDto
+{
+    public List<long> HostIds { get; set; } = new();
+
+    /// <summary>符合篩選的主機總數（截斷前）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝超過單次上限，畫面必須說明要分批</summary>
+    public bool Truncated { get; set; }
+}
+
 public class VisibleHostListDto
 {
     public List<VisibleHostDto> Items { get; set; } = new();

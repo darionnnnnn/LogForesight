@@ -300,11 +300,11 @@ public class IssueHandlingCommandService
     /// 使用者只會看到自己有權限的主機。已有進行中案件的主機標出既有處理人，讓使用者送出前
     /// 就知道哪些會被跳過（2.1，不搶走）。
     /// </summary>
-    public List<IssueCasePreviewHostDto> PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to)
+    public IssueCaseAssignPreviewDto PreviewIssueCaseAssign(string source, int eventId, DateTime? from, DateTime? to)
     {
         var occurrences = ResolveIssueOccurrences(source, eventId, from, to);
 
-        return occurrences.Values
+        var all = occurrences.Values
             .Select(o =>
             {
                 var openCase = _cases.GetOpen(o.Host.HostName, IssueSignatureKey.For(o.Issue));
@@ -320,6 +320,15 @@ public class IssueHandlingCommandService
             })
             .OrderBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // 同統一標記的理由（體檢 M10）：常見問題在 6000 台環境會把 6000 列塞進 modal。
+        // 上限只影響顯示；勾選範圍由畫面明確說明「預設全選前 N 台」，總數誠實回報
+        return new IssueCaseAssignPreviewDto
+        {
+            TotalHostCount = all.Count,
+            Truncated = all.Count > PreviewHostLimit,
+            Hosts = all.Take(PreviewHostLimit).ToList()
+        };
     }
 
     /// <summary>
@@ -544,13 +553,41 @@ public class IssueHandlingCommandService
     /// 以及整台被略過的原因。**預覽與落盤共用 <see cref="PlanBulkClose"/> 同一份規則**——
     /// 兩邊各算一次的話，畫面上說會跳過的主機實際可能被寫進去。
     /// </summary>
-    public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to) =>
-        new()
+    /// <summary>
+    /// 預覽的逐台清單上限（體檢 M10）。
+    ///
+    /// 為什麼一定要有：像 DCOM 10016、Service Control Manager 7000 這種問題在真實機房
+    /// 幾乎每台都有——6000 台環境按一次「統一標記」就會把 6000 列塞進 modal，
+    /// 沒有分頁、沒有搜尋、沒有虛擬捲動。專案在別處都刻意處理過同一類風險
+    /// （主機清單伺服器端分頁、執行監控每日彙總、未回報主機計數卡＋下鑽），
+    /// 這兩個 modal 是漏網之魚。
+    ///
+    /// 上限只影響**顯示**，不影響實際套用範圍——總數與總日數照實回傳，畫面要說出來。
+    /// </summary>
+    public const int PreviewHostLimit = 200;
+
+    public IssueBulkClosePreviewDto PreviewBulkClose(string source, int eventId, DateTime? from, DateTime? to)
+    {
+        var plan = PlanBulkClose(source, eventId, from, to);
+        var rows = plan.Select(p => p.Row).ToList();
+
+        return new IssueBulkClosePreviewDto
         {
             From = from?.ToString("yyyy-MM-dd"),
             To = to?.ToString("yyyy-MM-dd"),
-            Hosts = PlanBulkClose(source, eventId, from, to).Select(p => p.Row).ToList()
+            TotalHostCount = rows.Count,
+            TotalDayCount = rows.Sum(r => r.DayCount),
+            SkippedHostCount = rows.Count(r => r.SkipReason != null),
+            Truncated = rows.Count > PreviewHostLimit,
+            // 截斷時優先留下「會被寫入的」——略過的主機對操作者的決策價值較低，
+            // 而總數與略過數另外用數字誠實申報
+            Hosts = rows
+                .OrderBy(r => r.SkipReason != null ? 1 : 0)
+                .ThenBy(r => r.HostName, StringComparer.OrdinalIgnoreCase)
+                .Take(PreviewHostLimit)
+                .ToList()
         };
+    }
 
     /// <summary>
     /// 統一標記（§6）：把一個問題在**尚未有人接手**的主機上一次標成結論。
@@ -580,6 +617,18 @@ public class IssueHandlingCommandService
             throw DomainException.Validation(skipped.Count > 0
                 ? "這個問題在期間內的主機都已有人處理或已有結論，沒有可統一標記的項目。"
                 : "找不到任何符合條件、且您有權限的主機。");
+
+        // 單次寫入的硬上限（體檢 M10／S7）：統一標記是同步 HTTP，寫入量一大必然超過
+        // 瀏覽器或反向代理的逾時，而逾時之後使用者不知道到底寫進去多少、重按一次又是一輪。
+        // 在批次寫入改成「觸發→背景→輪詢」之前（規劃 P2 刻意不做的部分），先用上限
+        // 把最壞情況壓在可完成的範圍內，並在錯誤訊息裡告訴使用者怎麼縮小範圍。
+        var plannedDays = targets.Sum(t => t.Days.Count);
+        if (plannedDays > MaxBulkCloseDayWrites)
+        {
+            throw DomainException.Validation(
+                $"本次將寫入 {plannedDays:N0} 筆（{targets.Count:N0} 台主機），超過單次上限 {MaxBulkCloseDayWrites:N0} 筆。" +
+                "請縮小日期區間或改用更精確的問題條件，分次執行。");
+        }
 
         // 整批共用同一個時間戳：前端 timeline 靠「同操作者＋同時間戳」把一次操作分組成一塊
         var occurredAt = DateTime.Now;
@@ -614,9 +663,25 @@ public class IssueHandlingCommandService
         {
             UpdatedHostCount = targets.Count,
             UpdatedDayCount = updatedDays,
-            Skipped = skipped
+            SkippedHostCount = skipped.Count,
+            // 略過清單同預覽受同一個上限——結果 modal 一樣不該塞進數千列
+            Skipped = skipped.Take(PreviewHostLimit).ToList(),
+            // 影響範圍的追溯出口（體檢 X6）：批次寫入沒有復原機制，但要查得到影響了哪些
+            Source = request.Source,
+            EventId = request.EventId,
+            From = request.From?.ToString("yyyy-MM-dd"),
+            To = request.To?.ToString("yyyy-MM-dd")
         };
     }
+
+    /// <summary>
+    /// 統一標記單次可寫入的主機日上限（體檢 M10／S7）。
+    ///
+    /// 數字的取捨：1000 台 × 30 天＝3 萬筆，那正是體檢推算「即使一次 100ms 也要 50 分鐘」
+    /// 的情境。5000 筆在 P3（處理狀態落真表）之後是秒級，在那之前也還在同步請求
+    /// 撐得住的範圍內；真的需要更大範圍時，正確作法是分次執行而不是讓請求逾時。
+    /// </summary>
+    public const int MaxBulkCloseDayWrites = 5000;
 
     /// <summary>
     /// 統一標記的計畫（預覽與落盤共用）：逐主機決定要標哪些日子、略過的原因是什麼。
