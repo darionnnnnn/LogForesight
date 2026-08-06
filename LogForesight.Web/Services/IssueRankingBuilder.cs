@@ -55,7 +55,7 @@ public class IssueRankingBuilder
                 {
                     Source = a.Source,
                     EventId = a.EventId,
-                    Category = string.Empty,   // 由呼叫端自紀錄補（聚合表只存過濾用的 category 字串）
+                    Category = a.Category,
                     MaxSeverity = ((IssueSeverity)a.MaxSeverityRank).ToString(),
                     HostCount = a.HostCount,
                     DayCount = a.DayCount,

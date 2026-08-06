@@ -54,6 +54,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 g.Key.SourceName,
                 g.Key.EventId,
+                // 類別由規則以簽章為鍵決定，同一組內恆定——取 MIN 只是為了在 SQL 端
+                // 有個確定性的選法，不必為此多一趟「哪個類別出現最多」的 GROUP BY
+                Category = g.Min(x => x.Category),
                 MaxSeverityRank = g.Max(x => x.SeverityRank),
                 Elevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
                 HostCount = g.Select(x => x.HostId).Distinct().Count(),
@@ -78,6 +81,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 Source = g.SourceName,
                 EventId = g.EventId,
+                Category = g.Category ?? string.Empty,
                 MaxSeverityRank = g.MaxSeverityRank,
                 ElevatesDayRisk = g.Elevates == 1,
                 HostCount = g.HostCount,

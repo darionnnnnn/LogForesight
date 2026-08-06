@@ -34,20 +34,26 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
-    /// 最後附加的一行；沒有任何行時回 null（docs/SCALE-ISSUE-FIRST-PLAN.md N4）。
+    /// 最後附加的 N 行，由**新到舊**（docs/SCALE-ISSUE-FIRST-PLAN.md N4）。
     ///
     /// 存在的理由：續號用的「上一個 id」過去靠 <see cref="ReadLines()"/> 整份讀回再取最後一筆，
     /// 而那個呼叫在 Singleton store 的建構式裡——等於**站台啟動時同步讀千萬列並逐行解析**，
     /// 第一個觸發它的請求會長時間無回應。這裡是索引 (log_key, seq) 的一次反向 seek。
+    ///
+    /// **為什麼要多讀幾行而不是只讀一行**：只讀一行時，那一行剛好損毀就會讓呼叫端
+    /// 以為「沒有任何歷程」而從頭續號，與既有資料**重號**（同一天的歷程排序因此錯亂）。
+    /// 損毀通常是連續的一小段，往回多看幾行就能找到最後一筆完好的；
+    /// 而這仍然是同一次 seek，成本與讀一行幾乎相同——不必為此退回全表掃描。
     /// </summary>
-    public string? ReadLastLine()
+    public IReadOnlyList<string> ReadLastLines(int count)
     {
         using var ctx = _contextFactory();
         return ctx.LogLines.AsNoTracking()
             .Where(l => l.LogKey == _key)
             .OrderByDescending(l => l.Seq)
             .Select(l => l.Line)
-            .FirstOrDefault();
+            .Take(count)
+            .ToList();
     }
 
     /// <summary>附加一行（O(1)）</summary>

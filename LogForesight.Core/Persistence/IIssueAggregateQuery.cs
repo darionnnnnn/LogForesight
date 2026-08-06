@@ -14,6 +14,13 @@ public sealed class IssueAggregate
     public string Source { get; init; } = string.Empty;
     public int EventId { get; init; }
 
+    /// <summary>
+    /// 風險類別（<see cref="IssueCategory"/> 的字串）。
+    /// 同一個 (Source, EventId) 的類別由規則決定、實務上恆定，因此在 SQL 端取確定性的一個值即可
+    /// ——不是「隨便挑」，是「這一組本來就只有一個值」。
+    /// </summary>
+    public string Category { get; init; } = string.Empty;
+
     /// <summary>期間內出現過的最高嚴重度（<see cref="IssueSeverity"/> 的整數值）</summary>
     public int MaxSeverityRank { get; init; }
 

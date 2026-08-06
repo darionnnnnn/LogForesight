@@ -15,6 +15,14 @@ import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core
 const root = document.getElementById('user-detail');
 const userId = Number(root.dataset.userId);
 
+/**
+ * 目前登入者。**必須在 load() 裡先取好再渲染**——`getCurrentUser()` 是 async，
+ * 在同步的渲染函式裡直接呼叫會拿到 Promise（`promise.isServerAdmin` 是 undefined，
+ * 任何比較都恆為 false，而且不會報錯）。本頁曾因此讓整個 §H4 的修復完全沒有生效。
+ * 它有快取，放進既有的 Promise.all 是零額外成本。
+ */
+let currentUser = null;
+
 async function load() {
     renderLoading(document.getElementById('user-visible-hosts'), 3);
     renderLoading(document.getElementById('user-open-work'), 3);
@@ -22,10 +30,12 @@ async function load() {
     renderLoading(document.getElementById('user-assignment-history'), 3);
 
     // 兩支端點平行取：detail 查無此人會 404，workload 也會，錯誤由 api.js 統一顯示
-    const [detail, workload] = await Promise.all([
+    const [detail, workload, me] = await Promise.all([
         api.get(`/api/admin/users/${userId}/detail`),
-        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=true`)
+        api.get(`/api/handlers/${userId}/workload?includeResolvedDays=true`),
+        getCurrentUser()
     ]);
+    currentUser = me;
 
     renderHeader(detail);
     renderKpi(detail, workload);
@@ -111,7 +121,7 @@ function badge(text, variant, muted = false) {
  * 檢視者範圍呈現；檢視者完全沒有業務範圍時直接換成說明卡，不顯示會被誤讀的「0」。
  */
 function viewerHasNoBusinessScope() {
-    return getCurrentUser()?.isServerAdmin === true;
+    return currentUser?.isServerAdmin === true;
 }
 
 function renderKpi(detail, workload) {

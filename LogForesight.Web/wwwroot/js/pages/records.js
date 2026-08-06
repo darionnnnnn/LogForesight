@@ -1686,7 +1686,14 @@ document.getElementById('btn-copy-csv').addEventListener('click', async () => {
 function csvHeader() {
     if (currentView === 'host') return ['主機', '高風險', '中風險', '低風險', '關聯訊號', '類型', '最新日期', '最新狀況'];
     if (currentView === 'date') return ['日期', '主機數', '高風險', '中風險', '低風險', '關聯訊號', '類型'];
-    if (currentView === 'issue') return ['來源', 'Event ID', '分類', '嚴重度', '主機數', '風險日數', '總次數', '最近出現', '處理概況', '處理人'];
+    // 依問題視角（§10.3）：「涵蓋範圍」與「出現密度」在畫面上是合併字串（好讀），
+    // 匯出時**拆成獨立欄位**——CSV 是給人貼進試算表再排序／樞紐的，
+    // `2026-05-06 ~ 2026-07-28` 與 `3/98` 這種合併字串在 Excel 裡是死的
+    if (currentView === 'issue') {
+        return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
+            '首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '風險日數', '總次數', '處理概況', '處理人'];
+    }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
 }
 
@@ -1701,8 +1708,12 @@ function csvRow(item) {
             item.correlationHosts, cats(item.categories)];
     }
     if (currentView === 'issue') {
-        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category, severityName(item.maxSeverity),
-            item.hostCount, item.dayCount, item.totalCount, item.lastSeen,
+        return [quote(item.source), item.eventId, CATEGORY_NAMES[item.category] ?? item.category,
+            severityName(item.maxSeverity), item.elevatesDayRisk ? '是' : '',
+            item.hostCount,
+            item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
+            item.activeDays, item.periodDays,
+            item.dayCount, item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
     const handler = item.handlerName

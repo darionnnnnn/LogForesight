@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using NLog;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -17,6 +18,8 @@ namespace LogForesight.Core.Persistence.Sql;
 /// </summary>
 public sealed class EfRecordHandlingStore : IRecordHandlingStore
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly Func<LfDbContext> _contextFactory;
     private readonly EfJsonLogStore _logStore;
     private readonly object _logLock = new();
@@ -148,14 +151,33 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
             .ToList();
     }
 
-    /// <summary>續號起點＝最後一行的 LogId；沒有歷程或最後一行壞掉時從 0 起算</summary>
+    /// <summary>
+    /// 續號探測的回看行數。損毀通常是連續的一小段，20 行足以跨過去；
+    /// 而這仍是索引 (log_key, seq) 的同一次反向 seek，成本與讀一行幾乎相同。
+    /// </summary>
+    private const int LogIdProbeLines = 20;
+
+    /// <summary>
+    /// 續號起點＝**最後一筆解析得出來的** LogId。
+    ///
+    /// 由新到舊逐行嘗試，第一個成功的就是起點——只看最後一行的話，
+    /// 那一行剛好損毀就會從 1 重新續號，與既有歷程重號、同一天的排序因此錯亂。
+    /// 全部失敗才回 0 並記 Warn：那代表歷程尾端整段損毀，值得被看見而不是安靜地重號。
+    /// </summary>
     private long ReadLastLogId()
     {
-        var line = _logStore.ReadLastLine();
-        if (string.IsNullOrWhiteSpace(line)) return 0;
+        var lines = _logStore.ReadLastLines(LogIdProbeLines);
+        if (lines.Count == 0) return 0;
 
-        var parsed = JsonLogParser.Parse<RecordHandlingLog>(new[] { line }, LfJsonOptions.Compact);
-        return parsed.Count > 0 ? parsed[0].LogId : 0;
+        foreach (var line in lines)
+        {
+            var parsed = JsonLogParser.Parse<RecordHandlingLog>(new[] { line }, LfJsonOptions.Compact);
+            if (parsed.Count > 0) return parsed[0].LogId;
+        }
+
+        Log.Warn("[SQL] 處理歷程最後 {Count} 行都無法解析，續號自 0 起算——" +
+                 "若歷程尾端確實損毀，新舊 LogId 可能重號，請檢查 lf_log_lines 的 handling_log 內容", lines.Count);
+        return 0;
     }
 
     private static RecordHandling ToModel(RecordHandlingRow row) => new()
