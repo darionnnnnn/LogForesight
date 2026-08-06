@@ -362,6 +362,23 @@ public class VisibleHostDto
     public DateTime? LastReportAt { get; set; }
 }
 
+/// <summary>
+/// 主機查詢結果（體檢 X4）。**為什麼不直接回一個陣列**：autocomplete 的結果有 20 筆上限，
+/// 只回陣列的話畫面無從得知「還有更多」——2000 台環境輸入「SRV」可能有 500 台符合，
+/// 使用者看到 20 筆會合理地認為只有這些。這與本專案自己的「涵蓋範圍要誠實顯示」原則相牴觸
+/// （掃描結果、隱藏問題數都有誠實申報，唯獨這裡沒有）。
+/// </summary>
+public class VisibleHostListDto
+{
+    public List<VisibleHostDto> Items { get; set; } = new();
+
+    /// <summary>符合條件的總數（未受上限截斷）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝顯示的筆數少於 Total，畫面必須說出來</summary>
+    public bool Truncated { get; set; }
+}
+
 /// <summary>主機群組篩選選項（§5.4 D-4）——比完整 HostGroupDto 精簡，一般使用者用不到 MemberCount/Active</summary>
 public class HostGroupOptionDto
 {

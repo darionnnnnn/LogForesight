@@ -64,19 +64,8 @@ public static class HostIdentityResolver
     /// 識別集合。寫入端雖然擋掉了新的鏈（見 HostAdminService.MergeHost），但那個守則是後來
     /// 才加的，既有資料可能已經有鏈——查詢端自己認得，就不必賭資料乾淨。
     /// </summary>
-    public static List<HostKey> Expand(IEnumerable<WebHost> allHosts, long hostId)
-    {
-        var hosts = allHosts as IReadOnlyList<WebHost> ?? allHosts.ToList();
-
-        var self = hosts.FirstOrDefault(h => h.HostId == hostId);
-        if (self == null) return new List<HostKey>();
-
-        var keys = new List<HostKey> { HostKey.Of(self) };
-        keys.AddRange(hosts
-            .Where(h => h.HostId != hostId && Surviving(hosts, h).HostId == hostId)
-            .Select(HostKey.Of));
-        return keys;
-    }
+    public static List<HostKey> Expand(IEnumerable<WebHost> allHosts, long hostId) =>
+        new HostAliasIndex(allHosts).Aliases(hostId);
 
     /// <summary>
     /// 跟隨 MergedInto 鏈找出存活主機（併入的目標若自己也被併入就繼續往下）。
@@ -86,15 +75,98 @@ public static class HostIdentityResolver
     public static WebHost Surviving(IEnumerable<WebHost> allHosts, WebHost host)
     {
         var hosts = allHosts as IReadOnlyList<WebHost> ?? allHosts.ToList();
+        return Surviving(hosts.ToDictionary(h => h.HostId), host);
+    }
 
+    /// <summary>
+    /// 以 id 索引跟隨 MergedInto 鏈（<see cref="HostAliasIndex"/> 內部用）。
+    /// 與上面的清單版語意完全相同，差別只在不必每一步都線性搜尋整份主機清單——
+    /// 那正是 6000 台規模下把展開推成 O(N²) 的原因。
+    /// </summary>
+    internal static WebHost Surviving(IReadOnlyDictionary<long, WebHost> byId, WebHost host)
+    {
         var current = host;
-        for (int i = 0; i < hosts.Count && current.MergedInto != null; i++)
+        for (var i = 0; i < byId.Count && current.MergedInto != null; i++)
         {
-            var next = hosts.FirstOrDefault(h => h.HostId == current.MergedInto);
-            if (next == null) break;
+            if (!byId.TryGetValue(current.MergedInto.Value, out var next)) break;
             current = next;
         }
         return current;
+    }
+}
+
+/// <summary>
+/// 主機別名的一次性索引（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 A／N1）。
+///
+/// **這個類別存在的理由是效能，語意與 <see cref="HostIdentityResolver.Expand"/> 完全相同。**
+/// 舊寫法每展開一台主機就要掃過整份主機清單一次，而可見範圍解析
+/// （<c>RecordRepository.VisibleHostKeys</c>）對**每一台**可見主機各呼叫一次——
+/// 6000 台就是 3600 萬次比對，而且每一次查詢都重算一遍。
+///
+/// 這裡改成建一次索引（O(N)）之後每次展開 O(1)：
+///   - <see cref="Surviving"/>：任一主機 id → 它最終併入的存活主機
+///   - <see cref="Aliases"/>：存活主機 id → 它自己＋所有最終併入它的墓碑列
+///
+/// **持有的是 <see cref="HostKey"/>（值型別的複本）而不是 <see cref="WebHost"/> 參照**——
+/// 呼叫端拿到的鍵不會因為別處修改主機實體而改變，索引也就不會被外部意外汙染。
+/// </summary>
+public sealed class HostAliasIndex
+{
+    private readonly Dictionary<long, WebHost> _byId;
+    private readonly Dictionary<long, long> _survivingIdById = new();
+    private readonly Dictionary<long, List<HostKey>> _aliasesBySurvivingId = new();
+
+    public HostAliasIndex(IEnumerable<WebHost> allHosts)
+    {
+        var hosts = allHosts as IReadOnlyList<WebHost> ?? allHosts.ToList();
+        _byId = hosts.ToDictionary(h => h.HostId);
+        HostCount = hosts.Count;
+
+        foreach (var host in hosts)
+        {
+            var surviving = HostIdentityResolver.Surviving(_byId, host);
+            _survivingIdById[host.HostId] = surviving.HostId;
+
+            if (!_aliasesBySurvivingId.TryGetValue(surviving.HostId, out var aliases))
+            {
+                aliases = new List<HostKey>();
+                _aliasesBySurvivingId[surviving.HostId] = aliases;
+            }
+
+            // 主機本身永遠排在最前面（GetOne 依序擇一的既有契約）；
+            // 墓碑列附在後面，順序不影響語意
+            if (host.HostId == surviving.HostId) aliases.Insert(0, HostKey.Of(host));
+            else aliases.Add(HostKey.Of(host));
+        }
+    }
+
+    /// <summary>索引涵蓋的主機總數（含墓碑列）——供呼叫端判斷「可見範圍是否等於全部」</summary>
+    public int HostCount { get; }
+
+    /// <summary>指定主機最終併入的存活主機；查無回 null</summary>
+    public WebHost? Surviving(long hostId) =>
+        _survivingIdById.TryGetValue(hostId, out var id) && _byId.TryGetValue(id, out var host) ? host : null;
+
+    /// <summary>
+    /// 別名展開：主機本身 ＋ 所有最終併入它的墓碑列（本身排在最前）。
+    /// 查無主機時回空清單——空集合在查詢語意上就是「查不到任何資料」，是安全的失敗方向。
+    /// </summary>
+    public List<HostKey> Aliases(long hostId)
+    {
+        if (!_byId.ContainsKey(hostId)) return new List<HostKey>();
+
+        // 傳入的是墓碑列時，別名集合掛在它的存活主機下
+        var survivingId = _survivingIdById[hostId];
+        if (survivingId != hostId)
+        {
+            return _byId.TryGetValue(hostId, out var self)
+                ? new List<HostKey> { HostKey.Of(self) }
+                : new List<HostKey>();
+        }
+
+        return _aliasesBySurvivingId.TryGetValue(hostId, out var aliases)
+            ? new List<HostKey>(aliases)
+            : new List<HostKey>();
     }
 }
 
@@ -114,9 +186,14 @@ public sealed class HostLookup
     {
         var hosts = allHosts as IReadOnlyList<WebHost> ?? allHosts.ToList();
 
+        // id 索引先建一次（根因 A／N1）：舊寫法對每一台主機呼叫清單版的 Surviving，
+        // 而那個版本每一步都線性搜尋整份清單——6000 台時光是建這個 lookup 就要 3600 萬次比對，
+        // 而一次請求可能建好幾個 HostLookup
+        var byId = hosts.ToDictionary(h => h.HostId);
+
         foreach (var host in hosts)
         {
-            var surviving = HostIdentityResolver.Surviving(hosts, host);
+            var surviving = HostIdentityResolver.Surviving(byId, host);
             _byId[host.HostId] = surviving;
             _byName[host.HostName] = surviving;
         }

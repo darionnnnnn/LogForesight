@@ -128,8 +128,8 @@ async function resolveSelectedHostsFromUrl() {
     if (!csv) return;
 
     try {
-        const hosts = await api.get(`/api/hosts?ids=${encodeURIComponent(csv)}`, { silent: true });
-        for (const host of hosts) selectedHosts.set(String(host.hostId), host.hostName);
+        const result = await api.get(`/api/hosts?ids=${encodeURIComponent(csv)}`, { silent: true });
+        for (const host of result.items) selectedHosts.set(String(host.hostId), host.hostName);
     } catch {
         // 解析失敗就不顯示 chip；篩選條件本身仍在 URL 上，重新查詢不受影響
     }
@@ -186,14 +186,14 @@ function setupHostAutocomplete() {
     });
 
     async function loadHostSuggestions(query) {
-        let hosts;
+        let result;
         try {
-            hosts = await api.get(`/api/hosts?query=${encodeURIComponent(query)}`, { silent: true });
+            result = await api.get(`/api/hosts?query=${encodeURIComponent(query)}`, { silent: true });
         } catch {
             return;
         }
 
-        const candidates = hosts.filter(h => !selectedHosts.has(String(h.hostId)));
+        const candidates = result.items.filter(h => !selectedHosts.has(String(h.hostId)));
         suggestions.replaceChildren();
 
         if (candidates.length === 0) {
@@ -216,6 +216,16 @@ function setupHostAutocomplete() {
             });
             suggestions.appendChild(item);
         }
+
+        // 截斷要說出來（體檢 X4）：2000 台環境輸入常見前綴可能有數百台符合，
+        // 只出現 20 筆而不說明，使用者會合理地認為「就只有這 20 台」
+        if (result.truncated) {
+            const note = document.createElement('div');
+            note.className = 'dropdown-item-text small text-muted border-top';
+            note.textContent = `顯示前 ${result.items.length} 筆，共 ${result.total} 筆符合，請再輸入以縮小範圍`;
+            suggestions.appendChild(note);
+        }
+
         suggestions.classList.add('show');
     }
 

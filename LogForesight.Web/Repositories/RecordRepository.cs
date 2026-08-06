@@ -181,7 +181,35 @@ public class RecordRepository : IRecordRepository
         filter.Hosts = filter.Hosts == null
             ? visible
             : filter.Hosts.Where(k => visibleIds.Contains(k.HostId)).ToList();
+
+        // **刻意不做「可見範圍涵蓋全部主機時就不下推」的最佳化**
+        // （docs/SCALE-ISSUE-FIRST-PLAN.md 根因 A，實作時試過並撤回）：
+        // 「可見主機涵蓋主機清單裡的每一台」不等於「不限制」——分析紀錄裡可能存在
+        // **主機清單中已不存在**的 host_id（主機列被刪除），以及 host_id=0 的舊列
+        // （那些靠 filter.Hosts 觸發記憶體端的 HostMatcher 名稱比對才篩得掉）。
+        // 把條件整個拿掉會讓這兩類紀錄繞過可見範圍出現在畫面上，是授權缺口而不只是效能取捨。
+        // 既有測試（Search_無篩選條件_授權範圍以外的主機不出現／GetSummary_問題排行只含可見主機）
+        // 當場抓到這件事，保留這段註解免得下一輪又有人「順手最佳化」一次。
+        //
+        // 真正的成本在別名展開與整份 blob 讀取，那兩項已由 HostAliasIndex 與每請求快取解決；
+        // IN 清單本身在 EF 8 是單一 JSON 參數（OPENJSON／json_each），不是瓶頸也不會撞參數上限。
     }
+
+    /// <summary>
+    /// 主機別名索引的**每請求**快取（根因 A／N1）。
+    ///
+    /// 為什麼快取在這一層而不是 store：<c>HostStore.GetAll()</c> 回傳的是可變的實體，
+    /// 而全站有多處會「取出 → 改屬性 → Upsert」（SentinelAdminService／NetiqImportApplier…）。
+    /// 在 store 快取實體會讓那些尚未存檔的修改被其他讀取者看到，是正確性風險。
+    /// 這裡快取的是 <see cref="HostAliasIndex"/>——它只持有 <see cref="HostKey"/> 值複本，
+    /// 不共用可變實體，因此沒有這個問題。
+    ///
+    /// <see cref="RecordRepository"/> 是 Scoped，快取生命週期＝一次請求，
+    /// 與 <c>VisibilityService</c> 的每請求快取同一個理由與同一個範圍。
+    /// </summary>
+    private HostAliasIndex? _aliasIndex;
+
+    private HostAliasIndex AliasIndex() => _aliasIndex ??= new HostAliasIndex(_hosts.GetAll());
 
     public DailyAnalysisRecord? GetOne(long hostId, DateTime date)
     {
@@ -196,8 +224,12 @@ public class RecordRepository : IRecordRepository
         return record == null ? null : ApplySeverityVisibility(record);
     }
 
-    public List<HostKey> ResolveHostKeys(long hostId) =>
-        HostIdentityResolver.Expand(_hosts.GetAll(), hostId);
+    /// <summary>
+    /// 走每請求索引（根因 A／N1）：舊寫法是 <c>Expand(_hosts.GetAll(), hostId)</c>，
+    /// 而 <c>RecordListQueryService.BuildFilter</c> 在**迴圈裡**逐台呼叫它——
+    /// 用主機群組篩 500 台就是 500 次「整份 hosts blob 讀取＋反序列化」。
+    /// </summary>
+    public List<HostKey> ResolveHostKeys(long hostId) => AliasIndex().Aliases(hostId);
 
     public WebHost? ResolveHost(string hostName) => _hosts.FindByName(hostName);
 
@@ -210,13 +242,22 @@ public class RecordRepository : IRecordRepository
     /// </summary>
     private List<HostKey> VisibleHostKeys()
     {
-        var visibleIds = _visibility.GetVisibleHostIds();
-        var allHosts = _hosts.GetAll();
+        if (_visibleHostKeys != null) return _visibleHostKeys;
 
-        return allHosts
-            .Where(h => visibleIds.Contains(h.HostId))
-            .SelectMany(h => HostIdentityResolver.Expand(allHosts, h.HostId))
+        var visibleIds = _visibility.GetVisibleHostIds();
+        var index = AliasIndex();
+
+        // 走索引展開（根因 A／N1）：舊寫法對**每一台**可見主機呼叫一次 Expand，
+        // 而 Expand 內部又掃一次全部主機——6000 台＝3600 萬次比對，每次查詢重算一遍。
+        // 建索引是 O(N)，展開是 O(可見主機數)。
+        _visibleHostKeys = visibleIds
+            .SelectMany(index.Aliases)
             .DistinctBy(k => k.HostId)
             .ToList();
+
+        return _visibleHostKeys;
     }
+
+    /// <summary>可見鍵集合的每請求快取——同一次請求內可能被查詢＋計數＋明細各呼叫一次</summary>
+    private List<HostKey>? _visibleHostKeys;
 }

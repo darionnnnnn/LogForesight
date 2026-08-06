@@ -123,6 +123,47 @@ public class ScaleBenchmarks
         _out.WriteLine($"  SaveMany（90 列，模擬 BuildCase 回溯 90 天）於 {rows.Count:N0} 列的 blob 上：{batchSw.ElapsedMilliseconds:N0} ms");
     }
 
+    /// <summary>
+    /// 主機別名展開的成長曲線（規劃根因 A／N1）。不需要資料庫，秒級即可跑完。
+    ///
+    /// 改寫前 <c>VisibleHostKeys</c> 對**每一台**可見主機呼叫一次 <c>Expand</c>，
+    /// 而 <c>Expand</c> 內部又掃一次全部主機——是 O(N²)，且每次查詢重算一遍。
+    /// 這裡量的是「建索引＋展開全部可見主機」的總成本，應該隨主機數**線性**成長；
+    /// 若哪天有人把索引改回逐台掃描，這條曲線會立刻變成二次成長。
+    /// </summary>
+    [ScaleFact]
+    public void 主機別名展開成長曲線()
+    {
+        _out.WriteLine("== 別名展開（建索引＋展開全部可見主機）==");
+        _out.WriteLine($"{"主機數",10} | {"墓碑數",8} | {"耗時 ms",10} | {"展開鍵數",10}");
+
+        foreach (var hostCount in new[] { 500, 1000, 2000, 4000, 6000 })
+        {
+            var tombstones = hostCount / 30;
+            var hosts = new List<WebHost>(hostCount + tombstones);
+            for (var i = 0; i < hostCount; i++)
+                hosts.Add(new WebHost { HostId = i + 1, HostName = $"SRV-{i + 1:D5}", Active = true });
+            for (var t = 0; t < tombstones; t++)
+                hosts.Add(new WebHost
+                {
+                    HostId = hostCount + t + 1,
+                    HostName = $"OLD-{t + 1:D5}",
+                    Active = false,
+                    MergedInto = t * 7 % hostCount + 1
+                });
+
+            var sw = Stopwatch.StartNew();
+            var index = new HostAliasIndex(hosts);
+            var keys = hosts.Where(h => h.Active)
+                .SelectMany(h => index.Aliases(h.HostId))
+                .DistinctBy(k => k.HostId)
+                .ToList();
+            sw.Stop();
+
+            _out.WriteLine($"{hostCount,10:N0} | {tombstones,8:N0} | {sw.ElapsedMilliseconds,10:N0} | {keys.Count,10:N0}");
+        }
+    }
+
     private void RunProfile(ScaleProfile profile)
     {
         _out.WriteLine($"===== {profile} =====");
