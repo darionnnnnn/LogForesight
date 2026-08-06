@@ -493,6 +493,33 @@ var handlingLogPruned = new EfJsonLogStore(...).Prune(cutoff);
 **文件**：`DB-SPEC.md` 的「資料量推估」與「清理策略」要補這三張表——
 目前那兩節完全沒提到它們，等於承諾了一個沒有人負責的成長曲線。
 
+#### 實作結果（D 批，G4＋S-4 一起）
+
+清理段新增一區 `1b-2`，**排在 `historyService.Prune` 之後**（順序有意義：
+前者決定哪些日期已過期，反過來的話這一輪會漏掉剛過期的那幾天）：
+
+| 對象 | 方法 | 保留天數 |
+|---|---|---|
+| `lf_issue_handling` | `EfIssueHandlingStore.Prune` | `RetentionDays`（120） |
+| `lf_record_handling` | `EfRecordHandlingStore.Prune` | `RetentionDays` |
+| `lf_issue_cases` | `EfIssueCaseStore.Prune`（**只刪已結案、依 `closed_at`**） | `RetentionDays` |
+| `handling_log` | `EfRecordHandlingStore.PruneLogs` | `AuditRetentionDays`（730） |
+
+分批刪除的骨架抽成 `BatchedPrune`——只撈主鍵、分批 `ExecuteDelete`、
+單次上限 20 萬列、超過留待下次，並在超過上限時把剩餘筆數寫進 log。
+抽出來的理由不是省行數，是**不讓第五個清理對象再自己發明一次**。
+
+**進行中案件的舊逐日列一併刪、案件本身留著**：看似不一致，實則是同一條原則——
+案件的狀態、處理人、說明都在 `lf_issue_cases`，逐日列只是「那天的那個問題結了沒」，
+而那天的分析紀錄已經不在了。「還沒處理完」這件事不會因為清理而消失。
+
+**歷程從最舊的一端刪不影響續號**：`ReadLastLogId` 讀的是**最後**幾行。
+已補測試模擬「清理後站台重啟再續寫」，確認不會從 1 重號。
+
+`DB-SPEC.md` 的保留策略一節同步改寫：原文寫的是 2026-07-20 的構想
+（`Storage.DbRetentionDays` 統一 730），與實際落地的**四個保留期**不符，
+已改為以實作為準並補上四張表的容量推估。
+
 ### G3 `IssueRankingBuilder` 沒有單元測試
 
 已併入 D2 的作法（見 §一 D2 末段）。

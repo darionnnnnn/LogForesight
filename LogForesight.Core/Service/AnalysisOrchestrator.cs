@@ -384,6 +384,37 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
+            // 1b-2. 清理處理狀態三表與處理歷程（docs/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
+            //
+            // **必須排在 historyService.Prune 之後**：那一步決定了哪些日期的分析紀錄還在，
+            // 這裡刪的正是「紀錄已經不在、卻還留著的處理狀態」。順序反過來的話，
+            // 這一輪會漏掉剛被判定過期的那幾天，要等到下次執行才補上。
+            //
+            // 三個對象、三種保留天數，理由各自不同（見各 store 的 Prune 註解）：
+            //   問題／日處理狀態 → RetentionDays（跟著分析紀錄，它們是紀錄的附屬狀態）
+            //   已結案的案件     → RetentionDays（同上，但判準是結案時間，不是事件日期）
+            //   處理歷程         → AuditRetentionDays（追責證據，性質接近稽核）
+            try
+            {
+                var issueHandlingPruned = backend.IssueHandlingStore().Prune(retention.RetentionDays);
+                var recordHandlingStore = backend.RecordHandlingStore();
+                var dayHandlingPruned = recordHandlingStore.Prune(retention.RetentionDays);
+                var casePruned = backend.IssueCaseStore().Prune(retention.RetentionDays);
+
+                var handlingPruned = issueHandlingPruned + dayHandlingPruned + casePruned;
+                if (handlingPruned > 0)
+                    console.WriteLine($"已清除 {handlingPruned} 筆超過 {retention.RetentionDays} 天的處理狀態" +
+                                      $"（問題 {issueHandlingPruned}／日 {dayHandlingPruned}／已結案 {casePruned}）。");
+
+                var handlingLogPruned = recordHandlingStore.PruneLogs(retention.AuditRetentionDays);
+                if (handlingLogPruned > 0)
+                    console.WriteLine($"已清除 {handlingLogPruned} 筆超過 {retention.AuditRetentionDays} 天的處理歷程。");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
+            }
+
             // 1c. 清理過期的風險報告檔（docs/archive/HISTORY.md P1-4）
             try
             {

@@ -158,6 +158,37 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
         row.UpdatedAt = handling.UpdatedAt;
     }
 
+    /// <summary>
+    /// 清除超過保留天數的問題處理狀態（docs/SCALE-FIX-PLAN-2026-08-06.md S-4）。
+    ///
+    /// **與分析紀錄同一個 <c>RetentionDays</c>**：這些列的意義是「這台主機那一天的那個問題
+    /// 被標成什麼」，對應的 <c>lf_daily_records</c> 一被清掉，它們就再也沒有任何畫面讀得到——
+    /// 是純粹的孤兒，卻繼續佔空間並拖慢 <see cref="GetMany"/> 的範圍查詢。
+    ///
+    /// **進行中案件的舊日列也一併刪**：看似會弄壞案件，實際不會——案件自己的狀態、處理人、
+    /// 說明都在 lf_issue_cases，逐日列只是「那天的那個問題結了沒」，而那天的分析紀錄
+    /// 已經不在了。案件本身仍會留著（<c>EfIssueCaseStore.Prune</c> 只刪已結案），
+    /// 「還沒處理完」這件事不會因為清理而消失。
+    /// </summary>
+    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+
+        return BatchedPrune.Run<long>(_contextFactory,
+            (ctx, take) => ctx.IssueHandlings
+                .Where(h => h.RecordDate < cutoff)
+                .OrderBy(h => h.RecordDate)
+                .Select(h => h.Id)
+                .Take(take)
+                .ToList(),
+            (ctx, ids) => ctx.IssueHandlings.Where(h => ids.Contains(h.Id)).ExecuteDelete(),
+            ctx => ctx.IssueHandlings.Count(h => h.RecordDate < cutoff),
+            "問題處理狀態", maxRows, batchSize);
+    }
+
     private static IssueHandling ToModel(IssueHandlingRow row) => new()
     {
         HostName = row.HostName,

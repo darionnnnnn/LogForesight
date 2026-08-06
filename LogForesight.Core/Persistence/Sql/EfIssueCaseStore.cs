@@ -166,6 +166,35 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         ctx.SaveChanges();
     }
 
+    /// <summary>
+    /// 清除超過保留天數的案件（docs/SCALE-FIX-PLAN-2026-08-06.md S-4）。
+    ///
+    /// **只刪已結案、且結案時間早於 cutoff 的**——這裡刻意不用 <c>LastLinkedDate</c>
+    /// 之類的「事件日期」當條件：進行中案件不論多舊都要留著，因為它代表
+    /// **還沒處理完**。一個掛了兩年沒人動的案件正是最該被看見的那種，
+    /// 用日期把它清掉等於幫忙把爛帳藏起來。
+    ///
+    /// 結案時間才是案件自己的生命週期終點，也才是「可以忘記了」的正確判準。
+    /// </summary>
+    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+
+        return BatchedPrune.Run<string>(_contextFactory,
+            (ctx, take) => ctx.IssueCases
+                .Where(c => c.ClosedAt != null && c.ClosedAt < cutoff)
+                .OrderBy(c => c.ClosedAt)
+                .Select(c => c.CaseId)
+                .Take(take)
+                .ToList(),
+            (ctx, ids) => ctx.IssueCases.Where(c => ids.Contains(c.CaseId)).ExecuteDelete(),
+            ctx => ctx.IssueCases.Count(c => c.ClosedAt != null && c.ClosedAt < cutoff),
+            "已結案的問題案件", maxRows, batchSize);
+    }
+
     private static IssueCase ToModel(IssueCaseRow row) => new()
     {
         CaseId = row.CaseId,

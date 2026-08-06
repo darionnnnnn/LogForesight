@@ -286,23 +286,44 @@ lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
 
-### 保留策略（2026-07-20 修訂：統一年限，取代原「長期保存不清理」）
+### 保留策略（2026-08-06 更新：以**實際實作**為準，取代 2026-07-20 的統一年限構想）
 
-- **`Storage.DbRetentionDays` 預設 730**（兩年）；未來若改三年只動設定（1095），不動程式。
-- **全部資料表統一適用**——含 `lf_permission_changes`、`lf_record_handling(_log)`、`lf_reports`：
-  「時間過了當時紀錄也不重要了」，到期直接刪、未來有需要再修改（2026-07-20 決策；
-  曾提議的稽核類資料排除年限**已否決**）。
-- **應用層滾動清理**：批次 exe 每晚執行時（與 txt Prune 同位置）刪除
-  `record_date < 今天 − DbRetentionDays` 的資料，FK 子表先刪
-  （handling_log → handling → deep_dives → top_issues → categories → alerts → daily_records → reports）。
-  每晚僅刪一天份（2000 台約 3 萬列 lf_top_issues），**不需要分割表**，可移植性規則不受影響。
+原規劃是「`Storage.DbRetentionDays` 預設 730、全部資料表統一適用」。
+實際落地後分成**四個保留期**，因為這些資料的性質不同：
 
-容量估算（2000 台、保留兩年的穩態）：
-
-| 資料 | 年增量估算 | 兩年穩態 |
+| 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| lf_daily_records | 2000 台 × 365 天 ≈ 73 萬列/年 | ~146 萬列 |
-| lf_top_issues（大宗） | × 平均 15 簽章 ≈ 1,100 萬列/年 | ~2,200 萬列 |
+| `RetentionDays` | 120 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
+| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）** |
+| `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
+| `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
+
+**處理歷程跟稽核而不是跟執行歷程**（docs/SCALE-FIX-PLAN-2026-08-06.md G4）：
+它記的是「誰在什麼時候把這個問題標成什麼、為什麼」——那是**追責用的證據**，
+不是「這次跑了什麼」的執行紀錄。用 90 天的話，證據會比被追究的事件更早消失。
+
+**已結案的案件依「結案時間」而不是事件日期清理**（同上 S-4）：
+進行中案件**不論多舊都留著**，因為它代表「還沒處理完」。
+一個掛了兩年沒人動的案件正是最該被看見的那種，依事件日期清掉等於幫忙把爛帳藏起來。
+
+**應用層滾動清理**，掛在夜間分析的清理段（`AnalysisOrchestrator`）。
+順序上**處理狀態排在分析紀錄之後**——後者決定哪些日期已過期，
+順序反過來會漏掉剛被判定過期的那幾天，要等下次執行才補上。
+作法一律是**只撈主鍵 → 分批 `ExecuteDelete` → 單次上限 20 萬列、超過留待下次**
+（`BatchedPrune`）：整批載入實體再 `RemoveRange`，在 6000 台環境等於先把數 GB
+讀進記憶體只為了刪掉它們，而且是一筆會鎖住整張表的超長交易。
+**不需要分割表**，可移植性規則不受影響。
+
+容量估算（2000 台；括號內為 6000 台）：
+
+| 資料 | 年增量估算 | 保留期內穩態 |
+|---|---|---|
+| lf_daily_records | 2000 台 × 365 天 ≈ 73 萬列/年 | 120 天約 24 萬列（6000 台：72 萬） |
+| lf_top_issues（大宗） | × 平均 15 簽章 ≈ 1,100 萬列/年 | 120 天約 360 萬列（6000 台：1,080 萬） |
+| lf_issue_handling | 已標記的問題日，推估為 top_issues 的 10~30% | 120 天約 36~110 萬列（6000 台：110~320 萬） |
+| lf_record_handling | 每台每個處理過的日 ≤ 1 列 | 與 lf_daily_records 同量級以下 |
+| lf_issue_cases | 每台每個問題一案、跨日不重複 | 數萬列量級，遠小於上列 |
+| handling_log（保留 730 天） | 每次標記／指派一列，批次標記亦逐筆記錄 | **唯一以稽核年限成長的一張**，6000 台屬千萬列級 |
 | lf_record_categories/alerts | 各數百萬列/年 | 各 <1,000 萬列 |
 | lf_reports.content（文字大宗） | 風險日約 10% × 30KB ≈ 2GB/年 | ~4~5GB |
 

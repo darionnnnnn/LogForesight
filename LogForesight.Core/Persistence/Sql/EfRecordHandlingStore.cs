@@ -180,6 +180,49 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
         return 0;
     }
 
+    // ── 保留天數（docs/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）────────────────────
+    //
+    // **快照與歷程用不同的保留天數，這是刻意的**：
+    //   - 快照（lf_record_handling）是「這台主機那一天現在是什麼狀態」，
+    //     分析紀錄清掉之後就再也讀不到 → 跟著 RetentionDays（預設 120）。
+    //   - 歷程（handling_log）是「誰在什麼時候把它標成什麼、為什麼」，
+    //     那是**追責用的證據**，性質接近稽核而不是執行歷程 → 跟著 AuditRetentionDays
+    //     （預設 730）。用 RunLogRetentionDays（90）會讓證據比被追究的事件更早消失。
+
+    /// <summary>清除超過保留天數的日層級處理狀態快照（S-4，與分析紀錄同一個 RetentionDays）</summary>
+    public int Prune(int retentionDays) => Prune(retentionDays, BatchedPrune.MaxRowsPerRun, BatchedPrune.BatchSize);
+
+    /// <summary>上限與批次可調的多載，供測試以小數字驗證分批與上限行為</summary>
+    internal int Prune(int retentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+
+        return BatchedPrune.Run<long>(_contextFactory,
+            (ctx, take) => ctx.RecordHandlings
+                .Where(h => h.RecordDate < cutoff)
+                .OrderBy(h => h.RecordDate)
+                .Select(h => h.Id)
+                .Take(take)
+                .ToList(),
+            (ctx, ids) => ctx.RecordHandlings.Where(h => ids.Contains(h.Id)).ExecuteDelete(),
+            ctx => ctx.RecordHandlings.Count(h => h.RecordDate < cutoff),
+            "日處理狀態", maxRows, batchSize);
+    }
+
+    /// <summary>
+    /// 清除超過保留天數的處理歷程（G4）。歷程過去**從來不會被清理**——6000 台環境下
+    /// 它是千萬列級且無上限成長，而 <see cref="GetLogs"/> 的 SQL 端窄化效果會隨表成長遞減。
+    ///
+    /// 從最舊的一端刪不影響續號：<see cref="ReadLastLogId"/> 讀的是**最後**幾行。
+    /// </summary>
+    public int PruneLogs(int retentionDays)
+    {
+        lock (_logLock)
+        {
+            return _logStore.Prune(DateTime.Today.AddDays(-retentionDays));
+        }
+    }
+
     private static RecordHandling ToModel(RecordHandlingRow row) => new()
     {
         HostName = row.HostName,
