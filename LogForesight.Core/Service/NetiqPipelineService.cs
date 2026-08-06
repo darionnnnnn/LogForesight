@@ -24,6 +24,18 @@ public class NetiqPipelineService
     /// 但單一 job 逾時/失敗時受影響的主機也越多，50 是安全邊際下的實務選擇。</summary>
     internal const int IpBatchSize = 50;
 
+    /// <summary>
+    /// 本次實際的 Sentinel 平行度（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    ///
+    /// <see cref="NetiqOptions.MaxParallelServers"/> 是管理者可調的設定，但那個設定當初是在
+    /// 「分析獨佔一個批次行程」的前提下訂的。分析搬進站台行程之後（Web 排程化），平行度
+    /// 直接等於「同時有幾條執行緒在跟前景請求搶 thread pool 與連線」，所以設定值仍然有效，
+    /// 只是被夾在 <see cref="AnalysisOrchestrator.MaxParallelServersInWeb"/> 之內。
+    /// 下限 1＝完全依序（docs/archive/FEEDBACK-3-PLAN.md #2 的既有語意，不變）。
+    /// </summary>
+    internal static int ResolveParallelism(int configured) =>
+        Math.Clamp(configured, 1, AnalysisOrchestrator.MaxParallelServersInWeb);
+
     private readonly StorageBackend _backend;
     private readonly NetiqOptions _netiqOptions;
     private readonly ISentinelStore _sentinels;
@@ -88,7 +100,15 @@ public class NetiqPipelineService
             return result;
         }
 
-        var maxParallel = Math.Max(1, _netiqOptions.MaxParallelServers);
+        var configured = _netiqOptions.MaxParallelServers;
+        var maxParallel = ResolveParallelism(configured);
+        if (maxParallel < configured)
+        {
+            // 夾住時要明講：管理者調了 8 卻只跑 3、畫面又不說，會被當成設定沒生效
+            _console.WriteLine($"  ⓘ Sentinel 平行度設定為 {configured}，本次以 {maxParallel} 執行" +
+                              "（分析與網站同行程，平行度設上限以免拖慢前景畫面）");
+        }
+
         _console.WriteLine($"\n══════════ NetIQ 機房分析（{hostList.TotalHosts} 台主機，" +
                           $"{hostList.ByServer.Count} 台 Sentinel，平行度 {maxParallel}）══════════");
 
@@ -279,6 +299,13 @@ public class NetiqPipelineService
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,
                 hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName);
+
+            // 主機之間讓出執行緒（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計模式（AI 未設定）下
+            // AnalyzeDayAsync 幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒
+            // 佔到整批 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
+            // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
+            // 分析時間可以忽略。
+            await Task.Yield();
         }
 
         if (totalSkipped > 0)

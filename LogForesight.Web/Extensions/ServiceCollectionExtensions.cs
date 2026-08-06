@@ -215,6 +215,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddLogForesightServices(this IServiceCollection services)
     {
         services.AddScoped<IAuditService, AuditService>();
+        // 能力解析的單一事實來源（體檢 H1／H3）：登入、使用者詳細頁、指派前檢查共用同一份規則
+        services.AddScoped<UserCapabilityResolver>();
         services.AddScoped<IdentityService>();
         services.AddScoped<IVisibilityService, VisibilityService>();
         services.AddScoped<UserAdminService>();

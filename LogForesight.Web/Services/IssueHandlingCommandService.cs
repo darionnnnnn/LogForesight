@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -26,6 +26,12 @@ public class IssueHandlingCommandService
     private readonly IAuditService _audit;
     private readonly HandlingProgressCalculator _progress;
 
+    /// <summary>
+    /// 能力解析（體檢 H1）：「群組角色聯集 ∪ 負責人隱含 User 角色」（§2b）的單一事實來源。
+    /// 在這裡另寫一份判斷就會變成第三份複本，而 H3 正是這樣壞掉的。
+    /// </summary>
+    private readonly UserCapabilityResolver _capabilities;
+
     public IssueHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -38,8 +44,10 @@ public class IssueHandlingCommandService
         IVisibilityService visibility,
         ICurrentUser currentUser,
         IAuditService audit,
-        HandlingProgressCalculator progress)
+        HandlingProgressCalculator progress,
+        UserCapabilityResolver capabilities)
     {
+        _capabilities = capabilities;
         _store = store;
         _issueStore = issueStore;
         _cases = cases;
@@ -428,6 +436,27 @@ public class IssueHandlingCommandService
             }
         }
 
+        // 被指派者動得了嗎（體檢 H1）：指派前的檢查過去只做了「他看得到這台主機嗎」
+        // （§7 的 assigneeNoAccess），沒做「他動得了嗎」。交辦出去的工作進了對方清單、
+        // 對方按下「回覆處理狀態」必定 403，而指派的人完全不知情。
+        //
+        // **不擋、只提示**：把工作知會給主管是合理用法；問題不在能不能指派，
+        // 而在於指派的人不知道對方動不了。
+        //
+        // 能力解析走 UserCapabilityResolver——那是這條規則（群組角色聯集 ∪
+        // 負責人隱含 User 角色，§2b）的單一事實來源，登入與使用者詳細頁走的也是它。
+        // 在這裡另寫一份判斷，就會變成第三份複本，而 H3 正是這樣壞掉的。
+        var cannotHandle = plan
+            .Select(p => p.Handler)
+            .DistinctBy(h => h.UserId)
+            .Where(h => !_capabilities.Resolve(h).Contains(Capability.Handle))
+            .Select(h => new AssigneeCannotHandleDto
+            {
+                HandlerName = NameFormat.WithAccount(h.DisplayName, h.Account),
+                HostCount = plan.Count(p => p.Handler.UserId == h.UserId)
+            })
+            .ToList();
+
         var handlerNames = plan.Select(p => p.Handler).DistinctBy(h => h.UserId)
             .Select(h => NameFormat.WithAccount(h.DisplayName, h.Account)).ToList();
 
@@ -451,7 +480,8 @@ public class IssueHandlingCommandService
             Created = created,
             Skipped = skipped,
             Reassigned = reassigned,
-            AssigneeNoAccess = noAccess
+            AssigneeNoAccess = noAccess,
+            AssigneeCannotHandle = cannotHandle
         };
     }
 

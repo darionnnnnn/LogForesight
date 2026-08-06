@@ -72,6 +72,7 @@ internal sealed class ScaleServices
 
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,
-            Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress);
+            Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
+            new UserCapabilityResolver(userGroups, Hosts));
     }
 }

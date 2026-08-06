@@ -1,4 +1,4 @@
-using LogForesight.Web.Models;
+﻿using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -32,12 +32,22 @@ public class BulkScaleGateTests : IDisposable
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
 
-        _service = new IssueHandlingCommandService(
+        _service = NewService(new FakeUserGroupStore());
+    }
+
+    /// <summary>groups 影響「被指派者動不動得了」的判定（H1），多數測試給空的即可</summary>
+    private IssueHandlingCommandService NewService(FakeUserGroupStore groups)
+    {
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
+
+        return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
             new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts),
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle),
-            new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore));
+            new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),
+            new LogForesight.Web.Auth.UserCapabilityResolver(groups, _hosts));
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -165,6 +175,66 @@ public class BulkScaleGateTests : IDisposable
         Assert.Equal(10016, result.EventId);
         Assert.Equal(from.ToString("yyyy-MM-dd"), result.From);
         Assert.Equal(to.ToString("yyyy-MM-dd"), result.To);
+    }
+
+    /// <summary>
+    /// 體檢 H1：指派前的檢查過去只做了「他看得到這台主機嗎」，沒做「他動得了嗎」。
+    /// 交辦出去的工作進了對方清單、對方按下「回覆處理狀態」必定 403，而指派的人不知情。
+    /// **不擋、只提示**——把工作知會給主管是合理用法。
+    /// </summary>
+    [Fact]
+    public void 批次指派_對方沒有處理能力時要回報但不擋()
+    {
+        SeedHosts(2, days: 1);
+        // manager 群組只有 ViewAll，沒有 Handle
+        var groups = new FakeUserGroupStore();
+        var managerGroup = groups.Upsert(new UserGroup { GroupName = "manager", Role = UserRole.Manager, Active = true });
+        var manager = _users.Upsert(new WebUser
+        {
+            Account = "DOMAIN\\mgr", DisplayName = "王主管", Active = true,
+            GroupIds = new List<long> { managerGroup.GroupId }
+        });
+
+        var service = NewService(groups);
+        var result = service.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        {
+            Source = "DistributedCOM",
+            EventId = 10016,
+            HandlerId = manager.UserId,
+            HostIds = _hosts.GetAll().Select(h => h.HostId).ToList()
+        });
+
+        // 指派本身仍然成立（不擋）
+        Assert.Equal(2, result.Created);
+        // 但要講：一個處理人只回報一次，帶上影響的主機數
+        var warning = Assert.Single(result.AssigneeCannotHandle);
+        Assert.Contains("王主管", warning.HandlerName);
+        Assert.Equal(2, warning.HostCount);
+    }
+
+    /// <summary>有 Handle 的人不該被誤報——負責人隱含能力（§2b）也算數</summary>
+    [Fact]
+    public void 批次指派_對方有處理能力時不回報()
+    {
+        SeedHosts(1, days: 1);
+        var groups = new FakeUserGroupStore();
+        var userGroup = groups.Upsert(new UserGroup { GroupName = "OO部門", Role = UserRole.User, Active = true });
+        var handler = _users.Upsert(new WebUser
+        {
+            Account = "DOMAIN\\chen", DisplayName = "陳工程師", Active = true,
+            GroupIds = new List<long> { userGroup.GroupId }
+        });
+
+        var result = NewService(groups).BulkAssignIssueCase(new BulkAssignIssueCaseRequest
+        {
+            Source = "DistributedCOM",
+            EventId = 10016,
+            HandlerId = handler.UserId,
+            HostIds = _hosts.GetAll().Select(h => h.HostId).ToList()
+        });
+
+        Assert.Equal(1, result.Created);
+        Assert.Empty(result.AssigneeCannotHandle);
     }
 
     [Fact]

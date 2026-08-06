@@ -46,6 +46,65 @@ async function load() {
     renderGroupRisk(data);
 
     loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
+    startRunActivityWatch();  // 執行中告示（S-3）：同上，失敗靜默
+}
+
+/**
+ * 執行中告示（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+ *
+ * 分析與網站跑在同一個行程（本輪定案不拆獨立 worker），6000 台環境下一跑就是數小時，
+ * 期間整站回應變慢是**設計上接受的代價**。代價本身沒問題，「使用者不知道為什麼」才有問題——
+ * 沒有這行告示，慢就等於故障，變成客服電話。
+ *
+ * 只在真的有在跑時才顯示；跑完自動消失並停止輪詢，不留殘影也不長期打 API。
+ */
+let runActivityTimer = null;
+
+function startRunActivityWatch() {
+    if (runActivityTimer) return;   // 切換期間會重新 load()，不要疊出第二個計時器
+    refreshRunActivity();
+    // 30 秒：這行字只需要「大致上是對的」，分析動輒數小時，更密集只是白發請求
+    runActivityTimer = setInterval(refreshRunActivity, 30000);
+}
+
+async function refreshRunActivity() {
+    const container = document.getElementById('dashboard-run-activity');
+    if (!container) return;
+
+    let activity;
+    try {
+        activity = await api.get('/api/run-activity', { silent: true });
+    } catch {
+        // 純加值資訊，失敗就當作沒在跑——不要為了一行告示在畫面上留錯誤訊息
+        container.replaceChildren();
+        return;
+    }
+
+    if (!activity?.isRunning) {
+        container.replaceChildren();
+        return;
+    }
+
+    const bar = document.createElement('div');
+    bar.className = 'alert alert-info d-flex align-items-center gap-2 py-2 mb-3';
+    bar.setAttribute('role', 'status');       // 進行中狀態用 status（polite），不是 alert——
+    bar.setAttribute('aria-live', 'polite');  // 這不是需要打斷讀屏的緊急訊息
+
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner-border spinner-border-sm flex-shrink-0';
+    spinner.setAttribute('aria-hidden', 'true');
+    bar.appendChild(spinner);
+
+    // 有分母才講「第 N/M」——Total=0 代表還在掃描/清理階段，這時報進度是假的
+    const progressText = activity.total > 0
+        ? `分析進行中（第 ${formatNumber(activity.done)}／${formatNumber(activity.total)} ${activity.unitText || ''}）`
+        : '分析進行中';
+
+    const text = document.createElement('span');
+    text.textContent = `${progressText}，畫面回應可能較慢。資料仍是完整的，分析完成後會自動恢復。`;
+    bar.appendChild(text);
+
+    container.replaceChildren(bar);
 }
 
 /**

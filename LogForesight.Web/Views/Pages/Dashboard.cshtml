@@ -16,6 +16,10 @@
     <span class="text-muted small" id="dashboard-range"></span>
 </div>
 
+@* S-3：分析與網站跑在同一個行程，執行期間畫面會變慢——把原因講出來，
+   不然使用者會當成故障。刻意獨立於 dashboard-banner（那個會被 replaceChildren 清空）。 *@
+<div id="dashboard-run-activity"></div>
+
 <div id="dashboard-banner"></div>
 
 <div id="dashboard-ai-focus"></div>

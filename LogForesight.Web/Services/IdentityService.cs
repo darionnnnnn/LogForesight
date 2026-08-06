@@ -37,14 +37,19 @@ public class IdentityService
         ("dev", UserRole.Dev)
     };
 
+    /// <summary>能力解析的單一事實來源（見 <see cref="ResolveCapabilities"/>）</summary>
+    private readonly UserCapabilityResolver _capabilities;
+
     public IdentityService(
         IUserStore users,
         IUserGroupStore groups,
         IHostStore hosts,
         IAuthenticationProvider provider,
         ServerAdminAuthenticator serverAdmin,
-        IAuditService audit)
+        IAuditService audit,
+        UserCapabilityResolver capabilities)
     {
+        _capabilities = capabilities;
         _users = users;
         _groups = groups;
         _hosts = hosts;
@@ -173,33 +178,14 @@ public class IdentityService
         return saved;
     }
 
-    public IReadOnlySet<Capability> ResolveCapabilities(WebUser user)
-    {
-        var allGroups = _groups.GetAll();
-
-        // 停用的群組不給能力：停用群組是「暫時收回這批人的權限」的手段，
-        // 如果成員資格還在就照給，那個手段等於沒用。
-        var roles = allGroups
-            .Where(g => g.Active && user.GroupIds.Contains(g.GroupId))
-            .Select(g => g.Role)
-            .ToList();
-
-        // 負責人隱含 User 角色能力（docs/archive/FEEDBACK-11-PLAN.md §2b）：負責人匯入會自動建立
-        // 沒有群組的帳號，沒有這一段的話對方登入後看得到自己負責的主機、卻連處理狀態都標不了
-        // （Handle 來自群組角色），被交辦也回覆不了——「有可見範圍無處置能力」是半套。
-        // 刻意只補 User 角色（Handle＋ConfirmPermission），**不含 ViewAll**：
-        // 負責人看得到的是自己那幾台，不是全站。
-        if (IsHostOwner(user.UserId)) roles.Add(UserRole.User);
-
-        return RoleCapabilityMap.For(roles);
-    }
-
     /// <summary>
-    /// 是不是任一**啟用中**主機的負責人。停用主機不算——停用主機的資料已整批退出可見範圍
-    /// （§7.1），拿它當能力來源會出現「看不到任何東西卻有 Handle」的空殼權限。
+    /// 使用者的能力集合（登入時算進 cap claim）。
+    ///
+    /// 規則本身住在 <see cref="UserCapabilityResolver"/>——那是「這個人能做什麼」的
+    /// 單一事實來源，因為同一條規則另有兩個呼叫點（使用者詳細頁的能力顯示、
+    /// 指派前的「對方動得了嗎」檢查，體檢 H1）。這裡保留同名方法只為不動既有呼叫端。
     /// </summary>
-    private bool IsHostOwner(long userId) =>
-        userId > 0 && _hosts.GetAll().Any(h => h.Active && h.OwnerUserIds.Contains(userId));
+    public IReadOnlySet<Capability> ResolveCapabilities(WebUser user) => _capabilities.Resolve(user);
 
     public void EnsureSeedGroups()
     {

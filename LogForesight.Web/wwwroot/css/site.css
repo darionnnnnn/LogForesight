@@ -1540,10 +1540,57 @@ a.lf-stat:hover .lf-card,
 .lf-table-wrap {
     overflow-x: auto;
     scrollbar-width: thin;
+    position: relative;
 }
 
 .lf-table-wrap > table {
     margin-bottom: 0;
+}
+
+/* 還有內容在右邊看不到時的提示（體檢 M2／W1）：漸層陰影＋一行文字，捲到底自動消失。
+   1024×768 下依問題視角的內容寬 1512px、可視寬僅 709px，右側的動作欄整段在畫面外——
+   沒有提示的話，第一次使用的人會認定「這個視角沒有指派功能」。
+   陰影用 sticky 而不是 fixed/absolute：它要跟著捲動容器的右緣，不是頁面的。 */
+.lf-table-wrap--scrollable::after {
+    content: '← 可左右捲動';
+    position: sticky;
+    right: 0;
+    bottom: 0;
+    float: right;
+    z-index: 2;
+    padding: .15rem .5rem;
+    border-radius: var(--lf-radius-sm) 0 0 0;
+    background: var(--lf-card-bg);
+    border-top: 1px solid var(--lf-border);
+    border-left: 1px solid var(--lf-border);
+    color: var(--lf-text-muted);
+    font-size: var(--lf-font-size-xs);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/* 動作欄固定在列末（W1）：動作是「看到問題 → 做點什麼」的終點，
+   它不該是最容易被捲掉的那一欄。只對明確標記的表格生效，不影響其他表格的版面。 */
+.lf-table-wrap--sticky-action th:last-child,
+.lf-table-wrap--sticky-action td:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--lf-card-bg);
+    /* 與左側內容的分界：捲動時才看得出這一欄是浮在上面的 */
+    box-shadow: -6px 0 6px -6px rgba(15, 23, 42, .18);
+}
+
+/* hover 時列底色會蓋掉 sticky 欄的白底，補回去才不會出現一格「沒跟著變色」的破綻 */
+.lf-table-wrap--sticky-action tbody tr:hover td:last-child {
+    background: var(--bs-table-hover-bg, var(--lf-gray-50));
+}
+
+/* 列印是分頁的紙張，sticky 與捲動提示都沒有意義 */
+@media print {
+    .lf-table-wrap--scrollable::after { display: none; }
+    .lf-table-wrap--sticky-action th:last-child,
+    .lf-table-wrap--sticky-action td:last-child { position: static; box-shadow: none; }
 }
 
 /* ── 狀態呈現：空狀態要有指引、載入中要有回饋（§8.6-5、§8.6-6）───────────

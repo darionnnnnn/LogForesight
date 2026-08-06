@@ -472,6 +472,12 @@ public class BulkAssignIssueCaseResultDto
     /// 對方不是這台主機的一般授權對象，看到的只有被指派的那個問題。
     /// </summary>
     public List<AssigneeNoAccessDto> AssigneeNoAccess { get; set; } = new();
+
+    /// <summary>
+    /// 被指派者**沒有處理能力**（體檢 H1）：指派前的檢查過去只做了「他看得到這台主機嗎」，
+    /// 沒做「他動得了嗎」。交辦出去的工作進了對方清單、對方做不了任何事，指派的人也不知情。
+    /// </summary>
+    public List<AssigneeCannotHandleDto> AssigneeCannotHandle { get; set; } = new();
 }
 
 /// <summary>「這位處理人看不到這台主機」的提示素材（§7）</summary>
@@ -479,6 +485,26 @@ public class AssigneeNoAccessDto
 {
     public string HostName { get; set; } = string.Empty;
     public string HandlerName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 被指派者**沒有處理能力**（體檢 H1）。
+///
+/// 與 <see cref="AssigneeNoAccessDto"/> 是兩件不同的事，刻意分開回報：
+///   - NoAccess＝「他看不到這台主機」——指派仍成立，他會取得案件範圍的檢視權；
+///   - CannotHandle＝「他動不了」——工作進了對方清單、對方**做不了任何事**，
+///     而指派的人完全不知情。
+///
+/// **不擋**：把工作知會給主管是合理用法。問題不在能不能指派，
+/// 而在於指派的人不知道對方動不了——所以要講。
+/// 一個處理人只回報一次（不逐台重複），清單會很長時對決策沒有幫助。
+/// </summary>
+public class AssigneeCannotHandleDto
+{
+    public string HandlerName { get; set; } = string.Empty;
+
+    /// <summary>指派給他的主機數（讓操作者判斷影響多大）</summary>
+    public int HostCount { get; set; }
 }
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────

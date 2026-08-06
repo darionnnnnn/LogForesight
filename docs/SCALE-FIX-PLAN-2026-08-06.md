@@ -364,6 +364,27 @@ S-1 與 S-2 都由這一項解決：續跑看得懂進度，blob 也有了失效
 而 admin 在依問題視角上做的正是批次操作——把最常用的動作藏起來是反效果。
 sticky 欄位保住了可見性又不增加點擊。
 
+#### 實作結果（C 批）
+
+兩層都做了。1024×768 實測：內容寬 1536px／可視 709px，
+`documentElement.scrollWidth` 未超過視窗（**頁面本身不橫捲**，只有表格容器內捲），
+動作欄 `position: sticky; right: 0` 生效，`← 可左右捲動`
+在初次渲染即出現、捲到右底自動消失、捲回再出現。
+
+**過程中揪出一個原設計的缺陷**：`bindScrollAffordance` 原本靠
+`requestAnimationFrame` 做首次量測、並且只 `ResizeObserver.observe(wrap)`。
+兩者都不可靠——
+
+* `wrap` 的寬度由版面決定，**內容再寬它都不會變**，
+  所以「內容變寬」這個真正的觸發條件永遠偵測不到；
+* `requestAnimationFrame` 在**非前景分頁**會延後到分頁可見為止，
+  而那時 `wrap` 尺寸沒變、`ResizeObserver` 不會補一次 → 提示**永久缺席**。
+
+實際在瀏覽器量到的症狀就是這個：class 只有在使用者**已經捲過一次**之後才出現，
+也就是提示只在「已經發現可以捲」之後才願意告訴你可以捲。
+改為掛進 DOM 後**同步量一次**（讀 `scrollWidth` 本來就會強制重排），
+並額外 `observe(table)`。
+
 ### D7＋H1 指派給沒有處理能力的人
 
 **現況**：`mgr-wang`（只有 `ViewAll`）側欄顯示徽章「1」，點進去看得到案件、
@@ -382,6 +403,21 @@ sticky 欄位保住了可見性又不增加點擊。
 但至少指派當下有人被告知了。若實測後仍覺得困擾，再考慮「無 Handle 者的徽章改為
 灰色＋tooltip 說明」，但那是後話。
 
+#### 實作結果（C 批）
+
+`BulkAssignIssueCaseResultDto.AssigneeCannotHandle`（每位處理人一筆，
+帶 `HandlerName` 與受影響的 `HostCount`），前端在指派成功的 toast 之後
+另發一則 warning，與既有的 `assigneeNoAccess` **分開講**——
+「看不到」還能靠授與範圍補救，「動不了」則是工作進了對方清單卻做不了任何事，
+兩者的後續處置不同，合併成一句話會讓人不知道該去改哪裡。
+
+**能力判定抽成 `LogForesight.Web/Auth/UserCapabilityResolver`**：
+「群組角色聯集 ∪ 負責人隱含 User 角色」這條規則原本在
+`IdentityService.ResolveCapabilities` 與 `UserAdminService.GetUserDetail`
+各有一份，這次要用時本來會出現第三份——**H3 就是這樣壞的**。
+改為單一來源，`IdentityService` 轉為委派。
+這也避免了把登入相關依賴拖進處理服務（原本打算直接注入 `IdentityService`）。
+
 ### S-3 排程留在 Web 行程內的隔離措施（本輪決策的配套）
 
 決策已定：**不拆 worker**。規劃 §8.4 甲案的三項配套目前一項都沒做：
@@ -394,6 +430,28 @@ sticky 欄位保住了可見性又不增加點擊。
 
 **驗收**：6000 台資料集下觸發一次完整分析，同時以另一個瀏覽器操作——
 儀表板與問題查詢的回應時間不應超過 P0 基準的兩倍。
+
+#### 實作結果（C 批）
+
+| 項目 | 落地方式 |
+|---|---|
+| 連線池隔離 | `StorageBackend` 建構式新增 `maxPoolSize`（`ApplyMaxPoolSizeIfUnset`），`AnalysisOrchestrator` 以 `AnalysisMaxPoolSize = 4` 建立自己的 backend |
+| NetIQ 平行度上限 | `NetiqPipelineService.ResolveParallelism`＝`Clamp(設定值, 1, AnalysisOrchestrator.MaxParallelServersInWeb = 3)`，被夾住時 console 明講 |
+| 主機間讓出 | NetIQ 逐台（`RunBatchDayAsync` 內）與本機逐日（`AnalysisOrchestrator`）各加一次 `await Task.Yield()` |
+| 執行中的畫面標示 | 新端點 `GET /api/run-activity`（**任何登入者**皆可讀，不掛 `[Permission]`）＋儀表板 `#dashboard-run-activity` 一行告示，30 秒輪詢、跑完自動消失 |
+
+**連線池隔離的重點不是「限制 4 條」**：SqlServer 的連線池**以連線字串為鍵**，
+加上 `Max Pool Size` 之後分析才真正擁有**自己的池**，兩件事是同時發生的。
+使用者已自行指定 `Max Pool Size` 時尊重設定不覆寫，但那也代表兩邊共用同一個池，
+因此該情況會寫一筆 log 讓事後查得到。
+
+`/api/run-activity` 刻意與 `/api/admin/schedule/status` 分開：後者是維運視角
+（觸發來源、下次觸發、上次成敗、可否停止），需要 DevMonitor／Maintain；
+前者只回答「現在慢是不是因為在跑分析、跑到哪了」。變慢的是**所有人**的畫面，
+只讓維運看得到原因等於沒有配套。
+
+**尚未執行**：6000 台實機併發量測（需要壓測資料集與第二個瀏覽器工作階段，
+屬於實測階段）。已完成的是機制本身與其單元驗證。
 
 ---
 

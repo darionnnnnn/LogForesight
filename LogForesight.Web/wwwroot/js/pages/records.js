@@ -671,6 +671,9 @@ function renderIssueView() {
         rows: lastResult.items,
         sort,
         onSort: applySort,
+        // 動作欄固定在列末（體檢 W1）：1024px 下這一欄整段在畫面外，
+        // 而它正是 admin 在這個視角要用的東西（指派／統一標記／回覆狀態）
+        stickyLastColumn: true,
         // §10：點列就地展開該問題的受影響主機×日期，每列直連風險日詳情去處理——
         // 把「看到問題→去處理」從「下鑽明細→點日期→找問題」縮短（取代原本整列導向明細視角）
         onRowExpand: (group, cell) => renderIssueOccurrences(cell, group),
@@ -1544,6 +1547,18 @@ function renderBulkAssignForm(body, group, preview, users, groups) {
                 const names = [...new Set(result.assigneeNoAccess.map(a => a.handlerName))];
                 toast(`${names.join('、')} 沒有部分主機的檢視權限（${result.assigneeNoAccess.length} 台），` +
                     '只看得到被指派的這個問題。若需要完整權限，請至「群組與授權」調整。', 'warning', 10000);
+            }
+
+            // 被指派者**動不了**（體檢 H1）：與「看不到」是兩件事，分開講。
+            // 看不到還能被授與範圍；動不了則是工作進了對方清單、對方做不了任何事，
+            // 而指派的人過去完全不知情
+            if (result.assigneeCannotHandle?.length) {
+                const detail = result.assigneeCannotHandle
+                    .map(a => `${a.handlerName}（${a.hostCount} 台）`)
+                    .join('、');
+                toast(`${detail} 沒有「處理」能力，收到交辦後無法回覆處理狀態。` +
+                    '指派已完成；若要讓對方能處理，請至「群組與授權」把他加入具處理能力的群組，' +
+                    '或在主機頁指定為負責人。', 'warning', 12000);
             }
 
             body.closest('.modal')?.querySelector('[data-bs-dismiss="modal"]')?.click();

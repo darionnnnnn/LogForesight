@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using LogForesight.Core.Persistence.Sql;
@@ -26,7 +27,15 @@ public class StorageBackend
 
     /// <param name="settings">儲存後端設定（Type／ConnectionString）</param>
     /// <param name="fallbackDir">Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）</param>
-    public StorageBackend(StorageSettings settings, string fallbackDir)
+    /// <param name="maxPoolSize">連線池上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    /// null＝不干預（前景站台用）。夜間分析與站台跑在**同一個行程**（本輪已定案不拆 worker），
+    /// 兩者共用同一個連線池；分析在 6000 台環境下會連續數小時持續佔用連線，
+    /// 前景請求就得排隊等連線——症狀是「整站變慢」而不是「分析變慢」，
+    /// 而且從站台這一端完全看不出原因。給分析一個**獨立且較小**的池，
+    /// 讓它就算全開也吃不完 SQL Server 端的連線。
+    /// 僅對 SqlServer 生效：Sqlite 走本機檔案且本類別一律關掉 pooling（見
+    /// <see cref="DisableSqlitePoolingIfUnset"/>），沒有池可限。</param>
+    public StorageBackend(StorageSettings settings, string fallbackDir, int? maxPoolSize = null)
     {
         DbContextOptions<LfDbContext> options;
         if (settings.Type == "Sqlite")
@@ -40,12 +49,13 @@ public class StorageBackend
         }
         else
         {
+            var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
             // 暫時性錯誤（failover／節流等）自動重試；Sqlite 是本機檔案，沒有這類網路層
             // 暫時性錯誤，不需要
             options = new DbContextOptionsBuilder<LfDbContext>()
-                .UseSqlServer(settings.ConnectionString, o => o.EnableRetryOnFailure(maxRetryCount: 5))
+                .UseSqlServer(cs, o => o.EnableRetryOnFailure(maxRetryCount: 5))
                 .Options;
-            _dbDesc = $"SqlServer（{MaskConnectionString(settings.ConnectionString)}）";
+            _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
         }
 
         _dbFactory = () => new LfDbContext(options);
@@ -166,6 +176,33 @@ public class StorageBackend
 
         var builder = new SqliteConnectionStringBuilder(connectionString) { Pooling = false };
         return builder.ConnectionString;
+    }
+
+    /// <summary>
+    /// 為背景工作（夜間分析）的連線字串套上連線池上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    ///
+    /// 這是「同一行程內前景與背景共用資料庫」的必要隔離：SqlServer 的連線池預設 Max Pool Size=100
+    /// 且**以連線字串為鍵**——連線字串一模一樣的兩個 DbContext 工廠會共用同一個池，
+    /// 加上這個參數之後才是兩個獨立的池。因此這裡不是「限制分析用幾條」而已，
+    /// 而是「把分析從前景那個池裡分出去」，兩件事一起發生。
+    ///
+    /// 使用者若已在 ConnectionString 明寫 Max Pool Size，尊重其設定不覆寫——但那也意味著
+    /// 兩邊連線字串相同、池子不會分開，這是使用者自己的選擇（此時記 log 讓事後查得到）。
+    /// </summary>
+    internal static string ApplyMaxPoolSizeIfUnset(string connectionString, int? maxPoolSize)
+    {
+        if (maxPoolSize is not > 0) return connectionString;
+
+        var alreadySet = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .Any(p => p.TrimStart().Replace(" ", "").StartsWith("MaxPoolSize", StringComparison.OrdinalIgnoreCase));
+        if (alreadySet)
+        {
+            Log.Info("[SQL] 連線字串已自行指定 Max Pool Size，不套用背景工作的池上限 {N}——" +
+                     "背景分析與前景站台將共用同一個連線池", maxPoolSize);
+            return connectionString;
+        }
+
+        return new SqlConnectionStringBuilder(connectionString) { MaxPoolSize = maxPoolSize.Value }.ConnectionString;
     }
 
     /// <summary>連線字串遮罩：log 與 Location 顯示用，不外流密碼</summary>

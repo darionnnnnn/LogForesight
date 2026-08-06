@@ -34,3 +34,35 @@ public class NetiqPipelineServiceLookbackTests
         Assert.Equal(14, NetiqPipelineService.ResolveLookbackDays(backfillDays: 14, trendWindowDays: 14));
     }
 }
+
+/// <summary>
+/// Sentinel 平行度的行程內上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+///
+/// 分析已搬進網站行程執行（本輪定案不拆獨立 worker），平行度不再只是「分析跑多快」，
+/// 而是「同時有幾條執行緒在跟使用者的請求搶 thread pool 與連線」。管理者的設定仍然有效，
+/// 但被夾在一個安全上限內——真的需要更快，該做的是拆 worker，不是把這個數字調大。
+/// </summary>
+public class NetiqPipelineParallelismTests
+{
+    [Fact]
+    public void 設定值在上限內時照設定執行()
+    {
+        Assert.Equal(2, NetiqPipelineService.ResolveParallelism(2));
+    }
+
+    [Fact]
+    public void 設定值超過行程內上限時夾住()
+    {
+        Assert.Equal(AnalysisOrchestrator.MaxParallelServersInWeb, NetiqPipelineService.ResolveParallelism(8));
+    }
+
+    /// <summary>設 1＝完全依序，是既有語意（docs/archive/FEEDBACK-3-PLAN.md #2），不該被上限邏輯改掉</summary>
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(0, 1)]
+    [InlineData(-3, 1)]
+    public void 設定值小於一時一律視為依序(int configured, int expected)
+    {
+        Assert.Equal(expected, NetiqPipelineService.ResolveParallelism(configured));
+    }
+}

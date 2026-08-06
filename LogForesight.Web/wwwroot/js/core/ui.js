@@ -390,14 +390,16 @@ export function trackUnsaved(form, { excludeSelector } = {}) {
  * ／預設 asc）並呼叫 onSort(key, dir)——切換邏輯集中在這裡，呼叫端只需套用收到的狀態，
  * 不論是重打 API（伺服器分頁頁）還是本地重排（見 sortRows）。
  */
-export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort }) {
+export function renderTable(container, { columns, rows, empty, rowHref, rowDetail, onRowExpand, sort, onSort, stickyLastColumn }) {
     if (!rows || rows.length === 0) {
         renderEmpty(container, empty);
         return;
     }
 
     const wrap = document.createElement('div');
-    wrap.className = 'lf-table-wrap';
+    // stickyLastColumn：末欄（動作欄）在橫向捲動時固定在右緣（體檢 W1）。
+    // 只有真的有動作欄的表格才開——對一般表格套用會讓最後一欄無謂地浮起來
+    wrap.className = 'lf-table-wrap' + (stickyLastColumn ? ' lf-table-wrap--sticky-action' : '');
 
     const table = document.createElement('table');
     table.className = 'table table-hover align-middle mb-0';
@@ -496,6 +498,48 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     wrap.appendChild(table);
 
     container.replaceChildren(wrap);
+    bindScrollAffordance(wrap);
+}
+
+/**
+ * 橫向捲動的可見提示（體檢 M2／W1）。
+ *
+ * `.lf-table-wrap` 早就有 `overflow-x: auto`（頁面本身不溢出 ✅），但**沒有任何視覺提示**——
+ * 1024×768（遠端桌面、投影、舊筆電的常見解析度）下依問題視角的內容寬 1512px、
+ * 可視寬僅 709px，右側的「處理概況／處理人／動作」整段在畫面外，
+ * 第一次使用的人會直接認定「這個視角沒有指派功能」。
+ *
+ * 作法是右緣漸層陰影＋一行文字提示，捲到底自動消失。**一處改、全站表格受惠**。
+ * 用 class 切換而不是直接改 style：視覺細節留在 CSS，這裡只負責狀態。
+ */
+function bindScrollAffordance(wrap) {
+    const update = () => {
+        // 1px 容差：捲到底時 scrollLeft 可能因為小數寬度差一點點
+        const more = wrap.scrollWidth - wrap.clientWidth - wrap.scrollLeft > 1;
+        wrap.classList.toggle('lf-table-wrap--scrollable', more);
+    };
+
+    wrap.addEventListener('scroll', update, { passive: true });
+
+    // 容器寬度會隨側欄收合、字級切換、視窗縮放改變——只綁 window resize 抓不到前兩者
+    if (window.ResizeObserver) {
+        const observer = new ResizeObserver(update);
+        observer.observe(wrap);
+        // **表格本身也要觀察**：wrap 的寬度由版面決定，內容再寬它都不會變，
+        // 只觀察 wrap 的話「內容變寬」這個真正的觸發條件永遠偵測不到
+        // （欄位展開、字級切換、延遲載入的內容都屬於這一類）。
+        const table = wrap.querySelector('table');
+        if (table) observer.observe(table);
+    } else {
+        window.addEventListener('resize', update);
+    }
+
+    // 立即量一次，不等 requestAnimationFrame：呼叫端已經把 wrap 掛進 DOM，
+    // 讀 scrollWidth 會強制重排，量到的就是最終值。
+    // 原本用 rAF 是想「等佈局穩定」，但 rAF 在**非前景分頁**會被延後到分頁可見為止——
+    // 使用者在背景分頁開啟頁面、切回來時提示不會出現（wrap 寬度沒變，
+    // ResizeObserver 也不會再補一次），提示就這樣永久缺席。
+    update();
 }
 
 /**

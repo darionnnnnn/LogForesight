@@ -97,6 +97,27 @@ public class AnalysisOrchestrator
     // 趨勢比對窗口天數（涵蓋兩個完整週期，能分辨每週固定雜訊與異常趨勢）——分析語意常數，不開放設定
     private const int TrendWindowDays = 14;
 
+    /// <summary>
+    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    ///
+    /// 4 的來由：分析主線是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），
+    /// 真正的併發來源只有 NetIQ 的多 Sentinel 平行（<see cref="NetiqOptions.MaxParallelServers"/>
+    /// 預設 2，見 <see cref="MaxParallelServersInWeb"/> 的上限）加上各自的寫入，
+    /// 4 條連線已經餵得飽；再多也只是從前景那邊多搶而已。
+    /// 不開放設定：這是「不要拖垮站台」的安全上限，不是效能旋鈕——真的需要更快，
+    /// 該做的是拆獨立 worker（本輪已評估後決定不拆，見規劃 §8.4）。
+    /// </summary>
+    private const int AnalysisMaxPoolSize = 4;
+
+    /// <summary>
+    /// 分析與站台同行程時，NetIQ 多 Sentinel 平行度的硬上限（S-3）。
+    /// <see cref="NetiqOptions.MaxParallelServers"/> 是管理者可調的設定，但那個設定原本是在
+    /// 「分析獨佔一個批次行程」的前提下訂的；現在分析跑在站台裡，平行度直接等於
+    /// 「同時有幾條執行緒在搶 thread pool 與連線池」。設定值仍然有效，只是被夾在這個上限內，
+    /// 而且夾住時會明講——不然管理者調了 8 卻只跑 3，會以為設定壞了。
+    /// </summary>
+    internal const int MaxParallelServersInWeb = 3;
+
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
         RetentionOptions retention, IRunConsole console, CancellationToken ct, IRunProgress? progress = null)
@@ -106,8 +127,11 @@ public class AnalysisOrchestrator
 
         try
         {
-            // 本次執行共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）
-            var backend = new StorageBackend(settings.Storage, dataRoot);
+            // 本次執行共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）。
+            // 連線池刻意與站台分開（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：分析與站台跑在
+            // 同一個行程，分析一跑就是數小時，共用池的話前景請求會排隊等連線——
+            // 使用者看到的是「整站變慢」，而不是「分析變慢」。
+            var backend = new StorageBackend(settings.Storage, dataRoot, AnalysisMaxPoolSize);
 
             var ruleStore = new KnownIssueRuleStore(backend.Blob("rules"));
             RuleBootstrapper.Run(ruleStore);
@@ -576,6 +600,10 @@ public class AnalysisOrchestrator
             PrintResult(console, record, verbose: date == yesterday);
             console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
             progress?.Report("local", ++localDone, missingDates.Count);
+
+            // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
+            // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
+            await Task.Yield();
         }
 
         runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
