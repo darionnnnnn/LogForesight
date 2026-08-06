@@ -397,6 +397,10 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
+  **樂觀鎖衝突另有一支**（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md D3）：處理狀態三表以
+  `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
+  `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
+  多人同時操作是正常情境不是故障；風險日詳情的處理面板收到 409 後自動重載當日資料。
 - 分頁：請求 `page`（1 起）、`pageSize`（上限 200）；回應 `data: { items, page, pageSize, total }`。
 - 日期格式：`yyyy-MM-dd`（date）／ISO 8601（timestamp），前後端一致，不做隱式時區轉換。
 
@@ -739,8 +743,16 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **serverAdmin 引導卡（§1，回饋第九輪）**：serverAdmin 登入時本頁不打 summary API，改顯示
   引導卡（說明救援帳號用途、測試模式可用 demo-admin 測全站、正式建帳號步驟），其餘區塊
   連同靜態卡片標題一併隱藏——業務資料對它本來就是空的（§6.2 最小授權），空白畫面會被誤讀成壞掉。
+- **分析執行中告示（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md S-3）**：夜間分析與站台跑在
+  同一個行程（本輪定案不拆 worker），分析期間整站回應變慢是設計上接受的代價——這行告示是
+  代價的配套：頂部一行「分析進行中（第 N／M 台），畫面回應可能較慢」，30 秒輪詢
+  `GET api/run-activity`，沒在跑就整行不出現。該端點**任何登入者可讀**（刻意不掛
+  `[Permission]`、也刻意不放 `api/admin/` 前綴）：變慢的是所有人的畫面，只讓維運看得到原因
+  等於沒有配套；內容只有「在不在跑、跑到哪」，排程設定與上次成敗仍在
+  `GET api/admin/schedule/status`（維運視角，DevMonitor/Maintain）。
 - API：`GET api/dashboard/summary?days=`（一次回傳全部區塊資料，避免首頁多個請求；`DashboardService`
-  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）。
+  注入 `IHostGroupStore` 算群組風險，未處理數沿用 `HandlingHistoryQueryService.GetTodo` 同一套推導規則）、
+  `GET api/run-activity`（執行中告示，見上）。
 
 ### 9.2 `/records` 問題查詢（全角色）
 - 主篩選列：主機（**搜尋式 autocomplete**，授權範圍）／**主機群組 chip**／日期區間／風險層級／

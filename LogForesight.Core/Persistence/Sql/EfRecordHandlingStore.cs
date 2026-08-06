@@ -110,7 +110,15 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
         row.Note = handling.Note;
         row.UpdatedAt = handling.UpdatedAt;
 
-        ctx.SaveChanges();
+        try
+        {
+            ctx.SaveChanges();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // 樂觀鎖衝突（D3）：同一個風險日兩個人同時改處理狀態，後寫的要看到 409 不是 500
+            throw new ConcurrentUpdateException($"{handling.HostName} {day:yyyy-MM-dd} 的處理狀態", ex);
+        }
     }
 
     // ── 歷程（append-only，仍走 lf_log_lines）────────────────────────────────

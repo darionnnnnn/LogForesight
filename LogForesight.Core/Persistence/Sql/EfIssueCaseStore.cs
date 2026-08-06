@@ -118,7 +118,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
         row.ClosedAt = issueCase.ClosedAt;
         row.UpdatedAt = issueCase.UpdatedAt;
 
-        ctx.SaveChanges();
+        SaveWithConflictTranslation(ctx);
     }
 
     /// <summary>
@@ -163,7 +163,23 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
             row.UpdatedAt = issueCase.UpdatedAt;
         }
 
-        ctx.SaveChanges();
+        SaveWithConflictTranslation(ctx);
+    }
+
+    /// <summary>樂觀鎖衝突轉語意例外（D3）：訊息帶「哪一件案件」，讓 Web 層對應成 409</summary>
+    private static void SaveWithConflictTranslation(LfDbContext ctx)
+    {
+        try
+        {
+            ctx.SaveChanges();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            var what = ex.Entries.FirstOrDefault()?.Entity is IssueCaseRow row
+                ? $"「{row.IssueLabel}」（{row.HostName}）的案件"
+                : "這件案件";
+            throw new ConcurrentUpdateException(what, ex);
+        }
     }
 
     /// <summary>

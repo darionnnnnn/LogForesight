@@ -131,9 +131,24 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
             Apply(row, handling);
         }
 
-        ctx.SaveChanges();
+        try
+        {
+            ctx.SaveChanges();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            // 樂觀鎖衝突（D3）：訊息要講出「哪一筆」——批次寫入時逐筆列出沒有意義，
+            // 取第一筆衝突的列讓使用者知道從哪裡看起
+            throw new ConcurrentUpdateException(DescribeConflict(ex), ex);
+        }
         _performance?.Record($"issue_handling:SaveMany({list.Count})", sw.ElapsedMilliseconds);
     }
+
+    /// <summary>衝突訊息的「哪一筆」：主機＋日期。拿不到（理論上不會）就退回泛稱。</summary>
+    private static string DescribeConflict(DbUpdateConcurrencyException ex) =>
+        ex.Entries.FirstOrDefault()?.Entity is IssueHandlingRow row
+            ? $"{row.HostName} {row.RecordDate:yyyy-MM-dd} 的問題處理狀態"
+            : "這筆問題處理狀態";
 
     public void Clear(string hostName, DateTime date, string issueKey)
     {

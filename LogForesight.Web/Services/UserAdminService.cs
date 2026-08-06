@@ -19,6 +19,7 @@ public class UserAdminService
     private readonly IIssueCaseStore _cases;
     private readonly IVisibilityService _visibility;
     private readonly IAuditService _audit;
+    private readonly UserCapabilityResolver _capabilities;
 
     public UserAdminService(
         IUserStore users,
@@ -27,7 +28,8 @@ public class UserAdminService
         IHostGroupStore hostGroups,
         IIssueCaseStore cases,
         IVisibilityService visibility,
-        IAuditService audit)
+        IAuditService audit,
+        UserCapabilityResolver capabilities)
     {
         _users = users;
         _groups = groups;
@@ -36,6 +38,7 @@ public class UserAdminService
         _cases = cases;
         _visibility = visibility;
         _audit = audit;
+        _capabilities = capabilities;
     }
 
     public List<UserDto> GetUsers()
@@ -74,18 +77,16 @@ public class UserAdminService
         var groupsById = allGroups.ToDictionary(g => g.GroupId);
         var memberGroups = allGroups.Where(g => user.GroupIds.Contains(g.GroupId)).ToList();
 
-        // 能力＝啟用中群組的角色聯集（停用群組不給能力，同 IdentityService.ResolveCapabilities）
-        // ＋負責人隱含的 User 角色（§2b）。
+        // 能力來自 UserCapabilityResolver（單一事實來源，體檢 H1 抽出）——這裡原本有
+        // 第三份「群組角色聯集 ∪ 負責人隱含 User 角色」的複本，H3 就是複本漂移壞掉的。
         // **停用帳號一律顯示為無能力**：它連登入都進不來（IdentityService 擋、
         // ActiveUserMiddleware 逐請求 401），列出「他可以標記處理狀態」是誤導；
-        // 與下方可見主機為空同一個判斷，畫面上兩者要一致。
+        // 與下方可見主機為空同一個判斷，畫面上兩者要一致。停用的判斷依 resolver 的
+        // 契約由呼叫端負責（登入路徑不需要它，這裡的「顯示為無能力」是本頁的呈現語意）。
         var ownedHostIds = _visibility.GetOwnedHostIdsFor(userId);
-        var roles = new List<UserRole>();
-        if (user.Active)
-        {
-            roles.AddRange(memberGroups.Where(g => g.Active).Select(g => g.Role));
-            if (ownedHostIds.Count > 0) roles.Add(UserRole.User);
-        }
+        var capabilities = user.Active
+            ? _capabilities.Resolve(user)
+            : (IReadOnlySet<Capability>)new HashSet<Capability>();
 
         // 兩條路徑分開問（§2b）：一台主機可能既是他負責的、部門群組也被授權，
         // 「為什麼看得到」因此是兩個獨立的是非題，不是二選一
@@ -121,7 +122,7 @@ public class UserAdminService
                 Active = g.Active,
                 MemberCount = _users.GetAll().Count(u => u.GroupIds.Contains(g.GroupId))
             }).ToList(),
-            Capabilities = RoleCapabilityMap.For(roles).Select(c => c.ToString()).OrderBy(c => c).ToList(),
+            Capabilities = capabilities.Select(c => c.ToString()).OrderBy(c => c).ToList(),
             VisibleHosts = visibleHosts,
             AssignmentHistory = BuildAssignmentHistory(userId, hostsById)
         };

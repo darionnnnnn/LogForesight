@@ -29,7 +29,8 @@ public class UserAdminServiceTests
         new VisibilityService(
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
             _users, _groups, _access, _hosts, _cases),
-        _audit);
+        _audit,
+        new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
 
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 

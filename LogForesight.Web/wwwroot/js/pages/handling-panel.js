@@ -257,8 +257,13 @@ function assignField(handling, users, hostId, date) {
             }
 
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
-        } catch {
+        } catch (error) {
             select.disabled = false;
+            // 樂觀鎖衝突（D3）：別人剛改過這一天。錯誤 toast（api.js）已講原因，
+            // 這裡直接把最新狀態載回來——使用者要的是「看到最新」，不是自己按 F5
+            if (error?.status === 409) {
+                await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
+            }
         }
     });
 
@@ -488,8 +493,12 @@ function handlingForm() {
                 toast('已更新處理狀態', 'success');
                 await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
             }
-        } catch {
+        } catch (error) {
             restore();
+            // 樂觀鎖衝突（D3）：與上方指派路徑同一個處置——載回最新狀態
+            if (error?.status === 409) {
+                await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
+            }
         }
     });
 
