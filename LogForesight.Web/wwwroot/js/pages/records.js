@@ -642,14 +642,18 @@ function dateViewLink(row) {
 // ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
+    // 欄位順序＝「這個問題有多嚴重／影響多廣／什麼形狀／誰在處理」（規劃 §10.2 的四個維度）。
+    // 「涵蓋範圍」與「出現密度」是需求「期間跨度」的落地：只有「最近出現」看不出
+    // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
         { title: '問題', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
-        { title: '嚴重度', sortKey: 'severity', render: i => severityBadge(i.maxSeverity) },
+        { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: '風險日數', className: 'text-end', sortKey: 'dayCount', sortDefaultDir: 'desc', render: i => String(i.dayCount) },
+        { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
         { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
-        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => i.lastSeen },
+        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
         { title: '處理概況', render: i => i.handlingSummary },
         { title: '處理人', render: i => issueHandlersCell(i) }
     ];
@@ -764,6 +768,92 @@ function issueHandlersCell(group) {
     if (handlers.length > 3) {
         wrap.appendChild(document.createTextNode(` 等 ${handlers.length} 人`));
     }
+    return wrap;
+}
+
+/**
+ * 嚴重度欄：徽章＋「重大」旗標（規劃 §10.2 維度 1 的既有缺口——這個旗標過去只在
+ * 風險日詳情看得到，而它正是「disk 153 該排第一」的理由之一）。
+ */
+function issueSeverityCell(group) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(group.maxSeverity));
+
+    if (group.elevatesDayRisk) {
+        const flag = document.createElement('span');
+        flag.className = 'lf-badge lf-badge--danger';
+        flag.textContent = '重大';
+        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
+        wrap.appendChild(flag);
+    }
+    return wrap;
+}
+
+/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）。同一天時只顯示一次，不寫成「X ~ X」 */
+function issueSpanCell(group) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = group.firstSeen === group.lastSeen
+        ? group.firstSeen
+        : `${group.firstSeen} ~ ${group.lastSeen}`;
+    return span;
+}
+
+/**
+ * 出現密度：出現天數 ÷ 期間天數（§10.3）。
+ * 「2/90」與「90/90」是完全不同的問題——前者是零星爆發、後者是天天都有的背景值，
+ * 而數量排序看不出這件事。附一條密度條讓比例一眼可辨（文字仍是主要資訊，圖只是輔助）。
+ */
+function issueDensityCell(group) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
+
+    const text = document.createElement('span');
+    text.className = 'lf-mono small';
+    text.textContent = `${group.activeDays}/${group.periodDays}`;
+    wrap.appendChild(text);
+
+    const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
+    const bar = document.createElement('span');
+    bar.className = 'lf-density';
+    bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
+    const fill = document.createElement('span');
+    fill.className = 'lf-density__fill';
+    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+
+    return wrap;
+}
+
+/**
+ * 最近出現：日期＋「還在不在發生」（§10.3）。
+ * 目前的排行把「90 天前爆發過、之後再也沒出現」與「今天正在發生」視為同等——
+ * 前者其實該自動退場，而使用者只看日期得自己心算。
+ */
+function issueLastSeenCell(group) {
+    const wrap = document.createElement('div');
+
+    const date = document.createElement('div');
+    date.className = 'lf-mono small';
+    date.textContent = group.lastSeen;
+    wrap.appendChild(date);
+
+    const hint = document.createElement('div');
+    hint.className = 'small';
+    if (group.daysSinceLastSeen === 0) {
+        hint.className += ' text-danger fw-semibold';
+        hint.textContent = '今天仍在發生';
+    } else if (group.daysSinceLastSeen <= 3) {
+        hint.className += ' text-danger';
+        hint.textContent = `${group.daysSinceLastSeen} 天前`;
+    } else {
+        hint.className += ' text-muted';
+        hint.textContent = `已 ${group.daysSinceLastSeen} 天未再出現`;
+    }
+    wrap.appendChild(hint);
+
     return wrap;
 }
 

@@ -115,6 +115,27 @@ public class IssueGroupDto
     public int TotalCount { get; set; }
 
     public string LastSeen { get; set; } = string.Empty;
+
+    // ── 時間形狀（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3／P5）──────────────────
+    // 需求「同時顯示包含此問題的主機數量與**期間跨度**」的後半：只有「最近出現」
+    // 回答不了「這是老問題還是新問題／天天都有還是零星爆發」。
+    // 這幾個欄位全由本群組既有的紀錄推導，不需要額外查詢。
+
+    /// <summary>期間內最早出現的日期——與 <see cref="LastSeen"/> 合為「涵蓋範圍」</summary>
+    public string FirstSeen { get; set; } = string.Empty;
+
+    /// <summary>相異出現日數（密度的分子）</summary>
+    public int ActiveDays { get; set; }
+
+    /// <summary>查詢期間的天數（密度的分母）。「2/90 天」與「90/90 天」是完全不同的問題</summary>
+    public int PeriodDays { get; set; }
+
+    /// <summary>距今幾天沒再出現（0＝今天還在發生）。回答「還要不要處理，還是已經自己好了」</summary>
+    public int DaysSinceLastSeen { get; set; }
+
+    /// <summary>期間內是否曾命中「重大」旗標（過去只在詳情頁看得到，清單上缺這個維度）</summary>
+    public bool ElevatesDayRisk { get; set; }
+
     public string? KnownIssue { get; set; }
 
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與

@@ -587,6 +587,27 @@ body {
     opacity: .75;
 }
 
+/* 「我的交辦」未結案數（體檢 M7）：靠右、不搶標籤的視覺位置。
+   逾期時轉紅——那是唯一需要「今天就處理」的狀態，其餘只是待辦量。 */
+.lf-sidebar__badge {
+    margin-left: auto;
+    min-width: 1.4rem;
+    padding: 0 .35rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .16);
+    color: var(--lf-sidebar-fg-strong);
+    font-size: var(--lf-font-size-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.lf-sidebar__badge--overdue {
+    background: var(--lf-risk-high);
+    color: #fff;
+}
+
 .lf-sidebar__link:hover {
     background: var(--lf-sidebar-hover-bg);
     color: var(--lf-sidebar-fg-strong);
@@ -1316,6 +1337,25 @@ a.lf-stat:hover .lf-card,
 }
 
 .table > tbody > tr:last-child > td { border-bottom: none; }
+
+/* 出現密度條（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3）：文字「2/90」是主要資訊，
+   這條只是讓比例一眼可辨的輔助——**不可拿掉文字只留圖**，那會讓精確值消失，
+   也讓輔助技術讀不到（圖表準則：資訊不得只靠視覺傳達）。 */
+.lf-density {
+    display: inline-block;
+    width: 3rem;
+    height: .4rem;
+    border-radius: var(--lf-radius-sm);
+    background: var(--lf-gray-200);
+    overflow: hidden;
+    vertical-align: middle;
+}
+
+.lf-density__fill {
+    display: block;
+    height: 100%;
+    background: var(--lf-primary);
+}
 
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }

@@ -355,11 +355,12 @@ function severityBreakdown(category) {
 function renderTopIssues(data) {
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
-            { title: '問題', render: i => `${i.source} (${i.eventId})` },
-            { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
-            { title: '嚴重度', render: i => severityBadge(i.maxSeverity) },
-            { title: '主機數', className: 'text-end', render: i => formatNumber(i.hostCount) },
-            { title: '風險日數', className: 'text-end', render: i => formatNumber(i.dayCount) },
+            { title: '問題', render: i => issueNameCell(i) },
+            { title: '嚴重度', render: i => issueSeverityCell(i) },
+            { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
+            { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+            { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
+            { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
             { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
         ],
         rows: data.topIssues,
@@ -368,6 +369,157 @@ function renderTopIssues(data) {
                       `&from=${data.from}&to=${data.to}`,
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
+}
+
+/** 問題名稱＋「新」徽章：本期新出現是「今天有什麼不一樣」最直接的訊號（§10.3） */
+function issueNameCell(issue) {
+    const wrap = document.createElement('div');
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold d-flex align-items-center gap-1';
+    const name = document.createElement('span');
+    name.textContent = `${issue.source} (${issue.eventId})`;
+    title.appendChild(name);
+
+    if (issue.isNew) {
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning';
+        badge.textContent = '新';
+        badge.title = '前一個等長期間完全沒有出現過';
+        title.appendChild(badge);
+    }
+    wrap.appendChild(title);
+
+    const category = document.createElement('div');
+    category.className = 'small text-muted';
+    category.textContent = CATEGORY_NAMES[issue.category] ?? issue.category;
+    wrap.appendChild(category);
+
+    return wrap;
+}
+
+/** 嚴重度＋「重大」旗標（§10.2 維度 1：這個旗標過去只在詳情頁看得到） */
+function issueSeverityCell(issue) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    wrap.appendChild(severityBadge(issue.maxSeverity));
+
+    if (issue.elevatesDayRisk) {
+        const flag = document.createElement('span');
+        flag.className = 'lf-badge lf-badge--danger';
+        flag.textContent = '重大';
+        flag.title = '此問題曾命中「命中即列為高風險日」的規則旗標';
+        wrap.appendChild(flag);
+    }
+    return wrap;
+}
+
+/**
+ * 主機數＋影響率（§10.2 維度 2）。
+ * 「600 台」在 2000 台環境是 30%、在 50 台環境是全滅——**絕對值無法跨環境解讀**，
+ * 也無法在同一張榜上比較不同規模的部門。
+ */
+function issueHostCell(issue) {
+    const wrap = document.createElement('div');
+
+    const count = document.createElement('div');
+    count.textContent = formatNumber(issue.hostCount);
+    wrap.appendChild(count);
+
+    if (issue.hostRatio > 0) {
+        const ratio = document.createElement('div');
+        ratio.className = 'small text-muted';
+        ratio.textContent = `${Math.round(issue.hostRatio * 100)}%`;
+        ratio.title = '影響率＝主機數 ÷ 可見主機總數';
+        wrap.appendChild(ratio);
+    }
+    return wrap;
+}
+
+/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）＋是否仍在發生 */
+function issueSpanCell(issue) {
+    const wrap = document.createElement('div');
+
+    const span = document.createElement('div');
+    span.className = 'lf-mono small';
+    span.textContent = issue.firstSeen === issue.lastSeen
+        ? issue.firstSeen
+        : `${issue.firstSeen} ~ ${issue.lastSeen}`;
+    wrap.appendChild(span);
+
+    const hint = document.createElement('div');
+    hint.className = 'small';
+    if (issue.daysSinceLastSeen === 0) {
+        hint.className += ' text-danger fw-semibold';
+        hint.textContent = '今天仍在發生';
+    } else {
+        hint.className += ' text-muted';
+        hint.textContent = `${issue.daysSinceLastSeen} 天前`;
+    }
+    wrap.appendChild(hint);
+
+    return wrap;
+}
+
+/** 出現密度：天天都有（背景值）還是零星爆發（§10.3）。文字為主、密度條為輔 */
+function issueDensityCell(issue) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
+
+    const text = document.createElement('span');
+    text.className = 'lf-mono small';
+    text.textContent = `${issue.activeDays}/${issue.periodDays}`;
+    wrap.appendChild(text);
+
+    const ratio = issue.periodDays > 0 ? issue.activeDays / issue.periodDays : 0;
+    const bar = document.createElement('span');
+    bar.className = 'lf-density';
+    bar.title = `期間 ${issue.periodDays} 天內出現 ${issue.activeDays} 天（${Math.round(ratio * 100)}%）`;
+    const fill = document.createElement('span');
+    fill.className = 'lf-density__fill';
+    fill.style.width = `${Math.max(4, Math.round(ratio * 100))}%`;
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+
+    return wrap;
+}
+
+/**
+ * 變化幅度（§10.3）：與前一個等長期間相比的主機數增減。
+ * 這一欄是把「哪些問題最普遍」變成「哪些問題正在惡化」的關鍵——
+ * DCOM 這種每天都一樣的雜訊在這裡會顯示「—」，而真正在擴散的問題會跳出來。
+ */
+function issueChangeCell(issue) {
+    const span = document.createElement('span');
+    span.className = 'small';
+
+    if (issue.isNew) {
+        span.className += ' text-danger fw-semibold';
+        span.textContent = '本期新增';
+        return span;
+    }
+
+    if (issue.previousHostCount === 0) {
+        span.className += ' text-muted';
+        span.textContent = '—';
+        return span;
+    }
+
+    const delta = (issue.hostCount - issue.previousHostCount) / issue.previousHostCount;
+    const percent = Math.round(delta * 100);
+    if (percent === 0) {
+        span.className += ' text-muted';
+        span.textContent = '持平';
+    } else if (percent > 0) {
+        span.className += ' text-danger';
+        span.textContent = `↑${percent}%`;
+        span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
+    } else {
+        span.className += ' text-success';
+        span.textContent = `↓${Math.abs(percent)}%`;
+        span.title = `前期 ${issue.previousHostCount} 台 → 本期 ${issue.hostCount} 台`;
+    }
+    return span;
 }
 
 function renderHosts(data) {

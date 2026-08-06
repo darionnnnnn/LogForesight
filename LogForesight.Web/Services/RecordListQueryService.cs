@@ -271,8 +271,14 @@ public class RecordListQueryService
             .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
+        // 密度的分母＝查詢期間天數。篩選未指定日期時退回紀錄本身的跨度——
+        // 「2/90 天」的意義完全取決於分母是什麼，不能讓它變成一個沒有定義的數字
+        var periodDays = request.From.HasValue && request.To.HasValue
+            ? Math.Max(1, (request.To.Value.Date - request.From.Value.Date).Days + 1)
+            : records.Count == 0 ? 1 : Math.Max(1, (records.Max(r => r.Date.Date) - records.Min(r => r.Date.Date)).Days + 1);
+
         var groups = RecordQueryHelpers.GroupIssuesBySignature(records)
-            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost))
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays))
             .ToList();
 
         // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
@@ -346,7 +352,8 @@ public class RecordListQueryService
         HostLookup lookup,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyDictionary<string, List<IssueHandling>> handlingsByHost,
-        IReadOnlyDictionary<string, List<IssueCase>> casesByHost)
+        IReadOnlyDictionary<string, List<IssueCase>> casesByHost,
+        int periodDays)
     {
         var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = g.Min(x => x.Record.Date);
@@ -419,6 +426,14 @@ public class RecordListQueryService
             DayCount = g.Select(x => (Host: HostNameOf(lookup, x.Record), Day: x.Record.Date.Date)).Distinct().Count(),
             TotalCount = g.Sum(x => x.Issue.Count),
             LastSeen = latest.Record.Date.ToString("yyyy-MM-dd"),
+
+            // 時間形狀（§10.3）：全由本群組既有的紀錄推導，不必額外查詢
+            FirstSeen = from.ToString("yyyy-MM-dd"),
+            ActiveDays = g.Select(x => x.Record.Date.Date).Distinct().Count(),
+            PeriodDays = periodDays,
+            DaysSinceLastSeen = Math.Max(0, (DateTime.Today - latest.Record.Date.Date).Days),
+            ElevatesDayRisk = g.Any(x => x.Issue.ElevatesDayRisk),
+
             KnownIssue = latest.Issue.KnownIssue,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolved),
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
