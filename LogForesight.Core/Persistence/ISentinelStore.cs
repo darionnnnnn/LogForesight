@@ -48,8 +48,11 @@ public class SentinelStore : JsonBlobCollection<Sentinel>, ISentinelStore
             existing.BaseUrl = sentinel.BaseUrl;
             existing.Username = sentinel.Username;
             existing.PasswordEnc = sentinel.PasswordEnc;
+            // 逐欄複製：**新增模型欄位時這裡一定要跟著加一行**，漏抄的症狀是
+            // 「新增存得進去、編輯被靜默還原」——SentinelStoreRoundTripTests 守住這件事
             existing.Active = sentinel.Active;
             existing.Os = sentinel.Os;
+            existing.UseEsmDirectory = sentinel.UseEsmDirectory;
             existing.UpdatedAt = DateTime.Now;
             return existing;
         });

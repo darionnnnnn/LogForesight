@@ -139,12 +139,15 @@ internal class FakeSentinelStore : ISentinelStore
             return sentinel;
         }
 
+        // 與 SentinelStore.Upsert 逐欄對齊——那是「新增欄位時最容易漏改」的地方，
+        // 兩邊漂移會讓測試綠燈而正式環境掉資料（UseEsmDirectory 就這樣漏過一次）
         existing.Name = sentinel.Name;
         existing.BaseUrl = sentinel.BaseUrl;
         existing.Username = sentinel.Username;
         existing.PasswordEnc = sentinel.PasswordEnc;
         existing.Active = sentinel.Active;
         existing.Os = sentinel.Os;
+        existing.UseEsmDirectory = sentinel.UseEsmDirectory;
         existing.UpdatedAt = DateTime.Now;
         return existing;
     }

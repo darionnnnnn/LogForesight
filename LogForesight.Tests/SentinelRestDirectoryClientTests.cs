@@ -281,6 +281,107 @@ public class SentinelRestDirectoryClientTests
         Assert.Equal("10.1.2.9", Assert.Single(result.Hosts).HostName);
     }
 
+    // ── ESM 事件來源目錄（§五）：開關預設關、失敗一律退回事件掃描且要吵 ────────
+
+    private static SentinelServer EsmServer() => new()
+    {
+        Name = "SENTINEL-A", BaseUrl = "https://sentinel.local:8443",
+        Username = "svc", Password = "pw", UseEsmDirectory = true
+    };
+
+    /// <summary>開關關閉（預設）時**完全不碰** ESM 端點——既有環境零行為差異</summary>
+    [Fact]
+    public async Task ESM開關關閉_不打目錄端點()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty());
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.False(handler.EsmRequested);
+    }
+
+    [Fact]
+    public async Task ESM可用_直接回目錄結果且不發任何事件查詢()
+    {
+        var handler = new ScriptedHandler
+        {
+            // 三筆條目，其中 10.9.9.9 不在掃描的網段內——驗證前綴過濾
+            EsmResponse = ("""[{"name":"SRV-A","ipAddress":"10.1.2.5"},{"name":"SRV-B","ipAddress":"10.1.2.6"},{"name":"OTHER","ipAddress":"10.9.9.9"}]""", HttpStatusCode.OK)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
+
+        // 只回本網段的兩台（10.9.9.9 被前綴過濾掉）
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Empty(handler.Filters);   // 一個事件查詢都沒發——這正是 ESM 的價值
+        Assert.Empty(result.Warnings);
+
+        // 涵蓋語意不同於事件掃描，要講明白
+        Assert.Contains("事件來源目錄", result.CoverageNote);
+        Assert.Contains("沒有事件回報的主機", result.CoverageNote);
+        Assert.Contains("目錄共 3 筆條目", result.CoverageNote);
+    }
+
+    [Fact]
+    public async Task ESM可用_已登錄主機仍被排除在結果外()
+    {
+        var handler = new ScriptedHandler
+        {
+            EsmResponse = ("""[{"name":"SRV-A","ipAddress":"10.1.2.5"},{"name":"SRV-B","ipAddress":"10.1.2.6"}]""",
+                HttpStatusCode.OK)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None, knownIps: new[] { "10.1.2.5" });
+
+        Assert.Equal("10.1.2.6", Assert.Single(result.Hosts).IpAddress);
+        Assert.Contains("已登錄的 1 台", result.CoverageNote);
+    }
+
+    /// <summary>無權限＝最可能發生的情況（本環境正是如此）：退回事件掃描，
+    /// 並且告訴管理員該做什麼——關掉開關或去要權限</summary>
+    [Fact]
+    public async Task ESM無權限_退回事件掃描並顯性警告()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty())
+        {
+            EsmResponse = ("Forbidden", HttpStatusCode.Forbidden)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
+
+        Assert.Single(result.Hosts);            // 事件掃描接手，結果照樣有
+        Assert.Equal(2, handler.Filters.Count); // 主掃描＋補充掃描都跑了
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("ESM 唯讀權限", warning);
+        Assert.Contains("關閉此開關", warning);   // 訊息要說得出下一步
+    }
+
+    /// <summary>
+    /// 回應解析不出主機時，**絕不能**當成「這台 Sentinel 沒有主機」——那會讓管理員以為
+    /// 機房空了。退回事件掃描，並要求把回應貼回來定案格式。
+    /// </summary>
+    [Fact]
+    public async Task ESM回應格式不符_退回事件掃描而不是回報零台()
+    {
+        var handler = new ScriptedHandler(new JobScript(1, ("10.1.2.5", "srv5")), Empty())
+        {
+            EsmResponse = ("""[{"unexpected":"shape"},{"also":"unexpected"}]""", HttpStatusCode.OK)
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(EsmServer(), "10.1.2", CancellationToken.None);
+
+        Assert.Single(result.Hosts);   // 不是 0 台
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("格式與預期不符", warning);
+        Assert.Contains("收到 2 筆條目", warning);
+        Assert.Contains("診斷", warning);   // 要人回報輸出以便定案
+    }
+
     // ── 輸入與失敗路徑（行為不變，沿用改版前的守則）────────────────────────
 
     [Fact]
@@ -378,6 +479,12 @@ public class SentinelRestDirectoryClientTests
 
         public Action? OnAuth { get; init; }
 
+        /// <summary>ESM 目錄端點的回應；null＝測試不預期它被呼叫（被呼叫會擲例外）</summary>
+        public (string Body, HttpStatusCode Status)? EsmResponse { get; init; }
+
+        /// <summary>ESM 端點有沒有被打過——驗證「開關關閉時完全不碰」</summary>
+        public bool EsmRequested { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var url = request.RequestUri!.ToString();
@@ -388,6 +495,18 @@ public class SentinelRestDirectoryClientTests
                 return AuthStatus == HttpStatusCode.OK
                     ? Json(HttpStatusCode.OK, "{\"Token\":\"tok\"}")
                     : new HttpResponseMessage(AuthStatus);
+            }
+
+            if (request.Method == HttpMethod.Get && url.EndsWith(SentinelRestDirectoryClient.EsmEventSourcePath))
+            {
+                EsmRequested = true;
+                if (EsmResponse == null)
+                    throw new InvalidOperationException("本測試不預期 ESM 端點被呼叫（開關應為關閉）");
+
+                var (body, status) = EsmResponse.Value;
+                return status == HttpStatusCode.OK
+                    ? Json(HttpStatusCode.OK, body)
+                    : new HttpResponseMessage(status) { Content = new StringContent(body) };
             }
 
             if (request.Method == HttpMethod.Post && url == JobCollectionUrl)

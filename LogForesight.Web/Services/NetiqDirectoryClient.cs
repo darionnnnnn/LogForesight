@@ -277,6 +277,15 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             var alreadyKnown = NormalizeKnownIps(knownIps);
             var warnings = new List<string>();
 
+            // ESM 事件來源目錄（§五）：開關預設關，開著才試。成功就直接回——
+            // 它是「已註冊主機」而不是「窗口內講過話的主機」，涵蓋語意嚴格較好。
+            // 失敗（無權限／格式不符）落到下面的事件掃描，並把原因講出來。
+            if (server.UseEsmDirectory)
+            {
+                var esm = await TryEsmDirectoryAsync(client, normalizedPrefix, alreadyKnown, warnings, scanCt);
+                if (esm != null) return esm;
+            }
+
             var scan = new ScanState(alreadyKnown);
 
             // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
@@ -341,6 +350,66 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         {
             throw new NetiqDiscoveryException($"掃描 Sentinel「{server.Name}」失敗：{ex.Message}", ex);
         }
+    }
+
+    /// <summary>ESM 事件來源目錄的端點路徑（一般 REST 資源，不走 event-search job 生命週期）</summary>
+    internal const string EsmEventSourcePath = "/SentinelRESTServices/objects/eventsource";
+
+    /// <summary>
+    /// 嘗試以 ESM 目錄探索（§五）。成功回傳結果、失敗回 null 並在 <paramref name="warnings"/>
+    /// 留下**可行動**的說明，由呼叫端落回事件掃描。
+    ///
+    /// <para><b>三種失敗都要吵</b>：開關是人開的，開著卻每次都走退路代表這個環境不支援——
+    /// 訊息要能讓人決定「把開關關掉」或「把回應貼回來定案格式」。安靜地退路等於讓一個
+    /// 壞掉的捷徑假裝在工作，下次還是有人踩。</para>
+    /// </summary>
+    private static async Task<NetiqDiscoveryResult?> TryEsmDirectoryAsync(
+        SentinelClient client, string normalizedPrefix, IReadOnlyList<string> alreadyKnown,
+        List<string> warnings, CancellationToken ct)
+    {
+        string body;
+        try
+        {
+            body = await client.RawGetAsync(EsmEventSourcePath, ct);
+        }
+        catch (SentinelClientException ex)
+        {
+            warnings.Add(
+                "已開啟「以 ESM 事件來源目錄探索」，但這個帳號讀不到目錄" +
+                $"（{ex.Message}），本次已改用事件掃描。" +
+                "請確認該帳號具備 ESM 唯讀權限，或關閉此開關。");
+            return null;
+        }
+
+        var parsed = SentinelEsmDirectory.Parse(body);
+        if (!parsed.Usable)
+        {
+            // **關鍵區分**：解析不出來 ≠ 這台 Sentinel 沒有主機。後者會讓管理員以為機房空了。
+            warnings.Add(
+                $"ESM 事件來源目錄的回應格式與預期不符（收到 {parsed.RawEntryCount} 筆條目，" +
+                "無法解析出任何主機），本次已改用事件掃描。" +
+                "請至「診斷」分頁執行診斷並回報步驟 6 的輸出，以便定案欄位對應。");
+            return null;
+        }
+
+        var known = new HashSet<string>(alreadyKnown, StringComparer.OrdinalIgnoreCase);
+        var prefix = normalizedPrefix + ".";
+        var hosts = parsed.Sources
+            .Where(s => s.IpAddress.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Where(s => !known.Contains(s.IpAddress))
+            .Select(s => new NetiqDiscoveredHost(s.Name, s.IpAddress))
+            .ToList();
+
+        var knownNote = alreadyKnown.Count > 0 ? $"，另有已登錄的 {alreadyKnown.Count} 台未重新列出" : string.Empty;
+        return new NetiqDiscoveryResult
+        {
+            Hosts = hosts,
+            CoverageNote =
+                $"來源：Sentinel 事件來源目錄（已註冊主機的完整清單，**含目前沒有事件回報的主機**）。" +
+                $"目錄共 {parsed.RawEntryCount} 筆條目、可解析 {parsed.Sources.Count} 台，" +
+                $"其中屬於「{normalizedPrefix}.*」的有 {hosts.Count} 台{knownNote}。",
+            Warnings = warnings
+        };
     }
 
     /// <summary>

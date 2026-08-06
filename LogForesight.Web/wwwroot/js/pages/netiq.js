@@ -136,6 +136,7 @@ function openSentinelModal(sentinel) {
     document.getElementById('sentinel-base-url').value = sentinel?.baseUrl ?? '';
     document.getElementById('sentinel-username').value = sentinel?.username ?? '';
     document.getElementById('sentinel-os').value = sentinel?.os ?? 'windows';
+    document.getElementById('sentinel-use-esm').checked = sentinel?.useEsmDirectory ?? false;
     document.getElementById('sentinel-password').value = '';
     document.getElementById('sentinel-password-hint').textContent = sentinel?.hasPassword
         ? '已設定，留空＝不變更。'
@@ -200,6 +201,7 @@ sentinelForm.addEventListener('submit', async event => {
             baseUrl: document.getElementById('sentinel-base-url').value.trim(),
             username: document.getElementById('sentinel-username').value.trim(),
             os: document.getElementById('sentinel-os').value,
+            useEsmDirectory: document.getElementById('sentinel-use-esm').checked,
             // 留空字串＝不變更（後端 write-only 語意）；沒有勾選清除密碼的介面，
             // 需要清空密碼的情境（例如帳密停用）改用「停用」而非清空密碼
             password: document.getElementById('sentinel-password').value || null

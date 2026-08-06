@@ -70,7 +70,8 @@ public class SentinelAdminService
             Username = request.Username?.Trim() ?? "",
             PasswordEnc = passwordEnc,
             Active = existing?.Active ?? true,
-            Os = os
+            Os = os,
+            UseEsmDirectory = request.UseEsmDirectory
         });
 
         // 改名時同步所有掛在這台 Sentinel 下的主機顯示快照——不然要等下次批次/人工編輯才會更新，
@@ -227,6 +228,7 @@ public class SentinelAdminService
         Os = sentinel.Os,
         CreatedAt = sentinel.CreatedAt,
         UpdatedAt = sentinel.UpdatedAt,
-        HostCount = hostCount
+        HostCount = hostCount,
+        UseEsmDirectory = sentinel.UseEsmDirectory
     };
 }

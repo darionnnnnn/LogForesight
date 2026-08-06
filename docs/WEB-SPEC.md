@@ -1361,6 +1361,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **測試連線**（編輯/新增 modal 內按鈕，2026-07-29）：用表單目前輸入的網址／帳密（密碼留空＝
   沿用這台既有密碼）呼叫 `SentinelClient` 只做認證不建查詢工作，就地顯示成功（含耗時）或失敗
   原因；帳密僅過境不落地、不記稽核（唯讀操作）。
+- **以 ESM 事件來源目錄探索**（`Sentinel.UseEsmDirectory`，2026-08-06，**預設關閉**，
+  編輯/新增 modal 內）：開啟後探索改打 `/SentinelRESTServices/objects/eventsource`——
+  那是**已註冊主機的完整清單**，包含目前沒有事件回報的主機（事件掃描原理上看不到那些）。
+  但多數環境的探索帳號沒有 ESM 讀取權限（本環境即 401/403），且**回應格式因此無法在本環境
+  驗證**，所以刻意做成 per-Sentinel 的手動開關而不是自動嘗試——自動信任沒驗證過的解析，
+  錯了會讓主機清單靜默變形。form-text 要求「開啟前先到『診斷』分頁執行一次診斷」，
+  把驗證閘門放在人的流程裡。取不到或格式不符時自動改用事件掃描並在掃描結果顯示警告
+  （警告文字要說得出下一步：關開關、要權限、或回報輸出以定案格式）。
+  設計與退路詳見 docs/NETIQ-API-REFERENCE.md §3.5。
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
