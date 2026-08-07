@@ -610,7 +610,11 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
-const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析' };
+// netiq-ai（docs/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
+// 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
+// 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
+const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中' };
+const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
@@ -630,7 +634,8 @@ function renderScheduleProgress(status) {
 
     if (status.progressTotal > 0) {
         const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
-        const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal} 主機日`;
+        const unit = PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日';
+        const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal} ${unit}`;
         bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
         bar.style.width = `${pct}%`;
         bar.title = label;
