@@ -429,7 +429,7 @@ function priorHandlingTrigger(issue) {
             const history = await api.get(
                 `/api/records/${hostId}/${date}/handling/issue-history?issueKey=${encodeURIComponent(issue.issueKey)}`);
             showDetailModal({
-                title: `先前處理（${issue.source} ${issue.eventId}）`,
+                title: `先前處理（${issue.sourceEventLabel}）`,
                 body: issueHistoryBody(history),
                 size: 'modal-lg'
             });
@@ -696,7 +696,7 @@ function autoNoiseControl(issue) {
         // 第二個是獨立的是非題，「取消」＝合理的「不刪除」答案，不會被誤讀成中止操作
         const proceed = await confirmAction({
             title: '調回未處理',
-            message: `將「${issue.source} ${issue.eventId}」標為未處理。`,
+            message: `將「${issue.sourceEventLabel}」標為未處理。`,
             confirmText: '調回未處理',
             confirmVariant: 'primary'
         });
@@ -1138,7 +1138,7 @@ function issueCell(issue) {
 
     const title = document.createElement('div');
     title.className = 'fw-semibold';
-    title.textContent = `${issue.source} (${issue.eventId})`;
+    title.textContent = issue.sourceEventLabel;
     wrap.appendChild(title);
 
     const logName = document.createElement('div');
@@ -1281,7 +1281,7 @@ function sampleMessagesTrigger(issue) {
     trigger.addEventListener('click', event => {
         event.stopPropagation();
         showDetailModal({
-            title: `原始訊息（${issue.source} ${issue.eventId}，共 ${issue.sampleMessages.length} 則）`,
+            title: `原始訊息（${issue.sourceEventLabel}，共 ${issue.sampleMessages.length} 則）`,
             body: sampleMessagesBody(issue.sampleMessages),
             size: 'modal-lg'
         });

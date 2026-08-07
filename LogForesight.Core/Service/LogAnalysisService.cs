@@ -112,10 +112,14 @@ public class LogAnalysisService
     /// 內容」，這個問題留給 AI 段自己跑完前置掃描後決定（見 <see cref="CompleteAiAsync"/> 內的
     /// <c>skipForLowRisk</c>）。
     /// </summary>
+    /// <param name="hostOs">'windows'（預設）｜'linux'（docs/FEEDBACK-12-PLAN.md §4.3）：Linux 主機
+    /// 跳過跨 log 關聯比對（<see cref="CorrelationAnalyzer"/> 目前無 Platform 概念，Linux 事件
+    /// 餵進去會被 Windows 事件 ID 群組靜默誤讀）並在 UncoveredChecks 誠實申報「不適用」，
+    /// 不是還沒做完；本機路徑固定 Windows，不傳這個參數。</param>
     internal async Task<(DailyAnalysisRecord Record, AiWorkItem? WorkItem)> BuildStatisticalRecordAsync(
         DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true, int historyDays = 14,
         bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, string hostOs = WebHost.OsWindows)
     {
         Log.Info("開始分析 {Date:yyyy-MM-dd}：log 筆數={LogCount}, useAi={UseAi}", targetDate, logs.Count, useAi);
 
@@ -178,8 +182,14 @@ public class LogAnalysisService
         }
 
         // 跨 log 關聯比對：多個獨立訊號的已知攻擊鏈/故障鏈組合（含跨日比對）。
-        // 單一事件各自不嚴重、組合起來卻是明確故事——小模型最容易漏掉的判讀，由程式確定性比對
-        var correlations = CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
+        // 單一事件各自不嚴重、組合起來卻是明確故事——小模型最容易漏掉的判讀，由程式確定性比對。
+        // Linux 主機不執行（docs/FEEDBACK-12-PLAN.md §4.3）：CorrelationAnalyzer 目前無
+        // Platform 概念，是以 Windows Event ID 群組比對的，Linux 事件（EventId 恆 0）餵進去
+        // 會被錯誤群組、靜默誤判——「不執行」比「執行但結果不可信」誠實。
+        var isLinuxHost = hostOs.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
+        var correlations = isLinuxHost
+            ? new List<CorrelationFinding>()
+            : CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
 
         // 這幾個清單都是程式自己產生的短結構化字串（不是原始 log 內容），數量也有上限，記錄完整內容沒問題
         if (trendAlerts.Count > 0)
@@ -205,6 +215,13 @@ public class LogAnalysisService
         bool needsAi = useAi && (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening);
 
         var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable, channels);
+        if (isLinuxHost)
+        {
+            // 「不適用」而非「還沒做完」（docs/FEEDBACK-12-PLAN.md §4.3，落實
+            // docs/BACKLOG.md／docs/LINUX-RULES.md 原本只寫在文件、程式碼不存在的「固定申報」）：
+            // 與「沒告警 ≠ 沒問題」同一個誠實申報原則，不能讓人以為關聯層有檢查過 Linux 事件
+            uncoveredChecks.Add("關聯層（攻擊鏈/故障鏈比對）不適用於 Linux 主機——本版僅規則層＋趨勢層＋慢速趨勢層");
+        }
 
         // 慢速趨勢層若因前期歷史不足而完全沒有比對，要明講——「沒告警」不等於「沒問題」。
         // 歷史本來就不足（部署未滿兩週）屬預期，記 Info；歷史夠長卻仍無法比對，代表前期窗口內

@@ -249,6 +249,11 @@ public class IssueDto
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
 
+    /// <summary>顯示用的來源＋事件標籤（LogIssueSignature.SourceEventLabel）：Windows 是
+    /// 「{Source} EventId {EventId}」，Linux（EventId 恆為 0）改顯示「{Source}（規則Id）」，
+    /// 前端一律用這個欄位取代自行組裝 "Source EventId N"，避免 Linux 出現無意義的 EventId 0。</summary>
+    public string SourceEventLabel { get; set; } = string.Empty;
+
     /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化）：前端顯示「重大」
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>
     public bool ElevatesDayRisk { get; set; }

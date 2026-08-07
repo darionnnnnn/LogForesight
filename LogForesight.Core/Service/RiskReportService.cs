@@ -448,7 +448,7 @@ public class RiskReportService
         {
             var reason = activeSuppressions?.FirstOrDefault(s =>
                 s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
-            sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.Source} EventId {issue.EventId} x{issue.Count}" +
+            sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.SourceEventLabel} x{issue.Count}" +
                           $"：{issue.KnownIssue}");
             sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");
         }
@@ -474,7 +474,7 @@ public class RiskReportService
     private static string FormatIssue(LogIssueSignature i)
     {
         var sb = new StringBuilder();
-        sb.Append($"- [{i.Severity}] {i.LogName}/{i.Source} EventId {i.EventId} x{i.Count}（{i.FirstSeen}~{i.LastSeen}）");
+        sb.Append($"- [{i.Severity}] {i.LogName}/{i.SourceEventLabel} x{i.Count}（{i.FirstSeen}~{i.LastSeen}）");
         if (i.KnownIssue != null)
         {
             sb.Append($"：{i.KnownIssue}");

@@ -409,7 +409,7 @@ public class NetiqPipelineService
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
             var (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
-                securityLogAvailable: true, channels: null, ct);
+                securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
 
             plan.Store.Append(record);
 

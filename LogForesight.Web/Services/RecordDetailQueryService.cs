@@ -550,6 +550,7 @@ public class RecordDetailQueryService
             LogName = issue.LogName,
             Source = issue.Source,
             EventId = issue.EventId,
+            SourceEventLabel = issue.SourceEventLabel,
             Count = issue.Count,
             Category = issue.Category.ToString(),
             Severity = issue.Severity.ToString(),

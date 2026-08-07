@@ -69,7 +69,7 @@ internal class AnalysisPromptBuilder
             for (int i = 0; i < chunk.Length; i++)
             {
                 var item = chunk[i];
-                sb.AppendLine($"{i + 1}. [{item.Severity}] {item.LogName}/{item.Source} EventId {item.EventId} x{item.Count}" +
+                sb.AppendLine($"{i + 1}. [{item.Severity}] {item.LogName}/{item.SourceEventLabel} x{item.Count}" +
                               $"（{item.FirstSeen}~{item.LastSeen}）：" +
                               (item.KnownIssue != null ? $"{item.KnownIssue}；" : "") +
                               (item.SampleMessages.FirstOrDefault() ?? ""));
@@ -238,7 +238,9 @@ internal class AnalysisPromptBuilder
                 var topKeys = string.Join("、", h.TopIssues
                     .Where(i => i.Severity >= IssueSeverity.Medium)
                     .Take(3)
-                    .Select(i => $"{i.Source}#{i.EventId}x{i.Count}"));
+                    .Select(i => i.EventId == 0 && i.EventKey.Length > 0
+                        ? $"{i.Source}#{i.EventKey}x{i.Count}"
+                        : $"{i.Source}#{i.EventId}x{i.Count}"));
 
                 sb.Append($"- {h.Date:MM-dd}({WeekdayZh(h.Date)})：錯誤{h.ErrorCount} 警告{h.WarningCount} 稽核{h.AuditEventCount} 風險{h.RiskLevel}");
                 if (topKeys.Length > 0)
@@ -278,7 +280,7 @@ internal class AnalysisPromptBuilder
         var head = flagged ? $"[{i.Severity}/{i.Category}]" : $"[{EntryTypeText(i)}]";
         var time = i.Count > 1 ? $"（{i.FirstSeen}~{i.LastSeen}）" : $"（{i.FirstSeen}）";
         var known = flagged ? $"：{i.KnownIssue}" : "";
-        sb.AppendLine($"- {head} {i.LogName}/{i.Source} EventId {i.EventId} x{i.Count}{time}{TrendText(i, historyDays)}{known}");
+        sb.AppendLine($"- {head} {i.LogName}/{i.SourceEventLabel} x{i.Count}{time}{TrendText(i, historyDays)}{known}");
 
         // 歷史存 3 則範例，prompt 只放部分控制長度（重點問題 2 則、其他 1 則）；完整範例在風險報告與歷史紀錄
         var sampleCount = flagged ? FlaggedSampleCount : OtherSampleCount;
