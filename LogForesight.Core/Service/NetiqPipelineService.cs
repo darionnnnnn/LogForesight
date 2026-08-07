@@ -41,7 +41,7 @@ public class NetiqPipelineService
     private readonly ISentinelStore _sentinels;
     private readonly IHostStore _hosts;
     private readonly EventLogService _eventLogService;
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
     private readonly ISuppressionStore _suppressionStore;
     private readonly RiskReportService _reportService;
     private readonly BatchRunRecorder _runRecorder;
@@ -70,7 +70,7 @@ public class NetiqPipelineService
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
-        AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
+        IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
