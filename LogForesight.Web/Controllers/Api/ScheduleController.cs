@@ -103,10 +103,11 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public ApiResponse<RunPreviewDto> RunPreview([FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId)
     {
-        var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId);
+        var (_, hostIds, includesLocal, linuxCount) = ResolveScope(scope, segment, hostId);
         return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
         {
-            HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0)
+            HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0),
+            LinuxCount = linuxCount
         });
     }
 
@@ -114,7 +115,7 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public async Task<ApiResponse<TriggerRunResultDto>> Run([FromBody] TriggerRunRequest request)
     {
-        var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
+        var (runScope, hostIds, _, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
 
@@ -158,14 +159,20 @@ public class ScheduleController : ControllerBase
     /// 網段解析與比對複用 <see cref="CidrMatcher"/>（與 NetIQ 匯入精靈同一套，不寫第二份）；
     /// 主機清單複用 <see cref="HostListSelection"/>（與 NetIQ 機房分析同一份
     /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉）。
+    ///
+    /// <paramref name="LinuxCount"/>：這個範圍內有幾台 Linux 主機涵蓋但本次不會被查詢
+    /// （Linux 事件取數尚未支援，docs/FEEDBACK-12-PLAN.md §1.1）——預覽若不誠實講出這個數字，
+    /// 使用者看到的台數與實際查詢台數會對不上。
     /// </summary>
-    private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId)
+    private (RunScope Scope, List<long>? HostIds, bool IncludesLocal, int LinuxCount) ResolveScope(string scope, string? segment, long? hostId)
     {
         switch (scope)
         {
             case "all":
                 var allTargets = HostListSelection.FromStore(_hosts, _sentinels);
-                return (RunScope.Full, allTargets.ByServer.Values.SelectMany(v => v).Select(t => t.HostId).ToList(), true);
+                var allFlat = allTargets.ByServer.Values.SelectMany(v => v).ToList();
+                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), true,
+                    allFlat.Count(t => t.Os == WebHost.OsLinux));
 
             case "segment":
                 if (string.IsNullOrWhiteSpace(segment))
@@ -186,17 +193,25 @@ public class ScheduleController : ControllerBase
                 var range = CidrMatcher.Parse($"{normalizedPrefix}.*")!;
 
                 var netiqList = HostListSelection.FromStore(_hosts, _sentinels);
-                var matched = netiqList.ByServer.Values
+                var matchedTargets = netiqList.ByServer.Values
                     .SelectMany(v => v)
                     .Where(t => CidrMatcher.Matches(range, t.IpAddress))
-                    .Select(t => t.HostId)
                     .ToList();
-                return (RunScope.NetiqHosts, matched, false);
+                return (RunScope.NetiqHosts, matchedTargets.Select(t => t.HostId).ToList(), false,
+                    matchedTargets.Count(t => t.Os == WebHost.OsLinux));
 
             case "host":
                 if (hostId is not { } id) throw DomainException.Validation("請指定要更新的主機。");
                 var host = _hosts.Get(id) ?? throw DomainException.NotFound("找不到這台主機。");
-                if (host.Source == "local") return (RunScope.LocalOnly, null, true);
+                if (host.Source == "local") return (RunScope.LocalOnly, null, true, 0);
+
+                // Linux 主機事件取數尚未支援（docs/FEEDBACK-12-PLAN.md §1.2）：即使主機是
+                // Pollable 的，pipeline 內也會把它整批濾掉、靜默零結果——單機立即執行必須在這裡
+                // 明確拒絕，不能讓使用者拿到「已開始執行」的成功回饋卻什麼都沒發生
+                if (host.Os == WebHost.OsLinux)
+                    throw DomainException.Validation(
+                        $"「{host.HostName}」是 Linux 主機，事件取數尚未支援（規則面已就緒，" +
+                        "待 Linux Sentinel 接入），本次無法執行。");
 
                 // NetIQ 主機：確認目前真的在會被查詢的清單內（Pollable），不然「1 台」的預覽會是假象——
                 // 停用／待歸屬／IP 衝突／所屬 Sentinel 停用的主機實際執行時會被 orchestrator 濾掉、
@@ -208,7 +223,7 @@ public class ScheduleController : ControllerBase
                         $"「{host.HostName}」目前不會被查詢（可能已停用、待歸屬 Sentinel、IP 衝突，" +
                         "或所屬 Sentinel 已停用），請至主機頁確認狀態後再試。");
 
-                return (RunScope.NetiqHosts, new List<long> { id }, false);
+                return (RunScope.NetiqHosts, new List<long> { id }, false, 0);
 
             default:
                 throw DomainException.Validation($"範圍「{scope}」不合法，僅接受 all/segment/host。");

@@ -732,10 +732,16 @@ async function updateRunNowPreview() {
     try {
         const result = await api.get(`/api/admin/schedule/run-preview?${params}`, { silent: true });
         const heavy = result.hostCount >= 50;
-        previewEl.textContent = heavy
+        let text = heavy
             ? `目前有 ${result.hostCount} 台主機符合條件，數量較多——請留意白天對 Sentinel 的查詢負載，` +
               '必要時改用網段範圍縮小。'
             : `目前有 ${result.hostCount} 台主機符合條件。`;
+        // Linux 事件取數尚未支援，涵蓋在範圍內但不會被查詢——不誠實講出這個數字，
+        // 使用者看到的預覽台數會跟實際查詢台數對不上（docs/FEEDBACK-12-PLAN.md §1.1）
+        if (result.linuxCount > 0) {
+            text += `其中 ${result.linuxCount} 台 Linux 主機暫不查詢（Linux 事件取數尚未支援）。`;
+        }
+        previewEl.textContent = text;
         previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
     } catch (err) {
         previewEl.textContent = err?.message || '無法預覽，請確認網段格式。';

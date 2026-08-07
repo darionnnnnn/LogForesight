@@ -62,7 +62,14 @@ function renderHeader(detail) {
         updateButton.type = 'button';
         updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';
         updateButton.textContent = '指定主機更新';
-        updateButton.addEventListener('click', () => openHostUpdateModal(detail));
+        // Linux 主機事件取數尚未支援：後端會擋截，這裡先停用避免使用者拿到
+        // 「已開始執行」的成功回饋卻什麼都沒發生（docs/FEEDBACK-12-PLAN.md §1.2）
+        if (detail.os === 'linux') {
+            updateButton.disabled = true;
+            updateButton.title = 'Linux 主機事件取數尚未支援';
+        } else {
+            updateButton.addEventListener('click', () => openHostUpdateModal(detail));
+        }
         titleRow.appendChild(updateButton);
     }
 

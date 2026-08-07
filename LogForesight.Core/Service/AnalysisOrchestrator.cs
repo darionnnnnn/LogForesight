@@ -709,6 +709,16 @@ public class AnalysisOrchestrator
             result.NetiqResult = netiqResult;
             runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日");
+
+            // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的
+            // 里程碑列表完全看不到「這次有異常」（docs/FEEDBACK-12-PLAN.md §1.3）。彙整成一條
+            // 而非逐條灌爆里程碑列表——警告數可能隨 Sentinel／主機數量成長。
+            if (netiqResult.Warnings.Count > 0)
+            {
+                var preview = string.Join("；", netiqResult.Warnings.Take(2));
+                var suffix = netiqResult.Warnings.Count > 2 ? "…（完整清單見執行詳情）" : "";
+                runRecorder.Milestone($"⚠ 本次有 {netiqResult.Warnings.Count} 項警告：{preview}{suffix}");
+            }
         }
         catch (OperationCanceledException)
         {
