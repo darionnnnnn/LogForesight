@@ -119,62 +119,88 @@ public class NetiqPipelineService
         _console.WriteLine($"\n══════════ NetIQ 機房分析（{hostList.TotalHosts} 台主機，" +
                           $"{hostList.ByServer.Count} 台 Sentinel，平行度 {maxParallel}）══════════");
 
-        // 各台 Sentinel 轄下主機互不重疊、各自獨立的 SentinelClient 連線，跨台平行不破壞
-        // 「同一台主機同一天內依序處理」的趨勢比對前提（該限制只在單一主機內成立）。
-        // MaxDegreeOfParallelism 由管理者設定，設 1 等同完全依序處理（docs/archive/FEEDBACK-3-PLAN.md #2）。
-        // 取消交給 ParallelOptions.CancellationToken 統一處理，body 內不必再自行檢查。
-        await Parallel.ForEachAsync(hostList.ByServer, new ParallelOptions
+        // AI 與搜尋脫鉤（docs/FEEDBACK-12-PLAN.md §3）：搜尋＋統計主線把需要 AI 的主機日丟進
+        // 有界佇列，單一背景消費者依序（FIFO）取出跑 AI，搜尋不再被 AI 拖住。無論下面的搜尋
+        // 迴圈正常結束還是被取消，finally 都要讓消費者知道不會再有新項目並等它收尾——
+        // 否則消費者會永遠卡在 ReadAllAsync 等下一筆，執行永遠收不了尾。
+        var aiQueue = new AiFollowupQueue<AiFollowupJob>();
+        var consumerTask = ConsumeAiQueueAsync(aiQueue, result, ct);
+
+        try
         {
-            MaxDegreeOfParallelism = maxParallel,
-            CancellationToken = ct
-        }, async (entry, serverCt) =>
+            // 各台 Sentinel 轄下主機互不重疊、各自獨立的 SentinelClient 連線，跨台平行不破壞
+            // 「同一台主機同一天內依序處理」的趨勢比對前提（該限制只在單一主機內成立）。
+            // MaxDegreeOfParallelism 由管理者設定，設 1 等同完全依序處理（docs/archive/FEEDBACK-3-PLAN.md #2）。
+            // 取消交給 ParallelOptions.CancellationToken 統一處理，body 內不必再自行檢查。
+            await Parallel.ForEachAsync(hostList.ByServer, new ParallelOptions
+            {
+                MaxDegreeOfParallelism = maxParallel,
+                CancellationToken = ct
+            }, async (entry, serverCt) =>
+            {
+                var (serverName, targets) = entry;
+
+                var sentinel = _sentinels.FindByName(serverName);
+                if (sentinel == null)
+                {
+                    _console.WriteLine($"  ⚠ Sentinel「{serverName}」設定已消失，略過（轄下 {targets.Count} 台主機本次不查詢）");
+                    result.AddWarning($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
+                    return;
+                }
+                if (!sentinel.CanDiscover)
+                {
+                    _console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");
+                    result.AddWarning($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
+                    return;
+                }
+
+                var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
+                var linuxCount = targets.Count - windowsTargets.Count;
+                if (linuxCount > 0)
+                {
+                    _console.WriteLine($"  ℹ Sentinel「{serverName}」轄下 {linuxCount} 台 Linux 主機，" +
+                                      "取數管線尚未支援，本次不查詢（見 docs/BACKLOG.md）");
+                    result.AddWarning($"Sentinel「{serverName}」的 {linuxCount} 台 Linux 主機本次不查詢（Linux 取數尚未支援）");
+                }
+                if (windowsTargets.Count == 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await RunServerAsync(sentinel, windowsTargets, trendWindowDays, result, aiQueue, serverCt);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // 失敗隔離：一台 Sentinel 整台失聯（如連線位址設定壞掉）不該讓其餘 Sentinel
+                    // 完全沒被查詢——這正是 HostListResult.Warnings 一貫的「不能靜默略過」原則
+                    Log.Warn(ex, "[{Server}] NetIQ 分析失敗，轄下主機本次未完成", serverName);
+                    _console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {windowsTargets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
+                    result.AddWarning($"Sentinel「{serverName}」整體失敗：{ex.Message}");
+                    result.AddFailed(windowsTargets.Count);
+                }
+            });
+        }
+        finally
         {
-            var (serverName, targets) = entry;
-
-            var sentinel = _sentinels.FindByName(serverName);
-            if (sentinel == null)
-            {
-                _console.WriteLine($"  ⚠ Sentinel「{serverName}」設定已消失，略過（轄下 {targets.Count} 台主機本次不查詢）");
-                result.AddWarning($"Sentinel「{serverName}」設定已消失，轄下 {targets.Count} 台主機本次不查詢");
-                return;
-            }
-            if (!sentinel.CanDiscover)
-            {
-                _console.WriteLine($"  ⚠ Sentinel「{serverName}」查詢帳密未設定，略過（轄下 {targets.Count} 台主機本次不查詢）");
-                result.AddWarning($"Sentinel「{serverName}」查詢帳密未設定，轄下 {targets.Count} 台主機本次不查詢");
-                return;
-            }
-
-            var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
-            var linuxCount = targets.Count - windowsTargets.Count;
-            if (linuxCount > 0)
-            {
-                _console.WriteLine($"  ℹ Sentinel「{serverName}」轄下 {linuxCount} 台 Linux 主機，" +
-                                  "取數管線尚未支援，本次不查詢（見 docs/BACKLOG.md）");
-                result.AddWarning($"Sentinel「{serverName}」的 {linuxCount} 台 Linux 主機本次不查詢（Linux 取數尚未支援）");
-            }
-            if (windowsTargets.Count == 0)
-            {
-                return;
-            }
-
-            try
-            {
-                await RunServerAsync(sentinel, windowsTargets, trendWindowDays, result, serverCt);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // 失敗隔離：一台 Sentinel 整台失聯（如連線位址設定壞掉）不該讓其餘 Sentinel
-                // 完全沒被查詢——這正是 HostListResult.Warnings 一貫的「不能靜默略過」原則
-                Log.Warn(ex, "[{Server}] NetIQ 分析失敗，轄下主機本次未完成", serverName);
-                _console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {windowsTargets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
-                result.AddWarning($"Sentinel「{serverName}」整體失敗：{ex.Message}");
-                result.AddFailed(windowsTargets.Count);
-            }
-        });
+            aiQueue.Complete();
+            await consumerTask;
+        }
 
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
-                          $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日 ──");
+                          $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日" +
+                          (result.AiQueued > 0
+                              ? $"、AI 分析 {result.AiCompleted} 件完成（放棄 {result.AiAbandoned}，下次執行自動補跑）"
+                              : "") +
+                          " ──");
+
+        // 消費者內部把取消當下每個放棄的工作項都優雅地記錄下來（AiAbandoned）而不拋出，
+        // 但取消發生在 AI 段仍然是「使用者按了停止」——這裡要讓 OperationCanceledException
+        // 照既有慣例繼續往外傳，AnalysisOrchestrator 的 BatchRunRecorder（using 範圍）才會把
+        // 這次執行回填成「已停止」而不是「完成」。不這樣做的話，AI 段被取消時整趟執行會被
+        // 誤報成成功完成，使用者看不出還有工作沒做完。
+        ct.ThrowIfCancellationRequested();
         return result;
     }
 
@@ -189,7 +215,8 @@ public class NetiqPipelineService
         Math.Min(backfillDays, trendWindowDays);
 
     private async Task RunServerAsync(
-        Sentinel sentinel, List<NetiqTarget> targets, int trendWindowDays, NetiqPipelineResult result, CancellationToken ct)
+        Sentinel sentinel, List<NetiqTarget> targets, int trendWindowDays, NetiqPipelineResult result,
+        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
     {
         _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 Windows 主機");
 
@@ -237,14 +264,14 @@ public class NetiqPipelineService
 
             foreach (var batch in hostsNeedingDate.Chunk(IpBatchSize))
             {
-                await RunBatchDayAsync(client, sentinel.Name, batch, date, trendWindowDays, result, ct);
+                await RunBatchDayAsync(client, sentinel.Name, batch, date, trendWindowDays, result, aiQueue, ct);
             }
         }
     }
 
     private async Task RunBatchDayAsync(
         ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date,
-        int trendWindowDays, NetiqPipelineResult result, CancellationToken ct)
+        int trendWindowDays, NetiqPipelineResult result, AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
     {
         var ips = batch.Select(p => p.Target.IpAddress).ToList();
         // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient；用 DateTimeOffset 建構子
@@ -304,11 +331,11 @@ public class NetiqPipelineService
 
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,
-                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName);
+                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName, aiQueue, ct);
 
-            // 主機之間讓出執行緒（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計模式（AI 未設定）下
-            // AnalyzeDayAsync 幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒
-            // 佔到整批 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
+            // 主機之間讓出執行緒（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
+            // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
+            // 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
             // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
             // 分析時間可以忽略。
             await Task.Yield();
@@ -320,15 +347,24 @@ public class NetiqPipelineService
         }
     }
 
+    /// <summary>
+    /// 統計段（docs/FEEDBACK-12-PLAN.md §3.4）：聚合/規則/趨勢/關聯計算完立刻寫入，不等 AI——
+    /// 這是本輪脫鉤的核心，NetIQ 搜尋不再因為 AI 拖住下一個日期。需要 AI 時把工作項連同
+    /// 這裡建立的 <see cref="LogAnalysisService"/> 實例（AI 段要用同一個 historyService/
+    /// reportService/serverDescription 綁定）一起丟進 <paramref name="aiQueue"/>，
+    /// 由 <see cref="ConsumeAiQueueAsync"/> 背景消化。
+    /// </summary>
     private async Task AnalyzeHostDayAsync(
         HostPlan plan, DateTime date, List<EventLogEntryData> events, bool dataIncomplete,
-        string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName)
+        string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName,
+        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
     {
         var target = plan.Target;
 
         // 每台主機各自一個 LogAnalysisService 實例：historyService（owner-host 隔離）與
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
-        // 全部共用既有實例，不重複建構
+        // 全部共用既有實例，不重複建構。這個實例會被 AiWorkItem 需要 AI 時一併帶進佇列，
+        // AI 段用同一個實例呼叫 CompleteAiAsync（見下方 AiFollowupJob）。
         var analysisService = new LogAnalysisService(
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId);
@@ -341,20 +377,24 @@ public class NetiqPipelineService
             // （docs/BACKLOG.md 未決事項 #3，留待試點核對），v1 誠實的作法是不宣稱
             // 「已檢查且無異常」——channels=null 时 UncoveredChecks 不會列出這兩個頻道，
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
-            var record = await analysisService.AnalyzeDayAsync(
+            var (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
-                securityLogAvailable: true, channels: null);
+                securityLogAvailable: true, channels: null, ct);
+
+            plan.Store.Append(record);
 
             result.AddAnalyzed();
             _runRecorder.RecordDayAnalyzed();
 
-            // 問題案件批次逐日掛接、風險 log 暫存、AI 呼叫計數：與本機路徑同一個失敗邊界哲學，
-            // 任一步失敗只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）
+            // 問題案件批次逐日掛接、風險 log 暫存：與本機路徑同一個失敗邊界哲學，任一步失敗
+            // 只記警告，不讓這台主機這天的分析結果作廢（見 HostDayPostProcessor）。兩者只依賴
+            // TopIssues 與 events，AI 不會改動這兩者，所以留在統計段——不必等 AI 完成才能做。
+            // RecordAiCallIfApplicable 移到 ConsumeAiQueueAsync：AI 呼叫本身發生在 AI 段，
+            // 計數要跟著移動，否則執行監控的「AI 呼叫」統計會統計到還沒真正發生的事。
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
-            HostDayPostProcessor.RecordAiCallIfApplicable(_runRecorder, _useAi, record);
 
             // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
             // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
@@ -366,8 +406,22 @@ public class NetiqPipelineService
                 _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
             }
 
-            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
-                              (record.ReportFile != null ? $" → {record.ReportFile}" : ""));
+            if (workItem != null)
+            {
+                result.AddAiQueued();
+                _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成，AI 分析排隊中");
+                // 佇列已滿時在這裡背壓等待（docs/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
+                // 讓搜尋主線自然暫停，不是無限堆積記憶體
+                await aiQueue.EnqueueAsync(new AiFollowupJob(analysisService, plan, date, sentinelName, workItem), ct);
+            }
+            else
+            {
+                _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
+                                  (record.ReportFile != null ? $" → {record.ReportFile}" : ""));
+            }
+
+            // 統計完成即算 done，AI 不在內（docs/FEEDBACK-12-PLAN.md §3.7）：進度條分子分母
+            // 只反映搜尋+統計的進度，不會被 AI 卡住不動
             _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
         }
         catch (Exception ex)
@@ -379,6 +433,88 @@ public class NetiqPipelineService
             _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
             // 刻意不寫入歷史：下次執行的缺漏日判定（HasRecord）會自動把這天當缺漏重新處理，
             // 與本機模式的既有回補機制同一套邏輯，不需要另外設計重試旗標
+        }
+    }
+
+    /// <summary>
+    /// AI 待處理佇列的工作項（docs/FEEDBACK-12-PLAN.md §3.4）：帶著統計段已建好的
+    /// <see cref="LogAnalysisService"/> 實例（AI 段要用同一個 historyService/reportService
+    /// 綁定重讀歷史）與寫回目的地（<see cref="HostPlan.Store"/>）。<see cref="AiWorkItem"/>
+    /// 本身只是「這個主機日需要 AI 分析的輸入」，這裡再包一層 pipeline 才知道的路由資訊。
+    /// </summary>
+    private sealed record AiFollowupJob(
+        LogAnalysisService AnalysisService, HostPlan Plan, DateTime Date, string SentinelName, AiWorkItem WorkItem);
+
+    /// <summary>
+    /// AI 段的單一背景消費者（docs/FEEDBACK-12-PLAN.md §3.4）：依 FIFO 順序取出工作項，
+    /// 逐一呼叫 <see cref="LogAnalysisService.CompleteAiAsync"/> 並用
+    /// <see cref="IAnalysisRecordStore.AttachAiResult"/> 寫回——單一消費者天然序列化，
+    /// 保證同一台主機的日期依入列順序處理，讓隔日 prompt 引用前一天 AI 摘要的語意成立。
+    ///
+    /// 讀取用 <see cref="CancellationToken.None"/>：即使執行被取消，仍要把佇列裡已經在途的
+    /// 項目逐一讀出並記為放棄（而不是讓 ReadAllAsync 本身因取消直接拋出、佇列裡剩下的項目
+    /// 完全沒有機會被記錄）。是否放棄由迴圈內自行檢查 <paramref name="ct"/> 決定。
+    /// </summary>
+    private async Task ConsumeAiQueueAsync(AiFollowupQueue<AiFollowupJob> queue, NetiqPipelineResult result, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var job in queue.ReadAllAsync(CancellationToken.None))
+            {
+                var ip = job.Plan.Target.IpAddress;
+
+                if (ct.IsCancellationRequested)
+                {
+                    // 執行被取消：不再啟動新的 AI 呼叫。統計紀錄已完整寫入，AiPending 維持
+                    // true，下次執行由孤兒補跑機制自動接手（§3.10），這裡不需要做任何補救
+                    result.AddAiAbandoned();
+                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} " +
+                                      "執行已取消，AI 分析待下次執行補跑（統計紀錄已完整寫入）");
+                    continue;
+                }
+
+                try
+                {
+                    var outcome = await job.AnalysisService.CompleteAiAsync(job.WorkItem, ct);
+                    job.Plan.Store.AttachAiResult(job.Date, outcome);
+
+                    // 與統計段同一個判準（原 HostDayPostProcessor.RecordAiCallIfApplicable），
+                    // 只是移到 AI 呼叫真正發生的這裡——_useAi 在此必為 true（能入列就代表
+                    // BuildStatisticalRecordAsync 判定 needsAi，那必然蘊含 useAi 全域開啟）
+                    if (outcome.AiAnalyzed || outcome.RiskLevel != RiskLevels.Low)
+                    {
+                        _runRecorder.RecordAiCall(outcome.AiAnalyzed);
+                    }
+
+                    result.AddAiCompleted();
+                    _console.WriteLine($"  [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} AI 分析完成，" +
+                                      $"風險【{outcome.RiskLevel}】" + (outcome.ReportFile != null ? $" → {outcome.ReportFile}" : ""));
+                }
+                catch (OperationCanceledException)
+                {
+                    result.AddAiAbandoned();
+                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} " +
+                                      "AI 分析中途取消，待下次執行補跑（統計紀錄已完整寫入）");
+                }
+                catch (Exception ex)
+                {
+                    // 與統計段同一個失敗邊界哲學：AI 段任何一步意外失敗都不該讓其餘排隊項目
+                    // 停擺——已寫入的統計紀錄維持 AiPending=true，下次執行由孤兒補跑機制接手
+                    result.AddAiAbandoned();
+                    Log.Warn(ex, "[{Server}] [{Ip}] {Date} AI 分析失敗", job.SentinelName, ip, job.Date);
+                    _console.WriteLine($"  ✗ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} AI 分析失敗：{ex.Message}" +
+                                      "（統計紀錄已完整寫入，下次執行自動重試 AI 段）");
+                }
+
+                // 搜尋全部完成、佇列還有件時，這裡接手成為使用者看到的進度（docs/FEEDBACK-12-PLAN.md §3.7）
+                _progress?.Report("netiq-ai", result.AiCompleted + result.AiAbandoned, result.AiQueued);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 安全網：消費者本身不該拋出未處理例外——RunAsync 用 finally await 這個 Task，
+            // 未預期的例外會在那裡重新拋出並蓋掉原本的錯誤（例如取消），這裡先攔下記錄
+            Log.Error(ex, "NetIQ AI 消費者迴圈意外中止");
         }
     }
 
@@ -398,6 +534,9 @@ public sealed class NetiqPipelineResult
     private int _hostDaysAnalyzed;
     private int _hostsFailed;
     private int _hostDaysTotal;
+    private int _aiQueued;
+    private int _aiCompleted;
+    private int _aiAbandoned;
     private readonly List<string> _warnings = new();
 
     /// <summary>今日已有分析紀錄、本次跳過的主機數（當日續跑的核心：不重複分析）</summary>
@@ -422,6 +561,18 @@ public sealed class NetiqPipelineResult
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
     public IReadOnlyList<string> Warnings => _warnings;
 
+    /// <summary>本次排進 AI 待處理佇列的主機日數（docs/FEEDBACK-12-PLAN.md §3.4）——
+    /// 統計段判定需要 AI 就算一件，不論最後是否成功完成</summary>
+    public int AiQueued => _aiQueued;
+
+    /// <summary>AI 段成功跑完並附掛結果的主機日數（含 AI 呼叫本身失敗但仍完成降級寫回的情況——
+    /// 「完成」指的是這件工作項有跑到底，不是 AI 一定成功）</summary>
+    public int AiCompleted => _aiCompleted;
+
+    /// <summary>本次執行未能跑完 AI 段的主機日數（執行被取消，或 AI 段本身意外拋出未預期例外）：
+    /// 統計紀錄已完整寫入，只是 AiPending 維持 true，下次執行由孤兒補跑機制自動接手（§3.10）</summary>
+    public int AiAbandoned => _aiAbandoned;
+
     internal void AddSkipped() => Interlocked.Increment(ref _hostsSkippedUpToDate);
 
     internal void AddAnalyzed() => Interlocked.Increment(ref _hostDaysAnalyzed);
@@ -429,6 +580,12 @@ public sealed class NetiqPipelineResult
     internal void AddFailed(int count = 1) => Interlocked.Add(ref _hostsFailed, count);
 
     internal void AddToTotal(int count) => Interlocked.Add(ref _hostDaysTotal, count);
+
+    internal void AddAiQueued() => Interlocked.Increment(ref _aiQueued);
+
+    internal void AddAiCompleted() => Interlocked.Increment(ref _aiCompleted);
+
+    internal void AddAiAbandoned() => Interlocked.Increment(ref _aiAbandoned);
 
     internal void AddWarning(string message)
     {
