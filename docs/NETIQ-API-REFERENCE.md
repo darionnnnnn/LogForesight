@@ -170,6 +170,35 @@ job 生命週期，以 `SentinelClient.RawGetAsync` 取得）。
 `SentinelFieldMap`（設定可覆寫的字典，per-server 覆寫保留為保險）承載上表對應，`--sample-ip`
 一類的驗證查詢輸出可直接核對此表是否仍成立。
 
+## 4a. 欄位對應（Linux syslog，診斷輪 A 實證，docs/FEEDBACK-12-PLAN.md §4.0）
+
+**輪 A——2026-08-07 執行，Sentinel「118_linux」，樣本 IP 10.216.45.101。實證與定案**
+（欄位主形狀已定案，filter 內容子句與 `sev` 門檻仍待輪 B）：
+
+| 語意 | 欄位 | 實證依據 | 定案 |
+|---|---|---|---|
+| program | `sp` | 每筆事件帶 `sp=systemd`／`NetworkManager`／`kernel`；`msg` 也以 `program:` 或 `program[pid]:` 前綴開頭 | **`Program = sp`**；`msg` 前綴解析留作 `sp` 缺席時的 fallback |
+| 主機歸屬鍵 | `repip` | 步驟 8 `repip:10.216.45.101` found=15576（近 24h） | 與 Windows 同為 `repip`，`BuildIpClause` 直接重用，不需要 Linux 專用版本 |
+| 主機名 | `sn` | `sn=stkomsdb1`／`VM-NATFA02`（回報主機自身名） | 沿用，`DisplayName` 回填照舊 |
+| 正規化事件名 | `evt` | 值恆為樣板字串 `"NetIQ Universal Event {program} Event"`，資訊量＝program 本身，無正規化語意 | **不使用**；seed 的 `EventNamePattern` 定案維持留空（Web 端仍可維護，等未來接到有正規化 collector 的環境再啟用） |
+| collector 形態 | `pn`／`agent`／`port`／`rt2` | 恆為 `"NetIQ Universal Event"`／`"Full Text Parser"`；**`sun`／`sip`／`dhn`／`obssvcname`／`rv40` 全部不存在** | 泛用 syslog collector＋全文解析，`msg` 是未結構化原始 syslog 行；4C 的帳號級關聯只能靠 `msg` 文字解析（見 docs/LINUX-RULES.md「關聯層」） |
+| facility | `rv150` | `rv150=DAEMON`／`KERNEL`（大寫 facility——同名欄位在 Windows 上是頻道名） | 投影帶回但第一版不參與比對；`LogName` 仍固定 `"Linux"` |
+| 時間 | `dt` | ISO-8601 UTC（`estz=Asia/Taipei` 佐證時區基準） | 與 Windows 同一條解析路徑 |
+| 量級 | `sev` | 全站 9.46M 筆/24h；樣本主機 15,576 筆/24h（多為 kernel 分割區雜訊）；`sev:[3 TO 5]` 全站僅 2,384 筆/24h；樣本三筆皆 `sev=1`，**含 NetworkManager `<warn>` 訊息** | generic 高嚴重度子句極便宜；**`sev`↔syslog priority 對應存疑**（warn 訊息落在 sev=1），待輪 B 定案；`sp:kernel` 整拉有單 job 100k 截斷風險（樣本主機一台就 1.5 萬/日），filter 需混合下推 |
+| Windows 事件 | `rv40` | 步驟 7 `rv40:(4624 OR 4625)` found=0 | 純 Linux Sentinel，證實「同台不混平台」環境事實 |
+| ESM 目錄 | — | 步驟 6 驗證被拒（與 Windows 那台相同） | 主機探索照舊走事件投影 distinct 備案 |
+| 批次/分頁 | — | 步驟 4：100 個 IP 子句接受（~1.7s）；步驟 3：pgsize 1000 於 833ms | 批次機制照 Windows 沿用，上限無虞 |
+
+**輪 B——待使用者執行（4A 的診斷強化，見「診斷分頁」一節）**，逐項對應 4B 的未決點：
+`sp` 查詢行為（term／大小寫／前綴萬用字元）、`msg` 片語查詢行為、`sev` 0~5 分佈、
+`sev=2`／`sev:[3 TO 5]` 樣本全文、17 條種子 program 的量級、`sshd` 事件樣本全文
+（定案 4C 的帳號/IP 解析格式與 seed v5 的 `MessagePatterns` 校正）。
+
+**診斷分頁（`NetiqProbeRunner`）Linux 深掘步驟（2026-08-07，docs/FEEDBACK-12-PLAN.md §4.1）**：
+步驟 8 樣本數 3→10＋欄位名聯集；新增 8b（`msg` 全文不截斷）、8c（`sp` 查詢行為）、
+8d（`sev` 分佈＋樣本全文）、8e（種子 program 量級）、8f（`sshd` 樣本全文），皆掛在
+「有填 Linux 樣本 IP」同一個開關下，是本節輪 B 資料的直接來源。
+
 ## 5. 查詢 payload（`SentinelQueryBuilder.BuildWindowsFilter`）
 
 ```jsonc

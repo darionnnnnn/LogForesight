@@ -1035,6 +1035,15 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
+- **「AI 分析中」徽章（2026-08-07，docs/FEEDBACK-12-PLAN.md §3.5）**：NetIQ pipeline 搜尋與
+  AI 判讀脫鉤後（見 docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節），統計已寫入、
+  AI 段還在排隊或執行中的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
+  「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
+  兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
+- **問題列 Source/EventId 顯示（2026-08-07，docs/FEEDBACK-12-PLAN.md §4.3）**：Linux 事件沒有
+  EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 下拉選單一律改顯示
+  `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
+  沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
 - **詢問 AI 對話區塊（2026-07-27，實驗性精簡版）**：報告全文卡之上，AI 可用且當日有重點問題才顯示。
   範圍鎖定單一問題（下拉選擇，未選擇時輸入停用；換選即清空對話；**下拉只列目前嚴重度篩選後
   仍可見的問題**，篩選切換即連動——docs/archive/HISTORY.md #4）、10 輪上限**伺服器端強制**、
@@ -1105,6 +1114,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   LocalOnly、NetIQ 主機走 NetiqHosts 單台。後端先驗證主機目前確實在「會被查詢」的清單內
   （Pollable——停用／待歸屬／IP 衝突／所屬 Sentinel 停用都會被 orchestrator 靜默濾掉，
   預覽顯示「1 台」會是假象），不符合時拒絕並給出具體原因。
+  **Linux 主機過渡期擋截（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.2，待批 4B 落地即可拆除）**：
+  `HostDetail.Os === 'linux'` 時按鈕整顆 `disabled` 並附 tooltip 說明——Sentinel 搜尋還沒有
+  Linux 取數分支，讓使用者按下去空等一輪比直接說明白更浪費時間。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
 
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
@@ -1372,6 +1384,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   設計與退路詳見 docs/NETIQ-API-REFERENCE.md §3.5。
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
+  另有「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
+  **上限收斂為 3**（2026-08-07，docs/FEEDBACK-12-PLAN.md §二）：表單 `max="3"`＋後端
+  `[Range(1, NetiqOptions.MaxParallelServersLimit)]` 雙重把關，避免無上限地並行對多台
+  Sentinel 開查詢造成 server 端負擔失控；既有存值超過上限時讀取自動夾住（不擋存檔，
+  只在下次讀取時靜默收斂並記錄），不需要遷移。
   取代原本寫死在批次 appsettings.json 的 `NetIq` 區段（已整段移除，含 `Servers` 種子——全新環境
   直接在本頁新增 Sentinel，`SentinelSeeder` 已退役）。原本另有 `SampleFetchMode`（範例訊息 Q2
   查詢範圍），2026-07-29 隨 Q2 取消一併退役（msg 已直接投影在 Q1 內，設定失去所有行為消費端，
@@ -1427,6 +1444,13 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
   probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
   需 `Maintain`、寫稽核 `netiq_probe_run`（帳密未設定的 Sentinel 拒絕啟動）。
+  **Linux 深掘擴充（2026-08-07，docs/FEEDBACK-12-PLAN.md §4.1）**：步驟 8（Linux 主機樣本）
+  樣本數 3→10，命中時追加「欄位名聯集」彙總行；新增 8b（同批樣本的 `msg` 全文另行傾印，
+  不截斷，供規則的訊息子字串校正）、8c（`sp` 查詢行為實證：term／大小寫／前綴萬用字元）、
+  8d（`sev` 0~5 分佈逐值 found，另取 `sev:2`／`sev:[3 TO 5]` 樣本 msg 全文）、8e（種子 program
+  量級，清單現取自規則表不硬編）、8f（`sshd` 近 7 天樣本 msg 全文，查無時退路 `msg:sshd`）——
+  6 個新段落一律掛在「有填 Linux 樣本 IP」同一個開關下，未填時各印一行「略過」，
+  不稀釋純 Windows 環境的既有 13 步輸出（逐字不變，契約不破）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`
   （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁，2026-07-31）
@@ -1523,7 +1547,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。窗口 End 到點時排程引擎
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。**Linux 台數過渡期分開
+  回報（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.1，待批 4B 落地即可拆除）**：Sentinel 搜尋
+  尚未有 Linux 取數分支，run-preview 台數改拆 `LinuxCount`，範圍含 Linux 主機時額外附一行
+  「，其中 M 台 Linux 主機暫不查詢」，讓「這次要跑的台數」與「其中真的會查到資料的台數」
+  分得清楚。窗口 End 到點時排程引擎
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
@@ -1536,6 +1564,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
+  **`netiq-ai` phase（2026-08-07，docs/FEEDBACK-12-PLAN.md §3.7）**：NetIQ 搜尋與 AI 判讀脫鉤
+  後（見 docs/DETECTION-SPEC.md），搜尋段完成、AI 佇列仍在背景消費時進度條切換到這個新
+  phase，文字「AI 白話分析補寫中　x / y 件」（單位「件」，不是「主機日」——`DashboardController`
+  的 `UnitText` 與前端 `PROGRESS_PHASE_UNIT` map 對應這個 phase）。執行完成的里程碑同輪加註
+  AI 統計（`AiQueued`/`AiCompleted`/`AiAbandoned`，僅 `AiQueued > 0` 時顯示，取消時
+  `AiAbandoned` 讓「AI 還沒補完就被停止」這件事看得見，不是默默消失）。
+  **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
+  過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
+  「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
 - 總表（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
   單日主機明細（**點日期列就地展開**該天逐主機狀態，§2 回饋第九輪——懶載入 `onRowExpand`，
   各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面最下方的下鑽卡）、

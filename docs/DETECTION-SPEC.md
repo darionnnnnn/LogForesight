@@ -233,7 +233,7 @@ docs/archive/HISTORY.md #1）。
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
-#### Linux syslog（seed v4，2026-07-28 新增；⏸ 規則面已就緒，取數管線未完成）
+#### Linux syslog（seed v4，2026-07-28 新增；2026-08-07 起規則面＋事件模型＋簽章聚合已就緒，Sentinel 取數分支待輪 B 診斷資料）
 
 Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
 Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
@@ -266,16 +266,28 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）都已完成；
-> 但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
-> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
+> **目前狀態（2026-08-07，回饋第十二輪批 4A）**：規則模型、種子、驗證、Web 維護介面（規則頁
+> 的「Linux規則」分頁），以及**事件模型與簽章聚合**（`EventKey` 五元組分組鍵、
+> `LogAggregator.ClassifyLinux`、`IssueSignatureKey` 相容擴充）都已完成並有專屬測試覆蓋
+> （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。仍待完成的是**從 Sentinel 實際取得
+> Linux 事件的搜尋分支**（`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`
+> 的 Linux 分支），這部分需要一輪額外的診斷資料（`sp` 查詢行為、`sev` 分佈、program 量級、
+> sshd 樣本正則）才能定案 filter 子句與門檻，卡在使用者執行 NetIQ 維護頁「診斷」分頁的 probe
+> 並貼回結果——上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
+> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，也已能正確聚合分類 Linux 事件，但
+> Sentinel 搜尋還不會實際把 Linux 事件送進分析管線（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
 > 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
-> 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
-> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 NetIQ 維護頁「診斷」分頁的 probe 即可定案欄位形狀。
-> 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
+> 落在 Sentinel 層級而非逐事件判別）。
 >
-> **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
-> 不讓人以為有看過。
+> **五層偵測對 Linux 主機的適用性**（Sentinel 取數分支落地後即可生效）：
+>
+> | 層 | 適用 Linux？ | 說明 |
+> |---|---|---|
+> | 規則層 | ✓ | `KnownIssueCatalog.ClassifyLinux`，program＋訊息子字串比對 |
+> | 趨勢層 | ✓ | `TrendAnalyzer.SameIssue` 五元組比對，隔離「同 program 不同規則」 |
+> | 慢速趨勢層 | ✓ | `SlowTrendAnalyzer` 同上；`ChannelCoverage.WasRead("Linux")` 恆真 |
+> | 關聯層 | ✗（誠實申報「不適用」，非「還沒做完」） | `CorrelationAnalyzer` 目前只認 Windows Event ID 群組，Linux 主機短路跳過並在 `UncoveredChecks` 明講；SSH 攻擊鏈關聯是獨立規劃的 §4.5（4C），需輪 B 的 sshd 樣本正則定案，尚未實作 |
+> | AI 判讀層 | ✓ | 與平台無關，餵給 AI 的是聚合後的統計摘要，Linux 主機的規則/趨勢/慢速趨勢結果一樣能被翻譯成白話 |
 
 ### 給 AI 判讀的輔助資訊（除了事件本身）
 
@@ -378,6 +390,42 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
     把 prompt 對半切的做法則不採用：跨訊號關聯（如新服務安裝＋服務崩潰＋帳號建立）
     會被切斷，還要合併兩份可能矛盾的結論。
 
+### NetIQ 搜尋與 AI 判讀脫鉤（兩階段模型，2026-08-07 起）
+
+多台 Sentinel 併行搜尋時，若每個主機日都要等 AI 判讀完才進下一個，AI 呼叫的延遲會直接拖慢
+整條搜尋主線——這正是回饋第十二輪的問題 2。`NetiqPipelineService` 因此把每個主機日拆成兩段：
+
+1. **統計段**（`LogAnalysisService.BuildStatisticalRecordAsync`）：聚合、規則分類、趨勢／慢速
+   趨勢／關聯比對全部是確定性計算，算完立刻寫入紀錄，不等 AI。需要 AI 的日子先寫入暫代內容
+   （Headline/Summary 顯示「統計已完成，AI 分析排隊中」），並標記 `AiPending = true`。
+2. **AI 段**（`LogAnalysisService.CompleteAiAsync`）：前置掃描＋主分析＋深入分析報告，交給
+   `AiFollowupQueue`（bounded channel）背景消費——搜尋主線把工作丟進佇列就繼續處理下一個
+   主機日，不等待。單一背景消費者依序處理，`AttachAiResult` 完成後覆寫暫代欄位（含抽出欄
+   `RiskLevel` 同步）並把 `AiPending` 改回 `false`。
+
+**`AiPending` 三態**（`DailyAnalysisRecord`）：
+- `AiAnalyzed=false` 且 `AiPending=false`：AI 判定不需要（低風險日）或已嘗試但失敗——既有的
+  「統計模式紀錄」語意，行為不變。
+- `AiPending=true`：統計段已寫入，AI 段還在排隊或執行中——新增的第三態，畫面顯示「AI 分析中」
+  徽章，與「統計模式（AI 未分析）」區分。
+- `AiAnalyzed=true`：AI 段已完成並覆寫定案內容。
+
+**深析報告時機**：不需要 AI 的日子（低風險或 AI 全域關閉）統計段當下就直接產出報告；需要
+AI 的日子要等 AI 段完成才產出（暫代紀錄的 `ReportFile` 為 `null`），深析報告的內容因此只會
+在 `CompleteAiAsync` 完成後出現，不會有「報告先出但沒有 AI 內容」的中間態。
+
+**取消與補跑語意**：執行中途取消時，`AiFollowupQueue` 裡尚未處理的工作記為
+`AiAbandoned`（`NetiqPipelineResult` 的統計數字之一），已經寫入的統計紀錄維持
+`AiPending=true`，成為下次執行前的「孤兒」。下次執行時，`NetiqPipelineService` 除了掃描
+「缺漏日」，也會獨立掃描 lookback 窗口內既有的 `AiPending=true` 紀錄（與主機當天是否缺漏
+無關），包成補跑型工作（`LogAnalysisService.RetryAiAsync`）排進同一個佇列的尾端，優先序
+低於當日主線。補跑由既有紀錄（`TopIssues`/`TrendAlerts`/`CorrelationAlerts` 皆已持久化）
+重建主分析輸入，但前置掃描與深入分析報告刻意不補——兩者需要原始 log，取消當下已經回不去了。
+
+**適用範圍**：兩階段脫鉤只在 NetIQ pipeline 生效。本機分析路徑（`AnalyzeDayAsync`）評估後
+決定暫不比照拆分——單機序列執行、多個主機日之間本來就沒有並行搜尋主線可保護，脫鉤的收益
+低、佇列歸屬權（誰在程式結束前把佇列排空）的侵入性風險偏高，詳細評估見
+[docs/FEEDBACK-12-PLAN.md](docs/FEEDBACK-12-PLAN.md) §3.9。
 
 ---
 

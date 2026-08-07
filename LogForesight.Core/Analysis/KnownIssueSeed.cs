@@ -14,7 +14,7 @@ public static class KnownIssueSeed
     /// 頻道的規則（見 docs/RULES-SPEC.md 與 README「監控的危險訊號清單」）。
     /// v3（docs/archive/HISTORY.md #1，B1 三級化）：原 Severity=Critical 的 7 條規則改為
     /// High＋ElevatesDayRisk=true，行為不變（仍讓命中當天判定為高風險日），嚴重度顯示收斂為三級。
-    /// v4（docs/LINUX-RULES.md）：新增 16 條 Platform="linux" 種子規則（SSH 暴力破解、
+    /// v4（docs/LINUX-RULES.md）：新增 17 條 Platform="linux" 種子規則（SSH 暴力破解、
     /// 帳號/群組異動、auditd 滅跡、儲存/硬體/OOM、服務失敗迴圈、時間同步、cron 失敗），
     /// pattern 字串為 probe 前的通用草案，日後依真實環境輸出校正時再遞增版本。</summary>
     public const int Version = 4;
