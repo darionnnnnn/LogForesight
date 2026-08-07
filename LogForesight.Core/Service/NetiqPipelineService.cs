@@ -293,9 +293,12 @@ public class NetiqPipelineService
         foreach (var job in orphanJobs)
         {
             ct.ThrowIfCancellationRequested();
-            result.AddAiQueued();
             _console.WriteLine($"  [{sentinel.Name}] [{job.Ip}] {job.Date:yyyy-MM-dd} AiPending 孤兒補跑排隊中");
             await aiQueue.EnqueueAsync(job, ct);
+            // 計數放在 EnqueueAsync 成功之後（同 AnalyzeHostDayAsync 的理由）：取消若發生在
+            // 背壓等待中，這筆工作項並未真的進到佇列，提前計數會讓 AiQueued 與
+            // AiCompleted+AiAbandoned 永久對不上。
+            result.AddAiQueued();
         }
     }
 
@@ -399,6 +402,12 @@ public class NetiqPipelineService
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId);
 
+        // 記錄是否已成功寫入（見下方 catch(OperationCanceledException) 的判斷依據）——
+        // BuildStatisticalRecordAsync 本身被取消時 record 仍是 null，維持既有「未寫入歷史，
+        // 下次視為缺漏日重新處理」語意；record 非 null 代表 plan.Store.Append 已成功，
+        // 之後任何取消（目前唯一來源是 aiQueue.EnqueueAsync 的背壓等待）都不該被當成分析失敗。
+        DailyAnalysisRecord? record = null;
+
         try
         {
             // securityLogAvailable 固定 true、channels 固定 null：三輪 probe 已確認 Sentinel
@@ -407,7 +416,8 @@ public class NetiqPipelineService
             // （docs/BACKLOG.md 未決事項 #3，留待試點核對），v1 誠實的作法是不宣稱
             // 「已檢查且無異常」——channels=null 时 UncoveredChecks 不會列出這兩個頻道，
             // 這是已知的 v1 限制而非遺漏，待試點確認覆蓋現況後再決定要不要正式申報「不適用」。
-            var (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
+            AiWorkItem? workItem;
+            (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
 
@@ -438,12 +448,15 @@ public class NetiqPipelineService
 
             if (workItem != null)
             {
-                result.AddAiQueued();
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成，AI 分析排隊中");
                 // 佇列已滿時在這裡背壓等待（docs/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
                 // 讓搜尋主線自然暫停，不是無限堆積記憶體
                 await aiQueue.EnqueueAsync(
                     new AiFollowupJob(analysisService, plan.Store, target.IpAddress, date, sentinelName, workItem, RetryRecord: null), ct);
+                // 計數放在 EnqueueAsync 成功之後：取消若發生在背壓等待中，這筆工作項其實
+                // 沒有真的進到佇列，AddAiQueued 若在等待之前就算會與 AiCompleted+AiAbandoned
+                // 永久對不上（消費者永遠看不到這筆），netiq-ai 進度條分母也會卡住少 1 件永遠跑不完。
+                result.AddAiQueued();
             }
             else
             {
@@ -453,6 +466,17 @@ public class NetiqPipelineService
 
             // 統計完成即算 done，AI 不在內（docs/FEEDBACK-12-PLAN.md §3.7）：進度條分子分母
             // 只反映搜尋+統計的進度，不會被 AI 卡住不動
+            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+        }
+        catch (OperationCanceledException) when (record != null)
+        {
+            // 統計紀錄已成功寫入（plan.Store.Append 已跑過），取消發生在那之後——目前唯一
+            // 來源是 aiQueue.EnqueueAsync 佇列滿載時的背壓等待。這不是分析失敗，記錄本身完好、
+            // AiPending 維持 true，下次執行由孤兒補跑機制自動接手（§3.10），不能落進下面
+            // AddFailed 分支——那裡的「未寫入紀錄」對這筆而言是假的，會誤植一個其實資料完好
+            // 的主機日成失敗，讓執行監控顯示錯誤的失敗清單。
+            _console.WriteLine($"  ⚠ [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} " +
+                              "已取消排入 AI 佇列（統計紀錄已完整寫入，下次執行自動補跑）");
             _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
         }
         catch (Exception ex)

@@ -56,7 +56,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
-    private NetiqPipelineService MakePipeline(NetiqOptions? options = null)
+    private NetiqPipelineService MakePipeline(NetiqOptions? options = null, List<string>? consoleLines = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var reportSink = new FakeReportSink();
@@ -66,7 +66,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
             _backend.RecordStore(), _hosts);
-        var console = new RecordingRunConsole(new List<string>());
+        var console = new RecordingRunConsole(consoleLines ?? new List<string>());
 
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
@@ -236,5 +236,58 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         Assert.True(finalRecord.AiAnalyzed);
         Assert.Equal("補跑後的標題", finalRecord.Headline);
         Assert.Null(finalRecord.ReportFile); // 補跑不補深析報告（原始 log 不落地，見 §3.10）
+    }
+
+    /// <summary>
+    /// 體檢輪抓到的 bug（docs/FEEDBACK-12-PLAN.md §4，全案體檢）：<c>AiFollowupQueue.EnqueueAsync</c>
+    /// 若在呼叫當下 token 已被取消會立即拋出 <see cref="OperationCanceledException"/>（見
+    /// <c>AiFollowupQueueTests.取消token觸發時EnqueueAsync拋出取消例外</c>）。這個例外原本會被
+    /// <c>AnalyzeHostDayAsync</c> 最外層的 <c>catch (Exception ex)</c> 接住，誤判成「分析失敗、
+    /// 未寫入紀錄」——但這筆紀錄其實在呼叫 <c>EnqueueAsync</c> 之前就已經靠
+    /// <c>plan.Store.Append</c> 成功寫入。用第二天的假搜尋結果回呼時當場觸發取消，讓「統計段
+    /// 已完成寫入、正要排入 AI 佇列」這個時間點精準重現（比起硬撐佇列背壓等消費者時序去撞，
+    /// 這個做法不受執行緒排程與 Channel 內部消費/取消的競態影響，能穩定重現）。
+    /// 驗證取消後：主控台不會出現第二天的「分析失敗」字樣，取而代之的是「已取消排入 AI
+    /// 佇列」；第二天的統計紀錄確實寫入且 AiPending=true（下次執行交給孤兒補跑機制），
+    /// 而不是被錯誤地標記失敗、統計結果整個作廢。
+    /// </summary>
+    [Fact]
+    public async Task 取消發生在排入AI佇列當下不算分析失敗()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+
+        using var cts = new CancellationTokenSource();
+        var searchCalls = 0;
+        _client.Responder = _ =>
+        {
+            searchCalls++;
+            if (searchCalls == 2)
+            {
+                // 缺漏日按日期升冪處理，第二次查詢對應第二個（也是最後一個）缺漏日——
+                // 在這裡取消，讓該日的 BuildStatisticalRecordAsync／Store.Append 照常跑完
+                // （純同步計算，不檢查 ct），緊接著呼叫的 EnqueueAsync 才會撞見已取消的 token。
+                cts.Cancel();
+            }
+            return new SentinelSearchResult
+            {
+                Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+            };
+        };
+
+        var consoleLines = new List<string>();
+        var pipeline = MakePipeline(new NetiqOptions { BackfillDays = 2 }, consoleLines);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token));
+
+        Assert.DoesNotContain(consoleLines, l => l.Contains("分析失敗"));
+        Assert.Contains(consoleLines, l => l.Contains("已取消排入 AI 佇列"));
+
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        var cancelledDay = DateTime.Today.AddDays(-1); // 缺漏日 [Today-2, Today-1]，第二個即這天
+        var records = store.ReadRecent(cancelledDay, 2);
+        Assert.Equal(2, records.Count); // 兩天的統計段都確實寫入，取消不影響任何一天的紀錄落地
+        Assert.True(Assert.Single(records, r => r.Date.Date == cancelledDay.Date).AiPending);
     }
 }
