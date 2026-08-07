@@ -1,15 +1,21 @@
 # 排程回饋第十二輪規劃（2026-08-07）
 
-> **狀態（2026-08-07）：第 1／2／3／4A 批已全部實作完成＋全案體檢，於 `feature/feedback-12`
-> 分支逐批提交（commit `eea1e0a`~`6c45371`，見下方批次表）；1596 測試綠（基線 1543）。
-> 診斷輪 A（樣本 IP 10.216.45.101）與**輪 B（2026-08-07 第三次 probe，樣本 IP
-> 10.216.11.66）皆已執行完畢**：欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、
-> program 量級吵靜分類、collector 形態全部定案（見 §4.0 實證表）。
-> **資料閘門已全數解除（2026-08-07 第四次 probe，8g 實證完成）**：msg 片語查詢有效
-> （含斜線片語、欄位群組、吵 program＋片語組合——systemd 1.96M/日壓到 1 筆/日）、
-> 暴破訊息格式與 4C regex 已依真實樣本定案（見 §4.0 第四次 probe 表）。
-> **第 4B／4C 可以開始實作**（§4.4/§4.5 設計已全部定案）；4B 完成後才執行止血拆除（§4.6）。
-> 全案體檢額外揪出一個真實 bug 並已修復：`AiFollowupQueue.EnqueueAsync` 在取消時可能被
+> **狀態（2026-08-07）：全案（第 1／2／3／4A／4B／4C／4.6）已全部實作完成＋全案體檢＋文件
+> 同步，於 `feature/feedback-12` 分支逐批提交；1640 測試綠（基線 1543）。使用者原始指示
+> 「把所有拼圖補上，不留不實作項目」的範圍**已無殘留項目**——Linux 主機從掃描精靈納入、
+> 排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，已與 Windows 主機同一條管線走完整趟，
+> 分支待使用者實測後併 dev、再併 master（見 docs/logforesight-git-branch-workflow 慣例）。
+>
+> 診斷輪 A（樣本 IP 10.216.45.101）、輪 B（2026-08-07 第三次 probe，樣本 IP
+> 10.216.11.66）、第四次 probe（8g，msg 片語實證）**四輪皆已執行完畢並全數定案**：
+> 欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、program 量級吵靜分類、collector 形態、
+> msg 片語查詢行為、暴力破解訊息格式與 4C regex（見 §4.0 實證表）。
+> **4B（Sentinel Linux 取數分支）／4C（SSH 攻擊鏈關聯）／4.6（止血拆除＋體檢＋文件同步）
+> 皆已完成**：`SentinelFieldMap`／`SentinelEventMapper.MapLinux`／
+> `SentinelQueryBuilder.BuildLinuxFilter`／`LinuxCorrelationAnalyzer` 全數落地並有專屬測試；
+> 過渡期止血（1.1/1.2）已拆除；體檢額外揪出並修復一個真實 bug：「詢問 AI 現場取數」對 Linux
+> 主機恆用不存在的 `EventId` 欄位查詢，永遠靜默 0 筆（見 `SentinelEventFetchService.BuildQuery`）。
+> 全案體檢另揪出一個真實 bug 並已修復：`AiFollowupQueue.EnqueueAsync` 在取消時可能被
 > 誤判成「分析失敗」，實際上統計紀錄已成功寫入（見 commit `6c45371`）。
 > 對象是使用者實測後的三項回饋：
 > ①手動執行排程是否有依「同時處理幾台 Sentinel」並行、
@@ -724,29 +730,41 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 命中時 `ElevatesDayRisk` 語意比照 Windows 關聯鏈（拉高當日風險）。
 完成後把 4.3 的申報文案改為涵蓋範圍申報（見 4.3）。
 
-### 4.6 收尾：止血拆除、周邊確認、文件失準修正
+### 4.6 收尾：止血拆除、周邊確認、文件失準修正（2026-08-07 全部完成）
 
-1. **拆除 1.1/1.2**：預覽的 Linux 排除文案移除（`LinuxCount` 欄位保留但恆 0 或直接拆）、
-   `scope=host` 的 Linux 擋截移除、`host-detail.js` 按鈕恢復；1.3 的警告 milestone 保留
-   （通用機制）。
-2. **無回報告警自然痊癒確認**：Linux 主機開始被查詢後 `TouchNetiq` 生效，
-   「未回報主機」計數卡不再把 Linux 主機恆列——調查確認 `BuildSilentHosts` 無 OS 分支，
-   取數上線前 Linux 主機**現在就會**全數落入未回報（2 天 cutoff），這也是要盡快完成 4B 的理由。
-3. **體檢清單**（Linux 紀錄出現後被觸及的既有功能，逐項人工過一輪）：
-   風險日詳情頁 OS 徽章（已有 `HostOs`）、主機頁 OS 篩選、規則頁抑制主機下拉（已依平台過濾）、
-   週末體檢（純數字，通用）、案件掛接（`IssueSignatureKey` 擴鍵後 Linux 簽章各自成鍵，
-   ssh-bruteforce 與 ssh-accept 不再撞鍵——這正是 EventKey 要解的問題）、
-   詢問 AI 即時取數（`SentinelEventFetchService` 的投影欄位是否需要 Linux 分路）。
-4. **文件失準修正**（調查發現，順手歸零）：
+1. ✓ **拆除 1.1/1.2**：`ResolveScope` 回傳 tuple 拿掉 `LinuxCount`、`RunPreviewDto.LinuxCount`
+   刪除、`scope=host` 的 Linux 擋截整段移除、`runs.js`／`host-detail.js` 按鈕與文案恢復；
+   1.3 的警告 milestone 保留（通用機制）。體檢：全文 grep 確認無測試鎖定
+   `ResolveScope`/`RunPreview` 的 Linux 專屬行為，拆除後全套件 1640 測試 0 失敗。
+2. ✓ **無回報告警自然痊癒確認**：grep 確認 `BuildSilentHosts` 無 OS 分支——Linux 主機開始
+   被查詢後 `TouchNetiq` 自然生效，「未回報主機」計數卡不再恆列 Linux 主機，不需要額外程式碼。
+3. ✓ **體檢清單**（逐項獨立覆核，非僅沿用規劃文的原始判斷）：
+   - 風險日詳情頁 OS 徽章：`RecordDetailQueryService.HostOs = host?.Os`→
+     `record-detail.js` 渲染 Windows/Linux 徽章，正確。
+   - 主機頁 OS 篩選：`hosts.js` 的 `osFilter` 正確接入查詢參數，正確。
+   - 規則頁抑制主機下拉：已依規則 `Platform` 過濾，正確。
+   - 週末體檢：純數字統計，無 OS 分支，不受影響。
+   - 案件掛接：`IssueSignatureKey.For` 全站 ~15 處呼叫皆用含 `EventKey` 的多載，Linux
+     簽章各自成鍵不撞鍵，零漂移。
+   - 詢問 AI 即時取數：**體檢揪出真實 bug**——`SentinelEventFetchService` 不分 OS 一律用
+     `EventId`（`rv40`）組 filter，Linux 事件無此欄位，現場取數對 Linux 主機從未真正運作過
+     且無任何錯誤提示。抽出 `BuildQuery` 純函數，Linux 分路改用 program 子句，
+     新增 3 個測試，已修復並納入全套件驗證。
+4. ✓ **文件失準修正**（調查發現，順手歸零）：
    - ✓ `docs/BACKLOG.md:63`／`docs/LINUX-RULES.md:148`：「固定申報關聯層不適用」寫成已實作，
      實際是 P3 未做——**已隨 4A 文件同步修正**（4.3 已落地，改為現在式）。
    - ✓ `docs/RULES-SPEC.md:7`：指向已不存在的 `Service/RuleImporter.cs`——**已隨 4A 文件
      同步修正**為 `Analysis/RuleImportPlanner.cs`。
    - ✓ `KnownIssueSeed.cs:17-19`：v4 註解「16 條」→ 17 條——**已隨 4A 文件同步修正**
      （seed v5 時版本號再遞增）。
-   - `docs/NETIQ-API-REFERENCE.md` §4a：「`sun`／`sip`／`dhn`／`obssvcname`／`rv40` 全部
-     不存在」的絕對敘述失準（第二次 probe：CEF collector 路徑的事件帶 `obssvcname`＝
-     program）——改寫為 per-collector 敘述並補 CEF 形態列，**隨 4B 文件同步一併改**。
+   - ✓ `docs/NETIQ-API-REFERENCE.md` §4a：「`sun`／`sip`／`dhn`／`obssvcname`／`rv40` 全部
+     不存在」的絕對敘述失準——**已改寫為 per-collector 敘述並補 CEF 形態列**，同時整節
+     擴充為四輪 probe 的完整定案證據表。
+   - ✓ 額外發現並修正（原檢查清單未列，體檢時一併處理）：`DETECTION-SPEC.md`／
+     `LINUX-RULES.md`／`BACKLOG.md`／`WEB-SPEC.md`／`NETIQ-DISCOVERY-PLAN-2026-08-06.md`
+     共五份文件仍殘留「待輪 B」「待批 4B 落地」「只支援 Windows」等批 4B/4C 完工前的敘述，
+     一併同步至實作現況（sev→EntryType 映射表也一併修正——原表設想 syslog priority 文字，
+     四輪 probe 證實 `sev` 不可靠承載該語意，改記錄實際採用的計數用途映射）。
 
 ### 4.7 測試計畫
 
@@ -810,11 +828,11 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 | — | 4.0-A | ~~使用者執行診斷輪 A 並貼回~~ **已完成 2026-08-07**（欄位主形狀定案） | （無程式改動） | ✓ |
 | — | 4.0-B | ~~使用者執行診斷輪 B 並貼回~~ **已完成 2026-08-07（第三次 probe）**——六項證據五項定案（sp term 語意/sev 分佈與門檻/program 量級吵靜分類/collector 形態）；msg 片語為規劃缺口，補 4B.0 | （無程式改動） | ✓ |
 | 4B.0 | §4.1 追加 | ~~probe 新步驟 8g＋使用者第四次執行~~ **✓ 已完成 2026-08-07**（msg 片語全面實證，見 §4.0 第四次 probe 表） | NetiqProbeRunner | ✓ |
-| 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **無**（設計已全數定案，可實作） |
-| 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | **無**（regex 已依 8g 樣本定案，可實作） |
-| 4 | 4.6 | 止血拆除＋周邊體檢＋文件失準修正 | ScheduleController、host-detail.js、docs | 4B 完成 |
-| 4 | 4.7 | Linux 測試全套 | LogForesight.Tests | 隨各波 |
-| — | 五 | 文件七份同步 | docs/ | 隨各批 |
+| 4B | 4.4 | ~~FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5~~ **✓ 已完成 2026-08-07** | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | ✓ |
+| 4C | 4.5 | ~~SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級）~~ **✓ 已完成 2026-08-07** | CorrelationAnalyzer、KnownIssueSeed | ✓ |
+| 4 | 4.6 | ~~止血拆除＋周邊體檢＋文件失準修正~~ **✓ 已完成 2026-08-07**（體檢額外揪出並修復 `SentinelEventFetchService` 的 Linux 現場取數 bug） | ScheduleController、host-detail.js、SentinelEventFetchService、docs | ✓ |
+| 4 | 4.7 | ~~Linux 測試全套~~ **✓ 已完成**（4B/4C 共 +26 測試，全套件 1640 通過 0 失敗） | LogForesight.Tests | ✓ |
+| — | 五 | ~~文件七份同步~~ **✓ 已完成**（4A 隨批次同步；4B/4C 完工後再補一輪五份文件同步，2026-08-07） | docs/ | ✓ |
 
 ---
 
