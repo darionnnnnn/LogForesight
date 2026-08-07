@@ -54,7 +54,7 @@ public class RiskReportService
     /// <param name="activeSuppressions">本機現在生效中的抑制項目（含 Reason），用來在報告的
     /// 「已抑制的告警」區塊顯示原因；null/空清單時該區塊不輸出</param>
     public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
-        List<RuleSuppression>? activeSuppressions = null, string host = "")
+        List<RuleSuppression>? activeSuppressions = null, string host = "", CancellationToken ct = default)
     {
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
@@ -85,7 +85,7 @@ public class RiskReportService
             // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
             var outcome = group.Key == IssueCategory.Other
                 ? (record.AiAnalyzed
-                    ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription)
+                    ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription, ct)
                     : new DeepDiveOutcome(null, false, 0, categoryLogs.Count))
                 : BuildStaticOutcome(issues, categoryLogs.Count);
 
@@ -185,7 +185,8 @@ public class RiskReportService
     /// 不是整批塞入後才發現超標。問題清單與統計數字不受影響，只有佐證用的原始 log 可能被截斷。
     /// </summary>
     private async Task<DeepDiveOutcome> DeepDiveAsync(DailyAnalysisRecord record, IssueCategory category,
-        List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription)
+        List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription,
+        CancellationToken ct = default)
     {
         var head = new StringBuilder();
 
@@ -259,7 +260,7 @@ public class RiskReportService
         sb.Append(footer);
 
         var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens,
-            label: $"deepdive-{record.Date:yyyyMMdd}-{category}");
+            label: $"deepdive-{record.Date:yyyyMMdd}-{category}", ct: ct);
         return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }
 

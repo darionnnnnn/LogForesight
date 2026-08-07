@@ -56,7 +56,7 @@ internal class AnalysisPromptBuilder
     /// 前置掃描：分批請 AI 逐項篩選尾巴項目，只回報值得注意者。
     /// 批次之間彼此獨立（逐項判斷是否為雜訊不需要全局脈絡），所以可以安全拆分呼叫。
     /// </summary>
-    public async Task<ScreeningOutcome> ScreenTailAsync(DateTime date, List<LogIssueSignature> tailIssues)
+    public async Task<ScreeningOutcome> ScreenTailAsync(DateTime date, List<LogIssueSignature> tailIssues, CancellationToken ct = default)
     {
         var outcome = new ScreeningOutcome();
 
@@ -82,7 +82,7 @@ internal class AnalysisPromptBuilder
             sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），no 為上列項目編號；全部屬一般雜訊時 notable 給空陣列：");
             sb.AppendLine("""{"notable": [{"no": 1, "reason": "為何值得注意"}]}""");
 
-            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}");
+            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}", ct: ct);
             var parsed = result.Value;
 
             if (parsed == null)
