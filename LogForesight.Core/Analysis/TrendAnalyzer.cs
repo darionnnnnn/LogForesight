@@ -95,7 +95,7 @@ public static class TrendAnalyzer
                     sig.Trend = IssueTrend.New;
                     if (sig.Severity >= IssueSeverity.High && !sig.Suppressed && !channelWarmingUp)
                     {
-                        alerts.Add($"首次出現：{sig.Source} EventId {sig.EventId}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
+                        alerts.Add($"首次出現：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
                     }
                 }
             }
@@ -114,7 +114,7 @@ public static class TrendAnalyzer
                     if (!sig.Suppressed)
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                        alerts.Add($"頻率上升：{sig.Source} EventId {sig.EventId} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                        alerts.Add($"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
                     }
                 }
             }
@@ -153,8 +153,11 @@ public static class TrendAnalyzer
         return alerts;
     }
 
+    // EventKey 恆空的 Windows 事件兩邊都是 ""，這個條件對既有行為零影響；Linux 事件靠它把
+    // 「同 program 命中不同規則」（docs/FEEDBACK-12-PLAN.md §4.2）當成不同問題比對趨勢
     private static bool SameIssue(LogIssueSignature a, LogIssueSignature b) =>
-        a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId && a.EntryType == b.EntryType;
+        a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId &&
+        a.EntryType == b.EntryType && a.EventKey == b.EventKey;
 
     /// <summary>
     /// 封頂 High（docs/archive/HISTORY.md #1，B1 三級化前可升到 Critical）：

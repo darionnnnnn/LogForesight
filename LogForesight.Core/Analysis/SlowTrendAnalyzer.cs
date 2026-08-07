@@ -80,7 +80,7 @@ internal static class SlowTrendAnalyzer
             // 後者屬於 TrendAnalyzer 的 New 分支職責，兩者不重疊
             if (priorTotal > 0 && recentTotal >= MinRecentCount && recentTotal >= priorTotal * RisingFactor)
             {
-                alerts.Add($"慢速惡化：{sig.Source} EventId {sig.EventId} 近 {WindowDays} 天累計 x{recentTotal}" +
+                alerts.Add($"慢速惡化：{sig.SourceEventLabel} 近 {WindowDays} 天累計 x{recentTotal}" +
                            $"（含今日），前 {WindowDays} 天累計 x{priorTotal}");
             }
         }
@@ -91,6 +91,9 @@ internal static class SlowTrendAnalyzer
     private static int SumForSignature(List<DailyAnalysisRecord> days, LogIssueSignature sig) =>
         days.Sum(h => h.TopIssues.FirstOrDefault(i => SameIssue(i, sig))?.Count ?? 0);
 
+    // EventKey 恆空的 Windows 事件兩邊都是 ""，這個條件對既有行為零影響；Linux 事件靠它把
+    // 「同 program 命中不同規則」（docs/FEEDBACK-12-PLAN.md §4.2）當成不同問題比對趨勢
     private static bool SameIssue(LogIssueSignature a, LogIssueSignature b) =>
-        a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId && a.EntryType == b.EntryType;
+        a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId &&
+        a.EntryType == b.EntryType && a.EventKey == b.EventKey;
 }

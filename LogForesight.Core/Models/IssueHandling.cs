@@ -59,19 +59,32 @@ public static class IssueSignatureKey
     public static string For(string logName, string source, int eventId, System.Diagnostics.EventLogEntryType entryType) =>
         $"{logName}|{source}|{eventId}|{(int)entryType}";
 
-    public static string For(LogIssueSignature signature) =>
-        For(signature.LogName, signature.Source, signature.EventId, signature.EntryType);
+    /// <summary>
+    /// Linux 簽章的第五段（docs/FEEDBACK-12-PLAN.md §4.2）：<see cref="LogIssueSignature.EventKey"/>
+    /// 非空時附加尾段，用來把「同一個 program 命中不同規則」（如 sshd 底下的 ssh-bruteforce 與
+    /// ssh-accept）分成不同的處理狀態/案件鍵。Windows 事件與未命中規則的 Linux 事件
+    /// EventKey 恆空，這裡直接回傳既有的四段鍵，字串一字不變、零遷移。
+    ///
+    /// 只有這個多載會用到 EventKey——<see cref="For(string,string,int,System.Diagnostics.EventLogEntryType)"/>
+    /// 4 段版仍保留給 lf_top_issues 聚合查詢用（該表沒有存 EventKey 抽出欄，這是刻意不擴充
+    /// schema 的 v1 限制：Linux 的「依問題」跨日聚合會把同 program 的不同規則併成一組，
+    /// 待有真實 Linux 流量再評估要不要加欄位）。
+    /// </summary>
+    public static string For(LogIssueSignature signature)
+    {
+        var baseKey = For(signature.LogName, signature.Source, signature.EventId, signature.EntryType);
+        return signature.EventKey.Length > 0 ? $"{baseKey}|{signature.EventKey}" : baseKey;
+    }
 
     /// <summary>
     /// 反解出 (Source, EventId)——「依問題」分組用的鍵（docs/archive/FEEDBACK-11-PLAN.md §7）。
-    /// 格式不符時回 null（防禦：舊資料或人為改壞的 blob 不該讓整頁 500）。
-    /// 與 <see cref="For(string,string,int,System.Diagnostics.EventLogEntryType)"/> 對稱，
-    /// 分隔字元的定義因此只有這一份。
+    /// 格式不符時回 null（防禦：舊資料或人為改壞的 blob 不該讓整頁 500）。接受 4 段（Windows／
+    /// 未命中規則的 Linux）或 5 段（命中規則的 Linux，多出的 EventKey 尾段這裡用不到、忽略）。
     /// </summary>
     public static (string Source, int EventId)? TryParseSignature(string? key)
     {
         var parts = key?.Split('|');
-        if (parts is not { Length: 4 } || !int.TryParse(parts[2], out var eventId)) return null;
+        if (parts is not { Length: 4 or 5 } || !int.TryParse(parts[2], out var eventId)) return null;
 
         return (parts[1], eventId);
     }

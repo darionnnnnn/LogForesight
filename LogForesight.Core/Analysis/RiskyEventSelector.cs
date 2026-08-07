@@ -45,8 +45,12 @@ public static class RiskyEventSelector
             .ToList();
         if (qualifying.Count == 0) return new List<RiskyEvent>();
 
+        // 分組鍵與 LogAggregator.Aggregate 用同一套（含 EventKey）：只看 (LogName, Source,
+        // EventId, EntryType) 四元組的話，Linux「同 program 命中不同規則」（如 sshd 底下的
+        // ssh-bruteforce 與 ssh-accept）會反查到同一批原始事件，兩個簽章各自把對方的事件也
+        // 撈進自己的風險 log 暫存——EventKey 恆空的 Windows 事件不受影響。
         var bySignature = logs
-            .GroupBy(l => (l.LogName, l.Source, l.EventId, l.EntryType))
+            .GroupBy(LogAggregator.GroupKeyFor)
             .ToDictionary(g => g.Key, g => g.OrderBy(l => l.TimeGenerated).ToList());
 
         var result = new List<RiskyEvent>();
@@ -54,7 +58,7 @@ public static class RiskyEventSelector
 
         foreach (var sig in qualifying)
         {
-            if (!bySignature.TryGetValue((sig.LogName, sig.Source, sig.EventId, sig.EntryType), out var entries)) continue;
+            if (!bySignature.TryGetValue((sig.LogName, sig.Source, sig.EventId, sig.EntryType, sig.EventKey), out var entries)) continue;
 
             foreach (var e in PickHeadAndTail(entries, MaxPerSignature))
             {
