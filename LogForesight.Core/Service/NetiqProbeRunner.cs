@@ -226,6 +226,7 @@ public static class NetiqProbeRunner
                 console.WriteLine("   [8d] sev 分佈：略過（未提供樣本 IP）");
                 console.WriteLine("   [8e] 種子 program 量級：略過（未提供樣本 IP）");
                 console.WriteLine("   [8f] sshd 樣本：略過（未提供樣本 IP）");
+                console.WriteLine("   [8g] msg 片語查詢行為：略過（未提供樣本 IP）");
             }
             else
             {
@@ -340,6 +341,37 @@ public static class NetiqProbeRunner
                     {
                         var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
                         console.WriteLine($"     樣本 #{++i} msg 全文：{msg}");
+                    }
+                });
+
+                ok &= await Step(console, "8g", "msg 片語查詢行為（輪 B 後追加，§4.1 4B.0）——片語有效性／tokenization 邊界／群組語法＋sshd 暴破樣本", async () =>
+                {
+                    foreach (var probe in new[] { "msg:\"Failed password\"", "msg:\"authentication failure\"", "msg:\"I/O error\"", "msg:\"oom-kill\"", "msg:oom" })
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1), ct);
+                        console.WriteLine($"     {probe}：found={result.Found}");
+                    }
+
+                    var groupResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")", now.AddDays(-7), now, MaxResults: 1), ct);
+                    console.WriteLine($"     sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")：found={groupResult.Found}");
+
+                    var systemdResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:systemd AND msg:\"entered failed state\"", now.AddHours(-24), now, MaxResults: 1), ct);
+                    console.WriteLine($"     sp:systemd AND msg:\"entered failed state\"：found={systemdResult.Found}");
+
+                    var bruteforceResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:sshd AND msg:\"Failed password\"", now.AddDays(-7), now, MaxResults: 5), ct);
+                    console.WriteLine($"     sp:sshd AND msg:\"Failed password\"（近 7 天）found={bruteforceResult.Found}，取回={bruteforceResult.Events.Count} 筆");
+                    var j = 0;
+                    foreach (var evt in bruteforceResult.Events)
+                    {
+                        var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
+                        console.WriteLine($"     樣本 #{++j} msg 全文：{msg}");
+                    }
+                    if (bruteforceResult.Events.Count == 0)
+                    {
+                        console.WriteLine("     ⚠ 近 7 天查無 Failed password 事件，可自行放大時間範圍重跑本指令核對。");
                     }
                 });
             }

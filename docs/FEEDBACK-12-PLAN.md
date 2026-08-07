@@ -6,8 +6,9 @@
 > 10.216.11.66）皆已執行完畢**：欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、
 > program 量級吵靜分類、collector 形態全部定案（見 §4.0 實證表）。
 > **第 4B／4C 尚未實作，最後一個資料閘門是 4B.0**：輪 B 揭露原 §4.1 設計漏掉「msg 片語
-> 查詢行為」的對應步驟，需補 probe 新步驟 8g（§4.1 追加項）並請使用者第四次執行貼回，
-> 定案吵 program 的 msg 子句與 4C regex 後，4B/4C 即可全面實作；4B 完成後才執行止血拆除（§4.6）。
+> 查詢行為」的對應步驟，**新步驟 8g 已實作完成**（§4.1 追加項），待使用者第四次執行
+> 診斷分頁 probe（帶樣本 IP）並貼回結果，定案吵 program 的 msg 子句與 4C regex 後，
+> 4B/4C 即可全面實作；4B 完成後才執行止血拆除（§4.6）。
 > 全案體檢額外揪出一個真實 bug 並已修復：`AiFollowupQueue.EnqueueAsync` 在取消時可能被
 > 誤判成「分析失敗」，實際上統計紀錄已成功寫入（見 commit `6c45371`）。
 > 對象是使用者實測後的三項回饋：
@@ -503,7 +504,7 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 維持原本零測試覆蓋的現況——與 §3.9（本機路徑同步脫鉤）同一種「評估後決定不做」的
 成本效益判斷。
 
-**輪 B 後追加規劃（4B.0，未實作）——新步驟 8g「msg 片語查詢行為＋暴破樣本」**：
+**輪 B 後追加規劃（4B.0，已實作 2026-08-07）——新步驟 8g「msg 片語查詢行為＋暴破樣本」**：
 補上 §4.0 輪 B 第 2 項在原設計中漏掉的對應步驟（8c 當時只給了第 1 項），同掛
 「Linux 樣本 IP」開關、未填印「略過」、一行一結果：
 
@@ -768,7 +769,7 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 | 4A | 4.3 | 關聯層申報＋Linux 短路＋EventId 0 顯示修正 | LogAnalysisService、CorrelationAnalyzer、RiskReportService、SlowTrendAnalyzer、record-detail.js、records.js | — |
 | — | 4.0-A | ~~使用者執行診斷輪 A 並貼回~~ **已完成 2026-08-07**（欄位主形狀定案） | （無程式改動） | ✓ |
 | — | 4.0-B | ~~使用者執行診斷輪 B 並貼回~~ **已完成 2026-08-07（第三次 probe）**——六項證據五項定案（sp term 語意/sev 分佈與門檻/program 量級吵靜分類/collector 形態）；msg 片語為規劃缺口，補 4B.0 | （無程式改動） | ✓ |
-| 4B.0 | §4.1 追加 | **probe 新步驟 8g（msg 片語實證＋暴破樣本）＋使用者第四次執行貼回** | NetiqProbeRunner | — |
+| 4B.0 | §4.1 追加 | ✓ probe 新步驟 8g（msg 片語實證＋暴破樣本）已實作；待**使用者第四次執行貼回** | NetiqProbeRunner | — |
 | 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **8g 資料**（msg 子句個別有效性；其餘已定案） |
 | 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | 8g 第 2 項 sshd 暴破樣本（正則定案） |
 | 4 | 4.6 | 止血拆除＋周邊體檢＋文件失準修正 | ScheduleController、host-detail.js、docs | 4B 完成 |
