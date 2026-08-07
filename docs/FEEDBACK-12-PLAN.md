@@ -301,23 +301,31 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
    `RiskReportServiceTests`、`RecordStorageShaperTests`（新欄位 `AiPending` 的 shaping 行為——
    低風險精簡路徑不該把 pending 紀錄的欄位剪掉）、`BatchRunRecorderConcurrencyTests`。
 
-### 3.9 本機分析路徑同步脫鉤
+### 3.9 本機分析路徑——評估後定案不做（維持現行同步呼叫）
 
-**檔案**：`LogForesight.Core/Service/AnalysisOrchestrator.cs`（`RunLocalAnalysisAsync`，606~638 行）
+**原規劃**：本機逐日迴圈改走與 NetIQ 相同的兩階段——`BuildStatisticalRecordAsync` 寫入
+＋入列共用佇列，佇列與消費者從 `NetiqPipelineService` 上移到 orchestrator 層級，本機段
+與 NetIQ 段共用消費者。
 
-**改法**：本機逐日迴圈改走與 NetIQ 相同的兩階段——逐日 `BuildStatisticalRecordAsync` 寫入
-＋入列同一個佇列（佇列與消費者從 `NetiqPipelineService` 上移到 orchestrator 層級建立，
-本機段與 NetIQ 段共用；本機段先跑，其統計完成後 NetIQ 段開始，消費者全程在背景消化）。
-本機主機的 `AiWorkItem` 與 NetIQ 形狀相同（HostPlan 換成本機的 store/host 識別）。
+**實作前重新評估後改為不做，理由**：
+1. **現行「執行結果總表」（`RunLocalAnalysisAsync` 迴圈結束後的 `══════════ 本次執行結果 ══════════`
+   區塊）依賴每筆 `result.LocalResults` 在印出當下就是 AI 定案後的最終內容**
+   （`RiskLevel`／`ReportFile`）。改成兩階段會讓這個總表印出時大部分日期還是
+   「AI 分析排隊中」的暫代內容，這是本機路徑「一次执行、當場看到完整結果」的既有體驗，
+   拆分會讓這個體驗明顯變差，且需要额外設計「總表要不要等 AI 或事後重印」，複雜度
+   不亞於重新做一次 §3.4。
+2. **本機路徑只有一台主機，不是本輪要解決的問題**。使用者的原始回饋（②）是
+   「NetIQ 搜尋被 AI 拖住」——多台 Sentinel、上百上千台主機的搜尋序列化才是真正的痛點；
+   本機一次執行只回補少數天數，AI 慢頂多讓「這台機器自己的排程」晚幾分鐘結束，
+   不會連鎖拖累其他主機，風險/效益比與 NetIQ 段完全不同量級。
+3. 共用佇列會讓 `NetiqPipelineService` 的佇列所有權（現在完全自持、`RunAsync` 內建立/
+   收尾）變成由 orchestrator 外部注入，是對已完成並通過測試（§3.4/§3.6 的三個決定性測試）
+   的核心元件做侵入性修改，用「次要瓶頸」換「核心元件的迴歸風險」不划算。
 
-**為什麼順手做**：拆分（3.3）完成後，本機路徑改接佇列只是換呼叫點；不做的話
-「本機 AI 慢會延後 NetIQ 段開始」這個次要瓶頸仍在，留著就是下一輪回饋。
-
-**影響面**：本機分析的 console 輸出順序改變（AI 白話段落後補進紀錄，執行詳情的逐日
-輸出只含統計行）——`PrintResult` 的呼叫時機隨之調整；體檢（stage 6）仍在佇列清空後執行，
-讀得到完整 AI 摘要。
-
-**驗收**：本機＋NetIQ 混合執行一輪，本機統計完成時間點早於現行；體檢敘事含本機 AI 摘要。
+**維持現行行為**：`RunLocalAnalysisAsync` 繼續呼叫組合式 `AnalyzeDayAsync`（統計段+AI 段
+同步跑完才進下一天），與拆分前逐位一致。若未來本機路徑本身也遇到「AI 慢拖累」的回饋
+（而不是現在推測的次要瓶頸），再回頭評估——屆時「執行結果總表要不要等 AI」這個產品
+決策應該由實際回饋驅動，不是這輪憑空假設。
 
 ### 3.10 AiPending 孤兒補跑（取消自癒）
 
