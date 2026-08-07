@@ -2,10 +2,12 @@
 
 > **狀態（2026-08-07）：第 1／2／3／4A 批已全部實作完成＋全案體檢，於 `feature/feedback-12`
 > 分支逐批提交（commit `eea1e0a`~`6c45371`，見下方批次表）；1596 測試綠（基線 1543）。
-> 診斷輪 A 已執行完畢（Sentinel「118_linux」，https://10.216.7.118:8443，樣本 IP
-> 10.216.45.101），欄位主形狀已定案（見 §4.0/NETIQ-API-REFERENCE.md §4a 實證表）；
-> **第 4B（Sentinel 取數分支）與第 4C（SSH 攻擊鏈關聯）尚未實作，卡在使用者執行診斷輪 B
-> 並貼回結果**（§4.0 已列輪 B 待補清單）；4B 完成後才會執行第 4 批的止血拆除（§4.6）。
+> 診斷輪 A（樣本 IP 10.216.45.101）與**輪 B（2026-08-07 第三次 probe，樣本 IP
+> 10.216.11.66）皆已執行完畢**：欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、
+> program 量級吵靜分類、collector 形態全部定案（見 §4.0 實證表）。
+> **第 4B／4C 尚未實作，最後一個資料閘門是 4B.0**：輪 B 揭露原 §4.1 設計漏掉「msg 片語
+> 查詢行為」的對應步驟，需補 probe 新步驟 8g（§4.1 追加項）並請使用者第四次執行貼回，
+> 定案吵 program 的 msg 子句與 4C regex 後，4B/4C 即可全面實作；4B 完成後才執行止血拆除（§4.6）。
 > 全案體檢額外揪出一個真實 bug 並已修復：`AiFollowupQueue.EnqueueAsync` 在取消時可能被
 > 誤判成「分析失敗」，實際上統計紀錄已成功寫入（見 commit `6c45371`）。
 > 對象是使用者實測後的三項回饋：
@@ -439,6 +441,25 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
      樣本 msg 帶 `<nwarn>` 卻落在 `sev=1`——再次強化「sev 不可靠承載 syslog priority」
      的輪 A 疑點，混合下推＋`MapEntryTypeLinux` 門檻待輪 B 的設計不變。
 
+**輪 B 實證（2026-08-07 第三次 probe，樣本 IP `10.216.11.66`＝VM-LQLA1，
+found=1,661/24h）——六項證據五項定案，一項規劃缺口補 8g**：
+
+| 輪 B 項 | 實證（probe 原文依據） | 定案 |
+|---|---|---|
+| 1. `sp` 查詢行為 | `sp:kernel`=305,019（term 有效）；`sp:networkmanager`＝`sp:NetworkManager`＝1,855,133（**大小寫不敏感**）；`sp:user*`=7 而 `sp:user`=0、`sp:su`=51,702 而 sudo 另計（**exact term、非子字串**；前綴萬用字元有效） | program 子句可下推，不需處理大小寫；**Lucene term ≠ 本地 Contains**——一律以 `sp:{pattern}*` 前綴萬用字元近似（user→useradd/usermod/userdel、group→groupadd… 皆為前綴關係；「非前綴包含」的殘餘情境接受並記錄，本地 `FindLinuxRule` 仍是唯一判定） |
+| 2. `msg` 片語行為 | **未實測——規劃缺口**：§4.1 設計時只把輪 B 第 1 項分給 8c，第 2 項沒有任何步驟對應（是規劃缺口、不是實作漂移）；8f 因 `sp:sshd` 有值也未觸發 msg 退路 | **補新步驟 8g**（§4.1 追加項），第四次 probe 後定案吵 program 的 msg 子句——這是 4B filter 與 4C regex 的最後閘門 |
+| 3. `sev` 分佈 | 0=1,866,756、1=7,671,839、2=8、3=972、4=1,403、5=20（合計≈9.54M ✓） | `MapEntryTypeLinux` **定案**：`0~1→Information、2→Warning、3~5→Error`；同時誠實記錄——Linux 的警告數（sev2 全站 8 筆/日）幾乎恆零、錯誤數只反映 sev3-5 的 2.4k/日，計數品質受限於 collector 的 sev 品質，偵測（program＋message 比對）不受影響 |
+| 4. `sev` 語意 | `<warn>`（NetworkManager）與 `level=error`（dockerd）都落 sev=1；「pam_unix(crond:session): session opened」落 sev3-5；gkr-pam 警告落 sev=2 | **sev 確定不承載 syslog priority 語意**——只作計數與 generic 網，不作偵測依據；generic 子句定 `sev:[2 TO 5]`（全站 2,403 筆/日，極便宜，比 [3 TO 5] 多收的 sev2 僅 8 筆） |
+| 5. program 量級 | **吵**：systemd 1,958,144、kernel 305,019、sshd 244,480（樣本顯示大宗是 SFTP opendir/closedir 與 pam session 雜訊）、sudo 218,945、su 51,702；**靜**：chronyd 3,414、CRON 2,701、auditd 112、smartd 28、`user*` 7、group*/gpasswd≈0、ntpd 0 | 推翻原設計「sshd/sudo 量級小可整拉」——**五個吵 program（sshd/sudo/su/kernel/systemd）一律要 msg 下推**（sshd 一項 244k/日就足以讓 50 台批次撞 100k 截斷線）；靜 program 整拉。子句從規則現算：無 MessagePatterns 的規則產 `sp:{p}*`，有的產 `(sp:{p}* AND msg:(…))`（見 §4.4 修訂） |
+| 6. sshd 樣本 | 8f 取到最新 10 筆全是 session/SFTP 雜訊、**無 Failed password 樣本**；但 sev3-5 樣本見外網 IP（203.66.132.63、47.239.13.202）與 Sentinel 自家關聯規則「Large number of authentication attempts…」發動——**環境確實有暴破流量，4C 有真實價值** | 4C regex 樣本改由 8g 的目標查詢取得（`sp:sshd AND msg:"Failed password"` 近 7 天 5 筆全文）；另一實證：**部分 sshd 事件的 msg 沒有 `program[pid]:` 前綴**（snmpd 樣本有、sshd 的 pam/SFTP 行沒有）→ 4C regex 不得錨定前綴、mapper 的 msg 前綴 fallback 也不可假設必然存在（本來就是第三順位，不變） |
+| 7.（第二次 probe 追加項）collector 形態 | 樣本主機 10 筆全走 `pn=NetIQ Universal Event`、`sp` 皆在；欄位名聯集（48 欄）**無 `obssvcname`**；步驟 1 順帶看到的其他主機（VM-AppAnalysis、VM-EWTWAA16）也同路徑 | **受監控主機走 sp 路徑，`sp` 下推安全**；`obssvcname` 只保留在 mapper fallback 鏈（CEF 防禦），filter 不用它、8c 不需再擴充 |
+
+**涵蓋範圍誠實申報（輪 B 後新增的 v1 已知限制）**：Linux 取數的檢索範圍＝
+「規則 program（前綴萬用）∪ `sev:[2 TO 5]`」——低 sev 且未命中任何規則 program 的事件
+（如樣本主機每分鐘一筆的 snmpd 雜訊）**不會被取回**，也就不會進趨勢層的「首次出現」
+偵測。這與 Windows 面「Security 未知失敗 ID 不撈」（BACKLOG 未決 #10）同款的檢索面
+縮小，隨 4B 文件同步寫入 DETECTION-SPEC 的 Linux 章節，不裝作全量。
+
 ### 4.1 診斷分頁 Linux 深掘強化（4A）
 
 **檔案**：`LogForesight.Core/Service/NetiqProbeRunner.cs`（步驟 8：220~243 行）
@@ -481,6 +502,29 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 的範圍且與這支工具的定位（貼回對話的人工核對契約，不是自動化管線）不成比例，故不做，
 維持原本零測試覆蓋的現況——與 §3.9（本機路徑同步脫鉤）同一種「評估後決定不做」的
 成本效益判斷。
+
+**輪 B 後追加規劃（4B.0，未實作）——新步驟 8g「msg 片語查詢行為＋暴破樣本」**：
+補上 §4.0 輪 B 第 2 項在原設計中漏掉的對應步驟（8c 當時只給了第 1 項），同掛
+「Linux 樣本 IP」開關、未填印「略過」、一行一結果：
+
+1. `msg:"Failed password"`（近 24h found）——基本片語有效性；
+2. `sp:sshd AND msg:"Failed password"`（近 7 天）found ＋ **5 筆 msg 全文**——
+   兼作 4C regex 的實際樣本（8f 的最新 10 筆全是 session/SFTP 雜訊撈不到）；
+3. `sp:sshd AND msg:("Failed password" OR "Invalid user")`（近 7 天 found）——
+   欄位群組多片語語法有效性（found 應 ≥ 第 2 項）；
+4. `msg:"authentication failure"`（近 24h found）——sudo/su 規則的關鍵片語；
+5. `msg:"I/O error"`（近 24h found）——**斜線 tokenization 邊界**（kernel 規則）；
+6. `msg:"oom-kill"` 與 `msg:oom`（近 24h found 各一行）——**連字號 tokenization 邊界**；
+7. `sp:systemd AND msg:"entered failed state"`（近 24h found）——吵 program 片語下推
+   組合有效性（systemd 整拉 1.96M/日絕不可行，這條子句是 systemd 規則能否留在檢索
+   範圍的關鍵）。
+
+執行程序：實作 8g（小幅、只加不改）→ 建置測試 → 請使用者對 118_linux 帶同一個
+樣本 IP 第四次執行診斷並貼回 → 依結果定案 §4.4 第 3 點的 msg 子句與 §4.5 的 regex
+→ 4B 主體實作開跑。個別片語若實測不可靠（found 明顯低於預期或語法被拒），該規則的
+子句退成 `sp:{p}*` 整拉：kernel（305k/日）以縮小 `IpBatchSize` 控量；systemd 若片語
+不可行則**該規則退出檢索範圍並在文件申報**（1.96M/日無論如何不能整拉——寧可誠實縮小
+涵蓋，不可截斷汙染整批 DataIncomplete）。
 
 ### 4.2 事件模型與簽章聚合（4A，實作 LINUX-RULES.md §131-146 的設計文）
 
@@ -561,10 +605,14 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
    ——不含 `evt`（樣板字串不值頻寬）、不含 `rv40`／`sun`／`sip`（Linux 事件無此欄，
    輪 A 實證）；**`obssvcname` 納入**（第二次 probe 修訂：CEF collector 路徑的事件
    `sp` 缺席、program 落在 `obssvcname`，見 §4.0 新實證 A——短欄位，頻寬成本可忽略）。
-   `MapEntryTypeLinux(sev)` 候選：
-   `0~1→Information、2→Warning、3~5→Error`，門檻依輪 B 第 3/4 項定案——
-   規則比對不依賴 EntryType（program＋message），對應誤差只影響錯誤/警告計數與
-   generic 收集範圍，風險可控。
+   `MapEntryTypeLinux(sev)` **定案（輪 B 第 3/4 項）**：
+   `0~1→Information、2→Warning、3~5→Error`——輪 B 實證 sev 不承載 syslog priority
+   語意（`<warn>`/`level=error` 都落 sev=1、session opened 落 sev3-5），此對應是
+   「計數用途的務實選擇」而非語意還原；規則比對不依賴 EntryType（program＋message），
+   誤差只影響錯誤/警告計數（Linux 警告數幾乎恆零、錯誤數只反映 sev3-5，已在 §4.0
+   輪 B 表誠實記錄）與 generic 收集範圍，風險可控。同一模板訊息的 sev 觀察上一致
+   （dockerd warning/error 同落 1），五元組簽章被 EntryType 拆裂的風險低，列入 4B
+   體檢觀察項。
 2. `SentinelEventMapper.MapAll` 加 `os` 參數分路：Linux 產出
    `LogName="Linux"`、`Source` 走**三段 fallback 鏈**（第二次 probe 修訂）：
    `sp` →（缺席時）`obssvcname` →（再缺席時）`msg` 前綴 `program:`／`program[pid]:`
@@ -575,22 +623,26 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
    （保留 program 前綴，比對與顯示都用得上）、`EntryType=MapEntryTypeLinux(sev)`；
    `dt` 解析失敗整筆略過的既有語意共用。
 3. `SentinelQueryBuilder.BuildLinuxFilter(ips, rules)`：形狀比照 `BuildWindowsFilter`
-   （空 IP 擲例外、`BuildIpClause` 重用），內容子句採**混合下推**：
-   `{IP 子句} AND ({program 子句} OR sev:[N TO 5])`——
-   - 量級小的種子 program 整個拉（`sp:sshd OR sp:sudo OR …`，從 linux 規則現算，不硬編）；
-   - **吵雜 program 加 message 關鍵字下推**（`(sp:kernel AND msg:("I/O error" OR
-     "Out of memory" OR …))`）——輪 A 已見樣本主機一台 1.5 萬筆/日且多為 kernel 分割區
-     雜訊，`sp:kernel` 整拉會撞單 job 100k 截斷線（`MaxResultsPerJob`），50 台批次必炸；
-     哪些 program 算吵雜、msg 片語行為是否可靠，依輪 B 第 2/5 項定案；
-   - 下推永遠是**超集**（本地 `FindLinuxRule` 仍是唯一判定），若輪 B 顯示 msg 片語
-     不可靠（tokenization 邊界漏抓），該 program 退回整拉並改用第 4 點的批次縮小控量；
-   - generic `sev:[N TO 5]` 極便宜（N=3 時全站僅 2,384 筆/24h），N 依輪 B 第 3 項定；
-   - **CEF 路徑風險**（第二次 probe 新增，見 §4.0 新實證 A）：若受監控主機有事件走
-     Universal Common Event Format collector（`sp` 缺席），`sp:{program}` 白名單子句會
-     漏抓那些事件——輪 B 步驟 8 核對樣本主機的 `pn`／`sp` 存在性後定案：受監控主機
-     全走 NetIQ Universal Event 路徑（輪 A 該台如此）則維持 `sp` 下推；否則 program
-     子句改 `(sp:X OR obssvcname:X)`（屆時 8c 補一行 `obssvcname` 查詢行為驗證），
-     或最保守退回「repip＋sev 下推、program 全靠本地比對」。
+   （空 IP 擲例外、`BuildIpClause` 重用），內容子句採**混合下推**（依輪 B 定案版）：
+   `{IP 子句} AND ({規則子句聯集} OR sev:[2 TO 5])`——
+   - **子句從規則現算、規則統一產生**（不硬編 program 清單）：每條 linux 規則——
+     `MessagePatterns` 為空 → `sp:{ProgramPattern}*`（前綴萬用字元，輪 B 第 1 項定案：
+     `sp` 是 exact term、大小寫不敏感，`user`→useradd 這類「pattern 是 program 前綴」
+     的關係靠 `*` 補上，本地 Contains 語意的殘餘差距接受並記錄）；
+     `MessagePatterns` 非空 → `(sp:{ProgramPattern}* AND msg:("片語1" OR "片語2" …))`
+     ——**吵 program（sshd 244k／sudo 219k／su 52k／kernel 305k／systemd 1.96M 筆/日，
+     輪 B 第 5 項實證）整拉必撞 100k 截斷線，msg 下推不是最佳化而是可行性前提**；
+     靜 program（chronyd/CRON/auditd/smartd）帶 msg 子句只是更省，無害；
+   - msg 片語的個別有效性（斜線／連字號 tokenization、群組語法）依 **8g（4B.0）** 定案；
+     個別不可靠者該規則退 `sp:{p}*` 整拉（kernel 用縮小 `IpBatchSize` 控量；systemd
+     無論如何不整拉——片語不可行就退出檢索範圍並文件申報，見 §4.1 的 8g 執行程序）；
+   - 下推永遠是**超集需求**（本地 `FindLinuxRule` 仍是唯一判定）；
+   - generic `sev:[2 TO 5]`（輪 B 第 3/4 項定案）：全站 2,403 筆/日，極便宜，是
+     「未知 program 高 sev 事件」唯一的檢索通道；
+   - **檢索涵蓋限制**（輪 B 後新增，見 §4.0 誠實申報段）：低 sev 且未命中規則 program
+     的事件不在檢索範圍，隨 4B 文件同步寫入 DETECTION-SPEC；
+   - ~~CEF 路徑風險~~ **已解除**（輪 B 第 7 項：受監控主機全走 `sp` 路徑，欄位聯集
+     無 `obssvcname`）——`sp` 下推安全；`obssvcname` 僅留 mapper fallback 鏈。
 4. `NetiqPipelineService`：**拆掉 Windows 擋板**——`RunServerAsync` 依 `target.Os`
    把 targets 分成兩組（同一台 Sentinel 依環境事實只會有單一 OS，但程式不依賴此假設），
    filter builder／投影欄位／mapper 分路，批次與逐日結構共用；`IpBatchSize` 若輪 B
@@ -620,7 +672,12 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 「`Accepted password|publickey for {user} from {ip} port …`」），適合正則抽取：
 - **細版**（優先）：從 ssh-bruteforce／ssh-accept 命中事件的 msg 抽 `{user}`／`{ip}`，
   做「同帳號或同來源 IP」的精確關聯——失敗堆與成功登入同源才告警，誤報最低。
-  正則以輪 B 第 6 項的實際樣本定案（不同發行版前綴略有差異，以樣本為準）。
+  正則以 **8g 第 2 項**的實際樣本定案（輪 B 8f 取到的最新 10 筆全是 session/SFTP
+  雜訊、無 Failed password 樣本；改用 `sp:sshd AND msg:"Failed password"` 目標查詢取）。
+  **輪 B 新約束**：部分 sshd 事件的 msg 沒有 `program[pid]:` 前綴（snmpd 有、sshd 的
+  pam/SFTP 行沒有）——**regex 不得錨定行首前綴**，直接比對「Failed password for …
+  from …」本體。另輪 B 已證實環境有真實暴破流量（sev3-5 樣本見外網 IP 203.66.132.63、
+  47.239.13.202，Sentinel 自家關聯規則也發動過），4C 的價值不是理論性的。
 - **個別事件解析失敗時降級**：解析不出帳號/IP 的事件落入主機級計數（粗版語意），
   告警描述明講「部分事件無法解析帳號，已以主機級比對」——不因格式漂移靜默漏報。
 命中時 `ElevatesDayRisk` 語意比照 Windows 關聯鏈（拉高當日風險）。
@@ -710,9 +767,10 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 | 4A | 4.2 | EventName/EventKey＋五元組聚合＋Linux 分路比對 | EventLogEntryData、LogAggregator、KnownIssueCatalog、IssueHandling、TrendAnalyzer、SlowTrendAnalyzer、RiskyEvent、ChannelCoverage | — |
 | 4A | 4.3 | 關聯層申報＋Linux 短路＋EventId 0 顯示修正 | LogAnalysisService、CorrelationAnalyzer、RiskReportService、SlowTrendAnalyzer、record-detail.js、records.js | — |
 | — | 4.0-A | ~~使用者執行診斷輪 A 並貼回~~ **已完成 2026-08-07**（欄位主形狀定案） | （無程式改動） | ✓ |
-| — | 4.0-B | **使用者執行診斷輪 B 並貼回**（sp/msg 查詢行為、sev 分佈、program 量級、sshd 樣本） | （無程式改動） | 4.1 已合併 |
-| 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **輪 B 資料**（filter 子句與 sev 門檻） |
-| 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | 輪 B 第 6 項 sshd 樣本（正則定案） |
+| — | 4.0-B | ~~使用者執行診斷輪 B 並貼回~~ **已完成 2026-08-07（第三次 probe）**——六項證據五項定案（sp term 語意/sev 分佈與門檻/program 量級吵靜分類/collector 形態）；msg 片語為規劃缺口，補 4B.0 | （無程式改動） | ✓ |
+| 4B.0 | §4.1 追加 | **probe 新步驟 8g（msg 片語實證＋暴破樣本）＋使用者第四次執行貼回** | NetiqProbeRunner | — |
+| 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **8g 資料**（msg 子句個別有效性；其餘已定案） |
+| 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | 8g 第 2 項 sshd 暴破樣本（正則定案） |
 | 4 | 4.6 | 止血拆除＋周邊體檢＋文件失準修正 | ScheduleController、host-detail.js、docs | 4B 完成 |
 | 4 | 4.7 | Linux 測試全套 | LogForesight.Tests | 隨各波 |
 | — | 五 | 文件七份同步 | docs/ | 隨各批 |
