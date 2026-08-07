@@ -400,6 +400,45 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
 6. **`sshd` 事件樣本全文**（近 7 天、10 筆）——定案 4C 的帳號/IP 解析格式
    （「Failed password for … from …」）與 seed v5 的 `MessagePatterns` 校正。
 
+**第二次 probe（2026-08-07，4A 診斷強化合併後首跑，但未填 Linux 樣本 IP）——
+輪 B 未達成，另有兩項新實證**：
+
+1. **判定：輪 B 資料仍缺**。8／8b～8f 全數印「略過（未提供樣本 IP）」（§4.1 的設計如預期
+   運作——六個新步驟掛同一開關）。**後續動作：到 NetIQ 維護→「診斷」分頁，「Linux 樣本
+   IP」欄填 `10.216.45.101`（輪 A 同一台）重跑一次並貼回完整輸出**。Windows 樣本 IP 留空
+   即可（本站無 Windows 主機，步驟 9/11 對此站無意義）。
+2. **新實證 A（重要）：同一台 Sentinel 存在第二種 collector 形態，欄位形狀是
+   per-collector、不是 per-Sentinel**。步驟 1 的三筆最新樣本（`repip=10.216.74.41`、
+   `sn=VM-PA-SOAR`——SOAR 設備自身的 conmon 日誌）與輪 A 樣本形狀不同：
+   - `pn`＝`agent`＝`port`＝**「Universal Common Event Format」**（輪 A 是「NetIQ
+     Universal Event」）、`rt2` 同為 Full Text Parser；
+   - **`obssvcname=conmon` 存在且值＝syslog program**——輪 A 寫「`obssvcname` 不存在」
+     必須修正為「NetIQ Universal Event collector 的事件不存在；CEF collector 的事件有」；
+   - 投影傾印中**看不到 `sp`**；`msg` 仍帶 `program[pid]:` 前綴（`conmon[4125835]:`）；
+   - `evt` 仍是樣板字串（「Universal Common Event Format conmon Event」）、`rv150=USER`
+     （facility）——與輪 A 的「evt 無語意」「rv150=facility」定案一致，不動。
+
+   **對 §4.4 的設計修訂**（已寫回該節）：mapper 的 `Source` 解析改為三段 fallback 鏈
+   `sp` → `obssvcname` → `msg` 前綴解析（結構化欄位優先、正則殿後），三路皆失敗計入
+   既有的解析失敗警告；`obssvcname` 加入 Linux 投影欄位清單。filter 下推面新增一個
+   風險：若受監控主機有事件走 CEF 路徑，`sp:{program}` 白名單子句會漏抓——輪 B 步驟 8
+   重跑時**核對樣本主機的 `pn` 與 `sp` 存在性**（輪 A 該台是 NetIQ Universal Event 路徑、
+   `sp` 在），若受監控主機全走該路徑則 `sp` 下推安全；否則 program 子句改
+   `(sp:X OR obssvcname:X)` 或退回 repip＋sev 不做 program 下推。
+   風險定位：`VM-PA-SOAR` 是 SOAR 設備自身、未登錄為受監控主機，pipeline 只查已登錄
+   主機的 `repip`，這台的形狀不直接影響；但 4B 實作必須防「`sp` 缺席→program 空字串→
+   全部聚成 Other」的靜默降級。**對已完成的 4A 零影響**（EventKey 聚合在 mapper 下游，
+   吃的是已映射好的 `EventLogEntryData`，`Source` 怎麼來它不知道也不需要知道）。
+3. **新實證 B（次要）**：
+   - 步驟 5 的 Lucene 錯誤訊息列出 `<NOT>` 為合法 token——BACKLOG 6b（`NOT` 子句支援）
+     的弱正面證據（文法層支援；執行語意仍由既有的 runtime 偵測把關，不據此放鬆）。
+   - 步驟 12 在本站無效證：查的是 Windows provider 名（本站不存在），兩者 found=0 是
+     「值不存在」不是「斷詞行為」——不需改 probe，Windows 那台已驗過；若輪 B 後決定
+     採 `obssvcname` 下推，屆時再小幅擴充 8c 加一行 `obssvcname:conmon` 驗證即可。
+   - 量級一致性：9.54M 筆/24h（輪 A 9.46M）、`sev:[3 TO 5]`=2,401/24h（輪 A 2,384）、
+     樣本 msg 帶 `<nwarn>` 卻落在 `sev=1`——再次強化「sev 不可靠承載 syslog priority」
+     的輪 A 疑點，混合下推＋`MapEntryTypeLinux` 門檻待輪 B 的設計不變。
+
 ### 4.1 診斷分頁 Linux 深掘強化（4A）
 
 **檔案**：`LogForesight.Core/Service/NetiqProbeRunner.cs`（步驟 8：220~243 行）
@@ -516,18 +555,24 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 - `LogForesight.Core/Analysis/KnownIssueSeed.cs`（seed v5）
 
 **改法**（主形狀已依輪 A 定案；標「輪 B」者為僅剩的未決值）：
-1. `SentinelFieldMap` 加 Linux 段常數（輪 A 定案）：`LinuxProgram = "sp"`、
+1. `SentinelFieldMap` 加 Linux 段常數（輪 A 定案＋第二次 probe 修訂）：`LinuxProgram = "sp"`、
    `LinuxFacility = "rv150"`（投影帶回、第一版不參與比對）、
-   `LinuxQ1ProjectionFields = repip, sn, sp, rv150, dt, sev, msg`
-   ——不含 `evt`（樣板字串不值頻寬）、不含 `rv40`／`obssvcname`／`sun`／`sip`
-   （Linux 事件無此欄，輪 A 實證）。`MapEntryTypeLinux(sev)` 候選：
+   `LinuxQ1ProjectionFields = repip, sn, sp, obssvcname, rv150, dt, sev, msg`
+   ——不含 `evt`（樣板字串不值頻寬）、不含 `rv40`／`sun`／`sip`（Linux 事件無此欄，
+   輪 A 實證）；**`obssvcname` 納入**（第二次 probe 修訂：CEF collector 路徑的事件
+   `sp` 缺席、program 落在 `obssvcname`，見 §4.0 新實證 A——短欄位，頻寬成本可忽略）。
+   `MapEntryTypeLinux(sev)` 候選：
    `0~1→Information、2→Warning、3~5→Error`，門檻依輪 B 第 3/4 項定案——
    規則比對不依賴 EntryType（program＋message），對應誤差只影響錯誤/警告計數與
    generic 收集範圍，風險可控。
 2. `SentinelEventMapper.MapAll` 加 `os` 參數分路：Linux 產出
-   `LogName="Linux"`、`Source={sp}`（`sp` 缺席時從 `msg` 前綴 `program:`／`program[pid]:`
-   解析，再缺退空字串）、`EventId=0`、`Message={msg 全文}`（保留 program 前綴，
-   比對與顯示都用得上）、`EntryType=MapEntryTypeLinux(sev)`；
+   `LogName="Linux"`、`Source` 走**三段 fallback 鏈**（第二次 probe 修訂）：
+   `sp` →（缺席時）`obssvcname` →（再缺席時）`msg` 前綴 `program:`／`program[pid]:`
+   正則解析 → 全部失敗退空字串**並計入既有的解析失敗計數**（`totalSkipped` 同款警告
+   機制，防「program 靜默變空→全部聚成 Other」的降級不被看見）；結構化欄位優先、
+   正則殿後——CEF 路徑的樣本三個來源都有值且一致（`obssvcname=conmon`＝msg 前綴），
+   鏈的順序只影響取值成本不影響結果。其餘：`EventId=0`、`Message={msg 全文}`
+   （保留 program 前綴，比對與顯示都用得上）、`EntryType=MapEntryTypeLinux(sev)`；
    `dt` 解析失敗整筆略過的既有語意共用。
 3. `SentinelQueryBuilder.BuildLinuxFilter(ips, rules)`：形狀比照 `BuildWindowsFilter`
    （空 IP 擲例外、`BuildIpClause` 重用），內容子句採**混合下推**：
@@ -539,7 +584,13 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
      哪些 program 算吵雜、msg 片語行為是否可靠，依輪 B 第 2/5 項定案；
    - 下推永遠是**超集**（本地 `FindLinuxRule` 仍是唯一判定），若輪 B 顯示 msg 片語
      不可靠（tokenization 邊界漏抓），該 program 退回整拉並改用第 4 點的批次縮小控量；
-   - generic `sev:[N TO 5]` 極便宜（N=3 時全站僅 2,384 筆/24h），N 依輪 B 第 3 項定。
+   - generic `sev:[N TO 5]` 極便宜（N=3 時全站僅 2,384 筆/24h），N 依輪 B 第 3 項定；
+   - **CEF 路徑風險**（第二次 probe 新增，見 §4.0 新實證 A）：若受監控主機有事件走
+     Universal Common Event Format collector（`sp` 缺席），`sp:{program}` 白名單子句會
+     漏抓那些事件——輪 B 步驟 8 核對樣本主機的 `pn`／`sp` 存在性後定案：受監控主機
+     全走 NetIQ Universal Event 路徑（輪 A 該台如此）則維持 `sp` 下推；否則 program
+     子句改 `(sp:X OR obssvcname:X)`（屆時 8c 補一行 `obssvcname` 查詢行為驗證），
+     或最保守退回「repip＋sev 下推、program 全靠本地比對」。
 4. `NetiqPipelineService`：**拆掉 Windows 擋板**——`RunServerAsync` 依 `target.Os`
    把 targets 分成兩組（同一台 Sentinel 依環境事實只會有單一 OS，但程式不依賴此假設），
    filter builder／投影欄位／mapper 分路，批次與逐日結構共用；`IpBatchSize` 若輪 B
@@ -589,11 +640,15 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
    ssh-bruteforce 與 ssh-accept 不再撞鍵——這正是 EventKey 要解的問題）、
    詢問 AI 即時取數（`SentinelEventFetchService` 的投影欄位是否需要 Linux 分路）。
 4. **文件失準修正**（調查發現，順手歸零）：
-   - `docs/BACKLOG.md:63`／`docs/LINUX-RULES.md:148`：「固定申報關聯層不適用」寫成已實作，
-     實際是 P3 未做——4.3 落地後改為現在式並移除 BACKLOG 條目。
-   - `docs/RULES-SPEC.md:7`：指向已不存在的 `Service/RuleImporter.cs`，改為
-     `Analysis/RuleImportPlanner.cs`。
-   - `KnownIssueSeed.cs:17-19`：v4 註解「16 條」→ 17 條（隨 seed v5 一併改）。
+   - ✓ `docs/BACKLOG.md:63`／`docs/LINUX-RULES.md:148`：「固定申報關聯層不適用」寫成已實作，
+     實際是 P3 未做——**已隨 4A 文件同步修正**（4.3 已落地，改為現在式）。
+   - ✓ `docs/RULES-SPEC.md:7`：指向已不存在的 `Service/RuleImporter.cs`——**已隨 4A 文件
+     同步修正**為 `Analysis/RuleImportPlanner.cs`。
+   - ✓ `KnownIssueSeed.cs:17-19`：v4 註解「16 條」→ 17 條——**已隨 4A 文件同步修正**
+     （seed v5 時版本號再遞增）。
+   - `docs/NETIQ-API-REFERENCE.md` §4a：「`sun`／`sip`／`dhn`／`obssvcname`／`rv40` 全部
+     不存在」的絕對敘述失準（第二次 probe：CEF collector 路徑的事件帶 `obssvcname`＝
+     program）——改寫為 per-collector 敘述並補 CEF 形態列，**隨 4B 文件同步一併改**。
 
 ### 4.7 測試計畫
 
@@ -603,7 +658,10 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
   `ChannelCoverage.WasRead("Linux")`；`BuildUncoveredChecks` Linux 申報；
   `FindLinuxRule` 經 aggregator 的整合命中（17 條種子逐條，比照既有
   `Linux規則各自宣告的比對路都能命中自己` 的 MemberData 寫法）；probe 新步驟輸出格式。
-- **4B**：`SentinelEventMapper` Linux 分路（欄位定案後）；`BuildLinuxFilter`
+- **4B**：`SentinelEventMapper` Linux 分路（欄位定案後）——含 **Source 三段 fallback 鏈**
+  逐段測試（`sp` 有值走 `sp`；`sp` 缺席 `obssvcname` 有值走它；兩者皆缺從 msg 前綴解析
+  `program:`／`program[pid]:` 兩種形；全缺退空並計入解析失敗——用第二次 probe 的 CEF
+  樣本形狀當測資）；`BuildLinuxFilter`
   （空 IP 例外／IP 子句／`sev` 門檻）；pipeline 整合測試（3.8 的 fake client 骨架餵
   syslog 形狀事件 → TopIssues 命中 ssh-bruteforce → 紀錄寫入含正確 EventKey）；
   掃描精靈 Linux filter 分支。
