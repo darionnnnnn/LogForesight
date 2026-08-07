@@ -260,7 +260,15 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (!detail.aiAnalyzed) {
+    if (detail.aiPending) {
+        // 統計段已寫入、AI 段還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+        // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--info';
+        badge.textContent = 'AI 分析中';
+        badge.title = '統計結果已完成，AI 白話摘要正在背景處理，稍後重新整理即可看到';
+        top.appendChild(badge);
+    } else if (!detail.aiAnalyzed) {
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--secondary';
         badge.textContent = '統計模式（AI 未分析）';

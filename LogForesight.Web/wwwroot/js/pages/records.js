@@ -511,11 +511,19 @@ function headlineCell(record) {
         badge.textContent = 'AI';
         badge.title = 'AI 產出摘要';
         wrap.appendChild(badge);
+    } else if (record.aiPending) {
+        // 統計段已寫入、AI 段還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+        // 中性色，跟灰字的「統計模式」區分開，不能看起來像失敗
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--info me-1';
+        badge.textContent = 'AI 分析中';
+        badge.title = '統計結果已完成，AI 白話摘要正在背景處理';
+        wrap.appendChild(badge);
     }
 
     const text = document.createElement('span');
     text.textContent = record.headline || '（無 AI 摘要）';
-    if (!record.aiAnalyzed) text.className = 'text-muted';
+    if (!record.aiAnalyzed && !record.aiPending) text.className = 'text-muted';
     wrap.appendChild(text);
 
     if (record.hasCorrelation) {

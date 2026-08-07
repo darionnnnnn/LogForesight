@@ -142,6 +142,7 @@ public class RecordDetailQueryService
             TrendAssessment = caseGrantOnly ? "" : record.TrendAssessment,
             Action = caseGrantOnly ? "" : record.Action,
             AiAnalyzed = !caseGrantOnly && record.AiAnalyzed,
+            AiPending = !caseGrantOnly && record.AiPending,
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,

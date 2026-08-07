@@ -22,6 +22,11 @@ public class RecordListItemDto
 
     public bool AiAnalyzed { get; set; }
 
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+    /// 與 AiAnalyzed=false 不同：那是「AI 已定案不需要或已嘗試但失敗」，這是「還沒定案」。
+    /// 前端顯示「AI 分析中」而非「統計模式」，避免看起來像失敗。</summary>
+    public bool AiPending { get; set; }
+
     /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
@@ -194,6 +199,10 @@ public class RecordDetailDto
     public string TrendAssessment { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty;
     public bool AiAnalyzed { get; set; }
+
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5），
+    /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
+    public bool AiPending { get; set; }
 
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
