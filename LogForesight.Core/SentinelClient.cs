@@ -57,6 +57,16 @@ public class SentinelClientException : Exception
 }
 
 /// <summary>
+/// <see cref="SentinelClient"/> 對外唯一用到的能力（docs/FEEDBACK-12-PLAN.md §3.8-2）：抽出來
+/// 讓 <c>NetiqPipelineService</c> 的 pipeline 測試能注入假搜尋結果，不必真的連 Sentinel。
+/// <see cref="SentinelClient"/> 是唯一實作；簽章原封不動照搬既有 <c>SearchAsync</c>。
+/// </summary>
+public interface ISentinelSearchClient : IAsyncDisposable
+{
+    Task<SentinelSearchResult> SearchAsync(SentinelSearchRequest request, CancellationToken ct = default);
+}
+
+/// <summary>
 /// Sentinel REST API 封裝：SAML token 認證生命週期＋event-search job 生命週期
 /// （docs/NETIQ-API-REFERENCE.md §1、§3.1）。單一職責——只懂 REST 協定，不懂 watchlist／欄位對應等業務語意。
 ///
@@ -73,7 +83,7 @@ public class SentinelClientException : Exception
 /// <c>SentinelClient.Paging.cs</c>（查詢結果分頁與解析）。方法共享同一組 HTTP／session 狀態，
 /// 不拆成獨立可注入的類別。
 /// </summary>
-public sealed partial class SentinelClient : IAsyncDisposable
+public sealed partial class SentinelClient : ISentinelSearchClient
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 

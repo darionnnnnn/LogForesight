@@ -51,6 +51,7 @@ public class NetiqPipelineService
     private readonly int _riskyEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
+    private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
 
     /// <param name="console">輸出去哪裡（docs/archive/FEEDBACK-8-PLAN.md #2）：原本整支寫死 Console.WriteLine，
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
@@ -62,13 +63,17 @@ public class NetiqPipelineService
     /// 開關（docs/archive/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
     /// 每個方法都加一個參數傳遞</param>
     /// <param name="progress">進度回報（docs/archive/FEEDBACK-8-PLAN.md #2）；null＝不回報（測試預設不傳）</param>
+    /// <param name="clientFactory">依 Sentinel 建立搜尋用戶端（docs/FEEDBACK-12-PLAN.md §3.8-2）；
+    /// null＝預設走真正的 <see cref="SentinelClient"/>（<see cref="SentinelConnectionFactory.ToConnectable"/>
+    /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
+    /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
-        IRunProgress? progress = null)
+        IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -85,6 +90,8 @@ public class NetiqPipelineService
         _riskyEventRetentionDays = riskyEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
+        _clientFactory = clientFactory ?? (sentinel =>
+            new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -218,9 +225,8 @@ public class NetiqPipelineService
         _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
 
         var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
-        var server = SentinelConnectionFactory.ToConnectable(sentinel);
 
-        await using var client = new SentinelClient(server, _netiqOptions);
+        await using var client = _clientFactory(sentinel);
 
         // 缺漏日跨主機遞增：同一天內所有需要這天的主機一次查完（批次化），
         // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史
@@ -237,7 +243,7 @@ public class NetiqPipelineService
     }
 
     private async Task RunBatchDayAsync(
-        SentinelClient client, string sentinelName, HostPlan[] batch, DateTime date,
+        ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date,
         int trendWindowDays, NetiqPipelineResult result, CancellationToken ct)
     {
         var ips = batch.Select(p => p.Target.IpAddress).ToList();
