@@ -2,10 +2,8 @@ namespace LogForesight.Core.Analysis;
 
 /// <summary>
 /// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4「watchlist→Lucene 產生器」）。
-///
-/// 只有 Windows 分支：Linux 那台 Sentinel 尚未接入 LogForesight，沒有任何真實 probe 樣本可依據
-/// （docs/BACKLOG.md 閘門）。強行寫一份沒有實據的 Linux 產生器只是把猜測換個地方藏，
-/// 等 Linux Sentinel 接入、對它跑過 probe 後再補這個分支，屆時介面照這份的形狀加，不是新設計。
+/// Windows／Linux 各自的 <c>Build{Os}Filter</c> 分支，皆依真實 probe 樣本定案
+/// （docs/FEEDBACK-12-PLAN.md §4.0，四輪 probe，Sentinel「118_linux」）。
 /// </summary>
 public static class SentinelQueryBuilder
 {
@@ -81,6 +79,103 @@ public static class SentinelQueryBuilder
             .OrderBy(id => id)
             .ToList();
 
+    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）──────────────────
+
+    /// <summary>generic 高嚴重度收集的 sev 下限（輪 B 第 3/4 項定案，全站 2,403 筆/日，極便宜）。
+    /// 與 <see cref="GenericErrorSeverityMin"/> 數值相同、各自獨立宣告：Windows 版仍是未實證的
+    /// 候選值，Linux 版已由完整的 sev 分佈量測定案，兩者的實證基礎不同，不該共用同一個常數
+    /// 讓其中一邊的未來調整意外牽動另一邊。</summary>
+    public const int LinuxGenericSeverityMin = 2;
+
+    /// <summary>
+    /// 吵 program 常數集（輪 B 第 5 項量級實證的環境事實）：sshd（244k/日）／sudo（219k/日）／
+    /// su（52k/日）／kernel（305k/日）／systemd（1.96M/日）遠超單一 job 的 100k 截斷線，
+    /// 必須靠 msg 下推壓量；其餘 program 最大量級（chronyd 3.4k/日）整拉仍在安全範圍內，
+    /// 順便避開片語標點（chronyd「Can't synchronise」的撇號、CRON「(CRON) ERROR」的括號）
+    /// 下推時的殘餘風險。這是環境實測結果，不是理論推導——量級分佈若日後改變需要重新以
+    /// probe 驗證，不建議憑感覺調整這個集合。
+    /// </summary>
+    internal static readonly HashSet<string> LinuxNoisyPrograms =
+        new(StringComparer.OrdinalIgnoreCase) { "sshd", "sudo", "su", "kernel", "systemd" };
+
+    /// <summary>
+    /// 建立 Linux Q1 的 filter：`(IP 批次) AND (規則子句聯集 OR generic 高嚴重度收集)`。
+    /// 形狀比照 <see cref="BuildWindowsFilter"/>；內容子句是 program／message 混合下推
+    /// （見 <see cref="LinuxRuleProgramClauses"/>）。
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="hostIps"/> 為空，理由同 <see cref="BuildWindowsFilter"/>。</exception>
+    public static string BuildLinuxFilter(IReadOnlyList<string> hostIps, IEnumerable<KnownIssueRule> rules)
+    {
+        if (hostIps.Count == 0)
+        {
+            throw new ArgumentException("主機 IP 清單不可為空——會產生出等同全站掃描的 filter。", nameof(hostIps));
+        }
+
+        var ipClause = BuildIpClause(hostIps);
+        var contentClause = BuildLinuxContentClause(rules);
+        return $"{ipClause} AND {contentClause}";
+    }
+
+    private static string BuildLinuxContentClause(IEnumerable<KnownIssueRule> rules)
+    {
+        var genericClause = $"{SentinelFieldMap.Severity}:[{LinuxGenericSeverityMin} TO 5]";
+
+        var programClauses = LinuxRuleProgramClauses(rules);
+        return programClauses.Count == 0
+            ? genericClause
+            : $"(({string.Join(" OR ", programClauses)}) OR {genericClause})";
+    }
+
+    /// <summary>
+    /// 依 program 分組產生規則子句：吵 program（<see cref="LinuxNoisyPrograms"/>）帶該 program
+    /// 全部啟用規則的 <see cref="KnownIssueRule.MessagePatterns"/> 聯集下推
+    /// （<c>(sp:{program}* AND msg:("片語1" OR "片語2" …))</c>），其餘 program 整拉
+    /// （<c>sp:{program}*</c>，不論該規則有沒有 MessagePatterns——量級夠小，整拉比冒險下推更安全，
+    /// 見 <see cref="LinuxNoisyPrograms"/> 的說明）。internal 供測試直接驗證分組結果，
+    /// 不必逐次解析組出來的完整 filter 字串。
+    /// </summary>
+    internal static List<string> LinuxRuleProgramClauses(IEnumerable<KnownIssueRule> rules)
+    {
+        var byProgram = rules
+            .Where(r => r.Enabled && r.Platform == "linux" && r.ProgramPattern.Length > 0)
+            .GroupBy(r => r.ProgramPattern, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase); // 穩定順序：方便測試斷言與人工核對輸出
+
+        var clauses = new List<string>();
+        foreach (var group in byProgram)
+        {
+            var program = group.Key;
+            var programClause = $"{SentinelFieldMap.LinuxProgram}:{program}*";
+
+            if (!LinuxNoisyPrograms.Contains(program))
+            {
+                clauses.Add(programClause);
+                continue;
+            }
+
+            var phrases = group
+                .SelectMany(r => r.MessagePatterns)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // 吵 program 目前 17 條種子都有 MessagePatterns，這個分支理論上不會被走到；
+            // 萬一日後有人新增一條吵 program 規則卻忘記填片語，寧可安全退回整拉也不要
+            // 產生語法不完整的 filter（如 "(sp:x* AND msg:())"）
+            clauses.Add(phrases.Count == 0
+                ? programClause
+                : $"({programClause} AND {SentinelFieldMap.Message}:({string.Join(" OR ", phrases.Select(EscapeLucenePhrase))}))");
+        }
+
+        return clauses;
+    }
+
+    /// <summary>把規則的 MessagePatterns 片語包成帶跳脫的 Lucene 完整片語查詢——內容來自 Web
+    /// 規則維護頁（Maintain 權限，信任邊界內），但仍跳脫 `"`／`\` 避免管理者填入的片語意外
+    /// 破壞 filter 語法（同 <see cref="NormalizeSubnetPrefix"/> 對不受信輸入的白名單精神，
+    /// 這裡輸入來源更受信任，做的是語法正確性防禦而非安全性沙盒）。</summary>
+    private static string EscapeLucenePhrase(string phrase) =>
+        $"\"{phrase.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+
     // ── 網段範圍探索（新增主機，2026-07-29 定案）───────────────────────────────
     //
     // docs/NETIQ-API-REFERENCE.md §3.4：使用者在 Sentinel Web UI 實測 repip 支援前綴萬用字元
@@ -126,11 +221,18 @@ public static class SentinelQueryBuilder
     /// 會把安靜主機連同時間一起裁掉，而那正是最需要被發現的那種主機。
     /// </summary>
     /// <param name="excludeIps">要排除的 IP（殘差輪掃的已見主機、重掃的已登錄主機）。</param>
-    public static string BuildSubnetProbeFilter(string subnetInput, IReadOnlyCollection<string>? excludeIps = null)
+    /// <param name="os">依 <see cref="Sentinel.Os"/> 決定內容子句（docs/FEEDBACK-12-PLAN.md §4.4）：
+    /// windows（預設，既有行為不變）用頻道子句；linux 退回 <c>sev:[0 TO 5]</c>——輪 A 實證
+    /// <see cref="SentinelFieldMap.LogName"/>（`rv150`）在 Linux 事件上承載 facility
+    /// （`DAEMON`／`KERNEL`）而不是頻道名，頻道子句在 Linux Sentinel 上會恆為 0 台。</param>
+    public static string BuildSubnetProbeFilter(
+        string subnetInput, IReadOnlyCollection<string>? excludeIps = null, string os = WebHost.OsWindows)
     {
         var prefix = NormalizeSubnetPrefix(subnetInput);
-        var channelClause = $"({SentinelFieldMap.LogName}:System OR {SentinelFieldMap.LogName}:Application)";
-        return $"({SentinelFieldMap.HostIp}:{prefix}.* AND {channelClause}){BuildExclusionSuffix(excludeIps)}";
+        var contentClause = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)
+            ? $"{SentinelFieldMap.Severity}:[0 TO 5]"
+            : $"({SentinelFieldMap.LogName}:System OR {SentinelFieldMap.LogName}:Application)";
+        return $"({SentinelFieldMap.HostIp}:{prefix}.* AND {contentClause}){BuildExclusionSuffix(excludeIps)}";
     }
 
     /// <summary>

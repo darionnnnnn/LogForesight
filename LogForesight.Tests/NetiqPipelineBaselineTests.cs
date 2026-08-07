@@ -46,6 +46,25 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
         });
 
+    private WebHost AddLinuxHost(Sentinel sentinel, string ip, string hostName) =>
+        _hosts.Upsert(new WebHost
+        {
+            HostName = hostName, IpAddress = ip, Os = WebHost.OsLinux,
+            SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
+        });
+
+    /// <summary>10 筆 sshd 暴力破解樣本（docs/FEEDBACK-12-PLAN.md §4.0 第四次 probe 實際樣本格式）
+    /// ——10 筆剛好達 builtin-linux-ssh-bruteforce 的 CountThreshold，聚合後應命中滿嚴重度 High。</summary>
+    private static SentinelEvent LinuxBruteforceEvent(string ip, int index) => new(new Dictionary<string, string>
+    {
+        [SentinelFieldMap.HostIp] = ip,
+        [SentinelFieldMap.HostName] = "linux01",
+        [SentinelFieldMap.LinuxProgram] = "sshd",
+        [SentinelFieldMap.Timestamp] = DateTime.UtcNow.AddMinutes(-index).ToString("O"),
+        [SentinelFieldMap.Severity] = "1",
+        [SentinelFieldMap.Message] = $"Failed password for invalid user test{index} from 10.9.9.9 port 22 ssh2"
+    });
+
     /// <summary>命中 builtin-security-audit-log-cleared-1102（ElevatesDayRisk=true）的假事件——
     /// 用來讓某個主機日落在「非低風險」，藉此驗證 useAi=true 時真的會呼叫 AI。</summary>
     private static SentinelEvent HighRiskEvent(string ip) => new(new Dictionary<string, string>
@@ -145,6 +164,53 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
         Assert.Equal(4, result.HostDaysAnalyzed);   // 2 台主機 × 2 天
         Assert.Equal(2, _client.Requests.Count);    // 但只發了 2 次查詢（按日期批次，兩台共用）
+    }
+
+    /// <summary>
+    /// docs/FEEDBACK-12-PLAN.md §4B（拆 Windows 擋板）：同一台 Sentinel 轄下同時有 Windows 與
+    /// Linux 主機時，兩者都應該被實際查詢與分析——不再是「Linux 台印警告、本次不查」。
+    /// 用 filter 內容（是否含 `sp:`）分辨兩次查詢分別回什麼形狀的假事件，驗證 Linux 主機
+    /// 端到端跑完整條 mapper→aggregator→classify 鏈：正確聚合成 EventKey、LogName、次數、嚴重度
+    /// 都對得上，不是只有「有寫入紀錄」這種粗淺斷言。
+    /// </summary>
+    [Fact]
+    public async Task 同一Sentinel下Windows與Linux主機皆被查詢且各自正確映射()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        AddLinuxHost(sentinel, "10.0.0.9", "HOST-L");
+
+        _client.Responder = request =>
+        {
+            if (request.Filter.Contains($"{SentinelFieldMap.LinuxProgram}:"))
+            {
+                var events = Enumerable.Range(0, 10).Select(i => LinuxBruteforceEvent("10.0.0.9", i)).ToArray();
+                return new SentinelSearchResult { Events = events, Found = events.Length, State = SentinelJobState.Completed };
+            }
+            return new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+        };
+
+        var pipeline = MakePipeline(useAi: false);
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(2, result.HostDaysAnalyzed); // 1 Windows + 1 Linux，兩者都真的跑了
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Empty(result.Warnings); // 不再有「Linux 主機本次不查詢」警告
+        Assert.Equal(2, _client.Requests.Count); // 同一天，但 Windows/Linux 各自一次批次查詢
+
+        var yesterday = DateTime.Today.AddDays(-1);
+
+        var windowsStore = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        Assert.Single(windowsStore.ReadRecent(yesterday, 1));
+
+        var linuxStore = _backend.RecordStore(new HostKey { HostId = 2, HostName = "HOST-L" });
+        var linuxRecord = Assert.Single(linuxStore.ReadRecent(yesterday, 1));
+        var bruteforceIssue = Assert.Single(linuxRecord.TopIssues, i => i.EventKey == "builtin-linux-ssh-bruteforce");
+        Assert.Equal(LogAggregator.LinuxLogName, bruteforceIssue.LogName);
+        Assert.Equal("sshd", bruteforceIssue.Source);
+        Assert.Equal(0, bruteforceIssue.EventId);
+        Assert.Equal(10, bruteforceIssue.Count);
+        Assert.Equal(IssueSeverity.High, bruteforceIssue.Severity);
     }
 }
 

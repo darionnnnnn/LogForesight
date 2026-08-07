@@ -8,8 +8,11 @@ namespace LogForesight.Core.Service;
 /// <see cref="LogAnalysisService"/>——五層偵測/AI/報告零改動重用（見
 /// <c>SentinelPipelineContractTests</c> 的合約驗證）。
 ///
-/// **只支援 Windows 主機**：Linux 那台 Sentinel 尚未接入，沒有真實 probe 樣本
-/// （docs/BACKLOG.md），Linux 主機在這裡明確標示「尚未支援」而不是靜默略過。
+/// **同時支援 Windows／Linux 主機**（docs/FEEDBACK-12-PLAN.md §4B，2026-08-07 起）：
+/// 同一台 Sentinel 轄下的主機依 <see cref="NetiqTarget.Os"/> 分成兩組各自處理
+/// （<see cref="RunServerAsync"/>）——查詢 filter／投影欄位／事件映射三處分路
+/// （<see cref="SentinelQueryBuilder"/>／<see cref="SentinelFieldMap"/>／
+/// <see cref="SentinelEventMapper"/>），統計/趨勢/AI/報告仍是同一條零改動重用的下游。
 ///
 /// **當日續跑免費取得**：完成標記＝該主機當日已有分析紀錄（<see cref="IAnalysisRecordReader.HasRecord"/>，
 /// 各主機的 record store 已按 owner host 隔離）。凌晨排程跑到一半掛掉，白天重跑只會補上
@@ -154,31 +157,18 @@ public class NetiqPipelineService
                     return;
                 }
 
-                var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
-                var linuxCount = targets.Count - windowsTargets.Count;
-                if (linuxCount > 0)
-                {
-                    _console.WriteLine($"  ℹ Sentinel「{serverName}」轄下 {linuxCount} 台 Linux 主機，" +
-                                      "取數管線尚未支援，本次不查詢（見 docs/BACKLOG.md）");
-                    result.AddWarning($"Sentinel「{serverName}」的 {linuxCount} 台 Linux 主機本次不查詢（Linux 取數尚未支援）");
-                }
-                if (windowsTargets.Count == 0)
-                {
-                    return;
-                }
-
                 try
                 {
-                    await RunServerAsync(sentinel, windowsTargets, trendWindowDays, result, aiQueue, serverCt);
+                    await RunServerAsync(sentinel, targets, trendWindowDays, result, aiQueue, serverCt);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // 失敗隔離：一台 Sentinel 整台失聯（如連線位址設定壞掉）不該讓其餘 Sentinel
                     // 完全沒被查詢——這正是 HostListResult.Warnings 一貫的「不能靜默略過」原則
                     Log.Warn(ex, "[{Server}] NetIQ 分析失敗，轄下主機本次未完成", serverName);
-                    _console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {windowsTargets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
+                    _console.WriteLine($"  ✗ Sentinel「{serverName}」整體失敗：{ex.Message}（轄下 {targets.Count} 台主機本次未完成，下次執行自動重試缺漏日）");
                     result.AddWarning($"Sentinel「{serverName}」整體失敗：{ex.Message}");
-                    result.AddFailed(windowsTargets.Count);
+                    result.AddFailed(targets.Count);
                 }
             });
         }
@@ -214,11 +204,35 @@ public class NetiqPipelineService
     internal static int ResolveLookbackDays(int backfillDays, int trendWindowDays) =>
         Math.Min(backfillDays, trendWindowDays);
 
+    /// <summary>
+    /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
+    /// 缺漏日掃描＋孤兒補跑流程（docs/FEEDBACK-12-PLAN.md §4.4）——同一台 Sentinel 依環境事實
+    /// 通常只會有單一 OS（見類別文件），但這裡不依賴此假設，兩組都有目標時依序各跑一輪
+    /// （批次內部仍是各自 OS 同質，filter 只需要建一次）。
+    /// </summary>
     private async Task RunServerAsync(
         Sentinel sentinel, List<NetiqTarget> targets, int trendWindowDays, NetiqPipelineResult result,
         AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
     {
-        _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 Windows 主機");
+        var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
+        var linuxTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (windowsTargets.Count > 0)
+        {
+            await RunServerOsGroupAsync(sentinel, windowsTargets, WebHost.OsWindows, trendWindowDays, result, aiQueue, ct);
+        }
+        if (linuxTargets.Count > 0)
+        {
+            await RunServerOsGroupAsync(sentinel, linuxTargets, WebHost.OsLinux, trendWindowDays, result, aiQueue, ct);
+        }
+    }
+
+    private async Task RunServerOsGroupAsync(
+        Sentinel sentinel, List<NetiqTarget> targets, string os, int trendWindowDays, NetiqPipelineResult result,
+        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
+    {
+        var osLabel = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
+        _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 {osLabel} 主機");
 
         // 首次與非首次統一套用 BackfillDays（docs/archive/FEEDBACK-3-PLAN.md #1）：不再區分
         // 「該主機是否已有任何紀錄」——2000 台規模下不管是首次登錄還是排程漏跑，
@@ -283,7 +297,7 @@ public class NetiqPipelineService
 
                 foreach (var batch in hostsNeedingDate.Chunk(IpBatchSize))
                 {
-                    await RunBatchDayAsync(client, sentinel.Name, batch, date, trendWindowDays, result, aiQueue, ct);
+                    await RunBatchDayAsync(client, sentinel.Name, batch, date, os, trendWindowDays, result, aiQueue, ct);
                 }
             }
         }
@@ -303,9 +317,10 @@ public class NetiqPipelineService
     }
 
     private async Task RunBatchDayAsync(
-        ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date,
+        ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date, string os,
         int trendWindowDays, NetiqPipelineResult result, AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
     {
+        var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
         var ips = batch.Select(p => p.Target.IpAddress).ToList();
         // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient；用 DateTimeOffset 建構子
         // 讓 .NET 依系統時區規則正確處理 DST 轉換，不手動硬編位移
@@ -315,18 +330,22 @@ public class NetiqPipelineService
         string filter;
         try
         {
-            filter = SentinelQueryBuilder.BuildWindowsFilter(ips, KnownIssueCatalog.Rules);
+            filter = isLinux
+                ? SentinelQueryBuilder.BuildLinuxFilter(ips, KnownIssueCatalog.Rules)
+                : SentinelQueryBuilder.BuildWindowsFilter(ips, KnownIssueCatalog.Rules);
         }
         catch (ArgumentException)
         {
             return; // ips 不可能為空（Chunk 保證每批至少 1 筆），這裡只是防禦性守住
         }
 
+        var projectionFields = isLinux ? SentinelFieldMap.LinuxQ1ProjectionFields : SentinelFieldMap.Q1ProjectionFields;
+
         SentinelSearchResult searchResult;
         try
         {
             searchResult = await client.SearchAsync(
-                new SentinelSearchRequest(filter, start, end, SentinelFieldMap.Q1ProjectionFields), ct);
+                new SentinelSearchRequest(filter, start, end, projectionFields), ct);
         }
         catch (SentinelClientException ex)
         {
@@ -353,7 +372,7 @@ public class NetiqPipelineService
         foreach (var plan in batch)
         {
             var hostRawEvents = eventsByIp.TryGetValue(plan.Target.IpAddress, out var raw) ? raw : new List<SentinelEvent>();
-            var (mapped, skipped) = SentinelEventMapper.MapAll(hostRawEvents);
+            var (mapped, skipped) = SentinelEventMapper.MapAll(hostRawEvents, os);
             totalSkipped += skipped;
 
             // sn（回報此事件的主機名稱）回填 DisplayName——NetIQ 主機以 IP 登錄，

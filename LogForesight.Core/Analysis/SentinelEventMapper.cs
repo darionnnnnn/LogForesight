@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace LogForesight.Core.Analysis;
 
@@ -13,12 +14,32 @@ namespace LogForesight.Core.Analysis;
 internal static class SentinelEventMapper
 {
     /// <summary>
+    /// msg 前綴解析（Source 三段 fallback 鏈第三順位，docs/FEEDBACK-12-PLAN.md §4.4）：
+    /// syslog 訊息常以 <c>program:</c> 或 <c>program[pid]:</c> 開頭（如 <c>kernel: sdh: sdh1</c>、
+    /// <c>dbus[987]: [system] Successfully…</c>）。刻意要求緊接在行首、程式名後立即接
+    /// （選填的）<c>[數字]</c> 再接冒號空白——像 <c>pam_unix(sshd:session): session opened…</c>
+    /// 這種訊息本體內夾帶的偽冒號不會誤判成前綴（`(` 不在字元類別內，比對在那裡就會失敗），
+    /// 「error: Received disconnect…」這類 sshd 自己訊息格式帶的字首才會被誤吃，但這條路本來
+    /// 就是 sp／obssvcname 都缺席時的最後防線，不是主要取值來源（輪 B 實證受監控主機的
+    /// 事件 sp 幾乎恆在）。
+    /// </summary>
+    private static readonly Regex LinuxMessagePrefixRegex =
+        new(@"^(?<program>[A-Za-z0-9_.-]+)(?:\[\d+\])?:\s", RegexOptions.Compiled);
+
+    /// <summary>
     /// 映射單筆事件。時間或必要欄位缺席/無法解析時回傳 null，呼叫端應計入略過筆數
     /// （寧可少一筆也不要塞進假時間污染趨勢分析——同 <c>EventRecordMapper.Map</c> 對
     /// <c>TimeCreated is null</c> 的既有處理原則）。
     /// </summary>
-    public static EventLogEntryData? Map(SentinelEvent evt)
+    /// <param name="os">依 <see cref="WebHost.OsLinux"/>／<c>OsWindows</c>
+    /// 決定走哪條映射路徑；預設 windows（既有單一呼叫端在補上 Linux 分支前維持原行為）。</param>
+    public static EventLogEntryData? Map(SentinelEvent evt, string os = WebHost.OsWindows)
     {
+        if (os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase))
+        {
+            return MapLinux(evt);
+        }
+
         var fields = evt.Fields;
 
         if (!fields.TryGetValue(SentinelFieldMap.Timestamp, out var rawTimestamp) ||
@@ -60,16 +81,73 @@ internal static class SentinelEventMapper
         };
     }
 
+    /// <summary>
+    /// Linux 事件映射（docs/FEEDBACK-12-PLAN.md §4.4，第二次 probe 修訂）：<c>Source</c> 走三段
+    /// fallback 鏈——<see cref="SentinelFieldMap.LinuxProgram"/>（`sp`，受監控主機的主要路徑）→
+    /// <see cref="SentinelFieldMap.LinuxObsSvcName"/>（`obssvcname`，CEF collector 路徑的備援）→
+    /// <see cref="LinuxMessagePrefixRegex"/>（msg 前綴解析，最後防線）。三段皆解不出時回傳 null，
+    /// 交給 <see cref="MapAll"/> 既有的略過計數機制申報（不新開一條計數路徑，見規劃「既有的解析
+    /// 失敗計數」）——避免「program 靜默變空、全部聚成 Other」的降級不被看見。
+    /// <c>EventId</c> 恆 0（Linux 事件沒有這個概念）、<c>LogName</c> 固定
+    /// <see cref="LogAggregator.LinuxLogName"/>（"Linux"，下游 <see cref="LogAggregator"/> 依此
+    /// 判定走 Linux 分路）。
+    /// </summary>
+    private static EventLogEntryData? MapLinux(SentinelEvent evt)
+    {
+        var fields = evt.Fields;
+
+        if (!fields.TryGetValue(SentinelFieldMap.Timestamp, out var rawTimestamp) ||
+            !DateTimeOffset.TryParse(rawTimestamp, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp))
+        {
+            return null;
+        }
+
+        var message = fields.GetValueOrDefault(SentinelFieldMap.Message, string.Empty);
+
+        var source = fields.GetValueOrDefault(SentinelFieldMap.LinuxProgram, string.Empty);
+        if (source.Length == 0)
+        {
+            source = fields.GetValueOrDefault(SentinelFieldMap.LinuxObsSvcName, string.Empty);
+        }
+        if (source.Length == 0 && message.Length > 0)
+        {
+            var match = LinuxMessagePrefixRegex.Match(message);
+            if (match.Success)
+            {
+                source = match.Groups["program"].Value;
+            }
+        }
+        if (source.Length == 0)
+        {
+            return null; // 三段皆解不出——計入 MapAll 的略過計數，不產出 Source 恆空的假資料
+        }
+
+        var severity = ParseInt(fields, SentinelFieldMap.Severity);
+
+        return new EventLogEntryData
+        {
+            TimeGenerated = timestamp.ToLocalTime().DateTime,
+            EntryType = SentinelFieldMap.MapEntryTypeLinux(severity),
+            LogName = LogAggregator.LinuxLogName,
+            Source = source,
+            Message = message,
+            EventId = 0,
+            InstanceId = 0
+        };
+    }
+
     /// <summary>批次映射，自動略過解析失敗的筆數；回傳映射結果與略過筆數，供呼叫端誠實申報
     /// （與既有 DataIncomplete／Truncated 的「資料不完整要說出來」原則一致）。</summary>
-    public static (List<EventLogEntryData> Mapped, int SkippedCount) MapAll(IEnumerable<SentinelEvent> events)
+    public static (List<EventLogEntryData> Mapped, int SkippedCount) MapAll(
+        IEnumerable<SentinelEvent> events, string os = WebHost.OsWindows)
     {
         var mapped = new List<EventLogEntryData>();
         var skipped = 0;
 
         foreach (var evt in events)
         {
-            var entry = Map(evt);
+            var entry = Map(evt, os);
             if (entry != null)
             {
                 mapped.Add(entry);

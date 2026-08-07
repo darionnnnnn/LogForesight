@@ -70,4 +70,29 @@ public class SentinelFieldMapTests
 
         Assert.Equal(EventLogEntryType.SuccessAudit, type);
     }
+
+    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，輪 B 第 3/4 項定案）──────────────
+
+    [Theory]
+    [InlineData(0, EventLogEntryType.Information)]
+    [InlineData(1, EventLogEntryType.Information)]
+    [InlineData(2, EventLogEntryType.Warning)]
+    [InlineData(3, EventLogEntryType.Error)]
+    [InlineData(4, EventLogEntryType.Error)]
+    [InlineData(5, EventLogEntryType.Error)]
+    public void MapEntryTypeLinux_sev對應EntryType(int severity, EventLogEntryType expected)
+    {
+        // 輪 B 實測分佈：sev0=1.87M/sev1=7.67M/sev2=8/sev3~5=2.4k（全站/24h）——
+        // 這個對應是計數用途的務實選擇，不是 syslog priority 語意還原（NetworkManager 的
+        // <warn> 與 dockerd 的 level=error 皆落在 sev=1，見 SentinelFieldMap 的文件註解）
+        Assert.Equal(expected, SentinelFieldMap.MapEntryTypeLinux(severity));
+    }
+
+    [Fact]
+    public void MapEntryTypeLinux_不依賴頻道名參數_純以sev判定()
+    {
+        // 與 Windows 版 MapEntryType 的關鍵差異：Linux 沒有 Security 特例（xdasoutcome 不存在），
+        // 純粹依 sev 分段，函數簽章上也刻意不收頻道名參數
+        Assert.Equal(EventLogEntryType.Error, SentinelFieldMap.MapEntryTypeLinux(5));
+    }
 }

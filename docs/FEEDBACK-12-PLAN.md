@@ -681,10 +681,17 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
    （輪 A 實證 `rv150` 在 Linux 承載 facility：`DAEMON`／`KERNEL`）。
    依 `Sentinel.Os` 分支：linux 時內容子句退回 `sev:[0 TO 5]`；
    `NETIQ-DISCOVERY-PLAN-2026-08-06.md:208` 預留的退路正式落地並把 Linux 情境明寫進文件。
-6. seed v5：`EventNamePattern` 全數**定案維持留空**（輪 A：`evt` 無正規化語意，
-   不是待補）；`MessagePatterns` 依輪 B 第 4/6 項的 `msg` 全文樣本校正
-   （特別是 sshd 三條訊息與 kernel 家族在此環境的實際字樣）；同時修掉
-   `KnownIssueSeed.cs:17-19` 版本註解的「16 條」（實為 17 條）。
+6. ~~seed v5~~ **評估後定案：不校正 `MessagePatterns` 內容，不遞增 `Version`**（2026-08-07）。
+   逐條核對 8g／四輪 probe 的真實樣本後，**沒有找到任何與現有 `MessagePatterns` 矛盾的證據**——
+   `ssh-bruteforce` 的樣本「`Failed password for invalid user 1838651 from … ssh2`」同時
+   驗證了「Failed password」與「Invalid user」兩條既有片語（大小寫不敏感比對，樣本裡的
+   小寫 "invalid user" 命中規則的 "Invalid user"）；kernel 家族的「I/O error」經 8g 直接
+   查證有效（found=10/24h）；其餘片語（authentication failure／oom-kill 等）沒有反證，
+   只是未逐一取樣，不構成「錯誤」。`Version` 是「內容有變才遞增」的訊號（Web 端「內建規則
+   升級」據此提示既有部署要不要重新匯入）——沒有實質內容差異卻遞增版本號，只會讓現有
+   部署收到一個「有更新」但比對起來什麼都沒變的空歡喜提示，比不遞增更誤導。
+   `KnownIssueSeed.cs:17-19` 版本註解的「16 條」已隨批 4A 文件同步修正為 17（見
+   docs/BACKLOG.md／docs/LINUX-RULES.md 的既有記錄），此處不重複。
 
 ### 4.5 Linux 攻擊鏈關聯（4C）
 
