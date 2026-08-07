@@ -217,17 +217,20 @@ public class LinuxSignatureAggregationTests : IDisposable
         Assert.True(ChannelCoverage.WasRead(recordWithOtherChannels, "Linux"));
     }
 
-    // ── LogAnalysisService：關聯層 Linux 短路與 UncoveredChecks 申報 ──────
+    // ── LogAnalysisService：關聯層 Linux 分路（LinuxCorrelationAnalyzer）與 UncoveredChecks 申報
+    //    （docs/FEEDBACK-12-PLAN.md §4.5，批 4C 落地——CorrelationAnalyzer 對 Linux 事件的
+    //    「不執行」在 4A 已改為「走 LinuxCorrelationAnalyzer」，這裡驗證的是分路接對、
+    //    UncoveredChecks 文案也同步更新，不是原本 §4.3 那個純短路的舊行為）───────
 
     [Fact]
-    public async Task BuildStatisticalRecordAsync_Linux主機關聯層短路且誠實申報不適用()
+    public async Task BuildStatisticalRecordAsync_Linux主機未達暴力破解門檻時關聯層無告警()
     {
         using var fx = new EfSqliteFixture();
         var history = new EfAnalysisRecordStore(fx.NewContext, "test");
         var ai = new FakeAiService();
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore());
 
-        var logs = Enumerable.Range(0, 6)
+        var logs = Enumerable.Range(0, 6) // 未達 LinuxCorrelationAnalyzer 的 10 筆門檻
             .Select(i => MakeLinuxEntry("sshd", $"Failed password for invalid user root from 10.0.0.{i} port 22 ssh2"))
             .ToList();
 
@@ -236,6 +239,31 @@ public class LinuxSignatureAggregationTests : IDisposable
 
         Assert.Empty(record.CorrelationAlerts);
         Assert.Contains(record.UncoveredChecks, c => c.Contains("關聯層") && c.Contains("不適用於 Linux"));
+    }
+
+    [Fact]
+    public async Task BuildStatisticalRecordAsync_Linux主機SSH破解得手時關聯層產出告警()
+    {
+        using var fx = new EfSqliteFixture();
+        var history = new EfAnalysisRecordStore(fx.NewContext, "test");
+        var ai = new FakeAiService();
+        var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore());
+
+        var logs = new List<EventLogEntryData>();
+        logs.AddRange(Enumerable.Range(0, 10).Select(i =>
+            MakeLinuxEntry("sshd", $"Failed password for invalid user attacker1 from 10.0.0.1 port {50000 + i} ssh2",
+                DateTime.Today.AddHours(1).AddMinutes(i))));
+        logs.Add(MakeLinuxEntry("sshd", "Accepted password for attacker1 from 10.0.0.9 port 22 ssh2",
+            DateTime.Today.AddHours(2)));
+
+        var (record, _) = await service.BuildStatisticalRecordAsync(
+            DateTime.Today, logs, useAi: false, hostOs: WebHost.OsLinux);
+
+        var alert = Assert.Single(record.CorrelationAlerts);
+        Assert.Contains("破解得手", alert);
+        Assert.Contains("attacker1", alert);
+        // 命中關聯的問題日一律申報「僅涵蓋 SSH」，不會因為這次真的命中了就改口說「已完整涵蓋」
+        Assert.Contains(record.UncoveredChecks, c => c.Contains("僅涵蓋 SSH 破解得手"));
     }
 
     [Fact]

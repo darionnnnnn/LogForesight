@@ -183,12 +183,12 @@ public class LogAnalysisService
 
         // 跨 log 關聯比對：多個獨立訊號的已知攻擊鏈/故障鏈組合（含跨日比對）。
         // 單一事件各自不嚴重、組合起來卻是明確故事——小模型最容易漏掉的判讀，由程式確定性比對。
-        // Linux 主機不執行（docs/FEEDBACK-12-PLAN.md §4.3）：CorrelationAnalyzer 目前無
-        // Platform 概念，是以 Windows Event ID 群組比對的，Linux 事件（EventId 恆 0）餵進去
-        // 會被錯誤群組、靜默誤判——「不執行」比「執行但結果不可信」誠實。
+        // Linux 主機改走獨立的 LinuxCorrelationAnalyzer（docs/FEEDBACK-12-PLAN.md §4.5，批 4C）：
+        // CorrelationAnalyzer 是以 Windows Event ID 群組比對的，Linux 事件（EventId 恆 0）餵進去
+        // 會被錯誤群組、靜默誤判，兩套比對機制完全不同，不能共用同一支。
         var isLinuxHost = hostOs.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
         var correlations = isLinuxHost
-            ? new List<CorrelationFinding>()
+            ? LinuxCorrelationAnalyzer.Detect(issues, logs)
             : CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
 
         // 這幾個清單都是程式自己產生的短結構化字串（不是原始 log 內容），數量也有上限，記錄完整內容沒問題
@@ -217,10 +217,12 @@ public class LogAnalysisService
         var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable, channels);
         if (isLinuxHost)
         {
-            // 「不適用」而非「還沒做完」（docs/FEEDBACK-12-PLAN.md §4.3，落實
-            // docs/BACKLOG.md／docs/LINUX-RULES.md 原本只寫在文件、程式碼不存在的「固定申報」）：
-            // 與「沒告警 ≠ 沒問題」同一個誠實申報原則，不能讓人以為關聯層有檢查過 Linux 事件
-            uncoveredChecks.Add("關聯層（攻擊鏈/故障鏈比對）不適用於 Linux 主機——本版僅規則層＋趨勢層＋慢速趨勢層");
+            // 「涵蓋範圍」而非「完全不適用」（docs/FEEDBACK-12-PLAN.md §4.5，批 4C 落地後更新）：
+            // 關聯層現在涵蓋【SSH 破解得手】一項，但 Windows 面其餘的組合模式（帳號異動/新服務/
+            // 儲存連鎖/Defender 組合等）在 Linux 上仍未涵蓋——與「沒告警 ≠ 沒問題」同一個誠實
+            // 申報原則，不能讓人以為關聯層對 Linux 主機做了跟 Windows 對等的完整檢查。
+            uncoveredChecks.Add("關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項——" +
+                                "其餘 Windows 面的組合模式（帳號異動/新服務/儲存連鎖等）不適用於 Linux 主機");
         }
 
         // 慢速趨勢層若因前期歷史不足而完全沒有比對，要明講——「沒告警」不等於「沒問題」。
