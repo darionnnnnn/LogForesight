@@ -30,11 +30,11 @@ public class NetiqPipelineService
     /// <see cref="NetiqOptions.MaxParallelServers"/> 是管理者可調的設定，但那個設定當初是在
     /// 「分析獨佔一個批次行程」的前提下訂的。分析搬進站台行程之後（Web 排程化），平行度
     /// 直接等於「同時有幾條執行緒在跟前景請求搶 thread pool 與連線」，所以設定值仍然有效，
-    /// 只是被夾在 <see cref="AnalysisOrchestrator.MaxParallelServersInWeb"/> 之內。
+    /// 只是被夾在 <see cref="NetiqOptions.MaxParallelServersLimit"/> 之內。
     /// 下限 1＝完全依序（docs/archive/FEEDBACK-3-PLAN.md #2 的既有語意，不變）。
     /// </summary>
     internal static int ResolveParallelism(int configured) =>
-        Math.Clamp(configured, 1, AnalysisOrchestrator.MaxParallelServersInWeb);
+        Math.Clamp(configured, 1, NetiqOptions.MaxParallelServersLimit);
 
     private readonly StorageBackend _backend;
     private readonly NetiqOptions _netiqOptions;

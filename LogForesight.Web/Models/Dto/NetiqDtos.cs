@@ -260,8 +260,10 @@ public class UpdateNetiqOptionsRequest
     [Range(1, 14)]
     public int BackfillDays { get; set; }
 
-    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理</summary>
-    [Range(1, 8)]
+    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理。
+    /// 上限見 <see cref="NetiqOptions.MaxParallelServersLimit"/>（docs/FEEDBACK-12-PLAN.md §二：
+    /// 分析與站台同行程，這是行程架構上限，不是效能旋鈕）</summary>
+    [Range(1, NetiqOptions.MaxParallelServersLimit)]
     public int MaxParallelServers { get; set; }
 
     /// <summary>docs/archive/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>

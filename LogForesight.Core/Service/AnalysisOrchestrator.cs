@@ -102,21 +102,12 @@ public class AnalysisOrchestrator
     ///
     /// 4 的來由：分析主線是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），
     /// 真正的併發來源只有 NetIQ 的多 Sentinel 平行（<see cref="NetiqOptions.MaxParallelServers"/>
-    /// 預設 2，見 <see cref="MaxParallelServersInWeb"/> 的上限）加上各自的寫入，
+    /// 預設 2，上限見 <see cref="NetiqOptions.MaxParallelServersLimit"/>）加上各自的寫入，
     /// 4 條連線已經餵得飽；再多也只是從前景那邊多搶而已。
     /// 不開放設定：這是「不要拖垮站台」的安全上限，不是效能旋鈕——真的需要更快，
     /// 該做的是拆獨立 worker（本輪已評估後決定不拆，見規劃 §8.4）。
     /// </summary>
     private const int AnalysisMaxPoolSize = 4;
-
-    /// <summary>
-    /// 分析與站台同行程時，NetIQ 多 Sentinel 平行度的硬上限（S-3）。
-    /// <see cref="NetiqOptions.MaxParallelServers"/> 是管理者可調的設定，但那個設定原本是在
-    /// 「分析獨佔一個批次行程」的前提下訂的；現在分析跑在站台裡，平行度直接等於
-    /// 「同時有幾條執行緒在搶 thread pool 與連線池」。設定值仍然有效，只是被夾在這個上限內，
-    /// 而且夾住時會明講——不然管理者調了 8 卻只跑 3，會以為設定壞了。
-    /// </summary>
-    internal const int MaxParallelServersInWeb = 3;
 
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,

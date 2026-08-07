@@ -77,6 +77,33 @@ public class NetiqOptionsServiceTests : IDisposable
         Assert.Equal(5, saved.BackfillDays);
         Assert.False(saved.UseOfflineDemoData);
     }
+
+    /// <summary>
+    /// docs/FEEDBACK-12-PLAN.md §二：上限從 8 收斂到 3 之後，既有環境若曾存過 4~8 的值
+    /// （DataAnnotations 的 [Range] 只在 MVC 模型繫結時生效，不會擋這裡直接呼叫 Update），
+    /// Get() 要把它夾回 3，否則維護頁顯示 8、瀏覽器 max=3 驗證會擋住整張表單存不了檔。
+    /// </summary>
+    [Fact]
+    public void 既有存值超過上限時讀取自動夾住()
+    {
+        var service = Create("Development");
+        var request = Baseline();
+        request.MaxParallelServers = 8;
+        service.Update(request);
+
+        Assert.Equal(NetiqOptions.MaxParallelServersLimit, service.Get().MaxParallelServers);
+    }
+
+    [Fact]
+    public void 存值在上限內時讀取不受影響()
+    {
+        var service = Create("Development");
+        var request = Baseline();
+        request.MaxParallelServers = 2;
+        service.Update(request);
+
+        Assert.Equal(2, service.Get().MaxParallelServers);
+    }
 }
 
 /// <summary>測試用的環境替身：只有 EnvironmentName 有意義（IsProduction()/IsDevelopment() 靠它判定）</summary>
