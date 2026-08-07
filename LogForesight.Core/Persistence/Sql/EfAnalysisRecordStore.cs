@@ -127,6 +127,42 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         Log.Info("[SQL] AttachWeeklyCheckup {Date:yyyy-MM-dd}（結論長度 {Len}）", date, checkup.Conclusion.Length);
     }
 
+    public void AttachAiResult(DateTime date, AiOutcome outcome)
+    {
+        using var ctx = _contextFactory();
+        var row = OwnedRows(ctx).FirstOrDefault(r => r.RecordDate == date.Date);
+        if (row == null)
+        {
+            // 契約同 AttachWeeklyCheckup：找不到對應日期安靜略過（呼叫端在統計段 Append 之後
+            // 才附掛，理論上必找得到）
+            Log.Warn("[SQL] AttachAiResult：找不到 {Date:yyyy-MM-dd} 的紀錄，略過", date);
+            return;
+        }
+
+        var record = Deserialize(row);
+        record.Headline = outcome.Headline;
+        record.Summary = outcome.Summary;
+        record.TrendAssessment = outcome.TrendAssessment;
+        record.Action = outcome.Action;
+        record.RiskLevel = outcome.RiskLevel;
+        record.RiskBasis = outcome.RiskBasis;
+        record.AiAnalyzed = outcome.AiAnalyzed;
+        record.AiPending = false;
+        record.ScreenedTailCount = outcome.ScreenedTailCount;
+        record.ScreeningNotes = outcome.ScreeningNotes;
+        record.ReportFile = outcome.ReportFile;
+        record.DeepDives = outcome.DeepDives;
+        row.ContentJson = JsonSerializer.Serialize(record);
+
+        // 抽出欄同步（docs/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
+        // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移
+        row.RiskLevel = outcome.RiskLevel;
+        ctx.SaveChanges();
+
+        Log.Info("[SQL] AttachAiResult {Date:yyyy-MM-dd}（風險={Risk}, aiAnalyzed={AiAnalyzed}）",
+            date, outcome.RiskLevel, outcome.AiAnalyzed);
+    }
+
     /// <summary>
     /// 單次清理的列數上限（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
     ///

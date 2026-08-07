@@ -149,6 +149,7 @@ public class RecordStorageShaperTests
             TrendAssessment = "assessment",
             Action = "action",
             AiAnalyzed = false,
+            AiPending = true,
             ScreenedTailCount = 7,
             ScreeningNotes = new List<string> { "note" },
             ReportFile = "report/path.txt",

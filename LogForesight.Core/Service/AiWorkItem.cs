@@ -26,22 +26,3 @@ internal sealed record AiWorkItem(
     int HistoryDays,
     List<EventLogEntryData> Logs,
     List<RuleSuppression> ActiveSuppressions);
-
-/// <summary>
-/// AI 段定案後的輸出——覆寫統計段已寫入的暫代欄位（docs/FEEDBACK-12-PLAN.md §3.5
-/// <c>AttachAiResult</c> 的輸入）。<see cref="ReportFile"/>／<see cref="DeepDives"/> 也在這裡：
-/// 深析報告需要「AI 是否成功、風險是否被拉高」的最終結果才能決定要不要產生，
-/// 所以報告產出的時機隨 AI 段一起移動，不再是統計段的職責。
-/// </summary>
-internal sealed record AiOutcome(
-    string Headline,
-    string Summary,
-    string TrendAssessment,
-    string Action,
-    string RiskLevel,
-    string? RiskBasis,
-    bool AiAnalyzed,
-    int ScreenedTailCount,
-    List<string> ScreeningNotes,
-    string? ReportFile,
-    List<CategoryDeepDive> DeepDives);

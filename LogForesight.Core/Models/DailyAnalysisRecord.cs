@@ -65,6 +65,15 @@ public class DailyAnalysisRecord
     /// <summary>false = 統計模式紀錄（AI 未呼叫或呼叫失敗時的降級紀錄）</summary>
     public bool AiAnalyzed { get; set; } = true;
 
+    /// <summary>
+    /// true = 統計段已完成並寫入，AI 段還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）。
+    /// 與 <see cref="AiAnalyzed"/> 是不同的兩件事：AiAnalyzed=false 且 AiPending=false 是
+    /// 「AI 已定案不需要／已嘗試但失敗」的既有語意；AiPending=true 是新增的第三態，代表
+    /// 「還沒定案，正在等」。執行完成後由 <c>AttachAiResult</c> 改回 false；若執行被取消，
+    /// 這個旗標維持 true，下次執行會被當成待補跑的孤兒紀錄自動接手（§3.10）。
+    /// </summary>
+    public bool AiPending { get; set; }
+
     /// <summary>前置掃描檢視的低嚴重度項目數（0 = 當日事件種類未超過主 prompt 上限，未觸發掃描）</summary>
     public int ScreenedTailCount { get; set; }
 
@@ -124,6 +133,29 @@ public class DailyAnalysisRecord
     /// </summary>
     public List<CategoryDeepDive> DeepDives { get; set; } = new();
 }
+
+/// <summary>
+/// AI 段定案後的輸出（docs/FEEDBACK-12-PLAN.md §3.3/§3.5）——覆寫統計段已寫入的暫代欄位，
+/// 是 <c>IAnalysisRecordStore.AttachAiResult</c> 的輸入。放在 Models（而不是產生它的
+/// LogAnalysisService 所在的 Service 命名空間）是因為 Persistence 層的
+/// <c>IAnalysisRecordStore</c> 介面也需要引用這個型別——與 <see cref="WeeklyCheckupResult"/>
+/// 同一個理由（<c>AttachWeeklyCheckup</c> 的輸入也放在這裡）。
+/// <see cref="ReportFile"/>／<see cref="DeepDives"/> 也在這裡：深析報告需要「AI 是否成功、
+/// 風險是否被拉高」的最終結果才能決定要不要產生，所以報告產出的時機隨 AI 段一起移動，
+/// 不再是統計段的職責。
+/// </summary>
+public sealed record AiOutcome(
+    string Headline,
+    string Summary,
+    string TrendAssessment,
+    string Action,
+    string RiskLevel,
+    string? RiskBasis,
+    bool AiAnalyzed,
+    int ScreenedTailCount,
+    List<string> ScreeningNotes,
+    string? ReportFile,
+    List<CategoryDeepDive> DeepDives);
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

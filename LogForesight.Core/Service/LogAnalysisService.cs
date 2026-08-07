@@ -248,6 +248,7 @@ public class LogAnalysisService
         {
             record.Headline = "（統計已完成，AI 分析排隊中）";
             record.Summary = "（統計已完成，AI 分析排隊中）";
+            record.AiPending = true;
 
             var workItem = new AiWorkItem(targetDate, issues, trendAlerts, correlations, ruleRisk, riskBasis,
                 uncoveredChecks, dataIncomplete, errorCount, warningCount, auditCount, historyDays,
@@ -416,6 +417,7 @@ public class LogAnalysisService
         record.RiskLevel = outcome.RiskLevel;
         record.RiskBasis = outcome.RiskBasis;
         record.AiAnalyzed = outcome.AiAnalyzed;
+        record.AiPending = false;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
         record.ScreeningNotes = outcome.ScreeningNotes;
         record.ReportFile = outcome.ReportFile;
