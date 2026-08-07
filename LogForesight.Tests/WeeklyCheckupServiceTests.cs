@@ -4,9 +4,10 @@ namespace LogForesight.Tests;
 
 /// <summary>
 /// 驗證 2026-07-20 體檢重設計的兩個確定性行為：due-date 到期判斷（ShouldRun）與
-/// 窗口內三層皆無訊號時的閘門（RunAsync 早退路徑）。AI 敘事成功路徑本身無法在不啟動真實
-/// AI 服務下測試（AIService 目前是具體類別、未抽介面，是已知的覆蓋缺口，見 docs/DB-SPEC.md）；
-/// 這裡改用「有訊號時會嘗試呼叫 AI（因而在無法連線時失敗）」間接驗證閘門正確地沒有短路。
+/// 窗口內三層皆無訊號時的閘門（RunAsync 早退路徑）。這裡用「有訊號時會嘗試呼叫 AI（因而在
+/// 無法連線時失敗）」間接驗證閘門正確地沒有短路——這個寫法早於 IAiService 抽出
+/// （docs/FEEDBACK-12-PLAN.md §3.8-1），改用 <see cref="FakeAiService"/> 亦可，此處維持
+/// 原寫法不重工，兩者驗證的斷言相同。
 /// </summary>
 public class WeeklyCheckupServiceTests
 {

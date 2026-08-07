@@ -28,7 +28,25 @@ public class AiJsonResult<T> where T : class
     public int Attempts { get; init; }
 }
 
-public class AIService
+/// <summary>
+/// AI 呼叫的抽象介面（docs/FEEDBACK-12-PLAN.md §3.8-1）：抽出來是為了讓 NetIQ pipeline 的
+/// producer/consumer 拆分（§3）能在測試裡注入假 AI（可控延遲/失敗），不必真的打網路。
+/// <see cref="AIService"/> 是唯一實作；簽章原封不動照搬既有 <c>ChatAsync</c>／<c>ChatJsonAsync</c>，
+/// 只新增 <c>ct</c>——執行取消（§3.6）需要能中斷排隊中／進行中的 AI 呼叫，過去完全沒有取消路徑，
+/// 最壞情況要等到 600 秒逾時 ×重試全部跑完才會停下來。
+/// </summary>
+public interface IAiService
+{
+    Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
+        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        CancellationToken ct = default);
+
+    Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
+        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        string label = "chat-json", CancellationToken ct = default) where T : class;
+}
+
+public class AIService : IAiService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
@@ -140,7 +158,8 @@ public class AIService
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat")
+        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        CancellationToken ct = default)
     {
         var messages = new List<OpenAIMessage>();
         if (!string.IsNullOrEmpty(systemPrompt))
@@ -189,19 +208,19 @@ public class AIService
         Log.Debug("Chat 請求：jsonMode={JsonMode}, promptChars={PromptChars}, systemPromptChars={SystemPromptChars}",
             jsonMode, prompt.Length, systemPrompt?.Length ?? 0);
 
-        await _requestQueue.WaitAsync();
+        await _requestQueue.WaitAsync(ct);
         var sw = Stopwatch.StartNew();
         try
         {
-            var content = await _retryPipeline.ExecuteAsync(async ct =>
+            var content = await _retryPipeline.ExecuteAsync(async attemptCt =>
             {
-                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, ct);
+                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, attemptCt);
                 response.EnsureSuccessStatusCode();
 
                 // 先讀成字串再自己解析，而不是直接 ReadFromJsonAsync：中間的 proxy/gateway
                 // 偶爾會用 HTTP 200 回傳非 JSON 的純文字/HTML 錯誤頁（例如逾時橫幅），
                 // 這樣才能在解析失敗時把實際內容記下來，而不是只有一句無從查起的例外訊息
-                var rawBody = await response.Content.ReadAsStringAsync(ct);
+                var rawBody = await response.Content.ReadAsStringAsync(attemptCt);
                 OpenAIResponse? result;
                 try
                 {
@@ -236,11 +255,27 @@ public class AIService
                 }
 
                 return sanitized;
-            });
+            }, ct);
 
             Log.Info("Chat 完成：耗時={ElapsedMs}ms, 回應長度={ResponseChars} 字元", sw.ElapsedMilliseconds, content.Length);
             _dumper.Dump(label, systemPrompt ?? "", prompt, content);
             return new AiResponse { Success = true, Content = content };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 執行取消（docs/FEEDBACK-12-PLAN.md §3.6）：不能被吞成「AI 呼叫失敗」的降級結果——
+            // 呼叫端（NetIQ pipeline 的 AI 消費者）要能分辨「AI 真的失敗」與「run 被取消」，
+            // 後者不寫入失敗結果，讓該筆工作項維持 AiPending 由下次執行補跑。
+            // Polly v8 對 ExecuteAsync 傳入的 ct 本身觸發的取消一律不重試、直接往外拋，
+            // 不受 ShouldHandle 內含 TaskCanceledException 影響。
+            //
+            // 篩選條件 ct.IsCancellationRequested 是關鍵：HttpClient.Timeout 逾時也會拋
+            // TaskCanceledException（同樣是 OperationCanceledException 的子類別），但那個
+            // token 是 HttpClient 內部自己的、與我們傳入的 ct 無關——那種情況要落到下面的
+            // catch (Exception) 走既有的降級失敗路徑（AiResponse.Success=false），
+            // 不能被誤判成使用者取消而整個拋出去（實測抓到這個回歸：兩者都是
+            // OperationCanceledException，只看例外型別分不出來）。
+            throw;
         }
         catch (Exception ex)
         {
@@ -263,7 +298,7 @@ public class AIService
     /// <param name="maxTokens">覆寫預設的 token 上限，見 <see cref="ChatAsync"/> 的說明</param>
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
         Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
-        string label = "chat-json") where T : class
+        string label = "chat-json", CancellationToken ct = default) where T : class
     {
         string rawContent = string.Empty;
         string? lastError = null;
@@ -272,7 +307,7 @@ public class AIService
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
             var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
-                label: totalAttempts > 1 ? $"{label}-a{attempt}" : label);
+                label: totalAttempts > 1 ? $"{label}-a{attempt}" : label, ct: ct);
 
             if (!response.Success)
             {

@@ -26,7 +26,7 @@ public class LogAnalysisService
     private const int MaxHeadlineChars = 60;
 
     private readonly EventLogService _eventLogService;
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
     private readonly IAnalysisRecordStore _historyService;
     private readonly ISuppressionStore _suppressionStore;
     private readonly RiskReportService? _reportService;
@@ -42,7 +42,7 @@ public class LogAnalysisService
     /// <param name="host">寫入紀錄的主機名稱；null/空字串時預設為 Environment.MachineName（本機情境的自然值）</param>
     /// <param name="hostId">寫入紀錄的主機 PK（主機清單登記後取得）。**紀錄與主機的關聯鍵**；
     /// 0＝取不到主機列時的降級，查詢端會退回以主機名稱比對，分析本身不受影響</param>
-    public LogAnalysisService(EventLogService eventLogService, AIService aiService, IAnalysisRecordStore historyService,
+    public LogAnalysisService(EventLogService eventLogService, IAiService aiService, IAnalysisRecordStore historyService,
         ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null,
         string? host = null, long hostId = 0)
     {

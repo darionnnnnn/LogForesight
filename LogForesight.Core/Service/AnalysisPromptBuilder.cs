@@ -39,9 +39,9 @@ internal class AnalysisPromptBuilder
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出一個符合使用者指定結構的 JSON 物件。";
 
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
 
-    public AnalysisPromptBuilder(AIService aiService) => _aiService = aiService;
+    public AnalysisPromptBuilder(IAiService aiService) => _aiService = aiService;
 
     /// <summary>
     /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。

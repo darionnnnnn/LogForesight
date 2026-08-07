@@ -38,11 +38,11 @@ public class RiskReportService
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
     private readonly IReportSink _reportSink;
     private readonly int _deepDiveMaxTokens;
 
-    public RiskReportService(AIService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
+    public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
     {
         _aiService = aiService;
         _reportSink = reportSink;
