@@ -76,10 +76,6 @@ public class RunActivityDto
 public class RunPreviewDto
 {
     public int HostCount { get; set; }
-
-    /// <summary>HostCount 當中有幾台是 Linux 主機——涵蓋在範圍內但本次不會被查詢
-    /// （Linux 事件取數尚未支援，docs/FEEDBACK-12-PLAN.md §1.1）</summary>
-    public int LinuxCount { get; set; }
 }
 
 /// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）</summary>
