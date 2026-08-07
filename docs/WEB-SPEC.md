@@ -1114,9 +1114,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   LocalOnly、NetIQ 主機走 NetiqHosts 單台。後端先驗證主機目前確實在「會被查詢」的清單內
   （Pollable——停用／待歸屬／IP 衝突／所屬 Sentinel 停用都會被 orchestrator 靜默濾掉，
   預覽顯示「1 台」會是假象），不符合時拒絕並給出具體原因。
-  **Linux 主機過渡期擋截（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.2，待批 4B 落地即可拆除）**：
-  `HostDetail.Os === 'linux'` 時按鈕整顆 `disabled` 並附 tooltip 說明——Sentinel 搜尋還沒有
-  Linux 取數分支，讓使用者按下去空等一輪比直接說明白更浪費時間。
+  **Linux 主機比照 Windows 正式支援（2026-08-07，docs/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期
+  擋截）**：按鈕不再因 `HostDetail.Os === 'linux'` 停用——Sentinel 搜尋已有 Linux 取數分支，
+  Linux 主機走同一條 Pollable 驗證與 NetiqHosts 單台查詢路徑。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
 
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
@@ -1547,11 +1547,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。**Linux 台數過渡期分開
-  回報（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.1，待批 4B 落地即可拆除）**：Sentinel 搜尋
-  尚未有 Linux 取數分支，run-preview 台數改拆 `LinuxCount`，範圍含 Linux 主機時額外附一行
-  「，其中 M 台 Linux 主機暫不查詢」，讓「這次要跑的台數」與「其中真的會查到資料的台數」
-  分得清楚。窗口 End 到點時排程引擎
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。**Linux 主機比照 Windows
+  正式支援（2026-08-07，docs/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期擋板）**：run-preview
+  台數為單一總數，不再拆分 `LinuxCount`／附加「暫不查詢」提示——Sentinel 搜尋已有 Linux
+  取數分支（依 `Os` 分流查詢與映射），Linux 主機和 Windows 主機走同一條
+  `pollableIds.Contains(id)` 判斷，範圍與立即執行皆不再排除 Linux。窗口 End 到點時排程引擎
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。

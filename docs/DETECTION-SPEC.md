@@ -233,7 +233,7 @@ docs/archive/HISTORY.md #1）。
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
-#### Linux syslog（seed v4，2026-07-28 新增；2026-08-07 起規則面＋事件模型＋簽章聚合已就緒，Sentinel 取數分支待輪 B 診斷資料）
+#### Linux syslog（seed v4，2026-07-28 新增；2026-08-07 回饋第十二輪批 4B/4C 完成，Sentinel 取數＋SSH 攻擊鏈關聯已全面落地）
 
 Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
 Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
@@ -266,28 +266,30 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態（2026-08-07，回饋第十二輪批 4A）**：規則模型、種子、驗證、Web 維護介面（規則頁
-> 的「Linux規則」分頁），以及**事件模型與簽章聚合**（`EventKey` 五元組分組鍵、
-> `LogAggregator.ClassifyLinux`、`IssueSignatureKey` 相容擴充）都已完成並有專屬測試覆蓋
-> （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。仍待完成的是**從 Sentinel 實際取得
-> Linux 事件的搜尋分支**（`SentinelFieldMap`／`SentinelEventMapper`／`SentinelQueryBuilder`
-> 的 Linux 分支），這部分需要一輪額外的診斷資料（`sp` 查詢行為、`sev` 分佈、program 量級、
-> sshd 樣本正則）才能定案 filter 子句與門檻，卡在使用者執行 NetIQ 維護頁「診斷」分頁的 probe
-> 並貼回結果——上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
-> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，也已能正確聚合分類 Linux 事件，但
-> Sentinel 搜尋還不會實際把 Linux 事件送進分析管線（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
-> 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
-> 落在 Sentinel 層級而非逐事件判別）。
+> **目前狀態（2026-08-07，回饋第十二輪批 4B/4C 完成）**：規則模型、種子、驗證、Web 維護介面
+> （規則頁的「Linux規則」分頁）、**事件模型與簽章聚合**（`EventKey` 五元組分組鍵、
+> `LogAggregator.ClassifyLinux`、`IssueSignatureKey` 相容擴充）、**Sentinel 實際取數分支**
+> （`SentinelFieldMap`／`SentinelEventMapper.MapLinux`／`SentinelQueryBuilder.BuildLinuxFilter`，
+> 四輪 probe 定案，見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) §4a）、以及
+> **SSH 攻擊鏈關聯**（`LinuxCorrelationAnalyzer`，見下方關聯層說明）全部完成並有專屬測試覆蓋
+> （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。上表的訊息關鍵字已對照四輪 probe 的真實
+> 環境輸出（program 量級、`msg` 片語查詢行為、sshd 樣本全文）逐項核對，零矛盾證據，seed 版本
+> 維持 v4 不變（評估後定案不校正，見 docs/FEEDBACK-12-PLAN.md §4.6 批 4B.6）。
+> 也就是說 Linux 主機從掃描精靈納入、排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，
+> 已與 Windows 主機同一條管線走完整趟，沒有殘留的止血擋板或短路（見
+> [docs/BACKLOG.md](docs/BACKLOG.md)）。本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**
+> （同一台 Sentinel 不混平台，故 OS 標記落在 Sentinel 層級而非逐事件判別；唯一例外是同一台
+> Sentinel 上另有 CEF collector 路徑，欄位形狀細節見 NETIQ-API-REFERENCE.md §4a）。
 >
-> **五層偵測對 Linux 主機的適用性**（Sentinel 取數分支落地後即可生效）：
+> **五層偵測對 Linux 主機的適用性**：
 >
 > | 層 | 適用 Linux？ | 說明 |
 > |---|---|---|
 > | 規則層 | ✓ | `KnownIssueCatalog.ClassifyLinux`，program＋訊息子字串比對 |
 > | 趨勢層 | ✓ | `TrendAnalyzer.SameIssue` 五元組比對，隔離「同 program 不同規則」 |
 > | 慢速趨勢層 | ✓ | `SlowTrendAnalyzer` 同上；`ChannelCoverage.WasRead("Linux")` 恆真 |
-> | 關聯層 | ✗（誠實申報「不適用」，非「還沒做完」） | `CorrelationAnalyzer` 目前只認 Windows Event ID 群組，Linux 主機短路跳過並在 `UncoveredChecks` 明講；SSH 攻擊鏈關聯是獨立規劃的 §4.5（4C），需輪 B 的 sshd 樣本正則定案，尚未實作 |
-> | AI 判讀層 | ✓ | 與平台無關，餵給 AI 的是聚合後的統計摘要，Linux 主機的規則/趨勢/慢速趨勢結果一樣能被翻譯成白話 |
+> | 關聯層 | 部分（僅 SSH 破解得手一項） | `LinuxCorrelationAnalyzer` 獨立於 Windows 的 `CorrelationAnalyzer`（機制完全不同：regex 解析 `msg` 文字取 user/ip 再找重疊，而非 EventId 群組比對）；同日 `builtin-linux-ssh-bruteforce` 達門檻＋`builtin-linux-ssh-accept` 存在時比對兩者的 (user, ip)，重疊→精確命中（High），無重疊但有解析失敗樣本→降級提醒（Medium），全數解析成功且無重疊→誠實不告警（不是漏做）。其餘 Windows 面的組合模式（帳號異動鏈／新服務鏈／儲存連鎖等）目前不適用於 Linux 主機，`UncoveredChecks` 會明講 |
+> | AI 判讀層 | ✓ | 與平台無關，餵給 AI 的是聚合後的統計摘要，Linux 主機的規則/趨勢/慢速趨勢/關聯結果一樣能被翻譯成白話；「詢問 AI 現場取數」的即時查詢分支也已改用 program 子句支援 Linux（原本沿用 Windows 的 EventId 子句會恆查 0 筆） |
 
 ### 給 AI 判讀的輔助資訊（除了事件本身）
 
