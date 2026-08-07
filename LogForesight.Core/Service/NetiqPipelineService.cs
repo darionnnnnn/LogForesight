@@ -124,7 +124,7 @@ public class NetiqPipelineService
         // 迴圈正常結束還是被取消，finally 都要讓消費者知道不會再有新項目並等它收尾——
         // 否則消費者會永遠卡在 ReadAllAsync 等下一筆，執行永遠收不了尾。
         var aiQueue = new AiFollowupQueue<AiFollowupJob>();
-        var consumerTask = ConsumeAiQueueAsync(aiQueue, result, ct);
+        var consumerTask = ConsumeAiQueueAsync(aiQueue, result, trendWindowDays, ct);
 
         try
         {
@@ -226,6 +226,7 @@ public class NetiqPipelineService
         var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays, trendWindowDays);
 
         var plans = new List<HostPlan>();
+        var orphanJobs = new List<AiFollowupJob>();
         foreach (var target in targets)
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
@@ -235,37 +236,66 @@ public class NetiqPipelineService
             if (missingDates.Count == 0)
             {
                 result.AddSkipped();
-                continue;
             }
-            plans.Add(new HostPlan(target, store, missingDates));
+            else
+            {
+                plans.Add(new HostPlan(target, store, missingDates));
+            }
+
+            // AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
+            // 主機可能今天已經補齊缺漏日，但上次執行被取消時留下的某一天還卡在「AI 排隊中」，
+            // 兩者互不影響，各自獨立檢查同一個 lookback 窗口（與 MissingDateFinder 同一個範圍：
+            // 今天往回數 lookback 天，不含今天）。
+            var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback).Where(r => r.AiPending).ToList();
+            foreach (var pending in pendingRecords)
+            {
+                var retryService = new LogAnalysisService(
+                    _eventLogService, _aiService, store, _suppressionStore,
+                    target.RoleDesc, _reportService, target.HostName, target.HostId);
+                orphanJobs.Add(new AiFollowupJob(retryService, store, target.IpAddress, pending.Date, sentinel.Name,
+                    WorkItem: null, RetryRecord: pending));
+            }
         }
 
-        if (plans.Count == 0)
+        if (plans.Count == 0 && orphanJobs.Count == 0)
         {
             _console.WriteLine($"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
             return;
         }
 
-        // 進度分母（docs/archive/FEEDBACK-8-PLAN.md #2）：各 Sentinel 平行掃描完才知道各自要補幾天，
-        // 這裡累加進共享的 HostDaysTotal，分母隨掃描進度自然變大
-        result.AddToTotal(plans.Sum(p => p.MissingDates.Count));
-        _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+        if (plans.Count > 0)
+        {
+            // 進度分母（docs/archive/FEEDBACK-8-PLAN.md #2）：各 Sentinel 平行掃描完才知道各自要補幾天，
+            // 這裡累加進共享的 HostDaysTotal，分母隨掃描進度自然變大
+            result.AddToTotal(plans.Sum(p => p.MissingDates.Count));
+            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
 
-        var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
+            var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
 
-        await using var client = _clientFactory(sentinel);
+            await using var client = _clientFactory(sentinel);
 
-        // 缺漏日跨主機遞增：同一天內所有需要這天的主機一次查完（批次化），
-        // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史
-        foreach (var date in allDates)
+            // 缺漏日跨主機遞增：同一天內所有需要這天的主機一次查完（批次化），
+            // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史
+            foreach (var date in allDates)
+            {
+                ct.ThrowIfCancellationRequested();
+                var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
+
+                foreach (var batch in hostsNeedingDate.Chunk(IpBatchSize))
+                {
+                    await RunBatchDayAsync(client, sentinel.Name, batch, date, trendWindowDays, result, aiQueue, ct);
+                }
+            }
+        }
+
+        // 孤兒補跑殿後（docs/FEEDBACK-12-PLAN.md §3.10）：排在這台 Sentinel 的一般缺漏日之後，
+        // 不搶當日主線的 AI 佇列順位
+        foreach (var job in orphanJobs)
         {
             ct.ThrowIfCancellationRequested();
-            var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
-
-            foreach (var batch in hostsNeedingDate.Chunk(IpBatchSize))
-            {
-                await RunBatchDayAsync(client, sentinel.Name, batch, date, trendWindowDays, result, aiQueue, ct);
-            }
+            result.AddAiQueued();
+            _console.WriteLine($"  [{sentinel.Name}] [{job.Ip}] {job.Date:yyyy-MM-dd} AiPending 孤兒補跑排隊中");
+            await aiQueue.EnqueueAsync(job, ct);
         }
     }
 
@@ -412,7 +442,8 @@ public class NetiqPipelineService
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成，AI 分析排隊中");
                 // 佇列已滿時在這裡背壓等待（docs/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
                 // 讓搜尋主線自然暫停，不是無限堆積記憶體
-                await aiQueue.EnqueueAsync(new AiFollowupJob(analysisService, plan, date, sentinelName, workItem), ct);
+                await aiQueue.EnqueueAsync(
+                    new AiFollowupJob(analysisService, plan.Store, target.IpAddress, date, sentinelName, workItem, RetryRecord: null), ct);
             }
             else
             {
@@ -437,13 +468,19 @@ public class NetiqPipelineService
     }
 
     /// <summary>
-    /// AI 待處理佇列的工作項（docs/FEEDBACK-12-PLAN.md §3.4）：帶著統計段已建好的
+    /// AI 待處理佇列的工作項（docs/FEEDBACK-12-PLAN.md §3.4/§3.10）：帶著統計段已建好的
     /// <see cref="LogAnalysisService"/> 實例（AI 段要用同一個 historyService/reportService
-    /// 綁定重讀歷史）與寫回目的地（<see cref="HostPlan.Store"/>）。<see cref="AiWorkItem"/>
-    /// 本身只是「這個主機日需要 AI 分析的輸入」，這裡再包一層 pipeline 才知道的路由資訊。
+    /// 綁定重讀歷史）與寫回目的地（<paramref name="Store"/>）。兩種來源二擇一：
+    /// <paramref name="WorkItem"/> 非 null＝這次搜尋新算出的主機日；<paramref name="RetryRecord"/>
+    /// 非 null＝上次執行取消留下的 AiPending 孤兒紀錄補跑（§3.10，殿後排在同一台 Sentinel
+    /// 的一般缺漏日之後）。兩者恰好其中一個非 null，不會同時發生也不會都是 null。
     /// </summary>
     private sealed record AiFollowupJob(
-        LogAnalysisService AnalysisService, HostPlan Plan, DateTime Date, string SentinelName, AiWorkItem WorkItem);
+        LogAnalysisService AnalysisService, IAnalysisRecordStore Store, string Ip, DateTime Date, string SentinelName,
+        AiWorkItem? WorkItem, DailyAnalysisRecord? RetryRecord)
+    {
+        public bool IsRetry => RetryRecord != null;
+    }
 
     /// <summary>
     /// AI 段的單一背景消費者（docs/FEEDBACK-12-PLAN.md §3.4）：依 FIFO 順序取出工作項，
@@ -455,28 +492,31 @@ public class NetiqPipelineService
     /// 項目逐一讀出並記為放棄（而不是讓 ReadAllAsync 本身因取消直接拋出、佇列裡剩下的項目
     /// 完全沒有機會被記錄）。是否放棄由迴圈內自行檢查 <paramref name="ct"/> 決定。
     /// </summary>
-    private async Task ConsumeAiQueueAsync(AiFollowupQueue<AiFollowupJob> queue, NetiqPipelineResult result, CancellationToken ct)
+    private async Task ConsumeAiQueueAsync(
+        AiFollowupQueue<AiFollowupJob> queue, NetiqPipelineResult result, int trendWindowDays, CancellationToken ct)
     {
         try
         {
             await foreach (var job in queue.ReadAllAsync(CancellationToken.None))
             {
-                var ip = job.Plan.Target.IpAddress;
+                var tag = job.IsRetry ? "補跑" : "AI 分析";
 
                 if (ct.IsCancellationRequested)
                 {
                     // 執行被取消：不再啟動新的 AI 呼叫。統計紀錄已完整寫入，AiPending 維持
                     // true，下次執行由孤兒補跑機制自動接手（§3.10），這裡不需要做任何補救
                     result.AddAiAbandoned();
-                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} " +
-                                      "執行已取消，AI 分析待下次執行補跑（統計紀錄已完整寫入）");
+                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{job.Ip}] {job.Date:yyyy-MM-dd} " +
+                                      $"執行已取消，{tag}待下次執行補跑（統計紀錄已完整寫入）");
                     continue;
                 }
 
                 try
                 {
-                    var outcome = await job.AnalysisService.CompleteAiAsync(job.WorkItem, ct);
-                    job.Plan.Store.AttachAiResult(job.Date, outcome);
+                    var outcome = job.IsRetry
+                        ? await job.AnalysisService.RetryAiAsync(job.RetryRecord!, trendWindowDays, ct)
+                        : await job.AnalysisService.CompleteAiAsync(job.WorkItem!, ct);
+                    job.Store.AttachAiResult(job.Date, outcome);
 
                     // 與統計段同一個判準（原 HostDayPostProcessor.RecordAiCallIfApplicable），
                     // 只是移到 AI 呼叫真正發生的這裡——_useAi 在此必為 true（能入列就代表
@@ -487,22 +527,22 @@ public class NetiqPipelineService
                     }
 
                     result.AddAiCompleted();
-                    _console.WriteLine($"  [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} AI 分析完成，" +
+                    _console.WriteLine($"  [{job.SentinelName}] [{job.Ip}] {job.Date:yyyy-MM-dd} {tag}完成，" +
                                       $"風險【{outcome.RiskLevel}】" + (outcome.ReportFile != null ? $" → {outcome.ReportFile}" : ""));
                 }
                 catch (OperationCanceledException)
                 {
                     result.AddAiAbandoned();
-                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} " +
-                                      "AI 分析中途取消，待下次執行補跑（統計紀錄已完整寫入）");
+                    _console.WriteLine($"  ⚠ [{job.SentinelName}] [{job.Ip}] {job.Date:yyyy-MM-dd} " +
+                                      $"{tag}中途取消，待下次執行補跑（統計紀錄已完整寫入）");
                 }
                 catch (Exception ex)
                 {
                     // 與統計段同一個失敗邊界哲學：AI 段任何一步意外失敗都不該讓其餘排隊項目
                     // 停擺——已寫入的統計紀錄維持 AiPending=true，下次執行由孤兒補跑機制接手
                     result.AddAiAbandoned();
-                    Log.Warn(ex, "[{Server}] [{Ip}] {Date} AI 分析失敗", job.SentinelName, ip, job.Date);
-                    _console.WriteLine($"  ✗ [{job.SentinelName}] [{ip}] {job.Date:yyyy-MM-dd} AI 分析失敗：{ex.Message}" +
+                    Log.Warn(ex, "[{Server}] [{Ip}] {Date} {Tag}失敗", job.SentinelName, job.Ip, job.Date, tag);
+                    _console.WriteLine($"  ✗ [{job.SentinelName}] [{job.Ip}] {job.Date:yyyy-MM-dd} {tag}失敗：{ex.Message}" +
                                       "（統計紀錄已完整寫入，下次執行自動重試 AI 段）");
                 }
 

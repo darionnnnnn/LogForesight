@@ -185,4 +185,56 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         Assert.True(record.AiPending);
         Assert.False(record.AiAnalyzed);
     }
+
+    /// <summary>
+    /// AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：取消留下的 AiPending 紀錄不會
+    /// 永遠卡住——下一次執行時，即使該主機當天已經有紀錄（不算缺漏日、不會被搜尋撿到），
+    /// 孤兒補跑機制仍要獨立掃到它並把 AI 分析補上。這是兩階段化本身引入的新風險
+    /// （寫入時間點提前、AI 可能永遠追不上）的自癒機制，沒有這個測試就等於沒驗證過
+    /// 「取消真的不會遺失工作」這個承諾的下半段。
+    /// </summary>
+    [Fact]
+    public async Task 取消留下的孤兒紀錄下次執行會被自動補跑()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+        };
+
+        // 第一次執行：AI 卡住，取消，留下 AiPending=true 的孤兒紀錄
+        var hang = new TaskCompletionSource<AiResponse>();
+        _ai.Behavior = (_, ct) => hang.Task.WaitAsync(ct);
+        var firstPipeline = MakePipeline(new NetiqOptions { BackfillDays = 1 });
+        using (var cts = new CancellationTokenSource())
+        {
+            var runTask = firstPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (_ai.Calls == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        }
+
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        Assert.True(Assert.Single(store.ReadRecent(yesterday, 1)).AiPending);
+
+        // 第二次執行：AI 恢復正常回應。該主機日已有紀錄（不是缺漏日，搜尋不會再查一次），
+        // 但孤兒補跑機制應該獨立掃到它並補上 AI 分析
+        _ai.Behavior = null;
+        _ai.NextContent = """{"risk_level":"高","headline":"補跑後的標題","story":"補跑後的白話摘要","trend_story":"","action":"a"}""";
+        var secondPipeline = MakePipeline(new NetiqOptions { BackfillDays = 1 });
+        var result = await secondPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, result.AiQueued);   // 只有孤兒補跑這一件，沒有新的缺漏日
+        Assert.Equal(1, result.AiCompleted);
+        Assert.Equal(0, result.HostDaysAnalyzed); // 沒有新的統計段執行（該主機日已有紀錄）
+
+        var finalRecord = Assert.Single(store.ReadRecent(yesterday, 1));
+        Assert.False(finalRecord.AiPending);
+        Assert.True(finalRecord.AiAnalyzed);
+        Assert.Equal("補跑後的標題", finalRecord.Headline);
+        Assert.Null(finalRecord.ReportFile); // 補跑不補深析報告（原始 log 不落地，見 §3.10）
+    }
 }

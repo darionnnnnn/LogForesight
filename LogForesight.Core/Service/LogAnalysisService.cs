@@ -327,50 +327,17 @@ public class LogAnalysisService
         }
         else
         {
-            var prompt = AnalysisPromptBuilder.BuildPrompt(item.TargetDate, item.Issues, item.ErrorCount, item.WarningCount,
-                item.AuditCount, history, item.TrendAlerts, item.Correlations, screening, item.DataIncomplete,
-                item.UncoveredChecks, _serverDescription);
-
-            // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
-            // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
-            var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPrompt,
-                validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
-                               && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
-                               && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,
-                label: $"daily-{item.TargetDate:yyyyMMdd}", ct: ct);
-
-            if (result.Success)
-            {
-                aiAnalyzed = true;
-                headline = result.Value!.Headline;
-                summary = result.Value.Story;
-                trendAssessment = result.Value.TrendStory;
-                action = result.Value.Action;
-                // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
-                riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value.RiskLevel), item.RuleRisk);
-                if (riskLevel != item.RuleRisk) riskBasis = "ai_raise";
-            }
-            else if (result.RawContent.Length > 0)
-            {
-                // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
-                // 仍算完成 AI 分析，只是白話翻譯品質降級
-                aiAnalyzed = true;
-                headline = "AI 回覆格式異常，以下為原始內容";
-                summary = $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}";
-                riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), item.RuleRisk);
-                if (riskLevel != item.RuleRisk) riskBasis = "ai_raise";
-                Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", item.TargetDate, result.Attempts);
-            }
-            else
-            {
-                // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
-                // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
-                // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
-                aiAnalyzed = false;
-                headline = "今日分析摘要暫缺（AI 服務未回應）";
-                summary = $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。";
-                Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", item.TargetDate, result.Error);
-            }
+            var (h, s, t, a, rl, riskBasisOverride, analyzed) = await RunMainAnalysisAsync(
+                item.TargetDate, item.Issues, item.ErrorCount, item.WarningCount, item.AuditCount,
+                history, item.TrendAlerts, item.Correlations, screening, item.DataIncomplete,
+                item.UncoveredChecks, item.RuleRisk, ct);
+            headline = h;
+            summary = s;
+            trendAssessment = t;
+            action = a;
+            riskLevel = rl;
+            aiAnalyzed = analyzed;
+            if (riskBasisOverride != null) riskBasis = riskBasisOverride;
         }
 
         // CompleteAiAsync 沒有自己的持久化紀錄，組一個形狀跟原本單階段版本完全一樣的暫用物件
@@ -403,6 +370,94 @@ public class LogAnalysisService
 
         return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis,
             aiAnalyzed, screenedTailCount, screeningNotes, reportFile, scratch.DeepDives);
+    }
+
+    /// <summary>
+    /// AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：執行被取消時留下「統計已完成、
+    /// AI 沒跑完」的紀錄，下次執行改由 <paramref name="pendingRecord"/> 本身重建主分析所需輸入——
+    /// TopIssues／TrendAlerts／CorrelationAlerts／各項計數全部持久化在 ContentJson，足以重建
+    /// prompt；歷史一樣在這裡才重讀。
+    ///
+    /// **前置掃描與深析報告刻意不補**：兩者都需要原始 log 摘錄，而原始 log 不落地，取消當下
+    /// 就已經回不去了——補跑補的是白話摘要與風險再判定，不偽造一份沒有 log 佐證的深析。
+    /// <see cref="DailyAnalysisRecord.CorrelationAlerts"/> 持久化時只留描述文字（結構化的
+    /// <see cref="CorrelationFinding.Severity"/>／<see cref="CorrelationFinding.ElevatesDayRisk"/>
+    /// 沒有隨紀錄存下來），這裡用中性嚴重度重建只為了滿足 prompt 組裝的型別需求——
+    /// 風險再判定只看 AI 自己回報的 risk_level 與 <paramref name="pendingRecord"/> 既有的
+    /// <see cref="DailyAnalysisRecord.RiskLevel"/>，不看這裡重建的嚴重度，所以這個簡化
+    /// 不影響風險判定正確性。
+    /// </summary>
+    internal async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
+    {
+        var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
+        var correlations = pendingRecord.CorrelationAlerts
+            .Select(desc => new CorrelationFinding { Description = desc, Severity = IssueSeverity.High, ElevatesDayRisk = false })
+            .ToList();
+
+        var (headline, summary, trendAssessment, action, riskLevel, riskBasisOverride, aiAnalyzed) = await RunMainAnalysisAsync(
+            pendingRecord.Date, pendingRecord.TopIssues, pendingRecord.ErrorCount, pendingRecord.WarningCount,
+            pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations, screening: null,
+            pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel, ct);
+
+        return new AiOutcome(headline, summary, trendAssessment, action, riskLevel,
+            riskBasisOverride ?? pendingRecord.RiskBasis, aiAnalyzed,
+            pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
+            ReportFile: null, DeepDives: new List<CategoryDeepDive>());
+    }
+
+    /// <summary>
+    /// 主分析 AI 呼叫本體，<see cref="CompleteAiAsync"/> 與 <see cref="RetryAiAsync"/> 共用——
+    /// 兩者唯一的差異是輸入資料的來源（新鮮算出的 <see cref="AiWorkItem"/> vs. 從既有紀錄重建），
+    /// AI 呼叫、JSON 契約驗證、三種降級分支完全相同，不該各寫一份。
+    /// </summary>
+    /// <param name="ruleRisk">程式規則層判定的風險下限，AI 只能把它往上拉（見
+    /// <see cref="RiskLevels.MoreSevere"/>），不能往下壓</param>
+    /// <returns><c>RiskBasisOverride</c>：null＝AI 沒有把風險往上拉，呼叫端應維持原本的
+    /// RiskBasis；非 null（恆為 "ai_raise"）＝呼叫端應覆寫 RiskBasis</returns>
+    private async Task<(string Headline, string Summary, string TrendAssessment, string Action, string RiskLevel,
+        string? RiskBasisOverride, bool AiAnalyzed)> RunMainAnalysisAsync(
+        DateTime date, List<LogIssueSignature> issues, int errorCount, int warningCount, int auditCount,
+        List<DailyAnalysisRecord> history, List<string> trendAlerts, List<CorrelationFinding> correlations,
+        AnalysisPromptBuilder.ScreeningOutcome? screening, bool dataIncomplete, List<string> uncoveredChecks,
+        string ruleRisk, CancellationToken ct)
+    {
+        var prompt = AnalysisPromptBuilder.BuildPrompt(date, issues, errorCount, warningCount, auditCount, history,
+            trendAlerts, correlations, screening, dataIncomplete, uncoveredChecks, _serverDescription);
+
+        // response_format=json_object 只保證「合法 JSON」，不保證是我們要的物件形狀
+        // （模型可能回傳陣列、或欄位塞入異常冗長的重複文字）；驗證失敗會自動重新請求
+        var result = await _aiService.ChatJsonAsync<AiAnalysisResult>(prompt, AnalysisPromptBuilder.SystemPrompt,
+            validate: r => r.RiskLevel.Length > 0 && r.Headline.Length > 0 && r.Story.Length > 0
+                           && r.Headline.Length <= MaxHeadlineChars && r.Story.Length <= MaxSummaryChars
+                           && r.TrendStory.Length <= MaxSummaryChars && r.Action.Length <= MaxSummaryChars,
+            label: $"daily-{date:yyyyMMdd}", ct: ct);
+
+        if (result.Success)
+        {
+            // AI 判斷與程式判斷取較嚴重者：即使模型輕忽了，規則與趨勢比對的結論也會強制拉高風險等級
+            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.Value!.RiskLevel), ruleRisk);
+            return (result.Value.Headline, result.Value.Story, result.Value.TrendStory, result.Value.Action,
+                riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
+        }
+
+        if (result.RawContent.Length > 0)
+        {
+            // 網路正常但重試 JsonRetryCount 次後仍不合格：保留原文（截斷避免報告膨脹），不當機、不遺失資訊；
+            // 仍算完成 AI 分析，只是白話翻譯品質降級
+            var riskLevel = RiskLevels.MoreSevere(RiskLevels.Normalize(result.RawContent), ruleRisk);
+            Log.Warn("{Date:yyyy-MM-dd} 主分析降級為原文保留（{Attempts} 次嘗試仍未通過 JSON 檢查）", date, result.Attempts);
+            return ("AI 回覆格式異常，以下為原始內容",
+                $"（AI 回覆經 {result.Attempts} 次嘗試仍未通過 JSON 檢查，保留原文供參考）{TextTruncation.Truncate(result.RawContent, MaxSummaryChars)}",
+                string.Empty, string.Empty, riskLevel, riskLevel != ruleRisk ? "ai_raise" : null, true);
+        }
+
+        // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
+        // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
+        // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
+        Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", date, result.Error);
+        return ("今日分析摘要暫缺（AI 服務未回應）",
+            $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。",
+            string.Empty, string.Empty, ruleRisk, null, false);
     }
 
     /// <summary>把 AI 段的定案結果套用到統計段已建立的紀錄——只有 <see cref="AnalyzeDayAsync"/>
