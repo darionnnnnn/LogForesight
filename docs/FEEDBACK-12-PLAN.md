@@ -5,10 +5,10 @@
 > 診斷輪 A（樣本 IP 10.216.45.101）與**輪 B（2026-08-07 第三次 probe，樣本 IP
 > 10.216.11.66）皆已執行完畢**：欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、
 > program 量級吵靜分類、collector 形態全部定案（見 §4.0 實證表）。
-> **第 4B／4C 尚未實作，最後一個資料閘門是 4B.0**：輪 B 揭露原 §4.1 設計漏掉「msg 片語
-> 查詢行為」的對應步驟，**新步驟 8g 已實作完成**（§4.1 追加項），待使用者第四次執行
-> 診斷分頁 probe（帶樣本 IP）並貼回結果，定案吵 program 的 msg 子句與 4C regex 後，
-> 4B/4C 即可全面實作；4B 完成後才執行止血拆除（§4.6）。
+> **資料閘門已全數解除（2026-08-07 第四次 probe，8g 實證完成）**：msg 片語查詢有效
+> （含斜線片語、欄位群組、吵 program＋片語組合——systemd 1.96M/日壓到 1 筆/日）、
+> 暴破訊息格式與 4C regex 已依真實樣本定案（見 §4.0 第四次 probe 表）。
+> **第 4B／4C 可以開始實作**（§4.4/§4.5 設計已全部定案）；4B 完成後才執行止血拆除（§4.6）。
 > 全案體檢額外揪出一個真實 bug 並已修復：`AiFollowupQueue.EnqueueAsync` 在取消時可能被
 > 誤判成「分析失敗」，實際上統計紀錄已成功寫入（見 commit `6c45371`）。
 > 對象是使用者實測後的三項回饋：
@@ -461,6 +461,27 @@ found=1,661/24h）——六項證據五項定案，一項規劃缺口補 8g**：
 偵測。這與 Windows 面「Security 未知失敗 ID 不撈」（BACKLOG 未決 #10）同款的檢索面
 縮小，隨 4B 文件同步寫入 DETECTION-SPEC 的 Linux 章節，不裝作全量。
 
+**第四次 probe（2026-08-07，8g 首跑）——msg 片語實證完成，資料閘門全數解除**：
+
+| 8g 查詢 | found | 定案 |
+|---|---|---|
+| `msg:"Failed password"`（24h） | 149 | **msg 片語查詢有效** |
+| `msg:"authentication failure"`（24h） | 40 | 同上，sudo/su 關鍵片語可下推 |
+| `msg:"I/O error"`（24h） | 10 | **斜線片語有效**——tokenization 不是障礙（環境裡真的有磁碟 I/O 錯誤在發生，10 筆/日） |
+| `msg:"oom-kill"`／`msg:oom`（24h） | 0／2 | 無法區分「24h 剛好沒有 OOM」與「連字號斷詞問題」——**不依賴此片語**：真實 OOM 訊息（「Out of memory: Killed process…」）必含已驗證可行的純字片語「Out of memory」「Killed process」，`oom-kill` 留在本地規則、filter 面即使匹配不到也只是無害的空分支 |
+| `sp:sshd AND msg:("Failed password" OR "Invalid user")`（7 天） | 977 | **欄位群組多片語語法有效**（≥ 單片語的 725，語意正確） |
+| `sp:systemd AND msg:"entered failed state"`（24h） | 1 | **吵 program＋片語組合下推有效且量極小**——systemd 從 1.96M/日壓到 1 筆/日，這條路成立 |
+| `sp:sshd AND msg:"Failed password"`（7 天）＋5 筆全文 | 725 | 暴破訊息格式定案：「`Failed password for invalid user {user} from {ip} port {port} ssh2`」——無 program 前綴、`invalid user` 為可選段、來源皆內網 IP（10.225.2.219／10.215.2.55，帳號是員工編號式——內部掃描或設定錯誤的用戶端，非外網攻擊，但格式與外網攻擊完全相同） |
+
+**8g 之外的環境觀察（順手記錄）**：本輪 `sev:[3 TO 5]` 樣本出現 Sentinel 自家
+Syslog_UDP connector 的「Dropped 29,623 messages so far」——**此 Sentinel 的 syslog
+接收端在丟訊息（速率過載）**，代表事件面的完整性在來源端就不保證；我方無從逐主機
+偵測這種丟失，屬環境層事實，隨 4B 文件同步記入 NETIQ-API-REFERENCE 供日後排查
+「主機明明有事件卻查不到」時參考。connector 自身訊息的 repip 不會匹配受監控主機，
+不影響我們的 IP 篩選查詢。
+
+**結論：4B／4C 的全部資料閘門已解除**，可以開始實作（§4.4/§4.5 已依 8g 定案改寫）。
+
 ### 4.1 診斷分頁 Linux 深掘強化（4A）
 
 **檔案**：`LogForesight.Core/Service/NetiqProbeRunner.cs`（步驟 8：220~243 行）
@@ -626,29 +647,35 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 3. `SentinelQueryBuilder.BuildLinuxFilter(ips, rules)`：形狀比照 `BuildWindowsFilter`
    （空 IP 擲例外、`BuildIpClause` 重用），內容子句採**混合下推**（依輪 B 定案版）：
    `{IP 子句} AND ({規則子句聯集} OR sev:[2 TO 5])`——
-   - **子句從規則現算、規則統一產生**（不硬編 program 清單）：每條 linux 規則——
-     `MessagePatterns` 為空 → `sp:{ProgramPattern}*`（前綴萬用字元，輪 B 第 1 項定案：
-     `sp` 是 exact term、大小寫不敏感，`user`→useradd 這類「pattern 是 program 前綴」
-     的關係靠 `*` 補上，本地 Contains 語意的殘餘差距接受並記錄）；
-     `MessagePatterns` 非空 → `(sp:{ProgramPattern}* AND msg:("片語1" OR "片語2" …))`
-     ——**吵 program（sshd 244k／sudo 219k／su 52k／kernel 305k／systemd 1.96M 筆/日，
-     輪 B 第 5 項實證）整拉必撞 100k 截斷線，msg 下推不是最佳化而是可行性前提**；
-     靜 program（chronyd/CRON/auditd/smartd）帶 msg 子句只是更省，無害；
-   - msg 片語的個別有效性（斜線／連字號 tokenization、群組語法）依 **8g（4B.0）** 定案；
-     個別不可靠者該規則退 `sp:{p}*` 整拉（kernel 用縮小 `IpBatchSize` 控量；systemd
-     無論如何不整拉——片語不可行就退出檢索範圍並文件申報，見 §4.1 的 8g 執行程序）；
+   - **子句產生規則（8g 後定案版）**：以**吵 program 常數集** `{sshd, sudo, su, kernel,
+     systemd}`（輪 B 第 5 項量級實證的環境事實，hardcode 為附註解的常數）分兩型——
+     (a) 規則的 `ProgramPattern` 屬吵集 → `(sp:{p}* AND msg:("片語1" OR "片語2" …))`
+     （片語＝該 program 全部規則的 `MessagePatterns` 聯集；8g 已實證片語查詢、斜線片語、
+     欄位群組多片語、吵 program＋片語組合全部有效，systemd 從 1.96M/日壓到 1 筆/日）；
+     (b) 其餘規則（靜 program，含無 `MessagePatterns` 的帳號異動類）→ `sp:{p}*` 整拉
+     ——靜 program 量級最大不過 chronyd 3.4k/日，整拉順便**避開片語標點的殘餘風險**
+     （chronyd 的「Can't synchronise」帶撇號、CRON 的「(CRON) ERROR」帶括號，
+     這些不需要冒險下推）。前綴萬用字元語意（輪 B 第 1 項）：`sp` 是 exact term、
+     大小寫不敏感，`user`→useradd 這類前綴關係靠 `*` 補上；
+   - **不依賴 `oom-kill` 片語**（8g：found=0 無法排除斷詞問題）：真實 OOM 訊息必含
+     已驗證的「Out of memory」／「Killed process」，`oom-kill` 留在本地規則、filter 面
+     即使空匹配也無害；
    - 下推永遠是**超集需求**（本地 `FindLinuxRule` 仍是唯一判定）；
    - generic `sev:[2 TO 5]`（輪 B 第 3/4 項定案）：全站 2,403 筆/日，極便宜，是
      「未知 program 高 sev 事件」唯一的檢索通道；
+   - **總量評估（8g 後）**：靜 program 整拉 ~6.3k/日＋sshd 暴破面 ~150/日＋sudo/su
+     失敗 ~40/日＋kernel 片語 ~10/日＋systemd ~1/日＋sev 網 2.4k/日≈**全站不到 1 萬筆/日**，
+     再經 repip 批次切分後遠低於 100k 截斷線——**`IpBatchSize` 維持 50 共用，
+     不需要 Linux 專用常數**；
    - **檢索涵蓋限制**（輪 B 後新增，見 §4.0 誠實申報段）：低 sev 且未命中規則 program
      的事件不在檢索範圍，隨 4B 文件同步寫入 DETECTION-SPEC；
    - ~~CEF 路徑風險~~ **已解除**（輪 B 第 7 項：受監控主機全走 `sp` 路徑，欄位聯集
      無 `obssvcname`）——`sp` 下推安全；`obssvcname` 僅留 mapper fallback 鏈。
 4. `NetiqPipelineService`：**拆掉 Windows 擋板**——`RunServerAsync` 依 `target.Os`
    把 targets 分成兩組（同一台 Sentinel 依環境事實只會有單一 OS，但程式不依賴此假設），
-   filter builder／投影欄位／mapper 分路，批次與逐日結構共用；`IpBatchSize` 若輪 B
-   量級顯示需要，抽成 per-OS 常數（Linux 縮小批次把單 job 筆數壓在截斷線下）；
-   類別註解「只支援 Windows」同步改寫。1.1/1.2 的止血同步拆除（§4.6）。
+   filter builder／投影欄位／mapper 分路，批次與逐日結構共用；`IpBatchSize` **定案維持
+   50 共用**（8g 後總量評估：檢索面全站不到 1 萬筆/日，遠低於截斷線，不需要 per-OS
+   常數）；類別註解「只支援 Windows」同步改寫。1.1/1.2 的止血同步拆除（§4.6）。
 5. 掃描精靈：`BuildSubnetProbeFilter`（129~134 行）寫死
    `rv150:System OR rv150:Application` 頻道子句——Linux Sentinel 上主掃描必然 0 台
    （輪 A 實證 `rv150` 在 Linux 承載 facility：`DAEMON`／`KERNEL`）。
@@ -673,12 +700,18 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 「`Accepted password|publickey for {user} from {ip} port …`」），適合正則抽取：
 - **細版**（優先）：從 ssh-bruteforce／ssh-accept 命中事件的 msg 抽 `{user}`／`{ip}`，
   做「同帳號或同來源 IP」的精確關聯——失敗堆與成功登入同源才告警，誤報最低。
-  正則以 **8g 第 2 項**的實際樣本定案（輪 B 8f 取到的最新 10 筆全是 session/SFTP
-  雜訊、無 Failed password 樣本；改用 `sp:sshd AND msg:"Failed password"` 目標查詢取）。
-  **輪 B 新約束**：部分 sshd 事件的 msg 沒有 `program[pid]:` 前綴（snmpd 有、sshd 的
-  pam/SFTP 行沒有）——**regex 不得錨定行首前綴**，直接比對「Failed password for …
-  from …」本體。另輪 B 已證實環境有真實暴破流量（sev3-5 樣本見外網 IP 203.66.132.63、
-  47.239.13.202，Sentinel 自家關聯規則也發動過），4C 的價值不是理論性的。
+  **正則已依 8g 實際樣本定案（2026-08-07 第四次 probe）**——失敗面樣本格式：
+  「`Failed password for invalid user 1838651 from 10.225.2.219 port 54500 ssh2`」，
+  無 program 前綴、`invalid user ` 為可選段：
+  - 失敗：`Failed password for (?:invalid user )?(\S+) from (\d{1,3}(?:\.\d{1,3}){3}) port \d+`
+  - 成功：`Accepted (?:password|publickey) for (\S+) from (\d{1,3}(?:\.\d{1,3}){3}) port \d+`
+    ——成功面訊息在四輪 probe 都未直接取樣到（8f 只見 pam session opened），格式取
+    OpenSSH 上游標準模板；若此環境 sshd 的 LogLevel 不記 Accepted 行，ssh-accept 簽章
+    會恆零、關聯永不觸發——**誠實不誤報的行為**，試點時核對即可，不值得為此再跑一輪 probe。
+  **regex 不得錨定行首前綴**（輪 B 實證部分 sshd 事件的 msg 沒有 `program[pid]:` 前綴）。
+  另輪 B 已證實環境有真實暴破流量（8g 樣本的來源全是**內網 IP**、帳號為員工編號式——
+  內部掃描或設定錯誤的用戶端；sev3-5 樣本另見外網 IP 203.66.132.63/47.239.13.202——
+  兩種形態都存在，格式相同），4C 的價值不是理論性的。
 - **個別事件解析失敗時降級**：解析不出帳號/IP 的事件落入主機級計數（粗版語意），
   告警描述明講「部分事件無法解析帳號，已以主機級比對」——不因格式漂移靜默漏報。
 命中時 `ElevatesDayRisk` 語意比照 Windows 關聯鏈（拉高當日風險）。
@@ -769,9 +802,9 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 | 4A | 4.3 | 關聯層申報＋Linux 短路＋EventId 0 顯示修正 | LogAnalysisService、CorrelationAnalyzer、RiskReportService、SlowTrendAnalyzer、record-detail.js、records.js | — |
 | — | 4.0-A | ~~使用者執行診斷輪 A 並貼回~~ **已完成 2026-08-07**（欄位主形狀定案） | （無程式改動） | ✓ |
 | — | 4.0-B | ~~使用者執行診斷輪 B 並貼回~~ **已完成 2026-08-07（第三次 probe）**——六項證據五項定案（sp term 語意/sev 分佈與門檻/program 量級吵靜分類/collector 形態）；msg 片語為規劃缺口，補 4B.0 | （無程式改動） | ✓ |
-| 4B.0 | §4.1 追加 | ✓ probe 新步驟 8g（msg 片語實證＋暴破樣本）已實作；待**使用者第四次執行貼回** | NetiqProbeRunner | — |
-| 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **8g 資料**（msg 子句個別有效性；其餘已定案） |
-| 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | 8g 第 2 項 sshd 暴破樣本（正則定案） |
+| 4B.0 | §4.1 追加 | ~~probe 新步驟 8g＋使用者第四次執行~~ **✓ 已完成 2026-08-07**（msg 片語全面實證，見 §4.0 第四次 probe 表） | NetiqProbeRunner | ✓ |
+| 4B | 4.4 | FieldMap/Mapper/QueryBuilder Linux 分支＋擋板拆除＋掃描精靈分支＋seed v5 | SentinelFieldMap、SentinelEventMapper、SentinelQueryBuilder、NetiqPipelineService、KnownIssueSeed | **無**（設計已全數定案，可實作） |
+| 4C | 4.5 | SSH 攻擊鏈關聯（msg 解析細版＋逐事件降級） | CorrelationAnalyzer、KnownIssueSeed | **無**（regex 已依 8g 樣本定案，可實作） |
 | 4 | 4.6 | 止血拆除＋周邊體檢＋文件失準修正 | ScheduleController、host-detail.js、docs | 4B 完成 |
 | 4 | 4.7 | Linux 測試全套 | LogForesight.Tests | 隨各波 |
 | — | 五 | 文件七份同步 | docs/ | 隨各批 |
