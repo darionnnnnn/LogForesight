@@ -106,24 +106,25 @@ public class SentinelEventFetchService : ISentinelEventFetcher
         var netiqOptions = _netiqOptionsStore.Get();
         await using var client = new SentinelClient(server, netiqOptions);
 
-        var filter = $"{SentinelQueryBuilder.BuildIpClause(new[] { host.IpAddress! })} AND {SentinelFieldMap.EventId}:\"{eventId}\"";
+        var query = BuildQuery(host.Os, host.IpAddress!, source, eventId);
+
         // 當地日 00:00 → 翌日 00:00，轉 UTC 交給 SentinelClient——與 NetiqPipelineService 的
         // 日窗口同一套換算（TimeSpan.Zero 會把當地午夜當成 UTC 午夜，台灣環境整個窗口偏移 8 小時）
         var request = new SentinelSearchRequest(
-            filter,
+            query.Filter,
             new DateTimeOffset(date.Date, TimeZoneInfo.Local.GetUtcOffset(date.Date)),
             new DateTimeOffset(date.Date.AddDays(1), TimeZoneInfo.Local.GetUtcOffset(date.Date.AddDays(1))),
-            Fields: new[] { SentinelFieldMap.Timestamp, SentinelFieldMap.Message, SentinelFieldMap.Severity, SentinelFieldMap.Source, SentinelFieldMap.LogName },
+            Fields: query.ProjectionFields,
             PageSize: MaxResults,
             MaxResults: MaxResults);
 
         var searchResult = await client.SearchAsync(request, timeoutCts.Token);
         if (searchResult.Events.Count == 0) return null;
 
-        // Source 過濾在取回後於記憶體端比對——Sentinel 端 obssvcname 的比對語意依 probe 定案為準，
-        // filter 只鎖 IP+EventId 避免過嚴漏抓，這裡用完整 Source 字串再篩一次
+        // Source/program 過濾在取回後於記憶體端再比對一次——filter 只鎖 IP+內容子句避免過嚴漏抓
+        // （Linux 版還額外用了前綴萬用字元），這裡用完整值再篩一次收緊
         var messages = searchResult.Events
-            .Where(e => !e.Fields.TryGetValue(SentinelFieldMap.Source, out var s) || string.Equals(s, source, StringComparison.OrdinalIgnoreCase))
+            .Where(e => !e.Fields.TryGetValue(query.SourceField, out var s) || string.Equals(s, source, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(e => e.Fields.TryGetValue(SentinelFieldMap.Timestamp, out var t) ? t : string.Empty)
             .Take(MaxInjected)
             .Select(e => e.Fields.TryGetValue(SentinelFieldMap.Message, out var m) ? m : string.Empty)
@@ -132,5 +133,37 @@ public class SentinelEventFetchService : ISentinelEventFetcher
             .ToList();
 
         return messages.Count > 0 ? new LiveEventFetchResult(messages) : null;
+    }
+
+    internal readonly record struct LiveFetchQuery(string Filter, string[] ProjectionFields, string SourceField);
+
+    /// <summary>
+    /// 依主機 OS 組出現場取數的 filter／投影欄位／記憶體端二次過濾用的欄位鍵
+    /// （docs/FEEDBACK-12-PLAN.md §4.6 體檢揪出）。抽成純函數獨立於 HTTP 呼叫之外，
+    /// 才能不架假 Sentinel 伺服器直接單元測試——這支服務原本只測「不符資格時提早回 null」
+    /// 三道防線（見 SentinelEventFetchServiceTests 的類別文件），查詢本身怎麼組從未被驗證過，
+    /// Linux 版倘若寫錯只會靜默回傳空結果，不會有任何錯誤或警告冒出來。
+    ///
+    /// Linux 事件沒有 EventId（恆 0）也沒有 <c>rv40</c> 欄位（docs/FEEDBACK-12-PLAN.md §4.0
+    /// 輪 A 實證）——沿用 Windows 的 EventId 子句會對 Linux Sentinel 查出 0 筆（`rv40` 欄位
+    /// 不存在，不是「查無資料」而是「查詢條件對這個環境沒有意義」），現場取數會對 Linux 主機
+    /// 整個靜默失效。改用 program（<c>sp</c>，即 <paramref name="source"/>）子句，是 Linux 面
+    /// 能對應到「這個問題」的最接近欄位（EventKey/規則 Id 是本地概念，Sentinel 端沒有對應
+    /// 欄位可查）。
+    /// </summary>
+    internal static LiveFetchQuery BuildQuery(string os, string ip, string source, int eventId)
+    {
+        var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
+        var contentClause = isLinux
+            ? $"{SentinelFieldMap.LinuxProgram}:{source}*"
+            : $"{SentinelFieldMap.EventId}:\"{eventId}\"";
+        var filter = $"{SentinelQueryBuilder.BuildIpClause(new[] { ip })} AND {contentClause}";
+
+        var sourceField = isLinux ? SentinelFieldMap.LinuxProgram : SentinelFieldMap.Source;
+        var projectionFields = isLinux
+            ? new[] { SentinelFieldMap.Timestamp, SentinelFieldMap.Message, SentinelFieldMap.Severity, SentinelFieldMap.LinuxProgram }
+            : new[] { SentinelFieldMap.Timestamp, SentinelFieldMap.Message, SentinelFieldMap.Severity, SentinelFieldMap.Source, SentinelFieldMap.LogName };
+
+        return new LiveFetchQuery(filter, projectionFields, sourceField);
     }
 }

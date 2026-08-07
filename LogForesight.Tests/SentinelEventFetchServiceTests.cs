@@ -66,4 +66,41 @@ public class SentinelEventFetchServiceTests : IDisposable
 
         Assert.Null(result);
     }
+
+    // ── BuildQuery：現場取數的 filter／投影欄位（docs/FEEDBACK-12-PLAN.md §4.6 體檢揪出）──
+    // 純函數，不需要架假 Sentinel 伺服器——這裡驗證的正是「查詢本身怎麼組」，之前完全沒被測過。
+
+    [Fact]
+    public void BuildQuery_Windows主機用EventId子句()
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsWindows, "10.0.0.1", "disk", 153);
+
+        Assert.Contains($"{SentinelFieldMap.EventId}:\"153\"", query.Filter);
+        Assert.Contains("repip:10.0.0.1", query.Filter);
+        Assert.DoesNotContain(SentinelFieldMap.LinuxProgram + ":", query.Filter);
+        Assert.Equal(SentinelFieldMap.Source, query.SourceField);
+        Assert.Contains(SentinelFieldMap.Source, query.ProjectionFields);
+    }
+
+    [Fact]
+    public void BuildQuery_Linux主機改用program子句不含EventId()
+    {
+        var query = SentinelEventFetchService.BuildQuery(WebHost.OsLinux, "10.0.0.9", "sshd", eventId: 0);
+
+        // 不能沿用 rv40（EventId）——Linux 事件沒有這個欄位，查了只會恆 0 筆
+        Assert.DoesNotContain(SentinelFieldMap.EventId, query.Filter);
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:sshd*", query.Filter);
+        Assert.Contains("repip:10.0.0.9", query.Filter);
+        Assert.Equal(SentinelFieldMap.LinuxProgram, query.SourceField);
+        Assert.Contains(SentinelFieldMap.LinuxProgram, query.ProjectionFields);
+        Assert.DoesNotContain(SentinelFieldMap.Source, query.ProjectionFields);
+    }
+
+    [Fact]
+    public void BuildQuery_os比對不分大小寫()
+    {
+        var query = SentinelEventFetchService.BuildQuery("LINUX", "10.0.0.9", "sshd", 0);
+
+        Assert.Contains(SentinelFieldMap.LinuxProgram, query.ProjectionFields);
+    }
 }
