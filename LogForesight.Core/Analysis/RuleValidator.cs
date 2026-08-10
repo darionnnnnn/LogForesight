@@ -178,6 +178,16 @@ public static class RuleValidator
         {
             return $"ProgramPattern 超過長度上限（{RuleSchemaLimits.ProgramPatternMaxLength}）";
         }
+        // ProgramPattern 會以裸 term 形式進 Sentinel 的 Lucene filter（SentinelQueryBuilder.
+        // LinuxRuleProgramClauses 的 `sp:{pattern}*`，不像 MessagePatterns 有引號＋跳脫保護）——
+        // 空白或 Lucene 特殊字元（(、:、* 等）會讓整份 Q1 filter 語法壞掉，夜間取數整批查詢
+        // 失敗。字元集對齊 SentinelEventMapper.LinuxMessagePrefixRegex 的 program 字元類別
+        // （syslog identifier 的實務形狀），17 條種子全數天然合格。
+        if (rule.ProgramPattern.Length > 0 && !rule.ProgramPattern.All(IsLuceneSafeTermChar))
+        {
+            return "ProgramPattern 僅接受英數字與 _ . -（會直接進 Sentinel 查詢子句，" +
+                   "空白或特殊字元會破壞查詢語法）";
+        }
         if (rule.EventNamePattern.Length > RuleSchemaLimits.EventNamePatternMaxLength)
         {
             return $"EventNamePattern 超過長度上限（{RuleSchemaLimits.EventNamePatternMaxLength}）";
@@ -196,6 +206,12 @@ public static class RuleValidator
         }
         return null;
     }
+
+    /// <summary>Lucene 裸 term 安全字元（見 <see cref="CheckLinuxFields"/> 的 ProgramPattern 檢查）：
+    /// 英數字與 <c>_</c>／<c>.</c>／<c>-</c>，與 SentinelEventMapper 的 msg 前綴 program
+    /// 字元類別一致。</summary>
+    private static bool IsLuceneSafeTermChar(char c) =>
+        c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_' or '.' or '-';
 
     /// <summary>
     /// 遮蔽偵測入口：Windows 與 Linux 規則各自的比對邏輯完全獨立（FindRule／FindLinuxRule
