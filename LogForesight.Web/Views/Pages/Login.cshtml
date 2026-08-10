@@ -19,16 +19,28 @@
 <body>
     <div class="lf-login">
         <div class="lf-login__card">
-            @if (brand.IconDataUri != null)
-            {
-                @* alt 留空：緊接著的標題就是產品名稱，讀屏再念一次等於重複（純裝飾） *@
-                <img src="@brand.IconDataUri" alt="" class="lf-login__logo" />
-            }
-            <div class="lf-login__title">@brand.Name</div>
-            @if (brand.Subtitle != null)
-            {
-                <div class="lf-login__subtitle">@brand.Subtitle</div>
-            }
+            <div class="lf-login__brand">
+                <span class="lf-login__brand-mark">
+                    @if (brand.IconDataUri != null)
+                    {
+                        @* alt 留空：緊接著的標題就是產品名稱，讀屏再念一次等於重複（純裝飾） *@
+                        <img src="@brand.IconDataUri" alt="" class="lf-login__logo" />
+                    }
+                    else
+                    {
+                        @* 沒有自訂圖示時沿用內建向量圖示——與側欄同一套 fallback 語意
+                           （docs/archive/FEEDBACK-10-PLAN.md §1，IBrandProvider.IconDataUri 文件） *@
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
+                    }
+                </span>
+                <span class="lf-login__brand-text">
+                    <span class="lf-login__title" title="@brand.Name">@brand.Name</span>
+                    @if (brand.Subtitle != null)
+                    {
+                        <span class="lf-login__subtitle" title="@brand.Subtitle">@brand.Subtitle</span>
+                    }
+                </span>
+            </div>
 
             <form id="lf-login-form" novalidate>
                 <div class="mb-3">

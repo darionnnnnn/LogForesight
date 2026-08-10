@@ -172,7 +172,7 @@ job 生命週期，以 `SentinelClient.RawGetAsync` 取得）。
 
 ## 4a. 欄位對應（Linux syslog，四輪 probe 實證定案，docs/FEEDBACK-12-PLAN.md §4.0，已實作）
 
-Sentinel「118_linux」，https://10.216.7.118:8443，四輪診斷（2026-08-07）。**欄位形狀與
+Sentinel「118_linux」，https://10.xx.7.118:8443，四輪診斷（2026-08-07）。**欄位形狀與
 filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`／`SentinelEventMapper`／
 `SentinelQueryBuilder.BuildLinuxFilter`，批 4B）：
 

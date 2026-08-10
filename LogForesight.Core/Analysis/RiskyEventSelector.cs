@@ -38,29 +38,12 @@ public static class RiskyEventSelector
 
     public static List<RiskyEvent> Select(List<LogIssueSignature> issues, List<EventLogEntryData> logs, long hostId, DateTime date)
     {
-        var qualifying = issues
-            .Where(i => i.RuleId != null || i.Trend is IssueTrend.New or IssueTrend.Rising)
-            .OrderByDescending(i => i.Severity)
-            .ThenByDescending(i => i.Count)
-            .ToList();
-        if (qualifying.Count == 0) return new List<RiskyEvent>();
-
-        // 分組鍵與 LogAggregator.Aggregate 用同一套（含 EventKey）：只看 (LogName, Source,
-        // EventId, EntryType) 四元組的話，Linux「同 program 命中不同規則」（如 sshd 底下的
-        // ssh-bruteforce 與 ssh-accept）會反查到同一批原始事件，兩個簽章各自把對方的事件也
-        // 撈進自己的風險 log 暫存——EventKey 恆空的 Windows 事件不受影響。
-        var bySignature = logs
-            .GroupBy(LogAggregator.GroupKeyFor)
-            .ToDictionary(g => g.Key, g => g.OrderBy(l => l.TimeGenerated).ToList());
-
-        var result = new List<RiskyEvent>();
         var createdAt = DateTime.Now;
+        var result = new List<RiskyEvent>();
 
-        foreach (var sig in qualifying)
+        foreach (var (sig, entries) in SelectQualifyingEntries(issues, logs))
         {
-            if (!bySignature.TryGetValue((sig.LogName, sig.Source, sig.EventId, sig.EntryType, sig.EventKey), out var entries)) continue;
-
-            foreach (var e in PickHeadAndTail(entries, MaxPerSignature))
+            foreach (var e in entries)
             {
                 result.Add(new RiskyEvent
                 {
@@ -78,8 +61,60 @@ public static class RiskyEventSelector
             }
         }
 
-        // 每主機日合計上限：qualifying 已依嚴重度排序，result 依此順序累積，直接截斷即維持「嚴重度優先」
+        // 每主機日合計上限：SelectQualifyingEntries 已依嚴重度排序，result 依此順序累積，
+        // 直接截斷即維持「嚴重度優先」
         return result.Count > MaxPerHostDay ? result.Take(MaxPerHostDay).ToList() : result;
+    }
+
+    /// <summary>
+    /// 選取結果的原始事件版本（回饋十三輪 B1）：與 <see cref="Select"/> 共用同一套資格判定、
+    /// 分組與頭尾截斷邏輯（<see cref="SelectQualifyingEntries"/>），只是不轉成
+    /// <see cref="RiskyEvent"/>——不需要落庫用的 RuleId／訊息截斷／CreatedAt 這些欄位。
+    ///
+    /// 供 <c>AiWorkItem.Logs</c> 入列前過濾使用：AI 深析報告最終只從這裡挑 20 筆
+    /// （<see cref="Service.RiskReportService.MaxRawLogsPerReport"/>），沒有理由讓
+    /// <see cref="Service.AiFollowupQueue{T}"/> 帶著全量事件（含未命中規則、非趨勢異常的雜訊，
+    /// 單一 Sentinel job 上限可達 <c>NetiqOptions.MaxResultsPerJob</c>＝10 萬筆）在記憶體裡排隊等消化——
+    /// 佇列容量 200 件原本只界件數，真正吃記憶體的是這裡。截斷點與 <see cref="Select"/>
+    /// 寫進 <c>lf_risky_events</c> 暫存的內容逐位一致（同一次計算的兩種輸出形狀）。
+    /// </summary>
+    public static List<EventLogEntryData> SelectSourceEvents(List<LogIssueSignature> issues, List<EventLogEntryData> logs)
+    {
+        var result = SelectQualifyingEntries(issues, logs).SelectMany(pair => pair.Entries).ToList();
+        return result.Count > MaxPerHostDay ? result.Take(MaxPerHostDay).ToList() : result;
+    }
+
+    /// <summary>
+    /// 共用核心：資格判定（規則命中或趨勢 New/Rising）→ 依嚴重度排序 → 依簽章分組原始事件
+    /// → 每簽章頭尾各半截斷。<see cref="Select"/> 與 <see cref="SelectSourceEvents"/> 從這裡
+    /// 各自映射成不同的輸出形狀，但保證是同一份選取結果（含順序），下游的 500 筆合計截斷
+    /// 因此在兩邊落在同一個切點。
+    /// </summary>
+    private static List<(LogIssueSignature Signature, List<EventLogEntryData> Entries)> SelectQualifyingEntries(
+        List<LogIssueSignature> issues, List<EventLogEntryData> logs)
+    {
+        var qualifying = issues
+            .Where(i => i.RuleId != null || i.Trend is IssueTrend.New or IssueTrend.Rising)
+            .OrderByDescending(i => i.Severity)
+            .ThenByDescending(i => i.Count)
+            .ToList();
+        if (qualifying.Count == 0) return new();
+
+        // 分組鍵與 LogAggregator.Aggregate 用同一套（含 EventKey）：只看 (LogName, Source,
+        // EventId, EntryType) 四元組的話，Linux「同 program 命中不同規則」（如 sshd 底下的
+        // ssh-bruteforce 與 ssh-accept）會反查到同一批原始事件，兩個簽章各自把對方的事件也
+        // 撈進自己的風險 log 暫存——EventKey 恆空的 Windows 事件不受影響。
+        var bySignature = logs
+            .GroupBy(LogAggregator.GroupKeyFor)
+            .ToDictionary(g => g.Key, g => g.OrderBy(l => l.TimeGenerated).ToList());
+
+        var result = new List<(LogIssueSignature, List<EventLogEntryData>)>();
+        foreach (var sig in qualifying)
+        {
+            if (!bySignature.TryGetValue((sig.LogName, sig.Source, sig.EventId, sig.EntryType, sig.EventKey), out var entries)) continue;
+            result.Add((sig, PickHeadAndTail(entries, MaxPerSignature)));
+        }
+        return result;
     }
 
     /// <summary>超過上限時取頭尾各半（首端看開始樣態、尾端看最新狀態），未超過原樣回傳</summary>

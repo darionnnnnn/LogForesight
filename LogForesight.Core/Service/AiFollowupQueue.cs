@@ -32,6 +32,15 @@ public sealed class AiFollowupQueue<T>
     /// <summary>把工作項排進佇列；佇列滿時等待有空位（背壓讓生產端自然暫停），取消時原樣拋出。</summary>
     public ValueTask EnqueueAsync(T item, CancellationToken ct = default) => _channel.Writer.WriteAsync(item, ct);
 
+    /// <summary>
+    /// 非阻塞嘗試入列；佇列已滿時立即回傳 false，不等待（回饋十三輪 A7）。
+    /// 供呼叫端在真的要進入 <see cref="EnqueueAsync"/> 的阻塞等待前，先探測一次是否會背壓——
+    /// 探測到會背壓時可以先切換進度顯示成「搜尋暫停中」，讓畫面誠實反映現況，
+    /// 而不是讓使用者看著進度條卡住、以為程式當掉了。失敗後仍要呼叫 <see cref="EnqueueAsync"/>
+    /// 完成真正的入列，這裡只探測不消耗。
+    /// </summary>
+    public bool TryEnqueue(T item) => _channel.Writer.TryWrite(item);
+
     /// <summary>宣告不會再有新項目——消費者的 <see cref="ReadAllAsync"/> 讀完既有項目後自然結束，
     /// 不需要額外的哨兵值或逾時判斷。</summary>
     public void Complete() => _channel.Writer.TryComplete();

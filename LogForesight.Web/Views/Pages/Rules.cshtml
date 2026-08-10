@@ -242,6 +242,10 @@
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="rule-enabled" checked />
                                 <label class="form-check-label" for="rule-enabled">啟用</label>
+                                <div class="form-text">
+                                    停用只關掉這條規則命中的分類與知識庫顯示，趨勢層／關聯層對同一事件的偵測不受影響——
+                                    不是把這個事件從分析中整個拿掉。
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -293,12 +297,34 @@
                         </button>
                     </div>
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6">
-                            <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
-                            <select class="form-select" id="suppress-host" required>
-                                <option value="">請選擇主機…</option>
+                        <div class="col-md-4">
+                            <label for="suppress-scope" class="form-label">範圍 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="suppress-scope">
+                                <option value="Host">單一主機</option>
+                                <option value="Group">主機群組</option>
+                                <option value="Site">全站</option>
                             </select>
                         </div>
+                        <div class="col-md-8">
+                            <div id="suppress-host-wrap">
+                                <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="suppress-host">
+                                    <option value="">請選擇主機…</option>
+                                </select>
+                            </div>
+                            <div id="suppress-group-wrap" class="d-none">
+                                <label for="suppress-group" class="form-label">主機群組 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="suppress-group">
+                                    <option value="">請選擇主機群組…</option>
+                                </select>
+                            </div>
+                            <div id="suppress-site-wrap" class="d-none">
+                                <span class="form-label d-block invisible">範圍</span>
+                                <div class="form-text mb-0 mt-1">套用到全站所有主機，不限特定主機或群組。</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mb-3">
                         <div class="col-md-6">
                             <label for="suppress-days" class="form-label">生效天數</label>
                             <input type="number" class="form-control" id="suppress-days" min="1" placeholder="留空 = 永久，直到手動解除" />

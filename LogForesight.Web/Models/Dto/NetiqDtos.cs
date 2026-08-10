@@ -22,6 +22,7 @@ public class NetiqOptionsDto
     public bool AllowInvalidCertificates { get; set; }
     public int BackfillDays { get; set; }
     public int MaxParallelServers { get; set; }
+    public int MaxParallelQueriesPerServer { get; set; }
     public bool ChatLiveFetchEnabled { get; set; }
 
     /// <summary>§13：掃描匯入使用離線示範資料（預設 false＝真實連線）</summary>
@@ -265,6 +266,12 @@ public class UpdateNetiqOptionsRequest
     /// 分析與站台同行程，這是行程架構上限，不是效能旋鈕）</summary>
     [Range(1, NetiqOptions.MaxParallelServersLimit)]
     public int MaxParallelServers { get; set; }
+
+    /// <summary>回饋十三輪 D：單一 Sentinel 內部同時開幾條批次查詢，1＝完全依序處理。
+    /// 上限見 <see cref="NetiqOptions.MaxParallelQueriesPerServerLimit"/>（與 MaxParallelServers
+    /// 同一個「行程架構上限，不是效能旋鈕」的理由）</summary>
+    [Range(1, NetiqOptions.MaxParallelQueriesPerServerLimit)]
+    public int MaxParallelQueriesPerServer { get; set; }
 
     /// <summary>docs/archive/FEEDBACK-4-PLAN.md §5：詢問 AI 詢問當下是否向 Sentinel 即時查詢現場事件</summary>
     public bool ChatLiveFetchEnabled { get; set; }

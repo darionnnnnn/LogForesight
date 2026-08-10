@@ -26,6 +26,7 @@ public class RuleAdminService
     private readonly IUserStore _users;
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
+    private readonly IHostGroupStore _hostGroups;
 
     public RuleAdminService(
         IKnownIssueRuleStore rules,
@@ -33,7 +34,8 @@ public class RuleAdminService
         ISuppressionStore suppressions,
         IUserStore users,
         ICurrentUser currentUser,
-        IAuditService audit)
+        IAuditService audit,
+        IHostGroupStore hostGroups)
     {
         _rules = rules;
         _seeds = seeds;
@@ -41,6 +43,7 @@ public class RuleAdminService
         _users = users;
         _currentUser = currentUser;
         _audit = audit;
+        _hostGroups = hostGroups;
     }
 
     public List<RuleDto> GetRules()
@@ -48,9 +51,14 @@ public class RuleAdminService
         var content = LoadContent();
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
+        var groupNames = LoadGroupNames();
 
-        return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion)).ToList();
+        return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion, groupNames)).ToList();
     }
+
+    /// <summary>群組 Id → 名稱，供抑制 DTO 帶出可讀名稱用。一次整份撈出避免每筆抑制各查一次 store。</summary>
+    private Dictionary<long, string> LoadGroupNames() =>
+        _hostGroups.GetAll().ToDictionary(g => g.GroupId, g => g.GroupName);
 
     /// <summary>內建規則升級橫幅（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9）：庫內版本 &lt; 程式目前的種子版本時顯示</summary>
     public RuleImportStatusDto GetImportStatus()
@@ -246,11 +254,12 @@ public class RuleAdminService
         var content = LoadContent();
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
+        var groupNames = LoadGroupNames();
 
         return new RuleRestorePreviewDto
         {
-            Current = ToDto(current, seeds, suppressions, content.SeedVersion),
-            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion),
+            Current = ToDto(current, seeds, suppressions, content.SeedVersion, groupNames),
+            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion, groupNames),
             Differences = Diff(current, seedRule)
         };
     }
@@ -278,14 +287,18 @@ public class RuleAdminService
     }
 
     // ── 抑制設定 ─────────────────────────────────────────────────────────────
+    // 回饋十三輪 F：抑制粒度從「主機×規則」擴為 Host／Group／Site 三種範圍（體檢批 3 #13）——
+    // 2000 台環境下同一條規則在同類主機上逐台設定的維護成本會讓人乾脆停用整條規則，
+    // 反而失去分類與知識庫。實際生效範圍判定在 SuppressionFilter（Core 層純函數）。
 
     public List<RuleSuppressionDto> GetSuppressions()
     {
         var platformByRuleId = LoadContent().Rules
             .ToDictionary(r => r.Id, r => r.Platform, StringComparer.OrdinalIgnoreCase);
+        var groupNames = LoadGroupNames();
 
         return _suppressions.LoadAll()
-            .Select(s => ToSuppressionDto(s, platformByRuleId.GetValueOrDefault(s.RuleId, "windows")))
+            .Select(s => ToSuppressionDto(s, platformByRuleId.GetValueOrDefault(s.RuleId, "windows"), groupNames))
             .ToList();
     }
 
@@ -298,17 +311,56 @@ public class RuleAdminService
         if (string.IsNullOrWhiteSpace(request.Reason))
             throw DomainException.Validation("請說明抑制原因——沒有原因的抑制日後沒人知道能不能解除。");
 
+        if (!SuppressionScopes.IsValid(request.Scope))
+            throw DomainException.Validation($"不合法的抑制範圍「{request.Scope}」。");
+
+        var host = "";
+        long? hostGroupId = null;
+        string scopeText;
+
+        switch (request.Scope)
+        {
+            case SuppressionScopes.Host:
+                if (string.IsNullOrWhiteSpace(request.Host))
+                    throw DomainException.Validation("請選擇要抑制的主機。");
+                host = request.Host.Trim();
+                scopeText = $"主機 {host}";
+                break;
+
+            case SuppressionScopes.Group:
+                if (!request.HostGroupId.HasValue)
+                    throw DomainException.Validation("請選擇要抑制的主機群組。");
+                var group = _hostGroups.Get(request.HostGroupId.Value)
+                            ?? throw DomainException.NotFound("找不到這個主機群組。");
+                hostGroupId = group.GroupId;
+                scopeText = $"主機群組「{group.GroupName}」";
+                break;
+
+            default: // Site：不需要額外目標，全站只可能有一筆
+                scopeText = "全站";
+                break;
+        }
+
         // ISuppressionStore 的介面是整份載入/寫回（見其註解），這裡沿用同一慣例做 upsert：
-        // (RuleId, Host) 是天然的複合鍵，同一組覆寫而不是累積多筆
+        // (RuleId, Scope, 範圍目標) 是天然的複合鍵，同一組覆寫而不是累積多筆——
+        // Site 範圍沒有「目標」可比對，同規則同 Scope=Site 已經是唯一鍵。
         var all = _suppressions.LoadAll();
         all.RemoveAll(s =>
             string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(s.Host, request.Host.Trim(), StringComparison.OrdinalIgnoreCase));
+            string.Equals(s.Scope, request.Scope, StringComparison.OrdinalIgnoreCase) &&
+            (request.Scope switch
+            {
+                SuppressionScopes.Host => string.Equals(s.Host, host, StringComparison.OrdinalIgnoreCase),
+                SuppressionScopes.Group => s.HostGroupId == hostGroupId,
+                _ => true
+            }));
 
         all.Add(new RuleSuppression
         {
             RuleId = ruleId,
-            Host = request.Host.Trim(),
+            Scope = request.Scope,
+            Host = host,
+            HostGroupId = hostGroupId,
             Reason = request.Reason.Trim(),
             SuppressedBy = _currentUser.Account,
             CreatedAt = DateTime.Now,
@@ -319,28 +371,43 @@ public class RuleAdminService
 
         _audit.Record(
             action: AuditActions.SuppressAdd,
-            summary: $"抑制規則 {ruleId} 於主機 {request.Host} 的告警" +
+            summary: $"抑制規則 {ruleId} 於{scopeText}的告警" +
                      (request.Days.HasValue ? $"（{request.Days} 天後到期）" : "（永久，直到手動解除）") +
                      $"：{request.Reason}。抑制只關掉通知與風險升級，事件仍照常聚合與紀錄",
             targetKind: "rule",
             targetId: ruleId,
-            detail: new { request.Host, request.Reason, request.Days });
+            detail: new { request.Scope, host, hostGroupId, request.Reason, request.Days });
     }
 
-    public void RemoveSuppression(string ruleId, string host)
+    public void RemoveSuppression(string ruleId, string scope, string? host, long? hostGroupId)
     {
+        if (!SuppressionScopes.IsValid(scope))
+            throw DomainException.Validation($"不合法的抑制範圍「{scope}」。");
+
         var all = _suppressions.LoadAll();
         var removed = all.RemoveAll(s =>
             string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(s.Host, host, StringComparison.OrdinalIgnoreCase));
+            string.Equals(s.Scope, scope, StringComparison.OrdinalIgnoreCase) &&
+            (scope switch
+            {
+                SuppressionScopes.Host => string.Equals(s.Host, host, StringComparison.OrdinalIgnoreCase),
+                SuppressionScopes.Group => s.HostGroupId == hostGroupId,
+                _ => true
+            }));
 
         if (removed == 0) throw DomainException.NotFound("找不到這筆抑制設定。");
 
         _suppressions.SaveAll(all);
 
+        var scopeText = scope switch
+        {
+            SuppressionScopes.Host => $"主機 {host}",
+            SuppressionScopes.Group => $"主機群組（Id={hostGroupId}）",
+            _ => "全站"
+        };
         _audit.Record(
             action: AuditActions.SuppressRemove,
-            summary: $"解除規則 {ruleId} 於主機 {host} 的抑制，恢復告警",
+            summary: $"解除規則 {ruleId} 於{scopeText}的抑制，恢復告警",
             targetKind: "rule",
             targetId: ruleId);
     }
@@ -482,11 +549,14 @@ public class RuleAdminService
         KnownIssueRule rule,
         IReadOnlyDictionary<string, RuleSeedSnapshot> seeds,
         List<RuleSuppression> suppressions,
-        int currentSeedVersion)
+        int currentSeedVersion,
+        IReadOnlyDictionary<long, string> groupNames)
     {
         var isBuiltin = string.Equals(rule.Origin, "builtin", StringComparison.OrdinalIgnoreCase);
         seeds.TryGetValue(rule.Id, out var snapshot);
 
+        // 規則清單頁沒有「檢視中的主機」脈絡，這裡沿用既有簡化：同一規則若有多筆抑制
+        // （例如同時有 Host 級與 Group 級），只取第一筆代表性顯示徽章；完整清單見「告警抑制」分頁的 GetSuppressions()
         var suppression = suppressions.FirstOrDefault(s =>
             string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase));
 
@@ -517,14 +587,20 @@ public class RuleAdminService
             SeedHasNewerVersion = snapshot != null && snapshot.SeedVersion > currentSeedVersion,
             CanRestore = isBuiltin && snapshot != null,
             CanDelete = !isBuiltin,
-            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform)
+            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform, groupNames)
         };
     }
 
-    private static RuleSuppressionDto ToSuppressionDto(RuleSuppression suppression, string platform) => new()
+    private static RuleSuppressionDto ToSuppressionDto(
+        RuleSuppression suppression, string platform, IReadOnlyDictionary<long, string> groupNames) => new()
     {
         RuleId = suppression.RuleId,
+        Scope = suppression.Scope,
         Host = suppression.Host,
+        HostGroupId = suppression.HostGroupId,
+        HostGroupName = suppression.HostGroupId.HasValue
+            ? groupNames.GetValueOrDefault(suppression.HostGroupId.Value, "（群組已刪除）")
+            : null,
         Reason = suppression.Reason,
         ExpiresAt = suppression.ExpiresAt,
         IsExpired = suppression.ExpiresAt.HasValue && suppression.ExpiresAt.Value.Date < DateTime.Today,

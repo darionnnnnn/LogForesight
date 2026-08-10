@@ -285,6 +285,51 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.DoesNotContain(lowRiskResults, r => r.Date.Date == date.Date);
     }
 
+    /// <summary>
+    /// 回饋十三輪 C（孤兒補跑產報告）：UncoveredChecksAddendum 是追加，不是覆寫——統計段寫入的
+    /// 既有申報項目（如「趨勢基準建立中」）補跑後仍要看得到，AI 段只把自己才知道的新缺口併進去。
+    /// </summary>
+    [Fact]
+    public void AttachAiResult_UncoveredChecksAddendum追加而非覆寫既有申報項目()
+    {
+        var store = CreateStore();
+        var date = DateTime.Today;
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            RiskLevel = "低",
+            UncoveredChecks = new List<string> { "趨勢基準建立中（歷史 0/13 天）" }
+        });
+
+        store.AttachAiResult(date, new AiOutcome(
+            Headline: "h", Summary: "s", TrendAssessment: "", Action: "",
+            RiskLevel: "中", RiskBasis: null, AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>(),
+            UncoveredChecksAddendum: new List<string> { "風險事件暫存已逾期，補跑報告從缺" }));
+
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(new[] { "趨勢基準建立中（歷史 0/13 天）", "風險事件暫存已逾期，補跑報告從缺" }, read.UncoveredChecks);
+    }
+
+    /// <summary>UncoveredChecksAddendum 為 null（絕大多數呼叫端，主分析路徑）時完全不影響既有內容</summary>
+    [Fact]
+    public void AttachAiResult_UncoveredChecksAddendum為null時不影響既有內容()
+    {
+        var store = CreateStore();
+        var date = DateTime.Today;
+        store.Append(new DailyAnalysisRecord { Date = date, RiskLevel = "低", UncoveredChecks = new List<string> { "既有項目" } });
+
+        store.AttachAiResult(date, new AiOutcome(
+            Headline: "h", Summary: "s", TrendAssessment: "", Action: "",
+            RiskLevel: "低", RiskBasis: null, AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>()));
+
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal(new[] { "既有項目" }, read.UncoveredChecks);
+    }
+
     /// <summary>契約同 AttachWeeklyCheckup：找不到對應日期安靜略過，不擲例外、不新增紀錄。</summary>
     [Fact]
     public void AttachAiResult_日期不存在_不擲例外且不新增紀錄()

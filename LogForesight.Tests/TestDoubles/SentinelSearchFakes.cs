@@ -7,14 +7,17 @@ namespace LogForesight.Tests;
 /// ISentinelSearchClient 測試替身。預設每次查詢回傳零筆；測試可依 <see cref="Responder"/>
 /// 依請求內容（通常看 <c>request.Start</c> 判斷是哪一天）回傳對應的假事件。
 ///
-/// 呼叫紀錄用 lock 保護：<see cref="NetiqPipelineService"/> 平行處理多台 Sentinel 時，
-/// 每台各自持有自己的 client 實例，但單一實例內部（同一台 Sentinel）目前是依序呼叫——
-/// 保持執行緒安全純粹是防禦性的，不假設呼叫端的併發模型不會變。
+/// 呼叫紀錄與 <see cref="PeakConcurrency"/> 都用 lock／Interlocked 保護，因為
+/// <see cref="NetiqPipelineService"/> 不只平行處理多台 Sentinel，同一台 Sentinel 內部
+/// 也可能透過 client pool 平行送出多個批次查詢（回饋十三輪 D）——測試常用
+/// <see cref="FakeSentinelSearchClientFactory.Single"/> 讓 pool 裡的每個「client」其實都指向
+/// 同一個替身實例，這個類別本身必須真正執行緒安全，而不能只是防禦性寫寫。
 /// </summary>
 internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
 {
     private readonly object _lock = new();
     private readonly List<SentinelSearchRequest> _requests = new();
+    private int _active;
 
     public IReadOnlyList<SentinelSearchRequest> Requests { get { lock (_lock) return _requests.ToList(); } }
     public bool Disposed { get; private set; }
@@ -23,11 +26,34 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
     public Func<SentinelSearchRequest, SentinelSearchResult> Responder { get; set; } = _ =>
         new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
 
-    public Task<SentinelSearchResult> SearchAsync(SentinelSearchRequest request, CancellationToken ct = default)
+    /// <summary>模擬查詢耗時（回饋十三輪 D 的併發峰值測試用）：0＝立即完成。真實的
+    /// SentinelClient 一次查詢動輒數秒到數十秒，測試裡不需要真的等那麼久，但若完全不等，
+    /// 多個平行呼叫可能剛好序列化執行也測不出峰值差異——給一個小延遲讓呼叫真的有機會重疊。</summary>
+    public TimeSpan Delay { get; set; } = TimeSpan.Zero;
+
+    /// <summary>觀察到的「同時執行中」SearchAsync 呼叫數峰值——驗證呼叫端有沒有真的平行送出查詢，
+    /// 以及有沒有超過呼叫端自己設定的並行度上限（回饋十三輪 D，client pool）。</summary>
+    public int PeakConcurrency { get; private set; }
+
+    public async Task<SentinelSearchResult> SearchAsync(SentinelSearchRequest request, CancellationToken ct = default)
     {
         lock (_lock) _requests.Add(request);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(Responder(request));
+
+        var active = Interlocked.Increment(ref _active);
+        lock (_lock)
+        {
+            if (active > PeakConcurrency) PeakConcurrency = active;
+        }
+        try
+        {
+            if (Delay > TimeSpan.Zero) await Task.Delay(Delay, ct);
+            return Responder(request);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _active);
+        }
     }
 
     public ValueTask DisposeAsync()

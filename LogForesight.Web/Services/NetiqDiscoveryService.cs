@@ -202,7 +202,7 @@ public class NetiqDiscoveryService
         // 掃描沒拿到 sn 的主機，NetiqDiscoveredHost.HostName 會退回 IP（精靈清單上顯示 IP 是對的），
         // 但那**不是名字**，不能當 DisplayName 落盤：DisplayName 的存在意義就是「IP 之外還能認出
         // 是哪台機器」（docs/WEB-SPEC.md §7），寫成與 HostName 相同的 IP 會讓主機頁顯示
-        // 「10.1.2.25（10.1.2.25）」這種廢話，也讓夜間批次 TouchNetiq 之後補到的真名看起來像被改過。
+        // 「192.168.0.25（192.168.0.25）」這種廢話，也讓夜間批次 TouchNetiq 之後補到的真名看起來像被改過。
         // 名字未知就維持 null，等 TouchNetiq 回填——與 NetiqPipelineService 同一套語意。
         var displayNameByIp = scan.Hosts
             .Where(h => !string.Equals(h.HostName, h.IpAddress, StringComparison.OrdinalIgnoreCase))
@@ -292,7 +292,7 @@ public class NetiqDiscoveryService
         return created.GroupId;
     }
 
-    /// <summary>IP 的 /24 網段字串（10.1.2.37 → 10.1.2.0/24）。非法 IP 歸到「其他」</summary>
+    /// <summary>IP 的 /24 網段字串（192.168.0.37 → 192.168.0.0/24）。非法 IP 歸到「其他」</summary>
     private static string Slash24(string ip)
     {
         var parts = ip.Split('.');

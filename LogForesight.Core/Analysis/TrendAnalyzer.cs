@@ -4,22 +4,30 @@ public enum IssueTrend
 {
     Unknown,    // 尚無歷史可比對
     New,        // 歷史中從未出現過
-    Rising,     // 頻率明顯上升（今日 >= 歷史平均 2 倍且達最低次數門檻）
+    Rising,     // 頻率明顯上升（今日 >= 歷史基準 2 倍且達最低次數門檻）
     Recurring,  // 歷史中重複出現，頻率相近
     Declining   // 頻率明顯下降
 }
 
 /// <summary>
-/// 程式端的確定性頻率比對：拿當日各事件簽章的發生次數，對照前一日與近期歷史的平均值，
+/// 程式端的確定性頻率比對：拿當日各事件簽章的發生次數，對照前一日與近期歷史的基準值，
 /// 標記趨勢並在頻率上升時自動升級嚴重度。趨勢偵測不依賴 AI——數字比較程式做得又快又準，
 /// AI 只負責解讀「為什麼會上升、代表什麼」。
+///
+/// **歷史基準改用中位數**（回饋十三輪 E，取代原本的平均值）：單日爆量一次會把平均墊高到
+/// 之後兩週都達不到 <see cref="RisingFactor"/> 倍門檻、告警因此靜音兩週——2000 台環境下
+/// 事件量級差三個數量級，這個失真被放大。中位數對單一極端值不敏感，同一批比對邏輯
+/// （Rising/Declining 門檻、整體錯誤量／稽核量突增）不必跟著改，只是「基準」這個數字
+/// 的算法換了。<see cref="LogIssueSignature.HistoryDailyAverage"/> 屬性名維持不變
+/// （ContentJson 序列化相容，舊紀錄的欄位值仍是當時寫入時的平均值，語意隨欄位一起讀出，
+/// 不會說謊——舊紀錄未來再被讀取／重算時才會換成中位數）。
 /// </summary>
 public static class TrendAnalyzer
 {
     /// <summary>今日次數需達此值才可能被判為 Rising，避免 1 次變 2 次這種雜訊觸發告警</summary>
     private const int RisingMinCount = 5;
 
-    /// <summary>今日次數達歷史平均的幾倍視為頻率上升</summary>
+    /// <summary>今日次數達歷史基準的幾倍視為頻率上升</summary>
     private const double RisingFactor = 2.0;
 
     /// <summary>
@@ -68,7 +76,7 @@ public static class TrendAnalyzer
                 .ToList();
 
             sig.DaysSeenInHistory = pastCounts.Count;
-            sig.HistoryDailyAverage = pastCounts.Count > 0 ? Math.Round(pastCounts.Average(), 1) : null;
+            sig.HistoryDailyAverage = pastCounts.Count > 0 ? Math.Round(Median(pastCounts), 1) : null;
             sig.PreviousDayCount = prevRecord == null
                 ? null
                 : prevRecord.TopIssues.FirstOrDefault(i => SameIssue(i, sig))?.Count ?? 0;
@@ -114,7 +122,7 @@ public static class TrendAnalyzer
                     if (!sig.Suppressed)
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                        alerts.Add($"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史平均 x{sig.HistoryDailyAverage}{prevText}");
+                        alerts.Add($"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}");
                     }
                 }
             }
@@ -129,24 +137,24 @@ public static class TrendAnalyzer
         }
 
         // 整體錯誤量突增：個別事件都不顯眼、但總量暴增，也是異常訊號（例如大量不同來源同時出錯）
-        // DataIncomplete 的日子排除在平均值外，避免不完整的一天墊低基準
+        // DataIncomplete 的日子排除在基準計算外，避免不完整的一天墊低基準
         if (reliableHistory.Count > 0)
         {
-            var avgErrors = reliableHistory.Average(h => (double)h.ErrorCount);
-            if (todayErrorCount >= 10 && todayErrorCount >= avgErrors * RisingFactor)
+            var baselineErrors = Median(reliableHistory.Select(h => h.ErrorCount));
+            if (todayErrorCount >= 10 && todayErrorCount >= baselineErrors * RisingFactor)
             {
-                alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史平均 {avgErrors:0.#} 筆");
+                alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆");
             }
         }
 
         // 安全稽核事件總量突增：稽核事件（如 4625 登入失敗）不計入錯誤數，需獨立比對總量；
-        // 額外排除 Security log 無權限的歷史日（假性零會把平均墊低）
+        // 額外排除 Security log 無權限的歷史日（假性零會把基準墊低）
         if (reliableAuditHistory.Count > 0)
         {
-            var avgAudit = reliableAuditHistory.Average(h => (double)h.AuditEventCount);
-            if (todayAuditCount >= 10 && todayAuditCount >= avgAudit * RisingFactor)
+            var baselineAudit = Median(reliableAuditHistory.Select(h => h.AuditEventCount));
+            if (todayAuditCount >= 10 && todayAuditCount >= baselineAudit * RisingFactor)
             {
-                alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史平均 {avgAudit:0.#} 筆，需留意入侵嘗試");
+                alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試");
             }
         }
 
@@ -166,4 +174,15 @@ public static class TrendAnalyzer
     /// </summary>
     private static IssueSeverity Escalate(IssueSeverity s) =>
         s >= IssueSeverity.High ? IssueSeverity.High : s + 1;
+
+    /// <summary>
+    /// 歷史基準的中位數（回饋十三輪 E）：純算術，偶數筆數取中間兩值平均。呼叫端已保證非空清單
+    /// （<see cref="Apply"/> 內三處呼叫點都先檢查 Count &gt; 0），這裡不重複防禦。
+    /// </summary>
+    private static double Median(IEnumerable<int> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2.0 : sorted[mid];
+    }
 }

@@ -256,6 +256,13 @@ function assignField(handling, users, hostId, date) {
                     '只看得到被指派的問題。若需要完整權限，請至「群組與授權」調整。', 'warning', 10000);
             }
 
+            // 被指派者沒有 Handle 能力（回饋十三輪，體檢 H1 殘餘）：指派成立，但對方按下
+            // 「回覆處理狀態」會被後端擋下來——與上面的檢視權提示同一個道理，交辦的人要先知道
+            if (updated.assigneeCannotHandle) {
+                toast(`${formatUserName(updated.handlerName, updated.handlerAccount)} 目前的角色沒有處理能力，` +
+                    '指派仍會成立，但對方無法回覆處理狀態。若需要處理能力，請至「使用者」調整角色。', 'warning', 10000);
+            }
+
             await initHandlingPanel(hostId, date, state.getSelection, state.onBatchSaved, state.options);
         } catch (error) {
             select.disabled = false;

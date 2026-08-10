@@ -44,7 +44,7 @@ internal class HandlingServiceFacade
         // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts);
         _day = new DayHandlingCommandService(
-            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress);
+            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities);
         _history = new HandlingHistoryQueryService(

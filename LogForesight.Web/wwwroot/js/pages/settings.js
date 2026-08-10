@@ -22,12 +22,16 @@ const BRAND_DEFAULT_SUBTITLE = '事件日誌預警';
 let unsaved = null;
 
 // 兩段式（docs/archive/HISTORY.md #5，2026-07-27 簡化自三段式）：
-// 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁
+// 過濾機制已收斂到後端 RecordRepository 單一咽喉點，SiteHidden 對全站一致生效，沒有例外頁。
+// 回饋十三輪新增項3：DefaultHidden 模式下儀表板／報表的「風險類型」卡片改為例外中的例外——
+// 那兩張卡片沒有像風險日詳情頁一樣的手動展開入口，繼續套用「不過濾」會讓使用者以為
+// 取消勾選沒有生效（尤其「其他」類別本來就是低嚴重度雜訊大宗，最容易被注意到）。
 const DISPLAY_MODES = [
     {
         value: 'DefaultHidden', label: '預設隱藏，仍可手動開啟',
         hint: '風險日詳情頁預設只顯示勾選層級，未勾選層級的篩選鈕仍在，使用者可自行點開檢視；' +
-            '儀表板、報表與問題查詢頁的統計不受影響（仍計入全部層級）。'
+            '問題查詢頁的下鑽與詢問 AI 下拉同樣不受影響（仍計入全部層級）。' +
+            '但儀表板／報表的「風險類型」卡片沒有手動展開的入口，一律只計入上方勾選的嚴重度。'
     },
     {
         value: 'SiteHidden', label: '全站隱藏',
@@ -52,6 +56,7 @@ async function load() {
     renderRetentionFields(current);
     renderBrandFields(current);
     renderUpdatedAt(current);
+    loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -213,6 +218,27 @@ function renderRetentionFields(settings) {
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
     document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
+}
+
+/**
+ * 問題聚合欄背景回填狀態（回饋十三輪 A6，體檢 G2 殘餘）：/api/health/detail 的
+ * backfillInProgress/backfillDone/backfillTotal 過去沒有任何維運端讀取點——
+ * 回填未完成時問題排行的次數與影響範圍會偏低但看起來正常，這是唯一能發現「數字還不準」的地方。
+ * **失敗完全靜默**：這是加值資訊，載不到就不顯示，不該擋住設定頁其餘欄位（同 layout.js 的
+ * 工作量徽章慣例）；平常（沒有在回填）也不顯示，避免長駐一個「無事可報」的區塊佔版面。
+ */
+async function loadBackfillStatus() {
+    const el = document.getElementById('backfill-status');
+    try {
+        const detail = await api.get('/api/health/detail', { silent: true });
+        if (!detail.backfillInProgress) return;
+
+        el.textContent = `問題聚合欄背景回填進行中（${detail.backfillDone} / ${detail.backfillTotal}）——` +
+            '完成前，問題排行的次數與影響範圍可能偏低。';
+        el.classList.remove('d-none');
+    } catch {
+        // 靜默：見函式註解
+    }
 }
 
 /**

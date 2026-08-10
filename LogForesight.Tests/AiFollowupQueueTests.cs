@@ -81,4 +81,31 @@ public class AiFollowupQueueTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => queue.EnqueueAsync(2, cts.Token).AsTask());
     }
+
+    /// <summary>回饋十三輪 A7：TryEnqueue 是非阻塞探測，供呼叫端在真的要背壓等待前先切換
+    /// 進度顯示——有空位時要能立即成功且不消耗多餘的一個位置。</summary>
+    [Fact]
+    public async Task TryEnqueue_有空位時立即成功()
+    {
+        var queue = new AiFollowupQueue<int>(capacity: 2);
+
+        Assert.True(queue.TryEnqueue(1));
+        Assert.True(queue.TryEnqueue(2));
+        queue.Complete();
+
+        var read = new List<int>();
+        await foreach (var item in queue.ReadAllAsync()) read.Add(item);
+        Assert.Equal(new[] { 1, 2 }, read);
+    }
+
+    /// <summary>佇列已滿時 TryEnqueue 立即回 false、不阻塞——這是它與 EnqueueAsync 的關鍵差異，
+    /// 呼叫端據此判斷「即將進入背壓等待」而不必真的卡在那裡才知道。</summary>
+    [Fact]
+    public void TryEnqueue_佇列已滿時立即回false不阻塞()
+    {
+        var queue = new AiFollowupQueue<int>(capacity: 1);
+        Assert.True(queue.TryEnqueue(1));
+
+        Assert.False(queue.TryEnqueue(2));
+    }
 }

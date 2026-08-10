@@ -173,7 +173,7 @@ public class ScheduleController : ControllerBase
                 if (string.IsNullOrWhiteSpace(segment))
                     throw DomainException.Validation("請輸入要執行的網段。");
 
-                // 輸入語法與 NetIQ 匯入精靈一致（前綴 10.1.2 或 CIDR 10.1.2.0/24），
+                // 輸入語法與 NetIQ 匯入精靈一致（前綴 192.168.0 或 CIDR 192.168.0.0/24），
                 // 共用同一份 NormalizeSubnetPrefix；比對主機清單改用 CidrMatcher（同一套邏輯的
                 // 另一個消費端——精靈用正規化後的前綴組 Sentinel 查詢字串，這裡組本地萬用字元比對）
                 string normalizedPrefix;

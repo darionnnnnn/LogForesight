@@ -212,6 +212,122 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.Equal(10, bruteforceIssue.Count);
         Assert.Equal(IssueSeverity.High, bruteforceIssue.Severity);
     }
+
+    /// <summary>
+    /// 回饋十三輪 B2：查詢截斷時二分重查，收斂到單台才誠實標記資料不完整——不再一台吵的主機
+    /// 拖垮整批的趨勢基準。4 台主機模擬「批次越大越容易撞單一 job 上限」：查詢帶 2 台以上 IP
+    /// 時回傳截斷結果，只剩 1 台時查得到完整結果，藉此逼出遞迴切半的路徑（4→2+2→1+1+1+1）。
+    /// </summary>
+    [Fact]
+    public async Task 查詢截斷時二分重查_收斂到單台才標記資料不完整()
+    {
+        var sentinel = AddSentinel();
+        var ips = new[] { "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4" };
+        var hosts = ips.Select((ip, i) => AddWindowsHost(sentinel, ip, $"HOST-{i}")).ToList();
+
+        _client.Responder = request =>
+        {
+            var ipsInRequest = ips.Count(ip => request.Filter.Contains(ip));
+            return ipsInRequest > 1
+                // 兩台以上共用一次查詢：模擬撞到單一 job 的 MaxResultsPerJob 上限
+                ? new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 1000, State = SentinelJobState.Completed }
+                // 已收斂到單台：查得到完整結果，不再截斷
+                : new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+        };
+
+        var pipeline = MakePipeline(useAi: false);
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(4, result.HostDaysAnalyzed);
+        Assert.Equal(0, result.HostsFailed);
+        // 遞迴切半的查詢次數：1（4台）+2（各2台）+4（各1台）＝7，證明真的有切半重試，
+        // 不是巧合地全部主機都沒事
+        Assert.Equal(7, _client.Requests.Count);
+
+        var yesterday = DateTime.Today.AddDays(-1);
+        foreach (var host in hosts)
+        {
+            var store = _backend.RecordStore(new HostKey { HostId = host.HostId, HostName = host.HostName });
+            var record = Assert.Single(store.ReadRecent(yesterday, 1));
+            Assert.False(record.DataIncomplete,
+                $"{host.HostName} 不該被連坐標記資料不完整——切到單台查詢時本身已不再截斷");
+        }
+    }
+
+    /// <summary>單台查詢仍然截斷時（已無法再切），照既有行為誠實標記該台資料不完整</summary>
+    [Fact]
+    public async Task 單台查詢仍截斷時標記該台資料不完整()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _client.Responder = _ =>
+            new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 999, State = SentinelJobState.Completed };
+
+        var pipeline = MakePipeline(useAi: false);
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        Assert.Single(_client.Requests);   // 單台本來就切不下去，不會無窮遞迴
+
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        var record = Assert.Single(store.ReadRecent(yesterday, 1));
+        Assert.True(record.DataIncomplete);
+    }
+
+    // ── 回饋十三輪 D：單一 Sentinel 內部的 client pool 併發 ──────────────────────
+    // 51 台主機才會跨過 IpBatchSize=50，真的切出兩個批次——這是唯一能逼出「同一天內
+    // 多批次」路徑的方式，主機數不能再省。_client.Delay 給查詢一點耗時，讓平行呼叫
+    // 真的有機會重疊，不然即使程式碼有平行能力，跑太快也測不出峰值差異。
+
+    /// <summary>MaxParallelQueriesPerServer 大於 1 時，同一天內的批次真的會平行送出查詢，
+    /// 但峰值不超過設定值——client pool 正確節制並行度。不同天之間仍嚴格依序：第二天的任何
+    /// 查詢都不該在第一天全部查詢完成前開始（同一台主機的趨勢比對需要前一天已寫入的歷史，
+    /// 這個前提不能被批次間的平行破壞）。</summary>
+    [Fact]
+    public async Task 同天內多批次平行且不超過設定上限_不同天之間仍依序()
+    {
+        var sentinel = AddSentinel();
+        for (var i = 1; i <= 51; i++)
+        {
+            AddWindowsHost(sentinel, $"10.0.9.{i}", $"HOST-D-{i}");
+        }
+        _client.Delay = TimeSpan.FromMilliseconds(20);
+        var options = new NetiqOptions { BackfillDays = 2, MaxParallelQueriesPerServer = 2 };
+        var pipeline = MakePipeline(useAi: false, options: options);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(102, result.HostDaysAnalyzed); // 51 台 × 2 天缺漏
+        Assert.Equal(2, _client.PeakConcurrency);   // 51 台切成 50+1 兩批，池大小 2，兩批同時跑
+
+        // 日期序：找出第一天最後一筆查詢的位置，必須早於第二天第一筆查詢的位置
+        var byOrder = _client.Requests.Select((r, index) => (r.Start, index)).ToList();
+        var firstDayStart = byOrder.Min(x => x.Start);
+        var lastOfFirstDay = byOrder.Where(x => x.Start == firstDayStart).Max(x => x.index);
+        var firstOfLaterDay = byOrder.Where(x => x.Start != firstDayStart).Min(x => x.index);
+        Assert.True(lastOfFirstDay < firstOfLaterDay,
+            "第二天的查詢不該在第一天全部查詢完成前開始——趨勢比對需要前一天已寫入的歷史。");
+    }
+
+    /// <summary>MaxParallelQueriesPerServer 預設 1（未設定）時，同一天內即使有多個批次也維持
+    /// 依序處理——這是既有行為的逃生門，也是改動前的逐位行為。</summary>
+    [Fact]
+    public async Task 查詢平行度預設為一時_同天多批次仍依序處理()
+    {
+        var sentinel = AddSentinel();
+        for (var i = 1; i <= 51; i++)
+        {
+            AddWindowsHost(sentinel, $"10.0.9.{i}", $"HOST-D-{i}");
+        }
+        _client.Delay = TimeSpan.FromMilliseconds(20);
+        var pipeline = MakePipeline(useAi: false); // MaxParallelQueriesPerServer 未設，預設 1
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(51, result.HostDaysAnalyzed);
+        Assert.Equal(1, _client.PeakConcurrency); // 池只有 1 個 client，兩批依序跑，從未重疊
+    }
 }
 
 /// <summary>把輸出行存進呼叫端提供的清單，供測試檢查文字內容（如平行度、警告訊息）。</summary>

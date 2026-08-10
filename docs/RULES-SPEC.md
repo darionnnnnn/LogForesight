@@ -1,6 +1,7 @@
-# 規則外部化＋主機級抑制機制（現況規格）
+# 規則外部化＋告警抑制機制（現況規格）
 
-> 本文件是規則庫（含 Windows／Linux 雙平台）與主機級告警抑制機制的現況設計規格：規則不寫死在
+> 本文件是規則庫（含 Windows／Linux 雙平台）與告警抑制機制（主機／主機群組／全站三種範圍，
+> 回饋十三輪 F 加入群組與全站）的現況設計規格：規則不寫死在
 > 程式碼、可在 Web 規則維護頁調整，不需重新編譯部署。實作見 `Analysis/KnownIssueCatalog.cs`
 > （`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、`Analysis/RuleValidator.cs`、
 > `Analysis/SuppressionFilter.cs`、`Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、
@@ -19,8 +20,8 @@
 3. **後續更新走手動匯入**：程式改版新增/修訂 builtin 規則後，**不會自動覆寫**使用者的
    `rules.json`（避免「排程執行悄悄改變偵測行為」），而是啟動時提示、由維護者主動執行
    `--import-rules` 決定是否套用（見「Seed／匯入政策」）。
-4. **主機級告警抑制**：獨立於規則本身，讓維護者能對「已知雜訊」的規則在特定主機關閉通知，
-   同時不犧牲偵測與歷史資料的完整性（見「抑制機制」）。
+4. **告警抑制**：獨立於規則本身，讓維護者能對「已知雜訊」的規則在特定主機／主機群組／全站
+   關閉通知，同時不犧牲偵測與歷史資料的完整性（見「抑制機制」）。
 
 ## 三條語意邊界（必須記住的行為，容易被誤解）
 
@@ -186,28 +187,43 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 ## 抑制機制
 
-`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`Host`、`Reason`、`SuppressedBy`、
-`CreatedAt`、`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，必須 `null`）。獨立於規則本身
-儲存（`suppressions.json`，無 seed 概念，缺檔＝空清單），因為兩者生命週期不同：規則是全域設定，
-抑制是各主機的營運狀態。
+`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`Scope`（`Host`／`Group`／`Site`，
+回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、`Reason`、`SuppressedBy`、`CreatedAt`、
+`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，必須 `null`）。獨立於規則本身儲存
+（`suppressions.json`，無 seed 概念，缺檔＝空清單），因為兩者生命週期不同：規則是全域設定，
+抑制是各主機/群組/全站的營運狀態。
 
 **語意**（詳見上方「三條語意邊界」第 2 點）：只影響通知與風險升級，不影響偵測與紀錄。
 
-**主機與到期比對**（`Analysis/SuppressionFilter.cs`，純函數）：`Host` 不分大小寫比對
-`Environment.MachineName`；`ExpiresAt` 已到期的項目不生效，但**不自動刪除**——不留痕跡地
-讓抑制過期會讓人以為「已經處理好了」，實際上只是靜默恢復告警。到期後：
+**生效範圍三選一**（`SuppressionScopes`，回饋十三輪 F）：2000 台規模下同一條規則要在每台
+同類主機上各設一次抑制，維護成本最終只會讓人乾脆停用整條規則，反而失去分類與知識庫——
+`Scope` 因此不只是單台主機：
+
+- **`Host`**（預設，既有資料未帶此欄位時反序列化到此值，語意與改版前逐位相同，零遷移）：
+  只對 `Host` 欄位指定的單台主機生效。
+- **`Group`**：對 `HostGroupId` 指定的主機群組**目前所有成員**生效（不是「建立當下的成員快照」，
+  之後加入該群組的主機自動適用）。
+- **`Site`**：不限主機或群組，全站生效。
+
+**主機與到期比對**（`Analysis/SuppressionFilter.cs`，純函數）：`Host` 範圍不分大小寫比對
+`Environment.MachineName`；`Group` 範圍比對呼叫端注入的「該主機所屬群組 Id 集合」是否包含
+`HostGroupId`（`SuppressionFilter` 本身是純函數，不依賴群組 store，群組成員展開由呼叫端——
+`LogAnalysisService`／`NetiqPipelineService`／`AnalysisOrchestrator`／`WeeklyCheckupService`
+——各自解析後傳入）；`Site` 範圍一律生效。`ExpiresAt` 已到期的項目不生效，但**不自動刪除**——
+不留痕跡地讓抑制過期會讓人以為「已經處理好了」，實際上只是靜默恢復告警。到期後：
 
 - 每次執行的啟動階段（排程／立即執行）列出「已到期、恢復告警」的提示。
 - 需要人工到 Web `/admin/rules`「告警抑制」分頁清理，這是刻意的：到期後的清理需要人判斷
   「這個問題後來到底處理了沒有」，不該由程式自動猜測。
 
 **體檢固定提醒**（`WeeklyCheckupService`）：只要體檢確實產生報告（窗口內有訊號、AI 敘事成功），
-就固定列出本機生效中的抑制清單＋窗口期間各自的發生次數——防止「暫時關掉」變成永久盲區。
-不會為了顯示這個清單而強制觸發原本因「三層皆無訊號」而省略的 AI 呼叫，維持既有的成本控制設計。
+就固定列出本機生效中的抑制清單（含 Group／Site 範圍展開後對本機生效的項目）＋窗口期間各自
+的發生次數——防止「暫時關掉」變成永久盲區。不會為了顯示這個清單而強制觸發原本因「三層皆無
+訊號」而省略的 AI 呼叫，維持既有的成本控制設計。
 
-**維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選規則＋主機＋
-事由＋選填到期天數）、查詢（可依主機/規則/平台過濾）、解除，皆走既有儲存前驗證與稽核管線
-（見 docs/WEB-SPEC.md §9.7）。
+**維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選規則＋範圍
+＋範圍目標＋事由＋選填到期天數）、查詢（可依主機/規則/平台過濾）、解除，皆走既有儲存前
+驗證與稽核管線（見 docs/WEB-SPEC.md §9.7）。
 
 ## `RuleId` 落紀錄
 
@@ -219,10 +235,12 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 ## 未來擴充卡位（此版本不實作，只預留欄位/語意）
 
-- **`Scope`**：目前只接受 `"all"`（全域規則）。多主機/群組規模化時（見 `docs/archive/HISTORY.md`
-  的 NetIQ Sentinel 規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。
-  欄位已卡位，屆時只需要在 `RuleValidator` 放寬檢查、在 `FindRule`/`Classify` 加入呼叫端
-  的主機身分比對，不需要動 schema。
+- **`KnownIssueRule.Scope`**（規則本身的生效範圍，與下方「抑制機制」的 `RuleSuppression.Scope`
+  是兩個不同欄位，不要混淆——後者已於回饋十三輪 F 實作 Host/Group/Site 三值）：目前只接受
+  `"all"`（全域規則）。多主機/群組規模化時（見 `docs/archive/HISTORY.md` 的 NetIQ Sentinel
+  規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。欄位已卡位，
+  屆時只需要在 `RuleValidator` 放寬檢查、在 `FindRule`/`Classify` 加入呼叫端的主機身分比對，
+  不需要動 schema。
 - **`MatchFilter`**（規則與抑制皆有）：為「同一條規則、同一台主機下，只想關閉其中一部分
   比對範圍」卡位（例如「這台主機上 MyApp 的 7034 是雜訊，其他服務的 7034 要照常告警」）。
   此版本刻意不實作——這個粒度的比對語意會顯著複雜化，且需求尚未被證實，欄位先卡位、
@@ -273,14 +291,20 @@ lf_rules_meta（單列，對應 rules.json 頂層的兩個版本號）
   seed_version    int
 
 lf_rule_suppressions
+  suppression_id bigint         IDENTITY PK   -- 代理鍵：host/host_group_id 依 scope 可為 NULL，
+                                               -- 不適合直接當 PK 組成欄位（PK 欄位不可為 NULL）
   rule_id       nvarchar(100)
-  host          nvarchar(255)
+  scope         nvarchar(10)   NOT NULL   CHECK (scope IN ('Host','Group','Site'))  -- 回饋十三輪 F
+  host          nvarchar(255)              NULL   -- 只有 scope='Host' 時有值
+  host_group_id bigint                     NULL   -- 只有 scope='Group' 時有值
   reason        nvarchar(500)  NOT NULL
   suppressed_by nvarchar(100)
   created_at    timestamp
   expires_at    timestamp      NULL
   match_filter  nvarchar(100)  NULL   -- 卡位，此版本恆 NULL
-  PK (rule_id, host)
+  -- 同 (rule_id, scope, host|host_group_id) 覆寫去重是應用層 upsert 邏輯保證（現行 blob store
+  -- 的既有作法：寫入前先移除同鍵舊項），不是 DB 約束——Site 範圍沒有目標可比對，唯一性
+  -- 天然落在 (rule_id, scope='Site')，用 filtered unique index 表達比硬湊 PK 更乾淨。
 ```
 
 要點：

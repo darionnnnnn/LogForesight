@@ -30,9 +30,9 @@ public class OwnerCsvImporter : ICsvImporter
 
     public string BuildTemplate() =>
         "host_name,ip_address,owner_account\r\n" +
-        "SRV-OO-WEB01,10.1.2.11,DOMAIN\\user1\r\n" +
-        "SRV-OO-WEB01,10.1.2.11,DOMAIN\\user2\r\n" +
-        ",10.2.3.21,DOMAIN\\user3\r\n";
+        "SRV-OO-WEB01,192.168.0.11,DOMAIN\\user1\r\n" +
+        "SRV-OO-WEB01,192.168.0.11,DOMAIN\\user2\r\n" +
+        ",192.168.1.21,DOMAIN\\user3\r\n";
 
     public ImportPlan BuildPlan(CsvTable table, string fileName)
     {

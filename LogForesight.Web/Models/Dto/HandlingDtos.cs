@@ -65,6 +65,14 @@ public class HandlingDto
     /// 這個旗標是講給執行指派的人聽的，讓他知道對方看得到的只有被交辦的問題。
     /// </summary>
     public bool AssigneeHasNoHostAccess { get; set; }
+
+    /// <summary>
+    /// true＝被指派的人沒有 Handle 能力（回饋十三輪，體檢 H1 殘餘：
+    /// IssueHandlingCommandService 的批次指派已有同款提示，日層級指派原本沒有）。
+    /// **不擋、只提示**——與批次指派同一個決策：把工作知會給主管是合理用法，
+    /// 只是執行指派的人該知道對方按下「回覆處理狀態」會被後端擋下來。
+    /// </summary>
+    public bool AssigneeCannotHandle { get; set; }
 }
 
 public class UpdateHandlingRequest

@@ -191,6 +191,11 @@ async function loadMyWorkBadge(user) {
     const link = document.querySelector('[data-badge-source="my-work"]');
     if (!link || !user?.userId) return;
 
+    // 回饋十三輪 A4：沒有 Handle 能力的人（如只有 ViewAll 的主管角色）不載入徽章——
+    // 「我的交辦」頁本身仍可進（全角色可看任何人的處理人頁），但未結案「數字」是
+    // 處理人視角的待辦提醒，對無法動手處理的角色只是噪音
+    if (!hasCapability(user, 'Handle')) return;
+
     try {
         const workload = await api.get(`/api/handlers/${user.userId}/workload`, { silent: true });
         const count = (workload.openCaseCount ?? 0) + (workload.unresolvedDayCount ?? 0);

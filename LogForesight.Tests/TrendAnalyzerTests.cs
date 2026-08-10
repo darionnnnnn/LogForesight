@@ -15,7 +15,7 @@ public class TrendAnalyzerTests
     }
 
     [Fact]
-    public void 歷史平均兩倍以上且達最低次數時判為Rising並升級嚴重度()
+    public void 歷史基準兩倍以上且達最低次數時判為Rising並升級嚴重度()
     {
         var history = Enumerable.Range(1, 14)
             .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.High))
@@ -32,10 +32,33 @@ public class TrendAnalyzerTests
         Assert.Contains(alerts, a => a.Contains("頻率上升"));
     }
 
+    /// <summary>
+    /// 回饋十三輪 E：歷史基準改中位數的存在意義——單日爆量一次不該讓後續兩週都測不出真正的異常。
+    /// 13 天基準量 2、其中 1 天爆量到 100：平均會被拉到 9.0（(13×2+100)/14），之後真正異常的
+    /// 一天（15，接近基準的 7.5 倍）用平均門檻算是 15&gt;=18 不成立、判不出 Rising；
+    /// 中位數對這種單一極端值不敏感，仍是 2.0，同一天用中位數門檻 15&gt;=4 成立，正確判定為異常。
+    /// </summary>
+    [Fact]
+    public void 單日爆量不會墊高基準讓後續真正異常被平均值蓋掉()
+    {
+        var history = Enumerable.Range(1, 13)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.High))
+            .Append(HistoryDay(DateTime.Today.AddDays(-14), "disk", 153, 100, IssueSeverity.High))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 15, IssueSeverity.High);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 15, 0);
+
+        // 中位數＝2.0（排序後第 7、8 個皆為 2），不是被爆量拉高的平均 9.0
+        Assert.Equal(2.0, sig.HistoryDailyAverage);
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Contains(alerts, a => a.Contains("頻率上升") && a.Contains("基準 x2"));
+    }
+
     [Fact]
     public void 今日次數低於門檻時不判為Rising即使倍率達標()
     {
-        // 今日 4 次 < RisingMinCount(5)，即使是歷史平均(1)的 4 倍也不該觸發 Rising——避免雜訊
+        // 今日 4 次 < RisingMinCount(5)，即使是歷史基準(1)的 4 倍也不該觸發 Rising——避免雜訊
         var history = Enumerable.Range(1, 5)
             .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 1, IssueSeverity.High))
             .ToList();
@@ -47,7 +70,7 @@ public class TrendAnalyzerTests
     }
 
     [Fact]
-    public void 歷史平均高且今日減半以下時判為Declining()
+    public void 歷史基準高且今日減半以下時判為Declining()
     {
         var history = Enumerable.Range(1, 5)
             .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 20, IssueSeverity.High))
@@ -60,7 +83,7 @@ public class TrendAnalyzerTests
     }
 
     [Fact]
-    public void 次數與歷史平均相近時判為Recurring()
+    public void 次數與歷史基準相近時判為Recurring()
     {
         var history = Enumerable.Range(1, 5)
             .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 4, IssueSeverity.High))

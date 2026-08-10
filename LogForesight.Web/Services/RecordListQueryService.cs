@@ -292,6 +292,17 @@ public class RecordListQueryService
             groups = groups.Where(g => Enum.TryParse<IssueSeverity>(g.MaxSeverity, out var s) && allowedSeverities.Contains(s)).ToList();
         }
 
+        // 風險類型過濾（回饋十三輪新增項1）：BuildFilter 的 Categories 是**記錄層**過濾——record.TopIssues
+        // 任一簽章屬選中類別即整筆記錄通過（見 RecordFilterMatcher）。但依問題視角把該記錄的
+        // 全部問題簽章都攤開分組，包含未選中類別的簽章——篩「安全」時「其他」類的問題仍會混進清單，
+        // 和上面嚴重度過濾同一種漏法，補法也相同：疊加一層問題層過濾，不改 BuildFilter 的記錄層語意
+        // （依主機／依日期視角用的是同一個 filter，那兩個視角要保留「記錄命中即整列顯示」）。
+        if (request.Categories is { Count: > 0 } wantedCategories)
+        {
+            var allowedCategories = wantedCategories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            groups = groups.Where(g => allowedCategories.Contains(g.Category)).ToList();
+        }
+
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
         if (request.Statuses is { Count: > 0 } statuses)
         {

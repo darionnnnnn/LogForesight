@@ -11,16 +11,18 @@ public class ReportService
     private readonly IVisibilityService _visibility;
     private readonly HandlingHistoryQueryService _handling;
     private readonly IssueRankingBuilder _issueRanking;
+    private readonly ISystemSettingsStore _settings;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
-        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking)
+        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings)
     {
         _repository = repository;
         _hosts = hosts;
         _visibility = visibility;
         _handling = handling;
         _issueRanking = issueRanking;
+        _settings = settings;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
@@ -56,7 +58,7 @@ public class ReportService
             HandlingScope = scope,
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
-            Categories = RecordStatsBuilder.BuildCategoryCards(records),
+            Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities()),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),

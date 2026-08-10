@@ -27,12 +27,15 @@ public class NetiqOptionsService
     /// 上限從 8 收斂到 3 之後，既有環境若曾存過 4~8 的值，維護頁載入時要顯示夾住後的值，
     /// 否則表單顯示 8、瀏覽器 <c>max=3</c> 驗證會擋住整張表單存不了檔。<see cref="_store"/>
     /// 每次 <c>Get()</c> 都回傳新反序列化的物件，就地修改不影響其他呼叫端或底層儲存。
+    /// <see cref="NetiqOptions.MaxParallelQueriesPerServer"/>（回饋十三輪 D）同一套理由，一併夾住。
     /// </summary>
     public NetiqOptions Get()
     {
         var options = _store.Get();
         if (options.MaxParallelServers > NetiqOptions.MaxParallelServersLimit)
             options.MaxParallelServers = NetiqOptions.MaxParallelServersLimit;
+        if (options.MaxParallelQueriesPerServer > NetiqOptions.MaxParallelQueriesPerServerLimit)
+            options.MaxParallelQueriesPerServer = NetiqOptions.MaxParallelQueriesPerServerLimit;
         return options;
     }
 
@@ -55,6 +58,7 @@ public class NetiqOptionsService
             o.AllowInvalidCertificates = request.AllowInvalidCertificates;
             o.BackfillDays = request.BackfillDays;
             o.MaxParallelServers = request.MaxParallelServers;
+            o.MaxParallelQueriesPerServer = request.MaxParallelQueriesPerServer;
             o.ChatLiveFetchEnabled = request.ChatLiveFetchEnabled;
             // Production 環境一律強制關閉（即使 DB 殘留 true）——真連線是正式環境的唯一行為
             o.UseOfflineDemoData = request.UseOfflineDemoData && !_env.IsProduction();

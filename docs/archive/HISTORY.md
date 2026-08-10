@@ -3391,15 +3391,15 @@ SQL 階段 N 次讀取問題已隨 Phase C 完成而消失。）
 `SentinelClient.RawGetAsync`（打 ESM `/objects/eventsource` 等一般資源用，不走 event-search
 job 生命週期）。
 
-**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.1.2.11`；該 Sentinel 無 Linux 主機
+**2026-07-29 第二輪真實輸出已取得**（同日，`--sample-ip 10.x.x.11`；該 Sentinel 無 Linux 主機
 故略過 Linux 段）。**最關鍵的閘門已解除**：
 
-- **主機歸屬鍵定案為 `repip`**——四台 DC（`dc01`／`dc02`／`dc03`／`dc04`）對到四個各自不同的
-  `repip`（`10.1.8.1`／`10.1.8.2`／`10.1.8.3`／`10.1.8.4`），一對一、非共用的 collector 代理
-  IP；`--sample-ip` 用 `repip:` 也確實查得到該台資料。同時釐清 `sip` 是**用戶端來源 IP**
-  （同一台 DC 的三筆登入事件有三個不同 `sip`），不是主機自身。
+- **主機歸屬鍵定案為 `repip`**——四台 DC（`dc01`／`dc02`／`dc03`／`dc04`）對到四個各自不同、
+  同網段（與上方樣本 IP 不同網段）的 `repip`（`10.y.y.1`／`10.y.y.2`／`10.y.y.3`／`10.y.y.4`），
+  一對一、非共用的 collector 代理 IP；`--sample-ip` 用 `repip:` 也確實查得到該台資料。同時釐清
+  `sip` 是**用戶端來源 IP**（同一台 DC 的三筆登入事件有三個不同 `sip`），不是主機自身。
 - **`sun` 定案為帳號名**。
-- **System／Application 頻道有資料但量極少**：`repip:10.1.2.11` 近 24h System=3、
+- **System／Application 頻道有資料但量極少**：`repip:10.x.x.11` 近 24h System=3、
   Application=152，而該主機總量約 31 萬筆/日，即 **99.95% 是 Security**。研判 collector 對
   這兩個頻道只轉送 Error/Warning 等級（恰與本機模式的 `ErrorWarningOnly` 同策略）。磁碟／
   服務／硬體類規則**有**資料來源，但實際涵蓋的嚴重度區間待後續樣本傾印確認。

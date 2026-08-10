@@ -56,7 +56,8 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
-    private NetiqPipelineService MakePipeline(NetiqOptions? options = null, List<string>? consoleLines = null)
+    private NetiqPipelineService MakePipeline(
+        NetiqOptions? options = null, List<string>? consoleLines = null, IRiskyEventStore? riskyEventStore = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var reportSink = new FakeReportSink();
@@ -71,7 +72,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: true, progress: null,
+            riskyEventStore: riskyEventStore, riskyEventRetentionDays: 14, useAi: true, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
 
@@ -235,8 +236,61 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         Assert.False(finalRecord.AiPending);
         Assert.True(finalRecord.AiAnalyzed);
         Assert.Equal("補跑後的標題", finalRecord.Headline);
-        Assert.Null(finalRecord.ReportFile); // 補跑不補深析報告（原始 log 不落地，見 §3.10）
+        // 這個 fixture 沒有接風險事件暫存（riskyEventStore: null，見 MakePipeline 預設值）——
+        // 報告從缺是因為這裡沒接暫存，不是「補跑不補深析」這個舊決策（回饋十三輪 C 已改為
+        // 連深析一起補，見 RetryAiAsync；接了暫存的正例見下一個測試）
+        Assert.Null(finalRecord.ReportFile);
     }
+
+    /// <summary>
+    /// 回饋十三輪 C（體檢批 0 #6，取代 §3.10 舊決策）：孤兒補跑改為連深析報告一併補——
+    /// 第一次執行雖然在 AI 佇列被取消，但統計段早於取消點已經把風險事件寫進暫存
+    /// （HostDayPostProcessor.ReplaceRiskyEvents 在 EnqueueAsync 之前執行），第二次執行的
+    /// 孤兒補跑因此撈得到原始 log，能重建出報告——不再永遠留一份缺報告的紀錄。
+    /// </summary>
+    [Fact]
+    public async Task 接上風險事件暫存時孤兒補跑連深析報告一併補上()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+        };
+        var riskyEventStore = _backend.RiskyEventStore();
+
+        var hang = new TaskCompletionSource<AiResponse>();
+        _ai.Behavior = (_, ct) => hang.Task.WaitAsync(ct);
+        var firstPipeline = MakePipeline(new NetiqOptions { BackfillDays = 1 }, riskyEventStore: riskyEventStore);
+        using (var cts = new CancellationTokenSource())
+        {
+            var runTask = firstPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (_ai.Calls == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
+        }
+
+        var yesterday = DateTime.Today.AddDays(-1);
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        Assert.True(Assert.Single(store.ReadRecent(yesterday, 1)).AiPending);
+        // 統計段已經把命中規則的事件寫進風險暫存——即使 AI 段被取消，這份佐證已經落地
+        Assert.NotEmpty(riskyEventStore.QueryDay(1, yesterday));
+
+        _ai.Behavior = null;
+        _ai.NextContent = """{"risk_level":"高","headline":"補跑後的標題","story":"補跑後的白話摘要","trend_story":"","action":"a"}""";
+        var secondPipeline = MakePipeline(new NetiqOptions { BackfillDays = 1 }, riskyEventStore: riskyEventStore);
+        var result = await secondPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, result.AiQueued);
+        Assert.Equal(1, result.AiCompleted);
+
+        var finalRecord = Assert.Single(store.ReadRecent(yesterday, 1));
+        Assert.False(finalRecord.AiPending);
+        Assert.NotNull(finalRecord.ReportFile);
+        Assert.Contains(finalRecord.UncoveredChecks, c => c.Contains("風險事件暫存"));
+    }
+
 
     /// <summary>
     /// 體檢輪抓到的 bug（docs/FEEDBACK-12-PLAN.md §4，全案體檢）：<c>AiFollowupQueue.EnqueueAsync</c>

@@ -18,7 +18,7 @@ public sealed class NetiqDiscoveryResult
 {
     public List<NetiqDiscoveredHost> Hosts { get; init; } = new();
 
-    /// <summary>人看的涵蓋範圍說明，精靈直接顯示（如「掃描涵蓋『10.1.2.*』近 95 分鐘內有回報事件的主機」）</summary>
+    /// <summary>人看的涵蓋範圍說明，精靈直接顯示（如「掃描涵蓋『192.168.0.*』近 95 分鐘內有回報事件的主機」）</summary>
     public string CoverageNote { get; init; } = string.Empty;
 
     /// <summary>需要人工留意的異常（如查詢被截斷）——不是可以吞掉的雜訊，非空時精靈要顯示</summary>
@@ -35,7 +35,7 @@ public sealed class NetiqDiscoveryResult
 /// </summary>
 public interface INetiqDirectoryClient
 {
-    /// <param name="subnetPrefix">網段前綴（如「10.1.2」）或 CIDR（如「10.1.2.0/24」）——
+    /// <param name="subnetPrefix">網段前綴（如「192.168.0」）或 CIDR（如「192.168.0.0/24」）——
     /// 格式規則見 <see cref="SentinelQueryBuilder.NormalizeSubnetPrefix"/>，不合法時擲
     /// <see cref="NetiqDiscoveryException"/>。**必填**：探索是「掃一個網段」而不是「盲掃全站」，
     /// 全站事件量（實測單台 Sentinel 近 24h 達 2400 萬筆）下任何固定窗口設計涵蓋率都很差，
@@ -52,7 +52,8 @@ public interface INetiqDirectoryClient
 
 /// <summary>
 /// 開發／測試用替身：依網段前綴生成示範資料，其中刻意含與既有主機重疊的 IP（僅當前綴匹配
-/// 「10.1.2」時），讓「已登錄」「重疊復活」等分類在 demo 資料下也走得到。Development 環境注入。
+/// 「192.168.0」時——與精靈輸入框的建議範例同一個值，跟著打就能看到這個情境），
+/// 讓「已登錄」「重疊復活」等分類在 demo 資料下也走得到。Development 環境注入。
 /// </summary>
 public class StubNetiqDirectoryClient : INetiqDirectoryClient
 {
@@ -78,10 +79,10 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
         if (octets.Length == 3)
         {
             // 三段前綴：單一 /24 的示範資料
-            if (normalized == "10.1.2")
+            if (normalized == "192.168.0")
             {
-                hosts.Add(new NetiqDiscoveredHost("SRV-OO-WEB01", "10.1.2.11"));
-                hosts.Add(new NetiqDiscoveredHost("SRV-OO-DB01", "10.1.2.12"));
+                hosts.Add(new NetiqDiscoveredHost("SRV-OO-WEB01", "192.168.0.11"));
+                hosts.Add(new NetiqDiscoveredHost("SRV-OO-DB01", "192.168.0.12"));
             }
             for (var i = 20; i < 55; i++)
                 hosts.Add(new NetiqDiscoveredHost($"SRV-{server.Name}-{i:D3}", $"{normalized}.{i}"));

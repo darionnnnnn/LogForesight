@@ -68,10 +68,14 @@ public class RulesController : ControllerBase
         return ApiResponse.Ok();
     }
 
-    [HttpDelete("{ruleId}/suppressions/{host}")]
-    public ApiResponse RemoveSuppression(string ruleId, string host)
+    /// <summary>範圍改用 query string 傳遞（回饋十三輪 F）：Host/Group/Site 三種形狀的目標不同，
+    /// 不再適合塞進單一 path segment（Group／Site 沒有「host」可放）。</summary>
+    [HttpDelete("{ruleId}/suppressions")]
+    public ApiResponse RemoveSuppression(
+        string ruleId, [FromQuery] string scope = SuppressionScopes.Host,
+        [FromQuery] string? host = null, [FromQuery] long? hostGroupId = null)
     {
-        _service.RemoveSuppression(ruleId, host);
+        _service.RemoveSuppression(ruleId, scope, host, hostGroupId);
         return ApiResponse.Ok();
     }
 

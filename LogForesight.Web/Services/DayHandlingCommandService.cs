@@ -32,6 +32,7 @@ public class DayHandlingCommandService
     private readonly IAuditService _audit;
     private readonly ISystemSettingsStore _settings;
     private readonly HandlingProgressCalculator _progress;
+    private readonly UserCapabilityResolver _capabilities;
 
     public DayHandlingCommandService(
         IRecordHandlingStore store,
@@ -44,7 +45,8 @@ public class DayHandlingCommandService
         ICurrentUser currentUser,
         IAuditService audit,
         ISystemSettingsStore settings,
-        HandlingProgressCalculator progress)
+        HandlingProgressCalculator progress,
+        UserCapabilityResolver capabilities)
     {
         _store = store;
         _issueStore = issueStore;
@@ -57,6 +59,7 @@ public class DayHandlingCommandService
         _audit = audit;
         _settings = settings;
         _progress = progress;
+        _capabilities = capabilities;
     }
 
     public HandlingDto Get(long hostId, DateTime date)
@@ -187,6 +190,12 @@ public class DayHandlingCommandService
         // 但看不到這台主機的其他任何東西，交辦時講清楚比事後被問「我點進去是空的」好
         if (handler != null && !_visibility.GetVisibleHostIdsFor(handler.UserId).Contains(host.HostId))
             dto.AssigneeHasNoHostAccess = true;
+
+        // 被指派者動得了嗎（回饋十三輪，體檢 H1 殘餘）：IssueHandlingCommandService 的批次指派
+        // 已有這道提示，日層級指派原本沒有——同一套「不擋、只提示」決策，同一個
+        // UserCapabilityResolver 事實來源，另寫一份判斷就會變成第二份複本
+        if (handler != null && !_capabilities.Resolve(handler).Contains(Capability.Handle))
+            dto.AssigneeCannotHandle = true;
 
         return dto;
     }
