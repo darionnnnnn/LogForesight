@@ -85,6 +85,13 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 一個容易踩的點：`ProgramPattern` 沿用 `SourcePattern` 的子字串比對語意，所以 program 名稱有包含
 關係時（`"sudo"` 包含 `"su"`）順序有意義，具體的必須排在泛用的前面。
 
+另一個 Linux 專屬限制：**`ProgramPattern` 僅接受英數字與 `_`／`.`／`-`**（`RuleValidator`
+把關，2026-08-07 全案體檢新增）——它會以裸 term 形式直接進 Sentinel 的 Lucene filter
+（`SentinelQueryBuilder.LinuxRuleProgramClauses` 的 `sp:{pattern}*`，不像 `MessagePatterns`
+有引號＋跳脫保護），空白或 `(`／`:`／`*` 等特殊字元會讓整份夜間取數查詢語法壞掉、
+整批主機查詢失敗。字元集與 `SentinelEventMapper` 的 msg 前綴 program 正則一致
+（syslog identifier 的實務形狀），17 條種子全數天然合格。
+
 ### `MatchAllEventIds` 為什麼要顯式宣告
 
 規則外部化前，`EventIds` 空陣列天然代表「這個來源全部事件都算」（`WHEA-Logger` 等 3 條規則

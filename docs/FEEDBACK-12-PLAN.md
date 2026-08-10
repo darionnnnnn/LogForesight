@@ -859,3 +859,25 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 4. **全案體檢輪**（照慣例）：欄位漂移普查（AttachAiResult 抽出欄、FakeHostStore/替身的
    新欄位 EventName/EventKey/AiPending 抄寫）、並發計數普查（新增計數器）、
    `IssueSignatureKey` 既有鍵不變的升級安全驗證、文件與實作對讀。
+
+### 全案完工後第二輪體檢（2026-08-07，4B/4C/4.6 收畢後全面重掃）
+
+逐節對照 §4.4/§4.5/§4.6 定案設計與實作、審查 4B/4C 全部新程式碼、全 docs 殘留掃描。結果：
+
+- **§4.4 六項／§4.5 全項逐一핵對相符**：`LinuxQ1ProjectionFields` 內容、`MapEntryTypeLinux`
+  門檻、Source 三段 fallback 鏈（含「三段皆失敗回 null 併入既有略過計數」的取捨，與規劃
+  括號內意圖一致）、`BuildLinuxFilter` 混合下推形狀、吵 program 常數集、`EscapeLucenePhrase`、
+  掃描精靈 os 分支、seed 不動、4C regex／門檻／降級語意——零偏離。
+- **`RunServerAsync` OS 分組的髒值疑點排除**：`Os` 既非 windows 亦非 linux 的值會被分組靜默
+  丟掉，但 `WebHost.NormalizeOs` 是全部四條寫入路徑的單一正規化點（主機頁/NetIQ 登錄/CSV/
+  精靈），儲存值不變式成立，該情境經查不可達，非 bug。
+- **揪出並修復一個真實缺口**：`RuleValidator.CheckLinuxFields` 未限制 `ProgramPattern` 字元集
+  ——它以裸 term 進 Lucene filter（`sp:{pattern}*`，無 `MessagePatterns` 那種引號＋跳脫保護），
+  管理者存入帶空白/`(`/`:`/`*` 的規則會讓整份 Q1 filter 語法壞掉、Linux 夜間取數整批失敗。
+  補上「僅接受英數字與 `_`/`.`/`-`」驗證（字元集對齊 mapper 的 msg 前綴 program 正則；
+  載入時不合格＝該條跳過＋顯性警告，不炸整份規則表）＋7 個測試；17 條種子經既有種子
+  合格性測試連帶驗證全數通過。
+- **文件修正**：NETIQ-API-REFERENCE.md §4a 兩處懸空引用（誤指不存在的 §5a→改 §4a-1）；
+  WEB-SPEC.md 診斷分頁段補漏 8g；README.md 兩處舊敘述（開頭簡介＋NetIQ 取數段的
+  「只支援 Windows」）；RULES-SPEC.md／LINUX-RULES.md 補 ProgramPattern 字元集限制記錄。
+- 全套件 **1647 通過 0 失敗**（前輪 1640 +7 驗證測試），0 警告 0 錯誤。

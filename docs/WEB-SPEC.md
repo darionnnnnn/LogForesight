@@ -1448,8 +1448,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   樣本數 3→10，命中時追加「欄位名聯集」彙總行；新增 8b（同批樣本的 `msg` 全文另行傾印，
   不截斷，供規則的訊息子字串校正）、8c（`sp` 查詢行為實證：term／大小寫／前綴萬用字元）、
   8d（`sev` 0~5 分佈逐值 found，另取 `sev:2`／`sev:[3 TO 5]` 樣本 msg 全文）、8e（種子 program
-  量級，清單現取自規則表不硬編）、8f（`sshd` 近 7 天樣本 msg 全文，查無時退路 `msg:sshd`）——
-  6 個新段落一律掛在「有填 Linux 樣本 IP」同一個開關下，未填時各印一行「略過」，
+  量級，清單現取自規則表不硬編）、8f（`sshd` 近 7 天樣本 msg 全文，查無時退路 `msg:sshd`）、
+  8g（`msg` 片語查詢行為實證＋暴力破解樣本抽取，docs/FEEDBACK-12-PLAN.md §4.1 批 4B.0 追加）——
+  7 個新段落一律掛在「有填 Linux 樣本 IP」同一個開關下，未填時各印一行「略過」，
   不稀釋純 Windows 環境的既有 13 步輸出（逐字不變，契約不破）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
   （既有，UI 搬遷不動端點）、`GET/PUT api/admin/netiq/options`、`POST api/admin/sentinels/test-connection`

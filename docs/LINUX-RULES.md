@@ -26,7 +26,7 @@ Linux syslog 沒有 Event ID，規則面因此與 Windows 共用同一個 `Known
 | 欄位 | 型別 | 說明 |
 |---|---|---|
 | `Platform` | string | `"windows"`／`"linux"`。舊 rules.json／規則庫缺此欄位時預設 `"windows"` |
-| `ProgramPattern` | string | syslog identifier／process 名稱比對（sshd、sudo、kernel…），語意與 Windows 的 `SourcePattern` 一致（不分大小寫 Contains） |
+| `ProgramPattern` | string | syslog identifier／process 名稱比對（sshd、sudo、kernel…），語意與 Windows 的 `SourcePattern` 一致（不分大小寫 Contains）。**僅接受英數字與 `_`／`.`／`-`**——會以裸 term 進 Sentinel Lucene filter（`sp:{pattern}*`），特殊字元會破壞查詢語法，`RuleValidator` 把關（見 docs/RULES-SPEC.md「雙平台」） |
 | `EventNamePattern` | string | Sentinel 正規化事件名（`evt`／xdas taxonomy 名稱）比對，collector 有正規化的環境用這條路最穩。可空 |
 | `MessagePatterns` | string[] | 訊息子字串清單，**OR 語意、不分大小寫 Contains**（任一命中即算）。空陣列＝不看訊息、program 命中即算 |
 

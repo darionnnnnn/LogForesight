@@ -1,8 +1,8 @@
 # LogForesight
 
-分析 Windows Server 的 Event Log（Linux syslog 規則面已就緒、取數管線尚未串接，見
-[docs/LINUX-RULES.md](docs/LINUX-RULES.md)），**提早發現硬體故障前兆與入侵跡象**，
-在問題擴大前示警。
+分析 Windows Server 的 Event Log 與 Linux 主機的 syslog（經 NetIQ Sentinel 取數，
+規則面與取數管線皆已完備，見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)），
+**提早發現硬體故障前兆與入侵跡象**，在問題擴大前示警。
 偵測與風險判定完全由確定性的規則/趨勢/慢速趨勢/關聯層負責；本機 AI 模型（llama.cpp + Gemma 26B/27B 級
 MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Log 的人也能一眼看懂狀況該怎麼處理
 （2026-07-20 AI 角色轉換，詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
@@ -215,10 +215,12 @@ Web「NetIQ 維護」頁的「匯入」分頁：選一台已設好探索帳密�
 多主機集中分析從各 Sentinel 取事件（`SentinelClient`／`SentinelFieldMap`／
 `SentinelEventMapper`／`SentinelQueryBuilder`，`LogForesight.Core/Analysis/`）；機房 pipeline
 本體（`NetiqPipelineService`，`LogForesight.Core/Service/`）在本機分析結束後接機房迴圈，
-逐日、批次（≤50 台 IP）向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務——只支援
-Windows 主機（Linux 主機明確標示「尚未支援」而不是靜默略過）；當日續跑靠既有的缺漏日回補
-機制。每台主機每次執行最多回補 `NetiqOptions.BackfillDays` 天（預設 1，「系統管理 > NetIQ
-維護」頁可調），多台 Sentinel 依 `NetiqOptions.MaxParallelServers` 平行處理。
+逐日、批次（≤50 台 IP）向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務——
+**Windows／Linux 主機皆支援**（2026-08-07 起，依主機 `Os` 分組各自建查詢與映射，
+Linux 欄位對應與 filter 規則見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md)
+§4a）；當日續跑靠既有的缺漏日回補機制。每台主機每次執行最多回補
+`NetiqOptions.BackfillDays` 天（預設 1，「系統管理 > NetIQ 維護」頁可調），
+多台 Sentinel 依 `NetiqOptions.MaxParallelServers` 平行處理。
 
 **API 欄位對應驗證**：需要換一套 Sentinel 環境、或懷疑欄位對應跟現場不符時，到「系統管理 >
 NetIQ 維護」頁的「診斷」分頁，選一台 Sentinel、選填樣本 IP，按「執行診斷」即可跑一組小規模

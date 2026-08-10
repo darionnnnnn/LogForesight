@@ -186,8 +186,8 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | facility | `rv150` | `rv150=DAEMON`／`KERNEL`／`USER`（大寫 facility——同名欄位在 Windows 上是頻道名） | 投影帶回但不參與比對；`LogName` 固定 `"Linux"` |
 | 時間 | `dt` | ISO-8601 UTC（`estz=Asia/Taipei` 佐證時區基準） | 與 Windows 同一條解析路徑 |
 | 嚴重度 | `sev` | 分佈實測（全站/24h）：0=1.87M、1=7.67M、2=8、3=972、4=1,403、5=20。**不承載 syslog priority 語意**——NetworkManager 的 `<warn>` 與 dockerd 的 `level=error` 皆落在 sev=1，「pam session opened」反落在 sev3-5 | `SentinelFieldMap.MapEntryTypeLinux`：`0~1→Information、2→Warning、3~5→Error`（計數用途的務實選擇，不影響規則比對）；generic 收集門檻 `sev:[2 TO 5]`（`SentinelQueryBuilder.LinuxGenericSeverityMin`） |
-| program 量級 | `sp` | 吵：systemd 1.96M／kernel 305k／sshd 244k／sudo 219k／su 52k 筆/日；靜：chronyd 3.4k／CRON 2.7k／auditd 112／smartd 29／帳號異動類 ≤7 筆/日 | `LinuxNoisyPrograms` 常數集（sshd/sudo/su/kernel/systemd）帶 `MessagePatterns` 下推控量，其餘整拉（見 §5a `BuildLinuxFilter`） |
-| msg 片語 | `msg` | `"Failed password"`／`"I/O error"`／`"authentication failure"` 等片語查詢皆有效（含斜線）；欄位群組多片語語法有效；吵 program＋片語組合下推有效（`sp:systemd AND msg:"entered failed state"` 把 1.96M/日壓到 1 筆/日） | filter 內容子句採 program／msg 混合下推，見 §5a |
+| program 量級 | `sp` | 吵：systemd 1.96M／kernel 305k／sshd 244k／sudo 219k／su 52k 筆/日；靜：chronyd 3.4k／CRON 2.7k／auditd 112／smartd 29／帳號異動類 ≤7 筆/日 | `LinuxNoisyPrograms` 常數集（sshd/sudo/su/kernel/systemd）帶 `MessagePatterns` 下推控量，其餘整拉（見 §4a-1） |
+| msg 片語 | `msg` | `"Failed password"`／`"I/O error"`／`"authentication failure"` 等片語查詢皆有效（含斜線）；欄位群組多片語語法有效；吵 program＋片語組合下推有效（`sp:systemd AND msg:"entered failed state"` 把 1.96M/日壓到 1 筆/日） | filter 內容子句採 program／msg 混合下推，見 §4a-1 |
 | sshd 暴力破解樣本 | `msg` | 「`Failed password for invalid user {user} from {ip} port {port} ssh2`」，無 program 前綴、`invalid user` 為可選段；來源含內網與外網 IP，環境有真實暴破流量 | 4C `LinuxCorrelationAnalyzer` 的 regex 依此定案（見 docs/LINUX-RULES.md「關聯層」） |
 | Windows 事件 | `rv40` | `rv40:(4624 OR 4625)` found=0 | 純 Linux Sentinel，證實「同台不混平台」環境事實 |
 | ESM 目錄 | — | 驗證被拒（與 Windows 那台相同） | 主機探索照舊走事件投影 distinct 備案 |
