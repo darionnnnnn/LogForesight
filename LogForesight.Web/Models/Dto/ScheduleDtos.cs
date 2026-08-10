@@ -40,6 +40,12 @@ public class ScheduleStatusDto
     public int ProgressDone { get; set; }
     public int ProgressTotal { get; set; }
 
+    /// <summary>子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure，AI 佇列在背景消化，
+    /// 與上面的主進度同時在跑——null＝這次執行沒有（或還沒進到）子進度可畫，前端不畫子進度條。</summary>
+    public string? SubProgressPhase { get; set; }
+    public int SubProgressDone { get; set; }
+    public int SubProgressTotal { get; set; }
+
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }
     public DateTime? NextTriggerTime { get; set; }

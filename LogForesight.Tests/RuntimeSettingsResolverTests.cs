@@ -59,7 +59,7 @@ public class RuntimeSettingsResolverTests
 
         Assert.Equal(600, settings.Ai.TimeoutSeconds);
         Assert.Equal(3, settings.Ai.RetryCount);
-        Assert.Equal(1536, settings.Ai.MaxTokens);
+        Assert.Equal(2048, settings.Ai.MaxTokens);
         Assert.Equal(8192, settings.Ai.DeepDiveMaxTokens);
         Assert.Equal(7, settings.Analysis.CheckupIntervalDays);
         Assert.Empty(settings.Analysis.Channels);   // 空＝預設六頻道

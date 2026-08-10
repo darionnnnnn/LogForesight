@@ -97,11 +97,13 @@
 <div class="lf-card">
     <div class="lf-card__header">
         <div class="d-flex align-items-center gap-3">
+            @* 依問題排最左（回饋十四輪 UI-2）：全站主視角是問題事件（見 §10 預設視角邏輯——
+               無參數直接進頁時本來就預設 issue 視角），按鈕順序跟著反映這個優先順序。 *@
             <div class="btn-group btn-group-sm lf-no-print" role="group" aria-label="檢視角度" id="view-toggle">
+                <button type="button" class="btn btn-outline-primary" data-view="issue">依問題</button>
                 <button type="button" class="btn btn-outline-primary" data-view="detail">明細</button>
                 <button type="button" class="btn btn-outline-primary" data-view="host">依主機</button>
                 <button type="button" class="btn btn-outline-primary" data-view="date">依日期</button>
-                <button type="button" class="btn btn-outline-primary" data-view="issue">依問題</button>
             </div>
             <span class="text-muted small" id="result-count"></span>
         </div>

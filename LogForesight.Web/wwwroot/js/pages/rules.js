@@ -731,14 +731,52 @@ function populateGroupOptions() {
     }
 }
 
+/** Site 範圍預設帶到期日而非永久（回饋十四輪 C1）：全站抑制影響面最大，「忘記解除」的
+ * 代價也最高，30 天後自動失效比預設永久更安全；使用者仍可手動清空欄位改回永久。 */
+const DEFAULT_SITE_SUPPRESSION_DAYS = 30;
+
 /** 範圍下拉切換時，只顯示對應的目標欄位——三選一，其餘兩個連同其必填語意一起隱藏 */
 function updateSuppressScopeVisibility() {
     const scope = document.getElementById('suppress-scope').value;
     document.getElementById('suppress-host-wrap').classList.toggle('d-none', scope !== 'Host');
     document.getElementById('suppress-group-wrap').classList.toggle('d-none', scope !== 'Group');
     document.getElementById('suppress-site-wrap').classList.toggle('d-none', scope !== 'Site');
+
+    const daysInput = document.getElementById('suppress-days');
+    if (scope === 'Site' && !daysInput.value) {
+        daysInput.value = DEFAULT_SITE_SUPPRESSION_DAYS;
+    }
 }
 document.getElementById('suppress-scope').addEventListener('change', updateSuppressScopeVisibility);
+
+/** 送出前的影響面預覽（回饋十四輪 C1）：Group／Site 一鍵就能讓一條規則在大量主機上噤聲，
+ * 畫面上原本沒有任何規模提示——送出前先讓人看到「會影響幾台主機、過去這條規則在這些
+ * 主機上命中過幾次」再確認。Host 範圍本來就只影響單台主機，不需要這道關卡。
+ * 預覽本身失敗（如網路問題）不擋抑制流程——api.js 已經以 toast 顯示過錯誤，這裡只是
+ * 少了規模資訊可看，不代表抑制設定本身不能送出。 */
+async function confirmSuppressionScope(scope, hostGroupId) {
+    if (scope !== 'Group' && scope !== 'Site') return true;
+
+    const params = new URLSearchParams({ scope });
+    if (scope === 'Group') params.set('hostGroupId', hostGroupId);
+
+    let preview = null;
+    try {
+        preview = await api.get(`/api/rules/${encodeURIComponent(suppressingRuleId)}/suppression-preview?${params.toString()}`);
+    } catch {
+        return true;
+    }
+
+    const approxNote = preview.approximateForLinux
+        ? '（Linux 規則以同來源程式合計，實際命中此規則的次數可能略低）' : '';
+    return confirmAction({
+        title: '確認抑制範圍',
+        message: `此抑制將影響 ${preview.affectedHostCount} 台主機；過去 ${preview.windowDays} 天，` +
+                 `這條規則在這些主機上共命中 ${preview.recentHitCount} 次${approxNote}。確定要繼續嗎？`,
+        confirmText: '確定抑制',
+        confirmVariant: 'warning'
+    });
+}
 
 document.getElementById('suppress-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -760,6 +798,8 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
         toast('請選擇主機群組', 'warning');
         return;
     }
+
+    if (!await confirmSuppressionScope(scope, hostGroupId)) return;
 
     const days = document.getElementById('suppress-days').value;
     await api.post(`/api/rules/${encodeURIComponent(suppressingRuleId)}/suppressions`, {

@@ -89,7 +89,7 @@ public class SystemSettings
     public int AiJsonRetryCount { get; set; } = 2;
 
     /// <summary>一般呼叫（每日總覽、前置掃描）的 token 上限，0＝不設上限</summary>
-    public int AiMaxTokens { get; set; } = 1536;
+    public int AiMaxTokens { get; set; } = 2048;
 
     /// <summary>深入分析呼叫的 token 上限（天生比終端摘要長，故與 <see cref="AiMaxTokens"/> 分開）</summary>
     public int AiDeepDiveMaxTokens { get; set; } = 8192;

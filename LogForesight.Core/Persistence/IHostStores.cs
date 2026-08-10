@@ -44,6 +44,12 @@ public interface IHostStore
     void SetGroups(long hostId, IEnumerable<long> groupIds);
 
     /// <summary>
+    /// 批次專用（回饋十四輪 B1）：更新 <see cref="WebHost.IsHighVolume"/> 跨日記憶旗標。
+    /// 主機不存在時安靜略過——旗標本來就是最佳化提示，不是必須成立的不變量。
+    /// </summary>
+    void SetHighVolume(long hostId, bool isHighVolume);
+
+    /// <summary>
     /// 批次專用：一次 Mutate 完成多台主機的群組指派（docs/archive/FEEDBACK-5-PLAN.md §8）。
     /// <paramref name="replace"/>=true 時整批改為僅 <paramref name="groupIds"/>；
     /// false 時與既有群組取聯集（加入）。已併入其他主機（MergedInto 非 null）的

@@ -247,11 +247,23 @@ public class AnalysisOrchestrator
             // 到期抑制通知（回饋十三輪 F 移到這裡）：Group／Site 範圍的判定需要本機的群組成員資格，
             // 上面 Touch 完成後才拿得到（新主機或註冊失敗時 currentHostGroupIds 為空——
             // 只影響「還屬於哪些群組」，Host／Site 範圍的到期判定不受影響）。
-            var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, currentHostGroupIds, DateTime.Now);
-            foreach (var expired in expiredSuppressions)
+            var allSuppressions = suppressionStore.LoadAll();
+            var expiredSuppressions = SuppressionFilter.ExpiredForHost(allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
+            if (expiredSuppressions.Count > 0)
             {
-                console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
-                                  $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）");
+                // 同規則跨範圍並存時的語意修正（回饋十四輪 C1，見 SuppressionFilter.StillSuppressedElsewhere
+                // 的文件）：只看到期的那一筆會誤導使用者以為解除它就能恢復告警。
+                var stillSuppressedRuleIds = SuppressionFilter.StillSuppressedElsewhere(
+                    allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
+
+                foreach (var expired in expiredSuppressions)
+                {
+                    console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
+                                      $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）" +
+                                      (stillSuppressedRuleIds.Contains(expired.RuleId)
+                                          ? "（此規則仍受其他範圍的抑制設定生效中，解除這筆不會恢復告警）"
+                                          : ""));
+                }
             }
 
             // 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄。

@@ -275,6 +275,72 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         Assert.True(record.DataIncomplete);
     }
 
+    // ── 回饋十四輪 B1：二分重查跨日記憶（WebHost.IsHighVolume）─────────────────
+
+    /// <summary>
+    /// 跨日記憶讓下次執行分批時直接把高流量主機獨立成一批，不必每天都從整批大小重新二分
+    /// 收斂到它。同樣是 4 台主機各查 1 個新缺漏日：第一次執行（無人有旗標）要走完整的
+    /// 二分流程（4→2+2→1+1）才收斂到單台並標記旗標；第二次執行（旗標已從第一次帶過來）
+    /// 應該一開始就把高流量主機獨立成單台批次，查詢次數明顯低於第一次。
+    /// </summary>
+    [Fact]
+    public async Task 高流量主機跨日記憶_第二次執行查詢次數明顯低於第一次()
+    {
+        var sentinel = AddSentinel();
+        const string chattyIp = "10.0.0.1";
+        var hosts = new[] { chattyIp, "10.0.0.2", "10.0.0.3", "10.0.0.4" }
+            .Select((ip, i) => AddWindowsHost(sentinel, ip, $"HOST-{i}")).ToList();
+
+        // 只要批次的查詢條件包含這台 IP 就模擬截斷——不管跟誰同批、甚至單獨查詢也一樣，
+        // 模擬「這台主機本身流量就大到撞單一 job 上限」，不是批次太擁擠的偶發現象
+        _client.Responder = request => request.Filter.Contains(chattyIp)
+            ? new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 1000, State = SentinelJobState.Completed }
+            : new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+
+        // 第一次執行：昨天缺漏、無人有旗標，撞到截斷要完整走一輪二分才收斂到單台
+        var pipeline1 = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 1 });
+        var firstResult = await pipeline1.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var firstCallQueries = _client.Requests.Count;
+
+        Assert.Equal(4, firstResult.HostDaysAnalyzed);
+        Assert.True(_hosts.Get(hosts[0].HostId)!.IsHighVolume, "收斂到單台仍截斷，應該被標記為高流量主機");
+
+        // 第二次執行（模擬下一次排程）：BackfillDays 加大到 2，昨天已有紀錄不重複處理，
+        // 只有前天是新的缺漏日——4 台主機一樣各自新增 1 個缺漏日，場景結構與第一次對等，
+        // 差別只在旗標是否已從第一次執行帶過來
+        var pipeline2 = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 2 });
+        var secondResult = await pipeline2.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+        var secondCallQueries = _client.Requests.Count - firstCallQueries;
+
+        Assert.Equal(4, secondResult.HostDaysAnalyzed);
+        Assert.True(secondCallQueries < firstCallQueries,
+            $"第二次執行應該因為跨日記憶而少查詢很多次（第一次 {firstCallQueries} 次，第二次 {secondCallQueries} 次）");
+    }
+
+    /// <summary>
+    /// 旗標清除：已標記為高流量的主機，當某次單獨查詢不再截斷、且量遠低於上限（&lt;50%）時，
+    /// 旗標應自動清除，避免安靜下來的主機被永久孤立成單台批次（遲滯設計，防臨界主機
+    /// 每天在「單獨成批／合批再二分」間震盪——見 RunBatchDayAsync 的清除條件註解）。
+    /// </summary>
+    [Fact]
+    public async Task 高流量主機安靜下來後旗標自動清除()
+    {
+        var sentinel = AddSentinel();
+        var host = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _hosts.SetHighVolume(host.HostId, true); // 模擬先前執行已標記為高流量
+
+        // 這次查詢量遠低於上限（Found=0 < MaxResultsPerJob/2），不再截斷
+        _client.Responder = _ =>
+            new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+
+        var pipeline = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 1 });
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(1, result.HostDaysAnalyzed);
+        Assert.Single(_client.Requests); // 旗標讓它一開始就單獨成批，不需要二分
+        Assert.False(_hosts.Get(host.HostId)!.IsHighVolume, "查詢已不再截斷且遠低於上限，旗標應被清除");
+    }
+
     // ── 回饋十三輪 D：單一 Sentinel 內部的 client pool 併發 ──────────────────────
     // 51 台主機才會跨過 IpBatchSize=50，真的切出兩個批次——這是唯一能逼出「同一天內
     // 多批次」路徑的方式，主機數不能再省。_client.Delay 給查詢一點耗時，讓平行呼叫
@@ -327,6 +393,45 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
         Assert.Equal(51, result.HostDaysAnalyzed);
         Assert.Equal(1, _client.PeakConcurrency); // 池只有 1 個 client，兩批依序跑，從未重疊
+    }
+
+    /// <summary>
+    /// 回饋十四輪 A3：HostPlan.GroupIds 在計畫階段（RunServerOsGroupAsync）解析一次，取代原本
+    /// AnalyzeHostDayAsync 每主機日各自呼叫一次 HostStore.Get（整份主機清單 JSON blob
+    /// 反序列化、無快取）。2 台主機×3 個缺漏日：修復前 Get 呼叫次數等於主機日數（6），
+    /// 修復後應收斂為主機數（2）。
+    /// </summary>
+    [Fact]
+    public async Task 缺漏多天時HostStoreGet呼叫次數等於主機數而非主機日數()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+        var beforeRun = _hosts.GetCallCount;
+        var pipeline = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 3 });
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(6, result.HostDaysAnalyzed); // 2 台 × 3 天，確認場景本身橫跨多天可比對
+        Assert.Equal(2, _hosts.GetCallCount - beforeRun);
+    }
+
+    /// <summary>
+    /// 回饋十四輪 A3：抑制清單在 RunAsync 開始時讀一次，往下傳給每台主機每一天共用的快照，
+    /// 取代原本每主機日各自呼叫一次 LoadAll()。
+    /// </summary>
+    [Fact]
+    public async Task 缺漏多天時抑制清單LoadAll只呼叫一次()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+        var pipeline = MakePipeline(useAi: false, options: new NetiqOptions { BackfillDays = 3 });
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(6, result.HostDaysAnalyzed); // 場景本身橫跨多主機多天，才能證明不是巧合
+        Assert.Equal(1, _suppressions.LoadAllCallCount);
     }
 }
 

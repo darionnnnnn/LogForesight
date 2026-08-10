@@ -10,9 +10,17 @@ internal class FakeHostStore : IHostStore
     private readonly List<WebHost> _hosts = new();
     private long _nextId = 1;
 
+    /// <summary>回饋十四輪 A3：驗證 HostPlan.GroupIds 計畫階段解析一次有沒有真的把 Get 呼叫次數
+    /// 從「主機數×天數」收斂成「主機數」的計數器。</summary>
+    public int GetCallCount { get; private set; }
+
     public List<WebHost> GetAll() => _hosts.ToList();
 
-    public WebHost? Get(long hostId) => _hosts.FirstOrDefault(h => h.HostId == hostId);
+    public WebHost? Get(long hostId)
+    {
+        GetCallCount++;
+        return _hosts.FirstOrDefault(h => h.HostId == hostId);
+    }
 
     public WebHost? FindByName(string hostName) =>
         _hosts.FirstOrDefault(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
@@ -65,6 +73,12 @@ internal class FakeHostStore : IHostStore
     {
         var host = Get(hostId);
         if (host != null) host.GroupIds = groupIds.Distinct().ToList();
+    }
+
+    public void SetHighVolume(long hostId, bool isHighVolume)
+    {
+        var host = _hosts.FirstOrDefault(h => h.HostId == hostId); // 不經 Get()：不想污染 GetCallCount 斷言
+        if (host != null) host.IsHighVolume = isHighVolume;
     }
 
     public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace)

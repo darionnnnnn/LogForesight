@@ -200,8 +200,39 @@ public class RiskyEventSelectorTests
         Assert.Equal(3, result.Count);
         Assert.All(result, e => Assert.Equal("disk", e.Source));
         Assert.All(result, e => Assert.Equal(153, e.EventId));
-        // 未截斷訊息（RiskyEvent.Message 才會截 2000 字），確認回傳的是原始物件而非轉換結果
+        // 短訊息不受截斷影響，確認回傳的是 EventLogEntryData 形狀而非轉換成 RiskyEvent
+        // （RuleId／HostId／Date 這些落庫欄位不存在；訊息截斷門檻兩邊已對齊，見下方專門測試）
         Assert.All(result, e => Assert.StartsWith("disk-", e.Message));
+    }
+
+    /// <summary>
+    /// 回饋十四輪 A2：入列前訊息截斷對齊 <see cref="RiskyEventSelector.Select"/> 落庫版的
+    /// <see cref="RiskyEventSelector.MaxMessageChars"/>（2000 字）——AiWorkItem.Logs 窄化移進
+    /// BuildStatisticalRecordAsync 後，這裡是唯一還會帶著原始 Windows 事件訊息在記憶體排隊的地方，
+    /// 單筆訊息沒有上限的話，佇列容量 200 件仍可能因超長訊息吃到 GB 級記憶體。
+    /// 同時鎖住「不修改傳入的 logs」這個不變量：截斷回傳新物件，原始清單裡的物件應維持原長度，
+    /// 避免污染呼叫端後續還要用完整訊息的用途（如寫入風險 log 暫存）。
+    /// </summary>
+    [Fact]
+    public void SelectSourceEvents_訊息超過上限時截斷且不修改原始logs物件()
+    {
+        var sig = Sig("System", "disk", 153, ruleId: "builtin-disk-error", severity: IssueSeverity.High);
+        var longMessage = new string('x', RiskyEventSelector.MaxMessageChars + 500);
+        var original = new EventLogEntryData
+        {
+            TimeGenerated = Date,
+            EntryType = sig.EntryType,
+            LogName = sig.LogName,
+            Source = sig.Source,
+            EventId = sig.EventId,
+            Message = longMessage
+        };
+
+        var result = RiskyEventSelector.SelectSourceEvents(new List<LogIssueSignature> { sig }, new List<EventLogEntryData> { original });
+
+        Assert.Single(result);
+        Assert.True(result[0].Message.Length <= RiskyEventSelector.MaxMessageChars + "...".Length);
+        Assert.Equal(longMessage, original.Message); // 原始物件的訊息未被就地修改
     }
 
     [Fact]

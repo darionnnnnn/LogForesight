@@ -39,7 +39,7 @@ public class RuleBootstrapWebIntegrationTests : IDisposable
         var admin = new RuleAdminService(
             ruleStore, seedStore, suppressionStore,
             new FakeUserStore(), FakeCurrentUser.WithCapabilities(Capability.Maintain), new RecordingAuditService(),
-            new FakeHostGroupStore());
+            new FakeHostGroupStore(), new FakeHostStore(), new FakeIssueAggregateQuery());
 
         Assert.True(ruleStore.Exists);
         Assert.NotEmpty(admin.GetRules());

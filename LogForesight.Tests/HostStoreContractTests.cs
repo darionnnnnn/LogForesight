@@ -175,6 +175,32 @@ public class HostStoreContractTests : IDisposable
         Assert.Equal(new long[] { 5 }, after.OwnerUserIds);
     }
 
+    /// <summary>回饋十四輪 B1：跨日記憶旗標可設可清，新主機預設為 false。</summary>
+    [Fact]
+    public void SetHighVolume_可設定並清除()
+    {
+        var store = CreateStore();
+        var host = store.Upsert(new WebHost { HostName = "SRV-01" });
+        Assert.False(store.Get(host.HostId)!.IsHighVolume);
+
+        store.SetHighVolume(host.HostId, true);
+        Assert.True(store.Get(host.HostId)!.IsHighVolume);
+
+        store.SetHighVolume(host.HostId, false);
+        Assert.False(store.Get(host.HostId)!.IsHighVolume);
+    }
+
+    /// <summary>主機不存在時安靜略過——旗標只是最佳化提示，不該讓整支批次因為競態（主機剛被刪除）而炸掉。</summary>
+    [Fact]
+    public void SetHighVolume_主機不存在時安靜略過不擲例外()
+    {
+        var store = CreateStore();
+
+        var ex = Record.Exception(() => store.SetHighVolume(hostId: 999, isHighVolume: true));
+
+        Assert.Null(ex);
+    }
+
     /// <summary>綁定後舊主機留墓碑（不刪除），歷史才追溯得到、綁錯也能反向修復</summary>
     [Fact]
     public void Merge_來源主機保留為墓碑並停用()

@@ -180,8 +180,12 @@ internal class WeeklyCheckupService
         sb.AppendLine("【每日風險與摘要】");
         foreach (var day in window)
         {
+            // day.AiAnalyzed 守衛（回饋十四輪 B2，比照 AnalysisPromptBuilder 同一守衛）：Summary
+            // 在「AI 排隊中」（AiPending）與「統計模式／低風險跳過 AI」時是程式寫的樣板字串
+            // （如「（統計已完成，AI 分析排隊中）」「今日無異常訊號…」），不是真正的 AI 判讀。
+            // 不加這道守衛，體檢 prompt 會把樣板字串當成「當日結論」引給 AI，把它當真敘事引用。
             sb.AppendLine($"- {day.Date:MM-dd}：風險{day.RiskLevel}，錯誤{day.ErrorCount} 警告{day.WarningCount} 稽核{day.AuditEventCount}" +
-                          (day.Summary.Length > 0 ? $"，結論：{TextTruncation.Truncate(day.Summary, 60)}" : ""));
+                          (day.AiAnalyzed && day.Summary.Length > 0 ? $"，結論：{TextTruncation.Truncate(day.Summary, 60)}" : ""));
         }
 
         // 每個簽章一行，含窗口內逐日次數——彙整由程式先算好（確定性計算），AI 只需解讀不需自己加總

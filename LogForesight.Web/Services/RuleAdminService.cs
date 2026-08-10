@@ -27,6 +27,11 @@ public class RuleAdminService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IHostGroupStore _hostGroups;
+    private readonly IHostStore _hosts;
+    private readonly IIssueAggregateQuery _issueAggregateQuery;
+
+    /// <summary>抑制影響面預覽（回饋十四輪 C1）的比對窗口天數，與規則清單頁「近 N 日」等處的既有慣例一致</summary>
+    private const int SuppressionPreviewWindowDays = 14;
 
     public RuleAdminService(
         IKnownIssueRuleStore rules,
@@ -35,7 +40,9 @@ public class RuleAdminService
         IUserStore users,
         ICurrentUser currentUser,
         IAuditService audit,
-        IHostGroupStore hostGroups)
+        IHostGroupStore hostGroups,
+        IHostStore hosts,
+        IIssueAggregateQuery issueAggregateQuery)
     {
         _rules = rules;
         _seeds = seeds;
@@ -44,6 +51,8 @@ public class RuleAdminService
         _currentUser = currentUser;
         _audit = audit;
         _hostGroups = hostGroups;
+        _hosts = hosts;
+        _issueAggregateQuery = issueAggregateQuery;
     }
 
     public List<RuleDto> GetRules()
@@ -300,6 +309,72 @@ public class RuleAdminService
         return _suppressions.LoadAll()
             .Select(s => ToSuppressionDto(s, platformByRuleId.GetValueOrDefault(s.RuleId, "windows"), groupNames))
             .ToList();
+    }
+
+    /// <summary>
+    /// Group／Site 抑制的送出前影響面預覽（回饋十四輪 C1）：一鍵讓一條規則在大量主機上噤聲，
+    /// 畫面上原本沒有任何規模提示——送出前先算出「會影響幾台主機、過去這條規則在這些主機上
+    /// 命中過幾次」，讓維護者在確認前就看得到規模。Host 範圍本來就只影響單台主機，不需要
+    /// 這道關卡（呼叫端不該送 Host，這裡直接拒絕以免誤用）。
+    ///
+    /// M 值走 <c>lf_top_issues</c>（<see cref="IIssueAggregateQuery"/>）而非
+    /// <see cref="IRiskyEventStore"/>：前者的次數是精準加總（不受風險 log 暫存的每簽章
+    /// 50／每主機日 500 筆上限與保留期限制），後者才是原始 log 佐證的來源。
+    /// Windows 規則靠 SourcePattern＋EventIds 精準對應 <see cref="KnownIssueCatalog.FindRule"/>
+    /// 同一套比對邏輯；Linux 規則的比對鍵（EventKey）沒有隨紀錄存進 lf_top_issues，
+    /// 只能退而以 ProgramPattern 對 Source 做子字串比對，涵蓋面因此略寬於這條規則實際命中的
+    /// 次數（同一 program 底下如果還有其他規則，會被一併算進來）——<see cref="SuppressionPreviewDto.ApproximateForLinux"/>
+    /// 讓前端誠實標註這個數字是「同來源程式合計」而非精準值。
+    /// </summary>
+    public SuppressionPreviewDto PreviewSuppression(string ruleId, string scope, long? hostGroupId)
+    {
+        if (!SuppressionScopes.IsValid(scope))
+            throw DomainException.Validation($"不合法的抑制範圍「{scope}」。");
+        if (scope == SuppressionScopes.Host)
+            throw DomainException.Validation("Host 範圍只影響單台主機，不需要影響面預覽。");
+
+        var content = LoadContent();
+        var rule = content.Rules.FirstOrDefault(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase))
+                   ?? throw DomainException.NotFound("找不到這條規則。");
+
+        List<WebHost> targetHosts;
+        if (scope == SuppressionScopes.Group)
+        {
+            if (!hostGroupId.HasValue)
+                throw DomainException.Validation("請選擇要預覽的主機群組。");
+            if (_hostGroups.Get(hostGroupId.Value) == null)
+                throw DomainException.NotFound("找不到這個主機群組。");
+
+            targetHosts = _hosts.GetAll()
+                .Where(h => h.Active && h.MergedInto == null && h.GroupIds.Contains(hostGroupId.Value))
+                .ToList();
+        }
+        else // Site：全站存活主機
+        {
+            targetHosts = _hosts.GetAll().Where(h => h.Active && h.MergedInto == null).ToList();
+        }
+
+        var hostIds = targetHosts.Select(h => h.HostId).ToList();
+        var isLinux = string.Equals(rule.Platform, "linux", StringComparison.OrdinalIgnoreCase);
+        var aggregates = _issueAggregateQuery.Aggregate(
+            DateTime.Today.AddDays(-SuppressionPreviewWindowDays), DateTime.Today, hostIds);
+
+        var hitCount = isLinux
+            ? aggregates
+                .Where(a => a.Source.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase))
+                .Sum(a => a.TotalCount)
+            : aggregates
+                .Where(a => a.Source.Contains(rule.SourcePattern, StringComparison.OrdinalIgnoreCase) &&
+                            (rule.MatchAllEventIds || rule.EventIds.Contains(a.EventId)))
+                .Sum(a => a.TotalCount);
+
+        return new SuppressionPreviewDto
+        {
+            AffectedHostCount = hostIds.Count,
+            RecentHitCount = hitCount,
+            WindowDays = SuppressionPreviewWindowDays,
+            ApproximateForLinux = isLinux
+        };
     }
 
     public void AddSuppression(string ruleId, AddSuppressionRequest request)

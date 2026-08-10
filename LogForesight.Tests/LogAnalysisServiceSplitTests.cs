@@ -78,4 +78,36 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Assert.NotNull(sink.LastContent);
         Assert.Contains("統計模式紀錄", sink.LastContent);
     }
+
+    /// <summary>
+    /// 回饋十四輪 A2：AiWorkItem.Logs 的窄化移進 BuildStatisticalRecordAsync 本身——回傳的
+    /// workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果，不是原始 logs 全量。
+    /// 未命中規則、且首次執行（無歷史）故 Trend 恆 Unknown 的雜訊事件不該進到 workItem.Logs。
+    /// </summary>
+    [Fact]
+    public async Task BuildStatisticalRecordAsync傳回的workItem其Logs已窄化不含未命中規則的雜訊事件()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var ai = new FakeAiService();
+        var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore());
+
+        var diskEvents = MakeHighRiskDiskEvents(20); // 命中 builtin-storage-disk-io，應入選
+        var noiseEvents = Enumerable.Range(0, 30).Select(i => new EventLogEntryData
+        {
+            TimeGenerated = DateTime.Today.AddMinutes(-i),
+            EntryType = EventLogEntryType.Information,
+            LogName = "Application",
+            Source = "UnrelatedNoisyApp",
+            EventId = 5000,
+            Message = $"例行訊息 #{i}"
+        }).ToList(); // 未命中規則、首次執行歷史為空故 Trend=Unknown，不該入選
+        var logs = diskEvents.Concat(noiseEvents).ToList();
+
+        var (_, workItem) = await service.BuildStatisticalRecordAsync(DateTime.Today.AddDays(-1), logs, useAi: true);
+
+        Assert.NotNull(workItem);
+        Assert.Equal(diskEvents.Count, workItem!.Logs.Count);
+        Assert.All(workItem.Logs, e => Assert.Equal("disk", e.Source));
+        Assert.True(workItem.Logs.Count < logs.Count);
+    }
 }

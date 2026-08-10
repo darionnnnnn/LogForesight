@@ -21,6 +21,13 @@ public enum IssueTrend
 /// 的算法換了。<see cref="LogIssueSignature.HistoryDailyAverage"/> 屬性名維持不變
 /// （ContentJson 序列化相容，舊紀錄的欄位值仍是當時寫入時的平均值，語意隨欄位一起讀出，
 /// 不會說謊——舊紀錄未來再被讀取／重算時才會換成中位數）。
+///
+/// **整體錯誤量／稽核量的基準進一步改用「非零日」中位數**（回饋十四輪 A1）：簽章層的
+/// 中位數天生只吃非零值（一個簽章的歷史紀錄只在它真的出現過的日子才有），但總量層原本是
+/// 對含 0 的完整可靠歷史取中位數——錯誤只在部分日子出現的主機，中位數會落在 0，
+/// 0 × <see cref="RisingFactor"/> 恆為 0，倍率條件恆真，規則悄悄退化成「今日 ≥10 筆」的
+/// 固定門檻，且告警文字會誤導性地印出「基準 0 筆」。改成只用非零日計算後，兩層的基準
+/// 語意才真正一致；歷史中一筆非零日都沒有時退回固定門檻，但文案誠實說「多數日無事件」。
 /// </summary>
 public static class TrendAnalyzer
 {
@@ -137,24 +144,49 @@ public static class TrendAnalyzer
         }
 
         // 整體錯誤量突增：個別事件都不顯眼、但總量暴增，也是異常訊號（例如大量不同來源同時出錯）
-        // DataIncomplete 的日子排除在基準計算外，避免不完整的一天墊低基準
+        // DataIncomplete 的日子排除在基準計算外，避免不完整的一天墊低基準。
+        //
+        // 基準改用「非零日中位數」（回饋十四輪 A1）：錯誤只在部分日子出現的主機，含零值的
+        // 中位數＝0，0×RisingFactor 恆為 0，倍率條件恆真，規則退化成固定門檻「今日 ≥10 筆」，
+        // 且告警文字會誤導性地印出「基準 0 筆」。與簽章層 pastCounts（天然只收非零日）語意對齊：
+        // 只用實際發生過錯誤的日子算基準，才是「這台主機錯誤發生時通常幾筆」的正確度量。
+        // 歷史中一筆非零日都沒有時（nonZeroErrorDays 為空）無基準可算，但這不代表不用管——
+        // 平常零錯誤的主機突然冒出 ≥10 筆本來就值得一提，維持同一個絕對門檻觸發告警，
+        // 只是文案誠實說「多數日無錯誤」，不再宣稱一個不存在的「基準 0 筆」。
         if (reliableHistory.Count > 0)
         {
-            var baselineErrors = Median(reliableHistory.Select(h => h.ErrorCount));
-            if (todayErrorCount >= 10 && todayErrorCount >= baselineErrors * RisingFactor)
+            var nonZeroErrorDays = reliableHistory.Select(h => h.ErrorCount).Where(c => c > 0).ToList();
+            if (nonZeroErrorDays.Count > 0)
             {
-                alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆");
+                var baselineErrors = Median(nonZeroErrorDays);
+                if (todayErrorCount >= 10 && todayErrorCount >= baselineErrors * RisingFactor)
+                {
+                    alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆");
+                }
+            }
+            else if (todayErrorCount >= 10)
+            {
+                alerts.Add($"整體錯誤量突增：近 {reliableHistory.Count} 日可靠歷史多數日無錯誤，今日出現 {todayErrorCount} 筆");
             }
         }
 
         // 安全稽核事件總量突增：稽核事件（如 4625 登入失敗）不計入錯誤數，需獨立比對總量；
-        // 額外排除 Security log 無權限的歷史日（假性零會把基準墊低）
+        // 額外排除 Security log 無權限的歷史日（假性零會把基準墊低）。基準同樣改用非零日中位數，
+        // 理由與上方錯誤量突增一致。
         if (reliableAuditHistory.Count > 0)
         {
-            var baselineAudit = Median(reliableAuditHistory.Select(h => h.AuditEventCount));
-            if (todayAuditCount >= 10 && todayAuditCount >= baselineAudit * RisingFactor)
+            var nonZeroAuditDays = reliableAuditHistory.Select(h => h.AuditEventCount).Where(c => c > 0).ToList();
+            if (nonZeroAuditDays.Count > 0)
             {
-                alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試");
+                var baselineAudit = Median(nonZeroAuditDays);
+                if (todayAuditCount >= 10 && todayAuditCount >= baselineAudit * RisingFactor)
+                {
+                    alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試");
+                }
+            }
+            else if (todayAuditCount >= 10)
+            {
+                alerts.Add($"安全稽核事件量突增：近 {reliableAuditHistory.Count} 日可靠歷史多數日無稽核事件，今日出現 {todayAuditCount} 筆，需留意入侵嘗試");
             }
         }
 

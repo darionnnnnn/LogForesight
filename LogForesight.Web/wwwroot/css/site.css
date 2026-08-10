@@ -88,7 +88,12 @@
     --lf-sidebar-section: #68799a;
     --lf-sidebar-active-bg: rgba(59, 130, 246, .24);
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
-    --lf-sidebar-width: 244px;
+    /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
+       （見下方 html 規則的說明）——原本固定 px 時，2K 螢幕＋「大字級」偏好疊加後根字級衝到
+       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-sidebar__brand-name
+       的省略號截斷成「LogForesig...」。15.25rem 是原 244px 换算（244÷16），預設字級下畫面
+       完全不變，只有字級被放大時側欄才跟著等比變寬。 */
+    --lf-sidebar-width: 15.25rem;
     --lf-content-bg: #f8fafc;
     --lf-card-bg: #ffffff;
     --lf-border: #e2e8f0;
@@ -517,19 +522,22 @@ body {
     letter-spacing: 0;
 }
 
+/* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
+   視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
+   維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。 */
 .lf-sidebar__brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
+    width: 2.25rem;
+    height: 2.25rem;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
     flex-shrink: 0;
 }
 
-.lf-sidebar__brand-mark .lf-icon { width: 1.05rem; height: 1.05rem; }
+.lf-sidebar__brand-mark .lf-icon { width: 1.25rem; height: 1.25rem; }
 
 /* 自訂品牌圖示（docs/archive/FEEDBACK-10-PLAN.md §1）：上傳的圖片比例不一，contain 保證整張看得到
    （cover 會裁掉邊角，logo 被切比縮小更難看）。圓角切齊外框的漸層底 */

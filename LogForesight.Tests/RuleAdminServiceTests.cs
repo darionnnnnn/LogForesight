@@ -20,6 +20,8 @@ public class RuleAdminServiceTests
     private readonly FakeUserStore _users = new();
     private readonly RecordingAuditService _audit = new();
     private readonly FakeHostGroupStore _hostGroups = new();
+    private readonly FakeHostStore _hosts = new();
+    private readonly FakeIssueAggregateQuery _issueAggregateQuery = new();
 
     private const string BuiltinId = "builtin-disk-153";
 
@@ -47,7 +49,8 @@ public class RuleAdminServiceTests
     }
 
     private RuleAdminService Create() =>
-        new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups);
+        new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups,
+            _hosts, _issueAggregateQuery);
 
     private static SaveRuleRequest ValidRequest(string id = "custom-test") => new()
     {
@@ -401,6 +404,125 @@ public class RuleAdminServiceTests
         service.RemoveSuppression(BuiltinId, SuppressionScopes.Site, null, null);
 
         Assert.Empty(service.GetSuppressions());
+    }
+
+    // ── PreviewSuppression：抑制影響面預覽（回饋十四輪 C1）─────────────────────
+
+    [Fact]
+    public void PreviewSuppression_Host範圍不適用被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().PreviewSuppression(BuiltinId, SuppressionScopes.Host, null));
+
+        Assert.Contains("Host", ex.Message);
+    }
+
+    [Fact]
+    public void PreviewSuppression_Group未選群組時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().PreviewSuppression(BuiltinId, SuppressionScopes.Group, null));
+
+        Assert.Contains("主機群組", ex.Message);
+    }
+
+    [Fact]
+    public void PreviewSuppression_群組不存在時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().PreviewSuppression(BuiltinId, SuppressionScopes.Group, 999));
+
+        Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    [Fact]
+    public void PreviewSuppression_規則不存在時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().PreviewSuppression("no-such-rule", SuppressionScopes.Site, null));
+
+        Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    [Fact]
+    public void PreviewSuppression_Site範圍只計入啟用中且未合併的主機()
+    {
+        _hosts.Upsert(new WebHost { HostName = "H1", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "H2", Active = true });
+        _hosts.Upsert(new WebHost { HostName = "H3", Active = false }); // 停用，不計入
+
+        var preview = Create().PreviewSuppression(BuiltinId, SuppressionScopes.Site, null);
+
+        Assert.Equal(2, preview.AffectedHostCount);
+        Assert.Equal(14, preview.WindowDays);
+        Assert.False(preview.ApproximateForLinux);
+    }
+
+    [Fact]
+    public void PreviewSuppression_Group範圍只統計該群組成員的主機Id()
+    {
+        var target = _hostGroups.Upsert(new HostGroup { GroupName = "DB 伺服器" });
+        var other = _hostGroups.Upsert(new HostGroup { GroupName = "Web 伺服器" });
+        var db1 = _hosts.Upsert(new WebHost { HostName = "DB1", Active = true, GroupIds = new List<long> { target.GroupId } });
+        var db2 = _hosts.Upsert(new WebHost { HostName = "DB2", Active = true, GroupIds = new List<long> { target.GroupId } });
+        _hosts.Upsert(new WebHost { HostName = "WEB1", Active = true, GroupIds = new List<long> { other.GroupId } });
+
+        var preview = Create().PreviewSuppression(BuiltinId, SuppressionScopes.Group, target.GroupId);
+
+        Assert.Equal(2, preview.AffectedHostCount);
+        Assert.NotNull(_issueAggregateQuery.LastCall);
+        var requestedHostIds = _issueAggregateQuery.LastCall!.Value.HostIds!.OrderBy(x => x).ToList();
+        Assert.Equal(new[] { db1.HostId, db2.HostId }.OrderBy(x => x), requestedHostIds);
+    }
+
+    /// <summary>
+    /// M 值精準對應 KnownIssueCatalog.FindRule 同一套比對邏輯（來源子字串＋EventId 精確符合）：
+    /// Source 含子字串但 EventId 不符、或 Source 不含子字串的聚合列都不該被算進命中次數。
+    /// </summary>
+    [Fact]
+    public void PreviewSuppression_Windows規則精準比對SourcePattern子字串與EventId()
+    {
+        _hosts.Upsert(new WebHost { HostName = "H1", Active = true }); // Site 範圍至少要有一台存活主機，查詢才不會被空集合短路
+        _issueAggregateQuery.Result = new List<IssueAggregate>
+        {
+            new() { Source = "disk", EventId = 153, TotalCount = 42 },        // 精準命中
+            new() { Source = "disk-controller", EventId = 153, TotalCount = 3 }, // Source 含子字串，命中
+            new() { Source = "disk", EventId = 999, TotalCount = 100 },       // EventId 不符，不計入
+            new() { Source = "network", EventId = 153, TotalCount = 50 }      // Source 不符，不計入
+        };
+
+        var preview = Create().PreviewSuppression(BuiltinId, SuppressionScopes.Site, null);
+
+        Assert.Equal(45, preview.RecentHitCount);
+    }
+
+    /// <summary>
+    /// Linux 規則沒有 EventKey 可用（lf_top_issues 沒存），只能以 ProgramPattern 對 Source
+    /// 做子字串比對——涵蓋面因此寬於這條規則實際命中的次數，ApproximateForLinux 必須誠實標記。
+    /// </summary>
+    [Fact]
+    public void PreviewSuppression_Linux規則以ProgramPattern子字串比對且標記為近似值()
+    {
+        var linuxRule = new KnownIssueRule
+        {
+            Id = "builtin-linux-ssh-bruteforce",
+            Origin = "builtin",
+            Enabled = true,
+            Platform = "linux",
+            ProgramPattern = "sshd",
+            Category = IssueCategory.Security,
+            Severity = IssueSeverity.High,
+            Description = "SSH 暴力破解嘗試",
+            CountThreshold = 10
+        };
+        _rules.Content.Rules.Add(linuxRule);
+        _hosts.Upsert(new WebHost { HostName = "H1", Active = true }); // Site 範圍至少要有一台存活主機，查詢才不會被空集合短路
+        _issueAggregateQuery.Result = new List<IssueAggregate>
+        {
+            new() { Source = "sshd", EventId = 0, TotalCount = 30 },   // 同 program 的另一條規則（如 ssh-accept）也會被算進來
+            new() { Source = "httpd", EventId = 0, TotalCount = 99 }   // 不同 program，不計入
+        };
+
+        var preview = Create().PreviewSuppression(linuxRule.Id, SuppressionScopes.Site, null);
+
+        Assert.Equal(30, preview.RecentHitCount);
+        Assert.True(preview.ApproximateForLinux);
     }
 }
 

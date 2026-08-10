@@ -61,6 +61,13 @@ public class RulesController : ControllerBase
     public ApiResponse<List<RuleSuppressionDto>> GetSuppressions() =>
         ApiResponse<List<RuleSuppressionDto>>.Ok(_service.GetSuppressions());
 
+    /// <summary>Group／Site 抑制送出前的影響面預覽（回饋十四輪 C1）：會影響幾台主機、
+    /// 過去這條規則在這些主機上命中過幾次。Host 範圍不適用（見 <see cref="RuleAdminService.PreviewSuppression"/>）。</summary>
+    [HttpGet("{ruleId}/suppression-preview")]
+    public ApiResponse<SuppressionPreviewDto> PreviewSuppression(
+        string ruleId, [FromQuery] string scope, [FromQuery] long? hostGroupId = null) =>
+        ApiResponse<SuppressionPreviewDto>.Ok(_service.PreviewSuppression(ruleId, scope, hostGroupId));
+
     [HttpPost("{ruleId}/suppressions")]
     public ApiResponse AddSuppression(string ruleId, [FromBody] AddSuppressionRequest request)
     {

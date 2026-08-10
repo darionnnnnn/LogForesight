@@ -49,23 +49,36 @@ public class RunActivityController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<RunActivityDto> Get() => ApiResponse<RunActivityDto>.Ok(new RunActivityDto
+    public ApiResponse<RunActivityDto> Get()
     {
-        IsRunning = _runState.IsRunning,
-        Done = _runState.ProgressDone,
-        Total = _runState.ProgressTotal,
-        // 兩個階段的分母都是「主機日」，但一般使用者對這個單位沒有概念——
-        // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台），各用看得懂的量詞。
-        // netiq-ai（docs/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在消化時的
-        // 第二階段，分母是排隊的主機日數，用「件」而非「台」——避免使用者以為又要重新查一次。
-        UnitText = _runState.ProgressPhase switch
+        // 子進度優先（回饋十四輪 UI-6）：SchedulerRunState 把 netiq-ai／netiq-backpressure
+        // 拆進獨立的 SubProgress* 欄位後（不再與主進度共用、互相覆蓋），這支一般使用者看的
+        // 單一告示要自己決定「兩條軌只能顯示一條時，顯示哪一條」——選子進度：它代表較晚、
+        // 較貼近「現在到底卡在哪」的階段（搜尋主線常常已經跑完，只剩 AI 佇列在後面消化），
+        // 沿用改版前「後回報的蓋掉先回報的」單一欄位年代，AI 佇列進入消化階段後畫面自然
+        // 「被它接手」的既有體驗——只是現在用明確的優先序表達，不再依賴欄位互相覆蓋的巧合。
+        var hasSubProgress = _runState.SubProgressPhase != null;
+        var phase = hasSubProgress ? _runState.SubProgressPhase : _runState.ProgressPhase;
+        var done = hasSubProgress ? _runState.SubProgressDone : _runState.ProgressDone;
+        var total = hasSubProgress ? _runState.SubProgressTotal : _runState.ProgressTotal;
+
+        return ApiResponse<RunActivityDto>.Ok(new RunActivityDto
         {
-            "local" => "天",
-            "netiq" => "台",
-            "netiq-ai" => "件",
-            _ => null
-        }
-    });
+            IsRunning = _runState.IsRunning,
+            Done = done,
+            Total = total,
+            // 分母都是「主機日」，但一般使用者對這個單位沒有概念——本機路徑是逐日回補（天），
+            // NetIQ 機房路徑是逐台主機（台）；netiq-ai／netiq-backpressure 是排隊的主機日數，
+            // 用「件」而非「台」，避免使用者以為又要重新查一次（docs/FEEDBACK-12-PLAN.md §3.7）。
+            UnitText = phase switch
+            {
+                "local" => "天",
+                "netiq" => "台",
+                "netiq-ai" or "netiq-backpressure" => "件",
+                _ => null
+            }
+        });
+    }
 }
 
 /// <summary>主機詳情／時間軸（§9.4）</summary>
