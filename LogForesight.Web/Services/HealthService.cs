@@ -51,6 +51,11 @@ public class HealthService
         var performance = _backend.Performance.Snapshot();
         var migration = _backend.HandlingMigrator.State;
 
+        // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
+        // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
+        // AI 佇列消化階段這裡會停在搜尋階段的凍結數字，看起來像分析卡死。
+        var analysisActivity = _runState.LatestActivity();
+
         // 「慢操作占比過高」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
         // 因此獨立成 degraded 狀態，而不是併進 ok
         var degraded = performance.TotalOperations > 0 &&
@@ -71,9 +76,9 @@ public class HealthService
             AnalysisRunning = _runState.IsRunning,
             AnalysisTrigger = _runState.Trigger,
             AnalysisStartedAt = _runState.StartedAt,
-            AnalysisPhase = _runState.ProgressPhase,
-            AnalysisDone = _runState.ProgressDone,
-            AnalysisTotal = _runState.ProgressTotal,
+            AnalysisPhase = analysisActivity.Phase,
+            AnalysisDone = analysisActivity.Done,
+            AnalysisTotal = analysisActivity.Total,
             LastRunSucceeded = _runState.LastOutcome?.Success,
             LastRunEndedAt = _runState.LastOutcome?.EndedAt,
 

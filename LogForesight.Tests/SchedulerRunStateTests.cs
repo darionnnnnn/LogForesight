@@ -162,6 +162,27 @@ public class SchedulerRunStateTests
         Assert.Equal(80, state.SubProgressTotal);
     }
 
+    /// <summary>
+    /// 二次體檢後的單點化（LatestActivity）：單一告示的「子進度優先」取捨改由 SchedulerRunState
+    /// 本身提供，兩個讀取端（/api/run-activity、健康診斷 AnalysisPhase）共用——「漏改讀取端」
+    /// 這個坑已在兩處各踩一次（RunActivityController、HealthService），選擇邏輯不再散落各處。
+    /// </summary>
+    [Fact]
+    public void LatestActivity_子進度有值時優先回子進度_否則回主進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("netiq", 40, 100);
+        Assert.Equal(("netiq", 40, 100), state.LatestActivity()); // 尚無子進度：回主進度
+
+        state.ReportProgress("netiq-ai", 12, 80);
+        Assert.Equal(("netiq-ai", 12, 80), state.LatestActivity()); // 子進度出現後優先回它
+
+        state.ReportProgress("netiq", 60, 100);
+        Assert.Equal(("netiq-ai", 12, 80), state.LatestActivity()); // 主進度再推進也不搶回單一告示
+    }
+
     [Fact]
     public void EndRun不帶參數_預設等同null不覆蓋前一筆()
     {

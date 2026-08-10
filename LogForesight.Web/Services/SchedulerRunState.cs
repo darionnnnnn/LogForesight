@@ -85,6 +85,24 @@ public class SchedulerRunState
         }
     }
 
+    /// <summary>
+    /// 「單一告示」讀取端專用的進度快照（回饋十四輪 UI-6 體檢）：只有一行可顯示的讀取端
+    /// （一般使用者的執行中告示 <c>/api/run-activity</c>、健康診斷的 AnalysisPhase）要在
+    /// 主／子兩條軌之間挑一條——**子進度優先**，它代表較晚、較貼近「現在到底卡在哪」的階段
+    /// （搜尋主線常常已跑完，只剩 AI 佇列在背景消化）。選擇邏輯放在這裡單點化，
+    /// 不讓每個讀取端各自記得（主／子欄位拆開後，「漏改讀取端」這個坑已經踩過兩次）。
+    /// 能同時畫兩條進度條的讀取端（排程作業頁的狀態 API）直接讀兩組欄位，不走這裡。
+    /// </summary>
+    public (string? Phase, int Done, int Total) LatestActivity()
+    {
+        lock (_lock)
+        {
+            return SubProgressPhase != null
+                ? (SubProgressPhase, SubProgressDone, SubProgressTotal)
+                : (ProgressPhase, ProgressDone, ProgressTotal);
+        }
+    }
+
     /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ 兩階段各自的
     /// 主機日進度，供狀態 API 畫進度條。phase 落在 <see cref="SubProgressPhases"/> 時寫入子進度欄位，
     /// 其餘（local／netiq）寫入主進度欄位——兩組欄位互不覆蓋（回饋十四輪 UI-6）。</summary>

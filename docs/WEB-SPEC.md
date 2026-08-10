@@ -1248,6 +1248,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   三擇一顯示）。抑制列表「範圍」欄以文字呈現目標（「主機 SRV-01」／「群組 IIS 前端」／
   「全站」）。`RemoveSuppression` 端點的目標改用 query string（`?scope=&host=&hostGroupId=`）
   取代原本的 `{host}` path segment——Group／Site 範圍沒有單一 host 可放進路徑。
+- **Group／Site 抑制的影響面預覽（2026-08-10，回饋十四輪 C1，語意見 docs/RULES-SPEC.md）**：
+  範圍選 Group／Site 時送出前先打 `GET api/rules/{id}/suppression-preview?scope=&hostGroupId=`，
+  以確認對話框顯示「此抑制將影響 N 台主機；過去 14 天該規則在這些主機上共命中 M 次」
+  （Linux 規則附「同來源程式合計」註記）再送出；預覽呼叫失敗不擋抑制流程（api.js 已 toast
+  顯示錯誤，只是少了規模資訊）。範圍切到 Site 時「生效天數」欄空白會自動帶 30（可清空改回永久）。
 - **內建規則升級（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 `--import-rules`）**：
   庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
   新增／更新／略過／衝突（衝突＝使用者改過的 builtin）→「套用」（附 checkbox「連同已修改的
@@ -1256,7 +1261,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   當時薄包裝共用同一份邏輯）已隨 Phase 5 退場移除（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），Web 是現在
   唯一的入口；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
-  `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`。
+  `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`、
+  `GET api/rules/{id}/suppression-preview`（回饋十四輪 C1，Group／Site 限定）。
   `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
   由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
   規則升級另有 `GET api/rules/import-status`、`GET api/rules/import-preview?overwriteBuiltin=`、
@@ -1577,6 +1583,13 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   的 `UnitText` 與前端 `PROGRESS_PHASE_UNIT` map 對應這個 phase）。執行完成的里程碑同輪加註
   AI 統計（`AiQueued`/`AiCompleted`/`AiAbandoned`，僅 `AiQueued > 0` 時顯示，取消時
   `AiAbandoned` 讓「AI 還沒補完就被停止」這件事看得見，不是默默消失）。
+  **主／子進度條分離（2026-08-10，回饋十四輪 UI-6）**：`netiq-ai`／`netiq-backpressure` 這條
+  AI 背景消化軌與主進度（`netiq`，搜尋仍在往下一台主機推進）是**同時**在跑的兩件事——原本
+  共用一組 `progressPhase/Done/Total`，後回報的直接覆蓋先回報的，症狀是「進度卡住不動」。
+  `SchedulerRunState` 拆成主／子兩組欄位（status API 加 `subProgressPhase/Done/Total`），
+  狀態卡畫兩條：主進度條在上，子進度條窄一階（高度減半、縮排、灰色調）在下、只在有值時顯示。
+  只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）由
+  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先——它較貼近「現在卡在哪」）。
   **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。

@@ -51,16 +51,9 @@ public class RunActivityController : ControllerBase
     [HttpGet]
     public ApiResponse<RunActivityDto> Get()
     {
-        // 子進度優先（回饋十四輪 UI-6）：SchedulerRunState 把 netiq-ai／netiq-backpressure
-        // 拆進獨立的 SubProgress* 欄位後（不再與主進度共用、互相覆蓋），這支一般使用者看的
-        // 單一告示要自己決定「兩條軌只能顯示一條時，顯示哪一條」——選子進度：它代表較晚、
-        // 較貼近「現在到底卡在哪」的階段（搜尋主線常常已經跑完，只剩 AI 佇列在後面消化），
-        // 沿用改版前「後回報的蓋掉先回報的」單一欄位年代，AI 佇列進入消化階段後畫面自然
-        // 「被它接手」的既有體驗——只是現在用明確的優先序表達，不再依賴欄位互相覆蓋的巧合。
-        var hasSubProgress = _runState.SubProgressPhase != null;
-        var phase = hasSubProgress ? _runState.SubProgressPhase : _runState.ProgressPhase;
-        var done = hasSubProgress ? _runState.SubProgressDone : _runState.ProgressDone;
-        var total = hasSubProgress ? _runState.SubProgressTotal : _runState.ProgressTotal;
+        // 單一告示只能顯示一條進度，主／子軌的取捨（子進度優先）由 SchedulerRunState.LatestActivity
+        // 單點決定（回饋十四輪 UI-6 體檢）——這支與健康診斷共用同一個選擇邏輯，不各自記得。
+        var (phase, done, total) = _runState.LatestActivity();
 
         return ApiResponse<RunActivityDto>.Ok(new RunActivityDto
         {
