@@ -36,6 +36,7 @@ public class LogAnalysisService
     private readonly AnalysisPromptBuilder _promptBuilder;
     private readonly IRiskyEventStore? _riskyEventStore;
     private readonly IReadOnlyCollection<long> _hostGroupIds;
+    private readonly List<RuleSuppression>? _suppressionSnapshot;
 
     /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-SPEC.md）：只影響「要不要吵」
     /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
@@ -51,10 +52,17 @@ public class LogAnalysisService
     /// 範圍判定要知道主機的群組成員資格，見 <see cref="SuppressionFilter"/>）。呼叫端解析一次傳入，
     /// 這裡不查 store——null／未提供＝視為不屬於任何群組，Group 範圍的抑制對這台主機不生效
     /// （Host／Site 範圍不受影響）。</param>
+    /// <param name="suppressionSnapshot">整批執行（NetIQ pipeline）用的抑制清單快照（回饋十四輪 A3）：
+    /// 呼叫端在 run 開始時 <c>LoadAll()</c> 一次，往下傳給每台主機每一天共用，取代原本每主機日各自
+    /// 呼叫一次 <c>LoadAll()</c>（2000 台×14 天＝28,000 次整份反序列化）。null＝維持既有行為，
+    /// 每次用到都即時查 <see cref="_suppressionStore"/>（本機分析路徑單機單次執行，這個成本本來就
+    /// 可忽略，不需要快照；也讓「排程執行中使用者新增的抑制」在本機路徑仍是即時生效）。
+    /// 快照語意：整趟 run 內看到的是同一份清單，run 開始後才新增的抑制要下次執行才生效——
+    /// 對批次規模執行反而更一致（不會同一晚不同主機看到不同的抑制清單）。</param>
     public LogAnalysisService(EventLogService eventLogService, IAiService aiService, IAnalysisRecordStore historyService,
         ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null,
         string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
-        IReadOnlyCollection<long>? hostGroupIds = null)
+        IReadOnlyCollection<long>? hostGroupIds = null, List<RuleSuppression>? suppressionSnapshot = null)
     {
         _eventLogService = eventLogService;
         _aiService = aiService;
@@ -67,7 +75,11 @@ public class LogAnalysisService
         _promptBuilder = new AnalysisPromptBuilder(aiService);
         _riskyEventStore = riskyEventStore;
         _hostGroupIds = hostGroupIds ?? Array.Empty<long>();
+        _suppressionSnapshot = suppressionSnapshot;
     }
+
+    /// <summary>run 開始時已有快照就用快照，否則即時查 store——見建構子 <c>suppressionSnapshot</c> 參數說明。</summary>
+    private List<RuleSuppression> LoadSuppressions() => _suppressionSnapshot ?? _suppressionStore.LoadAll();
 
     /// <summary>
     /// 分析已抓取好的當日 log（回補多天時用：log 由呼叫端一次掃描、預先分桶，
@@ -140,7 +152,7 @@ public class LogAnalysisService
         // 主機級告警抑制（見 docs/RULES-SPEC.md）：只標記「這個簽章命中的規則被本機抑制」，
         // 不影響聚合、分類或後續寫入歷史——偵測與紀錄照常，只是後面判定風險/組告警文字時要跳過它。
         // 保留完整的 activeSuppressions（含 Reason）供風險報告的「已抑制的告警」區塊顯示。
-        var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, _hostGroupIds, DateTime.Now);
+        var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
         if (activeSuppressions.Count > 0)
         {
             var suppressedRuleIds = SuppressionFilter.ToRuleIdSet(activeSuppressions);
@@ -309,9 +321,15 @@ public class LogAnalysisService
             record.Summary = "（統計已完成，AI 分析排隊中）";
             record.AiPending = true;
 
+            // Logs 窄化為風險事件選取結果（回饋十四輪 A2，取代原本呼叫端事後補窄化）：這裡已經
+            // 持有 issues（規則命中／趨勢比對皆已完成），窄化的不變量因此進到型別建構本身，
+            // 不再依賴唯一呼叫端手動記得補——見 RiskyEventSelector.SelectSourceEvents 文件。
+            // 本機與 NetIQ 兩條路徑統一套用同一份窄化結果（含深析報告的原始 log 選取池），
+            // 已知行為：報告池從全量縮成 risky 池（≤500 筆），fallback 焦點問題若不在池內
+            // 顯示「（無對應的原始 log）」——報告已有此優雅降級，非新增缺口。
             var workItem = new AiWorkItem(targetDate, issues, trendAlerts, correlations, ruleRisk, riskBasis,
                 uncoveredChecks, dataIncomplete, errorCount, warningCount, auditCount, historyDays,
-                logs, activeSuppressions);
+                RiskyEventSelector.SelectSourceEvents(issues, logs), activeSuppressions);
             return (record, workItem);
         }
 
@@ -474,7 +492,7 @@ public class LogAnalysisService
             if (riskyEvents.Count > 0)
             {
                 var logs = riskyEvents.Select(ToEventLogEntryData).ToList();
-                var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, _hostGroupIds, DateTime.Now);
+                var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
 
                 // 形狀比照 CompleteAiAsync 的 scratch：GenerateReportIfActionableAsync 只看
                 // record 上這些欄位，少一個報告內容就缺一塊

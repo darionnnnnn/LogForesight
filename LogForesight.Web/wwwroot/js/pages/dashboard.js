@@ -347,8 +347,12 @@ function renderCategories(data) {
     for (const category of data.categories) {
         const link = document.createElement('a');
         link.className = 'lf-stat';
-        // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上
-        link.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
+        // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上。
+        // view=issue（回饋十四輪 UI-2）：這張卡片本身就是「依風險類型看問題」的入口，理應直接
+        // 落在依問題視角——與 renderTopIssues 的下鑽連結（見下方，同一個 view=issue 慣例）
+        // 保持一致，否則帶著 categories 參數進頁會被 §10 的「帶參數預設回明細」規則接住，
+        // 使用者點一個問題類別的卡片，看到的卻是逐筆明細而非依問題分組。
+        link.href = `/records?view=issue&categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
 
         // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
         // docs/archive/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）

@@ -150,6 +150,13 @@ public class NetiqPipelineService
         var aiQueue = new AiFollowupQueue<AiFollowupJob>();
         var consumerTask = ConsumeAiQueueAsync(aiQueue, result, trendWindowDays, ct);
 
+        // 抑制清單 run 開始時讀一次（回饋十四輪 A3），往下傳給每台主機每一天共用——取代原本
+        // 每主機日各自呼叫一次 LoadAll()（見 LogAnalysisService 建構子 suppressionSnapshot 參數
+        // 說明）。快照語意：整趟 run 內所有主機看到同一份抑制清單，run 開始後才新增的抑制要
+        // 下次執行才生效——這個 pipeline 本來就是每次執行重新建構（見類別文件），與本機路徑
+        // 「每次分析即時查」的即時性差異只在批次規模下才有感。
+        var suppressionSnapshot = _suppressionStore.LoadAll();
+
         try
         {
             // 各台 Sentinel 轄下主機互不重疊、各自獨立的 SentinelClient 連線，跨台平行不破壞
@@ -180,7 +187,7 @@ public class NetiqPipelineService
 
                 try
                 {
-                    await RunServerAsync(sentinel, targets, trendWindowDays, result, aiQueue, serverCt);
+                    await RunServerAsync(sentinel, targets, trendWindowDays, result, aiQueue, suppressionSnapshot, serverCt);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -233,24 +240,24 @@ public class NetiqPipelineService
     /// </summary>
     private async Task RunServerAsync(
         Sentinel sentinel, List<NetiqTarget> targets, int trendWindowDays, NetiqPipelineResult result,
-        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
+        AiFollowupQueue<AiFollowupJob> aiQueue, List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var windowsTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)).ToList();
         var linuxTargets = targets.Where(t => string.Equals(t.Os, WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)).ToList();
 
         if (windowsTargets.Count > 0)
         {
-            await RunServerOsGroupAsync(sentinel, windowsTargets, WebHost.OsWindows, trendWindowDays, result, aiQueue, ct);
+            await RunServerOsGroupAsync(sentinel, windowsTargets, WebHost.OsWindows, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
         }
         if (linuxTargets.Count > 0)
         {
-            await RunServerOsGroupAsync(sentinel, linuxTargets, WebHost.OsLinux, trendWindowDays, result, aiQueue, ct);
+            await RunServerOsGroupAsync(sentinel, linuxTargets, WebHost.OsLinux, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
         }
     }
 
     private async Task RunServerOsGroupAsync(
         Sentinel sentinel, List<NetiqTarget> targets, string os, int trendWindowDays, NetiqPipelineResult result,
-        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
+        AiFollowupQueue<AiFollowupJob> aiQueue, List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var osLabel = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase) ? "Linux" : "Windows";
         _console.WriteLine($"\n[{sentinel.Name}] {targets.Count} 台 {osLabel} 主機");
@@ -268,13 +275,22 @@ public class NetiqPipelineService
             var store = _backend.RecordStore(hostKey);
             var missingDates = MissingDateFinder.Find(store, lookback);
 
+            // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
+            // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
+            // 28,000 次全量讀。同一個值也給下面孤兒補跑的 retryService 用，本來就是同一台
+            // 主機同一次執行內的同一份群組成員資格，沒有理由查兩次；IsHighVolume（回饋十四輪
+            // B1，二分重查跨日記憶）順便從同一次 Get 一併取得，不額外多查。
+            var hostRecord = _hosts.Get(target.HostId);
+            var groupIds = (IReadOnlyCollection<long>?)hostRecord?.GroupIds ?? Array.Empty<long>();
+            var isHighVolume = hostRecord?.IsHighVolume ?? false;
+
             if (missingDates.Count == 0)
             {
                 result.AddSkipped();
             }
             else
             {
-                plans.Add(new HostPlan(target, store, missingDates));
+                plans.Add(new HostPlan(target, store, missingDates, groupIds, isHighVolume));
             }
 
             // AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
@@ -287,7 +303,7 @@ public class NetiqPipelineService
                 var retryService = new LogAnalysisService(
                     _eventLogService, _aiService, store, _suppressionStore,
                     target.RoleDesc, _reportService, target.HostName, target.HostId, _riskyEventStore,
-                    hostGroupIds: _hosts.Get(target.HostId)?.GroupIds);
+                    hostGroupIds: groupIds, suppressionSnapshot: suppressionSnapshot);
                 orphanJobs.Add(new AiFollowupJob(retryService, store, target.IpAddress, pending.Date, sentinel.Name,
                     WorkItem: null, RetryRecord: pending));
             }
@@ -326,7 +342,14 @@ public class NetiqPipelineService
                 {
                     ct.ThrowIfCancellationRequested();
                     var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
-                    var batches = hostsNeedingDate.Chunk(IpBatchSize).ToList();
+
+                    // 高流量主機跨日記憶（回饋十四輪 B1）：曾在單獨查詢下仍截斷的主機直接讓它
+                    // 單獨成一批，不必每天都從整批大小重新二分收斂到它（見 RunBatchDayAsync
+                    // 的截斷處理）——穩態下每天只多付這 1 次查詢，而不是 log₂(批次大小) 次。
+                    // 其餘主機照舊依 IpBatchSize 分批。
+                    var highVolumeBatches = hostsNeedingDate.Where(p => p.IsHighVolume).Select(p => new[] { p });
+                    var normalBatches = hostsNeedingDate.Where(p => !p.IsHighVolume).Chunk(IpBatchSize);
+                    var batches = highVolumeBatches.Concat(normalBatches).ToList();
 
                     // 取消交給 ParallelOptions.CancellationToken 統一處理（同 RunAsync 頂層的既有模式）。
                     await Parallel.ForEachAsync(batches, new ParallelOptions
@@ -341,7 +364,7 @@ public class NetiqPipelineService
                             throw new InvalidOperationException("Sentinel client pool 耗盡（不應發生：並行度已受池大小節制）。");
                         try
                         {
-                            await RunBatchDayAsync(client, sentinel.Name, batch, date, os, trendWindowDays, result, aiQueue, batchCt);
+                            await RunBatchDayAsync(client, sentinel.Name, batch, date, os, trendWindowDays, result, aiQueue, suppressionSnapshot, batchCt);
                         }
                         finally
                         {
@@ -384,7 +407,8 @@ public class NetiqPipelineService
 
     private async Task RunBatchDayAsync(
         ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date, string os,
-        int trendWindowDays, NetiqPipelineResult result, AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
+        int trendWindowDays, NetiqPipelineResult result, AiFollowupQueue<AiFollowupJob> aiQueue,
+        List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var isLinux = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
         var ips = batch.Select(p => p.Target.IpAddress).ToList();
@@ -434,14 +458,29 @@ public class NetiqPipelineService
             if (batch.Length > 1)
             {
                 var mid = batch.Length / 2;
-                await RunBatchDayAsync(client, sentinelName, batch[..mid], date, os, trendWindowDays, result, aiQueue, ct);
-                await RunBatchDayAsync(client, sentinelName, batch[mid..], date, os, trendWindowDays, result, aiQueue, ct);
+                await RunBatchDayAsync(client, sentinelName, batch[..mid], date, os, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
+                await RunBatchDayAsync(client, sentinelName, batch[mid..], date, os, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
                 return;
             }
 
             // 已收斂到單台仍截斷：真的沒辦法再切了，誠實標記資料不完整
             _console.WriteLine($"  ⚠ [{sentinelName}] {date:yyyy-MM-dd} 查詢結果被截斷" +
                               $"（found={searchResult.Found}，取回={searchResult.Events.Count}），標記資料不完整");
+
+            // 跨日記憶（回饋十四輪 B1）：單獨查詢都還截斷，記下來讓明天分批直接把這台獨立成一批，
+            // 不必再從整批大小重新二分收斂。只在旗標還沒設時才寫，避免同一台主機連續高流量的
+            // 每一天都白白多一次 blob 寫入。
+            if (!batch[0].IsHighVolume)
+            {
+                _hosts.SetHighVolume(batch[0].Target.HostId, true);
+            }
+        }
+        else if (batch.Length == 1 && batch[0].IsHighVolume && searchResult.Found < _netiqOptions.MaxResultsPerJob / 2)
+        {
+            // 旗標清除（回饋十四輪 B1）：單獨查詢已經不再截斷，且量遠低於上限（<50%）才清除——
+            // 遲滯設計防臨界主機在「單獨成批／合批再二分」間日日震盪。門檻用 Found（Sentinel
+            // 回報的符合條件總數，不受 max-results 截斷影響）而非取回筆數，才是真實日流量。
+            _hosts.SetHighVolume(batch[0].Target.HostId, false);
         }
 
         var eventsByIp = searchResult.Events
@@ -463,7 +502,7 @@ public class NetiqPipelineService
 
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,
-                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName, aiQueue, ct);
+                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName, aiQueue, suppressionSnapshot, ct);
 
             // 主機之間讓出執行緒（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
             // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
@@ -491,7 +530,7 @@ public class NetiqPipelineService
     private async Task AnalyzeHostDayAsync(
         HostPlan plan, DateTime date, List<EventLogEntryData> events, bool dataIncomplete,
         string? displayName, bool hostReported, int trendWindowDays, NetiqPipelineResult result, string sentinelName,
-        AiFollowupQueue<AiFollowupJob> aiQueue, CancellationToken ct)
+        AiFollowupQueue<AiFollowupJob> aiQueue, List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var target = plan.Target;
 
@@ -499,11 +538,12 @@ public class NetiqPipelineService
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
         // 全部共用既有實例，不重複建構。這個實例會被 AiWorkItem 需要 AI 時一併帶進佇列，
         // AI 段用同一個實例呼叫 CompleteAiAsync（見下方 AiFollowupJob）。
-        // hostGroupIds（回饋十三輪 F）：抑制的 Group 範圍判定要知道這台主機的群組成員資格。
+        // hostGroupIds（回饋十三輪 F）：抑制的 Group 範圍判定要知道這台主機的群組成員資格，
+        // 回饋十四輪 A3 改讀計畫階段已解析好的 plan.GroupIds，不再每主機日查一次 HostStore。
         var analysisService = new LogAnalysisService(
             _eventLogService, _aiService, plan.Store, _suppressionStore,
             target.RoleDesc, _reportService, target.HostName, target.HostId,
-            hostGroupIds: _hosts.Get(target.HostId)?.GroupIds);
+            hostGroupIds: plan.GroupIds, suppressionSnapshot: suppressionSnapshot);
 
         // 記錄是否已成功寫入（見下方 catch(OperationCanceledException) 的判斷依據）——
         // BuildStatisticalRecordAsync 本身被取消時 record 仍是 null，維持既有「未寫入歷史，
@@ -539,20 +579,9 @@ public class NetiqPipelineService
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
 
-            // AiWorkItem.Logs 窄化為風險事件選取結果（回饋十三輪 B1，體檢批 0 #1）：workItem.Logs
-            // 目前是 BuildStatisticalRecordAsync 內部整份 events（單一 Sentinel job 上限可達
-            // NetiqOptions.MaxResultsPerJob＝10 萬筆），而 AiFollowupQueue.Capacity=200 只界件數，
-            // 帶著全量事件排隊時實際記憶體上限＝200×不確定，AI 落後時可達 GB 級（規模化輪 S2
-            // 同一個坑的形狀）。深析報告最終只挑 20 筆（RiskReportService.MaxRawLogsPerReport），
-            // 這裡改成只帶 RiskyEventSelector 的選取結果（≤500 筆，同一套資格判定，不受
-            // ReplaceRiskyEvents 的保留期閘門限制——AI 佇列的記憶體風險與是否落地暫存是兩件事，
-            // 深度回補超過保留期的日子一樣要窄化）。已知行為變更：報告的原始 log 選取池從全量
-            // 縮成 risky 池，SelectRawLogs 的 fallback 焦點問題若不在 risky 池內會顯示
-            // 「（無對應的原始 log）」——報告已有此優雅降級，非新增缺口。
-            if (workItem != null)
-            {
-                workItem = workItem with { Logs = RiskyEventSelector.SelectSourceEvents(record.TopIssues, events) };
-            }
+            // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
+            // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果
+            // （≤500 筆），不必在這裡事後補——見 AiWorkItem.cs 與 RiskyEventSelector 的文件。
 
             // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
             // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
@@ -715,7 +744,14 @@ public class NetiqPipelineService
         }
     }
 
-    private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates);
+    /// <param name="GroupIds">這台主機所屬的主機群組 Id（回饋十四輪 A3）：計畫階段（<see cref="RunServerOsGroupAsync"/>）
+    /// 解析一次，取代原本 <see cref="AnalyzeHostDayAsync"/> 每主機日各自呼叫一次 <c>HostStore.Get</c>——
+    /// 該方法整份 blob 反序列化、無快取，2000 台×14 天等於 28,000 次全量讀。</param>
+    /// <param name="IsHighVolume">這台主機上次是否曾在單獨查詢下仍被截斷（回饋十四輪 B1，
+    /// <see cref="WebHost.IsHighVolume"/> 的計畫階段快照）：true 時分批（<see cref="RunServerOsGroupAsync"/>）
+    /// 直接讓它單獨成一批，不必每天都從整批大小重新二分收斂到它。</param>
+    private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates,
+        IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
 }
 
 /// <summary>

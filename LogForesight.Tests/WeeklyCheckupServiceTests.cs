@@ -145,4 +145,39 @@ public class WeeklyCheckupServiceTests
         Assert.Equal("本期無累積性異常，程式比對通過。", outcome.Conclusion);
         Assert.False(sink.Called);
     }
+
+    // ── BuildPrompt：AiAnalyzed 守衛（回饋十四輪 B2）───────────────────────
+
+    /// <summary>
+    /// AiPending／統計模式的樣板 Summary（如「（統計已完成，AI 分析排隊中）」）不是真正的 AI
+    /// 判讀，不該被當成「當日結論」引用進體檢 prompt——否則模型會把程式寫的佔位字串當成
+    /// 先前已有的敘事脈絡來延續。比照 AnalysisPromptBuilder 對每日 prompt 的同一道守衛
+    /// （<c>h.AiAnalyzed &amp;&amp; h.Summary.Length &gt; 0</c>）。
+    /// </summary>
+    [Fact]
+    public async Task 非AI判讀的樣板摘要不會被引用進體檢prompt()
+    {
+        var window = new List<DailyAnalysisRecord>
+        {
+            new()
+            {
+                Date = DateTime.Today.AddDays(-2), RiskLevel = "高", AiAnalyzed = false,
+                Summary = "（統計已完成，AI 分析排隊中）"
+            },
+            new()
+            {
+                Date = DateTime.Today.AddDays(-1), RiskLevel = "高", AiAnalyzed = true,
+                Summary = "偵測到真正的AI判讀內容"
+            }
+        };
+        var ai = new FakeAiService { NextContent = """{"conclusion":"測試結論"}""" };
+        var service = new WeeklyCheckupService(ai, new FakeReader(window), new FakeReportSink());
+
+        var outcome = await service.RunAsync(DateTime.Today, intervalDays: 7);
+
+        Assert.True(outcome.Completed);
+        var prompt = Assert.Single(ai.Prompts);
+        Assert.DoesNotContain("AI 分析排隊中", prompt);
+        Assert.Contains("偵測到真正的AI判讀內容", prompt);
+    }
 }

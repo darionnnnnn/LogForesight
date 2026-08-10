@@ -100,6 +100,16 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         });
     }
 
+    public void SetHighVolume(long hostId, bool isHighVolume)
+    {
+        Mutate(hosts =>
+        {
+            var host = hosts.FirstOrDefault(h => h.HostId == hostId);
+            if (host == null) return;
+            host.IsHighVolume = isHighVolume;
+        });
+    }
+
     public HostGroupsBatchResult SetGroupsBatch(IEnumerable<long> hostIds, IEnumerable<long> groupIds, bool replace)
     {
         var wanted = groupIds.Distinct().ToList();

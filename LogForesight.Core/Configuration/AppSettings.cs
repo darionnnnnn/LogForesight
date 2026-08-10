@@ -53,7 +53,7 @@ public class AiSettings
     /// 白白浪費時間。如果模型的「思考/推理」長度本身沒有上限，一直調高這個值也只是把
     /// 截斷點往後延，不是根本解——請優先用 ExtraRequestFields 限制思考長度（見下方）。
     /// </summary>
-    public int MaxTokens { get; set; } = 1536;
+    public int MaxTokens { get; set; } = 2048;
 
     /// <summary>
     /// 深入分析呼叫（RiskReportService 逐類別的問題分析）的 token 上限，獨立於 MaxTokens 之外。

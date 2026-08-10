@@ -171,6 +171,76 @@ public class TrendAnalyzerTests
         Assert.Contains(alerts, a => a.Contains("整體錯誤量突增"));
     }
 
+    /// <summary>
+    /// 回饋十四輪 A1：零膨脹主機（錯誤只在部分日子出現）修復前的退化行為——14 天中 8 天
+    /// ErrorCount=0、6 天為 100，含零值的中位數＝0（排序後第 7、8 個皆為 0），
+    /// 0×RisingFactor 恆為 0，倍率條件恆真，規則退化成「今日 ≥10 筆」固定門檻，
+    /// 今日 10 筆這種正常量也會被誤判為「整體錯誤量突增」。改用非零日中位數（100）後，
+    /// 門檻回到 100×2=200，今日 10 筆不再誤觸發。
+    /// </summary>
+    [Fact]
+    public void 整體錯誤量_零膨脹主機今日未達非零日基準兩倍時不觸發()
+    {
+        var history = Enumerable.Range(1, 8)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 0, RiskLevel = "低" })
+            .Concat(Enumerable.Range(9, 6)
+                .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 100, AuditEventCount = 0, RiskLevel = "低" }))
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 10, todayAuditCount: 0);
+
+        Assert.DoesNotContain(alerts, a => a.Contains("整體錯誤量突增"));
+    }
+
+    /// <summary>同一份零膨脹歷史，今日達非零日基準（100）兩倍時仍要能正確觸發——修復不是把規則整個關掉。</summary>
+    [Fact]
+    public void 整體錯誤量_零膨脹主機今日達非零日基準兩倍時觸發()
+    {
+        var history = Enumerable.Range(1, 8)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 0, RiskLevel = "低" })
+            .Concat(Enumerable.Range(9, 6)
+                .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 100, AuditEventCount = 0, RiskLevel = "低" }))
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 200, todayAuditCount: 0);
+
+        Assert.Contains(alerts, a => a.Contains("整體錯誤量突增") && a.Contains("基準 100"));
+    }
+
+    /// <summary>
+    /// 歷史裡一筆非零錯誤日都沒有時，無基準可算，但不代表不用管——維持固定門檻（今日 ≥10 筆）
+    /// 照樣觸發，只是文案誠實說「多數日無錯誤」，不再宣稱一個不存在的「基準 0 筆」。
+    /// </summary>
+    [Fact]
+    public void 整體錯誤量_歷史全零時仍以絕對門檻觸發但文案不宣稱基準筆數()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 0, RiskLevel = "低" })
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 10, todayAuditCount: 0);
+
+        Assert.Contains(alerts, a => a.Contains("整體錯誤量突增") && a.Contains("多數日無錯誤"));
+        Assert.DoesNotContain(alerts, a => a.Contains("基準 0 筆"));
+    }
+
+    /// <summary>安全稽核事件量突增與整體錯誤量突增同一套修復（回饋十四輪 A1），同構驗證一份即可。</summary>
+    [Fact]
+    public void 安全稽核事件量突增_零膨脹主機基準改用非零日中位數()
+    {
+        var history = Enumerable.Range(1, 8)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 0, RiskLevel = "低" })
+            .Concat(Enumerable.Range(9, 6)
+                .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 100, RiskLevel = "低" }))
+            .ToList();
+
+        var belowThreshold = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 10);
+        Assert.DoesNotContain(belowThreshold, a => a.Contains("安全稽核事件量突增"));
+
+        var atThreshold = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 200);
+        Assert.Contains(atThreshold, a => a.Contains("安全稽核事件量突增") && a.Contains("基準 100"));
+    }
+
     // ── 新頻道暖身（防切換日告警風暴）────────────────────────────────────
 
     [Fact]

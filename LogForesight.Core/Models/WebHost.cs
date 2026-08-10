@@ -110,6 +110,15 @@ public class WebHost
     /// 只有帶此標記的主機才進 NetIQ 匯入精靈的「重疊」分類、被建議一鍵復活重綁。
     /// </summary>
     public string? OrphanedFromSentinel { get; set; }
+
+    /// <summary>
+    /// NetIQ 批次專用（回饋十四輪 B1）：這台主機的單日事件量持續撞上單一 Sentinel job 的
+    /// <see cref="NetiqOptions.MaxResultsPerJob"/> 上限，即使單獨查詢也會被截斷，需要靠
+    /// <c>NetiqPipelineService</c> 的二分重查才收斂得完。標記後分批時直接讓這台主機獨立成
+    /// 單台批次，不必每天都從整批大小重新二分收斂到它——省下 log₂ 深度的查詢次數。
+    /// 由批次自動維護（單獨查詢仍截斷時設定；不再截斷且遠低於上限時清除），Web 不提供編輯。
+    /// </summary>
+    public bool IsHighVolume { get; set; }
 }
 
 /// <summary>主機群組（↔ lf_host_groups）。維度不限於部門，也可以是 DMZ、DB 伺服器等分類</summary>

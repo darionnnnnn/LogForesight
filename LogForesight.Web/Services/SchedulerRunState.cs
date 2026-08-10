@@ -29,6 +29,21 @@ public class SchedulerRunState
     public int ProgressDone { get; private set; }
     public int ProgressTotal { get; private set; }
 
+    /// <summary>
+    /// 子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure 是 AI 佇列在背景消化的同一條軌，
+    /// 與上面的主進度（netiq，搜尋＋統計仍在往下一台主機推進）在同一次執行內是**同時**在跑的
+    /// 兩件事——原本共用一組 ProgressPhase/Done/Total 欄位，後回報的會直接覆蓋先回報的，
+    /// 使用者看到的症狀是「進度卡住不動」，其實是另一條軌把畫面接管走了。分成獨立欄位後
+    /// 兩條軌各自持有最後回報值，狀態 API 兩者都給，前端就能同時畫出主／子兩條進度條。
+    /// local／netiq 兩個主階段彼此不重疊（同一次執行依序跑完本機才進 NetIQ），沿用舊語意
+    /// 共用同一組主進度欄位即可，不需要比照子進度拆開。
+    /// </summary>
+    private static readonly HashSet<string> SubProgressPhases = new() { "netiq-ai", "netiq-backpressure" };
+
+    public string? SubProgressPhase { get; private set; }
+    public int SubProgressDone { get; private set; }
+    public int SubProgressTotal { get; private set; }
+
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
     public RunOutcome? LastOutcome { get; private set; }
@@ -51,6 +66,9 @@ public class SchedulerRunState
             ProgressPhase = null;
             ProgressDone = 0;
             ProgressTotal = 0;
+            SubProgressPhase = null;
+            SubProgressDone = 0;
+            SubProgressTotal = 0;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -68,15 +86,25 @@ public class SchedulerRunState
     }
 
     /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ 兩階段各自的
-    /// 主機日進度，供狀態 API 畫進度條。</summary>
+    /// 主機日進度，供狀態 API 畫進度條。phase 落在 <see cref="SubProgressPhases"/> 時寫入子進度欄位，
+    /// 其餘（local／netiq）寫入主進度欄位——兩組欄位互不覆蓋（回饋十四輪 UI-6）。</summary>
     public void ReportProgress(string phase, int done, int total)
     {
         lock (_lock)
         {
             if (!IsRunning) return;
-            ProgressPhase = phase;
-            ProgressDone = done;
-            ProgressTotal = total;
+            if (SubProgressPhases.Contains(phase))
+            {
+                SubProgressPhase = phase;
+                SubProgressDone = done;
+                SubProgressTotal = total;
+            }
+            else
+            {
+                ProgressPhase = phase;
+                ProgressDone = done;
+                ProgressTotal = total;
+            }
         }
     }
 
@@ -92,6 +120,9 @@ public class SchedulerRunState
             ProgressPhase = null;
             ProgressDone = 0;
             ProgressTotal = 0;
+            SubProgressPhase = null;
+            SubProgressDone = 0;
+            SubProgressTotal = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

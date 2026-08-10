@@ -26,6 +26,22 @@ internal static class SuppressionFilter
         List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now) =>
         all.Where(s => IsForHost(s, host, hostGroupIds) && IsExpired(s, now)).ToList();
 
+    /// <summary>
+    /// 到期項目中，RuleId 仍被同一主機另一筆生效中抑制覆蓋的集合（回饋十四輪 C1）：同一條規則
+    /// 可能同時有 Site（永久）與 Host（已到期）兩筆抑制——只看到期的那一筆會誤導使用者以為
+    /// 解除它就能恢復告警，但其實該規則仍受另一個範圍抑制，解除到期的那筆不會有任何效果。
+    /// 用 <see cref="ActiveForHost"/> 反查：那個集合本身已排除到期項目，不會自我比對出偽陽性。
+    /// </summary>
+    public static HashSet<string> StillSuppressedElsewhere(
+        List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now)
+    {
+        var activeRuleIds = ToRuleIdSet(ActiveForHost(all, host, hostGroupIds, now));
+        return ExpiredForHost(all, host, hostGroupIds, now)
+            .Select(s => s.RuleId)
+            .Where(activeRuleIds.Contains)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     private static bool IsForHost(RuleSuppression s, string host, IReadOnlyCollection<long> hostGroupIds) => s.Scope switch
     {
         SuppressionScopes.Site => true,

@@ -850,16 +850,22 @@ export function checkboxList(container, items, emptyHint) {
  * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement }}
  */
 export function searchableUserSelect(users, { selectedId = null, includeNone = false, noneLabel = '（未指派）', pinnedNames = [], onChange } = {}) {
+    // input-group（回饋十四輪 UI-8）：搜尋框只是幫助篩選 select 選項的輔助工具，不是獨立的
+    // 輸入功能，原本各自成行看起來像兩個平行欄位，容易讓人誤以為要分別填寫兩者。併成一行、
+    // 搜尋框佔比縮小（flex-basis 40%）、select 佔滿剩餘寬度，一眼看出「主要選這裡、
+    // 打字只是幫忙篩選」的主從關係——互動邏輯（renderOptions／currentValue）完全不變。
     const wrap = document.createElement('div');
+    wrap.className = 'input-group input-group-sm';
 
     const search = document.createElement('input');
     search.type = 'text';
-    search.className = 'form-control form-control-sm mb-1';
-    search.placeholder = '輸入帳號或顯示名稱篩選…';
+    search.className = 'form-control';
+    search.style.flex = '0 1 40%';
+    search.placeholder = '篩選…';
     search.autocomplete = 'off';
 
     const select = document.createElement('select');
-    select.className = 'form-select form-select-sm';
+    select.className = 'form-select';
 
     const pinned = new Set(pinnedNames);
     const sorted = [...users].filter(u => u.active).sort((a, b) => {

@@ -46,13 +46,38 @@ internal class FakeRuleSeedStore : IRuleSeedStore
     }
 }
 
+/// <summary>回饋十四輪 C1：抑制影響面預覽（RuleAdminService.PreviewSuppression）用的假聚合查詢——
+/// 測試直接塞好要回傳的 IssueAggregate 清單，不需要真的連 SQL。</summary>
+internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
+{
+    public List<IssueAggregate> Result { get; set; } = new();
+
+    /// <summary>最後一次呼叫的參數，供測試斷言查詢範圍（期間／hostIds）有沒有傳對。</summary>
+    public (DateTime From, DateTime To, IReadOnlyCollection<long>? HostIds)? LastCall { get; private set; }
+
+    public List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    {
+        LastCall = (from, to, hostIds);
+        // 與真正的 EfIssueAggregateQuery 同一個既有慣例：空集合＝可見範圍為空，零結果
+        if (hostIds != null && hostIds.Count == 0) return new List<IssueAggregate>();
+        return Result;
+    }
+}
+
 internal class FakeSuppressionStore : ISuppressionStore
 {
     private List<RuleSuppression> _suppressions = new();
 
     public string Location => "(fake)";
 
-    public List<RuleSuppression> LoadAll() => _suppressions.ToList();
+    /// <summary>回饋十四輪 A3：驗證 per-run 快取有沒有真的把 LoadAll 收斂成呼叫一次用的計數器。</summary>
+    public int LoadAllCallCount { get; private set; }
+
+    public List<RuleSuppression> LoadAll()
+    {
+        LoadAllCallCount++;
+        return _suppressions.ToList();
+    }
 
     public void SaveAll(List<RuleSuppression> suppressions) => _suppressions = suppressions.ToList();
 }

@@ -159,6 +159,27 @@ public class AddSuppressionRequest
     public int? Days { get; set; }
 }
 
+/// <summary>
+/// Group／Site 抑制的送出前影響面預覽（回饋十四輪 C1）：一鍵讓一條規則在大量主機上噤聲，
+/// 送出前先讓人看清楚規模。Host 範圍只影響單台主機，不需要這道關卡（見
+/// <see cref="RuleAdminService.PreviewSuppression"/> 的守衛）。
+/// </summary>
+public class SuppressionPreviewDto
+{
+    /// <summary>此抑制範圍目前涵蓋的存活主機數</summary>
+    public int AffectedHostCount { get; set; }
+
+    /// <summary><see cref="WindowDays"/> 天內，這條規則在 <see cref="AffectedHostCount"/> 台主機上的命中次數合計</summary>
+    public long RecentHitCount { get; set; }
+
+    public int WindowDays { get; set; }
+
+    /// <summary>true＝這條規則是 Linux 規則，<see cref="RecentHitCount"/> 是以「同來源程式」
+    /// 合計而非精準對應這條規則（lf_top_issues 沒有存 Linux 的 EventKey，無法區分「同 program
+    /// 命中不同規則」的情況），畫面應標註可能略高於實際數字</summary>
+    public bool ApproximateForLinux { get; set; }
+}
+
 /// <summary>規則的回復預設預覽：目前內容 vs 原廠種子</summary>
 public class RuleRestorePreviewDto
 {

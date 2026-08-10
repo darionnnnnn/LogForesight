@@ -163,6 +163,55 @@ public class SuppressionTests
         Assert.Single(SuppressionFilter.ExpiredForHost(all, "ANY-HOST", Array.Empty<long>(), now));
     }
 
+    // ── StillSuppressedElsewhere：同規則跨範圍並存的到期語意（回饋十四輪 C1）─────────
+
+    /// <summary>釘住問題本身的場景：同一條規則同時有 Site（永久）與 Host（已到期）兩筆——
+    /// 到期的是 Host 那筆，但規則實際仍受 Site 範圍抑制，解除 Host 那筆不會恢復告警。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_Site永久與Host已到期並存時回報仍受抑制()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { RuleId = "rule-a", Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1) },
+            new() { RuleId = "rule-a", Scope = SuppressionScopes.Site, ExpiresAt = null }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Contains("rule-a", result);
+    }
+
+    [Fact]
+    public void StillSuppressedElsewhere_到期後沒有其他生效範圍時回報空集合()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { RuleId = "rule-a", Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1) }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Empty(result);
+    }
+
+    /// <summary>到期的那一筆本身不該被反查回自己身上（ActiveForHost 已排除到期項目，
+    /// 這裡釘住「只有一筆、已到期、沒有別的範圍」時不會被誤判成仍生效）。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_不會把到期項目自己誤判為仍生效()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { RuleId = "rule-a", Scope = SuppressionScopes.Site, ExpiresAt = now.AddDays(-1) }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "ANY-HOST", Array.Empty<long>(), now);
+
+        Assert.Empty(result);
+    }
+
     /// <summary>舊資料相容：Scope 欄位改版前不存在，反序列化後的預設值就是 Host，
     /// 語意與改版前逐位相同——這裡直接構造「沒設 Scope」的物件模擬舊資料。</summary>
     [Fact]

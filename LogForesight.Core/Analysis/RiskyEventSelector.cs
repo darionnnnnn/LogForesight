@@ -69,18 +69,37 @@ public static class RiskyEventSelector
     /// <summary>
     /// 選取結果的原始事件版本（回饋十三輪 B1）：與 <see cref="Select"/> 共用同一套資格判定、
     /// 分組與頭尾截斷邏輯（<see cref="SelectQualifyingEntries"/>），只是不轉成
-    /// <see cref="RiskyEvent"/>——不需要落庫用的 RuleId／訊息截斷／CreatedAt 這些欄位。
+    /// <see cref="RiskyEvent"/>——不需要落庫用的 RuleId／CreatedAt 這些欄位。
     ///
-    /// 供 <c>AiWorkItem.Logs</c> 入列前過濾使用：AI 深析報告最終只從這裡挑 20 筆
+    /// 供 <c>AiWorkItem.Logs</c> 入列前過濾使用（回饋十四輪 A2，呼叫端移進
+    /// <see cref="Service.LogAnalysisService.BuildStatisticalRecordAsync"/> 本身，型別內建構時
+    /// 就窄化，不再由呼叫端事後補）：AI 深析報告最終只從這裡挑 20 筆
     /// （<see cref="Service.RiskReportService.MaxRawLogsPerReport"/>），沒有理由讓
     /// <see cref="Service.AiFollowupQueue{T}"/> 帶著全量事件（含未命中規則、非趨勢異常的雜訊，
     /// 單一 Sentinel job 上限可達 <c>NetiqOptions.MaxResultsPerJob</c>＝10 萬筆）在記憶體裡排隊等消化——
-    /// 佇列容量 200 件原本只界件數，真正吃記憶體的是這裡。截斷點與 <see cref="Select"/>
-    /// 寫進 <c>lf_risky_events</c> 暫存的內容逐位一致（同一次計算的兩種輸出形狀）。
+    /// 佇列容量 200 件原本只界件數，真正吃記憶體的是這裡。選取點（哪些事件入選、依嚴重度排序、
+    /// 每簽章頭尾各半、每主機日合計 500 筆上限）與 <see cref="Select"/> 寫進
+    /// <c>lf_risky_events</c> 暫存的內容逐位一致（同一次計算的兩種輸出形狀），差別只在這裡
+    /// 額外把 <see cref="EventLogEntryData.Message"/> 截到 <see cref="MaxMessageChars"/>
+    /// （與落庫版對齊——深析報告最長只取用 500 字，2000 字上限純為封頂單筆記憶體，不影響內容）。
+    /// 回傳全新物件（不修改傳入的 <paramref name="logs"/>），呼叫端後續若還要用原始未截斷的
+    /// 事件（如寫入風險 log 暫存），拿到的仍是完整訊息。
     /// </summary>
     public static List<EventLogEntryData> SelectSourceEvents(List<LogIssueSignature> issues, List<EventLogEntryData> logs)
     {
-        var result = SelectQualifyingEntries(issues, logs).SelectMany(pair => pair.Entries).ToList();
+        var result = SelectQualifyingEntries(issues, logs)
+            .SelectMany(pair => pair.Entries)
+            .Select(e => new EventLogEntryData
+            {
+                TimeGenerated = e.TimeGenerated,
+                EntryType = e.EntryType,
+                LogName = e.LogName,
+                Source = e.Source,
+                Message = TextTruncation.Truncate(e.Message, MaxMessageChars),
+                InstanceId = e.InstanceId,
+                EventId = e.EventId
+            })
+            .ToList();
         return result.Count > MaxPerHostDay ? result.Take(MaxPerHostDay).ToList() : result;
     }
 
