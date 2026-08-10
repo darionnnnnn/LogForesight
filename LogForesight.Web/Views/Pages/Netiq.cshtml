@@ -76,10 +76,10 @@
                 <div class="col-sm-6 col-lg-4">
                     <label for="opt-max-parallel-servers" class="form-label">同時處理幾台 Sentinel</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理（既有行為）。平行度越高，單一 Sentinel 逾時／失敗越不拖累其他台，但同時發出的查詢也越多。">
+                            data-bs-content="各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理（既有行為）。上限 3：分析與網站同一個行程，平行度上限 3，避免拖慢前景畫面（不是效能旋鈕，調更高不會生效）。">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
-                    <input type="number" class="form-control" id="opt-max-parallel-servers" min="1" max="8" />
+                    <input type="number" class="form-control" id="opt-max-parallel-servers" min="1" max="3" />
                 </div>
             </div>
             <div class="form-check mt-3">

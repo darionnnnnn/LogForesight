@@ -75,6 +75,52 @@ public static class SentinelFieldMap
         InitiatorAccount, XdasOutcome
     };
 
+    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.0/§4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
+
+    /// <summary>syslog program／process 名稱（如 <c>sshd</c>、<c>kernel</c>）。**term 欄位、
+    /// 大小寫不敏感、支援前綴萬用字元**（輪 B 第 1 項：<c>sp:networkmanager</c> 與
+    /// <c>sp:NetworkManager</c> found 相同；<c>sp:user*</c> 命中 <c>sp:user</c> 查不到的事件）——
+    /// 與 <see cref="Source"/>（Windows）的「term 但不斷詞」語意相近，但 Linux 這邊額外確認
+    /// 前綴萬用字元有效，filter 產生器可放心用 <c>sp:{program}*</c>。</summary>
+    public const string LinuxProgram = "sp";
+
+    /// <summary>CEF collector（Universal Common Event Format）路徑的事件 program 落點——
+    /// 第二次 probe 實證：這類事件 <see cref="LinuxProgram"/> 缺席，program 改落在這裡
+    /// （如 <c>obssvcname=conmon</c>）。受監控主機目前全走 NetIQ Universal Event collector
+    /// （輪 B 第 7 項：欄位聯集無此欄），這是 <see cref="SentinelEventMapper"/> 的第二順位
+    /// fallback，不是主要取值來源。</summary>
+    public const string LinuxObsSvcName = "obssvcname";
+
+    /// <summary>syslog facility（如 <c>DAEMON</c>、<c>KERNEL</c>、<c>USER</c>）——輪 A 實證：
+    /// 同名欄位在 Windows 事件上承載頻道名（<see cref="LogName"/>），Linux 事件上是不同語意，
+    /// 兩者共用同一個 Sentinel 欄位鍵但意義不同（collector 差異）。第一版投影帶回，不參與比對。</summary>
+    public const string LinuxFacility = "rv150";
+
+    /// <summary>Linux Q1 查詢投影欄位。不含 <see cref="EventName"/>（`evt` 在此環境是
+    /// 「NetIQ Universal Event {program} Event」樣板字串，無正規化語意，輪 A 定案不使用）、
+    /// 不含 <see cref="InitiatorAccount"/>／<see cref="InitiatorIp"/>／<see cref="XdasOutcome"/>／
+    /// <see cref="EventId"/>（Linux 事件無此四欄，輪 A 實證）。含 <see cref="LinuxObsSvcName"/>：
+    /// 短欄位，頻寬成本可忽略，供 mapper 的 Source 三段 fallback 鏈使用。</summary>
+    public static readonly IReadOnlyList<string> LinuxQ1ProjectionFields = new[]
+    {
+        HostIp, HostName, LinuxProgram, LinuxObsSvcName, LinuxFacility, Timestamp, Severity, Message
+    };
+
+    /// <summary>
+    /// Linux sev→<see cref="EventLogEntryType"/> 的推導（輪 B 第 3/4 項定案）：
+    /// <c>0~1→Information、2→Warning、3~5→Error</c>。**這是計數用途的務實選擇，不是 syslog
+    /// priority 語意的還原**——輪 B 實證 sev 不可靠承載該語意（NetworkManager 的 <c>&lt;warn&gt;</c>
+    /// 與 dockerd 的 <c>level=error</c> 皆落在 sev=1；「pam_unix session opened」這類正常訊息
+    /// 反而落在 sev3-5）。誤差只影響錯誤/警告計數與 generic 收集門檻，不影響規則命中
+    /// （program＋message 比對，見 <see cref="KnownIssueCatalog.FindLinuxRule"/>，與 EntryType 無關）。
+    /// </summary>
+    public static EventLogEntryType MapEntryTypeLinux(int severity) => severity switch
+    {
+        <= 1 => EventLogEntryType.Information,
+        2 => EventLogEntryType.Warning,
+        _ => EventLogEntryType.Error
+    };
+
     /// <summary>
     /// 嚴重度→<see cref="EventLogEntryType"/> 的推導。**部分門檻是候選值，未經試點實證**：
     /// Security 頻道靠 <see cref="XdasOutcome"/>（廠商固定分類，比 sev 門檻可靠）判斷成功/失敗稽核；

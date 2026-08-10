@@ -35,14 +35,14 @@ internal class WeeklyCheckupService
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出一個符合使用者指定結構的 JSON 物件。";
 
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
     private readonly IAnalysisRecordReader _historyReader;
     private readonly IReportSink _reportSink;
     private readonly ISuppressionStore? _suppressionStore;
 
     /// <param name="suppressionStore">提供時，體檢報告固定列出本機生效中的抑制清單＋窗口期間各自的
     /// 發生次數（見 docs/RULES-SPEC.md 陷阱 4：暫時關閉的告警不該變成永久盲區）；null 時略過該區塊。</param>
-    public WeeklyCheckupService(AIService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink, ISuppressionStore? suppressionStore = null)
+    public WeeklyCheckupService(IAiService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink, ISuppressionStore? suppressionStore = null)
     {
         _aiService = aiService;
         _historyReader = historyReader;

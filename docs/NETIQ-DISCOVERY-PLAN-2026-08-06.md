@@ -206,6 +206,7 @@ cap：10,000（SupplementMaxResults），殘差輪掃同 3.1、上限 2 輪
 |---|---|
 | `NOT` 子句在此環境無效（未實證） | 排除失效偵測（3.1）當場抓到、停止輪掃、顯性警告；退回行為=單輪掃描（不劣於現行）。試點核對清單+1 |
 | 某環境 collector 不轉送 System/Application | 補充掃描仍在；主掃描 0 台＋補充有台數 → 提示跑診斷；證實後 `BuildSubnetProbeFilter` 退回全事件＝改一處 |
+| **（已正式落地）Linux Sentinel 的 `rv150` 是 facility 不是頻道名** | 這條退路已於回饋第十二輪批 4B.5 正式實作為 `BuildSubnetProbeFilter` 的 `os` 分支——不是「某環境可能不轉送」的未證實風險，是**確定成立**的 Linux 平台差異（`rv150` 在 Linux 承載 `DAEMON`／`KERNEL` 等 facility 值，`rv150:System OR rv150:Application` 頻道子句對 Linux Sentinel 必然 0 台）：Linux 時內容子句固定退回 `sev:[0 TO 5]`，Windows 行為不變。見 docs/NETIQ-API-REFERENCE.md §4a、docs/FEEDBACK-12-PLAN.md §4.4 item 5 |
 | 超大網段（>1,600 台或已登錄>500） | 輪數/子句上限觸頂 → 顯性警告建議拆 /24；不靜默、不半套 |
 | 多輪 job 增加 Sentinel job 數 | 每輪用完即刪；輪間沿用 `QueryDelayMs` 節流；輪數上限 5 |
 

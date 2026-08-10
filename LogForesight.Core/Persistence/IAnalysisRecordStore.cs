@@ -54,4 +54,16 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     /// 找不到對應日期的紀錄時安靜略過（理論上不應發生，因為呼叫前一定先做過當日分析）。
     /// </summary>
     void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup);
+
+    /// <summary>
+    /// 將 AI 段定案結果附掛到已存在的當日統計紀錄（docs/FEEDBACK-12-PLAN.md §3.5）：NetIQ pipeline
+    /// 兩階段化後，統計段先 <see cref="Append"/> 一筆 <c>AiPending=true</c> 的暫代紀錄，AI 段完成後
+    /// 用這個方法讀-改-寫回，與 <see cref="AttachWeeklyCheckup"/> 同一個樣板。
+    ///
+    /// 契約與 <see cref="AttachWeeklyCheckup"/> 一致：找不到對應日期安靜略過並記警告（理論上不應
+    /// 發生，統計段一定先 Append 過）。實作必須同步更新任何從內容抽出的索引/查詢欄（如
+    /// risk_level）——AI 若把風險往上拉（ai_raise），只改 JSON 內容、不改抽出欄，會讓清單／排行
+    /// ／儀表板讀到的風險等級與詳情頁對不上（欄位漂移）。
+    /// </summary>
+    void AttachAiResult(DateTime date, AiOutcome outcome);
 }

@@ -55,11 +55,14 @@ public class RunActivityController : ControllerBase
         Done = _runState.ProgressDone,
         Total = _runState.ProgressTotal,
         // 兩個階段的分母都是「主機日」，但一般使用者對這個單位沒有概念——
-        // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台），各用看得懂的量詞
+        // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台），各用看得懂的量詞。
+        // netiq-ai（docs/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在消化時的
+        // 第二階段，分母是排隊的主機日數，用「件」而非「台」——避免使用者以為又要重新查一次。
         UnitText = _runState.ProgressPhase switch
         {
             "local" => "天",
             "netiq" => "台",
+            "netiq-ai" => "件",
             _ => null
         }
     });

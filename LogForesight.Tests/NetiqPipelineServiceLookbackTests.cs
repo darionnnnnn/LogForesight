@@ -53,7 +53,7 @@ public class NetiqPipelineParallelismTests
     [Fact]
     public void 設定值超過行程內上限時夾住()
     {
-        Assert.Equal(AnalysisOrchestrator.MaxParallelServersInWeb, NetiqPipelineService.ResolveParallelism(8));
+        Assert.Equal(NetiqOptions.MaxParallelServersLimit, NetiqPipelineService.ResolveParallelism(8));
     }
 
     /// <summary>設 1＝完全依序，是既有語意（docs/archive/FEEDBACK-3-PLAN.md #2），不該被上限邏輯改掉</summary>

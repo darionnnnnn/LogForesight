@@ -170,6 +170,44 @@ job 生命週期，以 `SentinelClient.RawGetAsync` 取得）。
 `SentinelFieldMap`（設定可覆寫的字典，per-server 覆寫保留為保險）承載上表對應，`--sample-ip`
 一類的驗證查詢輸出可直接核對此表是否仍成立。
 
+## 4a. 欄位對應（Linux syslog，四輪 probe 實證定案，docs/FEEDBACK-12-PLAN.md §4.0，已實作）
+
+Sentinel「118_linux」，https://10.216.7.118:8443，四輪診斷（2026-08-07）。**欄位形狀與
+filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`／`SentinelEventMapper`／
+`SentinelQueryBuilder.BuildLinuxFilter`，批 4B）：
+
+| 語意 | 欄位 | 實證依據 | 定案 |
+|---|---|---|---|
+| program | `sp` | 每筆事件帶 `sp=systemd`／`NetworkManager`／`kernel`／`sshd` 等；`msg` 也以 `program:` 或 `program[pid]:` 前綴開頭；exact term、**大小寫不敏感**、**支援前綴萬用字元**（輪 B：`sp:networkmanager`＝`sp:NetworkManager`；`sp:user*` 有效） | **`Program`＝`SentinelFieldMap.LinuxProgram`（`sp`）**；`SentinelEventMapper` 的 Source 三段 fallback 鏈：`sp`→`obssvcname`→`msg` 前綴正則解析 |
+| 主機歸屬鍵 | `repip` | 與 Windows 同一輪已實證的回報者 IP 欄位 | 與 Windows 同為 `repip`，`BuildIpClause` 直接重用，不需要 Linux 專用版本 |
+| 主機名 | `sn` | `sn=stkomsdb1`／`VM-NATFA02`（回報主機自身名） | 沿用，`DisplayName` 回填照舊 |
+| 正規化事件名 | `evt` | 值恆為樣板字串 `"NetIQ Universal Event {program} Event"`（或 CEF 路徑的 `"Universal Common Event Format {program} Event"`），資訊量＝program 本身，無正規化語意 | **不使用**；seed 的 `EventNamePattern` 定案維持留空（Web 端仍可維護，等未來接到有正規化 collector 的環境再啟用） |
+| collector 形態 | `pn`／`agent`／`port`／`rt2`／`obssvcname` | **per-collector，不是 per-Sentinel**：同一台 Sentinel 上見過兩種收集路徑——(a) 主流路徑「NetIQ Universal Event」＋Full Text Parser，`sp` 存在、`obssvcname` 不存在；(b) 少量「Universal Common Event Format」（CEF）路徑（第二次 probe 實證，SOAR 設備自身的 conmon 日誌），`sp` 缺席、program 落在 `obssvcname`。兩種路徑 `sun`／`sip`／`dhn`／`rv40` 皆不存在 | 泛用 syslog collector＋全文解析，`msg` 是未結構化原始 syslog 行；`LinuxQ1ProjectionFields` 同時投影 `sp` 與 `obssvcname` 因應兩種路徑；受監控主機（非 collector 自身）目前實測全走 (a) 路徑，filter 的 `sp:{program}*` 下推安全（見下方「量級」列）；4C 的帳號級關聯只能靠 `msg` 文字解析（見 docs/LINUX-RULES.md「關聯層」） |
+| facility | `rv150` | `rv150=DAEMON`／`KERNEL`／`USER`（大寫 facility——同名欄位在 Windows 上是頻道名） | 投影帶回但不參與比對；`LogName` 固定 `"Linux"` |
+| 時間 | `dt` | ISO-8601 UTC（`estz=Asia/Taipei` 佐證時區基準） | 與 Windows 同一條解析路徑 |
+| 嚴重度 | `sev` | 分佈實測（全站/24h）：0=1.87M、1=7.67M、2=8、3=972、4=1,403、5=20。**不承載 syslog priority 語意**——NetworkManager 的 `<warn>` 與 dockerd 的 `level=error` 皆落在 sev=1，「pam session opened」反落在 sev3-5 | `SentinelFieldMap.MapEntryTypeLinux`：`0~1→Information、2→Warning、3~5→Error`（計數用途的務實選擇，不影響規則比對）；generic 收集門檻 `sev:[2 TO 5]`（`SentinelQueryBuilder.LinuxGenericSeverityMin`） |
+| program 量級 | `sp` | 吵：systemd 1.96M／kernel 305k／sshd 244k／sudo 219k／su 52k 筆/日；靜：chronyd 3.4k／CRON 2.7k／auditd 112／smartd 29／帳號異動類 ≤7 筆/日 | `LinuxNoisyPrograms` 常數集（sshd/sudo/su/kernel/systemd）帶 `MessagePatterns` 下推控量，其餘整拉（見 §4a-1） |
+| msg 片語 | `msg` | `"Failed password"`／`"I/O error"`／`"authentication failure"` 等片語查詢皆有效（含斜線）；欄位群組多片語語法有效；吵 program＋片語組合下推有效（`sp:systemd AND msg:"entered failed state"` 把 1.96M/日壓到 1 筆/日） | filter 內容子句採 program／msg 混合下推，見 §4a-1 |
+| sshd 暴力破解樣本 | `msg` | 「`Failed password for invalid user {user} from {ip} port {port} ssh2`」，無 program 前綴、`invalid user` 為可選段；來源含內網與外網 IP，環境有真實暴破流量 | 4C `LinuxCorrelationAnalyzer` 的 regex 依此定案（見 docs/LINUX-RULES.md「關聯層」） |
+| Windows 事件 | `rv40` | `rv40:(4624 OR 4625)` found=0 | 純 Linux Sentinel，證實「同台不混平台」環境事實 |
+| ESM 目錄 | — | 驗證被拒（與 Windows 那台相同） | 主機探索照舊走事件投影 distinct 備案 |
+| 批次/分頁 | — | 100 個 IP 子句接受（~1.7s）；pgsize 1000 於 833ms | 批次機制照 Windows 沿用，`IpBatchSize` 維持 50 共用（總量評估：檢索面全站 <1 萬筆/日，遠低於截斷線） |
+| 環境觀察 | — | Sentinel 自家 Syslog_UDP connector 在丟訊息（`"Dropped 29,623 messages so far"`） | 來源端完整性不保證——我方無從逐主機偵測這種丟失，屬環境層事實，排查「主機明明有事件卻查不到」時可留意 |
+
+**診斷分頁（`NetiqProbeRunner`）Linux 深掘步驟（docs/FEEDBACK-12-PLAN.md §4.1／4B.0）**：
+步驟 8 樣本數 3→10＋欄位名聯集；8b（`msg` 全文不截斷）、8c（`sp` 查詢行為）、
+8d（`sev` 分佈＋樣本全文）、8e（種子 program 量級）、8f（`sshd` 樣本全文）、
+8g（`msg` 片語查詢行為＋暴破樣本），皆掛在「有填 Linux 樣本 IP」同一個開關下，
+是上表全部實證的直接來源。
+
+### 4a-1. `BuildLinuxFilter` 內容子句（`SentinelQueryBuilder`，批 4B 實作）
+
+`{IP 批次} AND ({規則子句聯集} OR sev:[2 TO 5])`——規則子句依 program 分組，
+吵 program（`LinuxNoisyPrograms`：sshd/sudo/su/kernel/systemd）帶該 program 全部規則
+`MessagePatterns` 聯集下推（`(sp:{p}* AND msg:("片語1" OR "片語2" …))`，片語跳脫雙引號／
+反斜線防語法破壞），其餘 program 整拉（`sp:{p}*`，量級夠小，整拉也順便避開片語標點的
+殘餘風險——chronyd「Can't synchronise」的撇號、CRON「(CRON) ERROR」的括號）。
+
 ## 5. 查詢 payload（`SentinelQueryBuilder.BuildWindowsFilter`）
 
 ```jsonc

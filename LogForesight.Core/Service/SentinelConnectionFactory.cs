@@ -14,6 +14,7 @@ public static class SentinelConnectionFactory
         BaseUrl = s.BaseUrl,
         Username = s.Username,
         Password = CryptoHelper.IsEncrypted(s.PasswordEnc) ? CryptoHelper.Decrypt(s.PasswordEnc) : s.PasswordEnc,
-        UseEsmDirectory = s.UseEsmDirectory
+        UseEsmDirectory = s.UseEsmDirectory,
+        Os = s.Os
     };
 }

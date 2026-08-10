@@ -177,4 +177,143 @@ public class SentinelEventMapperTests
         Assert.NotNull(mapped);
         Assert.Equal(0, mapped!.EventId);
     }
+
+    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
+
+    /// <summary>輪 B 第四次 probe 實證的 sshd 暴力破解樣本（`sp` 主要路徑）。</summary>
+    private static SentinelEvent LinuxSshBruteforceFixture() => new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["dt"] = "2026-08-07T07:55:04.000Z",
+        ["sev"] = "1",
+        ["sn"] = "stkomsdb1",
+        ["repip"] = "10.216.45.101",
+        ["sp"] = "sshd",
+        ["rv150"] = "DAEMON",
+        ["evt"] = "NetIQ Universal Event sshd Event",
+        ["msg"] = "Failed password for invalid user 1838651 from 10.225.2.219 port 54500 ssh2"
+    });
+
+    /// <summary>第二次 probe 實證的 CEF collector 路徑樣本（`sp` 缺席，program 落在 `obssvcname`）。</summary>
+    private static SentinelEvent LinuxCefFallbackFixture() => new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["dt"] = "2026-08-07T07:22:44.853Z",
+        ["sev"] = "1",
+        ["sn"] = "VM-PA-SOAR",
+        ["repip"] = "10.216.74.41",
+        ["obssvcname"] = "conmon",
+        ["rv150"] = "USER",
+        ["evt"] = "Universal Common Event Format conmon Event",
+        ["msg"] = "conmon[4125835]: conmon 0b87414fd0743f5a3884 <nwarn>: Failed to write container status"
+    });
+
+    [Fact]
+    public void Linux事件_sp存在時走主要路徑當Source()
+    {
+        var mapped = SentinelEventMapper.Map(LinuxSshBruteforceFixture(), WebHost.OsLinux);
+
+        Assert.NotNull(mapped);
+        Assert.Equal("sshd", mapped!.Source);
+        Assert.Equal(LogAggregator.LinuxLogName, mapped.LogName);
+        Assert.Equal(0, mapped.EventId);
+        Assert.Contains("Failed password", mapped.Message);
+    }
+
+    [Fact]
+    public void Linux事件_sp缺席時退回obssvcname當Source()
+    {
+        var mapped = SentinelEventMapper.Map(LinuxCefFallbackFixture(), WebHost.OsLinux);
+
+        Assert.NotNull(mapped);
+        Assert.Equal("conmon", mapped!.Source);
+    }
+
+    [Fact]
+    public void Linux事件_sp與obssvcname皆缺席時從msg前綴解析Source()
+    {
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dt"] = "2026-08-07T07:55:18.000Z",
+            ["sev"] = "1",
+            ["msg"] = "kernel: sdh: sdh1"
+        };
+
+        var mapped = SentinelEventMapper.Map(new SentinelEvent(fields), WebHost.OsLinux);
+
+        Assert.NotNull(mapped);
+        Assert.Equal("kernel", mapped!.Source);
+    }
+
+    [Fact]
+    public void Linux事件_msg前綴解析不會誤吃訊息本體內的偽冒號()
+    {
+        // "pam_unix(sshd:session):" 的冒號在 "(" 之後，不緊接在行首單字後——正則要求
+        // 字元類別到冒號之間不能有其他字元，這種夾在括號裡的冒號不該被誤判成 program 前綴
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dt"] = "2026-08-07T07:55:18.000Z",
+            ["sev"] = "1",
+            ["msg"] = "pam_unix(sshd:session): session opened for user lgt by (uid=0)"
+        };
+
+        var mapped = SentinelEventMapper.Map(new SentinelEvent(fields), WebHost.OsLinux);
+
+        Assert.Null(mapped); // 三段皆解不出，計入略過計數
+    }
+
+    [Fact]
+    public void Linux事件_三段皆解不出Source時回傳null()
+    {
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dt"] = "2026-08-07T07:55:18.000Z",
+            ["sev"] = "1",
+            ["msg"] = "closedir \"/esx/dataytb/recv\" [postauth]" // 無 program: 前綴的 sshd 訊息（輪 B 實證存在）
+        };
+
+        var mapped = SentinelEventMapper.Map(new SentinelEvent(fields), WebHost.OsLinux);
+
+        Assert.Null(mapped);
+    }
+
+    [Theory]
+    [InlineData(0, EventLogEntryType.Information)]
+    [InlineData(1, EventLogEntryType.Information)]
+    [InlineData(2, EventLogEntryType.Warning)]
+    [InlineData(3, EventLogEntryType.Error)]
+    [InlineData(4, EventLogEntryType.Error)]
+    [InlineData(5, EventLogEntryType.Error)]
+    public void Linux事件_sev對應EntryType(int sev, EventLogEntryType expected)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dt"] = "2026-08-07T07:55:18.000Z",
+            ["sev"] = sev.ToString(),
+            ["sp"] = "sshd",
+            ["msg"] = "test"
+        };
+
+        var mapped = SentinelEventMapper.Map(new SentinelEvent(fields), WebHost.OsLinux);
+
+        Assert.Equal(expected, mapped!.EntryType);
+    }
+
+    [Fact]
+    public void MapAll_Linux三段皆解不出的筆數計入既有的略過計數()
+    {
+        var events = new List<SentinelEvent>
+        {
+            LinuxSshBruteforceFixture(),
+            LinuxCefFallbackFixture(),
+            new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dt"] = "2026-08-07T07:55:18.000Z", ["sev"] = "1",
+                ["msg"] = "closedir \"/esx/dataytb/recv\" [postauth]"
+            })
+        };
+
+        var (mapped, skipped) = SentinelEventMapper.MapAll(events, WebHost.OsLinux);
+
+        Assert.Equal(2, mapped.Count);
+        Assert.Equal(1, skipped);
+    }
 }

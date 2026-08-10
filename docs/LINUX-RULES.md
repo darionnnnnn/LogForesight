@@ -3,8 +3,8 @@
 > 本文件是 Linux syslog 規則面的現況參考：規則模型、比對語意、主機 OS 標記與目前的種子
 > 規則清單。規則外部化的共用機制（儲存、驗證、seed／匯入政策、抑制）見
 > [docs/RULES-SPEC.md](RULES-SPEC.md)，本文件只談 Linux 專屬的部分。緣起與各輪決策過程見
-> docs/archive/HISTORY.md／docs/archive/FEEDBACK-*-PLAN.md；取數管線尚未完成，見
-> docs/BACKLOG.md。
+> docs/archive/HISTORY.md／docs/archive/FEEDBACK-*-PLAN.md；取數管線與四輪 probe 定案細節見
+> docs/NETIQ-API-REFERENCE.md §4a、docs/BACKLOG.md。
 
 ## 現況總覽
 
@@ -13,16 +13,20 @@ Linux syslog 沒有 Event ID，規則面因此與 Windows 共用同一個 `Known
 只是多了 `Platform` 欄位與三個 Linux 專用比對欄位。Web 規則維護頁分
 **Windows規則／Linux規則／告警抑制** 三分頁，主機依 `Os` 欄位套用對應平台的規則面。
 
-**目前狀態**：規則模型、種子、驗證與 Web 維護介面皆已完成，可以維護 Linux 規則、把主機
-標成 Linux；但 **Linux 事件的取數管線尚未實作**（見 docs/BACKLOG.md）——也就是說現在能
-維護 Linux 規則面，但實際的每日分析還不會有 Linux 資料進來。
+**目前狀態（2026-08-07，回饋第十二輪批 4B/4C 完成）**：規則模型、種子、驗證、Web 維護介面、
+**事件模型與簽章聚合**（`EventKey` 分組鍵、規則層／趨勢層／慢速趨勢層，見下方「簽章鍵與
+聚合」）、**Sentinel 的 Linux 取數分支**（`SentinelEventMapper.MapLinux`／
+`SentinelQueryBuilder.BuildLinuxFilter`，四輪 probe 定案）、以及 **SSH 攻擊鏈關聯層**
+（`LinuxCorrelationAnalyzer`，見下方「關聯層」）全部完成並有專屬測試覆蓋——Linux 主機從
+掃描精靈納入、排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，已與 Windows 主機同一條
+管線走完整趟，沒有殘留的止血擋板或短路。
 
 ## 規則模型（`KnownIssueRule` 的 Linux 專用欄位）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
 | `Platform` | string | `"windows"`／`"linux"`。舊 rules.json／規則庫缺此欄位時預設 `"windows"` |
-| `ProgramPattern` | string | syslog identifier／process 名稱比對（sshd、sudo、kernel…），語意與 Windows 的 `SourcePattern` 一致（不分大小寫 Contains） |
+| `ProgramPattern` | string | syslog identifier／process 名稱比對（sshd、sudo、kernel…），語意與 Windows 的 `SourcePattern` 一致（不分大小寫 Contains）。**僅接受英數字與 `_`／`.`／`-`**——會以裸 term 進 Sentinel Lucene filter（`sp:{pattern}*`），特殊字元會破壞查詢語法，`RuleValidator` 把關（見 docs/RULES-SPEC.md「雙平台」） |
 | `EventNamePattern` | string | Sentinel 正規化事件名（`evt`／xdas taxonomy 名稱）比對，collector 有正規化的環境用這條路最穩。可空 |
 | `MessagePatterns` | string[] | 訊息子字串清單，**OR 語意、不分大小寫 Contains**（任一命中即算）。空陣列＝不看訊息、program 命中即算 |
 
@@ -125,30 +129,76 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 - `ssh-accept` 一律 Low、不參與風險判定——日常維運 SSH 登入絕不告警；收集目的是趨勢基準
   與未來 SSH 關聯鏈的成功面。
 - 帳號/群組異動類收「事件發生」不判合理性——管理員日常建帳號會出現在清單但屬 High 單項，
-  不觸發任何組合推論（關聯層目前不涵蓋 Linux，天然沒有無錨點誤報的空間）。
+  不觸發任何組合推論（關聯層僅涵蓋 SSH 破解得手一項，帳號/群組異動類天然沒有無錨點誤報的
+  空間）。
 - 每條種子附完整知識庫四欄位（白話說明/影響/常見原因/處置步驟，繁中）。
 
-## 簽章鍵與聚合
+## 簽章鍵與聚合（實作現況，2026-08-07，批 4A，docs/FEEDBACK-12-PLAN.md §4.2）
 
-`LogIssueSignature` 帶 nullable `EventKey`；Windows 路徑不填（null，行為零改變）。Linux 事件
-依序取：(1) 正規化事件名（collector 有正規化時最穩定）；(2) 命中規則的 Id（規則命中的事件
-以規則為粒度聚合）；(3) `{program}/{priority}` 退階（未命中任何規則時退到 program＋syslog
-等級粒度，比 Windows 的 Other 類粗，但誠實——沒有更細的穩定鍵可用）。聚合分組鍵擴為
-`(LogName, Source, EventId, EntryType, EventKey)`；Linux 事件固定 `LogName="Linux"`、
-`EventId=0`、`Source=program`。趨勢層/慢速趨勢層吃簽章鍵、純數字比較，邏輯不受影響。
+`LogIssueSignature.EventKey`（`string`，預設空字串，非 nullable）——比實作前的設計草案簡化：
+命中規則時 `EventKey = 規則 Id`（`KnownIssueCatalog.FindLinuxRule` 在 `LogAggregator.Aggregate`
+**聚合之前**逐事件呼叫，訊息全文比對必須在聚合前做，聚合後只剩截斷過的 `SampleMessages`）；
+未命中規則時 `EventKey = ""`，與 Windows 事件的空字串行為一致，一律聚合成 `Other` 類——
+**沒有實作原設計草案的「正規化事件名」與 `{program}/{priority}` 退階兩級**：前者經四輪
+probe 定案確認**不可行**——`evt` 欄位值恆為樣板字串「NetIQ Universal Event {program}
+Event」（或 CEF 路徑的對應樣板），資訊量就是 program 本身，沒有正規化語意可用，
+`EventNamePattern` 種子維持全空，Web 端仍可維護、留給未來若接到有真正規化 collector 的
+環境再啟用；後者則是評估後認為沒有實質必要——未命中規則的 Linux 事件退到 `Other` 類，
+語意與 Windows 未命中事件完全一致，不需要另外分裂出更細的退階粒度製造維護負擔。
 
-syslog priority → `EntryType` 固定映射：
+聚合分組鍵擴為 `(LogName, Source, EventId, EntryType, EventKey)` 五元組
+（`LogAggregator.GroupKeyFor`，`internal` 供 `RiskyEventSelector` 重用同一套鍵）；Linux 事件
+固定 `LogName="Linux"`、`EventId=0`、`Source=program`。`IssueSignatureKey.For` 的問題穩定鍵
+在 `EventKey` 非空時多附加一段（4 段或 5 段皆可解析，Windows 四段鍵字串逐字不變）。
+`TrendAnalyzer`／`SlowTrendAnalyzer` 的 `SameIssue` 一併比對 `EventKey`，避免「同 program
+命中不同規則」（如 sshd 底下的 `ssh-bruteforce` 與 `ssh-accept`）被誤判成同一個問題的趨勢延續。
+`ChannelCoverage.WasRead` 對 `LogName="Linux"` 恆回傳已讀（NetIQ pipeline 的 Linux 取數是整批
+查詢、不是逐頻道讀取，套用 Windows 三頻道 fallback 會讓趨勢暖身期永遠跑不完）。
 
-| syslog | EntryType |
+顯示面：`LogIssueSignature.SourceEventLabel`——`EventId` 恆為 0 的 Linux 事件若直接顯示
+「{Source} EventId 0」會誤導成「這是編號 0 的事件」，命中規則時改顯示「{Source}（規則Id）」，
+未命中規則仍顯示「{Source} EventId 0」（沒有更好的識別依據，誠實顯示比假裝有意義更好）。
+
+`sev` → `EntryType` 的固定映射（`SentinelFieldMap.MapEntryTypeLinux`，批 4B 已實作）：
+
+| `sev` | EntryType |
 |---|---|
-| emerg / alert / crit / err | Error |
-| warning | Warning |
-| notice / info / debug | Information |
+| 0～1 | Information |
+| 2 | Warning |
+| 3～5 | Error |
 
-## 關聯層（目前不涵蓋 Linux）
+**與原設計草案的差異**：草案原本設想 syslog priority 文字（emerg/alert/crit/err/warning/
+notice/info/debug）能直接映射 `EntryType`，但四輪 probe 實證推翻了這個假設——Sentinel 的
+`sev` 是純數值欄位（0～5），且**不可靠地承載 syslog priority 語意**：NetworkManager 的
+`<warn>` 訊息與 dockerd 的 `level=error` 訊息都落在 `sev=1`，而「pam session opened」這類
+例行訊息反而落在 `sev=3～5`。上表因此是**計數用途的務實選擇**，不是語意重建——規則層／
+趨勢層的判斷依據是 program＋`msg` 文字比對，不依賴 `EntryType`，`sev` 映射只影響統計摘要
+與 Log Viewer 顯示的圖示。
 
-Linux 主機的分析結果固定申報：「關聯層（攻擊鏈/故障鏈比對）不適用於 Linux 主機——本版僅
-規則層＋趨勢層＋慢速趨勢層」；批次執行輸出、風險報告、Web 詳情頁同步顯示——與「沒告警 ≠
-沒問題，是沒看」同一原則，不適用要說出來，不能讓人以為有看。Linux 關聯鏈（至少一條【SSH
-暴力破解→得手】，同日 failed password 達門檻＋同帳號/IP 成功登入，與 Windows【破解得手】
-同構）列為後續獨立項目，見 docs/BACKLOG.md。
+## 關聯層（批 4C 已實作，僅涵蓋 SSH 破解得手一項）
+
+`LinuxCorrelationAnalyzer`（`LogForesight.Core/Analysis/LinuxCorrelationAnalyzer.cs`）獨立於
+Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一份程式碼的 Linux 分支：Windows
+版靠 EventId 群組比對，Linux 版靠 **regex 解析 `msg` 文字**取 (user, ip) 再找同日重疊。
+`LogAnalysisService.BuildStatisticalRecordAsync` 對 Linux 主機呼叫
+`LinuxCorrelationAnalyzer.Detect(issues, logs)` 取代原本固定回傳空列表的短路。
+
+比對邏輯【SSH 破解得手】：同日 `builtin-linux-ssh-bruteforce` 簽章達門檻（≥10，
+`HeavyBruteforceThreshold`，與規則本身的 `CountThreshold` 各自獨立設定，比照 Windows
+關聯層慣例）＋`builtin-linux-ssh-accept` 簽章存在時，從兩組事件各自 regex 抽取
+(user, ip)，找交集：
+
+- **交集有命中** → 精確比對成功，High／`ElevatesDayRisk=true` 告警
+- **無交集，且全部事件都解析成功** → 誠實不告警（不是漏做——真的沒有精確重疊）
+- **無交集，但有事件解析失敗**（訊息格式跟 regex 預期不符）→ 降級為 Medium／
+  `ElevatesDayRisk=false` 的「請人工確認」提醒——**不能因為格式漂移就悄悄丟掉訊號**
+
+暴力破解訊息格式（四輪 probe 實證定案）：
+`Failed password for invalid user {user} from {ip} port {port} ssh2`，`invalid user` 為
+可選段（合法帳號密碼錯誤時不會出現這段）。
+
+其餘 Windows 面的組合模式（帳號異動鏈／新服務鏈／儲存連鎖等）目前**不適用於 Linux 主機**，
+`UncoveredChecks` 會明講「關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項」——與
+「沒告警 ≠ 沒問題，是沒看」同一原則，不適用的部分要說出來，不能讓人以為有看。批次執行
+輸出、風險報告、Web 詳情頁同步顯示。詳見
+[docs/FEEDBACK-12-PLAN.md](FEEDBACK-12-PLAN.md) §4.5。

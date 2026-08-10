@@ -172,6 +172,11 @@ public class SentinelServer
     /// 語意與注意事項見 <see cref="Sentinel.UseEsmDirectory"/>。</summary>
     public bool UseEsmDirectory { get; set; }
 
+    /// <summary>轄下主機的作業系統（docs/FEEDBACK-12-PLAN.md §4.4），沿用 <see cref="Sentinel.Os"/>
+    /// 的正規化小寫值——探索精靈的掃描 filter（<see cref="SentinelQueryBuilder.BuildSubnetProbeFilter"/>）
+    /// 依此決定要用 Windows 的頻道子句還是 Linux 的 sev 子句。</summary>
+    public string Os { get; set; } = WebHost.OsWindows;
+
     /// <summary>帳密齊備才可主動掃描（缺任一則精靈的掃描鈕停用並提示設定不完整）</summary>
     public bool CanDiscover => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrWhiteSpace(Password);
 }

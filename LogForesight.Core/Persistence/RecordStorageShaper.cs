@@ -37,6 +37,11 @@ internal static class RecordStorageShaper
             TrendAssessment = record.TrendAssessment,
             Action = record.Action,
             AiAnalyzed = record.AiAnalyzed,
+            // AiPending（docs/FEEDBACK-12-PLAN.md §3.5）：低風險日仍可能是「AI 排隊中」的暫代紀錄
+            // （尾巴事件夠多時 needsAi 仍為 true），漏抄這個欄位會讓它在精簡後靜默重置為 false，
+            // 排隊中的紀錄會被誤判成「AI 已定案不需要」——這是本檔逐欄手抄模式最容易踩的地雷
+            // （同 FakeHostStore/FakeSentinelStore 曾漏欄的教訓）
+            AiPending = record.AiPending,
             ScreenedTailCount = record.ScreenedTailCount,
             ScreeningNotes = record.ScreeningNotes,
             ReportFile = record.ReportFile,

@@ -4,7 +4,7 @@
 > 程式碼、可在 Web 規則維護頁調整，不需重新編譯部署。實作見 `Analysis/KnownIssueCatalog.cs`
 > （`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、`Analysis/RuleValidator.cs`、
 > `Analysis/SuppressionFilter.cs`、`Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、
-> `Service/RuleBootstrapper.cs`、`Service/RuleImporter.cs`、`Models/RuleSuppression.cs`、
+> `Analysis/RuleBootstrapper.cs`、`Analysis/RuleImportPlanner.cs`、`Models/RuleSuppression.cs`、
 > `Persistence/ISuppressionStore.cs`／`SuppressionStore.cs`。起草緣起與各輪決策過程見
 > docs/archive/HISTORY.md「規則外部化＋主機級抑制機制」段；Linux 雙平台規則面的完整種子清單見
 > [docs/LINUX-RULES.md](LINUX-RULES.md)。
@@ -85,6 +85,13 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 一個容易踩的點：`ProgramPattern` 沿用 `SourcePattern` 的子字串比對語意，所以 program 名稱有包含
 關係時（`"sudo"` 包含 `"su"`）順序有意義，具體的必須排在泛用的前面。
 
+另一個 Linux 專屬限制：**`ProgramPattern` 僅接受英數字與 `_`／`.`／`-`**（`RuleValidator`
+把關，2026-08-07 全案體檢新增）——它會以裸 term 形式直接進 Sentinel 的 Lucene filter
+（`SentinelQueryBuilder.LinuxRuleProgramClauses` 的 `sp:{pattern}*`，不像 `MessagePatterns`
+有引號＋跳脫保護），空白或 `(`／`:`／`*` 等特殊字元會讓整份夜間取數查詢語法壞掉、
+整批主機查詢失敗。字元集與 `SentinelEventMapper` 的 msg 前綴 program 正則一致
+（syslog identifier 的實務形狀），17 條種子全數天然合格。
+
 ### `MatchAllEventIds` 為什麼要顯式宣告
 
 規則外部化前，`EventIds` 空陣列天然代表「這個來源全部事件都算」（`WHEA-Logger` 等 3 條規則
@@ -96,7 +103,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 ### Id 命名與永久性
 
 - Builtin 規則 Id 慣例：`builtin-{類別}-{代表事件}`（如 `builtin-storage-disk-io`）。
-- Custom 規則建議 `custom-` 開頭（`RuleImporter` 用 `Origin` 欄位而非 Id 前綴判斷歸屬，
+- Custom 規則建議 `custom-` 開頭（`RuleImportPlanner` 用 `Origin` 欄位而非 Id 前綴判斷歸屬，
   前綴只是慣例，不是程式邏輯依據）。
 - **Id 一經出貨（隨版本釋出）永不改名**：Id 是 seed 同步與匯入去重的鍵，改名等於舊規則變孤兒、
   新規則被當成全新項目插入。規則語意大幅調整時，正確做法是「舊 Id 標記 `Enabled=false`
@@ -161,7 +168,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 - 之後程式改版若調整了 `KnownIssueSeed.CreateRules()`（新增規則、修訂知識庫文字），
   **不會自動覆寫**使用者的 `rules.json`——啟動時只提示「內建規則有更新（vX→vY），
   可執行 `--import-rules` 檢視」，實際套用需要維護者主動執行指令並確認。
-- `--import-rules`（`RuleImporter`）以 `Id` 為鍵做 diff：
+- `--import-rules`（`RuleImportPlanner`）以 `Id` 為鍵做 diff：
   - 種子裡存在、`rules.json` 沒有的 → **新增**
   - 兩邊 Id 相同、內容相同（不比較 `Enabled`）→ **略過**
   - 兩邊 Id 相同、內容不同、`Origin` 為 `builtin` → 預設**略過並提示**，需要

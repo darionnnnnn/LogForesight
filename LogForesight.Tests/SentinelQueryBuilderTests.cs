@@ -30,6 +30,17 @@ public class SentinelQueryBuilderTests
         Category = IssueCategory.Security
     };
 
+    private static KnownIssueRule LinuxRule(
+        string id, string program, string[]? messagePatterns = null, bool enabled = true) => new()
+    {
+        Id = id,
+        Platform = "linux",
+        Enabled = enabled,
+        ProgramPattern = program,
+        MessagePatterns = messagePatterns ?? Array.Empty<string>(),
+        Category = IssueCategory.Security
+    };
+
     [Fact]
     public void BuildWindowsFilter_含IP批次子句與AND連接內容子句()
     {
@@ -125,6 +136,146 @@ public class SentinelQueryBuilderTests
         var clause = SentinelQueryBuilder.BuildIpClause(new[] { "10.1.2.11" });
 
         Assert.Equal("(repip:10.1.2.11)", clause);
+    }
+
+    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）───────────────
+
+    [Fact]
+    public void BuildLinuxFilter_含IP批次子句與AND連接內容子句()
+    {
+        var filter = SentinelQueryBuilder.BuildLinuxFilter(
+            new[] { "10.1.2.11", "10.1.2.12" }, new[] { LinuxRule("r1", "sshd", new[] { "Failed password" }) });
+
+        Assert.StartsWith("(repip:10.1.2.11 OR repip:10.1.2.12)", filter);
+        Assert.Contains(" AND ", filter);
+    }
+
+    [Fact]
+    public void BuildLinuxFilter_空IP清單擲例外()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            SentinelQueryBuilder.BuildLinuxFilter(Array.Empty<string>(), Enumerable.Empty<KnownIssueRule>()));
+    }
+
+    [Fact]
+    public void BuildLinuxFilter_無規則時只有generic分支()
+    {
+        var filter = SentinelQueryBuilder.BuildLinuxFilter(new[] { "10.1.2.11" }, Enumerable.Empty<KnownIssueRule>());
+
+        Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:", filter);
+        Assert.Contains($"{SentinelFieldMap.Severity}:[{SentinelQueryBuilder.LinuxGenericSeverityMin} TO 5]", filter);
+    }
+
+    [Fact]
+    public void LinuxRuleProgramClauses_靜program整拉不論有無MessagePatterns()
+    {
+        var clauses = SentinelQueryBuilder.LinuxRuleProgramClauses(new[]
+        {
+            LinuxRule("quiet-no-msg", "user"),
+            LinuxRule("quiet-with-msg", "chronyd", new[] { "Can't synchronise" })
+        });
+
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:user*", clauses);
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:chronyd*", clauses);
+        Assert.DoesNotContain(clauses, c => c.Contains("msg:"));
+    }
+
+    [Fact]
+    public void LinuxRuleProgramClauses_吵program帶msg片語下推()
+    {
+        var clauses = SentinelQueryBuilder.LinuxRuleProgramClauses(new[]
+        {
+            LinuxRule("ssh-bruteforce", "sshd", new[] { "Failed password", "Invalid user" })
+        });
+
+        var sshdClause = Assert.Single(clauses);
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:sshd*", sshdClause);
+        Assert.Contains($"{SentinelFieldMap.Message}:(", sshdClause);
+        Assert.Contains("\"Failed password\"", sshdClause);
+        Assert.Contains("\"Invalid user\"", sshdClause);
+        Assert.Contains(" AND ", sshdClause);
+    }
+
+    [Fact]
+    public void LinuxRuleProgramClauses_同program多規則的MessagePatterns聯集去重()
+    {
+        // sshd 底下 ssh-bruteforce 與 ssh-accept 兩條規則各自的片語要合併成一個 sp:sshd* 子句，
+        // 不是兩個獨立子句——否則 filter 會對同一個 program 查兩次
+        var clauses = SentinelQueryBuilder.LinuxRuleProgramClauses(new[]
+        {
+            LinuxRule("ssh-bruteforce", "sshd", new[] { "Failed password", "Invalid user" }),
+            LinuxRule("ssh-accept", "sshd", new[] { "Accepted password" })
+        });
+
+        var sshdClause = Assert.Single(clauses);
+        Assert.Contains("\"Failed password\"", sshdClause);
+        Assert.Contains("\"Invalid user\"", sshdClause);
+        Assert.Contains("\"Accepted password\"", sshdClause);
+    }
+
+    [Fact]
+    public void LinuxRuleProgramClauses_排除停用規則與Windows規則()
+    {
+        var clauses = SentinelQueryBuilder.LinuxRuleProgramClauses(new[]
+        {
+            LinuxRule("disabled", "sudo", new[] { "authentication failure" }, enabled: false),
+            WindowsRule("win", new[] { 100 })
+        });
+
+        Assert.Empty(clauses);
+    }
+
+    [Fact]
+    public void LinuxRuleProgramClauses_MessagePatterns含跳脫字元時包成合法Lucene片語()
+    {
+        // chronyd 是靜 program（不下推 msg），改用一個假想的吵 program 規則驗證跳脫邏輯本身，
+        // 不依賴種子規則表當下是否剛好有帶特殊字元的吵 program 片語
+        var clauses = SentinelQueryBuilder.LinuxRuleProgramClauses(new[]
+        {
+            LinuxRule("kernel-test", "kernel", new[] { "mce: [Hardware Error]", "a \"quoted\" phrase" })
+        });
+
+        var kernelClause = Assert.Single(clauses);
+        Assert.Contains("\"mce: [Hardware Error]\"", kernelClause);
+        Assert.Contains("\\\"quoted\\\"", kernelClause); // 內嵌的雙引號被跳脫，不會提早結束片語
+    }
+
+    [Fact]
+    public void BuildSubnetProbeFilter_Linux時退回sev子句而非頻道子句()
+    {
+        var filter = SentinelQueryBuilder.BuildSubnetProbeFilter("10.1.2.0/24", os: WebHost.OsLinux);
+
+        Assert.Equal($"(repip:10.1.2.* AND {SentinelFieldMap.Severity}:[0 TO 5])", filter);
+        Assert.DoesNotContain("rv150", filter);
+    }
+
+    [Fact]
+    public void BuildSubnetProbeFilter_未指定os時維持既有Windows行為()
+    {
+        // 既有呼叫端（未改動前）不會傳 os，預設值必須讓輸出逐字不變——契約回歸
+        var filter = SentinelQueryBuilder.BuildSubnetProbeFilter("10.1.2.0/24");
+
+        Assert.Equal("(repip:10.1.2.* AND (rv150:System OR rv150:Application))", filter);
+    }
+
+    /// <summary>真實種子規則表建出的 Linux filter：吵/靜 program 分組符合輪 B 第 5 項的環境實測
+    /// （docs/FEEDBACK-12-PLAN.md §4.4）——這組是規則表演進時的護欄，不是重新驗證分組邏輯本身
+    /// （那些在上面用合成規則測過了）。</summary>
+    [Fact]
+    public void 種子規則表建出的LinuxFilter吵program帶msg下推靜program整拉()
+    {
+        var seedRules = KnownIssueSeed.CreateRules();
+        var filter = SentinelQueryBuilder.BuildLinuxFilter(new[] { "10.1.2.11" }, seedRules);
+
+        // 吵 program：sshd/sudo/su/kernel/systemd 都應該帶 msg 下推
+        foreach (var noisy in new[] { "sshd", "sudo", "su", "kernel", "systemd" })
+        {
+            Assert.Contains($"{SentinelFieldMap.LinuxProgram}:{noisy}* AND {SentinelFieldMap.Message}:(", filter);
+        }
+
+        // 靜 program：帳號異動類（無 MessagePatterns）應該只有整拉，不帶 msg 子句
+        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:user*", filter);
+        Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:user* AND", filter);
     }
 
     // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-REFERENCE.md §3.4）──

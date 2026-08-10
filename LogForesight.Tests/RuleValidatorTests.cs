@@ -317,6 +317,36 @@ public class RuleValidatorTests
         Assert.Contains("至少要填一個", outcome.SkippedRules[0].Reason);
     }
 
+    // ProgramPattern 會以裸 term 進 Sentinel Lucene filter（sp:{pattern}*，無引號跳脫保護，
+    // 見 SentinelQueryBuilder.LinuxRuleProgramClauses），空白/括號/冒號等特殊字元會讓整份
+    // Q1 filter 語法壞掉、夜間取數整批失敗——在驗證層擋下（全案體檢揪出的缺口）
+    [Theory]
+    [InlineData("my prog")]    // 空白：prog* 會脫離 sp 欄位變成獨立 term
+    [InlineData("a:b")]        // 冒號：Lucene 欄位分隔符
+    [InlineData("run-parts(")] // 括號：Lucene 群組語法
+    [InlineData("x*y")]        // 萬用字元：子句自己會補尾端 *，中段 * 不受控
+    public void Linux規則ProgramPattern含Lucene特殊字元時不合格(string programPattern)
+    {
+        var outcome = RuleValidator.Validate(
+            new List<KnownIssueRule> { LinuxRule(programPattern: programPattern) });
+
+        Assert.Empty(outcome.ValidRules);
+        Assert.Contains("僅接受英數字", outcome.SkippedRules[0].Reason);
+    }
+
+    [Theory]
+    [InlineData("CRON")]
+    [InlineData("systemd-networkd")] // - 與 . 是 syslog identifier 的實務形狀，必須放行
+    [InlineData("io.podman_3")]
+    public void Linux規則ProgramPattern合法字元通過驗證(string programPattern)
+    {
+        var outcome = RuleValidator.Validate(
+            new List<KnownIssueRule> { LinuxRule(programPattern: programPattern) });
+
+        Assert.Single(outcome.ValidRules);
+        Assert.Empty(outcome.SkippedRules);
+    }
+
     [Fact]
     public void Linux規則不可填SourcePattern等Windows專用欄位()
     {

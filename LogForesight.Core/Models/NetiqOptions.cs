@@ -57,11 +57,19 @@ public class NetiqOptions
     /// 同時處理幾台 Sentinel（docs/archive/FEEDBACK-3-PLAN.md #2）。各台 Sentinel 轄下主機互不重疊、
     /// 各自獨立的 <see cref="SentinelClient"/> 連線，跨台平行不破壞「同一台主機同一天內
     /// 依序處理」的趨勢比對前提（該限制只在單一主機內成立，一台主機只屬於一台 Sentinel）。
-    /// 預設 2；設 1 等同完全依序處理（既有行為的逃生門）。上限 8——平行度越高，
-    /// 單一 Sentinel 逾時／失敗互不拖累其他 Sentinel 的優勢越明顯，但同時發出的查詢
-    /// 也越多，過高可能造成多台 Sentinel 同時被拖慢。
+    /// 預設 2；設 1 等同完全依序處理（既有行為的逃生門）。上限見 <see cref="MaxParallelServersLimit"/>。
     /// </summary>
     public int MaxParallelServers { get; set; } = 2;
+
+    /// <summary>
+    /// <see cref="MaxParallelServers"/> 的硬上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3，
+    /// docs/FEEDBACK-12-PLAN.md §二）。分析與 Web 站台同一個行程，平行度直接等於「同時有幾條
+    /// 執行緒在搶 thread pool 與連線池」——這是行程架構決策，不是效能旋鈕，故收斂在單一常數，
+    /// 讓 Web 端 DTO 的 <c>[Range]</c> 與 pipeline 執行期的 <c>ResolveParallelism</c> 防線
+    /// 共用同一個數字，不會再有「調了 8 卻只跑 3」的落差。
+    /// 哪天拆出獨立 worker（S-3 已評估後決定本輪不拆）再放寬這個常數。
+    /// </summary>
+    public const int MaxParallelServersLimit = 3;
 
     /// <summary>
     /// 詢問 AI（實驗性）詢問當下是否向 Sentinel 即時查詢現場事件納入分析

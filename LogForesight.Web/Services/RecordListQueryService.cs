@@ -685,6 +685,7 @@ public class RecordListQueryService
             HasCorrelation = record.CorrelationAlerts.Count > 0,
             HasCoverageGap = record.HasCoverageGap,
             AiAnalyzed = record.AiAnalyzed,
+            AiPending = record.AiPending,
             // 對外三態（#12）：清單頁只呈現 未處理／處理中／已處理，結案類細節留給詳情頁
             HandlingStatus = HandlingStatuses.ExternalOf(progress.DayStatus),
             HandlingStatusText = HandlingStatusText(HandlingStatuses.ExternalOf(progress.DayStatus)),

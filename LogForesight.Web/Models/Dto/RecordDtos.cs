@@ -22,6 +22,11 @@ public class RecordListItemDto
 
     public bool AiAnalyzed { get; set; }
 
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+    /// 與 AiAnalyzed=false 不同：那是「AI 已定案不需要或已嘗試但失敗」，這是「還沒定案」。
+    /// 前端顯示「AI 分析中」而非「統計模式」，避免看起來像失敗。</summary>
+    public bool AiPending { get; set; }
+
     /// <summary>處理狀態（由問題層級推導：全結案→已處理、部分→處理中、未標記→退回日層級）</summary>
     public string HandlingStatus { get; set; } = HandlingStatuses.Open;
     public string HandlingStatusText { get; set; } = string.Empty;
@@ -195,6 +200,10 @@ public class RecordDetailDto
     public string Action { get; set; } = string.Empty;
     public bool AiAnalyzed { get; set; }
 
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5），
+    /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
+    public bool AiPending { get; set; }
+
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
     public int AuditEventCount { get; set; }
@@ -239,6 +248,11 @@ public class IssueDto
     public int Count { get; set; }
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = string.Empty;
+
+    /// <summary>顯示用的來源＋事件標籤（LogIssueSignature.SourceEventLabel）：Windows 是
+    /// 「{Source} EventId {EventId}」，Linux（EventId 恆為 0）改顯示「{Source}（規則Id）」，
+    /// 前端一律用這個欄位取代自行組裝 "Source EventId N"，避免 Linux 出現無意義的 EventId 0。</summary>
+    public string SourceEventLabel { get; set; } = string.Empty;
 
     /// <summary>命中即列為高風險日（docs/archive/HISTORY.md #1，B1 三級化）：前端顯示「重大」
     /// 徽章——這條問題就是讓當天判定為高風險日的原因，取代原本「嚴重」等級給人的直覺。</summary>

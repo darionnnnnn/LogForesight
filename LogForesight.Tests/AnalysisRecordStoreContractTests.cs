@@ -216,6 +216,91 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Null(store.LastWeeklyCheckupDate());
     }
 
+    // ── AttachAiResult：AI 段結果附掛（docs/FEEDBACK-12-PLAN.md §3.5）─────────────
+
+    [Fact]
+    public void AttachAiResult_覆寫暫代欄位並清除AiPending()
+    {
+        var store = CreateStore();
+        var date = DateTime.Today;
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            RiskLevel = "低",
+            Headline = "（統計已完成，AI 分析排隊中）",
+            Summary = "（統計已完成，AI 分析排隊中）",
+            AiPending = true,
+            AiAnalyzed = false
+        });
+
+        store.AttachAiResult(date, new AiOutcome(
+            Headline: "磁碟即將故障",
+            Summary: "偵測到大量磁碟I/O錯誤。",
+            TrendAssessment: "持續惡化",
+            Action: "今天就要處理",
+            RiskLevel: "高",
+            RiskBasis: "ai_raise",
+            AiAnalyzed: true,
+            ScreenedTailCount: 0,
+            ScreeningNotes: new List<string>(),
+            ReportFile: "export/x.txt",
+            DeepDives: new List<CategoryDeepDive>()));
+
+        var read = Assert.Single(store.ReadRecent(date, 1));
+        Assert.Equal("磁碟即將故障", read.Headline);
+        Assert.Equal("偵測到大量磁碟I/O錯誤。", read.Summary);
+        Assert.Equal("持續惡化", read.TrendAssessment);
+        Assert.Equal("今天就要處理", read.Action);
+        Assert.Equal("高", read.RiskLevel);
+        Assert.Equal("ai_raise", read.RiskBasis);
+        Assert.True(read.AiAnalyzed);
+        Assert.False(read.AiPending);
+        Assert.Equal("export/x.txt", read.ReportFile);
+    }
+
+    /// <summary>
+    /// 欄位漂移防護：AttachAiResult 把風險往上拉（ai_raise）時，抽出欄
+    /// （lf_daily_records.risk_level）必須跟著同步——清單/排行/儀表板的篩選查詢讀的是抽出欄，
+    /// 只改 ContentJson 不改抽出欄的話，這裡會查不到剛被拉高風險的那筆紀錄，
+    /// 但 ReadRecent（反序列化 ContentJson）卻會顯示正確的「高」風險，兩者對不上。
+    /// </summary>
+    [Fact]
+    public void AttachAiResult_風險被拉高時抽出欄risk_level同步更新_篩選查詢查得到()
+    {
+        var store = CreateStore();
+        var query = (IAnalysisRecordQuery)store;
+        var date = DateTime.Today;
+        store.Append(Record(date, risk: "低"));
+
+        store.AttachAiResult(date, new AiOutcome(
+            Headline: "h", Summary: "s", TrendAssessment: "", Action: "",
+            RiskLevel: "高", RiskBasis: "ai_raise", AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>()));
+
+        var highRiskResults = query.Query(new RecordQueryFilter { RiskLevels = new[] { "高" } });
+        var lowRiskResults = query.Query(new RecordQueryFilter { RiskLevels = new[] { "低" } });
+
+        Assert.Contains(highRiskResults, r => r.Date.Date == date.Date);
+        Assert.DoesNotContain(lowRiskResults, r => r.Date.Date == date.Date);
+    }
+
+    /// <summary>契約同 AttachWeeklyCheckup：找不到對應日期安靜略過，不擲例外、不新增紀錄。</summary>
+    [Fact]
+    public void AttachAiResult_日期不存在_不擲例外且不新增紀錄()
+    {
+        var store = CreateStore();
+        store.Append(Record(DateTime.Today));
+
+        store.AttachAiResult(DateTime.Today.AddDays(-5), new AiOutcome(
+            Headline: "不該被寫入", Summary: "", TrendAssessment: "", Action: "",
+            RiskLevel: "高", RiskBasis: null, AiAnalyzed: true,
+            ScreenedTailCount: 0, ScreeningNotes: new List<string>(), ReportFile: null,
+            DeepDives: new List<CategoryDeepDive>()));
+
+        Assert.Single(store.ReadRecent(DateTime.Today, 30));
+    }
+
     // ── 儲存整形（RecordStorageShaper 是共用規則）───────────────────────────
 
     [Fact]

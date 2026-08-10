@@ -69,7 +69,7 @@ function renderIssueOptions(topIssues) {
     for (const issue of topIssues) {
         const option = document.createElement('option');
         option.value = issue.issueKey;
-        option.textContent = `${issue.source} / EventId ${issue.eventId}（${severityName(issue.severity)}）`;
+        option.textContent = `${issue.sourceEventLabel}（${severityName(issue.severity)}）`;
         select.appendChild(option);
     }
 }

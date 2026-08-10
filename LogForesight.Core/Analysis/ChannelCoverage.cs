@@ -18,6 +18,17 @@ internal static class ChannelCoverage
     /// <summary>該日紀錄是否讀取了指定頻道。</summary>
     public static bool WasRead(DailyAnalysisRecord record, string logName)
     {
+        // Linux（docs/FEEDBACK-12-PLAN.md §4.2）一律視為已讀：NetIQ pipeline 傳入
+        // BuildStatisticalRecordAsync 的 channels 恆為 null（Linux 取數是整批查詢，成敗與否
+        // 影響的是整個主機日有沒有紀錄，不是單一頻道有沒有讀到），若不特判，下面的
+        // ChannelsRead==null fallback 只認 System/Application/Security 三個 Windows 頻道名，
+        // "Linux" 一律落到最後的 return false——慢速趨勢層會把每一天都當成「頻道未讀」排除，
+        // 暖身期永遠跑不完，Linux 簽章的趨勢比對形同永久停擺。
+        if (logName.Equals(LogAggregator.LinuxLogName, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         // 新紀錄（本欄位問世後）以實際讀取清單為準。
         if (record.ChannelsRead != null)
         {

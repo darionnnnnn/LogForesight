@@ -21,7 +21,20 @@ public class NetiqOptionsService
         _env = env;
     }
 
-    public NetiqOptions Get() => _store.Get();
+    /// <summary>
+    /// 讀取時把 <see cref="NetiqOptions.MaxParallelServers"/> 夾在
+    /// <see cref="NetiqOptions.MaxParallelServersLimit"/> 內（docs/FEEDBACK-12-PLAN.md §二）：
+    /// 上限從 8 收斂到 3 之後，既有環境若曾存過 4~8 的值，維護頁載入時要顯示夾住後的值，
+    /// 否則表單顯示 8、瀏覽器 <c>max=3</c> 驗證會擋住整張表單存不了檔。<see cref="_store"/>
+    /// 每次 <c>Get()</c> 都回傳新反序列化的物件，就地修改不影響其他呼叫端或底層儲存。
+    /// </summary>
+    public NetiqOptions Get()
+    {
+        var options = _store.Get();
+        if (options.MaxParallelServers > NetiqOptions.MaxParallelServersLimit)
+            options.MaxParallelServers = NetiqOptions.MaxParallelServersLimit;
+        return options;
+    }
 
     public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {

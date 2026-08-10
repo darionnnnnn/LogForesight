@@ -241,7 +241,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         {
             normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix);
             // 只為了驗證輸入格式——實際的 filter 每輪各自組（帶不同的排除清單）
-            SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix);
+            SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix, os: server.Os);
         }
         catch (ArgumentException ex)
         {
@@ -291,7 +291,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
             var mainOutcome = await RunResidualRoundsAsync(
                 client, scanCt,
-                exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix, exclude),
+                exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix, exclude, server.Os),
                 now.AddHours(-WindowHours), now,
                 CoverageTargetResults, MaxResidualRounds, scan, warnings, "主掃描");
 

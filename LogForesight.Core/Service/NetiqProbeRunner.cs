@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LogForesight.Core.Analysis;
 
 namespace LogForesight.Core.Service;
 
@@ -220,13 +221,25 @@ public static class NetiqProbeRunner
             if (string.IsNullOrWhiteSpace(sampleLinuxIp))
             {
                 console.WriteLine("   [8] Linux 主機樣本：略過（未提供樣本 IP）");
+                console.WriteLine("   [8b] Linux 樣本 msg 全文：略過（未提供樣本 IP）");
+                console.WriteLine("   [8c] sp 查詢行為實證：略過（未提供樣本 IP）");
+                console.WriteLine("   [8d] sev 分佈：略過（未提供樣本 IP）");
+                console.WriteLine("   [8e] 種子 program 量級：略過（未提供樣本 IP）");
+                console.WriteLine("   [8f] sshd 樣本：略過（未提供樣本 IP）");
+                console.WriteLine("   [8g] msg 片語查詢行為：略過（未提供樣本 IP）");
             }
             else
             {
-                ok &= await Step(console, 8, $"Linux 主機樣本（repip:{sampleLinuxIp}，近 24h、3 筆、全欄位）——program 欄位／sev↔syslog priority／OS 判別候選值", async () =>
+                // 樣本另存一份供 8b 重用（同一次查詢的 msg 全文另行傾印，不重新查一次）——
+                // 8 的既有輸出格式（含 3→10 筆的樣本數擴充）一字不留給 8b 動，8b 純粹是同一批
+                // 樣本的另一種呈現方式（不截斷 msg），供 MessagePatterns 子字串校正用。
+                SentinelSearchResult? linuxSample = null;
+
+                ok &= await Step(console, 8, $"Linux 主機樣本（repip:{sampleLinuxIp}，近 24h、10 筆、全欄位）——program 欄位／sev↔syslog priority／OS 判別候選值＋欄位名聯集", async () =>
                 {
                     var result = await client.SearchAsync(new SentinelSearchRequest(
-                        $"repip:{sampleLinuxIp}", now.AddHours(-24), now, MaxResults: 3), ct);
+                        $"repip:{sampleLinuxIp}", now.AddHours(-24), now, MaxResults: 10), ct);
+                    linuxSample = result;
                     console.WriteLine($"     found={result.Found}，取回={result.Events.Count} 筆");
 
                     var i = 0;
@@ -238,6 +251,127 @@ public static class NetiqProbeRunner
                     {
                         console.WriteLine($"     ⚠ 近 24h 查無事件——請確認「{sampleLinuxIp}」的 repip 值是否正確、" +
                                           "或這台主機的 log 是否確實有轉送到本 Sentinel。");
+                    }
+                    else
+                    {
+                        var fieldUnion = result.Events.SelectMany(e => e.Fields.Keys)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                        console.WriteLine($"     欄位名聯集：{string.Join("，", fieldUnion)}");
+                    }
+                });
+
+                ok &= await Step(console, "8b", "Linux 樣本 msg 全文（不截斷，一筆一段，供 MessagePatterns 子字串校正）", () =>
+                {
+                    if (linuxSample == null || linuxSample.Events.Count == 0)
+                    {
+                        console.WriteLine("     （步驟 8 無樣本可用，略過）");
+                        return Task.CompletedTask;
+                    }
+
+                    var i = 0;
+                    foreach (var evt in linuxSample.Events)
+                    {
+                        var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
+                        console.WriteLine($"     樣本 #{++i} msg 全文：{msg}");
+                    }
+                    return Task.CompletedTask;
+                });
+
+                ok &= await Step(console, "8c", "sp 查詢行為實證（term／大小寫／前綴萬用字元，近 24h found）", async () =>
+                {
+                    foreach (var probe in new[] { "sp:kernel", "sp:networkmanager", "sp:NetworkManager", "sp:user*" })
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1), ct);
+                        console.WriteLine($"     {probe}：found={result.Found}");
+                    }
+                });
+
+                ok &= await Step(console, "8d", "sev 分佈（近 24h，逐值 found）＋sev:2／sev:[3 TO 5] 各 3 筆 msg 全文", async () =>
+                {
+                    for (var sev = 0; sev <= 5; sev++)
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest($"sev:{sev}", now.AddHours(-24), now, MaxResults: 1), ct);
+                        console.WriteLine($"     sev:{sev} found={result.Found}");
+                    }
+
+                    foreach (var filter in new[] { "sev:2", "sev:[3 TO 5]" })
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest(filter, now.AddHours(-24), now, MaxResults: 3), ct);
+                        console.WriteLine($"     {filter} 樣本（found={result.Found}）：");
+                        var i = 0;
+                        foreach (var evt in result.Events)
+                        {
+                            var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
+                            console.WriteLine($"       #{++i} msg 全文：{msg}");
+                        }
+                    }
+                });
+
+                ok &= await Step(console, "8e", "種子 program 量級（KnownIssueCatalog 現取 17 條 Linux 種子的 program，逐一 sp:{program} found，近 24h）", async () =>
+                {
+                    var programs = KnownIssueCatalog.Rules
+                        .Where(r => r.Platform == "linux" && r.ProgramPattern.Length > 0)
+                        .Select(r => r.ProgramPattern)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    foreach (var program in programs)
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest($"sp:{program}", now.AddHours(-24), now, MaxResults: 1), ct);
+                        console.WriteLine($"     sp:{program} found={result.Found}");
+                    }
+                });
+
+                ok &= await Step(console, "8f", "sshd 樣本（近 7 天、10 筆，msg 全文；sp:sshd 查無則退路 msg:sshd）", async () =>
+                {
+                    var usedFallback = false;
+                    var result = await client.SearchAsync(new SentinelSearchRequest("sp:sshd", now.AddDays(-7), now, MaxResults: 10), ct);
+                    if (result.Found == 0)
+                    {
+                        usedFallback = true;
+                        console.WriteLine("     sp:sshd found=0，改用退路 msg:sshd");
+                        result = await client.SearchAsync(new SentinelSearchRequest("msg:sshd", now.AddDays(-7), now, MaxResults: 10), ct);
+                    }
+                    console.WriteLine($"     {(usedFallback ? "msg:sshd" : "sp:sshd")} found={result.Found}，取回={result.Events.Count} 筆");
+
+                    var i = 0;
+                    foreach (var evt in result.Events)
+                    {
+                        var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
+                        console.WriteLine($"     樣本 #{++i} msg 全文：{msg}");
+                    }
+                });
+
+                ok &= await Step(console, "8g", "msg 片語查詢行為（輪 B 後追加，§4.1 4B.0）——片語有效性／tokenization 邊界／群組語法＋sshd 暴破樣本", async () =>
+                {
+                    foreach (var probe in new[] { "msg:\"Failed password\"", "msg:\"authentication failure\"", "msg:\"I/O error\"", "msg:\"oom-kill\"", "msg:oom" })
+                    {
+                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1), ct);
+                        console.WriteLine($"     {probe}：found={result.Found}");
+                    }
+
+                    var groupResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")", now.AddDays(-7), now, MaxResults: 1), ct);
+                    console.WriteLine($"     sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")：found={groupResult.Found}");
+
+                    var systemdResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:systemd AND msg:\"entered failed state\"", now.AddHours(-24), now, MaxResults: 1), ct);
+                    console.WriteLine($"     sp:systemd AND msg:\"entered failed state\"：found={systemdResult.Found}");
+
+                    var bruteforceResult = await client.SearchAsync(new SentinelSearchRequest(
+                        "sp:sshd AND msg:\"Failed password\"", now.AddDays(-7), now, MaxResults: 5), ct);
+                    console.WriteLine($"     sp:sshd AND msg:\"Failed password\"（近 7 天）found={bruteforceResult.Found}，取回={bruteforceResult.Events.Count} 筆");
+                    var j = 0;
+                    foreach (var evt in bruteforceResult.Events)
+                    {
+                        var msg = evt.Fields.TryGetValue("msg", out var m) ? m : "(無 msg 欄位)";
+                        console.WriteLine($"     樣本 #{++j} msg 全文：{msg}");
+                    }
+                    if (bruteforceResult.Events.Count == 0)
+                    {
+                        console.WriteLine("     ⚠ 近 7 天查無 Failed password 事件，可自行放大時間範圍重跑本指令核對。");
                     }
                 });
             }
@@ -356,9 +490,14 @@ public static class NetiqProbeRunner
         return ok;
     }
 
-    private static async Task<bool> Step(IRunConsole console, int index, string title, Func<Task> action)
+    private static Task<bool> Step(IRunConsole console, int index, string title, Func<Task> action) =>
+        Step(console, index.ToString(), title, action);
+
+    /// <summary>字串標籤多載（8b／8c…這類新增子步驟用）——既有 13 個整數編號步驟透過上面的多載
+    /// 轉呼叫這個版本，輸出格式一字不變。</summary>
+    private static async Task<bool> Step(IRunConsole console, string label, string title, Func<Task> action)
     {
-        console.WriteLine($"   [{index}] {title}");
+        console.WriteLine($"   [{label}] {title}");
         try
         {
             await action();

@@ -336,17 +336,52 @@ public static class KnownIssueCatalog
         var rule = FindRule(signature.Source, signature.EventId);
         if (rule != null)
         {
-            signature.Category = rule.Category;
-            var thresholdMet = signature.Count >= rule.CountThreshold;
-            signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
-            // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
-            // 讓當天判定成高風險日，旗標要複製同一個行為（docs/archive/HISTORY.md #1）
-            signature.ElevatesDayRisk = thresholdMet && rule.ElevatesDayRisk;
-            signature.KnownIssue = rule.Description;
-            signature.RuleId = rule.Id;
+            ApplyRule(signature, rule);
             return;
         }
 
+        ClearToOther(signature);
+    }
+
+    /// <summary>
+    /// Linux 版 Classify（docs/FEEDBACK-12-PLAN.md §4.2）：規則比對已經在聚合**之前**由
+    /// <see cref="LogAggregator"/> 逐事件呼叫 <see cref="FindLinuxRule"/> 做過（訊息全文比對
+    /// 必須在聚合前做，聚合後只剩截斷過的 SampleMessages），這裡只需要用聚合時記下的
+    /// <see cref="LogIssueSignature.EventKey"/>（比對命中的規則 Id）查回規則本體套用分類，
+    /// 不重新比對訊息——避免對已截斷/精簡過的樣本訊息重跑一次可能得出不同結果的比對。
+    /// </summary>
+    public static void ClassifyLinux(LogIssueSignature signature)
+    {
+        var rule = signature.EventKey.Length > 0
+            ? Rules.FirstOrDefault(r => r.Platform == "linux" && r.Id == signature.EventKey)
+            : null;
+
+        if (rule != null)
+        {
+            ApplyRule(signature, rule);
+            return;
+        }
+
+        // 規則在聚合後被刪除/停用的極端情況（聚合當下比對到、分類當下規則表已經變了）：
+        // 不留著一個指向不存在規則的 EventKey 誤導後續（案件掛接、頻率報表都靠這個鍵）
+        signature.EventKey = string.Empty;
+        ClearToOther(signature);
+    }
+
+    private static void ApplyRule(LogIssueSignature signature, KnownIssueRule rule)
+    {
+        signature.Category = rule.Category;
+        var thresholdMet = signature.Count >= rule.CountThreshold;
+        signature.Severity = thresholdMet ? rule.Severity : Downgrade(rule.Severity);
+        // 未達次數門檻時降級，旗標也跟著不算——舊制下「降到 High、沒到 Critical」本來就不會
+        // 讓當天判定成高風險日，旗標要複製同一個行為（docs/archive/HISTORY.md #1）
+        signature.ElevatesDayRisk = thresholdMet && rule.ElevatesDayRisk;
+        signature.KnownIssue = rule.Description;
+        signature.RuleId = rule.Id;
+    }
+
+    private static void ClearToOther(LogIssueSignature signature)
+    {
         signature.Category = IssueCategory.Other;
         signature.Severity = IssueSeverity.Low;
         signature.ElevatesDayRisk = false;

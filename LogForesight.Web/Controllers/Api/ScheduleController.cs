@@ -157,7 +157,8 @@ public class ScheduleController : ControllerBase
     /// scope=all/segment/host 解析成 orchestrator 看得懂的 RunScope＋主機清單。
     /// 網段解析與比對複用 <see cref="CidrMatcher"/>（與 NetIQ 匯入精靈同一套，不寫第二份）；
     /// 主機清單複用 <see cref="HostListSelection"/>（與 NetIQ 機房分析同一份
-    /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉）。
+    /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉；Windows／Linux 主機皆涵蓋在內，
+    /// docs/FEEDBACK-12-PLAN.md §4B——Linux 取數上線後這裡不再需要另外分開處理）。
     /// </summary>
     private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId)
     {
@@ -165,7 +166,8 @@ public class ScheduleController : ControllerBase
         {
             case "all":
                 var allTargets = HostListSelection.FromStore(_hosts, _sentinels);
-                return (RunScope.Full, allTargets.ByServer.Values.SelectMany(v => v).Select(t => t.HostId).ToList(), true);
+                var allFlat = allTargets.ByServer.Values.SelectMany(v => v).ToList();
+                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), true);
 
             case "segment":
                 if (string.IsNullOrWhiteSpace(segment))
@@ -186,21 +188,21 @@ public class ScheduleController : ControllerBase
                 var range = CidrMatcher.Parse($"{normalizedPrefix}.*")!;
 
                 var netiqList = HostListSelection.FromStore(_hosts, _sentinels);
-                var matched = netiqList.ByServer.Values
+                var matchedTargets = netiqList.ByServer.Values
                     .SelectMany(v => v)
                     .Where(t => CidrMatcher.Matches(range, t.IpAddress))
-                    .Select(t => t.HostId)
                     .ToList();
-                return (RunScope.NetiqHosts, matched, false);
+                return (RunScope.NetiqHosts, matchedTargets.Select(t => t.HostId).ToList(), false);
 
             case "host":
                 if (hostId is not { } id) throw DomainException.Validation("請指定要更新的主機。");
                 var host = _hosts.Get(id) ?? throw DomainException.NotFound("找不到這台主機。");
                 if (host.Source == "local") return (RunScope.LocalOnly, null, true);
 
-                // NetIQ 主機：確認目前真的在會被查詢的清單內（Pollable），不然「1 台」的預覽會是假象——
-                // 停用／待歸屬／IP 衝突／所屬 Sentinel 停用的主機實際執行時會被 orchestrator 濾掉、
-                // 靜默變成 0 台，跟「不靜默少幾台」原則相悖，這裡先擋下並給出明確理由
+                // 確認目前真的在會被查詢的清單內（Pollable，Windows／Linux 皆同一套判準），
+                // 不然「1 台」的預覽會是假象——停用／待歸屬／IP 衝突／所屬 Sentinel 停用的主機
+                // 實際執行時會被 orchestrator 濾掉、靜默變成 0 台，跟「不靜默少幾台」原則相悖，
+                // 這裡先擋下並給出明確理由
                 var pollableIds = HostListSelection.FromStore(_hosts, _sentinels)
                     .ByServer.Values.SelectMany(v => v).Select(t => t.HostId).ToHashSet();
                 if (!pollableIds.Contains(id))

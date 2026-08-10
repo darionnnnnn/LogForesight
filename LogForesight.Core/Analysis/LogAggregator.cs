@@ -13,6 +13,29 @@ public class LogIssueSignature
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public EventLogEntryType EntryType { get; set; }
 
+    /// <summary>
+    /// Linux 簽章聚合鍵的第五段（docs/FEEDBACK-12-PLAN.md §4.2，實作 docs/LINUX-RULES.md §131-146
+    /// 的設計文，語意較該文簡化）。Windows 事件恆為空字串——既有的 (LogName, Source, EventId,
+    /// EntryType) 四元組鍵字串完全不變，零遷移。Linux 事件沒有 EventId（恆 0），只在規則命中時
+    /// 填規則 Id（<see cref="RuleId"/> 的值），用來把「同一個 program 命中不同規則」
+    /// （如 sshd 底下的 ssh-bruteforce 與 ssh-accept）在簽章、處理狀態、案件鍵上分開；
+    /// 未命中規則的 Linux 事件維持空字串，跟四元組聚合成 Other 類，語意與 Windows Other 一致。
+    /// </summary>
+    public string EventKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 顯示用的「來源＋事件識別」文字（docs/FEEDBACK-12-PLAN.md §4.3）：Windows 顯示既有的
+    /// 「{Source} EventId {EventId}」；Linux 命中規則時 EventId 恆 0、顯示這個數字沒有意義，
+    /// 改顯示「{Source}（{EventKey}）」（規則 Id）。未命中規則的 Linux 事件（EventKey 空）
+    /// 仍維持「EventId 0」——沒有更好的識別依據，誠實顯示比假裝有意義更好。
+    /// 不序列化——由 <see cref="Source"/>／<see cref="EventId"/>／<see cref="EventKey"/> 算出，
+    /// 避免另存一份可能漂移的值（同 <see cref="DailyAnalysisRecord.HasCoverageGap"/> 的既有慣例）。
+    /// </summary>
+    [JsonIgnore]
+    public string SourceEventLabel => EventId == 0 && EventKey.Length > 0
+        ? $"{Source}（{EventKey}）"
+        : $"{Source} EventId {EventId}";
+
     public int Count { get; set; }
 
     /// <summary>當日首次/最後發生時間 (HH:mm)，用於判斷是集中爆發還是全天零星</summary>
@@ -80,16 +103,25 @@ internal static class LogAggregator
     /// </summary>
     private static readonly string[] AccountLabels = { "Account Name:", "帳戶名稱:", "帳戶名稱：", "User:", "使用者:", "使用者：" };
 
+    /// <summary>Linux 事件的 LogName（docs/LINUX-RULES.md §131-146 定案）——sentinel 端映射器
+    /// 與這裡的分組/分類判斷都用這個常數，避免兩處字面值漂移。</summary>
+    internal const string LinuxLogName = "Linux";
+
     /// <summary>
-    /// 依 (LogName, Source, EventId, EntryType) 分組統計並用規則表分類。
+    /// 依 (LogName, Source, EventId, EntryType, EventKey) 五元組分組統計並用規則表分類。
     /// 聚合是小模型策略的核心：把上千筆原始 log 壓成數十行統計，AI 只看摘要不看原文。
     /// 上限 50：超出主 prompt 呈現上限的部分會走前置掃描（分批給 AI 篩選），
     /// 不會直接消失，所以這裡不需要砍太兇；50 之後的極端尾巴才截斷。
+    ///
+    /// EventKey（第五段，docs/FEEDBACK-12-PLAN.md §4.2）：Windows 事件恆空字串，
+    /// 既有四元組鍵字串完全不變。Linux 事件在分組**之前**逐事件呼叫
+    /// <see cref="KnownIssueCatalog.FindLinuxRule"/>——訊息全文比對（MessagePatterns）
+    /// 是這裡唯一能拿到完整訊息的地方，聚合後只剩截斷過的 SampleMessages，先比對後聚合才不漏。
     /// </summary>
     public static List<LogIssueSignature> Aggregate(List<EventLogEntryData> logs, int top = 50)
     {
         var signatures = logs
-            .GroupBy(l => (l.LogName, l.Source, l.EventId, l.EntryType))
+            .GroupBy(GroupKeyFor)
             .Select(g =>
             {
                 var distinctMessages = g
@@ -103,6 +135,7 @@ internal static class LogAggregator
                     Source = g.Key.Source,
                     EventId = g.Key.EventId,
                     EntryType = g.Key.EntryType,
+                    EventKey = g.Key.EventKey,
                     Count = g.Count(),
                     FirstSeen = g.Min(e => e.TimeGenerated).ToString("HH:mm"),
                     LastSeen = g.Max(e => e.TimeGenerated).ToString("HH:mm"),
@@ -117,7 +150,14 @@ internal static class LogAggregator
 
         foreach (var sig in signatures)
         {
-            KnownIssueCatalog.Classify(sig);
+            if (sig.LogName.Equals(LinuxLogName, StringComparison.OrdinalIgnoreCase))
+            {
+                KnownIssueCatalog.ClassifyLinux(sig);
+            }
+            else
+            {
+                KnownIssueCatalog.Classify(sig);
+            }
         }
 
         // 嚴重度優先、次數其次，確保截斷 top N 時重大問題一定被保留
@@ -126,6 +166,23 @@ internal static class LogAggregator
             .ThenByDescending(s => s.Count)
             .Take(top)
             .ToList();
+    }
+
+    /// <summary>
+    /// 分組鍵計算——Linux 事件的規則比對必須在這裡（分組之前）做，見 <see cref="Aggregate"/> 的說明。
+    /// internal 而非 private：<see cref="RiskyEventSelector"/> 從原始 <see cref="EventLogEntryData"/>
+    /// 反查對應的簽章時要用同一套鍵計算，否則 ssh-bruteforce／ssh-accept 這類「同 program
+    /// 不同規則」的原始事件會在風險 log 暫存裡混在一起（兩個簽章各自撈到同一批原始事件）。
+    /// </summary>
+    internal static (string LogName, string Source, int EventId, EventLogEntryType EntryType, string EventKey) GroupKeyFor(EventLogEntryData l)
+    {
+        if (!l.LogName.Equals(LinuxLogName, StringComparison.OrdinalIgnoreCase))
+        {
+            return (l.LogName, l.Source, l.EventId, l.EntryType, string.Empty);
+        }
+
+        var rule = KnownIssueCatalog.FindLinuxRule(l.Source, eventName: null, l.Message);
+        return (l.LogName, l.Source, l.EventId, l.EntryType, rule?.Id ?? string.Empty);
     }
 
     /// <summary>
@@ -188,6 +245,11 @@ internal static class LogAggregator
     /// <summary>
     /// 哪些頻道要抽取帳號/IP 彙總（KeyDetails）：Security 與兩個 RDP TerminalServices 頻道。
     /// RDP 也要，因為【暴力破解→RDP 得手】的跨日比對靠歷史簽章裡存的 KeyDetails IP 集合對照。
+    ///
+    /// 刻意不含 Linux（docs/FEEDBACK-12-PLAN.md §4.2）：這裡的帳號/IP 抽取邏輯
+    /// （<see cref="ExtractAccountsAndIps"/>）是為 Windows「Account Name:」／「User:」等固定
+    /// 標籤設計的，Linux syslog 訊息沒有這種標籤格式。sshd 失敗/成功登入的帳號與來源 IP
+    /// 解析是 §4.5（SSH 攻擊鏈關聯）獨立的正則，不借用這裡。
     /// </summary>
     private static bool ShouldExtractKeyDetails(string logName) =>
         logName.Equals(ChannelCatalog.SecurityChannel, StringComparison.OrdinalIgnoreCase) ||

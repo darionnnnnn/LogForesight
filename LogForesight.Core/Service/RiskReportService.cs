@@ -38,11 +38,11 @@ public class RiskReportService
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出符合使用者指定結構的 JSON 物件。";
 
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
     private readonly IReportSink _reportSink;
     private readonly int _deepDiveMaxTokens;
 
-    public RiskReportService(AIService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
+    public RiskReportService(IAiService aiService, IReportSink reportSink, int deepDiveMaxTokens = 8192)
     {
         _aiService = aiService;
         _reportSink = reportSink;
@@ -54,7 +54,7 @@ public class RiskReportService
     /// <param name="activeSuppressions">本機現在生效中的抑制項目（含 Reason），用來在報告的
     /// 「已抑制的告警」區塊顯示原因；null/空清單時該區塊不輸出</param>
     public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
-        List<RuleSuppression>? activeSuppressions = null, string host = "")
+        List<RuleSuppression>? activeSuppressions = null, string host = "", CancellationToken ct = default)
     {
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
@@ -85,7 +85,7 @@ public class RiskReportService
             // 只有 Other（未命中規則、AI 唯一還需要判讀的地方）才發一次深入分析呼叫
             var outcome = group.Key == IssueCategory.Other
                 ? (record.AiAnalyzed
-                    ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription)
+                    ? await DeepDiveAsync(record, group.Key, issues, categoryLogs, serverDescription, ct)
                     : new DeepDiveOutcome(null, false, 0, categoryLogs.Count))
                 : BuildStaticOutcome(issues, categoryLogs.Count);
 
@@ -185,7 +185,8 @@ public class RiskReportService
     /// 不是整批塞入後才發現超標。問題清單與統計數字不受影響，只有佐證用的原始 log 可能被截斷。
     /// </summary>
     private async Task<DeepDiveOutcome> DeepDiveAsync(DailyAnalysisRecord record, IssueCategory category,
-        List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription)
+        List<LogIssueSignature> issues, List<EventLogEntryData> rawLogs, string serverDescription,
+        CancellationToken ct = default)
     {
         var head = new StringBuilder();
 
@@ -259,7 +260,7 @@ public class RiskReportService
         sb.Append(footer);
 
         var result = await _aiService.ChatJsonAsync<DeepDiveResult>(sb.ToString(), DeepDiveSystemPrompt, maxTokens: _deepDiveMaxTokens,
-            label: $"deepdive-{record.Date:yyyyMMdd}-{category}");
+            label: $"deepdive-{record.Date:yyyyMMdd}-{category}", ct: ct);
         return new DeepDiveOutcome(result.Value, truncated, included, logLines.Count);
     }
 
@@ -447,7 +448,7 @@ public class RiskReportService
         {
             var reason = activeSuppressions?.FirstOrDefault(s =>
                 s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
-            sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.Source} EventId {issue.EventId} x{issue.Count}" +
+            sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.SourceEventLabel} x{issue.Count}" +
                           $"：{issue.KnownIssue}");
             sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");
         }
@@ -473,7 +474,7 @@ public class RiskReportService
     private static string FormatIssue(LogIssueSignature i)
     {
         var sb = new StringBuilder();
-        sb.Append($"- [{i.Severity}] {i.LogName}/{i.Source} EventId {i.EventId} x{i.Count}（{i.FirstSeen}~{i.LastSeen}）");
+        sb.Append($"- [{i.Severity}] {i.LogName}/{i.SourceEventLabel} x{i.Count}（{i.FirstSeen}~{i.LastSeen}）");
         if (i.KnownIssue != null)
         {
             sb.Append($"：{i.KnownIssue}");

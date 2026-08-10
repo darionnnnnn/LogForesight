@@ -26,7 +26,8 @@
 
 - **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／
   `SentinelQueryBuilder`，watchlist→Lucene 產生器）與機房 pipeline 本體
-  （`NetiqPipelineService`，`LogForesight.Core/Service/`，只支援 Windows 主機）皆已實作完成，
+  （`NetiqPipelineService`，`LogForesight.Core/Service/`，Windows／Linux 主機皆支援，
+  依 `Os` 分流查詢與映射，見 docs/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
@@ -39,9 +40,10 @@
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
   2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
-  3. Linux 主機的欄位形狀（program 落點、`sev`↔syslog priority 對應）——閘門是「Linux 那台
-     Sentinel 何時接入」，此環境 Windows/Linux 已完全拆分成不同 Sentinel，接入後對它跑一次
-     NetIQ 維護頁「診斷」分頁即可定案欄位（見 [docs/LINUX-RULES.md](LINUX-RULES.md)）。
+  3. ~~Linux 主機的欄位形狀／`sev` 對應門檻~~ **四輪 probe（2026-08-07，Sentinel「118_linux」）
+     全數定案並實作完成**（`Program=sp`、主機歸屬鍵沿用 `repip`、`sev` 不可靠承載 syslog
+     priority 語意改採計數用途的務實映射，見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)
+     §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)）。
   4. 真實 watchlist 形狀查詢（事件 ID 集合＋50 台 IP 批次）的耗時與命中量，決定夜間窗時程與
      批次大小。
   5. `dt` 時間邊界的人工核對（絕對時間區間需在 Sentinel Web UI 重現比對）。
@@ -56,14 +58,6 @@
   9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
   10. Security 頻道規則未涵蓋的「未知失敗 ID」目前不會被撈入 Sentinel 路徑（相對本機模式的
       已知涵蓋縮小）；是否值得靠 `xdasoutcome` 補一條 `NOT xdasoutcome:0` 分支待評估。
-- **Linux 事件取數管線**：Linux 規則面（模型／種子／Web 維護頁）已完成，但 Linux 主機的事件
-  尚未接進分析管線——需要在「NetIQ 接線」試點閘門解除、且有 Linux 主機所屬的 Sentinel 接入後，
-  比照 Windows 的 `SentinelFieldMap`／`SentinelQueryBuilder` 做 Linux 分支（欄位對應、Lucene
-  產生器、簽章聚合、覆蓋率申報），並補齊對應的自動化測試。
-- **Linux 攻擊鏈關聯層**：目前 Linux 主機的分析結果固定申報「關聯層不適用」（見
-  [docs/LINUX-RULES.md](LINUX-RULES.md)）。待 Linux 事件取數管線上線、帳號/IP 抽取穩定後，
-  可補至少一條【SSH 暴力破解→得手】關聯規則（同日 failed password 達門檻＋同帳號/IP 成功登入，
-  與 Windows【破解得手】同構）——這是獨立於取數管線之外的規劃項目，尚未排期。
 - **EVTX 離線匯入**：實際離線調查需求出現時再開規劃。
 - **伺服器端 CSV 匯出**：目前清單頁「複製為 CSV」為前端序列化當前頁；伺服器端全量匯出
   應與 `QueryPage` 下推查詢同路徑實作（避免匯出又走一次全撈）。

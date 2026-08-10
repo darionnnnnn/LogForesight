@@ -39,9 +39,9 @@ internal class AnalysisPromptBuilder
         "直接以 { 開始輸出，不要有任何前言、推理過程或說明文字，也不要使用 markdown code fence，" +
         "回覆的第一個字元必須是 {，只輸出一個符合使用者指定結構的 JSON 物件。";
 
-    private readonly AIService _aiService;
+    private readonly IAiService _aiService;
 
-    public AnalysisPromptBuilder(AIService aiService) => _aiService = aiService;
+    public AnalysisPromptBuilder(IAiService aiService) => _aiService = aiService;
 
     /// <summary>
     /// 超出主 prompt 呈現上限的 Other 類項目（前置掃描的對象；與 BuildPrompt 的分界一致）。
@@ -56,7 +56,7 @@ internal class AnalysisPromptBuilder
     /// 前置掃描：分批請 AI 逐項篩選尾巴項目，只回報值得注意者。
     /// 批次之間彼此獨立（逐項判斷是否為雜訊不需要全局脈絡），所以可以安全拆分呼叫。
     /// </summary>
-    public async Task<ScreeningOutcome> ScreenTailAsync(DateTime date, List<LogIssueSignature> tailIssues)
+    public async Task<ScreeningOutcome> ScreenTailAsync(DateTime date, List<LogIssueSignature> tailIssues, CancellationToken ct = default)
     {
         var outcome = new ScreeningOutcome();
 
@@ -69,7 +69,7 @@ internal class AnalysisPromptBuilder
             for (int i = 0; i < chunk.Length; i++)
             {
                 var item = chunk[i];
-                sb.AppendLine($"{i + 1}. [{item.Severity}] {item.LogName}/{item.Source} EventId {item.EventId} x{item.Count}" +
+                sb.AppendLine($"{i + 1}. [{item.Severity}] {item.LogName}/{item.SourceEventLabel} x{item.Count}" +
                               $"（{item.FirstSeen}~{item.LastSeen}）：" +
                               (item.KnownIssue != null ? $"{item.KnownIssue}；" : "") +
                               (item.SampleMessages.FirstOrDefault() ?? ""));
@@ -82,7 +82,7 @@ internal class AnalysisPromptBuilder
             sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），no 為上列項目編號；全部屬一般雜訊時 notable 給空陣列：");
             sb.AppendLine("""{"notable": [{"no": 1, "reason": "為何值得注意"}]}""");
 
-            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}");
+            var result = await _aiService.ChatJsonAsync<ScreeningResult>(sb.ToString(), SystemPrompt, label: $"screening-{date:yyyyMMdd}", ct: ct);
             var parsed = result.Value;
 
             if (parsed == null)
@@ -238,7 +238,9 @@ internal class AnalysisPromptBuilder
                 var topKeys = string.Join("、", h.TopIssues
                     .Where(i => i.Severity >= IssueSeverity.Medium)
                     .Take(3)
-                    .Select(i => $"{i.Source}#{i.EventId}x{i.Count}"));
+                    .Select(i => i.EventId == 0 && i.EventKey.Length > 0
+                        ? $"{i.Source}#{i.EventKey}x{i.Count}"
+                        : $"{i.Source}#{i.EventId}x{i.Count}"));
 
                 sb.Append($"- {h.Date:MM-dd}({WeekdayZh(h.Date)})：錯誤{h.ErrorCount} 警告{h.WarningCount} 稽核{h.AuditEventCount} 風險{h.RiskLevel}");
                 if (topKeys.Length > 0)
@@ -278,7 +280,7 @@ internal class AnalysisPromptBuilder
         var head = flagged ? $"[{i.Severity}/{i.Category}]" : $"[{EntryTypeText(i)}]";
         var time = i.Count > 1 ? $"（{i.FirstSeen}~{i.LastSeen}）" : $"（{i.FirstSeen}）";
         var known = flagged ? $"：{i.KnownIssue}" : "";
-        sb.AppendLine($"- {head} {i.LogName}/{i.Source} EventId {i.EventId} x{i.Count}{time}{TrendText(i, historyDays)}{known}");
+        sb.AppendLine($"- {head} {i.LogName}/{i.SourceEventLabel} x{i.Count}{time}{TrendText(i, historyDays)}{known}");
 
         // 歷史存 3 則範例，prompt 只放部分控制長度（重點問題 2 則、其他 1 則）；完整範例在風險報告與歷史紀錄
         var sampleCount = flagged ? FlaggedSampleCount : OtherSampleCount;

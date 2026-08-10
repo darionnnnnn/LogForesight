@@ -233,7 +233,7 @@ docs/archive/HISTORY.md #1）。
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
-#### Linux syslog（seed v4，2026-07-28 新增；⏸ 規則面已就緒，取數管線未完成）
+#### Linux syslog（seed v4，2026-07-28 新增；2026-08-07 回饋第十二輪批 4B/4C 完成，Sentinel 取數＋SSH 攻擊鏈關聯已全面落地）
 
 Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
 Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
@@ -266,16 +266,30 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 > **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
 > 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
 >
-> **目前狀態**：規則模型、種子、驗證與 Web 維護介面（規則頁的「Linux規則」分頁）都已完成；
-> 但 Linux 事件要從 Sentinel 取得，**取數管線尚未實作**（見 [docs/BACKLOG.md](docs/BACKLOG.md)）。
-> 也就是說現在可以維護 Linux 規則、把主機標成 Linux，但實際的每日分析還不會有 Linux 資料進來。
-> 本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**（同一台 Sentinel 不混平台，故 OS 標記
-> 落在 Sentinel 層級而非逐事件判別），目前接上的那台只有 Windows 主機——Linux 面的閘門因此是
-> 「Linux 那台 Sentinel 何時接入」，接入後對它跑一次 NetIQ 維護頁「診斷」分頁的 probe 即可定案欄位形狀。
-> 上表的訊息關鍵字是 probe 前的通用草案，屆時會依真實環境輸出校正（seed v5）。
+> **目前狀態（2026-08-07，回饋第十二輪批 4B/4C 完成）**：規則模型、種子、驗證、Web 維護介面
+> （規則頁的「Linux規則」分頁）、**事件模型與簽章聚合**（`EventKey` 五元組分組鍵、
+> `LogAggregator.ClassifyLinux`、`IssueSignatureKey` 相容擴充）、**Sentinel 實際取數分支**
+> （`SentinelFieldMap`／`SentinelEventMapper.MapLinux`／`SentinelQueryBuilder.BuildLinuxFilter`，
+> 四輪 probe 定案，見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) §4a）、以及
+> **SSH 攻擊鏈關聯**（`LinuxCorrelationAnalyzer`，見下方關聯層說明）全部完成並有專屬測試覆蓋
+> （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。上表的訊息關鍵字已對照四輪 probe 的真實
+> 環境輸出（program 量級、`msg` 片語查詢行為、sshd 樣本全文）逐項核對，零矛盾證據，seed 版本
+> 維持 v4 不變（評估後定案不校正，見 docs/FEEDBACK-12-PLAN.md §4.6 批 4B.6）。
+> 也就是說 Linux 主機從掃描精靈納入、排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，
+> 已與 Windows 主機同一條管線走完整趟，沒有殘留的止血擋板或短路（見
+> [docs/BACKLOG.md](docs/BACKLOG.md)）。本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**
+> （同一台 Sentinel 不混平台，故 OS 標記落在 Sentinel 層級而非逐事件判別；唯一例外是同一台
+> Sentinel 上另有 CEF collector 路徑，欄位形狀細節見 NETIQ-API-REFERENCE.md §4a）。
 >
-> **關聯層第一版不涵蓋 Linux**（攻擊鏈/故障鏈比對只認 Windows 事件），這件事會誠實申報在分析結果上，
-> 不讓人以為有看過。
+> **五層偵測對 Linux 主機的適用性**：
+>
+> | 層 | 適用 Linux？ | 說明 |
+> |---|---|---|
+> | 規則層 | ✓ | `KnownIssueCatalog.ClassifyLinux`，program＋訊息子字串比對 |
+> | 趨勢層 | ✓ | `TrendAnalyzer.SameIssue` 五元組比對，隔離「同 program 不同規則」 |
+> | 慢速趨勢層 | ✓ | `SlowTrendAnalyzer` 同上；`ChannelCoverage.WasRead("Linux")` 恆真 |
+> | 關聯層 | 部分（僅 SSH 破解得手一項） | `LinuxCorrelationAnalyzer` 獨立於 Windows 的 `CorrelationAnalyzer`（機制完全不同：regex 解析 `msg` 文字取 user/ip 再找重疊，而非 EventId 群組比對）；同日 `builtin-linux-ssh-bruteforce` 達門檻＋`builtin-linux-ssh-accept` 存在時比對兩者的 (user, ip)，重疊→精確命中（High），無重疊但有解析失敗樣本→降級提醒（Medium），全數解析成功且無重疊→誠實不告警（不是漏做）。其餘 Windows 面的組合模式（帳號異動鏈／新服務鏈／儲存連鎖等）目前不適用於 Linux 主機，`UncoveredChecks` 會明講 |
+> | AI 判讀層 | ✓ | 與平台無關，餵給 AI 的是聚合後的統計摘要，Linux 主機的規則/趨勢/慢速趨勢/關聯結果一樣能被翻譯成白話；「詢問 AI 現場取數」的即時查詢分支也已改用 program 子句支援 Linux（原本沿用 Windows 的 EventId 子句會恆查 0 筆） |
 
 ### 給 AI 判讀的輔助資訊（除了事件本身）
 
@@ -378,6 +392,42 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
     把 prompt 對半切的做法則不採用：跨訊號關聯（如新服務安裝＋服務崩潰＋帳號建立）
     會被切斷，還要合併兩份可能矛盾的結論。
 
+### NetIQ 搜尋與 AI 判讀脫鉤（兩階段模型，2026-08-07 起）
+
+多台 Sentinel 併行搜尋時，若每個主機日都要等 AI 判讀完才進下一個，AI 呼叫的延遲會直接拖慢
+整條搜尋主線——這正是回饋第十二輪的問題 2。`NetiqPipelineService` 因此把每個主機日拆成兩段：
+
+1. **統計段**（`LogAnalysisService.BuildStatisticalRecordAsync`）：聚合、規則分類、趨勢／慢速
+   趨勢／關聯比對全部是確定性計算，算完立刻寫入紀錄，不等 AI。需要 AI 的日子先寫入暫代內容
+   （Headline/Summary 顯示「統計已完成，AI 分析排隊中」），並標記 `AiPending = true`。
+2. **AI 段**（`LogAnalysisService.CompleteAiAsync`）：前置掃描＋主分析＋深入分析報告，交給
+   `AiFollowupQueue`（bounded channel）背景消費——搜尋主線把工作丟進佇列就繼續處理下一個
+   主機日，不等待。單一背景消費者依序處理，`AttachAiResult` 完成後覆寫暫代欄位（含抽出欄
+   `RiskLevel` 同步）並把 `AiPending` 改回 `false`。
+
+**`AiPending` 三態**（`DailyAnalysisRecord`）：
+- `AiAnalyzed=false` 且 `AiPending=false`：AI 判定不需要（低風險日）或已嘗試但失敗——既有的
+  「統計模式紀錄」語意，行為不變。
+- `AiPending=true`：統計段已寫入，AI 段還在排隊或執行中——新增的第三態，畫面顯示「AI 分析中」
+  徽章，與「統計模式（AI 未分析）」區分。
+- `AiAnalyzed=true`：AI 段已完成並覆寫定案內容。
+
+**深析報告時機**：不需要 AI 的日子（低風險或 AI 全域關閉）統計段當下就直接產出報告；需要
+AI 的日子要等 AI 段完成才產出（暫代紀錄的 `ReportFile` 為 `null`），深析報告的內容因此只會
+在 `CompleteAiAsync` 完成後出現，不會有「報告先出但沒有 AI 內容」的中間態。
+
+**取消與補跑語意**：執行中途取消時，`AiFollowupQueue` 裡尚未處理的工作記為
+`AiAbandoned`（`NetiqPipelineResult` 的統計數字之一），已經寫入的統計紀錄維持
+`AiPending=true`，成為下次執行前的「孤兒」。下次執行時，`NetiqPipelineService` 除了掃描
+「缺漏日」，也會獨立掃描 lookback 窗口內既有的 `AiPending=true` 紀錄（與主機當天是否缺漏
+無關），包成補跑型工作（`LogAnalysisService.RetryAiAsync`）排進同一個佇列的尾端，優先序
+低於當日主線。補跑由既有紀錄（`TopIssues`/`TrendAlerts`/`CorrelationAlerts` 皆已持久化）
+重建主分析輸入，但前置掃描與深入分析報告刻意不補——兩者需要原始 log，取消當下已經回不去了。
+
+**適用範圍**：兩階段脫鉤只在 NetIQ pipeline 生效。本機分析路徑（`AnalyzeDayAsync`）評估後
+決定暫不比照拆分——單機序列執行、多個主機日之間本來就沒有並行搜尋主線可保護，脫鉤的收益
+低、佇列歸屬權（誰在程式結束前把佇列排空）的侵入性風險偏高，詳細評估見
+[docs/FEEDBACK-12-PLAN.md](docs/FEEDBACK-12-PLAN.md) §3.9。
 
 ---
 
