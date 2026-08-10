@@ -332,16 +332,17 @@ public class SystemSettingsServiceTests
         Assert.Equal(new[] { "高" }, saved.VisibleDayRiskLevels);
     }
 
-    /// <summary>SystemSettings 模型的內建預設值已是全三級（見類別定義）——舊部署升級後
-    /// 這個欄位在資料庫尚未有值時，讀到的就是這個預設，不會突然全部隱藏</summary>
+    /// <summary>SystemSettings 模型的內建預設值是高＋中（回饋十三輪新增項2：低風險日佔絕大多數
+    /// 且通常不需要人工介入，預設顯示會把真正需要關注的高／中風險日稀釋掉）——舊部署升級後
+    /// 這個欄位在資料庫尚未有值時，讀到的就是這個預設。</summary>
     [Fact]
-    public void Get_未曾設定過時預設全顯示()
+    public void Get_未曾設定過時預設高中不含低()
     {
         var service = Create();
 
         var visible = service.Get().VisibleDayRiskLevels;
 
-        Assert.Equal(new HashSet<string> { "高", "中", "低" }, visible.ToHashSet());
+        Assert.Equal(new HashSet<string> { "高", "中" }, visible.ToHashSet());
     }
 
     [Fact]

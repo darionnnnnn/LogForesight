@@ -319,7 +319,7 @@ public class GroupAdminService
         {
             var range = CidrMatcher.Parse(request.Pattern)
                         ?? throw DomainException.Validation(
-                            $"「{request.Pattern}」不是有效的網段（可用 10.1.2.0/24、10.1.2.* 或單一 IP）。");
+                            $"「{request.Pattern}」不是有效的網段（可用 192.168.0.0/24、192.168.0.* 或單一 IP）。");
             return hosts.Where(h => CidrMatcher.Matches(range, h.IpAddress)).ToList();
         }
 

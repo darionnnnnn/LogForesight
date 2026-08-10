@@ -179,7 +179,7 @@ public static class SentinelQueryBuilder
     // ── 網段範圍探索（新增主機，2026-07-29 定案）───────────────────────────────
     //
     // docs/NETIQ-API-REFERENCE.md §3.4：使用者在 Sentinel Web UI 實測 repip 支援前綴萬用字元
-    // （repip:10.1.2.* 有效過濾，近 1h 從全站 154 萬筆縮到 2.4 萬筆），探索因此改走
+    // （repip:192.168.0.* 有效過濾，近 1h 從全站 154 萬筆縮到 2.4 萬筆），探索因此改走
     // 「網段範圍掃描」而不是 ESM 物件 API（一直被權限拒絕）——輸入網段前綴，
     // 依實測量級自動決定窗口，投影兩欄本地 distinct 出主機清單。
 
@@ -336,7 +336,7 @@ public static class SentinelQueryBuilder
         if (cidrBits.HasValue)
         {
             // CIDR 指定的位元數決定要留幾段：/16 留 2 段、/24 留 3 段——
-            // 多打的段數（如 10.1.2.5/24）直接截斷，少打的視為輸入錯誤
+            // 多打的段數（如 192.168.0.5/24）直接截斷，少打的視為輸入錯誤
             var wantedOctets = cidrBits.Value / 8;
             if (parsed.Count < wantedOctets)
             {

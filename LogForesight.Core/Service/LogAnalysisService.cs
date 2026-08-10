@@ -34,6 +34,8 @@ public class LogAnalysisService
     private readonly string _host;
     private readonly long _hostId;
     private readonly AnalysisPromptBuilder _promptBuilder;
+    private readonly IRiskyEventStore? _riskyEventStore;
+    private readonly IReadOnlyCollection<long> _hostGroupIds;
 
     /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-SPEC.md）：只影響「要不要吵」
     /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
@@ -42,9 +44,17 @@ public class LogAnalysisService
     /// <param name="host">寫入紀錄的主機名稱；null/空字串時預設為 Environment.MachineName（本機情境的自然值）</param>
     /// <param name="hostId">寫入紀錄的主機 PK（主機清單登記後取得）。**紀錄與主機的關聯鍵**；
     /// 0＝取不到主機列時的降級，查詢端會退回以主機名稱比對，分析本身不受影響</param>
+    /// <param name="riskyEventStore">風險 log 暫存（回饋十三輪 C）：只有 <see cref="RetryAiAsync"/>
+    /// （孤兒補跑）用得到——原始 log 不落地，補跑時要重建深析報告的佐證只能從這裡撈。
+    /// null＝不補（沿用既有「報告從缺」行為，本機分析路徑一律傳 null）</param>
+    /// <param name="hostGroupIds">這台主機目前所屬的主機群組 Id（回饋十三輪 F：抑制的 Group／Site
+    /// 範圍判定要知道主機的群組成員資格，見 <see cref="SuppressionFilter"/>）。呼叫端解析一次傳入，
+    /// 這裡不查 store——null／未提供＝視為不屬於任何群組，Group 範圍的抑制對這台主機不生效
+    /// （Host／Site 範圍不受影響）。</param>
     public LogAnalysisService(EventLogService eventLogService, IAiService aiService, IAnalysisRecordStore historyService,
         ISuppressionStore suppressionStore, string serverDescription = "", RiskReportService? reportService = null,
-        string? host = null, long hostId = 0)
+        string? host = null, long hostId = 0, IRiskyEventStore? riskyEventStore = null,
+        IReadOnlyCollection<long>? hostGroupIds = null)
     {
         _eventLogService = eventLogService;
         _aiService = aiService;
@@ -55,6 +65,8 @@ public class LogAnalysisService
         _host = string.IsNullOrEmpty(host) ? Environment.MachineName : host;
         _hostId = hostId;
         _promptBuilder = new AnalysisPromptBuilder(aiService);
+        _riskyEventStore = riskyEventStore;
+        _hostGroupIds = hostGroupIds ?? Array.Empty<long>();
     }
 
     /// <summary>
@@ -128,7 +140,7 @@ public class LogAnalysisService
         // 主機級告警抑制（見 docs/RULES-SPEC.md）：只標記「這個簽章命中的規則被本機抑制」，
         // 不影響聚合、分類或後續寫入歷史——偵測與紀錄照常，只是後面判定風險/組告警文字時要跳過它。
         // 保留完整的 activeSuppressions（含 Reason）供風險報告的「已抑制的告警」區塊顯示。
-        var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, DateTime.Now);
+        var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, _hostGroupIds, DateTime.Now);
         if (activeSuppressions.Count > 0)
         {
             var suppressedRuleIds = SuppressionFilter.ToRuleIdSet(activeSuppressions);
@@ -150,7 +162,7 @@ public class LogAnalysisService
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
         var history = _historyService.ReadRecent(targetDate, historyDays);
 
-        // 程式端確定性頻率比對：當日 vs 前一日 vs 歷史平均，頻率上升會就地升級該事件的嚴重度
+        // 程式端確定性頻率比對：當日 vs 前一日 vs 歷史基準，頻率上升會就地升級該事件的嚴重度
         var trendAlerts = TrendAnalyzer.Apply(issues, history, targetDate, errorCount, auditCount);
 
         // 慢速趨勢偵測（2026-07-20，見 docs/archive/HISTORY.md）：近 7 天 vs 前 7 天總量比較，
@@ -215,6 +227,25 @@ public class LogAnalysisService
         bool needsAi = useAi && (!lowRisk || tailIssues.Count >= MinTailForLowRiskScreening);
 
         var uncoveredChecks = BuildUncoveredChecks(securityLogAvailable, channels);
+
+        // 新主機趨勢基準空窗（回饋十三輪 A8）：TrendAnalyzer 對「歷史不足」已有既定的靜默降級
+        // 行為（history.Count==0 時全部標 Unknown、不產生 New/Rising 告警；channelWarmingUp
+        // 進一步用 WarmupDays=3 防切換日告警風暴）——偵測邏輯正確，但完全沒有對應的使用者申報，
+        // 「沒有趨勢告警」與「趨勢層根本還沒有基準可比對」在畫面上長得一模一樣。與「沒告警 ≠
+        // 沒問題」同一個誠實申報原則：NetIQ 新主機預設每次只回補 1 天（NetiqOptions.BackfillDays），
+        // 要 14 個日曆天才能長出完整基準，這段期間值得讓使用者知道，而不是留給他自己發現。
+        //
+        // 門檻是 historyDays - 1 不是 historyDays：ReadRecent(targetDate, historyDays) 的窗口
+        // 含 targetDate 本身（[targetDate-(historyDays-1), targetDate]），但當下這一天的紀錄
+        // 還沒寫入（正在分析中）——history 最多只可能有 historyDays-1 筆，用 historyDays 當門檻
+        // 這條件永遠成立，每天都會誤報「基準未建立」。
+        var fullHistoryDays = historyDays - 1;
+        if (history.Count < fullHistoryDays)
+        {
+            uncoveredChecks.Add($"趨勢基準建立中（歷史 {history.Count}/{fullHistoryDays} 天）：" +
+                                 "期間趨勢層（首次出現／頻率上升等判定）對本機尚未有完整比對基準，可能低估或漏判");
+        }
+
         if (isLinuxHost)
         {
             // 「涵蓋範圍」而非「完全不適用」（docs/FEEDBACK-12-PLAN.md §4.5，批 4C 落地後更新）：
@@ -223,6 +254,15 @@ public class LogAnalysisService
             // 申報原則，不能讓人以為關聯層對 Linux 主機做了跟 Windows 對等的完整檢查。
             uncoveredChecks.Add("關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項——" +
                                 "其餘 Windows 面的組合模式（帳號異動/新服務/儲存連鎖等）不適用於 Linux 主機");
+
+            // 檢索面比 Windows 窄一階（回饋十三輪 A9）：SentinelQueryBuilder 對 Linux 主機只拉
+            // 「規則 program 前綴 ∪ sev:[2 TO 5]」——不是整頻道拉取。命中已知規則的事件、與達到
+            // sev 門檻的事件會進來，但**規則外、severity 又不到門檻的未知新問題**永遠不會被
+            // Sentinel 回傳，本日趨勢層自然也看不見它、不會產生 New/Rising 告警。這不是本日的
+            // 資料缺口（回補不了），是這個檢索範圍的常態限制，每個 Linux 主機的每一天皆適用——
+            // Windows 主機是整頻道拉取（System/Application），沒有這層篩選，不受此限。
+            uncoveredChecks.Add("Linux 檢索範圍限「已知規則命中」與「sev 2-5」——" +
+                                "範圍外的未知新問題不會被取回，趨勢層對這類事件不可見（Windows 主機無此限制）");
         }
 
         // 慢速趨勢層若因前期歷史不足而完全沒有比對，要明講——「沒告警」不等於「沒問題」。
@@ -397,8 +437,13 @@ public class LogAnalysisService
     /// TopIssues／TrendAlerts／CorrelationAlerts／各項計數全部持久化在 ContentJson，足以重建
     /// prompt；歷史一樣在這裡才重讀。
     ///
-    /// **前置掃描與深析報告刻意不補**：兩者都需要原始 log 摘錄，而原始 log 不落地，取消當下
-    /// 就已經回不去了——補跑補的是白話摘要與風險再判定，不偽造一份沒有 log 佐證的深析。
+    /// **深析報告一併補**（回饋十三輪 C，體檢批 0 #6，取代舊決策「刻意不補」）：原始 log 雖然
+    /// 不隨紀錄落地，但規則命中或趨勢異常的簽章已經寫進 <c>lf_risky_events</c> 風險暫存
+    /// （<see cref="HostDayPostProcessor.ReplaceRiskyEvents"/>，每簽章至多 50／每主機日至多 500 筆），
+    /// 只要還在保留期內就能重建出報告需要的原始 log 佐證，不必留一份永久缺報告的紀錄。
+    /// 暫存已逾期（回補超過保留期，見 <see cref="Analysis.RiskyEventSelector.WithinRetention"/>）
+    /// 或本來就沒有合格事件寫入時，誠實維持 <c>ReportFile=null</c> 並在 UncoveredChecks 追加說明——
+    /// 不偽造一份沒有佐證的報告。
     /// <see cref="DailyAnalysisRecord.CorrelationAlerts"/> 持久化時只留描述文字（結構化的
     /// <see cref="CorrelationFinding.Severity"/>／<see cref="CorrelationFinding.ElevatesDayRisk"/>
     /// 沒有隨紀錄存下來），這裡用中性嚴重度重建只為了滿足 prompt 組裝的型別需求——
@@ -417,12 +462,83 @@ public class LogAnalysisService
             pendingRecord.Date, pendingRecord.TopIssues, pendingRecord.ErrorCount, pendingRecord.WarningCount,
             pendingRecord.AuditEventCount, history, pendingRecord.TrendAlerts, correlations, screening: null,
             pendingRecord.DataIncomplete, pendingRecord.UncoveredChecks, pendingRecord.RiskLevel, ct);
+        var riskBasis = riskBasisOverride ?? pendingRecord.RiskBasis;
 
-        return new AiOutcome(headline, summary, trendAssessment, action, riskLevel,
-            riskBasisOverride ?? pendingRecord.RiskBasis, aiAnalyzed,
+        string? reportFile = null;
+        List<CategoryDeepDive> deepDives = new();
+        List<string>? uncoveredChecksAddendum = null;
+
+        if (_riskyEventStore != null)
+        {
+            var riskyEvents = _riskyEventStore.QueryDay(pendingRecord.HostId, pendingRecord.Date);
+            if (riskyEvents.Count > 0)
+            {
+                var logs = riskyEvents.Select(ToEventLogEntryData).ToList();
+                var activeSuppressions = SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), _host, _hostGroupIds, DateTime.Now);
+
+                // 形狀比照 CompleteAiAsync 的 scratch：GenerateReportIfActionableAsync 只看
+                // record 上這些欄位，少一個報告內容就缺一塊
+                var scratch = new DailyAnalysisRecord
+                {
+                    Date = pendingRecord.Date,
+                    HostId = pendingRecord.HostId,
+                    Host = pendingRecord.Host,
+                    ErrorCount = pendingRecord.ErrorCount,
+                    WarningCount = pendingRecord.WarningCount,
+                    AuditEventCount = pendingRecord.AuditEventCount,
+                    TopIssues = pendingRecord.TopIssues,
+                    TrendAlerts = pendingRecord.TrendAlerts,
+                    CorrelationAlerts = pendingRecord.CorrelationAlerts,
+                    RiskLevel = riskLevel,
+                    RiskBasis = riskBasis,
+                    Headline = headline,
+                    Summary = summary,
+                    TrendAssessment = trendAssessment,
+                    Action = action,
+                    AiAnalyzed = aiAnalyzed,
+                    ScreenedTailCount = pendingRecord.ScreenedTailCount,
+                    ScreeningNotes = pendingRecord.ScreeningNotes,
+                    DataIncomplete = pendingRecord.DataIncomplete,
+                    UncoveredChecks = pendingRecord.UncoveredChecks
+                };
+
+                reportFile = await GenerateReportIfActionableAsync(scratch, logs, activeSuppressions, ct);
+                deepDives = scratch.DeepDives;
+                if (reportFile != null)
+                {
+                    uncoveredChecksAddendum = new List<string> { "原始 log 取自風險事件暫存（每簽章至多 50 筆），非本次即時查詢結果" };
+                }
+            }
+            else if (RiskLevels.IsActionable(riskLevel))
+            {
+                // 只有「這天原本該有報告」時才值得申報從缺——低風險日本來就不產報告，講了反而多餘
+                uncoveredChecksAddendum = new List<string>
+                {
+                    "本日報告因執行取消而延後補寫，風險事件暫存已逾期或當初無合格事件寫入，原始 log 佐證從缺"
+                };
+            }
+        }
+
+        return new AiOutcome(headline, summary, trendAssessment, action, riskLevel, riskBasis, aiAnalyzed,
             pendingRecord.ScreenedTailCount, pendingRecord.ScreeningNotes,
-            ReportFile: null, DeepDives: new List<CategoryDeepDive>());
+            reportFile, deepDives, uncoveredChecksAddendum);
     }
+
+    /// <summary>
+    /// 風險事件暫存 → 原始 log（回饋十三輪 C）：欄位形狀足以餵報告產生器
+    /// （<see cref="RiskReportService.SelectRawLogs"/> 只比對 LogName/Source/EventId/EntryType，
+    /// <see cref="RiskReportService.FormatRawLog"/> 只讀 Message/TimeGenerated）——唯一缺的
+    /// InstanceId 兩者皆不使用，留預設值 0 無妨。
+    /// </summary>
+    private static EventLogEntryData ToEventLogEntryData(RiskyEvent e) => new()
+    {
+        TimeGenerated = e.EventTime,
+        EntryType = e.EntryType,
+        LogName = e.LogName,
+        Source = e.Source,
+        Message = e.Message,
+        EventId = e.EventId
+    };
 
     /// <summary>
     /// 主分析 AI 呼叫本體，<see cref="CompleteAiAsync"/> 與 <see cref="RetryAiAsync"/> 共用——

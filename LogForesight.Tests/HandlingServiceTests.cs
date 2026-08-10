@@ -50,7 +50,9 @@ public class HandlingServiceTests
 
     private static DateTime Today => DateTime.Today;
 
-    private HandlingServiceFacade Create(params Capability[] capabilities)
+    private HandlingServiceFacade Create(params Capability[] capabilities) => Create(null, capabilities);
+
+    private HandlingServiceFacade Create(IUserGroupStore? groups, params Capability[] capabilities)
     {
         var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
         return new HandlingServiceFacade(
@@ -65,7 +67,8 @@ public class HandlingServiceTests
             visibility: new AlwaysVisibleService(_hosts),
             currentUser: currentUser,
             audit: _audit,
-            settings: _settings);
+            settings: _settings,
+            groups: groups);
     }
 
     /// <summary>
@@ -111,6 +114,31 @@ public class HandlingServiceTests
         var result = Create(Capability.Assign).Assign(_host.HostId, Today, _other.UserId);
 
         Assert.Equal(HandlingStatuses.InProgress, result.Status);
+    }
+
+    /// <summary>
+    /// 回饋十三輪，體檢 H1 殘餘：批次指派（IssueHandlingCommandService.BulkAssignIssueCase）
+    /// 已有「對方沒有處理能力」的提示，日層級指派原本沒有——同一套「不擋、只提示」決策，
+    /// 同一個 UserCapabilityResolver 事實來源（沒有群組、也不是任何主機負責人，兩條授權路徑都不成立）。
+    /// </summary>
+    [Fact]
+    public void 指派給沒有Handle能力的人_仍成立但回報()
+    {
+        var noCapUser = _users.Upsert(new WebUser { Account = "DOMAIN\\intern", DisplayName = "小實習生" });
+
+        var result = Create(Capability.Assign).Assign(_host.HostId, Today, noCapUser.UserId);
+
+        Assert.Equal("小實習生", result.HandlerName);   // 指派仍然成立，不擋
+        Assert.True(result.AssigneeCannotHandle);
+    }
+
+    /// <summary>負責人隱含 User 角色（§2b）也算數——不該被誤報</summary>
+    [Fact]
+    public void 指派給主機負責人_有Handle能力不回報()
+    {
+        var result = Create(Capability.Assign).Assign(_host.HostId, Today, _owner.UserId);
+
+        Assert.False(result.AssigneeCannotHandle);
     }
 
     [Fact]

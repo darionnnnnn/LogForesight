@@ -1711,11 +1711,13 @@ function csvHeader() {
     if (currentView === 'date') return ['日期', '主機數', '高風險', '中風險', '低風險', '關聯訊號', '類型'];
     // 依問題視角（§10.3）：「涵蓋範圍」與「出現密度」在畫面上是合併字串（好讀），
     // 匯出時**拆成獨立欄位**——CSV 是給人貼進試算表再排序／樞紐的，
-    // `2026-05-06 ~ 2026-07-28` 與 `3/98` 這種合併字串在 Excel 裡是死的
+    // `2026-05-06 ~ 2026-07-28` 與 `3/98` 這種合併字串在 Excel 裡是死的。
+    // 「風險日數」（回饋十三輪 A5）已移除：畫面欄位（renderIssueView）本來就沒有這一欄，
+    // CSV 與畫面欄位不一致會讓人以為匯出漏東西——出現天數／期間天數已能回答同樣的問題。
     if (currentView === 'issue') {
         return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
             '首見', '最近出現', '距今天數', '出現天數', '期間天數',
-            '風險日數', '總次數', '處理概況', '處理人'];
+            '總次數', '處理概況', '處理人'];
     }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
 }
@@ -1736,7 +1738,7 @@ function csvRow(item) {
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
             item.activeDays, item.periodDays,
-            item.dayCount, item.totalCount,
+            item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
     const handler = item.handlerName

@@ -118,7 +118,19 @@ public class RuleValidationDto
 public class RuleSuppressionDto
 {
     public string RuleId { get; set; } = string.Empty;
+
+    /// <summary>Host（預設）｜Group｜Site（回饋十三輪 F，見 SuppressionScopes）</summary>
+    public string Scope { get; set; } = "Host";
+
+    /// <summary>Scope=Host 時的目標主機；其餘 Scope 為空字串</summary>
     public string Host { get; set; } = string.Empty;
+
+    /// <summary>Scope=Group 時的目標主機群組 Id；其餘 Scope 為 null</summary>
+    public long? HostGroupId { get; set; }
+
+    /// <summary>Scope=Group 時的群組名稱（由 HostGroupId 反查帶出，供畫面直接顯示）</summary>
+    public string? HostGroupName { get; set; }
+
     public string Reason { get; set; } = string.Empty;
     public DateTime? ExpiresAt { get; set; }
     public bool IsExpired { get; set; }
@@ -130,8 +142,14 @@ public class RuleSuppressionDto
 
 public class AddSuppressionRequest
 {
-    [Required]
-    public string Host { get; set; } = string.Empty;
+    /// <summary>Host（預設，對應既有欄位）｜Group｜Site（回饋十三輪 F）</summary>
+    public string Scope { get; set; } = "Host";
+
+    /// <summary>Scope=Host 時必填</summary>
+    public string? Host { get; set; }
+
+    /// <summary>Scope=Group 時必填</summary>
+    public long? HostGroupId { get; set; }
 
     [Required(ErrorMessage = "請說明抑制原因")]
     [StringLength(500)]

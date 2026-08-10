@@ -308,6 +308,9 @@ public static class RuleValidator
                     continue;
                 }
 
+                // 子字串比對是刻意的、不是誤判：Sentinel 端 program 比對走 sp:{program}* 前綴，
+                // "su" 這種短 program 只要沒有 MessagePatterns 收斂，就真的會把 "sudo" 的事件
+                // 一併吃下去——遮蔽在這裡是真實發生的，不是規則寫法巧合撞名（回饋十三輪 A10）。
                 bool programCovered = later.ProgramPattern.Contains(earlier.ProgramPattern, StringComparison.OrdinalIgnoreCase);
                 if (!programCovered)
                 {
@@ -315,8 +318,10 @@ public static class RuleValidator
                 }
 
                 warnings.Add($"規則 {later.Id} 被排在前面的規則 {earlier.Id} 遮蔽，永遠不會命中" +
-                             $"（{earlier.Id} 的 ProgramPattern「{earlier.ProgramPattern}」不篩訊息，已涵蓋 {later.Id} 的 program 範圍），" +
-                             "請調整順序或縮小其中一條的比對範圍");
+                             $"（{earlier.Id} 的 ProgramPattern「{earlier.ProgramPattern}」不篩訊息，" +
+                             $"依前綴比對已涵蓋 {later.Id} 的「{later.ProgramPattern}」）。" +
+                             $"解法二選一：把 {later.Id} 移到 {earlier.Id} 之前；" +
+                             $"或幫 {earlier.Id} 加上 MessagePatterns，縮小到只比對它自己的訊息內容。");
                 break;
             }
         }

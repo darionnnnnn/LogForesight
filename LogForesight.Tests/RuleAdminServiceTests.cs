@@ -19,6 +19,7 @@ public class RuleAdminServiceTests
     private readonly FakeSuppressionStore _suppressions = new();
     private readonly FakeUserStore _users = new();
     private readonly RecordingAuditService _audit = new();
+    private readonly FakeHostGroupStore _hostGroups = new();
 
     private const string BuiltinId = "builtin-disk-153";
 
@@ -46,7 +47,7 @@ public class RuleAdminServiceTests
     }
 
     private RuleAdminService Create() =>
-        new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit);
+        new(_rules, _seeds, _suppressions, _users, FakeCurrentUser.WithCapabilities(Capability.Maintain), _audit, _hostGroups);
 
     private static SaveRuleRequest ValidRequest(string id = "custom-test") => new()
     {
@@ -302,9 +303,104 @@ public class RuleAdminServiceTests
     [Fact]
     public void 解除不存在的抑制_回報找不到()
     {
-        var ex = Assert.Throws<DomainException>(() => Create().RemoveSuppression(BuiltinId, "SRV-99"));
+        var ex = Assert.Throws<DomainException>(() =>
+            Create().RemoveSuppression(BuiltinId, SuppressionScopes.Host, "SRV-99", null));
 
         Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    // ── 抑制範圍：Group／Site（回饋十三輪 F）───────────────────────────────────
+
+    [Fact]
+    public void 新增群組範圍抑制_成功且帶回群組名稱()
+    {
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "IIS 前端" });
+        var service = Create();
+
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest
+        { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "整群組已知雜訊" });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionScopes.Group, dto.Scope);
+        Assert.Equal(group.GroupId, dto.HostGroupId);
+        Assert.Equal("IIS 前端", dto.HostGroupName);
+        Assert.Equal(string.Empty, dto.Host);
+    }
+
+    [Fact]
+    public void 新增群組範圍抑制_群組不存在時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(BuiltinId,
+            new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = 999, Reason = "測試" }));
+
+        Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    [Fact]
+    public void 新增群組範圍抑制_未選群組時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(BuiltinId,
+            new AddSuppressionRequest { Scope = SuppressionScopes.Group, Reason = "測試" }));
+
+        Assert.Contains("主機群組", ex.Message);
+    }
+
+    [Fact]
+    public void 新增全站範圍抑制_成功且不須額外目標()
+    {
+        var service = Create();
+
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "全站已知雜訊" });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionScopes.Site, dto.Scope);
+        Assert.Null(dto.HostGroupId);
+        Assert.Equal(string.Empty, dto.Host);
+    }
+
+    [Fact]
+    public void 同規則Host與Site範圍可並存_不互相覆寫()
+    {
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "單台" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "全站" });
+
+        Assert.Equal(2, service.GetSuppressions().Count);
+    }
+
+    [Fact]
+    public void 同規則同群組重複抑制_覆寫而非累積()
+    {
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "DB 伺服器" });
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "第一次" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "第二次" });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal("第二次", dto.Reason);
+    }
+
+    [Fact]
+    public void 解除群組範圍抑制_成功()
+    {
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "DB 伺服器" });
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "測試" });
+
+        service.RemoveSuppression(BuiltinId, SuppressionScopes.Group, null, group.GroupId);
+
+        Assert.Empty(service.GetSuppressions());
+    }
+
+    [Fact]
+    public void 解除全站範圍抑制_成功()
+    {
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "測試" });
+
+        service.RemoveSuppression(BuiltinId, SuppressionScopes.Site, null, null);
+
+        Assert.Empty(service.GetSuppressions());
     }
 }
 

@@ -15,14 +15,23 @@ public static class RecordStatsBuilder
     /// <summary>
     /// 依風險類別彙總。逐日彙總後合併：CategoryAggregator 是兩個儲存後端共用的同一份規則
     /// （§10.3），儀表板與明細頁因此不可能算出不同的數字。
+    ///
+    /// <paramref name="visibleSeverities"/>（回饋十三輪新增項3）：卡片彙總一律排除未勾選的問題嚴重度，
+    /// 不論 <see cref="SystemSettings.SeverityDisplayMode"/> 是 DefaultHidden 還是 SiteHidden。
+    /// 這與風險日詳情頁刻意不同——詳情頁在 DefaultHidden 模式下送出完整資料，靠前端「顯示已隱藏
+    /// 層級」按鈕讓使用者自行點開；但儀表板／報表的類別卡沒有這個手動展開的 UI，繼續套用
+    /// 「DefaultHidden＝不過濾」的話，被使用者在設定頁取消勾選的嚴重度（預設即不含 Low）
+    /// 會在這裡原封不動地繼續出現——尤其「其他」類別本來就是低嚴重度雜訊的大宗，
+    /// 最容易讓人以為「明明關掉了低風險顯示，其他類別怎麼還在顯示」。
     /// </summary>
-    public static List<DashboardCategoryDto> BuildCategoryCards(List<DailyAnalysisRecord> records)
+    public static List<DashboardCategoryDto> BuildCategoryCards(
+        List<DailyAnalysisRecord> records, HashSet<IssueSeverity> visibleSeverities)
     {
-        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(r.TopIssues));
+        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(VisibleIssues(r, visibleSeverities)));
         var merged = CategoryAggregator.Merge(perDay);
 
         var hostsPerCategory = records
-            .SelectMany(r => r.TopIssues.Select(i => new { i.Category, r.Host }))
+            .SelectMany(r => VisibleIssues(r, visibleSeverities).Select(i => new { i.Category, r.Host }))
             .GroupBy(x => x.Category)
             .ToDictionary(
                 g => g.Key,
@@ -42,6 +51,9 @@ public static class RecordStatsBuilder
             AffectedHosts = hostsPerCategory.TryGetValue(c.Category, out var count) ? count : 0
         }).ToList();
     }
+
+    private static IEnumerable<LogIssueSignature> VisibleIssues(DailyAnalysisRecord r, HashSet<IssueSeverity> visibleSeverities) =>
+        r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity));
 
     /// <summary>
     /// 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」共用。

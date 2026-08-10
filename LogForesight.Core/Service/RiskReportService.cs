@@ -492,8 +492,8 @@ public class RiskReportService
     private static string TrendZh(LogIssueSignature i) => i.Trend switch
     {
         IssueTrend.New => "首次出現，近期歷史中從未發生",
-        IssueTrend.Rising => $"頻率上升（昨日 x{i.PreviousDayCount?.ToString() ?? "-"}、近期平均 x{i.HistoryDailyAverage}）",
-        IssueTrend.Recurring => $"重複出現（近期 {i.DaysSeenInHistory} 天有發生、平均 x{i.HistoryDailyAverage}）",
+        IssueTrend.Rising => $"頻率上升（昨日 x{i.PreviousDayCount?.ToString() ?? "-"}、近期基準 x{i.HistoryDailyAverage}）",
+        IssueTrend.Recurring => $"重複出現（近期 {i.DaysSeenInHistory} 天有發生、基準 x{i.HistoryDailyAverage}）",
         IssueTrend.Declining => "頻率下降",
         _ => "無歷史可比對"
     };

@@ -152,6 +152,12 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         record.ScreeningNotes = outcome.ScreeningNotes;
         record.ReportFile = outcome.ReportFile;
         record.DeepDives = outcome.DeepDives;
+        // 追加而非覆寫（回饋十三輪 C）：統計段寫入的 UncoveredChecks 已經定案，
+        // AI 段（含孤兒補跑）只在這裡把自己才知道的新缺口併進去
+        if (outcome.UncoveredChecksAddendum is { Count: > 0 })
+        {
+            record.UncoveredChecks.AddRange(outcome.UncoveredChecksAddendum);
+        }
         row.ContentJson = JsonSerializer.Serialize(record);
 
         // 抽出欄同步（docs/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，

@@ -72,6 +72,28 @@ public class NetiqOptions
     public const int MaxParallelServersLimit = 3;
 
     /// <summary>
+    /// 單一 Sentinel 內部，同一天要查的主機批次最多同時開幾條查詢（回饋十三輪 D）。
+    /// <see cref="MaxParallelServers"/> 是跨 Sentinel 的平行度，這個是同一台 Sentinel 內部再往下
+    /// 一層——一台 Sentinel 轄下主機很多時（單日缺漏日的主機被 <c>IpBatchSize</c> 切成多個批次），
+    /// 這層平行度能縮短「只有 1～2 台 Sentinel 但主機量大」場景的整體查詢時間，與跨 Sentinel 平行是
+    /// 正交的維度。<see cref="SentinelClient"/> 單一 instance 是單一併發佇列（見其類別文件），
+    /// 要平行就得各自建立獨立實例——這裡的做法是建一個 client pool，池大小＝本設定值。
+    /// 預設 1＝完全依序（既有行為的逃生門，語意同 <see cref="MaxParallelServers"/>）。
+    /// 上限見 <see cref="MaxParallelQueriesPerServerLimit"/>。
+    /// </summary>
+    public int MaxParallelQueriesPerServer { get; set; } = 1;
+
+    /// <summary>
+    /// <see cref="MaxParallelQueriesPerServer"/> 的硬上限（回饋十三輪 D）。與
+    /// <see cref="MaxParallelServersLimit"/> 同一個「行程架構上限，不是效能旋鈕」的理由：
+    /// 兩個維度的乘積直接決定夜間分析同時可能佔用的 DB 連線數上限（見
+    /// <c>AnalysisOrchestrator.AnalysisMaxPoolSize</c>，其值就是以這兩個常數的乘積推算），
+    /// 也是同時對單一 Sentinel 開的查詢工作數——Sentinel 本身也在服務其他監控用途，
+    /// 不是這個系統獨佔的資源，故收斂在單一常數而非開放給管理者任意調高。
+    /// </summary>
+    public const int MaxParallelQueriesPerServerLimit = 4;
+
+    /// <summary>
     /// 詢問 AI（實驗性）詢問當下是否向 Sentinel 即時查詢現場事件納入分析
     /// （docs/archive/FEEDBACK-4-PLAN.md §5）。**預設 false**：對 Sentinel 的白天即時查詢負載
     /// 必須由管理者顯式開啟，不能因為 Web 加值功能就靜默對正式環境的 Sentinel 加壓。

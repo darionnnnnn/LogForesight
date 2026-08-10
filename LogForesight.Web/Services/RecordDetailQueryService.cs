@@ -653,7 +653,7 @@ public class RecordDetailQueryService
         // 這是 §5.1 D-1 #5：畫面已經說了「首次」，不需要再用一個必然是 0 的數字佐證
         if (effectiveTrend != IssueTrend.New && issue.PreviousDayCount.HasValue)
             parts.Add($"前一日 {issue.PreviousDayCount} 次");
-        if (issue.HistoryDailyAverage.HasValue) parts.Add($"歷史平均 {issue.HistoryDailyAverage.Value:0.#} 次");
+        if (issue.HistoryDailyAverage.HasValue) parts.Add($"歷史基準 {issue.HistoryDailyAverage.Value:0.#} 次");
         if (issue.DaysSeenInHistory > 0) parts.Add($"近期出現 {issue.DaysSeenInHistory} 天");
 
         return string.Join("\n", parts);

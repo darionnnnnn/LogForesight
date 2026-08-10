@@ -199,7 +199,7 @@ public class SaveHostGroupRequest
 
 public class HostGroupMemberQueryRequest
 {
-    /// <summary>網段：CIDR（10.1.2.0/24）或萬用字元（10.1.2.*）或單一 IP</summary>
+    /// <summary>網段：CIDR（192.168.0.0/24）或萬用字元（192.168.0.*）或單一 IP</summary>
     public string? Pattern { get; set; }
 
     /// <summary>關鍵字：比對 hostname 或 IP（Pattern 與 Query 擇一）</summary>

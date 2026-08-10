@@ -55,6 +55,7 @@ let editingRule = null;
 let restoringRuleId = null;
 let suppressingRuleId = null;
 let hostOptions = null;   // 抑制 modal 的主機下拉候選（延遲載入、依規則平台過濾），null = 尚未載入
+let groupOptions = null;  // 抑制 modal 的主機群組下拉候選（範圍選 Group 時用），null = 尚未載入
 
 const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
 
@@ -353,11 +354,19 @@ function statusCell(rule) {
 
     if (rule.suppression) {
         wrap.appendChild(statusBadge(rule.suppression.isExpired ? '抑制已到期' : '已抑制', 'dark', {
-            title: `${rule.suppression.host}：${rule.suppression.reason}`
+            title: `${suppressionTargetText(rule.suppression)}：${rule.suppression.reason}`
         }));
     }
 
     return wrap;
+}
+
+/** 抑制的生效範圍文字（回饋十三輪 F）：Host 顯示主機名、Group 顯示群組名、Site 就是全站——
+ * 規則清單的徽章 tooltip 與「告警抑制」分頁的表格共用同一份判斷，避免兩處各寫一套走鐘。 */
+function suppressionTargetText(s) {
+    if (s.scope === 'Group') return `群組 ${s.hostGroupName ?? '（群組已刪除）'}`;
+    if (s.scope === 'Site') return '全站';
+    return `主機 ${s.host}`;
 }
 
 function actionsCell(rule) {
@@ -368,10 +377,22 @@ function actionsCell(rule) {
     wrap.appendChild(button('', {
         variant: 'outline-secondary',
         icon: rule.enabled ? 'slash-circle' : 'plus-lg',
-        title: rule.enabled ? '停用' : '啟用',
+        // 停用只關掉分類與知識庫顯示，不影響趨勢層／關聯層偵測（同頁首提示與 modal 內的說明）——
+        // 這裡也帶一份，逐列操作時不必先展開編輯 modal 才看得到
+        title: rule.enabled ? '停用（不影響趨勢層／關聯層對同一事件的偵測）' : '啟用',
         onClick: () => toggleEnabled(rule)
     }));
     wrap.appendChild(button('', { variant: 'outline-dark', icon: 'bell-slash', title: '抑制', onClick: () => openSuppressModal(rule) }));
+
+    // 回饋十三輪 A10：builtin 規則本身可編輯可回復（見頁首提示），但「改內容」與「照著寫一條
+    // 新規則」是兩種不同意圖——後者過去只能手動把每個欄位抄一遍。以此為範本開新規則modal，
+    // 帶入來源欄位值但 Id 清空待填（必須以 custom- 開頭，見 openRuleModal 的 asTemplate 分支）。
+    if (rule.origin !== 'custom') {
+        wrap.appendChild(button('', {
+            variant: 'outline-secondary', icon: 'copy', title: '以此為範本建立自訂規則',
+            onClick: () => openRuleModal(rule, { asTemplate: true })
+        }));
+    }
 
     if (rule.canRestore) {
         wrap.appendChild(button('', { variant: 'outline-warning', icon: 'arrow-counterclockwise', title: '回復預設', onClick: () => openRestoreModal(rule) }));
@@ -387,23 +408,32 @@ function actionsCell(rule) {
 
 // ── 編輯 ─────────────────────────────────────────────────────────────────────
 
-function openRuleModal(rule) {
-    editingRule = rule;
+/**
+ * @param {object|null} rule 編輯／以此為範本時的來源規則；新增規則傳 null
+ * @param {{asTemplate?: boolean}} options asTemplate=true：欄位值取自 rule，但視為「新增」——
+ *   Id 清空待填（不可沿用來源 Id，會撞重複）、editingRule 不設，儲存時走 POST 新增而非改寫來源規則。
+ */
+function openRuleModal(rule, { asTemplate = false } = {}) {
+    editingRule = asTemplate ? null : rule;
     document.getElementById('rule-validation').replaceChildren();
 
-    // 編輯既有規則沿用它自己的平台；新增規則採目前所在分頁（Windows規則/Linux規則）的平台，
-    // 平台一經建立不可變更（見 RuleAdminService.BuildRule）。
+    // 編輯既有規則／以其為範本皆沿用來源的平台；新增規則採目前所在分頁（Windows規則/Linux規則）
+    // 的平台，平台一經建立不可變更（見 RuleAdminService.BuildRule）。
     const platform = rule?.platform ?? currentPlatform;
     applyPlatformBlocks(platform);
 
-    document.getElementById('rule-modal-title').textContent = rule
-        ? `編輯規則 ${rule.id}`
-        : `新增${platform === 'linux' ? ' Linux' : ' Windows'}規則`;
-    document.getElementById('rule-id').value = rule?.id ?? 'custom-';
-    document.getElementById('rule-id').disabled = !!rule;   // Id 是穩定識別鍵，建立後不可改
-    document.getElementById('rule-id-hint').textContent = rule
-        ? 'Id 一經建立即不可變更（seed 同步與抑制設定都靠它比對）。'
-        : '新規則必須以 custom- 開頭。';
+    const isNew = !editingRule;
+
+    document.getElementById('rule-modal-title').textContent = asTemplate
+        ? `以「${rule.id}」為範本建立自訂規則`
+        : rule
+            ? `編輯規則 ${rule.id}`
+            : `新增${platform === 'linux' ? ' Linux' : ' Windows'}規則`;
+    document.getElementById('rule-id').value = asTemplate ? suggestCustomId(rule.id) : (rule?.id ?? 'custom-');
+    document.getElementById('rule-id').disabled = !isNew;   // Id 是穩定識別鍵，建立後不可改
+    document.getElementById('rule-id-hint').textContent = isNew
+        ? '新規則必須以 custom- 開頭。'
+        : 'Id 一經建立即不可變更（seed 同步與抑制設定都靠它比對）。';
 
     document.getElementById('rule-source').value = rule?.sourcePattern ?? '';
     document.getElementById('rule-event-ids').value = rule?.eventIds.join(', ') ?? '';
@@ -431,6 +461,14 @@ function openRuleModal(rule) {
     if (kbFilled > 0) kbCollapse.show(); else kbCollapse.hide();
 
     ruleModal.show();
+}
+
+/** builtin Id 慣例是 builtin-xxx（見 KnownIssueSeed）——去掉前綴、換成 custom- 當預設建議值，
+ * 使用者仍可自行改，只是不必從空白開始想名字。Id 欄位在範本模式下未鎖定，重複時走既有的
+ * 「Id 重複」驗證錯誤，不需要在這裡另外查重。 */
+function suggestCustomId(originalId) {
+    const stripped = originalId.startsWith('builtin-') ? originalId.slice('builtin-'.length) : originalId;
+    return `custom-${stripped}`;
 }
 
 /** 依平台顯示/隱藏比對欄位區塊（Windows：來源+Event ID；Linux：Program+事件名+訊息子字串） */
@@ -624,8 +662,11 @@ async function openSuppressModal(rule) {
     suppressingRuleId = rule.id;
     document.getElementById('suppress-reason').value = '';
     document.getElementById('suppress-days').value = '';
-    await ensureHostOptions();
+    document.getElementById('suppress-scope').value = 'Host';
+    await Promise.all([ensureHostOptions(), ensureGroupOptions()]);
     populateHostOptions(rule.platform);
+    populateGroupOptions();
+    updateSuppressScopeVisibility();
     suppressModal.show();
 }
 
@@ -661,19 +702,70 @@ function populateHostOptions(platform) {
     }
 }
 
+/** 首次開啟抑制 modal 時載入主機群組清單（回饋十三輪 F，範圍選「主機群組」時用）。
+ * 與群組管理頁同一端點、同 Maintain 權限，不分平台——一個群組本來就可能混合 Windows／Linux 主機。 */
+async function ensureGroupOptions() {
+    if (groupOptions) return;
+    try {
+        const result = await api.get('/api/admin/host-groups');
+        groupOptions = result.filter(g => g.active);
+    } catch {
+        groupOptions = [];
+    }
+}
+
+function populateGroupOptions() {
+    const select = document.getElementById('suppress-group');
+    select.replaceChildren();
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '請選擇主機群組…';
+    select.appendChild(placeholder);
+
+    for (const group of (groupOptions ?? [])) {
+        const option = document.createElement('option');
+        option.value = String(group.groupId);
+        option.textContent = group.groupName;
+        select.appendChild(option);
+    }
+}
+
+/** 範圍下拉切換時，只顯示對應的目標欄位——三選一，其餘兩個連同其必填語意一起隱藏 */
+function updateSuppressScopeVisibility() {
+    const scope = document.getElementById('suppress-scope').value;
+    document.getElementById('suppress-host-wrap').classList.toggle('d-none', scope !== 'Host');
+    document.getElementById('suppress-group-wrap').classList.toggle('d-none', scope !== 'Group');
+    document.getElementById('suppress-site-wrap').classList.toggle('d-none', scope !== 'Site');
+}
+document.getElementById('suppress-scope').addEventListener('change', updateSuppressScopeVisibility);
+
 document.getElementById('suppress-form').addEventListener('submit', async event => {
     event.preventDefault();
 
+    const scope = document.getElementById('suppress-scope').value;
     const host = document.getElementById('suppress-host').value.trim();
+    const hostGroupId = document.getElementById('suppress-group').value;
     const reason = document.getElementById('suppress-reason').value.trim();
-    if (!host || !reason) {
-        toast('請填寫主機與原因', 'warning');
+
+    if (!reason) {
+        toast('請填寫原因', 'warning');
+        return;
+    }
+    if (scope === 'Host' && !host) {
+        toast('請選擇主機', 'warning');
+        return;
+    }
+    if (scope === 'Group' && !hostGroupId) {
+        toast('請選擇主機群組', 'warning');
         return;
     }
 
     const days = document.getElementById('suppress-days').value;
     await api.post(`/api/rules/${encodeURIComponent(suppressingRuleId)}/suppressions`, {
-        host,
+        scope,
+        host: scope === 'Host' ? host : null,
+        hostGroupId: scope === 'Group' ? Number(hostGroupId) : null,
         reason,
         days: days ? Number(days) : null
     });
@@ -686,7 +778,7 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
 const SUPPRESSION_COLUMNS = [
     { title: '規則', sortKey: 'ruleId', sortValue: s => s.ruleId, render: s => s.ruleId },
     { title: '平台', sortKey: 'platform', sortValue: s => s.platform, render: s => s.platform === 'linux' ? 'Linux' : 'Windows' },
-    { title: '主機', sortKey: 'host', sortValue: s => s.host, render: s => s.host },
+    { title: '範圍', sortKey: 'scope', sortValue: s => s.scope, render: s => suppressionTargetText(s) },
     { title: '原因', render: s => s.reason },
     { title: '到期', sortKey: 'expiresAt', sortValue: s => s.expiresAt ? new Date(s.expiresAt).getTime() : Infinity, render: s => expiryCell(s) },
     { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
@@ -712,7 +804,7 @@ function renderSuppressions() {
         },
         empty: {
             title: '目前沒有抑制設定',
-            hint: '若某條規則在某台主機上已確認是已知雜訊，可於規則列表的「抑制」建立。'
+            hint: '若某條規則在某台主機、某個主機群組、甚至全站已確認是已知雜訊，可於規則列表的「抑制」建立。'
         }
     });
 
@@ -751,14 +843,18 @@ function removeSuppressionButton(suppression) {
     return button('解除', { variant: 'outline-danger', icon: 'trash', onClick: async () => {
         const confirmed = await confirmAction({
             title: '解除抑制',
-            message: `解除後，規則「${suppression.ruleId}」在主機「${suppression.host}」上的告警將恢復。`,
+            message: `解除後，規則「${suppression.ruleId}」於${suppressionTargetText(suppression)}的告警將恢復。`,
             confirmText: '解除',
             confirmVariant: 'warning'
         });
         if (!confirmed) return;
 
-        await api.delete(
-            `/api/rules/${encodeURIComponent(suppression.ruleId)}/suppressions/${encodeURIComponent(suppression.host)}`);
+        // 範圍改用 query string（回饋十三輪 F）：Group/Site 沒有「host」可放進 path segment
+        const params = new URLSearchParams({ scope: suppression.scope });
+        if (suppression.scope === 'Host') params.set('host', suppression.host);
+        if (suppression.scope === 'Group') params.set('hostGroupId', String(suppression.hostGroupId));
+
+        await api.delete(`/api/rules/${encodeURIComponent(suppression.ruleId)}/suppressions?${params.toString()}`);
         toast('已解除抑制', 'success');
         await load();
     } });

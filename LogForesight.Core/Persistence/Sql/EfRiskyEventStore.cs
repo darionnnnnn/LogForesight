@@ -66,6 +66,19 @@ public class EfRiskyEventStore : IRiskyEventStore
         return rows.Select(Map).ToList();
     }
 
+    public List<RiskyEvent> QueryDay(long hostId, DateTime date)
+    {
+        var day = date.Date;
+        using var ctx = _contextFactory();
+
+        var rows = ctx.RiskyEvents.AsNoTracking()
+            .Where(r => r.HostId == hostId && r.Date == day)
+            .OrderByDescending(r => r.EventTime)
+            .ToList();
+
+        return rows.Select(Map).ToList();
+    }
+
     public int Prune(int retentionDays)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);

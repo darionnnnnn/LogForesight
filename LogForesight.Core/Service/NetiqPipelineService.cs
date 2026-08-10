@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -38,6 +39,13 @@ public class NetiqPipelineService
     /// </summary>
     internal static int ResolveParallelism(int configured) =>
         Math.Clamp(configured, 1, NetiqOptions.MaxParallelServersLimit);
+
+    /// <summary>
+    /// 單一 Sentinel 內部的批次查詢平行度（回饋十三輪 D）。與 <see cref="ResolveParallelism"/>
+    /// 同一個夾住理由，只是維度不同——見 <see cref="NetiqOptions.MaxParallelQueriesPerServer"/>。
+    /// </summary>
+    internal static int ResolveQueryParallelism(int configured) =>
+        Math.Clamp(configured, 1, NetiqOptions.MaxParallelQueriesPerServerLimit);
 
     private readonly StorageBackend _backend;
     private readonly NetiqOptions _netiqOptions;
@@ -119,8 +127,21 @@ public class NetiqPipelineService
                               "（分析與網站同行程，平行度設上限以免拖慢前景畫面）");
         }
 
+        // 回饋十三輪 D：單一 Sentinel 內部的批次查詢平行度，與上面的跨 Sentinel 平行是正交維度，
+        // 這裡先夾一次算出本次要用的值並申報，RunServerOsGroupAsync 內部重算同一個純函數取用
+        // （不跨方法傳遞這個值，各自算一次，結果必然一致）。
+        var configuredQueries = _netiqOptions.MaxParallelQueriesPerServer;
+        var maxQueries = ResolveQueryParallelism(configuredQueries);
+        if (maxQueries < configuredQueries)
+        {
+            _console.WriteLine($"  ⓘ 單台 Sentinel 查詢平行度設定為 {configuredQueries}，本次以 {maxQueries} 執行" +
+                              "（同一個行程架構上限，不是效能旋鈕）");
+        }
+
         _console.WriteLine($"\n══════════ NetIQ 機房分析（{hostList.TotalHosts} 台主機，" +
-                          $"{hostList.ByServer.Count} 台 Sentinel，平行度 {maxParallel}）══════════");
+                          $"{hostList.ByServer.Count} 台 Sentinel，平行度 {maxParallel}" +
+                          (maxQueries > 1 ? $"，單台 Sentinel 內查詢平行度 {maxQueries}" : "") +
+                          $"）══════════");
 
         // AI 與搜尋脫鉤（docs/FEEDBACK-12-PLAN.md §3）：搜尋＋統計主線把需要 AI 的主機日丟進
         // 有界佇列，單一背景消費者依序（FIFO）取出跑 AI，搜尋不再被 AI 拖住。無論下面的搜尋
@@ -265,7 +286,8 @@ public class NetiqPipelineService
             {
                 var retryService = new LogAnalysisService(
                     _eventLogService, _aiService, store, _suppressionStore,
-                    target.RoleDesc, _reportService, target.HostName, target.HostId);
+                    target.RoleDesc, _reportService, target.HostName, target.HostId, _riskyEventStore,
+                    hostGroupIds: _hosts.Get(target.HostId)?.GroupIds);
                 orphanJobs.Add(new AiFollowupJob(retryService, store, target.IpAddress, pending.Date, sentinel.Name,
                     WorkItem: null, RetryRecord: pending));
             }
@@ -286,18 +308,53 @@ public class NetiqPipelineService
 
             var allDates = plans.SelectMany(p => p.MissingDates).Distinct().OrderBy(d => d).ToList();
 
-            await using var client = _clientFactory(sentinel);
-
-            // 缺漏日跨主機遞增：同一天內所有需要這天的主機一次查完（批次化），
-            // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史
-            foreach (var date in allDates)
+            // client pool（回饋十三輪 D）：SentinelClient 單一 instance 是單一併發佇列（見其類別
+            // 文件），要平行查詢就得各自建立獨立實例——各自獨立的 SAML token、各自
+            // DisposeAsync 登出。maxQueries=1（預設）時池只有一個 client，下面的
+            // Parallel.ForEachAsync 退化成依序處理單一 batch，與改動前逐位相同。
+            var maxQueries = ResolveQueryParallelism(_netiqOptions.MaxParallelQueriesPerServer);
+            var clientPool = new ConcurrentBag<ISentinelSearchClient>(
+                Enumerable.Range(0, maxQueries).Select(_ => _clientFactory(sentinel)));
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
-
-                foreach (var batch in hostsNeedingDate.Chunk(IpBatchSize))
+                // 缺漏日跨主機遞增：同一天內所有需要這天的主機一次查完（批次化），
+                // 但不同天之間依序處理——同一台主機的趨勢比對需要前面日期已經寫入的歷史。
+                // 同一天內的批次彼此主機不重疊（Chunk 保證每台主機只落在一個批次裡），
+                // 這層批次間平行是安全的：不會有同一台主機同時被兩個批次處理，AI 佇列的
+                // 「同主機前一天已定案」FIFO 前提也不受影響（前提只約束同一台主機的日期序）。
+                foreach (var date in allDates)
                 {
-                    await RunBatchDayAsync(client, sentinel.Name, batch, date, os, trendWindowDays, result, aiQueue, ct);
+                    ct.ThrowIfCancellationRequested();
+                    var hostsNeedingDate = plans.Where(p => p.MissingDates.Contains(date)).ToList();
+                    var batches = hostsNeedingDate.Chunk(IpBatchSize).ToList();
+
+                    // 取消交給 ParallelOptions.CancellationToken 統一處理（同 RunAsync 頂層的既有模式）。
+                    await Parallel.ForEachAsync(batches, new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = maxQueries,
+                        CancellationToken = ct
+                    }, async (batch, batchCt) =>
+                    {
+                        // 租一個 client：並行度上限已等於池大小，池子裡永遠有東西可租——
+                        // TryTake 失敗代表這個不變量被破壞了，是程式錯誤而非可預期的執行期狀況。
+                        if (!clientPool.TryTake(out var client))
+                            throw new InvalidOperationException("Sentinel client pool 耗盡（不應發生：並行度已受池大小節制）。");
+                        try
+                        {
+                            await RunBatchDayAsync(client, sentinel.Name, batch, date, os, trendWindowDays, result, aiQueue, batchCt);
+                        }
+                        finally
+                        {
+                            clientPool.Add(client);
+                        }
+                    });
+                }
+            }
+            finally
+            {
+                foreach (var client in clientPool)
+                {
+                    await client.DisposeAsync();
                 }
             }
         }
@@ -308,7 +365,16 @@ public class NetiqPipelineService
         {
             ct.ThrowIfCancellationRequested();
             _console.WriteLine($"  [{sentinel.Name}] [{job.Ip}] {job.Date:yyyy-MM-dd} AiPending 孤兒補跑排隊中");
-            await aiQueue.EnqueueAsync(job, ct);
+
+            // 同 AnalyzeHostDayAsync 的背壓顯示（回饋十三輪 A7）：孤兒補跑排在殿後，
+            // 更容易撞上前面一般缺漏日已經把佇列排滿的情況
+            if (!aiQueue.TryEnqueue(job))
+            {
+                _console.WriteLine($"  ⏸ [{sentinel.Name}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
+                _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
+                await aiQueue.EnqueueAsync(job, ct);
+                _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            }
             // 計數放在 EnqueueAsync 成功之後（同 AnalyzeHostDayAsync 的理由）：取消若發生在
             // 背壓等待中，這筆工作項並未真的進到佇列，提前計數會讓 AiQueued 與
             // AiCompleted+AiAbandoned 永久對不上。
@@ -358,10 +424,24 @@ public class NetiqPipelineService
 
         if (searchResult.Truncated)
         {
-            // 整批共用一個 job，無法判斷截斷影響哪幾台——寧可全部標記資料不完整，
-            // 也不要有主機的統計數字看起來正常、其實被悄悄截斷（誠實申報原則）
+            // 截斷時二分重查（回饋十三輪 B2）：整批共用一個 job，原本無法判斷截斷影響哪幾台，
+            // 只能全部連坐標記資料不完整——一台吵的主機拖垮一整批的趨勢基準（Linux 上線後
+            // sshd/kernel 量級更容易撞上單一 job 的 MaxResultsPerJob 上限）。批次還能再切時，
+            // 切半各自重查：真的還是截斷就繼續切，收斂到單台才誠實標記；成本只在真的截斷時付，
+            // 多數情況下切一次的較小批次就不再截斷。批次序（同一天內主機互不重疊）與計數方式
+            // （AddToTotal 已在上層算完、AddAnalyzed/AddFailed 在 per-plan 層）不受影響，
+            // 遞迴呼叫本身就是「換一批更小的 ips 重新走一次這個函式」，不會重複計數。
+            if (batch.Length > 1)
+            {
+                var mid = batch.Length / 2;
+                await RunBatchDayAsync(client, sentinelName, batch[..mid], date, os, trendWindowDays, result, aiQueue, ct);
+                await RunBatchDayAsync(client, sentinelName, batch[mid..], date, os, trendWindowDays, result, aiQueue, ct);
+                return;
+            }
+
+            // 已收斂到單台仍截斷：真的沒辦法再切了，誠實標記資料不完整
             _console.WriteLine($"  ⚠ [{sentinelName}] {date:yyyy-MM-dd} 查詢結果被截斷" +
-                              $"（found={searchResult.Found}，取回={searchResult.Events.Count}），本批 {batch.Length} 台皆標記資料不完整");
+                              $"（found={searchResult.Found}，取回={searchResult.Events.Count}），標記資料不完整");
         }
 
         var eventsByIp = searchResult.Events
@@ -389,7 +469,9 @@ public class NetiqPipelineService
             // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
             // 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
             // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
-            // 分析時間可以忽略。
+            // 分析時間可以忽略。回饋十三輪 D 之後，MaxParallelQueriesPerServer 大於 1 時會有
+            // 多個批次的這個 foreach 同時執行、各自佔用一條執行緒各自 yield——讓步的必要性
+            // 隨批次平行度等比放大，不是變得沒必要，故不因批次 D 而移除或改變頻率。
             await Task.Yield();
         }
 
@@ -417,9 +499,11 @@ public class NetiqPipelineService
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
         // 全部共用既有實例，不重複建構。這個實例會被 AiWorkItem 需要 AI 時一併帶進佇列，
         // AI 段用同一個實例呼叫 CompleteAiAsync（見下方 AiFollowupJob）。
+        // hostGroupIds（回饋十三輪 F）：抑制的 Group 範圍判定要知道這台主機的群組成員資格。
         var analysisService = new LogAnalysisService(
             _eventLogService, _aiService, plan.Store, _suppressionStore,
-            target.RoleDesc, _reportService, target.HostName, target.HostId);
+            target.RoleDesc, _reportService, target.HostName, target.HostId,
+            hostGroupIds: _hosts.Get(target.HostId)?.GroupIds);
 
         // 記錄是否已成功寫入（見下方 catch(OperationCanceledException) 的判斷依據）——
         // BuildStatisticalRecordAsync 本身被取消時 record 仍是 null，維持既有「未寫入歷史，
@@ -455,6 +539,21 @@ public class NetiqPipelineService
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
 
+            // AiWorkItem.Logs 窄化為風險事件選取結果（回饋十三輪 B1，體檢批 0 #1）：workItem.Logs
+            // 目前是 BuildStatisticalRecordAsync 內部整份 events（單一 Sentinel job 上限可達
+            // NetiqOptions.MaxResultsPerJob＝10 萬筆），而 AiFollowupQueue.Capacity=200 只界件數，
+            // 帶著全量事件排隊時實際記憶體上限＝200×不確定，AI 落後時可達 GB 級（規模化輪 S2
+            // 同一個坑的形狀）。深析報告最終只挑 20 筆（RiskReportService.MaxRawLogsPerReport），
+            // 這裡改成只帶 RiskyEventSelector 的選取結果（≤500 筆，同一套資格判定，不受
+            // ReplaceRiskyEvents 的保留期閘門限制——AI 佇列的記憶體風險與是否落地暫存是兩件事，
+            // 深度回補超過保留期的日子一樣要窄化）。已知行為變更：報告的原始 log 選取池從全量
+            // 縮成 risky 池，SelectRawLogs 的 fallback 焦點問題若不在 risky 池內會顯示
+            // 「（無對應的原始 log）」——報告已有此優雅降級，非新增缺口。
+            if (workItem != null)
+            {
+                workItem = workItem with { Logs = RiskyEventSelector.SelectSourceEvents(record.TopIssues, events) };
+            }
+
             // 只在該主機當日真的有事件進 Sentinel 時才回填 LastReportAt（docs/NETIQ-API-REFERENCE.md §4.4：
             // 「整台主機近 24h 零事件＝無資料來源告警，沿用既有無回報機制」）——零事件也 Touch 的話，
             // 轉送已掛掉的主機會永遠顯示為正常回報，正是「沒查 ≠ 沒事」要防的靜默盲區。
@@ -468,10 +567,25 @@ public class NetiqPipelineService
             if (workItem != null)
             {
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成，AI 分析排隊中");
+                var job = new AiFollowupJob(analysisService, plan.Store, target.IpAddress, date, sentinelName, workItem, RetryRecord: null);
+
                 // 佇列已滿時在這裡背壓等待（docs/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
-                // 讓搜尋主線自然暫停，不是無限堆積記憶體
-                await aiQueue.EnqueueAsync(
-                    new AiFollowupJob(analysisService, plan.Store, target.IpAddress, date, sentinelName, workItem, RetryRecord: null), ct);
+                // 讓搜尋主線自然暫停，不是無限堆積記憶體。回饋十三輪 A7：先非阻塞探測一次，
+                // 探測到會背壓就先切一個獨立 phase 讓畫面誠實顯示「暫停中」，不然使用者看到的
+                // 就是進度條卡住不動——與使用者回饋②（AI 落後看起來像當掉）同一種外觀症狀。
+                //
+                // TryEnqueue（Channel.TryWrite）不看 ct——有空位時一定成功，即使 token 已取消。
+                // 這裡必須先手動檢查一次，否則「取消發生在排入 AI 佇列當下」（有空位的情況）
+                // 會被 TryEnqueue 靜默吞掉、不再拋出，AnalyzeHostDayAsync 外層就分不出
+                // 「取消但統計已寫入」與「正常排隊成功」，孤兒補跑機制也不會被觸發。
+                ct.ThrowIfCancellationRequested();
+                if (!aiQueue.TryEnqueue(job))
+                {
+                    _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
+                    _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
+                    await aiQueue.EnqueueAsync(job, ct);
+                    _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+                }
                 // 計數放在 EnqueueAsync 成功之後：取消若發生在背壓等待中，這筆工作項其實
                 // 沒有真的進到佇列，AddAiQueued 若在等待之前就算會與 AiCompleted+AiAbandoned
                 // 永久對不上（消費者永遠看不到這筆），netiq-ai 進度條分母也會卡住少 1 件永遠跑不完。

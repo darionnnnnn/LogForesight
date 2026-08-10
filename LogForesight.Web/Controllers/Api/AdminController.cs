@@ -315,6 +315,7 @@ public class AdminController : ControllerBase
         AllowInvalidCertificates = o.AllowInvalidCertificates,
         BackfillDays = o.BackfillDays,
         MaxParallelServers = o.MaxParallelServers,
+        MaxParallelQueriesPerServer = o.MaxParallelQueriesPerServer,
         ChatLiveFetchEnabled = o.ChatLiveFetchEnabled,
         UseOfflineDemoData = o.UseOfflineDemoData,
         CanUseOfflineDemo = !_env.IsProduction(),

@@ -281,6 +281,11 @@
             <h2 class="lf-card__title">資料保留</h2>
         </div>
         <div class="lf-card__body">
+            @* 問題聚合欄背景回填狀態（回饋十三輪 A6，體檢 G2 殘餘）：回填未完成時問題排行的
+               次數與影響範圍會偏低但看起來正常，過去只有 /api/health/detail 有這三個欄位、
+               維運端沒有任何畫面讀取點。只在真的回填中才顯示，平常不佔版面 *@
+            <div class="alert alert-info d-none" id="backfill-status" role="status"></div>
+
             <div class="row g-3">
                 <div class="col-sm-6">
                     <label for="initial-history-days" class="form-label">首次執行回補天數</label>

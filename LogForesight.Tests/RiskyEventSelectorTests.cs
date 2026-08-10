@@ -162,6 +162,87 @@ public class RiskyEventSelectorTests
         Assert.DoesNotContain(result, e => e.Source == "source-10");
     }
 
+    // ── SelectSourceEvents（回饋十三輪 B1）：與 Select 共用同一套資格判定與截斷，
+    //    只是回傳原始 EventLogEntryData 而非轉換後的 RiskyEvent ──────────────────
+
+    [Fact]
+    public void SelectSourceEvents_資格判定與Select完全一致()
+    {
+        var ruleSig = Sig("System", "disk", 153, ruleId: "builtin-disk-error", severity: IssueSeverity.High);
+        var trendNewSig = Sig("Application", "MyApp", 9999, ruleId: null, severity: IssueSeverity.Medium);
+        trendNewSig.Trend = IssueTrend.New;
+        var recurringSig = Sig("Application", "Other", 1, ruleId: null, severity: IssueSeverity.Medium);
+        recurringSig.Trend = IssueTrend.Recurring;   // 不合格：無規則且非 New/Rising
+
+        var issues = new List<LogIssueSignature> { ruleSig, trendNewSig, recurringSig };
+        var logs = RawLogs(ruleSig, count: 3)
+            .Concat(RawLogs(trendNewSig, count: 2))
+            .Concat(RawLogs(recurringSig, count: 5))
+            .ToList();
+
+        var riskyEvents = RiskyEventSelector.Select(issues, logs, hostId: 1, Date);
+        var sourceEvents = RiskyEventSelector.SelectSourceEvents(issues, logs);
+
+        // 兩者選中的筆數必須一致（同一套資格判定＋截斷），recurringSig 的 5 筆都不該出現在任一邊
+        Assert.Equal(5, riskyEvents.Count);
+        Assert.Equal(5, sourceEvents.Count);
+        Assert.DoesNotContain(sourceEvents, e => e.Source == "Other");
+    }
+
+    [Fact]
+    public void SelectSourceEvents_未合格時回傳原始EventLogEntryData而非RiskyEvent()
+    {
+        var sig = Sig("System", "disk", 153, ruleId: "builtin-disk-error", severity: IssueSeverity.High);
+        var logs = RawLogs(sig, count: 3);
+
+        var result = RiskyEventSelector.SelectSourceEvents(new List<LogIssueSignature> { sig }, logs);
+
+        Assert.Equal(3, result.Count);
+        Assert.All(result, e => Assert.Equal("disk", e.Source));
+        Assert.All(result, e => Assert.Equal(153, e.EventId));
+        // 未截斷訊息（RiskyEvent.Message 才會截 2000 字），確認回傳的是原始物件而非轉換結果
+        Assert.All(result, e => Assert.StartsWith("disk-", e.Message));
+    }
+
+    [Fact]
+    public void SelectSourceEvents_單一簽章超過每簽章上限時取頭尾各半_與Select相同切點()
+    {
+        var sig = Sig("System", "disk", 153, ruleId: "builtin-disk-error", severity: IssueSeverity.High);
+        var logs = Enumerable.Range(0, 70)
+            .Select(i => new EventLogEntryData
+            {
+                TimeGenerated = Date.AddMinutes(i),
+                EntryType = EventLogEntryType.Error,
+                LogName = sig.LogName,
+                Source = sig.Source,
+                EventId = sig.EventId,
+                Message = $"msg-{i}"
+            }).ToList();
+
+        var result = RiskyEventSelector.SelectSourceEvents(new List<LogIssueSignature> { sig }, logs);
+
+        Assert.Equal(RiskyEventSelector.MaxPerSignature, result.Count);
+        var messages = result.Select(e => e.Message).ToHashSet();
+        for (int i = 0; i < 25; i++) Assert.Contains($"msg-{i}", messages);
+        for (int i = 45; i < 70; i++) Assert.Contains($"msg-{i}", messages);
+        for (int i = 25; i < 45; i++) Assert.DoesNotContain($"msg-{i}", messages);
+    }
+
+    [Fact]
+    public void SelectSourceEvents_每主機日合計超過上限時依嚴重度排序後截斷_與Select相同筆數()
+    {
+        var issues = Enumerable.Range(0, 11)
+            .Select(i => Sig("System", $"source-{i}", 1000 + i, ruleId: $"rule-{i}", severity: IssueSeverity.High, count: RiskyEventSelector.MaxPerSignature))
+            .ToList();
+        var logs = issues.SelectMany(sig => RawLogs(sig, count: RiskyEventSelector.MaxPerSignature)).ToList();
+
+        var result = RiskyEventSelector.SelectSourceEvents(issues, logs);
+
+        Assert.Equal(RiskyEventSelector.MaxPerHostDay, result.Count);
+        Assert.Equal(RiskyEventSelector.MaxPerSignature, result.Count(e => e.Source == "source-0"));
+        Assert.DoesNotContain(result, e => e.Source == "source-10");
+    }
+
     // ── 保留期閘門（回補超過保留期的日子不寫暫存，寫了下次執行就被 Prune 清掉）──────────
 
     [Fact]

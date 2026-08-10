@@ -47,6 +47,11 @@ public class SystemSettings
     /// 舊值 <c>Locked</c>／<c>GlobalFilter</c>（docs/archive/HISTORY.md #5 簡化前的三模式設計）
     /// 讀取時正規化為 <c>SiteHidden</c>，見 SystemSettingsService.NormalizeDisplayMode。
     /// 不影響風險等級判定與報告全文——那是批次時已算定的證據層，不受顯示設定影響。
+    ///
+    /// **例外**（回饋十三輪新增項3）：儀表板／報表的「風險類型」卡片（<see cref="RecordStatsBuilder.BuildCategoryCards"/>）
+    /// 不論此欄位為何值，一律只計入 <see cref="UnhandledSeverities"/> 涵蓋的嚴重度——那兩張卡片
+    /// 沒有像風險日詳情頁一樣「預設隱藏但按鈕可展開」的手動入口，DefaultHidden 模式繼續全部顯示的話，
+    /// 使用者在這裡取消勾選的層級（預設不含 Low）會在卡片上原封不動地出現，讀起來像沒生效。
     /// </summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
 
@@ -57,10 +62,12 @@ public class SystemSettings
     /// 未勾選的等級整筆從查詢/統計消失（套用點見 RecordRepository，與問題嚴重度可見性同一個
     /// 咽喉——docs/archive/HISTORY.md S1）；風險日詳情直連與主機時間軸豁免不過濾（見
     /// RecordRepository 類別註解）。**「高」強制勾選**（SystemSettingsService.Update 驗證）：
-    /// 全部隱藏會讓儀表板永遠空白，違背產品目的。舊部署缺這個欄位時預設全顯示——
-    /// 風險日判定本身（批次算定的證據層）不受影響，只是顯示範圍，行為不變直到有人主動改設定。
+    /// 全部隱藏會讓儀表板永遠空白，違背產品目的。
+    /// 預設不含「低」（回饋十三輪新增項2）：低風險日佔絕大多數且通常不需要人工介入，
+    /// 預設就顯示會把畫面上真正需要關注的高／中風險日稀釋掉——這是新安裝與缺欄位的舊部署
+    /// 才會套用的出廠值，已明確儲存過設定的部署不受影響。
     /// </summary>
-    public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中", "低" };
+    public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中" };
 
     /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";

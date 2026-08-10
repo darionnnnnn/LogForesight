@@ -6,8 +6,8 @@
 > 排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，已與 Windows 主機同一條管線走完整趟，
 > 分支待使用者實測後併 dev、再併 master（見 docs/logforesight-git-branch-workflow 慣例）。
 >
-> 診斷輪 A（樣本 IP 10.216.45.101）、輪 B（2026-08-07 第三次 probe，樣本 IP
-> 10.216.11.66）、第四次 probe（8g，msg 片語實證）**四輪皆已執行完畢並全數定案**：
+> 診斷輪 A（樣本 IP 10.xx.45.101）、輪 B（2026-08-07 第三次 probe，樣本 IP
+> 10.xx.11.66）、第四次 probe（8g，msg 片語實證）**四輪皆已執行完畢並全數定案**：
 > 欄位主形狀、sp term 語意、sev 分佈與 EntryType 門檻、program 量級吵靜分類、collector 形態、
 > msg 片語查詢行為、暴力破解訊息格式與 4C regex（見 §4.0 實證表）。
 > **4B（Sentinel Linux 取數分支）／4C（SSH 攻擊鏈關聯）／4.6（止血拆除＋體檢＋文件同步）
@@ -378,13 +378,13 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
 
 ### 4.0 資料閘門與實證結果
 
-**輪 A——已執行（2026-08-07，Sentinel「118_linux」，https://10.216.7.118:8443，
-樣本 IP 10.216.45.101）。實證與定案**：
+**輪 A——已執行（2026-08-07，Sentinel「118_linux」，https://10.xx.7.118:8443，
+樣本 IP 10.xx.45.101）。實證與定案**：
 
 | 問題 | 實證（probe 原文依據） | 定案 |
 |---|---|---|
 | program 落點 | 每筆事件帶 **`sp`**（`sp=systemd`／`NetworkManager`／`kernel`），且 `msg` 以 `program:` 或 `program[pid]:` 前綴開頭（`msg=systemd: Starting…`、`msg=NetworkManager[1383]: <warn>…`） | **`Program = sp`**；`msg` 前綴解析留作 `sp` 缺席時的 fallback |
-| 主機歸屬鍵 | 步驟 8 `repip:10.216.45.101` found=15576（近 24h） | **與 Windows 同為 `repip`**，`BuildIpClause` 直接重用 |
+| 主機歸屬鍵 | 步驟 8 `repip:10.xx.45.101` found=15576（近 24h） | **與 Windows 同為 `repip`**，`BuildIpClause` 直接重用 |
 | 主機名 | `sn=stkomsdb1`／`VM-NATFA02`（回報主機自身名） | `sn` 沿用，DisplayName 回填照舊 |
 | 正規化事件名 | `evt="NetIQ Universal Event {program} Event"`——樣板字串，資訊量＝program 本身 | **`evt` 無正規化語意，不使用**；seed 的 `EventNamePattern` **定案維持留空**（Web 端仍可維護此欄，等未來接到有正規化 collector 的環境再啟用） |
 | collector 形態 | `pn`＝`agent`＝`port`＝`"NetIQ Universal Event"`、`rt2="Full Text Parser"`；**`sun`／`sip`／`dhn`／`obssvcname`／`rv40` 全部不存在** | 泛用 syslog collector＋全文解析——msg 是未結構化原始 syslog 行；4C 的帳號級關聯只能靠 msg 文字解析（見 §4.5） |
@@ -414,10 +414,10 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
 
 1. **判定：輪 B 資料仍缺**。8／8b～8f 全數印「略過（未提供樣本 IP）」（§4.1 的設計如預期
    運作——六個新步驟掛同一開關）。**後續動作：到 NetIQ 維護→「診斷」分頁，「Linux 樣本
-   IP」欄填 `10.216.45.101`（輪 A 同一台）重跑一次並貼回完整輸出**。Windows 樣本 IP 留空
+   IP」欄填 `10.xx.45.101`（輪 A 同一台）重跑一次並貼回完整輸出**。Windows 樣本 IP 留空
    即可（本站無 Windows 主機，步驟 9/11 對此站無意義）。
 2. **新實證 A（重要）：同一台 Sentinel 存在第二種 collector 形態，欄位形狀是
-   per-collector、不是 per-Sentinel**。步驟 1 的三筆最新樣本（`repip=10.216.74.41`、
+   per-collector、不是 per-Sentinel**。步驟 1 的三筆最新樣本（`repip=10.xx.74.41`、
    `sn=VM-PA-SOAR`——SOAR 設備自身的 conmon 日誌）與輪 A 樣本形狀不同：
    - `pn`＝`agent`＝`port`＝**「Universal Common Event Format」**（輪 A 是「NetIQ
      Universal Event」）、`rt2` 同為 Full Text Parser；
@@ -448,7 +448,7 @@ pipeline 內部 `new`（223 行）——兩者都注入不了假替身。
      樣本 msg 帶 `<nwarn>` 卻落在 `sev=1`——再次強化「sev 不可靠承載 syslog priority」
      的輪 A 疑點，混合下推＋`MapEntryTypeLinux` 門檻待輪 B 的設計不變。
 
-**輪 B 實證（2026-08-07 第三次 probe，樣本 IP `10.216.11.66`＝VM-LQLA1，
+**輪 B 實證（2026-08-07 第三次 probe，樣本 IP `10.xx.11.66`＝VM-LQLA1，
 found=1,661/24h）——六項證據五項定案，一項規劃缺口補 8g**：
 
 | 輪 B 項 | 實證（probe 原文依據） | 定案 |
@@ -477,7 +477,7 @@ found=1,661/24h）——六項證據五項定案，一項規劃缺口補 8g**：
 | `msg:"oom-kill"`／`msg:oom`（24h） | 0／2 | 無法區分「24h 剛好沒有 OOM」與「連字號斷詞問題」——**不依賴此片語**：真實 OOM 訊息（「Out of memory: Killed process…」）必含已驗證可行的純字片語「Out of memory」「Killed process」，`oom-kill` 留在本地規則、filter 面即使匹配不到也只是無害的空分支 |
 | `sp:sshd AND msg:("Failed password" OR "Invalid user")`（7 天） | 977 | **欄位群組多片語語法有效**（≥ 單片語的 725，語意正確） |
 | `sp:systemd AND msg:"entered failed state"`（24h） | 1 | **吵 program＋片語組合下推有效且量極小**——systemd 從 1.96M/日壓到 1 筆/日，這條路成立 |
-| `sp:sshd AND msg:"Failed password"`（7 天）＋5 筆全文 | 725 | 暴破訊息格式定案：「`Failed password for invalid user {user} from {ip} port {port} ssh2`」——無 program 前綴、`invalid user` 為可選段、來源皆內網 IP（10.225.2.219／10.215.2.55，帳號是員工編號式——內部掃描或設定錯誤的用戶端，非外網攻擊，但格式與外網攻擊完全相同） |
+| `sp:sshd AND msg:"Failed password"`（7 天）＋5 筆全文 | 725 | 暴破訊息格式定案：「`Failed password for invalid user {user} from {ip} port {port} ssh2`」——無 program 前綴、`invalid user` 為可選段、來源皆內網 IP（10.yy.2.219／10.zz.2.55，帳號是員工編號式——內部掃描或設定錯誤的用戶端，非外網攻擊，但格式與外網攻擊完全相同） |
 
 **8g 之外的環境觀察（順手記錄）**：本輪 `sev:[3 TO 5]` 樣本出現 Sentinel 自家
 Syslog_UDP connector 的「Dropped 29,623 messages so far」——**此 Sentinel 的 syslog
@@ -714,7 +714,7 @@ client）。為了讓這支純人工診斷工具變得可測而額外引入 DI �
 - **細版**（優先）：從 ssh-bruteforce／ssh-accept 命中事件的 msg 抽 `{user}`／`{ip}`，
   做「同帳號或同來源 IP」的精確關聯——失敗堆與成功登入同源才告警，誤報最低。
   **正則已依 8g 實際樣本定案（2026-08-07 第四次 probe）**——失敗面樣本格式：
-  「`Failed password for invalid user 1838651 from 10.225.2.219 port 54500 ssh2`」，
+  「`Failed password for invalid user 1838651 from 10.yy.2.219 port 54500 ssh2`」，
   無 program 前綴、`invalid user ` 為可選段：
   - 失敗：`Failed password for (?:invalid user )?(\S+) from (\d{1,3}(?:\.\d{1,3}){3}) port \d+`
   - 成功：`Accepted (?:password|publickey) for (\S+) from (\d{1,3}(?:\.\d{1,3}){3}) port \d+`

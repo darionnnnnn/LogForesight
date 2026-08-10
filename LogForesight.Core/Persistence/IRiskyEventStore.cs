@@ -19,6 +19,15 @@ public interface IRiskyEventStore
     /// </summary>
     List<RiskyEvent> Query(long hostId, DateTime date, string source, int eventId, int maxResults);
 
+    /// <summary>
+    /// 依主機＋日期取整日暫存（回饋十三輪 C，體檢批 0 #6：孤兒補跑產報告）——不分簽章，一次拿回
+    /// 這一天寫入的全部列（每主機日至多 <see cref="Analysis.RiskyEventSelector.MaxPerHostDay"/> 筆）。
+    /// 與 <see cref="Query"/> 的差異：<c>Query</c> 是「問 AI」對話依單一簽章逐次取用的既有介面，
+    /// 這裡是孤兒補跑要重建整份報告用的原始 log，需要一次拿到當天所有簽章的暫存內容。
+    /// 查無資料（超出保留期或本來就沒寫入）回空清單。
+    /// </summary>
+    List<RiskyEvent> QueryDay(long hostId, DateTime date);
+
     /// <summary>清除超過保留天數的暫存（以 <see cref="RiskyEvent.Date"/> 為基準，非寫入時間），回傳清除筆數</summary>
     int Prune(int retentionDays);
 }

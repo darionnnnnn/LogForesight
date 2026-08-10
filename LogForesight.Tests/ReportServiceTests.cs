@@ -36,7 +36,7 @@ public class ReportServiceTests : IDisposable
         // 問題排行自 P4 起走 SQL 端聚合（lf_top_issues），與紀錄查詢共用同一個 EF fixture——
         // 用假實作會讓「排行只含可見主機」這條授權測試測不到真正的下推路徑
         var issueRanking = new IssueRankingBuilder(new EfIssueAggregateQuery(_fixture.NewContext));
-        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking);
+        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -136,6 +136,36 @@ public class ReportServiceTests : IDisposable
         // 中風險日已被顯示設定藏起來，趨勢圖對應日期的中風險計數應為 0
         var hiddenDayPoint = result.Trend.Single(p => p.Date == DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd"));
         Assert.Equal(0, hiddenDayPoint.MediumRisk);
+    }
+
+    /// <summary>
+    /// 回饋十三輪新增項3：「風險類型」卡片沒有像風險日詳情頁那樣的手動展開入口，不論
+    /// SeverityDisplayMode 為 DefaultHidden 或 SiteHidden，一律只計入 UnhandledSeverities
+    /// （預設 High+Medium，不含 Low）——「其他」類別本來就是低嚴重度雜訊大宗，
+    /// 修正前最容易讓人以為「明明沒勾 Low，其他類別怎麼還在顯示」。
+    /// </summary>
+    [Fact]
+    public void GetSummary_風險類型卡預設排除Low嚴重度問題_只剩Low的類別整卡消失()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高",
+            new LogIssueSignature
+            {
+                LogName = "System", Source = "sec", EventId = 4625,
+                Severity = IssueSeverity.High, Category = IssueCategory.Security, Count = 1
+            },
+            new LogIssueSignature
+            {
+                LogName = "System", Source = "noisy", EventId = 9999,
+                Severity = IssueSeverity.Low, Category = IssueCategory.Other, Count = 1
+            });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        // 「其他」類別只有一個 Low 嚴重度問題，預設未勾選 Low 時整卡不應出現
+        Assert.DoesNotContain(result.Categories, c => c.Category == "Other");
+        var security = Assert.Single(result.Categories);
+        Assert.Equal("Security", security.Category);
     }
 
     [Fact]

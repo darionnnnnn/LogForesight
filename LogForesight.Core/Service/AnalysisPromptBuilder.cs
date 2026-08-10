@@ -314,10 +314,10 @@ internal class AnalysisPromptBuilder
         return i.Trend switch
         {
             IssueTrend.New => "（首次出現，歷史中從未發生）",
-            IssueTrend.Rising => $"（頻率上升：近{historyDays}日平均 x{i.HistoryDailyAverage}" +
+            IssueTrend.Rising => $"（頻率上升：近{historyDays}日基準 x{i.HistoryDailyAverage}" +
                                  (i.PreviousDayCount != null ? $"、昨日 x{i.PreviousDayCount}" : "") + "）",
-            IssueTrend.Recurring => $"（重複出現：近{historyDays}日中 {i.DaysSeenInHistory} 天有發生，平均 x{i.HistoryDailyAverage}）",
-            IssueTrend.Declining => $"（頻率下降：近{historyDays}日平均 x{i.HistoryDailyAverage}）",
+            IssueTrend.Recurring => $"（重複出現：近{historyDays}日中 {i.DaysSeenInHistory} 天有發生，基準 x{i.HistoryDailyAverage}）",
+            IssueTrend.Declining => $"（頻率下降：近{historyDays}日基準 x{i.HistoryDailyAverage}）",
             _ => ""
         };
     }

@@ -122,6 +122,58 @@ public class RiskyEventStoreContractTests : IDisposable
         Assert.Single(store.Query(1, Date.AddDays(1), "disk", 153, 20));
     }
 
+    // ── QueryDay（回饋十三輪 C：孤兒補跑產報告，一次取整日暫存）───────────────────
+
+    [Fact]
+    public void QueryDay取回整天所有簽章不分Source或EventId()
+    {
+        var store = CreateStore();
+        store.ReplaceDay(1, Date, new List<RiskyEvent>
+        {
+            Event(1, Date, "disk", 153, "disk-msg", eventTime: Date.AddHours(1)),
+            Event(1, Date, "Ntfs", 55, "ntfs-msg", eventTime: Date.AddHours(2))
+        });
+
+        var result = store.QueryDay(1, Date);
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, e => e.Message == "disk-msg");
+        Assert.Contains(result, e => e.Message == "ntfs-msg");
+    }
+
+    [Fact]
+    public void QueryDay依事件時間新到舊排序()
+    {
+        var store = CreateStore();
+        store.ReplaceDay(1, Date, new List<RiskyEvent>
+        {
+            Event(1, Date, "disk", 153, "old", eventTime: Date.AddHours(1)),
+            Event(1, Date, "Ntfs", 55, "new", eventTime: Date.AddHours(5))
+        });
+
+        var result = store.QueryDay(1, Date);
+
+        Assert.Equal(new[] { "new", "old" }, result.Select(e => e.Message));
+    }
+
+    [Fact]
+    public void QueryDay不比對其他主機或其他日期()
+    {
+        var store = CreateStore();
+        store.ReplaceDay(1, Date, new List<RiskyEvent> { Event(1, Date, "disk", 153, "match") });
+
+        Assert.Empty(store.QueryDay(2, Date));              // 不同主機
+        Assert.Empty(store.QueryDay(1, Date.AddDays(1)));   // 不同日期
+    }
+
+    [Fact]
+    public void QueryDay查無資料時回空清單()
+    {
+        var store = CreateStore();
+
+        Assert.Empty(store.QueryDay(1, Date));
+    }
+
     [Fact]
     public void Prune清除超過保留天數的紀錄()
     {

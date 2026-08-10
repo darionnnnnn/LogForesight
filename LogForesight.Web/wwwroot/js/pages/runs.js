@@ -613,7 +613,14 @@ function applyScheduleStatus(status) {
 // netiq-ai（docs/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
 // 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
 // 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
-const PROGRESS_PHASE_LABEL = { local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中' };
+// netiq-backpressure（回饋十三輪 A7）：AI 待處理佇列滿載（AiFollowupQueue.Capacity=200）時，
+// 搜尋主線在 NetiqPipelineService 背壓等待——外觀上與「卡住」無法區分，必須獨立標示原因，
+// 否則使用者回報的症狀就是「進度條不動了」。done/total 沿用 netiq 階段同一組主機日數字
+// （暫停當下已完成的量不會消失），只是暫時不再往前走。
+const PROGRESS_PHASE_LABEL = {
+    local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中',
+    'netiq-backpressure': '搜尋暫停：AI 佇列已滿，等待消化中'
+};
 const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，

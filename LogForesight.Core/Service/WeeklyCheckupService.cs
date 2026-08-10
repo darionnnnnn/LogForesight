@@ -39,15 +39,20 @@ internal class WeeklyCheckupService
     private readonly IAnalysisRecordReader _historyReader;
     private readonly IReportSink _reportSink;
     private readonly ISuppressionStore? _suppressionStore;
+    private readonly IReadOnlyCollection<long> _hostGroupIds;
 
     /// <param name="suppressionStore">提供時，體檢報告固定列出本機生效中的抑制清單＋窗口期間各自的
     /// 發生次數（見 docs/RULES-SPEC.md 陷阱 4：暫時關閉的告警不該變成永久盲區）；null 時略過該區塊。</param>
-    public WeeklyCheckupService(IAiService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink, ISuppressionStore? suppressionStore = null)
+    /// <param name="hostGroupIds">這台主機目前所屬的主機群組 Id（回饋十三輪 F：抑制的 Group 範圍
+    /// 判定需要，見 <see cref="SuppressionFilter"/>）；null／未提供＝視為不屬於任何群組。</param>
+    public WeeklyCheckupService(IAiService aiService, IAnalysisRecordReader historyReader, IReportSink reportSink,
+        ISuppressionStore? suppressionStore = null, IReadOnlyCollection<long>? hostGroupIds = null)
     {
         _aiService = aiService;
         _historyReader = historyReader;
         _reportSink = reportSink;
         _suppressionStore = suppressionStore;
+        _hostGroupIds = hostGroupIds ?? Array.Empty<long>();
     }
 
     /// <summary>
@@ -139,7 +144,7 @@ internal class WeeklyCheckupService
         // 固定星期改為 due-date 輪巡，但對外的檔案格式與既有部署/查閱習慣不需要跟著變動
         var fileName = $"{checkupDate:yyyy-MM-dd}_週檢.txt";
         var activeSuppressions = _suppressionStore != null
-            ? SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), Environment.MachineName, DateTime.Now)
+            ? SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), Environment.MachineName, _hostGroupIds, DateTime.Now)
             : new List<RuleSuppression>();
         var content = BuildReportText(checkupDate, window, outcome, activeSuppressions);
         outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup, host, fileName, content);

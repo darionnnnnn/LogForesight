@@ -572,7 +572,7 @@ function setMembersMode(mode) {
         btn.classList.toggle('active', btn.dataset.mode === mode);
     }
     membersInput.placeholder = mode === 'cidr'
-        ? '10.1.2.0/24、10.1.2.* 或單一 IP'
+        ? '192.168.0.0/24、192.168.0.* 或單一 IP'
         : '主機名或 IP 關鍵字';
 }
 

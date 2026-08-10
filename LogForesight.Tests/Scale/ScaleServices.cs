@@ -61,9 +61,10 @@ internal sealed class ScaleServices
         var issueRanking = new IssueRankingBuilder(backend.IssueAggregateQuery());
 
         Dashboard = new DashboardService(
-            Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking);
+            Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
+            settingsStore);
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore);
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore);

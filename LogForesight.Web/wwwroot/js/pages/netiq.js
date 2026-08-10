@@ -232,6 +232,7 @@ async function loadOptions() {
     document.getElementById('opt-allow-invalid-certs').checked = options.allowInvalidCertificates;
     document.getElementById('opt-backfill-days').value = options.backfillDays;
     document.getElementById('opt-max-parallel-servers').value = options.maxParallelServers;
+    document.getElementById('opt-max-parallel-queries').value = options.maxParallelQueriesPerServer;
     document.getElementById('opt-chat-live-fetch').checked = options.chatLiveFetchEnabled;
     // 這個選項只服務「詢問 AI」對話的 fallback 路徑，AI 未設定時整條路徑無意義，隱藏但保留值
     // （docs/archive/FEEDBACK-7-PLAN.md）
@@ -270,6 +271,7 @@ document.getElementById('netiq-options-form').addEventListener('submit', async e
             allowInvalidCertificates: document.getElementById('opt-allow-invalid-certs').checked,
             backfillDays: Number(document.getElementById('opt-backfill-days').value),
             maxParallelServers: Number(document.getElementById('opt-max-parallel-servers').value),
+            maxParallelQueriesPerServer: Number(document.getElementById('opt-max-parallel-queries').value),
             chatLiveFetchEnabled: document.getElementById('opt-chat-live-fetch').checked,
             useOfflineDemoData: document.getElementById('opt-offline-demo').checked
         });

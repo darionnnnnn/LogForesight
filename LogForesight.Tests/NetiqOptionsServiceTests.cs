@@ -33,7 +33,8 @@ public class NetiqOptionsServiceTests : IDisposable
         TimeoutSeconds = 120,
         RetryCount = 3,
         BackfillDays = 1,
-        MaxParallelServers = 2
+        MaxParallelServers = 2,
+        MaxParallelQueriesPerServer = 1
     };
 
     [Fact]
@@ -103,6 +104,30 @@ public class NetiqOptionsServiceTests : IDisposable
         service.Update(request);
 
         Assert.Equal(2, service.Get().MaxParallelServers);
+    }
+
+    /// <summary>回饋十三輪 D：MaxParallelQueriesPerServer 與 MaxParallelServers 同一套「讀取自動
+    /// 夾住」理由——上限常數若未來再收斂，既有存值也不該讓維護頁表單卡死。</summary>
+    [Fact]
+    public void 查詢平行度既有存值超過上限時讀取自動夾住()
+    {
+        var service = Create("Development");
+        var request = Baseline();
+        request.MaxParallelQueriesPerServer = 8;
+        service.Update(request);
+
+        Assert.Equal(NetiqOptions.MaxParallelQueriesPerServerLimit, service.Get().MaxParallelQueriesPerServer);
+    }
+
+    [Fact]
+    public void 查詢平行度存值在上限內時讀取不受影響()
+    {
+        var service = Create("Development");
+        var request = Baseline();
+        request.MaxParallelQueriesPerServer = 3;
+        service.Update(request);
+
+        Assert.Equal(3, service.Get().MaxParallelQueriesPerServer);
     }
 }
 

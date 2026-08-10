@@ -89,7 +89,7 @@ public class SuppressionTests
             new() { RuleId = "d", Host = "SRV-01", ExpiresAt = now.AddDays(-1) } // 已到期
         };
 
-        var active = SuppressionFilter.ActiveForHost(all, "SRV-01", now);
+        var active = SuppressionFilter.ActiveForHost(all, "SRV-01", Array.Empty<long>(), now);
 
         Assert.Equal(new[] { "a", "b" }, active.Select(s => s.RuleId).OrderBy(x => x));
     }
@@ -106,9 +106,73 @@ public class SuppressionTests
             new() { RuleId = "d", Host = "SRV-02", ExpiresAt = now.AddDays(-1) }  // 不同主機
         };
 
-        var expired = SuppressionFilter.ExpiredForHost(all, "SRV-01", now);
+        var expired = SuppressionFilter.ExpiredForHost(all, "SRV-01", Array.Empty<long>(), now);
 
         Assert.Equal("a", Assert.Single(expired).RuleId);
+    }
+
+    // ── 抑制範圍：Group／Site（回饋十三輪 F）─────────────────────────
+
+    [Fact]
+    public void ActiveForHost_Group範圍_主機屬於該群組時生效()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { RuleId = "a", Scope = SuppressionScopes.Group, HostGroupId = 10, ExpiresAt = null },
+            new() { RuleId = "b", Scope = SuppressionScopes.Group, HostGroupId = 20, ExpiresAt = null } // 主機不屬於這個群組
+        };
+
+        var active = SuppressionFilter.ActiveForHost(all, "SRV-01", new long[] { 10, 30 }, now);
+
+        Assert.Equal("a", Assert.Single(active).RuleId);
+    }
+
+    [Fact]
+    public void ActiveForHost_Group範圍_主機不屬於任何群組時全部不生效()
+    {
+        var all = new List<RuleSuppression> { new() { RuleId = "a", Scope = SuppressionScopes.Group, HostGroupId = 10 } };
+
+        var active = SuppressionFilter.ActiveForHost(all, "SRV-01", Array.Empty<long>(), DateTime.Today);
+
+        Assert.Empty(active);
+    }
+
+    [Fact]
+    public void ActiveForHost_Site範圍_不論主機或群組一律生效()
+    {
+        var all = new List<RuleSuppression> { new() { RuleId = "a", Scope = SuppressionScopes.Site } };
+
+        var activeNoGroups = SuppressionFilter.ActiveForHost(all, "ANY-HOST", Array.Empty<long>(), DateTime.Today);
+        var activeWithGroups = SuppressionFilter.ActiveForHost(all, "OTHER-HOST", new long[] { 999 }, DateTime.Today);
+
+        Assert.Single(activeNoGroups);
+        Assert.Single(activeWithGroups);
+    }
+
+    [Fact]
+    public void ActiveForHost_Site範圍_到期後不再生效()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { RuleId = "a", Scope = SuppressionScopes.Site, ExpiresAt = now.AddDays(-1) }
+        };
+
+        Assert.Empty(SuppressionFilter.ActiveForHost(all, "ANY-HOST", Array.Empty<long>(), now));
+        Assert.Single(SuppressionFilter.ExpiredForHost(all, "ANY-HOST", Array.Empty<long>(), now));
+    }
+
+    /// <summary>舊資料相容：Scope 欄位改版前不存在，反序列化後的預設值就是 Host，
+    /// 語意與改版前逐位相同——這裡直接構造「沒設 Scope」的物件模擬舊資料。</summary>
+    [Fact]
+    public void 未設定Scope的舊資料視為Host範圍()
+    {
+        var legacy = new RuleSuppression { RuleId = "a", Host = "SRV-01" }; // 沒有明確設 Scope
+
+        Assert.Equal(SuppressionScopes.Host, legacy.Scope);
+        var active = SuppressionFilter.ActiveForHost(new List<RuleSuppression> { legacy }, "SRV-01", Array.Empty<long>(), DateTime.Today);
+        Assert.Single(active);
     }
 
     [Fact]

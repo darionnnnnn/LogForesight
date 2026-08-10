@@ -27,6 +27,13 @@ internal class FakeRiskyEventStore : IRiskyEventStore
         return Rows;
     }
 
+    public List<RiskyEvent> QueryDay(long hostId, DateTime date)
+    {
+        LastHostId = hostId;
+        LastDate = date;
+        return Rows;
+    }
+
     public int Prune(int retentionDays) => throw new NotSupportedException("查詢面用不到清理");
 }
 

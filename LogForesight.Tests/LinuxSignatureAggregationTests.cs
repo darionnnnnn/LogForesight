@@ -239,6 +239,8 @@ public class LinuxSignatureAggregationTests : IDisposable
 
         Assert.Empty(record.CorrelationAlerts);
         Assert.Contains(record.UncoveredChecks, c => c.Contains("關聯層") && c.Contains("不適用於 Linux"));
+        // 回饋十三輪 A9：檢索面比 Windows 窄一階的申報，與關聯層申報同一力道、同時出現
+        Assert.Contains(record.UncoveredChecks, c => c.Contains("sev 2-5") && c.Contains("Windows 主機無此限制"));
     }
 
     [Fact]
@@ -278,6 +280,8 @@ public class LinuxSignatureAggregationTests : IDisposable
             DateTime.Today, new List<EventLogEntryData>(), useAi: false);
 
         Assert.DoesNotContain(record.UncoveredChecks, c => c.Contains("不適用於 Linux"));
+        // 回饋十三輪 A9：檢索面限制是 Linux 專屬的申報，Windows 主機不該出現
+        Assert.DoesNotContain(record.UncoveredChecks, c => c.Contains("sev 2-5"));
     }
 
     // ── FindLinuxRule 經 LogAggregator 整合命中：17 條種子逐條 ────────────

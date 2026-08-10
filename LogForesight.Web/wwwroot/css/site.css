@@ -487,8 +487,29 @@ body {
     border-bottom: 1px solid rgba(255, 255, 255, .07);
 }
 
-.lf-sidebar__brand small {
+/* 回饋十三輪 G：品牌名稱過長時要優雅省略號而非撐版或裁一半的字——.lf-sidebar__brand-text
+   必須自己 min-width:0，flex 子項預設 min-width:auto 在部分瀏覽器/情境下不會縮到內容寬度以下
+   （見 #lf-current-user 的既有先例，docs/FEEDBACK-5-PLAN.md §3）。名稱與副標分開各自截斷——
+   原本兩者共用一個 text-truncate 容器，副標是 <small> 區塊子元素，不受父層 nowrap/ellipsis
+   保護，超長時會被硬裁斷、裁到字元一半也不留省略號。*/
+.lf-sidebar__brand-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.lf-sidebar__brand-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lf-sidebar__brand-text small {
     display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: .7rem;
     font-weight: 400;
     color: var(--lf-sidebar-section);
@@ -1654,26 +1675,57 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-6);
 }
 
+/* 回饋十三輪 G：品牌區重調為圖示＋文字橫向排列（原本 CSS 早已是 flex，但 Login.cshtml 是
+   圖示獨占一行、標題另起頭的直向堆疊，兩者對不上——這裡讓 HTML 跟上既有的 CSS 意圖，
+   同時與側欄品牌區採同一套視覺語言：方形漸層底圖示 + 名稱/副標垂直疊放）*/
 .lf-login__brand {
     display: flex;
     align-items: center;
-    gap: var(--lf-space-2);
-    font-weight: 700;
-    font-size: var(--lf-font-size-xl);
-    color: var(--lf-text);
+    gap: var(--lf-space-3);
     margin-bottom: var(--lf-space-5);
+}
+
+.lf-login__brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    flex-shrink: 0;
+    border-radius: var(--lf-radius);
+    background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
+    color: #fff;
+}
+
+.lf-login__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
+
+/* min-width:0 同側欄品牌區的理由：flex item 沒有這行，超長品牌名不會優雅省略，
+   而是撐開卡片、把版面推爆（見 .lf-sidebar__brand-text 旁的說明）。display:flex
+   column 讓子項（.lf-login__title/.lf-login__subtitle）自動 blockify 成 block——
+   兩者本是 <span>，沒有這層 flex container 就停留在 display:inline，overflow/
+   text-overflow 對 inline 元素不生效，ellipsis 會整個沒有作用（曾在 preview 實測踩到）。 */
+.lf-login__brand-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 .lf-login__title {
     font-size: var(--lf-font-size-2xl);
     font-weight: 600;
-    margin-bottom: var(--lf-space-1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .lf-login__subtitle {
+    display: block;
     font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
-    margin-bottom: var(--lf-space-5);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 設定頁的圖示預覽格（docs/archive/FEEDBACK-10-PLAN.md §1）：尺寸刻意接近側欄實際顯示大小，
@@ -1698,14 +1750,14 @@ a.lf-stat:hover .lf-card,
     border-radius: inherit;
 }
 
-/* 自訂品牌圖示的登入頁版本（docs/archive/FEEDBACK-10-PLAN.md §1）：比側欄大一些（這裡是品牌的
-   主場），contain 保留原比例。沒有自訂圖示時整個節點不輸出，不會留下空白 */
+/* 自訂品牌圖示的登入頁版本（docs/archive/FEEDBACK-10-PLAN.md §1；回饋十三輪 G 改嵌入
+   .lf-login__brand-mark 方形容器，撐滿＋contain 保留原比例，不裁角。沒有自訂圖示時
+   fallback 成內建向量圖示（同容器），不會像改版前那樣整個品牌區只剩純文字 */
 .lf-login__logo {
     display: block;
-    max-width: 3.5rem;
-    max-height: 3.5rem;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
-    margin-bottom: var(--lf-space-3);
 }
 
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */

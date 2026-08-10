@@ -653,6 +653,28 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Single(unfiltered.Items);
     }
 
+    /// <summary>
+    /// 回饋十三輪新增項1：BuildFilter 的 Categories 是記錄層過濾（record.TopIssues 任一簽章屬選中
+    /// 類別即整筆記錄通過，見 RecordFilterMatcher），但依問題視角把記錄的全部簽章都攤開分組——
+    /// 修正前，篩「安全」時同一天裡的「其他」類問題（因為同記錄有安全類簽章而讓記錄通過過濾）
+    /// 仍會混入清單。與上面嚴重度過濾（RiskLevels）同一種漏法，修法也相同：疊加問題層過濾。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_篩安全類型_其他類型問題不應出現()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", issues: new[]
+        {
+            Issue("security", 4625, IssueSeverity.High, IssueCategory.Security),
+            Issue("other", 9999, IssueSeverity.Medium, IssueCategory.Other)
+        });
+
+        var filtered = _service.SearchByIssue(new RecordSearchRequest { Categories = new List<string> { "Security" } });
+
+        var group = Assert.Single(filtered.Items);
+        Assert.Equal("Security", group.Category);
+    }
+
     [Fact]
     public void SearchByIssue_依主機數排序()
     {

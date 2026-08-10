@@ -144,6 +144,12 @@ public class DailyAnalysisRecord
 /// 風險是否被拉高」的最終結果才能決定要不要產生，所以報告產出的時機隨 AI 段一起移動，
 /// 不再是統計段的職責。
 /// </summary>
+/// <param name="UncoveredChecksAddendum">
+/// 要追加進既有 <see cref="DailyAnalysisRecord.UncoveredChecks"/> 的項目（回饋十三輪 C，
+/// 孤兒補跑產報告）；null／空＝不追加。統計段寫入的 UncoveredChecks 已經定案，
+/// <c>AttachAiResult</c>（見 EfAnalysisRecordStore）只用這個欄位把 AI 段才知道的新缺口
+/// （例如風險事件暫存已逾期，補跑報告從缺）併進去，不是整批覆寫——避免覆寫掉統計段
+/// 已經寫好的既有申報項目。</param>
 public sealed record AiOutcome(
     string Headline,
     string Summary,
@@ -155,7 +161,8 @@ public sealed record AiOutcome(
     int ScreenedTailCount,
     List<string> ScreeningNotes,
     string? ReportFile,
-    List<CategoryDeepDive> DeepDives);
+    List<CategoryDeepDive> DeepDives,
+    List<string>? UncoveredChecksAddendum = null);
 
 /// <summary>單一類別（儲存裝置/硬體/安全…）的深入分析結果</summary>
 public class CategoryDeepDive

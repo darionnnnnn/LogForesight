@@ -98,16 +98,22 @@ public class AnalysisOrchestrator
     private const int TrendWindowDays = 14;
 
     /// <summary>
-    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3；回饋十三輪 D 擴充公式）。
     ///
-    /// 4 的來由：分析主線是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），
-    /// 真正的併發來源只有 NetIQ 的多 Sentinel 平行（<see cref="NetiqOptions.MaxParallelServers"/>
-    /// 預設 2，上限見 <see cref="NetiqOptions.MaxParallelServersLimit"/>）加上各自的寫入，
-    /// 4 條連線已經餵得飽；再多也只是從前景那邊多搶而已。
+    /// 分析主線本身是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），真正的併發
+    /// 來源是兩個正交維度：跨 Sentinel 平行（<see cref="NetiqOptions.MaxParallelServers"/>，
+    /// 上限 <see cref="NetiqOptions.MaxParallelServersLimit"/>）與單一 Sentinel 內部的批次平行
+    /// （<see cref="NetiqOptions.MaxParallelQueriesPerServer"/>，上限
+    /// <see cref="NetiqOptions.MaxParallelQueriesPerServerLimit"/>，回饋十三輪 D）。兩者同時吃滿
+    /// 上限時，同時活躍的「統計段寫入」數就是兩個上限的乘積——連線池必須至少這麼大，否則
+    /// 池配額本身會變成新的隱性瓶頸；再 +1 是給零星的非分析寫入（如 BatchRunRecorder 里程碑）
+    /// 一點餘裕。這兩個常數都是編譯期 const，此處運算式本身也維持編譯期常數，不必等執行期
+    /// 讀到 NetiqOptions 才能決定池大小（建立 StorageBackend 當下還沒有 blob 可讀，見下方呼叫式）。
     /// 不開放設定：這是「不要拖垮站台」的安全上限，不是效能旋鈕——真的需要更快，
     /// 該做的是拆獨立 worker（本輪已評估後決定不拆，見規劃 §8.4）。
     /// </summary>
-    private const int AnalysisMaxPoolSize = 4;
+    private const int AnalysisMaxPoolSize =
+        NetiqOptions.MaxParallelServersLimit * NetiqOptions.MaxParallelQueriesPerServerLimit + 1;
 
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
@@ -141,12 +147,8 @@ public class AnalysisOrchestrator
 
             var suppressionStore = new SuppressionStore(backend.Blob("suppressions"));
             var currentHost = Environment.MachineName;
-            var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, DateTime.Now);
-            foreach (var expired in expiredSuppressions)
-            {
-                console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
-                                  $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）");
-            }
+            // 到期抑制的通知移到 hostStore.Touch 之後才印（回饋十三輪 F）：Group／Site 範圍的抑制
+            // 判定需要知道本機的群組成員資格，那個資訊要等主機登記完成才拿得到，見下方。
 
             // 執行紀錄（docs/WEB-SPEC.md §2.1 Phase 4）：啟動時登記、結束時回填，讓 Web 的執行監控頁
             // 能回答「昨晚每台主機都跑了嗎、有沒有出問題」。掛上 NLog target 後 Warn 以上自動流入，
@@ -229,14 +231,27 @@ public class AnalysisOrchestrator
             }
 
             long currentHostId = 0;
+            List<long> currentHostGroupIds = new();
             try
             {
-                currentHostId = hostStore.Touch(currentHost, DateTime.Now).HostId;
+                var touched = hostStore.Touch(currentHost, DateTime.Now);
+                currentHostId = touched.HostId;
+                currentHostGroupIds = touched.GroupIds;
             }
             catch (Exception ex)
             {
                 Log.Warn(ex, "登記主機回報時間失敗（不影響本次分析）：{0}", ex.Message);
                 console.WriteLine($"  ⚠ 登記主機回報時間失敗（不影響分析）：{ex.Message}");
+            }
+
+            // 到期抑制通知（回饋十三輪 F 移到這裡）：Group／Site 範圍的判定需要本機的群組成員資格，
+            // 上面 Touch 完成後才拿得到（新主機或註冊失敗時 currentHostGroupIds 為空——
+            // 只影響「還屬於哪些群組」，Host／Site 範圍的到期判定不受影響）。
+            var expiredSuppressions = SuppressionFilter.ExpiredForHost(suppressionStore.LoadAll(), currentHost, currentHostGroupIds, DateTime.Now);
+            foreach (var expired in expiredSuppressions)
+            {
+                console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
+                                  $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）");
             }
 
             // 歷史 store 綁定「本機」識別：缺日判定與趨勢基準只看這台主機自己的紀錄。
@@ -245,13 +260,14 @@ public class AnalysisOrchestrator
 
             var reportService = new RiskReportService(aiService, reportSink, settings.Ai.DeepDiveMaxTokens);
             var analysisService = new LogAnalysisService(eventLogService, aiService, historyService, suppressionStore,
-                settings.Analysis.ServerDescription, reportService, currentHost, currentHostId);
+                settings.Analysis.ServerDescription, reportService, currentHost, currentHostId,
+                hostGroupIds: currentHostGroupIds);
             // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：每日分析完成後由呼叫端（下方主迴圈、
             // NetiqPipelineService）用 RiskyEventSelector 篩選並寫入，不改動 LogAnalysisService 本身
             var riskyEventStore = backend.RiskyEventStore();
             var permissionMonitor = new PermissionMonitorService(settings.Permissions,
                 new PermissionSnapshotStore(backend.Blob("permission_snapshot")));
-            var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore);
+            var weeklyCheckupService = new WeeklyCheckupService(aiService, historyService, reportSink, suppressionStore, currentHostGroupIds);
 
             // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
             // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。

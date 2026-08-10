@@ -66,3 +66,31 @@ public class NetiqPipelineParallelismTests
         Assert.Equal(expected, NetiqPipelineService.ResolveParallelism(configured));
     }
 }
+
+/// <summary>
+/// 單一 Sentinel 內部的批次查詢平行度（回饋十三輪 D），與 <see cref="NetiqPipelineParallelismTests"/>
+/// 同一個「行程架構上限，不是效能旋鈕」理由，只是維度不同——見 NetiqOptions.MaxParallelQueriesPerServer。
+/// </summary>
+public class NetiqPipelineQueryParallelismTests
+{
+    [Fact]
+    public void 設定值在上限內時照設定執行()
+    {
+        Assert.Equal(2, NetiqPipelineService.ResolveQueryParallelism(2));
+    }
+
+    [Fact]
+    public void 設定值超過行程內上限時夾住()
+    {
+        Assert.Equal(NetiqOptions.MaxParallelQueriesPerServerLimit, NetiqPipelineService.ResolveQueryParallelism(8));
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(0, 1)]
+    [InlineData(-3, 1)]
+    public void 設定值小於一時一律視為依序(int configured, int expected)
+    {
+        Assert.Equal(expected, NetiqPipelineService.ResolveQueryParallelism(configured));
+    }
+}

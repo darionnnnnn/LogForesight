@@ -15,6 +15,7 @@ public class DashboardService
     private readonly PermissionChangeService _permissionChanges;
     private readonly IHostGroupStore _hostGroups;
     private readonly IssueRankingBuilder _issueRanking;
+    private readonly ISystemSettingsStore _settings;
 
     public DashboardService(
         IRecordRepository repository,
@@ -24,7 +25,8 @@ public class DashboardService
         HandlingHistoryQueryService handling,
         PermissionChangeService permissionChanges,
         IHostGroupStore hostGroups,
-        IssueRankingBuilder issueRanking)
+        IssueRankingBuilder issueRanking,
+        ISystemSettingsStore settings)
     {
         _repository = repository;
         _visibility = visibility;
@@ -34,6 +36,7 @@ public class DashboardService
         _permissionChanges = permissionChanges;
         _hostGroups = hostGroups;
         _issueRanking = issueRanking;
+        _settings = settings;
     }
 
     public DashboardDto GetSummary(int days)
@@ -50,7 +53,7 @@ public class DashboardService
             TotalHosts = visibleHosts.Count
         };
 
-        dto.Categories = RecordStatsBuilder.BuildCategoryCards(records);
+        dto.Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities());
         dto.HostRanking = RecordStatsBuilder
             .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
             .Take(10)

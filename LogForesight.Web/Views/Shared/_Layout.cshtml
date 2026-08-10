@@ -36,11 +36,11 @@
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
                     }
                 </span>
-                <span class="text-truncate">
-                    @brand.Name
+                <span class="lf-sidebar__brand-text">
+                    <span class="lf-sidebar__brand-name" title="@brand.Name">@brand.Name</span>
                     @if (brand.Subtitle != null)
                     {
-                        <small>@brand.Subtitle</small>
+                        <small title="@brand.Subtitle">@brand.Subtitle</small>
                     }
                 </span>
             </div>
