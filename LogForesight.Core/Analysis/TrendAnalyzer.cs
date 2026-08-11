@@ -38,6 +38,21 @@ public static class TrendAnalyzer
     private const double RisingFactor = 2.0;
 
     /// <summary>
+    /// Low 簽章（升級前）頻率上升的「爆量例外」倍率門檻（回饋十六輪批次B-1）：Rising 嚴重度
+    /// 閘門（見下方 preEscalationSeverity 判斷）要求升級前 &gt;= Medium 才產生告警，未命中任何
+    /// 規則的簽章一律 Low，因此天生被閘門靜音——但一個平常量很小的未知簽章突然暴增，仍是
+    /// 值得看見的訊號（見 docs/DETECTION-SPEC.md 的「Low 簽章趨勢出口」小節）。門檻刻意遠高於
+    /// 一般 Rising 的 <see cref="RisingFactor"/>（2 倍）：Low 簽章天然雜訊多、日常 2~3 倍波動
+    /// 很常見，只有真正的爆量（10 倍）才該打破閘門。
+    /// </summary>
+    private const double SurgeFactor = 10.0;
+
+    /// <summary>爆量例外的絕對量門檻，與 <see cref="SurgeFactor"/> 滿足其一即觸發：歷史基準很小
+    /// （例如 1~2 次）時單靠倍率會讓「3 次變 30 次」這種真正該被看見的暴增被 10 倍門檻擋下，
+    /// 絕對量門檻兜底。</summary>
+    private const int SurgeMinCount = 100;
+
+    /// <summary>
     /// 為當日事件簽章標記趨勢，回傳程式比對出的頻率異常說明（給 prompt 與 console 告警用）。
     /// 不帶抑制旗標與結構化輸出的簡化版——內部委派到下方完整版，丟棄總量抑制與 refs 輸出，
     /// 讓既有呼叫端（不需要總量抑制／結構化導航的路徑）不用跟著改參數列表。
@@ -178,6 +193,24 @@ public static class TrendAnalyzer
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
                         var text = $"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
+                        if (sig.Suppressed)
+                        {
+                            suppressedAlerts.Add(text);
+                        }
+                        else
+                        {
+                            alerts.Add(text);
+                            alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
+                        }
+                    }
+                    // 爆量例外（回饋十六輪批次B-1，見 SurgeFactor／SurgeMinCount 說明）：升級前是
+                    // Low，一般閘門本該靜音，但今日量體已達基準 10 倍或絕對量 100 筆——未命中任何
+                    // 規則的簽章單日暴增仍該被看見（docs/DETECTION-SPEC.md「Low 簽章趨勢出口」）。
+                    // 用「頻率暴增」與一般「頻率上升」區分文字，讓讀者知道這是走爆量例外進來的。
+                    else if (sig.Count >= sig.HistoryDailyAverage * SurgeFactor || sig.Count >= SurgeMinCount)
+                    {
+                        var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
+                        var text = $"頻率暴增：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
                         if (sig.Suppressed)
                         {
                             suppressedAlerts.Add(text);

@@ -52,6 +52,71 @@ public class TrendAnalyzerTests
         Assert.DoesNotContain(alerts, a => a.Contains("頻率上升")); // 但不吵、不拉風險
     }
 
+    // ── 爆量例外（回饋十六輪批次B-1）─────────────────────────────────────
+    // Low 簽章（升級前）一般被 Rising 閘門靜音，但單日暴增達基準 10 倍或絕對量 100 筆時，
+    // 仍要打破閘門產生告警——用「頻率暴增」與一般「頻率上升」區分文字。
+
+    [Fact]
+    public void Low嚴重度簽章暴增達十倍基準時打破閘門產生告警()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 20, IssueSeverity.Low); // 基準2，今日20＝10倍
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 20, 0);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Contains(alerts, a => a.Contains("頻率暴增"));
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率上升"));
+    }
+
+    [Fact]
+    public void Low嚴重度簽章未達爆量門檻時仍不產生告警()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 19, IssueSeverity.Low); // 基準2，19＜10倍(20)且＜絕對量100
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 19, 0);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率暴增"));
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率上升"));
+    }
+
+    /// <summary>基準較大時單靠 10 倍門檻會把「翻好幾倍但還沒到誇張量級」的暴增擋在外面——
+    /// 絕對量 100 筆兜底：基準 15（10 倍＝150 遠高於 100），今日 100 仍應觸發。</summary>
+    [Fact]
+    public void Low嚴重度簽章達絕對量門檻時即使未達十倍基準仍觸發()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 15, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 100, IssueSeverity.Low); // 基準15，100＜150(10倍)但＝100(絕對量門檻)
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 100, 0);
+
+        Assert.Contains(alerts, a => a.Contains("頻率暴增"));
+    }
+
+    /// <summary>暖身期（可靠歷史 &lt; WarmupDays）完全不告警，爆量例外也不例外——新頻道
+    /// 上線第一天的倍率比較還不可靠，與一般 Rising 閘門同一套保護。</summary>
+    [Fact]
+    public void 暖身期時爆量例外也不觸發告警()
+    {
+        var history = Enumerable.Range(1, 2) // < WarmupDays(3)
+            .Select(d => DefenderHistoryDay(DateTime.Today.AddDays(-d), 1116, 2))
+            .ToList();
+        var sig = Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 30, IssueSeverity.Low);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率暴增"));
+    }
+
     /// <summary>Medium（升級前）以上的簽章不受閘門影響，維持既有行為——這是既有測試
     /// 「歷史基準兩倍以上且達最低次數時判為Rising並升級嚴重度」（High）以外的邊界確認。</summary>
     [Fact]
