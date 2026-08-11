@@ -5,6 +5,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Import;
+using LogForesight.Web.Services.Mail;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -75,6 +76,9 @@ public static class ServiceCollectionExtensions
 
         // 排程設定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）
         services.AddSingleton<ScheduleOptionsStore>(sp => new ScheduleOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("schedule_options")));
+
+        // 郵件通知寄送狀態（回饋十五輪批次D）：每日/每週摘要的「上次寄送日」＋緊急通知的去重鍵
+        services.AddSingleton<MailNotifyStateStore>(sp => new MailNotifyStateStore(sp.GetRequiredService<StorageBackend>().Blob("mail_notify_state")));
 
         // 風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）：批次寫、Web（AI 對話）讀
         services.AddSingleton<IRiskyEventStore>(sp => sp.GetRequiredService<StorageBackend>().RiskyEventStore());
@@ -290,6 +294,12 @@ public static class ServiceCollectionExtensions
         // 規則維護與執行監控
         services.AddScoped<RuleAdminService>();
         services.AddScoped<RunMonitorService>();
+
+        // 郵件通知（回饋十五輪批次D）：Singleton——SchedulerHostedService 是 Singleton 背景服務，
+        // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
+        // 本來就全是 Singleton，沒有 captive dependency 疑慮。
+        services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
+        services.AddSingleton<MailNotificationService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
         // （執行中/觸發來源/最新進度，供狀態與停止 API 讀取）；SchedulerHostedService 本身也註冊

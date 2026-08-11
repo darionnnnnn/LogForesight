@@ -56,4 +56,7 @@ internal class FakeSystemSettingsService : ISystemSettingsService
 
     public TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request) =>
         throw new NotSupportedException("測試未使用此方法");
+
+    public Task<TestMailResultDto> TestMail(TestMailRequest request) =>
+        throw new NotSupportedException("測試未使用此方法");
 }

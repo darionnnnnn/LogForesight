@@ -1691,7 +1691,8 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IGroupAccessStore` | blob `group_access` | Web |
 | `ISentinelStore`（docs/archive/HISTORY.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（2026-07-27；介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
-| `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數，`/admin/settings` 維護） | Web＋批次讀 |
+| `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
+| `MailNotifyStateStore`（2026-08-11，回饋十五輪批次D） | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知已寄的 host+date 去重集合，隨 `RetentionDays` 清理） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |

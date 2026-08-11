@@ -182,6 +182,60 @@ public class SystemSettings
     /// <summary>查詢使用者的過濾器樣板，{0} 代入登入帳號</summary>
     public string AdSearchFilter { get; set; } = "(sAMAccountName={0})";
 
+    // ── 郵件通知（回饋十五輪批次D）───────────────────────────────────────────
+    // 全案原本零 SMTP 基礎設施（十四輪暫緩批次D）。三路觸發共用同一份收件人/門檻設定：
+    // 排程結束後摘要、每日/每週定時彙總、高風險即時（不受時間限制，見 MailNotificationService）。
+
+    /// <summary>總開關。關閉時三路觸發全部略過，不需要額外檢查各自的 Enabled——單一咽喉點</summary>
+    public bool MailEnabled { get; set; }
+
+    public string SmtpServer { get; set; } = "";
+
+    public int SmtpPort { get; set; } = 25;
+
+    public bool SmtpUseTls { get; set; }
+
+    public string SmtpAccount { get; set; } = "";
+
+    /// <summary>SMTP 密碼的密文（<see cref="CryptoHelper.Encrypt"/> 產生），write-only，
+    /// 語意與 <see cref="AiApiKeyEnc"/> 完全對稱——內部/測試 relay 常不需要密碼，留空即可</summary>
+    public string SmtpPasswordEnc { get; set; } = "";
+
+    public string MailFrom { get; set; } = "";
+
+    /// <summary>全域收件人清單（必填才能寄出任何通知）</summary>
+    public List<string> MailRecipients { get; set; } = new();
+
+    /// <summary>額外把通知寄給主機負責人（WebIdentity.Email）——與全域收件人清單疊加，不是取代</summary>
+    public bool MailNotifyHostOwners { get; set; }
+
+    /// <summary>摘要納入門檻：RiskLevels.High（預設）或 RiskLevels.Medium，低於此等級不計入摘要</summary>
+    public string MailMinRiskLevel { get; set; } = RiskLevels.High;
+
+    /// <summary>排程/手動觸發的執行結束後寄一封本次執行摘要</summary>
+    public bool MailOnRunCompleted { get; set; }
+
+    public bool MailDailyEnabled { get; set; }
+
+    /// <summary>HH:mm，24 小時制</summary>
+    public string MailDailyTime { get; set; } = "08:00";
+
+    public bool MailWeeklyEnabled { get; set; }
+
+    /// <summary>DayOfWeek 的英文名（Monday…Sunday）</summary>
+    public string MailWeeklyDayOfWeek { get; set; } = "Monday";
+
+    public string MailWeeklyTime { get; set; } = "08:00";
+
+    /// <summary>高風險日不受每日/每週時刻限制，判定當下立即寄送（每 host+date 僅一次）</summary>
+    public bool MailUrgentEnabled { get; set; }
+
+    /// <summary>可用變數：{site} {host} {date} {risk} {type} {summary}，見 MailNotificationService</summary>
+    public string MailSubjectTemplate { get; set; } = "[{site}] {type}：{date} {summary}";
+
+    /// <summary>信件開頭可自訂的一段純文字，附加在自動組出的摘要表格之前</summary>
+    public string MailBodyIntro { get; set; } = "";
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

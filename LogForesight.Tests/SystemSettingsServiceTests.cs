@@ -1,6 +1,7 @@
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -9,12 +10,18 @@ namespace LogForesight.Tests;
 /// P0-3：<see cref="SystemSettingsService"/> 新增的 RunLogRetentionDays／AuditRetentionDays 欄位
 /// 走完整條 Update → Get 路徑（實測曾手改多處 wiring，這類機械式串接最容易漏一處）。
 /// </summary>
-public class SystemSettingsServiceTests
+public class SystemSettingsServiceTests : IDisposable
 {
     private readonly FakeSystemSettingsStore _store = new();
+    private readonly EfSqliteFixture _fx = new();
+    private readonly FakeSmtpMailSender _mailSender = new();
+
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private SystemSettingsService Create() =>
-        new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore());
+        new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeAnalysisRecordQuery(), new MailNotifyStateStore(_fx.Blob("mail_notify_state"))));
 
     private static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14) => new()

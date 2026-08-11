@@ -75,6 +75,30 @@ public class SystemSettingsDto
     public int ImportMaxFileSizeKb { get; set; }
     public int ImportMaxRows { get; set; }
 
+    // ── 郵件通知（回饋十五輪批次D）───────────────────────────────────────────
+    public bool MailEnabled { get; set; }
+    public string SmtpServer { get; set; } = "";
+    public int SmtpPort { get; set; }
+    public bool SmtpUseTls { get; set; }
+    public string SmtpAccount { get; set; } = "";
+
+    /// <summary>SMTP 密碼是否已設定；密碼本身 write-only，絕不回傳明碼或密文（同 AiHasApiKey 慣例）</summary>
+    public bool SmtpHasPassword { get; set; }
+
+    public string MailFrom { get; set; } = "";
+    public List<string> MailRecipients { get; set; } = new();
+    public bool MailNotifyHostOwners { get; set; }
+    public string MailMinRiskLevel { get; set; } = "";
+    public bool MailOnRunCompleted { get; set; }
+    public bool MailDailyEnabled { get; set; }
+    public string MailDailyTime { get; set; } = "";
+    public bool MailWeeklyEnabled { get; set; }
+    public string MailWeeklyDayOfWeek { get; set; } = "";
+    public string MailWeeklyTime { get; set; } = "";
+    public bool MailUrgentEnabled { get; set; }
+    public string MailSubjectTemplate { get; set; } = "";
+    public string MailBodyIntro { get; set; } = "";
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
@@ -216,6 +240,93 @@ public class UpdateSystemSettingsRequest
 
     [Range(1, 1000000, ErrorMessage = "匯入資料列上限必須介於 1~1000000 列")]
     public int ImportMaxRows { get; set; }
+
+    // ── 郵件通知（回饋十五輪批次D）───────────────────────────────────────────
+    // 實質驗證（收件人格式、時刻格式、SMTP 必填組合）在 SystemSettingsService.Update——
+    // 與其他區段同一慣例，DataAnnotations 只擋得住型別層級的粗淺檢查。
+
+    public bool MailEnabled { get; set; }
+
+    [StringLength(255)]
+    public string SmtpServer { get; set; } = "";
+
+    [Range(1, 65535, ErrorMessage = "SMTP Port 必須介於 1~65535")]
+    public int SmtpPort { get; set; } = 25;
+
+    public bool SmtpUseTls { get; set; }
+
+    [StringLength(255)]
+    public string SmtpAccount { get; set; } = "";
+
+    /// <summary>write-only；留空＝沿用既有密碼，要清除請另外傳 ClearSmtpPassword=true（同 AI 金鑰慣例）</summary>
+    [StringLength(255)]
+    public string? SmtpPassword { get; set; }
+
+    public bool ClearSmtpPassword { get; set; }
+
+    [StringLength(255)]
+    public string MailFrom { get; set; } = "";
+
+    public List<string> MailRecipients { get; set; } = new();
+
+    public bool MailNotifyHostOwners { get; set; }
+
+    public string MailMinRiskLevel { get; set; } = "高";
+
+    public bool MailOnRunCompleted { get; set; }
+
+    public bool MailDailyEnabled { get; set; }
+
+    public string MailDailyTime { get; set; } = "08:00";
+
+    public bool MailWeeklyEnabled { get; set; }
+
+    public string MailWeeklyDayOfWeek { get; set; } = "Monday";
+
+    public string MailWeeklyTime { get; set; } = "08:00";
+
+    public bool MailUrgentEnabled { get; set; }
+
+    [StringLength(255)]
+    public string MailSubjectTemplate { get; set; } = "[{site}] {type}：{date} {summary}";
+
+    [StringLength(2000)]
+    public string MailBodyIntro { get; set; } = "";
+}
+
+/// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存）試寄一封，
+/// 密碼留空時沿用已儲存的密文（與正式設定同一份 write-only 語意，測試不該逼使用者重打密碼）。</summary>
+public class TestMailRequest
+{
+    [Required(ErrorMessage = "請輸入 SMTP 伺服器")]
+    public string SmtpServer { get; set; } = "";
+
+    [Range(1, 65535, ErrorMessage = "SMTP Port 必須介於 1~65535")]
+    public int SmtpPort { get; set; } = 25;
+
+    public bool SmtpUseTls { get; set; }
+
+    public string SmtpAccount { get; set; } = "";
+
+    /// <summary>留空＝沿用已儲存的密碼</summary>
+    public string? SmtpPassword { get; set; }
+
+    [Required(ErrorMessage = "請輸入寄件人")]
+    public string MailFrom { get; set; } = "";
+
+    [Required(ErrorMessage = "請輸入至少一位收件人")]
+    [MinLength(1, ErrorMessage = "請輸入至少一位收件人")]
+    public List<string> Recipients { get; set; } = new();
+
+    public string SubjectTemplate { get; set; } = "";
+
+    public string BodyIntro { get; set; } = "";
+}
+
+public class TestMailResultDto
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = "";
 }
 
 /// <summary>

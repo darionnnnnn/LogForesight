@@ -32,4 +32,9 @@ public class SettingsController : ControllerBase
     [HttpPost("ad-test")]
     public ApiResponse<TestAdConnectionResultDto> TestAdConnection([FromBody] TestAdConnectionRequest request) =>
         ApiResponse<TestAdConnectionResultDto>.Ok(_settings.TestAdConnection(request));
+
+    /// <summary>測試寄信（回饋十五輪批次D）：用表單目前填的值試寄一封信，密碼留空沿用已儲存的密碼</summary>
+    [HttpPost("mail-test")]
+    public async Task<ApiResponse<TestMailResultDto>> TestMail([FromBody] TestMailRequest request) =>
+        ApiResponse<TestMailResultDto>.Ok(await _settings.TestMail(request));
 }
