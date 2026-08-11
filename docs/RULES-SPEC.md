@@ -213,9 +213,12 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 **四型互相獨立、比對邏輯不重疊**：`SuppressionFilter.ToRuleIdSet`／`ToSignatureKeySet`／
 `ToCorrelationPatternIdSet`／`HasVolumeSuppression` 各自只投影對應型別的項目（`ToRuleIdSet`
 過濾 `TargetType==Rule`，是既有行為的保證——舊資料的 `TargetType` 反序列化預設就是 `Rule`，
-過濾對既有安裝零行為影響）。`Host`／`Group`／`Site` 三種範圍與到期機制對四型一視同仁，
-`SuppressionFilter.TargetIdentity`（回饋十五輪體檢批G）提供跨型別的目標識別，供
-`StillSuppressedElsewhere` 之類「同一個目標是否還受其他範圍抑制」的比對使用。
+過濾對既有安裝零行為影響）。`Host`／`Group`／`Site` 三種範圍與到期機制在**比對層**
+（`SuppressionFilter`）對四型一視同仁——但**建立層**自回饋十六輪 C-1 起，新三型僅接受
+`Host`（見下方「範圍支援矩陣」；比對層維持四型通用是刻意的：若未來開放大範圍，或既有
+資料中存在早期建立的大範圍項目，生效語意不需要再改）。`SuppressionFilter.TargetIdentity`
+（回饋十五輪體檢批G）提供跨型別的目標識別，供 `StillSuppressedElsewhere` 之類
+「同一個目標是否還受其他範圍抑制」的比對使用。
 
 **`TargetLabel`／`Platform`**：非 `Rule` 型的人話標籤（如「Application / MyApp EventId 1000」）
 在建立時擷取存起來，管理頁、體檢報告、到期通知直接讀，不必從 `SignatureKey`／`PatternId`

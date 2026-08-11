@@ -354,14 +354,24 @@ internal class FakeSmtpMailSender : ISmtpMailSender
     /// 聚合寄送測試切換（回饋十六輪批次A-1）。</summary>
     public string? ThrowOnSendForRecipient { get; set; }
 
+    /// <summary>與 <see cref="ThrowOnSendForRecipient"/> 搭配：丟這個例外實例而非預設的
+    /// InvalidOperationException——「取消時已全數寄成功的 record 仍落地標記」的測試需要
+    /// 對特定收件人模擬 OperationCanceledException。</summary>
+    public Exception? ThrowOnSendForRecipientError { get; set; }
+
+    /// <summary>每次寄送前呼叫——供測試在「寄到第 N 位收件人時」觸發副作用（例如取消
+    /// CancellationTokenSource，模擬服務在寄送中途被停止，而非一開始就已停止）。</summary>
+    public Action<MailMessageSpec>? OnSend { get; set; }
+
     public Task SendAsync(SmtpConnectionSpec connection, MailMessageSpec message, CancellationToken ct = default)
     {
         Attempts.Add(message);
+        OnSend?.Invoke(message);
         if (ThrowOnSend != null) throw ThrowOnSend;
         if (ThrowOnSendForRecipient != null &&
             message.To.Any(to => string.Equals(to, ThrowOnSendForRecipient, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException($"smtp down for {ThrowOnSendForRecipient}");
+            throw ThrowOnSendForRecipientError ?? new InvalidOperationException($"smtp down for {ThrowOnSendForRecipient}");
         }
         Sent.Add((connection, message));
         return Task.CompletedTask;

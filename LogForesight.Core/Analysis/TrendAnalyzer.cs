@@ -47,9 +47,10 @@ public static class TrendAnalyzer
     /// </summary>
     private const double SurgeFactor = 10.0;
 
-    /// <summary>爆量例外的絕對量門檻，與 <see cref="SurgeFactor"/> 滿足其一即觸發：歷史基準很小
-    /// （例如 1~2 次）時單靠倍率會讓「3 次變 30 次」這種真正該被看見的暴增被 10 倍門檻擋下，
-    /// 絕對量門檻兜底。</summary>
+    /// <summary>爆量例外的絕對量門檻，與 <see cref="SurgeFactor"/> 滿足其一即觸發：歷史基準較大
+    /// 時單靠倍率會把量級已經很誇張的暴增擋在外面（基準 15 → 10 倍要 150 筆，今日 100 筆的
+    /// 真暴增反而不觸發），絕對量門檻兜底這種情境；基準很小時 10 倍本來就容易達到，
+    /// 走倍率條件即可。</summary>
     private const int SurgeMinCount = 100;
 
     /// <summary>

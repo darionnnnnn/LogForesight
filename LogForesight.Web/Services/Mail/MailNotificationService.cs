@@ -28,6 +28,9 @@ public class MailNotificationService
     /// （回饋十六輪批次A-3）：SMTP 整台不通時，不把「30 秒逾時 × 剩餘收件人數」全部付掉。</summary>
     private const int UrgentFailureThreshold = 3;
 
+    /// <summary>NotifyAfterRunAsync 的序列化 gate（本類別是 Singleton，見其內的說明）</summary>
+    private readonly SemaphoreSlim _notifyGate = new(1, 1);
+
     private readonly ISystemSettingsStore _settingsStore;
     private readonly ISmtpMailSender _sender;
     private readonly IHostStore _hosts;
@@ -75,23 +78,37 @@ public class MailNotificationService
     {
         try
         {
-            // 回饋十五輪體檢批G：settings 讀取原本在 try 外——ISystemSettingsStore.Get() 若拋例外
-            // （blob 讀取失敗／並發衝突，見 DB-SPEC.md 的 ConcurrencyToken 說明）會直接穿透
-            // NotifyAfterRunAsync，讓呼叫端（SchedulerHostedService）的外層 catch 誤把已成功的
-            // 分析執行覆寫成失敗結果——「通知永遠不能弄掛分析」這句話必須連設定讀取都算在內。
-            var settings = _settingsStore.Get();
-            if (!settings.MailEnabled) return;
-
-            var records = QueryDate(targetDate);
-
-            if (settings.MailOnRunCompleted)
+            // 序列化 gate（回饋十六輪體檢）：通知移出執行鎖（批次A-4）後，前一輪的寄信還在
+            // 進行時下一輪就可能開始並完成（統計模式秒級跑完），兩個 NotifyAfterRunAsync 並發
+            // 會在「第一輪還沒標記 UrgentSentKeys」的窗口各自算出同一批 pending、整批重複寄。
+            // gate 必須包住 _state.Get()（在 SendUrgentNotificationsAsync 內）——後進的一輪
+            // 等前一輪標記完才讀 state，天然排除已寄過的。只 gate 這個方法，不含每日/週彙總
+            // （那邊有各自的「上次寄送日」防重複，且與這裡操作的是不同狀態欄位）。
+            await _notifyGate.WaitAsync(ct);
+            try
             {
-                await SendRunSummaryAsync(settings, targetDate, records, ct);
+                // 回饋十五輪體檢批G：settings 讀取原本在 try 外——ISystemSettingsStore.Get() 若拋例外
+                // （blob 讀取失敗／並發衝突，見 DB-SPEC.md 的 ConcurrencyToken 說明）會直接穿透
+                // NotifyAfterRunAsync，讓呼叫端（SchedulerHostedService）的外層 catch 誤把已成功的
+                // 分析執行覆寫成失敗結果——「通知永遠不能弄掛分析」這句話必須連設定讀取都算在內。
+                var settings = _settingsStore.Get();
+                if (!settings.MailEnabled) return;
+
+                var records = QueryDate(targetDate);
+
+                if (settings.MailOnRunCompleted)
+                {
+                    await SendRunSummaryAsync(settings, targetDate, records, ct);
+                }
+
+                if (settings.MailUrgentEnabled)
+                {
+                    await SendUrgentNotificationsAsync(settings, records, ct);
+                }
             }
-
-            if (settings.MailUrgentEnabled)
+            finally
             {
-                await SendUrgentNotificationsAsync(settings, records, ct);
+                _notifyGate.Release();
             }
         }
         catch (Exception ex)
@@ -312,49 +329,57 @@ public class MailNotificationService
         var consecutiveFailures = 0;
         var circuitBroken = false;
 
-        foreach (var (email, recs) in perRecipient)
+        // 標記放 finally：取消例外會從 SendSafeAsync 重新拋出讓迴圈中斷，但中斷前已經
+        // 「對所有收件人都寄成功」的 record 必須落地標記，否則下次執行會對已收到的人整批重寄
+        // （服務停止時漏標的代價是重複信，比漏寄輕，但能避免就避免）。未寄到的收件人維持
+        // recipientSuccess 缺項（視為未成功），其涵蓋的 record 不標記、下次補寄。
+        try
         {
-            if (circuitBroken)
+            foreach (var email in recipientOrder)
             {
-                recipientSuccess[email] = false;
-                continue;
-            }
-
-            var (subject, body) = BuildUrgentMessage(settings, recs);
-            var success = await SendSafeAsync(settings, new List<string> { email }, subject, body, ct);
-            recipientSuccess[email] = success;
-
-            if (success)
-            {
-                consecutiveFailures = 0;
-            }
-            else if (++consecutiveFailures >= UrgentFailureThreshold)
-            {
-                // 連續失敗熔斷（發現1）：SMTP 整台不通時，不把「30 秒逾時 × 剩餘收件人數」
-                // 全部付掉——聚合後收件人數通常不多，熔斷主要是保底，不是常態路徑
-                circuitBroken = true;
-                Log.Warn("[Mail] 連續 {N} 封高風險即時通知寄送失敗，本輪停止剩餘寄送（尚有 {Remaining} 位收件人未寄）。",
-                    UrgentFailureThreshold, perRecipient.Count - recipientSuccess.Count);
-            }
-        }
-
-        // 標記語意：涵蓋此 record 的信「全部」寄成功才標記已寄（發現2a 的根修）——寧可讓
-        // 已收到的人下次重複收到（信量小、發生率低），也不漏寄。取消例外會在 SendSafeAsync
-        // 內重新拋出，讓迴圈中斷、未寄到的收件人維持 recipientSuccess 缺項（視為未成功）。
-        var cutoff = DateTime.Today.AddDays(-settings.RetentionDays);
-        _state.Update(s =>
-        {
-            foreach (var record in pending)
-            {
-                var key = UrgentKey(record);
-                if (coverage.TryGetValue(key, out var emails) &&
-                    emails.All(e => recipientSuccess.TryGetValue(e, out var ok) && ok))
+                if (circuitBroken)
                 {
-                    s.UrgentSentKeys.Add(key);
+                    recipientSuccess[email] = false;
+                    continue;
+                }
+
+                var (subject, body) = BuildUrgentMessage(settings, perRecipient[email]);
+                var success = await SendSafeAsync(settings, new List<string> { email }, subject, body, ct);
+                recipientSuccess[email] = success;
+
+                if (success)
+                {
+                    consecutiveFailures = 0;
+                }
+                else if (++consecutiveFailures >= UrgentFailureThreshold)
+                {
+                    // 連續失敗熔斷（發現1）：SMTP 整台不通時，不把「30 秒逾時 × 剩餘收件人數」
+                    // 全部付掉——聚合後收件人數通常不多，熔斷主要是保底，不是常態路徑
+                    circuitBroken = true;
+                    Log.Warn("[Mail] 連續 {N} 封高風險即時通知寄送失敗，本輪停止剩餘寄送（尚有 {Remaining} 位收件人未寄）。",
+                        UrgentFailureThreshold, perRecipient.Count - recipientSuccess.Count);
                 }
             }
-            s.UrgentSentKeys.RemoveWhere(key => IsBeforeCutoff(key, cutoff));
-        });
+        }
+        finally
+        {
+            // 標記語意：涵蓋此 record 的信「全部」寄成功才標記已寄（發現2a 的根修）——寧可讓
+            // 已收到的人下次重複收到（信量小、發生率低），也不漏寄。
+            var cutoff = DateTime.Today.AddDays(-settings.RetentionDays);
+            _state.Update(s =>
+            {
+                foreach (var record in pending)
+                {
+                    var key = UrgentKey(record);
+                    if (coverage.TryGetValue(key, out var emails) &&
+                        emails.All(e => recipientSuccess.TryGetValue(e, out var ok) && ok))
+                    {
+                        s.UrgentSentKeys.Add(key);
+                    }
+                }
+                s.UrgentSentKeys.RemoveWhere(key => IsBeforeCutoff(key, cutoff));
+            });
+        }
     }
 
     private (string Subject, string Body) BuildUrgentMessage(SystemSettings settings, List<DailyAnalysisRecord> records)

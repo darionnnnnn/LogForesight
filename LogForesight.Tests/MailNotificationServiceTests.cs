@@ -263,8 +263,8 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Equal(3, _sender.Attempts.Count);
     }
 
-    /// <summary>外層取消（服務停止／執行被取消）時整批不標記已寄——連已經處理過的部分也不算數，
-    /// 下次（沒有取消）要能整批正常補寄。取消要重新拋出並被 NotifyAfterRunAsync 的外層
+    /// <summary>外層取消（服務停止／執行被取消）時未寄成的批次不標記已寄，
+    /// 下次（沒有取消）要能正常補寄。取消要重新拋出並被 NotifyAfterRunAsync 的外層
     /// try/catch 吞掉，不能讓通知路徑弄掛呼叫端（回饋十六輪體檢發現2a）。</summary>
     [Fact]
     public async Task NotifyAfterRunAsync_外層取消時不標記已寄且下次可補寄()
@@ -281,6 +281,54 @@ public class MailNotificationServiceTests : IDisposable
         _sender.ThrowOnSend = null;
         await Create().NotifyAfterRunAsync(DateTime.Today);
         Assert.Single(_sender.Sent);
+    }
+
+    /// <summary>取消中斷寄送迴圈時，中斷前已「對所有收件人寄成功」的 record 仍要落地標記
+    /// （標記在 finally），只有沒寄完的 record 下次補寄——服務停止的那一刻不該把已送達的
+    /// 通知也變成下次的重複信（回饋十六輪體檢：原實作取消時跳過整段標記）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_取消中斷前已寄成的record仍標記_只補寄未完成的()
+    {
+        // 兩台主機各自一位負責人、無全域收件人：owner1（record1）先寄且成功，
+        // owner2（record2）寄送時模擬取消——record1 已被其唯一收件人收到，應標記
+        var owner1 = _users.Upsert(new WebUser { Account = "owner1", Email = "owner1@test.local", Active = true });
+        var owner2 = _users.Upsert(new WebUser { Account = "owner2", Email = "owner2@test.local", Active = true });
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { owner1.UserId } });
+        var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { owner2.UserId } });
+        _settingsStore.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.SmtpServer = "smtp.test.local";
+            s.MailFrom = "logforesight@test.local";
+            s.MailRecipients = new List<string>();
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = true;
+        });
+        _records.Add(Record(host1.HostId, "host1", DateTime.Today, RiskLevels.High));
+        _records.Add(Record(host2.HostId, "host2", DateTime.Today, RiskLevels.High));
+
+        // 服務「寄送中途」被停止：owner1 照常寄成，寄到 owner2 那一刻才取消——
+        // 取消不能發生在一開始（那樣連 gate 都不會過，正確地整批不寄），要發生在迴圈中途
+        using var cts = new CancellationTokenSource();
+        _sender.OnSend = message =>
+        {
+            if (message.To.Contains("owner2@test.local")) cts.Cancel();
+        };
+        _sender.ThrowOnSendForRecipient = "owner2@test.local";
+        _sender.ThrowOnSendForRecipientError = new OperationCanceledException(cts.Token);
+
+        var service = Create();
+        await service.NotifyAfterRunAsync(DateTime.Today, cts.Token);
+        Assert.Single(_sender.Sent);   // 只有 owner1 寄成
+
+        // 下一次執行：record1 已標記不重寄，只補寄 owner2 的 record2
+        _sender.OnSend = null;
+        _sender.ThrowOnSendForRecipient = null;
+        _sender.ThrowOnSendForRecipientError = null;
+        await service.NotifyAfterRunAsync(DateTime.Today);
+        Assert.Equal(2, _sender.Sent.Count);
+        Assert.DoesNotContain(_sender.Sent.Skip(1), s => s.Message.To.Contains("owner1@test.local"));
+        Assert.Contains(_sender.Sent.Skip(1), s => s.Message.To.Contains("owner2@test.local"));
     }
 
     /// <summary>回饋十五輪體檢批G：settings store 讀取本身拋例外（模擬 blob 讀取失敗／並發衝突）
