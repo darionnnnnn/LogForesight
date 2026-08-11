@@ -475,7 +475,8 @@ public class RuleAdminServiceTests
             TargetType = SuppressionTargetTypes.Correlation,
             CorrelationPatternId = CorrelationPatternIds.XdayBruteRdp,
             TargetLabel = "暴力破解→RDP 得手",
-            Scope = SuppressionScopes.Site,
+            Scope = SuppressionScopes.Host,
+            Host = "SRV-01",
             Reason = "已知的內部弱點掃描演練"
         });
 
@@ -489,7 +490,8 @@ public class RuleAdminServiceTests
             TargetType = SuppressionTargetTypes.Correlation,
             CorrelationPatternId = CorrelationPatternIds.LinuxSshBruteSuccess,
             TargetLabel = "SSH 破解得手",
-            Scope = SuppressionScopes.Site,
+            Scope = SuppressionScopes.Host,
+            Host = "SRV-02",
             Reason = "測試"
         });
         var linuxDto = service.GetSuppressions().Single(s => s.CorrelationPatternId == CorrelationPatternIds.LinuxSshBruteSuccess);
@@ -502,7 +504,7 @@ public class RuleAdminServiceTests
         var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
         {
             TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = "not-a-real-pattern",
-            TargetLabel = "測試", Scope = SuppressionScopes.Site, Reason = "測試"
+            TargetLabel = "測試", Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試"
         }));
 
         Assert.Contains("關聯模式", ex.Message);
@@ -531,10 +533,72 @@ public class RuleAdminServiceTests
         var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
         {
             TargetType = SuppressionTargetTypes.Volume, VolumeKind = "not-a-real-kind",
-            Scope = SuppressionScopes.Site, Reason = "測試"
+            Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試"
         }));
 
         Assert.Contains("總量類別", ex.Message);
+    }
+
+    // ── 新三型 Scope 限制：一律僅支援 Host（回饋十六輪批次C-1）────────────────
+
+    [Theory]
+    [InlineData(SuppressionTargetTypes.Signature)]
+    [InlineData(SuppressionTargetTypes.Correlation)]
+    [InlineData(SuppressionTargetTypes.Volume)]
+    public void 新三型_Group範圍被拒(string targetType)
+    {
+        var request = new AddSuppressionRequest { TargetType = targetType, Scope = SuppressionScopes.Group, HostGroupId = 1, Reason = "測試" };
+        FillRequiredFields(request, targetType);
+
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(request));
+
+        Assert.Contains("僅支援單台主機範圍", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(SuppressionTargetTypes.Signature)]
+    [InlineData(SuppressionTargetTypes.Correlation)]
+    [InlineData(SuppressionTargetTypes.Volume)]
+    public void 新三型_Site範圍被拒(string targetType)
+    {
+        var request = new AddSuppressionRequest { TargetType = targetType, Scope = SuppressionScopes.Site, Reason = "測試" };
+        FillRequiredFields(request, targetType);
+
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(request));
+
+        Assert.Contains("僅支援單台主機範圍", ex.Message);
+    }
+
+    /// <summary>Rule 型不受新三型的 Scope 限制影響——Group／Site 仍走既有的
+    /// PreviewSuppression 護欄，維持原行為。</summary>
+    [Fact]
+    public void Rule目標_不受新三型Scope限制影響_Site與Group仍可建立()
+    {
+        var service = Create();
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "測試群組" });
+
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "全站" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "群組" });
+
+        Assert.Equal(2, service.GetSuppressions().Count);
+    }
+
+    private static void FillRequiredFields(AddSuppressionRequest request, string targetType)
+    {
+        switch (targetType)
+        {
+            case SuppressionTargetTypes.Signature:
+                request.SignatureKey = "a|b|1|1";
+                request.TargetLabel = "測試";
+                break;
+            case SuppressionTargetTypes.Correlation:
+                request.CorrelationPatternId = CorrelationPatternIds.StorageChain;
+                request.TargetLabel = "測試";
+                break;
+            case SuppressionTargetTypes.Volume:
+                request.VolumeKind = VolumeKinds.Error;
+                break;
+        }
     }
 
     [Fact]
@@ -547,7 +611,7 @@ public class RuleAdminServiceTests
         service.AddSuppression(new AddSuppressionRequest
         {
             TargetType = SuppressionTargetTypes.Signature, SignatureKey = BuiltinId, TargetLabel = "撞字串測試",
-            Scope = SuppressionScopes.Site, Reason = "Signature"
+            Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "Signature"
         });
 
         Assert.Equal(2, service.GetSuppressions().Count);
@@ -577,11 +641,11 @@ public class RuleAdminServiceTests
         service.AddSuppression(new AddSuppressionRequest
         {
             TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = CorrelationPatternIds.StorageChain,
-            TargetLabel = "測試", Scope = SuppressionScopes.Site, Reason = "測試"
+            TargetLabel = "測試", Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試"
         });
 
         service.RemoveSuppression(SuppressionTargetTypes.Correlation, null, null, CorrelationPatternIds.StorageChain, null,
-            SuppressionScopes.Site, null, null);
+            SuppressionScopes.Host, "SRV-01", null);
 
         Assert.Empty(service.GetSuppressions());
     }
@@ -593,11 +657,11 @@ public class RuleAdminServiceTests
         service.AddSuppression(new AddSuppressionRequest
         {
             TargetType = SuppressionTargetTypes.Volume, VolumeKind = VolumeKinds.Error,
-            Scope = SuppressionScopes.Site, Reason = "測試"
+            Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試"
         });
 
         service.RemoveSuppression(SuppressionTargetTypes.Volume, null, null, null, VolumeKinds.Error,
-            SuppressionScopes.Site, null, null);
+            SuppressionScopes.Host, "SRV-01", null);
 
         Assert.Empty(service.GetSuppressions());
     }
