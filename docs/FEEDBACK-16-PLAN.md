@@ -3,7 +3,7 @@
 > 來源：外部程式碼審視報告（發現 1~9）＋使用者回饋六項（其他 1~6）。
 > 九項發現已逐一對照 dev@75faf07 程式碼核實，全部屬實。
 > 四個決策點已與使用者定案（見各批次「決策」註記）。
-> 狀態：**規劃完成，尚未實作**。
+> 狀態：**全案（批次A~F）實作完成，含測試與體檢輪，已在瀏覽器中實測 UI 改動**。
 
 ## 總覽
 
@@ -225,12 +225,17 @@ Group/Site 不受影響。
 
 檔案：`site.css`（`.lf-sidebar__brand*`，約 :483-549）
 
-- `.lf-sidebar__brand-mark` 自 2.25rem 放大至與兩行文字（名稱＋副標）等高（約 2.75rem，
-  實作時以實際渲染高度微調）。
-- `.lf-sidebar__brand-text` 高度對齊圖示：名稱貼圖示上緣、副標貼下緣
-  （`justify-content: space-between` ＋ 對應 margin 歸零）。
+- `.lf-sidebar__brand-mark` 自 2.25rem 放大至 2.75rem，內部圖示同比放大到 1.5rem。
+- `.lf-sidebar__brand-text` 用 `justify-content: space-between` 讓名稱貼上緣、副標貼下緣。
 - 只動側欄；登入頁 `.lf-login__brand` 結構相同但回饋未提，不動。
 - 實測項：長品牌名的省略號行為不能回歸（十三輪 G 的修正）。
+- **實作中用瀏覽器實測抓到規劃沒預期到的問題**：一開始用固定 `height: 2.75rem` 給圖示、
+  `align-self: stretch` 給文字（假設圖示固定高度必然 ≥ 文字自然高度），但實測發現有副標時
+  兩行文字的自然高度（60px）超過圖示固定高度（53px），導致圖示沒撐滿、對齊被打破。改法：
+  父層 `.lf-sidebar__brand` 的 `align-items` 從 `center` 改 `stretch`，圖示的 `height` 改
+  `min-height`——兩者互相以「較高者」為準撐滿，沒有副標時圖示落在 min-height（維持正方形），
+  有副標時圖示跟著撐高（微幅變成瘦長矩形，換取像素級對齊）。這個修正只能靠瀏覽器實測量測
+  `getBoundingClientRect()` 才抓得到，靜態審查規劃時看不出來。
 
 ### E-3 外觀儲存後即時更新側欄（其他 4）
 
@@ -263,13 +268,24 @@ Group/Site 不受影響。
 2. `docs/DETECTION-SPEC.md`：B-2 的「Low 簽章趨勢出口」小節＋爆量例外門檻申報。
 3. `docs/WEB-SPEC.md`：說明書頁版面變更（E-4）、AI 未設定隱藏語意（D-3）、
    抑制範圍矩陣（C-1，或指向 RULES-SPEC）。
-4. 全量 `dotnet test`（現況 1810 綠，本輪預估 +15~25 案）。
-5. 依既有流程：feature branch → 併 dev → 使用者實測 → 併 master。
+4. 全量 `dotnet test`：實作前基準 1810 綠，全案完成後 1827 綠（+17：郵件 6、趨勢層 5、
+   抑制範圍 6）。
+5. 依既有流程：feature branch（`feature/feedback-16`）→ 併 dev → 使用者實測 → 併 master。
 
-## 實作時的檢查點清單（規劃階段未定案，動手時先確認）
+## 實作時的檢查點清單（動手前的未定案項目，實作階段逐一確認完畢）
 
-- [ ] `EfJsonBlobStore.Mutate` 的並發語意（A-4：通知移出鎖後與輪詢並發）。
-- [ ] `runCts` 在 `EndRun` 後的生命週期；通知改用哪個權杖（A-4）。
-- [ ] `FakeSmtpMailSender` 現有能力，擴充逐封成敗腳本（A 測試）。
-- [ ] 排程狀態端點名稱與非 Maintain 權限可讀性（D-1）。
-- [ ] `netiq.js:225` 的 ai/status 用法是否已是隱藏語意（D-3）。
+- [x] `EfJsonBlobStore.Mutate` 的並發語意（A-4：通知移出鎖後與輪詢並發）——已內建樂觀並發
+      偵測＋短退避重試（見該檔頭註解「webdata 下更新遺失的風險小；真的撞上並發時記 log 並
+      重試」），不需要在 `MailNotificationService` 額外加序列化鎖。
+- [x] `runCts` 在 `EndRun` 後的生命週期（A-4）——`SchedulerRunState.EndRun` 會
+      `_cts?.Dispose()`，確認不能沿用；改用 `SchedulerHostedService` 新增的
+      `_lifetime.ApplicationStopping`（`IHostApplicationLifetime`，建構子已注入），站台正常
+      關閉時通知會被取消，平時等同不取消。
+- [x] `FakeSmtpMailSender` 現有能力，擴充逐封成敗腳本（A 測試）——加 `Attempts`（不論成敗都
+      記錄，供驗證熔斷的嘗試次數）與 `ThrowOnSendForRecipient`（依收件人選擇性失敗）。
+- [x] 排程狀態端點名稱與非 Maintain 權限可讀性（D-1）——沿用既有 `GET /api/run-activity`
+      （`RunActivityController`，docs/SCALE-FIX-PLAN-2026-08-06.md S-3 新增），刻意不掛
+      `[Permission]`、任何登入者可讀，chat-panel.js（非 Maintain 專屬頁）與 help-manual.js
+      （Maintain 專屬頁）都能直接呼叫，不需要權限分流的退路。
+- [x] `netiq.js:225` 的 ai/status 用法是否已是隱藏語意（D-3）——確認已是
+      `classList.toggle('d-none', !aiStatus?.available)`，不需修改。
