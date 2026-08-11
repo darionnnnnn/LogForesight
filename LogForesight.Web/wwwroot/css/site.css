@@ -540,17 +540,20 @@ body {
 /* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
    視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
    維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。
-   回饋十六輪批次E-2：再放大到 2.75rem。用 min-height 而非 height——搭配上方
-   .lf-sidebar__brand 的 align-items:stretch，沒有副標時圖示落在 min-height（維持
-   方形），有副標、文字自然高度超過 2.75rem 時圖示跟著撐高，兩者永遠以較高者對齊，
-   不會出現「文字比圖示高、圖示卻沒撐滿」的錯位。寬度維持固定，微幅變成瘦長矩形是
-   換取像素級對齊的合理代價。 */
+   回饋十六輪批次E-2：再放大到 2.75rem，當時用 min-height 撐高圖示去對齊兩行文字，
+   結果有副標時文字自然高度（約 60px）超過 2.75rem，圖示被拉成瘦長矩形——自訂圖示
+   （PNG/JPG）用 object-fit:contain 雖不變形，但無 viewBox 的 SVG 會被真的拉伸，
+   內建向量圖示與外框漸層底看起來也不像正方形標記了（回饋十七輪批次H 修正）。
+   改回固定正方形＋置中對齊：aspect-ratio 鎖住比例，align-self:center 不再跟著父層
+   stretch 撐高——圖示永遠是乾淨的正方形，文字對齊（justify-content:space-between，
+   上方 .lf-sidebar__brand-text）不受影響，兩者各自表述而非互相牽動。 */
 .lf-sidebar__brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 2.75rem;
-    min-height: 2.75rem;
+    aspect-ratio: 1 / 1;
+    align-self: center;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
