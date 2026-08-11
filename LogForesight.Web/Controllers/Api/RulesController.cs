@@ -86,6 +86,30 @@ public class RulesController : ControllerBase
         return ApiResponse.Ok();
     }
 
+    /// <summary>
+    /// 統一的抑制建立入口（回饋十五輪 A-6）：TargetType 由 body 指定（Rule／Signature／
+    /// Correlation／Volume），供詳情頁的簽章/關聯/總量抑制出口使用（批次 C）——這幾種目標
+    /// 不隸屬任何單一規則，不適合掛在 {ruleId} 路由下，因此用絕對路徑跳出 RulesController
+    /// 的 api/rules 前綴，但 Service/Store 仍是同一份，邏輯與既有規則抑制路徑完全共用。
+    /// </summary>
+    [HttpPost("/api/suppressions")]
+    public ApiResponse AddTargetedSuppression([FromBody] AddSuppressionRequest request)
+    {
+        _service.AddSuppression(request);
+        return ApiResponse.Ok();
+    }
+
+    /// <summary>統一的抑制解除入口，語意同 <see cref="AddTargetedSuppression"/>。</summary>
+    [HttpDelete("/api/suppressions")]
+    public ApiResponse RemoveTargetedSuppression(
+        [FromQuery] string targetType, [FromQuery] string? ruleId = null, [FromQuery] string? signatureKey = null,
+        [FromQuery] string? correlationPatternId = null, [FromQuery] string? volumeKind = null,
+        [FromQuery] string scope = SuppressionScopes.Host, [FromQuery] string? host = null, [FromQuery] long? hostGroupId = null)
+    {
+        _service.RemoveSuppression(targetType, ruleId, signatureKey, correlationPatternId, volumeKind, scope, host, hostGroupId);
+        return ApiResponse.Ok();
+    }
+
     /// <summary>內建規則升級（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 --import-rules）</summary>
     [HttpGet("import-status")]
     public ApiResponse<RuleImportStatusDto> GetImportStatus() =>

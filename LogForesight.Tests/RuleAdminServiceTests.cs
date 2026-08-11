@@ -406,6 +406,202 @@ public class RuleAdminServiceTests
         Assert.Empty(service.GetSuppressions());
     }
 
+    // ── 抑制目標四型（回饋十五輪 A-6）：Signature／Correlation／Volume ──────────────
+
+    [Fact]
+    public void 既有Rule路徑建立的抑制TargetType為Rule()
+    {
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Host = "SRV-01", Reason = "既有路徑" });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionTargetTypes.Rule, dto.TargetType);
+        Assert.Equal(BuiltinId, dto.RuleId);
+    }
+
+    [Fact]
+    public void Signature目標_成功建立且帶回標籤與平台()
+    {
+        var service = Create();
+        var key = IssueSignatureKey.For("Application", "MyNoisyApp", 1000, System.Diagnostics.EventLogEntryType.Error);
+
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature,
+            SignatureKey = key,
+            TargetLabel = "Application / MyNoisyApp EventId 1000",
+            Scope = SuppressionScopes.Host,
+            Host = "SRV-01",
+            Reason = "已知雜訊，未命中規則"
+        });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionTargetTypes.Signature, dto.TargetType);
+        Assert.Equal(key, dto.SignatureKey);
+        Assert.Equal("Application / MyNoisyApp EventId 1000", dto.TargetLabel);
+        Assert.Equal(WebHost.OsWindows, dto.Platform);
+        Assert.Equal(string.Empty, dto.RuleId);
+    }
+
+    [Fact]
+    public void Signature目標_缺簽章鍵時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature, TargetLabel = "測試", Host = "SRV-01", Reason = "測試"
+        }));
+
+        Assert.Contains("問題簽章", ex.Message);
+    }
+
+    [Fact]
+    public void Signature目標_缺顯示名稱時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature, SignatureKey = "a|b|1|1", Host = "SRV-01", Reason = "測試"
+        }));
+
+        Assert.Contains("顯示名稱", ex.Message);
+    }
+
+    [Fact]
+    public void Correlation目標_成功建立且平台依模式Id前綴推導()
+    {
+        var service = Create();
+
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Correlation,
+            CorrelationPatternId = CorrelationPatternIds.XdayBruteRdp,
+            TargetLabel = "暴力破解→RDP 得手",
+            Scope = SuppressionScopes.Site,
+            Reason = "已知的內部弱點掃描演練"
+        });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionTargetTypes.Correlation, dto.TargetType);
+        Assert.Equal(CorrelationPatternIds.XdayBruteRdp, dto.CorrelationPatternId);
+        Assert.Equal(WebHost.OsWindows, dto.Platform);
+
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Correlation,
+            CorrelationPatternId = CorrelationPatternIds.LinuxSshBruteSuccess,
+            TargetLabel = "SSH 破解得手",
+            Scope = SuppressionScopes.Site,
+            Reason = "測試"
+        });
+        var linuxDto = service.GetSuppressions().Single(s => s.CorrelationPatternId == CorrelationPatternIds.LinuxSshBruteSuccess);
+        Assert.Equal(WebHost.OsLinux, linuxDto.Platform);
+    }
+
+    [Fact]
+    public void Correlation目標_不合法的模式Id時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = "not-a-real-pattern",
+            TargetLabel = "測試", Scope = SuppressionScopes.Site, Reason = "測試"
+        }));
+
+        Assert.Contains("關聯模式", ex.Message);
+    }
+
+    [Fact]
+    public void Volume目標_成功建立_留空標籤時後端自動帶入固定文字()
+    {
+        var service = Create();
+
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Volume, VolumeKind = VolumeKinds.Audit,
+            Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "本機常態高稽核量"
+        });
+
+        var dto = Assert.Single(service.GetSuppressions());
+        Assert.Equal(SuppressionTargetTypes.Volume, dto.TargetType);
+        Assert.Equal(VolumeKinds.Audit, dto.VolumeKind);
+        Assert.Equal("安全稽核事件量突增", dto.TargetLabel);
+    }
+
+    [Fact]
+    public void Volume目標_不合法的總量類別時被拒()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create().AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Volume, VolumeKind = "not-a-real-kind",
+            Scope = SuppressionScopes.Site, Reason = "測試"
+        }));
+
+        Assert.Contains("總量類別", ex.Message);
+    }
+
+    [Fact]
+    public void 四型各自獨立比對_不因巧合值互相覆寫()
+    {
+        // Signature 的 SignatureKey 恰好與某條規則的 Id 撞字串也不該互相覆寫——
+        // upsert 去重鍵先比 TargetType，兩者分屬不同分區
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "Rule" });
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature, SignatureKey = BuiltinId, TargetLabel = "撞字串測試",
+            Scope = SuppressionScopes.Site, Reason = "Signature"
+        });
+
+        Assert.Equal(2, service.GetSuppressions().Count);
+    }
+
+    [Fact]
+    public void 解除Signature目標抑制_成功()
+    {
+        var service = Create();
+        var key = "System|disk|999|1";
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Signature, SignatureKey = key, TargetLabel = "測試",
+            Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試"
+        });
+
+        service.RemoveSuppression(SuppressionTargetTypes.Signature, null, key, null, null,
+            SuppressionScopes.Host, "SRV-01", null);
+
+        Assert.Empty(service.GetSuppressions());
+    }
+
+    [Fact]
+    public void 解除Correlation目標抑制_成功()
+    {
+        var service = Create();
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = CorrelationPatternIds.StorageChain,
+            TargetLabel = "測試", Scope = SuppressionScopes.Site, Reason = "測試"
+        });
+
+        service.RemoveSuppression(SuppressionTargetTypes.Correlation, null, null, CorrelationPatternIds.StorageChain, null,
+            SuppressionScopes.Site, null, null);
+
+        Assert.Empty(service.GetSuppressions());
+    }
+
+    [Fact]
+    public void 解除Volume目標抑制_成功()
+    {
+        var service = Create();
+        service.AddSuppression(new AddSuppressionRequest
+        {
+            TargetType = SuppressionTargetTypes.Volume, VolumeKind = VolumeKinds.Error,
+            Scope = SuppressionScopes.Site, Reason = "測試"
+        });
+
+        service.RemoveSuppression(SuppressionTargetTypes.Volume, null, null, null, VolumeKinds.Error,
+            SuppressionScopes.Site, null, null);
+
+        Assert.Empty(service.GetSuppressions());
+    }
+
     // ── PreviewSuppression：抑制影響面預覽（回饋十四輪 C1）─────────────────────
 
     [Fact]

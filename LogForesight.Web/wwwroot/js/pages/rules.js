@@ -36,12 +36,13 @@ const chipFilters = {
 // 只差 Platform 過濾——currentPlatform 由 tab 上的 data-platform 決定，不是獨立的分頁狀態。
 let currentPlatform = 'windows';
 let suppressionPlatform = '';   // 告警抑制分頁的平台篩選；空字串＝全部
+let suppressionTargetType = ''; // 告警抑制分頁的目標型別篩選（回饋十五輪 A-6）；空字串＝全部
 
 // 表頭點擊排序（取代原本的獨立排序下拉）＋本地分頁
 let ruleSort = { key: 'id', dir: 'asc' };
 let rulePage = 1;
 let rulePageSize = loadPageSize('rules');
-let suppressionSort = { key: 'ruleId', dir: 'asc' };
+let suppressionSort = { key: 'targetLabel', dir: 'asc' };
 let suppressionPage = 1;
 let suppressionPageSize = loadPageSize('suppressions');
 
@@ -173,6 +174,22 @@ function setupToolbar() {
         activeValues: [suppressionPlatform],
         multi: false,
         onToggle: value => { suppressionPlatform = value; suppressionPage = 1; renderSuppressions(); }
+    });
+
+    // 目標型別篩選（回饋十五輪 A-6）：抑制目標從「只有規則」擴為四型後，清單一多就很難找到
+    // 特定型別的抑制設定——沿用平台篩選同一套 chip 元件與互動慣例。
+    renderChips(document.getElementById('suppression-target-type-chips'), {
+        items: [
+            { value: '', label: '全部' },
+            { value: 'Rule', label: '規則' },
+            { value: 'Signature', label: '簽章' },
+            { value: 'Correlation', label: '關聯模式' },
+            { value: 'Volume', label: '總量' }
+        ],
+        attr: 'suppressionTargetType',
+        activeValues: [suppressionTargetType],
+        multi: false,
+        onToggle: value => { suppressionTargetType = value; suppressionPage = 1; renderSuppressions(); }
     });
 }
 
@@ -815,19 +832,48 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
     await load();
 });
 
+/** 目標欄的顯示文字（回饋十五輪 A）：Rule 顯示規則 Id，其餘三型顯示建立時記錄的人話標籤 */
+function suppressionTargetLabel(s) {
+    return s.targetType === 'Rule' || !s.targetType ? s.ruleId : (s.targetLabel ?? '（未命名）');
+}
+
+/** 目標型別中文（回饋十五輪 A）：清單頁需要一眼分辨這筆抑制掛在規則、簽章、關聯模式還是總量上 */
+const TARGET_TYPE_NAMES = { Rule: '規則', Signature: '簽章', Correlation: '關聯模式', Volume: '總量' };
+
 const SUPPRESSION_COLUMNS = [
-    { title: '規則', sortKey: 'ruleId', sortValue: s => s.ruleId, render: s => s.ruleId },
-    { title: '平台', sortKey: 'platform', sortValue: s => s.platform, render: s => s.platform === 'linux' ? 'Linux' : 'Windows' },
+    {
+        title: '目標', sortKey: 'targetLabel', sortValue: s => suppressionTargetLabel(s),
+        render: s => targetCell(s)
+    },
+    {
+        title: '平台', sortKey: 'platform', sortValue: s => s.platform ?? '',
+        // Volume 目標不分平台（總量統計不區分來源作業系統），platform 恆為 null——
+        // 顯示「—」而不是預設猜成 Windows，誠實反映「這欄對這筆資料不適用」
+        render: s => s.platform === 'linux' ? 'Linux' : s.platform === 'windows' ? 'Windows' : '—'
+    },
     { title: '範圍', sortKey: 'scope', sortValue: s => s.scope, render: s => suppressionTargetText(s) },
     { title: '原因', render: s => s.reason },
     { title: '到期', sortKey: 'expiresAt', sortValue: s => s.expiresAt ? new Date(s.expiresAt).getTime() : Infinity, render: s => expiryCell(s) },
     { title: '', className: 'text-end', render: s => removeSuppressionButton(s) }
 ];
 
+function targetCell(s) {
+    const wrap = document.createElement('div');
+    const badge = document.createElement('span');
+    badge.className = 'badge text-bg-secondary me-1';
+    badge.textContent = TARGET_TYPE_NAMES[s.targetType] ?? '規則';
+    wrap.appendChild(badge);
+    wrap.appendChild(document.createTextNode(suppressionTargetLabel(s)));
+    return wrap;
+}
+
 function renderSuppressions() {
-    const filtered = sortRows(
-        suppressionPlatform ? suppressions.filter(s => s.platform === suppressionPlatform) : suppressions,
-        SUPPRESSION_COLUMNS, suppressionSort);
+    let filtered = suppressions;
+    // Volume 目標不分平台（platform 恆為 null）——套平台篩選時不該被任一邊排除，
+    // 誠實反映「這欄對這筆資料不適用」而不是被平台篩選悄悄吃掉
+    if (suppressionPlatform) filtered = filtered.filter(s => s.platform === suppressionPlatform || s.platform == null);
+    if (suppressionTargetType) filtered = filtered.filter(s => (s.targetType ?? 'Rule') === suppressionTargetType);
+    filtered = sortRows(filtered, SUPPRESSION_COLUMNS, suppressionSort);
 
     const totalPages = Math.max(1, Math.ceil(filtered.length / suppressionPageSize));
     if (suppressionPage > totalPages) suppressionPage = totalPages;
@@ -881,20 +927,28 @@ function expiryCell(suppression) {
 
 function removeSuppressionButton(suppression) {
     return button('解除', { variant: 'outline-danger', icon: 'trash', onClick: async () => {
+        const targetTypeName = TARGET_TYPE_NAMES[suppression.targetType] ?? '規則';
         const confirmed = await confirmAction({
             title: '解除抑制',
-            message: `解除後，規則「${suppression.ruleId}」於${suppressionTargetText(suppression)}的告警將恢復。`,
+            message: `解除後，${targetTypeName}「${suppressionTargetLabel(suppression)}」於${suppressionTargetText(suppression)}的告警將恢復。`,
             confirmText: '解除',
             confirmVariant: 'warning'
         });
         if (!confirmed) return;
 
+        // 統一走 /api/suppressions（回饋十五輪 A-6）：四型共用同一個解除端點，targetType 決定
+        // 後端要認哪個目標欄位——Rule 帶 ruleId 走這裡效果與舊的 /api/rules/{id}/suppressions
+        // 完全一樣（同一個 service 方法），不需要前端自己分兩條路。
         // 範圍改用 query string（回饋十三輪 F）：Group/Site 沒有「host」可放進 path segment
-        const params = new URLSearchParams({ scope: suppression.scope });
+        const params = new URLSearchParams({ targetType: suppression.targetType ?? 'Rule', scope: suppression.scope });
+        if (suppression.ruleId) params.set('ruleId', suppression.ruleId);
+        if (suppression.signatureKey) params.set('signatureKey', suppression.signatureKey);
+        if (suppression.correlationPatternId) params.set('correlationPatternId', suppression.correlationPatternId);
+        if (suppression.volumeKind) params.set('volumeKind', suppression.volumeKind);
         if (suppression.scope === 'Host') params.set('host', suppression.host);
         if (suppression.scope === 'Group') params.set('hostGroupId', String(suppression.hostGroupId));
 
-        await api.delete(`/api/rules/${encodeURIComponent(suppression.ruleId)}/suppressions?${params.toString()}`);
+        await api.delete(`/api/suppressions?${params.toString()}`);
         toast('已解除抑制', 'success');
         await load();
     } });
