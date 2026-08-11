@@ -11,7 +11,7 @@ public class HelpChapterScorerTests
 {
     private static HelpChapter Chapter(string id, string title, string content,
         List<string>? keywords = null, List<string>? related = null) =>
-        new(id, title, content, keywords ?? new List<string>(), related ?? new List<string>());
+        new(id, title, content, keywords ?? new List<string>(), related ?? new List<string>(), Icon: "");
 
     [Fact]
     public void 標題命中的章節排在只有內文命中的章節之前()

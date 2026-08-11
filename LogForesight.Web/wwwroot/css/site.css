@@ -742,6 +742,19 @@ body {
     border-top: 1px solid var(--lf-border);
 }
 
+/* 操作說明書的章節目錄卡（回饋十七輪批次G-1，推翻十六輪批次E-4）：原本用 JS 量測目錄卡
+   高度、把內容區塞進同高的 max-height 內捲動——內容一長就要在小視窗裡捲兩層（頁面本身
+   +內容區），體驗很差。改回目錄卡 sticky 跟著頁面捲動，內容區自然展開多長顯示多長。
+   .lf-topbar 不是 fixed／sticky，捲動時會一起滑出視窗，所以 top:0 不會被任何東西擋住，
+   跟 .lf-sidebar 的 sticky 用法一致。只在 md 以上生效——這個斷點以下兩欄變上下堆疊，
+   sticky 在那裡沒有意義（見 Bootstrap 的 col-md-3/col-md-9 斷點）。 */
+@media (min-width: 768px) {
+    #help-chapter-nav-card {
+        position: sticky;
+        top: var(--lf-space-4);
+    }
+}
+
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */
 
 .lf-card {

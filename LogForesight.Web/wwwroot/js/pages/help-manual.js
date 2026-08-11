@@ -9,6 +9,9 @@ import { api } from '../core/api.js';
 import { toast, withBusy, icon } from '../core/ui.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
+/** 沒有指定圖示的章節（理論上不會發生，manifest 十四章都已配置）退回這個通用圖示 */
+const DEFAULT_CHAPTER_ICON = 'file-earmark-text';
+
 let chapters = [];
 let chapterById = new Map();
 let currentId = null;
@@ -24,9 +27,6 @@ async function load() {
     selectChapter(chapterById.has(hashId) ? hashId : chapters[0]?.id);
 
     loadAskAvailability();   // 獨立打，失敗不擋住章節內容（同 settings.js 的 backfill 狀態慣例）
-
-    alignChapterBodyHeight();
-    window.addEventListener('resize', throttledAlignHeight);
 }
 
 function renderNav() {
@@ -36,9 +36,9 @@ function renderNav() {
     for (const chapter of chapters) {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'list-group-item list-group-item-action';
+        btn.className = 'list-group-item list-group-item-action d-flex align-items-center gap-2';
         btn.dataset.chapterId = chapter.id;
-        btn.textContent = chapter.title;
+        btn.append(icon(chapter.icon || DEFAULT_CHAPTER_ICON), document.createTextNode(chapter.title));
         btn.addEventListener('click', () => selectChapter(chapter.id));
         nav.appendChild(btn);
     }
@@ -60,34 +60,6 @@ function selectChapter(id) {
     renderRelated(chapter);
 
     document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
-    alignChapterBodyHeight();
-}
-
-/**
- * 章節內容區高度對齊左側目錄卡（回饋十六輪批次E-4）：純 CSS 的 flex/grid stretch 只能讓
- * 較矮欄等高於較高欄，做不到「以較矮欄為基準」，改用 JS 量測目錄卡的實際高度，設到內容區
- * 的 max-height，超出用 scrollbar。章節切換（內容長度變化）與視窗縮放都要重算。
- */
-function alignChapterBodyHeight() {
-    const navCard = document.getElementById('help-chapter-nav-card');
-    const body = document.getElementById('help-chapter-body');
-    if (!navCard || !body) return;
-
-    // md 斷點以下兩欄變成上下堆疊，高度對齊沒有意義，交還瀏覽器自然高度
-    if (window.innerWidth < 768) {
-        body.style.maxHeight = '';
-        body.style.overflowY = '';
-        return;
-    }
-
-    body.style.maxHeight = `${navCard.offsetHeight}px`;
-    body.style.overflowY = 'auto';
-}
-
-let resizeTimer = null;
-function throttledAlignHeight() {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(alignChapterBodyHeight, 150);
 }
 
 function renderRelated(chapter) {

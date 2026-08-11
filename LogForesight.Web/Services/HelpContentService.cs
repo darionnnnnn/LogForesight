@@ -6,7 +6,7 @@ namespace LogForesight.Web.Services;
 
 /// <summary>操作說明書單一章節的完整內容（回饋十五輪批次E）。Keywords 只供 AI 選節計分使用，
 /// 不外洩到 <see cref="HelpChapterDto"/>——前端不需要知道計分用的關鍵字清單。</summary>
-public record HelpChapter(string Id, string Title, string Content, List<string> Keywords, List<string> Related);
+public record HelpChapter(string Id, string Title, string Content, List<string> Keywords, List<string> Related, string Icon);
 
 /// <summary>
 /// 操作說明書內容載入（docs/archive/FEEDBACK-15-PLAN.md 批次E-1）：manifest.json＋各章節 Markdown
@@ -30,7 +30,8 @@ public class HelpContentService
             Id = c.Id,
             Title = c.Title,
             Content = c.Content,
-            Related = c.Related
+            Related = c.Related,
+            Icon = c.Icon
         }).ToList()
     };
 
@@ -49,7 +50,7 @@ public class HelpContentService
             using var contentStream = OpenResource(assembly, entry.File);
             using var contentReader = new StreamReader(contentStream);
             chapters.Add(new HelpChapter(entry.Id, entry.Title, contentReader.ReadToEnd().TrimEnd(),
-                entry.Keywords, entry.Related));
+                entry.Keywords, entry.Related, entry.Icon));
         }
         return chapters;
     }
@@ -72,6 +73,7 @@ public class HelpContentService
         public string File { get; set; } = "";
         public List<string> Keywords { get; set; } = new();
         public List<string> Related { get; set; } = new();
+        public string Icon { get; set; } = "";
     }
 
     private class ManifestRoot
