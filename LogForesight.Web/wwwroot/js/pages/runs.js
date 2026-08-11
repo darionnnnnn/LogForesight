@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -38,15 +38,18 @@ let errorsSort = { key: 'count', dir: 'desc' };
 async function load() {
     renderLoading(document.getElementById('run-summary'), 4);
     renderLoading(document.getElementById('run-errors'), 3);
+    renderLoading(document.getElementById('run-list'), 4);
 
-    const [summaries, errors] = await Promise.all([
+    const [summaries, errors, runList] = await Promise.all([
         api.get(`/api/runs/summary?days=${currentDays}`),
-        api.get(`/api/runs/errors?days=${currentDays}`)
+        api.get(`/api/runs/errors?days=${currentDays}`),
+        api.get(`/api/runs/list?days=${currentDays}`)
     ]);
 
     renderLegend();
     renderSummary(summaries);
     renderErrors(errors);
+    renderRunList(runList);
 }
 
 function renderLegend() {
@@ -254,6 +257,47 @@ function renderErrorsTable() {
             renderErrorsTable();
         },
         empty: { title: '此期間沒有錯誤紀錄', hint: '所有批次執行都沒有產生 Error 或 Fatal 等級的訊息。' }
+    });
+}
+
+// ── 執行紀錄（回饋十七輪批次F-3）：每一筆 BatchRun 的扁平清單，不像執行總表按日期彙總 ──
+
+let currentRunList = [];
+let runListSort = { key: 'startedAt', dir: 'desc' };
+
+const RUN_LIST_COLUMNS = [
+    { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, render: r => r.hostName },
+    { title: '狀態', sortKey: 'status', sortValue: r => r.status, render: r => statusBadgeCell(r.status) },
+    { title: '開始時間', sortKey: 'startedAt', sortDefaultDir: 'desc', sortValue: r => r.startedAt, render: r => formatDateTime(r.startedAt) },
+    {
+        title: '耗時', className: 'text-end', sortKey: 'durationSeconds', sortDefaultDir: 'desc',
+        sortValue: r => r.durationSeconds ?? -1,
+        render: r => r.durationSeconds != null ? formatDuration(r.durationSeconds) : '進行中'
+    },
+    { title: '觸發來源', sortKey: 'triggerText', sortValue: r => r.triggerText, render: r => r.triggerText },
+    { title: '分析天數', className: 'text-end', sortKey: 'daysAnalyzed', sortDefaultDir: 'desc', sortValue: r => r.daysAnalyzed, render: r => String(r.daysAnalyzed) },
+    {
+        title: '警告 / 錯誤', className: 'text-end', sortKey: 'errorCount', sortDefaultDir: 'desc',
+        sortValue: r => r.errorCount, render: r => `${r.warnCount} / ${r.errorCount}`
+    },
+    { title: '', className: 'text-end', render: r => viewRunButton(r.runId) }
+];
+
+function renderRunList(runs) {
+    currentRunList = runs;
+    renderRunListTable();
+}
+
+function renderRunListTable() {
+    renderTable(document.getElementById('run-list'), {
+        columns: RUN_LIST_COLUMNS,
+        rows: sortRows(currentRunList, RUN_LIST_COLUMNS, runListSort),
+        sort: runListSort,
+        onSort: (key, dir) => {
+            runListSort = { key, dir };
+            renderRunListTable();
+        },
+        empty: { title: '此期間沒有執行紀錄' }
     });
 }
 
@@ -573,11 +617,45 @@ async function refreshScheduleStatus() {
     scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
 }
 
+/**
+ * 開始時間／已耗時（回饋十七輪批次F-2）：後端 status.startedAt 早就有了，只是畫面上原本
+ * 只顯示「執行中」，看不出何時開始、跑了多久。每秒本地計時（不是等輪詢間隔才更新，執行中
+ * 輪詢是 3 秒一次，數字跳動會不夠即時），輪詢回來時用 status.startedAt 重設一次校正飄移
+ * （分頁背景分頁、系統睡眠都可能讓 setInterval 累積誤差）。
+ */
+let elapsedTimer = null;
+
+function startElapsedTicker(startedAt) {
+    const start = new Date(startedAt).getTime();
+    const el = document.getElementById('schedule-elapsed');
+    el.classList.remove('d-none');
+
+    clearInterval(elapsedTimer);
+    function tick() {
+        const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
+        el.textContent = `開始於 ${formatDateTime(startedAt)}・已耗時 ${formatDuration(seconds)}`;
+    }
+    tick();
+    elapsedTimer = setInterval(tick, 1000);
+}
+
+function stopElapsedTicker() {
+    clearInterval(elapsedTimer);
+    elapsedTimer = null;
+    document.getElementById('schedule-elapsed').classList.add('d-none');
+}
+
 function applyScheduleStatus(status) {
     document.getElementById('schedule-status-text').textContent = status.isRunning ? '執行中' : '閒置';
     document.getElementById('schedule-run-state').textContent = status.isRunning
         ? `執行中（${status.triggerText}）`
         : '閒置';
+
+    if (status.isRunning && status.startedAt) {
+        startElapsedTicker(status.startedAt);
+    } else {
+        stopElapsedTicker();
+    }
 
     renderScheduleProgress(status);
 
@@ -819,8 +897,13 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     }
 });
 
+// 三頁籤（回饋十七輪批次F-1）共用同一份天數篩選、同一次 load() 取回的資料——頁籤切換
+// 只是顯示/隱藏面板，不重新打 API（三個面板的資料本來就一起抓，見 load()）
+bindTabs(document.getElementById('runs-tabs'));
+
 loadSchedule();
 guardLoad([
     document.getElementById('run-summary'),
-    document.getElementById('run-errors')
+    document.getElementById('run-errors'),
+    document.getElementById('run-list')
 ], load);

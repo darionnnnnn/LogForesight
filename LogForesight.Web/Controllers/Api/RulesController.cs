@@ -164,4 +164,9 @@ public class RunsController : ControllerBase
     [HttpGet("errors")]
     public ApiResponse<List<RunErrorGroupDto>> Errors([FromQuery] int days = 14) =>
         ApiResponse<List<RunErrorGroupDto>>.Ok(_service.GetErrorSummary(Math.Clamp(days, 1, 90)));
+
+    /// <summary>執行紀錄分頁（回饋十七輪批次F-3）：每一筆 BatchRun 的扁平清單</summary>
+    [HttpGet("list")]
+    public ApiResponse<List<RunListItemDto>> List([FromQuery] int days = 14) =>
+        ApiResponse<List<RunListItemDto>>.Ok(_service.GetRunList(Math.Clamp(days, 1, 90)));
 }
