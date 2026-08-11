@@ -602,6 +602,73 @@ public class RuleAdminServiceTests
         Assert.Empty(service.GetSuppressions());
     }
 
+    // ── 抑制徽章代表筆：最寬範圍優先（回饋十五輪 R3）───────────────────────────
+
+    [Fact]
+    public void 規則同時有Host與Site抑制時代表筆取Site不是先建立的Host()
+    {
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "先建的 Host" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Site, Reason = "後建的 Site" });
+
+        var rule = service.GetRules().Single(r => r.Id == BuiltinId);
+
+        Assert.Equal(SuppressionScopes.Site, rule.Suppression!.Scope);
+        Assert.Equal(2, rule.SuppressionCount);
+    }
+
+    [Fact]
+    public void 規則同時有Host與Group抑制時代表筆取Group()
+    {
+        var group = _hostGroups.Upsert(new HostGroup { GroupName = "測試群組" });
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "Host" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group.GroupId, Reason = "Group" });
+
+        var rule = service.GetRules().Single(r => r.Id == BuiltinId);
+
+        Assert.Equal(SuppressionScopes.Group, rule.Suppression!.Scope);
+    }
+
+    [Fact]
+    public void 只有一筆抑制時SuppressionCount為一且Preview只含這一筆()
+    {
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "測試" });
+
+        var rule = service.GetRules().Single(r => r.Id == BuiltinId);
+
+        Assert.Equal(1, rule.SuppressionCount);
+        Assert.Single(rule.SuppressionPreview);
+    }
+
+    [Fact]
+    public void 超過三筆抑制時Preview只取前三筆但SuppressionCount反映全部()
+    {
+        var group1 = _hostGroups.Upsert(new HostGroup { GroupName = "群組一" });
+        var group2 = _hostGroups.Upsert(new HostGroup { GroupName = "群組二" });
+        var service = Create();
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-01", Reason = "1" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Host, Host = "SRV-02", Reason = "2" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group1.GroupId, Reason = "3" });
+        service.AddSuppression(BuiltinId, new AddSuppressionRequest { Scope = SuppressionScopes.Group, HostGroupId = group2.GroupId, Reason = "4" });
+
+        var rule = service.GetRules().Single(r => r.Id == BuiltinId);
+
+        Assert.Equal(4, rule.SuppressionCount);
+        Assert.Equal(3, rule.SuppressionPreview.Count);
+    }
+
+    [Fact]
+    public void 沒有抑制時SuppressionCount為零且Preview為空()
+    {
+        var rule = Create().GetRules().Single(r => r.Id == BuiltinId);
+
+        Assert.Equal(0, rule.SuppressionCount);
+        Assert.Empty(rule.SuppressionPreview);
+        Assert.Null(rule.Suppression);
+    }
+
     // ── PreviewSuppression：抑制影響面預覽（回饋十四輪 C1）─────────────────────
 
     [Fact]
@@ -719,6 +786,85 @@ public class RuleAdminServiceTests
 
         Assert.Equal(30, preview.RecentHitCount);
         Assert.True(preview.ApproximateForLinux);
+    }
+
+    // ── MatchOrder：比對順序可見化（回饋十五輪 B-1）─────────────────────────────
+
+    private static KnownIssueRule LinuxRuleFixture(string id, bool enabled = true) => new()
+    {
+        Id = id, Origin = "custom", Enabled = enabled, Platform = "linux", ProgramPattern = "sshd",
+        Category = IssueCategory.Security, Severity = IssueSeverity.High, Description = "測試", CountThreshold = 1
+    };
+
+    [Fact]
+    public void MatchOrder反映清單順序_同平台規則依序編號從一開始()
+    {
+        // 建構子已放入 BuiltinId（清單第一條）；再手動 append 兩條，模擬 FindRule 的實際比對序位
+        _rules.Content.Rules.Add(new KnownIssueRule
+        {
+            Id = "custom-second", Origin = "custom", Enabled = true, Platform = "windows",
+            SourcePattern = "app2", EventIds = new[] { 1 }, Category = IssueCategory.Service,
+            Severity = IssueSeverity.Medium, Description = "測試", CountThreshold = 1
+        });
+        _rules.Content.Rules.Add(new KnownIssueRule
+        {
+            Id = "custom-third", Origin = "custom", Enabled = true, Platform = "windows",
+            SourcePattern = "app3", EventIds = new[] { 1 }, Category = IssueCategory.Service,
+            Severity = IssueSeverity.Medium, Description = "測試", CountThreshold = 1
+        });
+
+        var rules = Create().GetRules();
+
+        Assert.Equal(1, rules.Single(r => r.Id == BuiltinId).MatchOrder);
+        Assert.Equal(2, rules.Single(r => r.Id == "custom-second").MatchOrder);
+        Assert.Equal(3, rules.Single(r => r.Id == "custom-third").MatchOrder);
+    }
+
+    /// <summary>FindRule／FindLinuxRule 是兩套獨立比對邏輯——Windows 規則中間插一條 Linux 規則，
+    /// 不該打斷 Windows 側的順位編號，Linux 規則也從自己的 1 開始算，不看物理清單位置。</summary>
+    [Fact]
+    public void MatchOrder_Windows與Linux分開計數_不受清單中彼此交錯影響()
+    {
+        // 清單物理順序：[BuiltinId(win), linux-a, custom-second(win), linux-b]——刻意交錯
+        _rules.Content.Rules.Add(LinuxRuleFixture("linux-a"));
+        _rules.Content.Rules.Add(new KnownIssueRule
+        {
+            Id = "custom-second", Origin = "custom", Enabled = true, Platform = "windows",
+            SourcePattern = "app2", EventIds = new[] { 1 }, Category = IssueCategory.Service,
+            Severity = IssueSeverity.Medium, Description = "測試", CountThreshold = 1
+        });
+        _rules.Content.Rules.Add(LinuxRuleFixture("linux-b"));
+
+        var rules = Create().GetRules();
+
+        Assert.Equal(1, rules.Single(r => r.Id == BuiltinId).MatchOrder);
+        Assert.Equal(2, rules.Single(r => r.Id == "custom-second").MatchOrder);
+        Assert.Equal(1, rules.Single(r => r.Id == "linux-a").MatchOrder);
+        Assert.Equal(2, rules.Single(r => r.Id == "linux-b").MatchOrder);
+    }
+
+    /// <summary>停用規則依然佔一個順位——順序是清單事實，不是「目前有效比對序位」，
+    /// 停用只是不參與比對，列上仍照實顯示（同 RuleValidator 的遮蔽偵測語意）。</summary>
+    [Fact]
+    public void MatchOrder_停用規則仍計入順序不被跳過()
+    {
+        _rules.Content.Rules.Add(new KnownIssueRule
+        {
+            Id = "custom-disabled", Origin = "custom", Enabled = false, Platform = "windows",
+            SourcePattern = "app2", EventIds = new[] { 1 }, Category = IssueCategory.Service,
+            Severity = IssueSeverity.Medium, Description = "測試", CountThreshold = 1
+        });
+        _rules.Content.Rules.Add(new KnownIssueRule
+        {
+            Id = "custom-third", Origin = "custom", Enabled = true, Platform = "windows",
+            SourcePattern = "app3", EventIds = new[] { 1 }, Category = IssueCategory.Service,
+            Severity = IssueSeverity.Medium, Description = "測試", CountThreshold = 1
+        });
+
+        var rules = Create().GetRules();
+
+        Assert.Equal(2, rules.Single(r => r.Id == "custom-disabled").MatchOrder);
+        Assert.Equal(3, rules.Single(r => r.Id == "custom-third").MatchOrder);
     }
 }
 

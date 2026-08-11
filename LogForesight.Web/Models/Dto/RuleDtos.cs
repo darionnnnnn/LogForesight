@@ -11,6 +11,13 @@ public class RuleDto
     /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES.md）</summary>
     public string Platform { get; set; } = "windows";
 
+    /// <summary>
+    /// 比對順序（回饋十五輪 B-1）：同平台規則在儲存清單中的序位（1-based，含停用規則）——
+    /// FindRule／FindLinuxRule 依清單順序取第一個命中的規則，這是唯讀顯示值，本頁不支援調整
+    /// （新規則一律加在最後，見 RuleAdminService 的 Save 邏輯）。
+    /// </summary>
+    public int MatchOrder { get; set; }
+
     public string SourcePattern { get; set; } = string.Empty;
     public List<int> EventIds { get; set; } = new();
     public bool MatchAllEventIds { get; set; }
@@ -48,8 +55,18 @@ public class RuleDto
     /// <summary>true = 可刪除（僅 custom 規則）</summary>
     public bool CanDelete { get; set; }
 
-    /// <summary>本機對此規則生效中的抑制設定</summary>
+    /// <summary>本機對此規則生效中的抑制設定——多筆並存時取「最寬範圍優先」的代表筆
+    /// （回饋十五輪 R3，見 RuleAdminService.ScopeWidthRank），不是任意第一筆。</summary>
     public RuleSuppressionDto? Suppression { get; set; }
+
+    /// <summary>這條規則目前生效中的抑制筆數。1 筆時就是 <see cref="Suppression"/> 本身；
+    /// 大於 1 筆代表同時有多個範圍在抑制這條規則（如 Host＋Site 並存），畫面徽章需要誠實
+    /// 顯示「已抑制 ×N」而不是讓人誤以為只抑制了一台。</summary>
+    public int SuppressionCount { get; set; }
+
+    /// <summary>抑制徽章 tooltip 用的前 3 筆明細（已按 <see cref="Suppression"/> 同一套「最寬範圍優先」
+    /// 排序）；筆數更多時畫面提示「其餘 N 筆見『告警抑制』分頁」。</summary>
+    public List<RuleSuppressionDto> SuppressionPreview { get; set; } = new();
 }
 
 public class SaveRuleRequest

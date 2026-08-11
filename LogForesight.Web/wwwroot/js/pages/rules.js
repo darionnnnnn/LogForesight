@@ -10,7 +10,7 @@
 import { api } from '../core/api.js';
 import {
     renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, button, bindTabs, renderChips,
-    renderPagination, sortRows, loadPageSize, savePageSize
+    renderPagination, sortRows, loadPageSize, savePageSize, searchableHostSelect
 } from '../core/ui.js';
 import { severityBadge, elevatesBadge, statusBadge, formatDate, severityName } from '../core/format.js';
 
@@ -39,7 +39,9 @@ let suppressionPlatform = '';   // 告警抑制分頁的平台篩選；空字串
 let suppressionTargetType = ''; // 告警抑制分頁的目標型別篩選（回饋十五輪 A-6）；空字串＝全部
 
 // 表頭點擊排序（取代原本的獨立排序下拉）＋本地分頁
-let ruleSort = { key: 'id', dir: 'asc' };
+// 預設排序＝比對順序（回饋十五輪 B-1）：FindRule／FindLinuxRule 依清單順序取第一個命中，
+// 這是使用者最需要先看到的排序，其他欄位排序只是查找輔助
+let ruleSort = { key: 'matchOrder', dir: 'asc' };
 let rulePage = 1;
 let rulePageSize = loadPageSize('rules');
 let suppressionSort = { key: 'targetLabel', dir: 'asc' };
@@ -53,9 +55,10 @@ const suppressModal = new bootstrap.Modal(document.getElementById('suppress-moda
 let rules = [];
 let suppressions = [];
 let editingRule = null;
+let templateSourceRuleId = null; // 以此為範本建立時的來源規則 Id（回饋十五輪 R4）；非範本模式為 null
 let restoringRuleId = null;
 let suppressingRuleId = null;
-let hostOptions = null;   // 抑制 modal 的主機下拉候選（延遲載入、依規則平台過濾），null = 尚未載入
+let hostSelectWidget = null; // 抑制 modal 的主機搜尋型選取器（回饋十五輪 B-2），延遲建立、開 modal 時掛載
 let groupOptions = null;  // 抑制 modal 的主機群組下拉候選（範圍選 Group 時用），null = 尚未載入
 
 const kbCollapse = new bootstrap.Collapse(document.getElementById('rule-kb'), { toggle: false });
@@ -201,6 +204,10 @@ function updateSearchPlaceholder() {
 }
 
 const RULE_COLUMNS = [
+    {
+        title: '順序', className: 'text-end', sortKey: 'matchOrder',
+        sortValue: r => r.matchOrder, render: r => String(r.matchOrder)
+    },
     { title: '規則', sortKey: 'id', sortValue: r => r.id, render: r => ruleCell(r) },
     { title: '比對', render: r => matchCell(r) },
     {
@@ -253,6 +260,8 @@ function renderRules() {
     filtered = sortRows(filtered, RULE_COLUMNS, ruleSort);
 
     document.getElementById('rule-count').textContent = `共 ${filtered.length} 條`;
+    // 排序改到非「順序」欄時提醒：畫面上看到的列序不等於實際比對序位（回饋十五輪 B-1）
+    document.getElementById('rule-sort-hint').classList.toggle('d-none', ruleSort.key === 'matchOrder');
 
     const totalPages = Math.max(1, Math.ceil(filtered.length / rulePageSize));
     if (rulePage > totalPages) rulePage = totalPages;
@@ -370,12 +379,28 @@ function statusCell(rule) {
     }
 
     if (rule.suppression) {
-        wrap.appendChild(statusBadge(rule.suppression.isExpired ? '抑制已到期' : '已抑制', 'dark', {
-            title: `${suppressionTargetText(rule.suppression)}：${rule.suppression.reason}`
-        }));
+        wrap.appendChild(statusBadge(suppressionBadgeLabel(rule), 'dark', { title: suppressionBadgeTooltip(rule) }));
     }
 
     return wrap;
+}
+
+/** 徽章文字（回饋十五輪 R3）：多筆並存時帶數量，不然「已抑制」三個字看起來像只抑制了一台，
+ * 實際上可能同時有 Host＋Site 兩筆——單筆時維持既有的「已抑制／抑制已到期」二選一。 */
+function suppressionBadgeLabel(rule) {
+    if (rule.suppressionCount > 1) return `已抑制 ×${rule.suppressionCount}`;
+    return rule.suppression.isExpired ? '抑制已到期' : '已抑制';
+}
+
+/** tooltip 列出前 3 筆明細（範圍＋到期狀態＋原因），筆數更多時提示去「告警抑制」分頁看完整清單——
+ * 原生 title 屬性支援 \n 換行，不需要另外掛 popover 元件。 */
+function suppressionBadgeTooltip(rule) {
+    const preview = rule.suppressionPreview?.length ? rule.suppressionPreview : [rule.suppression];
+    const lines = preview.map(s =>
+        `${suppressionTargetText(s)}${s.isExpired ? '（已到期）' : ''}：${s.reason}`);
+    const remaining = rule.suppressionCount - preview.length;
+    if (remaining > 0) lines.push(`其餘 ${remaining} 筆見「告警抑制」分頁`);
+    return lines.join('\n');
 }
 
 /** 抑制的生效範圍文字（回饋十三輪 F）：Host 顯示主機名、Group 顯示群組名、Site 就是全站——
@@ -433,6 +458,15 @@ function actionsCell(rule) {
 function openRuleModal(rule, { asTemplate = false } = {}) {
     editingRule = asTemplate ? null : rule;
     document.getElementById('rule-validation').replaceChildren();
+
+    // 範本模式才顯示「同時停用原規則」（回饋十五輪 R4），預設勾選——見官方建議路徑
+    // （停用 builtin＋以它為範本複製）的說明，這裡把正確順序內建進同一次儲存操作
+    templateSourceRuleId = asTemplate ? rule.id : null;
+    document.getElementById('rule-template-disable-original-wrap').classList.toggle('d-none', !asTemplate);
+    if (asTemplate) {
+        document.getElementById('rule-template-disable-original').checked = true;
+        document.getElementById('rule-template-source-id').textContent = rule.id;
+    }
 
     // 編輯既有規則／以其為範本皆沿用來源的平台；新增規則採目前所在分頁（Windows規則/Linux規則）
     // 的平台，平台一經建立不可變更（見 RuleAdminService.BuildRule）。
@@ -580,9 +614,29 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
     const saveButton = document.getElementById('rule-save');
     const restore = withBusy(saveButton, '儲存中');
 
+    // 範本模式的「同時停用原規則」是儲存流程的一部分，先讀出來——儲存成功後 modal 就關了，
+    // 這幾個欄位／module 變數也可能被下一次 openRuleModal 覆寫
+    const shouldDisableTemplateSource = templateSourceRuleId &&
+        document.getElementById('rule-template-disable-original').checked;
+    const sourceRuleId = templateSourceRuleId;
+
     try {
         await api.post('/api/rules', collectRule());
-        toast(editingRule ? '已更新規則' : '已新增規則', 'success');
+
+        // 先建後停（回饋十五輪 R4）：順序刻意如此——若反過來先停用原規則、新規則卻建立失敗，
+        // 會留下「原規則已停用、沒有替代規則生效」的空窗，比遮蔽警告更糟。
+        if (shouldDisableTemplateSource) {
+            try {
+                await api.put(`/api/rules/${encodeURIComponent(sourceRuleId)}/enabled`, { enabled: false }, { silent: true });
+                toast('已新增規則，並停用原規則', 'success');
+            } catch {
+                toast(`新規則已建立，但停用原規則「${sourceRuleId}」失敗——原規則仍啟用，` +
+                    '新規則會被遮蔽，請到清單手動停用', 'warning');
+            }
+        } else {
+            toast(editingRule ? '已更新規則' : '已新增規則', 'success');
+        }
+
         ruleModal.hide();
         await load();
     } catch {
@@ -680,42 +734,22 @@ async function openSuppressModal(rule) {
     document.getElementById('suppress-reason').value = '';
     document.getElementById('suppress-days').value = '';
     document.getElementById('suppress-scope').value = 'Host';
-    await Promise.all([ensureHostOptions(), ensureGroupOptions()]);
-    populateHostOptions(rule.platform);
+    ensureHostSelectWidget(rule.platform);
+    await ensureGroupOptions();
     populateGroupOptions();
     updateSuppressScopeVisibility();
     suppressModal.show();
 }
 
-/** 首次開啟抑制 modal 時載入主機清單（避免要人手打主機名打錯）。與 hosts 頁同一端點、同 Maintain 權限。 */
-async function ensureHostOptions() {
-    if (hostOptions) return;
-    try {
-        // §5.4 D-4：/api/admin/hosts 改伺服器端分頁，這裡要看到「全部」主機才能挑選——
-        // 拉單頁上限（200）；主機數更多的部署，抑制設定的主機選取之後再視需要改成 autocomplete
-        const result = await api.get('/api/admin/hosts?pageSize=200');
-        hostOptions = result.items;
-    } catch {
-        // api.js 已以 toast 顯示錯誤；使用者可稍後重開再試
-        hostOptions = [];
-    }
-}
-
-/** 依規則平台過濾主機下拉（docs/LINUX-RULES.md §5.1）：Linux 規則只列 Linux 主機，反之亦然 */
-function populateHostOptions(platform) {
-    const select = document.getElementById('suppress-host');
-    select.replaceChildren();
-
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = '請選擇主機…';
-    select.appendChild(placeholder);
-
-    for (const host of (hostOptions ?? []).filter(h => h.os === platform)) {
-        const option = document.createElement('option');
-        option.value = host.hostName;
-        option.textContent = host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
-        select.appendChild(option);
+/** 主機搜尋型選取器（回饋十五輪 B-2）：首次開啟時建立掛載，之後每次開 modal 只需 reset
+ * 換平台／清空選取，不必重新建立 DOM——與 group 下拉（一次載入全部）刻意不同，
+ * 主機清單改伺服器端搜尋，見 searchableHostSelect 的文件說明。 */
+function ensureHostSelectWidget(platform) {
+    if (!hostSelectWidget) {
+        hostSelectWidget = searchableHostSelect({ platform });
+        document.getElementById('suppress-host-select').appendChild(hostSelectWidget.element);
+    } else {
+        hostSelectWidget.reset(platform);
     }
 }
 
@@ -799,7 +833,7 @@ document.getElementById('suppress-form').addEventListener('submit', async event 
     event.preventDefault();
 
     const scope = document.getElementById('suppress-scope').value;
-    const host = document.getElementById('suppress-host').value.trim();
+    const host = (hostSelectWidget?.getValue() ?? '').trim();
     const hostGroupId = document.getElementById('suppress-group').value;
     const reason = document.getElementById('suppress-reason').value.trim();
 

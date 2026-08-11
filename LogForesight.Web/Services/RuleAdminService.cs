@@ -61,8 +61,32 @@ public class RuleAdminService
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
         var groupNames = LoadGroupNames();
+        var matchOrderByRuleId = ComputeMatchOrders(content.Rules);
 
-        return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion, groupNames)).ToList();
+        return content.Rules.Select(rule =>
+            ToDto(rule, seeds, suppressions, content.SeedVersion, groupNames, matchOrderByRuleId[rule.Id])).ToList();
+    }
+
+    /// <summary>
+    /// 比對順序（回饋十五輪 B-1）：FindRule／FindLinuxRule 依清單順序取第一個命中的規則，
+    /// 這是規則系統最重要的語意，過去畫面上完全看不到、也無從調整——使用者無法判斷自己
+    /// 有沒有踩到遮蔽問題。這裡算出「同平台規則在儲存清單中的序位」（1-based，含停用規則，
+    /// 順序是清單事實，停用只是不參與比對）供清單頁顯示為唯讀欄，Windows／Linux 分開計數
+    /// （FindRule／FindLinuxRule 是兩套獨立比對邏輯，順序互不影響）。GroupBy 保留原始清單內的
+    /// 相對順序（LINQ 的既有保證），這裡不需要額外排序。
+    /// </summary>
+    private static Dictionary<string, int> ComputeMatchOrders(List<KnownIssueRule> rules)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var platformGroup in rules.GroupBy(r => r.Platform, StringComparer.OrdinalIgnoreCase))
+        {
+            int order = 1;
+            foreach (var rule in platformGroup)
+            {
+                result[rule.Id] = order++;
+            }
+        }
+        return result;
     }
 
     /// <summary>群組 Id → 名稱，供抑制 DTO 帶出可讀名稱用。一次整份撈出避免每筆抑制各查一次 store。</summary>
@@ -264,11 +288,13 @@ public class RuleAdminService
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
         var groupNames = LoadGroupNames();
+        // 回復預設只換內容不換位置，Current／Seed 兩側是同一條規則的順序
+        var matchOrder = ComputeMatchOrders(content.Rules).GetValueOrDefault(current.Id);
 
         return new RuleRestorePreviewDto
         {
-            Current = ToDto(current, seeds, suppressions, content.SeedVersion, groupNames),
-            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion, groupNames),
+            Current = ToDto(current, seeds, suppressions, content.SeedVersion, groupNames, matchOrder),
+            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion, groupNames, matchOrder),
             Differences = Diff(current, seedRule)
         };
     }
@@ -595,6 +621,15 @@ public class RuleAdminService
         _ => string.Equals(s.VolumeKind, volumeKind, StringComparison.OrdinalIgnoreCase)
     };
 
+    /// <summary>範圍寬度排序權重（回饋十五輪 R3）：數字越小越寬——Site 影響全站、Group 影響一批
+    /// 主機、Host 只影響單台。規則列的抑制徽章代表筆用這個排序挑「最該讓人注意」的那一筆。</summary>
+    private static int ScopeWidthRank(string scope) => scope switch
+    {
+        SuppressionScopes.Site => 0,
+        SuppressionScopes.Group => 1,
+        _ => 2 // Host
+    };
+
     // ── 內部 ─────────────────────────────────────────────────────────────────
 
     private RuleFileContent LoadContent()
@@ -733,17 +768,23 @@ public class RuleAdminService
         IReadOnlyDictionary<string, RuleSeedSnapshot> seeds,
         List<RuleSuppression> suppressions,
         int currentSeedVersion,
-        IReadOnlyDictionary<long, string> groupNames)
+        IReadOnlyDictionary<long, string> groupNames,
+        int matchOrder)
     {
         var isBuiltin = string.Equals(rule.Origin, "builtin", StringComparison.OrdinalIgnoreCase);
         seeds.TryGetValue(rule.Id, out var snapshot);
 
-        // 規則清單頁沒有「檢視中的主機」脈絡，這裡沿用既有簡化：同一規則若有多筆抑制
-        // （例如同時有 Host 級與 Group 級），只取第一筆代表性顯示徽章；完整清單見「告警抑制」分頁的 GetSuppressions()。
+        // 規則清單頁沒有「檢視中的主機」脈絡，代表筆改採「最寬範圍優先」（回饋十五輪 R3）：
+        // 同一規則若同時有 Host 級與 Site 級抑制，只顯示 Host 那筆會讓使用者誤以為只抑制了
+        // 一台主機，實際上早就全站噤聲——顯示最寬範圍的那筆才不會說謊（同寬度取最早建立的）。
         // TargetType==Rule 是刻意明寫的（回饋十五輪 A）：非 Rule 目標的 RuleId 恆為空字串，
         // 與任何真實規則 Id 都不會相等，本來就不會誤配對——這裡明寫只是不依賴這個巧合。
-        var suppression = suppressions.FirstOrDefault(s =>
-            s.TargetType == SuppressionTargetTypes.Rule && string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase));
+        var matchingSuppressions = suppressions
+            .Where(s => s.TargetType == SuppressionTargetTypes.Rule && string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => ScopeWidthRank(s.Scope))
+            .ThenBy(s => s.CreatedAt)
+            .ToList();
+        var suppression = matchingSuppressions.FirstOrDefault();
 
         return new RuleDto
         {
@@ -751,6 +792,7 @@ public class RuleAdminService
             Origin = rule.Origin,
             Enabled = rule.Enabled,
             Platform = rule.Platform,
+            MatchOrder = matchOrder,
             SourcePattern = rule.SourcePattern,
             EventIds = rule.EventIds.ToList(),
             MatchAllEventIds = rule.MatchAllEventIds,
@@ -772,7 +814,10 @@ public class RuleAdminService
             SeedHasNewerVersion = snapshot != null && snapshot.SeedVersion > currentSeedVersion,
             CanRestore = isBuiltin && snapshot != null,
             CanDelete = !isBuiltin,
-            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform, groupNames)
+            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform, groupNames),
+            SuppressionCount = matchingSuppressions.Count,
+            // 前 3 筆供徽章 tooltip 列出（回饋十五輪 R3）；其餘筆數畫面只顯示「見『告警抑制』分頁」
+            SuppressionPreview = matchingSuppressions.Take(3).Select(s => ToSuppressionDto(s, rule.Platform, groupNames)).ToList()
         };
     }
 
