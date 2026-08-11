@@ -117,6 +117,74 @@ public class TrendAnalyzerTests
         Assert.DoesNotContain(alerts, a => a.Contains("頻率暴增"));
     }
 
+    // ── 首次出現且爆量的出口（回饋十七輪批次C）─────────────────────────────
+    // New 分支只在 Severity>=High 時告警，Other 類簽章天生 Low、永遠不會走到——
+    // 一個從未出現過的未知簽章單日暴增（如 500 筆）仍該被看見，只用絕對量門檻
+    // （首次出現沒有歷史基準可乘）。
+
+    [Fact]
+    public void Low嚴重度首次出現且達絕對量門檻時觸發首次出現且大量告警()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 999, 1, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 100, IssueSeverity.Low); // 從未出現過，今日100＝絕對量門檻
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 100, 0);
+
+        Assert.Equal(IssueTrend.New, sig.Trend);
+        Assert.Contains(alerts, a => a.Contains("首次出現且大量"));
+    }
+
+    [Fact]
+    public void Low嚴重度首次出現且未達絕對量門檻時不告警()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 999, 1, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 99, IssueSeverity.Low); // 從未出現過，99＜絕對量門檻(100)
+
+        // todayErrorCount 傳 0（不是 99）：這裡只測簽章層的首次出現判定，不測整體錯誤量突增
+        // （那是獨立的總量層告警，todayErrorCount>=10 就會觸發，與這個簽章的次數無關）
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.Equal(IssueTrend.New, sig.Trend);
+        Assert.Empty(alerts);
+    }
+
+    /// <summary>暖身期新頻道上線第一天，所有簽章都是首次出現——爆量出口也要受同一道
+    /// 閘門保護，否則新頻道切換日會被自己的暖身資料觸發告警風暴。</summary>
+    [Fact]
+    public void 暖身期時首次出現且爆量的出口也不觸發告警()
+    {
+        var history = Enumerable.Range(1, 2) // < WarmupDays(3)
+            .Select(d => DefenderHistoryDay(DateTime.Today.AddDays(-d), 1116, 2))
+            .ToList();
+        var sig = Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 2222, 500, IssueSeverity.Low);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        Assert.Equal(IssueTrend.New, sig.Trend);
+        Assert.Empty(alerts);
+    }
+
+    /// <summary>High 嚴重度首次出現走既有分支，不會被爆量出口的文字覆蓋或重複告警。</summary>
+    [Fact]
+    public void High嚴重度首次出現且大量時仍只產生一般首次出現告警不重複()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 999, 1, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 500, IssueSeverity.High);
+
+        // todayErrorCount 傳 0：同上，只測簽章層告警，不讓總量層的「整體錯誤量突增」混進來
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
+
+        var alert = Assert.Single(alerts);
+        Assert.Contains("首次出現：", alert);
+        Assert.DoesNotContain("首次出現且大量", alert);
+    }
+
     /// <summary>Medium（升級前）以上的簽章不受閘門影響，維持既有行為——這是既有測試
     /// 「歷史基準兩倍以上且達最低次數時判為Rising並升級嚴重度」（High）以外的邊界確認。</summary>
     [Fact]
