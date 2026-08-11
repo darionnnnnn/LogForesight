@@ -33,6 +33,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly AnalysisOrchestrator _orchestrator;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
+    private readonly IHostApplicationLifetime _lifetime;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -53,6 +54,7 @@ public class SchedulerHostedService : BackgroundService
         _orchestrator = orchestrator;
         _mutexGate = mutexGate;
         _mail = mail;
+        _lifetime = lifetime;
 
         // 站台關閉時比照「使用者手動停止」：優雅停在主機日邊界，不留執行中的殘留紀錄
         lifetime.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -185,14 +187,6 @@ public class SchedulerHostedService : BackgroundService
 
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
                         effectiveRequest.Trigger ?? "manual", DateTime.Now);
-
-                    // 郵件通知（回饋十五輪批次D）：執行摘要與高風險即時通知同一個掛載點，只在
-                    // 執行成功時判定——失敗的執行沒有新的分析結果可摘要，見 MailNotificationService
-                    // 文件的「即時」定義說明。內部自行 try/catch 到底，不影響本次執行的成敗判定。
-                    if (result.Success)
-                    {
-                        await _mail.NotifyAfterRunAsync(DateTime.Today, runCts.Token);
-                    }
                 }, MutexTimeout);
 
                 if (!acquired)
@@ -211,6 +205,22 @@ public class SchedulerHostedService : BackgroundService
             finally
             {
                 _runState.EndRun(outcome);
+            }
+
+            // 郵件通知（回饋十五輪批次D，回饋十六輪批次A-4 移出執行鎖）：執行摘要與高風險
+            // 即時通知同一個掛載點，只在執行成功時判定——失敗的執行沒有新的分析結果可摘要，
+            // 見 MailNotificationService 文件的「即時」定義說明。
+            //
+            // **移出 RunExclusiveAsync 區塊、放在 EndRun 之後**（回饋十六輪體檢發現1）：分析結果
+            // 已經落地，通知不需要持有執行鎖；原本寄信（可能上百封、每封 30 秒逾時）卡在鎖內，
+            // 會讓 UI 的「執行中」狀態一路延伸到寄信結束，且鎖住排程/手動觸發整段期間。
+            // 不能沿用 runCts.Token——EndRun 已經把它 Dispose 掉；改用站台停止權杖，
+            // 站台正常關閉時通知會被取消（對稱於分析本身經 TryCancel 的優雅停止），
+            // 平時 ApplicationStopping 未觸發，等同不取消。內部自行 try/catch 到底，
+            // 不影響本次執行的成敗判定（outcome 已經定案並交給 EndRun）。
+            if (outcome is { Success: true })
+            {
+                await _mail.NotifyAfterRunAsync(DateTime.Today, _lifetime.ApplicationStopping);
             }
         });
 

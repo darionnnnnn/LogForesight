@@ -344,11 +344,25 @@ internal class FakeSmtpMailSender : ISmtpMailSender
 {
     public List<(SmtpConnectionSpec Connection, MailMessageSpec Message)> Sent { get; } = new();
 
+    /// <summary>每次 SendAsync 被呼叫都記錄（不論成功失敗）——回饋十六輪批次A 用來驗證
+    /// 「連續失敗熔斷」之類只看得到嘗試次數、看不到成功次數的行為。</summary>
+    public List<MailMessageSpec> Attempts { get; } = new();
+
     public Exception? ThrowOnSend { get; set; }
+
+    /// <summary>只對 To 含此收件人的信丟例外，其餘照常送出——供「部分收件人寄送失敗」的
+    /// 聚合寄送測試切換（回饋十六輪批次A-1）。</summary>
+    public string? ThrowOnSendForRecipient { get; set; }
 
     public Task SendAsync(SmtpConnectionSpec connection, MailMessageSpec message, CancellationToken ct = default)
     {
+        Attempts.Add(message);
         if (ThrowOnSend != null) throw ThrowOnSend;
+        if (ThrowOnSendForRecipient != null &&
+            message.To.Any(to => string.Equals(to, ThrowOnSendForRecipient, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException($"smtp down for {ThrowOnSendForRecipient}");
+        }
         Sent.Add((connection, message));
         return Task.CompletedTask;
     }

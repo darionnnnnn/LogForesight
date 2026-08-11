@@ -74,6 +74,27 @@ public class MailNotificationServiceTests : IDisposable
         Assert.DoesNotContain("host2", sent.Message.Body);
     }
 
+    /// <summary>回饋十六輪批次A-5：達門檻紀錄超過 50 筆時，明細只列前 50 筆並補一行
+    /// 「其餘 N 台請至站台檢視」——2000 台規模下 MailMinRiskLevel=中 可能有 600+ 筆，
+    /// 純文字信不該無上限列出去。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_執行摘要超過上限時截斷並提示其餘筆數()
+    {
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailMinRiskLevel = RiskLevels.Medium; });
+        for (var i = 0; i < 55; i++)
+        {
+            _records.Add(Record(i, $"host{i}", DateTime.Today, RiskLevels.High));
+        }
+
+        await Create().NotifyAfterRunAsync(DateTime.Today);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("host0", sent.Message.Body);
+        Assert.Contains("host49", sent.Message.Body);
+        Assert.DoesNotContain("host50", sent.Message.Body);
+        Assert.Contains("其餘 5 台請至站台", sent.Message.Body);
+    }
+
     [Fact]
     public async Task NotifyAfterRunAsync_無達門檻紀錄時不寄摘要信()
     {
@@ -111,8 +132,11 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
+    /// <summary>回饋十六輪批次A-1：高風險即時通知改按收件人聚合——全域收件人與非全域的
+    /// 主機負責人各自收到「一封」信，不再合併成單封多收件人的信（不同人該看到的內容不同：
+    /// 全域收件人看全部，負責人只看自己的主機）。</summary>
     [Fact]
-    public async Task NotifyAfterRunAsync_同時通知主機負責人時合併負責人信箱()
+    public async Task NotifyAfterRunAsync_全域收件人與負責人分別各收一封()
     {
         var owner = _users.Upsert(new WebUser { Account = "owner1", Email = "owner1@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { owner.UserId } });
@@ -121,15 +145,16 @@ public class MailNotificationServiceTests : IDisposable
 
         await Create().NotifyAfterRunAsync(DateTime.Today);
 
-        var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("ops@test.local", sent.Message.To);
-        Assert.Contains("owner1@test.local", sent.Message.To);
+        Assert.Equal(2, _sender.Sent.Count);
+        Assert.Contains(_sender.Sent, s => s.Message.To.Count == 1 && s.Message.To[0] == "ops@test.local");
+        Assert.Contains(_sender.Sent, s => s.Message.To.Count == 1 && s.Message.To[0] == "owner1@test.local");
     }
 
+    /// <summary>負責人信箱與全域收件人相同（不分大小寫）時，不重複收信——他已經在全域信
+    /// 裡看到全部內容，不需要再收一封只列自己主機的信。</summary>
     [Fact]
-    public async Task NotifyAfterRunAsync_收件人不分大小寫去重()
+    public async Task NotifyAfterRunAsync_負責人與全域收件人相同時不重複收信()
     {
-        // 全域收件人（EnableMail 預設）已含 "ops@test.local"，負責人信箱大小寫不同但視為同一人
         var owner = _users.Upsert(new WebUser { Account = "owner1", Email = "OPS@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { owner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
@@ -139,6 +164,123 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Single(sent.Message.To);
+    }
+
+    /// <summary>全域收件人收到的信涵蓋「本次全部」pending 主機，不只是自己負責的那些。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_全域收件人的信涵蓋全部高風險主機()
+    {
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(1, "host1", DateTime.Today, RiskLevels.High, "host1事故"));
+        _records.Add(Record(2, "host2", DateTime.Today, RiskLevels.High, "host2事故"));
+
+        await Create().NotifyAfterRunAsync(DateTime.Today);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("host1", sent.Message.Body);
+        Assert.Contains("host2", sent.Message.Body);
+    }
+
+    /// <summary>沒有任何收件人（全域清單空、且無負責人）時，pending 完全不標記——
+    /// 補設定後下次執行要能自動補寄（回饋十六輪體檢發現2b：先啟用通知後補收件人的部署順序）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_無任何收件人時不標記已寄且下次補寄()
+    {
+        _settingsStore.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.SmtpServer = "smtp.test.local";
+            s.MailFrom = "logforesight@test.local";
+            s.MailRecipients = new List<string>();
+            s.MailUrgentEnabled = true;
+        });
+        _records.Add(Record(1, "host1", DateTime.Today, RiskLevels.High));
+        var service = Create();
+
+        await service.NotifyAfterRunAsync(DateTime.Today);
+        Assert.Empty(_sender.Sent);
+
+        // 補上收件人設定後，同一天的高風險主機日要能自動補寄
+        _settingsStore.Update(s => s.MailRecipients = new List<string> { "ops@test.local" });
+        await service.NotifyAfterRunAsync(DateTime.Today);
+        Assert.Single(_sender.Sent);
+    }
+
+    /// <summary>標記語意是「涵蓋此 record 的信全部寄成功才標記」（回饋十六輪體檢發現2a 的根修：
+    /// 原本吞掉例外、無條件全部標記已寄）——只要有一位涵蓋到這個 record 的收件人失敗，這個
+    /// record 就整批留到下次重寄，即使其他收件人已經成功過也會再收到一次重複信。這是刻意的
+    /// 保守取捨：寧可讓已收到的人重複收到，也不讓任何一位該收到的人漏收。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_有收件人失敗時該record下次對所有收件人重寄()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "owner1", Email = "owner1@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { owner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host.HostId, "host1", DateTime.Today, RiskLevels.High));
+
+        _sender.ThrowOnSendForRecipient = "owner1@test.local";
+        var service = Create();
+        await service.NotifyAfterRunAsync(DateTime.Today);
+        Assert.Single(_sender.Sent);              // 只有全域 ops 成功；owner1 失敗未計入 Sent
+        Assert.Equal(2, _sender.Attempts.Count);  // 但兩位都嘗試過寄送
+
+        // 這筆高風險主機日尚未被標記已寄（owner1 那封失敗）——下次執行兩位都會重新收到，
+        // ops 因此重複收到一次
+        _sender.ThrowOnSendForRecipient = null;
+        await service.NotifyAfterRunAsync(DateTime.Today);
+        Assert.Equal(3, _sender.Sent.Count);
+        Assert.Equal(2, _sender.Sent.Count(s => s.Message.To[0] == "ops@test.local"));
+        Assert.Single(_sender.Sent, s => s.Message.To[0] == "owner1@test.local");
+    }
+
+    /// <summary>連續失敗達門檻即熔斷本輪剩餘寄送（回饋十六輪批次A-3），不把逾時全部付掉——
+    /// 第 4 位收件人完全不會被嘗試寄送（用 Attempts 驗證嘗試次數，因為全部失敗時 Sent 恆為空）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_連續失敗達門檻時熔斷本輪剩餘寄送()
+    {
+        var owners = Enumerable.Range(1, 4)
+            .Select(i => _users.Upsert(new WebUser { Account = $"owner{i}", Email = $"owner{i}@test.local", Active = true }))
+            .ToList();
+        _settingsStore.Update(s =>
+        {
+            s.MailEnabled = true;
+            s.SmtpServer = "smtp.test.local";
+            s.MailFrom = "logforesight@test.local";
+            s.MailRecipients = new List<string>();   // 只靠負責人收信，避免全域信干擾計數
+            s.MailUrgentEnabled = true;
+            s.MailNotifyHostOwners = true;
+        });
+        for (var i = 0; i < owners.Count; i++)
+        {
+            var host = _hosts.Upsert(new WebHost { HostName = $"host{i}", OwnerUserIds = new List<long> { owners[i].UserId } });
+            _records.Add(Record(host.HostId, $"host{i}", DateTime.Today, RiskLevels.High));
+        }
+        _sender.ThrowOnSend = new InvalidOperationException("smtp down");
+
+        await Create().NotifyAfterRunAsync(DateTime.Today);
+
+        // 4 位收件人、連續失敗門檻 3：第 3 次失敗後熔斷，第 4 位完全不被嘗試寄送
+        Assert.Equal(3, _sender.Attempts.Count);
+    }
+
+    /// <summary>外層取消（服務停止／執行被取消）時整批不標記已寄——連已經處理過的部分也不算數，
+    /// 下次（沒有取消）要能整批正常補寄。取消要重新拋出並被 NotifyAfterRunAsync 的外層
+    /// try/catch 吞掉，不能讓通知路徑弄掛呼叫端（回饋十六輪體檢發現2a）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_外層取消時不標記已寄且下次可補寄()
+    {
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(1, "host1", DateTime.Today, RiskLevels.High));
+        using var cts = new CancellationTokenSource();
+        _sender.ThrowOnSend = new OperationCanceledException(cts.Token);
+        cts.Cancel();
+
+        await Create().NotifyAfterRunAsync(DateTime.Today, cts.Token);
+        Assert.Empty(_sender.Sent);
+
+        _sender.ThrowOnSend = null;
+        await Create().NotifyAfterRunAsync(DateTime.Today);
+        Assert.Single(_sender.Sent);
     }
 
     /// <summary>回饋十五輪體檢批G：settings store 讀取本身拋例外（模擬 blob 讀取失敗／並發衝突）
