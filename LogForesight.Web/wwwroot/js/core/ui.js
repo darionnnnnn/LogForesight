@@ -296,6 +296,63 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
 }
 
 /**
+ * 需要必填原因的確認對話框（回饋十五輪 C-4）：骨架抽自 confirmAction，加一個必填 textarea——
+ * 抑制關聯模式／總量告警等高影響操作都要求說明原因（日後回頭確認「當初為什麼關掉」的唯一依據，
+ * 同 rules.js 抑制 modal 的既有慣例），這裡不用 window.prompt 是因為它跟應用程式的 Bootstrap
+ * modal 風格完全脫節（無深色模式、擋住 JS 執行緒、無法套版），且不支援多行輸入。
+ * @returns {Promise<string|null>} 確認且已填原因時回傳 trim 過的原因字串；取消或未填回傳 null
+ */
+export function confirmActionWithReason({ title = '請確認', message, reasonLabel = '原因', confirmText = '確定', confirmVariant = 'danger' }) {
+    return new Promise(resolve => {
+        const el = document.createElement('div');
+        el.className = 'modal fade';
+        el.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"></h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p></p>
+                        <label class="form-label" data-lf-reason-label></label>
+                        <textarea class="form-control" data-lf-reason rows="2" required></textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-${confirmVariant}" data-lf-confirm></button>
+                    </div>
+                </div>
+            </div>`;
+        el.querySelector('.modal-title').textContent = title;
+        el.querySelector('.modal-body p').textContent = message;
+        el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
+        el.querySelector('[data-lf-confirm]').textContent = confirmText;
+        const textarea = el.querySelector('[data-lf-reason]');
+
+        document.body.appendChild(el);
+        const modal = new bootstrap.Modal(el);
+
+        let reason = null;
+        el.querySelector('[data-lf-confirm]').addEventListener('click', () => {
+            const value = textarea.value.trim();
+            if (!value) {
+                textarea.classList.add('is-invalid');
+                return;
+            }
+            reason = value;
+            modal.hide();
+        });
+        el.addEventListener('hidden.bs.modal', () => {
+            el.remove();
+            resolve(reason);
+        });
+
+        modal.show();
+    });
+}
+
+/**
  * 通用資訊 modal（骨架抽自 confirmAction，避免第三份動態 modal 複本）：純檢視用途，
  * 沒有確認/取消語意，只有一個關閉鈕。body 收 DOM 節點而非 HTML 字串——內容常來自
  * 事件原始訊息等攻擊者可控字串，維持 textContent 純文字組裝原則（S7）。
