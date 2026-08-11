@@ -138,6 +138,19 @@ internal class FakeHostStore : IHostStore
         host.MergedInto = null;
         host.Active = true;
     }
+
+    /// <summary>回饋十七輪批次D：直接對內部 list 就地操作，與真實 HostStore.MutateBatch
+    /// 同一份語意（一次完成、不逐台整份讀改寫）。mutation 內若自行配發 HostId（NetiqImportApplier
+    /// 的批次三態邏輯就是這樣），事後把 _nextId 頂到目前最大值之上，避免後續 Upsert／Touch
+    /// 撞號。</summary>
+    public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation)
+    {
+        var result = mutation(_hosts);
+        if (_hosts.Count > 0) _nextId = Math.Max(_nextId, _hosts.Max(h => h.HostId) + 1);
+        return result;
+    }
+
+    public void MutateBatch(Action<List<WebHost>> mutation) => MutateBatch<object?>(list => { mutation(list); return null; });
 }
 
 internal class FakeSentinelStore : ISentinelStore

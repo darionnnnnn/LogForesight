@@ -174,6 +174,10 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
         });
     }
 
+    public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation) => Mutate(mutation);
+
+    public void MutateBatch(Action<List<WebHost>> mutation) => Mutate(mutation);
+
     /// <summary>
     /// 目標的空欄位以來源填補（見 <see cref="IHostStore.Merge"/> 的契約說明）。
     /// 一律「目標有值就不動」——合併不該悄悄改掉人已經設好的東西。

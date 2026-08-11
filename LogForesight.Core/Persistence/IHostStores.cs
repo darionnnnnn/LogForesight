@@ -81,6 +81,18 @@ public interface IHostStore
     /// 「留墓碑不刪除」的設計要能真的救得回來，才不只是一句安慰。
     /// </summary>
     void Unmerge(long hostId);
+
+    /// <summary>
+    /// 批次專用（回饋十七輪批次D）：一次 Mutate 完成任意一批主機異動，取代逐台呼叫
+    /// <see cref="Upsert"/>／<see cref="Get"/> 各自整份 blob 讀改寫——與 <see cref="SetGroupsBatch"/>
+    /// 同一個理由（勾選／匯入 N 台主機時，要的是一次寫入而非 N 次）。
+    /// <paramref name="mutation"/> 直接對傳入的清單就地操作（新增用 <c>list.Add</c>，
+    /// 修改既有項用 <c>FirstOrDefault</c> 找到後改欄位，不必呼叫 Upsert）。
+    /// </summary>
+    TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation);
+
+    /// <summary>同上，無回傳值版本（呼叫端不需要結果時不必自己塞假的 TResult）</summary>
+    void MutateBatch(Action<List<WebHost>> mutation);
 }
 
 /// <summary><see cref="IHostStore.SetGroupsBatch"/> 的結果：實際套用與略過的主機各自清單</summary>
