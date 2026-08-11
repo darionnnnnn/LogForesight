@@ -23,6 +23,10 @@ internal static class SlowTrendAnalyzer
     public static List<string> Apply(List<LogIssueSignature> issues, List<DailyAnalysisRecord> history, DateTime targetDate)
         => Apply(issues, history, targetDate, out _);
 
+    /// <summary>不需要抑制清單的便利多載（既有呼叫端，行為不變）</summary>
+    public static List<string> Apply(List<LogIssueSignature> issues, List<DailyAnalysisRecord> history, DateTime targetDate,
+        out bool evaluated) => Apply(issues, history, targetDate, out evaluated, out _);
+
     /// <summary>
     /// 比對每個當日事件簽章的「近 7 天（今日＋前 6 天）總量」與「前 7 天總量」，回傳命中的告警說明。
     /// 兩個窗口刻意等長——長度不一致會讓平穩訊號也產生系統性倍率偏差，把門檻實質放寬。
@@ -33,10 +37,16 @@ internal static class SlowTrendAnalyzer
     /// false = 前期資料不足，本次完全沒有比對（不是「比對過但沒發現」）。呼叫端據此申報偵測缺口——
     /// 靜默跳過會讓「沒告警」被誤讀成「沒問題」，與專案的覆蓋率誠實申報原則相違。
     /// </param>
+    /// <param name="suppressedAlerts">
+    /// 因簽章被抑制（回饋十五輪 A，issue.Suppressed）而未進回傳值、但原本會產生的告警文字——
+    /// 與 <see cref="TrendAnalyzer"/> 同一套「抑制關的是要不要吵，不是要不要算」語意：這裡的
+    /// 訊號本質上也是趨勢異常，被抑制的簽章不該繞過抑制設定從這條路徑繼續拉高風險／觸發 AI。
+    /// </param>
     public static List<string> Apply(List<LogIssueSignature> issues, List<DailyAnalysisRecord> history, DateTime targetDate,
-        out bool evaluated)
+        out bool evaluated, out List<string> suppressedAlerts)
     {
         var alerts = new List<string>();
+        suppressedAlerts = new List<string>();
         evaluated = false;
 
         // DataIncomplete 的日子排除在兩個窗口外，理由與 TrendAnalyzer 相同：
@@ -80,8 +90,16 @@ internal static class SlowTrendAnalyzer
             // 後者屬於 TrendAnalyzer 的 New 分支職責，兩者不重疊
             if (priorTotal > 0 && recentTotal >= MinRecentCount && recentTotal >= priorTotal * RisingFactor)
             {
-                alerts.Add($"慢速惡化：{sig.SourceEventLabel} 近 {WindowDays} 天累計 x{recentTotal}" +
-                           $"（含今日），前 {WindowDays} 天累計 x{priorTotal}");
+                var text = $"慢速惡化：{sig.SourceEventLabel} 近 {WindowDays} 天累計 x{recentTotal}" +
+                           $"（含今日），前 {WindowDays} 天累計 x{priorTotal}";
+                if (sig.Suppressed)
+                {
+                    suppressedAlerts.Add(text);
+                }
+                else
+                {
+                    alerts.Add(text);
+                }
             }
         }
 

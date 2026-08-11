@@ -150,6 +150,12 @@ public class RecordDetailQueryService
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = caseGrantOnly ? new List<string>() : record.TrendAlerts,
             CorrelationAlerts = caseGrantOnly ? new List<string>() : record.CorrelationAlerts,
+            TrendAlertRefs = caseGrantOnly ? new List<TrendAlertRefDto>() : record.TrendAlertRefs
+                .Select(r => new TrendAlertRefDto { Text = r.Text, IssueKey = r.IssueKey, Kind = r.Kind }).ToList(),
+            CorrelationAlertRefs = caseGrantOnly ? new List<CorrelationAlertRefDto>() : record.CorrelationAlertRefs
+                .Select(r => new CorrelationAlertRefDto { Text = r.Text, PatternId = r.PatternId }).ToList(),
+            SuppressedTrendAlerts = caseGrantOnly ? new List<string>() : record.SuppressedTrendAlerts,
+            SuppressedCorrelationAlerts = caseGrantOnly ? new List<string>() : record.SuppressedCorrelationAlerts,
             DeepDives = caseGrantOnly ? new List<DeepDiveDto>() : record.DeepDives.Select(d => new DeepDiveDto
             {
                 Category = d.Category.ToString(),

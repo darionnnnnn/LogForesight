@@ -35,6 +35,13 @@
         </None>
     </ItemGroup>
 
+    <!-- 操作說明書內容（回饋十五輪批次E）：內嵌資源編進組件，部署零額外檔案——
+         不像 wwwroot 靜態檔那樣需要跟著執行檔一起複製到輸出目錄／部署包 -->
+    <ItemGroup>
+        <EmbeddedResource Include="HelpContent\**\*.md" />
+        <EmbeddedResource Include="HelpContent\manifest.json" />
+    </ItemGroup>
+
     <!-- 同 LogForesight/LogForesight.Core 的既有慣例：測試可見 internal 細節（如
          ServiceCollectionExtensions.ShouldUseStubNetiqClient），不必為了測試把 DI 決策邏輯改成 public。 -->
     <ItemGroup>

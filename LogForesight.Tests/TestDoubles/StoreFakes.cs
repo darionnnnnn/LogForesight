@@ -1,3 +1,4 @@
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Tests;
 
@@ -315,7 +316,11 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
     {
         var matcher = filter.Hosts == null ? null : new HostMatcher(filter.Hosts);
-        return _records.Where(r => matcher == null || matcher.Matches(r)).ToList();
+        return _records
+            .Where(r => matcher == null || matcher.Matches(r))
+            .Where(r => filter.From == null || r.Date.Date >= filter.From.Value.Date)
+            .Where(r => filter.To == null || r.Date.Date <= filter.To.Value.Date)
+            .ToList();
     }
 
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
@@ -329,4 +334,22 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 
     public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
         throw new NotImplementedException();
+}
+
+/// <summary>
+/// 記憶體版 SMTP 寄送替身（回饋十五輪批次D）：不連真的 SMTP，只記錄送出過的信供斷言。
+/// <see cref="ThrowOnSend"/> 供「寄送失敗不影響呼叫端」的測試情境切換。
+/// </summary>
+internal class FakeSmtpMailSender : ISmtpMailSender
+{
+    public List<(SmtpConnectionSpec Connection, MailMessageSpec Message)> Sent { get; } = new();
+
+    public Exception? ThrowOnSend { get; set; }
+
+    public Task SendAsync(SmtpConnectionSpec connection, MailMessageSpec message, CancellationToken ct = default)
+    {
+        if (ThrowOnSend != null) throw ThrowOnSend;
+        Sent.Add((connection, message));
+        return Task.CompletedTask;
+    }
 }

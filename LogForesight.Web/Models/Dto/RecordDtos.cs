@@ -212,6 +212,22 @@ public class RecordDetailDto
     public List<CategorySummaryDto> Categories { get; set; } = new();
     public List<string> TrendAlerts { get; set; } = new();
     public List<string> CorrelationAlerts { get; set; } = new();
+
+    /// <summary>TrendAlerts 的結構化平行資料（回饋十五輪 C-1）：供頁內導航（點擊捲到對應問題
+    /// 分節）。舊紀錄為空清單，前端據此降級回純文字顯示。</summary>
+    public List<TrendAlertRefDto> TrendAlertRefs { get; set; } = new();
+
+    /// <summary>CorrelationAlerts 的結構化平行資料（回饋十五輪 C-1）：供模式說明 popover 與
+    /// 「抑制此模式」出口。</summary>
+    public List<CorrelationAlertRefDto> CorrelationAlertRefs { get; set; } = new();
+
+    /// <summary>因抑制設定未進 TrendAlerts、但原本會產生的告警文字（回饋十五輪 A/C）——
+    /// 抑制關的是「要不要吵」不是「要不要記」，這裡誠實申報「暫時關掉的東西其實還在發生」。</summary>
+    public List<string> SuppressedTrendAlerts { get; set; } = new();
+
+    /// <summary>因抑制設定未進 CorrelationAlerts 的告警文字，語意同 SuppressedTrendAlerts。</summary>
+    public List<string> SuppressedCorrelationAlerts { get; set; } = new();
+
     public List<DeepDiveDto> DeepDives { get; set; } = new();
 
     /// <summary>資料完整性申報（§「沒告警 ≠ 沒問題」）</summary>
@@ -238,6 +254,25 @@ public class RecordDetailDto
 
     /// <summary>層級顯示模式：DefaultHidden／Locked／GlobalFilter（見 SystemSettings.SeverityDisplayMode）</summary>
     public string SeverityDisplayMode { get; set; } = "DefaultHidden";
+}
+
+/// <summary>趨勢告警的結構化平行資料（回饋十五輪 C-1），對應 Core 的 TrendAlertRef</summary>
+public class TrendAlertRefDto
+{
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>Kind=signature 時的問題簽章鍵，供跳轉到對應的問題分節；其餘 Kind 為 null</summary>
+    public string? IssueKey { get; set; }
+
+    /// <summary>signature｜volume-error｜volume-audit</summary>
+    public string Kind { get; set; } = "signature";
+}
+
+/// <summary>關聯告警的結構化平行資料（回饋十五輪 C-1），對應 Core 的 CorrelationAlertRef</summary>
+public class CorrelationAlertRefDto
+{
+    public string Text { get; set; } = string.Empty;
+    public string PatternId { get; set; } = string.Empty;
 }
 
 public class IssueDto

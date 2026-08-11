@@ -1,4 +1,5 @@
 using LogForesight.Web.Configuration;
+using LogForesight.Web.Services.Mail;
 using NLog;
 
 namespace LogForesight.Web.Services;
@@ -31,6 +32,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly SchedulerRunState _runState;
     private readonly AnalysisOrchestrator _orchestrator;
     private readonly NamedMutexGate _mutexGate;
+    private readonly MailNotificationService _mail;
 
     public SchedulerHostedService(
         WebAppSettings webSettings,
@@ -40,6 +42,7 @@ public class SchedulerHostedService : BackgroundService
         SchedulerRunState runState,
         AnalysisOrchestrator orchestrator,
         NamedMutexGate mutexGate,
+        MailNotificationService mail,
         IHostApplicationLifetime lifetime)
     {
         _webSettings = webSettings;
@@ -49,6 +52,7 @@ public class SchedulerHostedService : BackgroundService
         _runState = runState;
         _orchestrator = orchestrator;
         _mutexGate = mutexGate;
+        _mail = mail;
 
         // 站台關閉時比照「使用者手動停止」：優雅停在主機日邊界，不留執行中的殘留紀錄
         lifetime.ApplicationStopping.Register(() => _runState.TryCancel());
@@ -90,6 +94,11 @@ public class SchedulerHostedService : BackgroundService
 
     private async Task TickAsync()
     {
+        // 每日／每週定時彙總（回饋十五輪批次D）：獨立於排程分析窗口之外，即使排程本身未啟用
+        // 也照常檢查——通知的時間軸是「使用者想幾點收到摘要」，不是「排程窗口設在幾點」。
+        // 內部自行 try/catch 到底且成功寄送與否都不影響下方的排程判斷，緊接著跑不需要額外保護。
+        await _mail.CheckAndSendDailyWeeklyAsync(DateTime.Now);
+
         var options = _scheduleOptionsStore.Get();
 
         if (_runState.IsRunning)
@@ -176,6 +185,14 @@ public class SchedulerHostedService : BackgroundService
 
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
                         effectiveRequest.Trigger ?? "manual", DateTime.Now);
+
+                    // 郵件通知（回饋十五輪批次D）：執行摘要與高風險即時通知同一個掛載點，只在
+                    // 執行成功時判定——失敗的執行沒有新的分析結果可摘要，見 MailNotificationService
+                    // 文件的「即時」定義說明。內部自行 try/catch 到底，不影響本次執行的成敗判定。
+                    if (result.Success)
+                    {
+                        await _mail.NotifyAfterRunAsync(DateTime.Today, runCts.Token);
+                    }
                 }, MutexTimeout);
 
                 if (!acquired)

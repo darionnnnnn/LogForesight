@@ -7,7 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, withBusy, showDetailModal, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
@@ -803,22 +803,48 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
 }
 
 /**
- * 批次標「已知雜訊」後的治本提議：勾選的問題中有命中規則的，提議把那些規則在本主機抑制，
- * 同樣雜訊之後不再進報告（沿用舊逐列面板的抑制提議，改為批次一次確認）。
+ * 批次標「已知雜訊」後的治本提議：勾選的問題中有命中規則的，提議把那些規則在本主機抑制；
+ * 未命中規則的（Other 類）改提議簽章抑制（回饋十五輪 C-3，取代過去的靜默不提議——A1 指出
+ * 的核心缺口是這類問題過去完全沒有抑制掛載點，現在補上了，批次提議也該跟著涵蓋）。
  */
 async function offerBatchSuppression(issueKeys) {
     if (!canMaintainRules || !currentDetail) return;
 
     const keys = new Set(issueKeys);
-    const ruleIds = [...new Set(currentDetail.topIssues
-        .filter(i => keys.has(i.issueKey) && i.ruleId && !i.suppressed)
-        .map(i => i.ruleId))];
-    if (ruleIds.length === 0) return;
+    const flagged = currentDetail.topIssues.filter(i => keys.has(i.issueKey) && !i.suppressed);
+    const ruleIds = [...new Set(flagged.filter(i => i.ruleId).map(i => i.ruleId))];
+    const signatureIssues = flagged.filter(i => !i.ruleId);
+
+    if (ruleIds.length === 0 && signatureIssues.length === 0) return;
+
+    // 純 Other 類（無規則可抑制）：改提議簽章抑制，不再靜默不提議
+    if (ruleIds.length === 0) {
+        const ok = await confirmAction({
+            title: '一併建立簽章抑制？',
+            message: `已標為已知雜訊。這 ${signatureIssues.length} 個問題未命中任何規則，` +
+                `要不要改用簽章抑制在本主機（${currentDetail.hostName}）關閉這些訊號的通知？` +
+                '抑制後不再拉高風險、不再進報告（事件仍照常紀錄）。',
+            confirmText: '建立抑制',
+            confirmVariant: 'primary'
+        });
+        if (!ok) return;
+
+        const failed = await createSignatureSuppressions(signatureIssues);
+        if (failed === 0) toast(`已建立 ${signatureIssues.length} 條簽章抑制`, 'success');
+        else toast(`部分簽章抑制建立失敗（${failed}/${signatureIssues.length}），可到「規則維護」手動設定`, 'warning');
+        return;
+    }
+
+    const message = signatureIssues.length > 0
+        ? `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制命中的 ${ruleIds.length} 條規則` +
+          `（${ruleIds.join('、')}），並對另外 ${signatureIssues.length} 個未命中規則的問題建立簽章抑制？` +
+          '抑制後這些訊號不再拉高風險、不再進報告（事件仍照常紀錄）。'
+        : `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制命中的 ${ruleIds.length} 條規則` +
+          `（${ruleIds.join('、')}）？抑制後這些訊號不再拉高風險、不再進報告（事件仍照常紀錄）。`;
 
     const ok = await confirmAction({
         title: '一併建立抑制規則？',
-        message: `已標為已知雜訊。要不要在本主機（${currentDetail.hostName}）抑制命中的 ${ruleIds.length} 條規則` +
-            `（${ruleIds.join('、')}）？抑制後這些訊號不再拉高風險、不再進報告（事件仍照常紀錄）。`,
+        message,
         confirmText: '建立抑制',
         confirmVariant: 'primary'
     });
@@ -836,9 +862,35 @@ async function offerBatchSuppression(issueKeys) {
             failed++;
         }
     }
+    if (signatureIssues.length > 0) {
+        failed += await createSignatureSuppressions(signatureIssues);
+    }
 
-    if (failed === 0) toast(`已建立 ${ruleIds.length} 條抑制規則`, 'success');
-    else toast(`部分抑制規則建立失敗（${failed}/${ruleIds.length}），可到「規則維護」手動設定`, 'warning');
+    const total = ruleIds.length + signatureIssues.length;
+    if (failed === 0) toast(`已建立 ${total} 條抑制設定`, 'success');
+    else toast(`部分抑制設定建立失敗（${failed}/${total}），可到「規則維護」手動設定`, 'warning');
+}
+
+/** 對未命中規則的問題建立簽章抑制：issue.issueKey 與後端 IssueSignatureKey.For 同一套算法，
+ * 直接送出即可，不需要前端自己組鍵。回傳失敗筆數，供呼叫端彙整 toast。 */
+async function createSignatureSuppressions(issues) {
+    let failed = 0;
+    for (const issue of issues) {
+        try {
+            await api.post('/api/suppressions', {
+                targetType: 'Signature',
+                signatureKey: issue.issueKey,
+                targetLabel: issue.sourceEventLabel,
+                platform: currentDetail.hostOs,
+                host: currentDetail.hostName,
+                reason: '詳情頁批次標記已知雜訊',
+                days: null
+            }, { silent: true });
+        } catch {
+            failed++;
+        }
+    }
+    return failed;
 }
 
 /**
@@ -1305,57 +1357,243 @@ function sampleMessagesBody(messages) {
     return wrap;
 }
 
+/** 關聯模式的觸發條件說明（回饋十五輪 C-2），供 popover 用——與 Description 本身
+ * （已經顯示在畫面上）不重複，這裡講的是「什麼組合會觸發這個模式」，供事後核對。 */
+const CORRELATION_PATTERN_HINTS = {
+    'intrusion-chain': '觸發條件：同日大量登入失敗，加上帳號建立／提權操作。',
+    'brute-success': '觸發條件：同日大量登入失敗後，相同帳號或來源 IP 出現成功登入。',
+    'persistence': '觸發條件：帳號異動或攻擊嘗試，加上新服務／排程任務同日出現。',
+    'audit-tamper': '觸發條件：稽核記錄被清除或變更，且同日有其他安全事件。',
+    'priv-implant': '觸發條件：權限／特權異動，加上新服務／排程任務同日出現。',
+    'av-off-malware': '觸發條件：防毒防護被關閉，且同日出現惡意程式或攻擊訊號。',
+    'malware-persistence': '觸發條件：偵測到惡意程式，加上新服務／排程任務同日出現。',
+    'storage-chain': '觸發條件：兩種以上儲存層訊號（磁碟／NTFS／控制器）同日出現。',
+    'storage-crash': '觸發條件：儲存層錯誤，加上非預期關機同日出現。',
+    'hw-unstable': '觸發條件：WHEA 硬體錯誤，加上非預期重開同日出現。',
+    'crash-service-fail': '觸發條件：應用程式崩潰，加上服務異常終止同日出現。',
+    'crash-loop-resource': '觸發條件：服務高頻異常終止（≥100 次），加上系統資源耗盡同日出現。',
+    'time-skew-auth': '觸發條件：時間同步失敗，加上登入失敗同日出現。',
+    'xday-intrusion': '觸發條件：昨日大量登入失敗，今日出現帳號／權限／服務異動。',
+    'xday-storage': '觸發條件：儲存層錯誤連續兩日出現。',
+    'xday-av-off-malware': '觸發條件：昨日防護被關閉，今日偵測到惡意程式。',
+    'xday-brute-rdp': '觸發條件：昨日大量登入失敗的來源 IP，今日以遠端桌面成功登入同一 IP。',
+    'linux-ssh-brute-success': '觸發條件：同日大量 SSH 登入失敗後，相同帳號或來源 IP 出現成功登入。',
+    'linux-ssh-brute-uncertain': '觸發條件：同日大量 SSH 登入失敗與成功登入同時存在，但部分事件無法解析帳號／IP。'
+};
+
+const TREND_BASIS_HINT = '「可靠歷史」＝排除資料不完整日與該頻道未讀取日的歷史。' +
+    '簽章層基準＝該問題出現日的次數中位數；總量層（整體錯誤量／安全稽核事件量）基準＝非零日中位數。';
+
 /**
  * 關聯訊號與趨勢告警：這是**程式確定性比對**的結果，不是 AI 猜測。
  * console 用紅色🔗區塊呈現，Web 沿用同一套視覺語言。
+ *
+ * 回饋十五輪 C-1／C-2／C-4：有結構化 Ref 資料時做頁內導航＋模式說明 popover＋抑制出口；
+ * 舊紀錄（Refs 為空清單）降級回純文字條列，零破壞。
  */
 function renderAlerts(detail) {
     const container = document.getElementById('detail-alerts');
     container.replaceChildren();
 
-    if (detail.correlationAlerts.length === 0 && detail.trendAlerts.length === 0) {
+    const hasSuppressed = detail.suppressedTrendAlerts?.length > 0 || detail.suppressedCorrelationAlerts?.length > 0;
+    if (detail.correlationAlerts.length === 0 && detail.trendAlerts.length === 0 && !hasSuppressed) {
         renderEmpty(container, { title: '無關聯或趨勢訊號' });
         return;
     }
 
     if (detail.correlationAlerts.length > 0) {
-        const box = document.createElement('div');
-        box.className = 'alert alert-danger';
+        container.appendChild(renderCorrelationBox(detail));
+    }
+    if (detail.trendAlerts.length > 0) {
+        container.appendChild(renderTrendBox(detail));
+    }
+    if (hasSuppressed) {
+        container.appendChild(renderSuppressedAlertsBox(detail));
+    }
+}
 
-        const title = document.createElement('div');
-        title.className = 'fw-semibold mb-2';
-        title.textContent = '🔗 關聯訊號（程式確定性比對）';
-        box.appendChild(title);
+function renderCorrelationBox(detail) {
+    const box = document.createElement('div');
+    box.className = 'alert alert-danger';
 
-        const list = document.createElement('ul');
-        list.className = 'mb-0 ps-3 small';
-        for (const alert of detail.correlationAlerts) {
-            const item = document.createElement('li');
-            item.textContent = alert;
-            list.appendChild(item);
-        }
-        box.appendChild(list);
-        container.appendChild(box);
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-2';
+    title.textContent = '🔗 關聯訊號（程式確定性比對）';
+    box.appendChild(title);
+
+    const list = document.createElement('ul');
+    list.className = 'mb-0 ps-3 small';
+    const refs = detail.correlationAlertRefs ?? [];
+    for (const alert of detail.correlationAlerts) {
+        const ref = refs.find(r => r.text === alert);
+        list.appendChild(ref ? correlationAlertItem(ref) : plainAlertItem(alert));
+    }
+    box.appendChild(list);
+    return box;
+}
+
+function correlationAlertItem(ref) {
+    const item = document.createElement('li');
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+
+    const text = document.createElement('span');
+    text.textContent = ref.text;
+    item.appendChild(text);
+
+    const right = document.createElement('span');
+    right.className = 'd-flex align-items-center gap-1 flex-shrink-0';
+    const hint = CORRELATION_PATTERN_HINTS[ref.patternId];
+    if (hint) right.appendChild(helpIcon(hint, '關聯模式說明'));
+    if (canMaintainRules) {
+        right.appendChild(button('', {
+            variant: 'outline-danger', size: 'sm', icon: 'bell-slash', title: '抑制此關聯模式',
+            onClick: () => suppressCorrelationPattern(ref)
+        }));
+    }
+    item.appendChild(right);
+    return item;
+}
+
+function renderTrendBox(detail) {
+    const box = document.createElement('div');
+    box.className = 'alert alert-warning mb-0';
+
+    const title = document.createElement('div');
+    title.className = 'fw-semibold mb-2 d-flex align-items-center gap-1';
+    title.appendChild(document.createTextNode('頻率異常'));
+    title.appendChild(helpIcon(TREND_BASIS_HINT, '基準怎麼算'));
+    box.appendChild(title);
+
+    const list = document.createElement('ul');
+    list.className = 'mb-0 ps-3 small';
+    const refs = detail.trendAlertRefs ?? [];
+    for (const alert of detail.trendAlerts) {
+        const ref = refs.find(r => r.text === alert);
+        list.appendChild(ref ? trendAlertItem(ref) : plainAlertItem(alert));
+    }
+    box.appendChild(list);
+    return box;
+}
+
+function trendAlertItem(ref) {
+    const item = document.createElement('li');
+    item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
+
+    if (ref.kind === 'signature' && ref.issueKey) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'btn btn-link p-0 text-body text-start';
+        link.textContent = ref.text;
+        link.addEventListener('click', () => scrollToIssue(ref.issueKey));
+        item.appendChild(link);
+    } else {
+        const text = document.createElement('span');
+        text.textContent = ref.text;
+        item.appendChild(text);
     }
 
-    if (detail.trendAlerts.length > 0) {
-        const box = document.createElement('div');
-        box.className = 'alert alert-warning mb-0';
+    if (canMaintainRules && ref.kind !== 'signature') {
+        const volumeKind = ref.kind === 'volume-audit' ? 'audit' : 'error';
+        item.appendChild(button('', {
+            variant: 'outline-danger', size: 'sm', icon: 'bell-slash', title: '抑制此類告警（本主機）',
+            onClick: () => suppressVolumeAlert(volumeKind)
+        }));
+    }
+    return item;
+}
 
-        const title = document.createElement('div');
-        title.className = 'fw-semibold mb-2';
-        title.textContent = '頻率異常';
-        box.appendChild(title);
+function plainAlertItem(text) {
+    const item = document.createElement('li');
+    item.textContent = text;
+    return item;
+}
 
-        const list = document.createElement('ul');
-        list.className = 'mb-0 ps-3 small';
-        for (const alert of detail.trendAlerts) {
-            const item = document.createElement('li');
-            item.textContent = alert;
-            list.appendChild(item);
-        }
-        box.appendChild(list);
-        container.appendChild(box);
+/** 已抑制的告警（回饋十五輪 C-1）：抑制關的是「要不要吵」不是「要不要記」——收合呈現，
+ * 讓看得仔細的人知道「暫時關掉的東西其實還在發生」，不是被無聲吃掉。 */
+function renderSuppressedAlertsBox(detail) {
+    const box = document.createElement('div');
+    box.className = 'alert alert-secondary mb-0 mt-2';
+
+    const summary = document.createElement('button');
+    summary.type = 'button';
+    summary.className = 'btn btn-link p-0 text-body text-decoration-none fw-semibold';
+    const count = (detail.suppressedTrendAlerts?.length ?? 0) + (detail.suppressedCorrelationAlerts?.length ?? 0);
+    summary.textContent = `已抑制的告警 ${count} 項（通知已關閉，偵測與紀錄照常）`;
+
+    const list = document.createElement('ul');
+    list.className = 'mb-0 mt-2 ps-3 small d-none';
+    for (const text of [...(detail.suppressedCorrelationAlerts ?? []), ...(detail.suppressedTrendAlerts ?? [])]) {
+        list.appendChild(plainAlertItem(text));
+    }
+
+    summary.addEventListener('click', () => list.classList.toggle('d-none'));
+
+    box.append(summary, list);
+    return box;
+}
+
+/** 「類型分布」卡的頁內導航沿用（scrollToCategory）——趨勢告警的簽章鍵先反查所屬類別，
+ * 再捲到那個分節；找不到代表被嚴重度篩選隱藏了，同一套提示訊息。 */
+function scrollToIssue(issueKey) {
+    const issue = currentDetail?.topIssues.find(i => i.issueKey === issueKey);
+    if (!issue) {
+        toast('這個問題目前被嚴重度篩選隱藏了，請在上方放寬篩選。', 'info');
+        return;
+    }
+    scrollToCategory(issue.category);
+}
+
+async function suppressCorrelationPattern(ref) {
+    // 強警告＋必填原因（回饋十五輪 C-4）：此模式命中即判高風險日，抑制是影響面最大的一種，
+    // 誤用等於幫入侵/故障訊號噤聲——只在確認為已知誤報時使用。
+    const reason = await confirmActionWithReason({
+        title: '抑制此關聯模式？',
+        message: `此模式命中即為高風險日。抑制後本主機（${currentDetail.hostName}）此模式將不再拉高風險、` +
+            '不再通知——僅在確認為已知誤報（如既知的內部弱點掃描演練）時使用。',
+        confirmText: '確定抑制',
+        confirmVariant: 'danger'
+    });
+    if (!reason) return;
+
+    try {
+        await api.post('/api/suppressions', {
+            targetType: 'Correlation',
+            correlationPatternId: ref.patternId,
+            targetLabel: ref.text,
+            scope: 'Host',
+            host: currentDetail.hostName,
+            reason
+        });
+        toast('已抑制此關聯模式', 'success');
+        await load();
+    } catch {
+        // api.js 已以 toast 顯示錯誤
+    }
+}
+
+async function suppressVolumeAlert(volumeKind) {
+    const label = volumeKind === 'audit' ? '安全稽核事件量突增' : '整體錯誤量突增';
+    const reason = await confirmActionWithReason({
+        title: `抑制「${label}」？`,
+        message: `抑制後本主機（${currentDetail.hostName}）此類告警將不再拉高風險、不再通知，事件仍照常紀錄。`,
+        confirmText: '確定抑制',
+        confirmVariant: 'danger'
+    });
+    if (!reason) return;
+
+    try {
+        await api.post('/api/suppressions', {
+            targetType: 'Volume',
+            volumeKind,
+            targetLabel: label,
+            scope: 'Host',
+            host: currentDetail.hostName,
+            reason
+        });
+        toast(`已抑制${label}`, 'success');
+        await load();
+    } catch {
+        // api.js 已以 toast 顯示錯誤
     }
 }
 

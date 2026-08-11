@@ -1,6 +1,7 @@
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -9,12 +10,19 @@ namespace LogForesight.Tests;
 /// P0-3：<see cref="SystemSettingsService"/> 新增的 RunLogRetentionDays／AuditRetentionDays 欄位
 /// 走完整條 Update → Get 路徑（實測曾手改多處 wiring，這類機械式串接最容易漏一處）。
 /// </summary>
-public class SystemSettingsServiceTests
+public class SystemSettingsServiceTests : IDisposable
 {
     private readonly FakeSystemSettingsStore _store = new();
+    private readonly EfSqliteFixture _fx = new();
+    private readonly FakeSmtpMailSender _mailSender = new();
+
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private SystemSettingsService Create() =>
-        new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore());
+        new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
+                new MailNotifyStateStore(_fx.Blob("mail_notify_state"))));
 
     private static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14) => new()
@@ -535,5 +543,172 @@ public class SystemSettingsServiceTests
         request.BrandIconDataUri = "data:image/png;base64,!!!not-base64!!!";
 
         Assert.Throws<DomainException>(() => Create().Update(request));
+    }
+
+    // ── 回饋十五輪批次D：郵件通知設定（round-trip／密碼三態／驗證）────────────────
+
+    /// <summary>合格的郵件設定基準（啟用＋連線＋收件人齊備），測試只覆寫要驗的那一項</summary>
+    private static UpdateSystemSettingsRequest ValidMailRequest()
+    {
+        var request = ValidRequest();
+        request.MailEnabled = true;
+        request.SmtpServer = "smtp.corp.local";
+        request.SmtpPort = 587;
+        request.SmtpUseTls = true;
+        request.SmtpAccount = "notify@corp.local";
+        request.MailFrom = "logforesight@corp.local";
+        request.MailRecipients = new List<string> { "ops@corp.local" };
+        request.MailOnRunCompleted = true;
+        return request;
+    }
+
+    [Fact]
+    public void Update後_郵件設定走完整條UpdateGet路徑持久化()
+    {
+        var service = Create();
+        var request = ValidMailRequest();
+        request.MailNotifyHostOwners = true;
+        request.MailMinRiskLevel = "中";
+        request.MailDailyEnabled = true;
+        request.MailDailyTime = "09:30";
+        request.MailWeeklyEnabled = true;
+        request.MailWeeklyDayOfWeek = "Friday";
+        request.MailWeeklyTime = "17:00";
+        request.MailUrgentEnabled = true;
+        request.MailSubjectTemplate = "[{site}] {type}";
+        request.MailBodyIntro = "  各位好  ";
+
+        service.Update(request);
+
+        // 重讀確認落地（不是只有回傳值對）——這類機械式串接最容易漏一處（同本檔 P0-3 慣例）
+        var reread = service.Get();
+        Assert.True(reread.MailEnabled);
+        Assert.Equal("smtp.corp.local", reread.SmtpServer);
+        Assert.Equal(587, reread.SmtpPort);
+        Assert.True(reread.SmtpUseTls);
+        Assert.Equal("notify@corp.local", reread.SmtpAccount);
+        Assert.Equal("logforesight@corp.local", reread.MailFrom);
+        Assert.Equal(new[] { "ops@corp.local" }, reread.MailRecipients);
+        Assert.True(reread.MailNotifyHostOwners);
+        Assert.Equal("中", reread.MailMinRiskLevel);
+        Assert.True(reread.MailOnRunCompleted);
+        Assert.True(reread.MailDailyEnabled);
+        Assert.Equal("09:30", reread.MailDailyTime);
+        Assert.True(reread.MailWeeklyEnabled);
+        Assert.Equal("Friday", reread.MailWeeklyDayOfWeek);
+        Assert.Equal("17:00", reread.MailWeeklyTime);
+        Assert.True(reread.MailUrgentEnabled);
+        Assert.Equal("[{site}] {type}", reread.MailSubjectTemplate);
+        Assert.Equal("各位好", reread.MailBodyIntro);   // trim
+    }
+
+    [Fact]
+    public void 設定SMTP密碼_以CryptoHelper加密存放且DTO只回報已設定()
+    {
+        var service = Create();
+        var request = ValidMailRequest();
+        request.SmtpPassword = "smtp-secret";
+
+        var saved = service.Update(request);
+
+        var stored = _store.Get().SmtpPasswordEnc;
+        Assert.True(CryptoHelper.IsEncrypted(stored));
+        Assert.Equal("smtp-secret", CryptoHelper.Decrypt(stored));
+        Assert.True(saved.SmtpHasPassword);
+    }
+
+    /// <summary>密碼三態之二：留空＝沿用既有密碼，不能被一次「不小心留空」的儲存清掉（同 AI 金鑰語意）</summary>
+    [Fact]
+    public void 更新時SMTP密碼留空_沿用既有密碼不被清除()
+    {
+        var service = Create();
+        var withPassword = ValidMailRequest();
+        withPassword.SmtpPassword = "smtp-original";
+        service.Update(withPassword);
+        var encryptedBefore = _store.Get().SmtpPasswordEnc;
+
+        service.Update(ValidMailRequest());   // SmtpPassword 未帶
+
+        Assert.Equal(encryptedBefore, _store.Get().SmtpPasswordEnc);
+    }
+
+    [Fact]
+    public void ClearSmtpPassword為true時_清除密碼()
+    {
+        var service = Create();
+        var withPassword = ValidMailRequest();
+        withPassword.SmtpPassword = "smtp-to-clear";
+        service.Update(withPassword);
+
+        var clearRequest = ValidMailRequest();
+        clearRequest.ClearSmtpPassword = true;
+        var saved = service.Update(clearRequest);
+
+        Assert.Equal("", _store.Get().SmtpPasswordEnc);
+        Assert.False(saved.SmtpHasPassword);
+    }
+
+    [Fact]
+    public void Update_啟用郵件觸發但收件人為空_丟例外()
+    {
+        var request = ValidMailRequest();
+        request.MailRecipients = new List<string>();
+
+        Assert.Throws<DomainException>(() => Create().Update(request));
+    }
+
+    /// <summary>格式錯誤的位址放行落盤的話，排程觸發時建 MailAddress 才炸、又被 SendSafeAsync
+    /// 靜默吞掉——使用者以為通知設好了卻永遠收不到信，儲存當下就要擋</summary>
+    [Fact]
+    public void Update_收件人不是合法信箱格式_丟例外()
+    {
+        var request = ValidMailRequest();
+        request.MailRecipients = new List<string> { "這不是信箱" };
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("收件人", ex.Message);
+    }
+
+    [Fact]
+    public void Update_寄件人不是合法信箱格式_丟例外()
+    {
+        var request = ValidMailRequest();
+        request.MailFrom = "not-an-email";
+
+        var ex = Assert.Throws<DomainException>(() => Create().Update(request));
+        Assert.Contains("寄件人", ex.Message);
+    }
+
+    [Fact]
+    public void Update_每日摘要時刻格式不合法_丟例外()
+    {
+        var request = ValidMailRequest();
+        request.MailDailyEnabled = true;
+        request.MailDailyTime = "廿五點";
+
+        Assert.Throws<DomainException>(() => Create().Update(request));
+    }
+
+    [Fact]
+    public void Update_郵件標題模板留空時回退出廠值()
+    {
+        var request = ValidMailRequest();
+        request.MailSubjectTemplate = "   ";
+
+        var saved = Create().Update(request);
+
+        Assert.Equal(new SystemSettings().MailSubjectTemplate, saved.MailSubjectTemplate);
+    }
+
+    /// <summary>郵件未啟用時，連線與收件人都可以留空——「還沒設定」是合法狀態，不該被逼著先填假資料</summary>
+    [Fact]
+    public void Update_郵件未啟用時_連線欄位可全空()
+    {
+        var request = ValidRequest();   // Mail* 全部維持預設（未啟用、全空）
+
+        var saved = Create().Update(request);
+
+        Assert.False(saved.MailEnabled);
+        Assert.Empty(saved.MailRecipients);
     }
 }

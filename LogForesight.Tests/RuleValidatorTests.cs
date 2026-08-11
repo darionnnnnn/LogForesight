@@ -191,6 +191,11 @@ public class RuleValidatorTests
         Assert.Single(outcome.ShadowWarnings);
         Assert.Contains("specific", outcome.ShadowWarnings[0]);
         Assert.Contains("broad", outcome.ShadowWarnings[0]);
+        // 回饋十五輪 R1：警告文字不再指示使用者做 UI 上做不到的事（調整順序），
+        // 改講可行的解法——停用其中一條，或縮小比對範圍
+        Assert.DoesNotContain("調整順序", outcome.ShadowWarnings[0]);
+        Assert.Contains("停用", outcome.ShadowWarnings[0]);
+        Assert.Contains("本頁不支援調整規則順序", outcome.ShadowWarnings[0]);
     }
 
     [Fact]
@@ -431,6 +436,9 @@ public class RuleValidatorTests
         Assert.Single(outcome.ShadowWarnings);
         Assert.Contains("specific", outcome.ShadowWarnings[0]);
         Assert.Contains("broad", outcome.ShadowWarnings[0]);
+        // 回饋十五輪 R1：移除「把 X 移到 Y 之前」這個 UI 上做不到的選項，只留可行的解法
+        Assert.DoesNotContain("移到", outcome.ShadowWarnings[0]);
+        Assert.Contains("本頁不支援調整規則順序", outcome.ShadowWarnings[0]);
     }
 
     [Fact]

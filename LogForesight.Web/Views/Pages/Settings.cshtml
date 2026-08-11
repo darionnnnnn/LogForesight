@@ -8,6 +8,7 @@
     <li class="nav-item"><button class="nav-link" data-tab="ad" type="button">AD 驗證</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="analysis" type="button">分析參數</button></li>
     <li class="nav-item"><button class="nav-link" data-tab="retention" type="button">資料保留</button></li>
+    <li class="nav-item"><button class="nav-link" data-tab="mail" type="button">郵件通知</button></li>
     @* 外觀（docs/archive/FEEDBACK-10-PLAN.md §1）：放最後一個頁籤——找 logo／名稱的人會直覺點「外觀」，
        塞進「層級與顯示」反而找不到；擺最後則不動預設落地頁籤（層級與顯示仍是主要入口） *@
     <li class="nav-item"><button class="nav-link" data-tab="brand" type="button">外觀</button></li>
@@ -328,6 +329,163 @@
                     <input type="number" class="form-control" id="risky-event-retention-days" min="1" max="3650" required />
                 </div>
             </div>
+        </div>
+    </div>
+
+    @* 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：SMTP 連線＋收件人＋三路觸發開關。
+       版面比照「AD 驗證」區塊（連線設定＋折疊進階＋測試按鈕） *@
+    <div class="lf-card mb-3 d-none" data-panel="mail">
+        <div class="lf-card__header">
+            <h2 class="lf-card__title">郵件通知</h2>
+        </div>
+        <div class="lf-card__body">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="mail-enabled" />
+                <label class="form-check-label" for="mail-enabled">啟用郵件通知</label>
+                <div class="form-text">
+                    關閉時，下方三路觸發（執行摘要／每日／每週／高風險即時）全部不寄送；「測試寄信」不受此開關影響。
+                </div>
+            </div>
+
+            <div class="row g-3 mb-2">
+                <div class="col-md-6">
+                    <label for="smtp-server" class="form-label">SMTP 伺服器</label>
+                    <input type="text" class="form-control" id="smtp-server" placeholder="smtp.corp.local" />
+                </div>
+                <div class="col-md-3">
+                    <label for="smtp-port" class="form-label">Port</label>
+                    <input type="number" class="form-control" id="smtp-port" min="1" max="65535" />
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="smtp-use-tls" />
+                        <label class="form-check-label" for="smtp-use-tls">使用 TLS</label>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label for="smtp-account" class="form-label">SMTP 帳號（選填）</label>
+                    <input type="text" class="form-control" id="smtp-account" placeholder="留空＝匿名／不驗證" />
+                </div>
+                <div class="col-md-6">
+                    <label for="smtp-password" class="form-label">SMTP 密碼</label>
+                    <input type="password" class="form-control" id="smtp-password" autocomplete="new-password" placeholder="留空＝沿用既有密碼" />
+                    <div class="form-text" id="smtp-password-hint"></div>
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="smtp-password-clear" />
+                        <label class="form-check-label" for="smtp-password-clear">清除目前的 SMTP 密碼</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-2">
+                <div class="col-md-6">
+                    <label for="mail-from" class="form-label">寄件人</label>
+                    <input type="text" class="form-control" id="mail-from" placeholder="logforesight@corp.local" />
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="mail-recipients" class="form-label">收件人</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="一行一位，全域收件人，三路通知共用。「同時通知主機負責人」勾選時，高風險即時通知會額外加上該主機負責人的信箱。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <textarea class="form-control" id="mail-recipients" rows="3" placeholder="一行一位，例如：&#10;ops@corp.local"></textarea>
+            </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="mail-notify-host-owners" />
+                <label class="form-check-label" for="mail-notify-host-owners">同時通知主機負責人</label>
+            </div>
+
+            <hr />
+
+            <div class="mb-3">
+                <label for="mail-min-risk-level" class="form-label">摘要納入門檻</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="執行摘要與每日／每週彙總只納入達此風險等級以上的主機日；高風險即時通知固定只看「高」，不受此設定影響。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <select class="form-select" id="mail-min-risk-level" style="max-width: 12rem;">
+                    <option value="高">高</option>
+                    <option value="中">中以上</option>
+                    <option value="低">低以上</option>
+                </select>
+            </div>
+
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="mail-on-run-completed" />
+                <label class="form-check-label" for="mail-on-run-completed">排程／手動執行結束後寄執行摘要</label>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="mail-urgent-enabled" />
+                <label class="form-check-label" for="mail-urgent-enabled">高風險日即時通知</label>
+                <div class="form-text">不受下方每日／每週時刻限制；每台主機同一天只寄一次。</div>
+            </div>
+
+            <div class="row g-3 align-items-end mb-2">
+                <div class="col-auto">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="mail-daily-enabled" />
+                        <label class="form-check-label" for="mail-daily-enabled">每日摘要</label>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <label for="mail-daily-time" class="form-label small mb-1">時刻</label>
+                    <input type="time" class="form-control form-control-sm" id="mail-daily-time" />
+                </div>
+            </div>
+            <div class="row g-3 align-items-end mb-3">
+                <div class="col-auto">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="mail-weekly-enabled" />
+                        <label class="form-check-label" for="mail-weekly-enabled">每週摘要</label>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <label for="mail-weekly-day" class="form-label small mb-1">星期</label>
+                    <select class="form-select form-select-sm" id="mail-weekly-day">
+                        <option value="Monday">星期一</option>
+                        <option value="Tuesday">星期二</option>
+                        <option value="Wednesday">星期三</option>
+                        <option value="Thursday">星期四</option>
+                        <option value="Friday">星期五</option>
+                        <option value="Saturday">星期六</option>
+                        <option value="Sunday">星期日</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label for="mail-weekly-time" class="form-label small mb-1">時刻</label>
+                    <input type="time" class="form-control form-control-sm" id="mail-weekly-time" />
+                </div>
+            </div>
+
+            <hr />
+
+            <div class="mb-3">
+                <label for="mail-subject-template" class="form-label">標題模板</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="可用變數：{site}＝品牌名稱、{host}＝主機、{date}＝日期、{risk}＝風險等級、{type}＝通知種類、{summary}＝摘要文字。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <input type="text" class="form-control lf-mono" id="mail-subject-template" placeholder="[{site}] {type}：{date} {summary}" />
+            </div>
+            <div class="mb-3">
+                <label for="mail-body-intro" class="form-label">信件開頭（選填）</label>
+                <textarea class="form-control" id="mail-body-intro" rows="2" placeholder="純文字，會加在信件內容最前面"></textarea>
+            </div>
+
+            <hr />
+
+            <h3 class="h6">測試寄信</h3>
+            <p class="text-muted small">
+                用上方表單目前填的值試寄一封信（尚未儲存也可以測）；密碼欄留空時 fallback 已儲存的密碼。
+            </p>
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="mail-test-btn">測試寄信</button>
+            </div>
+            <div id="mail-test-result"></div>
         </div>
     </div>
 

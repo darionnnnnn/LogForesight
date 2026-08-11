@@ -7,7 +7,7 @@
     <span>規則儲存前會自動驗證，不合格不會寫入。</span>
     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
             data-bs-title="關於規則維護"
-            data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。">
+            data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。">
         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
     </button>
 </div>
@@ -70,6 +70,7 @@
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">規則 <span class="text-muted small" id="rule-count"></span></h2>
+            <span class="text-muted small d-none" id="rule-sort-hint">目前排序非比對順序，比對以「順序」欄為準</span>
         </div>
         <div class="lf-card__body p-0" id="rule-list"></div>
         <div class="lf-card__body pt-0">
@@ -84,6 +85,10 @@
             <div class="lf-toolbar__group">
                 <span class="lf-toolbar__group-label">平台</span>
                 <div class="lf-toolbar__chips" id="suppression-platform-chips"></div>
+            </div>
+            <div class="lf-toolbar__group">
+                <span class="lf-toolbar__group-label">目標</span>
+                <div class="lf-toolbar__chips" id="suppression-target-type-chips"></div>
             </div>
         </div>
     </div>
@@ -110,6 +115,22 @@
             <form id="rule-form" novalidate>
                 <div class="modal-body">
                     <div id="rule-validation"></div>
+
+                    @* 以此為範本建立自訂規則時顯示（回饋十五輪 R4）：官方建議路徑「停用原規則＋以它為
+                       範本複製」在 UI 上被拆成兩個獨立操作，順序錯了（先複製沒先停用）就會撞見遮蔽
+                       警告卻無從調整順序——這個勾選框把正確順序內建進同一次操作。 *@
+                    <div class="alert alert-secondary d-none" id="rule-template-disable-original-wrap">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="rule-template-disable-original" checked />
+                            <label class="form-check-label" for="rule-template-disable-original">
+                                同時停用原規則 <strong id="rule-template-source-id"></strong>
+                            </label>
+                        </div>
+                        <div class="form-text mb-0">
+                            停用後原規則保留可隨時恢復；不停用的話新規則會被原規則遮蔽而不會生效。
+                            若剛剛點擊「驗證」看到遮蔽警告，儲存後會自動解決，不需要手動處理。
+                        </div>
+                    </div>
 
                     <div class="row g-3">
                         <div class="col-md-6">
@@ -307,10 +328,8 @@
                         </div>
                         <div class="col-md-8">
                             <div id="suppress-host-wrap">
-                                <label for="suppress-host" class="form-label">主機 <span class="text-danger">*</span></label>
-                                <select class="form-select" id="suppress-host">
-                                    <option value="">請選擇主機…</option>
-                                </select>
+                                <label class="form-label">主機 <span class="text-danger">*</span></label>
+                                <div id="suppress-host-select"></div>
                             </div>
                             <div id="suppress-group-wrap" class="d-none">
                                 <label for="suppress-group" class="form-label">主機群組 <span class="text-danger">*</span></label>

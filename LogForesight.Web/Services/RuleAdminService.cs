@@ -61,8 +61,32 @@ public class RuleAdminService
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
         var groupNames = LoadGroupNames();
+        var matchOrderByRuleId = ComputeMatchOrders(content.Rules);
 
-        return content.Rules.Select(rule => ToDto(rule, seeds, suppressions, content.SeedVersion, groupNames)).ToList();
+        return content.Rules.Select(rule =>
+            ToDto(rule, seeds, suppressions, content.SeedVersion, groupNames, matchOrderByRuleId[rule.Id])).ToList();
+    }
+
+    /// <summary>
+    /// 比對順序（回饋十五輪 B-1）：FindRule／FindLinuxRule 依清單順序取第一個命中的規則，
+    /// 這是規則系統最重要的語意，過去畫面上完全看不到、也無從調整——使用者無法判斷自己
+    /// 有沒有踩到遮蔽問題。這裡算出「同平台規則在儲存清單中的序位」（1-based，含停用規則，
+    /// 順序是清單事實，停用只是不參與比對）供清單頁顯示為唯讀欄，Windows／Linux 分開計數
+    /// （FindRule／FindLinuxRule 是兩套獨立比對邏輯，順序互不影響）。GroupBy 保留原始清單內的
+    /// 相對順序（LINQ 的既有保證），這裡不需要額外排序。
+    /// </summary>
+    private static Dictionary<string, int> ComputeMatchOrders(List<KnownIssueRule> rules)
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var platformGroup in rules.GroupBy(r => r.Platform, StringComparer.OrdinalIgnoreCase))
+        {
+            int order = 1;
+            foreach (var rule in platformGroup)
+            {
+                result[rule.Id] = order++;
+            }
+        }
+        return result;
     }
 
     /// <summary>群組 Id → 名稱，供抑制 DTO 帶出可讀名稱用。一次整份撈出避免每筆抑制各查一次 store。</summary>
@@ -264,11 +288,13 @@ public class RuleAdminService
         var seeds = _seeds.GetAll().ToDictionary(s => s.RuleId, StringComparer.OrdinalIgnoreCase);
         var suppressions = _suppressions.LoadAll();
         var groupNames = LoadGroupNames();
+        // 回復預設只換內容不換位置，Current／Seed 兩側是同一條規則的順序
+        var matchOrder = ComputeMatchOrders(content.Rules).GetValueOrDefault(current.Id);
 
         return new RuleRestorePreviewDto
         {
-            Current = ToDto(current, seeds, suppressions, content.SeedVersion, groupNames),
-            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion, groupNames),
+            Current = ToDto(current, seeds, suppressions, content.SeedVersion, groupNames, matchOrder),
+            Seed = ToDto(seedRule, seeds, suppressions, content.SeedVersion, groupNames, matchOrder),
             Differences = Diff(current, seedRule)
         };
     }
@@ -377,17 +403,82 @@ public class RuleAdminService
         };
     }
 
+    /// <summary>既有進入點（POST /api/rules/{ruleId}/suppressions）：RuleId 來自路由，內部委派到
+    /// 統一的 <see cref="AddSuppression(AddSuppressionRequest)"/>（回饋十五輪 A-6），行為與改版前逐位相同。</summary>
     public void AddSuppression(string ruleId, AddSuppressionRequest request)
     {
-        var content = LoadContent();
-        if (!content.Rules.Any(r => string.Equals(r.Id, ruleId, StringComparison.OrdinalIgnoreCase)))
-            throw DomainException.NotFound("找不到這條規則。");
+        request.TargetType = SuppressionTargetTypes.Rule;
+        request.RuleId = ruleId;
+        AddSuppression(request);
+    }
 
+    /// <summary>
+    /// 統一的抑制建立入口（回饋十五輪 A-6）：四型（Rule／Signature／Correlation／Volume，見
+    /// <see cref="SuppressionTargetTypes"/>）共用同一套 Scope 處理與到期語意，差別只在
+    /// 「比對什麼」與各自的必填驗證——Rule 沿用既有規則存在檢查；Signature／Correlation 需要
+    /// 呼叫端帶入人話標籤（伺服器端沒有現成的簽章/模式→人話對照表，前端當下手上有問題描述文字）；
+    /// Volume 的標籤固定二選一，留空由伺服器補上。
+    /// </summary>
+    public void AddSuppression(AddSuppressionRequest request)
+    {
+        if (!SuppressionTargetTypes.IsValid(request.TargetType))
+            throw DomainException.Validation($"不合法的抑制目標型別「{request.TargetType}」。");
         if (string.IsNullOrWhiteSpace(request.Reason))
             throw DomainException.Validation("請說明抑制原因——沒有原因的抑制日後沒人知道能不能解除。");
-
         if (!SuppressionScopes.IsValid(request.Scope))
             throw DomainException.Validation($"不合法的抑制範圍「{request.Scope}」。");
+
+        var ruleId = "";
+        string? signatureKey = null;
+        string? correlationPatternId = null;
+        string? volumeKind = null;
+        string? targetLabel = null;
+        string? platform = null;
+
+        switch (request.TargetType)
+        {
+            case SuppressionTargetTypes.Rule:
+                if (string.IsNullOrWhiteSpace(request.RuleId))
+                    throw DomainException.Validation("請指定要抑制的規則。");
+                var content = LoadContent();
+                var rule = content.Rules.FirstOrDefault(r => string.Equals(r.Id, request.RuleId, StringComparison.OrdinalIgnoreCase))
+                           ?? throw DomainException.NotFound("找不到這條規則。");
+                ruleId = request.RuleId.Trim();
+                platform = rule.Platform;
+                break;
+
+            case SuppressionTargetTypes.Signature:
+                if (string.IsNullOrWhiteSpace(request.SignatureKey))
+                    throw DomainException.Validation("缺少要抑制的問題簽章。");
+                if (string.IsNullOrWhiteSpace(request.TargetLabel))
+                    throw DomainException.Validation("缺少抑制目標的顯示名稱。");
+                signatureKey = request.SignatureKey.Trim();
+                targetLabel = request.TargetLabel.Trim();
+                platform = string.IsNullOrWhiteSpace(request.Platform) ? WebHost.OsWindows : request.Platform;
+                break;
+
+            case SuppressionTargetTypes.Correlation:
+                if (string.IsNullOrWhiteSpace(request.CorrelationPatternId) || !CorrelationPatternIds.IsValid(request.CorrelationPatternId))
+                    throw DomainException.Validation("不合法的關聯模式。");
+                if (string.IsNullOrWhiteSpace(request.TargetLabel))
+                    throw DomainException.Validation("缺少抑制目標的顯示名稱。");
+                correlationPatternId = request.CorrelationPatternId;
+                targetLabel = request.TargetLabel.Trim();
+                // Linux 模式 Id 統一 "linux-" 前綴（見 CorrelationPatternIds），其餘皆 Windows——
+                // 平台只影響清單頁篩選，比對本身不看這個欄位
+                platform = correlationPatternId.StartsWith("linux-", StringComparison.OrdinalIgnoreCase)
+                    ? WebHost.OsLinux : WebHost.OsWindows;
+                break;
+
+            default: // Volume
+                if (string.IsNullOrWhiteSpace(request.VolumeKind) || !VolumeKinds.IsValid(request.VolumeKind))
+                    throw DomainException.Validation("不合法的總量類別。");
+                volumeKind = request.VolumeKind;
+                targetLabel = string.IsNullOrWhiteSpace(request.TargetLabel)
+                    ? (request.VolumeKind == VolumeKinds.Audit ? "安全稽核事件量突增" : "整體錯誤量突增")
+                    : request.TargetLabel.Trim();
+                break;
+        }
 
         var host = "";
         long? hostGroupId = null;
@@ -417,11 +508,12 @@ public class RuleAdminService
         }
 
         // ISuppressionStore 的介面是整份載入/寫回（見其註解），這裡沿用同一慣例做 upsert：
-        // (RuleId, Scope, 範圍目標) 是天然的複合鍵，同一組覆寫而不是累積多筆——
-        // Site 範圍沒有「目標」可比對，同規則同 Scope=Site 已經是唯一鍵。
+        // (TargetType, 目標欄位, Scope, 範圍目標) 是天然的複合鍵，同一組覆寫而不是累積多筆——
+        // Site 範圍沒有「目標」可比對，同目標同 Scope=Site 已經是唯一鍵。
         var all = _suppressions.LoadAll();
         all.RemoveAll(s =>
-            string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase) &&
+            s.TargetType == request.TargetType &&
+            TargetMatches(s, request.TargetType, ruleId, signatureKey, correlationPatternId, volumeKind) &&
             string.Equals(s.Scope, request.Scope, StringComparison.OrdinalIgnoreCase) &&
             (request.Scope switch
             {
@@ -432,7 +524,13 @@ public class RuleAdminService
 
         all.Add(new RuleSuppression
         {
+            TargetType = request.TargetType,
             RuleId = ruleId,
+            SignatureKey = signatureKey,
+            CorrelationPatternId = correlationPatternId,
+            VolumeKind = volumeKind,
+            TargetLabel = targetLabel,
+            Platform = platform,
             Scope = request.Scope,
             Host = host,
             HostGroupId = hostGroupId,
@@ -444,24 +542,42 @@ public class RuleAdminService
 
         _suppressions.SaveAll(all);
 
+        var targetDescription = request.TargetType switch
+        {
+            SuppressionTargetTypes.Rule => $"規則 {ruleId}",
+            SuppressionTargetTypes.Signature => $"問題簽章「{targetLabel}」",
+            SuppressionTargetTypes.Correlation => $"關聯模式「{targetLabel}」",
+            _ => $"總量告警「{targetLabel}」"
+        };
         _audit.Record(
             action: AuditActions.SuppressAdd,
-            summary: $"抑制規則 {ruleId} 於{scopeText}的告警" +
+            summary: $"抑制{targetDescription}於{scopeText}的告警" +
                      (request.Days.HasValue ? $"（{request.Days} 天後到期）" : "（永久，直到手動解除）") +
                      $"：{request.Reason}。抑制只關掉通知與風險升級，事件仍照常聚合與紀錄",
-            targetKind: "rule",
-            targetId: ruleId,
-            detail: new { request.Scope, host, hostGroupId, request.Reason, request.Days });
+            targetKind: request.TargetType.ToLowerInvariant(),
+            targetId: ruleId.Length > 0 ? ruleId : (signatureKey ?? correlationPatternId ?? volumeKind ?? ""),
+            detail: new { request.TargetType, ruleId, signatureKey, correlationPatternId, volumeKind, request.Scope, host, hostGroupId, request.Reason, request.Days });
     }
 
-    public void RemoveSuppression(string ruleId, string scope, string? host, long? hostGroupId)
+    /// <summary>既有進入點（DELETE /api/rules/{ruleId}/suppressions）：內部委派到統一的
+    /// <see cref="RemoveSuppression(string,string?,string?,string?,string?,string,string?,long?)"/>，
+    /// 行為與改版前逐位相同。</summary>
+    public void RemoveSuppression(string ruleId, string scope, string? host, long? hostGroupId) =>
+        RemoveSuppression(SuppressionTargetTypes.Rule, ruleId, null, null, null, scope, host, hostGroupId);
+
+    /// <summary>統一的抑制解除入口（回饋十五輪 A-6）：四型共用，目標欄位依 targetType 只認對應的一個。</summary>
+    public void RemoveSuppression(string targetType, string? ruleId, string? signatureKey,
+        string? correlationPatternId, string? volumeKind, string scope, string? host, long? hostGroupId)
     {
+        if (!SuppressionTargetTypes.IsValid(targetType))
+            throw DomainException.Validation($"不合法的抑制目標型別「{targetType}」。");
         if (!SuppressionScopes.IsValid(scope))
             throw DomainException.Validation($"不合法的抑制範圍「{scope}」。");
 
         var all = _suppressions.LoadAll();
         var removed = all.RemoveAll(s =>
-            string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase) &&
+            s.TargetType == targetType &&
+            TargetMatches(s, targetType, ruleId ?? "", signatureKey, correlationPatternId, volumeKind) &&
             string.Equals(s.Scope, scope, StringComparison.OrdinalIgnoreCase) &&
             (scope switch
             {
@@ -480,12 +596,39 @@ public class RuleAdminService
             SuppressionScopes.Group => $"主機群組（Id={hostGroupId}）",
             _ => "全站"
         };
+        var targetDescription = targetType switch
+        {
+            SuppressionTargetTypes.Rule => $"規則 {ruleId}",
+            SuppressionTargetTypes.Signature => "問題簽章",
+            SuppressionTargetTypes.Correlation => "關聯模式",
+            _ => "總量告警"
+        };
         _audit.Record(
             action: AuditActions.SuppressRemove,
-            summary: $"解除規則 {ruleId} 於{scopeText}的抑制，恢復告警",
-            targetKind: "rule",
-            targetId: ruleId);
+            summary: $"解除{targetDescription}於{scopeText}的抑制，恢復告警",
+            targetKind: targetType.ToLowerInvariant(),
+            targetId: ruleId ?? signatureKey ?? correlationPatternId ?? volumeKind ?? "");
     }
+
+    /// <summary>抑制項目的目標欄位是否對得上——四型各自比對不同欄位，Add 的 upsert 去重與
+    /// Remove 的定位共用同一套判斷，避免兩處各寫一份日後漂移。</summary>
+    private static bool TargetMatches(RuleSuppression s, string targetType, string ruleId,
+        string? signatureKey, string? correlationPatternId, string? volumeKind) => targetType switch
+    {
+        SuppressionTargetTypes.Rule => string.Equals(s.RuleId, ruleId, StringComparison.OrdinalIgnoreCase),
+        SuppressionTargetTypes.Signature => string.Equals(s.SignatureKey, signatureKey, StringComparison.OrdinalIgnoreCase),
+        SuppressionTargetTypes.Correlation => string.Equals(s.CorrelationPatternId, correlationPatternId, StringComparison.OrdinalIgnoreCase),
+        _ => string.Equals(s.VolumeKind, volumeKind, StringComparison.OrdinalIgnoreCase)
+    };
+
+    /// <summary>範圍寬度排序權重（回饋十五輪 R3）：數字越小越寬——Site 影響全站、Group 影響一批
+    /// 主機、Host 只影響單台。規則列的抑制徽章代表筆用這個排序挑「最該讓人注意」的那一筆。</summary>
+    private static int ScopeWidthRank(string scope) => scope switch
+    {
+        SuppressionScopes.Site => 0,
+        SuppressionScopes.Group => 1,
+        _ => 2 // Host
+    };
 
     // ── 內部 ─────────────────────────────────────────────────────────────────
 
@@ -625,15 +768,23 @@ public class RuleAdminService
         IReadOnlyDictionary<string, RuleSeedSnapshot> seeds,
         List<RuleSuppression> suppressions,
         int currentSeedVersion,
-        IReadOnlyDictionary<long, string> groupNames)
+        IReadOnlyDictionary<long, string> groupNames,
+        int matchOrder)
     {
         var isBuiltin = string.Equals(rule.Origin, "builtin", StringComparison.OrdinalIgnoreCase);
         seeds.TryGetValue(rule.Id, out var snapshot);
 
-        // 規則清單頁沒有「檢視中的主機」脈絡，這裡沿用既有簡化：同一規則若有多筆抑制
-        // （例如同時有 Host 級與 Group 級），只取第一筆代表性顯示徽章；完整清單見「告警抑制」分頁的 GetSuppressions()
-        var suppression = suppressions.FirstOrDefault(s =>
-            string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase));
+        // 規則清單頁沒有「檢視中的主機」脈絡，代表筆改採「最寬範圍優先」（回饋十五輪 R3）：
+        // 同一規則若同時有 Host 級與 Site 級抑制，只顯示 Host 那筆會讓使用者誤以為只抑制了
+        // 一台主機，實際上早就全站噤聲——顯示最寬範圍的那筆才不會說謊（同寬度取最早建立的）。
+        // TargetType==Rule 是刻意明寫的（回饋十五輪 A）：非 Rule 目標的 RuleId 恆為空字串，
+        // 與任何真實規則 Id 都不會相等，本來就不會誤配對——這裡明寫只是不依賴這個巧合。
+        var matchingSuppressions = suppressions
+            .Where(s => s.TargetType == SuppressionTargetTypes.Rule && string.Equals(s.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => ScopeWidthRank(s.Scope))
+            .ThenBy(s => s.CreatedAt)
+            .ToList();
+        var suppression = matchingSuppressions.FirstOrDefault();
 
         return new RuleDto
         {
@@ -641,6 +792,7 @@ public class RuleAdminService
             Origin = rule.Origin,
             Enabled = rule.Enabled,
             Platform = rule.Platform,
+            MatchOrder = matchOrder,
             SourcePattern = rule.SourcePattern,
             EventIds = rule.EventIds.ToList(),
             MatchAllEventIds = rule.MatchAllEventIds,
@@ -662,14 +814,22 @@ public class RuleAdminService
             SeedHasNewerVersion = snapshot != null && snapshot.SeedVersion > currentSeedVersion,
             CanRestore = isBuiltin && snapshot != null,
             CanDelete = !isBuiltin,
-            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform, groupNames)
+            Suppression = suppression == null ? null : ToSuppressionDto(suppression, rule.Platform, groupNames),
+            SuppressionCount = matchingSuppressions.Count,
+            // 前 3 筆供徽章 tooltip 列出（回饋十五輪 R3）；其餘筆數畫面只顯示「見『告警抑制』分頁」
+            SuppressionPreview = matchingSuppressions.Take(3).Select(s => ToSuppressionDto(s, rule.Platform, groupNames)).ToList()
         };
     }
 
     private static RuleSuppressionDto ToSuppressionDto(
-        RuleSuppression suppression, string platform, IReadOnlyDictionary<long, string> groupNames) => new()
+        RuleSuppression suppression, string fallbackRulePlatform, IReadOnlyDictionary<long, string> groupNames) => new()
     {
         RuleId = suppression.RuleId,
+        TargetType = suppression.TargetType,
+        SignatureKey = suppression.SignatureKey,
+        CorrelationPatternId = suppression.CorrelationPatternId,
+        VolumeKind = suppression.VolumeKind,
+        TargetLabel = suppression.TargetLabel,
         Scope = suppression.Scope,
         Host = suppression.Host,
         HostGroupId = suppression.HostGroupId,
@@ -679,6 +839,8 @@ public class RuleAdminService
         Reason = suppression.Reason,
         ExpiresAt = suppression.ExpiresAt,
         IsExpired = suppression.ExpiresAt.HasValue && suppression.ExpiresAt.Value.Date < DateTime.Today,
-        Platform = platform
+        // Rule 目標由呼叫端傳入規則反查到的平台；其餘三型的平台在建立時就記錄在 suppression 本身
+        // （見 AddSuppression），這裡直接讀，不需要（也讀不到）規則表反查
+        Platform = suppression.TargetType == SuppressionTargetTypes.Rule ? fallbackRulePlatform : suppression.Platform
     };
 }

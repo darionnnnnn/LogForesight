@@ -272,8 +272,9 @@ public static class RuleValidator
                 }
 
                 warnings.Add($"規則 {later.Id} 被排在前面的規則 {earlier.Id} 遮蔽，永遠不會命中" +
-                             $"（{earlier.Id} 的 SourcePattern「{earlier.SourcePattern}」與 EventIds 已涵蓋 {later.Id}），" +
-                             "請調整順序或縮小其中一條的比對範圍");
+                             $"（{earlier.Id} 的 SourcePattern「{earlier.SourcePattern}」與 EventIds 已涵蓋 {later.Id}）。" +
+                             $"解法：停用其中一條（建議停用 {earlier.Id} 並以它為範本建立更精確的自訂規則），" +
+                             $"或縮小 {earlier.Id} 的比對範圍使兩者不重疊。本頁不支援調整規則順序，順序由建立先後決定。");
                 break;
             }
         }
@@ -320,8 +321,8 @@ public static class RuleValidator
                 warnings.Add($"規則 {later.Id} 被排在前面的規則 {earlier.Id} 遮蔽，永遠不會命中" +
                              $"（{earlier.Id} 的 ProgramPattern「{earlier.ProgramPattern}」不篩訊息，" +
                              $"依前綴比對已涵蓋 {later.Id} 的「{later.ProgramPattern}」）。" +
-                             $"解法二選一：把 {later.Id} 移到 {earlier.Id} 之前；" +
-                             $"或幫 {earlier.Id} 加上 MessagePatterns，縮小到只比對它自己的訊息內容。");
+                             $"解法：幫 {earlier.Id} 加上 MessagePatterns，縮小到只比對它自己的訊息內容；" +
+                             $"或停用其中一條。本頁不支援調整規則順序，順序由建立先後決定。");
                 break;
             }
         }

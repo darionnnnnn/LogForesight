@@ -11,6 +11,13 @@ public class RuleDto
     /// <summary>'windows'（預設）| 'linux'——決定下面用哪組比對欄位（docs/LINUX-RULES.md）</summary>
     public string Platform { get; set; } = "windows";
 
+    /// <summary>
+    /// 比對順序（回饋十五輪 B-1）：同平台規則在儲存清單中的序位（1-based，含停用規則）——
+    /// FindRule／FindLinuxRule 依清單順序取第一個命中的規則，這是唯讀顯示值，本頁不支援調整
+    /// （新規則一律加在最後，見 RuleAdminService 的 Save 邏輯）。
+    /// </summary>
+    public int MatchOrder { get; set; }
+
     public string SourcePattern { get; set; } = string.Empty;
     public List<int> EventIds { get; set; } = new();
     public bool MatchAllEventIds { get; set; }
@@ -48,8 +55,18 @@ public class RuleDto
     /// <summary>true = 可刪除（僅 custom 規則）</summary>
     public bool CanDelete { get; set; }
 
-    /// <summary>本機對此規則生效中的抑制設定</summary>
+    /// <summary>本機對此規則生效中的抑制設定——多筆並存時取「最寬範圍優先」的代表筆
+    /// （回饋十五輪 R3，見 RuleAdminService.ScopeWidthRank），不是任意第一筆。</summary>
     public RuleSuppressionDto? Suppression { get; set; }
+
+    /// <summary>這條規則目前生效中的抑制筆數。1 筆時就是 <see cref="Suppression"/> 本身；
+    /// 大於 1 筆代表同時有多個範圍在抑制這條規則（如 Host＋Site 並存），畫面徽章需要誠實
+    /// 顯示「已抑制 ×N」而不是讓人誤以為只抑制了一台。</summary>
+    public int SuppressionCount { get; set; }
+
+    /// <summary>抑制徽章 tooltip 用的前 3 筆明細（已按 <see cref="Suppression"/> 同一套「最寬範圍優先」
+    /// 排序）；筆數更多時畫面提示「其餘 N 筆見『告警抑制』分頁」。</summary>
+    public List<RuleSuppressionDto> SuppressionPreview { get; set; } = new();
 }
 
 public class SaveRuleRequest
@@ -119,6 +136,21 @@ public class RuleSuppressionDto
 {
     public string RuleId { get; set; } = string.Empty;
 
+    /// <summary>Rule（預設）｜Signature｜Correlation｜Volume（回饋十五輪 A，見 SuppressionTargetTypes）</summary>
+    public string TargetType { get; set; } = "Rule";
+
+    /// <summary>TargetType=Signature 時的簽章鍵；其餘為 null</summary>
+    public string? SignatureKey { get; set; }
+
+    /// <summary>TargetType=Correlation 時的關聯模式 Id；其餘為 null</summary>
+    public string? CorrelationPatternId { get; set; }
+
+    /// <summary>TargetType=Volume 時的總量類別（error｜audit）；其餘為 null</summary>
+    public string? VolumeKind { get; set; }
+
+    /// <summary>非 Rule 目標的人話標籤，畫面直接顯示；TargetType=Rule 時為 null（用 RuleId 查）</summary>
+    public string? TargetLabel { get; set; }
+
     /// <summary>Host（預設）｜Group｜Site（回饋十三輪 F，見 SuppressionScopes）</summary>
     public string Scope { get; set; } = "Host";
 
@@ -135,13 +167,40 @@ public class RuleSuppressionDto
     public DateTime? ExpiresAt { get; set; }
     public bool IsExpired { get; set; }
 
-    /// <summary>所屬規則的平台（'windows'/'linux'），由 RuleId 反查帶出——
+    /// <summary>平台（'windows'/'linux'）：TargetType=Rule 時由 RuleId 反查帶出；Signature／
+    /// Correlation 由建立時記錄／模式 Id 推導；Volume 不分平台，恆為 null——
     /// 抑制清單依平台篩選、「抑制此規則」的主機下拉也依此過濾（docs/LINUX-RULES.md §5.1）</summary>
-    public string Platform { get; set; } = "windows";
+    public string? Platform { get; set; } = "windows";
 }
 
 public class AddSuppressionRequest
 {
+    /// <summary>Rule（預設，對應既有規則抑制路徑）｜Signature｜Correlation｜Volume
+    /// （回饋十五輪 A，見 SuppressionTargetTypes）</summary>
+    public string TargetType { get; set; } = "Rule";
+
+    /// <summary>TargetType=Rule 時必填；經 POST /api/rules/{ruleId}/suppressions 呼叫時
+    /// 由路由參數帶入，不需要在 body 重複填寫</summary>
+    public string? RuleId { get; set; }
+
+    /// <summary>TargetType=Signature 時必填（IssueSignatureKey.For 產生的鍵，由前端從
+    /// 問題的 LogName/Source/EventId/EntryType 組出）</summary>
+    public string? SignatureKey { get; set; }
+
+    /// <summary>TargetType=Correlation 時必填，須為已知模式 Id（CorrelationPatternIds.All 之一）</summary>
+    public string? CorrelationPatternId { get; set; }
+
+    /// <summary>TargetType=Volume 時必填（error｜audit，見 VolumeKinds）</summary>
+    public string? VolumeKind { get; set; }
+
+    /// <summary>非 Rule 目標的人話標籤，管理頁直接顯示。Signature／Correlation 建議由前端帶入
+    /// （前端當下有問題描述文字）；Volume 留空時後端自動帶入固定文字。</summary>
+    public string? TargetLabel { get; set; }
+
+    /// <summary>非 Rule 目標的平台（'windows'/'linux'），供清單頁篩選——Signature 由前端帶入
+    /// （前端當下知道問題所屬主機的 OS）；Correlation／Volume 留空時後端自動推導或留空。</summary>
+    public string? Platform { get; set; }
+
     /// <summary>Host（預設，對應既有欄位）｜Group｜Site（回饋十三輪 F）</summary>
     public string Scope { get; set; } = "Host";
 

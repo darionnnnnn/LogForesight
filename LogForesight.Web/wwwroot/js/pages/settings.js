@@ -54,6 +54,7 @@ async function load() {
     renderAdFields(current);
     renderAnalysisFields(current);
     renderRetentionFields(current);
+    renderMailFields(current);
     renderBrandFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
@@ -218,6 +219,43 @@ function renderRetentionFields(settings) {
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
     document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
+}
+
+/** 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：密碼欄比照 AI 金鑰，不預填、只顯示是否已設定 */
+function renderMailFields(settings) {
+    document.getElementById('mail-enabled').checked = settings.mailEnabled;
+    document.getElementById('smtp-server').value = settings.smtpServer ?? '';
+    document.getElementById('smtp-port').value = settings.smtpPort ?? 25;
+    document.getElementById('smtp-use-tls').checked = settings.smtpUseTls;
+    document.getElementById('smtp-account').value = settings.smtpAccount ?? '';
+
+    document.getElementById('smtp-password').value = '';
+    document.getElementById('smtp-password-hint').textContent = settings.smtpHasPassword
+        ? '已設定密碼；留空儲存＝沿用既有密碼，輸入新值才會覆蓋。'
+        : '尚未設定密碼；不需驗證的內網 relay 可留空。';
+    document.getElementById('smtp-password-clear').checked = false;
+
+    document.getElementById('mail-from').value = settings.mailFrom ?? '';
+    document.getElementById('mail-recipients').value = (settings.mailRecipients ?? []).join('\n');
+    document.getElementById('mail-notify-host-owners').checked = settings.mailNotifyHostOwners;
+
+    document.getElementById('mail-min-risk-level').value = settings.mailMinRiskLevel || '高';
+    document.getElementById('mail-on-run-completed').checked = settings.mailOnRunCompleted;
+    document.getElementById('mail-urgent-enabled').checked = settings.mailUrgentEnabled;
+    document.getElementById('mail-daily-enabled').checked = settings.mailDailyEnabled;
+    document.getElementById('mail-daily-time').value = settings.mailDailyTime || '08:00';
+    document.getElementById('mail-weekly-enabled').checked = settings.mailWeeklyEnabled;
+    document.getElementById('mail-weekly-day').value = settings.mailWeeklyDayOfWeek || 'Monday';
+    document.getElementById('mail-weekly-time').value = settings.mailWeeklyTime || '08:00';
+
+    document.getElementById('mail-subject-template').value = settings.mailSubjectTemplate ?? '';
+    document.getElementById('mail-body-intro').value = settings.mailBodyIntro ?? '';
+    document.getElementById('mail-test-result').replaceChildren();
+}
+
+/** 一行一位、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
+function collectMailRecipients() {
+    return collectLines('mail-recipients');
 }
 
 /**
@@ -392,6 +430,24 @@ function bindForm() {
             return;
         }
 
+        // 郵件通知（回饋十五輪批次D）：與後端 SystemSettingsService.Update 的驗證規則對齊，
+        // 前端先擋一次是體驗，後端仍會再驗一次（前端驗證不是防線）
+        const mailEnabled = document.getElementById('mail-enabled').checked;
+        const mailRecipients = collectMailRecipients();
+        const mailOnRunCompleted = document.getElementById('mail-on-run-completed').checked;
+        const mailDailyEnabled = document.getElementById('mail-daily-enabled').checked;
+        const mailWeeklyEnabled = document.getElementById('mail-weekly-enabled').checked;
+        const mailUrgentEnabled = document.getElementById('mail-urgent-enabled').checked;
+        const smtpServer = document.getElementById('smtp-server').value.trim();
+        const mailFrom = document.getElementById('mail-from').value.trim();
+        if (mailEnabled && (mailOnRunCompleted || mailDailyEnabled || mailWeeklyEnabled || mailUrgentEnabled)) {
+            if (!smtpServer || !mailFrom || mailRecipients.length === 0) {
+                activateTabForElement(document.getElementById('mail-recipients'));
+                toast('已啟用郵件通知的觸發項目，請填妥 SMTP 伺服器、寄件人與至少一位收件人。', 'warning');
+                return;
+            }
+        }
+
         const restore = withBusy(saveButton, '儲存中');
         try {
             current = await api.put('/api/admin/settings', {
@@ -427,6 +483,27 @@ function bindForm() {
                 analysisChannels: collectLines('analysis-channels'),
                 importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
                 importMaxRows: Number(document.getElementById('import-max-rows').value),
+                // 郵件通知（回饋十五輪批次D）
+                mailEnabled,
+                smtpServer,
+                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpUseTls: document.getElementById('smtp-use-tls').checked,
+                smtpAccount: document.getElementById('smtp-account').value.trim(),
+                smtpPassword: document.getElementById('smtp-password').value || null,
+                clearSmtpPassword: document.getElementById('smtp-password-clear').checked,
+                mailFrom,
+                mailRecipients,
+                mailNotifyHostOwners: document.getElementById('mail-notify-host-owners').checked,
+                mailMinRiskLevel: document.getElementById('mail-min-risk-level').value,
+                mailOnRunCompleted,
+                mailDailyEnabled,
+                mailDailyTime: document.getElementById('mail-daily-time').value,
+                mailWeeklyEnabled,
+                mailWeeklyDayOfWeek: document.getElementById('mail-weekly-day').value,
+                mailWeeklyTime: document.getElementById('mail-weekly-time').value,
+                mailUrgentEnabled,
+                mailSubjectTemplate: document.getElementById('mail-subject-template').value.trim(),
+                mailBodyIntro: document.getElementById('mail-body-intro').value.trim(),
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),
@@ -436,6 +513,7 @@ function bindForm() {
             renderAiFields(current);
             renderAdFields(current);
             renderAnalysisFields(current);
+            renderMailFields(current);
             renderBrandFields(current);
             renderUpdatedAt(current);
             unsaved?.clear();
@@ -495,6 +573,47 @@ function bindAdTest() {
 }
 
 /**
+ * 測試寄信（docs/archive/FEEDBACK-15-PLAN.md 批次D）：用表單目前填的值（不需先儲存）試寄一封信。
+ * 密碼欄留空時後端自動 fallback 已儲存的密文（見 SystemSettingsService.TestMail），
+ * 這裡不需要另外提示——與「儲存」欄位共用同一套「留空＝沿用既有值」語意。
+ */
+function bindMailTest() {
+    const button = document.getElementById('mail-test-btn');
+
+    button.addEventListener('click', async () => {
+        const recipients = collectMailRecipients();
+        if (recipients.length === 0) {
+            toast('請至少輸入一位收件人。', 'warning');
+            return;
+        }
+
+        const resultEl = document.getElementById('mail-test-result');
+        const restore = withBusy(button, '寄送中');
+        try {
+            const result = await api.post('/api/admin/settings/mail-test', {
+                smtpServer: document.getElementById('smtp-server').value.trim(),
+                smtpPort: Number(document.getElementById('smtp-port').value),
+                smtpUseTls: document.getElementById('smtp-use-tls').checked,
+                smtpAccount: document.getElementById('smtp-account').value.trim(),
+                smtpPassword: document.getElementById('smtp-password').value || null,
+                mailFrom: document.getElementById('mail-from').value.trim(),
+                recipients,
+                subjectTemplate: document.getElementById('mail-subject-template').value.trim(),
+                bodyIntro: document.getElementById('mail-body-intro').value.trim()
+            }, { silent: true });
+
+            resultEl.className = result.success ? 'text-success small' : 'text-danger small';
+            resultEl.textContent = result.message;
+        } catch (error) {
+            resultEl.className = 'text-danger small';
+            resultEl.textContent = error?.message || '測試寄信失敗。';
+        } finally {
+            restore();
+        }
+    });
+}
+
+/**
  * AI 進階參數「還原預設值」（docs/archive/FEEDBACK-10-PLAN.md §3）：出廠值由後端隨設定一起送來
  * （`aiAdvancedDefaults`，源頭是 Core 的 SystemSettings 屬性初始器），前端不硬編第二份數字。
  * 只填回欄位、不直接存檔——存檔仍走整頁單一 form 的「儲存」，未儲存提醒（trackUnsaved）
@@ -528,12 +647,14 @@ function bindAiAdvancedReset() {
 
 bindForm();
 bindAdTest();
+bindMailTest();
 bindAiAdvancedReset();
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
 bindTabs(document.getElementById('settings-tabs'));
 unsaved = trackUnsaved(document.getElementById('settings-form'), {
-    excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result'
+    excludeSelector: '#ad-test-account, #ad-test-password, #ad-test-btn, #ad-test-result, ' +
+        '#mail-test-btn, #mail-test-result'
 });
 load();

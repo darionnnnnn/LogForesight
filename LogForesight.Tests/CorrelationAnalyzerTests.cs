@@ -8,7 +8,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 入侵鏈_大量登入失敗加帳號建立()
     {
-        AssertPattern("【入侵鏈】", new()
+        AssertPattern("【入侵鏈】", CorrelationPatternIds.IntrusionChain, new()
         {
             Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security),
             Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
@@ -26,7 +26,7 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today, match);
 
-        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.ElevatesDayRisk);
+        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.ElevatesDayRisk && f.PatternId == CorrelationPatternIds.BruteSuccess);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 持久化_攻擊嘗試加新服務()
     {
-        AssertPattern("【持久化】", new()
+        AssertPattern("【持久化】", CorrelationPatternIds.Persistence, new()
         {
             Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security),
             Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
@@ -55,7 +55,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 滅跡_稽核清除加其他安全事件()
     {
-        AssertPattern("【滅跡】", new()
+        AssertPattern("【滅跡】", CorrelationPatternIds.AuditTamper, new()
         {
             Sig("Security", "Security-Auditing", 1102, 1, IssueSeverity.Critical, IssueCategory.Security),
             Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
@@ -65,7 +65,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 提權植入_權限異動加新服務()
     {
-        AssertPattern("【提權→植入】", new()
+        AssertPattern("【提權→植入】", CorrelationPatternIds.PrivImplant, new()
         {
             Sig("Security", "Security-Auditing", 4670, 1, IssueSeverity.High, IssueCategory.Security),
             Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
@@ -75,7 +75,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 儲存連鎖_兩種以上儲存層訊號同日()
     {
-        AssertPattern("【儲存連鎖】", new()
+        AssertPattern("【儲存連鎖】", CorrelationPatternIds.StorageChain, new()
         {
             Sig("System", "disk", 153, 5, IssueSeverity.Critical, IssueCategory.Storage),
             Sig("System", "Ntfs", 55, 5, IssueSeverity.Critical, IssueCategory.Storage)
@@ -85,7 +85,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 儲存當機_儲存錯誤加非預期關機()
     {
-        AssertPattern("【儲存→當機】", new()
+        AssertPattern("【儲存→當機】", CorrelationPatternIds.StorageCrash, new()
         {
             Sig("System", "disk", 153, 5, IssueSeverity.Critical, IssueCategory.Storage),
             Sig("System", "Kernel-Power", 41, 1, IssueSeverity.Critical, IssueCategory.Hardware)
@@ -95,7 +95,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 硬體不穩_WHEA加非預期重開()
     {
-        AssertPattern("【硬體不穩】", new()
+        AssertPattern("【硬體不穩】", CorrelationPatternIds.HwUnstable, new()
         {
             Sig("System", "WHEA-Logger", 1, 5, IssueSeverity.Critical, IssueCategory.Hardware),
             Sig("System", "Kernel-Power", 41, 1, IssueSeverity.Critical, IssueCategory.Hardware)
@@ -105,7 +105,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 崩潰服務失敗_應用程式崩潰加服務異常終止()
     {
-        AssertPattern("【崩潰→服務失敗】", new()
+        AssertPattern("【崩潰→服務失敗】", CorrelationPatternIds.CrashServiceFail, new()
         {
             Sig("Application", "Application Error", 1000, 3, IssueSeverity.Medium, IssueCategory.Service),
             Sig("System", "Service Control Manager", 7031, 3, IssueSeverity.Medium, IssueCategory.Service)
@@ -115,7 +115,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 崩潰循環資源耗盡_高頻服務終止加資源耗盡()
     {
-        AssertPattern("【崩潰循環→資源耗盡】", new()
+        AssertPattern("【崩潰循環→資源耗盡】", CorrelationPatternIds.CrashLoopResource, new()
         {
             Sig("System", "Service Control Manager", 7031, 100, IssueSeverity.Medium, IssueCategory.Service),
             Sig("System", "Resource-Exhaustion-Detector", 2004, 1, IssueSeverity.High, IssueCategory.Resource)
@@ -139,7 +139,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 時間偏移驗證失敗_時間同步失敗加登入失敗()
     {
-        AssertPattern("【時間偏移→驗證失敗】", new()
+        AssertPattern("【時間偏移→驗證失敗】", CorrelationPatternIds.TimeSkewAuth, new()
         {
             Sig("System", "Time-Service", 29, 3, IssueSeverity.Medium, IssueCategory.Config),
             Sig("Security", "Security-Auditing", 4625, 15, IssueSeverity.High, IssueCategory.Security)
@@ -157,7 +157,7 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
 
-        Assert.Contains(findings, f => f.Description.Contains("【跨日入侵鏈】"));
+        Assert.Contains(findings, f => f.Description.Contains("【跨日入侵鏈】") && f.PatternId == CorrelationPatternIds.XdayIntrusion);
     }
 
     [Fact]
@@ -171,7 +171,25 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayStorage }, DateTime.Today);
 
-        Assert.Contains(findings, f => f.Description.Contains("【儲存持續劣化】"));
+        Assert.Contains(findings, f => f.Description.Contains("【儲存持續劣化】") && f.PatternId == CorrelationPatternIds.XdayStorage);
+    }
+
+    /// <summary>跨日版的防護遭關閉→惡意程式（昨日關防護、今日惡意程式），過去完全沒有測試覆蓋——
+    /// 補上這個場景順便釘住 PatternId（回饋十五輪 A-5）。</summary>
+    [Fact]
+    public void 跨日防護遭關閉惡意程式_昨日防護關閉加今日惡意程式()
+    {
+        var yesterdayProtectionOff = HistoryDay(DateTime.Today.AddDays(-1), "Microsoft-Windows-Windows Defender", 5001, 1,
+            IssueSeverity.High, ChannelCatalog.DefenderChannel, IssueCategory.Security);
+        var issues = new List<LogIssueSignature>
+        {
+            Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayProtectionOff }, DateTime.Today);
+
+        Assert.Contains(findings, f => f.Description.Contains("【防護遭關閉→惡意程式】") && f.Description.Contains("昨日") &&
+            f.PatternId == CorrelationPatternIds.XdayAvOffMalware);
     }
 
     [Fact]
@@ -192,7 +210,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 防護遭關閉惡意程式_防護關閉加惡意程式偵測()
     {
-        AssertPattern("【防護遭關閉→惡意程式】", new()
+        AssertPattern("【防護遭關閉→惡意程式】", CorrelationPatternIds.AvOffMalware, new()
         {
             Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 5001, 1, IssueSeverity.High, IssueCategory.Security),
             Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security)
@@ -216,7 +234,7 @@ public class CorrelationAnalyzerTests
     [Fact]
     public void 惡意程式持久化_惡意程式加新服務()
     {
-        AssertPattern("【惡意程式→持久化】", new()
+        AssertPattern("【惡意程式→持久化】", CorrelationPatternIds.MalwarePersistence, new()
         {
             Sig(ChannelCatalog.DefenderChannel, "Microsoft-Windows-Windows Defender", 1116, 1, IssueSeverity.High, IssueCategory.Security),
             Sig("System", "Service Control Manager", 7045, 1, IssueSeverity.High, IssueCategory.Security)
@@ -234,7 +252,8 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today, match);
 
-        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.Description.Contains("含 RDP 工作階段登入"));
+        Assert.Contains(findings, f => f.Description.Contains("【破解得手】") && f.Description.Contains("含 RDP 工作階段登入") &&
+            f.PatternId == CorrelationPatternIds.BruteSuccess);
     }
 
     // ── RDP 跨日得手（需 IP 交集）與防誤報負向案例 ──────────────────────
@@ -252,7 +271,8 @@ public class CorrelationAnalyzerTests
 
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
 
-        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") && f.ElevatesDayRisk);
+        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") && f.ElevatesDayRisk &&
+            f.PatternId == CorrelationPatternIds.XdayBruteRdp);
     }
 
     [Fact]
@@ -300,10 +320,10 @@ public class CorrelationAnalyzerTests
         Assert.Empty(findings);
     }
 
-    private static void AssertPattern(string pattern, List<LogIssueSignature> issues)
+    private static void AssertPattern(string pattern, string expectedPatternId, List<LogIssueSignature> issues)
     {
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);
-        Assert.Contains(findings, f => f.Description.Contains(pattern));
+        Assert.Contains(findings, f => f.Description.Contains(pattern) && f.PatternId == expectedPatternId);
     }
 
     // Sig(...) 已搬到 TestDoubles\TestData.cs（原本多帶的 keyDetails 參數已合併進共用版本，

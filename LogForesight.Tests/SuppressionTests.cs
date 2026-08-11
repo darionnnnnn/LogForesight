@@ -179,7 +179,49 @@ public class SuppressionTests
 
         var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
 
-        Assert.Contains("rule-a", result);
+        Assert.Contains((SuppressionTargetTypes.Rule, "rule-a"), result);
+    }
+
+    /// <summary>回饋十五輪體檢批G：泛型化前只比 RuleId，非 Rule 型的 RuleId 恆為空字串會讓比對
+    /// 恆假——這裡釘住 Signature 型也能正確判定「到期後仍受其他範圍抑制」。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_非Rule目標型別也能正確比對()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Signature, SignatureKey = "sig-a",
+                Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1)
+            },
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Signature, SignatureKey = "sig-a",
+                Scope = SuppressionScopes.Site, ExpiresAt = null
+            }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Contains((SuppressionTargetTypes.Signature, "sig-a"), result);
+    }
+
+    /// <summary>不同 TargetType 但剛好用同一個字串當識別值時不該互相誤判為同一個目標
+    /// （TargetIdentity 的複合鍵設計就是為了擋這個）。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_不同TargetType的相同字串不會誤判為同一目標()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Rule, RuleId = "x", Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1) },
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = "x", Scope = SuppressionScopes.Site, ExpiresAt = null }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Empty(result);
     }
 
     [Fact]
@@ -234,6 +276,67 @@ public class SuppressionTests
         Assert.Contains("builtin-storage-disk-io", ids);
     }
 
+    // ── 抑制目標四型（回饋十五輪 A）：ToRuleIdSet 只認 Rule，三個新投影各認一種 ─────
+
+    [Fact]
+    public void ToRuleIdSet不含非Rule目標_既有行為保證()
+    {
+        // 四型共用同一份清單後最重要的回歸釘子：舊資料（TargetType 預設 Rule）行為要逐位不變，
+        // 新加進來的三型絕不能悄悄混進規則抑制比對
+        var suppressions = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Rule, RuleId = "rule-a" },
+            new() { TargetType = SuppressionTargetTypes.Signature, RuleId = "", SignatureKey = "System|disk|153|1" },
+            new() { TargetType = SuppressionTargetTypes.Correlation, RuleId = "", CorrelationPatternId = CorrelationPatternIds.StorageChain },
+            new() { TargetType = SuppressionTargetTypes.Volume, RuleId = "", VolumeKind = VolumeKinds.Error }
+        };
+
+        var ids = SuppressionFilter.ToRuleIdSet(suppressions);
+
+        Assert.Equal(new[] { "rule-a" }, ids);
+    }
+
+    [Fact]
+    public void ToSignatureKeySet只投影Signature目標且不分大小寫()
+    {
+        var suppressions = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = "System|Disk|153|1" },
+            new() { TargetType = SuppressionTargetTypes.Rule, RuleId = "rule-a" } // 不該混進來
+        };
+
+        var keys = SuppressionFilter.ToSignatureKeySet(suppressions);
+
+        Assert.Single(keys);
+        Assert.Contains("system|disk|153|1", keys);
+    }
+
+    [Fact]
+    public void ToCorrelationPatternIdSet只投影Correlation目標()
+    {
+        var suppressions = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Correlation, CorrelationPatternId = CorrelationPatternIds.XdayBruteRdp },
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = "a" } // 不該混進來
+        };
+
+        var ids = SuppressionFilter.ToCorrelationPatternIdSet(suppressions);
+
+        Assert.Equal(new[] { CorrelationPatternIds.XdayBruteRdp }, ids);
+    }
+
+    [Fact]
+    public void HasVolumeSuppression只認Volume目標且比對VolumeKind()
+    {
+        var suppressions = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Volume, VolumeKind = VolumeKinds.Error }
+        };
+
+        Assert.True(SuppressionFilter.HasVolumeSuppression(suppressions, VolumeKinds.Error));
+        Assert.False(SuppressionFilter.HasVolumeSuppression(suppressions, VolumeKinds.Audit));
+    }
+
     // ── 抑制對風險判定的效果（LogAnalysisService.ComputeRuleBasedRisk，internal，見 InternalsVisibleTo）──
 
     [Fact]
@@ -280,7 +383,7 @@ public class SuppressionTests
         var issue = Sig("System", "disk", 153, 5, IssueSeverity.Critical);
         issue.ElevatesDayRisk = true;
         issue.Suppressed = true;
-        var correlation = new CorrelationFinding { Severity = IssueSeverity.High, ElevatesDayRisk = true, Description = "test" };
+        var correlation = new CorrelationFinding { Severity = IssueSeverity.High, ElevatesDayRisk = true, Description = "test", PatternId = "test-pattern" };
 
         var risk = LogAnalysisService.ComputeRuleBasedRisk(new List<LogIssueSignature> { issue },
             new List<string>(), new List<CorrelationFinding> { correlation });

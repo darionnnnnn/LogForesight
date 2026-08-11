@@ -110,6 +110,12 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Settings() => View();
 
+    /// <summary>操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：僅 Maintain 顯示，
+    /// 側欄選單顯示與此頁面級標註雙閘，比照既有 admin 頁慣例</summary>
+    [HttpGet("/help/manual")]
+    [Permission(Capability.Maintain)]
+    public IActionResult HelpManual() => View();
+
     [HttpGet("/access-denied")]
     public IActionResult AccessDenied() => View();
 

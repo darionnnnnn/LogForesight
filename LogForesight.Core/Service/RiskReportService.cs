@@ -446,8 +446,16 @@ public class RiskReportService
         sb.AppendLine($"■ 已抑制的告警 {suppressedIssues.Count} 項（通知已關閉，偵測與紀錄照常）");
         foreach (var issue in suppressedIssues)
         {
+            // 反查抑制原因要兩條路都試（回饋十五輪 A-1）：issue.Suppressed 現在可能來自
+            // Rule 或 Signature 兩種抑制（見 LogAnalysisService 的標記邏輯）——issue.RuleId
+            // 為 null（未命中規則）時只查 RuleId 一定查無結果，會誤報「原因未知」，
+            // 但其實是命中了簽章級抑制，原因清清楚楚存在 SignatureKey 那筆裡。
+            // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
+            var issueKey = IssueSignatureKey.For(issue);
             var reason = activeSuppressions?.FirstOrDefault(s =>
-                s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase))?.Reason;
+                (issue.RuleId != null && s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase)) ||
+                (s.TargetType == SuppressionTargetTypes.Signature &&
+                 string.Equals(s.SignatureKey, issueKey, StringComparison.OrdinalIgnoreCase)))?.Reason;
             sb.AppendLine($"  - [{issue.Severity}] {issue.LogName}/{issue.SourceEventLabel} x{issue.Count}" +
                           $"：{issue.KnownIssue}");
             sb.AppendLine($"    抑制原因：{reason ?? "（原因未知，可能是設定檔異動或匯入時未帶入）"}");

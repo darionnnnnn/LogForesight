@@ -49,7 +49,11 @@ async function request(method, url, body, options = {}) {
     }
 
     // 401：登入逾期或帳號已停用 → 導回登入頁，並記住原本要去的位置
-    if (response.status === 401) {
+    // 例外：登入頁本身送出的登入請求 401 是「帳號或密碼錯誤」，不是「登入逾期」——
+    // 整頁轉址會讓 login.js 的錯誤訊息顯示與輸入內容保留全部失效（訊息閃一下就被
+    // 蓋成「登入已逾期」）。此時放行到下面的一般錯誤處理，讓後端訊息正常顯示。
+    const isLoginAttempt = location.pathname === '/login' || url === '/api/auth/login';
+    if (response.status === 401 && !isLoginAttempt) {
         const returnUrl = encodeURIComponent(location.pathname + location.search);
         location.href = `/login?returnUrl=${returnUrl}`;
         throw new ApiError('auth_expired', '登入已逾期', 401);

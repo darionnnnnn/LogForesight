@@ -37,8 +37,10 @@
    - 影響：console/報告的告警呈現（紅色橫幅、頻率異常清單）、風險等級判定
      （`LogAnalysisService.ComputeRuleBasedRisk` 排除被抑制的簽章）。
    - 不影響：事件照常聚合、規則照常命中並落 `RuleId`、`TrendAnalyzer` 照常計算趨勢欄位與
-     嚴重度升級（只是不產生告警文字）、歷史紀錄照常寫入完整資訊、**`CorrelationAnalyzer`
-     完全不受影響**（單一事件被抑制，不代表它跟其他事件組合出的攻擊鏈/故障鏈也該被消音）。
+     嚴重度升級（只是不產生告警文字）、歷史紀錄照常寫入完整資訊、**Rule／Signature 型抑制
+     不會消音關聯層**（單一事件被抑制，不代表它跟其他事件組合出的攻擊鏈/故障鏈也該被消音；
+     要對特定關聯模式關閉通知，必須明確建立 `TargetType=Correlation` 的抑制——見下方
+     「抑制目標四型」，那是刻意獨立、建立時強警告的另一個決定，不是單一事件抑制的副作用）。
    - 這樣設計的原因：(a) 維護者的抑制判斷可能是錯的或過時的，需要保留紀錄才能回查；
      (b) 管理頁要做的「每個規則的發生頻率」報表，資料正是來自「照常紀錄」；
      (c) 符合本專案「沒告警 ≠ 沒問題，是沒看」的一貫哲學——抑制是「看了但決定不吵」，
@@ -187,13 +189,59 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 ## 抑制機制
 
-`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`Scope`（`Host`／`Group`／`Site`，
-回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、`Reason`、`SuppressedBy`、`CreatedAt`、
-`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，必須 `null`）。獨立於規則本身儲存
-（`suppressions.json`，無 seed 概念，缺檔＝空清單），因為兩者生命週期不同：規則是全域設定，
-抑制是各主機/群組/全站的營運狀態。
+`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`TargetType`／`SignatureKey`／
+`CorrelationPatternId`／`VolumeKind`／`TargetLabel`／`Platform`（抑制目標四型，回饋十五輪 A，
+見下節）、`Scope`（`Host`／`Group`／`Site`，回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、
+`Reason`、`SuppressedBy`、`CreatedAt`、`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，
+必須 `null`）。獨立於規則本身儲存（blob `suppressions`，無 seed 概念，缺檔＝空清單），
+因為兩者生命週期不同：規則是全域設定，抑制是各主機/群組/全站的營運狀態。
 
 **語意**（詳見上方「三條語意邊界」第 2 點）：只影響通知與風險升級，不影響偵測與紀錄。
+
+### 抑制目標四型（回饋十五輪 A）
+
+`TargetType`（`SuppressionTargetTypes`）決定抑制比對「什麼」，四型共用同一份清單與同一套
+`Scope`／到期語意，差別只在比對欄位與影響的下游計算：
+
+| TargetType | 比對欄位 | 比對的東西 | 影響的下游計算 |
+|---|---|---|---|
+| `Rule`（預設，舊資料反序列化到此值，零遷移） | `RuleId` | 命中規則的問題 | `LogIssueSignature.Suppressed`；`ComputeRuleBasedRisk` 排除該簽章的 `ElevatesDayRisk`／`Severity==High` 貢獻 |
+| `Signature` | `SignatureKey`（`IssueSignatureKey.For(LogIssueSignature)` 物件版，含 Linux 專用的第五段 `EventKey`） | 未命中規則的問題簽章（`RuleId==null`，即 Other 類別） | 同上 `Suppressed`／風險計算，補上 A1 指出的核心缺口——過去只有命中規則的簽章才有抑制掛載點 |
+| `Correlation` | `CorrelationPatternId`（`Analysis/CorrelationPatternIds.cs`，17 個 Windows＋2 個 Linux 模式） | 跨 log 關聯訊號（攻擊鏈／故障鏈組合） | 命中的模式整批移出 `correlations`，不參與 `ComputeRuleBasedRisk`、不進 prompt、不進告警清單——這是四型中**影響面最大**的一種（`correlations.Count>0` 本身即可判中風險，`ElevatesDayRisk` 的模式直接判高風險），建立時 UI 強制理由必填＋強警告 |
+| `Volume` | `VolumeKind`（`error`／`audit`，見 `VolumeKinds`） | 整體錯誤量／安全稽核事件量突增的趨勢告警 | `TrendAnalyzer` 略過對應的總量突增判定，不產生趨勢告警、不參與風險計算 |
+
+**四型互相獨立、比對邏輯不重疊**：`SuppressionFilter.ToRuleIdSet`／`ToSignatureKeySet`／
+`ToCorrelationPatternIdSet`／`HasVolumeSuppression` 各自只投影對應型別的項目（`ToRuleIdSet`
+過濾 `TargetType==Rule`，是既有行為的保證——舊資料的 `TargetType` 反序列化預設就是 `Rule`，
+過濾對既有安裝零行為影響）。`Host`／`Group`／`Site` 三種範圍與到期機制對四型一視同仁，
+`SuppressionFilter.TargetIdentity`（回饋十五輪體檢批G）提供跨型別的目標識別，供
+`StillSuppressedElsewhere` 之類「同一個目標是否還受其他範圍抑制」的比對使用。
+
+**`TargetLabel`／`Platform`**：非 `Rule` 型的人話標籤（如「Application / MyApp EventId 1000」）
+在建立時擷取存起來，管理頁、體檢報告、到期通知直接讀，不必從 `SignatureKey`／`PatternId`
+反推；`Platform` 同理供非規則目標的抑制清單頁篩選（`Rule` 型仍可從 `KnownIssueRule` 反查平台，
+不需要另存）。
+
+### 與「已知雜訊記憶」（`NoiseMark`）的分工（回饋十五輪體檢批G 定案）
+
+`Signature` 型抑制上線後，「未命中規則的問題（Other 類別）」第一次同時有兩條標記雜訊的路徑
+可用，容易讓人搞不清楚該用哪個。兩者操作的是**不同層級**，設計上刻意並存、不互相取代：
+
+- **`NoiseMark`／`INoiseMarkStore`**（webdata blob，主機＋簽章為鍵，見 docs/WEB-SPEC.md §9.4）：
+  **處理狀態層級**的記憶，純 Web UI 便利——標記後，之後同主機同簽章的新問題在畫面上自動顯示
+  「已知雜訊（自動）」，省去每天重新標記同一個問題的處理狀態。**完全不影響批次分析**：
+  不改變風險等級判定、不讓問題從「重點問題」清單消失、不影響 `Suppressed` 旗標——單純是
+  「這個問題我看過了，知道是雜訊，處理狀態幫我自動填」。
+- **`Signature` 型 `RuleSuppression`**：**批次分析／風險判定層級**的關閉，效果與 `Rule` 型抑制
+  完全對等——影響 `ComputeRuleBasedRisk`、有明確的 `Host`／`Group`／`Site` 範圍（NoiseMark
+  只能逐主機標記，沒有群組/全站批次能力）與選填到期日，且仍受「抑制只關通知、事件照常
+  聚合命中寫入歷史」的語意邊界約束。
+
+**選用原則**：只是想讓自己的待辦清單乾淨、不想每天重複標記同一個問題的處理狀態 → 用
+`NoiseMark`（畫面上標「已知雜訊」的既有動作）；問題本身已確認不重要、想讓它不再拉高風險
+等級、且範圍可能不只一台主機 → 用 `Signature` 型抑制（「告警抑制」分頁）。兩者可以同時對
+同一個（主機、簽章）成立，互不衝突——`NoiseMark` 決定畫面上的處理狀態怎麼預填，
+`Signature` 抑制決定這個問題還算不算進風險等級，是完全正交的兩個問題。
 
 **生效範圍三選一**（`SuppressionScopes`，回饋十三輪 F）：2000 台規模下同一條規則要在每台
 同類主機上各設一次抑制，維護成本最終只會讓人乾脆停用整條規則，反而失去分類與知識庫——
@@ -232,9 +280,11 @@ Site 範圍的到期天數預設帶 30 天而非永久（可手動清空改回�
 的發生次數——防止「暫時關掉」變成永久盲區。不會為了顯示這個清單而強制觸發原本因「三層皆無
 訊號」而省略的 AI 呼叫，維持既有的成本控制設計。
 
-**維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選規則＋範圍
-＋範圍目標＋事由＋選填到期天數）、查詢（可依主機/規則/平台過濾）、解除，皆走既有儲存前
-驗證與稽核管線（見 docs/WEB-SPEC.md §9.7）。
+**維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選抑制目標型別
+＋範圍＋範圍目標＋事由＋選填到期天數）、查詢（可依主機／目標型別／平台過濾）、解除，
+統一走 `POST/DELETE /api/suppressions`（回饋十五輪 A-6，取代原本綁死規則 Id 的路徑式端點；
+舊端點 `{ruleId}/suppressions` 仍保留、內部委派同一份服務邏輯，相容既有呼叫端），
+皆走既有儲存前驗證與稽核管線（見 docs/WEB-SPEC.md §9.7）。
 
 ## `RuleId` 落紀錄
 

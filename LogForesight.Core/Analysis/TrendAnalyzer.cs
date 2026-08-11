@@ -38,12 +38,36 @@ public static class TrendAnalyzer
     private const double RisingFactor = 2.0;
 
     /// <summary>
-    /// 為當日事件簽章標記趨勢，回傳程式比對出的頻率異常說明（給 prompt 與 console 告警用）
+    /// 為當日事件簽章標記趨勢，回傳程式比對出的頻率異常說明（給 prompt 與 console 告警用）。
+    /// 不帶抑制旗標與結構化輸出的簡化版——內部委派到下方完整版，丟棄總量抑制與 refs 輸出，
+    /// 讓既有呼叫端（不需要總量抑制／結構化導航的路徑）不用跟著改參數列表。
     /// </summary>
     public static List<string> Apply(List<LogIssueSignature> issues, List<DailyAnalysisRecord> history,
-        DateTime targetDate, int todayErrorCount, int todayAuditCount)
+        DateTime targetDate, int todayErrorCount, int todayAuditCount) =>
+        Apply(issues, history, targetDate, todayErrorCount, todayAuditCount, false, false, out _, out _);
+
+    /// <summary>
+    /// 完整版：多兩個總量抑制旗標（回饋十五輪 A-1），多兩個結構化輸出（回饋十五輪 A-5）。
+    /// </summary>
+    /// <param name="suppressErrorVolume">true＝本機有生效中的整體錯誤量突增抑制
+    /// （RuleSuppression.TargetType=Volume, VolumeKind=error）：符合觸發條件的告警文字
+    /// 改進 <paramref name="suppressedAlerts"/>，不進回傳值、不影響風險判定。</param>
+    /// <param name="suppressAuditVolume">同上，對象是安全稽核事件量突增（VolumeKind=audit）。</param>
+    /// <param name="suppressedAlerts">
+    /// 因抑制設定（簽章級 <see cref="LogIssueSignature.Suppressed"/> 或上述總量旗標）未進入
+    /// 回傳值、但原本會產生的告警文字——抑制關的是「要不要吵」不是「要不要記」，這份清單供
+    /// 詳情頁「已抑制的告警」區塊誠實申報用，見 <see cref="DailyAnalysisRecord.SuppressedTrendAlerts"/>。
+    /// </param>
+    /// <param name="alertRefs">回傳值（未被抑制的告警）的結構化平行資料，同序、逐筆對應，
+    /// 供詳情頁頁內導航——見 <see cref="DailyAnalysisRecord.TrendAlertRefs"/>。</param>
+    public static List<string> Apply(List<LogIssueSignature> issues, List<DailyAnalysisRecord> history,
+        DateTime targetDate, int todayErrorCount, int todayAuditCount,
+        bool suppressErrorVolume, bool suppressAuditVolume,
+        out List<string> suppressedAlerts, out List<TrendAlertRef> alertRefs)
     {
         var alerts = new List<string>();
+        suppressedAlerts = new List<string>();
+        alertRefs = new List<TrendAlertRef>();
 
         if (history.Count == 0)
         {
@@ -95,8 +119,15 @@ public static class TrendAnalyzer
             bool everSeen = history.Any(h => h.Date.Date < targetDate.Date &&
                                              h.TopIssues.Any(i => SameIssue(i, sig)));
 
-            // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警文字——
-            // 抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-SPEC.md 的語意邊界）
+            // 用物件版重載（含 EventKey 第五段）而非四參數版：Linux 簽章靠 EventKey 把「同一個
+            // program 命中不同規則」區分成不同問題（見 SameIssue 的比對邏輯與 IssueDto.IssueKey
+            // 的產生方式），四參數版會讓這裡的 key 與前端 issue.issueKey 對不上，點擊導航失效
+            var issueKey = IssueSignatureKey.For(sig);
+
+            // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警
+            // 回傳值——抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-SPEC.md 的語意邊界）。
+            // 文字一律算出來，再依 sig.Suppressed 決定進 alerts 或 suppressedAlerts，兩邊共用同一份
+            // 組字邏輯，不會漂移不同步。
             if (pastCounts.Count == 0)
             {
                 if (everSeen)
@@ -108,9 +139,18 @@ public static class TrendAnalyzer
                 else
                 {
                     sig.Trend = IssueTrend.New;
-                    if (sig.Severity >= IssueSeverity.High && !sig.Suppressed && !channelWarmingUp)
+                    if (sig.Severity >= IssueSeverity.High && !channelWarmingUp)
                     {
-                        alerts.Add($"首次出現：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生");
+                        var text = $"首次出現：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生";
+                        if (sig.Suppressed)
+                        {
+                            suppressedAlerts.Add(text);
+                        }
+                        else
+                        {
+                            alerts.Add(text);
+                            alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
+                        }
                     }
                 }
             }
@@ -124,12 +164,29 @@ public static class TrendAnalyzer
                     // 直接讓當天判定為高風險日。嚴重度現在封頂 High，改用旗標達成同樣效果——
                     // 判定時機要在 Escalate 之前（看「升級前」是不是 High），
                     // 否則 Medium→High 這種正常升一級也會被誤判成「原本就是 High」
+                    var preEscalationSeverity = sig.Severity;
                     if (sig.Severity == IssueSeverity.High) sig.ElevatesDayRisk = true;
                     sig.Severity = Escalate(sig.Severity);
-                    if (!sig.Suppressed)
+
+                    // Rising 嚴重度閘門（回饋十五輪 A-4）：Trend/Escalate/ElevatesDayRisk 上面已經
+                    // 照算不受影響（供紀錄與頻率報表），但 Low 簽章的頻率上升不產生告警文字、不拉高
+                    // 風險——一個本來就不重要的簽章不該有能力把當天拉成中風險（見
+                    // LogAnalysisService.ComputeRuleBasedRisk：trendAlerts.Count > 0 直接判中風險）。
+                    // 門檻用升級前的嚴重度：Escalate 必定把 Low 拉到 Medium，若用升級後的值判斷，
+                    // 這道閘門會恆真、形同沒做。
+                    if (preEscalationSeverity >= IssueSeverity.Medium)
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                        alerts.Add($"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}");
+                        var text = $"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
+                        if (sig.Suppressed)
+                        {
+                            suppressedAlerts.Add(text);
+                        }
+                        else
+                        {
+                            alerts.Add(text);
+                            alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
+                        }
                     }
                 }
             }
@@ -156,17 +213,31 @@ public static class TrendAnalyzer
         if (reliableHistory.Count > 0)
         {
             var nonZeroErrorDays = reliableHistory.Select(h => h.ErrorCount).Where(c => c > 0).ToList();
+            string? text = null;
             if (nonZeroErrorDays.Count > 0)
             {
                 var baselineErrors = Median(nonZeroErrorDays);
                 if (todayErrorCount >= 10 && todayErrorCount >= baselineErrors * RisingFactor)
                 {
-                    alerts.Add($"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆");
+                    text = $"整體錯誤量突增：今日 {todayErrorCount} 筆，近 {reliableHistory.Count} 日可靠歷史基準 {baselineErrors:0.#} 筆";
                 }
             }
             else if (todayErrorCount >= 10)
             {
-                alerts.Add($"整體錯誤量突增：近 {reliableHistory.Count} 日可靠歷史多數日無錯誤，今日出現 {todayErrorCount} 筆");
+                text = $"整體錯誤量突增：近 {reliableHistory.Count} 日可靠歷史多數日無錯誤，今日出現 {todayErrorCount} 筆";
+            }
+
+            if (text != null)
+            {
+                if (suppressErrorVolume)
+                {
+                    suppressedAlerts.Add(text);
+                }
+                else
+                {
+                    alerts.Add(text);
+                    alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = null, Kind = TrendAlertKinds.VolumeError });
+                }
             }
         }
 
@@ -176,17 +247,31 @@ public static class TrendAnalyzer
         if (reliableAuditHistory.Count > 0)
         {
             var nonZeroAuditDays = reliableAuditHistory.Select(h => h.AuditEventCount).Where(c => c > 0).ToList();
+            string? text = null;
             if (nonZeroAuditDays.Count > 0)
             {
                 var baselineAudit = Median(nonZeroAuditDays);
                 if (todayAuditCount >= 10 && todayAuditCount >= baselineAudit * RisingFactor)
                 {
-                    alerts.Add($"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試");
+                    text = $"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試";
                 }
             }
             else if (todayAuditCount >= 10)
             {
-                alerts.Add($"安全稽核事件量突增：近 {reliableAuditHistory.Count} 日可靠歷史多數日無稽核事件，今日出現 {todayAuditCount} 筆，需留意入侵嘗試");
+                text = $"安全稽核事件量突增：近 {reliableAuditHistory.Count} 日可靠歷史多數日無稽核事件，今日出現 {todayAuditCount} 筆，需留意入侵嘗試";
+            }
+
+            if (text != null)
+            {
+                if (suppressAuditVolume)
+                {
+                    suppressedAlerts.Add(text);
+                }
+                else
+                {
+                    alerts.Add(text);
+                    alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = null, Kind = TrendAlertKinds.VolumeAudit });
+                }
             }
         }
 
@@ -209,7 +294,8 @@ public static class TrendAnalyzer
 
     /// <summary>
     /// 歷史基準的中位數（回饋十三輪 E）：純算術，偶數筆數取中間兩值平均。呼叫端已保證非空清單
-    /// （<see cref="Apply"/> 內三處呼叫點都先檢查 Count &gt; 0），這裡不重複防禦。
+    /// （<see cref="Apply(List{LogIssueSignature},List{DailyAnalysisRecord},DateTime,int,int,bool,bool,out List{string},out List{TrendAlertRef})"/>
+    /// 內三處呼叫點都先檢查 Count &gt; 0），這裡不重複防禦。
     /// </summary>
     private static double Median(IEnumerable<int> values)
     {

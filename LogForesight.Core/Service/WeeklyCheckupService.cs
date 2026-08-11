@@ -288,18 +288,46 @@ internal class WeeklyCheckupService
         }
 
         // 固定列出生效中的抑制設定＋本期發生次數：防止「暫時關掉」變成永久盲區
-        // （見 docs/RULES-SPEC.md 陷阱 4）——只要體檢確實有產生報告，這個提醒就一定在
+        // （見 docs/RULES-SPEC.md 陷阱 4）——只要體檢確實有產生報告，這個提醒就一定在。
+        // 四型抑制（回饋十五輪 A）發生次數的算法不同——Rule／Signature 有清楚的逐筆問題可數，
+        // Correlation 只能數「有結構化 Ref 的日子」（舊紀錄無 Ref，會低估但不會誤報），
+        // Volume 沒有對應的逐日計數素材，不編造數字，只列出抑制範圍本身。
         if (activeSuppressions.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("■ 生效中的抑制設定（提醒：暫時關閉通知的告警，本期仍照常偵測與記錄）");
             foreach (var s in activeSuppressions)
             {
-                int occurrences = window.SelectMany(d => d.TopIssues)
-                    .Where(i => i.RuleId != null && i.RuleId.Equals(s.RuleId, StringComparison.OrdinalIgnoreCase))
-                    .Sum(i => i.Count);
                 var expiry = s.ExpiresAt == null ? "永久" : $"至 {s.ExpiresAt:yyyy-MM-dd}";
-                sb.AppendLine($"  - {s.RuleId}（{expiry}）：本期共發生 {occurrences} 次｜原因：{s.Reason}");
+                string label = s.TargetType switch
+                {
+                    SuppressionTargetTypes.Signature => s.TargetLabel ?? s.SignatureKey ?? "(簽章)",
+                    SuppressionTargetTypes.Correlation => s.TargetLabel ?? s.CorrelationPatternId ?? "(關聯模式)",
+                    SuppressionTargetTypes.Volume => s.TargetLabel ?? $"總量突增（{s.VolumeKind}）",
+                    _ => s.RuleId
+                };
+
+                if (s.TargetType == SuppressionTargetTypes.Volume)
+                {
+                    sb.AppendLine($"  - {label}（{expiry}）｜原因：{s.Reason}");
+                    continue;
+                }
+
+                int occurrences = s.TargetType switch
+                {
+                    // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
+                    SuppressionTargetTypes.Signature => window.SelectMany(d => d.TopIssues)
+                        .Where(i => string.Equals(IssueSignatureKey.For(i), s.SignatureKey, StringComparison.OrdinalIgnoreCase))
+                        .Sum(i => i.Count),
+                    // 舊紀錄無 CorrelationAlertRefs（回饋十五輪 A 之前寫入），這裡會低估、不會誤報——
+                    // 與專案一貫的零遷移降級原則一致，寧可少算也不編造一個查無來源的數字
+                    SuppressionTargetTypes.Correlation => window.Count(d =>
+                        d.CorrelationAlertRefs.Any(r => string.Equals(r.PatternId, s.CorrelationPatternId, StringComparison.OrdinalIgnoreCase))),
+                    _ => window.SelectMany(d => d.TopIssues)
+                        .Where(i => i.RuleId != null && i.RuleId.Equals(s.RuleId, StringComparison.OrdinalIgnoreCase))
+                        .Sum(i => i.Count)
+                };
+                sb.AppendLine($"  - {label}（{expiry}）：本期共發生 {occurrences} 次｜原因：{s.Reason}");
             }
         }
 

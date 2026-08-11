@@ -61,4 +61,16 @@ public class CorrelationAnalyzerRuleAlignmentTests
         Assert.True(KnownIssueCatalog.HasWatchlist("Microsoft-Windows-Windows Defender"));
         AssertAllIdsCoveredByRules(CorrelationAnalyzer.DefenderProtectionOffIds);
     }
+
+    // ── PatternId 目錄完整性（回饋十五輪 A-5）───────────────────────────
+    // CorrelationFinding.PatternId 是 required 屬性，已經在編譯期保證每個 findings.Add
+    // 呼叫端都有指定；這裡額外釘住目錄本身（CorrelationPatternIds.All）沒有拼字重複——
+    // 拼字重複的後果是兩個不同模式共用同一個抑制開關，抑制其中一個會誤傷另一個。
+
+    [Fact]
+    public void CorrelationPatternIds目錄內全部識別碼皆非空且不重複()
+    {
+        Assert.All(CorrelationPatternIds.All, id => Assert.False(string.IsNullOrWhiteSpace(id)));
+        Assert.Equal(CorrelationPatternIds.All.Length, CorrelationPatternIds.All.Distinct().Count());
+    }
 }

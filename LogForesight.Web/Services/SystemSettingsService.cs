@@ -3,6 +3,7 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Web.Services;
 
@@ -36,6 +37,13 @@ public interface ISystemSettingsService
     /// 與對象伺服器。這裡是管理者對自己測試，失敗原因可以顯示細節（與一般登入的規則不同）。
     /// </summary>
     TestAdConnectionResultDto TestAdConnection(TestAdConnectionRequest request);
+
+    /// <summary>
+    /// 測試寄信（回饋十五輪批次D）：用表單目前值（可能還沒儲存）試寄一封信。密碼欄留空＝沿用
+    /// 已儲存的密碼（表單不會把已儲存的密碼明碼帶回前端，留空是唯一「不變更密碼」的表示方式，
+    /// 與 <see cref="Update"/> 的 ClearSmtpPassword／SmtpPassword 寫入慣例對稱）。
+    /// </summary>
+    Task<TestMailResultDto> TestMail(TestMailRequest request);
 }
 
 public class SystemSettingsService : ISystemSettingsService
@@ -68,13 +76,16 @@ public class SystemSettingsService : ISystemSettingsService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IUserStore _users;
+    private readonly MailNotificationService _mail;
 
-    public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit, IUserStore users)
+    public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit,
+        IUserStore users, MailNotificationService mail)
     {
         _store = store;
         _currentUser = currentUser;
         _audit = audit;
         _users = users;
+        _mail = mail;
     }
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
@@ -157,6 +168,43 @@ public class SystemSettingsService : ISystemSettingsService
 
         var brandIcon = ValidateBrandIcon(request.BrandIconDataUri);
 
+        // 郵件通知（回饋十五輪批次D）：任一路觸發啟用時，收件人與寄件人是硬性前提——
+        // 沒有收件人的通知設定等於沒設定，儲存當下就該擋，而不是等到排程觸發時才在 log 裡默默失敗
+        var mailRecipients = NormalizeLines(request.MailRecipients);
+        var anyMailTriggerEnabled = request.MailOnRunCompleted || request.MailDailyEnabled ||
+                                     request.MailWeeklyEnabled || request.MailUrgentEnabled;
+        if (request.MailEnabled && anyMailTriggerEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(request.SmtpServer))
+                throw DomainException.Validation("已啟用郵件通知的觸發項目，請輸入 SMTP 伺服器。");
+            if (string.IsNullOrWhiteSpace(request.MailFrom))
+                throw DomainException.Validation("已啟用郵件通知的觸發項目，請輸入寄件人。");
+            if (mailRecipients.Count == 0)
+                throw DomainException.Validation("已啟用郵件通知的觸發項目，請至少輸入一位收件人。");
+        }
+        // 位址格式在儲存當下就驗（含未啟用時填的值）：格式錯誤的位址若放行落盤，排程觸發時
+        // 建 MailAddress 才炸、又被 SendSafeAsync 靜默吞掉只記 log——使用者會以為通知設好了
+        // 卻永遠收不到信，這正是「儲存當下就該擋」最有價值的一類錯誤
+        if (!string.IsNullOrWhiteSpace(request.MailFrom) &&
+            !System.Net.Mail.MailAddress.TryCreate(request.MailFrom.Trim(), out _))
+            throw DomainException.Validation($"寄件人「{request.MailFrom.Trim()}」不是合法的電子郵件位址。");
+        foreach (var recipient in mailRecipients)
+        {
+            if (!System.Net.Mail.MailAddress.TryCreate(recipient, out _))
+                throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
+        }
+        if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
+            throw DomainException.Validation("郵件摘要門檻不合法。");
+        if (request.MailDailyEnabled && !TimeSpan.TryParse(request.MailDailyTime, out _))
+            throw DomainException.Validation("每日摘要時刻格式不合法，請用 HH:mm。");
+        if (request.MailWeeklyEnabled)
+        {
+            if (!TimeSpan.TryParse(request.MailWeeklyTime, out _))
+                throw DomainException.Validation("每週摘要時刻格式不合法，請用 HH:mm。");
+            if (!Enum.TryParse<DayOfWeek>(request.MailWeeklyDayOfWeek, ignoreCase: true, out _))
+                throw DomainException.Validation("每週摘要星期不合法。");
+        }
+
         var before = _store.Get();
 
         var saved = _store.Update(s =>
@@ -201,6 +249,32 @@ public class SystemSettingsService : ISystemSettingsService
             s.ImportMaxFileSizeKb = request.ImportMaxFileSizeKb;
             s.ImportMaxRows = request.ImportMaxRows;
 
+            // 郵件通知（回饋十五輪批次D）
+            s.MailEnabled = request.MailEnabled;
+            s.SmtpServer = request.SmtpServer?.Trim() ?? "";
+            s.SmtpPort = request.SmtpPort;
+            s.SmtpUseTls = request.SmtpUseTls;
+            s.SmtpAccount = request.SmtpAccount?.Trim() ?? "";
+            if (request.ClearSmtpPassword)
+                s.SmtpPasswordEnc = "";
+            else if (!string.IsNullOrEmpty(request.SmtpPassword))
+                s.SmtpPasswordEnc = CryptoHelper.Encrypt(request.SmtpPassword);
+            s.MailFrom = request.MailFrom?.Trim() ?? "";
+            s.MailRecipients = mailRecipients;
+            s.MailNotifyHostOwners = request.MailNotifyHostOwners;
+            s.MailMinRiskLevel = request.MailMinRiskLevel;
+            s.MailOnRunCompleted = request.MailOnRunCompleted;
+            s.MailDailyEnabled = request.MailDailyEnabled;
+            s.MailDailyTime = request.MailDailyTime;
+            s.MailWeeklyEnabled = request.MailWeeklyEnabled;
+            s.MailWeeklyDayOfWeek = request.MailWeeklyDayOfWeek;
+            s.MailWeeklyTime = request.MailWeeklyTime;
+            s.MailUrgentEnabled = request.MailUrgentEnabled;
+            s.MailSubjectTemplate = string.IsNullOrWhiteSpace(request.MailSubjectTemplate)
+                ? new SystemSettings().MailSubjectTemplate
+                : request.MailSubjectTemplate.Trim();
+            s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
+
             s.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -218,16 +292,25 @@ public class SystemSettingsService : ISystemSettingsService
                     before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.AiBaseUrl,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RiskyEventRetentionDays,
-                    before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter
+                    before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
+                    before.MailEnabled, before.SmtpServer, before.SmtpPort, before.SmtpUseTls, before.SmtpAccount,
+                    before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
+                    before.MailOnRunCompleted, before.MailDailyEnabled, before.MailDailyTime,
+                    before.MailWeeklyEnabled, before.MailWeeklyDayOfWeek, before.MailWeeklyTime, before.MailUrgentEnabled
                 },
                 After = new
                 {
                     saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.AiBaseUrl,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RiskyEventRetentionDays,
-                    saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter
+                    saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
+                    saved.MailEnabled, saved.SmtpServer, saved.SmtpPort, saved.SmtpUseTls, saved.SmtpAccount,
+                    saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
+                    saved.MailOnRunCompleted, saved.MailDailyEnabled, saved.MailDailyTime,
+                    saved.MailWeeklyEnabled, saved.MailWeeklyDayOfWeek, saved.MailWeeklyTime, saved.MailUrgentEnabled
                 },
-                AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey)
+                AiApiKeyChanged = request.ClearAiApiKey || !string.IsNullOrEmpty(request.AiApiKey),
+                SmtpPasswordChanged = request.ClearSmtpPassword || !string.IsNullOrEmpty(request.SmtpPassword)
             });
 
         return ToDto(saved);
@@ -333,6 +416,50 @@ public class SystemSettingsService : ISystemSettingsService
         }
     }
 
+    public async Task<TestMailResultDto> TestMail(TestMailRequest request)
+    {
+        // 密碼留空＝沿用已儲存的密碼——表單不會把已存密碼明碼帶回前端，這是使用者「沒改密碼」
+        // 的唯一表示方式，與 Update 的 ClearSmtpPassword／SmtpPassword 寫入慣例對稱。
+        var password = string.IsNullOrEmpty(request.SmtpPassword)
+            ? DecryptSavedSmtpPassword()
+            : request.SmtpPassword;
+
+        var connection = new SmtpConnectionSpec(request.SmtpServer.Trim(), request.SmtpPort, request.SmtpUseTls,
+            request.SmtpAccount.Trim(), password);
+        var recipients = request.Recipients.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim()).ToList();
+
+        // 稽核只記「執行過測試」與對象伺服器／收件人，密碼不落盤、不進稽核 detail
+        _audit.Record(
+            action: AuditActions.SettingsUpdate,
+            summary: "執行郵件測試寄信",
+            targetKind: "system_settings",
+            targetId: "mail_test",
+            detail: new { request.SmtpServer, request.SmtpPort, request.SmtpUseTls, Recipients = recipients });
+
+        // 模板空白時回退出廠模板——與 Update 的儲存路徑同一個 fallback 規則，測試信的主旨
+        // 才不會因為表單還沒填模板就寄出空白主旨（測出來的行為要跟存檔後的實際行為一致）
+        var subjectTemplate = string.IsNullOrWhiteSpace(request.SubjectTemplate)
+            ? new SystemSettings().MailSubjectTemplate
+            : request.SubjectTemplate;
+
+        try
+        {
+            await _mail.SendTestAsync(connection, request.MailFrom.Trim(), recipients,
+                subjectTemplate, request.BodyIntro);
+            return new TestMailResultDto { Success = true, Message = "測試郵件已送出，請確認收件匣。" };
+        }
+        catch (Exception ex)
+        {
+            return new TestMailResultDto { Success = false, Message = $"測試寄信失敗：{ex.Message}" };
+        }
+    }
+
+    private string? DecryptSavedSmtpPassword()
+    {
+        var enc = _store.Get().SmtpPasswordEnc;
+        return string.IsNullOrEmpty(enc) ? null : CryptoHelper.Decrypt(enc);
+    }
+
     /// <summary>
     /// 這裡是管理者對自己測試，細節可以顯示（與一般登入一律「帳號或密碼錯誤」不同，
     /// 見 LdapCredentialVerifier 與定案 2026-07-27）。
@@ -420,6 +547,26 @@ public class SystemSettingsService : ISystemSettingsService
         AnalysisChannels = s.AnalysisChannels,
         ImportMaxFileSizeKb = s.ImportMaxFileSizeKb,
         ImportMaxRows = s.ImportMaxRows,
+        // 郵件通知（回饋十五輪批次D）
+        MailEnabled = s.MailEnabled,
+        SmtpServer = s.SmtpServer,
+        SmtpPort = s.SmtpPort,
+        SmtpUseTls = s.SmtpUseTls,
+        SmtpAccount = s.SmtpAccount,
+        SmtpHasPassword = !string.IsNullOrEmpty(s.SmtpPasswordEnc),
+        MailFrom = s.MailFrom,
+        MailRecipients = s.MailRecipients,
+        MailNotifyHostOwners = s.MailNotifyHostOwners,
+        MailMinRiskLevel = s.MailMinRiskLevel,
+        MailOnRunCompleted = s.MailOnRunCompleted,
+        MailDailyEnabled = s.MailDailyEnabled,
+        MailDailyTime = s.MailDailyTime,
+        MailWeeklyEnabled = s.MailWeeklyEnabled,
+        MailWeeklyDayOfWeek = s.MailWeeklyDayOfWeek,
+        MailWeeklyTime = s.MailWeeklyTime,
+        MailUrgentEnabled = s.MailUrgentEnabled,
+        MailSubjectTemplate = s.MailSubjectTemplate,
+        MailBodyIntro = s.MailBodyIntro,
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

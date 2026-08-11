@@ -14,6 +14,9 @@
 // 形成循環——但雙方都只在「函式體內」使用彼此、非模組初始化期求值，ESM 的 live binding
 // 在此安全（searchableUserSelect 於執行期才呼叫 formatUserName）。
 import { formatUserName } from './format.js';
+// 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
+// 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
+import { api } from './api.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -286,6 +289,63 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
         el.addEventListener('hidden.bs.modal', () => {
             el.remove();
             resolve(confirmed);
+        });
+
+        modal.show();
+    });
+}
+
+/**
+ * 需要必填原因的確認對話框（回饋十五輪 C-4）：骨架抽自 confirmAction，加一個必填 textarea——
+ * 抑制關聯模式／總量告警等高影響操作都要求說明原因（日後回頭確認「當初為什麼關掉」的唯一依據，
+ * 同 rules.js 抑制 modal 的既有慣例），這裡不用 window.prompt 是因為它跟應用程式的 Bootstrap
+ * modal 風格完全脫節（無深色模式、擋住 JS 執行緒、無法套版），且不支援多行輸入。
+ * @returns {Promise<string|null>} 確認且已填原因時回傳 trim 過的原因字串；取消或未填回傳 null
+ */
+export function confirmActionWithReason({ title = '請確認', message, reasonLabel = '原因', confirmText = '確定', confirmVariant = 'danger' }) {
+    return new Promise(resolve => {
+        const el = document.createElement('div');
+        el.className = 'modal fade';
+        el.innerHTML = `
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"></h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p></p>
+                        <label class="form-label" data-lf-reason-label></label>
+                        <textarea class="form-control" data-lf-reason rows="2" required></textarea>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-${confirmVariant}" data-lf-confirm></button>
+                    </div>
+                </div>
+            </div>`;
+        el.querySelector('.modal-title').textContent = title;
+        el.querySelector('.modal-body p').textContent = message;
+        el.querySelector('[data-lf-reason-label]').textContent = reasonLabel;
+        el.querySelector('[data-lf-confirm]').textContent = confirmText;
+        const textarea = el.querySelector('[data-lf-reason]');
+
+        document.body.appendChild(el);
+        const modal = new bootstrap.Modal(el);
+
+        let reason = null;
+        el.querySelector('[data-lf-confirm]').addEventListener('click', () => {
+            const value = textarea.value.trim();
+            if (!value) {
+                textarea.classList.add('is-invalid');
+                return;
+            }
+            reason = value;
+            modal.hide();
+        });
+        el.addEventListener('hidden.bs.modal', () => {
+            el.remove();
+            resolve(reason);
         });
 
         modal.show();
@@ -915,6 +975,116 @@ export function searchableUserSelect(users, { selectedId = null, includeNone = f
     renderOptions();
     wrap.append(search, select);
     return { element: wrap, getValue: () => select.value, select };
+}
+
+/**
+ * 伺服器端搜尋型主機選取器（回饋十五輪 R2）：取代「一次拉單頁上限 200 筆」的做法——
+ * 2000 台規模下這個上限讓 90% 的主機選不到，而且失敗方式是靜默的（下拉裡就是沒有那台）。
+ * 與 {@link searchableUserSelect} 的差異是查詢方式：使用者清單通常不大，可以整批載入後
+ * 純前端篩選；主機清單量級不同，改成輸入時 debounce 打 /api/admin/hosts（該端點本來就是
+ * 伺服器端分頁，這裡只是多帶 query／os 兩個既有參數），只取回前 50 筆命中結果。
+ *
+ * @param {object} opts
+ *   platform     'windows' | 'linux'，對應 /api/admin/hosts 的 os 參數
+ *   selectedHost 預選主機（{ hostName, displayName } 或 null）
+ *   onChange     select 值變更時回呼（帶新的 hostName 字串）
+ * @returns {{ element: HTMLElement, getValue: () => string, select: HTMLSelectElement,
+ *             reset: (platform: string, selectedHost?: object|null) => void }}
+ */
+export function searchableHostSelect({ platform = 'windows', selectedHost = null, onChange } = {}) {
+    const outer = document.createElement('div');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'input-group input-group-sm';
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.className = 'form-control';
+    search.style.flex = '0 1 40%';
+    search.placeholder = '輸入主機名稱、顯示名稱或 IP 搜尋…';
+    search.autocomplete = 'off';
+
+    const select = document.createElement('select');
+    select.className = 'form-select';
+
+    const hint = document.createElement('div');
+    hint.className = 'form-text';
+
+    wrap.append(search, select);
+    outer.append(wrap, hint);
+
+    let currentPlatform = platform;
+    let currentValue = selectedHost?.hostName ?? '';
+    // 目前選中的主機——即使最新一次搜尋結果沒有它也保留這個選項，否則一打字就把
+    // select.value 靜默改掉（同 searchableUserSelect 保留目前選中人的理由）
+    let pinned = selectedHost;
+    let lastShown = [];
+    let debounceTimer = null;
+    let requestSeq = 0; // 避免慢回應蓋掉快回應：只採用「目前為止最新發出」的那個請求結果
+
+    function optionLabel(host) {
+        return host.displayName ? `${host.hostName}（${host.displayName}）` : host.hostName;
+    }
+
+    function renderOptions(hosts, total) {
+        lastShown = pinned && !hosts.some(h => h.hostName === pinned.hostName) ? [pinned, ...hosts] : hosts;
+
+        select.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '請選擇主機…';
+        select.appendChild(placeholder);
+        for (const host of lastShown) {
+            const opt = document.createElement('option');
+            opt.value = host.hostName;
+            opt.textContent = optionLabel(host);
+            select.appendChild(opt);
+        }
+        select.value = currentValue;
+
+        hint.textContent = total === 0 ? '查無符合的主機'
+            : total > hosts.length ? `共 ${total} 台，輸入關鍵字縮小範圍` : `共 ${total} 台`;
+    }
+
+    async function runSearch(keyword) {
+        const seq = ++requestSeq;
+        try {
+            const result = await api.get(
+                `/api/admin/hosts?query=${encodeURIComponent(keyword)}&os=${encodeURIComponent(currentPlatform)}&pageSize=50`,
+                { silent: true });
+            if (seq !== requestSeq) return; // 更新的請求已發出，這筆是過期回應，丟棄
+            renderOptions(result.items, result.total);
+        } catch {
+            if (seq !== requestSeq) return;
+            hint.textContent = '主機清單載入失敗，可稍後重試';
+        }
+    }
+
+    search.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => runSearch(search.value.trim()), 300);
+    });
+    select.addEventListener('change', () => {
+        currentValue = select.value;
+        pinned = lastShown.find(h => h.hostName === currentValue) ?? null;
+        onChange?.(currentValue);
+    });
+
+    runSearch('');
+
+    return {
+        element: outer,
+        getValue: () => select.value,
+        select,
+        // 平台切換時重置（Windows／Linux 規則各自的主機清單不同，見 rules.js 的抑制 modal）
+        reset(newPlatform, newSelectedHost = null) {
+            currentPlatform = newPlatform;
+            currentValue = newSelectedHost?.hostName ?? '';
+            pinned = newSelectedHost;
+            search.value = '';
+            runSearch('');
+        }
+    };
 }
 
 /**
