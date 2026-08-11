@@ -22,6 +22,7 @@ public class MailNotificationService
     private readonly IHostStore _hosts;
     private readonly IUserStore _users;
     private readonly IAnalysisRecordQuery _records;
+    private readonly IRecordHandlingStore _handlings;
     private readonly MailNotifyStateStore _state;
 
     public MailNotificationService(
@@ -30,6 +31,7 @@ public class MailNotificationService
         IHostStore hosts,
         IUserStore users,
         IAnalysisRecordQuery records,
+        IRecordHandlingStore handlings,
         MailNotifyStateStore state)
     {
         _settingsStore = settingsStore;
@@ -37,6 +39,7 @@ public class MailNotificationService
         _hosts = hosts;
         _users = users;
         _records = records;
+        _handlings = handlings;
         _state = state;
     }
 
@@ -272,6 +275,19 @@ public class MailNotificationService
             var highCount = group.Count(r => r.RiskLevel == RiskLevels.High);
             var mediumCount = group.Count(r => r.RiskLevel == RiskLevels.Medium);
             body.AppendLine($"  - {hostName}：高風險 {highCount} 天、中風險 {mediumCount} 天");
+        }
+
+        // 週報附未處理數（docs/FEEDBACK-15-PLAN.md D-3）：不限窗口——「還沒處理完」是當下狀態，
+        // 一個上上週就掛著沒人動的風險日正是週報最該提醒的東西，只看近 7 天反而幫忙藏爛帳
+        // （同 docs/DB-SPEC.md「進行中案件不論多舊都留著」的取向）。每日摘要不附：當日摘要
+        // 的重點是「今天發生什麼」，待辦總量每天寄一次只會變成沒人看的固定噪音。
+        if (isWeekly)
+        {
+            var unresolved = _handlings.GetUnresolved();
+            body.AppendLine();
+            body.AppendLine(unresolved.Count == 0
+                ? "目前沒有未處理（含處理中）的風險日。"
+                : $"目前未處理（含處理中）的風險日共 {unresolved.Count} 筆，請至站台的問題查詢頁檢視。");
         }
 
         await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);

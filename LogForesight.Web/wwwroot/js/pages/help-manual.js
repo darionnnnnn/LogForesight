@@ -116,7 +116,6 @@ function bindAskForm() {
         try {
             const result = await api.post('/api/help/ask', { question }, { silent: true });
             if (!result) {
-                resultEl.innerHTML = '';
                 const warn = document.createElement('div');
                 warn.className = 'text-muted small';
                 warn.textContent = 'AI 服務暫時無法回應，可先查閱下方章節。';

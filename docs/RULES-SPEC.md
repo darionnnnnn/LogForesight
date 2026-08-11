@@ -37,8 +37,10 @@
    - 影響：console/報告的告警呈現（紅色橫幅、頻率異常清單）、風險等級判定
      （`LogAnalysisService.ComputeRuleBasedRisk` 排除被抑制的簽章）。
    - 不影響：事件照常聚合、規則照常命中並落 `RuleId`、`TrendAnalyzer` 照常計算趨勢欄位與
-     嚴重度升級（只是不產生告警文字）、歷史紀錄照常寫入完整資訊、**`CorrelationAnalyzer`
-     完全不受影響**（單一事件被抑制，不代表它跟其他事件組合出的攻擊鏈/故障鏈也該被消音）。
+     嚴重度升級（只是不產生告警文字）、歷史紀錄照常寫入完整資訊、**Rule／Signature 型抑制
+     不會消音關聯層**（單一事件被抑制，不代表它跟其他事件組合出的攻擊鏈/故障鏈也該被消音；
+     要對特定關聯模式關閉通知，必須明確建立 `TargetType=Correlation` 的抑制——見下方
+     「抑制目標四型」，那是刻意獨立、建立時強警告的另一個決定，不是單一事件抑制的副作用）。
    - 這樣設計的原因：(a) 維護者的抑制判斷可能是錯的或過時的，需要保留紀錄才能回查；
      (b) 管理頁要做的「每個規則的發生頻率」報表，資料正是來自「照常紀錄」；
      (c) 符合本專案「沒告警 ≠ 沒問題，是沒看」的一貫哲學——抑制是「看了但決定不吵」，
@@ -187,11 +189,12 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 ## 抑制機制
 
-`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`Scope`（`Host`／`Group`／`Site`，
-回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、`Reason`、`SuppressedBy`、`CreatedAt`、
-`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，必須 `null`）。獨立於規則本身儲存
-（`suppressions.json`，無 seed 概念，缺檔＝空清單），因為兩者生命週期不同：規則是全域設定，
-抑制是各主機/群組/全站的營運狀態。
+`RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`TargetType`／`SignatureKey`／
+`CorrelationPatternId`／`VolumeKind`／`TargetLabel`／`Platform`（抑制目標四型，回饋十五輪 A，
+見下節）、`Scope`（`Host`／`Group`／`Site`，回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、
+`Reason`、`SuppressedBy`、`CreatedAt`、`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，
+必須 `null`）。獨立於規則本身儲存（blob `suppressions`，無 seed 概念，缺檔＝空清單），
+因為兩者生命週期不同：規則是全域設定，抑制是各主機/群組/全站的營運狀態。
 
 **語意**（詳見上方「三條語意邊界」第 2 點）：只影響通知與風險升級，不影響偵測與紀錄。
 

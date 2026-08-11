@@ -182,6 +182,17 @@ public class SystemSettingsService : ISystemSettingsService
             if (mailRecipients.Count == 0)
                 throw DomainException.Validation("已啟用郵件通知的觸發項目，請至少輸入一位收件人。");
         }
+        // 位址格式在儲存當下就驗（含未啟用時填的值）：格式錯誤的位址若放行落盤，排程觸發時
+        // 建 MailAddress 才炸、又被 SendSafeAsync 靜默吞掉只記 log——使用者會以為通知設好了
+        // 卻永遠收不到信，這正是「儲存當下就該擋」最有價值的一類錯誤
+        if (!string.IsNullOrWhiteSpace(request.MailFrom) &&
+            !System.Net.Mail.MailAddress.TryCreate(request.MailFrom.Trim(), out _))
+            throw DomainException.Validation($"寄件人「{request.MailFrom.Trim()}」不是合法的電子郵件位址。");
+        foreach (var recipient in mailRecipients)
+        {
+            if (!System.Net.Mail.MailAddress.TryCreate(recipient, out _))
+                throw DomainException.Validation($"收件人「{recipient}」不是合法的電子郵件位址。");
+        }
         if (!RiskLevels.All.Contains(request.MailMinRiskLevel))
             throw DomainException.Validation("郵件摘要門檻不合法。");
         if (request.MailDailyEnabled && !TimeSpan.TryParse(request.MailDailyTime, out _))
@@ -425,10 +436,16 @@ public class SystemSettingsService : ISystemSettingsService
             targetId: "mail_test",
             detail: new { request.SmtpServer, request.SmtpPort, request.SmtpUseTls, Recipients = recipients });
 
+        // 模板空白時回退出廠模板——與 Update 的儲存路徑同一個 fallback 規則，測試信的主旨
+        // 才不會因為表單還沒填模板就寄出空白主旨（測出來的行為要跟存檔後的實際行為一致）
+        var subjectTemplate = string.IsNullOrWhiteSpace(request.SubjectTemplate)
+            ? new SystemSettings().MailSubjectTemplate
+            : request.SubjectTemplate;
+
         try
         {
             await _mail.SendTestAsync(connection, request.MailFrom.Trim(), recipients,
-                request.SubjectTemplate, request.BodyIntro);
+                subjectTemplate, request.BodyIntro);
             return new TestMailResultDto { Success = true, Message = "測試郵件已送出，請確認收件匣。" };
         }
         catch (Exception ex)

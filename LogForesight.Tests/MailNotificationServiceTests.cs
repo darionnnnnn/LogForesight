@@ -16,12 +16,14 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeHostStore _hosts = new();
     private readonly FakeUserStore _users = new();
     private readonly FakeAnalysisRecordQuery _records = new();
+    private readonly FakeHandlingStore _handlings = new();
     private readonly EfSqliteFixture _fx = new();
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private MailNotificationService Create() =>
-        new(_settingsStore, _sender, _hosts, _users, _records, new MailNotifyStateStore(_fx.Blob("mail_notify_state")));
+        new(_settingsStore, _sender, _hosts, _users, _records, _handlings,
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")));
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
         string headline = "", string? riskBasis = null) => new()
@@ -208,6 +210,31 @@ public class MailNotificationServiceTests : IDisposable
         // 輪詢每分鐘跑一次，同一天內再次命中時刻窗口不該重複寄
         await service.CheckAndSendDailyWeeklyAsync(atTime.AddMinutes(1));
         Assert.Single(_sender.Sent);
+    }
+
+    /// <summary>週報彙總範圍（docs/FEEDBACK-15-PLAN.md D-3）：過去 7 日達門檻的主機日
+    /// 逐主機彙總＋未處理數；窗口外的紀錄不計入。</summary>
+    [Fact]
+    public async Task 週報彙總過去七日達門檻的主機日並附未處理數()
+    {
+        var now = new DateTime(2026, 8, 10, 9, 0, 0);
+        EnableMail(s =>
+        {
+            s.MailWeeklyEnabled = true;
+            s.MailWeeklyDayOfWeek = now.DayOfWeek.ToString();
+            s.MailWeeklyTime = "08:00";
+            s.MailMinRiskLevel = RiskLevels.Medium;   // 門檻放到中，高＋中兩筆都要計入
+        });
+        _records.Add(Record(1, "host1", now.Date.AddDays(-2), RiskLevels.High));
+        _records.Add(Record(1, "host1", now.Date.AddDays(-1), RiskLevels.Medium));
+        _records.Add(Record(1, "host1", now.Date.AddDays(-10), RiskLevels.High));   // 窗口外，不計入
+        _handlings.Save(new RecordHandling { HostName = "host1", Date = now.Date.AddDays(-2), Status = HandlingStatuses.Open });
+
+        await Create().CheckAndSendDailyWeeklyAsync(now);
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("host1：高風險 1 天、中風險 1 天", sent.Message.Body);
+        Assert.Contains("未處理（含處理中）的風險日共 1 筆", sent.Message.Body);
     }
 
     [Fact]
