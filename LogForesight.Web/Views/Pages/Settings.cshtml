@@ -398,6 +398,14 @@
                 <input class="form-check-input" type="checkbox" id="mail-notify-host-owners" />
                 <label class="form-check-label" for="mail-notify-host-owners">同時通知主機負責人</label>
             </div>
+            <div class="alert alert-warning py-2 px-3 small d-none" id="mail-suspended-recipients-wrap">
+                <strong>已暫停寄送的收件人</strong>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="這些地址連續寄送失敗達 3 次，已自動排除避免拖累其他收件人；通常代表地址打錯。修正地址後儲存本頁設定即可重新嘗試。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                </button>
+                <div id="mail-suspended-recipients-list" class="lf-mono mt-1"></div>
+            </div>
 
             <hr />
 
@@ -459,6 +467,11 @@
                     <label for="mail-weekly-time" class="form-label small mb-1">時刻</label>
                     <input type="time" class="form-control form-control-sm" id="mail-weekly-time" />
                 </div>
+            </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="mail-digest-skip-empty" />
+                <label class="form-check-label" for="mail-digest-skip-empty">期間內無達門檻風險日時不寄摘要信</label>
+                <div class="form-text">預設仍照寄——「期間內無事」的信同時是系統存活訊號，關閉後只在有達門檻風險日時才收到每日／每週摘要。</div>
             </div>
 
             <hr />

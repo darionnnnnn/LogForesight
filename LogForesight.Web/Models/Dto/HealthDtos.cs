@@ -64,4 +64,8 @@ public class HealthDetailDto : HealthDto
 
     /// <summary>最後一次搬移失敗的原因（成功為 null）</summary>
     public string? MigrationError { get; set; }
+
+    /// <summary>因連續寄送失敗達門檻而暫停寄送的郵件收件人（回饋十七輪批次B-1）：
+    /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
+    public List<string> SuspendedMailRecipients { get; set; } = new();
 }

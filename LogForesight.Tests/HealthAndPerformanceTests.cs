@@ -1,5 +1,6 @@
 ﻿using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -85,7 +86,14 @@ public class HealthServiceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller());
+    private HealthService NewService() => new(_backend, new SchedulerRunState(), _backend.TopIssueBackfiller(), NewMailService());
+
+    /// <summary>HealthService 只用得到 GetSuspendedRecipients()（回饋十七輪批次B-1），
+    /// 其餘相依給最小可用的替身即可</summary>
+    private MailNotificationService NewMailService() => new(
+        new FakeSystemSettingsStore(), new FakeSmtpMailSender(), new FakeHostStore(), new FakeUserStore(),
+        new FakeUserGroupStore(), new FakeGroupAccessStore(), new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
+        new MailNotifyStateStore(_backend.Blob("mail_notify_state")));
 
     [Fact]
     public void 存活檢查_資料庫可達時回ok()
@@ -147,7 +155,7 @@ public class HealthServiceTests : IDisposable
         Assert.True(runState.TryBeginRun("manual", out _));
         runState.ReportProgress("分析主機", 30, 100);
 
-        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller()).GetDetail();
+        var dto = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService()).GetDetail();
 
         Assert.True(dto.AnalysisRunning);
         Assert.Equal("manual", dto.AnalysisTrigger);

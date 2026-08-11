@@ -250,7 +250,13 @@ function renderMailFields(settings) {
 
     document.getElementById('mail-subject-template').value = settings.mailSubjectTemplate ?? '';
     document.getElementById('mail-body-intro').value = settings.mailBodyIntro ?? '';
+    document.getElementById('mail-digest-skip-empty').checked = settings.mailDigestSkipEmpty;
     document.getElementById('mail-test-result').replaceChildren();
+
+    // 已暫停寄送的收件人（回饋十七輪批次B-1）：連續失敗達門檻的地址，通常是打錯字
+    const suspended = settings.suspendedMailRecipients ?? [];
+    document.getElementById('mail-suspended-recipients-wrap').classList.toggle('d-none', suspended.length === 0);
+    document.getElementById('mail-suspended-recipients-list').textContent = suspended.join('、');
 }
 
 /** 一行一位、去除空白行——與後端 SystemSettingsService.NormalizeLines 對齊的寬鬆解析 */
@@ -545,6 +551,7 @@ function bindForm() {
                 mailUrgentEnabled,
                 mailSubjectTemplate: document.getElementById('mail-subject-template').value.trim(),
                 mailBodyIntro: document.getElementById('mail-body-intro').value.trim(),
+                mailDigestSkipEmpty: document.getElementById('mail-digest-skip-empty').checked,
                 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）
                 brandName: document.getElementById('brand-name').value.trim(),
                 brandSubtitle: document.getElementById('brand-subtitle').value.trim(),

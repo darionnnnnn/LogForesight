@@ -167,53 +167,19 @@ public class VisibilityService : IVisibilityService
         return _cached;
     }
 
-    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId)
-    {
-        // 停用的使用者不因負責人身分取得任何範圍（停用優先於一切授權路徑，同 GetVisibleHostIds）
-        var user = _users.Get(userId);
-        if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
+    // GetOwnedHostIdsFor／GetGroupVisibleHostIdsFor／GetVisibleHostIdsFor 三個方法委派給
+    // HostVisibilityResolver（回饋十七輪批次B-4 抽出）：MailNotificationService（Singleton）
+    // 需要同一套「指定使用者看得到哪些主機」邏輯，但無法注入這裡依賴的 Scoped ICurrentUser——
+    // 單點化避免兩邊各自維護一份而漂移。
 
-        return _hosts.GetAll()
-            .Where(h => h.Active && h.OwnerUserIds.Contains(userId))
-            .Select(h => h.HostId)
-            .ToHashSet();
-    }
+    public IReadOnlySet<long> GetOwnedHostIdsFor(long userId) =>
+        HostVisibilityResolver.GetOwnedHostIds(_hosts, _users, userId);
 
-    public IReadOnlySet<long> GetVisibleHostIdsFor(long userId)
-    {
-        // 與 GetVisibleHostIds 同一套規則（群組授權 ∪ 負責人，§2b）——兩邊漂移的話，
-        // 指派前的「他看得到這台嗎」提示就會說謊
-        var visible = GetGroupVisibleHostIdsFor(userId).ToHashSet();
-        visible.UnionWith(GetOwnedHostIdsFor(userId));
-        return visible;
-    }
+    public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) =>
+        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId);
 
-    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId)
-    {
-        var user = _users.Get(userId);
-        if (user == null || !user.Active) return new HashSet<long>();
-
-        // 對象持有 ViewAll（dev/manager/admin 群組）時看得到全部主機——能力來自所屬群組的
-        // 角色聯集，與登入時解析 cap claim 的規則同一套（RoleCapabilityMap）
-        var activeGroups = _userGroups.GetAll()
-            .Where(g => g.Active && user.GroupIds.Contains(g.GroupId))
-            .ToList();
-
-        var allHosts = _hosts.GetAll().Where(h => h.Active).ToList();
-
-        if (RoleCapabilityMap.For(activeGroups.Select(g => g.Role)).Contains(Capability.ViewAll))
-            return allHosts.Select(h => h.HostId).ToHashSet();
-
-        var hostGroupIds = _access.GetAll()
-            .Where(a => activeGroups.Any(g => g.GroupId == a.UserGroupId))
-            .Select(a => a.HostGroupId)
-            .ToHashSet();
-
-        return allHosts
-            .Where(h => h.GroupIds.Any(hostGroupIds.Contains))
-            .Select(h => h.HostId)
-            .ToHashSet();
-    }
+    public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) =>
+        HostVisibilityResolver.GetGroupVisibleHostIds(_hosts, _users, _userGroups, _access, userId);
 
     public List<WebHost> GetVisibleHosts()
     {

@@ -236,6 +236,11 @@ public class SystemSettings
     /// <summary>信件開頭可自訂的一段純文字，附加在自動組出的摘要表格之前</summary>
     public string MailBodyIntro { get; set; } = "";
 
+    /// <summary>每日／週報彙總期間內無達門檻風險日時是否略過寄送（回饋十七輪批次A-4）。
+    /// 預設 false（照寄）——「期間內無事」同時是系統存活訊號，沉默無法區分「沒事」與
+    /// 「排程本身掛了」；使用者可主動關閉以減少噪音。</summary>
+    public bool MailDigestSkipEmpty { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }

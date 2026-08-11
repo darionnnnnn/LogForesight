@@ -1,6 +1,7 @@
 using System.Reflection;
 using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Web.Services;
 
@@ -21,12 +22,14 @@ public class HealthService
     private readonly StorageBackend _backend;
     private readonly SchedulerRunState _runState;
     private readonly TopIssueBackfiller _backfiller;
+    private readonly MailNotificationService _mail;
 
-    public HealthService(StorageBackend backend, SchedulerRunState runState, TopIssueBackfiller backfiller)
+    public HealthService(StorageBackend backend, SchedulerRunState runState, TopIssueBackfiller backfiller, MailNotificationService mail)
     {
         _backend = backend;
         _runState = runState;
         _backfiller = backfiller;
+        _mail = mail;
     }
 
     /// <summary>組建版本（Directory.Build.props 的 Version＋commit）</summary>
@@ -92,7 +95,9 @@ public class HealthService
             MigrationBlocksWrites = migration.ShouldBlockWrites,
             MigrationDoneParts = new[] { migration.IssueHandlingDone, migration.IssueCasesDone, migration.RecordHandlingDone }
                 .Count(x => x),
-            MigrationError = migration.LastError
+            MigrationError = migration.LastError,
+
+            SuspendedMailRecipients = _mail.GetSuspendedRecipients()
         };
     }
 

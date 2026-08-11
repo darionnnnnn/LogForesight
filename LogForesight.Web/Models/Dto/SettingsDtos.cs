@@ -99,6 +99,13 @@ public class SystemSettingsDto
     public string MailSubjectTemplate { get; set; } = "";
     public string MailBodyIntro { get; set; } = "";
 
+    /// <summary>每日／週報彙總期間內無達門檻風險日時是否略過寄送（回饋十七輪批次A-4）</summary>
+    public bool MailDigestSkipEmpty { get; set; }
+
+    /// <summary>因連續寄送失敗達門檻而暫停寄送的收件人（回饋十七輪批次B-1）：
+    /// 讓管理者看得到「為什麼這個人一直沒收到信」，通常代表地址打錯。</summary>
+    public List<string> SuspendedMailRecipients { get; set; } = new();
+
     public DateTime? UpdatedAt { get; set; }
 
     public string? UpdatedByAccount { get; set; }
@@ -292,6 +299,8 @@ public class UpdateSystemSettingsRequest
 
     [StringLength(2000)]
     public string MailBodyIntro { get; set; } = "";
+
+    public bool MailDigestSkipEmpty { get; set; }
 }
 
 /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存）試寄一封，

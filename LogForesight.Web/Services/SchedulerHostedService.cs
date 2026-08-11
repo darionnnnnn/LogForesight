@@ -220,7 +220,7 @@ public class SchedulerHostedService : BackgroundService
             // 不影響本次執行的成敗判定（outcome 已經定案並交給 EndRun）。
             if (outcome is { Success: true })
             {
-                await _mail.NotifyAfterRunAsync(DateTime.Today, _lifetime.ApplicationStopping);
+                await _mail.NotifyAfterRunAsync(_lifetime.ApplicationStopping);
             }
         });
 
