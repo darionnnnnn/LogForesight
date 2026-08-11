@@ -152,13 +152,22 @@ public class LogAnalysisService
         // 主機級告警抑制（見 docs/RULES-SPEC.md）：只標記「這個簽章命中的規則被本機抑制」，
         // 不影響聚合、分類或後續寫入歷史——偵測與紀錄照常，只是後面判定風險/組告警文字時要跳過它。
         // 保留完整的 activeSuppressions（含 Reason）供風險報告的「已抑制的告警」區塊顯示。
+        //
+        // 簽章級抑制（回饋十五輪 A-1）：issue.RuleId==null（Other 類未命中規則）過去完全沒有
+        // 抑制掛載點，是 A1 指出的核心缺口。TargetType=Signature 的抑制以 IssueSignatureKey 比對，
+        // 不看有沒有命中規則——同一個 issue 也可能同時被 Rule 與 Signature 兩種抑制命中，兩者是
+        // 「或」的關係，任一命中即算抑制。
         var activeSuppressions = SuppressionFilter.ActiveForHost(LoadSuppressions(), _host, _hostGroupIds, DateTime.Now);
         if (activeSuppressions.Count > 0)
         {
             var suppressedRuleIds = SuppressionFilter.ToRuleIdSet(activeSuppressions);
+            var suppressedSignatureKeys = SuppressionFilter.ToSignatureKeySet(activeSuppressions);
             foreach (var issue in issues)
             {
-                if (issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId))
+                bool ruleSuppressed = issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId);
+                bool signatureSuppressed = suppressedSignatureKeys.Contains(
+                    IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType));
+                if (ruleSuppressed || signatureSuppressed)
                 {
                     issue.Suppressed = true;
                 }
@@ -174,14 +183,22 @@ public class LogAnalysisService
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
         var history = _historyService.ReadRecent(targetDate, historyDays);
 
+        // 總量抑制（回饋十五輪 A-1）：整體錯誤量／安全稽核事件量突增過去不掛任何簽章，
+        // 結構上沒有抑制掛載點——TargetType=Volume 補上這個缺口。
+        bool suppressErrorVolume = SuppressionFilter.HasVolumeSuppression(activeSuppressions, VolumeKinds.Error);
+        bool suppressAuditVolume = SuppressionFilter.HasVolumeSuppression(activeSuppressions, VolumeKinds.Audit);
+
         // 程式端確定性頻率比對：當日 vs 前一日 vs 歷史基準，頻率上升會就地升級該事件的嚴重度
-        var trendAlerts = TrendAnalyzer.Apply(issues, history, targetDate, errorCount, auditCount);
+        var trendAlerts = TrendAnalyzer.Apply(issues, history, targetDate, errorCount, auditCount,
+            suppressErrorVolume, suppressAuditVolume, out var suppressedTrendAlerts, out var trendAlertRefs);
 
         // 慢速趨勢偵測（2026-07-20，見 docs/archive/HISTORY.md）：近 7 天 vs 前 7 天總量比較，
         // 每日、全主機、確定性執行，捕捉躲在 TrendAnalyzer 單日門檻下的緩慢惡化訊號——
         // 取代原本「週六全量體檢」找慢速斜線的職責，偵測延遲從最壞 7 天縮到 1 天。
         // 併入既有 trendAlerts 清單：同屬程式比對出的頻率異常，prompt/報告/console 沿用同一套呈現與風險下限判定
-        trendAlerts.AddRange(SlowTrendAnalyzer.Apply(issues, history, targetDate, out bool slowTrendEvaluated));
+        var slowTrendAlerts = SlowTrendAnalyzer.Apply(issues, history, targetDate, out bool slowTrendEvaluated, out var suppressedSlowTrendAlerts);
+        trendAlerts.AddRange(slowTrendAlerts);
+        suppressedTrendAlerts.AddRange(suppressedSlowTrendAlerts);
 
         issues = issues
             .OrderByDescending(i => i.Severity)
@@ -214,6 +231,18 @@ public class LogAnalysisService
         var correlations = isLinuxHost
             ? LinuxCorrelationAnalyzer.Detect(issues, logs)
             : CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
+
+        // 關聯模式抑制（回饋十五輪 A-1）：跨 log 關聯訊號過去無抑制路徑，且
+        // correlations.Count > 0 直接判中風險（見下方 ComputeRuleBasedRisk）、ElevatesDayRisk
+        // 命中甚至直接判高風險——是本輪影響面最大的一種抑制，建立時要求理由必填＋強警告
+        // （批次 C 的 UI 職責），這裡只管過濾：被抑制的模式整批移出 correlations，不參與風險判定、
+        // 不進 prompt、不進告警清單，改記到 suppressedCorrelations 供「已抑制的告警」誠實申報。
+        var correlationPatternIdSet = SuppressionFilter.ToCorrelationPatternIdSet(activeSuppressions);
+        var suppressedCorrelations = correlations.Where(c => correlationPatternIdSet.Contains(c.PatternId)).ToList();
+        if (suppressedCorrelations.Count > 0)
+        {
+            correlations = correlations.Where(c => !correlationPatternIdSet.Contains(c.PatternId)).ToList();
+        }
 
         // 這幾個清單都是程式自己產生的短結構化字串（不是原始 log 內容），數量也有上限，記錄完整內容沒問題
         if (trendAlerts.Count > 0)
@@ -306,6 +335,10 @@ public class LogAnalysisService
             TopIssues = issues,
             TrendAlerts = trendAlerts,
             CorrelationAlerts = correlations.Select(c => c.Description).ToList(),
+            TrendAlertRefs = trendAlertRefs,
+            CorrelationAlertRefs = correlations.Select(c => new CorrelationAlertRef { Text = c.Description, PatternId = c.PatternId }).ToList(),
+            SuppressedTrendAlerts = suppressedTrendAlerts,
+            SuppressedCorrelationAlerts = suppressedCorrelations.Select(c => c.Description).ToList(),
             RiskLevel = ruleRisk,
             RiskBasis = riskBasis,
             AiAnalyzed = false,
@@ -472,8 +505,11 @@ public class LogAnalysisService
     internal async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
+        // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，
+        // 見本方法 XML 文件），空字串不影響 prompt 組裝，也不會被誤判成任何已知模式（不落在
+        // CorrelationPatternIds.All 內，Web 層驗證與抑制比對都用得到這個目錄，這裡只是重建輸入不比對）
         var correlations = pendingRecord.CorrelationAlerts
-            .Select(desc => new CorrelationFinding { Description = desc, Severity = IssueSeverity.High, ElevatesDayRisk = false })
+            .Select(desc => new CorrelationFinding { Description = desc, Severity = IssueSeverity.High, ElevatesDayRisk = false, PatternId = "" })
             .ToList();
 
         var (headline, summary, trendAssessment, action, riskLevel, riskBasisOverride, aiAnalyzed) = await RunMainAnalysisAsync(

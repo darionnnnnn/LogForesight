@@ -51,6 +51,7 @@ public class LinuxCorrelationAnalyzerTests
         Assert.True(finding.ElevatesDayRisk);
         Assert.Contains("破解得手", finding.Description);
         Assert.Contains("attacker1", finding.Description);
+        Assert.Equal(CorrelationPatternIds.LinuxSshBruteSuccess, finding.PatternId);
     }
 
     [Fact]
@@ -114,6 +115,7 @@ public class LinuxCorrelationAnalyzerTests
         Assert.Equal(IssueSeverity.Medium, finding.Severity);
         Assert.False(finding.ElevatesDayRisk); // 降級版不確定性高，不該拉高當日風險
         Assert.Contains("無法解析", finding.Description);
+        Assert.Equal(CorrelationPatternIds.LinuxSshBruteUncertain, finding.PatternId);
     }
 
     [Fact]

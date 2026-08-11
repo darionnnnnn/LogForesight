@@ -87,7 +87,7 @@ internal static class LinuxCorrelationAnalyzer
 
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.LinuxSshBruteSuccess,
                 Description = $"【SSH 破解得手】同日大量 SSH 登入失敗（x{bruteforceSignature!.Count}）後，" +
                               $"相同帳號/IP 出現成功登入（{string.Join("；", parts)}）——暴力破解極可能已得手，" +
                               "應立即鎖定該帳號、強制改密碼並全面稽查其後續活動"
@@ -102,7 +102,7 @@ internal static class LinuxCorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.Medium, ElevatesDayRisk = false,
+                Severity = IssueSeverity.Medium, ElevatesDayRisk = false, PatternId = CorrelationPatternIds.LinuxSshBruteUncertain,
                 Description = $"【SSH 破解得手？】同日大量 SSH 登入失敗（x{bruteforceSignature!.Count}）與成功登入" +
                               $"（x{acceptSignature.Count}）同時存在，但部分事件無法解析帳號/IP" +
                               $"（失敗面 {bruteforceParseFailures} 筆／成功面 {acceptParseFailures} 筆解析不出），" +

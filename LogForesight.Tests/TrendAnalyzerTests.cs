@@ -33,6 +33,42 @@ public class TrendAnalyzerTests
     }
 
     /// <summary>
+    /// Rising 嚴重度閘門（回饋十五輪 A-4）：Low 簽章的頻率上升不該有能力把當天拉成中風險——
+    /// Trend/Escalate/ElevatesDayRisk 判定完全不受影響（仍照算供紀錄用），只是不產生告警文字。
+    /// </summary>
+    [Fact]
+    public void Low嚴重度簽章頻率上升時不產生告警文字但趨勢與升級照算()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 10, IssueSeverity.Low);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Equal(IssueSeverity.Medium, sig.Severity); // Escalate 仍把 Low 升到 Medium
+        Assert.False(sig.ElevatesDayRisk);                 // 升級前不是 High，旗標不設
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率上升")); // 但不吵、不拉風險
+    }
+
+    /// <summary>Medium（升級前）以上的簽章不受閘門影響，維持既有行為——這是既有測試
+    /// 「歷史基準兩倍以上且達最低次數時判為Rising並升級嚴重度」（High）以外的邊界確認。</summary>
+    [Fact]
+    public void Medium嚴重度簽章頻率上升時仍正常產生告警文字()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.Medium))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 10, IssueSeverity.Medium);
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 10, 0);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Contains(alerts, a => a.Contains("頻率上升"));
+    }
+
+    /// <summary>
     /// 回饋十三輪 E：歷史基準改中位數的存在意義——單日爆量一次不該讓後續兩週都測不出真正的異常。
     /// 13 天基準量 2、其中 1 天爆量到 100：平均會被拉到 9.0（(13×2+100)/14），之後真正異常的
     /// 一天（15，接近基準的 7.5 倍）用平均門檻算是 15&gt;=18 不成立、判不出 Rising；
@@ -287,6 +323,90 @@ public class TrendAnalyzerTests
         var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0);
 
         Assert.DoesNotContain(alerts, a => a.Contains("首次出現"));
+    }
+
+    // ── 總量抑制與結構化 refs（回饋十五輪 A-1／A-5）─────────────────────
+
+    [Fact]
+    public void 整體錯誤量突增_抑制旗標開啟時不進回傳值改進suppressedAlerts()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 2, AuditEventCount = 0, RiskLevel = "低" })
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, 20, 0,
+            suppressErrorVolume: true, suppressAuditVolume: false, out var suppressed, out var refs);
+
+        Assert.DoesNotContain(alerts, a => a.Contains("整體錯誤量突增"));
+        Assert.Contains(suppressed, a => a.Contains("整體錯誤量突增"));
+        Assert.DoesNotContain(refs, r => r.Kind == TrendAlertKinds.VolumeError);
+    }
+
+    [Fact]
+    public void 安全稽核事件量突增_抑制旗標開啟時不進回傳值改進suppressedAlerts()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 2, RiskLevel = "低" })
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, 0, 20,
+            suppressErrorVolume: false, suppressAuditVolume: true, out var suppressed, out var refs);
+
+        Assert.DoesNotContain(alerts, a => a.Contains("安全稽核事件量突增"));
+        Assert.Contains(suppressed, a => a.Contains("安全稽核事件量突增"));
+        Assert.DoesNotContain(refs, r => r.Kind == TrendAlertKinds.VolumeAudit);
+    }
+
+    [Fact]
+    public void 總量抑制旗標關閉時行為與舊版本一致()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 2, AuditEventCount = 0, RiskLevel = "低" })
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, 20, 0,
+            suppressErrorVolume: false, suppressAuditVolume: false, out var suppressed, out var refs);
+
+        Assert.Contains(alerts, a => a.Contains("整體錯誤量突增"));
+        Assert.Empty(suppressed);
+        Assert.Contains(refs, r => r.Kind == TrendAlertKinds.VolumeError && r.IssueKey == null);
+    }
+
+    [Fact]
+    public void alertRefs對應首次出現與頻率上升時帶對應的IssueKey()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.High))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 10, IssueSeverity.High);
+        var expectedKey = IssueSignatureKey.For(sig.LogName, sig.Source, sig.EventId, sig.EntryType);
+
+        // todayErrorCount/todayAuditCount 刻意傳 0：history 的 HistoryDay 輔助方法不帶 ErrorCount
+        // （預設 0），非零的 todayErrorCount 會意外觸發「整體錯誤量突增（多數日無錯誤）」固定門檻，
+        // 這裡只想單獨看簽章層的 Rising ref，不想跟總量告警混在一起斷言
+        TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0,
+            false, false, out _, out var refs);
+
+        var rising = Assert.Single(refs);
+        Assert.Equal(TrendAlertKinds.Signature, rising.Kind);
+        Assert.Equal(expectedKey, rising.IssueKey);
+    }
+
+    [Fact]
+    public void 被抑制的簽章頻率上升時文字進suppressedAlerts不進alertRefs()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 153, 2, IssueSeverity.High))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 10, IssueSeverity.High);
+        sig.Suppressed = true;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0,
+            false, false, out var suppressed, out var refs);
+
+        Assert.Empty(alerts);
+        Assert.Empty(refs);
+        Assert.Contains(suppressed, a => a.Contains("頻率上升"));
     }
 
     private static DailyAnalysisRecord DefenderHistoryDay(DateTime date, int eventId, int count)

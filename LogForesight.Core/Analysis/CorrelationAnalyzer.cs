@@ -12,6 +12,11 @@ internal class CorrelationFinding
     public bool ElevatesDayRisk { get; init; }
 
     public string Description { get; init; } = string.Empty;
+
+    /// <summary>穩定的模式識別碼（回饋十五輪 A-5，見 <see cref="CorrelationPatternIds"/>），供
+    /// 告警抑制掛載（RuleSuppression.TargetType=Correlation）與詳情頁的模式說明 popover 使用。
+    /// required：新增模式時編譯期強制指定，不會有漏標的呼叫端。</summary>
+    public required string PatternId { get; init; }
 }
 
 /// <summary>
@@ -87,7 +92,7 @@ internal static class CorrelationAnalyzer
                 : "";
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.IntrusionChain,
                 Description = $"【入侵鏈】同日出現大量登入失敗（x{bruteForce!.Count}）與帳號建立/提權操作（EventId {accountChange.EventId}）" +
                               $"——暴力破解得手後建立立足點的典型組合{ordering}，應立即調查該帳號的所有活動"
             });
@@ -105,7 +110,7 @@ internal static class CorrelationAnalyzer
 
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.BruteSuccess,
                 Description = $"【破解得手】同日大量登入失敗（x{bruteForce!.Count}）後，相同帳號/IP 出現成功登入{rdpNote}（{matchedText}）" +
                               "——暴力破解極可能已得手，應立即鎖定該帳號、強制改密碼並全面稽查其後續活動"
             });
@@ -115,7 +120,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.Persistence,
                 Description = "【持久化】帳號異動或攻擊嘗試與新服務/排程任務同日出現" +
                               $"（{newService.Source} EventId {newService.EventId}）——入侵後植入持久化後門的典型組合，" +
                               "請確認該服務/任務的執行檔來源與簽章"
@@ -127,7 +132,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.AuditTamper,
                 Description = $"【滅跡】稽核記錄被清除/變更（EventId {auditTamper.EventId}）且同日有其他安全事件" +
                               "——高度疑似入侵者在清除操作痕跡，被清除前的稽核內容可能已遺失，應以其他來源（防火牆、EDR）交叉調查"
             });
@@ -138,7 +143,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.PrivImplant,
                 Description = $"【提權→植入】權限/特權異動（EventId {permissionChange.EventId}）與新服務/排程任務同日出現" +
                               "——先取得權限再植入執行體的攻擊推進模式"
             });
@@ -158,7 +163,7 @@ internal static class CorrelationAnalyzer
                 : "同日出現帳號建立/提權操作";
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.AvOffMalware,
                 Description = $"【防護遭關閉→惡意程式】防毒防護被關閉/停用（EventId {defenderProtectionOff.EventId}）且{trigger}" +
                               "——入侵者常在植入惡意程式前先解除防護，應立即重啟防護、全機掃描並調查關閉來源"
             });
@@ -168,7 +173,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.MalwarePersistence,
                 Description = $"【惡意程式→持久化】偵測到惡意程式（EventId {defenderMalware.EventId}）與新服務/排程任務" +
                               $"同日出現（{newService.Source} EventId {newService.EventId}）——惡意程式建立持久化立足點的典型組合，" +
                               "請確認該服務/任務的執行檔來源與簽章，並確認惡意程式已徹底清除"
@@ -189,7 +194,7 @@ internal static class CorrelationAnalyzer
             var parts = string.Join("、", storageSignals.Select(s => $"{s.Source}#{s.EventId} x{s.Count}"));
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.StorageChain,
                 Description = $"【儲存連鎖】多個儲存層訊號同日出現（{parts}）——磁碟 I/O、檔案系統、控制器同時異常是" +
                               "硬碟故障連鎖反應的訊號，故障可能迫在眉睫，應立即備份並安排更換"
             });
@@ -200,7 +205,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.StorageCrash,
                 Description = "【儲存→當機】磁碟/檔案系統錯誤與非預期關機同日出現——儲存故障可能已導致系統崩潰，" +
                               "下次崩潰可能無法開機，備份的優先度最高"
             });
@@ -210,7 +215,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.HwUnstable,
                 Description = "【硬體不穩】WHEA 硬體錯誤與非預期重開同日出現——硬體劣化已實際影響系統穩定性，" +
                               "而不只是 corrected error 統計上升"
             });
@@ -225,7 +230,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High,
+                Severity = IssueSeverity.High, PatternId = CorrelationPatternIds.CrashServiceFail,
                 Description = $"【崩潰→服務失敗】應用程式崩潰（{appCrash.Source} x{appCrash.Count}）與服務異常終止" +
                               $"（x{serviceFailure.Count}）同日出現——可能為同一應用程式的崩潰導致服務失敗，" +
                               "請比對兩者的範例訊息是否指向同一程式"
@@ -237,7 +242,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High,
+                Severity = IssueSeverity.High, PatternId = CorrelationPatternIds.CrashLoopResource,
                 Description = $"【崩潰循環→資源耗盡】服務高頻異常終止（x{serviceFailureCount}）與系統資源耗盡同日出現" +
                               "——服務陷入「崩潰→自動重啟→再崩潰」的循環正在耗盡系統資源，放任將拖垮整機，" +
                               "應先停用該服務的自動重啟再排查根因"
@@ -248,7 +253,7 @@ internal static class CorrelationAnalyzer
         {
             findings.Add(new CorrelationFinding
             {
-                Severity = IssueSeverity.High,
+                Severity = IssueSeverity.High, PatternId = CorrelationPatternIds.TimeSkewAuth,
                 Description = "【時間偏移→驗證失敗】時間同步失敗與登入失敗同日出現——時鐘偏移會導致 Kerberos 驗證大量失敗，" +
                               "登入失敗可能是假性攻擊訊號；但仍需先修復時間同步後確認登入失敗是否消失，不可直接排除攻擊"
             });
@@ -267,7 +272,7 @@ internal static class CorrelationAnalyzer
             {
                 findings.Add(new CorrelationFinding
                 {
-                    Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                    Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.XdayIntrusion,
                     Description = "【跨日入侵鏈】昨日大量登入失敗、今日出現帳號/權限/服務異動——攻擊者跨日推進的典型模式" +
                                   "（先暴力破解、隔日建立立足點），比單日訊號更值得警戒，應立即調查"
                 });
@@ -278,7 +283,7 @@ internal static class CorrelationAnalyzer
             {
                 findings.Add(new CorrelationFinding
                 {
-                    Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                    Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.XdayStorage,
                     Description = "【儲存持續劣化】儲存層錯誤連續兩日出現——不是偶發抖動而是持續劣化中，" +
                                   "硬碟剩餘壽命可能以天計，備份與更換不應再等待"
                 });
@@ -291,7 +296,7 @@ internal static class CorrelationAnalyzer
             {
                 findings.Add(new CorrelationFinding
                 {
-                    Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                    Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.XdayAvOffMalware,
                     Description = "【防護遭關閉→惡意程式】昨日防毒防護被關閉、今日偵測到惡意程式——攻擊者先解除防護、" +
                                   "隔日植入惡意程式的跨日推進模式，應立即隔離主機並全面稽查"
                 });
@@ -316,7 +321,7 @@ internal static class CorrelationAnalyzer
                 {
                     findings.Add(new CorrelationFinding
                     {
-                        Severity = IssueSeverity.High, ElevatesDayRisk = true,
+                        Severity = IssueSeverity.High, ElevatesDayRisk = true, PatternId = CorrelationPatternIds.XdayBruteRdp,
                         Description = $"【暴力破解→RDP 得手】昨日大量登入失敗的來源 IP，今日以遠端桌面成功登入" +
                                       $"（來源IP：{string.Join("、", overlapIps.Take(5))}）——暴力破解跨日以 RDP 得手的跡象，" +
                                       "應立即鎖定該來源、檢查其遠端工作階段的所有活動並強制改密碼"

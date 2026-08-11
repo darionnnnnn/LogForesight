@@ -113,6 +113,43 @@ public class SlowTrendAnalyzerTests
         Assert.False(evaluated);
     }
 
+    /// <summary>
+    /// 抑制對慢速趨勢的效果（回饋十五輪 A-1）：SlowTrendAnalyzer 原本完全不檢查
+    /// issue.Suppressed，是簽章級抑制的一個漏網之魚——Rising/New 的抑制檢查生效後，
+    /// 這裡若沒跟進，被抑制的簽章仍能靠「慢速惡化」文字繼續拉高風險、觸發 AI。
+    /// </summary>
+    [Fact]
+    public void 被抑制的簽章慢速惡化時不進回傳值改進suppressedAlerts()
+    {
+        var prior = Enumerable.Range(7, 7).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 1));
+        var recent = Enumerable.Range(1, 6).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 2));
+        var history = prior.Concat(recent).ToList();
+        var sig = Sig(5);
+        sig.Suppressed = true;
+
+        var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today,
+            out bool evaluated, out var suppressed);
+
+        Assert.True(evaluated);
+        Assert.Empty(alerts);
+        Assert.Contains(suppressed, a => a.Contains("慢速惡化"));
+    }
+
+    [Fact]
+    public void 未被抑制的對照組仍正常產生慢速惡化告警()
+    {
+        var prior = Enumerable.Range(7, 7).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 1));
+        var recent = Enumerable.Range(1, 6).Select(d => HistoryDayFor(DateTime.Today.AddDays(-d), 2));
+        var history = prior.Concat(recent).ToList();
+        var sig = Sig(5);
+
+        var alerts = SlowTrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today,
+            out _, out var suppressed);
+
+        Assert.Contains(alerts, a => a.Contains("慢速惡化"));
+        Assert.Empty(suppressed);
+    }
+
     private static LogIssueSignature Sig(int count) => new()
     {
         LogName = "System",

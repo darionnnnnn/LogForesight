@@ -27,11 +27,36 @@ public class DailyAnalysisRecord
     public int AuditEventCount { get; set; }
     public List<LogIssueSignature> TopIssues { get; set; } = new();
 
-    /// <summary>程式比對歷史後偵測到的頻率異常（首次出現、頻率上升、整體錯誤量突增）</summary>
+    /// <summary>程式比對歷史後偵測到的頻率異常（首次出現、頻率上升、整體錯誤量突增）。
+    /// 已排除本機抑制設定關掉的項目（回饋十五輪 A）——被抑制的仍照算趨勢欄位與嚴重度升級，
+    /// 只是不出現在這份清單，語意邊界見 docs/RULES-SPEC.md。</summary>
     public List<string> TrendAlerts { get; set; } = new();
 
-    /// <summary>跨 log 關聯訊號：多個獨立事件的已知攻擊鏈/故障鏈組合（CorrelationAnalyzer 確定性比對）</summary>
+    /// <summary>跨 log 關聯訊號：多個獨立事件的已知攻擊鏈/故障鏈組合（CorrelationAnalyzer 確定性比對）。
+    /// 已排除本機抑制設定關掉的模式（回饋十五輪 A）。</summary>
     public List<string> CorrelationAlerts { get; set; } = new();
+
+    /// <summary>
+    /// <see cref="TrendAlerts"/> 的結構化平行資料（回饋十五輪 A-5／C-1）：供詳情頁頁內導航
+    /// （點擊捲到對應問題分節）。舊紀錄為空清單，前端據此降級回純文字顯示。
+    /// </summary>
+    public List<TrendAlertRef> TrendAlertRefs { get; set; } = new();
+
+    /// <summary><see cref="CorrelationAlerts"/> 的結構化平行資料（回饋十五輪 A-5／C-1）：
+    /// 供詳情頁的模式說明 popover 與「抑制此模式」出口。舊紀錄為空清單。</summary>
+    public List<CorrelationAlertRef> CorrelationAlertRefs { get; set; } = new();
+
+    /// <summary>
+    /// 因抑制設定而未進入 <see cref="TrendAlerts"/> 的告警文字（回饋十五輪 A）：抑制關的是
+    /// 「要不要吵」不是「要不要記」，這份清單讓詳情頁的「已抑制的告警」區塊誠實申報「暫時關掉
+    /// 的東西其實還在發生」，而不是讓它們無聲消失。涵蓋簽章層（首次出現／頻率上升）與總量層
+    /// （整體錯誤量／安全稽核事件量突增）兩種抑制。舊紀錄為空清單。
+    /// </summary>
+    public List<string> SuppressedTrendAlerts { get; set; } = new();
+
+    /// <summary>因抑制設定而未進入 <see cref="CorrelationAlerts"/> 的告警文字（回饋十五輪 A），
+    /// 語意與 <see cref="SuppressedTrendAlerts"/> 對稱。舊紀錄為空清單。</summary>
+    public List<string> SuppressedCorrelationAlerts { get; set; } = new();
 
     public string RiskLevel { get; set; } = string.Empty;
 
