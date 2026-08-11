@@ -275,6 +275,26 @@ Linux 規則因該表未存 EventKey 只能以同來源程式合計，畫面誠�
 Site 範圍的到期天數預設帶 30 天而非永久（可手動清空改回永久）——全站抑制「忘記解除」
 的代價最高，自動失效比預設永久安全。
 
+**範圍支援矩陣**（回饋十六輪 C-1，行為變更）：`Signature`／`Correlation`／`Volume` 三型目前
+**一律只接受 `Host` 範圍**，`RuleAdminService.AddSuppression` 在服務層直接拒絕這三型的
+`Group`／`Site` 請求（`DomainException.Validation`）——理由是只有 `Rule` 型有上述的
+`PreviewSuppression` 影響面預覽，新三型完全沒有這道護欄；不限制的話，一次 API 呼叫就能建立
+無預覽的全站抑制，例如 Site 範圍的 `Volume` 抑制＝全站關掉「整體錯誤量突增」，而那正是
+未命中規則事件（Other 類別）爆量時僅剩的一道網（見「Low 簽章的趨勢出口」，
+docs/DETECTION-SPEC.md）。詳情頁的簽章／關聯抑制入口本來就硬編 `Scope=Host`，這裡把同樣的
+限制下沉到服務層，堵住繞過 UI 直接呼叫 API 的路徑。
+
+| TargetType | Host | Group | Site |
+|---|---|---|---|
+| `Rule` | ✓ | ✓（有預覽） | ✓（有預覽） |
+| `Signature` | ✓ | ✗ | ✗ |
+| `Correlation` | ✓ | ✗ | ✗ |
+| `Volume` | ✓ | ✗ | ✗ |
+
+未來若要為新三型開放 `Group`／`Site`，必須先把 `PreviewSuppression` 泛型化
+（`(targetType, targetKey, scope, groupId)`）支援四型，而不是直接放行——否則等於複製三扇
+沒有護欄的門。
+
 **體檢固定提醒**（`WeeklyCheckupService`）：只要體檢確實產生報告（窗口內有訊號、AI 敘事成功），
 就固定列出本機生效中的抑制清單（含 Group／Site 範圍展開後對本機生效的項目）＋窗口期間各自
 的發生次數——防止「暫時關掉」變成永久盲區。不會為了顯示這個清單而強制觸發原本因「三層皆無

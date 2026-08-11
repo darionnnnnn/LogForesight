@@ -36,6 +36,22 @@ export function initChatPanel(hostIdParam, dateParam, topIssues, aiAvailable) {
     renderIssueOptions(topIssues);
     resetConversation();
     bindEvents();
+    loadRunHint();
+}
+
+/**
+ * 分析執行中提示（回饋十六輪批次D-1）：AI 對話與批次分析共用同一個地端模型的序列請求佇列
+ * （見 README 的「本機推論同時處理多個請求會互搶 GPU 資源」），執行中時回應會明顯變慢——
+ * 面板顯示當下查一次，不輪詢（分析動輒數小時，多輪詢不會讓提示更準確，只是白發請求）。
+ */
+async function loadRunHint() {
+    const hint = document.getElementById('chat-run-hint');
+    try {
+        const activity = await api.get('/api/run-activity', { silent: true });
+        hint.classList.toggle('d-none', !activity?.isRunning);
+    } catch {
+        hint.classList.add('d-none');
+    }
 }
 
 /**

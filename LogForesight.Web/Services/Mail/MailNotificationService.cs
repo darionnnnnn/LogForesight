@@ -17,6 +17,17 @@ public class MailNotificationService
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+    /// <summary>執行摘要／每日週報信，明細行數上限（回饋十六輪批次A-5）：2000 台規模下
+    /// 中風險以上可能有 600+ 筆，純文字信不該列到那個長度，超出改導向站台。</summary>
+    private const int SummaryBodyLineLimit = 50;
+
+    /// <summary>高風險即時通知單封信的主機明細行數上限（回饋十六輪批次A-1）。</summary>
+    private const int UrgentBodyLineLimit = 20;
+
+    /// <summary>高風險即時通知同一輪寄送的連續失敗次數上限，達到即熔斷剩餘寄送
+    /// （回饋十六輪批次A-3）：SMTP 整台不通時，不把「30 秒逾時 × 剩餘收件人數」全部付掉。</summary>
+    private const int UrgentFailureThreshold = 3;
+
     private readonly ISystemSettingsStore _settingsStore;
     private readonly ISmtpMailSender _sender;
     private readonly IHostStore _hosts;
@@ -198,19 +209,35 @@ public class MailNotificationService
         var summary = $"{qualifying.Count} 台主機達 {settings.MailMinRiskLevel} 風險以上";
         var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, settings.MailMinRiskLevel, "執行摘要", summary);
 
+        var ordered = qualifying.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)).ToList();
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine($"{dateText} 執行摘要：{summary}").AppendLine();
-        foreach (var record in qualifying.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)))
+        foreach (var record in ordered.Take(SummaryBodyLineLimit))
         {
             var hostName = ResolveHostDisplayName(record);
             body.AppendLine($"  - [{record.RiskLevel}風險] {hostName}　錯誤 {record.ErrorCount}／警告 {record.WarningCount}" +
                              (string.IsNullOrWhiteSpace(record.Headline) ? "" : $"　{record.Headline}"));
         }
+        if (ordered.Count > SummaryBodyLineLimit)
+        {
+            body.AppendLine($"  ……其餘 {ordered.Count - SummaryBodyLineLimit} 台請至站台的問題查詢頁檢視。");
+        }
 
         await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
     }
 
+    /// <summary>
+    /// 高風險即時通知：**按收件人聚合**（回饋十六輪批次A-1，取代原本「逐主機日一封信」）——
+    /// 一位收件人一次執行最多只收一封信，信中簡述本次新增的高風險主機，細節導向站台。
+    /// 這同時解決了 2000 台規模下「300~1000 個高風險主機日＝300~1000 封信」的序列寄送風暴
+    /// （見回饋十六輪體檢發現1）：信件數從「主機數」降為「收件人數」，通常只有個位數到幾十封。
+    ///
+    /// 收件人解析分兩層：全域收件人（<see cref="SystemSettings.MailRecipients"/>）各自收到
+    /// 一封列出「本次全部」pending 的信；有開啟 <see cref="SystemSettings.MailNotifyHostOwners"/>
+    /// 時，非全域收件人的主機負責人另外收到一封只列「自己負責」主機的信——已經是全域收件人的
+    /// 負責人不重複收信（他已經在全域信裡看到全部內容）。
+    /// </summary>
     private async Task SendUrgentNotificationsAsync(SystemSettings settings, List<DailyAnalysisRecord> records, CancellationToken ct)
     {
         var highRisk = records.Where(r => r.RiskLevel == RiskLevels.High).ToList();
@@ -220,34 +247,161 @@ public class MailNotificationService
         var pending = highRisk.Where(r => !state.UrgentSentKeys.Contains(UrgentKey(r))).ToList();
         if (pending.Count == 0) return;
 
-        foreach (var record in pending)
+        var globalRecipients = settings.MailRecipients
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Select(r => r.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var globalSet = new HashSet<string>(globalRecipients, StringComparer.OrdinalIgnoreCase);
+
+        // 保序：全域收件人（依 MailRecipients 清單順序）在前，負責人（依 pending 出現順序）在後——
+        // 熔斷（下方 UrgentFailureThreshold）依這個順序判斷「連續」失敗，順序必須是明確保證的行為
+        // 而非依賴 Dictionary 迭代順序這種實作細節。
+        var recipientOrder = new List<string>();
+        var perRecipient = new Dictionary<string, List<DailyAnalysisRecord>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var email in globalRecipients)
         {
-            var host = _hosts.Get(record.HostId);
-            var recipients = ResolveRecipients(settings, host);
-            if (recipients.Count == 0) continue;
-
-            var hostName = ResolveHostDisplayName(record);
-            var dateText = record.Date.ToString("yyyy-MM-dd");
-            var subject = ExpandTemplate(settings.MailSubjectTemplate, hostName, dateText, RiskLevels.High, "高風險即時通知",
-                record.Headline?.Length > 0 ? record.Headline : "偵測到高風險訊號");
-
-            var body = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
-            body.AppendLine($"主機 {hostName} 於 {dateText} 判定為高風險日。");
-            if (!string.IsNullOrWhiteSpace(record.Headline)) body.AppendLine($"狀況：{record.Headline}");
-            if (!string.IsNullOrWhiteSpace(record.RiskBasis)) body.AppendLine($"判定依據：{record.RiskBasis}");
-
-            await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
+            perRecipient[email] = new List<DailyAnalysisRecord>(pending);
+            recipientOrder.Add(email);
         }
 
-        // 標記已寄＋順便清掉超過保留期的舊 key，不無限增長（用 RetentionDays 當保留期，
-        // 與業務資料同一個保留週期，沒有理由讓已到期資料的通知紀錄留得比資料本身久）
+        if (settings.MailNotifyHostOwners)
+        {
+            foreach (var record in pending)
+            {
+                var host = _hosts.Get(record.HostId);
+                if (host == null) continue;
+
+                foreach (var ownerId in host.OwnerUserIds)
+                {
+                    var email = _users.Get(ownerId)?.Email;
+                    if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email)) continue;
+
+                    if (!perRecipient.TryGetValue(email, out var list))
+                    {
+                        list = new List<DailyAnalysisRecord>();
+                        perRecipient[email] = list;
+                        recipientOrder.Add(email);
+                    }
+                    if (!list.Contains(record)) list.Add(record);
+                }
+            }
+        }
+
+        // 沒人可收（全域清單空且無負責人 email）：這批 pending 完全不標記，設定補齊後
+        // 下次執行自動補寄——修掉「先啟用通知、後填收件人」那幾天永久漏寄的路徑（發現2b）
+        if (perRecipient.Count == 0) return;
+
+        // recordKey → 涵蓋到它的收件人清單，供寄送完成後判斷該不該標記已寄
+        var coverage = new Dictionary<string, List<string>>();
+        foreach (var (email, recs) in perRecipient)
+        {
+            foreach (var record in recs)
+            {
+                var key = UrgentKey(record);
+                if (!coverage.TryGetValue(key, out var emails))
+                {
+                    emails = new List<string>();
+                    coverage[key] = emails;
+                }
+                emails.Add(email);
+            }
+        }
+
+        var recipientSuccess = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var consecutiveFailures = 0;
+        var circuitBroken = false;
+
+        foreach (var (email, recs) in perRecipient)
+        {
+            if (circuitBroken)
+            {
+                recipientSuccess[email] = false;
+                continue;
+            }
+
+            var (subject, body) = BuildUrgentMessage(settings, recs);
+            var success = await SendSafeAsync(settings, new List<string> { email }, subject, body, ct);
+            recipientSuccess[email] = success;
+
+            if (success)
+            {
+                consecutiveFailures = 0;
+            }
+            else if (++consecutiveFailures >= UrgentFailureThreshold)
+            {
+                // 連續失敗熔斷（發現1）：SMTP 整台不通時，不把「30 秒逾時 × 剩餘收件人數」
+                // 全部付掉——聚合後收件人數通常不多，熔斷主要是保底，不是常態路徑
+                circuitBroken = true;
+                Log.Warn("[Mail] 連續 {N} 封高風險即時通知寄送失敗，本輪停止剩餘寄送（尚有 {Remaining} 位收件人未寄）。",
+                    UrgentFailureThreshold, perRecipient.Count - recipientSuccess.Count);
+            }
+        }
+
+        // 標記語意：涵蓋此 record 的信「全部」寄成功才標記已寄（發現2a 的根修）——寧可讓
+        // 已收到的人下次重複收到（信量小、發生率低），也不漏寄。取消例外會在 SendSafeAsync
+        // 內重新拋出，讓迴圈中斷、未寄到的收件人維持 recipientSuccess 缺項（視為未成功）。
         var cutoff = DateTime.Today.AddDays(-settings.RetentionDays);
         _state.Update(s =>
         {
-            foreach (var record in pending) s.UrgentSentKeys.Add(UrgentKey(record));
+            foreach (var record in pending)
+            {
+                var key = UrgentKey(record);
+                if (coverage.TryGetValue(key, out var emails) &&
+                    emails.All(e => recipientSuccess.TryGetValue(e, out var ok) && ok))
+                {
+                    s.UrgentSentKeys.Add(key);
+                }
+            }
             s.UrgentSentKeys.RemoveWhere(key => IsBeforeCutoff(key, cutoff));
         });
+    }
+
+    private (string Subject, string Body) BuildUrgentMessage(SystemSettings settings, List<DailyAnalysisRecord> records)
+    {
+        var ordered = records.OrderByDescending(r => r.Date).ThenBy(r => ResolveHostDisplayName(r)).ToList();
+        var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+
+        string hostLabel;
+        string summary;
+        if (ordered.Count == 1)
+        {
+            hostLabel = ResolveHostDisplayName(ordered[0]);
+            summary = ordered[0].Headline?.Length > 0 ? ordered[0].Headline : "偵測到高風險訊號";
+        }
+        else
+        {
+            hostLabel = $"{ordered.Count} 台主機";
+            summary = $"{ordered.Count} 台主機新增高風險日";
+        }
+
+        var subject = ExpandTemplate(settings.MailSubjectTemplate, hostLabel, dateText, RiskLevels.High, "高風險即時通知", summary);
+
+        var body = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+        body.AppendLine(ordered.Count == 1
+            ? $"主機 {hostLabel} 於 {ordered[0].Date:yyyy-MM-dd} 判定為高風險日。"
+            : "本次執行新增以下高風險主機日：");
+        body.AppendLine();
+
+        foreach (var record in ordered.Take(UrgentBodyLineLimit))
+        {
+            var name = ResolveHostDisplayName(record);
+            var line = $"  - {name}　{record.Date:yyyy-MM-dd}";
+            if (!string.IsNullOrWhiteSpace(record.Headline)) line += $"　{record.Headline}";
+            body.AppendLine(line);
+        }
+        if (ordered.Count > UrgentBodyLineLimit)
+        {
+            body.AppendLine($"  ……其餘 {ordered.Count - UrgentBodyLineLimit} 筆請至站台的問題查詢頁檢視。");
+        }
+
+        if (ordered.Count == 1 && !string.IsNullOrWhiteSpace(ordered[0].RiskBasis))
+        {
+            body.AppendLine().AppendLine($"判定依據：{ordered[0].RiskBasis}");
+        }
+
+        return (subject, body.ToString());
     }
 
     private async Task SendDigestAsync(SystemSettings settings, DateTime now, int windowDays, bool isWeekly, CancellationToken ct)
@@ -269,12 +423,17 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine($"{type}（{from:yyyy-MM-dd} ~ {now:yyyy-MM-dd}）：{summary}").AppendLine();
 
-        foreach (var group in qualifying.GroupBy(r => r.HostId))
+        var hostGroups = qualifying.GroupBy(r => r.HostId).ToList();
+        foreach (var group in hostGroups.Take(SummaryBodyLineLimit))
         {
             var hostName = ResolveHostDisplayName(group.First());
             var highCount = group.Count(r => r.RiskLevel == RiskLevels.High);
             var mediumCount = group.Count(r => r.RiskLevel == RiskLevels.Medium);
             body.AppendLine($"  - {hostName}：高風險 {highCount} 天、中風險 {mediumCount} 天");
+        }
+        if (hostGroups.Count > SummaryBodyLineLimit)
+        {
+            body.AppendLine($"  ……其餘 {hostGroups.Count - SummaryBodyLineLimit} 台請至站台的問題查詢頁檢視。");
         }
 
         // 週報附未處理數（docs/FEEDBACK-15-PLAN.md D-3）：不限窗口——「還沒處理完」是當下狀態，
@@ -307,22 +466,37 @@ public class MailNotificationService
     }
 
     /// <summary>
-    /// 寄送失敗只記 WARN，不往外拋——這是三路觸發共用的最後一道防線，呼叫端（排程輪詢／
+    /// 寄送失敗只記 WARN、回 false，不往外拋——這是三路觸發共用的最後一道防線，呼叫端（排程輪詢／
     /// 執行收尾）不該因為一封信寄失敗而受影響。SmtpClient 逾時無獨立設定，共用 30 秒合理上限，
     /// relay 通常是內網，30 秒逾時仍未回應代表連線本身有問題，繼續等沒有意義。
+    ///
+    /// **回傳成敗**（回饋十六輪批次A-2）：<see cref="SendUrgentNotificationsAsync"/> 需要依成敗
+    /// 決定要不要標記 <see cref="MailNotifyState.UrgentSentKeys"/>——原本吞掉一切例外、
+    /// 迴圈跑完就無條件全部標記已寄，寄送失敗或服務中途停止時會讓高風險通知永久漏寄
+    /// （回饋十六輪體檢發現2）。
+    ///
+    /// **外層真正的取消要求會重新拋出**（<c>ct.IsCancellationRequested</c>）：呼叫端（服務停止／
+    /// 執行被取消）需要迴圈立即中斷，不能讓尚未寄出的收件人也被判定「處理過」。30 秒逾時觸發的
+    /// 取消（外層 ct 本身未取消）視為單純寄送失敗，回 false 讓迴圈繼續處理下一位收件人。
     /// </summary>
-    private async Task SendSafeAsync(SystemSettings settings, List<string> recipients, string subject, string body, CancellationToken ct)
+    private async Task<bool> SendSafeAsync(SystemSettings settings, List<string> recipients, string subject, string body, CancellationToken ct)
     {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
             await _sender.SendAsync(ResolveConnection(settings),
                 new MailMessageSpec(settings.MailFrom, recipients, subject, body), timeoutCts.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             Log.Warn(ex, "[Mail] 寄送失敗：{Subject}（收件人 {Count} 位）", subject, recipients.Count);
+            return false;
         }
     }
 }

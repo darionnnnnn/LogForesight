@@ -428,6 +428,17 @@ public class RuleAdminService
         if (!SuppressionScopes.IsValid(request.Scope))
             throw DomainException.Validation($"不合法的抑制範圍「{request.Scope}」。");
 
+        // 新三型（Signature／Correlation／Volume）目前一律限 Host 範圍（回饋十六輪批次C-1）：
+        // 只有 Rule 型有 PreviewSuppression 的影響面預覽——Group/Site 範圍讓維護者在送出前
+        // 看得到「會影響幾台主機、過去命中幾次」。新三型完全沒有這道護欄，UI 三個入口
+        // （詳情頁的簽章／關聯抑制）本來就硬編 Scope=Host，這裡把同樣的限制下沉到服務層，
+        // 堵住繞過 UI 直接呼叫 API 建 Group/Site 抑制的路徑——那等於無預覽地讓一類訊號
+        // 在大量主機上噤聲（回饋十六輪體檢發現5，例如 Site 範圍的 Volume 抑制＝全站關掉
+        // 「整體錯誤量突增」，而那正是未命中規則事件爆量時的最後一道網）。未來若要開放
+        // 大範圍，須先把 PreviewSuppression 泛型化支援新三型。
+        if (request.TargetType != SuppressionTargetTypes.Rule && request.Scope != SuppressionScopes.Host)
+            throw DomainException.Validation("簽章／關聯／總量抑制目前僅支援單台主機範圍。");
+
         var ruleId = "";
         string? signatureKey = null;
         string? correlationPatternId = null;

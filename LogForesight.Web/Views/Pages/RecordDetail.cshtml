@@ -50,6 +50,7 @@
                     @* #chat-body 整組（下拉／訊息／輸入表單）在「放大檢視」時被搬移進全螢幕 modal，
                        關閉後搬回這裡——見 chat-panel.js、ui.js showDetailModal 的 onClose 說明 *@
                     <div id="chat-body">
+                        <div class="text-muted small mb-2 d-none" id="chat-run-hint">分析執行中，AI 回應可能較慢。</div>
                         <select class="form-select form-select-sm mb-2" id="chat-issue-select">
                             <option value="">請先選擇要詢問的異常項目…</option>
                         </select>

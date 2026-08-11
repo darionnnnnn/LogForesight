@@ -24,6 +24,9 @@ async function load() {
     selectChapter(chapterById.has(hashId) ? hashId : chapters[0]?.id);
 
     loadAskAvailability();   // 獨立打，失敗不擋住章節內容（同 settings.js 的 backfill 狀態慣例）
+
+    alignChapterBodyHeight();
+    window.addEventListener('resize', throttledAlignHeight);
 }
 
 function renderNav() {
@@ -57,6 +60,34 @@ function selectChapter(id) {
     renderRelated(chapter);
 
     document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    alignChapterBodyHeight();
+}
+
+/**
+ * 章節內容區高度對齊左側目錄卡（回饋十六輪批次E-4）：純 CSS 的 flex/grid stretch 只能讓
+ * 較矮欄等高於較高欄，做不到「以較矮欄為基準」，改用 JS 量測目錄卡的實際高度，設到內容區
+ * 的 max-height，超出用 scrollbar。章節切換（內容長度變化）與視窗縮放都要重算。
+ */
+function alignChapterBodyHeight() {
+    const navCard = document.getElementById('help-chapter-nav-card');
+    const body = document.getElementById('help-chapter-body');
+    if (!navCard || !body) return;
+
+    // md 斷點以下兩欄變成上下堆疊，高度對齊沒有意義，交還瀏覽器自然高度
+    if (window.innerWidth < 768) {
+        body.style.maxHeight = '';
+        body.style.overflowY = '';
+        return;
+    }
+
+    body.style.maxHeight = `${navCard.offsetHeight}px`;
+    body.style.overflowY = 'auto';
+}
+
+let resizeTimer = null;
+function throttledAlignHeight() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(alignChapterBodyHeight, 150);
 }
 
 function renderRelated(chapter) {
@@ -88,14 +119,31 @@ function renderRelated(chapter) {
     wrap.classList.remove('d-none');
 }
 
-/** AI 問答框：未設定時整區換成說明文案，比照統計模式的誠實申報寫法 */
+/**
+ * AI 問答卡：未設定時整卡隱藏（回饋十六輪批次D-3，行為變更）——與全站其他 AI 入口
+ * （儀表板焦點卡、清單頁歸納鈕、詳情頁對話）一致，不再顯示「未設定 AI 服務」的說明文案。
+ */
 async function loadAskAvailability() {
     try {
         const status = await api.get('/api/help/ask-available', { silent: true });
-        document.getElementById('help-ask-unavailable').classList.toggle('d-none', status.available);
-        document.getElementById('help-ask-form-wrap').classList.toggle('d-none', !status.available);
+        document.getElementById('help-ask-card').classList.toggle('d-none', !status.available);
+        if (status.available) loadRunHint();
     } catch {
         // 靜默：問答框本來就是加值功能，查詢失敗維持預設隱藏狀態即可，不擋住手冊內容
+    }
+}
+
+/**
+ * 分析執行中提示（回饋十六輪批次D-1）：AI 問答與批次分析共用同一個地端模型的序列請求佇列，
+ * 執行中時回應會明顯變慢——卡片顯示當下查一次，不輪詢。
+ */
+async function loadRunHint() {
+    const hint = document.getElementById('help-ask-run-hint');
+    try {
+        const activity = await api.get('/api/run-activity', { silent: true });
+        hint.classList.toggle('d-none', !activity?.isRunning);
+    } catch {
+        hint.classList.add('d-none');
     }
 }
 
@@ -128,11 +176,14 @@ function bindAskForm() {
             renderAiText(answerBox, result.answer, { badge: 'AI 回答' });
             resultEl.appendChild(answerBox);
 
+            // 回饋十六輪批次D-2：這是 HelpChapterScorer 選進 prompt 的候選章節，不是模型自述
+            // 實際引用了哪些——SystemPrompt 另外要求模型在回答結尾自列引用，兩份清單可能不同
+            // （模型可能只用到候選裡的一部分）。標籤誠實反映「這是什麼」，避免與模型自述矛盾。
             const citedChapters = (result.citedChapterIds ?? []).map(id => chapterById.get(id)).filter(Boolean);
             if (citedChapters.length > 0) {
                 const citeLabel = document.createElement('div');
                 citeLabel.className = 'small text-muted mb-1';
-                citeLabel.textContent = '引用章節：';
+                citeLabel.textContent = '參考章節（提供給 AI 的內容）：';
                 resultEl.appendChild(citeLabel);
 
                 const citeList = document.createElement('div');
