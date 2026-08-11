@@ -442,4 +442,57 @@ MailBodyIntro（信件開頭可自訂段落，純文字）
 | `RuleSuppression` 多型欄位讓舊端點誤建歪資料 | 服務層單點驗證（TargetType 與目標欄位成對），舊端點委派同一路徑 |
 | SmtpClient 為 legacy API | 介面隔離（ISmtpMailSender），日後換實作不動業務碼；內網 relay 場景實測 |
 | AI 問答品質不穩（20K 小模型） | 標示實驗性＋僅依章節作答的 system prompt＋未涵蓋要明說；手冊本體不依賴 AI |
-| marked.js 新前端依賴 | vendored 固定版本、僅手冊頁載入；sanitize 後插入 |
+| marked.js 新前端依賴 | **實作時改變決策，見「實作結果」**：沿用既有 markdown-lite.js 安全子集，未引入 marked.js |
+
+## 實作結果（2026-08-11，全案完成）
+
+全部 7 個批次依序（F→A→A-6→B→C→D→E→G）在 `feature/feedback-15` 分支完成，本機未推送
+origin。最終狀態 1799 測試綠（不含跳過的 Scale 系列）。
+
+| 批次 | commit | 內容 |
+|---|---|---|
+| F | `64096b5` | 登入頁 401 不再整頁轉址蓋掉錯誤訊息 |
+| A（核心層） | `ce741e7` | 抑制目標四型（Rule/Signature/Correlation/Volume）、`CorrelationFinding.PatternId`、TrendAnalyzer Rising 嚴重度閘門＋總量抑制、SlowTrendAnalyzer 補抑制檢查、`DailyAnalysisRecord` 四個平行欄位 |
+| （修復） | `9828dde` | `IssueSignatureKey.For` 4 處誤用四參數版本、漏帶 Linux 專用 EventKey 第五段，Linux 同 program 不同規則的簽章抑制會誤連坐；獨立提交（非批次A功能，是查證中發現的既有正確性問題） |
+| A-6（Web層） | `b75e74e` | 統一入口 `POST/DELETE /api/suppressions`，`rules.js` 告警抑制分頁加目標型別欄＋篩選 |
+| B | `9b5ed1a` | R1 MatchOrder 唯讀欄＋警告文案改寫；R2 `searchableHostSelect` 取代 `pageSize=200`；R3 代表筆改「範圍最寬優先」＋「已抑制×N」徽章；R4 範本 modal 先建立新規則成功才停用原規則 |
+| C | `875799e` | C-1 告警結構化頁內導航（`RecordDetailDto` 新增 4 個 Ref 欄位）；C-2 `lf-help` 關聯模式觸發條件字典（19 項）；C-3 批次提議升級（無 `RuleId` 問題改提議簽章抑制）；C-4 總量／關聯告警抑制出口＋新增 `ui.js` `confirmActionWithReason` |
+| D | `e32282c` | SMTP 郵件通知全案：三路觸發（執行後摘要／每日每週定時／高風險即時去重）、設定頁新分頁、測試寄信。**刻意簡化**：只寄純文字，規劃文件寫的 HTML 雙版本未實作（內部通知信不需要） |
+| E | `41565a1` | 操作說明書＋AI 問答（實驗性）：14 節內嵌 Markdown、`/help/manual` 頁、關鍵字選節計分＋預算截斷。**刻意偏離規劃**：未引入 `marked.min.js`，沿用既有 `markdown-lite.js` 安全子集（全站至今未引入任何可解析 HTML 的 Markdown 庫，見該檔頭註解）；批次開工前依 CLAUDE.md 規則詢問使用者是否套用 `ui-ux-pro-max`，回覆「沿用現有樣式」 |
+| G（體檢＋文件） | 本次提交 | 見下「體檢發現」與「文件更新」 |
+
+### 體檢發現（批次G）
+
+全案體檢揪出 3 個真實問題，皆已修復並補回歸測試：
+
+1. **`SuppressionFilter.StillSuppressedElsewhere` 泛型化不完整**：四型抑制上線後，這個
+   「到期抑制是否仍受其他範圍覆蓋」的比對函式仍只比 `RuleId`——Signature／Correlation／Volume
+   三型的 `RuleId` 恆為空字串，比對恆假，「此設定仍受其他範圍抑制」的提示對這三型永遠不會
+   出現。連帶發現 `AnalysisOrchestrator` 的到期抑制通知會對這三型印出空白識別（`{expired.RuleId}`
+   是空字串）。修正：新增 `SuppressionFilter.TargetIdentity`（TargetType＋對應欄位的複合鍵），
+   `StillSuppressedElsewhere` 改用複合鍵比對；`AnalysisOrchestrator` 改用 `TargetLabel` 做非
+   Rule 型的顯示身分（與 `WeeklyCheckupService` 既有的正確寫法對齊）。
+2. **`MailNotificationService` 兩個對外方法的 settings 讀取在 try 區塊外**：`ISystemSettingsStore.Get()`
+   若拋例外（blob 讀取失敗／並發衝突，見 docs/DB-SPEC.md 的 `ConcurrencyToken` 說明）會直接
+   穿透方法本身。`NotifyAfterRunAsync` 的呼叫端（`SchedulerHostedService.TriggerRunAsync`）會讓
+   外層 catch 把**已成功的分析執行**誤判為失敗；`CheckAndSendDailyWeeklyAsync` 的呼叫端
+   （`TickAsync`）沒有自己的 try/catch，例外會讓同一輪詢的排程窗口判斷整段被跳過。兩者都
+   違反程式注解自己宣稱的「內部自行 try/catch 到底」保證。修正：把 `Get()` 移進 try 區塊。
+3. **文字報告（`RiskReportService`）未涵蓋已抑制的趨勢／關聯告警**（記錄但不在本輪修——
+   已用 `spawn_task` 交給後續處理）：網頁詳情頁與週體檢報告都已正確涵蓋抑制四型，只有
+   `export/*.txt` 的「已抑制的告警」區塊仍只顯示 Rule／Signature 兩型（`AppendSuppressedIssues`
+   只查 `TopIssues`），沒有渲染 `SuppressedTrendAlerts`／`SuppressedCorrelationAlerts`。不是
+   bug（沒有任何地方會算錯或當掉），是文字報告的資訊完整度落後於網頁版，屬於錦上添花的
+   一致性補強，故未列入本輪範圍。
+
+其餘 4 項體檢項目（`ToRuleIdSet` 其餘 callsite、Rising 閘門測試覆蓋、關聯抑制與
+`ElevatesDayRisk` 的隔離、新增 API 權限標註）核對後確認既有實作已經正確，無需修改。
+
+### 文件更新
+
+README.md（功能清單＋ Rising 閘門行為變更申報）、docs/RULES-SPEC.md（抑制目標四型完整規格＋
+與 `NoiseMark` 的分工定案）、docs/DETECTION-SPEC.md（Rising 嚴重度閘門＋`PatternId`＋總量抑制）、
+docs/WEB-SPEC.md（§9.7 抑制四型/UI、§9.9b 郵件通知分頁、新增 §9.9c 操作說明書、§10.2 blob key
+表新增 `mail_notify_state`）皆已更新。**docs/DB-SPEC.md 未新增內容**——查證後確認該文件的既有
+範圍僅涵蓋真正的 SQL 關聯表，`RuleSuppression`／`MailNotifyState` 皆是 `lf_blobs` 整份型儲存，
+依既有慣例（如 `system_settings` blob）欄位級規格記在 WEB-SPEC.md，不重複記一份在 DB-SPEC.md。

@@ -59,11 +59,15 @@ public class MailNotificationService
     /// </summary>
     public async Task NotifyAfterRunAsync(DateTime targetDate, CancellationToken ct = default)
     {
-        var settings = _settingsStore.Get();
-        if (!settings.MailEnabled) return;
-
         try
         {
+            // 回饋十五輪體檢批G：settings 讀取原本在 try 外——ISystemSettingsStore.Get() 若拋例外
+            // （blob 讀取失敗／並發衝突，見 DB-SPEC.md 的 ConcurrencyToken 說明）會直接穿透
+            // NotifyAfterRunAsync，讓呼叫端（SchedulerHostedService）的外層 catch 誤把已成功的
+            // 分析執行覆寫成失敗結果——「通知永遠不能弄掛分析」這句話必須連設定讀取都算在內。
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled) return;
+
             var records = QueryDate(targetDate);
 
             if (settings.MailOnRunCompleted)
@@ -90,11 +94,15 @@ public class MailNotificationService
     /// </summary>
     public async Task CheckAndSendDailyWeeklyAsync(DateTime now, CancellationToken ct = default)
     {
-        var settings = _settingsStore.Get();
-        if (!settings.MailEnabled) return;
-
         try
         {
+            // 回饋十五輪體檢批G：settings 讀取原本在 try 外，未受保護——這支方法緊接著在
+            // SchedulerHostedService.TickAsync 的排程窗口判斷之前呼叫且沒有自己的 try/catch
+            // （文件註解宣稱「內部自行 try/catch 到底...不需要額外保護」），一旦 Get() 拋例外，
+            // 整個 TickAsync 連同下方排程窗口判斷都會被跳過，等於通知路徑間接卡住了排程觸發。
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled) return;
+
             var today = now.ToString("yyyy-MM-dd");
 
             if (settings.MailDailyEnabled &&

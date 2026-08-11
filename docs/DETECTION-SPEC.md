@@ -52,6 +52,14 @@ README 保留定位、結構、部署與操作；偵測層的規則細節、危�
 關聯訊號在 prompt 中以獨立區塊呈現並明確標注「由程式確定性比對，不是猜測」，
 執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
 
+**`PatternId`**（回饋十五輪 A，`Analysis/CorrelationPatternIds.cs`）：上表 17 個 Windows 模式
+＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）合計 19 個模式，各自有
+穩定不隨文字說明變動的 Id 常數。用途是**關聯模式抑制**的比對鍵（`RuleSuppression.TargetType=
+Correlation`，見 docs/RULES-SPEC.md「抑制目標四型」）——過去關聯訊號只能整層 log 分析器一起
+開關，沒有針對單一模式的抑制路徑；`CorrelationFinding.PatternId` 現在是 `public required
+string`，`CorrelationAnalyzer`／`LinuxCorrelationAnalyzer` 的每個 `findings.Add(...)` 都標好
+對應常數，`CorrelationAnalyzerRuleAlignmentTests` 涵蓋 Id 與模式的對齊不漂移。
+
 ### 正常 RDP 使用不會誤報的設計（2026-07 RDP 頻道擴充）
 
 納入 RDP 連線紀錄擴大了入侵偵測面，但**日常遠端維運絕不能被誤判成入侵**。防誤報靠三道設計：
@@ -95,12 +103,26 @@ EntryType)` 會全面漂移、既有歷史的趨勢比對全數斷成「首次�
 | 趨勢 | 判定條件 | 後續動作 |
 |---|---|---|
 | **首次出現 (New)** | 近 14 日歷史中從未發生 | 嚴重度 High 以上者列入頻率異常告警 |
-| **頻率上升 (Rising)** | 今日次數 ≥ 5 **且** ≥ 歷史基準 2 倍 | **嚴重度自動升一級**（封頂「高」；原本就是「高」的改標記「重大」旗標 → 觸發紅色告警），列入頻率異常告警 |
+| **頻率上升 (Rising)** | 今日次數 ≥ 5 **且** ≥ 歷史基準 2 倍 | `Trend` 一律標記 `Rising`、嚴重度自動升一級（封頂「高」；原本就是「高」的改標記「重大」旗標 → 觸發紅色告警）；**是否列入頻率異常告警文字、參與風險等級判定，另有嚴重度閘門，見下** |
 | **重複出現 (Recurring)** | 歷史中出現過、頻率相近 | 附註出現天數與基準次數供 AI 判讀 |
 | **頻率下降 (Declining)** | 歷史基準 ≥ 5 且今日次數 ≤ 基準一半 | 附註（問題可能已緩解） |
 
+**Rising 嚴重度閘門**（回饋十五輪 A-4，行為變更）：只有**升級前**嚴重度已達 Medium 以上的簽章，
+Rising 才會產生告警文字、進 `TrendAlerts`／`SuppressedTrendAlerts`（視是否被抑制）並參與
+`ComputeRuleBasedRisk` 的風險等級判定；Low 嚴重度簽章的 Rising **不吵、不拉風險**，但
+`Trend`／`Severity` 欄位仍照常標記與升級——資訊沒有遺失，只是不再單靠「量的變化」把一個
+本質上輕微的問題拉成需要人工介入的中風險日（Low 嚴重度雜訊型簽章天然量大、頻率波動本來就
+劇烈，過去的無閘門設計等於任何一個雜訊簽章某天多發生幾次就能觸發告警）。判定點在
+`TrendAnalyzer.Apply`：`preEscalationSeverity`（升級前的原始嚴重度）在寫入 `sig.Severity`
+之前先捕捉，`preEscalationSeverity >= IssueSeverity.Medium` 才把告警文字送進
+`alerts`／`alertRefs`，否則整段略過（不進 `suppressedAlerts`——那是給「本來會吵、但被使用者
+主動抑制」的東西，被閘門擋下的不算被抑制，是本來就不該吵）。
+
 另外比對**整體錯誤總量**：今日錯誤 ≥ 10 筆且 ≥ 近 14 日基準 2 倍時，即使個別事件都不顯眼也會告警
 （多個不同來源同時出錯常是連鎖故障的開端）。安全稽核事件總量（如 4625 登入失敗）另做同構比對。
+兩者皆可個別抑制（`RuleSuppression.TargetType=Volume`，`VolumeKind=error`／`audit`，
+回饋十五輪 A，見 docs/RULES-SPEC.md「抑制目標四型」）：某台主機的錯誤或稽核事件量本來就大、
+波動屬於正常範圍時，可關閉對應的總量告警，抑制期間仍照常聚合計數，只是不吵、不拉風險。
 
 「今日次數 ≥ 5」的最低門檻是為了避免 1 次變 2 次這種統計雜訊觸發告警；
 所有比對結果（前一日次數、歷史基準、出現天數）都會附註在 prompt 的事件行上，

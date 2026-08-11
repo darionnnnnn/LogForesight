@@ -139,6 +139,17 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Single(sent.Message.To);
     }
 
+    /// <summary>回饋十五輪體檢批G：settings store 讀取本身拋例外（模擬 blob 讀取失敗／並發衝突）
+    /// 時不能穿透——這裡曾經是真的漏洞：Get() 呼叫原本在 try 區塊外，例外會一路傳到
+    /// SchedulerHostedService，讓已成功的分析執行被誤判為失敗。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_設定讀取本身拋例外時不拋出()
+    {
+        _settingsStore.ThrowOnGet = new InvalidOperationException("blob 讀取失敗");
+
+        await Create().NotifyAfterRunAsync(DateTime.Today);
+    }
+
     [Fact]
     public async Task NotifyAfterRunAsync_寄送失敗不拋出例外()
     {
@@ -152,6 +163,17 @@ public class MailNotificationServiceTests : IDisposable
     }
 
     // ── CheckAndSendDailyWeeklyAsync：每日／每週定時彙總 ────────────────────
+
+    /// <summary>回饋十五輪體檢批G：CheckAndSendDailyWeeklyAsync 由 SchedulerHostedService.TickAsync
+    /// 在排程窗口判斷「之前」呼叫、且呼叫端沒有自己的 try/catch——settings 讀取拋例外若沒被這裡
+    /// 擋下，會連帶讓同一輪詢的排程窗口判斷整段被跳過，等於通知路徑間接卡住排程觸發。</summary>
+    [Fact]
+    public async Task CheckAndSendDailyWeeklyAsync_設定讀取本身拋例外時不拋出()
+    {
+        _settingsStore.ThrowOnGet = new InvalidOperationException("blob 讀取失敗");
+
+        await Create().CheckAndSendDailyWeeklyAsync(DateTime.Today);
+    }
 
     [Fact]
     public async Task CheckAndSendDailyWeeklyAsync_MailEnabled為false時不寄送()

@@ -251,17 +251,25 @@ public class AnalysisOrchestrator
             var expiredSuppressions = SuppressionFilter.ExpiredForHost(allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
             if (expiredSuppressions.Count > 0)
             {
-                // 同規則跨範圍並存時的語意修正（回饋十四輪 C1，見 SuppressionFilter.StillSuppressedElsewhere
-                // 的文件）：只看到期的那一筆會誤導使用者以為解除它就能恢復告警。
-                var stillSuppressedRuleIds = SuppressionFilter.StillSuppressedElsewhere(
+                // 同目標跨範圍並存時的語意修正（回饋十四輪 C1，回饋十五輪體檢批G 泛型化到抑制四型，
+                // 見 SuppressionFilter.StillSuppressedElsewhere 的文件）：只看到期的那一筆會誤導
+                // 使用者以為解除它就能恢復告警。
+                var stillSuppressedTargets = SuppressionFilter.StillSuppressedElsewhere(
                     allSuppressions, currentHost, currentHostGroupIds, DateTime.Now);
 
                 foreach (var expired in expiredSuppressions)
                 {
-                    console.WriteLine($"  ℹ 抑制已到期，恢復告警：{expired.RuleId}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
+                    // 非 Rule 型的 RuleId 恆為空字串（回饋十五輪體檢批G 修正）：顯示身分改用
+                    // TargetLabel（建立時擷取的人話標籤，見 RuleSuppression.TargetLabel 文件），
+                    // 否則這行訊息對 Signature/Correlation/Volume 三型會印出空白，看不出是哪個目標到期。
+                    var label = expired.TargetType == SuppressionTargetTypes.Rule
+                        ? expired.RuleId
+                        : expired.TargetLabel ?? expired.TargetType;
+
+                    console.WriteLine($"  ℹ 抑制已到期，恢復告警：{label}（原訂於 {expired.ExpiresAt:yyyy-MM-dd} 到期，" +
                                       $"原因：{expired.Reason}；未自動清理，可於「規則維護」頁的「告警抑制」分頁解除）" +
-                                      (stillSuppressedRuleIds.Contains(expired.RuleId)
-                                          ? "（此規則仍受其他範圍的抑制設定生效中，解除這筆不會恢復告警）"
+                                      (stillSuppressedTargets.Contains(SuppressionFilter.TargetIdentity(expired))
+                                          ? "（此設定仍受其他範圍的抑制生效中，解除這筆不會恢復告警）"
                                           : ""));
                 }
             }

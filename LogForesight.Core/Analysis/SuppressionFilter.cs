@@ -50,19 +50,34 @@ internal static class SuppressionFilter
         all.Where(s => IsForHost(s, host, hostGroupIds) && IsExpired(s, now)).ToList();
 
     /// <summary>
-    /// 到期項目中，RuleId 仍被同一主機另一筆生效中抑制覆蓋的集合（回饋十四輪 C1）：同一條規則
-    /// 可能同時有 Site（永久）與 Host（已到期）兩筆抑制——只看到期的那一筆會誤導使用者以為
-    /// 解除它就能恢復告警，但其實該規則仍受另一個範圍抑制，解除到期的那筆不會有任何效果。
-    /// 用 <see cref="ActiveForHost"/> 反查：那個集合本身已排除到期項目，不會自我比對出偽陽性。
+    /// 抑制項目的目標識別（TargetType＋對應欄位），供比對「兩筆抑制設定是否指向同一個目標」。
+    /// 回饋十五輪體檢批G：<see cref="StillSuppressedElsewhere"/> 原本只比 RuleId（四型上線前
+    /// 全部抑制都是 Rule 型），四型上線後若沿用只比 RuleId，Signature/Correlation/Volume
+    /// 三型的 RuleId 恆為空字串，「仍受其他範圍抑制」的比對會恆假——不是崩潰，是悄悄失效。
     /// </summary>
-    public static HashSet<string> StillSuppressedElsewhere(
+    public static (string TargetType, string Key) TargetIdentity(RuleSuppression s) => s.TargetType switch
+    {
+        SuppressionTargetTypes.Signature => (s.TargetType, s.SignatureKey ?? ""),
+        SuppressionTargetTypes.Correlation => (s.TargetType, s.CorrelationPatternId ?? ""),
+        SuppressionTargetTypes.Volume => (s.TargetType, s.VolumeKind ?? ""),
+        _ => (s.TargetType, s.RuleId)
+    };
+
+    /// <summary>
+    /// 到期項目中，目標仍被同一主機另一筆生效中抑制覆蓋的集合（回饋十四輪 C1，回饋十五輪體檢批G
+    /// 泛型化到四型）：同一個目標可能同時有 Site（永久）與 Host（已到期）兩筆抑制——只看到期的
+    /// 那一筆會誤導使用者以為解除它就能恢復告警，但其實該目標仍受另一個範圍抑制，解除到期的那筆
+    /// 不會有任何效果。用 <see cref="ActiveForHost"/> 反查：那個集合本身已排除到期項目，
+    /// 不會自我比對出偽陽性。
+    /// </summary>
+    public static HashSet<(string TargetType, string Key)> StillSuppressedElsewhere(
         List<RuleSuppression> all, string host, IReadOnlyCollection<long> hostGroupIds, DateTime now)
     {
-        var activeRuleIds = ToRuleIdSet(ActiveForHost(all, host, hostGroupIds, now));
+        var activeTargets = ActiveForHost(all, host, hostGroupIds, now).Select(TargetIdentity).ToHashSet();
         return ExpiredForHost(all, host, hostGroupIds, now)
-            .Select(s => s.RuleId)
-            .Where(activeRuleIds.Contains)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(TargetIdentity)
+            .Where(activeTargets.Contains)
+            .ToHashSet();
     }
 
     private static bool IsForHost(RuleSuppression s, string host, IReadOnlyCollection<long> hostGroupIds) => s.Scope switch

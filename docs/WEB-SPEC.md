@@ -1267,6 +1267,22 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
   規則升級另有 `GET api/rules/import-status`、`GET api/rules/import-preview?overwriteBuiltin=`、
   `POST api/rules/import-apply`（2026-07-31）。
+- **抑制目標四型（回饋十五輪 A/A-6，語意見 docs/RULES-SPEC.md）**：「告警抑制」分頁新增「目標
+  型別」欄＋篩選 chip（規則／簽章／關聯／音量），非規則目標的列顯示 `TargetLabel`＋`Platform`
+  （無 `RuleId` 可查詢）。新增／解除統一走絕對路徑端點 `POST/DELETE /api/suppressions`（不綁
+  `ruleId`，`AddSuppressionRequest` 依 `TargetType` 帶對應欄位），舊的 `{ruleId}/suppressions`
+  端點保留、內部委派同一份 `RuleAdminService` 邏輯供既有呼叫端相容。規則清單列上有抑制時顯示
+  抑制筆數徽章＋前 3 筆 tooltip 預覽（`RuleDto.SuppressionCount`／`SuppressionPreview`，範圍最寬
+  的排最前——Site > Group > Host）。
+- **比對順序改唯讀＋遮蔽警告文案收斂（回饋十五輪 B，R1）**：規則的比對順序＝清單順序（第一個
+  命中的規則生效），本頁不支援拖曳調整，`RuleDto.MatchOrder` 唯讀顯示；遮蔽警告文案移除「請調整
+  順序」等操作提示（改成純陳述「本頁不支援調整規則順序，順序由建立先後決定」），避免暗示一個
+  UI 做不到的動作。
+- **主機下拉改伺服器端搜尋（回饋十五輪 B，R2）**：抑制目標主機選擇器改用 `ui.js` 的
+  `searchableHostSelect`（輸入關鍵字 debounce 300ms 打 `GET /api/admin/hosts?query=&os=&pageSize=50`），
+  取代原本一次性 `pageSize=200` 全量下拉——大規模環境下主機清單過長時可直接輸入關鍵字篩選。
+- **範本套用可停用原規則（回饋十五輪 B，R4）**：套用規則範本時新增「停用原規則」勾選（先建立新
+  規則、成功後才停用來源規則，避免建立失敗卻已停用原規則的中間態）。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
 - 使用者：清單/編輯/停用、所屬群組指派；**點列進入使用者詳細頁（§9.8a）**。
@@ -1545,8 +1561,58 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      原始事件暫存（`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3），批次每晚
      依此天數清理；回補超過此天數的日子直接跳過寫入（寫了下次也會被清，見
      `RiskyEventSelector.WithinRetention`）。
+  5. **郵件通知**（回饋十五輪批次D，新分頁，版面比照「AD 驗證」的展開式版面）：啟用開關＋
+     SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
+     `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
+     寄件人／收件人（一行一位 textarea，與 AD 伺服器／監控資料夾等既有 `List<string>` 欄位
+     UX 慣例一致）＋「同時通知主機負責人」開關＋摘要納入門檻（`MailMinRiskLevel`）＋三路
+     觸發開關（執行結束後摘要／每日定時＋時刻／每週定時＋星期＋時刻／高風險即時）＋標題模板
+     （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字。
+     「測試寄信」（`POST api/admin/settings/mail-test`）用表單目前值試寄一封，不需先儲存，
+     密碼欄留空時 fallback 已儲存的密文；回報成功或含 SMTP 錯誤細節（管理者對自己測試，
+     細節可顯示，比照 AD 測試連線的語意）。三路觸發與寄送實作見 §10.2 的
+     `MailNotifyStateStore` 對照列與 docs/RULES-SPEC.md／docs/DETECTION-SPEC.md 相關段落。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
+  `POST api/admin/settings/mail-test`（回饋十五輪批次D）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
+
+### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，回饋十五輪批次E，實驗性）
+
+- **選單位置**：側欄「系統」分組最下方（僅 `Maintain` 顯示，選單顯示與頁面
+  `[Permission(Capability.Maintain)]` 雙閘，比照既有 admin 頁）。
+- **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`keywords[]`／
+  `related[]`）＋ 14 個章節 Markdown 檔，全部以**內嵌資源**編進組件（csproj 的
+  `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
+  以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
+- **頁面版面**：左側章節目錄（`list-group`）＋右側內容（單一 `GET /api/help/manual` 一次取回
+  manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash 深連結
+  （`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI 問答共用
+  同一份關聯資訊。
+- **Markdown 渲染刻意不引入新的第三方庫**：沿用既有 `markdown-lite.js` 的安全子集（粗體、
+  行內代碼、清單、標題轉粗體行、段落，全程 `document.createElement`／`createTextNode` 組
+  DOM，不使用 `innerHTML`）——全站至今未引入任何可解析 HTML／連結的 Markdown 轉換庫（見該
+  檔頭註解），即使手冊內容是自家資源、內容可信，仍照這個既有的 XSS 紀律走，不為單一頁面
+  開一個新的渲染路徑。
+- **AI 問答（實驗性徽章）**：頂部問答框，`AiBaseUrl` 未設定時整區換成「未設定 AI 服務，僅
+  提供文件瀏覽」（`GET /api/help/ask-available` 判斷，比照統計模式的誠實申報寫法）。
+  `POST /api/help/ask` 流程：
+  1. **選節**（`HelpChapterScorer`，純靜態、無外部依賴）：對 question 做關鍵字比對計分
+     （title 命中 ×3、keywords 命中 ×2、內文命中 ×1；中文以雙字元 bigram 切詞、英文以連續
+     字母數字為一個詞），取最高分節＋其 manifest 的 `related` 節；完全比對不到任何章節時
+     選節回空清單，**仍會呼叫 AI**（不在這裡用寫死的訊息取代 AI 的判斷），system prompt
+     要求 AI 依系統提示誠實回答「說明書未涵蓋」。
+  2. **預算控制**：以 `PromptBudget.EstimateTokens` 累計已選章節內容，上限約 12K token，
+     超出即停止加節（最高分節本身永遠保留，即使自己已超過預算——只是不再加更多節）；是否
+     連同輸出上限一起超出 context 總預算，交給 `AIService.ChatAsync` 既有的
+     `PromptBudget.ExceedsBudget` 防線把關，這裡不重複做同一件事。
+  3. **呼叫**：既有 `IWebAiService.ChatOnceAsync`（詳情頁對話同一套介面，單輪、不留歷史），
+     system prompt 固定要求台灣繁中回答、僅依提供章節內容作答、章節沒寫的明說「未涵蓋」、
+     結尾列出引用章節標題。任何失敗（未設定、逾時、選不到節仍呼叫失敗）一律回 `data:null`
+     （比照 `AiController` 既有慣例），前端顯示「AI 服務暫時無法回應，可先查閱下方章節」。
+- **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
+  prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
+  結構已為它預留素材。
+- API：`GET api/help/manual`、`GET api/help/ask-available`、`POST api/help/ask`（`Maintain`）。
 
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
 - **改名與權限放寬（2026-07-31，docs/archive/FEEDBACK-6-PLAN.md §2）**：側欄由「執行監控」改名

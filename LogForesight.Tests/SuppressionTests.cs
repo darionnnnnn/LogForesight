@@ -179,7 +179,49 @@ public class SuppressionTests
 
         var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
 
-        Assert.Contains("rule-a", result);
+        Assert.Contains((SuppressionTargetTypes.Rule, "rule-a"), result);
+    }
+
+    /// <summary>回饋十五輪體檢批G：泛型化前只比 RuleId，非 Rule 型的 RuleId 恆為空字串會讓比對
+    /// 恆假——這裡釘住 Signature 型也能正確判定「到期後仍受其他範圍抑制」。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_非Rule目標型別也能正確比對()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Signature, SignatureKey = "sig-a",
+                Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1)
+            },
+            new()
+            {
+                TargetType = SuppressionTargetTypes.Signature, SignatureKey = "sig-a",
+                Scope = SuppressionScopes.Site, ExpiresAt = null
+            }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Contains((SuppressionTargetTypes.Signature, "sig-a"), result);
+    }
+
+    /// <summary>不同 TargetType 但剛好用同一個字串當識別值時不該互相誤判為同一個目標
+    /// （TargetIdentity 的複合鍵設計就是為了擋這個）。</summary>
+    [Fact]
+    public void StillSuppressedElsewhere_不同TargetType的相同字串不會誤判為同一目標()
+    {
+        var now = new DateTime(2026, 7, 21);
+        var all = new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Rule, RuleId = "x", Scope = SuppressionScopes.Host, Host = "SRV-01", ExpiresAt = now.AddDays(-1) },
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = "x", Scope = SuppressionScopes.Site, ExpiresAt = null }
+        };
+
+        var result = SuppressionFilter.StillSuppressedElsewhere(all, "SRV-01", Array.Empty<long>(), now);
+
+        Assert.Empty(result);
     }
 
     [Fact]

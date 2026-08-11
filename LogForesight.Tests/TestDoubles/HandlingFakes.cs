@@ -293,7 +293,11 @@ internal class FakeSystemSettingsStore : ISystemSettingsStore
 {
     private SystemSettings _settings = new();
 
-    public SystemSettings Get() => _settings;
+    /// <summary>模擬 blob 讀取失敗／並發衝突（回饋十五輪體檢批G）：驗證「settings 讀取本身
+    /// 拋例外時，呼叫端不能被弄掛」這類防線用，預設 null＝正常運作。</summary>
+    public Exception? ThrowOnGet { get; set; }
+
+    public SystemSettings Get() => ThrowOnGet != null ? throw ThrowOnGet : _settings;
 
     public SystemSettings Update(Action<SystemSettings> mutation)
     {
