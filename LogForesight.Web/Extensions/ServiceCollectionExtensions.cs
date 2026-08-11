@@ -257,6 +257,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWebAiService, WebAiService>();
         services.AddScoped<AiInsightService>();
 
+        // 操作說明書（回饋十五輪批次E）：內容編譯進組件、執行期間不變，Singleton＋Lazy 延後載入
+        services.AddSingleton<HelpContentService>();
+        services.AddScoped<HelpQaService>();
+
         // 詢問 AI 現場取數（docs/archive/FEEDBACK-4-PLAN.md §5）：Singleton——併發旗標與 10 分鐘快取
         // 要全站共用同一份，不能隨請求範圍各自持有
         services.AddSingleton<ISentinelEventFetcher, SentinelEventFetchService>();
