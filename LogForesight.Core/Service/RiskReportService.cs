@@ -450,7 +450,8 @@ public class RiskReportService
             // Rule 或 Signature 兩種抑制（見 LogAnalysisService 的標記邏輯）——issue.RuleId
             // 為 null（未命中規則）時只查 RuleId 一定查無結果，會誤報「原因未知」，
             // 但其實是命中了簽章級抑制，原因清清楚楚存在 SignatureKey 那筆裡。
-            var issueKey = IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType);
+            // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
+            var issueKey = IssueSignatureKey.For(issue);
             var reason = activeSuppressions?.FirstOrDefault(s =>
                 (issue.RuleId != null && s.RuleId.Equals(issue.RuleId, StringComparison.OrdinalIgnoreCase)) ||
                 (s.TargetType == SuppressionTargetTypes.Signature &&

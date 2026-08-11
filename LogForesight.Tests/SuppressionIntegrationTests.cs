@@ -77,6 +77,52 @@ public class SuppressionIntegrationTests : IDisposable
         Assert.Equal("低", record.RiskLevel);
     }
 
+    /// <summary>
+    /// EventKey 第五段修復的回歸測試（實作過程中發現）：Linux「同 program 命中不同規則」的兩個
+    /// 簽章（sshd 的 bruteforce／accept）共用同一組 (LogName,Source,EventId,EntryType)，只有
+    /// EventKey 不同——簽章抑制的鍵比對若漏比對 EventKey（誤用四參數版 IssueSignatureKey.For），
+    /// 會把兩個不同問題誤判成同一把鑰匙，抑制其中一個會連坐關掉另一個完全無關的問題。
+    /// </summary>
+    [Fact]
+    public async Task 簽章級抑制對Linux同program不同規則的兩個簽章各自獨立不會連坐()
+    {
+        var history = new EfAnalysisRecordStore(_fx.NewContext, "test");
+        var suppressionStore = new FakeSuppressionStore();
+        var service = MakeService(history, suppressionStore);
+
+        List<EventLogEntryData> MakeSshLogs(DateTime day) => Enumerable.Range(0, 6)
+            .Select(i => new EventLogEntryData
+            {
+                TimeGenerated = day.AddHours(1).AddMinutes(i), LogName = LogAggregator.LinuxLogName,
+                Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Error,
+                Message = $"Failed password for invalid user root from 10.0.0.{i} port 22 ssh2"
+            })
+            .Concat(Enumerable.Range(0, 3).Select(i => new EventLogEntryData
+            {
+                TimeGenerated = day.AddHours(2).AddMinutes(i), LogName = LogAggregator.LinuxLogName,
+                Source = "sshd", EventId = 0, EntryType = EventLogEntryType.Error,
+                Message = $"Accepted password for admin from 10.0.0.{i} port 22 ssh2"
+            }))
+            .ToList();
+
+        // 先跑一次拿到 bruteforce 簽章的完整（五段）issueKey——與前端 issue.issueKey 同一套算法
+        var probeDate = DateTime.Today.AddDays(-1);
+        var probeRecord = await service.AnalyzeDayAsync(probeDate, MakeSshLogs(probeDate), useAi: false);
+        var bruteforceIssueKey = IssueSignatureKey.For(probeRecord.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-bruteforce"));
+
+        suppressionStore.SaveAll(new List<RuleSuppression>
+        {
+            new() { TargetType = SuppressionTargetTypes.Signature, SignatureKey = bruteforceIssueKey, Scope = SuppressionScopes.Site, Reason = "測試：只抑制暴力破解" }
+        });
+
+        var record = await service.AnalyzeDayAsync(DateTime.Today, MakeSshLogs(DateTime.Today), useAi: false);
+
+        var bruteforce = record.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-bruteforce");
+        var accepted = record.TopIssues.Single(i => i.EventKey == "builtin-linux-ssh-accept");
+        Assert.True(bruteforce.Suppressed);
+        Assert.False(accepted.Suppressed); // 修復前：兩者共用四段鍵，這裡會被誤連坐抑制
+    }
+
     /// <summary>對照組：同一情境不建立抑制，慢速惡化告警應正常出現且拉高風險——
     /// 證明上一個測試的「沒告警」確實是抑制生效，不是情境本身就不會觸發。</summary>
     [Fact]

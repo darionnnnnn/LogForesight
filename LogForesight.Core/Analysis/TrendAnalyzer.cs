@@ -119,7 +119,10 @@ public static class TrendAnalyzer
             bool everSeen = history.Any(h => h.Date.Date < targetDate.Date &&
                                              h.TopIssues.Any(i => SameIssue(i, sig)));
 
-            var issueKey = IssueSignatureKey.For(sig.LogName, sig.Source, sig.EventId, sig.EntryType);
+            // 用物件版重載（含 EventKey 第五段）而非四參數版：Linux 簽章靠 EventKey 把「同一個
+            // program 命中不同規則」區分成不同問題（見 SameIssue 的比對邏輯與 IssueDto.IssueKey
+            // 的產生方式），四參數版會讓這裡的 key 與前端 issue.issueKey 對不上，點擊導航失效
+            var issueKey = IssueSignatureKey.For(sig);
 
             // 被抑制的簽章仍照算趨勢欄位與嚴重度升級（落紀錄、供頻率報表使用），只是不加入告警
             // 回傳值——抑制關的是「要不要吵」，不是「要不要算」（見 docs/RULES-SPEC.md 的語意邊界）。

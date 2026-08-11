@@ -165,8 +165,10 @@ public class LogAnalysisService
             foreach (var issue in issues)
             {
                 bool ruleSuppressed = issue.RuleId != null && suppressedRuleIds.Contains(issue.RuleId);
-                bool signatureSuppressed = suppressedSignatureKeys.Contains(
-                    IssueSignatureKey.For(issue.LogName, issue.Source, issue.EventId, issue.EntryType));
+                // 物件版重載（含 EventKey 第五段）：與 IssueDto.IssueKey／前端建立簽章抑制時
+                // 送出的鍵一致，四參數版在 Linux「同 program 命中不同規則」時會漏掉區分段，
+                // 導致抑制鍵對不上、簽章抑制對這類問題永遠不生效
+                bool signatureSuppressed = suppressedSignatureKeys.Contains(IssueSignatureKey.For(issue));
                 if (ruleSuppressed || signatureSuppressed)
                 {
                     issue.Suppressed = true;

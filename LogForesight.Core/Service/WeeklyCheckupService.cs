@@ -315,9 +315,9 @@ internal class WeeklyCheckupService
 
                 int occurrences = s.TargetType switch
                 {
+                    // 物件版重載（含 EventKey 第五段，理由同 LogAnalysisService 的標記邏輯）
                     SuppressionTargetTypes.Signature => window.SelectMany(d => d.TopIssues)
-                        .Where(i => string.Equals(IssueSignatureKey.For(i.LogName, i.Source, i.EventId, i.EntryType),
-                            s.SignatureKey, StringComparison.OrdinalIgnoreCase))
+                        .Where(i => string.Equals(IssueSignatureKey.For(i), s.SignatureKey, StringComparison.OrdinalIgnoreCase))
                         .Sum(i => i.Count),
                     // 舊紀錄無 CorrelationAlertRefs（回饋十五輪 A 之前寫入），這裡會低估、不會誤報——
                     // 與專案一貫的零遷移降級原則一致，寧可少算也不編造一個查無來源的數字
