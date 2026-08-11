@@ -43,6 +43,7 @@ async function init() {
         }
     }
 
+    updateDeniedButtonState();
     await search();
 }
 
@@ -167,15 +168,28 @@ function renderPager() {
 document.getElementById('audit-filter').addEventListener('submit', event => {
     event.preventDefault();
     currentPage = 1;
+    updateDeniedButtonState();
     search();
 });
 
-/** 被拒的存取是稽核上最有價值的一類——給它一個一鍵入口 */
+/** 被拒的存取是稽核上最有價值的一類——給它一個一鍵入口。再按一次可以取消篩選
+ * （回饋十六輪批次E-1：原本只能設定、無法從按鈕取消，只能改用下拉選單清回「全部」）。 */
 document.getElementById('btn-denied').addEventListener('click', () => {
-    document.getElementById('audit-result').value = 'Denied';
+    const select = document.getElementById('audit-result');
+    select.value = select.value === 'Denied' ? '' : 'Denied';
+    updateDeniedButtonState();
     currentPage = 1;
     search();
 });
+
+/** 手動改下拉選單、URL 下鑽（result=Denied）與按鈕點擊三個途徑最終都收斂到同一個
+ * select 值，按鈕的啟用外觀（Bootstrap active class）跟著同步，不會出現「篩選其實是被拒、
+ * 但按鈕看起來沒按下」的不一致。 */
+document.getElementById('audit-result').addEventListener('change', updateDeniedButtonState);
+
+function updateDeniedButtonState() {
+    document.getElementById('btn-denied').classList.toggle('active', document.getElementById('audit-result').value === 'Denied');
+}
 
 // 失敗收斂（docs/archive/FEEDBACK-10-PLAN.md §4）：載入中途出錯時把骨架列換成失敗狀態，不留無限載入
 guardLoad(document.getElementById('audit-list'), init);

@@ -482,7 +482,11 @@ body {
 
 .lf-sidebar__brand {
     display: flex;
-    align-items: center;
+    /* align-items:stretch（回饋十六輪批次E-2，改自 center）：有副標時兩行文字的自然高度
+       可能超過 .lf-sidebar__brand-mark 的基準高度（實測中文字級下約 60px > 53px）——
+       固定 center 對齊時圖示不會跟著撐高，導致圖示反而沒對齊到文字的上下邊界。stretch
+       讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，不管有無副標。 */
+    align-items: stretch;
     gap: var(--lf-space-2);
     padding: var(--lf-space-4) var(--lf-space-5);
     font-size: var(--lf-font-size-xl);
@@ -500,8 +504,19 @@ body {
 .lf-sidebar__brand-text {
     display: flex;
     flex-direction: column;
+    /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
+       預設值，寫出來是文件化意圖：不依賴父層設定不變，之後若父層改回 center 這裡仍然正確）。
+       justify-content:space-between 讓名稱貼齊撐滿後的區塊上緣、副標貼齊下緣（回饋十六輪
+       批次E-2：原本兩者只是各自靠攏，沒有對齊圖示邊界）。*/
+    justify-content: space-between;
+    align-self: stretch;
     min-width: 0;
     flex: 1 1 auto;
+}
+
+/* 沒有副標時只剩一行文字，space-between 在單一子項時等同貼頂——改回置中對齊圖示中線 */
+.lf-sidebar__brand-text:not(:has(small)) {
+    justify-content: center;
 }
 
 .lf-sidebar__brand-name {
@@ -524,20 +539,25 @@ body {
 
 /* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
    視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
-   維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。 */
+   維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。
+   回饋十六輪批次E-2：再放大到 2.75rem。用 min-height 而非 height——搭配上方
+   .lf-sidebar__brand 的 align-items:stretch，沒有副標時圖示落在 min-height（維持
+   方形），有副標、文字自然高度超過 2.75rem 時圖示跟著撐高，兩者永遠以較高者對齊，
+   不會出現「文字比圖示高、圖示卻沒撐滿」的錯位。寬度維持固定，微幅變成瘦長矩形是
+   換取像素級對齊的合理代價。 */
 .lf-sidebar__brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 2.75rem;
+    min-height: 2.75rem;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
     flex-shrink: 0;
 }
 
-.lf-sidebar__brand-mark .lf-icon { width: 1.25rem; height: 1.25rem; }
+.lf-sidebar__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
 
 /* 自訂品牌圖示（docs/archive/FEEDBACK-10-PLAN.md §1）：上傳的圖片比例不一，contain 保證整張看得到
    （cover 會裁掉邊角，logo 被切比縮小更難看）。圓角切齊外框的漸層底 */

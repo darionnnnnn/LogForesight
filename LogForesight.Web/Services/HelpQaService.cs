@@ -60,6 +60,10 @@ public class HelpQaService
         return new AskHelpResponseDto
         {
             Answer = answer.Trim(),
+            // 這是選進 prompt 的候選章節（HelpChapterScorer.SelectChapters），不是模型自述
+            // 「實際引用了哪些」——SystemPrompt 另外要求模型在回答結尾自列引用，兩者可能不同
+            // （模型未必用到候選裡的每一節）。前端標籤據此改為「參考章節（提供給 AI 的內容）」，
+            // 不宣稱這是模型的實際引用（回饋十六輪批次D-2）。
             CitedChapterIds = selected.Select(c => c.Id).ToList()
         };
     }

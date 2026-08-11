@@ -2,34 +2,9 @@
     ViewData["Title"] = "操作說明書";
 }
 
-<div class="lf-card mb-3" id="help-ask-card">
-    <div class="lf-card__header">
-        <h2 class="lf-card__title">
-            詢問說明書
-            <span class="lf-badge lf-badge--warning ms-1">實驗性</span>
-        </h2>
-    </div>
-    <div class="lf-card__body">
-        <div id="help-ask-unavailable" class="text-muted small d-none">
-            未設定 AI 服務，僅提供文件瀏覽。AI 位址請至「系統管理 &gt; 設定 &gt; AI 服務」頁設定。
-        </div>
-        <div id="help-ask-form-wrap" class="d-none">
-            <p class="text-muted small mb-2">
-                單輪問答，不保留對話歷史；只依據下方說明書內容作答，說明書沒寫的會誠實告知未涵蓋。
-            </p>
-            <form id="help-ask-form" class="d-flex gap-2 mb-2">
-                <input type="text" class="form-control" id="help-ask-input" maxlength="500"
-                       placeholder="例如：怎麼抑制某條規則的告警？" autocomplete="off" />
-                <button type="submit" class="btn btn-primary" id="help-ask-submit">提問</button>
-            </form>
-            <div id="help-ask-result"></div>
-        </div>
-    </div>
-</div>
-
 <div class="row g-3">
     <div class="col-md-3">
-        <div class="lf-card">
+        <div class="lf-card" id="help-chapter-nav-card">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">章節目錄</h2>
             </div>
@@ -43,11 +18,36 @@
             <div class="lf-card__header">
                 <h2 class="lf-card__title" id="help-chapter-title"></h2>
             </div>
-            <div class="lf-card__body">
+            @* 高度對齊左側目錄卡（回饋十六輪批次E-4），由 help-manual.js 量測後設定
+               max-height；超出內容用 scrollbar，不撐開版面 *@
+            <div class="lf-card__body" id="help-chapter-body">
                 <div id="help-chapter-content"></div>
                 <div id="help-chapter-related" class="mt-3 pt-3 border-top d-none"></div>
             </div>
         </div>
+    </div>
+</div>
+
+@* 詢問說明書：移到章節內容下方（回饋十六輪批次E-4），AI 未設定時整卡隱藏
+   （回饋十六輪批次D-3，與全站其他 AI 入口一致，不再顯示「未設定」文案） *@
+<div class="lf-card mt-3 d-none" id="help-ask-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">
+            詢問說明書
+            <span class="lf-badge lf-badge--warning ms-1">實驗性</span>
+        </h2>
+    </div>
+    <div class="lf-card__body">
+        <p class="text-muted small mb-2">
+            單輪問答，不保留對話歷史；只依據下方說明書內容作答，說明書沒寫的會誠實告知未涵蓋。
+        </p>
+        <div class="text-muted small mb-2 d-none" id="help-ask-run-hint">分析執行中，AI 回應可能較慢。</div>
+        <form id="help-ask-form" class="d-flex gap-2 mb-2">
+            <input type="text" class="form-control" id="help-ask-input" maxlength="500"
+                   placeholder="例如：怎麼抑制某條規則的告警？" autocomplete="off" />
+            <button type="submit" class="btn btn-primary" id="help-ask-submit">提問</button>
+        </form>
+        <div id="help-ask-result"></div>
     </div>
 </div>
 

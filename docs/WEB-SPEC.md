@@ -1273,7 +1273,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `ruleId`，`AddSuppressionRequest` 依 `TargetType` 帶對應欄位），舊的 `{ruleId}/suppressions`
   端點保留、內部委派同一份 `RuleAdminService` 邏輯供既有呼叫端相容。規則清單列上有抑制時顯示
   抑制筆數徽章＋前 3 筆 tooltip 預覽（`RuleDto.SuppressionCount`／`SuppressionPreview`，範圍最寬
-  的排最前——Site > Group > Host）。
+  的排最前——Site > Group > Host）。**新三型（簽章／關聯／音量）目前僅支援 `Host` 範圍**
+  （回饋十六輪批次C-1，`RuleAdminService.AddSuppression` 服務層拒絕 Group／Site；只有 `Rule`
+  型有 `PreviewSuppression` 影響面預覽，完整範圍支援矩陣見 docs/RULES-SPEC.md）。
 - **比對順序改唯讀＋遮蔽警告文案收斂（回饋十五輪 B，R1）**：規則的比對順序＝清單順序（第一個
   命中的規則生效），本頁不支援拖曳調整，`RuleDto.MatchOrder` 唯讀顯示；遮蔽警告文案移除「請調整
   順序」等操作提示（改成純陳述「本頁不支援調整規則順序，順序由建立先後決定」），避免暗示一個
@@ -1587,14 +1589,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **頁面版面**：左側章節目錄（`list-group`）＋右側內容（單一 `GET /api/help/manual` 一次取回
   manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash 深連結
   （`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI 問答共用
-  同一份關聯資訊。
+  同一份關聯資訊。**問答框位於章節內容下方**（回饋十六輪批次E-4，行為變更：原本在頁面頂部）；
+  章節內容區高度由 `help-manual.js` 量測左側目錄卡的實際高度後設為 `max-height`，超出內容
+  用 scrollbar（純 CSS 的 flex/grid stretch 只能讓較矮欄等高於較高欄，做不到「以較矮欄為
+  基準」，改用 JS 量測；md 斷點以下兩欄堆疊時交還瀏覽器自然高度）。
 - **Markdown 渲染刻意不引入新的第三方庫**：沿用既有 `markdown-lite.js` 的安全子集（粗體、
   行內代碼、清單、標題轉粗體行、段落，全程 `document.createElement`／`createTextNode` 組
   DOM，不使用 `innerHTML`）——全站至今未引入任何可解析 HTML／連結的 Markdown 轉換庫（見該
   檔頭註解），即使手冊內容是自家資源、內容可信，仍照這個既有的 XSS 紀律走，不為單一頁面
   開一個新的渲染路徑。
-- **AI 問答（實驗性徽章）**：頂部問答框，`AiBaseUrl` 未設定時整區換成「未設定 AI 服務，僅
-  提供文件瀏覽」（`GET /api/help/ask-available` 判斷，比照統計模式的誠實申報寫法）。
+- **AI 問答（實驗性徽章）**：`AiBaseUrl` 未設定時**整張問答卡隱藏**（回饋十六輪批次D-3，
+  行為變更：原本整區換成「未設定 AI 服務，僅提供文件瀏覽」的文案，改成與全站其他 AI 入口
+  ——儀表板焦點卡、清單頁歸納鈕、詳情頁對話——一致的隱藏語意；`GET /api/help/ask-available`
+  判斷）。卡片顯示時另外查一次 `GET /api/run-activity`（任何登入者可讀、不掛
+  `[Permission]`，見 §9.1），執行中時在問答框上方顯示「分析執行中，AI 回應可能較慢」
+  （回饋十六輪批次D-1：AI 問答與批次分析共用同一個地端模型的序列請求佇列，見 README「本機
+  推論同時處理多個請求會互搶 GPU 資源」）；查一次不輪詢，分析動輒數小時，輪詢不會讓提示
+  更準確。詳情頁對話（`chat-panel.js`）比照同一套提示。
   `POST /api/help/ask` 流程：
   1. **選節**（`HelpChapterScorer`，純靜態、無外部依賴）：對 question 做關鍵字比對計分
      （title 命中 ×3、keywords 命中 ×2、內文命中 ×1；中文以雙字元 bigram 切詞、英文以連續
@@ -1609,6 +1620,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      system prompt 固定要求台灣繁中回答、僅依提供章節內容作答、章節沒寫的明說「未涵蓋」、
      結尾列出引用章節標題。任何失敗（未設定、逾時、選不到節仍呼叫失敗）一律回 `data:null`
      （比照 `AiController` 既有慣例），前端顯示「AI 服務暫時無法回應，可先查閱下方章節」。
+     回應的 `citedChapterIds` 是 `HelpChapterScorer` 選進 prompt 的候選章節，**不是**模型
+     自述實際引用了哪些——兩者可能不同（模型未必用到候選裡的每一節）。前端標籤誠實標為
+     「參考章節（提供給 AI 的內容）」，不宣稱是模型的實際引用（回饋十六輪批次D-2，行為變更：
+     原標籤為「引用章節」）。
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。

@@ -292,6 +292,47 @@ function renderBrandFields(settings) {
     document.getElementById('brand-icon-file').value = '';
 }
 
+/**
+ * 儲存成功後即時更新側欄品牌區塊（回饋十六輪批次E-3）：原本要整頁重整才看得到新外觀。
+ * 空值回退規則與後端 BrandProvider.Get 對齊——名稱空白回出廠預設「LogForesight」，
+ * 副標／圖示空白代表刻意不設定，對應節點直接移除／換回內建圖示。
+ */
+function applyBrandToSidebar(settings) {
+    const mark = document.getElementById('lf-brand-mark');
+    if (mark) {
+        mark.replaceChildren();
+        if (settings.brandIconDataUri) {
+            const img = document.createElement('img');
+            img.src = settings.brandIconDataUri;
+            img.alt = '';
+            img.className = 'lf-sidebar__brand-img';
+            mark.appendChild(img);
+        } else {
+            mark.appendChild(icon('speedometer2'));
+        }
+    }
+
+    const brandName = settings.brandName || 'LogForesight';
+    const nameEl = document.getElementById('lf-brand-name');
+    if (nameEl) {
+        nameEl.textContent = brandName;
+        nameEl.title = brandName;
+    }
+
+    let subtitleEl = document.getElementById('lf-brand-subtitle');
+    if (settings.brandSubtitle) {
+        if (!subtitleEl) {
+            subtitleEl = document.createElement('small');
+            subtitleEl.id = 'lf-brand-subtitle';
+            document.querySelector('.lf-sidebar__brand-text')?.appendChild(subtitleEl);
+        }
+        subtitleEl.textContent = settings.brandSubtitle;
+        subtitleEl.title = settings.brandSubtitle;
+    } else if (subtitleEl) {
+        subtitleEl.remove();
+    }
+}
+
 function setBrandIcon(dataUri) {
     brandIconDataUri = dataUri ?? '';
 
@@ -515,6 +556,7 @@ function bindForm() {
             renderAnalysisFields(current);
             renderMailFields(current);
             renderBrandFields(current);
+            applyBrandToSidebar(current);
             renderUpdatedAt(current);
             unsaved?.clear();
         } catch {
