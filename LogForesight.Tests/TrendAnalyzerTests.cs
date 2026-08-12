@@ -169,6 +169,27 @@ public class TrendAnalyzerTests
         Assert.Empty(alerts);
     }
 
+    /// <summary>抑制對新出口一視同仁（回饋十七輪批次C 規劃明列的測試）：被抑制的簽章命中
+    /// 「首次出現且大量」時，文字進 suppressedAlerts（詳情頁「已抑制的告警」誠實申報用），
+    /// 不進 alerts／alertRefs——抑制關的是「要不要吵」，不是「要不要算」。</summary>
+    [Fact]
+    public void 被抑制的簽章首次出現且大量時文字進suppressedAlerts不進alerts()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 999, 1, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 100, IssueSeverity.Low);
+        sig.Suppressed = true;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 0,
+            false, false, out var suppressed, out var refs);
+
+        Assert.Empty(alerts);
+        Assert.Empty(refs);
+        Assert.Contains(suppressed, a => a.Contains("首次出現且大量"));
+        Assert.Equal(IssueSeverity.Medium, sig.Severity); // 抑制不影響「要不要算」：升級照做
+    }
+
     /// <summary>暖身期新頻道上線第一天，所有簽章都是首次出現——爆量出口也要受同一道
     /// 閘門保護，否則新頻道切換日會被自己的暖身資料觸發告警風暴。</summary>
     [Fact]

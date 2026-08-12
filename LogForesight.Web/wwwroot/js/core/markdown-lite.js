@@ -34,6 +34,18 @@ function isTableSeparatorLine(line) {
     return cells.length > 0 && cells.every(c => TABLE_SEPARATOR_CELL.test(c));
 }
 
+/** 「新表格開頭」邊界用的嚴格版分隔列判定（終檢修正）：每格至少兩條橫線。
+ * 表格「續行」迴圈要中斷於下一個表格的分隔列（見呼叫端），但 GFM 的分隔格語法容許單一
+ * 橫線，`| - | - |` 這種常見的「佔位資料列」會被寬鬆版誤判成分隔列——中斷發生在錯的地方，
+ * 一個表格被拆成兩半、前一列還被誤升成第二個表格的表頭。實務上的 markdown 產生器
+ * （含 AI 輸出）分隔列幾乎都寫 `---`，佔位格幾乎都是單一 `-`，用「至少兩條橫線」區分兩者；
+ * 表格「開頭」判定維持寬鬆版不變（單橫線分隔列開新表格仍是合法 GFM，兩處語意不同）。 */
+function isStrictTableSeparatorLine(line) {
+    if (!line.includes('|')) return false;
+    const cells = splitTableRow(line);
+    return cells.length > 0 && cells.every(c => /^:?-{2,}:?$/.test(c));
+}
+
 /** 判斷這行「去除行內代碼」後是否還算含 `|`（體檢輪修正）：行內代碼裡的管線符號
  * （如 `netstat -an | grep ESTABLISH` 這種指令範例）不該被當成表格儲存格分隔——
  * 否則表格後面緊接著（無空白行分隔）這種散文行會被誤吞成表格的資料列，行內代碼也被
@@ -91,9 +103,11 @@ function renderBlocks(container, text) {
             // 續行也要中斷於「下一行其實是另一個表格的開頭」（體檢輪修正）：兩個 GFM 表格
             // 中間沒有空白行分隔時，起點判定的防呆邏輯要在這裡對稱套用一次，否則第二個表格
             // 的表頭會被吞成第一個表格的普通資料列、分隔列會被當字面文字顯示成 ---。
+            // 這裡用「嚴格版」分隔列判定（見 isStrictTableSeparatorLine）：`| - | - |` 這種
+            // 單橫線佔位資料列不該觸發中斷，否則表格會被拆成兩半（終檢修正）。
             while (
                 i < lines.length && lines[i].trim() !== '' && hasPipeOutsideCode(lines[i]) &&
-                !(i + 1 < lines.length && isTableSeparatorLine(lines[i + 1]))
+                !(i + 1 < lines.length && isStrictTableSeparatorLine(lines[i + 1]))
             ) {
                 bodyRows.push(splitTableRow(lines[i]));
                 i++;

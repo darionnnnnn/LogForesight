@@ -3,7 +3,8 @@
 > 來源：外部程式碼審視報告（頭號發現＋中2低2）＋使用者回饋八項（其他 1~8）。
 > 全部發現已逐一對照 dev@236f08d 程式碼核實，**無一被推翻**。
 > 四個決策點已與使用者定案（見「決策記錄」）。
-> 狀態：**規劃完成，未實作**。
+> 狀態：**全案（批次 A~I）實作完成＋體檢輪＋終檢輪收尾，已併 dev**。
+> 實作與規劃的偏離見文末「實作紀錄與規劃偏離」。
 
 ## 決策記錄
 
@@ -189,6 +190,10 @@
   正是暖身期要防的切換日風暴。
 - 不動嚴重度、不設 `ElevatesDayRisk`（與 Rising 爆量例外對齊：爆量例外只負責「被看見」，
   告警文字產生後 `ComputeRuleBasedRisk` 的 trendAlerts>0 → 中風險，已足夠）。
+  **→ 體檢輪推翻「不動嚴重度」這半**（2026-08-12）：這段論證只驗證了日風險判定這個消費端，
+  漏了 `RiskReportService.SelectFocusIssues` 也在讀 Severity——不升級的話這個訊號永遠進不了
+  報告的深入分析區塊。實作改為命中出口時比照 Rising 分支呼叫 `Escalate()`，
+  「不設 `ElevatesDayRisk`」維持不變。明細見 `DETECTION-SPEC.md` 對應段落。
 - `sig.Suppressed` 分流進 `suppressedAlerts`，`alertRefs` 同步（與既有兩處相同的三行模式）。
 - 測試：500 筆告警／99 筆不告警／暖身期不告警／已抑制進 suppressedAlerts／
   High 首次出現不重複告警（走既有 High 分支，不進爆量例外）。
@@ -398,3 +403,43 @@ A → B（同一批檔案、同一組測試，郵件層一次收攏）→ C → 
 E（並行）放最後的理由：它會動到 F 的進度顯示資料結構，先把 F 的頁籤與執行紀錄落地、
 E 再改多軌進度，避免同一支 runs.js 前後改兩次方向。
 （若希望降低單輪風險，E 可獨立成 feature 分支最後併入。）
+
+---
+
+## 實作紀錄與規劃偏離（2026-08-11～2026-08-12）
+
+全案於 `feature/feedback-17` 分支逐批 commit（A/B → C → D → H → G-4 → G-1/G-2 → G-3 →
+F → E → I 文件 → 體檢輪修正 → 終檢輪收尾），實際順序與建議一致，E 未另拆分支。
+每批獨立跑全量測試＋瀏覽器實測後才 commit。合併前跑多代理體檢輪（6 維度審查＋每發現
+2 代理獨立反駁驗證），6 個確認缺陷全數修復（明細見 `WEB-SPEC.md` 各「體檢輪修正」段與
+`DETECTION-SPEC.md`）；終檢輪再補齊本節列出的規劃缺漏與一個體檢輪修正自身引入的
+邊角回歸（markdown 表格佔位列誤判，見 `markdown-lite.js` 的 `isStrictTableSeparatorLine`）。
+
+**與規劃的偏離**（實作版皆已記載於 `WEB-SPEC.md`，此處集中補規劃側的註記）：
+
+- **B-4**：規劃寫直接用 `IVisibilityService.GetVisibleHostIdsFor`；實作抽出 static
+  `HostVisibilityResolver` 供 Singleton 的 `MailNotificationService` 與 Scoped 的
+  `VisibilityService` 共用——`VisibilityService` 依賴 Scoped 的 `ICurrentUser`，Singleton
+  不能直接注入（captive dependency）。邏輯仍是單一份（`VisibilityService` 三個方法改
+  委派給 resolver），「不另造第二份權限邏輯」的意圖達成，只是落點不同。
+- **E-3**：規劃寫「per-phase 進度字典＋主進度條顯示合計」；實作是固定第三組欄位
+  `LocalProgressPhase/Done/Total`（與既有主／子進度欄位對稱），且**不做合計條**——本機與
+  NetIQ 各畫獨立進度條。phase 集合是封閉的（local／netiq／netiq-ai／netiq-backpressure），
+  字典的開放性用不到；合計條會把兩路不同量綱（本機日 vs 機房主機日）硬加在一起，反而失真。
+- **F-1**：「URL hash 深連結」未做——規劃寫「與 Settings 頁行為一致」，但 Settings 頁
+  （`bindTabs`）本來就沒有 hash 深連結，規劃的前提有誤；實作取「與 Settings 一致」這一半。
+  天數鈕不在頁籤列同排右側、而是另起一行——`bindTabs` 要求頁籤與面板是同層手足元素
+  （見 `Runs.cshtml` 註解），同排會破壞這個結構。
+- **F-3**：執行紀錄表格欄縮減——「結束時間／範圍（Args）／AI 呼叫失敗」三欄未渲染
+  （DTO 有帶），耗時已含結束資訊、AI 數字與逐條 log 在「檢視」鈕重用的執行詳情 modal
+  內都有，逐欄堆上表格會讓 14 天清單橫向爆寬。「點列展開 BatchRunLog」改為檢視鈕開
+  既有 modal，同一資訊少一套展開實作。
+- **批次 I**：`MailNotifyState` 新欄位記載於 `WEB-SPEC.md` §10.2 的 blob 對照表而非
+  `DB-SPEC.md`——該表本來就是 Web 層 blob 欄位的歸屬地，`DB-SPEC.md` 不含 blob 內容結構。
+- **E-6**：規劃的三條 Orchestrator 並行整合測試以「`SchedulerRunStateTests` 的多軌進度
+  單元測試＋瀏覽器實測（並行輸出前綴、雙進度條、優雅停止）」取代——Orchestrator 整合
+  測試需要整套 EventLog／Sentinel／AI 環境替身，成本效益不符；`Task.WhenAll` 的失敗語意
+  與單一匯合點由程式註解記載不變量，體檢輪的併發審查亦已覆核。
+- 規劃外變更三處，理由記載於對應檔案註解：`AnalysisMaxPoolSize` +1→+2（本機迴圈加入
+  連線池競爭）、NetIQ 主進度條改「有回報過才顯示」（純本機執行時「準備中」誤導，瀏覽器
+  實測發現）、`"netiq-done"` 完工訊號（體檢輪修正 3）。

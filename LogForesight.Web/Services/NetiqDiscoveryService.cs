@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
+using NLog;
 
 namespace LogForesight.Web.Services;
 
@@ -19,6 +21,8 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class NetiqDiscoveryService
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly INetiqServerCatalog _catalog;
     private readonly INetiqDirectoryClient _client;
     private readonly IHostStore _hosts;
@@ -207,7 +211,13 @@ public class NetiqDiscoveryService
         var displayNameByIp = scan.Hosts
             .Where(h => !string.Equals(h.HostName, h.IpAddress, StringComparison.OrdinalIgnoreCase))
             .ToDictionary(h => h.IpAddress, h => h.HostName, StringComparer.OrdinalIgnoreCase);
+        // 匯入耗時申報（回饋十七輪批次D-1，規劃明列）：批次化前逐台 FindByName+Upsert 是匯入慢
+        // 的主因，落一筆台數＋毫秒的 log，之後有沒有改善（或再劣化）看得見。
+        var applyStopwatch = Stopwatch.StartNew();
         var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp);
+        applyStopwatch.Stop();
+        Log.Info("NetIQ 匯入套用完成：{Count} 台（新增 {Added}／更新 {Updated}／復活 {Revived}），耗時 {ElapsedMs}ms",
+            wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);
 
         // 用過即丟：token 對應的掃描快照已經落盤，同一個 token 不該被重複套用第二次
         Pending.TryRemove(request.Token, out _);

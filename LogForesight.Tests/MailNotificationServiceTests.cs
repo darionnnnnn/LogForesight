@@ -482,6 +482,56 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains("bad@test.local", service.GetSuspendedRecipients());
     }
 
+    /// <summary>熔斷跳過的收件人不計入跨輪失敗 streak（回饋十七輪批次B-1 規劃明列的測試）：
+    /// 熔斷是「本輪 SMTP 整體異常、沒嘗試寄」，不是這個收件人地址本身的問題——被跳過的
+    /// 收件人不該累積失敗次數，否則 SMTP 掛一輪就會讓排在熔斷點之後的所有人一起被記黑點。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_熔斷跳過的收件人不累積跨輪失敗計數()
+    {
+        EnableMail(s =>
+        {
+            s.MailUrgentEnabled = true;
+            s.MailRecipients = new List<string>
+            {
+                "a@test.local", "b@test.local", "c@test.local", "d@test.local", "e@test.local"
+            };
+        });
+        _sender.ThrowOnSend = new InvalidOperationException("smtp down");
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        // 連續失敗 3 次即熔斷：只有 a/b/c 被實際嘗試，d/e 被跳過
+        Assert.Equal(3, _sender.Attempts.Count);
+        var streaks = new MailNotifyStateStore(_fx.Blob("mail_notify_state")).Get().RecipientFailureStreaks;
+        Assert.Equal(1, streaks["a@test.local"]);
+        Assert.Equal(1, streaks["b@test.local"]);
+        Assert.Equal(1, streaks["c@test.local"]);
+        Assert.False(streaks.ContainsKey("d@test.local")); // 熔斷跳過＝本輪沒嘗試，不計黑點
+        Assert.False(streaks.ContainsKey("e@test.local"));
+    }
+
+    /// <summary>停用帳號視為未對應（回饋十七輪批次B-4 規劃明列的測試）：與 VisibilityService
+    /// 一致，停用優先於一切授權路徑——即使該帳號的群組是 ViewAll，只要 Active=false 就只收
+    /// 統計行，不含任何主機明細。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_停用帳號的收件人只收統計行不含主機明細()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser
+        {
+            Account = "ops", Email = "ops@test.local", Active = false, GroupIds = new List<long> { group.GroupId }
+        });
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.DoesNotContain("host1", sent.Message.Body);
+        Assert.Contains("站台", sent.Message.Body);
+    }
+
     /// <summary>寄送成功會把該收件人的失敗 streak 歸零——不是永久性的懲罰，地址一旦恢復
     /// 正常就不再被排除（回饋十七輪批次B-1）。</summary>
     [Fact]
