@@ -313,6 +313,35 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Contains("站台", sent.Message.Body);
     }
 
+    /// <summary>回饋十七輪體檢輪抓到的真實漏寄：收件人只有部分可見範圍時（看得到host1、看不到
+    /// host2），舊版 BuildUrgentMessage 的統計行是用該收件人自己過濾後的明細現算（此例只算得出
+    /// 1），host2 連統計數字都沒被提到——卻因為 ops 那封信寄送成功，被 MarkSent 的 zero-coverage
+    /// fallback 標記為已通知，成了真正意義上「沒人被告知過」的靜默漏寄。修法對齊
+    /// SendRunSummaryAsync 既有做法：統計行改用全站聚合（未經過濾的 pending.Count），
+    /// 讓「coverage 為空的紀錄仍由統計行如實反映其存在」這個 MarkSent 文件註解的前提，
+    /// 在高風險即時通知這條路徑下也成立，不是只有摘要信才成立。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_部分可見範圍時統計行仍反映看不到的主機()
+    {
+        var viewerGroup = _userGroups.Upsert(new UserGroup { GroupName = "viewers", Role = UserRole.User, Active = true });
+        _users.Upsert(new WebUser { Account = "ops", Email = "ops@test.local", Active = true, GroupIds = new List<long> { viewerGroup.GroupId } });
+        _groupAccess.ReplaceAll(new[] { new GroupAccess { UserGroupId = viewerGroup.GroupId, HostGroupId = 10 } });
+
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1", GroupIds = new List<long> { 10 } });
+        var host2 = _hosts.Upsert(new WebHost { HostName = "host2", GroupIds = new List<long> { 20 } });
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High));
+        _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("host1", sent.Message.Body);
+        Assert.DoesNotContain("host2", sent.Message.Body);
+        // 全站聚合統計行反映真實筆數 2（含 ops 看不到的 host2），不是只算 ops 自己可見的 1 筆
+        Assert.Contains("2 筆", sent.Message.Body);
+    }
+
     /// <summary>內容廣泛化（回饋十七輪批次B-3，使用者回饋「其他 8」）：信件不含 Headline
     /// 與 RiskBasis（判定依據）等具體錯誤內容，只留數量與等級等較廣泛的資訊。</summary>
     [Fact]

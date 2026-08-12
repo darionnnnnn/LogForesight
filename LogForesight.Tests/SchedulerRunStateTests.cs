@@ -150,6 +150,38 @@ public class SchedulerRunStateTests
         Assert.Equal(20, state.ProgressTotal);
     }
 
+    /// <summary>
+    /// 體檢輪抓到的真實缺口：NetIQ 主機少、本機在回補多天缺漏時，NetIQ 通常會比本機早跑完。
+    /// 修復前 ProgressPhase 只在整趟執行的 TryBeginRun/EndRun 才會被清空，NetIQ 內部跑完後
+    /// 不會主動清掉自己的欄位——LatestActivity() 因此會一路顯示 netiq 跑完當下的最後一次
+    /// 回報值（凍結不動），即使本機明明還在推進，外觀上與「卡住」無法區分。
+    /// <see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/> 收尾時會送一個特殊 phase
+    /// （"netiq-done"）通知 NetIQ 這一路真的結束了，這裡直接驗證 SchedulerRunState 這一側收到
+    /// 後的行為：清空主／子進度欄位，讓 LatestActivity() 的優先序自然落回還在推進的本機。
+    /// </summary>
+    [Fact]
+    public void NetIQ完工後清空主子進度欄位_LatestActivity落回仍在推進的本機()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 2, 7);
+        state.ReportProgress("netiq", 2, 2);
+        Assert.Equal(("netiq", 2, 2), state.LatestActivity()); // NetIQ 還在跑（或剛跑完但還沒送完工訊號）時優先顯示它
+
+        state.ReportProgress("netiq-done", 0, 0);
+
+        Assert.Null(state.ProgressPhase);
+        Assert.Equal(0, state.ProgressTotal);
+        Assert.Null(state.SubProgressPhase);
+        // 本機的欄位完全不受影響——它還在跑，不該被 NetIQ 收尾的動作波及
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(2, state.LocalProgressDone);
+        Assert.Equal(7, state.LocalProgressTotal);
+        // 單一告示讀取端現在會落回本機，不再顯示 netiq 凍結的 2/2 舊值
+        Assert.Equal(("local", 2, 7), state.LatestActivity());
+    }
+
     [Fact]
     public void EndRun後本機進度欄位也歸零()
     {

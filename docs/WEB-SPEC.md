@@ -1608,6 +1608,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
      **N+1 修正（2026-08-11，回饋十七輪批次B-2）**：一次通知批次改用主機／使用者字典
      （`MailContext`），不再逐筆紀錄各自呼叫 `Store.Get()`（每次呼叫整份 blob 反序列化）。
+
+     **體檢輪修正（2026-08-12）**：合併回 dev 前的體檢輪抓到兩處真實缺陷，皆已修復並補測試。
+     (1) 高風險即時通知的統計行原本用該收件人自己過濾後的明細現算——收件人只有部分可見範圍
+     時，看不到的主機日連統計數字都沒被提到，卻因為那封信寄送成功而被 `MarkSent` 的
+     zero-coverage fallback 標記為已通知，是真正意義上「沒人被告知過」的靜默漏寄。改為統計行
+     用未經過濾的 pending 總數，對齊 `SendRunSummaryAsync` 既有做法，讓「coverage 為空的紀錄
+     仍由統計行如實反映其存在」這個前提在兩條路徑下都成立。
+     (2) `ResolvePerRecipient` 的 `GetVisibleHostIds` 原本寫在 `Where` 的 predicate 本體內，
+     每筆 record 都重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），對每位收件人重跑
+     一次完整的 store 全表掃描——是 B-2 想修掉的同一種 N+1，改為在迴圈內對每位收件人只算一次。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`（回饋十五輪批次D）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
@@ -1630,11 +1640,25 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   原本用 `help-manual.js` 量測左側目錄卡高度、把內容區塞進同高的 `max-height` 內捲動——內容
   一長就要在小視窗裡捲兩層（頁面本身＋內容區），體驗不佳。改回左側目錄卡 `position: sticky`
   跟著頁面捲動（`.lf-topbar` 非 fixed，不會擋住），內容區不設 `max-height`，多長顯示多長；
-  md 斷點以下兩欄堆疊時 sticky 停用，交還瀏覽器自然高度。
+  md 斷點以下兩欄堆疊時 sticky 停用，交還瀏覽器自然高度。**目錄卡自身限高（2026-08-12，
+  體檢輪修正）**：G-1 當時只顧到「內容區不要雙層捲動」，沒處理「目錄卡本身比矮視窗還高」
+  這個情境——sticky 卡住後卡片仍渲染完整 14 列原生高度，超出視窗底緣的最後幾個章節在整段
+  捲動範圍內都摸不到也點不到。比照 `.lf-sidebar` 的既有模式（見其註解）：
+  `#help-chapter-nav-card` 加 `max-height: calc(100vh - var(--lf-space-4) * 2)`，卡頭固定、
+  卡身（`.lf-card__body`）`overflow-y: auto` 內部捲動，矮視窗下超出的章節改用捲動觸及，不再
+  永遠碰不到。
 - **Markdown 渲染刻意不引入新的第三方庫**：沿用既有 `markdown-lite.js` 的安全子集（粗體、
   行內代碼、清單、標題轉粗體行、段落、**GFM 風格表格**（2026-08-11 回饋十七輪批次G-4 新增：
   連續 `|` 開頭行＋下一行為 `|---|---|` 分隔列才判定為表格開頭，避免誤判含 `|` 的散文；
-  段落續行迴圈也要中斷於表格開頭，否則散文起頭接的表格會被吞進同一段落當純文字），全程
+  段落續行迴圈也要中斷於表格開頭，否則散文起頭接的表格會被吞進同一段落當純文字；
+  **體檢輪修正（2026-08-12）**：起點判定當時只顧到「表格開頭」這一側，表格**續行**（body-row
+  消耗迴圈）沒有對稱套用同一道防呆，兩個真實情境會被誤吞——(1) 表格後緊接（無空白行分隔）
+  含行內代碼管線符號的散文（如 `` `netstat -an | grep ESTABLISH` ``）被拆進表格當資料列、
+  行內代碼從中間被切斷；(2) 兩個 GFM 表格中間沒有空白行時，第二個表格的表頭被吞成第一個
+  表格的普通資料列、分隔列原樣顯示成 `---`。修法：新增 `hasPipeOutsideCode()`（先去除行內
+  代碼再判斷是否還含 `|`，避免指令範例裡的管線符號被誤判為儲存格分隔）取代三處的
+  `.includes('|')`；body-row 續行迴圈加上「下一行是不是另一個表格開頭」的中斷條件，
+  與起點判定對稱），全程
   `document.createElement`／`createTextNode` 組 DOM，不使用 `innerHTML`）——全站至今未引入
   任何可解析 HTML／連結的 Markdown 轉換庫（見該檔頭註解），即使手冊內容是自家資源、內容
   可信，仍照這個既有的 XSS 紀律走，不為單一頁面開一個新的渲染路徑。這是全站 AI 文字的
@@ -1733,6 +1757,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   鎖擋撞號）因此不受影響——兩路共用同一個 `AnalysisRunContext` 執行個體是這裡安全的前提，
   不是巧合，未來異動不能讓任一路各自另建一份。連線池上限 `AnalysisMaxPoolSize` 再 +1，
   覆蓋本機迴圈現在會與 NetIQ 峰值並行度同時競爭連線的情境。
+  **NetIQ 完工訊號（2026-08-12，體檢輪修正）**：並行後 NetIQ 若比本機早跑完（主機少、本機在
+  回補多天缺漏），`ProgressPhase` 原本只在整趟執行的 `TryBeginRun`/`EndRun` 才會被清空，NetIQ
+  跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
+  `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
+  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
+  （`"netiq-done"`，與 `"local"` 一樣是兩邊約定的字串慣例）通知 `SchedulerRunState` 清空
+  netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
+  NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
+  一併消失，不是副作用。
   **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。

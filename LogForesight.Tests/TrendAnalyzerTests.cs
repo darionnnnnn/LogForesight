@@ -136,6 +136,23 @@ public class TrendAnalyzerTests
         Assert.Contains(alerts, a => a.Contains("首次出現且大量"));
     }
 
+    /// <summary>體檢輪抓到的真實缺口：這個出口原本只讓告警文字「被看見」，卻沒有跟著升嚴重度
+    /// （與 Rising 分支的爆量例外不對稱——那邊一定會 Escalate()）。Severity 停在 Low 的後果是
+    /// RiskReportService.SelectFocusIssues 的「Trend==New &amp;&amp; Severity&gt;=Medium」篩選門檻
+    /// 永遠踩不到，這個訊號在匯出的風險報告裡只會留下總覽一行文字，拿不到深入分析／原始 log。</summary>
+    [Fact]
+    public void Low嚴重度首次出現且大量時嚴重度跟著升一級()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => HistoryDay(DateTime.Today.AddDays(-d), "disk", 999, 1, IssueSeverity.Low))
+            .ToList();
+        var sig = Sig("System", "disk", 153, 100, IssueSeverity.Low);
+
+        TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 100, 0);
+
+        Assert.Equal(IssueSeverity.Medium, sig.Severity);
+    }
+
     [Fact]
     public void Low嚴重度首次出現且未達絕對量門檻時不告警()
     {

@@ -34,6 +34,15 @@ function isTableSeparatorLine(line) {
     return cells.length > 0 && cells.every(c => TABLE_SEPARATOR_CELL.test(c));
 }
 
+/** 判斷這行「去除行內代碼」後是否還算含 `|`（體檢輪修正）：行內代碼裡的管線符號
+ * （如 `netstat -an | grep ESTABLISH` 這種指令範例）不該被當成表格儲存格分隔——
+ * 否則表格後面緊接著（無空白行分隔）這種散文行會被誤吞成表格的資料列，行內代碼也被
+ * 從中間切斷。只用於「這行算不算表格行」的判定，不影響 splitTableRow 實際切格的行為
+ * （已確認是表格行之後，儲存格裡的行內代碼仍走 appendInline 正常解析）。 */
+function hasPipeOutsideCode(line) {
+    return line.replace(/`[^`]*`/g, '').includes('|');
+}
+
 /** 一行文字中的 **粗體** 與 `行內代碼` 拆成節點附加到 target；其餘文字原樣 createTextNode */
 function appendInline(target, line) {
     INLINE_TOKEN.lastIndex = 0;
@@ -75,11 +84,17 @@ function renderBlocks(container, text) {
 
         // 表格：目前行含 `|` 且下一行是分隔列（--- 之類）才判定為表格開頭——單純一行含 `|`
         // 的散文（如路徑、管線指令）不會有這種分隔列跟著，不會被誤判
-        if (line.includes('|') && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
+        if (hasPipeOutsideCode(line) && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1])) {
             const headerCells = splitTableRow(line);
             i += 2;
             const bodyRows = [];
-            while (i < lines.length && lines[i].trim() !== '' && lines[i].includes('|')) {
+            // 續行也要中斷於「下一行其實是另一個表格的開頭」（體檢輪修正）：兩個 GFM 表格
+            // 中間沒有空白行分隔時，起點判定的防呆邏輯要在這裡對稱套用一次，否則第二個表格
+            // 的表頭會被吞成第一個表格的普通資料列、分隔列會被當字面文字顯示成 ---。
+            while (
+                i < lines.length && lines[i].trim() !== '' && hasPipeOutsideCode(lines[i]) &&
+                !(i + 1 < lines.length && isTableSeparatorLine(lines[i + 1]))
+            ) {
                 bodyRows.push(splitTableRow(lines[i]));
                 i++;
             }
@@ -165,7 +180,7 @@ function renderBlocks(container, text) {
             // 後面接的表格會被吞進同一個段落當純文字印出，永遠走不到表格解析
             if (current.trim() === '' || HEADING_LINE.test(current) ||
                 UNORDERED_ITEM.test(current) || ORDERED_ITEM.test(current) ||
-                (current.includes('|') && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1]))) break;
+                (hasPipeOutsideCode(current) && i + 1 < lines.length && isTableSeparatorLine(lines[i + 1]))) break;
             if (!first) para.appendChild(document.createElement('br'));
             appendInline(para, current);
             first = false;

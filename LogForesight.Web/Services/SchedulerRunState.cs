@@ -142,6 +142,21 @@ public class SchedulerRunState
                 LocalProgressDone = done;
                 LocalProgressTotal = total;
             }
+            else if (phase == NetiqDonePhase)
+            {
+                // NetIQ 這一路已經跑完（體檢輪修正）：清空主／子進度欄位。不清的話
+                // ProgressPhase 停在最後一次回報值（如 netiq 2/2）不會再變，本機若還在
+                // 回補多天缺漏，LatestActivity() 的優先序（子>主>本機）會一路顯示這個凍結
+                // 的舊值——外觀上與「卡住」無法區分。清空後優先序自然落回還在推進的本機，
+                // 排程作業頁的雙進度條（各自依 progressPhase／subProgressPhase 是否為
+                // truthy 決定顯示）也會正確地讓 NetIQ 那兩條 bar 一併消失，不是副作用。
+                ProgressPhase = null;
+                ProgressDone = 0;
+                ProgressTotal = 0;
+                SubProgressPhase = null;
+                SubProgressDone = 0;
+                SubProgressTotal = 0;
+            }
             else if (SubProgressPhases.Contains(phase))
             {
                 SubProgressPhase = phase;
@@ -156,6 +171,10 @@ public class SchedulerRunState
             }
         }
     }
+
+    /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
+    /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
+    public const string NetiqDonePhase = "netiq-done";
 
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>

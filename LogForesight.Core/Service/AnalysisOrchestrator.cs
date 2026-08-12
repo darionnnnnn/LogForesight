@@ -819,6 +819,19 @@ public class AnalysisOrchestrator
             Log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");
             console.WriteLine($"\n  ✗ NetIQ 機房分析失敗：{ex.Message}（本機分析結果不受影響，下次執行自動重試缺漏日）");
         }
+        finally
+        {
+            // NetIQ 這一路收尾訊號（體檢輪修正）：不論成功、失敗或取消，只要曾經進入這個 try
+            // （TotalHosts>0，代表這次執行真的有 netiq 進度可能被回報過），都要送一次完工訊號。
+            // 本機與 NetIQ 改並行執行後（批次E），NetIQ 若比本機早跑完（主機少、本機在回補
+            // 多天缺漏），SchedulerRunState.ProgressPhase 會停在 netiq 的最後一次回報值不再變
+            // ——單一告示讀取端（/api/run-activity、健診）的 LatestActivity() 因此會一路顯示
+            // 這個凍結的舊值，外觀上與「卡住」無法區分。"netiq-done" 是 SchedulerRunState 認得
+            // 的特殊 phase 字面值（與 "local" 一樣是兩邊約定的字串慣例，見 WebRunProgress／
+            // SchedulerRunState.ReportProgress），收到後會清空 netiq 的主／子進度欄位，讓
+            // LatestActivity() 的優先序自然落回還在推進的本機。
+            progress?.Report("netiq-done", 0, 0);
+        }
     }
 
     private static string FormatElapsed(TimeSpan span) =>

@@ -309,9 +309,15 @@ public class MailNotificationService
         foreach (var email in globalRecipients)
         {
             var account = ResolveAccount(email, ctx.AllUsers);
-            List<DailyAnalysisRecord>? detail = account == null
-                ? null
-                : records.Where(r => GetVisibleHostIds(account.UserId).Contains(r.HostId)).ToList();
+            List<DailyAnalysisRecord>? detail = null;
+            if (account != null)
+            {
+                // 體檢輪抓到：GetVisibleHostIds 若直接寫在 Where 的 predicate 裡，
+                // 每筆 record 都會重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），
+                // 對每位收件人重跑一次完整的 store 全表掃描，正是 B-2 想修掉的同一種 N+1。
+                var visible = GetVisibleHostIds(account.UserId);
+                detail = records.Where(r => visible.Contains(r.HostId)).ToList();
+            }
             views[email] = new RecipientView(detail);
             order.Add(email);
         }
@@ -395,7 +401,14 @@ public class MailNotificationService
         // 路徑（回饋十六輪體檢發現2b）
         if (order.Count == 0) return;
 
-        (string Subject, string Body) BuildMessage(RecipientView view) => BuildUrgentMessage(settings, view.Detail, ctx);
+        // 全站聚合統計行（回饋十七輪體檢輪修正）：與 SendRunSummaryAsync 的 statsLine 同樣用
+        // 未經可見範圍過濾的 pending.Count，每位收件人共用同一句，不因各自 Detail 的子集而縮水。
+        // MarkSent 的 zero-coverage fallback（見其文件說明）前提是「coverage 為空的 record 仍會
+        // 被統計行如實反映」——這個前提只有在統計行是全站聚合時才成立；先前這裡的統計行是用
+        // 已過濾後的 view.Detail 現算，收件人看得到部分主機、看不到的那些主機就連統計數字都
+        // 沒被提及，卻仍被標記成已通知，是真實的靜默漏寄。
+        var globalStatsLine = $"本次執行共 {pending.Count} 筆高風險主機日達門檻";
+        (string Subject, string Body) BuildMessage(RecipientView view) => BuildUrgentMessage(settings, globalStatsLine, view.Detail, ctx);
 
         // 標記語意：涵蓋此 record 的信全部寄成功才標記已寄（回饋十六輪體檢發現2a 的根修）——
         // 寧可讓已收到的人下次重複收到，也不漏寄。放在 SendPerRecipientAsync 的 finally 裡
@@ -579,32 +592,35 @@ public class MailNotificationService
         return body.ToString();
     }
 
-    private (string Subject, string Body) BuildUrgentMessage(SystemSettings settings, List<DailyAnalysisRecord>? detail, MailContext ctx)
+    /// <summary><paramref name="globalStatsLine"/> 是未經可見範圍過濾的全站聚合統計行，每位
+    /// 收件人共用同一句（見呼叫端的說明）；<paramref name="detail"/> 才是該收件人自己可見範圍
+    /// 內的主機明細，null 或空清單都只附全站統計行、不附明細清單。</summary>
+    private (string Subject, string Body) BuildUrgentMessage(SystemSettings settings, string globalStatsLine, List<DailyAnalysisRecord>? detail, MailContext ctx)
     {
         var dateText = DateTime.Today.ToString("yyyy-MM-dd");
         var records = detail ?? new List<DailyAnalysisRecord>();
 
         if (records.Count == 0)
         {
-            // 對應不到帳號的收件人：只給統計行，不含任何主機明細（回饋十七輪批次B-4）
-            const string stats = "本次執行新增高風險日，詳情請至站台檢視";
-            var subj = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, RiskLevels.High, "高風險即時通知", stats);
+            // 對應不到帳號、或可見範圍不含本輪任何一筆的收件人：只給全站統計行，不含主機明細
+            var subj = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, RiskLevels.High, "高風險即時通知", globalStatsLine);
             var b = new StringBuilder();
             if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) b.AppendLine(settings.MailBodyIntro).AppendLine();
-            b.AppendLine(stats);
+            b.AppendLine($"{globalStatsLine}，詳情請至站台檢視。");
             return (subj, b.ToString());
         }
 
         var ordered = records.OrderByDescending(r => r.Date).ThenBy(r => ResolveHostDisplayName(r, ctx)).ToList();
-        var statsLine = ordered.Count == 1 ? "偵測到高風險訊號" : $"{ordered.Count} 台主機新增高風險日";
         var hostLabel = ordered.Count == 1 ? ResolveHostDisplayName(ordered[0], ctx) : $"{ordered.Count} 台主機";
-        var subject = ExpandTemplate(settings.MailSubjectTemplate, hostLabel, dateText, RiskLevels.High, "高風險即時通知", statsLine);
+        var subject = ExpandTemplate(settings.MailSubjectTemplate, hostLabel, dateText, RiskLevels.High, "高風險即時通知", globalStatsLine);
 
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+        body.AppendLine(globalStatsLine);
+        body.AppendLine();
         body.AppendLine(ordered.Count == 1
             ? $"主機 {ResolveHostDisplayName(ordered[0], ctx)} 於 {ordered[0].Date:yyyy-MM-dd} 判定為高風險日。"
-            : "本次執行新增以下高風險主機日：");
+            : "本次執行新增以下您可見範圍內的高風險主機日：");
         body.AppendLine();
 
         foreach (var record in ordered.Take(UrgentBodyLineLimit))

@@ -146,6 +146,15 @@ Rising 才會產生告警文字、進 `TrendAlerts`／`SuppressedTrendAlerts`（
 門檻，不像 Rising 分支的爆量例外還有 `SurgeFactor`（10 倍）條件**。同樣受 `channelWarmingUp`
 閘門保護——新頻道上線第一天所有簽章都是首次出現，這正是暖身期要防的切換日風暴。
 
+**嚴重度也要跟著升一級（2026-08-12，體檢輪修正）**：批次C 剛落地時這個出口只顧到「產生告警
+文字」，沒有像 Rising 分支的爆量例外那樣呼叫 `Escalate()`——體檢輪抓到這個不對稱的下游後果：
+`RiskReportService.SelectFocusIssues` 篩進報告深入分析區塊的條件是
+`Severity>=High || Trend==Rising || (Trend==New && Severity>=Medium)`，Rising 一律因
+`Trend==Rising` 本身就過關，但 New 硬性要求 `Severity>=Medium`——嚴重度沒被升級的話，這個
+訊號雖然靠告警文字把當天拉到中風險（`ComputeRuleBasedRisk` 的 `trendAlerts.Count>0`），
+卻永遠進不了 focus，報告裡只剩總覽一行文字，拿不到分類區塊、原始 log 樣本或知識庫/AI
+寫的處置建議。修法：命中這個出口時比照 Rising 分支呼叫 `Escalate()`（Low→Medium）。
+
 `SlowTrendAnalyzer` **刻意不套用 Rising 同款的嚴重度閘門**——這不是遺漏，是設計取捨：
 Low 簽章天然雜訊多、單日波動劇烈的理由在 7 天窗口被視窗長度與 `MinRecentCount` 部分抵銷，
 且它是「持續性未知訊號緩慢成長」唯一能被抓到的安全網（單日層的爆量例外只抓瞬時暴增，

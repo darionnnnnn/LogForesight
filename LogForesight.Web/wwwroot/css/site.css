@@ -752,6 +752,19 @@ body {
     #help-chapter-nav-card {
         position: sticky;
         top: var(--lf-space-4);
+        /* 體檢輪修正：矮視窗（筆電未最大化、開發者工具開著等）下，sticky 卡住後若卡片本身
+           比視窗還高，超出視窗底緣的章節在整段捲動期間都摸不到也點不到——.lf-sidebar 早就
+           踩過同一個坑（見其註解），這裡比照它的做法：卡片限制最大高度，超出的部分改由
+           內部（章節清單）捲動，不讓卡片本身無止盡撐高。 */
+        max-height: calc(100vh - var(--lf-space-4) * 2);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    #help-chapter-nav-card .lf-card__body {
+        overflow-y: auto;
+        min-height: 0;
     }
 }
 
