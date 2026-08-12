@@ -103,14 +103,20 @@ public class SentinelAdminService
         // 帶有「現存 Sentinel 名單整個是空的就安全跳過」的欄杆（防設定尚未匯入時誤判）；
         // 這裡是 admin 明確點了刪除這一台，就算它是最後一台，轄下主機也該照樣孤兒化，
         // 不能被那道防未知狀況的欄杆連坐擋下
-        var affected = 0;
-        foreach (var host in _hosts.GetAll().Where(h => h.SentinelId == sentinelId && h.Active && h.MergedInto == null))
+        //
+        // 一次 MutateBatch 完成整批（回饋十七輪批次D）：原本逐台 Upsert 各自整份 blob
+        // 讀改寫，轄下主機一多就是明顯的 N+1。
+        var affected = _hosts.MutateBatch(hosts =>
         {
-            host.Active = false;
-            host.OrphanedFromSentinel = host.NetiqServer;
-            _hosts.Upsert(host);
-            affected++;
-        }
+            var count = 0;
+            foreach (var host in hosts.Where(h => h.SentinelId == sentinelId && h.Active && h.MergedInto == null))
+            {
+                host.Active = false;
+                host.OrphanedFromSentinel = host.NetiqServer;
+                count++;
+            }
+            return count;
+        });
 
         _audit.Record(
             action: AuditActions.SentinelDelete,
@@ -213,12 +219,16 @@ public class SentinelAdminService
 
     private void SyncHostDisplaySnapshot(long sentinelId, string newName)
     {
-        foreach (var host in _hosts.GetAll().Where(h => h.SentinelId == sentinelId &&
-                                                          !string.Equals(h.NetiqServer, newName, StringComparison.Ordinal)))
+        // 一次 MutateBatch 完成整批（回饋十七輪批次D）：改名的 Sentinel 轄下主機一多，
+        // 逐台 Upsert 就是明顯的 N+1。
+        _hosts.MutateBatch(hosts =>
         {
-            host.NetiqServer = newName;
-            _hosts.Upsert(host);
-        }
+            foreach (var host in hosts.Where(h => h.SentinelId == sentinelId &&
+                                                    !string.Equals(h.NetiqServer, newName, StringComparison.Ordinal)))
+            {
+                host.NetiqServer = newName;
+            }
+        });
     }
 
     private static SentinelDto ToDto(Sentinel sentinel, int hostCount) => new()

@@ -21,6 +21,7 @@ public class SystemSettingsServiceTests : IDisposable
     private SystemSettingsService Create() =>
         new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
                 new MailNotifyStateStore(_fx.Blob("mail_notify_state"))));
 

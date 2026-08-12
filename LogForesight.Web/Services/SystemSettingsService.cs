@@ -274,9 +274,14 @@ public class SystemSettingsService : ISystemSettingsService
                 ? new SystemSettings().MailSubjectTemplate
                 : request.MailSubjectTemplate.Trim();
             s.MailBodyIntro = request.MailBodyIntro?.Trim() ?? "";
+            s.MailDigestSkipEmpty = request.MailDigestSkipEmpty;
 
             s.UpdatedByAccount = _currentUser.Account;
         });
+
+        // 收件人清單可能剛被改正（回饋十七輪批次B-1）：舊的連續失敗計數不該繼續卡著，
+        // 讓改正後的地址從零開始重新累計，而不是沿用改動前的失敗歷史繼續排除它。
+        _mail.ResetRecipientFailureStreaks();
 
         _audit.Record(
             action: AuditActions.SettingsUpdate,
@@ -567,6 +572,8 @@ public class SystemSettingsService : ISystemSettingsService
         MailUrgentEnabled = s.MailUrgentEnabled,
         MailSubjectTemplate = s.MailSubjectTemplate,
         MailBodyIntro = s.MailBodyIntro,
+        MailDigestSkipEmpty = s.MailDigestSkipEmpty,
+        SuspendedMailRecipients = _mail.GetSuspendedRecipients(),
         UpdatedAt = s.UpdatedAt,
         UpdatedByAccount = s.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(s.UpdatedByAccount)

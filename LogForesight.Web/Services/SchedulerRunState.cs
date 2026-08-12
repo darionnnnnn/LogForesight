@@ -23,8 +23,10 @@ public class SchedulerRunState
     public DateTime? StartedAt { get; private set; }
     public string? LatestMessage { get; private set; }
 
-    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：local｜netiq；done/total 為主機日粒度。
-    /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。</summary>
+    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq；done/total 為主機日粒度。
+    /// ProgressTotal=0 代表尚未進到有量化進度的階段（清理／掃描中），狀態卡改顯示不定進度。
+    /// **回饋十七輪批次E 起這裡專屬 NetIQ**——本機的進度改回報到 <see cref="LocalProgressPhase"/>
+    /// （見其說明：本機與 NetIQ 改並行執行後，兩者不能再共用一組欄位）。</summary>
     public string? ProgressPhase { get; private set; }
     public int ProgressDone { get; private set; }
     public int ProgressTotal { get; private set; }
@@ -35,14 +37,24 @@ public class SchedulerRunState
     /// 兩件事——原本共用一組 ProgressPhase/Done/Total 欄位，後回報的會直接覆蓋先回報的，
     /// 使用者看到的症狀是「進度卡住不動」，其實是另一條軌把畫面接管走了。分成獨立欄位後
     /// 兩條軌各自持有最後回報值，狀態 API 兩者都給，前端就能同時畫出主／子兩條進度條。
-    /// local／netiq 兩個主階段彼此不重疊（同一次執行依序跑完本機才進 NetIQ），沿用舊語意
-    /// 共用同一組主進度欄位即可，不需要比照子進度拆開。
     /// </summary>
     private static readonly HashSet<string> SubProgressPhases = new() { "netiq-ai", "netiq-backpressure" };
 
     public string? SubProgressPhase { get; private set; }
     public int SubProgressDone { get; private set; }
     public int SubProgressTotal { get; private set; }
+
+    /// <summary>
+    /// 本機分析進度（回饋十七輪批次E）：本機與 NetIQ 機房分析改成並行執行（AnalysisOrchestrator
+    /// 的 Task.WhenAll），不再是「先跑完本機才進 NetIQ」的依序關係——local／netiq 兩個 phase
+    /// 現在會**同時**回報進度，若仍共用上面那組主進度欄位，交錯的 ReportProgress("local",...)／
+    /// ReportProgress("netiq",...) 會互相蓋掉對方，畫面症狀跟當初 netiq／netiq-ai 共用一組欄位時
+    /// 一模一樣（進度卡住不動／跳來跳去）。獨立成第三組欄位，語意上與上面的主／子進度對稱：
+    /// 三條軌互不覆蓋，各自持有自己最後一次回報的值。
+    /// </summary>
+    public string? LocalProgressPhase { get; private set; }
+    public int LocalProgressDone { get; private set; }
+    public int LocalProgressTotal { get; private set; }
 
     /// <summary>最近一次執行完畢（成功/失敗/停止）的結果；站台重啟後歸零（行程內狀態，
     /// 持久紀錄請看執行總表——那裡有完整歷史，這裡只回答「剛剛那次到底成不成功」）。</summary>
@@ -69,6 +81,9 @@ public class SchedulerRunState
             SubProgressPhase = null;
             SubProgressDone = 0;
             SubProgressTotal = 0;
+            LocalProgressPhase = null;
+            LocalProgressDone = 0;
+            LocalProgressTotal = 0;
             _cts = new CancellationTokenSource();
             cts = _cts;
             return true;
@@ -93,25 +108,56 @@ public class SchedulerRunState
     /// 不讓每個讀取端各自記得（主／子欄位拆開後，「漏改讀取端」這個坑已經踩過兩次）。
     /// 能同時畫兩條進度條的讀取端（排程作業頁的狀態 API）直接讀兩組欄位，不走這裡。
     /// </summary>
+    /// <summary>
+    /// 優先序：子進度 &gt; 主進度（netiq） &gt; 本機（回饋十七輪批次E 新增第三順位）。子進度／主進度
+    /// 的取捨理由見類別註解（較晚、較貼近「現在卡在哪」）；本機排最後——Full 範圍下 NetIQ 通常是
+    /// 規模較大、較慢的一路，單一告示優先顯示它更有代表性。LocalOnly 範圍（netiq 從未回報）或
+    /// NetIQ 尚未開始回報時，自然落回本機進度，不會顯示空白。
+    /// </summary>
     public (string? Phase, int Done, int Total) LatestActivity()
     {
         lock (_lock)
         {
-            return SubProgressPhase != null
-                ? (SubProgressPhase, SubProgressDone, SubProgressTotal)
-                : (ProgressPhase, ProgressDone, ProgressTotal);
+            if (SubProgressPhase != null) return (SubProgressPhase, SubProgressDone, SubProgressTotal);
+            if (ProgressPhase != null) return (ProgressPhase, ProgressDone, ProgressTotal);
+            return LocalProgressPhase != null
+                ? (LocalProgressPhase, LocalProgressDone, LocalProgressTotal)
+                : (null, 0, 0);
         }
     }
 
     /// <summary>IRunProgress 的落地點（docs/archive/FEEDBACK-8-PLAN.md #2）：本機／NetIQ 兩階段各自的
-    /// 主機日進度，供狀態 API 畫進度條。phase 落在 <see cref="SubProgressPhases"/> 時寫入子進度欄位，
-    /// 其餘（local／netiq）寫入主進度欄位——兩組欄位互不覆蓋（回饋十四輪 UI-6）。</summary>
+    /// 主機日進度，供狀態 API 畫進度條。phase=="local" 寫入本機專屬欄位（回饋十七輪批次E：本機與
+    /// NetIQ 改並行執行後不能再共用主進度欄位，見 LocalProgressPhase 的說明）；落在
+    /// <see cref="SubProgressPhases"/> 的寫入子進度欄位；其餘（netiq）寫入主進度欄位——三組欄位
+    /// 互不覆蓋。</summary>
     public void ReportProgress(string phase, int done, int total)
     {
         lock (_lock)
         {
             if (!IsRunning) return;
-            if (SubProgressPhases.Contains(phase))
+            if (phase == "local")
+            {
+                LocalProgressPhase = phase;
+                LocalProgressDone = done;
+                LocalProgressTotal = total;
+            }
+            else if (phase == NetiqDonePhase)
+            {
+                // NetIQ 這一路已經跑完（體檢輪修正）：清空主／子進度欄位。不清的話
+                // ProgressPhase 停在最後一次回報值（如 netiq 2/2）不會再變，本機若還在
+                // 回補多天缺漏，LatestActivity() 的優先序（子>主>本機）會一路顯示這個凍結
+                // 的舊值——外觀上與「卡住」無法區分。清空後優先序自然落回還在推進的本機，
+                // 排程作業頁的雙進度條（各自依 progressPhase／subProgressPhase 是否為
+                // truthy 決定顯示）也會正確地讓 NetIQ 那兩條 bar 一併消失，不是副作用。
+                ProgressPhase = null;
+                ProgressDone = 0;
+                ProgressTotal = 0;
+                SubProgressPhase = null;
+                SubProgressDone = 0;
+                SubProgressTotal = 0;
+            }
+            else if (SubProgressPhases.Contains(phase))
             {
                 SubProgressPhase = phase;
                 SubProgressDone = done;
@@ -125,6 +171,10 @@ public class SchedulerRunState
             }
         }
     }
+
+    /// <summary>NetIQ 路徑收尾時的完工訊號（<see cref="AnalysisOrchestrator.RunNetiqAnalysisAsync"/>
+    /// 的 finally，成功／失敗都會送）——見 <see cref="ReportProgress"/> 對這個分支的說明。</summary>
+    public const string NetiqDonePhase = "netiq-done";
 
     /// <param name="outcome">這次執行的結局；null＝沒有真的開始過（例如跨行程 Mutex 逾時），
     /// 維持上一筆 LastOutcome 不變，不用「沒開始」蓋掉「上次真的跑過的結果」。</param>
@@ -141,6 +191,9 @@ public class SchedulerRunState
             SubProgressPhase = null;
             SubProgressDone = 0;
             SubProgressTotal = 0;
+            LocalProgressPhase = null;
+            LocalProgressDone = 0;
+            LocalProgressTotal = 0;
             _cts?.Dispose();
             _cts = null;
             if (outcome != null) LastOutcome = outcome;

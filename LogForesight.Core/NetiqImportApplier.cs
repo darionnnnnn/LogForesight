@@ -46,43 +46,65 @@ public static class NetiqImportApplier
         IReadOnlyDictionary<string, string>? displayNameByIp = null)
     {
         var newHostOs = WebHost.NormalizeOs(os) ?? WebHost.OsWindows;
-        int added = 0, updated = 0, revived = 0;
         var sentinel = sentinels.FindByName(serverName);
+        var ips = selectedIps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        foreach (var ip in selectedIps.Distinct(StringComparer.OrdinalIgnoreCase))
+        // 一次 MutateBatch 完成整批（回饋十七輪批次D）：原本逐台 FindByName+Upsert，
+        // 各自都是一次整份 blob 讀改寫（見 JsonBlobCollection.Mutate）——勾 500 台就是上千次
+        // 序列化往返，這是掃描精靈匯入慢的主因（掃描本身的網路耗時另計）。
+        return hosts.MutateBatch(list =>
+            ApplyToList(list, serverName, ips, sentinel?.SentinelId, newHostOs, groupByIp, displayNameByIp));
+    }
+
+    /// <summary>
+    /// 純函式核心：對記憶體中的主機清單就地套用三態異動（新增／更新／孤兒復活）。
+    /// 自 <see cref="Apply"/> 抽出以便一次 <see cref="IHostStore.MutateBatch{TResult}"/> 完成整批。
+    ///
+    /// **真 store 與測試替身共用同一份邏輯**：<c>FakeHostStore.MutateBatch</c> 直接對內部 list
+    /// 呼叫這支方法，不是各自重寫一份三態判斷——這個專案已經踩過幾次「測試替身的邏輯與正式
+    /// 實作漂移、測試綠燈卻蓋掉正式環境 bug」的教訓（如 Sentinel Upsert 曾漏欄位），
+    /// 單點化直接堵住這個形狀。
+    /// </summary>
+    internal static ApplyOutcome ApplyToList(
+        List<WebHost> hosts, string serverName, List<string> ips, long? sentinelId, string newHostOs,
+        IReadOnlyDictionary<string, long?>? groupByIp, IReadOnlyDictionary<string, string>? displayNameByIp)
+    {
+        int added = 0, updated = 0, revived = 0;
+        var nextId = hosts.Count == 0 ? 1 : hosts.Max(h => h.HostId) + 1;
+
+        foreach (var ip in ips)
         {
-            var existing = hosts.FindByName(ip);
+            var existing = hosts.FirstOrDefault(h => string.Equals(h.HostName, ip, StringComparison.OrdinalIgnoreCase));
 
             if (existing?.OrphanedFromSentinel != null)
             {
                 // 重疊復活：同 HostId 復活，歷史/群組/負責人零斷裂。
                 // 群組不動——這仍是「既有主機」，只是查詢重疊觸發復活，不是新登錄
                 existing.Active = true;
-                existing.SentinelId = sentinel?.SentinelId;
+                existing.SentinelId = sentinelId;
                 existing.NetiqServer = serverName;
                 existing.OrphanedFromSentinel = null;
-                hosts.Upsert(existing);
                 revived++;
             }
             else if (existing != null)
             {
                 // 既有使用中主機：群組不動
-                existing.SentinelId = sentinel?.SentinelId;
+                existing.SentinelId = sentinelId;
                 existing.NetiqServer = serverName;
                 existing.Active = true;
-                hosts.Upsert(existing);
                 updated++;
             }
             else
             {
                 var groupId = groupByIp != null && groupByIp.TryGetValue(ip, out var g) ? g : null;
                 var displayName = displayNameByIp != null && displayNameByIp.TryGetValue(ip, out var name) ? name : null;
-                hosts.Upsert(new WebHost
+                hosts.Add(new WebHost
                 {
+                    HostId = nextId++,
                     HostName = ip,
                     IpAddress = ip,
                     IpUpdatedAt = DateTime.Now,
-                    SentinelId = sentinel?.SentinelId,
+                    SentinelId = sentinelId,
                     NetiqServer = serverName,
                     Source = "netiq",
                     Os = newHostOs,

@@ -97,3 +97,27 @@ public class RunErrorGroupDto
     public DateTime LastSeen { get; set; }
     public long LatestRunId { get; set; }
 }
+
+/// <summary>執行紀錄（回饋十七輪批次F-3）：每一筆 BatchRun 原始資料的扁平清單，不像
+/// <see cref="RunDaySummaryDto"/>／<see cref="RunDayHostStatusDto"/> 是按日期/主機彙總——
+/// 回答的是「每一次執行本身跑了多久、觸發方式、有沒有問題」，供「執行紀錄」分頁逐筆檢視。</summary>
+public class RunListItemDto
+{
+    public long RunId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public DateTime StartedAt { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public int? DurationSeconds { get; set; }
+
+    /// <summary>success | failed | stopped | running | stuck，與 RunDayHostStatusDto.Status
+    /// 同一套語意（不含 backfilled／none——那是「沒有這筆 BatchRun」的狀態，這裡每筆都存在）</summary>
+    public string Status { get; set; } = string.Empty;
+
+    public string TriggerText { get; set; } = string.Empty;
+    public string Args { get; set; } = string.Empty;
+    public int DaysAnalyzed { get; set; }
+    public int AiCalls { get; set; }
+    public int AiFailures { get; set; }
+    public int WarnCount { get; set; }
+    public int ErrorCount { get; set; }
+}

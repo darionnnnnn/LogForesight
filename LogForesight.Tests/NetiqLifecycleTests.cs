@@ -378,6 +378,23 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal(s1.SentinelId, added.SentinelId);
     }
 
+    /// <summary>回饋十七輪批次D：Apply 改成一次 MutateBatch 完成整批新增，同批內多台新主機的
+    /// HostId 不該撞號——批內遞增（見 NetiqImportApplier.ApplyToList 的 nextId 變數）取代原本
+    /// 逐台呼叫 Store.Upsert 各自配發 ID。</summary>
+    [Fact]
+    public void 套用_同批新增多台主機時HostId不重號()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        var ips = Enumerable.Range(0, 20).Select(i => $"10.1.3.{i}").ToArray();
+
+        var outcome = NetiqImportApplier.Apply("S1", ips, _hosts, sentinels);
+
+        Assert.Equal(20, outcome.Added);
+        var hostIds = ips.Select(ip => _hosts.FindByName(ip)!.HostId).ToList();
+        Assert.Equal(hostIds.Count, hostIds.Distinct().Count());
+    }
+
     [Fact]
     public void 套用_既有主機更新Sentinel歸屬()
     {

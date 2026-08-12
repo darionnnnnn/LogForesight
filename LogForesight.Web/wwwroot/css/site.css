@@ -540,17 +540,20 @@ body {
 /* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
    視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
    維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。
-   回饋十六輪批次E-2：再放大到 2.75rem。用 min-height 而非 height——搭配上方
-   .lf-sidebar__brand 的 align-items:stretch，沒有副標時圖示落在 min-height（維持
-   方形），有副標、文字自然高度超過 2.75rem 時圖示跟著撐高，兩者永遠以較高者對齊，
-   不會出現「文字比圖示高、圖示卻沒撐滿」的錯位。寬度維持固定，微幅變成瘦長矩形是
-   換取像素級對齊的合理代價。 */
+   回饋十六輪批次E-2：再放大到 2.75rem，當時用 min-height 撐高圖示去對齊兩行文字，
+   結果有副標時文字自然高度（約 60px）超過 2.75rem，圖示被拉成瘦長矩形——自訂圖示
+   （PNG/JPG）用 object-fit:contain 雖不變形，但無 viewBox 的 SVG 會被真的拉伸，
+   內建向量圖示與外框漸層底看起來也不像正方形標記了（回饋十七輪批次H 修正）。
+   改回固定正方形＋置中對齊：aspect-ratio 鎖住比例，align-self:center 不再跟著父層
+   stretch 撐高——圖示永遠是乾淨的正方形，文字對齊（justify-content:space-between，
+   上方 .lf-sidebar__brand-text）不受影響，兩者各自表述而非互相牽動。 */
 .lf-sidebar__brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 2.75rem;
-    min-height: 2.75rem;
+    aspect-ratio: 1 / 1;
+    align-self: center;
     border-radius: var(--lf-radius-sm);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
@@ -737,6 +740,32 @@ body {
     padding: var(--lf-space-3) var(--lf-space-5);
     background: var(--lf-content-bg);
     border-top: 1px solid var(--lf-border);
+}
+
+/* 操作說明書的章節目錄卡（回饋十七輪批次G-1，推翻十六輪批次E-4）：原本用 JS 量測目錄卡
+   高度、把內容區塞進同高的 max-height 內捲動——內容一長就要在小視窗裡捲兩層（頁面本身
+   +內容區），體驗很差。改回目錄卡 sticky 跟著頁面捲動，內容區自然展開多長顯示多長。
+   .lf-topbar 不是 fixed／sticky，捲動時會一起滑出視窗，所以 top:0 不會被任何東西擋住，
+   跟 .lf-sidebar 的 sticky 用法一致。只在 md 以上生效——這個斷點以下兩欄變上下堆疊，
+   sticky 在那裡沒有意義（見 Bootstrap 的 col-md-3/col-md-9 斷點）。 */
+@media (min-width: 768px) {
+    #help-chapter-nav-card {
+        position: sticky;
+        top: var(--lf-space-4);
+        /* 體檢輪修正：矮視窗（筆電未最大化、開發者工具開著等）下，sticky 卡住後若卡片本身
+           比視窗還高，超出視窗底緣的章節在整段捲動期間都摸不到也點不到——.lf-sidebar 早就
+           踩過同一個坑（見其註解），這裡比照它的做法：卡片限制最大高度，超出的部分改由
+           內部（章節清單）捲動，不讓卡片本身無止盡撐高。 */
+        max-height: calc(100vh - var(--lf-space-4) * 2);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    #help-chapter-nav-card .lf-card__body {
+        overflow-y: auto;
+        min-height: 0;
+    }
 }
 
 /* ── 卡片 ──────────────────────────────────────────────────────────────── */

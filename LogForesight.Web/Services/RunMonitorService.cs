@@ -182,6 +182,22 @@ public class RunMonitorService
 
     private static string StatusOf(List<BatchRun> dayRuns) => BuildCell("", dayRuns).Status;
 
+    /// <summary>單筆 BatchRun 的狀態判定（回饋十七輪批次F-3 抽出，原本內嵌在 BuildCell 裡）：
+    /// 執行紀錄分頁（GetRunList）需要對每一筆 BatchRun 各自判定，不像 BuildCell 只取「當天最新一筆」
+    /// 代表整天。抽出單點化，避免兩處各自維護一份判定邏輯而漂移。</summary>
+    private static string ComputeStatus(BatchRun run)
+    {
+        // Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
+        // 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來
+        if (run.FinishedAt == null)
+            return DateTime.Now - run.StartedAt > StuckThreshold ? "stuck" : "running";
+        if (run.Stopped) return "stopped";
+        if (run.ExitCode != 0) return "failed";
+        if (run.ErrorCount > 0) return "failed";
+        if (run.WarnCount > 0 || run.AiFailures > 0) return "warning";
+        return "success";
+    }
+
     private static RunDayHostStatusDto BuildCell(string date, List<BatchRun> dayRuns)
     {
         if (dayRuns.Count == 0)
@@ -193,19 +209,9 @@ public class RunMonitorService
 
         var latest = dayRuns[0];
 
-        // Stopped 優先於 exit code／錯誤計數判定（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）：
-        // 優雅停止是「已停止」不是「失敗」；停止前累積的警告/錯誤仍顯示在各自的計數欄，不會被藏起來
-        var status = latest.FinishedAt == null
-            ? (DateTime.Now - latest.StartedAt > StuckThreshold ? "stuck" : "running")
-            : latest.Stopped ? "stopped"
-            : latest.ExitCode != 0 ? "failed"
-            : latest.ErrorCount > 0 ? "failed"
-            : latest.WarnCount > 0 || latest.AiFailures > 0 ? "warning"
-            : "success";
-
         return new RunDayHostStatusDto
         {
-            Status = status,
+            Status = ComputeStatus(latest),
             RunId = latest.RunId,
             StartedAt = latest.StartedAt,
             FinishedAt = latest.FinishedAt,
@@ -265,6 +271,33 @@ public class RunMonitorService
             $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
+
+    /// <summary>
+    /// 執行紀錄（回饋十七輪批次F-3）：每一筆 BatchRun 原始資料的扁平清單，依開始時間新到舊。
+    /// 與「執行總表」（按日期彙總每台主機的最新一筆）不同——這裡逐筆列出，含同一天內的多次
+    /// 手動重跑，回答的是「每一次執行本身的細節」而非「這一天整體狀況」。
+    /// </summary>
+    public List<RunListItemDto> GetRunList(int days) =>
+        _runs.GetRecentRuns(days, hostNames: null)
+            .Select(run => new RunListItemDto
+            {
+                RunId = run.RunId,
+                HostName = run.HostName,
+                StartedAt = run.StartedAt,
+                FinishedAt = run.FinishedAt,
+                DurationSeconds = run.FinishedAt.HasValue
+                    ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
+                    : null,
+                Status = ComputeStatus(run),
+                TriggerText = TriggerText(run.Trigger),
+                Args = run.Args,
+                DaysAnalyzed = run.DaysAnalyzed,
+                AiCalls = run.AiCalls,
+                AiFailures = run.AiFailures,
+                WarnCount = run.WarnCount,
+                ErrorCount = run.ErrorCount
+            })
+            .ToList();
 
     /// <summary>
     /// 異常彙總：把近 N 天的 Error/Fatal 依訊息聚合。

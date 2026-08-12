@@ -10,6 +10,9 @@ public class HelpChapterDto
 
     /// <summary>相關章節 id（manifest 的 related，人與 AI 共用同一份關聯資訊）</summary>
     public List<string> Related { get; set; } = new();
+
+    /// <summary>章節目錄圖示名稱（回饋十七輪批次G-2），對應 /img/icons.svg 的 symbol id</summary>
+    public string Icon { get; set; } = "";
 }
 
 public class HelpManualDto

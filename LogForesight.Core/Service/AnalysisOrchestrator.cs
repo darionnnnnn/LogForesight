@@ -98,7 +98,8 @@ public class AnalysisOrchestrator
     private const int TrendWindowDays = 14;
 
     /// <summary>
-    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3；回饋十三輪 D 擴充公式）。
+    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3；回饋十三輪 D 擴充公式；
+    /// 回饋十七輪批次E 再 +1）。
     ///
     /// 分析主線本身是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），真正的併發
     /// 來源是兩個正交維度：跨 Sentinel 平行（<see cref="NetiqOptions.MaxParallelServers"/>，
@@ -106,14 +107,20 @@ public class AnalysisOrchestrator
     /// （<see cref="NetiqOptions.MaxParallelQueriesPerServer"/>，上限
     /// <see cref="NetiqOptions.MaxParallelQueriesPerServerLimit"/>，回饋十三輪 D）。兩者同時吃滿
     /// 上限時，同時活躍的「統計段寫入」數就是兩個上限的乘積——連線池必須至少這麼大，否則
-    /// 池配額本身會變成新的隱性瓶頸；再 +1 是給零星的非分析寫入（如 BatchRunRecorder 里程碑）
+    /// 池配額本身會變成新的隱性瓶頸；原本再 +1 是給零星的非分析寫入（如 BatchRunRecorder 里程碑）
     /// 一點餘裕。這兩個常數都是編譯期 const，此處運算式本身也維持編譯期常數，不必等執行期
     /// 讀到 NetiqOptions 才能決定池大小（建立 StorageBackend 當下還沒有 blob 可讀，見下方呼叫式）。
+    ///
+    /// **批次E 再 +1**：本機與 NetIQ 機房分析改並行執行後，本機的逐日分析迴圈（一次一條連線，
+    /// 用完即還）現在會與 NetIQ 的峰值並行度同時競爭同一個池——原本的 +1 只打算覆蓋「零星的
+    /// 非分析寫入」，沒有把「本機整條分析迴圈也在同時跑」算進去。連線池滿載時新請求只會排隊
+    /// 等待（ADO.NET pool 的既有行為），不會逾時報錯或死結（本機迴圈不會在持有一條連線的同時
+    /// 又去搶同一個池的第二條），但排隊等待會侵蝕批次E想省下的等待時間，多留一點餘裕。
     /// 不開放設定：這是「不要拖垮站台」的安全上限，不是效能旋鈕——真的需要更快，
     /// 該做的是拆獨立 worker（本輪已評估後決定不拆，見規劃 §8.4）。
     /// </summary>
     private const int AnalysisMaxPoolSize =
-        NetiqOptions.MaxParallelServersLimit * NetiqOptions.MaxParallelQueriesPerServerLimit + 1;
+        NetiqOptions.MaxParallelServersLimit * NetiqOptions.MaxParallelQueriesPerServerLimit + 2;
 
     public async Task<OrchestratorResult> RunAsync(
         RunRequest request, AppSettings settings, string dataRoot,
@@ -456,24 +463,49 @@ public class AnalysisOrchestrator
 
             var yesterday = DateTime.Today.AddDays(-1);
 
+            // 本機／NetIQ 並行執行（回饋十七輪批次E，取代原本「本機跑完才進 NetIQ」的依序關係）：
+            // 2000 台規模下本機回補多天時，NetIQ 機房分析原本要空等本機跑完才能開始，兩者其實
+            // 互不依賴（不同主機、不同資料列）。NetIQ pipeline 內部本來就用 Parallel.ForEachAsync
+            // 平行跑多個 Sentinel worker，這裡是把本機也當成「多一個並行 worker」。
+            //
+            // **runCtx 只建一份、兩路共用同一個實例**（尤其 CaseCoordinator／RiskyEventStore／
+            // RunRecorder）——這是併發安全的關鍵前提，不是巧合：IssueCaseCoordinator 底下的
+            // RecordHandlingLog.LogId 是行程內單一序號產生器（EfRecordHandlingStore._lastLogId），
+            // 靠實例層級的鎖擋撞號，只有在「本機與 NetIQ 共用同一個 IssueCaseCoordinator 實例」時
+            // 才安全；若未來改動讓任一路各自另外呼叫 backend.RecordHandlingStore() 建出第二個實例，
+            // 兩個實例會各自對 DB 算 MAX(seq) 而互相不知道對方，序號會撞號。同理 BatchRunRecorder
+            // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
+            // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
+            // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
             var runCtx = new AnalysisRunContext(
                 request, settings, retention, console, ct, eventLogService, caseCoordinator,
                 riskyEventStore, runRecorder, result, useAi, progress);
 
-            // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料
-            if (request.Scope != RunScope.NetiqHosts)
-            {
-                await RunLocalAnalysisAsync(runCtx, analysisService, historyService, currentHost, currentHostId, yesterday);
-            }
+            // 本機路徑額外套一層前綴 console（回饋十七輪批次E-2）：並行後兩路的輸出會交錯，
+            // 沒有標記的話讀執行詳情看不出哪一行是哪一路。NetIQ 路徑既有的逐 Sentinel logContext
+            // 前綴（見 HostDayPostProcessor 呼叫點）不受影響，維持原樣。只換 Console 這一個欄位，
+            // CaseCoordinator／RiskyEventStore／RunRecorder 仍是上面那個共用實例——見上方說明。
+            var localCtx = runCtx with { Console = new PrefixedRunConsole(console, "[本機] ") };
 
-            // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：本機分析完成後，
-            //    對 Web 主機頁登錄的 NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套
-            //    LogAnalysisService。LocalOnly 範圍（Phase 3 手動觸發只跑本機）跳過這段。
-            if (request.Scope != RunScope.LocalOnly)
-            {
-                ct.ThrowIfCancellationRequested();
-                await RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService);
-            }
+            // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料
+            var localTask = request.Scope != RunScope.NetiqHosts
+                ? RunLocalAnalysisAsync(localCtx, analysisService, historyService, currentHost, currentHostId, yesterday)
+                : Task.CompletedTask;
+
+            // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
+            //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
+            //    範圍（Phase 3 手動觸發只跑本機）跳過這段。
+            var netiqTask = request.Scope != RunScope.LocalOnly
+                ? RunNetiqAnalysisAsync(runCtx, backend, hostStore, sentinelStore, aiService, suppressionStore, reportService)
+                : Task.CompletedTask;
+
+            // 失敗語意：任一路未攔截的例外都讓整趟判定失敗（維持既有的嚴格語意，見下方
+            // catch）；已寫入的另一路結果不受影響並保留——兩路各自對不同主機寫入，冪等，
+            // 下次執行的缺漏日回補機制會自動補上失敗的那一路。NetIQ 路徑本來就有自己的內部
+            // try/catch（RunNetiqAnalysisAsync 尾端）吞掉非取消例外，只有取消會穿透；本機路徑
+            // 沒有這層保護，維持「本機出問題就是整趟失敗」的既有嚴格度（本機通常只有一台，
+            // 出問題多半是環境性的，值得當硬失敗訊號，不像 NetIQ 是「一台壞不該拖累其他台」）。
+            await Task.WhenAll(localTask, netiqTask);
 
             // 6. 體檢：週期性回顧（獨立於每日分析），距上次體檢達 CheckupIntervalDays 天（含補跑）就執行
             if (weeklyCheckupService.ShouldRun(DateTime.Today, settings.Analysis.CheckupIntervalDays))
@@ -540,6 +572,32 @@ public class AnalysisOrchestrator
             result.FailureMessage = ex.Message;
             result.Elapsed = runStopwatch.Elapsed;
             return result;
+        }
+    }
+
+    /// <summary>
+    /// 本機路徑專用的前綴 console（回饋十七輪批次E-2）：本機與 NetIQ 並行執行後，兩路的輸出會
+    /// 交錯，替本機每一行加上統一前綴才分得清哪一行是哪一路——NetIQ 路徑既有的逐 Sentinel
+    /// logContext 前綴（見 HostDayPostProcessor 呼叫點）已經在做同樣的事，這裡是把同一個原則
+    /// 套用到本機這一路。空白／純換行訊息先在這裡濾掉（trim 後為空就不加前綴、原樣轉發），
+    /// 不然會印出一行只有「[本機] 」的空洞前綴——WebRunConsole 自己也會 trim 整段訊息，
+    /// 但如果先加了前綴，訊息就不再是空的，trim 救不回來。
+    /// </summary>
+    private sealed class PrefixedRunConsole : IRunConsole
+    {
+        private readonly IRunConsole _inner;
+        private readonly string _prefix;
+
+        public PrefixedRunConsole(IRunConsole inner, string prefix)
+        {
+            _inner = inner;
+            _prefix = prefix;
+        }
+
+        public void WriteLine(string message = "")
+        {
+            var trimmed = message.Trim();
+            _inner.WriteLine(trimmed.Length == 0 ? trimmed : $"{_prefix}{trimmed}");
         }
     }
 
@@ -760,6 +818,19 @@ public class AnalysisOrchestrator
             // 只記錄失敗、留給下次執行的缺漏日回補機制自動重試
             Log.Error(ex, "NetIQ 機房分析失敗，本機分析結果不受影響");
             console.WriteLine($"\n  ✗ NetIQ 機房分析失敗：{ex.Message}（本機分析結果不受影響，下次執行自動重試缺漏日）");
+        }
+        finally
+        {
+            // NetIQ 這一路收尾訊號（體檢輪修正）：不論成功、失敗或取消，只要曾經進入這個 try
+            // （TotalHosts>0，代表這次執行真的有 netiq 進度可能被回報過），都要送一次完工訊號。
+            // 本機與 NetIQ 改並行執行後（批次E），NetIQ 若比本機早跑完（主機少、本機在回補
+            // 多天缺漏），SchedulerRunState.ProgressPhase 會停在 netiq 的最後一次回報值不再變
+            // ——單一告示讀取端（/api/run-activity、健診）的 LatestActivity() 因此會一路顯示
+            // 這個凍結的舊值，外觀上與「卡住」無法區分。"netiq-done" 是 SchedulerRunState 認得
+            // 的特殊 phase 字面值（與 "local" 一樣是兩邊約定的字串慣例，見 WebRunProgress／
+            // SchedulerRunState.ReportProgress），收到後會清空 netiq 的主／子進度欄位，讓
+            // LatestActivity() 的優先序自然落回還在推進的本機。
+            progress?.Report("netiq-done", 0, 0);
         }
     }
 

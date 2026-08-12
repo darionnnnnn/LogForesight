@@ -34,8 +34,9 @@ public class ScheduleStatusDto
     public DateTime? StartedAt { get; set; }
     public string? LatestMessage { get; set; }
 
-    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：local｜netiq；ProgressTotal=0 代表尚未有
-    /// 量化進度可畫（清理／掃描中），前端改顯示不定進度。</summary>
+    /// <summary>執行進度（docs/archive/FEEDBACK-8-PLAN.md #2）：netiq 專屬（回饋十七輪批次E 起，
+    /// 本機進度改回報到 <see cref="LocalProgressPhase"/>——本機與 NetIQ 並行執行後不能再共用一組
+    /// 欄位）。ProgressTotal=0 代表尚未有量化進度可畫（清理／掃描中），前端改顯示不定進度。</summary>
     public string? ProgressPhase { get; set; }
     public int ProgressDone { get; set; }
     public int ProgressTotal { get; set; }
@@ -45,6 +46,13 @@ public class ScheduleStatusDto
     public string? SubProgressPhase { get; set; }
     public int SubProgressDone { get; set; }
     public int SubProgressTotal { get; set; }
+
+    /// <summary>本機分析進度（回饋十七輪批次E）：與上面的 NetIQ 主／子進度完全獨立的第三條軌，
+    /// 本機與 NetIQ 現在並行執行，可能同時都在回報——null＝這次執行本機階段還沒開始或已跳過
+    /// （NetiqHosts 範圍），前端不畫這條軌。</summary>
+    public string? LocalProgressPhase { get; set; }
+    public int LocalProgressDone { get; set; }
+    public int LocalProgressTotal { get; set; }
 
     public bool CanStop { get; set; }
     public bool ScheduleEnabled { get; set; }

@@ -155,17 +155,43 @@ public static class TrendAnalyzer
                 else
                 {
                     sig.Trend = IssueTrend.New;
-                    if (sig.Severity >= IssueSeverity.High && !channelWarmingUp)
+                    // 暖身期不告警——新頻道上線第一天所有簽章都是首次出現，這是要防的切換日風暴
+                    if (!channelWarmingUp)
                     {
-                        var text = $"首次出現：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生";
-                        if (sig.Suppressed)
+                        string? text = null;
+                        if (sig.Severity >= IssueSeverity.High)
                         {
-                            suppressedAlerts.Add(text);
+                            text = $"首次出現：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生";
                         }
-                        else
+                        // 首次出現且爆量的出口（回饋十七輪批次C）：Other 類簽章一律 Low，未命中任何
+                        // 規則、上面的 High 門檻天生不會觸發——但一個從未出現過的未知簽章，第一天就
+                        // 來 SurgeMinCount 筆以上，仍是值得看見的訊號（見 SurgeMinCount 說明；
+                        // 首次出現沒有歷史基準可乘，只用絕對量門檻，不像 Rising 分支的 SurgeFactor
+                        // 那樣還有倍率條件）。
+                        else if (sig.Count >= SurgeMinCount)
                         {
-                            alerts.Add(text);
-                            alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
+                            // 嚴重度跟著升一級（體檢輪修正，對齊 Rising 分支的爆量例外做法——見
+                            // 該分支 Escalate() 的呼叫時機）：不升的話這個訊號雖然「被看見」在告警
+                            // 文字與當日風險判定（ComputeRuleBasedRisk 的 trendAlerts.Count>0）裡，
+                            // 卻永遠達不到 RiskReportService.SelectFocusIssues 的
+                            // 「Trend==New && Severity>=Medium」篩選門檻，深入分析／原始 log／
+                            // 分類區塊都輪不到它，只能停留在報告總覽的一行文字——這與 Rising 的
+                            // 爆量例外（一定會因為 Trend==Rising 本身即符合篩選）待遇不一致。
+                            sig.Severity = Escalate(sig.Severity);
+                            text = $"首次出現且大量：{sig.SourceEventLabel}（{sig.Severity}）今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史中從未發生";
+                        }
+
+                        if (text != null)
+                        {
+                            if (sig.Suppressed)
+                            {
+                                suppressedAlerts.Add(text);
+                            }
+                            else
+                            {
+                                alerts.Add(text);
+                                alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
+                            }
                         }
                     }
                 }

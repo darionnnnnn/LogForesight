@@ -1563,17 +1563,61 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      原始事件暫存（`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3），批次每晚
      依此天數清理；回補超過此天數的日子直接跳過寫入（寫了下次也會被清，見
      `RiskyEventSelector.WithinRetention`）。
-  5. **郵件通知**（回饋十五輪批次D，新分頁，版面比照「AD 驗證」的展開式版面）：啟用開關＋
+  5. **郵件通知**（回饋十五輪批次D，新分頁，版面比照「AD 驗證」的展開式版面；回饋十七輪
+     批次A/B 全面修正日期與權限範圍，見下方）：啟用開關＋
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
      寄件人／收件人（一行一位 textarea，與 AD 伺服器／監控資料夾等既有 `List<string>` 欄位
      UX 慣例一致）＋「同時通知主機負責人」開關＋摘要納入門檻（`MailMinRiskLevel`）＋三路
-     觸發開關（執行結束後摘要／每日定時＋時刻／每週定時＋星期＋時刻／高風險即時）＋標題模板
-     （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字。
+     觸發開關（執行結束後摘要／每日定時＋時刻／每週定時＋星期＋時刻／高風險即時）＋
+     「期間內無達門檻風險日時不寄摘要信」開關（`MailDigestSkipEmpty`，預設 false 照寄——
+     無事的信同時是系統存活訊號）＋標題模板
+     （可用變數 `{site}`/`{host}`/`{date}`/`{risk}`/`{type}`/`{summary}`）＋信件開頭文字＋
+     已暫停寄送的收件人清單（見下方）。
      「測試寄信」（`POST api/admin/settings/mail-test`）用表單目前值試寄一封，不需先儲存，
      密碼欄留空時 fallback 已儲存的密文；回報成功或含 SMTP 錯誤細節（管理者對自己測試，
      細節可顯示，比照 AD 測試連線的語意）。三路觸發與寄送實作見 §10.2 的
      `MailNotifyStateStore` 對照列與 docs/RULES-SPEC.md／docs/DETECTION-SPEC.md 相關段落。
+
+     **窗口查詢取代目標日期（2026-08-11，回饋十七輪批次A，根修頭號發現）**：分析永遠只
+     產出到昨天（`MissingDateFinder` offset 從 1 起算、`AnalysisOrchestrator` 固定分析
+     `yesterday`），原本 `NotifyAfterRunAsync(DateTime.Today)` 卻查「今天」，導致執行摘要與
+     高風險即時通知兩路永遠零筆不寄、每日摘要因窗口算到今天而天天寄一封「無事」假信。改為
+     `NotifyAfterRunAsync()` 不再接受日期參數，內部固定查近 14 天（`NotifyLookbackDays`，
+     對齊立即執行回補天數上限）不含今天的窗口，靠 `UrgentSentKeys`／新增的 `SummarySentKeys`
+     去重（執行摘要原本沒有去重狀態，靠新欄位補上，語意變成「尚未摘要過的達門檻主機日」）。
+     每日／週報窗口同輪右移一天（`To = 昨天`），語意對齊「今天以前發生了什麼」。
+
+     **收件人可見範圍過濾（2026-08-11，回饋十七輪批次B-4）**：三路信件都改成雙層內容——
+     全站統計行（數字，不含主機名，所有收件人都看得到）＋主機明細（僅解析得到帳號、且該
+     帳號可見範圍涵蓋的主機；`IVisibilityService.GetVisibleHostIdsFor` 同一套規則，經新增的
+     `HostVisibilityResolver` 靜態類別讓 Singleton 的 `MailNotificationService` 與 Scoped 的
+     `VisibilityService` 共用同一份邏輯，避免各自維護一份而漂移）。收件人 email 對應不到任何
+     啟用中帳號（自由文字地址，如共用信箱）時只收統計行，不含任何主機明細——權限無從判定
+     時預設最小揭露。
+
+     **收件人跨輪失敗排除（2026-08-11，回饋十七輪批次B-1）**：單一收件人連續寄送失敗達 3 次
+     即從後續寄送清單排除（`RecipientFailureStreaks`），不再讓一個打錯的地址拖累全域收件人
+     每輪重複收信；寄送成功即歸零，設定頁儲存郵件設定時整份清空（改正地址後從零重新累計）。
+     熔斷（本輪 SMTP 整體異常、連續失敗 3 次即停止本輪剩餘寄送，回饋十六輪批次A-3）跳過的
+     收件人不計入這個跨輪計數——熔斷是「本輪沒嘗試」，不是這個收件人本身的問題。已暫停的
+     收件人同時顯示在設定頁與 `/api/health/detail`（`SuspendedMailRecipients`）。
+
+     **信件內容廣泛化（2026-08-11，回饋十七輪批次B-3）**：明細行移除 `Headline`／`RiskBasis`
+     （判定依據），只留主機、日期、風險等級、錯誤／警告數量——不揭露具體錯誤內容。
+
+     **N+1 修正（2026-08-11，回饋十七輪批次B-2）**：一次通知批次改用主機／使用者字典
+     （`MailContext`），不再逐筆紀錄各自呼叫 `Store.Get()`（每次呼叫整份 blob 反序列化）。
+
+     **體檢輪修正（2026-08-12）**：合併回 dev 前的體檢輪抓到兩處真實缺陷，皆已修復並補測試。
+     (1) 高風險即時通知的統計行原本用該收件人自己過濾後的明細現算——收件人只有部分可見範圍
+     時，看不到的主機日連統計數字都沒被提到，卻因為那封信寄送成功而被 `MarkSent` 的
+     zero-coverage fallback 標記為已通知，是真正意義上「沒人被告知過」的靜默漏寄。改為統計行
+     用未經過濾的 pending 總數，對齊 `SendRunSummaryAsync` 既有做法，讓「coverage 為空的紀錄
+     仍由統計行如實反映其存在」這個前提在兩條路徑下都成立。
+     (2) `ResolvePerRecipient` 的 `GetVisibleHostIds` 原本寫在 `Where` 的 predicate 本體內，
+     每筆 record 都重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），對每位收件人重跑
+     一次完整的 store 全表掃描——是 B-2 想修掉的同一種 N+1，改為在迴圈內對每位收件人只算一次。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`（回饋十五輪批次D）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
@@ -1582,22 +1626,44 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 - **選單位置**：側欄「系統」分組最下方（僅 `Maintain` 顯示，選單顯示與頁面
   `[Permission(Capability.Maintain)]` 雙閘，比照既有 admin 頁）。
-- **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`keywords[]`／
-  `related[]`）＋ 14 個章節 Markdown 檔，全部以**內嵌資源**編進組件（csproj 的
+- **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
+  `keywords[]`／`related[]`；`icon` 為 2026-08-11 回饋十七輪批次G-2 新增，對應 `icons.svg`
+  的 symbol id，十四章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇）＋ 14 個章節
+  Markdown 檔，全部以**內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
-- **頁面版面**：左側章節目錄（`list-group`）＋右側內容（單一 `GET /api/help/manual` 一次取回
-  manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash 深連結
-  （`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI 問答共用
-  同一份關聯資訊。**問答框位於章節內容下方**（回饋十六輪批次E-4，行為變更：原本在頁面頂部）；
-  章節內容區高度由 `help-manual.js` 量測左側目錄卡的實際高度後設為 `max-height`，超出內容
-  用 scrollbar（純 CSS 的 flex/grid stretch 只能讓較矮欄等高於較高欄，做不到「以較矮欄為
-  基準」，改用 JS 量測；md 斷點以下兩欄堆疊時交還瀏覽器自然高度）。
+- **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
+  一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
+  深連結（`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI
+  問答共用同一份關聯資訊。**問答框位於章節內容下方**（回饋十六輪批次E-4，行為變更：原本在
+  頁面頂部）。**章節內容區改回自然展開（2026-08-11，回饋十七輪批次G-1，推翻批次E-4的做法）**：
+  原本用 `help-manual.js` 量測左側目錄卡高度、把內容區塞進同高的 `max-height` 內捲動——內容
+  一長就要在小視窗裡捲兩層（頁面本身＋內容區），體驗不佳。改回左側目錄卡 `position: sticky`
+  跟著頁面捲動（`.lf-topbar` 非 fixed，不會擋住），內容區不設 `max-height`，多長顯示多長；
+  md 斷點以下兩欄堆疊時 sticky 停用，交還瀏覽器自然高度。**目錄卡自身限高（2026-08-12，
+  體檢輪修正）**：G-1 當時只顧到「內容區不要雙層捲動」，沒處理「目錄卡本身比矮視窗還高」
+  這個情境——sticky 卡住後卡片仍渲染完整 14 列原生高度，超出視窗底緣的最後幾個章節在整段
+  捲動範圍內都摸不到也點不到。比照 `.lf-sidebar` 的既有模式（見其註解）：
+  `#help-chapter-nav-card` 加 `max-height: calc(100vh - var(--lf-space-4) * 2)`，卡頭固定、
+  卡身（`.lf-card__body`）`overflow-y: auto` 內部捲動，矮視窗下超出的章節改用捲動觸及，不再
+  永遠碰不到。
 - **Markdown 渲染刻意不引入新的第三方庫**：沿用既有 `markdown-lite.js` 的安全子集（粗體、
-  行內代碼、清單、標題轉粗體行、段落，全程 `document.createElement`／`createTextNode` 組
-  DOM，不使用 `innerHTML`）——全站至今未引入任何可解析 HTML／連結的 Markdown 轉換庫（見該
-  檔頭註解），即使手冊內容是自家資源、內容可信，仍照這個既有的 XSS 紀律走，不為單一頁面
-  開一個新的渲染路徑。
+  行內代碼、清單、標題轉粗體行、段落、**GFM 風格表格**（2026-08-11 回饋十七輪批次G-4 新增：
+  連續 `|` 開頭行＋下一行為 `|---|---|` 分隔列才判定為表格開頭，避免誤判含 `|` 的散文；
+  段落續行迴圈也要中斷於表格開頭，否則散文起頭接的表格會被吞進同一段落當純文字；
+  **體檢輪修正（2026-08-12）**：起點判定當時只顧到「表格開頭」這一側，表格**續行**（body-row
+  消耗迴圈）沒有對稱套用同一道防呆，兩個真實情境會被誤吞——(1) 表格後緊接（無空白行分隔）
+  含行內代碼管線符號的散文（如 `` `netstat -an | grep ESTABLISH` ``）被拆進表格當資料列、
+  行內代碼從中間被切斷；(2) 兩個 GFM 表格中間沒有空白行時，第二個表格的表頭被吞成第一個
+  表格的普通資料列、分隔列原樣顯示成 `---`。修法：新增 `hasPipeOutsideCode()`（先去除行內
+  代碼再判斷是否還含 `|`，避免指令範例裡的管線符號被誤判為儲存格分隔）取代三處的
+  `.includes('|')`；body-row 續行迴圈加上「下一行是不是另一個表格開頭」的中斷條件，
+  與起點判定對稱），全程
+  `document.createElement`／`createTextNode` 組 DOM，不使用 `innerHTML`）——全站至今未引入
+  任何可解析 HTML／連結的 Markdown 轉換庫（見該檔頭註解），即使手冊內容是自家資源、內容
+  可信，仍照這個既有的 XSS 紀律走，不為單一頁面開一個新的渲染路徑。這是全站 AI 文字的
+  單一渲染入口，表格支援對聊天面板／風險日詳情／儀表板／問題查詢等所有 AI 輸出面同時生效，
+  不只限於本頁。
 - **AI 問答（實驗性徽章）**：`AiBaseUrl` 未設定時**整張問答卡隱藏**（回饋十六輪批次D-3，
   行為變更：原本整區換成「未設定 AI 服務，僅提供文件瀏覽」的文案，改成與全站其他 AI 入口
   ——儀表板焦點卡、清單頁歸納鈕、詳情頁對話——一致的隱藏語意；`GET /api/help/ask-available`
@@ -1649,6 +1715,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
+- **開始時間／已耗時（2026-08-11，回饋十七輪批次F-2）**：狀態 API 的 `startedAt` 欄位早就
+  存在，只是前端從未顯示——原本只看得到「執行中」，看不出何時開始、跑了多久。前端每秒
+  本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
+  `setInterval` 累積誤差）。
 - **執行進度條（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #2）**：狀態卡在執行中顯示進度條＋
   「本機分析／NetIQ 機房分析　x / y 主機日」文字；粒度為主機日，經 Core 的 `IRunProgress`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
@@ -1670,15 +1740,54 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SchedulerRunState` 拆成主／子兩組欄位（status API 加 `subProgressPhase/Done/Total`），
   狀態卡畫兩條：主進度條在上，子進度條窄一階（高度減半、縮排、灰色調）在下、只在有值時顯示。
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）由
-  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先——它較貼近「現在卡在哪」）。
+  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先──netiq 主進度次之──本機
+  再次之，較貼近「現在卡在哪」）。
+  **本機／NetIQ 並行執行（2026-08-11，回饋十七輪批次E）**：`AnalysisOrchestrator` 原本嚴格
+  「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
+  再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
+  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。進度
+  回報第三度拆欄位：`SchedulerRunState` 新增 `LocalProgressPhase/Done/Total`，與既有的
+  NetIQ 主／子進度三組欄位互不覆蓋（並行後 local／netiq 不再像過去「依序不重疊」，若仍共用
+  一組欄位會重演「進度卡住不動」）；status API 對應加三個欄位，狀態卡畫出對應的第三條進度條
+  （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
+  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
+  「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
+  保證回傳的 Task 要等兩個輸入 Task 都進入終態才完成，`runRecorder.Finish()`／`Dispose()`
+  （單一匯合點呼叫，未加鎖）與 `IssueCaseCoordinator`（`RecordHandlingLog.LogId` 靠實例層級
+  鎖擋撞號）因此不受影響——兩路共用同一個 `AnalysisRunContext` 執行個體是這裡安全的前提，
+  不是巧合，未來異動不能讓任一路各自另建一份。連線池上限 `AnalysisMaxPoolSize` 再 +1，
+  覆蓋本機迴圈現在會與 NetIQ 峰值並行度同時競爭連線的情境。
+  **NetIQ 完工訊號（2026-08-12，體檢輪修正）**：並行後 NetIQ 若比本機早跑完（主機少、本機在
+  回補多天缺漏），`ProgressPhase` 原本只在整趟執行的 `TryBeginRun`/`EndRun` 才會被清空，NetIQ
+  跑完後不會主動清掉自己的欄位——單一告示讀取端（`/api/run-activity`、健康診斷）的
+  `LatestActivity()` 因此會一路顯示 netiq 跑完當下凍結的舊值，外觀上與「卡住」無法區分。
+  `RunNetiqAnalysisAsync` 收尾（`finally`，成功／失敗／取消皆會送）改送一個特殊 phase
+  （`"netiq-done"`，與 `"local"` 一樣是兩邊約定的字串慣例）通知 `SchedulerRunState` 清空
+  netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
+  NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
+  一併消失，不是副作用。
   **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
-- 總表（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/未執行計數＋失敗主機清單）、
-  單日主機明細（**點日期列就地展開**該天逐主機狀態，§2 回饋第九輪——懶載入 `onRowExpand`，
-  各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面最下方的下鑽卡）、
-  單次執行詳情（改 `showDetailModal`，統計＋逐條 log，等級篩選、exception 展開）、
-  異常彙總（Error/Fatal 按訊息聚合）。
+- **三頁籤（2026-08-11，回饋十七輪批次F-1，取代原本三區塊一路往下堆疊的版面）**：執行總表／
+  異常彙總／執行紀錄，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
+  下方，三頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
+  切換面板可見度，不重打 API。**實作踩坑**：頁籤 `<ul>` 一開始被包進日期篩選的 flex 容器裡，
+  `bindTabs` 用 `tabsEl.parentElement` 找 `[data-panel]`，面板卻在容器外找不到——瀏覽器實測
+  抓到，改回頁籤與面板同一層手足元素（比照 `#settings-tabs` 的既有結構）才修正。
+  - **執行總表**（**每日一列彙總**：成功/**已回補**/有警告/失敗/**已停止**/異常中斷/執行中/
+    未執行計數＋失敗主機清單）＋單日主機明細（**點日期列就地展開**該天逐主機狀態，§2 回饋
+    第九輪——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面
+    最下方的下鑽卡）。
+  - **異常彙總**（Error/Fatal 按訊息聚合）。
+  - **執行紀錄**（2026-08-11，回饋十七輪批次F-3，新增）：`GET api/runs/list?days=N`
+    （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
+    主機／狀態／開始時間／耗時／觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了
+    多久、誰觸發的」，同一天內的多次手動重跑各自一列。狀態判定（success/failed/stopped/
+    running/stuck/warning）抽出 `ComputeStatus(BatchRun)` 供這裡與既有的 `BuildCell`
+    （總表逐主機明細用）共用，避免兩處各自維護一份判定邏輯。「檢視執行」按鈕重用既有的
+    執行詳情 modal。
+  - 單次執行詳情（改 `showDetailModal`，統計＋逐條 log，等級篩選、exception 展開）。
 - **本機主機的「已回補」狀態（§3，回饋第九輪）**：立即執行回補會把缺漏日的分析紀錄補到
   被補的那些日期，但 `BatchRun` 只登記在觸發當天——被回補日期原本誤顯示「未執行」。
   `RunMonitorService` 對 local 主機在當日無 BatchRun 時 fallback 查「D-1 是否有分析紀錄」
@@ -1773,7 +1882,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `ISentinelStore`（docs/archive/HISTORY.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（2026-07-27；介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
 | `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
-| `MailNotifyStateStore`（2026-08-11，回饋十五輪批次D） | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知已寄的 host+date 去重集合，隨 `RetentionDays` 清理） | Web |
+| `MailNotifyStateStore`（2026-08-11，回饋十五輪批次D；2026-08-11 回饋十七輪批次A/B 擴充） | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
