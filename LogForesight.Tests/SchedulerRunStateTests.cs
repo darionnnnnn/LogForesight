@@ -123,21 +123,73 @@ public class SchedulerRunStateTests
         Assert.Null(state.ProgressPhase); // 主進度欄位完全不受子進度回報影響
     }
 
-    /// <summary>local／netiq 兩個主階段依序不重疊（同一次執行先跑完本機才進 NetIQ），
-    /// 沿用舊語意共用同一組主進度欄位——後回報的直接取代前一個是預期行為。</summary>
+    // ── 本機／NetIQ 並行進度（回饋十七輪批次E）─────────────────────────────
+    // 本機與 NetIQ 機房分析改成並行執行（AnalysisOrchestrator 的 Task.WhenAll），local／netiq
+    // 兩個 phase 現在會同時回報進度，不能再共用一組主進度欄位——否則會重演 netiq／netiq-ai
+    // 當初共用一組欄位時「進度卡住不動」的症狀。
+
+    /// <summary>核心場景：local 與 netiq 交錯回報時互不覆蓋，各自持有自己最後一次回報的值
+    /// （取代舊版「local／netiq 依序不重疊、共用一組欄位」的假設——並行後這個假設不再成立）。</summary>
     [Fact]
-    public void local與netiq共用同一組主進度欄位()
+    public void local與netiq並行時各自獨立進度欄位_互不覆蓋()
     {
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
 
-        state.ReportProgress("local", 5, 5);
+        state.ReportProgress("local", 2, 5);
         state.ReportProgress("netiq", 1, 20);
+        // 兩軌交錯繼續推進，不該互相蓋掉對方
+        state.ReportProgress("local", 3, 5);
+        state.ReportProgress("netiq", 4, 20);
 
+        Assert.Equal("local", state.LocalProgressPhase);
+        Assert.Equal(3, state.LocalProgressDone);
+        Assert.Equal(5, state.LocalProgressTotal);
         Assert.Equal("netiq", state.ProgressPhase);
-        Assert.Equal(1, state.ProgressDone);
+        Assert.Equal(4, state.ProgressDone);
         Assert.Equal(20, state.ProgressTotal);
-        Assert.Null(state.SubProgressPhase);
+    }
+
+    [Fact]
+    public void EndRun後本機進度欄位也歸零()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+        state.ReportProgress("local", 3, 5);
+        Assert.Equal(5, state.LocalProgressTotal);
+
+        state.EndRun();
+
+        Assert.Null(state.LocalProgressPhase);
+        Assert.Equal(0, state.LocalProgressDone);
+        Assert.Equal(0, state.LocalProgressTotal);
+    }
+
+    /// <summary>LatestActivity 的第三順位：LocalOnly 範圍（netiq 從未回報）或 NetIQ 尚未開始
+    /// 回報時，單一告示要能落回本機進度，不能顯示空白——這是 LocalOnly 手動觸發最常見的情境。</summary>
+    [Fact]
+    public void LatestActivity_netiq未回報時落回本機進度()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("manual:tester", out _));
+
+        state.ReportProgress("local", 2, 5);
+
+        Assert.Equal(("local", 2, 5), state.LatestActivity());
+    }
+
+    /// <summary>本機與 NetIQ 同時在跑時，單一告示優先顯示 NetIQ（Full 範圍下通常規模較大、
+    /// 較具代表性）——本機進度仍照常累積在自己的欄位，只是不搶單一告示的顯示權。</summary>
+    [Fact]
+    public void LatestActivity_本機與NetIQ同時在跑時優先顯示NetIQ()
+    {
+        var state = new SchedulerRunState();
+        Assert.True(state.TryBeginRun("schedule", out _));
+
+        state.ReportProgress("local", 1, 5);
+        state.ReportProgress("netiq", 10, 100);
+
+        Assert.Equal(("netiq", 10, 100), state.LatestActivity());
     }
 
     /// <summary>

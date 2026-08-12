@@ -52,6 +52,14 @@
                         @* 開始時間／已耗時（回饋十七輪批次F-2）：原本只看得到「執行中」，看不出何時開始、
                            跑了多久——手動每秒計時、輪詢回來的 startedAt 校正，避免分頁閒置時計時器飄移 *@
                         <div class="small text-muted mb-1 d-none" id="schedule-elapsed"></div>
+                        @* 本機進度（回饋十七輪批次E）：本機與 NetIQ 機房分析改並行執行，可能同時都在跑，
+                           各自一條獨立的軌（不像子進度是附屬於 NetIQ 主進度之下）——顏色與下方的
+                           NetIQ 主進度條區分（bg-info vs 預設色），一眼看出這是兩件不同的事同時發生，
+                           不是同一件事的兩個階段。只有本機階段真的有值時才顯示。 *@
+                        <div class="progress mb-1 d-none" id="schedule-local-progress-wrap" style="height: 6px;">
+                            <div class="progress-bar bg-info" id="schedule-local-progress-bar" role="progressbar"></div>
+                        </div>
+                        <div class="small text-muted mb-2 d-none" id="schedule-local-progress-text"></div>
                         <div class="progress mb-1 d-none" id="schedule-progress-wrap" style="height: 6px;">
                             <div class="progress-bar" id="schedule-progress-bar" role="progressbar"></div>
                         </div>

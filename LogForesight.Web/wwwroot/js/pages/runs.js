@@ -708,8 +708,16 @@ const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
  * 子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure 這條 AI 背景消化軌與主進度
  * （netiq，搜尋仍在往下一台主機推進）可能同時在跑——兩者原本共用一組欄位，後回報的會
  * 直接蓋掉先回報的，畫面症狀是「進度卡住不動」。SchedulerRunState 已把兩者分成獨立欄位，
- * 這裡只需各自畫一條：主進度在上（沿用既有邏輯不變），子進度在下、只在有值時才顯示。 */
+ * 這裡只需各自畫一條：主進度在上（沿用既有邏輯不變），子進度在下、只在有值時才顯示。
+ *
+ * 本機進度（回饋十七輪批次E）：本機與 NetIQ 改並行執行後，本機也是獨立一條軌，畫在主進度
+ * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「準備中」，
+ * 因為 NetiqHosts 範圍（僅指定 NetIQ 主機）時本機根本不會執行，不該一直顯示一條空的
+ * 「本機分析 準備中」軌。 */
 function renderScheduleProgress(status) {
+    const localWrap = document.getElementById('schedule-local-progress-wrap');
+    const localBar = document.getElementById('schedule-local-progress-bar');
+    const localText = document.getElementById('schedule-local-progress-text');
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
     const text = document.getElementById('schedule-progress-text');
@@ -718,28 +726,66 @@ function renderScheduleProgress(status) {
     const subText = document.getElementById('schedule-subprogress-text');
 
     if (!status.isRunning) {
+        localWrap.classList.add('d-none');
+        localText.classList.add('d-none');
         wrap.classList.add('d-none');
         text.classList.add('d-none');
         subWrap.classList.add('d-none');
         subText.classList.add('d-none');
         return;
     }
-    wrap.classList.remove('d-none');
-    text.classList.remove('d-none');
 
-    if (status.progressTotal > 0) {
-        const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
-        const unit = PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日';
-        const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase ?? ''}　${status.progressDone} / ${status.progressTotal} ${unit}`;
-        bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-        bar.style.width = `${pct}%`;
-        bar.title = label;
-        text.textContent = label;
+    if (!status.localProgressPhase) {
+        localWrap.classList.add('d-none');
+        localText.classList.add('d-none');
     } else {
-        bar.classList.add('progress-bar-striped', 'progress-bar-animated');
-        bar.style.width = '100%';
-        bar.title = '準備中…';
-        text.textContent = '準備中…';
+        localWrap.classList.remove('d-none');
+        localText.classList.remove('d-none');
+
+        if (status.localProgressTotal > 0) {
+            const localPct = Math.min(100, Math.round((status.localProgressDone / status.localProgressTotal) * 100));
+            const localUnit = PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日';
+            const localLabel = `${PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? status.localProgressPhase}　` +
+                               `${status.localProgressDone} / ${status.localProgressTotal} ${localUnit}`;
+            localBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+            localBar.style.width = `${localPct}%`;
+            localBar.title = localLabel;
+            localText.textContent = localLabel;
+        } else {
+            localBar.classList.add('progress-bar-striped', 'progress-bar-animated');
+            localBar.style.width = '100%';
+            localBar.title = '準備中…';
+            localText.textContent = '準備中…';
+        }
+    }
+
+    // 主進度（NetIQ）：回饋十七輪批次E 前是「執行中就無條件顯示，total=0 畫不定進度」——那時
+    // 本機與 NetIQ 依序執行，這條「準備中」占位最多只會出現在本機剛跑完、NetIQ 還沒回報第一次
+    // 進度的短暫空檔。並行後兩者同時開跑，若這次執行根本沒有 NetIQ 主機（NetiqPipelineService
+    // 一開始就直接 return，永遠不會呼叫 Report("netiq",...)），這個「準備中」會卡在畫面上長達
+    // 整段本機執行時間，變成誤導（瀏覽器實測跑一次純本機執行時抓到）。改成與本機／子進度同一套
+    // 「有回報過才顯示」：沒有 NetIQ 工作時這條軌乾脆不出現，比一直閃著假的「準備中」誠實。
+    if (!status.progressPhase) {
+        wrap.classList.add('d-none');
+        text.classList.add('d-none');
+    } else {
+        wrap.classList.remove('d-none');
+        text.classList.remove('d-none');
+
+        if (status.progressTotal > 0) {
+            const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
+            const unit = PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日';
+            const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase}　${status.progressDone} / ${status.progressTotal} ${unit}`;
+            bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
+            bar.style.width = `${pct}%`;
+            bar.title = label;
+            text.textContent = label;
+        } else {
+            bar.classList.add('progress-bar-striped', 'progress-bar-animated');
+            bar.style.width = '100%';
+            bar.title = '準備中…';
+            text.textContent = '準備中…';
+        }
     }
 
     // 子進度：沒有回報過（subProgressPhase 為 null，如純本機執行、或 NetIQ 還沒進到 AI 消化階段）

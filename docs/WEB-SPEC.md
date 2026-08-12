@@ -1670,7 +1670,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SchedulerRunState` 拆成主／子兩組欄位（status API 加 `subProgressPhase/Done/Total`），
   狀態卡畫兩條：主進度條在上，子進度條窄一階（高度減半、縮排、灰色調）在下、只在有值時顯示。
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）由
-  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先——它較貼近「現在卡在哪」）。
+  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先──netiq 主進度次之──本機
+  再次之，較貼近「現在卡在哪」）。
+  **本機／NetIQ 並行執行（2026-08-11，回饋十七輪批次E）**：`AnalysisOrchestrator` 原本嚴格
+  「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
+  再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
+  `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。進度
+  回報第三度拆欄位：`SchedulerRunState` 新增 `LocalProgressPhase/Done/Total`，與既有的
+  NetIQ 主／子進度三組欄位互不覆蓋（並行後 local／netiq 不再像過去「依序不重疊」，若仍共用
+  一組欄位會重演「進度卡住不動」）；status API 對應加三個欄位，狀態卡畫出對應的第三條進度條
+  （只在有值時顯示，不像 NetIQ 主進度條「執行中就無條件顯示準備中」——`NetiqHosts` 範圍時
+  本機不執行，`LocalOnly`／無 NetIQ 主機時 NetIQ 也不該顯示一條假的準備中，兩條軌都改成
+  「有回報過才顯示」）。失敗語意維持嚴格：任一路未攔截的例外仍讓整趟判定失敗，`Task.WhenAll`
+  保證回傳的 Task 要等兩個輸入 Task 都進入終態才完成，`runRecorder.Finish()`／`Dispose()`
+  （單一匯合點呼叫，未加鎖）與 `IssueCaseCoordinator`（`RecordHandlingLog.LogId` 靠實例層級
+  鎖擋撞號）因此不受影響——兩路共用同一個 `AnalysisRunContext` 執行個體是這裡安全的前提，
+  不是巧合，未來異動不能讓任一路各自另建一份。連線池上限 `AnalysisMaxPoolSize` 再 +1，
+  覆蓋本機迴圈現在會與 NetIQ 峰值並行度同時競爭連線的情境。
   **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
