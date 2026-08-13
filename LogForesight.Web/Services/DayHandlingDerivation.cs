@@ -45,9 +45,11 @@ public static class DayHandlingDerivation
         // 問題層級也能明確標成「處理中」（批次套用改版）：即使還沒有任何問題結案，
         // 只要有一個被標成 in_progress，這一天就不該再算 open——有人已經在動它了。
         // observing（docs/archive/FEEDBACK-8-PLAN.md #4）同樣算——不論觀察中或已到期都是「有人在管」，
-        // 到期只是加上逾期提示（HasOverdueIssue），不會把日子打回 open
+        // 到期只是加上逾期提示（HasOverdueIssue），不會把日子打回 open。
+        // escalated（回饋十八輪批次G）同理：上報等 admin 決定＝有人在管、還沒有結論。
         var anyInProgress = issueHandlings.Any(h =>
-            h.Status == IssueHandlingStatuses.InProgress || h.Status == IssueHandlingStatuses.Observing);
+            h.Status == IssueHandlingStatuses.InProgress || h.Status == IssueHandlingStatuses.Observing ||
+            h.Status == IssueHandlingStatuses.Escalated);
 
         var total = counted.Count;
         var closed = counted.Count(i => closedKeys.Contains(IssueSignatureKey.For(i)));

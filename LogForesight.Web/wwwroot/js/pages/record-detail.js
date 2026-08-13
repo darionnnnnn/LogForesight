@@ -66,7 +66,9 @@ function issueBucket(issue) {
     if (issue.caseHandlerId) {
         return issue.caseHandlerId === currentUserId ? 'mine' : 'others';
     }
-    if (issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing') return 'mine';
+    // escalated（回饋十八輪批次G）：上報中比照 in_progress——有人在管、還沒有結論
+    if (issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing' ||
+        issue.handlingStatus === 'escalated') return 'mine';
 
     return 'pending';
 }
@@ -908,7 +910,9 @@ function isInProgressIssue(issue) {
     // 日層級推導本來就把它視同處理中（docs/archive/FEEDBACK-8-PLAN.md #4）。
     // 少了它，觀察中的問題會被收進標示「已處理／已有結論」的收合區——標籤與內容不符，
     // 而且顯示範圍下拉把它算進「待處理」，數字對得上、卻要展開「已有結論」才找得到。
-    return issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing';
+    // escalated（回饋十八輪批次G）同理：上報中＝有人在管、還沒有結論。
+    return issue.handlingStatus === 'in_progress' || issue.handlingStatus === 'observing' ||
+        issue.handlingStatus === 'escalated';
 }
 
 /**

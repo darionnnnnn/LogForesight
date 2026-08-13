@@ -3,6 +3,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 using static LogForesight.Tests.TestData;
 
@@ -15,7 +16,7 @@ namespace LogForesight.Tests;
 /// 「A 主機預設管理者是 OOO，但管理者覺得這個問題緊急先給 XXX 處理，
 /// 這時管理者不變，但問題的處理者會被指派到 XXX 身上」。
 /// </summary>
-public class HandlingServiceTests
+public class HandlingServiceTests : IDisposable
 {
     private readonly FakeUserStore _users = new();
     private readonly FakeHostStore _hosts = new();
@@ -25,8 +26,13 @@ public class HandlingServiceTests
     private readonly FakeNoiseMarkStore _noiseMarks = new();
     private readonly RecordingAuditService _audit = new();
     private readonly FakeSystemSettingsStore _settings = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly FakeRecordRepository _repository;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly FakeSmtpMailSender _mailSender = new();
+    private readonly EfSqliteFixture _fx = new();
+
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private readonly WebUser _owner;
     private readonly WebUser _other;
@@ -68,7 +74,41 @@ public class HandlingServiceTests
             currentUser: currentUser,
             audit: _audit,
             settings: _settings,
-            groups: groups);
+            groups: groups,
+            issueOwners: _issueOwners);
+    }
+
+    /// <summary>接上真的 <see cref="MailNotificationService"/>（回饋十八輪體檢輪）：專供上報通知
+    /// 防重寄的迴歸測試——一般測試走上面沒有 mail 的 Create，通知行為靜默跳過即可。</summary>
+    private MailNotificationService CreateMail()
+    {
+        var groups = new FakeUserGroupStore();
+        var admins = groups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "admin1", Email = "admin1@test.local", Active = true, GroupIds = new List<long> { admins.GroupId } });
+        _settings.Update(s => s.MailEnabled = true);
+        return new MailNotificationService(
+            _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
+    }
+
+    private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)
+    {
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
+        return new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: _cases,
+            caseCoordinator: _caseCoordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: new AlwaysVisibleService(_hosts),
+            currentUser: currentUser,
+            audit: _audit,
+            settings: _settings,
+            issueOwners: _issueOwners,
+            mail: mail);
     }
 
     /// <summary>
@@ -201,6 +241,105 @@ public class HandlingServiceTests
         _hosts.SetOwners(_host.HostId, Array.Empty<long>());
 
         Assert.Null(Create(Capability.Handle).Get(_host.HostId, Today).HandlerName);
+    }
+
+    // ── 問題負責人優先於主機負責人（回饋十八輪批次F）──────────────────────────
+
+    /// <summary>問題負責人恰一人時優先於主機負責人——主機負責人是 OOO，但這天的問題
+    /// 有獨立的問題負責人 XXX，自動帶入的應該是 XXX。</summary>
+    [Fact]
+    public void 問題負責人恰一人時優先於主機負責人()
+    {
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("XXX", result.HandlerName);
+    }
+
+    /// <summary>問題負責人多人時不猜，落回主機負責人恰一人的既有規則</summary>
+    [Fact]
+    public void 問題負責人多人時落回主機負責人()
+    {
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\yyy", DisplayName = "YYY" });
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule
+        {
+            SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId, third.UserId }
+        });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);   // 落回主機負責人（唯一：_owner）
+    }
+
+    /// <summary>當天多個問題各自命中不同問題負責人時不猜——與主機負責人多人時同一套精神，
+    /// 落回主機負責人恰一人的規則。</summary>
+    [Fact]
+    public void 當天多問題各自負責人不同時不猜_落回主機負責人()
+    {
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\yyy", DisplayName = "YYY" });
+        var day = Today.AddDays(1);
+        var a = Issue("disk", 153);
+        var b = Issue("network", 201);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);
+    }
+
+    /// <summary>當天多個問題命中的問題負責人恰好是同一人時，聯集去重後仍算「恰一人」</summary>
+    [Fact]
+    public void 當天多問題負責人聯集為同一人時採用()
+    {
+        var day = Today.AddDays(1);
+        var a = Issue("disk", 153);
+        var b = Issue("network", 201);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("XXX", result.HandlerName);
+    }
+
+    /// <summary>停用的問題負責人不算——同主機負責人的既有語意</summary>
+    [Fact]
+    public void 問題負責人帳號停用時不採用_落回主機負責人()
+    {
+        _other.Active = false;
+        _users.Upsert(_other);
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);
+    }
+
+    /// <summary>問題負責人的優先序在實際寫入（第一次 Update/Assign）時同樣生效，不只是顯示</summary>
+    [Fact]
+    public void 問題負責人優先序_實際寫入時同樣生效()
+    {
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        Create(Capability.Handle).Update(_host.HostId, day, new UpdateHandlingRequest { Status = HandlingStatuses.InProgress });
+
+        Assert.Equal(_other.UserId, _handlings.Get(_host.HostName, day)!.HandlerId);
     }
 
     // ── 狀態維護 ─────────────────────────────────────────────────────────────
@@ -1535,5 +1674,157 @@ public class HandlingServiceTests
 
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
         Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
+    }
+
+    // ── 無法處理（escalated，回饋十八輪批次G）────────────────────────────────
+
+    /// <summary>問題層級標無法處理必填原因——admin 要據此決定結案或改派，後端擋不只信前端</summary>
+    [Fact]
+    public void 標記無法處理_未填原因時拒絕()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Handle).SetIssueStatus(_host.HostId, day,
+            new SetIssueStatusRequest
+            {
+                IssueKey = IssueSignatureKey.For(a),
+                Status = IssueHandlingStatuses.Escalated
+            }));
+
+        Assert.Contains("原因", ex.Message);
+    }
+
+    /// <summary>無法處理是非結案：問題視同處理中（有人在管），不進未處理、也不因此結案</summary>
+    [Fact]
+    public void 標記無法處理_視同處理中不結案()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "換硬體超出我的權限"
+        });
+
+        Assert.Equal(IssueHandlingStatuses.Escalated, result.Status);
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+
+        var todo = service.GetTodo(new[] { record });
+        Assert.Equal(0, todo.OpenCount);
+        Assert.Equal(1, todo.InProgressCount);
+    }
+
+    /// <summary>日層級也擋：Update 標無法處理沒填原因時拒絕（與問題層級同一條規則）</summary>
+    [Fact]
+    public void 日層級標記無法處理_未填原因時拒絕()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Handle).Update(_host.HostId, Today,
+            new UpdateHandlingRequest { Status = HandlingStatuses.Escalated }));
+
+        Assert.Contains("原因", ex.Message);
+    }
+
+    [Fact]
+    public void 日層級標記無法處理_有原因時成功且列入未結案()
+    {
+        var result = Create(Capability.Handle).Update(_host.HostId, Today,
+            new UpdateHandlingRequest { Status = HandlingStatuses.Escalated, Note = "需要外部廠商" });
+
+        Assert.Equal(HandlingStatuses.Escalated, result.Status);
+        Assert.Contains(HandlingStatuses.Escalated, HandlingStatuses.Unresolved);
+    }
+
+    // ── 上報通知防重寄（回饋十八輪體檢輪修正：previousStatus 已是 escalated 時不重寄）────
+
+    /// <summary>單筆轉入無法處理寄一次；已是無法處理時改備註重存不再寄第二次。</summary>
+    [Fact]
+    public void SetIssueStatus_轉入無法處理通知一次_已上報再存不重寄()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "換硬體超出我的權限"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明，廠商已聯絡"
+        });
+        Assert.Single(_mailSender.Sent);
+    }
+
+    /// <summary>批次轉入無法處理彙整寄一封；整批已上報過的問題再送同一批不重寄。</summary>
+    [Fact]
+    public void SetIssueStatusBatch_批次轉入無法處理通知一次_已上報再送不重寄()
+    {
+        var day = Today.AddDays(-2);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Handle);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "需要外部廠商"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明"
+        });
+        Assert.Single(_mailSender.Sent);
+    }
+
+    /// <summary>跨主機一次回覆轉入無法處理寄一封；同一批案件已是無法處理時再回覆不重寄。</summary>
+    [Fact]
+    public void BulkSetIssueStatusByHandler_轉入無法處理通知一次_已上報再回覆不重寄()
+    {
+        var day = Today.AddDays(-3);
+        var a = Issue("disk", 153);
+        var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(second.HostName, day, a);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+        service.Assign(second.HostId, day, _other.UserId);
+
+        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153,
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "需要外部廠商"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153,
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明"
+        });
+        Assert.Single(_mailSender.Sent);
     }
 }

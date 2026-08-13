@@ -58,15 +58,17 @@ public class ScheduleController : ControllerBase
             o.Enabled = request.Enabled;
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
+            o.LocalAnalysisEnabled = request.LocalAnalysisEnabled;
             o.UpdatedByAccount = _currentUser.Account;
         });
 
         _audit.Record(
             action: AuditActions.ScheduleOptionsUpdate,
             summary: $"更新排程設定：{(saved.Enabled ? "已啟用" : "未啟用")}、{saved.Windows.Count} 個執行窗口" +
-                     (saved.DebugDump ? "，AI 診斷傾印開啟中" : ""),
+                     (saved.DebugDump ? "，AI 診斷傾印開啟中" : "") +
+                     (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用"),
             targetKind: "schedule",
-            detail: new { saved.Enabled, saved.Windows, saved.DebugDump });
+            detail: new { saved.Enabled, saved.Windows, saved.DebugDump, saved.LocalAnalysisEnabled });
 
         return ApiResponse<ScheduleOptionsDto>.Ok(ToDto(saved));
     }
@@ -173,7 +175,9 @@ public class ScheduleController : ControllerBase
             case "all":
                 var allTargets = HostListSelection.FromStore(_hosts, _sentinels);
                 var allFlat = allTargets.ByServer.Values.SelectMany(v => v).ToList();
-                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), true);
+                // 本機分析停用時（回饋十八輪批次D），全部主機的範圍不再涵蓋本機——預覽台數與
+                // 執行監控要如實反映，不能讓使用者以為本機也在這次執行內
+                return (RunScope.Full, allFlat.Select(t => t.HostId).ToList(), _optionsStore.Get().LocalAnalysisEnabled);
 
             case "segment":
                 if (string.IsNullOrWhiteSpace(segment))
@@ -203,7 +207,12 @@ public class ScheduleController : ControllerBase
             case "host":
                 if (hostId is not { } id) throw DomainException.Validation("請指定要更新的主機。");
                 var host = _hosts.Get(id) ?? throw DomainException.NotFound("找不到這台主機。");
-                if (host.Source == "local") return (RunScope.LocalOnly, null, true);
+                if (host.Source == "local")
+                {
+                    if (!_optionsStore.Get().LocalAnalysisEnabled)
+                        throw DomainException.Validation("本機分析已停用，請先於排程作業頁啟用「分析本機主機」。");
+                    return (RunScope.LocalOnly, null, true);
+                }
 
                 // 確認目前真的在會被查詢的清單內（Pollable，Windows／Linux 皆同一套判準），
                 // 不然「1 台」的預覽會是假象——停用／待歸屬／IP 衝突／所屬 Sentinel 停用的主機
@@ -245,6 +254,7 @@ public class ScheduleController : ControllerBase
         Enabled = options.Enabled,
         Windows = options.Windows,
         DebugDump = options.DebugDump,
+        LocalAnalysisEnabled = options.LocalAnalysisEnabled,
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)

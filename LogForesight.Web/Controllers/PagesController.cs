@@ -98,6 +98,13 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Groups() => View();
 
+    /// <summary>問題負責人（回饋十八輪批次F）：以 (Source,EventId) 為鍵指派跨主機的問題負責人，
+    /// 與主機負責人是相同概念、相同待遇——優先於主機負責人（自動帶入處理人／郵件路由），
+    /// 並隱含具備第四條授權路徑（見 VisibilityService／UserCapabilityResolver）。</summary>
+    [HttpGet("/admin/issue-owners")]
+    [Permission(Capability.Maintain)]
+    public IActionResult IssueOwners() => View();
+
     [HttpGet("/admin/imports")]
     [Permission(Capability.Maintain)]
     public IActionResult Imports() => View();
@@ -115,6 +122,12 @@ public class PagesController : Controller
     [HttpGet("/help/manual")]
     [Permission(Capability.Maintain)]
     public IActionResult HelpManual() => View();
+
+    /// <summary>首次啟動精靈（回饋十八輪批次H）：不進側欄——入口在教學文件清單第一項，
+    /// 隱藏後仍可直接輸入網址到達。就緒度七步混合制（完成自動判定、跳過手動）。</summary>
+    [HttpGet("/setup")]
+    [Permission(Capability.Maintain)]
+    public IActionResult Setup() => View();
 
     [HttpGet("/access-denied")]
     public IActionResult AccessDenied() => View();

@@ -232,15 +232,7 @@ public class IdentityService
         Log.Info("測試模式：已建立開箱測試管理員 {0}（{1}），可直接登入測試全站功能。", displayName, account);
     }
 
-    public bool HasNoAdmins()
-    {
-        var adminGroupIds = _groups.GetAll()
-            .Where(g => g.Role == UserRole.Admin && g.Active)
-            .Select(g => g.GroupId)
-            .ToHashSet();
-
-        if (adminGroupIds.Count == 0) return true;
-
-        return !_users.GetAll().Any(u => u.Active && u.GroupIds.Any(adminGroupIds.Contains));
-    }
+    // 解析邏輯抽至 AdminMembersResolver（回饋十八輪批次G）：上報通知的收件人來源
+    // （Singleton 的 MailNotificationService）也要「找出全部 admin 成員」，共用同一份判定
+    public bool HasNoAdmins() => AdminMembersResolver.GetAdminMembers(_groups, _users).Count == 0;
 }

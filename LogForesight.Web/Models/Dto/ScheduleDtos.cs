@@ -5,6 +5,10 @@ public class ScheduleOptionsDto
     public bool Enabled { get; set; }
     public List<ScheduleWindow> Windows { get; set; } = new();
     public bool DebugDump { get; set; }
+
+    /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true，見 ScheduleOptions.LocalAnalysisEnabled。</summary>
+    public bool LocalAnalysisEnabled { get; set; } = true;
+
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 
@@ -21,6 +25,9 @@ public class SaveScheduleOptionsRequest
     public bool Enabled { get; set; }
     public List<ScheduleWindow> Windows { get; set; } = new();
     public bool DebugDump { get; set; }
+
+    /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true。</summary>
+    public bool LocalAnalysisEnabled { get; set; } = true;
 }
 
 /// <summary>docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻。

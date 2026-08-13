@@ -82,13 +82,19 @@ public static class HandlingStatuses
     public const string FalsePositive = "false_positive";
     public const string KnownNoise = "known_noise";
 
+    /// <summary>無法處理（回饋十八輪批次G）：處理人上報「我處理不了」，等 admin 決定結案或
+    /// 重新指派。**非結案**（列入 <see cref="Unresolved"/>——上報中就是還沒處理完，週報未處理數
+    /// 與待辦統計都要計入），對外三態歸「處理中」。與問題層級的
+    /// <see cref="IssueHandlingStatuses.Escalated"/> 同值同語意，兩層值域必須同步維護。</summary>
+    public const string Escalated = "escalated";
+
     public static readonly string[] All =
     {
-        Open, InProgress, Resolved, WontFix, FalsePositive, KnownNoise
+        Open, InProgress, Resolved, WontFix, FalsePositive, KnownNoise, Escalated
     };
 
     /// <summary>尚未結案的狀態——儀表板待辦與逾期清單的依據</summary>
-    public static readonly string[] Unresolved = { Open, InProgress };
+    public static readonly string[] Unresolved = { Open, InProgress, Escalated };
 
     public static bool IsValid(string status) => All.Contains(status);
 
@@ -109,6 +115,9 @@ public static class HandlingStatuses
         // 走不到這個分支；這裡是防禦——沒有它，任何未來漏進來的 observing 會掉進 default
         // 被誤歸「已處理」，觀察中的日子就從待辦統計裡消失了
         IssueHandlingStatuses.Observing => InProgress,
+        // 無法處理（回饋十八輪批次G）：上報中＝有人在管但還沒有結論——同 observing 歸「處理中」，
+        // 掉進 default 被歸「已處理」的話，上報等 admin 決定的日子會從待辦統計裡消失
+        Escalated => InProgress,
         _ => Resolved
     };
 }

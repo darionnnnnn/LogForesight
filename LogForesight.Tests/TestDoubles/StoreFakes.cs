@@ -324,15 +324,21 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 {
     private readonly List<DailyAnalysisRecord> _records = new();
 
+    /// <summary>最近一次 Query() 收到的 filter（回饋十八輪批次A-4）：郵件下推測試斷言用，
+    /// 確認 MailNotificationService 真的把 RiskLevels 帶進查詢，而不是只在記憶體篩。</summary>
+    public RecordQueryFilter? LastFilter { get; private set; }
+
     public void Add(DailyAnalysisRecord record) => _records.Add(record);
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter)
     {
+        LastFilter = filter;
         var matcher = filter.Hosts == null ? null : new HostMatcher(filter.Hosts);
         return _records
             .Where(r => matcher == null || matcher.Matches(r))
             .Where(r => filter.From == null || r.Date.Date >= filter.From.Value.Date)
             .Where(r => filter.To == null || r.Date.Date <= filter.To.Value.Date)
+            .Where(r => filter.RiskLevels == null || filter.RiskLevels.Count == 0 || filter.RiskLevels.Contains(r.RiskLevel))
             .ToList();
     }
 
@@ -345,8 +351,45 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false) =>
         throw new NotImplementedException();
 
+    /// <summary>與 EfAnalysisRecordStore.ListHostDates 同語意（回饋十八輪批次C 測試所需）：
+    /// 窗口內 HostId／Date 的輕量投影，HostId=0（無主機識別的舊列）不列入。</summary>
     public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
-        throw new NotImplementedException();
+        _records
+            .Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date && r.HostId != 0)
+            .Select(r => (r.HostId, r.Date.Date))
+            .ToHashSet();
+}
+
+/// <summary>問題負責人規則的記憶體實作（回饋十八輪批次F）：與正式的 IssueOwnerStore
+/// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
+internal class FakeIssueOwnerStore : IIssueOwnerStore
+{
+    private readonly List<IssueOwnerRule> _rules = new();
+
+    public List<IssueOwnerRule> GetAll() => _rules.ToList();
+
+    public IssueOwnerRule? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
+
+    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    {
+        var existing = _rules.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
+        if (existing == null)
+        {
+            rule.UpdatedAt = DateTime.Now;
+            _rules.Add(rule);
+            return rule;
+        }
+        existing.OwnerUserIds = rule.OwnerUserIds;
+        existing.Note = rule.Note;
+        existing.UpdatedAt = DateTime.Now;
+        existing.UpdatedByAccount = rule.UpdatedByAccount;
+        return existing;
+    }
+
+    public void Delete(string source, int eventId) => _rules.RemoveAll(r => Matches(r, source, eventId));
+
+    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
+        r.EventId == eventId && string.Equals(r.SourceName, source, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

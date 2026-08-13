@@ -36,6 +36,20 @@ public static class RiskLevels
     /// <summary>兩者取風險較高者（不能往下壓，只能往上拉——見 docs/archive/HISTORY.md）</summary>
     public static string MoreSevere(string a, string b) => Rank(a) >= Rank(b) ? a : b;
 
+    /// <summary>
+    /// 達到指定等級（含）以上的等級陣列，供 <see cref="Core.Persistence.RecordQueryFilter.RiskLevels"/>
+    /// 下推查詢使用（回饋十八輪批次A）：例如 <c>AtOrAbove(Medium)</c> 回傳 {高,中}。
+    /// 未知值（非 High/Medium/Low）fail-open 回傳全集——寧可少下推、多查一點，也不能因為
+    /// 一個非預期字面值把下推語意變成「什麼都不通知」。
+    /// </summary>
+    public static string[] AtOrAbove(string min) => min switch
+    {
+        High => new[] { High },
+        Medium => new[] { High, Medium },
+        Low => new[] { High, Medium, Low },
+        _ => All
+    };
+
     /// <summary>從 AI 回傳的風險等級文字（或 JSON 解析失敗時的原文）歸一化為 高/中/低/未知</summary>
     public static string Normalize(string text)
     {

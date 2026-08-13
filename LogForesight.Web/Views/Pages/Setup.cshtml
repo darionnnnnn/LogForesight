@@ -1,0 +1,42 @@
+@{
+    ViewData["Title"] = "首次啟動精靈";
+}
+
+<section class="lf-card mb-3">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">首次啟動精靈</h2>
+        <span class="text-muted small" id="setup-progress-text"></span>
+    </div>
+    <div class="lf-card__body">
+        <div class="progress mb-1" style="height: 8px;">
+            <div class="progress-bar" id="setup-progress-bar" role="progressbar"></div>
+        </div>
+        <div class="text-muted small" id="setup-progress-detail"></div>
+    </div>
+</section>
+
+<div id="setup-settled-card" class="lf-card mb-3 d-none">
+    <div class="lf-card__body">
+        <div class="d-flex align-items-center gap-2 mb-2">
+            <svg class="lf-icon text-success" aria-hidden="true"><use href="/img/icons.svg#clipboard-check"></use></svg>
+            <strong>全部步驟已完成（含跳過的步驟）。</strong>
+        </div>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="setup-hidden-checkbox" />
+            <label class="form-check-label" for="setup-hidden-checkbox">
+                隱藏教學文件裡的啟動精靈入口（隨時可直接輸入 /setup 網址回到這裡）
+            </label>
+        </div>
+    </div>
+</div>
+
+<section class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">設定步驟</h2>
+    </div>
+    <div class="lf-card__body p-0" id="setup-steps"></div>
+</section>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/setup.js" asp-append-version="true"></script>
+}

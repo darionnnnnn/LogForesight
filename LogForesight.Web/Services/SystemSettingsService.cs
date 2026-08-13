@@ -206,6 +206,14 @@ public class SystemSettingsService : ISystemSettingsService
         }
 
         var before = _store.Get();
+        // 由關轉開判定要用的三個舊值先讀成區域變數（回饋十八輪批次C）：不能依賴 before 這個
+        // 物件在 _store.Update() 之後仍保有「更新前」的內容——ISystemSettingsStore 的介面契約
+        // 只保證 Get() 回傳的是讀取當下的快照，並未保證與後續 Update() 使用的是不同執行個體
+        // （正式的 blob 實作每次 Get() 都會重新反序列化、天然是不同物件；但介面本身沒有明文
+        // 這條保證，捕捉當下值比依賴這個隱含細節更穩妥）。
+        var wasMailEnabled = before.MailEnabled;
+        var wasSummaryOn = before.MailOnRunCompleted;
+        var wasUrgentOn = before.MailUrgentEnabled;
 
         var saved = _store.Update(s =>
         {
@@ -282,6 +290,19 @@ public class SystemSettingsService : ISystemSettingsService
         // 收件人清單可能剛被改正（回饋十七輪批次B-1）：舊的連續失敗計數不該繼續卡著，
         // 讓改正後的地址從零開始重新累計，而不是沿用改動前的失敗歷史繼續排除它。
         _mail.ResetRecipientFailureStreaks();
+
+        // 郵件通知由關轉開時預填已通知狀態（回饋十八輪批次C）：語意「從啟用（含重新啟用）
+        // 起算」——不預填的話，第一次啟用會把窗口內累積的歷史紀錄當成全部未通知，寄出一封
+        // 「近 14 天總帳」（可能上千筆，且是使用者對這個功能的第一印象）。逐路判定（摘要／緊急
+        // 各自的開關）：只有「這一路確實由關轉開」才預填對應集合，已經開著時重複儲存設定
+        // （哪怕只是改了無關欄位）不能觸發預填——否則會把當下真正 pending 的紀錄也標成已讀，
+        // 變成真的漏寄。MailEnabled 本身也是一道總開關，同樣要看關轉開。
+        var summaryTurnedOn = saved.MailEnabled && saved.MailOnRunCompleted && !(wasMailEnabled && wasSummaryOn);
+        var urgentTurnedOn = saved.MailEnabled && saved.MailUrgentEnabled && !(wasMailEnabled && wasUrgentOn);
+        if (summaryTurnedOn || urgentTurnedOn)
+        {
+            _mail.MarkExistingRecordsAsNotified(summaryTurnedOn, urgentTurnedOn);
+        }
 
         _audit.Record(
             action: AuditActions.SettingsUpdate,

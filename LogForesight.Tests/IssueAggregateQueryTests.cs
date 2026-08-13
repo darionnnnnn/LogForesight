@@ -165,4 +165,60 @@ public class IssueAggregateQueryTests : IDisposable
     {
         Assert.Empty(Query().Aggregate(DateTime.Today, DateTime.Today, null));
     }
+
+    // ── HostIdsFor（回饋十八輪批次F，問題負責人的授權路徑用）─────────────────
+
+    [Fact]
+    public void HostIdsFor_回傳期間內出現過指定問題的相異主機()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(2), Issue("disk", 153));
+        Add(2, "B", d0.AddDays(4), Issue("disk", 153));
+        Add(3, "C", d0, Issue("network", 999));   // 不同問題，不該混進來
+
+        var hostIds = Query().HostIdsFor(new[] { ("disk", 153) }, d0, d0.AddDays(10));
+
+        Assert.Equal(new HashSet<long> { 1, 2 }, hostIds);
+    }
+
+    [Fact]
+    public void HostIdsFor_Source比對不分大小寫()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("Disk", 153));
+
+        var hostIds = Query().HostIdsFor(new[] { ("DISK", 153) }, d0, d0);
+
+        Assert.Equal(new HashSet<long> { 1 }, hostIds);
+    }
+
+    [Fact]
+    public void HostIdsFor_多個問題取聯集()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));
+        Add(2, "B", d0, Issue("network", 999));
+
+        var hostIds = Query().HostIdsFor(new[] { ("disk", 153), ("network", 999) }, d0, d0);
+
+        Assert.Equal(new HashSet<long> { 1, 2 }, hostIds);
+    }
+
+    [Fact]
+    public void HostIdsFor_期間外的出現不計入()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0.AddDays(-5), Issue("disk", 153));
+
+        var hostIds = Query().HostIdsFor(new[] { ("disk", 153) }, d0, d0.AddDays(10));
+
+        Assert.Empty(hostIds);
+    }
+
+    [Fact]
+    public void HostIdsFor_空問題清單回空集合()
+    {
+        Assert.Empty(Query().HostIdsFor(Array.Empty<(string, int)>(), DateTime.Today, DateTime.Today));
+    }
 }

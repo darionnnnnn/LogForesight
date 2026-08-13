@@ -18,9 +18,12 @@ public class VisibilityServiceTests
     private readonly FakeGroupAccessStore _access = new();
     private readonly FakeHostStore _hosts = new();
     private readonly FakeIssueCaseStore _cases = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
+    private readonly FakeIssueAggregateQuery _issueAggregates = new();
+    private readonly FakeSystemSettingsStore _settings = new();
 
     private VisibilityService Create(ICurrentUser currentUser) =>
-        new(currentUser, _users, _userGroups, _access, _hosts, _cases);
+        new(currentUser, _users, _userGroups, _access, _hosts, _cases, _issueOwners, _issueAggregates, _settings);
 
     /// <summary>建立「OO 部門使用者 → OO 部門主機」的完整授權鏈，並額外建立一台 XX 部門主機</summary>
     private (WebUser user, WebHost ooHost, WebHost xxHost) SetupTwoDepartments()
@@ -288,6 +291,94 @@ public class VisibilityServiceTests
         Assert.Contains(xxHost.HostId, owned);
         Assert.DoesNotContain(ooHost.HostId, owned);     // 群組授權來的不算負責人
         Assert.DoesNotContain(stopped.HostId, owned);    // 停用主機不算
+    }
+
+    // ── 問題負責人路徑（回饋十八輪批次F，第四條授權路徑）───────────────────────────────
+
+    /// <summary>問題負責人自動可見（保留期內出現過其負責問題的）主機，即使不屬於授權群組——
+    /// 與主機負責人同級：整台可見，聯集進 GetVisibleHostIds。</summary>
+    [Fact]
+    public void 問題負責人_看得到出現過其問題的主機即使不屬於授權群組()
+    {
+        var (user, ooHost, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.Contains(ooHost.HostId, visible);   // 群組授權來的
+        Assert.Contains(xxHost.HostId, visible);   // 問題負責人來的
+    }
+
+    /// <summary>已停用（撤場）的主機不因問題負責人身分被看見——同主機負責人的既有語意
+    /// （回饋十八輪體檢輪修正：GetIssueOwnedHostIds 原本漏過濾 Active，撤場主機仍會現身）。</summary>
+    [Fact]
+    public void 問題負責人_已停用主機不視為可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        xxHost.Active = false;
+        _hosts.Upsert(xxHost);
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.DoesNotContain(xxHost.HostId, visible);
+    }
+
+    /// <summary>不是任何問題的負責人時，不查聚合（沒有規則就不必問）——驗證早退路徑。</summary>
+    [Fact]
+    public void 問題負責人_沒有規則時不觸發聚合查詢()
+    {
+        var (user, _, _) = SetupTwoDepartments();
+        _issueAggregates.HostIdsForResult = new HashSet<long> { 999 };   // 若誤觸查詢會混進不該有的主機
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.DoesNotContain(999, visible);
+        Assert.Null(_issueAggregates.LastHostIdsForCall);
+    }
+
+    /// <summary>問題負責人給的是整台可見，不是案件授與那種窄授與——與主機負責人同級待遇</summary>
+    [Fact]
+    public void 問題負責人_不視為案件授與而是完整可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+
+        var service = Create(FakeCurrentUser.ForUser(user.UserId));
+
+        service.EnsureVisible(xxHost.HostId);   // 不應拋例外
+        Assert.False(service.IsCaseGrantOnly(xxHost.HostId));
+        Assert.Null(service.GetIssueKeyRestriction(xxHost.HostId));
+    }
+
+    /// <summary>停用的使用者不因問題負責人身分取得任何範圍——同主機負責人的既有語意</summary>
+    [Fact]
+    public void 問題負責人_使用者已停用時可見範圍為空()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+        user.Active = false;
+        _users.Upsert(user);
+
+        Assert.Empty(Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds());
+    }
+
+    /// <summary>指派前的檢查也要含問題負責人路徑，否則「他看得到這台嗎」的提示會說謊
+    /// （同主機負責人 GetVisibleHostIdsFor 的既有覆蓋範圍）。</summary>
+    [Fact]
+    public void 指定使用者的可見範圍_含問題負責人路徑()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+
+        var visible = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIdsFor(user.UserId);
+
+        Assert.Contains(xxHost.HostId, visible);
     }
 
     [Fact]

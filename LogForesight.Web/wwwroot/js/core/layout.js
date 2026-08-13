@@ -36,6 +36,9 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
+            // 問題負責人（回饋十八輪批次F）：以 (Source,EventId) 為鍵指派跨主機負責人，
+            // 與主機負責人是相同概念——放在主機／群組之後，同屬「誰負責什麼」這條動線
+            { href: '/admin/issue-owners', label: '問題負責人', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/settings', label: '設定', icon: 'gear', requires: 'Maintain' }
@@ -74,6 +77,7 @@ async function init() {
     renderCurrentUser(user);
     bindLogout();
     initHelpPopovers();
+    renderSetupReturnBanner();
 
     if (user.needsAdminSetup) {
         const { toast } = await import('./ui.js');
@@ -335,6 +339,52 @@ function applyFontScale(scale) {
     for (const button of document.querySelectorAll('#lf-font-scale [data-scale]')) {
         button.classList.toggle('active', button.dataset.scale === scale);
     }
+}
+
+/**
+ * 回到啟動精靈提示列（回饋十八輪批次H）：從精靈頁「前往設定」點過來時（?from=setup），
+ * 在頁頂顯示一條可關閉的提示，點擊回 /setup。集中在 layout.js 而不是逐頁各寫一份——
+ * 每個目標頁（設定／使用者／群組／NetIQ／排程）都可能是精靈的跳轉目的地，
+ * 這裡是所有頁面共同載入的入口，單點處理不必修改每一個目標頁。
+ *
+ * 清掉 URL 上的 from 參數（history.replaceState）：同 login.js 的 returnUrl 處理慣例——
+ * 重新整理或分享這個網址不該一直帶著「你是從精靈來的」這個一次性狀態。
+ */
+function renderSetupReturnBanner() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('from') !== 'setup') return;
+
+    params.delete('from');
+    const cleanQuery = params.toString();
+    history.replaceState(null, '', location.pathname + (cleanQuery ? `?${cleanQuery}` : '') + location.hash);
+
+    const banner = document.getElementById('lf-setup-return-banner');
+    if (!banner) return;
+
+    banner.replaceChildren();
+    banner.className = 'alert alert-info d-flex align-items-center justify-content-between mb-0 rounded-0 lf-no-print';
+
+    const text = document.createElement('span');
+    text.textContent = '設定完成後，可以回到啟動精靈繼續下一步。';
+    banner.appendChild(text);
+
+    const actions = document.createElement('div');
+    actions.className = 'd-flex align-items-center gap-2';
+
+    const backLink = document.createElement('a');
+    backLink.href = '/setup';
+    backLink.className = 'btn btn-sm btn-primary';
+    backLink.textContent = '返回啟動精靈';
+    actions.appendChild(backLink);
+
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'btn-close';
+    dismiss.setAttribute('aria-label', '關閉');
+    dismiss.addEventListener('click', () => banner.classList.add('d-none'));
+    actions.appendChild(dismiss);
+
+    banner.appendChild(actions);
 }
 
 initFontScale();

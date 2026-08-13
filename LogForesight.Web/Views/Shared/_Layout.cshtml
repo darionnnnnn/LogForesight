@@ -70,6 +70,10 @@
                 </div>
             </header>
 
+            @* 回到啟動精靈提示列（回饋十八輪批次H）：從精靈「前往設定」點過來時顯示，
+               layout.js 依 ?from=setup 判斷是否要顯示，內容純前端組裝 *@
+            <div id="lf-setup-return-banner" class="d-none lf-no-print"></div>
+
             <main class="lf-content">
                 @RenderBody()
             </main>

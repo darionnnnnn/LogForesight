@@ -30,9 +30,10 @@ internal class RecordQueryServiceFacade
         INoiseMarkStore noiseMarks,
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IIssueOwnerStore? issueOwners = null)
     {
-        _list = new RecordListQueryService(repository, hosts, users, handlings, issueHandlings, cases, settings);
+        _list = new RecordListQueryService(repository, hosts, users, handlings, issueHandlings, cases, settings, issueOwners);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);
     }

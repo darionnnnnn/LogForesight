@@ -19,6 +19,7 @@ public class IdentityServiceTests
     private readonly FakeUserStore _users = new();
     private readonly FakeUserGroupStore _groups = new();
     private readonly FakeHostStore _hosts = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly RecordingAuditService _audit = new();
 
     private IdentityService Create(IAuthenticationProvider? provider = null)
@@ -40,7 +41,7 @@ public class IdentityServiceTests
             provider ?? new StubAuthenticationProvider(),
             new ServerAdminAuthenticator(settings),
             _audit,
-            new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
+            new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts, _issueOwners));
     }
 
     [Fact]
@@ -246,6 +247,46 @@ public class IdentityServiceTests
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner" });
         var other = _users.Upsert(new WebUser { Account = "DOMAIN\\other" });
         _hosts.Upsert(new WebHost { HostName = "SRV-01", OwnerUserIds = new List<long> { owner.UserId } });
+
+        Assert.Empty(service.ResolveCapabilities(other));
+    }
+
+    // ── 問題負責人隱含能力（回饋十八輪批次F，相同概念、相同待遇）─────────────────
+
+    /// <summary>問題負責人與主機負責人待遇相同：無群組帳號也能取得 Handle／ConfirmPermission</summary>
+    [Fact]
+    public void ResolveCapabilities_無群組的問題負責人_取得Handle與ConfirmPermission()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+
+        var caps = service.ResolveCapabilities(user);
+
+        Assert.Contains(Capability.Handle, caps);
+        Assert.Contains(Capability.ConfirmPermission, caps);
+    }
+
+    [Fact]
+    public void ResolveCapabilities_問題負責人_不因此取得ViewAll或Maintain()
+    {
+        var service = Create();
+        var user = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+
+        var caps = service.ResolveCapabilities(user);
+
+        Assert.DoesNotContain(Capability.ViewAll, caps);
+        Assert.DoesNotContain(Capability.Maintain, caps);
+    }
+
+    [Fact]
+    public void ResolveCapabilities_非問題負責人_不受影響()
+    {
+        var service = Create();
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
+        var other = _users.Upsert(new WebUser { Account = "DOMAIN\\other" });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
 
         Assert.Empty(service.ResolveCapabilities(other));
     }

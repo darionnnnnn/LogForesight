@@ -25,6 +25,8 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeGroupAccessStore _groupAccess = new();
     private readonly FakeAnalysisRecordQuery _records = new();
     private readonly FakeHandlingStore _handlings = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
+    private readonly FakeIssueAggregateQuery _issueAggregates = new();
     private readonly EfSqliteFixture _fx = new();
 
     /// <summary>分析永遠只產出到昨天——所有測試紀錄以此為基準日，而非 DateTime.Today</summary>
@@ -34,17 +36,18 @@ public class MailNotificationServiceTests : IDisposable
 
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")));
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates);
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
-        string headline = "", string? riskBasis = null) => new()
+        string headline = "", string? riskBasis = null, params LogIssueSignature[] issues) => new()
     {
         HostId = hostId,
         Host = host,
         Date = date,
         RiskLevel = riskLevel,
         Headline = headline,
-        RiskBasis = riskBasis ?? ""
+        RiskBasis = riskBasis ?? "",
+        TopIssues = issues.ToList()
     };
 
     /// <summary>啟用郵件＋填妥連線與收件人的基準設定，測試只覆寫要驗的那一項（同 SystemSettingsServiceTests 慣例）</summary>
@@ -223,6 +226,78 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
+    // ── RiskLevels 查詢下推（回饋十八輪批次A）─────────────────────────────
+    // 2000 台規模下每次執行後全表查 14 天會反序列化上萬列（見 docs/FEEDBACK-18-PLAN.md 批次A）；
+    // 修法是把風險過濾下推進 RecordQueryFilter，記憶體判定原樣保留（雙保險，語意不變）。
+    // 這裡直接斷言 FakeAnalysisRecordQuery.LastFilter，而不是只看寄信結果——只看寄信結果的話，
+    // 「下推漏了某個等級」這種寫錯不會被任何既有測試抓到（服務端的記憶體過濾會把漏洞蓋住）。
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要與緊急同開時下推門檻以上等級的聯集()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailUrgentEnabled = true; s.MailMinRiskLevel = RiskLevels.Medium; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High, RiskLevels.Medium }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_只開緊急時下推只查高風險()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要開啟時下推門檻以上等級()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailMinRiskLevel = RiskLevels.High; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要與緊急皆未開啟時不查詢也不寄送()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail();
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Null(_records.LastFilter);
+        Assert.Empty(_sender.Sent);
+    }
+
+    /// <summary>回饋十八輪批次A-3：每日／週報彙總同樣下推門檻以上等級（與摘要同一手法）。</summary>
+    [Fact]
+    public async Task CheckAndSendDailyWeeklyAsync_下推門檻以上等級()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailDailyEnabled = true; s.MailDailyTime = "08:00"; s.MailMinRiskLevel = RiskLevels.Medium; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().CheckAndSendDailyWeeklyAsync(new DateTime(2026, 8, 11, 9, 0, 0));
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High, RiskLevels.Medium }, _records.LastFilter!.RiskLevels);
+    }
+
     /// <summary>回饋十六輪批次A-1：高風險即時通知改按收件人聚合——全域收件人與非全域的
     /// 主機負責人各自收到「一封」信，不再合併成單封多收件人的信。全域收件人本身要能解析到
     /// 一個 ViewAll 帳號才看得到主機明細（回饋十七輪批次B-4）。</summary>
@@ -257,6 +332,88 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Single(sent.Message.To);
+    }
+
+    // ── 問題負責人優先於主機負責人（回饋十八輪批次F）─────────────────────────
+
+    private static LogIssueSignature Issue(string source, int eventId) =>
+        new() { LogName = "System", Source = source, EventId = eventId, Severity = IssueSeverity.High };
+
+    /// <summary>這天的問題命中問題負責人規則時，通知對象是問題負責人，不是主機負責人——
+    /// 「優先取代」不是「疊加」。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_問題命中規則時通知問題負責人不通知主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 問題負責人 issueowner
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
+    /// <summary>當天問題都沒命中任何問題負責人規則時，落回既有的主機負責人行為。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_問題未命中規則時落回主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
+    /// <summary>同一批通知裡，不同主機日各自路由到不同對象——這是逐 record 的判定，不是全站開關。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_同批次不同主機日各自路由到不同對象()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High, issues: Issue("network", 999)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local" && s.Message.Body.Contains("host1") && !s.Message.Body.Contains("host2"));
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local" && s.Message.Body.Contains("host2") && !s.Message.Body.Contains("host1"));
+    }
+
+    /// <summary>回饋十八輪體檢輪修正：全域收件人若解析到的帳號本身是問題負責人，即使他不在任何
+    /// 授權群組、也不是主機負責人，仍要在自己收到的那份摘要信裡看到該主機——原本
+    /// GetVisibleHostIds(userId) 只聯集了群組授權與主機負責人兩條路徑，漏了問題負責人這第三條，
+    /// 該收件人的明細會被過濾成空、只看得到統計行。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_全域收件人是問題負責人時看得到該主機明細()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailRecipients = new List<string> { "issueowner@test.local" }; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal("issueowner@test.local", sent.Message.To[0]);
+        Assert.Contains("host1", sent.Message.Body);
     }
 
     /// <summary>全域收件人若能解析到帳號且可見範圍涵蓋全部主機，收到的信涵蓋「本次全部」
@@ -845,6 +1002,96 @@ public class MailNotificationServiceTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             Create().SendTestAsync(connection, "logforesight@test.local", new List<string> { "ops@test.local" },
                 "[{site}] {type}：{date} {summary}", ""));
+    }
+
+    // ── NotifyEscalationAsync：問題上報通知（回饋十八輪批次G）─────────────────
+
+    private static EscalationNotice Notice(string? reason = "換硬體超出我的權限") =>
+        new("disk 7", "host1", "user1", reason);
+
+    [Fact]
+    public async Task NotifyEscalationAsync_寄給全部admin群組成員()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        _users.Upsert(new WebUser { Account = "a2", Email = "a2@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "a1@test.local", "a2@test.local" }, sent.Message.To.OrderBy(e => e));
+        Assert.Contains("disk 7", sent.Message.Body);
+        Assert.Contains("無法處理", sent.Message.Body);
+        Assert.Contains("換硬體超出我的權限", sent.Message.Body);
+        Assert.Contains("user1", sent.Message.Body);
+    }
+
+    /// <summary>admin 判定必須用 UserGroup.Role，不能用群組名稱——群組改名後通知不能斷。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_admin群組改名後仍寄()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "系統管理組（已改名）", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Single(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyEscalationAsync_MailEnabled為false時不寄()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyEscalationAsync_admin成員皆無email時不寄不拋()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    /// <summary>停用的 admin 帳號與停用的 admin 群組成員都不收信（與 HasNoAdmins 同一份判定）。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_停用帳號與停用群組不收信()
+    {
+        var activeGroup = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        var inactiveGroup = _userGroups.Upsert(new UserGroup { GroupName = "old-admins", Role = UserRole.Admin, Active = false });
+        _users.Upsert(new WebUser { Account = "ok", Email = "ok@test.local", Active = true, GroupIds = new List<long> { activeGroup.GroupId } });
+        _users.Upsert(new WebUser { Account = "off", Email = "off@test.local", Active = false, GroupIds = new List<long> { activeGroup.GroupId } });
+        _users.Upsert(new WebUser { Account = "gone", Email = "gone@test.local", Active = true, GroupIds = new List<long> { inactiveGroup.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "ok@test.local" }, sent.Message.To);
+    }
+
+    /// <summary>寄送失敗不往外拋（fire-and-forget 的前提：狀態變更不能被通知失敗弄掛）。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_寄送失敗不拋例外()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+        _sender.ThrowOnSend = new InvalidOperationException("smtp down");
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
     }
 }
 

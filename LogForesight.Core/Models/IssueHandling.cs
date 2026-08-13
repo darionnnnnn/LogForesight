@@ -120,6 +120,16 @@ public static class IssueHandlingStatuses
     public const string Observing = "observing";
     public const string Open = "open";
 
+    /// <summary>
+    /// 無法處理（回饋十八輪批次G）：負責人／處理人回覆「我處理不了，需要上報」——與
+    /// <see cref="WontFix"/>（評估後決定不值得處理）語意不同，這是 escalation，不是結案。
+    /// **非結案類**：案件保持進行中，等 admin 決定結案或重新指派；對外三態歸「處理中」
+    /// （見 HandlingStatuses.ExternalOf）。轉入此狀態時會即時通知 admin 群組成員
+    /// （MailNotificationService.NotifyEscalationAsync），原因必填（比照 wont_fix，
+    /// admin 收到信要看得出「為什麼處理不了」才決定得了下一步）。
+    /// </summary>
+    public const string Escalated = "escalated";
+
     public static readonly string[] Closed =
     {
         Resolved, WontFix, FalsePositive, KnownNoise
@@ -127,7 +137,7 @@ public static class IssueHandlingStatuses
 
     public static readonly string[] All =
     {
-        Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Observing, Open
+        Resolved, WontFix, FalsePositive, KnownNoise, InProgress, Observing, Open, Escalated
     };
 
     /// <summary>是否為結案類狀態</summary>

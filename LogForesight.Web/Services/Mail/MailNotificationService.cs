@@ -23,6 +23,10 @@ namespace LogForesight.Web.Services.Mail;
 /// **回饋十七輪批次B-4：收件人只看得到自己權限範圍內的主機**——統計行（全站數字，不含主機名）
 /// 所有收件人都收得到；主機明細只給解析得到帳號的收件人，且只列該帳號可見範圍內的主機。
 /// 對應不到帳號的收件人（自由文字 email，如共用信箱，權限無從判定）只收統計行。
+///
+/// **回饋十八輪批次F：問題負責人優先於主機負責人**（見 <see cref="ResolvePerRecipient"/> 內的
+/// <c>RecordOwnerIds</c>）——逐主機日判定，這天的問題命中問題負責人規則就通知問題負責人、
+/// 不再通知主機負責人；沒有任何問題命中規則才落回主機負責人。
 /// </summary>
 public class MailNotificationService
 {
@@ -64,6 +68,16 @@ public class MailNotificationService
     private readonly IRecordHandlingStore _handlings;
     private readonly MailNotifyStateStore _state;
 
+    /// <summary>問題負責人規則（回饋十八輪批次F）：郵件路由優先於主機負責人。
+    /// 可為 null——測試組裝不注入時，路由靜默落回既有的「只通知主機負責人」行為。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+
+    /// <summary>問題負責人授權路徑用（回饋十八輪體檢輪修正）：全域收件人若是問題負責人，
+    /// 摘要信裡該看得到自己負責問題的主機明細——原本 GetVisibleHostIds(userId) 只聯集了
+    /// 群組授權與主機負責人，漏了 VisibilityService.GetVisibleHostIdsFor 已經有的第三條路徑，
+    /// 兩邊本該同步卻各自維護一份而漂移。可為 null，同 _issueOwners 的既有慣例。</summary>
+    private readonly IIssueAggregateQuery? _issueAggregates;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -73,7 +87,9 @@ public class MailNotificationService
         IGroupAccessStore groupAccess,
         IAnalysisRecordQuery records,
         IRecordHandlingStore handlings,
-        MailNotifyStateStore state)
+        MailNotifyStateStore state,
+        IIssueOwnerStore? issueOwners = null,
+        IIssueAggregateQuery? issueAggregates = null)
     {
         _settingsStore = settingsStore;
         _sender = sender;
@@ -83,7 +99,9 @@ public class MailNotificationService
         _groupAccess = groupAccess;
         _records = records;
         _handlings = handlings;
+        _issueAggregates = issueAggregates;
         _state = state;
+        _issueOwners = issueOwners;
     }
 
     // ── 對外三路觸發 ──────────────────────────────────────────────────────
@@ -123,10 +141,18 @@ public class MailNotificationService
                 // 分析執行覆寫成失敗結果——「通知永遠不能弄掛分析」這句話必須連設定讀取都算在內。
                 var settings = _settingsStore.Get();
                 if (!settings.MailEnabled) return;
+                if (!settings.MailOnRunCompleted && !settings.MailUrgentEnabled) return;
 
                 var to = DateTime.Today.AddDays(-1);
                 var from = to.AddDays(-(NotifyLookbackDays - 1));
-                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to });
+                // RiskLevels 下推（回饋十八輪批次A）：兩路門檻不同——摘要用 MailMinRiskLevel（可能低到
+                // 中），緊急只要 High。取聯集下推、記憶體判定不變（見 SendRunSummaryAsync／
+                // SendUrgentNotificationsAsync 內仍各自 Rank／== High 一次），高選擇度預篩大幅減少
+                // DB 端反序列化的列數，語意零風險（下推只是收窄查詢範圍，不是最終判定）。
+                var riskFilter = settings.MailOnRunCompleted
+                    ? RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
+                    : new[] { RiskLevels.High };
+                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter });
                 var ctx = BuildContext();
 
                 if (settings.MailOnRunCompleted)
@@ -195,6 +221,59 @@ public class MailNotificationService
         }
     }
 
+    /// <summary>
+    /// 問題上報通知（回饋十八輪批次G，第四路觸發——事件驅動即時單發）：處理狀態被標成
+    /// 「無法處理」（<see cref="IssueHandlingStatuses.Escalated"/>）時，寄信給全部 admin 群組成員，
+    /// 請他們決定結案或重新指派。與三路批次觸發不同：不去重、不落地 SentKeys（重複上報就
+    /// 重複通知是正確行為——每次上報都是一次明確的人為求助）、不走收件人可見範圍過濾
+    /// （admin 本來就看得到全站）。收件人由 <see cref="AdminMembersResolver"/> 即時解析
+    /// （Role==Admin 判定，群組改名不受影響）。操作者身分由呼叫端傳入——本類別是 Singleton，
+    /// 不能注入 Scoped 的 ICurrentUser（既有慣例，見 GetVisibleHostIds 的說明）。
+    /// 內部 try/catch 到底：通知永遠不能弄掛狀態變更本身。
+    /// </summary>
+    public async Task NotifyEscalationAsync(EscalationNotice notice, CancellationToken ct = default)
+    {
+        try
+        {
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled) return;
+
+            var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
+                .Select(u => u.Email)
+                .Where(e => !string.IsNullOrWhiteSpace(e))
+                .Select(e => e!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (recipients.Count == 0)
+            {
+                Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
+                return;
+            }
+
+            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+            var statsLine = $"負責人回覆無法處理：{notice.IssueLabel}";
+            var subject = ExpandTemplate(settings.MailSubjectTemplate, notice.HostLabel, dateText, "-", "問題上報", statsLine);
+
+            var body = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+            body.AppendLine($"問題「{notice.IssueLabel}」（{notice.HostLabel}）被回覆為「無法處理」，請決定結案或重新指派。");
+            body.AppendLine();
+            body.AppendLine($"  回覆人：{notice.ActorAccount}");
+            if (!string.IsNullOrWhiteSpace(notice.Reason))
+            {
+                body.AppendLine($"  原因：{notice.Reason}");
+            }
+            body.AppendLine();
+            body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
+
+            await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 問題上報通知處理失敗（不影響狀態變更本身）");
+        }
+    }
+
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>
     public async Task SendTestAsync(SmtpConnectionSpec connection, string from, List<string> recipients,
         string subjectTemplate, string bodyIntro, CancellationToken ct = default)
@@ -210,6 +289,39 @@ public class MailNotificationService
     /// 舊的連續失敗計數不該繼續卡著——整份清空，讓改正後的地址從零開始重新累計。</summary>
     public void ResetRecipientFailureStreaks() => _state.Update(s => s.RecipientFailureStreaks.Clear());
 
+    /// <summary>
+    /// 郵件通知由關轉開時呼叫（回饋十八輪批次C，設定頁儲存郵件設定的掛載點）：把
+    /// <see cref="NotifyLookbackDays"/> 窗口內既有的分析紀錄一律標成已通知——語意是
+    /// 「從啟用（含重新啟用）起算」，啟用前累積的歷史紀錄不補寄，第一封信只涵蓋啟用後新產出的。
+    ///
+    /// 呼叫端必須自行判定「由關轉開」才呼叫（見 SystemSettingsService.Update）：這個方法本身
+    /// 不做判斷、無條件執行——若每次儲存設定都呼叫，會把當下真正 pending 的達門檻紀錄也標成
+    /// 已通知，變成真的漏寄。<paramref name="summary"/>／<paramref name="urgent"/> 對應
+    /// SummarySentKeys／UrgentSentKeys，分別由「執行摘要」「高風險即時通知」各自由關轉開的
+    /// 那一路觸發，互不影響——只開一邊時不動另一邊的狀態。
+    ///
+    /// 兩個集合都填「窗口內全部紀錄」的 key，不只是達門檻的那些：這樣之後調整
+    /// <see cref="SystemSettings.MailMinRiskLevel"/> 也不會讓「啟用前、當時未達門檻」的紀錄
+    /// 突然變成 pending 積壓——集合本來就只是「已經看過、不用再通知」的標記，門檻高低與它無關。
+    /// </summary>
+    public void MarkExistingRecordsAsNotified(bool summary, bool urgent)
+    {
+        if (!summary && !urgent) return;
+
+        var to = DateTime.Today.AddDays(-1);
+        var from = to.AddDays(-(NotifyLookbackDays - 1));
+        var keys = _records.ListHostDates(from, to)
+            .Select(h => $"{h.HostId}|{h.Date:yyyy-MM-dd}")
+            .ToList();
+        if (keys.Count == 0) return;
+
+        _state.Update(s =>
+        {
+            if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
+            if (urgent) foreach (var key in keys) s.UrgentSentKeys.Add(key);
+        });
+    }
+
     /// <summary>目前已因連續失敗達門檻而被排除寄送的收件人（回饋十七輪批次B-1）：
     /// 供設定頁與 /api/health/detail 顯示，讓管理者看得到「為什麼這個人一直沒收到信」。</summary>
     public List<string> GetSuspendedRecipients() =>
@@ -223,13 +335,21 @@ public class MailNotificationService
 
     /// <summary>一次通知批次共用的主機／使用者字典：避免逐筆紀錄各自呼叫 Store.Get()——
     /// 每次呼叫都整份 blob 反序列化（見 JsonBlobCollection.Read），高風險 pending 動輒數百筆時
-    /// 這是明顯的 N+1（回饋十六輪體檢發現3／回饋十七輪體檢低3）。一次批次只建一次。</summary>
-    private sealed record MailContext(Dictionary<long, WebHost> HostsById, List<WebUser> AllUsers)
+    /// 這是明顯的 N+1（回饋十六輪體檢發現3／回饋十七輪體檢低3）。一次批次只建一次。
+    /// <paramref name="IssueOwnersByKey"/>（回饋十八輪批次F）：同一個理由——問題負責人比對
+    /// 若逐 record、逐 issue 各自呼叫 _issueOwners.GetAll()，會是比主機字典更嚴重的 N+1
+    /// （2000 台規模下每台每天可能有數個問題）。key 為 (SourceUpper, EventId)。</summary>
+    private sealed record MailContext(
+        Dictionary<long, WebHost> HostsById, List<WebUser> AllUsers,
+        Dictionary<(string SourceUpper, int EventId), List<long>> IssueOwnersByKey)
     {
         public WebHost? Host(long hostId) => HostsById.GetValueOrDefault(hostId);
     }
 
-    private MailContext BuildContext() => new(_hosts.GetAll().ToDictionary(h => h.HostId), _users.GetAll());
+    private MailContext BuildContext() => new(
+        _hosts.GetAll().ToDictionary(h => h.HostId),
+        _users.GetAll(),
+        IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>()));
 
     // ── 內部：收件人解析與可見範圍 ────────────────────────────────────────
 
@@ -251,8 +371,9 @@ public class MailNotificationService
     /// LogForesight.Web.Services.VisibilityService.GetVisibleHostIdsFor 邏輯對稱但獨立實作——
     /// MailNotificationService 是 Singleton，VisibilityService 依賴 Scoped 的 ICurrentUser
     /// 無法被 Singleton 直接消費，見 <see cref="HostVisibilityResolver"/>。</summary>
-    private IReadOnlySet<long> GetVisibleHostIds(long userId) =>
-        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId);
+    private IReadOnlySet<long> GetVisibleHostIds(long userId, int retentionDays) =>
+        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId,
+            _issueOwners, _issueAggregates, retentionDays);
 
     private SmtpConnectionSpec ResolveConnection(SystemSettings settings) => new(
         settings.SmtpServer, settings.SmtpPort, settings.SmtpUseTls, settings.SmtpAccount,
@@ -283,9 +404,16 @@ public class MailNotificationService
 
     /// <summary>
     /// 依可見範圍把「本次涵蓋的全部紀錄」拆給每位收件人（回饋十七輪批次B-4）：
-    /// 全域收件人與（選填）主機負責人套用同一套規則——對應到帳號的人只看見自己可見範圍內的
+    /// 全域收件人與（選填）負責人套用同一套規則——對應到帳號的人只看見自己可見範圍內的
     /// 主機明細，對應不到帳號的人只收統計行。負責人一律限縮到自己負責的主機（本來就是可見範圍
     /// 的子集，見 HostVisibilityResolver.GetOwnedHostIds）。
+    ///
+    /// **問題負責人優先於主機負責人**（回饋十八輪批次F，見 <see cref="RecordOwnerIds"/>）：
+    /// 逐 record 判定——這筆主機日的問題中只要有任一個命中問題負責人規則，通知對象就是
+    /// 命中規則的問題負責人聯集，**不再**通知主機負責人；record 內所有問題都未命中規則的
+    /// 才落回主機負責人。這是 record 粒度的優先取代，不是全站開關，同一批通知裡不同主機日
+    /// 可能各自路由到不同對象。
+    ///
     /// 保序：全域收件人（依設定清單順序）在前、負責人（依 records 出現順序）在後——熔斷依這個
     /// 順序判斷「連續」失敗，順序必須是明確保證的行為而非依賴 Dictionary 迭代順序這種實作細節。
     /// **永久失效收件人排除**（回饋十七輪批次B-1）：連續失敗達門檻的收件人不進清單，不嘗試寄送。
@@ -315,7 +443,7 @@ public class MailNotificationService
                 // 體檢輪抓到：GetVisibleHostIds 若直接寫在 Where 的 predicate 裡，
                 // 每筆 record 都會重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），
                 // 對每位收件人重跑一次完整的 store 全表掃描，正是 B-2 想修掉的同一種 N+1。
-                var visible = GetVisibleHostIds(account.UserId);
+                var visible = GetVisibleHostIds(account.UserId, settings.RetentionDays);
                 detail = records.Where(r => visible.Contains(r.HostId)).ToList();
             }
             views[email] = new RecipientView(detail);
@@ -329,7 +457,7 @@ public class MailNotificationService
                 var host = ctx.Host(record.HostId);
                 if (host == null) continue;
 
-                foreach (var ownerId in host.OwnerUserIds)
+                foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
                     var email = ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId)?.Email;
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
@@ -349,6 +477,24 @@ public class MailNotificationService
         }
 
         return (order, views);
+    }
+
+    /// <summary>
+    /// 這筆主機日通知路由的收件人 ID（回饋十八輪批次F）：問題負責人優先於主機負責人。
+    /// 逐一比對 <paramref name="record"/>.TopIssues 的 (Source,EventId) 是否命中
+    /// <see cref="MailContext.IssueOwnersByKey"/>，命中的規則各自的負責人聯集去重；
+    /// 有任何命中就回傳這個聯集（不落回主機負責人——「優先取代」不是「疊加」）；
+    /// 全都沒命中才回傳 host.OwnerUserIds（既有行為）。
+    /// </summary>
+    private static IReadOnlyList<long> RecordOwnerIds(DailyAnalysisRecord record, WebHost host, MailContext ctx)
+    {
+        var issueOwnerIds = record.TopIssues
+            .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
+                IssueOwnerRule.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
+            .Distinct()
+            .ToList();
+
+        return issueOwnerIds.Count > 0 ? issueOwnerIds : host.OwnerUserIds;
     }
 
     // ── 內部：組信 ────────────────────────────────────────────────────────
@@ -643,7 +789,12 @@ public class MailNotificationService
         // 「昨天發生了什麼」；週報＝近七個完整日（昨天往回 7 天）。
         var to = now.Date.AddDays(-1);
         var from = to.AddDays(-(windowDays - 1));
-        var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to });
+        // RiskLevels 下推（回饋十八輪批次A-3，與 NotifyAfterRunAsync 同一手法）：記憶體 Rank 過濾
+        // 保留（雙保險，語意不變），下推只是收窄 DB 端回傳的列數。
+        var records = _records.Query(new RecordQueryFilter
+        {
+            Hosts = null, From = from, To = to, RiskLevels = RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
+        });
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var qualifying = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
 
@@ -733,3 +884,12 @@ public class MailNotificationService
         }
     }
 }
+
+/// <summary>
+/// 問題上報通知的內容素材（回饋十八輪批次G，見 <see cref="MailNotificationService.NotifyEscalationAsync"/>）。
+/// <paramref name="IssueLabel"/>＝問題顯示文字（「Source EventId」，與案件的反正規化快照同源）；
+/// <paramref name="HostLabel"/>＝主機標籤（單台為主機名，多台為「N 台主機」）；
+/// <paramref name="ActorAccount"/>＝回覆無法處理的人（由呼叫端自 ICurrentUser 取出傳入）；
+/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
+/// </summary>
+public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);

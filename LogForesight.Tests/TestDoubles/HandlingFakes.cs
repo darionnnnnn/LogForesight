@@ -37,16 +37,20 @@ internal class HandlingServiceFacade
         ICurrentUser currentUser,
         IAuditService audit,
         ISystemSettingsStore settings,
-        IUserGroupStore? groups = null)
+        IUserGroupStore? groups = null,
+        IIssueOwnerStore? issueOwners = null,
+        LogForesight.Web.Services.Mail.MailNotificationService? mail = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
-        var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts);
+        var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         _day = new DayHandlingCommandService(
-            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities);
+            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
+            mail, issueOwners);
         _issue = new IssueHandlingCommandService(
-            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities);
+            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
+            mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
     }
@@ -114,12 +118,32 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
 
-    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts）─────────────────
+    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／From／To／RiskLevels）─────
+    // RiskLevels 過濾（回饋十八輪批次A-4）：與 EfAnalysisRecordStore.ApplyPushableFilters
+    // 同語意，避免與正式實作漂移（此類漂移過去曾在多個測試替身各自重演）。
+    // From／To（回饋十八輪體檢輪修正）：原本漏了日期範圍過濾，與姊妹替身 FakeAnalysisRecordQuery
+    // （StoreFakes.cs，同一輪已補過）不一致——同一介面的兩份替身語意要一致，不能各自漏一半。
     List<DailyAnalysisRecord> IAnalysisRecordQuery.Query(RecordQueryFilter filter)
     {
-        if (filter.Hosts == null) return _records.ToList();
-        var matcher = new HostMatcher(filter.Hosts);
-        return _records.Where(matcher.Matches).ToList();
+        IEnumerable<DailyAnalysisRecord> query = _records;
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            query = query.Where(matcher.Matches);
+        }
+        if (filter.From != null)
+        {
+            query = query.Where(r => r.Date.Date >= filter.From.Value.Date);
+        }
+        if (filter.To != null)
+        {
+            query = query.Where(r => r.Date.Date <= filter.To.Value.Date);
+        }
+        if (filter.RiskLevels is { Count: > 0 })
+        {
+            query = query.Where(r => filter.RiskLevels.Contains(r.RiskLevel));
+        }
+        return query.ToList();
     }
 
     DailyAnalysisRecord? IAnalysisRecordQuery.GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
