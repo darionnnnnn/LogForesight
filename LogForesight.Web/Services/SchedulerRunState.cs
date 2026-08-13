@@ -11,7 +11,15 @@ namespace LogForesight.Web.Services;
 /// 使用者在「已開始執行」的 toast 之後就再也看不到失敗訊息，只能翻 log 檔。狀態卡改顯示
 /// 這筆紀錄，讓失敗在畫面上「看得見」。
 /// </summary>
-public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt);
+/// <param name="AnyRecordsWritten">
+/// 這次執行是否有任何主機日成功寫入分析結果（回饋十八輪批次B）：本機出問題會讓整趟
+/// <see cref="Success"/> 判 false（維持批次E既有的嚴格語意，見 AnalysisOrchestrator 的說明），
+/// 但 NetIQ 那一路可能已經對數百上千台主機完成分析並寫入——用這個欄位讓通知閘門
+/// （<see cref="SchedulerHostedService"/>）能區分「整趟失敗、什麼都沒做」與「這一路失敗、
+/// 另一路已有真實產出」，後者不該讓已完成的通知一起靜音。預設 false，供既有呼叫端
+/// （測試／例外路徑「orchestrator 環境層級炸掉、result 不可信」）零改動沿用舊行為。
+/// </param>
+public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt, bool AnyRecordsWritten = false);
 
 public class SchedulerRunState
 {

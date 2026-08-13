@@ -114,12 +114,22 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
 
-    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts）─────────────────
+    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／RiskLevels）─────────
+    // RiskLevels 過濾（回饋十八輪批次A-4）：與 EfAnalysisRecordStore.ApplyPushableFilters
+    // 同語意，避免與正式實作漂移（此類漂移過去曾在多個測試替身各自重演）。
     List<DailyAnalysisRecord> IAnalysisRecordQuery.Query(RecordQueryFilter filter)
     {
-        if (filter.Hosts == null) return _records.ToList();
-        var matcher = new HostMatcher(filter.Hosts);
-        return _records.Where(matcher.Matches).ToList();
+        IEnumerable<DailyAnalysisRecord> query = _records;
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            query = query.Where(matcher.Matches);
+        }
+        if (filter.RiskLevels is { Count: > 0 })
+        {
+            query = query.Where(r => filter.RiskLevels.Contains(r.RiskLevel));
+        }
+        return query.ToList();
     }
 
     DailyAnalysisRecord? IAnalysisRecordQuery.GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)

@@ -16,14 +16,19 @@ public class SystemSettingsServiceTests : IDisposable
     private readonly EfSqliteFixture _fx = new();
     private readonly FakeSmtpMailSender _mailSender = new();
 
+    /// <summary>回饋十八輪批次C 測試所需：讓測試能先塞紀錄，再驗證 Update 後
+    /// MailNotifyStateStore 的預填結果——原本 Create() 內部各自新建，測試碰不到。</summary>
+    private readonly FakeAnalysisRecordQuery _mailRecords = new();
+    private MailNotifyStateStore MailState => new(_fx.Blob("mail_notify_state"));
+
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private SystemSettingsService Create() =>
         new(_store, FakeCurrentUser.WithCapabilities(), new RecordingAuditService(), new FakeUserStore(),
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
-                new FakeAnalysisRecordQuery(), new FakeHandlingStore(),
-                new MailNotifyStateStore(_fx.Blob("mail_notify_state"))));
+                _mailRecords, new FakeHandlingStore(),
+                MailState));
 
     private static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14) => new()
@@ -711,5 +716,71 @@ public class SystemSettingsServiceTests : IDisposable
 
         Assert.False(saved.MailEnabled);
         Assert.Empty(saved.MailRecipients);
+    }
+
+    // ── 回饋十八輪批次C：郵件由關轉開時預填已通知狀態 ──────────────────────────
+
+    private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
+
+    /// <summary>由關轉開（首次啟用）：窗口內既有紀錄一律標成已通知——不補寄啟用前的歷史，
+    /// 避免第一封信是「近 14 天總帳」（見 docs/FEEDBACK-18-PLAN.md 批次C）。</summary>
+    [Fact]
+    public void Update_摘要由關轉開時預填窗口內既有紀錄為已通知()
+    {
+        _mailRecords.Add(new DailyAnalysisRecord { HostId = 1, Host = "host1", Date = Yesterday, RiskLevel = "高" });
+
+        Create().Update(ValidMailRequest());   // MailEnabled+MailOnRunCompleted 由 false→true
+
+        Assert.Contains($"1|{Yesterday:yyyy-MM-dd}", MailState.Get().SummarySentKeys);
+    }
+
+    /// <summary>已經開著時重複儲存（哪怕只是改了無關欄位）不能觸發預填——否則會把當下真正
+    /// pending 的紀錄也標成已讀，變成真的漏寄。</summary>
+    [Fact]
+    public void Update_已啟用時重複儲存不預填新紀錄()
+    {
+        var service = Create();
+        service.Update(ValidMailRequest());   // 第一次：由關轉開，預填當時窗口（此時無紀錄）
+
+        _mailRecords.Add(new DailyAnalysisRecord { HostId = 2, Host = "host2", Date = Yesterday, RiskLevel = "高" });
+        var again = ValidMailRequest();
+        again.MailBodyIntro = "改個無關欄位";
+        service.Update(again);   // 第二次：已經是開著的，不該再次預填
+
+        Assert.DoesNotContain($"2|{Yesterday:yyyy-MM-dd}", MailState.Get().SummarySentKeys);
+    }
+
+    /// <summary>只開緊急通知（不開執行摘要）時，只預填 UrgentSentKeys，不動 SummarySentKeys。</summary>
+    [Fact]
+    public void Update_只開緊急通知時只預填UrgentSentKeys()
+    {
+        _mailRecords.Add(new DailyAnalysisRecord { HostId = 3, Host = "host3", Date = Yesterday, RiskLevel = "高" });
+        var request = ValidMailRequest();
+        request.MailOnRunCompleted = false;
+        request.MailUrgentEnabled = true;
+
+        Create().Update(request);
+
+        var state = MailState.Get();
+        Assert.Contains($"3|{Yesterday:yyyy-MM-dd}", state.UrgentSentKeys);
+        Assert.DoesNotContain($"3|{Yesterday:yyyy-MM-dd}", state.SummarySentKeys);
+    }
+
+    /// <summary>關閉後重新啟用：語意是「從（重新）啟用起算」——關閉期間新增的紀錄，
+    /// 在重新啟用當下一樣視為既有歷史、不補寄（使用者確認的甲案）。</summary>
+    [Fact]
+    public void Update_關閉後重新啟用再次預填當時窗口內容()
+    {
+        var service = Create();
+        service.Update(ValidMailRequest());   // 第一次啟用
+
+        var disabled = ValidMailRequest();
+        disabled.MailEnabled = false;
+        service.Update(disabled);   // 關閉
+
+        _mailRecords.Add(new DailyAnalysisRecord { HostId = 4, Host = "host4", Date = Yesterday, RiskLevel = "高" });
+        service.Update(ValidMailRequest());   // 重新啟用：關閉期間新增的紀錄也被視為既有歷史
+
+        Assert.Contains($"4|{Yesterday:yyyy-MM-dd}", MailState.Get().SummarySentKeys);
     }
 }

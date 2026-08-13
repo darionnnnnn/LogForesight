@@ -47,4 +47,16 @@ public class RiskLevelsTests
     {
         Assert.Equal(expected, RiskLevels.Normalize(text));
     }
+
+    /// <summary>AtOrAbove（回饋十八輪批次A）：供郵件查詢下推使用，未知值 fail-open 回全集。</summary>
+    [Theory]
+    [InlineData("高", new[] { "高" })]
+    [InlineData("中", new[] { "高", "中" })]
+    [InlineData("低", new[] { "高", "中", "低" })]
+    [InlineData("未知", new[] { "高", "中", "低" })]
+    [InlineData("", new[] { "高", "中", "低" })]
+    public void AtOrAbove_回傳達到指定等級以上的集合(string min, string[] expected)
+    {
+        Assert.Equal(expected, RiskLevels.AtOrAbove(min));
+    }
 }

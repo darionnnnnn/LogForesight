@@ -96,8 +96,9 @@ public class WebHost
 
     /// <summary>
     /// 負責人（↔ lf_host_owners，可多人）。
-    /// **與授權是兩件事**：負責人不因此取得檢視權，他該透過部門群組拿到；
-    /// 負責人的用途是處理人指派時的預設值與排序。
+    /// **是第二條授權路徑**（回饋十一輪 §2b）：負責人自動取得所負責主機的檢視權（與部門群組授權
+    /// 是聯集關係，見 VisibilityService.GetVisibleHostIds），並隱含具備處理狀態維護權限
+    /// （見 UserCapabilityResolver.IsHostOwner）。另外的用途是處理人指派時的預設值與排序。
     /// </summary>
     public List<long> OwnerUserIds { get; set; } = new();
 

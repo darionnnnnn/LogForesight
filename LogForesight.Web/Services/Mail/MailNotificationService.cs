@@ -123,10 +123,18 @@ public class MailNotificationService
                 // 分析執行覆寫成失敗結果——「通知永遠不能弄掛分析」這句話必須連設定讀取都算在內。
                 var settings = _settingsStore.Get();
                 if (!settings.MailEnabled) return;
+                if (!settings.MailOnRunCompleted && !settings.MailUrgentEnabled) return;
 
                 var to = DateTime.Today.AddDays(-1);
                 var from = to.AddDays(-(NotifyLookbackDays - 1));
-                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to });
+                // RiskLevels 下推（回饋十八輪批次A）：兩路門檻不同——摘要用 MailMinRiskLevel（可能低到
+                // 中），緊急只要 High。取聯集下推、記憶體判定不變（見 SendRunSummaryAsync／
+                // SendUrgentNotificationsAsync 內仍各自 Rank／== High 一次），高選擇度預篩大幅減少
+                // DB 端反序列化的列數，語意零風險（下推只是收窄查詢範圍，不是最終判定）。
+                var riskFilter = settings.MailOnRunCompleted
+                    ? RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
+                    : new[] { RiskLevels.High };
+                var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to, RiskLevels = riskFilter });
                 var ctx = BuildContext();
 
                 if (settings.MailOnRunCompleted)
@@ -209,6 +217,39 @@ public class MailNotificationService
     /// <summary>設定頁儲存郵件設定時呼叫（回饋十七輪批次B-1）：收件人地址若已改正，
     /// 舊的連續失敗計數不該繼續卡著——整份清空，讓改正後的地址從零開始重新累計。</summary>
     public void ResetRecipientFailureStreaks() => _state.Update(s => s.RecipientFailureStreaks.Clear());
+
+    /// <summary>
+    /// 郵件通知由關轉開時呼叫（回饋十八輪批次C，設定頁儲存郵件設定的掛載點）：把
+    /// <see cref="NotifyLookbackDays"/> 窗口內既有的分析紀錄一律標成已通知——語意是
+    /// 「從啟用（含重新啟用）起算」，啟用前累積的歷史紀錄不補寄，第一封信只涵蓋啟用後新產出的。
+    ///
+    /// 呼叫端必須自行判定「由關轉開」才呼叫（見 SystemSettingsService.Update）：這個方法本身
+    /// 不做判斷、無條件執行——若每次儲存設定都呼叫，會把當下真正 pending 的達門檻紀錄也標成
+    /// 已通知，變成真的漏寄。<paramref name="summary"/>／<paramref name="urgent"/> 對應
+    /// SummarySentKeys／UrgentSentKeys，分別由「執行摘要」「高風險即時通知」各自由關轉開的
+    /// 那一路觸發，互不影響——只開一邊時不動另一邊的狀態。
+    ///
+    /// 兩個集合都填「窗口內全部紀錄」的 key，不只是達門檻的那些：這樣之後調整
+    /// <see cref="SystemSettings.MailMinRiskLevel"/> 也不會讓「啟用前、當時未達門檻」的紀錄
+    /// 突然變成 pending 積壓——集合本來就只是「已經看過、不用再通知」的標記，門檻高低與它無關。
+    /// </summary>
+    public void MarkExistingRecordsAsNotified(bool summary, bool urgent)
+    {
+        if (!summary && !urgent) return;
+
+        var to = DateTime.Today.AddDays(-1);
+        var from = to.AddDays(-(NotifyLookbackDays - 1));
+        var keys = _records.ListHostDates(from, to)
+            .Select(h => $"{h.HostId}|{h.Date:yyyy-MM-dd}")
+            .ToList();
+        if (keys.Count == 0) return;
+
+        _state.Update(s =>
+        {
+            if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
+            if (urgent) foreach (var key in keys) s.UrgentSentKeys.Add(key);
+        });
+    }
 
     /// <summary>目前已因連續失敗達門檻而被排除寄送的收件人（回饋十七輪批次B-1）：
     /// 供設定頁與 /api/health/detail 顯示，讓管理者看得到「為什麼這個人一直沒收到信」。</summary>
@@ -643,7 +684,12 @@ public class MailNotificationService
         // 「昨天發生了什麼」；週報＝近七個完整日（昨天往回 7 天）。
         var to = now.Date.AddDays(-1);
         var from = to.AddDays(-(windowDays - 1));
-        var records = _records.Query(new RecordQueryFilter { Hosts = null, From = from, To = to });
+        // RiskLevels 下推（回饋十八輪批次A-3，與 NotifyAfterRunAsync 同一手法）：記憶體 Rank 過濾
+        // 保留（雙保險，語意不變），下推只是收窄 DB 端回傳的列數。
+        var records = _records.Query(new RecordQueryFilter
+        {
+            Hosts = null, From = from, To = to, RiskLevels = RiskLevels.AtOrAbove(settings.MailMinRiskLevel)
+        });
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var qualifying = records.Where(r => RiskLevels.Rank(r.RiskLevel) >= minRank).ToList();
 

@@ -223,6 +223,78 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
+    // ── RiskLevels 查詢下推（回饋十八輪批次A）─────────────────────────────
+    // 2000 台規模下每次執行後全表查 14 天會反序列化上萬列（見 docs/FEEDBACK-18-PLAN.md 批次A）；
+    // 修法是把風險過濾下推進 RecordQueryFilter，記憶體判定原樣保留（雙保險，語意不變）。
+    // 這裡直接斷言 FakeAnalysisRecordQuery.LastFilter，而不是只看寄信結果——只看寄信結果的話，
+    // 「下推漏了某個等級」這種寫錯不會被任何既有測試抓到（服務端的記憶體過濾會把漏洞蓋住）。
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要與緊急同開時下推門檻以上等級的聯集()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailUrgentEnabled = true; s.MailMinRiskLevel = RiskLevels.Medium; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High, RiskLevels.Medium }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_只開緊急時下推只查高風險()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => s.MailUrgentEnabled = true);
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要開啟時下推門檻以上等級()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailMinRiskLevel = RiskLevels.High; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High }, _records.LastFilter!.RiskLevels);
+    }
+
+    [Fact]
+    public async Task NotifyAfterRunAsync_摘要與緊急皆未開啟時不查詢也不寄送()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail();
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Null(_records.LastFilter);
+        Assert.Empty(_sender.Sent);
+    }
+
+    /// <summary>回饋十八輪批次A-3：每日／週報彙總同樣下推門檻以上等級（與摘要同一手法）。</summary>
+    [Fact]
+    public async Task CheckAndSendDailyWeeklyAsync_下推門檻以上等級()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => { s.MailDailyEnabled = true; s.MailDailyTime = "08:00"; s.MailMinRiskLevel = RiskLevels.Medium; });
+        _records.Add(Record(1, "host1", Yesterday, RiskLevels.High));
+
+        await Create().CheckAndSendDailyWeeklyAsync(new DateTime(2026, 8, 11, 9, 0, 0));
+
+        Assert.NotNull(_records.LastFilter);
+        Assert.Equal(new[] { RiskLevels.High, RiskLevels.Medium }, _records.LastFilter!.RiskLevels);
+    }
+
     /// <summary>回饋十六輪批次A-1：高風險即時通知改按收件人聚合——全域收件人與非全域的
     /// 主機負責人各自收到「一封」信，不再合併成單封多收件人的信。全域收件人本身要能解析到
     /// 一個 ViewAll 帳號才看得到主機明細（回饋十七輪批次B-4）。</summary>

@@ -185,8 +185,16 @@ public class SchedulerHostedService : BackgroundService
                     if (!result.Success)
                         Log.Warn("觸發來源 {Trigger} 的執行未成功：{Message}", effectiveRequest.Trigger, result.FailureMessage);
 
+                    // 有沒有任何主機日真的寫入分析結果（回饋十八輪批次B）：本機與 NetIQ 並行執行後
+                    // （批次十七E），本機出問題會讓 result.Success=false（維持既有嚴格語意，見
+                    // AnalysisOrchestrator 的說明），但 NetIQ 那一路可能已經對數百上千台主機完成
+                    // 分析並寫入——下面的通知閘門要用這個欄位區分「整趟真的什麼都沒做」與
+                    // 「一路失敗、另一路已有真實產出」，見 RunOutcome.AnyRecordsWritten 的說明。
+                    var anyRecordsWritten = result.LocalResults.Count > 0
+                        || (result.NetiqResult?.HostDaysAnalyzed ?? 0) > 0;
+
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
-                        effectiveRequest.Trigger ?? "manual", DateTime.Now);
+                        effectiveRequest.Trigger ?? "manual", DateTime.Now, anyRecordsWritten);
                 }, MutexTimeout);
 
                 if (!acquired)
@@ -208,8 +216,15 @@ public class SchedulerHostedService : BackgroundService
             }
 
             // 郵件通知（回饋十五輪批次D，回饋十六輪批次A-4 移出執行鎖）：執行摘要與高風險
-            // 即時通知同一個掛載點，只在執行成功時判定——失敗的執行沒有新的分析結果可摘要，
-            // 見 MailNotificationService 文件的「即時」定義說明。
+            // 即時通知同一個掛載點。
+            //
+            // **閘門＝成功或有產出**（回饋十八輪批次B，取代原本「只在 Success 時判定」）：本機與
+            // NetIQ 並行執行後，本機出問題會讓整趟 Success=false（維持批次E既有的嚴格語意），
+            // 但 NetIQ 那一路（2000 台等級）可能已經完整跑完並寫入——原本的閘門會讓「本機這台
+            // 環境性小問題」把已完成的全機房高風險通知一起靜音，且因為 UrgentSentKeys 沒被
+            // 標記、隔天成功執行會補寄，症狀是「通知延遲一天」而非永久漏，難以察覺（見
+            // docs/FEEDBACK-18-PLAN.md 批次B）。改成「成功或有任何主機日寫入」就通知，
+            // 執行監控頁的失敗訊號不受影響（outcome.Success 已經定案並交給上面的 EndRun）。
             //
             // **移出 RunExclusiveAsync 區塊、放在 EndRun 之後**（回饋十六輪體檢發現1）：分析結果
             // 已經落地，通知不需要持有執行鎖；原本寄信（可能上百封、每封 30 秒逾時）卡在鎖內，
@@ -217,8 +232,8 @@ public class SchedulerHostedService : BackgroundService
             // 不能沿用 runCts.Token——EndRun 已經把它 Dispose 掉；改用站台停止權杖，
             // 站台正常關閉時通知會被取消（對稱於分析本身經 TryCancel 的優雅停止），
             // 平時 ApplicationStopping 未觸發，等同不取消。內部自行 try/catch 到底，
-            // 不影響本次執行的成敗判定（outcome 已經定案並交給 EndRun）。
-            if (outcome is { Success: true })
+            // 不影響本次執行的成敗判定。
+            if (outcome is { } o && (o.Success || o.AnyRecordsWritten))
             {
                 await _mail.NotifyAfterRunAsync(_lifetime.ApplicationStopping);
             }

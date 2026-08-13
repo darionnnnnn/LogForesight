@@ -36,6 +36,27 @@ public class SchedulerRunStateTests
         Assert.Equal("Operation is not valid due to the current state of the object.", state.LastOutcome.Message);
     }
 
+    /// <summary>AnyRecordsWritten（回饋十八輪批次B）：預設 false，既有呼叫端（不帶這個參數的
+    /// 建構）零改動維持舊行為——通知閘門只在明確算出「有寫入」時才放行。</summary>
+    [Fact]
+    public void RunOutcome_未指定AnyRecordsWritten時預設false()
+    {
+        var outcome = new RunOutcome(true, null, "manual:tester", DateTime.Now);
+
+        Assert.False(outcome.AnyRecordsWritten);
+    }
+
+    /// <summary>整趟失敗（本機環境性問題）但 NetIQ 那一路已有真實產出——閘門要能區分
+    /// 「整趟真的什麼都沒做」與「一路失敗、另一路已完成」，見 SchedulerHostedService 的說明。</summary>
+    [Fact]
+    public void RunOutcome_失敗但有寫入時AnyRecordsWritten為true()
+    {
+        var outcome = new RunOutcome(false, "本機分析失敗", "schedule", DateTime.Now, AnyRecordsWritten: true);
+
+        Assert.False(outcome.Success);
+        Assert.True(outcome.AnyRecordsWritten);
+    }
+
     [Fact]
     public void EndRun傳null_保留前一筆LastOutcome()
     {
