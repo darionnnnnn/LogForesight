@@ -136,8 +136,32 @@ function openModal(rule) {
         checked: rule?.ownerUserIds?.includes(u.userId) ?? false
     })), '尚無使用者，請先於「使用者」頁建立。');
 
+    renderSelectedSummary();
     modal.show();
 }
+
+/** 目前選到／輸入的問題摘要——編輯時鍵已鎖定，新增時 picker／手動輸入互斥，
+ * 使用者存檔前應該看得到「我現在到底要指派哪個問題」，不必回頭比對上方欄位。 */
+function renderSelectedSummary() {
+    let sourceName, eventId;
+    if (editingRule) {
+        sourceName = editingRule.sourceName;
+        eventId = editingRule.eventId;
+    } else if (!manualField.classList.contains('d-none')) {
+        sourceName = document.getElementById('issue-owner-source').value.trim();
+        eventId = document.getElementById('issue-owner-event-id').value;
+    } else {
+        const [source, id] = (picker.value || '').split('|');
+        sourceName = source;
+        eventId = id;
+    }
+
+    selectedSummary.textContent = sourceName && eventId ? `已選擇：${sourceName} (${eventId})` : '';
+}
+
+picker.addEventListener('change', renderSelectedSummary);
+document.getElementById('issue-owner-source').addEventListener('input', renderSelectedSummary);
+document.getElementById('issue-owner-event-id').addEventListener('input', renderSelectedSummary);
 
 function matchesIssue(option, rule) {
     return option.eventId === rule.eventId && option.sourceName.toUpperCase() === rule.sourceName.toUpperCase();
@@ -169,6 +193,7 @@ function setManualMode(manual) {
     if (manual) {
         document.getElementById('issue-owner-source').focus();
     }
+    renderSelectedSummary();
 }
 
 form.addEventListener('submit', async event => {

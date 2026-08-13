@@ -310,6 +310,22 @@ public class VisibilityServiceTests
         Assert.Contains(xxHost.HostId, visible);   // 問題負責人來的
     }
 
+    /// <summary>已停用（撤場）的主機不因問題負責人身分被看見——同主機負責人的既有語意
+    /// （回饋十八輪體檢輪修正：GetIssueOwnedHostIds 原本漏過濾 Active，撤場主機仍會現身）。</summary>
+    [Fact]
+    public void 問題負責人_已停用主機不視為可見()
+    {
+        var (user, _, xxHost) = SetupTwoDepartments();
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        xxHost.Active = false;
+        _hosts.Upsert(xxHost);
+        _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
+
+        var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
+
+        Assert.DoesNotContain(xxHost.HostId, visible);
+    }
+
     /// <summary>不是任何問題的負責人時，不查聚合（沒有規則就不必問）——驗證早退路徑。</summary>
     [Fact]
     public void 問題負責人_沒有規則時不觸發聚合查詢()

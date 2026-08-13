@@ -386,3 +386,14 @@ API：`POST /api/admin/setup/skip/{stepId}`（含取消跳過 toggle）、`POST 
 - 本機路徑失敗降級（回饋二方案B）：維持批次十七E 的硬失敗語意，只改通知閘門。
 - 郵件「重新啟用補寄積壓」（回饋三乙案）：定案從啟用起算。
 - `/api/health/detail` 大改：僅維持現狀，就緒度另立 `/api/admin/setup/status`。
+
+## 體檢輪修正（8+1 角度平行審查，2 處 CONFIRMED、其餘 PLAUSIBLE 全數修正）
+
+批次 A~H 全部完成後，對 `dev..feature/feedback-18` 整條 diff 跑一輪多角度審查，抓到：
+
+- **CONFIRMED**：「依問題」視角把 escalated 誤算進未處理（`RecordListQueryService.SearchByIssue`／`BuildIssueGroup` 漏把 `Escalated` 併入處理中分支）。
+- **CONFIRMED**：單筆／批次／跨主機三個回覆入口都會在「已上報再存一次」時重寄一封上報信（`IssueHandlingCommandService.NotifyEscalationIfNeeded` 原本沒有 `previousStatus` 防呆）——三處呼叫點皆已補上「只在轉入時通知」的判定，並各自補了轉入寄一次／已上報再存不重寄的迴歸測試（`HandlingServiceTests.cs`）。
+- **PLAUSIBLE 並修正**：`SearchByIssue` 的 `usersById` N+1（每筆問題重查 `_users.Get`）→ 改成迴圈外建一次字典；`HostVisibilityResolver.GetIssueOwnedHostIds` 漏過濾 `Active`，撤場主機仍算進問題負責人可見範圍→ 補過濾＋`VisibilityServiceTests` 迴歸測試；`MailNotificationService.GetVisibleHostIds(userId)` 只聯集群組授權與主機負責人兩條路徑，全域收件人若只是問題負責人會看不到自己負責主機的明細→ 補 `IIssueAggregateQuery` 依賴並補迴歸測試；`RecordDetailQueryService` 的問題狀態文字 switch 忘了 escalated 分支；`issue-owners.js` 的 `renderSelectedSummary` 是死程式碼（宣告了沒接事件）→ 補接；`SetupReadinessService` 一次請求內 `_hosts.GetAll()` 重複兩次→ 收斂成一次；`IssueOwnerRule` 的 `(Source, EventId)` 比對邏輯在 4 處各自重複實作→ 收斂成 `IssueOwnerRule.Matches`／`KeyOf`／`IndexByKey` 三個靜態輔助方法；`setup.js` 的本地 `statusBadge` 遮蔽了 `core/format.js` 匯出的同名函式。
+- **測試替身漂移**：`HandlingFakes.FakeRecordRepository` 的 `IAnalysisRecordQuery.Query` 明顯實作忘了套用 `filter.From`/`filter.To`（同一 fake 內的 `FakeAnalysisRecordQuery` 有套用，兩者語意不一致）→ 已補上。
+
+修正後全量測試 1951 通過（5 個 ScaleBenchmarks 略過），0 失敗。

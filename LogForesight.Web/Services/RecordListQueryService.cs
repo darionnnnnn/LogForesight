@@ -285,11 +285,17 @@ public class RecordListQueryService
 
         // 問題負責人 badge（回饋十八輪批次F）：一次批次載入一次，避免逐群組各自查詢
         // （同 allHandlings／allCases 的 N+1 教訓）。key 為 (SourceUpper, EventId)。
-        var issueOwnersByKey = (_issueOwners?.GetAll() ?? new List<IssueOwnerRule>())
-            .ToDictionary(r => (r.SourceName.ToUpperInvariant(), r.EventId), r => r.OwnerUserIds);
+        var issueOwnersByKey = IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>());
+
+        // 使用者字典（回饋十八輪體檢輪修正）：BuildIssueGroup 原本（Handlers 欄位，改版前既有）與
+        // 新增的 IssueOwnerNames 欄位都各自對每個負責人／處理人 id 呼叫 _users.Get(id)——
+        // 這支方法不分頁、對每個相異問題群組都會呼叫一次，1000 種問題、每種數個負責人／處理人，
+        // 就是全站最慢那條路徑（本方法上面的註解）曾經踩過的同一種 N+1（2000 台環境下單次查詢
+        // 超過 45 分鐘未返回）。一次批次只查一次使用者清單，兩個欄位共用同一份字典。
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
 
         var groups = RecordQueryHelpers.GroupIssuesBySignature(records)
-            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays, issueOwnersByKey))
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays, issueOwnersByKey, usersById))
             .ToList();
 
         // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
@@ -376,7 +382,8 @@ public class RecordListQueryService
         IReadOnlyDictionary<string, List<IssueHandling>> handlingsByHost,
         IReadOnlyDictionary<string, List<IssueCase>> casesByHost,
         int periodDays,
-        IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey)
+        IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey,
+        IReadOnlyDictionary<long, WebUser> usersById)
     {
         var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = g.Min(x => x.Record.Date);
@@ -425,7 +432,7 @@ public class RecordListQueryService
                 string.Equals(h.IssueKey, key, StringComparison.Ordinal));
 
             if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
-            else if (handling != null && handling.Status == IssueHandlingStatuses.InProgress) processing++;
+            else if (handling != null && handling.Status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Escalated) processing++;
             else if (handling != null && IssueHandlingStatuses.IsObservationActive(handling.Status, handling.DueDate, DateTime.Today)) processing++;
             else if (handling != null && IssueHandlingStatuses.IsObservationExpired(handling.Status, handling.DueDate, DateTime.Today)) unhandled++;
             else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
@@ -433,7 +440,7 @@ public class RecordListQueryService
         }
 
         var handlers = handlerIds
-            .Select(id => new { Id = id, User = _users.Get(id) })
+            .Select(id => new { Id = id, User = usersById.GetValueOrDefault(id) })
             .Where(x => !string.IsNullOrEmpty(x.User?.DisplayName))
             .OrderBy(x => x.User!.DisplayName, StringComparer.OrdinalIgnoreCase)
             .Select(x => new IssueGroupHandlerDto { HandlerId = x.Id, DisplayName = x.User!.DisplayName, Account = x.User.Account })
@@ -464,8 +471,8 @@ public class RecordListQueryService
                 : processing > 0 ? HandlingStatuses.InProgress
                 : HandlingStatuses.Resolved,
             Handlers = handlers,
-            IssueOwnerNames = issueOwnersByKey.TryGetValue((g.Key.Source.ToUpperInvariant(), g.Key.EventId), out var ownerIds)
-                ? ownerIds.Select(id => _users.Get(id))
+            IssueOwnerNames = issueOwnersByKey.TryGetValue(IssueOwnerRule.KeyOf(g.Key.Source, g.Key.EventId), out var ownerIds)
+                ? ownerIds.Select(id => usersById.GetValueOrDefault(id))
                     .Where(u => u is { Active: true })
                     .Select(u => NameFormat.WithAccount(u!.DisplayName, u.Account))
                     .ToList()

@@ -597,6 +597,10 @@ public class RecordDetailQueryService
         IssueHandlingStatuses.KnownNoise => "已知雜訊",
         IssueHandlingStatuses.InProgress => "處理中",
         IssueHandlingStatuses.Observing => "觀察中",
+        // 無法處理（回饋十八輪批次G，體檢輪修正）：與 HandlingTextHelpers.IssueStatusText 用字一致——
+        // 這裡是獨立的一份（Open 刻意映射成空字串而非「未處理」，不與共用版合併），
+        // 新增狀態時兩處都要記得加，見 HandlingTextHelpers 的對照。
+        IssueHandlingStatuses.Escalated => "無法處理（待管理員決定）",
         IssueHandlingStatuses.Open => string.Empty,
         _ => string.Empty
     };

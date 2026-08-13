@@ -72,6 +72,12 @@ public class MailNotificationService
     /// 可為 null——測試組裝不注入時，路由靜默落回既有的「只通知主機負責人」行為。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
 
+    /// <summary>問題負責人授權路徑用（回饋十八輪體檢輪修正）：全域收件人若是問題負責人，
+    /// 摘要信裡該看得到自己負責問題的主機明細——原本 GetVisibleHostIds(userId) 只聯集了
+    /// 群組授權與主機負責人，漏了 VisibilityService.GetVisibleHostIdsFor 已經有的第三條路徑，
+    /// 兩邊本該同步卻各自維護一份而漂移。可為 null，同 _issueOwners 的既有慣例。</summary>
+    private readonly IIssueAggregateQuery? _issueAggregates;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -82,7 +88,8 @@ public class MailNotificationService
         IAnalysisRecordQuery records,
         IRecordHandlingStore handlings,
         MailNotifyStateStore state,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        IIssueAggregateQuery? issueAggregates = null)
     {
         _settingsStore = settingsStore;
         _sender = sender;
@@ -92,6 +99,7 @@ public class MailNotificationService
         _groupAccess = groupAccess;
         _records = records;
         _handlings = handlings;
+        _issueAggregates = issueAggregates;
         _state = state;
         _issueOwners = issueOwners;
     }
@@ -341,8 +349,7 @@ public class MailNotificationService
     private MailContext BuildContext() => new(
         _hosts.GetAll().ToDictionary(h => h.HostId),
         _users.GetAll(),
-        (_issueOwners?.GetAll() ?? new List<IssueOwnerRule>())
-            .ToDictionary(r => (r.SourceName.ToUpperInvariant(), r.EventId), r => r.OwnerUserIds));
+        IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>()));
 
     // ── 內部：收件人解析與可見範圍 ────────────────────────────────────────
 
@@ -364,8 +371,9 @@ public class MailNotificationService
     /// LogForesight.Web.Services.VisibilityService.GetVisibleHostIdsFor 邏輯對稱但獨立實作——
     /// MailNotificationService 是 Singleton，VisibilityService 依賴 Scoped 的 ICurrentUser
     /// 無法被 Singleton 直接消費，見 <see cref="HostVisibilityResolver"/>。</summary>
-    private IReadOnlySet<long> GetVisibleHostIds(long userId) =>
-        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId);
+    private IReadOnlySet<long> GetVisibleHostIds(long userId, int retentionDays) =>
+        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _groupAccess, userId,
+            _issueOwners, _issueAggregates, retentionDays);
 
     private SmtpConnectionSpec ResolveConnection(SystemSettings settings) => new(
         settings.SmtpServer, settings.SmtpPort, settings.SmtpUseTls, settings.SmtpAccount,
@@ -435,7 +443,7 @@ public class MailNotificationService
                 // 體檢輪抓到：GetVisibleHostIds 若直接寫在 Where 的 predicate 裡，
                 // 每筆 record 都會重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），
                 // 對每位收件人重跑一次完整的 store 全表掃描，正是 B-2 想修掉的同一種 N+1。
-                var visible = GetVisibleHostIds(account.UserId);
+                var visible = GetVisibleHostIds(account.UserId, settings.RetentionDays);
                 detail = records.Where(r => visible.Contains(r.HostId)).ToList();
             }
             views[email] = new RecipientView(detail);
@@ -482,7 +490,7 @@ public class MailNotificationService
     {
         var issueOwnerIds = record.TopIssues
             .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
-                (issue.Source.ToUpperInvariant(), issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
+                IssueOwnerRule.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
             .Distinct()
             .ToList();
 

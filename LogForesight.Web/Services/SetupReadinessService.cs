@@ -49,6 +49,10 @@ public class SetupReadinessService
     {
         var state = _state.Get();
         var settings = _settings.Get();
+        // 一次批次載入一次（回饋十八輪體檢輪修正）：HasPollableNetiqHosts／HasAnyAuthorization
+        // 原本各自呼叫一次 _hosts.GetAll()，這支 API 呼叫頻率低（僅精靈頁），但同一次請求內
+        // 兩次全表讀取仍是明顯可避免的重複——見 SearchByIssue 等處已經在遵守的同一個原則。
+        var allHosts = _hosts.GetAll();
 
         var steps = new List<SetupStepDto>
         {
@@ -73,12 +77,12 @@ public class SetupReadinessService
                 skipped: state.SkippedSteps),
 
             BuildStep("netiq", "NetIQ Sentinel 與主機", canSkip: true, targetUrl: "/admin/netiq",
-                done: HasPollableNetiqHosts(),
+                done: HasPollableNetiqHosts(allHosts),
                 doneDetail: "已有啟用中的 Sentinel 與可輪巡的 NetIQ 主機。", notDoneDetail: "尚未設定 Sentinel 或沒有可輪巡的 NetIQ 主機。",
                 skipped: state.SkippedSteps),
 
             BuildStep("groups", "群組與授權", canSkip: true, targetUrl: "/admin/groups",
-                done: HasAnyAuthorization(),
+                done: HasAnyAuthorization(allHosts),
                 doneDetail: "已有部門群組授權或主機負責人設定。", notDoneDetail: "尚未設定任何部門群組授權或主機負責人——一般使用者將看不到任何主機。",
                 skipped: state.SkippedSteps),
 
@@ -126,17 +130,17 @@ public class SetupReadinessService
         TargetUrl = targetUrl
     };
 
-    private bool HasPollableNetiqHosts()
+    private bool HasPollableNetiqHosts(List<WebHost> allHosts)
     {
         var sentinels = _sentinels.GetAll();
         if (!sentinels.Any(s => s.Active)) return false;
 
         var sentinelsById = sentinels.ToDictionary(s => s.SentinelId);
-        return NetiqHostList.Pollable(_hosts.GetAll(), id => sentinelsById.TryGetValue(id, out var s) && s.Active).Count > 0;
+        return NetiqHostList.Pollable(allHosts, id => sentinelsById.TryGetValue(id, out var s) && s.Active).Count > 0;
     }
 
     /// <summary>有部門群組授權**或**任一啟用中主機有負責人——兩條路徑（群組授權／主機負責人）
     /// 任一成立就算「有人看得到東西」，不強制兩者都設。</summary>
-    private bool HasAnyAuthorization() =>
-        _groupAccess.GetAll().Count > 0 || _hosts.GetAll().Any(h => h.Active && h.OwnerUserIds.Count > 0);
+    private bool HasAnyAuthorization(List<WebHost> allHosts) =>
+        _groupAccess.GetAll().Count > 0 || allHosts.Any(h => h.Active && h.OwnerUserIds.Count > 0);
 }

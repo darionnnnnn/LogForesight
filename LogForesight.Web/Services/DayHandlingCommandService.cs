@@ -335,7 +335,7 @@ public class DayHandlingCommandService
     {
         if (_issueOwners != null && record != null)
         {
-            var issueOwnerId = DefaultIssueOwnerId(record);
+            var issueOwnerId = DefaultIssueOwnerId(_issueOwners, record);
             if (issueOwnerId.HasValue) return issueOwnerId;
         }
 
@@ -347,17 +347,18 @@ public class DayHandlingCommandService
 
     /// <summary>
     /// 當日問題負責人恰一人時回傳其 UserId（回饋十八輪批次F）：把當天全部問題各自命中的
-    /// 問題負責人規則（(Source,EventId) 比對，不分大小寫）聯集去重——多筆問題各只有一個負責人
-    /// 但恰好是同一人時仍算「恰一人」，不同問題各自的負責人不同時則不猜（同主機負責人的
-    /// 「多人不猜」精神，只是這裡的「人」是跨問題聯集後的結果）。
+    /// 問題負責人規則（<see cref="IssueOwnerRule.Matches"/>，(Source,EventId) 不分大小寫比對）
+    /// 聯集去重——多筆問題各只有一個負責人但恰好是同一人時仍算「恰一人」，不同問題各自的
+    /// 負責人不同時則不猜（同主機負責人的「多人不猜」精神，只是這裡的「人」是跨問題聯集後的結果）。
+    /// <paramref name="issueOwners"/> 由呼叫端傳入（非空由呼叫端保證）：不在方法內部用
+    /// null-forgiving 讀取欄位，讓這個方法本身可以安全地被獨立呼叫，不依賴呼叫端先做過的檢查。
     /// </summary>
-    private long? DefaultIssueOwnerId(DailyAnalysisRecord record)
+    private long? DefaultIssueOwnerId(IIssueOwnerStore issueOwners, DailyAnalysisRecord record)
     {
-        var rules = _issueOwners!.GetAll();
+        var rules = issueOwners.GetAll();
         var ownerIds = record.TopIssues
             .SelectMany(issue => rules
-                .Where(r => r.EventId == issue.EventId &&
-                            string.Equals(r.SourceName, issue.Source, StringComparison.OrdinalIgnoreCase))
+                .Where(r => IssueOwnerRule.Matches(r, issue.Source, issue.EventId))
                 .SelectMany(r => r.OwnerUserIds))
             .Distinct()
             .ToList();

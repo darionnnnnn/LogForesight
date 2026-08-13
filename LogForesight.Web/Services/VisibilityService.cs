@@ -189,7 +189,7 @@ public class VisibilityService : IVisibilityService
         {
             var retentionDays = _settings.Get().RetentionDays;
             visible.UnionWith(HostVisibilityResolver.GetIssueOwnedHostIds(
-                _issueOwners, _users, _issueAggregates, user.UserId, retentionDays));
+                _hosts, _issueOwners, _users, _issueAggregates, user.UserId, retentionDays));
         }
 
         _cached = visible;

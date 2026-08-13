@@ -38,7 +38,8 @@ internal class HandlingServiceFacade
         IAuditService audit,
         ISystemSettingsStore settings,
         IUserGroupStore? groups = null,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        LogForesight.Web.Services.Mail.MailNotificationService? mail = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
@@ -46,9 +47,10 @@ internal class HandlingServiceFacade
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         _day = new DayHandlingCommandService(
             store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            issueOwners: issueOwners);
+            mail, issueOwners);
         _issue = new IssueHandlingCommandService(
-            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities);
+            store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
+            mail);
         _history = new HandlingHistoryQueryService(
             store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
     }
@@ -116,9 +118,11 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
 
-    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／RiskLevels）─────────
+    // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／From／To／RiskLevels）─────
     // RiskLevels 過濾（回饋十八輪批次A-4）：與 EfAnalysisRecordStore.ApplyPushableFilters
     // 同語意，避免與正式實作漂移（此類漂移過去曾在多個測試替身各自重演）。
+    // From／To（回饋十八輪體檢輪修正）：原本漏了日期範圍過濾，與姊妹替身 FakeAnalysisRecordQuery
+    // （StoreFakes.cs，同一輪已補過）不一致——同一介面的兩份替身語意要一致，不能各自漏一半。
     List<DailyAnalysisRecord> IAnalysisRecordQuery.Query(RecordQueryFilter filter)
     {
         IEnumerable<DailyAnalysisRecord> query = _records;
@@ -126,6 +130,14 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
         {
             var matcher = new HostMatcher(filter.Hosts);
             query = query.Where(matcher.Matches);
+        }
+        if (filter.From != null)
+        {
+            query = query.Where(r => r.Date.Date >= filter.From.Value.Date);
+        }
+        if (filter.To != null)
+        {
+            query = query.Where(r => r.Date.Date <= filter.To.Value.Date);
         }
         if (filter.RiskLevels is { Count: > 0 })
         {

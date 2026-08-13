@@ -3,6 +3,7 @@ using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
+using LogForesight.Web.Services.Mail;
 using Xunit;
 using static LogForesight.Tests.TestData;
 
@@ -15,7 +16,7 @@ namespace LogForesight.Tests;
 /// 「A 主機預設管理者是 OOO，但管理者覺得這個問題緊急先給 XXX 處理，
 /// 這時管理者不變，但問題的處理者會被指派到 XXX 身上」。
 /// </summary>
-public class HandlingServiceTests
+public class HandlingServiceTests : IDisposable
 {
     private readonly FakeUserStore _users = new();
     private readonly FakeHostStore _hosts = new();
@@ -28,6 +29,10 @@ public class HandlingServiceTests
     private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly FakeRecordRepository _repository;
     private readonly IssueCaseCoordinator _caseCoordinator;
+    private readonly FakeSmtpMailSender _mailSender = new();
+    private readonly EfSqliteFixture _fx = new();
+
+    public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
     private readonly WebUser _owner;
     private readonly WebUser _other;
@@ -71,6 +76,39 @@ public class HandlingServiceTests
             settings: _settings,
             groups: groups,
             issueOwners: _issueOwners);
+    }
+
+    /// <summary>接上真的 <see cref="MailNotificationService"/>（回饋十八輪體檢輪）：專供上報通知
+    /// 防重寄的迴歸測試——一般測試走上面沒有 mail 的 Create，通知行為靜默跳過即可。</summary>
+    private MailNotificationService CreateMail()
+    {
+        var groups = new FakeUserGroupStore();
+        var admins = groups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "admin1", Email = "admin1@test.local", Active = true, GroupIds = new List<long> { admins.GroupId } });
+        _settings.Update(s => s.MailEnabled = true);
+        return new MailNotificationService(
+            _settings, _mailSender, _hosts, _users, groups, new FakeGroupAccessStore(),
+            new FakeAnalysisRecordQuery(), _handlings, new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
+    }
+
+    private HandlingServiceFacade CreateWithMail(MailNotificationService mail, params Capability[] capabilities)
+    {
+        var currentUser = FakeCurrentUser.ForUser(_other.UserId, capabilities);
+        return new HandlingServiceFacade(
+            store: _handlings,
+            issueStore: _issueHandlings,
+            cases: _cases,
+            caseCoordinator: _caseCoordinator,
+            noiseMarks: _noiseMarks,
+            repository: _repository,
+            hosts: _hosts,
+            users: _users,
+            visibility: new AlwaysVisibleService(_hosts),
+            currentUser: currentUser,
+            audit: _audit,
+            settings: _settings,
+            issueOwners: _issueOwners,
+            mail: mail);
     }
 
     /// <summary>
@@ -1700,5 +1738,93 @@ public class HandlingServiceTests
 
         Assert.Equal(HandlingStatuses.Escalated, result.Status);
         Assert.Contains(HandlingStatuses.Escalated, HandlingStatuses.Unresolved);
+    }
+
+    // ── 上報通知防重寄（回饋十八輪體檢輪修正：previousStatus 已是 escalated 時不重寄）────
+
+    /// <summary>單筆轉入無法處理寄一次；已是無法處理時改備註重存不再寄第二次。</summary>
+    [Fact]
+    public void SetIssueStatus_轉入無法處理通知一次_已上報再存不重寄()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Handle);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "換硬體超出我的權限"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明，廠商已聯絡"
+        });
+        Assert.Single(_mailSender.Sent);
+    }
+
+    /// <summary>批次轉入無法處理彙整寄一封；整批已上報過的問題再送同一批不重寄。</summary>
+    [Fact]
+    public void SetIssueStatusBatch_批次轉入無法處理通知一次_已上報再送不重寄()
+    {
+        var day = Today.AddDays(-2);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Handle);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "需要外部廠商"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明"
+        });
+        Assert.Single(_mailSender.Sent);
+    }
+
+    /// <summary>跨主機一次回覆轉入無法處理寄一封；同一批案件已是無法處理時再回覆不重寄。</summary>
+    [Fact]
+    public void BulkSetIssueStatusByHandler_轉入無法處理通知一次_已上報再回覆不重寄()
+    {
+        var day = Today.AddDays(-3);
+        var a = Issue("disk", 153);
+        var second = _hosts.Upsert(new WebHost { HostName = "SRV-B" });
+        _repository.AddRecord(_host.HostName, day, a);
+        _repository.AddRecord(second.HostName, day, a);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Assign, Capability.Handle);
+        service.Assign(_host.HostId, day, _other.UserId);
+        service.Assign(second.HostId, day, _other.UserId);
+
+        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153,
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "需要外部廠商"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        service.BulkSetIssueStatusByHandler(new BulkIssueStatusRequest
+        {
+            Source = "disk", EventId = 153,
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "追加說明"
+        });
+        Assert.Single(_mailSender.Sent);
     }
 }

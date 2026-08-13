@@ -8,6 +8,7 @@
 
 import { api } from '../core/api.js';
 import { toast, withBusy, guardLoad } from '../core/ui.js';
+import { statusBadge } from '../core/format.js';
 
 const stepsContainer = document.getElementById('setup-steps');
 let status = null;
@@ -45,10 +46,12 @@ function renderProgress() {
     bar.classList.toggle('bg-success', settled === total && total > 0);
 }
 
-const STATUS_DOT = {
-    done: '#16a34a',
-    skipped: '#94a3b8',
-    pending: '#e2e8f0'
+// 三態共用一份定義（回饋十八輪體檢輪修正）：狀態字典 dot 顏色與 lf-badge 變體都從同一個
+// stepState() 結果查表，兩者不會各自判斷而彼此漂移。
+const STEP_STATE_META = {
+    done: { dot: '#16a34a', badgeVariant: 'success', badgeText: '已完成' },
+    skipped: { dot: '#94a3b8', badgeVariant: 'secondary', badgeText: '已跳過' },
+    pending: { dot: '#e2e8f0', badgeVariant: 'warning', badgeText: '待設定' }
 };
 
 function renderSteps() {
@@ -66,12 +69,14 @@ function renderSteps() {
         const top = document.createElement('div');
         top.className = 'd-flex align-items-start gap-3';
 
+        const meta = STEP_STATE_META[stepState(step)];
+
         const dot = document.createElement('span');
         dot.className = 'rounded-circle flex-shrink-0 mt-1';
         dot.style.width = '14px';
         dot.style.height = '14px';
         dot.style.display = 'inline-block';
-        dot.style.background = STATUS_DOT[stepState(step)];
+        dot.style.background = meta.dot;
 
         const body = document.createElement('div');
         body.className = 'flex-grow-1';
@@ -84,7 +89,7 @@ function renderSteps() {
         title.textContent = `${index + 1}. ${step.title}`;
         titleRow.appendChild(title);
 
-        titleRow.appendChild(statusBadge(step));
+        titleRow.appendChild(statusBadge(meta.badgeText, meta.badgeVariant));
         body.appendChild(titleRow);
 
         const detail = document.createElement('div');
@@ -126,21 +131,6 @@ function stepState(step) {
     if (step.done) return 'done';
     if (step.skipped) return 'skipped';
     return 'pending';
-}
-
-function statusBadge(step) {
-    const badge = document.createElement('span');
-    if (step.done) {
-        badge.className = 'lf-badge lf-badge--success';
-        badge.textContent = '已完成';
-    } else if (step.skipped) {
-        badge.className = 'lf-badge lf-badge--secondary';
-        badge.textContent = '已跳過';
-    } else {
-        badge.className = 'lf-badge lf-badge--warning';
-        badge.textContent = '待設定';
-    }
-    return badge;
 }
 
 async function toggleSkip(step, button) {

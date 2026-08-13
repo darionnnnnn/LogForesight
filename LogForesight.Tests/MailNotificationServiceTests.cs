@@ -26,6 +26,7 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeAnalysisRecordQuery _records = new();
     private readonly FakeHandlingStore _handlings = new();
     private readonly FakeIssueOwnerStore _issueOwners = new();
+    private readonly FakeIssueAggregateQuery _issueAggregates = new();
     private readonly EfSqliteFixture _fx = new();
 
     /// <summary>分析永遠只產出到昨天——所有測試紀錄以此為基準日，而非 DateTime.Today</summary>
@@ -35,7 +36,7 @@ public class MailNotificationServiceTests : IDisposable
 
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates);
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
         string headline = "", string? riskBasis = null, params LogIssueSignature[] issues) => new()
@@ -392,6 +393,27 @@ public class MailNotificationServiceTests : IDisposable
 
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local" && s.Message.Body.Contains("host1") && !s.Message.Body.Contains("host2"));
         Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local" && s.Message.Body.Contains("host2") && !s.Message.Body.Contains("host1"));
+    }
+
+    /// <summary>回饋十八輪體檢輪修正：全域收件人若解析到的帳號本身是問題負責人，即使他不在任何
+    /// 授權群組、也不是主機負責人，仍要在自己收到的那份摘要信裡看到該主機——原本
+    /// GetVisibleHostIds(userId) 只聯集了群組授權與主機負責人兩條路徑，漏了問題負責人這第三條，
+    /// 該收件人的明細會被過濾成空、只看得到統計行。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_全域收件人是問題負責人時看得到該主機明細()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailRecipients = new List<string> { "issueowner@test.local" }; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal("issueowner@test.local", sent.Message.To[0]);
+        Assert.Contains("host1", sent.Message.Body);
     }
 
     /// <summary>全域收件人若能解析到帳號且可見範圍涵蓋全部主機，收到的信涵蓋「本次全部」

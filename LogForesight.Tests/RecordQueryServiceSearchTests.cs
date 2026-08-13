@@ -530,6 +530,28 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("DOMAIN\\h", groupHandler.Account);
     }
 
+    /// <summary>問題層級的 escalated（無法處理，回饋十八輪批次G）在依問題視角要算「處理中」，
+    /// 不是已處理也不是未處理——體檢輪修正：原本的三態分類鏈沒有涵蓋這個新狀態，
+    /// 落到嚴重度後備分支被誤算成已處理或未處理。</summary>
+    [Fact]
+    public void SearchByIssue_問題層級Escalated算處理中()
+    {
+        var host = AddHost("HOST-A");
+        var issue = DiskIssue();
+        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Escalated, Note = "需要外部廠商", UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Contains("1 台處理中", group.HandlingSummary);
+        Assert.Equal(HandlingStatuses.InProgress, group.GroupStatus);
+    }
+
     [Fact]
     public void SearchByIssue_未指派過濾_只留處理人清單為空的問題()
     {

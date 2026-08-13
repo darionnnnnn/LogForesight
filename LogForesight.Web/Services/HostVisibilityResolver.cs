@@ -61,7 +61,8 @@ internal static class HostVisibilityResolver
     /// 天數一致——保留多久的紀錄，就讓負責人看多久的可見範圍，兩者天然同步）。
     /// </summary>
     public static IReadOnlySet<long> GetIssueOwnedHostIds(
-        IIssueOwnerStore issueOwners, IUserStore users, IIssueAggregateQuery issueAggregates, long userId, int retentionDays)
+        IHostStore hosts, IIssueOwnerStore issueOwners, IUserStore users, IIssueAggregateQuery issueAggregates,
+        long userId, int retentionDays)
     {
         var user = users.Get(userId);
         if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
@@ -74,7 +75,14 @@ internal static class HostVisibilityResolver
 
         var to = DateTime.Today;
         var from = to.AddDays(-(Math.Max(retentionDays, 1) - 1));
-        return issueAggregates.HostIdsFor(owned, from, to);
+        var hostIds = issueAggregates.HostIdsFor(owned, from, to);
+        if (hostIds.Count == 0) return hostIds;
+
+        // 停用主機排除（回饋十八輪體檢輪修正）：與 GetOwnedHostIds／GetGroupVisibleHostIds 同一條規則
+        // ——這裡原本漏過濾，停用主機只要保留期內出現過負責的問題就會被算進可見範圍，
+        // 與本方法自己的文件註解（「保留期內出現過其負責問題的『存活』主機」）矛盾。
+        var activeHostIds = hosts.GetAll().Where(h => h.Active).Select(h => h.HostId).ToHashSet();
+        return hostIds.Where(activeHostIds.Contains).ToHashSet();
     }
 
     /// <summary>群組授權 ∪ 主機負責人 ∪ 問題負責人（docs/archive/FEEDBACK-11-PLAN.md §2b，
@@ -87,7 +95,7 @@ internal static class HostVisibilityResolver
         visible.UnionWith(GetOwnedHostIds(hosts, users, userId));
         if (issueOwners != null && issueAggregates != null)
         {
-            visible.UnionWith(GetIssueOwnedHostIds(issueOwners, users, issueAggregates, userId, retentionDays));
+            visible.UnionWith(GetIssueOwnedHostIds(hosts, issueOwners, users, issueAggregates, userId, retentionDays));
         }
         return visible;
     }

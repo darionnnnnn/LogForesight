@@ -52,6 +52,5 @@ public class IssueOwnerStore : JsonBlobCollection<IssueOwnerRule>, IIssueOwnerSt
     public void Delete(string source, int eventId) =>
         Mutate(items => items.RemoveAll(r => Matches(r, source, eventId)));
 
-    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
-        r.EventId == eventId && string.Equals(r.SourceName, source, StringComparison.OrdinalIgnoreCase);
+    private static bool Matches(IssueOwnerRule r, string source, int eventId) => IssueOwnerRule.Matches(r, source, eventId);
 }

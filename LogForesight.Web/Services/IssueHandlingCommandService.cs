@@ -76,10 +76,15 @@ public class IssueHandlingCommandService
     /// 狀態轉為「無法處理」時的上報通知（回饋十八輪批次G）：fire-and-forget——
     /// MailNotificationService.NotifyEscalationAsync 內部 try/catch 到底、永不拋出，
     /// 狀態變更（已落盤、已稽核）不等待也不受寄送成敗影響。
+    ///
+    /// **只在「轉入」escalated 時通知**（回饋十八輪體檢輪修正，補齊
+    /// <see cref="DayHandlingCommandService.Update"/> 已有的同一條規則）：<paramref name="previousStatus"/>
+    /// 已經是 escalated 時不重寄——單筆改備註、批次／跨主機回覆重複命中同一批已上報的問題，
+    /// 原本沒有這個防呆會讓 admin 每次都收到一封「重複」的上報信（改個字都會轟炸）。
     /// </summary>
-    private void NotifyEscalationIfNeeded(string status, string issueLabel, string hostLabel, string? reason)
+    private void NotifyEscalationIfNeeded(string status, string? previousStatus, string issueLabel, string hostLabel, string? reason)
     {
-        if (status != IssueHandlingStatuses.Escalated || _mail == null) return;
+        if (status != IssueHandlingStatuses.Escalated || previousStatus == IssueHandlingStatuses.Escalated || _mail == null) return;
         _ = _mail.NotifyEscalationAsync(new EscalationNotice(issueLabel, hostLabel, _currentUser.Account, reason));
     }
 
@@ -99,6 +104,10 @@ public class IssueHandlingCommandService
         RequireIssueAllowed(hostId, request.IssueKey);
         RequireNotHandledByOthers(host.HostName, request.IssueKey);
 
+        // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）
+        var previousStatus = _issueStore.GetForDay(host.HostName, date)
+            .FirstOrDefault(h => string.Equals(h.IssueKey, request.IssueKey, StringComparison.Ordinal))?.Status;
+
         var caseSync = ApplyIssueStatus(host, date, request.IssueKey, HandlingTextHelpers.IssueLabel(issue), request.Status, request.Note, request.DueDate, request.ForgetNoise, clearing, DateTime.Now);
 
         _audit.Record(
@@ -111,7 +120,7 @@ public class IssueHandlingCommandService
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
             detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
 
-        NotifyEscalationIfNeeded(request.Status, HandlingTextHelpers.IssueLabel(issue), host.HostName, request.Note);
+        NotifyEscalationIfNeeded(request.Status, previousStatus, HandlingTextHelpers.IssueLabel(issue), host.HostName, request.Note);
 
         // 回傳更新後的當日進度，讓前端就地更新「N/M 已處理」與日層級推導狀態
         var progress = _progress.ComputeProgress(host, date, record);
@@ -158,6 +167,13 @@ public class IssueHandlingCommandService
             RequireNotHandledByOthers(host.HostName, issueKey);
         }
 
+        // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
+        // 批次勾選裡只要有任一問題是「新」轉入 escalated（先前不是），這批就算有上報動作。
+        var previousStatusByKey = _issueStore.GetForDay(host.HostName, date)
+            .ToDictionary(h => h.IssueKey, h => h.Status, StringComparer.Ordinal);
+        var anyNewlyEscalated = appliedKeys.Any(k =>
+            !previousStatusByKey.TryGetValue(k, out var prev) || prev != IssueHandlingStatuses.Escalated);
+
         var occurredAt = DateTime.Now;
         var totalSyncedDays = 0;
         foreach (var issueKey in appliedKeys)
@@ -176,10 +192,16 @@ public class IssueHandlingCommandService
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
             detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
 
-        // 批次勾 N 個問題標無法處理：一封信彙整（不逐問題各寄一封轟炸 admin）
-        NotifyEscalationIfNeeded(request.Status,
-            appliedKeys.Count == 1 ? labelByKey[appliedKeys[0]] : $"{appliedKeys.Count} 個問題",
-            host.HostName, request.Note);
+        // 批次勾 N 個問題標無法處理：一封信彙整（不逐問題各寄一封轟炸 admin）。
+        // 「是否為新轉入」的判定粒度是整批（anyNewlyEscalated），不是單一問題的前後狀態比對，
+        // 所以不透過 NotifyEscalationIfNeeded 的 previousStatus 參數（那是給單筆場景用的），
+        // 直接呼叫 MailNotificationService，語意保持獨立不互相借用參數表達不同的判斷維度。
+        if (request.Status == IssueHandlingStatuses.Escalated && anyNewlyEscalated && _mail != null)
+        {
+            _ = _mail.NotifyEscalationAsync(new EscalationNotice(
+                appliedKeys.Count == 1 ? labelByKey[appliedKeys[0]] : $"{appliedKeys.Count} 個問題",
+                host.HostName, _currentUser.Account, request.Note));
+        }
 
         var progress = _progress.ComputeProgress(host, date, record);
 
@@ -573,6 +595,11 @@ public class IssueHandlingCommandService
         if (targets.Count == 0)
             throw DomainException.Validation("找不到指派給您、且仍在進行中的這個問題。");
 
+        // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
+        // targets 是案件物件本身，SyncStatus 之後 openCase.Status 會被就地改寫成新值，
+        // 必須在迴圈開始前先讀一次舊狀態，跟批次回覆同一套「整批任一新轉入」判斷。
+        var anyNewlyEscalated = targets.Any(c => c.Status != IssueHandlingStatuses.Escalated);
+
         // 整批共用同一個時間戳：前端的處理歷程 timeline 靠「同操作者＋同時間戳」分組，
         // 逐案取 DateTime.Now 的微小差異會讓一次操作在畫面上散成好幾筆
         var occurredAt = DateTime.Now;
@@ -602,9 +629,15 @@ public class IssueHandlingCommandService
             targetId: $"{request.Source}/{request.EventId}",
             detail: new { request.Source, request.EventId, request.Status, request.Note, request.DueDate, HostNames = hostNames });
 
-        // 跨主機一次回覆無法處理：一封信彙整全部主機（這正是「負責人回覆無法處理」的主要入口）
-        NotifyEscalationIfNeeded(request.Status, $"{request.Source} {request.EventId}",
-            targets.Count == 1 ? targets[0].HostName : $"{targets.Count} 台主機", request.Note);
+        // 跨主機一次回覆無法處理：一封信彙整全部主機（這正是「負責人回覆無法處理」的主要入口）。
+        // 同批次回覆的理由（見上方 anyNewlyEscalated 的說明），不透過 NotifyEscalationIfNeeded 的
+        // previousStatus 參數。
+        if (request.Status == IssueHandlingStatuses.Escalated && anyNewlyEscalated && _mail != null)
+        {
+            _ = _mail.NotifyEscalationAsync(new EscalationNotice(
+                $"{request.Source} {request.EventId}",
+                targets.Count == 1 ? targets[0].HostName : $"{targets.Count} 台主機", _currentUser.Account, request.Note));
+        }
 
         return new BulkIssueStatusResultDto
         {
@@ -827,7 +860,10 @@ public class IssueHandlingCommandService
                     continue;
                 }
 
-                if (current is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing)
+                // escalated（回饋十八輪體檢輪修正）：正在等 admin 決定的問題被批次結案蓋掉，
+                // 比一般處理中被覆蓋更該讓管理者看見警告——這正是無法處理狀態存在的理由
+                // （有人明確上報了，不該被批次結案悄悄蓋過去）
+                if (current is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Observing or IssueHandlingStatuses.Escalated)
                     row.OverwriteDayCount++;
 
                 days.Add((date, issueKey, HandlingTextHelpers.IssueLabel(issue)));

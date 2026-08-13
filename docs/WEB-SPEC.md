@@ -338,7 +338,17 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `GetOwnedHostIdsFor`／`GetGroupVisibleHostIdsFor` 兩個投影分別回答「為什麼看得到這台」——
 兩條路徑可同時成立，因此是兩顆徽章而不是一個列舉值。
 
-**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：前兩條路徑之外、刻意更窄的第三條路徑。
+**問題負責人路徑**（2026-08-13，回饋十八輪批次F）：第 3 層再擴充一條——`IssueOwnerRule`
+（鍵＝(Source,EventId)，跨主機生效）指派的負責人，自動取得保留期內出現過該問題之主機的
+檢視權（`HostVisibilityResolver.GetIssueOwnedHostIds`，內部呼叫
+`IIssueAggregateQuery.HostIdsFor` 反查 `lf_top_issues`），與主機負責人**同級**（整台可見，
+非問題層級的窄授與），同樣聯集進 `GetVisibleHostIds`／`GetVisibleHostIdsFor`，同樣隱含
+`Handle`＋`ConfirmPermission`（不含 `ViewAll`，`UserCapabilityResolver.IsIssueOwner`）。
+**問題負責人優先於主機負責人**（不是疊加）：`DayHandlingCommandService.DefaultHandlerId`
+自動帶入處理人、`MailNotificationService.ResolvePerRecipient` 的郵件路由，兩處都先查問題
+負責人恰一人是否命中，命中即不再看主機負責人。管理頁見 §9（`/admin/issue-owners`）。
+
+**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：前面路徑之外、刻意更窄的一條。
 被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
 `IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
 等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
@@ -946,7 +956,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      | `HostName` | 現行主機名稱（同 handling 鍵語意） |
      | `IssueKey` | 問題簽章鍵（`LogName|Source|EventId|EntryType`） |
      | `IssueLabel` | 「Source EventId」反正規化（同 `RecordHandlingLog.IssueLabel`，避免規則改名/清理影響追責） |
-     | `Status` | 值域同 `IssueHandlingStatuses`（open／in_progress／結案四種） |
+     | `Status` | 值域同 `IssueHandlingStatuses`（open／in_progress／escalated／結案四種，回饋十八輪批次G 新增 escalated） |
      | `HandlerId` | 案件處理人——同一問題跨日只歸一人 |
      | `Note` | 最近一次說明快照（完整敘事仍在處理歷程） |
      | `DueDate` | 僅 `in_progress` 有意義 |
