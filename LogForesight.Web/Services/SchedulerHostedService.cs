@@ -144,12 +144,16 @@ public class SchedulerHostedService : BackgroundService
         // AI 診斷傾印一律以目前的排程設定為準（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：
         // 排程輪詢與手動觸發共用同一個開關，這裡統一覆寫呼叫端傳入的值，
         // 不然「排程開了傾印、手動觸發卻沒開」的不一致會讓人以為傾印沒生效。
+        // IncludeLocal 同一套作法（回饋十八輪批次D）：本機分析停用開關與排程設定同一生命週期，
+        // 統一在這裡覆寫，不由呼叫端各自決定。
+        var scheduleOptions = _scheduleOptionsStore.Get();
         var effectiveRequest = new RunRequest
         {
             Scope = request.Scope,
             HostIds = request.HostIds,
             BackfillOverride = request.BackfillOverride,
-            DebugDump = _scheduleOptionsStore.Get().DebugDump,
+            DebugDump = scheduleOptions.DebugDump,
+            IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
             Trigger = request.Trigger
         };
 

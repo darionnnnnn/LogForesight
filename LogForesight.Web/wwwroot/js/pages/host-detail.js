@@ -23,6 +23,10 @@ const LEGEND = [
     { key: 'none', label: '無分析紀錄', color: 'var(--lf-timeline-none)' }
 ];
 
+// 分析本機主機開關（回饋十八輪批次D）：本機主機（Source==='local'）在停用時，「指定主機更新」
+// 按鈕點下去只會打到後端的 400（ScheduleController 的 host 分支已擋），不如直接不顯示。
+let localAnalysisEnabled = true;
+
 async function load() {
     renderLoading(document.getElementById('host-timeline'), 2);
     renderLoading(document.getElementById('host-issues'), 3);
@@ -32,6 +36,11 @@ async function load() {
         getCurrentUser()
     ]);
     canMaintainHost = hasCapability(user, 'Maintain');
+
+    if (canMaintainHost && detail.source === 'local') {
+        const options = await api.get('/api/admin/schedule/options', { silent: true }).catch(() => null);
+        localAnalysisEnabled = options?.localAnalysisEnabled ?? true;
+    }
 
     renderHeader(detail);
     renderTimeline(detail);
@@ -56,8 +65,9 @@ function renderHeader(detail) {
     titleRow.appendChild(title);
 
     // 指定主機更新（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5）：就近原則，看著這台主機覺得資料舊了當場按，
-    // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）
-    if (canMaintainHost) {
+    // 只有 Maintain 能觸發（與排程作業頁的立即執行同一組能力）。本機主機在「分析本機主機」
+    // 停用時不顯示這顆按鈕（回饋十八輪批次D）：按下去只會打到後端 400，不如不顯示。
+    if (canMaintainHost && (detail.source !== 'local' || localAnalysisEnabled)) {
         const updateButton = document.createElement('button');
         updateButton.type = 'button';
         updateButton.className = 'btn btn-sm btn-outline-primary lf-no-print';

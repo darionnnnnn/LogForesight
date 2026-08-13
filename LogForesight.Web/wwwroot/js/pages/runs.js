@@ -485,6 +485,8 @@ let canMaintainSchedule = false;
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
 // 只是不顯示——避免隱藏期間存檔把設定意外歸零。
 let aiAvailable = false;
+// 分析本機主機開關（回饋十八輪批次D）：影響「立即執行」modal 的「全部主機」描述文字。
+let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
 
 async function loadSchedule() {
@@ -510,6 +512,14 @@ function applyScheduleOptions(options) {
     document.getElementById('schedule-enabled').checked = options.enabled;
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
     document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || !aiAvailable);
+    document.getElementById('schedule-local-analysis').checked = options.localAnalysisEnabled;
+    localAnalysisEnabled = options.localAnalysisEnabled;
+    const scopeAllLabel = document.getElementById('run-now-scope-all-label');
+    if (scopeAllLabel) {
+        scopeAllLabel.textContent = localAnalysisEnabled
+            ? '全部主機（等同排程觸發的完整執行）'
+            : '全部主機（不含本機——本機分析已停用，等同排程觸發的完整執行）';
+    }
     renderScheduleWindows();
 
     document.getElementById('schedule-updated').textContent = options.updatedAt
@@ -591,7 +601,8 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
         const saved = await api.put('/api/admin/schedule/options', {
             enabled: document.getElementById('schedule-enabled').checked,
             windows: scheduleWindows,
-            debugDump: document.getElementById('schedule-debug-dump').checked
+            debugDump: document.getElementById('schedule-debug-dump').checked,
+            localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked
         });
         applyScheduleOptions(saved);
         toast('已儲存排程設定', 'success');

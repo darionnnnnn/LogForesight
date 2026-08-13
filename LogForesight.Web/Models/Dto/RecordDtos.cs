@@ -471,6 +471,10 @@ public class HostDetailDto
     /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
+    /// <summary>'local'（本機直讀）| 'netiq'（自 Sentinel 取得），↔ WebHost.Source（回饋十八輪批次D）：
+    /// 前端據此判斷「指定主機更新」按鈕在本機分析停用時是否要隱藏。</summary>
+    public string Source { get; set; } = "local";
+
     public string? NetiqServer { get; set; }
     public DateTime? LastReportAt { get; set; }
     public List<string> GroupNames { get; set; } = new();

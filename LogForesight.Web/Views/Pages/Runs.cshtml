@@ -23,6 +23,17 @@
                         </button>
                     </div>
 
+                    @* 分析本機主機（回饋十八輪批次D）：Web 主機自身不一定是重點監控目標，
+                       停用後排程／立即執行只跑 NetIQ 機房分析。 *@
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="schedule-local-analysis" data-maintain-only />
+                        <label class="form-check-label" for="schedule-local-analysis">分析本機主機</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="關閉後排程／立即執行只跑 NetIQ 機房分析，本機（Web 主機自身）不再逐日分析。若同一台機器日後也以 IP 登錄為 NetIQ 主機，仍會照常從 Sentinel 取數，不受此開關影響。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                    </div>
+
                     <label class="form-label small fw-semibold">執行窗口</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
@@ -150,7 +161,9 @@
                         <label class="form-label">範圍</label>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-all" value="all" checked />
-                            <label class="form-check-label" for="run-now-scope-all">全部主機（等同排程觸發的完整執行）</label>
+                            <label class="form-check-label" for="run-now-scope-all">
+                                <span id="run-now-scope-all-label">全部主機（等同排程觸發的完整執行）</span>
+                            </label>
                         </div>
                         <div class="form-check">
                             <input class="form-check-input" type="radio" name="run-now-scope" id="run-now-scope-segment" value="segment" />
@@ -163,7 +176,7 @@
                     <div class="mb-3">
                         <label for="run-now-backfill" class="form-label">回補天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="僅影響 NetIQ 主機的回補窗口，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。本機主機每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
+                                data-bs-content="僅影響 NetIQ 主機的回補窗口，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                         </button>
                         <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="14" style="max-width: 120px;" />

@@ -30,6 +30,18 @@ public class ScheduleOptions
     /// </summary>
     public bool DebugDump { get; set; } = false;
 
+    /// <summary>
+    /// 是否分析本機主機（回饋十八輪批次D）：預設 true（零行為變化）。停用後排程／手動觸發的
+    /// 完整執行只跑 NetIQ 機房分析，本機主機不再逐日分析（<see cref="RunRequest.IncludeLocal"/>）。
+    /// 停用不等於「這台機器從此不被監控」——若同一台機器日後也以 IP 登錄為 NetIQ 主機，仍會照常
+    /// 從 Sentinel 取數，兩者鍵不同（本機用 MachineName、NetIQ 用 IP），互不影響。適用情境：
+    /// Web 主機本身不是重點監控目標，或改由 NetIQ 側取數（見 docs/FEEDBACK-18-PLAN.md 批次D）。
+    /// 本機的 AI 呼叫與 NetIQ 共用同一個序列化佇列（AIService 的 SemaphoreSlim），停用本機分析
+    /// 也讓 NetIQ 的 AI 佇列不用再跟本機搶序——這是本輪選擇「加開關」而非「本機也走 NetIQ 那套
+    /// AI 佇列統一」的原因（成本遠大於收益的評估見 FEEDBACK-12-PLAN.md §3.9，本輪重新核對依然成立）。
+    /// </summary>
+    public bool LocalAnalysisEnabled { get; set; } = true;
+
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 }

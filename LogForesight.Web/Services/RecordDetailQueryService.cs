@@ -307,6 +307,7 @@ public class RecordDetailQueryService
             RoleDesc = host.RoleDesc,
             IpAddress = host.IpAddress,
             Os = host.Os,
+            Source = host.Source,
             NetiqServer = host.NetiqServer,
             LastReportAt = host.LastReportAt,
             GroupNames = NameFormat.ResolveNames(host.GroupIds, groups, g => g.GroupName),

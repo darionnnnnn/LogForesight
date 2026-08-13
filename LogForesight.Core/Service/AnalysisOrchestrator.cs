@@ -29,6 +29,15 @@ public class RunRequest
     public bool DebugDump { get; init; }
 
     /// <summary>
+    /// 是否分析本機主機（回饋十八輪批次D，↔ ScheduleOptions.LocalAnalysisEnabled）：預設 true。
+    /// 停用時本機逐日分析整段跳過，只跑 NetIQ 機房分析——與 <see cref="RunScope.NetiqHosts"/>
+    /// 語意上的差異是：Scope 決定「這次執行的範圍設計」（例如指定主機更新只碰 NetIQ 一台），
+    /// 這個欄位是「本機分析這個功能本身開不開」的獨立總開關，兩者交集才是最終要不要跑本機
+    /// （見下方 RunAsync 對 localTask 的判斷）。
+    /// </summary>
+    public bool IncludeLocal { get; init; } = true;
+
+    /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
@@ -487,10 +496,24 @@ public class AnalysisOrchestrator
             // CaseCoordinator／RiskyEventStore／RunRecorder 仍是上面那個共用實例——見上方說明。
             var localCtx = runCtx with { Console = new PrefixedRunConsole(console, "[本機] ") };
 
-            // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料
-            var localTask = request.Scope != RunScope.NetiqHosts
-                ? RunLocalAnalysisAsync(localCtx, analysisService, historyService, currentHost, currentHostId, yesterday)
-                : Task.CompletedTask;
+            // 2~4. 本機逐日分析：NetiqHosts 範圍（Phase 3 手動觸發指定 NetIQ 主機）不動本機資料；
+            // IncludeLocal=false（回饋十八輪批次D，排程設定「分析本機主機」關閉）整段跳過，
+            // 只印一行讓執行詳情看得出是設定行為、不是漏跑（不是「未執行」）。
+            Task localTask;
+            if (request.Scope == RunScope.NetiqHosts)
+            {
+                localTask = Task.CompletedTask;
+            }
+            else if (!request.IncludeLocal)
+            {
+                console.WriteLine("\n本機分析已停用（排程設定「分析本機主機」關閉），本次僅執行 NetIQ 機房分析。");
+                runRecorder.Milestone("本機分析已停用（排程設定），本次僅執行 NetIQ 機房分析");
+                localTask = Task.CompletedTask;
+            }
+            else
+            {
+                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, currentHost, currentHostId, yesterday);
+            }
 
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
             //    NetIQ 主機逐一向 Sentinel 取事件、映射後餵進同一套 LogAnalysisService。LocalOnly
