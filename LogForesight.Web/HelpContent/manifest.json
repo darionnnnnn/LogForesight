@@ -1,5 +1,8 @@
 {
   "chapters": [
+    { "id": "setup-wizard", "title": "首次啟動精靈", "type": "link", "href": "/setup", "icon": "activity",
+      "keywords": ["啟動精靈", "初始設定", "就緒度", "設定精靈"],
+      "related": ["overview", "settings"] },
     { "id": "overview", "title": "系統總覽與登入", "file": "01-overview.md", "icon": "info-circle",
       "keywords": ["登入", "帳號", "密碼", "AD驗證", "救援帳號", "serverAdmin", "角色", "架構", "五層偵測"],
       "related": ["dashboard", "permissions"] },

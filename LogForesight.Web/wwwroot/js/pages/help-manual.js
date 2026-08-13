@@ -56,10 +56,41 @@ function selectChapter(id) {
     }
 
     document.getElementById('help-chapter-title').textContent = chapter.title;
-    renderAiText(document.getElementById('help-chapter-content'), chapter.content);
+    renderChapterContent(chapter);
     renderRelated(chapter);
 
     document.getElementById('help-chapter-content').scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+/**
+ * type=link 章節（回饋十八輪批次H，目前只有啟動精靈）沒有 Markdown 內容可渲染——
+ * markdown-lite 刻意不支援連結，這裡另外組一張導引卡。type=markdown（既有章節）
+ * 走原本的 renderAiText。
+ */
+function renderChapterContent(chapter) {
+    const container = document.getElementById('help-chapter-content');
+    container.replaceChildren();
+
+    if (chapter.type !== 'link') {
+        renderAiText(container, chapter.content);
+        return;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'lf-card p-3';
+
+    const desc = document.createElement('p');
+    desc.className = 'mb-3';
+    desc.textContent = '透過就緒度檢查一步步完成初始設定：儲存體、管理員帳號、郵件通知、AI 服務、NetIQ、群組授權、排程，每一步都可以跳過稍後再回來。';
+    card.appendChild(desc);
+
+    const link = document.createElement('a');
+    link.className = 'btn btn-primary';
+    link.href = chapter.href;
+    link.textContent = '開啟啟動精靈';
+    card.appendChild(link);
+
+    container.appendChild(card);
 }
 
 function renderRelated(chapter) {

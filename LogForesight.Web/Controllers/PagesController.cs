@@ -123,6 +123,12 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult HelpManual() => View();
 
+    /// <summary>首次啟動精靈（回饋十八輪批次H）：不進側欄——入口在教學文件清單第一項，
+    /// 隱藏後仍可直接輸入網址到達。就緒度七步混合制（完成自動判定、跳過手動）。</summary>
+    [HttpGet("/setup")]
+    [Permission(Capability.Maintain)]
+    public IActionResult Setup() => View();
+
     [HttpGet("/access-denied")]
     public IActionResult AccessDenied() => View();
 

@@ -13,6 +13,13 @@ public class HelpChapterDto
 
     /// <summary>章節目錄圖示名稱（回饋十七輪批次G-2），對應 /img/icons.svg 的 symbol id</summary>
     public string Icon { get; set; } = "";
+
+    /// <summary>"markdown"（預設，既有章節）｜"link"（回饋十八輪批次H，導向站內其他頁面的
+    /// 導引卡，例如首次啟動精靈）。markdown-lite 刻意不支援連結，type=link 的章節前端另外渲染。</summary>
+    public string Type { get; set; } = "markdown";
+
+    /// <summary>type=link 時的目的地路徑；markdown 章節恆為 null。</summary>
+    public string? Href { get; set; }
 }
 
 public class HelpManualDto
