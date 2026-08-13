@@ -14,6 +14,7 @@ internal static class HandlingTextHelpers
         HandlingStatuses.WontFix => "不處理",
         HandlingStatuses.FalsePositive => "誤報",
         HandlingStatuses.KnownNoise => "已知雜訊",
+        HandlingStatuses.Escalated => "無法處理（待管理員決定）",
         _ => status
     };
 
@@ -27,6 +28,7 @@ internal static class HandlingTextHelpers
         IssueHandlingStatuses.InProgress => "處理中",
         IssueHandlingStatuses.Observing => "觀察中",
         IssueHandlingStatuses.Open => "未處理",
+        IssueHandlingStatuses.Escalated => "無法處理（待管理員決定）",
         _ => status
     };
 

@@ -10,14 +10,17 @@
 import { api } from '../core/api.js';
 import { toast, withBusy, showDetailModal } from '../core/ui.js';
 
-/** 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses） */
+/** 值域與風險日詳情的問題層級狀態一致（core 的 IssueHandlingStatuses）。
+ * escalated（回饋十八輪批次G）：「我處理不了，需要上報」——非結案，後端會即時通知
+ * admin 群組決定結案或重新指派 */
 const STATUS_OPTIONS = [
     { value: 'in_progress', label: '處理中' },
     { value: 'observing', label: '觀察中' },
     { value: 'resolved', label: '已處理' },
     { value: 'wont_fix', label: '不處理' },
     { value: 'false_positive', label: '誤報' },
-    { value: 'known_noise', label: '已知雜訊' }
+    { value: 'known_noise', label: '已知雜訊' },
+    { value: 'escalated', label: '無法處理（上報管理員）' }
 ];
 
 /**
@@ -84,6 +87,11 @@ export function openIssueStatusReplyModal(group, onApplied) {
         // 「不處理」必須說明理由——與風險日詳情的規則一致（那裡也是不處理→說明必填）
         if (statusSelect.value === 'wont_fix' && !noteInput.value.trim()) {
             toast('標記為「不處理」時請填寫說明', 'warning');
+            return;
+        }
+        // 「無法處理」必填原因（回饋十八輪批次G）：管理員收到上報通知要據此決定結案或改派
+        if (statusSelect.value === 'escalated' && !noteInput.value.trim()) {
+            toast('標記為「無法處理」時請填寫原因，管理員將據此決定結案或重新指派', 'warning');
             return;
         }
         if (statusSelect.value === 'observing' && !dueInput.value) {

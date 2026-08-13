@@ -1536,4 +1536,68 @@ public class HandlingServiceTests
         Assert.Equal(ApiErrorCodes.ValidationFailed, ex.Code);
         Assert.Equal(_owner.UserId, _cases.GetOpen(_host.HostName, IssueSignatureKey.For(a))!.HandlerId);
     }
+
+    // ── 無法處理（escalated，回饋十八輪批次G）────────────────────────────────
+
+    /// <summary>問題層級標無法處理必填原因——admin 要據此決定結案或改派，後端擋不只信前端</summary>
+    [Fact]
+    public void 標記無法處理_未填原因時拒絕()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Handle).SetIssueStatus(_host.HostId, day,
+            new SetIssueStatusRequest
+            {
+                IssueKey = IssueSignatureKey.For(a),
+                Status = IssueHandlingStatuses.Escalated
+            }));
+
+        Assert.Contains("原因", ex.Message);
+    }
+
+    /// <summary>無法處理是非結案：問題視同處理中（有人在管），不進未處理、也不因此結案</summary>
+    [Fact]
+    public void 標記無法處理_視同處理中不結案()
+    {
+        var day = Today.AddDays(-1);
+        var a = Issue("disk", 153);
+        var record = _repository.AddRecord(_host.HostName, day, a);
+        var service = Create(Capability.Handle);
+
+        var result = service.SetIssueStatus(_host.HostId, day, new SetIssueStatusRequest
+        {
+            IssueKey = IssueSignatureKey.For(a),
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "換硬體超出我的權限"
+        });
+
+        Assert.Equal(IssueHandlingStatuses.Escalated, result.Status);
+        Assert.Equal(HandlingStatuses.InProgress, result.DayStatus);
+
+        var todo = service.GetTodo(new[] { record });
+        Assert.Equal(0, todo.OpenCount);
+        Assert.Equal(1, todo.InProgressCount);
+    }
+
+    /// <summary>日層級也擋：Update 標無法處理沒填原因時拒絕（與問題層級同一條規則）</summary>
+    [Fact]
+    public void 日層級標記無法處理_未填原因時拒絕()
+    {
+        var ex = Assert.Throws<DomainException>(() => Create(Capability.Handle).Update(_host.HostId, Today,
+            new UpdateHandlingRequest { Status = HandlingStatuses.Escalated }));
+
+        Assert.Contains("原因", ex.Message);
+    }
+
+    [Fact]
+    public void 日層級標記無法處理_有原因時成功且列入未結案()
+    {
+        var result = Create(Capability.Handle).Update(_host.HostId, Today,
+            new UpdateHandlingRequest { Status = HandlingStatuses.Escalated, Note = "需要外部廠商" });
+
+        Assert.Equal(HandlingStatuses.Escalated, result.Status);
+        Assert.Contains(HandlingStatuses.Escalated, HandlingStatuses.Unresolved);
+    }
 }

@@ -18,14 +18,17 @@ function operatorLabel(actorDisplayName, actorAccount) {
     return actorAccount ? formatUserName(actorDisplayName, actorAccount) : '（系統）';
 }
 
-// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域
+// 狀態直選（取代下拉）：日層級與問題層級批次套用共用同一組值域。
+// escalated（回饋十八輪批次G）：處理人回覆「我處理不了，需要上報」——非結案，
+// 轉入時後端會即時通知 admin 群組決定結案或重新指派
 const STATUS_CHIPS = [
     { value: 'open', text: '未處理' },
     { value: 'in_progress', text: '處理中' },
     { value: 'resolved', text: '已處理' },
     { value: 'wont_fix', text: '不處理（評估後決定）' },
     { value: 'false_positive', text: '誤報' },
-    { value: 'known_noise', text: '已知雜訊' }
+    { value: 'known_noise', text: '已知雜訊' },
+    { value: 'escalated', text: '無法處理（上報管理員）' }
 ];
 
 // 「觀察中」只在問題層級（批次模式）提供（docs/archive/FEEDBACK-8-PLAN.md #4）：日層級 HandlingStatuses
@@ -40,12 +43,14 @@ const NOTE_FIELD_BY_STATUS = {
     resolved: { label: '處理說明（選填）', required: false },
     wont_fix: { label: '不處理原因（必填）', required: true },
     false_positive: { label: '備註（選填）', required: false },
-    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false }
+    known_noise: { label: '備註（選填，供日後回頭確認判斷依據）', required: false },
+    escalated: { label: '無法處理原因（必填，管理員將據此決定結案或改派）', required: true }
 };
 
 const STATUS_VARIANTS = {
     open: 'danger', in_progress: 'primary', observing: 'info', resolved: 'success',
-    wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary'
+    wont_fix: 'secondary', false_positive: 'secondary', known_noise: 'secondary',
+    escalated: 'warning'
 };
 
 /** 目前面板的狀態：initHandlingPanel 之後才有值，refreshSelection 靠這份重繪 */

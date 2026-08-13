@@ -2,6 +2,7 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Web.Services;
 
@@ -34,6 +35,10 @@ public class DayHandlingCommandService
     private readonly HandlingProgressCalculator _progress;
     private readonly UserCapabilityResolver _capabilities;
 
+    /// <summary>問題上報通知（回饋十八輪批次G）：日層級狀態轉為「無法處理」時同樣通知 admin。
+    /// **可為 null**（同 IssueHandlingCommandService 的說明）：測試組裝不注入，通知靜默跳過。</summary>
+    private readonly MailNotificationService? _mail;
+
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -46,8 +51,10 @@ public class DayHandlingCommandService
         IAuditService audit,
         ISystemSettingsStore settings,
         HandlingProgressCalculator progress,
-        UserCapabilityResolver capabilities)
+        UserCapabilityResolver capabilities,
+        MailNotificationService? mail = null)
     {
+        _mail = mail;
         _store = store;
         _issueStore = issueStore;
         _caseCoordinator = caseCoordinator;
@@ -87,6 +94,10 @@ public class DayHandlingCommandService
         if (request.DueDate.HasValue && request.DueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
 
+        // 無法處理必填原因（回饋十八輪批次G，與問題層級 ValidateIssueStatus 同一條規則）
+        if (request.Status == HandlingStatuses.Escalated && string.IsNullOrWhiteSpace(request.Note))
+            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
+
         var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date);
         var previousStatus = existing.Status;
         var previousNote = existing.Note;
@@ -114,6 +125,14 @@ public class DayHandlingCommandService
                 Before = new { Status = previousStatus, Note = previousNote },
                 After = new { existing.Status, existing.Note, existing.DueDate }
             });
+
+        // 上報通知（回饋十八輪批次G）：只在「轉入」escalated 時通知（既有 escalated 只改說明不重寄）；
+        // fire-and-forget，NotifyEscalationAsync 內部 try/catch 到底、永不拋出
+        if (_mail != null && request.Status == HandlingStatuses.Escalated && previousStatus != HandlingStatuses.Escalated)
+        {
+            _ = _mail.NotifyEscalationAsync(new EscalationNotice(
+                $"{date:yyyy-MM-dd} 風險日", host.HostName, _currentUser.Account, existing.Note));
+        }
 
         return ToDto(host, date, existing);
     }

@@ -203,6 +203,59 @@ public class MailNotificationService
         }
     }
 
+    /// <summary>
+    /// 問題上報通知（回饋十八輪批次G，第四路觸發——事件驅動即時單發）：處理狀態被標成
+    /// 「無法處理」（<see cref="IssueHandlingStatuses.Escalated"/>）時，寄信給全部 admin 群組成員，
+    /// 請他們決定結案或重新指派。與三路批次觸發不同：不去重、不落地 SentKeys（重複上報就
+    /// 重複通知是正確行為——每次上報都是一次明確的人為求助）、不走收件人可見範圍過濾
+    /// （admin 本來就看得到全站）。收件人由 <see cref="AdminMembersResolver"/> 即時解析
+    /// （Role==Admin 判定，群組改名不受影響）。操作者身分由呼叫端傳入——本類別是 Singleton，
+    /// 不能注入 Scoped 的 ICurrentUser（既有慣例，見 GetVisibleHostIds 的說明）。
+    /// 內部 try/catch 到底：通知永遠不能弄掛狀態變更本身。
+    /// </summary>
+    public async Task NotifyEscalationAsync(EscalationNotice notice, CancellationToken ct = default)
+    {
+        try
+        {
+            var settings = _settingsStore.Get();
+            if (!settings.MailEnabled) return;
+
+            var recipients = AdminMembersResolver.GetAdminMembers(_userGroups, _users)
+                .Select(u => u.Email)
+                .Where(e => !string.IsNullOrWhiteSpace(e))
+                .Select(e => e!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (recipients.Count == 0)
+            {
+                Log.Warn("[Mail] 問題上報通知略過：admin 群組沒有任何成員設定了 email（問題：{Issue}）。", notice.IssueLabel);
+                return;
+            }
+
+            var dateText = DateTime.Today.ToString("yyyy-MM-dd");
+            var statsLine = $"負責人回覆無法處理：{notice.IssueLabel}";
+            var subject = ExpandTemplate(settings.MailSubjectTemplate, notice.HostLabel, dateText, "-", "問題上報", statsLine);
+
+            var body = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
+            body.AppendLine($"問題「{notice.IssueLabel}」（{notice.HostLabel}）被回覆為「無法處理」，請決定結案或重新指派。");
+            body.AppendLine();
+            body.AppendLine($"  回覆人：{notice.ActorAccount}");
+            if (!string.IsNullOrWhiteSpace(notice.Reason))
+            {
+                body.AppendLine($"  原因：{notice.Reason}");
+            }
+            body.AppendLine();
+            body.AppendLine("請至站台的問題查詢頁（依問題視角）檢視並處理。");
+
+            await SendSafeAsync(settings, recipients, subject, body.ToString(), ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 問題上報通知處理失敗（不影響狀態變更本身）");
+        }
+    }
+
     /// <summary>測試寄信（設定頁「測試寄信」鈕）：用表單目前值（可能還沒儲存），不落地任何狀態。</summary>
     public async Task SendTestAsync(SmtpConnectionSpec connection, string from, List<string> recipients,
         string subjectTemplate, string bodyIntro, CancellationToken ct = default)
@@ -779,3 +832,12 @@ public class MailNotificationService
         }
     }
 }
+
+/// <summary>
+/// 問題上報通知的內容素材（回饋十八輪批次G，見 <see cref="MailNotificationService.NotifyEscalationAsync"/>）。
+/// <paramref name="IssueLabel"/>＝問題顯示文字（「Source EventId」，與案件的反正規化快照同源）；
+/// <paramref name="HostLabel"/>＝主機標籤（單台為主機名，多台為「N 台主機」）；
+/// <paramref name="ActorAccount"/>＝回覆無法處理的人（由呼叫端自 ICurrentUser 取出傳入）；
+/// <paramref name="Reason"/>＝上報原因（狀態變更時必填的說明）。
+/// </summary>
+public sealed record EscalationNotice(string IssueLabel, string HostLabel, string ActorAccount, string? Reason);

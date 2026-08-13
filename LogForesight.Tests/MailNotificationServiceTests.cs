@@ -918,6 +918,96 @@ public class MailNotificationServiceTests : IDisposable
             Create().SendTestAsync(connection, "logforesight@test.local", new List<string> { "ops@test.local" },
                 "[{site}] {type}：{date} {summary}", ""));
     }
+
+    // ── NotifyEscalationAsync：問題上報通知（回饋十八輪批次G）─────────────────
+
+    private static EscalationNotice Notice(string? reason = "換硬體超出我的權限") =>
+        new("disk 7", "host1", "user1", reason);
+
+    [Fact]
+    public async Task NotifyEscalationAsync_寄給全部admin群組成員()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        _users.Upsert(new WebUser { Account = "a2", Email = "a2@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "a1@test.local", "a2@test.local" }, sent.Message.To.OrderBy(e => e));
+        Assert.Contains("disk 7", sent.Message.Body);
+        Assert.Contains("無法處理", sent.Message.Body);
+        Assert.Contains("換硬體超出我的權限", sent.Message.Body);
+        Assert.Contains("user1", sent.Message.Body);
+    }
+
+    /// <summary>admin 判定必須用 UserGroup.Role，不能用群組名稱——群組改名後通知不能斷。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_admin群組改名後仍寄()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "系統管理組（已改名）", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Single(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyEscalationAsync_MailEnabled為false時不寄()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    [Fact]
+    public async Task NotifyEscalationAsync_admin成員皆無email時不寄不拋()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
+    }
+
+    /// <summary>停用的 admin 帳號與停用的 admin 群組成員都不收信（與 HasNoAdmins 同一份判定）。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_停用帳號與停用群組不收信()
+    {
+        var activeGroup = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        var inactiveGroup = _userGroups.Upsert(new UserGroup { GroupName = "old-admins", Role = UserRole.Admin, Active = false });
+        _users.Upsert(new WebUser { Account = "ok", Email = "ok@test.local", Active = true, GroupIds = new List<long> { activeGroup.GroupId } });
+        _users.Upsert(new WebUser { Account = "off", Email = "off@test.local", Active = false, GroupIds = new List<long> { activeGroup.GroupId } });
+        _users.Upsert(new WebUser { Account = "gone", Email = "gone@test.local", Active = true, GroupIds = new List<long> { inactiveGroup.GroupId } });
+        EnableMail();
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Equal(new[] { "ok@test.local" }, sent.Message.To);
+    }
+
+    /// <summary>寄送失敗不往外拋（fire-and-forget 的前提：狀態變更不能被通知失敗弄掛）。</summary>
+    [Fact]
+    public async Task NotifyEscalationAsync_寄送失敗不拋例外()
+    {
+        var group = _userGroups.Upsert(new UserGroup { GroupName = "admins", Role = UserRole.Admin, Active = true });
+        _users.Upsert(new WebUser { Account = "a1", Email = "a1@test.local", Active = true, GroupIds = new List<long> { group.GroupId } });
+        EnableMail();
+        _sender.ThrowOnSend = new InvalidOperationException("smtp down");
+
+        await Create().NotifyEscalationAsync(Notice());
+
+        Assert.Empty(_sender.Sent);
+    }
 }
 
 /// <summary>MissingDateFinder 測試用最小 IAnalysisRecordReader：全空歷史，模擬「近 N 天都沒有

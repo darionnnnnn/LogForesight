@@ -2,6 +2,7 @@
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
+using LogForesight.Web.Services.Mail;
 
 namespace LogForesight.Web.Services;
 
@@ -32,6 +33,13 @@ public class IssueHandlingCommandService
     /// </summary>
     private readonly UserCapabilityResolver _capabilities;
 
+    /// <summary>問題上報通知（回饋十八輪批次G）：狀態轉為「無法處理」時即時通知 admin 群組。
+    /// Scoped→Singleton 是合法依賴方向（同 SystemSettingsService 注入它的既有前例）。
+    /// **可為 null**：MailNotifyStateStore 依賴具象的 EF blob，測試（HandlingServiceFacade）
+    /// 逐一補假件的成本不成比例——production DI 一定會注入（已註冊 Singleton），
+    /// null 只發生在測試組裝，此時上報通知靜默跳過（通知行為另有專屬測試覆蓋）。</summary>
+    private readonly MailNotificationService? _mail;
+
     public IssueHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -45,7 +53,8 @@ public class IssueHandlingCommandService
         ICurrentUser currentUser,
         IAuditService audit,
         HandlingProgressCalculator progress,
-        UserCapabilityResolver capabilities)
+        UserCapabilityResolver capabilities,
+        MailNotificationService? mail = null)
     {
         _capabilities = capabilities;
         _store = store;
@@ -60,6 +69,18 @@ public class IssueHandlingCommandService
         _currentUser = currentUser;
         _audit = audit;
         _progress = progress;
+        _mail = mail;
+    }
+
+    /// <summary>
+    /// 狀態轉為「無法處理」時的上報通知（回饋十八輪批次G）：fire-and-forget——
+    /// MailNotificationService.NotifyEscalationAsync 內部 try/catch 到底、永不拋出，
+    /// 狀態變更（已落盤、已稽核）不等待也不受寄送成敗影響。
+    /// </summary>
+    private void NotifyEscalationIfNeeded(string status, string issueLabel, string hostLabel, string? reason)
+    {
+        if (status != IssueHandlingStatuses.Escalated || _mail == null) return;
+        _ = _mail.NotifyEscalationAsync(new EscalationNotice(issueLabel, hostLabel, _currentUser.Account, reason));
     }
 
     public IssueStatusResultDto SetIssueStatus(long hostId, DateTime date, SetIssueStatusRequest request)
@@ -69,7 +90,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing);
+        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
 
         // 問題必須真的存在於當日紀錄——否則會存下指向不存在問題的狀態
         var issue = record.TopIssues.FirstOrDefault(i => IssueSignatureKey.For(i) == request.IssueKey)
@@ -89,6 +110,8 @@ public class IssueHandlingCommandService
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}/{request.IssueKey}",
             detail: new { request.IssueKey, request.Status, request.Note, request.DueDate });
+
+        NotifyEscalationIfNeeded(request.Status, HandlingTextHelpers.IssueLabel(issue), host.HostName, request.Note);
 
         // 回傳更新後的當日進度，讓前端就地更新「N/M 已處理」與日層級推導狀態
         var progress = _progress.ComputeProgress(host, date, record);
@@ -113,7 +136,7 @@ public class IssueHandlingCommandService
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing);
+        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
 
         // 只套用當日紀錄真的還有的問題——頁面沒重新整理時勾選的問題可能已經不在了。
         // GroupBy 防禦性地取第一筆，同 LoadGuidanceLookup 的寫法，避免壞資料的重複鍵讓整批炸掉
@@ -152,6 +175,11 @@ public class IssueHandlingCommandService
             targetKind: "issue_handling",
             targetId: $"{host.HostName}/{date:yyyy-MM-dd}",
             detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
+
+        // 批次勾 N 個問題標無法處理：一封信彙整（不逐問題各寄一封轟炸 admin）
+        NotifyEscalationIfNeeded(request.Status,
+            appliedKeys.Count == 1 ? labelByKey[appliedKeys[0]] : $"{appliedKeys.Count} 個問題",
+            host.HostName, request.Note);
 
         var progress = _progress.ComputeProgress(host, date, record);
 
@@ -200,13 +228,19 @@ public class IssueHandlingCommandService
             $"此問題由 {name} 的案件處理中，無法直接變更狀態。如需接手，請由管理者改派處理人。");
     }
 
-    private static void ValidateIssueStatus(string status, DateTime? dueDate, bool clearing)
+    private static void ValidateIssueStatus(string status, DateTime? dueDate, bool clearing, string? note = null)
     {
         if (!clearing && !IssueHandlingStatuses.IsValid(status))
             throw DomainException.Validation($"未知的問題處理狀態「{status}」。");
 
         if (status == IssueHandlingStatuses.InProgress && dueDate.HasValue && dueDate.Value.Date < DateTime.Today)
             throw DomainException.Validation("預計完成日不可早於今天。");
+
+        // 無法處理必填原因（回饋十八輪批次G）：admin 收到上報通知要看得出「為什麼處理不了」
+        // 才決定得了結案或改派——前端已標必填，這裡是防繞過的實際防線（同 wont_fix 的前端
+        // 必填慣例，但上報多了「別人要據此做決定」的分量，值得後端也擋）
+        if (status == IssueHandlingStatuses.Escalated && string.IsNullOrWhiteSpace(note))
+            throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
 
         // 觀察中一定要有觀察至日期（docs/archive/FEEDBACK-8-PLAN.md #4）——沒有終點的「觀察」沒有意義，
         // 前端固定送「今天 + N 天」（1~90 天），這裡防禦性驗證同一個範圍，不只信前端
@@ -521,7 +555,7 @@ public class IssueHandlingCommandService
     public BulkIssueStatusResultDto BulkSetIssueStatusByHandler(BulkIssueStatusRequest request)
     {
         var clearing = string.IsNullOrWhiteSpace(request.Status);
-        ValidateIssueStatus(request.Status, request.DueDate, clearing);
+        ValidateIssueStatus(request.Status, request.DueDate, clearing, request.Note);
 
         if (_currentUser.UserId <= 0)
             throw DomainException.Validation("此帳號沒有可回覆的案件。");
@@ -567,6 +601,10 @@ public class IssueHandlingCommandService
             targetKind: "issue_case",
             targetId: $"{request.Source}/{request.EventId}",
             detail: new { request.Source, request.EventId, request.Status, request.Note, request.DueDate, HostNames = hostNames });
+
+        // 跨主機一次回覆無法處理：一封信彙整全部主機（這正是「負責人回覆無法處理」的主要入口）
+        NotifyEscalationIfNeeded(request.Status, $"{request.Source} {request.EventId}",
+            targets.Count == 1 ? targets[0].HostName : $"{targets.Count} 台主機", request.Note);
 
         return new BulkIssueStatusResultDto
         {
