@@ -23,12 +23,18 @@ namespace LogForesight.Web.Services;
 /// **案件授與**（docs/archive/FEEDBACK-10-PLAN.md §7）是這兩條路徑之外、刻意更窄的第三條路徑：
 /// 被指派為某個問題案件的處理人時，取得「那台主機的那個問題」的檢視權，其餘一律不可見。
 /// 沒有這條路徑，把問題交辦給不在該主機授權範圍內的人＝對方打不開，等於白指派。
+///
+/// **問題負責人**（回饋十八輪批次F）是第四條路徑，與主機負責人**同級**（整台可見，不是案件
+/// 授與那種窄授與）：保留期內出現過其負責問題（(Source,EventId) 規則，見
+/// <see cref="IssueOwnerRule"/>）的主機自動可見。理由與主機負責人一致——問題歸屬也是第一手
+/// 資料，不該另外去授權矩陣補一刀。
 /// </summary>
 public interface IVisibilityService
 {
     /// <summary>
     /// 目前登入者可見的主機 ID。持有 ViewAll 能力者為全部主機；
-    /// 其餘人為「群組授權 ∪ 自己是負責人的主機」（docs/archive/FEEDBACK-11-PLAN.md §2b）。
+    /// 其餘人為「群組授權 ∪ 主機負責人 ∪ 問題負責人」（docs/archive/FEEDBACK-11-PLAN.md §2b，
+    /// 回饋十八輪批次F 新增問題負責人）。
     /// </summary>
     IReadOnlySet<long> GetVisibleHostIds();
 
@@ -95,6 +101,12 @@ public class VisibilityService : IVisibilityService
     private readonly IHostStore _hosts;
     private readonly IIssueCaseStore _cases;
 
+    /// <summary>問題負責人第四條授權路徑（回饋十八輪批次F）：可為 null——測試組裝不注入時，
+    /// 這條路徑靜默跳過（同本檔既有的 Singleton 依賴慣例）。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+    private readonly IIssueAggregateQuery? _issueAggregates;
+    private readonly ISystemSettingsStore? _settings;
+
     // 每請求快取：一次請求內可能被多個 Service 呼叫（查詢＋計數＋明細），
     // Scoped 生命週期下重複解析同一份資料是白費工
     private IReadOnlySet<long>? _cached;
@@ -106,7 +118,10 @@ public class VisibilityService : IVisibilityService
         IUserGroupStore userGroups,
         IGroupAccessStore access,
         IHostStore hosts,
-        IIssueCaseStore cases)
+        IIssueCaseStore cases,
+        IIssueOwnerStore? issueOwners = null,
+        IIssueAggregateQuery? issueAggregates = null,
+        ISystemSettingsStore? settings = null)
     {
         _currentUser = currentUser;
         _users = users;
@@ -114,6 +129,9 @@ public class VisibilityService : IVisibilityService
         _access = access;
         _hosts = hosts;
         _cases = cases;
+        _issueOwners = issueOwners;
+        _issueAggregates = issueAggregates;
+        _settings = settings;
     }
 
     public IReadOnlySet<long> GetVisibleHostIds()
@@ -158,12 +176,23 @@ public class VisibilityService : IVisibilityService
             .Select(a => a.HostGroupId)
             .ToHashSet();
 
-        // 群組授權 ∪ 負責人（§2b）：負責人是主機歸屬的第一手資料，不該還要另外去授權矩陣補一刀
-        _cached = allHosts
+        // 群組授權 ∪ 主機負責人（§2b）：負責人是主機歸屬的第一手資料，不該還要另外去授權矩陣補一刀
+        var visible = allHosts
             .Where(h => h.GroupIds.Any(hostGroupIds.Contains) || h.OwnerUserIds.Contains(user.UserId))
             .Select(h => h.HostId)
             .ToHashSet();
 
+        // ∪ 問題負責人（回饋十八輪批次F，第四條授權路徑）：與主機負責人同級的整台可見，
+        // 理由同上——問題歸屬也是第一手資料。三個依賴同時可用才查（其一為 null 代表測試組裝
+        // 沒注入，靜默跳過這條路徑，同本類別既有的 Singleton 依賴慣例）。
+        if (_issueOwners != null && _issueAggregates != null && _settings != null)
+        {
+            var retentionDays = _settings.Get().RetentionDays;
+            visible.UnionWith(HostVisibilityResolver.GetIssueOwnedHostIds(
+                _issueOwners, _users, _issueAggregates, user.UserId, retentionDays));
+        }
+
+        _cached = visible;
         return _cached;
     }
 
@@ -176,7 +205,8 @@ public class VisibilityService : IVisibilityService
         HostVisibilityResolver.GetOwnedHostIds(_hosts, _users, userId);
 
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) =>
-        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId);
+        HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId,
+            _issueOwners, _issueAggregates, _settings?.Get().RetentionDays ?? 120);
 
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) =>
         HostVisibilityResolver.GetGroupVisibleHostIds(_hosts, _users, _userGroups, _access, userId);

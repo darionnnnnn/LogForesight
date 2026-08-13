@@ -18,6 +18,10 @@ public class RecordListQueryService
     private readonly IIssueCaseStore _cases;
     private readonly ISystemSettingsStore _settings;
 
+    /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
+    /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+
     public RecordListQueryService(
         IRecordRepository repository,
         IHostStore hosts,
@@ -25,7 +29,8 @@ public class RecordListQueryService
         IRecordHandlingStore handlings,
         IIssueHandlingStore issueHandlings,
         IIssueCaseStore cases,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IIssueOwnerStore? issueOwners = null)
     {
         _repository = repository;
         _hosts = hosts;
@@ -34,6 +39,7 @@ public class RecordListQueryService
         _issueHandlings = issueHandlings;
         _cases = cases;
         _settings = settings;
+        _issueOwners = issueOwners;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -277,8 +283,13 @@ public class RecordListQueryService
             ? Math.Max(1, (request.To.Value.Date - request.From.Value.Date).Days + 1)
             : records.Count == 0 ? 1 : Math.Max(1, (records.Max(r => r.Date.Date) - records.Min(r => r.Date.Date)).Days + 1);
 
+        // 問題負責人 badge（回饋十八輪批次F）：一次批次載入一次，避免逐群組各自查詢
+        // （同 allHandlings／allCases 的 N+1 教訓）。key 為 (SourceUpper, EventId)。
+        var issueOwnersByKey = (_issueOwners?.GetAll() ?? new List<IssueOwnerRule>())
+            .ToDictionary(r => (r.SourceName.ToUpperInvariant(), r.EventId), r => r.OwnerUserIds);
+
         var groups = RecordQueryHelpers.GroupIssuesBySignature(records)
-            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays))
+            .Select(g => BuildIssueGroup(g, lookup, unhandledSeverities, handlingsByHost, casesByHost, periodDays, issueOwnersByKey))
             .ToList();
 
         // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：上方「風險層級」chips 篩的是日風險等級
@@ -364,7 +375,8 @@ public class RecordListQueryService
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyDictionary<string, List<IssueHandling>> handlingsByHost,
         IReadOnlyDictionary<string, List<IssueCase>> casesByHost,
-        int periodDays)
+        int periodDays,
+        IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey)
     {
         var hostNames = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var from = g.Min(x => x.Record.Date);
@@ -451,7 +463,13 @@ public class RecordListQueryService
             GroupStatus = unhandled > 0 ? HandlingStatuses.Open
                 : processing > 0 ? HandlingStatuses.InProgress
                 : HandlingStatuses.Resolved,
-            Handlers = handlers
+            Handlers = handlers,
+            IssueOwnerNames = issueOwnersByKey.TryGetValue((g.Key.Source.ToUpperInvariant(), g.Key.EventId), out var ownerIds)
+                ? ownerIds.Select(id => _users.Get(id))
+                    .Where(u => u is { Active: true })
+                    .Select(u => NameFormat.WithAccount(u!.DisplayName, u.Account))
+                    .ToList()
+                : new List<string>()
         };
     }
 

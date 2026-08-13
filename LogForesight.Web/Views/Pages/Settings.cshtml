@@ -389,14 +389,14 @@
             <div class="mb-3">
                 <label for="mail-recipients" class="form-label">收件人</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="一行一位，全域收件人，三路通知共用。「同時通知主機負責人」勾選時，高風險即時通知會額外加上該主機負責人的信箱。">
+                        data-bs-content="一行一位，全域收件人，三路通知共用。「同時通知負責人」勾選時，每個主機日的通知對象優先給該日問題的問題負責人（於「問題負責人」頁設定）；沒有問題負責人命中時才改通知主機負責人，兩者擇一、不疊加。">
                     <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control" id="mail-recipients" rows="3" placeholder="一行一位，例如：&#10;ops@corp.local"></textarea>
             </div>
             <div class="form-check mb-3">
                 <input class="form-check-input" type="checkbox" id="mail-notify-host-owners" />
-                <label class="form-check-label" for="mail-notify-host-owners">同時通知主機負責人</label>
+                <label class="form-check-label" for="mail-notify-host-owners">同時通知負責人（問題負責人優先，其次主機負責人）</label>
             </div>
             <div class="alert alert-warning py-2 px-3 small d-none" id="mail-suspended-recipients-wrap">
                 <strong>已暫停寄送的收件人</strong>

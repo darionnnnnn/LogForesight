@@ -25,6 +25,7 @@ public class HandlingServiceTests
     private readonly FakeNoiseMarkStore _noiseMarks = new();
     private readonly RecordingAuditService _audit = new();
     private readonly FakeSystemSettingsStore _settings = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly FakeRecordRepository _repository;
     private readonly IssueCaseCoordinator _caseCoordinator;
 
@@ -68,7 +69,8 @@ public class HandlingServiceTests
             currentUser: currentUser,
             audit: _audit,
             settings: _settings,
-            groups: groups);
+            groups: groups,
+            issueOwners: _issueOwners);
     }
 
     /// <summary>
@@ -201,6 +203,105 @@ public class HandlingServiceTests
         _hosts.SetOwners(_host.HostId, Array.Empty<long>());
 
         Assert.Null(Create(Capability.Handle).Get(_host.HostId, Today).HandlerName);
+    }
+
+    // ── 問題負責人優先於主機負責人（回饋十八輪批次F）──────────────────────────
+
+    /// <summary>問題負責人恰一人時優先於主機負責人——主機負責人是 OOO，但這天的問題
+    /// 有獨立的問題負責人 XXX，自動帶入的應該是 XXX。</summary>
+    [Fact]
+    public void 問題負責人恰一人時優先於主機負責人()
+    {
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("XXX", result.HandlerName);
+    }
+
+    /// <summary>問題負責人多人時不猜，落回主機負責人恰一人的既有規則</summary>
+    [Fact]
+    public void 問題負責人多人時落回主機負責人()
+    {
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\yyy", DisplayName = "YYY" });
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule
+        {
+            SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId, third.UserId }
+        });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);   // 落回主機負責人（唯一：_owner）
+    }
+
+    /// <summary>當天多個問題各自命中不同問題負責人時不猜——與主機負責人多人時同一套精神，
+    /// 落回主機負責人恰一人的規則。</summary>
+    [Fact]
+    public void 當天多問題各自負責人不同時不猜_落回主機負責人()
+    {
+        var third = _users.Upsert(new WebUser { Account = "DOMAIN\\yyy", DisplayName = "YYY" });
+        var day = Today.AddDays(1);
+        var a = Issue("disk", 153);
+        var b = Issue("network", 201);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);
+    }
+
+    /// <summary>當天多個問題命中的問題負責人恰好是同一人時，聯集去重後仍算「恰一人」</summary>
+    [Fact]
+    public void 當天多問題負責人聯集為同一人時採用()
+    {
+        var day = Today.AddDays(1);
+        var a = Issue("disk", 153);
+        var b = Issue("network", 201);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("XXX", result.HandlerName);
+    }
+
+    /// <summary>停用的問題負責人不算——同主機負責人的既有語意</summary>
+    [Fact]
+    public void 問題負責人帳號停用時不採用_落回主機負責人()
+    {
+        _other.Active = false;
+        _users.Upsert(_other);
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        var result = Create(Capability.Handle).Get(_host.HostId, day);
+
+        Assert.Equal("OOO", result.HandlerName);
+    }
+
+    /// <summary>問題負責人的優先序在實際寫入（第一次 Update/Assign）時同樣生效，不只是顯示</summary>
+    [Fact]
+    public void 問題負責人優先序_實際寫入時同樣生效()
+    {
+        var day = Today.AddDays(1);
+        var issue = Issue("disk", 153);
+        _repository.AddRecord(_host.HostName, day, issue);
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+
+        Create(Capability.Handle).Update(_host.HostId, day, new UpdateHandlingRequest { Status = HandlingStatuses.InProgress });
+
+        Assert.Equal(_other.UserId, _handlings.Get(_host.HostName, day)!.HandlerId);
     }
 
     // ── 狀態維護 ─────────────────────────────────────────────────────────────

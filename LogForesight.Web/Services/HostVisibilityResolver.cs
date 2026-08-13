@@ -53,12 +53,42 @@ internal static class HostVisibilityResolver
             .ToHashSet();
     }
 
-    /// <summary>群組授權 ∪ 負責人（docs/archive/FEEDBACK-11-PLAN.md §2b）。</summary>
+    /// <summary>
+    /// 問題負責人可見的主機（回饋十八輪批次F，第四條授權路徑）：保留期內出現過其負責問題
+    /// （(Source,EventId) 規則）的存活主機——與主機負責人（整台可見）同級，不是案件授與
+    /// 那種問題層級的窄授與；理由同主機負責人：問題負責人是這個問題歸屬的第一手資料，
+    /// 不該還要另外去授權矩陣補一刀。窗口用 <paramref name="retentionDays"/>（與歷史紀錄保留
+    /// 天數一致——保留多久的紀錄，就讓負責人看多久的可見範圍，兩者天然同步）。
+    /// </summary>
+    public static IReadOnlySet<long> GetIssueOwnedHostIds(
+        IIssueOwnerStore issueOwners, IUserStore users, IIssueAggregateQuery issueAggregates, long userId, int retentionDays)
+    {
+        var user = users.Get(userId);
+        if (userId <= 0 || user == null || !user.Active) return new HashSet<long>();
+
+        var owned = issueOwners.GetAll()
+            .Where(r => r.OwnerUserIds.Contains(userId))
+            .Select(r => (r.SourceName, r.EventId))
+            .ToList();
+        if (owned.Count == 0) return new HashSet<long>();
+
+        var to = DateTime.Today;
+        var from = to.AddDays(-(Math.Max(retentionDays, 1) - 1));
+        return issueAggregates.HostIdsFor(owned, from, to);
+    }
+
+    /// <summary>群組授權 ∪ 主機負責人 ∪ 問題負責人（docs/archive/FEEDBACK-11-PLAN.md §2b，
+    /// 回饋十八輪批次F 新增第三條聯集）。</summary>
     public static IReadOnlySet<long> GetVisibleHostIds(
-        IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId)
+        IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
+        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null, int retentionDays = 120)
     {
         var visible = GetGroupVisibleHostIds(hosts, users, userGroups, access, userId).ToHashSet();
         visible.UnionWith(GetOwnedHostIds(hosts, users, userId));
+        if (issueOwners != null && issueAggregates != null)
+        {
+            visible.UnionWith(GetIssueOwnedHostIds(issueOwners, users, issueAggregates, userId, retentionDays));
+        }
         return visible;
     }
 }

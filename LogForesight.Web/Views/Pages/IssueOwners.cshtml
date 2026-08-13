@@ -1,0 +1,73 @@
+@{
+    ViewData["Title"] = "問題負責人";
+}
+
+<section class="lf-card">
+    <div class="lf-card__header">
+        <h2 class="lf-card__title">問題負責人</h2>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                    data-bs-content="以「問題（來源＋Event ID）」為單位指派負責人，跨主機生效——與主機負責人是相同概念，但優先於主機負責人：自動帶入處理人、郵件通知路由都會先看問題負責人，沒有命中才落回主機負責人。問題負責人也自動取得曾出現其負責問題之主機的檢視權。">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            </button>
+            <button type="button" class="btn btn-sm btn-primary" id="issue-owner-new">
+                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#plus-lg"></use></svg>
+                新增規則
+            </button>
+        </div>
+    </div>
+    <div class="lf-card__body p-0" id="issue-owner-list"></div>
+</section>
+
+<div class="modal fade" id="issue-owner-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="issue-owner-modal-title">新增問題負責人規則</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="issue-owner-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-3" id="issue-owner-picker-field">
+                        <label class="form-label">問題</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="從近 30 天出現過的問題挑選；若要指派的問題還沒出現過，切換到「手動輸入」。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                        <select class="form-select" id="issue-owner-picker"></select>
+                        <button type="button" class="btn btn-link btn-sm px-0 mt-1" id="issue-owner-manual-toggle">
+                            找不到？改為手動輸入
+                        </button>
+                    </div>
+                    <div class="row g-3 mb-3 d-none" id="issue-owner-manual-field">
+                        <div class="col-md-8">
+                            <label for="issue-owner-source" class="form-label">來源（Source） <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="issue-owner-source" placeholder="例如 disk、DCOM" />
+                        </div>
+                        <div class="col-md-4">
+                            <label for="issue-owner-event-id" class="form-label">Event ID <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="issue-owner-event-id" min="1" />
+                        </div>
+                    </div>
+                    <div class="mb-3" id="issue-owner-selected-summary"></div>
+                    <div class="mb-3">
+                        <label class="form-label">負責人</label>
+                        <div id="issue-owner-users" class="border rounded p-2" style="max-height: 220px; overflow-y: auto;"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="issue-owner-note" class="form-label">備註（選填）</label>
+                        <textarea class="form-control" id="issue-owner-note" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="issue-owner-save">儲存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/js/pages/issue-owners.js" asp-append-version="true"></script>
+}

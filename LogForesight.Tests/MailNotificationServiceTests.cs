@@ -25,6 +25,7 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeGroupAccessStore _groupAccess = new();
     private readonly FakeAnalysisRecordQuery _records = new();
     private readonly FakeHandlingStore _handlings = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly EfSqliteFixture _fx = new();
 
     /// <summary>分析永遠只產出到昨天——所有測試紀錄以此為基準日，而非 DateTime.Today</summary>
@@ -34,17 +35,18 @@ public class MailNotificationServiceTests : IDisposable
 
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
-            new MailNotifyStateStore(_fx.Blob("mail_notify_state")));
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners);
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
-        string headline = "", string? riskBasis = null) => new()
+        string headline = "", string? riskBasis = null, params LogIssueSignature[] issues) => new()
     {
         HostId = hostId,
         Host = host,
         Date = date,
         RiskLevel = riskLevel,
         Headline = headline,
-        RiskBasis = riskBasis ?? ""
+        RiskBasis = riskBasis ?? "",
+        TopIssues = issues.ToList()
     };
 
     /// <summary>啟用郵件＋填妥連線與收件人的基準設定，測試只覆寫要驗的那一項（同 SystemSettingsServiceTests 慣例）</summary>
@@ -329,6 +331,67 @@ public class MailNotificationServiceTests : IDisposable
 
         var sent = Assert.Single(_sender.Sent);
         Assert.Single(sent.Message.To);
+    }
+
+    // ── 問題負責人優先於主機負責人（回饋十八輪批次F）─────────────────────────
+
+    private static LogIssueSignature Issue(string source, int eventId) =>
+        new() { LogName = "System", Source = source, EventId = eventId, Severity = IssueSeverity.High };
+
+    /// <summary>這天的問題命中問題負責人規則時，通知對象是問題負責人，不是主機負責人——
+    /// 「優先取代」不是「疊加」。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_問題命中規則時通知問題負責人不通知主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);   // 全域收件人 ops + 問題負責人 issueowner
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local" && s.Message.Body.Contains("host1"));
+        Assert.DoesNotContain(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
+    /// <summary>當天問題都沒命中任何問題負責人規則時，落回既有的主機負責人行為。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_問題未命中規則時落回主機負責人()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local");
+    }
+
+    /// <summary>同一批通知裡，不同主機日各自路由到不同對象——這是逐 record 的判定，不是全站開關。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_同批次不同主機日各自路由到不同對象()
+    {
+        CreateViewAllAccount("ops@test.local");
+        var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
+        var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
+        var host1 = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
+        _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
+        _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High, issues: Issue("network", 999)));
+
+        await Create().NotifyAfterRunAsync();
+
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "issueowner@test.local" && s.Message.Body.Contains("host1") && !s.Message.Body.Contains("host2"));
+        Assert.Contains(_sender.Sent, s => s.Message.To[0] == "hostowner@test.local" && s.Message.Body.Contains("host2") && !s.Message.Body.Contains("host1"));
     }
 
     /// <summary>全域收件人若能解析到帳號且可見範圍涵蓋全部主機，收到的信涵蓋「本次全部」

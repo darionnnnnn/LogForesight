@@ -39,6 +39,10 @@ public class DayHandlingCommandService
     /// **可為 null**（同 IssueHandlingCommandService 的說明）：測試組裝不注入，通知靜默跳過。</summary>
     private readonly MailNotificationService? _mail;
 
+    /// <summary>問題負責人規則（回饋十八輪批次F）：預設處理人判定優先於主機負責人。
+    /// 可為 null——測試組裝不注入時，這條優先序靜默跳過、落回既有主機負責人規則。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+
     public DayHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -52,9 +56,11 @@ public class DayHandlingCommandService
         ISystemSettingsStore settings,
         HandlingProgressCalculator progress,
         UserCapabilityResolver capabilities,
-        MailNotificationService? mail = null)
+        MailNotificationService? mail = null,
+        IIssueOwnerStore? issueOwners = null)
     {
         _mail = mail;
+        _issueOwners = issueOwners;
         _store = store;
         _issueStore = issueStore;
         _caseCoordinator = caseCoordinator;
@@ -77,7 +83,7 @@ public class DayHandlingCommandService
         // 「由問題標記推導出的日狀態」，不是存的日層級快照——兩者在批次套用後會不同步
         var record = _repository.GetOne(hostId, date);
 
-        var dto = ToDto(host, date, handling, _progress.TryComputeProgress(host, date, record));
+        var dto = ToDto(host, date, handling, _progress.TryComputeProgress(host, date, record), record);
         dto.OpenCaseCount = _progress.OpenCaseCount(host, record);
         return dto;
     }
@@ -86,7 +92,11 @@ public class DayHandlingCommandService
     {
         var host = RequireVisibleHost(hostId);
         RequireNotCaseGrantOnly(hostId);
-        RequireRecordExists(hostId, date);
+        // 不允許對不存在的分析紀錄建立處理狀態——那會產生指向空白的待辦事項。
+        // 順便取得 record（回饋十八輪批次F）：NewHandling 需要當日問題清單才能判斷
+        // 問題負責人優先序。
+        var record = _repository.GetOne(hostId, date)
+                     ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
 
         if (!HandlingStatuses.IsValid(request.Status))
             throw DomainException.Validation($"未知的處理狀態「{request.Status}」。");
@@ -98,7 +108,7 @@ public class DayHandlingCommandService
         if (request.Status == HandlingStatuses.Escalated && string.IsNullOrWhiteSpace(request.Note))
             throw DomainException.Validation("標記為無法處理時必須填寫原因——管理者要據此決定結案或重新指派。");
 
-        var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date);
+        var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousStatus = existing.Status;
         var previousNote = existing.Note;
 
@@ -134,7 +144,7 @@ public class DayHandlingCommandService
                 $"{date:yyyy-MM-dd} 風險日", host.HostName, _currentUser.Account, existing.Note));
         }
 
-        return ToDto(host, date, existing);
+        return ToDto(host, date, existing, record: record);
     }
 
     /// <summary>
@@ -158,7 +168,7 @@ public class DayHandlingCommandService
                 throw DomainException.Validation($"{handler.DisplayName} 的帳號已停用，無法指派。");
         }
 
-        var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date);
+        var existing = _store.Get(host.HostName, date) ?? NewHandling(host.HostName, date, record);
         var previousHandler = existing.HandlerId.HasValue ? _users.Get(existing.HandlerId.Value) : null;
 
         existing.HandlerId = handlerId;
@@ -283,11 +293,11 @@ public class DayHandlingCommandService
     }
 
     /// <summary>
-    /// 風險日產生時的預設處理人：**負責人恰好一人時自動帶入，多人或無人則留空**。
-    /// 多人時不猜——猜錯會讓真正該處理的人以為有別人在處理。
-    /// 由查詢端於首次讀取時觸發（批次不知道 Web 的負責人設定）。
+    /// 風險日產生時的預設處理人：**問題負責人優先於主機負責人**（回饋十八輪批次F），
+    /// 兩者都是「恰好一人時自動帶入，多人或無人則留空」——多人時不猜，猜錯會讓真正該處理的人
+    /// 以為有別人在處理。由查詢端於首次讀取時觸發（批次不知道 Web 的負責人設定）。
     /// </summary>
-    private RecordHandling NewHandling(string hostName, DateTime date)
+    private RecordHandling NewHandling(string hostName, DateTime date, DailyAnalysisRecord? record)
     {
         var handling = new RecordHandling
         {
@@ -298,7 +308,7 @@ public class DayHandlingCommandService
         };
 
         var host = _hosts.FindByName(hostName);
-        var defaultHandlerId = host == null ? null : DefaultHandlerId(host);
+        var defaultHandlerId = host == null ? null : DefaultHandlerId(host, record);
 
         if (defaultHandlerId.HasValue)
         {
@@ -316,14 +326,45 @@ public class DayHandlingCommandService
     }
 
     /// <summary>
-    /// 預設處理人：**負責人恰好一人且未停用時**才帶入。
-    /// 多人時不猜——猜錯會讓真正該處理的人以為有別人在處理，那比留空更糟。
+    /// 預設處理人：**問題負責人優先於主機負責人**（回饋十八輪批次F，兩者判定規則相同——
+    /// 恰好一人且未停用時才帶入，多人時不猜，猜錯會讓真正該處理的人以為有別人在處理，
+    /// 那比留空更糟）。<paramref name="record"/> 為 null（找不到當日紀錄的極端情況）或
+    /// 問題負責人規則沒有恰一人命中時，落回既有的主機負責人規則。
     /// </summary>
-    private long? DefaultHandlerId(WebHost host)
+    private long? DefaultHandlerId(WebHost host, DailyAnalysisRecord? record)
     {
+        if (_issueOwners != null && record != null)
+        {
+            var issueOwnerId = DefaultIssueOwnerId(record);
+            if (issueOwnerId.HasValue) return issueOwnerId;
+        }
+
         if (host.OwnerUserIds.Count != 1) return null;
 
         var owner = _users.Get(host.OwnerUserIds[0]);
+        return owner is { Active: true } ? owner.UserId : null;
+    }
+
+    /// <summary>
+    /// 當日問題負責人恰一人時回傳其 UserId（回饋十八輪批次F）：把當天全部問題各自命中的
+    /// 問題負責人規則（(Source,EventId) 比對，不分大小寫）聯集去重——多筆問題各只有一個負責人
+    /// 但恰好是同一人時仍算「恰一人」，不同問題各自的負責人不同時則不猜（同主機負責人的
+    /// 「多人不猜」精神，只是這裡的「人」是跨問題聯集後的結果）。
+    /// </summary>
+    private long? DefaultIssueOwnerId(DailyAnalysisRecord record)
+    {
+        var rules = _issueOwners!.GetAll();
+        var ownerIds = record.TopIssues
+            .SelectMany(issue => rules
+                .Where(r => r.EventId == issue.EventId &&
+                            string.Equals(r.SourceName, issue.Source, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(r => r.OwnerUserIds))
+            .Distinct()
+            .ToList();
+
+        if (ownerIds.Count != 1) return null;
+
+        var owner = _users.Get(ownerIds[0]);
         return owner is { Active: true } ? owner.UserId : null;
     }
 
@@ -361,23 +402,19 @@ public class DayHandlingCommandService
             throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
     }
 
-    /// <summary>不允許對不存在的分析紀錄建立處理狀態——那會產生指向空白的待辦事項</summary>
-    private void RequireRecordExists(long hostId, DateTime date)
-    {
-        if (_repository.GetOne(hostId, date) == null)
-            throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
-    }
 
-    private HandlingDto ToDto(WebHost host, DateTime date, RecordHandling? handling, DayHandlingDerivation.DayProgress? progress = null)
+    private HandlingDto ToDto(WebHost host, DateTime date, RecordHandling? handling,
+        DayHandlingDerivation.DayProgress? progress = null, DailyAnalysisRecord? record = null)
     {
-        // 尚未有任何處理紀錄時，以「唯一負責人」作為顯示上的預設處理人。
-        // **這裡只計算不寫入**——讀取不該產生副作用，也不該每次瀏覽都留下一筆稽核；
-        // 實際的持久化與稽核發生在第一次真正寫入時（見 NewHandling），兩邊共用 DefaultHandlerId。
+        // 尚未有任何處理紀錄時，以「唯一負責人」（問題負責人優先，回饋十八輪批次F）作為
+        // 顯示上的預設處理人。**這裡只計算不寫入**——讀取不該產生副作用，也不該每次瀏覽都
+        // 留下一筆稽核；實際的持久化與稽核發生在第一次真正寫入時（見 NewHandling），
+        // 兩邊共用 DefaultHandlerId。
         //
         // 一旦有處理紀錄，其 HandlerId 就是唯一權威（含 null）：
         // 「從未指派」與「admin 明確取消指派」都是 null 但意義相反，
         // 對已存在的紀錄再套預設值會讓「取消指派」看起來沒有生效。
-        var handlerId = handling != null ? handling.HandlerId : DefaultHandlerId(host);
+        var handlerId = handling != null ? handling.HandlerId : DefaultHandlerId(host, record);
         var handler = handlerId.HasValue ? _users.Get(handlerId.Value) : null;
 
         return new HandlingDto

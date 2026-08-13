@@ -23,6 +23,10 @@ namespace LogForesight.Web.Services.Mail;
 /// **回饋十七輪批次B-4：收件人只看得到自己權限範圍內的主機**——統計行（全站數字，不含主機名）
 /// 所有收件人都收得到；主機明細只給解析得到帳號的收件人，且只列該帳號可見範圍內的主機。
 /// 對應不到帳號的收件人（自由文字 email，如共用信箱，權限無從判定）只收統計行。
+///
+/// **回饋十八輪批次F：問題負責人優先於主機負責人**（見 <see cref="ResolvePerRecipient"/> 內的
+/// <c>RecordOwnerIds</c>）——逐主機日判定，這天的問題命中問題負責人規則就通知問題負責人、
+/// 不再通知主機負責人；沒有任何問題命中規則才落回主機負責人。
 /// </summary>
 public class MailNotificationService
 {
@@ -64,6 +68,10 @@ public class MailNotificationService
     private readonly IRecordHandlingStore _handlings;
     private readonly MailNotifyStateStore _state;
 
+    /// <summary>問題負責人規則（回饋十八輪批次F）：郵件路由優先於主機負責人。
+    /// 可為 null——測試組裝不注入時，路由靜默落回既有的「只通知主機負責人」行為。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -73,7 +81,8 @@ public class MailNotificationService
         IGroupAccessStore groupAccess,
         IAnalysisRecordQuery records,
         IRecordHandlingStore handlings,
-        MailNotifyStateStore state)
+        MailNotifyStateStore state,
+        IIssueOwnerStore? issueOwners = null)
     {
         _settingsStore = settingsStore;
         _sender = sender;
@@ -84,6 +93,7 @@ public class MailNotificationService
         _records = records;
         _handlings = handlings;
         _state = state;
+        _issueOwners = issueOwners;
     }
 
     // ── 對外三路觸發 ──────────────────────────────────────────────────────
@@ -317,13 +327,22 @@ public class MailNotificationService
 
     /// <summary>一次通知批次共用的主機／使用者字典：避免逐筆紀錄各自呼叫 Store.Get()——
     /// 每次呼叫都整份 blob 反序列化（見 JsonBlobCollection.Read），高風險 pending 動輒數百筆時
-    /// 這是明顯的 N+1（回饋十六輪體檢發現3／回饋十七輪體檢低3）。一次批次只建一次。</summary>
-    private sealed record MailContext(Dictionary<long, WebHost> HostsById, List<WebUser> AllUsers)
+    /// 這是明顯的 N+1（回饋十六輪體檢發現3／回饋十七輪體檢低3）。一次批次只建一次。
+    /// <paramref name="IssueOwnersByKey"/>（回饋十八輪批次F）：同一個理由——問題負責人比對
+    /// 若逐 record、逐 issue 各自呼叫 _issueOwners.GetAll()，會是比主機字典更嚴重的 N+1
+    /// （2000 台規模下每台每天可能有數個問題）。key 為 (SourceUpper, EventId)。</summary>
+    private sealed record MailContext(
+        Dictionary<long, WebHost> HostsById, List<WebUser> AllUsers,
+        Dictionary<(string SourceUpper, int EventId), List<long>> IssueOwnersByKey)
     {
         public WebHost? Host(long hostId) => HostsById.GetValueOrDefault(hostId);
     }
 
-    private MailContext BuildContext() => new(_hosts.GetAll().ToDictionary(h => h.HostId), _users.GetAll());
+    private MailContext BuildContext() => new(
+        _hosts.GetAll().ToDictionary(h => h.HostId),
+        _users.GetAll(),
+        (_issueOwners?.GetAll() ?? new List<IssueOwnerRule>())
+            .ToDictionary(r => (r.SourceName.ToUpperInvariant(), r.EventId), r => r.OwnerUserIds));
 
     // ── 內部：收件人解析與可見範圍 ────────────────────────────────────────
 
@@ -377,9 +396,16 @@ public class MailNotificationService
 
     /// <summary>
     /// 依可見範圍把「本次涵蓋的全部紀錄」拆給每位收件人（回饋十七輪批次B-4）：
-    /// 全域收件人與（選填）主機負責人套用同一套規則——對應到帳號的人只看見自己可見範圍內的
+    /// 全域收件人與（選填）負責人套用同一套規則——對應到帳號的人只看見自己可見範圍內的
     /// 主機明細，對應不到帳號的人只收統計行。負責人一律限縮到自己負責的主機（本來就是可見範圍
     /// 的子集，見 HostVisibilityResolver.GetOwnedHostIds）。
+    ///
+    /// **問題負責人優先於主機負責人**（回饋十八輪批次F，見 <see cref="RecordOwnerIds"/>）：
+    /// 逐 record 判定——這筆主機日的問題中只要有任一個命中問題負責人規則，通知對象就是
+    /// 命中規則的問題負責人聯集，**不再**通知主機負責人；record 內所有問題都未命中規則的
+    /// 才落回主機負責人。這是 record 粒度的優先取代，不是全站開關，同一批通知裡不同主機日
+    /// 可能各自路由到不同對象。
+    ///
     /// 保序：全域收件人（依設定清單順序）在前、負責人（依 records 出現順序）在後——熔斷依這個
     /// 順序判斷「連續」失敗，順序必須是明確保證的行為而非依賴 Dictionary 迭代順序這種實作細節。
     /// **永久失效收件人排除**（回饋十七輪批次B-1）：連續失敗達門檻的收件人不進清單，不嘗試寄送。
@@ -423,7 +449,7 @@ public class MailNotificationService
                 var host = ctx.Host(record.HostId);
                 if (host == null) continue;
 
-                foreach (var ownerId in host.OwnerUserIds)
+                foreach (var ownerId in RecordOwnerIds(record, host, ctx))
                 {
                     var email = ctx.AllUsers.FirstOrDefault(u => u.UserId == ownerId)?.Email;
                     if (string.IsNullOrWhiteSpace(email) || globalSet.Contains(email) || suspended.Contains(email)) continue;
@@ -443,6 +469,24 @@ public class MailNotificationService
         }
 
         return (order, views);
+    }
+
+    /// <summary>
+    /// 這筆主機日通知路由的收件人 ID（回饋十八輪批次F）：問題負責人優先於主機負責人。
+    /// 逐一比對 <paramref name="record"/>.TopIssues 的 (Source,EventId) 是否命中
+    /// <see cref="MailContext.IssueOwnersByKey"/>，命中的規則各自的負責人聯集去重；
+    /// 有任何命中就回傳這個聯集（不落回主機負責人——「優先取代」不是「疊加」）；
+    /// 全都沒命中才回傳 host.OwnerUserIds（既有行為）。
+    /// </summary>
+    private static IReadOnlyList<long> RecordOwnerIds(DailyAnalysisRecord record, WebHost host, MailContext ctx)
+    {
+        var issueOwnerIds = record.TopIssues
+            .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
+                (issue.Source.ToUpperInvariant(), issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
+            .Distinct()
+            .ToList();
+
+        return issueOwnerIds.Count > 0 ? issueOwnerIds : host.OwnerUserIds;
     }
 
     // ── 內部：組信 ────────────────────────────────────────────────────────

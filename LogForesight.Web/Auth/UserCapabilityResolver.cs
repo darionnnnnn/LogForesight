@@ -22,10 +22,15 @@ public class UserCapabilityResolver
     private readonly IUserGroupStore _groups;
     private readonly IHostStore _hosts;
 
-    public UserCapabilityResolver(IUserGroupStore groups, IHostStore hosts)
+    /// <summary>問題負責人規則（回饋十八輪批次F）：可為 null——測試組裝不注入時，
+    /// 問題負責人隱含能力靜默跳過（同 MailNotificationService 的既有慣例）。</summary>
+    private readonly IIssueOwnerStore? _issueOwners;
+
+    public UserCapabilityResolver(IUserGroupStore groups, IHostStore hosts, IIssueOwnerStore? issueOwners = null)
     {
         _groups = groups;
         _hosts = hosts;
+        _issueOwners = issueOwners;
     }
 
     /// <summary>
@@ -47,7 +52,9 @@ public class UserCapabilityResolver
         // （Handle 來自群組角色），被交辦也回覆不了——「有可見範圍無處置能力」是半套。
         // 刻意只補 User 角色（Handle＋ConfirmPermission），**不含 ViewAll**：
         // 負責人看得到的是自己那幾台，不是全站。
-        if (IsHostOwner(user.UserId)) roles.Add(UserRole.User);
+        // 問題負責人（回饋十八輪批次F）是相同概念、相同待遇——與主機負責人同一句判斷式，
+        // 不另開分支：兩條路徑都是「這個人自動具備處理能力，但不代表能看到全站」。
+        if (IsHostOwner(user.UserId) || IsIssueOwner(user.UserId)) roles.Add(UserRole.User);
 
         return RoleCapabilityMap.For(roles);
     }
@@ -58,4 +65,9 @@ public class UserCapabilityResolver
     /// </summary>
     private bool IsHostOwner(long userId) =>
         userId > 0 && _hosts.GetAll().Any(h => h.Active && h.OwnerUserIds.Contains(userId));
+
+    /// <summary>是不是任一問題的負責人（回饋十八輪批次F）。問題負責人規則沒有「啟用中」欄位
+    /// （不像主機有 Active）——規則本身要嘛存在要嘛刪除，沒有停用態。</summary>
+    private bool IsIssueOwner(long userId) =>
+        userId > 0 && _issueOwners != null && _issueOwners.GetAll().Any(r => r.OwnerUserIds.Contains(userId));
 }

@@ -155,6 +155,12 @@ public class IssueGroupDto
     /// 處理人工作頁（docs/archive/FEEDBACK-4-PLAN.md §4/§6）；超過 3 人的「○○○ 等 N 人」收斂
     /// 由前端做（伺服器端收斂成純文字，收斂後的第一個名字就沒有 Id 可連了）</summary>
     public List<IssueGroupHandlerDto> Handlers { get; set; } = new();
+
+    /// <summary>這個問題的問題負責人（回饋十八輪批次F，若有指派規則）——與 Handlers（進行中案件的
+    /// 處理人）是不同概念：這是「歸誰管」的長期屬性，Handlers 是「現在誰在處理」的事件層級指派，
+    /// 兩者可以不同（同 WebHost.OwnerUserIds 與 RecordHandling.HandlerId 的既有區分）。空清單＝
+    /// 沒有指派問題負責人規則。</summary>
+    public List<string> IssueOwnerNames { get; set; } = new();
 }
 
 /// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>

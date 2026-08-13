@@ -101,6 +101,42 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
+    {
+        if (issues.Count == 0) return new HashSet<long>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        // 大小寫不分（同 EfAnalysisRecordStore.ApplyPushableFilters 的 Source 篩選理由：
+        // provider collation 不保證一致，兩邊都正規化才與比對邏輯逐位一致）
+        var wanted = issues
+            .Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId))
+            .ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        // SQL 端先用 EventId 粗篩（高選擇度、可下推，Source 不分大小寫的精確比對留在記憶體），
+        // 拉回的是相異三元組，數量遠小於原始列數
+        var rows = ctx.TopIssues.AsNoTracking()
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId))
+            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Distinct()
+            .ToList();
+
+        var result = rows
+            .Where(r => wanted.Contains((r.SourceName.ToUpperInvariant(), r.EventId)))
+            .Select(r => r.HostId)
+            .ToHashSet();
+
+        Log.Debug("[SQL] IssueAggregate.HostIdsFor（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，{IssueCount} 個問題）→ {HostCount} 台主機、{Ms}ms",
+            f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:HostIdsFor", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     /// <summary>主機日數＝相異 (host_id, record_date) 組合數（同一台主機多天各算一次）</summary>
     private static Dictionary<(string, int), int> HostDayCounts(
         LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)

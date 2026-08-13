@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AuditLogStore>(sp => new AuditLogStore(sp.GetRequiredService<StorageBackend>().LogStore("audit")));
         services.AddSingleton<IImportLogStore>(sp => new ImportLogStore(sp.GetRequiredService<StorageBackend>().LogStore("import_logs")));
         services.AddSingleton<ISentinelStore>(sp => new SentinelStore(sp.GetRequiredService<StorageBackend>().Blob("sentinels")));
+        services.AddSingleton<IIssueOwnerStore>(sp => new IssueOwnerStore(sp.GetRequiredService<StorageBackend>().Blob("issue_owners")));
         services.AddSingleton<ISystemSettingsStore>(sp => new SystemSettingsStore(sp.GetRequiredService<StorageBackend>().Blob("system_settings")));
         services.AddSingleton<NetiqOptionsStore>(sp => new NetiqOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("netiq_options")));
 
@@ -227,6 +228,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<HostAdminService>();
         services.AddScoped<INetiqHostService, NetiqHostService>();
         services.AddScoped<GroupAdminService>();
+        services.AddScoped<IssueOwnerAdminService>();
 
         // Sentinel 名單改由 Web 維護（docs/archive/HISTORY.md 定案 1），讀寫都經 ISentinelStore
         services.AddSingleton<INetiqServerCatalog, NetiqServerCatalog>();

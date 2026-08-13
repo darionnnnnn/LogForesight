@@ -65,4 +65,13 @@ public interface IIssueAggregateQuery
     /// （null＝不限制；空集合＝零結果，與 <c>RecordQueryFilter.Hosts</c> 同一套授權語意）。
     /// </summary>
     List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
+    /// （回饋十八輪批次F，問題負責人的授權路徑用）。Source 比對不分大小寫；
+    /// EventId=0 的問題（未命中規則的 Windows 事件不會落地成 0，這裡單純防禦）不會誤配。
+    /// host_id=0（未回填或無主機識別的舊列）不列入——與 <see cref="EfAnalysisRecordStore.ListHostDates"/>
+    /// 同一套排除慣例。
+    /// </summary>
+    HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
 }

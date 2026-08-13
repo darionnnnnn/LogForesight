@@ -62,6 +62,17 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         if (hostIds != null && hostIds.Count == 0) return new List<IssueAggregate>();
         return Result;
     }
+
+    /// <summary>回饋十八輪批次F：測試直接塞好要回傳的主機集合，不需要真的連 SQL。</summary>
+    public HashSet<long> HostIdsForResult { get; set; } = new();
+
+    public (IReadOnlyCollection<(string Source, int EventId)> Issues, DateTime From, DateTime To)? LastHostIdsForCall { get; private set; }
+
+    public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
+    {
+        LastHostIdsForCall = (issues, from, to);
+        return HostIdsForResult;
+    }
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

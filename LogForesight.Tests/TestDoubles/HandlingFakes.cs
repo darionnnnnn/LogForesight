@@ -37,14 +37,16 @@ internal class HandlingServiceFacade
         ICurrentUser currentUser,
         IAuditService audit,
         ISystemSettingsStore settings,
-        IUserGroupStore? groups = null)
+        IUserGroupStore? groups = null,
+        IIssueOwnerStore? issueOwners = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
-        var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts);
+        var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
         _day = new DayHandlingCommandService(
-            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities);
+            store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
+            issueOwners: issueOwners);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities);
         _history = new HandlingHistoryQueryService(

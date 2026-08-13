@@ -360,6 +360,38 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .ToHashSet();
 }
 
+/// <summary>問題負責人規則的記憶體實作（回饋十八輪批次F）：與正式的 IssueOwnerStore
+/// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
+internal class FakeIssueOwnerStore : IIssueOwnerStore
+{
+    private readonly List<IssueOwnerRule> _rules = new();
+
+    public List<IssueOwnerRule> GetAll() => _rules.ToList();
+
+    public IssueOwnerRule? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
+
+    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    {
+        var existing = _rules.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
+        if (existing == null)
+        {
+            rule.UpdatedAt = DateTime.Now;
+            _rules.Add(rule);
+            return rule;
+        }
+        existing.OwnerUserIds = rule.OwnerUserIds;
+        existing.Note = rule.Note;
+        existing.UpdatedAt = DateTime.Now;
+        existing.UpdatedByAccount = rule.UpdatedByAccount;
+        return existing;
+    }
+
+    public void Delete(string source, int eventId) => _rules.RemoveAll(r => Matches(r, source, eventId));
+
+    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
+        r.EventId == eventId && string.Equals(r.SourceName, source, StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>
 /// 記憶體版 SMTP 寄送替身（回饋十五輪批次D）：不連真的 SMTP，只記錄送出過的信供斷言。
 /// <see cref="ThrowOnSend"/> 供「寄送失敗不影響呼叫端」的測試情境切換。

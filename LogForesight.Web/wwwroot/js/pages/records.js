@@ -875,6 +875,18 @@ function issueGroupCell(group) {
     title.textContent = `${group.source} (${group.eventId})`;
     wrap.appendChild(title);
 
+    // 問題負責人 badge（回饋十八輪批次F）：「這個問題歸誰」在主視角一眼可見——
+    // 與下方 issueHandlersCell（現在誰在處理）是不同概念，見後端 IssueGroupDto.IssueOwnerNames 註解。
+    if (group.issueOwnerNames?.length > 0) {
+        const owner = document.createElement('div');
+        owner.className = 'small mt-1';
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--info';
+        badge.textContent = `負責人：${group.issueOwnerNames.join('、')}`;
+        owner.appendChild(badge);
+        wrap.appendChild(owner);
+    }
+
     if (group.knownIssue) {
         const known = document.createElement('div');
         known.className = 'small text-muted';

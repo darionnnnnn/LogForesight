@@ -109,6 +109,10 @@ public static class AuditActions
     public const string AccessGrant = "access_grant";
     public const string AccessRevoke = "access_revoke";
 
+    // 問題負責人（回饋十八輪批次F）
+    public const string IssueOwnerUpdate = "issue_owner_update";
+    public const string IssueOwnerDelete = "issue_owner_delete";
+
     // 匯入
     public const string ImportApply = "import_apply";
 

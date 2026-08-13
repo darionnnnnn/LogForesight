@@ -27,6 +27,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
+    private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly RecordQueryServiceFacade _service;
     private readonly HandlingServiceFacade _handlingService;
 
@@ -49,7 +50,8 @@ public class RecordQueryServiceSearchTests : IDisposable
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
-            settings: _settingsStore);
+            settings: _settingsStore,
+            issueOwners: _issueOwners);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到
@@ -459,6 +461,32 @@ public class RecordQueryServiceSearchTests : IDisposable
 
         Assert.Single(result.Items);
         Assert.Equal(1, result.Items[0].HostCount);
+    }
+
+    /// <summary>問題負責人 badge（回饋十八輪批次F）：有規則時 IssueOwnerNames 附上；
+    /// 沒有規則時是空清單，不是 null——前端 group.issueOwnerNames?.length 判斷要有東西可判斷。</summary>
+    [Fact]
+    public void SearchByIssue_附上問題負責人()
+    {
+        var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "OOO", Active = true });
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
+        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Equal(new List<string> { "OOO(DOMAIN\\owner)" }, result.Items[0].IssueOwnerNames);
+    }
+
+    [Fact]
+    public void SearchByIssue_沒有問題負責人規則時回空清單()
+    {
+        var host = AddHost("HOST-A");
+        AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Empty(result.Items[0].IssueOwnerNames);
     }
 
     [Fact]

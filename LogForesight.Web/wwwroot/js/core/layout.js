@@ -36,6 +36,9 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
+            // 問題負責人（回饋十八輪批次F）：以 (Source,EventId) 為鍵指派跨主機負責人，
+            // 與主機負責人是相同概念——放在主機／群組之後，同屬「誰負責什麼」這條動線
+            { href: '/admin/issue-owners', label: '問題負責人', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/settings', label: '設定', icon: 'gear', requires: 'Maintain' }
