@@ -617,3 +617,38 @@ swap 就達到同樣的效能效果（不再反序列化整份 ContentJson），
 「不受 scope 篩選」文件化例外規則）。
 
 下一步：E6（ClusterSignatures 改 Aggregate 子集）。
+
+### 批次E6（完成，commit `ea0a073`，2007 測試綠）
+
+`ClusterSignatures`（AI 歸納用，跨主機同簽章聚類）改呼叫 `IIssueAggregateQuery.Aggregate`
+取代整批載入——`IssueClusterDto`（Source/EventId/HostCount/TotalCount）是
+`IssueAggregate` 的現成真子集，過濾邏輯與 `SearchByIssue`（批次E1）同一套
+（EventId/Source/Categories/RiskLevels/Severity，含 SiteHidden 嚴重度可見性）。
+
+**驗證方式的取捨**：這支方法先前完全沒有測試覆蓋，且本機 dev 環境未設定 AI
+（`/api/ai/query-summary` 因 `_ai.Available=false` 短路回 `data:null`，不會真的
+呼叫到 `ClusterSignatures`），沒辦法瀏覽器端到端驗證。改為補三個單元測試釘住
+行為（只留跨主機問題／依主機數排序取前五／套用風險類型過濾），全數綠燈——
+這是本輪唯一一個無法瀏覽器驗證、改用單元測試補強信心的批次。
+
+下一步：E7（退場普查）。
+
+### 批次E7（完成，commit `746d2c8`，2007 測試綠）
+
+- **死碼移除**：`RecordStatsBuilder.BuildIssueRanking` 確認零呼叫端（`IssueRankingBuilder`
+  早在批次A之前的規模化輪就已取代它，死碼一直沒清掉）——移除；順帶修正
+  `IssueRankingDto` 的 XML 文件註解，原本仍引用這支已刪除的方法，改指向實際
+  供資的 `IssueRankingBuilder`。
+- **`_repository.Query` 殘餘呼叫端普查**（共 4 處，全數核對後確認刻意不動）：
+  - `RecordDetailQueryService.GetHostDetail`／`GetHostIssueOccurrences`——範圍是
+    單一主機的天數視窗（時間軸／重點問題展開），不是跨主機聚合，量級與
+    E1-E6 解的「M 主機 × N 天」問題不同量級；且用 `applyDayRiskVisibility:false`
+    豁免（時間軸必須看完整證據，不受日風險等級顯示設定影響），`QueryLightweight`
+    目前的簽章不支援這個參數，貿然套用會是行為改變而非單純效能優化。
+  - `IssueHandlingCommandService.PlanBulkClose`／`ResolveIssueOccurrences`——
+    寫入路徑指令（統一標記／指派前置查詢），範圍是單一 (Source,EventId) 問題
+    的出現範圍，天然受「這個問題影響多廣」限制（多數問題影響個位數主機），
+    不是全站規模；且已有 `MaxBulkCloseDayWrites` 上限守門。批次E的範疇是
+    「讀取路徑」，寫入指令不在此列。
+
+下一步：E8（授權下推檢查表）。
