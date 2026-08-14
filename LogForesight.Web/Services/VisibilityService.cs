@@ -26,7 +26,7 @@ namespace LogForesight.Web.Services;
 ///
 /// **問題負責人**（回饋十八輪批次F）是第四條路徑，與主機負責人**同級**（整台可見，不是案件
 /// 授與那種窄授與）：保留期內出現過其負責問題（(Source,EventId) 規則，見
-/// <see cref="IssueOwnerRule"/>）的主機自動可見。理由與主機負責人一致——問題歸屬也是第一手
+/// <see cref="IssueProfile"/>）的主機自動可見。理由與主機負責人一致——問題歸屬也是第一手
 /// 資料，不該另外去授權矩陣補一刀。
 /// </summary>
 public interface IVisibilityService

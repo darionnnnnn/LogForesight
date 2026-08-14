@@ -476,7 +476,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "OOO", Active = true });
         var host = AddHost("HOST-A");
         AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 

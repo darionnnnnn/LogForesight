@@ -13,7 +13,7 @@ namespace LogForesight.Core.Models;
 ///   3. 授權路徑（第四條）：問題負責人自動可見「保留期內出現過其負責問題的主機」
 ///      （見 Web 端 HostVisibilityResolver.GetIssueOwnedHostIds），並隱含 User 角色。
 /// </summary>
-public class IssueOwnerRule
+public class IssueProfile
 {
     /// <summary>比對不分大小寫（見 IssueOwnerStore.Matches），OrdinalIgnoreCase——與
     /// MatchesSignature（IssueHandlingCommandService）等既有 Source 比對慣例一致。</summary>
@@ -38,7 +38,7 @@ public class IssueOwnerRule
     /// 收斂到這裡之後只有一處要維護——切換比對規則（例如改成不允許不分大小寫）
     /// 只需要改這一個方法，不會有處改到、處漏改的風險。
     /// </summary>
-    public static bool Matches(IssueOwnerRule rule, string source, int eventId) =>
+    public static bool Matches(IssueProfile rule, string source, int eventId) =>
         rule.EventId == eventId && string.Equals(rule.SourceName, source, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
@@ -57,7 +57,7 @@ public class IssueOwnerRule
     /// 去重、KeyOf 以 ToUpperInvariant 折疊，兩者對極端 Unicode（如土耳其無點 i）並非嚴格等價，
     /// 直接 ToDictionary 撞鍵會讓整頁炸掉——寧可靜默取第一筆也不讓查詢頁 500。
     /// </summary>
-    public static Dictionary<(string SourceUpper, int EventId), List<long>> IndexByKey(IEnumerable<IssueOwnerRule> rules) =>
+    public static Dictionary<(string SourceUpper, int EventId), List<long>> IndexByKey(IEnumerable<IssueProfile> rules) =>
         rules.GroupBy(r => KeyOf(r.SourceName, r.EventId))
             .ToDictionary(g => g.Key, g => g.First().OwnerUserIds);
 }

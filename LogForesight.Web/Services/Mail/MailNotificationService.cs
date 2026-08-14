@@ -358,7 +358,7 @@ public class MailNotificationService
     private MailContext BuildContext() => new(
         _hosts.GetAll().ToDictionary(h => h.HostId),
         _users.GetAll(),
-        IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>()));
+        IssueProfile.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueProfile>()));
 
     // ── 內部：收件人解析與可見範圍 ────────────────────────────────────────
 
@@ -499,7 +499,7 @@ public class MailNotificationService
     {
         var issueOwnerIds = record.TopIssues
             .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
-                IssueOwnerRule.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
+                IssueProfile.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
             .Distinct()
             .ToList();
 

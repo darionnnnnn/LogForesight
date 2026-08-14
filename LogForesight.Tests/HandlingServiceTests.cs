@@ -253,7 +253,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -268,7 +268,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule
+        _issueOwners.Upsert(new IssueProfile
         {
             SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId, third.UserId }
         });
@@ -288,8 +288,8 @@ public class HandlingServiceTests : IDisposable
         var a = Issue("disk", 153);
         var b = Issue("network", 201);
         _repository.AddRecord(_host.HostName, day, a, b);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -304,8 +304,8 @@ public class HandlingServiceTests : IDisposable
         var a = Issue("disk", 153);
         var b = Issue("network", 201);
         _repository.AddRecord(_host.HostName, day, a, b);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -321,7 +321,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -335,7 +335,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         Create(Capability.Handle).Update(_host.HostId, day, new UpdateHandlingRequest { Status = HandlingStatuses.InProgress });
 

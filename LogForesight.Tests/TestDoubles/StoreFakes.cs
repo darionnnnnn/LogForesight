@@ -368,13 +368,13 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
 /// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {
-    private readonly List<IssueOwnerRule> _rules = new();
+    private readonly List<IssueProfile> _rules = new();
 
-    public List<IssueOwnerRule> GetAll() => _rules.ToList();
+    public List<IssueProfile> GetAll() => _rules.ToList();
 
-    public IssueOwnerRule? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
+    public IssueProfile? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
 
-    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    public IssueProfile Upsert(IssueProfile rule)
     {
         var existing = _rules.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
         if (existing == null)
@@ -394,8 +394,8 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
 
     // 委派單一事實來源（終檢輪修正）：自寫一份就是 FakeHostStore/FakeUserStore 踩過的
     // 「測試替身與正式實作語意漂移」家族，正式端改比對規則時這裡不會跟著動。
-    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
-        IssueOwnerRule.Matches(r, source, eventId);
+    private static bool Matches(IssueProfile r, string source, int eventId) =>
+        IssueProfile.Matches(r, source, eventId);
 }
 
 /// <summary>

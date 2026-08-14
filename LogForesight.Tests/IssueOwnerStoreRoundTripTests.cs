@@ -17,7 +17,7 @@ public class IssueOwnerStoreRoundTripTests : IDisposable
 
     private IssueOwnerStore Store() => new(_fixture.Blob("issue_owners"));
 
-    private static IssueOwnerRule FullyPopulated() => new()
+    private static IssueProfile FullyPopulated() => new()
     {
         SourceName = "disk",
         EventId = 153,
@@ -49,7 +49,7 @@ public class IssueOwnerStoreRoundTripTests : IDisposable
     [Fact]
     public void 更新_全部欄位都跟著改_沒有欄位被靜默還原()
     {
-        Store().Upsert(new IssueOwnerRule
+        Store().Upsert(new IssueProfile
         {
             SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { 9 }, Note = "舊備註"
         });
@@ -64,8 +64,8 @@ public class IssueOwnerStoreRoundTripTests : IDisposable
     [Fact]
     public void 更新_同SourceEventId視為同一筆而非新增()
     {
-        Store().Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { 1 } });
-        Store().Upsert(new IssueOwnerRule { SourceName = "DISK", EventId = 153, OwnerUserIds = new List<long> { 2 } });
+        Store().Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { 1 } });
+        Store().Upsert(new IssueProfile { SourceName = "DISK", EventId = 153, OwnerUserIds = new List<long> { 2 } });
 
         Assert.Single(Store().GetAll());
         Assert.Equal(new List<long> { 2 }, Store().Get("disk", 153)!.OwnerUserIds);
@@ -83,7 +83,7 @@ public class IssueOwnerStoreRoundTripTests : IDisposable
     }
 
     /// <summary>逐欄比對。新增模型欄位時這裡也要加一行——加了才會逼出 Upsert 的漏抄。</summary>
-    private static void AssertAllFieldsMatch(IssueOwnerRule expected, IssueOwnerRule actual)
+    private static void AssertAllFieldsMatch(IssueProfile expected, IssueProfile actual)
     {
         Assert.Equal(expected.SourceName, actual.SourceName);
         Assert.Equal(expected.EventId, actual.EventId);

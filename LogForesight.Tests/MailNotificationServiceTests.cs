@@ -348,7 +348,7 @@ public class MailNotificationServiceTests : IDisposable
         var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
         var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
 
@@ -366,7 +366,7 @@ public class MailNotificationServiceTests : IDisposable
         CreateViewAllAccount("ops@test.local");
         var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
 
@@ -384,7 +384,7 @@ public class MailNotificationServiceTests : IDisposable
         var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
         var host1 = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
         var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
         _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High, issues: Issue("network", 999)));
@@ -403,7 +403,7 @@ public class MailNotificationServiceTests : IDisposable
     public async Task NotifyAfterRunAsync_全域收件人是問題負責人時看得到該主機明細()
     {
         var owner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
         _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailRecipients = new List<string> { "issueowner@test.local" }; });

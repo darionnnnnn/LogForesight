@@ -332,7 +332,7 @@ public class RecordListQueryService
 
         // 問題負責人 badge（回饋十八輪批次F）與使用者字典：一次批次載入，避免逐群組各自查詢
         // （BuildIssueGroup 時代 N+1 的既有教訓，見批次A/D 的 issueOwnersByKey／usersById 設計）
-        var issueOwnersByKey = IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>());
+        var issueOwnersByKey = IssueProfile.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueProfile>());
         var usersById = _users.GetAll().ToDictionary(u => u.UserId);
 
         // 處理狀態的候選集只到「篩選後留下的問題 × 可見主機」這一層（不是問題 × 主機 × 天數），
@@ -482,7 +482,7 @@ public class RecordListQueryService
                 : processing > 0 ? HandlingStatuses.InProgress
                 : HandlingStatuses.Resolved,
             Handlers = handlers,
-            IssueOwnerNames = issueOwnersByKey.TryGetValue(IssueOwnerRule.KeyOf(aggregate.Source, aggregate.EventId), out var ownerIds)
+            IssueOwnerNames = issueOwnersByKey.TryGetValue(IssueProfile.KeyOf(aggregate.Source, aggregate.EventId), out var ownerIds)
                 ? ownerIds.Select(id => usersById.GetValueOrDefault(id))
                     .Where(u => u is { Active: true })
                     .Select(u => NameFormat.WithAccount(u!.DisplayName, u.Account))

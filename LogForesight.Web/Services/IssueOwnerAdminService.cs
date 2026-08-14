@@ -52,7 +52,7 @@ public class IssueOwnerAdminService
         var to = DateTime.Today;
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         var owned = _issueOwners.GetAll()
-            .Select(r => IssueOwnerRule.KeyOf(r.SourceName, r.EventId))
+            .Select(r => IssueProfile.KeyOf(r.SourceName, r.EventId))
             .ToHashSet();
 
         return _issueAggregates.Aggregate(from, to, null)
@@ -64,7 +64,7 @@ public class IssueOwnerAdminService
                 EventId = a.EventId,
                 HostCount = a.HostCount,
                 LastSeen = a.LastSeen,
-                HasOwner = owned.Contains(IssueOwnerRule.KeyOf(a.Source, a.EventId))
+                HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
             })
             .ToList();
     }
@@ -86,7 +86,7 @@ public class IssueOwnerAdminService
                             ?? new List<string>();
         var afterOwners = requestedOwners.Select(id => usersById[id].Account).ToList();
 
-        var saved = _issueOwners.Upsert(new IssueOwnerRule
+        var saved = _issueOwners.Upsert(new IssueProfile
         {
             SourceName = sourceName,
             EventId = request.EventId,
@@ -128,14 +128,14 @@ public class IssueOwnerAdminService
         var to = DateTime.Today;
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         return _issueAggregates.Aggregate(from, to, null)
-            .ToDictionary(a => IssueOwnerRule.KeyOf(a.Source, a.EventId), a => (a.HostCount, a.LastSeen));
+            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId), a => (a.HostCount, a.LastSeen));
     }
 
     private IssueOwnerDto ToDto(
-        IssueOwnerRule rule, Dictionary<long, WebUser> usersById,
+        IssueProfile rule, Dictionary<long, WebUser> usersById,
         Dictionary<(string SourceUpper, int EventId), (int HostCount, DateTime LastSeen)> recentByKey)
     {
-        var recent = recentByKey.TryGetValue(IssueOwnerRule.KeyOf(rule.SourceName, rule.EventId), out var r) ? r : ((int, DateTime)?)null;
+        var recent = recentByKey.TryGetValue(IssueProfile.KeyOf(rule.SourceName, rule.EventId), out var r) ? r : ((int, DateTime)?)null;
 
         return new IssueOwnerDto
         {

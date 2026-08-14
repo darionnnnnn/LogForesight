@@ -22,7 +22,7 @@ internal class FakeCurrentUser : ICurrentUser
         new() { UserId = 999, Capabilities = capabilities.ToHashSet() };
 
     /// <summary>指定帳號字串（回饋十八輪批次F）：驗證「誰做的」被正確記錄下來的測試
-    /// （IssueOwnerRule.UpdatedByAccount 之類），比預設的 "test-user" 更能證明帳號真的有傳遞。</summary>
+    /// （IssueProfile.UpdatedByAccount 之類），比預設的 "test-user" 更能證明帳號真的有傳遞。</summary>
     public static FakeCurrentUser ForAccount(string account) =>
         new() { UserId = 999, Account = account, Capabilities = new HashSet<Capability> { Capability.Maintain } };
 

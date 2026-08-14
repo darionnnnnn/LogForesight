@@ -259,7 +259,7 @@ public class IdentityServiceTests
     {
         var service = Create();
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
 
         var caps = service.ResolveCapabilities(user);
 
@@ -272,7 +272,7 @@ public class IdentityServiceTests
     {
         var service = Create();
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
 
         var caps = service.ResolveCapabilities(user);
 
@@ -286,7 +286,7 @@ public class IdentityServiceTests
         var service = Create();
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\issueowner" });
         var other = _users.Upsert(new WebUser { Account = "DOMAIN\\other" });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
 
         Assert.Empty(service.ResolveCapabilities(other));
     }
