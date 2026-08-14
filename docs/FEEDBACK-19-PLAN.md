@@ -862,3 +862,59 @@ G3 的分數展開改用提示文字（rowHref/rowDetail 互斥）。體檢（�
 class——已成為往後新增欄位時的固定檢查項。
 
 下一步：批次H（郵件問題優先）。
+
+---
+
+### 批次H：郵件問題優先（完成）
+
+**H1** `MailIssueDigest`（新增，`LogForesight.Web/Services/Mail`）：Singleton-safe
+的問題優先摘要查詢，依 (Source,EventId) 產出問題行，分四區——逾期＞新出現＞
+擴散中＞其他高風險（一個問題只落一區，取最急迫的）。逾期判定重用
+`IssueTodoQuery.IsOverdueInProgress`（改 `internal` 共用，其文件註解本就預告
+「供批次H 郵件的逾期區塊共用同一個口徑」，避免另訂一套規則）。
+
+**DI 生命週期調整**（H1 落地時發現的架構前提）：`OccurrenceStatusResolver`
+改註冊為 Singleton——它自身四個相依（`IHostStore`／`IIssueHandlingStore`／
+`IIssueCaseStore`／`ISystemSettingsStore`）本來就全是 Singleton，往下調整
+沒有 captive dependency 疑慮。這樣 `MailIssueDigest` 才能直接注入它重用
+「批次撈 handling/case → 逐筆判定」邏輯，不必為 Singleton 情境另外複製一份
+判定規則（否則就要在 Singleton 情境重寫一份 `OccurrenceStatusResolver.
+Resolve` 的邏輯，違反 D 批次「不各自重寫一份批次載入的樣板碼」的既有原則）。
+`IssueHandlingRollupQuery`／`IssueTodoQuery` 維持 Scoped 不受影響。
+
+**H2** 三種信改版：執行摘要／每日週報的主機日明細（逐主機日一行）整段移除，
+改一行「請至站台」連結；高風險即時改為「問題優先區塊＋主機日附錄」雙節
+並存（規劃原文「逐問題行＋主機日附錄」）。**與規劃原文的落地方式偏離**：
+規劃只點名「其他高風險」分區依嚴重度過濾，未明講新出現／擴散中是否也要
+疊加嚴重度門檻；判斷「這是全新的東西」本身就是使用者最需要知道的事，
+疊加嚴重度門檻會讓低嚴重度新問題被悄悄濾掉，故前三區（逾期／新出現／
+擴散中）刻意不設嚴重度門檻，只有兜底的「其他高風險」依嚴重度過濾。
+
+既有的收件人解析／可見範圍過濾／coverage 去重／熔斷機制全部不動——只有
+body 內容來源換掉。`RecipientView` 新增 `VisibleHostIds` 欄位供問題優先區塊
+查詢用，與既有的 `Detail`（coverage 去重用，語意不變）分開，兩者服務不同
+目的：Detail 答「本輪窗口內、達門檻的主機日子集」，VisibleHostIds 答「這個人
+整體看得到哪些主機」。
+
+**H3** 效能：`BuildIssueRowsCached` 以 hostIds 集合排序後的字串鍵在批次內
+共用同一次 `MailIssueDigest.Build` 結果，多位可見範圍相同的收件人（常見於
+同群組授權）不會各自重複查詢。
+
+真實 dev 環境驗證：DI 容器啟動零錯誤（證明 Singleton 生命週期調整正確）、
+郵件設定頁功能不受影響；SMTP 未配置無法端到端驗證實際寄信內容（同 E6
+「AI 未配置」的既有限制模式），改以真實 SQL 資料
+（`EfSqliteFixture`＋`EfAnalysisRecordStore`＋`EfIssueAggregateQuery`）驅動的
+整合測試驗證四分區判定邏輯本身正確。
+
+**H4**：新增 `MailIssueDigestTests`（9 個，真實 SQL 驅動的分區判定，含逾期
+測試踩到的一個測試自身邏輯錯誤——`Add()` 輔助函式沿用既有慣例把日風險等級
+硬寫死 Low，而逾期母體 `ActionableOccurrences` 要求日風險為高／中，補上可覆寫
+日風險等級的 `Add()` 多載修正）；`MailNotificationServiceTests` 修復 4 個因
+body 內容改版而斷言過時字串的既有測試（改斷言統計行等未變的觀察面），並
+新增 5 個（問題優先截斷／雙節並存／H3 共用查詢／空清單措辭）；
+`FakeIssueAggregateQuery` 新增 `AggregateCallCount`／`AggregateOverride`
+供 H3 與分區測試使用（純附加，既有呼叫端不受影響）。
+
+commit `10259d8`，2085 測試綠。
+
+下一步：批次I（文件同步＋BACKLOG 收斂＋全案體檢，回饋十九輪最後一批）。
