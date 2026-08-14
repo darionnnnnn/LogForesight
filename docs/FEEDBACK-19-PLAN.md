@@ -747,3 +747,34 @@ SetConclusion/ClearConclusion 服務方法）與 §2 決策一原文一致，無
 殘留舊文字），皆已修正並補測試／重新驗證。2023 測試綠。
 
 下一步：批次G（統計強化：基準線／PriorityScore／HostTier）。
+
+---
+
+### 批次G2：主機分級（完成）
+
+`WebHost.Tier`（core/standard/test，預設 standard）：blob（`lf_hosts`）零遷移，
+`NormalizeTier` 同 `NormalizeOs` 慣例。主機頁單台編輯下拉＋批次設定分級（批次
+走既有 `IHostStore.MutateBatch`，同 `SetGroupsBatch` 一次寫入的理由，不逐台
+`Upsert`）；NetIQ 單筆／批次登錄與掃描精靈套用（`NetiqImportApplier.Apply`
+新增 `tier` 參數）皆為選填欄，只套用在本次**新增**的主機——與既有 `os` 參數
+同一原則。**與規劃原文「NetIQ／CSV 匯入選填欄」的落地方式不同**：hosts.csv
+已於回饋十一輪 §2a 退役，現存的匯入路徑只剩 NetIQ 掃描精靈（`
+NetiqImportApplier`）與單筆/批次登錄（`NetiqHostService`），沒有獨立的 CSV
+匯入器可掛；`OwnerCsvImporter` 職責僅限負責人，不是合適的掛載點。主機清單與
+詳情頁顯示分級徽章。
+
+**體檢揪出真 bug**：`HostStore.Upsert` 對「已存在」主機的逐欄複製分支漏抄
+`Tier`——新主機因為走 `Add` 分支（直接用傳入物件）不會踩到，只有編輯既有
+主機才會現形。這是本輪第二次踩到同一個 bug class（批次F4 的
+`IssueOwnerAdminService.Upsert` 也是逐欄複製漏抄新欄位）：只用全新物件寫的
+單元測試測不出來，只有實際在瀏覽器對既有主機儲存才抓到——之後新增欄位時，
+任何「取出既有物件→逐欄複製到新物件」的 Upsert 分支都要優先檢查這一類。
+已修正 `HostStore.Upsert` 與測試替身 `FakeHostStore.Upsert`（兩者當初一起
+漏，這次也一起補），並補迴歸測試專門釘住「編輯既有主機」這條路徑（不能只測
+新增）。
+
+真實 dev SQLite 端到端瀏覽器驗證：單台編輯分級、批次設定分級（三台一次套
+用）、主機清單/詳情頁徽章正確顯示、NetIQ 掃描精靈分級欄位存在且選項正確。
+commit `94d8169`，2035 測試綠。
+
+下一步：批次G1（機房級基準線）。
