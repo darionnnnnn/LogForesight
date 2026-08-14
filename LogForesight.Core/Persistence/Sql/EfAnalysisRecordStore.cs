@@ -447,6 +447,89 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter)
+    {
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var rows = q
+            .Select(r => new
+            {
+                r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
+                r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
+                r.AiAnalyzed, r.AiPending
+            })
+            .ToList();
+
+        // 只帶判定/分類需要的欄位（不含 SampleMessages／KeyDetails 等風險日詳情頁專用內容）
+        var recordIds = rows.Select(r => r.RecordId).ToHashSet();
+        var issuesByRecordId = recordIds.Count == 0
+            ? new Dictionary<long, List<LogIssueSignature>>()
+            : ctx.TopIssues.AsNoTracking()
+                .Where(t => recordIds.Contains(t.RecordId))
+                .Select(t => new
+                {
+                    t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
+                    t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey
+                })
+                .ToList()
+                .GroupBy(t => t.RecordId)
+                .ToDictionary(g => g.Key, g => g.Select(t => new LogIssueSignature
+                {
+                    LogName = t.LogName,
+                    Source = t.SourceName,
+                    EventId = t.EventId,
+                    EntryType = (System.Diagnostics.EventLogEntryType)t.EntryType,
+                    EventKey = t.EventKey,
+                    Count = t.EventCount,
+                    // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
+                    // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
+                    // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
+                    Severity = (IssueSeverity)t.SeverityRank,
+                    Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
+                    ElevatesDayRisk = t.ElevatesDayRisk,
+                    KnownIssue = t.KnownIssue
+                }).ToList());
+
+        var records = rows.Select(r => new DailyAnalysisRecord
+        {
+            HostId = r.HostId,
+            Host = r.HostName,
+            Date = r.RecordDate,
+            RiskLevel = r.RiskLevel,
+            Headline = r.Headline,
+            ErrorCount = r.ErrorCount,
+            WarningCount = r.WarningCount,
+            DataIncomplete = r.DataIncomplete,
+            SecurityLogAvailable = r.SecurityLogAvailable,
+            AiAnalyzed = r.AiAnalyzed,
+            AiPending = r.AiPending,
+            // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
+            // 只檢查 Count > 0，用單一佔位元素表達「有」就夠，內容本身不會被讀取
+            CorrelationAlerts = r.HasCorrelation ? new List<string> { "(lightweight)" } : new List<string>(),
+            TopIssues = issuesByRecordId.TryGetValue(r.RecordId, out var issues) ? issues : new List<LogIssueSignature>()
+        });
+
+        // 主機名稱 fallback（HostId=0 的舊列）與 RecordFilterMatcher 防禦性覆核，與 Query() 同一套規則
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        var result = records
+            .Where(r => RecordFilterMatcher.Matches(r, filter))
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Debug("[SQL] QueryLightweight（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ DB {Rows} 列、篩後 {Result} 筆、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryLightweight", sw.ElapsedMilliseconds);
+        return result;
+    }
+
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var sw = Stopwatch.StartNew();

@@ -351,6 +351,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false) =>
         throw new NotImplementedException();
 
+    /// <summary>記憶體實作沒有「整份 blob」與「輕量列」的區別，直接沿用 Query()——
+    /// 差異只在真正的 SQL 後端才有效能意義，測試在意的是篩選/授權語意逐位一致。</summary>
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter) => Query(filter);
+
     /// <summary>與 EfAnalysisRecordStore.ListHostDates 同語意（回饋十八輪批次C 測試所需）：
     /// 窗口內 HostId／Date 的輕量投影，HostId=0（無主機識別的舊列）不列入。</summary>
     public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>

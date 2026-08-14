@@ -53,6 +53,17 @@ public interface IAnalysisRecordQuery
     List<DailyAnalysisRecord> Query(RecordQueryFilter filter);
 
     /// <summary>
+    /// 依條件查詢，回傳輕量版 <see cref="DailyAnalysisRecord"/>（回饋十九輪批次E3）：
+    /// 只填「明細清單頁需要處理狀態篩選時」實際會讀到的欄位（B1 抽出欄＋TopIssues 的判定用子集），
+    /// 不反序列化整份 <c>ContentJson</c>——<see cref="Query"/> 在 Statuses/Overdue/Unassigned
+    /// 篩選啟用時必須整批撈回才能算出每筆的處理狀態，2000 台規模下那正是全量載入整份分析內容
+    /// 的效能熱點。TopIssues 只帶判定與分類需要的欄位（不含 SampleMessages／KeyDetails 等
+    /// 僅風險日詳情頁會用到的內容），CorrelationAlerts 只表達「有沒有」（單一佔位元素，
+    /// 呼叫端一律只檢查 Count > 0，不讀內容）。
+    /// </summary>
+    List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter);
+
+    /// <summary>
     /// 單筆紀錄（主機＋日期）；不存在回 null。
     /// 主機以識別集合表示——併入其他主機後同一台機器會有多個識別（本身＋墓碑），
     /// 依傳入順序擇一命中（呼叫端把存活主機排在最前，見 <see cref="HostIdentityResolver.Expand"/>）。

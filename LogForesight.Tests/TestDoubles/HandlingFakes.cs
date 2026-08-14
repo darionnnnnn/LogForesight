@@ -121,6 +121,10 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) =>
         ((IAnalysisRecordQuery)this).Query(filter);
 
+    /// <summary>記憶體實作沒有「整份 blob」與「輕量列」的區別，直接沿用 Query()（同 FakeAnalysisRecordQuery 的既有慣例）</summary>
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter) =>
+        ((IAnalysisRecordQuery)this).Query(filter);
+
     // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／From／To／RiskLevels）─────
     // RiskLevels 過濾（回饋十八輪批次A-4）：與 EfAnalysisRecordStore.ApplyPushableFilters
     // 同語意，避免與正式實作漂移（此類漂移過去曾在多個測試替身各自重演）。

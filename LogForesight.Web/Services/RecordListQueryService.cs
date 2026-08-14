@@ -59,10 +59,12 @@ public class RecordListQueryService
         var filter = BuildFilter(request);
         var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
-        // Statuses／Overdue 篩選依賴處理狀態（handling.json／issue_handling.json），那不在 SQL 裡，
-        // 必須先算出候選集裡「每一筆」的日狀態才能篩選——天生無法只看某一頁。沒有這兩個條件時
-        // 才能把排序＋分頁整個下推給 SQL（docs/archive/HISTORY.md P1-2），只為「這一頁」載入
-        // 處理狀態，這是 2000 台規模下清單頁最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑。
+        // Statuses／Overdue／Unassigned 篩選依賴處理狀態（lf_record_handling／lf_issue_handling／
+        // lf_issue_cases 三張表 join 出來的推導結果），必須先算出候選集裡**每一筆**的日狀態才能篩選
+        // ——天生無法只看某一頁。沒有這三個條件時才能把排序＋分頁整個下推給 SQL
+        // （docs/archive/HISTORY.md P1-2），只為「這一頁」載入處理狀態，這是 2000 台規模下清單頁
+        // 最常見瀏覽情境（不勾狀態篩選）的效能關鍵路徑；三個條件任一啟用時退回 QueryLightweight
+        // 整批撈回（回饋十九輪批次E3，只帶輕量欄位，不是整份 ContentJson）。
         var needsHandlingFilter = request.Statuses is { Count: > 0 } || request.Overdue == true || request.Unassigned;
 
         if (!needsHandlingFilter)
@@ -91,7 +93,10 @@ public class RecordListQueryService
             };
         }
 
-        var records = _repository.Query(filter);
+        // 全面 SQL 化（回饋十九輪批次E3）：這條慢速路徑必須整批撈回才能逐筆算處理狀態，
+        // 不能像上面的快速路徑一樣把分頁下推給 SQL——但撈回的不必是整份 ContentJson，
+        // 改用 QueryLightweight 只帶處理狀態判定/分類/風險等級需要的欄位
+        var records = _repository.QueryLightweight(filter);
 
         // 紀錄 → 存活主機的索引：合併過的主機，舊識別下的紀錄要歸到存活主機，
         // 處理狀態（以現行主機名稱為鍵）與清單的連結才對得上
