@@ -69,7 +69,9 @@ public class IssueTodoQuery
         };
     }
 
-    private static bool IsOverdueInProgress(ResolvedOccurrence r)
+    /// <summary>逾期＝處理中但預計完成日已過。internal 供 <c>MailIssueDigest</c>（回饋十九輪批次H）
+    /// 共用同一個口徑，不是各自訂一套逾期規則（見上方呼叫處註解）。</summary>
+    internal static bool IsOverdueInProgress(ResolvedOccurrence r)
     {
         var today = DateTime.Today;
         if (r.OpenCase != null)

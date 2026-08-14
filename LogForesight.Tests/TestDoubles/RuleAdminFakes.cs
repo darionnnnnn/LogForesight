@@ -55,14 +55,24 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>最後一次呼叫的參數，供測試斷言查詢範圍（期間／hostIds）有沒有傳對。</summary>
     public (DateTime From, DateTime To, IReadOnlyCollection<long>? HostIds)? LastCall { get; private set; }
 
+    /// <summary>Aggregate 累計呼叫次數（回饋十九輪批次H3）：供測試斷言「同一批次內相同
+    /// 可見範圍集合有沒有真的共用結果、沒有重複查詢」。</summary>
+    public int AggregateCallCount { get; private set; }
+
+    /// <summary>依 (from,to) 回傳不同結果（回饋十九輪批次H）：預設所有呼叫共用同一份
+    /// <see cref="Result"/>，測試若要區分「本期」與「前期」聚合（如驗證新出現／擴散中判定）
+    /// 才需要設這個委派——不設時維持既有的單一 Result 慣例，其餘既有測試不受影響。</summary>
+    public Func<DateTime, DateTime, List<IssueAggregate>>? AggregateOverride { get; set; }
+
     public List<IssueAggregate> Aggregate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
         LastCall = (from, to, hostIds);
+        AggregateCallCount++;
         // 與真正的 EfIssueAggregateQuery 同一個既有慣例：空集合＝可見範圍為空，零結果
         if (hostIds != null && hostIds.Count == 0) return new List<IssueAggregate>();
-        return Result;
+        return AggregateOverride?.Invoke(from, to) ?? Result;
     }
 
     /// <summary>回饋十八輪批次F：測試直接塞好要回傳的主機集合，不需要真的連 SQL。</summary>

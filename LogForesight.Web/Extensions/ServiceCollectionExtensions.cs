@@ -280,8 +280,15 @@ public static class ServiceCollectionExtensions
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
-        // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼
-        services.AddScoped<OccurrenceStatusResolver>();
+        // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
+        // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
+        // （IHostStore／IIssueHandlingStore／IIssueCaseStore／ISystemSettingsStore）本來就全是
+        // Singleton，往下調整生命週期沒有 captive dependency 疑慮；這樣批次H 的
+        // MailIssueDigest（Singleton，見下方郵件通知區塊）才能直接注入它，重用同一套
+        // 「批次撈 handling/case → 逐筆判定」邏輯，不必為 Singleton 情境另外複製一份判定規則。
+        // 既有的 Scoped 呼叫端（DashboardService／ReportService 等）依賴 Singleton 服務永遠合法，
+        // 不受影響。
+        services.AddSingleton<OccurrenceStatusResolver>();
         services.AddScoped<IssueHandlingRollupQuery>();
         services.AddScoped<IssueTodoQuery>();
         services.AddScoped<DashboardService>();
@@ -313,6 +320,9 @@ public static class ServiceCollectionExtensions
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
+        // 郵件問題優先摘要（回饋十九輪批次H1）：同樣 Singleton-safe，相依的 IIssueAggregateQuery／
+        // OccurrenceStatusResolver 皆已是 Singleton
+        services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
