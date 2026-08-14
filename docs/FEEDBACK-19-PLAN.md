@@ -814,3 +814,51 @@ G4：`IIssueAggregateQuery.FirstSeenFor` 讀 `lf_issue_first_seen`（批次B落�
 端到端 2 個），commit `b6c0ae1`，2047 測試綠。
 
 下一步：批次G3（PriorityScore 最小版，依賴 G1/G2/G4 已完成的資料）。
+
+---
+
+### 批次G3：PriorityScore 最小版（完成）
+
+`IssuePriorityScorer`（static、常數寫死、無設定、無接口——規劃 §使用者定案的
+公式，微調需重新走定案流程，不是實作時能單方面調整的參數）：
+
+```
+score = 100 × severityW × hostRatioFactor × spreadW × noveltyW × openW × tierW
+```
+
+severityW／spreadW／noveltyW／openW 全部重用 G1（基準線）／G4（fleet 首見）／
+既有處理概況（rollup）的資料，零新查詢；tierW（受影響主機最高分級）是唯一
+需要新資料的成分，新增 `IIssueAggregateQuery.HostIdsByIssue` 一句 GROUP BY
+（只查當頁組，同 `LatestOccurrences` 規模假設）取代逐問題查詢。「最高分級」
+刻意取 max 不取平均——一台核心主機中鏢，不該被其餘測試機稀釋掉。
+
+`IssueRankingBuilder`（儀表板／報表共用）改依 PriorityScore 排序，次要鍵維持
+原本的嚴重度→主機數→總次數（確保同分時排序穩定，不受 SQL 回傳順序影響）；
+`IssueRankingDto` 附上總分＋六個成分權重，供前端「為什麼是 N 分」使用。
+
+**與規劃原文的落地方式偏離**：規劃寫「列展開顯示成分明細」，但重點問題卡的
+`renderTable` 既有 `rowHref`（點列下鑽問題查詢）與 `rowDetail`（列展開）二擇
+一互斥（`ui.js` 文件明載）。改用「分數」欄＋`title` 提示顯示成分明細，不犧牲
+既有的點列下鑽這個更常用的動線。依問題視角（`records.js`）維持原排序不變，
+`IssueGroupDto` 刻意不擴充 PriorityScore 欄位——規劃原文「其他視角排序不變」。
+
+真實 dev SQLite 端到端瀏覽器驗證：儀表板重點問題卡與報表問題排行皆依分數
+正確排序，且實測數據證明真的不再是純嚴重度排序（一個 Medium 嚴重度但分數
+79 分的問題排在兩個 High 嚴重度但分數 66 分的問題之前）；分數提示文字正確
+顯示六個成分權重。
+
+新增 25 個單元測試（`IssuePriorityScorer` 純函式 16 個，含公式邊界值／夾值
+／門檻邊界＋`IssueRankingBuilder` 端到端 3 個，含 tierW 查無主機資料時的
+退回行為），commit `a89ff29`，2075 測試綠。
+
+## 批次G 全案結案摘要
+
+G1~G4 全部完成，commit 序列 `94d8169`→`a89ff29`，dev 分支
+`feature/feedback-19`，2075 測試綠。與規劃原文有三處刻意偏離，皆已在各自
+段落記錄理由：G2 的 NetIQ/CSV 匯入選填欄改走掃描精靈（hosts.csv 已退役）；
+G4 的「涵蓋範圍」簡化為單一首見日期（避免與既有距今天數提示語意重複）；
+G3 的分數展開改用提示文字（rowHref/rowDetail 互斥）。體檢（隨批次同步進行，
+非獨立輪）在 G2／F4 各揪出一次「Upsert 逐欄複製漏抄新欄位」同一種 bug
+class——已成為往後新增欄位時的固定檢查項。
+
+下一步：批次H（郵件問題優先）。
