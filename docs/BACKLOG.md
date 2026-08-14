@@ -32,7 +32,7 @@
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。
   探索方案（NetIQ 匯入精靈的主機發現）已解決：改用「網段範圍掃描」，完全不碰 ESM API
-  （權限被拒）與全站 24h distinct（不可行）。**2026-08-06 涵蓋保證改版**：移除自適應時間窗
+  （權限被拒）與全站 24h distinct（不可行）。**涵蓋保證改版**：移除自適應時間窗
   （事件越多窗口越短，被裁掉的時間裡安靜主機會**靜默**消失），改為窄化 filter
   （限 System/Application 頻道，成本正比主機數而非事件量）＋殘差輪掃（觸頂時排除已見主機重查）
   ＋全事件短窗補充掃描，見 docs/NETIQ-API-REFERENCE.md §3.4。
@@ -40,7 +40,7 @@
   2~3 晚，核對下列尚未實證的細節：
   1. `sev` 的 Warning/Error 確切門檻（目前為候選值，見 NETIQ-API-REFERENCE.md §4）。
   2. Defender/RDP Operational 頻道有無進 Sentinel（沒有則該偵測面誠實申報不適用）。
-  3. ~~Linux 主機的欄位形狀／`sev` 對應門檻~~ **四輪 probe（2026-08-07，Sentinel「118_linux」）
+  3. ~~Linux 主機的欄位形狀／`sev` 對應門檻~~ **多輪 probe（Sentinel「118_linux」）
      全數定案並實作完成**（`Program=sp`、主機歸屬鍵沿用 `repip`、`sev` 不可靠承載 syslog
      priority 語意改採計數用途的務實映射，見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)
      §4a、[docs/LINUX-RULES.md](LINUX-RULES.md)）。
@@ -56,7 +56,7 @@
   7. 多網卡主機以哪個 IP 回報（有「查無資料」假象的風險）。
   8. token 有效期長短（決定長輪收集中是否需要主動換發）。
   9. 2000 台規模放量前需評估逐主機 `HasRecord` 查詢的批次化（目前是 O(主機數×天數) 個別查詢）。
-      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 每主機日呼叫已於回饋十四輪 A3 收斂
+      同構的 `HostStore.Get`／`ISuppressionStore.LoadAll` 每主機日呼叫已收斂
       （改為計畫階段解析一次＋run 級快照，見 `NetiqPipelineService.HostPlan`）——`HasRecord`
       走的是 SQL 而非整份 blob 反序列化，性質不同，仍待放量前實測決定要不要批次化。
   10. Security 頻道規則未涵蓋的「未知失敗 ID」目前不會被撈入 Sentinel 路徑（相對本機模式的
@@ -65,7 +65,7 @@
 - **伺服器端 CSV 匯出**：目前清單頁「複製為 CSV」為前端序列化當前頁；伺服器端全量匯出
   應與 `QueryPage` 下推查詢同路徑實作（避免匯出又走一次全撈）。
 
-## AI 整合觀察項（原 docs/archive/FEEDBACK-4-PLAN.md §5 MCP 評估，2026-07-30）
+## AI 整合觀察項（原 docs/archive/FEEDBACK-4-PLAN.md §5 MCP 評估）
 
 - **LogForesight as MCP server（供外部 AI 客戶端使用，非內建小模型）**：評估「詢問 AI 現場取數」
   該不該讓地端小模型透過 MCP 自主決定查什麼時，結論是不採（模型無 function calling、地端小模型
@@ -79,7 +79,7 @@
 ## 本次簡化重構（refactor/simplify-2026-07）遞延項
 
 - **`RecordsController` 的查詢參數尚未收斂為查詢模型類別**：`RecordsController.cs` 目前仍有
-  41 個 `[FromQuery]` 參數（3 個端點各約 13～15 個；2026-07-29 表頭排序功能又加了 `sort`/`dir`
+  41 個 `[FromQuery]` 參數（3 個端點各約 13～15 個；表頭排序功能又加了 `sort`/`dir`
   各三份，收斂的價值更高了），Phase 6f 體檢時判斷「model binding 語意屬
   行為相鄰、無把關測試」而暫緩合併成單一查詢模型類別，改記入本清單。需要先补一輪端到端測試
   釘住目前的 model binding 行為（空值/預設值/大小寫等），才能安全地做這個重構。
@@ -98,7 +98,7 @@
   架構重構範圍內處理。折衷方案（三個屬性包成一個不可變快照、用單次原子替換取代逐一
   覆寫）可以先解決「非原子」的理論風險且不需要動呼叫端，若之後要做可從這裡切入。
 
-## 回饋第九輪遞延項（docs/archive/FEEDBACK-9-PLAN.md，2026-08-05）
+## 案件指派與觀察機制遞延項（詳見 docs/archive/FEEDBACK-9-PLAN.md）
 
 - **常設自動指派規則（§6 解讀「乙」）**：讓「此問題簽章之後永遠自動指派給某人」，連未來
   新出現的主機也自動掛。§6 本輪只做「甲」（一次把目前受影響主機批次指派、建案件）。
@@ -117,7 +117,7 @@
   「未指派也要跨日觀察」的需求成立，需要類似已知雜訊記憶的主機×簽章記憶機制——
   避免草率引入同一問題的第三套跨日協調機制，觀察需求明確後再規劃。
 
-## 回饋第十一輪遞延項（docs/archive/FEEDBACK-11-PLAN.md，2026-08-05）
+## 主機分組與案件歷程遞延項（詳見 docs/archive/FEEDBACK-11-PLAN.md）
 
 - **本機主機失去「第一次分析前預先建檔＋分組」的批次途徑**（§2a 退役 hosts.csv 的已知損失）：
   本機主機現一律由批次分析首次執行時自動 Touch 登錄，之後才能在主機頁批次設定群組——
@@ -135,7 +135,7 @@
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
 - **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合，處理概況要逐問題查
-  handling 標記。**2026-08-06 更新**：`IssueRankingDto` 已備妥 `OpenHostCount`／
+  handling 標記。`IssueRankingDto` 已備妥 `OpenHostCount`／
   `ResolvedHostCount` 兩個欄位與 `IssueRankingBuilder` 的 rollup 參數，
   `IIssueAggregateQuery` 也已回傳該群組的相異完整簽章（join 處理狀態的鍵）——
   剩下的只是把 `lf_issue_handling` 的逐簽章彙總接上去，並依 §10.6 讓「全部主機都已有結論」
@@ -143,14 +143,14 @@
   屆時一併做 **D6 乙案**（SCALE-FIX-PLAN-2026-08-06.md）：報表問題排行套用「顯示範圍」
   選擇器——同一次 join 的事，甲案的常駐說明文字屆時移除。
 
-## 回饋第十三輪遞延項（2026-08-10）
+## 其他遞延項
 
-- **通知管道——Email 以外的推播**（原「通知管道（下一輪候選首位）」，Email 部分已解決）：
-  Email（SMTP）已於回饋十五輪批次D落地（執行摘要／每日週彙總／高風險即時三路觸發），
-  十六輪批次A再完成可信度重構（按收件人聚合、寄成功才標記、連續失敗熔斷）。剩餘候選是
+- **通知管道——Email 以外的推播**（Email 部分已解決）：
+  Email（SMTP）已落地（執行摘要／每日週彙總／高風險即時三路觸發），
+  並完成可信度重構（按收件人聚合、寄成功才標記、連續失敗熔斷）。剩餘候選是
   Telegram／Teams webhook 之類的即時通訊管道；本系統定位為第二層縱深防禦，即時性要求
   不如第一層監控，待有明確需求再排入。
-- **抑制影響面預覽泛型化**（回饋十六輪 C-1 遞延）：`RuleAdminService.PreviewSuppression`
+- **抑制影響面預覽泛型化**（遞延）：`RuleAdminService.PreviewSuppression`
   目前只支援 Rule 型；Signature／Correlation／Volume 三型因此在服務層被限制僅 Host 範圍
   （無預覽的大範圍噤聲太危險，見 docs/RULES-SPEC.md「範圍支援矩陣」）。**若未來要為新三型
   開放 Group／Site、或在規則頁補新三型的建立入口，必須先把預覽泛型化**
@@ -163,9 +163,9 @@
 - **問題簽章級白話說明快取**：低優先。目前每次深入分析都重新呼叫 AI 生成白話說明，同一簽章
   重複出現時內容通常相近，理論上可快取共用；但 AI 呼叫本身已有既有的成本控制設計（統計模式
   短路、報告只在 Other 類別才呼叫），這項最佳化的邊際效益現階段不明顯，暫緩。
-- **`SlowTrendAnalyzer` 的離群值敏感度**（回饋十四輪 A1 重新界定，原標題「中位數化」不準確）：
-  `TrendAnalyzer` 的基準是「一組每日次數取中位數」，所以換統計量講得通（十三輪 E 改中位數、
-  十四輪 A1 進一步改非零日中位數）；但 `SlowTrendAnalyzer` 比的是**兩個 7 天窗口的總量和**
+- **`SlowTrendAnalyzer` 的離群值敏感度**（重新界定，原標題「中位數化」不準確）：
+  `TrendAnalyzer` 的基準是「一組每日次數取中位數」，所以換統計量講得通（先改為中位數、
+  再進一步改為非零日中位數）；但 `SlowTrendAnalyzer` 比的是**兩個 7 天窗口的總量和**
   （近 7 天累計 vs 前 7 天累計），結構上根本沒有「基準中位數」這個東西可以換，零膨脹也不會
   讓它退化（`priorTotal > 0` 的守門已擋掉全零前期）。它真正的同類問題是「單日爆量墊高整個
   窗口總量」——那要改的是窗口內的聚合方式（如逐日取中位數再乘天數、或先削峰再加總），

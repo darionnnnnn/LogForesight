@@ -23,7 +23,7 @@
 
 | 規則 | 原因 |
 |---|---|
-| **資料表一律 `lf_` 前綴**（2026-07-20 定案）、索引 `ix_lf_` 前綴；識別字全小寫 snake_case、**長度 ≤ 30 字元**（含前綴，最長 `lf_record_handling_log` = 22 ✓）、避開兩家保留字 | 前綴避免與公司共用 DB 中其他系統的表衝突、一眼可辨識歸屬；Oracle 12.2 之前識別字上限 30 bytes。大小寫說明：未加引號時 SQL Server 預設不分大小寫、Oracle 一律轉大寫（實體名即 `LF_...`），文件以小寫書寫、DDL 不加引號，兩家行為一致 |
+| **資料表一律 `lf_` 前綴**、索引 `ix_lf_` 前綴；識別字全小寫 snake_case、**長度 ≤ 30 字元**（含前綴，最長 `lf_record_handling_log` = 22 ✓）、避開兩家保留字 | 前綴避免與公司共用 DB 中其他系統的表衝突、一眼可辨識歸屬；Oracle 12.2 之前識別字上限 30 bytes。大小寫說明：未加引號時 SQL Server 預設不分大小寫、Oracle 一律轉大寫（實體名即 `LF_...`），文件以小寫書寫、DDL 不加引號，兩家行為一致 |
 | 型別只用兩家共通的抽象：`bigint` / `int` / `nvarchar(n)` / `text(大文字)` / `date` / `timestamp` / `bool` | 對應表見下；建表 DDL 等 DB 定案後由此機械翻譯 |
 | 布林一律 `bool`（SQL Server `BIT`／Oracle `NUMBER(1)`+CHECK）；**三態布林用 nullable**（如 `security_log_available`：NULL=未嘗試） | 兩家都沒有共通的原生 BOOLEAN（Oracle 23ai 才有，不可假設） |
 | 巢狀/清單資料存 **JSON 文字欄**（`text`），**不用**任何一家的 JSON 原生型別與 JSON 函式 | 解析在應用層做（同一套 System.Text.Json 模型）；避免綁死單一 DB 的 JSON 查詢語法 |
@@ -71,7 +71,7 @@ lf_users
   is_admin       bool NOT NULL                    -- true = 可看全部主機（維運主管/資安）
   active         bool NOT NULL
   last_login_at  timestamp NULL                   -- 最近一次登入成功；null = 從未登入
-                                                  -- （2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3；
+                                                  -- （詳見 docs/archive/FEEDBACK-11-PLAN.md §3；
                                                   --  JSON 後端缺欄容忍、零遷移。唯一寫入點
                                                   --  IUserStore.TouchLogin，刻意不走 Upsert）
 
@@ -100,7 +100,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   ai_analyzed      bool NOT NULL
   security_log_available bool NULL                -- 三態：NULL=未嘗試
   data_incomplete  bool NOT NULL
-  headline         nvarchar(200)                  -- AI 白話標題（2026-07-20 AI 角色轉換，↔ DailyAnalysisRecord.Headline）
+  headline         nvarchar(200)                  -- AI 白話標題（↔ DailyAnalysisRecord.Headline）
   summary          nvarchar(2000)                 -- AI 白話敘述（↔ Summary，序列化欄位名不變）
   trend_assessment nvarchar(2000)
   action           nvarchar(500)                  -- AI 白話行動建議（↔ Action，取代原 recommendations_json 多項清單）
@@ -112,7 +112,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   UNIQUE (host_id, record_date)
 ```
 
-**`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（2026-08-07，
+**`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
 JSON 裡多出的欄位，不是新增資料表欄位）**：
 - `AiPending`（bool）：NetIQ 搜尋與 AI 判讀脫鉤後的第三態——統計已寫入、AI 段還在排隊或
@@ -124,7 +124,7 @@ JSON 裡多出的欄位，不是新增資料表欄位）**：
   `(Source, EventId)` 分組，會把同 program 命中不同規則的 Linux 問題併成一組；這是有意識
   接受的 v1 限制，真的有 Linux 流量進來後再評估是否需要加欄位（見 docs/LINUX-RULES.md）。
 
-**`AttachAiResult`（`IAnalysisRecordStore`，2026-08-07）**：AI 段完成後覆寫暫代的 `ContentJson`
+**`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
 內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`**（AI 有可能把
 程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level` 篩選的查詢
 （清單頁、儀表板）看不到這筆紀錄升級後的真正風險，是本專案反覆出現過的「抽出欄漂移」
@@ -132,7 +132,7 @@ bug 家族的同一種模式，寫入路徑因此固定放在同一處做兩件�
 
 ```
 lf_top_issues                                        -- ↔ LogIssueSignature（欄位一比一，趨勢數字全保留）
-                                                     -- 2026-08-06 起同時是**問題聚合的事實表**
+                                                     -- 同時是**問題聚合的事實表**
                                                      -- （docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
                                                      -- 「這個問題影響幾台、跨哪段期間、出現幾天」
                                                      -- 由本表 GROUP BY 直接回答，不再把整段期間的
@@ -174,7 +174,7 @@ lf_record_categories                                 -- 當日的「類別彙總
   issue_count    int NOT NULL                     -- 該類別當日簽章數
   total_events   int NOT NULL                     -- 該類別當日事件總筆數
   max_severity   nvarchar(10) NOT NULL            -- 該類別當日最高嚴重度
-  critical_count int NOT NULL DEFAULT 0           -- ↓ 2026-07-21 Web 報表需求新增：各嚴重度簽章數分解
+  critical_count int NOT NULL DEFAULT 0           -- ↓ Web 報表需求新增：各嚴重度簽章數分解
   high_count     int NOT NULL DEFAULT 0           --   （「類別×嚴重度」堆疊圖與下鑽篩選直接查此表，
   medium_count   int NOT NULL DEFAULT 0           --    不掃 lf_top_issues；見 WEB-SPEC.md §10.4）
   low_count      int NOT NULL DEFAULT 0
@@ -187,7 +187,7 @@ lf_record_categories                                 -- 當日的「類別彙總
 「本週儲存裝置類 Critical 有幾台/幾天」變成一個索引查詢。這延續整個專案的原則：
 **能確定性預先算好的東西不要留到查詢時算**——批次端如此，DB 端也如此。
 
-> 2026-07-21 增補：Web 報表的「類別×嚴重度」堆疊圖需要嚴重度分解，增列四個
+> 增補：Web 報表的「類別×嚴重度」堆疊圖需要嚴重度分解，增列四個
 > `*_count` 欄（見上）。彙總計算定義為 Core 的純函數（`CategoryAggregator`），
 > SQL 寫入路徑與 JSONL 查詢期聚合共用同一份——與 `RecordStorageShaper` 同一套
 > 單點原則（一致性機制 #4），分析邏輯不受影響。詳見 WEB-SPEC.md §10.4。
@@ -261,11 +261,11 @@ lf_reports                                           -- ↔ export\ 下的 txt �
 
 ### AI 問答（⏸ 未來選項——視資源決定，僅保留設計）
 
-AI 問答已降為未來選項（2026-07-20 決策：先把報告顯示與查詢做好，問答視資源再議）。
+AI 問答已降為未來選項（決策：先把報告顯示與查詢做好，問答視資源再議）。
 下列兩張表**暫不建**；設計保留在此，屆時要做時 schema 不需重新討論。
 其餘所有表的設計皆不依賴問答功能。
 
-> **2026-07-27 註**：風險日詳情頁已上線一個**精簡版**對話（`POST api/ai/chat`，見 WEB-SPEC §9.3）——
+> **註**：風險日詳情頁已上線一個**精簡版**對話（`POST api/ai/chat`，見 WEB-SPEC §9.3）——
 > 單日單一問題為範圍、10 輪上限、**不持久化**（前端持有 transcript，每輪送全量），因此不需要這兩張表。
 > 本節設計對應的是跨日、存 DB、開 session 的完整問答，兩者是不同功能；完整版重啟時本設計依然適用。
 > 精簡版已依本節「範例訊息以資料圍欄框住、system prompt 重申非指令」的 injection 預警實作。
@@ -295,7 +295,7 @@ lf_qa_messages
 ```
 lf_daily_records:  UNIQUE(host_id, record_date)；(record_date, risk_level) —「今天全機房哪些主機有風險」
 lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
-                   (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合（2026-08-06）
+                   (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
 lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)
 lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
@@ -307,7 +307,7 @@ lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
 
-### 保留策略（2026-08-06 更新：以**實際實作**為準，取代 2026-07-20 的統一年限構想）
+### 保留策略（以**實際實作**為準，取代原本的統一年限構想）
 
 原規劃是「`Storage.DbRetentionDays` 預設 730、全部資料表統一適用」。
 實際落地後分成**四個保留期**，因為這些資料的性質不同：
@@ -352,7 +352,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 
 - **Schema 演進採「只增不改」**：新版本只加欄位（nullable 或有預設值）、不改不刪既有欄位，
   舊資料永遠可讀；配合 EF Core migration 記錄版本。
-- **檔案端 120 天輪替（原 90 天，2026-07-24 配合首次回補 120 天調整）**：txt 定位為「臨時資料庫」，
+- **檔案端 120 天輪替**（與首次回補天數一致）：txt 定位為「臨時資料庫」，
   DB 上線時最多匯入近 120 天歷史——此限制已知悉並接受，保留年限自 DB 上線日起算。
 
 ## Web 查詢情境 → 資料表對應（驗證 schema 夠用）
@@ -406,7 +406,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 **安全**：Web 用的 DB 帳號唯讀（`qa_*` 表除外）；授權過濾在查詢層，AI 拿到的 context
 永遠只來自該使用者有權的主機；AI 沒有任何工具/行動能力，純問答。
 
-## Schema 升級機制（定案 13，2026-07-24；**已落實 2026-07-27**）
+## Schema 升級機制（已落實）
 
 `LfDbContext` 靠 `Database.EnsureCreated()` 建表——**只在資料庫不存在時**建立整套 schema，
 對已存在的 DB **不會**補新表或新欄位。NetIQ Web 整併那一輪（`Sentinel`／`SentinelId`／

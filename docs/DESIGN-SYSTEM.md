@@ -125,7 +125,7 @@ skill 對 dashboard/analytics 情境的一致首選配對：**Fira Sans（UI/正
 - [ ] 無 Bootstrap 預設藍 `#0d6efd` 殘留
 - [ ] 字級三檔切換下版面不破
 
-## 6a. 視窗高度驅動的版面（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §5）
+## 6a. 視窗高度驅動的版面（詳見 docs/archive/FEEDBACK-10-PLAN.md §5）
 
 報表頁是全站第一個「一屏內看完」的版面，作法可供日後同類需求沿用：
 

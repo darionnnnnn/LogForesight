@@ -72,9 +72,9 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 
 **目的**：發現一個網段裡有哪些主機在向這台 Sentinel 回報，供 NetIQ 匯入精靈勾選登錄。
 （ESM `/objects/eventsource` 才是「已註冊主機目錄」的正解，但本環境的探索帳號被 401/403
-拒絕——那是**權限**問題不是 API 不存在，見 docs/archive/HISTORY.md 2026-07-29 第二輪 probe。）
+拒絕——那是**權限**問題不是 API 不存在，詳見 docs/archive/HISTORY.md「第二輪 probe」一節。）
 
-**2026-08-06 涵蓋保證改版**（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
+**涵蓋保證改版**（詳見 docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
 改版前用「自適應窗口」控制取回筆數：事件越多、掃描窗口越短（下限曾是 5 分鐘），
 而被裁掉的時間裡安靜主機的少數幾筆事件一併消失，**畫面上沒有任何跡象**。
 那是靜默漏機。現行設計把窗口固定在 24 小時，改用下面兩件事控制成本：
@@ -85,7 +85,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 (repip:{prefix}.* AND (rv150:System OR rv150:Application))
 ```
 
-第三輪 probe 實測單台主機日量約 31 萬筆，其中 **Security 佔 99.95%**
+probe 實測單台主機日量約 31 萬筆，其中 **Security 佔 99.95%**
 （System=3、Application=152）。排除 Security 後每台主機只貢獻約 **155 筆/日**——
 取回量因此**從正比於「事件量」變成正比於「主機數」**。探索要的本來就是
 「每台主機至少一筆事件」而不是「所有事件」。
@@ -172,9 +172,9 @@ job 生命週期，以 `SentinelClient.RawGetAsync` 取得）。
 `SentinelFieldMap`（設定可覆寫的字典，per-server 覆寫保留為保險）承載上表對應，`--sample-ip`
 一類的驗證查詢輸出可直接核對此表是否仍成立。
 
-## 4a. 欄位對應（Linux syslog，四輪 probe 實證定案，docs/archive/FEEDBACK-12-PLAN.md §4.0，已實作）
+## 4a. 欄位對應（Linux syslog，多輪 probe 實證定案，詳見 docs/archive/FEEDBACK-12-PLAN.md §4.0，已實作）
 
-Sentinel「118_linux」，https://10.xx.7.118:8443，四輪診斷（2026-08-07）。**欄位形狀與
+Sentinel「118_linux」，https://10.xx.7.118:8443，經多輪診斷。**欄位形狀與
 filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`／`SentinelEventMapper`／
 `SentinelQueryBuilder.BuildLinuxFilter`，批 4B）：
 
