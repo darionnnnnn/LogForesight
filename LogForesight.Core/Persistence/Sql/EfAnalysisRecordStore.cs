@@ -86,7 +86,18 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 HasCorrelation = shaped.CorrelationAlerts.Count > 0,
                 WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
                 ContentJson = JsonSerializer.Serialize(shaped),
-                CreatedAt = DateTime.Now
+                CreatedAt = DateTime.Now,
+                // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）：寫入時一併填好，語意同 lf_top_issues
+                // 既有聚合維度的分工。ExtractVersion=1 標記「這是本輪寫入的新列」，
+                // 舊列（回填前）維持 0，DailyRecordBackfiller 依此判定候選。
+                Headline = shaped.Headline,
+                DataIncomplete = shaped.DataIncomplete,
+                SecurityLogAvailable = shaped.SecurityLogAvailable,
+                ErrorCount = shaped.ErrorCount,
+                WarningCount = shaped.WarningCount,
+                AiAnalyzed = shaped.AiAnalyzed,
+                AiPending = shaped.AiPending,
+                ExtractVersion = 1
             };
             ctx.DailyRecords.Add(row);
             ctx.SaveChanges();   // 先存主列拿到 RecordId
@@ -108,15 +119,74 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                     EventCount = issue.Count,
                     ElevatesDayRisk = issue.ElevatesDayRisk,
                     LogName = issue.LogName,
-                    EntryType = (int)issue.EntryType
+                    EntryType = (int)issue.EntryType,
+                    KnownIssue = issue.KnownIssue,
+                    EventKey = issue.EventKey
                 });
             }
             ctx.SaveChanges();
             tx.Commit();
         });
 
+        // 機房首見日（回饋十九輪批次B）：獨立於主交易之外——這是輔助的呈現用資料，
+        // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
+        UpsertFirstSeen(shaped);
+
         Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
             shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>
+    /// 機房首見日 insert-if-absent，取較早的日期為準（回饋十九輪批次B）。
+    ///
+    /// 平行處理多台主機（NetIQ MaxParallelServers）時，兩台主機可能同時第一次寫入同一個
+    /// 新問題——insert 可能撞唯一鍵。這裡當一般情況處理（catch 後改走「取較早日期」的
+    /// 更新），不是異常：先查是否已存在，不存在才嘗試新增；新增撞鍵或已存在時，
+    /// 改成「較早的日期才更新」的條件式 UPDATE，不會被較晚出現的紀錄覆蓋掉更早的首見日。
+    /// </summary>
+    private void UpsertFirstSeen(DailyAnalysisRecord shaped)
+    {
+        var date = shaped.Date.Date;
+        foreach (var (source, eventId) in shaped.TopIssues.Select(i => (i.Source, i.EventId)).Distinct())
+        {
+            var sourceKey = source.ToUpperInvariant();
+            try
+            {
+                using var ctx = _contextFactory();
+                if (ctx.IssueFirstSeen.Any(f => f.SourceKey == sourceKey && f.EventId == eventId))
+                {
+                    // 已存在：只有新日期更早才更新，一句 SQL 完成、不必先讀出來比較
+                    ctx.Database.ExecuteSqlInterpolated($"""
+                        UPDATE lf_issue_first_seen SET first_seen = {date}
+                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
+                        """);
+                    continue;
+                }
+
+                ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                    { SourceKey = sourceKey, EventId = eventId, SourceName = source, FirstSeen = date });
+                ctx.SaveChanges();
+            }
+            catch (DbUpdateException ex)
+            {
+                // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
+                // 不是需要中止分析的錯誤
+                Log.Debug("[SQL] IssueFirstSeen 新增撞鍵（{Source}/{EventId}），改走較早日期更新：{Msg}",
+                    source, eventId, ex.Message);
+                try
+                {
+                    using var ctx = _contextFactory();
+                    ctx.Database.ExecuteSqlInterpolated($"""
+                        UPDATE lf_issue_first_seen SET first_seen = {date}
+                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
+                        """);
+                }
+                catch (Exception retryEx)
+                {
+                    Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
+                }
+            }
+        }
     }
 
     public void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup)

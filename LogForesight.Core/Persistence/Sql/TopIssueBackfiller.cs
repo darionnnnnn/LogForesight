@@ -121,6 +121,9 @@ public sealed class TopIssueBackfiller
                 row.ElevatesDayRisk = match.ElevatesDayRisk;
                 row.LogName = match.LogName;
                 row.EntryType = (int)match.EntryType;
+                // 回饋十九輪批次B：與其餘聚合維度同一批回填，不必另開一個回填流程
+                row.KnownIssue = match.KnownIssue;
+                row.EventKey = match.EventKey;
             }
         }
 

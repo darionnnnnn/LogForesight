@@ -62,6 +62,23 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(3, agg.DayCount);                       // 主機日總數
     }
 
+    /// <summary>
+    /// 舊資料相容（LegacySeverityRank，回饋十九輪批次B）：三級化前寫入的 Critical 嚴重度
+    /// 在 SQL 端也要正規化成 High＋ElevatesDayRisk=true，與 blob 路徑
+    /// （RecordRepository.NormalizeLegacySeverity）同一套規則，兩邊才不會顯示不同的詞。
+    /// </summary>
+    [Fact]
+    public void 舊資料Critical嚴重度正規化為High並強制重大旗標()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153, severity: IssueSeverity.Critical, elevates: false));
+
+        var agg = Query().Aggregate(d0, d0, null).Single();
+
+        Assert.Equal((int)IssueSeverity.High, agg.MaxSeverityRank);
+        Assert.True(agg.ElevatesDayRisk);
+    }
+
     [Fact]
     public void 總次數與最高嚴重度與重大旗標()
     {

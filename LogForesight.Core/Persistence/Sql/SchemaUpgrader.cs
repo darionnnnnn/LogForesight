@@ -85,6 +85,42 @@ internal static class SchemaUpgrader
             "IX_lf_record_handling_unique", "host_name_key, record_date", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_handler", "handler_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_status", "status");
+
+        // 首次寫入時間（回饋十九輪批次B，MTTA 保底）：舊列為 NULL，本輪不回填
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_handling", "created_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+
+        // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）。舊列的預設值不是正確資料，
+        // 由 DailyRecordBackfiller 依 extract_version 背景補齊（同 lf_top_issues 既有機制）。
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "headline",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(max) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "data_incomplete",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "security_log_available",
+            isSqlite ? "INTEGER NULL" : "bit NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "error_count",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "warning_count",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "ai_analyzed",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "ai_pending",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "extract_version",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
+
+        // 依問題視角全面 SQL 化的最後兩欄（回饋十九輪批次B）：見 LfDbContext.TopIssueRow 類別註解。
+        // event_key 補上後，SchemaUpgrader 這裡刻意**不**回填舊列（回填只在 TopIssueBackfiller
+        // 尚未跑完的舊列上才有意義；已回填過的舊列即使沒有 event_key 也代表當初分析時
+        // EventKey 恆為空——Windows 事件與規劃 §8.1 缺陷 1 修復前的 Linux 事件皆是如此，
+        // 語意上就是空字串，不是「還沒回填」）。
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "known_issue", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "event_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+
+        // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
+        CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
+            isSqlite ? SqliteCreateIssueFirstSeen : SqlServerCreateIssueFirstSeen);
     }
 
     private const string SqliteCreateIssueHandling = """
@@ -218,6 +254,26 @@ internal static class SchemaUpgrader
             message nvarchar(max) NOT NULL,
             rule_id nvarchar(64) NULL,
             created_at datetime2 NOT NULL
+        )
+        """;
+
+    private const string SqliteCreateIssueFirstSeen = """
+        CREATE TABLE lf_issue_first_seen (
+            source_key TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            source_name TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            CONSTRAINT PK_lf_issue_first_seen PRIMARY KEY (source_key, event_id)
+        )
+        """;
+
+    private const string SqlServerCreateIssueFirstSeen = """
+        CREATE TABLE lf_issue_first_seen (
+            source_key nvarchar(255) NOT NULL,
+            event_id int NOT NULL,
+            source_name nvarchar(255) NOT NULL,
+            first_seen datetime2 NOT NULL,
+            CONSTRAINT PK_lf_issue_first_seen PRIMARY KEY (source_key, event_id)
         )
         """;
 

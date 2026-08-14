@@ -332,6 +332,10 @@ public static class ServiceCollectionExtensions
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
 
+        // lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上
+        services.AddSingleton<DailyRecordBackfiller>(sp => sp.GetRequiredService<StorageBackend>().DailyRecordBackfiller());
+        services.AddHostedService<DailyRecordBackfillHostedService>();
+
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用
         services.AddSingleton<NetiqProbeRunState>();

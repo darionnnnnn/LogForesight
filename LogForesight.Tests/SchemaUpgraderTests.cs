@@ -158,4 +158,83 @@ public class SchemaUpgraderTests : IDisposable
         SchemaUpgrader.Upgrade(ctx);
         SchemaUpgrader.Upgrade(ctx);   // 再跑一次：冪等,不應重複建欄位/索引而出錯
     }
+
+    // ── 回饋十九輪批次B：lf_daily_records 抽出欄／lf_issue_first_seen ──────────────
+
+    /// <summary>舊 schema 缺批次B 的抽出欄——升級後補上，既存列的 extract_version 預設 0
+    /// （尚未回填，DailyRecordBackfiller 依此判定候選）</summary>
+    [Fact]
+    public void 舊schema缺批次B抽出欄_升級後補上且既存列extract_version為0()
+    {
+        CreateOldSchema();
+        using (var raw = _connection.CreateCommand())
+        {
+            raw.CommandText = "INSERT INTO lf_daily_records (host_id, host_name, record_date, risk_level, content_json, created_at) " +
+                               "VALUES (1, 'HOST-A', '2026-01-01', '高', '{}', '2026-01-01')";
+            raw.ExecuteNonQuery();
+        }
+
+        using var ctx = NewContext();
+        SchemaUpgrader.Upgrade(ctx);
+
+        var row = ctx.DailyRecords.Single();
+        Assert.Equal(0, row.ExtractVersion);
+        Assert.Equal(string.Empty, row.Headline);
+        Assert.Equal(0, row.ErrorCount);
+    }
+
+    /// <summary>升級後可正常讀寫批次B 的抽出欄（不是只補了欄位卻寫不進去）</summary>
+    [Fact]
+    public void 舊schema升級後_批次B抽出欄可讀寫()
+    {
+        CreateOldSchema();
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            ctx.DailyRecords.Add(new DailyRecordRow
+            {
+                HostId = 1, HostName = "HOST-A", RecordDate = DateTime.Today, RiskLevel = "高",
+                ContentJson = "{}", Headline = "測試標題", ErrorCount = 3, AiAnalyzed = true, ExtractVersion = 1
+            });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.DailyRecords.Single();
+            Assert.Equal("測試標題", row.Headline);
+            Assert.Equal(3, row.ErrorCount);
+            Assert.True(row.AiAnalyzed);
+            Assert.Equal(1, row.ExtractVersion);
+        }
+    }
+
+    /// <summary>lf_issue_first_seen 是全新的表（不掛在既有表升級之下），連線上完全沒有任何表時也要建得起來</summary>
+    [Fact]
+    public void 空連線升級後_lf_issue_first_seen表存在且可讀寫()
+    {
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 1, 1) });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.IssueFirstSeen.Single();
+            Assert.Equal("disk", row.SourceName);
+            Assert.Equal(new DateTime(2026, 1, 1), row.FirstSeen);
+        }
+    }
 }

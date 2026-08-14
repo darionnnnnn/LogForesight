@@ -162,6 +162,9 @@ public class StorageBackend
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);
 
+    /// <summary>lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上</summary>
+    public DailyRecordBackfiller DailyRecordBackfiller() => new(_dbFactory);
+
     /// <summary>
     /// 關閉 Sqlite 連線池：Microsoft.Data.Sqlite 預設開啟連線池，連線 Close() 回池前的
     /// Deactivate() 要把 EF Core 註冊在該實體連線上的 user function 移除；併發下若同一顆

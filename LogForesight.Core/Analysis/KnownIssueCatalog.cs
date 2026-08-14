@@ -20,6 +20,28 @@ public enum IssueSeverity
     Critical
 }
 
+/// <summary>
+/// 舊資料相容（docs/archive/HISTORY.md #1，B1 三級化；回饋十九輪批次B 把這個規則搬成
+/// 共用元件，供 SQL 端聚合查詢使用）：三級化之前寫入的歷史紀錄若嚴重度仍是 Critical，
+/// 一律等同 High＋ElevatesDayRisk=true——Critical 原本唯一的實際作用就是「命中即列為高風險日」，
+/// 正規化後可解釋性不變。
+///
+/// **只在讀取時正規化，不回寫資料庫**（<c>RecordRepository.NormalizeLegacySeverity</c> 的
+/// 既有原則：證據層是事後不可改寫的批次判定結果）——這個類別是同一條規則的第二個實作，
+/// 供 SQL 端（操作 <c>int</c> severity_rank）使用；blob 路徑操作 <see cref="IssueSeverity"/>
+/// 列舉，兩邊分開實作是因為型別不同，但規則本身必須是同一份（都是「Critical→High+elevates」，
+/// 改一邊忘了改另一邊就是兩個畫面對不起來的新來源）。
+/// </summary>
+public static class LegacySeverityRank
+{
+    /// <summary>正規化後的嚴重度整數值：Critical 降為 High，其餘不變</summary>
+    public static int Normalize(int rank) =>
+        rank == (int)IssueSeverity.Critical ? (int)IssueSeverity.High : rank;
+
+    /// <summary>是否因為原始值是 Critical 而必須強制視為「重大」</summary>
+    public static bool ForcesElevate(int rank) => rank == (int)IssueSeverity.Critical;
+}
+
 public class KnownIssueRule
 {
     // ── 規則管理欄位（規則外部化，見 docs/RULES-SPEC.md）─────────────────────

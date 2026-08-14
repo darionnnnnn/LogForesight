@@ -97,8 +97,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 Source = g.SourceName,
                 EventId = g.EventId,
                 Category = g.Category ?? string.Empty,
-                MaxSeverityRank = g.MaxSeverityRank,
-                ElevatesDayRisk = g.Elevates == 1,
+                // 舊資料相容（LegacySeverityRank）：SQL 端存的是三級化前寫入的原始值（Critical=3），
+                // blob 路徑在讀取時正規化成 High＋elevates，這裡是同一條規則的 SQL 端版本——
+                // 沒有這一步，依問題視角與重點問題卡會顯示「Critical」而報表／詳情頁顯示「高，重大」，
+                // 正是這輪要解的「畫面數字/用詞對不起來」那類缺陷
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.MaxSeverityRank),
+                ElevatesDayRisk = g.Elevates == 1 || LegacySeverityRank.ForcesElevate(g.MaxSeverityRank),
                 HostCount = hostCounts.TryGetValue(key, out var hc) ? hc : 0,
                 DayCount = hostDays.TryGetValue(key, out var d) ? d : g.Rows,
                 ActiveDays = g.ActiveDays,
