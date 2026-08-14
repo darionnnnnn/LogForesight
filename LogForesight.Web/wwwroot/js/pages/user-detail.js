@@ -229,10 +229,10 @@ function renderOpenWork(workload) {
     });
 
     // 未結案風險日：workload 帶回近 30 天已結案的日子，這裡只留推導後未結案的。
-    // 判定沿用後端 HandlingStatuses.Unresolved 的定義（open／in_progress，觀察中在日層級
-    // 推導時已映成 in_progress），不自己另立一套「不是 resolved 就算未結案」的規則——
+    // 判定沿用後端 HandlingStatuses.Unresolved 的定義（open／in_progress／escalated，觀察中在
+    // 日層級推導時已映成 in_progress），不自己另立一套「不是 resolved 就算未結案」的規則——
     // 結案有四種狀態，那樣寫會把「不處理／誤報／已知雜訊」全部誤列成未結案。
-    const UNRESOLVED = new Set(['open', 'in_progress']);
+    const UNRESOLVED = new Set(['open', 'in_progress', 'escalated']);
     const openDays = workload.days.filter(d => UNRESOLVED.has(d.derivedStatus));
     container.appendChild(sectionLabel(`未結案風險日（${openDays.length}）`));
 

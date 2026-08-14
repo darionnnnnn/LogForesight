@@ -1797,6 +1797,40 @@ public class HandlingServiceTests : IDisposable
         Assert.Single(_mailSender.Sent);
     }
 
+    /// <summary>批次裡混有已上報過的問題時，信件只算「新」轉入的那些——不把舊上報重複算進標籤
+    /// （終檢輪修正：原本用整批數量，admin 會誤以為先前的上報又發生了一次）。</summary>
+    [Fact]
+    public void SetIssueStatusBatch_信件標籤只算新轉入的問題()
+    {
+        var day = Today.AddDays(-4);
+        var a = Issue("disk", 153);
+        var b = Issue("app", 1000);
+        _repository.AddRecord(_host.HostName, day, a, b);
+        var mail = CreateMail();
+        var service = CreateWithMail(mail, Capability.Handle);
+
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "需要外部廠商"
+        });
+        Assert.Single(_mailSender.Sent);
+
+        // A 已上報過，這批 A+B 只有 B 是新轉入——信裡是 B 的標籤，不是「2 個問題」
+        service.SetIssueStatusBatch(_host.HostId, day, new BatchSetIssueStatusRequest
+        {
+            IssueKeys = new List<string> { IssueSignatureKey.For(a), IssueSignatureKey.For(b) },
+            Status = IssueHandlingStatuses.Escalated,
+            Note = "這批也處理不了"
+        });
+
+        Assert.Equal(2, _mailSender.Sent.Count);
+        var second = _mailSender.Sent[1];
+        Assert.Contains("app 1000", second.Message.Body);
+        Assert.DoesNotContain("2 個問題", second.Message.Body);
+    }
+
     /// <summary>跨主機一次回覆轉入無法處理寄一封；同一批案件已是無法處理時再回覆不重寄。</summary>
     [Fact]
     public void BulkSetIssueStatusByHandler_轉入無法處理通知一次_已上報再回覆不重寄()

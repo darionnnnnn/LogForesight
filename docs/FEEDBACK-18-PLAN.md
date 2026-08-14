@@ -1,5 +1,13 @@
 # 回饋第十八輪規劃（FEEDBACK-18）
 
+> **狀態：全案完成（批次 A~H＋體檢輪＋終檢輪），已併 dev，全量測試綠。**
+> 以下批次章節為當時的規劃內容（未來式語氣），與實作的少數刻意偏離見文末
+> 「體檢輪修正」與「終檢輪」兩節——已知偏離：G 的狀態顯示文字實作採
+> 「無法處理（上報管理員）」（規劃原文「待管理員決定」）；G 的上報信不含連結
+> （整個 MailNotificationService 既有信件皆無 URL，站台 base URL 未知）；admin 成員解析
+> 抽成獨立的 `AdminMembersResolver` 靜態類（規劃原訂放 `IdentityService`，語意等價）；
+> H-1 的「前往設定」到 `/admin/settings` 無錨點。
+>
 > 基準：dev@1159459（回饋十七輪終檢收尾，1854 測試綠）。
 > 來源：外部審查回饋四項（郵件全表拉取、本機失敗靜音通知、首次啟用總帳信、本機 AI 排隊）
 > ＋四項新功能需求（問題負責人、無法處理上報、就緒度檢查、首次啟動精靈）＋順手修文案漂移。
@@ -397,3 +405,37 @@ API：`POST /api/admin/setup/skip/{stepId}`（含取消跳過 toggle）、`POST 
 - **測試替身漂移**：`HandlingFakes.FakeRecordRepository` 的 `IAnalysisRecordQuery.Query` 明顯實作忘了套用 `filter.From`/`filter.To`（同一 fake 內的 `FakeAnalysisRecordQuery` 有套用，兩者語意不一致）→ 已補上。
 
 修正後全量測試 1951 通過（5 個 ScaleBenchmarks 略過），0 失敗。
+
+## 終檢輪（合併 dev 後、push 前的全案自查）
+
+四個平行審查代理（規劃比對／體檢修正 commit 獵 bug／文件稽核／架構契合度）＋dev 全量測試，
+抓到並全數修正：
+
+- **規劃缺漏補齊**：批次D 規劃表列的「執行監控停用顯示」漏做——`RunMonitorService` 補
+  `local_disabled` 狀態（本機空白日顯「本機分析已停用」而非「未執行」，
+  `RunDaySummaryDto.LocalDisabledCount` 獨立計數不混入未執行）＋三條測試；批次C 規劃承諾的
+  `MarkExistingRecordsAsNotified` 內部 try/catch 補上（預填失敗不弄掛設定儲存）；
+  12-settings.md 的批次C 承諾句補上。
+- **漏網 bug（兩代理交叉確認）**：`user-detail.js` 的 `UNRESOLVED` 集合漏加 `escalated`——
+  個人頁「未結案風險日」清單會把上報中的日子濾掉，與側欄徽章計數對不上（體檢輪修了
+  `record-detail.js` 同款兩處，這一處漏網）。
+- **上報信內容失真**：批次／跨主機入口的信件標籤原用整批數量（含早已上報過的），admin 會
+  誤以為舊上報又發生——改取「新轉入」子集當標籤＋迴歸測試。
+- **測試補洞**：批次B 核心語意（失敗但有產出→通知）抽成 `RunOutcome.ShouldNotify`／
+  `ComputeAnyRecordsWritten` 並補四條測試；批次H 的 HelpController hidden 過濾／type=link
+  第一項／既有章節 DTO 向後相容補 `HelpContentServiceTests`；SetSkipped 未知 stepId 驗證＋測試。
+- **收斂與慣例**：`FakeRecordRepository.Query`（IRecordRepository 側）委派給已修正的過濾實作
+  （fake 只修一半的殘留）；`IndexByKey` 改 GroupBy 防禦重複鍵；`IssueOwnerAdminService` 四處
+  手寫鍵改走 `IssueOwnerRule.KeyOf`；`FakeIssueOwnerStore.Matches` 委派單一事實來源；
+  `setup.js` dot 色改 CSS tokens；SetupController 的 request DTO 移入 `SetupDtos.cs`；
+  `AdminMembersResolver` 改 internal（同 `HostVisibilityResolver` 前例）；retentionDays 預設
+  120 三處收斂為 `SystemSettings.DefaultRetentionDays`。
+- **文件普查**：WEB-SPEC 郵件章節補十八輪四批次小節、store 對照表補兩個新 store、新增
+  §9.9d `/setup` 規格、§9.9c manifest 補 type/href 與 Hidden 過濾、排程設定卡補
+  「分析本機主機」開關、三處狀態值域列舉同步 escalated/observing、問題負責人段修正
+  「郵件可多位／帶入恰一人」的語意混同（09-permissions.md／13-glossary.md 同步修正）；
+  10-scheduler.md 修正一句自相矛盾的建議（本機是否重點的兩個情境反了）；05-handling.md
+  指派節補問題負責人；manifest.json keywords 補新詞（問題負責人／無法處理／上報／
+  分析本機主機）；01-overview.md／14-faq.md 順手補問題負責人與「啟用前不補寄」FAQ。
+
+終檢輪後全量測試 1963+ 通過，0 失敗。

@@ -26,7 +26,9 @@ const STATUS_META = {
     stopped: { label: '已停止', color: '#ea580c' },   // 優雅停止（手動或窗口結束）——不是失敗
     running: { label: '執行中', color: '#1e40af' },
     stuck: { label: '異常中斷', color: '#7c3aed' },
-    none: { label: '未執行', color: '#e2e8f0' }
+    none: { label: '未執行', color: '#e2e8f0' },
+    // 本機分析已停用（批次D）：設定行為不是漏跑，與「未執行」分開顯示（--lf-gray-400）
+    local_disabled: { label: '本機分析已停用', color: '#94a3b8' }
 };
 
 let currentDays = 14;
@@ -100,6 +102,7 @@ function renderSummary(summaries) {
             { title: '異常中斷', className: 'text-end', render: s => countCell(s.stuckCount, 'stuck') },
             { title: '執行中', className: 'text-end', render: s => countCell(s.runningCount, 'running') },
             { title: '未執行', className: 'text-end', render: s => countCell(s.notRunCount, 'none') },
+            { title: '本機停用', className: 'text-end', render: s => countCell(s.localDisabledCount, 'local_disabled') },
             { title: '失敗主機', render: s => failedHostsCell(s) }
         ],
         rows: [...summaries].reverse(),   // 最新日期在最上面，跟其他頁的時間排序習慣一致

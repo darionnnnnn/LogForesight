@@ -53,7 +53,11 @@ public class IssueOwnerRule
     /// 批次建立 (Source,EventId) → 負責人清單 的查找字典（回饋十八輪批次F 的 N+1 教訓：
     /// 逐 record／逐群組各自呼叫 <c>IIssueOwnerStore.GetAll()</c> 是明顯的 N+1）。
     /// 呼叫端（郵件路由、依問題視角 badge）一次批次只建一次。
+    /// GroupBy 防禦性取第一筆（同 PlanBulkClose 對重複鍵的既有慣例）：Upsert 以 OrdinalIgnoreCase
+    /// 去重、KeyOf 以 ToUpperInvariant 折疊，兩者對極端 Unicode（如土耳其無點 i）並非嚴格等價，
+    /// 直接 ToDictionary 撞鍵會讓整頁炸掉——寧可靜默取第一筆也不讓查詢頁 500。
     /// </summary>
     public static Dictionary<(string SourceUpper, int EventId), List<long>> IndexByKey(IEnumerable<IssueOwnerRule> rules) =>
-        rules.ToDictionary(r => KeyOf(r.SourceName, r.EventId), r => r.OwnerUserIds);
+        rules.GroupBy(r => KeyOf(r.SourceName, r.EventId))
+            .ToDictionary(g => g.Key, g => g.First().OwnerUserIds);
 }

@@ -194,11 +194,8 @@ public class SchedulerHostedService : BackgroundService
                     // AnalysisOrchestrator 的說明），但 NetIQ 那一路可能已經對數百上千台主機完成
                     // 分析並寫入——下面的通知閘門要用這個欄位區分「整趟真的什麼都沒做」與
                     // 「一路失敗、另一路已有真實產出」，見 RunOutcome.AnyRecordsWritten 的說明。
-                    var anyRecordsWritten = result.LocalResults.Count > 0
-                        || (result.NetiqResult?.HostDaysAnalyzed ?? 0) > 0;
-
                     outcome = new RunOutcome(result.Success, result.Success ? null : result.FailureMessage,
-                        effectiveRequest.Trigger ?? "manual", DateTime.Now, anyRecordsWritten);
+                        effectiveRequest.Trigger ?? "manual", DateTime.Now, RunOutcome.ComputeAnyRecordsWritten(result));
                 }, MutexTimeout);
 
                 if (!acquired)
@@ -237,7 +234,7 @@ public class SchedulerHostedService : BackgroundService
             // 站台正常關閉時通知會被取消（對稱於分析本身經 TryCancel 的優雅停止），
             // 平時 ApplicationStopping 未觸發，等同不取消。內部自行 try/catch 到底，
             // 不影響本次執行的成敗判定。
-            if (outcome is { } o && (o.Success || o.AnyRecordsWritten))
+            if (outcome is { ShouldNotify: true })
             {
                 await _mail.NotifyAfterRunAsync(_lifetime.ApplicationStopping);
             }

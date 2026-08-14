@@ -19,7 +19,19 @@ namespace LogForesight.Web.Services;
 /// 另一路已有真實產出」，後者不該讓已完成的通知一起靜音。預設 false，供既有呼叫端
 /// （測試／例外路徑「orchestrator 環境層級炸掉、result 不可信」）零改動沿用舊行為。
 /// </param>
-public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt, bool AnyRecordsWritten = false);
+public sealed record RunOutcome(bool Success, string? Message, string Trigger, DateTime EndedAt, bool AnyRecordsWritten = false)
+{
+    /// <summary>通知閘門（回饋十八輪批次B）：成功**或**有產出就通知——本機出問題讓整趟
+    /// Success=false 時，NetIQ 那一路已寫入的高風險通知不該一起被靜音。抽成屬性讓
+    /// SchedulerHostedService 的閘門與測試釘住同一份判定，不在呼叫端內嵌第二份。</summary>
+    public bool ShouldNotify => Success || AnyRecordsWritten;
+
+    /// <summary>從 orchestrator 結果推導「這次執行有沒有任何主機日真的寫入分析結果」
+    /// （回饋十八輪批次B）：本機路徑有結果，或 NetIQ 管線有分析完成的主機日，任一成立即可。
+    /// 抽成靜態函式供 SchedulerHostedService 與測試共用同一份推導。</summary>
+    public static bool ComputeAnyRecordsWritten(OrchestratorResult result) =>
+        result.LocalResults.Count > 0 || (result.NetiqResult?.HostDaysAnalyzed ?? 0) > 0;
+}
 
 public class SchedulerRunState
 {

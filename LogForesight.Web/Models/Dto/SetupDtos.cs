@@ -30,3 +30,13 @@ public class SetupStatusDto
 
     public bool Hidden { get; set; }
 }
+
+public class SetSkippedRequest
+{
+    public bool Skipped { get; set; }
+}
+
+public class SetHiddenRequest
+{
+    public bool Hidden { get; set; }
+}

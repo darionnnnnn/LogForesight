@@ -141,8 +141,12 @@ public class SystemSettings
     /// <summary>首次執行（歷史資料庫全空）時回補歷史的天數</summary>
     public int InitialHistoryDays { get; set; } = 120;
 
+    /// <summary>RetentionDays 的出廠預設——設定不可得時的 fallback 也引用這裡
+    /// （HostVisibilityResolver／VisibilityService），改預設值只改這一處。</summary>
+    public const int DefaultRetentionDays = 120;
+
     /// <summary>歷史資料庫保留天數（需 &gt;= InitialHistoryDays）</summary>
-    public int RetentionDays { get; set; } = 120;
+    public int RetentionDays { get; set; } = DefaultRetentionDays;
 
     /// <summary>
     /// 執行歷程保留天數（批次執行紀錄／診斷、匯入紀錄——docs/WEB-SPEC.md §11-6、

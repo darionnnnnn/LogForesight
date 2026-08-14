@@ -168,11 +168,13 @@ public class IssueHandlingCommandService
         }
 
         // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
-        // 批次勾選裡只要有任一問題是「新」轉入 escalated（先前不是），這批就算有上報動作。
+        // 只有「新」轉入 escalated（先前不是）的那些問題算上報動作——信件的問題數也只算這個
+        // 子集，不把早已上報過的問題重複算進去（終檢輪修正：原本用整批數量當標籤，
+        // admin 會誤以為先前的上報又發生了一次）。
         var previousStatusByKey = _issueStore.GetForDay(host.HostName, date)
             .ToDictionary(h => h.IssueKey, h => h.Status, StringComparer.Ordinal);
-        var anyNewlyEscalated = appliedKeys.Any(k =>
-            !previousStatusByKey.TryGetValue(k, out var prev) || prev != IssueHandlingStatuses.Escalated);
+        var newlyEscalatedKeys = appliedKeys.Where(k =>
+            !previousStatusByKey.TryGetValue(k, out var prev) || prev != IssueHandlingStatuses.Escalated).ToList();
 
         var occurredAt = DateTime.Now;
         var totalSyncedDays = 0;
@@ -193,13 +195,13 @@ public class IssueHandlingCommandService
             detail: new { IssueKeys = appliedKeys, request.Status, request.Note, request.DueDate });
 
         // 批次勾 N 個問題標無法處理：一封信彙整（不逐問題各寄一封轟炸 admin）。
-        // 「是否為新轉入」的判定粒度是整批（anyNewlyEscalated），不是單一問題的前後狀態比對，
-        // 所以不透過 NotifyEscalationIfNeeded 的 previousStatus 參數（那是給單筆場景用的），
-        // 直接呼叫 MailNotificationService，語意保持獨立不互相借用參數表達不同的判斷維度。
-        if (request.Status == IssueHandlingStatuses.Escalated && anyNewlyEscalated && _mail != null)
+        // 「是否為新轉入」的判定粒度是批次層級的子集（newlyEscalatedKeys），不是單一問題的
+        // 前後狀態比對，所以不透過 NotifyEscalationIfNeeded 的 previousStatus 參數（那是給
+        // 單筆場景用的），直接呼叫 MailNotificationService，語意保持獨立。
+        if (request.Status == IssueHandlingStatuses.Escalated && newlyEscalatedKeys.Count > 0 && _mail != null)
         {
             _ = _mail.NotifyEscalationAsync(new EscalationNotice(
-                appliedKeys.Count == 1 ? labelByKey[appliedKeys[0]] : $"{appliedKeys.Count} 個問題",
+                newlyEscalatedKeys.Count == 1 ? labelByKey[newlyEscalatedKeys[0]] : $"{newlyEscalatedKeys.Count} 個問題",
                 host.HostName, _currentUser.Account, request.Note));
         }
 
@@ -597,8 +599,12 @@ public class IssueHandlingCommandService
 
         // 轉入 escalated 才通知的判定要在寫入前取舊狀態（見 NotifyEscalationIfNeeded 的說明）：
         // targets 是案件物件本身，SyncStatus 之後 openCase.Status 會被就地改寫成新值，
-        // 必須在迴圈開始前先讀一次舊狀態，跟批次回覆同一套「整批任一新轉入」判斷。
-        var anyNewlyEscalated = targets.Any(c => c.Status != IssueHandlingStatuses.Escalated);
+        // 必須在迴圈開始前先讀一次舊狀態。只取「新」轉入的子集——信件的主機數也只算這些，
+        // 不把早已上報過的主機重複算進去（終檢輪修正，同批次回覆的理由）。
+        var newlyEscalatedHosts = targets
+            .Where(c => c.Status != IssueHandlingStatuses.Escalated)
+            .Select(c => c.HostName)
+            .ToList();
 
         // 整批共用同一個時間戳：前端的處理歷程 timeline 靠「同操作者＋同時間戳」分組，
         // 逐案取 DateTime.Now 的微小差異會讓一次操作在畫面上散成好幾筆
@@ -629,14 +635,15 @@ public class IssueHandlingCommandService
             targetId: $"{request.Source}/{request.EventId}",
             detail: new { request.Source, request.EventId, request.Status, request.Note, request.DueDate, HostNames = hostNames });
 
-        // 跨主機一次回覆無法處理：一封信彙整全部主機（這正是「負責人回覆無法處理」的主要入口）。
-        // 同批次回覆的理由（見上方 anyNewlyEscalated 的說明），不透過 NotifyEscalationIfNeeded 的
-        // previousStatus 參數。
-        if (request.Status == IssueHandlingStatuses.Escalated && anyNewlyEscalated && _mail != null)
+        // 跨主機一次回覆無法處理：一封信彙整（這正是「負責人回覆無法處理」的主要入口）。
+        // 主機標籤只算「新」轉入的那些（見上方 newlyEscalatedHosts 的說明），
+        // 不透過 NotifyEscalationIfNeeded 的 previousStatus 參數。
+        if (request.Status == IssueHandlingStatuses.Escalated && newlyEscalatedHosts.Count > 0 && _mail != null)
         {
             _ = _mail.NotifyEscalationAsync(new EscalationNotice(
                 $"{request.Source} {request.EventId}",
-                targets.Count == 1 ? targets[0].HostName : $"{targets.Count} 台主機", _currentUser.Account, request.Note));
+                newlyEscalatedHosts.Count == 1 ? newlyEscalatedHosts[0] : $"{newlyEscalatedHosts.Count} 台主機",
+                _currentUser.Account, request.Note));
         }
 
         return new BulkIssueStatusResultDto

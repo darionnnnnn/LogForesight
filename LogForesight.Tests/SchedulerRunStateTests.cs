@@ -301,4 +301,49 @@ public class SchedulerRunStateTests
 
         Assert.Same(first, state.LastOutcome);
     }
+
+    // ── 通知閘門「成功或有產出就通知」（回饋十八輪批次B，終檢輪補測試）──────────
+    // 核心語意：本機拋例外讓整趟 Success=false，但 NetIQ 已對大量主機寫入時，通知不能被靜音。
+
+    /// <summary>本機失敗（LocalResults 空）＋NetIQ 有寫入 → 判定有產出、閘門放行。</summary>
+    [Fact]
+    public void ComputeAnyRecordsWritten_本機失敗但NetIQ有寫入時為true()
+    {
+        var netiq = new NetiqPipelineResult();
+        netiq.AddAnalyzed();   // NetIQ 這一路完成了至少一個主機日
+
+        var result = new OrchestratorResult { Success = false, FailureMessage = "本機分析失敗", NetiqResult = netiq };
+
+        Assert.True(RunOutcome.ComputeAnyRecordsWritten(result));
+        Assert.True(new RunOutcome(false, "本機分析失敗", "schedule", DateTime.Now,
+            RunOutcome.ComputeAnyRecordsWritten(result)).ShouldNotify);
+    }
+
+    /// <summary>整趟真的什麼都沒做（兩路皆空）→ 不通知，維持批次E的嚴格語意。</summary>
+    [Fact]
+    public void ComputeAnyRecordsWritten_兩路皆無產出時為false且不通知()
+    {
+        var result = new OrchestratorResult { Success = false, FailureMessage = "環境層級失敗" };
+
+        Assert.False(RunOutcome.ComputeAnyRecordsWritten(result));
+        Assert.False(new RunOutcome(false, "環境層級失敗", "schedule", DateTime.Now,
+            RunOutcome.ComputeAnyRecordsWritten(result)).ShouldNotify);
+    }
+
+    /// <summary>本機有結果（NetIQ 未跑）也算有產出——閘門看的是「任一路有寫入」。</summary>
+    [Fact]
+    public void ComputeAnyRecordsWritten_本機有結果時為true()
+    {
+        var result = new OrchestratorResult { Success = false, FailureMessage = "NetIQ 失敗" };
+        result.LocalResults.Add(new DailyAnalysisRecord { Host = "SRV-A", Date = DateTime.Today.AddDays(-1) });
+
+        Assert.True(RunOutcome.ComputeAnyRecordsWritten(result));
+    }
+
+    /// <summary>成功一律通知，不看 AnyRecordsWritten（例如全部主機都已是最新、零新寫入的成功執行）。</summary>
+    [Fact]
+    public void ShouldNotify_成功時不論有無寫入皆通知()
+    {
+        Assert.True(new RunOutcome(true, null, "schedule", DateTime.Now, AnyRecordsWritten: false).ShouldNotify);
+    }
 }

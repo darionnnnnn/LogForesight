@@ -344,9 +344,14 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `IIssueAggregateQuery.HostIdsFor` 反查 `lf_top_issues`），與主機負責人**同級**（整台可見，
 非問題層級的窄授與），同樣聯集進 `GetVisibleHostIds`／`GetVisibleHostIdsFor`，同樣隱含
 `Handle`＋`ConfirmPermission`（不含 `ViewAll`，`UserCapabilityResolver.IsIssueOwner`）。
-**問題負責人優先於主機負責人**（不是疊加）：`DayHandlingCommandService.DefaultHandlerId`
-自動帶入處理人、`MailNotificationService.ResolvePerRecipient` 的郵件路由，兩處都先查問題
-負責人恰一人是否命中，命中即不再看主機負責人。管理頁見 §9（`/admin/issue-owners`）。
+**問題負責人優先於主機負責人**（不是疊加）：`MailNotificationService.ResolvePerRecipient`
+的郵件路由逐主機日判定，該日問題命中規則即通知問題負責人（**可多位**）、不再通知主機負責人；
+`DayHandlingCommandService.DefaultHandlerId` 的自動帶入處理人同樣先查問題負責人，但只在
+跨命中問題聯集去重後**恰一人**且未停用時帶入，多人不猜、落回主機負責人規則。
+管理頁 `/admin/issue-owners`（側欄「系統管理＞問題負責人」，`Maintain`）：
+`IssueOwnersController` GET／GET recent-issues（近 30 天出現過的問題選擇器，依主機數排序）／
+PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
+(Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
 
 **案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：前面路徑之外、刻意更窄的一條。
 被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
@@ -787,8 +792,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **主機群組 chip（2026-07-23 Phase D-4）**：`GET api/hosts/groups`（只列出使用者看得到主機所屬的
   群組，不洩漏看不到的部門）；`GroupIds` 於 `RecordSearchRequest` 展開為主機集合後與 `HostIds` 取聯集。
 - **處理狀態對外一律三態（2026-07-28，docs/archive/HISTORY.md #12）**：清單、CSV、儀表板／
-  報表統計只呈現 **未處理／處理中／已處理**，六種內部狀態的結案類（`resolved`/`wont_fix`/
-  `false_positive`/`known_noise`）一律收斂為「已處理」——單點定義 `HandlingStatuses.ExternalOf()`。
+  報表統計只呈現 **未處理／處理中／已處理**，內部狀態（open／in_progress／observing／escalated
+  ＋結案四種 `resolved`/`wont_fix`/`false_positive`/`known_noise`）中的結案類一律收斂為
+  「已處理」、observing 與 escalated 收斂為「處理中」——單點定義 `HandlingStatuses.ExternalOf()`。
   「已處理」chip 因此查得到被標成「不處理」的日子（改版前精確比對 `resolved` 查不到）；
   `HandlingHistoryQueryService.GetTodo` 同步改用 ExternalOf 分桶，修掉「wont_fix 三個桶都數不到、
   導致報表『未完成』把已結案日誤算進去」的缺口。**只在對外出口套用**——
@@ -956,7 +962,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      | `HostName` | 現行主機名稱（同 handling 鍵語意） |
      | `IssueKey` | 問題簽章鍵（`LogName|Source|EventId|EntryType`） |
      | `IssueLabel` | 「Source EventId」反正規化（同 `RecordHandlingLog.IssueLabel`，避免規則改名/清理影響追責） |
-     | `Status` | 值域同 `IssueHandlingStatuses`（open／in_progress／escalated／結案四種，回饋十八輪批次G 新增 escalated） |
+     | `Status` | 值域同 `IssueHandlingStatuses`（open／in_progress／observing／escalated／結案四種，回饋十八輪批次G 新增 escalated） |
      | `HandlerId` | 案件處理人——同一問題跨日只歸一人 |
      | `Note` | 最近一次說明快照（完整敘事仍在處理歷程） |
      | `DueDate` | 僅 `in_progress` 有意義 |
@@ -981,9 +987,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      - **狀態同步**：標記某日某問題的狀態時，若該（主機, IssueKey）有進行中案件，同步展開到
        案件涵蓋的其他日子（逐日一列 `case_sync` 歷程，同一次操作共用同一個時間戳供前端 timeline
        分組）。標成結案類（resolved/wont_fix/false_positive/known_noise）→ 案件本身結案
-       （`ClosedAt`），之後同問題再出現視為新案件；標 open/in_progress → 案件維持進行中並同步
-       狀態；調回未處理一律落盤明確 `open`（不使用缺列語意，否則下次批次掛接會把它自動蓋回
-       `in_progress`）。
+       （`ClosedAt`），之後同問題再出現視為新案件；標 open/in_progress/escalated → 案件維持
+       進行中並同步狀態（escalated 非結案，回饋十八輪批次G）；調回未處理一律落盤明確 `open`
+       （不使用缺列語意，否則下次批次掛接會把它自動蓋回 `in_progress`）。
      - **批次逐日掛接**：排程每天寫入新的分析紀錄後，對當日有進行中案件的問題呼叫
        `IssueCaseCoordinator.AttachNewDay`，寫入 `IssueHandling{CaseId, Status=案件現狀,
        Note=案件說明, DueDate=案件期限}` 與一列 `case_attach` 歷程（actor 為系統）；案件
@@ -1578,7 +1584,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
      寄件人／收件人（一行一位 textarea，與 AD 伺服器／監控資料夾等既有 `List<string>` 欄位
-     UX 慣例一致）＋「同時通知主機負責人」開關＋摘要納入門檻（`MailMinRiskLevel`）＋三路
+     UX 慣例一致）＋「同時通知負責人（問題負責人優先，其次主機負責人）」開關
+     （`MailNotifyHostOwners`，回饋十八輪批次F 起逐主機日路由：該日問題命中問題負責人規則
+     即通知問題負責人、取代主機負責人）＋摘要納入門檻（`MailMinRiskLevel`）＋三路
      觸發開關（執行結束後摘要／每日定時＋時刻／每週定時＋星期＋時刻／高風險即時）＋
      「期間內無達門檻風險日時不寄摘要信」開關（`MailDigestSkipEmpty`，預設 false 照寄——
      無事的信同時是系統存活訊號）＋標題模板
@@ -1628,6 +1636,24 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      (2) `ResolvePerRecipient` 的 `GetVisibleHostIds` 原本寫在 `Where` 的 predicate 本體內，
      每筆 record 都重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），對每位收件人重跑
      一次完整的 store 全表掃描——是 B-2 想修掉的同一種 N+1，改為在迴圈內對每位收件人只算一次。
+
+     **回饋十八輪（2026-08-13～14，批次A/B/C/G）**：
+     (A) **RiskLevels 下推查詢層**：三路通知的達門檻過濾原本先全量撈近 14 天再記憶體過濾，
+     2000 台×14 天在門檻「高」時撈回的絕大多數是用不到的中低風險列——`RecordQueryFilter`
+     增列 `RiskLevels`，`RiskLevels.AtOrAbove(min)`（未知門檻 fail-open 回全部）算出集合後
+     下推到 `EfAnalysisRecordStore.ApplyPushableFilters`，記憶體端保留同一道過濾當雙保險。
+     (B) **通知閘門改「成功或有產出」**（`RunOutcome.ShouldNotify = Success || AnyRecordsWritten`，
+     `ComputeAnyRecordsWritten` 從 orchestrator 結果推導）：本機與 NetIQ 並行後，本機環境性
+     失敗會讓整趟 Success=false，但 NetIQ 可能已完成數百上千台的分析——原閘門會把已完成的
+     高風險通知一起靜音（症狀是延遲一天補寄，難察覺）。
+     (C) **啟用時預填已通知**（`MarkExistingRecordsAsNotified`，內部 try/catch 不弄掛設定儲存）：
+     郵件由關轉開時把窗口內既有紀錄的 key 預填進 `SummarySentKeys`／`UrgentSentKeys`
+     （逐路由獨立判定關轉開）——語意定案「從啟用起算」，啟用前的積壓不補寄、第一封信不轟炸。
+     (G) **問題上報通知**（`NotifyEscalationAsync`，事件驅動第四路）：問題被回覆「無法處理」
+     （escalated）時即時通知 admin 群組全部成員（`AdminMembersResolver`，Role==Admin 判定、
+     群組改名不受影響；仍受 MailEnabled 閘門管控）。只在**轉入** escalated 時通知（單筆比對
+     前狀態、批次／跨主機取「新轉入」子集，信件的問題數／主機數也只算該子集）——已上報過的
+     問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`（回饋十五輪批次D）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
@@ -1637,11 +1663,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **選單位置**：側欄「系統」分組最下方（僅 `Maintain` 顯示，選單顯示與頁面
   `[Permission(Capability.Maintain)]` 雙閘，比照既有 admin 頁）。
 - **內容存放**：`LogForesight.Web/HelpContent/`——`manifest.json`（`id`／`title`／`icon`／
-  `keywords[]`／`related[]`；`icon` 為 2026-08-11 回饋十七輪批次G-2 新增，對應 `icons.svg`
-  的 symbol id，十四章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇）＋ 14 個章節
-  Markdown 檔，全部以**內嵌資源**編進組件（csproj 的
+  `keywords[]`／`related[]`／`type`／`href`；`icon` 為 2026-08-11 回饋十七輪批次G-2 新增，
+  對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
+  `type`／`href` 為回饋十八輪批次H 新增——`type` 省略時預設 `"markdown"`（既有章節零改動），
+  `type="link"` 的章節（目前只有第一項「首次啟動精靈」，`href="/setup"`）沒有 Markdown 檔，
+  前端渲染成導引卡）＋ 14 個章節 Markdown 檔（清單共 15 項＝14 md＋1 link），全部以
+  **內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
+  精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
+  `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
 - **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
   一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
   深連結（`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI
@@ -1708,6 +1739,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   結構已為它預留素材。
 - API：`GET api/help/manual`、`GET api/help/ask-available`、`POST api/help/ask`（`Maintain`）。
 
+### 9.9d `/setup` 首次啟動精靈（`Maintain`，回饋十八輪批次H）
+
+- **回答「設好了嗎」，與 `/api/health/detail` 的「現在健康嗎」刻意分開**（後者是六大塊維運
+  訊號，硬併會讓它更難用）。`SetupReadinessService` 彙整七個一次性設定步驟成 checklist：
+  storage／admin-account（不可跳過）＋ mail／ai／netiq／groups／schedule（可跳過、可逆）。
+  「完成」全部自動判定（讀現成 store，不新增探測邏輯）、「跳過」由使用者手動決定
+  （`SetupWizardStateStore`，blob `setup_wizard_state`）。步驟清單不含規則版本——規則庫由
+  RuleBootstrapper 啟動時自動就緒，使用者無事可做。
+- **不進側欄**：入口在操作說明書清單第一項（type=link 導引卡，見 §9.9c）；直接輸入網址也可達。
+  全部步驟達終態（`allSettled`）後可勾「隱藏教學文件裡的精靈入口」（隱藏只影響清單入口，
+  `/setup` 本身仍可用）。
+- **版面**：頂部整體進度（x/7＋進度條）＋垂直 checklist（狀態圓點＋標題＋detail＋
+  「前往設定」「跳過此步」）；聚焦步驟寫入 `location.hash`（`#step-{id}`）深連結；「前往設定」
+  帶 `?from=setup`，目標頁（`layout.js` 共用）顯示可關閉的「返回啟動精靈」提示列。
+- API：`GET api/admin/setup/status`、`POST api/admin/setup/skip/{stepId}`（未知／不可跳過的
+  stepId 後端直接忽略，前端不顯示按鈕只是第一道）、`POST api/admin/setup/hidden`（走稽核）。
+
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
 - **改名與權限放寬（2026-07-31，docs/archive/FEEDBACK-6-PLAN.md §2）**：側欄由「執行監控」改名
   「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
@@ -1720,7 +1768,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）。**Linux 主機比照 Windows
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）、**「分析本機主機」開關**
+  （回饋十八輪批次D，`ScheduleOptions.LocalAnalysisEnabled` 預設 true）：停用後排程與立即執行
+  都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
+  設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
+  隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」
+  而非「未執行」（`RunMonitorService`＋`RunDaySummaryDto.LocalDisabledCount`）。**Linux 主機比照 Windows
   正式支援（2026-08-07，docs/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期擋板）**：run-preview
   台數為單一總數，不再拆分 `LinuxCount`／附加「暫不查詢」提示——Sentinel 搜尋已有 Linux
   取數分支（依 `Os` 分流查詢與映射），Linux 主機和 Windows 主機走同一條
@@ -1901,6 +1954,8 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
 | `IIssueAggregateQuery`（2026-08-06） | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
+| `IIssueOwnerStore`（2026-08-13，回饋十八輪批次F） | blob `issue_owners`（問題負責人規則，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners` 維護） | Web |
+| `SetupWizardStateStore`（2026-08-13，回饋十八輪批次H；無介面，直接注入具體類別） | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
 | `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |

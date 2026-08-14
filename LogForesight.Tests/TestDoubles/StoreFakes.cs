@@ -388,8 +388,10 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
 
     public void Delete(string source, int eventId) => _rules.RemoveAll(r => Matches(r, source, eventId));
 
+    // 委派單一事實來源（終檢輪修正）：自寫一份就是 FakeHostStore/FakeUserStore 踩過的
+    // 「測試替身與正式實作語意漂移」家族，正式端改比對規則時這裡不會跟著動。
     private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
-        r.EventId == eventId && string.Equals(r.SourceName, source, StringComparison.OrdinalIgnoreCase);
+        IssueOwnerRule.Matches(r, source, eventId);
 }
 
 /// <summary>

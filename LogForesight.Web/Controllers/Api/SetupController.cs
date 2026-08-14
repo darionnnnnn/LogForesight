@@ -44,13 +44,3 @@ public class SetupController : ControllerBase
         return ApiResponse<SetupStatusDto>.Ok(_service.GetStatus());
     }
 }
-
-public class SetSkippedRequest
-{
-    public bool Skipped { get; set; }
-}
-
-public class SetHiddenRequest
-{
-    public bool Hidden { get; set; }
-}

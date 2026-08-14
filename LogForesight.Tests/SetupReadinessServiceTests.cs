@@ -192,6 +192,19 @@ public class SetupReadinessServiceTests : IDisposable
         Assert.False(service.GetStatus().Steps.Single(s => s.Id == "storage").Skipped);
     }
 
+    /// <summary>未知步驟 id 不落地（終檢輪補）：直接打 API 的任意字串不能靜默累積進
+    /// SkippedSteps blob 變成垃圾。</summary>
+    [Fact]
+    public void 未知的步驟id呼叫SetSkipped_不落地()
+    {
+        var service = Create();
+
+        service.SetSkipped("not-a-step", true);
+
+        var state = new SetupWizardStateStore(_backend.Blob("setup_wizard_state")).Get();
+        Assert.Empty(state.SkippedSteps);
+    }
+
     [Fact]
     public void 全部完成或跳過時AllSettled為true()
     {

@@ -7,7 +7,7 @@ namespace LogForesight.Web.Services;
 /// 架構理由）：Singleton 的 MailNotificationService（上報通知的收件人來源）與 Scoped 的
 /// IdentityService（HasNoAdmins）都要用，不能讓 Singleton 依賴 Scoped 服務。
 /// </summary>
-public static class AdminMembersResolver
+internal static class AdminMembersResolver
 {
     /// <summary>啟用中 admin 群組（Role==Admin 且 Active）的全部啟用中成員；
     /// 沒有任何 admin 群組或成員時回空清單。</summary>

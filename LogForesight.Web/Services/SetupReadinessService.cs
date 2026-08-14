@@ -104,8 +104,16 @@ public class SetupReadinessService
     /// 不顯示跳過按鈕：前端被繞過（直接打 API）時，這裡仍要擋下。</summary>
     private static readonly HashSet<string> NonSkippableStepIds = new() { "storage", "admin-account" };
 
+    /// <summary>全部合法步驟 id（終檢輪補）：SetSkipped 只接受這份清單——未知 id 不落地，
+    /// 避免直接打 API 的任意字串靜默累積進 SkippedSteps blob 變成垃圾。</summary>
+    private static readonly HashSet<string> AllStepIds = new()
+    {
+        "storage", "admin-account", "mail", "ai", "netiq", "groups", "schedule"
+    };
+
     public void SetSkipped(string stepId, bool skipped)
     {
+        if (!AllStepIds.Contains(stepId)) return;
         if (skipped && NonSkippableStepIds.Contains(stepId)) return;
 
         _state.Update(s =>

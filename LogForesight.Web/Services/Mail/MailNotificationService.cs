@@ -308,18 +308,27 @@ public class MailNotificationService
     {
         if (!summary && !urgent) return;
 
-        var to = DateTime.Today.AddDays(-1);
-        var from = to.AddDays(-(NotifyLookbackDays - 1));
-        var keys = _records.ListHostDates(from, to)
-            .Select(h => $"{h.HostId}|{h.Date:yyyy-MM-dd}")
-            .ToList();
-        if (keys.Count == 0) return;
-
-        _state.Update(s =>
+        // try/catch 到底（回饋十八輪終檢輪補）：這是設定儲存流程的附掛動作，預填失敗
+        // （查詢逾時等）最壞就是啟用前的歷史紀錄被補寄一輪，不能反過來弄掛設定儲存本身。
+        try
         {
-            if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
-            if (urgent) foreach (var key in keys) s.UrgentSentKeys.Add(key);
-        });
+            var to = DateTime.Today.AddDays(-1);
+            var from = to.AddDays(-(NotifyLookbackDays - 1));
+            var keys = _records.ListHostDates(from, to)
+                .Select(h => $"{h.HostId}|{h.Date:yyyy-MM-dd}")
+                .ToList();
+            if (keys.Count == 0) return;
+
+            _state.Update(s =>
+            {
+                if (summary) foreach (var key in keys) s.SummarySentKeys.Add(key);
+                if (urgent) foreach (var key in keys) s.UrgentSentKeys.Add(key);
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "[Mail] 郵件啟用預填已通知狀態失敗（不影響設定儲存本身；啟用前的歷史紀錄可能被補寄）");
+        }
     }
 
     /// <summary>目前已因連續失敗達門檻而被排除寄送的收件人（回饋十七輪批次B-1）：

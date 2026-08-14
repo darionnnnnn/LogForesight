@@ -45,12 +45,10 @@ function renderList() {
             {
                 title: '問題',
                 render: r => {
-                    const wrap = document.createElement('div');
                     const main = document.createElement('div');
                     main.className = 'fw-semibold';
                     main.textContent = `${r.sourceName} (${r.eventId})`;
-                    wrap.appendChild(main);
-                    return wrap;
+                    return main;
                 }
             },
             {

@@ -89,7 +89,8 @@ internal static class HostVisibilityResolver
     /// 回饋十八輪批次F 新增第三條聯集）。</summary>
     public static IReadOnlySet<long> GetVisibleHostIds(
         IHostStore hosts, IUserStore users, IUserGroupStore userGroups, IGroupAccessStore access, long userId,
-        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null, int retentionDays = 120)
+        IIssueOwnerStore? issueOwners = null, IIssueAggregateQuery? issueAggregates = null,
+        int retentionDays = SystemSettings.DefaultRetentionDays)
     {
         var visible = GetGroupVisibleHostIds(hosts, users, userGroups, access, userId).ToHashSet();
         visible.UnionWith(GetOwnedHostIds(hosts, users, userId));

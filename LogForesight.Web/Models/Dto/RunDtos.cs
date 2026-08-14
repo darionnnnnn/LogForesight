@@ -22,6 +22,10 @@ public class RunDaySummaryDto
     public int RunningCount { get; set; }
     public int NotRunCount { get; set; }
 
+    /// <summary>本機分析已停用（回饋十八輪批次D）：排程設定「分析本機主機」關閉時，本機主機的
+    /// 空白日不算進「未執行」——那是設定行為不是漏跑，混計會讓人誤判排程壞了。</summary>
+    public int LocalDisabledCount { get; set; }
+
     /// <summary>優雅停止（手動停止或執行窗口 End 到點）——不算失敗，見 <c>BatchRun.Stopped</c></summary>
     public int StoppedCount { get; set; }
 
@@ -35,7 +39,7 @@ public class RunDayHostStatusDto
 {
     public string HostName { get; set; } = string.Empty;
 
-    /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none</summary>
+    /// <summary>success | backfilled | warning | failed | stopped | running | stuck | none | local_disabled</summary>
     public string Status { get; set; } = string.Empty;
 
     public long? RunId { get; set; }

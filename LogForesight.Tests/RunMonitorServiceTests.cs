@@ -16,10 +16,11 @@ public class RunMonitorServiceTests : IDisposable
     private readonly FakeHostStore _hosts = new();
     private BatchRunStore Runs() => new(_fx.LogStore("runs"), _fx.LogStore("run_logs"));
     private EfAnalysisRecordStore Records() => new(_fx.NewContext, "test");
+    private ScheduleOptionsStore Options() => new(_fx.Blob("schedule_options"));
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore());
+    private RunMonitorService Create() => new(Runs(), _hosts, Records(), new FakeUserStore(), Options());
 
     private static DailyAnalysisRecord Rec(long hostId, string host, DateTime date) =>
         new() { HostId = hostId, Host = host, Date = date, RiskLevel = "低" };
@@ -61,7 +62,7 @@ public class RunMonitorServiceTests : IDisposable
         var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.7", Source = "netiq" });
         Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDaySummaries(3);
+        var summaries = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDaySummaries(3);
         var today = summaries.Single(s => s.Date == DateTime.Today.ToString("yyyy-MM-dd"));
 
         // DEV-BATCH-HOST（跑批次的機器本身）與 10.0.0.7（NetIQ 主機）都算成功——
@@ -112,7 +113,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
         Assert.Equal(runId, row.RunId);
@@ -126,7 +127,7 @@ public class RunMonitorServiceTests : IDisposable
         runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today);
+        var detail = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today);
 
         var row = Assert.Single(detail, d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
@@ -147,7 +148,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore());
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options());
 
         var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
         Assert.Equal("stopped", row.Status);
@@ -171,7 +172,7 @@ public class RunMonitorServiceTests : IDisposable
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
         var row = Assert.Single(
-            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore()).GetDayDetail(DateTime.Today),
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
             d => d.HostName == "SRV-LOCAL");
         Assert.Equal("success", row.Status);
     }
@@ -228,7 +229,7 @@ public class RunMonitorServiceTests : IDisposable
         var records = Records();
         records.Append(Rec(netiqOk.HostId, netiqOk.HostName, DateTime.Today.AddDays(-1)));
 
-        var summaries = new RunMonitorService(runs, _hosts, records, new FakeUserStore()).GetDaySummaries(1);
+        var summaries = new RunMonitorService(runs, _hosts, records, new FakeUserStore(), Options()).GetDaySummaries(1);
         var today = Assert.Single(summaries);
 
         Assert.Equal(3, today.TotalHosts);
@@ -253,7 +254,7 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), users);
+        var service = new RunMonitorService(runs, _hosts, Records(), users, Options());
 
         Assert.Equal("手動（系統維護(DOMAIN\\svc-lfadmin)）", service.GetDetail(runId).TriggerText);
     }
@@ -271,8 +272,55 @@ public class RunMonitorServiceTests : IDisposable
         });
         _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
 
-        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore());
+        var service = new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options());
 
         Assert.Equal("手動（DOMAIN\\deleted-user）", service.GetDetail(runId).TriggerText);
+    }
+
+    // ── 本機分析停用（回饋十八輪批次D，終檢輪補上規劃表列的執行監控顯示）──────────
+
+    /// <summary>停用「分析本機主機」後，本機主機的空白日顯示「本機分析已停用」而非「未執行」——
+    /// 那是設定行為不是漏跑，混在同一格會讓人每天誤判排程壞了。</summary>
+    [Fact]
+    public void 本機分析停用_本機主機空白日列為停用而非未執行()
+    {
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+        Options().Update(o => o.LocalAnalysisEnabled = false);
+        var service = Create();
+
+        var row = Assert.Single(service.GetDayDetail(DateTime.Today), d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("local_disabled", row.Status);
+
+        var today = service.GetDaySummaries(1).Single();
+        Assert.Equal(1, today.LocalDisabledCount);
+        Assert.Equal(0, today.NotRunCount);
+    }
+
+    /// <summary>停用前真的有跑過的日子照實顯示（成功／失敗照舊），只有空白日才標停用。</summary>
+    [Fact]
+    public void 本機分析停用_有執行紀錄的日子仍照實顯示()
+    {
+        var runs = Runs();
+        var runId = runs.StartRun(new BatchRun { HostName = "SRV-LOCAL", StartedAt = DateTime.Now });
+        runs.FinishRun(new BatchRun { RunId = runId, HostName = "SRV-LOCAL", StartedAt = DateTime.Now, FinishedAt = DateTime.Now, ExitCode = 0 });
+        _hosts.Upsert(new WebHost { HostName = "SRV-LOCAL", Source = "local" });
+        Options().Update(o => o.LocalAnalysisEnabled = false);
+
+        var row = Assert.Single(
+            new RunMonitorService(runs, _hosts, Records(), new FakeUserStore(), Options()).GetDayDetail(DateTime.Today),
+            d => d.HostName == "SRV-LOCAL");
+        Assert.Equal("success", row.Status);
+    }
+
+    /// <summary>NetIQ 主機完全不受本機停用開關影響——停用只作用在本機那一路。</summary>
+    [Fact]
+    public void 本機分析停用_NetIQ主機狀態不受影響()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "10.0.0.8", Source = "netiq" });
+        Records().Append(Rec(host.HostId, host.HostName, DateTime.Today.AddDays(-1)));
+        Options().Update(o => o.LocalAnalysisEnabled = false);
+
+        var row = Assert.Single(Create().GetDayDetail(DateTime.Today), d => d.HostName == host.HostName);
+        Assert.Equal("success", row.Status);
     }
 }

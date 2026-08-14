@@ -15,6 +15,7 @@ public class RunMonitorService
     private readonly IHostStore _hosts;
     private readonly IAnalysisRecordQuery _records;
     private readonly IUserStore _users;
+    private readonly ScheduleOptionsStore _scheduleOptions;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -22,12 +23,14 @@ public class RunMonitorService
     /// <summary>失敗主機清單的顯示上限——超過的部分只算數量，避免單一異常日把整頁撐爆</summary>
     private const int MaxFailedHostNames = 10;
 
-    public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users)
+    public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
+        ScheduleOptionsStore scheduleOptions)
     {
         _runs = runs;
         _hosts = hosts;
         _records = records;
         _users = users;
+        _scheduleOptions = scheduleOptions;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -56,6 +59,7 @@ public class RunMonitorService
         var runs = _runs.GetRecentRuns(days, hostNames: null);
         var from = DateTime.Today.AddDays(-days + 1);
         var hosts = AllHosts(runs);
+        var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
 
         // 「執行日 D」對應「D-1 的分析紀錄是否存在」（NetIQ 與本機回補共用同一套對應，見 StatusOf），
         // 窗口因此整體往前多帶一天。涵蓋全部主機（不只 NetIQ）——本機主機的回補 fallback 也要用
@@ -71,7 +75,7 @@ public class RunMonitorService
             foreach (var host in hosts)
             {
                 var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
-                var status = StatusOf(host, dayRuns, date, recordDates);
+                var status = StatusOf(host, dayRuns, date, recordDates, localEnabled);
 
                 switch (status)
                 {
@@ -83,6 +87,7 @@ public class RunMonitorService
                     case "running": summary.RunningCount++; break;
                     // 已停止不列失敗主機清單——那是使用者的明確操作，缺漏日下次執行自動回補
                     case "stopped": summary.StoppedCount++; break;
+                    case "local_disabled": summary.LocalDisabledCount++; break;
                     default: summary.NotRunCount++; break;
                 }
             }
@@ -103,6 +108,7 @@ public class RunMonitorService
         var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
         var dateStr = date.ToString("yyyy-MM-dd");
         var hosts = AllHosts(runs);
+        var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
         var recordDates = _records.ListHostDates(date.AddDays(-1), date.AddDays(-1));
 
         return hosts.Select(host =>
@@ -110,7 +116,7 @@ public class RunMonitorService
             var dayRuns = RunsForHostOnDate(runs, host.HostName, dateStr);
             var cell = host.Source == "netiq"
                 ? NetiqCell(host, date, recordDates)
-                : LocalCell(host, dateStr, dayRuns, date, recordDates);
+                : LocalCell(host, dateStr, dayRuns, date, recordDates, localEnabled);
             return new RunDayHostStatusDto
             {
                 HostName = host.HostName,
@@ -132,8 +138,8 @@ public class RunMonitorService
     /// （管線在晚上跑，回補的是昨天的缺漏日，見 <c>NetiqPipelineService</c>）。
     /// 只能判斷 success／none 兩態——沒有個別失敗/警告訊號可用：分析失敗時管線刻意不寫入紀錄，
     /// 下次自動重試（與「沒跑」在資料面完全等價，這是誠實的合併，不是遺漏）。</summary>
-    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
-        host.Source == "netiq" ? NetiqStatus(host, date, recordDates) : LocalStatus(host, dayRuns, date, recordDates);
+    private static string StatusOf(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled) =>
+        host.Source == "netiq" ? NetiqStatus(host, date, recordDates) : LocalStatus(host, dayRuns, date, recordDates, localEnabled);
 
     private static string NetiqStatus(HostRef host, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates) =>
         recordDates.Contains((host.HostId, date.AddDays(-1).Date)) ? "success" : "none";
@@ -148,21 +154,26 @@ public class RunMonitorService
     /// 於是被回補的其他日期原本會誤顯示「未執行」。存在則標「backfilled」（已回補），不冒充
     /// success——「當天真的有跑」與「後來補的資料」要分得出來，符合本頁誠實原則。
     /// </summary>
-    private static string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates)
+    private static string LocalStatus(HostRef host, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
     {
         if (dayRuns.Count > 0) return StatusOf(dayRuns);
-        return HasBackfilledRecord(host, date, recordDates) ? "backfilled" : "none";
+        if (HasBackfilledRecord(host, date, recordDates)) return "backfilled";
+        // 本機分析已停用（回饋十八輪批次D）：停用後本機主機格顯示停用狀態、不冒充「未執行」——
+        // 「設定行為」與「漏跑」是完全不同的事，混在同一格會讓人每天誤判排程壞了。
+        // 停用前真的有跑／有回補的日子仍照實顯示（上面兩個分支先判），只有「什麼都沒有」的
+        // 空格才落到停用說明；開關是當下狀態，無從得知歷史哪天才停用，一律以現值標示。
+        return localEnabled ? "none" : "local_disabled";
     }
 
     private static RunDayHostStatusDto LocalCell(
-        HostRef host, string dateStr, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates)
+        HostRef host, string dateStr, List<BatchRun> dayRuns, DateTime date, HashSet<(long HostId, DateTime Date)> recordDates, bool localEnabled)
     {
         // 有 BatchRun：完整 cell（含 runId／計數，供「檢視執行」）。沒有：回補 fallback 只有狀態，
         // 沒有可連到的單次執行紀錄（回補的執行紀錄掛在觸發當天那台，不是這個日期格）
         if (dayRuns.Count > 0) return BuildCell(dateStr, dayRuns);
         return new RunDayHostStatusDto
         {
-            Status = HasBackfilledRecord(host, date, recordDates) ? "backfilled" : "none"
+            Status = LocalStatus(host, dayRuns, date, recordDates, localEnabled)
         };
     }
 

@@ -116,7 +116,10 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
         return record;
     }
 
-    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) => _records.ToList();
+    // 委派給下方 IAnalysisRecordQuery 的顯式實作（終檢輪修正）：原本這裡無視 filter 全量回傳，
+    // 同一類別內的兩個 Query 各是一套語意——正是這輪在別的替身抓過的漂移家族。
+    public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) =>
+        ((IAnalysisRecordQuery)this).Query(filter);
 
     // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／From／To／RiskLevels）─────
     // RiskLevels 過濾（回饋十八輪批次A-4）：與 EfAnalysisRecordStore.ApplyPushableFilters

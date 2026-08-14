@@ -206,7 +206,7 @@ public class VisibilityService : IVisibilityService
 
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) =>
         HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId,
-            _issueOwners, _issueAggregates, _settings?.Get().RetentionDays ?? 120);
+            _issueOwners, _issueAggregates, _settings?.Get().RetentionDays ?? SystemSettings.DefaultRetentionDays);
 
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) =>
         HostVisibilityResolver.GetGroupVisibleHostIds(_hosts, _users, _userGroups, _access, userId);
