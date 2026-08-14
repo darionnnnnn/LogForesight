@@ -33,7 +33,10 @@ public class ReportService
         if (to < from) (from, to) = (to, from);
 
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
-        var records = _handling.FilterByScope(_repository.Query(new RecordQueryFilter { From = from, To = to }), scope);
+        // 全面 SQL 化（回饋十九輪批次E5）：KPI／趨勢／FilterByScope／GetTodo 都只需要判定用欄位
+        // （風險等級、TopIssues、Headline 等），改用 QueryLightweight（批次E3 建的機制）避免
+        // 期間內全部紀錄逐一反序列化整份 ContentJson——與前期比較還要再撈一次，兩份都改
+        var records = _handling.FilterByScope(_repository.QueryLightweight(new RecordQueryFilter { From = from, To = to }), scope);
 
         // 與前一個「等長」期間比較：主管要的不是數字本身，是「變好還是變壞」。
         // 等長才可比——拿一週跟一個月比毫無意義。前期套用同一 scope，比較才有意義（§5）
@@ -41,7 +44,7 @@ public class ReportService
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-span + 1);
         var previousRecords = _handling.FilterByScope(
-            _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
+            _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
