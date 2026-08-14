@@ -202,8 +202,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // 目標範圍就是呼叫端已經算出的少數幾種問題，不是整份表——與 HostIdsFor 同一個規模假設
         var rows = q
-            .Select(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.RecordDate, x.SeverityRank })
-            .Distinct()
+            .Select(x => new
+            {
+                x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.RecordDate, x.SeverityRank, x.KnownIssue
+            })
             .ToList()
             .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
             .ToList();
@@ -221,7 +223,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     IssueKey = IssueSignatureKey.For(
                         g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType),
                     LastSeen = latest.RecordDate,
-                    SeverityRank = latest.SeverityRank
+                    SeverityRank = latest.SeverityRank,
+                    KnownIssue = latest.KnownIssue
                 };
             })
             .ToList();

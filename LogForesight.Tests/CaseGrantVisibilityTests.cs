@@ -114,7 +114,9 @@ public class CaseGrantVisibilityTests : IDisposable
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.ForUser(_user.UserId, Capability.Handle),
-            settings: _settings);
+            settings: _settings,
+            aggregates: new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings));
 
     private HandlingServiceFacade Handling(IVisibilityService visibility)
     {

@@ -36,6 +36,8 @@ public class RecordQueryServiceSearchTests : IDisposable
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
 
         _service = new RecordQueryServiceFacade(
             repository: repository,
@@ -51,6 +53,8 @@ public class RecordQueryServiceSearchTests : IDisposable
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
             settings: _settingsStore,
+            aggregates: aggregates,
+            statusResolver: statusResolver,
             issueOwners: _issueOwners);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService

@@ -31,9 +31,12 @@ internal class RecordQueryServiceFacade
         IKnownIssueRuleStore rules,
         ICurrentUser currentUser,
         ISystemSettingsStore settings,
+        IIssueAggregateQuery aggregates,
+        OccurrenceStatusResolver statusResolver,
         IIssueOwnerStore? issueOwners = null)
     {
-        _list = new RecordListQueryService(repository, hosts, users, handlings, issueHandlings, cases, settings, issueOwners);
+        _list = new RecordListQueryService(
+            repository, hosts, users, handlings, issueHandlings, cases, settings, visibility, aggregates, statusResolver, issueOwners);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);
     }

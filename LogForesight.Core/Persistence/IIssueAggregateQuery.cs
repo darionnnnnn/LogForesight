@@ -109,6 +109,9 @@ public sealed class HostIssueOccurrence
     public string IssueKey { get; init; } = string.Empty;
     public DateTime LastSeen { get; init; }
     public int SeverityRank { get; init; }
+
+    /// <summary>最近一次出現當天的已知問題說明（回饋十九輪批次E1，依問題視角用），未命中規則為 null</summary>
+    public string? KnownIssue { get; init; }
 }
 
 /// <summary>

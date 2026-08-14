@@ -70,7 +70,8 @@ internal sealed class ScaleServices
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates);
 
         RecordList = new RecordListQueryService(
-            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore);
+            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
+            Visibility, aggregates, statusResolver);
 
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts);
 
