@@ -652,3 +652,37 @@ swap 就達到同樣的效能效果（不再反序列化整份 ContentJson），
     「讀取路徑」，寫入指令不在此列。
 
 下一步：E8（授權下推檢查表）。
+
+### 批次E8（完成，無程式碼變更——純查證）
+
+逐條核對批次E新增／改動的六個 SQL 聚合方法（`EfIssueAggregateQuery.Aggregate`／
+`LatestOccurrences`／`ActionableOccurrences`／`AggregateByCategory`（批次D既有）／
+`AggregateByDate`／`AggregateByHost`），確認全部在方法開頭有
+`if (hostIds != null && hostIds.Count == 0) return 空清單;` 這道守門——空集合
+＝零結果，不是「不限制」。
+
+`RecordListQueryService` 的四個呼叫端（`SearchByHost`／`SearchByDate`／
+`SearchByIssue`／`ClusterSignatures`）全部經由同一個 `ResolveVisibleHostIds`
+取得可見範圍，該方法保證回傳明確清單（永不回傳 null），可見範圍為空時
+回傳空清單——與上述六個方法的守門語意銜接正確。
+
+`QueryLightweight`（批次E3-E5 用，走 `RecordRepository` 既有的
+`ApplyVisibility`／`HostMatcher` 機制）不是新機制，是重用 `Query`／`QueryPage`
+早已驗證過的授權路徑——`HostMatcher` 對空 `HostKey` 集合的 `Matches()` 恆回
+`false`（`_hostIds`／`_hostNames` 兩個 HashSet 皆空，兩個分支都比對不到），
+逐位核對後確認這正是「空集合＝零結果」在這條路徑上的具體實作，沒有新增
+授權風險。
+
+未發現任何授權下推缺口。批次E（讀取路徑全面 SQL 化）全案完成。
+
+---
+
+## 批次E 全案結案摘要
+
+E0~E8 全部完成，commit 序列 `f079eb0`→`51b1a3d`，dev 分支 `feature/feedback-19`，
+2007 測試綠。體檢輪（E1/E2）揪出兩個影響全部新 SQL 路徑的真缺口——
+`request.Severity` 報表下鑽門檻漏接、SiteHidden 問題嚴重度可見性整段漏接——
+兩者都已修正並在 E1~E6 逐一驗證過。E7 退場普查移除一處死碼、修正一處過時
+文件參照，並核對剩餘 4 處 `_repository.Query` 呼叫端皆屬單一主機／單一問題
+範疇，非批次E範疇的規模化風險。除批次E6（AI 未設定，無法瀏覽器驗證，
+改用單元測試補強）外，全部批次皆對真實 dev DB 端到端瀏覽器驗證過。
