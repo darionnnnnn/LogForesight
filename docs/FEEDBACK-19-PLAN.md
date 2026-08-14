@@ -603,3 +603,17 @@ swap 就達到同樣的效能效果（不再反序列化整份 ContentJson），
 重點問題／高風險主機／依群組風險概況）與改版前逐位相同。
 
 下一步：E5（ReportService 全 SQL 化）。
+
+### 批次E5（完成，commit `cec4922`，2004 測試綠）
+
+同批次E4 的簡化手法：`ReportService.GetSummary` 兩處整批載入（本期＋前一等長
+期間比較）改呼叫 `QueryLightweight`。核對 `FilterByScope`／`BuildKpi`／
+`BuildTrend`／`GetTodo` 四個下游消費點，全部只讀取判定用欄位，一行 swap 完成，
+零下游改動。
+
+瀏覽器對真實 dev DB 端到端驗證：`/reports` 近 30 天全部區塊正確渲染；額外測試
+`handlingScope=open` 篩選——KPI／趨勢／主機排行正確歸零（FilterByScope 在這份
+資料上找不到符合的日子），風險類型分布／問題排行維持不受影響（符合既有的
+「不受 scope 篩選」文件化例外規則）。
+
+下一步：E6（ClusterSignatures 改 Aggregate 子集）。
