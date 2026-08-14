@@ -1,13 +1,13 @@
 @{
-    ViewData["Title"] = "問題負責人";
+    ViewData["Title"] = "問題檔案";
 }
 
 <section class="lf-card">
     <div class="lf-card__header">
-        <h2 class="lf-card__title">問題負責人</h2>
+        <h2 class="lf-card__title">問題檔案</h2>
         <div class="d-flex align-items-center gap-2">
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                    data-bs-content="以「問題（來源＋Event ID）」為單位指派負責人，跨主機生效——與主機負責人是相同概念，但優先於主機負責人：自動帶入處理人、郵件通知路由都會先看問題負責人，沒有命中才落回主機負責人。問題負責人也自動取得曾出現其負責問題之主機的檢視權。">
+                    data-bs-content="以「問題（來源＋Event ID）」為單位記錄負責人與機房結論，跨主機生效。負責人優先於主機負責人：自動帶入處理人、郵件通知路由都會先看問題負責人，沒有命中才落回主機負責人，也自動取得曾出現其負責問題之主機的檢視權。機房結論勾選「自動套用」後，之後新出現的主機日會沿用同一個結論，不必每次重新標記。">
                 <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
             </button>
             <button type="button" class="btn btn-sm btn-primary" id="issue-owner-new">
@@ -23,7 +23,7 @@
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="issue-owner-modal-title">新增問題負責人規則</h5>
+                <h5 class="modal-title" id="issue-owner-modal-title">新增問題檔案</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
             </div>
             <form id="issue-owner-form" novalidate>
@@ -57,6 +57,36 @@
                     <div class="mb-3">
                         <label for="issue-owner-note" class="form-label">備註（選填）</label>
                         <textarea class="form-control" id="issue-owner-note" rows="2"></textarea>
+                    </div>
+
+                    <div id="issue-owner-conclusion-section" class="d-none">
+                        <hr />
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <label class="form-label mb-0">機房結論</label>
+                                <button type="button" class="btn btn-link btn-sm px-0 d-none" id="issue-owner-conclusion-clear">
+                                    解除結論
+                                </button>
+                            </div>
+                            <div id="issue-owner-conclusion-current" class="lf-hint mb-2"></div>
+                            <select class="form-select form-select-sm mb-2" id="issue-owner-conclusion-status">
+                                <option value="">（不設定機房結論）</option>
+                                <option value="resolved">已處理</option>
+                                <option value="wont_fix">不處理</option>
+                                <option value="false_positive">誤報</option>
+                                <option value="known_noise">已知雜訊</option>
+                            </select>
+                            <div id="issue-owner-conclusion-fields" class="d-none">
+                                <textarea class="form-control form-control-sm mb-2" id="issue-owner-conclusion-note" rows="2"
+                                          placeholder="原因（必填）——這是代全體下結論的操作，理由要留在紀錄裡。"></textarea>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="issue-owner-conclusion-auto-apply" />
+                                    <label class="form-check-label small" for="issue-owner-conclusion-auto-apply">
+                                        之後新出現的主機日也自動套用這個結論
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">

@@ -92,7 +92,16 @@ public class IssueOwnerAdminService
             EventId = request.EventId,
             OwnerUserIds = requestedOwners,
             Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim(),
-            UpdatedByAccount = _currentUser.Account
+            UpdatedByAccount = _currentUser.Account,
+            // 這支方法只管負責人（表單看不到機房結論欄位）——保留既有結論原封不動，
+            // 否則「編輯負責人」會把「設定機房結論」的結果悄悄清空（同 IssueOwnerStore.Upsert
+            // 逐欄複製守則的反向情境：呼叫端沒帶到的欄位不該被覆寫成預設值）
+            ConclusionStatus = before?.ConclusionStatus,
+            ConclusionNote = before?.ConclusionNote ?? string.Empty,
+            ConcludedById = before?.ConcludedById,
+            ConcludedByAccount = before?.ConcludedByAccount,
+            ConcludedAt = before?.ConcludedAt,
+            AutoApply = before?.AutoApply ?? false
         });
 
         _audit.Record(
@@ -104,6 +113,78 @@ public class IssueOwnerAdminService
 
         var recentByKey = RecentAggregatesByKey();
         return ToDto(saved, usersById, recentByKey);
+    }
+
+    /// <summary>
+    /// 設定機房結論（回饋十九輪批次F，§2 決策一）：統一標記勾選「之後自動套用」
+    /// （<see cref="IssueHandlingCommandService.BulkCloseIssue"/>）與問題檔案頁的「設定機房結論」
+    /// 都走這裡——只有一份「保留既有負責人／備註，只改結論欄」的合併邏輯，避免兩個入口
+    /// 各自 Upsert 一次、其中一個沒注意到要保留對方負責的欄位。
+    /// </summary>
+    public IssueOwnerDto SetConclusion(string source, int eventId, SetIssueConclusionRequest request)
+    {
+        var sourceName = source?.Trim() ?? "";
+        if (sourceName.Length == 0) throw DomainException.Validation("請指定問題來源（Source）。");
+        if (!IssueHandlingStatuses.IsClosed(request.Status))
+            throw DomainException.Validation("機房結論只接受「已處理／不處理／誤報／已知雜訊」四種結論。");
+
+        var note = request.Note?.Trim();
+        if (string.IsNullOrEmpty(note))
+            throw DomainException.Validation("請填寫機房結論的原因——這是代全體下結論的操作，理由要留在紀錄裡。");
+
+        var existing = _issueOwners.Get(sourceName, eventId) ?? new IssueProfile { SourceName = sourceName, EventId = eventId };
+        var beforeStatus = existing.ConclusionStatus;
+
+        existing.ConclusionStatus = request.Status;
+        existing.ConclusionNote = note;
+        existing.ConcludedById = _currentUser.UserId;
+        existing.ConcludedByAccount = _currentUser.Account;
+        existing.ConcludedAt = DateTime.Now;
+        existing.AutoApply = request.AutoApply;
+        existing.UpdatedByAccount = _currentUser.Account;
+
+        var saved = _issueOwners.Upsert(existing);
+
+        _audit.Record(
+            action: AuditActions.IssueOwnerUpdate,
+            summary: $"設定問題「{sourceName} {eventId}」的機房結論：{HandlingTextHelpers.IssueStatusText(request.Status)}" +
+                     (beforeStatus != null ? $"（原結論：{HandlingTextHelpers.IssueStatusText(beforeStatus)}）" : "") +
+                     (request.AutoApply ? "，之後新出現的主機日將自動套用" : ""),
+            targetKind: "issue_owner",
+            targetId: $"{sourceName}/{eventId}",
+            detail: new { SourceName = sourceName, EventId = eventId, request.Status, Note = note, request.AutoApply });
+
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
+        return ToDto(saved, usersById, RecentAggregatesByKey());
+    }
+
+    /// <summary>
+    /// 解除機房結論（§2 決策一）：只清結論欄位（AutoApply 隨之停止），已經套用到 IssueHandling
+    /// 的歷史列**不回滾**——那是已經寫入的事實，誠實留痕；要翻案走既有逐日／統一標記改 open。
+    /// </summary>
+    public IssueOwnerDto ClearConclusion(string source, int eventId)
+    {
+        var existing = _issueOwners.Get(source, eventId)
+                        ?? throw DomainException.NotFound("找不到這筆問題檔案。");
+
+        existing.ConclusionStatus = null;
+        existing.ConclusionNote = string.Empty;
+        existing.ConcludedById = null;
+        existing.ConcludedByAccount = null;
+        existing.ConcludedAt = null;
+        existing.AutoApply = false;
+        existing.UpdatedByAccount = _currentUser.Account;
+
+        var saved = _issueOwners.Upsert(existing);
+
+        _audit.Record(
+            action: AuditActions.IssueOwnerUpdate,
+            summary: $"解除問題「{source} {eventId}」的機房結論",
+            targetKind: "issue_owner",
+            targetId: $"{source}/{eventId}");
+
+        var usersById = _users.GetAll().ToDictionary(u => u.UserId);
+        return ToDto(saved, usersById, RecentAggregatesByKey());
     }
 
     public void Delete(string source, int eventId)
@@ -152,7 +233,16 @@ public class IssueOwnerAdminService
                 ? null
                 : _users.FindByAccount(rule.UpdatedByAccount)?.DisplayName,
             RecentHostCount = recent?.Item1,
-            RecentLastSeen = recent?.Item2
+            RecentLastSeen = recent?.Item2,
+            ConclusionStatus = rule.ConclusionStatus,
+            ConclusionStatusText = rule.ConclusionStatus == null ? null : HandlingTextHelpers.IssueStatusText(rule.ConclusionStatus),
+            ConclusionNote = rule.ConclusionStatus == null ? null : rule.ConclusionNote,
+            ConcludedAt = rule.ConcludedAt,
+            ConcludedByAccount = rule.ConcludedByAccount,
+            ConcludedByDisplayName = string.IsNullOrEmpty(rule.ConcludedByAccount)
+                ? null
+                : _users.FindByAccount(rule.ConcludedByAccount)?.DisplayName,
+            AutoApply = rule.AutoApply
         };
     }
 }

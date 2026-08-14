@@ -374,6 +374,13 @@ public class BulkCloseIssueRequest
     [Required(ErrorMessage = "請填寫原因")]
     [StringLength(1000, ErrorMessage = "原因長度不可超過 1000 字元")]
     public string Note { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 之後新出現的主機日是否自動套用這個結論（回饋十九輪批次F，§2 決策一）：勾選時同時把
+    /// (Source,EventId) 的問題檔案設成機房結論，見 IssueOwnerAdminService.SetConclusion——
+    /// 這一次的統一標記只處理**既有**日子，AutoApply 才是「以後也這樣」的開關。
+    /// </summary>
+    public bool AutoApply { get; set; }
 }
 
 /// <summary>統一標記的預覽／結果共用的逐主機列</summary>

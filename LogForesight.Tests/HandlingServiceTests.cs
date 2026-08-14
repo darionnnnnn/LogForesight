@@ -1254,6 +1254,44 @@ public class HandlingServiceTests : IDisposable
         }
     }
 
+    /// <summary>勾選「之後自動套用」（回饋十九輪批次F，§2 決策一）：統一標記除了處理既有日子，
+    /// 還要把問題檔案設成機房結論，供之後新出現的主機日自動套用</summary>
+    [Fact]
+    public void 統一標記_勾選自動套用時設定問題檔案的機房結論()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
+            AutoApply = true
+        });
+
+        var profile = _issueOwners.Get("disk", 153);
+        Assert.NotNull(profile);
+        Assert.Equal(IssueHandlingStatuses.KnownNoise, profile!.ConclusionStatus);
+        Assert.Equal("已知的雜訊來源", profile.ConclusionNote);
+        Assert.True(profile.AutoApply);
+    }
+
+    /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
+    [Fact]
+    public void 統一標記_不勾選自動套用時不動問題檔案()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "這次先這樣"
+        });
+
+        Assert.Null(_issueOwners.Get("disk", 153));
+    }
+
     /// <summary>
     /// 已有進行中案件的主機整台略過（定案 6-1）——不論處理人是誰。要動別人的案件，
     /// 正規路徑是改派或由處理人自己回覆。

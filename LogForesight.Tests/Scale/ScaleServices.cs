@@ -77,9 +77,11 @@ internal sealed class ScaleServices
         var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
 
+        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser);
+
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,
             Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
-            new UserCapabilityResolver(userGroups, Hosts));
+            new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin);
     }
 }

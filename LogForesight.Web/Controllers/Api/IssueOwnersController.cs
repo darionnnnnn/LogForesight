@@ -40,4 +40,15 @@ public class IssueOwnersController : ControllerBase
         _service.Delete(source, eventId);
         return ApiResponse.Ok();
     }
+
+    /// <summary>設定機房結論（回饋十九輪批次F）——問題檔案頁的「設定機房結論」入口，
+    /// 與依問題視角統一標記勾選「之後自動套用」共用同一個服務方法。</summary>
+    [HttpPut("{source}/{eventId:int}/conclusion")]
+    public ApiResponse<IssueOwnerDto> SetConclusion(string source, int eventId, [FromBody] SetIssueConclusionRequest request) =>
+        ApiResponse<IssueOwnerDto>.Ok(_service.SetConclusion(source, eventId, request));
+
+    /// <summary>解除機房結論（§2 決策一：只清結論欄位，已套用的歷史列不回滾）</summary>
+    [HttpDelete("{source}/{eventId:int}/conclusion")]
+    public ApiResponse<IssueOwnerDto> ClearConclusion(string source, int eventId) =>
+        ApiResponse<IssueOwnerDto>.Ok(_service.ClearConclusion(source, eventId));
 }

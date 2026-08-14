@@ -1096,6 +1096,21 @@ function renderBulkCloseForm(body, group, preview) {
     noteInput.placeholder = '例：確認為週期性維護作業產生，非異常。';
     form.append(noteLabel, noteInput);
 
+    // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這次操作只處理上方列出的既有日子，
+    // 勾選後才會另外把這個問題設成機房結論，讓之後新出現的主機日也自動套用同一個結論
+    const autoApplyWrap = document.createElement('div');
+    autoApplyWrap.className = 'form-check mb-3';
+    const autoApplyInput = document.createElement('input');
+    autoApplyInput.type = 'checkbox';
+    autoApplyInput.className = 'form-check-input';
+    autoApplyInput.id = 'bulk-close-auto-apply';
+    const autoApplyLabel = document.createElement('label');
+    autoApplyLabel.className = 'form-check-label small';
+    autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
+    autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
+    autoApplyWrap.append(autoApplyInput, autoApplyLabel);
+    form.appendChild(autoApplyWrap);
+
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary';
@@ -1130,11 +1145,13 @@ function renderBulkCloseForm(body, group, preview) {
                 from: filters.from || null,
                 to: filters.to || null,
                 status: statusSelect.value,
-                note: noteInput.value.trim()
+                note: noteInput.value.trim(),
+                autoApply: autoApplyInput.checked
             });
 
             toast(`已標記 ${formatNumber(result.updatedHostCount)} 台主機、共 ${formatNumber(result.updatedDayCount)} 天` +
-                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : ''), 'success', 6000);
+                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : '') +
+                  (autoApplyInput.checked ? '；已設為機房結論，之後新出現的主機日將自動套用' : ''), 'success', 6000);
 
             if (statusSelect.value === 'false_positive') {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
