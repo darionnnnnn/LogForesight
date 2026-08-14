@@ -166,6 +166,15 @@ public interface IIssueAggregateQuery
     /// <c>ToUpperInvariant()</c> 正規化才查得到——與本檔其餘方法的 wanted-normalization 慣例一致。
     /// 查無資料（理論上不會發生，機房首見日在每次分析寫入時 insert-if-absent）時該問題不在回傳字典中，
     /// 呼叫端須自行決定 fallback（如退回本次查詢窗口內的 FirstSeen）。
+    ///
+    /// **刻意沒有 <c>hostIds</c> 參數——這是「空集合＝零結果」授權慣例的唯一例外，不是漏做**
+    /// （回饋十九輪批次I 體檢確認）：「機房首見」的語意本來就是**跨主機的機房級事實**
+    /// （「這個問題第一次在機房出現是什麼時候」），套上可見範圍過濾就會退化成「這個問題在
+    /// 我看得到的主機上第一次出現」——那正是呼叫端已經有的 <see cref="IssueAggregate.FirstSeen"/>，
+    /// 兩欄會變成同一個數字，這個欄位存在的理由（分辨「本期首見」與「其實是老問題」）就消失了。
+    /// 揭露面可接受：回傳值只有日期、不含任何主機資訊，且呼叫端傳入的問題集合本來就已經過
+    /// 可見範圍過濾（見 <c>IssueRankingBuilder.Build</c>），使用者問不到自己看不見的問題。
+    /// 做授權下推稽核時請勿把這裡「修」成有過濾。
     /// </summary>
     Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IReadOnlyCollection<(string Source, int EventId)> issues);
