@@ -875,6 +875,69 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(1, preview.TotalHostCount);
         Assert.False(preview.Truncated);
     }
+
+    // ── ClusterSignatures（回饋十九輪批次E6：改走 Aggregate 子集）──────────────────
+
+    [Fact]
+    public void ClusterSignatures_只保留跨主機的問題()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var shared = DiskIssue();
+        var soloIssue = Issue("app", 999, IssueSeverity.Medium, IssueCategory.Resource);
+        AddRecord(a, DateTime.Today, "高", issues: new[] { shared });
+        AddRecord(b, DateTime.Today, "高", issues: new[] { shared });
+        AddRecord(a, DateTime.Today.AddDays(-1), "中", issues: new[] { soloIssue });   // 單機問題
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest());
+
+        var cluster = Assert.Single(clusters);
+        Assert.Equal("disk", cluster.Source);
+        Assert.Equal(153, cluster.EventId);
+        Assert.Equal(2, cluster.HostCount);
+    }
+
+    [Fact]
+    public void ClusterSignatures_依主機數排序_取前五()
+    {
+        var issues = Enumerable.Range(0, 6)
+            .Select(i => Issue($"src{i}", 100 + i, IssueSeverity.High, IssueCategory.Other))
+            .ToList();
+
+        // 第 0 個問題影響 3 台，其餘各影響 2 台——第 0 個應該排最前面
+        var hosts = Enumerable.Range(0, 3).Select(i => AddHost($"HOST-{i}")).ToList();
+        foreach (var host in hosts) AddRecord(host, DateTime.Today, "高", issues: new[] { issues[0] });
+        for (var i = 1; i < issues.Count; i++)
+        {
+            AddRecord(hosts[0], DateTime.Today, "高", issues: new[] { issues[i] });
+            AddRecord(hosts[1], DateTime.Today, "高", issues: new[] { issues[i] });
+        }
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest());
+
+        Assert.Equal(5, clusters.Count);   // 6 個跨主機問題只取前 5
+        Assert.Equal("src0", clusters[0].Source);
+        Assert.Equal(3, clusters[0].HostCount);
+        Assert.All(clusters.Skip(1), c => Assert.Equal(2, c.HostCount));
+    }
+
+    [Fact]
+    public void ClusterSignatures_套用風險類型過濾()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var storage = DiskIssue();
+        var security = Issue("Defender", 1116, IssueSeverity.High, IssueCategory.Security);
+        AddRecord(a, DateTime.Today, "高", issues: new[] { storage });
+        AddRecord(b, DateTime.Today, "高", issues: new[] { storage });
+        AddRecord(a, DateTime.Today.AddDays(-1), "高", issues: new[] { security });
+        AddRecord(b, DateTime.Today.AddDays(-1), "高", issues: new[] { security });
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest { Categories = new List<string> { "Security" } });
+
+        var cluster = Assert.Single(clusters);
+        Assert.Equal("Defender", cluster.Source);
+    }
 }
 
 /// <summary>永遠回 null——Search 不會實際讀報告全文，這裡只是滿足建構式依賴</summary>

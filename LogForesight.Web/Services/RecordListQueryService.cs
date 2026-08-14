@@ -672,21 +672,53 @@ public class RecordListQueryService
             string.Equals(h.HostName, HostNameOf(lookup, record), StringComparison.OrdinalIgnoreCase) &&
             h.Date.Date == record.Date.Date);
 
+    /// <summary>
+    /// 跨主機同簽章聚類（AI 歸納用，回饋十九輪批次E6）：欄位是 <see cref="IssueAggregate"/>
+    /// 的現成真子集（Source／EventId／HostCount／TotalCount），改走 <see cref="IIssueAggregateQuery.Aggregate"/>
+    /// 不必另建聚合查詢——與 SearchByIssue（批次E1）同一套過濾邏輯。
+    /// </summary>
     public List<IssueClusterDto> ClusterSignatures(RecordSearchRequest request)
     {
-        var records = _repository.Query(BuildFilter(request));
-        var lookup = new HostLookup(_hosts.GetAll());
+        var hostIds = ResolveVisibleHostIds(request);
+        var (from, to) = ResolveDateRange(request);
+        var visibleSeverities = ResolveVisibleSeverities();
 
-        return RecordQueryHelpers.GroupIssuesBySignature(records)
-            .Select(g => new IssueClusterDto
-            {
-                Source = g.Key.Source,
-                EventId = g.Key.EventId,
-                HostCount = g.Select(x => HostNameOf(lookup, x.Record)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
-                TotalCount = g.Sum(x => x.Issue.Count)
-            })
+        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities);
+
+        if (request.EventId.HasValue)
+            aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
+
+        if (!string.IsNullOrWhiteSpace(request.Source))
+            aggregates = aggregates.Where(a => string.Equals(a.Source, request.Source, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (request.Categories is { Count: > 0 } wantedCategories)
+        {
+            var allowedCategories = wantedCategories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            aggregates = aggregates.Where(a => allowedCategories.Contains(a.Category)).ToList();
+        }
+
+        if (request.RiskLevels is { Count: > 0 } riskLevels)
+        {
+            var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
+            aggregates = aggregates.Where(a => allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Severity) &&
+            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity))
+        {
+            aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
+        }
+
+        return aggregates
             // 只保留跨主機的——單台出現的不叫「共通」，AI 歸納那些沒有價值
-            .Where(c => c.HostCount > 1)
+            .Where(a => a.HostCount > 1)
+            .Select(a => new IssueClusterDto
+            {
+                Source = a.Source,
+                EventId = a.EventId,
+                HostCount = a.HostCount,
+                TotalCount = (int)a.TotalCount
+            })
             .OrderByDescending(c => c.HostCount)
             .ThenByDescending(c => c.TotalCount)
             .Take(5)
