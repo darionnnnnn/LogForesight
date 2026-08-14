@@ -12,10 +12,12 @@ public class ReportService
     private readonly HandlingHistoryQueryService _handling;
     private readonly IssueRankingBuilder _issueRanking;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueAggregateQuery _aggregates;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
-        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings)
+        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
+        IIssueAggregateQuery aggregates)
     {
         _repository = repository;
         _hosts = hosts;
@@ -23,6 +25,7 @@ public class ReportService
         _handling = handling;
         _issueRanking = issueRanking;
         _settings = settings;
+        _aggregates = aggregates;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
@@ -60,7 +63,12 @@ public class ReportService
             HandlingScope = scope,
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
-            Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities()),
+            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與儀表板同一個查詢方法。
+            // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
+            // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
+            // 篩的日層級處理狀態不是同一件事
+            Categories = RecordStatsBuilder.BuildCategoryCards(_aggregates.AggregateByCategory(
+                from, to, visibleHosts.Select(h => h.HostId).ToList(), _settings.Get().ParseUnhandledSeverities())),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),

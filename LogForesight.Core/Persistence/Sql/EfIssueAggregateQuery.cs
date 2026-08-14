@@ -233,6 +233,83 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public List<CategoryAggregate> AggregateByCategory(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<CategoryAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        using var ctx = _contextFactory();
+
+        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
+        }
+
+        // 風險資訊層級（去重前）：SQL 端 GROUP BY 拿到每個 (類別,主機,問題) 組合在期間內的
+        // 最高嚴重度／是否曾重大／累計次數與事件數——組數受限於相異風險資訊數，不是原始列數
+        var riskItems = q
+            .GroupBy(x => new { x.Category, x.HostId, x.SourceName, x.EventId })
+            .Select(g => new
+            {
+                g.Key.Category,
+                g.Key.HostId,
+                g.Key.SourceName,
+                g.Key.EventId,
+                MaxSeverityRank = g.Max(x => x.SeverityRank),
+                AnyElevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
+                Occurrences = g.Count(),
+                EventTotal = g.Sum(x => (long)x.EventCount)
+            })
+            .ToList();
+
+        var result = riskItems
+            // host_id 解析成存活主機再去重合併：合併前後的兩個 id 代表同一筆風險資訊，
+            // 語意與 SurvivingHostCounts／SurvivingHostDayCounts 一致
+            .GroupBy(x => new { x.Category, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.SourceName, x.EventId })
+            .Select(g => new
+            {
+                g.Key.Category,
+                g.Key.SurvivingHostId,
+                // 舊資料相容（LegacySeverityRank）：與 Aggregate 同一條規則，否則這張卡跟
+                // 依問題視角／重點問題卡對同一筆資料的嚴重度用詞會對不上
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.MaxSeverityRank)),
+                Elevates = g.Any(x => x.AnyElevates == 1 || LegacySeverityRank.ForcesElevate(x.MaxSeverityRank)),
+                Occurrences = g.Sum(x => x.Occurrences),
+                EventTotal = g.Sum(x => x.EventTotal)
+            })
+            // 嚴重度可見性：依「這筆風險資訊」正規化後的最高嚴重度篩，不是逐筆出現各自篩——
+            // 風險資訊是這張卡的顯示單位，可見性也該以它為單位判斷（規劃 D1）
+            .Where(item => allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)item.MaxSeverityRank))
+            .GroupBy(item => item.Category)
+            .Select(g => new CategoryAggregate
+            {
+                Category = g.Key,
+                RiskItemCount = g.Count(),
+                CumulativeCount = g.Sum(x => x.Occurrences),
+                AffectedHosts = g.Select(x => x.SurvivingHostId).Distinct().Count(),
+                TotalEvents = g.Sum(x => x.EventTotal),
+                HighCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.High),
+                MediumCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Medium),
+                LowCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Low),
+                ElevatesCount = g.Count(x => x.Elevates)
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateByCategory（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 個類別、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateByCategory", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
     private static Dictionary<(string, int), int> SurvivingHostCounts(

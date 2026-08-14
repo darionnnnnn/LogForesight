@@ -80,6 +80,12 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds) =>
         LatestOccurrencesResult;
+
+    public List<CategoryAggregate> AggregateByCategoryResult { get; set; } = new();
+
+    public List<CategoryAggregate> AggregateByCategory(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities) =>
+        AggregateByCategoryResult;
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

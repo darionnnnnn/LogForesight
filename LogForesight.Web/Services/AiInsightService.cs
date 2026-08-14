@@ -92,9 +92,12 @@ public class AiInsightService
         sb.AppendLine($"期間 {d.From}～{d.To}：高風險日 {d.HighRiskDays}、中風險日 {d.MediumRiskDays}、涵蓋率缺口 {d.CoverageGapDays} 天。");
         if (d.Categories.Count > 0)
         {
-            sb.AppendLine("風險類別（問題數／受影響主機）：");
+            sb.AppendLine("風險類別（風險資訊數／受影響主機）：");
             foreach (var c in d.Categories.Take(8))
-                sb.AppendLine($"  - {c.Category}：{c.IssueCount} 項、{c.AffectedHosts} 台，最高嚴重度 {c.MaxSeverity}");
+            {
+                var maxSeverity = c.HighCount > 0 ? "High" : c.MediumCount > 0 ? "Medium" : "Low";
+                sb.AppendLine($"  - {c.Category}：{c.RiskItemCount} 項、{c.AffectedHosts} 台，最高嚴重度 {maxSeverity}");
+            }
         }
         if (d.HostRanking.Count > 0)
         {

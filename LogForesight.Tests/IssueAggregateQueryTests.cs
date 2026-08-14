@@ -279,4 +279,126 @@ public class IssueAggregateQueryTests : IDisposable
     {
         Assert.Empty(Query().HostIdsFor(Array.Empty<(string, int)>(), DateTime.Today, DateTime.Today));
     }
+
+    // ── AggregateByCategory（回饋十九輪批次D，風險類型卡雙數字）──────────────────
+
+    /// <summary>驗收標準（規劃 D1）：一主機一問題連續 3 天，大數字（去重）＝1，小字（累計）＝3</summary>
+    [Fact]
+    public void AggregateByCategory_大數字去重小字累計()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), Issue("disk", 153));
+        Add(1, "A", d0.AddDays(2), Issue("disk", 153));
+
+        var cat = Query().AggregateByCategory(d0, d0.AddDays(2), null, null).Single();
+
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(3, cat.CumulativeCount);
+        Assert.Equal(1, cat.AffectedHosts);
+    }
+
+    /// <summary>不同主機的同一個問題各自算一筆風險資訊</summary>
+    [Fact]
+    public void AggregateByCategory_不同主機各算一筆()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));
+        Add(2, "B", d0, Issue("disk", 153));
+
+        var cat = Query().AggregateByCategory(d0, d0, null, null).Single();
+
+        Assert.Equal(2, cat.RiskItemCount);
+        Assert.Equal(2, cat.AffectedHosts);
+    }
+
+    /// <summary>嚴重度分桶依風險資訊（去重後）的期間內最高嚴重度，三桶之和＝RiskItemCount</summary>
+    [Fact]
+    public void AggregateByCategory_嚴重度分桶依風險資訊的最高嚴重度()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        // 同一筆風險資訊：第一天 Low，第二天升到 High——應歸入 High 桶，不是 Low
+        Add(1, "A", d0, Issue("disk", 153, severity: IssueSeverity.Low));
+        Add(1, "A", d0.AddDays(1), Issue("disk", 153, severity: IssueSeverity.High));
+
+        var cat = Query().AggregateByCategory(d0, d0.AddDays(1), null, null).Single();
+
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(1, cat.HighCount);
+        Assert.Equal(0, cat.LowCount);
+    }
+
+    /// <summary>嚴重度可見性篩選：依風險資訊的最高嚴重度篩，被篩掉的不計入任何欄位</summary>
+    [Fact]
+    public void AggregateByCategory_嚴重度可見性篩選()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153, severity: IssueSeverity.Low));
+        Add(2, "B", d0, Issue("DCOM", 10016, severity: IssueSeverity.High));
+
+        var onlyHigh = Query().AggregateByCategory(d0, d0, null, new HashSet<IssueSeverity> { IssueSeverity.High });
+
+        var cat = Assert.Single(onlyHigh);
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(1, cat.HighCount);
+    }
+
+    /// <summary>舊資料相容：Critical 正規化為 High，且強制視為重大——與 Aggregate 同一條規則</summary>
+    [Fact]
+    public void AggregateByCategory_舊資料Critical正規化為High並強制重大()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153, severity: IssueSeverity.Critical, elevates: false));
+
+        var cat = Query().AggregateByCategory(d0, d0, null, null).Single();
+
+        Assert.Equal(1, cat.HighCount);
+        Assert.Equal(0, cat.LowCount);
+        Assert.Equal(1, cat.ElevatesCount);
+    }
+
+    /// <summary>主機合併：兩個 host_id 代表同一台實體機器，風險資訊只能算一筆（同 Aggregate 的既有規則）</summary>
+    [Fact]
+    public void AggregateByCategory_主機合併後風險資訊只算一筆()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", MergedInto = b.HostId, Active = false });
+
+        Add(a.HostId, "A", d0, Issue("disk", 153));
+        Add(b.HostId, "B", d0.AddDays(1), Issue("disk", 153));
+
+        var cat = Query().AggregateByCategory(d0, d0.AddDays(1), null, null).Single();
+
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(1, cat.AffectedHosts);
+        Assert.Equal(2, cat.CumulativeCount);   // 累計次數不受合併影響——兩天各算一次
+    }
+
+    /// <summary>可見範圍的授權語意與 Aggregate 一致：空集合＝零結果</summary>
+    [Fact]
+    public void AggregateByCategory_可見範圍_空集合為零結果()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));
+
+        Assert.Empty(Query().AggregateByCategory(d0, d0, Array.Empty<long>(), null));
+    }
+
+    [Fact]
+    public void AggregateByCategory_不同類別各自彙總()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var storageIssue = Issue("disk", 153);
+        storageIssue.Category = IssueCategory.Storage;
+        var securityIssue = Issue("Defender", 1116);
+        securityIssue.Category = IssueCategory.Security;
+        Add(1, "A", d0, storageIssue, securityIssue);
+
+        var result = Query().AggregateByCategory(d0, d0, null, null).ToDictionary(c => c.Category);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(1, result[IssueCategory.Storage.ToString()].RiskItemCount);
+        Assert.Equal(1, result[IssueCategory.Security.ToString()].RiskItemCount);
+    }
 }

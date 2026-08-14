@@ -305,6 +305,13 @@ function renderCategoryChart() {
     const categories = currentData.categories;
     const wrapper = document.getElementById('category-wrapper');
 
+    // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與依問題視角的問題排行同一個限制：
+    // 母體是跨主機跨日的獨立投影，套用「顯示範圍」會把「這個類型有幾個風險資訊」變成
+    // 「符合這個處理狀態的日子裡有幾個」，那是另一個問題的答案——同一頁已有先例（問題排行
+    // 的 scopeNote），這裡照樣講清楚，不要讓數字看起來像回應了篩選卻其實沒有
+    const subtitle = document.getElementById('category-subtitle');
+    if (subtitle) subtitle.textContent = currentScope !== 'all' ? '不受「顯示範圍」篩選影響' : '';
+
     if (categories.length === 0) {
         charts.renderNoData(wrapper);
         return;
@@ -348,11 +355,11 @@ function renderCategoryChart() {
     charts.attachToolbar(document.getElementById('category-toolbar'), {
         canvasWrapper: wrapper,
         title: '風險類型分布',
-        // docs/archive/HISTORY.md #1（B1 三級化）：嚴重度欄位收斂為三級，「嚴重」欄移除
-        tableColumns: ['類型', '高', '中', '低', '問題數', '主機數'],
+        // 問題數＝去重風險資訊筆數（回饋十九輪批次D），高/中/低三欄依此口徑分桶、三者之和＝問題數
+        tableColumns: ['類型', '高', '中', '低', '問題數', '期間累計', '主機數'],
         tableRows: categories.map(c => [
             CATEGORY_NAMES[c.category] ?? c.category,
-            c.highCount, c.mediumCount, c.lowCount, c.issueCount, c.affectedHosts
+            c.highCount, c.mediumCount, c.lowCount, c.riskItemCount, c.cumulativeCount, c.affectedHosts
         ])
     });
 }

@@ -16,6 +16,7 @@ public class DashboardService
     private readonly IHostGroupStore _hostGroups;
     private readonly IssueRankingBuilder _issueRanking;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueAggregateQuery _aggregates;
 
     public DashboardService(
         IRecordRepository repository,
@@ -26,7 +27,8 @@ public class DashboardService
         PermissionChangeService permissionChanges,
         IHostGroupStore hostGroups,
         IssueRankingBuilder issueRanking,
-        ISystemSettingsStore settings)
+        ISystemSettingsStore settings,
+        IIssueAggregateQuery aggregates)
     {
         _repository = repository;
         _visibility = visibility;
@@ -37,6 +39,7 @@ public class DashboardService
         _hostGroups = hostGroups;
         _issueRanking = issueRanking;
         _settings = settings;
+        _aggregates = aggregates;
     }
 
     public DashboardDto GetSummary(int days)
@@ -57,7 +60,13 @@ public class DashboardService
             TotalHosts = visibleHosts.Count
         };
 
-        dto.Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities());
+        var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
+
+        // 風險類型卡（回饋十九輪批次D）：SQL 端聚合，與報表共用同一個查詢方法，
+        // 「大數字（去重）／小字（累計）」兩個口徑不可能在兩頁漂移成不同的數字
+        dto.Categories = RecordStatsBuilder.BuildCategoryCards(
+            _aggregates.AggregateByCategory(from, anchor, visibleHostIds, _settings.Get().ParseUnhandledSeverities()));
+
         dto.HostRanking = RecordStatsBuilder
             .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
             .Take(10)
@@ -68,7 +77,6 @@ public class DashboardService
         // 在記憶體 GroupBy——6000 台 × 7 天約 4.2 萬筆紀錄、數十萬個問題物件，
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。
-        var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
         var ranked = _issueRanking.Build(from, anchor, visibleHostIds, visibleHosts.Count);
         var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
         dto.TopIssues = openIssues.Take(5).ToList();

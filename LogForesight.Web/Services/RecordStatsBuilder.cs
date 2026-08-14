@@ -13,47 +13,30 @@ namespace LogForesight.Web.Services;
 public static class RecordStatsBuilder
 {
     /// <summary>
-    /// 依風險類別彙總。逐日彙總後合併：CategoryAggregator 是兩個儲存後端共用的同一份規則
-    /// （§10.3），儀表板與明細頁因此不可能算出不同的數字。
+    /// 依風險類別彙總（回饋十九輪批次D，取代原本對 <c>records</c> 在記憶體用
+    /// <c>CategoryAggregator</c> 逐日彙總再合併的版本——那條路徑撈的是整段期間的
+    /// <c>DailyAnalysisRecord</c>，改走 <see cref="IIssueAggregateQuery.AggregateByCategory"/>
+    /// 的 SQL 聚合，儀表板與報表共用同一個查詢方法，數字不可能漂移）。
     ///
-    /// <paramref name="visibleSeverities"/>（回饋十三輪新增項3）：卡片彙總一律排除未勾選的問題嚴重度，
-    /// 不論 <see cref="SystemSettings.SeverityDisplayMode"/> 是 DefaultHidden 還是 SiteHidden。
-    /// 這與風險日詳情頁刻意不同——詳情頁在 DefaultHidden 模式下送出完整資料，靠前端「顯示已隱藏
-    /// 層級」按鈕讓使用者自行點開；但儀表板／報表的類別卡沒有這個手動展開的 UI，繼續套用
-    /// 「DefaultHidden＝不過濾」的話，被使用者在設定頁取消勾選的嚴重度（預設即不含 Low）
-    /// 會在這裡原封不動地繼續出現——尤其「其他」類別本來就是低嚴重度雜訊的大宗，
-    /// 最容易讓人以為「明明關掉了低風險顯示，其他類別怎麼還在顯示」。
+    /// 排序：最高嚴重度（依風險資訊去重口徑）→ 風險資訊數，與依問題視角/重點問題卡同一套慣例。
     /// </summary>
-    public static List<DashboardCategoryDto> BuildCategoryCards(
-        List<DailyAnalysisRecord> records, HashSet<IssueSeverity> visibleSeverities)
-    {
-        var perDay = records.SelectMany(r => CategoryAggregator.Aggregate(VisibleIssues(r, visibleSeverities)));
-        var merged = CategoryAggregator.Merge(perDay);
-
-        var hostsPerCategory = records
-            .SelectMany(r => VisibleIssues(r, visibleSeverities).Select(i => new { i.Category, r.Host }))
-            .GroupBy(x => x.Category)
-            .ToDictionary(
-                g => g.Key,
-                g => g.Select(x => x.Host).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-
-        return merged.Select(c => new DashboardCategoryDto
-        {
-            Category = c.Category.ToString(),
-            IssueCount = c.IssueCount,
-            TotalEvents = c.TotalEvents,
-            MaxSeverity = c.MaxSeverity.ToString(),
-            CriticalCount = c.CriticalCount,
-            HighCount = c.HighCount,
-            MediumCount = c.MediumCount,
-            LowCount = c.LowCount,
-            ElevatesCount = c.ElevatesCount,
-            AffectedHosts = hostsPerCategory.TryGetValue(c.Category, out var count) ? count : 0
-        }).ToList();
-    }
-
-    private static IEnumerable<LogIssueSignature> VisibleIssues(DailyAnalysisRecord r, HashSet<IssueSeverity> visibleSeverities) =>
-        r.TopIssues.Where(i => visibleSeverities.Contains(i.Severity));
+    public static List<DashboardCategoryDto> BuildCategoryCards(IReadOnlyList<CategoryAggregate> aggregates) =>
+        aggregates
+            .Select(a => new DashboardCategoryDto
+            {
+                Category = a.Category,
+                RiskItemCount = a.RiskItemCount,
+                CumulativeCount = a.CumulativeCount,
+                TotalEvents = a.TotalEvents,
+                HighCount = a.HighCount,
+                MediumCount = a.MediumCount,
+                LowCount = a.LowCount,
+                ElevatesCount = a.ElevatesCount,
+                AffectedHosts = a.AffectedHosts
+            })
+            .OrderByDescending(c => c.HighCount > 0 ? 2 : c.MediumCount > 0 ? 1 : 0)
+            .ThenByDescending(c => c.RiskItemCount)
+            .ToList();
 
     /// <summary>
     /// 問題排行（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」共用。

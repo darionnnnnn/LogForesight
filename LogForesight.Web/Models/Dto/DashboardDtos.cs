@@ -127,19 +127,24 @@ public class IssueRankingDto
     public int ResolvedHostCount { get; set; }
 }
 
+/// <summary>
+/// 風險類型卡（回饋十九輪批次D，外部審查§零-2「大數字該是去重筆數」）。
+/// 兩種計數口徑並存，語意見 <see cref="CategoryAggregate"/>：
+/// <see cref="RiskItemCount"/> 是大數字（去重），<see cref="CumulativeCount"/> 是小字（累計）。
+/// High/Medium/Low/ElevatesCount 皆依 <see cref="RiskItemCount"/> 的去重口徑分桶，
+/// 三桶之和＝RiskItemCount，不是舊版的 IssueCount。
+/// </summary>
 public class DashboardCategoryDto
 {
     public string Category { get; set; } = string.Empty;
-    public int IssueCount { get; set; }
-    public int TotalEvents { get; set; }
-    public string MaxSeverity { get; set; } = string.Empty;
-    public int CriticalCount { get; set; }
+    public int RiskItemCount { get; set; }
+    public long CumulativeCount { get; set; }
+    public long TotalEvents { get; set; }
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
-    /// <summary>命中「重大」旗標的問題數（docs/archive/HISTORY.md #1）：分類卡的紅框顯著性
-    /// 判定改看這個，取代三級化後恆為 0 的 CriticalCount</summary>
+    /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊數，去重口徑</summary>
     public int ElevatesCount { get; set; }
 
     public int AffectedHosts { get; set; }

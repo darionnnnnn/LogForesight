@@ -84,6 +84,15 @@ public interface IIssueAggregateQuery
     List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// 依風險類別彙總（回饋十九輪批次D，取代 <c>CategoryAggregator.Merge</c> 在記憶體對
+    /// 整段期間紀錄的彙總）。<paramref name="allowedSeverities"/> 為 null 時不限制，
+    /// 否則只計入落在集合內的問題（已含 Critical→High 的舊資料相容映射，呼叫端不必自己展開）。
+    /// </summary>
+    List<CategoryAggregate> AggregateByCategory(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? allowedSeverities);
 }
 
 /// <summary>單一（存活主機, 完整簽章）在期間內最近一次出現的快照</summary>
@@ -93,4 +102,43 @@ public sealed class HostIssueOccurrence
     public string IssueKey { get; init; } = string.Empty;
     public DateTime LastSeen { get; init; }
     public int SeverityRank { get; init; }
+}
+
+/// <summary>
+/// 單一風險類別在期間內的彙總（回饋十九輪批次D，§二-2「大數字該是去重筆數」）。
+///
+/// **兩種計數口徑並存，各自回答不同的問題**：
+///   - <see cref="RiskItemCount"/>（大數字）＝這段期間「有幾個不同的（主機,問題）風險資訊」
+///     ——同一台主機同一個問題連續多天出現只算一筆，答的是「現在有多少個問題要處理」。
+///   - <see cref="CumulativeCount"/>（小字）＝主機×日的原始出現次數加總，答的是
+///     「這段期間累計看到幾次」，數字大不代表問題多，只代表拖得久。
+/// 過去只有後者（<c>CategoryAggregator</c> 的既有語意），且被誤當「有幾個問題」顯示，
+/// 是外部審查點名「總覽儀表板看不出真正嚴重程度」的直接原因。
+/// </summary>
+public sealed class CategoryAggregate
+{
+    public string Category { get; init; } = string.Empty;
+
+    /// <summary>去重風險資訊筆數：相異 (存活主機, Source, EventId) 組合數</summary>
+    public int RiskItemCount { get; init; }
+
+    /// <summary>主機×日累計出現次數（COUNT(*)，即舊 IssueCount 的語意）</summary>
+    public long CumulativeCount { get; init; }
+
+    /// <summary>相異存活主機數</summary>
+    public int AffectedHosts { get; init; }
+
+    /// <summary>期間內全部事件次數加總（原始日誌筆數，不去重——與風險資訊筆數是不同的量綱）</summary>
+    public long TotalEvents { get; init; }
+
+    /// <summary>
+    /// 依風險資訊（去重後）的最高嚴重度分桶，三者之和＝<see cref="RiskItemCount"/>。
+    /// 三級化後不再有 Critical 分桶（正規化為 High，見 <see cref="LegacySeverityRank"/>）。
+    /// </summary>
+    public int HighCount { get; init; }
+    public int MediumCount { get; init; }
+    public int LowCount { get; init; }
+
+    /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
+    public int ElevatesCount { get; init; }
 }

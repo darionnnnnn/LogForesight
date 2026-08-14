@@ -369,14 +369,22 @@ function renderCategories(data) {
                 </div>
                 <div class="lf-stat__value"></div>
                 <div class="lf-stat__label mb-2"></div>
+                <div class="small text-muted mb-1"></div>
                 <div class="small"></div>
             </div>`;
 
         card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
-        card.querySelector('.lf-stat__value').textContent = formatNumber(category.issueCount);
+        // 大數字＝去重風險資訊筆數（同一台主機同一個問題連續多天只算一筆）；
+        // 小字＝期間累計出現次數（主機×日），兩者常常差很多，同時看才不會誤以為問題變多了
+        // （回饋十九輪批次D，外部審查點名的「看不出真正嚴重程度」）
+        card.querySelector('.lf-stat__value').textContent = formatNumber(category.riskItemCount);
+        card.querySelector('.lf-stat__value').title = '去重後的風險資訊筆數：同一台主機同一個問題連續多天只算一筆';
         card.querySelector('.lf-stat__label').textContent = `個問題．${category.affectedHosts} 台主機`;
-        card.querySelector('.small').replaceChildren(severityBreakdown(category));
+        const cumulative = card.querySelector('.small.text-muted');
+        cumulative.textContent = `期間累計 ${formatNumber(category.cumulativeCount)} 筆（主機×日）`;
+        cumulative.title = '主機×日的原始出現次數加總——數字大不代表問題多，只代表拖得久';
+        card.querySelector('.small:not(.text-muted)').replaceChildren(severityBreakdown(category));
 
         link.appendChild(card);
         grid.appendChild(link);
