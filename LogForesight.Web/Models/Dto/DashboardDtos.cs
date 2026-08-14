@@ -63,7 +63,8 @@ public class DashboardDto
 
 /// <summary>
 /// 問題排行的一列（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」
-/// 共用同一個投影（<c>RecordStatsBuilder.BuildIssueRanking</c>），兩邊的數字因此必然一致。
+/// 共用同一個投影（<see cref="LogForesight.Web.Services.IssueRankingBuilder"/>，SQL 端聚合），
+/// 兩邊的數字因此必然一致。
 ///
 /// 刻意**不含處理狀態**：處理概況要逐問題查 handling 標記（依問題視角才做的事），
 /// 排行卡回答的是「哪幾個問題影響最大」；點進去的依問題視角就有完整的處理概況。
