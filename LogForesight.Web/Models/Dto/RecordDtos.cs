@@ -161,6 +161,16 @@ public class IssueGroupDto
     /// 兩者可以不同（同 WebHost.OwnerUserIds 與 RecordHandling.HandlerId 的既有區分）。空清單＝
     /// 沒有指派問題負責人規則。</summary>
     public List<string> IssueOwnerNames { get; set; } = new();
+
+    // ── 機房級基準線（回饋十九輪批次G1，語意同 IssueRankingDto 同名欄位）───────
+
+    public double? BaselineMedianHostCount { get; set; }
+    public int? BaselineLatestHostCount { get; set; }
+    public double? BaselineDeviationMultiplier { get; set; }
+    public int BaselineOccurrenceDays { get; set; }
+
+    /// <summary>問題在整個機房第一次出現的日期（回饋十九輪批次G4，不受查詢期間截斷）</summary>
+    public string FleetFirstSeen { get; set; } = string.Empty;
 }
 
 /// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>
@@ -476,6 +486,12 @@ public class HostDetailDto
 
     /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
+
+    /// <summary>'core' | 'standard' | 'test'（回饋十九輪批次G）</summary>
+    public string Tier { get; set; } = "standard";
+
+    /// <summary>Tier 的中文顯示（核心／一般／測試）</summary>
+    public string TierText { get; set; } = "一般";
 
     /// <summary>'local'（本機直讀）| 'netiq'（自 Sentinel 取得），↔ WebHost.Source（回饋十八輪批次D）：
     /// 前端據此判斷「指定主機更新」按鈕在本機分析停用時是否要隱藏。</summary>

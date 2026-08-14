@@ -87,6 +87,9 @@ public class AddNetiqHostRequest
 
     /// <summary>'windows'（預設）| 'linux'</summary>
     public string Os { get; set; } = "windows";
+
+    /// <summary>'core'／'standard'（預設）／'test'（回饋十九輪批次G，選填）</summary>
+    public string? Tier { get; set; }
 }
 
 public class BulkAddNetiqHostsRequest
@@ -101,6 +104,9 @@ public class BulkAddNetiqHostsRequest
 
     /// <summary>'windows'（預設）| 'linux'——整批同一種作業系統，混合平台請分兩批貼上</summary>
     public string Os { get; set; } = "windows";
+
+    /// <summary>'core'／'standard'（預設）／'test'（回饋十九輪批次G，選填）——整批同一個分級</summary>
+    public string? Tier { get; set; }
 }
 
 /// <summary>
@@ -207,6 +213,12 @@ public class NetiqImportRequest
     /// 上選；混合平台的網段請分兩次掃描匯入。
     /// </summary>
     public string Os { get; set; } = WebHost.OsWindows;
+
+    /// <summary>
+    /// 本次匯入的主機分級（回饋十九輪批次G，選填）。**只套用在本次新增的主機**，同 <see cref="Os"/> 原則。
+    /// 省略＝standard（一般）。
+    /// </summary>
+    public string? Tier { get; set; }
 }
 
 /// <summary>單一網段的群組指派方式</summary>

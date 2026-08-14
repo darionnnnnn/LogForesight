@@ -224,6 +224,9 @@ public class HostAdminService
         var os = WebHost.NormalizeOs(request.Os)
                  ?? throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
 
+        var tier = WebHost.NormalizeTier(request.Tier)
+                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受 core、standard 或 test。");
+
         var existing = _hosts.FindByName(hostName);
         var isNew = existing == null;
 
@@ -239,6 +242,7 @@ public class HostAdminService
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = existing?.Source ?? "local",
             Os = os,
+            Tier = tier,
             Active = request.Active,
             // 群組與負責人由專屬端點維護，避免「更新角色描述」意外清掉它們
             GroupIds = existing?.GroupIds ?? new List<long>(),
@@ -254,10 +258,10 @@ public class HostAdminService
             action: AuditActions.HostUpdate,
             summary: isNew
                 ? $"新增主機 {saved.HostName}（{saved.RoleDesc}）"
-                : $"更新主機 {saved.HostName}：角色描述「{saved.RoleDesc}」、狀態「{(saved.Active ? "啟用" : "停用")}」",
+                : $"更新主機 {saved.HostName}：角色描述「{saved.RoleDesc}」、分級「{HostDtoMapper.TierText(saved.Tier)}」、狀態「{(saved.Active ? "啟用" : "停用")}」",
             targetKind: "host",
             targetId: saved.HostId.ToString(),
-            detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Active });
+            detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Tier, saved.Active });
 
         return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId));
     }
@@ -334,6 +338,52 @@ public class HostAdminService
         {
             UpdatedCount = result.Updated.Count,
             Skipped = result.Skipped.Select(h => new SkippedHostDto { HostName = h.HostName, Reason = "已併入其他主機" }).ToList()
+        };
+    }
+
+    /// <summary>
+    /// 批次設定分級（回饋十九輪批次G）：一次 <see cref="IHostStore.MutateBatch{TResult}"/> 完成，
+    /// 與 <see cref="SetGroupsBatch"/> 同一個理由——勾選 N 台要的是一次寫入，不是 N 次
+    /// FindByName+Upsert 各自整份 blob 讀改寫。已併入其他主機的主機略過（分級對墓碑紀錄無意義，
+    /// 同群組批次設定的既有慣例）。
+    /// </summary>
+    public HostTierBatchResultDto SetTierBatch(IEnumerable<long> hostIds, string tier)
+    {
+        var normalizedTier = WebHost.NormalizeTier(tier)
+                              ?? throw DomainException.Validation($"主機分級「{tier}」不合法，僅接受 core、standard 或 test。");
+
+        var requestedHostIds = hostIds.Distinct().ToList();
+        if (requestedHostIds.Count == 0)
+            throw DomainException.Validation("請至少選擇一台主機。");
+
+        var updated = new List<WebHost>();
+        var skipped = new List<WebHost>();
+        _hosts.MutateBatch(list =>
+        {
+            var wanted = requestedHostIds.ToHashSet();
+            foreach (var host in list.Where(h => wanted.Contains(h.HostId)))
+            {
+                if (host.MergedInto != null) { skipped.Add(host); continue; }
+                host.Tier = normalizedTier;
+                updated.Add(host);
+            }
+        });
+
+        if (updated.Count > 0)
+        {
+            _audit.Record(
+                action: AuditActions.HostUpdate,
+                summary: $"批次設定分級「{HostDtoMapper.TierText(normalizedTier)}」：" +
+                         $"共 {updated.Count} 台主機（{NameFormat.Join(updated.Select(h => h.HostName).ToList())}）",
+                targetKind: "host",
+                targetId: "batch",
+                detail: new { Tier = normalizedTier, HostIds = updated.Select(h => h.HostId), HostNames = updated.Select(h => h.HostName) });
+        }
+
+        return new HostTierBatchResultDto
+        {
+            UpdatedCount = updated.Count,
+            Skipped = skipped.Select(h => new SkippedHostDto { HostName = h.HostName, Reason = "已併入其他主機" }).ToList()
         };
     }
 

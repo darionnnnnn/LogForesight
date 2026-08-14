@@ -150,4 +150,13 @@ public static class HandlingActions
     /// 追責時「原本誰、後來誰、誰換的」必須查得到，混進建案動作就分不出來了。
     /// </summary>
     public const string CaseReassign = "case_reassign";
+
+    /// <summary>
+    /// 批次排程依問題檔案的機房結論自動套用到新出現的主機日（回饋十九輪批次F，逐日一列，
+    /// actor＝系統，§2 決策一）。與 <see cref="CaseAttach"/> 分開是因為觸發條件不同——
+    /// CaseAttach 是「這台主機這個問題已經有進行中案件在追」，這個是「沒有案件，但機房
+    /// 對這個問題本身已經有結論」，追責時要分得出這一天的狀態是案件繼承來的還是機房結論
+    /// 自動套用的。
+    /// </summary>
+    public const string FleetApply = "fleet_apply";
 }

@@ -48,7 +48,8 @@ internal sealed class ScaleServices
             : FakeCurrentUser.ForUser(2, Capability.Handle);
 
         Visibility = new VisibilityService(currentUser, users, userGroups, access, Hosts, Cases);
-        Repository = new RecordRepository(recordStore, Hosts, Visibility, new FakeSystemSettingsService());
+        var settingsService = new FakeSystemSettingsService();
+        Repository = new RecordRepository(recordStore, Hosts, Visibility, settingsService);
 
         var progress = new HandlingProgressCalculator(IssueHandlings, recordHandling, Cases, settingsStore);
         var handlingHistory = new HandlingHistoryQueryService(
@@ -58,22 +59,29 @@ internal sealed class ScaleServices
             new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms")),
             Hosts, Visibility, currentUser, new RecordingAuditService(), users);
 
-        var issueRanking = new IssueRankingBuilder(backend.IssueAggregateQuery());
+        var aggregates = backend.IssueAggregateQuery(Hosts);
+        var issueRanking = new IssueRankingBuilder(aggregates, Hosts);
+        var statusResolver = new OccurrenceStatusResolver(Hosts, IssueHandlings, Cases, settingsStore);
+        var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 
         Dashboard = new DashboardService(
             Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore);
+            settingsStore, aggregates, issueTodo);
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates);
 
         RecordList = new RecordListQueryService(
-            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore);
+            Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
+            settingsService, Visibility, aggregates, statusResolver);
 
-        CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts);
+        var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
+        CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
+
+        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser);
 
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,
             Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
-            new UserCapabilityResolver(userGroups, Hosts));
+            new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin);
     }
 }

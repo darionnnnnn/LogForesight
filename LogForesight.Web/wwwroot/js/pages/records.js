@@ -16,7 +16,10 @@ import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
+import {
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber,
+    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, issueBaselineText
+} from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 
@@ -658,7 +661,9 @@ function renderIssueView() {
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
+        { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
         { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
         { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
         { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
@@ -801,13 +806,35 @@ function issueSeverityCell(group) {
     return wrap;
 }
 
-/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）。同一天時只顯示一次，不寫成「X ~ X」 */
+/**
+ * 本期首見（回饋十九輪批次G4，欄名由「涵蓋範圍」改標）：本次查詢期間內第一次出現的日期，
+ * 受查詢期間截斷——與不受截斷的「首見（機房）」欄分開，兩者答的是不同問題。
+ */
 function issueSpanCell(group) {
     const span = document.createElement('span');
     span.className = 'lf-mono small';
-    span.textContent = group.firstSeen === group.lastSeen
-        ? group.firstSeen
-        : `${group.firstSeen} ~ ${group.lastSeen}`;
+    span.textContent = group.firstSeen;
+    return span;
+}
+
+/** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
+function issueFleetFirstSeenCell(group) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = group.fleetFirstSeen || group.firstSeen;
+    return span;
+}
+
+/** 機房級基準線（回饋十九輪批次G1），語意與 dashboard.js 的同名 cell 一致 */
+function issueBaselineCell(group) {
+    const span = document.createElement('span');
+    const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
+    const multiplier = group.baselineDeviationMultiplier;
+
+    span.className = noBaseline ? 'small text-muted'
+        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
+        : 'small';
+    span.textContent = issueBaselineText(group);
     return span;
 }
 
@@ -855,7 +882,7 @@ function issueLastSeenCell(group) {
     hint.className = 'small';
     if (group.daysSinceLastSeen === 0) {
         hint.className += ' text-danger fw-semibold';
-        hint.textContent = '今天仍在發生';
+        hint.textContent = '昨日仍在發生';
     } else if (group.daysSinceLastSeen <= 3) {
         hint.className += ' text-danger';
         hint.textContent = `${group.daysSinceLastSeen} 天前`;
@@ -1096,6 +1123,21 @@ function renderBulkCloseForm(body, group, preview) {
     noteInput.placeholder = '例：確認為週期性維護作業產生，非異常。';
     form.append(noteLabel, noteInput);
 
+    // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這次操作只處理上方列出的既有日子，
+    // 勾選後才會另外把這個問題設成機房結論，讓之後新出現的主機日也自動套用同一個結論
+    const autoApplyWrap = document.createElement('div');
+    autoApplyWrap.className = 'form-check mb-3';
+    const autoApplyInput = document.createElement('input');
+    autoApplyInput.type = 'checkbox';
+    autoApplyInput.className = 'form-check-input';
+    autoApplyInput.id = 'bulk-close-auto-apply';
+    const autoApplyLabel = document.createElement('label');
+    autoApplyLabel.className = 'form-check-label small';
+    autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
+    autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
+    autoApplyWrap.append(autoApplyInput, autoApplyLabel);
+    form.appendChild(autoApplyWrap);
+
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary';
@@ -1130,11 +1172,13 @@ function renderBulkCloseForm(body, group, preview) {
                 from: filters.from || null,
                 to: filters.to || null,
                 status: statusSelect.value,
-                note: noteInput.value.trim()
+                note: noteInput.value.trim(),
+                autoApply: autoApplyInput.checked
             });
 
             toast(`已標記 ${formatNumber(result.updatedHostCount)} 台主機、共 ${formatNumber(result.updatedDayCount)} 天` +
-                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : ''), 'success', 6000);
+                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : '') +
+                  (autoApplyInput.checked ? '；已設為機房結論，之後新出現的主機日將自動套用' : ''), 'success', 6000);
 
             if (statusSelect.value === 'false_positive') {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
@@ -1690,11 +1734,14 @@ document.getElementById('view-toggle').addEventListener('click', event => {
 for (const button of document.querySelectorAll('[data-range]')) {
     button.addEventListener('click', () => {
         const days = Number(button.dataset.range);
-        const from = new Date();
+        // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
+        const to = new Date();
+        to.setDate(to.getDate() - 1);
+        const from = new Date(to);
         from.setDate(from.getDate() - days + 1);
 
         document.getElementById('filter-from').value = toLocalDateString(from);
-        document.getElementById('filter-to').value = todayLocal();
+        document.getElementById('filter-to').value = toLocalDateString(to);
         currentPage = 1;
         search();
     });
@@ -1728,7 +1775,8 @@ function csvHeader() {
     // CSV 與畫面欄位不一致會讓人以為匯出漏東西——出現天數／期間天數已能回答同樣的問題。
     if (currentView === 'issue') {
         return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
-            '首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '本期首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '首見（機房）', '基準台數／日', '偏離倍數',
             '總次數', '處理概況', '處理人'];
     }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
@@ -1750,6 +1798,8 @@ function csvRow(item) {
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
             item.activeDays, item.periodDays,
+            item.fleetFirstSeen || item.firstSeen,
+            item.baselineMedianHostCount ?? '', item.baselineDeviationMultiplier ?? '',
             item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
@@ -1765,14 +1815,14 @@ function quote(value) {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-// 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
+// 期間篩選的預設終點錨在昨天（回饋十九輪批次C），不是真實今天——見 analysisAnchorLocal 的說明
 function today() {
-    return todayLocal();
+    return analysisAnchorLocal();
 }
 
 function defaultFrom() {
     const date = new Date();
-    date.setDate(date.getDate() - 6);
+    date.setDate(date.getDate() - 7);   // 錨點已右移一天，往前 7 天湊回原本 7 天的預設窗
     return toLocalDateString(date);
 }
 

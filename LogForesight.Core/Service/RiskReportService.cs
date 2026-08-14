@@ -119,18 +119,10 @@ public class RiskReportService
         return reportPath;
     }
 
-    /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）</summary>
-    internal static string CategoryZh(IssueCategory category) => category switch
-    {
-        IssueCategory.Storage => "儲存裝置",
-        IssueCategory.Hardware => "硬體",
-        IssueCategory.Security => "安全",
-        IssueCategory.Service => "服務",
-        IssueCategory.Resource => "資源",
-        IssueCategory.Backup => "備份",
-        IssueCategory.Config => "設定",
-        _ => "其他"
-    };
+    /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）——委派給 Core 的唯一字典
+    /// <see cref="IssueCategoryNames"/>（回饋十九輪批次I，BACKLOG S13 的收斂），
+    /// 本地保留這個名字讓既有呼叫端零改動</summary>
+    internal static string CategoryZh(IssueCategory category) => IssueCategoryNames.Zh(category);
 
     /// <summary>
     /// 檔名：日期＋風險等級＋當日發現的類別，如 2026-07-15_高風險_儲存裝置+安全.txt。

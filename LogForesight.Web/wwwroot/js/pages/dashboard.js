@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineText } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -285,13 +285,18 @@ function renderKpi(data, user, displaySettings) {
     );
 
     // 待辦：主管看到「有哪些風險」後的下一個問題是「有人在處理嗎」。
-    // 後端只數本期的高＋中風險日，下鑽連結帶同一組條件，卡片數字與點進去的筆數才對得上
-    const unresolved = data.todo.openCount + data.todo.inProgressCount;
+    // 大數字改問題口徑（回饋十九輪批次D2，外部審查§一-2）：「未處理 1,340」（風險日數）
+    // 在兩千台環境對使用者等於沒有資訊，改成「未處理問題 X 個」——有幾個不同的問題要處理，
+    // 副標才是影響台數與風險日數（data.todo 的既有日數，退居輔助角色）
+    const todoExtra = document.createElement('div');
+    todoExtra.className = 'small text-muted';
+    todoExtra.textContent = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
     cards.push({
-        label: data.todo.overdueCount > 0 ? `未處理（逾期 ${data.todo.overdueCount}）` : '未處理',
-        value: unresolved,
-        variant: data.todo.overdueCount > 0 ? 'danger' : (unresolved > 0 ? 'warning' : 'secondary'),
-        url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`
+        label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
+        value: data.issueTodo.openIssueCount,
+        variant: data.issueTodo.overdueIssueCount > 0 ? 'danger' : (data.issueTodo.openIssueCount > 0 ? 'warning' : 'secondary'),
+        url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
+        extra: todoExtra
     });
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
@@ -323,7 +328,8 @@ function renderKpi(data, user, displaySettings) {
             label: card.label,
             variant: card.variant,
             url: card.url,
-            hint: card.hint
+            hint: card.hint,
+            extra: card.extra
         }));
         container.appendChild(col);
     }
@@ -369,14 +375,22 @@ function renderCategories(data) {
                 </div>
                 <div class="lf-stat__value"></div>
                 <div class="lf-stat__label mb-2"></div>
+                <div class="small text-muted mb-1"></div>
                 <div class="small"></div>
             </div>`;
 
         card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
-        card.querySelector('.lf-stat__value').textContent = formatNumber(category.issueCount);
+        // 大數字＝去重風險資訊筆數（同一台主機同一個問題連續多天只算一筆）；
+        // 小字＝期間累計出現次數（主機×日），兩者常常差很多，同時看才不會誤以為問題變多了
+        // （回饋十九輪批次D，外部審查點名的「看不出真正嚴重程度」）
+        card.querySelector('.lf-stat__value').textContent = formatNumber(category.riskItemCount);
+        card.querySelector('.lf-stat__value').title = '去重後的風險資訊筆數：同一台主機同一個問題連續多天只算一筆';
         card.querySelector('.lf-stat__label').textContent = `個問題．${category.affectedHosts} 台主機`;
-        card.querySelector('.small').replaceChildren(severityBreakdown(category));
+        const cumulative = card.querySelector('.small.text-muted');
+        cumulative.textContent = `期間累計 ${formatNumber(category.cumulativeCount)} 筆（主機×日）`;
+        cumulative.title = '主機×日的原始出現次數加總——數字大不代表問題多，只代表拖得久';
+        card.querySelector('.small:not(.text-muted)').replaceChildren(severityBreakdown(category));
 
         link.appendChild(card);
         grid.appendChild(link);
@@ -419,13 +433,18 @@ function renderTopIssues(data) {
     // 背景整理中的提示放在**表格容器之外**——renderTable 會 replaceChildren，
     // 塞在同一個容器裡會被下一次渲染吃掉
     renderStatsPendingNote('dashboard-issues-pending', data);
+    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
             { title: '問題', render: i => issueNameCell(i) },
+            { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
             { title: '嚴重度', render: i => issueSeverityCell(i) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
-            { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+            { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
+            { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
+            { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
+            { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
             { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
             { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
             { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
@@ -436,6 +455,28 @@ function renderTopIssues(data) {
                       `&from=${data.from}&to=${data.to}`,
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
+}
+
+/**
+ * 已有結論的問題被排除提示（§10.6）：全部主機都已有結論的問題不佔用重點清單版面，
+ * 但悄悄少幾筆會讓人以為問題變少了——卡底把數字誠實說出來。
+ * 同 renderStatsPendingNote，容器在表格外，不會被 renderTable 的 replaceChildren 清掉。
+ */
+function renderConcludedNote(containerId, concludedCount) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    if (!concludedCount) {
+        el.classList.add('d-none');
+        el.textContent = '';
+        return;
+    }
+
+    // 用 classList 增減而不是整個蓋掉 className——容器在 cshtml 帶著 px-3 pb-2 的排版 class，
+    // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
+    el.classList.remove('d-none');
+    el.classList.add('small', 'text-muted');
+    el.textContent = `另有 ${concludedCount} 個問題已有結論（未列入）`;
 }
 
 /**
@@ -524,22 +565,57 @@ function issueHostCell(issue) {
     return wrap;
 }
 
-/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）＋是否仍在發生 */
+/**
+ * 未處理主機數（§10.6）：主機數答的是「影響多大」，這一欄答「現在還有幾台真的要處理」——
+ * 兩者常常不一樣（很多台早就有結論，只是還沒退出這張榜的排序）。0 台時淡化顯示，
+ * 不用紅字製造「這裡也要處理」的錯誤急迫感。
+ */
+function issueOpenCell(issue) {
+    const wrap = document.createElement('div');
+    const count = document.createElement('div');
+    count.textContent = formatNumber(issue.openHostCount);
+    count.className = issue.openHostCount > 0 ? 'text-danger fw-semibold' : 'text-muted';
+    wrap.appendChild(count);
+    return wrap;
+}
+
+/**
+ * 優先度分數（回饋十九輪批次G3）：重點問題卡改依這個分數排序，取代單純的「嚴重度→主機數→
+ * 總次數」——那套排序看不出「這個問題今天特別該優先處理」。**列展開與 rowHref（點列下鑽問題
+ * 查詢）互斥**（見 renderTable 文件），這裡改用 title 提示顯示成分明細，不犧牲既有的點列下鑽。
+ */
+function issuePriorityScoreCell(issue) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono fw-semibold';
+    span.textContent = issue.priorityScore.toFixed(0);
+    span.title = '為什麼是這個分數：' +
+        `嚴重度×${issue.priorityScoreSeverityWeight.toFixed(2)}　` +
+        `影響率×${issue.priorityScoreHostRatioFactor.toFixed(2)}　` +
+        `異常擴散×${issue.priorityScoreSpreadWeight.toFixed(2)}　` +
+        `新穎度×${issue.priorityScoreNoveltyWeight.toFixed(2)}　` +
+        `未處理×${issue.priorityScoreOpenWeight.toFixed(2)}　` +
+        `主機分級×${issue.priorityScoreTierWeight.toFixed(2)}`;
+    return span;
+}
+
+/**
+ * 本期首見（回饋十九輪批次G4，欄名由「涵蓋範圍」改標）：本次查詢期間內第一次出現的日期
+ * ＋是否仍在發生。與新增的「首見（機房）」欄分開——這裡受查詢期間截斷，答的是「這次查詢看到
+ * 的最早一筆」；機房首見不受截斷，答的是「這個問題第一次在機房出現是什麼時候」。
+ */
 function issueSpanCell(issue) {
     const wrap = document.createElement('div');
 
     const span = document.createElement('div');
     span.className = 'lf-mono small';
-    span.textContent = issue.firstSeen === issue.lastSeen
-        ? issue.firstSeen
-        : `${issue.firstSeen} ~ ${issue.lastSeen}`;
+    span.textContent = issue.firstSeen;
     wrap.appendChild(span);
 
     const hint = document.createElement('div');
     hint.className = 'small';
     if (issue.daysSinceLastSeen === 0) {
         hint.className += ' text-danger fw-semibold';
-        hint.textContent = '今天仍在發生';
+        hint.textContent = '昨日仍在發生';
     } else {
         hint.className += ' text-muted';
         hint.textContent = `${issue.daysSinceLastSeen} 天前`;
@@ -547,6 +623,30 @@ function issueSpanCell(issue) {
     wrap.appendChild(hint);
 
     return wrap;
+}
+
+/** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
+function issueFleetFirstSeenCell(issue) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = issue.fleetFirstSeen || issue.firstSeen;
+    return span;
+}
+
+/**
+ * 機房級基準線（回饋十九輪批次G1）：這個問題「平常」影響幾台，與最近一次出現時的規模比較——
+ * 回答數量排序答不了的「這次是不是異常擴散」。基準期出現不足 3 天視為新問題，沒有「平常」可比。
+ */
+function issueBaselineCell(issue) {
+    const span = document.createElement('span');
+    const noBaseline = issue.baselineOccurrenceDays < 3 || issue.baselineMedianHostCount == null;
+    const multiplier = issue.baselineDeviationMultiplier;
+
+    span.className = noBaseline ? 'small text-muted'
+        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
+        : 'small';
+    span.textContent = issueBaselineText(issue);
+    return span;
 }
 
 /** 出現密度：天天都有（背景值）還是零星爆發（§10.3）。文字為主、密度條為輔 */

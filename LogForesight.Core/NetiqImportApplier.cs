@@ -36,6 +36,10 @@ public static class NetiqImportApplier
     /// 任何欄位。省略或某 IP 沒有對應名稱＝該欄位維持既有行為（新主機 DisplayName 為 null，
     /// 等夜間批次回填）。
     /// </param>
+    /// <param name="tier">
+    /// 本次新增主機的分級（回饋十九輪批次G，選填）。與 <paramref name="os"/> 同一原則：
+    /// **只套用在全新主機**，既有主機（含復活的孤兒）的分級一律不動。省略＝standard（一般，既有行為）。
+    /// </param>
     public static ApplyOutcome Apply(
         string serverName,
         IEnumerable<string> selectedIps,
@@ -43,9 +47,11 @@ public static class NetiqImportApplier
         ISentinelStore sentinels,
         IReadOnlyDictionary<string, long?>? groupByIp = null,
         string? os = null,
-        IReadOnlyDictionary<string, string>? displayNameByIp = null)
+        IReadOnlyDictionary<string, string>? displayNameByIp = null,
+        string? tier = null)
     {
         var newHostOs = WebHost.NormalizeOs(os) ?? WebHost.OsWindows;
+        var newHostTier = WebHost.NormalizeTier(tier) ?? WebHost.TierStandard;
         var sentinel = sentinels.FindByName(serverName);
         var ips = selectedIps.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -53,7 +59,7 @@ public static class NetiqImportApplier
         // 各自都是一次整份 blob 讀改寫（見 JsonBlobCollection.Mutate）——勾 500 台就是上千次
         // 序列化往返，這是掃描精靈匯入慢的主因（掃描本身的網路耗時另計）。
         return hosts.MutateBatch(list =>
-            ApplyToList(list, serverName, ips, sentinel?.SentinelId, newHostOs, groupByIp, displayNameByIp));
+            ApplyToList(list, serverName, ips, sentinel?.SentinelId, newHostOs, groupByIp, displayNameByIp, newHostTier));
     }
 
     /// <summary>
@@ -67,7 +73,8 @@ public static class NetiqImportApplier
     /// </summary>
     internal static ApplyOutcome ApplyToList(
         List<WebHost> hosts, string serverName, List<string> ips, long? sentinelId, string newHostOs,
-        IReadOnlyDictionary<string, long?>? groupByIp, IReadOnlyDictionary<string, string>? displayNameByIp)
+        IReadOnlyDictionary<string, long?>? groupByIp, IReadOnlyDictionary<string, string>? displayNameByIp,
+        string newHostTier = WebHost.TierStandard)
     {
         int added = 0, updated = 0, revived = 0;
         var nextId = hosts.Count == 0 ? 1 : hosts.Max(h => h.HostId) + 1;
@@ -108,6 +115,7 @@ public static class NetiqImportApplier
                     NetiqServer = serverName,
                     Source = "netiq",
                     Os = newHostOs,
+                    Tier = newHostTier,
                     DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
                     Active = true,
                     GroupIds = groupId.HasValue ? new List<long> { groupId.Value } : new List<long>(),

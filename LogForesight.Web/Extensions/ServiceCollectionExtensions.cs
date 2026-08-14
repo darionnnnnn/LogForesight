@@ -56,7 +56,8 @@ public static class ServiceCollectionExtensions
 
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
-        services.AddSingleton<IIssueAggregateQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueAggregateQuery());
+        services.AddSingleton<IIssueAggregateQuery>(sp =>
+            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
@@ -278,6 +279,18 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RecordDetailQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
+        // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
+        // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
+        // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
+        // （IHostStore／IIssueHandlingStore／IIssueCaseStore／ISystemSettingsStore）本來就全是
+        // Singleton，往下調整生命週期沒有 captive dependency 疑慮；這樣批次H 的
+        // MailIssueDigest（Singleton，見下方郵件通知區塊）才能直接注入它，重用同一套
+        // 「批次撈 handling/case → 逐筆判定」邏輯，不必為 Singleton 情境另外複製一份判定規則。
+        // 既有的 Scoped 呼叫端（DashboardService／ReportService 等）依賴 Singleton 服務永遠合法，
+        // 不受影響。
+        services.AddSingleton<OccurrenceStatusResolver>();
+        services.AddScoped<IssueHandlingRollupQuery>();
+        services.AddScoped<IssueTodoQuery>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
@@ -307,6 +320,9 @@ public static class ServiceCollectionExtensions
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
+        // 郵件問題優先摘要（回饋十九輪批次H1）：同樣 Singleton-safe，相依的 IIssueAggregateQuery／
+        // OccurrenceStatusResolver 皆已是 Singleton
+        services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
@@ -329,6 +345,10 @@ public static class ServiceCollectionExtensions
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
+
+        // lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上
+        services.AddSingleton<DailyRecordBackfiller>(sp => sp.GetRequiredService<StorageBackend>().DailyRecordBackfiller());
+        services.AddHostedService<DailyRecordBackfillHostedService>();
 
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用

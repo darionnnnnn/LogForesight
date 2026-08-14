@@ -105,40 +105,6 @@ public class CategoryAggregatorTests
         Assert.Empty(CategoryAggregator.Aggregate(Array.Empty<LogIssueSignature>()));
     }
 
-    [Fact]
-    public void Merge_跨多日彙總相加()
-    {
-        var day1 = CategoryAggregator.Aggregate(new[]
-        {
-            Issue(IssueCategory.Storage, IssueSeverity.Critical, 10),
-            Issue(IssueCategory.Storage, IssueSeverity.High, 3)
-        });
-        var day2 = CategoryAggregator.Aggregate(new[]
-        {
-            Issue(IssueCategory.Storage, IssueSeverity.Medium, 5)
-        });
-
-        var merged = CategoryAggregator.Merge(day1.Concat(day2)).Single();
-
-        Assert.Equal(3, merged.IssueCount);
-        Assert.Equal(18, merged.TotalEvents);
-        Assert.Equal(1, merged.CriticalCount);
-        Assert.Equal(1, merged.HighCount);
-        Assert.Equal(1, merged.MediumCount);
-        Assert.Equal(IssueSeverity.Critical, merged.MaxSeverity);
-    }
-
-    [Fact]
-    public void Merge_不同類別各自保留()
-    {
-        var summaries = CategoryAggregator.Aggregate(new[]
-        {
-            Issue(IssueCategory.Storage, IssueSeverity.Critical),
-            Issue(IssueCategory.Security, IssueSeverity.High)
-        });
-
-        var merged = CategoryAggregator.Merge(summaries);
-
-        Assert.Equal(2, merged.Count);
-    }
+    // Merge（跨多日彙總）已於回饋十九輪批次I 隨方法一併移除——批次D1 把報表的期間統計
+    // 改走 AggregateByCategory 的 SQL 聚合後，Merge 只剩測試在呼叫（E7 退場普查的漏網死碼）。
 }

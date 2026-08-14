@@ -40,14 +40,17 @@ public class BulkScaleGateTests : IDisposable
     {
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService());
+        var currentUser = FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle);
+        var issueOwnerAdmin = new IssueOwnerAdminService(
+            new FakeIssueOwnerStore(), new FakeIssueAggregateQuery(), _users, new RecordingAuditService(), currentUser);
 
         return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
-            new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts),
+            new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore()),
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
-            FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle),
+            currentUser,
             new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),
-            new LogForesight.Web.Auth.UserCapabilityResolver(groups, _hosts));
+            new LogForesight.Web.Auth.UserCapabilityResolver(groups, _hosts), issueOwnerAdmin);
     }
 
     public void Dispose() => _fixture.Dispose();

@@ -65,28 +65,4 @@ public static class CategoryAggregator
             .ToList();
     }
 
-    /// <summary>
-    /// 跨多天/多主機的合併彙總（報表的期間統計用）。
-    /// 逐日彙總後再相加，語意是「這段期間各類別總共出現幾個問題簽章」。
-    /// </summary>
-    public static List<CategorySummary> Merge(IEnumerable<CategorySummary> summaries)
-    {
-        return summaries
-            .GroupBy(s => s.Category)
-            .Select(group => new CategorySummary
-            {
-                Category = group.Key,
-                IssueCount = group.Sum(s => s.IssueCount),
-                TotalEvents = group.Sum(s => s.TotalEvents),
-                MaxSeverity = group.Max(s => s.MaxSeverity),
-                CriticalCount = group.Sum(s => s.CriticalCount),
-                HighCount = group.Sum(s => s.HighCount),
-                MediumCount = group.Sum(s => s.MediumCount),
-                LowCount = group.Sum(s => s.LowCount),
-                ElevatesCount = group.Sum(s => s.ElevatesCount)
-            })
-            .OrderByDescending(s => s.MaxSeverity)
-            .ThenByDescending(s => s.IssueCount)
-            .ToList();
-    }
 }

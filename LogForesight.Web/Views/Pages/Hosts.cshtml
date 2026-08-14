@@ -52,6 +52,7 @@
 <div class="lf-toolbar mb-3 d-none" id="host-selection-bar">
     <span class="fw-semibold" id="host-selection-count"></span>
     <button type="button" class="btn btn-sm btn-primary" id="btn-batch-groups">批次設定群組</button>
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-batch-tier">批次設定分級</button>
     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
 </div>
 
@@ -124,6 +125,18 @@
                             </select>
                         </div>
                         <div class="col-md-6">
+                            <label for="host-tier" class="form-label">分級</label>
+                            <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                    data-bs-content="純人工分類，供優先度分數的權重與清單/詳情頁徽章使用，不影響規則面或批次行為。">
+                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            </button>
+                            <select class="form-select" id="host-tier">
+                                <option value="core">核心</option>
+                                <option value="standard" selected>一般</option>
+                                <option value="test">測試</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">主機群組</label>
                             <div id="host-groups" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
                             <div class="form-text">決定哪些部門看得到這台主機。<strong>未分組時只有 admin 看得到。</strong></div>
@@ -178,6 +191,18 @@
                         <select class="form-select" id="bulk-os">
                             <option value="windows">Windows</option>
                             <option value="linux">Linux</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulk-tier" class="form-label">分級</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="整批同一個分級；只套用在本次新增的主機，既有主機的分級不動。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        </button>
+                        <select class="form-select" id="bulk-tier">
+                            <option value="core">核心</option>
+                            <option value="standard" selected>一般</option>
+                            <option value="test">測試</option>
                         </select>
                     </div>
                     <div class="mb-2">
@@ -238,6 +263,37 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="submit" class="btn btn-primary" id="batch-groups-save">套用</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batch-tier-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次設定分級</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="batch-tier-form" novalidate>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <div class="form-label small text-muted" id="batch-tier-hosts-label"></div>
+                        <div id="batch-tier-hosts" class="lf-bulk-assign-hosts"></div>
+                    </div>
+                    <div>
+                        <label for="batch-tier-select" class="form-label">分級</label>
+                        <select class="form-select" id="batch-tier-select">
+                            <option value="core">核心</option>
+                            <option value="standard" selected>一般</option>
+                            <option value="test">測試</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="batch-tier-save">套用</button>
                 </div>
             </form>
         </div>

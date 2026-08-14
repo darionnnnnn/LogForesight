@@ -60,6 +60,10 @@ internal static class RecordStorageShaper
                 Source = i.Source,
                 EventId = i.EventId,
                 EntryType = i.EntryType,
+                // Linux 完整簽章第五段（回饋十九輪批次B）：漏抄會讓低風險日的 Linux 規則命中
+                // 精簡後遺失 EventKey，「同 program 不同規則」併回同一組——同 KnownIssue/RuleId
+                // 那一類「新增欄位漏抄進精簡投影」的既有教訓
+                EventKey = i.EventKey,
                 Count = i.Count,
                 FirstSeen = i.FirstSeen,
                 LastSeen = i.LastSeen,

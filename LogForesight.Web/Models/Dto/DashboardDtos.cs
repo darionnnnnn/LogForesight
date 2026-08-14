@@ -16,8 +16,12 @@ public class DashboardDto
     /// <summary>近 24 小時的 Web 登入失敗次數（僅具 ViewAudit 能力者可見）</summary>
     public int? RecentLoginFailures { get; set; }
 
-    /// <summary>待辦：未處理/處理中/逾期的風險日數</summary>
+    /// <summary>待辦：未處理/處理中/逾期的風險日數——供 IssueTodo 的「未處理風險日 M」副標用，
+    /// 不再是 KPI 卡的主要數字（回饋十九輪批次D2）</summary>
     public HandlingTodoDto Todo { get; set; } = new();
+
+    /// <summary>待辦的問題口徑（回饋十九輪批次D2）：KPI 卡主要數字，見 <see cref="IssueTodoDto"/></summary>
+    public IssueTodoDto IssueTodo { get; set; } = new();
 
     /// <summary>待確認的權限異動筆數</summary>
     public int PendingPermissionChanges { get; set; }
@@ -31,6 +35,10 @@ public class DashboardDto
     /// 點列下鑽問題查詢的依問題視角（帶 source＋eventId）。
     /// </summary>
     public List<IssueRankingDto> TopIssues { get; set; } = new();
+
+    /// <summary>本期問題排行中「全部主機都已有結論」而未列入 <see cref="TopIssues"/> 的筆數
+    /// （§10.6：不讓已結案的問題佔用重點清單版面，但卡底要誠實說出來，不是悄悄少了幾筆）</summary>
+    public int ConcludedTopIssueCount { get; set; }
 
     /// <summary>
     /// 問題統計是否還在背景整理（回填或搬移中，docs/archive/SCALE-FIX-PLAN-2026-08-06.md G2）。
@@ -55,7 +63,8 @@ public class DashboardDto
 
 /// <summary>
 /// 問題排行的一列（docs/archive/FEEDBACK-11-PLAN.md §8）：儀表板「重點問題」卡與報表「問題排行」
-/// 共用同一個投影（<c>RecordStatsBuilder.BuildIssueRanking</c>），兩邊的數字因此必然一致。
+/// 共用同一個投影（<see cref="LogForesight.Web.Services.IssueRankingBuilder"/>，SQL 端聚合），
+/// 兩邊的數字因此必然一致。
 ///
 /// 刻意**不含處理狀態**：處理概況要逐問題查 handling 標記（依問題視角才做的事），
 /// 排行卡回答的是「哪幾個問題影響最大」；點進去的依問題視角就有完整的處理概況。
@@ -121,21 +130,64 @@ public class IssueRankingDto
 
     /// <summary>已有結論的主機數</summary>
     public int ResolvedHostCount { get; set; }
+
+    // ── 機房級基準線（回饋十九輪批次G1）──────────────────────────────────────
+    //
+    // 基準＝過去 30 天出現日台數中位數；偏離倍數＝最近出現日台數 ÷ 基準。
+    // BaselineOccurrenceDays < 3（規劃定案 N=3）時 Median/Multiplier 皆為 null，
+    // 前端顯示「新問題，無基準」——見 IssueBaselineCalculator。
+
+    /// <summary>基準期（過去 30 天）出現日台數中位數，無基準時為 null</summary>
+    public double? BaselineMedianHostCount { get; set; }
+
+    /// <summary>基準期最近一次出現日的台數，無基準時為 null</summary>
+    public int? BaselineLatestHostCount { get; set; }
+
+    /// <summary>偏離倍數＝BaselineLatestHostCount ÷ BaselineMedianHostCount，無基準時為 null</summary>
+    public double? BaselineDeviationMultiplier { get; set; }
+
+    /// <summary>基準期實際出現的天數（呼叫端用於判斷「新問題，無基準」的門檻是否達到）</summary>
+    public int BaselineOccurrenceDays { get; set; }
+
+    // ── fleet 首見（回饋十九輪批次G4）───────────────────────────────────────
+
+    /// <summary>問題在整個機房第一次出現的日期（不受查詢期間截斷，↔ lf_issue_first_seen）。
+    /// 查無資料時退回 FirstSeen（理論上不會發生，見 IIssueAggregateQuery.FirstSeenFor）。</summary>
+    public string FleetFirstSeen { get; set; } = string.Empty;
+
+    // ── 優先度分數（回饋十九輪批次G3，見 IssuePriorityScorer）─────────────────
+    //
+    // 重點問題卡（儀表板／報表共用本投影）改依這個分數排序，取代單純的
+    // 「嚴重度→主機數→總次數」——後者看不出「這個問題今天特別該優先處理」。
+    // 六個成分權重原樣附上，前端展開列直接顯示「為什麼是 N 分」，不必重算拆解。
+
+    public double PriorityScore { get; set; }
+    public double PriorityScoreSeverityWeight { get; set; }
+    public double PriorityScoreHostRatioFactor { get; set; }
+    public double PriorityScoreSpreadWeight { get; set; }
+    public double PriorityScoreNoveltyWeight { get; set; }
+    public double PriorityScoreOpenWeight { get; set; }
+    public double PriorityScoreTierWeight { get; set; }
 }
 
+/// <summary>
+/// 風險類型卡（回饋十九輪批次D，外部審查§零-2「大數字該是去重筆數」）。
+/// 兩種計數口徑並存，語意見 <see cref="CategoryAggregate"/>：
+/// <see cref="RiskItemCount"/> 是大數字（去重），<see cref="CumulativeCount"/> 是小字（累計）。
+/// High/Medium/Low/ElevatesCount 皆依 <see cref="RiskItemCount"/> 的去重口徑分桶，
+/// 三桶之和＝RiskItemCount，不是舊版的 IssueCount。
+/// </summary>
 public class DashboardCategoryDto
 {
     public string Category { get; set; } = string.Empty;
-    public int IssueCount { get; set; }
-    public int TotalEvents { get; set; }
-    public string MaxSeverity { get; set; } = string.Empty;
-    public int CriticalCount { get; set; }
+    public int RiskItemCount { get; set; }
+    public long CumulativeCount { get; set; }
+    public long TotalEvents { get; set; }
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
 
-    /// <summary>命中「重大」旗標的問題數（docs/archive/HISTORY.md #1）：分類卡的紅框顯著性
-    /// 判定改看這個，取代三級化後恆為 0 的 CriticalCount</summary>
+    /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊數，去重口徑</summary>
     public int ElevatesCount { get; set; }
 
     public int AffectedHosts { get; set; }
@@ -204,6 +256,10 @@ public class ReportSummaryDto
 
     /// <summary>Top 10 以外問題的合計；無其他問題時為 null</summary>
     public IssueRankingOthersDto? IssueOthers { get; set; }
+
+    /// <summary>本期問題排行中「全部主機都已有結論」而未列入 <see cref="IssueRanking"/> 的筆數
+    /// （§10.6，與 <see cref="DashboardDto.ConcludedTopIssueCount"/> 同一件事）</summary>
+    public int ConcludedIssueCount { get; set; }
 
     /// <summary>問題統計是否還在背景整理——與 <see cref="DashboardDto.IssueStatsPending"/> 同一件事</summary>
     public bool IssueStatsPending { get; set; }

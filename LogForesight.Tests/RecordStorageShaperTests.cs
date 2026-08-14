@@ -59,6 +59,23 @@ public class RecordStorageShaperTests
         Assert.True(issue.ElevatesDayRisk);
     }
 
+    /// <summary>
+    /// EventKey（Linux 完整簽章第五段）必須在低風險日精簡時保留，理由同 RuleId/Suppressed——
+    /// 漏抄會讓命中規則的 Linux 事件在低風險日「同 program 不同規則」併回同一組
+    /// （回饋十九輪批次B 查證抓到的既有 bug）。
+    /// </summary>
+    [Fact]
+    public void 低風險日_保留EventKey()
+    {
+        var record = LowRiskRecord();
+        record.TopIssues[0].EventKey = "ssh-bruteforce";
+
+        var shaped = RecordStorageShaper.ForStorage(record);
+        var issue = Assert.Single(shaped.TopIssues);
+
+        Assert.Equal("ssh-bruteforce", issue.EventKey);
+    }
+
     [Fact]
     public void 低風險日_Host與DeepDives原樣帶過()
     {

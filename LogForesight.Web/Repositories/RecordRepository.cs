@@ -30,6 +30,15 @@ public interface IRecordRepository
     List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true);
 
     /// <summary>
+    /// 依條件查詢的輕量版（回饋十九輪批次E3）：語意與可見範圍套用點與 <see cref="Query"/> 完全相同
+    /// （同一個單一咽喉），差別只在回傳的 <see cref="DailyAnalysisRecord"/> 不含整份 ContentJson
+    /// 反序列化出的內容（見 <see cref="IAnalysisRecordQuery.QueryLightweight"/>）——供只需要
+    /// 處理狀態判定/分類/風險等級這幾個欄位的呼叫端使用（明細清單頁的 Statuses/Overdue/Unassigned
+    /// 篩選路徑），不是「不過濾」的入口。
+    /// </summary>
+    List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter);
+
+    /// <summary>
     /// 分頁查詢（已套用目前登入者的可見範圍）——docs/archive/HISTORY.md P1-2。
     /// 可下推的條件盡量在 SQL 端完成排序與分頁，見 <see cref="IAnalysisRecordQuery.QueryPage"/>。
     /// </summary>
@@ -69,6 +78,13 @@ public class RecordRepository : IRecordRepository
         ApplyVisibility(filter);
         if (applyDayRiskVisibility && !TryApplyDayRiskVisibility(filter)) return new List<DailyAnalysisRecord>();
         return ApplySeverityVisibility(_records.Query(filter));
+    }
+
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter)
+    {
+        ApplyVisibility(filter);
+        if (!TryApplyDayRiskVisibility(filter)) return new List<DailyAnalysisRecord>();
+        return ApplySeverityVisibility(_records.QueryLightweight(filter));
     }
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)

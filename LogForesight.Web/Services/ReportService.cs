@@ -12,10 +12,12 @@ public class ReportService
     private readonly HandlingHistoryQueryService _handling;
     private readonly IssueRankingBuilder _issueRanking;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueAggregateQuery _aggregates;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
-        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings)
+        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
+        IIssueAggregateQuery aggregates)
     {
         _repository = repository;
         _hosts = hosts;
@@ -23,6 +25,7 @@ public class ReportService
         _handling = handling;
         _issueRanking = issueRanking;
         _settings = settings;
+        _aggregates = aggregates;
     }
 
     public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
@@ -30,7 +33,10 @@ public class ReportService
         if (to < from) (from, to) = (to, from);
 
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
-        var records = _handling.FilterByScope(_repository.Query(new RecordQueryFilter { From = from, To = to }), scope);
+        // 全面 SQL 化（回饋十九輪批次E5）：KPI／趨勢／FilterByScope／GetTodo 都只需要判定用欄位
+        // （風險等級、TopIssues、Headline 等），改用 QueryLightweight（批次E3 建的機制）避免
+        // 期間內全部紀錄逐一反序列化整份 ContentJson——與前期比較還要再撈一次，兩份都改
+        var records = _handling.FilterByScope(_repository.QueryLightweight(new RecordQueryFilter { From = from, To = to }), scope);
 
         // 與前一個「等長」期間比較：主管要的不是數字本身，是「變好還是變壞」。
         // 等長才可比——拿一週跟一個月比毫無意義。前期套用同一 scope，比較才有意義（§5）
@@ -38,7 +44,7 @@ public class ReportService
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-span + 1);
         var previousRecords = _handling.FilterByScope(
-            _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
+            _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
         var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
@@ -48,8 +54,10 @@ public class ReportService
         // 而問題聚合是跨主機跨日的獨立投影；把 scope 套上去會讓「這個問題影響幾台」
         // 變成「符合這個處理狀態的日子裡影響幾台」，那是另一個問題的答案
         var visibleHosts = _visibility.GetVisibleHosts();
-        var issueRanked = _issueRanking.Build(
+        var allIssueRanked = _issueRanking.Build(
             from, to, visibleHosts.Select(h => h.HostId).ToList(), visibleHosts.Count);
+        // §10.6：全部主機都已有結論的問題不佔用排行版面（與儀表板重點問題卡同一套規則）
+        var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
 
         var dto = new ReportSummaryDto
         {
@@ -58,7 +66,12 @@ public class ReportService
             HandlingScope = scope,
             Kpi = BuildKpi(records, previousRecords),
             Trend = BuildTrend(records, from, to),
-            Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities()),
+            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與儀表板同一個查詢方法。
+            // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
+            // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
+            // 篩的日層級處理狀態不是同一件事
+            Categories = RecordStatsBuilder.BuildCategoryCards(_aggregates.AggregateByCategory(
+                from, to, visibleHosts.Select(h => h.HostId).ToList(), _settings.Get().ParseUnhandledSeverities())),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
@@ -67,6 +80,7 @@ public class ReportService
             IssueRanking = issueRanked.Take(HostRankingLimit).ToList(),
             RankedIssueCount = issueRanked.Count,
             IssueOthers = BuildIssueOthers(issueRanked),
+            ConcludedIssueCount = concludedIssueCount,
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,

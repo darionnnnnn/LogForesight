@@ -9,7 +9,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3 lf-no-print">
     <div class="btn-group btn-group-sm" role="group" aria-label="期間">
-        <button type="button" class="btn btn-outline-primary" data-days="1">今天</button>
+        <button type="button" class="btn btn-outline-primary" data-days="1">昨日</button>
         <button type="button" class="btn btn-outline-primary active" data-days="7">近 7 天</button>
         <button type="button" class="btn btn-outline-primary" data-days="30">近 30 天</button>
     </div>
@@ -51,6 +51,9 @@
                因為 renderTable 會 replaceChildren，塞在裡面會被下一次渲染吃掉 *@
             <div class="px-3 pt-3 d-none" id="dashboard-issues-pending"></div>
             <div class="lf-card__body p-0" id="dashboard-issues"></div>
+            @* §10.6：全部主機都已有結論的問題不佔用這張卡的版面，但要誠實說出來排除了幾筆——
+               同上，放在表格容器之外避免被 renderTable 的 replaceChildren 清掉 *@
+            <div class="px-3 pb-2 d-none" id="dashboard-issues-concluded"></div>
         </section>
     </div>
 </div>

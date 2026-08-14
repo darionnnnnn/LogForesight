@@ -66,7 +66,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         var runRecorder = new BatchRunRecorder(batchRunStore, "test-host", Array.Empty<string>());
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
-            _backend.RecordStore(), _hosts);
+            _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
         var console = new RecordingRunConsole(consoleLines ?? new List<string>());
 
         return new NetiqPipelineService(

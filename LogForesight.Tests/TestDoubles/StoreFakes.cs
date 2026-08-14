@@ -47,6 +47,7 @@ internal class FakeHostStore : IHostStore
         existing.RoleDesc = host.RoleDesc;
         existing.Source = host.Source;
         existing.Os = host.Os;
+        existing.Tier = host.Tier;
         existing.Active = host.Active;
         existing.GroupIds = host.GroupIds;
         existing.OwnerUserIds = host.OwnerUserIds;
@@ -351,6 +352,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false) =>
         throw new NotImplementedException();
 
+    /// <summary>記憶體實作沒有「整份 blob」與「輕量列」的區別，直接沿用 Query()——
+    /// 差異只在真正的 SQL 後端才有效能意義，測試在意的是篩選/授權語意逐位一致。</summary>
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter) => Query(filter);
+
     /// <summary>與 EfAnalysisRecordStore.ListHostDates 同語意（回饋十八輪批次C 測試所需）：
     /// 窗口內 HostId／Date 的輕量投影，HostId=0（無主機識別的舊列）不列入。</summary>
     public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
@@ -360,17 +365,17 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .ToHashSet();
 }
 
-/// <summary>問題負責人規則的記憶體實作（回饋十八輪批次F）：與正式的 IssueOwnerStore
-/// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
+/// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
+/// IssueOwnerStore 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {
-    private readonly List<IssueOwnerRule> _rules = new();
+    private readonly List<IssueProfile> _rules = new();
 
-    public List<IssueOwnerRule> GetAll() => _rules.ToList();
+    public List<IssueProfile> GetAll() => _rules.ToList();
 
-    public IssueOwnerRule? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
+    public IssueProfile? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
 
-    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    public IssueProfile Upsert(IssueProfile rule)
     {
         var existing = _rules.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
         if (existing == null)
@@ -383,6 +388,12 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         existing.Note = rule.Note;
         existing.UpdatedAt = DateTime.Now;
         existing.UpdatedByAccount = rule.UpdatedByAccount;
+        existing.ConclusionStatus = rule.ConclusionStatus;
+        existing.ConclusionNote = rule.ConclusionNote;
+        existing.ConcludedById = rule.ConcludedById;
+        existing.ConcludedByAccount = rule.ConcludedByAccount;
+        existing.ConcludedAt = rule.ConcludedAt;
+        existing.AutoApply = rule.AutoApply;
         return existing;
     }
 
@@ -390,8 +401,8 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
 
     // 委派單一事實來源（終檢輪修正）：自寫一份就是 FakeHostStore/FakeUserStore 踩過的
     // 「測試替身與正式實作語意漂移」家族，正式端改比對規則時這裡不會跟著動。
-    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
-        IssueOwnerRule.Matches(r, source, eventId);
+    private static bool Matches(IssueProfile r, string source, int eventId) =>
+        IssueProfile.Matches(r, source, eventId);
 }
 
 /// <summary>

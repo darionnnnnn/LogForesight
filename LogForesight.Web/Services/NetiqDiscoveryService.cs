@@ -214,7 +214,7 @@ public class NetiqDiscoveryService
         // 匯入耗時申報（回饋十七輪批次D-1，規劃明列）：批次化前逐台 FindByName+Upsert 是匯入慢
         // 的主因，落一筆台數＋毫秒的 log，之後有沒有改善（或再劣化）看得見。
         var applyStopwatch = Stopwatch.StartNew();
-        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp);
+        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp, request.Tier);
         applyStopwatch.Stop();
         Log.Info("NetIQ 匯入套用完成：{Count} 台（新增 {Added}／更新 {Updated}／復活 {Revived}），耗時 {ElapsedMs}ms",
             wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);

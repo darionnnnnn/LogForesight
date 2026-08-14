@@ -158,4 +158,189 @@ public class SchemaUpgraderTests : IDisposable
         SchemaUpgrader.Upgrade(ctx);
         SchemaUpgrader.Upgrade(ctx);   // 再跑一次：冪等,不應重複建欄位/索引而出錯
     }
+
+    // ── 回饋十九輪批次B：lf_daily_records 抽出欄／lf_issue_first_seen ──────────────
+
+    /// <summary>舊 schema 缺批次B 的抽出欄——升級後補上，既存列的 extract_version 預設 0
+    /// （尚未回填，DailyRecordBackfiller 依此判定候選）</summary>
+    [Fact]
+    public void 舊schema缺批次B抽出欄_升級後補上且既存列extract_version為0()
+    {
+        CreateOldSchema();
+        using (var raw = _connection.CreateCommand())
+        {
+            raw.CommandText = "INSERT INTO lf_daily_records (host_id, host_name, record_date, risk_level, content_json, created_at) " +
+                               "VALUES (1, 'HOST-A', '2026-01-01', '高', '{}', '2026-01-01')";
+            raw.ExecuteNonQuery();
+        }
+
+        using var ctx = NewContext();
+        SchemaUpgrader.Upgrade(ctx);
+
+        var row = ctx.DailyRecords.Single();
+        Assert.Equal(0, row.ExtractVersion);
+        Assert.Equal(string.Empty, row.Headline);
+        Assert.Equal(0, row.ErrorCount);
+    }
+
+    /// <summary>升級後可正常讀寫批次B 的抽出欄（不是只補了欄位卻寫不進去）</summary>
+    [Fact]
+    public void 舊schema升級後_批次B抽出欄可讀寫()
+    {
+        CreateOldSchema();
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            ctx.DailyRecords.Add(new DailyRecordRow
+            {
+                HostId = 1, HostName = "HOST-A", RecordDate = DateTime.Today, RiskLevel = "高",
+                ContentJson = "{}", Headline = "測試標題", ErrorCount = 3, AiAnalyzed = true, ExtractVersion = 1
+            });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.DailyRecords.Single();
+            Assert.Equal("測試標題", row.Headline);
+            Assert.Equal(3, row.ErrorCount);
+            Assert.True(row.AiAnalyzed);
+            Assert.Equal(1, row.ExtractVersion);
+        }
+    }
+
+    /// <summary>lf_issue_first_seen 是全新的表（不掛在既有表升級之下），連線上完全沒有任何表時也要建得起來</summary>
+    [Fact]
+    public void 空連線升級後_lf_issue_first_seen表存在且可讀寫()
+    {
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 1, 1) });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.IssueFirstSeen.Single();
+            Assert.Equal("disk", row.SourceName);
+            Assert.Equal(new DateTime(2026, 1, 1), row.FirstSeen);
+        }
+    }
+
+    // ── lf_issue_first_seen 歷史種子（批次B 規劃 B3、批次I 體檢補上）──────────
+
+    /// <summary>
+    /// 升級當下 lf_top_issues 已有的歷史問題要被種進首見表——沒有種子的話，批次B 之前
+    /// 就存在的問題會在之後第一次重現時被 upsert 寫成「重現日＝首見日」且永久固定
+    /// （逐日 upsert 只在較早日期才更新，錯值不會自我修復）。
+    /// </summary>
+    [Fact]
+    public void 升級時_既有top_issues歷史被種進首見表且取最早日期()
+    {
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            var recordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 3, 5)));
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早，種子要取這筆
+            ctx.TopIssues.Add(TopIssue(recordId, "DCOM", 10016, new DateTime(2026, 2, 1)));
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            Assert.Equal(2, ctx.IssueFirstSeen.Count());
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 20), disk.FirstSeen);
+        }
+    }
+
+    /// <summary>未回填舊列的 record_date 哨兵（0001-01-01）不得混進種子——混進來會把首見日
+    /// 全部種成西元 1 年，比沒有種子更糟。</summary>
+    [Fact]
+    public void 種子排除record_date為MinValue的未回填舊列()
+    {
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            var recordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, DateTime.MinValue));           // 未回填哨兵
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 3, 5)));
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var disk = ctx.IssueFirstSeen.Single();
+            Assert.Equal(new DateTime(2026, 3, 5), disk.FirstSeen);
+        }
+    }
+
+    /// <summary>表非空＝已種過（或逐日 upsert 已在運作），不重種——重種需要逐列比對更早日期，
+    /// 每次啟動都付一趟 GROUP BY 的成本不成比例（見 SchemaUpgrader.SeedIssueFirstSeenIfEmpty 註解）。</summary>
+    [Fact]
+    public void 首見表非空時_升級不重種不覆寫既有列()
+    {
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            var recordId = AddParentRecord(ctx);
+            ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 5, 1) });
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早的歷史，但不該觸發重種
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var disk = ctx.IssueFirstSeen.Single();
+            Assert.Equal(new DateTime(2026, 5, 1), disk.FirstSeen);   // 維持原值
+        }
+    }
+
+    /// <summary>lf_top_issues 有 FK 指向 lf_daily_records，測試子列前要先有父列</summary>
+    private static long AddParentRecord(LfDbContext ctx)
+    {
+        var record = new DailyRecordRow
+        {
+            HostId = 1, HostName = "HOST-A", RecordDate = new DateTime(2026, 1, 1),
+            RiskLevel = "低", ContentJson = "{}"
+        };
+        ctx.DailyRecords.Add(record);
+        ctx.SaveChanges();
+        return record.RecordId;
+    }
+
+    private static TopIssueRow TopIssue(long recordId, string source, int eventId, DateTime recordDate) => new()
+    {
+        RecordId = recordId, HostId = 1, RecordDate = recordDate, LogName = "System", SourceName = source,
+        EventId = eventId, EntryType = 2, EventCount = 1, Category = "Storage",
+        SeverityRank = (int)IssueSeverity.High, EventKey = ""
+    };
 }

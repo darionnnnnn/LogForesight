@@ -1,31 +1,32 @@
 namespace LogForesight.Core.Persistence;
 
-/// <summary>問題負責人規則的讀寫（↔ webdata blob，key=issue_owners，回饋十八輪批次F）</summary>
+/// <summary>問題檔案的讀寫（↔ webdata blob，key=issue_owners，回饋十八輪批次F 建立、
+/// 回饋十九輪批次F 擴充承載機房結論——見 <see cref="IssueProfile"/>）</summary>
 public interface IIssueOwnerStore
 {
-    List<IssueOwnerRule> GetAll();
+    List<IssueProfile> GetAll();
 
     /// <summary>(Source, EventId) 不分大小寫比對；找不到回 null。</summary>
-    IssueOwnerRule? Get(string source, int eventId);
+    IssueProfile? Get(string source, int eventId);
 
     /// <summary>依 (Source, EventId) 自然鍵新增或更新。</summary>
-    IssueOwnerRule Upsert(IssueOwnerRule rule);
+    IssueProfile Upsert(IssueProfile rule);
 
     void Delete(string source, int eventId);
 }
 
 /// <summary><see cref="IIssueOwnerStore"/> 的實作：整份 JSON 存一筆 blob，與 SentinelStore 等
 /// 其他 webdata store 同模式（JsonBlobCollection 提供原子讀改寫）。</summary>
-public class IssueOwnerStore : JsonBlobCollection<IssueOwnerRule>, IIssueOwnerStore
+public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStore
 {
     public IssueOwnerStore(EfJsonBlobStore blob) : base(blob) { }
 
-    public List<IssueOwnerRule> GetAll() => Read();
+    public List<IssueProfile> GetAll() => Read();
 
-    public IssueOwnerRule? Get(string source, int eventId) =>
+    public IssueProfile? Get(string source, int eventId) =>
         Read().FirstOrDefault(r => Matches(r, source, eventId));
 
-    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    public IssueProfile Upsert(IssueProfile rule)
     {
         return Mutate(items =>
         {
@@ -45,6 +46,12 @@ public class IssueOwnerStore : JsonBlobCollection<IssueOwnerRule>, IIssueOwnerSt
             existing.Note = rule.Note;
             existing.UpdatedAt = now;
             existing.UpdatedByAccount = rule.UpdatedByAccount;
+            existing.ConclusionStatus = rule.ConclusionStatus;
+            existing.ConclusionNote = rule.ConclusionNote;
+            existing.ConcludedById = rule.ConcludedById;
+            existing.ConcludedByAccount = rule.ConcludedByAccount;
+            existing.ConcludedAt = rule.ConcludedAt;
+            existing.AutoApply = rule.AutoApply;
             return existing;
         });
     }
@@ -52,5 +59,5 @@ public class IssueOwnerStore : JsonBlobCollection<IssueOwnerRule>, IIssueOwnerSt
     public void Delete(string source, int eventId) =>
         Mutate(items => items.RemoveAll(r => Matches(r, source, eventId)));
 
-    private static bool Matches(IssueOwnerRule r, string source, int eventId) => IssueOwnerRule.Matches(r, source, eventId);
+    private static bool Matches(IssueProfile r, string source, int eventId) => IssueProfile.Matches(r, source, eventId);
 }

@@ -7,12 +7,13 @@
 
 ## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
 
-- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——類別中文名 C# 一份（批次
-  `RiskReportService.cs`，txt 報告用）、JS 一份（`format.js` 的 `CATEGORY_NAMES`）。
-  跨語言無法靠編譯器對齊，目前用人工保持一致。方案：先把 C# 版搬到 Core
-  （`IssueCategoryNames`，批次與 Web 共用一份，這步無爭議可直接做）；
-  再由 `_Layout.cshtml` server-render `window.LF_META = {...}`（類別名/嚴重度名/風險等級）
-  供 `format.js` 讀取、保留現值當 fallback。分歧風險目前低，晚做或不做皆可接受。
+- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——**C# 端已於回饋十九輪批次I 收斂**：
+  `LogForesight.Core/Analysis/IssueCategoryNames` 是 C# 唯一字典，`RiskReportService.CategoryZh`
+  （txt 報告）與 `MailIssueRow.FormatLine`（郵件，批次H 曾短暫長出第三份拷貝、體檢時收斂）
+  皆委派它。**剩餘的是 JS 端**：`format.js` 的 `CATEGORY_NAMES`＋`rules.js` 一份局部拷貝，
+  跨語言無法靠編譯器對齊，目前用人工保持一致。方案：由 `_Layout.cshtml` server-render
+  `window.LF_META = {...}`（類別名/嚴重度名/風險等級）供 `format.js` 讀取、保留現值當
+  fallback。分歧風險目前低，晚做或不做皆可接受。
 
 - **S14 剩餘部分：前端下鑽 URL 組裝共用**——`/records?riskLevels=…&from=…&to=…` 的組裝在
   `dashboard.js`／`reports.js`／`record-detail.js` 重複 10+ 處，尚未抽出共用的
@@ -107,6 +108,15 @@
   案件時自動建案（沿用案件制，不另造同步機制）；UI 於批次指派 modal 加一顆「之後新主機也
   自動指派」勾選即建規則，規則清單/停用放規則或使用者維護頁（下一輪定）；他人已有進行中
   案件不搶走、命中寫稽核。
+  **與問題檔案的關係**（回饋十九輪批次F 新增後補記）：`IssueProfile.AutoApply`＋
+  `ConclusionStatus` 已經是「這個問題簽章之後永遠自動套用某個結論」的落地（見
+  `IssueCaseCoordinator.AttachNewDay` 的 fleet 套用分支）——概念上與這裡的「乙」有重疊
+  （都是「簽章 key → 未來新主機日自動套用某個結果」），但落地的**結果**不同：問題檔案
+  自動套用的是「結論」（closed 狀態，`HandlingActions.FleetApply`），這裡的乙要的是「自動
+  指派處理人」（open/in_progress 狀態，建案件）。兩者若真的都要做，需要先想清楚「自動指派」
+  與「自動結論」在 `AttachNewDay` 的三層優先序裡怎麼排（案件優先於問題檔案結論是已定案的
+  既有順序，自動指派要插在哪一層）；現況是只做了「自動結論」那一半，「自動指派」仍是本項
+  未解決的部分，不要誤以為問題檔案已經涵蓋了這一項。
 - **使用者名稱格式剩餘敘事句（§9 未竟）**：§9 已補齊負責人欄徽章、處理面板目前處理人、
   問題查詢處理人欄、權限異動確認人、匯入操作者、NetIQ 更新者。**仍為顯示名稱單值**的是
   少數敘事句：處理歷程「處理人：○○○」、案件敘事「由 ○○○ 處理」、跨主機批次指派略過清單
@@ -134,14 +144,27 @@
   或改由 `RecordHandlingLog` 的 `case_reassign` 反查——兩種作法都要先想清楚
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
-- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合，處理概況要逐問題查
-  handling 標記。`IssueRankingDto` 已備妥 `OpenHostCount`／
-  `ResolvedHostCount` 兩個欄位與 `IssueRankingBuilder` 的 rollup 參數，
-  `IIssueAggregateQuery` 也已回傳該群組的相異完整簽章（join 處理狀態的鍵）——
-  剩下的只是把 `lf_issue_handling` 的逐簽章彙總接上去，並依 §10.6 讓「全部主機都已有結論」
-  的問題退出重點清單（含卡底「另有 N 個問題已有結論（未列入）」的誠實出口）。
-  屆時一併做 **D6 乙案**（SCALE-FIX-PLAN-2026-08-06.md）：報表問題排行套用「顯示範圍」
-  選擇器——同一次 join 的事，甲案的常駐說明文字屆時移除。
+- **報表問題排行的「顯示範圍」選擇器**（原 D6 乙案，SCALE-FIX-PLAN-2026-08-06.md）：
+  排除已有結論的問題（規劃出處 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6；
+  回饋十九輪批次A已完成，`IssueHandlingRollupQuery`＋
+  `IssueRankingBuilder.ExcludeConcluded`，儀表板重點問題卡與報表問題排行皆已接上、
+  兩頁「另有 N 個問題已有結論」數字一致）目前是**固定行為**，沒有讓使用者切換「全部／
+  排除已有結論」的選擇器——多數情境固定排除即符合需求，真的需要看全部（例如稽核）時
+  再評估要不要加選擇器。既有的「不受『顯示範圍』篩選影響」常駐說明文字仍成立
+  （那是日層級 handlingScope 與問題聚合母體不同的另一件事），不受本項影響。
+
+## 成效指標遞延項（回饋十九輪§5 明確不做，記入待補）
+
+- **MTTA/MTTR 成效指標輪**：平均認領時間（MTTA，問題出現到有人開始處理）／平均解決時間
+  （MTTR，出現到結案）目前沒有任何一頁呈現，只有處理概況的靜態計數（未處理／處理中／已處理）。
+  資料基礎已具備：`IssueHandling.created_at`（回饋十九輪批次B新增，僅新增時落）＋`IssueCase`
+  的建立/結案時間軸＋處理歷程（`RecordHandlingLog`）。**尚待決定的問題**（立案前需要先想清楚）：
+  1. 「認領」的定義——案件建立算認領，還是狀態變成 `in_progress` 才算（觀察中算不算已認領）？
+  2. 統計母體——依問題（Source,EventId）還是依主機日？兩者的「平均」意義不同。
+  3. 呈現位置——報表新增卡片，還是使用者/處理人工作頁的個人指標？
+  4. 歷史資料缺口——`created_at` 只在批次B之後新增的紀錄才有值，舊資料無法回溯計算，
+     指標上線初期的分母天然縮水，需要在畫面上誠實標示「僅涵蓋 X 日後新增的紀錄」。
+  觸發條件：使用者對「處理效率」有明確的稽核／管理需求時再立案規劃。
 
 ## 其他遞延項
 
@@ -176,6 +199,29 @@
   價值低於修正成本，記錄理由供之後若真的遇到相關 bug 時查閱。
 - **批次 4：專案外觀（README Quick Start／LICENSE 等）**：使用者定案本輪不做，留待後續有
   對外發布或新人上手需求明確時再排入。
+
+## 回饋十九輪體檢輪記錄的設計面債務（未排期）
+
+- **`visibleSeverities` 選填參數的隱性契約**（`IIssueAggregateQuery` 的
+  `Aggregate`/`LatestOccurrences`/`ActionableOccurrences`/`AggregateByDate`/`AggregateByHost`）：
+  介面文件寫「呼叫端必須自己把 SiteHidden 過濾傳進來」，但參數是 `= null` 選填——
+  `RecordListQueryService`（問題查詢四視角）有傳；`IssueRankingBuilder`（重點問題卡／報表
+  排行）、`IssueTodoQuery`（KPI 待辦）、`MailIssueDigest`（郵件）**皆未傳**。這不是本輪
+  回歸（排行卡改版前就沒套 SiteHidden），但選填形狀正是 `IssueRankingBuilder` 註解記錄過的
+  踩雷模式（rollup 參數選填→兩個呼叫端都忘了傳→死了一整輪）。待決兩件事：
+  ① 立場——KPI／排行／郵件在 SiteHidden 模式下**該不該**排除被隱藏的嚴重度
+  （「待辦不受顯示設定影響」也是合理立場，但要明文定案，不能維持「看起來套了其實沒套」）；
+  ② 形狀——定案後把參數改必填（要不套用就明寫 `null`），讓編譯器逼每個呼叫端表態。
+- **`SetConclusion` 的服務層能力檢查**（防禦縱深）：統一標記的 AutoApply 勾選路徑經
+  `IssueHandlingCommandService`（`Assign`＋`Handle`）呼叫 `IssueOwnerAdminService.SetConclusion`，
+  繞過了 `IssueOwnersController` 的 `[Permission(Maintain)]`。現行能力矩陣下 Assign 只有
+  admin、無實際越權；若日後能力可自訂（出現有 Assign+Handle 但無 Maintain 的角色）就會變成
+  真缺口。屆時在 `SetConclusion` 服務層內補能力檢查，把授權判定從 controller attribute
+  下沉到服務層。
+- **`UpsertFirstSeen` 的 SQLite 日期字串比較**：條件式 UPDATE（`first_seen > {date}`）在
+  SQLite 是字典序文字比較，同一天二次寫入時因小數位數格式差異會觸發一次無意義的 UPDATE 並讓
+  儲存格式在兩種寫法間漂移（**首見日的值不會錯**，跨日比較方向正確；SqlServer 不受影響）。
+  若未來對 `first_seen` 做 ORDER BY／範圍查詢，先改走 EF 型別化路徑消除格式漂移。
 
 ## 使用方式
 

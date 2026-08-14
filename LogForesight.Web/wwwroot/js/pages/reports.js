@@ -15,7 +15,10 @@
 
 import { api, getDisplaySettings } from '../core/api.js';
 import { statCard } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
+import {
+    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal,
+    issueBaselineText
+} from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -305,6 +308,13 @@ function renderCategoryChart() {
     const categories = currentData.categories;
     const wrapper = document.getElementById('category-wrapper');
 
+    // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與依問題視角的問題排行同一個限制：
+    // 母體是跨主機跨日的獨立投影，套用「顯示範圍」會把「這個類型有幾個風險資訊」變成
+    // 「符合這個處理狀態的日子裡有幾個」，那是另一個問題的答案——同一頁已有先例（問題排行
+    // 的 scopeNote），這裡照樣講清楚，不要讓數字看起來像回應了篩選卻其實沒有
+    const subtitle = document.getElementById('category-subtitle');
+    if (subtitle) subtitle.textContent = currentScope !== 'all' ? '不受「顯示範圍」篩選影響' : '';
+
     if (categories.length === 0) {
         charts.renderNoData(wrapper);
         return;
@@ -348,11 +358,11 @@ function renderCategoryChart() {
     charts.attachToolbar(document.getElementById('category-toolbar'), {
         canvasWrapper: wrapper,
         title: '風險類型分布',
-        // docs/archive/HISTORY.md #1（B1 三級化）：嚴重度欄位收斂為三級，「嚴重」欄移除
-        tableColumns: ['類型', '高', '中', '低', '問題數', '主機數'],
+        // 問題數＝去重風險資訊筆數（回饋十九輪批次D），高/中/低三欄依此口徑分桶、三者之和＝問題數
+        tableColumns: ['類型', '高', '中', '低', '問題數', '期間累計', '主機數'],
         tableRows: categories.map(c => [
             CATEGORY_NAMES[c.category] ?? c.category,
-            c.highCount, c.mediumCount, c.lowCount, c.issueCount, c.affectedHosts
+            c.highCount, c.mediumCount, c.lowCount, c.riskItemCount, c.cumulativeCount, c.affectedHosts
         ])
     });
 }
@@ -496,17 +506,20 @@ function renderIssueRankChart() {
     });
 
     const tableRows = issues.map(i => [
-        `${i.source} (${i.eventId})`, CATEGORY_NAMES[i.category] ?? i.category,
-        severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount
+        `${i.source} (${i.eventId})`, i.priorityScore.toFixed(0), CATEGORY_NAMES[i.category] ?? i.category,
+        severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount,
+        issueBaselineText(i), i.fleetFirstSeen || i.firstSeen
     ]);
     if (others) {
-        tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', others.hostCount, '', others.totalCount]);
+        tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', '', others.hostCount, '', others.totalCount, '', '']);
     }
 
     charts.attachToolbar(document.getElementById('host-toolbar'), {
         canvasWrapper: wrapper,
         title: '問題排行',
-        tableColumns: ['問題', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數'],
+        // 排序已改依分數（§G3，見 IssueRankingBuilder.Build），這裡只是把數字亮出來讓人看得懂
+        // 為什麼是這個順序——不重算，直接顯示後端算好的分數
+        tableColumns: ['問題', '分數', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數', 'vs 基準', '首見（機房）'],
         tableRows
     });
 }
@@ -531,7 +544,12 @@ function renderIssueRankMeta() {
         ? `；${currentData.issueStatsPendingHint ?? '統計整理中，數字可能不完整'}`
         : '';
 
-    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}` : '';
+    // §10.6：全部主機都已有結論的問題不佔用排行版面，卡底同一行誠實說出排除了幾筆
+    const concludedNote = currentData.concludedIssueCount > 0
+        ? `；另有 ${currentData.concludedIssueCount} 個問題已有結論（未列入）`
+        : '';
+
+    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 
     if (currentData.issueOthers) {
         viewAll.href = `/records?view=issue&from=${currentData.from}&to=${currentData.to}`;
@@ -710,8 +728,11 @@ for (const btn of document.querySelectorAll('#report-scope-chips button')) {
 }
 
 function setRange(days) {
+    // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天，
+    // 錨在今天會讓「本週/本月/近 90 天」的最後一天必然沒有資料
     const to = new Date();
-    const from = new Date();
+    to.setDate(to.getDate() - 1);
+    const from = new Date(to);
     from.setDate(from.getDate() - days + 1);
 
     // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
