@@ -448,4 +448,45 @@ B1/B2/B3/B6/B8 皆按規劃落地；B4、B7 與規劃原文有偏離：
 前端新增 `analysisAnchorLocal()`（format.js）與既有 `todayLocal()` 並存，避免下一個人
 在到期日／逾期判斷等真實時鐘情境誤用新的錨點函式。
 
-批次D（儀表板口徑）尚未開始。
+### 批次E0（提前完成，commit `f079eb0`）
+
+D2 明確要求「狀態判定抽用共用組狀態解析器（E0），勿另寫第二套」，所以在 D2 之前先做：
+`RecordListQueryService.BuildIssueGroup` 與 `IssueHandlingRollupQuery`（批次A 產物）過去
+各自實作同一套三態判定規則，抽成 `IssueGroupStatusResolver`（Core.Models 純函數）兩處共用。
+
+抽取時抓到一個由重構自己引入又自己抓到的問題：一度把「今天」參數誤用成分析錨點
+（批次C 的昨天），但觀察到期／逾期比對的是使用者設定的行事曆期限（真實時鐘），不是
+分析資料的錨點——兩者是不同的「今天」，混用會讓「觀察至昨天」的案子誤判成還在觀察中。
+既有測試 `SearchByIssue_觀察中未到期算處理中_到期算未處理` 當場抓到，改回真實
+`DateTime.Today` 後測試通過，另補一條 `IssueHandlingRollupQuery` 這條路徑原本沒覆蓋到的
+同款回歸測試。
+
+### 批次D（完成，commit `124c101`+`6b6f8a8`，2004 測試綠）
+
+**D1 風險類型卡雙數字**：新增 `IIssueAggregateQuery.AggregateByCategory`（SQL 兩層
+GROUP BY：先依 (類別,主機,問題) 取期間內最高嚴重度與累計次數，host_id 解析成存活主機後
+再依類別彙總），取代 `RecordStatsBuilder.BuildCategoryCards` 對整段期間 `DailyAnalysisRecord`
+在記憶體用 `CategoryAggregator` 逐日彙總再合併的版本。`DashboardCategoryDto` 改雙數字
+（`RiskItemCount` 大數字去重／`CumulativeCount` 小字累計），高/中/低分桶也改依風險資訊的
+期間內最高嚴重度（三桶之和＝RiskItemCount）。移除未使用的 `MaxSeverity`／`CriticalCount`
+欄位（順帶修正唯一消費 `MaxSeverity` 的 `AiInsightService` 呼叫端）。
+
+報表的風險類型卡與既有的問題排行同一個限制：SQL 聚合是跨主機跨日的獨立投影，不受
+「顯示範圍」（日層級處理狀態）篩選影響——比照問題排行既有的 scopeNote 做法，新增
+`category-subtitle` 顯示同款提示，不做成「靜默不回應篩選」。嚴重度可見性沿用
+`ParseUnhandledSeverities`（查證確認：SiteHidden 模式下的 `GetVisibleSeverities` 是
+同一個底層欄位算出來的，交集恆等於自身，維持既有行為不變，不需要另外實作 B7 那種
+「兩種設定路徑」的下推）。
+
+**D2 Todo 改問題口徑**：新增 `IIssueAggregateQuery.ActionableOccurrences`（join
+`lf_top_issues`／`lf_daily_records`，母體＝可行動風險日，與 `HandlingHistoryQueryService.GetTodo`
+既有定義一致）＋ `IssueTodoQuery`（依 (Source,EventId) 去重計數）。新增
+`OccurrenceStatusResolver` 共用骨架（批次載入 handling/case＋逐筆判定），`IssueHandlingRollupQuery`
+一併重構為用它——避免這份樣板碼在批次H 的逾期摘要出現前就已經有第三份拷貝。
+`DashboardDto.IssueTodo`（KPI 卡主要數字）與既有 `Todo`（風險日數，退居副標與報表
+處理進度圖表用）並存，角色不重疊。群組風險卡 `UnhandledCount` 同步為問題口徑。
+
+兩批瀏覽器端到端驗證：儀表板「其他」類別「8 個問題．期間累計 97 筆」與報表同一資料集
+逐位相同；KPI 卡「11 未處理問題．影響 1 台．未處理風險日 9」。
+
+批次E（讀取路徑全面SQL化）尚未開始，E0 已提前完成。
