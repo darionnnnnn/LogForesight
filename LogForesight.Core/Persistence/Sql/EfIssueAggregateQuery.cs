@@ -233,6 +233,69 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public List<HostIssueOccurrence> ActionableOccurrences(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        using var ctx = _contextFactory();
+
+        // 母體與 HandlingHistoryQueryService.GetTodo 的既有定義一致：日層級 RiskLevel 為高或中
+        // （不是問題自身嚴重度）——一句 join 取代「先撈整段期間紀錄、再在記憶體篩高中風險日」
+        var q =
+            from ti in ctx.TopIssues.AsNoTracking()
+            join dr in ctx.DailyRecords.AsNoTracking() on ti.RecordId equals dr.RecordId
+            where dr.RecordDate >= f && dr.RecordDate <= t &&
+                  (dr.RiskLevel == RiskLevels.High || dr.RiskLevel == RiskLevels.Medium)
+            select ti;
+
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
+        }
+
+        // 每個 (主機,問題) 的最近出現日與期間內最高嚴重度：SQL 端 GROUP BY 做完，
+        // 拉回的量受限於相異 (主機,問題) 組合數，不是可行動日的原始問題列數
+        var grouped = q
+            .GroupBy(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType })
+            .Select(g => new
+            {
+                g.Key.HostId,
+                g.Key.LogName,
+                g.Key.SourceName,
+                g.Key.EventId,
+                g.Key.EntryType,
+                LastSeen = g.Max(x => x.RecordDate),
+                MaxSeverityRank = g.Max(x => x.SeverityRank)
+            })
+            .ToList();
+
+        var result = grouped
+            // host_id 解析成存活主機再合併：同 LatestOccurrences 的既有規則
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType))
+            .Select(g => new HostIssueOccurrence
+            {
+                HostId = g.Key.SurvivingHostId,
+                IssueKey = IssueSignatureKey.For(
+                    g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType),
+                LastSeen = g.Max(x => x.LastSeen),
+                SeverityRank = g.Max(x => x.MaxSeverityRank)
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.ActionableOccurrences（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:ActionableOccurrences", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
     {

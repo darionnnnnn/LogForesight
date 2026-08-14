@@ -279,7 +279,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RecordDetailQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
+        // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
+        // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼
+        services.AddScoped<OccurrenceStatusResolver>();
         services.AddScoped<IssueHandlingRollupQuery>();
+        services.AddScoped<IssueTodoQuery>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 

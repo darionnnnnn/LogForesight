@@ -20,20 +20,12 @@ namespace LogForesight.Web.Services;
 public class IssueHandlingRollupQuery
 {
     private readonly IIssueAggregateQuery _aggregates;
-    private readonly IHostStore _hosts;
-    private readonly IIssueHandlingStore _issueHandlings;
-    private readonly IIssueCaseStore _cases;
-    private readonly ISystemSettingsStore _settings;
+    private readonly OccurrenceStatusResolver _statusResolver;
 
-    public IssueHandlingRollupQuery(
-        IIssueAggregateQuery aggregates, IHostStore hosts, IIssueHandlingStore issueHandlings,
-        IIssueCaseStore cases, ISystemSettingsStore settings)
+    public IssueHandlingRollupQuery(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver)
     {
         _aggregates = aggregates;
-        _hosts = hosts;
-        _issueHandlings = issueHandlings;
-        _cases = cases;
-        _settings = settings;
+        _statusResolver = statusResolver;
     }
 
     /// <summary>
@@ -50,48 +42,14 @@ public class IssueHandlingRollupQuery
         var occurrences = _aggregates.LatestOccurrences(issues, from, to, visibleHostIds);
         if (occurrences.Count == 0) return new Dictionary<string, IssueHandlingRollup>();
 
-        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
-
-        var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
-        var hostNames = occurrences
-            .Select(o => hostsById.TryGetValue(o.HostId, out var h) ? h.HostName : null)
-            .Where(n => n != null)
-            .Select(n => n!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (hostNames.Count == 0) return new Dictionary<string, IssueHandlingRollup>();
-
-        var handlingsByHost = _issueHandlings.GetMany(hostNames, from, to)
-            .GroupBy(h => h.HostName, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var openCasesByHost = _cases.GetMany(hostNames)
-            .Where(c => c.ClosedAt == null)
-            .GroupBy(c => c.HostName, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var resolved = _statusResolver.Resolve(occurrences, from, to);
 
         var openCount = new Dictionary<string, int>(StringComparer.Ordinal);
         var resolvedCount = new Dictionary<string, int>(StringComparer.Ordinal);
-        // 觀察到期／逾期比對真實時鐘，不是分析錨點——見 RecordListQueryService.BuildIssueGroup
-        // 對應位置的說明，兩處必須用同一個基準才不會又是一組對不起來的數字
-        var today = DateTime.Today;
-
-        foreach (var occurrence in occurrences)
+        foreach (var r in resolved)
         {
-            if (!hostsById.TryGetValue(occurrence.HostId, out var host)) continue;
-
-            var openCase = openCasesByHost.TryGetValue(host.HostName, out var cases)
-                ? cases.FirstOrDefault(c => string.Equals(c.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
-                : null;
-            var handling = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var rows)
-                ? rows.FirstOrDefault(h =>
-                    h.Date.Date == occurrence.LastSeen.Date && string.Equals(h.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
-                : null;
-
-            var status = IssueGroupStatusResolver.Resolve(
-                openCase, handling, (IssueSeverity)occurrence.SeverityRank, unhandledSeverities, today);
-
-            if (status == HostIssueStatus.Open) openCount[occurrence.IssueKey] = openCount.GetValueOrDefault(occurrence.IssueKey) + 1;
-            if (status == HostIssueStatus.Resolved) resolvedCount[occurrence.IssueKey] = resolvedCount.GetValueOrDefault(occurrence.IssueKey) + 1;
+            if (r.Status == HostIssueStatus.Open) openCount[r.Occurrence.IssueKey] = openCount.GetValueOrDefault(r.Occurrence.IssueKey) + 1;
+            if (r.Status == HostIssueStatus.Resolved) resolvedCount[r.Occurrence.IssueKey] = resolvedCount.GetValueOrDefault(r.Occurrence.IssueKey) + 1;
         }
 
         return occurrences

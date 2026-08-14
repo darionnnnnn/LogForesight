@@ -285,13 +285,18 @@ function renderKpi(data, user, displaySettings) {
     );
 
     // 待辦：主管看到「有哪些風險」後的下一個問題是「有人在處理嗎」。
-    // 後端只數本期的高＋中風險日，下鑽連結帶同一組條件，卡片數字與點進去的筆數才對得上
-    const unresolved = data.todo.openCount + data.todo.inProgressCount;
+    // 大數字改問題口徑（回饋十九輪批次D2，外部審查§一-2）：「未處理 1,340」（風險日數）
+    // 在兩千台環境對使用者等於沒有資訊，改成「未處理問題 X 個」——有幾個不同的問題要處理，
+    // 副標才是影響台數與風險日數（data.todo 的既有日數，退居輔助角色）
+    const todoExtra = document.createElement('div');
+    todoExtra.className = 'small text-muted';
+    todoExtra.textContent = `影響 ${formatNumber(data.issueTodo.affectedHostCount)} 台．未處理風險日 ${formatNumber(data.todo.openCount + data.todo.inProgressCount)}`;
     cards.push({
-        label: data.todo.overdueCount > 0 ? `未處理（逾期 ${data.todo.overdueCount}）` : '未處理',
-        value: unresolved,
-        variant: data.todo.overdueCount > 0 ? 'danger' : (unresolved > 0 ? 'warning' : 'secondary'),
-        url: `/records?statuses=open,in_progress&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`
+        label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
+        value: data.issueTodo.openIssueCount,
+        variant: data.issueTodo.overdueIssueCount > 0 ? 'danger' : (data.issueTodo.openIssueCount > 0 ? 'warning' : 'secondary'),
+        url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
+        extra: todoExtra
     });
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
@@ -323,7 +328,8 @@ function renderKpi(data, user, displaySettings) {
             label: card.label,
             variant: card.variant,
             url: card.url,
-            hint: card.hint
+            hint: card.hint,
+            extra: card.extra
         }));
         container.appendChild(col);
     }

@@ -60,10 +60,12 @@ internal sealed class ScaleServices
 
         var aggregates = backend.IssueAggregateQuery(Hosts);
         var issueRanking = new IssueRankingBuilder(aggregates);
+        var statusResolver = new OccurrenceStatusResolver(Hosts, IssueHandlings, Cases, settingsStore);
+        var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 
         Dashboard = new DashboardService(
             Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore, aggregates);
+            settingsStore, aggregates, issueTodo);
 
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates);
 

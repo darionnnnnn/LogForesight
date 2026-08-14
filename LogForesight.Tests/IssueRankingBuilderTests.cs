@@ -35,7 +35,8 @@ public class IssueRankingBuilderTests : IDisposable
     private IssueRankingBuilder BuilderWithRollup()
     {
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
-        var rollup = new IssueHandlingRollupQuery(aggregates, _hosts, _issueHandlings, _cases, _settings);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
+        var rollup = new IssueHandlingRollupQuery(aggregates, statusResolver);
         return new IssueRankingBuilder(aggregates, rollup);
     }
 

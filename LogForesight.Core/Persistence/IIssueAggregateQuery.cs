@@ -86,6 +86,13 @@ public interface IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds);
 
     /// <summary>
+    /// 期間內出現在「可行動」風險日（高／中）上的每個 (存活主機, 完整簽章) 最近一次出現快照
+    /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
+    /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
+    /// </summary>
+    List<HostIssueOccurrence> ActionableOccurrences(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
     /// 依風險類別彙總（回饋十九輪批次D，取代 <c>CategoryAggregator.Merge</c> 在記憶體對
     /// 整段期間紀錄的彙總）。<paramref name="allowedSeverities"/> 為 null 時不限制，
     /// 否則只計入落在集合內的問題（已含 Critical→High 的舊資料相容映射，呼叫端不必自己展開）。

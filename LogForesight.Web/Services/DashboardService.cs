@@ -17,6 +17,7 @@ public class DashboardService
     private readonly IssueRankingBuilder _issueRanking;
     private readonly ISystemSettingsStore _settings;
     private readonly IIssueAggregateQuery _aggregates;
+    private readonly IssueTodoQuery _issueTodo;
 
     public DashboardService(
         IRecordRepository repository,
@@ -28,7 +29,8 @@ public class DashboardService
         IHostGroupStore hostGroups,
         IssueRankingBuilder issueRanking,
         ISystemSettingsStore settings,
-        IIssueAggregateQuery aggregates)
+        IIssueAggregateQuery aggregates,
+        IssueTodoQuery issueTodo)
     {
         _repository = repository;
         _visibility = visibility;
@@ -40,6 +42,7 @@ public class DashboardService
         _issueRanking = issueRanking;
         _settings = settings;
         _aggregates = aggregates;
+        _issueTodo = issueTodo;
     }
 
     public DashboardDto GetSummary(int days)
@@ -85,7 +88,7 @@ public class DashboardService
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();
         BuildSilentHosts(dto, visibleHosts);
-        BuildGroupRisk(dto, records, visibleHosts);
+        BuildGroupRisk(dto, records, visibleHosts, from, anchor);
 
         dto.HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High);
         dto.MediumRiskDays = records.Count(r => r.RiskLevel == RiskLevels.Medium);
@@ -93,6 +96,8 @@ public class DashboardService
 
         // 待辦母體（高＋中風險日）由 GetTodo 內部強制套用，呼叫端傳整批紀錄即可
         dto.Todo = _handling.GetTodo(records);
+        // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
+        dto.IssueTodo = _issueTodo.Build(from, anchor, visibleHostIds);
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
 
         // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
@@ -133,7 +138,8 @@ public class DashboardService
     /// 依主機群組的風險概況（§5.4 D-4）：兩千台規模下「先看部門、再下鑽個別主機」是主要動線，
     /// 比一次攤開兩千台實際得多。只列出「至少有一台可見主機」的群組。
     /// </summary>
-    private void BuildGroupRisk(DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts)
+    private void BuildGroupRisk(
+        DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts, DateTime from, DateTime anchor)
     {
         var recordsByHost = records
             .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
@@ -148,8 +154,9 @@ public class DashboardService
                     .SelectMany(h => recordsByHost.TryGetValue(h.HostName, out var recs) ? recs : new List<DailyAnalysisRecord>())
                     .ToList();
 
-                // 待辦母體（高／中風險日）由 GetTodo 內部強制套用
-                var todo = _handling.GetTodo(memberRecords);
+                // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理／處理中的問題數，
+                // 不再是風險日數——與儀表板 KPI 卡同一套定義，只是把可見範圍縮到這個群組
+                var groupIssueTodo = _issueTodo.Build(from, anchor, memberHosts.Select(h => h.HostId).ToList());
 
                 return new DashboardGroupRiskDto
                 {
@@ -158,7 +165,7 @@ public class DashboardService
                     HostCount = memberHosts.Count,
                     HighRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.High),
                     MediumRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.Medium),
-                    UnhandledCount = todo.OpenCount + todo.InProgressCount
+                    UnhandledCount = groupIssueTodo.OpenIssueCount + groupIssueTodo.InProgressIssueCount
                 };
             })
             .Where(g => g.HostCount > 0)

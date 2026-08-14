@@ -39,9 +39,12 @@ public class IssueAggregateQueryTests : IDisposable
         };
 
     private void Add(long hostId, string host, DateTime date, params LogIssueSignature[] issues) =>
+        Add(hostId, host, date, RiskLevels.Low, issues);
+
+    private void Add(long hostId, string host, DateTime date, string riskLevel, params LogIssueSignature[] issues) =>
         _records.Append(new DailyAnalysisRecord
         {
-            HostId = hostId, Host = host, Date = date, RiskLevel = RiskLevels.Low,
+            HostId = hostId, Host = host, Date = date, RiskLevel = riskLevel,
             TopIssues = issues.ToList()
         });
 
@@ -400,5 +403,66 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(2, result.Count);
         Assert.Equal(1, result[IssueCategory.Storage.ToString()].RiskItemCount);
         Assert.Equal(1, result[IssueCategory.Security.ToString()].RiskItemCount);
+    }
+
+    // ── ActionableOccurrences（回饋十九輪批次D，Todo 問題口徑）───────────────────
+
+    /// <summary>母體＝日層級 RiskLevel 高／中，與 HandlingHistoryQueryService.GetTodo 既有定義一致</summary>
+    [Fact]
+    public void ActionableOccurrences_只計入高中風險日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Low, Issue("DCOM", 10016));   // 低風險日不計入
+
+        var result = Query().ActionableOccurrences(d0, d0.AddDays(1), null);
+
+        var occurrence = Assert.Single(result);
+        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
+    }
+
+    [Fact]
+    public void ActionableOccurrences_中風險日也計入()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.Medium, Issue("disk", 153));
+
+        Assert.Single(Query().ActionableOccurrences(d0, d0, null));
+    }
+
+    /// <summary>取最近一次出現日，與 LatestOccurrences 同一個語意</summary>
+    [Fact]
+    public void ActionableOccurrences_取最近一次出現日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(3), RiskLevels.High, Issue("disk", 153));
+
+        var occurrence = Query().ActionableOccurrences(d0, d0.AddDays(3), null).Single();
+
+        Assert.Equal(d0.AddDays(3), occurrence.LastSeen);
+    }
+
+    [Fact]
+    public void ActionableOccurrences_主機合併後解析成存活主機()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", MergedInto = b.HostId, Active = false });
+
+        Add(a.HostId, "A", d0, RiskLevels.High, Issue("disk", 153));
+
+        var occurrence = Query().ActionableOccurrences(d0, d0, null).Single();
+
+        Assert.Equal(b.HostId, occurrence.HostId);
+    }
+
+    [Fact]
+    public void ActionableOccurrences_可見範圍_空集合為零結果()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+
+        Assert.Empty(Query().ActionableOccurrences(d0, d0, Array.Empty<long>()));
     }
 }

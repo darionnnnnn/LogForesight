@@ -223,6 +223,25 @@ public class HandlingTodoDto
     public int TotalCount { get; set; }
 }
 
+/// <summary>
+/// 待辦的問題口徑（回饋十九輪批次D2）：儀表板 KPI 卡的主要數字，答的是「有幾個不同的問題
+/// 要處理」而不是「有幾個主機日還沒結案」——後者仍看 <see cref="HandlingTodoDto"/>
+/// （供「未處理風險日 M」副標與報表「處理進度」圖表用，兩者角色不同、不互相取代）。
+/// </summary>
+public class IssueTodoDto
+{
+    /// <summary>未處理問題數（依 (Source, EventId) 去重）——KPI 卡的大數字</summary>
+    public int OpenIssueCount { get; set; }
+
+    public int InProgressIssueCount { get; set; }
+
+    /// <summary>處理中但預計完成日已過的問題數，與批次H 郵件的逾期區塊同一個口徑</summary>
+    public int OverdueIssueCount { get; set; }
+
+    /// <summary>受未處理問題影響的相異主機數——KPI 卡副標「影響 N 台」</summary>
+    public int AffectedHostCount { get; set; }
+}
+
 // ── 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）────────────────────────
 
 /// <summary>批次指派 modal 開啟時的受影響主機預覽——已有進行中案件的主機標出既有處理人，

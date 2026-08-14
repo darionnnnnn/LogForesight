@@ -16,8 +16,12 @@ public class DashboardDto
     /// <summary>近 24 小時的 Web 登入失敗次數（僅具 ViewAudit 能力者可見）</summary>
     public int? RecentLoginFailures { get; set; }
 
-    /// <summary>待辦：未處理/處理中/逾期的風險日數</summary>
+    /// <summary>待辦：未處理/處理中/逾期的風險日數——供 IssueTodo 的「未處理風險日 M」副標用，
+    /// 不再是 KPI 卡的主要數字（回饋十九輪批次D2）</summary>
     public HandlingTodoDto Todo { get; set; } = new();
+
+    /// <summary>待辦的問題口徑（回饋十九輪批次D2）：KPI 卡主要數字，見 <see cref="IssueTodoDto"/></summary>
+    public IssueTodoDto IssueTodo { get; set; } = new();
 
     /// <summary>待確認的權限異動筆數</summary>
     public int PendingPermissionChanges { get; set; }
