@@ -52,7 +52,11 @@ public class DashboardService
         // 一個必然是空的區間，還觸發「本期無風險訊號」綠橫幅——把「沒資料」講成「沒事」。
         var anchor = DateTime.Today.AddDays(-1);
         var from = anchor.AddDays(-days + 1);
-        var records = _repository.Query(new RecordQueryFilter { From = from });
+        // 全面 SQL 化（回饋十九輪批次E4）：主機排行／群組風險／風險日計數／涵蓋缺口計數／
+        // GetTodo 都只需要判定用欄位（風險等級、關聯訊號有無、TopIssues、Headline），
+        // 不需要整份分析內容——QueryLightweight（批次E3 建的同一套機制）避免可見主機數 × 天數
+        // 這個量級（兩千台×30天約 6 萬筆）逐一反序列化整份 ContentJson
+        var records = _repository.QueryLightweight(new RecordQueryFilter { From = from });
         var visibleHosts = _visibility.GetVisibleHosts();
 
         var dto = new DashboardDto
