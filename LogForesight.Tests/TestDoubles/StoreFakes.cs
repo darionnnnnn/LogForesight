@@ -364,8 +364,8 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .ToHashSet();
 }
 
-/// <summary>問題負責人規則的記憶體實作（回饋十八輪批次F）：與正式的 IssueOwnerStore
-/// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
+/// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
+/// IssueOwnerStore 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {
     private readonly List<IssueProfile> _rules = new();
@@ -387,6 +387,12 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         existing.Note = rule.Note;
         existing.UpdatedAt = DateTime.Now;
         existing.UpdatedByAccount = rule.UpdatedByAccount;
+        existing.ConclusionStatus = rule.ConclusionStatus;
+        existing.ConclusionNote = rule.ConclusionNote;
+        existing.ConcludedById = rule.ConcludedById;
+        existing.ConcludedByAccount = rule.ConcludedByAccount;
+        existing.ConcludedAt = rule.ConcludedAt;
+        existing.AutoApply = rule.AutoApply;
         return existing;
     }
 

@@ -43,7 +43,7 @@ public class BulkScaleGateTests : IDisposable
 
         return new IssueHandlingCommandService(
             _handlingStore, _issueHandlingStore, _caseStore,
-            new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts),
+            new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, new FakeIssueOwnerStore()),
             new FakeNoiseMarkStore(), repository, _hosts, _users, visibility,
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Assign, LogForesight.Web.Auth.Capability.Handle),
             new RecordingAuditService(), new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore),

@@ -51,7 +51,7 @@ public class HandlingServiceTests : IDisposable
 
         _repository = new FakeRecordRepository(_hosts);
         _repository.AddRecord(_host.HostName, Today);
-        _caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _repository, _hosts);
+        _caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _repository, _hosts, new FakeIssueOwnerStore());
     }
 
     private static DateTime Today => DateTime.Today;

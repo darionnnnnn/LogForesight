@@ -60,7 +60,7 @@ public class RecordQueryServiceSearchTests : IDisposable
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到
-        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, _issueOwners);
         _handlingService = new HandlingServiceFacade(
             store: _handlingStore,
             issueStore: _issueHandlingStore,

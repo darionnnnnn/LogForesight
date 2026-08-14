@@ -1,6 +1,7 @@
 namespace LogForesight.Core.Persistence;
 
-/// <summary>問題負責人規則的讀寫（↔ webdata blob，key=issue_owners，回饋十八輪批次F）</summary>
+/// <summary>問題檔案的讀寫（↔ webdata blob，key=issue_owners，回饋十八輪批次F 建立、
+/// 回饋十九輪批次F 擴充承載機房結論——見 <see cref="IssueProfile"/>）</summary>
 public interface IIssueOwnerStore
 {
     List<IssueProfile> GetAll();
@@ -45,6 +46,12 @@ public class IssueOwnerStore : JsonBlobCollection<IssueProfile>, IIssueOwnerStor
             existing.Note = rule.Note;
             existing.UpdatedAt = now;
             existing.UpdatedByAccount = rule.UpdatedByAccount;
+            existing.ConclusionStatus = rule.ConclusionStatus;
+            existing.ConclusionNote = rule.ConclusionNote;
+            existing.ConcludedById = rule.ConcludedById;
+            existing.ConcludedByAccount = rule.ConcludedByAccount;
+            existing.ConcludedAt = rule.ConcludedAt;
+            existing.AutoApply = rule.AutoApply;
             return existing;
         });
     }

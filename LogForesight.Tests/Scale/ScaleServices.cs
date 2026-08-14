@@ -74,7 +74,8 @@ internal sealed class ScaleServices
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
             settingsService, Visibility, aggregates, statusResolver);
 
-        CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts);
+        var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
+        CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
 
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,

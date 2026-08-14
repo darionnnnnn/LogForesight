@@ -125,7 +125,7 @@ public class CaseGrantVisibilityTests : IDisposable
             store: _handlings,
             issueStore: _issueHandlings,
             cases: _cases,
-            caseCoordinator: new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _recordStore, _hosts),
+            caseCoordinator: new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _recordStore, _hosts, new FakeIssueOwnerStore()),
             noiseMarks: new FakeNoiseMarkStore(),
             repository: repository,
             hosts: _hosts,

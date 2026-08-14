@@ -34,19 +34,22 @@ public class IssueCaseCoordinator
     private readonly IRecordHandlingStore _handlingLog;
     private readonly IAnalysisRecordQuery _records;
     private readonly IHostStore _hosts;
+    private readonly IIssueOwnerStore _issueProfiles;
 
     public IssueCaseCoordinator(
         IIssueCaseStore cases,
         IIssueHandlingStore issueHandlings,
         IRecordHandlingStore handlingLog,
         IAnalysisRecordQuery records,
-        IHostStore hosts)
+        IHostStore hosts,
+        IIssueOwnerStore issueProfiles)
     {
         _cases = cases;
         _issueHandlings = issueHandlings;
         _handlingLog = handlingLog;
         _records = records;
         _hosts = hosts;
+        _issueProfiles = issueProfiles;
     }
 
     /// <summary>
@@ -183,52 +186,86 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 批次逐日掛接（§0.4-C）：console 排程每天寫入新的 DailyAnalysisRecord 後呼叫，
-    /// 把當日 TopIssues 中「有進行中案件」的問題掛進案件——只掛進行中案件（已結案案件見
-    /// <see cref="SyncStatus"/> 的重現語意），該日該問題已有標記時不覆蓋（防禦性，理論上不會發生），
-    /// 內建冪等（已掛過的日子下次呼叫直接跳過），失敗由呼叫端決定是否吞掉（不擋分析主流程）。
+    /// 批次逐日掛接（§0.4-C，回饋十九輪批次F 擴充機房結論自動套用）：console 排程每天寫入新的
+    /// DailyAnalysisRecord 後呼叫，依優先序把當日 TopIssues 掛上狀態：
+    ///   1. 該日該問題已有標記時不覆蓋（防禦性，理論上不會發生，或已掛過——內建冪等）。
+    ///   2. 有進行中案件（既有行為）：掛進案件狀態，記 <see cref="HandlingActions.CaseAttach"/>。
+    ///   3. 沒有進行中案件，但問題檔案（<see cref="IssueProfile"/>）有機房結論且
+    ///      <see cref="IssueProfile.AutoApply"/>＝true：自動套用該結論，記
+    ///      <see cref="HandlingActions.FleetApply"/>——這正是機房結論存在的主要情境
+    ///      （多數問題從沒建過案件，不會走到分支 2）。
+    /// 只掛進行中案件／有 AutoApply 結論的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
+    /// 失敗由呼叫端決定是否吞掉（不擋分析主流程）。
     /// </summary>
     public CaseAttachResult AttachNewDay(string hostName, DateTime date, IReadOnlyCollection<LogIssueSignature> issues, DateTime occurredAt)
     {
-        var openCases = _cases.GetOpenForHost(hostName);
-        if (openCases.Count == 0 || issues.Count == 0) return new CaseAttachResult(0);
+        if (issues.Count == 0) return new CaseAttachResult(0);
 
+        var openCases = _cases.GetOpenForHost(hostName);
         var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+
+        // fleet 結論索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
+        // 不是逐問題查）。只索引真正會被套用的（AutoApply 開啟且已有結論）
+        var profilesByKey = _issueProfiles.GetAll()
+            .Where(p => p.AutoApply && p.ConclusionStatus != null)
+            .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
+            .ToDictionary(g => g.Key, g => g.First());
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
         foreach (var issue in issues)
         {
             var key = IssueSignatureKey.For(issue);
-            if (!casesByIssueKey.TryGetValue(key, out var openCase)) continue;
             if (existingForDay.ContainsKey(key)) continue;   // 已有標記（防禦性）或已掛過（冪等）→ 不覆蓋
 
+            if (casesByIssueKey.TryGetValue(key, out var openCase))
+            {
+                toSave.Add(new IssueHandling
+                {
+                    HostName = hostName, Date = date, IssueKey = key, Status = openCase.Status,
+                    Note = openCase.Note, DueDate = openCase.DueDate, CaseId = openCase.CaseId,
+                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
+                });
+
+                _handlingLog.AppendLog(new RecordHandlingLog
+                {
+                    HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
+                    Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
+                    ActorId = null, ActorAccount = string.Empty,
+                    Action = HandlingActions.CaseAttach, CreatedAt = occurredAt
+                });
+
+                if (date.Date > openCase.LastLinkedDate.Date)
+                {
+                    openCase.LastLinkedDate = date.Date;
+                    openCase.UpdatedAt = occurredAt;
+                    // **累積後一次寫**（體檢 S4／docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
+                    // 原本在迴圈內逐案 Save，2000 台每晚約 4000 次寫入——blob 時代那是
+                    // 4000 次整份讀改寫，且與 Web 端的標記操作搶同一把鎖
+                    casesToSave.Add(openCase);
+                }
+                continue;
+            }
+
+            if (!profilesByKey.TryGetValue(IssueProfile.KeyOf(issue.Source, issue.EventId), out var profile)) continue;
+
+            var note = $"〔機房結論〕{profile.ConclusionNote}";
             toSave.Add(new IssueHandling
             {
-                HostName = hostName, Date = date, IssueKey = key, Status = openCase.Status,
-                Note = openCase.Note, DueDate = openCase.DueDate, CaseId = openCase.CaseId,
+                HostName = hostName, Date = date, IssueKey = key, Status = profile.ConclusionStatus!,
+                Note = note, DueDate = null, CaseId = null,
                 ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
             });
 
             _handlingLog.AppendLog(new RecordHandlingLog
             {
-                HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
-                Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
+                HostName = hostName, Date = date, Status = profile.ConclusionStatus!, IssueKey = key,
+                IssueLabel = issue.SourceEventLabel, Note = note,
                 ActorId = null, ActorAccount = string.Empty,
-                Action = HandlingActions.CaseAttach, CreatedAt = occurredAt
+                Action = HandlingActions.FleetApply, CreatedAt = occurredAt
             });
-
-            if (date.Date > openCase.LastLinkedDate.Date)
-            {
-                openCase.LastLinkedDate = date.Date;
-                openCase.UpdatedAt = occurredAt;
-                // **累積後一次寫**（體檢 S4／docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
-                // 原本在迴圈內逐案 Save，2000 台每晚約 4000 次寫入——blob 時代那是
-                // 4000 次整份讀改寫，且與 Web 端的標記操作搶同一把鎖
-                casesToSave.Add(openCase);
-            }
         }
 
         _issueHandlings.SaveMany(toSave);
