@@ -686,3 +686,64 @@ E0~E8 全部完成，commit 序列 `f079eb0`→`51b1a3d`，dev 分支 `feature/f
 文件參照，並核對剩餘 4 處 `_repository.Query` 呼叫端皆屬單一主機／單一問題
 範疇，非批次E範疇的規模化風險。除批次E6（AI 未設定，無法瀏覽器驗證，
 改用單元測試補強）外，全部批次皆對真實 dev DB 端到端瀏覽器驗證過。
+
+---
+
+### 批次F1+F2（完成）
+
+`IssueOwnerRule` → `IssueProfile` 改名（`git mv`，純改名 commit）＋擴充六個欄位
+（`ConclusionStatus`／`ConclusionNote`／`ConcludedById`／`ConcludedByAccount`／
+`ConcludedAt`／`AutoApply`）；blob key `issue_owners` 沿用，零資料遷移。
+`AttachNewDay` 改為三層優先序（人工標記／既有處理 → 進行中案件 → fleet 結論
+`AutoApply=true` 時自動套用），fleet 套用寫入 `HandlingActions.FleetApply`，
+刻意不寫 NoiseMark（避免 `ResolveIssueStatus` 多一個判斷來源）。
+
+### 批次F3+F4（完成）
+
+設定入口採單一共用服務方法（`IssueOwnerAdminService.SetConclusion`／
+`ClearConclusion`），供兩個呼叫端共用：F3 統一標記 dialog 的「自動套用」
+checkbox（`records.js`，勾選時 `BulkCloseIssueRequest.AutoApply=true`，
+`IssueHandlingCommandService.BulkCloseIssue` 內呼叫）、F4「問題檔案」管理頁
+（`/admin/issue-owners`，`issue-owners.js`／`IssueOwners.cshtml`）的機房結論
+編輯區。API 採 `PUT/DELETE {source}/{eventId}/conclusion` 子資源慣例。
+
+**體檢揪出真 bug**：既有的 `IssueOwnerAdminService.Upsert`（負責人單獨儲存
+路徑）原本建構全新 `IssueProfile` 未帶入既有機房結論欄位，會在每次「只改
+負責人、沒動結論」的表單儲存時靜默清空已設定的機房結論——`IssueOwnerStore.
+Upsert` 本身的逐欄複製沒問題，問題出在呼叫端沒把「它不認識的欄位」原樣
+帶回去。修正為先 `before = _issueOwners.Get(...)` 再複製六個結論欄位到新建
+的 `IssueProfile`，並補迴歸測試
+`IssueOwnerAdminServiceTests.Upsert負責人表單_不清空既有機房結論`。
+
+瀏覽器體檢也抓到一處純前端 bug：`issue-owners.js` 的 `openModal()` 有一行
+寫死的舊文字「編輯問題負責人／新增問題負責人規則」，蓋掉了 cshtml 已經改
+過的標題——只有實際點開 modal 讀畫面文字才抓得到，程式碼審閱看不出來
+（cshtml 的預設標題與 JS 的執行期覆寫互相獨立，各自看都「正確」）。
+
+真實 dev SQLite 端到端瀏覽器驗證：問題檔案頁新增／編輯／設定結論／解除結論
+／刪除全流程；統一標記勾選自動套用 → API 200 → 回問題檔案頁確認機房結論
+正確落地，證明 F3 的勾選正確驅動 F4 背後的同一個 `SetConclusion`。
+
+commit `a71088e`，2023 測試綠。
+
+### 批次F5（確認免動工，無程式碼變更）
+
+比對 `IssueCaseCoordinator.AttachNewDay` 的 fleet 套用寫入
+（`ActorId=null, ActorAccount=string.Empty, Note="〔機房結論〕"+結論原因`）
+與既有、已上線的案件套用寫入（`HandlingActions.CaseAttach`，同樣
+`ActorId=null, ActorAccount=string.Empty`）——形狀完全一致。詳情頁
+`record-detail.js` 的 `issueHistoryEntryItem` 對 `entry.note` 是通用渲染
+（沒有依 `Action` 分支特殊處理），`formatUserName(null, '')` 回傳空字串、
+不會顯示「undefined」之類的殘影。既有的 `CaseAttach` 寫入已經在既有功能
+中驗證過能正確顯示，`FleetApply` 走同一條渲染路徑，屬程式碼結構上的必然
+等價，不需要重新開瀏覽器逐項核對。維持規劃原文「不另做徽章」的判斷。
+
+### 批次F 全案結案摘要
+
+F1~F5 全部完成。F1/F2 commit（見批次F1+F2 段），F3/F4 commit `a71088e`，F5
+確認免動工。核心設計（IssueProfile 承載 fleet 結論、三層優先序、共用
+SetConclusion/ClearConclusion 服務方法）與 §2 決策一原文一致，無偏離。
+體檢揪出一個後端真 bug（Upsert 清空既有結論）與一個前端真 bug（modal 標題
+殘留舊文字），皆已修正並補測試／重新驗證。2023 測試綠。
+
+下一步：批次G（統計強化：基準線／PriorityScore／HostTier）。
