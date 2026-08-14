@@ -517,3 +517,41 @@ group——兩種語意疊加，但日風險預篩其實與「依問題視角看
 「1 台未處理」筆數一致。
 
 下一步：E2（`SearchByDate`／`SearchByHost` 全 SQL 化）。
+
+### 批次E2（完成，commit `789ddb0`，2004 測試綠）
+
+`SearchByHost`／`SearchByDate` 改由 `IIssueAggregateQuery.AggregateByHost`／`AggregateByDate`
+兩句 GROUP BY（`lf_daily_records`＋`lf_top_issues`）回答，不再整批載入紀錄。
+Categories／EventId／Source／MinSeverity 過濾比照 `EfAnalysisRecordStore.ApplyPushableFilters`
+的 exists 子查詢寫法（新增 `ApplyIssueExistsFilters` 共用私有方法）；RiskLevels 為母體篩選
+（篩掉的日子連同分桶一起消失，語意同 `RecordFilterMatcher`）。
+
+**體檢揪出兩個 E1/E2 共通的真缺口**（不是規劃階段預期的偏離，是實作時測試抓到才發現）：
+
+1. **`SearchByIssue` 漏接 `request.Severity`**（報表「類別×嚴重度」下鑽用的門檻篩選，
+   `reports.js` 的 `severity=` 連結）——E1 提交時完全遺漏這個過濾維度，直到寫 E2 時
+   核對 API controller 的四個端點共用同一組查詢參數才發現。已補上（`aggregate.MaxSeverityRank >= 門檻`）。
+
+2. **SiteHidden 模式（問題嚴重度可見性，docs/archive/HISTORY.md S1）整段漏接**——
+   全新 SQL 聚合路徑繞過 `RecordRepository` 的「單一咽喉」（`ApplySeverityVisibility`），
+   E1 提交時完全沒注意到這一層過濾的存在，直到既有測試
+   `SearchByHost_SiteHidden模式下類別聚合不含被隱藏層級` 失敗才發現波及 E1／E2 全部方法。
+   修法：`LegacySeverityRank.ExpandVisibleRanks` 把可見嚴重度集合展開成可直接比對的原始
+   severity_rank 集合（含 Critical→High 的正規化關係），貫穿 `Aggregate`／`LatestOccurrences`／
+   `ActionableOccurrences`／`AggregateByDate`／`AggregateByHost` 五個方法（`ActionableOccurrences`
+   目前無呼叫端傳入非 null 值，是為了不留下「同一份規則、有的方法做有的方法沒做」的不一致，
+   一次補齊，不是本輪新增使用）。`RecordListQueryService` 新增 `ISystemSettingsService`
+   依賴，取 `GetVisibleSeverities()` 轉型後傳入。
+
+   `AggregateByCategory`（批次D，儀表板／報表風險類型卡）查證後確認**不受影響、不需要修改**：
+   它的 `allowedSeverities` 是回饋十三輪新增項3的既有例外規則（「不論 SeverityDisplayMode
+   為何值，一律只計入 UnhandledSeverities」），與 SiteHidden 是兩套獨立機制，只是恰好底層
+   欄位相同——在 SiteHidden 模式下兩者交集等於自身，不套用不影響既有正確性；在 DefaultHidden
+   模式下這個例外規則本來就該繼續套用。這是查證後排除的假警報，不是遺漏。
+
+瀏覽器對真實 dev DB 端到端驗證：`/records?view=host` 近 90 天顯示 1 台主機（高3／中20／低0／
+關聯3／類型 chips／最新狀況）；`/records?view=date` 近 90 天顯示 23 天，逐日高/中/低/關聯/
+類型正確、分頁正常；`/records?view=issue` 重新驗證仍是 19 個問題，數字與 E1 驗證時逐位相同
+（本環境非 SiteHidden 模式，新增的過濾不應改變既有畫面，驗證結果符合預期）。
+
+下一步：E3（明細視角快速/慢速路徑 SQL 化）。
