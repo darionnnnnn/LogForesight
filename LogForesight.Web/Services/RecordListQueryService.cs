@@ -405,38 +405,40 @@ public class RecordListQueryService
 
         int processing = 0, resolved = 0, unhandled = 0;
         var handlerIds = new HashSet<long>();
+        // 觀察到期／逾期是使用者設定的行事曆期限，比對的是真實時鐘，不是分析錨點——
+        // 「觀察至 8/20」指的是真實日曆的 8/20，不會因為分析資料只到昨天而跟著往後挪
+        // （與 DaysSinceLastSeen 的資料錨點是兩件不同的事，批次C 沒有動這裡）
+        var today = DateTime.Today;
 
         foreach (var hostName in hostNames)
         {
             var openCase = openCases.FirstOrDefault(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
-            if (openCase != null)
+            if (openCase?.HandlerId.HasValue == true) handlerIds.Add(openCase.HandlerId.Value);
+
+            IssueHandling? handling = null;
+            IssueSeverity latestSeverity = default;
+            if (openCase == null)
             {
-                if (openCase.HandlerId.HasValue) handlerIds.Add(openCase.HandlerId.Value);
-                // 觀察到期（docs/archive/FEEDBACK-8-PLAN.md #4）：問題仍在發生，計入未處理——處理人仍留在
-                // Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，不是「沒人管」）
-                if (IssueHandlingStatuses.IsObservationExpired(openCase.Status, openCase.DueDate, DateTime.Today))
-                    unhandled++;
-                else
-                    processing++;
-                continue;
+                var latestForHost = g
+                    .Where(x => string.Equals(HostNameOf(lookup, x.Record), hostName, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.Record.Date)
+                    .First();
+                var key = IssueSignatureKey.For(latestForHost.Issue);
+                handling = issueHandlings.FirstOrDefault(h =>
+                    string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
+                    h.Date.Date == latestForHost.Record.Date.Date &&
+                    string.Equals(h.IssueKey, key, StringComparison.Ordinal));
+                latestSeverity = latestForHost.Issue.Severity;
             }
 
-            var latestForHost = g
-                .Where(x => string.Equals(HostNameOf(lookup, x.Record), hostName, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.Record.Date)
-                .First();
-            var key = IssueSignatureKey.For(latestForHost.Issue);
-            var handling = issueHandlings.FirstOrDefault(h =>
-                string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase) &&
-                h.Date.Date == latestForHost.Record.Date.Date &&
-                string.Equals(h.IssueKey, key, StringComparison.Ordinal));
-
-            if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) resolved++;
-            else if (handling != null && handling.Status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Escalated) processing++;
-            else if (handling != null && IssueHandlingStatuses.IsObservationActive(handling.Status, handling.DueDate, DateTime.Today)) processing++;
-            else if (handling != null && IssueHandlingStatuses.IsObservationExpired(handling.Status, handling.DueDate, DateTime.Today)) unhandled++;
-            else if (!unhandledSeverities.Contains(latestForHost.Issue.Severity)) resolved++;
-            else unhandled++;
+            // 處理人仍留在 Handlers 清單（人還是那個人，只是這個問題現在該重新處理了，
+            // 不是「沒人管」）——這一點與狀態判定分開處理，不受 IssueGroupStatusResolver 影響
+            switch (IssueGroupStatusResolver.Resolve(openCase, handling, latestSeverity, unhandledSeverities, today))
+            {
+                case HostIssueStatus.Open: unhandled++; break;
+                case HostIssueStatus.Processing: processing++; break;
+                case HostIssueStatus.Resolved: resolved++; break;
+            }
         }
 
         var handlers = handlerIds

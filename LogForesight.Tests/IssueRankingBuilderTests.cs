@@ -174,6 +174,29 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.True(row.ElevatesDayRisk);
     }
 
+    /// <summary>
+    /// 觀察到期比對真實時鐘，不是分析錨點（回饋十九輪批次E0 抽取共用解析器時的迴歸測試——
+    /// 把 today 誤用成分析錨點，會讓「觀察至昨天」的案子被誤判成仍在觀察中而非已到期）。
+    /// </summary>
+    [Fact]
+    public void 觀察到期比對真實時鐘_不是分析錨點()
+    {
+        var today = DateTime.Today;
+        var hostA = _hosts.Upsert(new WebHost { HostName = "A" });
+        Add(hostA.HostId, "A", today, Issue("disk", 153, severity: IssueSeverity.High));
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = "A", Date = today,
+            IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning),
+            Status = IssueHandlingStatuses.Observing, DueDate = today.AddDays(-1)   // 觀察期已過
+        });
+
+        var row = BuilderWithRollup().Build(today, today, null, totalHosts: 1).Single();
+
+        Assert.Equal(1, row.OpenHostCount);   // 到期＝仍在發生，計入未處理，不是已處理
+        Assert.Equal(0, row.ResolvedHostCount);
+    }
+
     /// <summary>可見範圍的授權語意與查詢層一致：空集合＝零結果，不是「不限制」</summary>
     [Fact]
     public void 可見範圍_空集合為零結果()

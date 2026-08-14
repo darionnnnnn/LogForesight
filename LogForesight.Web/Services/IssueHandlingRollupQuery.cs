@@ -7,10 +7,10 @@ namespace LogForesight.Web.Services;
 /// （DashboardService／ReportService）從未真正傳過，一直是死碼，
 /// <c>OpenHostCount</c>／<c>ResolvedHostCount</c> 因此恆為 0。
 ///
-/// **每主機的三態判定與 <see cref="RecordListQueryService"/> 的依問題視角同一套規則**
-/// （案件優先於逐日標記／觀察到期算未處理／未標記時依嚴重度預設是否需要處理）——
-/// 這裡刻意複用同一份規則描述而非另外發明一套，否則儀表板與問題查詢頁對「這個問題
-/// 有沒有結論」的判斷會對不上，正是外部審查點名的「三個畫面數字對不起來」那種缺陷。
+/// **每主機的三態判定與 <see cref="RecordListQueryService"/> 的依問題視角共用同一個
+/// <see cref="IssueGroupStatusResolver"/>**（回饋十九輪批次E0：原本兩處各自實作同一套規則，
+/// 已收斂成單一函數）——否則儀表板與問題查詢頁對「這個問題有沒有結論」的判斷會對不上，
+/// 正是外部審查點名的「三個畫面數字對不起來」那種缺陷。
 ///
 /// 資料來源全部走真表：<see cref="IIssueAggregateQuery.LatestOccurrences"/> 取代整段期間的
 /// blob 撈取，只查「這幾個問題、這些主機」的最近一次出現快照，處理狀態批次載入
@@ -71,15 +71,27 @@ public class IssueHandlingRollupQuery
 
         var openCount = new Dictionary<string, int>(StringComparer.Ordinal);
         var resolvedCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        // 觀察到期／逾期比對真實時鐘，不是分析錨點——見 RecordListQueryService.BuildIssueGroup
+        // 對應位置的說明，兩處必須用同一個基準才不會又是一組對不起來的數字
+        var today = DateTime.Today;
 
         foreach (var occurrence in occurrences)
         {
             if (!hostsById.TryGetValue(occurrence.HostId, out var host)) continue;
 
-            var (isOpen, isResolved) = ResolveHostStatus(occurrence, host.HostName, openCasesByHost, handlingsByHost, unhandledSeverities);
+            var openCase = openCasesByHost.TryGetValue(host.HostName, out var cases)
+                ? cases.FirstOrDefault(c => string.Equals(c.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
+                : null;
+            var handling = openCase == null && handlingsByHost.TryGetValue(host.HostName, out var rows)
+                ? rows.FirstOrDefault(h =>
+                    h.Date.Date == occurrence.LastSeen.Date && string.Equals(h.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
+                : null;
 
-            if (isOpen) openCount[occurrence.IssueKey] = openCount.GetValueOrDefault(occurrence.IssueKey) + 1;
-            if (isResolved) resolvedCount[occurrence.IssueKey] = resolvedCount.GetValueOrDefault(occurrence.IssueKey) + 1;
+            var status = IssueGroupStatusResolver.Resolve(
+                openCase, handling, (IssueSeverity)occurrence.SeverityRank, unhandledSeverities, today);
+
+            if (status == HostIssueStatus.Open) openCount[occurrence.IssueKey] = openCount.GetValueOrDefault(occurrence.IssueKey) + 1;
+            if (status == HostIssueStatus.Resolved) resolvedCount[occurrence.IssueKey] = resolvedCount.GetValueOrDefault(occurrence.IssueKey) + 1;
         }
 
         return occurrences
@@ -89,40 +101,5 @@ public class IssueHandlingRollupQuery
                 key => key,
                 key => new IssueHandlingRollup(openCount.GetValueOrDefault(key), resolvedCount.GetValueOrDefault(key)),
                 StringComparer.Ordinal);
-    }
-
-    /// <summary>
-    /// 單一主機對單一問題的處理概況——與 <c>RecordListQueryService.BuildIssueGroup</c>
-    /// 逐主機迴圈內的判定逐位相同：案件優先；否則看最近一次出現當天的問題層級標記；
-    /// 未標記時依嚴重度是否在「不處理」名單內預設為已處理。
-    /// </summary>
-    private static (bool IsOpen, bool IsResolved) ResolveHostStatus(
-        HostIssueOccurrence occurrence, string hostName,
-        IReadOnlyDictionary<string, List<IssueCase>> openCasesByHost,
-        IReadOnlyDictionary<string, List<IssueHandling>> handlingsByHost,
-        IReadOnlySet<IssueSeverity> unhandledSeverities)
-    {
-        var openCase = openCasesByHost.TryGetValue(hostName, out var cases)
-            ? cases.FirstOrDefault(c => string.Equals(c.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
-            : null;
-
-        if (openCase != null)
-        {
-            // 觀察到期：問題仍在發生，計入未處理；否則案件進行中，既非未處理也非已處理
-            var expired = IssueHandlingStatuses.IsObservationExpired(openCase.Status, openCase.DueDate, DateTime.Today);
-            return (IsOpen: expired, IsResolved: false);
-        }
-
-        var handling = handlingsByHost.TryGetValue(hostName, out var rows)
-            ? rows.FirstOrDefault(h =>
-                h.Date.Date == occurrence.LastSeen.Date && string.Equals(h.IssueKey, occurrence.IssueKey, StringComparison.Ordinal))
-            : null;
-
-        if (handling != null && IssueHandlingStatuses.IsClosed(handling.Status)) return (false, true);
-        if (handling != null && handling.Status is IssueHandlingStatuses.InProgress or IssueHandlingStatuses.Escalated) return (false, false);
-        if (handling != null && IssueHandlingStatuses.IsObservationActive(handling.Status, handling.DueDate, DateTime.Today)) return (false, false);
-        if (handling != null && IssueHandlingStatuses.IsObservationExpired(handling.Status, handling.DueDate, DateTime.Today)) return (true, false);
-        if (!unhandledSeverities.Contains((IssueSeverity)occurrence.SeverityRank)) return (false, true);
-        return (true, false);
     }
 }
