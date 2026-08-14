@@ -376,4 +376,35 @@ score = 100 × severityW × (0.5 + 0.5×hostRatio) × spreadW × noveltyW × ope
 
 ## 實作紀錄與規劃偏離（實作時填寫）
 
-（依慣例：各批次完成後記錄實際 commit、與規劃的偏離及理由。）
+### 批次A（完成，commit `d27ede7`，1966 測試綠）
+
+四項全部完成，三處與規劃原文有偏離，理由如下：
+
+1. **A2 主機合併修復的做法與規劃原文不同**：規劃草稿曾設想「MergeHost 回寫
+   `lf_top_issues.host_id`」，實作前重新評估發現這會破壞 `UnmergeHost` 的反向修復能力
+   （回寫後無法分辨目標主機底下哪些列原本屬於來源主機）。改為**查詢端解析**——
+   `EfIssueAggregateQuery` 新增主機合併鏈解析（`HostAliasIndex`），與既有 blob 路徑
+   （`HostLookup`／`RecordRepository`）用同一套邏輯，`host_id` 維持「紀錄當下識別」的
+   歷史事實不變。連帶修掉一個規劃未預期的第二個問題：可見範圍只傳存活主機 id 時，
+   舊識別下的合併前歷史會被 `WHERE host_id IN (...)` 整段濾掉（比雙重計數更嚴重）。
+2. **A1 的 rollup 接線比規劃原文描述的更完整**：規劃原文只說「補傳
+   `handlingByIssue`」，實作時發現這個可選參數本身就是死碼的成因（兩個呼叫端「忘記
+   傳」正是問題所在），因此把計算收進 `IssueRankingBuilder` 內部（新增
+   `IssueHandlingRollupQuery` 服務＋ `IIssueAggregateQuery.LatestOccurrences` 查詢
+   方法），呼叫端不再需要知道 rollup 存在。§10.6 的排除邏輯（`ExcludeConcluded`）與
+   兩頁footer/副標文字亦一併完成（原規劃第二條）。
+3. **報表「顯示範圍」選擇器（D6 乙案的 UI 部分）延後**：與使用者確認後，這輪只做
+   「固定排除已有結論＋誠實顯示排除筆數」，不做選擇器 UI（獨立功能，且需要
+   ui-ux-pro-max 設計決策的範圍超出本批次），已記入 BACKLOG。
+
+依 CLAUDE.md 規則，動手前就 A1 的前端呈現（未處理欄＋排除筆數文字）詢問是否套用
+`ui-ux-pro-max`；使用者選擇套用，實作沿用專案既有 `docs/DESIGN-SYSTEM.md`（企業藍＋
+Fira，已持久化的設計系統）與既有元件慣例（`renderTable`／footer 容器置於表格外以避免
+`replaceChildren` 清空的既有寫法），未重新產生新的色彩/字型/版面規格。
+
+瀏覽器端到端驗證（真實 dev DB，非僅單元測試）：儀表板「重點問題」卡與報表「問題排行」
+在同一份資料上都顯示「另有 29 個問題已有結論（未列入）」，「未處理」欄數字與逐問題
+的處理概況吻合，兩頁數字一致——直接驗證了這輪要解的「三個畫面數字對不起來」那類缺陷
+在這個路徑上已經收斂。
+
+批次B（資料基盤）尚未開始。
