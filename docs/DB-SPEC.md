@@ -109,8 +109,35 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   uncovered_checks_json text                      -- List<string>（未檢查項目申報）
   report_id        bigint NULL FK → lf_reports       -- 有風險報告時指向全文
   created_at       timestamp NOT NULL
+  extract_version  int NOT NULL DEFAULT 0            -- 回饋十九輪批次B 新增：抽出欄（headline/
+                                                     -- data_incomplete/security_log_available/
+                                                     -- error_count/warning_count/ai_analyzed/
+                                                     -- ai_pending）的回填版本號，0=舊列尚未回填、
+                                                     -- 由 DailyRecordBackfiller 背景補齊（同
+                                                     -- lf_top_issues 既有的回填機制）
   UNIQUE (host_id, record_date)
 ```
+
+```
+lf_issue_first_seen                                  -- 回饋十九輪批次B 新增：問題的機房首見日
+                                                     -- （不受查詢期間截斷，回饋十九輪批次G4
+                                                     -- 呈現用；與 lf_top_issues.record_date 的
+                                                     -- MIN 不同——那受查詢期間截斷，這張表
+                                                     -- insert-if-absent、之後不論查哪個期間
+                                                     -- 都不變）
+  source_key     nvarchar(255) NOT NULL           -- Source 正規化大寫（collation-safety，
+                                                   -- 同 host_name_key 慣例）
+  event_id       int NOT NULL
+  source_name    nvarchar(255) NOT NULL           -- 顯示用原始大小寫
+  first_seen     date NOT NULL
+  PK (source_key, event_id)
+```
+
+`lf_issue_first_seen` 寫入時 insert-if-absent、已存在時只在新日期較早才更新（並行寫入
+撞唯一鍵時視為正常情況，改走條件式 UPDATE 補寫，不是需要中止分析的錯誤——見
+`EfAnalysisRecordStore.UpsertFirstSeen`）。鍵刻意用 `(source_key, event_id)`，不含
+`log_name`/`entry_type`：首見的語意是「這個問題」（依問題視角的分組鍵），不是某個完整
+簽章第一次出現。
 
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
@@ -293,7 +320,8 @@ lf_qa_messages
 ### 索引
 
 ```
-lf_daily_records:  UNIQUE(host_id, record_date)；(record_date, risk_level) —「今天全機房哪些主機有風險」
+lf_daily_records:  UNIQUE(host_id, record_date)；(record_date, risk_level) —「今天全機房哪些主機有風險」；(extract_version) — 回填掃描
+lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
