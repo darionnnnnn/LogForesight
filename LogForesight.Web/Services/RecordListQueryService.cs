@@ -461,7 +461,10 @@ public class RecordListQueryService
             FirstSeen = from.ToString("yyyy-MM-dd"),
             ActiveDays = g.Select(x => x.Record.Date.Date).Distinct().Count(),
             PeriodDays = periodDays,
-            DaysSinceLastSeen = Math.Max(0, (DateTime.Today - latest.Record.Date.Date).Days),
+            // 距今天數以分析資料的錨點（昨天）為準，不是真實今天（回饋十九輪批次C）：
+            // 分析永遠只產到昨天，用真實今天算會讓「昨天發生的問題」顯示成「1 天前」，
+            // 跟儀表板／報表的口徑（IssueRankingBuilder 同一批次的修法）對不起來
+            DaysSinceLastSeen = Math.Max(0, (DateTime.Today.AddDays(-1) - latest.Record.Date.Date).Days),
             ElevatesDayRisk = g.Any(x => x.Issue.ElevatesDayRisk),
 
             KnownIssue = latest.Issue.KnownIssue,

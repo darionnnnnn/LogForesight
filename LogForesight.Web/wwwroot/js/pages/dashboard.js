@@ -574,7 +574,7 @@ function issueSpanCell(issue) {
     hint.className = 'small';
     if (issue.daysSinceLastSeen === 0) {
         hint.className += ' text-danger fw-semibold';
-        hint.textContent = '今天仍在發生';
+        hint.textContent = '昨日仍在發生';
     } else {
         hint.className += ' text-muted';
         hint.textContent = `${issue.daysSinceLastSeen} 天前`;

@@ -144,6 +144,23 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.Equal(3, row.DaysSinceLastSeen);
     }
 
+    /// <summary>
+    /// 距今天數以查詢的 to 為準，不是另外抓一次真實今天（回饋十九輪批次C）：
+    /// Dashboard／Report 現在傳的 to 是分析錨點（昨天），這裡驗證即使 to 跟真實今天不同，
+    /// 算出來的天數仍是相對 to，不會因為真實時鐘往前走而多算一天。
+    /// </summary>
+    [Fact]
+    public void 距今天數以查詢的to為準_不是真實今天()
+    {
+        var to = DateTime.Today.AddDays(-1);   // 模擬 Dashboard 傳入的錨點（昨天）
+        Add(1, "A", to.AddDays(-3), Issue("disk", 153));   // 距 to 三天前發生
+
+        var row = Builder().Build(to.AddDays(-10), to, null, totalHosts: 1).Single();
+
+        // 若實作錯誤地用真實 DateTime.Today 計算，這裡會多算 1 天變成 4
+        Assert.Equal(3, row.DaysSinceLastSeen);
+    }
+
     [Fact]
     public void 重大旗標與最高嚴重度()
     {

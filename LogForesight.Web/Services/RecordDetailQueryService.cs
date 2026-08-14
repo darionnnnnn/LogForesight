@@ -257,7 +257,11 @@ public class RecordDetailQueryService
 
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
 
-        var from = DateTime.Today.AddDays(-days + 1);
+        // 錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天，時間軸錨在今天
+        // 會固定多出一格「沒分析」——那不是涵蓋缺口，只是今晚批次還沒跑到而已，
+        // 硬把它畫成跟真正的缺口同一種灰格，反而稀釋了缺口訊號的可信度
+        var anchor = DateTime.Today.AddDays(-1);
+        var from = anchor.AddDays(-days + 1);
         // 別名展開：這台主機若併入過其他主機，時間軸要涵蓋合併前的那段歷史，
         // 否則「風險時間軸」會在合併日之前整片空白，看起來像沒有分析過。
         // applyDayRiskVisibility=false（docs/archive/FEEDBACK-3-PLAN.md #8 豁免）：時間軸與下方的
@@ -277,7 +281,7 @@ public class RecordDetailQueryService
         // 逐日填格：**沒有紀錄的日子也要有格子**——那代表「這天沒分析」，
         // 與「這天分析過、沒風險」是完全不同的意義，畫面上必須分得出來
         var timeline = new List<TimelineDayDto>();
-        for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
+        for (var date = from; date <= anchor; date = date.AddDays(1))
         {
             records.TryGetValue(date.Date, out var record);
             timeline.Add(new TimelineDayDto
@@ -334,7 +338,9 @@ public class RecordDetailQueryService
         _visibility.EnsureVisible(hostId);
         var host = _hosts.Get(hostId) ?? throw DomainException.NotFound("找不到這台主機。");
 
-        var from = DateTime.Today.AddDays(-days + 1);
+        // 錨點與 GetHostDetail 同一套（回饋十九輪批次C）：days 視窗的語意要一致，
+        // 否則「重點問題」展開的逐日發生明細與上方時間軸看到的區間會對不上
+        var from = DateTime.Today.AddDays(-1).AddDays(-days + 1);
         var records = _repository.Query(new RecordQueryFilter
         {
             Hosts = _repository.ResolveHostKeys(hostId),

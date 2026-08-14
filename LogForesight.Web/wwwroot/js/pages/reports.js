@@ -15,7 +15,7 @@
 
 import { api, getDisplaySettings } from '../core/api.js';
 import { statCard } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal } from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -715,8 +715,11 @@ for (const btn of document.querySelectorAll('#report-scope-chips button')) {
 }
 
 function setRange(days) {
+    // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天，
+    // 錨在今天會讓「本週/本月/近 90 天」的最後一天必然沒有資料
     const to = new Date();
-    const from = new Date();
+    to.setDate(to.getDate() - 1);
+    const from = new Date(to);
     from.setDate(from.getDate() - days + 1);
 
     // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天

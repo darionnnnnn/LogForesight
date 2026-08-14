@@ -16,7 +16,7 @@ import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
+import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 
@@ -855,7 +855,7 @@ function issueLastSeenCell(group) {
     hint.className = 'small';
     if (group.daysSinceLastSeen === 0) {
         hint.className += ' text-danger fw-semibold';
-        hint.textContent = '今天仍在發生';
+        hint.textContent = '昨日仍在發生';
     } else if (group.daysSinceLastSeen <= 3) {
         hint.className += ' text-danger';
         hint.textContent = `${group.daysSinceLastSeen} 天前`;
@@ -1690,11 +1690,14 @@ document.getElementById('view-toggle').addEventListener('click', event => {
 for (const button of document.querySelectorAll('[data-range]')) {
     button.addEventListener('click', () => {
         const days = Number(button.dataset.range);
-        const from = new Date();
+        // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
+        const to = new Date();
+        to.setDate(to.getDate() - 1);
+        const from = new Date(to);
         from.setDate(from.getDate() - days + 1);
 
         document.getElementById('filter-from').value = toLocalDateString(from);
-        document.getElementById('filter-to').value = todayLocal();
+        document.getElementById('filter-to').value = toLocalDateString(to);
         currentPage = 1;
         search();
     });
@@ -1765,14 +1768,14 @@ function quote(value) {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-// 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
+// 期間篩選的預設終點錨在昨天（回饋十九輪批次C），不是真實今天——見 analysisAnchorLocal 的說明
 function today() {
-    return todayLocal();
+    return analysisAnchorLocal();
 }
 
 function defaultFrom() {
     const date = new Date();
-    date.setDate(date.getDate() - 6);
+    date.setDate(date.getDate() - 7);   // 錨點已右移一天，往前 7 天湊回原本 7 天的預設窗
     return toLocalDateString(date);
 }
 

@@ -116,7 +116,9 @@ public class ReportsController : ControllerBase
     public ApiResponse<ReportSummaryDto> Summary(
         [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope)
     {
-        var toDate = ParseDate(to) ?? DateTime.Today;
+        // 未帶 to 時的預設終點錨在昨天（回饋十九輪批次C）：前端一律會帶明確日期
+        // （reports.js 的 setRange），這裡是給直接呼叫 API 的情境一個正確的預設值
+        var toDate = ParseDate(to) ?? DateTime.Today.AddDays(-1);
         var fromDate = ParseDate(from) ?? toDate.AddDays(-29);
 
         return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope));

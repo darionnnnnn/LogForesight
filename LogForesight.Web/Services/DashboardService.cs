@@ -41,7 +41,11 @@ public class DashboardService
 
     public DashboardDto GetSummary(int days)
     {
-        var from = DateTime.Today.AddDays(-days + 1);
+        // 期間錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
+        // （AnalysisOrchestrator 固定分析 yesterday），錨在真實今天會讓「今天」按鈕查詢
+        // 一個必然是空的區間，還觸發「本期無風險訊號」綠橫幅——把「沒資料」講成「沒事」。
+        var anchor = DateTime.Today.AddDays(-1);
+        var from = anchor.AddDays(-days + 1);
         var records = _repository.Query(new RecordQueryFilter { From = from });
         var visibleHosts = _visibility.GetVisibleHosts();
 
@@ -49,7 +53,7 @@ public class DashboardService
         {
             Days = days,
             From = from.ToString("yyyy-MM-dd"),
-            To = DateTime.Today.ToString("yyyy-MM-dd"),
+            To = anchor.ToString("yyyy-MM-dd"),
             TotalHosts = visibleHosts.Count
         };
 
@@ -65,7 +69,7 @@ public class DashboardService
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。
         var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
-        var ranked = _issueRanking.Build(from, DateTime.Today, visibleHostIds, visibleHosts.Count);
+        var ranked = _issueRanking.Build(from, anchor, visibleHostIds, visibleHosts.Count);
         var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
         dto.TopIssues = openIssues.Take(5).ToList();
         dto.ConcludedTopIssueCount = concludedCount;

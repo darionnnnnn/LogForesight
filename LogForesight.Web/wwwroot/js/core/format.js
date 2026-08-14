@@ -172,9 +172,21 @@ export function toLocalDateString(date) {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** 今天的本地日期字串，等同 toLocalDateString(new Date()) */
+/** 今天的本地日期字串，等同 toLocalDateString(new Date())。到期日／逾期判斷等「真實時鐘」情境用這個。 */
 export function todayLocal() {
     return toLocalDateString(new Date());
+}
+
+/**
+ * 分析資料涵蓋的最後一天＝昨天（回饋十九輪批次C）：分析永遠只產到昨天
+ * （後端 AnalysisOrchestrator 固定分析 yesterday），期間篩選的預設終點與快捷範圍
+ * 錨在這一天，不是 todayLocal()——錨在今天會讓查詢區間的最後一天必然沒有資料。
+ * 到期日／逾期判斷等「真實時鐘」情境不要用這個，繼續用 todayLocal()。
+ */
+export function analysisAnchorLocal() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return toLocalDateString(d);
 }
 
 /** 千分位數字 */

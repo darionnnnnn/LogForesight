@@ -93,7 +93,11 @@ public class IssueRankingBuilder
         // ResolvedHostCount 維持 0，不影響其餘欄位。
         var handlingByIssue = _rollup?.Build(current, from, to, visibleHostIds);
 
-        var today = DateTime.Today;
+        // 距今天數以查詢期間的 to 為準，不是另外抓一次真實今天（回饋十九輪批次C）：
+        // 分析資料只到昨天，呼叫端（Dashboard/Report）傳的 to 本來就是「現在能看到的最後一天」；
+        // 用真實 DateTime.Today 算距今天數，在 to=昨天 時會讓每個問題的天數多算一天，
+        // 報表檢視歷史區間時更是離譜（會算出「距今天」而不是「距檢視區間終點」）。
+        var today = to.Date;
 
         return current
             .Select(a =>
