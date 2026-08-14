@@ -83,16 +83,14 @@ LogForesight.Web/
 ├── Controllers/
 │   ├── PagesController.cs        -- MVC：只回傳 View() 頁面殼，一頁一 Action，無資料邏輯
 │   └── Api/                      -- API：[ApiController]、[Route("api/...")]、只回傳 JSON
-│       ├── AuthController.cs
-│       ├── DashboardController.cs
-│       ├── RecordsController.cs
-│       ├── HostsController.cs
-│       ├── PermissionChangesController.cs
-│       ├── ReportsController.cs
+│       ├── AuthController.cs／AiController.cs
+│       ├── DashboardController.cs／ScheduleController.cs／HealthController.cs
+│       ├── RecordsController.cs／HandlingController.cs／HandlersController.cs
+│       ├── HostsController.cs／IssueOwnersController.cs
 │       ├── RulesController.cs
-│       ├── AdminController.cs    -- 使用者/群組/授權維護
+│       ├── AdminController.cs／SettingsController.cs／DisplaySettingsController.cs -- 使用者/群組/授權/設定維護
 │       ├── ImportsController.cs
-│       ├── RunsController.cs     -- 執行監控
+│       ├── HelpController.cs／SetupController.cs
 │       └── AuditController.cs
 ├── Models/
 │   ├── Dto/                      -- API 請求/回應物件（依 Controller 分子資料夾）
