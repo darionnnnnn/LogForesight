@@ -47,6 +47,7 @@ internal class FakeHostStore : IHostStore
         existing.RoleDesc = host.RoleDesc;
         existing.Source = host.Source;
         existing.Os = host.Os;
+        existing.Tier = host.Tier;
         existing.Active = host.Active;
         existing.GroupIds = host.GroupIds;
         existing.OwnerUserIds = host.OwnerUserIds;

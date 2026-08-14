@@ -293,6 +293,17 @@
                         </div>
                         <div class="col-4 small text-muted">混合平台請分兩次掃描匯入</div>
                     </div>
+                    <div class="row g-2 align-items-center mb-3">
+                        <div class="col-4 small">分級</div>
+                        <div class="col-4">
+                            <select class="form-select form-select-sm" id="wizard-tier">
+                                <option value="core">核心</option>
+                                <option value="standard" selected>一般</option>
+                                <option value="test">測試</option>
+                            </select>
+                        </div>
+                        <div class="col-4 small text-muted">同樣只影響本次新增的主機</div>
+                    </div>
                     <p class="small text-muted">
                         作業系統決定這批主機套用哪個平台的規則面（規則維護頁的 Windows規則／Linux規則），
                         同樣只影響本次<strong>新增</strong>的主機——既有主機的作業系統不會被改動。

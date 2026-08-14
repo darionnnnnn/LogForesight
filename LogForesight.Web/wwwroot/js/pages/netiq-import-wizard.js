@@ -190,6 +190,7 @@ async function openWizard(sentinel, subnetPrefix) {
     // 沿用上一台的選擇會讓人不知不覺把 Linux 主機匯成 Windows（規則面整個錯配，畫面上還看不出來）。
     // 下拉仍保留可改，當作混合環境（單一 Sentinel 同時有兩種 OS）的逃生門。
     document.getElementById('wizard-os').value = sentinel.os === 'linux' ? 'linux' : 'windows';
+    document.getElementById('wizard-tier').value = 'standard';
 
     renderWizardPane();
     wizardModal.show();
@@ -276,7 +277,8 @@ async function wizardSubmitImport() {
             token: wizardScan.token,
             selectedIps,
             groupAssignments,
-            os: document.getElementById('wizard-os').value
+            os: document.getElementById('wizard-os').value,
+            tier: document.getElementById('wizard-tier').value
         });
         toast(`已匯入：新增 ${result.added}、更新 ${result.updated}` +
               (result.revived > 0 ? `、復活 ${result.revived}` : ''), 'success', 6000);

@@ -286,6 +286,12 @@ public class HostDto
     /// <summary>'windows' | 'linux'——決定套用哪個平台的規則面（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
+    /// <summary>'core' | 'standard' | 'test'（回饋十九輪批次G，純人工分類）</summary>
+    public string Tier { get; set; } = "standard";
+
+    /// <summary>Tier 的中文顯示（核心／一般／測試）</summary>
+    public string TierText { get; set; } = "一般";
+
     public bool Active { get; set; }
     public long? MergedInto { get; set; }
     public DateTime? LastReportAt { get; set; }
@@ -317,7 +323,19 @@ public class SaveHostRequest
     /// <summary>'windows'（預設）| 'linux'</summary>
     public string Os { get; set; } = "windows";
 
+    /// <summary>'core' | 'standard'（預設）| 'test'（回饋十九輪批次G）</summary>
+    public string Tier { get; set; } = "standard";
+
     public bool Active { get; set; } = true;
+}
+
+/// <summary>批次設定分級（回饋十九輪批次G，同 SetGroupsBatchRequest 一次 Mutate 完成整批的理由）</summary>
+public class SetTierBatchRequest
+{
+    public List<long> HostIds { get; set; } = new();
+
+    /// <summary>'core' | 'standard' | 'test'</summary>
+    public string Tier { get; set; } = "standard";
 }
 
 public class SetIdsRequest
@@ -336,6 +354,13 @@ public class SetGroupsBatchRequest
 }
 
 public class HostGroupsBatchResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<SkippedHostDto> Skipped { get; set; } = new();
+}
+
+/// <summary>批次設定分級的結果（回饋十九輪批次G，形狀同 HostGroupsBatchResultDto）</summary>
+public class HostTierBatchResultDto
 {
     public int UpdatedCount { get; set; }
     public List<SkippedHostDto> Skipped { get; set; } = new();

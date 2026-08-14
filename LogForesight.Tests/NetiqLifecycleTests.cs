@@ -363,6 +363,42 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal("linux", _hosts.FindByName("10.1.2.63")!.Os);
     }
 
+    // ── 掃描匯入的分級（回饋十九輪批次G：只套用在本次新增的主機，同 OS 原則）────
+
+    [Fact]
+    public void 套用_新主機依指定分級登錄()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.64" }, _hosts, sentinels, tier: "core");
+
+        Assert.Equal("core", _hosts.FindByName("10.1.2.64")!.Tier);
+    }
+
+    [Fact]
+    public void 套用_未指定分級時新主機預設standard()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.65" }, _hosts, sentinels);
+
+        Assert.Equal("standard", _hosts.FindByName("10.1.2.65")!.Tier);
+    }
+
+    [Fact]
+    public void 套用_既有主機的分級不被匯入改動()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.66", IpAddress = "10.1.2.66", Source = "netiq", Tier = "core" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.66" }, _hosts, sentinels, tier: "test");
+
+        Assert.Equal("core", _hosts.FindByName("10.1.2.66")!.Tier);
+    }
+
     [Fact]
     public void 套用_新主機以IP為HostName登錄()
     {

@@ -59,7 +59,10 @@ let unpolledIds = new Set();   // 其中今晚不會被輪巡的那些
  */
 const selectedHosts = new Map();
 const batchGroupsModal = new bootstrap.Modal(document.getElementById('batch-groups-modal'));
+const batchTierModal = new bootstrap.Modal(document.getElementById('batch-tier-modal'));
 let headerCheckboxEl = null;   // 表頭全選 checkbox 的 DOM 參照，供逐列勾選後同步狀態
+
+const TIER_LABELS = { core: '核心', standard: '一般', test: '測試' };
 
 async function load() {
     renderLoading(listContainer, 5);
@@ -301,6 +304,7 @@ function render() {
             { title: '來源', sortKey: 'source', render: sourceCell },
             { title: 'IP', sortKey: 'ip', render: h => h.ipAddress ?? '' },
             { title: 'OS', sortKey: 'os', render: h => h.os === 'linux' ? 'Linux' : 'Windows' },
+            { title: '分級', render: tierCell },
             { title: '角色描述', sortKey: 'roleDesc', render: h => h.roleDesc },
             { title: '主機群組', render: h => badges(h.groupNames, '未分組（只有 admin 看得到）') },
             { title: '負責人', render: h => badges(h.ownerNames, '未指定') },
@@ -452,6 +456,12 @@ function statusBadges(host) {
     return badges;
 }
 
+/** 分級徽章（回饋十九輪批次G）：核心用醒目色引起注意，一般不特別強調，測試用中性色 */
+function tierCell(host) {
+    const variant = host.tier === 'core' ? 'danger' : host.tier === 'test' ? 'secondary' : 'light border';
+    return badge(host.tierText ?? TIER_LABELS[host.tier] ?? '一般', variant);
+}
+
 function badge(text, variant) {
     const el = document.createElement('span');
     el.className = `lf-badge lf-badge--${variant} me-1`;
@@ -583,6 +593,7 @@ function openModal(host) {
     document.getElementById('host-netiq').value = host?.netiqServer ?? '';
     document.getElementById('host-role-desc').value = host?.roleDesc ?? '';
     document.getElementById('host-os').value = host?.os ?? 'windows';
+    document.getElementById('host-tier').value = host?.tier ?? 'standard';
     document.getElementById('host-active').checked = host?.active ?? true;
 
     checkboxList(document.getElementById('host-groups'), hostGroups.map(g => ({
@@ -622,6 +633,7 @@ form.addEventListener('submit', async event => {
             netiqServer: document.getElementById('host-netiq').value.trim() || null,
             roleDesc: document.getElementById('host-role-desc').value.trim(),
             os: document.getElementById('host-os').value,
+            tier: document.getElementById('host-tier').value,
             active: document.getElementById('host-active').checked
         });
 
@@ -656,6 +668,7 @@ bulkForm.addEventListener('submit', async event => {
         const result = await api.post('/api/admin/netiq/hosts/bulk', {
             netiqServer: document.getElementById('bulk-netiq').value.trim() || null,
             os: document.getElementById('bulk-os').value,
+            tier: document.getElementById('bulk-tier').value,
             lines
         });
 
@@ -750,6 +763,30 @@ function openBatchGroupsModal() {
     batchGroupsModal.show();
 }
 
+/**
+ * 批次設定分級 modal（回饋十九輪批次G，形狀同 openBatchGroupsModal）：頂部列出已勾選主機
+ * 與現有分級徽章，套用前先看得到「會動到誰」。
+ */
+function openBatchTierModal() {
+    const hosts = [...selectedHosts.values()].sort((a, b) => a.hostName.localeCompare(b.hostName, 'zh-TW'));
+
+    document.getElementById('batch-tier-hosts-label').textContent = `已勾選主機（${hosts.length} 台）`;
+    const list = document.getElementById('batch-tier-hosts');
+    list.replaceChildren();
+    for (const host of hosts) {
+        const row = document.createElement('div');
+        row.className = 'small mb-1';
+        const name = document.createElement('span');
+        name.className = 'me-2';
+        name.textContent = host.hostName;
+        row.append(name, badge(TIER_LABELS[host.tier] ?? '一般', 'light border'));
+        list.appendChild(row);
+    }
+
+    document.getElementById('batch-tier-select').value = 'standard';
+    batchTierModal.show();
+}
+
 /** 「取代」模式下若沒勾任何群組，套用後這些主機會全部變成未分組——先警告 */
 function updateReplaceWarning() {
     const mode = document.querySelector('input[name="batch-groups-mode"]:checked').value;
@@ -769,6 +806,7 @@ document.querySelectorAll('input[name="batch-groups-mode"]').forEach(el =>
 document.getElementById('batch-groups-checks').addEventListener('change', updateReplaceWarning);
 
 document.getElementById('btn-batch-groups').addEventListener('click', openBatchGroupsModal);
+document.getElementById('btn-batch-tier').addEventListener('click', openBatchTierModal);
 document.getElementById('btn-select-all-matching')
     .addEventListener('click', event => selectAllMatching(event.currentTarget));
 document.getElementById('btn-clear-selection').addEventListener('click', () => {
@@ -806,10 +844,39 @@ document.getElementById('batch-groups-form').addEventListener('submit', async ev
     }
 });
 
+document.getElementById('batch-tier-form').addEventListener('submit', async event => {
+    event.preventDefault();
+
+    const tier = document.getElementById('batch-tier-select').value;
+
+    const saveButton = document.getElementById('batch-tier-save');
+    const restore = withBusy(saveButton, '套用中');
+
+    try {
+        const result = await api.put('/api/admin/hosts/tier/batch', {
+            hostIds: [...selectedHosts.keys()],
+            tier
+        });
+
+        toast(result.skipped.length > 0
+            ? `已更新 ${result.updatedCount} 台，略過 ${result.skipped.length} 台（已併入其他主機）`
+            : `已更新 ${result.updatedCount} 台`, 'success');
+
+        selectedHosts.clear();
+        batchTierModal.hide();
+        await load();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
 document.getElementById('btn-new-host').addEventListener('click', () => openModal(null));
 document.getElementById('btn-bulk-hosts').addEventListener('click', () => {
     document.getElementById('bulk-lines').value = '';
     document.getElementById('bulk-os').value = 'windows';
+    document.getElementById('bulk-tier').value = 'standard';
     document.getElementById('bulk-result').replaceChildren();
     bulkModal.show();
 });

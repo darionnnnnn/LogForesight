@@ -477,6 +477,12 @@ public class HostDetailDto
     /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
+    /// <summary>'core' | 'standard' | 'test'（回饋十九輪批次G）</summary>
+    public string Tier { get; set; } = "standard";
+
+    /// <summary>Tier 的中文顯示（核心／一般／測試）</summary>
+    public string TierText { get; set; } = "一般";
+
     /// <summary>'local'（本機直讀）| 'netiq'（自 Sentinel 取得），↔ WebHost.Source（回饋十八輪批次D）：
     /// 前端據此判斷「指定主機更新」按鈕在本機分析停用時是否要隱藏。</summary>
     public string Source { get; set; } = "local";

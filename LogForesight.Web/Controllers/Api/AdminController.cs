@@ -167,6 +167,11 @@ public class AdminController : ControllerBase
     public ApiResponse<HostGroupsBatchResultDto> SetGroupsBatch([FromBody] SetGroupsBatchRequest request) =>
         ApiResponse<HostGroupsBatchResultDto>.Ok(_hosts.SetGroupsBatch(request.HostIds, request.GroupIds, request.Mode));
 
+    /// <summary>批次設定分級（回饋十九輪批次G）</summary>
+    [HttpPut("hosts/tier/batch")]
+    public ApiResponse<HostTierBatchResultDto> SetTierBatch([FromBody] SetTierBatchRequest request) =>
+        ApiResponse<HostTierBatchResultDto>.Ok(_hosts.SetTierBatch(request.HostIds, request.Tier));
+
     [HttpPut("hosts/{hostId:long}/owners")]
     public ApiResponse<HostDto> SetHostOwners(long hostId, [FromBody] SetIdsRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SetHostOwners(hostId, request.Ids));

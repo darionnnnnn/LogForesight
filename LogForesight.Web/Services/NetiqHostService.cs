@@ -79,6 +79,15 @@ public class NetiqHostService : INetiqHostService
         var os = WebHost.NormalizeOs(request.Os)
                  ?? throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
 
+        // 分級選填：留空時新主機退回一般、既有主機沿用原分級（同 SentinelId 省略＝待歸屬的寬鬆慣例，
+        // 不像 Os 沒有合法空值可退——分級的預設本來就是「一般」，不需要強制輸入）
+        string? tier = null;
+        if (!string.IsNullOrWhiteSpace(request.Tier))
+        {
+            tier = WebHost.NormalizeTier(request.Tier)
+                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受 core、standard 或 test。");
+        }
+
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
         // IP 重複刻意**不擋**：改用衝突佇列處理（決策：軟處理）。
@@ -96,6 +105,7 @@ public class NetiqHostService : INetiqHostService
             RoleDesc = request.RoleDesc?.Trim() ?? "",
             Source = NetiqHostList.NetiqSource,
             Os = os,
+            Tier = tier ?? existing?.Tier ?? WebHost.TierStandard,
             Active = true,
             GroupIds = existing?.GroupIds ?? new List<long>(),
             OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
@@ -117,6 +127,13 @@ public class NetiqHostService : INetiqHostService
     {
         var os = WebHost.NormalizeOs(request.Os)
                  ?? throw DomainException.Validation($"作業系統類型「{request.Os}」不合法，僅接受 windows 或 linux。");
+
+        string? tier = null;
+        if (!string.IsNullOrWhiteSpace(request.Tier))
+        {
+            tier = WebHost.NormalizeTier(request.Tier)
+                   ?? throw DomainException.Validation($"主機分級「{request.Tier}」不合法，僅接受 core、standard 或 test。");
+        }
 
         var (sentinelId, sentinel) = ResolveSentinel(request.NetiqServer);
 
@@ -155,6 +172,7 @@ public class NetiqHostService : INetiqHostService
                 RoleDesc = parsed.RoleDesc.Length > 0 ? parsed.RoleDesc : existing?.RoleDesc ?? "",
                 Source = NetiqHostList.NetiqSource,
                 Os = os,
+                Tier = tier ?? existing?.Tier ?? WebHost.TierStandard,
                 Active = true,
                 GroupIds = existing?.GroupIds ?? new List<long>(),
                 OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()
@@ -202,6 +220,7 @@ public class NetiqHostService : INetiqHostService
             RoleDesc = host.RoleDesc,
             Source = host.Source,
             Os = host.Os,
+            Tier = host.Tier,
             Active = active,
             GroupIds = host.GroupIds,
             OwnerUserIds = host.OwnerUserIds

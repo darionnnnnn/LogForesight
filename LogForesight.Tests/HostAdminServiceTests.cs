@@ -281,6 +281,109 @@ public class HostAdminServiceTests
         Assert.Contains("部門A", entry.Summary);
         Assert.Contains("2 台", entry.Summary);
     }
+
+    // ── 分級（回饋十九輪批次G）─────────────────────────────────────────────
+
+    [Fact]
+    public void SaveHost_分級不合法_擋下()
+    {
+        var ex = Assert.Throws<DomainException>(() =>
+            Create().SaveHost(new SaveHostRequest { HostName = "SRV-01", Tier = "gold" }));
+
+        Assert.Contains("gold", ex.Message);
+    }
+
+    [Fact]
+    public void SaveHost_未指定分級_預設一般()
+    {
+        var result = Create().SaveHost(new SaveHostRequest { HostName = "SRV-01" });
+
+        Assert.Equal("standard", result.Tier);
+        Assert.Equal("一般", result.TierText);
+    }
+
+    [Fact]
+    public void SaveHost_可設定為核心分級()
+    {
+        var result = Create().SaveHost(new SaveHostRequest { HostName = "SRV-01", Tier = "core" });
+
+        Assert.Equal("core", result.Tier);
+        Assert.Equal("核心", result.TierText);
+    }
+
+    /// <summary>
+    /// 迴歸測試：Upsert 對「已存在」主機走逐欄複製分支，這一分支曾漏抄 Tier——
+    /// 新主機因為走 Add 分支（直接用傳入物件）不會踩到，只有編輯既有主機才會現形，
+    /// 這正是原本的 bug 在單元測試裡沒被抓到、要靠瀏覽器對既有主機實測才發現的原因。
+    /// </summary>
+    [Fact]
+    public void SaveHost_編輯既有主機的分級_不會被靜默丟棄()
+    {
+        var service = Create();
+        service.SaveHost(new SaveHostRequest { HostName = "SRV-01", Tier = "standard" });
+
+        var result = service.SaveHost(new SaveHostRequest { HostName = "SRV-01", Tier = "core" });
+
+        Assert.Equal("core", result.Tier);
+        Assert.Equal("core", _hosts.FindByName("SRV-01")!.Tier);
+    }
+
+    [Fact]
+    public void SetTierBatch_套用到選取的主機()
+    {
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        var result = Create().SetTierBatch(new[] { a.HostId, b.HostId }, "core");
+
+        Assert.Equal(2, result.UpdatedCount);
+        Assert.Empty(result.Skipped);
+        Assert.Equal("core", _hosts.Get(a.HostId)!.Tier);
+        Assert.Equal("core", _hosts.Get(b.HostId)!.Tier);
+    }
+
+    [Fact]
+    public void SetTierBatch_已併入其他主機的主機_略過並回報()
+    {
+        var service = Create();
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        service.MergeHost(a.HostId, b.HostId);
+
+        var result = service.SetTierBatch(new[] { a.HostId, b.HostId }, "test");
+
+        Assert.Equal(1, result.UpdatedCount);
+        var skipped = Assert.Single(result.Skipped);
+        Assert.Equal("A", skipped.HostName);
+        Assert.Equal("test", _hosts.Get(b.HostId)!.Tier);
+    }
+
+    [Fact]
+    public void SetTierBatch_分級不合法_擋下()
+    {
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+
+        Assert.Throws<DomainException>(() => Create().SetTierBatch(new[] { a.HostId }, "gold"));
+    }
+
+    [Fact]
+    public void SetTierBatch_未勾選任何主機_擋下()
+    {
+        Assert.Throws<DomainException>(() => Create().SetTierBatch(Array.Empty<long>(), "core"));
+    }
+
+    [Fact]
+    public void SetTierBatch_寫入一筆彙總稽核紀錄()
+    {
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        Create().SetTierBatch(new[] { a.HostId, b.HostId }, "core");
+
+        var entry = Assert.Single(_audit.Entries);
+        Assert.Contains("核心", entry.Summary);
+        Assert.Contains("2 台", entry.Summary);
+    }
 }
 
 // FakeNetiqHostServiceForAdmin／FakeNetiqServerCatalog 已搬到 TestDoubles\NetiqFakes.cs。

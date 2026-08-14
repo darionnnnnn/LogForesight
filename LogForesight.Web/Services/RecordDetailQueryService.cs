@@ -311,6 +311,8 @@ public class RecordDetailQueryService
             RoleDesc = host.RoleDesc,
             IpAddress = host.IpAddress,
             Os = host.Os,
+            Tier = host.Tier,
+            TierText = HostDtoMapper.TierText(host.Tier),
             Source = host.Source,
             NetiqServer = host.NetiqServer,
             LastReportAt = host.LastReportAt,

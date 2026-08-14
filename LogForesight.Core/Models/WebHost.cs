@@ -120,6 +120,25 @@ public class WebHost
     /// 由批次自動維護（單獨查詢仍截斷時設定；不再截斷且遠低於上限時清除），Web 不提供編輯。
     /// </summary>
     public bool IsHighVolume { get; set; }
+
+    /// <summary>
+    /// 主機分級（回饋十九輪批次G）：'core'（核心）| 'standard'（一般，預設）| 'test'（測試）。
+    /// 純人工分類——不影響規則面或批次行為（不像 <see cref="Os"/> 會改套用哪個平台的規則），
+    /// 只供 PriorityScore 的 tierW 權重與清單/詳情頁徽章使用。寫入前一律經
+    /// <see cref="NormalizeTier"/>，儲存值恆為小寫（同 <see cref="NormalizeOs"/> 慣例）。
+    /// </summary>
+    public string Tier { get; set; } = TierStandard;
+
+    public const string TierCore = "core";
+    public const string TierStandard = "standard";
+    public const string TierTest = "test";
+
+    /// <summary>把外部輸入的分級值正規化成儲存用的小寫值；不合法時回 null 交由呼叫端擋下（同 <see cref="NormalizeOs"/>）</summary>
+    public static string? NormalizeTier(string? value)
+    {
+        var normalized = value?.Trim().ToLowerInvariant();
+        return normalized is TierCore or TierStandard or TierTest ? normalized : null;
+    }
 }
 
 /// <summary>主機群組（↔ lf_host_groups）。維度不限於部門，也可以是 DMZ、DB 伺服器等分類</summary>

@@ -91,6 +91,7 @@ function renderHeader(detail) {
     const fields = [
         ['IP 位址', detail.ipAddress || '未設定'],
         ['作業系統', detail.os === 'linux' ? 'Linux' : 'Windows'],
+        ['分級', detail.tierText ?? '一般'],
         ['所屬 Sentinel', detail.netiqServer || '本機直讀'],
         ['主機群組', detail.groupNames.length ? detail.groupNames.join('、') : '未分群'],
         ['負責人', detail.ownerNames.length ? detail.ownerNames.join('、') : '未指定'],
