@@ -584,3 +584,22 @@ QueryLightweight，回傳的風險等級／涵蓋缺口（DataIncomplete/Securit
 推導）／風險類型／處理狀態／處理人（含案件 fallback「（案件）」標示）全部正確。
 
 下一步：E4（儀表板其餘卡片全 SQL 化）。
+
+### 批次E4（完成，commit `0ab65b3`，2004 測試綠）
+
+比規劃原文更簡單：`DashboardService.GetSummary` 唯一的整批載入點
+（`_repository.Query(new RecordQueryFilter { From = from })`）一次換成
+`QueryLightweight`（批次E3 建的機制），下游 `RecordStatsBuilder.BuildHostRanking`／
+`BuildGroupRisk`／`HighRiskDays`／`MediumRiskDays`／`CoverageGapDays`／
+`HandlingHistoryQueryService.GetTodo` 五個消費點逐一核對後確認全部只讀取
+`DailyAnalysisRecord` 的判定用欄位（RiskLevel／CorrelationAlerts 有無／Date／
+Host／Headline／TopIssues／HasCoverageGap），QueryLightweight 全部覆蓋，
+不需要像規劃原文設想的分別把 BuildHostRanking／BuildGroupRisk 改寫成呼叫
+`AggregateByHost`——那樣反而要多維護一套「按群組彙總」的邏輯，這裡一行
+swap 就達到同樣的效能效果（不再反序列化整份 ContentJson），下游零改動、
+零回歸風險。`BuildSilentHosts` 本就不碰 records，維持不動。
+
+瀏覽器對真實 dev DB 端到端驗證：近 30 天儀表板全部數字（KPI 卡／風險類型卡／
+重點問題／高風險主機／依群組風險概況）與改版前逐位相同。
+
+下一步：E5（ReportService 全 SQL 化）。
