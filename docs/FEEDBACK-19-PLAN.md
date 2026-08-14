@@ -555,3 +555,32 @@ Categories／EventId／Source／MinSeverity 過濾比照 `EfAnalysisRecordStore.
 （本環境非 SiteHidden 模式，新增的過濾不應改變既有畫面，驗證結果符合預期）。
 
 下一步：E3（明細視角快速/慢速路徑 SQL 化）。
+
+### 批次E3（完成，commit `6aceb79`，2004 測試綠）
+
+只做了慢速路徑（Statuses/Overdue/Unassigned 篩選啟用時）：新增
+`IAnalysisRecordQuery.QueryLightweight`／`IRecordRepository.QueryLightweight`，
+與既有 `Query` 套用完全相同的可見範圍／日風險等級顯示／SiteHidden 嚴重度可見性
+（同一個單一咽喉，直接重用既有 `ApplyVisibility`／`TryApplyDayRiskVisibility`／
+`ApplySeverityVisibility`），差別只在回傳的 `DailyAnalysisRecord` 不反序列化整份
+`ContentJson`——只填處理狀態判定/分類/風險等級需要的欄位（B1 抽出欄＋TopIssues
+的判定用子集，從 `lf_top_issues` 重建 `LogIssueSignature`，不含 SampleMessages／
+KeyDetails 等風險日詳情頁專用內容），`CorrelationAlerts` 用單一佔位元素表達
+「有沒有」。`Search()` 的慢速路徑改呼叫它，下游 `DeriveProgress`／
+`ComputeIsOverdue`／`IsUnassigned`／`ToListItem` 全部零改動（都只消費
+`DailyAnalysisRecord` 既有欄位，這是選擇「重用同一個型別、只換資料來源」
+而不是新開一個輕量型別的原因——影響面降到最小）。
+
+**與規劃原文的取捨**：快速路徑（`QueryPage`，無 Statuses/Overdue/Unassigned 時，
+多數瀏覽情境）本已只為「這一頁」載入，量級是 pageSize 不是全量，維持現狀不動——
+規劃原文「快速路徑改讀 B1 新欄」屬於錦上添花的效能微調，不是 N3 那類真正的
+規模化風險，本輪聚焦在慢速路徑這個真正的熱點，避免不成比例的改動換取邊際效益。
+
+順帶更正 `Search()` 頂部一句過時註解（仍寫著已退役的 handling.json／
+issue_handling.json 檔案後端，改成現行的 SQL 表名）。
+
+瀏覽器對真實 dev DB 端到端驗證：明細視角近 90 天勾選「已處理」正確走
+QueryLightweight，回傳的風險等級／涵蓋缺口（DataIncomplete/SecurityLogAvailable
+推導）／風險類型／處理狀態／處理人（含案件 fallback「（案件）」標示）全部正確。
+
+下一步：E4（儀表板其餘卡片全 SQL 化）。
