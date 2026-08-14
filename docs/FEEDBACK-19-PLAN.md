@@ -407,4 +407,30 @@ Fira，已持久化的設計系統）與既有元件慣例（`renderTable`／foo
 的處理概況吻合，兩頁數字一致——直接驗證了這輪要解的「三個畫面數字對不起來」那類缺陷
 在這個路徑上已經收斂。
 
-批次B（資料基盤）尚未開始。
+### 批次B（完成，commit `2a010fd`，1981 測試綠）
+
+B1/B2/B3/B6/B8 皆按規劃落地；B4、B7 與規劃原文有偏離：
+
+1. **B4 改為 SQL 端正規化，不是一次性 UPDATE**：實作前重讀
+   `RecordRepository.NormalizeLegacySeverity` 的類別註解，發現它明文規定「只在讀取時於
+   記憶體正規化，不回寫資料庫——證據層是事後不可改寫的批次判定結果」。原規劃的
+   「一次性資料修正」會直接違反這條既有原則。改為新增 `LegacySeverityRank`（Core 共用
+   靜態類別，`Normalize`／`ForcesElevate` 兩個純函數），套用在
+   `EfIssueAggregateQuery.Aggregate` 的 `MaxSeverityRank`／`ElevatesDayRisk` 計算——
+   與 blob 路徑同一條規則的 SQL 端版本，行為對齊但不碰資料本身。
+2. **B7（嚴重度可見性 SQL 下推）延後**：目前沒有任何消費端（批次D/E 才會需要），
+   先建接口會是「不留多餘接口」原則要避免的那種東西。留到批次D 實際要用時再做。
+3. **加做一項規劃未列的修復**：`RecordStorageShaper` 低風險日精簡路徑漏抄
+   `LogIssueSignature.EventKey`——這是本輪 B2 新增 event_key 抽出欄時才會踩到的既有 bug
+   （低風險日的 Linux 規則命中在精簡後會遺失完整簽章第五段），順手修掉並補回歸測試。
+4. **`lf_issue_first_seen` 的 upsert 設計比規劃原文更細**：規劃只寫「insert-if-absent」，
+   實作時發現 NetIQ 回補（`BackfillDays`）與多台主機平行處理會讓「較晚寫入卻是較早日期」
+   與「兩台主機同時第一次寫入同一個新問題」都是真實會發生的情境，因此改成「取較早日期」
+   的條件式 UPDATE＋撞唯一鍵時的重試邏輯，且刻意獨立於主交易之外（首見日是輔助呈現資料，
+   不該讓它的競態害當天的分析結果整筆遺失）。
+
+瀏覽器對真實 dev DB（已累積批次A測試時的資料）端到端驗證：啟動時 schema 升級一次補齊
+14 個欄位＋1 張新表零錯誤，`DailyRecordBackfiller` 自動抓到 112 筆待回填舊列並完成回填，
+儀表板／報表畫面數字與批次A驗證時完全一致（未受 schema 變更影響）。
+
+批次C（期間右移昨日）尚未開始。
