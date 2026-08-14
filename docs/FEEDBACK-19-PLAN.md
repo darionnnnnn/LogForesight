@@ -490,3 +490,30 @@ GROUP BY：先依 (類別,主機,問題) 取期間內最高嚴重度與累計次
 逐位相同；KPI 卡「11 未處理問題．影響 1 台．未處理風險日 9」。
 
 批次E（讀取路徑全面SQL化）尚未開始，E0 已提前完成。
+
+### 批次E1（完成，commit `7239edb`，2004 測試綠）
+
+`SearchByIssue` 改由 `IIssueAggregateQuery.Aggregate`（問題數級的候選集）→ 依篩選條件
+（EventId/Source/Categories/RiskLevels）窄化 → `LatestOccurrences`（窄化後問題 × 可見主機，
+擴充 `KnownIssue` 欄位）→ `OccurrenceStatusResolver`（沿用批次D 骨架）逐主機判定處理概況
+→ 組 DTO → 剩餘的 statuses／unassigned 過濾 → 排序 → 分頁。全程不再整批載入
+`DailyAnalysisRecord`。這裡繞過 `_repository.Query` 內建的 `ApplyVisibility`，改新增
+`ResolveVisibleHostIds`：交集 `IVisibilityService.GetVisibleHostIds()` 與請求的
+HostIds/GroupIds，空集合＝零結果，語意與既有授權慣例一致。
+
+**與規劃原文一處刻意偏離**：舊版 `request.RiskLevels`（風險層級 chips）被套用兩次——
+一次在 `BuildFilter` 當**日風險等級**預篩記錄，一次在分組後當**問題嚴重度**過濾
+group——兩種語意疊加，但日風險預篩其實與「依問題視角看的是問題嚴重度」這條既有設計
+原則本身衝突（程式碼原有註解也承認這點），且新版 `IIssueAggregateQuery.Aggregate` 介面
+沒有、也不需要新增「日風險」這個參數（沒有其他消費端需要）。新版只保留問題嚴重度過濾，
+拿掉日風險預篩——測試覆蓋範圍內（`SearchByIssue_高風險日內的低嚴重度問題` 等）結果不變，
+理論上唯一會外顯的情境（篩單一日風險等級、但某問題自身嚴重度跨日風險等級不一致）
+沒有既有測試覆蓋，屬於刻意簡化而非疏漏。EventId/Source 過濾語意重新核對後與舊版
+（`RecordFilterMatcher` 的精確比對）完全相同，並非規劃原文推測的「語意調整」。
+
+瀏覽器對真實 dev DB 端到端驗證：`/records?view=issue` 近 30 天顯示 19 個問題，
+處理概況三態、處理人（陳工程師／劉負責人／王主管／測試管理員）、涵蓋範圍、出現密度、
+總次數與排序皆正確；勾選「未處理」狀態 chip 正確窄化為 3 筆，與明細列出的
+「1 台未處理」筆數一致。
+
+下一步：E2（`SearchByDate`／`SearchByHost` 全 SQL 化）。
