@@ -30,7 +30,7 @@
 角色四種（user/dev/manager/admin，能力聯集）、負責人與處理人分離（僅 admin 可指派）、
 規則四層保護（builtin 可改可停可回復不可刪）、CSV 三檔匯入（預覽後 all-or-nothing 套用）、
 全系統操作稽核（含登入登出）、儲存層單一介面（webdata 各 store 業務邏輯與後端無關，透過
-`EfJsonBlobStore`/`EfJsonLogStore` 走 SQL；**Jsonl 檔案後端已於 2026-07-24 全面退役**，
+`EfJsonBlobStore`/`EfJsonLogStore` 走 SQL；**Jsonl 檔案後端已全面退役**，
 `Storage.Type` 收斂為 Sqlite／SqlServer 二選一，見 §10.4、§10.5）、不做自由文字搜尋。
 
 ## 2. 系統全貌
@@ -64,7 +64,7 @@ flowchart LR
 |---|---|
 | **S** 單一職責 | Controller 只做「HTTP ↔ DTO 轉換與呼叫 Service」，不含業務邏輯；Service 只做業務規則，不碰 HttpContext；Repository 只做資料存取，不做授權判斷。稽核、授權、例外處理各自是獨立的 Filter/Middleware，不散落在各 Action 內 |
 | **O** 開放封閉 | 儲存後端以 `Storage.Type` 切換實作、不改呼叫端（Strategy + Factory，沿用批次端既有模式）；驗證方式以 `IAuthenticationProvider` 抽換（Stub → AD/Windows）；新增角色能力只改 `RoleCapabilityMap` 一處 |
-| **L** 里氏替換 | Sqlite 與 SqlServer 實作必須通過**同一組合約測試**（DB-SPEC 一致性機制 #3），語意寫在介面註解，實作不得偏離——替換 provider 不允許行為差異（JSONL 曾是第三個受此規則約束的後端，已於 2026-07-24 退役，見 §10.4） |
+| **L** 里氏替換 | Sqlite 與 SqlServer 實作必須通過**同一組合約測試**（DB-SPEC 一致性機制 #3），語意寫在介面註解，實作不得偏離——替換 provider 不允許行為差異（JSONL 曾是第三個受此規則約束的後端，已退役，見 §10.4） |
 | **I** 介面隔離 | 有測試假件依賴的儲存介面按聚合根拆分（`IUserStore`、`IKnownIssueRuleStore`…），不做一個巨型 `IRepository`；讀寫需求差異大的（分析紀錄）維持既有的 Reader/Writer 分離；單一實作且測試零引用的介面（如原 `IAuditLogStore`、`IBatchRunStore`）已於簡化重構移除，改直接依賴具體類別，不留只有一個實作的抽象層 |
 | **D** 依賴反轉 | Service 依賴抽象（保留下來的介面，或本身就穩定的具體類別）而非拼裝細節；`EfJsonBlobStore`/`EfJsonLogStore` 是儲存層唯一的底層實作，定義與實作都在 Core，依賴方向永遠指向抽象。Controller 與 Service 全部建構式注入 |
 
@@ -127,7 +127,7 @@ LogForesight.Web/
 |---|---|---|
 | `Appsettings` | 組態綁定單例 | Singleton |
 | Core 各 `IXxxStore`（有測試假件依賴者） | 以 `StorageBackend`（依 `Storage.Type` 建立的單一路由點）的 `Blob`/`LogStore` 組出 | Singleton |
-| `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ldap）——DB 的 AD 設定開啟時改走 DB 動態設定（docs/archive/HISTORY.md #9） | Singleton |
+| `IAuthenticationProvider` | `DynamicAuthenticationProvider` 包裝依 `Auth.Provider` 註冊的 fallback（Stub / Ldap）——DB 的 AD 設定開啟時改走 DB 動態設定 | Singleton |
 | `JwtTokenService` | 直接注入具體類別（`IJwtTokenService` 介面因測試零引用，簡化重構時已移除） | Singleton |
 | `ICurrentUser` | `HttpContextCurrentUser`（自 Claims 讀取） | Scoped |
 | `IVisibilityService` | `VisibilityService`（授權主機解析＋每請求快取） | Scoped |
@@ -136,13 +136,13 @@ LogForesight.Web/
 
 ## 5. 組態（appsettings.json ↔ Appsettings.cs）
 
-**§12（回饋第九輪）appsettings 精簡**：本檔**只保留「站台還沒起來、資料庫還沒連上之前就必須
+**§12appsettings 精簡**：本檔**只保留「站台還沒起來、資料庫還沒連上之前就必須
 知道」的啟動與安全前提**，其餘一律以 DB（「系統管理 > 設定」頁）為唯一事實來源——改完即時生效、
 不必重啟站台，也不會出現「檔案一份、DB 一份」的漂移。
 
 ```json
 {
-  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已於 2026-07-24 退役）
+  "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },  // Type: Sqlite | SqlServer（§10.5；Jsonl 已退役）
   // SecretKey / PasswordHash 內含「開箱即可測試」的公開已知測試值（帳號 svc-lfadmin / 密碼 LogForesight-dev）,
   // 正式環境務必以環境變數 Jwt__SecretKey、Auth__ServerAdmin__PasswordHash 覆寫,且 Provider 改成 Ad。
   "Jwt": { "Issuer": "LogForesight", "Audience": "LogForesight.Web", "SecretKey": "<測試值,正式環境覆寫>", "ExpireHours": 8 },
@@ -267,7 +267,7 @@ JWT Claims：`sub`（user_id）、`account`、`name`、`cap`（能力字串陣�
 **能力進 token、主機授權範圍不進 token**——範圍每次請求由 `IVisibilityService` 即時解析
 （群組異動即時生效；能力異動最遲於 token 過期時生效，接受此延遲）。
 
-**上次登入時間**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3）：登入成功時 `IdentityService`
+**上次登入時間**：登入成功時 `IdentityService`
 呼叫 `IUserStore.TouchLogin` 寫入 `WebUser.LastLoginAt`（唯一寫入點）。
 **刻意不併進 `Upsert`**——各處建構 `WebUser` 的呼叫端都不帶這個欄位，交給 Upsert 的逐欄
 覆寫會在每次編輯使用者時把它靜默清成 null（同 owners.csv 曾漏抄 SentinelId 的失敗模式）。
@@ -322,14 +322,14 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 不是就近覆寫。統一標記（§9.2）因此以 `[Permission(Assign)]＋[Permission(Handle)]` 兩個標註
 表達「兩者兼具」（實務上即 admin）。
 
-**負責人隱含能力**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §2b）：是任一**啟用中**主機的負責人時，
+**負責人隱含能力**：是任一**啟用中**主機的負責人時，
 `IdentityService.ResolveCapabilities` 聯集 `User` 角色能力（`Handle`＋`ConfirmPermission`），
 **不含 `ViewAll`**。理由：負責人匯入（owners.csv）會自動建立沒有群組的帳號，沒有這一段的話
 對方登入後看得到自己負責的主機、卻連處理狀態都標不了，被交辦也回覆不了——「有可見範圍
 無處置能力」是半套。能力進 JWT，已在線上的人最遲重新登入才取得（可見範圍則即時生效）。
 停用帳號一律視為無能力（登入本來就進不來，見 §6.3）。
 
-**負責人路徑**（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §2b）：第 3 層的授權鏈**擴充為聯集**——
+**負責人路徑**：第 3 層的授權鏈**擴充為聯集**——
 `WebHost.OwnerUserIds` 含此人的（啟用中）主機直接可見，與群組授權同級（整台可見，
 不是問題層級的窄授與），`GetVisibleHostIds`／`GetVisibleHostIdsFor` 兩邊同一套規則。
 理由：負責人是主機歸屬的第一手資料，改版前卻與部門群組授權完全脫鉤，「這台出事、
@@ -338,7 +338,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `GetOwnedHostIdsFor`／`GetGroupVisibleHostIdsFor` 兩個投影分別回答「為什麼看得到這台」——
 兩條路徑可同時成立，因此是兩顆徽章而不是一個列舉值。
 
-**問題負責人路徑**（2026-08-13，回饋十八輪批次F）：第 3 層再擴充一條——`IssueOwnerRule`
+**問題負責人路徑**：第 3 層再擴充一條——`IssueOwnerRule`
 （鍵＝(Source,EventId)，跨主機生效）指派的負責人，自動取得保留期內出現過該問題之主機的
 檢視權（`HostVisibilityResolver.GetIssueOwnedHostIds`，內部呼叫
 `IIssueAggregateQuery.HostIdsFor` 反查 `lf_top_issues`），與主機負責人**同級**（整台可見，
@@ -353,7 +353,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
 (Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
 
-**案件授與**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §7）：前面路徑之外、刻意更窄的一條。
+**案件授與**：前面路徑之外、刻意更窄的一條。
 被指派為某個問題案件的處理人時，對**該主機的該問題**取得檢視權（`IVisibilityService.GetCaseGrants`／
 `IsCaseGrantOnly`，`EnsureVisible` 放行）——沒有這條路徑，把問題交辦給不在該主機授權範圍內的人
 等於白指派（對方打不開）。授與以「**現在或曾經**是處理人」為準，結案後仍看得到自己處理過的東西。
@@ -378,14 +378,14 @@ PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從�
    他被交辦的是「這台主機的這個問題」，不是這一天。
    端到端驗收見 `LogForesight.Tests/CaseGrantVisibilityTests.cs`（刻意串真實服務，不用替身）。
 
-**角色與群組的分工**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §10——回答「兩者是否重複」）：
+**角色與群組的分工**：
 不重複，是同一個機制的兩種用途。**角色掛在群組上**（`UserGroup.Role`），使用者藉由加入群組
 取得角色，多群組時能力取聯集；群組同時是**可見範圍單位**（只有 `Role=User` 的部門群組進授權矩陣，
 ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。角色回答「能用哪些功能」（第 2 層），
 群組回答「能看哪些主機」（第 3 層），拆掉任一邊都表達不了現有語意。群組頁與使用者頁的
 分段標題與 popover 就是在畫面上講出這個區別。
 
-**停用主機不在可見範圍**（2026-07-27，docs/archive/HISTORY.md N-1）：`Active=false` 的主機
+**停用主機不在可見範圍**：`Active=false` 的主機
 （管理員手動停用或 Sentinel 移除觸發的系統停用）一律排除在 `GetVisibleHostIds()` 之外——
 含 ViewAll 分支。其歷史紀錄因此不出現在問題查詢/儀表板/報表的任何計數，資料只留在資料庫，
 重新啟用即全部復原；主機管理頁不經此路徑，停用主機本身仍可見可管理。墓碑列（合併來源，
@@ -412,7 +412,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
-  **樂觀鎖衝突另有一支**（2026-08-06，docs/archive/SCALE-FIX-PLAN-2026-08-06.md D3）：處理狀態三表以
+  **樂觀鎖衝突另有一支**：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
   多人同時操作是正常情境不是故障；風險日詳情的處理面板收到 409 後自動重載當日資料。
@@ -593,7 +593,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 ### 8.6 使用者便利性規範（決策 #4 的具體化，逐條可驗收）
 
 1. 清單頁的篩選條件記憶於 `localStorage`，回到頁面自動還原（含儀表板時間窗）
-2. **所有清單支援表頭點擊排序**（2026-07-29）：`renderTable` 的欄位定義帶 `sortKey` 即可點擊，
+2. **所有清單支援表頭點擊排序**：`renderTable` 的欄位定義帶 `sortKey` 即可點擊，
    同欄再點切換 asc/desc、換欄回到該欄的 `sortDefaultDir`（未指定則 asc），切換邏輯集中在
    `core/ui.js`，呼叫端只需套用收到的 `{key, dir}`。伺服器端分頁頁（`records`／`hosts`／`audit`）
    排序下推 API（`sort`/`dir` 查詢參數）；本地清單頁（`users`／`rules`／`suppressions`／執行監控
@@ -604,34 +604,34 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 4. 表單錯誤顯示在欄位旁（Bootstrap validation style），API 錯誤 message 直接顯示，不轉譯
 5. 空狀態要有指引（「尚無資料。請先於『CSV 匯入』建立使用者與主機」），不留白畫面
 6. 載入中一律有視覺回饋（表格 skeleton 列或 spinner），按鈕送出後 disable 防連點。
-   **等待動畫只有三種出口（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #1），不要再長出第四種寫法**：
+   **等待動畫只有三種出口，不要再長出第四種寫法**：
    整塊清單載入 → `ui.js renderLoading()`（骨架列）；按鈕忙碌 → `withBusy()`（按鈕內
    spinner＋「⋯中」）；其餘區塊內等待（精靈步驟、輪詢中的狀態文字等）→ `renderSpinner()`
    （spinner＋文字，輪詢更新時只換文字節點、不重建 spinner 避免動畫重置閃爍）。
    聊天泡泡的三點跳動（`.lf-typing`）是對話情境的既有專屬樣式，不在此收斂範圍
-7. **每頁筆數可選（2026-07-29）**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
+7. **每頁筆數可選**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
    預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
    「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
 8. 日期區間提供快捷鈕：今天／近 7 天／近 30 天
-9. **modal 寬度（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §7）**：表單 modal 欄位 ≥3 組即
+9. **modal 寬度**：表單 modal 欄位 ≥3 組即
    `modal-lg`＋`row g-3` 兩欄排列；檢視型 modal（唯讀展示內容，非表單）一律 `modal-lg`
    起跳。避免「細細一長排」逼使用者在窄欄位裡一路往下捲；<992px（`modal-lg` 斷點以下）
    兩欄自動退回單欄（Bootstrap grid 原生行為，不需額外處理）。內容仍可能超高者另加
    `modal-dialog-scrollable`。短訊息的二次確認框（`confirmAction`）刻意不套用——
    寬版對單句確認文字反而鬆散。
-10. **常駐說明文字收斂為 hover icon（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §6）**：純描述性的
+10. **常駐說明文字收斂為 hover icon**：純描述性的
     `.form-text`（說明「這欄位是什麼」但不影響能否送出）改為 `core/ui.js` 的 `helpIcon(content, title)`
     ——小圖示鈕，`hover`/`focus` 觸發 `bootstrap.Popover`；放在 `<label>` **之後、`<input>` 之前的
     同層 sibling**（不巢在 `<label>` 內——互動元素巢在 `<label>` 內在不同瀏覽器的點擊/焦點行為不一致，
     專案內無此前例）。**保留常駐顯示**的判準：說明陳述的是不可逆或會擋住送出的後果（例如「未分組時
     只有 admin 看得到」「建立後不可修改」「保留天數上限」），這類文字不該藏在要滑鼠移過去才看得到的
     icon 裡；純描述性質（例如「用於向 Sentinel 查詢」）才收斂。
-11. **批次操作跨頁選取（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §8）**：伺服器端分頁清單若支援批次
+11. **批次操作跨頁選取**：伺服器端分頁清單若支援批次
     操作，勾選狀態存 `Map<id, rowDto>`（不是純 id 集合）——批次確認畫面通常要顯示「勾了哪些」的
     名稱／摘要，而那些列未必在目前這一頁，只能靠勾選當下存下的物件；翻頁／篩選不清空，僅
     「清除選取」與套用成功後清空。表頭全選只作用於目前這一頁（伺服器端分頁沒有「全部」的概念），
     以 `indeterminate` 呈現「本頁部分已選」。首見於主機頁批次改群組，供之後其他清單頁比照。
-12. **使用者名稱欄位固定顯示「顯示名稱(帳號)」（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #6）**：
+12. **使用者名稱欄位固定顯示「顯示名稱(帳號)」**：
     半形括號；前端唯一出口 `format.js formatUserName()`（查無顯示名稱退回帳號），後端組字串的
     出口（TriggerText 之類「誰做的」敘述句）走 `NameFormat.FormatAccount()`。DTO 只補
     displayName／account 素材、不在後端組顯示字串（格式是前端的事）；查無對應使用者
@@ -640,7 +640,7 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     使用者顯示名稱為主、完整格式放 title（空間有限）；NetIQ 維護頁更新者維持帳號
     （`NetiqOptions` 是直接回傳的 Core 儲存模型，不為單一欄位重造零加值 DTO 複本）。
 
-- **載入失敗的收斂**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §4）：骨架列（`renderLoading`）是
+- **載入失敗的收斂**：骨架列（`renderLoading`）是
   「等一下就會有東西」的承諾，但各頁的 `load()`／`init()` 過去沒有頂層 catch——中途任何一支 API
   失敗或前端例外，骨架列就**永遠**留在畫面上（錯誤 toast 幾秒後消失，使用者看到的是「一直載入」）。
   `ui.js` 的 `guardLoad(containers, fn)` 包住各頁載入流程，失敗時把骨架列換成「載入失敗」空狀態；
@@ -724,7 +724,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、**重點問題 Top 5**、
   高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、
   **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
-- **重點問題 Top 5（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §8-1）**：位置在主機排行**之前**
+- **重點問題 Top 5**：位置在主機排行**之前**
   ——全站主視角是問題事件、第二視角才是主機（§8 視角盤點）。一列一個問題（Source＋EventId，
   與依問題視角同一把分組鍵）：問題／分類／最高嚴重度／主機數／風險日數／總次數，
   點列下鑽 `/records?view=issue&source=&eventId=&from=&to=`。資料由
@@ -732,7 +732,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在既有的 `GET api/dashboard/summary` 內一併回傳，不另開請求。
   **刻意不含處理狀態**：那要逐問題查 handling 標記，是依問題視角才做的事；這張卡回答的是
   「哪幾個問題影響最大」，點進去就看得到處理概況。
-- **改以「問題的重要性」而非數量呈現（2026-08-06，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／P5）**：
+- **改以「問題的重要性」而非數量呈現**：
   純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
   恆在第 1（資訊量為零），而 `disk 153`（3 台、都在近 3 天、高嚴重度＋重大）排在很後面。
   欄位因此改為 問題（含「新」徽章）／嚴重度（含「重大」旗標）／主機數（含**影響率**）／
@@ -751,14 +751,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
 - **依群組風險概況（2026-07-23 Phase D-4）**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
-- **日風險等級顯示設定的影響**（2026-07-30，docs/archive/FEEDBACK-3-PLAN.md #8）：統計母體經
+- **日風險等級顯示設定的影響**：統計母體經
   `RecordRepository` 已排除被隱藏等級的風險日（見 9.9b 1b）；前端另依
   `GET api/settings/display` 把被隱藏等級的 KPI 卡整卡不顯示——「0」與「被藏起來」是兩件事，
   不讓 0 被誤讀成「這期間真的沒有中風險日」。
 - **serverAdmin 引導卡（§1，回饋第九輪）**：serverAdmin 登入時本頁不打 summary API，改顯示
   引導卡（說明救援帳號用途、測試模式可用 demo-admin 測全站、正式建帳號步驟），其餘區塊
   連同靜態卡片標題一併隱藏——業務資料對它本來就是空的（§6.2 最小授權），空白畫面會被誤讀成壞掉。
-- **分析執行中告示（2026-08-06，docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）**：夜間分析與站台跑在
+- **分析執行中告示**：夜間分析與站台跑在
   同一個行程（本輪定案不拆 worker），分析期間整站回應變慢是設計上接受的代價——這行告示是
   代價的配套：頂部一行「分析進行中（第 N／M 台），畫面回應可能較慢」，30 秒輪詢
   `GET api/run-activity`，沒在跑就整行不出現。該端點**任何登入者可讀**（刻意不掛
@@ -781,7 +781,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   群組層級 `GroupStatus`）、「未指派」chip 篩 `Handlers` 為空的問題；點列**就地展開**該問題
   受影響主機×日期（重用 `GET api/records` 明細端點、可見範圍已過濾），每列「去處理」直連風險日詳情。
   admin 另有列內「指派」批次分派（§6）；處理人清單含自己時另有「回覆處理狀態」
-  （2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §11）——同一個問題被指派到 N 台主機時，
+  ——同一個問題被指派到 N 台主機時，
   在這裡填一次即套用到**自己名下**該問題的全部進行中案件（`POST api/handling/issue-cases/bulk-status`，
   能力 `Handle`；逐案走既有 `IssueCaseCoordinator.SyncStatus`，跨日展開／歷程／結案語意完全沿用，
   不是第二套狀態機）。別人名下的案件不受影響——這是「回覆自己手上的工作」，不是代人回覆。
@@ -791,7 +791,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   解析回顯示名稱，下鑽連結才能正確還原成 chip。
 - **主機群組 chip（2026-07-23 Phase D-4）**：`GET api/hosts/groups`（只列出使用者看得到主機所屬的
   群組，不洩漏看不到的部門）；`GroupIds` 於 `RecordSearchRequest` 展開為主機集合後與 `HostIds` 取聯集。
-- **處理狀態對外一律三態（2026-07-28，docs/archive/HISTORY.md #12）**：清單、CSV、儀表板／
+- **處理狀態對外一律三態**：清單、CSV、儀表板／
   報表統計只呈現 **未處理／處理中／已處理**，內部狀態（open／in_progress／observing／escalated
   ＋結案四種 `resolved`/`wont_fix`/`false_positive`/`known_noise`）中的結案類一律收斂為
   「已處理」、observing 與 escalated 收斂為「處理中」——單點定義 `HandlingStatuses.ExternalOf()`。
@@ -805,7 +805,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
   依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
   「風險→關聯→日期」緊急程度排序，2026-07-29）
-- **依問題視角補上「時間形狀」（2026-08-06，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P5）**：
+- **依問題視角補上「時間形狀」**：
   原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
   新增三欄——**涵蓋範圍**（首見 ~ 最近出現，即需求的「期間跨度」）、**出現密度**（N/M 天＋密度條，
   文字為主、圖為輔，不可只留圖）、**最近出現**改為「日期＋是否仍在發生」；
@@ -813,7 +813,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   三者皆由該群組既有紀錄推導，不額外查詢。
   同時修掉 N3：`BuildIssueGroup` 過去是逐群組呼叫、內部各查一次處理狀態與案件
   （1000 種問題＝2000 次查詢），改為整批載入一次後建索引。
-- **第四視角「依問題」**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §4）：一列一個問題（Source＋EventId 分組，
+- **第四視角「依問題」**：一列一個問題（Source＋EventId 分組，
   與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
   主機數／風險日數／總次數／最近出現／處理概況（「N 台處理中／M 台未處理」）／處理人（進行中
   問題案件的處理人，去重超過 3 人摺疊「等 N 人」，姓名連到 §9.4a 處理人工作頁）；預設排序
@@ -821,14 +821,14 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `Assign` 能力可見「批次指派」：modal 列出受目前篩選區間影響的主機（可勾選排除）＋處理人／
   說明／預計完成日，對每台主機建立跨日問題案件（§9.3 案件徽章一節），已有他人進行中案件的主機
   保留原處理人並回報略過清單。
-  **群組指派與分攤**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §12）：批次指派 modal 的指派對象可選
+  **群組指派與分攤**：批次指派 modal 的指派對象可選
   「單一使用者」或「使用者群組」——選群組時把勾選的主機分攤給群組內**啟用中**的成員，
   兩種模式由 admin 當場選：**平均輪流**（主機依名稱、成員依帳號排序，round-robin）或
   **依現有負載**（每次分給「既有進行中案件數＋本次已分到台數」最少的人，同分時帳號序決勝）。
   兩者皆**確定性**（同輸入同結果，預覽看到的就是會落盤的分配），預覽表每列可個別改人。
   API 形狀因此從單一 `HandlerId` 擴充為 `Assignments: [{hostId, handlerId}]`（空＝全部給
   `HandlerId`，單人／群組共用一支端點）。
-  **統一標記（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §6）**：列內第三顆動作鈕（需 `Assign`
+  **統一標記**：列內第三顆動作鈕（需 `Assign`
   **且** `Handle`，兩個標註疊加＝都要滿足；實務上即 admin），把這個問題在**尚未有人接手**的
   主機上一次標成結論（僅結案四態，**原因必填**——代全體下結論的操作，理由是紀錄的一部分）。
   - **「尚未有人接手」＝該（主機, 問題）沒有進行中案件**，這是唯一的略過條件（定案 6-1）：
@@ -856,7 +856,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `POST api/handling/issue-cases/bulk-status`（`Handle`，§11 跨主機回覆；
   **刻意放在另一個 controller**——`[Permission]` 是 `AllowMultiple`，類別與方法上的標註是
   「都要滿足」而非「就近覆寫」，寫在 `Assign` 類別裡會把只有 `Handle` 的處理人擋掉）。
-  **依問題視角的風險層級 chips 同時過濾問題嚴重度（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #5）**：
+  **依問題視角的風險層級 chips 同時過濾問題嚴重度**：
   chips 篩的本是日風險等級（記錄層），但此視角一列一個問題、顯示的「嚴重度」是問題層級——
   高風險日裡本就可能同時有低嚴重度問題，預設「高＋中」下清單仍會出現「低」，觀感是篩選失效。
   `SearchByIssue` 在既有日風險過濾之上**疊加**同一組選擇映射到問題嚴重度（高→High＋Critical
@@ -885,8 +885,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      與規則抑制並存：有 `RuleId` 走抑制（治本）、無 `RuleId` 靠記憶（治標，供未命中規則的 Other 類別）。
   4. **類別標題列依最高嚴重度加淡色底**（danger/warning/neutral soft），一眼區分分節輕重。
   5. **趨勢欄與原始訊息**：`BuildTrendText` 首次出現時不再輸出「前一日 0 次」（贅述）；趨勢欄文字適度換行。
-     範例訊息歷經兩次改版：展開式 `<pre>` → hover 泡泡（2026-07-23）→ **「原始訊息 N 則」點擊開 modal**
-     （2026-07-28，docs/archive/HISTORY.md #14）——舊名「範例訊息」看不出指的是什麼，且 popover
+     範例訊息歷經兩次改版：展開式 `<pre>` → hover 泡泡→ **「原始訊息 N 則」點擊開 modal**
+     ——舊名「範例訊息」看不出指的是什麼，且 popover
      受 Popper 定位空間壓縮導致內容擠成一團；改 modal 後每則訊息各自成段落（等寬、邊框分隔），
      寬度不受定位限制。共用 `ui.js` 的 `showDetailModal()`，維持 `textContent` 純文字組裝（事件訊息
      是攻擊者可控字串，不解析 HTML）。
@@ -932,19 +932,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      看得到高嚴重度問題（可能是 AI 判讀上調、關聯訊號，或問題被顯示設定隱藏）。舊紀錄無此欄位時
      顯示通用說明。SiteHidden 模式另在 header 補一行「另有 N 項問題已依全站顯示設定隱藏；
      風險等級以完整資料判定」（`HiddenIssueCount`）。
-  12. **重點問題表格欄位合併**（2026-07-30，docs/archive/FEEDBACK-3-PLAN.md #5）：原「來源/Event」
+  12. **重點問題表格欄位合併**：原「來源/Event」
      「次數」「嚴重度」「時段」「說明」五欄合併為單一「問題」欄（`issueCell`：標題行＋
      嚴重度/次數/時段 meta 行＋說明＋keyDetails＋原始訊息連結），趨勢與處理狀態維持獨立欄
      （補 `min-width` 防擠壓）——keyDetails（4703 這類事件動輒數百字的帳號/IP 彙總）原本
      把其餘欄壓成逐字直排。keyDetails 超過 3 行以 line-clamp 收合＋「顯示全部」展開
      （初次量測隱藏中的列——收合區——由 ResizeObserver 於展開時補量）；列印時
      `@media print` 解除收合。「選取」欄與批次套用機制（#6/#7/#8 各項）零改動。
-  13. **勾選 checkbox 併回「處理狀態」欄**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md #1，取代第 6 項
-     引入的獨立「選取」欄）：獨立欄拿掉後三欄變回「問題｜趨勢｜處理狀態」；表頭「處理狀態」
+  13. **勾選 checkbox 併回「處理狀態」欄**：獨立欄拿掉後三欄變回「問題｜趨勢｜處理狀態」；表頭「處理狀態」
      文字右側放全選 checkbox（含 indeterminate 三態），欄內每列右上角放大版 checkbox
      （約 2rem 見方點擊區）疊在狀態文字上方，`selectedIssueKeys`／批次套用面板行為不變——
      純排版調整，當初「選取欄不能排第一」的限制（展開箭頭固定佔第一欄）隨獨立欄拿掉自然消失。
-  14. **跨日問題案件（IssueCase）**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §0/§2）：同主機同問題
+  14. **跨日問題案件（IssueCase）**：同主機同問題
      指派處理人時建立跨日「案件」（以主機＋問題簽章為鍵），回溯關聯歷史內同問題的未結案日、
      之後標記狀態會同步展開到案件涵蓋的其他日子，批次排程每天也會把新分析到的日子自動掛進
      進行中案件——**案件是協調紀錄，逐日 `IssueHandling` 列仍是唯一投影面**，儀表板／報表／
@@ -998,7 +997,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      - 日層級 `RecordHandling.HandlerId`（這一天的處理人）與案件處理人（這個問題跨日歸誰）
        兩者並存、分開顯示；清單「處理人」欄日層級有值時優先，否則 fallback 顯示該日問題所屬
        進行中案件的處理人（後綴「（案件）」）。
-  16. **顯示範圍下拉**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §8）：嚴重度篩選旁一個**單選**下拉，
+  16. **顯示範圍下拉**：嚴重度篩選旁一個**單選**下拉，
      與嚴重度是 AND 關係。每個問題先歸入四個互斥的桶——未處理／我處理中／**他人處理中**
      （進行中案件的處理人不是自己）／已完成（結案四態＋預設不處理＋自動雜訊）——四個選項是
      這些桶的組合：「待處理」（預設，隱藏他人處理中）／「顯示所有問題」／「隱藏已完成」／
@@ -1007,17 +1006,17 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      **他人處理中的問題不可勾選、不可改狀態**：checkbox `disabled`、全選跳過、狀態欄唯讀，
      後端 `IssueHandlingCommandService.RequireNotHandledByOthers` 是實際防線（**admin 也擋**——
      admin 的正確動作是改派，不是繞過協調機制直接寫）。要換人處理走第 17 項的改派。
-  17. **案件改派**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §9）：`IssueCaseCoordinator.ReassignCase`
+  17. **案件改派**：`IssueCaseCoordinator.ReassignCase`
      轉移進行中案件的 `HandlerId`，**不結案重開**——案件是「這個問題這一輪處理」的連續紀錄，
      重開會把回溯關聯過的日子重算、也會讓「先前處理」誤以為這輪已結束；逐日 `IssueHandling`
      列完全不動（狀態沒變），只寫一列 `case_reassign` 歷程（記在案件最近掛接的那一天）＋稽核。
      日層級指派（`PUT …/handling/assign`）預設維持既有的「不搶走、回報略過清單」語意，
      前端據此問使用者「要不要改派」，確認後帶 `reassign=true` 重送；依問題批次指派則以
      逐列的「改派」勾選表達（`ReassignHostIds`）。
-  18. **案件徽章格式與位置**（2026-08-05，docs/archive/FEEDBACK-10-PLAN.md §6）：徽章自「問題」欄移到
+  18. **案件徽章格式與位置**：徽章自「問題」欄移到
      **「處理狀態」欄**（誰在處理是處理狀態資訊，不是問題的識別資訊），人名改全站統一的
      「顯示名稱(帳號)」（`IssueDto.CaseHandlerAccount` 新增）。
-  15. **查看先前處理**（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §4）：問題再次發生時，「處理狀態」欄
+  15. **查看先前處理**：問題再次發生時，「處理狀態」欄
      多一顆「先前處理」按鈕（`IssueDto.HasPriorHandling`——早於本日、狀態為結案類的逐日標記或
      已結案的 `IssueCase` 任一存在即為 true；唯讀角色也看得到，不限 `canHandle`）。點擊開
      `GET api/records/{hostId}/{date}/handling/issue-history?issueKey=`（`issueKey` 走 query
@@ -1027,7 +1026,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      不構成「先前處理方式」的答案。
   - 問題層級狀態新增 `open`（`IssueHandlingStatuses.Open`）：唯一需持久化的非結案類狀態，用來蓋掉
     低風險預設／已知雜訊自動判讀（單純清除標記做不到——缺列語意會讓畫面重新套用同一個自動推導）。
-  - 問題層級狀態另新增 `in_progress`＋`DueDate`（2026-07-27）：非結案類，但只要當日有任一問題被標成
+  - 問題層級狀態另新增 `in_progress`＋`DueDate`：非結案類，但只要當日有任一問題被標成
     `in_progress`，日狀態推導（`DayHandlingDerivation`）即提前進入 `in_progress`，不必等到有問題結案。
   - **問題層級狀態再新增 `observing`（觀察中，2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #4）**：處理人判斷
     「先看幾天再說」——非結案類，`DueDate` 在此狀態下代表「觀察至」（沿用同一欄位，不另開一欄；
@@ -1041,8 +1040,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
     觀察是問題×主機層級、
     只影響 Web 的待辦／處理狀態呈現，**不動分析、不動風險等級、不動報告**——事件照常偵測與寫入，
     這正是「觀察」的意義（要看它還發不發生）。兩者職責不重疊。
-  - **逾期語意兩層並列**（2026-07-27）：日層級 `RecordHandling.DueDate` 過期且未結案，**或**任一問題層級
-    「處理中」的 `DueDate` 過期**或「觀察中」的觀察至日期過期**（2026-08-04），該風險日即算逾期——
+  - **逾期語意兩層並列**：日層級 `RecordHandling.DueDate` 過期且未結案，**或**任一問題層級
+    「處理中」的 `DueDate` 過期**或「觀察中」的觀察至日期過期**，該風險日即算逾期——
     問題查詢的 `overdue` 篩選、清單的逾期標記與儀表板
     逾期計數共用同一套規則（單點定義 `DayHandlingDerivation.HasOverdueIssue`）。
 - **AI 產出標註（2026-07-27 統一）**：AI 生成的文字一律以 `lf-badge--secondary` 徽章＋
@@ -1052,12 +1051,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
-- **「AI 分析中」徽章（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §3.5）**：NetIQ pipeline 搜尋與
+- **「AI 分析中」徽章**：NetIQ pipeline 搜尋與
   AI 判讀脫鉤後（見 docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節），統計已寫入、
   AI 段還在排隊或執行中的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
-- **問題列 Source/EventId 顯示（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4.3）**：Linux 事件沒有
+- **問題列 Source/EventId 顯示**：Linux 事件沒有
   EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 下拉選單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
@@ -1072,7 +1071,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   **呈現（#1/#3/#10/#12）**：訊息區固定高度＋捲軸（`.lf-chat-messages`，回覆後自動捲底）、
   等待回覆時顯示三點跳動泡泡（`.lf-typing`）、AI 回覆經 `markdown-lite.js` 安全子集渲染
   （**粗體**/`行內代碼`/清單，DOM 組裝、絕不 innerHTML——全站 AI 文字的唯一渲染出口，
-  docs/archive/HISTORY.md S7）、清除重來鈕帶圖示。**放大檢視**（2026-07-30，docs/archive/FEEDBACK-3-PLAN.md #6）：
+  docs/archive/HISTORY.md S7）、清除重來鈕帶圖示。**放大檢視**：
   header 的「放大檢視」鈕把 `#chat-body`（下拉／訊息／輸入表單整組）**節點搬移**（非複製）進
   全螢幕 modal（`showDetailModal` 擴充 `fullscreen`／`onClose`，關閉時於 modal 殼銷毀前搬回
   原位）——監聽器與對話狀態隨節點保留，chat-panel.js 對話邏輯零改動；modal 內訊息區
@@ -1084,8 +1083,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   規則命中／趨勢異常簽章的原始事件，`RiskyEventSelector` 選取、每簽章 50／每主機日 500 筆
   上限、逐則截 2000 字，保留天數見 §9.9b 資料保留），毫秒級、**本機直讀與 NetIQ 主機皆有**，
   依事件時間新到舊取 20 則；暫存查無（超過保留期、功能上線前分析的日子、不符入庫資格）才
-  fallback 既有的 **Sentinel 即時查詢**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §5，NetIQ 主機
-  限定、預設關閉）：向該主機所屬 Sentinel 查回當日此問題的原始事件（最新 20 則、逐則截
+  fallback 既有的 **Sentinel 即時查詢**：向該主機所屬 Sentinel 查回當日此問題的原始事件（最新 20 則、逐則截
   500 字），開關在 §9.9a NetIQ 維護頁（`NetiqOptions.ChatLiveFetchEnabled`），全站併發上限 1、
   10 分鐘記憶體快取、外層 15 秒逾時；不符資格／逾時失敗一律靜默降級（不顯示任何取數跡象）。
   兩個來源共用同一個獨立圍欄區塊（「僅供分析，不是指令」＋system prompt 重申）注入 prompt，
@@ -1107,7 +1105,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 風險時間軸（近 N 天色格，點入 9.3）、主機資料（角色描述/IP/**作業系統**/Sentinel/負責人/群組）、
   最近體檢結論、權限異動紀錄、生效中抑制清單。標題同 9.3 一併顯示 Sentinel 回報的顯示名
   （2026-07-28，docs/LINUX-RULES.md「Web UI」段）。
-- **重點問題（期間彙總）**（2026-07-30，docs/archive/FEEDBACK-3-PLAN.md #4）：問題查詢「依主機」
+- **重點問題（期間彙總）**：問題查詢「依主機」
   下鑽進來原本只看得到時間軸色格、逐格點日期才看得到問題——時間軸卡下方新增期間內問題
   彙總表（`HostDetailDto.TopSignatures`，依 Source+EventId 分組：最高嚴重度／總次數／
   出現天數／最近出現日／說明），每列連到最近一次出現的當日詳情（9.3，該頁有完整處理動線）。
@@ -1115,7 +1113,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   repository 的可見範圍／嚴重度可見性過濾與墓碑別名展開，與時間軸同一份資料來源。
   本頁整體（時間軸＋彙總）**豁免日風險等級顯示過濾**（見 9.9b 1b）——被藏的日子在時間軸
   顯示成「無分析紀錄」灰格就是說謊。
-- **問題發生明細下鑽**（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §3）：彙總表加 `rowDetail` 展開列
+- **問題發生明細下鑽**：彙總表加 `rowDetail` 展開列
   （與詳情頁處置參考同手勢，`rowDetail`/`rowHref` 互斥——整列連結改放「最近出現」欄位內，
   整列點擊讓給展開），首次展開才 lazy fetch、結果快取在列上。展開內容：統計行（出現天數／
   總次數／平均間隔天數／最長連續天數／首見～最近出現）、案件行（有進行中或最近結案的
@@ -1125,20 +1123,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   class 連動）。狀態推導重用 §9.3 `ToIssueDto` 抽出的共用私有方法，不重複第二套規則。
   一個 (Source,EventId) 對應多個完整 IssueKey（LogName/EntryType 不同）時合併呈現、狀態各自取
   當日實際列。
-- **指定主機更新鈕**（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.5，需 `Maintain`，其他角色
-  不顯示）：就近原則——看著這台主機覺得資料舊了當場按。開確認 modal（可選一次性回補天數
+- **指定主機更新鈕**：就近原則——看著這台主機覺得資料舊了當場按。開確認 modal（可選一次性回補天數
   1~14，不落地設定）後送 `POST api/admin/schedule/run`（scope=host）；本機直讀主機走
   LocalOnly、NetIQ 主機走 NetiqHosts 單台。後端先驗證主機目前確實在「會被查詢」的清單內
   （Pollable——停用／待歸屬／IP 衝突／所屬 Sentinel 停用都會被 orchestrator 靜默濾掉，
   預覽顯示「1 台」會是假象），不符合時拒絕並給出具體原因。
-  **Linux 主機比照 Windows 正式支援（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期
-  擋截）**：按鈕不再因 `HostDetail.Os === 'linux'` 停用——Sentinel 搜尋已有 Linux 取數分支，
+  **Linux 主機比照 Windows 正式支援**：按鈕不再因 `HostDetail.Os === 'linux'` 停用——Sentinel 搜尋已有 Linux 取數分支，
   Linux 主機走同一條 Pollable 驗證與 NetiqHosts 單台查詢路徑。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
 
 ### 9.4a `/handlers/{userId}` 處理人員工作頁（全角色，資料以檢視者可見範圍過濾）
 
-（2026-07-30，docs/archive/FEEDBACK-4-PLAN.md §6）點任何處理人姓名（問題查詢明細／依主機／依問題視角
+點任何處理人姓名（問題查詢明細／依主機／依問題視角
 的處理人欄、詳情頁處理面板、詳情頁案件徽章）都連到此頁；導覽「監控作業」區另加「我的交辦」
 （`requires: null`，前端依目前登入者導向自己的 `/handlers/{userId}`）——不新增 Capability，
 處理人姓名本來就全站可見，此頁未洩漏新資訊；**資料以檢視者的可見範圍過濾**（不是被看者的），
@@ -1147,7 +1143,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **KPI 列**：進行中案件數／未結案風險日數／逾期數（沿用 §9.3 逾期兩層並列同一套
   `HasOverdueIssue` 語意）。
 - **進行中案件表**（該人為處理人、尚未結案的跨日問題案件）。
-  **視角切換（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §7）——預設「依問題」**：
+  **視角切換——預設「依問題」**：
   被交辦同一類問題橫跨多台主機時，主要動線是「一次看完、一次回覆」，逐台一列反而要來回比對。
   - **依問題**（預設）：一列一個問題（Source＋EventId，同 §9.2 by-issue 的分組鍵）——
     問題｜主機數｜狀態彙總（「N 台處理中／M 台觀察中」）｜涵蓋範圍｜逾期台數；
@@ -1187,7 +1183,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 └──────────────────────────────────────────────────────────┘
 ```
 
-> §4（回饋第九輪）**一頁化**；**2026-08-05（docs/archive/FEEDBACK-10-PLAN.md §5）改為隨視窗自動縮放**：
+> §4**一頁化**；**2026-08-05改為隨視窗自動縮放**：
 > 原本靠把 `.lf-chart` 砍到 230px 硬擠，等於押注「使用者的可用高度剛好是我猜的數字」——
 > 瀏覽器邊框、工具列、字級偏好任一項不同就破功。改為由外而內分配高度：
 > `.lf-layout:has(.lf-report-page)` 綁 `100dvh`（`:has` 讓這組規則只作用於報表頁）→
@@ -1211,7 +1207,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   並排時擠在右側會把文字壓成逐字直排。
 - **自訂圖表**（#6）：modal 逐圖勾選要顯示哪些圖表，狀態存 `localStorage`（預設全開）；
   隱藏的圖不建構 Chart.js 實例（lazy render），列印沿用畫面狀態。
-- **排行卡的「主機｜問題」切換（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §8-2）**：卡 header 的 toggle
+- **排行卡的「主機｜問題」切換**：卡 header 的 toggle
   切換同一張卡的兩個視角——主機告警排行（高／中風險日堆疊）或問題排行（事件次數，
   Source＋EventId 分組，下鑽問題查詢的依問題視角）。狀態存 `localStorage`，**預設主機**
   （既有畫面零變化）。**刻意不另開第五張卡**：報表一頁化的高度是由外而內分配的（§5，
@@ -1219,7 +1215,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   也正好是「同一個排行、兩種視角」。資料 `RecordStatsBuilder.BuildIssueRanking`
   ——與儀表板「重點問題」卡同一份投影，兩頁數字必然一致；Top 10 之外併成「其他 N 個問題」
   彙總條（同主機排行的理由：尾端不隱形），「檢視全部」連問題查詢的依問題視角。
-- **占比小圖的資料來源與全站一致**（docs/archive/HISTORY.md）：受影響主機占比的分母
+- **占比小圖的資料來源與全站一致**：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
 - **處理狀態顯示範圍（§5，回饋第九輪；2026-08-05 併入期間列同一行）**：一組**單選** chip——全部（預設）／未結案
@@ -1237,7 +1233,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （原 `GET api/reports/signature` 於 §4 隨簽章查詢併入問題查詢一併移除。）
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
-- **規則庫初始化（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §10）**：`rules` blob 原本只有
+- **規則庫初始化**：`rules` blob 原本只有
   批次的 `RuleBootstrapper` 會初始化，全新環境（批次從未執行過）Web 開站即假設
   「批次至少跑過一次」，本頁對著不存在的 blob 直接拋例外（500）。Web
   `Program.cs` 啟動時現與批次共用同一份 `RuleBootstrapper.LoadContent`（搬至
@@ -1259,47 +1255,46 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   正規化事件名＋訊息子字串），類別／嚴重度／門檻／重大／知識庫／啟用完全共用。新增規則的平台由所在分頁
   決定且建立後不可變更（`Platform` 與 `Origin` 同屬身分欄位）。告警抑制分頁加「平台」欄與篩選，
   「抑制此規則」的主機下拉**依規則平台過濾**（Linux 規則只列 Linux 主機）。
-- **抑制範圍 Host／Group／Site（回饋十三輪 F）**：「抑制此規則」modal 新增「範圍」下拉（單一
+- **抑制範圍 Host／Group／Site**：「抑制此規則」modal 新增「範圍」下拉（單一
   主機／主機群組／全站），依選擇切換對應的目標欄位（主機下拉／主機群組下拉／不需額外目標，
   三擇一顯示）。抑制列表「範圍」欄以文字呈現目標（「主機 SRV-01」／「群組 IIS 前端」／
   「全站」）。`RemoveSuppression` 端點的目標改用 query string（`?scope=&host=&hostGroupId=`）
   取代原本的 `{host}` path segment——Group／Site 範圍沒有單一 host 可放進路徑。
-- **Group／Site 抑制的影響面預覽（2026-08-10，回饋十四輪 C1，語意見 docs/RULES-SPEC.md）**：
+- **Group／Site 抑制的影響面預覽**：
   範圍選 Group／Site 時送出前先打 `GET api/rules/{id}/suppression-preview?scope=&hostGroupId=`，
   以確認對話框顯示「此抑制將影響 N 台主機；過去 14 天該規則在這些主機上共命中 M 次」
   （Linux 規則附「同來源程式合計」註記）再送出；預覽呼叫失敗不擋抑制流程（api.js 已 toast
   顯示錯誤，只是少了規模資訊）。範圍切到 Site 時「生效天數」欄空白會自動帶 30（可清空改回永久）。
-- **內建規則升級（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9，承接 `--import-rules`）**：
+- **內建規則升級**：
   庫內種子版本落後內建種子時頁頂顯示橫幅「內建規則有更新 vX→vY」→「預覽差異」modal 逐條列
   新增／更新／略過／衝突（衝突＝使用者改過的 builtin）→「套用」（附 checkbox「連同已修改的
   內建規則一併覆蓋（保留啟用狀態）」＝`--overwrite-builtin` 語意；custom 規則永不觸碰）。
   分類與套用邏輯拆到 Core 純函數 `RuleImportPlanner.BuildPlan/Apply`；批次 console CLI（`--import-rules`，
-  當時薄包裝共用同一份邏輯）已隨 Phase 5 退場移除（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），Web 是現在
+  當時薄包裝共用同一份邏輯）已隨 Phase 5 退場移除，Web 是現在
   唯一的入口；套用走既有儲存前驗證管線，寫稽核 `rule_seed_import`。
 - API：`GET/POST api/rules`、`GET/PUT/DELETE api/rules/{id}`、`POST api/rules/{id}/restore`、
   `PUT api/rules/{id}/enabled`、`GET/POST/DELETE api/rules/{id}/suppressions`、
-  `GET api/rules/{id}/suppression-preview`（回饋十四輪 C1，Group／Site 限定）。
+  `GET api/rules/{id}/suppression-preview`。
   `RuleDto`／`SaveRuleRequest` 帶 `Platform`＋三個 Linux 比對欄位；`RuleSuppressionDto` 的 `Platform`
   由 RuleId 反查帶出（非新儲存欄位）。維持單一端點回全量、前端分平台呈現（規則量級小，不需分頁端點）。
   規則升級另有 `GET api/rules/import-status`、`GET api/rules/import-preview?overwriteBuiltin=`、
-  `POST api/rules/import-apply`（2026-07-31）。
-- **抑制目標四型（回饋十五輪 A/A-6，語意見 docs/RULES-SPEC.md）**：「告警抑制」分頁新增「目標
+  `POST api/rules/import-apply`。
+- **抑制目標四型**：「告警抑制」分頁新增「目標
   型別」欄＋篩選 chip（規則／簽章／關聯／音量），非規則目標的列顯示 `TargetLabel`＋`Platform`
   （無 `RuleId` 可查詢）。新增／解除統一走絕對路徑端點 `POST/DELETE /api/suppressions`（不綁
   `ruleId`，`AddSuppressionRequest` 依 `TargetType` 帶對應欄位），舊的 `{ruleId}/suppressions`
   端點保留、內部委派同一份 `RuleAdminService` 邏輯供既有呼叫端相容。規則清單列上有抑制時顯示
   抑制筆數徽章＋前 3 筆 tooltip 預覽（`RuleDto.SuppressionCount`／`SuppressionPreview`，範圍最寬
   的排最前——Site > Group > Host）。**新三型（簽章／關聯／音量）目前僅支援 `Host` 範圍**
-  （回饋十六輪批次C-1，`RuleAdminService.AddSuppression` 服務層拒絕 Group／Site；只有 `Rule`
-  型有 `PreviewSuppression` 影響面預覽，完整範圍支援矩陣見 docs/RULES-SPEC.md）。
-- **比對順序改唯讀＋遮蔽警告文案收斂（回饋十五輪 B，R1）**：規則的比對順序＝清單順序（第一個
+  。
+- **比對順序改唯讀＋遮蔽警告文案收斂**：規則的比對順序＝清單順序（第一個
   命中的規則生效），本頁不支援拖曳調整，`RuleDto.MatchOrder` 唯讀顯示；遮蔽警告文案移除「請調整
   順序」等操作提示（改成純陳述「本頁不支援調整規則順序，順序由建立先後決定」），避免暗示一個
   UI 做不到的動作。
-- **主機下拉改伺服器端搜尋（回饋十五輪 B，R2）**：抑制目標主機選擇器改用 `ui.js` 的
+- **主機下拉改伺服器端搜尋**：抑制目標主機選擇器改用 `ui.js` 的
   `searchableHostSelect`（輸入關鍵字 debounce 300ms 打 `GET /api/admin/hosts?query=&os=&pageSize=50`），
   取代原本一次性 `pageSize=200` 全量下拉——大規模環境下主機清單過長時可直接輸入關鍵字篩選。
-- **範本套用可停用原規則（回饋十五輪 B，R4）**：套用規則範本時新增「停用原規則」勾選（先建立新
+- **範本套用可停用原規則**：套用規則範本時新增「停用原規則」勾選（先建立新
   規則、成功後才停用來源規則，避免建立失敗卻已停用原規則的中間態）。
 
 ### 9.8 `/admin/users`、`/admin/hosts`、`/admin/groups`（`Maintain`）
@@ -1308,9 +1303,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   帳號建了但人沒來過是需要被看見的狀態，不是普通空值）。
   **快速篩選 toolbar（Phase D-2）**：狀態／角色單選 chip（角色選項來自現有群組去重）＋群組多選 chip，
   排序改表頭點擊（帳號/顯示名稱/上次登入/狀態，2026-07-29 取代原本的獨立排序下拉，見 §8.6-2），本地分頁。
-  **狀態預設「啟用」（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §4）**：日常維護看的是現在還在職的人，
+  **狀態預設「啟用」**：日常維護看的是現在還在職的人，
   停用帳號是歷史事實、只在查舊帳號時才需要；chip 仍可切「全部／停用」，不是藏起來。
-  **一次新增多筆（2026-07-27，docs/archive/HISTORY.md #7）**：新增 modal 單筆／多筆切換——多筆模式
+  **一次新增多筆**：新增 modal 單筆／多筆切換——多筆模式
   只填帳號 textarea（一行一個，也接受逗號分隔）＋所屬群組，顯示名稱預設＝帳號、Email 留空
   （之後 AD 登入時自動補上，見 #8）；送出前比對既存帳號，衝突時由使用者選「跳過」或「以此批群組
   整組覆蓋」（`POST api/admin/users/batch`，覆蓋走既有 `SetUserGroups` 保留 Before/After 稽核，
@@ -1357,7 +1352,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 ### 9.8a `/admin/users/{id}` 使用者詳細（`Maintain`）
 
-（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md §3）自使用者清單點列進入，回答「這個人是誰、看得到什麼、
+自使用者清單點列進入，回答「這個人是誰、看得到什麼、
 手上有什麼、被交辦過什麼」。**與 §9.4a 處理人工作頁刻意分開**：那頁是全角色頁、資料以
 **檢視者**的可見範圍過濾；本頁的可見主機與上次登入以**被查看者**為準，是管理視角資訊，
 兩者混在同一頁會讓「這頁的資料以誰的範圍過濾」變成兩套規則疊在一起。頁頂有連往工作頁的連結。
@@ -1380,7 +1375,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   ＋前端另打 `api/handlers/{id}/workload`。
 
 ### 9.9 `/admin/imports` 資料匯入（`Maintain`）
-**§2a（2026-08-05，docs/archive/FEEDBACK-11-PLAN.md）本頁收斂為單一卡片「負責人」**：使用者／主機／
+**§2a本頁收斂為單一卡片「負責人」**：使用者／主機／
 群組授權三種 CSV 連同 Importer、範本與測試**整組退役**（主機的主要來源是 NetIQ 掃描匯入）。
 `ImportKind` 保留那三個列舉值——歷次匯入紀錄存的是字串 Kind，拿掉會讓過去的紀錄失去顯示名稱，
 而匯入紀錄是稽核性質的歷史事實；未註冊的 Kind 由 `ImportService.Resolve` 回
@@ -1431,7 +1426,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   另有「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
-  **上限收斂為 3**（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §二）：表單 `max="3"`＋後端
+  **上限收斂為 3**：表單 `max="3"`＋後端
   `[Range(1, NetiqOptions.MaxParallelServersLimit)]` 雙重把關，避免無上限地並行對多台
   Sentinel 開查詢造成 server 端負擔失控；既有存值超過上限時讀取自動夾住（不擋存檔，
   只在下次讀取時靜默收斂並記錄），不需要遷移。
@@ -1443,14 +1438,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   **預設關閉**）：與其餘節流參數同一個表單區塊，form-text 說明開啟後風險日詳情頁「詢問 AI」
   首輪會對 Sentinel 發即時查詢，請評估白天查詢負載（行為詳見 §9.3 詢問 AI 對話區塊一節）。
   2026-07-31 起此即時查詢降為 **fallback**：對話先查風險 log 暫存（不受本開關影響），
-  查無才用到本開關控制的即時查詢（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.4）。
+  查無才用到本開關控制的即時查詢。
 - **離線示範資料開關**（`UseOfflineDemoData`，§13 回饋第九輪，**預設關閉＝真實連線**）：
   取代原 appsettings 的 `Netiq:DiscoveryClient`（Auto 讓 Development 預設假資料、方向顛倒）。
   開關**僅非 Production 顯示**（DTO 的 `CanUseOfflineDemo`）；三道保險擋正式環境——前端不顯示、
   `NetiqOptionsService.Update` 在 Production 拒絕開啟並強制關閉、DI 選型
   （`UseStubNetiqClient(isProduction, flag)`）在 Production 一律真連線。開啟時頁面常駐警示徽章，
   掃描精靈結果的 `Warnings` 也顯著標示「示範資料」（2026-07-30 誤認 bug 的既有防線）。
-- **頁面分頁化（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11；2026-08-05 增「匯入」分頁）**：
+- **頁面分頁化**：
   現為 **「設定｜匯入｜診斷」三分頁**（沿用 `bindTabs` 手作頁籤模式）——Sentinel 清單與連線
   節流參數在「設定」。
 - **「匯入」分頁（§1，2026-08-05，docs/archive/FEEDBACK-11-PLAN.md）**：掃描匯入自「資料匯入」頁整批搬來
@@ -1461,7 +1456,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   由 `netiq.js` 呼叫 `initNetiqImportTab()` 掛載；掃描下拉的資料**由 `netiq.js` 已取回的
   Sentinel 清單傳入**（`refreshScanPicker(sentinels)`），不各自再查一次——同頁兩個分頁
   各打一次同一支 API 是白費往返，而剛補完帳密的 Sentinel 也必須立刻出現在下拉裡。
-- **精靈主機清單排版（2026-07-29）**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
+- **精靈主機清單排版**：modal 改 `modal-xl`＋`modal-dialog-scrollable`；每個網段內的
   主機改多欄 CSS grid（原本一台一列直排，網段常有數十台要捲很久）；單一網段主機數超過 20 台
   預設收合（summary 上的計數維持可判斷）；加「全選新主機／全不選」快捷（前者＝恢復預設勾選狀態：
   新主機與可復活的勾、既有使用中主機不勾，不是無條件全選）。
@@ -1478,19 +1473,19 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `Warnings`（超出掃描能力／排除語法未生效／頻道覆蓋疑慮等，每則都說得出下一步動作）。
   掃描時已知的真實機器名（Sentinel `sn` 欄位眾數）在匯入當下就寫入新主機的
   `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的 `DisplayName` 一律不動。
-- **主機名稱 tooltip 改掛整列（2026-07-29）**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
+- **主機名稱 tooltip 改掛整列**：`title` 原本只掛在名稱 `<span>` 上，滑鼠要精準停在
   截斷文字正上方才會出現；改掛到整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的空白處也看得到
   完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是瀏覽器標準行為）。
 - **「診斷」分頁（NetIQ API probe Web 化，承接 `--netiq-probe`）**：選一台已設定的 Sentinel、
   選填 Windows／Linux 樣本 IP（對應原 `--sample-ip`／`--sample-linux-ip`）→ 執行 13 步驗證查詢
   （欄位對應／dt 邊界／分頁效能／IP 批次上限／頻道覆蓋等，是 Linux Sentinel 接入 P3 閘門的
   載具）。查詢邏輯拆 Core 純服務 `NetiqProbeRunner`；批次 console CLI 薄殼已隨 Phase 5 退場
-  移除（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），Web 是現在唯一的入口，輸出契約不變——仍是可直接
+  移除，Web 是現在唯一的入口，輸出契約不變——仍是可直接
   複製貼回對話定案欄位的純文字。長耗時操作走「觸發→背景執行→
   輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
   probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
   需 `Maintain`、寫稽核 `netiq_probe_run`（帳密未設定的 Sentinel 拒絕啟動）。
-  **Linux 深掘擴充（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4.1）**：步驟 8（Linux 主機樣本）
+  **Linux 深掘擴充**：步驟 8（Linux 主機樣本）
   樣本數 3→10，命中時追加「欄位名聯集」彙總行；新增 8b（同批樣本的 `msg` 全文另行傾印，
   不截斷，供規則的訊息子字串校正）、8c（`sp` 查詢行為實證：term／大小寫／前綴萬用字元）、
   8d（`sev` 0~5 分佈逐值 found，另取 `sev:2`／`sev:[3 TO 5]` 樣本 msg 全文）、8e（種子 program
@@ -1503,7 +1498,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （新增）、`GET api/admin/netiq/probe/status`＋`POST api/admin/netiq/probe/start`（診斷分頁，2026-07-31）
 
 ### 9.9b `/admin/settings` 系統設定（`Maintain`）
-- **頁籤化（2026-07-31，docs/archive/FEEDBACK-5-PLAN.md §9；2026-08-05 增「外觀」分頁）**：設定項目多且長，
+- **頁籤化**：設定項目多且長，
   六張卡（層級與顯示／AI 服務／AD 驗證／分析參數／資料保留／外觀）改由頂部 `<ul class="nav nav-tabs" id="settings-tabs">` 切換
   （沿用規則頁既有的 `ui.js` `bindTabs` 手作頁籤模式，非作用中頁籤需在初始 HTML 就帶
   `d-none`——`bindTabs` 只在點擊時切換，不會處理初始狀態）。**單一 form 不拆**：後端仍是整份
@@ -1520,16 +1515,15 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （單點事實來源 `DayHandlingDerivation`／`RecordDetailQueryService.ToIssueDto`）。預設 High/Medium，
      與改版前寫死的 Low 規則行為一致；既有設定殘留的 `Critical` 於讀取時正規化為 `High`
      （`SystemSettingsService.NormalizeLegacySeverities`），既有部署不需手動改設定。同組勾選另驅動**層級顯示模式**（`SeverityDisplayMode`）二選一
-     （docs/archive/HISTORY.md #5，2026-07-27 自三模式簡化；舊值 `Locked`／`GlobalFilter`
-     讀取時正規化為 `SiteHidden`，不改寫 blob）：
+     ：
      - `DefaultHidden`（預設）：詳情頁嚴重度篩選預設只亮勾選層級（初始值經 `RecordDetailDto.UnhandledSeverities`
        帶給前端，僅首次載入初始化、批次套用重載不重置），未勾選層級的篩選鈕仍在、可手動點開；
        儀表板、報表與問題查詢頁統計不受影響（仍計入全部層級）。
      - `SiteHidden`：未勾選層級在**後端查詢層全站排除**——過濾收斂在 `RecordRepository` 單一咽喉點
-       （docs/archive/HISTORY.md S1，`ISystemSettingsService.GetVisibleSeverities()` 為規則出口），
+       ，
        詳情頁、AI 對話下拉、儀表板類別卡、報表統計、問題查詢分組視圖與簽章查詢全部同一套過濾，沒有例外頁。
        **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
-  1b. **日風險等級顯示**（2026-07-30，docs/archive/FEEDBACK-3-PLAN.md #8；與 1. 是不同的兩套層級）：
+  1b. **日風險等級顯示**：
       高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
       儀表板永遠空白）。未勾選等級的風險日**整筆**從查詢/統計消失——過濾點與問題嚴重度
       可見性共用同一個咽喉（`RecordRepository`，`ApplyDayRiskVisibility`/`GetVisibleDayRiskLevels`），
@@ -1539,7 +1533,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
       灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
       `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
       用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
-  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。**§12（回饋第九輪）起本頁是 AI
+  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。**§12起本頁是 AI
      全部參數的唯一事實來源**——原 appsettings 的 `Ai` 區段整段退役，`TimeoutSeconds`/`RetryCount`/
      `RetryDelaySeconds`/`JsonRetryCount`/`MaxTokens`/`DeepDiveMaxTokens`/兩個 penalty/
      `ExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**
@@ -1551,11 +1545,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      一行一路徑）、掃描頻道（`AnalysisChannels`，一行一頻道全名、空＝預設六頻道；只正規化
      不驗證已知性——自訂頻道是既有設計，拼錯會在分析時誠實申報「不存在／不適用」）、
      CSV 匯入上限（`ImportMaxFileSizeKb`/`ImportMaxRows`，每次上傳即時讀取）。
-  2c. **AI 進階參數的「還原預設值」**（docs/archive/FEEDBACK-10-PLAN.md §3）：`GET api/admin/settings`
+  2c. **AI 進階參數的「還原預設值」**：`GET api/admin/settings`
      多回一個 `AiAdvancedDefaults` 子物件，值由 `new SystemSettings()` 取得——**出廠值的單一
      事實來源仍是 Core 模型的屬性初始器**，前端不硬編第二份。按鈕只把九個欄位填回表單、
      **不直接落盤**（仍走整頁單一 form 的「儲存」，未儲存提醒照常亮起）。
-  2d. **外觀／品牌**（docs/archive/FEEDBACK-10-PLAN.md §1，2026-08-05 新分頁）：產品名稱
+  2d. **外觀／品牌**：產品名稱
      （`BrandName`，空＝回退 `LogForesight`）、副標（`BrandSubtitle`，**出廠值
      「事件日誌預警」不含「Windows」**——Linux 規則面已就緒，寫死 Windows 名不符實；
      空＝不顯示副標）、自訂圖示（`BrandIconDataUri`，**只收 PNG／JPG** 的 data URI、
@@ -1563,24 +1557,22 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      **消費端是伺服器端渲染**：`_Layout.cshtml` 與 `Login.cshtml` 經 `IBrandProvider`
      （Services，只暴露品牌三欄給 View，不讓 View 碰 Persistence）直接輸出——側欄品牌是
      每頁第一眼，等前端 fetch 回來才替換會閃動。
-  3. **AD 驗證**（docs/archive/HISTORY.md #9，2026-07-27；§12 起為 AD 設定的**唯一**來源，
-     appsettings 的 `Auth:Ldap:Domain` 退役）：啟用開關＋伺服器清單（一行一台，依序
+  3. **AD 驗證**：啟用開關＋伺服器清單（一行一台，依序
      嘗試）＋進階（SearchBase／SearchFilter）。開啟後不論 appsettings 的 `Auth:Provider` 為何，
      登入一律改用 DB 設定的 AD 伺服器驗證（`DynamicAuthenticationProvider`，存檔即生效不必重啟）；
      bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
      是 AD 設定填錯時的逃生門。另提供「測試連線」（`POST api/admin/settings/ad-test`）：
      用管理者當場輸入的帳密對表單目前的伺服器試 bind（未儲存也能測），密碼不落盤、不進稽核 detail。
   4. **資料保留**：首次執行回補天數、歷史資料保留天數（預設皆 120，需保留天數 ≥ 回補天數）；
-     2026-07-27（docs/archive/HISTORY.md P0-3）另加**執行歷程保留天數**（預設 90，範圍 7~3650，
+     2026-07-27另加**執行歷程保留天數**（預設 90，範圍 7~3650，
      批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730，範圍 90~3650）——
      批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
-     2026-07-31（docs/archive/WEB-SCHEDULER-PLAN.md §2）再加**風險 log 暫存保留天數**（預設 14，
+     2026-07-31再加**風險 log 暫存保留天數**（預設 14，
      範圍 1~3650 且不可大於歷史資料保留天數，前後端皆驗證）——規則命中/趨勢異常問題的
      原始事件暫存（`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3），批次每晚
      依此天數清理；回補超過此天數的日子直接跳過寫入（寫了下次也會被清，見
      `RiskyEventSelector.WithinRetention`）。
-  5. **郵件通知**（回饋十五輪批次D，新分頁，版面比照「AD 驗證」的展開式版面；回饋十七輪
-     批次A/B 全面修正日期與權限範圍，見下方）：啟用開關＋
+  5. **郵件通知**：啟用開關＋
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
      寄件人／收件人（一行一位 textarea，與 AD 伺服器／監控資料夾等既有 `List<string>` 欄位
@@ -1597,7 +1589,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      細節可顯示，比照 AD 測試連線的語意）。三路觸發與寄送實作見 §10.2 的
      `MailNotifyStateStore` 對照列與 docs/RULES-SPEC.md／docs/DETECTION-SPEC.md 相關段落。
 
-     **窗口查詢取代目標日期（2026-08-11，回饋十七輪批次A，根修頭號發現）**：分析永遠只
+     **窗口查詢取代目標日期**：分析永遠只
      產出到昨天（`MissingDateFinder` offset 從 1 起算、`AnalysisOrchestrator` 固定分析
      `yesterday`），原本 `NotifyAfterRunAsync(DateTime.Today)` 卻查「今天」，導致執行摘要與
      高風險即時通知兩路永遠零筆不寄、每日摘要因窗口算到今天而天天寄一封「無事」假信。改為
@@ -1606,7 +1598,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      去重（執行摘要原本沒有去重狀態，靠新欄位補上，語意變成「尚未摘要過的達門檻主機日」）。
      每日／週報窗口同輪右移一天（`To = 昨天`），語意對齊「今天以前發生了什麼」。
 
-     **收件人可見範圍過濾（2026-08-11，回饋十七輪批次B-4）**：三路信件都改成雙層內容——
+     **收件人可見範圍過濾**：三路信件都改成雙層內容——
      全站統計行（數字，不含主機名，所有收件人都看得到）＋主機明細（僅解析得到帳號、且該
      帳號可見範圍涵蓋的主機；`IVisibilityService.GetVisibleHostIdsFor` 同一套規則，經新增的
      `HostVisibilityResolver` 靜態類別讓 Singleton 的 `MailNotificationService` 與 Scoped 的
@@ -1614,20 +1606,20 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      啟用中帳號（自由文字地址，如共用信箱）時只收統計行，不含任何主機明細——權限無從判定
      時預設最小揭露。
 
-     **收件人跨輪失敗排除（2026-08-11，回饋十七輪批次B-1）**：單一收件人連續寄送失敗達 3 次
+     **收件人跨輪失敗排除**：單一收件人連續寄送失敗達 3 次
      即從後續寄送清單排除（`RecipientFailureStreaks`），不再讓一個打錯的地址拖累全域收件人
      每輪重複收信；寄送成功即歸零，設定頁儲存郵件設定時整份清空（改正地址後從零重新累計）。
      熔斷（本輪 SMTP 整體異常、連續失敗 3 次即停止本輪剩餘寄送，回饋十六輪批次A-3）跳過的
      收件人不計入這個跨輪計數——熔斷是「本輪沒嘗試」，不是這個收件人本身的問題。已暫停的
      收件人同時顯示在設定頁與 `/api/health/detail`（`SuspendedMailRecipients`）。
 
-     **信件內容廣泛化（2026-08-11，回饋十七輪批次B-3）**：明細行移除 `Headline`／`RiskBasis`
+     **信件內容廣泛化**：明細行移除 `Headline`／`RiskBasis`
      （判定依據），只留主機、日期、風險等級、錯誤／警告數量——不揭露具體錯誤內容。
 
-     **N+1 修正（2026-08-11，回饋十七輪批次B-2）**：一次通知批次改用主機／使用者字典
+     **N+1 修正**：一次通知批次改用主機／使用者字典
      （`MailContext`），不再逐筆紀錄各自呼叫 `Store.Get()`（每次呼叫整份 blob 反序列化）。
 
-     **體檢輪修正（2026-08-12）**：合併回 dev 前的體檢輪抓到兩處真實缺陷，皆已修復並補測試。
+     **體檢輪修正**：合併回 dev 前的體檢輪抓到兩處真實缺陷，皆已修復並補測試。
      (1) 高風險即時通知的統計行原本用該收件人自己過濾後的明細現算——收件人只有部分可見範圍
      時，看不到的主機日連統計數字都沒被提到，卻因為那封信寄送成功而被 `MarkSent` 的
      zero-coverage fallback 標記為已通知，是真正意義上「沒人被告知過」的靜默漏寄。改為統計行
@@ -1655,7 +1647,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      前狀態、批次／跨主機取「新轉入」子集，信件的問題數／主機數也只算該子集）——已上報過的
      問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
-  `POST api/admin/settings/mail-test`（回饋十五輪批次D）、
+  `POST api/admin/settings/mail-test`、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 
 ### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，回饋十五輪批次E，實驗性）
@@ -1676,8 +1668,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
   一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
   深連結（`#{章節id}`），章節結尾的「相關功能」連結沿用 manifest 的 `related`，人與 AI
-  問答共用同一份關聯資訊。**問答框位於章節內容下方**（回饋十六輪批次E-4，行為變更：原本在
-  頁面頂部）。**章節內容區改回自然展開（2026-08-11，回饋十七輪批次G-1，推翻批次E-4的做法）**：
+  問答共用同一份關聯資訊。**問答框位於章節內容下方**。**章節內容區改回自然展開**：
   原本用 `help-manual.js` 量測左側目錄卡高度、把內容區塞進同高的 `max-height` 內捲動——內容
   一長就要在小視窗裡捲兩層（頁面本身＋內容區），體驗不佳。改回左側目錄卡 `position: sticky`
   跟著頁面捲動（`.lf-topbar` 非 fixed，不會擋住），內容區不設 `max-height`，多長顯示多長；
@@ -1692,7 +1683,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   行內代碼、清單、標題轉粗體行、段落、**GFM 風格表格**（2026-08-11 回饋十七輪批次G-4 新增：
   連續 `|` 開頭行＋下一行為 `|---|---|` 分隔列才判定為表格開頭，避免誤判含 `|` 的散文；
   段落續行迴圈也要中斷於表格開頭，否則散文起頭接的表格會被吞進同一段落當純文字；
-  **體檢輪修正（2026-08-12）**：起點判定當時只顧到「表格開頭」這一側，表格**續行**（body-row
+  **體檢輪修正**：起點判定當時只顧到「表格開頭」這一側，表格**續行**（body-row
   消耗迴圈）沒有對稱套用同一道防呆，兩個真實情境會被誤吞——(1) 表格後緊接（無空白行分隔）
   含行內代碼管線符號的散文（如 `` `netstat -an | grep ESTABLISH` ``）被拆進表格當資料列、
   行內代碼從中間被切斷；(2) 兩個 GFM 表格中間沒有空白行時，第二個表格的表頭被吞成第一個
@@ -1708,13 +1699,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   可信，仍照這個既有的 XSS 紀律走，不為單一頁面開一個新的渲染路徑。這是全站 AI 文字的
   單一渲染入口，表格支援對聊天面板／風險日詳情／儀表板／問題查詢等所有 AI 輸出面同時生效，
   不只限於本頁。
-- **AI 問答（實驗性徽章）**：`AiBaseUrl` 未設定時**整張問答卡隱藏**（回饋十六輪批次D-3，
-  行為變更：原本整區換成「未設定 AI 服務，僅提供文件瀏覽」的文案，改成與全站其他 AI 入口
-  ——儀表板焦點卡、清單頁歸納鈕、詳情頁對話——一致的隱藏語意；`GET /api/help/ask-available`
-  判斷）。卡片顯示時另外查一次 `GET /api/run-activity`（任何登入者可讀、不掛
+- **AI 問答（實驗性徽章）**：`AiBaseUrl` 未設定時**整張問答卡隱藏**。卡片顯示時另外查一次 `GET /api/run-activity`（任何登入者可讀、不掛
   `[Permission]`，見 §9.1），執行中時在問答框上方顯示「分析執行中，AI 回應可能較慢」
-  （回饋十六輪批次D-1：AI 問答與批次分析共用同一個地端模型的序列請求佇列，見 README「本機
-  推論同時處理多個請求會互搶 GPU 資源」）；查一次不輪詢，分析動輒數小時，輪詢不會讓提示
+  ；查一次不輪詢，分析動輒數小時，輪詢不會讓提示
   更準確。詳情頁對話（`chat-panel.js`）比照同一套提示。
   `POST /api/help/ask` 流程：
   1. **選節**（`HelpChapterScorer`，純靜態、無外部依賴）：對 question 做關鍵字比對計分
@@ -1732,8 +1719,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （比照 `AiController` 既有慣例），前端顯示「AI 服務暫時無法回應，可先查閱下方章節」。
      回應的 `citedChapterIds` 是 `HelpChapterScorer` 選進 prompt 的候選章節，**不是**模型
      自述實際引用了哪些——兩者可能不同（模型未必用到候選裡的每一節）。前端標籤誠實標為
-     「參考章節（提供給 AI 的內容）」，不宣稱是模型的實際引用（回饋十六輪批次D-2，行為變更：
-     原標籤為「引用章節」）。
+     「參考章節（提供給 AI 的內容）」，不宣稱是模型的實際引用。
 - **明確不做**（本輪範圍界定）：向量 RAG／embedding、多輪對話、非 admin 開放、手冊全文塞進
   prompt。文件量若日後成長到選節命中率明顯不足，再評估 RAG——manifest 的 keywords／related
   結構已為它預留素材。
@@ -1757,35 +1743,35 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   stepId 後端直接忽略，前端不顯示按鈕只是第一道）、`POST api/admin/setup/hidden`（走稽核）。
 
 ### 9.10 `/runs` 排程作業（`DevMonitor` 或 `Maintain` 任一）
-- **改名與權限放寬（2026-07-31，docs/archive/FEEDBACK-6-PLAN.md §2）**：側欄由「執行監控」改名
+- **改名與權限放寬**：側欄由「執行監控」改名
   「排程作業」；權限由單一 `DevMonitor` 放寬為 **DevMonitor 或 Maintain 任一**（OR 語意，
   `PermissionAttribute` 擴為 `params Capability[]`）——修正 serverAdmin 有 Maintain 卻進不了
   排程設定所在頁面的缺口。dev 進得來但只能看；排程設定／立即執行／停止等會動到系統的操作
   僅 `Maintain`（前端以 `data-maintain-only` 整批隱藏，後端各 API 逐一標註）。
-- **排程設定卡（2026-07-31，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3／§1.4.5）**：頁頂新增——
+- **排程設定卡**：頁頂新增——
   Enabled 開關（預設關，升級後零行為變化）、執行窗口清單編輯（最多 4 組 Start→End，支援
   跨午夜，儲存時後端 `ScheduleCalculator.Validate` 強制驗證格式/重疊）、AI 診斷傾印開關
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
   可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）、**「分析本機主機」開關**
-  （回饋十八輪批次D，`ScheduleOptions.LocalAnalysisEnabled` 預設 true）：停用後排程與立即執行
+  ：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」
   而非「未執行」（`RunMonitorService`＋`RunDaySummaryDto.LocalDisabledCount`）。**Linux 主機比照 Windows
-  正式支援（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期擋板）**：run-preview
+  正式支援**：run-preview
   台數為單一總數，不再拆分 `LinuxCount`／附加「暫不查詢」提示——Sentinel 搜尋已有 Linux
   取數分支（依 `Os` 分流查詢與映射），Linux 主機和 Windows 主機走同一條
   `pollableIds.Contains(id)` 判斷，範圍與立即執行皆不再排除 Linux。窗口 End 到點時排程引擎
   對「排程觸發」的進行中執行發優雅停止（停在主機日邊界；手動觸發不受窗限不在此停）。
 - **手動觸發即回**：`POST run` 只等到「確定開始」（取得跨行程 Mutex）就返回，分析在背景
   繼續、進度由 status 輪詢——不能等整趟跑完，HTTP 請求會被掛住數小時。
-- **開始時間／已耗時（2026-08-11，回饋十七輪批次F-2）**：狀態 API 的 `startedAt` 欄位早就
+- **開始時間／已耗時**：狀態 API 的 `startedAt` 欄位早就
   存在，只是前端從未顯示——原本只看得到「執行中」，看不出何時開始、跑了多久。前端每秒
   本地計時，輪詢回來時用 `startedAt` 重設校正飄移（分頁背景、系統睡眠都可能讓
   `setInterval` 累積誤差）。
-- **執行進度條（2026-08-04，docs/archive/FEEDBACK-8-PLAN.md #2）**：狀態卡在執行中顯示進度條＋
+- **執行進度條**：狀態卡在執行中顯示進度條＋
   「本機分析／NetIQ 機房分析　x / y 主機日」文字；粒度為主機日，經 Core 的 `IRunProgress`
   介面回報（本機段逐日、NetIQ 段各 Sentinel 平行掃描完 plans 後累加分母、逐主機日累加分子
   ——分母隨掃描逐步變大、只增不減），Web 端 `WebRunProgress` 落地 `SchedulerRunState`，
@@ -1794,13 +1780,13 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
-  **`netiq-ai` phase（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §3.7）**：NetIQ 搜尋與 AI 判讀脫鉤
+  **`netiq-ai` phase**：NetIQ 搜尋與 AI 判讀脫鉤
   後（見 docs/DETECTION-SPEC.md），搜尋段完成、AI 佇列仍在背景消費時進度條切換到這個新
   phase，文字「AI 白話分析補寫中　x / y 件」（單位「件」，不是「主機日」——`DashboardController`
   的 `UnitText` 與前端 `PROGRESS_PHASE_UNIT` map 對應這個 phase）。執行完成的里程碑同輪加註
   AI 統計（`AiQueued`/`AiCompleted`/`AiAbandoned`，僅 `AiQueued > 0` 時顯示，取消時
   `AiAbandoned` 讓「AI 還沒補完就被停止」這件事看得見，不是默默消失）。
-  **主／子進度條分離（2026-08-10，回饋十四輪 UI-6）**：`netiq-ai`／`netiq-backpressure` 這條
+  **主／子進度條分離**：`netiq-ai`／`netiq-backpressure` 這條
   AI 背景消化軌與主進度（`netiq`，搜尋仍在往下一台主機推進）是**同時**在跑的兩件事——原本
   共用一組 `progressPhase/Done/Total`，後回報的直接覆蓋先回報的，症狀是「進度卡住不動」。
   `SchedulerRunState` 拆成主／子兩組欄位（status API 加 `subProgressPhase/Done/Total`），
@@ -1808,7 +1794,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）由
   `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先──netiq 主進度次之──本機
   再次之，較貼近「現在卡在哪」）。
-  **本機／NetIQ 並行執行（2026-08-11，回饋十七輪批次E）**：`AnalysisOrchestrator` 原本嚴格
+  **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
   「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
   再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
   `[本機] ` 前綴（NetIQ 既有的逐 Sentinel 前綴不變），並行後交錯的輸出才分得清誰是誰。進度
@@ -1832,10 +1818,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。
-  **Pipeline 警告上收（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
+  **Pipeline 警告上收**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
-- **三頁籤（2026-08-11，回饋十七輪批次F-1，取代原本三區塊一路往下堆疊的版面）**：執行總表／
+- **三頁籤**：執行總表／
   異常彙總／執行紀錄，沿用設定頁既有的 `nav-tabs`＋`bindTabs` 模式；天數篩選與圖例移到頁籤列
   下方，三頁籤共用同一次 API 抓回的資料（`load()` 一次 `Promise.all` 三支端點），切頁籤只是
   切換面板可見度，不重打 API。**實作踩坑**：頁籤 `<ul>` 一開始被包進日期篩選的 flex 容器裡，
@@ -1846,7 +1832,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
     第九輪——懶載入 `onRowExpand`，各列排序/分頁狀態獨立、可同時展開多天，取代舊版跳到頁面
     最下方的下鑽卡）。
   - **異常彙總**（Error/Fatal 按訊息聚合）。
-  - **執行紀錄**（2026-08-11，回饋十七輪批次F-3，新增）：`GET api/runs/list?days=N`
+  - **執行紀錄**：`GET api/runs/list?days=N`
     （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
     主機／狀態／開始時間／耗時／觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了
     多久、誰觸發的」，同一天內的多次手動重跑各自一列。狀態判定（success/failed/stopped/
@@ -1887,7 +1873,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 
 ### 9.11 `/audit` 操作紀錄（`ViewAudit`）
 - 篩選（期間/使用者/動作分類/對象/result，denied 快速鈕）、清單（時間/帳號/summary/result）、
-  展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉（2026-07-29）。
+  展開 before/after 對照。時間欄支援表頭排序（`dir`，預設新到舊）＋每頁筆數下拉。
 - API：`GET api/audit?from=&to=&userId=&actions=&targetKind=&result=&dir=&page=&pageSize=`
 
 ## 10. 資料模型與儲存層
@@ -1938,24 +1924,24 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 
 | 介面 | 儲存 key（blob＝整份型／log＝append-only／表＝正規化真表） | 寫入者 |
 |---|---|---|
-| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者自 2026-08-06 起同時是問題聚合的事實表） | 批次 |
+| `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者同時是問題聚合的事實表） | 批次 |
 | `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」） | 批次 |
 | `IUserStore` | blob `users` | Web |
 | `IUserGroupStore` | blob `user_groups` | Web |
 | `IHostStore` | blob `hosts`（含群組/負責人參照，`SetGroups`/`SetOwners` 直接改本文件內的清單） | Web＋批次（批次僅 upsert host_name/last_report_at） |
 | `IHostGroupStore` | blob `host_groups` | Web |
 | `IGroupAccessStore` | blob `group_access` | Web |
-| `ISentinelStore`（docs/archive/HISTORY.md 定案 2） | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
+| `ISentinelStore` | blob `sentinels`（NetIQ Sentinel 連線設定，密碼欄位存密文；CRUD UI 在 `/admin/netiq`） | Web |
 | `NetiqOptionsStore`（2026-07-27；介面已於簡化重構移除，直接注入具體類別） | blob `netiq_options`（單一物件：Sentinel 查詢節流參數，`/admin/netiq` 維護，appsettings.json 不再提供） | Web |
-| `ISystemSettingsStore`（2026-07-27） | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
-| `MailNotifyStateStore`（2026-08-11，回饋十五輪批次D；2026-08-11 回饋十七輪批次A/B 擴充） | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
+| `ISystemSettingsStore` | blob `system_settings`（單一物件：未處理計算等級／AI 位址＋金鑰／補充與留存天數／郵件通知 SMTP 設定＋密碼，`/admin/settings` 維護） | Web＋批次讀 |
+| `MailNotifyStateStore` | blob `mail_notify_state`（單一物件：每日／每週摘要上次寄送日、高風險即時通知與執行摘要各自的已寄 host+date 去重集合（`UrgentSentKeys`／`SummarySentKeys`，皆隨 `RetentionDays` 清理）、收件人跨輪連續失敗次數（`RecipientFailureStreaks`，儲存郵件設定時整份清空）） | Web |
 | `IRecordHandlingStore` | **表 `lf_record_handling`**（快照）＋log `handling_log`（歷程 append；2026-07-28 增 `IssueKey`／`IssueLabel` 兩欄，記錄問題層級標記是對哪個問題，見 §9.3-#6） | Web＋批次 |
 | `IIssueHandlingStore` | **表 `lf_issue_handling`**（問題層級狀態，方案 B） | Web＋批次 |
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
-| `IIssueAggregateQuery`（2026-08-06） | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
+| `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore`（Phase D-1） | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore`（2026-08-13，回饋十八輪批次F） | blob `issue_owners`（問題負責人規則，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners` 維護） | Web |
-| `SetupWizardStateStore`（2026-08-13，回饋十八輪批次H；無介面，直接注入具體類別） | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（問題負責人規則，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners` 維護） | Web |
+| `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
 | `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |
@@ -2000,7 +1986,7 @@ lf_top_issues 算好」的持久層職責，批次的分析層看不到這張表
 
 ### 10.4 Jsonl 檔案後端退役與 blob 併發防線（2026-07-24 改寫）
 
-**Jsonl 檔案後端已全面退役**（docs/archive/HISTORY.md 定案 10）：`Storage.Type` 收斂為
+**Jsonl 檔案後端已全面退役**：`Storage.Type` 收斂為
 Sqlite／SqlServer 二選一，設成 `Jsonl` 啟動即報錯；沒有服役中的 Jsonl 正式資料需要遷移，
 `--import-history` 匯入器確定不做。原本「每個檔案單一主要寫入者＋`File.Replace` 原子替換」
 的併發保護一併走入歷史——換 DB 後這一層防線一度沒跟上：`EfJsonBlobStore.Mutate` 在
@@ -2027,7 +2013,7 @@ temp 檔＋`File.Replace` 手法。
   批次與 Web 的 `appsettings.json` 皆預設此值。
 - **`SqlServer`**：正式環境（2000 台量級）。
 
-（`Jsonl` 已於 2026-07-24 全面退役，見 §10.4；`Storage.Type` 設成非 Sqlite/SqlServer 的值
+（`Jsonl` 已全面退役，見 §10.4；`Storage.Type` 設成非 Sqlite/SqlServer 的值
 一律於啟動時報錯，不會靜默退回舊行為。）
 
 **全部資料走資料庫**（Phase C 收斂——先前分析紀錄走 SQL、webdata 走 JSONL 的混合狀態已統一）：
@@ -2068,7 +2054,7 @@ temp 檔＋`File.Replace` 手法。
 ## 12. 測試策略
 
 - **合約測試**：每個新儲存介面一組合約測試基底（`AnalysisRecordStoreContractTests` 等），
-  各後端實作跑同一組案例確保語意逐位一致；Jsonl 檔案後端已於 2026-07-24 退役，
+  各後端實作跑同一組案例確保語意逐位一致；Jsonl 檔案後端已退役，
   SQL（`EfAnalysisRecordStoreContractTests`，SQLite 上跑）現為唯一且預設路線。
 - **Service 單元測試**：注入 in-memory store 假實作，覆蓋授權範圍過濾（user 看不到未授權主機——
   **每個查詢型 Service 至少一條此測試**）、指派/狀態變更的能力規則、CSV 預覽的錯誤判定、

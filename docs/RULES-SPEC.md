@@ -2,8 +2,8 @@
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 >
-> 本文件是規則庫（含 Windows／Linux 雙平台）與告警抑制機制（主機／主機群組／全站三種範圍，
-> 回饋十三輪 F 加入群組與全站）的現況設計規格：規則不寫死在
+> 本文件是規則庫（含 Windows／Linux 雙平台）與告警抑制機制（主機／主機群組／全站三種範圍）
+> 的現況設計規格：規則不寫死在
 > 程式碼、可在 Web 規則維護頁調整，不需重新編譯部署。實作見 `Analysis/KnownIssueCatalog.cs`
 > （`KnownIssueRule`＋比對邏輯）、`Analysis/KnownIssueSeed.cs`（內建種子）、`Analysis/RuleValidator.cs`、
 > `Analysis/SuppressionFilter.cs`、`Persistence/IKnownIssueRuleStore.cs`／`KnownIssueRuleStore.cs`、
@@ -50,17 +50,17 @@
 3. **關聯層的組合模式不搬進規則庫**：`CorrelationAnalyzer` 比對的是「多個獨立事件的已知組合」
    （入侵鏈、故障連鎖等），這是程式邏輯（條件判斷、時序比對、跨日比對），不是可以用
    `(SourcePattern, EventIds) → 分類/嚴重度` 描述的資料，所以維持在程式碼裡。它引用的事件 ID
-   常數（`CorrelationAnalyzer.AccountChangeIds` 等，2026-07 起共八組，含 Defender 的
+   常數（`CorrelationAnalyzer.AccountChangeIds` 等，共八組，含 Defender 的
    `DefenderMalwareIds`/`DefenderProtectionOffIds`，故意標 `internal` 供 selftest 驗證）
    與規則表是兩份獨立維護的東西——`rules.json` 新增的 Security 事件規則**不會**自動延伸關聯層
    的偵測範圍；`--selftest` 有一項檢查會驗證這幾組 ID 是否都存在於目前生效的規則表，抓漂移用，
    但不能反向保證「規則表的新事件都被關聯層涵蓋」。
 
-4. **規則不加 `LogName` 欄位；頻道由 provider 名稱天然區分**（2026-07 EventLogReader 遷移）：
-   新增 Defender/RDP Operational 頻道後，規則仍只靠 `SourcePattern` 區分頻道（provider 名稱唯一：
+4. **規則不加 `LogName` 欄位；頻道由 provider 名稱天然區分**：Defender/RDP Operational 頻道
+   規則與其餘規則一樣只靠 `SourcePattern` 區分頻道（provider 名稱唯一：
    `Microsoft-Windows-Windows Defender`、`Microsoft-Windows-TerminalServices-*`），schema 與未來
-   DB 映射不變。各頻道的 watchlist（Operational 頻道的 Information 等級事件要收哪些）沿用原本
-   Security watchlist 的推導機制擴為多頻道（`KnownIssueCatalog.ChannelWatchlists`）：凡 SourcePattern
+   DB 映射不變。各頻道的 watchlist（Operational 頻道的 Information 等級事件要收哪些）與
+   Security watchlist 共用同一套推導機制（`KnownIssueCatalog.ChannelWatchlists`）：凡 SourcePattern
    命中該頻道 provider 探測字串的啟用規則，其 EventIds 聯集即為該頻道 watchlist——新增一條 Defender/RDP
    規則，對應頻道 watchlist 自動涵蓋，不需另外同步。停用規則會讓其事件退出 watchlist（Information
    事件收不進來），這與「停用只影響 Classify」略有不同，是 Operational 頻道收取機制的必然。
@@ -77,9 +77,9 @@
 | `Scope` | 生效範圍，此版本只接受 `"all"`，為未來多主機/群組規則卡位（見下） |
 | `MatchAllEventIds` | 顯式宣告「不看 EventIds，來源命中就算」，取代舊版「EventIds 空陣列＝全比對」的隱含語意 |
 | `MatchFilter` | 為未來「同規則同主機下只關閉部分比對範圍」卡位，此版本必須為 `null` |
-| `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（2026-07-28 新增，見下） |
+| `Platform` | `windows`（預設）／`linux`，決定用哪組比對欄位（見下） |
 
-### 雙平台（2026-07-28，docs/LINUX-RULES.md）
+### 雙平台（docs/LINUX-RULES.md）
 
 Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位與三個 Linux 專用比對欄位
 （`ProgramPattern`／`EventNamePattern`／`MessagePatterns`），**共用同一份規則儲存與同一套抑制、
@@ -91,7 +91,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 關係時（`"sudo"` 包含 `"su"`）順序有意義，具體的必須排在泛用的前面。
 
 另一個 Linux 專屬限制：**`ProgramPattern` 僅接受英數字與 `_`／`.`／`-`**（`RuleValidator`
-把關，2026-08-07 全案體檢新增）——它會以裸 term 形式直接進 Sentinel 的 Lucene filter
+把關）——它會以裸 term 形式直接進 Sentinel 的 Lucene filter
 （`SentinelQueryBuilder.LinuxRuleProgramClauses` 的 `sp:{pattern}*`，不像 `MessagePatterns`
 有引號＋跳脫保護），空白或 `(`／`:`／`*` 等特殊字元會讓整份夜間取數查詢語法壞掉、
 整批主機查詢失敗。字元集與 `SentinelEventMapper` 的 msg 前綴 program 正則一致
@@ -144,11 +144,9 @@ ISuppressionStore     （介面：Location / LoadAll / SaveAll）
 Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 store（單一路由點，
 與分析紀錄同一開關）；`KnownIssueCatalog`/`RuleBootstrapper`/`LogAnalysisService` 等消費端只認介面。
 
-> **2026-07-24 起規則存資料庫**：Jsonl 檔案後端已全面退役（見 docs/archive/HISTORY.md「2026-07-24」段
-> 定案 10），`Storage.Type` 收斂為 Sqlite／SqlServer 二選一，兩者都是 DB。原本的
-> `JsonKnownIssueRuleStore`／`JsonSuppressionStore` 已於 2026-07-28 的簡化重構改名為
-> `KnownIssueRuleStore`／`SuppressionStore`（名稱裡的 Json 早已名不符實——底層一律走
-> `EfJsonBlobStore` 存進 `lf_blobs`）。下方保留的容錯設計中，「檔案」請讀作「blob 內容」。
+> **規則存於資料庫**：`Storage.Type` 只接受 Sqlite／SqlServer 二選一，兩者都是 DB，規則與抑制
+> 皆透過 `KnownIssueRuleStore`／`SuppressionStore` 底層一律走 `EfJsonBlobStore` 存進 `lf_blobs`。
+> 下方保留的容錯設計中，「檔案」請讀作「blob 內容」。
 
 序列化與容錯設計：
 
@@ -192,15 +190,15 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 ## 抑制機制
 
 `RuleSuppression`（`Models/RuleSuppression.cs`）：`RuleId`、`TargetType`／`SignatureKey`／
-`CorrelationPatternId`／`VolumeKind`／`TargetLabel`／`Platform`（抑制目標四型，回饋十五輪 A，
-見下節）、`Scope`（`Host`／`Group`／`Site`，回饋十三輪 F 加入，見下）、`Host`、`HostGroupId`、
+`CorrelationPatternId`／`VolumeKind`／`TargetLabel`／`Platform`（抑制目標四型，見下節）、
+`Scope`（`Host`／`Group`／`Site`，見下）、`Host`、`HostGroupId`、
 `Reason`、`SuppressedBy`、`CreatedAt`、`ExpiresAt`（`null`＝永久）、`MatchFilter`（卡位，
 必須 `null`）。獨立於規則本身儲存（blob `suppressions`，無 seed 概念，缺檔＝空清單），
 因為兩者生命週期不同：規則是全域設定，抑制是各主機/群組/全站的營運狀態。
 
 **語意**（詳見上方「三條語意邊界」第 2 點）：只影響通知與風險升級，不影響偵測與紀錄。
 
-### 抑制目標四型（回饋十五輪 A）
+### 抑制目標四型
 
 `TargetType`（`SuppressionTargetTypes`）決定抑制比對「什麼」，四型共用同一份清單與同一套
 `Scope`／到期語意，差別只在比對欄位與影響的下游計算：
@@ -216,10 +214,10 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 `ToCorrelationPatternIdSet`／`HasVolumeSuppression` 各自只投影對應型別的項目（`ToRuleIdSet`
 過濾 `TargetType==Rule`，是既有行為的保證——舊資料的 `TargetType` 反序列化預設就是 `Rule`，
 過濾對既有安裝零行為影響）。`Host`／`Group`／`Site` 三種範圍與到期機制在**比對層**
-（`SuppressionFilter`）對四型一視同仁——但**建立層**自回饋十六輪 C-1 起，新三型僅接受
+（`SuppressionFilter`）對四型一視同仁——但**建立層**新三型僅接受
 `Host`（見下方「範圍支援矩陣」；比對層維持四型通用是刻意的：若未來開放大範圍，或既有
 資料中存在早期建立的大範圍項目，生效語意不需要再改）。`SuppressionFilter.TargetIdentity`
-（回饋十五輪體檢批G）提供跨型別的目標識別，供 `StillSuppressedElsewhere` 之類
+提供跨型別的目標識別，供 `StillSuppressedElsewhere` 之類
 「同一個目標是否還受其他範圍抑制」的比對使用。
 
 **`TargetLabel`／`Platform`**：非 `Rule` 型的人話標籤（如「Application / MyApp EventId 1000」）
@@ -227,7 +225,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 反推；`Platform` 同理供非規則目標的抑制清單頁篩選（`Rule` 型仍可從 `KnownIssueRule` 反查平台，
 不需要另存）。
 
-### 與「已知雜訊記憶」（`NoiseMark`）的分工（回饋十五輪體檢批G 定案）
+### 與「已知雜訊記憶」（`NoiseMark`）的分工
 
 `Signature` 型抑制上線後，「未命中規則的問題（Other 類別）」第一次同時有兩條標記雜訊的路徑
 可用，容易讓人搞不清楚該用哪個。兩者操作的是**不同層級**，設計上刻意並存、不互相取代：
@@ -248,7 +246,7 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 同一個（主機、簽章）成立，互不衝突——`NoiseMark` 決定畫面上的處理狀態怎麼預填，
 `Signature` 抑制決定這個問題還算不算進風險等級，是完全正交的兩個問題。
 
-**生效範圍三選一**（`SuppressionScopes`，回饋十三輪 F）：2000 台規模下同一條規則要在每台
+**生效範圍三選一**（`SuppressionScopes`）：2000 台規模下同一條規則要在每台
 同類主機上各設一次抑制，維護成本最終只會讓人乾脆停用整條規則，反而失去分類與知識庫——
 `Scope` 因此不只是單台主機：
 
@@ -267,12 +265,12 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 
 - 每次執行的啟動階段（排程／立即執行）列出「已到期、恢復告警」的提示。同一條規則同時有
   別的範圍仍生效時（如 Host 到期但 Site 永久抑制還在），提示補「此規則仍受其他範圍的抑制
-  設定生效中，解除這筆不會恢復告警」（回饋十四輪 C1，`SuppressionFilter.StillSuppressedElsewhere`）——
+  設定生效中，解除這筆不會恢復告警」（`SuppressionFilter.StillSuppressedElsewhere`）——
   否則使用者會去解除一個解除了也沒效果的項目，誤以為告警已恢復。
 - 需要人工到 Web `/admin/rules`「告警抑制」分頁清理，這是刻意的：到期後的清理需要人判斷
   「這個問題後來到底處理了沒有」，不該由程式自動猜測。
 
-**Group／Site 的影響面預覽**（回饋十四輪 C1）：新增這兩種範圍的抑制＝一鍵讓一條規則在
+**Group／Site 的影響面預覽**：新增這兩種範圍的抑制＝一鍵讓一條規則在
 大量主機上噤聲，對一個把「沒告警 ≠ 沒問題」寫進核心原則的系統，這是最容易讓人不小心把
 自己弄瞎的操作。送出前顯示「此抑制將影響 N 台主機；過去 14 天該規則在這些主機上共命中
 M 次」再要求確認（`RuleAdminService.PreviewSuppression`，M 值查 `lf_top_issues` 聚合；
@@ -280,7 +278,7 @@ Linux 規則因該表未存 EventKey 只能以同來源程式合計，畫面誠�
 Site 範圍的到期天數預設帶 30 天而非永久（可手動清空改回永久）——全站抑制「忘記解除」
 的代價最高，自動失效比預設永久安全。
 
-**範圍支援矩陣**（回饋十六輪 C-1，行為變更）：`Signature`／`Correlation`／`Volume` 三型目前
+**範圍支援矩陣**：`Signature`／`Correlation`／`Volume` 三型目前
 **一律只接受 `Host` 範圍**，`RuleAdminService.AddSuppression` 在服務層直接拒絕這三型的
 `Group`／`Site` 請求（`DomainException.Validation`）——理由是只有 `Rule` 型有上述的
 `PreviewSuppression` 影響面預覽，新三型完全沒有這道護欄；不限制的話，一次 API 呼叫就能建立
@@ -307,8 +305,8 @@ docs/DETECTION-SPEC.md）。詳情頁的簽章／關聯抑制入口本來就硬�
 
 **維護入口**：`/admin/rules`（系統管理 > 規則維護）的「告警抑制」分頁——新增（選抑制目標型別
 ＋範圍＋範圍目標＋事由＋選填到期天數）、查詢（可依主機／目標型別／平台過濾）、解除，
-統一走 `POST/DELETE /api/suppressions`（回饋十五輪 A-6，取代原本綁死規則 Id 的路徑式端點；
-舊端點 `{ruleId}/suppressions` 仍保留、內部委派同一份服務邏輯，相容既有呼叫端），
+統一走 `POST/DELETE /api/suppressions`（舊端點 `{ruleId}/suppressions` 仍保留、
+內部委派同一份服務邏輯，相容既有呼叫端），
 皆走既有儲存前驗證與稽核管線（見 docs/WEB-SPEC.md §9.7）。
 
 ## `RuleId` 落紀錄
@@ -322,7 +320,7 @@ docs/DETECTION-SPEC.md）。詳情頁的簽章／關聯抑制入口本來就硬�
 ## 未來擴充卡位（此版本不實作，只預留欄位/語意）
 
 - **`KnownIssueRule.Scope`**（規則本身的生效範圍，與下方「抑制機制」的 `RuleSuppression.Scope`
-  是兩個不同欄位，不要混淆——後者已於回饋十三輪 F 實作 Host/Group/Site 三值）：目前只接受
+  是兩個不同欄位，不要混淆——後者已實作 Host/Group/Site 三值）：目前只接受
   `"all"`（全域規則）。多主機/群組規模化時（見 `docs/archive/HISTORY.md` 的 NetIQ Sentinel
   規劃）預期會加入主機名或群組名，讓「環境特有雜訊規則」不用套用到所有主機。欄位已卡位，
   屆時只需要在 `RuleValidator` 放寬檢查、在 `FindRule`/`Classify` 加入呼叫端的主機身分比對，
@@ -380,7 +378,7 @@ lf_rule_suppressions
   suppression_id bigint         IDENTITY PK   -- 代理鍵：host/host_group_id 依 scope 可為 NULL，
                                                -- 不適合直接當 PK 組成欄位（PK 欄位不可為 NULL）
   rule_id       nvarchar(100)
-  scope         nvarchar(10)   NOT NULL   CHECK (scope IN ('Host','Group','Site'))  -- 回饋十三輪 F
+  scope         nvarchar(10)   NOT NULL   CHECK (scope IN ('Host','Group','Site'))
   host          nvarchar(255)              NULL   -- 只有 scope='Host' 時有值
   host_group_id bigint                     NULL   -- 只有 scope='Group' 時有值
   reason        nvarchar(500)  NOT NULL
