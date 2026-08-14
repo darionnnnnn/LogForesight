@@ -247,6 +247,79 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public List<IssueDailyHostCount> DailyHostCounts(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds)
+    {
+        if (issues.Count == 0) return new List<IssueDailyHostCount>();
+        if (hostIds != null && hostIds.Count == 0) return new List<IssueDailyHostCount>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var q = ctx.TopIssues.AsNoTracking()
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
+        }
+
+        // 目標範圍是呼叫端已經算出的少數幾種問題（通常是當頁排行結果），不是整份表——
+        // 與 LatestOccurrences／HostIdsFor 同一個規模假設
+        var rows = q
+            .Select(x => new { x.HostId, x.SourceName, x.EventId, x.RecordDate })
+            .ToList()
+            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .ToList();
+
+        var result = rows
+            // host_id 先解析成存活主機再去重：合併前後兩個 id 同一天各自出現過要算一台，不是兩台
+            .GroupBy(x => (x.SourceName, x.EventId, x.RecordDate))
+            .Select(g => new IssueDailyHostCount
+            {
+                Source = g.Key.SourceName,
+                EventId = g.Key.EventId,
+                Date = g.Key.RecordDate,
+                HostCount = g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count()
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.DailyHostCounts（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，{IssueCount} 個問題）→ {Count} 筆、{Ms}ms",
+            f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:DailyHostCounts", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
+        IReadOnlyCollection<(string Source, int EventId)> issues)
+    {
+        if (issues.Count == 0) return new Dictionary<(string, int), DateTime>();
+
+        var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var rows = ctx.IssueFirstSeen.AsNoTracking()
+            .Where(x => eventIds.Contains(x.EventId))
+            .Select(x => new { x.SourceKey, x.EventId, x.FirstSeen })
+            .ToList()
+            .Where(x => wanted.Contains((x.SourceKey, x.EventId)))
+            .ToList();
+
+        return rows.ToDictionary(x => (x.SourceKey, x.EventId), x => x.FirstSeen);
+    }
+
     public List<HostIssueOccurrence> ActionableOccurrences(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null)

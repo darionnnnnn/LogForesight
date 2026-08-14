@@ -494,6 +494,45 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Empty(result.Items[0].IssueOwnerNames);
     }
 
+    // ── 機房級基準線與 fleet 首見（回饋十九輪批次G1/G4）─────────────────────────
+
+    [Fact]
+    public void SearchByIssue_基準線與偏離倍數()
+    {
+        var to = new DateTime(2026, 8, 10);
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        // 基準期兩個出現日各 1 台，第三個出現日（查詢當天）2 台
+        AddRecord(a, to.AddDays(-25), "高", issues: new[] { DiskIssue() });
+        AddRecord(a, to.AddDays(-15), "高", issues: new[] { DiskIssue() });
+        AddRecord(a, to, "高", issues: new[] { DiskIssue() });
+        AddRecord(b, to, "高", issues: new[] { DiskIssue() });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = to, To = to });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(3, group.BaselineOccurrenceDays);
+        Assert.Equal(1, group.BaselineMedianHostCount);
+        Assert.Equal(2, group.BaselineLatestHostCount);
+        Assert.Equal(2.0, group.BaselineDeviationMultiplier);
+    }
+
+    [Fact]
+    public void SearchByIssue_機房首見不受查詢期間截斷()
+    {
+        var oldDate = new DateTime(2026, 1, 1);
+        var recentDate = new DateTime(2026, 8, 1);
+        var host = AddHost("HOST-A");
+        AddRecord(host, oldDate, "高", issues: new[] { DiskIssue() });
+        AddRecord(host, recentDate, "高", issues: new[] { DiskIssue() });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = recentDate, To = recentDate });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal("2026-08-01", group.FirstSeen);
+        Assert.Equal("2026-01-01", group.FleetFirstSeen);
+    }
+
     [Fact]
     public void SearchByIssue_處理概況三態彙總()
     {

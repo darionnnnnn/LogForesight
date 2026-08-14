@@ -16,7 +16,10 @@ import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal } from '../core/format.js';
+import {
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber,
+    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, issueBaselineText
+} from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
 
@@ -658,7 +661,9 @@ function renderIssueView() {
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
+        { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
+        { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
         { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
         { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
         { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
@@ -801,13 +806,35 @@ function issueSeverityCell(group) {
     return wrap;
 }
 
-/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）。同一天時只顯示一次，不寫成「X ~ X」 */
+/**
+ * 本期首見（回饋十九輪批次G4，欄名由「涵蓋範圍」改標）：本次查詢期間內第一次出現的日期，
+ * 受查詢期間截斷——與不受截斷的「首見（機房）」欄分開，兩者答的是不同問題。
+ */
 function issueSpanCell(group) {
     const span = document.createElement('span');
     span.className = 'lf-mono small';
-    span.textContent = group.firstSeen === group.lastSeen
-        ? group.firstSeen
-        : `${group.firstSeen} ~ ${group.lastSeen}`;
+    span.textContent = group.firstSeen;
+    return span;
+}
+
+/** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
+function issueFleetFirstSeenCell(group) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = group.fleetFirstSeen || group.firstSeen;
+    return span;
+}
+
+/** 機房級基準線（回饋十九輪批次G1），語意與 dashboard.js 的同名 cell 一致 */
+function issueBaselineCell(group) {
+    const span = document.createElement('span');
+    const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
+    const multiplier = group.baselineDeviationMultiplier;
+
+    span.className = noBaseline ? 'small text-muted'
+        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
+        : 'small';
+    span.textContent = issueBaselineText(group);
     return span;
 }
 
@@ -1748,7 +1775,8 @@ function csvHeader() {
     // CSV 與畫面欄位不一致會讓人以為匯出漏東西——出現天數／期間天數已能回答同樣的問題。
     if (currentView === 'issue') {
         return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
-            '首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '本期首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '首見（機房）', '基準台數／日', '偏離倍數',
             '總次數', '處理概況', '處理人'];
     }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
@@ -1770,6 +1798,8 @@ function csvRow(item) {
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
             item.activeDays, item.periodDays,
+            item.fleetFirstSeen || item.firstSeen,
+            item.baselineMedianHostCount ?? '', item.baselineDeviationMultiplier ?? '',
             item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }

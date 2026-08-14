@@ -194,3 +194,22 @@ export function formatNumber(value) {
     if (value === null || value === undefined) return '';
     return Number(value).toLocaleString('zh-TW');
 }
+
+/**
+ * 機房級基準線的純文字描述（回饋十九輪批次G1）：儀表板重點問題卡／報表問題排行／
+ * 依問題視角三處共用同一份措辭與四捨五入規則，「vs 基準」欄位的數字才不會各自寫法不同。
+ * 基準期（過去 30 天）出現不足 3 天視為新問題，沒有「平常長什麼樣」可比。
+ */
+export function issueBaselineText(issue) {
+    if (issue.baselineOccurrenceDays < 3 || issue.baselineMedianHostCount == null) {
+        return '新問題，無基準';
+    }
+
+    const median = Number.isInteger(issue.baselineMedianHostCount)
+        ? String(issue.baselineMedianHostCount)
+        : issue.baselineMedianHostCount.toFixed(1);
+    const multiplier = issue.baselineDeviationMultiplier;
+
+    return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` +
+        (multiplier != null ? `（×${multiplier.toFixed(1)}）` : '');
+}

@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineText } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -441,7 +441,9 @@ function renderTopIssues(data) {
             { title: '嚴重度', render: i => issueSeverityCell(i) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
             { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
-            { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
+            { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
+            { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
+            { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
             { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
             { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
             { title: '總次數', className: 'text-end', render: i => formatNumber(i.totalCount) }
@@ -573,15 +575,17 @@ function issueOpenCell(issue) {
     return wrap;
 }
 
-/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）＋是否仍在發生 */
+/**
+ * 本期首見（回饋十九輪批次G4，欄名由「涵蓋範圍」改標）：本次查詢期間內第一次出現的日期
+ * ＋是否仍在發生。與新增的「首見（機房）」欄分開——這裡受查詢期間截斷，答的是「這次查詢看到
+ * 的最早一筆」；機房首見不受截斷，答的是「這個問題第一次在機房出現是什麼時候」。
+ */
 function issueSpanCell(issue) {
     const wrap = document.createElement('div');
 
     const span = document.createElement('div');
     span.className = 'lf-mono small';
-    span.textContent = issue.firstSeen === issue.lastSeen
-        ? issue.firstSeen
-        : `${issue.firstSeen} ~ ${issue.lastSeen}`;
+    span.textContent = issue.firstSeen;
     wrap.appendChild(span);
 
     const hint = document.createElement('div');
@@ -596,6 +600,30 @@ function issueSpanCell(issue) {
     wrap.appendChild(hint);
 
     return wrap;
+}
+
+/** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
+function issueFleetFirstSeenCell(issue) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono small';
+    span.textContent = issue.fleetFirstSeen || issue.firstSeen;
+    return span;
+}
+
+/**
+ * 機房級基準線（回饋十九輪批次G1）：這個問題「平常」影響幾台，與最近一次出現時的規模比較——
+ * 回答數量排序答不了的「這次是不是異常擴散」。基準期出現不足 3 天視為新問題，沒有「平常」可比。
+ */
+function issueBaselineCell(issue) {
+    const span = document.createElement('span');
+    const noBaseline = issue.baselineOccurrenceDays < 3 || issue.baselineMedianHostCount == null;
+    const multiplier = issue.baselineDeviationMultiplier;
+
+    span.className = noBaseline ? 'small text-muted'
+        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
+        : 'small';
+    span.textContent = issueBaselineText(issue);
+    return span;
 }
 
 /** 出現密度：天天都有（背景值）還是零星爆發（§10.3）。文字為主、密度條為輔 */

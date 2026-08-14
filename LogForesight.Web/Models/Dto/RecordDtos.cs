@@ -161,6 +161,16 @@ public class IssueGroupDto
     /// 兩者可以不同（同 WebHost.OwnerUserIds 與 RecordHandling.HandlerId 的既有區分）。空清單＝
     /// 沒有指派問題負責人規則。</summary>
     public List<string> IssueOwnerNames { get; set; } = new();
+
+    // ── 機房級基準線（回饋十九輪批次G1，語意同 IssueRankingDto 同名欄位）───────
+
+    public double? BaselineMedianHostCount { get; set; }
+    public int? BaselineLatestHostCount { get; set; }
+    public double? BaselineDeviationMultiplier { get; set; }
+    public int BaselineOccurrenceDays { get; set; }
+
+    /// <summary>問題在整個機房第一次出現的日期（回饋十九輪批次G4，不受查詢期間截斷）</summary>
+    public string FleetFirstSeen { get; set; } = string.Empty;
 }
 
 /// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>

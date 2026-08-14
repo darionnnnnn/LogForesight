@@ -350,11 +350,18 @@ public class RecordListQueryService
             .GroupBy(x => x.Sig!.Value)
             .ToDictionary(g => g.Key, g => g.Select(x => x.Resolved).ToList());
 
+        // 機房級基準線（§G1）與 fleet 首見（§G4）：與 IssueRankingBuilder 共用同一個計算/介面，
+        // 兩頁的「vs 基準」數字必然一致；只對本頁篩選後留下的問題查，不是整份表
+        var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
+        var baselines = IssueBaselineCalculator.Compute(
+            _aggregates.DailyHostCounts(issues, baselineFrom, baselineTo, hostIds));
+        var fleetFirstSeen = _aggregates.FirstSeenFor(issues);
+
         var groups = aggregates
             .Select(a => BuildIssueGroup(
                 a,
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
-                periodDays, issueOwnersByKey, usersById))
+                periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -416,7 +423,9 @@ public class RecordListQueryService
         List<ResolvedOccurrence> occurrences,
         int periodDays,
         IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey,
-        IReadOnlyDictionary<long, WebUser> usersById)
+        IReadOnlyDictionary<long, WebUser> usersById,
+        IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
+        IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照（Linux 的 EventKey 尾段被
         // TryParseSignature 收斂掉了）——每台主機只看它自己最近一次出現的那筆，
@@ -446,6 +455,10 @@ public class RecordListQueryService
         // 已知問題說明：取整組（不分主機）最近一次出現那筆的標記，與改版前「群組內最新一筆
         // 紀錄的 KnownIssue」語意相同
         var latestKnownIssue = occurrences.OrderByDescending(o => o.Occurrence.LastSeen).FirstOrDefault()?.Occurrence.KnownIssue;
+
+        var baselineKey = (SourceKey: aggregate.Source.ToUpperInvariant(), aggregate.EventId);
+        baselines.TryGetValue(baselineKey, out var baseline);
+        fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
 
         var handlers = handlerIds
             .Select(id => new { Id = id, User = usersById.GetValueOrDefault(id) })
@@ -487,7 +500,13 @@ public class RecordListQueryService
                     .Where(u => u is { Active: true })
                     .Select(u => NameFormat.WithAccount(u!.DisplayName, u.Account))
                     .ToList()
-                : new List<string>()
+                : new List<string>(),
+
+            BaselineMedianHostCount = baseline.MedianHostCount,
+            BaselineLatestHostCount = baseline.LatestHostCount,
+            BaselineDeviationMultiplier = baseline.DeviationMultiplier,
+            BaselineOccurrenceDays = baseline.OccurrenceDays,
+            FleetFirstSeen = (firstSeenInFleet == default ? aggregate.FirstSeen : firstSeenInFleet).ToString("yyyy-MM-dd")
         };
     }
 

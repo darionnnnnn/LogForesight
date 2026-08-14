@@ -113,6 +113,19 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
         AggregateByHostResult;
+
+    public List<IssueDailyHostCount> DailyHostCountsResult { get; set; } = new();
+
+    public List<IssueDailyHostCount> DailyHostCounts(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds) =>
+        DailyHostCountsResult;
+
+    public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenForResult { get; set; } = new();
+
+    public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
+        IReadOnlyCollection<(string Source, int EventId)> issues) =>
+        FirstSeenForResult;
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

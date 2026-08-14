@@ -130,6 +130,30 @@ public class IssueRankingDto
 
     /// <summary>已有結論的主機數</summary>
     public int ResolvedHostCount { get; set; }
+
+    // ── 機房級基準線（回饋十九輪批次G1）──────────────────────────────────────
+    //
+    // 基準＝過去 30 天出現日台數中位數；偏離倍數＝最近出現日台數 ÷ 基準。
+    // BaselineOccurrenceDays < 3（規劃定案 N=3）時 Median/Multiplier 皆為 null，
+    // 前端顯示「新問題，無基準」——見 IssueBaselineCalculator。
+
+    /// <summary>基準期（過去 30 天）出現日台數中位數，無基準時為 null</summary>
+    public double? BaselineMedianHostCount { get; set; }
+
+    /// <summary>基準期最近一次出現日的台數，無基準時為 null</summary>
+    public int? BaselineLatestHostCount { get; set; }
+
+    /// <summary>偏離倍數＝BaselineLatestHostCount ÷ BaselineMedianHostCount，無基準時為 null</summary>
+    public double? BaselineDeviationMultiplier { get; set; }
+
+    /// <summary>基準期實際出現的天數（呼叫端用於判斷「新問題，無基準」的門檻是否達到）</summary>
+    public int BaselineOccurrenceDays { get; set; }
+
+    // ── fleet 首見（回饋十九輪批次G4）───────────────────────────────────────
+
+    /// <summary>問題在整個機房第一次出現的日期（不受查詢期間截斷，↔ lf_issue_first_seen）。
+    /// 查無資料時退回 FirstSeen（理論上不會發生，見 IIssueAggregateQuery.FirstSeenFor）。</summary>
+    public string FleetFirstSeen { get; set; } = string.Empty;
 }
 
 /// <summary>

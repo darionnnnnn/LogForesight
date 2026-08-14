@@ -87,6 +87,15 @@ public class IssueRankingBuilder
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
 
+        // 機房級基準線（§G1）與 fleet 首見（§G4）：只對「當頁組」（current 命中的問題）查，
+        // 不是整份表——與 LatestOccurrences 同一個規模假設。基準期固定「to 往前 30 天」，
+        // 與查詢期間本身無關（同批次C「不另外抓一次真實時鐘」的既定原則，這裡的錨點也是 to）
+        var issuesOnPage = current.Select(a => (a.Source, a.EventId)).Distinct().ToList();
+        var (baselineFrom, baselineTo) = IssueBaselineCalculator.Window(to);
+        var baselines = IssueBaselineCalculator.Compute(
+            _aggregates.DailyHostCounts(issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
+        var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
+
         // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
         // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼
         // （回饋十九輪查證抓到）。_rollup 為 null 時（測試未注入）OpenHostCount／
@@ -104,6 +113,9 @@ public class IssueRankingBuilder
             {
                 previous.TryGetValue((a.Source, a.EventId), out var prev);
                 var rollup = LookupRollup(handlingByIssue, a);
+                var baselineKey = (SourceKey: a.Source.ToUpperInvariant(), a.EventId);
+                baselines.TryGetValue(baselineKey, out var baseline);
+                fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
 
                 return new IssueRankingDto
                 {
@@ -128,7 +140,14 @@ public class IssueRankingBuilder
                     IsNew = prev == null,
 
                     OpenHostCount = rollup?.OpenHostCount ?? 0,
-                    ResolvedHostCount = rollup?.ResolvedHostCount ?? 0
+                    ResolvedHostCount = rollup?.ResolvedHostCount ?? 0,
+
+                    BaselineMedianHostCount = baseline.MedianHostCount,
+                    BaselineLatestHostCount = baseline.LatestHostCount,
+                    BaselineDeviationMultiplier = baseline.DeviationMultiplier,
+                    BaselineOccurrenceDays = baseline.OccurrenceDays,
+
+                    FleetFirstSeen = (firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet).ToString("yyyy-MM-dd")
                 };
             })
             // 預設排序維持既有語意（最高嚴重度 → 主機數 → 總次數），呼叫端要換維度時自行重排——

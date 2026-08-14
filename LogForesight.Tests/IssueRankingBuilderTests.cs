@@ -288,4 +288,63 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.Equal("disk", rows[0].Source);
         Assert.Equal("DCOM", rows[1].Source);
     }
+
+    // ── 機房級基準線（回饋十九輪批次G1）──────────────────────────────────────
+
+    /// <summary>基準＝基準期（to 往前 30 天）出現日台數中位數；偏離倍數＝最近出現日台數 ÷ 基準</summary>
+    [Fact]
+    public void 基準線_中位數與偏離倍數()
+    {
+        var to = new DateTime(2026, 8, 10);
+        // 基準期三個出現日，台數分別 2/2/2（中位數 2）
+        Add(1, "A", to.AddDays(-25), Issue("disk", 153));
+        Add(2, "B", to.AddDays(-25), Issue("disk", 153));
+        Add(1, "A", to.AddDays(-15), Issue("disk", 153));
+        Add(2, "B", to.AddDays(-15), Issue("disk", 153));
+        // 最近一次出現日（to 當天）8 台——異常擴散
+        for (var i = 1; i <= 8; i++) Add(i, $"H{i}", to, Issue("disk", 153));
+
+        var row = Builder().Build(to, to, null, totalHosts: 8).Single();
+
+        Assert.Equal(3, row.BaselineOccurrenceDays);
+        Assert.Equal(2, row.BaselineMedianHostCount);
+        Assert.Equal(8, row.BaselineLatestHostCount);
+        Assert.Equal(4.0, row.BaselineDeviationMultiplier);
+    }
+
+    /// <summary>基準期出現不足 3 天（規劃定案 N=3）＝新問題，沒有「平常長什麼樣」可比</summary>
+    [Fact]
+    public void 基準線_出現天數不足三天時無基準()
+    {
+        var to = new DateTime(2026, 8, 10);
+        Add(1, "A", to.AddDays(-10), Issue("disk", 153));
+        Add(1, "A", to, Issue("disk", 153));
+
+        var row = Builder().Build(to, to, null, totalHosts: 1).Single();
+
+        Assert.Equal(2, row.BaselineOccurrenceDays);
+        Assert.Null(row.BaselineMedianHostCount);
+        Assert.Null(row.BaselineLatestHostCount);
+        Assert.Null(row.BaselineDeviationMultiplier);
+    }
+
+    // ── fleet 首見（回饋十九輪批次G4）────────────────────────────────────────
+
+    /// <summary>
+    /// 機房首見不受查詢期間截斷（↔ lf_issue_first_seen，批次B insert-if-absent 落地）：
+    /// 查詢窗口只涵蓋近期時，FirstSeen（查詢期間內）與 FleetFirstSeen（真正第一次出現）要能分開。
+    /// </summary>
+    [Fact]
+    public void 機房首見_不受查詢期間截斷()
+    {
+        var oldDate = new DateTime(2026, 1, 1);
+        var recentDate = new DateTime(2026, 8, 1);
+        Add(1, "A", oldDate, Issue("disk", 153));
+        Add(1, "A", recentDate, Issue("disk", 153));
+
+        var row = Builder().Build(recentDate, recentDate, null, totalHosts: 1).Single();
+
+        Assert.Equal("2026-08-01", row.FirstSeen);
+        Assert.Equal("2026-01-01", row.FleetFirstSeen);
+    }
 }

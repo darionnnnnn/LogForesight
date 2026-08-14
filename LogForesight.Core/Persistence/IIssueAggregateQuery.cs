@@ -139,6 +139,35 @@ public interface IIssueAggregateQuery
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+
+    /// <summary>
+    /// 期間內每個 (問題, 出現日) 的相異存活主機數（回饋十九輪批次G1，機房級基準線用）。
+    /// 只回傳有出現的日子——沒出現的日子不落地成 0，呼叫端用列數就能知道「出現日數」，
+    /// 不必額外傳日曆天數展開。<paramref name="issues"/> 是呼叫端已經算出的候選問題集合
+    /// （通常是當頁排行結果），不是整份表——與 <see cref="LatestOccurrences"/> 同一個規模假設。
+    /// </summary>
+    List<IssueDailyHostCount> DailyHostCounts(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// 問題的機房首見日（回饋十九輪批次G4呈現，批次B落地，↔ lf_issue_first_seen）。
+    /// 鍵為 (SourceKey 正規化大寫, EventId)，呼叫端查詢時要對 Source 做同樣的
+    /// <c>ToUpperInvariant()</c> 正規化才查得到——與本檔其餘方法的 wanted-normalization 慣例一致。
+    /// 查無資料（理論上不會發生，機房首見日在每次分析寫入時 insert-if-absent）時該問題不在回傳字典中，
+    /// 呼叫端須自行決定 fallback（如退回本次查詢窗口內的 FirstSeen）。
+    /// </summary>
+    Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
+        IReadOnlyCollection<(string Source, int EventId)> issues);
+}
+
+/// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
+public sealed class IssueDailyHostCount
+{
+    public string Source { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public DateTime Date { get; init; }
+    public int HostCount { get; init; }
 }
 
 /// <summary>單一天（跨全部主機）的風險彙總</summary>

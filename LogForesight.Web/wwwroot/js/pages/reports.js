@@ -15,7 +15,10 @@
 
 import { api, getDisplaySettings } from '../core/api.js';
 import { statCard } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal } from '../core/format.js';
+import {
+    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal,
+    issueBaselineText
+} from '../core/format.js';
 import * as charts from '../core/charts.js';
 
 let currentData = null;
@@ -504,16 +507,17 @@ function renderIssueRankChart() {
 
     const tableRows = issues.map(i => [
         `${i.source} (${i.eventId})`, CATEGORY_NAMES[i.category] ?? i.category,
-        severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount
+        severityName(i.maxSeverity), i.hostCount, i.dayCount, i.totalCount,
+        issueBaselineText(i), i.fleetFirstSeen || i.firstSeen
     ]);
     if (others) {
-        tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', others.hostCount, '', others.totalCount]);
+        tableRows.push([`其他 ${others.issueCount} 個問題（彙總）`, '', '', others.hostCount, '', others.totalCount, '', '']);
     }
 
     charts.attachToolbar(document.getElementById('host-toolbar'), {
         canvasWrapper: wrapper,
         title: '問題排行',
-        tableColumns: ['問題', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數'],
+        tableColumns: ['問題', '分類', '最高嚴重度', '主機數', '風險日數', '事件次數', 'vs 基準', '首見（機房）'],
         tableRows
     });
 }
