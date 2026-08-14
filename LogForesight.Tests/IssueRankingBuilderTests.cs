@@ -28,7 +28,7 @@ public class IssueRankingBuilderTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext, _hosts));
+    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext, _hosts), _hosts);
 
     /// <summary>帶處理概況彙總的完整組裝——驗證 OpenHostCount／ResolvedHostCount 這條路徑要串真的
     /// IssueHandlingRollupQuery，不是像 <see cref="Builder"/> 那樣單測 Aggregate→DTO 映射。</summary>
@@ -37,7 +37,7 @@ public class IssueRankingBuilderTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
         var rollup = new IssueHandlingRollupQuery(aggregates, statusResolver);
-        return new IssueRankingBuilder(aggregates, rollup);
+        return new IssueRankingBuilder(aggregates, _hosts, rollup);
     }
 
     private static LogIssueSignature Issue(
@@ -346,5 +346,54 @@ public class IssueRankingBuilderTests : IDisposable
 
         Assert.Equal("2026-08-01", row.FirstSeen);
         Assert.Equal("2026-01-01", row.FleetFirstSeen);
+    }
+
+    // ── 優先度分數（回饋十九輪批次G3）────────────────────────────────────────
+
+    /// <summary>
+    /// tierW 端到端：受影響主機裡最高的分級決定這個問題的分級權重（IssuePriorityScorer 的
+    /// 純函式測試已釘住公式本身，這裡驗證的是「查主機的 Tier 有沒有真的接上」這條 SQL 路徑）。
+    /// </summary>
+    [Fact]
+    public void PriorityScore_受影響主機最高分級決定tierW()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var coreHost = _hosts.Upsert(new WebHost { HostName = "CORE", Tier = WebHost.TierCore });
+        var testHost = _hosts.Upsert(new WebHost { HostName = "TEST", Tier = WebHost.TierTest });
+        // 一台核心、一台測試機都中鏢——即使測試機拉低平均，也該取最高分級（核心）
+        Add(coreHost.HostId, "CORE", d0, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(testHost.HostId, "TEST", d0, Issue("disk", 153, severity: IssueSeverity.High));
+
+        var row = Builder().Build(d0, d0, null, totalHosts: 2).Single();
+
+        Assert.Equal(1.2, row.PriorityScoreTierWeight);
+    }
+
+    /// <summary>沒有主機分級資料（測試替身未登錄任何主機）時退回一般分級，不是拋例外或算成 0</summary>
+    [Fact]
+    public void PriorityScore_查無主機分級資料時退回一般()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153));   // 未經 _hosts.Upsert 登錄的裸 hostId
+
+        var row = Builder().Build(d0, d0, null, totalHosts: 1).Single();
+
+        Assert.Equal(1.0, row.PriorityScoreTierWeight);
+    }
+
+    /// <summary>分數排序取代舊的「嚴重度→主機數→總次數」為主排序鍵——高分項目該排在前面</summary>
+    [Fact]
+    public void PriorityScore_依分數由高至低排序()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var coreHost = _hosts.Upsert(new WebHost { HostName = "CORE", Tier = WebHost.TierCore });
+        // 兩個問題同嚴重度、同主機數，只有分級不同——核心主機的問題分數該較高
+        Add(coreHost.HostId, "CORE", d0, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(2, "STD", d0, Issue("DCOM", 10016, severity: IssueSeverity.High));
+
+        var rows = Builder().Build(d0, d0, null, totalHosts: 2);
+
+        Assert.Equal("disk", rows[0].Source);
+        Assert.True(rows[0].PriorityScore > rows[1].PriorityScore);
     }
 }

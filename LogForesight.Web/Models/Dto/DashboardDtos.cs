@@ -154,6 +154,20 @@ public class IssueRankingDto
     /// <summary>問題在整個機房第一次出現的日期（不受查詢期間截斷，↔ lf_issue_first_seen）。
     /// 查無資料時退回 FirstSeen（理論上不會發生，見 IIssueAggregateQuery.FirstSeenFor）。</summary>
     public string FleetFirstSeen { get; set; } = string.Empty;
+
+    // ── 優先度分數（回饋十九輪批次G3，見 IssuePriorityScorer）─────────────────
+    //
+    // 重點問題卡（儀表板／報表共用本投影）改依這個分數排序，取代單純的
+    // 「嚴重度→主機數→總次數」——後者看不出「這個問題今天特別該優先處理」。
+    // 六個成分權重原樣附上，前端展開列直接顯示「為什麼是 N 分」，不必重算拆解。
+
+    public double PriorityScore { get; set; }
+    public double PriorityScoreSeverityWeight { get; set; }
+    public double PriorityScoreHostRatioFactor { get; set; }
+    public double PriorityScoreSpreadWeight { get; set; }
+    public double PriorityScoreNoveltyWeight { get; set; }
+    public double PriorityScoreOpenWeight { get; set; }
+    public double PriorityScoreTierWeight { get; set; }
 }
 
 /// <summary>

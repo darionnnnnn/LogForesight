@@ -20,6 +20,7 @@ namespace LogForesight.Web.Services;
 public class IssueRankingBuilder
 {
     private readonly IIssueAggregateQuery _aggregates;
+    private readonly IHostStore _hosts;
     private readonly IssueHandlingRollupQuery? _rollup;
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
@@ -30,11 +31,13 @@ public class IssueRankingBuilder
     /// 結果兩個正式呼叫端都忘了傳，OpenHostCount 因此死了一整輪（回饋十九輪查證抓到）。</param>
     public IssueRankingBuilder(
         IIssueAggregateQuery aggregates,
+        IHostStore hosts,
         IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null)
     {
         _aggregates = aggregates;
+        _hosts = hosts;
         _rollup = rollup;
         _backfiller = backfiller;
         _backend = backend;
@@ -96,6 +99,11 @@ public class IssueRankingBuilder
             _aggregates.DailyHostCounts(issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
         var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
 
+        // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
+        // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
+        var hostIdsByIssue = _aggregates.HostIdsByIssue(issuesOnPage, from, to, visibleHostIds);
+        var tierByHostId = _hosts.GetAll().ToDictionary(h => h.HostId, h => h.Tier);
+
         // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
         // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼
         // （回饋十九輪查證抓到）。_rollup 為 null 時（測試未注入）OpenHostCount／
@@ -116,6 +124,20 @@ public class IssueRankingBuilder
                 var baselineKey = (SourceKey: a.Source.ToUpperInvariant(), a.EventId);
                 baselines.TryGetValue(baselineKey, out var baseline);
                 fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
+                var resolvedFleetFirstSeen = firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet;
+
+                var highestTier = hostIdsByIssue.TryGetValue(baselineKey, out var affectedHostIds)
+                    ? HighestTier(affectedHostIds, tierByHostId)
+                    : WebHost.TierStandard;
+
+                var score = IssuePriorityScorer.Score(new IssuePriorityScorer.ScoreInput(
+                    MaxSeverity: (IssueSeverity)a.MaxSeverityRank,
+                    HostRatio: totalHosts > 0 ? (double)a.HostCount / totalHosts : 0,
+                    BaselineDeviationMultiplier: baseline.DeviationMultiplier,
+                    FleetFirstSeenDaysAgo: Math.Max(0, (today - resolvedFleetFirstSeen.Date).Days),
+                    OpenHostCount: rollup?.OpenHostCount ?? 0,
+                    HostCount: a.HostCount,
+                    HighestAffectedTier: highestTier));
 
                 return new IssueRankingDto
                 {
@@ -147,12 +169,22 @@ public class IssueRankingBuilder
                     BaselineDeviationMultiplier = baseline.DeviationMultiplier,
                     BaselineOccurrenceDays = baseline.OccurrenceDays,
 
-                    FleetFirstSeen = (firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet).ToString("yyyy-MM-dd")
+                    FleetFirstSeen = resolvedFleetFirstSeen.ToString("yyyy-MM-dd"),
+
+                    PriorityScore = score.Total,
+                    PriorityScoreSeverityWeight = score.SeverityWeight,
+                    PriorityScoreHostRatioFactor = score.HostRatioFactor,
+                    PriorityScoreSpreadWeight = score.SpreadWeight,
+                    PriorityScoreNoveltyWeight = score.NoveltyWeight,
+                    PriorityScoreOpenWeight = score.OpenWeight,
+                    PriorityScoreTierWeight = score.TierWeight
                 };
             })
-            // 預設排序維持既有語意（最高嚴重度 → 主機數 → 總次數），呼叫端要換維度時自行重排——
-            // 三張問句式卡片各有各的排序（§10.4），排序規則屬於呈現層決策，不寫死在這裡
-            .OrderByDescending(i => Enum.TryParse<IssueSeverity>(i.MaxSeverity, out var s) ? (int)s : -1)
+            // 重點問題卡改依 PriorityScore 排序（§G3），取代單純的「嚴重度→主機數→總次數」——
+            // 那套排序看不出「這個問題今天特別該優先處理」。同分時仍以嚴重度→主機數→總次數
+            // 為次要排序鍵，確保排序穩定、不會因為 SQL 回傳順序不保證而每次跑出不同順位
+            .OrderByDescending(i => i.PriorityScore)
+            .ThenByDescending(i => Enum.TryParse<IssueSeverity>(i.MaxSeverity, out var s) ? (int)s : -1)
             .ThenByDescending(i => i.HostCount)
             .ThenByDescending(i => i.TotalCount)
             .ToList();
@@ -198,6 +230,28 @@ public class IssueRankingBuilder
         }
         return merged;
     }
+
+    /// <summary>受影響主機裡最高的分級（§G3 tierW 用：一台核心主機中鏢，不該被其餘測試機稀釋）。
+    /// 查不到 Tier（理論上不會發生，WebHost.Tier 恆有值）或主機清單為空時退回一般。</summary>
+    private static string HighestTier(IReadOnlyCollection<long> hostIds, IReadOnlyDictionary<long, string> tierByHostId)
+    {
+        var best = WebHost.TierStandard;
+        var bestRank = TierRank(best);
+        foreach (var hostId in hostIds)
+        {
+            if (!tierByHostId.TryGetValue(hostId, out var tier)) continue;
+            var rank = TierRank(tier);
+            if (rank > bestRank) { best = tier; bestRank = rank; }
+        }
+        return best;
+    }
+
+    private static int TierRank(string tier) => tier switch
+    {
+        WebHost.TierCore => 2,
+        WebHost.TierTest => 0,
+        _ => 1
+    };
 }
 
 /// <summary>單一問題簽章的處理概況彙總（§10.6：全部有結論的問題不進重點清單）</summary>

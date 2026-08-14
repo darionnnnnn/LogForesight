@@ -438,6 +438,7 @@ function renderTopIssues(data) {
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
             { title: '問題', render: i => issueNameCell(i) },
+            { title: '分數', className: 'text-end', render: i => issuePriorityScoreCell(i) },
             { title: '嚴重度', render: i => issueSeverityCell(i) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
             { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
@@ -573,6 +574,25 @@ function issueOpenCell(issue) {
     count.className = issue.openHostCount > 0 ? 'text-danger fw-semibold' : 'text-muted';
     wrap.appendChild(count);
     return wrap;
+}
+
+/**
+ * 優先度分數（回饋十九輪批次G3）：重點問題卡改依這個分數排序，取代單純的「嚴重度→主機數→
+ * 總次數」——那套排序看不出「這個問題今天特別該優先處理」。**列展開與 rowHref（點列下鑽問題
+ * 查詢）互斥**（見 renderTable 文件），這裡改用 title 提示顯示成分明細，不犧牲既有的點列下鑽。
+ */
+function issuePriorityScoreCell(issue) {
+    const span = document.createElement('span');
+    span.className = 'lf-mono fw-semibold';
+    span.textContent = issue.priorityScore.toFixed(0);
+    span.title = '為什麼是這個分數：' +
+        `嚴重度×${issue.priorityScoreSeverityWeight.toFixed(2)}　` +
+        `影響率×${issue.priorityScoreHostRatioFactor.toFixed(2)}　` +
+        `異常擴散×${issue.priorityScoreSpreadWeight.toFixed(2)}　` +
+        `新穎度×${issue.priorityScoreNoveltyWeight.toFixed(2)}　` +
+        `未處理×${issue.priorityScoreOpenWeight.toFixed(2)}　` +
+        `主機分級×${issue.priorityScoreTierWeight.toFixed(2)}`;
+    return span;
 }
 
 /**

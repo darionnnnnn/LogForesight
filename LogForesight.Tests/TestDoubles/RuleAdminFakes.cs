@@ -126,6 +126,13 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IReadOnlyCollection<(string Source, int EventId)> issues) =>
         FirstSeenForResult;
+
+    public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssueResult { get; set; } = new();
+
+    public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds) =>
+        HostIdsByIssueResult;
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

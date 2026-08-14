@@ -182,6 +182,51 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds)
+    {
+        var empty = new Dictionary<(string, int), HashSet<long>>();
+        if (issues.Count == 0) return empty;
+        if (hostIds != null && hostIds.Count == 0) return empty;
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var q = ctx.TopIssues.AsNoTracking()
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && x.HostId != 0 && eventIds.Contains(x.EventId));
+
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
+        }
+
+        var rows = q
+            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Distinct()
+            .ToList()
+            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .ToList();
+
+        var result = rows
+            .GroupBy(x => (SourceKey: x.SourceName.ToUpperInvariant(), x.EventId))
+            .ToDictionary(g => g.Key, g => g.Select(x => Surviving(aliasIndex, x.HostId)).ToHashSet());
+
+        Log.Debug("[SQL] IssueAggregate.HostIdsByIssue（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，{IssueCount} 個問題）→ {Count} 種問題、{Ms}ms",
+            f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:HostIdsByIssue", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null)

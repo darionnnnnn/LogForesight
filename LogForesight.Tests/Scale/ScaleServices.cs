@@ -60,7 +60,7 @@ internal sealed class ScaleServices
             Hosts, Visibility, currentUser, new RecordingAuditService(), users);
 
         var aggregates = backend.IssueAggregateQuery(Hosts);
-        var issueRanking = new IssueRankingBuilder(aggregates);
+        var issueRanking = new IssueRankingBuilder(aggregates, Hosts);
         var statusResolver = new OccurrenceStatusResolver(Hosts, IssueHandlings, Cases, settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 

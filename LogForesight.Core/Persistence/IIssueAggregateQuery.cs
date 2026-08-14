@@ -82,6 +82,16 @@ public interface IIssueAggregateQuery
     HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
 
     /// <summary>
+    /// 期間內每個問題各自影響的相異存活主機 id 集合（回饋十九輪批次G3，PriorityScore 的
+    /// tierW 用：「受影響主機最高分級」需要逐一問題各自的主機清單，不是合起來的一個集合）。
+    /// 與 <see cref="HostIdsFor"/> 的差異只在回傳形狀——那裡是輸入問題集合「合起來」影響的
+    /// 主機（授權反查用），這裡是「逐一問題」各自的主機集合。查無資料的問題不在回傳字典中。
+    /// </summary>
+    Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
     /// 期間內每個 (存活主機, 完整簽章) 最近一次出現的日期與當時嚴重度（回饋十九輪批次A，
     /// §10.6「排除已有結論的問題」的資料基礎）。這裡只回答「這個組合最後一次出現時長什麼樣子」——
     /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
