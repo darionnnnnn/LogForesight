@@ -25,15 +25,30 @@ public class IssueTodoQuery
         _statusResolver = statusResolver;
     }
 
-    public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
+    public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds) =>
+        Aggregate(ResolveActionable(from, to, visibleHostIds));
+
+    /// <summary>
+    /// 解析一次、彙總多次（回饋十九輪批次I 體檢修正）：儀表板的全站 KPI 與逐群組的
+    /// UnhandledCount 需要同一份可行動快照的不同子集彙總——原本逐群組各自呼叫
+    /// <see cref="Build"/>，每個群組都是一趟 SQL＋一輪批次載入（<see cref="OccurrenceStatusResolver"/>
+    /// 內含 hosts/handling/case 三次查詢），群組數不設上限時就是 4×N 次查詢，正是
+    /// <c>IssueHandlingRollupQuery</c> 註解裡點名要避免的那種 N+1。呼叫端改為：
+    /// 對全站可見範圍解析一次，再用 <see cref="Aggregate"/> 對各群組的主機子集各自彙總。
+    /// </summary>
+    public List<ResolvedOccurrence> ResolveActionable(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
     {
         var occurrences = _aggregates.ActionableOccurrences(from, to, visibleHostIds);
-        if (occurrences.Count == 0) return new IssueTodoDto();
+        if (occurrences.Count == 0) return new List<ResolvedOccurrence>();
 
-        var resolved = _statusResolver.Resolve(occurrences, from, to);
+        return _statusResolver.Resolve(occurrences, from, to);
+    }
 
-        // 問題計數以 (Source, EventId) 去重——同一個問題在多台主機都未處理只算一個問題，
-        // 「影響幾台」交給 AffectedHostCount 另外回答，兩件事不要混在同一個數字裡
+    /// <summary>純彙總（無 I/O）：問題計數以 (Source, EventId) 去重——同一個問題在多台主機
+    /// 都未處理只算一個問題，「影響幾台」交給 AffectedHostCount 另外回答，
+    /// 兩件事不要混在同一個數字裡。</summary>
+    public static IssueTodoDto Aggregate(IEnumerable<ResolvedOccurrence> resolved)
+    {
         var openIssues = new HashSet<(string Source, int EventId)>();
         var inProgressIssues = new HashSet<(string, int)>();
         var overdueIssues = new HashSet<(string, int)>();

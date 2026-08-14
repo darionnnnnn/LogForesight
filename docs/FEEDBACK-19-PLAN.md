@@ -847,9 +847,11 @@ severityW／spreadW／noveltyW／openW 全部重用 G1（基準線）／G4（fle
 79 分的問題排在兩個 High 嚴重度但分數 66 分的問題之前）；分數提示文字正確
 顯示六個成分權重。
 
-新增 25 個單元測試（`IssuePriorityScorer` 純函式 16 個，含公式邊界值／夾值
-／門檻邊界＋`IssueRankingBuilder` 端到端 3 個，含 tierW 查無主機資料時的
-退回行為），commit `a89ff29`，2075 測試綠。
+新增 28 個測試案例（`IssuePriorityScorer` 純函式 25 例——9 個測試方法，其中
+6 個 Theory 展開 22 例＋3 個 Fact，含公式邊界值／夾值／門檻邊界；
+`IssueRankingBuilder` 端到端 3 個，含 tierW 查無主機資料時的退回行為；
+體檢輪核對修正：初記的「25 個（16＋3）」把 Theory 方法數與展開案例數混在同一句），
+commit `a89ff29`，2075 測試綠。
 
 ## 批次G 全案結案摘要
 
@@ -906,7 +908,7 @@ body 內容來源換掉。`RecipientView` 新增 `VisibleHostIds` 欄位供問�
 （`EfSqliteFixture`＋`EfAnalysisRecordStore`＋`EfIssueAggregateQuery`）驅動的
 整合測試驗證四分區判定邏輯本身正確。
 
-**H4**：新增 `MailIssueDigestTests`（9 個，真實 SQL 驅動的分區判定，含逾期
+**H4**：新增 `MailIssueDigestTests`（8 個測試方法，真實 SQL 驅動的分區判定，含逾期
 測試踩到的一個測試自身邏輯錯誤——`Add()` 輔助函式沿用既有慣例把日風險等級
 硬寫死 Low，而逾期母體 `ActionableOccurrences` 要求日風險為高／中，補上可覆寫
 日風險等級的 `Add()` 多載修正）；`MailNotificationServiceTests` 修復 4 個因
@@ -991,4 +993,79 @@ PriorityScore、主機分級、fleet 首見）、**郵件改問題優先**（批
 體檢（隨批次同步進行，非獨立輪）共揪出的真 bug 與缺口：E1 漏接報表下鑽門檻、E2 SiteHidden
 問題嚴重度可見性整段漏接、F4 與 G2 兩次「Upsert 逐欄複製漏抄新欄位」、G2 前端 modal 標題
 被 JS 寫死值蓋掉、H4 測試自身把日風險寫死 Low 導致逾期分區測不到、I 的授權檢查表未涵蓋
-批次G/H 新方法。與規劃原文的刻意偏離共七處，皆已在各批次段落記錄理由。
+批次G/H 新方法。與規劃原文的刻意偏離詳見各批次段落自述（體檢輪核對：各段明寫的偏離
+合計十處，另有數處以「取捨／比規劃更細／更簡單」措辭記錄的實質差異——計數口徑本就不一，
+故不給總數，以各段落的逐項記錄為準）。
+---
+
+## 獨立體檢輪（批次I 之後、併 dev 之前——三份平行審查＋規劃逐項比對）
+
+批次A~I 結案後另跑一輪**獨立**體檢（前面各批次的體檢是隨批同步進行）：三個平行唯讀審查
+（獵 bug／過度設計／文件稽核，各自對 `a0772d3..HEAD` 全輪 diff）＋規劃逐項比對。
+共揪出並修正以下項目：
+
+### 規劃逐項比對揪出的缺漏
+
+- **B3 歷史種子漏做且紀錄失實**：批次B 紀錄宣稱「B3 按規劃落地」，但規劃明列的一次性種子
+  （`INSERT ... SELECT MIN(record_date)`）實際沒有做——批次B 之前就存在的問題在
+  `lf_issue_first_seen` 沒有列，「首見（機房）」fallback 成查詢窗口首見（欄位失去意義）、
+  PriorityScore 的 noveltyW 把老問題誤判成新問題；且逐日 upsert 只在較早日期才更新，
+  錯值一旦寫入**永久固定**。已補上 `SchemaUpgrader.SeedIssueFirstSeenIfEmpty`（表空才種的
+  毫秒級門檻，不拖慢啟動路徑；表非空不重種的取捨與誠實限制見其註解）＋3 個測試
+  （含 MinValue 哨兵排除、非空不重種）。
+
+### 獵 bug 審查（修正 7 項）
+
+1. **（高）`LookupRollup` 跨簽章計數相加重複計主機**：同一台主機常同時出現在同組多個完整
+   簽章下，相加會算成兩台——OpenHostCount 可大於 HostCount、PriorityScore 的 openW 突破
+   [0.5,1.0] 值域扭曲排序、`ExcludeConcluded` 的「全部已有結論」永遠不成立。這是批次A 把
+   死了一輪的 rollup 接活後才生效的 bug。根修：`IssueHandlingRollupQuery` 改回傳主機 id
+   集合（`IssueHostStatusSets`），合併改集合聯集；ResolvedHostCount 定義為「已有結論且沒有
+   任何簽章仍未處理」（resolved 差集 open）。
+2. **（高）`NetiqHostService.BulkAddHosts` 會把既有主機分級洗成下拉選的值**：前端下拉恆送
+   具體值，`tier ?? existing?.Tier` 的 fallback 是死分支，「重貼一次清單」就洗掉既有分級，
+   與 bulk modal 說明文字「只套用在本次新增的主機」直接矛盾。修正為
+   `existing?.Tier ?? tier`（與掃描精靈 `NetiqImportApplier` 同一原則）。
+3. **（高）`DailyRecordBackfiller` 進度沒接進 `StatsPending()`**：抽出欄回填期間，報表趨勢
+   的錯誤數、清單的標題／錯誤警告欄全是 DDL 預設值（0／''）卻無任何「統計中」提示——
+   「0 錯誤」比「數字偏低」更會誤導成「這天很乾淨」。已補第三個分支與對應提示文案。
+4. **（中）`DailyHostCounts` 分組鍵未正規化 Source 大小寫**：與本檔其餘方法的
+   wanted-normalization 慣例不一致，大小寫變體會拆成同日兩列、破壞基準線計算的
+   「一筆＝一天」假設。已修正並回傳大寫鍵。
+5. **（中）`BuildGroupRisk` 逐群組呼叫 `IssueTodoQuery.Build`（N+1）**：每群組一趟 SQL＋
+   三次批次載入，群組數不設上限＝4×N 次查詢，正是本輪自己引用的 N3 教訓同型。根修：
+   `IssueTodoQuery` 拆成 `ResolveActionable`（解析一次）＋`Aggregate`（純彙總），
+   儀表板 KPI 與逐群組共用同一份解析結果。
+6. **（低）依問題視角 `TotalCount` 的 long→int 未防溢位**：補 `Math.Min`，與排行卡同寫法。
+7. **（低）`ResolveDateRange` 預設終點仍是今天（批次C 錨點右移漏一處）**：未帶 To 的 API
+   呼叫會讓基準線窗口右移一天、只有 29 天樣本，與儀表板對不起來。修正為昨天，並把
+   `RecordQueryServiceSearchTests` 整檔遷移到「紀錄以昨天造」的既定測試哲學
+   （回饋十七輪頭號教訓，該檔先前未跟上）。
+   另修一項純外觀：儀表板 concluded-note 蓋掉容器 padding（classList 增減取代整段覆寫）。
+
+### 過度設計審查（收斂 5 項、確認乾淨面）
+
+清單點名的 6 個新查詢方法全部有正式呼叫端、DTO 新欄位全部有消費端、分層與 DI 生命週期
+符合既有慣例——整體乾淨。收斂項：`CategoryAggregator.Merge` 死碼移除（批次D1 改走 SQL 後
+只剩測試在呼叫，E7 退場普查的漏網）；類別中文名 C# 端收斂為 Core 唯一字典
+`IssueCategoryNames`（批次H 曾長出第三份 switch 拷貝，即 BACKLOG S13 記錄的分歧風險；
+S13 現況描述同步更正）；前端 `TIER_LABELS` 移除（與後端 `TierText` 同輪造出的雙份字典，
+改讀 DTO 欄位）；`IssueOwnerDto` 的 `ConcludedAt`／`ConcludedBy*` 三欄原是死欄位，判定為
+前端漏做而非多餘（代全體下結論該留痕）——問題檔案頁結論欄補上「由誰於何時設定」；
+測試替身 `FakeIssueAggregateQuery` 的 7 個無人使用 seam 收斂為直接回空。
+設計面債務（`visibleSeverities` 選填參數的隱性契約＋SiteHidden 在 KPI／排行／郵件的立場
+未定案、`SetConclusion` 服務層能力檢查、`UpsertFirstSeen` SQLite 格式漂移）記入
+docs/BACKLOG.md「回饋十九輪體檢輪記錄的設計面債務」。
+
+### 文件稽核（修正 8 項）
+
+DB-SPEC 的 EventKey「刻意不抽出成資料庫欄位」宣稱已被批次B 推翻（改寫並補
+`event_key`／`known_issue`／`ai_pending` 欄與 `created_at` 註記）；本規劃案結案摘要的
+「偏離七處」與 G3／H4 的測試數三處數字失實（已更正，見各段落）；WEB-SPEC §9.1／§9.6 與
+說明書漏了批次A 的「排除已有結論＋卡底計數」（已補）；BACKLOG 的 §10.6 懸空參照補上出處；
+郵件行數上限「即時信兩節各自套用」的精確語意補進 WEB-SPEC 與說明書；說明書標題殘留
+C# 類別名一處（已去除）。文件稽核同時確認：頁名「問題檔案」全站無殘留舊稱、四份文件對
+排序規則／四分區／三層優先序的說法完全一致、RULES-SPEC 等三份規則面文件未因本輪過期、
+說明書 14 份無簡體慣用語與程式識別字。
+
+體檢輪修正後 2086 測試綠（含新增的種子測試、扣除移除的 Merge 死碼測試）。

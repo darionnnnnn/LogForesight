@@ -172,7 +172,11 @@ public class NetiqHostService : INetiqHostService
                 RoleDesc = parsed.RoleDesc.Length > 0 ? parsed.RoleDesc : existing?.RoleDesc ?? "",
                 Source = NetiqHostList.NetiqSource,
                 Os = os,
-                Tier = tier ?? existing?.Tier ?? WebHost.TierStandard,
+                // 分級只套用在**新增**的主機（回饋十九輪批次I 體檢修正，與掃描精靈
+                // NetiqImportApplier 同一原則、也是 bulk modal 說明文字的承諾）：前端下拉
+                // 恆送具體值，寫成 tier ?? existing 的話「重貼一次清單」就會把既有主機
+                // 已設好的分級靜默洗成這次下拉選的值
+                Tier = existing?.Tier ?? tier ?? WebHost.TierStandard,
                 Active = true,
                 GroupIds = existing?.GroupIds ?? new List<long>(),
                 OwnerUserIds = existing?.OwnerUserIds ?? new List<long>()

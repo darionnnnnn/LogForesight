@@ -475,7 +475,9 @@ public class RecordListQueryService
             MaxSeverity = ((IssueSeverity)aggregate.MaxSeverityRank).ToString(),
             HostCount = aggregate.HostCount,
             DayCount = aggregate.DayCount,
-            TotalCount = (int)aggregate.TotalCount,
+            // 溢位保護與排行卡（IssueRankingBuilder）同一寫法：全歷史區間的 SUM(event_count)
+            // 在大規模環境可能超過 int 上限，unchecked 轉型會回繞成負數
+            TotalCount = (int)Math.Min(aggregate.TotalCount, int.MaxValue),
             LastSeen = aggregate.LastSeen.ToString("yyyy-MM-dd"),
 
             // 時間形狀（§10.3）：全由 SQL 聚合結果既有的欄位帶出，不必額外查詢
@@ -533,8 +535,12 @@ public class RecordListQueryService
 
     /// <summary>期間未指定時退回全部歷史——SQL 聚合查詢需要具體的上下限，不能像 RecordQueryFilter
     /// 那樣用 null 代表不限制</summary>
+    /// <summary>未帶 To 時的預設終點是**昨天**（分析錨點，回饋十九輪批次C／批次I 體檢補漏）：
+    /// 分析永遠只產出到昨天，前端也一律以昨天為終點送出——預設用今天不會多查到任何紀錄
+    /// （今天的紀錄不存在），但會讓基準線窗口（IssueBaselineCalculator.Window 以 to 為錨）
+    /// 右移一天、實際只有 29 天樣本，與儀表板／報表的「vs 基準」數字對不起來。</summary>
     private static (DateTime From, DateTime To) ResolveDateRange(RecordSearchRequest request) =>
-        (request.From ?? DateTime.MinValue, request.To ?? DateTime.Today);
+        (request.From ?? DateTime.MinValue, request.To ?? DateTime.Today.AddDays(-1));
 
     /// <summary>
     /// SQL 聚合查詢共用的 RiskLevels／Categories／MinSeverity 解析（回饋十九輪批次E2）：

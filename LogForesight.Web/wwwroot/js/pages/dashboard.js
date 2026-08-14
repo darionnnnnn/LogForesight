@@ -472,7 +472,10 @@ function renderConcludedNote(containerId, concludedCount) {
         return;
     }
 
-    el.className = 'small text-muted';
+    // 用 classList 增減而不是整個蓋掉 className——容器在 cshtml 帶著 px-3 pb-2 的排版 class，
+    // 蓋掉會讓這行文字貼齊卡片左緣（批次I 體檢修正）
+    el.classList.remove('d-none');
+    el.classList.add('small', 'text-muted');
     el.textContent = `另有 ${concludedCount} 個問題已有結論（未列入）`;
 }
 

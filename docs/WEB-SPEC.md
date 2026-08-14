@@ -776,6 +776,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - 資料來源走 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不把整段期間的
     紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
   - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台。
+  - **全部主機都已有結論的問題退出清單**（回饋十九輪批次A，原規劃出處
+    docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6）：不佔用重點清單版面，但卡底誠實顯示
+    「另有 N 個問題已有結論（未列入）」——悄悄少幾筆會被誤讀成「問題變少了」。
+    報表問題排行套同一條規則、同一句文案，兩頁的排除數字一致（`IssueRankingBuilder.
+    ExcludeConcluded`）。此為固定行為，無切換選擇器（刻意，見 docs/BACKLOG.md 的
+    「顯示範圍選擇器」條目）。
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
   加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
@@ -1241,7 +1247,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   ——與儀表板「重點問題」卡同一份投影（同一套 PriorityScore 排序＋vs 基準／首見（機房）
   欄，見 §9.1），兩頁數字必然一致；長條圖依分數排序，「表格」切換出的資料表額外附
   分數／vs 基準／首見（機房）三欄；Top 10 之外併成「其他 N 個問題」彙總條（同主機排行
-  的理由：尾端不隱形），「檢視全部」連問題查詢的依問題視角。
+  的理由：尾端不隱形），「檢視全部」連問題查詢的依問題視角。全部主機已有結論的問題
+  同 §9.1 退出排行並於副標顯示「另有 N 個問題已有結論（未列入）」，兩頁數字一致。
 - **占比小圖的資料來源與全站一致**：受影響主機占比的分母
   ＝可見主機總數（與儀表板 TotalHosts 同 `IVisibilityService`）；處理進度＝期間內高＋中風險日的
   resolved 比例（與儀表板待辦同 `HandlingHistoryQueryService.GetTodo` 規則，母體由 GetTodo 內部強制）。
@@ -1634,7 +1641,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      依嚴重度過濾，其餘三區的訊號本身已是優先理由），逐主機日明細改一行「請至站台」連結；
      高風險即時改為「問題優先區塊＋主機日附錄」雙節並存（既有的逐主機日明細降級為附錄，
      不是移除）。行數上限沿用既有常數（`SummaryBodyLineLimit=50`／`UrgentBodyLineLimit=20`），
-     語意由「主機日行數」改為「問題行數」。`MailIssueDigest` 與 `OccurrenceStatusResolver`
+     摘要／週報的語意由「主機日行數」改為「問題行數」；**即時信是兩節各自套用同一個 20 行
+     上限、各自截斷**（問題優先節計問題行、主機日附錄節仍計主機日行，單封信最多 40 行明細）。`MailIssueDigest` 與 `OccurrenceStatusResolver`
      皆為 Singleton（`OccurrenceStatusResolver` 回饋十九輪批次H 由 Scoped 改註冊，其自身相依
      本就全是 Singleton，沒有 captive dependency 疑慮），批次內相同可見範圍的收件人共用同一次
      查詢結果（`BuildIssueRowsCached`，以 hostIds 集合排序後的字串為鍵）。

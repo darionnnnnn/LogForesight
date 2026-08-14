@@ -24,6 +24,7 @@ public class IssueRankingBuilder
     private readonly IssueHandlingRollupQuery? _rollup;
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
+    private readonly DailyRecordBackfiller? _dailyBackfiller;
 
     /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
@@ -34,13 +35,15 @@ public class IssueRankingBuilder
         IHostStore hosts,
         IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
-        StorageBackend? backend = null)
+        StorageBackend? backend = null,
+        DailyRecordBackfiller? dailyBackfiller = null)
     {
         _aggregates = aggregates;
         _hosts = hosts;
         _rollup = rollup;
         _backfiller = backfiller;
         _backend = backend;
+        _dailyBackfiller = dailyBackfiller;
     }
 
     /// <summary>
@@ -67,6 +70,16 @@ public class IssueRankingBuilder
         {
             return (true, $"問題統計回填中（已完成 {progress.Done:N0}/{progress.Total:N0}），" +
                           "次數與影響範圍可能偏低。");
+        }
+
+        // 批次E 讀取面 SQL 化後的第三種背景工作（回饋十九輪批次I 體檢補上）：抽出欄回填
+        // 未完成時，舊列的 headline／錯誤警告數等抽出欄還是 DDL 預設值（''／0），畫面上
+        // 「0 錯誤」比「數字偏低」更會誤導成「這天很乾淨」——同一句誠實提示必須涵蓋它
+        var dailyProgress = _dailyBackfiller?.Progress;
+        if (dailyProgress is { InProgress: true })
+        {
+            return (true, $"畫面欄位回填中（已完成 {dailyProgress.Done:N0}/{dailyProgress.Total:N0}），" +
+                          "標題與錯誤／警告數可能暫時顯示為空。");
         }
 
         return (false, null);
@@ -212,23 +225,32 @@ public class IssueRankingBuilder
     /// <summary>
     /// 處理狀態以**完整簽章**為鍵，而排行以 (Source, EventId) 為單位——
     /// 一個群組底下可能有多個完整簽章，任一個有未處理主機就算未處理（規劃 §8.1 缺陷 1）。
+    ///
+    /// **合併必須是主機 id 集合的聯集，不是計數相加**（回饋十九輪批次I 體檢修正）：同一台
+    /// 主機常同時出現在同組的多個簽章下，計數相加會把它算成兩台——OpenHostCount 因此可能
+    /// 大於 HostCount，讓 PriorityScore 的 openW 突破 [0.5,1.0] 值域、
+    /// <see cref="ExcludeConcluded"/> 的「全部主機已有結論」永遠不成立。
+    /// ResolvedHostCount 取「已有結論且**沒有任何簽章仍未處理**」的主機數（resolved 差集 open）
+    /// ——一台主機在簽章 A 已結論、簽章 B 仍未處理，對「這個問題處理完了沒」的答案是還沒。
     /// </summary>
     private static IssueHandlingRollup? LookupRollup(
-        IReadOnlyDictionary<string, IssueHandlingRollup>? byIssueKey, IssueAggregate aggregate)
+        IReadOnlyDictionary<string, IssueHostStatusSets>? byIssueKey, IssueAggregate aggregate)
     {
         if (byIssueKey == null || aggregate.IssueKeys.Count == 0) return null;
 
-        IssueHandlingRollup? merged = null;
+        HashSet<long>? openHosts = null;
+        HashSet<long>? resolvedHosts = null;
         foreach (var key in aggregate.IssueKeys)
         {
-            if (!byIssueKey.TryGetValue(key, out var one)) continue;
-            merged = merged == null
-                ? one
-                : new IssueHandlingRollup(
-                    merged.OpenHostCount + one.OpenHostCount,
-                    merged.ResolvedHostCount + one.ResolvedHostCount);
+            if (!byIssueKey.TryGetValue(key, out var sets)) continue;
+            (openHosts ??= new HashSet<long>()).UnionWith(sets.OpenHosts);
+            (resolvedHosts ??= new HashSet<long>()).UnionWith(sets.ResolvedHosts);
         }
-        return merged;
+        if (openHosts == null && resolvedHosts == null) return null;
+
+        var open = openHosts ?? new HashSet<long>();
+        var fullyResolved = (resolvedHosts ?? new HashSet<long>()).Count(id => !open.Contains(id));
+        return new IssueHandlingRollup(open.Count, fullyResolved);
     }
 
     /// <summary>受影響主機裡最高的分級（§G3 tierW 用：一台核心主機中鏢，不該被其餘測試機稀釋）。

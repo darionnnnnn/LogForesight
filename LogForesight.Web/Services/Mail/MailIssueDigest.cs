@@ -115,23 +115,9 @@ public static class MailIssueBucket
 /// <summary>一行問題優先摘要（回饋十九輪批次H1）</summary>
 public sealed record MailIssueRow(string Source, int EventId, string Category, int HostCount, int PreviousHostCount, string Bucket)
 {
-    /// <summary>信件本文的一行文字：<c>{Source}/{EventId}（{Category}）｜影響 N 台（前期 M）｜{區塊標記}</c></summary>
+    /// <summary>信件本文的一行文字：<c>{Source}/{EventId}（{Category}）｜影響 N 台（前期 M）｜{區塊標記}</c>。
+    /// 類別中文名走 Core 的唯一字典 <see cref="IssueCategoryNames"/>（批次I 體檢收斂——
+    /// 這裡原本是第三份 switch 拷貝，正是 BACKLOG S13 記錄的分歧風險）。</summary>
     public string FormatLine() =>
-        $"{Source}/{EventId}（{CategoryText(Category)}）｜影響 {HostCount} 台（前期 {PreviousHostCount}）｜{MailIssueBucket.Label(Bucket)}";
-
-    /// <summary>類別英文列舉 → 中文名（同前端 format.js 的 CATEGORY_NAMES，這裡是純文字信件的
-    /// 伺服器端版本，兩邊各自維護一份是因為信件是伺服器產生的純文字，前端的字典用不到這裡）。
-    /// 查無對應時原樣顯示，不擋信件產生。</summary>
-    private static string CategoryText(string category) => category switch
-    {
-        "Storage" => "儲存裝置",
-        "Hardware" => "硬體",
-        "Security" => "安全",
-        "Service" => "服務",
-        "Backup" => "備份",
-        "Config" => "設定",
-        "Resource" => "資源",
-        "Other" => "其他",
-        _ => category
-    };
+        $"{Source}/{EventId}（{IssueCategoryNames.Zh(Category)}）｜影響 {HostCount} 台（前期 {PreviousHostCount}）｜{MailIssueBucket.Label(Bucket)}";
 }

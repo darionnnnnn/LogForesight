@@ -121,6 +121,47 @@ internal static class SchemaUpgrader
         // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
             isSqlite ? SqliteCreateIssueFirstSeen : SqlServerCreateIssueFirstSeen);
+        SeedIssueFirstSeenIfEmpty(ctx, isSqlite);
+    }
+
+    /// <summary>
+    /// 機房首見日的歷史種子（回饋十九輪批次B 規劃明列、批次I 體檢發現漏做後補上）：
+    /// 沒有這一步，批次B 上線**之前**就存在的問題在 `lf_issue_first_seen` 沒有列，
+    /// 「首見（機房）」會 fallback 成查詢窗口首見（欄位失去存在意義），且 PriorityScore 的
+    /// noveltyW 會把老問題誤判成 7 天內的新問題；更糟的是逐日 upsert 只在「新日期較早」時
+    /// 更新，錯值一旦寫入就**永久固定**——所以種子必須在任何逐日寫入發生前補上。
+    ///
+    /// **這是本檔唯一的 DML 步驟**（其餘全是 DDL）：放在這裡而不是背景回填器，是因為它的
+    /// 冪等門檻（表空才種）與「建表後立刻要有正確初值」的時序需求都與 DDL 同一格——表是
+    /// 這裡建的，種子跟著建表走，不必再發明一個回填版本號。門檻是毫秒級的 <c>Any()</c>
+    /// （走 PK），不會拖慢啟動路徑（見 StorageBackend 的 30 秒 SCM 逾時警語）；只有
+    /// 全新升級（表剛建、還是空的）那一次才會付出對 `lf_top_issues` 的一趟 GROUP BY。
+    ///
+    /// 誠實限制（規劃 B3 原文明列）：種子值受建表當時 `lf_top_issues` 保留期下限截斷——
+    /// 比保留期更早出現的問題，種出來的首見日是保留期內最早的一筆，之後不會再被截斷。
+    /// 已跑過一段時間才收到本修正的環境（表非空）不重種：既有列可能是「批次B 之後第一次
+    /// 出現的日期」而非真正首見，屬已知且有界的偏差，重種會需要逐列比對更早日期、
+    /// 為了修開發期資料把每次啟動變慢不成比例。
+    ///
+    /// 排除 `record_date` 為 MinValue 哨兵的未回填舊列（同 EfIssueAggregateQuery 的既有
+    /// 排除慣例）——讓它們混進來會把首見日全部種成西元 1 年。UPPER() 對 ASCII 來源名與
+    /// C# ToUpperInvariant 等價（Windows provider 與 Linux program 名皆 ASCII）。
+    /// </summary>
+    private static void SeedIssueFirstSeenIfEmpty(LfDbContext ctx, bool isSqlite)
+    {
+        // 來源表不存在就跳過（同 AddColumnIfMissing 的容忍原則）：正常部署 EnsureCreated
+        // 已建好全部表，走到這裡代表 schema 殘缺，種子強行執行只會讓整個站台啟動失敗
+        if (!TableExists(ctx, isSqlite, "lf_top_issues")) return;
+        if (ctx.IssueFirstSeen.Any()) return;
+
+        var seeded = ctx.Database.ExecuteSqlRaw("""
+            INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
+            SELECT UPPER(source_name), event_id, MIN(source_name), MIN(record_date)
+            FROM lf_top_issues
+            WHERE record_date >= '2000-01-01'
+            GROUP BY UPPER(source_name), event_id
+            """);
+        if (seeded > 0) Log.Info("[SQL] lf_issue_first_seen 歷史種子完成：{Count} 個問題", seeded);
     }
 
     private const string SqliteCreateIssueHandling = """

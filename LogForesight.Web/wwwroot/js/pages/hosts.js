@@ -62,8 +62,6 @@ const batchGroupsModal = new bootstrap.Modal(document.getElementById('batch-grou
 const batchTierModal = new bootstrap.Modal(document.getElementById('batch-tier-modal'));
 let headerCheckboxEl = null;   // 表頭全選 checkbox 的 DOM 參照，供逐列勾選後同步狀態
 
-const TIER_LABELS = { core: '核心', standard: '一般', test: '測試' };
-
 async function load() {
     renderLoading(listContainer, 5);
 
@@ -459,7 +457,7 @@ function statusBadges(host) {
 /** 分級徽章（回饋十九輪批次G）：核心用醒目色引起注意，一般不特別強調，測試用中性色 */
 function tierCell(host) {
     const variant = host.tier === 'core' ? 'danger' : host.tier === 'test' ? 'secondary' : 'light border';
-    return badge(host.tierText ?? TIER_LABELS[host.tier] ?? '一般', variant);
+    return badge(host.tierText ?? '一般', variant);   // tierText 由後端 HostDtoMapper 供給，前端不維護第二份中文字典
 }
 
 function badge(text, variant) {
@@ -779,7 +777,7 @@ function openBatchTierModal() {
         const name = document.createElement('span');
         name.className = 'me-2';
         name.textContent = host.hostName;
-        row.append(name, badge(TIER_LABELS[host.tier] ?? '一般', 'light border'));
+        row.append(name, badge(host.tierText ?? '一般', 'light border'));
         list.appendChild(row);
     }
 

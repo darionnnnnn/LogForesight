@@ -327,11 +327,15 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .ToList();
 
         var result = rows
-            // host_id 先解析成存活主機再去重：合併前後兩個 id 同一天各自出現過要算一台，不是兩台
-            .GroupBy(x => (x.SourceName, x.EventId, x.RecordDate))
+            // host_id 先解析成存活主機再去重：合併前後兩個 id 同一天各自出現過要算一台，不是兩台。
+            // 分組鍵的 Source 同樣要正規化大小寫（回饋十九輪批次I 體檢修正，與本檔其餘方法的
+            // wanted-normalization 慣例一致）——大小寫變體會被拆成同日兩列，下游
+            // IssueBaselineCalculator 的「一筆＝一天」假設被破壞：出現日數虛胖、中位數偏低、
+            // 偏離倍數因此偏高，且污染 PriorityScore 的 spreadW
+            .GroupBy(x => (SourceKey: x.SourceName.ToUpperInvariant(), x.EventId, x.RecordDate))
             .Select(g => new IssueDailyHostCount
             {
-                Source = g.Key.SourceName,
+                Source = g.Key.SourceKey,
                 EventId = g.Key.EventId,
                 Date = g.Key.RecordDate,
                 HostCount = g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count()

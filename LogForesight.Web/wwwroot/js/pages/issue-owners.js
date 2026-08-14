@@ -84,6 +84,14 @@ function renderList() {
                     note.className = 'text-muted small';
                     note.textContent = r.conclusionNote || '';
                     wrap.append(status, note);
+                    // 代全體下結論的留痕（批次I 體檢補上，與「更新」欄同一慣例）：
+                    // 這個結論會自動套用到未來的主機日，之後有人問「這是誰決定的」要答得出來
+                    if (r.concludedAt) {
+                        const by = document.createElement('div');
+                        by.className = 'text-muted small';
+                        by.textContent = `由 ${formatUserName(r.concludedByDisplayName, r.concludedByAccount)} 於 ${formatDateTime(r.concludedAt)} 設定`;
+                        wrap.appendChild(by);
+                    }
                     return wrap;
                 }
             },

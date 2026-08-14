@@ -7,12 +7,13 @@
 
 ## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
 
-- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——類別中文名 C# 一份（批次
-  `RiskReportService.cs`，txt 報告用）、JS 一份（`format.js` 的 `CATEGORY_NAMES`）。
-  跨語言無法靠編譯器對齊，目前用人工保持一致。方案：先把 C# 版搬到 Core
-  （`IssueCategoryNames`，批次與 Web 共用一份，這步無爭議可直接做）；
-  再由 `_Layout.cshtml` server-render `window.LF_META = {...}`（類別名/嚴重度名/風險等級）
-  供 `format.js` 讀取、保留現值當 fallback。分歧風險目前低，晚做或不做皆可接受。
+- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——**C# 端已於回饋十九輪批次I 收斂**：
+  `LogForesight.Core/Analysis/IssueCategoryNames` 是 C# 唯一字典，`RiskReportService.CategoryZh`
+  （txt 報告）與 `MailIssueRow.FormatLine`（郵件，批次H 曾短暫長出第三份拷貝、體檢時收斂）
+  皆委派它。**剩餘的是 JS 端**：`format.js` 的 `CATEGORY_NAMES`＋`rules.js` 一份局部拷貝，
+  跨語言無法靠編譯器對齊，目前用人工保持一致。方案：由 `_Layout.cshtml` server-render
+  `window.LF_META = {...}`（類別名/嚴重度名/風險等級）供 `format.js` 讀取、保留現值當
+  fallback。分歧風險目前低，晚做或不做皆可接受。
 
 - **S14 剩餘部分：前端下鑽 URL 組裝共用**——`/records?riskLevels=…&from=…&to=…` 的組裝在
   `dashboard.js`／`reports.js`／`record-detail.js` 重複 10+ 處，尚未抽出共用的
@@ -144,7 +145,8 @@
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
 - **報表問題排行的「顯示範圍」選擇器**（原 D6 乙案，SCALE-FIX-PLAN-2026-08-06.md）：
-  §10.6 排除已有結論的問題（回饋十九輪批次A已完成，`IssueHandlingRollupQuery`＋
+  排除已有結論的問題（規劃出處 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6；
+  回饋十九輪批次A已完成，`IssueHandlingRollupQuery`＋
   `IssueRankingBuilder.ExcludeConcluded`，儀表板重點問題卡與報表問題排行皆已接上、
   兩頁「另有 N 個問題已有結論」數字一致）目前是**固定行為**，沒有讓使用者切換「全部／
   排除已有結論」的選擇器——多數情境固定排除即符合需求，真的需要看全部（例如稽核）時
@@ -197,6 +199,29 @@
   價值低於修正成本，記錄理由供之後若真的遇到相關 bug 時查閱。
 - **批次 4：專案外觀（README Quick Start／LICENSE 等）**：使用者定案本輪不做，留待後續有
   對外發布或新人上手需求明確時再排入。
+
+## 回饋十九輪體檢輪記錄的設計面債務（未排期）
+
+- **`visibleSeverities` 選填參數的隱性契約**（`IIssueAggregateQuery` 的
+  `Aggregate`/`LatestOccurrences`/`ActionableOccurrences`/`AggregateByDate`/`AggregateByHost`）：
+  介面文件寫「呼叫端必須自己把 SiteHidden 過濾傳進來」，但參數是 `= null` 選填——
+  `RecordListQueryService`（問題查詢四視角）有傳；`IssueRankingBuilder`（重點問題卡／報表
+  排行）、`IssueTodoQuery`（KPI 待辦）、`MailIssueDigest`（郵件）**皆未傳**。這不是本輪
+  回歸（排行卡改版前就沒套 SiteHidden），但選填形狀正是 `IssueRankingBuilder` 註解記錄過的
+  踩雷模式（rollup 參數選填→兩個呼叫端都忘了傳→死了一整輪）。待決兩件事：
+  ① 立場——KPI／排行／郵件在 SiteHidden 模式下**該不該**排除被隱藏的嚴重度
+  （「待辦不受顯示設定影響」也是合理立場，但要明文定案，不能維持「看起來套了其實沒套」）；
+  ② 形狀——定案後把參數改必填（要不套用就明寫 `null`），讓編譯器逼每個呼叫端表態。
+- **`SetConclusion` 的服務層能力檢查**（防禦縱深）：統一標記的 AutoApply 勾選路徑經
+  `IssueHandlingCommandService`（`Assign`＋`Handle`）呼叫 `IssueOwnerAdminService.SetConclusion`，
+  繞過了 `IssueOwnersController` 的 `[Permission(Maintain)]`。現行能力矩陣下 Assign 只有
+  admin、無實際越權；若日後能力可自訂（出現有 Assign+Handle 但無 Maintain 的角色）就會變成
+  真缺口。屆時在 `SetConclusion` 服務層內補能力檢查，把授權判定從 controller attribute
+  下沉到服務層。
+- **`UpsertFirstSeen` 的 SQLite 日期字串比較**：條件式 UPDATE（`first_seen > {date}`）在
+  SQLite 是字典序文字比較，同一天二次寫入時因小數位數格式差異會觸發一次無意義的 UPDATE 並讓
+  儲存格式在兩種寫法間漂移（**首見日的值不會錯**，跨日比較方向正確；SqlServer 不受影響）。
+  若未來對 `first_seen` 做 ORDER BY／範圍查詢，先改走 EF 型別化路徑消除格式漂移。
 
 ## 使用方式
 

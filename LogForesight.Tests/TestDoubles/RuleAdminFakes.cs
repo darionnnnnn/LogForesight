@@ -86,18 +86,12 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         return HostIdsForResult;
     }
 
-    public List<HostIssueOccurrence> LatestOccurrencesResult { get; set; } = new();
-
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
-        LatestOccurrencesResult;
-
-    public List<CategoryAggregate> AggregateByCategoryResult { get; set; } = new();
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities) =>
-        AggregateByCategoryResult;
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities) => new();
 
     public List<HostIssueOccurrence> ActionableOccurrencesResult { get; set; } = new();
 
@@ -106,43 +100,28 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
         ActionableOccurrencesResult;
 
-    public List<DateRiskAggregate> AggregateByDateResult { get; set; } = new();
-
     public List<DateRiskAggregate> AggregateByDate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
-        AggregateByDateResult;
-
-    public List<HostRiskAggregate> AggregateByHostResult { get; set; } = new();
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<HostRiskAggregate> AggregateByHost(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
         int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
-        AggregateByHostResult;
-
-    public List<IssueDailyHostCount> DailyHostCountsResult { get; set; } = new();
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<IssueDailyHostCount> DailyHostCounts(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds) =>
-        DailyHostCountsResult;
-
-    public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenForResult { get; set; } = new();
+        IReadOnlyCollection<long>? hostIds) => new();
 
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
-        IReadOnlyCollection<(string Source, int EventId)> issues) =>
-        FirstSeenForResult;
-
-    public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssueResult { get; set; } = new();
+        IReadOnlyCollection<(string Source, int EventId)> issues) => new();
 
     public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds) =>
-        HostIdsByIssueResult;
+        IReadOnlyCollection<long>? hostIds) => new();
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

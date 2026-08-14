@@ -92,7 +92,12 @@ public class DashboardService
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();
         BuildSilentHosts(dto, visibleHosts);
-        BuildGroupRisk(dto, records, visibleHosts, from, anchor);
+
+        // 可行動快照對全站可見範圍**只解析一次**（回饋十九輪批次I 體檢修正）：KPI 卡與逐群組的
+        // UnhandledCount 都從同一份解析結果各自彙總——原本逐群組各自呼叫 IssueTodoQuery.Build，
+        // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
+        var actionableResolved = _issueTodo.ResolveActionable(from, anchor, visibleHostIds);
+        BuildGroupRisk(dto, records, visibleHosts, actionableResolved);
 
         dto.HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High);
         dto.MediumRiskDays = records.Count(r => r.RiskLevel == RiskLevels.Medium);
@@ -101,7 +106,7 @@ public class DashboardService
         // 待辦母體（高＋中風險日）由 GetTodo 內部強制套用，呼叫端傳整批紀錄即可
         dto.Todo = _handling.GetTodo(records);
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
-        dto.IssueTodo = _issueTodo.Build(from, anchor, visibleHostIds);
+        dto.IssueTodo = IssueTodoQuery.Aggregate(actionableResolved);
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
 
         // 登入失敗卡只給看得到稽核的人（admin）——一般使用者看到這個數字沒有意義，
@@ -143,7 +148,8 @@ public class DashboardService
     /// 比一次攤開兩千台實際得多。只列出「至少有一台可見主機」的群組。
     /// </summary>
     private void BuildGroupRisk(
-        DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts, DateTime from, DateTime anchor)
+        DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts,
+        List<ResolvedOccurrence> actionableResolved)
     {
         var recordsByHost = records
             .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
@@ -159,8 +165,12 @@ public class DashboardService
                     .ToList();
 
                 // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理／處理中的問題數，
-                // 不再是風險日數——與儀表板 KPI 卡同一套定義，只是把可見範圍縮到這個群組
-                var groupIssueTodo = _issueTodo.Build(from, anchor, memberHosts.Select(h => h.HostId).ToList());
+                // 不再是風險日數——與儀表板 KPI 卡同一套定義，只是把母體縮到這個群組的主機。
+                // 從呼叫端已解析好的全站快照做記憶體子集彙總（回饋十九輪批次I 體檢修正），
+                // 不逐群組重新查詢——群組成員 ⊆ 可見範圍，子集過濾與逐群組查詢結果等價
+                var memberIds = memberHosts.Select(h => h.HostId).ToHashSet();
+                var groupIssueTodo = IssueTodoQuery.Aggregate(
+                    actionableResolved.Where(r => memberIds.Contains(r.Occurrence.HostId)));
 
                 return new DashboardGroupRiskDto
                 {

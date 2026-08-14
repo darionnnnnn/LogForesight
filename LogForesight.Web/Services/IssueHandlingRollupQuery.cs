@@ -30,34 +30,42 @@ public class IssueHandlingRollupQuery
 
     /// <summary>
     /// <paramref name="aggregates"/> 是呼叫端已經算好的問題排行（同一次查詢的結果，不重算）。
-    /// 回傳以完整簽章為鍵，供 <see cref="IssueRankingBuilder.Build"/> 的內部彙總用。
+    /// 回傳以完整簽章為鍵的**主機 id 集合**（不是計數）——一個 (Source,EventId) 底下常有多個
+    /// 完整簽章（同 Source/EventId 出現在不同 LogName/EntryType，`DistinctSignatures` 註解明講
+    /// 「通常 1~2 個」），同一台主機可能同時出現在多個簽章下；呼叫端（
+    /// <see cref="IssueRankingBuilder.LookupRollup"/>）合併簽章時必須做**集合聯集**再取 Count，
+    /// 整數計數相加會把同一台主機算成兩台（回饋十九輪批次I 體檢揪到：OpenHostCount 因此可能
+    /// 大於 HostCount，PriorityScore 的 openW 突破 [0.5,1.0] 值域扭曲排序，且
+    /// `ExcludeConcluded` 的「全部主機已有結論」判定永遠不成立）。
     /// </summary>
-    public IReadOnlyDictionary<string, IssueHandlingRollup> Build(
+    public IReadOnlyDictionary<string, IssueHostStatusSets> Build(
         IReadOnlyCollection<IssueAggregate> aggregates, DateTime from, DateTime to,
         IReadOnlyCollection<long>? visibleHostIds)
     {
-        if (aggregates.Count == 0) return new Dictionary<string, IssueHandlingRollup>();
+        if (aggregates.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
 
         var issues = aggregates.Select(a => (a.Source, a.EventId)).Distinct().ToList();
         var occurrences = _aggregates.LatestOccurrences(issues, from, to, visibleHostIds);
-        if (occurrences.Count == 0) return new Dictionary<string, IssueHandlingRollup>();
+        if (occurrences.Count == 0) return new Dictionary<string, IssueHostStatusSets>();
 
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
-        var openCount = new Dictionary<string, int>(StringComparer.Ordinal);
-        var resolvedCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        var byKey = new Dictionary<string, IssueHostStatusSets>(StringComparer.Ordinal);
         foreach (var r in resolved)
         {
-            if (r.Status == HostIssueStatus.Open) openCount[r.Occurrence.IssueKey] = openCount.GetValueOrDefault(r.Occurrence.IssueKey) + 1;
-            if (r.Status == HostIssueStatus.Resolved) resolvedCount[r.Occurrence.IssueKey] = resolvedCount.GetValueOrDefault(r.Occurrence.IssueKey) + 1;
+            if (!byKey.TryGetValue(r.Occurrence.IssueKey, out var sets))
+            {
+                sets = new IssueHostStatusSets(new HashSet<long>(), new HashSet<long>());
+                byKey[r.Occurrence.IssueKey] = sets;
+            }
+
+            if (r.Status == HostIssueStatus.Open) sets.OpenHosts.Add(r.Occurrence.HostId);
+            if (r.Status == HostIssueStatus.Resolved) sets.ResolvedHosts.Add(r.Occurrence.HostId);
         }
 
-        return occurrences
-            .Select(o => o.IssueKey)
-            .Distinct(StringComparer.Ordinal)
-            .ToDictionary(
-                key => key,
-                key => new IssueHandlingRollup(openCount.GetValueOrDefault(key), resolvedCount.GetValueOrDefault(key)),
-                StringComparer.Ordinal);
+        return byKey;
     }
 }
+
+/// <summary>單一完整簽章的未處理／已有結論主機 id 集合（供跨簽章聯集，見 <see cref="IssueHandlingRollupQuery.Build"/>）</summary>
+public sealed record IssueHostStatusSets(HashSet<long> OpenHosts, HashSet<long> ResolvedHosts);
