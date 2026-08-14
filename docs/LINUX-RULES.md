@@ -1,5 +1,7 @@
 # Linux 規則面（現況）
 
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+>
 > 本文件是 Linux syslog 規則面的現況參考：規則模型、比對語意、主機 OS 標記與目前的種子
 > 規則清單。規則外部化的共用機制（儲存、驗證、seed／匯入政策、抑制）見
 > [docs/RULES-SPEC.md](RULES-SPEC.md)，本文件只談 Linux 專屬的部分。緣起與各輪決策過程見
@@ -133,7 +135,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
   空間）。
 - 每條種子附完整知識庫四欄位（白話說明/影響/常見原因/處置步驟，繁中）。
 
-## 簽章鍵與聚合（實作現況，2026-08-07，批 4A，docs/FEEDBACK-12-PLAN.md §4.2）
+## 簽章鍵與聚合（實作現況，2026-08-07，批 4A，docs/archive/FEEDBACK-12-PLAN.md §4.2）
 
 `LogIssueSignature.EventKey`（`string`，預設空字串，非 nullable）——比實作前的設計草案簡化：
 命中規則時 `EventKey = 規則 Id`（`KnownIssueCatalog.FindLinuxRule` 在 `LogAggregator.Aggregate`
@@ -201,4 +203,4 @@ Windows 的 `CorrelationAnalyzer`——兩者機制完全不同，不是同一�
 `UncoveredChecks` 會明講「關聯層（攻擊鏈/故障鏈比對）僅涵蓋 SSH 破解得手一項」——與
 「沒告警 ≠ 沒問題，是沒看」同一原則，不適用的部分要說出來，不能讓人以為有看。批次執行
 輸出、風險報告、Web 詳情頁同步顯示。詳見
-[docs/FEEDBACK-12-PLAN.md](FEEDBACK-12-PLAN.md) §4.5。
+[docs/archive/FEEDBACK-12-PLAN.md](FEEDBACK-12-PLAN.md) §4.5。

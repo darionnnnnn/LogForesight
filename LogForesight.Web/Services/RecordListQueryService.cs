@@ -260,7 +260,7 @@ public class RecordListQueryService
         var lookup = new HostLookup(_hosts.GetAll());
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
-        // 處理狀態與案件**整批載入一次**（docs/SCALE-ISSUE-FIRST-PLAN.md N3）。
+        // 處理狀態與案件**整批載入一次**（docs/archive/SCALE-ISSUE-FIRST-PLAN.md N3）。
         //
         // 改版前 BuildIssueGroup 是逐群組呼叫的，而它內部各有一次 GetMany——
         // 1000 種問題就是 2000 次查詢（blob 時代更是 2000 次整份反序列化，

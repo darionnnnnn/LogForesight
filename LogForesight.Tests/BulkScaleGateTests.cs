@@ -7,7 +7,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 批次操作的規模閘門（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 D／體檢 M10、S7、X3）。
+/// 批次操作的規模閘門（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 D／體檢 M10、S7、X3）。
 ///
 /// 這些上限存在的理由不是「怕慢」，而是**畫面誠實**與**請求可完成**：
 ///   - 預覽逐台清單無上限時，6000 台環境按一次統一標記就把 6000 列塞進 modal；

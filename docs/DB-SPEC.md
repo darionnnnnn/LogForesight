@@ -1,5 +1,7 @@
 # 資料庫欄位級規格（DB-SPEC）
 
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+>
 > 本文件是資料庫 schema 的現況欄位級定案：資料表設計、索引、保留策略、Web 查詢情境對應、
 > Schema 升級機制。**全部資料走 SQL**（`Storage.Type` 為 `Sqlite`／`SqlServer` 二選一，
 > 無檔案後端）；實際落地的 provider 架構（EF Core、`lf_blobs`/`lf_log_lines` 抽象）見
@@ -112,7 +114,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
 ```
 
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（2026-08-07，
-docs/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
+docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
 JSON 裡多出的欄位，不是新增資料表欄位）**：
 - `AiPending`（bool）：NetIQ 搜尋與 AI 判讀脫鉤後的第三態——統計已寫入、AI 段還在排隊或
   執行中。與既有的 `ai_analyzed=false`（AI 判定不需要或已失敗）是不同語意，見
@@ -132,7 +134,7 @@ bug 家族的同一種模式，寫入路徑因此固定放在同一處做兩件�
 ```
 lf_top_issues                                        -- ↔ LogIssueSignature（欄位一比一，趨勢數字全保留）
                                                      -- 2026-08-06 起同時是**問題聚合的事實表**
-                                                     -- （docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
+                                                     -- （docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
                                                      -- 「這個問題影響幾台、跨哪段期間、出現幾天」
                                                      -- 由本表 GROUP BY 直接回答，不再把整段期間的
                                                      -- 紀錄撈回記憶體聚合。
@@ -318,7 +320,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
 
-**處理歷程跟稽核而不是跟執行歷程**（docs/SCALE-FIX-PLAN-2026-08-06.md G4）：
+**處理歷程跟稽核而不是跟執行歷程**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md G4）：
 它記的是「誰在什麼時候把這個問題標成什麼、為什麼」——那是**追責用的證據**，
 不是「這次跑了什麼」的執行紀錄。用 90 天的話，證據會比被追究的事件更早消失。
 

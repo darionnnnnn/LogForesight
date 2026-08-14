@@ -702,7 +702,7 @@ function applyScheduleStatus(status) {
     wasScheduleRunning = status.isRunning;
 }
 
-// netiq-ai（docs/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
+// netiq-ai（docs/archive/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
 // 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
 // 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
 // netiq-backpressure（回饋十三輪 A7）：AI 待處理佇列滿載（AiFollowupQueue.Capacity=200）時，

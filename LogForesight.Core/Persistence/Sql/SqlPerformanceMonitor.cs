@@ -3,7 +3,7 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 資料層的慢操作計數與門檻告警（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
+/// 資料層的慢操作計數與門檻告警（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
 ///
 /// **為什麼需要它**：改版前每個 SQL 操作都有 `[SQL]` 的 Debug/Info log（含耗時），
 /// 但那是「事後翻 log」的資料——要回答「現在站台是不是變慢了」得有人去撈、去比對。

@@ -262,7 +262,7 @@ public class UpdateNetiqOptionsRequest
     public int BackfillDays { get; set; }
 
     /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理。
-    /// 上限見 <see cref="NetiqOptions.MaxParallelServersLimit"/>（docs/FEEDBACK-12-PLAN.md §二：
+    /// 上限見 <see cref="NetiqOptions.MaxParallelServersLimit"/>（docs/archive/FEEDBACK-12-PLAN.md §二：
     /// 分析與站台同行程，這是行程架構上限，不是效能旋鈕）</summary>
     [Range(1, NetiqOptions.MaxParallelServersLimit)]
     public int MaxParallelServers { get; set; }

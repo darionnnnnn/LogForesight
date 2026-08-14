@@ -137,7 +137,7 @@ public class SentinelAdminServiceTests
         Assert.NotNull(_sentinels.Get(sentinel.SentinelId));   // Sentinel 列本身還在，只是 Active=false
     }
 
-    // ── UseEsmDirectory（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）────────────
+    // ── UseEsmDirectory（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）────────────
 
     [Fact]
     public void ESM開關_預設關閉_儲存後可開啟並持久化()

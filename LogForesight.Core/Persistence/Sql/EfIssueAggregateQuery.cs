@@ -5,7 +5,7 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// <see cref="IIssueAggregateQuery"/> 的 SQL 實作（docs/SCALE-ISSUE-FIRST-PLAN.md §4.2）。
+/// <see cref="IIssueAggregateQuery"/> 的 SQL 實作（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §4.2）。
 ///
 /// 整個聚合是**一句 GROUP BY**，取代改版前「撈回 18 萬筆紀錄的完整 JSON 再於記憶體 GroupBy」。
 /// 唯一在應用層做的是相異完整簽章的收集——一個 (Source, EventId) 底下可能有多個

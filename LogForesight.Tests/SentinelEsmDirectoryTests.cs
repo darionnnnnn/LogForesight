@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// ESM 事件來源目錄的回應解析（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §5.2）。
+/// ESM 事件來源目錄的回應解析（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §5.2）。
 ///
 /// <para><b>這些樣本是合成的，不是實測</b>：本環境的探索帳號對 ESM 端點被 401/403 拒絕，
 /// 拿不到任何真實回應（見 docs/archive/HISTORY.md 2026-07-29 第二輪 probe）。

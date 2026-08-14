@@ -75,7 +75,7 @@ public static class SentinelFieldMap
         InitiatorAccount, XdasOutcome
     };
 
-    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.0/§4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
+    // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.0/§4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
 
     /// <summary>syslog program／process 名稱（如 <c>sshd</c>、<c>kernel</c>）。**term 欄位、
     /// 大小寫不敏感、支援前綴萬用字元**（輪 B 第 1 項：<c>sp:networkmanager</c> 與

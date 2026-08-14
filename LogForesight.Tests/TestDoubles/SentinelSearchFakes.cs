@@ -1,6 +1,6 @@
 namespace LogForesight.Tests;
 
-// ── 測試替身：ISentinelSearchClient（docs/FEEDBACK-12-PLAN.md §3.8-2/§3.8-3）──────────
+// ── 測試替身：ISentinelSearchClient（docs/archive/FEEDBACK-12-PLAN.md §3.8-2/§3.8-3）──────────
 // 讓 NetiqPipelineService 的整合測試不必真的連 Sentinel。
 
 /// <summary>

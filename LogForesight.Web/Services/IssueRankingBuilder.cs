@@ -3,7 +3,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 問題排行的組裝（docs/SCALE-ISSUE-FIRST-PLAN.md P4／§10）：儀表板「重點問題」卡與
+/// 問題排行的組裝（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／§10）：儀表板「重點問題」卡與
 /// 報表「問題排行」共用同一份投影，兩頁的數字因此必然一致。
 ///
 /// **取代的是什麼**：<c>RecordStatsBuilder.BuildIssueRanking</c> 過去在**記憶體**對
@@ -34,7 +34,7 @@ public class IssueRankingBuilder
     }
 
     /// <summary>
-    /// 問題統計目前準不準（docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+    /// 問題統計目前準不準（docs/archive/SCALE-FIX-PLAN-2026-08-06.md G2）。
     ///
     /// 兩種背景工作都會讓聚合數字**偏低但看起來完全正常**：
     ///   - 遷移未完成：處理狀態還沒搬完（連帶影響處理概況）；

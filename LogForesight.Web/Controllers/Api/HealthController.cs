@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace LogForesight.Web.Controllers.Api;
 
 /// <summary>
-/// 健康檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
+/// 健康檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
 ///
 /// <c>GET api/health</c> **匿名可讀**——這是刻意的：資料庫掛掉時最需要這支端點，
 /// 而那時多半也登不進去。回傳內容因此收斂到「活著沒有＋版本」，不含任何可用來

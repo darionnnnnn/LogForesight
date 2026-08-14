@@ -1,9 +1,9 @@
 # 待辦事項（BACKLOG）
 
-> 本文件彙整目前**已知但刻意未做**的項目，收斂自 2026-07-28 的文件整併（原散落在
-> SHARED-STANDARDS-PLAN、OPS-HARDENING-PLAN 與 refactor/simplify-2026-07 簡化重構分支的
-> 體檢紀錄，這些來源文件已歸檔至 [docs/archive/HISTORY.md](archive/HISTORY.md)）。
-> 每項附觸發條件或建議時機；沒有時程表——遇到相關需求或有餘裕時再排入。
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+>
+> 本文件彙整目前**已知但刻意未做**的項目。每項附觸發條件或建議時機；
+> 沒有時程表——遇到相關需求或有餘裕時再排入。
 
 ## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
 
@@ -27,7 +27,7 @@
 - **NetIQ 接線（試點驗證）**：取數邏輯（`SentinelFieldMap`／`SentinelEventMapper`／
   `SentinelQueryBuilder`，watchlist→Lucene 產生器）與機房 pipeline 本體
   （`NetiqPipelineService`，`LogForesight.Core/Service/`，Windows／Linux 主機皆支援，
-  依 `Os` 分流查詢與映射，見 docs/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
+  依 `Os` 分流查詢與映射，見 docs/archive/FEEDBACK-12-PLAN.md §4B）皆已實作完成，
   欄位對應見 [docs/NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md)。Web 排程／立即執行本機
   分析後接機房迴圈，逐日/批次取數（多台 Sentinel 平行處理＋回補窗口可設定，
   `NetiqOptions.MaxParallelServers`／`BackfillDays`），當日續跑靠既有 `HasRecord` 機制。

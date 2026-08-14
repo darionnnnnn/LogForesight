@@ -6,7 +6,7 @@ using Xunit.Abstractions;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 規模基準量測（docs/SCALE-ISSUE-FIRST-PLAN.md P0）——**預設不執行**，
+/// 規模基準量測（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P0）——**預設不執行**，
 /// 設 <c>LF_SCALE_BENCH=1</c> 才跑（見 <see cref="ScaleFactAttribute"/>）。
 ///
 /// 這組數字是後續每一個階段的對照組：沒有它，「改好了」只是感覺。
@@ -35,7 +35,7 @@ public class ScaleBenchmarks
     /// 「標記一個問題」的成長曲線（規劃 §8.5.1 的**改版後**對照）。
     ///
     /// 改版前這份資料是整份 JSON blob，每標記一次就要讀出整份、反序列化、改一筆、
-    /// 再整份序列化寫回。實測（記錄於 docs/SCALE-ISSUE-FIRST-PLAN.md §8.5.1）：
+    /// 再整份序列化寫回。實測（記錄於 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.5.1）：
     ///   1 萬列 113ms／10 萬列 987ms／50 萬列 3,320ms／100 萬列 6,841ms（配置 2.4 GB），
     /// 完全線性，外推 6000 台 × 90 天的 324 萬列會撞上 .NET 的 2 GB 單一物件上限。
     ///
@@ -156,7 +156,7 @@ public class ScaleBenchmarks
     }
 
     /// <summary>
-    /// **升級路徑的實測**（docs/SCALE-FIX-PLAN-2026-08-06.md §三、體檢 S-1／G1）。
+    /// **升級路徑的實測**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三、體檢 S-1／G1）。
     ///
     /// 造一份 100 萬列的**舊格式** issue_handling blob，走完整的升級流程：
     ///   1. 建立後端（＝服務啟動）必須在**秒級**完成，不能被搬移拖住（G1）；

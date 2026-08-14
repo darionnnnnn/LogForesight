@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// NetIQ pipeline 兩階段拆分後的新行為（docs/FEEDBACK-12-PLAN.md §3.4/§3.6/§3.8-4）：
+/// NetIQ pipeline 兩階段拆分後的新行為（docs/archive/FEEDBACK-12-PLAN.md §3.4/§3.6/§3.8-4）：
 /// 這批測試存在的唯一理由就是驗證這次改動真正解決的問題——AI 拖住搜尋、取消要能立即生效、
 /// FIFO 消費序讓隔日 prompt 仍看得到前一天的 AI 摘要。共用 <see cref="NetiqPipelineBaselineTests"/>
 /// 同一套固定裝置慣例（真實 StorageBackend + 假搜尋用戶端 + 假 AI），但每個測試都刻意讓 AI
@@ -188,7 +188,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
     }
 
     /// <summary>
-    /// AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：取消留下的 AiPending 紀錄不會
+    /// AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：取消留下的 AiPending 紀錄不會
     /// 永遠卡住——下一次執行時，即使該主機當天已經有紀錄（不算缺漏日、不會被搜尋撿到），
     /// 孤兒補跑機制仍要獨立掃到它並把 AI 分析補上。這是兩階段化本身引入的新風險
     /// （寫入時間點提前、AI 可能永遠追不上）的自癒機制，沒有這個測試就等於沒驗證過
@@ -293,7 +293,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
 
 
     /// <summary>
-    /// 體檢輪抓到的 bug（docs/FEEDBACK-12-PLAN.md §4，全案體檢）：<c>AiFollowupQueue.EnqueueAsync</c>
+    /// 體檢輪抓到的 bug（docs/archive/FEEDBACK-12-PLAN.md §4，全案體檢）：<c>AiFollowupQueue.EnqueueAsync</c>
     /// 若在呼叫當下 token 已被取消會立即拋出 <see cref="OperationCanceledException"/>（見
     /// <c>AiFollowupQueueTests.取消token觸發時EnqueueAsync拋出取消例外</c>）。這個例外原本會被
     /// <c>AnalyzeHostDayAsync</c> 最外層的 <c>catch (Exception ex)</c> 接住，誤判成「分析失敗、

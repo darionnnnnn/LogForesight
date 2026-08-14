@@ -88,7 +88,7 @@ public class LogAnalysisService
     /// 組合呼叫：<see cref="BuildStatisticalRecordAsync"/> 算統計段，需要 AI 時立刻接著跑
     /// <see cref="CompleteAiAsync"/>，行為與拆分前完全相同——本機分析路徑目前仍走這個組合呼叫，
     /// 兩階段真正脫鉤（統計先寫入、AI 由背景消費者延後補上）只在 NetIQ pipeline 生效
-    /// （docs/FEEDBACK-12-PLAN.md §3.3/§3.4）。
+    /// （docs/archive/FEEDBACK-12-PLAN.md §3.3/§3.4）。
     /// </summary>
     /// <param name="useAi">false = 統計模式：聚合、規則分類、趨勢比對照常執行，但不呼叫 AI</param>
     /// <param name="dataIncomplete">true = 本日事件來源不完整（如 Event Log 回補時已被覆蓋），寫入紀錄供趨勢基準排除</param>
@@ -123,7 +123,7 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// 統計段（docs/FEEDBACK-12-PLAN.md §3.3）：聚合、規則分類、趨勢／慢速趨勢／關聯比對——
+    /// 統計段（docs/archive/FEEDBACK-12-PLAN.md §3.3）：聚合、規則分類、趨勢／慢速趨勢／關聯比對——
     /// 全部確定性計算，不呼叫 AI。回傳的 <see cref="DailyAnalysisRecord"/> 在「不需要 AI」時
     /// 已經是定案內容（含報告檔，若風險可行動）；「需要 AI」時則是暫代內容（Headline/Summary
     /// 顯示排隊中字樣），同時回傳非 null 的 <see cref="AiWorkItem"/> 供 <see cref="CompleteAiAsync"/>
@@ -136,7 +136,7 @@ public class LogAnalysisService
     /// 內容」，這個問題留給 AI 段自己跑完前置掃描後決定（見 <see cref="CompleteAiAsync"/> 內的
     /// <c>skipForLowRisk</c>）。
     /// </summary>
-    /// <param name="hostOs">'windows'（預設）｜'linux'（docs/FEEDBACK-12-PLAN.md §4.3）：Linux 主機
+    /// <param name="hostOs">'windows'（預設）｜'linux'（docs/archive/FEEDBACK-12-PLAN.md §4.3）：Linux 主機
     /// 跳過跨 log 關聯比對（<see cref="CorrelationAnalyzer"/> 目前無 Platform 概念，Linux 事件
     /// 餵進去會被 Windows 事件 ID 群組靜默誤讀）並在 UncoveredChecks 誠實申報「不適用」，
     /// 不是還沒做完；本機路徑固定 Windows，不傳這個參數。</param>
@@ -226,7 +226,7 @@ public class LogAnalysisService
 
         // 跨 log 關聯比對：多個獨立訊號的已知攻擊鏈/故障鏈組合（含跨日比對）。
         // 單一事件各自不嚴重、組合起來卻是明確故事——小模型最容易漏掉的判讀，由程式確定性比對。
-        // Linux 主機改走獨立的 LinuxCorrelationAnalyzer（docs/FEEDBACK-12-PLAN.md §4.5，批 4C）：
+        // Linux 主機改走獨立的 LinuxCorrelationAnalyzer（docs/archive/FEEDBACK-12-PLAN.md §4.5，批 4C）：
         // CorrelationAnalyzer 是以 Windows Event ID 群組比對的，Linux 事件（EventId 恆 0）餵進去
         // 會被錯誤群組、靜默誤判，兩套比對機制完全不同，不能共用同一支。
         var isLinuxHost = hostOs.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase);
@@ -291,7 +291,7 @@ public class LogAnalysisService
 
         if (isLinuxHost)
         {
-            // 「涵蓋範圍」而非「完全不適用」（docs/FEEDBACK-12-PLAN.md §4.5，批 4C 落地後更新）：
+            // 「涵蓋範圍」而非「完全不適用」（docs/archive/FEEDBACK-12-PLAN.md §4.5，批 4C 落地後更新）：
             // 關聯層現在涵蓋【SSH 破解得手】一項，但 Windows 面其餘的組合模式（帳號異動/新服務/
             // 儲存連鎖/Defender 組合等）在 Linux 上仍未涵蓋——與「沒告警 ≠ 沒問題」同一個誠實
             // 申報原則，不能讓人以為關聯層對 Linux 主機做了跟 Windows 對等的完整檢查。
@@ -385,7 +385,7 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// AI 段（docs/FEEDBACK-12-PLAN.md §3.3）：對 <see cref="BuildStatisticalRecordAsync"/>
+    /// AI 段（docs/archive/FEEDBACK-12-PLAN.md §3.3）：對 <see cref="BuildStatisticalRecordAsync"/>
     /// 判定需要 AI 的主機日執行前置掃描＋主分析＋深析報告，回傳定案結果供呼叫端合併進已寫入的
     /// 統計紀錄——<see cref="AnalyzeDayAsync"/> 的組合呼叫直接套用；NetIQ pipeline 的兩階段
     /// 消費者則透過類似 <c>AttachWeeklyCheckup</c> 的讀-改-寫回樣板套用（見 <c>AttachAiResult</c>）。
@@ -485,7 +485,7 @@ public class LogAnalysisService
     }
 
     /// <summary>
-    /// AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：執行被取消時留下「統計已完成、
+    /// AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：執行被取消時留下「統計已完成、
     /// AI 沒跑完」的紀錄，下次執行改由 <paramref name="pendingRecord"/> 本身重建主分析所需輸入——
     /// TopIssues／TrendAlerts／CorrelationAlerts／各項計數全部持久化在 ContentJson，足以重建
     /// prompt；歷史一樣在這裡才重讀。

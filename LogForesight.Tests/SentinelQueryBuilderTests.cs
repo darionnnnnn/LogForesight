@@ -138,7 +138,7 @@ public class SentinelQueryBuilderTests
         Assert.Equal("(repip:10.1.2.11)", clause);
     }
 
-    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）───────────────
+    // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）───────────────
 
     [Fact]
     public void BuildLinuxFilter_含IP批次子句與AND連接內容子句()
@@ -259,7 +259,7 @@ public class SentinelQueryBuilderTests
     }
 
     /// <summary>真實種子規則表建出的 Linux filter：吵/靜 program 分組符合輪 B 第 5 項的環境實測
-    /// （docs/FEEDBACK-12-PLAN.md §4.4）——這組是規則表演進時的護欄，不是重新驗證分組邏輯本身
+    /// （docs/archive/FEEDBACK-12-PLAN.md §4.4）——這組是規則表演進時的護欄，不是重新驗證分組邏輯本身
     /// （那些在上面用合成規則測過了）。</summary>
     [Fact]
     public void 種子規則表建出的LinuxFilter吵program帶msg下推靜program整拉()
@@ -300,7 +300,7 @@ public class SentinelQueryBuilderTests
         Assert.Equal("repip:10.1.2.*", filter);
     }
 
-    // ── 探索窄化與排除（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）──────────
+    // ── 探索窄化與排除（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）──────────
 
     /// <summary>
     /// 主掃描窄化到低量頻道：探索要的是「每台主機至少一筆事件」，不是「所有事件」。

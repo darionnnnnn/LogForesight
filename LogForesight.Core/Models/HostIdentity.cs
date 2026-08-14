@@ -96,7 +96,7 @@ public static class HostIdentityResolver
 }
 
 /// <summary>
-/// 主機別名的一次性索引（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 A／N1）。
+/// 主機別名的一次性索引（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 A／N1）。
 ///
 /// **這個類別存在的理由是效能，語意與 <see cref="HostIdentityResolver.Expand"/> 完全相同。**
 /// 舊寫法每展開一台主機就要掃過整份主機清單一次，而可見範圍解析

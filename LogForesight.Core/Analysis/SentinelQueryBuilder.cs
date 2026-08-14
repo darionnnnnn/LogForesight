@@ -3,7 +3,7 @@ namespace LogForesight.Core.Analysis;
 /// <summary>
 /// 規則表→Lucene filter 的純函數產生器（docs/NETIQ-API-REFERENCE.md §4「watchlist→Lucene 產生器」）。
 /// Windows／Linux 各自的 <c>Build{Os}Filter</c> 分支，皆依真實 probe 樣本定案
-/// （docs/FEEDBACK-12-PLAN.md §4.0，四輪 probe，Sentinel「118_linux」）。
+/// （docs/archive/FEEDBACK-12-PLAN.md §4.0，四輪 probe，Sentinel「118_linux」）。
 /// </summary>
 public static class SentinelQueryBuilder
 {
@@ -79,7 +79,7 @@ public static class SentinelQueryBuilder
             .OrderBy(id => id)
             .ToList();
 
-    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）──────────────────
+    // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案）──────────────────
 
     /// <summary>generic 高嚴重度收集的 sev 下限（輪 B 第 3/4 項定案，全站 2,403 筆/日，極便宜）。
     /// 與 <see cref="GenericErrorSeverityMin"/> 數值相同、各自獨立宣告：Windows 版仍是未實證的
@@ -209,7 +209,7 @@ public static class SentinelQueryBuilder
 
     /// <summary>
     /// 探索主掃描的 filter：網段前綴**再限定低量頻道**
-    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）。
+    /// （docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1）。
     ///
     /// **為什麼要窄化**：探索要的是「每台主機至少一筆事件」，不是「所有事件」。
     /// 第三輪 probe 實測單台主機日量約 31 萬筆，其中 Security 佔 99.95%
@@ -221,7 +221,7 @@ public static class SentinelQueryBuilder
     /// 會把安靜主機連同時間一起裁掉，而那正是最需要被發現的那種主機。
     /// </summary>
     /// <param name="excludeIps">要排除的 IP（殘差輪掃的已見主機、重掃的已登錄主機）。</param>
-    /// <param name="os">依 <see cref="Sentinel.Os"/> 決定內容子句（docs/FEEDBACK-12-PLAN.md §4.4）：
+    /// <param name="os">依 <see cref="Sentinel.Os"/> 決定內容子句（docs/archive/FEEDBACK-12-PLAN.md §4.4）：
     /// windows（預設，既有行為不變）用頻道子句；linux 退回 <c>sev:[0 TO 5]</c>——輪 A 實證
     /// <see cref="SentinelFieldMap.LogName"/>（`rv150`）在 Linux 事件上承載 facility
     /// （`DAEMON`／`KERNEL`）而不是頻道名，頻道子句在 Linux Sentinel 上會恆為 0 台。</param>
@@ -238,7 +238,7 @@ public static class SentinelQueryBuilder
     /// <summary>
     /// 排除子句 <c> AND NOT (repip:a OR repip:b …)</c>——空清單回空字串。
     ///
-    /// **兩個用途，同一個機制**（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1／§3.3）：
+    /// **兩個用途，同一個機制**（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.1／§3.3）：
     ///   1. **殘差輪掃**：單輪取回筆數觸頂時，把已發現的主機排除後重查，
     ///      下一輪取回的就只有還沒見過的主機——這是「上限觸頂不會靜默漏機」的關鍵，
     ///      取代原設計「超量就縮短窗口」（縮掉的時間裡安靜主機的事件一併消失，且無警告）。

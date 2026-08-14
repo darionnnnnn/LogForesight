@@ -166,7 +166,7 @@ public class ScheduleController : ControllerBase
     /// 網段解析與比對複用 <see cref="CidrMatcher"/>（與 NetIQ 匯入精靈同一套，不寫第二份）；
     /// 主機清單複用 <see cref="HostListSelection"/>（與 NetIQ 機房分析同一份
     /// 「實際會被查詢」語意，網段找不到符合的主機不會被靜默吞掉；Windows／Linux 主機皆涵蓋在內，
-    /// docs/FEEDBACK-12-PLAN.md §4B——Linux 取數上線後這裡不再需要另外分開處理）。
+    /// docs/archive/FEEDBACK-12-PLAN.md §4B——Linux 取數上線後這裡不再需要另外分開處理）。
     /// </summary>
     private (RunScope Scope, List<long>? HostIds, bool IncludesLocal) ResolveScope(string scope, string? segment, long? hostId)
     {

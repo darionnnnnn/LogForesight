@@ -4,7 +4,7 @@ namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// <see cref="IIssueHandlingStore"/> 的真表實作（↔ lf_issue_handling，
-/// docs/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）。
+/// docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）。
 ///
 /// **取代的是什麼**：原本整份存在 lf_blobs 的一列。實測（規劃 §8.5.1）在 100 萬列時，
 /// 「標記一個問題」這個動作要 6.8 秒、配置 2.4 GB；6000 台 × 90 天推得的 324 萬列，
@@ -174,7 +174,7 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
     }
 
     /// <summary>
-    /// 清除超過保留天數的問題處理狀態（docs/SCALE-FIX-PLAN-2026-08-06.md S-4）。
+    /// 清除超過保留天數的問題處理狀態（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4）。
     ///
     /// **與分析紀錄同一個 <c>RetentionDays</c>**：這些列的意義是「這台主機那一天的那個問題
     /// 被標成什麼」，對應的 <c>lf_daily_records</c> 一被清掉，它們就再也沒有任何畫面讀得到——

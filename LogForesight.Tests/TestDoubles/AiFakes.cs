@@ -30,7 +30,7 @@ internal sealed class FakeWebAi : IWebAiService
     }
 }
 
-// ── 測試替身：IAiService（docs/FEEDBACK-12-PLAN.md §3.8-1/§3.8-3）────────────────
+// ── 測試替身：IAiService（docs/archive/FEEDBACK-12-PLAN.md §3.8-1/§3.8-3）────────────────
 // 讓 LogAnalysisService／NetiqPipelineService 的測試不必真的打 AI API。
 
 /// <summary>

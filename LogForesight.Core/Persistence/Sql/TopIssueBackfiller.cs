@@ -5,7 +5,7 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 把 <c>lf_top_issues</c> 的聚合維度回填到既有列（docs/SCALE-ISSUE-FIRST-PLAN.md P4）。
+/// 把 <c>lf_top_issues</c> 的聚合維度回填到既有列（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）。
 ///
 /// **為什麼一定要回填而不是「舊資料就算了」**：問題聚合（主機數／期間跨度／出現密度／
 /// 總次數）改由這張表 GROUP BY 直接回答之後，沒回填的舊列會讓數字**偏低但看起來正常**——

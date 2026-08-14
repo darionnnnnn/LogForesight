@@ -6,7 +6,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 慢操作統計與健康檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
+/// 慢操作統計與健康檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
 ///
 /// 這兩者是「企業級可運維」的最低門檻：沒有它們，「站台現在是不是變慢了」
 /// 只能靠人上伺服器翻 log。測試釘住的是**門檻語意**與**不洩漏內部細節**兩件事。

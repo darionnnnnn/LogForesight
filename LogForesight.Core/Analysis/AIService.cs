@@ -29,7 +29,7 @@ public class AiJsonResult<T> where T : class
 }
 
 /// <summary>
-/// AI 呼叫的抽象介面（docs/FEEDBACK-12-PLAN.md §3.8-1）：抽出來是為了讓 NetIQ pipeline 的
+/// AI 呼叫的抽象介面（docs/archive/FEEDBACK-12-PLAN.md §3.8-1）：抽出來是為了讓 NetIQ pipeline 的
 /// producer/consumer 拆分（§3）能在測試裡注入假 AI（可控延遲/失敗），不必真的打網路。
 /// <see cref="AIService"/> 是唯一實作；簽章原封不動照搬既有 <c>ChatAsync</c>／<c>ChatJsonAsync</c>，
 /// 只新增 <c>ct</c>——執行取消（§3.6）需要能中斷排隊中／進行中的 AI 呼叫，過去完全沒有取消路徑，
@@ -263,7 +263,7 @@ public class AIService : IAiService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // 執行取消（docs/FEEDBACK-12-PLAN.md §3.6）：不能被吞成「AI 呼叫失敗」的降級結果——
+            // 執行取消（docs/archive/FEEDBACK-12-PLAN.md §3.6）：不能被吞成「AI 呼叫失敗」的降級結果——
             // 呼叫端（NetIQ pipeline 的 AI 消費者）要能分辨「AI 真的失敗」與「run 被取消」，
             // 後者不寫入失敗結果，讓該筆工作項維持 AiPending 由下次執行補跑。
             // Polly v8 對 ExecuteAsync 傳入的 ct 本身觸發的取消一律不重試、直接往外拋，

@@ -41,7 +41,7 @@ public interface INetiqDirectoryClient
     /// 全站事件量（實測單台 Sentinel 近 24h 達 2400 萬筆）下任何固定窗口設計涵蓋率都很差，
     /// 不如強制要求網段換來明確的涵蓋語意。</param>
     /// <param name="knownIps">已登錄、**不需要重新發現**的主機 IP
-    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）。在 server 端就被排除，
+    /// （docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）。在 server 端就被排除，
     /// 沒有新主機時 found=0、一次查詢即結束——重掃因此從「又拉數萬筆」變成趨近免費。
     /// null／空＝首掃行為（不排除）。**回傳結果不含這些主機**，呼叫端自行合成
     /// （它們的名稱以主機清單為準，比事件裡的 sn 更可靠）。</param>
@@ -118,7 +118,7 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 
 /// <summary>
 /// Sentinel REST API 真連線：網段範圍掃描（docs/NETIQ-API-REFERENCE.md §3.4；
-/// **2026-08-06 涵蓋保證改版** docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
+/// **2026-08-06 涵蓋保證改版** docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
 ///
 /// <para><b>涵蓋保證（本類別存在的意義，改版的核心）</b>：掃描結束時，
 /// (a) 近 24 小時內有 ≥1 筆 System/Application 事件的主機、

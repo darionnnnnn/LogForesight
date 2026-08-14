@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 處理狀態三表與處理歷程的保留天數（docs/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
+/// 處理狀態三表與處理歷程的保留天數（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
 ///
 /// 改動前這四個對象**從來不會被清理**：`lf_daily_records` 有 RetentionDays（預設 120），
 /// 但它的附屬處理狀態沒有——分析紀錄被清掉之後，處理狀態變成永遠讀不到的孤兒，

@@ -27,7 +27,7 @@ public class StorageBackend
 
     /// <param name="settings">儲存後端設定（Type／ConnectionString）</param>
     /// <param name="fallbackDir">Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）</param>
-    /// <param name="maxPoolSize">連線池上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    /// <param name="maxPoolSize">連線池上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
     /// null＝不干預（前景站台用）。夜間分析與站台跑在**同一個行程**（本輪已定案不拆 worker），
     /// 兩者共用同一個連線池；分析在 6000 台環境下會連續數小時持續佔用連線，
     /// 前景請求就得排隊等連線——症狀是「整站變慢」而不是「分析變慢」，
@@ -63,7 +63,7 @@ public class StorageBackend
         Log.Info("[SQL] 啟用 {Desc} 後端（全資料走 SQL，無檔案）。正在確保 schema…", _dbDesc);
         try
         {
-            // 跨行程互斥（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：EnsureCreated 與 SchemaUpgrader
+            // 跨行程互斥（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：EnsureCreated 與 SchemaUpgrader
             // 都是「檢查缺什麼→缺才補」，這個序列**不是原子的**——Web 與批次（或多個 Web 實例）
             // 同時啟動時可能同時判定「缺」而重複執行 DDL，後者會撞「已存在」錯誤。
             //
@@ -79,7 +79,7 @@ public class StorageBackend
                 SchemaUpgrader.Upgrade(ctx);
 
                 // 處理狀態的遷移**只在這裡做判定，不在這裡搬**
-                // （docs/SCALE-FIX-PLAN-2026-08-06.md §三／G1）：
+                // （docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三／G1）：
                 // 實際搬移可能是數分鐘（2000 台約 108 萬列／350 MB），
                 // 掛在啟動路徑上會直接撞 Windows 服務 30 秒的啟動逾時而被 SCM 砍掉。
                 // 這裡只做毫秒級的「需不需要搬」判定並寫下狀態，搬移交給背景服務。
@@ -116,7 +116,7 @@ public class StorageBackend
     private static readonly TimeSpan SchemaMutexTimeout = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    /// 資料層慢操作統計（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。每行程一份，
+    /// 資料層慢操作統計（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。每行程一份，
     /// 由本類別產生的所有 store 共用同一個實例——分散成多份就答不出「整站有幾次慢操作」。
     /// </summary>
     public SqlPerformanceMonitor Performance { get; } = new();
@@ -135,7 +135,7 @@ public class StorageBackend
     /// <summary>風險 log 暫存 store</summary>
     public EfRiskyEventStore RiskyEventStore() => new(_dbFactory);
 
-    // ── 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）──────────────────────
+    // ── 處理狀態三表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）──────────────────────
     // 這三個過去是 Blob("issue_handling") 等整份型 store，現在走真表；
     // 介面不變，呼叫端與 DI 註冊只換建構方式。
 
@@ -145,11 +145,11 @@ public class StorageBackend
 
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
-    /// <summary>問題聚合查詢（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）</summary>
+    /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）</summary>
     public EfIssueAggregateQuery IssueAggregateQuery() => new(_dbFactory, Performance);
 
     /// <summary>
-    /// 處理狀態自 blob 搬進真表的遷移器（docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
+    /// 處理狀態自 blob 搬進真表的遷移器（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
     /// **每個後端一份**：遷移狀態要跨呼叫共享，不能每次都 new 一個新的。
     /// </summary>
     public HandlingBlobMigrator HandlingMigrator => _handlingMigrator ??=
@@ -179,7 +179,7 @@ public class StorageBackend
     }
 
     /// <summary>
-    /// 為背景工作（夜間分析）的連線字串套上連線池上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    /// 為背景工作（夜間分析）的連線字串套上連線池上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
     ///
     /// 這是「同一行程內前景與背景共用資料庫」的必要隔離：SqlServer 的連線池預設 Max Pool Size=100
     /// 且**以連線字串為鍵**——連線字串一模一樣的兩個 DbContext 工廠會共用同一個池，

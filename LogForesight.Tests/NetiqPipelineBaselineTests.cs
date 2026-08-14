@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// NetiqPipelineService 的行為基準測試（docs/FEEDBACK-12-PLAN.md §3.8-3）。
+/// NetiqPipelineService 的行為基準測試（docs/archive/FEEDBACK-12-PLAN.md §3.8-3）。
 ///
 /// 本體過去零整合測試——只測過靜態純函式（<c>ResolveLookbackDays</c>／<c>ResolveParallelism</c>）
 /// 與計數器原子性，改動兩階段拆分（§3.4）之前，先對**現行為**（批次查詢→逐台分析→寫入）釘住
@@ -53,7 +53,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
             SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
         });
 
-    /// <summary>10 筆 sshd 暴力破解樣本（docs/FEEDBACK-12-PLAN.md §4.0 第四次 probe 實際樣本格式）
+    /// <summary>10 筆 sshd 暴力破解樣本（docs/archive/FEEDBACK-12-PLAN.md §4.0 第四次 probe 實際樣本格式）
     /// ——10 筆剛好達 builtin-linux-ssh-bruteforce 的 CountThreshold，聚合後應命中滿嚴重度 High。</summary>
     private static SentinelEvent LinuxBruteforceEvent(string ip, int index) => new(new Dictionary<string, string>
     {
@@ -167,7 +167,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
     }
 
     /// <summary>
-    /// docs/FEEDBACK-12-PLAN.md §4B（拆 Windows 擋板）：同一台 Sentinel 轄下同時有 Windows 與
+    /// docs/archive/FEEDBACK-12-PLAN.md §4B（拆 Windows 擋板）：同一台 Sentinel 轄下同時有 Windows 與
     /// Linux 主機時，兩者都應該被實際查詢與分析——不再是「Linux 台印警告、本次不查」。
     /// 用 filter 內容（是否含 `sp:`）分辨兩次查詢分別回什麼形狀的假事件，驗證 Linux 主機
     /// 端到端跑完整條 mapper→aggregator→classify 鏈：正確聚合成 EventKey、LogName、次數、嚴重度

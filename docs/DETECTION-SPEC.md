@@ -1,8 +1,9 @@
 # LogForesight 偵測與 AI 內部規格
 
-本文件收錄「偵測邏輯與 AI 運用」的深度內容，自 README 拆出（2026-08-05，回饋第九輪 §11）：
-README 保留定位、結構、部署與操作；偵測層的規則細節、危險訊號清單、小模型策略與 AI 穩定性
-設計集中在這裡，需要時再查。規則「機制」（語意邊界、seed／匯入、DB 映射）另見
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+
+本文件收錄「偵測邏輯與 AI 運用」的深度內容：規則細節、危險訊號清單、小模型策略與 AI 穩定性
+設計。規則「機制」（語意邊界、seed／匯入、DB 映射）另見
 [RULES-SPEC.md](RULES-SPEC.md)——一份講「偵測什麼」，一份講「規則怎麼運作」。
 
 ---
@@ -364,7 +365,7 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 > **SSH 攻擊鏈關聯**（`LinuxCorrelationAnalyzer`，見下方關聯層說明）全部完成並有專屬測試覆蓋
 > （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。上表的訊息關鍵字已對照四輪 probe 的真實
 > 環境輸出（program 量級、`msg` 片語查詢行為、sshd 樣本全文）逐項核對，零矛盾證據，seed 版本
-> 維持 v4 不變（評估後定案不校正，見 docs/FEEDBACK-12-PLAN.md §4.6 批 4B.6）。
+> 維持 v4 不變（評估後定案不校正，見 docs/archive/FEEDBACK-12-PLAN.md §4.6 批 4B.6）。
 > 也就是說 Linux 主機從掃描精靈納入、排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，
 > 已與 Windows 主機同一條管線走完整趟，沒有殘留的止血擋板或短路（見
 > [docs/BACKLOG.md](docs/BACKLOG.md)）。本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**
@@ -517,7 +518,7 @@ AI 的日子要等 AI 段完成才產出（暫代紀錄的 `ReportFile` 為 `nul
 **適用範圍**：兩階段脫鉤只在 NetIQ pipeline 生效。本機分析路徑（`AnalyzeDayAsync`）評估後
 決定暫不比照拆分——單機序列執行、多個主機日之間本來就沒有並行搜尋主線可保護，脫鉤的收益
 低、佇列歸屬權（誰在程式結束前把佇列排空）的侵入性風險偏高，詳細評估見
-[docs/FEEDBACK-12-PLAN.md](docs/FEEDBACK-12-PLAN.md) §3.9。
+[docs/archive/FEEDBACK-12-PLAN.md](docs/archive/FEEDBACK-12-PLAN.md) §3.9。
 
 ---
 

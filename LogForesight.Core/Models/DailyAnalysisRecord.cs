@@ -91,7 +91,7 @@ public class DailyAnalysisRecord
     public bool AiAnalyzed { get; set; } = true;
 
     /// <summary>
-    /// true = 統計段已完成並寫入，AI 段還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）。
+    /// true = 統計段已完成並寫入，AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）。
     /// 與 <see cref="AiAnalyzed"/> 是不同的兩件事：AiAnalyzed=false 且 AiPending=false 是
     /// 「AI 已定案不需要／已嘗試但失敗」的既有語意；AiPending=true 是新增的第三態，代表
     /// 「還沒定案，正在等」。執行完成後由 <c>AttachAiResult</c> 改回 false；若執行被取消，
@@ -160,7 +160,7 @@ public class DailyAnalysisRecord
 }
 
 /// <summary>
-/// AI 段定案後的輸出（docs/FEEDBACK-12-PLAN.md §3.3/§3.5）——覆寫統計段已寫入的暫代欄位，
+/// AI 段定案後的輸出（docs/archive/FEEDBACK-12-PLAN.md §3.3/§3.5）——覆寫統計段已寫入的暫代欄位，
 /// 是 <c>IAnalysisRecordStore.AttachAiResult</c> 的輸入。放在 Models（而不是產生它的
 /// LogAnalysisService 所在的 Service 命名空間）是因為 Persistence 層的
 /// <c>IAnalysisRecordStore</c> 介面也需要引用這個型別——與 <see cref="WeeklyCheckupResult"/>

@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 主機別名索引（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 A／N1）。
+/// 主機別名索引（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 A／N1）。
 ///
 /// 這個索引是**純效能改寫**：語意必須與改寫前的
 /// <see cref="HostIdentityResolver.Expand"/> 逐位相同。因此這組測試的重點不是

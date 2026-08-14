@@ -512,7 +512,7 @@ function headlineCell(record) {
         badge.title = 'AI 產出摘要';
         wrap.appendChild(badge);
     } else if (record.aiPending) {
-        // 統計段已寫入、AI 段還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+        // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，跟灰字的「統計模式」區分開，不能看起來像失敗
         const badge = document.createElement('span');
         badge.className = 'lf-badge lf-badge--info me-1';

@@ -224,7 +224,7 @@ public class SchedulerHostedService : BackgroundService
             // 但 NetIQ 那一路（2000 台等級）可能已經完整跑完並寫入——原本的閘門會讓「本機這台
             // 環境性小問題」把已完成的全機房高風險通知一起靜音，且因為 UrgentSentKeys 沒被
             // 標記、隔天成功執行會補寄，症狀是「通知延遲一天」而非永久漏，難以察覺（見
-            // docs/FEEDBACK-18-PLAN.md 批次B）。改成「成功或有任何主機日寫入」就通知，
+            // docs/archive/FEEDBACK-18-PLAN.md 批次B）。改成「成功或有任何主機日寫入」就通知，
             // 執行監控頁的失敗訊號不受影響（outcome.Success 已經定案並交給上面的 EndRun）。
             //
             // **移出 RunExclusiveAsync 區塊、放在 EndRun 之後**（回饋十六輪體檢發現1）：分析結果

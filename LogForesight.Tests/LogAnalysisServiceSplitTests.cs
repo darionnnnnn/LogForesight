@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// LogAnalysisService 拆分統計段/AI 段（docs/FEEDBACK-12-PLAN.md §3.3）之後的回歸測試：
+/// LogAnalysisService 拆分統計段/AI 段（docs/archive/FEEDBACK-12-PLAN.md §3.3）之後的回歸測試：
 /// AnalyzeDayAsync 的組合呼叫（統計段緊接著 AI 段）產出的最終紀錄與報告內容要與拆分前
 /// 完全一致。這裡專門釘住 <c>CompleteAiAsync</c> 內部組出的暫用 <see cref="DailyAnalysisRecord"/>
 /// 有沒有把 <see cref="RiskReportService.GenerateAsync"/> 會讀的欄位都填齊——實作過程中曾經

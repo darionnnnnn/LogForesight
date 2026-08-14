@@ -1,6 +1,8 @@
 # LogForesight 設計系統 v2
 
-2026-08-05 視覺改版依據文件。本文件是 site.css token 區、共用元件層（ui.js／format.js／charts.js）與版面骨架的**單一設計依據**；與 WEB-SPEC §8 互補——§8 管架構規範（分層、白名單、驗收條目），本文件管視覺語彙的具體取值與理由。
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+
+視覺改版依據文件。本文件是 site.css token 區、共用元件層（ui.js／format.js／charts.js）與版面骨架的**單一設計依據**；與 WEB-SPEC §8 互補——§8 管架構規範（分層、白名單、驗收條目），本文件管視覺語彙的具體取值與理由。
 
 ## 1. 產生方式與定位
 

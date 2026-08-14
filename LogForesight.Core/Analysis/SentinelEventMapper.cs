@@ -14,7 +14,7 @@ namespace LogForesight.Core.Analysis;
 internal static class SentinelEventMapper
 {
     /// <summary>
-    /// msg 前綴解析（Source 三段 fallback 鏈第三順位，docs/FEEDBACK-12-PLAN.md §4.4）：
+    /// msg 前綴解析（Source 三段 fallback 鏈第三順位，docs/archive/FEEDBACK-12-PLAN.md §4.4）：
     /// syslog 訊息常以 <c>program:</c> 或 <c>program[pid]:</c> 開頭（如 <c>kernel: sdh: sdh1</c>、
     /// <c>dbus[987]: [system] Successfully…</c>）。刻意要求緊接在行首、程式名後立即接
     /// （選填的）<c>[數字]</c> 再接冒號空白——像 <c>pam_unix(sshd:session): session opened…</c>
@@ -82,7 +82,7 @@ internal static class SentinelEventMapper
     }
 
     /// <summary>
-    /// Linux 事件映射（docs/FEEDBACK-12-PLAN.md §4.4，第二次 probe 修訂）：<c>Source</c> 走三段
+    /// Linux 事件映射（docs/archive/FEEDBACK-12-PLAN.md §4.4，第二次 probe 修訂）：<c>Source</c> 走三段
     /// fallback 鏈——<see cref="SentinelFieldMap.LinuxProgram"/>（`sp`，受監控主機的主要路徑）→
     /// <see cref="SentinelFieldMap.LinuxObsSvcName"/>（`obssvcname`，CEF collector 路徑的備援）→
     /// <see cref="LinuxMessagePrefixRegex"/>（msg 前綴解析，最後防線）。三段皆解不出時回傳 null，

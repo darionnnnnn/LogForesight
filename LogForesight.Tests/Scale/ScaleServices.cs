@@ -5,7 +5,7 @@ using LogForesight.Web.Services;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 把 <see cref="ScaleDataSet"/> 接上**真正的**產品 Service（docs/SCALE-ISSUE-FIRST-PLAN.md P0）。
+/// 把 <see cref="ScaleDataSet"/> 接上**真正的**產品 Service（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P0）。
 ///
 /// 這裡刻意**不用任何 store 假實作**：壓測要量的正是整份 blob 讀改寫、可見範圍展開、
 /// 全量載入聚合這三件事的成本，換成 in-memory 假 store 就把要量的東西全部量掉了。

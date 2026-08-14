@@ -5,7 +5,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 問題排行的組裝層（docs/SCALE-FIX-PLAN-2026-08-06.md G3）。
+/// 問題排行的組裝層（docs/archive/SCALE-FIX-PLAN-2026-08-06.md G3）。
 ///
 /// **為什麼補這組測試**：P4 為聚合查詢寫了 9 條測試，卻沒有測「把聚合變成 DTO」那一層——
 /// 而分類欄空白（D2）、變化幅度、IsNew、影響率全在這一層。D2 那種

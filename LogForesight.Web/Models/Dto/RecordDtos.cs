@@ -22,7 +22,7 @@ public class RecordListItemDto
 
     public bool AiAnalyzed { get; set; }
 
-    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5）——
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
     /// 與 AiAnalyzed=false 不同：那是「AI 已定案不需要或已嘗試但失敗」，這是「還沒定案」。
     /// 前端顯示「AI 分析中」而非「統計模式」，避免看起來像失敗。</summary>
     public bool AiPending { get; set; }
@@ -121,7 +121,7 @@ public class IssueGroupDto
 
     public string LastSeen { get; set; } = string.Empty;
 
-    // ── 時間形狀（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3／P5）──────────────────
+    // ── 時間形狀（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.3／P5）──────────────────
     // 需求「同時顯示包含此問題的主機數量與**期間跨度**」的後半：只有「最近出現」
     // 回答不了「這是老問題還是新問題／天天都有還是零星爆發」。
     // 這幾個欄位全由本群組既有的紀錄推導，不需要額外查詢。
@@ -206,7 +206,7 @@ public class RecordDetailDto
     public string Action { get; set; } = string.Empty;
     public bool AiAnalyzed { get; set; }
 
-    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/FEEDBACK-12-PLAN.md §3.5），
+    /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5），
     /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
     public bool AiPending { get; set; }
 

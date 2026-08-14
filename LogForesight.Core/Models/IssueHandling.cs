@@ -60,7 +60,7 @@ public static class IssueSignatureKey
         $"{logName}|{source}|{eventId}|{(int)entryType}";
 
     /// <summary>
-    /// Linux 簽章的第五段（docs/FEEDBACK-12-PLAN.md §4.2）：<see cref="LogIssueSignature.EventKey"/>
+    /// Linux 簽章的第五段（docs/archive/FEEDBACK-12-PLAN.md §4.2）：<see cref="LogIssueSignature.EventKey"/>
     /// 非空時附加尾段，用來把「同一個 program 命中不同規則」（如 sshd 底下的 ssh-bruteforce 與
     /// ssh-accept）分成不同的處理狀態/案件鍵。Windows 事件與未命中規則的 Linux 事件
     /// EventKey 恆空，這裡直接回傳既有的四段鍵，字串一字不變、零遷移。

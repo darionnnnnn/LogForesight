@@ -47,14 +47,14 @@ public static class ServiceCollectionExtensions
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         //
-        // 這三個自 P3 起走**真表**而非整份 blob（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B）：
+        // 這三個自 P3 起走**真表**而非整份 blob（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 B）：
         // 它們會隨「主機數 × 天數」成長，6000 台 × 90 天下 issue_handling 的整份序列化
         // 會撞上 .NET 的 2 GB 單一物件上限。介面不變，呼叫端零修改。
         services.AddSingleton<IRecordHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().RecordHandlingStore());
         services.AddSingleton<IIssueHandlingStore>(sp => sp.GetRequiredService<StorageBackend>().IssueHandlingStore());
         services.AddSingleton<IIssueCaseStore>(sp => sp.GetRequiredService<StorageBackend>().IssueCaseStore());
 
-        // 問題聚合（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
+        // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
         services.AddSingleton<IIssueAggregateQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueAggregateQuery());
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
@@ -281,7 +281,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
-        // 健康檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
+        // 健康檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）：Singleton——它只讀 StorageBackend
         // 與 SchedulerRunState 兩個既有的行程內單例，沒有請求範圍狀態
         services.AddSingleton<HealthService>();
 
@@ -321,12 +321,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
-        // 處理狀態自 blob 搬進真表（docs/SCALE-FIX-PLAN-2026-08-06.md §三）：
+        // 處理狀態自 blob 搬進真表（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）：
         // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
         // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
         services.AddHostedService<HandlingMigrationHostedService>();
 
-        // lf_top_issues 聚合欄的背景回填（docs/SCALE-ISSUE-FIRST-PLAN.md P4）：
+        // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
 

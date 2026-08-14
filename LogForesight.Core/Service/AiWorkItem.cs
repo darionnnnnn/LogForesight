@@ -3,7 +3,7 @@ namespace LogForesight.Core.Service;
 /// <summary>
 /// 一個主機日「需要 AI 補完」時，統計段（<see cref="LogAnalysisService.BuildStatisticalRecordAsync"/>）
 /// 留給 AI 段（<see cref="LogAnalysisService.CompleteAiAsync"/>）的完整輸入
-/// （docs/FEEDBACK-12-PLAN.md §3.2/§3.3）。統計段已經把 issues/trendAlerts/correlations/ruleRisk
+/// （docs/archive/FEEDBACK-12-PLAN.md §3.2/§3.3）。統計段已經把 issues/trendAlerts/correlations/ruleRisk
 /// 都算好，AI 段不重算，只需要這些既有結果＋原始 events（深析報告用——原始 log 不落地，
 /// 只能隨件攜帶）。
 ///

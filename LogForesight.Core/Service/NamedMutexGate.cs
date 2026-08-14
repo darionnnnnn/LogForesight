@@ -69,7 +69,7 @@ public class NamedMutexGate
     }
 
     /// <summary>
-    /// 同步版本（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：供**啟動路徑**的 schema 建立／升級使用。
+    /// 同步版本（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E3）：供**啟動路徑**的 schema 建立／升級使用。
     ///
     /// 為什麼可以直接 WaitOne／ReleaseMutex 而不必像 <see cref="RunExclusiveAsync"/> 那樣包
     /// <see cref="Task.Run(Action)"/>：整段完全同步、沒有 await，取得與釋放天生在同一條執行緒上，

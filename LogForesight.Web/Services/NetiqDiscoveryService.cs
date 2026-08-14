@@ -62,7 +62,7 @@ public class NetiqDiscoveryService
         if (!server.CanDiscover)
             throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
 
-        // 已登錄主機不必重新「發現」（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）：
+        // 已登錄主機不必重新「發現」（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）：
         // 在 Sentinel 端就排除掉，沒有新主機時 found=0、一次查詢即結束。
         // 它們在下面被合成回結果，精靈畫面的「既有／新發現」分組完全不變。
         var alreadyRegistered = AlreadyRegisteredInSubnet(server.Name, subnetPrefix);

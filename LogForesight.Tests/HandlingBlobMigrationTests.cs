@@ -4,8 +4,8 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 處理狀態自整份 blob 遷入真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3、
-/// 修復規劃 docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
+/// 處理狀態自整份 blob 遷入真表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3、
+/// 修復規劃 docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
 /// **這是全案唯一會動到既有資料的一步**，四條約束逐一釘住：
 ///   1. 中斷後可安全重來——每一份包在單一交易內，被砍就整份回滾、表仍為空。

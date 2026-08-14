@@ -33,7 +33,7 @@ public class DashboardDto
     public List<IssueRankingDto> TopIssues { get; set; } = new();
 
     /// <summary>
-    /// 問題統計是否還在背景整理（回填或搬移中，docs/SCALE-FIX-PLAN-2026-08-06.md G2）。
+    /// 問題統計是否還在背景整理（回填或搬移中，docs/archive/SCALE-FIX-PLAN-2026-08-06.md G2）。
     ///
     /// **為什麼放在這裡而不是 /api/health/detail**：那支需要 <c>Maintain</c>，
     /// 而看排行的是全部角色；而且「這張卡的數字準不準」本來就是這張卡的資料，
@@ -78,7 +78,7 @@ public class IssueRankingDto
     /// <summary>全部主機加總的事件次數</summary>
     public int TotalCount { get; set; }
 
-    // ── 時間形狀（docs/SCALE-ISSUE-FIRST-PLAN.md §10.3／P4）──────────────────
+    // ── 時間形狀（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.3／P4）──────────────────
     //
     // 這些是「今天該先看哪一個」的唯一來源。改版前排行只看數量，結果是 2000 台環境下
     // DCOM 10016 這種「每台都有、每天都一樣」的雜訊恆在第一名（資訊量為零），

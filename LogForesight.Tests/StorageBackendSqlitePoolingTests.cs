@@ -30,7 +30,7 @@ public class StorageBackendSqlitePoolingTests
 }
 
 /// <summary>
-/// SqlServer 背景工作的連線池隔離（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+/// SqlServer 背景工作的連線池隔離（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
 ///
 /// 這件事的重點常被誤解成「限制分析只能用 4 條連線」；真正的效果是**連線字串一改，
 /// ADO.NET 就把它當成另一個池**——分析與前景站台從此不共用同一組連線。

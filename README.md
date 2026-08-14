@@ -1,5 +1,7 @@
 # LogForesight
 
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+
 分析 Windows Server 的 Event Log 與 Linux 主機的 syslog（經 NetIQ Sentinel 取數，
 規則面與取數管線皆已完備，見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)），
 **提早發現硬體故障前兆與入侵跡象**，在問題擴大前示警。

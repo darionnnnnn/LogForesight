@@ -178,7 +178,7 @@ public class SentinelEventMapperTests
         Assert.Equal(0, mapped!.EventId);
     }
 
-    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
+    // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.4，四輪 probe 實證定案，Sentinel「118_linux」）──
 
     /// <summary>輪 B 第四次 probe 實證的 sshd 暴力破解樣本（`sp` 主要路徑）。</summary>
     private static SentinelEvent LinuxSshBruteforceFixture() => new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

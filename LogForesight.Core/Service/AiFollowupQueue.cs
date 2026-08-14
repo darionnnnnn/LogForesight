@@ -3,7 +3,7 @@ using System.Threading.Channels;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// NetIQ pipeline 的 AI 待處理佇列（docs/FEEDBACK-12-PLAN.md §3.2）：搜尋＋統計主線把需要 AI
+/// NetIQ pipeline 的 AI 待處理佇列（docs/archive/FEEDBACK-12-PLAN.md §3.2）：搜尋＋統計主線把需要 AI
 /// 的主機日丟進來，單一背景消費者依序（FIFO）取出跑 AI，讓 NetIQ 搜尋不再被 AI 拖住
 /// （現況：<c>NetiqPipelineService</c> 批次內逐台 <c>await</c> AI，本批沒跑完下一天的搜尋
 /// 就不會發出）。FIFO 保序是刻意的：消費者處理同一台主機的日期時能保證前一天已經定案，
@@ -11,13 +11,13 @@ namespace LogForesight.Core.Service;
 ///
 /// **有容量上限、不是無限佇列**：工作項會帶著該主機日的 mapped events（深析報告需要原始 log
 /// 摘錄，而原始 log 不落地，只能隨件攜帶），無界佇列在 AI 大幅落後時就是 OOM 候選——本專案
-/// 才在規模化輪被 OOM 咬過（docs/SCALE-ISSUE-FIRST-PLAN.md S2），這裡不再開第二個口子。
+/// 才在規模化輪被 OOM 咬過（docs/archive/SCALE-ISSUE-FIRST-PLAN.md S2），這裡不再開第二個口子。
 /// 滿載時 <see cref="EnqueueAsync"/> 背壓讓搜尋主線暫停等待，屬「AI 落後
 /// <see cref="Capacity"/> 個主機日」的極端情況，記憶體保護優先於吞吐量。
 /// </summary>
 public sealed class AiFollowupQueue<T>
 {
-    /// <summary>預設佇列容量（docs/FEEDBACK-12-PLAN.md §3.2）。</summary>
+    /// <summary>預設佇列容量（docs/archive/FEEDBACK-12-PLAN.md §3.2）。</summary>
     public const int Capacity = 200;
 
     private readonly Channel<T> _channel;

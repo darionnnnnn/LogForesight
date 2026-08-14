@@ -1,5 +1,7 @@
 # LogForesight.Web 開發規格文件
 
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+>
 > 本文件是 Web 查詢/維護介面的現況規格：架構、分層、驗證授權、API 慣例、前端慣例、
 > 頁面規格、CSV 匯入、稽核。資料表欄位級設計以 [DB-SPEC.md](DB-SPEC.md) 為準（本文件新增的表在
 > 第 10 節補齊欄位定義，同樣遵守 DB-SPEC 的雙 DB 可移植規則）；規則庫的 DB 映射見
@@ -412,7 +414,7 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - **例外處理單點化**：`ApiExceptionFilter` 把未捕捉例外轉成 `server_error` 信封（HTTP 500）、
   完整堆疊寫 Web 端 NLog；業務錯誤由 Service 拋 `DomainException(code, message)`，
   Filter 轉 4xx 信封。Controller/Service 不寫 try-catch 樣板。
-  **樂觀鎖衝突另有一支**（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md D3）：處理狀態三表以
+  **樂觀鎖衝突另有一支**（2026-08-06，docs/archive/SCALE-FIX-PLAN-2026-08-06.md D3）：處理狀態三表以
   `UpdatedAt` 當並發權杖，store 把 `DbUpdateConcurrencyException` 轉成 Core 的
   `ConcurrentUpdateException`（訊息帶「哪一筆被搶先改了」），Filter 對應 409＋`conflict`——
   多人同時操作是正常情境不是故障；風險日詳情的處理面板收到 409 後自動重載當日資料。
@@ -732,7 +734,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   在既有的 `GET api/dashboard/summary` 內一併回傳，不另開請求。
   **刻意不含處理狀態**：那要逐問題查 handling 標記，是依問題視角才做的事；這張卡回答的是
   「哪幾個問題影響最大」，點進去就看得到處理概況。
-- **改以「問題的重要性」而非數量呈現（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P4／P5）**：
+- **改以「問題的重要性」而非數量呈現（2026-08-06，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／P5）**：
   純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
   恆在第 1（資訊量為零），而 `disk 153`（3 台、都在近 3 天、高嚴重度＋重大）排在很後面。
   欄位因此改為 問題（含「新」徽章）／嚴重度（含「重大」旗標）／主機數（含**影響率**）／
@@ -758,7 +760,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **serverAdmin 引導卡（§1，回饋第九輪）**：serverAdmin 登入時本頁不打 summary API，改顯示
   引導卡（說明救援帳號用途、測試模式可用 demo-admin 測全站、正式建帳號步驟），其餘區塊
   連同靜態卡片標題一併隱藏——業務資料對它本來就是空的（§6.2 最小授權），空白畫面會被誤讀成壞掉。
-- **分析執行中告示（2026-08-06，docs/SCALE-FIX-PLAN-2026-08-06.md S-3）**：夜間分析與站台跑在
+- **分析執行中告示（2026-08-06，docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）**：夜間分析與站台跑在
   同一個行程（本輪定案不拆 worker），分析期間整站回應變慢是設計上接受的代價——這行告示是
   代價的配套：頂部一行「分析進行中（第 N／M 台），畫面回應可能較慢」，30 秒輪詢
   `GET api/run-activity`，沒在跑就整行不出現。該端點**任何登入者可讀**（刻意不掛
@@ -805,7 +807,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   明細視角 `sort` 為 `date`/`host`/`risk`，依主機視角為 `host`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`，
   依日期視角為 `date`/`hostCount`/`highRisk`/`mediumRisk`/`lowRisk`/`correlation`；未指定時維持各視角原本的
   「風險→關聯→日期」緊急程度排序，2026-07-29）
-- **依問題視角補上「時間形狀」（2026-08-06，docs/SCALE-ISSUE-FIRST-PLAN.md P5）**：
+- **依問題視角補上「時間形狀」（2026-08-06，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P5）**：
   原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
   新增三欄——**涵蓋範圍**（首見 ~ 最近出現，即需求的「期間跨度」）、**出現密度**（N/M 天＋密度條，
   文字為主、圖為輔，不可只留圖）、**最近出現**改為「日期＋是否仍在發生」；
@@ -1052,12 +1054,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
-- **「AI 分析中」徽章（2026-08-07，docs/FEEDBACK-12-PLAN.md §3.5）**：NetIQ pipeline 搜尋與
+- **「AI 分析中」徽章（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §3.5）**：NetIQ pipeline 搜尋與
   AI 判讀脫鉤後（見 docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節），統計已寫入、
   AI 段還在排隊或執行中的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
-- **問題列 Source/EventId 顯示（2026-08-07，docs/FEEDBACK-12-PLAN.md §4.3）**：Linux 事件沒有
+- **問題列 Source/EventId 顯示（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4.3）**：Linux 事件沒有
   EventId（恆 0），問題列標題／原始訊息彈窗／先前處理彈窗／詢問 AI 下拉選單一律改顯示
   `IssueDto.SourceEventLabel`（後端算好：命中 Linux 規則時顯示「{Source}（規則Id）」，其餘
   沿用既有「{Source} EventId {EventId}」）——避免 Linux 問題列出現無意義的「EventId 0」。
@@ -1131,7 +1133,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   LocalOnly、NetIQ 主機走 NetiqHosts 單台。後端先驗證主機目前確實在「會被查詢」的清單內
   （Pollable——停用／待歸屬／IP 衝突／所屬 Sentinel 停用都會被 orchestrator 靜默濾掉，
   預覽顯示「1 台」會是假象），不符合時拒絕並給出具體原因。
-  **Linux 主機比照 Windows 正式支援（2026-08-07，docs/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期
+  **Linux 主機比照 Windows 正式支援（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期
   擋截）**：按鈕不再因 `HostDetail.Os === 'linux'` 停用——Sentinel 搜尋已有 Linux 取數分支，
   Linux 主機走同一條 Pollable 驗證與 NetiqHosts 單台查詢路徑。
 - API：`GET api/host-detail/{id}?days=`、`GET api/host-detail/{hostId}/issues?source=&eventId=&days=`
@@ -1431,7 +1433,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
 - **連線與節流參數**：`QueryDelayMs`／`PageSize`／`MaxResultsPerJob`／`TimeoutSeconds`／
   `RetryCount`／`AllowInvalidCertificates`，套用於全部 Sentinel（`SentinelClient` 查詢行為），
   另有「同時處理幾台 Sentinel」（`MaxParallelServers`，1＝完全依序處理）——
-  **上限收斂為 3**（2026-08-07，docs/FEEDBACK-12-PLAN.md §二）：表單 `max="3"`＋後端
+  **上限收斂為 3**（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §二）：表單 `max="3"`＋後端
   `[Range(1, NetiqOptions.MaxParallelServersLimit)]` 雙重把關，避免無上限地並行對多台
   Sentinel 開查詢造成 server 端負擔失控；既有存值超過上限時讀取自動夾住（不擋存檔，
   只在下次讀取時靜默收斂並記錄），不需要遷移。
@@ -1490,12 +1492,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   輪詢」（`NetiqProbeRunState` 自成一個併發 1 的 probe gate，**不與排程/手動分析共用**——
   probe 是小規模診斷查詢，不該被夜間分析互斥擋住）；輸出即時累積到唯讀 textarea＋「複製」鈕。
   需 `Maintain`、寫稽核 `netiq_probe_run`（帳密未設定的 Sentinel 拒絕啟動）。
-  **Linux 深掘擴充（2026-08-07，docs/FEEDBACK-12-PLAN.md §4.1）**：步驟 8（Linux 主機樣本）
+  **Linux 深掘擴充（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4.1）**：步驟 8（Linux 主機樣本）
   樣本數 3→10，命中時追加「欄位名聯集」彙總行；新增 8b（同批樣本的 `msg` 全文另行傾印，
   不截斷，供規則的訊息子字串校正）、8c（`sp` 查詢行為實證：term／大小寫／前綴萬用字元）、
   8d（`sev` 0~5 分佈逐值 found，另取 `sev:2`／`sev:[3 TO 5]` 樣本 msg 全文）、8e（種子 program
   量級，清單現取自規則表不硬編）、8f（`sshd` 近 7 天樣本 msg 全文，查無時退路 `msg:sshd`）、
-  8g（`msg` 片語查詢行為實證＋暴力破解樣本抽取，docs/FEEDBACK-12-PLAN.md §4.1 批 4B.0 追加）——
+  8g（`msg` 片語查詢行為實證＋暴力破解樣本抽取，docs/archive/FEEDBACK-12-PLAN.md §4.1 批 4B.0 追加）——
   7 個新段落一律掛在「有填 Linux 樣本 IP」同一個開關下，未填時各印一行「略過」，
   不稀釋純 Windows 環境的既有 13 步輸出（逐字不變，契約不破）。
 - API：`GET/POST api/admin/sentinels`、`DELETE api/admin/sentinels/{id}`、`PUT api/admin/sentinels/{id}/active`
@@ -1774,7 +1776,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」
   而非「未執行」（`RunMonitorService`＋`RunDaySummaryDto.LocalDisabledCount`）。**Linux 主機比照 Windows
-  正式支援（2026-08-07，docs/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期擋板）**：run-preview
+  正式支援（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §4B，批 4.6 拆除過渡期擋板）**：run-preview
   台數為單一總數，不再拆分 `LinuxCount`／附加「暫不查詢」提示——Sentinel 搜尋已有 Linux
   取數分支（依 `Os` 分流查詢與映射），Linux 主機和 Windows 主機走同一條
   `pollableIds.Contains(id)` 判斷，範圍與立即執行皆不再排除 Linux。窗口 End 到點時排程引擎
@@ -1794,7 +1796,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
-  **`netiq-ai` phase（2026-08-07，docs/FEEDBACK-12-PLAN.md §3.7）**：NetIQ 搜尋與 AI 判讀脫鉤
+  **`netiq-ai` phase（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §3.7）**：NetIQ 搜尋與 AI 判讀脫鉤
   後（見 docs/DETECTION-SPEC.md），搜尋段完成、AI 佇列仍在背景消費時進度條切換到這個新
   phase，文字「AI 白話分析補寫中　x / y 件」（單位「件」，不是「主機日」——`DashboardController`
   的 `UnitText` 與前端 `PROGRESS_PHASE_UNIT` map 對應這個 phase）。執行完成的里程碑同輪加註
@@ -1832,7 +1834,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   netiq 的主／子進度欄位，讓 `LatestActivity()` 的優先序自然落回還在推進的本機；狀態卡的
   NetIQ 雙進度條（依 `progressPhase`/`subProgressPhase` 是否為 truthy 決定顯示）也會正確地
   一併消失，不是副作用。
-  **Pipeline 警告上收（2026-08-07，docs/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
+  **Pipeline 警告上收（2026-08-07，docs/archive/FEEDBACK-12-PLAN.md §1.3）**：NetIQ 各 Sentinel 掃描
   過程累積的警告（涵蓋範圍不完整、頻道疑慮等）執行完成後彙整成一則里程碑，取前 2 則＋
   「…（完整清單見執行詳情）」，取代原本只能在單次執行詳情逐條翻找的呈現。
 - **三頁籤（2026-08-11，回饋十七輪批次F-1，取代原本三區塊一路往下堆疊的版面）**：執行總表／
@@ -1929,7 +1931,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 文件，一列一 key）或 `lf_log_lines`（append-only，同 key 多列）裡的 `BlobKey`，不再有實體檔案；
 `StorageBackend` 是唯一路由點（key 名稱與寫入者見程式碼註解，本表為對照速查）。
 
-**（2026-08-06 改寫，docs/SCALE-ISSUE-FIRST-PLAN.md P3）處理狀態三份改走真表**：
+**（2026-08-06 改寫，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）處理狀態三份改走真表**：
 `record_handling`／`issue_handling`／`issue_cases` 自整份 blob 改為
 `lf_record_handling`／`lf_issue_handling`／`lf_issue_cases`。判準是**成長維度**——
 這三份隨「主機數 × 天數」成長（6000 台 × 90 天下 issue_handling 約 324 萬列，

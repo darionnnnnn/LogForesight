@@ -56,7 +56,7 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup);
 
     /// <summary>
-    /// 將 AI 段定案結果附掛到已存在的當日統計紀錄（docs/FEEDBACK-12-PLAN.md §3.5）：NetIQ pipeline
+    /// 將 AI 段定案結果附掛到已存在的當日統計紀錄（docs/archive/FEEDBACK-12-PLAN.md §3.5）：NetIQ pipeline
     /// 兩階段化後，統計段先 <see cref="Append"/> 一筆 <c>AiPending=true</c> 的暫代紀錄，AI 段完成後
     /// 用這個方法讀-改-寫回，與 <see cref="AttachWeeklyCheckup"/> 同一個樣板。
     ///

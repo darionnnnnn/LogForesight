@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 批 4A（docs/FEEDBACK-12-PLAN.md §4.2/§4.3/§4.7）Linux 事件模型與簽章聚合的專屬測試：
+/// 批 4A（docs/archive/FEEDBACK-12-PLAN.md §4.2/§4.3/§4.7）Linux 事件模型與簽章聚合的專屬測試：
 /// EventKey 五元組分組鍵、IssueSignatureKey 向後相容、TrendAnalyzer/SlowTrendAnalyzer 的
 /// SameIssue 五元組比對、ChannelCoverage.WasRead("Linux") 恆真、關聯層 Linux 短路與
 /// UncoveredChecks 申報、FindLinuxRule 經 LogAggregator 整合命中、RiskyEventSelector
@@ -218,7 +218,7 @@ public class LinuxSignatureAggregationTests : IDisposable
     }
 
     // ── LogAnalysisService：關聯層 Linux 分路（LinuxCorrelationAnalyzer）與 UncoveredChecks 申報
-    //    （docs/FEEDBACK-12-PLAN.md §4.5，批 4C 落地——CorrelationAnalyzer 對 Linux 事件的
+    //    （docs/archive/FEEDBACK-12-PLAN.md §4.5，批 4C 落地——CorrelationAnalyzer 對 Linux 事件的
     //    「不執行」在 4A 已改為「走 LinuxCorrelationAnalyzer」，這裡驗證的是分路接對、
     //    UncoveredChecks 文案也同步更新，不是原本 §4.3 那個純短路的舊行為）───────
 

@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AIService 的取消語意（docs/FEEDBACK-12-PLAN.md §3.6）：抽出 IAiService 時新增了
+/// AIService 的取消語意（docs/archive/FEEDBACK-12-PLAN.md §3.6）：抽出 IAiService 時新增了
 /// <c>CancellationToken</c> 貫穿，目的是讓使用者按「停止」能立即掐斷排隊中／進行中的 AI 呼叫，
 /// 而不是像過去一樣完全沒有取消路徑，最壞情況要等到 600 秒逾時 ×重試全部跑完。
 ///

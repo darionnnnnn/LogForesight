@@ -139,12 +139,12 @@ public class SentinelEventFetchService : ISentinelEventFetcher
 
     /// <summary>
     /// 依主機 OS 組出現場取數的 filter／投影欄位／記憶體端二次過濾用的欄位鍵
-    /// （docs/FEEDBACK-12-PLAN.md §4.6 體檢揪出）。抽成純函數獨立於 HTTP 呼叫之外，
+    /// （docs/archive/FEEDBACK-12-PLAN.md §4.6 體檢揪出）。抽成純函數獨立於 HTTP 呼叫之外，
     /// 才能不架假 Sentinel 伺服器直接單元測試——這支服務原本只測「不符資格時提早回 null」
     /// 三道防線（見 SentinelEventFetchServiceTests 的類別文件），查詢本身怎麼組從未被驗證過，
     /// Linux 版倘若寫錯只會靜默回傳空結果，不會有任何錯誤或警告冒出來。
     ///
-    /// Linux 事件沒有 EventId（恆 0）也沒有 <c>rv40</c> 欄位（docs/FEEDBACK-12-PLAN.md §4.0
+    /// Linux 事件沒有 EventId（恆 0）也沒有 <c>rv40</c> 欄位（docs/archive/FEEDBACK-12-PLAN.md §4.0
     /// 輪 A 實證）——沿用 Windows 的 EventId 子句會對 Linux Sentinel 查出 0 筆（`rv40` 欄位
     /// 不存在，不是「查無資料」而是「查詢條件對這個環境沒有意義」），現場取數會對 Linux 主機
     /// 整個靜默失效。改用 program（<c>sp</c>，即 <paramref name="source"/>）子句，是 Linux 面

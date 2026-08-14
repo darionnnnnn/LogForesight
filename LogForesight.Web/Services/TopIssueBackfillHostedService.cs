@@ -3,7 +3,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 在**背景**補齊 <c>lf_top_issues</c> 的聚合維度（docs/SCALE-ISSUE-FIRST-PLAN.md P4／§8.2 E3）。
+/// 在**背景**補齊 <c>lf_top_issues</c> 的聚合維度（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／§8.2 E3）。
 ///
 /// **為什麼不掛在啟動路徑上**：回填要逐筆解析 ContentJson，資料量大時要跑數分鐘；
 /// 掛在 <c>StorageBackend</c> 的建構式裡會讓 Windows 服務啟動逾時（預設 30 秒）。

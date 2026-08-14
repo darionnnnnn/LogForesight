@@ -5,7 +5,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// 處理狀態三表的合約測試（docs/WEB-SPEC.md §12「新增 store 時，SQLite 合約子類為必要項」）。
 ///
-/// 這三個 store 自 P3 起由整份 JSON blob 換成真表（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B）。
+/// 這三個 store 自 P3 起由整份 JSON blob 換成真表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 B）。
 /// **換的是儲存方式，不是語意**——這組測試釘住的就是那些必須逐位不變的語意：
 ///   - 「缺列即未處理」（清除＝刪列，不留狀態為空的殭屍列）
 ///   - 同一 (主機, 日期, 問題) 至多一列

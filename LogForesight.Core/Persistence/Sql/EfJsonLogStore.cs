@@ -34,7 +34,7 @@ public sealed class EfJsonLogStore
     }
 
     /// <summary>
-    /// 最後附加的 N 行，由**新到舊**（docs/SCALE-ISSUE-FIRST-PLAN.md N4）。
+    /// 最後附加的 N 行，由**新到舊**（docs/archive/SCALE-ISSUE-FIRST-PLAN.md N4）。
     ///
     /// 存在的理由：續號用的「上一個 id」過去靠 <see cref="ReadLines()"/> 整份讀回再取最後一筆，
     /// 而那個呼叫在 Singleton store 的建構式裡——等於**站台啟動時同步讀千萬列並逐行解析**，
@@ -74,7 +74,7 @@ public sealed class EfJsonLogStore
     /// schema 升級前寫入的既存列沒有時間戳記，一律保留（無法判斷年代，寧可留著）。
     /// </summary>
     /// <summary>
-    /// 單次清理的列數上限與批次大小（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
+    /// 單次清理的列數上限與批次大小（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
     /// 稽核保留 730 天、處理歷程隨主機數×天數成長，兩千台以上這張表是千萬列級——
     /// 舊寫法把過期列整批 <c>ToList()</c> 載入再 RemoveRange，等於把數百萬行 JSON
     /// 文字讀進記憶體只為了刪掉它們。上限超過的部分留待下次執行（清理天生冪等）。

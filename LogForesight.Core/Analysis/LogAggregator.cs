@@ -14,7 +14,7 @@ public class LogIssueSignature
     public EventLogEntryType EntryType { get; set; }
 
     /// <summary>
-    /// Linux 簽章聚合鍵的第五段（docs/FEEDBACK-12-PLAN.md §4.2，實作 docs/LINUX-RULES.md §131-146
+    /// Linux 簽章聚合鍵的第五段（docs/archive/FEEDBACK-12-PLAN.md §4.2，實作 docs/LINUX-RULES.md §131-146
     /// 的設計文，語意較該文簡化）。Windows 事件恆為空字串——既有的 (LogName, Source, EventId,
     /// EntryType) 四元組鍵字串完全不變，零遷移。Linux 事件沒有 EventId（恆 0），只在規則命中時
     /// 填規則 Id（<see cref="RuleId"/> 的值），用來把「同一個 program 命中不同規則」
@@ -24,7 +24,7 @@ public class LogIssueSignature
     public string EventKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// 顯示用的「來源＋事件識別」文字（docs/FEEDBACK-12-PLAN.md §4.3）：Windows 顯示既有的
+    /// 顯示用的「來源＋事件識別」文字（docs/archive/FEEDBACK-12-PLAN.md §4.3）：Windows 顯示既有的
     /// 「{Source} EventId {EventId}」；Linux 命中規則時 EventId 恆 0、顯示這個數字沒有意義，
     /// 改顯示「{Source}（{EventKey}）」（規則 Id）。未命中規則的 Linux 事件（EventKey 空）
     /// 仍維持「EventId 0」——沒有更好的識別依據，誠實顯示比假裝有意義更好。
@@ -113,7 +113,7 @@ internal static class LogAggregator
     /// 上限 50：超出主 prompt 呈現上限的部分會走前置掃描（分批給 AI 篩選），
     /// 不會直接消失，所以這裡不需要砍太兇；50 之後的極端尾巴才截斷。
     ///
-    /// EventKey（第五段，docs/FEEDBACK-12-PLAN.md §4.2）：Windows 事件恆空字串，
+    /// EventKey（第五段，docs/archive/FEEDBACK-12-PLAN.md §4.2）：Windows 事件恆空字串，
     /// 既有四元組鍵字串完全不變。Linux 事件在分組**之前**逐事件呼叫
     /// <see cref="KnownIssueCatalog.FindLinuxRule"/>——訊息全文比對（MessagePatterns）
     /// 是這裡唯一能拿到完整訊息的地方，聚合後只剩截斷過的 SampleMessages，先比對後聚合才不漏。
@@ -246,7 +246,7 @@ internal static class LogAggregator
     /// 哪些頻道要抽取帳號/IP 彙總（KeyDetails）：Security 與兩個 RDP TerminalServices 頻道。
     /// RDP 也要，因為【暴力破解→RDP 得手】的跨日比對靠歷史簽章裡存的 KeyDetails IP 集合對照。
     ///
-    /// 刻意不含 Linux（docs/FEEDBACK-12-PLAN.md §4.2）：這裡的帳號/IP 抽取邏輯
+    /// 刻意不含 Linux（docs/archive/FEEDBACK-12-PLAN.md §4.2）：這裡的帳號/IP 抽取邏輯
     /// （<see cref="ExtractAccountsAndIps"/>）是為 Windows「Account Name:」／「User:」等固定
     /// 標籤設計的，Linux syslog 訊息沒有這種標籤格式。sshd 失敗/成功登入的帳號與來源 IP
     /// 解析是 §4.5（SSH 攻擊鏈關聯）獨立的正則，不借用這裡。

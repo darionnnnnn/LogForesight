@@ -183,7 +183,7 @@ public class RecordRepository : IRecordRepository
             : filter.Hosts.Where(k => visibleIds.Contains(k.HostId)).ToList();
 
         // **刻意不做「可見範圍涵蓋全部主機時就不下推」的最佳化**
-        // （docs/SCALE-ISSUE-FIRST-PLAN.md 根因 A，實作時試過並撤回）：
+        // （docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 A，實作時試過並撤回）：
         // 「可見主機涵蓋主機清單裡的每一台」不等於「不限制」——分析紀錄裡可能存在
         // **主機清單中已不存在**的 host_id（主機列被刪除），以及 host_id=0 的舊列
         // （那些靠 filter.Hosts 觸發記憶體端的 HostMatcher 名稱比對才篩得掉）。

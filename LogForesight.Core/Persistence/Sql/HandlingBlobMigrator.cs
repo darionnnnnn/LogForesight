@@ -5,8 +5,8 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 把三份處理狀態自整份 JSON blob 搬進真表（docs/SCALE-ISSUE-FIRST-PLAN.md P3、
-/// 修復規劃 docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
+/// 把三份處理狀態自整份 JSON blob 搬進真表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3、
+/// 修復規劃 docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
 /// **這是全案唯一會動到既有資料的一步**，四條約束：
 ///

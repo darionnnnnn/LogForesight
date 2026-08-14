@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 「無法處理」狀態（回饋十八輪批次G，docs/FEEDBACK-18-PLAN.md）：處理人上報「我處理不了」，
+/// 「無法處理」狀態（回饋十八輪批次G，docs/archive/FEEDBACK-18-PLAN.md）：處理人上報「我處理不了」，
 /// 等 admin 決定結案或重新指派。三套值域（日層級 HandlingStatuses／問題層級
 /// IssueHandlingStatuses／對外三態 ExternalOf）必須同步——值域漂移正是先前多輪體檢
 /// 反覆抓到的 bug 家族，這組測試就是同步的鎖。

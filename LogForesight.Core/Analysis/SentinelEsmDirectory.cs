@@ -7,7 +7,7 @@ public sealed record EsmEventSource(string Name, string IpAddress);
 
 /// <summary>
 /// ESM 事件來源目錄（<c>/SentinelRESTServices/objects/eventsource</c>）的回應解析
-/// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §5.2）。
+/// （docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §5.2）。
 ///
 /// <para><b>這是一份「防禦性」解析器，不是已定案的欄位對應。</b>
 /// 本專案其他的 Sentinel 欄位對應（<see cref="SentinelFieldMap"/>）全部有真實 probe

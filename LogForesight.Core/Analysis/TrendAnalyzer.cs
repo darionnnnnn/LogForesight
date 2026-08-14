@@ -339,7 +339,7 @@ public static class TrendAnalyzer
     }
 
     // EventKey 恆空的 Windows 事件兩邊都是 ""，這個條件對既有行為零影響；Linux 事件靠它把
-    // 「同 program 命中不同規則」（docs/FEEDBACK-12-PLAN.md §4.2）當成不同問題比對趨勢
+    // 「同 program 命中不同規則」（docs/archive/FEEDBACK-12-PLAN.md §4.2）當成不同問題比對趨勢
     private static bool SameIssue(LogIssueSignature a, LogIssueSignature b) =>
         a.LogName == b.LogName && a.Source == b.Source && a.EventId == b.EventId &&
         a.EntryType == b.EntryType && a.EventKey == b.EventKey;

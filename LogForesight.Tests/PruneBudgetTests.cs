@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 清理的分批與上限（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
+/// 清理的分批與上限（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
 ///
 /// 改動前兩支 Prune 都是「<c>.ToList()</c> 整批載入實體 → RemoveRange」——正常每晚只刪一天份
 /// 沒問題，但停機幾天沒跑或調短保留天數時，一次要刪數十萬列，等於先把數 GB 的

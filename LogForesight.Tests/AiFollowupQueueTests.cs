@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// AiFollowupQueue 的佇列機制本身（docs/FEEDBACK-12-PLAN.md §3.2／§3.8-4）：FIFO 保序與
+/// AiFollowupQueue 的佇列機制本身（docs/archive/FEEDBACK-12-PLAN.md §3.2／§3.8-4）：FIFO 保序與
 /// 有界背壓。這裡只測佇列機制，不涉及 AI／pipeline 語意（那些在 NetiqPipelineService 的
 /// 整合測試裡驗證）。
 /// </summary>

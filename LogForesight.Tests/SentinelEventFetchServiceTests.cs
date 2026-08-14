@@ -67,7 +67,7 @@ public class SentinelEventFetchServiceTests : IDisposable
         Assert.Null(result);
     }
 
-    // ── BuildQuery：現場取數的 filter／投影欄位（docs/FEEDBACK-12-PLAN.md §4.6 體檢揪出）──
+    // ── BuildQuery：現場取數的 filter／投影欄位（docs/archive/FEEDBACK-12-PLAN.md §4.6 體檢揪出）──
     // 純函數，不需要架假 Sentinel 伺服器——這裡驗證的正是「查詢本身怎麼組」，之前完全沒被測過。
 
     [Fact]

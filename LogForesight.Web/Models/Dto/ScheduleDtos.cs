@@ -71,7 +71,7 @@ public class ScheduleStatusDto
 }
 
 /// <summary>
-/// 給**一般使用者**看的執行中告示（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+/// 給**一般使用者**看的執行中告示（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
 ///
 /// 與 <see cref="ScheduleStatusDto"/> 刻意不共用：那個是維運視角（觸發來源、下次觸發時間、
 /// 上次成敗、可否停止），需要 DevMonitor／Maintain；這個只回答「現在慢是不是因為在跑分析、

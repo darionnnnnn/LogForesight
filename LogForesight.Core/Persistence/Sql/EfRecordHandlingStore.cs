@@ -6,7 +6,7 @@ namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// <see cref="IRecordHandlingStore"/> 的真表實作（快照 ↔ lf_record_handling；
-/// 歷程仍走 append-only 的 <see cref="EfJsonLogStore"/>，docs/SCALE-ISSUE-FIRST-PLAN.md P3）。
+/// 歷程仍走 append-only 的 <see cref="EfJsonLogStore"/>，docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）。
 ///
 /// **兩個改動，各修一個體檢項目**：
 ///   - 快照從整份 blob 改真表（根因 B）。
@@ -188,7 +188,7 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
         return 0;
     }
 
-    // ── 保留天數（docs/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）────────────────────
+    // ── 保留天數（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）────────────────────
     //
     // **快照與歷程用不同的保留天數，這是刻意的**：
     //   - 快照（lf_record_handling）是「這台主機那一天現在是什麼狀態」，

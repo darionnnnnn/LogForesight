@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace LogForesight.Core.Analysis;
 
 /// <summary>
-/// Linux 主機的跨事件關聯分析（docs/FEEDBACK-12-PLAN.md §4.5，批 4C）：獨立於
+/// Linux 主機的跨事件關聯分析（docs/archive/FEEDBACK-12-PLAN.md §4.5，批 4C）：獨立於
 /// <see cref="CorrelationAnalyzer"/>（Windows Event ID 群組比對，兩者比對機制完全不同，
 /// 硬塞進同一支會讓兩套規則互相干擾）。目前只有一條【SSH 破解得手】關聯，與 Windows
 /// 【破解得手】同構——同日大量 SSH 登入失敗（達 <see cref="KnownIssueRule.CountThreshold"/>）
@@ -95,7 +95,7 @@ internal static class LinuxCorrelationAnalyzer
             return findings;
         }
 
-        // 個別事件解析失敗時降級（docs/FEEDBACK-12-PLAN.md §4.5）：精確比對沒有交集，但只要
+        // 個別事件解析失敗時降級（docs/archive/FEEDBACK-12-PLAN.md §4.5）：精確比對沒有交集，但只要
         // 任一邊有解析失敗的事件，就不能把「沒交集」當成「確認沒關聯」——正則格式可能已經
         // 跟不上這批事件的實際寫法，落回主機級粗版比對，明講降級原因，不因格式漂移靜默漏報。
         if (bruteforceParseFailures > 0 || acceptParseFailures > 0)

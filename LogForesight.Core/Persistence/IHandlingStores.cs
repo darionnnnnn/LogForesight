@@ -91,7 +91,7 @@ public interface IIssueCaseStore
     void Save(IssueCase issueCase);
 
     /// <summary>
-    /// 批次寫入／更新（docs/SCALE-ISSUE-FIRST-PLAN.md P3，對應體檢 S4）：
+    /// 批次寫入／更新（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3，對應體檢 S4）：
     /// 夜間掛接 <c>AttachNewDay</c> 過去在迴圈內逐案 <see cref="Save"/>，
     /// 2000 台每晚約 4000 次寫入、blob 時代每次都是整份讀改寫。
     /// 與 <see cref="IIssueHandlingStore.SaveMany"/> 同一個理由存在。

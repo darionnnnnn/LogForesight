@@ -9,7 +9,7 @@ namespace LogForesight.Core.Service;
 /// <see cref="LogAnalysisService"/>——五層偵測/AI/報告零改動重用（見
 /// <c>SentinelPipelineContractTests</c> 的合約驗證）。
 ///
-/// **同時支援 Windows／Linux 主機**（docs/FEEDBACK-12-PLAN.md §4B，2026-08-07 起）：
+/// **同時支援 Windows／Linux 主機**（docs/archive/FEEDBACK-12-PLAN.md §4B，2026-08-07 起）：
 /// 同一台 Sentinel 轄下的主機依 <see cref="NetiqTarget.Os"/> 分成兩組各自處理
 /// （<see cref="RunServerAsync"/>）——查詢 filter／投影欄位／事件映射三處分路
 /// （<see cref="SentinelQueryBuilder"/>／<see cref="SentinelFieldMap"/>／
@@ -29,7 +29,7 @@ public class NetiqPipelineService
     internal const int IpBatchSize = 50;
 
     /// <summary>
-    /// 本次實際的 Sentinel 平行度（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+    /// 本次實際的 Sentinel 平行度（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
     ///
     /// <see cref="NetiqOptions.MaxParallelServers"/> 是管理者可調的設定，但那個設定當初是在
     /// 「分析獨佔一個批次行程」的前提下訂的。分析搬進站台行程之後（Web 排程化），平行度
@@ -74,7 +74,7 @@ public class NetiqPipelineService
     /// 開關（docs/archive/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
     /// 每個方法都加一個參數傳遞</param>
     /// <param name="progress">進度回報（docs/archive/FEEDBACK-8-PLAN.md #2）；null＝不回報（測試預設不傳）</param>
-    /// <param name="clientFactory">依 Sentinel 建立搜尋用戶端（docs/FEEDBACK-12-PLAN.md §3.8-2）；
+    /// <param name="clientFactory">依 Sentinel 建立搜尋用戶端（docs/archive/FEEDBACK-12-PLAN.md §3.8-2）；
     /// null＝預設走真正的 <see cref="SentinelClient"/>（<see cref="SentinelConnectionFactory.ToConnectable"/>
     /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
@@ -143,7 +143,7 @@ public class NetiqPipelineService
                           (maxQueries > 1 ? $"，單台 Sentinel 內查詢平行度 {maxQueries}" : "") +
                           $"）══════════");
 
-        // AI 與搜尋脫鉤（docs/FEEDBACK-12-PLAN.md §3）：搜尋＋統計主線把需要 AI 的主機日丟進
+        // AI 與搜尋脫鉤（docs/archive/FEEDBACK-12-PLAN.md §3）：搜尋＋統計主線把需要 AI 的主機日丟進
         // 有界佇列，單一背景消費者依序（FIFO）取出跑 AI，搜尋不再被 AI 拖住。無論下面的搜尋
         // 迴圈正常結束還是被取消，finally 都要讓消費者知道不會再有新項目並等它收尾——
         // 否則消費者會永遠卡在 ReadAllAsync 等下一筆，執行永遠收不了尾。
@@ -234,7 +234,7 @@ public class NetiqPipelineService
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
-    /// 缺漏日掃描＋孤兒補跑流程（docs/FEEDBACK-12-PLAN.md §4.4）——同一台 Sentinel 依環境事實
+    /// 缺漏日掃描＋孤兒補跑流程（docs/archive/FEEDBACK-12-PLAN.md §4.4）——同一台 Sentinel 依環境事實
     /// 通常只會有單一 OS（見類別文件），但這裡不依賴此假設，兩組都有目標時依序各跑一輪
     /// （批次內部仍是各自 OS 同質，filter 只需要建一次）。
     /// </summary>
@@ -293,7 +293,7 @@ public class NetiqPipelineService
                 plans.Add(new HostPlan(target, store, missingDates, groupIds, isHighVolume));
             }
 
-            // AiPending 孤兒補跑（docs/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
+            // AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
             // 主機可能今天已經補齊缺漏日，但上次執行被取消時留下的某一天還卡在「AI 排隊中」，
             // 兩者互不影響，各自獨立檢查同一個 lookback 窗口（與 MissingDateFinder 同一個範圍：
             // 今天往回數 lookback 天，不含今天）。
@@ -382,7 +382,7 @@ public class NetiqPipelineService
             }
         }
 
-        // 孤兒補跑殿後（docs/FEEDBACK-12-PLAN.md §3.10）：排在這台 Sentinel 的一般缺漏日之後，
+        // 孤兒補跑殿後（docs/archive/FEEDBACK-12-PLAN.md §3.10）：排在這台 Sentinel 的一般缺漏日之後，
         // 不搶當日主線的 AI 佇列順位
         foreach (var job in orphanJobs)
         {
@@ -504,7 +504,7 @@ public class NetiqPipelineService
                 plan, date, mapped, searchResult.Truncated, displayName,
                 hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName, aiQueue, suppressionSnapshot, ct);
 
-            // 主機之間讓出執行緒（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
+            // 主機之間讓出執行緒（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
             // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
             // 50 台跑完，期間前景請求只能等 thread pool 長新執行緒（每秒才補一條）。
             // Yield 讓已排隊的前景工作先跑——成本是每台一次排程往返，相對於一台主機一天的
@@ -521,7 +521,7 @@ public class NetiqPipelineService
     }
 
     /// <summary>
-    /// 統計段（docs/FEEDBACK-12-PLAN.md §3.4）：聚合/規則/趨勢/關聯計算完立刻寫入，不等 AI——
+    /// 統計段（docs/archive/FEEDBACK-12-PLAN.md §3.4）：聚合/規則/趨勢/關聯計算完立刻寫入，不等 AI——
     /// 這是本輪脫鉤的核心，NetIQ 搜尋不再因為 AI 拖住下一個日期。需要 AI 時把工作項連同
     /// 這裡建立的 <see cref="LogAnalysisService"/> 實例（AI 段要用同一個 historyService/
     /// reportService/serverDescription 綁定）一起丟進 <paramref name="aiQueue"/>，
@@ -598,7 +598,7 @@ public class NetiqPipelineService
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 統計完成，AI 分析排隊中");
                 var job = new AiFollowupJob(analysisService, plan.Store, target.IpAddress, date, sentinelName, workItem, RetryRecord: null);
 
-                // 佇列已滿時在這裡背壓等待（docs/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
+                // 佇列已滿時在這裡背壓等待（docs/archive/FEEDBACK-12-PLAN.md §3.2）——AI 落後太多時
                 // 讓搜尋主線自然暫停，不是無限堆積記憶體。回饋十三輪 A7：先非阻塞探測一次，
                 // 探測到會背壓就先切一個獨立 phase 讓畫面誠實顯示「暫停中」，不然使用者看到的
                 // 就是進度條卡住不動——與使用者回饋②（AI 落後看起來像當掉）同一種外觀症狀。
@@ -626,7 +626,7 @@ public class NetiqPipelineService
                                   (record.ReportFile != null ? $" → {record.ReportFile}" : ""));
             }
 
-            // 統計完成即算 done，AI 不在內（docs/FEEDBACK-12-PLAN.md §3.7）：進度條分子分母
+            // 統計完成即算 done，AI 不在內（docs/archive/FEEDBACK-12-PLAN.md §3.7）：進度條分子分母
             // 只反映搜尋+統計的進度，不會被 AI 卡住不動
             _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
         }
@@ -654,7 +654,7 @@ public class NetiqPipelineService
     }
 
     /// <summary>
-    /// AI 待處理佇列的工作項（docs/FEEDBACK-12-PLAN.md §3.4/§3.10）：帶著統計段已建好的
+    /// AI 待處理佇列的工作項（docs/archive/FEEDBACK-12-PLAN.md §3.4/§3.10）：帶著統計段已建好的
     /// <see cref="LogAnalysisService"/> 實例（AI 段要用同一個 historyService/reportService
     /// 綁定重讀歷史）與寫回目的地（<paramref name="Store"/>）。兩種來源二擇一：
     /// <paramref name="WorkItem"/> 非 null＝這次搜尋新算出的主機日；<paramref name="RetryRecord"/>
@@ -669,7 +669,7 @@ public class NetiqPipelineService
     }
 
     /// <summary>
-    /// AI 段的單一背景消費者（docs/FEEDBACK-12-PLAN.md §3.4）：依 FIFO 順序取出工作項，
+    /// AI 段的單一背景消費者（docs/archive/FEEDBACK-12-PLAN.md §3.4）：依 FIFO 順序取出工作項，
     /// 逐一呼叫 <see cref="LogAnalysisService.CompleteAiAsync"/> 並用
     /// <see cref="IAnalysisRecordStore.AttachAiResult"/> 寫回——單一消費者天然序列化，
     /// 保證同一台主機的日期依入列順序處理，讓隔日 prompt 引用前一天 AI 摘要的語意成立。
@@ -732,7 +732,7 @@ public class NetiqPipelineService
                                       "（統計紀錄已完整寫入，下次執行自動重試 AI 段）");
                 }
 
-                // 搜尋全部完成、佇列還有件時，這裡接手成為使用者看到的進度（docs/FEEDBACK-12-PLAN.md §3.7）
+                // 搜尋全部完成、佇列還有件時，這裡接手成為使用者看到的進度（docs/archive/FEEDBACK-12-PLAN.md §3.7）
                 _progress?.Report("netiq-ai", result.AiCompleted + result.AiAbandoned, result.AiQueued);
             }
         }
@@ -794,7 +794,7 @@ public sealed class NetiqPipelineResult
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
     public IReadOnlyList<string> Warnings => _warnings;
 
-    /// <summary>本次排進 AI 待處理佇列的主機日數（docs/FEEDBACK-12-PLAN.md §3.4）——
+    /// <summary>本次排進 AI 待處理佇列的主機日數（docs/archive/FEEDBACK-12-PLAN.md §3.4）——
     /// 統計段判定需要 AI 就算一件，不論最後是否成功完成</summary>
     public int AiQueued => _aiQueued;
 

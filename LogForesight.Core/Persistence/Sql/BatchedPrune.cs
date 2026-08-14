@@ -3,7 +3,7 @@ using NLog;
 namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
-/// 分批刪除的共用骨架（docs/SCALE-FIX-PLAN-2026-08-06.md S-4，沿用 P0.5 在
+/// 分批刪除的共用骨架（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4，沿用 P0.5 在
 /// <see cref="EfAnalysisRecordStore.Prune(int)"/>／<see cref="EfJsonLogStore.Prune(DateTime)"/>
 /// 驗證過的作法）。
 ///

@@ -1,7 +1,7 @@
 namespace LogForesight.Core.Persistence;
 
 /// <summary>
-/// 處理狀態自 blob 搬進真表的**遷移狀態**（docs/SCALE-FIX-PLAN-2026-08-06.md §三）。
+/// 處理狀態自 blob 搬進真表的**遷移狀態**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
 /// **為什麼需要把它寫下來**：原本的冪等判斷是「目標表非空即跳過」——那是**全表**判斷，
 /// 不是「這一份搬完了沒」。首次啟動若在遷移中途被強制中止（Windows 服務啟動逾時被 SCM 砍掉），

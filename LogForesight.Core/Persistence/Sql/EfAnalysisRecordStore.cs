@@ -30,7 +30,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// </summary>
     private readonly HostKey? _ownerHost;
 
-    /// <summary>慢操作統計（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）；測試直接建構時可不傳</summary>
+    /// <summary>慢操作統計（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）；測試直接建構時可不傳</summary>
     private readonly SqlPerformanceMonitor? _performance;
 
     public EfAnalysisRecordStore(
@@ -160,7 +160,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         }
         row.ContentJson = JsonSerializer.Serialize(record);
 
-        // 抽出欄同步（docs/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
+        // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
         // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移
         row.RiskLevel = outcome.RiskLevel;
         ctx.SaveChanges();
@@ -170,7 +170,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     }
 
     /// <summary>
-    /// 單次清理的列數上限（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
+    /// 單次清理的列數上限（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E2）。
     ///
     /// 為什麼要有上限：正常每晚只有一天份過期（2000~6000 列），但**只要停機幾天沒跑、
     /// 或管理者把保留天數調短**，一次要刪的就是數十萬列。無上限時那會變成一筆超長交易——

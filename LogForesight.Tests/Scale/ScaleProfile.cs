@@ -3,7 +3,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 規模壓測的資料量設定（docs/SCALE-ISSUE-FIRST-PLAN.md P0）。
+/// 規模壓測的資料量設定（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P0）。
 ///
 /// 為什麼要有 profile 而不是寫死數字：同一組壓測要在三種量級下跑——
 /// <see cref="Small"/> 供常態測試驗證產生器本身沒壞（秒級），

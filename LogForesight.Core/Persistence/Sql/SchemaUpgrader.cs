@@ -39,7 +39,7 @@ internal static class SchemaUpgrader
             "IX_lf_risky_events_host_id_date_source_event_id", "host_id, date, source, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_risky_events", "IX_lf_risky_events_date", "date");
 
-        // 問題事實表的聚合維度（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
+        // 問題事實表的聚合維度（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
         // 舊列的預設值（host_id=0、event_count=0、log_name=''）**不是正確資料**——
         // 由 TopIssueBackfiller 在背景補齊，補完之前畫面要誠實標示「統計中」。
         AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "host_id",
@@ -61,7 +61,7 @@ internal static class SchemaUpgrader
             "IX_lf_top_issues_date_signature", "record_date, source_name, event_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_top_issues", "IX_lf_top_issues_host_date", "host_id, record_date");
 
-        // 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：與 lf_risky_events 完全同一套
+        // 處理狀態三表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：與 lf_risky_events 完全同一套
         // 「檢查缺什麼→缺才補」的冪等 DDL——既有部署的 DB 已經存在，EnsureCreated 對它
         // 什麼都不做，新 DB 則由 EnsureCreated 建好、這裡 no-op。
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_handling",

@@ -4,7 +4,7 @@ namespace LogForesight.Core.Persistence.Sql;
 
 /// <summary>
 /// <see cref="IIssueCaseStore"/> 的真表實作（↔ lf_issue_cases，
-/// docs/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）。
+/// docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）。
 ///
 /// **為什麼案件也要一起搬**（它的列數比 issue_handling 少一個量級）：
 ///   1. <c>GetOpen</c> 是**每次標記都會走**的路徑（IssueCaseCoordinator.SyncStatus 開頭），
@@ -183,7 +183,7 @@ public sealed class EfIssueCaseStore : IIssueCaseStore
     }
 
     /// <summary>
-    /// 清除超過保留天數的案件（docs/SCALE-FIX-PLAN-2026-08-06.md S-4）。
+    /// 清除超過保留天數的案件（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4）。
     ///
     /// **只刪已結案、且結案時間早於 cutoff 的**——這裡刻意不用 <c>LastLinkedDate</c>
     /// 之類的「事件日期」當條件：進行中案件不論多舊都要留著，因為它代表

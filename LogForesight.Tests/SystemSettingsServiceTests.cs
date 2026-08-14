@@ -723,7 +723,7 @@ public class SystemSettingsServiceTests : IDisposable
     private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
 
     /// <summary>由關轉開（首次啟用）：窗口內既有紀錄一律標成已通知——不補寄啟用前的歷史，
-    /// 避免第一封信是「近 14 天總帳」（見 docs/FEEDBACK-18-PLAN.md 批次C）。</summary>
+    /// 避免第一封信是「近 14 天總帳」（見 docs/archive/FEEDBACK-18-PLAN.md 批次C）。</summary>
     [Fact]
     public void Update_摘要由關轉開時預填窗口內既有紀錄為已通知()
     {

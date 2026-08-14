@@ -344,7 +344,7 @@ public static class KnownIssueCatalog
     }
 
     /// <summary>
-    /// Linux 版 Classify（docs/FEEDBACK-12-PLAN.md §4.2）：規則比對已經在聚合**之前**由
+    /// Linux 版 Classify（docs/archive/FEEDBACK-12-PLAN.md §4.2）：規則比對已經在聚合**之前**由
     /// <see cref="LogAggregator"/> 逐事件呼叫 <see cref="FindLinuxRule"/> 做過（訊息全文比對
     /// 必須在聚合前做，聚合後只剩截斷過的 SampleMessages），這裡只需要用聚合時記下的
     /// <see cref="LogIssueSignature.EventKey"/>（比對命中的規則 Id）查回規則本體套用分類，

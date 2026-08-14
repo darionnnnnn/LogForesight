@@ -3,7 +3,7 @@ using NLog;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 在**背景**把處理狀態自 blob 搬進真表（docs/SCALE-FIX-PLAN-2026-08-06.md §三／G1）。
+/// 在**背景**把處理狀態自 blob 搬進真表（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三／G1）。
 ///
 /// **為什麼不能在啟動路徑上做**：2000 台約 108 萬列／350 MB，搬移是分鐘級；
 /// Windows 服務的啟動逾時預設 30 秒，掛在 `StorageBackend` 建構式裡會被 SCM 砍掉——

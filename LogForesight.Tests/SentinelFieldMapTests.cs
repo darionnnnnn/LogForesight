@@ -71,7 +71,7 @@ public class SentinelFieldMapTests
         Assert.Equal(EventLogEntryType.SuccessAudit, type);
     }
 
-    // ── Linux（docs/FEEDBACK-12-PLAN.md §4.4，輪 B 第 3/4 項定案）──────────────
+    // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.4，輪 B 第 3/4 項定案）──────────────
 
     [Theory]
     [InlineData(0, EventLogEntryType.Information)]

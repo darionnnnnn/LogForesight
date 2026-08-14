@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 規模壓測的資料集（docs/SCALE-ISSUE-FIRST-PLAN.md P0）：在暫存目錄產生一個**檔案型** SQLite
+/// 規模壓測的資料集（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P0）：在暫存目錄產生一個**檔案型** SQLite
 /// 資料庫，內容為 N 台主機 × M 天的完整分析紀錄＋處理狀態＋案件＋授權設定。
 ///
 /// **為什麼是檔案而不是 in-memory**：6000 台 × 90 天約 54 萬筆紀錄、GB 級的 ContentJson，
@@ -504,7 +504,7 @@ public sealed class ScaleDataSet : IDisposable
             }
         }
 
-        // P3 起這兩份走真表（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 B），不再是整份 blob。
+        // P3 起這兩份走真表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 B），不再是整份 blob。
         // 產生器改走 store 的批次入口——它現在是「本批次涉及的列建索引後合併」，
         // 不是舊實作的 O(既有列 × 本次列)，灌資料不再是瓶頸
         Backend.IssueHandlingStore().SaveMany(handlings);

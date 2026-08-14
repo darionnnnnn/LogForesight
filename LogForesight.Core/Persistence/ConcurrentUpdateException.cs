@@ -1,7 +1,7 @@
 namespace LogForesight.Core.Persistence;
 
 /// <summary>
-/// 樂觀鎖衝突（docs/SCALE-FIX-PLAN-2026-08-06.md D3）：讀取之後、寫入之前，
+/// 樂觀鎖衝突（docs/archive/SCALE-FIX-PLAN-2026-08-06.md D3）：讀取之後、寫入之前，
 /// 同一列被別人改過。
 ///
 /// 這**不是**故障，是多人同時操作的正常結果——呼叫端應該讓使用者重新整理後再試，

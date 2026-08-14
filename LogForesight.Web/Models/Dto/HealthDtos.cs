@@ -1,7 +1,7 @@
 namespace LogForesight.Web.Models.Dto;
 
 /// <summary>
-/// 匿名可讀的存活檢查（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
+/// 匿名可讀的存活檢查（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
 /// **刻意只有三個欄位**：監控系統要的是「活著沒有」，多一個欄位就多一分把內部狀態
 /// 洩漏給未登入者的風險。診斷細節在 <see cref="HealthDetailDto"/>（需 Maintain）。
 /// </summary>

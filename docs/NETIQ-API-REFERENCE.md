@@ -1,5 +1,7 @@
 # NetIQ Sentinel 取數 API 參考
 
+> 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
+>
 > 本文件是 Sentinel REST API 的現況技術參考（認證、事件查詢、欄位對應、查詢 payload）——
 > 公開的 Sentinel REST API 文件（7.0/8.2 版）未涵蓋事件查詢結果頁的確切 JSON 結構，
 > 下列欄位對應是本環境（8.5）以 NetIQ 維護頁「診斷」分頁的驗證查詢核對後的定案結果。
@@ -72,7 +74,7 @@ Sentinel 的事件查詢是**非同步 search job**，不是同步 query：
 （ESM `/objects/eventsource` 才是「已註冊主機目錄」的正解，但本環境的探索帳號被 401/403
 拒絕——那是**權限**問題不是 API 不存在，見 docs/archive/HISTORY.md 2026-07-29 第二輪 probe。）
 
-**2026-08-06 涵蓋保證改版**（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
+**2026-08-06 涵蓋保證改版**（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
 改版前用「自適應窗口」控制取回筆數：事件越多、掃描窗口越短（下限曾是 5 分鐘），
 而被裁掉的時間裡安靜主機的少數幾筆事件一併消失，**畫面上沒有任何跡象**。
 那是靜默漏機。現行設計把窗口固定在 24 小時，改用下面兩件事控制成本：
@@ -170,7 +172,7 @@ job 生命週期，以 `SentinelClient.RawGetAsync` 取得）。
 `SentinelFieldMap`（設定可覆寫的字典，per-server 覆寫保留為保險）承載上表對應，`--sample-ip`
 一類的驗證查詢輸出可直接核對此表是否仍成立。
 
-## 4a. 欄位對應（Linux syslog，四輪 probe 實證定案，docs/FEEDBACK-12-PLAN.md §4.0，已實作）
+## 4a. 欄位對應（Linux syslog，四輪 probe 實證定案，docs/archive/FEEDBACK-12-PLAN.md §4.0，已實作）
 
 Sentinel「118_linux」，https://10.xx.7.118:8443，四輪診斷（2026-08-07）。**欄位形狀與
 filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`／`SentinelEventMapper`／
@@ -194,7 +196,7 @@ filter 內容子句／`sev` 門檻皆已定案並實作**（`SentinelFieldMap`�
 | 批次/分頁 | — | 100 個 IP 子句接受（~1.7s）；pgsize 1000 於 833ms | 批次機制照 Windows 沿用，`IpBatchSize` 維持 50 共用（總量評估：檢索面全站 <1 萬筆/日，遠低於截斷線） |
 | 環境觀察 | — | Sentinel 自家 Syslog_UDP connector 在丟訊息（`"Dropped 29,623 messages so far"`） | 來源端完整性不保證——我方無從逐主機偵測這種丟失，屬環境層事實，排查「主機明明有事件卻查不到」時可留意 |
 
-**診斷分頁（`NetiqProbeRunner`）Linux 深掘步驟（docs/FEEDBACK-12-PLAN.md §4.1／4B.0）**：
+**診斷分頁（`NetiqProbeRunner`）Linux 深掘步驟（docs/archive/FEEDBACK-12-PLAN.md §4.1／4B.0）**：
 步驟 8 樣本數 3→10＋欄位名聯集；8b（`msg` 全文不截斷）、8c（`sp` 查詢行為）、
 8d（`sev` 分佈＋樣本全文）、8e（種子 program 量級）、8f（`sshd` 樣本全文）、
 8g（`msg` 片語查詢行為＋暴破樣本），皆掛在「有填 Linux 樣本 IP」同一個開關下，

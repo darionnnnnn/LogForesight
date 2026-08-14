@@ -36,7 +36,7 @@ public class NetiqPipelineServiceLookbackTests
 }
 
 /// <summary>
-/// Sentinel 平行度的行程內上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）。
+/// Sentinel 平行度的行程內上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
 ///
 /// 分析已搬進網站行程執行（本輪定案不拆獨立 worker），平行度不再只是「分析跑多快」，
 /// 而是「同時有幾條執行緒在跟使用者的請求搶 thread pool 與連線」。管理者的設定仍然有效，

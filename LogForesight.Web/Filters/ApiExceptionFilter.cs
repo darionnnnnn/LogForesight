@@ -27,7 +27,7 @@ public class ApiExceptionFilter : IExceptionFilter
                 domain.Code,
                 domain.Message),
 
-            // 樂觀鎖衝突（docs/SCALE-FIX-PLAN-2026-08-06.md D3）：多人同時操作的正常結果，
+            // 樂觀鎖衝突（docs/archive/SCALE-FIX-PLAN-2026-08-06.md D3）：多人同時操作的正常結果，
             // 不是故障——store 已把「哪一筆被搶先改了」寫進訊息，直接給使用者看。
             // 例外型別在 Core（拋出點是 store，Core 不能參照 Web 的 DomainException）
             LogForesight.Core.Persistence.ConcurrentUpdateException conflict => (

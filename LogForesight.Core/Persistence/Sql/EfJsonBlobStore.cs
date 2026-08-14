@@ -49,7 +49,7 @@ public sealed class EfJsonBlobStore
     {
         // 行程內序列化；跨程序靠 DB 交易（SQLite 寫入鎖／SqlServer 交易）
         //
-        // 這把鎖是全站寫入處理狀態時的實際排隊點（docs/SCALE-ISSUE-FIRST-PLAN.md §8.4）：
+        // 這把鎖是全站寫入處理狀態時的實際排隊點（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.4）：
         // 整份 blob 越大，持有時間越長，其他請求就排得越久。量測涵蓋「等鎖＋讀改寫」
         // 整段——只量鎖內時間會漏掉真正讓使用者感覺卡住的那一半。
         var sw = System.Diagnostics.Stopwatch.StartNew();

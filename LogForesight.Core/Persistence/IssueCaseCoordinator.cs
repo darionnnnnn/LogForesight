@@ -224,7 +224,7 @@ public class IssueCaseCoordinator
             {
                 openCase.LastLinkedDate = date.Date;
                 openCase.UpdatedAt = occurredAt;
-                // **累積後一次寫**（體檢 S4／docs/SCALE-ISSUE-FIRST-PLAN.md P3）：
+                // **累積後一次寫**（體檢 S4／docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
                 // 原本在迴圈內逐案 Save，2000 台每晚約 4000 次寫入——blob 時代那是
                 // 4000 次整份讀改寫，且與 Web 端的標記操作搶同一把鎖
                 casesToSave.Add(openCase);

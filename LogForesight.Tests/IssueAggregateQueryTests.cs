@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 問題聚合（docs/SCALE-ISSUE-FIRST-PLAN.md P4／§4.2／根因 C）。
+/// 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／§4.2／根因 C）。
 ///
 /// **這是需求「主視角改成問題」的資料層**：主機數與期間跨度是使用者明確要求的兩個數字，
 /// 其餘是 §10.3「時間形狀」的訊號。改版前這些只能把整段期間的紀錄撈回記憶體再 GroupBy

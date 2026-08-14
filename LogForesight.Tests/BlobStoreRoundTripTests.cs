@@ -11,7 +11,7 @@ namespace LogForesight.Tests;
 /// 本專案已有三個前例：`RuleImporter` 漏抄 `ElevatesDayRisk`、
 /// `OwnerCsvImporter` 手刻 WebHost 漏抄 SentinelId/Os/OrphanedFromSentinel、
 /// 2026-08-06 的 `SentinelStore` 漏抄 `UseEsmDirectory`（見
-/// docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §8.2／§8.4）。</para>
+/// docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §8.2／§8.4）。</para>
 ///
 /// <para>因此這裡比對的是**整個物件**：從「全部欄位都不一樣」的既有資料更新過去，
 /// 任一欄沒被複製都當場失敗，不必倚賴有沒有人記得補測試。

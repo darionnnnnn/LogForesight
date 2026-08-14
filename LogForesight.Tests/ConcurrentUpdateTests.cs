@@ -11,7 +11,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// 樂觀鎖衝突的端到端配線（docs/SCALE-FIX-PLAN-2026-08-06.md D3）。
+/// 樂觀鎖衝突的端到端配線（docs/archive/SCALE-FIX-PLAN-2026-08-06.md D3）。
 ///
 /// 三張處理狀態表以 <c>UpdatedAt</c> 當並發權杖，衝突**偵測得到**
 /// （<c>DbUpdateConcurrencyException</c>），但在 D3 之前沒有人攔——

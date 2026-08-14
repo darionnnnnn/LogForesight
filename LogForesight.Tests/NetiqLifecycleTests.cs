@@ -118,7 +118,7 @@ public class NetiqDiscoveryServiceTests
         Assert.False(sub.Hosts.First(h => h.IpAddress == "10.1.2.12").Exists);
     }
 
-    // ── 重掃增量：已登錄主機在 Sentinel 端就排除（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）──
+    // ── 重掃增量：已登錄主機在 Sentinel 端就排除（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §3.3）──
 
     /// <summary>
     /// 重掃時已登錄主機不必重新「發現」——在 server 端排除掉，沒有新主機時一次查詢就結束。

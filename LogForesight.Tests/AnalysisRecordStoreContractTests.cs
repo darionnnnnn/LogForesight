@@ -216,7 +216,7 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Null(store.LastWeeklyCheckupDate());
     }
 
-    // ── AttachAiResult：AI 段結果附掛（docs/FEEDBACK-12-PLAN.md §3.5）─────────────
+    // ── AttachAiResult：AI 段結果附掛（docs/archive/FEEDBACK-12-PLAN.md §3.5）─────────────
 
     [Fact]
     public void AttachAiResult_覆寫暫代欄位並清除AiPending()

@@ -57,7 +57,7 @@ public class SentinelClientException : Exception
 }
 
 /// <summary>
-/// <see cref="SentinelClient"/> 對外唯一用到的能力（docs/FEEDBACK-12-PLAN.md §3.8-2）：抽出來
+/// <see cref="SentinelClient"/> 對外唯一用到的能力（docs/archive/FEEDBACK-12-PLAN.md §3.8-2）：抽出來
 /// 讓 <c>NetiqPipelineService</c> 的 pipeline 測試能注入假搜尋結果，不必真的連 Sentinel。
 /// <see cref="SentinelClient"/> 是唯一實作；簽章原封不動照搬既有 <c>SearchAsync</c>。
 /// </summary>

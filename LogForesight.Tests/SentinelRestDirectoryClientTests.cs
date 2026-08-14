@@ -9,7 +9,7 @@ namespace LogForesight.Tests;
 /// <summary>
 /// SentinelRestDirectoryClient：網段範圍掃描的真實 client
 /// （docs/NETIQ-API-REFERENCE.md §3.4；**2026-08-06 涵蓋保證改版**
-/// docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
+/// docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §三）。
 ///
 /// <para><b>這組測試守的是「涵蓋保證」</b>：掃描結果只有三種——完整、
 /// 顯性警告不完整、顯性失敗。被消滅的是第四種：**靜默漏掉主機**。

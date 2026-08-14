@@ -60,7 +60,7 @@ public class DashboardService
             .ToList();
         // 重點問題（§8-1）：五筆足以回答「現在最該處理哪幾個問題」，再多就變成第二張清單頁。
         //
-        // 自 P4 起走 SQL 端聚合（docs/SCALE-ISSUE-FIRST-PLAN.md 根因 C）而不是對 records
+        // 自 P4 起走 SQL 端聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 C）而不是對 records
         // 在記憶體 GroupBy——6000 台 × 7 天約 4.2 萬筆紀錄、數十萬個問題物件，
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。

@@ -29,7 +29,7 @@ public class DashboardController : ControllerBase
 }
 
 /// <summary>
-/// 執行中告示（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：**任何登入者**都讀得到，
+/// 執行中告示（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：**任何登入者**都讀得到，
 /// 刻意不掛 <c>[Permission]</c>——分析與站台跑在同一個行程，變慢的是所有人的畫面，
 /// 只讓維運看得到原因等於沒有配套。回傳只有「在不在跑、跑到哪」，不含排程設定、
 /// 觸發來源與上次成敗（那些在 <c>/api/admin/schedule/status</c>，維運視角）。
@@ -62,7 +62,7 @@ public class RunActivityController : ControllerBase
             Total = total,
             // 分母都是「主機日」，但一般使用者對這個單位沒有概念——本機路徑是逐日回補（天），
             // NetIQ 機房路徑是逐台主機（台）；netiq-ai／netiq-backpressure 是排隊的主機日數，
-            // 用「件」而非「台」，避免使用者以為又要重新查一次（docs/FEEDBACK-12-PLAN.md §3.7）。
+            // 用「件」而非「台」，避免使用者以為又要重新查一次（docs/archive/FEEDBACK-12-PLAN.md §3.7）。
             UnitText = phase switch
             {
                 "local" => "天",

@@ -8,7 +8,7 @@ using LogForesight.Web.Services;
 using NLog;
 using NLog.Web;
 
-// console 輸出一律 UTF-8（docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §6）：本專案的
+// console 輸出一律 UTF-8（docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §6）：本專案的
 // console 訊息全是繁體中文，而 Windows 的主控台預設代碼頁是系統地區設定（繁中為 950），
 // 與讀取端（Rider 執行視窗、CI log 收集器）的預期編碼不一致時整片變亂碼。
 // 在這裡釘死成 UTF-8，輸出端就不再取決於誰來啟動這個行程。
@@ -180,7 +180,7 @@ try
     app.UseAuthentication();
     app.UseMiddleware<ActiveUserMiddleware>();   // 停用帳號即時生效（§6.3），必須在驗證之後
     app.UseAuthorization();
-    // 處理狀態搬移中擋下寫入（docs/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+    // 處理狀態搬移中擋下寫入（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
     // 位置有要求：在 UseAuthorization 之後（不擋登入），在 CsrfHeaderMiddleware 之前
     //（先回明確的「搬移中」，不要讓使用者收到看似「請求來源驗證失敗」的誤導訊息）
     app.UseMiddleware<MigrationGateMiddleware>();

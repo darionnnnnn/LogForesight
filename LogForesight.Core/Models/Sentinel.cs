@@ -46,7 +46,7 @@ public class Sentinel
 
     /// <summary>
     /// 以 ESM 事件來源目錄（<c>/SentinelRESTServices/objects/eventsource</c>）取代事件掃描來探索主機
-    /// （docs/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）。**預設 false**。
+    /// （docs/archive/NETIQ-DISCOVERY-PLAN-2026-08-06.md §五）。**預設 false**。
     ///
     /// ESM 目錄本來是探索的正解——一次唯讀查詢就拿到已註冊主機清單，而且包含
     /// **目前完全沒在回報的主機**（事件掃描原理上看不到那些，見 §3.4 的涵蓋保證）。

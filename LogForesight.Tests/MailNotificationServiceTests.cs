@@ -227,7 +227,7 @@ public class MailNotificationServiceTests : IDisposable
     }
 
     // ── RiskLevels 查詢下推（回饋十八輪批次A）─────────────────────────────
-    // 2000 台規模下每次執行後全表查 14 天會反序列化上萬列（見 docs/FEEDBACK-18-PLAN.md 批次A）；
+    // 2000 台規模下每次執行後全表查 14 天會反序列化上萬列（見 docs/archive/FEEDBACK-18-PLAN.md 批次A）；
     // 修法是把風險過濾下推進 RecordQueryFilter，記憶體判定原樣保留（雙保險，語意不變）。
     // 這裡直接斷言 FakeAnalysisRecordQuery.LastFilter，而不是只看寄信結果——只看寄信結果的話，
     // 「下推漏了某個等級」這種寫錯不會被任何既有測試抓到（服務端的記憶體過濾會把漏洞蓋住）。
@@ -924,7 +924,7 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
-    /// <summary>週報彙總範圍（docs/FEEDBACK-15-PLAN.md D-3）：過去 7 個完整日（窗口右移一天，
+    /// <summary>週報彙總範圍（docs/archive/FEEDBACK-15-PLAN.md D-3）：過去 7 個完整日（窗口右移一天，
     /// 昨天往回 7 天）達門檻的主機日逐主機彙總＋未處理數；窗口外的紀錄不計入。</summary>
     [Fact]
     public async Task 週報彙總過去七日達門檻的主機日並附未處理數()

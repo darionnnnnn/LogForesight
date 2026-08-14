@@ -4,7 +4,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// LinuxCorrelationAnalyzer：Linux 主機的【SSH 破解得手】關聯（docs/FEEDBACK-12-PLAN.md §4.5，
+/// LinuxCorrelationAnalyzer：Linux 主機的【SSH 破解得手】關聯（docs/archive/FEEDBACK-12-PLAN.md §4.5，
 /// 批 4C）——與 Windows 版 CorrelationAnalyzer 機制完全不同（regex 解析 msg 文字，不是
 /// EventId 群組比對），獨立成一個測試檔。
 /// </summary>

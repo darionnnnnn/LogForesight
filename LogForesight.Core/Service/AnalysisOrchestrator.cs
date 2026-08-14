@@ -107,7 +107,7 @@ public class AnalysisOrchestrator
     private const int TrendWindowDays = 14;
 
     /// <summary>
-    /// 夜間分析自己那個連線池的上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3；回饋十三輪 D 擴充公式；
+    /// 夜間分析自己那個連線池的上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3；回饋十三輪 D 擴充公式；
     /// 回饋十七輪批次E 再 +1）。
     ///
     /// 分析主線本身是**依序**的（同一台主機的趨勢比對需要前一天已寫入的歷史），真正的併發
@@ -141,7 +141,7 @@ public class AnalysisOrchestrator
         try
         {
             // 本次執行共用同一個 StorageBackend（DbContext 工廠與 schema 確認只做一次）。
-            // 連線池刻意與站台分開（docs/SCALE-FIX-PLAN-2026-08-06.md S-3）：分析與站台跑在
+            // 連線池刻意與站台分開（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：分析與站台跑在
             // 同一個行程，分析一跑就是數小時，共用池的話前景請求會排隊等連線——
             // 使用者看到的是「整站變慢」，而不是「分析變慢」。
             var backend = new StorageBackend(settings.Storage, dataRoot, AnalysisMaxPoolSize);
@@ -307,7 +307,7 @@ public class AnalysisOrchestrator
 
             // 問題案件批次逐日掛接（docs/archive/FEEDBACK-4-PLAN.md §0.4-C）：Web 指派後建立的進行中案件，
             // 排程每天分析完新的一天就要把當日相符的問題掛進去（2.4）。
-            // 走與 Web 端**同一組真表 store**（docs/SCALE-ISSUE-FIRST-PLAN.md P3）：
+            // 走與 Web 端**同一組真表 store**（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
             // 這三份自 blob 改真表之後，批次端若還構造舊的 blob store，就會變成
             // 「批次寫 blob、Web 讀資料表」——兩邊各看到一半的處理狀態，而且不會報錯。
             var caseCoordinator = new IssueCaseCoordinator(
@@ -427,7 +427,7 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "執行歷程／匯入／稽核紀錄／風險 log 暫存清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            // 1b-2. 清理處理狀態三表與處理歷程（docs/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
+            // 1b-2. 清理處理狀態三表與處理歷程（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
             //
             // **必須排在 historyService.Prune 之後**：那一步決定了哪些日期的分析紀錄還在，
             // 這裡刪的正是「紀錄已經不在、卻還留著的處理狀態」。順序反過來的話，
@@ -822,7 +822,7 @@ public class AnalysisOrchestrator
                     : ""));
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的
-            // 里程碑列表完全看不到「這次有異常」（docs/FEEDBACK-12-PLAN.md §1.3）。彙整成一條
+            // 里程碑列表完全看不到「這次有異常」（docs/archive/FEEDBACK-12-PLAN.md §1.3）。彙整成一條
             // 而非逐條灌爆里程碑列表——警告數可能隨 Sentinel／主機數量成長。
             if (netiqResult.Warnings.Count > 0)
             {

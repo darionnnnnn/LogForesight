@@ -62,8 +62,8 @@ public class NetiqOptions
     public int MaxParallelServers { get; set; } = 2;
 
     /// <summary>
-    /// <see cref="MaxParallelServers"/> 的硬上限（docs/SCALE-FIX-PLAN-2026-08-06.md S-3，
-    /// docs/FEEDBACK-12-PLAN.md §二）。分析與 Web 站台同一個行程，平行度直接等於「同時有幾條
+    /// <see cref="MaxParallelServers"/> 的硬上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3，
+    /// docs/archive/FEEDBACK-12-PLAN.md §二）。分析與 Web 站台同一個行程，平行度直接等於「同時有幾條
     /// 執行緒在搶 thread pool 與連線池」——這是行程架構決策，不是效能旋鈕，故收斂在單一常數，
     /// 讓 Web 端 DTO 的 <c>[Range]</c> 與 pipeline 執行期的 <c>ResolveParallelism</c> 防線
     /// 共用同一個數字，不會再有「調了 8 卻只跑 3」的落差。

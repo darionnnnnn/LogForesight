@@ -822,7 +822,7 @@ public class MailNotificationService
         var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", dateText, settings.MailMinRiskLevel, type, statsLine);
         var windowText = $"{type}（{from:yyyy-MM-dd} ~ {to:yyyy-MM-dd}）：{statsLine}";
 
-        // 週報附未處理數（docs/FEEDBACK-15-PLAN.md D-3）：不限窗口——「還沒處理完」是當下狀態，
+        // 週報附未處理數（docs/archive/FEEDBACK-15-PLAN.md D-3）：不限窗口——「還沒處理完」是當下狀態，
         // 一個上上週就掛著沒人動的風險日正是週報最該提醒的東西，只看近 7 天反而幫忙藏爛帳。
         // 這是全站統計，不受可見範圍過濾（同 statsLine 的粒度），所有收件人一律看得到。
         string? unresolvedLine = null;

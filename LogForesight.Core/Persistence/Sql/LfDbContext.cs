@@ -32,7 +32,7 @@ public class LfDbContext : DbContext
     /// <summary>append-only 逐行 JSONL（稽核/執行/匯入/處理歷程，↔ EfJsonLogStore）</summary>
     public DbSet<LogLineRow> LogLines => Set<LogLineRow>();
 
-    // ── 處理狀態三表（docs/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）──────────────
+    // ── 處理狀態三表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3／根因 B）──────────────
     //
     // 這三份資料原本各是一個整份 JSON blob（lf_blobs 的一列）。它們與 hosts／users 的差別在於
     // **會隨「主機數 × 天數」成長**：6000 台 × 90 天下 issue_handling 約 324 萬列，
@@ -116,7 +116,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(20);
             e.Property(x => x.SeverityRank).HasColumnName("severity_rank");
 
-            // 問題事實表的聚合維度（docs/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：
+            // 問題事實表的聚合維度（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：
             // 這張表原本只當「篩選子表」用（EXISTS 子查詢），拿不到主機與日期就無法在 SQL 端
             // 回答「這個問題影響幾台、跨哪段期間」——那正是需求「主視角改成問題」要的兩個數字。
             // 這四欄自父列與問題本身去正規化而來，寫入時一併填好（同 lf_record_categories
@@ -266,7 +266,7 @@ public class DailyRecordRow
 
 /// <summary>
 /// 問題簽章列。原本只是「供過濾的抽出欄」，自 P4 起同時是**問題聚合的事實表**
-/// （docs/SCALE-ISSUE-FIRST-PLAN.md 根因 C）——讀取單筆紀錄的權威來源仍是
+/// （docs/archive/SCALE-ISSUE-FIRST-PLAN.md 根因 C）——讀取單筆紀錄的權威來源仍是
 /// <see cref="DailyRecordRow.ContentJson"/>，但「這個問題影響幾台、跨哪段期間、
 /// 出現幾天」改由這張表 GROUP BY 直接回答，不再把整段期間的紀錄撈回記憶體。
 /// ↔ lf_top_issues

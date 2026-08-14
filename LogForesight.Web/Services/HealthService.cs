@@ -6,7 +6,7 @@ using LogForesight.Web.Services.Mail;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 站台健康狀態（docs/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
+/// 站台健康狀態（docs/archive/SCALE-ISSUE-FIRST-PLAN.md §8.2 E5）。
 ///
 /// **為什麼需要**：改版前要回答「站台現在是不是壞了／變慢了」，只能上伺服器翻 `logs\web.log`。
 /// 企業級部署要能被監控系統輪詢，而且要在**沒有人登入**的情況下就答得出「活著沒有」——
