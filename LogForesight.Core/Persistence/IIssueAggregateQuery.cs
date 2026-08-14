@@ -63,8 +63,14 @@ public interface IIssueAggregateQuery
     /// <summary>
     /// 期間內依 (Source, EventId) 聚合。<paramref name="hostIds"/> 為可見範圍
     /// （null＝不限制；空集合＝零結果，與 <c>RecordQueryFilter.Hosts</c> 同一套授權語意）。
+    /// <paramref name="visibleSeverities"/>＝SiteHidden 模式的問題嚴重度可見性
+    /// （<c>ISystemSettingsService.GetVisibleSeverities</c>，null＝不限制／DefaultHidden 模式）——
+    /// 這裡繞過 <c>RecordRepository</c> 的「單一咽喉」，呼叫端必須自己把這道過濾傳進來，
+    /// 否則 SiteHidden 模式下應該被隱藏的問題會在依問題／依主機／依日期視角重新冒出來。
     /// </summary>
-    List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+    List<IssueAggregate> Aggregate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
 
     /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
@@ -81,16 +87,20 @@ public interface IIssueAggregateQuery
     /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
     /// 處理狀態的業務規則（案件優先／觀察到期／預設嚴重度）綁在同一層。
     /// </summary>
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
     List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds);
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null);
 
     /// <summary>
     /// 期間內出現在「可行動」風險日（高／中）上的每個 (存活主機, 完整簽章) 最近一次出現快照
     /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
     /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
     /// </summary>
-    List<HostIssueOccurrence> ActionableOccurrences(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+    List<HostIssueOccurrence> ActionableOccurrences(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
 
     /// <summary>
     /// 依風險類別彙總（回饋十九輪批次D，取代 <c>CategoryAggregator.Merge</c> 在記憶體對
@@ -100,6 +110,70 @@ public interface IIssueAggregateQuery
     List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? allowedSeverities);
+
+    /// <summary>
+    /// 依日期彙總（回饋十九輪批次E2，取代「依日期」視角在記憶體對整段期間紀錄的 GroupBy）。
+    /// 彙總單位是 <c>lf_daily_records</c>（不是問題表）：一天一列，回答「這一天整體有多不平靜」。
+    /// <paramref name="riskLevels"/> 非 null 時只計入日風險等級落在集合內的紀錄——這是母體篩選
+    /// （篩掉的日子連同它的高/中/低分桶一起消失），不是分桶後再過濾，篩「只看高」時
+    /// 中/低分桶自然全為零，與舊版 <c>RecordFilterMatcher</c> 的既有語意相同。
+    /// <paramref name="categories"/>／<paramref name="eventId"/>／<paramref name="source"/>
+    /// 語意同 <see cref="RecordQueryFilter"/> 的同名欄位（紀錄中任一問題簽章符合即命中該紀錄）。
+    /// </summary>
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>：套用在風險類型 chips 的
+    /// 母體上（<c>Categories</c> 欄位），不影響高/中/低風險日分桶——那是日層級欄位，不受問題嚴重度
+    /// 可見性影響（同 <c>RecordRepository.ApplySeverityVisibility</c> 只砍 TopIssues、不動 RiskLevel 的既有原則）。
+    List<DateRiskAggregate> AggregateByDate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+
+    /// <summary>
+    /// 依主機彙總（回饋十九輪批次E2，取代「依主機」視角在記憶體對整段期間紀錄的 GroupBy）。
+    /// 彙總單位同樣是 <c>lf_daily_records</c>，跨整段期間攤平成一台主機一列。
+    /// 其餘參數語意同 <see cref="AggregateByDate"/>。
+    /// </summary>
+    List<HostRiskAggregate> AggregateByHost(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+}
+
+/// <summary>單一天（跨全部主機）的風險彙總</summary>
+public sealed class DateRiskAggregate
+{
+    public DateTime Date { get; init; }
+    public int HighRiskHosts { get; init; }
+    public int MediumRiskHosts { get; init; }
+    public int LowRiskHosts { get; init; }
+
+    /// <summary>當天有關聯訊號的相異存活主機數</summary>
+    public int CorrelationHosts { get; init; }
+
+    /// <summary>當天有風險紀錄的相異存活主機數</summary>
+    public int HostCount { get; init; }
+
+    /// <summary>當天出現過的風險類型，依「最高嚴重度、問題數」排序（<see cref="CategoryAggregator"/> 同一套規則）</summary>
+    public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>單一（存活）主機跨整段期間的風險彙總</summary>
+public sealed class HostRiskAggregate
+{
+    public long HostId { get; init; }
+    public int HighRiskDays { get; init; }
+    public int MediumRiskDays { get; init; }
+    public int LowRiskDays { get; init; }
+    public int CorrelationDays { get; init; }
+
+    /// <summary>期間內出現過的風險類型，依「最高嚴重度、問題數」排序（跨日去重）</summary>
+    public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
+
+    public DateTime LatestDate { get; init; }
+    public string LatestRiskLevel { get; init; } = string.Empty;
+    public string LatestHeadline { get; init; } = string.Empty;
 }
 
 /// <summary>單一（存活主機, 完整簽章）在期間內最近一次出現的快照</summary>

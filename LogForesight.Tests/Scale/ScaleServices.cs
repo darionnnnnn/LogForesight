@@ -48,7 +48,8 @@ internal sealed class ScaleServices
             : FakeCurrentUser.ForUser(2, Capability.Handle);
 
         Visibility = new VisibilityService(currentUser, users, userGroups, access, Hosts, Cases);
-        Repository = new RecordRepository(recordStore, Hosts, Visibility, new FakeSystemSettingsService());
+        var settingsService = new FakeSystemSettingsService();
+        Repository = new RecordRepository(recordStore, Hosts, Visibility, settingsService);
 
         var progress = new HandlingProgressCalculator(IssueHandlings, recordHandling, Cases, settingsStore);
         var handlingHistory = new HandlingHistoryQueryService(
@@ -71,7 +72,7 @@ internal sealed class ScaleServices
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
-            Visibility, aggregates, statusResolver);
+            settingsService, Visibility, aggregates, statusResolver);
 
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts);
 

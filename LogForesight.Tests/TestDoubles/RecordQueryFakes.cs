@@ -33,10 +33,12 @@ internal class RecordQueryServiceFacade
         ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        ISystemSettingsService? settingsService = null)
     {
         _list = new RecordListQueryService(
-            repository, hosts, users, handlings, issueHandlings, cases, settings, visibility, aggregates, statusResolver, issueOwners);
+            repository, hosts, users, handlings, issueHandlings, cases, settings,
+            settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver, issueOwners);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);
     }

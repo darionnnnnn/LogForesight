@@ -40,6 +40,18 @@ public static class LegacySeverityRank
 
     /// <summary>是否因為原始值是 Critical 而必須強制視為「重大」</summary>
     public static bool ForcesElevate(int rank) => rank == (int)IssueSeverity.Critical;
+
+    /// <summary>
+    /// 可見嚴重度集合展開回「正規化後會落在可見集合內」的原始 rank 集合（回饋十九輪批次E1/E2，
+    /// SiteHidden 過濾用）：可見集合含 High 時，Critical(3) 的舊資料列也算可見——
+    /// Critical 正規化後就是 High，呼叫端不必自己展開這條規則。
+    /// </summary>
+    public static HashSet<int> ExpandVisibleRanks(IReadOnlySet<IssueSeverity> visible)
+    {
+        var ranks = visible.Select(s => (int)s).ToHashSet();
+        if (visible.Contains(IssueSeverity.High)) ranks.Add((int)IssueSeverity.Critical);
+        return ranks;
+    }
 }
 
 public class KnownIssueRule

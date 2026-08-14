@@ -17,6 +17,7 @@ public class RecordListQueryService
     private readonly IIssueHandlingStore _issueHandlings;
     private readonly IIssueCaseStore _cases;
     private readonly ISystemSettingsStore _settings;
+    private readonly ISystemSettingsService _settingsService;
     private readonly IVisibilityService _visibility;
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
@@ -33,6 +34,7 @@ public class RecordListQueryService
         IIssueHandlingStore issueHandlings,
         IIssueCaseStore cases,
         ISystemSettingsStore settings,
+        ISystemSettingsService settingsService,
         IVisibilityService visibility,
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
@@ -45,6 +47,7 @@ public class RecordListQueryService
         _issueHandlings = issueHandlings;
         _cases = cases;
         _settings = settings;
+        _settingsService = settingsService;
         _visibility = visibility;
         _aggregates = aggregates;
         _statusResolver = statusResolver;
@@ -178,29 +181,31 @@ public class RecordListQueryService
 
     public PagedResult<RecordHostGroupDto> SearchByHost(RecordSearchRequest request)
     {
-        var records = _repository.Query(BuildFilter(request));
-        var lookup = new HostLookup(_hosts.GetAll());
+        // 全面 SQL 化（回饋十九輪批次E2）：改版前整批載入期間內全部紀錄再於記憶體 GroupBy，
+        // 與 SearchByIssue 改版前同一種代價（問題數 × 主機數 × 天數）。改由
+        // lf_daily_records／lf_top_issues 兩句 GROUP BY 回答，語意與篩選條件與 E1 對齊。
+        var hostIds = ResolveVisibleHostIds(request);
+        var (from, to) = ResolveDateRange(request);
+        var (riskLevels, categories, minSeverity) = ParseAggregateFilters(request);
+        var visibleSeverities = ResolveVisibleSeverities();
 
-        var groups = records
-            .Select(r => new { Record = r, Host = lookup.For(r) })
-            .GroupBy(x => x.Host?.HostName ?? x.Record.Host, StringComparer.OrdinalIgnoreCase)
-            .Select(g =>
+        var aggregates = _aggregates.AggregateByHost(
+            from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
+        var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
+
+        var groups = aggregates
+            .Select(a => new RecordHostGroupDto
             {
-                var latest = g.OrderByDescending(x => x.Record.Date).First();
-                return new RecordHostGroupDto
-                {
-                    HostId = latest.Host?.HostId ?? 0,
-                    HostName = latest.Host?.HostName ?? latest.Record.Host,
-                    HighRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.High),
-                    MediumRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.Medium),
-                    LowRiskDays = g.Count(x => x.Record.RiskLevel == RiskLevels.Low),
-                    CorrelationDays = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
-                    Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
-                        .Select(c => c.Category.ToString()).ToList(),
-                    LatestDate = latest.Record.Date.ToString("yyyy-MM-dd"),
-                    LatestRiskLevel = latest.Record.RiskLevel,
-                    LatestHeadline = latest.Record.Headline
-                };
+                HostId = a.HostId,
+                HostName = hostsById.TryGetValue(a.HostId, out var h) ? h.HostName : string.Empty,
+                HighRiskDays = a.HighRiskDays,
+                MediumRiskDays = a.MediumRiskDays,
+                LowRiskDays = a.LowRiskDays,
+                CorrelationDays = a.CorrelationDays,
+                Categories = a.Categories.ToList(),
+                LatestDate = a.LatestDate.ToString("yyyy-MM-dd"),
+                LatestRiskLevel = a.LatestRiskLevel,
+                LatestHeadline = a.LatestHeadline
             })
             .ToList();
 
@@ -225,22 +230,25 @@ public class RecordListQueryService
 
     public PagedResult<RecordDateGroupDto> SearchByDate(RecordSearchRequest request)
     {
-        var records = _repository.Query(BuildFilter(request));
-        var lookup = new HostLookup(_hosts.GetAll());
+        // 全面 SQL 化（回饋十九輪批次E2），語意與篩選條件與 SearchByHost／E1 對齊
+        var hostIds = ResolveVisibleHostIds(request);
+        var (from, to) = ResolveDateRange(request);
+        var (riskLevels, categories, minSeverity) = ParseAggregateFilters(request);
+        var visibleSeverities = ResolveVisibleSeverities();
 
-        var groups = records
-            .Select(r => new { Record = r, HostName = lookup.For(r)?.HostName ?? r.Host })
-            .GroupBy(x => x.Record.Date.Date)
-            .Select(g => new RecordDateGroupDto
+        var aggregates = _aggregates.AggregateByDate(
+            from, to, hostIds, riskLevels, categories, request.EventId, request.Source, minSeverity, visibleSeverities);
+
+        var groups = aggregates
+            .Select(a => new RecordDateGroupDto
             {
-                Date = g.Key.ToString("yyyy-MM-dd"),
-                HighRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.High),
-                MediumRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.Medium),
-                LowRiskHosts = g.Count(x => x.Record.RiskLevel == RiskLevels.Low),
-                CorrelationHosts = g.Count(x => x.Record.CorrelationAlerts.Count > 0),
-                Categories = CategoryAggregator.Aggregate(g.SelectMany(x => x.Record.TopIssues))
-                    .Select(c => c.Category.ToString()).ToList(),
-                HostCount = g.Select(x => x.HostName).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                Date = a.Date.ToString("yyyy-MM-dd"),
+                HighRiskHosts = a.HighRiskHosts,
+                MediumRiskHosts = a.MediumRiskHosts,
+                LowRiskHosts = a.LowRiskHosts,
+                CorrelationHosts = a.CorrelationHosts,
+                Categories = a.Categories.ToList(),
+                HostCount = a.HostCount
             })
             .ToList();
 
@@ -275,8 +283,9 @@ public class RecordListQueryService
         // 所以可見範圍要自己算好再傳下去——空集合＝零結果，與既有的授權語意一致。
         var hostIds = ResolveVisibleHostIds(request);
         var (from, to) = ResolveDateRange(request);
+        var visibleSeverities = ResolveVisibleSeverities();
 
-        var aggregates = _aggregates.Aggregate(from, to, hostIds);
+        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities);
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -300,6 +309,14 @@ public class RecordListQueryService
             aggregates = aggregates.Where(a => allowedSeverities.Contains((IssueSeverity)a.MaxSeverityRank)).ToList();
         }
 
+        // 嚴重度門檻（報表「類別×嚴重度」下鑽用，docs/WEB-SPEC.md）：語意同 RecordQueryFilter.MinSeverity
+        // 「紀錄中任一問題簽章達到此嚴重度」，這裡的等價物是「問題期間內最高嚴重度達到門檻」
+        if (!string.IsNullOrWhiteSpace(request.Severity) &&
+            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var minSeverity))
+        {
+            aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
+        }
+
         if (aggregates.Count == 0) return Paginate(new List<IssueGroupDto>(), request);
 
         // 密度的分母＝查詢期間天數。篩選未指定日期時退回候選問題本身的跨度——
@@ -316,7 +333,7 @@ public class RecordListQueryService
         // 處理狀態的候選集只到「篩選後留下的問題 × 可見主機」這一層（不是問題 × 主機 × 天數），
         // 與 OccurrenceStatusResolver 共用批次D 已驗證過的骨架（IssueHandlingRollupQuery 同款）
         var issues = aggregates.Select(a => (a.Source, a.EventId)).ToList();
-        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds);
+        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities);
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
         // 依 (Source,EventId) 分桶——完整簽章鍵可能帶 Linux 的 EventKey 尾段（5 段），
@@ -494,6 +511,54 @@ public class RecordListQueryService
     /// 那樣用 null 代表不限制</summary>
     private static (DateTime From, DateTime To) ResolveDateRange(RecordSearchRequest request) =>
         (request.From ?? DateTime.MinValue, request.To ?? DateTime.Today);
+
+    /// <summary>
+    /// SQL 聚合查詢共用的 RiskLevels／Categories／MinSeverity 解析（回饋十九輪批次E2）：
+    /// 與 <see cref="BuildFilter"/> 對同一批 request 欄位的既有解析規則相同，避免兩份拷貝各自漂移。
+    /// </summary>
+    private static (IReadOnlySet<string>? RiskLevels, IReadOnlySet<IssueCategory>? Categories, IssueSeverity? MinSeverity)
+        ParseAggregateFilters(RecordSearchRequest request)
+    {
+        var riskLevels = request.RiskLevels is { Count: > 0 } ? request.RiskLevels.ToHashSet() : null;
+
+        IReadOnlySet<IssueCategory>? categories = null;
+        if (request.Categories is { Count: > 0 })
+        {
+            var parsed = new HashSet<IssueCategory>();
+            foreach (var name in request.Categories)
+            {
+                if (Enum.TryParse<IssueCategory>(name, ignoreCase: true, out var category)) parsed.Add(category);
+            }
+            if (parsed.Count > 0) categories = parsed;
+        }
+
+        IssueSeverity? minSeverity = null;
+        if (!string.IsNullOrWhiteSpace(request.Severity) &&
+            Enum.TryParse<IssueSeverity>(request.Severity, ignoreCase: true, out var parsedSeverity))
+        {
+            minSeverity = parsedSeverity;
+        }
+
+        return (riskLevels, categories, minSeverity);
+    }
+
+    /// <summary>
+    /// SiteHidden 模式的問題嚴重度可見性（docs/archive/HISTORY.md S1）——這裡繞過
+    /// <see cref="IRecordRepository"/> 的單一咽喉，必須自己把 <see cref="ISystemSettingsService.GetVisibleSeverities"/>
+    /// 轉成 SQL 聚合查詢要的型別再傳下去，否則 SiteHidden 模式下應該被隱藏的問題會在
+    /// 依問題／依主機／依日期視角重新冒出來。null＝DefaultHidden 模式，不限制。
+    /// </summary>
+    private IReadOnlySet<IssueSeverity>? ResolveVisibleSeverities()
+    {
+        var visible = _settingsService.GetVisibleSeverities();
+        if (visible == null) return null;
+
+        return visible
+            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
+            .Where(s => s.HasValue)
+            .Select(s => s!.Value)
+            .ToHashSet();
+    }
 
     /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
     private static string BuildHandlingSummary(int unhandled, int processing, int resolved)

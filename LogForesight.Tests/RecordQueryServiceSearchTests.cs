@@ -55,7 +55,8 @@ public class RecordQueryServiceSearchTests : IDisposable
             settings: _settingsStore,
             aggregates: aggregates,
             statusResolver: statusResolver,
-            issueOwners: _issueOwners);
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到

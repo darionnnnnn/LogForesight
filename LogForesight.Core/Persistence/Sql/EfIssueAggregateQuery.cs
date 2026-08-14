@@ -37,7 +37,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         _performance = performance;
     }
 
-    public List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    public List<IssueAggregate> Aggregate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
         // 空集合＝可見範圍為空 → 零結果（與 RecordQueryFilter.Hosts 同一套授權語意，
         // 不是「不限制」——這個慣例反過來就是授權缺口）
@@ -47,6 +49,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = from.Date;
         var t = to.Date;
         var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
 
@@ -55,6 +58,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 讓它們以 0001-01-01 混進來會把 FirstSeen 拉到西元 1 年。
             // 回填未完成期間數字會偏低，由呼叫端誠實標示「統計中」（P4 的既定取捨）
             .Where(x => x.RecordDate >= f && x.RecordDate <= t);
+
+        // SiteHidden 模式（RecordRepository.ApplySeverityVisibility 的 SQL 端等價物）：
+        // 這裡繞過 RecordRepository 的單一咽喉，隱藏的嚴重度要在這裡自己擋掉，
+        // 否則依問題視角會讓「應該被隱藏」的問題重新冒出來
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         HashSet<long>? expandedHostIds = null;
         if (hostIds != null)
@@ -85,9 +93,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 主機數／主機日數／相異簽章各補一趟輕量查詢：主機數與主機日數需要先把 host_id
         // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
         // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
-        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex);
-        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex);
-        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds);
+        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks);
+        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks);
+        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds, visibleRanks);
 
         var result = grouped.Select(g =>
         {
@@ -176,7 +184,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds)
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
         if (issues.Count == 0) return new List<HostIssueOccurrence>();
         if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
@@ -185,6 +193,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = from.Date;
         var t = to.Date;
         var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
@@ -193,6 +202,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var q = ctx.TopIssues.AsNoTracking()
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         if (hostIds != null)
         {
@@ -237,7 +248,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     }
 
     public List<HostIssueOccurrence> ActionableOccurrences(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
 
@@ -245,6 +257,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var f = from.Date;
         var t = to.Date;
         var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
 
@@ -256,6 +269,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             where dr.RecordDate >= f && dr.RecordDate <= t &&
                   (dr.RiskLevel == RiskLevels.High || dr.RiskLevel == RiskLevels.Medium)
             select ti;
+
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         if (hostIds != null)
         {
@@ -376,13 +391,249 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public List<DateRiskAggregate> AggregateByDate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<DateRiskAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+
+        var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        var issuesQuery = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+
+        HashSet<long>? expanded = null;
+        if (hostIds != null)
+        {
+            expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            recordsQuery = recordsQuery.Where(r => expanded.Contains(r.HostId));
+            issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
+        }
+        if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
+        recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
+
+        // SiteHidden 模式：只影響風險類型 chips（issuesQuery），不動 recordsQuery——
+        // 同 RecordRepository.ApplySeverityVisibility 只砍 TopIssues、不排除整筆紀錄／不動
+        // RiskLevel 的既有原則，高/中/低風險日分桶因此不受這個設定影響
+        if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        // 輕量列（不含 ContentJson／Headline），量級＝期間天數 × 可見主機數，不是整份 blob
+        var rows = recordsQuery
+            .Select(r => new { r.RecordId, r.HostId, r.RecordDate, r.RiskLevel, r.HasCorrelation })
+            .ToList()
+            // host_id 解析成存活主機再依 (存活主機,日期) 去重——合併前後的兩個 id 若剛好
+            // 同一天都有紀錄（理論上不會發生），較高風險等級的那筆勝出，不重複計數同一台主機
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.RecordDate))
+            .Select(g => g.OrderByDescending(x => RiskLevels.Rank(x.RiskLevel)).First())
+            .ToList();
+
+        // 風險類型清單的母體要跟著日風險篩選收斂——篩「只看高」時，中/低風險日被砍掉的問題
+        // 不該還出現在風險類型 chips 裡
+        if (riskLevels != null)
+        {
+            var allowedRecordIds = rows.Select(x => x.RecordId).ToHashSet();
+            issuesQuery = issuesQuery.Where(x => allowedRecordIds.Contains(x.RecordId));
+        }
+
+        var categoriesByDate = CategoriesByDate(issuesQuery);
+
+        var result = rows
+            .GroupBy(x => x.RecordDate)
+            .Select(g => new DateRiskAggregate
+            {
+                Date = g.Key,
+                HighRiskHosts = g.Count(x => x.RiskLevel == RiskLevels.High),
+                MediumRiskHosts = g.Count(x => x.RiskLevel == RiskLevels.Medium),
+                LowRiskHosts = g.Count(x => x.RiskLevel == RiskLevels.Low),
+                CorrelationHosts = g.Count(x => x.HasCorrelation),
+                HostCount = g.Count(),
+                Categories = categoriesByDate.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>()
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateByDate（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 天、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateByDate", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    public List<HostRiskAggregate> AggregateByHost(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<HostRiskAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+
+        var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        var issuesQuery = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+
+        HashSet<long>? expanded = null;
+        if (hostIds != null)
+        {
+            expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            recordsQuery = recordsQuery.Where(r => expanded.Contains(r.HostId));
+            issuesQuery = issuesQuery.Where(x => expanded.Contains(x.HostId));
+        }
+        if (riskLevels != null) recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
+        recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
+        if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        // 輕量列含 Headline（B1 抽出欄，純量文字，不是整份 ContentJson）——latest 列要顯示的
+        // 標題／風險等級直接跟著這趟撈回來，不必為了「最新一列的 headline」另外補查
+        var rows = recordsQuery
+            .Select(r => new { r.RecordId, r.HostId, r.RecordDate, r.RiskLevel, r.HasCorrelation, r.Headline })
+            .ToList()
+            .Select(x => new { x.RecordId, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.RecordDate, x.RiskLevel, x.HasCorrelation, x.Headline })
+            .GroupBy(x => (x.SurvivingHostId, x.RecordDate))
+            .Select(g => g.OrderByDescending(x => RiskLevels.Rank(x.RiskLevel)).First())
+            .ToList();
+
+        if (riskLevels != null)
+        {
+            var allowedRecordIds = rows.Select(x => x.RecordId).ToHashSet();
+            issuesQuery = issuesQuery.Where(x => allowedRecordIds.Contains(x.RecordId));
+        }
+
+        var categoriesByHost = CategoriesByHost(issuesQuery, aliasIndex);
+
+        var result = rows
+            .GroupBy(x => x.SurvivingHostId)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.RecordDate).First();
+                return new HostRiskAggregate
+                {
+                    HostId = g.Key,
+                    HighRiskDays = g.Count(x => x.RiskLevel == RiskLevels.High),
+                    MediumRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Medium),
+                    LowRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Low),
+                    CorrelationDays = g.Count(x => x.HasCorrelation),
+                    Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
+                    LatestDate = latest.RecordDate,
+                    LatestRiskLevel = latest.RiskLevel,
+                    LatestHeadline = latest.Headline
+                };
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateByHost（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 台主機、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateByHost", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Categories／EventId／Source 窄化紀錄——語意同 <see cref="RecordQueryFilter"/> 的同名欄位
+    /// （紀錄中任一問題簽章符合即命中該紀錄），與 <c>EfAnalysisRecordStore.ApplyPushableFilters</c>
+    /// 的 <c>ctx.TopIssues.Any(...)</c> exists 子查詢是同一個規則的另一份實作——
+    /// 這裡查的是 <see cref="DailyRecordRow"/> 不是它，兩邊資料表不同無法直接共用同一個 LINQ 運算式，
+    /// 但條件邏輯逐位相同。
+    /// </summary>
+    private static IQueryable<DailyRecordRow> ApplyIssueExistsFilters(
+        LfDbContext ctx, IQueryable<DailyRecordRow> q,
+        IReadOnlySet<IssueCategory>? categories, int? eventId, string? source, IssueSeverity? minSeverity)
+    {
+        if (categories is { Count: > 0 })
+        {
+            var names = categories.Select(c => c.ToString()).ToList();
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && names.Contains(t.Category)));
+        }
+        if (eventId.HasValue)
+        {
+            var id = eventId.Value;
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.EventId == id));
+        }
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            var src = source.ToUpperInvariant();
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SourceName.ToUpper() == src));
+        }
+        if (minSeverity.HasValue)
+        {
+            var rank = (int)minSeverity.Value;
+            q = q.Where(r => ctx.TopIssues.Any(t => t.RecordId == r.RecordId && t.SeverityRank >= rank));
+        }
+        return q;
+    }
+
+    /// <summary>依日期分組的風險類型清單，依「最高嚴重度、問題數」排序
+    /// （<see cref="CategoryAggregator"/> 同一套規則的 SQL 端等價物）</summary>
+    private static Dictionary<DateTime, IReadOnlyList<string>> CategoriesByDate(IQueryable<TopIssueRow> issuesQuery)
+    {
+        return issuesQuery
+            .Select(x => new { x.RecordDate, x.Category, x.SeverityRank })
+            .ToList()
+            .GroupBy(x => new { x.RecordDate, x.Category })
+            .Select(g => new
+            {
+                g.Key.RecordDate,
+                g.Key.Category,
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.SeverityRank)),
+                IssueCount = g.Count()
+            })
+            .GroupBy(x => x.RecordDate)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g
+                    .OrderByDescending(x => x.MaxSeverityRank)
+                    .ThenByDescending(x => x.IssueCount)
+                    .Select(x => x.Category)
+                    .ToList());
+    }
+
+    /// <summary>依存活主機分組的風險類型清單（跨整段期間去重），排序規則同上</summary>
+    private static Dictionary<long, IReadOnlyList<string>> CategoriesByHost(
+        IQueryable<TopIssueRow> issuesQuery, HostAliasIndex aliasIndex)
+    {
+        return issuesQuery
+            .Select(x => new { x.HostId, x.Category, x.SeverityRank })
+            .ToList()
+            .GroupBy(x => new { SurvivingHostId = Surviving(aliasIndex, x.HostId), x.Category })
+            .Select(g => new
+            {
+                g.Key.SurvivingHostId,
+                g.Key.Category,
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.SeverityRank)),
+                IssueCount = g.Count()
+            })
+            .GroupBy(x => x.SurvivingHostId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g
+                    .OrderByDescending(x => x.MaxSeverityRank)
+                    .ThenByDescending(x => x.IssueCount)
+                    .Select(x => x.Category)
+                    .ToList());
+    }
+
     /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
     private static Dictionary<(string, int), int> SurvivingHostCounts(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds, HostAliasIndex aliasIndex)
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
             .Select(x => new { x.SourceName, x.EventId, x.HostId })
@@ -396,10 +647,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
     private static Dictionary<(string, int), int> SurvivingHostDayCounts(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds, HostAliasIndex aliasIndex)
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
             .Select(x => new { x.SourceName, x.EventId, x.HostId, x.RecordDate })
@@ -419,7 +672,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// 沒有它就答不出「這個問題是不是已經有結論」——§10.6 的前提。
     /// </summary>
     private static Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<int>? visibleRanks = null)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
         if (hostIds != null)
@@ -427,6 +681,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             var ids = hostIds.ToList();
             q = q.Where(x => ids.Contains(x.HostId));
         }
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
         return q
             .Select(x => new { x.SourceName, x.EventId, x.LogName, x.EntryType })

@@ -55,7 +55,9 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>最後一次呼叫的參數，供測試斷言查詢範圍（期間／hostIds）有沒有傳對。</summary>
     public (DateTime From, DateTime To, IReadOnlyCollection<long>? HostIds)? LastCall { get; private set; }
 
-    public List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    public List<IssueAggregate> Aggregate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
         LastCall = (from, to, hostIds);
         // 與真正的 EfIssueAggregateQuery 同一個既有慣例：空集合＝可見範圍為空，零結果
@@ -78,7 +80,7 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds) =>
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
         LatestOccurrencesResult;
 
     public List<CategoryAggregate> AggregateByCategoryResult { get; set; } = new();
@@ -90,8 +92,27 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     public List<HostIssueOccurrence> ActionableOccurrencesResult { get; set; } = new();
 
     public List<HostIssueOccurrence> ActionableOccurrences(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds) =>
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
         ActionableOccurrencesResult;
+
+    public List<DateRiskAggregate> AggregateByDateResult { get; set; } = new();
+
+    public List<DateRiskAggregate> AggregateByDate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
+        AggregateByDateResult;
+
+    public List<HostRiskAggregate> AggregateByHostResult { get; set; } = new();
+
+    public List<HostRiskAggregate> AggregateByHost(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
+        AggregateByHostResult;
 }
 
 internal class FakeSuppressionStore : ISuppressionStore
