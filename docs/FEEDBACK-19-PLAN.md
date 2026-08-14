@@ -778,3 +778,39 @@ NetiqImportApplier`）與單筆/批次登錄（`NetiqHostService`），沒有獨
 commit `94d8169`，2035 測試綠。
 
 下一步：批次G1（機房級基準線）。
+
+---
+
+### 批次G1+G4：機房級基準線＋fleet 首見呈現（完成）
+
+`IIssueAggregateQuery.DailyHostCounts` 一句 GROUP BY 取代整批載入，只查當頁組
+（排行結果的問題集合，與 `LatestOccurrences` 同一個規模假設），不是整份表。
+`IssueBaselineCalculator`（Web 層純函式，無 I/O）依 (Source,EventId) 分組：
+基準期固定「查詢期間終點（`to`）往前 30 天」——與批次C「不另外抓一次真實
+時鐘」同一原則，這裡的錨點也是呼叫端傳入的 `to`，不是 `DateTime.Today`；
+基準＝出現日台數中位數，偏離倍數＝最近出現日台數 ÷ 基準；出現不足 3 天
+（規劃定案 N=3）視為新問題、無基準。`IssueRankingBuilder`（儀表板/報表共用）
+與 `RecordListQueryService.SearchByIssue`（依問題視角）共用同一份計算，三頁
+「vs 基準」數字因此必然一致——與既有 `IssueRankingBuilder` 抽出共用投影同一
+個理由。
+
+G4：`IIssueAggregateQuery.FirstSeenFor` 讀 `lf_issue_first_seen`（批次B落地、
+本輪才有消費端）。三個消費頁新增「首見（機房）」欄；原「涵蓋範圍」欄改標
+「本期首見」並簡化為只顯示首見單一日期——**與規劃原文字面略有差異**：不再
+顯示「首見~最近出現」的範圍字串，範圍所需的「還在不在發生」資訊已由既有的
+「距今天數」提示（如「16 天前」／「昨日仍在發生」）帶出，兩者同時保留會語意
+重複。CSV 匯出（依問題視角）同步補上機房首見／基準台數／偏離倍數三欄，用
+原始數值而非預先格式化字串——CSV 是給人貼進試算表排序用的。
+
+前端三頁（dashboard.js／reports.js／records.js）的「vs 基準」文字措辭收斂進
+`core/format.js` 的 `issueBaselineText`，不三處各寫一份四捨五入規則。
+
+真實 dev SQLite 端到端瀏覽器驗證：儀表板重點問題卡、報表問題排行（圖表資料
+表）、依問題視角三處欄位與數字互相一致；CSV 匯出含新欄位（基準台數／偏離
+倍數在無基準時正確留空，不是印出 null 字樣）。
+
+新增 12 個單元測試（`IssueBaselineCalculator` 純函式 7 個＋`IssueRankingBuilder`
+端到端 3 個，含中位數奇偶筆數邊界／Source 大小寫正規化＋`SearchByIssue`
+端到端 2 個），commit `b6c0ae1`，2047 測試綠。
+
+下一步：批次G3（PriorityScore 最小版，依賴 G1/G2/G4 已完成的資料）。
