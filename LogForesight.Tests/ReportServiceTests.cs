@@ -35,7 +35,7 @@ public class ReportServiceTests : IDisposable
 
         // 問題排行自 P4 起走 SQL 端聚合（lf_top_issues），與紀錄查詢共用同一個 EF fixture——
         // 用假實作會讓「排行只含可見主機」這條授權測試測不到真正的下推路徑
-        var issueRanking = new IssueRankingBuilder(new EfIssueAggregateQuery(_fixture.NewContext));
+        var issueRanking = new IssueRankingBuilder(new EfIssueAggregateQuery(_fixture.NewContext, _hosts));
         _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore);
     }
 

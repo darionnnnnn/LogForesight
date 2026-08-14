@@ -66,42 +66,54 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         var shaped = RecordStorageShaper.ForStorage(record);
 
-        using var ctx = _contextFactory();
-        var row = new DailyRecordRow
-        {
-            HostId = shaped.HostId,
-            HostName = shaped.Host,
-            RecordDate = shaped.Date.Date,
-            RiskLevel = shaped.RiskLevel,
-            HasCorrelation = shaped.CorrelationAlerts.Count > 0,
-            WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
-            ContentJson = JsonSerializer.Serialize(shaped),
-            CreatedAt = DateTime.Now
-        };
-        ctx.DailyRecords.Add(row);
-        ctx.SaveChanges();   // 先存主列拿到 RecordId
+        // 主列與問題子列必須同進退——分兩次 SaveChanges 但不包交易時，子列寫入失敗會留下
+        // 一筆「沒有問題列」的紀錄，SQL 聚合（IIssueAggregateQuery）會靜默漏算這一天。
+        // execution strategy／BeginTransaction 的用法同 EfJsonBlobStore.Mutate。
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
 
-        foreach (var issue in shaped.TopIssues)
+        strategy.Execute(() =>
         {
-            ctx.TopIssues.Add(new TopIssueRow
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+
+            var row = new DailyRecordRow
             {
-                RecordId = row.RecordId,
-                SourceName = issue.Source,
-                EventId = issue.EventId,
-                Category = issue.Category.ToString(),
-                SeverityRank = (int)issue.Severity,
-                // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
-                // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
-                // 分析層看不到這張表，批次的分析邏輯零修改
                 HostId = shaped.HostId,
+                HostName = shaped.Host,
                 RecordDate = shaped.Date.Date,
-                EventCount = issue.Count,
-                ElevatesDayRisk = issue.ElevatesDayRisk,
-                LogName = issue.LogName,
-                EntryType = (int)issue.EntryType
-            });
-        }
-        ctx.SaveChanges();
+                RiskLevel = shaped.RiskLevel,
+                HasCorrelation = shaped.CorrelationAlerts.Count > 0,
+                WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
+                ContentJson = JsonSerializer.Serialize(shaped),
+                CreatedAt = DateTime.Now
+            };
+            ctx.DailyRecords.Add(row);
+            ctx.SaveChanges();   // 先存主列拿到 RecordId
+
+            foreach (var issue in shaped.TopIssues)
+            {
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = row.RecordId,
+                    SourceName = issue.Source,
+                    EventId = issue.EventId,
+                    Category = issue.Category.ToString(),
+                    SeverityRank = (int)issue.Severity,
+                    // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
+                    // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
+                    // 分析層看不到這張表，批次的分析邏輯零修改
+                    HostId = shaped.HostId,
+                    RecordDate = shaped.Date.Date,
+                    EventCount = issue.Count,
+                    ElevatesDayRisk = issue.ElevatesDayRisk,
+                    LogName = issue.LogName,
+                    EntryType = (int)issue.EntryType
+                });
+            }
+            ctx.SaveChanges();
+            tx.Commit();
+        });
 
         Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
             shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);

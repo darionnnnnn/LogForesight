@@ -48,8 +48,10 @@ public class ReportService
         // 而問題聚合是跨主機跨日的獨立投影；把 scope 套上去會讓「這個問題影響幾台」
         // 變成「符合這個處理狀態的日子裡影響幾台」，那是另一個問題的答案
         var visibleHosts = _visibility.GetVisibleHosts();
-        var issueRanked = _issueRanking.Build(
+        var allIssueRanked = _issueRanking.Build(
             from, to, visibleHosts.Select(h => h.HostId).ToList(), visibleHosts.Count);
+        // §10.6：全部主機都已有結論的問題不佔用排行版面（與儀表板重點問題卡同一套規則）
+        var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
 
         var dto = new ReportSummaryDto
         {
@@ -67,6 +69,7 @@ public class ReportService
             IssueRanking = issueRanked.Take(HostRankingLimit).ToList(),
             RankedIssueCount = issueRanked.Count,
             IssueOthers = BuildIssueOthers(issueRanked),
+            ConcludedIssueCount = concludedIssueCount,
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,

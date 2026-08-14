@@ -74,4 +74,23 @@ public interface IIssueAggregateQuery
     /// 同一套排除慣例。
     /// </summary>
     HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
+
+    /// <summary>
+    /// 期間內每個 (存活主機, 完整簽章) 最近一次出現的日期與當時嚴重度（回饋十九輪批次A，
+    /// §10.6「排除已有結論的問題」的資料基礎）。這裡只回答「這個組合最後一次出現時長什麼樣子」——
+    /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
+    /// 處理狀態的業務規則（案件優先／觀察到期／預設嚴重度）綁在同一層。
+    /// </summary>
+    List<HostIssueOccurrence> LatestOccurrences(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds);
+}
+
+/// <summary>單一（存活主機, 完整簽章）在期間內最近一次出現的快照</summary>
+public sealed class HostIssueOccurrence
+{
+    public long HostId { get; init; }
+    public string IssueKey { get; init; } = string.Empty;
+    public DateTime LastSeen { get; init; }
+    public int SeverityRank { get; init; }
 }

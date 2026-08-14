@@ -531,7 +531,12 @@ function renderIssueRankMeta() {
         ? `；${currentData.issueStatsPendingHint ?? '統計整理中，數字可能不完整'}`
         : '';
 
-    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}` : '';
+    // §10.6：全部主機都已有結論的問題不佔用排行版面，卡底同一行誠實說出排除了幾筆
+    const concludedNote = currentData.concludedIssueCount > 0
+        ? `；另有 ${currentData.concludedIssueCount} 個問題已有結論（未列入）`
+        : '';
+
+    subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 
     if (currentData.issueOthers) {
         viewAll.href = `/records?view=issue&from=${currentData.from}&to=${currentData.to}`;

@@ -73,6 +73,13 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         LastHostIdsForCall = (issues, from, to);
         return HostIdsForResult;
     }
+
+    public List<HostIssueOccurrence> LatestOccurrencesResult { get; set; } = new();
+
+    public List<HostIssueOccurrence> LatestOccurrences(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds) =>
+        LatestOccurrencesResult;
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

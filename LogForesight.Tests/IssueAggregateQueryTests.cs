@@ -18,6 +18,7 @@ public class IssueAggregateQueryTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
     private readonly EfAnalysisRecordStore _records;
+    private readonly FakeHostStore _hosts = new();
 
     public IssueAggregateQueryTests()
     {
@@ -26,7 +27,7 @@ public class IssueAggregateQueryTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private EfIssueAggregateQuery Query() => new(_fx.NewContext);
+    private EfIssueAggregateQuery Query() => new(_fx.NewContext, _hosts);
 
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
@@ -87,6 +88,46 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(1, agg.HostCount);
         Assert.Equal(5, agg.ActiveDays);
         Assert.Equal(5, agg.DayCount);
+    }
+
+    /// <summary>
+    /// 主機合併的既有 bug（查證抓到）：<c>host_id</c> 是紀錄當下的識別，MergeHost
+    /// 刻意不回寫（回寫會讓 UnmergeHost 失去反向依據）——查詢端必須跟 blob 路徑
+    /// （HostLookup／HostAliasIndex）一樣，把 host_id 解析回存活主機再去重，
+    /// 否則合併前後的兩個 id 會被算成兩台。
+    /// </summary>
+    [Fact]
+    public void 主機合併_解析成存活主機後只算一台()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", MergedInto = b.HostId, Active = false });
+
+        Add(a.HostId, "A", d0, Issue("disk", 153));           // 併入前的舊歷史，仍掛在舊 id 下
+        Add(b.HostId, "B", d0.AddDays(1), Issue("disk", 153));
+
+        var agg = Query().Aggregate(d0, d0.AddDays(1), null).Single();
+
+        Assert.Equal(1, agg.HostCount);   // 不是 2
+        Assert.Equal(2, agg.DayCount);    // 主機日數不受合併影響——兩天各算一次
+    }
+
+    /// <summary>
+    /// 可見範圍只傳存活主機 id 時，也要涵蓋它已併入的舊識別下的歷史——否則合併後
+    /// 那段歷史會被 WHERE host_id IN (可見範圍) 整段濾掉，比雙重計數更嚴重（資料消失）。
+    /// </summary>
+    [Fact]
+    public void 主機合併_可見範圍只給存活id也要涵蓋舊識別的歷史()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A", MergedInto = b.HostId, Active = false });
+
+        Add(a.HostId, "A", d0, Issue("disk", 153));
+
+        var agg = Query().Aggregate(d0, d0, new[] { b.HostId }).Single();
+
+        Assert.Equal(1, agg.HostCount);
     }
 
     [Fact]

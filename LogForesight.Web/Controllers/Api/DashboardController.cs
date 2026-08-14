@@ -25,7 +25,9 @@ public class DashboardController : ControllerBase
 
     [HttpGet("summary")]
     public ApiResponse<DashboardDto> Summary([FromQuery] int? days) =>
-        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(days ?? DefaultDays));
+        // Clamp 同 host-detail 慣例（1..90）：未夾住時任意整數（含負數／超大值）會直接進
+        // DateTime.Today.AddDays(-days+1) 算出離譜的查詢區間
+        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(Math.Clamp(days ?? DefaultDays, 1, 90)));
 }
 
 /// <summary>

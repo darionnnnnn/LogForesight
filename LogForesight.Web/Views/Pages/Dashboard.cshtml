@@ -51,6 +51,9 @@
                因為 renderTable 會 replaceChildren，塞在裡面會被下一次渲染吃掉 *@
             <div class="px-3 pt-3 d-none" id="dashboard-issues-pending"></div>
             <div class="lf-card__body p-0" id="dashboard-issues"></div>
+            @* §10.6：全部主機都已有結論的問題不佔用這張卡的版面，但要誠實說出來排除了幾筆——
+               同上，放在表格容器之外避免被 renderTable 的 replaceChildren 清掉 *@
+            <div class="px-3 pb-2 d-none" id="dashboard-issues-concluded"></div>
         </section>
     </div>
 </div>

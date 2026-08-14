@@ -20,15 +20,22 @@ namespace LogForesight.Web.Services;
 public class IssueRankingBuilder
 {
     private readonly IIssueAggregateQuery _aggregates;
+    private readonly IssueHandlingRollupQuery? _rollup;
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
 
+    /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
+    /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
+    /// 刻意內建計算而不是留給呼叫端傳字典：這個參數過去就是以「呼叫端自己組字典」的形式存在，
+    /// 結果兩個正式呼叫端都忘了傳，OpenHostCount 因此死了一整輪（回饋十九輪查證抓到）。</param>
     public IssueRankingBuilder(
         IIssueAggregateQuery aggregates,
+        IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null)
     {
         _aggregates = aggregates;
+        _rollup = rollup;
         _backfiller = backfiller;
         _backend = backend;
     }
@@ -68,8 +75,7 @@ public class IssueRankingBuilder
     /// <paramref name="totalHosts"/> 供影響率使用，0 時影響率為 0。
     /// </summary>
     public List<IssueRankingDto> Build(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
-        IReadOnlyDictionary<string, IssueHandlingRollup>? handlingByIssue = null)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts)
     {
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
@@ -79,9 +85,17 @@ public class IssueRankingBuilder
         var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
             .ToDictionary(a => (a.Source, a.EventId));
 
+        var current = _aggregates.Aggregate(from, to, visibleHostIds);
+
+        // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
+        // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼
+        // （回饋十九輪查證抓到）。_rollup 為 null 時（測試未注入）OpenHostCount／
+        // ResolvedHostCount 維持 0，不影響其餘欄位。
+        var handlingByIssue = _rollup?.Build(current, from, to, visibleHostIds);
+
         var today = DateTime.Today;
 
-        return _aggregates.Aggregate(from, to, visibleHostIds)
+        return current
             .Select(a =>
             {
                 previous.TryGetValue((a.Source, a.EventId), out var prev);
@@ -119,6 +133,25 @@ public class IssueRankingBuilder
             .ThenByDescending(i => i.HostCount)
             .ThenByDescending(i => i.TotalCount)
             .ToList();
+    }
+
+    /// <summary>
+    /// 從已排序的問題排行中濾掉「全部主機都已有結論」的問題（§10.6）——那些問題不該佔用
+    /// 重點清單的版面。回傳過濾後的清單與被排除的筆數（呼叫端用於「另有 N 個問題已有結論
+    /// （未列入）」）。<see cref="IssueRankingDto.ResolvedHostCount"/> 需要 <see cref="Build"/>
+    /// 已注入 <see cref="IssueHandlingRollupQuery"/> 才有值——未注入時（測試）恆為 0，
+    /// 此處不會誤排除任何問題。
+    /// </summary>
+    public static (List<IssueRankingDto> Kept, int ConcludedCount) ExcludeConcluded(IReadOnlyList<IssueRankingDto> ranked)
+    {
+        var kept = new List<IssueRankingDto>();
+        var concluded = 0;
+        foreach (var issue in ranked)
+        {
+            if (issue.HostCount > 0 && issue.ResolvedHostCount == issue.HostCount) concluded++;
+            else kept.Add(issue);
+        }
+        return (kept, concluded);
     }
 
     /// <summary>

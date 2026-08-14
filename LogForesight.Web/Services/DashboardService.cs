@@ -65,10 +65,10 @@ public class DashboardService
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。
         var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
-        dto.TopIssues = _issueRanking
-            .Build(from, DateTime.Today, visibleHostIds, visibleHosts.Count)
-            .Take(5)
-            .ToList();
+        var ranked = _issueRanking.Build(from, DateTime.Today, visibleHostIds, visibleHosts.Count);
+        var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
+        dto.TopIssues = openIssues.Take(5).ToList();
+        dto.ConcludedTopIssueCount = concludedCount;
 
         // 背景整理中時數字會偏低但看起來正常——必須說出來（G2）
         (dto.IssueStatsPending, dto.IssueStatsPendingHint) = _issueRanking.StatsPending();

@@ -134,14 +134,13 @@
   或改由 `RecordHandlingLog` 的 `case_reassign` 反查——兩種作法都要先想清楚
   「歷程以案件為單一事實來源」會不會因此被拆成兩份。
 
-- **儀表板「重點問題」卡不含未處理數**（§8-1）：卡片只做純紀錄聚合，處理概況要逐問題查
-  handling 標記。`IssueRankingDto` 已備妥 `OpenHostCount`／
-  `ResolvedHostCount` 兩個欄位與 `IssueRankingBuilder` 的 rollup 參數，
-  `IIssueAggregateQuery` 也已回傳該群組的相異完整簽章（join 處理狀態的鍵）——
-  剩下的只是把 `lf_issue_handling` 的逐簽章彙總接上去，並依 §10.6 讓「全部主機都已有結論」
-  的問題退出重點清單（含卡底「另有 N 個問題已有結論（未列入）」的誠實出口）。
-  屆時一併做 **D6 乙案**（SCALE-FIX-PLAN-2026-08-06.md）：報表問題排行套用「顯示範圍」
-  選擇器——同一次 join 的事，甲案的常駐說明文字屆時移除。
+- **報表問題排行的「顯示範圍」選擇器**（原 D6 乙案，SCALE-FIX-PLAN-2026-08-06.md）：
+  §10.6 排除已有結論的問題（回饋十九輪批次A已完成，`IssueHandlingRollupQuery`＋
+  `IssueRankingBuilder.ExcludeConcluded`，儀表板重點問題卡與報表問題排行皆已接上、
+  兩頁「另有 N 個問題已有結論」數字一致）目前是**固定行為**，沒有讓使用者切換「全部／
+  排除已有結論」的選擇器——多數情境固定排除即符合需求，真的需要看全部（例如稽核）時
+  再評估要不要加選擇器。既有的「不受『顯示範圍』篩選影響」常駐說明文字仍成立
+  （那是日層級 handlingScope 與問題聚合母體不同的另一件事），不受本項影響。
 
 ## 其他遞延項
 

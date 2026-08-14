@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -10,17 +11,29 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 整個聚合是**一句 GROUP BY**，取代改版前「撈回 18 萬筆紀錄的完整 JSON 再於記憶體 GroupBy」。
 /// 唯一在應用層做的是相異完整簽章的收集——一個 (Source, EventId) 底下可能有多個
 /// LogName／EntryType 組合，那是 join 處理狀態的鍵，數量極少（通常 1~2 個）。
+///
+/// **主機合併的處理**：<c>lf_top_issues.host_id</c> 是紀錄當下的識別（歷史事實，
+/// 與 blob 路徑的 <c>DailyAnalysisRecord.HostId</c> 同一個值，見 <see cref="HostMatcher"/>
+/// 的 PK-first 比對規則），合併主機時**不回寫**——回寫會讓 <c>UnmergeHost</c> 失去反向依據。
+/// 因此這裡跟 blob 路徑（<see cref="HostLookup"/>／<see cref="HostAliasIndex"/>）一樣，
+/// 查詢當下用主機清單的合併鏈把 host_id 解析成存活主機再計數／篩選：
+///   - 篩選：<paramref name="hostIds"/>（呼叫端傳入的一律是存活主機 id）先展開回涵蓋的
+///     墓碑列 id，否則合併後舊識別下的歷史會被 WHERE 整段濾掉、從畫面上消失；
+///   - 計數：COUNT(DISTINCT host_id) 前先把每個 host_id 解析成存活 id 再去重，
+///     否則同一台實體機器合併前後的兩個 id 會被算成兩台。
 /// </summary>
 public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly Func<LfDbContext> _contextFactory;
+    private readonly IHostStore _hosts;
     private readonly SqlPerformanceMonitor? _performance;
 
-    public EfIssueAggregateQuery(Func<LfDbContext> contextFactory, SqlPerformanceMonitor? performance = null)
+    public EfIssueAggregateQuery(Func<LfDbContext> contextFactory, IHostStore hosts, SqlPerformanceMonitor? performance = null)
     {
         _contextFactory = contextFactory;
+        _hosts = hosts;
         _performance = performance;
     }
 
@@ -33,6 +46,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
 
         using var ctx = _contextFactory();
 
@@ -42,10 +56,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 回填未完成期間數字會偏低，由呼叫端誠實標示「統計中」（P4 的既定取捨）
             .Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
+        HashSet<long>? expandedHostIds = null;
         if (hostIds != null)
         {
-            var ids = hostIds.ToList();   // EF 8：單一 JSON 參數（OPENJSON／json_each）
-            q = q.Where(x => ids.Contains(x.HostId));
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expandedHostIds.Contains(x.HostId));   // EF 8：單一 JSON 參數（OPENJSON／json_each）
         }
 
         var grouped = q
@@ -59,7 +74,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 Category = g.Min(x => x.Category),
                 MaxSeverityRank = g.Max(x => x.SeverityRank),
                 Elevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
-                HostCount = g.Select(x => x.HostId).Distinct().Count(),
                 ActiveDays = g.Select(x => x.RecordDate).Distinct().Count(),
                 FirstSeen = g.Min(x => x.RecordDate),
                 LastSeen = g.Max(x => x.RecordDate),
@@ -68,11 +82,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             })
             .ToList();
 
-        // 主機日數與相異簽章各補一趟輕量查詢：兩者都無法在同一個 GROUP BY 裡表達
-        //（前者是 COUNT(DISTINCT host_id, record_date) 的組合、後者是字串集合），
-        // 而且回傳量都遠小於原始列數
-        var hostDays = HostDayCounts(ctx, f, t, hostIds);
-        var signatures = DistinctSignatures(ctx, f, t, hostIds);
+        // 主機數／主機日數／相異簽章各補一趟輕量查詢：主機數與主機日數需要先把 host_id
+        // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
+        // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
+        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex);
+        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex);
+        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds);
 
         var result = grouped.Select(g =>
         {
@@ -84,7 +99,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 Category = g.Category ?? string.Empty,
                 MaxSeverityRank = g.MaxSeverityRank,
                 ElevatesDayRisk = g.Elevates == 1,
-                HostCount = g.HostCount,
+                HostCount = hostCounts.TryGetValue(key, out var hc) ? hc : 0,
                 DayCount = hostDays.TryGetValue(key, out var d) ? d : g.Rows,
                 ActiveDays = g.ActiveDays,
                 FirstSeen = g.FirstSeen,
@@ -100,6 +115,24 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         return result;
     }
+
+    /// <summary>可見範圍（存活主機 id）展開回涵蓋的墓碑列 id；索引裡找不到的 id
+    /// （理論上不會發生——可見範圍本來就是從主機清單算出來的）至少保留自己，不整台消失。</summary>
+    private static HashSet<long> ExpandToAliasIds(HostAliasIndex index, IReadOnlyCollection<long> hostIds)
+    {
+        var result = new HashSet<long>();
+        foreach (var id in hostIds)
+        {
+            var aliases = index.Aliases(id);
+            if (aliases.Count == 0) { result.Add(id); continue; }
+            foreach (var alias in aliases) result.Add(alias.HostId);
+        }
+        return result;
+    }
+
+    /// <summary>host_id 解析成存活主機 id；索引裡找不到（合併前的舊資料、或測試未登錄主機清單）
+    /// 就用原始 id 當自己的存活 id——不強求資料乾淨（同 <see cref="HostIdentityResolver"/> 慣例）。</summary>
+    private static long Surviving(HostAliasIndex index, long hostId) => index.Surviving(hostId)?.HostId ?? hostId;
 
     public HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to)
     {
@@ -137,19 +170,95 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
-    /// <summary>主機日數＝相異 (host_id, record_date) 組合數（同一台主機多天各算一次）</summary>
-    private static Dictionary<(string, int), int> HostDayCounts(
-        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds)
+    public List<HostIssueOccurrence> LatestOccurrences(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds)
     {
-        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        if (issues.Count == 0) return new List<HostIssueOccurrence>();
+        if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
+        var eventIds = wanted.Select(w => w.EventId).ToHashSet();
+
+        using var ctx = _contextFactory();
+
+        var q = ctx.TopIssues.AsNoTracking()
+            .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
+
         if (hostIds != null)
         {
-            var ids = hostIds.ToList();
-            q = q.Where(x => ids.Contains(x.HostId));
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expanded.Contains(x.HostId));
         }
+
+        // 目標範圍就是呼叫端已經算出的少數幾種問題，不是整份表——與 HostIdsFor 同一個規模假設
+        var rows = q
+            .Select(x => new { x.HostId, x.LogName, x.SourceName, x.EventId, x.EntryType, x.RecordDate, x.SeverityRank })
+            .Distinct()
+            .ToList()
+            .Where(x => wanted.Contains((x.SourceName.ToUpperInvariant(), x.EventId)))
+            .ToList();
+
+        var result = rows
+            // host_id 先解析成存活主機再分組：合併前後兩個 id 在同一天或不同天各自出現過，
+            // 併起來取真正最近的一次，不是各自留一筆
+            .GroupBy(x => (SurvivingHostId: Surviving(aliasIndex, x.HostId), x.LogName, x.SourceName, x.EventId, x.EntryType))
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.RecordDate).ThenByDescending(x => x.SeverityRank).First();
+                return new HostIssueOccurrence
+                {
+                    HostId = g.Key.SurvivingHostId,
+                    IssueKey = IssueSignatureKey.For(
+                        g.Key.LogName, g.Key.SourceName, g.Key.EventId, (System.Diagnostics.EventLogEntryType)g.Key.EntryType),
+                    LastSeen = latest.RecordDate,
+                    SeverityRank = latest.SeverityRank
+                };
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.LatestOccurrences（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}，{IssueCount} 個問題）→ {Count} 筆、{Ms}ms",
+            f, t, issues.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:LatestOccurrences", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
+    /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
+    private static Dictionary<(string, int), int> SurvivingHostCounts(
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds, HostAliasIndex aliasIndex)
+    {
+        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
+
+        return q
+            .Select(x => new { x.SourceName, x.EventId, x.HostId })
+            .Distinct()
+            .ToList()   // host_id → 存活 id 的解析非 SQL 可翻譯，先拉回輕量投影再算
+            .GroupBy(x => (x.SourceName, x.EventId))
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count());
+    }
+
+    /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
+    private static Dictionary<(string, int), int> SurvivingHostDayCounts(
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds, HostAliasIndex aliasIndex)
+    {
+        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
 
         return q
             .Select(x => new { x.SourceName, x.EventId, x.HostId, x.RecordDate })
+            .Distinct()
+            .ToList()
+            .Select(x => new { x.SourceName, x.EventId, HostId = Surviving(aliasIndex, x.HostId), x.RecordDate })
             .Distinct()
             .GroupBy(x => new { x.SourceName, x.EventId })
             .Select(g => new { g.Key.SourceName, g.Key.EventId, Count = g.Count() })

@@ -419,12 +419,14 @@ function renderTopIssues(data) {
     // 背景整理中的提示放在**表格容器之外**——renderTable 會 replaceChildren，
     // 塞在同一個容器裡會被下一次渲染吃掉
     renderStatsPendingNote('dashboard-issues-pending', data);
+    renderConcludedNote('dashboard-issues-concluded', data.concludedTopIssueCount);
 
     renderTable(document.getElementById('dashboard-issues'), {
         columns: [
             { title: '問題', render: i => issueNameCell(i) },
             { title: '嚴重度', render: i => issueSeverityCell(i) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
+            { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
             { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
             { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
             { title: '變化', className: 'text-end text-nowrap', render: i => issueChangeCell(i) },
@@ -436,6 +438,25 @@ function renderTopIssues(data) {
                       `&from=${data.from}&to=${data.to}`,
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
+}
+
+/**
+ * 已有結論的問題被排除提示（§10.6）：全部主機都已有結論的問題不佔用重點清單版面，
+ * 但悄悄少幾筆會讓人以為問題變少了——卡底把數字誠實說出來。
+ * 同 renderStatsPendingNote，容器在表格外，不會被 renderTable 的 replaceChildren 清掉。
+ */
+function renderConcludedNote(containerId, concludedCount) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    if (!concludedCount) {
+        el.classList.add('d-none');
+        el.textContent = '';
+        return;
+    }
+
+    el.className = 'small text-muted';
+    el.textContent = `另有 ${concludedCount} 個問題已有結論（未列入）`;
 }
 
 /**
@@ -521,6 +542,20 @@ function issueHostCell(issue) {
         ratio.title = '影響率＝主機數 ÷ 可見主機總數';
         wrap.appendChild(ratio);
     }
+    return wrap;
+}
+
+/**
+ * 未處理主機數（§10.6）：主機數答的是「影響多大」，這一欄答「現在還有幾台真的要處理」——
+ * 兩者常常不一樣（很多台早就有結論，只是還沒退出這張榜的排序）。0 台時淡化顯示，
+ * 不用紅字製造「這裡也要處理」的錯誤急迫感。
+ */
+function issueOpenCell(issue) {
+    const wrap = document.createElement('div');
+    const count = document.createElement('div');
+    count.textContent = formatNumber(issue.openHostCount);
+    count.className = issue.openHostCount > 0 ? 'text-danger fw-semibold' : 'text-muted';
+    wrap.appendChild(count);
     return wrap;
 }
 

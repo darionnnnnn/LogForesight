@@ -145,8 +145,10 @@ public class StorageBackend
 
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
-    /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）</summary>
-    public EfIssueAggregateQuery IssueAggregateQuery() => new(_dbFactory, Performance);
+    /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
+    /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
+    /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>
+    public EfIssueAggregateQuery IssueAggregateQuery(IHostStore hosts) => new(_dbFactory, hosts, Performance);
 
     /// <summary>
     /// 處理狀態自 blob 搬進真表的遷移器（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。

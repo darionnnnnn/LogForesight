@@ -58,7 +58,7 @@ internal sealed class ScaleServices
             new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms")),
             Hosts, Visibility, currentUser, new RecordingAuditService(), users);
 
-        var issueRanking = new IssueRankingBuilder(backend.IssueAggregateQuery());
+        var issueRanking = new IssueRankingBuilder(backend.IssueAggregateQuery(Hosts));
 
         Dashboard = new DashboardService(
             Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,

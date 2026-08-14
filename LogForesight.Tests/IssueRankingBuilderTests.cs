@@ -16,6 +16,10 @@ public class IssueRankingBuilderTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
     private readonly EfAnalysisRecordStore _records;
+    private readonly FakeHostStore _hosts = new();
+    private readonly FakeIssueHandlingStore _issueHandlings = new();
+    private readonly FakeIssueCaseStore _cases = new();
+    private readonly FakeSystemSettingsStore _settings = new();
 
     public IssueRankingBuilderTests()
     {
@@ -24,7 +28,16 @@ public class IssueRankingBuilderTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
-    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext));
+    private IssueRankingBuilder Builder() => new(new EfIssueAggregateQuery(_fx.NewContext, _hosts));
+
+    /// <summary>帶處理概況彙總的完整組裝——驗證 OpenHostCount／ResolvedHostCount 這條路徑要串真的
+    /// IssueHandlingRollupQuery，不是像 <see cref="Builder"/> 那樣單測 Aggregate→DTO 映射。</summary>
+    private IssueRankingBuilder BuilderWithRollup()
+    {
+        var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
+        var rollup = new IssueHandlingRollupQuery(aggregates, _hosts, _issueHandlings, _cases, _settings);
+        return new IssueRankingBuilder(aggregates, rollup);
+    }
 
     private static LogIssueSignature Issue(
         string source, int eventId, int count = 1,
@@ -158,24 +171,65 @@ public class IssueRankingBuilderTests : IDisposable
     /// <summary>
     /// 處理狀態以**完整簽章**為鍵，而排行以 (Source, EventId) 為單位——
     /// 一個群組底下的多個完整簽章要**合併**未處理／已處理主機數（§10.6 的前提）。
+    /// 端到端串真的 IssueHandlingRollupQuery：這正是查證抓到的死碼（兩個正式呼叫端
+    /// 從未傳過 handlingByIssue）該補上的那條路徑，用手動塞字典測不出「真的接線了沒」。
     /// </summary>
     [Fact]
     public void 處理概況_跨多個完整簽章合併()
     {
         var d0 = new DateTime(2026, 8, 1);
-        Add(1, "A", d0, Issue("disk", 153, logName: "System", entryType: EventLogEntryType.Warning));
-        Add(2, "B", d0, Issue("disk", 153, logName: "Application", entryType: EventLogEntryType.Error));
+        var hostA = _hosts.Upsert(new WebHost { HostName = "A" });
+        var hostB = _hosts.Upsert(new WebHost { HostName = "B" });
 
-        var rollup = new Dictionary<string, IssueHandlingRollup>
+        Add(hostA.HostId, "A", d0,
+            Issue("disk", 153, severity: IssueSeverity.High, logName: "System", entryType: EventLogEntryType.Warning));
+        Add(hostB.HostId, "B", d0,
+            Issue("disk", 153, severity: IssueSeverity.High, logName: "Application", entryType: EventLogEntryType.Error));
+
+        // B 已標記為已處理；A 沒有任何標記，嚴重度 High 落在預設「需處理」名單內 → 未處理
+        _issueHandlings.Save(new IssueHandling
         {
-            [IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning)] = new(OpenHostCount: 1, ResolvedHostCount: 0),
-            [IssueSignatureKey.For("Application", "disk", 153, EventLogEntryType.Error)] = new(OpenHostCount: 0, ResolvedHostCount: 1)
-        };
+            HostName = "B",
+            Date = d0,
+            IssueKey = IssueSignatureKey.For("Application", "disk", 153, EventLogEntryType.Error),
+            Status = IssueHandlingStatuses.Resolved
+        });
 
-        var row = Builder().Build(d0, d0, null, totalHosts: 2, rollup).Single();
+        var row = BuilderWithRollup().Build(d0, d0, null, totalHosts: 2).Single();
 
         Assert.Equal(1, row.OpenHostCount);
         Assert.Equal(1, row.ResolvedHostCount);
+    }
+
+    /// <summary>
+    /// §10.6：全部主機都已有結論的問題不佔用重點清單版面，但要誠實回報排除了幾筆——
+    /// 悄悄少幾筆會製造「怎麼問題變少了」的第二種數字對不起來。
+    /// </summary>
+    [Fact]
+    public void ExcludeConcluded_全部主機已結論的問題被排除且計數()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var hostA = _hosts.Upsert(new WebHost { HostName = "A" });
+        var hostB = _hosts.Upsert(new WebHost { HostName = "B" });
+
+        // disk/153：唯一主機 A 已標記已處理 → 全部有結論，該被排除
+        Add(hostA.HostId, "A", d0, Issue("disk", 153, severity: IssueSeverity.High));
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = "A", Date = d0,
+            IssueKey = IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning),
+            Status = IssueHandlingStatuses.Resolved
+        });
+
+        // DCOM/10016：主機 B 沒有任何標記、嚴重度 High → 未處理，該保留
+        Add(hostB.HostId, "B", d0, Issue("DCOM", 10016, severity: IssueSeverity.High));
+
+        var ranked = BuilderWithRollup().Build(d0, d0, null, totalHosts: 2);
+        var (kept, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
+
+        Assert.Equal(1, concludedCount);
+        Assert.Single(kept);
+        Assert.Equal("DCOM", kept[0].Source);
     }
 
     /// <summary>預設排序：最高嚴重度 → 主機數 → 總次數（與依問題視角的既有預設一致）</summary>
