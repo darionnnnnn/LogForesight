@@ -337,8 +337,7 @@ public Task<ApiResponse<HandlingDto>> Assign(long id, AssignRequest req) => ...
 `GetOwnedHostIdsFor`／`GetGroupVisibleHostIdsFor` 兩個投影分別回答「為什麼看得到這台」——
 兩條路徑可同時成立，因此是兩顆徽章而不是一個列舉值。
 
-**問題負責人路徑**：第 3 層再擴充一條——`IssueProfile`（回饋十九輪批次F 由 `IssueOwnerRule`
-改名擴欄，blob key `issue_owners` 沿用、零資料遷移；鍵＝(Source,EventId)，跨主機生效）
+**問題負責人路徑**：第 3 層再擴充一條——`IssueProfile`（blob key `issue_owners`；鍵＝(Source,EventId)，跨主機生效）
 指派的負責人，自動取得保留期內出現過該問題之主機的檢視權（`HostVisibilityResolver.
 GetIssueOwnedHostIds`，內部呼叫 `IIssueAggregateQuery.HostIdsFor` 反查 `lf_top_issues`），
 與主機負責人**同級**（整台可見，非問題層級的窄授與），同樣聯集進 `GetVisibleHostIds`／
@@ -353,7 +352,7 @@ GetIssueOwnedHostIds`，內部呼叫 `IIssueAggregateQuery.HostIdsFor` 反查 `l
 PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從近期問題挑選或手動輸入
 (Source, EventId)，編輯時鍵鎖定只能改負責人與備註。
 
-**機房結論（回饋十九輪批次F 新增）**：`IssueProfile` 額外承載
+**機房結論**：`IssueProfile` 額外承載
 `ConclusionStatus`（限 `IssueHandlingStatuses` 四種結案態：resolved／wont_fix／
 false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時必填）＋
 `ConcludedById`／`ConcludedByAccount`／`ConcludedAt`＋`AutoApply`（bool）。
@@ -737,12 +736,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **重點問題 Top 5**：位置在主機排行**之前**
   ——全站主視角是問題事件、第二視角才是主機（§8 視角盤點）。一列一個問題（Source＋EventId，
   與依問題視角同一把分組鍵），點列下鑽 `/records?view=issue&source=&eventId=&from=&to=`。
-  資料由 `IssueRankingBuilder.Build`（與報表問題排行共用同一份投影，兩頁數字必然一致，
-  取代已於回饋十九輪批次E退場的 `RecordStatsBuilder.BuildIssueRanking` 記憶體 GroupBy）在既有的
+  資料由 `IssueRankingBuilder.Build`（與報表問題排行共用同一份投影，兩頁數字必然一致）在既有的
   `GET api/dashboard/summary` 內一併回傳，不另開請求。
   **刻意不含處理狀態外的細節**：處理狀態摘要仍附在列上（未處理主機數），但逐問題的完整
   處理歷程要進依問題視角才看得到；這張卡回答的是「哪幾個問題現在最該優先看」。
-- **改以「分數」而非數量或單純嚴重度排序**（回饋十九輪批次G3）：
+- **依「分數」而非數量或單純嚴重度排序**：
   純數量排序在 2000 台以上必然失效——`DCOM 10016` 這種幾乎每台都有、每天都一樣的雜訊
   恆在第 1（資訊量為零）。改依 `IssuePriorityScorer.Score` 算出的分數排序（同分時退回
   嚴重度→主機數→總次數當次要鍵，排序穩定）：
@@ -764,20 +762,18 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   **變化幅度**（與前一等長期間比）／總次數。
   - 影響率＝主機數 ÷ 可見主機總數：「600 台」在 2000 台環境是 30%、在 50 台是全滅，
     絕對值無法跨環境解讀。
-  - **vs 基準**（回饋十九輪批次G1）：基準＝過去 30 天（查詢期間終點往前推，不受查詢
+  - **vs 基準**：基準＝過去 30 天（查詢期間終點往前推，不受查詢
     期間本身影響）出現日台數的中位數，偏離倍數＝最近出現日台數 ÷ 基準；出現不足 3 天視為
     新問題、顯示「新問題，無基準」。`IssueBaselineCalculator`（純函式）與依問題視角共用
     同一份計算，兩頁數字必然一致。
-  - **本期首見／首見（機房）**（回饋十九輪批次G4）：前者受查詢期間截斷（這次查詢看到的
+  - **本期首見／首見（機房）**：前者受查詢期間截斷（這次查詢看到的
     最早一筆），後者不受截斷（↔ `lf_issue_first_seen`，這個問題第一次在機房出現的真正日期，
-    回饋十九輪批次B insert-if-absent 落地）。原「涵蓋範圍」欄（首見~最近出現的範圍字串）
-    已拆開：本期首見只顯示單一日期，「還在不在發生」改由既有的距今天數提示（「N 天前」／
-    「昨日仍在發生」）回答，避免與新增的機房首見欄語意重複。
+    以 insert-if-absent 落地）。本期首見只顯示單一日期，「還在不在發生」由距今天數提示
+    （「N 天前」／「昨日仍在發生」）回答，不與機房首見欄語意重複。
   - 資料來源走 `IIssueAggregateQuery`（`lf_top_issues` 的 GROUP BY），不把整段期間的
     紀錄撈回記憶體聚合；與報表問題排行共用 `IssueRankingBuilder`，兩頁數字必然一致。
   - 主機數以**存活主機 id** 計——合併過的主機不再被算成兩台。
-  - **全部主機都已有結論的問題退出清單**（回饋十九輪批次A，原規劃出處
-    docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6）：不佔用重點清單版面，但卡底誠實顯示
+  - **全部主機都已有結論的問題退出清單**（背景見 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6）：不佔用重點清單版面，但卡底誠實顯示
     「另有 N 個問題已有結論（未列入）」——悄悄少幾筆會被誤讀成「問題變少了」。
     報表問題排行套同一條規則、同一句文案，兩頁的排除數字一致（`IssueRankingBuilder.
     ExcludeConcluded`）。此為固定行為，無切換選擇器（刻意，見 docs/BACKLOG.md 的
@@ -846,13 +842,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   「風險→關聯→日期」緊急程度排序）
 - **依問題視角補上「時間形狀」**：
   原欄位只回答「影響多廣」，回答不了「這是老問題還是新問題／天天都有還是零星爆發／還在不在發生」。
-  欄位——**vs 基準**（回饋十九輪批次G1，語意與計算式同 §9.1，`IssueBaselineCalculator` 共用）、
-  **本期首見**（受查詢期間截斷）、**首見（機房）**（回饋十九輪批次G4，不受截斷，↔
+  欄位——**vs 基準**（語意與計算式同 §9.1，`IssueBaselineCalculator` 共用）、
+  **本期首見**（受查詢期間截斷）、**首見（機房）**（不受截斷，↔
   `lf_issue_first_seen`）、**出現密度**（N/M 天＋密度條，文字為主、圖為輔，不可只留圖）、
   **最近出現**（日期＋是否仍在發生）；嚴重度欄另補「重大」旗標（過去只在風險日詳情看得到）。
-  資料來源走 `IIssueAggregateQuery` 的 SQL 聚合（回饋十九輪批次E 全面改版，取代舊版
-  `BuildIssueGroup` 逐群組整批載入紀錄再記憶體 GroupBy 的 N3 熱點——2000 台規模下單次查詢
-  一度超過 45 分鐘未返回）。
+  資料來源走 `IIssueAggregateQuery` 的 SQL 聚合（不把整段期間的紀錄撈回記憶體聚合——2000 台規模下的記憶體 GroupBy 會讓單次查詢逾時）。
 - **第四視角「依問題」**：一列一個問題（Source＋EventId 分組，
   與詳情頁/主機頁彙總同一套 `GroupIssuesBySignature` 鍵），欄位＝問題／分類／嚴重度（期間最高）／
   主機數／vs 基準／本期首見／首見（機房）／出現密度／總次數／最近出現／處理概況（「N 台處理中／
@@ -1356,12 +1350,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   清單加 OS 欄與單選 chip 篩選（`GET api/admin/hosts?os=`）。
   **掃描精靈與 CSV 的 OS 只套用在本次新增的主機**——既有主機（含復活的孤兒）的 OS 一律不動，
   與群組指派同一原則：匯入不是隱性改設定，而改 OS 等於把既有主機的偵測面整個換掉。
-- **主機分級**（回饋十九輪批次G2）：`WebHost.Tier`（`core`／`standard`（預設）／`test`，經
+- **主機分級**：`WebHost.Tier`（`core`／`standard`（預設）／`test`，經
   `WebHost.NormalizeTier` 正規化，同 `NormalizeOs` 慣例）純人工分類，不影響規則面或批次
   行為——只供 §9.1／§9.6 的 PriorityScore `tierW` 權重與清單/詳情頁徽章使用。主機頁單台
   編輯下拉＋批次設定（工具列「批次設定分級」，`PUT api/admin/hosts/tier/batch`，同批次改
   群組一次 `MutateBatch` 完成整批）；NetIQ 單筆／批次登錄與掃描精靈皆為選填欄，只套用在
-  本次新增的主機（同 OS 原則）。**hosts.csv 已於回饋十一輪 §2a 退役**，沒有獨立的 CSV
+  本次新增的主機（同 OS 原則）。**沒有 hosts.csv 匯入路徑**，沒有獨立的 CSV
   匯入器可掛這個欄位，掃描精靈是現存匯入路徑唯一的選填欄入口。
 - 主機清單**為伺服器端分頁＋搜尋＋篩選**：`GET api/admin/hosts` 改參數化
   （`HostSearchRequest`：query/status/sentinel/groupIds/**os**/sort/**dir**/page/pageSize）回傳 `PagedResult<HostDto>`；
@@ -1635,16 +1629,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      對應不到任何啟用中帳號（自由文字地址，如共用信箱）時只收統計行，不含任何明細——權限
      無從判定時預設最小揭露。
 
-     **內容改為問題優先**（回饋十九輪批次H）：原本第二層是逐主機日一行的明細列表，
-     執行摘要／每日週報已整段改為**問題優先區塊**（`MailIssueDigest.Build`，依 (Source,
+     **內容為問題優先**：執行摘要／每日週報的第二層是**問題優先區塊**（`MailIssueDigest.Build`，依 (Source,
      EventId) 分區——逾期＞新出現＞擴散中＞其他高風險，一個問題只落一區；只有「其他高風險」
-     依嚴重度過濾，其餘三區的訊號本身已是優先理由），逐主機日明細改一行「請至站台」連結；
-     高風險即時改為「問題優先區塊＋主機日附錄」雙節並存（既有的逐主機日明細降級為附錄，
-     不是移除）。行數上限沿用既有常數（`SummaryBodyLineLimit=50`／`UrgentBodyLineLimit=20`），
-     摘要／週報的語意由「主機日行數」改為「問題行數」；**即時信是兩節各自套用同一個 20 行
+     依嚴重度過濾，其餘三區的訊號本身已是優先理由），逐主機日明細為一行「請至站台」連結；
+     高風險即時為「問題優先區塊＋主機日附錄」雙節並存。行數上限沿用既有常數（`SummaryBodyLineLimit=50`／`UrgentBodyLineLimit=20`），
+     摘要／週報的行數語意是「問題行數」；**即時信是兩節各自套用同一個 20 行
      上限、各自截斷**（問題優先節計問題行、主機日附錄節仍計主機日行，單封信最多 40 行明細）。`MailIssueDigest` 與 `OccurrenceStatusResolver`
-     皆為 Singleton（`OccurrenceStatusResolver` 回饋十九輪批次H 由 Scoped 改註冊，其自身相依
-     本就全是 Singleton，沒有 captive dependency 疑慮），批次內相同可見範圍的收件人共用同一次
+     皆為 Singleton（`OccurrenceStatusResolver` 自身相依
+     全是 Singleton，沒有 captive dependency 疑慮），批次內相同可見範圍的收件人共用同一次
      查詢結果（`BuildIssueRowsCached`，以 hostIds 集合排序後的字串為鍵）。
 
      **收件人跨輪失敗排除**：單一收件人連續寄送失敗達 3 次
@@ -1977,7 +1969,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `IIssueCaseStore` | **表 `lf_issue_cases`**（問題案件，跨日處理歸屬） | Web＋批次 |
 | `IIssueAggregateQuery` | 表 `lf_top_issues`（唯讀聚合：問題 → 主機數／期間跨度／出現密度／總次數） | 查詢面，不寫入 |
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
-| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護，回饋十九輪批次F 由 `IssueOwnerRule` 擴欄改名） | Web |
+| `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
 | `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |

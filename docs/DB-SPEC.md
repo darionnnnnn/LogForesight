@@ -98,7 +98,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   warning_count    int NOT NULL
   audit_count      int NOT NULL
   ai_analyzed      bool NOT NULL
-  ai_pending       bool NOT NULL DEFAULT 0        -- 回饋十九輪批次B 抽出：NetIQ 搜尋與 AI 判讀
+  ai_pending       bool NOT NULL DEFAULT 0        -- NetIQ 搜尋與 AI 判讀
                                                   -- 脫鉤的第三態（統計已寫入、AI 段排隊中），
                                                   -- 與 ai_analyzed=false 是不同語意
   security_log_available bool NULL                -- 三態：NULL=未嘗試
@@ -112,7 +112,7 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
   uncovered_checks_json text                      -- List<string>（未檢查項目申報）
   report_id        bigint NULL FK → lf_reports       -- 有風險報告時指向全文
   created_at       timestamp NOT NULL
-  extract_version  int NOT NULL DEFAULT 0            -- 回饋十九輪批次B 新增：抽出欄（headline/
+  extract_version  int NOT NULL DEFAULT 0            -- 抽出欄（headline/
                                                      -- data_incomplete/security_log_available/
                                                      -- error_count/warning_count/ai_analyzed/
                                                      -- ai_pending）的回填版本號，0=舊列尚未回填、
@@ -122,9 +122,9 @@ lf_daily_records                                     -- ↔ DailyAnalysisRecord
 ```
 
 ```
-lf_issue_first_seen                                  -- 回饋十九輪批次B 新增：問題的機房首見日
-                                                     -- （不受查詢期間截斷，回饋十九輪批次G4
-                                                     -- 呈現用；與 lf_top_issues.record_date 的
+lf_issue_first_seen                                  -- 問題的機房首見日
+                                                     -- （不受查詢期間截斷，供呈現用；
+                                                     -- 與 lf_top_issues.record_date 的
                                                      -- MIN 不同——那受查詢期間截斷，這張表
                                                      -- insert-if-absent、之後不論查哪個期間
                                                      -- 都不變）
@@ -149,9 +149,9 @@ JSON 裡多出的欄位，不是新增資料表欄位）**：
   執行中。與既有的 `ai_analyzed=false`（AI 判定不需要或已失敗）是不同語意，見
   docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節。
 - `LogIssueSignature.EventKey`：問題簽章的第五個分組鍵欄位（Linux 事件命中規則時的規則 Id，
-  Windows 事件恆空字串）。**已於回饋十九輪批次B 抽出成 `lf_top_issues.event_key` 欄**
-  （早期為「刻意不抽出」，批次B 推翻——處理狀態以完整簽章為鍵，`IssueSignatureKey`
-  需要它才組得回五段完整簽章、join 得到「這個問題有沒有結論」）。但**「依問題視角」的
+  Windows 事件恆空字串）。**已抽出成 `lf_top_issues.event_key` 欄**
+  （處理狀態以完整簽章為鍵，`IssueSignatureKey` 需要它才組得回五段完整簽章、
+  join 得到「這個問題有沒有結論」）。但**「依問題視角」的
   跨主機/跨日聚合鍵仍是 `(Source, EventId)`、不含 EventKey**——同 program 命中不同規則的
   Linux 問題仍會併成一組，這是有意識接受的 v1 限制，真的有 Linux 流量進來後再評估
   （見 docs/LINUX-RULES.md）。
@@ -183,9 +183,9 @@ lf_top_issues                                        -- ↔ LogIssueSignature（
   event_count      int NOT NULL                   -- 'count' 是保留字，改名
   category         nvarchar(20) NOT NULL          -- Storage/Hardware/Security/...
   severity         nvarchar(10) NOT NULL          -- Low/Medium/High/Critical
-  known_issue      nvarchar(500) NULL             -- 命中規則表時的中文說明（回饋十九輪批次B 抽出，
+  known_issue      nvarchar(500) NULL             -- 命中規則表時的中文說明（
                                                   --   依問題視角的說明欄直接查此欄不解 JSON）
-  event_key        nvarchar(255) NOT NULL DEFAULT ''  -- 完整簽章第五段（回饋十九輪批次B 抽出：
+  event_key        nvarchar(255) NOT NULL DEFAULT ''  -- 完整簽章第五段（
                                                   --   Linux 規則 Id，Windows 恆空字串；聚合鍵仍是
                                                   --   (source_name, event_id)，見 ContentJson 補充節）
   first_seen       nvarchar(5)                    -- HH:mm（沿用現有模型；跨日聚合無意義所以不用 timestamp）
@@ -334,8 +334,8 @@ lf_issue_first_seen: PK(source_key, event_id)
 lf_top_issues:     (record_id)；(event_id, source_name) — 跨主機找同一簽章
                    (record_date, source_name, event_id)；(host_id, record_date) — 問題聚合
 lf_issue_handling: UNIQUE(host_name_key, record_date, issue_key)；(host_name_key, record_date)；(case_id)
-                   -- 另有 created_at 欄（回饋十九輪批次B8）：僅新增列時落、更新不覆寫，
-                   -- 舊列為 NULL、本輪不消費——MTTA 成效指標輪（docs/BACKLOG.md）的資料基礎
+                   -- 另有 created_at 欄：僅新增列時落、更新不覆寫，舊列為 NULL；
+                   -- 目前無消費端，是 MTTA 成效指標（docs/BACKLOG.md）的資料基礎
 
 lf_issue_cases:    (host_name_key, issue_key, closed_at)；(handler_id, closed_at)
 lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)

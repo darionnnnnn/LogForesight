@@ -7,7 +7,7 @@
 
 ## 前端共用抽取（原 SHARED-STANDARDS-PLAN S13／S14，P3 選配）
 
-- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——**C# 端已於回饋十九輪批次I 收斂**：
+- **S13：類別／嚴重度中文名的 C#／JS 跨語言雙份**——**C# 端已收斂**：
   `LogForesight.Core/Analysis/IssueCategoryNames` 是 C# 唯一字典，`RiskReportService.CategoryZh`
   （txt 報告）與 `MailIssueRow.FormatLine`（郵件，批次H 曾短暫長出第三份拷貝、體檢時收斂）
   皆委派它。**剩餘的是 JS 端**：`format.js` 的 `CATEGORY_NAMES`＋`rules.js` 一份局部拷貝，
@@ -108,7 +108,7 @@
   案件時自動建案（沿用案件制，不另造同步機制）；UI 於批次指派 modal 加一顆「之後新主機也
   自動指派」勾選即建規則，規則清單/停用放規則或使用者維護頁（下一輪定）；他人已有進行中
   案件不搶走、命中寫稽核。
-  **與問題檔案的關係**（回饋十九輪批次F 新增後補記）：`IssueProfile.AutoApply`＋
+  **與問題檔案的關係**：`IssueProfile.AutoApply`＋
   `ConclusionStatus` 已經是「這個問題簽章之後永遠自動套用某個結論」的落地（見
   `IssueCaseCoordinator.AttachNewDay` 的 fleet 套用分支）——概念上與這裡的「乙」有重疊
   （都是「簽章 key → 未來新主機日自動套用某個結果」），但落地的**結果**不同：問題檔案
@@ -146,18 +146,18 @@
 
 - **報表問題排行的「顯示範圍」選擇器**（原 D6 乙案，SCALE-FIX-PLAN-2026-08-06.md）：
   排除已有結論的問題（規劃出處 docs/archive/SCALE-ISSUE-FIRST-PLAN.md §10.6；
-  回饋十九輪批次A已完成，`IssueHandlingRollupQuery`＋
+  已由 `IssueHandlingRollupQuery`＋
   `IssueRankingBuilder.ExcludeConcluded`，儀表板重點問題卡與報表問題排行皆已接上、
   兩頁「另有 N 個問題已有結論」數字一致）目前是**固定行為**，沒有讓使用者切換「全部／
   排除已有結論」的選擇器——多數情境固定排除即符合需求，真的需要看全部（例如稽核）時
   再評估要不要加選擇器。既有的「不受『顯示範圍』篩選影響」常駐說明文字仍成立
   （那是日層級 handlingScope 與問題聚合母體不同的另一件事），不受本項影響。
 
-## 成效指標遞延項（回饋十九輪§5 明確不做，記入待補）
+## 成效指標遞延項（明確不做，記入待補）
 
 - **MTTA/MTTR 成效指標輪**：平均認領時間（MTTA，問題出現到有人開始處理）／平均解決時間
   （MTTR，出現到結案）目前沒有任何一頁呈現，只有處理概況的靜態計數（未處理／處理中／已處理）。
-  資料基礎已具備：`IssueHandling.created_at`（回饋十九輪批次B新增，僅新增時落）＋`IssueCase`
+  資料基礎已具備：`IssueHandling.created_at`（僅新增時落）＋`IssueCase`
   的建立/結案時間軸＋處理歷程（`RecordHandlingLog`）。**尚待決定的問題**（立案前需要先想清楚）：
   1. 「認領」的定義——案件建立算認領，還是狀態變成 `in_progress` 才算（觀察中算不算已認領）？
   2. 統計母體——依問題（Source,EventId）還是依主機日？兩者的「平均」意義不同。
@@ -200,7 +200,7 @@
 - **批次 4：專案外觀（README Quick Start／LICENSE 等）**：使用者定案本輪不做，留待後續有
   對外發布或新人上手需求明確時再排入。
 
-## 回饋十九輪體檢輪記錄的設計面債務（未排期）
+## 設計面債務（未排期）
 
 - **`visibleSeverities` 選填參數的隱性契約**（`IIssueAggregateQuery` 的
   `Aggregate`/`LatestOccurrences`/`ActionableOccurrences`/`AggregateByDate`/`AggregateByHost`）：

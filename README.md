@@ -98,14 +98,12 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 
 ## 部署驗證
 
-早期版本有獨立的 `--selftest`／`--debug-dump` console 旗標，隨批次 console 專案於 Phase 5
-退場（`docs/archive/WEB-SCHEDULER-PLAN.md` §1.5）一併移除，對應的驗證方式改為：
+沒有獨立的驗證用 CLI 旗標，驗證方式如下：
 
 - **內建規則的合法性**（有無不合格項目、是否有規則被排序在前面的規則遮蔽、推導出的 Security
-  稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：現在是
-  `LogForesight.Tests` 的自動化測試（`KnownIssueCatalogTests`、
-  `CorrelationAnalyzerRuleAlignmentTests`），換一台主機部署前跑 `dotnet test` 全綠即可，
-  比手動執行一次性 CLI 驗證更不容易被忘記跑。
+  稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：由
+  `LogForesight.Tests` 的自動化測試涵蓋（`KnownIssueCatalogTests`、
+  `CorrelationAnalyzerRuleAlignmentTests`），換一台主機部署前跑 `dotnet test` 全綠即可。
 - **你改過的規則**（透過 Web 規則維護頁新增/修改）：儲存前一律經過 `RuleValidator`（見下方
   「規則庫與抑制設定」），驗證不過直接拒絕寫入，不需要另外手動驗證。
 - **AI 呼叫的完整 prompt 與原始回應**（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
@@ -489,29 +487,16 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲罰、額外請求欄位）、
 權限監控資料夾、分析參數（伺服器角色描述、體檢間隔、掃描頻道）、CSV 匯入上限、
 各項保留天數、AD 驗證伺服器。NetIQ 連線與節流參數則在「系統管理 > NetIQ 維護」頁。
-（原本散在 appsettings 的 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段
-皆於 §12 遷入或退役；每個欄位的預設值＝原出廠值，升級後行為不變。）
+（`appsettings.json` 沒有 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段，
+這些設定一律以 DB 的設定頁為準——見 docs/WEB-SPEC.md §12。）
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
 ## Web 部署（docs/archive/HISTORY.md P1-3）
 
-**只需要部署 `LogForesight.Web` 一個執行檔**——早期版本另需與批次 `LogForesight.exe` 部署在
-同一台伺服器並共用資料目錄，批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），
-現在 Web 站台本身就是分析執行與查詢介面的唯一部署單位。
-
-**行為變更（回饋十九輪，2026-08）**：
-- **儀表板／報表／問題查詢的期間右端錨點右移一天**——分析永遠只產出到昨天，畫面的
-  「近 N 天」等日期預設值改以「昨天」而非「今天」為終點（避免每次都少算一天）。
-  郵件的每日／週報窗口同步右移。
-- **儀表板重點問題卡與報表問題排行改依「優先度分數」排序**，不再是純嚴重度→主機數→
-  總次數；分數綜合嚴重度、影響率、與過去 30 天基準的偏離倍數、機房首見天數、未處理比例、
-  受影響主機分級六個維度（詳見 docs/WEB-SPEC.md §9.1）。問題查詢頁的「依問題」視角**不受
-  影響**，排序邏輯維持不變。
-- **郵件本文改版**：執行摘要／每日週報的逐主機日明細改為「問題優先」摘要（分區——逾期／
-  新出現／擴散中／其他高風險），高風險即時通知改為「問題優先＋主機日附錄」並存；收件人
-  可見範圍過濾與去重機制不受影響（詳見 docs/WEB-SPEC.md §9.9b）。
+**只需要部署 `LogForesight.Web` 一個執行檔**——Web 站台本身就是分析執行與查詢介面的
+唯一部署單位，沒有另外的批次執行檔要一起部署。
 
 ### 以 Windows 服務執行
 
