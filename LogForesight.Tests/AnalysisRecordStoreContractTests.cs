@@ -171,6 +171,127 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Single(store.ReadRecent(DateTime.Today, 7));
     }
 
+    // ── PruneDetails ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PruneDetails_超過保留期_清除詳情但保留統計欄與子列()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        var date = DateTime.Today.AddDays(-130);
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            RiskLevel = "高",
+            Headline = "測試標題",
+            ErrorCount = 5,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new() { LogName = "System", Source = "disk", EventId = 153, Count = 7, Severity = IssueSeverity.Critical }
+            }
+        });
+
+        // Act
+        var pruned = store.PruneDetails(120);
+
+        // Assert
+        Assert.Equal(1, pruned);
+        using var ctx = _fx.NewContext();
+        var row = ctx.DailyRecords.Single();
+        Assert.True(row.DetailPruned);
+        Assert.Equal(string.Empty, row.ContentJson);
+        Assert.Equal("高", row.RiskLevel);
+        Assert.Equal("測試標題", row.Headline);
+        Assert.Equal(5, row.ErrorCount);
+
+        var topIssue = Assert.Single(ctx.TopIssues.ToList());
+        Assert.Equal("disk", topIssue.SourceName);
+        Assert.Equal(153, topIssue.EventId);
+    }
+
+    [Fact]
+    public void PruneDetails_保留期內的列不受影響()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-10)));
+
+        var pruned = store.PruneDetails(120);
+
+        Assert.Equal(0, pruned);
+        using var ctx = _fx.NewContext();
+        var row = ctx.DailyRecords.Single();
+        Assert.False(row.DetailPruned);
+        Assert.NotEqual(string.Empty, row.ContentJson);
+    }
+
+    [Fact]
+    public void PruneDetails_冪等_連續執行第二次回傳0()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+
+        var pruned1 = store.PruneDetails(120);
+        var pruned2 = store.PruneDetails(120);
+
+        Assert.Equal(1, pruned1);
+        Assert.Equal(0, pruned2);
+    }
+
+    [Fact]
+    public void CountPrunableDetails_回傳筆數正確且不改變資料()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+        store.Append(Record(DateTime.Today.AddDays(-131)));
+        store.Append(Record(DateTime.Today.AddDays(-10)));
+
+        using var ctxPre = _fx.NewContext();
+        var originalContent = ctxPre.DailyRecords.Where(r => r.RecordDate < DateTime.Today.AddDays(-120)).Select(r => r.ContentJson).ToList();
+
+        var count = store.CountPrunableDetails(120);
+
+        Assert.Equal(2, count);
+
+        using var ctxPost = _fx.NewContext();
+        var currentContent = ctxPost.DailyRecords.Where(r => r.RecordDate < DateTime.Today.AddDays(-120)).Select(r => r.ContentJson).ToList();
+        Assert.Equal(originalContent, currentContent);
+    }
+
+    [Fact]
+    public void PruneDetails_分批執行_不超過上限()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+        store.Append(Record(DateTime.Today.AddDays(-131)));
+        store.Append(Record(DateTime.Today.AddDays(-132)));
+
+        // maxRows = 2, batchSize = 1
+        var pruned1 = store.PruneDetails(120, 2, 1);
+        Assert.Equal(2, pruned1);
+
+        var countLeft = store.CountPrunableDetails(120);
+        Assert.Equal(1, countLeft);
+
+        var pruned2 = store.PruneDetails(120, 2, 1);
+        Assert.Equal(1, pruned2);
+    }
+
+    [Fact]
+    public void PruneDetails_分多批次執行_完整清除所有符合條件的列()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        for (int i = 0; i < 5; i++)
+        {
+            store.Append(Record(DateTime.Today.AddDays(-130 - i)));
+        }
+
+        // maxRows = 10, batchSize = 2 (應該會跑 3 個 batch: 2, 2, 1)
+        var pruned = store.PruneDetails(120, 10, 2);
+        Assert.Equal(5, pruned);
+
+        var remaining = store.CountPrunableDetails(120);
+        Assert.Equal(0, remaining);
+    }
+
     // ── 週體檢附掛 ───────────────────────────────────────────────────────────
 
     [Fact]

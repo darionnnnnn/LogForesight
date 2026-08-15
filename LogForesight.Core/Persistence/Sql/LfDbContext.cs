@@ -104,6 +104,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.WeeklyCheckupDate).HasColumnName("weekly_checkup_date");
             e.Property(x => x.ContentJson).HasColumnName("content_json");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.DetailPruned).HasColumnName("detail_pruned").HasDefaultValue(false);
 
             // 讀取面全面 SQL 化的抽出欄（回饋十九輪批次B）：只有這幾個欄位需要跨越單筆詳情頁
             // （仍讀 ContentJson）以外的清單／聚合路徑，其餘欄位（RiskBasis／TrendAssessment／
@@ -305,6 +306,9 @@ public class DailyRecordRow
     public DateTime? WeeklyCheckupDate { get; set; }
     public string ContentJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>標記詳情是否已因超過保留期而被清除，以確保夜間作業冪等性</summary>
+    public bool DetailPruned { get; set; }
 
     // ── 讀取面 SQL 化的抽出欄（回饋十九輪批次B）──────────────────────────
 

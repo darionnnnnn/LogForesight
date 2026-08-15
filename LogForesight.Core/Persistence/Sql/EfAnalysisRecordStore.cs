@@ -317,6 +317,75 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return total;
     }
 
+    /// <summary>回報「若現在執行 PruneDetails，會清掉幾列詳情」，不做任何異動。
+    /// 不受單次上限影響——它回答的是「總共還有多少」，不是「這次會清多少」。</summary>
+    public int CountPrunableDetails(int detailRetentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-detailRetentionDays);
+        using var ctx = _contextFactory();
+        return OwnedRows(ctx).Count(r => r.RecordDate < cutoff && !r.DetailPruned);
+    }
+
+    /// <summary>
+    /// 清除過期的詳情內容（<c>content_json</c>），**整列保留**——與 <see cref="Prune"/> 的
+    /// 整列刪除是兩層不同的保留期：統計層（抽出欄與 lf_top_issues）要留到足以做年度同期比較，
+    /// 而詳情只有風險日詳情頁在讀，是整張表的儲存量大宗。兩層分開才不必為了年度比較
+    /// 把儲存量整個放大。
+    ///
+    /// <c>content_json</c> 與 <c>detail_pruned</c> **在同一次 ExecuteUpdate 設定**：
+    /// 分兩趟的話中途失敗會留下「內容清了但標記沒設」的列，那列會被下次執行重複處理，
+    /// 畫面也無從分辨詳情是被清掉還是本來就沒有。
+    /// </summary>
+    public int PruneDetails(int detailRetentionDays) => PruneDetails(detailRetentionDays, MaxPruneRowsPerRun, PruneBatchSize);
+
+    internal int PruneDetails(int detailRetentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-detailRetentionDays);
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var total = 0;
+        while (total < maxRows)
+        {
+            var batch = Math.Min(batchSize, maxRows - total);
+            var recordIds = OwnedRows(ctx)
+                .Where(r => r.RecordDate < cutoff && !r.DetailPruned)
+                .OrderBy(r => r.RecordDate)
+                .Select(r => r.RecordId)
+                .Take(batch)
+                .ToList();
+            if (recordIds.Count == 0) break;
+
+            var updated = ctx.DailyRecords
+                .Where(r => recordIds.Contains(r.RecordId))
+                .ExecuteUpdate(s => s
+                    .SetProperty(p => p.ContentJson, string.Empty)
+                    .SetProperty(p => p.DetailPruned, true));
+            total += updated;
+        }
+
+        if (total == 0)
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天）：無可清除詳情", detailRetentionDays);
+            return 0;
+        }
+
+        var remaining = OwnedRows(ctx).Count(r => r.RecordDate < cutoff && !r.DetailPruned);
+        if (remaining > 0)
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms，" +
+                     "另有 {Remaining} 筆超過本次上限 {Max}，留待下次執行",
+                detailRetentionDays, cutoff, total, sw.ElapsedMilliseconds, remaining, maxRows);
+        }
+        else
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms",
+                detailRetentionDays, cutoff, total, sw.ElapsedMilliseconds);
+        }
+
+        return total;
+    }
+
     // ── 讀取（批次面）─────────────────────────────────────────────────────────
 
     public List<DailyAnalysisRecord> ReadRecent(DateTime anchorDate, int days)
