@@ -24,6 +24,11 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_log_lines", "created_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_log_lines", "IX_lf_log_lines_log_key_created_at", "log_key, created_at");
 
+        // 供上層快取失效判定的單調遞增版本號。不重用 updated_at 是因為 DateTime.Now 在 Windows 解析度約 15.6 ms，
+        // 同 tick 寫入會漏更新，因此獨立加一欄。
+        AddColumnIfMissing(ctx, isSqlite, "lf_blobs", "version",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
+
         // P1-2：問題查詢頁分頁排序需要的抽出欄（見 LfDbContext.DailyRecordRow.HasCorrelation 註解）。
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "has_correlation",

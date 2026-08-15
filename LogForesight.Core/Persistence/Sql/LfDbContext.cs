@@ -63,6 +63,7 @@ public class LfDbContext : DbContext
             e.HasKey(x => x.BlobKey);
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
+            e.Property(x => x.Version).HasColumnName("version");
             // 樂觀鎖：UpdatedAt 當並發權杖。EfJsonBlobStore.Mutate 是「讀→改→寫」，
             // 沒有這個標記的話兩個行程各自讀到舊內容、後寫的整份蓋掉先寫的（更新遺失）——
             // 這正是 JSONL 檔案時代跨程序鎖檔要防的事故，換 DB 後要用資料庫的機制補上。
@@ -472,6 +473,9 @@ public class BlobRow
     public string BlobKey { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>供上層快取判定用的單調遞增版本號，與 UpdatedAt（並發權杖）用途不同。</summary>
+    public long Version { get; set; }
 }
 
 /// <summary>append-only JSONL 的一行（log_key＝來源，如 "audit"；seq 自增即附加順序）。↔ lf_log_lines</summary>

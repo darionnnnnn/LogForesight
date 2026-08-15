@@ -257,4 +257,53 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.Equal("確認為背景雜訊", reread.Note);
         Assert.Single(NoiseMarks().GetForHost("SRV-A"));   // 更新不是新增一列
     }
+
+    // ── EfJsonBlobStore 版本與快取 ───────────────────────────────────────────
+
+    [Fact]
+    public void Blob_全新寫入後ReadVersion回傳一()
+    {
+        var store = _fixture.Blob("test_v1");
+        store.Mutate(_ => ("content_1", true));
+
+        Assert.Equal(1, store.ReadVersion());
+    }
+
+    [Fact]
+    public void Blob_連續Mutate三次後ReadVersion回傳三()
+    {
+        var store = _fixture.Blob("test_v2");
+        store.Mutate(_ => ("1", true));
+        store.Mutate(_ => ("2", true));
+        store.Mutate(_ => ("3", true));
+
+        Assert.Equal(3, store.ReadVersion());
+    }
+
+    [Fact]
+    public void Blob_ReadWithVersion回傳的內容與版本_和分別呼叫Read與ReadVersion一致()
+    {
+        var store = _fixture.Blob("test_v3");
+        store.Mutate(_ => ("content_3", true));
+
+        var (content, version) = store.ReadWithVersion();
+
+        Assert.Equal("content_3", content);
+        Assert.Equal(1, version);
+        Assert.Equal(store.Read(), content);
+        Assert.Equal(store.ReadVersion(), version);
+    }
+
+    [Fact]
+    public void Blob_各自獨立建立的實例_A寫入後B讀得到遞增後的值()
+    {
+        var storeA = _fixture.Blob("test_v4");
+        var storeB = _fixture.Blob("test_v4");
+
+        storeA.Mutate(_ => ("a_writes", true));
+        Assert.Equal(1, storeB.ReadVersion());
+
+        storeA.Mutate(_ => ("a_writes_again", true));
+        Assert.Equal(2, storeB.ReadVersion());
+    }
 }
