@@ -17,9 +17,15 @@ public abstract class JsonBlobCollection<T> where T : class
 {
     private readonly EfJsonBlobStore _blob;
     private readonly bool _cached;
-    private List<T>? _cache;
-    private long _cacheVersion;
     private readonly object _cacheLock = new();
+
+    /// <summary>快取內容與它對應的版本，**綁在同一個不可變物件上**：兩個獨立欄位的話，
+    /// 讀取端可能看到「新清單配舊版本」（或反之）的撕裂組合，那會讓快取永遠不再更新。</summary>
+    private sealed record CacheSnapshot(List<T> Items, long Version);
+
+    /// <summary>volatile：命中路徑刻意不進 <see cref="_cacheLock"/>（見 <see cref="Read"/>），
+    /// 需要保證別的執行緒剛換上的快照立刻看得到。</summary>
+    private volatile CacheSnapshot? _snapshot;
 
     protected JsonBlobCollection(EfJsonBlobStore blob, bool cached = false)
     {
@@ -35,21 +41,32 @@ public abstract class JsonBlobCollection<T> where T : class
     /// <para>為什麼要快取：主機清單（3000 台約 4 MB）在單一請求內會被讀取十幾次，若無快取反序列化成本極高。</para>
     /// <para>為什麼每次都探測版本不設 TTL：主機清單是授權可見範圍的來源，過期快取會導致使用者看到不該看的主機，探測成本為微秒級。</para>
     /// <para>注意：呼叫端不可修改回傳清單中的物件屬性！回傳的淺複製只保護清單本身（增刪排序安全），但物件是共用的參考。</para>
+    /// <para><b>命中路徑不進鎖</b>：版本探測與快照比對都在鎖外完成，只有真的要重新載入時才鎖。
+    /// 若連命中也要搶同一把鎖，單一請求十幾次的 <c>GetAll()</c> 加上多人併發就全部排隊在這裡——
+    /// 反序列化是省掉了，卻換來一個新的咽喉點，等於抵消掉加快取的目的。</para>
     /// </summary>
     protected List<T> Read()
     {
         if (!_cached) return Deserialize(_blob.Read());
 
+        // 鎖外：版本探測是單列主鍵查詢，快照是不可變物件，兩者都不需要互斥
+        var version = _blob.ReadVersion();
+        var snapshot = _snapshot;
+        if (snapshot != null && snapshot.Version == version) return new List<T>(snapshot.Items);
+
         lock (_cacheLock)
         {
-            var version = _blob.ReadVersion();
-            if (_cache == null || _cacheVersion != version)
+            // 雙重檢查：等鎖期間可能已有別的執行緒載入同一版本，不必重做一次 4 MB 的反序列化
+            var current = _snapshot;
+            if (current == null || current.Version != version)
             {
+                // 用 ReadWithVersion 而不是沿用上面探測到的 version：兩次讀之間內容可能又被改過，
+                // 拿舊版本號配新內容存進快照，快取就永遠不會再更新
                 var (content, loadedVersion) = _blob.ReadWithVersion();
-                _cache = Deserialize(content);
-                _cacheVersion = loadedVersion;
+                current = new CacheSnapshot(Deserialize(content), loadedVersion);
+                _snapshot = current;
             }
-            return new List<T>(_cache);
+            return new List<T>(current.Items);
         }
     }
 

@@ -368,4 +368,40 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.Single(bRead);
         Assert.Equal("domain\\user1", bRead[0].Account);
     }
+
+    /// <summary>
+    /// 命中路徑不進鎖之後的併發正確性：快照是不可變物件、以 volatile 欄位整個換掉，
+    /// 所以併發讀取只會看到「某一個完整版本」，不會看到載入到一半的清單。
+    /// 若哪天有人把快照拆回「清單 + 版本」兩個獨立欄位，這裡會讀到撕裂的組合而失敗。
+    ///
+    /// **刻意不用 <see cref="EfSqliteFixture"/>**：它是 in-memory DB，整個 fixture 共用
+    /// 一條 <c>SqliteConnection</c>，而該型別不是執行緒安全的——併發讀取會撞
+    /// 「database is locked」，測到的是替身的限制不是產品行為。這裡改用檔案型 SQLite，
+    /// 每個 DbContext 各自開連線，與正式部署同形狀。
+    /// </summary>
+    [Fact]
+    public void 快取併發讀取_多執行緒同時GetAll_每次都拿到完整清單()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-cache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var backend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "c.db")}" }, dir);
+            var store = new HostStore(backend.Blob("hosts"));
+            store.Upsert(new WebHost { HostName = "A" });
+            store.Upsert(new WebHost { HostName = "B" });
+
+            var counts = new System.Collections.Concurrent.ConcurrentBag<int>();
+            System.Threading.Tasks.Parallel.For(0, 64, _ => counts.Add(store.GetAll().Count));
+
+            Assert.Equal(64, counts.Count);
+            Assert.All(counts, c => Assert.Equal(2, c));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* 暫存目錄刪不掉不影響結論 */ }
+        }
+    }
 }
