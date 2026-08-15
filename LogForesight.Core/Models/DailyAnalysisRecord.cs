@@ -152,6 +152,14 @@ public class DailyAnalysisRecord
     public WeeklyCheckupResult? WeeklyCheckup { get; set; }
 
     /// <summary>
+    /// 這筆紀錄的詳情已被清除。
+    /// 因為此模型本身會被序列化寫入 ContentJson，若不排除此屬性會產生循環邏輯，
+    /// 且 ContentJson 正是會被清空的目標，其值應由 DB 資料列的 DetailPruned 決定。
+    /// </summary>
+    [JsonIgnore]
+    public bool DetailPruned { get; set; }
+
+    /// <summary>
     /// 各類別的 AI 深入分析結構化結果（風險「中」以上才有）。與報告全文（ReportFile）並存但目的不同：
     /// 報告全文是給人看的完整排版，這裡是給未來 DB／查詢/問答用的結構化資料，兩者由同一次深析呼叫產生，
     /// 不需要事後從文字反解析。低風險日恆為空清單（該日從不觸發深析）。

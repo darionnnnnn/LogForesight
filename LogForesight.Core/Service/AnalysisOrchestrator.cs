@@ -406,6 +406,29 @@ public class AnalysisOrchestrator
                 console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
             }
 
+            // 1a. 保留期現況申報（只計數不清除）。
+            //
+            // **刻意用未限縮的 RecordStore()**：上面那行 historyService 綁定本機識別，
+            // 只看得到這台機器自己的紀錄，而 NetIQ 機房數千台主機的紀錄不屬於本機——
+            // 用它計數會回報接近 0，真實情況完全看不見。
+            try
+            {
+                var allHostRecords = backend.RecordStore();
+                var prunableRecords = allHostRecords.CountPrunableRecords(retention.RetentionDays);
+                var prunableDetails = allHostRecords.CountPrunableDetails(retention.DetailRetentionDays);
+
+                if (prunableRecords > 0 || prunableDetails > 0)
+                {
+                    var msg = $"目前尚未啟用自動清除，僅申報：若現在執行，將清掉 {prunableRecords} 列過期紀錄、{prunableDetails} 列過期詳情。";
+                    console.WriteLine($"  ℹ {msg}");
+                    runRecorder.Milestone(msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "保留期現況申報失敗（不影響本次分析）：{0}", ex.Message);
+            }
+
             // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
             try
             {

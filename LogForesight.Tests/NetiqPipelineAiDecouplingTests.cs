@@ -19,6 +19,21 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
     private readonly FakeAiService _ai = new();
     private readonly FakeSentinelSearchClient _client = new();
 
+    /// <summary>
+    /// 等到條件成立，逾時就**明確失敗並說出等的是什麼**。
+    ///
+    /// 這批測試原本各處是「輪詢到 5 秒就放棄、然後繼續往下跑」。兩個問題：
+    /// 逾時後測試帶著錯誤的前提繼續執行，最後在別的地方以看不懂的斷言失敗收場；
+    /// 而且全套並行跑滿 CPU 時 5 秒並不夠，會間歇性假失敗。
+    /// 逾時放寬到 30 秒（真的卡死仍會在 30 秒內失敗，不會把測試掛住），並在這裡就斷言。
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, string what, int timeoutSeconds = 30)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.True(condition(), $"等待逾時（{timeoutSeconds} 秒）：{what}");
+    }
+
     public NetiqPipelineAiDecouplingTests()
     {
         Directory.CreateDirectory(_dir);
@@ -98,11 +113,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         var pipeline = MakePipeline(new NetiqOptions { BackfillDays = 3 });
         var runTask = pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_client.Requests.Count < 3 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(50);
-        }
+        await WaitUntilAsync(() => _client.Requests.Count >= 3, "三天的搜尋全部發出");
 
         Assert.Equal(3, _client.Requests.Count); // 三天的搜尋全部發出，沒有被卡住的 AI 擋住
 
@@ -165,12 +176,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
 
         // 等到 AI 真的被呼叫（消費者已進入 CompleteAiAsync、卡在 hang 上）才取消，
         // 測的是「取消時 AI 呼叫正在進行中」而不是「還沒開始」
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_ai.Calls == 0 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(20);
-        }
-        Assert.True(_ai.Calls > 0, "AI 應該已經被呼叫（卡在 hang 上）");
+        await WaitUntilAsync(() => _ai.Calls > 0, "AI 已經被呼叫（卡在 hang 上）");
 
         cts.Cancel();
 
@@ -211,8 +217,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         using (var cts = new CancellationTokenSource())
         {
             var runTask = firstPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token);
-            var deadline = DateTime.UtcNow.AddSeconds(5);
-            while (_ai.Calls == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            await WaitUntilAsync(() => _ai.Calls > 0, "AI 已經被呼叫");
             cts.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
         }
@@ -265,8 +270,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         using (var cts = new CancellationTokenSource())
         {
             var runTask = firstPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14, cts.Token);
-            var deadline = DateTime.UtcNow.AddSeconds(5);
-            while (_ai.Calls == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+            await WaitUntilAsync(() => _ai.Calls > 0, "AI 已經被呼叫");
             cts.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runTask);
         }

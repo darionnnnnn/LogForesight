@@ -317,6 +317,14 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return total;
     }
 
+    /// <summary>回報「若現在執行 Prune，會刪掉幾列」，不做任何異動。</summary>
+    public int CountPrunableRecords(int retentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        using var ctx = _contextFactory();
+        return OwnedRows(ctx).Count(r => r.RecordDate < cutoff);
+    }
+
     /// <summary>回報「若現在執行 PruneDetails，會清掉幾列詳情」，不做任何異動。
     /// 不受單次上限影響——它回答的是「總共還有多少」，不是「這次會清多少」。</summary>
     public int CountPrunableDetails(int detailRetentionDays)
@@ -527,7 +535,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             {
                 r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
                 r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
-                r.AiAnalyzed, r.AiPending
+                r.AiAnalyzed, r.AiPending, r.DetailPruned
             })
             .ToList();
 
@@ -574,6 +582,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             SecurityLogAvailable = r.SecurityLogAvailable,
             AiAnalyzed = r.AiAnalyzed,
             AiPending = r.AiPending,
+            DetailPruned = r.DetailPruned,
             // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
             // 只檢查 Count > 0，用單一佔位元素表達「有」就夠，內容本身不會被讀取
             CorrelationAlerts = r.HasCorrelation ? new List<string> { "(lightweight)" } : new List<string>(),
@@ -725,7 +734,27 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return null;
     }
 
-    /// <summary>預設 JsonSerializer，round-trip 保真</summary>
-    private static DailyAnalysisRecord Deserialize(DailyRecordRow row) =>
-        JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
+    /// <summary>
+    /// 預設 JsonSerializer，round-trip 保真。
+    /// 空字串是 PruneDetails 的產物，Deserialize 對它會丟 JsonException，
+    /// 不是回 null，所以必須在呼叫前就攔下。
+    /// </summary>
+    private static DailyAnalysisRecord Deserialize(DailyRecordRow row)
+    {
+        if (row.DetailPruned || string.IsNullOrWhiteSpace(row.ContentJson))
+        {
+            return new DailyAnalysisRecord
+            {
+                HostId = row.HostId,
+                Host = row.HostName,
+                Date = row.RecordDate,
+                RiskLevel = row.RiskLevel,
+                DetailPruned = true
+            };
+        }
+
+        var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
+        record.DetailPruned = row.DetailPruned;
+        return record;
+    }
 }
