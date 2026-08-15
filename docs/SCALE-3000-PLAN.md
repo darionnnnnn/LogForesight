@@ -169,7 +169,37 @@ var previousFrom = previousTo.AddDays(-span + 1);
 分支：自 `dev` 開 `feature/scale-3000`。各階段獨立可測，順序不可換——
 S1 不先做，S3／S4 的量測全部失真。
 
-### S1 — 主機清單快取層（對應 B1）
+### S1 — 主機清單快取層（對應 B1）　**已完成**
+
+實作分三段委派執行，各段獨立驗收：`lf_blobs` 加 `version` 欄 → 快取層 → 寫入面批次化。
+測試 2086 → 2099 全綠。機制的現行事實見 `docs/DB-SPEC.md` §F，以下只記決策與驗收所得。
+
+**版本權杖不重用 `updated_at`**：它已是 EF 並發權杖且值取自 `DateTime.Now`，
+Windows 解析度約 15.6 ms，同 tick 寫入會拿到相同戳記。主機清單是授權可見範圍的來源，
+漏更新等於可能看到不該看到的主機——所以另立 `version` 欄，並且不動既有的並發權杖機制
+（那是正確性機制，不該夾在效能改動裡碰）。
+
+**快取放在 `JsonBlobCollection` 而非 `EfJsonBlobStore`**：昂貴的是反序列化不只是 DB 讀取，
+放在 blob 層只省掉讀取，4 MB JSON 照樣每次重新解析。
+
+**驗收抓到的三件事**：
+
+| 抓到什麼 | 根因 | 處置 |
+|---|---|---|
+| `NetiqOrphanSweeper`／`SentinelIdBackfiller` 對 `GetAll()` 的結果直接改物件屬性再逐台 `Upsert` | 加了快取之後，這等於直接改到快取內容——`Upsert` 尚未提交、甚至提交失敗時，變更已對所有讀取者可見，而 `Active` 影響主機可見性 | 兩處都改走 `MutateBatch`（它的 mutation 拿到的是當場反序列化的新清單），與 N+1 一併解決 |
+| `FlushHostTouches` 用「複製一份再 `Clear()`」取出緩衝 | 多台 Sentinel 平行處理、各自跑完都會 flush，`Clear()` 會把複製之後由別台寫入的新項目一併刪掉——那台主機的 `LastReportAt` 靜默消失、畫面顯示成無回報 | 改為逐鍵 `TryRemove`，只移除自己真的取走的鍵 |
+| `lf_blobs.version` 的 schema 升級路徑無測試 | SQLite 測試走 `EnsureCreated`，欄位從 EF 模型建出，`SchemaUpgrader` 那行在測試中從未執行——錯了會是新環境全綠、只有正式環境炸 | 比照該檔既有的「舊 schema 缺某欄」樣式補測試 |
+
+**踩過的坑，不要改回去**：快取命中時回傳的是淺複製。看起來像可以省掉的一次配置，
+但拿掉之後呼叫端對清單做 `Clear()`／排序會直接改壞快取（已有測試釘住）。
+
+**刻意不動的**：`SetHighVolume` 逐台寫入（既有 `if (!IsHighVolume)` 護欄已避免重複寫入，
+觸發頻率極低）、`AnalysisOrchestrator.Touch`（一趟執行一次）、Web 端單筆 `Upsert`。
+
+**尚未驗證**：快取對真實請求的效果只有程式碼推論與單元測試，沒有實機量測。
+`SqlPerformanceMonitor` 會記錄 `blob:hosts:Read`，實測時可據此確認單一請求的次數是否降到 0–1。
+
+---
 
 **讀取面**：在 `HostStore` 之上加一層版本感知快取。`lf_blobs` 已有 `UpdatedAt` 欄
 （`EfJsonBlobStore` 的 `BlobRow`），以它當版本戳：

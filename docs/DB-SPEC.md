@@ -551,3 +551,33 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 
 **唯一留待後續的開放項**：C 節 Security 長期保存政策的第二步（試點階段核對抓得到什麼後回頭決定，
 見 docs/BACKLOG.md）。schema 本身已無開放問題。
+
+### F. `lf_blobs.version`：整份型 store 的快取失效權杖
+
+`lf_blobs` 每一列存一整份 JSON（key＝store 名稱）。`hosts`／`host_groups`／`group_access`
+三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
+會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
+`JsonBlobCollection` 因此對這三份、且只有這三份啟用讀取快取。
+
+`version` 是 `bigint`，`EfJsonBlobStore.Mutate` 每次寫入遞增 1，唯一用途是讓快取判斷
+「內容有沒有變過」——`ReadVersion()` 只讀這一個整數欄，不拉整份內容。
+
+| 欄位 | 用途 | 誰維護 |
+|---|---|---|
+| `updated_at` | EF 並發權杖（樂觀鎖，防更新遺失） | EF 於 `SaveChanges` 比對原始值 |
+| `version` | 快取失效判定 | `Mutate` 遞增 |
+
+**兩者不可合併成一個**：`updated_at` 取自 `DateTime.Now`，Windows 上實際解析度約 15.6 ms，
+同一個 tick 內的兩次寫入會拿到相同戳記。主機清單是**授權可見範圍的來源**，
+漏一次更新等於使用者可能看到不該看到的主機。
+
+其餘 store（`users`、`sentinels`、`rules`…）不啟用快取：它們不隨主機數成長，
+加快取只是徒增失效正確性的風險面。
+
+兩條不可放寬的約束：
+
+- **每次 `Read()` 都探測版本，不設 TTL。** 探測是單列主鍵查詢（微秒級），
+  沒有理由為它在授權正確性上做時間折衷。
+- **快取命中時回傳淺複製，呼叫端不得修改清單內的物件。** 淺複製只保護清單本身
+  （增刪排序安全），物件是共用參考。要改主機資料一律走 `MutateBatch`——
+  它的 mutation 拿到的是當場從資料庫反序列化的全新清單，不是快取物件。
