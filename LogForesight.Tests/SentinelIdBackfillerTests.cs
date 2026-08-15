@@ -72,4 +72,18 @@ public class SentinelIdBackfillerTests
         Assert.Equal(0, second.BackfilledCount);
         Assert.Equal(0, second.UnresolvedCount);
     }
+
+    [Fact]
+    public void 批次作業_回填結果與計數不變()
+    {
+        var sentinel = _sentinels.Upsert(new Sentinel { Name = "SENTINEL-B" });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.10", Source = "netiq", NetiqServer = "sentinel-b" });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.11", Source = "netiq", NetiqServer = "sentinel-b" });
+
+        var result = SentinelIdBackfiller.Run(_hosts, _sentinels);
+
+        Assert.Equal(2, result.BackfilledCount);
+        Assert.Equal(sentinel.SentinelId, _hosts.FindByName("10.1.2.10")!.SentinelId);
+        Assert.Equal(sentinel.SentinelId, _hosts.FindByName("10.1.2.11")!.SentinelId);
+    }
 }

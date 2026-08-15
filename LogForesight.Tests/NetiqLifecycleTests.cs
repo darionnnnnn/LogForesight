@@ -76,6 +76,20 @@ public class NetiqOrphanSweeperTests
 
         Assert.True(_hosts.FindByName("MYPC")!.Active);
     }
+
+    [Fact]
+    public void 批次作業_孤兒主機仍被正確停用且寫入()
+    {
+        AddNetiq("10.1.2.20", sentinelId: 99, netiqServer: "SENTINEL-OLD");
+        AddNetiq("10.1.2.21", sentinelId: 99, netiqServer: "SENTINEL-OLD");
+
+        var result = NetiqOrphanSweeper.Sweep(_hosts, new long[] { 1 });
+
+        Assert.Equal(2, result.OrphanedCount);
+        Assert.False(_hosts.FindByName("10.1.2.20")!.Active);
+        Assert.Equal("SENTINEL-OLD", _hosts.FindByName("10.1.2.20")!.OrphanedFromSentinel);
+        Assert.False(_hosts.FindByName("10.1.2.21")!.Active);
+    }
 }
 
 /// <summary>

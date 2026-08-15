@@ -63,6 +63,13 @@ public class NetiqPipelineService
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
+    /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
+    /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
+    private readonly ConcurrentDictionary<long, HostTouch> _hostTouches = new();
+
+    /// <summary>單台主機待寫回的回報時間與顯示名。同一台主機重複觸發時後寫覆蓋前寫——
+    /// 一趟執行內的 <c>DateTime.Now</c> 差異對「最後回報時間」沒有意義。</summary>
+    private sealed record HostTouch(string? DisplayName, DateTime ReportedAt);
 
     /// <param name="console">輸出去哪裡（docs/archive/FEEDBACK-8-PLAN.md #2）：原本整支寫死 Console.WriteLine，
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
@@ -204,6 +211,7 @@ public class NetiqPipelineService
         {
             aiQueue.Complete();
             await consumerTask;
+            FlushHostTouches();
         }
 
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
@@ -253,6 +261,8 @@ public class NetiqPipelineService
         {
             await RunServerOsGroupAsync(sentinel, linuxTargets, WebHost.OsLinux, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
         }
+
+        FlushHostTouches();
     }
 
     private async Task RunServerOsGroupAsync(
@@ -590,7 +600,7 @@ public class NetiqPipelineService
             // 這個訊號值得人工看一眼（確認是真安靜還是轉送掛了），試點階段再依誤報率校準。
             if (hostReported)
             {
-                _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
+                _hostTouches[target.HostId] = new HostTouch(displayName, DateTime.Now);
             }
 
             if (workItem != null)
@@ -742,6 +752,51 @@ public class NetiqPipelineService
             // 未預期的例外會在那裡重新拋出並蓋掉原本的錯誤（例如取消），這裡先攔下記錄
             Log.Error(ex, "NetIQ AI 消費者迴圈意外中止");
         }
+    }
+
+    /// <summary>
+    /// 把累積的回報時間一次寫回主機清單。逐台 <c>TouchNetiq</c> 是整份 blob 的讀→改→寫，
+    /// 3000 台 × 120 天的初次回補等於 36 萬次 4 MB 全量重寫；改為累積後在**每台 Sentinel
+    /// 跑完**與 <see cref="RunAsync"/> 的 finally 各 flush 一次，一趟執行降到個位數次。
+    ///
+    /// 延遲寫入的代價是崩潰時丟掉尚未 flush 的回報時間，那些主機會短暫顯示為無回報；
+    /// 損失上界是「一台 Sentinel 的回報時間」，而執行中途崩潰本來就代表那一批資料不完整。
+    ///
+    /// **逐鍵 TryRemove 而不是「複製一份再 Clear」**：多台 Sentinel 平行處理，各自跑完都會
+    /// 呼叫這裡。<c>Clear</c> 會把「複製之後、清除之前」由別台 Sentinel 寫入的新項目一併刪掉，
+    /// 那台主機的 LastReportAt 就這樣消失、畫面顯示成無回報，而且不會有任何錯誤訊息——
+    /// 正是「沒查 ≠ 沒事」要防的靜默盲區。只移除自己真的取走的鍵才不會漏。
+    /// </summary>
+    private void FlushHostTouches()
+    {
+        if (_hostTouches.IsEmpty) return;
+
+        var touches = new List<KeyValuePair<long, HostTouch>>();
+        foreach (var hostId in _hostTouches.Keys)
+        {
+            if (_hostTouches.TryRemove(hostId, out var touch))
+            {
+                touches.Add(new KeyValuePair<long, HostTouch>(hostId, touch));
+            }
+        }
+
+        if (touches.Count == 0) return;
+
+        _hosts.MutateBatch(batch =>
+        {
+            var hostDict = batch.ToDictionary(h => h.HostId);
+            foreach (var kvp in touches)
+            {
+                if (hostDict.TryGetValue(kvp.Key, out var host))
+                {
+                    host.LastReportAt = kvp.Value.ReportedAt;
+                    if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                    {
+                        host.DisplayName = kvp.Value.DisplayName;
+                    }
+                }
+            }
+        });
     }
 
     /// <param name="GroupIds">這台主機所屬的主機群組 Id（回饋十四輪 A3）：計畫階段（<see cref="RunServerOsGroupAsync"/>）

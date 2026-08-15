@@ -21,25 +21,26 @@ public static class SentinelIdBackfiller
     {
         var byName = sentinels.GetAll().ToDictionary(s => s.Name, s => s, StringComparer.OrdinalIgnoreCase);
 
-        var candidates = hosts.GetAll()
-            .Where(h => h.SentinelId == null && !string.IsNullOrWhiteSpace(h.NetiqServer))
-            .ToList();
-
         int backfilled = 0, unresolved = 0;
-        foreach (var host in candidates)
+        hosts.MutateBatch(batch =>
         {
-            if (byName.TryGetValue(host.NetiqServer!.Trim(), out var sentinel))
+            var candidates = batch
+                .Where(h => h.SentinelId == null && !string.IsNullOrWhiteSpace(h.NetiqServer));
+
+            foreach (var host in candidates)
             {
-                host.SentinelId = sentinel.SentinelId;
-                host.NetiqServer = sentinel.Name;   // 正規化大小寫，與 Sentinel 現存名稱一致
-                hosts.Upsert(host);
-                backfilled++;
+                if (byName.TryGetValue(host.NetiqServer!.Trim(), out var sentinel))
+                {
+                    host.SentinelId = sentinel.SentinelId;
+                    host.NetiqServer = sentinel.Name;   // 正規化大小寫，與 Sentinel 現存名稱一致
+                    backfilled++;
+                }
+                else
+                {
+                    unresolved++;
+                }
             }
-            else
-            {
-                unresolved++;
-            }
-        }
+        });
 
         return new Result { BackfilledCount = backfilled, UnresolvedCount = unresolved };
     }
