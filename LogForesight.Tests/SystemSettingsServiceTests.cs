@@ -31,7 +31,7 @@ public class SystemSettingsServiceTests : IDisposable
                 MailState));
 
     private static UpdateSystemSettingsRequest ValidRequest(
-        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14) => new()
+        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14, int detailRetentionDays = 120) => new()
     {
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
@@ -42,6 +42,7 @@ public class SystemSettingsServiceTests : IDisposable
         RunLogRetentionDays = runLogRetentionDays,
         AuditRetentionDays = auditRetentionDays,
         RiskyEventRetentionDays = riskyEventRetentionDays,
+        DetailRetentionDays = detailRetentionDays,
         // §12：自 appsettings 遷入的參數（各欄位的 [Range] 由 API 邊界的模型驗證負責，
         // 服務層只做跨欄位規則；這裡帶出廠值，讓既有測試不會存進一堆 0）
         AiTimeoutSeconds = 600,
@@ -171,6 +172,64 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(90, settings.RunLogRetentionDays);
         Assert.Equal(730, settings.AuditRetentionDays);
         Assert.Equal(14, settings.RiskyEventRetentionDays);
+        Assert.Equal(120, settings.DetailRetentionDays);
+    }
+
+    // ── 詳情保留天數（DetailRetentionDays） ───────────────────────────────────────────
+
+    [Fact]
+    public void Update後_詳情保留天數持久化()
+    {
+        var service = Create();
+
+        var saved = service.Update(ValidRequest(detailRetentionDays: 90));
+
+        Assert.Equal(90, saved.DetailRetentionDays);
+        Assert.Equal(90, service.Get().DetailRetentionDays);
+    }
+
+    [Fact]
+    public void 詳情保留天數大於歷史資料保留天數時拒絕()
+    {
+        var service = Create();
+        var request = ValidRequest(detailRetentionDays: 200); // RetentionDays 固定為 120
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("詳情保留天數", ex.Message);
+    }
+
+    [Fact]
+    public void 詳情保留天數等於歷史資料保留天數時允許()
+    {
+        var service = Create();
+
+        var saved = service.Update(ValidRequest(detailRetentionDays: 120));
+
+        Assert.Equal(120, saved.DetailRetentionDays);
+    }
+
+    [Fact]
+    public void Update_稽核紀錄同時包含Before與After的詳情保留天數()
+    {
+        // 先建立初始設定並清除之前的稽核紀錄（或者直接用新的 audit service 拿最後一筆）
+        var audit = new RecordingAuditService();
+        var service = new SystemSettingsService(_store, FakeCurrentUser.WithCapabilities(), audit, new FakeUserStore(),
+            new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
+                new FakeUserGroupStore(), new FakeGroupAccessStore(),
+                _mailRecords, new FakeHandlingStore(),
+                MailState));
+
+        // 存入不同的值以確認稽核抓到變更
+        service.Update(ValidRequest(detailRetentionDays: 90));
+
+        var record = audit.Entries.Last();
+        var detailNode = System.Text.Json.Nodes.JsonNode.Parse(record.DetailJson!)!;
+
+        // FakeSystemSettingsStore 會修改同一個物件參考，所以 before/after 值可能相同。
+        // 但測試的重點是「斷言兩邊都在」（Before 與 After 區塊都有此欄位），所以檢查 key 是否存在。
+        var detailObj = detailNode.AsObject();
+        Assert.True(detailObj["Before"]!.AsObject().ContainsKey("DetailRetentionDays"));
+        Assert.True(detailObj["After"]!.AsObject().ContainsKey("DetailRetentionDays"));
     }
 
     /// <summary>

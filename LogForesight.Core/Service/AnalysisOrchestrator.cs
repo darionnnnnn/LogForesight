@@ -981,4 +981,5 @@ public record RetentionOptions
     public int RunLogRetentionDays { get; init; } = 90;
     public int AuditRetentionDays { get; init; } = 730;
     public int RiskyEventRetentionDays { get; init; } = 14;
+    public int DetailRetentionDays { get; init; } = 120;
 }
