@@ -16,14 +16,42 @@ namespace LogForesight.Core.Persistence;
 public abstract class JsonBlobCollection<T> where T : class
 {
     private readonly EfJsonBlobStore _blob;
+    private readonly bool _cached;
+    private List<T>? _cache;
+    private long _cacheVersion;
+    private readonly object _cacheLock = new();
 
-    protected JsonBlobCollection(EfJsonBlobStore blob) => _blob = blob;
+    protected JsonBlobCollection(EfJsonBlobStore blob, bool cached = false)
+    {
+        _blob = blob;
+        _cached = cached;
+    }
 
     /// <summary>供 log／Location 顯示（相容原本的名稱；DB 後端回傳的是位置描述而非真實路徑）</summary>
     protected string FilePath => _blob.Location;
 
-    /// <summary>讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。</summary>
-    protected List<T> Read() => Deserialize(_blob.Read());
+    /// <summary>
+    /// 讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。
+    /// <para>為什麼要快取：主機清單（3000 台約 4 MB）在單一請求內會被讀取十幾次，若無快取反序列化成本極高。</para>
+    /// <para>為什麼每次都探測版本不設 TTL：主機清單是授權可見範圍的來源，過期快取會導致使用者看到不該看的主機，探測成本為微秒級。</para>
+    /// <para>注意：呼叫端不可修改回傳清單中的物件屬性！回傳的淺複製只保護清單本身（增刪排序安全），但物件是共用的參考。</para>
+    /// </summary>
+    protected List<T> Read()
+    {
+        if (!_cached) return Deserialize(_blob.Read());
+
+        lock (_cacheLock)
+        {
+            var version = _blob.ReadVersion();
+            if (_cache == null || _cacheVersion != version)
+            {
+                var (content, loadedVersion) = _blob.ReadWithVersion();
+                _cache = Deserialize(content);
+                _cacheVersion = loadedVersion;
+            }
+            return new List<T>(_cache);
+        }
+    }
 
     /// <summary>
     /// 讀→改→寫的原子更新（底層保證整段互斥、不留半截、不遺失更新，見 <see cref="EfJsonBlobStore"/>）。

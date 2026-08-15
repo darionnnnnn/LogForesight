@@ -306,4 +306,66 @@ public class BlobStoreRoundTripTests : IDisposable
         storeA.Mutate(_ => ("a_writes_again", true));
         Assert.Equal(2, storeB.ReadVersion());
     }
+
+    // ── 快取機制 ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void 快取命中_同一HostStore實例連續兩次GetAll_回傳內容相同()
+    {
+        var store = new HostStore(_fixture.Blob("cache_test_1"));
+        store.Upsert(new WebHost { HostName = "A" });
+
+        var first = store.GetAll();
+        var second = store.GetAll();
+
+        Assert.Equal(first.Count, second.Count);
+        Assert.Equal(first[0].HostName, second[0].HostName);
+    }
+
+    [Fact]
+    public void 快取跨實例失效_實例A新增主機_實例B重新讀取應讀到新資料()
+    {
+        // 必須是兩個各自獨立 new 出來的 store 實例，且共用同一個 blob key
+        var storeA = new HostStore(_fixture.Blob("cache_test_2"));
+        var storeB = new HostStore(_fixture.Blob("cache_test_2"));
+
+        // B 先讀取，建立快取
+        storeB.GetAll();
+
+        // A 寫入新主機
+        storeA.Upsert(new WebHost { HostName = "NewHost" });
+
+        // B 再讀取，必須因為版本不同而重新拉取
+        var bRead = storeB.GetAll();
+        Assert.Single(bRead);
+        Assert.Equal("NewHost", bRead[0].HostName);
+    }
+
+    [Fact]
+    public void 快取回傳清單安全修改_修改GetAll的回傳清單_不影響快取內儲存的清單()
+    {
+        var store = new HostStore(_fixture.Blob("cache_test_3"));
+        store.Upsert(new WebHost { HostName = "SafeHost" });
+
+        var list = store.GetAll();
+        list.Clear();
+
+        var listAgain = store.GetAll();
+        Assert.Single(listAgain);
+    }
+
+    [Fact]
+    public void 快取_未啟用快取的Store不受影響_UserStore跨實例讀寫正常()
+    {
+        var storeA = new UserStore(_fixture.Blob("cache_test_4"));
+        var storeB = new UserStore(_fixture.Blob("cache_test_4"));
+
+        storeB.GetAll(); // 觸發讀取
+
+        storeA.Upsert(new WebUser { Account = "domain\\user1" });
+
+        var bRead = storeB.GetAll();
+        Assert.Single(bRead);
+        Assert.Equal("domain\\user1", bRead[0].Account);
+    }
 }

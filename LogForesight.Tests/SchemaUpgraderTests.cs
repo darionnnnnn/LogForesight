@@ -40,6 +40,8 @@ public class SchemaUpgraderTests : IDisposable
         // 那會是測試假設本身的錯誤，不是 SchemaUpgrader 的問題
         raw.CommandText = "CREATE TABLE lf_daily_records (record_id INTEGER PRIMARY KEY AUTOINCREMENT, host_id INTEGER, host_name TEXT, record_date TEXT, risk_level TEXT, weekly_checkup_date TEXT, content_json TEXT, created_at TEXT)";
         raw.ExecuteNonQuery();
+        raw.CommandText = "CREATE TABLE lf_blobs (blob_key TEXT PRIMARY KEY, content TEXT, updated_at TEXT)";
+        raw.ExecuteNonQuery();
     }
 
     [Fact]
@@ -157,6 +159,44 @@ public class SchemaUpgraderTests : IDisposable
 
         SchemaUpgrader.Upgrade(ctx);
         SchemaUpgrader.Upgrade(ctx);   // 再跑一次：冪等,不應重複建欄位/索引而出錯
+    }
+
+    // ── lf_blobs 快取版本欄位 ───────────────────────────────────────────────
+
+    /// <summary>
+    /// 舊 schema 缺 version 欄——升級後補上且可讀寫，既存列預設為 0
+    /// 理由：SQLite 測試平常走 EnsureCreated，SchemaUpgrader 在測試裡從來沒被執行到。
+    /// 沒有這組測試，寫錯了會是「新環境全綠、只有正式環境炸」。
+    /// </summary>
+    [Fact]
+    public void 舊schema缺version欄_升級後補上且可讀寫()
+    {
+        CreateOldSchema();
+        using (var raw = _connection.CreateCommand())
+        {
+            raw.CommandText = "INSERT INTO lf_blobs (blob_key, content, updated_at) VALUES ('hosts', '{}', '2026-01-01')";
+            raw.ExecuteNonQuery();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.Blobs.Single();
+            Assert.Equal("hosts", row.BlobKey);
+            Assert.Equal(0, row.Version); // 預設值為 0
+
+            ctx.Blobs.Add(new BlobRow { BlobKey = "new_store", Content = "[]", Version = 42 });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            Assert.Equal(42, ctx.Blobs.Single(b => b.BlobKey == "new_store").Version); // 驗證升級後可正常讀寫
+        }
     }
 
     // ── 回饋十九輪批次B：lf_daily_records 抽出欄／lf_issue_first_seen ──────────────
