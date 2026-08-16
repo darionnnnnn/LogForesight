@@ -130,47 +130,63 @@ internal static class SchemaUpgrader
         // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
         CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
             isSqlite ? SqliteCreateIssueFirstSeen : SqlServerCreateIssueFirstSeen);
-        SeedIssueFirstSeenIfEmpty(ctx, isSqlite);
+        // 種子（SeedIssueFirstSeenIfEmpty）已移往背景服務 IssueFirstSeenSeedHostedService。
+        // 理由：原本放在啟動路徑上會因為全表掃描而導致 30 秒的 SCM 啟動逾時。
     }
 
-    /// <summary>
-    /// 機房首見日的歷史種子（回饋十九輪批次B 規劃明列、批次I 體檢發現漏做後補上）：
-    /// 沒有這一步，批次B 上線**之前**就存在的問題在 `lf_issue_first_seen` 沒有列，
-    /// 「首見（機房）」會 fallback 成查詢窗口首見（欄位失去存在意義），且 PriorityScore 的
-    /// noveltyW 會把老問題誤判成 7 天內的新問題；更糟的是逐日 upsert 只在「新日期較早」時
-    /// 更新，錯值一旦寫入就**永久固定**——所以種子必須在任何逐日寫入發生前補上。
-    ///
-    /// **這是本檔唯一的 DML 步驟**（其餘全是 DDL）：放在這裡而不是背景回填器，是因為它的
-    /// 冪等門檻（表空才種）與「建表後立刻要有正確初值」的時序需求都與 DDL 同一格——表是
-    /// 這裡建的，種子跟著建表走，不必再發明一個回填版本號。門檻是毫秒級的 <c>Any()</c>
-    /// （走 PK），不會拖慢啟動路徑（見 StorageBackend 的 30 秒 SCM 逾時警語）；只有
-    /// 全新升級（表剛建、還是空的）那一次才會付出對 `lf_top_issues` 的一趟 GROUP BY。
-    ///
-    /// 誠實限制（規劃 B3 原文明列）：種子值受建表當時 `lf_top_issues` 保留期下限截斷——
-    /// 比保留期更早出現的問題，種出來的首見日是保留期內最早的一筆，之後不會再被截斷。
-    /// 已跑過一段時間才收到本修正的環境（表非空）不重種：既有列可能是「批次B 之後第一次
-    /// 出現的日期」而非真正首見，屬已知且有界的偏差，重種會需要逐列比對更早日期、
-    /// 為了修開發期資料把每次啟動變慢不成比例。
-    ///
-    /// 排除 `record_date` 為 MinValue 哨兵的未回填舊列（同 EfIssueAggregateQuery 的既有
-    /// 排除慣例）——讓它們混進來會把首見日全部種成西元 1 年。UPPER() 對 ASCII 來源名與
-    /// C# ToUpperInvariant 等價（Windows provider 與 Linux program 名皆 ASCII）。
-    /// </summary>
-    private static void SeedIssueFirstSeenIfEmpty(LfDbContext ctx, bool isSqlite)
-    {
-        // 來源表不存在就跳過（同 AddColumnIfMissing 的容忍原則）：正常部署 EnsureCreated
-        // 已建好全部表，走到這裡代表 schema 殘缺，種子強行執行只會讓整個站台啟動失敗
-        if (!TableExists(ctx, isSqlite, "lf_top_issues")) return;
-        if (ctx.IssueFirstSeen.Any()) return;
 
-        var seeded = ctx.Database.ExecuteSqlRaw("""
+
+    internal static void MergeIssueFirstSeenSeed(LfDbContext ctx)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // **兩段 SQL 刻意避開「在 HAVING 裡引用外層欄位或未分組的欄位」**：那種寫法在 Sqlite 上
+        // 能跑，在 SqlServer 上卻可能因為分組規則較嚴而失敗——而測試只跑得到 Sqlite，
+        // 這種差異會是「測試全綠、正式環境炸」。改用衍生資料表與純量子查詢，兩個 provider
+        // 的語意都沒有模糊空間。
+
+        // 補缺：lf_top_issues 有、lf_issue_first_seen 沒有的組合，補上歷史最小 record_date
+        var inserted = ctx.Database.ExecuteSqlRaw("""
             INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
-            SELECT UPPER(source_name), event_id, MIN(source_name), MIN(record_date)
-            FROM lf_top_issues
-            WHERE record_date >= '2000-01-01'
-            GROUP BY UPPER(source_name), event_id
+            SELECT src.source_key, src.event_id, src.source_name, src.first_seen
+            FROM (
+                SELECT UPPER(source_name) AS source_key,
+                       event_id           AS event_id,
+                       MIN(source_name)   AS source_name,
+                       MIN(record_date)   AS first_seen
+                FROM lf_top_issues
+                WHERE record_date >= '2000-01-01'
+                GROUP BY UPPER(source_name), event_id
+            ) src
+            WHERE NOT EXISTS (
+                SELECT 1 FROM lf_issue_first_seen fs
+                WHERE fs.source_key = src.source_key AND fs.event_id = src.event_id
+            )
             """);
-        if (seeded > 0) Log.Info("[SQL] lf_issue_first_seen 歷史種子完成：{Count} 個問題", seeded);
+
+        // 修正：兩邊都有、但歷史最小日期早於現存 first_seen 的，更新成較早的那個。
+        // 純量子查詢在 WHERE 直接與 first_seen 比較——NULL（該問題已無歷史列）不成立，
+        // 那一列自然不會被更新，不必另外處理。
+        var updated = ctx.Database.ExecuteSqlRaw("""
+            UPDATE lf_issue_first_seen
+            SET first_seen = (
+                SELECT MIN(t.record_date)
+                FROM lf_top_issues t
+                WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                  AND t.event_id = lf_issue_first_seen.event_id
+                  AND t.record_date >= '2000-01-01'
+            )
+            WHERE (
+                SELECT MIN(t2.record_date)
+                FROM lf_top_issues t2
+                WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                  AND t2.event_id = lf_issue_first_seen.event_id
+                  AND t2.record_date >= '2000-01-01'
+            ) < lf_issue_first_seen.first_seen
+            """);
+
+        Log.Info("[SQL] lf_issue_first_seen 機房首見日冪等合併完成：補缺 {Inserted} 列，修正 {Updated} 列，耗時 {Ms}ms",
+            inserted, updated, sw.ElapsedMilliseconds);
     }
 
     private const string SqliteCreateIssueHandling = """

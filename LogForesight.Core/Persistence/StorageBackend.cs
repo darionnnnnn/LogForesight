@@ -25,6 +25,9 @@ public class StorageBackend
     private readonly Func<LfDbContext> _dbFactory;
     private readonly string _dbDesc;
 
+    public const int ForegroundCommandTimeoutSeconds = 60;
+    public const int AnalysisCommandTimeoutSeconds = 300;
+
     /// <param name="settings">儲存後端設定（Type／ConnectionString）</param>
     /// <param name="fallbackDir">Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）</param>
     /// <param name="maxPoolSize">連線池上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
@@ -50,10 +53,17 @@ public class StorageBackend
         else
         {
             var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
+            // 依用途分流逾時長度：
+            // 前景站台（maxPoolSize == null）逾時設 60 秒，比預設寬一點吸收尖峰，但仍要在使用者放棄之前失敗。
+            // 夜間分析（maxPoolSize != null）逾時設 300 秒，批次聚合本來就慢，用前景的標準會讓夜間分析在正常情況下失敗。
+            var timeoutSeconds = maxPoolSize == null ? ForegroundCommandTimeoutSeconds : AnalysisCommandTimeoutSeconds;
+
             // 暫時性錯誤（failover／節流等）自動重試；Sqlite 是本機檔案，沒有這類網路層
             // 暫時性錯誤，不需要
             options = new DbContextOptionsBuilder<LfDbContext>()
-                .UseSqlServer(cs, o => o.EnableRetryOnFailure(maxRetryCount: 5))
+                .UseSqlServer(cs, o => o
+                    .EnableRetryOnFailure(maxRetryCount: 5)
+                    .CommandTimeout(timeoutSeconds))
                 .Options;
             _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
         }
@@ -164,6 +174,16 @@ public class StorageBackend
 
     /// <summary>lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上</summary>
     public DailyRecordBackfiller DailyRecordBackfiller() => new(_dbFactory);
+
+    /// <summary>
+    /// 機房首見日的冪等合併（與順序無關）。
+    /// 從啟動路徑移至背景服務，避免造成啟動逾時。
+    /// </summary>
+    public void MergeIssueFirstSeenSeed()
+    {
+        using var ctx = _dbFactory();
+        SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+    }
 
     /// <summary>
     /// 關閉 Sqlite 連線池：Microsoft.Data.Sqlite 預設開啟連線池，連線 Close() 回池前的
