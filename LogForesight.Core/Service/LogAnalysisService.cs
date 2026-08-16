@@ -407,7 +407,6 @@ public class LogAnalysisService
         AnalysisPromptBuilder.ScreeningOutcome? screening = null;
         if (shouldScreen)
         {
-            Console.WriteLine($"  事件種類較多，前置掃描 {tailIssues.Count} 項未分類項目...");
             screening = await _promptBuilder.ScreenTailAsync(item.TargetDate, tailIssues, ct);
             Log.Info("前置掃描完成：共 {Total} 項，值得注意 {Notable} 項，一般雜訊 {Clean} 項，掃描失敗 {Failed} 項",
                 tailIssues.Count, screening.Notable.Count, screening.CleanCount, screening.FailedCount);
@@ -698,7 +697,6 @@ public class LogAnalysisService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"風險報告輸出失敗：{ex.Message}");
             Log.Error(ex, "風險報告輸出失敗：{Date:yyyy-MM-dd}", record.Date);
             return null;
         }

@@ -159,8 +159,6 @@ public class EventLogService
             bool complete = !(earliestAvailable != null && earliestAvailable > scanFloor);
             if (!complete)
             {
-                Console.WriteLine($"  ⚠ {logName} 保留的歷史不足以涵蓋 {startDate:yyyy-MM-dd} 起的區間，" +
-                                   $"最早可回溯到 {earliestAvailable:yyyy-MM-dd HH:mm}（更早的事件已被覆蓋，該區間統計可能偏低）");
                 Log.Warn("{LogName} 保留歷史不足，最早可回溯到 {Earliest:yyyy-MM-dd HH:mm}，請求區間起點為 {Start:yyyy-MM-dd}",
                     logName, earliestAvailable, startDate);
             }
@@ -181,7 +179,6 @@ public class EventLogService
         catch (Exception ex)
         {
             // 其他例外（含權限不足 UnauthorizedAccessException）：存在但讀不到，屬偵測盲區。
-            Console.WriteLine($"讀取 {logName} Event Log 時發生錯誤（Security／部分 Operational 頻道需要以系統管理員執行）: {ex.Message}");
             Log.Warn(ex, "讀取 {LogName} Event Log 失敗", logName);
             return new EventLogScanResult { Entries = logs, Complete = false, ReadFailed = true };
         }
@@ -258,8 +255,6 @@ public class EventLogService
             if (i < 0 && totalEntries > 0 && earliestAvailable > scanFloor)
             {
                 complete = false;
-                Console.WriteLine($"  ⚠ {logName} 保留的歷史不足以涵蓋 {startDate:yyyy-MM-dd} 起的區間，" +
-                                   $"最早可回溯到 {earliestAvailable:yyyy-MM-dd HH:mm}（更早的事件已被覆蓋，該區間統計可能偏低）");
                 Log.Warn("{LogName} 保留歷史不足，最早可回溯到 {Earliest:yyyy-MM-dd HH:mm}，請求區間起點為 {Start:yyyy-MM-dd}",
                     logName, earliestAvailable, startDate);
             }
@@ -271,7 +266,6 @@ public class EventLogService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"讀取 {logName} Event Log 時發生錯誤（Security 需要以系統管理員執行）: {ex.Message}");
             Log.Warn(ex, "讀取 {LogName} Event Log 失敗", logName);
             return new EventLogScanResult { Entries = logs, Complete = false, ReadFailed = true };
         }

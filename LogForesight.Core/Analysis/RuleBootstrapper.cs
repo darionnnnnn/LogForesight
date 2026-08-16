@@ -51,14 +51,12 @@ public static class RuleBootstrapper
             try
             {
                 store.Save(seedContent);
-                Console.WriteLine($"規則庫：{store.Location} 不存在，已寫入內建種子（{seedContent.Rules.Count} 條規則，seed v{seedContent.SeedVersion}）。");
                 Log.Info("首次部署：已寫入規則種子 {Path}，共 {Count} 條，seed v{Version}",
                     store.Location, seedContent.Rules.Count, seedContent.SeedVersion);
                 return (seedContent, false);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"⚠ 規則種子寫入失敗（{ex.Message}），本次執行改用內建種子（不落地，下次啟動會再嘗試寫入）。");
                 Log.Error(ex, "規則種子寫入失敗：{Path}", store.Location);
                 return (seedContent, true);
             }
@@ -70,8 +68,6 @@ public static class RuleBootstrapper
             return (outcome.Content!, false);
         }
 
-        Console.WriteLine($"⚠ 規則檔載入失敗（{outcome.Error}），本次執行改用內建種子；" +
-                          $"原檔未被覆寫，請自行修正 {store.Location} 後重新執行。");
         Log.Warn("規則檔載入失敗，降級用內建種子：{Path}，原因：{Error}", store.Location, outcome.Error);
         return (BuiltInSeedContent(), true);
     }
@@ -84,12 +80,10 @@ public static class RuleBootstrapper
         foreach (var (rule, reason) in validation.SkippedRules)
         {
             var id = string.IsNullOrEmpty(rule.Id) ? "(無 Id)" : rule.Id;
-            Console.WriteLine($"⚠ 規則 {id} 不合格，已跳過：{reason}");
             Log.Warn("規則驗證失敗，已跳過：Id={Id}, 原因={Reason}", rule.Id, reason);
         }
         foreach (var warning in validation.ShadowWarnings)
         {
-            Console.WriteLine($"⚠ {warning}");
             Log.Warn("規則遮蔽警告：{Warning}", warning);
         }
 
@@ -114,10 +108,11 @@ public static class RuleBootstrapper
             UpdateHint = updateHint
         };
 
-        Console.WriteLine($"規則庫：{result.Source}（{result.EnabledCount} 條啟用、{result.DisabledCount} 條停用、seed v{result.SeedVersion}）");
+        Log.Info("規則庫：{Source}（{EnabledCount} 條啟用、{DisabledCount} 條停用、seed v{SeedVersion}）",
+            result.Source, result.EnabledCount, result.DisabledCount, result.SeedVersion);
         if (updateHint != null)
         {
-            Console.WriteLine($"  ℹ {updateHint}");
+            Log.Info("規則種子更新提示：{UpdateHint}", updateHint);
         }
 
         return result;

@@ -67,7 +67,6 @@ internal class PermissionMonitorService
         var previous = _snapshotStore.Load();
         if (previous == null)
         {
-            Console.WriteLine("  尚無權限基準快照，本次建立基準（不產生異動告警）。");
             Log.Info("尚無權限基準快照，建立基準");
             _snapshotStore.Save(current);
             return result;
@@ -104,7 +103,6 @@ internal class PermissionMonitorService
         }
         else if (current.AdministratorsMembers == null)
         {
-            Console.WriteLine("  本次無法讀取 Administrators 群組成員，跳過該項比對（不影響資料夾 ACL 檢查）。");
             Log.Warn("本次無法讀取 Administrators 群組成員，跳過該項比對（不影響資料夾 ACL 檢查）。");
         }
 
@@ -222,7 +220,6 @@ internal class PermissionMonitorService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  無法讀取資料夾權限 {path}：{ex.Message}");
             Log.Warn(ex, "無法讀取資料夾權限：{Path}", path);
             return new FolderAclSnapshot { Accessible = false };
         }
@@ -247,7 +244,6 @@ internal class PermissionMonitorService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  無法讀取本機 Administrators 群組成員：{ex.Message}");
             Log.Warn(ex, "無法讀取本機 Administrators 群組成員");
             return null;
         }

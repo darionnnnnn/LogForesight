@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -142,9 +142,6 @@ public class AIService : IAiService
                     .Handle<AiEnvelopeParseException>(),
                 OnRetry = args =>
                 {
-                    var msg = $"AI 呼叫失敗（{args.Outcome.Exception?.Message}），" +
-                             $"{args.RetryDelay.TotalSeconds:0} 秒後重試（第 {args.AttemptNumber + 1}/{settings.RetryCount} 次）...";
-                    Console.WriteLine($"  {msg}");
                     Log.Warn(args.Outcome.Exception, "AI 網路層呼叫失敗，第 {Attempt}/{Total} 次重試", args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
@@ -177,8 +174,6 @@ public class AIService : IAiService
         if (effectiveMaxTokens > 0 &&
             PromptBudget.ExceedsBudget(prompt + (systemPrompt ?? ""), effectiveMaxTokens, out var estimatedPromptTokens))
         {
-            Console.WriteLine($"  ⚠ [{label}] prompt 估計 {estimatedPromptTokens} tokens + 輸出上限 {effectiveMaxTokens}，" +
-                              $"可能超出 context 預算（約 {PromptBudget.UsableTokens}），回應有被 server 端截斷的風險。");
             Log.Warn("[{Label}] prompt 估計 {PromptTokens} tokens + maxTokens {MaxTokens} 可能超出可用預算 {Usable}",
                 label, estimatedPromptTokens, effectiveMaxTokens, PromptBudget.UsableTokens);
         }
@@ -229,7 +224,6 @@ public class AIService : IAiService
                 catch (JsonException ex)
                 {
                     var preview = PreviewForLog(rawBody);
-                    Console.WriteLine($"    AI 回應信封不是合法 JSON，預覽：{preview}");
                     Log.Warn(ex, "AI 回應信封不是合法 JSON，HTTP 狀態碼={StatusCode}，預覽：{Preview}",
                         (int)response.StatusCode, preview);
                     // 包裝成同一種例外類型丟出去，讓 Polly 依 ShouldHandle 判斷是否重試，
@@ -333,7 +327,6 @@ public class AIService : IAiService
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
-                    Console.WriteLine($"    回覆預覽：{preview}");
                     Log.Warn("JSON 解析失敗（第 {Attempt}/{Total} 次），型別={Type}，回覆長度={ResponseChars}，預覽：{Preview}",
                         attempt, totalAttempts, typeof(T).Name, response.Content.Length, preview);
                 }
@@ -347,10 +340,6 @@ public class AIService : IAiService
                 }
             }
 
-            if (attempt < totalAttempts)
-            {
-                Console.WriteLine($"  {lastError}，重新請求（第 {attempt + 1}/{totalAttempts} 次）...");
-            }
         }
 
         Log.Error("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",

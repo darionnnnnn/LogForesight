@@ -1,4 +1,5 @@
 using System.Text.Json;
+using NLog;
 
 namespace LogForesight.Core.Persistence;
 
@@ -8,6 +9,8 @@ namespace LogForesight.Core.Persistence;
 /// </summary>
 internal class PermissionSnapshotStore
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     private readonly EfJsonBlobStore _blob;
 
     public PermissionSnapshotStore(EfJsonBlobStore blob) => _blob = blob;
@@ -24,7 +27,7 @@ internal class PermissionSnapshotStore
         }
         catch (JsonException)
         {
-            Console.WriteLine("  權限快照損毀，本次重建基準（不產生異動告警）。");
+            Log.Warn("權限快照損毀，本次重建基準（不產生異動告警）。");
             return null;
         }
     }
