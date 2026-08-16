@@ -508,10 +508,23 @@ sc create LogForesightWeb ^
   binPath= "C:\path\to\LogForesight.Web.exe" ^
   start= auto
 sc description LogForesightWeb "LogForesight 查詢介面（Web）"
+sc failure LogForesightWeb reset= 86400 actions= restart/60000/restart/60000/restart/60000
 sc start LogForesightWeb
 ```
 
 服務帳號需要對 `Storage:DataRoot`（含資料庫檔案，若用 Sqlite）與自己的 `logs\` 目錄有讀寫權限。
+
+`sc failure` 是必要的，不是加分項：這套系統的用途就是「沒人看的時候幫你看」，
+服務自己掛掉卻掛到有人發現為止，等於監控本身變成盲區。上面的設定是三次失敗各隔 60 秒重啟、
+失敗計數 24 小時歸零。
+
+**啟動逾時**：SCM 預設只等 30 秒。主機數多時首次啟動要做 schema 確認與背景搬移的判定，
+接近或超過 30 秒會被 SCM 直接砍掉，而且症狀是「服務起不來」而非任何錯誤訊息——
+唯一線索在 `logs\` 的 nlog 檔裡。真的遇到就調整登錄檔（單位是毫秒，需重開機生效）：
+
+```
+reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v ServicesPipeTimeout /t REG_DWORD /d 120000 /f
+```
 
 ### HTTPS（Kestrel）
 

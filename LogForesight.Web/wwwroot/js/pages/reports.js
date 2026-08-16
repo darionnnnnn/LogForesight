@@ -14,7 +14,7 @@
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
-import { statCard } from '../core/ui.js';
+import { statCard, toast } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal,
     issueBaselineText
@@ -127,8 +127,20 @@ async function load() {
     const from = document.getElementById('report-from').value;
     const to = document.getElementById('report-to').value;
 
+    if (from && to) {
+        const fromDate = new Date(from);
+        const toDate = new Date(to);
+        const diffDays = Math.round((toDate - fromDate) / 86400000) + 1;
+        if (diffDays > 366) {
+            toast('查詢區間不可超過 366 天，請縮小範圍', 'danger');
+            return;
+        }
+    }
+
+    const compare = document.getElementById('report-compare').value;
+
     const [data, displaySettings] = await Promise.all([
-        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}`),
+        api.get(`/api/reports/summary?from=${from}&to=${to}&handlingScope=${currentScope}&compare=${compare}`),
         getDisplaySettings()
     ]);
     currentData = data;
@@ -194,6 +206,18 @@ function renderKpi() {
 
     const container = document.getElementById('report-kpi');
     container.replaceChildren();
+
+    if (currentData.comparisonOutOfRetention) {
+        const warning = document.createElement('div');
+        warning.className = 'col-12';
+        const msg = document.createElement('div');
+        msg.className = 'small px-3 py-2 rounded';
+        msg.style.backgroundColor = 'var(--lf-warning-soft)';
+        msg.style.color = 'var(--lf-warning-text)';
+        msg.textContent = '比較期間的資料已超過保留期，對比數字不具參考價值。';
+        warning.appendChild(msg);
+        container.appendChild(warning);
+    }
 
     for (const card of cards) {
         const col = document.createElement('div');
@@ -727,6 +751,27 @@ for (const btn of document.querySelectorAll('#report-scope-chips button')) {
     btn.classList.toggle('active', btn.dataset.scope === currentScope);
 }
 
+let userSelectedCompare = false;
+
+document.getElementById('report-compare').addEventListener('change', () => {
+    userSelectedCompare = true;
+});
+
+function updateDefaultCompare() {
+    if (userSelectedCompare) return;
+    const from = document.getElementById('report-from').value;
+    const to = document.getElementById('report-to').value;
+    if (from && to) {
+        const fromDate = new Date(from);
+        const toDate = new Date(to);
+        const diffDays = Math.round((toDate - fromDate) / 86400000) + 1;
+        document.getElementById('report-compare').value = diffDays >= 180 ? 'yoy' : 'previous';
+    }
+}
+
+document.getElementById('report-from').addEventListener('change', updateDefaultCompare);
+document.getElementById('report-to').addEventListener('change', updateDefaultCompare);
+
 function setRange(days) {
     // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天，
     // 錨在今天會讓「本週/本月/近 90 天」的最後一天必然沒有資料
@@ -738,6 +783,10 @@ function setRange(days) {
     // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
     document.getElementById('report-from').value = toLocalDateString(from);
     document.getElementById('report-to').value = toLocalDateString(to);
+
+    if (!userSelectedCompare) {
+        document.getElementById('report-compare').value = days >= 180 ? 'yoy' : 'previous';
+    }
 }
 
 document.getElementById('chart-picker-modal').addEventListener('show.bs.modal', renderChartPickerBody);

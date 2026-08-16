@@ -178,7 +178,43 @@ public interface IIssueAggregateQuery
     /// </summary>
     Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IReadOnlyCollection<(string Source, int EventId)> issues);
+
+    /// <summary>
+    /// 推導風險日的處理狀態（SQL 端實作）。
+    /// 注意：墓碑主機不在本查詢的責任範圍，呼叫端必須排除並自行處理。
+    /// </summary>
+    List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds);
+
+    DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today);
+
+    /// <summary>
+    /// 報表 KPI 聚合 (scope == all)。
+    /// </summary>
+    ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
+    /// <summary>
+    /// 報表逐日趨勢聚合 (scope == all)。
+    /// </summary>
+    List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
 }
+
+public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);
+public sealed record TrendAggregate(DateTime Date, int HighRisk, int MediumRisk, int ErrorCount);
+
+/// <summary>
+/// SQL 端推導出的風險日處理狀態（不含墓碑主機）。
+/// </summary>
+public sealed record DayHandlingProjection(long HostId, DateTime Date, string DayStatus, bool HasHandler);
 
 /// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
 public sealed class IssueDailyHostCount
@@ -221,6 +257,7 @@ public sealed class HostRiskAggregate
 
     public DateTime LatestDate { get; init; }
     public string LatestRiskLevel { get; init; } = string.Empty;
+    /// <summary>最新一天的風險日標題</summary>
     public string LatestHeadline { get; init; } = string.Empty;
 }
 
@@ -274,3 +311,6 @@ public sealed class CategoryAggregate
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
     public int ElevatesCount { get; init; }
 }
+
+public sealed record DayTodoAggregate(
+    int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);

@@ -171,6 +171,219 @@ public class AnalysisRecordStoreContractTests : IDisposable
         Assert.Single(store.ReadRecent(DateTime.Today, 7));
     }
 
+    // ── PruneDetails ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PruneDetails_超過保留期_清除詳情但保留統計欄與子列()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        var date = DateTime.Today.AddDays(-130);
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            RiskLevel = "高",
+            Headline = "測試標題",
+            ErrorCount = 5,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new() { LogName = "System", Source = "disk", EventId = 153, Count = 7, Severity = IssueSeverity.Critical }
+            }
+        });
+
+        // Act
+        var pruned = store.PruneDetails(120);
+
+        // Assert
+        Assert.Equal(1, pruned);
+        using var ctx = _fx.NewContext();
+        var row = ctx.DailyRecords.Single();
+        Assert.True(row.DetailPruned);
+        Assert.Equal(string.Empty, row.ContentJson);
+        Assert.Equal("高", row.RiskLevel);
+        Assert.Equal("測試標題", row.Headline);
+        Assert.Equal(5, row.ErrorCount);
+
+        var topIssue = Assert.Single(ctx.TopIssues.ToList());
+        Assert.Equal("disk", topIssue.SourceName);
+        Assert.Equal(153, topIssue.EventId);
+    }
+
+    [Fact]
+    public void PruneDetails_保留期內的列不受影響()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-10)));
+
+        var pruned = store.PruneDetails(120);
+
+        Assert.Equal(0, pruned);
+        using var ctx = _fx.NewContext();
+        var row = ctx.DailyRecords.Single();
+        Assert.False(row.DetailPruned);
+        Assert.NotEqual(string.Empty, row.ContentJson);
+    }
+
+    [Fact]
+    public void PruneDetails_冪等_連續執行第二次回傳0()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+
+        var pruned1 = store.PruneDetails(120);
+        var pruned2 = store.PruneDetails(120);
+
+        Assert.Equal(1, pruned1);
+        Assert.Equal(0, pruned2);
+    }
+
+    [Fact]
+    public void PruneDetails_讀取已被清除的列不拋例外_回傳DetailPruned為true且標頭資訊正確()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        var date = DateTime.Today.AddDays(-130);
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            HostId = 99,
+            Host = "test-host",
+            RiskLevel = "Medium",
+            Headline = "已被清除的紀錄"
+        });
+
+        store.PruneDetails(120);
+
+        var record = store.ReadRecent(DateTime.Today, 150).FirstOrDefault(r => r.Date == date);
+        Assert.NotNull(record);
+        Assert.True(record.DetailPruned);
+        Assert.Equal(99, record.HostId);
+        Assert.Equal("test-host", record.Host);
+        Assert.Equal(date, record.Date);
+        Assert.Equal("Medium", record.RiskLevel);
+
+        var one = store.GetOne(new[] { new HostKey { HostId = 99, HostName = "test-host" } }, date);
+        Assert.NotNull(one);
+        Assert.True(one.DetailPruned);
+        Assert.Equal(99, one.HostId);
+        Assert.Equal("test-host", one.Host);
+        Assert.Equal(date, one.Date);
+    }
+
+    [Fact]
+    public void PruneDetails_未被清除的列讀出來DetailPruned為false且內容與清理前相同()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        var date = DateTime.Today.AddDays(-10);
+        store.Append(new DailyAnalysisRecord
+        {
+            Date = date,
+            HostId = 99,
+            Host = "test-host",
+            RiskLevel = "High",
+            Headline = "未過期"
+        });
+
+        store.PruneDetails(120);
+
+        var record = store.ReadRecent(DateTime.Today, 15).Single();
+        Assert.False(record.DetailPruned);
+        Assert.Equal("High", record.RiskLevel);
+        Assert.Equal("未過期", record.Headline);
+    }
+
+    [Fact]
+    public void PruneDetails_QueryLightweight回傳的DetailPruned正確()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        var oldDate = DateTime.Today.AddDays(-130);
+        var newDate = DateTime.Today.AddDays(-10);
+        store.Append(Record(oldDate));
+        store.Append(Record(newDate));
+
+        store.PruneDetails(120);
+
+        var results = store.QueryLightweight(new RecordQueryFilter());
+        var oldRecord = results.Single(r => r.Date == oldDate);
+        var newRecord = results.Single(r => r.Date == newDate);
+
+        Assert.True(oldRecord.DetailPruned);
+        Assert.False(newRecord.DetailPruned);
+    }
+
+    [Fact]
+    public void CountPrunableRecords_回傳正確數值且不改變任何資料()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+        store.Append(Record(DateTime.Today.AddDays(-131)));
+        store.Append(Record(DateTime.Today.AddDays(-10)));
+
+        using var ctxPre = _fx.NewContext();
+        var rowsPre = ctxPre.DailyRecords.Count();
+
+        var count = store.CountPrunableRecords(120);
+
+        Assert.Equal(2, count);
+        using var ctxPost = _fx.NewContext();
+        var rowsPost = ctxPost.DailyRecords.Count();
+        Assert.Equal(rowsPre, rowsPost);
+    }
+
+    [Fact]
+    public void CountPrunableDetails_回傳筆數正確且不改變資料()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+        store.Append(Record(DateTime.Today.AddDays(-131)));
+        store.Append(Record(DateTime.Today.AddDays(-10)));
+
+        using var ctxPre = _fx.NewContext();
+        var originalContent = ctxPre.DailyRecords.Where(r => r.RecordDate < DateTime.Today.AddDays(-120)).Select(r => r.ContentJson).ToList();
+
+        var count = store.CountPrunableDetails(120);
+
+        Assert.Equal(2, count);
+
+        using var ctxPost = _fx.NewContext();
+        var currentContent = ctxPost.DailyRecords.Where(r => r.RecordDate < DateTime.Today.AddDays(-120)).Select(r => r.ContentJson).ToList();
+        Assert.Equal(originalContent, currentContent);
+    }
+
+    [Fact]
+    public void PruneDetails_分批執行_不超過上限()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        store.Append(Record(DateTime.Today.AddDays(-130)));
+        store.Append(Record(DateTime.Today.AddDays(-131)));
+        store.Append(Record(DateTime.Today.AddDays(-132)));
+
+        // maxRows = 2, batchSize = 1
+        var pruned1 = store.PruneDetails(120, 2, 1);
+        Assert.Equal(2, pruned1);
+
+        var countLeft = store.CountPrunableDetails(120);
+        Assert.Equal(1, countLeft);
+
+        var pruned2 = store.PruneDetails(120, 2, 1);
+        Assert.Equal(1, pruned2);
+    }
+
+    [Fact]
+    public void PruneDetails_分多批次執行_完整清除所有符合條件的列()
+    {
+        var store = (EfAnalysisRecordStore)CreateStore();
+        for (int i = 0; i < 5; i++)
+        {
+            store.Append(Record(DateTime.Today.AddDays(-130 - i)));
+        }
+
+        // maxRows = 10, batchSize = 2 (應該會跑 3 個 batch: 2, 2, 1)
+        var pruned = store.PruneDetails(120, 10, 2);
+        Assert.Equal(5, pruned);
+
+        var remaining = store.CountPrunableDetails(120);
+        Assert.Equal(0, remaining);
+    }
+
     // ── 週體檢附掛 ───────────────────────────────────────────────────────────
 
     [Fact]

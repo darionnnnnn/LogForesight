@@ -465,4 +465,45 @@ public class IssueAggregateQueryTests : IDisposable
 
         Assert.Empty(Query().ActionableOccurrences(d0, d0, Array.Empty<long>()));
     }
+
+    [Fact]
+    public void AggregateByHost_Categories_排序對照()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+
+        // 類別 Hardware: 最高嚴重度 High (2), 總數 1 筆
+        var issueA = Issue("A", 1, severity: IssueSeverity.High);
+        issueA.Category = IssueCategory.Hardware;
+
+        // 類別 Service: 最高嚴重度 Medium (1), 總數 3 筆 (分三天)
+        var issueB = Issue("B", 2, severity: IssueSeverity.Medium);
+        issueB.Category = IssueCategory.Service;
+
+        // 類別 Storage: 最高嚴重度 Medium (1), 總數 2 筆
+        var issueC = Issue("C", 3, severity: IssueSeverity.Medium);
+        issueC.Category = IssueCategory.Storage;
+
+        // 類別 Security: 最高嚴重度 Low (0), 總數 5 筆
+        var issueD = Issue("D", 4, severity: IssueSeverity.Low);
+        issueD.Category = IssueCategory.Security;
+
+        Add(1, "H1", d0, issueA, issueB, issueC, issueD);
+        Add(1, "H1", d0.AddDays(1), issueB, issueC, issueD);
+        Add(1, "H1", d0.AddDays(2), issueB, issueD);
+        Add(1, "H1", d0.AddDays(3), issueD);
+        Add(1, "H1", d0.AddDays(4), issueD);
+
+        var agg = Query().AggregateByHost(d0, d0.AddDays(10), null).Single();
+
+        // 順序預期：
+        // 1. Hardware (High, 1次) -> 最高嚴重度優先
+        // 2. Service (Medium, 3次) -> 同嚴重度，次數較多優先
+        // 3. Storage (Medium, 2次)
+        // 4. Security (Low, 5次)
+        Assert.Equal(4, agg.Categories.Count);
+        Assert.Equal(IssueCategory.Hardware.ToString(), agg.Categories[0]);
+        Assert.Equal(IssueCategory.Service.ToString(), agg.Categories[1]);
+        Assert.Equal(IssueCategory.Storage.ToString(), agg.Categories[2]);
+        Assert.Equal(IssueCategory.Security.ToString(), agg.Categories[3]);
+    }
 }

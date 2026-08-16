@@ -64,4 +64,25 @@ public static class RecordStatsBuilder
             .ThenByDescending(h => h.MediumRiskDays)
             .ToList();
     }
+
+    public static List<DashboardHostDto> BuildHostRanking(
+        IReadOnlyList<HostRiskAggregate> hosts, IReadOnlyDictionary<long, WebHost> hostsById)
+    {
+        return hosts
+            .Where(h => h.HighRiskDays > 0 || h.MediumRiskDays > 0)
+            .Select(h => new DashboardHostDto
+            {
+                HostId = h.HostId,
+                HostName = hostsById.TryGetValue(h.HostId, out var wh) ? wh.HostName : h.HostId.ToString(),
+                HighRiskDays = h.HighRiskDays,
+                MediumRiskDays = h.MediumRiskDays,
+                CorrelationDays = h.CorrelationDays,
+                LatestRiskLevel = h.LatestRiskLevel,
+                LatestHeadline = h.LatestHeadline
+            })
+            .OrderByDescending(h => h.HighRiskDays)
+            .ThenByDescending(h => h.CorrelationDays)
+            .ThenByDescending(h => h.MediumRiskDays)
+            .ToList();
+    }
 }

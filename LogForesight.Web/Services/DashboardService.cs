@@ -7,7 +7,6 @@ namespace LogForesight.Web.Services;
 /// <summary>總覽儀表板（docs/WEB-SPEC.md §9.1）</summary>
 public class DashboardService
 {
-    private readonly IRecordRepository _repository;
     private readonly IVisibilityService _visibility;
     private readonly AuditLogStore _audit;
     private readonly ICurrentUser _currentUser;
@@ -18,9 +17,9 @@ public class DashboardService
     private readonly ISystemSettingsStore _settings;
     private readonly IIssueAggregateQuery _aggregates;
     private readonly IssueTodoQuery _issueTodo;
+    private readonly ISystemSettingsService _systemSettings;
 
     public DashboardService(
-        IRecordRepository repository,
         IVisibilityService visibility,
         AuditLogStore audit,
         ICurrentUser currentUser,
@@ -30,9 +29,9 @@ public class DashboardService
         IssueRankingBuilder issueRanking,
         ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates,
-        IssueTodoQuery issueTodo)
+        IssueTodoQuery issueTodo,
+        ISystemSettingsService systemSettings)
     {
-        _repository = repository;
         _visibility = visibility;
         _audit = audit;
         _currentUser = currentUser;
@@ -43,6 +42,7 @@ public class DashboardService
         _settings = settings;
         _aggregates = aggregates;
         _issueTodo = issueTodo;
+        _systemSettings = systemSettings;
     }
 
     public DashboardDto GetSummary(int days)
@@ -52,12 +52,8 @@ public class DashboardService
         // 一個必然是空的區間，還觸發「本期無風險訊號」綠橫幅——把「沒資料」講成「沒事」。
         var anchor = DateTime.Today.AddDays(-1);
         var from = anchor.AddDays(-days + 1);
-        // 全面 SQL 化（回饋十九輪批次E4）：主機排行／群組風險／風險日計數／涵蓋缺口計數／
-        // GetTodo 都只需要判定用欄位（風險等級、關聯訊號有無、TopIssues、Headline），
-        // 不需要整份分析內容——QueryLightweight（批次E3 建的同一套機制）避免可見主機數 × 天數
-        // 這個量級（兩千台×30天約 6 萬筆）逐一反序列化整份 ContentJson
-        var records = _repository.QueryLightweight(new RecordQueryFilter { From = from });
         var visibleHosts = _visibility.GetVisibleHosts();
+        var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
 
         var dto = new DashboardDto
         {
@@ -67,15 +63,27 @@ public class DashboardService
             TotalHosts = visibleHosts.Count
         };
 
-        var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
+        // 全部走 SQL 端聚合（SCALE-3000 S4），不再把整段期間的紀錄載入記憶體。
+        // 繞過 RecordRepository 之後，它套的三層可見範圍要在這裡自己等價重現：
+        // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveDayRiskLevels 算出，
+        // **空交集必須在這裡短路、不可下推**（底層對空集合的語意是「不限制」，會從零筆變全部）；
+        // 可見嚴重度傳給有問題子列參與的聚合。
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+        var riskLevels = RecordRepository.ResolveDayRiskLevels(_systemSettings.GetVisibleDayRiskLevels(), null);
+        var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
+        var nothingVisible = riskLevels != null && riskLevels.Count == 0;
+
+        var hostRiskAgg = nothingVisible
+            ? new List<HostRiskAggregate>()
+            : _aggregates.AggregateByHost(from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
 
         // 風險類型卡（回饋十九輪批次D）：SQL 端聚合，與報表共用同一個查詢方法，
         // 「大數字（去重）／小字（累計）」兩個口徑不可能在兩頁漂移成不同的數字
         dto.Categories = RecordStatsBuilder.BuildCategoryCards(
-            _aggregates.AggregateByCategory(from, anchor, visibleHostIds, _settings.Get().ParseUnhandledSeverities()));
+            _aggregates.AggregateByCategory(from, anchor, visibleHostIds, unhandledSeverities));
 
         dto.HostRanking = RecordStatsBuilder
-            .BuildHostRanking(records, visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase))
+            .BuildHostRanking(hostRiskAgg, visibleHosts.ToDictionary(h => h.HostId))
             .Take(10)
             .ToList();
         // 重點問題（§8-1）：五筆足以回答「現在最該處理哪幾個問題」，再多就變成第二張清單頁。
@@ -97,14 +105,29 @@ public class DashboardService
         // UnhandledCount 都從同一份解析結果各自彙總——原本逐群組各自呼叫 IssueTodoQuery.Build，
         // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
         var actionableResolved = _issueTodo.ResolveActionable(from, anchor, visibleHostIds);
-        BuildGroupRisk(dto, records, visibleHosts, actionableResolved);
+        BuildGroupRisk(dto, hostRiskAgg, visibleHosts, actionableResolved);
 
-        dto.HighRiskDays = records.Count(r => r.RiskLevel == RiskLevels.High);
-        dto.MediumRiskDays = records.Count(r => r.RiskLevel == RiskLevels.Medium);
-        dto.CoverageGapDays = records.Count(r => r.HasCoverageGap);
+        // 全站三個日數從同一個 KPI 聚合取（與報表同一支查詢）。刻意**不**用 hostRiskAgg 加總——
+        // 讓「群組加總 == 全站總數」那條測試真的在比對兩支不同查詢，不是同一份資料自己加自己
+        if (nothingVisible)
+        {
+            dto.HighRiskDays = 0;
+            dto.MediumRiskDays = 0;
+            dto.CoverageGapDays = 0;
+            dto.Todo = new HandlingTodoDto();
+        }
+        else
+        {
+            var kpi = _aggregates.AggregateReportKpi(from, anchor, visibleHostIds, riskLevels, visibleSeverities);
+            dto.HighRiskDays = kpi.HighRiskDays;
+            dto.MediumRiskDays = kpi.MediumRiskDays;
+            dto.CoverageGapDays = kpi.CoverageGapDays;
 
-        // 待辦母體（高＋中風險日）由 GetTodo 內部強制套用，呼叫端傳整批紀錄即可
-        dto.Todo = _handling.GetTodo(records);
+            // 待辦走 GetTodoByRange：它負責墓碑主機的兩段相加（SQL 經 host_name 橋接對合併主機
+            // 必然落空，那些主機另行以記憶體精算），母體（高＋中風險日）也由它內部強制套用。
+            // 不要直接呼叫 AggregateDayTodo——那會漏掉墓碑、也漏掉 TotalCount
+            dto.Todo = _handling.GetTodoByRange(from, anchor);
+        }
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
         dto.IssueTodo = IssueTodoQuery.Aggregate(actionableResolved);
         dto.PendingPermissionChanges = _permissionChanges.CountPending();
@@ -148,20 +171,20 @@ public class DashboardService
     /// 比一次攤開兩千台實際得多。只列出「至少有一台可見主機」的群組。
     /// </summary>
     private void BuildGroupRisk(
-        DashboardDto dto, List<DailyAnalysisRecord> records, List<WebHost> visibleHosts,
+        DashboardDto dto, IReadOnlyList<HostRiskAggregate> hostRiskAgg, List<WebHost> visibleHosts,
         List<ResolvedOccurrence> actionableResolved)
     {
-        var recordsByHost = records
-            .GroupBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var aggByHost = hostRiskAgg.ToDictionary(h => h.HostId);
 
         dto.GroupRisk = _hostGroups.GetAll()
             .Where(g => g.Active)
             .Select(group =>
             {
                 var memberHosts = visibleHosts.Where(h => h.Active && h.GroupIds.Contains(group.GroupId)).ToList();
-                var memberRecords = memberHosts
-                    .SelectMany(h => recordsByHost.TryGetValue(h.HostName, out var recs) ? recs : new List<DailyAnalysisRecord>())
+                var memberAgg = memberHosts
+                    .Select(h => aggByHost.TryGetValue(h.HostId, out var agg) ? agg : null)
+                    .Where(a => a != null)
+                    .Select(a => a!)
                     .ToList();
 
                 // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理／處理中的問題數，
@@ -177,8 +200,8 @@ public class DashboardService
                     GroupId = group.GroupId,
                     GroupName = group.GroupName,
                     HostCount = memberHosts.Count,
-                    HighRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.High),
-                    MediumRiskDays = memberRecords.Count(r => r.RiskLevel == RiskLevels.Medium),
+                    HighRiskDays = memberAgg.Sum(a => a.HighRiskDays),
+                    MediumRiskDays = memberAgg.Sum(a => a.MediumRiskDays),
                     UnhandledCount = groupIssueTodo.OpenIssueCount + groupIssueTodo.InProgressIssueCount
                 };
             })

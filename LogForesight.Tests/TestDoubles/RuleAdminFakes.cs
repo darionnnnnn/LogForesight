@@ -119,9 +119,27 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     public Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IReadOnlyCollection<(string Source, int EventId)> issues) => new();
 
+    public List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds) => new();
+
     public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds) => new();
+
+    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new(0, 0, 0, 0, 0);
+
+    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
+
+
+    public DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today) => new(0, 0, 0, 0, 0);
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

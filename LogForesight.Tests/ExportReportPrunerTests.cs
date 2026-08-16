@@ -100,3 +100,34 @@ public class ExportReportPrunerTests : IDisposable
         Assert.Equal(expected, ExportReportPruner.TryParseReportDate(fileName, out _));
     }
 }
+
+public class FileReportSinkTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "lf-export-sink-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+    }
+
+    [Theory]
+    [InlineData("../outside", ".._outside")]
+    [InlineData("..\\outside", ".._outside")]
+    [InlineData("..", "_")]
+    [InlineData(".", "_")]
+    [InlineData("host/name", "host_name")]
+    [InlineData("host\\name", "host_name")]
+    public async Task 寫入時淨化host避免跳出export目錄(string maliciousHost, string expectedFolder)
+    {
+        var sink = new LogForesight.Core.Persistence.FileReportSink(_dir);
+        var content = "test content";
+        var fileName = "report.txt";
+
+        var path = await sink.WriteAsync((LogForesight.Core.Persistence.ReportKind)0, maliciousHost, fileName, content);
+
+        var fileInfo = new FileInfo(path);
+        Assert.True(fileInfo.Exists);
+        Assert.Equal(expectedFolder, fileInfo.Directory!.Name);
+        Assert.StartsWith(_dir, fileInfo.Directory.FullName, StringComparison.OrdinalIgnoreCase);
+    }
+}

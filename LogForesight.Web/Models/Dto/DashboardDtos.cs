@@ -273,6 +273,15 @@ public class ReportSummaryDto
     /// <summary>期間內高＋中風險日的處理彙總（docs/archive/HISTORY.md #6）——與儀表板待辦
     /// 同一套 HandlingHistoryQueryService.GetTodo 規則，供「處理進度」圖表（ResolvedCount / TotalCount）</summary>
     public HandlingTodoDto Handling { get; set; } = new();
+
+    public string ComparisonMode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 為什麼需要這一欄：RetentionDays 預設 120 天，去年同期的資料早就被清掉了。
+    /// 不申報的話畫面會顯示比較期各項為 0，使用者會讀成「去年完全沒問題」——
+    /// 那是最糟的一種錯，因為它看起來完全正常。前端會用這個旗標顯示提示。
+    /// </summary>
+    public bool ComparisonOutOfRetention { get; set; }
 }
 
 /// <summary>主機排行 Top 10 之外的彙總（避免主機量大時尾端主機完全隱形）</summary>

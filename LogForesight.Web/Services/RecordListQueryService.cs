@@ -578,17 +578,8 @@ public class RecordListQueryService
     /// 轉成 SQL 聚合查詢要的型別再傳下去，否則 SiteHidden 模式下應該被隱藏的問題會在
     /// 依問題／依主機／依日期視角重新冒出來。null＝DefaultHidden 模式，不限制。
     /// </summary>
-    private IReadOnlySet<IssueSeverity>? ResolveVisibleSeverities()
-    {
-        var visible = _settingsService.GetVisibleSeverities();
-        if (visible == null) return null;
-
-        return visible
-            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
-            .Where(s => s.HasValue)
-            .Select(s => s!.Value)
-            .ToHashSet();
-    }
+    private IReadOnlySet<IssueSeverity>? ResolveVisibleSeverities() =>
+        RecordRepository.ParseVisibleSeverities(_settingsService.GetVisibleSeverities());
 
     /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
     private static string BuildHandlingSummary(int unhandled, int processing, int resolved)

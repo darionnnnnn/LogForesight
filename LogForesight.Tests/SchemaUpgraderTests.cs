@@ -40,6 +40,8 @@ public class SchemaUpgraderTests : IDisposable
         // 那會是測試假設本身的錯誤，不是 SchemaUpgrader 的問題
         raw.CommandText = "CREATE TABLE lf_daily_records (record_id INTEGER PRIMARY KEY AUTOINCREMENT, host_id INTEGER, host_name TEXT, record_date TEXT, risk_level TEXT, weekly_checkup_date TEXT, content_json TEXT, created_at TEXT)";
         raw.ExecuteNonQuery();
+        raw.CommandText = "CREATE TABLE lf_blobs (blob_key TEXT PRIMARY KEY, content TEXT, updated_at TEXT)";
+        raw.ExecuteNonQuery();
     }
 
     [Fact]
@@ -159,6 +161,44 @@ public class SchemaUpgraderTests : IDisposable
         SchemaUpgrader.Upgrade(ctx);   // 再跑一次：冪等,不應重複建欄位/索引而出錯
     }
 
+    // ── lf_blobs 快取版本欄位 ───────────────────────────────────────────────
+
+    /// <summary>
+    /// 舊 schema 缺 version 欄——升級後補上且可讀寫，既存列預設為 0
+    /// 理由：SQLite 測試平常走 EnsureCreated，SchemaUpgrader 在測試裡從來沒被執行到。
+    /// 沒有這組測試，寫錯了會是「新環境全綠、只有正式環境炸」。
+    /// </summary>
+    [Fact]
+    public void 舊schema缺version欄_升級後補上且可讀寫()
+    {
+        CreateOldSchema();
+        using (var raw = _connection.CreateCommand())
+        {
+            raw.CommandText = "INSERT INTO lf_blobs (blob_key, content, updated_at) VALUES ('hosts', '{}', '2026-01-01')";
+            raw.ExecuteNonQuery();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.Blobs.Single();
+            Assert.Equal("hosts", row.BlobKey);
+            Assert.Equal(0, row.Version); // 預設值為 0
+
+            ctx.Blobs.Add(new BlobRow { BlobKey = "new_store", Content = "[]", Version = 42 });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            Assert.Equal(42, ctx.Blobs.Single(b => b.BlobKey == "new_store").Version); // 驗證升級後可正常讀寫
+        }
+    }
+
     // ── 回饋十九輪批次B：lf_daily_records 抽出欄／lf_issue_first_seen ──────────────
 
     /// <summary>舊 schema 缺批次B 的抽出欄——升級後補上，既存列的 extract_version 預設 0
@@ -238,29 +278,28 @@ public class SchemaUpgraderTests : IDisposable
         }
     }
 
-    // ── lf_issue_first_seen 歷史種子（批次B 規劃 B3、批次I 體檢補上）──────────
+    // ── lf_issue_first_seen 歷史種子冪等合併 ──────────
 
     /// <summary>
-    /// 升級當下 lf_top_issues 已有的歷史問題要被種進首見表——沒有種子的話，批次B 之前
-    /// 就存在的問題會在之後第一次重現時被 upsert 寫成「重現日＝首見日」且永久固定
-    /// （逐日 upsert 只在較早日期才更新，錯值不會自我修復）。
+    /// 補缺：lf_top_issues 有、lf_issue_first_seen 沒有的組合會被補上。
     /// </summary>
     [Fact]
-    public void 升級時_既有top_issues歷史被種進首見表且取最早日期()
+    public void 首見日合併_補缺_無則補上且取最早日期()
     {
         using (var ctx = NewContext())
         {
             ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
             var recordId = AddParentRecord(ctx);
             ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 3, 5)));
-            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早，種子要取這筆
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早
             ctx.TopIssues.Add(TopIssue(recordId, "DCOM", 10016, new DateTime(2026, 2, 1)));
             ctx.SaveChanges();
         }
 
         using (var ctx = NewContext())
         {
-            SchemaUpgrader.Upgrade(ctx);
+            SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
         }
 
         using (var ctx = NewContext())
@@ -268,17 +307,51 @@ public class SchemaUpgraderTests : IDisposable
             Assert.Equal(2, ctx.IssueFirstSeen.Count());
             var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
             Assert.Equal(new DateTime(2026, 1, 20), disk.FirstSeen);
+            var dcom = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DCOM" && f.EventId == 10016);
+            Assert.Equal(new DateTime(2026, 2, 1), dcom.FirstSeen);
         }
     }
 
-    /// <summary>未回填舊列的 record_date 哨兵（0001-01-01）不得混進種子——混進來會把首見日
-    /// 全部種成西元 1 年，比沒有種子更糟。</summary>
+    /// <summary>
+    /// 順序無關：先讓 lf_issue_first_seen 有一列「較晚」的日期（模擬逐日 upsert 搶先寫入），
+    /// 再跑合併——那一列必須被修正成歷史最小日期。
+    /// </summary>
     [Fact]
-    public void 種子排除record_date為MinValue的未回填舊列()
+    public void 首見日合併_順序無關_已存在較晚日期會被修正成較早()
     {
         using (var ctx = NewContext())
         {
             ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+            var recordId = AddParentRecord(ctx);
+            ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 5, 1) });
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早的歷史
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 20), disk.FirstSeen);   // 被修正
+        }
+    }
+
+    /// <summary>
+    /// 哨兵列排除：record_date 為 MinValue 的列不會讓首見日變成西元 1 年。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_哨兵列排除_MinValue不會變成首見日()
+    {
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
             var recordId = AddParentRecord(ctx);
             ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, DateTime.MinValue));           // 未回填哨兵
             ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 3, 5)));
@@ -287,7 +360,7 @@ public class SchemaUpgraderTests : IDisposable
 
         using (var ctx = NewContext())
         {
-            SchemaUpgrader.Upgrade(ctx);
+            SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
         }
 
         using (var ctx = NewContext())
@@ -297,30 +370,33 @@ public class SchemaUpgraderTests : IDisposable
         }
     }
 
-    /// <summary>表非空＝已種過（或逐日 upsert 已在運作），不重種——重種需要逐列比對更早日期，
-    /// 每次啟動都付一趟 GROUP BY 的成本不成比例（見 SchemaUpgrader.SeedIssueFirstSeenIfEmpty 註解）。</summary>
+    /// <summary>
+    /// 合併是冪等的：連續執行兩次，第二次不改變任何資料。
+    /// </summary>
     [Fact]
-    public void 首見表非空時_升級不重種不覆寫既有列()
+    public void 首見日合併_合併是冪等的()
     {
         using (var ctx = NewContext())
         {
             ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
             var recordId = AddParentRecord(ctx);
             ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
                 { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 5, 1) });
-            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));   // 更早的歷史，但不該觸發重種
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));
             ctx.SaveChanges();
         }
 
         using (var ctx = NewContext())
         {
-            SchemaUpgrader.Upgrade(ctx);
+            SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            SchemaUpgrader.MergeIssueFirstSeenSeed(ctx); // 連續執行兩次
         }
 
         using (var ctx = NewContext())
         {
-            var disk = ctx.IssueFirstSeen.Single();
-            Assert.Equal(new DateTime(2026, 5, 1), disk.FirstSeen);   // 維持原值
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 20), disk.FirstSeen);
         }
     }
 

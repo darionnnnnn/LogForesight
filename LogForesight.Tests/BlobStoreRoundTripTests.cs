@@ -257,4 +257,151 @@ public class BlobStoreRoundTripTests : IDisposable
         Assert.Equal("確認為背景雜訊", reread.Note);
         Assert.Single(NoiseMarks().GetForHost("SRV-A"));   // 更新不是新增一列
     }
+
+    // ── EfJsonBlobStore 版本與快取 ───────────────────────────────────────────
+
+    [Fact]
+    public void Blob_全新寫入後ReadVersion回傳一()
+    {
+        var store = _fixture.Blob("test_v1");
+        store.Mutate(_ => ("content_1", true));
+
+        Assert.Equal(1, store.ReadVersion());
+    }
+
+    [Fact]
+    public void Blob_連續Mutate三次後ReadVersion回傳三()
+    {
+        var store = _fixture.Blob("test_v2");
+        store.Mutate(_ => ("1", true));
+        store.Mutate(_ => ("2", true));
+        store.Mutate(_ => ("3", true));
+
+        Assert.Equal(3, store.ReadVersion());
+    }
+
+    [Fact]
+    public void Blob_ReadWithVersion回傳的內容與版本_和分別呼叫Read與ReadVersion一致()
+    {
+        var store = _fixture.Blob("test_v3");
+        store.Mutate(_ => ("content_3", true));
+
+        var (content, version) = store.ReadWithVersion();
+
+        Assert.Equal("content_3", content);
+        Assert.Equal(1, version);
+        Assert.Equal(store.Read(), content);
+        Assert.Equal(store.ReadVersion(), version);
+    }
+
+    [Fact]
+    public void Blob_各自獨立建立的實例_A寫入後B讀得到遞增後的值()
+    {
+        var storeA = _fixture.Blob("test_v4");
+        var storeB = _fixture.Blob("test_v4");
+
+        storeA.Mutate(_ => ("a_writes", true));
+        Assert.Equal(1, storeB.ReadVersion());
+
+        storeA.Mutate(_ => ("a_writes_again", true));
+        Assert.Equal(2, storeB.ReadVersion());
+    }
+
+    // ── 快取機制 ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void 快取命中_同一HostStore實例連續兩次GetAll_回傳內容相同()
+    {
+        var store = new HostStore(_fixture.Blob("cache_test_1"));
+        store.Upsert(new WebHost { HostName = "A" });
+
+        var first = store.GetAll();
+        var second = store.GetAll();
+
+        Assert.Equal(first.Count, second.Count);
+        Assert.Equal(first[0].HostName, second[0].HostName);
+    }
+
+    [Fact]
+    public void 快取跨實例失效_實例A新增主機_實例B重新讀取應讀到新資料()
+    {
+        // 必須是兩個各自獨立 new 出來的 store 實例，且共用同一個 blob key
+        var storeA = new HostStore(_fixture.Blob("cache_test_2"));
+        var storeB = new HostStore(_fixture.Blob("cache_test_2"));
+
+        // B 先讀取，建立快取
+        storeB.GetAll();
+
+        // A 寫入新主機
+        storeA.Upsert(new WebHost { HostName = "NewHost" });
+
+        // B 再讀取，必須因為版本不同而重新拉取
+        var bRead = storeB.GetAll();
+        Assert.Single(bRead);
+        Assert.Equal("NewHost", bRead[0].HostName);
+    }
+
+    [Fact]
+    public void 快取回傳清單安全修改_修改GetAll的回傳清單_不影響快取內儲存的清單()
+    {
+        var store = new HostStore(_fixture.Blob("cache_test_3"));
+        store.Upsert(new WebHost { HostName = "SafeHost" });
+
+        var list = store.GetAll();
+        list.Clear();
+
+        var listAgain = store.GetAll();
+        Assert.Single(listAgain);
+    }
+
+    [Fact]
+    public void 快取_未啟用快取的Store不受影響_UserStore跨實例讀寫正常()
+    {
+        var storeA = new UserStore(_fixture.Blob("cache_test_4"));
+        var storeB = new UserStore(_fixture.Blob("cache_test_4"));
+
+        storeB.GetAll(); // 觸發讀取
+
+        storeA.Upsert(new WebUser { Account = "domain\\user1" });
+
+        var bRead = storeB.GetAll();
+        Assert.Single(bRead);
+        Assert.Equal("domain\\user1", bRead[0].Account);
+    }
+
+    /// <summary>
+    /// 命中路徑不進鎖之後的併發正確性：快照是不可變物件、以 volatile 欄位整個換掉，
+    /// 所以併發讀取只會看到「某一個完整版本」，不會看到載入到一半的清單。
+    /// 若哪天有人把快照拆回「清單 + 版本」兩個獨立欄位，這裡會讀到撕裂的組合而失敗。
+    ///
+    /// **刻意不用 <see cref="EfSqliteFixture"/>**：它是 in-memory DB，整個 fixture 共用
+    /// 一條 <c>SqliteConnection</c>，而該型別不是執行緒安全的——併發讀取會撞
+    /// 「database is locked」，測到的是替身的限制不是產品行為。這裡改用檔案型 SQLite，
+    /// 每個 DbContext 各自開連線，與正式部署同形狀。
+    /// </summary>
+    [Fact]
+    public void 快取併發讀取_多執行緒同時GetAll_每次都拿到完整清單()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "lf-cache-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var backend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "c.db")}" }, dir);
+            var store = new HostStore(backend.Blob("hosts"));
+            store.Upsert(new WebHost { HostName = "A" });
+            store.Upsert(new WebHost { HostName = "B" });
+
+            var counts = new System.Collections.Concurrent.ConcurrentBag<int>();
+            System.Threading.Tasks.Parallel.For(0, 64, _ => counts.Add(store.GetAll().Count));
+
+            Assert.Equal(64, counts.Count);
+            Assert.All(counts, c => Assert.Equal(2, c));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { /* 暫存目錄刪不掉不影響結論 */ }
+        }
+    }
 }

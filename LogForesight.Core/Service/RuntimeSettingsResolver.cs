@@ -68,6 +68,16 @@ public static class RuntimeSettingsResolver
                 Log.Warn("系統設定的風險 log 暫存保留天數（{RiskyEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
                     systemSettings.RiskyEventRetentionDays, retention.RetentionDays);
             }
+
+            if (systemSettings.DetailRetentionDays >= 1 && systemSettings.DetailRetentionDays <= retention.RetentionDays)
+            {
+                retention = retention with { DetailRetentionDays = systemSettings.DetailRetentionDays };
+            }
+            else
+            {
+                Log.Warn("系統設定的詳情保留天數（{DetailRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
+                    systemSettings.DetailRetentionDays, retention.RetentionDays);
+            }
         }
         catch (Exception ex)
         {

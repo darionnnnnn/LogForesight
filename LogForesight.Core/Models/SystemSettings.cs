@@ -170,6 +170,12 @@ public class SystemSettings
     public int RiskyEventRetentionDays { get; set; } = 14;
 
     /// <summary>
+    /// 詳情保留天數：風險日詳情頁的原始內容（樣本訊息等）保留多久。
+    /// 必須小於或等於 <see cref="RetentionDays"/>，預設為 120。
+    /// </summary>
+    public int DetailRetentionDays { get; set; } = 120;
+
+    /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的
     /// Auth:Provider 是 Stub 或 Ldap，一律改用 <see cref="AdServers"/> 等 DB 設定連線驗證——
     /// 這正是「測試模式（Stub）開啟後也走 AD 驗證」的開關，見 DynamicAuthenticationProvider。

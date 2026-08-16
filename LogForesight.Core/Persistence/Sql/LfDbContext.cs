@@ -63,6 +63,7 @@ public class LfDbContext : DbContext
             e.HasKey(x => x.BlobKey);
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
+            e.Property(x => x.Version).HasColumnName("version");
             // 樂觀鎖：UpdatedAt 當並發權杖。EfJsonBlobStore.Mutate 是「讀→改→寫」，
             // 沒有這個標記的話兩個行程各自讀到舊內容、後寫的整份蓋掉先寫的（更新遺失）——
             // 這正是 JSONL 檔案時代跨程序鎖檔要防的事故，換 DB 後要用資料庫的機制補上。
@@ -103,6 +104,7 @@ public class LfDbContext : DbContext
             e.Property(x => x.WeeklyCheckupDate).HasColumnName("weekly_checkup_date");
             e.Property(x => x.ContentJson).HasColumnName("content_json");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.DetailPruned).HasColumnName("detail_pruned").HasDefaultValue(false);
 
             // 讀取面全面 SQL 化的抽出欄（回饋十九輪批次B）：只有這幾個欄位需要跨越單筆詳情頁
             // （仍讀 ContentJson）以外的清單／聚合路徑，其餘欄位（RiskBasis／TrendAssessment／
@@ -305,6 +307,9 @@ public class DailyRecordRow
     public string ContentJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>標記詳情是否已因超過保留期而被清除，以確保夜間作業冪等性</summary>
+    public bool DetailPruned { get; set; }
+
     // ── 讀取面 SQL 化的抽出欄（回饋十九輪批次B）──────────────────────────
 
     public string Headline { get; set; } = string.Empty;
@@ -472,6 +477,9 @@ public class BlobRow
     public string BlobKey { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>供上層快取判定用的單調遞增版本號，與 UpdatedAt（並發權杖）用途不同。</summary>
+    public long Version { get; set; }
 }
 
 /// <summary>append-only JSONL 的一行（log_key＝來源，如 "audit"；seq 自增即附加順序）。↔ lf_log_lines</summary>

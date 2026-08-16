@@ -1,6 +1,7 @@
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
+using LogForesight.Core.Persistence.Sql;
 
 namespace LogForesight.Web.Services;
 
@@ -27,6 +28,7 @@ public class HandlingHistoryQueryService
     private readonly ISystemSettingsStore _settings;
     private readonly IRecordRepository _repository;
     private readonly HandlingProgressCalculator _progress;
+    private readonly IIssueAggregateQuery _aggregateQuery;
 
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
@@ -37,7 +39,8 @@ public class HandlingHistoryQueryService
         IVisibilityService visibility,
         ISystemSettingsStore settings,
         IRecordRepository repository,
-        HandlingProgressCalculator progress)
+        HandlingProgressCalculator progress,
+        IIssueAggregateQuery aggregateQuery)
     {
         _store = store;
         _issueStore = issueStore;
@@ -48,6 +51,7 @@ public class HandlingHistoryQueryService
         _settings = settings;
         _repository = repository;
         _progress = progress;
+        _aggregateQuery = aggregateQuery;
     }
 
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date)
@@ -124,14 +128,30 @@ public class HandlingHistoryQueryService
         var openCases = _cases.GetMany(hostNames).Where(c => c.ClosedAt == null && c.HandlerId.HasValue).ToList();
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
+        // 迴圈外先建索引：3000 台 × 366 天下，迴圈內線性搜尋是 10^10 次字串比對。
+        // 鍵一律走 HostNameKey.Of——原本是 OrdinalIgnoreCase 比對，改用字典後若自己寫大小寫
+        // 轉換，兩套正規化規則遲早漂移，症狀是「名稱大小寫不同的主機處理狀態突然全部對不上」。
+        // ToDictionary 不怕撞鍵：lf_record_handling 對 (host_name_key, record_date) 有 unique 索引。
+        var handlingDict = handlings.ToDictionary(h => (HostNameKey.Of(h.HostName), h.Date.Date));
+        var issueHandlingDict = issueHandlings
+            .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date))
+            .ToDictionary(g => g.Key, g => g.ToList());
+        var openCasesDict = openCases
+            .GroupBy(c => HostNameKey.Of(c.HostName))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         return actionable.Where(record =>
         {
             var name = NameOf(record);
-            var handling = handlings.FirstOrDefault(h =>
-                string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) && h.Date.Date == record.Date.Date);
-            var forDay = issueHandlings
-                .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) && h.Date.Date == record.Date.Date)
-                .ToList();
+            var key = (HostNameKey.Of(name), record.Date.Date);
+
+            handlingDict.TryGetValue(key, out var handling);
+
+            if (!issueHandlingDict.TryGetValue(key, out var forDay))
+            {
+                forDay = new List<IssueHandling>();
+            }
+
             var external = HandlingStatuses.ExternalOf(
                 DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities).DayStatus);
 
@@ -139,20 +159,91 @@ public class HandlingHistoryQueryService
             {
                 HandlingScopes.Unresolved => external != HandlingStatuses.Resolved,
                 HandlingScopes.Open => external == HandlingStatuses.Open,
-                HandlingScopes.Unassigned => !HasHandler(record, name, handling, openCases),
+                HandlingScopes.Unassigned => !HasHandler(record, name, handling, openCasesDict),
                 _ => true
             };
         }).ToList();
     }
 
     /// <summary>是否有處理人：日層級 HandlerId，或當日問題屬某進行中案件（與清單頁 fallback 同語意）。</summary>
-    private static bool HasHandler(DailyAnalysisRecord record, string hostName, RecordHandling? handling, List<IssueCase> openCases)
+    private static bool HasHandler(DailyAnalysisRecord record, string hostName, RecordHandling? handling, Dictionary<string, List<IssueCase>> openCasesDict)
     {
         if (handling?.HandlerId != null) return true;
         if (record.TopIssues.Count == 0) return false;
         var issueKeys = record.TopIssues.Select(IssueSignatureKey.For).ToHashSet(StringComparer.Ordinal);
-        return openCases.Any(c =>
-            string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase) && issueKeys.Contains(c.IssueKey));
+        if (!openCasesDict.TryGetValue(HostNameKey.Of(hostName), out var hostCases))
+        {
+            return false;
+        }
+        foreach (var c in hostCases)
+        {
+            if (issueKeys.Contains(c.IssueKey)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 全站待辦（儀表板 KPI／報表處理進度共用）。
+    /// 為什麼要分兩段：處理狀態以主機名稱為鍵，合併後紀錄帶舊名稱、狀態掛存活名稱，
+    /// SQL 經 host_name 橋接對墓碑必然落空。
+    /// </summary>
+    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to)
+    {
+        var visibleHostIds = _visibility.GetVisibleHostIds();
+        if (visibleHostIds.Count == 0) return new HandlingTodoDto();
+
+        var allHosts = _hosts.GetAll();
+        var aliasIndex = new HostAliasIndex(allHosts);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var tombstoneHostKeys = new List<HostKey>();
+        var tombstoneHostIds = new List<long>();
+        var survivingHostIds = new List<long>();
+
+        foreach (var hostId in visibleHostIds)
+        {
+            var aliases = aliasIndex.Aliases(hostId);
+            if (aliases.Count > 0)
+            {
+                survivingHostIds.Add(aliases[0].HostId);
+                for (int i = 1; i < aliases.Count; i++)
+                {
+                    tombstoneHostKeys.Add(aliases[i]);
+                    tombstoneHostIds.Add(aliases[i].HostId);
+                }
+            }
+        }
+
+        var sqlTodo = _aggregateQuery.AggregateDayTodo(
+            from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today);
+
+        var todo = new HandlingTodoDto
+        {
+            TotalCount = sqlTodo.TotalCount,
+            OpenCount = sqlTodo.OpenCount,
+            InProgressCount = sqlTodo.InProgressCount,
+            ResolvedCount = sqlTodo.ResolvedCount,
+            OverdueCount = sqlTodo.OverdueCount
+        };
+
+        if (tombstoneHostKeys.Count > 0)
+        {
+            var tombstoneRecords = _repository.QueryLightweight(new RecordQueryFilter
+            {
+                From = from,
+                To = to,
+                Hosts = tombstoneHostKeys
+            });
+            var memTodo = GetTodo(tombstoneRecords);
+
+            todo.TotalCount += memTodo.TotalCount;
+            todo.OpenCount += memTodo.OpenCount;
+            todo.InProgressCount += memTodo.InProgressCount;
+            todo.ResolvedCount += memTodo.ResolvedCount;
+            todo.OverdueCount += memTodo.OverdueCount;
+        }
+
+        return todo;
     }
 
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)
@@ -173,20 +264,30 @@ public class HandlingHistoryQueryService
         var issueHandlings = _issueStore.GetMany(hostNames, from, to);
         var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
 
+        // 迴圈外先建索引：3000 台 × 366 天下，迴圈內線性搜尋是 10^10 次字串比對。
+        // 鍵一律走 HostNameKey.Of——原本是 OrdinalIgnoreCase 比對，改用字典後若自己寫大小寫
+        // 轉換，兩套正規化規則遲早漂移，症狀是「名稱大小寫不同的主機處理狀態突然全部對不上」。
+        // ToDictionary 不怕撞鍵：lf_record_handling 對 (host_name_key, record_date) 有 unique 索引。
+        var handlingDict = handlings.ToDictionary(h => (HostNameKey.Of(h.HostName), h.Date.Date));
+        var issueHandlingDict = issueHandlings
+            .GroupBy(h => (HostNameKey.Of(h.HostName), h.Date.Date))
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         var todo = new HandlingTodoDto { TotalCount = actionable.Count };
         foreach (var record in actionable)
         {
             var name = NameOf(record);
-            var handling = handlings.FirstOrDefault(h =>
-                string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
-                h.Date.Date == record.Date.Date);
+            var key = (HostNameKey.Of(name), record.Date.Date);
+
+            handlingDict.TryGetValue(key, out var handling);
+
+            if (!issueHandlingDict.TryGetValue(key, out var forDay))
+            {
+                forDay = new List<IssueHandling>();
+            }
 
             // 日狀態由問題層級推導（方案 B，與問題清單同一套規則）——
             // 全部問題結案的風險日不再算未處理，即使日層級從沒被人動過
-            var forDay = issueHandlings
-                .Where(h => string.Equals(h.HostName, name, StringComparison.OrdinalIgnoreCase) &&
-                            h.Date.Date == record.Date.Date)
-                .ToList();
             var progress = DayHandlingDerivation.Derive(record.TopIssues, forDay, handling?.Status, unhandledSeverities);
 
             // 對外三態（#12）：日層級 fallback 出來的狀態可能是 wont_fix/false_positive/known_noise

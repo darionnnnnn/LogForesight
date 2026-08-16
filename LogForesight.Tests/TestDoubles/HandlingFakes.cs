@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -56,7 +56,7 @@ internal class HandlingServiceFacade
             store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
             issueOwnerAdmin, mail);
         _history = new HandlingHistoryQueryService(
-            store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
+            store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery());
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);

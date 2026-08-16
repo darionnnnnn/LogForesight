@@ -11,10 +11,10 @@ namespace LogForesight.Core.Persistence.Sql;
 /// **兩個改動，各修一個體檢項目**：
 ///   - 快照從整份 blob 改真表（根因 B）。
 ///   - 歷程的**讀取**下推到 SQL（體檢 S5／規劃 N4）：舊實作的 <c>GetLogs</c> 是
-///     <c>ReadAllLogs()</c> 讀回全部行再過濾，而且建構式為了取 <c>_lastLogId</c>
-///     也整份讀一次——這個 store 是 Singleton，等於**站台啟動時同步讀千萬列**，
-///     第一個觸發它的請求長時間無回應。改為 log_id 由資料庫序號決定、
-///     GetLogs 以日期範圍先在 SQL 端窄化。
+///     <c>ReadAllLogs()</c> 讀回全部行再過濾，而且建構式為了取歷程序號也整份讀一次——
+///     這個 store 是 Singleton，等於**站台啟動時同步讀千萬列**，第一個觸發它的請求
+///     長時間無回應。改為 GetLogs 以日期範圍先在 SQL 端窄化；序號的取得方式見
+///     <see cref="AppendLog"/>（每次寫入只讀尾端幾行，不留任何記憶體快取）。
 /// </summary>
 public sealed class EfRecordHandlingStore : IRecordHandlingStore
 {
@@ -23,13 +23,6 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     private readonly Func<LfDbContext> _contextFactory;
     private readonly EfJsonLogStore _logStore;
     private readonly object _logLock = new();
-
-    /// <summary>
-    /// 歷程序號。**不再於建構式整份讀取**（N4）：改為第一次寫入時才以
-    /// <c>MAX(seq)</c> 之外的方式決定起點——這裡採「延遲初始化＋只讀最後一行」，
-    /// 避免站台啟動被千萬列的解析卡住。
-    /// </summary>
-    private long? _lastLogId;
 
     public EfRecordHandlingStore(Func<LfDbContext> contextFactory, EfJsonLogStore logStore)
     {
@@ -127,11 +120,12 @@ public sealed class EfRecordHandlingStore : IRecordHandlingStore
     {
         lock (_logLock)
         {
-            // 首次寫入才初始化序號（N4：不在建構式整份讀，改為只讀最後一行）
-            _lastLogId ??= ReadLastLogId();
-
-            var next = _lastLogId.Value + 1;
-            _lastLogId = next;
+            // 每次寫入都呼叫 ReadLastLogId() 取得起點。
+            // 理由：目前系統內可能存在多個獨立實例（例如 Web 端註冊的 Singleton，以及
+            // AnalysisOrchestrator 內自建的 StorageBackend 實例）。如果使用記憶體快取序號，
+            // 夜間分析寫入多筆歷程後，Web 端的快取會落後，導致隔天 Web 端寫入時發生 LogId 重號。
+            // ReadLastLogId() 只會讀取尾端幾行資料，成本與讀一行幾乎相同，不值得為了快取承擔重號風險。
+            var next = ReadLastLogId() + 1;
             log.LogId = next;
             if (log.CreatedAt == default) log.CreatedAt = DateTime.Now;
 

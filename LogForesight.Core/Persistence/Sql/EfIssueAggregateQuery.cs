@@ -436,6 +436,308 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    private sealed record DayHandlingRaw(
+        long HostId, DateTime RecordDate, string? DayLevelStatus, long? DayHandlerId,
+        int Total, int Closed, bool AnyInProgress, bool HasCaseHandler,
+        DateTime? DayDueDate, bool AnyOverdueIssue);
+
+    private List<DayHandlingRaw> GetDayHandlingRaw(
+        LfDbContext ctx, DateTime f, DateTime t,
+        HashSet<long>? expandedHostIds, IReadOnlyCollection<long> excludedHostIds,
+        List<int> unhandledRanks, DateTime todayForOverdue)
+    {
+        var recordsQuery = ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.RecordDate >= f && r.RecordDate <= t &&
+                        (r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium));
+
+        if (expandedHostIds != null)
+        {
+            recordsQuery = recordsQuery.Where(r => expandedHostIds.Contains(r.HostId));
+        }
+
+        if (excludedHostIds.Count > 0)
+        {
+            recordsQuery = recordsQuery.Where(r => !excludedHostIds.Contains(r.HostId));
+        }
+
+        var q = from dr in recordsQuery
+                let hostNameKey = dr.HostName.ToUpper()
+
+                join rh in ctx.RecordHandlings.AsNoTracking()
+                    on new { HostNameKey = hostNameKey, dr.RecordDate } equals new { rh.HostNameKey, rh.RecordDate } into rhs
+                from rh in rhs.DefaultIfEmpty()
+
+                let total = ctx.TopIssues.AsNoTracking()
+                    .Count(ti => ti.RecordId == dr.RecordId &&
+                                 (unhandledRanks.Contains(ti.SeverityRank) ||
+                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))))
+
+                let closed = ctx.TopIssues.AsNoTracking()
+                    .Count(ti => ti.RecordId == dr.RecordId &&
+                                 (unhandledRanks.Contains(ti.SeverityRank) ||
+                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))) &&
+                                 ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                      (ih.Status == HandlingStatuses.Resolved || ih.Status == HandlingStatuses.WontFix || ih.Status == HandlingStatuses.FalsePositive || ih.Status == HandlingStatuses.KnownNoise)))
+
+                let anyInProgress = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                   ih.HostNameKey == hostNameKey &&
+                                   ih.RecordDate == dr.RecordDate &&
+                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing || ih.Status == HandlingStatuses.Escalated)))
+
+                let anyCaseHandler = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueCases.AsNoTracking().Any(ic =>
+                                   ic.HostNameKey == hostNameKey &&
+                                   ic.ClosedAt == null &&
+                                   ic.HandlerId != null &&
+                                   ic.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType)))
+
+                let anyOverdueIssue = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                   ih.HostNameKey == hostNameKey &&
+                                   ih.RecordDate == dr.RecordDate &&
+                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                   ih.DueDate != null && ih.DueDate < todayForOverdue &&
+                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing)))
+
+                select new DayHandlingRaw(
+                    dr.HostId,
+                    dr.RecordDate,
+                    rh.Status,
+                    rh.HandlerId,
+                    total,
+                    closed,
+                    anyInProgress,
+                    anyCaseHandler,
+                    rh.DueDate,
+                    anyOverdueIssue
+                );
+
+        return q.ToList();
+    }
+
+    public List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+
+        using var ctx = _contextFactory();
+
+        HashSet<long>? expandedHostIds = null;
+        if (hostIds != null)
+        {
+            if (hostIds.Count == 0) return new List<DayHandlingProjection>();
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+        }
+
+        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue);
+
+        var result = projected.Select(x =>
+        {
+            string status;
+            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
+            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
+            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+
+            return new DayHandlingProjection(
+                Surviving(aliasIndex, x.HostId),
+                x.RecordDate,
+                status,
+                x.DayHandlerId != null || x.HasCaseHandler
+            );
+        }).ToList();
+
+        Log.Debug("[SQL] IssueAggregate.DeriveDayHandling（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:DeriveDayHandling", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
+    public DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+
+        using var ctx = _contextFactory();
+
+        HashSet<long>? expandedHostIds = null;
+        if (hostIds != null)
+        {
+            if (hostIds.Count == 0) return new DayTodoAggregate(0, 0, 0, 0, 0);
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+        }
+
+        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date);
+
+        int totalCount = 0;
+        int openCount = 0;
+        int inProgressCount = 0;
+        int resolvedCount = 0;
+        int overdueCount = 0;
+
+        foreach (var x in projected)
+        {
+            totalCount++;
+
+            string status;
+            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
+            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
+            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+
+            var external = HandlingStatuses.ExternalOf(status);
+            if (external == HandlingStatuses.Open) openCount++;
+            else if (external == HandlingStatuses.InProgress) inProgressCount++;
+            else resolvedCount++;
+
+            bool isUnresolved = HandlingStatuses.Unresolved.Contains(status);
+            bool dayOverdue = x.DayDueDate.HasValue && x.DayDueDate.Value.Date < today.Date && isUnresolved;
+
+            if (dayOverdue || x.AnyOverdueIssue)
+            {
+                overdueCount++;
+            }
+        }
+
+        Log.Debug("[SQL] IssueAggregate.AggregateDayTodo（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, totalCount, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateDayTodo", sw.ElapsedMilliseconds);
+
+        return new DayTodoAggregate(totalCount, openCount, inProgressCount, resolvedCount, overdueCount);
+    }
+
+    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new ReportKpiAggregate(0, 0, 0, 0, 0);
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+
+        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+        }
+        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        var stats = qRecords.Select(r => new { r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable }).ToList();
+        var highRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.High);
+        var mediumRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.Medium);
+        var coverageGapDays = stats.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
+
+        var affectedHosts = qRecords.Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
+            .Select(r => r.HostId)
+            .Distinct()
+            .ToList()
+            .Select(h => Surviving(aliasIndex, h))
+            .Distinct()
+            .Count();
+
+        var qIssues = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
+        }
+        if (riskLevels != null)
+        {
+            var allowedRecordIds = qRecords.Select(r => r.RecordId);
+            qIssues = qIssues.Where(x => allowedRecordIds.Contains(x.RecordId));
+        }
+        if (visibleRanks != null) qIssues = qIssues.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        var totalIssues = qIssues.Count();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportKpi（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Ms}ms", f, t, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportKpi", sw.ElapsedMilliseconds);
+
+        return new ReportKpiAggregate(totalIssues, highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
+    }
+
+    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<TrendAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        using var ctx = _contextFactory();
+
+        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+        }
+        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        var trend = qRecords
+            .GroupBy(r => r.RecordDate)
+            .Select(g => new {
+                Date = g.Key,
+                HighRisk = g.Count(r => r.RiskLevel == RiskLevels.High),
+                MediumRisk = g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                ErrorCount = g.Sum(r => r.ErrorCount)
+            })
+            .ToList()
+            .Select(x => new TrendAggregate(x.Date, x.HighRisk, x.MediumRisk, x.ErrorCount))
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportTrend（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 天、{Ms}ms", f, t, trend.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportTrend", sw.ElapsedMilliseconds);
+
+        return trend;
+    }
+
+
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
     {
@@ -618,40 +920,82 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
         if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
 
-        // 輕量列含 Headline（B1 抽出欄，純量文字，不是整份 ContentJson）——latest 列要顯示的
-        // 標題／風險等級直接跟著這趟撈回來，不必為了「最新一列的 headline」另外補查
-        var rows = recordsQuery
-            .Select(r => new { r.RecordId, r.HostId, r.RecordDate, r.RiskLevel, r.HasCorrelation, r.Headline })
-            .ToList()
-            .Select(x => new { x.RecordId, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.RecordDate, x.RiskLevel, x.HasCorrelation, x.Headline })
-            .GroupBy(x => (x.SurvivingHostId, x.RecordDate))
-            .Select(g => g.OrderByDescending(x => RiskLevels.Rank(x.RiskLevel)).First())
+        // 1. 主聚合在 SQL 端：依 HostId 分組算天數與最新日期，拉回量受限於主機數而非紀錄數
+        var hostRecordsAgg = recordsQuery
+            .GroupBy(r => r.HostId)
+            .Select(g => new
+            {
+                HostId = g.Key,
+                HighRiskDays = g.Count(r => r.RiskLevel == RiskLevels.High),
+                MediumRiskDays = g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                LowRiskDays = g.Count(r => r.RiskLevel == RiskLevels.Low),
+                CorrelationDays = g.Count(r => r.HasCorrelation),
+                MaxDate = g.Max(r => r.RecordDate)
+            })
             .ToList();
 
+        // 2. 每台主機最新一天的風險等級與標題：以相關子查詢取 MAX(RecordDate) 那列，同樣是主機數量級
+        var latestRaw = recordsQuery
+            .Where(r => r.RecordDate == recordsQuery.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
+            .Select(r => new { r.HostId, r.RiskLevel, r.Headline })
+            .ToList()
+            .GroupBy(r => r.HostId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // 3. 類別：問題子列 join 篩選後的紀錄，SQL 端依 (HostId, Category) 分組，拉回主機 × 類別列
         if (riskLevels != null)
         {
-            var allowedRecordIds = rows.Select(x => x.RecordId).ToHashSet();
+            var allowedRecordIds = recordsQuery.Select(x => x.RecordId);
             issuesQuery = issuesQuery.Where(x => allowedRecordIds.Contains(x.RecordId));
         }
 
-        var categoriesByHost = CategoriesByHost(issuesQuery, aliasIndex);
+        var categoriesRaw = issuesQuery
+            .GroupBy(x => new { x.HostId, x.Category })
+            .Select(g => new
+            {
+                g.Key.HostId,
+                g.Key.Category,
+                MaxSeverityRank = g.Max(x => x.SeverityRank),
+                IssueCount = g.Count()
+            })
+            .ToList();
 
-        var result = rows
+        var categoriesByHost = categoriesRaw
+            .GroupBy(x => new { SurvivingHostId = Surviving(aliasIndex, x.HostId), x.Category })
+            .Select(g => new
+            {
+                g.Key.SurvivingHostId,
+                g.Key.Category,
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.MaxSeverityRank)),
+                IssueCount = g.Sum(x => x.IssueCount)
+            })
             .GroupBy(x => x.SurvivingHostId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g
+                    .OrderByDescending(x => x.MaxSeverityRank)
+                    .ThenByDescending(x => x.IssueCount)
+                    .Select(x => x.Category)
+                    .ToList());
+
+        // 4. 記憶體內折併別名（Surviving）：天數相加、Latest 取日期最大的別名、Categories 依既有排序去重
+        var result = hostRecordsAgg
+            .GroupBy(x => Surviving(aliasIndex, x.HostId))
             .Select(g =>
             {
-                var latest = g.OrderByDescending(x => x.RecordDate).First();
+                var newest = g.OrderByDescending(x => x.MaxDate).First();
+                latestRaw.TryGetValue(newest.HostId, out var head);
                 return new HostRiskAggregate
                 {
                     HostId = g.Key,
-                    HighRiskDays = g.Count(x => x.RiskLevel == RiskLevels.High),
-                    MediumRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Medium),
-                    LowRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Low),
-                    CorrelationDays = g.Count(x => x.HasCorrelation),
+                    HighRiskDays = g.Sum(x => x.HighRiskDays),
+                    MediumRiskDays = g.Sum(x => x.MediumRiskDays),
+                    LowRiskDays = g.Sum(x => x.LowRiskDays),
+                    CorrelationDays = g.Sum(x => x.CorrelationDays),
                     Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
-                    LatestDate = latest.RecordDate,
-                    LatestRiskLevel = latest.RiskLevel,
-                    LatestHeadline = latest.Headline
+                    LatestDate = newest.MaxDate,
+                    LatestRiskLevel = head?.RiskLevel ?? string.Empty,
+                    LatestHeadline = head?.Headline ?? string.Empty
                 };
             })
             .ToList();
@@ -713,31 +1057,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 IssueCount = g.Count()
             })
             .GroupBy(x => x.RecordDate)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<string>)g
-                    .OrderByDescending(x => x.MaxSeverityRank)
-                    .ThenByDescending(x => x.IssueCount)
-                    .Select(x => x.Category)
-                    .ToList());
-    }
-
-    /// <summary>依存活主機分組的風險類型清單（跨整段期間去重），排序規則同上</summary>
-    private static Dictionary<long, IReadOnlyList<string>> CategoriesByHost(
-        IQueryable<TopIssueRow> issuesQuery, HostAliasIndex aliasIndex)
-    {
-        return issuesQuery
-            .Select(x => new { x.HostId, x.Category, x.SeverityRank })
-            .ToList()
-            .GroupBy(x => new { SurvivingHostId = Surviving(aliasIndex, x.HostId), x.Category })
-            .Select(g => new
-            {
-                g.Key.SurvivingHostId,
-                g.Key.Category,
-                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.SeverityRank)),
-                IssueCount = g.Count()
-            })
-            .GroupBy(x => x.SurvivingHostId)
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<string>)g

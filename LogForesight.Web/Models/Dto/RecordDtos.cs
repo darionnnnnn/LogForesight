@@ -220,6 +220,9 @@ public class RecordDetailDto
     /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
     public bool AiPending { get; set; }
 
+    /// <summary>原始樣本訊息與詳情已超過保留期並清除（整列與統計欄、問題清單仍保留）</summary>
+    public bool DetailPruned { get; set; }
+
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
     public int AuditEventCount { get; set; }

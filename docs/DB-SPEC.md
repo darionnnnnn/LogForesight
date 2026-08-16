@@ -350,14 +350,29 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 ### 保留策略（以**實際實作**為準，取代原本的統一年限構想）
 
 原規劃是「`Storage.DbRetentionDays` 預設 730、全部資料表統一適用」。
-實際落地後分成**四個保留期**，因為這些資料的性質不同：
+實際落地後分成**五個保留期**，因為這些資料的性質不同：
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
 | `RetentionDays` | 120 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
+| `DetailRetentionDays` | 120 | `lf_daily_records.content_json`（風險日詳情的原始樣本訊息）——**只清內容、整列保留** |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）** |
 | `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
+
+**清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
+NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只對跑分析的那台機器生效
+（實測：500 台 × 200 天的資料集，限縮可清 0 筆、未限縮 39,500 筆）。
+`RecordStore(ownerHost)` 的限縮語意本身是對的（缺日判定與趨勢基準只該看本機），
+錯的是拿它來清理——回歸防線見 `LogForesight.Tests/Scale/RetentionScopeBenchmarks.cs`。
+
+**為什麼詳情要獨立一層**（SCALE-3000 S2）：`content_json` 是整張表的儲存量大宗
+（實測平均 5.3 KB/筆），而年度同期比較需要的 KPI 與趨勢**沒有一項讀它**——
+那些全部來自抽出欄與 `lf_top_issues`。3000 台若把分析紀錄留兩年（`RetentionDays` 760），
+連 `content_json` 一起留約 12 GB；詳情只留 120 天則約 1.9 GB。
+清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`，**不刪列**，
+統計、風險等級、問題清單一律不受影響。驗證 `DetailRetentionDays <= RetentionDays`——
+詳情活得比它所屬的紀錄久沒有意義。
 
 **處理歷程跟稽核而不是跟執行歷程**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md G4）：
 它記的是「誰在什麼時候把這個問題標成什麼、為什麼」——那是**追責用的證據**，
@@ -551,3 +566,33 @@ schema 不需為此預先改動（`key_details` 本來就 nullable）；屆時�
 
 **唯一留待後續的開放項**：C 節 Security 長期保存政策的第二步（試點階段核對抓得到什麼後回頭決定，
 見 docs/BACKLOG.md）。schema 本身已無開放問題。
+
+### F. `lf_blobs.version`：整份型 store 的快取失效權杖
+
+`lf_blobs` 每一列存一整份 JSON（key＝store 名稱）。`hosts`／`host_groups`／`group_access`
+三份隨主機數成長，3000 台的 `hosts` 約 4 MB，而 `IHostStore.GetAll()` 在單一 HTTP 請求內
+會被呼叫十餘次（`HostLookup`／`HostAliasIndex`／可見範圍解析各自都要）。
+`JsonBlobCollection` 因此對這三份、且只有這三份啟用讀取快取。
+
+`version` 是 `bigint`，`EfJsonBlobStore.Mutate` 每次寫入遞增 1，唯一用途是讓快取判斷
+「內容有沒有變過」——`ReadVersion()` 只讀這一個整數欄，不拉整份內容。
+
+| 欄位 | 用途 | 誰維護 |
+|---|---|---|
+| `updated_at` | EF 並發權杖（樂觀鎖，防更新遺失） | EF 於 `SaveChanges` 比對原始值 |
+| `version` | 快取失效判定 | `Mutate` 遞增 |
+
+**兩者不可合併成一個**：`updated_at` 取自 `DateTime.Now`，Windows 上實際解析度約 15.6 ms，
+同一個 tick 內的兩次寫入會拿到相同戳記。主機清單是**授權可見範圍的來源**，
+漏一次更新等於使用者可能看到不該看到的主機。
+
+其餘 store（`users`、`sentinels`、`rules`…）不啟用快取：它們不隨主機數成長，
+加快取只是徒增失效正確性的風險面。
+
+兩條不可放寬的約束：
+
+- **每次 `Read()` 都探測版本，不設 TTL。** 探測是單列主鍵查詢（微秒級），
+  沒有理由為它在授權正確性上做時間折衷。
+- **快取命中時回傳淺複製，呼叫端不得修改清單內的物件。** 淺複製只保護清單本身
+  （增刪排序安全），物件是共用參考。要改主機資料一律走 `MutateBatch`——
+  它的 mutation 拿到的是當場從資料庫反序列化的全新清單，不是快取物件。

@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 
@@ -53,7 +53,7 @@ internal sealed class ScaleServices
 
         var progress = new HandlingProgressCalculator(IssueHandlings, recordHandling, Cases, settingsStore);
         var handlingHistory = new HandlingHistoryQueryService(
-            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress);
+            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress, new FakeIssueAggregateQuery());
 
         var permissionChanges = new PermissionChangeService(
             new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms")),
@@ -65,10 +65,10 @@ internal sealed class ScaleServices
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 
         Dashboard = new DashboardService(
-            Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore, aggregates, issueTodo);
+            Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
+            settingsStore, aggregates, issueTodo, settingsService);
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService);
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,

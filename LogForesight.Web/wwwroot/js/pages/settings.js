@@ -4,7 +4,7 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon } from '../core/ui.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -216,6 +216,7 @@ function collectAdServers() {
 function renderRetentionFields(settings) {
     document.getElementById('initial-history-days').value = settings.initialHistoryDays;
     document.getElementById('retention-days').value = settings.retentionDays;
+    document.getElementById('detail-retention-days').value = settings.detailRetentionDays;
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
     document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
@@ -457,6 +458,7 @@ function bindForm() {
             return;
         }
 
+        const detailRetentionDays = Number(document.getElementById('detail-retention-days').value);
         const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
         const riskyEventRetentionDays = Number(document.getElementById('risky-event-retention-days').value);
@@ -464,6 +466,36 @@ function bindForm() {
             activateTabForElement(document.getElementById('risky-event-retention-days'));
             toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
             return;
+        }
+
+        // **只列真的會造成刪除的設定。** 首次執行回補天數刻意不列——它決定的是
+        // 「首次執行要往回補幾天」，調小不會刪掉任何既有資料。把不會發生的事寫進
+        // 刪除確認，只會讓使用者學會忽略這個對話框。
+        const reducedItems = [];
+        if (retentionDays < current.retentionDays) {
+            reducedItems.push(`歷史資料保留天數：${current.retentionDays} → ${retentionDays} 天（${retentionDays} 天以前的分析紀錄將進入刪除範圍）`);
+        }
+        if (detailRetentionDays < current.detailRetentionDays) {
+            reducedItems.push(`詳情保留天數：${current.detailRetentionDays} → ${detailRetentionDays} 天（${detailRetentionDays} 天以前的原始樣本訊息將被清除，統計與問題清單保留）`);
+        }
+        if (runLogRetentionDays < current.runLogRetentionDays) {
+            reducedItems.push(`執行歷程保留天數：${current.runLogRetentionDays} → ${runLogRetentionDays} 天（${runLogRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+        if (auditRetentionDays < current.auditRetentionDays) {
+            reducedItems.push(`稽核紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+        if (riskyEventRetentionDays < current.riskyEventRetentionDays) {
+            reducedItems.push(`風險 log 暫存保留天數：${current.riskyEventRetentionDays} → ${riskyEventRetentionDays} 天（${riskyEventRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+
+        if (reducedItems.length > 0) {
+            const confirmed = await confirmAction({
+                title: '確認資料保留變更',
+                body: `${reducedItems.map(x => '• ' + x).join('\n')}\n\n此變更無法復原。確定要儲存？`,
+                confirmText: '確定',
+                confirmVariant: 'danger'
+            });
+            if (!confirmed) return;
         }
 
         const apiKey = document.getElementById('ai-api-key').value;
@@ -506,6 +538,7 @@ function bindForm() {
                 clearAiApiKey: clearApiKey,
                 initialHistoryDays,
                 retentionDays,
+                detailRetentionDays,
                 runLogRetentionDays,
                 auditRetentionDays,
                 riskyEventRetentionDays,

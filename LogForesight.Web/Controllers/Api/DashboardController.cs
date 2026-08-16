@@ -114,14 +114,20 @@ public class ReportsController : ControllerBase
 
     [HttpGet("summary")]
     public ApiResponse<ReportSummaryDto> Summary(
-        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope)
+        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope, [FromQuery] string? compare = null)
     {
         // 未帶 to 時的預設終點錨在昨天（回饋十九輪批次C）：前端一律會帶明確日期
         // （reports.js 的 setRange），這裡是給直接呼叫 API 的情境一個正確的預設值
         var toDate = ParseDate(to) ?? DateTime.Today.AddDays(-1);
         var fromDate = ParseDate(from) ?? toDate.AddDays(-29);
 
-        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope));
+        int days = (toDate - fromDate).Days + 1;
+        if (days > 366)
+        {
+            throw DomainException.Validation($"查詢範圍過大（目前 {days} 天，上限 366 天），請縮小期間。");
+        }
+
+        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope, compare));
     }
     // 跨主機同簽章查詢（原 GET signature）已於 §4 併入「問題查詢」（eventId＋source＋依問題視角
     // 為嚴格超集），端點與 ReportService.FindSignature／SignatureHitDto 一併移除。

@@ -200,6 +200,37 @@
 - **批次 4：專案外觀（README Quick Start／LICENSE 等）**：使用者定案本輪不做，留待後續有
   對外發布或新人上手需求明確時再排入。
 
+## 規模化（SCALE-3000）遞延項（詳見 docs/archive/SCALE-3000-PLAN.md）
+
+- **SqlServer 未實測**：測試只跑得到 SQLite。本輪新增的 SQL（首見日冪等合併、處理狀態推導、
+  報表／儀表板聚合）已刻意收斂到兩個 provider 都無爭議的語法（避開 `HAVING` 引用外層／未分組欄位、
+  問題鍵串接交給 EF 而非手寫 `||`／`+`），但這是「降低風險」不是「已驗證」。正式環境第一次
+  跑分析與開報表時要看 nlog 有沒有 SQL 例外。
+- **效益未實機量測**：`SqlPerformanceMonitor` 會記錄 `blob:hosts:Read`（S1 快取，單一請求應降到
+  0～1 次）與各聚合方法的耗時，實測時據此確認。前端三頁（設定／詳情／報表）未做瀏覽器實測
+  （在 `[Authorize]` 之後），只做了 JS 語法檢查。
+- **`scope != all` 的報表路徑仍在記憶體**：`ReportService` 對 `unresolved`／`open`／`unassigned`
+  三種顯示範圍仍以 `QueryLightweight` 載入整段期間的紀錄再 `FilterByScope`。母體只有高／中風險日、
+  量級小一階，且已受 366 天上限約束；`DeriveDayHandling` 已能提供 SQL 端的日狀態，
+  真的成為瓶頸時可接上。
+- **`AggregateByDate` 仍逐列物化**（回饋十九輪 E2 遺留）：輕量列、無 Headline，量級＝天數 × 主機數。
+  「依日期」視角在 3000 台 × 長區間會感覺到；改法同本輪對 `AggregateByHost` 做的（SQL 端 GROUP BY 後
+  才折併別名）。
+- **`BatchRunStore` 有與修掉前的 `EfRecordHandlingStore` 相同的雙實例序號結構**（Web Singleton ＋
+  分析端 `AnalysisOrchestrator` 自建），且建構式做 `ReadAllRunLines()`／`ReadAllLogs()` 全量讀。
+  目前 Web 端只讀（`RunMonitorService` 四個 Get 方法）所以不會撞號，但哪天在 Web 端加寫入路徑
+  就會靜默重號；建構式全量讀在執行歷程累積後也會拖慢站台啟動。改法同 S6 對 `EfRecordHandlingStore`
+  做的：序號改為每次寫入重讀尾端。
+- **初次上線的歷史回補**：實測穩態 3000 主機日／小時，3000 台每日增量約一小時沒問題；但
+  `InitialHistoryDays` 預設 120 天 × 3000 台 ＝ 36 萬主機日 ≈ 五天，期間站台數字不完整。
+  這是分批上線程序（依 Sentinel 或主機群組分梯次啟用）要解的，不是程式碼；
+  `AiFollowupQueue.Capacity = 200` 回補期間必然長時間背壓，畫面會誠實顯示「搜尋暫停中」，
+  屬正確行為，刻意不做成設定。
+- **年度同期比較的資料前提**：`RetentionDays` 預設 120 天，`compare=yoy` 的比較期資料早已被清除，
+  前端會依 `comparisonOutOfRetention` 顯示提示。要做真正的年度比較需把 `RetentionDays` 調到
+  760 以上，儲存量靠 `DetailRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
+  詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
+
 ## 設計面債務（未排期）
 
 - **`visibleSeverities` 選填參數的隱性契約**（`IIssueAggregateQuery` 的

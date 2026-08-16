@@ -176,6 +176,7 @@ public class RecordStorageShaperTests
             WeeklyCheckup = new WeeklyCheckupResult { CheckupDate = new DateTime(2026, 7, 20), HasFindings = true, Conclusion = "wc" },
             DeepDives = new List<CategoryDeepDive> { new() { Category = IssueCategory.Storage } },
             ChannelsRead = new List<string> { "System", "Security" },
+            DetailPruned = true,
             TopIssues = new List<LogIssueSignature> { new() { LogName = "System", Source = "disk", EventId = 153, Count = 1, SampleMessages = new() { "x" } } }
         };
 
@@ -195,9 +196,9 @@ public class RecordStorageShaperTests
 
         foreach (var prop in typeof(DailyAnalysisRecord).GetProperties())
         {
-            if (prop.Name == nameof(DailyAnalysisRecord.TopIssues))
+            if (prop.Name == nameof(DailyAnalysisRecord.TopIssues) || prop.Name == nameof(DailyAnalysisRecord.DetailPruned))
             {
-                continue; // TopIssues 是唯一被刻意改寫的欄位，另由上面的測試檢查
+                continue; // TopIssues 是刻意改寫，DetailPruned 是 DB 專用旗標
             }
 
             var expected = prop.GetValue(original);

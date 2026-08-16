@@ -105,4 +105,49 @@ public class RuntimeSettingsResolverTests
 
         Assert.Null(settings.Ai.ExtraRequestFields);
     }
+
+    // ── 保留天數解析（ResolveRetention） ───────────────────────────────────────────
+
+    [Fact]
+    public void ResolveRetention_合理範圍內的值正確套用()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.DetailRetentionDays = 90;
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(90, retention.DetailRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_大於歷史資料保留天數時不套用_沿用預設值()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.DetailRetentionDays = 200; // 超出範圍
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        // RetentionOptions 的出廠預設為 120
+        Assert.Equal(120, retention.DetailRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_小於1時不套用_沿用預設值()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.DetailRetentionDays = 0; // 不合法下限
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(120, retention.DetailRetentionDays);
+    }
 }
