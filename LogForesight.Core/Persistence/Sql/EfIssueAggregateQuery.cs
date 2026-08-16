@@ -436,6 +436,127 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+
+        using var ctx = _contextFactory();
+
+        var recordsQuery = ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.RecordDate >= f && r.RecordDate <= t &&
+                        (r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium));
+
+        if (hostIds != null)
+        {
+            if (hostIds.Count == 0) return new List<DayHandlingProjection>();
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            recordsQuery = recordsQuery.Where(r => expanded.Contains(r.HostId));
+        }
+
+        if (excludedHostIds.Count > 0)
+        {
+            recordsQuery = recordsQuery.Where(r => !excludedHostIds.Contains(r.HostId));
+        }
+
+        var q = from dr in recordsQuery
+                let hostNameKey = dr.HostName.ToUpper()
+
+                join rh in ctx.RecordHandlings.AsNoTracking()
+                    on new { HostNameKey = hostNameKey, dr.RecordDate } equals new { rh.HostNameKey, rh.RecordDate } into rhs
+                from rh in rhs.DefaultIfEmpty()
+
+                let total = ctx.TopIssues.AsNoTracking()
+                    .Count(ti => ti.RecordId == dr.RecordId &&
+                                 (unhandledRanks.Contains(ti.SeverityRank) ||
+                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))))
+
+                let closed = ctx.TopIssues.AsNoTracking()
+                    .Count(ti => ti.RecordId == dr.RecordId &&
+                                 (unhandledRanks.Contains(ti.SeverityRank) ||
+                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))) &&
+                                 ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                      ih.HostNameKey == hostNameKey &&
+                                      ih.RecordDate == dr.RecordDate &&
+                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                      (ih.Status == HandlingStatuses.Resolved || ih.Status == HandlingStatuses.WontFix || ih.Status == HandlingStatuses.FalsePositive || ih.Status == HandlingStatuses.KnownNoise)))
+
+                let anyInProgress = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                   ih.HostNameKey == hostNameKey &&
+                                   ih.RecordDate == dr.RecordDate &&
+                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing || ih.Status == HandlingStatuses.Escalated)))
+
+                let anyCaseHandler = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueCases.AsNoTracking().Any(ic =>
+                                   ic.HostNameKey == hostNameKey &&
+                                   ic.ClosedAt == null &&
+                                   ic.HandlerId != null &&
+                                   ic.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType)))
+
+                select new
+                {
+                    dr.HostId,
+                    dr.RecordDate,
+                    DayLevelStatus = rh.Status,
+                    DayHandlerId = rh.HandlerId,
+                    Total = total,
+                    Closed = closed,
+                    AnyInProgress = anyInProgress,
+                    HasCaseHandler = anyCaseHandler
+                };
+
+        var projected = q.ToList();
+
+        var result = projected.Select(x =>
+        {
+            string status;
+            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
+            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
+            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+
+            return new DayHandlingProjection(
+                Surviving(aliasIndex, x.HostId),
+                x.RecordDate,
+                status,
+                x.DayHandlerId != null || x.HasCaseHandler
+            );
+        }).ToList();
+
+        Log.Debug("[SQL] IssueAggregate.DeriveDayHandling（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:DeriveDayHandling", sw.ElapsedMilliseconds);
+
+        return result;
+    }
+
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
     {

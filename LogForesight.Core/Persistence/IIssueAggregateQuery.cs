@@ -178,7 +178,22 @@ public interface IIssueAggregateQuery
     /// </summary>
     Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
         IReadOnlyCollection<(string Source, int EventId)> issues);
+
+    /// <summary>
+    /// 推導風險日的處理狀態（SQL 端實作）。
+    /// 注意：墓碑主機不在本查詢的責任範圍，呼叫端必須排除並自行處理。
+    /// </summary>
+    List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds);
 }
+
+/// <summary>
+/// SQL 端推導出的風險日處理狀態（不含墓碑主機）。
+/// </summary>
+public sealed record DayHandlingProjection(long HostId, DateTime Date, string DayStatus, bool HasHandler);
 
 /// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
 public sealed class IssueDailyHostCount
