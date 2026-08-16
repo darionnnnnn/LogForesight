@@ -399,34 +399,49 @@ public class AnalysisOrchestrator
                 console.WriteLine("  未偵測到權限異動。");
             }
 
-            // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長
-            var pruned = historyService.Prune(retention.RetentionDays);
+            // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
+            //
+            // **一律用未限縮的 RecordStore()，不要用上面的 historyService**（SCALE-3000 S2-3b）：
+            // historyService 綁定「本機」識別（缺日判定與趨勢基準只看本機），而 NetIQ 機房
+            // 數千台主機的紀錄不屬於本機。這裡若用它，保留期對絕大多數資料等於從來沒有生效——
+            // 這正是 2026-08-16 以前的實際情況，而 docs/DB-SPEC.md 的保留策略表寫的是全表適用，
+            // 文件與實作長期不一致。實測（RetentionScopeBenchmarks）：500 台 × 200 天的資料集，
+            // 限縮到本機可清 0 筆、未限縮 39,500 筆。
+            //
+            // 限縮語意本身沒有錯，錯的是拿它來清理——store 該誠實，所以只改呼叫端。
+            //
+            // 兩層保留期（S2）：先刪整列，再把「留著但已過詳情保留期」的 content_json 清空。
+            // **順序不可反**：先清詳情再刪列，等於為即將被刪的列白做一次 UPDATE。
+            var allHostRecords = backend.RecordStore();
+
+            var pruned = allHostRecords.Prune(retention.RetentionDays);
             if (pruned > 0)
             {
                 console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
             }
 
-            // 1a. 保留期現況申報（只計數不清除）。
-            //
-            // **刻意用未限縮的 RecordStore()**：上面那行 historyService 綁定本機識別，
-            // 只看得到這台機器自己的紀錄，而 NetIQ 機房數千台主機的紀錄不屬於本機——
-            // 用它計數會回報接近 0，真實情況完全看不見。
             try
             {
-                var allHostRecords = backend.RecordStore();
-                var prunableRecords = allHostRecords.CountPrunableRecords(retention.RetentionDays);
-                var prunableDetails = allHostRecords.CountPrunableDetails(retention.DetailRetentionDays);
-
-                if (prunableRecords > 0 || prunableDetails > 0)
+                var detailPruned = allHostRecords.PruneDetails(retention.DetailRetentionDays);
+                if (detailPruned > 0)
                 {
-                    var msg = $"目前尚未啟用自動清除，僅申報：若現在執行，將清掉 {prunableRecords} 列過期紀錄、{prunableDetails} 列過期詳情。";
+                    console.WriteLine($"已清除 {detailPruned} 筆超過 {retention.DetailRetentionDays} 天的紀錄詳情" +
+                                      "（統計與問題清單保留，僅原始樣本訊息不可再查看）。");
+                }
+
+                // 積壓申報：單次清除有上限（見 EfAnalysisRecordStore.MaxPruneRowsPerRun），
+                // 首次啟用時的積壓會分多晚排掉。沒有這行的話，使用者看到「清了還有」會以為壞掉。
+                var remaining = allHostRecords.CountPrunableRecords(retention.RetentionDays);
+                if (remaining > 0)
+                {
+                    var msg = $"尚有 {remaining} 筆過期紀錄超出本次清除上限，將於後續執行陸續清完。";
                     console.WriteLine($"  ℹ {msg}");
                     runRecorder.Milestone(msg);
                 }
             }
             catch (Exception ex)
             {
-                Log.Warn(ex, "保留期現況申報失敗（不影響本次分析）：{0}", ex.Message);
+                Log.Warn(ex, "詳情清除或積壓申報失敗（不影響本次分析）：{0}", ex.Message);
             }
 
             // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
@@ -453,7 +468,7 @@ public class AnalysisOrchestrator
 
             // 1b-2. 清理處理狀態三表與處理歷程（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
             //
-            // **必須排在 historyService.Prune 之後**：那一步決定了哪些日期的分析紀錄還在，
+            // **必須排在上面的分析紀錄清理（步驟 1）之後**：那一步決定了哪些日期的分析紀錄還在，
             // 這裡刪的正是「紀錄已經不在、卻還留著的處理狀態」。順序反過來的話，
             // 這一輪會漏掉剛被判定過期的那幾天，要等到下次執行才補上。
             //
