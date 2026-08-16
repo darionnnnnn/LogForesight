@@ -1232,16 +1232,25 @@ function issueCell(issue) {
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
     // 超長時只是視覺上先收合（keyDetailsBlock），有明確的「顯示全部」可以展開，
     // 不是把內容拿掉
-    if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
+    if (currentDetail.detailPruned) {
+        const prunedHint = document.createElement('div');
+        prunedHint.className = 'small mt-1 px-2 py-1 rounded';
+        prunedHint.style.backgroundColor = 'var(--lf-info-soft)';
+        prunedHint.style.color = 'var(--lf-info-text)';
+        prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
+        wrap.appendChild(prunedHint);
+    } else {
+        if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
 
-    if (issue.distinctMessageCount > 1) {
-        const distinct = document.createElement('div');
-        distinct.className = 'small text-muted mt-1';
-        distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
-        wrap.appendChild(distinct);
+        if (issue.distinctMessageCount > 1) {
+            const distinct = document.createElement('div');
+            distinct.className = 'small text-muted mt-1';
+            distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
+            wrap.appendChild(distinct);
+        }
+
+        if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
     }
-
-    if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
 
     return wrap;
 }

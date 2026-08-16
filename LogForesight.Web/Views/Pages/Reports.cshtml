@@ -16,14 +16,21 @@
             <form id="report-form" class="row g-2 align-items-end">
                 <div class="col-auto">
                     <label for="report-from" class="form-label small mb-1">起始日期</label>
-                    <input type="date" class="form-control form-control-sm" id="report-from" />
+                    <input type="date" class="form-control form-control-sm" id="report-from" max="@DateTime.Now.ToString("yyyy-MM-dd")" />
                 </div>
                 <div class="col-auto">
                     <label for="report-to" class="form-label small mb-1">結束日期</label>
-                    <input type="date" class="form-control form-control-sm" id="report-to" />
+                    <input type="date" class="form-control form-control-sm" id="report-to" max="@DateTime.Now.ToString("yyyy-MM-dd")" />
                 </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-sm btn-primary">套用</button>
+                    <label for="report-compare" class="form-label small mb-1">比較模式</label>
+                    <select class="form-select form-select-sm" id="report-compare">
+                        <option value="previous">對比前一期</option>
+                        <option value="yoy">對比去年同期</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-primary mb-0" style="height: 31px;">套用</button>
                 </div>
                 <div class="col-auto">
                     <div class="btn-group btn-group-sm">
