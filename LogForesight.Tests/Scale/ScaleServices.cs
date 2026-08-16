@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 
@@ -68,7 +68,7 @@ internal sealed class ScaleServices
             Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
             settingsStore, aggregates, issueTodo);
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService);
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,

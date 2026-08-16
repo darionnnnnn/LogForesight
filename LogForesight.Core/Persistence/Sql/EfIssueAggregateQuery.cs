@@ -557,6 +557,162 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new ReportKpiAggregate(0, 0, 0, 0, 0);
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+
+        using var ctx = _contextFactory();
+
+        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+        }
+        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        var stats = qRecords.Select(r => new { r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable }).ToList();
+        var highRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.High);
+        var mediumRiskDays = stats.Count(r => r.RiskLevel == RiskLevels.Medium);
+        var coverageGapDays = stats.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
+
+        var affectedHosts = qRecords.Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
+            .Select(r => r.HostId)
+            .Distinct()
+            .ToList()
+            .Select(h => Surviving(aliasIndex, h))
+            .Distinct()
+            .Count();
+
+        var qIssues = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
+        }
+        if (riskLevels != null)
+        {
+            var allowedRecordIds = qRecords.Select(r => r.RecordId);
+            qIssues = qIssues.Where(x => allowedRecordIds.Contains(x.RecordId));
+        }
+        if (visibleRanks != null) qIssues = qIssues.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        var totalIssues = qIssues.Count();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportKpi（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Ms}ms", f, t, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportKpi", sw.ElapsedMilliseconds);
+
+        return new ReportKpiAggregate(totalIssues, highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
+    }
+
+    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<TrendAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        using var ctx = _contextFactory();
+
+        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+        }
+        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        var trend = qRecords
+            .GroupBy(r => r.RecordDate)
+            .Select(g => new {
+                Date = g.Key,
+                HighRisk = g.Count(r => r.RiskLevel == RiskLevels.High),
+                MediumRisk = g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                ErrorCount = g.Sum(r => r.ErrorCount)
+            })
+            .ToList()
+            .Select(x => new TrendAggregate(x.Date, x.HighRisk, x.MediumRisk, x.ErrorCount))
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportTrend（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 天、{Ms}ms", f, t, trend.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportTrend", sw.ElapsedMilliseconds);
+
+        return trend;
+    }
+
+    public List<ReportHostRiskAggregate> AggregateReportHostRisk(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0) return new List<ReportHostRiskAggregate>();
+
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+
+        using var ctx = _contextFactory();
+
+        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
+        if (hostIds != null)
+        {
+            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
+            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+        }
+        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        // **GROUP BY 在 SQL 端做完再拉回**（同 ActionableOccurrences 的既有作法）：
+        // 逐列 Select().ToList() 再於記憶體分組，3000 台 × 366 天就是 110 萬列進記憶體，
+        // 等於先聚合再反聚合。拉回的量要受限於相異主機數，不是紀錄列數。
+        var grouped = qRecords
+            .GroupBy(r => r.HostId)
+            .Select(g => new
+            {
+                HostId = g.Key,
+                HighDays = g.Count(r => r.RiskLevel == RiskLevels.High),
+                MediumDays = g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                CorrelationDays = g.Count(r => r.HasCorrelation),
+                MaxDate = g.Max(r => r.RecordDate)
+            })
+            .ToList();
+
+        // 每台主機最新一天的風險等級與標題（主機排行要顯示）：量同樣是主機數而非紀錄數
+        var latest = qRecords
+            .Where(r => r.RecordDate == qRecords.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
+            .Select(r => new { r.HostId, r.RiskLevel, r.Headline })
+            .ToList()
+            .GroupBy(r => r.HostId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // 合併過的主機：舊識別下的統計併進存活主機，「最新」取各別名中日期最大的那一台
+        var hostRisk = grouped
+            .GroupBy(x => Surviving(aliasIndex, x.HostId))
+            .Select(g =>
+            {
+                var newest = g.OrderByDescending(x => x.MaxDate).First();
+                latest.TryGetValue(newest.HostId, out var head);
+                return new ReportHostRiskAggregate(
+                    g.Key,
+                    g.Sum(x => x.HighDays),
+                    g.Sum(x => x.MediumDays),
+                    g.Sum(x => x.CorrelationDays),
+                    head?.RiskLevel ?? string.Empty,
+                    head?.Headline ?? string.Empty);
+            })
+            .ToList();
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportHostRisk（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 台主機、{Ms}ms", f, t, hostRisk.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportHostRisk", sw.ElapsedMilliseconds);
+
+        return hostRisk;
+    }
+
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
     {

@@ -128,6 +128,12 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
     public Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
         IReadOnlyCollection<long>? hostIds) => new();
+
+    public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new(0, 0, 0, 0, 0);
+
+    public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
+
+    public List<ReportHostRiskAggregate> AggregateReportHostRisk(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

@@ -188,7 +188,30 @@ public interface IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds);
+
+    /// <summary>
+    /// 報表 KPI 聚合 (scope == all)。
+    /// </summary>
+    ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
+    /// <summary>
+    /// 報表逐日趨勢聚合 (scope == all)。
+    /// </summary>
+    List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
+    /// <summary>
+    /// 報表主機風險彙總 (scope == all)。
+    /// </summary>
+    List<ReportHostRiskAggregate> AggregateReportHostRisk(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 }
+
+public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);
+public sealed record TrendAggregate(DateTime Date, int HighRisk, int MediumRisk, int ErrorCount);
+/// <summary>報表主機排行的單台彙總。<see cref="CorrelationDays"/> 與 Latest 兩欄不是裝飾——
+/// 主機排行本來就會顯示它們，少帶回來的症狀是「畫面欄位靜默變空」而不是報錯。</summary>
+public sealed record ReportHostRiskAggregate(
+    long HostId, int HighRiskDays, int MediumRiskDays,
+    int CorrelationDays, string LatestRiskLevel, string LatestHeadline);
 
 /// <summary>
 /// SQL 端推導出的風險日處理狀態（不含墓碑主機）。

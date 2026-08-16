@@ -37,7 +37,7 @@ public class ReportServiceTests : IDisposable
         // EF fixture——用假實作會讓「排行只含可見主機」這條授權測試測不到真正的下推路徑
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
-        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates);
+        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -49,6 +49,40 @@ public class ReportServiceTests : IDisposable
         {
             HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = risk, TopIssues = issues.ToList()
         });
+
+    /// <summary>
+    /// 主機排行不是只有兩個天數欄位：關聯天數、最新風險等級、最新標題也要帶回來。
+    ///
+    /// 這條存在的理由是實作時真的踩過：KPI 下推 SQL 之後，排行一度改用
+    /// 「把聚合結果展開成每個風險日一個假紀錄、再餵回 RecordStatsBuilder」的作法——
+    /// 天數對得上，但假紀錄沒有關聯訊號也沒有標題，那幾欄會**靜默變空**，
+    /// 而當時的測試只驗天數所以全綠。
+    /// </summary>
+    [Fact]
+    public void GetSummary_主機排行帶回關聯天數與最新標題()
+    {
+        var host = AddHost("HOST-RANK");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-1),
+            RiskLevel = "高", Headline = "舊的標題",
+            CorrelationAlerts = new List<string> { "測試用關聯訊號" }
+        });
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today,
+            RiskLevel = "中", Headline = "最新的標題"
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        var row = Assert.Single(result.HostRanking);
+        Assert.Equal(1, row.HighRiskDays);
+        Assert.Equal(1, row.MediumRiskDays);
+        Assert.Equal(1, row.CorrelationDays);            // 假紀錄的作法這裡會是 0
+        Assert.Equal("最新的標題", row.LatestHeadline);   // 假紀錄的作法這裡會是空字串
+        Assert.Equal("中", row.LatestRiskLevel);
+    }
 
     [Fact]
     public void GetSummary_TotalHosts與可見主機數一致()
@@ -310,5 +344,110 @@ public class ReportServiceTests : IDisposable
         var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, "unassigned");
         // 有案件負責人，所以不算 unassigned，因此高風險日應為 0
         Assert.Equal(0, result.Kpi.HighRiskDays);
+    }
+    [Fact]
+    public void GetSummary_AllScope_KPI欄位正確且包含或條件CoverageGap()
+    {
+        var host = AddHost("HOST-KPI");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        var rec1 = new DailyAnalysisRecord { HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-2), RiskLevel = "低", DataIncomplete = true, TopIssues = new List<LogIssueSignature>() };
+        var rec2 = new DailyAnalysisRecord { HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-3), RiskLevel = "低", SecurityLogAvailable = false, TopIssues = new List<LogIssueSignature>() };
+        _recordStore.Append(rec1);
+        _recordStore.Append(rec2);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(2, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+        Assert.Equal(2, result.Kpi.CoverageGapDays);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_合併主機舊識別算進存活主機()
+    {
+        var hostA = AddHost("HOST-A-MERGE");
+        var hostB = AddHost("HOST-B-MERGE");
+        AddRecord(hostA, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(hostB, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.Merge(hostB.HostId, hostA.HostId);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.AffectedHosts); // A and B merged to A
+        Assert.Single(result.HostRanking);
+        Assert.Equal(2, result.HostRanking[0].HighRiskDays);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_不可見主機不計入任何數字()
+    {
+        var visible = AddHost("HOST-VIS");
+        AddRecord(visible, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = 9999, Host = "HOST-GHOST", Date = DateTime.Today, RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature> { Issue("ghost", 1, IssueSeverity.High, 1) }
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+        Assert.Single(result.HostRanking);
+        Assert.Equal(1, result.RankedHostCount);
+        Assert.Equal(1, result.Trend.Count(t => t.HighRisk > 0));
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_日風險等級顯示範圍限制()
+    {
+        var host = AddHost("HOST-RISK");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        // 只顯示高，中風險日被濾掉
+        Assert.Equal(1, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_不可見嚴重度不計入TotalIssues但不影響風險日()
+    {
+        var host = AddHost("HOST-SEV");
+        AddRecord(host, DateTime.Today, "高",
+            Issue("disk", 1, IssueSeverity.High, 1),
+            Issue("disk", 2, IssueSeverity.Low, 1));
+
+        // SiteHidden 隱藏 Low
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High", "Medium" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.TotalIssues); // Low is hidden
+        Assert.Equal(1, result.Kpi.HighRiskDays); // 仍是高風險日
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_趨勢補零()
+    {
+        var host = AddHost("HOST-TREND");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(7, result.Trend.Count);
+        Assert.Equal(1, result.Trend.Count(t => t.HighRisk == 1));
+        Assert.Equal(6, result.Trend.Count(t => t.HighRisk == 0));
     }
 }
