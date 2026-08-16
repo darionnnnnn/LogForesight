@@ -502,11 +502,10 @@ public class AnalysisOrchestrator
             // 平行跑多個 Sentinel worker，這裡是把本機也當成「多一個並行 worker」。
             //
             // **runCtx 只建一份、兩路共用同一個實例**（尤其 CaseCoordinator／RiskyEventStore／
-            // RunRecorder）——這是併發安全的關鍵前提，不是巧合：IssueCaseCoordinator 底下的
-            // RecordHandlingLog.LogId 是行程內單一序號產生器（EfRecordHandlingStore._lastLogId），
-            // 靠實例層級的鎖擋撞號，只有在「本機與 NetIQ 共用同一個 IssueCaseCoordinator 實例」時
-            // 才安全；若未來改動讓任一路各自另外呼叫 backend.RecordHandlingStore() 建出第二個實例，
-            // 兩個實例會各自對 DB 算 MAX(seq) 而互相不知道對方，序號會撞號。同理 BatchRunRecorder
+            // RunRecorder）——共用是刻意的，但**歷程序號已不再依賴它**：
+            // EfRecordHandlingStore.AppendLog 每次寫入都重讀 DB 尾端取得起點，不留記憶體快取，
+            // 所以多個實例並存也不會撞號（Web 端 Singleton 與這裡自建的 backend 本來就是兩份，
+            // 舊的快取寫法在那個邊界上已經會重號）。同理 BatchRunRecorder
             // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
             // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
             // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。

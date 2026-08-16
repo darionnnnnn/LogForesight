@@ -105,6 +105,7 @@ internal class PermissionMonitorService
         else if (current.AdministratorsMembers == null)
         {
             Console.WriteLine("  本次無法讀取 Administrators 群組成員，跳過該項比對（不影響資料夾 ACL 檢查）。");
+            Log.Warn("本次無法讀取 Administrators 群組成員，跳過該項比對（不影響資料夾 ACL 檢查）。");
         }
 
         // 各監控資料夾的 ACL 異動：不判斷合理性，一律列出讓人工確認

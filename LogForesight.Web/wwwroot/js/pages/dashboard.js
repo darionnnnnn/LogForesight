@@ -75,6 +75,7 @@ async function refreshRunActivity() {
     try {
         activity = await api.get('/api/run-activity', { silent: true });
     } catch {
+        // 刻意不清掉計時器：API 偶發失敗不代表分析結束，停掉會讓告示再也不出現。
         // 純加值資訊，失敗就當作沒在跑——不要為了一行告示在畫面上留錯誤訊息
         container.replaceChildren();
         return;
@@ -82,6 +83,8 @@ async function refreshRunActivity() {
 
     if (!activity?.isRunning) {
         container.replaceChildren();
+        clearInterval(runActivityTimer);
+        runActivityTimer = null;
         return;
     }
 

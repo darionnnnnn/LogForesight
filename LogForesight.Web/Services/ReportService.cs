@@ -59,6 +59,8 @@ public class ReportService
         // §10.6：全部主機都已有結論的問題不佔用排行版面（與儀表板重點問題卡同一套規則）
         var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
 
+        var statsPending = _issueRanking.StatsPending();
+
         var dto = new ReportSummaryDto
         {
             From = from.ToString("yyyy-MM-dd"),
@@ -85,8 +87,8 @@ public class ReportService
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
-            IssueStatsPending = _issueRanking.StatsPending().Pending,
-            IssueStatsPendingHint = _issueRanking.StatsPending().Hint,
+            IssueStatsPending = statsPending.Pending,
+            IssueStatsPendingHint = statsPending.Hint,
             Handling = _handling.GetTodo(records)
         };
 
