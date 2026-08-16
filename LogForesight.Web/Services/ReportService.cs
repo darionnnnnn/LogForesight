@@ -30,9 +30,13 @@ public class ReportService
         _systemSettings = systemSettings;
     }
 
-    public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
+    public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
     {
         if (to < from) (from, to) = (to, from);
+
+        var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
+        var retentionThreshold = DateTime.Today.AddDays(-_settings.Get().RetentionDays);
+        bool outOfRetention = previousTo < retentionThreshold;
 
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
 
@@ -68,9 +72,6 @@ public class ReportService
 
                 var kpiAgg = _aggregates.AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities);
 
-                var span = (to.Date - from.Date).Days + 1;
-                var previousTo = from.Date.AddDays(-1);
-                var previousFrom = previousTo.AddDays(-span + 1);
                 var kpiAggPrev = _aggregates.AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
 
                 kpi = new ReportKpiDto
@@ -120,9 +121,6 @@ public class ReportService
             var records = _handling.FilterByScope(_repository.QueryLightweight(new RecordQueryFilter { From = from, To = to }), scope);
             recordsForTodo = records;
 
-            var span = (to.Date - from.Date).Days + 1;
-            var previousTo = from.Date.AddDays(-1);
-            var previousFrom = previousTo.AddDays(-span + 1);
             var previousRecords = _handling.FilterByScope(
                 _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
 
@@ -144,6 +142,8 @@ public class ReportService
             From = from.ToString("yyyy-MM-dd"),
             To = to.ToString("yyyy-MM-dd"),
             HandlingScope = scope,
+            ComparisonMode = actualComparisonMode,
+            ComparisonOutOfRetention = outOfRetention,
             Kpi = kpi,
             Trend = trend,
             // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與儀表板同一個查詢方法。
@@ -173,6 +173,19 @@ public class ReportService
         };
 
         return dto;
+    }
+
+    private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)
+    {
+        if (string.Equals(compare, "yoy", StringComparison.OrdinalIgnoreCase))
+        {
+            return (from.AddYears(-1), to.AddYears(-1), "yoy");
+        }
+
+        var span = (to.Date - from.Date).Days + 1;
+        var previousTo = from.Date.AddDays(-1);
+        var previousFrom = previousTo.AddDays(-span + 1);
+        return (previousFrom, previousTo, "previous");
     }
 
     private IReadOnlySet<string>? TryApplyDayRiskVisibility(IReadOnlySet<string>? visibleDayRiskLevels, List<string>? filterRiskLevels)

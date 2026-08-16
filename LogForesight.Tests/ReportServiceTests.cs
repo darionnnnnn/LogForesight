@@ -637,4 +637,111 @@ public class ReportServiceTests : IDisposable
         var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
         Assert.Equal(1, todo.OverdueCount);
     }
+
+    [Fact]
+    public void ReportsController_Summary_367天丟出驗證錯誤()
+    {
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var from = DateTime.Today.AddDays(-366).ToString("yyyy-MM-dd");
+        var to = DateTime.Today.ToString("yyyy-MM-dd");
+
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => controller.Summary(from, to, null));
+        Assert.Contains("366", ex.Message);
+    }
+
+    [Fact]
+    public void ReportsController_Summary_366天可以通過()
+    {
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var from = DateTime.Today.AddDays(-365).ToString("yyyy-MM-dd");
+        var to = DateTime.Today.ToString("yyyy-MM-dd");
+
+        var result = controller.Summary(from, to, null);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void GetSummary_CompareYoy_比較期為去年同期()
+    {
+        var host = AddHost("HOST-YOY");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevFrom = from.AddYears(-1);
+        var prevTo = to.AddYears(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "yoy");
+
+        Assert.Equal("yoy", result.ComparisonMode);
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_ComparePrevious_維持現行緊鄰前期行為()
+    {
+        var host = AddHost("HOST-PREV");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevTo = from.AddDays(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result1 = _service.GetSummary(from, to, null, "previous");
+        var result2 = _service.GetSummary(from, to, null, null);
+
+        Assert.Equal("previous", result1.ComparisonMode);
+        Assert.Equal(1, result1.Kpi.HighRiskDaysPrevious);
+        Assert.Equal("previous", result2.ComparisonMode);
+        Assert.Equal(1, result2.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_CompareUnrecognized_當成previous不丟錯()
+    {
+        var host = AddHost("HOST-UNREC");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevTo = from.AddDays(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "invalid_mode");
+
+        Assert.Equal("previous", result.ComparisonMode);
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_CompareYoy_閏年2月29的去年比較期終點是2月28()
+    {
+        var host = AddHost("HOST-LEAP");
+        var from = new DateTime(2024, 2, 29);
+        var to = new DateTime(2024, 2, 29);
+
+        AddRecord(host, new DateTime(2023, 2, 28), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "yoy");
+
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_ComparisonOutOfRetention_依比較期終點是否落在保留期之外判定()
+    {
+        var fromOutside = DateTime.Today.AddDays(-120);
+        var toOutside = DateTime.Today.AddDays(-119);
+
+        var fromInside = DateTime.Today.AddDays(-119);
+        var toInside = DateTime.Today.AddDays(-118);
+
+        var resultOutside = _service.GetSummary(fromOutside, toOutside, null, "previous");
+        var resultInside = _service.GetSummary(fromInside, toInside, null, "previous");
+
+        Assert.True(resultOutside.ComparisonOutOfRetention);
+        Assert.False(resultInside.ComparisonOutOfRetention);
+    }
 }
