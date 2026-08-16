@@ -245,4 +245,70 @@ public class ReportServiceTests : IDisposable
 
         Assert.DoesNotContain(result.IssueRanking, i => i.Source == "ghost");
     }
+
+    [Fact]
+    public void GetSummary_主機名稱大小寫不同時仍能正確對應到處理狀態()
+    {
+        var host = AddHost("HoSt-CaSe");
+        AddRecord(host, DateTime.Today, "高");
+        // 存檔用全小寫
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = "host-case", Date = DateTime.Today,
+            Status = HandlingStatuses.InProgress, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+        // 如果有抓到狀態，就不會是 Open（預設）
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.InProgressCount);
+        Assert.Equal(0, result.Handling.OpenCount);
+    }
+
+    [Fact]
+    public void GetSummary_同一天有多個問題層級標記時推導結果一致()
+    {
+        var host = AddHost("HOST-MULTI");
+        var issue1 = Issue("disk", 1, IssueSeverity.High, 1);
+        var issue2 = Issue("disk", 2, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today, "高", issue1, issue2);
+
+        // 兩個問題分別有狀態
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue1),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue2),
+            Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.InProgressCount);
+    }
+
+    [Fact]
+    public void GetSummary_unassigned範圍_日層級無處理人但問題屬進行中案件時不算未指派()
+    {
+        var host = AddHost("HOST-CASE-ASSIGN");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today, "高", issue);
+
+        // 日層級沒有處理人，但有一個針對該問題的案件，有指派處理人
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\x", DisplayName = "案件負責人" });
+        _caseStore.Save(new IssueCase
+        {
+            HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            CreatedAt = DateTime.Now, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, "unassigned");
+        // 有案件負責人，所以不算 unassigned，因此高風險日應為 0
+        Assert.Equal(0, result.Kpi.HighRiskDays);
+    }
 }
