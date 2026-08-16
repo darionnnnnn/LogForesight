@@ -282,6 +282,10 @@
             <h2 class="lf-card__title">資料保留</h2>
         </div>
         <div class="lf-card__body">
+            <div class="alert mb-3" style="background-color: var(--lf-warning-soft); color: var(--lf-warning-text); border-color: var(--lf-warning);">
+                超過保留天數的資料會在每次批次啟動時<strong>永久刪除，無法復原</strong>。
+            </div>
+
             @* 問題聚合欄背景回填狀態（回饋十三輪 A6，體檢 G2 殘餘）：回填未完成時問題排行的
                次數與影響範圍會偏低但看起來正常，過去只有 /api/health/detail 有這三個欄位、
                維運端沒有任何畫面讀取點。只在真的回填中才顯示，平常不佔版面 *@
@@ -299,15 +303,23 @@
                 <div class="col-sm-6">
                     <label for="retention-days" class="form-label">歷史資料保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="超過此天數的歷史紀錄，每次批次啟動時自動清除。不可小於首次執行回補天數。">
+                            data-bs-content="超過此天數的歷史紀錄，每次批次啟動時自動清除，永久刪除，無法復原。不可小於首次執行回補天數。">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="retention-days" min="1" max="3650" required />
                 </div>
                 <div class="col-sm-6">
+                    <label for="detail-retention-days" class="form-label">詳情保留天數</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="詳情刪除後，該日的統計、風險等級與問題清單仍然保留，只有原始樣本訊息不可再查看。超過此天數每次批次啟動時自動清除，永久刪除，無法復原。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    </button>
+                    <input type="number" class="form-control" id="detail-retention-days" min="1" max="3650" required />
+                </div>
+                <div class="col-sm-6">
                     <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除。資料只留在資料庫，不影響業務分析結果。">
+                            data-bs-content="批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。資料只留在資料庫，不影響業務分析結果。">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="run-log-retention-days" min="7" max="3650" required />
@@ -315,7 +327,7 @@
                 <div class="col-sm-6">
                     <label for="audit-retention-days" class="form-label">稽核紀錄保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="操作稽核紀錄，超過此天數每次批次啟動時自動清除。合規／追責用途，保留期通常較長。">
+                            data-bs-content="操作稽核紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。合規／追責用途，保留期通常較長。">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required />
@@ -323,7 +335,7 @@
                 <div class="col-sm-6">
                     <label for="risky-event-retention-days" class="form-label">風險 log 暫存保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除。不可大於歷史資料保留天數。">
+                            data-bs-content="規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。不可大於歷史資料保留天數。">
                         <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="risky-event-retention-days" min="1" max="3650" required />
