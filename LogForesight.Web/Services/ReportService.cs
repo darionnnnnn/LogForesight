@@ -51,24 +51,17 @@ public class ReportService
         if (scope == HandlingHistoryQueryService.HandlingScopes.All)
         {
             var visibleDayRiskLevels = _systemSettings.GetVisibleDayRiskLevels();
-            var riskLevels = TryApplyDayRiskVisibility(visibleDayRiskLevels, null);
+            var riskLevels = RecordRepository.ResolveDayRiskLevels(visibleDayRiskLevels, null);
 
             if (riskLevels != null && riskLevels.Count == 0)
             {
                 kpi = new ReportKpiDto();
-                trend = BuildTrendEmpty(from, to);
+                trend = BuildTrendFromAggregate(new List<TrendAggregate>(), from, to);
                 ranked = new List<DashboardHostDto>();
             }
             else
             {
-                var visibleSeveritiesStr = _systemSettings.GetVisibleSeverities();
-                IReadOnlySet<IssueSeverity>? visibleSeverities = visibleSeveritiesStr == null
-                    ? null
-                    : visibleSeveritiesStr
-                        .Select(s => Enum.TryParse<IssueSeverity>(s, true, out var v) ? v : (IssueSeverity?)null)
-                        .Where(v => v.HasValue)
-                        .Select(v => v!.Value)
-                        .ToHashSet();
+                var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
 
                 var kpiAgg = _aggregates.AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities);
 
@@ -88,33 +81,12 @@ public class ReportService
                 var trendAgg = _aggregates.AggregateReportTrend(from, to, hostIds, riskLevels, visibleSeverities);
                 trend = BuildTrendFromAggregate(trendAgg, from, to);
 
-                // 直接由聚合結果組出排行。**不要為了重用 RecordStatsBuilder.BuildHostRanking
-                // 而把聚合展開成「每個風險日一個假紀錄」**——那是先聚合再反聚合，
-                // 3000 台 × 366 天等於上百萬個物件，正好抵消掉下推 SQL 的目的；
-                // 而且假紀錄沒有關聯訊號與標題，那兩欄會靜默變空。
                 // 排序規則與 BuildHostRanking 一致：高風險日 → 關聯日 → 中風險日。
-                var hostRiskAgg = _aggregates.AggregateReportHostRisk(from, to, hostIds, riskLevels, visibleSeverities);
+                var hostRiskAgg = _aggregates.AggregateByHost(from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
                 var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
-                ranked = hostRiskAgg
-                    .Where(h => h.HighRiskDays > 0 || h.MediumRiskDays > 0)
-                    .Select(h => new DashboardHostDto
-                    {
-                        HostId = h.HostId,
-                        HostName = hostsById.TryGetValue(h.HostId, out var wh) ? wh.HostName : h.HostId.ToString(),
-                        HighRiskDays = h.HighRiskDays,
-                        MediumRiskDays = h.MediumRiskDays,
-                        CorrelationDays = h.CorrelationDays,
-                        LatestRiskLevel = h.LatestRiskLevel,
-                        LatestHeadline = h.LatestHeadline
-                    })
-                    .OrderByDescending(h => h.HighRiskDays)
-                    .ThenByDescending(h => h.CorrelationDays)
-                    .ThenByDescending(h => h.MediumRiskDays)
-                    .ToList();
+                ranked = RecordStatsBuilder.BuildHostRanking(hostRiskAgg, hostsById);
             }
-
-            // 這是下一段要處理的最後一個記憶體路徑
-            // GetTodoByRange 會直接在底下賦值時呼叫，不再需要撈 recordsForTodo
+            // 待辦走 GetTodoByRange（見下方 Handling 欄位），這條分支從頭到尾不載入任何紀錄
         }
         else
         {
@@ -188,26 +160,6 @@ public class ReportService
         return (previousFrom, previousTo, "previous");
     }
 
-    private IReadOnlySet<string>? TryApplyDayRiskVisibility(IReadOnlySet<string>? visibleDayRiskLevels, List<string>? filterRiskLevels)
-    {
-        if (visibleDayRiskLevels == null) return filterRiskLevels == null ? null : filterRiskLevels.ToHashSet();
-
-        var effective = filterRiskLevels == null
-            ? visibleDayRiskLevels.ToHashSet()
-            : filterRiskLevels.Where(visibleDayRiskLevels.Contains).ToHashSet();
-
-        return effective;
-    }
-
-    private static List<ReportTrendPointDto> BuildTrendEmpty(DateTime from, DateTime to)
-    {
-        var points = new List<ReportTrendPointDto>();
-        for (var date = from.Date; date <= to.Date; date = date.AddDays(1))
-        {
-            points.Add(new ReportTrendPointDto { Date = date.ToString("yyyy-MM-dd"), HighRisk = 0, MediumRisk = 0, ErrorCount = 0 });
-        }
-        return points;
-    }
 
     private static List<ReportTrendPointDto> BuildTrendFromAggregate(List<TrendAggregate> aggregates, DateTime from, DateTime to)
     {

@@ -101,6 +101,38 @@ public class RecordRepository : IRecordRepository
     }
 
     /// <summary>
+    /// 日風險等級顯示範圍與呼叫端要求的交集。回傳 null＝不限制（顯示範圍未設定或全勾）；
+    /// **空集合＝零結果，呼叫端必須短路，不可下推**——底層對空集合的語意是「不限制」，
+    /// 直接傳下去會從零筆變成全部。這是授權規則的唯一定義處，其他 Service 不得自行複製。
+    /// </summary>
+    public static IReadOnlySet<string>? ResolveDayRiskLevels(
+        IReadOnlySet<string>? visibleDayRiskLevels, IReadOnlyCollection<string>? requested)
+    {
+        if (visibleDayRiskLevels == null)
+            return requested == null ? null : new HashSet<string>(requested);
+
+        return requested == null
+            ? new HashSet<string>(visibleDayRiskLevels)
+            : new HashSet<string>(requested.Where(visibleDayRiskLevels.Contains));
+    }
+
+    /// <summary>
+    /// 可見嚴重度（SiteHidden 模式）自設定字串轉成 SQL 聚合要的列舉集合。null＝DefaultHidden 模式，
+    /// 不限制。繞過 <see cref="IRecordRepository"/> 咽喉直接下聚合的 Service 都要傳這個進去，
+    /// 否則 SiteHidden 模式下應該被隱藏的問題會在依問題／依主機／依日期視角重新冒出來——
+    /// 這裡是唯一的轉換處，不要在各 Service 各自複製一份。
+    /// </summary>
+    public static IReadOnlySet<IssueSeverity>? ParseVisibleSeverities(IReadOnlySet<string>? visible)
+    {
+        if (visible == null) return null;
+        return visible
+            .Select(s => Enum.TryParse<IssueSeverity>(s, ignoreCase: true, out var severity) ? severity : (IssueSeverity?)null)
+            .Where(s => s.HasValue)
+            .Select(s => s!.Value)
+            .ToHashSet();
+    }
+
+    /// <summary>
     /// 日風險等級顯示過濾（docs/archive/FEEDBACK-3-PLAN.md #8）：與可見範圍同樣的「只能縮小不能放大」
     /// 語意——filter.RiskLevels 若已被呼叫端（或使用者篩選）設限，取交集；未設限則直接套用
     /// 顯示範圍。回傳 false 時代表交集為空，呼叫端應直接回傳空結果。
@@ -115,13 +147,10 @@ public class RecordRepository : IRecordRepository
         var visible = _settings.GetVisibleDayRiskLevels();
         if (visible == null) return true;   // 全顯示（未設定或全勾），不過濾
 
-        var effective = filter.RiskLevels == null
-            ? visible.ToList()
-            : filter.RiskLevels.Where(visible.Contains).ToList();
+        var effective = ResolveDayRiskLevels(visible, filter.RiskLevels);
+        if (effective != null && effective.Count == 0) return false;
 
-        if (effective.Count == 0) return false;
-
-        filter.RiskLevels = effective;
+        filter.RiskLevels = effective?.ToList();
         return true;
     }
 

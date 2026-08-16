@@ -133,7 +133,6 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
 
-    public List<ReportHostRiskAggregate> AggregateReportHostRisk(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) => new();
 
     public DayTodoAggregate AggregateDayTodo(
         DateTime from, DateTime to,

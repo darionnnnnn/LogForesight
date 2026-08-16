@@ -737,70 +737,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
-    public List<ReportHostRiskAggregate> AggregateReportHostRisk(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
-    {
-        if (hostIds != null && hostIds.Count == 0) return new List<ReportHostRiskAggregate>();
-
-        var sw = Stopwatch.StartNew();
-        var f = from.Date;
-        var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
-
-        using var ctx = _contextFactory();
-
-        var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= f && r.RecordDate <= t);
-        if (hostIds != null)
-        {
-            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
-            qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
-        }
-        if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
-
-        // **GROUP BY 在 SQL 端做完再拉回**（同 ActionableOccurrences 的既有作法）：
-        // 逐列 Select().ToList() 再於記憶體分組，3000 台 × 366 天就是 110 萬列進記憶體，
-        // 等於先聚合再反聚合。拉回的量要受限於相異主機數，不是紀錄列數。
-        var grouped = qRecords
-            .GroupBy(r => r.HostId)
-            .Select(g => new
-            {
-                HostId = g.Key,
-                HighDays = g.Count(r => r.RiskLevel == RiskLevels.High),
-                MediumDays = g.Count(r => r.RiskLevel == RiskLevels.Medium),
-                CorrelationDays = g.Count(r => r.HasCorrelation),
-                MaxDate = g.Max(r => r.RecordDate)
-            })
-            .ToList();
-
-        // 每台主機最新一天的風險等級與標題（主機排行要顯示）：量同樣是主機數而非紀錄數
-        var latest = qRecords
-            .Where(r => r.RecordDate == qRecords.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
-            .Select(r => new { r.HostId, r.RiskLevel, r.Headline })
-            .ToList()
-            .GroupBy(r => r.HostId)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        // 合併過的主機：舊識別下的統計併進存活主機，「最新」取各別名中日期最大的那一台
-        var hostRisk = grouped
-            .GroupBy(x => Surviving(aliasIndex, x.HostId))
-            .Select(g =>
-            {
-                var newest = g.OrderByDescending(x => x.MaxDate).First();
-                latest.TryGetValue(newest.HostId, out var head);
-                return new ReportHostRiskAggregate(
-                    g.Key,
-                    g.Sum(x => x.HighDays),
-                    g.Sum(x => x.MediumDays),
-                    g.Sum(x => x.CorrelationDays),
-                    head?.RiskLevel ?? string.Empty,
-                    head?.Headline ?? string.Empty);
-            })
-            .ToList();
-
-        Log.Debug("[SQL] IssueAggregate.AggregateReportHostRisk（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 台主機、{Ms}ms", f, t, hostRisk.Count, sw.ElapsedMilliseconds);
-        _performance?.Record("issues:AggregateReportHostRisk", sw.ElapsedMilliseconds);
-
-        return hostRisk;
-    }
 
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
@@ -984,40 +920,82 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         recordsQuery = ApplyIssueExistsFilters(ctx, recordsQuery, categories, eventId, source, minSeverity);
         if (visibleRanks != null) issuesQuery = issuesQuery.Where(x => visibleRanks.Contains(x.SeverityRank));
 
-        // 輕量列含 Headline（B1 抽出欄，純量文字，不是整份 ContentJson）——latest 列要顯示的
-        // 標題／風險等級直接跟著這趟撈回來，不必為了「最新一列的 headline」另外補查
-        var rows = recordsQuery
-            .Select(r => new { r.RecordId, r.HostId, r.RecordDate, r.RiskLevel, r.HasCorrelation, r.Headline })
-            .ToList()
-            .Select(x => new { x.RecordId, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.RecordDate, x.RiskLevel, x.HasCorrelation, x.Headline })
-            .GroupBy(x => (x.SurvivingHostId, x.RecordDate))
-            .Select(g => g.OrderByDescending(x => RiskLevels.Rank(x.RiskLevel)).First())
+        // 1. 主聚合在 SQL 端：依 HostId 分組算天數與最新日期，拉回量受限於主機數而非紀錄數
+        var hostRecordsAgg = recordsQuery
+            .GroupBy(r => r.HostId)
+            .Select(g => new
+            {
+                HostId = g.Key,
+                HighRiskDays = g.Count(r => r.RiskLevel == RiskLevels.High),
+                MediumRiskDays = g.Count(r => r.RiskLevel == RiskLevels.Medium),
+                LowRiskDays = g.Count(r => r.RiskLevel == RiskLevels.Low),
+                CorrelationDays = g.Count(r => r.HasCorrelation),
+                MaxDate = g.Max(r => r.RecordDate)
+            })
             .ToList();
 
+        // 2. 每台主機最新一天的風險等級與標題：以相關子查詢取 MAX(RecordDate) 那列，同樣是主機數量級
+        var latestRaw = recordsQuery
+            .Where(r => r.RecordDate == recordsQuery.Where(x => x.HostId == r.HostId).Max(x => x.RecordDate))
+            .Select(r => new { r.HostId, r.RiskLevel, r.Headline })
+            .ToList()
+            .GroupBy(r => r.HostId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // 3. 類別：問題子列 join 篩選後的紀錄，SQL 端依 (HostId, Category) 分組，拉回主機 × 類別列
         if (riskLevels != null)
         {
-            var allowedRecordIds = rows.Select(x => x.RecordId).ToHashSet();
+            var allowedRecordIds = recordsQuery.Select(x => x.RecordId);
             issuesQuery = issuesQuery.Where(x => allowedRecordIds.Contains(x.RecordId));
         }
 
-        var categoriesByHost = CategoriesByHost(issuesQuery, aliasIndex);
+        var categoriesRaw = issuesQuery
+            .GroupBy(x => new { x.HostId, x.Category })
+            .Select(g => new
+            {
+                g.Key.HostId,
+                g.Key.Category,
+                MaxSeverityRank = g.Max(x => x.SeverityRank),
+                IssueCount = g.Count()
+            })
+            .ToList();
 
-        var result = rows
+        var categoriesByHost = categoriesRaw
+            .GroupBy(x => new { SurvivingHostId = Surviving(aliasIndex, x.HostId), x.Category })
+            .Select(g => new
+            {
+                g.Key.SurvivingHostId,
+                g.Key.Category,
+                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.MaxSeverityRank)),
+                IssueCount = g.Sum(x => x.IssueCount)
+            })
             .GroupBy(x => x.SurvivingHostId)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<string>)g
+                    .OrderByDescending(x => x.MaxSeverityRank)
+                    .ThenByDescending(x => x.IssueCount)
+                    .Select(x => x.Category)
+                    .ToList());
+
+        // 4. 記憶體內折併別名（Surviving）：天數相加、Latest 取日期最大的別名、Categories 依既有排序去重
+        var result = hostRecordsAgg
+            .GroupBy(x => Surviving(aliasIndex, x.HostId))
             .Select(g =>
             {
-                var latest = g.OrderByDescending(x => x.RecordDate).First();
+                var newest = g.OrderByDescending(x => x.MaxDate).First();
+                latestRaw.TryGetValue(newest.HostId, out var head);
                 return new HostRiskAggregate
                 {
                     HostId = g.Key,
-                    HighRiskDays = g.Count(x => x.RiskLevel == RiskLevels.High),
-                    MediumRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Medium),
-                    LowRiskDays = g.Count(x => x.RiskLevel == RiskLevels.Low),
-                    CorrelationDays = g.Count(x => x.HasCorrelation),
+                    HighRiskDays = g.Sum(x => x.HighRiskDays),
+                    MediumRiskDays = g.Sum(x => x.MediumRiskDays),
+                    LowRiskDays = g.Sum(x => x.LowRiskDays),
+                    CorrelationDays = g.Sum(x => x.CorrelationDays),
                     Categories = categoriesByHost.TryGetValue(g.Key, out var cats) ? cats : Array.Empty<string>(),
-                    LatestDate = latest.RecordDate,
-                    LatestRiskLevel = latest.RiskLevel,
-                    LatestHeadline = latest.Headline
+                    LatestDate = newest.MaxDate,
+                    LatestRiskLevel = head?.RiskLevel ?? string.Empty,
+                    LatestHeadline = head?.Headline ?? string.Empty
                 };
             })
             .ToList();
@@ -1079,31 +1057,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 IssueCount = g.Count()
             })
             .GroupBy(x => x.RecordDate)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<string>)g
-                    .OrderByDescending(x => x.MaxSeverityRank)
-                    .ThenByDescending(x => x.IssueCount)
-                    .Select(x => x.Category)
-                    .ToList());
-    }
-
-    /// <summary>依存活主機分組的風險類型清單（跨整段期間去重），排序規則同上</summary>
-    private static Dictionary<long, IReadOnlyList<string>> CategoriesByHost(
-        IQueryable<TopIssueRow> issuesQuery, HostAliasIndex aliasIndex)
-    {
-        return issuesQuery
-            .Select(x => new { x.HostId, x.Category, x.SeverityRank })
-            .ToList()
-            .GroupBy(x => new { SurvivingHostId = Surviving(aliasIndex, x.HostId), x.Category })
-            .Select(g => new
-            {
-                g.Key.SurvivingHostId,
-                g.Key.Category,
-                MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.SeverityRank)),
-                IssueCount = g.Count()
-            })
-            .GroupBy(x => x.SurvivingHostId)
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<string>)g

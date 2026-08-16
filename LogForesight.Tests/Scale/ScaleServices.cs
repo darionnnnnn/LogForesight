@@ -65,8 +65,8 @@ internal sealed class ScaleServices
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 
         Dashboard = new DashboardService(
-            Repository, Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore, aggregates, issueTodo);
+            Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
+            settingsStore, aggregates, issueTodo, settingsService);
 
         Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService);
 
