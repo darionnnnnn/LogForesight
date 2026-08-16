@@ -28,6 +28,7 @@ public class HandlingHistoryQueryService
     private readonly ISystemSettingsStore _settings;
     private readonly IRecordRepository _repository;
     private readonly HandlingProgressCalculator _progress;
+    private readonly IIssueAggregateQuery _aggregateQuery;
 
     public HandlingHistoryQueryService(
         IRecordHandlingStore store,
@@ -38,7 +39,8 @@ public class HandlingHistoryQueryService
         IVisibilityService visibility,
         ISystemSettingsStore settings,
         IRecordRepository repository,
-        HandlingProgressCalculator progress)
+        HandlingProgressCalculator progress,
+        IIssueAggregateQuery aggregateQuery)
     {
         _store = store;
         _issueStore = issueStore;
@@ -49,6 +51,7 @@ public class HandlingHistoryQueryService
         _settings = settings;
         _repository = repository;
         _progress = progress;
+        _aggregateQuery = aggregateQuery;
     }
 
     public List<HandlingLogDto> GetLogs(long hostId, DateTime date)
@@ -177,6 +180,70 @@ public class HandlingHistoryQueryService
             if (issueKeys.Contains(c.IssueKey)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// 全站待辦（儀表板 KPI／報表處理進度共用）。
+    /// 為什麼要分兩段：處理狀態以主機名稱為鍵，合併後紀錄帶舊名稱、狀態掛存活名稱，
+    /// SQL 經 host_name 橋接對墓碑必然落空。
+    /// </summary>
+    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to)
+    {
+        var visibleHostIds = _visibility.GetVisibleHostIds();
+        if (visibleHostIds.Count == 0) return new HandlingTodoDto();
+
+        var allHosts = _hosts.GetAll();
+        var aliasIndex = new HostAliasIndex(allHosts);
+        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
+
+        var tombstoneHostKeys = new List<HostKey>();
+        var tombstoneHostIds = new List<long>();
+        var survivingHostIds = new List<long>();
+
+        foreach (var hostId in visibleHostIds)
+        {
+            var aliases = aliasIndex.Aliases(hostId);
+            if (aliases.Count > 0)
+            {
+                survivingHostIds.Add(aliases[0].HostId);
+                for (int i = 1; i < aliases.Count; i++)
+                {
+                    tombstoneHostKeys.Add(aliases[i]);
+                    tombstoneHostIds.Add(aliases[i].HostId);
+                }
+            }
+        }
+
+        var sqlTodo = _aggregateQuery.AggregateDayTodo(
+            from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today);
+
+        var todo = new HandlingTodoDto
+        {
+            TotalCount = sqlTodo.TotalCount,
+            OpenCount = sqlTodo.OpenCount,
+            InProgressCount = sqlTodo.InProgressCount,
+            ResolvedCount = sqlTodo.ResolvedCount,
+            OverdueCount = sqlTodo.OverdueCount
+        };
+
+        if (tombstoneHostKeys.Count > 0)
+        {
+            var tombstoneRecords = _repository.QueryLightweight(new RecordQueryFilter
+            {
+                From = from,
+                To = to,
+                Hosts = tombstoneHostKeys
+            });
+            var memTodo = GetTodo(tombstoneRecords);
+
+            todo.TotalCount += memTodo.TotalCount;
+            todo.OpenCount += memTodo.OpenCount;
+            todo.InProgressCount += memTodo.InProgressCount;
+            todo.ResolvedCount += memTodo.ResolvedCount;
+            todo.OverdueCount += memTodo.OverdueCount;
+        }
+
+        return todo;
     }
 
     public HandlingTodoDto GetTodo(IReadOnlyCollection<DailyAnalysisRecord> records)

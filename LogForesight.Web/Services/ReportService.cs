@@ -113,7 +113,7 @@ public class ReportService
             }
 
             // 這是下一段要處理的最後一個記憶體路徑
-            recordsForTodo = _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to });
+            // GetTodoByRange 會直接在底下賦值時呼叫，不再需要撈 recordsForTodo
         }
         else
         {
@@ -167,7 +167,9 @@ public class ReportService
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
-            Handling = _handling.GetTodo(recordsForTodo)
+            Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
+                ? _handling.GetTodoByRange(from, to)
+                : _handling.GetTodo(recordsForTodo!)
         };
 
         return dto;

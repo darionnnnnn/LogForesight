@@ -16,28 +16,35 @@ public class ReportServiceTests : IDisposable
     private readonly EfAnalysisRecordStore _recordStore;
     private readonly FakeHostStore _hosts = new();
     private readonly FakeUserStore _users = new();
-    private readonly FakeHandlingStore _handlingStore = new();
-    private readonly FakeIssueHandlingStore _issueHandlingStore = new();
+    private readonly EfRecordHandlingStore _handlingStore;
+    private readonly EfIssueHandlingStore _issueHandlingStore;
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
+    private readonly RecordRepository _repository;
+    private readonly HandlingHistoryQueryService _handling;
     private readonly ReportService _service;
 
     public ReportServiceTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
+        _handlingStore = new EfRecordHandlingStore(_fixture.NewContext, new EfJsonLogStore(_fixture.NewContext, "handling"));
+        _issueHandlingStore = new EfIssueHandlingStore(_fixture.NewContext);
         var visibility = new AlwaysVisibleService(_hosts);
-        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        _repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
-        var handling = new HandlingHistoryQueryService(
-            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress);
 
-        // 問題排行／風險類型分布自 P4 起走 SQL 端聚合（lf_top_issues），與紀錄查詢共用同一個
-        // EF fixture——用假實作會讓「排行只含可見主機」這條授權測試測不到真正的下推路徑
+        // 排行／風險類型分布自 P4 起走 SQL 端投影（lf_top_issues），與儀表板查詢共用同一份
+        // EF fixture。實作，讓「排行只含可見主機」這類測試測得到下推路徑
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+
+        _handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates);
+
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
-        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
+
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -449,5 +456,185 @@ public class ReportServiceTests : IDisposable
         Assert.Equal(7, result.Trend.Count);
         Assert.Equal(1, result.Trend.Count(t => t.HighRisk == 1));
         Assert.Equal(6, result.Trend.Count(t => t.HighRisk == 0));
+    }
+
+    // ── 待辦事項 (GetTodoByRange) 測試 ─────────────────────────────────────────────
+
+    [Fact]
+    public void GetTodoByRange_與GetTodo記憶體聚合四計數等價()
+    {
+        var from = DateTime.Today.AddDays(-9);
+        var to = DateTime.Today;
+
+        // 建立 20 台主機
+        var hosts = Enumerable.Range(1, 20).Select(i => AddHost($"HOST-EQ-{i}")).ToList();
+
+        // 建立假資料：各種狀態組合
+        foreach (var host in hosts)
+        {
+            for (var d = from; d <= to; d = d.AddDays(1))
+            {
+                var issues = new[] { Issue("disk", 1, IssueSeverity.High, 1), Issue("cpu", 2, IssueSeverity.Medium, 1) };
+                AddRecord(host, d, "高", issues);
+
+                // 隨機（依據主機跟日期分派不同狀態組合）
+                int mod = (int)((host.HostId + d.DayOfYear) % 7);
+                switch (mod)
+                {
+                    case 0: // 未標記
+                        break;
+                    case 1: // 問題層級結案
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now });
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[1]), Status = IssueHandlingStatuses.KnownNoise, UpdatedAt = DateTime.Now });
+                        break;
+                    case 2: // 部分結案
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now });
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[1]), Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now });
+                        break;
+                    case 3: // InProgress (問題層級)
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now });
+                        break;
+                    case 4: // Observing (問題層級)
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(1), UpdatedAt = DateTime.Now });
+                        break;
+                    case 5: // Escalated
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Escalated, UpdatedAt = DateTime.Now });
+                        break;
+                    case 6: // 日層級 wont_fix
+                        _handlingStore.Save(new RecordHandling { HostName = host.HostName, Date = d, Status = HandlingStatuses.WontFix, UpdatedAt = DateTime.Now });
+                        break;
+                }
+            }
+        }
+
+        var filter = new RecordQueryFilter { From = from, To = to, Hosts = hosts.Select(HostKey.Of).ToList() };
+        var records = _repository.QueryLightweight(filter);
+        var memTodo = _handling.GetTodo(records);
+        var sqlTodo = _handling.GetTodoByRange(from, to);
+
+        Assert.Equal(memTodo.TotalCount, sqlTodo.TotalCount);
+        Assert.Equal(memTodo.OpenCount, sqlTodo.OpenCount);
+        Assert.Equal(memTodo.InProgressCount, sqlTodo.InProgressCount);
+        Assert.Equal(memTodo.ResolvedCount, sqlTodo.ResolvedCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_墓碑主機合併後舊識別的風險日仍被正確計數()
+    {
+        var hostA = AddHost("HOST-A-TODO");
+        var hostB = AddHost("HOST-B-TODO");
+        var from = DateTime.Today.AddDays(-2);
+        var to = DateTime.Today;
+
+        AddRecord(hostB, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.Merge(hostB.HostId, hostA.HostId);
+
+        var todo = _handling.GetTodoByRange(from, to);
+
+        Assert.Equal(1, todo.TotalCount);
+        Assert.Equal(1, todo.OpenCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則一_日層級逾期未結案_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-1");
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            Status = HandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則二_問題層級InProgress且逾期_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-2");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue);
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則三_問題層級Observing且逾期_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-3");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue);
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期不重複計算_同一天多條逾期規則同時滿足時只算一次()
+    {
+        var host = AddHost("HOST-OVERDUE-4");
+        var issue1 = Issue("disk", 1, IssueSeverity.High, 1);
+        var issue2 = Issue("disk", 2, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue1, issue2);
+
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            Status = HandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue1),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue2),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
     }
 }

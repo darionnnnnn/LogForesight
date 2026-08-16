@@ -436,30 +436,23 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
-    public List<DayHandlingProjection> DeriveDayHandling(
-        DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity> unhandledSeverities,
-        IReadOnlyCollection<long> excludedHostIds)
+    private sealed record DayHandlingRaw(
+        long HostId, DateTime RecordDate, string? DayLevelStatus, long? DayHandlerId,
+        int Total, int Closed, bool AnyInProgress, bool HasCaseHandler,
+        DateTime? DayDueDate, bool AnyOverdueIssue);
+
+    private List<DayHandlingRaw> GetDayHandlingRaw(
+        LfDbContext ctx, DateTime f, DateTime t,
+        HashSet<long>? expandedHostIds, IReadOnlyCollection<long> excludedHostIds,
+        List<int> unhandledRanks, DateTime todayForOverdue)
     {
-        var sw = Stopwatch.StartNew();
-        var f = from.Date;
-        var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
-
-        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
-
-        using var ctx = _contextFactory();
-
         var recordsQuery = ctx.DailyRecords.AsNoTracking()
             .Where(r => r.RecordDate >= f && r.RecordDate <= t &&
                         (r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium));
 
-        if (hostIds != null)
+        if (expandedHostIds != null)
         {
-            if (hostIds.Count == 0) return new List<DayHandlingProjection>();
-            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
-            recordsQuery = recordsQuery.Where(r => expanded.Contains(r.HostId));
+            recordsQuery = recordsQuery.Where(r => expandedHostIds.Contains(r.HostId));
         }
 
         if (excludedHostIds.Count > 0)
@@ -521,19 +514,55 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                                        ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
                                        : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType)))
 
-                select new
-                {
+                let anyOverdueIssue = ctx.TopIssues.AsNoTracking()
+                    .Any(ti => ti.RecordId == dr.RecordId &&
+                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
+                                   ih.HostNameKey == hostNameKey &&
+                                   ih.RecordDate == dr.RecordDate &&
+                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
+                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
+                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
+                                   ih.DueDate != null && ih.DueDate < todayForOverdue &&
+                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing)))
+
+                select new DayHandlingRaw(
                     dr.HostId,
                     dr.RecordDate,
-                    DayLevelStatus = rh.Status,
-                    DayHandlerId = rh.HandlerId,
-                    Total = total,
-                    Closed = closed,
-                    AnyInProgress = anyInProgress,
-                    HasCaseHandler = anyCaseHandler
-                };
+                    rh.Status,
+                    rh.HandlerId,
+                    total,
+                    closed,
+                    anyInProgress,
+                    anyCaseHandler,
+                    rh.DueDate,
+                    anyOverdueIssue
+                );
 
-        var projected = q.ToList();
+        return q.ToList();
+    }
+
+    public List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+
+        using var ctx = _contextFactory();
+
+        HashSet<long>? expandedHostIds = null;
+        if (hostIds != null)
+        {
+            if (hostIds.Count == 0) return new List<DayHandlingProjection>();
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+        }
+
+        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, DateTime.MinValue);
 
         var result = projected.Select(x =>
         {
@@ -555,6 +584,66 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         _performance?.Record("issues:DeriveDayHandling", sw.ElapsedMilliseconds);
 
         return result;
+    }
+
+    public DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today)
+    {
+        var sw = Stopwatch.StartNew();
+        var f = from.Date;
+        var t = to.Date;
+        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
+
+        using var ctx = _contextFactory();
+
+        HashSet<long>? expandedHostIds = null;
+        if (hostIds != null)
+        {
+            if (hostIds.Count == 0) return new DayTodoAggregate(0, 0, 0, 0, 0);
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+        }
+
+        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date);
+
+        int totalCount = 0;
+        int openCount = 0;
+        int inProgressCount = 0;
+        int resolvedCount = 0;
+        int overdueCount = 0;
+
+        foreach (var x in projected)
+        {
+            totalCount++;
+
+            string status;
+            if (x.Total > 0 && x.Closed == x.Total) status = HandlingStatuses.Resolved;
+            else if (x.Closed > 0 || x.AnyInProgress) status = HandlingStatuses.InProgress;
+            else status = string.IsNullOrEmpty(x.DayLevelStatus) ? HandlingStatuses.Open : x.DayLevelStatus;
+
+            var external = HandlingStatuses.ExternalOf(status);
+            if (external == HandlingStatuses.Open) openCount++;
+            else if (external == HandlingStatuses.InProgress) inProgressCount++;
+            else resolvedCount++;
+
+            bool isUnresolved = HandlingStatuses.Unresolved.Contains(status);
+            bool dayOverdue = x.DayDueDate.HasValue && x.DayDueDate.Value.Date < today.Date && isUnresolved;
+
+            if (dayOverdue || x.AnyOverdueIssue)
+            {
+                overdueCount++;
+            }
+        }
+
+        Log.Debug("[SQL] IssueAggregate.AggregateDayTodo（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, totalCount, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateDayTodo", sw.ElapsedMilliseconds);
+
+        return new DayTodoAggregate(totalCount, openCount, inProgressCount, resolvedCount, overdueCount);
     }
 
     public ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)

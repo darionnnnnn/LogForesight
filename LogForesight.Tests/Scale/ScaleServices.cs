@@ -53,7 +53,7 @@ internal sealed class ScaleServices
 
         var progress = new HandlingProgressCalculator(IssueHandlings, recordHandling, Cases, settingsStore);
         var handlingHistory = new HandlingHistoryQueryService(
-            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress);
+            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress, new FakeIssueAggregateQuery());
 
         var permissionChanges = new PermissionChangeService(
             new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms")),

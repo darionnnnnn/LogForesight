@@ -189,6 +189,13 @@ public interface IIssueAggregateQuery
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds);
 
+    DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today);
+
     /// <summary>
     /// 報表 KPI 聚合 (scope == all)。
     /// </summary>
@@ -312,3 +319,6 @@ public sealed class CategoryAggregate
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
     public int ElevatesCount { get; init; }
 }
+
+public sealed record DayTodoAggregate(
+    int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);
