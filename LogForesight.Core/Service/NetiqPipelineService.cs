@@ -782,21 +782,43 @@ public class NetiqPipelineService
 
         if (touches.Count == 0) return;
 
-        _hosts.MutateBatch(batch =>
+        // 寫入失敗不讓整台 Sentinel 作廢（比照 HostDayPostProcessor 的既定哲學）：
+        // blob 的行程內互斥是 per-instance 的鎖，Web 端與分析端各有一份 backend，
+        // 同一份 hosts blob 真的會在 DB 層競爭、撞滿重試次數後拋出。這個例外若冒到
+        // RunServerAsync 尾端，會被 Parallel.ForEachAsync 的 catch 記成「整台 Sentinel 失敗」
+        // ——幾百台已經分析完成的主機被記為失敗，只因為回報時間寫不回去。
+        // 失敗時把 touch 放回字典等下次 flush；已有較新的值就保留較新的，不要覆蓋回舊值。
+        try
         {
-            var hostDict = batch.ToDictionary(h => h.HostId);
-            foreach (var kvp in touches)
+            _hosts.MutateBatch(batch =>
             {
-                if (hostDict.TryGetValue(kvp.Key, out var host))
+                var hostDict = batch.ToDictionary(h => h.HostId);
+                foreach (var kvp in touches)
                 {
-                    host.LastReportAt = kvp.Value.ReportedAt;
-                    if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                    if (hostDict.TryGetValue(kvp.Key, out var host))
                     {
-                        host.DisplayName = kvp.Value.DisplayName;
+                        host.LastReportAt = kvp.Value.ReportedAt;
+                        if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                        {
+                            host.DisplayName = kvp.Value.DisplayName;
+                        }
                     }
                 }
+            });
+        }
+        catch (Exception ex)
+        {
+            foreach (var kvp in touches)
+            {
+                _hostTouches.AddOrUpdate(
+                    kvp.Key,
+                    kvp.Value,
+                    (_, existing) => existing.ReportedAt >= kvp.Value.ReportedAt ? existing : kvp.Value);
             }
-        });
+
+            Log.Warn(ex, "回報時間批次寫回失敗（{Count} 台），保留待下次 flush 重試：{Msg}",
+                touches.Count, ex.Message);
+        }
     }
 
     /// <param name="GroupIds">這台主機所屬的主機群組 Id（回饋十四輪 A3）：計畫階段（<see cref="RunServerOsGroupAsync"/>）

@@ -516,6 +516,37 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         var afterB = _hosts.FindByName("HOST-B")!;
         Assert.Equal("NEW-NAME-B", afterB.DisplayName); // 有傳名字的應該要更新
     }
+
+    /// <summary>
+    /// 回饋二十輪 D：回報時間批次寫回失敗時，不可讓整台 Sentinel 的主機被記成失敗。
+    /// hosts blob 的行程內互斥是 per-instance 的鎖，Web 端與分析端各有一份 backend，
+    /// 同一份 blob 真的會在 DB 層競爭並在重試耗盡後拋出——那個例外若冒到 RunServerAsync
+    /// 尾端，會被 Parallel.ForEachAsync 的 catch 記成「整台 Sentinel 失敗」，
+    /// 幾百台已經分析完成的主機因此變成失敗。
+    /// </summary>
+    [Fact]
+    public async Task 回報時間寫回失敗時_分析結果不作廢且主機不被記為失敗()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        // 要真的有事件才會累積回報時間（零事件刻意不 Touch，見 hostReported 的註解）
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+        };
+        _hosts.ThrowOnMutateBatch = true;
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.True(_hosts.MutateBatchAttempts > 0);   // 真的走到了批次寫回
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+
+        // 分析結果本身照樣落地
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        Assert.Single(store.ReadRecent(DateTime.Today.AddDays(-1), 1));
+    }
 }
 
 /// <summary>把輸出行存進呼叫端提供的清單，供測試檢查文字內容（如平行度、警告訊息）。</summary>

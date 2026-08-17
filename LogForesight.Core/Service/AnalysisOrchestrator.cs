@@ -434,7 +434,12 @@ public class AnalysisOrchestrator
                 var remaining = allHostRecords.CountPrunableRecords(retention.RetentionDays);
                 if (remaining > 0)
                 {
-                    var msg = $"尚有 {remaining} 筆過期紀錄超出本次清除上限，將於後續執行陸續清完。";
+                    // 只報筆數的話，「陸續清完」與「卡住了」在畫面上分不出來——
+                    // 依單次上限估出還要幾次執行，使用者才知道是明天還是下個月
+                    var perRun = EfAnalysisRecordStore.MaxPruneRowsPerRun;
+                    var estimatedRuns = (remaining + perRun - 1) / perRun;
+                    var msg = $"尚有 {remaining} 筆過期紀錄超出本次清除上限（每次上限 {perRun} 筆），" +
+                              $"預估還需約 {estimatedRuns} 次執行清完。";
                     console.WriteLine($"  ℹ {msg}");
                     runRecorder.Milestone(msg);
                 }

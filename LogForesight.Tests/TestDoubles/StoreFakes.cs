@@ -144,8 +144,17 @@ internal class FakeHostStore : IHostStore
     /// 同一份語意（一次完成、不逐台整份讀改寫）。mutation 內若自行配發 HostId（NetiqImportApplier
     /// 的批次三態邏輯就是這樣），事後把 _nextId 頂到目前最大值之上，避免後續 Upsert／Touch
     /// 撞號。</summary>
+    /// <summary>設為 true 時 MutateBatch 一律拋例外，用來模擬 blob 寫入重試耗盡（回饋二十輪 D）</summary>
+    public bool ThrowOnMutateBatch { get; set; }
+
+    /// <summary>MutateBatch 被呼叫的次數（含失敗）</summary>
+    public int MutateBatchAttempts { get; private set; }
+
     public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation)
     {
+        MutateBatchAttempts++;
+        if (ThrowOnMutateBatch) throw new InvalidOperationException("模擬 blob 寫入重試耗盡");
+
         var result = mutation(_hosts);
         if (_hosts.Count > 0) _nextId = Math.Max(_nextId, _hosts.Max(h => h.HostId) + 1);
         return result;

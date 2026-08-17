@@ -259,7 +259,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 交易日誌暴增、鎖住整張表、夜間批次卡在清理階段出不來。
     /// 超過的部分留給下一次執行（清理天生冪等，分幾晚刪完不影響正確性）。
     /// </summary>
-    private const int MaxPruneRowsPerRun = 50_000;
+    /// <remarks>積壓申報要用它估「還需幾次執行」，所以是 internal 而非 private。</remarks>
+    internal const int MaxPruneRowsPerRun = 50_000;
 
     /// <summary>一批刪除的列數：夠大到不會來回太多次，夠小到單筆交易不會過長</summary>
     private const int PruneBatchSize = 2_000;
