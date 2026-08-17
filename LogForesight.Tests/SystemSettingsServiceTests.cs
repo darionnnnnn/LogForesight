@@ -37,7 +37,11 @@ public class SystemSettingsServiceTests : IDisposable
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
         VisibleDayRiskLevels = new List<string> { "高", "中", "低" },
+        AiProvider = "Local",
         AiBaseUrl = "",
+        AiModel = "local-model",
+        AiAzureDeployment = "",
+        AiAzureApiVersion = "2024-10-21",
         InitialHistoryDays = 120,
         RetentionDays = 120,
         RunLogRetentionDays = runLogRetentionDays,
@@ -867,5 +871,150 @@ public class SystemSettingsServiceTests : IDisposable
         service.Update(ValidMailRequest());   // 重新啟用：關閉期間新增的紀錄也被視為既有歷史
 
         Assert.Contains($"4|{Yesterday:yyyy-MM-dd}", MailState.Get().SummarySentKeys);
+    }
+
+    // ── AI 服務 Provider 三選一與相關新欄位 ───────────────────────────────────
+
+    [Fact]
+    public void 未設定Provider的既有設定讀出來是本機OpenAI相容端點_且既有行為不受影響()
+    {
+        // 模擬既有部署（未設定 Provider 欄位）
+        _store.Update(s =>
+        {
+            s.AiProvider = "";
+            s.AiModel = "";
+            s.AiAzureDeployment = "";
+            s.AiAzureApiVersion = "";
+            s.AiBaseUrl = "http://localhost:8080";
+        });
+
+        var service = Create();
+        var dto = service.Get();
+
+        Assert.Equal("Local", dto.AiProvider);
+        Assert.Equal("local-model", dto.AiModel);
+        Assert.Equal("", dto.AiAzureDeployment);
+        Assert.Equal("2024-10-21", dto.AiAzureApiVersion);
+        Assert.Equal("http://localhost:8080", dto.AiBaseUrl);
+    }
+
+    [Fact]
+    public void 出廠預設的逾時秒數為1200_但既有已存的值不會被改動()
+    {
+        // 出廠模型預設值為 1200
+        var defaultModel = new SystemSettings();
+        Assert.Equal(1200, defaultModel.AiTimeoutSeconds);
+
+        // 既有部署已存在 600 秒
+        _store.Update(s => s.AiTimeoutSeconds = 600);
+
+        var service = Create();
+        var dto = service.Get();
+
+        // 讀出來仍為 600，不被出廠預設 1200 覆寫
+        Assert.Equal(600, dto.AiTimeoutSeconds);
+
+        // 執行期解析也不會被改動
+        var appSettings = new LogForesight.Core.Configuration.AppSettings();
+        LogForesight.Core.Service.RuntimeSettingsResolver.ApplySystemSettingsOverrides(appSettings, _store);
+        Assert.Equal(600, appSettings.Ai.TimeoutSeconds);
+    }
+
+    [Fact]
+    public void Update_選Azure時缺少部署名稱會回驗證錯誤()
+    {
+        var service = Create();
+
+        // 1. 缺部署名稱
+        var requestNoDeployment = ValidRequest();
+        requestNoDeployment.AiProvider = "AzureOpenAi";
+        requestNoDeployment.AiBaseUrl = "https://example.openai.azure.com/";
+        requestNoDeployment.AiAzureDeployment = "";
+        requestNoDeployment.AiAzureApiVersion = "2024-10-21";
+        requestNoDeployment.AiApiKey = "sk-azure-key";
+        var ex1 = Assert.Throws<DomainException>(() => service.Update(requestNoDeployment));
+        Assert.Contains("部署名稱", ex1.Message);
+
+        // 2. 缺端點位址
+        var requestNoUrl = ValidRequest();
+        requestNoUrl.AiProvider = "AzureOpenAi";
+        requestNoUrl.AiBaseUrl = "";
+        requestNoUrl.AiAzureDeployment = "gpt-4o";
+        requestNoUrl.AiAzureApiVersion = "2024-10-21";
+        requestNoUrl.AiApiKey = "sk-azure-key";
+        var ex2 = Assert.Throws<DomainException>(() => service.Update(requestNoUrl));
+        Assert.Contains("端點位址", ex2.Message);
+
+        // 3. 缺 API 版本
+        var requestNoVer = ValidRequest();
+        requestNoVer.AiProvider = "AzureOpenAi";
+        requestNoVer.AiBaseUrl = "https://example.openai.azure.com/";
+        requestNoVer.AiAzureDeployment = "gpt-4o";
+        requestNoVer.AiAzureApiVersion = "";
+        requestNoVer.AiApiKey = "sk-azure-key";
+        var ex3 = Assert.Throws<DomainException>(() => service.Update(requestNoVer));
+        Assert.Contains("API 版本", ex3.Message);
+
+        // 4. 缺金鑰
+        var requestNoKey = ValidRequest();
+        requestNoKey.AiProvider = "AzureOpenAi";
+        requestNoKey.AiBaseUrl = "https://example.openai.azure.com/";
+        requestNoKey.AiAzureDeployment = "gpt-4o";
+        requestNoKey.AiAzureApiVersion = "2024-10-21";
+        requestNoKey.AiApiKey = null;
+        var ex4 = Assert.Throws<DomainException>(() => service.Update(requestNoKey));
+        Assert.Contains("金鑰", ex4.Message);
+    }
+
+    [Fact]
+    public void Update_選OpenAI官方時缺少模型名稱或金鑰會回驗證錯誤()
+    {
+        var service = Create();
+
+        // 1. 缺模型名稱
+        var requestNoModel = ValidRequest();
+        requestNoModel.AiProvider = "OpenAi";
+        requestNoModel.AiModel = "";
+        requestNoModel.AiApiKey = "sk-openai-key";
+        var ex1 = Assert.Throws<DomainException>(() => service.Update(requestNoModel));
+        Assert.Contains("模型名稱", ex1.Message);
+
+        // 2. 缺金鑰
+        var requestNoKey = ValidRequest();
+        requestNoKey.AiProvider = "OpenAi";
+        requestNoKey.AiModel = "gpt-4o";
+        requestNoKey.AiApiKey = null;
+        var ex2 = Assert.Throws<DomainException>(() => service.Update(requestNoKey));
+        Assert.Contains("金鑰", ex2.Message);
+    }
+
+    [Fact]
+    public void Update後_AI提供者與新欄位正確持久化()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.AiProvider = "AzureOpenAi";
+        request.AiBaseUrl = "https://prod.openai.azure.com/";
+        request.AiModel = "gpt-4o";
+        request.AiAzureDeployment = "gpt-4o-deployment";
+        request.AiAzureApiVersion = "2024-10-21";
+        request.AiApiKey = "sk-azure-secret";
+
+        var saved = service.Update(request);
+
+        Assert.Equal("AzureOpenAi", saved.AiProvider);
+        Assert.Equal("https://prod.openai.azure.com/", saved.AiBaseUrl);
+        Assert.Equal("gpt-4o", saved.AiModel);
+        Assert.Equal("gpt-4o-deployment", saved.AiAzureDeployment);
+        Assert.Equal("2024-10-21", saved.AiAzureApiVersion);
+        Assert.True(saved.AiHasApiKey);
+
+        // 重讀確認 DB 落地
+        var reread = service.Get();
+        Assert.Equal("AzureOpenAi", reread.AiProvider);
+        Assert.Equal("https://prod.openai.azure.com/", reread.AiBaseUrl);
+        Assert.Equal("gpt-4o", reread.AiModel);
+        Assert.Equal("gpt-4o-deployment", reread.AiAzureDeployment);
+        Assert.Equal("2024-10-21", reread.AiAzureApiVersion);
     }
 }

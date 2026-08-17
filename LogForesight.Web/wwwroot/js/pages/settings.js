@@ -149,8 +149,61 @@ function collectDayRiskLevels() {
         .map(btn => btn.dataset.riskLevel);
 }
 
+function updateAiProviderFields(provider) {
+    const baseUrlWrap = document.getElementById('ai-base-url-wrap');
+    const baseUrlLabel = document.getElementById('ai-base-url-label');
+    const baseUrlInput = document.getElementById('ai-base-url');
+    const modelWrap = document.getElementById('ai-model-wrap');
+    const modelLabel = document.getElementById('ai-model-label');
+    const modelInput = document.getElementById('ai-model');
+    const modelHint = document.getElementById('ai-model-hint');
+    const azureDepWrap = document.getElementById('ai-azure-deployment-wrap');
+    const azureVerWrap = document.getElementById('ai-azure-api-version-wrap');
+    const apiKeyLabel = document.getElementById('ai-api-key-label');
+    const providerHint = document.getElementById('ai-provider-hint');
+
+    if (provider === 'OpenAi') {
+        if (providerHint) providerHint.textContent = '使用 OpenAI 官方 API 服務。';
+        baseUrlWrap.classList.add('d-none');
+        modelWrap.classList.remove('d-none');
+        modelLabel.textContent = '模型名稱（必填）';
+        modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
+        modelHint.textContent = '例如 gpt-4o、gpt-4o-mini。';
+        azureDepWrap.classList.add('d-none');
+        azureVerWrap.classList.add('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
+    } else if (provider === 'AzureOpenAi') {
+        if (providerHint) providerHint.textContent = '使用 Microsoft Azure OpenAI 服務。';
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
+        baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
+        modelWrap.classList.add('d-none');
+        azureDepWrap.classList.remove('d-none');
+        azureVerWrap.classList.remove('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
+    } else {
+        if (providerHint) providerHint.textContent = '使用本機或內部部署之 OpenAI 相容端點（如 llama.cpp／KoboldCpp）。';
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = 'API 位址';
+        baseUrlInput.placeholder = 'http://localhost:8080';
+        modelWrap.classList.remove('d-none');
+        modelLabel.textContent = '模型名稱';
+        modelInput.placeholder = 'local-model';
+        modelHint.textContent = '選填，預設 local-model。';
+        azureDepWrap.classList.add('d-none');
+        azureVerWrap.classList.add('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（選填）';
+    }
+}
+
 function renderAiFields(settings) {
+    const provider = settings.aiProvider || 'Local';
+    document.getElementById('ai-provider').value = provider;
     document.getElementById('ai-base-url').value = settings.aiBaseUrl ?? '';
+    document.getElementById('ai-model').value = settings.aiModel ?? '';
+    document.getElementById('ai-azure-deployment').value = settings.aiAzureDeployment ?? '';
+    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || '2024-10-21';
+    updateAiProviderFields(provider);
 
     const apiKeyInput = document.getElementById('ai-api-key');
     apiKeyInput.value = '';
@@ -498,8 +551,48 @@ function bindForm() {
             if (!confirmed) return;
         }
 
+        const aiProvider = document.getElementById('ai-provider').value;
+        const aiBaseUrl = document.getElementById('ai-base-url').value.trim();
+        const aiModel = document.getElementById('ai-model').value.trim();
+        const aiAzureDeployment = document.getElementById('ai-azure-deployment').value.trim();
+        const aiAzureApiVersion = document.getElementById('ai-azure-api-version').value.trim();
         const apiKey = document.getElementById('ai-api-key').value;
         const clearApiKey = document.getElementById('ai-api-key-clear').checked;
+        const hasApiKey = apiKey || (current?.aiHasApiKey && !clearApiKey);
+
+        if (aiProvider === 'OpenAi') {
+            if (!hasApiKey) {
+                activateTabForElement(document.getElementById('ai-api-key'));
+                toast('使用 OpenAI 官方 API 時，請輸入 API 金鑰。', 'warning');
+                return;
+            }
+            if (!aiModel) {
+                activateTabForElement(document.getElementById('ai-model'));
+                toast('使用 OpenAI 官方 API 時，請輸入模型名稱。', 'warning');
+                return;
+            }
+        } else if (aiProvider === 'AzureOpenAi') {
+            if (!aiBaseUrl) {
+                activateTabForElement(document.getElementById('ai-base-url'));
+                toast('使用 Azure OpenAI 時，請輸入端點位址。', 'warning');
+                return;
+            }
+            if (!aiAzureDeployment) {
+                activateTabForElement(document.getElementById('ai-azure-deployment'));
+                toast('使用 Azure OpenAI 時，請輸入部署名稱。', 'warning');
+                return;
+            }
+            if (!aiAzureApiVersion) {
+                activateTabForElement(document.getElementById('ai-azure-api-version'));
+                toast('使用 Azure OpenAI 時，請輸入 API 版本。', 'warning');
+                return;
+            }
+            if (!hasApiKey) {
+                activateTabForElement(document.getElementById('ai-api-key'));
+                toast('使用 Azure OpenAI 時，請輸入 API 金鑰。', 'warning');
+                return;
+            }
+        }
 
         const adAuthEnabled = document.getElementById('ad-auth-enabled').checked;
         const adServers = collectAdServers();
@@ -533,7 +626,11 @@ function bindForm() {
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
                 visibleDayRiskLevels: collectDayRiskLevels(),
-                aiBaseUrl: document.getElementById('ai-base-url').value.trim(),
+                aiProvider,
+                aiBaseUrl,
+                aiModel,
+                aiAzureDeployment,
+                aiAzureApiVersion,
                 aiApiKey: apiKey || null,
                 clearAiApiKey: clearApiKey,
                 initialHistoryDays,
@@ -727,7 +824,14 @@ function bindAiAdvancedReset() {
     });
 }
 
+function bindAiProvider() {
+    document.getElementById('ai-provider')?.addEventListener('change', e => {
+        updateAiProviderFields(e.target.value);
+    });
+}
+
 bindForm();
+bindAiProvider();
 bindAdTest();
 bindMailTest();
 bindAiAdvancedReset();

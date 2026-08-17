@@ -62,19 +62,49 @@
         </div>
         <div class="lf-card__body">
             <div class="mb-3">
-                <label for="ai-base-url" class="form-label">API 位址</label>
-                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                <label for="ai-provider" class="form-label">服務提供者</label>
+                <select class="form-select" id="ai-provider">
+                    <option value="Local">本機 OpenAI 相容端點</option>
+                    <option value="OpenAi">OpenAI 官方</option>
+                    <option value="AzureOpenAi">Azure OpenAI</option>
+                </select>
+                <div class="form-text" id="ai-provider-hint"></div>
+            </div>
+
+            <div class="mb-3" id="ai-base-url-wrap">
+                <label for="ai-base-url" class="form-label" id="ai-base-url-label">API 位址</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="ai-base-url-help"
                         data-bs-content="OpenAI 相容端點（如 llama.cpp／KoboldCpp）。留空會停用 AI 分析與加值功能。">
                     <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                 </button>
                 <input type="text" class="form-control" id="ai-base-url" placeholder="http://localhost:8080" />
+                <div class="form-text" id="ai-base-url-hint"></div>
             </div>
-            <div class="mb-2">
-                <label for="ai-api-key" class="form-label">API 金鑰</label>
+
+            <div class="mb-3" id="ai-model-wrap">
+                <label for="ai-model" class="form-label" id="ai-model-label">模型名稱</label>
+                <input type="text" class="form-control" id="ai-model" placeholder="local-model" />
+                <div class="form-text" id="ai-model-hint">選填，預設 local-model。</div>
+            </div>
+
+            <div class="mb-3 d-none" id="ai-azure-deployment-wrap">
+                <label for="ai-azure-deployment" class="form-label">部署名稱（Deployment Name）</label>
+                <input type="text" class="form-control" id="ai-azure-deployment" placeholder="例如 gpt-4o" />
+                <div class="form-text">Azure OpenAI 建立的模型部署名稱。</div>
+            </div>
+
+            <div class="mb-3 d-none" id="ai-azure-api-version-wrap">
+                <label for="ai-azure-api-version" class="form-label">API 版本</label>
+                <input type="text" class="form-control" id="ai-azure-api-version" placeholder="2024-10-21" />
+                <div class="form-text">Azure OpenAI API 版本，預設 2024-10-21。</div>
+            </div>
+
+            <div class="mb-2" id="ai-api-key-wrap">
+                <label for="ai-api-key" class="form-label" id="ai-api-key-label">API 金鑰</label>
                 <input type="password" class="form-control" id="ai-api-key" autocomplete="new-password" placeholder="留空＝沿用既有金鑰" />
                 <div class="form-text" id="ai-api-key-hint"></div>
             </div>
-            <div class="form-check">
+            <div class="form-check" id="ai-api-key-clear-wrap">
                 <input class="form-check-input" type="checkbox" id="ai-api-key-clear" />
                 <label class="form-check-label" for="ai-api-key-clear">清除目前的 API 金鑰</label>
             </div>

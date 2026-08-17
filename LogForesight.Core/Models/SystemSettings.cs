@@ -69,15 +69,27 @@ public class SystemSettings
     /// </summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中" };
 
-    /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
+    /// <summary>AI 提供者（Local／OpenAi／AzureOpenAi）。預設為 Local（本機 OpenAI 相容端點）</summary>
+    public string AiProvider { get; set; } = "Local";
+
+    /// <summary>AI（llama.cpp／OpenAI 相容端點／Azure 端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";
+
+    /// <summary>模型名稱。OpenAI 官方必填；本機預設為 local-model</summary>
+    public string AiModel { get; set; } = "local-model";
+
+    /// <summary>Azure OpenAI 部署名稱（deployment）</summary>
+    public string AiAzureDeployment { get; set; } = "";
+
+    /// <summary>Azure OpenAI API 版本，預設 2024-10-21</summary>
+    public string AiAzureApiVersion { get; set; } = "2024-10-21";
 
     // ── AI 進階參數（§12，回饋第九輪：自 appsettings 的 Ai 區段遷入）──────────────────
     // 各欄位預設值＝原 appsettings.json 的出廠值，舊部署升級後行為不變（零遷移）。
     // 套用點：RuntimeSettingsResolver.ApplySystemSettingsOverrides（排程/立即執行每次重建設定）。
 
     /// <summary>單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘）</summary>
-    public int AiTimeoutSeconds { get; set; } = 600;
+    public int AiTimeoutSeconds { get; set; } = 1200;
 
     /// <summary>網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應）</summary>
     public int AiRetryCount { get; set; } = 3;
