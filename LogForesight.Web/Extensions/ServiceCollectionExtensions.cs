@@ -345,7 +345,8 @@ public static class ServiceCollectionExtensions
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
-        services.AddHostedService<IssueFirstSeenSeedHostedService>();
+        services.AddSingleton<IssueFirstSeenSeedHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<IssueFirstSeenSeedHostedService>());
 
         // lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上
         services.AddSingleton<DailyRecordBackfiller>(sp => sp.GetRequiredService<StorageBackend>().DailyRecordBackfiller());

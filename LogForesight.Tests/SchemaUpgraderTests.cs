@@ -400,6 +400,96 @@ public class SchemaUpgraderTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// 便宜閘門：浮水印與目前最大值相同時，合併整段被跳過，證明底層 SQL 沒有執行。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_浮水印相同時_跳過合併不執行SQL()
+    {
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+            var recordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));
+            ctx.SaveChanges();
+        }
+
+        IssueFirstSeenSeedMergeOutcome firstOutcome;
+        using (var ctx = NewContext())
+        {
+            firstOutcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        }
+
+        Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, firstOutcome);
+
+        // 第二次在資料未變更時執行，應被閘門跳過且 SQL 執行次數不增加
+        IssueFirstSeenSeedMergeOutcome secondOutcome;
+        using (var ctx = NewContext())
+        {
+            secondOutcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        }
+
+        Assert.Equal(IssueFirstSeenSeedMergeOutcome.Skipped, secondOutcome);
+    }
+
+    /// <summary>
+    /// 浮水印更新：lf_top_issues 有新資料使浮水印落後時，合併會執行並更新浮水印。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_有新資料使浮水印落後時_執行合併並更新浮水印()
+    {
+        long firstRecordId;
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+            firstRecordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(firstRecordId, "disk", 153, new DateTime(2026, 3, 1)));
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+            var wmRow = ctx.Blobs.Single(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenWatermarkBlobKey);
+            Assert.Equal(firstRecordId.ToString(), wmRow.Content);
+        }
+
+        // 新增一筆 recordId 更大的父列與問題
+        long secondRecordId;
+        using (var ctx = NewContext())
+        {
+            secondRecordId = AddParentRecord(ctx);
+            Assert.True(secondRecordId > firstRecordId);
+            ctx.TopIssues.Add(TopIssue(secondRecordId, "disk", 153, new DateTime(2026, 1, 15))); // 更早的首見日
+            ctx.TopIssues.Add(TopIssue(secondRecordId, "network", 404, new DateTime(2026, 2, 1)));
+            ctx.SaveChanges();
+        }
+
+        IssueFirstSeenSeedMergeOutcome newOutcome;
+        using (var ctx = NewContext())
+        {
+            newOutcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        }
+
+        Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, newOutcome);
+
+        using (var ctx = NewContext())
+        {
+            // 浮水印更新為第二筆 recordId
+            var wmRow = ctx.Blobs.Single(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenWatermarkBlobKey);
+            Assert.Equal(secondRecordId.ToString(), wmRow.Content);
+
+            // 且首見日正確更新與補缺
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 15), disk.FirstSeen);
+            var net = ctx.IssueFirstSeen.Single(f => f.SourceKey == "NETWORK" && f.EventId == 404);
+            Assert.Equal(new DateTime(2026, 2, 1), net.FirstSeen);
+        }
+    }
+
     /// <summary>lf_top_issues 有 FK 指向 lf_daily_records，測試子列前要先有父列</summary>
     private static long AddParentRecord(LfDbContext ctx)
     {
