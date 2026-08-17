@@ -48,12 +48,13 @@ public class RecordsController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
+        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
         var request = new RecordSearchRequest
         {
             HostIds = ParseLongs(hostIds),
             GroupIds = ParseLongs(groupIds),
-            From = ParseDate(from),
-            To = ParseDate(to),
+            From = parsedFrom,
+            To = parsedTo,
             RiskLevels = ParseStrings(riskLevels),
             Categories = ParseStrings(categories),
             Severity = severity,
@@ -137,13 +138,15 @@ public class RecordsController : ControllerBase
 
     private static RecordSearchRequest BuildRequest(
         string? hostIds, string? groupIds, string? from, string? to, string? riskLevels, string? categories,
-        string? severity, int? eventId, string? source, string? sort, string dir, int page, int pageSize) =>
-        new()
+        string? severity, int? eventId, string? source, string? sort, string dir, int page, int pageSize)
+    {
+        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
+        return new()
         {
             HostIds = ParseLongs(hostIds),
             GroupIds = ParseLongs(groupIds),
-            From = ParseDate(from),
-            To = ParseDate(to),
+            From = parsedFrom,
+            To = parsedTo,
             RiskLevels = ParseStrings(riskLevels),
             Categories = ParseStrings(categories),
             Severity = severity,
@@ -154,6 +157,7 @@ public class RecordsController : ControllerBase
             Page = page,
             PageSize = pageSize
         };
+    }
 
     [HttpGet("{hostId:long}/{date}")]
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
