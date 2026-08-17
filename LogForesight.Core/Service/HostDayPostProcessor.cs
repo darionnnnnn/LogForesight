@@ -9,12 +9,26 @@ namespace LogForesight.Core.Service;
 /// </summary>
 internal static class MissingDateFinder
 {
-    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays) =>
-        Enumerable.Range(1, lookbackDays)
+    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays, bool requireAi = false)
+    {
+        if (!requireAi)
+        {
+            return Enumerable.Range(1, lookbackDays)
+                .Select(offset => DateTime.Today.AddDays(-offset))
+                .Where(date => !store.HasRecord(date))
+                .OrderBy(date => date)
+                .ToList();
+        }
+
+        var records = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
+            .ToDictionary(r => r.Date.Date);
+
+        return Enumerable.Range(1, lookbackDays)
             .Select(offset => DateTime.Today.AddDays(-offset))
-            .Where(date => !store.HasRecord(date))
+            .Where(date => !records.TryGetValue(date, out var r) || !r.AiAnalyzed || r.AiPending)
             .OrderBy(date => date)
             .ToList();
+    }
 }
 
 /// <summary>

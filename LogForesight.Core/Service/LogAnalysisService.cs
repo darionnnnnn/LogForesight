@@ -662,7 +662,7 @@ public class LogAnalysisService
         record.RiskLevel = outcome.RiskLevel;
         record.RiskBasis = outcome.RiskBasis;
         record.AiAnalyzed = outcome.AiAnalyzed;
-        record.AiPending = false;
+        record.AiPending = !outcome.AiAnalyzed && record.RiskLevel != RiskLevels.Low;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
         record.ScreeningNotes = outcome.ScreeningNotes;
         record.ReportFile = outcome.ReportFile;

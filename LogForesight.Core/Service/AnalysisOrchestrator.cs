@@ -37,6 +37,9 @@ public class RunRequest
     /// </summary>
     public bool IncludeLocal { get; init; } = true;
 
+    /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false。</summary>
+    public bool OnlyMissingOrFailed { get; init; }
+
     /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
@@ -677,7 +680,7 @@ public class AnalysisOrchestrator
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
-        var missingDates = MissingDateFinder.Find(historyService, lookbackDays);
+        var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed);
 
         if (missingDates.Count == 0)
         {
@@ -854,7 +857,8 @@ public class AnalysisOrchestrator
             var netiqPipeline = new NetiqPipelineService(
                 backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
-                riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress);
+                riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress,
+                onlyMissingOrFailed: request.OnlyMissingOrFailed);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
