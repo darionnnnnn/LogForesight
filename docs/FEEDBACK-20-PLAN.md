@@ -237,5 +237,27 @@
 - 各作業獨立 commit，可單獨回滾。
 
 ## 7. 執行紀錄
+
+分支 `feature/feedback-20`（自 dev @ce296b9）。基準測試 2168 綠／2174 總計。
+委派模型：開工時查得 Claude 池週限 65%、Gemini 週限 30%，使用者指派先用 `claude-sonnet-4-6`；
+A 段後 Claude 五小時額度用罄，**自 B1 起改用 `gemini-3.7-flash-high`** 並沿用至今。
+
+執行時的規劃調整：作業 B 拆成 B1（riskLevels 貫通）／B2（嚴重度母體統一＋display API），
+作業 O 拆成 O1（設定層）／O2（AIService 請求組法）——原規劃各為一段，實際規模過大。
+
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| A | agy | `f752116` | 2174→2180，0 警告 | 加了 BOM、改壞既有註解、順手改動無關錯誤訊息、4/5 支新測試只測工具函式沒穿過 controller → Claude 修正並補一支走 AuditController 的接線測試 |
+| B1 | agy | `53b0879` | 2180→2185 | 參數名用 `dayRiskLevels`，與同概念的既有 `riskLevels` 不一致 → 統一命名。順帶修好 ReportService 全隱藏短路不涵蓋 Todo（P2 的第二個不一致） |
+| B2 | agy | `d6f6d0a` | 2185→2189 | Q17 根因確認為**傳錯設定**（卡片傳 ParseUnhandledSeverities、下鑽傳 ParseVisibleSeverities）。過度設計三處：AffectedHosts 別名屬性（同值序列化成兩個 JSON 欄位）、分頁邏輯複製兩份繞過共用 Paginate、無用 using → Claude 移除 |
+| I | agy | `e172870` | 2189→2193 | agy 正確地連帶改了三個查詢字典的鍵。Claude 驗收另抓到：`Aggregate` 輸出的 Source 改成 MIN 後，IssueRankingBuilder／MailIssueDigest 用它當跨期比較鍵會靜默落空（老問題誤判為新出現）→ 兩處改用 KeyOf 並補回歸測試 |
+| C | agy | `5469054` | 2193→2197 | 用 public static 可變欄位（LastMergeOutcome＋執行計數器）傳遞結果，並為此把 SchemaUpgrader 開放成 public → 改用既有回傳值、刪除靜態欄位、改回 internal（專案已有 InternalsVisibleTo） |
+| D/F/G | Claude | `9418fb0` | 2197→2198 | D 的測試首次紅是自己寫錯（零事件主機刻意不累積回報時間），補事件後通過並以突變測試確認斷言有效 |
+| N | agy | `4c371b9` | 2198→2203 | 預覽的 IAnalysisRecordQuery 宣告成可選依賴、null 時靜默回總台數 → 改必填；預覽用 `Query` 會反序列化整份 ContentJson 而它是打字防抖觸發的路徑 → 改 `QueryLightweight` |
+| O1 | agy | `4620329` | 2203→2210 | 重複貼上的註解區塊；provider 必填判定寫成三份（Available＋兩個工廠）→ 抽成共用判定；AppSettings.IsConfigured 註解被刪掉的「刻意清空位址＝刻意停用」語意補回 |
+
+核對階段的一處誤判已更正：`HandlingHistoryQueryService` 的兩處 `ToDictionary` 原被列為與 CRON 撞鍵同型的風險，
+實際上鍵 `(host_name_key, record_date)` 在資料表有 unique 索引（註解已寫明），是安全的，作業 I 明文禁止動它。
+
+**待執行**：O2（AIService 依 provider 組請求＋重試迭代修補）、E（GetDayHandlingRaw 改寫）、
+J／K／L／M（前端四段）、P（說明書）、H（文件收尾）。
