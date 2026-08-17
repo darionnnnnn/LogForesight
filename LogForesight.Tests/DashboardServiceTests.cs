@@ -209,6 +209,8 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal("A", only.HostName);
         Assert.Equal(0, only.MediumRiskDays);
         Assert.Equal(0, summary.GroupRisk.Single().MediumRiskDays);
+        Assert.Equal(1, summary.Todo.TotalCount);
+        Assert.Equal(1, summary.Todo.OpenCount);
     }
 
     /// <summary>可見範圍交集為空時整頁歸零，而不是（因為空集合被當「不限制」）變成全部可見。</summary>

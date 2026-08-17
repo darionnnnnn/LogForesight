@@ -47,6 +47,7 @@ public class ReportService
         ReportKpiDto kpi;
         List<ReportTrendPointDto> trend;
         List<DashboardHostDto> ranked;
+        HandlingTodoDto? handlingDto = null;
 
         if (scope == HandlingHistoryQueryService.HandlingScopes.All)
         {
@@ -58,6 +59,7 @@ public class ReportService
                 kpi = new ReportKpiDto();
                 trend = BuildTrendFromAggregate(new List<TrendAggregate>(), from, to);
                 ranked = new List<DashboardHostDto>();
+                handlingDto = new HandlingTodoDto();
             }
             else
             {
@@ -85,6 +87,7 @@ public class ReportService
                 var hostRiskAgg = _aggregates.AggregateByHost(from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
                 var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
                 ranked = RecordStatsBuilder.BuildHostRanking(hostRiskAgg, hostsById);
+                handlingDto = _handling.GetTodoByRange(from, to, riskLevels);
             }
             // 待辦走 GetTodoByRange（見下方 Handling 欄位），這條分支從頭到尾不載入任何紀錄
         }
@@ -140,7 +143,7 @@ public class ReportService
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
-                ? _handling.GetTodoByRange(from, to)
+                ? handlingDto ?? new HandlingTodoDto()
                 : _handling.GetTodo(recordsForTodo!)
         };
 

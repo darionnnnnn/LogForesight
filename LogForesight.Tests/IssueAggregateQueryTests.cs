@@ -506,4 +506,35 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(IssueCategory.Storage.ToString(), agg.Categories[2]);
         Assert.Equal(IssueCategory.Security.ToString(), agg.Categories[3]);
     }
+
+    [Fact]
+    public void AggregateDayTodo_傳null時母體與現況相同計入高中風險日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Medium, Issue("cpu", 100));
+        Add(1, "A", d0.AddDays(2), RiskLevels.Low, Issue("net", 200));
+
+        var unhandled = new HashSet<IssueSeverity> { IssueSeverity.High, IssueSeverity.Medium };
+        var result = Query().AggregateDayTodo(d0, d0.AddDays(2), null, unhandled, Array.Empty<long>(), d0.AddDays(5), riskLevels: null);
+
+        // 高 1 + 中 1 = 2，低風險日不計入
+        Assert.Equal(2, result.TotalCount);
+        Assert.Equal(2, result.OpenCount);
+    }
+
+    [Fact]
+    public void ActionableOccurrences_只顯示高時_中風險日的問題不列入()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Medium, Issue("cpu", 100));
+
+        var visibleRiskLevels = new HashSet<string> { RiskLevels.High };
+        var result = Query().ActionableOccurrences(d0, d0.AddDays(1), null, null, visibleRiskLevels);
+
+        var occurrence = Assert.Single(result);
+        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
+    }
 }
+

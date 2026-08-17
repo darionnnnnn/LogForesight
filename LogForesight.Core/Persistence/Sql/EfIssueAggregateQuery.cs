@@ -371,7 +371,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<HostIssueOccurrence> ActionableOccurrences(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
 
@@ -385,11 +386,19 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         // 母體與 HandlingHistoryQueryService.GetTodo 的既有定義一致：日層級 RiskLevel 為高或中
         // （不是問題自身嚴重度）——一句 join 取代「先撈整段期間紀錄、再在記憶體篩高中風險日」
+        var recordsQuery = ctx.DailyRecords.AsNoTracking().Where(dr => dr.RecordDate >= f && dr.RecordDate <= t);
+        if (riskLevels == null)
+        {
+            recordsQuery = recordsQuery.Where(dr => dr.RiskLevel == RiskLevels.High || dr.RiskLevel == RiskLevels.Medium);
+        }
+        else
+        {
+            recordsQuery = recordsQuery.Where(dr => riskLevels.Contains(dr.RiskLevel));
+        }
+
         var q =
             from ti in ctx.TopIssues.AsNoTracking()
-            join dr in ctx.DailyRecords.AsNoTracking() on ti.RecordId equals dr.RecordId
-            where dr.RecordDate >= f && dr.RecordDate <= t &&
-                  (dr.RiskLevel == RiskLevels.High || dr.RiskLevel == RiskLevels.Medium)
+            join dr in recordsQuery on ti.RecordId equals dr.RecordId
             select ti;
 
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
@@ -444,11 +453,20 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     private List<DayHandlingRaw> GetDayHandlingRaw(
         LfDbContext ctx, DateTime f, DateTime t,
         HashSet<long>? expandedHostIds, IReadOnlyCollection<long> excludedHostIds,
-        List<int> unhandledRanks, DateTime todayForOverdue)
+        List<int> unhandledRanks, DateTime todayForOverdue,
+        IReadOnlySet<string>? riskLevels = null)
     {
         var recordsQuery = ctx.DailyRecords.AsNoTracking()
-            .Where(r => r.RecordDate >= f && r.RecordDate <= t &&
-                        (r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium));
+            .Where(r => r.RecordDate >= f && r.RecordDate <= t);
+
+        if (riskLevels == null)
+        {
+            recordsQuery = recordsQuery.Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium);
+        }
+        else
+        {
+            recordsQuery = recordsQuery.Where(r => riskLevels.Contains(r.RiskLevel));
+        }
 
         if (expandedHostIds != null)
         {
@@ -591,7 +609,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,
-        DateTime today)
+        DateTime today,
+        IReadOnlySet<string>? riskLevels = null)
     {
         var sw = Stopwatch.StartNew();
         var f = from.Date;
@@ -608,7 +627,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
         }
 
-        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date);
+        var projected = GetDayHandlingRaw(ctx, f, t, expandedHostIds, excludedHostIds, unhandledRanks, today.Date, riskLevels);
 
         int totalCount = 0;
         int openCount = 0;

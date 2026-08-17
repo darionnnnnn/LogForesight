@@ -744,4 +744,35 @@ public class ReportServiceTests : IDisposable
         Assert.True(resultOutside.ComparisonOutOfRetention);
         Assert.False(resultInside.ComparisonOutOfRetention);
     }
+
+    [Fact]
+    public void GetSummary_日風險等級只顯示高時_中風險日的待辦不計入Todo()
+    {
+        var host = AddHost("HOST-RISK-TODO");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.OpenCount);
+    }
+
+    [Fact]
+    public void GetSummary_日風險等級全部隱藏時_Todo為零()
+    {
+        var host = AddHost("HOST-ALL-HIDDEN");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string>();
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(0, result.Kpi.HighRiskDays);
+        Assert.Equal(0, result.Handling.TotalCount);
+        Assert.Equal(0, result.Handling.OpenCount);
+    }
 }
