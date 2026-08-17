@@ -133,6 +133,25 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.Equal(1, row.HostCount);
     }
 
+    /// <summary>
+    /// 回饋二十輪 I：Aggregate 已把大小寫不同的同名來源合併，但輸出的 Source 是該期間內
+    /// 任一個原始寫法——前期只出現 cron、本期只出現 CRON 時，若用原始字串當跨期比較的鍵，
+    /// 前期會靜默查不到，老問題被誤判成「新出現」。
+    /// </summary>
+    [Fact]
+    public void 前期對比_來源大小寫不同時仍對得上不會誤判為新出現()
+    {
+        var from = new DateTime(2026, 8, 5);
+        var to = new DateTime(2026, 8, 11);          // 前期＝07-29 ~ 08-04
+        Add(1, "A", new DateTime(2026, 7, 30), Issue("cron", 0));
+        Add(1, "A", from.AddDays(1), Issue("CRON", 0));
+
+        var row = Builder().Build(from, to, null, totalHosts: 1).Single();
+
+        Assert.False(row.IsNew);
+        Assert.Equal(1, row.PreviousHostCount);
+    }
+
     /// <summary>距今天數回答「還要不要處理」——把「90 天前爆發過」與「今天正在發生」分開</summary>
     [Fact]
     public void 距今天數()

@@ -72,10 +72,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         }
 
         var grouped = q
-            .GroupBy(x => new { x.SourceName, x.EventId })
+            .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
             .Select(g => new
             {
-                g.Key.SourceName,
+                g.Key.SourceUpper,
+                Source = g.Min(x => x.SourceName) ?? g.Key.SourceUpper,
                 g.Key.EventId,
                 // 類別由規則以簽章為鍵決定，同一組內恆定——取 MIN 只是為了在 SQL 端
                 // 有個確定性的選法，不必為此多一趟「哪個類別出現最多」的 GROUP BY
@@ -99,10 +100,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var result = grouped.Select(g =>
         {
-            var key = (g.SourceName, g.EventId);
+            var key = (g.SourceUpper.ToUpperInvariant(), g.EventId);
             return new IssueAggregate
             {
-                Source = g.SourceName,
+                Source = g.Source,
                 EventId = g.EventId,
                 Category = g.Category ?? string.Empty,
                 // 舊資料相容（LegacySeverityRank）：SQL 端存的是三級化前寫入的原始值（Critical=3），
@@ -1108,7 +1109,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Select(x => new { x.SourceName, x.EventId, x.HostId })
             .Distinct()
             .ToList()   // host_id → 存活 id 的解析非 SQL 可翻譯，先拉回輕量投影再算
-            .GroupBy(x => (x.SourceName, x.EventId))
+            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => Surviving(aliasIndex, x.HostId)).Distinct().Count());
@@ -1127,12 +1128,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Select(x => new { x.SourceName, x.EventId, x.HostId, x.RecordDate })
             .Distinct()
             .ToList()
-            .Select(x => new { x.SourceName, x.EventId, HostId = Surviving(aliasIndex, x.HostId), x.RecordDate })
-            .Distinct()
-            .GroupBy(x => new { x.SourceName, x.EventId })
-            .Select(g => new { g.Key.SourceName, g.Key.EventId, Count = g.Count() })
-            .ToList()
-            .ToDictionary(x => (x.SourceName, x.EventId), x => x.Count);
+            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => (Surviving(aliasIndex, x.HostId), x.RecordDate)).Distinct().Count());
     }
 
     /// <summary>
@@ -1156,7 +1155,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Select(x => new { x.SourceName, x.EventId, x.LogName, x.EntryType })
             .Distinct()
             .ToList()
-            .GroupBy(x => (x.SourceName, x.EventId))
+            .GroupBy(x => (SourceUpper: x.SourceName.ToUpperInvariant(), x.EventId))
             .ToDictionary(
                 g => g.Key,
                 g => (IReadOnlyList<string>)g

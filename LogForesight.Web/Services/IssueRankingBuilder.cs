@@ -98,8 +98,11 @@ public class IssueRankingBuilder
         // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-periodDays + 1);
+        // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
+        // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
+        // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
         var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
-            .ToDictionary(a => (a.Source, a.EventId));
+            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
 
@@ -132,7 +135,7 @@ public class IssueRankingBuilder
         return current
             .Select(a =>
             {
-                previous.TryGetValue((a.Source, a.EventId), out var prev);
+                previous.TryGetValue(IssueProfile.KeyOf(a.Source, a.EventId), out var prev);
                 var rollup = LookupRollup(handlingByIssue, a);
                 var baselineKey = (SourceKey: a.Source.ToUpperInvariant(), a.EventId);
                 baselines.TryGetValue(baselineKey, out var baseline);

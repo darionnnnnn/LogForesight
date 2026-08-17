@@ -301,4 +301,27 @@ public class IssueOwnerAdminServiceTests
 
         Assert.Equal(2, _audit.Entries.Count(r => r.Action == AuditActions.IssueOwnerUpdate));
     }
+
+    /// <summary>
+    /// 聚合資料含大小寫不同的同名來源（撞鍵）時，List() 不拋出例外且能正常回傳，
+    /// 近期統計合併取 HostCount 最大值與 LastSeen 最新日期。
+    /// </summary>
+    [Fact]
+    public void List_聚合資料含大小寫不同之同名來源時不拋例外且正常回傳()
+    {
+        var user = AddUser("DOMAIN\\owner", "OOO");
+        Create().Upsert(new SaveIssueOwnerRequest { SourceName = "cron", EventId = 1, OwnerUserIds = new List<long> { user.UserId } });
+        _issueAggregates.Result = new List<IssueAggregate>
+        {
+            new() { Source = "cron", EventId = 1, HostCount = 3, LastSeen = new DateTime(2026, 8, 1) },
+            new() { Source = "CRON", EventId = 1, HostCount = 7, LastSeen = new DateTime(2026, 8, 5) }
+        };
+
+        var list = Create().List();
+
+        var dto = Assert.Single(list);
+        Assert.Equal(7, dto.RecentHostCount);
+        Assert.Equal(new DateTime(2026, 8, 5), dto.RecentLastSeen);
+    }
 }
+

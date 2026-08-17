@@ -551,5 +551,42 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(1, cat.RiskItemCount);
         Assert.Equal(1, cat.AffectedHosts);
     }
+
+    /// <summary>
+    /// 來源名稱大小寫不同（如 cron 與 CRON、EventId 皆為 0）時，Aggregate 只回傳一筆，
+    /// 且 TotalCount 與 HostCount 為兩者合併後的值。
+    /// </summary>
+    [Fact]
+    public void Aggregate_來源名稱大小寫不同時合併為單一問題且次數與主機數合併()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("cron", 0, count: 5));
+        Add(2, "B", d0, Issue("CRON", 0, count: 3));
+
+        var agg = Assert.Single(Query().Aggregate(d0, d0, null));
+
+        Assert.Equal(0, agg.EventId);
+        Assert.Equal(8, agg.TotalCount);
+        Assert.Equal(2, agg.HostCount);
+    }
+
+    /// <summary>
+    /// 同一來源名稱不同大小寫合併後，FirstSeen 取較早者、LastSeen 取較晚者。
+    /// </summary>
+    [Fact]
+    public void Aggregate_來源名稱大小寫不同時FirstSeen取較早者LastSeen取較晚者()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("cron", 0));
+        Add(1, "A", d0.AddDays(4), Issue("CRON", 0));
+
+        var agg = Assert.Single(Query().Aggregate(d0, d0.AddDays(10), null));
+
+        Assert.Equal(d0, agg.FirstSeen);
+        Assert.Equal(d0.AddDays(4), agg.LastSeen);
+        Assert.Equal(1, agg.HostCount);
+        Assert.Equal(2, agg.ActiveDays);
+    }
 }
+
 

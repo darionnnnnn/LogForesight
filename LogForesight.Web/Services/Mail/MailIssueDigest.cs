@@ -45,8 +45,10 @@ public class MailIssueDigest
         // 前期對比用**等長**的前一個期間——與 IssueRankingBuilder.Build 同一套規則
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-periodDays + 1);
+        // 鍵正規化成大寫（回饋二十輪 I）：Aggregate 輸出的 Source 是該期間內任一個原始寫法，
+        // 本期與前期可能取到不同大小寫，用原始字串當鍵會讓前期對比靜默落空
         var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
-            .ToDictionary(a => (a.Source, a.EventId));
+            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
         if (current.Count == 0) return new List<MailIssueRow>();
@@ -56,8 +58,9 @@ public class MailIssueDigest
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
         {
+            // overdueKeys 沿用原始寫法——它來自 IssueKey 字串解析，不是 Aggregate 的母體
             var key = (a.Source, a.EventId);
-            previous.TryGetValue(key, out var prev);
+            previous.TryGetValue(IssueProfile.KeyOf(a.Source, a.EventId), out var prev);
             var previousHostCount = prev?.HostCount ?? 0;
 
             string bucket;

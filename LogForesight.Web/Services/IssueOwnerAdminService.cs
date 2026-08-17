@@ -209,7 +209,10 @@ public class IssueOwnerAdminService
         var to = DateTime.Today;
         var from = to.AddDays(-(RecentIssueWindowDays - 1));
         return _issueAggregates.Aggregate(from, to, null)
-            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId), a => (a.HostCount, a.LastSeen));
+            .GroupBy(a => IssueProfile.KeyOf(a.Source, a.EventId))
+            .ToDictionary(
+                g => g.Key,
+                g => (HostCount: g.Max(x => x.HostCount), LastSeen: g.Max(x => x.LastSeen)));
     }
 
     private IssueOwnerDto ToDto(
