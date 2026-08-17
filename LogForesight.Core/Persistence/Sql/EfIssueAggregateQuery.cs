@@ -758,7 +758,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
 
     public List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IReadOnlySet<string>? riskLevels = null)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<CategoryAggregate>();
 
@@ -775,6 +776,14 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         {
             var expanded = ExpandToAliasIds(aliasIndex, hostIds);
             q = q.Where(x => expanded.Contains(x.HostId));
+        }
+
+        if (riskLevels != null)
+        {
+            var recordsQuery = ctx.DailyRecords.AsNoTracking()
+                .Where(r => r.RecordDate >= f && r.RecordDate <= t && riskLevels.Contains(r.RiskLevel));
+            var allowedRecordIds = recordsQuery.Select(r => r.RecordId);
+            q = q.Where(x => allowedRecordIds.Contains(x.RecordId));
         }
 
         // 風險資訊層級（去重前）：SQL 端 GROUP BY 拿到每個 (類別,主機,問題) 組合在期間內的

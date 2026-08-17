@@ -120,7 +120,8 @@ public interface IIssueAggregateQuery
     /// </summary>
     List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? allowedSeverities);
+        IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 依日期彙總（回饋十九輪批次E2，取代「依日期」視角在記憶體對整段期間紀錄的 GroupBy）。

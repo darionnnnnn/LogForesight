@@ -202,6 +202,7 @@ public class ReportServiceTests : IDisposable
                 Severity = IssueSeverity.Low, Category = IssueCategory.Other, Count = 1
             });
 
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High", "Medium" };
         var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
 
         // 「其他」類別只有一個 Low 嚴重度問題，預設未勾選 Low 時整卡不應出現

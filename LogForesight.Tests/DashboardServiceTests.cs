@@ -1,6 +1,7 @@
 using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
 using Xunit;
@@ -267,5 +268,56 @@ public class DashboardServiceTests : IDisposable
         AddRecord(a, 3, RiskLevels.Low);                                // 未知（null）：不算缺口
 
         Assert.Equal(2, _service.GetSummary(7).CoverageGapDays);
+    }
+
+    [Fact]
+    public void GetSummary_SiteHidden隱藏嚴重度時_風險類型卡主機數與依問題視角去重主機數相等()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+        var c = AddHost("HOST-C", 1);
+
+        var highIssue = new LogIssueSignature
+        {
+            LogName = "Security", Source = "Auth", EventId = 4625,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Security, Severity = IssueSeverity.High
+        };
+        var lowIssue = new LogIssueSignature
+        {
+            LogName = "Security", Source = "Audit", EventId = 4624,
+            EntryType = System.Diagnostics.EventLogEntryType.Information,
+            Category = IssueCategory.Security, Severity = IssueSeverity.Low
+        };
+
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { highIssue } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { highIssue } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = c.HostId, Host = c.HostName, Date = Anchor, RiskLevel = RiskLevels.Low, TopIssues = new() { lowIssue } });
+
+        // SiteHidden 模式：隱藏 Low，只顯示 High
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High" };
+
+        var summary = _service.GetSummary(7);
+        var secCard = Assert.Single(summary.Categories, cat => cat.Category == "Security");
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var listService = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver);
+
+        var issueResult = listService.SearchByIssue(new RecordSearchRequest
+        {
+            From = Anchor.AddDays(-6),
+            To = Anchor,
+            Categories = new() { "Security" }
+        });
+
+        // 驗證：風險類型卡主機數（2 台：A、B）與依問題視角去重主機數相等
+        Assert.Equal(2, secCard.AffectedHosts);
+        Assert.Equal(secCard.AffectedHosts, issueResult.DistinctHostCount);
     }
 }

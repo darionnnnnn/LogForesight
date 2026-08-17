@@ -1,5 +1,15 @@
 namespace LogForesight.Web.Models.Dto;
 
+/// <summary>
+/// 問題查詢「依問題」視角的分頁結果（回饋二十輪 B2）：在既有分頁結果上附加去重主機總數，
+/// 供前端顯示「共 N 台主機（去重）」與風險類型卡對齊。
+/// </summary>
+public class IssueSearchResultDto : PagedResult<IssueGroupDto>
+{
+    /// <summary>期間內符合條件的問題所影響的相異存活主機去重計數（定義同風險類型卡的主機數）</summary>
+    public int DistinctHostCount { get; set; }
+}
+
 /// <summary>問題查詢的清單列</summary>
 public class RecordListItemDto
 {

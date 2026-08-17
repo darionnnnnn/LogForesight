@@ -382,4 +382,7 @@ public class TestAdConnectionResultDto
 public class DisplaySettingsDto
 {
     public List<string> VisibleDayRiskLevels { get; set; } = new();
+
+    /// <summary>顯示中的問題嚴重度清單（回饋二十輪 B2，SiteHidden 模式下的可見嚴重度；未限制時為完整清單）</summary>
+    public List<string> VisibleSeverities { get; set; } = new();
 }

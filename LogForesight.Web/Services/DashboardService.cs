@@ -68,7 +68,6 @@ public class DashboardService
         // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveDayRiskLevels 算出，
         // **空交集必須在這裡短路、不可下推**（底層對空集合的語意是「不限制」，會從零筆變全部）；
         // 可見嚴重度傳給有問題子列參與的聚合。
-        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var riskLevels = RecordRepository.ResolveDayRiskLevels(_systemSettings.GetVisibleDayRiskLevels(), null);
         var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
         var nothingVisible = riskLevels != null && riskLevels.Count == 0;
@@ -77,10 +76,12 @@ public class DashboardService
             ? new List<HostRiskAggregate>()
             : _aggregates.AggregateByHost(from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
 
-        // 風險類型卡（回饋十九輪批次D）：SQL 端聚合，與報表共用同一個查詢方法，
-        // 「大數字（去重）／小字（累計）」兩個口徑不可能在兩頁漂移成不同的數字
-        dto.Categories = RecordStatsBuilder.BuildCategoryCards(
-            _aggregates.AggregateByCategory(from, anchor, visibleHostIds, unhandledSeverities));
+        // 風險類型卡（回饋十九輪批次D、二十輪批次B）：SQL 端聚合，與報表共用同一個查詢方法，
+        // 可見嚴重度傳入 visibleSeverities（與下鑽依問題查詢相同），並傳入 riskLevels；全部隱藏時短路為空
+        dto.Categories = nothingVisible
+            ? new List<DashboardCategoryDto>()
+            : RecordStatsBuilder.BuildCategoryCards(
+                _aggregates.AggregateByCategory(from, anchor, visibleHostIds, visibleSeverities, riskLevels));
 
         dto.HostRanking = RecordStatsBuilder
             .BuildHostRanking(hostRiskAgg, visibleHosts.ToDictionary(h => h.HostId))

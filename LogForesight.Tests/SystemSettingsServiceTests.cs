@@ -1,3 +1,4 @@
+using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
@@ -379,6 +380,31 @@ public class SystemSettingsServiceTests : IDisposable
         var service = Create();
 
         Assert.Null(service.GetVisibleSeverities());
+    }
+
+    [Fact]
+    public void DisplaySettings_未限制嚴重度時回傳完整清單_有限制時只回傳可見嚴重度()
+    {
+        // 1. DefaultHidden 模式（未限制）：回傳完整清單 ["High", "Medium", "Low"]
+        _store.Update(s => s.SeverityDisplayMode = "DefaultHidden");
+        var service = Create();
+        var controller = new DisplaySettingsController(service);
+
+        var unrestricted = controller.Get();
+        Assert.True(unrestricted.Success);
+        Assert.NotNull(unrestricted.Data);
+        Assert.Equal(new List<string> { "High", "Medium", "Low" }, unrestricted.Data.VisibleSeverities);
+
+        // 2. SiteHidden 模式（有限制）：只回傳可見的嚴重度
+        _store.Update(s =>
+        {
+            s.SeverityDisplayMode = "SiteHidden";
+            s.UnhandledSeverities = new List<string> { "High", "Medium" };
+        });
+        var restricted = controller.Get();
+        Assert.True(restricted.Success);
+        Assert.NotNull(restricted.Data);
+        Assert.Equal(new List<string> { "High", "Medium" }, restricted.Data.VisibleSeverities);
     }
 
     // ── docs/archive/FEEDBACK-3-PLAN.md #8：日風險等級顯示 ──────────────────────

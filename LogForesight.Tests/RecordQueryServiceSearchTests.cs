@@ -981,6 +981,33 @@ public class RecordQueryServiceSearchTests : IDisposable
         var cluster = Assert.Single(clusters);
         Assert.Equal("Defender", cluster.Source);
     }
+
+    [Fact]
+    public void SearchByIssue_同一主機命中多個問題_去重主機總數不重複計算()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+
+        var issue1 = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage);
+        var issue2 = Issue("Ntfs", 55, IssueSeverity.High, IssueCategory.Storage);
+
+        // HOST-A 同時命中 issue1 與 issue2；HOST-B 只命中 issue1
+        AddRecord(a, Yesterday, "高", issues: new[] { issue1, issue2 });
+        AddRecord(b, Yesterday, "高", issues: new[] { issue1 });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Equal(2, result.Items.Count);
+        // 各問題各自的主機數：issue1 有 2 台，issue2 有 1 台（加總 = 3）
+        var g1 = result.Items.First(i => i.Source == "disk");
+        var g2 = result.Items.First(i => i.Source == "Ntfs");
+        Assert.Equal(2, g1.HostCount);
+        Assert.Equal(1, g2.HostCount);
+
+        // 跨問題去重後的主機總數為 2 台（HOST-A、HOST-B），不重複計算 HOST-A
+        // ——各列 HostCount 加總是 3，去重後才是可以跟風險類型卡對照的數字
+        Assert.Equal(2, result.DistinctHostCount);
+    }
 }
 
 /// <summary>永遠回 null——Search 不會實際讀報告全文，這裡只是滿足建構式依賴</summary>

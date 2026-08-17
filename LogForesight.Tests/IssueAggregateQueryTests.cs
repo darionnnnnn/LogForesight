@@ -536,5 +536,20 @@ public class IssueAggregateQueryTests : IDisposable
         var occurrence = Assert.Single(result);
         Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
     }
+
+    [Fact]
+    public void AggregateByCategory_日風險等級只顯示高時_不計入中風險日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(2, "B", d0, RiskLevels.Medium, Issue("cpu", 100, severity: IssueSeverity.High));
+
+        var visibleRiskLevels = new HashSet<string> { RiskLevels.High };
+        var result = Query().AggregateByCategory(d0, d0, null, null, visibleRiskLevels);
+
+        var cat = Assert.Single(result);
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(1, cat.AffectedHosts);
+    }
 }
 

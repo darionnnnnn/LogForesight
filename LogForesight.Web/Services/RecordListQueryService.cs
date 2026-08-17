@@ -276,7 +276,7 @@ public class RecordListQueryService
     /// 與 <see cref="RecordQueryHelpers.GroupIssuesBySignature"/> 同一個分組鍵），回答「這個問題影響
     /// 多大範圍、誰在處理」——依主機／依日期是「這台主機／這一天怎麼樣」，這裡反過來看「這個問題本身」。
     /// </summary>
-    public PagedResult<IssueGroupDto> SearchByIssue(RecordSearchRequest request)
+    public IssueSearchResultDto SearchByIssue(RecordSearchRequest request)
     {
         // 全面 SQL 化（回饋十九輪批次E1）：改版前把期間內全部紀錄整批查回記憶體再 GroupBy——
         // 這正是需求「主視角改成問題」要用的那個畫面，卻是全站最慢的一條路徑（N3，2000 台環境下
@@ -322,7 +322,7 @@ public class RecordListQueryService
             aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
         }
 
-        if (aggregates.Count == 0) return Paginate(new List<IssueGroupDto>(), request);
+        if (aggregates.Count == 0) return WithDistinctHosts(Paginate(new List<IssueGroupDto>(), request), 0);
 
         // 密度的分母＝查詢期間天數。篩選未指定日期時退回候選問題本身的跨度——
         // 「2/90 天」的意義完全取決於分母是什麼，不能讓它變成一個沒有定義的數字
@@ -392,8 +392,28 @@ public class RecordListQueryService
                 .ThenByDescending(i => i.TotalCount)
         }).ToList();
 
-        return Paginate(groups, request);
+        // 去重主機總數（回饋二十輪 B2）：期間內符合條件的問題所影響的存活主機去重計數，
+        // 定義與風險類型卡的主機數相同（同一台主機命中多個問題不重複計數）——
+        // 列表各列的 HostCount 加總會大於這個值，前端要顯示的是這個才對得上卡片
+        var distinctHostCount = groups
+            .SelectMany(g => resolvedByIssue.TryGetValue((g.Source, g.EventId), out var occs) ? occs : Enumerable.Empty<ResolvedOccurrence>())
+            .Select(r => r.Occurrence.HostId)
+            .Distinct()
+            .Count();
+
+        return WithDistinctHosts(Paginate(groups, request), distinctHostCount);
     }
+
+    /// <summary>依問題視角的分頁結果沿用共用 Paginate，再附上去重主機總數</summary>
+    private static IssueSearchResultDto WithDistinctHosts(PagedResult<IssueGroupDto> paged, int distinctHostCount) =>
+        new()
+        {
+            Items = paged.Items,
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            Total = paged.Total,
+            DistinctHostCount = distinctHostCount
+        };
 
     private static int SeverityRank(string severity) =>
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
