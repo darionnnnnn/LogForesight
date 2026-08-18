@@ -38,11 +38,11 @@ public class AiJsonResult<T> where T : class
 public interface IAiService
 {
     Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default);
 
     Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class;
 }
 
@@ -51,7 +51,9 @@ public class AIService : IAiService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly HttpClient _httpClient;
-    private readonly string _baseUrl;
+    private readonly string _provider;
+    private readonly string _requestUrl;
+    private readonly string _defaultModel;
     private readonly int _maxTokens;
     private readonly int _jsonRetryCount;
     private readonly double? _frequencyPenalty;
@@ -67,19 +69,13 @@ public class AIService : IAiService
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
 
     public AIService(AiSettings settings, IPromptDumper? dumper = null)
+        : this(settings, CreateDefaultHandler(), dumper)
+    {
+    }
+
+    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null)
     {
         _dumper = dumper ?? new NullPromptDumper();
-        // 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
-        // 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
-        // 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
-        // 用戶端還不知道就拿去重用」的典型特徵，跟 HTTP/2 協商無關（先前以為是協商問題，
-        // 加了固定 HTTP/1.1 版本也沒解決，故排除該假設）。
-        // 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
-        // 相對生成時間微乎其微，直接停用連線池換取穩定性划算。
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.Zero
-        };
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
@@ -91,14 +87,41 @@ public class AIService : IAiService
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
 
-        // 需驗證的端點才帶 Authorization；地端無驗證的端點（多數情況）沒有金鑰，不送這個標頭
-        if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+        _provider = string.IsNullOrWhiteSpace(settings.Provider) ? "Local" : settings.Provider.Trim();
+        _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? "local-model" : settings.Model.Trim();
+
+        if (string.Equals(_provider, "AzureOpenAi", StringComparison.OrdinalIgnoreCase))
         {
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            var baseUrl = settings.BaseUrl.TrimEnd('/');
+            var deployment = settings.AzureDeployment?.Trim() ?? "";
+            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? "2024-10-21" : settings.AzureApiVersion.Trim();
+            _requestUrl = $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("api-key", settings.ApiKey);
+            }
+        }
+        else if (string.Equals(_provider, "OpenAi", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
+            _requestUrl = $"{baseUrl}/v1/chat/completions";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            }
+        }
+        else
+        {
+            var baseUrl = settings.BaseUrl.TrimEnd('/');
+            _requestUrl = $"{baseUrl}/v1/chat/completions";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            }
         }
 
-        _baseUrl = settings.BaseUrl.TrimEnd('/');
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;
         _frequencyPenalty = settings.FrequencyPenalty;
@@ -149,13 +172,28 @@ public class AIService : IAiService
             .Build();
     }
 
+    /// <summary>
+    /// 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
+    /// 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
+    /// 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
+    /// 用戶端還不知道就拿去重用」的典型特徵，跟 HTTP/2 協商無關（先前以為是協商問題，
+    /// 加了固定 HTTP/1.1 版本也沒解決，故排除該假設）。
+    /// 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
+    /// 相對生成時間微乎其微，直接停用連線池換取穩定性划算。**不要改回預設的連線池。**
+    /// </summary>
+    private static HttpMessageHandler CreateDefaultHandler() =>
+        new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.Zero
+        };
+
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
     /// 短小的終端 JSON（如每日總覽、前置掃描）該用較小的上限——模型一旦退化重複輸出，
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default)
     {
         var messages = new List<OpenAIMessage>();
@@ -178,9 +216,12 @@ public class AIService : IAiService
                 label, estimatedPromptTokens, effectiveMaxTokens, PromptBudget.UsableTokens);
         }
 
+        var isAzure = string.Equals(_provider, "AzureOpenAi", StringComparison.OrdinalIgnoreCase);
+        var effectiveModel = isAzure ? null : (!string.IsNullOrWhiteSpace(model) ? model : _defaultModel);
+
         var requestBody = new OpenAIRequest
                           {
-                              Model = model,
+                              Model = effectiveModel,
                               Temperature = temperature,
                               Messages = messages,
                               ResponseFormat = jsonMode ? new OpenAIResponseFormat() : null,
@@ -209,7 +250,7 @@ public class AIService : IAiService
         {
             var content = await _retryPipeline.ExecuteAsync(async attemptCt =>
             {
-                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, attemptCt);
+                var response = await _httpClient.PostAsJsonAsync(_requestUrl, requestNode, attemptCt);
                 response.EnsureSuccessStatusCode();
 
                 // 先讀成字串再自己解析，而不是直接 ReadFromJsonAsync：中間的 proxy/gateway
@@ -291,7 +332,7 @@ public class AIService : IAiService
     /// <param name="validate">額外的內容合理性檢查（如必填欄位非空、長度未超出正常摘要範圍），null 則只要求解析成功</param>
     /// <param name="maxTokens">覆寫預設的 token 上限，見 <see cref="ChatAsync"/> 的說明</param>
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class
     {
         string rawContent = string.Empty;
@@ -300,7 +341,11 @@ public class AIService : IAiService
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
-            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
+            var currentPrompt = attempt == 1 || string.IsNullOrWhiteSpace(lastError)
+                ? prompt
+                : BuildRetryPrompt(prompt, lastError, rawContent);
+
+            var response = await ChatAsync(currentPrompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
                 label: totalAttempts > 1 ? $"{label}-a{attempt}" : label, ct: ct);
 
             if (!response.Success)
@@ -347,6 +392,15 @@ public class AIService : IAiService
         return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = lastError, Attempts = totalAttempts };
     }
 
+    /// <summary>
+    /// ChatJsonAsync 重試時將上次失敗原因與回覆片段附加在使用者 prompt 尾端，要求模型修正。
+    /// </summary>
+    private static string BuildRetryPrompt(string originalPrompt, string lastError, string? rawContent)
+    {
+        var preview = string.IsNullOrWhiteSpace(rawContent) ? "（無回覆內容）" : PreviewForLog(rawContent);
+        return $"{originalPrompt}\n\n【前次嘗試失敗，請修正後重新回答】\n失敗原因：{lastError}\n前次回覆片段：{preview}\n請修正上述問題，並嚴格依要求輸出合法的 JSON。";
+    }
+
     /// <summary>把解析出的（已是我們自訂的小型結構化物件，不是原始長文字）結果序列化成一行方便寫入 log，
     /// 並保守截斷長度以防單一欄位異常冗長時仍把 log 撐大</summary>
     private static string SafeSerialize<T>(T value)
@@ -388,7 +442,8 @@ public class AIService : IAiService
     private class OpenAIRequest
     {
         [JsonPropertyName("model")]
-        public string Model { get; set; } = string.Empty;
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Model { get; set; }
 
         [JsonPropertyName("messages")]
         public List<OpenAIMessage> Messages { get; set; } = new();

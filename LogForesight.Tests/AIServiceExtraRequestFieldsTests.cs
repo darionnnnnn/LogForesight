@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
 using Xunit;
 
@@ -101,3 +102,351 @@ public class AIServiceExtraRequestFieldsTests
         Assert.Null(ex);
     }
 }
+
+/// <summary>
+/// AIService 的 Provider 網址／認證／主體組裝與 ChatJsonAsync 迭代修補重試測試（任務 O2）
+/// </summary>
+public class AIServiceProviderAndRetryTests
+{
+    private class TestHttpMessageHandler : HttpMessageHandler
+    {
+        public HttpRequestMessage? LastRequest { get; private set; }
+        public string? LastRequestBody { get; private set; }
+        public List<HttpRequestMessage> Requests { get; } = new();
+        public List<string> RequestBodies { get; } = new();
+
+        public Func<HttpRequestMessage, HttpResponseMessage>? ResponseFactory { get; set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            Requests.Add(request);
+
+            if (request.Content != null)
+            {
+                var body = await request.Content.ReadAsStringAsync(cancellationToken);
+                LastRequestBody = body;
+                RequestBodies.Add(body);
+            }
+            else
+            {
+                RequestBodies.Add("");
+            }
+
+            if (ResponseFactory != null)
+            {
+                return ResponseFactory(request);
+            }
+
+            var jsonResponse = """
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "{\"status\":\"ok\"}"
+                            }
+                        }
+                    ]
+                }
+                """;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(jsonResponse, System.Text.Encoding.UTF8, "application/json")
+            };
+        }
+    }
+
+    private class TestResult
+    {
+        [JsonPropertyName("status")]
+        public string Status { get; set; } = "";
+    }
+
+    [Fact]
+    public async Task AzureOpenAi_請求網址含deployment與apiVersion_認證用apiKey標頭_主體不含model()
+    {
+        var handler = new TestHttpMessageHandler();
+        var settings = new AiSettings
+        {
+            Provider = "AzureOpenAi",
+            BaseUrl = "https://my-resource.openai.azure.com",
+            AzureDeployment = "gpt-4o-mini",
+            AzureApiVersion = "2024-10-21",
+            ApiKey = "azure-test-key",
+            TimeoutSeconds = 5,
+            RetryCount = 1
+        };
+        var service = new AIService(settings, handler);
+
+        var response = await service.ChatAsync("測試 Azure prompt");
+
+        Assert.True(response.Success);
+        Assert.NotNull(handler.LastRequest);
+
+        // 1. 網址檢查：含 deployment 與 api-version
+        var uri = handler.LastRequest!.RequestUri!.ToString();
+        Assert.Equal("https://my-resource.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-10-21", uri);
+
+        // 2. 標頭檢查：認證用 api-key 標頭，不使用 Authorization
+        Assert.Null(handler.LastRequest.Headers.Authorization);
+        Assert.True(handler.LastRequest.Headers.Contains("api-key"));
+        Assert.Equal("azure-test-key", handler.LastRequest.Headers.GetValues("api-key").FirstOrDefault());
+
+        // 3. 主體檢查：主體不含 model 欄位
+        Assert.NotNull(handler.LastRequestBody);
+        var doc = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.False(doc.RootElement.TryGetProperty("model", out _));
+    }
+
+    [Fact]
+    public async Task OpenAi官方_未填BaseUrl時使用官方端點_認證用Bearer_主體帶模型名稱()
+    {
+        var handler = new TestHttpMessageHandler();
+        var settings = new AiSettings
+        {
+            Provider = "OpenAi",
+            BaseUrl = "",
+            Model = "gpt-4o",
+            ApiKey = "sk-openai-secret",
+            TimeoutSeconds = 5,
+            RetryCount = 1
+        };
+        var service = new AIService(settings, handler);
+
+        var response = await service.ChatAsync("測試 OpenAI prompt");
+
+        Assert.True(response.Success);
+        Assert.NotNull(handler.LastRequest);
+
+        // 1. 網址檢查：官方端點
+        var uri = handler.LastRequest!.RequestUri!.ToString();
+        Assert.Equal("https://api.openai.com/v1/chat/completions", uri);
+
+        // 2. 標頭檢查：Bearer 認證
+        Assert.NotNull(handler.LastRequest.Headers.Authorization);
+        Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization!.Scheme);
+        Assert.Equal("sk-openai-secret", handler.LastRequest.Headers.Authorization!.Parameter);
+        Assert.False(handler.LastRequest.Headers.Contains("api-key"));
+
+        // 3. 主體檢查：帶模型名稱
+        Assert.NotNull(handler.LastRequestBody);
+        var doc = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.True(doc.RootElement.TryGetProperty("model", out var modelProp));
+        Assert.Equal("gpt-4o", modelProp.GetString());
+    }
+
+    [Fact]
+    public async Task OpenAi官方_有填BaseUrl時以BaseUrl為準()
+    {
+        var handler = new TestHttpMessageHandler();
+        var settings = new AiSettings
+        {
+            Provider = "OpenAi",
+            BaseUrl = "https://custom-proxy.internal:8443/",
+            Model = "gpt-4o",
+            ApiKey = "sk-openai-secret",
+            TimeoutSeconds = 5,
+            RetryCount = 1
+        };
+        var service = new AIService(settings, handler);
+
+        var response = await service.ChatAsync("測試 OpenAI proxy prompt");
+
+        Assert.True(response.Success);
+        Assert.NotNull(handler.LastRequest);
+
+        var uri = handler.LastRequest!.RequestUri!.ToString();
+        Assert.Equal("https://custom-proxy.internal:8443/v1/chat/completions", uri);
+    }
+
+    [Fact]
+    public async Task LocalProvider_未設金鑰時不送Authorization標頭_既有行為不變()
+    {
+        var handler = new TestHttpMessageHandler();
+        var settings = new AiSettings
+        {
+            Provider = "Local",
+            BaseUrl = "http://localhost:8080",
+            ApiKey = "",
+            Model = "local-model",
+            TimeoutSeconds = 5,
+            RetryCount = 1
+        };
+        var service = new AIService(settings, handler);
+
+        var response = await service.ChatAsync("測試 Local prompt");
+
+        Assert.True(response.Success);
+        Assert.NotNull(handler.LastRequest);
+
+        // 1. 網址檢查：{BaseUrl}/v1/chat/completions
+        var uri = handler.LastRequest!.RequestUri!.ToString();
+        Assert.Equal("http://localhost:8080/v1/chat/completions", uri);
+
+        // 2. 標頭檢查：不送 Authorization 標頭，亦無 api-key
+        Assert.Null(handler.LastRequest.Headers.Authorization);
+        Assert.False(handler.LastRequest.Headers.Contains("api-key"));
+
+        // 3. 主體檢查：帶模型名稱 local-model
+        Assert.NotNull(handler.LastRequestBody);
+        var doc = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.True(doc.RootElement.TryGetProperty("model", out var modelProp));
+        Assert.Equal("local-model", modelProp.GetString());
+    }
+
+    [Fact]
+    public async Task ChatJsonAsync_第二次嘗試送出的prompt含上一次失敗原因_第一次不含()
+    {
+        var handler = new TestHttpMessageHandler();
+        int callCount = 0;
+        handler.ResponseFactory = req =>
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                var badJson = """
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "抱歉，這不是合法的 JSON 內容，請見諒。"
+                                }
+                            }
+                        ]
+                    }
+                    """;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(badJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            else
+            {
+                var goodJson = """
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "{\"status\":\"success\"}"
+                                }
+                            }
+                        ]
+                    }
+                    """;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(goodJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+        };
+
+        var settings = new AiSettings
+        {
+            BaseUrl = "http://localhost:8080",
+            JsonRetryCount = 2,
+            RetryCount = 1,
+            TimeoutSeconds = 5
+        };
+        var service = new AIService(settings, handler);
+
+        var result = await service.ChatJsonAsync<TestResult>("請以 JSON 輸出系統摘要");
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal("success", result.Value?.Status);
+        Assert.Equal(2, handler.RequestBodies.Count);
+
+        // 檢查第 1 次請求的 prompt
+        var firstBody = JsonDocument.Parse(handler.RequestBodies[0]);
+        var firstMessages = firstBody.RootElement.GetProperty("messages");
+        var firstUserPrompt = firstMessages[firstMessages.GetArrayLength() - 1].GetProperty("content").GetString()!;
+        Assert.Equal("請以 JSON 輸出系統摘要", firstUserPrompt);
+        Assert.DoesNotContain("前次嘗試失敗", firstUserPrompt);
+        Assert.DoesNotContain("AI 回覆不是合法 JSON", firstUserPrompt);
+
+        // 檢查第 2 次請求的 prompt
+        var secondBody = JsonDocument.Parse(handler.RequestBodies[1]);
+        var secondMessages = secondBody.RootElement.GetProperty("messages");
+        var secondUserPrompt = secondMessages[secondMessages.GetArrayLength() - 1].GetProperty("content").GetString()!;
+        Assert.StartsWith("請以 JSON 輸出系統摘要", secondUserPrompt);
+        Assert.Contains("前次嘗試失敗", secondUserPrompt);
+        Assert.Contains("AI 回覆不是合法 JSON 或格式不符契約", secondUserPrompt);
+        Assert.Contains("抱歉，這不是合法的 JSON 內容", secondUserPrompt);
+    }
+
+    [Fact]
+    public async Task ChatJsonAsync_內容驗證失敗時第二次嘗試含驗證失敗原因()
+    {
+        var handler = new TestHttpMessageHandler();
+        int callCount = 0;
+        handler.ResponseFactory = req =>
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                var invalidContentJson = """
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "{\"status\":\"invalid\"}"
+                                }
+                            }
+                        ]
+                    }
+                    """;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(invalidContentJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+            else
+            {
+                var validContentJson = """
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "{\"status\":\"valid\"}"
+                                }
+                            }
+                        ]
+                    }
+                    """;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(validContentJson, System.Text.Encoding.UTF8, "application/json")
+                };
+            }
+        };
+
+        var settings = new AiSettings
+        {
+            BaseUrl = "http://localhost:8080",
+            JsonRetryCount = 2,
+            RetryCount = 1,
+            TimeoutSeconds = 5
+        };
+        var service = new AIService(settings, handler);
+
+        var result = await service.ChatJsonAsync<TestResult>(
+            "分析日誌狀態",
+            validate: r => r.Status == "valid");
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Attempts);
+        Assert.Equal("valid", result.Value?.Status);
+        Assert.Equal(2, handler.RequestBodies.Count);
+
+        var secondBody = JsonDocument.Parse(handler.RequestBodies[1]);
+        var secondMessages = secondBody.RootElement.GetProperty("messages");
+        var secondUserPrompt = secondMessages[secondMessages.GetArrayLength() - 1].GetProperty("content").GetString()!;
+        Assert.Contains("AI 回覆內容未通過檢查", secondUserPrompt);
+    }
+}
+
