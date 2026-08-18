@@ -1435,6 +1435,22 @@ a.lf-stat:hover .lf-card,
     background: var(--lf-primary);
 }
 
+/* 問題欄白話說明（單行截斷、設最大寬度不撐寬欄位、支援 focus-visible 樣式） */
+.lf-issue-explanation {
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 18rem;
+    cursor: default;
+}
+
+.lf-issue-explanation:focus-visible {
+    outline: 2px solid var(--lf-primary);
+    border-radius: var(--lf-radius-sm);
+}
+
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
 

@@ -210,6 +210,18 @@ export function issueBaselineText(issue) {
         : issue.baselineMedianHostCount.toFixed(1);
     const multiplier = issue.baselineDeviationMultiplier;
 
-    return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` +
-        (multiplier != null ? `（×${multiplier.toFixed(1)}）` : '');
+    let multiplierText = '';
+    if (multiplier != null) {
+        const m = multiplier.toFixed(1);
+        if (multiplier >= 2) {
+            multiplierText = `（×${m} 擴散）`;
+        } else if (multiplier < 1) {
+            multiplierText = `（×${m} 收斂）`;
+        } else {
+            multiplierText = `（×${m}）`;
+        }
+    }
+
+    return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` + multiplierText;
 }
+

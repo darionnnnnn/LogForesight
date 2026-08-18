@@ -14,11 +14,12 @@
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
+    headerWithHelp, icon
 } from '../core/ui.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber,
-    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, issueBaselineText
+    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -660,14 +661,43 @@ function renderIssueView() {
         { title: '問題', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
-        { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
-        { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
-        { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
-        { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
-        { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
+        {
+            title: '主機數',
+            className: 'text-end',
+            renderHeader: () => headerWithHelp('主機數', '在本次查詢日期區間內，曾出現此問題的相異主機總台數。', '主機數'),
+            render: i => String(i.hostCount)
+        },
+        {
+            title: 'vs 基準',
+            className: 'text-nowrap',
+            renderHeader: () => headerWithHelp('vs 基準', '最近一次出現時的受影響主機數，與過去 30 天歷史中位數（基準台數/日）的比較。倍數大於等於 2（紅色）代表異常擴散，1 到 2 之間（灰色）為正常波動，小於 1（收斂）代表影響範圍已低於平時基準。', 'vs 基準線'),
+            render: i => issueBaselineCell(i)
+        },
+        {
+            title: '首見',
+            className: 'text-nowrap',
+            renderHeader: () => headerWithHelp('首見', '此問題在全機房歷史記錄中首次出現的日期。若本次查詢區間內的首次出現日與機房首見不同，第二行會額外標示本次查詢區間的「本期首見」日期。', '首見日期'),
+            render: i => issueFirstSeenCell(i)
+        },
+        {
+            title: '出現密度',
+            className: 'text-end text-nowrap',
+            renderHeader: () => headerWithHelp('出現密度', '查詢期間內有發生此問題的天數比例（出現天數 / 查詢天數）。比例高（如 30/30）代表天天發生的背景雜訊；比例低（如 2/30）代表近期或零星爆發的突發狀況。', '出現密度'),
+            render: i => issueDensityCell(i)
+        },
+        {
+            title: '總次數',
+            className: 'text-end',
+            renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
+            render: i => formatNumber(i.totalCount)
+        },
         { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
-        { title: '處理概況', render: i => i.handlingSummary },
+        {
+            title: '處理概況',
+            className: 'text-nowrap',
+            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有案件或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
+            render: i => issueHandlingSummaryCell(i)
+        },
         { title: '處理人', render: i => issueHandlersCell(i) }
     ];
 
@@ -807,45 +837,113 @@ function issueSeverityCell(group) {
 }
 
 /**
- * 本期首見（回饋十九輪批次G4，欄名由「涵蓋範圍」改標）：本次查詢期間內第一次出現的日期，
- * 受查詢期間截斷——與不受截斷的「首見（機房）」欄分開，兩者答的是不同問題。
+ * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現
  */
-function issueSpanCell(group) {
-    const span = document.createElement('span');
-    span.className = 'lf-mono small';
-    span.textContent = group.firstSeen;
-    return span;
+function issueHandlingSummaryCell(group) {
+    const wrap = document.createElement('div');
+    wrap.className = 'small lf-mono';
+
+    const unhandled = document.createElement('div');
+    unhandled.className = group.unhandledCount > 0 ? '' : 'text-muted';
+    unhandled.textContent = `${formatNumber(group.unhandledCount)} 台未處理`;
+
+    const inProgress = document.createElement('div');
+    inProgress.className = group.inProgressCount > 0 ? '' : 'text-muted';
+    inProgress.textContent = `${formatNumber(group.inProgressCount)} 台處理中`;
+
+    const resolved = document.createElement('div');
+    resolved.className = group.resolvedCount > 0 ? '' : 'text-muted';
+    resolved.textContent = `${formatNumber(group.resolvedCount)} 台已處理`;
+
+    wrap.append(unhandled, inProgress, resolved);
+    return wrap;
 }
 
-/** 機房首見（回饋十九輪批次G4）：不受查詢期間截斷的真正第一次出現日期 */
-function issueFleetFirstSeenCell(group) {
-    const span = document.createElement('span');
-    span.className = 'lf-mono small';
-    span.textContent = group.fleetFirstSeen || group.firstSeen;
-    return span;
+/**
+ * 首見（兩欄合併）：預設顯示機房首見；當本期首見與機房首見不同時，
+ * 換行顯示第二行標示本期首見，並附 SVG 圖示標記差異；相同時只顯示一行。
+ */
+function issueFirstSeenCell(group) {
+    const wrap = document.createElement('div');
+    const fleetFirst = group.fleetFirstSeen || group.firstSeen;
+    const periodFirst = group.firstSeen;
+
+    wrap.title = '機房首見：此問題在全機房歷史記錄中首次出現的日期。\n本期首見：此問題在本次查詢區間內首次出現的日期。';
+
+    const fleetLine = document.createElement('div');
+    fleetLine.className = 'lf-mono small';
+    fleetLine.textContent = fleetFirst;
+    wrap.appendChild(fleetLine);
+
+    if (periodFirst && periodFirst !== fleetFirst) {
+        const periodLine = document.createElement('div');
+        periodLine.className = 'lf-mono small text-muted d-inline-flex align-items-center gap-1 mt-1';
+        periodLine.appendChild(icon('info-circle'));
+        const text = document.createElement('span');
+        text.textContent = `本期 ${periodFirst}`;
+        periodLine.appendChild(text);
+        wrap.appendChild(periodLine);
+    }
+
+    return wrap;
 }
 
-/** 機房級基準線（回饋十九輪批次G1），語意與 dashboard.js 的同名 cell 一致 */
+/**
+ * 機房級基準線：第一行顯示「基準 N 台/日 → M 台」，第二行顯示倍數徽章。
+ * 大於等於 2 為危險色，1 到 2 為中性色，小於 1 為收斂。
+ */
 function issueBaselineCell(group) {
-    const span = document.createElement('span');
+    const wrap = document.createElement('div');
     const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
+
+    if (noBaseline) {
+        wrap.className = 'small text-muted';
+        wrap.textContent = '新問題，無基準';
+        wrap.title = '過去 30 天出現不足 3 天，視為新問題，尚無基準可比';
+        return wrap;
+    }
+
+    const median = Number.isInteger(group.baselineMedianHostCount)
+        ? String(group.baselineMedianHostCount)
+        : group.baselineMedianHostCount.toFixed(1);
     const multiplier = group.baselineDeviationMultiplier;
 
-    span.className = noBaseline ? 'small text-muted'
-        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
-        : 'small';
-    span.textContent = issueBaselineText(group);
-    return span;
+    const line1 = document.createElement('div');
+    line1.className = 'small lf-mono';
+    line1.textContent = `基準 ${median} 台/日 → ${group.baselineLatestHostCount} 台`;
+    wrap.appendChild(line1);
+
+    if (multiplier != null) {
+        const line2 = document.createElement('div');
+        line2.className = 'mt-1';
+        const m = multiplier.toFixed(1);
+        const tooltip = `基準倍數（最近出現主機數 ÷ 過去 30 天基準中位數）：大於 1 表示影響擴大（≥2 為異常擴散）；小於 1（如 ×${m}）表示影響台數低於平時基準，情況正在收斂。`;
+
+        let badge;
+        if (multiplier >= 2) {
+            badge = statusBadge(`×${m} 擴散`, 'danger', { title: tooltip });
+        } else if (multiplier >= 1) {
+            badge = statusBadge(`×${m} 正常`, 'neutral', { title: tooltip });
+        } else {
+            // 收斂用 success 而非 neutral：neutral/secondary/light 三個變體樣式相同，
+            // 都用 neutral 的話「正常」與「收斂」在畫面上長得一模一樣，等於沒有區分。
+            // 影響台數低於基準本來就是好消息，淡綠底語意也對
+            badge = statusBadge(`×${m} 收斂`, 'success', { title: tooltip });
+        }
+        line2.appendChild(badge);
+        wrap.appendChild(line2);
+    }
+
+    return wrap;
 }
 
 /**
  * 出現密度：出現天數 ÷ 期間天數（§10.3）。
- * 「2/90」與「90/90」是完全不同的問題——前者是零星爆發、後者是天天都有的背景值，
- * 而數量排序看不出這件事。附一條密度條讓比例一眼可辨（文字仍是主要資訊，圖只是輔助）。
+ * 數字在上、進度條換行在下，欄寬不變。既有的數字文字與 tooltip 內容保留。
  */
 function issueDensityCell(group) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
+    const wrap = document.createElement('div');
+    wrap.className = 'd-inline-flex flex-column align-items-end';
 
     const text = document.createElement('span');
     text.className = 'lf-mono small';
@@ -854,7 +952,7 @@ function issueDensityCell(group) {
 
     const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
     const bar = document.createElement('span');
-    bar.className = 'lf-density';
+    bar.className = 'lf-density mt-1';
     bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
     fill.className = 'lf-density__fill';
@@ -901,6 +999,16 @@ function issueGroupCell(group) {
     title.className = 'fw-semibold';
     title.textContent = `${group.source} (${group.eventId})`;
     wrap.appendChild(title);
+
+    // 白話說明：在來源(EventId)之下多一行，null 時不佔行；單行截斷、設最大寬度、hover/focus 可看完整內容
+    if (group.plainExplanation) {
+        const explanation = document.createElement('div');
+        explanation.className = 'lf-issue-explanation';
+        explanation.textContent = group.plainExplanation;
+        explanation.title = group.plainExplanation;
+        explanation.tabIndex = 0;
+        wrap.appendChild(explanation);
+    }
 
     // 問題負責人 badge（回饋十八輪批次F）：「這個問題歸誰」在主視角一眼可見——
     // 與下方 issueHandlersCell（現在誰在處理）是不同概念，見後端 IssueGroupDto.IssueOwnerNames 註解。
