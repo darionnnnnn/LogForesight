@@ -6,8 +6,8 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad } from '../core/ui.js';
-import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES } from '../core/format.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows } from '../core/ui.js';
+import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
@@ -170,6 +170,61 @@ function renderLegend() {
     }
 }
 
+const ISSUE_COLUMNS = [
+    {
+        title: '來源 / Event',
+        sortKey: 'source',
+        sortValue: s => `${s.source} (${s.eventId})`,
+        render: s => `${s.source} (${s.eventId})`
+    },
+    {
+        title: '分類',
+        sortKey: 'category',
+        sortValue: s => CATEGORY_NAMES[s.category] ?? s.category,
+        render: s => CATEGORY_NAMES[s.category] ?? s.category
+    },
+    {
+        title: '嚴重度',
+        sortKey: 'severity',
+        sortDefaultDir: 'asc',
+        sortValue: s => SEVERITY_ORDER.indexOf(s.maxSeverity),
+        render: s => severityBadge(s.maxSeverity)
+    },
+    {
+        title: '總次數',
+        className: 'text-end',
+        sortKey: 'totalCount',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.totalCount,
+        render: s => formatNumber(s.totalCount)
+    },
+    {
+        title: '出現天數',
+        className: 'text-end',
+        sortKey: 'daysSeen',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.daysSeen,
+        render: s => formatNumber(s.daysSeen)
+    },
+    {
+        title: '最近出現',
+        className: 'text-nowrap',
+        sortKey: 'lastSeenDate',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.lastSeenDate,
+        render: s => lastSeenLink(s)
+    },
+    {
+        title: '說明',
+        sortKey: 'knownIssue',
+        sortValue: s => s.knownIssue || '',
+        render: s => s.knownIssue || ''
+    }
+];
+
+let issuesSort = null;
+let currentDetail = null;
+
 /**
  * 重點問題（期間彙總，docs/archive/FEEDBACK-3-PLAN.md #4；docs/archive/FEEDBACK-4-PLAN.md §3 再改版）：
  * 問題查詢「依主機」下鑽進來原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接
@@ -178,17 +233,16 @@ function renderLegend() {
  * 取代原本的整列連結（rowHref 與 rowDetail 互斥），跨日需求改走這個連結。
  */
 function renderIssues(detail) {
+    currentDetail = detail;
+    const rows = sortRows(detail.topSignatures, ISSUE_COLUMNS, issuesSort);
     renderTable(document.getElementById('host-issues'), {
-        columns: [
-            { title: '來源 / Event', render: s => `${s.source} (${s.eventId})` },
-            { title: '分類', render: s => CATEGORY_NAMES[s.category] ?? s.category },
-            { title: '嚴重度', render: s => severityBadge(s.maxSeverity) },
-            { title: '總次數', className: 'text-end', render: s => formatNumber(s.totalCount) },
-            { title: '出現天數', className: 'text-end', render: s => formatNumber(s.daysSeen) },
-            { title: '最近出現', className: 'text-nowrap', render: s => lastSeenLink(s) },
-            { title: '說明', render: s => s.knownIssue || '' }
-        ],
-        rows: detail.topSignatures,
+        columns: ISSUE_COLUMNS,
+        rows,
+        sort: issuesSort,
+        onSort: (key, dir) => {
+            issuesSort = { key, dir };
+            renderIssues(currentDetail);
+        },
         rowDetail: s => occurrenceDetailPanel(s),
         // 時間軸的灰格＝「這天沒分析」，不是「沒問題」；空狀態的 hint 呼應同一個原則，
         // 避免使用者把「期間內沒有重點問題」誤讀成「這台主機根本沒被監控」
