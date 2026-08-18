@@ -1527,15 +1527,120 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* ── 主機詳情：月曆式風險時間軸（docs/task-M.md）────────────────────────── */
+
+.lf-calendar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4, 1rem);
+    align-items: flex-start;
+}
+
+.lf-calendar__month {
+    flex: 0 0 auto;
+    width: 210px;
+    max-width: 100%;
+}
+
+.lf-calendar__title {
+    font-size: var(--lf-font-size-sm, .86rem);
+    font-weight: 600;
+    color: var(--lf-text, #0f172a);
+    margin-bottom: var(--lf-space-2, .5rem);
+    text-align: center;
+}
+
+.lf-calendar__weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.lf-calendar__weekday {
+    font-size: var(--lf-font-size-xs, .78rem);
+    font-weight: 500;
+    color: var(--lf-text-muted, #64748b);
+    line-height: 1.2;
+}
+
+.lf-calendar__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.lf-calendar__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--lf-radius-sm, .25rem);
+    font-size: .75rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    color: var(--lf-gray-900, #0f172a);
+    user-select: none;
+    position: relative;
+    transition: transform var(--lf-transition, .15s ease),
+                opacity var(--lf-transition, .15s ease),
+                outline-color var(--lf-transition, .15s ease),
+                box-shadow var(--lf-transition, .15s ease);
+}
+
+.lf-calendar__cell[data-risk="高"] {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell {
+    cursor: pointer;
+}
+
+a.lf-calendar__cell:hover {
+    transform: scale(1.12);
+    z-index: 2;
+    box-shadow: var(--lf-shadow-sm, 0 1px 3px rgba(15, 23, 42, .08));
+    color: var(--lf-gray-900, #0f172a);
+}
+
+a.lf-calendar__cell[data-risk="高"]:hover {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell:focus-visible {
+    outline: 2px solid var(--lf-primary, #1e40af);
+    outline-offset: 2px;
+    z-index: 3;
+}
+
+.lf-calendar__cell--empty {
+    background: transparent;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* 主機詳情問題發生明細展開時的時間軸高亮連動（docs/FEEDBACK-4-PLAN.md §3）：
    這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
    只疊加外框/透明度，展開哪個問題一眼看得出來 */
 .lf-timeline-cell--highlight {
     outline: 2px solid var(--lf-primary, #1e40af);
     outline-offset: 1px;
+    z-index: 1;
 }
+
 .lf-timeline-cell--dim {
     opacity: .25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lf-calendar__cell {
+        transition: none;
+    }
+    a.lf-calendar__cell:hover {
+        transform: none;
+    }
 }
 
 /* ── 問題層級處理狀態：狀態文字＋右側批次套用（2026-07-27 改版；2026-07-28 #7 拆欄）─────
