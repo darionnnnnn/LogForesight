@@ -119,11 +119,11 @@ public class IssueRankingBuilder
         var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
 
         // 規則白話說明：以當頁問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
-        var rules = LoadRules();
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
         var explanations = issuesOnPage
             .ToDictionary(
                 i => i,
-                i => FindPlainExplanation(rules, i.Source, i.EventId));
+                i => KnownIssueCatalog.PlainExplanationFor(rules, i.Source, i.EventId));
 
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
@@ -290,24 +290,6 @@ public class IssueRankingBuilder
         _ => 1
     };
 
-    private List<KnownIssueRule> LoadRules()
-    {
-        // 未注入規則儲存的只有測試組裝；Web 行程的靜態規則表是空的（見 KnownIssueCatalog.FindRule
-        // 的多載說明），所以兩條退路都回內建種子，不要回靜態表
-        if (_rules == null) return KnownIssueSeed.CreateRules();
-        var outcome = _rules.Load();
-        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
-        {
-            return rules;
-        }
-        return KnownIssueSeed.CreateRules();
-    }
-
-    private static string? FindPlainExplanation(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
-    {
-        var rule = KnownIssueCatalog.FindRule(rules, source, eventId);
-        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
-    }
 }
 
 /// <summary>單一問題簽章的處理概況彙總（§10.6：全部有結論的問題不進重點清單）</summary>

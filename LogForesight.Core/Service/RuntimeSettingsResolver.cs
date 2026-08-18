@@ -38,11 +38,9 @@ public static class RuntimeSettingsResolver
             if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
                 settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
 
-            settings.Ai.Provider = string.IsNullOrWhiteSpace(systemSettings.AiProvider)
-                ? "Local"
-                : systemSettings.AiProvider.Trim();
+            settings.Ai.Provider = AiProviders.Normalize(systemSettings.AiProvider);
             settings.Ai.Model = string.IsNullOrWhiteSpace(systemSettings.AiModel)
-                ? (settings.Ai.Provider == "Local" ? "local-model" : "")
+                ? AiProviders.DefaultModel(settings.Ai.Provider)
                 : systemSettings.AiModel.Trim();
             settings.Ai.AzureDeployment = systemSettings.AiAzureDeployment?.Trim() ?? "";
             settings.Ai.AzureApiVersion = string.IsNullOrWhiteSpace(systemSettings.AiAzureApiVersion)

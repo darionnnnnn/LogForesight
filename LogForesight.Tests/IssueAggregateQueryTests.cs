@@ -588,5 +588,3 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(2, agg.ActiveDays);
     }
 }
-
-

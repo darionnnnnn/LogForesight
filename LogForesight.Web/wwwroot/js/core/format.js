@@ -108,6 +108,15 @@ const HANDLING_STATUS = {
  * success | danger | warning | info | primary | neutral | dark。
  * icon（選填）為 sprite symbol id，會以 SVG 前置於文字（取代原本用 emoji 當圖示的做法）。
  */
+/**
+ * AI 主機日是「排隊中」還是「失敗待補」（回饋二十輪 N）：兩者的 aiPending 都是 true，
+ * 後端以 headline 帶「AI 待補」區分。前端據此決定徽章——「分析中」暗示稍後重整就有，
+ * 「待補」才會告訴使用者要靠排程補跑。與 LogAnalysisService 失敗分支的 headline 文字對齊。
+ */
+export function isAiRetryPending(headline) {
+    return typeof headline === 'string' && headline.includes('AI 待補');
+}
+
 export function statusBadge(text, variant = 'neutral', { title, icon: iconName } = {}) {
     const span = document.createElement('span');
     span.className = `lf-badge lf-badge--${variant}`;
@@ -200,6 +209,57 @@ export function formatNumber(value) {
  * 依問題視角三處共用同一份措辭與四捨五入規則，「vs 基準」欄位的數字才不會各自寫法不同。
  * 基準期（過去 30 天）出現不足 3 天視為新問題，沒有「平常長什麼樣」可比。
  */
+/**
+ * 機房級基準線的視覺 cell（回饋二十輪 K2／終檢收斂為共用）：第一行「基準 N 台/日 → M 台」，
+ * 第二行倍數徽章——≥2 危險色「擴散」、1～2 中性「正常」、<1 綠色「收斂」。
+ * 問題查詢「依問題」與儀表板「重點問題」共用這一份，兩頁的呈現不會漂移；
+ * 純文字匯出（報表 CSV）走 issueBaselineText。
+ */
+export function issueBaselineCell(group) {
+    const wrap = document.createElement('div');
+    const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
+
+    if (noBaseline) {
+        wrap.className = 'small text-muted';
+        wrap.textContent = '新問題，無基準';
+        wrap.title = '過去 30 天出現不足 3 天，視為新問題，尚無基準可比';
+        return wrap;
+    }
+
+    const median = Number.isInteger(group.baselineMedianHostCount)
+        ? String(group.baselineMedianHostCount)
+        : group.baselineMedianHostCount.toFixed(1);
+    const multiplier = group.baselineDeviationMultiplier;
+
+    const line1 = document.createElement('div');
+    line1.className = 'small lf-mono';
+    line1.textContent = `基準 ${median} 台/日 → ${group.baselineLatestHostCount} 台`;
+    wrap.appendChild(line1);
+
+    if (multiplier != null) {
+        const line2 = document.createElement('div');
+        line2.className = 'mt-1';
+        const m = multiplier.toFixed(1);
+        const tooltip = `基準倍數（最近出現主機數 ÷ 過去 30 天基準中位數）：大於 1 表示影響擴大（≥2 為異常擴散）；小於 1（如 ×${m}）表示影響台數低於平時基準，情況正在收斂。`;
+
+        let badge;
+        if (multiplier >= 2) {
+            badge = statusBadge(`×${m} 擴散`, 'danger', { title: tooltip });
+        } else if (multiplier >= 1) {
+            badge = statusBadge(`×${m} 正常`, 'neutral', { title: tooltip });
+        } else {
+            // 收斂用 success 而非 neutral：neutral/secondary/light 三個變體樣式相同，
+            // 都用 neutral 的話「正常」與「收斂」在畫面上長得一模一樣，等於沒有區分。
+            // 影響台數低於基準本來就是好消息，淡綠底語意也對
+            badge = statusBadge(`×${m} 收斂`, 'success', { title: tooltip });
+        }
+        line2.appendChild(badge);
+        wrap.appendChild(line2);
+    }
+
+    return wrap;
+}
+
 export function issueBaselineText(issue) {
     if (issue.baselineOccurrenceDays < 3 || issue.baselineMedianHostCount == null) {
         return '新問題，無基準';
@@ -224,4 +284,3 @@ export function issueBaselineText(issue) {
 
     return `基準 ${median} 台/日 → ${issue.baselineLatestHostCount} 台` + multiplierText;
 }
-

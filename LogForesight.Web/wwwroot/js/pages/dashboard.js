@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
-import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineText } from '../core/format.js';
+import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
 
@@ -445,6 +445,7 @@ function renderTopIssues(data) {
             { title: '嚴重度', render: i => issueSeverityCell(i) },
             { title: '主機數', className: 'text-end', render: i => issueHostCell(i) },
             { title: '未處理', className: 'text-end', render: i => issueOpenCell(i) },
+            // 機房級基準線（回饋十九輪批次G1）：與問題查詢「依問題」共用 format.js 的同一個 cell
             { title: 'vs 基準', className: 'text-nowrap', render: i => issueBaselineCell(i) },
             { title: '本期首見', className: 'text-nowrap', render: i => issueSpanCell(i) },
             { title: '首見（機房）', className: 'text-nowrap', render: i => issueFleetFirstSeenCell(i) },
@@ -633,22 +634,6 @@ function issueFleetFirstSeenCell(issue) {
     const span = document.createElement('span');
     span.className = 'lf-mono small';
     span.textContent = issue.fleetFirstSeen || issue.firstSeen;
-    return span;
-}
-
-/**
- * 機房級基準線（回饋十九輪批次G1）：這個問題「平常」影響幾台，與最近一次出現時的規模比較——
- * 回答數量排序答不了的「這次是不是異常擴散」。基準期出現不足 3 天視為新問題，沒有「平常」可比。
- */
-function issueBaselineCell(issue) {
-    const span = document.createElement('span');
-    const noBaseline = issue.baselineOccurrenceDays < 3 || issue.baselineMedianHostCount == null;
-    const multiplier = issue.baselineDeviationMultiplier;
-
-    span.className = noBaseline ? 'small text-muted'
-        : multiplier != null && multiplier >= 2 ? 'small text-danger fw-semibold'
-        : 'small';
-    span.textContent = issueBaselineText(issue);
     return span;
 }
 

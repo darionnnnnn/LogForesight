@@ -20,7 +20,7 @@ public class SystemSettingsDto
     /// <summary>顯示中的日風險等級（高/中/低，docs/archive/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
-    public string AiProvider { get; set; } = "Local";
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
     public string AiBaseUrl { get; set; } = "";
     public string AiModel { get; set; } = "local-model";
     public string AiAzureDeployment { get; set; } = "";
@@ -165,7 +165,7 @@ public class UpdateSystemSettingsRequest
     /// 見 SystemSettingsService.Update</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
-    public string AiProvider { get; set; } = "Local";
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
 
     /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]

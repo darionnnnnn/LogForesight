@@ -483,6 +483,9 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     const headRow = document.createElement('tr');
     for (const col of columns) {
         const th = document.createElement('th');
+        // sortKey 與 renderHeader 可以共存（回饋二十輪終檢）：可排序欄位也要能掛說明圖示。
+        // 原本兩者互斥，K2 為了讓 headerWithHelp 出來只好把主機數／總次數的 sortKey 刪掉，
+        // 使用者可見的排序功能就這樣倒退了
         if (col.sortKey && onSort) {
             th.appendChild(sortHeader(col, sort, onSort));
             const active = sort && sort.key === col.sortKey;
@@ -661,9 +664,18 @@ function sortHeader(col, sort, onSort) {
     btn.type = 'button';
     btn.className = 'lf-th-sort' + (active ? ' lf-th-sort--active' : '');
 
-    const text = document.createElement('span');
-    text.textContent = col.title;
-    btn.appendChild(text);
+    if (col.renderHeader) {
+        // 說明圖示的 popover 靠 hover/focus，點它不該切換排序——攔在按鈕之前
+        const custom = col.renderHeader();
+        custom.addEventListener('click', e => {
+            if (e.target.closest('.lf-help')) e.stopPropagation();
+        });
+        btn.appendChild(custom);
+    } else {
+        const text = document.createElement('span');
+        text.textContent = col.title;
+        btn.appendChild(text);
+    }
 
     const caret = document.createElement('span');
     caret.className = 'lf-th-sort__caret';

@@ -17,7 +17,7 @@ public class AppSettings
 public class AiSettings
 {
     /// <summary>AI 服務提供者（Local / OpenAi / AzureOpenAi），預設 Local</summary>
-    public string Provider { get; set; } = "Local";
+    public string Provider { get; set; } = AiProviders.Local;
 
     /// <summary>llama.cpp 的 OpenAI 相容 API 位址。實際生效值優先讀「系統管理 > 設定」頁（<see cref="SystemSettings.AiBaseUrl"/>），此為 DB 尚未設定時的退路</summary>
     public string BaseUrl { get; set; } = "http://localhost:8080";
@@ -39,12 +39,7 @@ public class AiSettings
     /// DB 覆寫之後讀取才是事實——本機 provider 下，DB 存過但刻意清空 BaseUrl 時會覆寫成
     /// 空字串，即「刻意停用」。
     /// </summary>
-    public bool IsConfigured => Provider switch
-    {
-        "OpenAi" => !string.IsNullOrWhiteSpace(ApiKey),
-        "AzureOpenAi" => !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(AzureDeployment),
-        _ => !string.IsNullOrWhiteSpace(BaseUrl)
-    };
+    public bool IsConfigured => AiProviders.IsConfigured(Provider, BaseUrl, ApiKey, AzureDeployment);
 
     /// <summary>
     /// 需驗證的 API 端點所需金鑰（明碼，僅存在於執行期記憶體），發送時以 Authorization: Bearer 帶入。

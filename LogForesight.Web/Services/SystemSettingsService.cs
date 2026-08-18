@@ -1,3 +1,4 @@
+using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
@@ -67,7 +68,7 @@ public class SystemSettingsService : ISystemSettingsService
     public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "SiteHidden" };
 
     /// <summary>合法 AI 提供者名稱</summary>
-    public static readonly string[] ValidAiProviders = { "Local", "OpenAi", "AzureOpenAi" };
+    public static IReadOnlyList<string> ValidAiProviders => AiProviders.All;
 
     /// <summary>舊值遷移：既存 blob 裡的 Locked／GlobalFilter 一律視同新的 SiteHidden——
     /// 兩者語意都被新模式涵蓋（全站查詢層排除）且更嚴格一致，不需要区分。
@@ -211,7 +212,7 @@ public class SystemSettingsService : ISystemSettingsService
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
 
-        var aiProvider = string.IsNullOrWhiteSpace(request.AiProvider) ? "Local" : request.AiProvider.Trim();
+        var aiProvider = AiProviders.Normalize(request.AiProvider);
         var matchedProvider = ValidAiProviders.FirstOrDefault(p => string.Equals(p, aiProvider, StringComparison.OrdinalIgnoreCase));
         if (matchedProvider == null)
             throw DomainException.Validation("AI 服務提供者不合法。");
@@ -222,14 +223,14 @@ public class SystemSettingsService : ISystemSettingsService
         var hasApiKey = !string.IsNullOrWhiteSpace(request.AiApiKey) ||
                         (!string.IsNullOrEmpty(before.AiApiKeyEnc) && !request.ClearAiApiKey);
 
-        if (aiProvider == "OpenAi")
+        if (aiProvider == AiProviders.OpenAi)
         {
             if (!hasApiKey)
                 throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入 API 金鑰。");
             if (string.IsNullOrWhiteSpace(request.AiModel))
                 throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入模型名稱。");
         }
-        else if (aiProvider == "AzureOpenAi")
+        else if (aiProvider == AiProviders.AzureOpenAi)
         {
             if (string.IsNullOrWhiteSpace(request.AiBaseUrl))
                 throw DomainException.Validation("使用 Azure OpenAI 時，請輸入端點位址。");
@@ -265,7 +266,7 @@ public class SystemSettingsService : ISystemSettingsService
             else if (!string.IsNullOrEmpty(request.AiApiKey))
                 s.AiApiKeyEnc = CryptoHelper.Encrypt(request.AiApiKey);
             s.AiModel = string.IsNullOrWhiteSpace(request.AiModel)
-                ? (aiProvider == "Local" ? "local-model" : "")
+                ? AiProviders.DefaultModel(aiProvider)
                 : request.AiModel.Trim();
             s.AiAzureDeployment = request.AiAzureDeployment?.Trim() ?? "";
             s.AiAzureApiVersion = string.IsNullOrWhiteSpace(request.AiAzureApiVersion)
@@ -591,10 +592,10 @@ public class SystemSettingsService : ISystemSettingsService
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
-        AiProvider = string.IsNullOrWhiteSpace(s.AiProvider) ? "Local" : s.AiProvider,
+        AiProvider = AiProviders.Normalize(s.AiProvider),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
-        AiModel = string.IsNullOrWhiteSpace(s.AiModel) ? (string.IsNullOrWhiteSpace(s.AiProvider) || s.AiProvider == "Local" ? "local-model" : "") : s.AiModel,
+        AiModel = string.IsNullOrWhiteSpace(s.AiModel) ? AiProviders.DefaultModel(s.AiProvider) : s.AiModel,
         AiAzureDeployment = s.AiAzureDeployment,
         AiAzureApiVersion = string.IsNullOrWhiteSpace(s.AiAzureApiVersion) ? "2024-10-21" : s.AiAzureApiVersion,
         InitialHistoryDays = s.InitialHistoryDays,

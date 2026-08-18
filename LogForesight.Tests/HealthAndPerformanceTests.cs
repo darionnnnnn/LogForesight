@@ -193,8 +193,11 @@ public class HealthServiceTests : IDisposable
                 RetryInterval = TimeSpan.Zero
             };
 
+            // 走 BackgroundService 的公開入口而非測試墊片：StartAsync 會啟動 ExecuteAsync 並回傳
+            // 代表它的 Task（ExecuteTask），等它結束就等於等重試迴圈跑完
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await service.RunAsync(cts.Token);
+            await service.StartAsync(cts.Token);
+            await service.ExecuteTask!;
 
             Assert.Equal(IssueFirstSeenSeedHostedService.MaxRetries, service.Progress.Failures);
             Assert.Equal(IssueFirstSeenSeedStates.Failed, service.Progress.State);

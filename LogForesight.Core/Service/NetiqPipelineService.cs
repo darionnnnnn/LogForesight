@@ -819,10 +819,14 @@ public class NetiqPipelineService
         {
             foreach (var kvp in touches)
             {
+                // 逐欄合併而不是整筆二選一：ReportedAt 取較新，DisplayName 取非空的那個——
+                // 整筆丟掉會連帶丟掉另一筆才有的顯示名稱，容錯機制自己先丟一半資料
                 _hostTouches.AddOrUpdate(
                     kvp.Key,
                     kvp.Value,
-                    (_, existing) => existing.ReportedAt >= kvp.Value.ReportedAt ? existing : kvp.Value);
+                    (_, existing) => new HostTouch(
+                        !string.IsNullOrWhiteSpace(existing.DisplayName) ? existing.DisplayName : kvp.Value.DisplayName,
+                        existing.ReportedAt >= kvp.Value.ReportedAt ? existing.ReportedAt : kvp.Value.ReportedAt));
             }
 
             Log.Warn(ex, "回報時間批次寫回失敗（{Count} 台），保留待下次 flush 重試：{Msg}",

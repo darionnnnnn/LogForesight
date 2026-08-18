@@ -8,7 +8,7 @@
 
 import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
-import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
+import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -270,7 +270,15 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (detail.aiPending) {
+    if (detail.aiPending && isAiRetryPending(detail.headline)) {
+        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：不能顯示成「分析中」——
+        // 那會讓人以為稍後重整就有，實際要靠排程「只補跑失敗或未執行」才補得回來
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning';
+        badge.textContent = 'AI 待補';
+        badge.title = 'AI 服務當時未回應，白話摘要從缺；可用排程頁「只補跑失敗或未執行」補回';
+        top.appendChild(badge);
+    } else if (detail.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
         const badge = document.createElement('span');

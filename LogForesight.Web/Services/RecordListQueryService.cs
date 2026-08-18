@@ -361,12 +361,12 @@ public class RecordListQueryService
         var fleetFirstSeen = _aggregates.FirstSeenFor(issues);
 
         // 規則白話說明：以篩選後留下的問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
-        var rules = LoadRules();
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
         var explanations = issues
             .Distinct()
             .ToDictionary(
                 i => i,
-                i => FindPlainExplanation(rules, i.Source, i.EventId));
+                i => KnownIssueCatalog.PlainExplanationFor(rules, i.Source, i.EventId));
 
         var groups = aggregates
             .Select(a => BuildIssueGroup(
@@ -914,23 +914,4 @@ public class RecordListQueryService
         _ => status
     };
 
-    private List<KnownIssueRule> LoadRules()
-    {
-        // 未注入規則儲存的只有測試組裝；Web 行程的靜態規則表是空的（見 KnownIssueCatalog.FindRule
-        // 的多載說明），所以兩條退路都回內建種子，不要回靜態表
-        if (_rules == null) return KnownIssueSeed.CreateRules();
-        var outcome = _rules.Load();
-        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
-        {
-            return rules;
-        }
-        return KnownIssueSeed.CreateRules();
-    }
-
-    private static string? FindPlainExplanation(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
-    {
-        var rule = KnownIssueCatalog.FindRule(rules, source, eventId);
-        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
-    }
 }
-

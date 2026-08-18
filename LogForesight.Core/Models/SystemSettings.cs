@@ -70,7 +70,7 @@ public class SystemSettings
     public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中" };
 
     /// <summary>AI 提供者（Local／OpenAi／AzureOpenAi）。預設為 Local（本機 OpenAI 相容端點）</summary>
-    public string AiProvider { get; set; } = "Local";
+    public string AiProvider { get; set; } = Configuration.AiProviders.Local;
 
     /// <summary>AI（llama.cpp／OpenAI 相容端點／Azure 端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";

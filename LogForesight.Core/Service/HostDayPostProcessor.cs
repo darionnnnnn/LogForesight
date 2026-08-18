@@ -20,8 +20,11 @@ internal static class MissingDateFinder
                 .ToList();
         }
 
+        // GroupBy 再取第一筆而非直接 ToDictionary：同一天若有重複列（合併主機／遷移期間），
+        // 撞鍵會在排程的計畫階段炸掉整台 Sentinel——這正是回饋二十輪 I 修掉的那類 500
         var records = store.ReadRecent(DateTime.Today.AddDays(-1), lookbackDays)
-            .ToDictionary(r => r.Date.Date);
+            .GroupBy(r => r.Date.Date)
+            .ToDictionary(g => g.Key, g => g.First());
 
         return Enumerable.Range(1, lookbackDays)
             .Select(offset => DateTime.Today.AddDays(-offset))

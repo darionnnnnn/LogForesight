@@ -149,7 +149,7 @@ public class ScheduleController : ControllerBase
         if (includesLocal)
         {
             var localHostName = Environment.MachineName;
-            var localRecords = recentRecords.Where(r => r.Host.Equals(localHostName, StringComparison.OrdinalIgnoreCase)).ToList();
+            var localRecords = recentRecords.Where(r => string.Equals(r.Host, localHostName, StringComparison.OrdinalIgnoreCase)).ToList();
             if (localRecords.Count < lookback || localRecords.Any(r => !r.AiAnalyzed || r.AiPending))
             {
                 count++;

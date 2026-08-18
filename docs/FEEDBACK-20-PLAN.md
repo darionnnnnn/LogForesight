@@ -73,6 +73,11 @@
 
 ## 3. 作業明細
 
+> 各階段驗收欄列出的測試名稱是委派時的**語意要求**，執行端實作時多以語意等價但不同的名稱命名
+> （如 `Reports_from大於to_回400` 實作為 `ReportsController_Summary_from大於to_回應驗證錯誤不交換`）。
+> 回頭查證請 grep 語意關鍵字而非全名；實際名稱以各 commit 的 diff 為準。
+
+
 ### 作業 A-階段 1：日期區間解析單一入口
 - **背景**：報表 366 天上限在 controller 算、swap 在 service 做，顛倒區間繞過上限；四個 controller 的 from/to 也各自解析。
 - **契約**：
@@ -197,7 +202,7 @@
 ### 作業 O-階段 1：AI 服務 provider 設定模型
 - **背景**：無 provider 概念；URL 硬編 `/v1/chat/completions`、Bearer only、model 寫死 `local-model`。
 - **契約**：
-  - 設定新增 `AiProvider`（`LocalCompatible`｜`OpenAI`｜`AzureOpenAI`，預設 LocalCompatible）、`AiModel`（OpenAI 用；本機預設 `local-model`）、`AiAzureDeployment`、`AiAzureApiVersion`（暫定預設 `2024-10-21`）；API key 沿用既有加密欄位。
+  - 設定新增 `AiProvider`（`Local`｜`OpenAi`｜`AzureOpenAi`，預設 Local；規劃原寫 LocalCompatible／OpenAI／AzureOpenAI，實作定為此三值）、`AiModel`（OpenAI 用；本機預設 `local-model`）、`AiAzureDeployment`、`AiAzureApiVersion`（暫定預設 `2024-10-21`）；API key 沿用既有加密欄位。
   - `AiTimeoutSeconds` 出廠預設改 1200（DB 模型與 appsettings 兩處），既有值不動。
   - Resolver／`AiSettings` 傳遞新欄位；`WebAiService` fingerprint 納入新欄位。
   - DB schema／migration 依既有 SystemSettings 儲存機制（若為 blob 則無 migration）。
@@ -281,10 +286,48 @@ EventId 4719」這種不含空白的長 token；flex 子項預設 `min-width: au
 
 ### 併回前的狀態
 
-外部審查 P1～P7 全數完成；使用者回饋 Q1～Q19 全數完成。
+外部審查 P1～P7 全數完成；使用者回饋 Q1～Q19 全數完成（Q17 的「共 N 台主機（去重）」前端顯示與
+Q8 的「AI 待補」headline 標記兩項在終檢才補上，見下方終檢段）。
 測試自 2168 綠／2174 總計成長到 2216 綠／2222 總計，全程 0 警告。
 前端四段（J／K／L／M）無自動化測試，改以瀏覽器實測驗收（DOM 量測與 CSS 規則比對），
 量測方法與數字記在各 commit 訊息內。
+
+### 併回前終檢（兩個獨立審查：程式碼／文件）
+
+**程式碼審查抓到、已修**：
+- `MailIssueDigest.overdueKeys` 仍以原始大小寫比對——作業 I 的同型漏網，我當初的註解推論是反的
+  （overdueKeys 來自 IssueKey 字串解析、帶原始大小寫；Aggregate 的 Source 是任一寫法，兩邊必然可能對不上），
+  逾期問題會靜默掉出「逾期」區。兩端都改用 `IssueProfile.KeyOf`。
+- 「依問題」的主機數／總次數失去排序：`renderTable` 裡 `sortKey` 與 `renderHeader` 互斥，K2 為了讓
+  說明圖示出來把 sortKey 刪了。改共用元件讓兩者共存（說明圖示點擊不觸發排序），sortKey 加回。
+- `IssueFirstSeenSeedHostedService` 把 stoppingToken 傳給 `Task.Run`：委派未開跑前 token 已取消會直接
+  丟 TaskCanceledException 逸出 ExecuteAsync（不在委派內的 catch 範圍），BackgroundService 預設會停站台。
+  改為不傳 token，取消由外層 while 與 Delay 負責；順帶移除純測試墊片 `RunAsync`，測試改走 `StartAsync`。
+- `FlushHostTouches` 失敗放回時整筆二選一，會丟掉另一筆才有的 DisplayName——改逐欄合併。
+- vs 基準的 cell 在 records.js 與 dashboard.js 各一份、外觀不同（K2 契約「共用 format」被做反）——
+  抽進 format.js 共用，儀表板重點問題現在也有三色徽章。
+- 規則載入退路（`LoadRules`＋`FindPlainExplanation`）在兩個 Web 服務逐字重複 20 行——收斂進
+  `KnownIssueCatalog.ResolveRules`／`PlainExplanationFor`。
+- AI provider 三個字面值散在七檔、`IsConfigured` 三路判定 Core／Web 各一份且大小寫比對方式不一致
+  （appsettings 寫 `"openai"` 時一份落本機分支、另一份組出 OpenAI 官方 URL）——新增
+  `AiProviders` 常數類，Normalize／DefaultModel／IsConfigured 只有一份。
+- `MissingDateFinder.Find(requireAi)` 的 `ToDictionary` 撞鍵無防禦（同一輪剛修過同型）、
+  `RunPreview` 的 `r.Host` 無 null 防護、三個檔案檔尾多餘空行、月曆「timeline 每日連續」的隱性前提補註解。
+
+**文件審查抓到、已修**：
+- **`DistinctHostCount` 後端做了、前端沒接，說明書卻已寫「畫面上看得到」**——這是本輪最嚴重的疏漏：
+  B2 加了欄位、K2 契約漏列、P 憑規劃定案直接寫進兩章說明書。Q17 的整個解法靠它。前端已補在
+  「共 N 個問題」旁。
+- AI 完全失敗的主機日 `AiPending=true` 會永久顯示「AI 分析中」——契約寫的「headline 註明 AI 待補」
+  agy 沒做、我驗收 N 時沒抓到。補 headline 標記，前端據此顯示「AI 待補」徽章（warning 色）與說明。
+- `visibleSeverities` 改必填未做，BACKLOG 條目卻刪了（債務消失）——條目改寫成「立場已定案、形狀未改」留下。
+- BACKLOG 漏「AI 測試連線」遞延；WEB-SPEC 漏日期區間規則／health detail 三欄／display API 欄位／
+  依問題 DTO 新欄／立即執行新旗標；說明書引號內 UI 文案與實際字串不符一處；manifest keyword
+  「AI待補」原本指向不存在的內容（補了功能就成立）。
+
+**審查說法經核實不成立、未改**：程式碼審查 1-1 稱「統計模式部署下本機主機會永久顯示 AI 分析中」——
+`ApplyOutcome` 只在 `workItem != null`（needsAi）時才呼叫，統計模式走另一條路徑不進它。
+但同一條裡「AI 真的失敗時顯示成分析中」成立，已依上述修正。
 
 **尚待人工驗收**：需登入才看得到的頁面我無法自行操作（不會自建帳號或輸入密碼），
 以下請實機確認——問題查詢「依問題」六欄改版的實際觀感、主機詳情月曆時間軸與高亮連動、

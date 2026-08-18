@@ -51,6 +51,10 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
             Progress.State = IssueFirstSeenSeedStates.Running;
             IssueFirstSeenSeedMergeOutcome? outcome = null;
 
+            // 不把 stoppingToken 傳給 Task.Run：委派尚未開跑前 token 已取消時，Task.Run 會直接回
+            // canceled task，await 就丟 TaskCanceledException——那不在委派內的 catch 範圍，
+            // BackgroundService 預設會當成未處理例外把站台停掉。取消由外層 while 條件與
+            // Task.Delay 負責，合併本身跑到一半不能中斷（那是一段 SQL）
             await Task.Run(() =>
             {
                 try
@@ -65,7 +69,7 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
                     Log.Error(ex, "[SQL] lf_issue_first_seen 冪等合併失敗（第 {Failures}/{Max} 次）：{Msg}",
                         Progress.Failures, MaxRetries, ex.Message);
                 }
-            }, stoppingToken);
+            });
 
             if (outcome != null)
             {
@@ -97,7 +101,6 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
         }
     }
 
-    internal async Task RunAsync(CancellationToken stoppingToken) => await ExecuteAsync(stoppingToken);
 }
 
 /// <summary>首見日合併進度與狀態（供 /api/health/detail 申報）</summary>

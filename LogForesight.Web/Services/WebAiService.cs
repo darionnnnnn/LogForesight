@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Configuration;
 using LogForesight.Web.Configuration;
 using NLog;
 
@@ -72,23 +73,17 @@ public class WebAiService : IWebAiService
     /// </summary>
     private static (string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced) BuildSnapshot(SystemSettings db)
     {
-        var provider = string.IsNullOrWhiteSpace(db.AiProvider) ? "Local" : db.AiProvider.Trim();
-        var model = string.IsNullOrWhiteSpace(db.AiModel) ? (provider == "Local" ? "local-model" : "") : db.AiModel.Trim();
+        var provider = AiProviders.Normalize(db.AiProvider);
+        var model = string.IsNullOrWhiteSpace(db.AiModel) ? AiProviders.DefaultModel(provider) : db.AiModel.Trim();
         var apiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? "2024-10-21" : db.AiAzureApiVersion.Trim();
         return (provider, EffectiveBaseUrl(db), db.AiApiKeyEnc ?? "", model, db.AiAzureDeployment?.Trim() ?? "", apiVersion, AdvancedFingerprint(db));
     }
 
-    /// <summary>
-    /// AI 是否算設定完成——三個 provider 的必填欄位不同（本機看位址、OpenAI 官方看金鑰、
-    /// Azure 要位址＋部署名稱）。<see cref="Available"/> 與兩個客戶端工廠共用這一份判定，
-    /// 分開寫三份遲早漂移成「首頁說可用、實際建不出客戶端」。
-    /// </summary>
-    private static bool IsConfigured(string provider, string baseUrl, string keyEnc, string azureDeployment) => provider switch
-    {
-        "OpenAi" => !string.IsNullOrWhiteSpace(keyEnc),
-        "AzureOpenAi" => !string.IsNullOrWhiteSpace(baseUrl) && !string.IsNullOrWhiteSpace(azureDeployment),
-        _ => !string.IsNullOrWhiteSpace(baseUrl)
-    };
+    /// <summary>「AI 是否算設定完成」走 Core 的唯一定義（<see cref="AiProviders.IsConfigured"/>），
+    /// 與批次端的 <c>AiSettings.IsConfigured</c> 同一份——分開寫遲早漂移成
+    /// 「首頁說可用、實際建不出客戶端」。這裡拿到的是金鑰密文，判定只看有沒有值，不解密。</summary>
+    private static bool IsConfigured(string provider, string baseUrl, string keyEnc, string azureDeployment) =>
+        AiProviders.IsConfigured(provider, baseUrl, keyEnc, azureDeployment);
 
     // 本類別是 Singleton，但 AI 位址／金鑰／進階參數可在設定頁隨時改：每次取用時比對 DB 目前值，
     // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）

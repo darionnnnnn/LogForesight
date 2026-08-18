@@ -19,7 +19,7 @@ import {
 } from '../core/ui.js';
 import {
     riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber,
-    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal
+    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -451,8 +451,13 @@ function renderActiveConditions(filters) {
 const VIEW_UNIT = { detail: '筆', host: '台主機', date: '天', issue: '個問題' };
 
 function render() {
-    document.getElementById('result-count').textContent =
-        lastResult.total > 0 ? `共 ${lastResult.total} ${VIEW_UNIT[currentView] ?? '筆'}` : '';
+    // 依問題視角多帶「共 N 台主機（去重）」（回饋二十輪 B2／終檢補接）：列表各列的主機數
+    // 是各問題自己的台數、加總會大於儀表板風險類型卡的去重數，這個才是與卡片同一口徑的數字
+    let countText = lastResult.total > 0 ? `共 ${lastResult.total} ${VIEW_UNIT[currentView] ?? '筆'}` : '';
+    if (currentView === 'issue' && lastResult.total > 0 && Number.isInteger(lastResult.distinctHostCount)) {
+        countText += `，共 ${lastResult.distinctHostCount} 台主機（去重）`;
+    }
+    document.getElementById('result-count').textContent = countText;
 
     if (currentView === 'host') renderHostView();
     else if (currentView === 'date') renderDateView();
@@ -514,6 +519,13 @@ function headlineCell(record) {
         badge.className = 'lf-badge lf-badge--secondary me-1';
         badge.textContent = 'AI';
         badge.title = 'AI 產出摘要';
+        wrap.appendChild(badge);
+    } else if (record.aiPending && isAiRetryPending(record.headline)) {
+        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：與「分析中」區分開
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning me-1';
+        badge.textContent = 'AI 待補';
+        badge.title = 'AI 服務當時未回應，可用排程頁「只補跑失敗或未執行」補回';
         wrap.appendChild(badge);
     } else if (record.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
@@ -664,13 +676,14 @@ function renderIssueView() {
         {
             title: '主機數',
             className: 'text-end',
+            sortKey: 'hostCount', sortDefaultDir: 'desc',
             renderHeader: () => headerWithHelp('主機數', '在本次查詢日期區間內，曾出現此問題的相異主機總台數。', '主機數'),
             render: i => String(i.hostCount)
         },
         {
             title: 'vs 基準',
             className: 'text-nowrap',
-            renderHeader: () => headerWithHelp('vs 基準', '最近一次出現時的受影響主機數，與過去 30 天歷史中位數（基準台數/日）的比較。倍數大於等於 2（紅色）代表異常擴散，1 到 2 之間（灰色）為正常波動，小於 1（收斂）代表影響範圍已低於平時基準。', 'vs 基準線'),
+            renderHeader: () => headerWithHelp('vs 基準', '最近一次出現時的受影響主機數，與過去 30 天歷史中位數（基準台數/日）的比較。倍數大於等於 2（紅色）代表異常擴散，1 到 2 之間（灰色）為正常波動，小於 1（綠色「收斂」）代表影響範圍已低於平時基準。', 'vs 基準線'),
             render: i => issueBaselineCell(i)
         },
         {
@@ -688,6 +701,7 @@ function renderIssueView() {
         {
             title: '總次數',
             className: 'text-end',
+            sortKey: 'totalCount', sortDefaultDir: 'desc',
             renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
             render: i => formatNumber(i.totalCount)
         },
@@ -888,54 +902,6 @@ function issueFirstSeenCell(group) {
     return wrap;
 }
 
-/**
- * 機房級基準線：第一行顯示「基準 N 台/日 → M 台」，第二行顯示倍數徽章。
- * 大於等於 2 為危險色，1 到 2 為中性色，小於 1 為收斂。
- */
-function issueBaselineCell(group) {
-    const wrap = document.createElement('div');
-    const noBaseline = group.baselineOccurrenceDays < 3 || group.baselineMedianHostCount == null;
-
-    if (noBaseline) {
-        wrap.className = 'small text-muted';
-        wrap.textContent = '新問題，無基準';
-        wrap.title = '過去 30 天出現不足 3 天，視為新問題，尚無基準可比';
-        return wrap;
-    }
-
-    const median = Number.isInteger(group.baselineMedianHostCount)
-        ? String(group.baselineMedianHostCount)
-        : group.baselineMedianHostCount.toFixed(1);
-    const multiplier = group.baselineDeviationMultiplier;
-
-    const line1 = document.createElement('div');
-    line1.className = 'small lf-mono';
-    line1.textContent = `基準 ${median} 台/日 → ${group.baselineLatestHostCount} 台`;
-    wrap.appendChild(line1);
-
-    if (multiplier != null) {
-        const line2 = document.createElement('div');
-        line2.className = 'mt-1';
-        const m = multiplier.toFixed(1);
-        const tooltip = `基準倍數（最近出現主機數 ÷ 過去 30 天基準中位數）：大於 1 表示影響擴大（≥2 為異常擴散）；小於 1（如 ×${m}）表示影響台數低於平時基準，情況正在收斂。`;
-
-        let badge;
-        if (multiplier >= 2) {
-            badge = statusBadge(`×${m} 擴散`, 'danger', { title: tooltip });
-        } else if (multiplier >= 1) {
-            badge = statusBadge(`×${m} 正常`, 'neutral', { title: tooltip });
-        } else {
-            // 收斂用 success 而非 neutral：neutral/secondary/light 三個變體樣式相同，
-            // 都用 neutral 的話「正常」與「收斂」在畫面上長得一模一樣，等於沒有區分。
-            // 影響台數低於基準本來就是好消息，淡綠底語意也對
-            badge = statusBadge(`×${m} 收斂`, 'success', { title: tooltip });
-        }
-        line2.appendChild(badge);
-        wrap.appendChild(line2);
-    }
-
-    return wrap;
-}
 
 /**
  * 出現密度：出現天數 ÷ 期間天數（§10.3）。

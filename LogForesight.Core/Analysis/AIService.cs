@@ -8,6 +8,8 @@ using NLog;
 using Polly;
 using Polly.Retry;
 
+using LogForesight.Core.Configuration;
+
 namespace LogForesight.Core.Analysis;
 
 /// <summary>AI 呼叫的結構化結果：錯誤與正常內容分離，呼叫端不需靠字串前綴判斷失敗</summary>
@@ -87,10 +89,10 @@ public class AIService : IAiService
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
 
-        _provider = string.IsNullOrWhiteSpace(settings.Provider) ? "Local" : settings.Provider.Trim();
-        _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? "local-model" : settings.Model.Trim();
+        _provider = AiProviders.Normalize(settings.Provider);
+        _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? AiProviders.DefaultModel(_provider) : settings.Model.Trim();
 
-        if (string.Equals(_provider, "AzureOpenAi", StringComparison.OrdinalIgnoreCase))
+        if (_provider == AiProviders.AzureOpenAi)
         {
             var baseUrl = settings.BaseUrl.TrimEnd('/');
             var deployment = settings.AzureDeployment?.Trim() ?? "";
@@ -101,7 +103,7 @@ public class AIService : IAiService
                 _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("api-key", settings.ApiKey);
             }
         }
-        else if (string.Equals(_provider, "OpenAi", StringComparison.OrdinalIgnoreCase))
+        else if (_provider == AiProviders.OpenAi)
         {
             var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
             _requestUrl = $"{baseUrl}/v1/chat/completions";
@@ -216,7 +218,7 @@ public class AIService : IAiService
                 label, estimatedPromptTokens, effectiveMaxTokens, PromptBudget.UsableTokens);
         }
 
-        var isAzure = string.Equals(_provider, "AzureOpenAi", StringComparison.OrdinalIgnoreCase);
+        var isAzure = _provider == AiProviders.AzureOpenAi;
         var effectiveModel = isAzure ? null : (!string.IsNullOrWhiteSpace(model) ? model : _defaultModel);
 
         var requestBody = new OpenAIRequest

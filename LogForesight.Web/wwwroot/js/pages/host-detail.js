@@ -154,7 +154,9 @@ function renderTimeline(detail) {
         const grid = document.createElement('div');
         grid.className = 'lf-calendar__grid';
 
-        // 月初以空白補齊對齊星期（一～日：週一為 0，週日為 6）
+        // 月初以空白補齊對齊星期（一～日：週一為 0，週日為 6）。
+        // 前提：detail.timeline 是後端產生的**連續每日**陣列（缺分析的日子也會以 hasRecord=false 佔位），
+        // 所以只補月首、之後逐格順排就對得上星期。若日後改成稀疏陣列，這裡要改成依日數字算 grid 位置
         const firstDay = days[0];
         const [firstY, firstM, firstD] = firstDay.date.split('-').map(Number);
         const firstDate = new Date(firstY, firstM - 1, firstD);

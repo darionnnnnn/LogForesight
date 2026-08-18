@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+
 namespace LogForesight.Core.Analysis;
 
 public enum IssueCategory
@@ -309,6 +311,30 @@ public static class KnownIssueCatalog
     /// 明確只看 Platform="windows" 規則——Linux 規則的 SourcePattern 恆空，
     /// 顯式排除比依賴「空字串 Contains 恆真但 EventIds 恆空」的隱含行為清楚（docs/LINUX-RULES.md §1.2）。
     /// </summary>
+    /// <summary>
+    /// Web 端取得「目前生效規則清單」的唯一入口（回饋二十輪終檢收斂）：有規則儲存就讀它
+    /// （反映 Web 編輯），讀不到或為空、或根本沒注入（測試組裝）都退回內建種子——
+    /// 不要退回靜態 <see cref="Rules"/>，Web 行程刻意不初始化它、在那裡是空的。
+    /// 這個退路策略是有語意的決策，兩個消費端各寫一份遲早漂移成兩個畫面顯示不同的說明。
+    /// </summary>
+    public static List<KnownIssueRule> ResolveRules(IKnownIssueRuleStore? store)
+    {
+        if (store == null) return KnownIssueSeed.CreateRules();
+        var outcome = store.Load();
+        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
+        {
+            return rules;
+        }
+        return KnownIssueSeed.CreateRules();
+    }
+
+    /// <summary>命中規則的白話說明；未命中或規則沒寫說明時為 null（讓呼叫端據此決定要不要佔行）。</summary>
+    public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = FindRule(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
     public static KnownIssueRule? FindRule(string source, int eventId) => FindRule(Rules, source, eventId);
 
     /// <summary>

@@ -644,9 +644,12 @@ public class LogAnalysisService
         // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
         // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
         // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
+        // headline 帶「AI 待補」是刻意的（回饋二十輪 N）：ApplyOutcome 會把這種主機日標為
+        // AiPending 讓「只補跑失敗或未執行」撿得到，但前端對 AiPending 一律顯示「AI 分析中」——
+        // 沒有這個標記，失敗的主機日會永久顯示成「分析中」，使用者看不出它其實已經失敗
         Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", date, result.Error);
-        return ("今日分析摘要暫缺（AI 服務未回應）",
-            $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。",
+        return ("今日分析摘要暫缺（AI 服務未回應，AI 待補）",
+            $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。可用排程頁「只補跑失敗或未執行」補回。",
             string.Empty, string.Empty, ruleRisk, null, false);
     }
 
@@ -662,6 +665,8 @@ public class LogAnalysisService
         record.RiskLevel = outcome.RiskLevel;
         record.RiskBasis = outcome.RiskBasis;
         record.AiAnalyzed = outcome.AiAnalyzed;
+        // AI 失敗且非低風險才標待補（回饋二十輪 N）：低風險日本來就不會呼叫 AI
+        // （見 needsAi 的判準），標了會讓「只補跑」把它們全撿回來重跑一遍統計
         record.AiPending = !outcome.AiAnalyzed && record.RiskLevel != RiskLevels.Low;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
         record.ScreeningNotes = outcome.ScreeningNotes;
