@@ -1451,9 +1451,21 @@ a.lf-stat:hover .lf-card,
 }
 .table > tbody > tr.lf-row-link:focus-visible,
 .table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
+.lf-row-expand-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: .4em;
+}
+.lf-row-expand-cell__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .lf-row-caret {
     display: inline-flex;
-    margin-right: .4em;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: .15em;
     color: var(--lf-text-muted);
     transform: rotate(-90deg);
     transition: transform .15s ease;

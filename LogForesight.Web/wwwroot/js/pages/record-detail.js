@@ -1507,10 +1507,13 @@ function trendAlertItem(ref) {
 
     if (canMaintainRules && ref.kind !== 'signature') {
         const volumeKind = ref.kind === 'volume-audit' ? 'audit' : 'error';
-        item.appendChild(button('', {
+        const right = document.createElement('span');
+        right.className = 'd-flex align-items-center gap-1 flex-shrink-0';
+        right.appendChild(button('', {
             variant: 'outline-danger', size: 'sm', icon: 'bell-slash', title: '抑制此類告警（本主機）',
             onClick: () => suppressVolumeAlert(volumeKind)
         }));
+        item.appendChild(right);
     }
     return item;
 }
