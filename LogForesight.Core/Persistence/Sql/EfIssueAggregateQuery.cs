@@ -446,6 +446,16 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return result;
     }
 
+    private sealed record TopIssueSummary(
+        long RecordId, string LogName, string SourceName, int EventId,
+        int EntryType, int SeverityRank, string EventKey);
+
+    private static string IssueKeyFor(string logName, string sourceName, int eventId, int entryType, string? eventKey)
+    {
+        var baseKey = IssueSignatureKey.For(logName, sourceName, eventId, (System.Diagnostics.EventLogEntryType)entryType);
+        return string.IsNullOrEmpty(eventKey) ? baseKey : $"{baseKey}|{eventKey}";
+    }
+
     private sealed record DayHandlingRaw(
         long HostId, DateTime RecordDate, string? DayLevelStatus, long? DayHandlerId,
         int Total, int Closed, bool AnyInProgress, bool HasCaseHandler,
@@ -457,6 +467,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         List<int> unhandledRanks, DateTime todayForOverdue,
         IReadOnlySet<string>? riskLevels = null)
     {
+        var sw = Stopwatch.StartNew();
+
         var recordsQuery = ctx.DailyRecords.AsNoTracking()
             .Where(r => r.RecordDate >= f && r.RecordDate <= t);
 
@@ -479,85 +491,193 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             recordsQuery = recordsQuery.Where(r => !excludedHostIds.Contains(r.HostId));
         }
 
-        var q = from dr in recordsQuery
-                let hostNameKey = dr.HostName.ToUpper()
+        var hostDays = (from dr in recordsQuery
+                        let hostNameKey = dr.HostName.ToUpper()
+                        join rh in ctx.RecordHandlings.AsNoTracking()
+                            on new { HostNameKey = hostNameKey, dr.RecordDate } equals new { rh.HostNameKey, rh.RecordDate } into rhs
+                        from rh in rhs.DefaultIfEmpty()
+                        select new
+                        {
+                            dr.RecordId,
+                            dr.HostId,
+                            dr.RecordDate,
+                            HostNameKey = hostNameKey,
+                            DayLevelStatus = rh.Status,
+                            DayHandlerId = (long?)rh.HandlerId,
+                            DayDueDate = (DateTime?)rh.DueDate
+                        }).ToList();
 
-                join rh in ctx.RecordHandlings.AsNoTracking()
-                    on new { HostNameKey = hostNameKey, dr.RecordDate } equals new { rh.HostNameKey, rh.RecordDate } into rhs
-                from rh in rhs.DefaultIfEmpty()
+        if (hostDays.Count == 0)
+        {
+            Log.Debug("[SQL] IssueAggregate.GetDayHandlingRaw（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ 0 筆、{Ms}ms",
+                f, t, sw.ElapsedMilliseconds);
+            _performance?.Record("issues:GetDayHandlingRaw", sw.ElapsedMilliseconds);
+            return new List<DayHandlingRaw>();
+        }
 
-                let total = ctx.TopIssues.AsNoTracking()
-                    .Count(ti => ti.RecordId == dr.RecordId &&
-                                 (unhandledRanks.Contains(ti.SeverityRank) ||
-                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
-                                      ih.HostNameKey == hostNameKey &&
-                                      ih.RecordDate == dr.RecordDate &&
-                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))))
+        // 2. 「嚴重度落在 unhandledRanks 的問題數」以 SQL 端 GROUP BY RecordId 直接算出
+        var unhandledCounts = (from ti in ctx.TopIssues.AsNoTracking()
+                               join dr in recordsQuery on ti.RecordId equals dr.RecordId
+                               where unhandledRanks.Contains(ti.SeverityRank)
+                               group ti by ti.RecordId into g
+                               select new { RecordId = g.Key, Count = g.Count() })
+                              .ToDictionary(x => x.RecordId, x => x.Count);
 
-                let closed = ctx.TopIssues.AsNoTracking()
-                    .Count(ti => ti.RecordId == dr.RecordId &&
-                                 (unhandledRanks.Contains(ti.SeverityRank) ||
-                                  ctx.IssueHandlings.AsNoTracking().Any(ih =>
-                                      ih.HostNameKey == hostNameKey &&
-                                      ih.RecordDate == dr.RecordDate &&
-                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType))) &&
-                                 ctx.IssueHandlings.AsNoTracking().Any(ih =>
-                                      ih.HostNameKey == hostNameKey &&
-                                      ih.RecordDate == dr.RecordDate &&
-                                      ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                          ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                          : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
-                                      (ih.Status == HandlingStatuses.Resolved || ih.Status == HandlingStatuses.WontFix || ih.Status == HandlingStatuses.FalsePositive || ih.Status == HandlingStatuses.KnownNoise)))
+        // 3. 處理狀態列與案件列：只取這批主機日／主機對應的那些
+        var hostNameKeys = hostDays.Select(x => x.HostNameKey).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                let anyInProgress = ctx.TopIssues.AsNoTracking()
-                    .Any(ti => ti.RecordId == dr.RecordId &&
-                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
-                                   ih.HostNameKey == hostNameKey &&
-                                   ih.RecordDate == dr.RecordDate &&
-                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
-                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing || ih.Status == HandlingStatuses.Escalated)))
+        var issueHandlings = ctx.IssueHandlings.AsNoTracking()
+            .Where(ih => ih.RecordDate >= f && ih.RecordDate <= t)
+            .Where(ih => hostNameKeys.Contains(ih.HostNameKey))
+            .Select(ih => new
+            {
+                ih.HostNameKey,
+                ih.RecordDate,
+                ih.IssueKey,
+                ih.Status,
+                ih.DueDate
+            })
+            .ToList();
 
-                let anyCaseHandler = ctx.TopIssues.AsNoTracking()
-                    .Any(ti => ti.RecordId == dr.RecordId &&
-                               ctx.IssueCases.AsNoTracking().Any(ic =>
-                                   ic.HostNameKey == hostNameKey &&
-                                   ic.ClosedAt == null &&
-                                   ic.HandlerId != null &&
-                                   ic.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType)))
+        var openCases = ctx.IssueCases.AsNoTracking()
+            .Where(ic => ic.ClosedAt == null && ic.HandlerId != null)
+            .Where(ic => hostNameKeys.Contains(ic.HostNameKey))
+            .Select(ic => new
+            {
+                ic.HostNameKey,
+                ic.IssueKey
+            })
+            .ToList();
 
-                let anyOverdueIssue = ctx.TopIssues.AsNoTracking()
-                    .Any(ti => ti.RecordId == dr.RecordId &&
-                               ctx.IssueHandlings.AsNoTracking().Any(ih =>
-                                   ih.HostNameKey == hostNameKey &&
-                                   ih.RecordDate == dr.RecordDate &&
-                                   ih.IssueKey == (ti.EventKey != null && ti.EventKey != ""
-                                       ? ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType + "|" + ti.EventKey
-                                       : ti.LogName + "|" + ti.SourceName + "|" + ti.EventId + "|" + ti.EntryType) &&
-                                   ih.DueDate != null && ih.DueDate < todayForOverdue &&
-                                   (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing)))
+        var handlingsByHostDay = issueHandlings
+            .GroupBy(ih => (ih.HostNameKey.ToUpperInvariant(), ih.RecordDate))
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(x => x.IssueKey, StringComparer.Ordinal)
+                      .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal)
+            );
 
-                select new DayHandlingRaw(
-                    dr.HostId,
-                    dr.RecordDate,
-                    rh.Status,
-                    rh.HandlerId,
-                    total,
-                    closed,
-                    anyInProgress,
-                    anyCaseHandler,
-                    rh.DueDate,
-                    anyOverdueIssue
-                );
+        var casesByHost = openCases
+            .GroupBy(ic => ic.HostNameKey.ToUpperInvariant())
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.IssueKey).ToHashSet(StringComparer.Ordinal)
+            );
 
-        return q.ToList();
+        // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵
+        var hostDaysNeedingDetail = hostDays
+            .Where(d => handlingsByHostDay.ContainsKey((d.HostNameKey.ToUpperInvariant(), d.RecordDate)) ||
+                        casesByHost.ContainsKey(d.HostNameKey.ToUpperInvariant()))
+            .ToList();
+
+        var recordIdsNeedingDetail = hostDaysNeedingDetail.Select(d => d.RecordId).ToHashSet();
+
+        var detailsByRecordId = new Dictionary<long, List<TopIssueSummary>>();
+        if (recordIdsNeedingDetail.Count > 0)
+        {
+            var topIssuesDetail = ctx.TopIssues.AsNoTracking()
+                .Where(ti => recordIdsNeedingDetail.Contains(ti.RecordId))
+                .Select(ti => new TopIssueSummary(
+                    ti.RecordId,
+                    ti.LogName,
+                    ti.SourceName,
+                    ti.EventId,
+                    ti.EntryType,
+                    ti.SeverityRank,
+                    ti.EventKey
+                ))
+                .ToList();
+
+            detailsByRecordId = topIssuesDetail
+                .GroupBy(ti => ti.RecordId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        var unhandledRanksSet = unhandledRanks.ToHashSet();
+        var result = new List<DayHandlingRaw>(hostDays.Count);
+
+        foreach (var hd in hostDays)
+        {
+            var hostKey = hd.HostNameKey.ToUpperInvariant();
+            var dayKey = (hostKey, hd.RecordDate);
+
+            handlingsByHostDay.TryGetValue(dayKey, out var dayHandlings);
+            casesByHost.TryGetValue(hostKey, out var hostOpenCases);
+
+            int total;
+            int closed = 0;
+            bool anyInProgress = false;
+            bool anyCaseHandler = false;
+            bool anyOverdueIssue = false;
+
+            if (dayHandlings == null && hostOpenCases == null)
+            {
+                total = unhandledCounts.GetValueOrDefault(hd.RecordId, 0);
+            }
+            else
+            {
+                total = 0;
+                if (detailsByRecordId.TryGetValue(hd.RecordId, out var issues))
+                {
+                    foreach (var ti in issues)
+                    {
+                        var issueKey = IssueKeyFor(ti.LogName, ti.SourceName, ti.EventId, ti.EntryType, ti.EventKey);
+                        var ih = dayHandlings != null && dayHandlings.TryGetValue(issueKey, out var found) ? found : null;
+                        bool hasHandling = ih != null;
+                        bool isCounted = unhandledRanksSet.Contains(ti.SeverityRank) || hasHandling;
+
+                        if (isCounted)
+                        {
+                            total++;
+                            if (hasHandling && IssueHandlingStatuses.IsClosed(ih!.Status))
+                            {
+                                closed++;
+                            }
+                        }
+
+                        if (hasHandling)
+                        {
+                            if (ih!.Status == HandlingStatuses.InProgress ||
+                                ih.Status == IssueHandlingStatuses.Observing ||
+                                ih.Status == HandlingStatuses.Escalated)
+                            {
+                                anyInProgress = true;
+                            }
+
+                            if (ih.DueDate.HasValue && ih.DueDate.Value.Date < todayForOverdue.Date &&
+                                (ih.Status == HandlingStatuses.InProgress || ih.Status == IssueHandlingStatuses.Observing))
+                            {
+                                anyOverdueIssue = true;
+                            }
+                        }
+
+                        if (hostOpenCases != null && hostOpenCases.Contains(issueKey))
+                        {
+                            anyCaseHandler = true;
+                        }
+                    }
+                }
+            }
+
+            result.Add(new DayHandlingRaw(
+                hd.HostId,
+                hd.RecordDate,
+                hd.DayLevelStatus,
+                hd.DayHandlerId,
+                total,
+                closed,
+                anyInProgress,
+                anyCaseHandler,
+                hd.DayDueDate,
+                anyOverdueIssue
+            ));
+        }
+
+        Log.Debug("[SQL] IssueAggregate.GetDayHandlingRaw（{From:yyyy-MM-dd}~{To:yyyy-MM-dd}）→ {Count} 筆、{Ms}ms",
+            f, t, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:GetDayHandlingRaw", sw.ElapsedMilliseconds);
+
+        return result;
     }
 
     public List<DayHandlingProjection> DeriveDayHandling(

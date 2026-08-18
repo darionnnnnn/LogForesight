@@ -71,7 +71,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
         ctx.SaveChanges();
     }
 
-    private void AddIssueHandling(string host, DateTime date, LogIssueSignature issue, string status)
+    private void AddIssueHandling(string host, DateTime date, LogIssueSignature issue, string status, DateTime? dueDate = null)
     {
         using var ctx = _fx.NewContext();
         var key = IssueSignatureKey.For(issue);
@@ -79,6 +79,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
         if (row != null)
         {
             row.Status = status;
+            row.DueDate = dueDate;
             row.UpdatedAt = DateTime.UtcNow;
         }
         else
@@ -90,6 +91,7 @@ public class DayHandlingSqlDerivationTests : IDisposable
                 RecordDate = date,
                 IssueKey = key,
                 Status = status,
+                DueDate = dueDate,
                 UpdatedAt = DateTime.UtcNow
             });
         }
@@ -329,4 +331,95 @@ public class DayHandlingSqlDerivationTests : IDisposable
         Assert.Single(sqlResult);
         Assert.Equal(2, sqlResult[0].HostId);
     }
+
+    [Fact]
+    public void 結案判定_嚴重度落在未處理母體與靠處理狀態列納入之兩分支皆正確()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var issueHigh = Issue("disk", 153, severity: IssueSeverity.High);
+        var issueLow = Issue("net", 200, severity: IssueSeverity.Low);
+        Add(1, "A", d0, RiskLevels.High, issueHigh, issueLow);
+
+        var unhandled = new HashSet<IssueSeverity> { IssueSeverity.High };
+
+        // 分支一：只有 High 被標為 Resolved，Low 未標記
+        // Total = 1 (只有 High 納入母體), Closed = 1 -> Resolved
+        AddIssueHandling("A", d0, issueHigh, IssueHandlingStatuses.Resolved);
+        var sqlResult1 = Query().DeriveDayHandling(d0, d0, null, unhandled, Array.Empty<long>());
+        Assert.Single(sqlResult1);
+        Assert.Equal(HandlingStatuses.Resolved, sqlResult1[0].DayStatus);
+
+        // 分支二：Low 也被標為 Resolved（靠處理狀態列納入母體）
+        // Total = 2 (High + Low 均納入), Closed = 2 -> Resolved
+        AddIssueHandling("A", d0, issueLow, IssueHandlingStatuses.Resolved);
+        var sqlResult2 = Query().DeriveDayHandling(d0, d0, null, unhandled, Array.Empty<long>());
+        Assert.Single(sqlResult2);
+        Assert.Equal(HandlingStatuses.Resolved, sqlResult2[0].DayStatus);
+
+        // 分支二延伸：Low 被標為 Resolved，但 High 被重設為未標記（重設為 open）
+        // Total = 2 (High + Low 均納入), Closed = 1 -> InProgress
+        AddIssueHandling("A", d0, issueHigh, IssueHandlingStatuses.Open);
+        var sqlResult3 = Query().DeriveDayHandling(d0, d0, null, unhandled, Array.Empty<long>());
+        Assert.Single(sqlResult3);
+        Assert.Equal(HandlingStatuses.InProgress, sqlResult3[0].DayStatus);
+    }
+
+    [Fact]
+    public void 逾期判定_問題層級逾期日期已過為真且未到為假()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var today = new DateTime(2026, 8, 10);
+        var issue1 = Issue("disk", 153, severity: IssueSeverity.High);
+        Add(1, "A", d0, RiskLevels.High, issue1);
+
+        var unhandled = new HashSet<IssueSeverity> { IssueSeverity.High };
+
+        // 逾期情況：處理中且 DueDate 為 8/8 < today 8/10 -> overdueCount = 1
+        AddIssueHandling("A", d0, issue1, IssueHandlingStatuses.InProgress, dueDate: new DateTime(2026, 8, 8));
+        var resultOverdue = Query().AggregateDayTodo(d0, d0, null, unhandled, Array.Empty<long>(), today);
+        Assert.Equal(1, resultOverdue.OverdueCount);
+
+        // 未逾期情況：處理中且 DueDate 為 8/12 > today 8/10 -> overdueCount = 0
+        AddIssueHandling("A", d0, issue1, IssueHandlingStatuses.InProgress, dueDate: new DateTime(2026, 8, 12));
+        var resultNotOverdue = Query().AggregateDayTodo(d0, d0, null, unhandled, Array.Empty<long>(), today);
+        Assert.Equal(0, resultNotOverdue.OverdueCount);
+
+        // 觀察到期情況：觀察中且 DueDate 為 8/5 < today 8/10 -> overdueCount = 1
+        AddIssueHandling("A", d0, issue1, IssueHandlingStatuses.Observing, dueDate: new DateTime(2026, 8, 5));
+        var resultObsExpired = Query().AggregateDayTodo(d0, d0, null, unhandled, Array.Empty<long>(), today);
+        Assert.Equal(1, resultObsExpired.OverdueCount);
+
+        // 觀察未到期情況：觀察中且 DueDate 為 8/10 == today 8/10 -> overdueCount = 0
+        AddIssueHandling("A", d0, issue1, IssueHandlingStatuses.Observing, dueDate: new DateTime(2026, 8, 10));
+        var resultObsActive = Query().AggregateDayTodo(d0, d0, null, unhandled, Array.Empty<long>(), today);
+        Assert.Equal(0, resultObsActive.OverdueCount);
+    }
+
+    [Fact]
+    public void 簽章配對_帶EventKey與不帶EventKey各自能與處理狀態正確配對()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var winIssue = Issue("disk", 153, severity: IssueSeverity.High, logName: "System", eventKey: "");
+        var linuxIssue1 = Issue("sshd", 0, severity: IssueSeverity.High, logName: "Linux", eventKey: "ssh-bruteforce");
+        var linuxIssue2 = Issue("sshd", 0, severity: IssueSeverity.High, logName: "Linux", eventKey: "ssh-accept");
+        Add(1, "A", d0, RiskLevels.High, winIssue, linuxIssue1, linuxIssue2);
+
+        var unhandled = new HashSet<IssueSeverity> { IssueSeverity.High };
+
+        // 僅標記 winIssue 與 linuxIssue1 為 Resolved
+        AddIssueHandling("A", d0, winIssue, IssueHandlingStatuses.Resolved);
+        AddIssueHandling("A", d0, linuxIssue1, IssueHandlingStatuses.Resolved);
+
+        // linuxIssue2 雖然同為 sshd/0，但 EventKey 不同，未被標記 -> 總共 3 個問題，2 個結案 -> InProgress
+        var sqlResult1 = Query().DeriveDayHandling(d0, d0, null, unhandled, Array.Empty<long>());
+        Assert.Single(sqlResult1);
+        Assert.Equal(HandlingStatuses.InProgress, sqlResult1[0].DayStatus);
+
+        // 接著將 linuxIssue2 也標為 Resolved -> 3 個皆結案 -> Resolved
+        AddIssueHandling("A", d0, linuxIssue2, IssueHandlingStatuses.Resolved);
+        var sqlResult2 = Query().DeriveDayHandling(d0, d0, null, unhandled, Array.Empty<long>());
+        Assert.Single(sqlResult2);
+        Assert.Equal(HandlingStatuses.Resolved, sqlResult2[0].DayStatus);
+    }
 }
+
