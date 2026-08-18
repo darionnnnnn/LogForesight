@@ -62,6 +62,7 @@ public class NetiqPipelineService
     private readonly int _riskyEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
+    private readonly bool _onlyMissingOrFailed;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
     /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
@@ -85,13 +86,15 @@ public class NetiqPipelineService
     /// null＝預設走真正的 <see cref="SentinelClient"/>（<see cref="SentinelConnectionFactory.ToConnectable"/>
     /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
+    /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
-        IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
+        IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
+        bool onlyMissingOrFailed = false)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -108,6 +111,7 @@ public class NetiqPipelineService
         _riskyEventRetentionDays = riskyEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
+        _onlyMissingOrFailed = onlyMissingOrFailed;
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
     }
@@ -283,7 +287,7 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = MissingDateFinder.Find(store, lookback);
+            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed);
 
             // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
             // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
@@ -307,7 +311,10 @@ public class NetiqPipelineService
             // 主機可能今天已經補齊缺漏日，但上次執行被取消時留下的某一天還卡在「AI 排隊中」，
             // 兩者互不影響，各自獨立檢查同一個 lookback 窗口（與 MissingDateFinder 同一個範圍：
             // 今天往回數 lookback 天，不含今天）。
-            var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback).Where(r => r.AiPending).ToList();
+            var missingSet = missingDates.ToHashSet();
+            var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback)
+                .Where(r => (r.AiPending || (_onlyMissingOrFailed && !r.AiAnalyzed && r.RiskLevel != RiskLevels.Low)) && !missingSet.Contains(r.Date.Date))
+                .ToList();
             foreach (var pending in pendingRecords)
             {
                 var retryService = new LogAnalysisService(
@@ -321,7 +328,9 @@ public class NetiqPipelineService
 
         if (plans.Count == 0 && orphanJobs.Count == 0)
         {
-            _console.WriteLine($"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
+            _console.WriteLine(_onlyMissingOrFailed
+                ? $"  [{sentinel.Name}] 今日全數主機皆已完成且具備 AI 分析，跳過。"
+                : $"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
             return;
         }
 
@@ -782,21 +791,47 @@ public class NetiqPipelineService
 
         if (touches.Count == 0) return;
 
-        _hosts.MutateBatch(batch =>
+        // 寫入失敗不讓整台 Sentinel 作廢（比照 HostDayPostProcessor 的既定哲學）：
+        // blob 的行程內互斥是 per-instance 的鎖，Web 端與分析端各有一份 backend，
+        // 同一份 hosts blob 真的會在 DB 層競爭、撞滿重試次數後拋出。這個例外若冒到
+        // RunServerAsync 尾端，會被 Parallel.ForEachAsync 的 catch 記成「整台 Sentinel 失敗」
+        // ——幾百台已經分析完成的主機被記為失敗，只因為回報時間寫不回去。
+        // 失敗時把 touch 放回字典等下次 flush；已有較新的值就保留較新的，不要覆蓋回舊值。
+        try
         {
-            var hostDict = batch.ToDictionary(h => h.HostId);
-            foreach (var kvp in touches)
+            _hosts.MutateBatch(batch =>
             {
-                if (hostDict.TryGetValue(kvp.Key, out var host))
+                var hostDict = batch.ToDictionary(h => h.HostId);
+                foreach (var kvp in touches)
                 {
-                    host.LastReportAt = kvp.Value.ReportedAt;
-                    if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                    if (hostDict.TryGetValue(kvp.Key, out var host))
                     {
-                        host.DisplayName = kvp.Value.DisplayName;
+                        host.LastReportAt = kvp.Value.ReportedAt;
+                        if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                        {
+                            host.DisplayName = kvp.Value.DisplayName;
+                        }
                     }
                 }
+            });
+        }
+        catch (Exception ex)
+        {
+            foreach (var kvp in touches)
+            {
+                // 逐欄合併而不是整筆二選一：ReportedAt 取較新，DisplayName 取非空的那個——
+                // 整筆丟掉會連帶丟掉另一筆才有的顯示名稱，容錯機制自己先丟一半資料
+                _hostTouches.AddOrUpdate(
+                    kvp.Key,
+                    kvp.Value,
+                    (_, existing) => new HostTouch(
+                        !string.IsNullOrWhiteSpace(existing.DisplayName) ? existing.DisplayName : kvp.Value.DisplayName,
+                        existing.ReportedAt >= kvp.Value.ReportedAt ? existing.ReportedAt : kvp.Value.ReportedAt));
             }
-        });
+
+            Log.Warn(ex, "回報時間批次寫回失敗（{Count} 台），保留待下次 flush 重試：{Msg}",
+                touches.Count, ex.Message);
+        }
     }
 
     /// <param name="GroupIds">這台主機所屬的主機群組 Id（回饋十四輪 A3）：計畫階段（<see cref="RunServerOsGroupAsync"/>）

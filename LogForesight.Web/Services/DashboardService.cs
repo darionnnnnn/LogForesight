@@ -68,7 +68,6 @@ public class DashboardService
         // 可見主機以 hostIds 傳入；日風險等級顯示範圍由 ResolveDayRiskLevels 算出，
         // **空交集必須在這裡短路、不可下推**（底層對空集合的語意是「不限制」，會從零筆變全部）；
         // 可見嚴重度傳給有問題子列參與的聚合。
-        var unhandledSeverities = _settings.Get().ParseUnhandledSeverities();
         var riskLevels = RecordRepository.ResolveDayRiskLevels(_systemSettings.GetVisibleDayRiskLevels(), null);
         var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
         var nothingVisible = riskLevels != null && riskLevels.Count == 0;
@@ -77,10 +76,12 @@ public class DashboardService
             ? new List<HostRiskAggregate>()
             : _aggregates.AggregateByHost(from, anchor, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
 
-        // 風險類型卡（回饋十九輪批次D）：SQL 端聚合，與報表共用同一個查詢方法，
-        // 「大數字（去重）／小字（累計）」兩個口徑不可能在兩頁漂移成不同的數字
-        dto.Categories = RecordStatsBuilder.BuildCategoryCards(
-            _aggregates.AggregateByCategory(from, anchor, visibleHostIds, unhandledSeverities));
+        // 風險類型卡（回饋十九輪批次D、二十輪批次B）：SQL 端聚合，與報表共用同一個查詢方法，
+        // 可見嚴重度傳入 visibleSeverities（與下鑽依問題查詢相同），並傳入 riskLevels；全部隱藏時短路為空
+        dto.Categories = nothingVisible
+            ? new List<DashboardCategoryDto>()
+            : RecordStatsBuilder.BuildCategoryCards(
+                _aggregates.AggregateByCategory(from, anchor, visibleHostIds, visibleSeverities, riskLevels));
 
         dto.HostRanking = RecordStatsBuilder
             .BuildHostRanking(hostRiskAgg, visibleHosts.ToDictionary(h => h.HostId))
@@ -104,7 +105,9 @@ public class DashboardService
         // 可行動快照對全站可見範圍**只解析一次**（回饋十九輪批次I 體檢修正）：KPI 卡與逐群組的
         // UnhandledCount 都從同一份解析結果各自彙總——原本逐群組各自呼叫 IssueTodoQuery.Build，
         // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
-        var actionableResolved = _issueTodo.ResolveActionable(from, anchor, visibleHostIds);
+        var actionableResolved = nothingVisible
+            ? new List<ResolvedOccurrence>()
+            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels);
         BuildGroupRisk(dto, hostRiskAgg, visibleHosts, actionableResolved);
 
         // 全站三個日數從同一個 KPI 聚合取（與報表同一支查詢）。刻意**不**用 hostRiskAgg 加總——
@@ -126,7 +129,7 @@ public class DashboardService
             // 待辦走 GetTodoByRange：它負責墓碑主機的兩段相加（SQL 經 host_name 橋接對合併主機
             // 必然落空，那些主機另行以記憶體精算），母體（高＋中風險日）也由它內部強制套用。
             // 不要直接呼叫 AggregateDayTodo——那會漏掉墓碑、也漏掉 TotalCount
-            dto.Todo = _handling.GetTodoByRange(from, anchor);
+            dto.Todo = _handling.GetTodoByRange(from, anchor, riskLevels);
         }
         // 待辦的問題口徑（回饋十九輪批次D2）：KPI 卡的主要數字，Todo 只供「未處理風險日 M」副標
         dto.IssueTodo = IssueTodoQuery.Aggregate(actionableResolved);

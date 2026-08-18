@@ -133,6 +133,25 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.Equal(1, row.HostCount);
     }
 
+    /// <summary>
+    /// 回饋二十輪 I：Aggregate 已把大小寫不同的同名來源合併，但輸出的 Source 是該期間內
+    /// 任一個原始寫法——前期只出現 cron、本期只出現 CRON 時，若用原始字串當跨期比較的鍵，
+    /// 前期會靜默查不到，老問題被誤判成「新出現」。
+    /// </summary>
+    [Fact]
+    public void 前期對比_來源大小寫不同時仍對得上不會誤判為新出現()
+    {
+        var from = new DateTime(2026, 8, 5);
+        var to = new DateTime(2026, 8, 11);          // 前期＝07-29 ~ 08-04
+        Add(1, "A", new DateTime(2026, 7, 30), Issue("cron", 0));
+        Add(1, "A", from.AddDays(1), Issue("CRON", 0));
+
+        var row = Builder().Build(from, to, null, totalHosts: 1).Single();
+
+        Assert.False(row.IsNew);
+        Assert.Equal(1, row.PreviousHostCount);
+    }
+
     /// <summary>距今天數回答「還要不要處理」——把「90 天前爆發過」與「今天正在發生」分開</summary>
     [Fact]
     public void 距今天數()
@@ -395,5 +414,20 @@ public class IssueRankingBuilderTests : IDisposable
 
         Assert.Equal("disk", rows[0].Source);
         Assert.True(rows[0].PriorityScore > rows[1].PriorityScore);
+    }
+
+    [Fact]
+    public void Build_命中規則帶得出白話說明_未命中為null()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153), Issue("CustomApp", 9999));
+
+        var rows = Builder().Build(d0, d0, null, totalHosts: 1);
+
+        var disk = rows.Single(r => r.Source == "disk" && r.EventId == 153);
+        Assert.Equal("這台伺服器的硬碟出現讀寫錯誤，是硬碟即將故障最直接的警訊。", disk.PlainExplanation);
+
+        var unknown = rows.Single(r => r.Source == "CustomApp" && r.EventId == 9999);
+        Assert.Null(unknown.PlainExplanation);
     }
 }

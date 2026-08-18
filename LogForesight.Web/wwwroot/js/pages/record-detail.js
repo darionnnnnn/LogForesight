@@ -6,9 +6,9 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
-import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
+import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -23,6 +23,7 @@ const date = root.dataset.date;
 // 把使用者手動調整過的篩選狀態蓋回預設值。
 let activeSeverities = null;
 let currentDetail = null;
+let currentDisplaySettings = null;
 
 // 批次套用改版（2026-07-27）：勾選純粹代表「這列要包含在下一次批次套用」，
 // 與這列目前的處理狀態脫鉤——狀態改在右側「處理狀態」區塊填一次套用給全部勾選的問題
@@ -91,23 +92,30 @@ async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
 
-    const [detail, user, aiStatus] = await Promise.all([
+    const [detail, user, aiStatus, displaySettings] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
         getCurrentUser(),
-        api.get('/api/ai/status', { silent: true }).catch(() => null)
+        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getDisplaySettings()
     ]);
     // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/archive/HISTORY.md S1）：
     // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
+    currentDisplaySettings = displaySettings;
     canMaintainRules = hasCapability(user, 'Maintain');
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
     aiAvailable = !!aiStatus?.available;
 
+    const allowed = allowedSeverities();
     if (activeSeverities === null) {
-        activeSeverities = new Set(
-            detail.unhandledSeverities?.length ? detail.unhandledSeverities : ['Critical', 'High', 'Medium']);
+        const initial = detail.unhandledSeverities?.length ? detail.unhandledSeverities : ['Critical', 'High', 'Medium'];
+        activeSeverities = new Set(initial.filter(s => allowed.has(s)));
+    } else {
+        for (const s of activeSeverities) {
+            if (!allowed.has(s)) activeSeverities.delete(s);
+        }
     }
 
     renderHeader(currentDetail);
@@ -262,7 +270,15 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (detail.aiPending) {
+    if (detail.aiPending && isAiRetryPending(detail.headline)) {
+        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：不能顯示成「分析中」——
+        // 那會讓人以為稍後重整就有，實際要靠排程「只補跑失敗或未執行」才補得回來
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning';
+        badge.textContent = 'AI 待補';
+        badge.title = 'AI 服務當時未回應，白話摘要從缺；可用排程頁「只補跑失敗或未執行」補回';
+        top.appendChild(badge);
+    } else if (detail.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
         const badge = document.createElement('span');
@@ -955,8 +971,19 @@ function highlightedCategories() {
  * 切換時共用同一份判斷，避免多處篩選邏輯各自維護後兜不起來。
  * 嚴重度與顯示範圍（§8）是 AND 關係——兩個條件都通過才看得到。
  */
+/**
+ * 管理者顯示設定允許的嚴重度（回饋二十輪 L）。與使用者自己的篩選（activeSeverities）
+ * 是兩件事：被管理者隱藏的層級不該長出篩選鈕、也不該算進「另有 N 項未顯示」——
+ * 那句提示講的是「你自己篩掉的」，管理者隱藏的部分由 hiddenIssueCount 那句負責交代。
+ * 取不到設定時退回全部允許（getDisplaySettings 本身已對失敗降級）。
+ */
+function allowedSeverities() {
+    return new Set(currentDisplaySettings?.visibleSeverities ?? SEVERITY_ORDER);
+}
+
 function visibleTopIssues() {
-    return currentDetail.topIssues.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
+    const allowed = allowedSeverities();
+    return currentDetail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity) && inCurrentScope(i));
 }
 
 /**
@@ -969,7 +996,8 @@ function renderScopeFilter(detail) {
     if (!select) return;
 
     // 只算嚴重度篩選後的問題：下拉顯示的數字要與切過去之後真正看得到的列數一致
-    const bySeverity = detail.topIssues.filter(i => activeSeverities.has(i.severity));
+    const allowed = allowedSeverities();
+    const bySeverity = detail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity));
     const counts = { pending: 0, mine: 0, others: 0, done: 0 };
     for (const issue of bySeverity) counts[issueBucket(issue)]++;
 
@@ -1001,9 +1029,10 @@ function renderSeverityFilter(detail) {
     const container = document.getElementById('detail-severity-filter');
     if (!container) return;
 
-    // 只列出當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
+    // 只列出管理者顯示設定允許且當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
     // Locked 模式不需特判：load() 已把未勾選層級從 topIssues 拿掉，這裡自然長不出對應的鈕
-    const present = SEVERITY_ORDER.filter(s => detail.topIssues.some(i => i.severity === s));
+    const allowed = allowedSeverities();
+    const present = SEVERITY_ORDER.filter(s => allowed.has(s) && detail.topIssues.some(i => i.severity === s));
     if (present.length <= 1) {
         container.replaceChildren();
         return;
@@ -1054,6 +1083,7 @@ function renderIssues(detail) {
 
     let shown = 0;
     let hidden = 0;
+    const allowed = allowedSeverities();
 
     // 顯示範圍（§8）：collapseDone 決定「已完成」是維持既有的分節底部收合列（待處理／
     // 顯示所有問題），還是整組不出現（隱藏已完成）／整組平鋪（僅已完成）
@@ -1063,10 +1093,13 @@ function renderIssues(detail) {
         const all = detail.topIssues.filter(i => i.category === category.category);
         if (all.length === 0) continue;
 
-        // 嚴重度與顯示範圍兩道篩選（§8）：兩者都要通過才顯示，被篩掉的併入底部的
+        // 管理者顯示設定允許的問題（排除管理者設定隱藏的嚴重度，不計入使用者篩選造成的 hidden）
+        const allowedIssues = all.filter(i => allowed.has(i.severity));
+
+        // 嚴重度與顯示範圍兩道使用者篩選（§8）：兩者都要通過才顯示，被使用者篩掉的併入底部的
         // 「另有 N 項未顯示」提示——「沒看到」與「不存在」必須分得清楚
-        const issues = all.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
-        hidden += all.length - issues.length;
+        const issues = allowedIssues.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
+        hidden += allowedIssues.length - issues.length;
         if (issues.length === 0) continue;
         shown += issues.length;
 
@@ -1121,14 +1154,21 @@ function renderIssues(detail) {
 
     // 全被篩掉時給明確出口，不留白畫面讓人誤以為「這天沒問題」
     if (shown === 0) {
-        renderEmpty(container, {
-            title: `已隱藏全部 ${hidden} 項`,
-            hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
-        });
+        if (hidden > 0) {
+            renderEmpty(container, {
+                title: `已隱藏全部 ${hidden} 項`,
+                hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
+            });
+        } else {
+            renderEmpty(container, {
+                title: '當日沒有符合顯示設定的重點問題',
+                hint: '當日問題已依全站顯示設定隱藏。'
+            });
+        }
         return;
     }
 
-    // 有被篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
+    // 有被使用者篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
     if (hidden > 0) {
         const note = document.createElement('div');
         note.className = 'text-muted small px-3 py-2 border-top';
@@ -1450,6 +1490,7 @@ function correlationAlertItem(ref) {
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
     const text = document.createElement('span');
+    text.className = 'lf-alert-item__text';
     text.textContent = ref.text;
     item.appendChild(text);
 
@@ -1492,25 +1533,32 @@ function trendAlertItem(ref) {
     const item = document.createElement('li');
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
+    // 文字側必須能收縮（lf-alert-item__text）：flex 子項預設 min-width:auto，
+    // 而這裡的內容是「Microsoft-Windows-Security-Auditing EventId 4719」這種不含空白的
+    // 長 token，不加的話它拒絕收縮、把整列推出卡片（純中文的那幾行會自動斷行所以看不出來）
     if (ref.kind === 'signature' && ref.issueKey) {
         const link = document.createElement('button');
         link.type = 'button';
-        link.className = 'btn btn-link p-0 text-body text-start';
+        link.className = 'btn btn-link p-0 text-body text-start lf-alert-item__text';
         link.textContent = ref.text;
         link.addEventListener('click', () => scrollToIssue(ref.issueKey));
         item.appendChild(link);
     } else {
         const text = document.createElement('span');
+        text.className = 'lf-alert-item__text';
         text.textContent = ref.text;
         item.appendChild(text);
     }
 
     if (canMaintainRules && ref.kind !== 'signature') {
         const volumeKind = ref.kind === 'volume-audit' ? 'audit' : 'error';
-        item.appendChild(button('', {
+        const right = document.createElement('span');
+        right.className = 'd-flex align-items-center gap-1 flex-shrink-0';
+        right.appendChild(button('', {
             variant: 'outline-danger', size: 'sm', icon: 'bell-slash', title: '抑制此類告警（本主機）',
             onClick: () => suppressVolumeAlert(volumeKind)
         }));
+        item.appendChild(right);
     }
     return item;
 }

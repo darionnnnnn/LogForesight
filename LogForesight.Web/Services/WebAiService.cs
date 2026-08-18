@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Configuration;
 using LogForesight.Web.Configuration;
 using NLog;
 
@@ -66,6 +67,24 @@ public class WebAiService : IWebAiService
     private static string AdvancedFingerprint(SystemSettings db) =>
         $"{db.AiDeepDiveMaxTokens}|{db.AiFrequencyPenalty}|{db.AiPresencePenalty}|{db.AiExtraRequestFieldsJson}";
 
+    /// <summary>
+    /// 快照＝參與「設定變了要不要重建客戶端」比對的所有欄位。provider 相關欄位一併納入，
+    /// 否則在設定頁換了 provider，互動情境會繼續打舊端點直到重啟。
+    /// </summary>
+    private static (string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced) BuildSnapshot(SystemSettings db)
+    {
+        var provider = AiProviders.Normalize(db.AiProvider);
+        var model = string.IsNullOrWhiteSpace(db.AiModel) ? AiProviders.DefaultModel(provider) : db.AiModel.Trim();
+        var apiVersion = string.IsNullOrWhiteSpace(db.AiAzureApiVersion) ? "2024-10-21" : db.AiAzureApiVersion.Trim();
+        return (provider, EffectiveBaseUrl(db), db.AiApiKeyEnc ?? "", model, db.AiAzureDeployment?.Trim() ?? "", apiVersion, AdvancedFingerprint(db));
+    }
+
+    /// <summary>「AI 是否算設定完成」走 Core 的唯一定義（<see cref="AiProviders.IsConfigured"/>），
+    /// 與批次端的 <c>AiSettings.IsConfigured</c> 同一份——分開寫遲早漂移成
+    /// 「首頁說可用、實際建不出客戶端」。這裡拿到的是金鑰密文，判定只看有沒有值，不解密。</summary>
+    private static bool IsConfigured(string provider, string baseUrl, string keyEnc, string azureDeployment) =>
+        AiProviders.IsConfigured(provider, baseUrl, keyEnc, azureDeployment);
+
     // 本類別是 Singleton，但 AI 位址／金鑰／進階參數可在設定頁隨時改：每次取用時比對 DB 目前值，
     // 變了就重建 AIService（設定頁存檔即生效，不必重啟站台）——SettingsBoundClient（S8）
     // 統一處理快照比對與重建，取代原本互動／對話情境各自寫一份幾乎逐字相同的 lock+比對邏輯。
@@ -73,24 +92,28 @@ public class WebAiService : IWebAiService
     // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
     // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
     // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _interactiveClient;
-    private readonly SettingsBoundClient<(string BaseUrl, string KeyEnc, string Advanced), AIService> _chatClient;
+    private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _interactiveClient;
+    private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _chatClient;
 
     public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings)
     {
         _cache = cache;
         _systemSettings = systemSettings;
 
-        _interactiveClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
+        _interactiveClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
-            if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+            var (provider, baseUrl, keyEnc, model, azureDeployment, azureApiVersion, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
+            if (!IsConfigured(provider, baseUrl, keyEnc, azureDeployment)) return null;
 
             var advanced = AdvancedFromDb();
             return new AIService(new AiSettings
             {
+                Provider = provider,
                 BaseUrl = baseUrl,
                 ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                Model = model,
+                AzureDeployment = azureDeployment,
+                AzureApiVersion = azureApiVersion,
                 // 互動情境的參數覆寫——**不重試**：互動情境下重試只會把「失敗」拖成數十秒
                 // （逾時×嘗試＋退避），使用者早就不等了。一次打不到就降級，
                 // 讓卡片安靜消失比讓人盯著轉圈更好。
@@ -106,16 +129,20 @@ public class WebAiService : IWebAiService
             });
         });
 
-        _chatClient = new SettingsBoundClient<(string, string, string), AIService>(snapshot =>
+        _chatClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
         {
-            var (baseUrl, keyEnc, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
-            if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+            var (provider, baseUrl, keyEnc, model, azureDeployment, azureApiVersion, _) = snapshot;   // 指紋只參與比對，factory 內直接重讀 DB
+            if (!IsConfigured(provider, baseUrl, keyEnc, azureDeployment)) return null;
 
             var advanced = AdvancedFromDb();
             return new AIService(new AiSettings
             {
+                Provider = provider,
                 BaseUrl = baseUrl,
                 ApiKey = CryptoHelper.IsEncrypted(keyEnc) ? CryptoHelper.Decrypt(keyEnc) : "",
+                Model = model,
+                AzureDeployment = azureDeployment,
+                AzureApiVersion = azureApiVersion,
                 // 對話回覆比單一問題判讀長，token 上限拉高；地端模型回應快（實測 50~80 t/s），
                 // 逾時不必抓得像批次那麼保守，但仍給足餘裕避免正常對話被腰斬。不重試——
                 // 互動情境下重試只會把「失敗」拖得更久，一次打不到就讓使用者自己重問。
@@ -139,20 +166,27 @@ public class WebAiService : IWebAiService
     /// </summary>
     private static string EffectiveBaseUrl(SystemSettings db) => db.AiBaseUrl.Trim();
 
-    public bool Available => !string.IsNullOrWhiteSpace(EffectiveBaseUrl(_systemSettings.Get()));
+    public bool Available
+    {
+        get
+        {
+            var (provider, baseUrl, keyEnc, _, azureDeployment, _, _) = BuildSnapshot(_systemSettings.Get());
+            return IsConfigured(provider, baseUrl, keyEnc, azureDeployment);
+        }
+    }
 
     /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）互動情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetClient()
     {
         var db = _systemSettings.Get();
-        return _interactiveClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
+        return _interactiveClient.Get(BuildSnapshot(db));
     }
 
     /// <summary>依 DB 目前的位址／金鑰／進階參數取（或重建）對話情境的 AI 客戶端；未設定位址回 null</summary>
     private AIService? GetChatClient()
     {
         var db = _systemSettings.Get();
-        return _chatClient.Get((EffectiveBaseUrl(db), db.AiApiKeyEnc, AdvancedFingerprint(db)));
+        return _chatClient.Get(BuildSnapshot(db));
     }
 
     public async Task<string?> ChatOnceAsync(string systemPrompt, string userPrompt)

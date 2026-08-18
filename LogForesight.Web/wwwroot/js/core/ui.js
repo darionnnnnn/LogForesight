@@ -55,6 +55,19 @@ export function helpIcon(content, title) {
 }
 
 /**
+ * 表頭文字＋說明圖示的組合節點（回饋二十輪 J），供欄位定義的 renderHeader() 使用。
+ * 說明內容沿用 helpIcon 的 popover 行為（hover 與 focus 都能觸發）。
+ */
+export function headerWithHelp(title, content, popoverTitle) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    const text = document.createElement('span');
+    text.textContent = title;
+    wrap.append(text, helpIcon(content, popoverTitle));
+    return wrap;
+}
+
+/**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
  */
@@ -68,6 +81,8 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
         const span = document.createElement('span');
         span.textContent = text;
         btn.appendChild(span);
+    } else if (title) {
+        btn.setAttribute('aria-label', title);
     }
     if (onClick) btn.addEventListener('click', onClick);
     return btn;
@@ -468,6 +483,9 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     const headRow = document.createElement('tr');
     for (const col of columns) {
         const th = document.createElement('th');
+        // sortKey 與 renderHeader 可以共存（回饋二十輪終檢）：可排序欄位也要能掛說明圖示。
+        // 原本兩者互斥，K2 為了讓 headerWithHelp 出來只好把主機數／總次數的 sortKey 刪掉，
+        // 使用者可見的排序功能就這樣倒退了
         if (col.sortKey && onSort) {
             th.appendChild(sortHeader(col, sort, onSort));
             const active = sort && sort.key === col.sortKey;
@@ -506,23 +524,32 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             const td = document.createElement('td');
             if (col.className) td.className = col.className;
 
-            // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示
+            const content = col.render ? col.render(row) : row[col.key];
+            // 非 Node 的值一律走 createTextNode（等同 textContent）而非 innerHTML：
+            // 資料裡混有 Event Log 的原始訊息，那是攻擊者可控的字串，絕不能當成 HTML 解析
+            const contentNode = content instanceof Node
+                ? content
+                : document.createTextNode(content === null || content === undefined ? '' : String(content));
+
+            // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示。
+            // 以 flex 排版包裹箭頭與內容，確保箭頭與第一行內容同列、對齊頂端——
+            // 內容是 block 元素（如 issueCell／issueGroupCell）時，箭頭原本會被擠成獨佔一行
             if (expandable && index === 0) {
+                const wrap = document.createElement('div');
+                wrap.className = 'lf-row-expand-cell';
+
                 const caret = document.createElement('span');
                 caret.className = 'lf-row-caret';
                 caret.appendChild(icon('chevron-down'));
-                td.appendChild(caret);
-            }
 
-            const content = col.render ? col.render(row) : row[col.key];
-            if (content instanceof Node) {
-                td.appendChild(content);
-            } else if (content === null || content === undefined) {
-                td.appendChild(document.createTextNode(''));
+                const body = document.createElement('div');
+                body.className = 'lf-row-expand-cell__body';
+                body.appendChild(contentNode);
+
+                wrap.append(caret, body);
+                td.appendChild(wrap);
             } else {
-                // 一律用 textContent 而非 innerHTML：資料裡混有 Event Log 的原始訊息，
-                // 那是攻擊者可控的字串，絕不能當成 HTML 解析
-                td.appendChild(document.createTextNode(String(content)));
+                td.appendChild(contentNode);
             }
             tr.appendChild(td);
         }
@@ -637,9 +664,18 @@ function sortHeader(col, sort, onSort) {
     btn.type = 'button';
     btn.className = 'lf-th-sort' + (active ? ' lf-th-sort--active' : '');
 
-    const text = document.createElement('span');
-    text.textContent = col.title;
-    btn.appendChild(text);
+    if (col.renderHeader) {
+        // 說明圖示的 popover 靠 hover/focus，點它不該切換排序——攔在按鈕之前
+        const custom = col.renderHeader();
+        custom.addEventListener('click', e => {
+            if (e.target.closest('.lf-help')) e.stopPropagation();
+        });
+        btn.appendChild(custom);
+    } else {
+        const text = document.createElement('span');
+        text.textContent = col.title;
+        btn.appendChild(text);
+    }
 
     const caret = document.createElement('span');
     caret.className = 'lf-th-sort__caret';

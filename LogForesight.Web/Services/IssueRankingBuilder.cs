@@ -25,6 +25,7 @@ public class IssueRankingBuilder
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
     private readonly DailyRecordBackfiller? _dailyBackfiller;
+    private readonly IKnownIssueRuleStore? _rules;
 
     /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
@@ -36,7 +37,8 @@ public class IssueRankingBuilder
         IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null,
-        DailyRecordBackfiller? dailyBackfiller = null)
+        DailyRecordBackfiller? dailyBackfiller = null,
+        IKnownIssueRuleStore? rules = null)
     {
         _aggregates = aggregates;
         _hosts = hosts;
@@ -44,6 +46,7 @@ public class IssueRankingBuilder
         _backfiller = backfiller;
         _backend = backend;
         _dailyBackfiller = dailyBackfiller;
+        _rules = rules;
     }
 
     /// <summary>
@@ -98,8 +101,11 @@ public class IssueRankingBuilder
         // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-periodDays + 1);
+        // 鍵一律正規化成大寫（回饋二十輪 I）：Aggregate 已把大小寫不同的同名來源合併成一筆，
+        // 但輸出的 Source 是該期間內任一個原始寫法——本期與前期各自取到的寫法可能不同，
+        // 用原始字串當鍵會讓前期對比靜默落空、老問題被當成新問題
         var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
-            .ToDictionary(a => (a.Source, a.EventId));
+            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
 
@@ -111,6 +117,13 @@ public class IssueRankingBuilder
         var baselines = IssueBaselineCalculator.Compute(
             _aggregates.DailyHostCounts(issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
         var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
+
+        // 規則白話說明：以當頁問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var explanations = issuesOnPage
+            .ToDictionary(
+                i => i,
+                i => KnownIssueCatalog.PlainExplanationFor(rules, i.Source, i.EventId));
 
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
@@ -132,12 +145,13 @@ public class IssueRankingBuilder
         return current
             .Select(a =>
             {
-                previous.TryGetValue((a.Source, a.EventId), out var prev);
+                previous.TryGetValue(IssueProfile.KeyOf(a.Source, a.EventId), out var prev);
                 var rollup = LookupRollup(handlingByIssue, a);
                 var baselineKey = (SourceKey: a.Source.ToUpperInvariant(), a.EventId);
                 baselines.TryGetValue(baselineKey, out var baseline);
                 fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
                 var resolvedFleetFirstSeen = firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet;
+                explanations.TryGetValue((a.Source, a.EventId), out var plainExplanation);
 
                 var highestTier = hostIdsByIssue.TryGetValue(baselineKey, out var affectedHostIds)
                     ? HighestTier(affectedHostIds, tierByHostId)
@@ -169,6 +183,7 @@ public class IssueRankingBuilder
                     DaysSinceLastSeen = Math.Max(0, (today - a.LastSeen.Date).Days),
                     HostRatio = totalHosts > 0 ? (double)a.HostCount / totalHosts : 0,
                     ElevatesDayRisk = a.ElevatesDayRisk,
+                    PlainExplanation = plainExplanation,
 
                     PreviousHostCount = prev?.HostCount ?? 0,
                     PreviousTotalCount = (int)Math.Min(prev?.TotalCount ?? 0, int.MaxValue),
@@ -274,6 +289,7 @@ public class IssueRankingBuilder
         WebHost.TierTest => 0,
         _ => 1
     };
+
 }
 
 /// <summary>單一問題簽章的處理概況彙總（§10.6：全部有結論的問題不進重點清單）</summary>

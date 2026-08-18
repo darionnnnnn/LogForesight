@@ -110,7 +110,8 @@ public interface IIssueAggregateQuery
     /// </summary>
     List<HostIssueOccurrence> ActionableOccurrences(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 依風險類別彙總（回饋十九輪批次D，取代 <c>CategoryAggregator.Merge</c> 在記憶體對
@@ -119,7 +120,8 @@ public interface IIssueAggregateQuery
     /// </summary>
     List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? allowedSeverities);
+        IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 依日期彙總（回饋十九輪批次E2，取代「依日期」視角在記憶體對整段期間紀錄的 GroupBy）。
@@ -194,7 +196,8 @@ public interface IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,
-        DateTime today);
+        DateTime today,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 報表 KPI 聚合 (scope == all)。

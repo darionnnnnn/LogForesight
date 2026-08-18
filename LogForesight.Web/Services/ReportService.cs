@@ -47,22 +47,24 @@ public class ReportService
         ReportKpiDto kpi;
         List<ReportTrendPointDto> trend;
         List<DashboardHostDto> ranked;
+        HandlingTodoDto? handlingDto = null;
+
+        var visibleDayRiskLevels = _systemSettings.GetVisibleDayRiskLevels();
+        var riskLevels = RecordRepository.ResolveDayRiskLevels(visibleDayRiskLevels, null);
+        var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
+        var nothingVisible = riskLevels != null && riskLevels.Count == 0;
 
         if (scope == HandlingHistoryQueryService.HandlingScopes.All)
         {
-            var visibleDayRiskLevels = _systemSettings.GetVisibleDayRiskLevels();
-            var riskLevels = RecordRepository.ResolveDayRiskLevels(visibleDayRiskLevels, null);
-
-            if (riskLevels != null && riskLevels.Count == 0)
+            if (nothingVisible)
             {
                 kpi = new ReportKpiDto();
                 trend = BuildTrendFromAggregate(new List<TrendAggregate>(), from, to);
                 ranked = new List<DashboardHostDto>();
+                handlingDto = new HandlingTodoDto();
             }
             else
             {
-                var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
-
                 var kpiAgg = _aggregates.AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities);
 
                 var kpiAggPrev = _aggregates.AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
@@ -85,6 +87,7 @@ public class ReportService
                 var hostRiskAgg = _aggregates.AggregateByHost(from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
                 var hostsById = _hosts.GetAll().ToDictionary(h => h.HostId);
                 ranked = RecordStatsBuilder.BuildHostRanking(hostRiskAgg, hostsById);
+                handlingDto = _handling.GetTodoByRange(from, to, riskLevels);
             }
             // 待辦走 GetTodoByRange（見下方 Handling 欄位），這條分支從頭到尾不載入任何紀錄
         }
@@ -118,12 +121,13 @@ public class ReportService
             ComparisonOutOfRetention = outOfRetention,
             Kpi = kpi,
             Trend = trend,
-            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D），與儀表板同一個查詢方法。
+            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D、二十輪批次B），與儀表板同一個查詢方法。
             // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
             // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
             // 篩的日層級處理狀態不是同一件事
-            Categories = RecordStatsBuilder.BuildCategoryCards(_aggregates.AggregateByCategory(
-                from, to, visibleHosts.Select(h => h.HostId).ToList(), _settings.Get().ParseUnhandledSeverities())),
+            Categories = RecordStatsBuilder.BuildCategoryCards(nothingVisible
+                ? new List<CategoryAggregate>()
+                : _aggregates.AggregateByCategory(from, to, hostIds, visibleSeverities, riskLevels)),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
@@ -140,7 +144,7 @@ public class ReportService
             IssueStatsPending = statsPending.Pending,
             IssueStatsPendingHint = statsPending.Hint,
             Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
-                ? _handling.GetTodoByRange(from, to)
+                ? handlingDto ?? new HandlingTodoDto()
                 : _handling.GetTodo(recordsForTodo!)
         };
 

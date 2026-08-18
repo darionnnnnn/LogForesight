@@ -178,11 +178,12 @@ public class StorageBackend
     /// <summary>
     /// 機房首見日的冪等合併（與順序無關）。
     /// 從啟動路徑移至背景服務，避免造成啟動逾時。
+    /// 回傳這次是真的跑了合併還是被浮水印閘門跳過，供背景服務申報狀態。
     /// </summary>
-    public void MergeIssueFirstSeenSeed()
+    public IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(bool force = false)
     {
         using var ctx = _dbFactory();
-        SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        return SchemaUpgrader.MergeIssueFirstSeenSeed(ctx, force);
     }
 
     /// <summary>

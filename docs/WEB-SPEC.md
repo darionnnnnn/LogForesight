@@ -858,6 +858,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   M 台未處理」）／處理人（進行中問題案件的處理人，去重超過 3 人摺疊「等 N 人」，姓名連到
   §9.4a 處理人工作頁）；預設排序嚴重度→主機數→總次數（**不採 §9.1／§9.6 的 PriorityScore
   排序**——規劃定案「其他視角排序不變」，`IssueGroupDto` 刻意不附加分數欄位）。
+  回饋二十輪補上：`IssueGroupDto.PlainExplanation`（命中規則的白話說明，未命中為 null；
+  `IssueRankingDto` 同）、`UnhandledCount`／`InProgressCount`／`ResolvedCount`（處理概況三整數，
+  與 `HandlingSummary` 字串同源，字串保留供 CSV）；回應型別改為 `IssueSearchResultDto`
+  （繼承 `PagedResult`），多帶 `DistinctHostCount`——期間內符合條件問題所影響的**存活主機去重數**，
+  與儀表板風險類型卡同一口徑（各列 `HostCount` 加總必大於它，前端顯示「共 N 台主機（去重）」）。
   點列帶 `eventId`／`source` 篩選跳明細視角；狀態 chip／逾期篩選此視角停用。
   `Assign` 能力可見「批次指派」：modal 列出受目前篩選區間影響的主機（可勾選排除）＋處理人／
   說明／預計完成日，對每台主機建立跨日問題案件（§9.3 案件徽章一節），已有他人進行中案件的主機
@@ -1283,6 +1288,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   給上級是真實使用情境，排版好看必須含列印版面。
 - API：`GET api/reports/summary?from=&to=&handlingScope=all|unresolved|open|unassigned`
   （KPI＋圖表＋TotalHosts＋Handling＋套用的 HandlingScope 一次回傳）。
+  **日期區間規則**（回饋二十輪 A，`QueryStringParsing.ParseDateRange` 是所有 controller 的
+  唯一入口）：報表 `from > to` 回 400（不交換）、含首尾超過 366 天回 400；缺 `to` 預設昨天、
+  缺 `from` 預設 `to` 往前 29 天。其他帶 from/to 的端點（records／ai／audit／handling）
+  顛倒時自動交換、不設上限。這是對外行為變更：改版前顛倒區間會算出負天數繞過 366 天檢查，
+  進 service 才被交換成多年區間。
   （原 `GET api/reports/signature` 於 §4 隨簽章查詢併入問題查詢一併移除。）
 
 ### 9.7 `/admin/rules` 規則維護（`Maintain`）
@@ -1581,7 +1591,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
       灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
       `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
       用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
-  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。**§12起本頁是 AI
+  2. **AI 服務**：提供者三選一（`Local` 本機 OpenAI 相容端點／`OpenAi` 官方／`AzureOpenAi`，
+     預設 Local ＝ 升級前的既有行為）＋位址＋金鑰（write-only，金鑰密文存 DB）＋模型名稱，
+     Azure 另有部署名稱與 API 版本。請求組法依提供者而異：Local／OpenAi 走
+     `{base}/v1/chat/completions` 帶 `Authorization: Bearer`；Azure 走
+     `{base}/openai/deployments/{deployment}/chat/completions?api-version=…`、認證改
+     `api-key` 標頭且主體不送 `model`（由 deployment 決定）。「算不算已設定」的必填欄位
+     依提供者而異，`AiSettings.IsConfigured` 與 `WebAiService` 共用同一份判定
+     （分開寫會漂移成「首頁說可用、實際建不出客戶端」）。**§12起本頁是 AI
      全部參數的唯一事實來源**——原 appsettings 的 `Ai` 區段整段退役，`TimeoutSeconds`/`RetryCount`/
      `RetryDelaySeconds`/`JsonRetryCount`/`MaxTokens`/`DeepDiveMaxTokens`/兩個 penalty/
      `ExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**
@@ -1670,6 +1687,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      熔斷（本輪 SMTP 整體異常、連續失敗 3 次即停止本輪剩餘寄送）跳過的
      收件人不計入這個跨輪計數——熔斷是「本輪沒嘗試」，不是這個收件人本身的問題。已暫停的
      收件人同時顯示在設定頁與 `/api/health/detail`（`SuspendedMailRecipients`）。
+     `/api/health/detail` 另有回饋二十輪 C 補上的首見日合併狀態：`IssueFirstSeenSeedState`
+     （not_started／running／completed／skipped／failed）、`IssueFirstSeenSeedFailures`、
+     `IssueFirstSeenSeedError`；連續失敗達 3 次即視為 degraded（見 DB-SPEC 首見日段）。
 
      **信件內容廣泛化**：明細行移除 `Headline`／`RiskBasis`
      （判定依據），只留主機、日期、風險等級、錯誤／警告數量——不揭露具體錯誤內容。
@@ -1809,7 +1829,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示）、**「分析本機主機」開關**
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「只補跑失敗或未執行的
+  主機」勾選**——`TriggerRunRequest.OnlyMissingOrFailed`，回饋二十輪 N：待跑判定由「無紀錄」
+  放寬為「無紀錄或 AI 未成功」，AI 完全失敗的主機日以 `AiPending=true`＋headline 帶「AI 待補」
+  標記讓它撿得到；預覽台數依旗標計算）、**「分析本機主機」開關**
   ：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機

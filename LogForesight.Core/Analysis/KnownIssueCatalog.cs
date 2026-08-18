@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+
 namespace LogForesight.Core.Analysis;
 
 public enum IssueCategory
@@ -309,11 +311,44 @@ public static class KnownIssueCatalog
     /// 明確只看 Platform="windows" 規則——Linux 規則的 SourcePattern 恆空，
     /// 顯式排除比依賴「空字串 Contains 恆真但 EventIds 恆空」的隱含行為清楚（docs/LINUX-RULES.md §1.2）。
     /// </summary>
-    public static KnownIssueRule? FindRule(string source, int eventId)
+    /// <summary>
+    /// Web 端取得「目前生效規則清單」的唯一入口（回饋二十輪終檢收斂）：有規則儲存就讀它
+    /// （反映 Web 編輯），讀不到或為空、或根本沒注入（測試組裝）都退回內建種子——
+    /// 不要退回靜態 <see cref="Rules"/>，Web 行程刻意不初始化它、在那裡是空的。
+    /// 這個退路策略是有語意的決策，兩個消費端各寫一份遲早漂移成兩個畫面顯示不同的說明。
+    /// </summary>
+    public static List<KnownIssueRule> ResolveRules(IKnownIssueRuleStore? store)
     {
-        foreach (var rule in Rules)
+        if (store == null) return KnownIssueSeed.CreateRules();
+        var outcome = store.Load();
+        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
         {
-            if (rule.Platform != "windows")
+            return rules;
+        }
+        return KnownIssueSeed.CreateRules();
+    }
+
+    /// <summary>命中規則的白話說明；未命中或規則沒寫說明時為 null（讓呼叫端據此決定要不要佔行）。</summary>
+    public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = FindRule(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    public static KnownIssueRule? FindRule(string source, int eventId) => FindRule(Rules, source, eventId);
+
+    /// <summary>
+    /// 同上，但比對對象由呼叫端提供——Web 行程刻意不呼叫 <see cref="Initialize"/>
+    /// （見 Program.cs：全域分類狀態是批次分析才用得到的），靜態 <see cref="Rules"/> 在那裡是空的，
+    /// 所以 Web 端要自行從規則儲存載入後傳進來。比對規則只有這一份定義，不要另外複製。
+    /// </summary>
+    public static KnownIssueRule? FindRule(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        foreach (var rule in rules)
+        {
+            // Linux 規則的比對需要 program＋訊息內容（見 FindLinuxRule），
+            // 不是這裡的 (來源, EventId) 能決定的，故一律略過
+            if (!rule.Enabled || rule.Platform != "windows")
             {
                 continue;
             }

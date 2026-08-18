@@ -26,10 +26,12 @@ public class ScheduleController : ControllerBase
     private readonly IAuditService _audit;
     private readonly ICurrentUser _currentUser;
     private readonly IUserStore _users;
+    private readonly IAnalysisRecordQuery _records;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
-        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users)
+        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
+        IAnalysisRecordQuery records)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -39,6 +41,7 @@ public class ScheduleController : ControllerBase
         _audit = audit;
         _currentUser = currentUser;
         _users = users;
+        _records = records;
     }
 
     [HttpGet("options")]
@@ -109,12 +112,53 @@ public class ScheduleController : ControllerBase
     /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
     [HttpGet("run-preview")]
     [Permission(Capability.Maintain)]
-    public ApiResponse<RunPreviewDto> RunPreview([FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId)
+    public ApiResponse<RunPreviewDto> RunPreview(
+        [FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId,
+        [FromQuery] bool onlyMissingOrFailed = false, [FromQuery] int? backfillDays = null)
     {
         var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId);
+        if (!onlyMissingOrFailed)
+        {
+            return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
+            {
+                HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0)
+            });
+        }
+
+        var lookback = Math.Clamp(backfillDays ?? 14, 1, 14);
+        var from = DateTime.Today.AddDays(-lookback);
+        var to = DateTime.Today.AddDays(-1);
+        // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，
+        // Query 會反序列化整份分析內容，三千台 × 14 天在預覽這種互動路徑上代價過高
+        var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to });
+
+        var count = 0;
+
+        if (hostIds is { Count: > 0 })
+        {
+            var recordsByHost = recentRecords.Where(r => r.HostId != 0).GroupBy(r => r.HostId).ToDictionary(g => g.Key, g => g.ToList());
+            foreach (var id in hostIds)
+            {
+                if (!recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback || hostRecords.Any(r => !r.AiAnalyzed || r.AiPending))
+                {
+                    count++;
+                }
+            }
+        }
+
+        if (includesLocal)
+        {
+            var localHostName = Environment.MachineName;
+            var localRecords = recentRecords.Where(r => string.Equals(r.Host, localHostName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (localRecords.Count < lookback || localRecords.Any(r => !r.AiAnalyzed || r.AiPending))
+            {
+                count++;
+            }
+        }
+
         return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
         {
-            HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0)
+            HostCount = count
         });
     }
 
@@ -131,6 +175,7 @@ public class ScheduleController : ControllerBase
             Scope = runScope,
             HostIds = hostIds,
             BackfillOverride = request.BackfillDays,
+            OnlyMissingOrFailed = request.OnlyMissingOrFailed,
             Trigger = $"manual:{_currentUser.Account}"
         };
 
@@ -138,9 +183,10 @@ public class ScheduleController : ControllerBase
             action: AuditActions.ScheduleManualRun,
             summary: $"手動觸發分析執行（範圍：{ScopeText(request.Scope)}" +
                      (request.Segment != null ? $"「{request.Segment}」" : "") +
-                     (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") + "）",
+                     (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") +
+                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") + "）",
             targetKind: "schedule",
-            detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays });
+            detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays, request.OnlyMissingOrFailed });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto

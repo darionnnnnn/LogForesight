@@ -506,4 +506,85 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(IssueCategory.Storage.ToString(), agg.Categories[2]);
         Assert.Equal(IssueCategory.Security.ToString(), agg.Categories[3]);
     }
+
+    [Fact]
+    public void AggregateDayTodo_傳null時母體與現況相同計入高中風險日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Medium, Issue("cpu", 100));
+        Add(1, "A", d0.AddDays(2), RiskLevels.Low, Issue("net", 200));
+
+        var unhandled = new HashSet<IssueSeverity> { IssueSeverity.High, IssueSeverity.Medium };
+        var result = Query().AggregateDayTodo(d0, d0.AddDays(2), null, unhandled, Array.Empty<long>(), d0.AddDays(5), riskLevels: null);
+
+        // 高 1 + 中 1 = 2，低風險日不計入
+        Assert.Equal(2, result.TotalCount);
+        Assert.Equal(2, result.OpenCount);
+    }
+
+    [Fact]
+    public void ActionableOccurrences_只顯示高時_中風險日的問題不列入()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153));
+        Add(1, "A", d0.AddDays(1), RiskLevels.Medium, Issue("cpu", 100));
+
+        var visibleRiskLevels = new HashSet<string> { RiskLevels.High };
+        var result = Query().ActionableOccurrences(d0, d0.AddDays(1), null, null, visibleRiskLevels);
+
+        var occurrence = Assert.Single(result);
+        Assert.Equal(IssueSignatureKey.For("System", "disk", 153, EventLogEntryType.Warning), occurrence.IssueKey);
+    }
+
+    [Fact]
+    public void AggregateByCategory_日風險等級只顯示高時_不計入中風險日()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, RiskLevels.High, Issue("disk", 153, severity: IssueSeverity.High));
+        Add(2, "B", d0, RiskLevels.Medium, Issue("cpu", 100, severity: IssueSeverity.High));
+
+        var visibleRiskLevels = new HashSet<string> { RiskLevels.High };
+        var result = Query().AggregateByCategory(d0, d0, null, null, visibleRiskLevels);
+
+        var cat = Assert.Single(result);
+        Assert.Equal(1, cat.RiskItemCount);
+        Assert.Equal(1, cat.AffectedHosts);
+    }
+
+    /// <summary>
+    /// 來源名稱大小寫不同（如 cron 與 CRON、EventId 皆為 0）時，Aggregate 只回傳一筆，
+    /// 且 TotalCount 與 HostCount 為兩者合併後的值。
+    /// </summary>
+    [Fact]
+    public void Aggregate_來源名稱大小寫不同時合併為單一問題且次數與主機數合併()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("cron", 0, count: 5));
+        Add(2, "B", d0, Issue("CRON", 0, count: 3));
+
+        var agg = Assert.Single(Query().Aggregate(d0, d0, null));
+
+        Assert.Equal(0, agg.EventId);
+        Assert.Equal(8, agg.TotalCount);
+        Assert.Equal(2, agg.HostCount);
+    }
+
+    /// <summary>
+    /// 同一來源名稱不同大小寫合併後，FirstSeen 取較早者、LastSeen 取較晚者。
+    /// </summary>
+    [Fact]
+    public void Aggregate_來源名稱大小寫不同時FirstSeen取較早者LastSeen取較晚者()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("cron", 0));
+        Add(1, "A", d0.AddDays(4), Issue("CRON", 0));
+
+        var agg = Assert.Single(Query().Aggregate(d0, d0.AddDays(10), null));
+
+        Assert.Equal(d0, agg.FirstSeen);
+        Assert.Equal(d0.AddDays(4), agg.LastSeen);
+        Assert.Equal(1, agg.HostCount);
+        Assert.Equal(2, agg.ActiveDays);
+    }
 }

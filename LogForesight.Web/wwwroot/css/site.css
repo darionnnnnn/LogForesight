@@ -494,6 +494,19 @@ body {
     color: #fff;
     letter-spacing: .01em;
     border-bottom: 1px solid rgba(255, 255, 255, .07);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--lf-transition);
+}
+
+.lf-sidebar__brand:hover {
+    background: var(--lf-sidebar-hover-bg);
+    color: #fff;
+}
+
+.lf-sidebar__brand:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: -2px;
 }
 
 /* 回饋十三輪 G：品牌名稱過長時要優雅省略號而非撐版或裁一半的字——.lf-sidebar__brand-text
@@ -775,6 +788,20 @@ body {
     border: 1px solid var(--lf-border);
     border-radius: var(--lf-radius);
     box-shadow: var(--lf-shadow-xs);
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
+}
+
+.lf-card:hover {
+    background-color: var(--lf-primary-soft);
+}
+
+.lf-card--clickable {
+    cursor: pointer;
+}
+
+.lf-card--clickable:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
 }
 
 .lf-card__header {
@@ -1435,6 +1462,22 @@ a.lf-stat:hover .lf-card,
     background: var(--lf-primary);
 }
 
+/* 問題欄白話說明（單行截斷、設最大寬度不撐寬欄位、支援 focus-visible 樣式） */
+.lf-issue-explanation {
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 18rem;
+    cursor: default;
+}
+
+.lf-issue-explanation:focus-visible {
+    outline: 2px solid var(--lf-primary);
+    border-radius: var(--lf-radius-sm);
+}
+
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
 
@@ -1451,9 +1494,29 @@ a.lf-stat:hover .lf-card,
 }
 .table > tbody > tr.lf-row-link:focus-visible,
 .table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
+/* 告警列的文字側（回饋二十輪 Q18）：li 是 flex 容器，子項預設 min-width:auto——
+   來源名稱這類不含空白的長 token 會拒絕收縮並把右側按鈕推出卡片。
+   min-width:0 讓它可收縮，overflow-wrap 讓長 token 真的斷得下去 */
+.lf-alert-item__text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+.lf-row-expand-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: .4em;
+}
+.lf-row-expand-cell__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .lf-row-caret {
     display: inline-flex;
-    margin-right: .4em;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: .15em;
     color: var(--lf-text-muted);
     transform: rotate(-90deg);
     transition: transform .15s ease;
@@ -1464,15 +1527,120 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* ── 主機詳情：月曆式風險時間軸（docs/task-M.md）────────────────────────── */
+
+.lf-calendar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4, 1rem);
+    align-items: flex-start;
+}
+
+.lf-calendar__month {
+    flex: 0 0 auto;
+    width: 210px;
+    max-width: 100%;
+}
+
+.lf-calendar__title {
+    font-size: var(--lf-font-size-sm, .86rem);
+    font-weight: 600;
+    color: var(--lf-text, #0f172a);
+    margin-bottom: var(--lf-space-2, .5rem);
+    text-align: center;
+}
+
+.lf-calendar__weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.lf-calendar__weekday {
+    font-size: var(--lf-font-size-xs, .78rem);
+    font-weight: 500;
+    color: var(--lf-text-muted, #64748b);
+    line-height: 1.2;
+}
+
+.lf-calendar__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.lf-calendar__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--lf-radius-sm, .25rem);
+    font-size: .75rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    color: var(--lf-gray-900, #0f172a);
+    user-select: none;
+    position: relative;
+    transition: transform var(--lf-transition, .15s ease),
+                opacity var(--lf-transition, .15s ease),
+                outline-color var(--lf-transition, .15s ease),
+                box-shadow var(--lf-transition, .15s ease);
+}
+
+.lf-calendar__cell[data-risk="高"] {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell {
+    cursor: pointer;
+}
+
+a.lf-calendar__cell:hover {
+    transform: scale(1.12);
+    z-index: 2;
+    box-shadow: var(--lf-shadow-sm, 0 1px 3px rgba(15, 23, 42, .08));
+    color: var(--lf-gray-900, #0f172a);
+}
+
+a.lf-calendar__cell[data-risk="高"]:hover {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell:focus-visible {
+    outline: 2px solid var(--lf-primary, #1e40af);
+    outline-offset: 2px;
+    z-index: 3;
+}
+
+.lf-calendar__cell--empty {
+    background: transparent;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* 主機詳情問題發生明細展開時的時間軸高亮連動（docs/FEEDBACK-4-PLAN.md §3）：
    這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
    只疊加外框/透明度，展開哪個問題一眼看得出來 */
 .lf-timeline-cell--highlight {
     outline: 2px solid var(--lf-primary, #1e40af);
     outline-offset: 1px;
+    z-index: 1;
 }
+
 .lf-timeline-cell--dim {
     opacity: .25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lf-calendar__cell {
+        transition: none;
+    }
+    a.lf-calendar__cell:hover {
+        transform: none;
+    }
 }
 
 /* ── 問題層級處理狀態：狀態文字＋右側批次套用（2026-07-27 改版；2026-07-28 #7 拆欄）─────

@@ -25,6 +25,7 @@ public class RecordListQueryService
     /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
     /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
+    private readonly IKnownIssueRuleStore? _rules;
 
     public RecordListQueryService(
         IRecordRepository repository,
@@ -38,7 +39,8 @@ public class RecordListQueryService
         IVisibilityService visibility,
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        IKnownIssueRuleStore? rules = null)
     {
         _repository = repository;
         _hosts = hosts;
@@ -52,6 +54,7 @@ public class RecordListQueryService
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _issueOwners = issueOwners;
+        _rules = rules;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -276,7 +279,7 @@ public class RecordListQueryService
     /// 與 <see cref="RecordQueryHelpers.GroupIssuesBySignature"/> 同一個分組鍵），回答「這個問題影響
     /// 多大範圍、誰在處理」——依主機／依日期是「這台主機／這一天怎麼樣」，這裡反過來看「這個問題本身」。
     /// </summary>
-    public PagedResult<IssueGroupDto> SearchByIssue(RecordSearchRequest request)
+    public IssueSearchResultDto SearchByIssue(RecordSearchRequest request)
     {
         // 全面 SQL 化（回饋十九輪批次E1）：改版前把期間內全部紀錄整批查回記憶體再 GroupBy——
         // 這正是需求「主視角改成問題」要用的那個畫面，卻是全站最慢的一條路徑（N3，2000 台環境下
@@ -322,7 +325,7 @@ public class RecordListQueryService
             aggregates = aggregates.Where(a => a.MaxSeverityRank >= (int)minSeverity).ToList();
         }
 
-        if (aggregates.Count == 0) return Paginate(new List<IssueGroupDto>(), request);
+        if (aggregates.Count == 0) return WithDistinctHosts(Paginate(new List<IssueGroupDto>(), request), 0);
 
         // 密度的分母＝查詢期間天數。篩選未指定日期時退回候選問題本身的跨度——
         // 「2/90 天」的意義完全取決於分母是什麼，不能讓它變成一個沒有定義的數字
@@ -357,11 +360,20 @@ public class RecordListQueryService
             _aggregates.DailyHostCounts(issues, baselineFrom, baselineTo, hostIds));
         var fleetFirstSeen = _aggregates.FirstSeenFor(issues);
 
+        // 規則白話說明：以篩選後留下的問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
+        var rules = KnownIssueCatalog.ResolveRules(_rules);
+        var explanations = issues
+            .Distinct()
+            .ToDictionary(
+                i => i,
+                i => KnownIssueCatalog.PlainExplanationFor(rules, i.Source, i.EventId));
+
         var groups = aggregates
             .Select(a => BuildIssueGroup(
                 a,
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
-                periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen))
+                periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen,
+                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -392,8 +404,28 @@ public class RecordListQueryService
                 .ThenByDescending(i => i.TotalCount)
         }).ToList();
 
-        return Paginate(groups, request);
+        // 去重主機總數（回饋二十輪 B2）：期間內符合條件的問題所影響的存活主機去重計數，
+        // 定義與風險類型卡的主機數相同（同一台主機命中多個問題不重複計數）——
+        // 列表各列的 HostCount 加總會大於這個值，前端要顯示的是這個才對得上卡片
+        var distinctHostCount = groups
+            .SelectMany(g => resolvedByIssue.TryGetValue((g.Source, g.EventId), out var occs) ? occs : Enumerable.Empty<ResolvedOccurrence>())
+            .Select(r => r.Occurrence.HostId)
+            .Distinct()
+            .Count();
+
+        return WithDistinctHosts(Paginate(groups, request), distinctHostCount);
     }
+
+    /// <summary>依問題視角的分頁結果沿用共用 Paginate，再附上去重主機總數</summary>
+    private static IssueSearchResultDto WithDistinctHosts(PagedResult<IssueGroupDto> paged, int distinctHostCount) =>
+        new()
+        {
+            Items = paged.Items,
+            Page = paged.Page,
+            PageSize = paged.PageSize,
+            Total = paged.Total,
+            DistinctHostCount = distinctHostCount
+        };
 
     private static int SeverityRank(string severity) =>
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
@@ -425,7 +457,8 @@ public class RecordListQueryService
         IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey,
         IReadOnlyDictionary<long, WebUser> usersById,
         IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
-        IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen)
+        IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
+        string? plainExplanation)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照（Linux 的 EventKey 尾段被
         // TryParseSignature 收斂掉了）——每台主機只看它自己最近一次出現的那筆，
@@ -491,7 +524,11 @@ public class RecordListQueryService
             ElevatesDayRisk = aggregate.ElevatesDayRisk,
 
             KnownIssue = latestKnownIssue,
+            PlainExplanation = plainExplanation,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount),
+            UnhandledCount = unhandled,
+            InProgressCount = processing,
+            ResolvedCount = resolvedCount,
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
             GroupStatus = unhandled > 0 ? HandlingStatuses.Open
                 : processing > 0 ? HandlingStatuses.InProgress
@@ -876,4 +913,5 @@ public class RecordListQueryService
         HandlingStatuses.Resolved => "已處理",
         _ => status
     };
+
 }

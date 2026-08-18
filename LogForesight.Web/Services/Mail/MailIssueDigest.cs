@@ -45,8 +45,10 @@ public class MailIssueDigest
         // 前期對比用**等長**的前一個期間——與 IssueRankingBuilder.Build 同一套規則
         var previousTo = from.Date.AddDays(-1);
         var previousFrom = previousTo.AddDays(-periodDays + 1);
+        // 鍵正規化成大寫（回饋二十輪 I）：Aggregate 輸出的 Source 是該期間內任一個原始寫法，
+        // 本期與前期可能取到不同大小寫，用原始字串當鍵會讓前期對比靜默落空
         var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
-            .ToDictionary(a => (a.Source, a.EventId));
+            .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
         if (current.Count == 0) return new List<MailIssueRow>();
@@ -56,7 +58,10 @@ public class MailIssueDigest
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
         {
-            var key = (a.Source, a.EventId);
+            // 兩份查表都用正規化鍵：Aggregate 輸出的 Source 是該期間任一原始寫法，
+            // 而 overdueKeys 來自 IssueKey 字串解析（帶處理狀態列當時的原始大小寫）——
+            // cron／CRON 併存時兩邊必然可能對不上，逾期問題會靜默掉出「逾期」區
+            var key = IssueProfile.KeyOf(a.Source, a.EventId);
             previous.TryGetValue(key, out var prev);
             var previousHostCount = prev?.HostCount ?? 0;
 
@@ -75,7 +80,7 @@ public class MailIssueDigest
 
     /// <summary>逾期問題的 (Source,EventId) 集合——母體與判定規則與 <see cref="IssueTodoQuery"/>
     /// 共用同一個口徑（<see cref="IssueTodoQuery.IsOverdueInProgress"/>），不是另訂一套規則。</summary>
-    private HashSet<(string Source, int EventId)> ResolveOverdueKeys(
+    private HashSet<(string SourceUpper, int EventId)> ResolveOverdueKeys(
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
     {
         var actionable = _aggregates.ActionableOccurrences(from, to, visibleHostIds);
@@ -83,12 +88,14 @@ public class MailIssueDigest
 
         var resolved = _statusResolver.Resolve(actionable, from, to);
 
+        // 鍵一律正規化（回饋二十輪 I 終檢補上）：呼叫端用 Aggregate 的 Source 查這個集合，
+        // 那是任一原始寫法，不正規化就會漏
         var overdue = new HashSet<(string, int)>();
         foreach (var r in resolved)
         {
             if (!IssueTodoQuery.IsOverdueInProgress(r)) continue;
             var signature = IssueSignatureKey.TryParseSignature(r.Occurrence.IssueKey);
-            if (signature != null) overdue.Add(signature.Value);
+            if (signature != null) overdue.Add(IssueProfile.KeyOf(signature.Value.Source, signature.Value.EventId));
         }
         return overdue;
     }

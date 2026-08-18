@@ -33,12 +33,13 @@ public class AuditController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
     {
+        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
         var query = new AuditQuery
         {
-            From = ParseDate(from),
+            From = parsedFrom,
             // 結束日期含當天：使用者選「到 7/21」的意思是包含 7/21 全天，
             // 不做這個處理的話當天的紀錄會全部查不到
-            To = ParseDate(to)?.AddDays(1).AddSeconds(-1),
+            To = parsedTo?.AddDays(1).AddSeconds(-1),
             UserId = userId,
             TargetKind = targetKind,
             Ascending = dir == "asc",

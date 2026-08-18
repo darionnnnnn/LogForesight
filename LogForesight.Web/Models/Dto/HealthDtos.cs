@@ -65,6 +65,18 @@ public class HealthDetailDto : HealthDto
     /// <summary>最後一次搬移失敗的原因（成功為 null）</summary>
     public string? MigrationError { get; set; }
 
+    // ── 問題機房首見日的背景合併 ────────────────────────────────────────
+    // 首次合併成功後會記錄浮水印，重啟時比對浮水印跳過；三次連續失敗時反映為 degraded
+
+    /// <summary>not_started｜running｜completed｜skipped｜failed</summary>
+    public string IssueFirstSeenSeedState { get; set; } = string.Empty;
+
+    /// <summary>已失敗/重試次數（0～3）</summary>
+    public int IssueFirstSeenSeedFailures { get; set; }
+
+    /// <summary>最後一次合併失敗的原因（成功/未發生為 null）</summary>
+    public string? IssueFirstSeenSeedError { get; set; }
+
     /// <summary>因連續寄送失敗達門檻而暫停寄送的郵件收件人（回饋十七輪批次B-1）：
     /// 通常代表地址打錯，維運人員不用翻 log 就看得到。</summary>
     public List<string> SuspendedMailRecipients { get; set; } = new();

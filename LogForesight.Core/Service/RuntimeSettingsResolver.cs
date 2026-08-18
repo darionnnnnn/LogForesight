@@ -38,6 +38,15 @@ public static class RuntimeSettingsResolver
             if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
                 settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
 
+            settings.Ai.Provider = AiProviders.Normalize(systemSettings.AiProvider);
+            settings.Ai.Model = string.IsNullOrWhiteSpace(systemSettings.AiModel)
+                ? AiProviders.DefaultModel(settings.Ai.Provider)
+                : systemSettings.AiModel.Trim();
+            settings.Ai.AzureDeployment = systemSettings.AiAzureDeployment?.Trim() ?? "";
+            settings.Ai.AzureApiVersion = string.IsNullOrWhiteSpace(systemSettings.AiAzureApiVersion)
+                ? "2024-10-21"
+                : systemSettings.AiAzureApiVersion.Trim();
+
             ApplyAiAdvanced(settings.Ai, systemSettings);
 
             // 權限監控資料夾與分析參數（§12）：DB 是唯一事實來源

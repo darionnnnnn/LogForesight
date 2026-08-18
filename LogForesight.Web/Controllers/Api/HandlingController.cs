@@ -81,9 +81,12 @@ public class IssueCasesController : ControllerBase
     [HttpGet("preview")]
     public ApiResponse<IssueCaseAssignPreviewDto> Preview(
         [FromQuery] string source, [FromQuery] int eventId,
-        [FromQuery] string? from, [FromQuery] string? to) =>
-        ApiResponse<IssueCaseAssignPreviewDto>.Ok(
-            _service.PreviewIssueCaseAssign(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
+        [FromQuery] string? from, [FromQuery] string? to)
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        return ApiResponse<IssueCaseAssignPreviewDto>.Ok(
+            _service.PreviewIssueCaseAssign(source, eventId, parsedFrom, parsedTo));
+    }
 
     [HttpPost("bulk-assign")]
     public ApiResponse<BulkAssignIssueCaseResultDto> BulkAssign([FromBody] BulkAssignIssueCaseRequest request) =>
@@ -147,9 +150,12 @@ public class IssueBulkCloseController : ControllerBase
     [HttpGet("close-preview")]
     public ApiResponse<IssueBulkClosePreviewDto> ClosePreview(
         [FromQuery] string source, [FromQuery] int eventId,
-        [FromQuery] string? from, [FromQuery] string? to) =>
-        ApiResponse<IssueBulkClosePreviewDto>.Ok(
-            _service.PreviewBulkClose(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
+        [FromQuery] string? from, [FromQuery] string? to)
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        return ApiResponse<IssueBulkClosePreviewDto>.Ok(
+            _service.PreviewBulkClose(source, eventId, parsedFrom, parsedTo));
+    }
 
     [HttpPost("bulk-close")]
     public ApiResponse<BulkCloseIssueResultDto> BulkClose([FromBody] BulkCloseIssueRequest request) =>

@@ -20,7 +20,11 @@ public class SystemSettingsDto
     /// <summary>顯示中的日風險等級（高/中/低，docs/archive/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
     public string AiBaseUrl { get; set; } = "";
+    public string AiModel { get; set; } = "local-model";
+    public string AiAzureDeployment { get; set; } = "";
+    public string AiAzureApiVersion { get; set; } = "2024-10-21";
 
     /// <summary>API 金鑰是否已設定；金鑰本身 write-only，絕不回傳明碼或密文</summary>
     public bool AiHasApiKey { get; set; }
@@ -161,9 +165,20 @@ public class UpdateSystemSettingsRequest
     /// 見 SystemSettingsService.Update</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
+
     /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]
     public string AiBaseUrl { get; set; } = "";
+
+    [StringLength(200)]
+    public string AiModel { get; set; } = "";
+
+    [StringLength(200)]
+    public string AiAzureDeployment { get; set; } = "";
+
+    [StringLength(100)]
+    public string AiAzureApiVersion { get; set; } = "";
 
     /// <summary>write-only；留空＝沿用既有金鑰，要清除請另外傳 ClearAiApiKey=true</summary>
     [StringLength(500)]
@@ -382,4 +397,7 @@ public class TestAdConnectionResultDto
 public class DisplaySettingsDto
 {
     public List<string> VisibleDayRiskLevels { get; set; } = new();
+
+    /// <summary>顯示中的問題嚴重度清單（回饋二十輪 B2，SiteHidden 模式下的可見嚴重度；未限制時為完整清單）</summary>
+    public List<string> VisibleSeverities { get; set; } = new();
 }

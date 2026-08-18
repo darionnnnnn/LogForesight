@@ -45,14 +45,19 @@ public sealed class EfJsonBlobStore
     }
 
     /// <summary>目前版本號；內容不存在回 0。只讀一個整數欄，不拉整份內容——
-    /// 這是上層快取判定「要不要重讀」的探測點。</summary>
+    /// 這是上層快取判定「要不要重讀」的探測點。
+    /// 成本要記進效能監控：SQLite 是本機檔案存取，SqlServer 是一次網路往返，
+    /// 單一請求十幾次探測的真實代價只有量到才看得見。</summary>
     public long ReadVersion()
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         using var ctx = _contextFactory();
-        return ctx.Blobs.AsNoTracking()
+        var version = ctx.Blobs.AsNoTracking()
             .Where(b => b.BlobKey == _key)
             .Select(b => b.Version)
             .FirstOrDefault();
+        _performance?.Record($"blob:{_key}:ReadVersion", sw.ElapsedMilliseconds);
+        return version;
     }
 
     /// <summary>目前內容與版本；內容不存在回 (null, 0)。

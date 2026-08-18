@@ -108,6 +108,9 @@ public class TriggerRunRequest
 
     /// <summary>一次性回補天數覆寫（1..14），不落地設定</summary>
     public int? BackfillDays { get; set; }
+
+    /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</summary>
+    public bool OnlyMissingOrFailed { get; set; }
 }
 
 public class TriggerRunResultDto

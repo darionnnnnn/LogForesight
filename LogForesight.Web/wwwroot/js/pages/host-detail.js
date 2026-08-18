@@ -6,8 +6,8 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad } from '../core/ui.js';
-import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES } from '../core/format.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows } from '../core/ui.js';
+import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
@@ -110,33 +110,94 @@ function renderHeader(detail) {
     document.getElementById('host-header').replaceChildren(card);
 }
 
+const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+
 function renderTimeline(detail) {
     const container = document.getElementById('host-timeline');
 
-    const wrap = document.createElement('div');
-    wrap.className = 'd-flex flex-wrap gap-1';
-
+    // 依月份（yyyy-MM）分組
+    const monthsMap = new Map();
     for (const day of detail.timeline) {
-        const cell = document.createElement(day.hasRecord ? 'a' : 'div');
-        cell.className = 'rounded lf-timeline-cell';
-        cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/archive/FEEDBACK-4-PLAN.md §3）
-        cell.style.width = '22px';
-        cell.style.height = '22px';
-        cell.style.background = cellColor(day);
-        cell.style.display = 'inline-block';
-
-        if (day.hasRecord) {
-            cell.href = `/records/${hostId}/${day.date}`;
-            cell.title = `${day.date}｜${day.riskLevel}風險${day.headline ? '｜' + day.headline : ''}`;
-        } else {
-            // 這天沒有分析紀錄——可能是排程沒跑、機器關機，不是「沒問題」
-            cell.title = `${day.date}｜無分析紀錄`;
+        const monthKey = day.date.substring(0, 7);
+        if (!monthsMap.has(monthKey)) {
+            monthsMap.set(monthKey, []);
         }
-
-        wrap.appendChild(cell);
+        monthsMap.get(monthKey).push(day);
     }
 
-    container.replaceChildren(wrap);
+    const calendarWrap = document.createElement('div');
+    calendarWrap.className = 'lf-calendar';
+
+    for (const [monthKey, days] of monthsMap) {
+        const monthCard = document.createElement('div');
+        monthCard.className = 'lf-calendar__month';
+
+        const [yStr, mStr] = monthKey.split('-');
+        const year = parseInt(yStr, 10);
+        const month = parseInt(mStr, 10);
+
+        const title = document.createElement('div');
+        title.className = 'lf-calendar__title';
+        title.textContent = `${year} 年 ${month} 月`;
+        monthCard.appendChild(title);
+
+        const weekdaysHeader = document.createElement('div');
+        weekdaysHeader.className = 'lf-calendar__weekdays';
+        for (const wd of WEEKDAYS) {
+            const wdCol = document.createElement('div');
+            wdCol.className = 'lf-calendar__weekday';
+            wdCol.textContent = wd;
+            weekdaysHeader.appendChild(wdCol);
+        }
+        monthCard.appendChild(weekdaysHeader);
+
+        const grid = document.createElement('div');
+        grid.className = 'lf-calendar__grid';
+
+        // 月初以空白補齊對齊星期（一～日：週一為 0，週日為 6）。
+        // 前提：detail.timeline 是後端產生的**連續每日**陣列（缺分析的日子也會以 hasRecord=false 佔位），
+        // 所以只補月首、之後逐格順排就對得上星期。若日後改成稀疏陣列，這裡要改成依日數字算 grid 位置
+        const firstDay = days[0];
+        const [firstY, firstM, firstD] = firstDay.date.split('-').map(Number);
+        const firstDate = new Date(firstY, firstM - 1, firstD);
+        const startWeekday = (firstDate.getDay() + 6) % 7;
+
+        for (let i = 0; i < startWeekday; i++) {
+            const emptyCell = document.createElement('span');
+            emptyCell.className = 'lf-calendar__cell lf-calendar__cell--empty';
+            emptyCell.setAttribute('aria-hidden', 'true');
+            grid.appendChild(emptyCell);
+        }
+
+        for (const day of days) {
+            const cell = document.createElement(day.hasRecord ? 'a' : 'span');
+            cell.className = 'lf-calendar__cell lf-timeline-cell';
+            cell.dataset.date = day.date;   // 問題發生明細展開時的高亮連動用（docs/archive/FEEDBACK-4-PLAN.md §3）
+            cell.style.backgroundColor = cellColor(day);
+
+            const dayNum = parseInt(day.date.split('-')[2], 10);
+            cell.textContent = String(dayNum);
+
+            if (day.riskLevel) {
+                cell.dataset.risk = day.riskLevel;
+            }
+
+            if (day.hasRecord) {
+                cell.href = `/records/${hostId}/${day.date}`;
+                cell.title = `${day.date}｜${day.riskLevel}風險${day.headline ? '｜' + day.headline : ''}`;
+            } else {
+                // 這天沒有分析紀錄——可能是排程沒跑、機器關機，不是「沒問題」
+                cell.title = `${day.date}｜無分析紀錄`;
+            }
+
+            grid.appendChild(cell);
+        }
+
+        monthCard.appendChild(grid);
+        calendarWrap.appendChild(monthCard);
+    }
+
+    container.replaceChildren(calendarWrap);
     renderLegend();
 }
 
@@ -170,6 +231,61 @@ function renderLegend() {
     }
 }
 
+const ISSUE_COLUMNS = [
+    {
+        title: '來源 / Event',
+        sortKey: 'source',
+        sortValue: s => `${s.source} (${s.eventId})`,
+        render: s => `${s.source} (${s.eventId})`
+    },
+    {
+        title: '分類',
+        sortKey: 'category',
+        sortValue: s => CATEGORY_NAMES[s.category] ?? s.category,
+        render: s => CATEGORY_NAMES[s.category] ?? s.category
+    },
+    {
+        title: '嚴重度',
+        sortKey: 'severity',
+        sortDefaultDir: 'asc',
+        sortValue: s => SEVERITY_ORDER.indexOf(s.maxSeverity),
+        render: s => severityBadge(s.maxSeverity)
+    },
+    {
+        title: '總次數',
+        className: 'text-end',
+        sortKey: 'totalCount',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.totalCount,
+        render: s => formatNumber(s.totalCount)
+    },
+    {
+        title: '出現天數',
+        className: 'text-end',
+        sortKey: 'daysSeen',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.daysSeen,
+        render: s => formatNumber(s.daysSeen)
+    },
+    {
+        title: '最近出現',
+        className: 'text-nowrap',
+        sortKey: 'lastSeenDate',
+        sortDefaultDir: 'desc',
+        sortValue: s => s.lastSeenDate,
+        render: s => lastSeenLink(s)
+    },
+    {
+        title: '說明',
+        sortKey: 'knownIssue',
+        sortValue: s => s.knownIssue || '',
+        render: s => s.knownIssue || ''
+    }
+];
+
+let issuesSort = null;
+let currentDetail = null;
+
 /**
  * 重點問題（期間彙總，docs/archive/FEEDBACK-3-PLAN.md #4；docs/archive/FEEDBACK-4-PLAN.md §3 再改版）：
  * 問題查詢「依主機」下鑽進來原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接
@@ -178,17 +294,16 @@ function renderLegend() {
  * 取代原本的整列連結（rowHref 與 rowDetail 互斥），跨日需求改走這個連結。
  */
 function renderIssues(detail) {
+    currentDetail = detail;
+    const rows = sortRows(detail.topSignatures, ISSUE_COLUMNS, issuesSort);
     renderTable(document.getElementById('host-issues'), {
-        columns: [
-            { title: '來源 / Event', render: s => `${s.source} (${s.eventId})` },
-            { title: '分類', render: s => CATEGORY_NAMES[s.category] ?? s.category },
-            { title: '嚴重度', render: s => severityBadge(s.maxSeverity) },
-            { title: '總次數', className: 'text-end', render: s => formatNumber(s.totalCount) },
-            { title: '出現天數', className: 'text-end', render: s => formatNumber(s.daysSeen) },
-            { title: '最近出現', className: 'text-nowrap', render: s => lastSeenLink(s) },
-            { title: '說明', render: s => s.knownIssue || '' }
-        ],
-        rows: detail.topSignatures,
+        columns: ISSUE_COLUMNS,
+        rows,
+        sort: issuesSort,
+        onSort: (key, dir) => {
+            issuesSort = { key, dir };
+            renderIssues(currentDetail);
+        },
         rowDetail: s => occurrenceDetailPanel(s),
         // 時間軸的灰格＝「這天沒分析」，不是「沒問題」；空狀態的 hint 呼應同一個原則，
         // 避免使用者把「期間內沒有重點問題」誤讀成「這台主機根本沒被監控」

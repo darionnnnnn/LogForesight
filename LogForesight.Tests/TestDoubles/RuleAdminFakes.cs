@@ -91,13 +91,15 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
 
     public List<CategoryAggregate> AggregateByCategory(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities) => new();
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IReadOnlySet<string>? riskLevels = null) => new();
 
     public List<HostIssueOccurrence> ActionableOccurrencesResult { get; set; } = new();
 
     public List<HostIssueOccurrence> ActionableOccurrences(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null) =>
         ActionableOccurrencesResult;
 
     public List<DateRiskAggregate> AggregateByDate(
@@ -139,7 +141,8 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
         IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
         IReadOnlyCollection<long> excludedHostIds,
-        DateTime today) => new(0, 0, 0, 0, 0);
+        DateTime today,
+        IReadOnlySet<string>? riskLevels = null) => new(0, 0, 0, 0, 0);
 }
 
 internal class FakeSuppressionStore : ISuppressionStore

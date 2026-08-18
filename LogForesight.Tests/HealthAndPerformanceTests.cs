@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Persistence.Sql;
 using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
 using Xunit;
@@ -162,5 +163,83 @@ public class HealthServiceTests : IDisposable
         Assert.Equal("分析主機", dto.AnalysisPhase);
         Assert.Equal(30, dto.AnalysisDone);
         Assert.Equal(100, dto.AnalysisTotal);
+    }
+
+    /// <summary>首見日合併失敗重試：連續失敗達上限（3次）後停止重試並標記為失敗狀態</summary>
+    [Fact]
+    public async Task 首見日合併_連續失敗達上限後停止重試並標記為失敗狀態()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "lf-failing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dbPath = Path.Combine(tempDir, "f.db");
+            var tempBackend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={dbPath}" },
+                tempDir);
+
+            // 破壞 table 模擬執行期查詢或合併失敗
+            using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "DROP TABLE lf_top_issues;";
+                cmd.ExecuteNonQuery();
+            }
+
+            var service = new IssueFirstSeenSeedHostedService(tempBackend)
+            {
+                InitialDelay = TimeSpan.Zero,
+                RetryInterval = TimeSpan.Zero
+            };
+
+            // 走 BackgroundService 的公開入口而非測試墊片：StartAsync 會啟動 ExecuteAsync 並回傳
+            // 代表它的 Task（ExecuteTask），等它結束就等於等重試迴圈跑完
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await service.StartAsync(cts.Token);
+            await service.ExecuteTask!;
+
+            Assert.Equal(IssueFirstSeenSeedHostedService.MaxRetries, service.Progress.Failures);
+            Assert.Equal(IssueFirstSeenSeedStates.Failed, service.Progress.State);
+            Assert.NotNull(service.Progress.LastError);
+            Assert.True(service.Progress.IsFailed);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(tempDir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>/api/health/detail 回應需包含首見日合併狀態，且3次失敗時反映為 degraded</summary>
+    [Fact]
+    public void 健康檢查_診斷檢查含首見日合併狀態與降級反映()
+    {
+        var runState = new SchedulerRunState();
+        var seedService = new IssueFirstSeenSeedHostedService(_backend);
+
+        // 1. 初始/未開始狀態
+        var healthService = new HealthService(_backend, runState, _backend.TopIssueBackfiller(), NewMailService(), seedService);
+        var detail1 = healthService.GetDetail();
+        Assert.Equal(IssueFirstSeenSeedStates.NotStarted, detail1.IssueFirstSeenSeedState);
+        Assert.Equal(0, detail1.IssueFirstSeenSeedFailures);
+        Assert.Null(detail1.IssueFirstSeenSeedError);
+        Assert.Equal(HealthStatuses.Ok, detail1.Status);
+
+        // 2. 已跳過或已完成狀態
+        seedService.Progress.State = IssueFirstSeenSeedStates.Skipped;
+        var detail2 = healthService.GetDetail();
+        Assert.Equal(IssueFirstSeenSeedStates.Skipped, detail2.IssueFirstSeenSeedState);
+        Assert.Equal(HealthStatuses.Ok, detail2.Status);
+
+        // 3. 連續失敗達上限（3次）狀態 -> 狀態反映為 degraded
+        seedService.Progress.State = IssueFirstSeenSeedStates.Failed;
+        seedService.Progress.Failures = IssueFirstSeenSeedHostedService.MaxRetries;
+        seedService.Progress.LastError = "逾時或連線中斷";
+        var detail3 = healthService.GetDetail();
+        Assert.Equal(IssueFirstSeenSeedStates.Failed, detail3.IssueFirstSeenSeedState);
+        Assert.Equal(3, detail3.IssueFirstSeenSeedFailures);
+        Assert.Equal("逾時或連線中斷", detail3.IssueFirstSeenSeedError);
+        Assert.Equal(HealthStatuses.Degraded, detail3.Status);
     }
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -136,8 +137,23 @@ internal static class SchemaUpgrader
 
 
 
-    internal static void MergeIssueFirstSeenSeed(LfDbContext ctx)
+    internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
+
+    internal static IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(LfDbContext ctx, bool force = false)
     {
+        // 依分析等級設置 300 秒逾時，避免大表掃描因 60 秒前景逾時而失敗
+        ctx.Database.SetCommandTimeout(StorageBackend.AnalysisCommandTimeoutSeconds);
+
+        // 便宜閘門：讀取目前 lf_top_issues 最大 record_id 與既有浮水印比較（毫秒級單一查詢）
+        var currentMaxRecordId = ctx.TopIssues.Max(t => (long?)t.RecordId) ?? 0;
+        var watermarkRow = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenWatermarkBlobKey);
+
+        if (!force && watermarkRow != null && long.TryParse(watermarkRow.Content, out var wm) && wm == currentMaxRecordId)
+        {
+            Log.Info("[SQL] lf_issue_first_seen 浮水印相同（{Watermark}），跳過機房首見日合併", wm);
+            return IssueFirstSeenSeedMergeOutcome.Skipped;
+        }
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // **兩段 SQL 刻意避開「在 HAVING 裡引用外層欄位或未分組的欄位」**：那種寫法在 Sqlite 上
@@ -185,8 +201,30 @@ internal static class SchemaUpgrader
             ) < lf_issue_first_seen.first_seen
             """);
 
-        Log.Info("[SQL] lf_issue_first_seen 機房首見日冪等合併完成：補缺 {Inserted} 列，修正 {Updated} 列，耗時 {Ms}ms",
-            inserted, updated, sw.ElapsedMilliseconds);
+        // 更新浮水印至 lf_blobs
+        if (watermarkRow == null)
+        {
+            ctx.Blobs.Add(new BlobRow
+            {
+                BlobKey = IssueFirstSeenWatermarkBlobKey,
+                Content = currentMaxRecordId.ToString(),
+                UpdatedAt = DateTime.Now,
+                Version = 1
+            });
+        }
+        else
+        {
+            watermarkRow.Content = currentMaxRecordId.ToString();
+            watermarkRow.UpdatedAt = DateTime.Now;
+            watermarkRow.Version++;
+        }
+
+        ctx.SaveChanges();
+
+        Log.Info("[SQL] lf_issue_first_seen 機房首見日冪等合併完成（浮水印更新至 {Watermark}）：補缺 {Inserted} 列，修正 {Updated} 列，耗時 {Ms}ms",
+            currentMaxRecordId, inserted, updated, sw.ElapsedMilliseconds);
+
+        return IssueFirstSeenSeedMergeOutcome.Completed;
     }
 
     private const string SqliteCreateIssueHandling = """
@@ -409,4 +447,11 @@ internal static class SchemaUpgrader
                 "SELECT i.name AS Value FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id WHERE t.name = {0}", table).ToList();
         return names.Contains(indexName, StringComparer.OrdinalIgnoreCase);
     }
+}
+
+/// <summary>首見日合併的執行結果</summary>
+public enum IssueFirstSeenSeedMergeOutcome
+{
+    Completed,
+    Skipped
 }

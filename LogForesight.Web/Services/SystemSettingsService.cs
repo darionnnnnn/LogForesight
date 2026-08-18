@@ -1,3 +1,4 @@
+using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
@@ -65,6 +66,9 @@ public class SystemSettingsService : ISystemSettingsService
     /// 而過濾機制已收斂到 RecordRepository 單一咽喉點（S1），沒有理由再分兩種嚴格程度不同的隱藏。
     /// </summary>
     public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "SiteHidden" };
+
+    /// <summary>合法 AI 提供者名稱</summary>
+    public static IReadOnlyList<string> ValidAiProviders => AiProviders.All;
 
     /// <summary>舊值遷移：既存 blob 裡的 Locked／GlobalFilter 一律視同新的 SiteHidden——
     /// 兩者語意都被新模式涵蓋（全站查詢層排除）且更嚴格一致，不需要区分。
@@ -208,7 +212,36 @@ public class SystemSettingsService : ISystemSettingsService
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
 
+        var aiProvider = AiProviders.Normalize(request.AiProvider);
+        var matchedProvider = ValidAiProviders.FirstOrDefault(p => string.Equals(p, aiProvider, StringComparison.OrdinalIgnoreCase));
+        if (matchedProvider == null)
+            throw DomainException.Validation("AI 服務提供者不合法。");
+        aiProvider = matchedProvider;
+
         var before = _store.Get();
+
+        var hasApiKey = !string.IsNullOrWhiteSpace(request.AiApiKey) ||
+                        (!string.IsNullOrEmpty(before.AiApiKeyEnc) && !request.ClearAiApiKey);
+
+        if (aiProvider == AiProviders.OpenAi)
+        {
+            if (!hasApiKey)
+                throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入 API 金鑰。");
+            if (string.IsNullOrWhiteSpace(request.AiModel))
+                throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入模型名稱。");
+        }
+        else if (aiProvider == AiProviders.AzureOpenAi)
+        {
+            if (string.IsNullOrWhiteSpace(request.AiBaseUrl))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入端點位址。");
+            if (string.IsNullOrWhiteSpace(request.AiAzureDeployment))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入部署名稱。");
+            if (string.IsNullOrWhiteSpace(request.AiAzureApiVersion))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入 API 版本。");
+            if (!hasApiKey)
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入 API 金鑰。");
+        }
+
         // 由關轉開判定要用的三個舊值先讀成區域變數（回饋十八輪批次C）：不能依賴 before 這個
         // 物件在 _store.Update() 之後仍保有「更新前」的內容——ISystemSettingsStore 的介面契約
         // 只保證 Get() 回傳的是讀取當下的快照，並未保證與後續 Update() 使用的是不同執行個體
@@ -226,11 +259,19 @@ public class SystemSettingsService : ISystemSettingsService
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.VisibleDayRiskLevels = dayRiskLevels;
+            s.AiProvider = aiProvider;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
                 s.AiApiKeyEnc = "";
             else if (!string.IsNullOrEmpty(request.AiApiKey))
                 s.AiApiKeyEnc = CryptoHelper.Encrypt(request.AiApiKey);
+            s.AiModel = string.IsNullOrWhiteSpace(request.AiModel)
+                ? AiProviders.DefaultModel(aiProvider)
+                : request.AiModel.Trim();
+            s.AiAzureDeployment = request.AiAzureDeployment?.Trim() ?? "";
+            s.AiAzureApiVersion = string.IsNullOrWhiteSpace(request.AiAzureApiVersion)
+                ? "2024-10-21"
+                : request.AiAzureApiVersion.Trim();
             s.InitialHistoryDays = request.InitialHistoryDays;
             s.RetentionDays = request.RetentionDays;
             s.RunLogRetentionDays = request.RunLogRetentionDays;
@@ -319,7 +360,8 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.AiBaseUrl,
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
+                    before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RiskyEventRetentionDays, before.DetailRetentionDays,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
@@ -330,7 +372,8 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.AiBaseUrl,
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
+                    saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RiskyEventRetentionDays, saved.DetailRetentionDays,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
@@ -549,8 +592,12 @@ public class SystemSettingsService : ISystemSettingsService
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
+        AiProvider = AiProviders.Normalize(s.AiProvider),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
+        AiModel = string.IsNullOrWhiteSpace(s.AiModel) ? AiProviders.DefaultModel(s.AiProvider) : s.AiModel,
+        AiAzureDeployment = s.AiAzureDeployment,
+        AiAzureApiVersion = string.IsNullOrWhiteSpace(s.AiAzureApiVersion) ? "2024-10-21" : s.AiAzureApiVersion,
         InitialHistoryDays = s.InitialHistoryDays,
         RetentionDays = s.RetentionDays,
         RunLogRetentionDays = s.RunLogRetentionDays,

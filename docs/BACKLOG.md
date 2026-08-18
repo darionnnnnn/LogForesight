@@ -207,12 +207,15 @@
   問題鍵串接交給 EF 而非手寫 `||`／`+`），但這是「降低風險」不是「已驗證」。正式環境第一次
   跑分析與開報表時要看 nlog 有沒有 SQL 例外。
 - **效益未實機量測**：`SqlPerformanceMonitor` 會記錄 `blob:hosts:Read`（S1 快取，單一請求應降到
-  0～1 次）與各聚合方法的耗時，實測時據此確認。前端三頁（設定／詳情／報表）未做瀏覽器實測
+  0～1 次）、`blob:hosts:ReadVersion`（回饋二十輪 G 補上——版本探測本來不計入任何 key，
+  只看 `Read` 會漏掉每次 `GetAll()` 都做的那趟往返，是驗證方法本身的盲區）與各聚合方法的耗時，
+  實測時據此確認。前端三頁（設定／詳情／報表）未做瀏覽器實測
   （在 `[Authorize]` 之後），只做了 JS 語法檢查。
 - **`scope != all` 的報表路徑仍在記憶體**：`ReportService` 對 `unresolved`／`open`／`unassigned`
   三種顯示範圍仍以 `QueryLightweight` 載入整段期間的紀錄再 `FilterByScope`。母體只有高／中風險日、
-  量級小一階，且已受 366 天上限約束；`DeriveDayHandling` 已能提供 SQL 端的日狀態，
-  真的成為瓶頸時可接上。
+  量級小一階，且 366 天上限現在真的擋得住（回饋二十輪 A 之前，起訖顛倒會算出負天數繞過檢查，
+  進 service 才被交換成多年區間——那時這條的「已受上限約束」前提其實不成立）；
+  `DeriveDayHandling` 已能提供 SQL 端的日狀態，真的成為瓶頸時可接上。
 - **`AggregateByDate` 仍逐列物化**（回饋十九輪 E2 遺留）：輕量列、無 Headline，量級＝天數 × 主機數。
   「依日期」視角在 3000 台 × 長區間會感覺到；改法同本輪對 `AggregateByHost` 做的（SQL 端 GROUP BY 後
   才折併別名）。
@@ -233,16 +236,29 @@
 
 ## 設計面債務（未排期）
 
-- **`visibleSeverities` 選填參數的隱性契約**（`IIssueAggregateQuery` 的
-  `Aggregate`/`LatestOccurrences`/`ActionableOccurrences`/`AggregateByDate`/`AggregateByHost`）：
-  介面文件寫「呼叫端必須自己把 SiteHidden 過濾傳進來」，但參數是 `= null` 選填——
-  `RecordListQueryService`（問題查詢四視角）有傳；`IssueRankingBuilder`（重點問題卡／報表
-  排行）、`IssueTodoQuery`（KPI 待辦）、`MailIssueDigest`（郵件）**皆未傳**。這不是本輪
-  回歸（排行卡改版前就沒套 SiteHidden），但選填形狀正是 `IssueRankingBuilder` 註解記錄過的
-  踩雷模式（rollup 參數選填→兩個呼叫端都忘了傳→死了一整輪）。待決兩件事：
-  ① 立場——KPI／排行／郵件在 SiteHidden 模式下**該不該**排除被隱藏的嚴重度
-  （「待辦不受顯示設定影響」也是合理立場，但要明文定案，不能維持「看起來套了其實沒套」）；
-  ② 形狀——定案後把參數改必填（要不套用就明寫 `null`），讓編譯器逼每個呼叫端表態。
+- **`visibleSeverities` 參數仍是選填（形狀未改）**：立場已在回饋二十輪 B1／B2 定案並落地
+  ——待辦／KPI／排行／風險類型卡皆尊重 SiteHidden 顯示設定，所有正式呼叫端都已明確傳入。
+  但 `IIssueAggregateQuery` 上的參數形狀仍是 `= null` 選填（10 處），編譯器不會逼新呼叫端表態；
+  這正是 `IssueRankingBuilder` 註解記錄過的踩雷模式（rollup 參數選填→兩個呼叫端都忘了傳→死了一整輪）。
+  改必填要動介面與全部實作／替身，本輪判定非必要而未做；下次動到該介面時一併改。
+- **AI 設定頁的「測試連線」**：三種 provider 各自的連線驗證形狀不同（本機端點無金鑰、OpenAI 官方
+  要金鑰、Azure 要 deployment），本輪只做儲存驗證（缺必填欄位即回驗證錯誤）。真的打一次
+  chat/completions 回範例 JSON 才叫測試連線，留待需求明確時做。
+- **`lf_top_issues` 缺持久化的大小寫正規化來源鍵**：首見日合併的兩段 SQL 與
+  `EfIssueAggregateQuery` 數處都用 `UPPER(source_name)` 比對／分組，`(event_id, source_name)`
+  索引因此無法 seek。加一個寫入時就存大寫的 `source_key` 欄位＋索引可讓這些查詢 sargable。
+  本輪（二十輪 C）加了浮水印閘門後，那兩段 SQL 只在資料真的變動時才跑，成本從「每次重啟」
+  降成「有新資料時一次」，改 schema＋回填千萬列的風險已不成比例；等真的量到瓶頸再做。
+- **儀表板單次請求仍發約 10～12 支聚合查詢**：資料一天只變一次，加一層短 TTL 的行程內快取
+  成本不高。刻意不做的理由：快取鍵必須含可見範圍與顯示設定的雜湊，這類與授權相關的快取
+  一旦鍵漏了維度就是越權（使用者看到不該看的主機）；且回饋二十輪 E 改寫
+  `GetDayHandlingRaw` 後成本形狀已變，應先用 `issues:GetDayHandlingRaw` 等效能鍵實測，
+  再決定要不要快取、快取哪一層。
+- **依問題視角的白話說明只對 Windows 規則有效**：`KnownIssueCatalog.FindRule` 是
+  Windows 專用（Linux 規則要靠 program＋訊息內容比對，見 `FindLinuxRule`），而問題清單這層
+  只有 (來源, EventId)，湊不出 Linux 規則的比對條件。Linux 問題因此不會顯示白話說明——
+  不是漏做，是這層資訊不足。要補得先決定「用 program 前綴粗略比對」是否可接受
+  （會有誤配風險，Linux 規則本來就靠訊息內容區分）。
 - **`SetConclusion` 的服務層能力檢查**（防禦縱深）：統一標記的 AutoApply 勾選路徑經
   `IssueHandlingCommandService`（`Assign`＋`Handle`）呼叫 `IssueOwnerAdminService.SetConclusion`，
   繞過了 `IssueOwnersController` 的 `[Permission(Maintain)]`。現行能力矩陣下 Assign 只有

@@ -187,7 +187,7 @@ public class HandlingHistoryQueryService
     /// 為什麼要分兩段：處理狀態以主機名稱為鍵，合併後紀錄帶舊名稱、狀態掛存活名稱，
     /// SQL 經 host_name 橋接對墓碑必然落空。
     /// </summary>
-    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to)
+    public HandlingTodoDto GetTodoByRange(DateTime from, DateTime to, IReadOnlySet<string>? riskLevels = null)
     {
         var visibleHostIds = _visibility.GetVisibleHostIds();
         if (visibleHostIds.Count == 0) return new HandlingTodoDto();
@@ -215,7 +215,7 @@ public class HandlingHistoryQueryService
         }
 
         var sqlTodo = _aggregateQuery.AggregateDayTodo(
-            from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today);
+            from, to, survivingHostIds, unhandledSeverities, tombstoneHostIds, DateTime.Today, riskLevels);
 
         var todo = new HandlingTodoDto
         {

@@ -23,13 +23,20 @@ public class HealthService
     private readonly SchedulerRunState _runState;
     private readonly TopIssueBackfiller _backfiller;
     private readonly MailNotificationService _mail;
+    private readonly IssueFirstSeenSeedHostedService? _firstSeenSeedService;
 
-    public HealthService(StorageBackend backend, SchedulerRunState runState, TopIssueBackfiller backfiller, MailNotificationService mail)
+    public HealthService(
+        StorageBackend backend,
+        SchedulerRunState runState,
+        TopIssueBackfiller backfiller,
+        MailNotificationService mail,
+        IssueFirstSeenSeedHostedService? firstSeenSeedService = null)
     {
         _backend = backend;
         _runState = runState;
         _backfiller = backfiller;
         _mail = mail;
+        _firstSeenSeedService = firstSeenSeedService;
     }
 
     /// <summary>組建版本（Directory.Build.props 的 Version＋commit）</summary>
@@ -59,10 +66,14 @@ public class HealthService
         // AI 佇列消化階段這裡會停在搜尋階段的凍結數字，看起來像分析卡死。
         var analysisActivity = _runState.LatestActivity();
 
-        // 「慢操作占比過高」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
+        var firstSeenProgress = _firstSeenSeedService?.Progress;
+        var firstSeenFailed = firstSeenProgress?.IsFailed == true;
+
+        // 「慢操作占比過高」或「首見日合併連續失敗達上限」不等於壞掉，但它是使用者開始抱怨之前唯一的先行指標——
         // 因此獨立成 degraded 狀態，而不是併進 ok
-        var degraded = performance.TotalOperations > 0 &&
-                       performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent;
+        var degraded = (performance.TotalOperations > 0 &&
+                       performance.SlowOperations * 100.0 / performance.TotalOperations >= DegradedSlowRatioPercent)
+                       || firstSeenFailed;
 
         return new HealthDetailDto
         {
@@ -96,6 +107,11 @@ public class HealthService
             MigrationDoneParts = new[] { migration.IssueHandlingDone, migration.IssueCasesDone, migration.RecordHandlingDone }
                 .Count(x => x),
             MigrationError = migration.LastError,
+
+            // 問題機房首見日的背景合併（首次合併記錄浮水印，重啟跳過；連續失敗達上限反映為 degraded）
+            IssueFirstSeenSeedState = firstSeenProgress?.State ?? IssueFirstSeenSeedStates.NotStarted,
+            IssueFirstSeenSeedFailures = firstSeenProgress?.Failures ?? 0,
+            IssueFirstSeenSeedError = firstSeenProgress?.LastError,
 
             SuspendedMailRecipients = _mail.GetSuspendedRecipients()
         };

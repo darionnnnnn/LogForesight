@@ -162,4 +162,18 @@ public class IssueTodoQueryTests : IDisposable
 
         Assert.Equal(0, todo.OpenIssueCount);
     }
+
+    [Fact]
+    public void ResolveActionable_日風險等級只顯示高時_中風險日問題不計入()
+    {
+        var host = _hosts.Upsert(new WebHost { HostName = "A" });
+        Add(host.HostId, "A", DateTime.Today, RiskLevels.High, Issue("disk", 153));
+        Add(host.HostId, "A", DateTime.Today.AddDays(-1), RiskLevels.Medium, Issue("cpu", 100));
+
+        var todo = Query().Build(DateTime.Today.AddDays(-6), DateTime.Today, null, new HashSet<string> { RiskLevels.High });
+
+        Assert.Equal(1, todo.OpenIssueCount);
+        Assert.Equal(1, todo.AffectedHostCount);
+    }
 }
+

@@ -25,8 +25,8 @@ public class IssueTodoQuery
         _statusResolver = statusResolver;
     }
 
-    public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds) =>
-        Aggregate(ResolveActionable(from, to, visibleHostIds));
+    public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, IReadOnlySet<string>? riskLevels = null) =>
+        Aggregate(ResolveActionable(from, to, visibleHostIds, riskLevels));
 
     /// <summary>
     /// 解析一次、彙總多次（回饋十九輪批次I 體檢修正）：儀表板的全站 KPI 與逐群組的
@@ -36,9 +36,11 @@ public class IssueTodoQuery
     /// <c>IssueHandlingRollupQuery</c> 註解裡點名要避免的那種 N+1。呼叫端改為：
     /// 對全站可見範圍解析一次，再用 <see cref="Aggregate"/> 對各群組的主機子集各自彙總。
     /// </summary>
-    public List<ResolvedOccurrence> ResolveActionable(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
+    public List<ResolvedOccurrence> ResolveActionable(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
+        IReadOnlySet<string>? riskLevels = null)
     {
-        var occurrences = _aggregates.ActionableOccurrences(from, to, visibleHostIds);
+        var occurrences = _aggregates.ActionableOccurrences(from, to, visibleHostIds, riskLevels: riskLevels);
         if (occurrences.Count == 0) return new List<ResolvedOccurrence>();
 
         return _statusResolver.Resolve(occurrences, from, to);

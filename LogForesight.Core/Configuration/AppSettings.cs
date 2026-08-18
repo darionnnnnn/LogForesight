@@ -16,16 +16,30 @@ public class AppSettings
 
 public class AiSettings
 {
+    /// <summary>AI 服務提供者（Local / OpenAi / AzureOpenAi），預設 Local</summary>
+    public string Provider { get; set; } = AiProviders.Local;
+
     /// <summary>llama.cpp 的 OpenAI 相容 API 位址。實際生效值優先讀「系統管理 > 設定」頁（<see cref="SystemSettings.AiBaseUrl"/>），此為 DB 尚未設定時的退路</summary>
     public string BaseUrl { get; set; } = "http://localhost:8080";
 
+    /// <summary>模型名稱。OpenAI 官方必填；本機預設為 local-model</summary>
+    public string Model { get; set; } = "local-model";
+
+    /// <summary>Azure OpenAI 部署名稱（deployment）</summary>
+    public string AzureDeployment { get; set; } = "";
+
+    /// <summary>Azure OpenAI API 版本，預設 2024-10-21</summary>
+    public string AzureApiVersion { get; set; } = "2024-10-21";
+
     /// <summary>
-    /// AI 是否已設定（BaseUrl 有值）——批次／排程執行以此判斷要不要呼叫 AI，未設定時
+    /// AI 是否已設定——批次／排程執行以此判斷要不要呼叫 AI，未設定時
     /// 自動短路成統計模式，不必逐一嘗試打逾時（docs/archive/FEEDBACK-7-PLAN.md）。
+    /// 必填欄位依 provider 而異：本機看位址、OpenAI 官方看金鑰、Azure 要位址＋部署名稱。
     /// 呼叫前提：本值需在 <c>RuntimeSettingsResolver.ApplySystemSettingsOverrides</c> 套用
-    /// DB 覆寫之後讀取才是事實——DB 存過但刻意清空 BaseUrl 時會覆寫成空字串，即「刻意停用」。
+    /// DB 覆寫之後讀取才是事實——本機 provider 下，DB 存過但刻意清空 BaseUrl 時會覆寫成
+    /// 空字串，即「刻意停用」。
     /// </summary>
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(BaseUrl);
+    public bool IsConfigured => AiProviders.IsConfigured(Provider, BaseUrl, ApiKey, AzureDeployment);
 
     /// <summary>
     /// 需驗證的 API 端點所需金鑰（明碼，僅存在於執行期記憶體），發送時以 Authorization: Bearer 帶入。
@@ -34,8 +48,8 @@ public class AiSettings
     /// </summary>
     public string ApiKey { get; set; } = "";
 
-    /// <summary>單次 AI 呼叫的逾時秒數。本機 27B 級模型單次回應可能需數分鐘，預設 600 秒</summary>
-    public int TimeoutSeconds { get; set; } = 600;
+    /// <summary>單次 AI 呼叫的逾時秒數。本機 27B 級模型單次回應可能需數分鐘，預設 1200 秒</summary>
+    public int TimeoutSeconds { get; set; } = 1200;
 
     /// <summary>失敗重試次數（Polly，連線失敗/HTTP 錯誤/逾時/空回應皆重試）</summary>
     public int RetryCount { get; set; } = 3;

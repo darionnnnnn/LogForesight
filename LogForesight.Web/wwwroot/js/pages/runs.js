@@ -901,9 +901,18 @@ document.getElementById('run-now-segment').addEventListener('input', () => {
     runNowPreviewDebounce = setTimeout(updateRunNowPreview, 400);
 });
 
+document.getElementById('run-now-backfill')?.addEventListener('input', () => {
+    clearTimeout(runNowPreviewDebounce);
+    runNowPreviewDebounce = setTimeout(updateRunNowPreview, 400);
+});
+
+document.getElementById('run-now-only-missing')?.addEventListener('change', updateRunNowPreview);
+
 async function updateRunNowPreview() {
     const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
     const segment = document.getElementById('run-now-segment').value.trim();
+    const onlyMissingOrFailed = document.getElementById('run-now-only-missing')?.checked || false;
+    const backfillDays = document.getElementById('run-now-backfill')?.value;
     const previewEl = document.getElementById('run-now-preview');
 
     if (scope === 'segment' && !segment) {
@@ -914,14 +923,17 @@ async function updateRunNowPreview() {
 
     const params = new URLSearchParams({ scope });
     if (scope === 'segment') params.set('segment', segment);
+    if (onlyMissingOrFailed) params.set('onlyMissingOrFailed', 'true');
+    if (backfillDays) params.set('backfillDays', backfillDays);
 
     try {
         const result = await api.get(`/api/admin/schedule/run-preview?${params}`, { silent: true });
         const heavy = result.hostCount >= 50;
+        const suffix = onlyMissingOrFailed ? '待補跑或未執行。' : '符合條件。';
         const text = heavy
-            ? `目前有 ${result.hostCount} 台主機符合條件，數量較多——請留意白天對 Sentinel 的查詢負載，` +
+            ? `目前有 ${result.hostCount} 台主機${suffix.replace('。', '，')}數量較多——請留意白天對 Sentinel 的查詢負載，` +
               '必要時改用網段範圍縮小。'
-            : `目前有 ${result.hostCount} 台主機符合條件。`;
+            : `目前有 ${result.hostCount} 台主機${suffix}`;
         previewEl.textContent = text;
         previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
     } catch (err) {
@@ -936,6 +948,7 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
     const segment = document.getElementById('run-now-segment').value.trim();
     const backfillDays = document.getElementById('run-now-backfill').value;
+    const onlyMissingOrFailed = document.getElementById('run-now-only-missing')?.checked || false;
 
     const submitButton = document.getElementById('run-now-submit');
     const restore = withBusy(submitButton, '送出中');
@@ -943,7 +956,8 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const result = await api.post('/api/admin/schedule/run', {
             scope,
             segment: scope === 'segment' ? segment : null,
-            backfillDays: backfillDays ? Number(backfillDays) : null
+            backfillDays: backfillDays ? Number(backfillDays) : null,
+            onlyMissingOrFailed
         });
         toast(result.message, result.started ? 'success' : 'warning');
         if (result.started) {
