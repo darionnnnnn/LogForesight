@@ -1581,7 +1581,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
       灰格會說謊，時間軸必須看完整證據）。一般使用者（非 Maintain）經
       `GET api/settings/display`（無 `[Permission]`，比照 `HostsController` 先例）取得目前顯示範圍，
       用於儀表板 KPI 卡、報表趨勢圖 series、問題查詢篩選 chip 的顯示/隱藏。
-  2. **AI 服務**：API 位址＋金鑰（write-only，金鑰密文存 DB）。**§12起本頁是 AI
+  2. **AI 服務**：提供者三選一（`Local` 本機 OpenAI 相容端點／`OpenAi` 官方／`AzureOpenAi`，
+     預設 Local ＝ 升級前的既有行為）＋位址＋金鑰（write-only，金鑰密文存 DB）＋模型名稱，
+     Azure 另有部署名稱與 API 版本。請求組法依提供者而異：Local／OpenAi 走
+     `{base}/v1/chat/completions` 帶 `Authorization: Bearer`；Azure 走
+     `{base}/openai/deployments/{deployment}/chat/completions?api-version=…`、認證改
+     `api-key` 標頭且主體不送 `model`（由 deployment 決定）。「算不算已設定」的必填欄位
+     依提供者而異，`AiSettings.IsConfigured` 與 `WebAiService` 共用同一份判定
+     （分開寫會漂移成「首頁說可用、實際建不出客戶端」）。**§12起本頁是 AI
      全部參數的唯一事實來源**——原 appsettings 的 `Ai` 區段整段退役，`TimeoutSeconds`/`RetryCount`/
      `RetryDelaySeconds`/`JsonRetryCount`/`MaxTokens`/`DeepDiveMaxTokens`/兩個 penalty/
      `ExtraRequestFieldsJson`（JSON 物件文字，存檔驗證格式）移入本分頁的**進階參數折疊區**

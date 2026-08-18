@@ -142,6 +142,15 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 `log_name`/`entry_type`：首見的語意是「這個問題」（依問題視角的分組鍵），不是某個完整
 簽章第一次出現。
 
+歷史資料的補齊由背景服務 `IssueFirstSeenSeedHostedService` 呼叫
+`SchemaUpgrader.MergeIssueFirstSeenSeed`（自 `lf_top_issues` 合併）。**閘門是浮水印**：
+以 `lf_top_issues` 目前的最大 `record_id` 存進 blob（鍵 `issue_first_seen_watermark`），
+啟動時比對相同就整段跳過——那兩段 SQL 是 `GROUP BY UPPER(source_name), event_id` 的全表掃，
+千萬列級環境下不能每次重啟都跑一遍（回饋二十輪 C）。合併吃分析等級的 300 秒逾時
+（不是前景的 60 秒），失敗每 30 分重試最多 3 次後停止，狀態經
+`/api/health/detail` 申報並在三次失敗時反映為降級——補不完的症狀是老問題被
+`PriorityScore` 當成 7 天內的新問題，畫面上完全看不出來，所以必須申報。
+
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
 docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
 JSON 裡多出的欄位，不是新增資料表欄位）**：
@@ -365,6 +374,12 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 （實測：500 台 × 200 天的資料集，限縮可清 0 筆、未限縮 39,500 筆）。
 `RecordStore(ownerHost)` 的限縮語意本身是對的（缺日判定與趨勢基準只該看本機），
 錯的是拿它來清理——回歸防線見 `LogForesight.Tests/Scale/RetentionScopeBenchmarks.cs`。
+
+**升級告知**：修好之後的第一個副作用是「這些設定值第一次真正生效」——既有部署升級後第一晚
+就會開始真的刪 NetIQ 主機的過期資料。若當初因為「反正沒作用」把天數設得很短，那是一次
+無法復原的刪除。README 的「升級注意事項」與說明書「資料保留」段都有對應警語（回饋二十輪 F）。
+積壓超過單次上限（`EfAnalysisRecordStore.MaxPruneRowsPerRun` = 50,000）時，執行畫面會申報
+剩餘筆數**與預估還需幾次執行**——只報筆數的話，「陸續清完」與「卡住了」在畫面上分不出來。
 
 **為什麼詳情要獨立一層**（SCALE-3000 S2）：`content_json` 是整張表的儲存量大宗
 （實測平均 5.3 KB/筆），而年度同期比較需要的 KPI 與趨勢**沒有一項讀它**——

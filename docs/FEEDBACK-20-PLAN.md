@@ -259,5 +259,33 @@ A 段後 Claude 五小時額度用罄，**自 B1 起改用 `gemini-3.7-flash-hig
 核對階段的一處誤判已更正：`HandlingHistoryQueryService` 的兩處 `ToDictionary` 原被列為與 CRON 撞鍵同型的風險，
 實際上鍵 `(host_name_key, record_date)` 在資料表有 unique 索引（註解已寫明），是安全的，作業 I 明文禁止動它。
 
-**待執行**：O2（AIService 依 provider 組請求＋重試迭代修補）、E（GetDayHandlingRaw 改寫）、
-J／K／L／M（前端四段）、P（說明書）、H（文件收尾）。
+| O2 | agy | `5a15729` | 2210→2216 | handler 抽成方法後，記錄「實測推翻 HTTP/2 協商假設」的長註解被留在原地與程式碼拆開 → 搬回並明示不要改回去 |
+| E | agy | `9380942` | 2216→2219 | 完全照策略做，語意逐項核對等價；無需修正 |
+| J | agy | `01e6e2b` | 2219（無新增） | 內容附加邏輯複製成兩份（含「絕不用 innerHTML」的安全註解只留一份）→ 收斂；註解引用了不存在的章節編號。**Q18 當時未能重現**，如實標記待確認 |
+| K1 | agy | `4d8ec2c` | 2219→2222 | 規則比對邏輯被複製到兩個 Web 服務（Core 已有一份，共三份）→ 收斂回 `KnownIssueCatalog` 並加接受規則清單的多載。**同一 commit 修掉 Q18 真因**（見下） |
+| K2 | agy | `7fb1dd2` | 2222（無新增） | 「正常」與「收斂」都用 neutral，而 neutral/secondary/light 樣式相同、兩者畫面上無法區分 → 收斂改用 success |
+| L | agy | `7ad2365` | 2222（無新增） | `allowed` 運算在四個函式各寫一次 → 收斂成 `allowedSeverities()` 並註明「使用者篩選」與「管理者隱藏」是兩件事 |
+| M | agy | `0e207fb` | 2222（無新增） | 無需修正（`data-date` 契約、配色、圖例都照契約保留） |
+| P | Claude | `237d184` | 2222 | 說明書五章；自己一度用 `json.dumps` 重寫 manifest 造成 336 行純重排，已還原改定點替換 |
+| H | Claude | 本次 | 2222 | BACKLOG／WEB-SPEC／DB-SPEC 收尾 |
+
+### Q18 的教訓：形狀對、方向錯
+
+J 段依相鄰程式碼的樣子在**按鈕側**加了 `flex-shrink-0`。我在隔離環境重現不出溢出，
+因此沒有宣稱修好、如實標記待確認。使用者提供截圖後真因才清楚：溢出的是
+`ref.kind === 'signature'` 分支的 `button.btn-link`，內容是「Microsoft-Windows-Security-Auditing
+EventId 4719」這種不含空白的長 token；flex 子項預設 `min-width: auto`，它拒絕收縮並把整列推出卡片。
+純中文的那行會自動斷行，所以截圖裡只有前兩行溢出——這也是我先前用中文 `<span>` 測不出來的原因。
+真修法在**文字側**加 `min-width: 0` ＋ `overflow-wrap: anywhere`（K1 commit）。
+實測 375px 下按鈕從超出 244px 變為落在容器內。
+
+### 併回前的狀態
+
+外部審查 P1～P7 全數完成；使用者回饋 Q1～Q19 全數完成。
+測試自 2168 綠／2174 總計成長到 2216 綠／2222 總計，全程 0 警告。
+前端四段（J／K／L／M）無自動化測試，改以瀏覽器實測驗收（DOM 量測與 CSS 規則比對），
+量測方法與數字記在各 commit 訊息內。
+
+**尚待人工驗收**：需登入才看得到的頁面我無法自行操作（不會自建帳號或輸入密碼），
+以下請實機確認——問題查詢「依問題」六欄改版的實際觀感、主機詳情月曆時間軸與高亮連動、
+排程「只補跑失敗或未執行」的實際補跑行為、AI 三種 provider 的實際連線。
