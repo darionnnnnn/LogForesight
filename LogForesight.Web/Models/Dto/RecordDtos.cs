@@ -153,9 +153,21 @@ public class IssueGroupDto
 
     public string? KnownIssue { get; set; }
 
+    /// <summary>白話說明（取自命中規則的 PlainExplanation；未命中或規則無說明時為 null）</summary>
+    public string? PlainExplanation { get; set; }
+
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
+
+    /// <summary>處理概況：未處理台數（與 HandlingSummary 來源一致）</summary>
+    public int UnhandledCount { get; set; }
+
+    /// <summary>處理概況：處理中台數（與 HandlingSummary 來源一致）</summary>
+    public int InProgressCount { get; set; }
+
+    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）</summary>
+    public int ResolvedCount { get; set; }
 
     /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
     /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>

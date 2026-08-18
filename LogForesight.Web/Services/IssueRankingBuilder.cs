@@ -25,6 +25,7 @@ public class IssueRankingBuilder
     private readonly TopIssueBackfiller? _backfiller;
     private readonly StorageBackend? _backend;
     private readonly DailyRecordBackfiller? _dailyBackfiller;
+    private readonly IKnownIssueRuleStore? _rules;
 
     /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
@@ -36,7 +37,8 @@ public class IssueRankingBuilder
         IssueHandlingRollupQuery? rollup = null,
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null,
-        DailyRecordBackfiller? dailyBackfiller = null)
+        DailyRecordBackfiller? dailyBackfiller = null,
+        IKnownIssueRuleStore? rules = null)
     {
         _aggregates = aggregates;
         _hosts = hosts;
@@ -44,6 +46,7 @@ public class IssueRankingBuilder
         _backfiller = backfiller;
         _backend = backend;
         _dailyBackfiller = dailyBackfiller;
+        _rules = rules;
     }
 
     /// <summary>
@@ -115,6 +118,13 @@ public class IssueRankingBuilder
             _aggregates.DailyHostCounts(issuesOnPage, baselineFrom, baselineTo, visibleHostIds));
         var fleetFirstSeen = _aggregates.FirstSeenFor(issuesOnPage);
 
+        // 規則白話說明：以當頁問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
+        var rules = LoadRules();
+        var explanations = issuesOnPage
+            .ToDictionary(
+                i => i,
+                i => FindPlainExplanation(rules, i.Source, i.EventId));
+
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
         var hostIdsByIssue = _aggregates.HostIdsByIssue(issuesOnPage, from, to, visibleHostIds);
@@ -141,6 +151,7 @@ public class IssueRankingBuilder
                 baselines.TryGetValue(baselineKey, out var baseline);
                 fleetFirstSeen.TryGetValue(baselineKey, out var firstSeenInFleet);
                 var resolvedFleetFirstSeen = firstSeenInFleet == default ? a.FirstSeen : firstSeenInFleet;
+                explanations.TryGetValue((a.Source, a.EventId), out var plainExplanation);
 
                 var highestTier = hostIdsByIssue.TryGetValue(baselineKey, out var affectedHostIds)
                     ? HighestTier(affectedHostIds, tierByHostId)
@@ -172,6 +183,7 @@ public class IssueRankingBuilder
                     DaysSinceLastSeen = Math.Max(0, (today - a.LastSeen.Date).Days),
                     HostRatio = totalHosts > 0 ? (double)a.HostCount / totalHosts : 0,
                     ElevatesDayRisk = a.ElevatesDayRisk,
+                    PlainExplanation = plainExplanation,
 
                     PreviousHostCount = prev?.HostCount ?? 0,
                     PreviousTotalCount = (int)Math.Min(prev?.TotalCount ?? 0, int.MaxValue),
@@ -277,6 +289,25 @@ public class IssueRankingBuilder
         WebHost.TierTest => 0,
         _ => 1
     };
+
+    private List<KnownIssueRule> LoadRules()
+    {
+        // 未注入規則儲存的只有測試組裝；Web 行程的靜態規則表是空的（見 KnownIssueCatalog.FindRule
+        // 的多載說明），所以兩條退路都回內建種子，不要回靜態表
+        if (_rules == null) return KnownIssueSeed.CreateRules();
+        var outcome = _rules.Load();
+        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
+        {
+            return rules;
+        }
+        return KnownIssueSeed.CreateRules();
+    }
+
+    private static string? FindPlainExplanation(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = KnownIssueCatalog.FindRule(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
 }
 
 /// <summary>單一問題簽章的處理概況彙總（§10.6：全部有結論的問題不進重點清單）</summary>

@@ -309,11 +309,20 @@ public static class KnownIssueCatalog
     /// 明確只看 Platform="windows" 規則——Linux 規則的 SourcePattern 恆空，
     /// 顯式排除比依賴「空字串 Contains 恆真但 EventIds 恆空」的隱含行為清楚（docs/LINUX-RULES.md §1.2）。
     /// </summary>
-    public static KnownIssueRule? FindRule(string source, int eventId)
+    public static KnownIssueRule? FindRule(string source, int eventId) => FindRule(Rules, source, eventId);
+
+    /// <summary>
+    /// 同上，但比對對象由呼叫端提供——Web 行程刻意不呼叫 <see cref="Initialize"/>
+    /// （見 Program.cs：全域分類狀態是批次分析才用得到的），靜態 <see cref="Rules"/> 在那裡是空的，
+    /// 所以 Web 端要自行從規則儲存載入後傳進來。比對規則只有這一份定義，不要另外複製。
+    /// </summary>
+    public static KnownIssueRule? FindRule(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
-        foreach (var rule in Rules)
+        foreach (var rule in rules)
         {
-            if (rule.Platform != "windows")
+            // Linux 規則的比對需要 program＋訊息內容（見 FindLinuxRule），
+            // 不是這裡的 (來源, EventId) 能決定的，故一律略過
+            if (!rule.Enabled || rule.Platform != "windows")
             {
                 continue;
             }

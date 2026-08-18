@@ -1008,6 +1008,60 @@ public class RecordQueryServiceSearchTests : IDisposable
         // ——各列 HostCount 加總是 3，去重後才是可以跟風險類型卡對照的數字
         Assert.Equal(2, result.DistinctHostCount);
     }
+
+    [Fact]
+    public void SearchByIssue_命中規則帶得出白話說明_未命中為null()
+    {
+        var a = AddHost("HOST-A");
+        var diskIssue = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage);
+        var unknownIssue = Issue("CustomApp", 9999, IssueSeverity.High, IssueCategory.Other);
+
+        AddRecord(a, Yesterday, "高", issues: new[] { diskIssue, unknownIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var disk = result.Items.Single(i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal("這台伺服器的硬碟出現讀寫錯誤，是硬碟即將故障最直接的警訊。", disk.PlainExplanation);
+
+        var unknown = result.Items.Single(i => i.Source == "CustomApp" && i.EventId == 9999);
+        Assert.Null(unknown.PlainExplanation);
+    }
+
+    [Fact]
+    public void SearchByIssue_處理概況三個整數與既有HandlingSummary字串一致()
+    {
+        var processingHost = AddHost("HOST-PROCESSING");
+        var resolvedHost = AddHost("HOST-RESOLVED");
+        var unhandledHost = AddHost("HOST-UNHANDLED");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
+        var issue = DiskIssue();
+
+        AddRecord(processingHost, Yesterday, "高", issues: new[] { issue });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = processingHost.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(resolvedHost, Yesterday, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = resolvedHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(unhandledHost, Yesterday, "高", issues: new[] { issue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.UnhandledCount);
+        Assert.Equal(1, group.InProgressCount);
+        Assert.Equal(1, group.ResolvedCount);
+        Assert.Equal("1 台未處理／1 台處理中／1 台已處理", group.HandlingSummary);
+    }
 }
 
 /// <summary>永遠回 null——Search 不會實際讀報告全文，這裡只是滿足建構式依賴</summary>

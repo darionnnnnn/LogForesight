@@ -415,4 +415,19 @@ public class IssueRankingBuilderTests : IDisposable
         Assert.Equal("disk", rows[0].Source);
         Assert.True(rows[0].PriorityScore > rows[1].PriorityScore);
     }
+
+    [Fact]
+    public void Build_命中規則帶得出白話說明_未命中為null()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        Add(1, "A", d0, Issue("disk", 153), Issue("CustomApp", 9999));
+
+        var rows = Builder().Build(d0, d0, null, totalHosts: 1);
+
+        var disk = rows.Single(r => r.Source == "disk" && r.EventId == 153);
+        Assert.Equal("這台伺服器的硬碟出現讀寫錯誤，是硬碟即將故障最直接的警訊。", disk.PlainExplanation);
+
+        var unknown = rows.Single(r => r.Source == "CustomApp" && r.EventId == 9999);
+        Assert.Null(unknown.PlainExplanation);
+    }
 }

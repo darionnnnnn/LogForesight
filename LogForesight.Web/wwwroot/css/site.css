@@ -1451,6 +1451,14 @@ a.lf-stat:hover .lf-card,
 }
 .table > tbody > tr.lf-row-link:focus-visible,
 .table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
+/* 告警列的文字側（回饋二十輪 Q18）：li 是 flex 容器，子項預設 min-width:auto——
+   來源名稱這類不含空白的長 token 會拒絕收縮並把右側按鈕推出卡片。
+   min-width:0 讓它可收縮，overflow-wrap 讓長 token 真的斷得下去 */
+.lf-alert-item__text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
 .lf-row-expand-cell {
     display: flex;
     align-items: flex-start;

@@ -116,6 +116,9 @@ public class IssueRankingDto
     /// <summary>期間內是否曾命中「重大」旗標（過去只在詳情頁看得到，排行清單上缺這個維度）</summary>
     public bool ElevatesDayRisk { get; set; }
 
+    /// <summary>白話說明（取自命中規則的 PlainExplanation；未命中或規則無說明時為 null）</summary>
+    public string? PlainExplanation { get; set; }
+
     /// <summary>前一個等長期間的主機數（變化幅度的基準；0＝本期新出現）</summary>
     public int PreviousHostCount { get; set; }
 

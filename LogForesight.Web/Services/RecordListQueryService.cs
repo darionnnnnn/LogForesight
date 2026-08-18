@@ -25,6 +25,7 @@ public class RecordListQueryService
     /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
     /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
+    private readonly IKnownIssueRuleStore? _rules;
 
     public RecordListQueryService(
         IRecordRepository repository,
@@ -38,7 +39,8 @@ public class RecordListQueryService
         IVisibilityService visibility,
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
-        IIssueOwnerStore? issueOwners = null)
+        IIssueOwnerStore? issueOwners = null,
+        IKnownIssueRuleStore? rules = null)
     {
         _repository = repository;
         _hosts = hosts;
@@ -52,6 +54,7 @@ public class RecordListQueryService
         _aggregates = aggregates;
         _statusResolver = statusResolver;
         _issueOwners = issueOwners;
+        _rules = rules;
     }
 
     public PagedResult<RecordListItemDto> Search(RecordSearchRequest request)
@@ -357,11 +360,20 @@ public class RecordListQueryService
             _aggregates.DailyHostCounts(issues, baselineFrom, baselineTo, hostIds));
         var fleetFirstSeen = _aggregates.FirstSeenFor(issues);
 
+        // 規則白話說明：以篩選後留下的問題為範圍批次查表（反映 Web 編輯），不在逐列時重覆讀取規則檔
+        var rules = LoadRules();
+        var explanations = issues
+            .Distinct()
+            .ToDictionary(
+                i => i,
+                i => FindPlainExplanation(rules, i.Source, i.EventId));
+
         var groups = aggregates
             .Select(a => BuildIssueGroup(
                 a,
                 resolvedByIssue.TryGetValue((a.Source, a.EventId), out var occs) ? occs : new List<ResolvedOccurrence>(),
-                periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen))
+                periodDays, issueOwnersByKey, usersById, baselines, fleetFirstSeen,
+                explanations.TryGetValue((a.Source, a.EventId), out var exp) ? exp : null))
             .ToList();
 
         // 處理概況三態過濾（§10）：篩的是群組層級的「處理概況」（open/in_progress/resolved）
@@ -445,7 +457,8 @@ public class RecordListQueryService
         IReadOnlyDictionary<(string SourceUpper, int EventId), List<long>> issueOwnersByKey,
         IReadOnlyDictionary<long, WebUser> usersById,
         IReadOnlyDictionary<(string SourceKey, int EventId), IssueBaselineCalculator.Baseline> baselines,
-        IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen)
+        IReadOnlyDictionary<(string SourceKey, int EventId), DateTime> fleetFirstSeen,
+        string? plainExplanation)
     {
         // 同一台主機在這個 (Source,EventId) 底下可能有多筆快照（Linux 的 EventKey 尾段被
         // TryParseSignature 收斂掉了）——每台主機只看它自己最近一次出現的那筆，
@@ -511,7 +524,11 @@ public class RecordListQueryService
             ElevatesDayRisk = aggregate.ElevatesDayRisk,
 
             KnownIssue = latestKnownIssue,
+            PlainExplanation = plainExplanation,
             HandlingSummary = BuildHandlingSummary(unhandled, processing, resolvedCount),
+            UnhandledCount = unhandled,
+            InProgressCount = processing,
+            ResolvedCount = resolvedCount,
             // 群組層級的處理概況三態（§10 篩選用）：有未處理→open；否則有處理中→in_progress；否則 resolved
             GroupStatus = unhandled > 0 ? HandlingStatuses.Open
                 : processing > 0 ? HandlingStatuses.InProgress
@@ -896,4 +913,24 @@ public class RecordListQueryService
         HandlingStatuses.Resolved => "已處理",
         _ => status
     };
+
+    private List<KnownIssueRule> LoadRules()
+    {
+        // 未注入規則儲存的只有測試組裝；Web 行程的靜態規則表是空的（見 KnownIssueCatalog.FindRule
+        // 的多載說明），所以兩條退路都回內建種子，不要回靜態表
+        if (_rules == null) return KnownIssueSeed.CreateRules();
+        var outcome = _rules.Load();
+        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
+        {
+            return rules;
+        }
+        return KnownIssueSeed.CreateRules();
+    }
+
+    private static string? FindPlainExplanation(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = KnownIssueCatalog.FindRule(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
 }
+

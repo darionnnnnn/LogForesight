@@ -1450,6 +1450,7 @@ function correlationAlertItem(ref) {
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
     const text = document.createElement('span');
+    text.className = 'lf-alert-item__text';
     text.textContent = ref.text;
     item.appendChild(text);
 
@@ -1492,15 +1493,19 @@ function trendAlertItem(ref) {
     const item = document.createElement('li');
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
+    // 文字側必須能收縮（lf-alert-item__text）：flex 子項預設 min-width:auto，
+    // 而這裡的內容是「Microsoft-Windows-Security-Auditing EventId 4719」這種不含空白的
+    // 長 token，不加的話它拒絕收縮、把整列推出卡片（純中文的那幾行會自動斷行所以看不出來）
     if (ref.kind === 'signature' && ref.issueKey) {
         const link = document.createElement('button');
         link.type = 'button';
-        link.className = 'btn btn-link p-0 text-body text-start';
+        link.className = 'btn btn-link p-0 text-body text-start lf-alert-item__text';
         link.textContent = ref.text;
         link.addEventListener('click', () => scrollToIssue(ref.issueKey));
         item.appendChild(link);
     } else {
         const text = document.createElement('span');
+        text.className = 'lf-alert-item__text';
         text.textContent = ref.text;
         item.appendChild(text);
     }
