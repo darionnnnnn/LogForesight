@@ -1,4 +1,4 @@
-namespace LogForesight.Web.Models.Dto;
+﻿namespace LogForesight.Web.Models.Dto;
 
 public class DashboardDto
 {
@@ -174,21 +174,26 @@ public class IssueRankingDto
 }
 
 /// <summary>
-/// 風險類型卡（回饋十九輪批次D，外部審查§零-2「大數字該是去重筆數」）。
-/// 兩種計數口徑並存，語意見 <see cref="CategoryAggregate"/>：
-/// <see cref="RiskItemCount"/> 是大數字（去重），<see cref="CumulativeCount"/> 是小字（累計）。
-/// High/Medium/Low/ElevatesCount 皆依 <see cref="RiskItemCount"/> 的去重口徑分桶，
-/// 三桶之和＝RiskItemCount，不是舊版的 IssueCount。
+/// 風險類型卡。三種計數口徑並存，語意見 <see cref="CategoryAggregate"/>：
+/// <see cref="IssueTypeCount"/> 是大數字（問題類型數）、<see cref="AffectedHosts"/> 是主機數、
+/// <see cref="CumulativeCount"/> 是累計主機×日；<see cref="RiskItemCount"/> 保留供其他消費端。
+/// High/Medium/Low/ElevatesCount 皆依 <see cref="RiskItemCount"/> 的去重口徑分桶，三桶之和＝RiskItemCount。
 /// </summary>
 public class DashboardCategoryDto
 {
     public string Category { get; set; } = string.Empty;
+    public int IssueTypeCount { get; set; }
     public int RiskItemCount { get; set; }
     public long CumulativeCount { get; set; }
     public long TotalEvents { get; set; }
     public int HighCount { get; set; }
     public int MediumCount { get; set; }
     public int LowCount { get; set; }
+
+    /// <summary>依問題類型分桶（與 IssueTypeCount 同量綱，卡片嚴重度分解用）</summary>
+    public int HighTypeCount { get; set; }
+    public int MediumTypeCount { get; set; }
+    public int LowTypeCount { get; set; }
 
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊數，去重口徑</summary>
     public int ElevatesCount { get; set; }

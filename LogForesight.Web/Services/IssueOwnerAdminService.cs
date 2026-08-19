@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -58,13 +58,17 @@ public class IssueOwnerAdminService
         return _issueAggregates.Aggregate(from, to, null)
             .OrderByDescending(a => a.HostCount)
             .ThenBy(a => a.Source, StringComparer.OrdinalIgnoreCase)
-            .Select(a => new RecentIssueOptionDto
+            .Select(a =>
             {
-                SourceName = a.Source,
-                EventId = a.EventId,
-                HostCount = a.HostCount,
-                LastSeen = a.LastSeen,
-                HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
+                return new RecentIssueOptionDto
+                {
+                    SourceName = a.Source,
+                    EventId = a.EventId,
+                    DisplayLabel = FormatDisplayLabel(a.Source, a.EventId),
+                    HostCount = a.HostCount,
+                    LastSeen = a.LastSeen,
+                    HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
+                };
             })
             .ToList();
     }
@@ -74,7 +78,7 @@ public class IssueOwnerAdminService
         var sourceName = request.SourceName?.Trim() ?? "";
         if (sourceName.Length == 0)
             throw DomainException.Validation("請指定問題來源（Source）。");
-        if (request.EventId <= 0)
+        if (request.EventId < 0)
             throw DomainException.Validation("請指定合法的 Event ID。");
 
         var usersById = _users.GetAll().ToDictionary(u => u.UserId);
@@ -225,6 +229,7 @@ public class IssueOwnerAdminService
         {
             SourceName = rule.SourceName,
             EventId = rule.EventId,
+            DisplayLabel = FormatDisplayLabel(rule.SourceName, rule.EventId),
             OwnerUserIds = rule.OwnerUserIds,
             OwnerNames = rule.OwnerUserIds
                 .Select(id => usersById.TryGetValue(id, out var u) ? NameFormat.WithAccount(u.DisplayName, u.Account) : $"(已刪除:{id})")
@@ -248,4 +253,12 @@ public class IssueOwnerAdminService
             AutoApply = rule.AutoApply
         };
     }
+
+    /// <summary>
+    /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，
+    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題檔案的鍵是 (Source, 0)，涵蓋該來源的
+    /// 全部規則，任選其中一個 key 掛上去語意是錯的（且候選清單與已指派清單會長得不一樣）。
+    /// </summary>
+    public static string FormatDisplayLabel(string source, int eventId) =>
+        eventId == 0 ? source : $"{source} ({eventId})";
 }

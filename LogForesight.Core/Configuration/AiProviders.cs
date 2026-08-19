@@ -1,3 +1,5 @@
+using NLog;
+
 namespace LogForesight.Core.Configuration;
 
 /// <summary>
@@ -8,6 +10,8 @@ namespace LogForesight.Core.Configuration;
 /// </summary>
 public static class AiProviders
 {
+    private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
     /// <summary>本機 OpenAI 相容端點（llama.cpp／KoboldCpp 等）。預設值＝升級前的既有行為。</summary>
     public const string Local = "Local";
     public const string OpenAi = "OpenAi";
@@ -25,6 +29,7 @@ public static class AiProviders
         {
             if (string.Equals(trimmed, known, StringComparison.OrdinalIgnoreCase)) return known;
         }
+        Log.Warn("無法辨識的 AI Provider 設定值「{0}」，已退回 {1}", value, Local);
         return Local;
     }
 

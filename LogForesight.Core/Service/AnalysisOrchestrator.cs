@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -386,7 +386,8 @@ public class AnalysisOrchestrator
                         ChangeType = detail.ChangeType,
                         Before = detail.Before,
                         After = detail.After,
-                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty
+                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty,
+                        Source = PermissionChangeSources.Local
                     }));
 
                     console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
@@ -463,6 +464,13 @@ public class AnalysisOrchestrator
                 var auditPruned = new AuditLogStore(backend.LogStore("audit")).Prune(retention.AuditRetentionDays);
                 if (auditPruned > 0)
                     console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
+
+                // 權限異動待辦（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
+                // 跟稽核紀錄同一個保留天數
+                var permPruned = new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"))
+                    .Prune(retention.AuditRetentionDays);
+                if (permPruned > 0)
+                    console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");
 
                 // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
                 var riskyEventPruned = riskyEventStore.Prune(retention.RiskyEventRetentionDays);
@@ -680,7 +688,7 @@ public class AnalysisOrchestrator
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
-        var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed);
+        var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
         if (missingDates.Count == 0)
         {

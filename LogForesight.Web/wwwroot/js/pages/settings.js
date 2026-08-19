@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 全站設定（「系統管理 > 設定」頁）：未處理計算等級、AI 服務、資料保留天數。
  * 單一表單、單一 PUT，三個卡片對應同一份 SystemSettingsDto。
  */
@@ -16,6 +16,9 @@ const BRAND_ICON_MAX_KB = 64;
 
 /** 「還原預設外觀」填回的副標——與 Core 的 SystemSettings.BrandSubtitle 出廠值一致 */
 const BRAND_DEFAULT_SUBTITLE = '事件日誌預警';
+
+/** 雲端 AI 提供者的資料外送申報文字：provider 提示與切換確認框共用同一句 */
+const CLOUD_AI_DECLARATION = '分析時最多 500 則原始 log 訊息（可能含帳號名稱、來源 IP）會傳送至第三方服務。';
 
 // 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
@@ -153,6 +156,7 @@ function updateAiProviderFields(provider) {
     const baseUrlWrap = document.getElementById('ai-base-url-wrap');
     const baseUrlLabel = document.getElementById('ai-base-url-label');
     const baseUrlInput = document.getElementById('ai-base-url');
+    const baseUrlHint = document.getElementById('ai-base-url-hint');
     const modelWrap = document.getElementById('ai-model-wrap');
     const modelLabel = document.getElementById('ai-model-label');
     const modelInput = document.getElementById('ai-model');
@@ -163,8 +167,11 @@ function updateAiProviderFields(provider) {
     const providerHint = document.getElementById('ai-provider-hint');
 
     if (provider === 'OpenAi') {
-        if (providerHint) providerHint.textContent = '使用 OpenAI 官方 API 服務。';
-        baseUrlWrap.classList.add('d-none');
+        if (providerHint) providerHint.textContent = `使用 OpenAI 官方 API 服務。${CLOUD_AI_DECLARATION}`;
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = 'API 位址（選填）';
+        baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
+        if (baseUrlHint) baseUrlHint.textContent = '留空使用官方端點，要走 proxy 才填。';
         modelWrap.classList.remove('d-none');
         modelLabel.textContent = '模型名稱（必填）';
         modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
@@ -173,10 +180,11 @@ function updateAiProviderFields(provider) {
         azureVerWrap.classList.add('d-none');
         if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
     } else if (provider === 'AzureOpenAi') {
-        if (providerHint) providerHint.textContent = '使用 Microsoft Azure OpenAI 服務。';
+        if (providerHint) providerHint.textContent = `使用 Microsoft Azure OpenAI 服務。${CLOUD_AI_DECLARATION}`;
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
         baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
+        if (baseUrlHint) baseUrlHint.textContent = '';
         modelWrap.classList.add('d-none');
         azureDepWrap.classList.remove('d-none');
         azureVerWrap.classList.remove('d-none');
@@ -186,6 +194,7 @@ function updateAiProviderFields(provider) {
         baseUrlWrap.classList.remove('d-none');
         baseUrlLabel.textContent = 'API 位址';
         baseUrlInput.placeholder = 'http://localhost:8080';
+        if (baseUrlHint) baseUrlHint.textContent = '';
         modelWrap.classList.remove('d-none');
         modelLabel.textContent = '模型名稱';
         modelInput.placeholder = 'local-model';
@@ -544,7 +553,7 @@ function bindForm() {
         if (reducedItems.length > 0) {
             const confirmed = await confirmAction({
                 title: '確認資料保留變更',
-                body: `${reducedItems.map(x => '• ' + x).join('\n')}\n\n此變更無法復原。確定要儲存？`,
+                message: `${reducedItems.map(x => '• ' + x).join('\n')}\n\n此變更無法復原。確定要儲存？`,
                 confirmText: '確定',
                 confirmVariant: 'danger'
             });
@@ -618,6 +627,18 @@ function bindForm() {
                 toast('已啟用郵件通知的觸發項目，請填妥 SMTP 伺服器、寄件人與至少一位收件人。', 'warning');
                 return;
             }
+        }
+
+        // 切換到雲端 provider 時二次確認（由 Local 切到 OpenAi 或 AzureOpenAi）
+        const previousAiProvider = current?.aiProvider || 'Local';
+        if (previousAiProvider === 'Local' && (aiProvider === 'OpenAi' || aiProvider === 'AzureOpenAi')) {
+            const confirmed = await confirmAction({
+                title: '確認切換至雲端 AI 服務',
+                message: `切換至雲端提供者後，${CLOUD_AI_DECLARATION}\n\n確定要儲存？`,
+                confirmText: '確定',
+                confirmVariant: 'danger'
+            });
+            if (!confirmed) return;
         }
 
         const restore = withBusy(saveButton, '儲存中');
@@ -826,6 +847,10 @@ function bindAiAdvancedReset() {
 
 function bindAiProvider() {
     document.getElementById('ai-provider')?.addEventListener('change', e => {
+        // 位址欄語意隨 provider 改變（本機端點／OpenAI proxy／Azure endpoint），切換時清空，
+        // 否則從 Local 切到雲端會把 localhost 位址一起存出去——請求根本沒出內網，申報卻說會
+        const baseUrl = document.getElementById('ai-base-url');
+        if (baseUrl) baseUrl.value = '';
         updateAiProviderFields(e.target.value);
     });
 }

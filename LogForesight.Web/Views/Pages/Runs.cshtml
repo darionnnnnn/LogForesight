@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "排程作業";
 }
 
@@ -174,16 +174,17 @@
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label for="run-now-backfill" class="form-label">回補天數（選填）</label>
+                        <label for="run-now-backfill" class="form-label">回望天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="僅影響 NetIQ 主機的回補窗口，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
+                                data-bs-content="檢查最近幾天內有沒有缺漏或需要補跑的日子（上限 30 天），已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
                             <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
                         </button>
-                        <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="14" style="max-width: 120px;" />
+                        <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="30" style="max-width: 120px;" />
                     </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="run-now-only-missing" />
                         <label class="form-check-label" for="run-now-only-missing">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的）</label>
+                        <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
                     </div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
                 </div>

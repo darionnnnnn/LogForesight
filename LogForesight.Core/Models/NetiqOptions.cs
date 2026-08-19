@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Models;
+﻿namespace LogForesight.Core.Models;
 
 /// <summary>
 /// NetIQ Sentinel 查詢的節流／逃生門設定（↔ webdata blob，key=netiq_options）。單一物件，非清單。
@@ -43,7 +43,7 @@ public class NetiqOptions
     /// 每台主機每次執行最多回補幾天（docs/archive/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
     /// 14 天、非首次檢查 14 天內缺漏的雙軌設計——2000 台規模下對 Sentinel 做大量歷史日查詢
     /// 不現實，正式環境的預期行為是「只查前一天」。首次與非首次統一套用同一個值
-    /// （<c>Math.Min(BackfillDays, trendWindowDays)</c>，見 NetiqPipelineService）。
+    /// （夾在 <see cref="MaxBackfillDaysLimit"/>，見 NetiqPipelineService.ResolveLookbackDays）。
     ///
     /// 預設 1 的取捨（顯式，非隱藏行為）：
     ///   - 缺漏日不自動自癒：排程漏跑的中間日子永遠不會補，主機時間軸的灰格與執行監控頁
@@ -70,6 +70,14 @@ public class NetiqOptions
     /// 哪天拆出獨立 worker（S-3 已評估後決定本輪不拆）再放寬這個常數。
     /// </summary>
     public const int MaxParallelServersLimit = 3;
+
+    /// <summary>
+    /// 回望天數（<see cref="BackfillDays"/>）的上限。回望窗口與趨勢基線窗口
+    /// （AnalysisOrchestrator.TrendWindowDays）是兩件不同的事——前者決定「往回檢查幾天有沒有
+    /// 缺漏或需補跑的日子」，後者決定趨勢比較的基線長度，不該互相夾住。
+    /// Web 端 DTO 的 <c>[Range]</c> 與 pipeline 的 <c>ResolveLookbackDays</c> 共用這個數字。
+    /// </summary>
+    public const int MaxBackfillDaysLimit = 30;
 
     /// <summary>
     /// 單一 Sentinel 內部，同一天要查的主機批次最多同時開幾條查詢（回饋十三輪 D）。

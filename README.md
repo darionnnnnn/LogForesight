@@ -266,7 +266,7 @@ token 有效期等細節），待核對清單見 [docs/BACKLOG.md](docs/BACKLOG.
 1. **純統計模式回補歷史基準（建議排週末）**：到「系統管理 > 設定 > AI 服務」頁清空
    `AiBaseUrl` 並存檔——系統會自動短路成統計模式（規則／趨勢／關聯層照常執行，只是不呼叫
    AI，見下方「深入分析」一節），速度快得多。到「系統管理 > NetIQ 維護」頁把
-   `BackfillDays` 設為 14（上限值；`TrendAnalyzer` 需要至少 13～14 天可靠歷史才不會持續
+   `BackfillDays` 設為 14（上限是 30，但 `TrendAnalyzer` 只需要 13～14 天可靠歷史，設 14 就夠；設更多只是多查 Sentinel。趨勢分析需要足夠歷史才不會持續
    申報「趨勢基準建立中」），視 Sentinel 環境與網路狀況調整 `MaxParallelServers`／
    `MaxParallelQueriesPerServer`（見「NetIQ 事件取數與 API 驗證」一節）縮短總耗時。完成
    掃描匯入後，到「系統管理 > 排程作業」頁按「立即執行」觸發第一次全量回補。
@@ -570,7 +570,7 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 | `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
 | `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
-| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定 |
+| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，**使用雲端 AI provider（OpenAI 官方／Azure OpenAI）時必須設定**：保護的是真實的雲端 API 憑證 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
 

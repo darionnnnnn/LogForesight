@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using NLog;
 using LogForesight.Core.Persistence;
 
@@ -138,6 +138,7 @@ internal static class SchemaUpgrader
 
 
     internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
+    internal const string IssueFirstSeenFullDoneBlobKey = "issue_first_seen_full_done";
 
     internal static IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(LfDbContext ctx, bool force = false)
     {
@@ -148,13 +149,23 @@ internal static class SchemaUpgrader
         var currentMaxRecordId = ctx.TopIssues.Max(t => (long?)t.RecordId) ?? 0;
         var watermarkRow = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenWatermarkBlobKey);
 
-        if (!force && watermarkRow != null && long.TryParse(watermarkRow.Content, out var wm) && wm == currentMaxRecordId)
+        long watermark = 0;
+        var hasValidWatermark = watermarkRow != null && long.TryParse(watermarkRow.Content, out watermark);
+
+        if (!force && hasValidWatermark && watermark == currentMaxRecordId)
         {
-            Log.Info("[SQL] lf_issue_first_seen 浮水印相同（{Watermark}），跳過機房首見日合併", wm);
+            Log.Info("[SQL] lf_issue_first_seen 浮水印相同（{Watermark}），跳過機房首見日合併", watermark);
             return IssueFirstSeenSeedMergeOutcome.Skipped;
         }
 
+        // force＝完整重算：浮水印視為 0（全部列都當新列掃）、全掃修正段也不看初次回補旗標。
+        // 保留期清理刪列／重新分析舊日期這兩種情況需要它（見 BACKLOG「首見日的完整重算入口」）。
+        if (force) watermark = 0;
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // 檢查是否已完成初次回補（UPDATE 段）
+        var fullDoneRow = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenFullDoneBlobKey);
 
         // **兩段 SQL 刻意避開「在 HAVING 裡引用外層欄位或未分組的欄位」**：那種寫法在 Sqlite 上
         // 能跑，在 SqlServer 上卻可能因為分組規則較嚴而失敗——而測試只跑得到 Sqlite，
@@ -162,6 +173,7 @@ internal static class SchemaUpgrader
         // 的語意都沒有模糊空間。
 
         // 補缺：lf_top_issues 有、lf_issue_first_seen 沒有的組合，補上歷史最小 record_date
+        // （增量處理：只掃 record_id > watermark 的新列；浮水印不存在時 watermark 為 0，等同全掃）
         var inserted = ctx.Database.ExecuteSqlRaw("""
             INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
             SELECT src.source_key, src.event_id, src.source_name, src.first_seen
@@ -172,18 +184,18 @@ internal static class SchemaUpgrader
                        MIN(record_date)   AS first_seen
                 FROM lf_top_issues
                 WHERE record_date >= '2000-01-01'
+                  AND record_id > {0}
                 GROUP BY UPPER(source_name), event_id
             ) src
             WHERE NOT EXISTS (
                 SELECT 1 FROM lf_issue_first_seen fs
                 WHERE fs.source_key = src.source_key AND fs.event_id = src.event_id
             )
-            """);
+            """, watermark);
 
-        // 修正：兩邊都有、但歷史最小日期早於現存 first_seen 的，更新成較早的那個。
-        // 純量子查詢在 WHERE 直接與 first_seen 比較——NULL（該問題已無歷史列）不成立，
-        // 那一列自然不會被更新，不必另外處理。
-        var updated = ctx.Database.ExecuteSqlRaw("""
+        // 增量修正：回補會替既有組合寫入「日期更早」的新列（回望窗口最多 30 天），
+        // 這些列必須讓 first_seen 往前移。只掃 record_id > watermark 的新列，成本與新資料量成正比。
+        var incrementalUpdated = ctx.Database.ExecuteSqlRaw("""
             UPDATE lf_issue_first_seen
             SET first_seen = (
                 SELECT MIN(t.record_date)
@@ -191,6 +203,7 @@ internal static class SchemaUpgrader
                 WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
                   AND t.event_id = lf_issue_first_seen.event_id
                   AND t.record_date >= '2000-01-01'
+                  AND t.record_id > {0}
             )
             WHERE (
                 SELECT MIN(t2.record_date)
@@ -198,8 +211,46 @@ internal static class SchemaUpgrader
                 WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
                   AND t2.event_id = lf_issue_first_seen.event_id
                   AND t2.record_date >= '2000-01-01'
+                  AND t2.record_id > {0}
             ) < lf_issue_first_seen.first_seen
-            """);
+            """, watermark);
+
+        // 修正：兩邊都有、但歷史最小日期早於現存 first_seen 的，更新成較早的那個。
+        // 純量子查詢在 WHERE 直接與 first_seen 比較——NULL（該問題已無歷史列）不成立，
+        // 那一列自然不會被更新，不必另外處理。
+        // （只在「初次回補」執行一次，成功後寫入旗標；旗標已存在則整段跳過）
+        var updated = incrementalUpdated;
+        if (force || fullDoneRow == null)
+        {
+            updated += ctx.Database.ExecuteSqlRaw("""
+                UPDATE lf_issue_first_seen
+                SET first_seen = (
+                    SELECT MIN(t.record_date)
+                    FROM lf_top_issues t
+                    WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                      AND t.event_id = lf_issue_first_seen.event_id
+                      AND t.record_date >= '2000-01-01'
+                )
+                WHERE (
+                    SELECT MIN(t2.record_date)
+                    FROM lf_top_issues t2
+                    WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                      AND t2.event_id = lf_issue_first_seen.event_id
+                      AND t2.record_date >= '2000-01-01'
+                ) < lf_issue_first_seen.first_seen
+                """);
+
+            if (fullDoneRow == null)
+            {
+                ctx.Blobs.Add(new BlobRow
+                {
+                    BlobKey = IssueFirstSeenFullDoneBlobKey,
+                    Content = "true",
+                    UpdatedAt = DateTime.Now,
+                    Version = 1
+                });
+            }
+        }
 
         // 更新浮水印至 lf_blobs
         if (watermarkRow == null)

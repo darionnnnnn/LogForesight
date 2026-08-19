@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -482,9 +482,171 @@ public class SchemaUpgraderTests : IDisposable
             var wmRow = ctx.Blobs.Single(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenWatermarkBlobKey);
             Assert.Equal(secondRecordId.ToString(), wmRow.Content);
 
-            // 且首見日正確更新與補缺
+            // 且首見日正確更新與補缺——回補寫入的更早日期會被增量段修正
             var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
             Assert.Equal(new DateTime(2026, 1, 15), disk.FirstSeen);
+            var net = ctx.IssueFirstSeen.Single(f => f.SourceKey == "NETWORK" && f.EventId == 404);
+            Assert.Equal(new DateTime(2026, 2, 1), net.FirstSeen);
+        }
+    }
+
+    /// <summary>
+    /// 首次執行：INSERT 與 UPDATE 兩段都跑，首見日結果正確，旗標與浮水印被寫入。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_首次執行_INSERT與UPDATE皆執行且寫入旗標()
+    {
+        long recordId;
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+
+            // 預先在 lf_issue_first_seen 塞入一筆較晚的首見日，驗證初次回補 UPDATE 段確實執行
+            ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                { SourceKey = "DISK", EventId = 153, SourceName = "disk", FirstSeen = new DateTime(2026, 5, 1) });
+
+            recordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(recordId, "disk", 153, new DateTime(2026, 1, 20)));    // 歷史更早，應被 UPDATE 修正
+            ctx.TopIssues.Add(TopIssue(recordId, "network", 404, new DateTime(2026, 2, 10))); // 全新組合，應被 INSERT 補入
+            ctx.SaveChanges();
+        }
+
+        IssueFirstSeenSeedMergeOutcome outcome;
+        using (var ctx = NewContext())
+        {
+            outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+        }
+
+        Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+
+        using (var ctx = NewContext())
+        {
+            // 驗證旗標已寫入
+            var fullDone = ctx.Blobs.SingleOrDefault(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenFullDoneBlobKey);
+            Assert.NotNull(fullDone);
+            Assert.Equal("true", fullDone.Content);
+
+            // 驗證浮水印已更新
+            var wm = ctx.Blobs.SingleOrDefault(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenWatermarkBlobKey);
+            Assert.NotNull(wm);
+            Assert.Equal(recordId.ToString(), wm.Content);
+
+            // 驗證 UPDATE 與 INSERT 皆生效
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 20), disk.FirstSeen); // 被 UPDATE 修正為較早歷史日期
+
+            var net = ctx.IssueFirstSeen.Single(f => f.SourceKey == "NETWORK" && f.EventId == 404);
+            Assert.Equal(new DateTime(2026, 2, 10), net.FirstSeen); // 被 INSERT 補入
+        }
+    }
+
+    /// <summary>
+    /// 第二次執行（已有旗標、且有新增列）：只有新的 (source, event) 組合被補進去，既有組合的首見日不變。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_第二次執行已有旗標且有新增列_僅掃新列_補入新組合並修正回補的更早首見日()
+    {
+        long firstRecordId;
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+            firstRecordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(firstRecordId, "disk", 153, new DateTime(2026, 3, 1)));
+            ctx.SaveChanges();
+        }
+
+        // 首次執行，建立浮水印與旗標
+        using (var ctx = NewContext())
+        {
+            var outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+        }
+
+        // 新增列：包含既有問題（帶不同日期）與全新問題組合
+        long secondRecordId;
+        using (var ctx = NewContext())
+        {
+            secondRecordId = AddParentRecord(ctx);
+            Assert.True(secondRecordId > firstRecordId);
+            ctx.TopIssues.Add(TopIssue(secondRecordId, "disk", 153, new DateTime(2026, 1, 10)));
+            ctx.TopIssues.Add(TopIssue(secondRecordId, "memory", 200, new DateTime(2026, 2, 15)));
+            ctx.SaveChanges();
+        }
+
+        // 第二次執行
+        using (var ctx = NewContext())
+        {
+            var outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+        }
+
+        using (var ctx = NewContext())
+        {
+            // 浮水印推進至第二筆 recordId
+            var wm = ctx.Blobs.Single(b => b.BlobKey == SchemaUpgrader.IssueFirstSeenWatermarkBlobKey);
+            Assert.Equal(secondRecordId.ToString(), wm.Content);
+
+            // 既有組合：新列日期更早（回補情境）時，增量段把首見日往前修正
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 1, 10), disk.FirstSeen);
+
+            // 全新組合被補入
+            var mem = ctx.IssueFirstSeen.Single(f => f.SourceKey == "MEMORY" && f.EventId == 200);
+            Assert.Equal(new DateTime(2026, 2, 15), mem.FirstSeen);
+        }
+    }
+
+    /// <summary>
+    /// 第二次執行時 UPDATE 段不再執行：刻意將某筆既有首見日改成較晚日期，再跑一次合併，確認其未被修正。
+    /// </summary>
+    [Fact]
+    public void 首見日合併_第二次執行時UPDATE段不再執行_既有首見日被篡改亦不被修正()
+    {
+        long firstRecordId;
+        using (var ctx = NewContext())
+        {
+            ctx.Database.EnsureCreated();
+            SchemaUpgrader.Upgrade(ctx);
+            firstRecordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(firstRecordId, "disk", 153, new DateTime(2026, 1, 20)));
+            ctx.SaveChanges();
+        }
+
+        // 首次執行完成回補
+        using (var ctx = NewContext())
+        {
+            var outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+        }
+
+        // 刻意將既有首見日改成較晚的錯誤日期，並新增一筆新紀錄讓浮水印落後以通過便宜閘門
+        long secondRecordId;
+        using (var ctx = NewContext())
+        {
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            disk.FirstSeen = new DateTime(2026, 9, 30); // 刻意設為較晚日期
+
+            secondRecordId = AddParentRecord(ctx);
+            ctx.TopIssues.Add(TopIssue(secondRecordId, "network", 404, new DateTime(2026, 2, 1)));
+            ctx.SaveChanges();
+        }
+
+        // 第二次執行
+        using (var ctx = NewContext())
+        {
+            var outcome = SchemaUpgrader.MergeIssueFirstSeenSeed(ctx);
+            Assert.Equal(IssueFirstSeenSeedMergeOutcome.Completed, outcome);
+        }
+
+        using (var ctx = NewContext())
+        {
+            // 驗證 disk 依然是 2026-09-30，證明 UPDATE 段未被執行（否則會被修正回 2026-01-20）
+            var disk = ctx.IssueFirstSeen.Single(f => f.SourceKey == "DISK" && f.EventId == 153);
+            Assert.Equal(new DateTime(2026, 9, 30), disk.FirstSeen);
+
+            // 新組合 network 正確補入
             var net = ctx.IssueFirstSeen.Single(f => f.SourceKey == "NETWORK" && f.EventId == 404);
             Assert.Equal(new DateTime(2026, 2, 1), net.FirstSeen);
         }

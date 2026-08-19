@@ -554,6 +554,7 @@ public class PermissionChangeDto
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+    public string Source { get; set; } = PermissionChangeSources.Local;
 
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
     public string? ConfirmedByAccount { get; set; }

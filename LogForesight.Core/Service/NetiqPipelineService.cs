@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -64,6 +64,9 @@ public class NetiqPipelineService
     private readonly IRunProgress? _progress;
     private readonly bool _onlyMissingOrFailed;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
+    private readonly PermissionChangeStore? _permissionChangeStore;
+    /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
+    private ConcurrentDictionary<string, byte> _permissionKeys = new();
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
     /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
     private readonly ConcurrentDictionary<long, HostTouch> _hostTouches = new();
@@ -87,6 +90,7 @@ public class NetiqPipelineService
     /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
     /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
+    /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -94,7 +98,8 @@ public class NetiqPipelineService
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
-        bool onlyMissingOrFailed = false)
+        bool onlyMissingOrFailed = false,
+        PermissionChangeStore? permissionChangeStore = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -114,6 +119,7 @@ public class NetiqPipelineService
         _onlyMissingOrFailed = onlyMissingOrFailed;
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
+        _permissionChangeStore = permissionChangeStore ?? new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -128,6 +134,13 @@ public class NetiqPipelineService
         {
             return result;
         }
+
+        // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
+        // 只讀回望窗口（＋一週緩衝）內附加的列：更早的列不可能在本輪被重寫
+        var dedupeSince = DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7));
+        _permissionKeys = new ConcurrentDictionary<string, byte>(
+            (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
+            StringComparer.Ordinal);
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -237,12 +250,11 @@ public class NetiqPipelineService
     /// <summary>
     /// 回補天數計算（docs/archive/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
     /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
-    /// 若 BackfillDays 設得比趨勢窗口還大，仍以趨勢窗口為準——回補比趨勢分析
-    /// 實際會用到的更多天沒有意義，多查的天數只是白費 Sentinel 查詢額度。
-    /// 抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
+    /// 回望窗口與趨勢基線窗口是兩件不同的事，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>，
+    /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
-    internal static int ResolveLookbackDays(int backfillDays, int trendWindowDays) =>
-        Math.Min(backfillDays, trendWindowDays);
+    internal static int ResolveLookbackDays(int backfillDays) =>
+        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
@@ -279,7 +291,7 @@ public class NetiqPipelineService
         // 首次與非首次統一套用 BackfillDays（docs/archive/FEEDBACK-3-PLAN.md #1）：不再區分
         // 「該主機是否已有任何紀錄」——2000 台規模下不管是首次登錄還是排程漏跑，
         // 對 Sentinel 做大量歷史日查詢都不現實，一律以管理者設定的回補窗口為準
-        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays, trendWindowDays);
+        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays);
 
         var plans = new List<HostPlan>();
         var orphanJobs = new List<AiFollowupJob>();
@@ -287,7 +299,7 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed);
+            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
 
             // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
             // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
@@ -313,7 +325,7 @@ public class NetiqPipelineService
             // 今天往回數 lookback 天，不含今天）。
             var missingSet = missingDates.ToHashSet();
             var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback)
-                .Where(r => (r.AiPending || (_onlyMissingOrFailed && !r.AiAnalyzed && r.RiskLevel != RiskLevels.Low)) && !missingSet.Contains(r.Date.Date))
+                .Where(r => (_onlyMissingOrFailed ? HostDayPostProcessor.NeedsBackfill(r, _useAi) : r.AiPending) && !missingSet.Contains(r.Date.Date))
                 .ToList();
             foreach (var pending in pendingRecords)
             {
@@ -597,6 +609,8 @@ public class NetiqPipelineService
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+            HostDayPostProcessor.RecordPermissionChanges(
+                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext);
 
             // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
             // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果

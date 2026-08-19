@@ -61,6 +61,7 @@ public class PermissionChangeService
                 Before = change.Before,
                 After = change.After,
                 AlertText = change.AlertText,
+                Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
                 Status = confirmation?.Status ?? PermissionConfirmStatuses.Pending,
                 ConfirmedByAccount = confirmation?.ConfirmedByAccount,
                 ConfirmedByDisplayName = string.IsNullOrEmpty(confirmation?.ConfirmedByAccount)

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 總覽儀表板（docs/WEB-SPEC.md §9.1）。
  *
  * 排版遵循 §8.2 視覺層級：有「重大」問題時該類別卡加紅邊；
@@ -376,24 +376,28 @@ function renderCategories(data) {
                     <span class="d-inline-block rounded-circle" style="width:10px;height:10px"></span>
                     <span class="fw-semibold"></span>
                 </div>
-                <div class="lf-stat__value"></div>
-                <div class="lf-stat__label mb-2"></div>
-                <div class="small text-muted mb-1"></div>
-                <div class="small"></div>
+                <div class="d-flex align-items-baseline gap-1 mb-1">
+                    <span class="lf-stat__value"></span>
+                    <span class="lf-stat__label">個問題</span>
+                </div>
+                <div class="lf-stat__label mb-1 category-hosts"></div>
+                <div class="small text-muted mb-2 category-cumulative"></div>
+                <div class="small category-severity"></div>
             </div>`;
 
         card.querySelector('span.rounded-circle').style.background = colors[category.category] ?? 'var(--lf-cat-other)';
         card.querySelector('span.fw-semibold').textContent = CATEGORY_NAMES[category.category] ?? category.category;
-        // 大數字＝去重風險資訊筆數（同一台主機同一個問題連續多天只算一筆）；
-        // 小字＝期間累計出現次數（主機×日），兩者常常差很多，同時看才不會誤以為問題變多了
-        // （回饋十九輪批次D，外部審查點名的「看不出真正嚴重程度」）
-        card.querySelector('.lf-stat__value').textContent = formatNumber(category.riskItemCount);
-        card.querySelector('.lf-stat__value').title = '去重後的風險資訊筆數：同一台主機同一個問題連續多天只算一筆';
-        card.querySelector('.lf-stat__label').textContent = `個問題．${category.affectedHosts} 台主機`;
-        const cumulative = card.querySelector('.small.text-muted');
+        // 大數字＝去重問題類型數（同一個問題不論出現在幾台主機、幾天，都只算一項）；
+        // 第二行＝相異存活主機數；
+        // 第三行＝期間累計出現次數（主機×日）
+        const statValue = card.querySelector('.lf-stat__value');
+        statValue.textContent = formatNumber(category.issueTypeCount);
+        statValue.title = '去重問題類型數：同一個問題不論出現在幾台主機、幾天，都只算一項';
+        card.querySelector('.category-hosts').textContent = `${formatNumber(category.affectedHosts)} 台主機`;
+        const cumulative = card.querySelector('.category-cumulative');
         cumulative.textContent = `期間累計 ${formatNumber(category.cumulativeCount)} 筆（主機×日）`;
         cumulative.title = '主機×日的原始出現次數加總——數字大不代表問題多，只代表拖得久';
-        card.querySelector('.small:not(.text-muted)').replaceChildren(severityBreakdown(category));
+        card.querySelector('.category-severity').replaceChildren(severityBreakdown(category));
 
         link.appendChild(card);
         grid.appendChild(link);
@@ -413,10 +417,11 @@ function severityBreakdown(category) {
     // margin 只顧橫向會在行尾留下不對稱空隙（docs/archive/FEEDBACK-3-PLAN.md #3）
     const wrap = document.createElement('span');
     wrap.className = 'd-flex flex-wrap gap-1';
+    // 與大數字同量綱：依問題類型分桶（同一問題不論幾台主機、幾天只算一項）
     const counts = {
-        High: category.highCount,
-        Medium: category.mediumCount,
-        Low: category.lowCount
+        High: category.highTypeCount,
+        Medium: category.mediumTypeCount,
+        Low: category.lowTypeCount
     };
 
     for (const severity of SEVERITY_ORDER) {

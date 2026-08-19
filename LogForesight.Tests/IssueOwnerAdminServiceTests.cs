@@ -35,7 +35,7 @@ public class IssueOwnerAdminServiceTests
     public void Upsert_EventId不合法時擋下()
     {
         var ex = Assert.Throws<DomainException>(() =>
-            Create().Upsert(new SaveIssueOwnerRequest { SourceName = "disk", EventId = 0 }));
+            Create().Upsert(new SaveIssueOwnerRequest { SourceName = "disk", EventId = -1 }));
 
         Assert.Contains("Event ID", ex.Message);
     }

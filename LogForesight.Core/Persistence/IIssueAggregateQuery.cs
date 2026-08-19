@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Persistence;
+﻿namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 一個問題（Source＋EventId）在某段期間內的聚合結果
@@ -280,7 +280,9 @@ public sealed class HostIssueOccurrence
 /// 單一風險類別在期間內的彙總（回饋十九輪批次D，§二-2「大數字該是去重筆數」）。
 ///
 /// **兩種計數口徑並存，各自回答不同的問題**：
-///   - <see cref="RiskItemCount"/>（大數字）＝這段期間「有幾個不同的（主機,問題）風險資訊」
+///   - <see cref="IssueTypeCount"/>（卡片大數字）＝相異 (Source, EventId) 數，跨主機跨日皆去重，
+///     答的是「這個類別有幾種問題」。
+///   - <see cref="RiskItemCount"/>＝這段期間「有幾個不同的（主機,問題）風險資訊」
 ///     ——同一台主機同一個問題連續多天出現只算一筆，答的是「現在有多少個問題要處理」。
 ///   - <see cref="CumulativeCount"/>（小字）＝主機×日的原始出現次數加總，答的是
 ///     「這段期間累計看到幾次」，數字大不代表問題多，只代表拖得久。
@@ -290,6 +292,9 @@ public sealed class HostIssueOccurrence
 public sealed class CategoryAggregate
 {
     public string Category { get; init; } = string.Empty;
+
+    /// <summary>去重問題類型數：相異 (SourceName 大小寫不敏感, EventId) 組合數，跨主機、跨日期皆去重</summary>
+    public int IssueTypeCount { get; init; }
 
     /// <summary>去重風險資訊筆數：相異 (存活主機, Source, EventId) 組合數</summary>
     public int RiskItemCount { get; init; }
@@ -310,6 +315,14 @@ public sealed class CategoryAggregate
     public int HighCount { get; init; }
     public int MediumCount { get; init; }
     public int LowCount { get; init; }
+
+    /// <summary>
+    /// 依「問題類型」（相異 Source+EventId，取該類型跨主機跨日的最高嚴重度）分桶，
+    /// 三者之和＝<see cref="IssueTypeCount"/>——卡片大數字與嚴重度分解同一量綱。
+    /// </summary>
+    public int HighTypeCount { get; init; }
+    public int MediumTypeCount { get; init; }
+    public int LowTypeCount { get; init; }
 
     /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
     public int ElevatesCount { get; init; }

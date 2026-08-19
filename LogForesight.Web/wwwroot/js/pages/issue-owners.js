@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 問題檔案維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
  *
  * 以 (Source, EventId) 為鍵指派跨主機負責人——與主機負責人（hosts.js 的 #host-owners）
@@ -49,6 +49,13 @@ async function load() {
     renderList();
 }
 
+/** 問題顯示標籤的單一出口：後端已算好 displayLabel（Linux 的 EventId 恆 0，不顯示無意義的「(0)」），
+ * 舊資料或尚未帶欄位時退回本地推算 */
+function issueLabel(item) {
+    if (!item) return '';
+    return item.displayLabel || (item.eventId === 0 ? item.sourceName : `${item.sourceName} (${item.eventId})`);
+}
+
 function renderList() {
     renderTable(listContainer, {
         columns: [
@@ -57,7 +64,7 @@ function renderList() {
                 render: r => {
                     const main = document.createElement('div');
                     main.className = 'fw-semibold';
-                    main.textContent = `${r.sourceName} (${r.eventId})`;
+                    main.textContent = issueLabel(r);
                     return main;
                 }
             },
@@ -119,7 +126,7 @@ function renderList() {
         rows: rules,
         empty: {
             title: '尚未指派任何問題負責人',
-            hint: '按右上角「新增規則」開始指派——問題負責人優先於主機負責人，自動帶入處理人與郵件通知都會先看這裡。'
+            hint: '按右上角「新增規則」開始指派——問題負責人是長期負責人，該問題之後每天出現時會自動建案指派給他，郵件通知也優先看這裡。'
         },
         stickyLastColumn: true
     });
@@ -202,9 +209,10 @@ conclusionStatus.addEventListener('change', syncConclusionFieldsVisibility);
 
 conclusionClearButton.addEventListener('click', async () => {
     if (!editingRule) return;
+    const targetLabel = issueLabel(editingRule);
     const confirmed = await confirmAction({
         title: '解除機房結論',
-        message: `確定要解除「${editingRule.sourceName} (${editingRule.eventId})」的機房結論嗎？已經套用到既有主機日的結果不會回滾。`,
+        message: `確定要解除「${targetLabel}」的機房結論嗎？已經套用到既有主機日的結果不會回滾。`,
         confirmText: '解除',
         confirmVariant: 'danger'
     });
@@ -223,20 +231,31 @@ conclusionClearButton.addEventListener('click', async () => {
 /** 目前選到／輸入的問題摘要——編輯時鍵已鎖定，新增時 picker／手動輸入互斥，
  * 使用者存檔前應該看得到「我現在到底要指派哪個問題」，不必回頭比對上方欄位。 */
 function renderSelectedSummary() {
-    let sourceName, eventId;
+    let sourceName, eventId, displayLabel;
     if (editingRule) {
         sourceName = editingRule.sourceName;
         eventId = editingRule.eventId;
+        displayLabel = editingRule.displayLabel;
     } else if (!manualField.classList.contains('d-none')) {
         sourceName = document.getElementById('issue-owner-source').value.trim();
-        eventId = document.getElementById('issue-owner-event-id').value;
+        const raw = document.getElementById('issue-owner-event-id').value.trim();
+        eventId = raw === '' ? NaN : Number(raw);
     } else {
         const [source, id] = (picker.value || '').split('|');
         sourceName = source;
-        eventId = id;
+        eventId = id !== undefined && id !== '' ? Number(id) : NaN;
+        const selectedOption = recentIssues.find(o => matchesIssue(o, { sourceName, eventId }));
+        displayLabel = selectedOption?.displayLabel;
     }
 
-    selectedSummary.textContent = sourceName && eventId ? `已選擇：${sourceName} (${eventId})` : '';
+    const isValid = !!sourceName && Number.isInteger(eventId) && eventId >= 0;
+    if (!isValid) {
+        selectedSummary.textContent = '';
+        return;
+    }
+
+    const label = issueLabel({ displayLabel, sourceName, eventId });
+    selectedSummary.textContent = `已選擇：${label}`;
 }
 
 picker.addEventListener('change', renderSelectedSummary);
@@ -257,7 +276,8 @@ function renderPicker(rule) {
     for (const option of recentIssues) {
         const el = document.createElement('option');
         el.value = `${option.sourceName}|${option.eventId}`;
-        el.textContent = `${option.sourceName} (${option.eventId}) — ${option.hostCount} 台主機` +
+        const label = issueLabel(option);
+        el.textContent = `${label} — ${option.hostCount} 台主機` +
             (option.hasOwner && !(rule && matchesIssue(option, rule)) ? '（已指派）' : '');
         if (rule && matchesIssue(option, rule)) el.selected = true;
         picker.appendChild(el);
@@ -285,14 +305,15 @@ form.addEventListener('submit', async event => {
         eventId = editingRule.eventId;
     } else if (!manualField.classList.contains('d-none')) {
         sourceName = document.getElementById('issue-owner-source').value.trim();
-        eventId = Number(document.getElementById('issue-owner-event-id').value);
+        const raw = document.getElementById('issue-owner-event-id').value.trim();
+        eventId = raw === '' ? NaN : Number(raw);
     } else {
         const [source, id] = (picker.value || '').split('|');
         sourceName = source;
-        eventId = Number(id);
+        eventId = id !== undefined && id !== '' ? Number(id) : NaN;
     }
 
-    if (!sourceName || !eventId) {
+    if (!sourceName || !Number.isInteger(eventId) || eventId < 0) {
         toast('請選擇或輸入要指派的問題', 'warning');
         return;
     }
@@ -334,9 +355,10 @@ form.addEventListener('submit', async event => {
 });
 
 async function removeRule(rule) {
+    const targetLabel = issueLabel(rule);
     const confirmed = await confirmAction({
         title: '刪除問題檔案',
-        message: `確定要刪除「${rule.sourceName} (${rule.eventId})」的問題檔案嗎？刪除後這個問題會落回主機負責人（若有設定）` +
+        message: `確定要刪除「${targetLabel}」的問題檔案嗎？刪除後這個問題會落回主機負責人（若有設定）` +
             (rule.conclusionStatus ? '，機房結論也會一併移除。' : '。'),
         confirmText: '刪除',
         confirmVariant: 'danger'

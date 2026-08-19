@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -564,7 +564,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 g => g.Select(x => x.IssueKey).ToHashSet(StringComparer.Ordinal)
             );
 
-        // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵
+        // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵。
+        //    **案件這一路是主機層級不是主機日層級**（案件本來就跨日，casesByHost 以主機為鍵）：
+        //    一台主機只要有任何一筆未結案案件，它在查詢區間內的所有日子都會納入明細載入。
+        //    投影很窄（無 ContentJson）、單次 IN 查詢，實務可接受——但別依賴「只有真的有處理
+        //    狀態或案件的主機日才拉明細」這個更緊的說法。
         var hostDaysNeedingDetail = hostDays
             .Where(d => handlingsByHostDay.ContainsKey((d.HostNameKey.ToUpperInvariant(), d.RecordDate)) ||
                         casesByHost.ContainsKey(d.HostNameKey.ToUpperInvariant()))
@@ -932,6 +936,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 g.Key.Category,
                 g.Key.SurvivingHostId,
+                g.Key.SourceName,
+                g.Key.EventId,
                 // 舊資料相容（LegacySeverityRank）：與 Aggregate 同一條規則，否則這張卡跟
                 // 依問題視角／重點問題卡對同一筆資料的嚴重度用詞會對不上
                 MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.MaxSeverityRank)),
@@ -943,9 +949,20 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 風險資訊是這張卡的顯示單位，可見性也該以它為單位判斷（規劃 D1）
             .Where(item => allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)item.MaxSeverityRank))
             .GroupBy(item => item.Category)
-            .Select(g => new CategoryAggregate
+            .Select(g =>
             {
+                // 問題類型＝相異 (Source, EventId)；每個類型取跨主機跨日的最高嚴重度分桶
+                var typeMaxRank = g
+                    .GroupBy(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+                    .Select(t => t.Max(x => x.MaxSeverityRank))
+                    .ToList();
+                return new CategoryAggregate
+                {
                 Category = g.Key,
+                IssueTypeCount = typeMaxRank.Count,
+                HighTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.High),
+                MediumTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.Medium),
+                LowTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.Low),
                 RiskItemCount = g.Count(),
                 CumulativeCount = g.Sum(x => x.Occurrences),
                 AffectedHosts = g.Select(x => x.SurvivingHostId).Distinct().Count(),
@@ -954,6 +971,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 MediumCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Medium),
                 LowCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Low),
                 ElevatesCount = g.Count(x => x.Elevates)
+                };
             })
             .ToList();
 

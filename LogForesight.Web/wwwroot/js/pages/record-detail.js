@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 風險日詳情（docs/WEB-SPEC.md §9.3）。
  *
  * 兩層呈現（DB-PLAN 定案）：
@@ -810,6 +810,8 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
 
         wrap.replaceWith(statusControl(issue));
         renderProgress();
+        renderSeverityFilter(currentDetail);
+        renderScopeFilter(currentDetail);
 
         // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
@@ -987,6 +989,47 @@ function visibleTopIssues() {
 }
 
 /**
+ * 計算符合條件的問題筆數（契約 §1、§2、§3 共用）。
+ * @param {Array} issues 問題清單（通常為 detail.topIssues）
+ * @param {object} opts
+ *   severity: 指定單一嚴重度字串；若為 null 則取 activeSeverities
+ *   scoped: 是否套用目前顯示範圍（inCurrentScope）
+ */
+function countIssues(issues, { severity = null, scoped = true, scopeValue = null } = {}) {
+    const allowed = allowedSeverities();
+    const buckets = scopeValue
+        ? (SCOPE_OPTIONS.find(o => o.value === scopeValue) ?? SCOPE_OPTIONS[0]).buckets
+        : null;
+    return issues.filter(i => {
+        if (!allowed.has(i.severity)) return false;
+        if (severity !== null ? i.severity !== severity : !activeSeverities.has(i.severity)) return false;
+        if (buckets) return buckets.includes(issueBucket(i));
+        return !scoped || inCurrentScope(i);
+    }).length;
+}
+
+/**
+ * 找出「切過去真的看得到」的顯示範圍。預設不處理的低嚴重度問題落在 done 桶，
+ * 而「顯示所有問題」的桶不含 done——直接寫死切到 all 會切了還是空的。
+ * 回傳 null 代表沒有任何範圍看得到（不該出現捷徑按鈕）。
+ */
+function scopeThatReveals(issues) {
+    return SCOPE_OPTIONS.find(o => o.value !== currentScope &&
+        countIssues(issues, { scopeValue: o.value }) > 0) ?? null;
+}
+
+/**
+ * 切換顯示範圍並連動重新渲染問題清單、嚴重度篩選鈕與顯示範圍下拉。
+ */
+function changeScope(newScope) {
+    currentScope = newScope;
+    renderIssues(currentDetail);
+    renderSeverityFilter(currentDetail);
+    renderScopeFilter(currentDetail);
+    updateIssueOptions(visibleTopIssues());
+}
+
+/**
  * 顯示範圍下拉（docs/archive/FEEDBACK-10-PLAN.md §8）：選項附上該範圍實際會顯示的問題數，
  * 切之前就知道會多／少幾列。**狀態不持久化**——每次進頁回到「待處理」，
  * 與「已結案收合」同一個誠實預設的原則（上次的篩選不該悄悄決定這次看到什麼）。
@@ -1013,12 +1056,7 @@ function renderScopeFilter(detail) {
 
     // 沒有任何他人處理中的問題時，「待處理」與「顯示所有問題」看到的東西完全一樣——
     // 下拉仍保留（選項數固定比較好預期），但預設值不需要使用者操心
-    select.onchange = () => {
-        currentScope = select.value;
-        renderIssues(currentDetail);
-        renderScopeFilter(currentDetail);
-        updateIssueOptions(visibleTopIssues());
-    };
+    select.onchange = () => changeScope(select.value);
 }
 
 /**
@@ -1030,7 +1068,8 @@ function renderSeverityFilter(detail) {
     if (!container) return;
 
     // 只列出管理者顯示設定允許且當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
-    // Locked 模式不需特判：load() 已把未勾選層級從 topIssues 拿掉，這裡自然長不出對應的鈕
+    // 某嚴重度在目前顯示範圍下筆數為 0，但在未套範圍時筆數大於 0 時，該按鈕仍要顯示（計數顯示 0）。
+    // 完全不存在該嚴重度的問題時，維持現行行為（按鈕不出現）。
     const allowed = allowedSeverities();
     const present = SEVERITY_ORDER.filter(s => allowed.has(s) && detail.topIssues.some(i => i.severity === s));
     if (present.length <= 1) {
@@ -1040,7 +1079,7 @@ function renderSeverityFilter(detail) {
 
     container.replaceChildren();
     for (const severity of present) {
-        const count = detail.topIssues.filter(i => i.severity === severity).length;
+        const count = countIssues(detail.topIssues, { severity, scoped: true });
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-outline-secondary' + (activeSeverities.has(severity) ? ' active' : '');
@@ -1154,7 +1193,21 @@ function renderIssues(detail) {
 
     // 全被篩掉時給明確出口，不留白畫面讓人誤以為「這天沒問題」
     if (shown === 0) {
-        if (hidden > 0) {
+        const unscopedCount = countIssues(detail.topIssues, { scoped: false });
+        const target = unscopedCount > 0 ? scopeThatReveals(detail.topIssues) : null;
+        if (target) {
+            renderEmpty(container, {
+                title: `已隱藏全部 ${hidden} 項`,
+                hint: `有 ${unscopedCount} 項符合目前嚴重度篩選的問題不在「${currentScopeOption().label}」這個顯示範圍內。`
+            });
+            const btn = button(`切換為「${target.label}」`, {
+                variant: 'outline-primary',
+                size: 'sm',
+                onClick: () => changeScope(target.value)
+            });
+            btn.classList.add('mt-3');
+            container.querySelector('.lf-empty')?.appendChild(btn);
+        } else if (hidden > 0) {
             renderEmpty(container, {
                 title: `已隱藏全部 ${hidden} 項`,
                 hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
