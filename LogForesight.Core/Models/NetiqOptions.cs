@@ -43,7 +43,7 @@ public class NetiqOptions
     /// 每台主機每次執行最多回補幾天（docs/archive/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
     /// 14 天、非首次檢查 14 天內缺漏的雙軌設計——2000 台規模下對 Sentinel 做大量歷史日查詢
     /// 不現實，正式環境的預期行為是「只查前一天」。首次與非首次統一套用同一個值
-    /// （<c>Math.Min(BackfillDays, trendWindowDays)</c>，見 NetiqPipelineService）。
+    /// （夾在 <see cref="MaxBackfillDaysLimit"/>，見 NetiqPipelineService.ResolveLookbackDays）。
     ///
     /// 預設 1 的取捨（顯式，非隱藏行為）：
     ///   - 缺漏日不自動自癒：排程漏跑的中間日子永遠不會補，主機時間軸的灰格與執行監控頁

@@ -158,6 +158,10 @@ internal static class SchemaUpgrader
             return IssueFirstSeenSeedMergeOutcome.Skipped;
         }
 
+        // force＝完整重算：浮水印視為 0（全部列都當新列掃）、全掃修正段也不看初次回補旗標。
+        // 保留期清理刪列／重新分析舊日期這兩種情況需要它（見 BACKLOG「首見日的完整重算入口」）。
+        if (force) watermark = 0;
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // 檢查是否已完成初次回補（UPDATE 段）
@@ -216,7 +220,7 @@ internal static class SchemaUpgrader
         // 那一列自然不會被更新，不必另外處理。
         // （只在「初次回補」執行一次，成功後寫入旗標；旗標已存在則整段跳過）
         var updated = incrementalUpdated;
-        if (fullDoneRow == null)
+        if (force || fullDoneRow == null)
         {
             updated += ctx.Database.ExecuteSqlRaw("""
                 UPDATE lf_issue_first_seen
@@ -236,13 +240,16 @@ internal static class SchemaUpgrader
                 ) < lf_issue_first_seen.first_seen
                 """);
 
-            ctx.Blobs.Add(new BlobRow
+            if (fullDoneRow == null)
             {
-                BlobKey = IssueFirstSeenFullDoneBlobKey,
-                Content = "true",
-                UpdatedAt = DateTime.Now,
-                Version = 1
-            });
+                ctx.Blobs.Add(new BlobRow
+                {
+                    BlobKey = IssueFirstSeenFullDoneBlobKey,
+                    Content = "true",
+                    UpdatedAt = DateTime.Now,
+                    Version = 1
+                });
+            }
         }
 
         // 更新浮水印至 lf_blobs

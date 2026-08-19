@@ -95,7 +95,7 @@ public class LinuxIssueOwnerAdminTests
         var options = Create().RecentIssues();
 
         var sshd = options.Single(o => o.SourceName == "sshd");
-        Assert.Equal("sshd（ssh-bruteforce）", sshd.DisplayLabel);
+        Assert.Equal("sshd", sshd.DisplayLabel);   // Linux 只顯示來源，不掛任一規則 key
         Assert.DoesNotContain("(0)", sshd.DisplayLabel);
 
         var cron = options.Single(o => o.SourceName == "cron");

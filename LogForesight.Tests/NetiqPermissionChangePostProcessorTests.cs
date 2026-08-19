@@ -334,4 +334,25 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("CONTOSO\\SuperAdmin", record.After);
         Assert.Equal("（不在群組中）", record.Before);
     }
+
+    [Fact]
+    public void 同主機日超過上限_只逐則寫前50筆並多一筆彙總()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var date = new DateTime(2026, 8, 19);
+        var events = Enumerable.Range(0, 80).Select(i => new EventLogEntryData
+        {
+            EventId = 4670, Source = "Microsoft-Windows-Security-Auditing",
+            Message = "Permissions on an object were changed. Object Name: C:/share/file" + i + ".txt",
+            TimeGenerated = date.AddMinutes(i)
+        }).ToList();
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-DC01", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Equal(HostDayPostProcessor.MaxPermissionChangeRecordsPerHostDay + 1, records.Count);
+        var summary = Assert.Single(records, r => r.ChangeType == "權限異動（彙總）");
+        Assert.Contains("30 則", summary.AlertText);
+    }
 }

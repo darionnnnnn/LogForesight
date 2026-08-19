@@ -136,3 +136,11 @@
 | A-2 | Claude | 完成 | 2227 綠 | agy 連兩次無產出（第一次 `--effort` 旗標不支援 Claude 模型、第二次只輸出探索敘述），規模小改由 Claude 做 |
 | B-1 | agy(gemini-3.7-flash-high) | 完成 | 2244 綠 | 驗收另外抓到既有 bug：settings.js 兩處 `confirmAction` 誤用 `body` 參數（正確 `message`），保留天數確認框原本顯示 undefined，一併修正 |
 | C-1 | agy(gemini-3.7-flash-high) | 完成 | 2247 綠 | **規劃契約有洞**：回補會替既有組合寫入更早日期的新列，UPDATE 段被旗標永久關閉後不會修正。Claude 補上「增量修正段」（只掃新列）並還原被 agy 改掉的既有測試斷言 |
+| D-1 | agy(gemini) | 完成 | 2251 綠 | 無落差；終檢補：嚴重度分解改用同量綱的 `*TypeCount` |
+| E-1 | agy(gemini) | 完成 | 2251 綠 | agy 的捷徑寫死切到「顯示所有問題」，但預設不處理的問題落在 done 桶、該範圍不含 done——按了仍空；Claude 改成自動挑真的看得到的範圍 |
+| F-1 | agy(gemini) | 完成 | 2259 綠 | agy 把 label fallback 複製 5 份，Claude 抽成單一函式；終檢：Linux 標籤任選一個規則 key 語意錯，改為只顯示來源 |
+| F-2 | agy(gemini) | 完成 | 2264 綠 | 終檢揪出**已結案案件每天復活**（只看 open case）：補「不處理類結案不再自動建案、resolved 重新交辦」；Note 未帶到案件也補上 |
+| G-1 | agy(gemini) | 完成 | 2264 綠 | 無落差；終檢：截斷提示講明「不套風險層級篩選」口徑；handler-detail 同型巢狀連結一併移除 |
+| H-1 | agy(gemini) | 完成 | 2271 綠 | agy 冪等去重逐主機日整份讀 log → Claude 改每輪快照；終檢再補：每主機日上限 50＋彙總列、快照只讀近期、依 AuditRetentionDays 清理 |
+| I | Claude | 完成 | — | 文件終檢揪出 02-dashboard／13-glossary／10-scheduler／README 殘留舊口徑、DETECTION-SPEC 與 DB-SPEC 漏補、`force` 不能真的完整重算（已改成可以） |
+| 終檢 | 兩個獨立 Explore | 完成 | 2277 綠 | 程式碼審查 19 項：採 13、駁 3（#3 指派語意與人工一致／#10 案件粒度本就主機×簽章／#15 測試已有大小寫混合）、#2 規模風險維持 §6 定案記 BACKLOG、#4 已先修；`confirmAction` 換行塌陷、切 provider 舊位址殘留、`ResolveLookbackDays` 下界 0→1 回歸、ActionText 漏兩個動作碼皆補 |

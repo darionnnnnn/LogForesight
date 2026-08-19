@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 全站設定（「系統管理 > 設定」頁）：未處理計算等級、AI 服務、資料保留天數。
  * 單一表單、單一 PUT，三個卡片對應同一份 SystemSettingsDto。
  */
@@ -17,7 +17,7 @@ const BRAND_ICON_MAX_KB = 64;
 /** 「還原預設外觀」填回的副標——與 Core 的 SystemSettings.BrandSubtitle 出廠值一致 */
 const BRAND_DEFAULT_SUBTITLE = '事件日誌預警';
 
-/** 雲端 AI 提供者的資料外送申報文字（§D3） */
+/** 雲端 AI 提供者的資料外送申報文字：provider 提示與切換確認框共用同一句 */
 const CLOUD_AI_DECLARATION = '分析時最多 500 則原始 log 訊息（可能含帳號名稱、來源 IP）會傳送至第三方服務。';
 
 // 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
@@ -847,6 +847,10 @@ function bindAiAdvancedReset() {
 
 function bindAiProvider() {
     document.getElementById('ai-provider')?.addEventListener('change', e => {
+        // 位址欄語意隨 provider 改變（本機端點／OpenAI proxy／Azure endpoint），切換時清空，
+        // 否則從 Local 切到雲端會把 localhost 位址一起存出去——請求根本沒出內網，申報卻說會
+        const baseUrl = document.getElementById('ai-base-url');
+        if (baseUrl) baseUrl.value = '';
         updateAiProviderFields(e.target.value);
     });
 }

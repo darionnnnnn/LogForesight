@@ -136,8 +136,10 @@ public class NetiqPipelineService
         }
 
         // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
+        // 只讀回望窗口（＋一週緩衝）內附加的列：更早的列不可能在本輪被重寫
+        var dedupeSince = DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7));
         _permissionKeys = new ConcurrentDictionary<string, byte>(
-            (_permissionChangeStore?.GetDedupeKeys() ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
+            (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
             StringComparer.Ordinal);
 
         var configured = _netiqOptions.MaxParallelServers;
@@ -252,7 +254,7 @@ public class NetiqPipelineService
     /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
     internal static int ResolveLookbackDays(int backfillDays) =>
-        Math.Clamp(backfillDays, 1, NetiqOptions.MaxBackfillDaysLimit);
+        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的

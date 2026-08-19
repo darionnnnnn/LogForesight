@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 共用 UI 元件（docs/WEB-SPEC.md §8.1）：toast、確認對話框、表格渲染、載入/空狀態。
  *
  * 集中在這裡的理由與 api.js 相同——「破壞性操作要二次確認」「空狀態要有指引」
@@ -290,7 +290,10 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
                 </div>
             </div>`;
         el.querySelector('.modal-title').textContent = title;
-        el.querySelector('.modal-body p').textContent = message;
+        const body = el.querySelector('.modal-body p');
+        body.textContent = message;
+        body.style.whiteSpace = 'pre-line';   // 呼叫端用 
+ 排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
 
         document.body.appendChild(el);

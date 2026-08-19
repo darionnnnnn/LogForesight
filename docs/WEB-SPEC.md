@@ -363,7 +363,9 @@ false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時�
 稽核動作碼 `HandlingActions.FleetApply`；④ 都沒有、但問題檔案有負責人 → **自動建立案件**
 （`Status=in_progress`、`HandlerId`＝第一位負責人、系統名義 `ActorId=null`）並寫當日標記，
 稽核動作碼 `HandlingActions.OwnerAutoAssign`——問題負責人即長期負責人，案件直接進他的
-「我的交辦」。負責人之後被移除時既有案件不回收；已分析過的歷史日子不回頭補建。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
+「我的交辦」。**不再打擾**：同主機同問題最近一筆案件若被以 wont_fix／false_positive／known_noise
+結案，隔天再出現不自動建案（resolved 除外——修好後再出現是新事件，重新交辦）。
+負責人之後被移除時既有案件不回收；已分析過的歷史日子不回頭補建。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
 多一個判斷來源）。「解除結論」只清空 `IssueProfile` 上的結論欄位，已寫入的 `IssueHandling`
 列不回溯（誠實留痕，不假裝從沒發生過）。
 設定入口有二：管理頁本身（`PUT/DELETE /api/issue-owners/{source}/{eventId}/conclusion`）與
@@ -866,7 +868,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `IssueRankingDto` 同）、`UnhandledCount`／`InProgressCount`／`ResolvedCount`（處理概況三整數，
   與 `HandlingSummary` 字串同源，字串保留供 CSV）；回應型別改為 `IssueSearchResultDto`
   （繼承 `PagedResult`），多帶 `DistinctHostCount`——期間內符合條件問題所影響的**存活主機去重數**，
-  與儀表板風險類型卡同一口徑（各列 `HostCount` 加總必大於它，前端顯示「共 N 台主機（去重）」）。
+  與儀表板風險類型卡的「主機數」那一行同一口徑（各列 `HostCount` 加總必大於它，前端顯示「共 N 台主機（去重）」）。
   點列就地展開出現明細（固定 `pageSize=100`，超過時明講「共 N 筆，僅顯示前 100 筆」並給
   明細視角出口）；主機數欄呈現「N 台 / M 主機日」兩個數字（`HostCount`／`DayCount`）。
   狀態 chip／逾期篩選此視角停用。
@@ -1210,9 +1212,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
 - **兩個來源**，每筆以 `PermissionChangeRecord.Source` 標示：`本機監控`（`PermissionMonitorService`
   比對本機群組成員與 WatchedFolders ACL）與 `NetIQ 事件`（`HostDayPostProcessor.RecordPermissionChanges`
-  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點）。舊資料無此欄位時
+  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時
   畫面視為本機監控。NetIQ 這條的冪等鍵＝(主機, 事件時間, EventId, 告警文字)，去重鍵快照
-  每輪執行載入一次（store 是 append-only JSON log，逐主機日查會變成數萬次全表掃描）。
+  每輪執行載入一次、只讀回望窗口＋一週內附加的列。每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆「權限異動（彙總）」；整份 log 依 `AuditRetentionDays` 清理。
 - API：`GET api/permission-changes?status=&page=`、`PUT api/permission-changes/{id}/confirm`
 
 ### 9.6 `/reports` 報表（全角色；user 限授權範圍）——主管的主要畫面，排版是重點

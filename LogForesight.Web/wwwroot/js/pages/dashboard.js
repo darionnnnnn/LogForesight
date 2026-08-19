@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 總覽儀表板（docs/WEB-SPEC.md §9.1）。
  *
  * 排版遵循 §8.2 視覺層級：有「重大」問題時該類別卡加紅邊；
@@ -417,10 +417,11 @@ function severityBreakdown(category) {
     // margin 只顧橫向會在行尾留下不對稱空隙（docs/archive/FEEDBACK-3-PLAN.md #3）
     const wrap = document.createElement('span');
     wrap.className = 'd-flex flex-wrap gap-1';
+    // 與大數字同量綱：依問題類型分桶（同一問題不論幾台主機、幾天只算一項）
     const counts = {
-        High: category.highCount,
-        Medium: category.mediumCount,
-        Low: category.lowCount
+        High: category.highTypeCount,
+        Medium: category.mediumTypeCount,
+        Low: category.lowTypeCount
     };
 
     for (const severity of SEVERITY_ORDER) {

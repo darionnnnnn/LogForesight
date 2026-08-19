@@ -38,9 +38,10 @@ public class NetiqPipelineServiceLookbackTests
     }
 
     [Fact]
-    public void BackfillDays小於一時一律視為一天()
+    public void BackfillDays為0時維持不回望的既有語意()
     {
-        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 0));
+        Assert.Equal(0, NetiqPipelineService.ResolveLookbackDays(backfillDays: 0));
+        Assert.Equal(0, NetiqPipelineService.ResolveLookbackDays(backfillDays: -3));
     }
 
     /// <summary>DTO 驗證邊界：30 通過、31 被拒（與 pipeline 夾值共用同一個上限常數）</summary>

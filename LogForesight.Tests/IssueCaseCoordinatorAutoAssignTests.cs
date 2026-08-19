@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Service;
 using Xunit;
@@ -191,5 +191,37 @@ public class IssueCaseCoordinatorAutoAssignTests
 
         var dayHandling = _issueHandlings.GetForDay(Host, today).Single();
         Assert.Equal(openCase.CaseId, dayHandling.CaseId);
+    }
+
+    [Theory]
+    [InlineData(IssueHandlingStatuses.WontFix, false)]
+    [InlineData(IssueHandlingStatuses.FalsePositive, false)]
+    [InlineData(IssueHandlingStatuses.KnownNoise, false)]
+    [InlineData(IssueHandlingStatuses.Resolved, true)]
+    public void 掛接_最近一筆案件已結案時_不處理類結案不再自動建案_已解決則重新交辦(string closedStatus, bool expectNewCase)
+    {
+        _issueProfiles.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { 101 } });
+        _cases.Save(new IssueCase
+        {
+            CaseId = "closed-1", HostName = Host, IssueKey = IssueKey, IssueLabel = IssueLabel,
+            Status = closedStatus, HandlerId = 101, ClosedAt = DateTime.Now.AddDays(-1),
+            FirstLinkedDate = DateTime.Today.AddDays(-3), LastLinkedDate = DateTime.Today.AddDays(-2),
+            CreatedAt = DateTime.Now.AddDays(-3), UpdatedAt = DateTime.Now.AddDays(-1)
+        });
+
+        var result = Create().AttachNewDay(Host, DateTime.Today, CreateDiskIssues(), DateTime.Now);
+
+        var open = _cases.GetOpen(Host, IssueKey);
+        if (expectNewCase)
+        {
+            Assert.NotNull(open);
+            Assert.NotEqual("closed-1", open.CaseId);
+            Assert.Equal(1, result.AttachedCount);
+        }
+        else
+        {
+            Assert.Null(open);
+            Assert.Equal(0, result.AttachedCount);
+        }
     }
 }

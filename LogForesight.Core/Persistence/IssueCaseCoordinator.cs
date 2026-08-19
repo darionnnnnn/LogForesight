@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Persistence;
+﻿namespace LogForesight.Core.Persistence;
 
 /// <summary>建案結果：Created=false 時代表該問題已有他人的進行中案件，未變更（2.1「只由一個人處理」）</summary>
 public readonly record struct CaseBuildResult(bool Created, string? CaseId, long? ExistingHandlerId, int LinkedDayCount);
@@ -203,6 +203,12 @@ public class IssueCaseCoordinator
 
         var openCases = _cases.GetOpenForHost(hostName);
         var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
+
+        // 自動建案的「不再打擾」集合：同主機同問題最近一筆案件被人以 wont_fix／false_positive／
+        // known_noise 結案時，代表負責人已判定這個問題不值得處理——隔天問題再出現不該再開一件
+        // 新案件把它復活（resolved 除外：真正修好後再出現是新的事件，該再交辦一次）。
+        // 只在有負責人 profile 時才需要這份資料，避免每主機日多讀一次全部案件。
+        HashSet<string>? dismissedIssueKeys = null;
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
 
@@ -212,6 +218,17 @@ public class IssueCaseCoordinator
             .Where(p => (p.AutoApply && p.ConclusionStatus != null) || p.OwnerUserIds.Count > 0)
             .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
             .ToDictionary(g => g.Key, g => g.First());
+
+        if (profilesByKey.Values.Any(p => p.OwnerUserIds.Count > 0))
+        {
+            dismissedIssueKeys = _cases.GetMany(new[] { hostName })
+                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
+                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
+                .Where(c => c.Status is IssueHandlingStatuses.WontFix
+                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+                .Select(c => c.IssueKey)
+                .ToHashSet(StringComparer.Ordinal);
+        }
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
@@ -275,27 +292,30 @@ public class IssueCaseCoordinator
 
             if (profile.OwnerUserIds.Count > 0)
             {
+                if (dismissedIssueKeys != null && dismissedIssueKeys.Contains(key)) continue;
+
                 var caseId = Guid.NewGuid().ToString("n");
                 const string status = IssueHandlingStatuses.InProgress;
+                const string autoNote = "系統依問題檔案自動派送";
 
                 toSave.Add(new IssueHandling
                 {
                     HostName = hostName, Date = date, IssueKey = key, Status = status,
-                    Note = null, DueDate = null, CaseId = caseId,
+                    Note = autoNote, DueDate = null, CaseId = caseId,
                     ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
                 });
 
                 _handlingLog.AppendLog(new RecordHandlingLog
                 {
                     HostName = hostName, Date = date, Status = status, IssueKey = key,
-                    IssueLabel = issue.SourceEventLabel, Note = "系統依問題檔案自動派送",
+                    IssueLabel = issue.SourceEventLabel, Note = autoNote,
                     ActorId = null, ActorAccount = string.Empty,
                     Action = HandlingActions.OwnerAutoAssign, CreatedAt = occurredAt
                 });
 
                 casesToSave.Add(CreateOpenCase(
                     caseId, hostName, key, issue.SourceEventLabel,
-                    profile.OwnerUserIds[0], null, null,
+                    profile.OwnerUserIds[0], autoNote, null,
                     date.Date, date.Date,
                     occurredAt, string.Empty));
                 existingForDay[key] = toSave[^1];

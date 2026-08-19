@@ -279,6 +279,8 @@ lf_permission_changes                                -- ↔ PermissionChangeDeta
   change_type    nvarchar(50) NOT NULL            -- 成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取
   before_state   text
   after_state    text
+  source         nvarchar(20) NOT NULL DEFAULT '本機監控'  -- '本機監控' | 'NetIQ 事件'（缺欄視為本機監控）
+  event_id       int NULL                          -- NetIQ 事件來源才有，供去重鍵
   confirm_status nvarchar(20) NOT NULL DEFAULT 'pending'  -- 'pending' | 'authorized' | 'suspicious'
   confirmed_by   bigint NULL FK → lf_users
   confirmed_at   timestamp NULL

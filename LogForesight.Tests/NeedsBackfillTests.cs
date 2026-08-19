@@ -219,4 +219,15 @@ public sealed class NeedsBackfillTests : IDisposable
         Assert.Equal(1, preview.Data!.HostCount);
         Assert.True(preview.Data.AiDisabled, "AI 未設定時 AiDisabled 應為 true");
     }
+
+    [Fact]
+    public void NeedsBackfill_AI已成功分析_不需補跑()
+    {
+        var record = new DailyAnalysisRecord
+        {
+            Date = DateTime.Today.AddDays(-1), HostId = 1, Host = "test-host",
+            RiskLevel = RiskLevels.High, AiAnalyzed = true, AiPending = false
+        };
+        Assert.False(HostDayPostProcessor.NeedsBackfill(record, useAi: true));
+    }
 }

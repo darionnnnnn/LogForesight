@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 問題查詢（docs/WEB-SPEC.md §9.2）。
  *
  * 篩選條件與 URL 查詢字串同步（§8.6-2）——查詢結果可以複製網址給同事，
@@ -778,7 +778,7 @@ async function renderIssueOccurrences(cell, group) {
     if (result.total > result.items.length) {
         const truncNote = document.createElement('span');
         truncNote.className = 'text-muted';
-        truncNote.textContent = `共 ${formatNumber(result.total)} 筆，僅顯示前 ${result.items.length} 筆。`;
+        truncNote.textContent = `共 ${formatNumber(result.total)} 筆（不套用風險層級篩選），僅顯示前 ${result.items.length} 筆。`;
         foot.appendChild(truncNote);
     }
     const allLink = document.createElement('a');

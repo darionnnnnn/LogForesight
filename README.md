@@ -266,7 +266,7 @@ token 有效期等細節），待核對清單見 [docs/BACKLOG.md](docs/BACKLOG.
 1. **純統計模式回補歷史基準（建議排週末）**：到「系統管理 > 設定 > AI 服務」頁清空
    `AiBaseUrl` 並存檔——系統會自動短路成統計模式（規則／趨勢／關聯層照常執行，只是不呼叫
    AI，見下方「深入分析」一節），速度快得多。到「系統管理 > NetIQ 維護」頁把
-   `BackfillDays` 設為 14（上限值；`TrendAnalyzer` 需要至少 13～14 天可靠歷史才不會持續
+   `BackfillDays` 設為 14（上限是 30，但 `TrendAnalyzer` 只需要 13～14 天可靠歷史，設 14 就夠；設更多只是多查 Sentinel。趨勢分析需要足夠歷史才不會持續
    申報「趨勢基準建立中」），視 Sentinel 環境與網路狀況調整 `MaxParallelServers`／
    `MaxParallelQueriesPerServer`（見「NetIQ 事件取數與 API 驗證」一節）縮短總耗時。完成
    掃描匯入後，到「系統管理 > 排程作業」頁按「立即執行」觸發第一次全量回補。

@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -60,14 +60,11 @@ public class IssueOwnerAdminService
             .ThenBy(a => a.Source, StringComparer.OrdinalIgnoreCase)
             .Select(a =>
             {
-                var eventKey = a.EventId == 0
-                    ? a.IssueKeys.Select(k => k.Split('|')).FirstOrDefault(p => p.Length == 5)?[4]
-                    : null;
                 return new RecentIssueOptionDto
                 {
                     SourceName = a.Source,
                     EventId = a.EventId,
-                    DisplayLabel = FormatDisplayLabel(a.Source, a.EventId, eventKey),
+                    DisplayLabel = FormatDisplayLabel(a.Source, a.EventId),
                     HostCount = a.HostCount,
                     LastSeen = a.LastSeen,
                     HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
@@ -258,16 +255,10 @@ public class IssueOwnerAdminService
     }
 
     /// <summary>
-    /// 顯示用的問題標籤（重用 SourceEventLabel 概念）：Windows 顯示「{Source} ({EventId})」；
-    /// Linux（EventId 恆為 0）若有規則 key 則顯示「{Source}（{EventKey}）」，無規則 key 則只顯示「{Source}」，
-    /// 絕不顯示無意義的「(0)」，避免被誤讀為計數。
+    /// 顯示用的問題標籤：Windows 顯示「{Source} ({EventId})」；Linux（EventId 恆為 0）只顯示「{Source}」，
+    /// 絕不顯示無意義的「(0)」。刻意不附規則 key——問題檔案的鍵是 (Source, 0)，涵蓋該來源的
+    /// 全部規則，任選其中一個 key 掛上去語意是錯的（且候選清單與已指派清單會長得不一樣）。
     /// </summary>
-    public static string FormatDisplayLabel(string source, int eventId, string? eventKey = null)
-    {
-        if (eventId == 0)
-        {
-            return string.IsNullOrWhiteSpace(eventKey) ? source : $"{source}（{eventKey}）";
-        }
-        return $"{source} ({eventId})";
-    }
+    public static string FormatDisplayLabel(string source, int eventId) =>
+        eventId == 0 ? source : $"{source} ({eventId})";
 }

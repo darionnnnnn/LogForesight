@@ -1,4 +1,4 @@
-using LogForesight.Web.Models.Dto;
+﻿using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
 
@@ -29,6 +29,9 @@ public static class RecordStatsBuilder
                 RiskItemCount = a.RiskItemCount,
                 CumulativeCount = a.CumulativeCount,
                 TotalEvents = a.TotalEvents,
+                HighTypeCount = a.HighTypeCount,
+                MediumTypeCount = a.MediumTypeCount,
+                LowTypeCount = a.LowTypeCount,
                 HighCount = a.HighCount,
                 MediumCount = a.MediumCount,
                 LowCount = a.LowCount,

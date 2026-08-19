@@ -949,10 +949,20 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             // 風險資訊是這張卡的顯示單位，可見性也該以它為單位判斷（規劃 D1）
             .Where(item => allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)item.MaxSeverityRank))
             .GroupBy(item => item.Category)
-            .Select(g => new CategoryAggregate
+            .Select(g =>
             {
+                // 問題類型＝相異 (Source, EventId)；每個類型取跨主機跨日的最高嚴重度分桶
+                var typeMaxRank = g
+                    .GroupBy(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+                    .Select(t => t.Max(x => x.MaxSeverityRank))
+                    .ToList();
+                return new CategoryAggregate
+                {
                 Category = g.Key,
-                IssueTypeCount = g.Select(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId)).Distinct().Count(),
+                IssueTypeCount = typeMaxRank.Count,
+                HighTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.High),
+                MediumTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.Medium),
+                LowTypeCount = typeMaxRank.Count(r => r == (int)IssueSeverity.Low),
                 RiskItemCount = g.Count(),
                 CumulativeCount = g.Sum(x => x.Occurrences),
                 AffectedHosts = g.Select(x => x.SurvivingHostId).Distinct().Count(),
@@ -961,6 +971,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 MediumCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Medium),
                 LowCount = g.Count(x => x.MaxSeverityRank == (int)IssueSeverity.Low),
                 ElevatesCount = g.Count(x => x.Elevates)
+                };
             })
             .ToList();
 
