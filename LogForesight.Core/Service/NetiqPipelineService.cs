@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -237,12 +237,11 @@ public class NetiqPipelineService
     /// <summary>
     /// 回補天數計算（docs/archive/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
     /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
-    /// 若 BackfillDays 設得比趨勢窗口還大，仍以趨勢窗口為準——回補比趨勢分析
-    /// 實際會用到的更多天沒有意義，多查的天數只是白費 Sentinel 查詢額度。
-    /// 抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
+    /// 回望窗口與趨勢基線窗口是兩件不同的事，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>，
+    /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
-    internal static int ResolveLookbackDays(int backfillDays, int trendWindowDays) =>
-        Math.Min(backfillDays, trendWindowDays);
+    internal static int ResolveLookbackDays(int backfillDays) =>
+        Math.Clamp(backfillDays, 1, NetiqOptions.MaxBackfillDaysLimit);
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
@@ -279,7 +278,7 @@ public class NetiqPipelineService
         // 首次與非首次統一套用 BackfillDays（docs/archive/FEEDBACK-3-PLAN.md #1）：不再區分
         // 「該主機是否已有任何紀錄」——2000 台規模下不管是首次登錄還是排程漏跑，
         // 對 Sentinel 做大量歷史日查詢都不現實，一律以管理者設定的回補窗口為準
-        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays, trendWindowDays);
+        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays);
 
         var plans = new List<HostPlan>();
         var orphanJobs = new List<AiFollowupJob>();

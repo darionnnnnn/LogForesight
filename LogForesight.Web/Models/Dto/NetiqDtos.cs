@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -268,9 +268,9 @@ public class UpdateNetiqOptionsRequest
 
     public bool AllowInvalidCertificates { get; set; }
 
-    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #1：正式環境的預期值是 1（只查前一天），
-    /// 上限 14 與趨勢窗口天數對齊——回補比趨勢分析用得到的更多天沒有意義</summary>
-    [Range(1, 14)]
+    /// <summary>正式環境的預期值是 1（只查前一天）；上限見
+    /// <see cref="NetiqOptions.MaxBackfillDaysLimit"/>——回望窗口與趨勢基線窗口是兩件事</summary>
+    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
     public int BackfillDays { get; set; }
 
     /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理。

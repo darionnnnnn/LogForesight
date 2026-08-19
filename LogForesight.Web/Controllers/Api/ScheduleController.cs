@@ -1,4 +1,4 @@
-using LogForesight.Core.Service;
+﻿using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -132,7 +132,7 @@ public class ScheduleController : ControllerBase
         }
 
         var useAi = !aiDisabled;
-        var lookback = Math.Clamp(backfillDays ?? 14, 1, 14);
+        var lookback = Math.Clamp(backfillDays ?? 14, 1, NetiqOptions.MaxBackfillDaysLimit);
         var from = DateTime.Today.AddDays(-lookback);
         var to = DateTime.Today.AddDays(-1);
         // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，

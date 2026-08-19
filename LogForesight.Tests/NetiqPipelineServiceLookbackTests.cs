@@ -1,37 +1,60 @@
+﻿using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Models;
+using LogForesight.Web.Models.Dto;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/archive/FEEDBACK-3-PLAN.md #1：<see cref="NetiqPipelineService.ResolveLookbackDays"/>——
-/// 首次執行與缺漏日回補統一套用 BackfillDays，取代原本「首次深度回補 14 天」的例外路徑。
+/// <see cref="NetiqPipelineService.ResolveLookbackDays"/>——首次執行與缺漏日回補統一套用
+/// BackfillDays，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（回望窗口與趨勢基線
+/// 窗口是兩件不同的事，不互相夾住）。
 /// </summary>
 public class NetiqPipelineServiceLookbackTests
 {
     [Fact]
     public void 預設值1只回補一天()
     {
-        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 1, trendWindowDays: 14));
+        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 1));
     }
 
     [Fact]
     public void BackfillDays設為3時回補三天內缺漏()
     {
-        Assert.Equal(3, NetiqPipelineService.ResolveLookbackDays(backfillDays: 3, trendWindowDays: 14));
+        Assert.Equal(3, NetiqPipelineService.ResolveLookbackDays(backfillDays: 3));
     }
 
-    /// <summary>不再有「首次執行深度回補 14 天」的例外——即使 BackfillDays 設定值較大，
-    /// 也不會超過趨勢窗口本身，回補比趨勢分析用得到的更多天沒有意義</summary>
+    /// <summary>回望天數不再被趨勢窗口（14）夾住——設 30 就回望 30 天</summary>
     [Fact]
-    public void BackfillDays大於趨勢窗口時以趨勢窗口為準()
+    public void BackfillDays設為30時不被趨勢窗口夾住()
     {
-        Assert.Equal(14, NetiqPipelineService.ResolveLookbackDays(backfillDays: 20, trendWindowDays: 14));
+        Assert.Equal(30, NetiqPipelineService.ResolveLookbackDays(backfillDays: 30));
     }
 
     [Fact]
-    public void BackfillDays等於趨勢窗口時取該值()
+    public void BackfillDays超過上限時夾在上限()
     {
-        Assert.Equal(14, NetiqPipelineService.ResolveLookbackDays(backfillDays: 14, trendWindowDays: 14));
+        Assert.Equal(NetiqOptions.MaxBackfillDaysLimit, NetiqPipelineService.ResolveLookbackDays(backfillDays: 45));
+    }
+
+    [Fact]
+    public void BackfillDays小於一時一律視為一天()
+    {
+        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 0));
+    }
+
+    /// <summary>DTO 驗證邊界：30 通過、31 被拒（與 pipeline 夾值共用同一個上限常數）</summary>
+    [Theory]
+    [InlineData(30, true)]
+    [InlineData(31, false)]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    public void BackfillDays的DTO驗證以上限常數為界(int value, bool expectValid)
+    {
+        var dto = new UpdateNetiqOptionsRequest { BackfillDays = value };
+        var ctx = new ValidationContext(dto) { MemberName = nameof(UpdateNetiqOptionsRequest.BackfillDays) };
+        var ok = Validator.TryValidateProperty(value, ctx, new List<ValidationResult>());
+        Assert.Equal(expectValid, ok);
     }
 }
 
