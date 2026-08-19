@@ -7,6 +7,10 @@ public class IssueOwnerDto
 {
     public string SourceName { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>顯示用的問題標籤（重用 SourceEventLabel 概念）：EventId 0 時只顯示來源名稱（若有規則 key 則顯示 Source（EventKey）），不顯示 (0) 避免誤讀為計數</summary>
+    public string DisplayLabel { get; set; } = string.Empty;
+
     public List<long> OwnerUserIds { get; set; } = new();
 
     /// <summary>「顯示名稱(帳號)」，供清單直接呈現（§9 顯示格式一致慣例）</summary>
@@ -71,6 +75,10 @@ public class RecentIssueOptionDto
 {
     public string SourceName { get; set; } = string.Empty;
     public int EventId { get; set; }
+
+    /// <summary>顯示用的問題標籤（重用 SourceEventLabel 概念）：EventId 0 時只顯示來源名稱（若有規則 key 則顯示 Source（EventKey）），不顯示 (0) 避免誤讀為計數</summary>
+    public string DisplayLabel { get; set; } = string.Empty;
+
     public int HostCount { get; set; }
     public DateTime LastSeen { get; set; }
 

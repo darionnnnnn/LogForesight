@@ -58,13 +58,20 @@ public class IssueOwnerAdminService
         return _issueAggregates.Aggregate(from, to, null)
             .OrderByDescending(a => a.HostCount)
             .ThenBy(a => a.Source, StringComparer.OrdinalIgnoreCase)
-            .Select(a => new RecentIssueOptionDto
+            .Select(a =>
             {
-                SourceName = a.Source,
-                EventId = a.EventId,
-                HostCount = a.HostCount,
-                LastSeen = a.LastSeen,
-                HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
+                var eventKey = a.EventId == 0
+                    ? a.IssueKeys.Select(k => k.Split('|')).FirstOrDefault(p => p.Length == 5)?[4]
+                    : null;
+                return new RecentIssueOptionDto
+                {
+                    SourceName = a.Source,
+                    EventId = a.EventId,
+                    DisplayLabel = FormatDisplayLabel(a.Source, a.EventId, eventKey),
+                    HostCount = a.HostCount,
+                    LastSeen = a.LastSeen,
+                    HasOwner = owned.Contains(IssueProfile.KeyOf(a.Source, a.EventId))
+                };
             })
             .ToList();
     }
@@ -74,7 +81,7 @@ public class IssueOwnerAdminService
         var sourceName = request.SourceName?.Trim() ?? "";
         if (sourceName.Length == 0)
             throw DomainException.Validation("請指定問題來源（Source）。");
-        if (request.EventId <= 0)
+        if (request.EventId < 0)
             throw DomainException.Validation("請指定合法的 Event ID。");
 
         var usersById = _users.GetAll().ToDictionary(u => u.UserId);
@@ -225,6 +232,7 @@ public class IssueOwnerAdminService
         {
             SourceName = rule.SourceName,
             EventId = rule.EventId,
+            DisplayLabel = FormatDisplayLabel(rule.SourceName, rule.EventId),
             OwnerUserIds = rule.OwnerUserIds,
             OwnerNames = rule.OwnerUserIds
                 .Select(id => usersById.TryGetValue(id, out var u) ? NameFormat.WithAccount(u.DisplayName, u.Account) : $"(已刪除:{id})")
@@ -247,5 +255,19 @@ public class IssueOwnerAdminService
                 : _users.FindByAccount(rule.ConcludedByAccount)?.DisplayName,
             AutoApply = rule.AutoApply
         };
+    }
+
+    /// <summary>
+    /// 顯示用的問題標籤（重用 SourceEventLabel 概念）：Windows 顯示「{Source} ({EventId})」；
+    /// Linux（EventId 恆為 0）若有規則 key 則顯示「{Source}（{EventKey}）」，無規則 key 則只顯示「{Source}」，
+    /// 絕不顯示無意義的「(0)」，避免被誤讀為計數。
+    /// </summary>
+    public static string FormatDisplayLabel(string source, int eventId, string? eventKey = null)
+    {
+        if (eventId == 0)
+        {
+            return string.IsNullOrWhiteSpace(eventKey) ? source : $"{source}（{eventKey}）";
+        }
+        return $"{source} ({eventId})";
     }
 }
