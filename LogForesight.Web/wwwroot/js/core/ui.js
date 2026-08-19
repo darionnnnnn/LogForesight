@@ -292,8 +292,7 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
         el.querySelector('.modal-title').textContent = title;
         const body = el.querySelector('.modal-body p');
         body.textContent = message;
-        body.style.whiteSpace = 'pre-line';   // 呼叫端用 
- 排條列，textContent 不會自己換行
+        body.style.whiteSpace = 'pre-line';   // 呼叫端用換行字元排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
 
         document.body.appendChild(el);
