@@ -41,7 +41,7 @@
 
 ## 2. 作業總覽
 
-本輪委派模型：claude-sonnet-4-6（Gemini 週限剩 17% < 20%，依 skill 規則改用 Claude 池，週限 32%）｜使用者未指派。
+本輪委派模型：作業 A 用 `claude-sonnet-4-6`（開工時 Gemini 週限 17% < 20%）；**自作業 B 起改用 `gemini-3.7-flash-high`**——Claude 池於作業 B 開跑時回報 Individual quota reached（重置需 83 小時）。不再換回。｜使用者未指派。
 
 | 作業 | 目標 | 依賴 | 執行 |
 |---|---|---|---|
