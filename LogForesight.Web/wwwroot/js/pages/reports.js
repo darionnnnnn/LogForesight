@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 報表（docs/WEB-SPEC.md §9.6）——主管的主要畫面。
  *
  * §8.4 的驗收標準在這頁兌現：**任何一個數字，最多兩次點擊就能看到組成它的風險日清單**。
@@ -524,7 +524,7 @@ function renderIssueRankChart() {
             const issue = issues[point.index];   // 「其他」條是彙總，不下鑽
             return issue
                 ? `/records?view=issue&source=${encodeURIComponent(issue.source)}&eventId=${issue.eventId}` +
-                  `&from=${currentData.from}&to=${currentData.to}`
+                  `&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`
                 : null;
         }
     });
@@ -576,7 +576,7 @@ function renderIssueRankMeta() {
     subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 
     if (currentData.issueOthers) {
-        viewAll.href = `/records?view=issue&from=${currentData.from}&to=${currentData.to}`;
+        viewAll.href = `/records?view=issue&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`;
         viewAll.classList.remove('d-none');
     } else {
         viewAll.classList.add('d-none');

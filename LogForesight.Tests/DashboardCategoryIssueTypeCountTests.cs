@@ -181,7 +181,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
 
     /// <summary>
     /// 儀表板風險類型卡的「N 個問題」必須等於下鑽到依問題視角看到的問題數——兩邊是同一個
-    /// universe（同一組日風險等級、同一組可見嚴重度）。這條是「卡片 75、點進去 9」的回歸測試。
+    /// universe（同一組日風險等級、同一組可見嚴重度）。
     /// </summary>
     [Fact]
     public void 風險類型卡的問題數等於依問題視角在同一母體下的問題數()
@@ -207,5 +207,54 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Assert.Equal(2, card.IssueTypeCount);                 // noisy 111 與 crit 222
         Assert.Equal(card.IssueTypeCount, listed.Count);      // 卡片＝下鑽筆數
         Assert.DoesNotContain(listed, a => a.Source == "hidden");   // 低風險日不在母體內
+    }
+
+    /// <summary>
+    /// 「共 N 台主機（去重）」與處理概況走 LatestOccurrences，母體必須與列表本體一致——
+    /// 少了這道，全站隱藏低風險日時會出現「列表不含該日、主機數卻算進去」。
+    /// </summary>
+    [Fact]
+    public void 最近出現快照與列表本體套用同一組日風險母體()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        Add(1, "Host1", d0, RiskLevels.High, Issue("noisy", 111, severity: IssueSeverity.Low));
+        Add(2, "Host2", d0, RiskLevels.Low, Issue("noisy", 111, severity: IssueSeverity.Low));   // 低風險日：母體外
+
+        var query = Query();
+        var visibleDayRisks = new HashSet<string> { RiskLevels.High, RiskLevels.Medium };
+        var issues = new[] { ("noisy", 111) };
+
+        var occ = query.LatestOccurrences(issues, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks);
+        var listed = query.Aggregate(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks).Single();
+
+        Assert.Equal(listed.HostCount, occ.Select(o => o.HostId).Distinct().Count());
+        Assert.Equal(1, listed.HostCount);
+    }
+
+    /// <summary>
+    /// 同一個 (Source, EventId) 的列帶不同 category（規則調整過、或部分主機日未命中規則落 Other）時，
+    /// 卡片不可以在兩張卡各算一次——依問題視角把它收斂成單一類別，兩邊要一致。
+    /// 使用者實測：安全 19 → 點進去 17、服務 6 → 5，其餘類別一致（字母序較後的類別才會少）。
+    /// </summary>
+    [Fact]
+    public void 同一問題跨兩個類別時_卡片與依問題視角歸在同一個類別()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        // 同一個 (auth, 4625)：一天被判為 Security、另一天未命中規則落 Other
+        Add(1, "Host1", d0, RiskLevels.High, Issue("auth", 4625, severity: IssueSeverity.High, category: IssueCategory.Security));
+        Add(1, "Host1", d0.AddDays(1), RiskLevels.High, Issue("auth", 4625, severity: IssueSeverity.High, category: IssueCategory.Other));
+
+        var query = Query();
+        var from = d0.AddDays(-1);
+        var to = d0.AddDays(2);
+
+        var cards = query.AggregateByCategory(from, to, null, null, null);
+        var listed = query.Aggregate(from, to, null);
+
+        // 只會出現在一張卡上，且與依問題視角的歸類一致
+        var canonical = listed.Single(a => a.Source.Equals("auth", StringComparison.OrdinalIgnoreCase)).Category;
+        Assert.Equal(1, cards.Sum(c => c.IssueTypeCount));
+        Assert.Equal(1, cards.Single(c => c.Category == canonical).IssueTypeCount);
+        Assert.DoesNotContain(cards, c => c.Category != canonical && c.IssueTypeCount > 0);
     }
 }

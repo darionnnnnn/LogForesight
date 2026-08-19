@@ -345,7 +345,7 @@ public class RecordListQueryService
         // 處理狀態的候選集只到「篩選後留下的問題 × 可見主機」這一層（不是問題 × 主機 × 天數），
         // 與 OccurrenceStatusResolver 共用批次D 已驗證過的骨架（IssueHandlingRollupQuery 同款）
         var issues = aggregates.Select(a => (a.Source, a.EventId)).ToList();
-        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities);
+        var occurrences = _aggregates.LatestOccurrences(issues, from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
         var resolved = _statusResolver.Resolve(occurrences, from, to);
 
         // 依 (Source,EventId) 分桶——完整簽章鍵可能帶 Linux 的 EventKey 尾段（5 段），
