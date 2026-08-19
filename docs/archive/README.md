@@ -31,6 +31,8 @@
 | `FEEDBACK-17-PLAN.md` | 外部審視發現＋使用者八項（批次 A~I）。 |
 | `FEEDBACK-18-PLAN.md` | 批次 A~H；狀態顯示文字與上報信的實作偏離記於文末兩節。 |
 | `FEEDBACK-19-PLAN.md` | 問題主視角一次到位（批次 A~I）：問題聚合走 SQL、機房級基準線與首見、PriorityScore、郵件問題優先。 |
+| `FEEDBACK-20-PLAN.md` | 外部審查七項＋使用者回饋十九項（含終檢輪）：問題主視角收尾、首見日浮水印閘門、OpenAI／Azure provider、只補跑失敗或未執行旗標。 |
+| `FEEDBACK-21-PLAN.md` | 外部審查四項（補跑旗標／雲端 provider 申報／首見日增量／小項）＋使用者回饋十一項：需補跑判定單點化、回望天數 30、風險類型卡改問題類型數、Linux 問題可指派＋負責人自動交辦、NetIQ 權限異動待辦。 |
 | `UX-AUDIT-2026-08-05.md` | 四角色實際登入的全面 UX 體檢報告（只提問題，不含實作）。 |
 | `SCALE-ISSUE-FIRST-PLAN.md` | 規模化（2000~6000 台）與問題主視角的規劃案。 |
 | `SCALE-REVIEW-2026-08-06.md` | 上述規模化改版的體檢報告（14 項問題）。 |
