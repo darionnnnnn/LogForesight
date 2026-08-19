@@ -9,7 +9,7 @@ namespace LogForesight.Core.Service;
 /// </summary>
 internal static class MissingDateFinder
 {
-    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays, bool requireAi = false)
+    public static List<DateTime> Find(IAnalysisRecordReader store, int lookbackDays, bool requireAi = false, bool useAi = true)
     {
         if (!requireAi)
         {
@@ -28,7 +28,7 @@ internal static class MissingDateFinder
 
         return Enumerable.Range(1, lookbackDays)
             .Select(offset => DateTime.Today.AddDays(-offset))
-            .Where(date => !records.TryGetValue(date, out var r) || !r.AiAnalyzed || r.AiPending)
+            .Where(date => !records.TryGetValue(date, out var r) || HostDayPostProcessor.NeedsBackfill(r, useAi))
             .OrderBy(date => date)
             .ToList();
     }
@@ -41,9 +41,31 @@ internal static class MissingDateFinder
 /// （只記警告，下次執行冪等補跑）。<paramref name="logContext"/> 供 NetIQ 路徑帶入
 /// Sentinel／IP 供除錯定位，本機路徑固定傳空字串。
 /// </summary>
-internal static class HostDayPostProcessor
+public static class HostDayPostProcessor
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// 「這個主機日是否需要補跑」的唯一定義——三處判定（MissingDateFinder、NetiqPipelineService
+    /// 孤兒清單、ScheduleController.RunPreview）皆呼叫此函式，不各寫一份。
+    ///
+    /// 規則依序：
+    /// 1. record 為 null（該日完全沒有紀錄＝缺日）→ 需要
+    /// 2. AiPending == true → 需要
+    /// 3. useAi == true &amp;&amp; !AiAnalyzed &amp;&amp; RiskLevel != Low → 需要
+    /// 4. 其餘 → 不需要
+    ///
+    /// useAi == false（統計模式，AI 未設定）時，AiAnalyzed 恆為 false 屬正常狀態，
+    /// 規則 3 不觸發——只有「缺日」與「AiPending」兩種情況才需要補跑。
+    /// 低風險日「刻意不呼叫 AI」是合法終局狀態，不視為失敗。
+    /// </summary>
+    public static bool NeedsBackfill(DailyAnalysisRecord? record, bool useAi)
+    {
+        if (record == null) return true;
+        if (record.AiPending) return true;
+        if (useAi && !record.AiAnalyzed && record.RiskLevel != RiskLevels.Low) return true;
+        return false;
+    }
 
     public static void AttachCase(
         IssueCaseCoordinator caseCoordinator, string hostName, DateTime date,

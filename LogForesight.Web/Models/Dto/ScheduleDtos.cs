@@ -97,6 +97,10 @@ public class RunActivityDto
 public class RunPreviewDto
 {
     public int HostCount { get; set; }
+
+    /// <summary>AI 未設定時為 true（統計模式）。前端可據此在「只補跑失敗或未執行的主機」
+    /// 選項旁顯示提示文字，說明此選項在 AI 未設定時的實際語意。</summary>
+    public bool AiDisabled { get; set; }
 }
 
 /// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）</summary>

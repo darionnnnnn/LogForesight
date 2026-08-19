@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "排程作業";
 }
 
@@ -184,6 +184,7 @@
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="run-now-only-missing" />
                         <label class="form-check-label" for="run-now-only-missing">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的）</label>
+                        <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
                     </div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
                 </div>

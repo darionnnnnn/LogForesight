@@ -287,7 +287,7 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed);
+            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
 
             // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
             // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
@@ -313,7 +313,7 @@ public class NetiqPipelineService
             // 今天往回數 lookback 天，不含今天）。
             var missingSet = missingDates.ToHashSet();
             var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback)
-                .Where(r => (r.AiPending || (_onlyMissingOrFailed && !r.AiAnalyzed && r.RiskLevel != RiskLevels.Low)) && !missingSet.Contains(r.Date.Date))
+                .Where(r => (_onlyMissingOrFailed ? HostDayPostProcessor.NeedsBackfill(r, _useAi) : r.AiPending) && !missingSet.Contains(r.Date.Date))
                 .ToList();
             foreach (var pending in pendingRecords)
             {

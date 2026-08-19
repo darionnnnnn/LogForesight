@@ -179,25 +179,25 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
         var store = new EfAnalysisRecordStore(_fx.NewContext, "test");
         var yesterday = DateTime.Today.AddDays(-1);
 
-        // Local host: 已有紀錄且 AI 成功
+        // Local host: 低風險日（AI 刻意不呼叫，AiAnalyzed=false、AiPending=false 是合法終局狀態）
         store.Append(new DailyAnalysisRecord
         {
             Date = yesterday,
             HostId = 0,
             Host = Environment.MachineName,
             RiskLevel = "低",
-            AiAnalyzed = true,
+            AiAnalyzed = false,
             AiPending = false
         });
 
-        // Host 1: 已有紀錄且 AI 成功
+        // Host 1: 低風險日（AI 刻意不呼叫，合法終局狀態）
         store.Append(new DailyAnalysisRecord
         {
             Date = yesterday,
             HostId = 1,
             Host = "host-ok",
             RiskLevel = "低",
-            AiAnalyzed = true,
+            AiAnalyzed = false,
             AiPending = false
         });
 

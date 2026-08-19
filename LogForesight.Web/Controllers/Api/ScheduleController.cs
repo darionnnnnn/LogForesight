@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -27,11 +28,12 @@ public class ScheduleController : ControllerBase
     private readonly ICurrentUser _currentUser;
     private readonly IUserStore _users;
     private readonly IAnalysisRecordQuery _records;
+    private readonly IWebAiService? _webAi;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
-        IAnalysisRecordQuery records)
+        IAnalysisRecordQuery records, IWebAiService? webAi = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -42,6 +44,7 @@ public class ScheduleController : ControllerBase
         _currentUser = currentUser;
         _users = users;
         _records = records;
+        _webAi = webAi;
     }
 
     [HttpGet("options")]
@@ -117,14 +120,18 @@ public class ScheduleController : ControllerBase
         [FromQuery] bool onlyMissingOrFailed = false, [FromQuery] int? backfillDays = null)
     {
         var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId);
+        var aiDisabled = !(_webAi?.Available ?? true);
+
         if (!onlyMissingOrFailed)
         {
             return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
             {
-                HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0)
+                HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0),
+                AiDisabled = aiDisabled
             });
         }
 
+        var useAi = !aiDisabled;
         var lookback = Math.Clamp(backfillDays ?? 14, 1, 14);
         var from = DateTime.Today.AddDays(-lookback);
         var to = DateTime.Today.AddDays(-1);
@@ -139,7 +146,9 @@ public class ScheduleController : ControllerBase
             var recordsByHost = recentRecords.Where(r => r.HostId != 0).GroupBy(r => r.HostId).ToDictionary(g => g.Key, g => g.ToList());
             foreach (var id in hostIds)
             {
-                if (!recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback || hostRecords.Any(r => !r.AiAnalyzed || r.AiPending))
+                // 「該主機在回望窗口內的紀錄筆數不足＝有缺日」語意保留
+                if (!recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback ||
+                    hostRecords.Any(r => HostDayPostProcessor.NeedsBackfill(r, useAi)))
                 {
                     count++;
                 }
@@ -150,7 +159,7 @@ public class ScheduleController : ControllerBase
         {
             var localHostName = Environment.MachineName;
             var localRecords = recentRecords.Where(r => string.Equals(r.Host, localHostName, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (localRecords.Count < lookback || localRecords.Any(r => !r.AiAnalyzed || r.AiPending))
+            if (localRecords.Count < lookback || localRecords.Any(r => HostDayPostProcessor.NeedsBackfill(r, useAi)))
             {
                 count++;
             }
@@ -158,7 +167,8 @@ public class ScheduleController : ControllerBase
 
         return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
         {
-            HostCount = count
+            HostCount = count,
+            AiDisabled = aiDisabled
         });
     }
 

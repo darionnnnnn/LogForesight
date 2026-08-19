@@ -936,6 +936,13 @@ async function updateRunNowPreview() {
             : `目前有 ${result.hostCount} 台主機${suffix}`;
         previewEl.textContent = text;
         previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
+
+        // 當 AI 未設定時，在「只補跑失敗或未執行的主機」選項旁顯示提示文字
+        const aiDisabledHint = document.getElementById('run-now-ai-disabled-hint');
+        if (aiDisabledHint) {
+            aiDisabledHint.textContent = result.aiDisabled ? 'AI 未設定，此選項僅補跑缺漏日' : '';
+            aiDisabledHint.hidden = !result.aiDisabled;
+        }
     } catch (err) {
         previewEl.textContent = err?.message || '無法預覽，請確認網段格式。';
         previewEl.className = 'alert alert-danger py-2 px-3 mb-0';
