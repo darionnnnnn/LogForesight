@@ -293,7 +293,10 @@ public class RecordListQueryService
         var (from, to) = ResolveDateRange(request);
         var visibleSeverities = ResolveVisibleSeverities();
 
-        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities);
+        // 母體＝全站「日風險等級顯示」設定允許的主機日（**不是**畫面上的 chip——在依問題視角
+        // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
+        // 卡片數字才等於下鑽進來的筆數
+        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();
@@ -310,7 +313,8 @@ public class RecordListQueryService
         }
 
         // 問題嚴重度過濾（docs/archive/FEEDBACK-8-PLAN.md #5）：這裡篩的是問題層級的期間內最高嚴重度
-        // （Aggregate 已套用 LegacySeverityRank 正規化，不會再看到 Critical）
+        // （Aggregate 已套用 LegacySeverityRank 正規化，不會再看到 Critical）。
+        // 依問題視角是問題主視角，chip 一律是「問題嚴重度」語意，畫面上也這樣標示
         if (request.RiskLevels is { Count: > 0 } riskLevels)
         {
             var allowedSeverities = riskLevels.SelectMany(MapRiskLevelToSeverities).ToHashSet();
@@ -429,20 +433,6 @@ public class RecordListQueryService
 
     private static int SeverityRank(string severity) =>
         Enum.TryParse<IssueSeverity>(severity, out var s) ? (int)s : -1;
-
-    /// <summary>
-    /// 日風險等級（高/中/低）→ 問題嚴重度集合（docs/archive/FEEDBACK-8-PLAN.md #5）。Critical 併入
-    /// 「高」：docs/archive/HISTORY.md #1（B1 三級化）後規則不再產出 Critical（嚴重度封頂 High，
-    /// 改看 ElevatesDayRisk 旗標判定高風險日），Critical 只可能是三級化前的歷史資料——
-    /// 概念上等同今日的「高」，勾選「高」時仍要看得到。
-    /// </summary>
-    private static IEnumerable<IssueSeverity> MapRiskLevelToSeverities(string riskLevel) => riskLevel switch
-    {
-        RiskLevels.High => new[] { IssueSeverity.High, IssueSeverity.Critical },
-        RiskLevels.Medium => new[] { IssueSeverity.Medium },
-        RiskLevels.Low => new[] { IssueSeverity.Low },
-        _ => Array.Empty<IssueSeverity>()
-    };
 
     /// <summary>
     /// 單一問題分組的彙總 DTO（回饋十九輪批次E1，SQL 聚合結果版）。處理概況三態已由
@@ -618,6 +608,23 @@ public class RecordListQueryService
     private IReadOnlySet<IssueSeverity>? ResolveVisibleSeverities() =>
         RecordRepository.ParseVisibleSeverities(_settingsService.GetVisibleSeverities());
 
+    /// <summary>全站「日風險等級顯示」設定允許的等級（母體限制，與畫面 chip 無關）。
+    /// 依問題視角用它當 universe，才會與儀表板風險類型卡是同一批主機日。</summary>
+    private IReadOnlySet<string>? ResolveVisibleDayRiskLevels() =>
+        RecordRepository.ResolveDayRiskLevels(_settingsService.GetVisibleDayRiskLevels(), null);
+
+    /// <summary>
+    /// 依問題視角的 chip → 問題嚴重度集合（docs/archive/FEEDBACK-8-PLAN.md #5）。Critical 併入
+    /// 「高」：三級化後規則不再產出 Critical，只可能是歷史資料，概念上等同今日的「高」。
+    /// </summary>
+    private static IEnumerable<IssueSeverity> MapRiskLevelToSeverities(string riskLevel) => riskLevel switch
+    {
+        RiskLevels.High => new[] { IssueSeverity.High, IssueSeverity.Critical },
+        RiskLevels.Medium => new[] { IssueSeverity.Medium },
+        RiskLevels.Low => new[] { IssueSeverity.Low },
+        _ => Array.Empty<IssueSeverity>()
+    };
+
     /// <summary>「N 台未處理／M 台處理中」的三態摘要文字；全部有結論時省略未處理／處理中兩段</summary>
     private static string BuildHandlingSummary(int unhandled, int processing, int resolved)
     {
@@ -736,7 +743,10 @@ public class RecordListQueryService
         var (from, to) = ResolveDateRange(request);
         var visibleSeverities = ResolveVisibleSeverities();
 
-        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities);
+        // 母體＝全站「日風險等級顯示」設定允許的主機日（**不是**畫面上的 chip——在依問題視角
+        // chip 篩的是問題嚴重度，見下方）。與儀表板風險類型卡傳同一組值，兩邊才是同一個 universe，
+        // 卡片數字才等於下鑽進來的筆數
+        var aggregates = _aggregates.Aggregate(from, to, hostIds, visibleSeverities, ResolveVisibleDayRiskLevels());
 
         if (request.EventId.HasValue)
             aggregates = aggregates.Where(a => a.EventId == request.EventId.Value).ToList();

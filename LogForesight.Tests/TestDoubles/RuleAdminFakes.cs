@@ -1,4 +1,4 @@
-using LogForesight.Web.Services;
+﻿using LogForesight.Web.Services;
 
 namespace LogForesight.Tests;
 
@@ -66,7 +66,8 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<IssueAggregate> Aggregate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null)
     {
         LastCall = (from, to, hostIds);
         AggregateCallCount++;
