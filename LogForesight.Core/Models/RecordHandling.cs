@@ -159,4 +159,9 @@ public static class HandlingActions
     /// 自動套用的。
     /// </summary>
     public const string FleetApply = "fleet_apply";
+
+    /// <summary>
+    /// 批次排程依問題檔案的負責人自動建立案件並指派（逐日一列，actor＝系統）。
+    /// </summary>
+    public const string OwnerAutoAssign = "owner_auto_assign";
 }
