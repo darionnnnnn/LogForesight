@@ -72,16 +72,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             q = q.Where(x => expandedHostIds.Contains(x.HostId));   // EF 8：單一 JSON 參數（OPENJSON／json_each）
         }
 
-        // 日風險等級（畫面上的「風險層級」chip）：篩的是「問題出現在哪些主機日」，
-        // 與問題自身的嚴重度是兩套層級——同 AggregateByCategory 的寫法，兩邊才會是同一個
-        // universe（儀表板風險類型卡的數字＝下鑽到依問題視角的筆數）
-        if (riskLevels != null)
-        {
-            var allowedRecordIds = ctx.DailyRecords.AsNoTracking()
-                .Where(r => r.RecordDate >= f && r.RecordDate <= t && riskLevels.Contains(r.RiskLevel))
-                .Select(r => r.RecordId);
-            q = q.Where(x => allowedRecordIds.Contains(x.RecordId));
-        }
+        // 日風險等級母體（見 ApplyRiskLevels）：與 AggregateByCategory 同一個 universe，
+        // 儀表板風險類型卡的數字才等於下鑽到依問題視角的筆數
+        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
 
         var grouped = q
             .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
@@ -242,7 +235,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null)
     {
         if (issues.Count == 0) return new List<HostIssueOccurrence>();
         if (hostIds != null && hostIds.Count == 0) return new List<HostIssueOccurrence>();
@@ -262,6 +256,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Where(x => x.RecordDate >= f && x.RecordDate <= t && eventIds.Contains(x.EventId));
 
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        // 母體與 Aggregate 一致：依問題視角的「共 N 台主機（去重）」與處理概況都由這裡來，
+        // 少了這道就會出現「列表限縮在可見日風險、主機數卻含被隱藏的日子」
+        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
 
         if (hostIds != null)
         {
@@ -915,13 +913,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             q = q.Where(x => expanded.Contains(x.HostId));
         }
 
-        if (riskLevels != null)
-        {
-            var recordsQuery = ctx.DailyRecords.AsNoTracking()
-                .Where(r => r.RecordDate >= f && r.RecordDate <= t && riskLevels.Contains(r.RiskLevel));
-            var allowedRecordIds = recordsQuery.Select(r => r.RecordId);
-            q = q.Where(x => allowedRecordIds.Contains(x.RecordId));
-        }
+        q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
 
         // 風險資訊層級（去重前）：SQL 端 GROUP BY 拿到每個 (類別,主機,問題) 組合在期間內的
         // 最高嚴重度／是否曾重大／累計次數與事件數——組數受限於相異風險資訊數，不是原始列數

@@ -89,7 +89,8 @@ internal sealed class FakeIssueAggregateQuery : IIssueAggregateQuery
 
     public List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null) => new();
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null) => new();
 
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,

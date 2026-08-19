@@ -104,7 +104,8 @@ public interface IIssueAggregateQuery
     /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
     List<HostIssueOccurrence> LatestOccurrences(
         IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
-        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 期間內出現在「可行動」風險日（高／中）上的每個 (存活主機, 完整簽章) 最近一次出現快照

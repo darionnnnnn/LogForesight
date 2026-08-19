@@ -208,4 +208,26 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Assert.Equal(card.IssueTypeCount, listed.Count);      // 卡片＝下鑽筆數
         Assert.DoesNotContain(listed, a => a.Source == "hidden");   // 低風險日不在母體內
     }
+
+    /// <summary>
+    /// 「共 N 台主機（去重）」與處理概況走 LatestOccurrences，母體必須與列表本體一致——
+    /// 少了這道，全站隱藏低風險日時會出現「列表不含該日、主機數卻算進去」。
+    /// </summary>
+    [Fact]
+    public void 最近出現快照與列表本體套用同一組日風險母體()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        Add(1, "Host1", d0, RiskLevels.High, Issue("noisy", 111, severity: IssueSeverity.Low));
+        Add(2, "Host2", d0, RiskLevels.Low, Issue("noisy", 111, severity: IssueSeverity.Low));   // 低風險日：母體外
+
+        var query = Query();
+        var visibleDayRisks = new HashSet<string> { RiskLevels.High, RiskLevels.Medium };
+        var issues = new[] { ("noisy", 111) };
+
+        var occ = query.LatestOccurrences(issues, d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks);
+        var listed = query.Aggregate(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks).Single();
+
+        Assert.Equal(listed.HostCount, occ.Select(o => o.HostId).Distinct().Count());
+        Assert.Equal(1, listed.HostCount);
+    }
 }
