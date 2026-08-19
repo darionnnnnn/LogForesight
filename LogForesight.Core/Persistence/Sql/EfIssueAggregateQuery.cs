@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using LogForesight.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using NLog;
@@ -564,7 +564,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 g => g.Select(x => x.IssueKey).ToHashSet(StringComparer.Ordinal)
             );
 
-        // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵
+        // 4. 只有在該主機日真的有處理狀態列或案件列時，才需要它的 lf_top_issues 明細來比對問題鍵。
+        //    **案件這一路是主機層級不是主機日層級**（案件本來就跨日，casesByHost 以主機為鍵）：
+        //    一台主機只要有任何一筆未結案案件，它在查詢區間內的所有日子都會納入明細載入。
+        //    投影很窄（無 ContentJson）、單次 IN 查詢，實務可接受——但別依賴「只有真的有處理
+        //    狀態或案件的主機日才拉明細」這個更緊的說法。
         var hostDaysNeedingDetail = hostDays
             .Where(d => handlingsByHostDay.ContainsKey((d.HostNameKey.ToUpperInvariant(), d.RecordDate)) ||
                         casesByHost.ContainsKey(d.HostNameKey.ToUpperInvariant()))

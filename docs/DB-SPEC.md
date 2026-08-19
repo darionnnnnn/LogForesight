@@ -136,6 +136,11 @@ lf_issue_first_seen                                  -- 問題的機房首見日
   PK (source_key, event_id)
 ```
 
+機房首見日的維護合併（`SchemaUpgrader.MergeIssueFirstSeenSeed`）是**增量**的：以
+`lf_blobs` 的 `issue_first_seen_watermark`（`lf_top_issues` 的 `MAX(record_id)`）為界，
+只掃新列補新組合、並在新列日期更早時修正既有組合（回補會寫入日期更早的新列）；
+全表掃描的修正段只在初次回補跑一次，之後由 `issue_first_seen_full_done` 旗標擋掉。
+
 `lf_issue_first_seen` 寫入時 insert-if-absent、已存在時只在新日期較早才更新（並行寫入
 撞唯一鍵時視為正常情況，改走條件式 UPDATE 補寫，不是需要中止分析的錯誤——見
 `EfAnalysisRecordStore.UpsertFirstSeen`）。鍵刻意用 `(source_key, event_id)`，不含

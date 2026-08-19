@@ -356,11 +356,14 @@ PUT／DELETE，寫入走稽核（`IssueOwnerAdminService`）；新增時可從�
 `ConclusionStatus`（限 `IssueHandlingStatuses` 四種結案態：resolved／wont_fix／
 false_positive／known_noise，或 null）＋`ConclusionNote`（設定結論時必填）＋
 `ConcludedById`／`ConcludedByAccount`／`ConcludedAt`＋`AutoApply`（bool）。
-`AutoApply=true` 時，`IssueCaseCoordinator.AttachNewDay`（批次每天寫入新紀錄後掛接）
-的三層優先序為：① 這天已有人工標記或既有處理 → 略過（冪等）；② 有進行中案件 → 沿用案件
-狀態（既有行為）；③ 都沒有、但命中一筆 `AutoApply=true` 的問題檔案結論 → 自動套用該結論，
-寫入 `IssueHandling{ Status=ConclusionStatus, Note="〔機房結論〕"+ConclusionNote, CaseId=null }`，
-稽核動作碼 `HandlingActions.FleetApply`。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
+`IssueCaseCoordinator.AttachNewDay`（批次每天寫入新紀錄後掛接）的四層優先序為：
+① 這天已有人工標記或既有處理 → 略過（冪等）；② 有進行中案件 → 沿用案件狀態；
+③ 命中一筆 `AutoApply=true` 的問題檔案結論 → 自動套用該結論，寫入
+`IssueHandling{ Status=ConclusionStatus, Note="〔機房結論〕"+ConclusionNote, CaseId=null }`，
+稽核動作碼 `HandlingActions.FleetApply`；④ 都沒有、但問題檔案有負責人 → **自動建立案件**
+（`Status=in_progress`、`HandlerId`＝第一位負責人、系統名義 `ActorId=null`）並寫當日標記，
+稽核動作碼 `HandlingActions.OwnerAutoAssign`——問題負責人即長期負責人，案件直接進他的
+「我的交辦」。負責人之後被移除時既有案件不回收；已分析過的歷史日子不回頭補建。刻意不寫 `NoiseMark`（避免 `ResolveIssueStatus`
 多一個判斷來源）。「解除結論」只清空 `IssueProfile` 上的結論欄位，已寫入的 `IssueHandling`
 列不回溯（誠實留痕，不假裝從沒發生過）。
 設定入口有二：管理頁本身（`PUT/DELETE /api/issue-owners/{source}/{eventId}/conclusion`）與
@@ -730,7 +733,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （回傳 display_name、能力集合、所屬群組——側欄選單與功能鈕的顯示依據）。
 
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
-- 區塊：風險類型統計卡（8 類 × 數量/最高嚴重度/涉及主機數）、**重點問題 Top 5**、
+- 區塊：風險類型統計卡（8 類：主數字＝**問題類型數** `IssueTypeCount`——相異 (Source, EventId)、
+  跨主機跨日皆去重；次行為涉及主機數、期間累計主機×日、嚴重度分解）、**重點問題 Top 5**、
   高風險主機排行、待辦區（未處理/逾期/權限異動 pending 數）、未回報主機、
   **依群組風險概況**、Web 登入失敗 24h 卡（admin 才顯示）。
 - **全部走 SQL 端聚合，不載入期間內的紀錄**；與報表共用同一組聚合與同一個排行排序，
@@ -863,7 +867,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   與 `HandlingSummary` 字串同源，字串保留供 CSV）；回應型別改為 `IssueSearchResultDto`
   （繼承 `PagedResult`），多帶 `DistinctHostCount`——期間內符合條件問題所影響的**存活主機去重數**，
   與儀表板風險類型卡同一口徑（各列 `HostCount` 加總必大於它，前端顯示「共 N 台主機（去重）」）。
-  點列帶 `eventId`／`source` 篩選跳明細視角；狀態 chip／逾期篩選此視角停用。
+  點列就地展開出現明細（固定 `pageSize=100`，超過時明講「共 N 筆，僅顯示前 100 筆」並給
+  明細視角出口）；主機數欄呈現「N 台 / M 主機日」兩個數字（`HostCount`／`DayCount`）。
+  狀態 chip／逾期篩選此視角停用。
   `Assign` 能力可見「批次指派」：modal 列出受目前篩選區間影響的主機（可勾選排除）＋處理人／
   說明／預計完成日，對每台主機建立跨日問題案件（§9.3 案件徽章一節），已有他人進行中案件的主機
   保留原處理人並回報略過清單。
@@ -1202,6 +1208,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
 - pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
+- **兩個來源**，每筆以 `PermissionChangeRecord.Source` 標示：`本機監控`（`PermissionMonitorService`
+  比對本機群組成員與 WatchedFolders ACL）與 `NetIQ 事件`（`HostDayPostProcessor.RecordPermissionChanges`
+  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點）。舊資料無此欄位時
+  畫面視為本機監控。NetIQ 這條的冪等鍵＝(主機, 事件時間, EventId, 告警文字)，去重鍵快照
+  每輪執行載入一次（store 是 append-only JSON log，逐主機日查會變成數萬次全表掃描）。
 - API：`GET api/permission-changes?status=&page=`、`PUT api/permission-changes/{id}/confirm`
 
 ### 9.6 `/reports` 報表（全角色；user 限授權範圍）——主管的主要畫面，排版是重點
@@ -1830,9 +1841,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
   可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「只補跑失敗或未執行的
-  主機」勾選**——`TriggerRunRequest.OnlyMissingOrFailed`，回饋二十輪 N：待跑判定由「無紀錄」
-  放寬為「無紀錄或 AI 未成功」，AI 完全失敗的主機日以 `AiPending=true`＋headline 帶「AI 待補」
-  標記讓它撿得到；預覽台數依旗標計算）、**「分析本機主機」開關**
+  主機」勾選**——`TriggerRunRequest.OnlyMissingOrFailed`：待跑判定是
+  `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日／`AiPending`／
+  「AI 已設定且未分析且非低風險」三者之一才算待跑），三處呼叫端（缺漏日掃描、NetIQ 孤兒
+  補跑、預覽）共用，不各寫一份。低風險日不跑 AI 是合法終局、AI 未設定時 `AiAnalyzed` 恆為
+  false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日）、**「分析本機主機」開關**
   ：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
@@ -1923,8 +1936,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （與 NetIQ 同一套日期對應、同一次 `ListHostDates` 查詢），存在則標新狀態 `backfilled`
   （「已回補」淺綠）——刻意不冒充 success，「當天真的有跑」與「後來補的資料」要分得出來。
   未登記主機（HostId=0）不走 fallback（舊紀錄 HostId 也可能為 0，跨主機誤配比顯示未執行更糟）。
-  立即執行 modal 的「回補天數」文案同輪講明：僅影響 NetIQ 回補窗口，本機一律自動回補
-  趨勢窗口內的缺漏日。
+  立即執行 modal 的「回望天數」（上限 `NetiqOptions.MaxBackfillDaysLimit`＝30，與趨勢基線
+  窗口 `TrendWindowDays`＝14 脫鉤）文案講明：檢查最近 N 天內有沒有缺漏或需補跑的日子、
+  已完成的日子不會重跑；僅影響 NetIQ，本機一律自動回補趨勢窗口內的缺漏日。
 - **「已停止」狀態**（§1.4.4）：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
   不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。
