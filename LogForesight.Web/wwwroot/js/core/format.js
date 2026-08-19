@@ -17,6 +17,9 @@ export const CATEGORY_NAMES = {
     Backup: '備份', Config: '設定', Resource: '資源', Other: '其他'
 };
 
+/** 類別固定顯示順序（依 CATEGORY_NAMES 定義順序） */
+export const CATEGORY_ORDER = Object.keys(CATEGORY_NAMES);
+
 /** 類別英文列舉 → 中文名，查無回原字串 */
 export function categoryName(category) {
     return CATEGORY_NAMES[category] ?? category;

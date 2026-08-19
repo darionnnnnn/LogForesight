@@ -18,7 +18,7 @@ import {
     headerWithHelp, icon
 } from '../core/ui.js';
 import {
-    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber,
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
     formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
@@ -472,7 +472,7 @@ function render() {
 function renderDetailView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => dateLink(r) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => r.date },
             { title: '主機', sortKey: 'host', render: r => r.hostName },
             { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
@@ -502,13 +502,6 @@ function applySort(key, dir) {
 function detailQuery() {
     const categories = activeChips('filter-category-chips', 'category');
     return categories.length ? `?categories=${encodeURIComponent(categories.join(','))}` : '';
-}
-
-function dateLink(record) {
-    const link = document.createElement('a');
-    link.href = `/records/${record.hostId}/${record.date}${detailQuery()}`;
-    link.textContent = record.date;
-    return link;
 }
 
 function headlineCell(record) {
@@ -626,7 +619,7 @@ function renderHostView() {
 function renderDateView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => dateViewLink(d) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => d.date },
             { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => String(d.hostCount) },
             { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => String(d.highRiskHosts) },
             { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => String(d.mediumRiskHosts) },
@@ -656,13 +649,6 @@ function detailForDate(date) {
     return `?${params.toString()}`;
 }
 
-function dateViewLink(row) {
-    const link = document.createElement('a');
-    link.href = detailForDate(row.date);
-    link.textContent = row.date;
-    return link;
-}
-
 // ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
@@ -674,11 +660,11 @@ function renderIssueView() {
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         {
-            title: '主機數',
-            className: 'text-end',
+            title: '主機數 / 主機日',
+            className: 'text-end text-nowrap',
             sortKey: 'hostCount', sortDefaultDir: 'desc',
-            renderHeader: () => headerWithHelp('主機數', '在本次查詢日期區間內，曾出現此問題的相異主機總台數。', '主機數'),
-            render: i => String(i.hostCount)
+            renderHeader: () => headerWithHelp('主機數 / 主機日', '在本次查詢日期區間內，曾出現此問題的相異主機總台數（台），以及累計出現的主機日總數（主機日，即展開明細的總筆數）。', '主機數與主機日'),
+            render: i => `${formatNumber(i.hostCount)} 台 / ${formatNumber(i.dayCount)} 主機日`
         },
         {
             title: 'vs 基準',
@@ -788,7 +774,13 @@ async function renderIssueOccurrences(cell, group) {
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
     const foot = document.createElement('div');
-    foot.className = 'small mt-2';
+    foot.className = 'small mt-2 d-flex align-items-center gap-2';
+    if (result.total > result.items.length) {
+        const truncNote = document.createElement('span');
+        truncNote.className = 'text-muted';
+        truncNote.textContent = `共 ${formatNumber(result.total)} 筆，僅顯示前 ${result.items.length} 筆。`;
+        foot.appendChild(truncNote);
+    }
     const allLink = document.createElement('a');
     allLink.href = detailForIssue(group);
     allLink.textContent = '在明細視角檢視這個問題的全部風險日 →';
@@ -1728,11 +1720,16 @@ function correlationCell(count) {
     return span;
 }
 
+const categoryOrderMap = new Map(CATEGORY_ORDER.map((c, i) => [c, i]));
+
 function categoryBadges(categories) {
-    // 有類別篩選時，命中的類別 badge 用主色標示，看得出哪個是你篩的
+    // 依 CATEGORY_ORDER 的固定順序呈現，使各列類別順序一致；命中篩選者仍用主色
     const active = new Set(activeChips('filter-category-chips', 'category'));
     const wrap = document.createElement('span');
-    for (const category of categories) {
+    const sorted = [...(categories ?? [])].sort((a, b) =>
+        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || a.localeCompare(b)
+    );
+    for (const category of sorted) {
         const badge = document.createElement('span');
         badge.className = active.has(category)
             ? 'lf-badge lf-badge--primary me-1'
