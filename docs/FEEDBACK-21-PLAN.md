@@ -78,7 +78,7 @@
 - **驗收**：測試 `Normalize_未知值退回Local且記警告`；手動 grep settings.js 含「第三方」。
 
 ### 作業 C-階段 1：首見日增量合併
-- **契約**：INSERT 段加 `record_id > 浮水印` 條件（浮水印不存在視為 0）；UPDATE 段只在 blob 旗標（暫定 key `issue_first_seen_full_done`）不存在時執行，執行後寫旗標；閘門仍先比 MAX(record_id)；SQLite/SqlServer 兩 provider 皆可跑。
+- **契約**：INSERT 段加 `record_id > 浮水印` 條件（浮水印不存在視為 0）；**增量修正段**：對 `record_id > 浮水印` 的新列，若其最小日期早於既有 `first_seen` 就修正（回補會寫入更早日期的新列，這段不可省）；全掃 UPDATE 段只在 blob 旗標（key `issue_first_seen_full_done`）不存在時執行，執行後寫旗標；閘門仍先比 MAX(record_id)；SQLite/SqlServer 兩 provider 皆可跑。
 - **範圍**：SchemaUpgrader.cs、SchemaUpgraderTests；不動 IssueFirstSeenSeedHostedService。
 - **驗收**：測試 `首見日合併_第二次只處理新record_id`、`首見日合併_初次後不再跑UPDATE段`；既有測試全綠。
 
@@ -132,3 +132,7 @@
 ## 7. 執行紀錄
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
+| A-1 | agy(claude-sonnet-4-6) | 完成 | build 0 警告、2222 綠 | agy 漏做 cshtml 的提示元素（前端 `if` 守衛讓它靜默失效），Claude 補上 |
+| A-2 | Claude | 完成 | 2227 綠 | agy 連兩次無產出（第一次 `--effort` 旗標不支援 Claude 模型、第二次只輸出探索敘述），規模小改由 Claude 做 |
+| B-1 | agy(gemini-3.7-flash-high) | 完成 | 2244 綠 | 驗收另外抓到既有 bug：settings.js 兩處 `confirmAction` 誤用 `body` 參數（正確 `message`），保留天數確認框原本顯示 undefined，一併修正 |
+| C-1 | agy(gemini-3.7-flash-high) | 完成 | 2247 綠 | **規劃契約有洞**：回補會替既有組合寫入更早日期的新列，UPDATE 段被旗標永久關閉後不會修正。Claude 補上「增量修正段」（只掃新列）並還原被 agy 改掉的既有測試斷言 |
