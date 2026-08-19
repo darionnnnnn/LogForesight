@@ -298,7 +298,9 @@ function renderKpi(data, user, displaySettings) {
         label: data.issueTodo.overdueIssueCount > 0 ? `未處理問題（逾期 ${data.issueTodo.overdueIssueCount}）` : '未處理問題',
         value: data.issueTodo.openIssueCount,
         variant: data.issueTodo.overdueIssueCount > 0 ? 'danger' : (data.issueTodo.openIssueCount > 0 ? 'warning' : 'secondary'),
-        url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中')}&from=${data.from}&to=${data.to}`,
+        // 三級全帶＝不按問題嚴重度篩：這張卡數的是「未處理問題」不分嚴重度，
+        // 依問題視角的 chip 是嚴重度語意，只帶高中會把低嚴重度的未處理問題濾掉
+        url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
         extra: todoExtra
     });
 
@@ -356,7 +358,8 @@ function renderCategories(data) {
     for (const category of data.categories) {
         const link = document.createElement('a');
         link.className = 'lf-stat';
-        // 分類卡的計數含低風險日的問題，下鑽顯式帶全部風險層級，卡片數字與點進去的筆數才對得上。
+        // 下鑽顯式帶三個等級＝不按問題嚴重度篩（依問題視角的 chip 是嚴重度語意）；
+        // 母體兩邊都由全站「日風險等級顯示」設定決定，卡片數字與點進去的筆數才對得上。
         // view=issue（回饋十四輪 UI-2）：這張卡片本身就是「依風險類型看問題」的入口，理應直接
         // 落在依問題視角——與 renderTopIssues 的下鑽連結（見下方，同一個 view=issue 慣例）
         // 保持一致，否則帶著 categories 參數進頁會被 §10 的「帶參數預設回明細」規則接住，
@@ -461,7 +464,7 @@ function renderTopIssues(data) {
         rows: data.topIssues,
         // 帶 view=issue 明確指定視角（帶參數時預設會回到明細視角），期間沿用本頁的區間
         rowHref: i => `/records?view=issue&source=${encodeURIComponent(i.source)}&eventId=${i.eventId}` +
-                      `&from=${data.from}&to=${data.to}`,
+                      `&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
         empty: { title: '本期沒有重點問題', hint: '期間內沒有偵測到任何問題事件。' }
     });
 }

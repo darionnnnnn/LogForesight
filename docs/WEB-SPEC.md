@@ -1606,8 +1606,10 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
        **明確不動**：日風險等級的判定結果與報告 txt（批次已算定的證據層，不可事後改寫）。
   1b. **日風險等級顯示**：
       高／中／低三顆按鈕，「高」鎖定恆選（`SystemSettingsService.Update` 驗證，全隱藏會讓
-      儀表板永遠空白）。未勾選等級的風險日**整筆**從查詢/統計消失——過濾點與問題嚴重度
-      可見性共用同一個咽喉（`RecordRepository`，`ApplyDayRiskVisibility`/`GetVisibleDayRiskLevels`），
+      儀表板永遠空白）。未勾選等級的風險日**整筆**從查詢/統計消失——記錄層走
+      `RecordRepository` 的單一咽喉（`ApplyDayRiskVisibility`/`GetVisibleDayRiskLevels`）；
+      依問題視角繞過咽喉直接下推聚合，改由 `RecordListQueryService.ResolveVisibleDayRiskLevels()`
+      把同一組值傳給 `Aggregate`／`LatestOccurrences` 當母體（§10），兩條路徑同一份設定，
       套用於 `Query`/`QueryPage`（即儀表板 KPI／主機排行／群組概況、報表 KPI／趨勢／排行、
       問題查詢三視角）。兩個顯式豁免：`GetOne`（風險日詳情直連，本來就不走 filter 路徑）與
       `GetHostDetail` 時間軸（`applyDayRiskVisibility=false`——被藏的日子顯示成「無分析紀錄」

@@ -915,6 +915,12 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
 
+        // 可見嚴重度**逐列**套用（與 Aggregate 同一層級）：先篩列再取 Max，兩邊對同一個問題
+        // 才會得到同一個最高嚴重度；先取 Max 再篩整筆會讓「同時有 High 與 Low 列、只勾低」的
+        // 問題在列表看得到、卡片卻算不到
+        var visibleRanks = allowedSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(allowedSeverities);
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
+
         // 風險資訊層級（去重前）：SQL 端 GROUP BY 拿到每個 (類別,主機,問題) 組合在期間內的
         // 最高嚴重度／是否曾重大／累計次數與事件數——組數受限於相異風險資訊數，不是原始列數
         var riskItems = q
@@ -968,9 +974,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 Occurrences = g.Sum(x => x.Occurrences),
                 EventTotal = g.Sum(x => x.EventTotal)
             })
-            // 嚴重度可見性：依「這筆風險資訊」正規化後的最高嚴重度篩，不是逐筆出現各自篩——
-            // 風險資訊是這張卡的顯示單位，可見性也該以它為單位判斷（規劃 D1）
-            .Where(item => allowedSeverities == null || allowedSeverities.Contains((IssueSeverity)item.MaxSeverityRank))
             .GroupBy(item => item.Category)
             .Select(g =>
             {
@@ -1256,20 +1259,25 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                     .ToList());
     }
 
-    /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
-    /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
-    /// <summary>日風險等級限縮的單一出口：問題只要出現在風險等級符合的主機日就算，
-    /// 三個輔助查詢與主查詢共用同一份定義，避免「主機數對不上筆數」。</summary>
+    /// <summary>
+    /// 日風險等級母體限縮的單一出口：問題只要出現在風險等級符合的主機日就算。
+    /// 主查詢（<see cref="Aggregate"/>／<see cref="AggregateByCategory"/>／
+    /// <see cref="LatestOccurrences"/>）與三個輔助查詢共用同一份定義，避免「主機數對不上筆數」。
+    /// null＝不限制；**空集合＝零結果**（與 hostIds 同一套授權／可見性慣例，不是「不限制」）。
+    /// </summary>
     private static IQueryable<TopIssueRow> ApplyRiskLevels(
         LfDbContext ctx, IQueryable<TopIssueRow> q, DateTime from, DateTime to, IReadOnlySet<string>? riskLevels)
     {
         if (riskLevels == null) return q;
+        if (riskLevels.Count == 0) return q.Where(_ => false);
         var allowedRecordIds = ctx.DailyRecords.AsNoTracking()
             .Where(r => r.RecordDate >= from && r.RecordDate <= to && riskLevels.Contains(r.RiskLevel))
             .Select(r => r.RecordId);
         return q.Where(x => allowedRecordIds.Contains(x.RecordId));
     }
 
+    /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
+    /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
     private static Dictionary<(string, int), int> SurvivingHostCounts(
         LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
         HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)

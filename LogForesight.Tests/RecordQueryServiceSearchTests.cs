@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -726,9 +726,9 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/archive/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
-    /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
-    /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
+    /// docs/archive/FEEDBACK-8-PLAN.md #5：依問題視角的 chips 篩的是**問題嚴重度**——
+    /// 高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一嚴重度），
+    /// 勾「高＋中」時不該出現低嚴重度的問題組。
     /// </summary>
     [Fact]
     public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
@@ -1061,6 +1061,61 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(1, group.InProgressCount);
         Assert.Equal(1, group.ResolvedCount);
         Assert.Equal("1 台未處理／1 台處理中／1 台已處理", group.HandlingSummary);
+    }
+
+    /// <summary>
+    /// 依問題視角的母體＝全站「日風險等級顯示」設定允許的主機日（WEB-SPEC §10）：
+    /// 隱藏低風險日時，只出現在低風險日的問題查不到；高風險日上的問題不受影響。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_全站隱藏低風險日_只出現在低風險日的問題不列入母體()
+    {
+        var host = AddHost("HOST-A");
+        var onHighDay = new LogIssueSignature
+        {
+            LogName = "System", Source = "on-high", EventId = 101,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        var onLowDay = new LogIssueSignature
+        {
+            LogName = "System", Source = "on-low", EventId = 102,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { onHighDay });
+        AddRecord(host, Yesterday.AddDays(-1), "低", issues: new[] { onLowDay });
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高", "中" };
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Single(result.Items);
+        Assert.Equal("on-high", result.Items[0].Source);
+    }
+
+    /// <summary>
+    /// 隱藏低風險**日**不可以連帶取消依問題視角的「低」篩選——那裡的 chip 是**問題嚴重度**。
+    /// 勾「低」時，高風險日上的低嚴重度問題仍要查得到（儀表板風險類型卡下鑽的路徑）。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_全站隱藏低風險日_勾低嚴重度仍查得到高風險日上的低嚴重度問題()
+    {
+        var host = AddHost("HOST-A");
+        var lowSeverity = new LogIssueSignature
+        {
+            LogName = "System", Source = "noisy", EventId = 111,
+            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { lowSeverity });
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高", "中" };
+
+        var withLow = _service.SearchByIssue(
+            new RecordSearchRequest { RiskLevels = new List<string> { "高", "中", "低" } });
+        Assert.Single(withLow.Items);
+
+        var highMediumOnly = _service.SearchByIssue(
+            new RecordSearchRequest { RiskLevels = new List<string> { "高", "中" } });
+        Assert.Empty(highMediumOnly.Items);
     }
 }
 

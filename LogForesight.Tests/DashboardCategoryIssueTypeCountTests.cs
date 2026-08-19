@@ -181,7 +181,7 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
 
     /// <summary>
     /// 儀表板風險類型卡的「N 個問題」必須等於下鑽到依問題視角看到的問題數——兩邊是同一個
-    /// universe（同一組日風險等級、同一組可見嚴重度）。這條是「卡片 75、點進去 9」的回歸測試。
+    /// universe（同一組日風險等級、同一組可見嚴重度）。
     /// </summary>
     [Fact]
     public void 風險類型卡的問題數等於依問題視角在同一母體下的問題數()
