@@ -230,4 +230,31 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Assert.Equal(listed.HostCount, occ.Select(o => o.HostId).Distinct().Count());
         Assert.Equal(1, listed.HostCount);
     }
+
+    /// <summary>
+    /// 同一個 (Source, EventId) 的列帶不同 category（規則調整過、或部分主機日未命中規則落 Other）時，
+    /// 卡片不可以在兩張卡各算一次——依問題視角把它收斂成單一類別，兩邊要一致。
+    /// 使用者實測：安全 19 → 點進去 17、服務 6 → 5，其餘類別一致（字母序較後的類別才會少）。
+    /// </summary>
+    [Fact]
+    public void 同一問題跨兩個類別時_卡片與依問題視角歸在同一個類別()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        // 同一個 (auth, 4625)：一天被判為 Security、另一天未命中規則落 Other
+        Add(1, "Host1", d0, RiskLevels.High, Issue("auth", 4625, severity: IssueSeverity.High, category: IssueCategory.Security));
+        Add(1, "Host1", d0.AddDays(1), RiskLevels.High, Issue("auth", 4625, severity: IssueSeverity.High, category: IssueCategory.Other));
+
+        var query = Query();
+        var from = d0.AddDays(-1);
+        var to = d0.AddDays(2);
+
+        var cards = query.AggregateByCategory(from, to, null, null, null);
+        var listed = query.Aggregate(from, to, null);
+
+        // 只會出現在一張卡上，且與依問題視角的歸類一致
+        var canonical = listed.Single(a => a.Source.Equals("auth", StringComparison.OrdinalIgnoreCase)).Category;
+        Assert.Equal(1, cards.Sum(c => c.IssueTypeCount));
+        Assert.Equal(1, cards.Single(c => c.Category == canonical).IssueTypeCount);
+        Assert.DoesNotContain(cards, c => c.Category != canonical && c.IssueTypeCount > 0);
+    }
 }

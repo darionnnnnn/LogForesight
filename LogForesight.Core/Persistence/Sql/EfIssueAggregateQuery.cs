@@ -932,7 +932,26 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             })
             .ToList();
 
+        // 一個問題只歸一個類別：同一個 (Source, EventId) 的列可能帶不同 category（規則調整過、
+        // 或部分主機日未命中規則而落 Other）。依問題視角用 MIN(category) 收斂成單一類別
+        // （見 Aggregate），卡片這邊若照原始列的類別各算一次，同一個問題會被兩張卡都算進去，
+        // 點進去卻只出現在其中一張——卡片數字與下鑽筆數就差在這裡。
+        var canonicalCategory = riskItems
+            .GroupBy(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+            .ToDictionary(g => g.Key, g => g.Min(x => x.Category));
+
         var result = riskItems
+            .Select(x => new
+            {
+                Category = canonicalCategory[((x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId)],
+                x.HostId,
+                x.SourceName,
+                x.EventId,
+                x.MaxSeverityRank,
+                x.AnyElevates,
+                x.Occurrences,
+                x.EventTotal
+            })
             // host_id 解析成存活主機再去重合併：合併前後的兩個 id 代表同一筆風險資訊，
             // 語意與 SurvivingHostCounts／SurvivingHostDayCounts 一致
             .GroupBy(x => new { x.Category, SurvivingHostId = Surviving(aliasIndex, x.HostId), x.SourceName, x.EventId })
