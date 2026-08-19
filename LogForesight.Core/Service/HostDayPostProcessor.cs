@@ -1,3 +1,6 @@
+﻿using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -44,6 +47,40 @@ internal static class MissingDateFinder
 public static class HostDayPostProcessor
 {
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
+
+    /// <summary>
+    /// NetIQ Windows Security 權限異動事件與中文類型對應（放在單一常數點）。
+    /// 各 EventId 意義：
+    ///   - 4728: 已將成員新增到安全性全域群組 (A member was added to a security-enabled global group)
+    ///   - 4732: 已將成員新增到安全性本機群組 (A member was added to a security-enabled local group)
+    ///   - 4756: 已將成員新增到安全性通用群組 (A member was added to a security-enabled universal group)
+    ///   - 4729: 已從安全性全域群組移除成員 (A member was removed from a security-enabled global group)
+    ///   - 4733: 已從安全性本機群組移除成員 (A member was removed from a security-enabled local group)
+    ///   - 4757: 已從安全性通用群組移除成員 (A member was removed from a security-enabled universal group)
+    ///   - 4670: 已變更物件的權限 (Permissions on an object were changed)
+    ///   - 4717: 已將系統安全性存取權授與帳戶 (System security access was granted to an account)
+    ///   - 4718: 已從帳戶移除系統安全性存取權 (System security access was removed from an account)
+    ///   - 4719: 已變更系統稽核原則 (System audit policy was changed)
+    ///   - 4907: 已變更物件的稽核設定 (Auditing settings on object were changed)
+    /// </summary>
+    private static readonly Dictionary<int, string> PermissionChangeEventTypes = new()
+    {
+        // 成員新增
+        [4728] = "成員新增",
+        [4732] = "成員新增",
+        [4756] = "成員新增",
+        // 成員移除
+        [4729] = "成員移除",
+        [4733] = "成員移除",
+        [4757] = "成員移除",
+        // ACL／物件權限變更
+        [4670] = "權限變更",
+        // 稽核政策變更
+        [4717] = "稽核政策變更",
+        [4718] = "稽核政策變更",
+        [4719] = "稽核政策變更",
+        [4907] = "稽核政策變更",
+    };
 
     /// <summary>
     /// 「這個主機日是否需要補跑」的唯一定義——三處判定（MissingDateFinder、NetiqPipelineService
@@ -98,6 +135,142 @@ public static class HostDayPostProcessor
         {
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 風險 log 暫存寫入失敗（不影響分析結果）", logContext, date);
         }
+    }
+
+    public static void RecordPermissionChanges(
+        PermissionChangeStore? permissionChangeStore,
+        ConcurrentDictionary<string, byte> knownKeys,
+        string hostName,
+        string hostOs,
+        List<EventLogEntryData> events,
+        DateTime date,
+        string logContext = "")
+    {
+        if (permissionChangeStore == null) return;
+        if (!string.Equals(hostOs, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)) return;
+        if (events == null || events.Count == 0) return;
+
+        try
+        {
+            var matchingEvents = events
+                .Where(e => e.EventId != 0 && PermissionChangeEventTypes.ContainsKey(e.EventId))
+                .ToList();
+
+            if (matchingEvents.Count == 0) return;
+
+            // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。去重鍵由呼叫端傳入
+            // 的快照承擔——多台主機平行處理，用 ConcurrentDictionary.TryAdd 做原子佔位。
+            var recordsToAppend = new List<PermissionChangeRecord>();
+
+            foreach (var evt in matchingEvents)
+            {
+                var changeType = PermissionChangeEventTypes[evt.EventId];
+                var alertText = TextTruncation.Truncate(evt.Message ?? string.Empty, 500);
+                var key = PermissionChangeRecord.DedupeKey(hostName, evt.TimeGenerated, evt.EventId, alertText);
+                if (!knownKeys.TryAdd(key, 0)) continue;
+
+                var (target, before, after) = ExtractPermissionDetails(evt, changeType);
+
+                recordsToAppend.Add(new PermissionChangeRecord
+                {
+                    ChangeId = Guid.NewGuid().ToString("N"),
+                    HostName = hostName,
+                    DetectedAt = evt.TimeGenerated,
+                    Target = target,
+                    ChangeType = changeType,
+                    Before = before,
+                    After = after,
+                    AlertText = alertText,
+                    Source = PermissionChangeSources.Netiq,
+                    EventId = evt.EventId
+                });
+            }
+
+            if (recordsToAppend.Count > 0)
+            {
+                permissionChangeStore.AppendChanges(recordsToAppend);
+                Log.Info("{Context}{Date:yyyy-MM-dd} 權限異動待辦：寫入 {Count} 筆紀錄", logContext, date, recordsToAppend.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動待辦寫入失敗（不影響分析結果）", logContext, date);
+        }
+    }
+
+    private static (string Target, string Before, string After) ExtractPermissionDetails(EventLogEntryData evt, string changeType)
+    {
+        var message = evt.Message ?? string.Empty;
+        var lines = message.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+
+        string? target = null;
+        string? memberName = null;
+        string? originalSecDesc = null;
+        string? newSecDesc = null;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (target == null)
+            {
+                target = TryExtractValue(line, "Group Name:", "群組名稱:", "群組名稱：", "Object Name:", "物件名稱:", "物件名稱：", "Target Account:", "目標帳戶:", "目標帳戶：");
+            }
+            if (memberName == null)
+            {
+                memberName = TryExtractValue(line, "Member Name:", "成員名稱:", "成員名稱：", "Account Name:", "帳戶名稱:", "帳戶名稱：");
+            }
+            if (originalSecDesc == null)
+            {
+                originalSecDesc = TryExtractValue(line, "Original Security Descriptor:", "原始安全性描述元:", "原始安全性描述元：");
+            }
+            if (newSecDesc == null)
+            {
+                newSecDesc = TryExtractValue(line, "New Security Descriptor:", "新的安全性描述元:", "新的安全性描述元：");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            target = string.IsNullOrWhiteSpace(evt.Source)
+                ? $"Event {evt.EventId}"
+                : $"{evt.Source} (EventId {evt.EventId})";
+        }
+
+        string before = string.Empty;
+        string after = string.Empty;
+
+        if (changeType == "成員新增")
+        {
+            before = "（不在群組中）";
+            after = memberName ?? string.Empty;
+        }
+        else if (changeType == "成員移除")
+        {
+            before = memberName ?? string.Empty;
+            after = "（已移出群組）";
+        }
+        else if (changeType == "權限變更")
+        {
+            before = originalSecDesc ?? string.Empty;
+            after = newSecDesc ?? string.Empty;
+        }
+
+        return (target, before, after);
+    }
+
+    private static string? TryExtractValue(string line, params string[] prefixes)
+    {
+        foreach (var prefix in prefixes)
+        {
+            var idx = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                var val = line[(idx + prefix.Length)..].Trim();
+                if (!string.IsNullOrEmpty(val) && val != "-")
+                    return val;
+            }
+        }
+        return null;
     }
 
     /// <summary>

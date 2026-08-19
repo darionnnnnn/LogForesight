@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Models;
+﻿namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 權限異動的結構化紀錄（↔ lf_permission_changes）。
@@ -30,6 +30,24 @@ public class PermissionChangeRecord
 
     /// <summary>批次產生的告警文字（與 console 顯示的同一行）</summary>
     public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>異動來源（本機監控／NetIQ 事件）</summary>
+    public string Source { get; set; } = PermissionChangeSources.Local;
+
+    /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
+    public int? EventId { get; set; }
+
+    /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
+    public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>
+        $"{hostName.ToUpperInvariant()}|{detectedAt.Ticks}|{eventId}|{alertText}";
+
+    public string DedupeKey() => DedupeKey(HostName, DetectedAt, EventId ?? 0, AlertText);
+}
+
+public static class PermissionChangeSources
+{
+    public const string Local = "本機監控";
+    public const string Netiq = "NetIQ 事件";
 }
 
 /// <summary>

@@ -64,6 +64,9 @@ public class NetiqPipelineService
     private readonly IRunProgress? _progress;
     private readonly bool _onlyMissingOrFailed;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
+    private readonly PermissionChangeStore? _permissionChangeStore;
+    /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
+    private ConcurrentDictionary<string, byte> _permissionKeys = new();
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
     /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
     private readonly ConcurrentDictionary<long, HostTouch> _hostTouches = new();
@@ -87,6 +90,7 @@ public class NetiqPipelineService
     /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
     /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
+    /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -94,7 +98,8 @@ public class NetiqPipelineService
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
-        bool onlyMissingOrFailed = false)
+        bool onlyMissingOrFailed = false,
+        PermissionChangeStore? permissionChangeStore = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -114,6 +119,7 @@ public class NetiqPipelineService
         _onlyMissingOrFailed = onlyMissingOrFailed;
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
+        _permissionChangeStore = permissionChangeStore ?? new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -128,6 +134,11 @@ public class NetiqPipelineService
         {
             return result;
         }
+
+        // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
+        _permissionKeys = new ConcurrentDictionary<string, byte>(
+            (_permissionChangeStore?.GetDedupeKeys() ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
+            StringComparer.Ordinal);
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -596,6 +607,8 @@ public class NetiqPipelineService
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+            HostDayPostProcessor.RecordPermissionChanges(
+                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext);
 
             // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
             // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果

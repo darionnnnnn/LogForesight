@@ -386,7 +386,8 @@ public class AnalysisOrchestrator
                         ChangeType = detail.ChangeType,
                         Before = detail.Before,
                         After = detail.After,
-                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty
+                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty,
+                        Source = PermissionChangeSources.Local
                     }));
 
                     console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");

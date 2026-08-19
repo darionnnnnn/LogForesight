@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 
 namespace LogForesight.Core.Persistence;
@@ -76,6 +76,12 @@ public class PermissionChangeStore
     public PermissionChangeRecord? Get(string changeId) =>
         ReadAllChanges().FirstOrDefault(c =>
             string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>整份去重鍵快照（供後處理冪等）。**每輪執行讀一次**——這個 store 是
+    /// append-only 的 JSON log，每次讀都要整份反序列化，逐主機日呼叫在 3000 台規模下
+    /// 會變成數萬次全表掃描（同 suppressionSnapshot／profilesByKey 的一次性載入慣例）。</summary>
+    public HashSet<string> GetDedupeKeys() =>
+        ReadAllChanges().Select(c => c.DedupeKey()).ToHashSet(StringComparer.Ordinal);
 
     public List<PermissionChangeConfirmation> GetConfirmations(IEnumerable<string> changeIds)
     {

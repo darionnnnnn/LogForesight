@@ -65,11 +65,15 @@ function changeCard(change) {
     type.className = 'fw-semibold';
     type.textContent = change.changeType;
 
+    const source = document.createElement('span');
+    source.className = 'lf-badge lf-badge--secondary';
+    source.textContent = change.source || '本機監控';
+
     const host = document.createElement('span');
     host.className = 'text-muted small';
     host.textContent = `${change.hostName}　${formatDateTime(change.detectedAt)}`;
 
-    title.append(type, host, statusBadge(change.status));
+    title.append(type, source, host, statusBadge(change.status));
     header.appendChild(title);
 
     if (change.status === 'pending') {
