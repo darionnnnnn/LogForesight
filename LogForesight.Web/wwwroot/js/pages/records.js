@@ -37,6 +37,8 @@ let pageSize = loadPageSize('records');
 // 因此視角切換時重設（見 view-toggle 事件），不像篩選條件那樣沿用
 let sort = { key: '', dir: 'desc' };
 let lastResult = null;
+// 全站「日風險等級顯示」設定允許的等級（見 syncRiskChipSemantics）
+let dayRiskVisible = new Set(['高', '中', '低']);
 
 let aiAvailable = false;
 
@@ -69,12 +71,28 @@ async function init() {
  * 在 init 的首次 search() 之前執行，取消後的條件才是實際送出的查詢。
  */
 async function applyDayRiskVisibility() {
-    const settings = await getDisplaySettings();
-    const visible = new Set(settings?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    dayRiskVisible = new Set((await getDisplaySettings())?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    syncRiskChipSemantics();
+}
+
+/**
+ * 這排 chip 在不同視角是**不同層級**：依問題視角（問題主視角）篩的是「問題嚴重度」，
+ * 其餘視角篩的是「日風險等級」。因此：
+ *   - 標籤文字隨視角改，使用者看得出自己在篩什麼；
+ *   - 全站「日風險等級顯示」設定只能藏／取消日層級的 chip，**不能**動到依問題視角的嚴重度
+ *     篩選（拿日層級的可見性去取消嚴重度條件，會讓低嚴重度問題整批消失、與儀表板風險類型卡
+ *     的數字對不上，正是這個設定想避免的那種「看不見卻仍生效」）。
+ */
+function syncRiskChipSemantics() {
+    const isIssueView = currentView === 'issue';
+    const label = document.getElementById('filter-risk-label');
+    if (label) label.textContent = isIssueView ? '問題嚴重度' : '風險層級';
+
     for (const btn of document.querySelectorAll('#filter-risk-chips [data-risk]')) {
-        const hidden = !visible.has(btn.dataset.risk);
+        const hidden = !isIssueView && !dayRiskVisible.has(btn.dataset.risk);
         btn.classList.toggle('d-none', hidden);
         if (hidden) btn.classList.remove('active');
+        btn.title = isIssueView ? '問題自身的嚴重度（與該問題出現在哪種風險日無關）' : '';
     }
 }
 
@@ -325,6 +343,8 @@ function setActiveView(view) {
             ? (view === 'issue' ? '依問題視角篩的是各問題的處理概況（未處理／處理中／已處理）' : '')
             : '依主機／依日期視角不支援處理狀態篩選';
     }
+
+    syncRiskChipSemantics();
 
     // 未指派 chip 僅「依問題」視角顯示（§10）：問題角度的分派入口
     document.getElementById('filter-unassigned-group').classList.toggle('d-none', view !== 'issue');

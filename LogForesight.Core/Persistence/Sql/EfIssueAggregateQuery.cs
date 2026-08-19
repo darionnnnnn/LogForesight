@@ -39,7 +39,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     public List<IssueAggregate> Aggregate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null)
     {
         // 空集合＝可見範圍為空 → 零結果（與 RecordQueryFilter.Hosts 同一套授權語意，
         // 不是「不限制」——這個慣例反過來就是授權缺口）
@@ -71,6 +72,17 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             q = q.Where(x => expandedHostIds.Contains(x.HostId));   // EF 8：單一 JSON 參數（OPENJSON／json_each）
         }
 
+        // 日風險等級（畫面上的「風險層級」chip）：篩的是「問題出現在哪些主機日」，
+        // 與問題自身的嚴重度是兩套層級——同 AggregateByCategory 的寫法，兩邊才會是同一個
+        // universe（儀表板風險類型卡的數字＝下鑽到依問題視角的筆數）
+        if (riskLevels != null)
+        {
+            var allowedRecordIds = ctx.DailyRecords.AsNoTracking()
+                .Where(r => r.RecordDate >= f && r.RecordDate <= t && riskLevels.Contains(r.RiskLevel))
+                .Select(r => r.RecordId);
+            q = q.Where(x => allowedRecordIds.Contains(x.RecordId));
+        }
+
         var grouped = q
             .GroupBy(x => new { SourceUpper = x.SourceName.ToUpper(), x.EventId })
             .Select(g => new
@@ -94,9 +106,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         // 主機數／主機日數／相異簽章各補一趟輕量查詢：主機數與主機日數需要先把 host_id
         // 解析成存活主機再去重（無法在 SQL 端表達合併鏈的 CASE 映射），相異簽章是字串集合，
         // 三者都無法併進同一句 GROUP BY，而且回傳量都遠小於原始列數
-        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks);
-        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks);
-        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds, visibleRanks);
+        var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
+        var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
+        var signatures = DistinctSignatures(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
 
         var result = grouped.Select(g =>
         {
@@ -1235,11 +1247,24 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
     /// <summary>存活主機數＝相異問題底下，host_id 解析成存活主機 id 後的去重數
     /// （合併前後的兩個 id 代表同一台實體機器，只能算一台）</summary>
+    /// <summary>日風險等級限縮的單一出口：問題只要出現在風險等級符合的主機日就算，
+    /// 三個輔助查詢與主查詢共用同一份定義，避免「主機數對不上筆數」。</summary>
+    private static IQueryable<TopIssueRow> ApplyRiskLevels(
+        LfDbContext ctx, IQueryable<TopIssueRow> q, DateTime from, DateTime to, IReadOnlySet<string>? riskLevels)
+    {
+        if (riskLevels == null) return q;
+        var allowedRecordIds = ctx.DailyRecords.AsNoTracking()
+            .Where(r => r.RecordDate >= from && r.RecordDate <= to && riskLevels.Contains(r.RiskLevel))
+            .Select(r => r.RecordId);
+        return q.Where(x => allowedRecordIds.Contains(x.RecordId));
+    }
+
     private static Dictionary<(string, int), int> SurvivingHostCounts(
         LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
-        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks)
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
@@ -1256,9 +1281,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// <summary>主機日數＝相異 (存活主機, record_date) 組合數（同一台主機多天各算一次）</summary>
     private static Dictionary<(string, int), int> SurvivingHostDayCounts(
         LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? expandedHostIds,
-        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks)
+        HostAliasIndex aliasIndex, IReadOnlySet<int>? visibleRanks, IReadOnlySet<string>? riskLevels = null)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (expandedHostIds != null) q = q.Where(x => expandedHostIds.Contains(x.HostId));
         if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
 
@@ -1279,9 +1305,10 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
     /// </summary>
     private static Dictionary<(string, int), IReadOnlyList<string>> DistinctSignatures(
         LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<int>? visibleRanks = null)
+        IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
     {
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
         if (hostIds != null)
         {
             var ids = hostIds.ToList();

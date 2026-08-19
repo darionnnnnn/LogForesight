@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
@@ -47,12 +47,15 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         };
 
     private void Add(long hostId, string host, DateTime date, params LogIssueSignature[] issues) =>
+        Add(hostId, host, date, RiskLevels.Low, issues);
+
+    private void Add(long hostId, string host, DateTime date, string riskLevel, params LogIssueSignature[] issues) =>
         _records.Append(new DailyAnalysisRecord
         {
             HostId = hostId,
             Host = host,
             Date = date,
-            RiskLevel = RiskLevels.Low,
+            RiskLevel = riskLevel,
             TopIssues = issues.ToList()
         });
 
@@ -174,5 +177,35 @@ public class DashboardCategoryIssueTypeCountTests : IDisposable
         Assert.Equal(60, card.LowCount);
         Assert.Equal(5, card.ElevatesCount);
         Assert.Equal(25, card.AffectedHosts);
+    }
+
+    /// <summary>
+    /// 儀表板風險類型卡的「N 個問題」必須等於下鑽到依問題視角看到的問題數——兩邊是同一個
+    /// universe（同一組日風險等級、同一組可見嚴重度）。這條是「卡片 75、點進去 9」的回歸測試。
+    /// </summary>
+    [Fact]
+    public void 風險類型卡的問題數等於依問題視角在同一母體下的問題數()
+    {
+        var d0 = DateTime.Today.AddDays(-3);
+        // 高風險日上的低嚴重度問題（卡片會算、依問題視角在「勾全部嚴重度」時也要算得到）
+        Add(1, "Host1", d0, RiskLevels.High, Issue("noisy", 111, severity: IssueSeverity.Low, category: IssueCategory.Other));
+        Add(2, "Host2", d0, RiskLevels.High, Issue("noisy", 111, severity: IssueSeverity.Low, category: IssueCategory.Other));
+        Add(2, "Host2", d0.AddDays(1), RiskLevels.Medium, Issue("crit", 222, severity: IssueSeverity.High, category: IssueCategory.Other));
+        // 低風險日：全站設定隱藏「低」時，兩邊都不該算進來
+        Add(3, "Host3", d0, RiskLevels.Low, Issue("hidden", 333, severity: IssueSeverity.High, category: IssueCategory.Other));
+
+        var query = Query();
+        var visibleDayRisks = new HashSet<string> { RiskLevels.High, RiskLevels.Medium };
+
+        var card = query.AggregateByCategory(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
+            .Single(c => c.Category == IssueCategory.Other.ToString());
+
+        var listed = query.Aggregate(d0.AddDays(-1), d0.AddDays(2), null, null, visibleDayRisks)
+            .Where(a => a.Category == IssueCategory.Other.ToString())
+            .ToList();
+
+        Assert.Equal(2, card.IssueTypeCount);                 // noisy 111 與 crit 222
+        Assert.Equal(card.IssueTypeCount, listed.Count);      // 卡片＝下鑽筆數
+        Assert.DoesNotContain(listed, a => a.Source == "hidden");   // 低風險日不在母體內
     }
 }

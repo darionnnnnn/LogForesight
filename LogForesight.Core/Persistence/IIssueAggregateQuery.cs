@@ -67,10 +67,14 @@ public interface IIssueAggregateQuery
     /// （<c>ISystemSettingsService.GetVisibleSeverities</c>，null＝不限制／DefaultHidden 模式）——
     /// 這裡繞過 <c>RecordRepository</c> 的「單一咽喉」，呼叫端必須自己把這道過濾傳進來，
     /// 否則 SiteHidden 模式下應該被隱藏的問題會在依問題／依主機／依日期視角重新冒出來。
+    /// <paramref name="riskLevels"/>＝**日**風險等級（畫面上的「風險層級」chip），篩的是
+    /// 「問題出現在哪些主機日」，與問題自身的嚴重度是兩套層級；null＝不限制。與
+    /// <see cref="AggregateByCategory"/> 同一套語意，儀表板風險類型卡的數字才等於下鑽筆數。
     /// </summary>
     List<IssueAggregate> Aggregate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
