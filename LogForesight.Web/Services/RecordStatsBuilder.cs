@@ -25,6 +25,7 @@ public static class RecordStatsBuilder
             .Select(a => new DashboardCategoryDto
             {
                 Category = a.Category,
+                IssueTypeCount = a.IssueTypeCount,
                 RiskItemCount = a.RiskItemCount,
                 CumulativeCount = a.CumulativeCount,
                 TotalEvents = a.TotalEvents,

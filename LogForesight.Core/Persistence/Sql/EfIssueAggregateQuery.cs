@@ -932,6 +932,8 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 g.Key.Category,
                 g.Key.SurvivingHostId,
+                g.Key.SourceName,
+                g.Key.EventId,
                 // 舊資料相容（LegacySeverityRank）：與 Aggregate 同一條規則，否則這張卡跟
                 // 依問題視角／重點問題卡對同一筆資料的嚴重度用詞會對不上
                 MaxSeverityRank = LegacySeverityRank.Normalize(g.Max(x => x.MaxSeverityRank)),
@@ -946,6 +948,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .Select(g => new CategoryAggregate
             {
                 Category = g.Key,
+                IssueTypeCount = g.Select(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId)).Distinct().Count(),
                 RiskItemCount = g.Count(),
                 CumulativeCount = g.Sum(x => x.Occurrences),
                 AffectedHosts = g.Select(x => x.SurvivingHostId).Distinct().Count(),

@@ -183,6 +183,7 @@ public class IssueRankingDto
 public class DashboardCategoryDto
 {
     public string Category { get; set; } = string.Empty;
+    public int IssueTypeCount { get; set; }
     public int RiskItemCount { get; set; }
     public long CumulativeCount { get; set; }
     public long TotalEvents { get; set; }

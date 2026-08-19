@@ -291,6 +291,9 @@ public sealed class CategoryAggregate
 {
     public string Category { get; init; } = string.Empty;
 
+    /// <summary>去重問題類型數：相異 (SourceName 大小寫不敏感, EventId) 組合數，跨主機、跨日期皆去重</summary>
+    public int IssueTypeCount { get; init; }
+
     /// <summary>去重風險資訊筆數：相異 (存活主機, Source, EventId) 組合數</summary>
     public int RiskItemCount { get; init; }
 
