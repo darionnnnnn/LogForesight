@@ -1249,8 +1249,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，
   Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時畫面視為本機監控。NetIQ 這條的冪等鍵＝
   (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
-  每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆
-  「權限異動（彙總）」；依 `AuditRetentionDays` 清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+  **不設每主機日筆數上限**：權限異動全數逐則入庫，每一筆都查得到、篩得到；量的控制交給
+  依 `AuditRetentionDays` 的清理（依寫入時間，不是事件時間，見 DB-SPEC）。
 - **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
 - API：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`

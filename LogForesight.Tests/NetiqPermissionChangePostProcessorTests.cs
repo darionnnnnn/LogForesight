@@ -335,8 +335,10 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("（不在群組中）", record.Before);
     }
 
+    /// <summary>權限異動不設每主機日筆數上限：全部逐則入庫才查得到、篩得到，
+    /// 也不再產生「權限異動（彙總）」這種只講筆數的替代列。</summary>
     [Fact]
-    public void 同主機日超過上限_只逐則寫前50筆並多一筆彙總()
+    public void 同主機日大量異動全數逐則寫入且不產生彙總列()
     {
         using var fixture = new EfSqliteFixture();
         var store = new PermissionChangeStore(fixture.NewContext);
@@ -351,9 +353,29 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-DC01", WebHost.OsWindows, events, date);
 
         var records = store.Query(null, null, 1000);
-        Assert.Equal(HostDayPostProcessor.MaxPermissionChangeRecordsPerHostDay + 1, records.Count);
-        var summary = Assert.Single(records, r => r.ChangeType == "權限異動（彙總）");
-        Assert.Contains("30 則", summary.AlertText);
+        Assert.Equal(80, records.Count);
+        Assert.DoesNotContain(records, r => r.ChangeType == "權限異動（彙總）");
+    }
+
+    /// <summary>取消筆數上限後，重跑同一主機日仍不得產生重複列（去重鍵語意未變）。</summary>
+    [Fact]
+    public void 大量異動重跑同一主機日不產生重複列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 19);
+        var events = Enumerable.Range(0, 60).Select(i => new EventLogEntryData
+        {
+            EventId = 4670, Source = "Microsoft-Windows-Security-Auditing",
+            Message = "Permissions on an object were changed. Object Name: C:/share/file" + i + ".txt",
+            TimeGenerated = date.AddMinutes(i)
+        }).ToList();
+
+        var keys = Keys();
+        HostDayPostProcessor.RecordPermissionChanges(store, keys, "SRV-DC01", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, keys, "SRV-DC01", WebHost.OsWindows, events, date);
+
+        Assert.Equal(60, store.Query(null, null, 1000).Count);
     }
 
     [Fact]

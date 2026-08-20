@@ -63,11 +63,6 @@ public static class HostDayPostProcessor
     ///   - 4719: 已變更系統稽核原則 (System audit policy was changed)
     ///   - 4907: 已變更物件的稽核設定 (Auditing settings on object were changed)
     /// </summary>
-    /// <summary>每主機日逐則寫入的上限：一台吵雜的 DC 一天能產生數千則 4670／4907，
-    /// 逐則寫會讓待辦頁與 append-only log 失控。超過的部分彙總成一筆（含各類型筆數），
-    /// 「有異動」這件事不會被吞掉，只是不逐則列。</summary>
-    internal const int MaxPermissionChangeRecordsPerHostDay = 50;
-
     private static readonly Dictionary<int, string> PermissionChangeEventTypes = new()
     {
         // 成員新增
@@ -166,8 +161,10 @@ public static class HostDayPostProcessor
 
             // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。去重鍵由呼叫端傳入
             // 的快照承擔——多台主機平行處理，用 ConcurrentDictionary.TryAdd 做原子佔位。
+            //
+            // 每主機日不設筆數上限：權限異動全部逐則入庫才查得到、篩得到（一台吵雜的 DC
+            // 一天可達數萬則）。量的控制交給保留天數清理（PermissionChangeStore 依 created_at）。
             var recordsToAppend = new List<PermissionChangeRecord>();
-            var overflowByType = new Dictionary<string, int>();
 
             foreach (var evt in matchingEvents)
             {
@@ -175,12 +172,6 @@ public static class HostDayPostProcessor
                 var alertText = TextTruncation.Truncate(evt.Message ?? string.Empty, 500);
                 var key = PermissionChangeRecord.DedupeKey(hostName, evt.TimeGenerated, evt.EventId, alertText);
                 if (!knownKeys.TryAdd(key, 0)) continue;
-
-                if (recordsToAppend.Count >= MaxPermissionChangeRecordsPerHostDay)
-                {
-                    overflowByType[changeType] = overflowByType.GetValueOrDefault(changeType) + 1;
-                    continue;
-                }
 
                 var details = PermissionChangeExtractor.Extract(
                     evt.Message, changeType, evt.EventId, evt.Source, evt.InitiatorAccount);
@@ -202,34 +193,6 @@ public static class HostDayPostProcessor
                     Source = PermissionChangeSources.Netiq,
                     EventId = evt.EventId
                 });
-            }
-
-            if (overflowByType.Count > 0)
-            {
-                var overflowTotal = overflowByType.Values.Sum();
-                var summaryText = $"本日另有 {overflowTotal} 則權限異動事件未逐則列出（" +
-                    string.Join("、", overflowByType.Select(kv => $"{kv.Key} {kv.Value} 則")) + "）";
-                var summaryKey = PermissionChangeRecord.DedupeKey(hostName, date.Date, 0, summaryText);
-                if (knownKeys.TryAdd(summaryKey, 0))
-                {
-                    recordsToAppend.Add(new PermissionChangeRecord
-                    {
-                        ChangeId = Guid.NewGuid().ToString("N"),
-                        HostName = hostName,
-                        DetectedAt = date.Date,
-                        Target = $"{hostName}（彙總）",
-                        ChangeType = "權限異動（彙總）",
-                        Category = PermissionCategory.Resolve("權限異動（彙總）", 0),
-                        IsPrivilegedTarget = false,
-                        InitiatorAccount = null,
-                        TargetAccount = null,
-                        Before = string.Empty,
-                        After = string.Empty,
-                        AlertText = summaryText,
-                        Source = PermissionChangeSources.Netiq,
-                        EventId = 0
-                    });
-                }
             }
 
             if (recordsToAppend.Count > 0)

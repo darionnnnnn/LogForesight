@@ -267,7 +267,8 @@ docs/archive/HISTORY.md #1）。
 
 寫進「權限異動待辦」的每一筆都帶一個**類別 key**，由 `change_type` 與 EventId 以純函式推導
 （`PermissionCategory.Resolve`，純函式是為了讓舊資料能在遷移時離線重算）。`change_type`
-共 10 個相異值、兩個來源，其中「成員新增」「成員移除」兩個值兩來源共用：
+現行產生 9 個相異值、兩個來源，其中「成員新增」「成員移除」兩個值兩來源共用
+（另有既有資料才會出現的舊值，見下表 `summary`）：
 
 | 類別 key | 中文標籤 | 涵蓋的 change_type |
 |---|---|---|
@@ -276,7 +277,7 @@ docs/archive/HISTORY.md #1）。
 | `owner_change` | 擁有者變更 | 擁有者變更 |
 | `folder_access` | 資料夾存取狀態 | 無法存取、恢復可存取 |
 | `audit_policy` | 稽核政策變更 | 稽核政策變更（4717／4718／4719／4907） |
-| `summary` | 權限異動彙總 | 權限異動（彙總）——同一主機日逐則超過 50 筆時的彙總列 |
+| `summary` | 權限異動彙總 | 權限異動（彙總）——不再產生的舊值，僅既有歷史列會落在此類別 |
 | `other` | 其他 | 推導不出對應類別時的退路，恆非空 |
 
 另有 `is_privileged_target` 旗標：類別為 `group_member`、`change_type` 是「成員新增」、
