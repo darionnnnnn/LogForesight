@@ -314,3 +314,9 @@
 依問題視角的日風險母體限縮（`ApplyRiskLevels`）在一次 `Aggregate` 呼叫裡會下四次同樣的
 `lf_daily_records` 子查詢（主查詢＋三個輔助），而該表只有 `record_date`、`(host_id, record_date)`
 索引。兩千台規模下這是主動線，值得實測後決定加索引或改成一次取出 record_id 集合再共用。
+
+## 權限異動待辦（PERMISSION-CHANGES 輪次遞延）
+
+- **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
+- **使用者自訂異動類別**：本輪類別是系統內建的固定七類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。
+- **`EnsureCreated` 與 `SchemaUpgrader` 在全新安裝會建出兩份同欄位索引**：`AddIndexIfMissing` 依**索引名稱**判斷存在與否，而 EnsureCreated 建的是 EF 預設命名（`IX_lf_xxx_ChangeId`）、SchemaUpgrader 用的是自訂名稱（`IX_lf_xxx_change_id`），兩者不相等。這不是本輪造成的，`lf_issue_handling` 等表早已如此，影響是寫入吞吐與儲存空間、不影響正確性。要處理的話是全專案 schema 層級的一輪。

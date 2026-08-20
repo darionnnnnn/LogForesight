@@ -1219,13 +1219,45 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
-- pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
+- **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／主機 (IP)／
+  帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
+  EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。
+  表格上方有一鍵全部展開／收合（作用範圍為當頁）。
+- 「主機 (IP)」的 IP 取自主機主檔 `WebHost.IpAddress`，取不到且主機名本身是 IP 時用主機名
+  （NetIQ 主機常如此），都沒有就不顯示括號。**不存 IP 快照**——IP 會變，顯示最新的才合理。
+- 「帳號」兩行：操作者與目標帳號。缺值顯示「—」，**不猜、不填假值**。
+- 「異動說明」是後端產生的 `SummaryText`；類別中文標籤是後端的 `CategoryLabel`。
+  **前端不維護第二套**——摘要規則或標籤散在前端，會和後端各自演化成兩種說法。
+- **時間語意**：`本機監控` 來源是快照比對，寫入時整批同一個時間戳，那是「偵測到的時間」
+  而非事件發生時間。欄位標題附說明，不讓使用者誤讀。
+- **篩選**：關鍵字（比對主機／操作者／目標帳號／對象／說明）、網段（CIDR／萬用字元／單一 IP，
+  走 `CidrMatcher`；格式錯誤時錯誤訊息顯示在該欄位旁而非只在頁面頂端）、類別（多選，選項來自
+  `GET api/permission-changes/categories`）、來源、時間範圍。條件記憶於 localStorage 並同步網址。
+  **狀態不放進篩選列**——維持既有四個頁籤（待確認／授權操作／可疑／全部），兩套並存會產生
+  「頁籤選待確認、篩選選可疑」這種無解狀態。
+- **批次核准**：勾選框只出現在待確認的列；跨頁保留選取；表頭全選三態；另有「選取全部符合條件」
+  （走 `ids` 端點，超過上限時誠實告知筆數並請分批）。送出前 modal 預覽按類別與主機分組。
+  回應是**逐筆結果**：已被他人處理／不在可見範圍／找不到的項目進 `skipped` 並顯示原因，
+  其餘照樣成功——不做全有全無。
 - **兩個來源**，每筆以 `PermissionChangeRecord.Source` 標示：`本機監控`（`PermissionMonitorService`
   比對本機群組成員與 WatchedFolders ACL）與 `NetIQ 事件`（`HostDayPostProcessor.RecordPermissionChanges`
-  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時
-  畫面視為本機監控。NetIQ 這條的冪等鍵＝(主機, 事件時間, EventId, 告警文字)，去重鍵快照
-  每輪執行載入一次、只讀回望窗口＋一週內附加的列。每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆「權限異動（彙總）」；整份 log 依 `AuditRetentionDays` 清理。
-- API：`GET api/permission-changes?status=&page=`、`PUT api/permission-changes/{id}/confirm`
+  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，
+  Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時畫面視為本機監控。NetIQ 這條的冪等鍵＝
+  (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
+  每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆
+  「權限異動（彙總）」；依 `AuditRetentionDays` 清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+- **操作者帳號**取自 NetIQ 的 `sun` 欄位（Q1 投影本來就查回來了，只是舊版在
+  `SentinelEventMapper` 映射時丟棄）；沒有時退而取訊息 `Subject` 區段的帳戶名稱。
+  擷取是**分區段**的：`Subject` 與 `Member` 各自獨立，操作者不可能被寫成被異動的成員。
+- API：
+  - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
+    → `PagedResult<PermissionChangeDto>`（`Total` 是套用篩選後的真實總筆數，畫面「共 N 筆」的來源）
+  - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
+    **不可改成從當頁資料收集**，那樣沒出現在當頁的類別就選不到）
+  - `GET api/permission-changes/ids` → `{ changeIds, total, truncated }`（僅待確認；與清單共用同一份篩選組裝）
+  - `PUT api/permission-changes/{id}/confirm`（單筆；已被他人處理時回 Conflict）
+  - `POST api/permission-changes/confirm/batch` → `{ updatedCount, skipped[] }`（一次上限 500；
+    標記可疑時說明必填；稽核一次寫一筆，action `perm_confirm_batch`）
 
 ### 9.6 `/reports` 報表（全角色；user 限授權範圍）——主管的主要畫面，排版是重點
 
