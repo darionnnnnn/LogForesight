@@ -39,6 +39,7 @@
 | `SCALE-FIX-PLAN-2026-08-06.md` | 針對該體檢 14 項問題的修復規劃。 |
 | `NETIQ-DISCOVERY-PLAN-2026-08-06.md` | NetIQ 主機探索成本改善＋開發環境 console 編碼修復。 |
 | `SCALE-3000-PLAN.md` | 三千台規模化：主機清單快取、兩層保留期、處理狀態與報表／儀表板 SQL 下推、年度同期比較；含實測數字、驗收所得與委派紀錄。 |
+| `PERMISSION-CHANGES-PLAN.md` | 權限異動待辦頁改版（2026-08-20）：JSONL＋blob 正規化為 lf_permission_changes 真表（確認狀態同列）、舊資料遷移、帳號擷取分區段修正、分頁篩選排序、批次核准、前端表格化；含終檢與體檢的完整發現記錄。 |
 
 ## 給 AI 助理的提醒
 
