@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using Microsoft.EntityFrameworkCore;
 using NLog;
 
@@ -202,7 +203,13 @@ public sealed class PermissionChangeMigrator
 
             var category = PermissionCategory.Resolve(record.ChangeType, record.EventId);
             var isPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(record.Target, record.ChangeType);
-            var (initiatorAccount, targetAccount) = ExtractAccounts(record);
+            var (initiatorAccount, targetAccount) = PermissionChangeExtractor.ExtractAccounts(
+                record.AlertText,
+                record.ChangeType,
+                record.Before,
+                record.After,
+                record.InitiatorAccount,
+                record.TargetAccount);
 
             var row = new PermissionChangeRow
             {
@@ -251,90 +258,6 @@ public sealed class PermissionChangeMigrator
         }
 
         return rows.Count;
-    }
-
-    private static (string? InitiatorAccount, string? TargetAccount) ExtractAccounts(PermissionChangeRecord record)
-    {
-        string? initiator = string.IsNullOrWhiteSpace(record.InitiatorAccount) ? null : record.InitiatorAccount.Trim();
-        string? target = string.IsNullOrWhiteSpace(record.TargetAccount) ? null : record.TargetAccount.Trim();
-
-        // TargetAccount 提取
-        if (target == null)
-        {
-            if (record.ChangeType == "成員新增")
-            {
-                if (!string.IsNullOrWhiteSpace(record.After) &&
-                    record.After != "（不在群組中）" &&
-                    record.After != "（已移出群組）")
-                {
-                    target = record.After.Trim();
-                }
-            }
-            else if (record.ChangeType == "成員移除")
-            {
-                if (!string.IsNullOrWhiteSpace(record.Before) &&
-                    record.Before != "（不在群組中）" &&
-                    record.Before != "（已移出群組）")
-                {
-                    target = record.Before.Trim();
-                }
-            }
-            else if (record.ChangeType == "權限新增（ACL 規則）" && !string.IsNullOrWhiteSpace(record.After))
-            {
-                var parts = record.After.Split('｜');
-                if (parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0]))
-                    target = parts[0].Trim();
-            }
-            else if (record.ChangeType == "權限移除（ACL 規則）" && !string.IsNullOrWhiteSpace(record.Before))
-            {
-                var parts = record.Before.Split('｜');
-                if (parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0]))
-                    target = parts[0].Trim();
-            }
-        }
-
-        // 從 AlertText 中提取
-        if (!string.IsNullOrWhiteSpace(record.AlertText))
-        {
-            var lines = record.AlertText.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var rawLine in lines)
-            {
-                var line = rawLine.Trim();
-                if (target == null)
-                {
-                    target = TryExtractValue(line,
-                        "Member Name:", "成員名稱:", "成員名稱：",
-                        "Target Account:", "目標帳戶:", "目標帳戶：",
-                        "被異動帳戶:", "被異動帳戶：");
-                }
-                if (initiator == null)
-                {
-                    initiator = TryExtractValue(line,
-                        "Caller User Name:", "操作者帳號:", "操作者帳號：",
-                        "操作者:", "操作者：", "執行者:", "執行者：");
-                }
-            }
-        }
-
-        if (initiator is "-" or "—" or "null" or "NULL" or "") initiator = null;
-        if (target is "-" or "—" or "null" or "NULL" or "") target = null;
-
-        return (initiator, target);
-    }
-
-    private static string? TryExtractValue(string line, params string[] prefixes)
-    {
-        foreach (var prefix in prefixes)
-        {
-            var idx = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
-            {
-                var val = line[(idx + prefix.Length)..].Trim();
-                if (!string.IsNullOrEmpty(val) && val != "-" && val != "—")
-                    return val;
-            }
-        }
-        return null;
     }
 
     private bool HasOldData()
