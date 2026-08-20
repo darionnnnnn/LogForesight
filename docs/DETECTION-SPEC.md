@@ -294,9 +294,10 @@ Account Operators、Backup Operators、本機 Administrators 群組，不分大�
 `Subject` 與 `Member` 各自獨立，操作者在結構上不可能流進成員欄位。
 
 **異動對象（`target`）的擷取**：依序取群組名稱 → 物件名稱 → 目標帳戶，三者都剖不出時是
-**空字串**。**不以事件來源名或 EventId 充數**——事件來源不是被異動的對象，兩者本來就各有
-欄位；充數的值會被下游當成群組名顯示給使用者（顯示層對既有的這種舊值另有辨識與降級，見
-[WEB-SPEC.md](WEB-SPEC.md) §9.5）。`is_privileged_target` 以對象比對特權群組關鍵字，
+**空字串**。**不以事件來源名或 EventId 充數**——產生事件的元件名不是被異動的對象，充數的值
+會被下游當成群組名顯示給使用者（顯示層對既有的這種舊值另有辨識與降級，見
+[WEB-SPEC.md](WEB-SPEC.md) §9.5）。權限異動列**不保存** Windows 事件來源名（`source` 欄是
+本機監控／NetIQ 的來源軌別），要回溯事件種類請用 `event_id`。`is_privileged_target` 以對象比對特權群組關鍵字，
 對象為空的列本來就命中不了，判定行為不因此改變。
 
 #### 惡意程式與防護狀態（Microsoft Defender Operational 頻道，經 EventLogReader 讀取）

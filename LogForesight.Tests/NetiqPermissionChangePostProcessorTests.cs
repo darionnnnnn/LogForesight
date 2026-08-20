@@ -820,6 +820,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     [InlineData("cn=Admin User,ou=Admins,ou=IT,dc=domain,dc=local", "Admin User")]
     [InlineData("CN=SingleCNOnly", "SingleCNOnly")]
     [InlineData("OU=Admins,CN=NestedUser,DC=corp", "NestedUser")]
+    [InlineData("CN=,OU=Admins,DC=corp", "CN=,OU=Admins,DC=corp")]   // CN 有名無值：退回原值，不把帳號吃掉
     public void 帳號顯示短名_多層OU的DN取CN值(string dn, string expected)
     {
         var result = AccountDisplayFormatter.ToShortName(dn);

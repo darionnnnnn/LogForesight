@@ -796,4 +796,23 @@ public sealed class PermissionChangeQueryTests : IDisposable
         });
         Assert.Equal(@"D:\share\finance 存取狀態變更", withoutType);
     }
+
+    /// <summary>本機監控的對象字面已含「群組」二字，句子不得再疊一次前綴
+    /// （否則變成「加入群組 本機 Administrators 群組」——提權高風險列幾乎全在這條路徑上）。</summary>
+    [Fact]
+    public void SummaryText_本機監控群組成員_不重複群組前綴()
+    {
+        var summary = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "local-gm",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            Target = "本機 Administrators 群組",
+            TargetAccount = @"CORP\alice",
+            Source = PermissionChangeSources.Local
+        });
+
+        Assert.Equal(@"CORP\alice 被加入本機 Administrators 群組", summary);
+        Assert.DoesNotContain("群組 本機", summary);
+    }
 }

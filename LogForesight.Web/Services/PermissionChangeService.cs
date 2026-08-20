@@ -388,13 +388,13 @@ public class PermissionChangeService
         return _store.CountPending(hostNames);
     }
 
-    /// <summary>舊資料的對象欄可能被寫成事件來源名而非真正的異動對象，兩種形狀：
-    /// 「來源名 (EventId 4756)」與無來源時的「Event 4756」。只認形狀不認特定來源名。</summary>
     /// <summary>稽核摘要用的「異動類型／對象」，任一段為空就不留分隔符</summary>
     private static string AuditChangeDesc(PermissionChangeRecord change) =>
         string.Join("／", new[] { change.ChangeType, change.Target }
             .Where(s => !string.IsNullOrWhiteSpace(s)));
 
+    /// <summary>舊資料的對象欄可能被寫成事件來源名而非真正的異動對象，兩種形狀：
+    /// 「來源名 (EventId 4756)」與無來源時的「Event 4756」。只認形狀不認特定來源名。</summary>
     private static readonly Regex BadTargetRegex =
         new(@"(\(EventId\s+(?<id>\d+)\)$|^Event\s+(?<id>\d+)$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -498,7 +498,11 @@ public class PermissionChangeService
                 if (string.IsNullOrWhiteSpace(member))
                     member = "（未能解析成員）";
 
-                var group = Sp("群組", target);
+                // 本機監控的對象字面已是「本機 Administrators 群組」，再加前綴會變成
+                // 「加入群組 本機 Administrators 群組」；降級佔位字（全形括號起頭）仍要前綴
+                var group = target.Contains("群組") && !target.StartsWith('（')
+                    ? target
+                    : Sp("群組", target);
 
                 if (change.ChangeType == "成員新增")
                 {
@@ -514,11 +518,10 @@ public class PermissionChangeService
                         : Sentence(member, "被移出" + group);
                 }
 
-                // 用原始異動類型收尾：群組類未來若新增其他型別，不該一律被講成「成員變更」
-                var groupAction = !string.IsNullOrWhiteSpace(change.ChangeType) ? change.ChangeType : "成員變更";
+                // 理論上不可達（group_member 只由成員新增／移除推導出）；保守給一個成句的退路
                 return hasInitiator
-                    ? Sentence(initiator, "變更" + group, "的" + groupAction)
-                    : Sentence(group, groupAction);
+                    ? Sentence(initiator, "變更" + group, "的成員")
+                    : Sentence(group, "成員變更");
             }
 
             case PermissionCategory.FolderAcl:
