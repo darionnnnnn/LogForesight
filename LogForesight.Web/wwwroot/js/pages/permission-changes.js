@@ -571,12 +571,18 @@ function parseStructuredLine(line) {
         if (colonIdx < lastMatchEnd) continue;
 
         // 取冒號前最後一個空白之後的字串當 key 候選（行首與行內共用同一套規則）
-        let candidateStart = lastMatchEnd;
+        let candidateStart = -1;
         for (let k = colonIdx - 1; k >= lastMatchEnd; k--) {
             if (/\s/.test(line[k])) {
                 candidateStart = k + 1;
                 break;
             }
+        }
+        // 回掃不到空白時只有行首算數：否則像 AAA:BBB:CCC 這種值本身含冒號的字串，
+        // BBB 會被當成 key（它既不在行首也不在空白之後），把 AAA 的值整個吃掉
+        if (candidateStart === -1) {
+            if (lastMatchEnd !== 0) continue;
+            candidateStart = 0;
         }
 
         const candidateKey = line.slice(candidateStart, colonIdx);
@@ -637,9 +643,10 @@ function parseStructuredLine(line) {
  *
  * @param {string|null|undefined} rawText
  * @param {string} emptyFallback 空值時的預設文字（例如「—」或「（無）」）
+ * @param {boolean} monoPlain 退回純文字時是否用等寬字（異動前／異動後的單串值需要）
  * @returns {HTMLElement}
  */
-function renderStructuredDetail(rawText, emptyFallback = '—') {
+function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = false) {
     const text = (rawText != null) ? String(rawText).trim() : '';
     if (!text) {
         const emptyEl = document.createElement('span');
@@ -651,11 +658,12 @@ function renderStructuredDetail(rawText, emptyFallback = '—') {
     const lines = String(rawText).split(/\r\n|\r|\n/);
     const parsedLines = lines.map(parseStructuredLine);
 
-    // 計算整段文字解析出的 key/value 與區段標題總數
+    // 只數 key/value 對：區段標題不算，否則整段只有「主體:」這種標題時
+    // 會渲染出一張沒有任何欄位的空表格
     let totalKvCount = 0;
     for (const lineItems of parsedLines) {
         for (const item of lineItems) {
-            if (item.type === 'kv' || item.type === 'section') {
+            if (item.type === 'kv') {
                 totalKvCount++;
             }
         }
@@ -664,8 +672,8 @@ function renderStructuredDetail(rawText, emptyFallback = '—') {
     // 少於 2 對時，整段退回純文字（僅套用保留換行與自動折行）
     if (totalKvCount < 2) {
         const plainWrap = document.createElement('div');
-        plainWrap.className = 'lf-detail-plain';
-        plainWrap.textContent = rawText;
+        plainWrap.className = monoPlain ? 'lf-detail-plain font-monospace' : 'lf-detail-plain';
+        plainWrap.textContent = String(rawText);
         return plainWrap;
     }
 
@@ -769,8 +777,8 @@ function detailView(change) {
             </tbody>
         </table>`;
     const cells = diffWrap.querySelectorAll('td');
-    cells[0].appendChild(renderStructuredDetail(change.before, '（無）'));
-    cells[1].appendChild(renderStructuredDetail(change.after, '（無）'));
+    cells[0].appendChild(renderStructuredDetail(change.before, '（無）', true));
+    cells[1].appendChild(renderStructuredDetail(change.after, '（無）', true));
     wrap.appendChild(diffWrap);
 
     if (change.status === 'pending') {

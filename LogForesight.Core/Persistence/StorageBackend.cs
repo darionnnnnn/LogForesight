@@ -59,8 +59,19 @@ public class StorageBackend
             if (string.IsNullOrWhiteSpace(settings.ConnectionString))
             {
                 var dbPath = DefaultSqlitePath(fallbackDir);
-                // Sqlite 不會替我們建目錄，首次啟動時 Db\ 還不存在
-                Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+                // Sqlite 不會替我們建目錄，首次啟動時 Db\ 還不存在。
+                // 失敗時要講出「這是 DataRoot 的寫入權限問題」——只丟原生的「拒絕存取路徑 X」
+                // 看不出該去改哪個設定。
+                var dbDir = Path.GetDirectoryName(dbPath)!;
+                try
+                {
+                    Directory.CreateDirectory(dbDir);
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                {
+                    throw new InvalidOperationException(
+                        $"無法建立資料庫目錄「{dbDir}」：請確認執行帳號對 Storage:DataRoot（{fallbackDir}）有寫入權限。", ex);
+                }
                 cs = $"Data Source={dbPath}";
             }
             else

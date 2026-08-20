@@ -482,10 +482,10 @@ body {
 
 .lf-sidebar__brand {
     display: flex;
-    /* align-items:stretch（回饋十六輪批次E-2，改自 center）：有副標時兩行文字的自然高度
-       可能超過 .lf-sidebar__brand-mark 的基準高度（實測中文字級下約 60px > 53px）——
-       固定 center 對齊時圖示不會跟著撐高，導致圖示反而沒對齊到文字的上下邊界。stretch
-       讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，不管有無副標。 */
+    /* align-items:stretch：有副標時兩行文字的自然高度可能超過 .lf-sidebar__brand-mark
+       的基準高度——固定 center 對齊時圖示不會跟著撐高，導致圖示沒對齊到文字的上下邊界。
+       stretch 讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，
+       不管有無副標。 */
     align-items: stretch;
     gap: var(--lf-space-2);
     /* 左右內距用 space-4 而不是 space-5：側欄總寬固定（--lf-sidebar-width），
@@ -2102,9 +2102,12 @@ a.lf-calendar__cell:focus-visible {
     }
 }
 
-/* ── 權限異動明細結構化 key/value 呈現（.gemini-tasks/task-c1.md）─────────── */
+/* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */
 
-.lf-detail-plain {
+/* 解析不出成對欄位時的退路：只保留原文換行與折行。異動前／異動後兩欄另加
+   .font-monospace——安全性描述元這類單串值走的正是這條路徑，等寬字是它唯一的可讀性依靠 */
+.lf-detail-plain,
+.lf-kv-row--asis td.lf-kv-asis-cell {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-wrap: anywhere;
@@ -2138,15 +2141,12 @@ a.lf-calendar__cell:focus-visible {
 
 .lf-kv-row--asis td.lf-kv-asis-cell {
     padding: var(--lf-space-1) var(--lf-space-2);
-    white-space: pre-wrap;
-    word-break: break-word;
-    overflow-wrap: anywhere;
     color: var(--lf-text);
 }
 
+/* 欄寬由 width 決定（表格是 table-layout: fixed，max-width 在此不生效） */
 .lf-kv-key {
     width: 32%;
-    max-width: 12rem;
     vertical-align: top;
     color: var(--lf-text-muted);
     font-weight: 500;

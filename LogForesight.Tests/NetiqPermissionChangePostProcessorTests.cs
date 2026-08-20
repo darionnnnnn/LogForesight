@@ -357,7 +357,8 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.DoesNotContain(records, r => r.ChangeType == "權限異動（彙總）");
     }
 
-    /// <summary>取消筆數上限後，重跑同一主機日仍不得產生重複列（去重鍵語意未變）。</summary>
+    /// <summary>取消筆數上限後，重跑同一主機日仍不得產生重複列。第二輪比照 pipeline
+    /// 從 store 重新載入去重鍵快照——上限拿掉後這份快照才第一次承受數萬筆的量。</summary>
     [Fact]
     public void 大量異動重跑同一主機日不產生重複列()
     {
@@ -371,9 +372,8 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             TimeGenerated = date.AddMinutes(i)
         }).ToList();
 
-        var keys = Keys();
-        HostDayPostProcessor.RecordPermissionChanges(store, keys, "SRV-DC01", WebHost.OsWindows, events, date);
-        HostDayPostProcessor.RecordPermissionChanges(store, keys, "SRV-DC01", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-DC01", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-DC01", WebHost.OsWindows, events, date);
 
         Assert.Equal(60, store.Query(null, null, 1000).Count);
     }
