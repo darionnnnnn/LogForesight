@@ -488,7 +488,7 @@ public sealed class PermissionChangeQueryTests : IDisposable
         };
 
         var summaryWithInit = PermissionChangeService.GenerateSummaryText(recordWithInit);
-        Assert.Equal("admin_ad.brk 將 33951 [Li Zhihui] 自群組 _6110H1220000000 移除", summaryWithInit);
+        Assert.Equal("admin_ad.brk 將 33951 [Li Zhihui] 移出群組 _6110H1220000000", summaryWithInit);
 
         var recordNoInit = new PermissionChangeRecord
         {
@@ -502,7 +502,7 @@ public sealed class PermissionChangeQueryTests : IDisposable
         };
 
         var summaryNoInit = PermissionChangeService.GenerateSummaryText(recordNoInit);
-        Assert.Equal("33951 [Li Zhihui] 自群組 _6110H1220000000 被移除", summaryNoInit);
+        Assert.Equal("33951 [Li Zhihui] 被移出群組 _6110H1220000000", summaryNoInit);
     }
 
     [Fact]
@@ -546,7 +546,8 @@ public sealed class PermissionChangeQueryTests : IDisposable
             InitiatorAccount = null,
             TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
             After = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
-            Target = "Microsoft-Windows-Security-Auditing (EventId 4756)"
+            Target = "Microsoft-Windows-Security-Auditing (EventId 4756)",
+            EventId = 4756
         };
 
         var gmSummary = PermissionChangeService.GenerateSummaryText(gmRecord);
@@ -558,11 +559,12 @@ public sealed class PermissionChangeQueryTests : IDisposable
             Category = PermissionCategory.FolderAcl,
             ChangeType = "權限變更",
             InitiatorAccount = "admin_ad.brk",
-            Target = "Security-Audit-Source (EventId 4670)"
+            Target = "Security-Audit-Source (EventId 4670)",
+            EventId = 4670
         };
 
         var faSummary = PermissionChangeService.GenerateSummaryText(faRecord);
-        Assert.Equal("admin_ad.brk 變更 （未能解析路徑）的權限", faSummary);
+        Assert.Equal("admin_ad.brk 變更（未能解析路徑）的權限", faSummary);
     }
 
     [Fact]
@@ -730,5 +732,68 @@ public sealed class PermissionChangeQueryTests : IDisposable
         Assert.Equal(string.Empty, item.InitiatorAccountDisplay);
         Assert.Equal("   ", item.TargetAccount);
         Assert.Equal(string.Empty, item.TargetAccountDisplay);
+    }
+
+    /// <summary>降級佔位字是全形括號起頭，接合處不得留下孤兒空格——句子中間開洞比截斷還難讀。</summary>
+    [Fact]
+    public void SummaryText_成員與對象皆降級時_句中不留孤兒空格()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-both-fallback",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = "admin_ad.brk",
+            Target = string.Empty
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal("admin_ad.brk 將（未能解析成員）加入群組（未能解析群組名稱）", summary);
+        Assert.DoesNotContain(" （", summary);
+        Assert.DoesNotContain("） ", summary);
+    }
+
+    /// <summary>壞形狀辨識要比對本列 EventId：真的叫「Event 5」的群組不能被誤判成壞資料。</summary>
+    [Fact]
+    public void SummaryText_對象形狀像退路值但EventId不符時_視為正常對象()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-real-event-name",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            TargetAccount = @"CORP\alice",
+            After = @"CORP\alice",
+            Target = "Event 5",
+            EventId = 4756
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal(@"CORP\alice 被加入群組 Event 5", summary);
+        Assert.DoesNotContain("未能解析", summary);
+    }
+
+    /// <summary>資料夾存取狀態沒有操作者，句子仍要有動詞，不能只剩一個孤立路徑。</summary>
+    [Fact]
+    public void SummaryText_資料夾存取狀態_異動類型缺漏時仍是完整句()
+    {
+        var withType = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "fa-type",
+            Category = PermissionCategory.FolderAccess,
+            ChangeType = "無法存取",
+            Target = @"D:\share\finance"
+        });
+        Assert.Equal(@"D:\share\finance 無法存取", withType);
+
+        var withoutType = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "fa-no-type",
+            Category = PermissionCategory.FolderAccess,
+            Target = @"D:\share\finance"
+        });
+        Assert.Equal(@"D:\share\finance 存取狀態變更", withoutType);
     }
 }

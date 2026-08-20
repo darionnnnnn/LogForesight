@@ -930,7 +930,9 @@ function openConfirm(change, targetStatus) {
     detail.replaceChildren();
     const summary = document.createElement('div');
     summary.className = 'alert alert-light border mb-0 small';
-    summary.textContent = `${change.hostName}｜${change.changeType}｜${change.target}`;
+    // 對象剖不出時是空字串，濾掉才不會留一個沒有下文的分隔線
+    summary.textContent = [change.hostName, change.changeType, change.target]
+        .filter(Boolean).join('｜');
     detail.appendChild(summary);
 
     const note = document.getElementById('confirm-note');

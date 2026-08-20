@@ -1485,6 +1485,8 @@ a.lf-stat:hover .lf-card,
 .lf-issue-explanation--primary {
     color: var(--lf-text);
     max-width: 28rem;
+    /* 不吃掉整列可點的手指游標（.lf-issue-explanation 的 cursor: default 會蓋掉列的 pointer） */
+    cursor: inherit;
 }
 
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */

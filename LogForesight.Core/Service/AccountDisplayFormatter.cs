@@ -50,7 +50,9 @@ public static class AccountDisplayFormatter
             }
         }
 
-        return value.ToString().Trim();
+        // CN 有名無值（「CN=,OU=x」）時退回原值：短名化是為了好讀，不是把帳號變不見
+        var shortName = value.ToString().Trim();
+        return shortName.Length > 0 ? shortName : trimmed;
     }
 
     private static int FindFirstCnIndex(string s)
