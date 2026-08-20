@@ -2171,7 +2171,8 @@ temp 檔＋`File.Replace` 手法。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立；對**既有** DB 的欄位/索引增補由 `SchemaUpgrader`
   （自製冪等 DDL，見 [DB-SPEC.md](DB-SPEC.md)「Schema 升級機制」）在 EnsureCreated
   之後接手——不用 EF Migrations。批次與 Web 須設**相同的 `Storage.Type`**；
-  SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
+  SQLite 模式共用 `{DataRoot}\Db\logforesight.db`（`ConnectionString` 留空時的預設落點，
+  子資料夾由 `StorageBackend` 自動建立），批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
 
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）
