@@ -280,7 +280,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
   created_at           datetime2 NOT NULL               -- 寫進資料庫的時間（保留期清理用）
   target               nvarchar(max) NOT NULL           -- 資料夾路徑或群組名稱（不得設長度上限：Windows 長路徑輕易超過 512，SQLite 測不出、SQL Server 會截斷）
-  change_type          nvarchar(64) NOT NULL            -- 10 個相異值，對應類別見 DETECTION-SPEC「權限異動類別」
+  change_type          nvarchar(64) NOT NULL            -- 現行產生 9 個相異值（既有資料另可能有舊值「權限異動（彙總）」），對應類別見 DETECTION-SPEC「權限異動類別」
   category             nvarchar(64) NOT NULL            -- 類別 key，由 change_type/event_id 純函式推導
   is_privileged_target bit NOT NULL                     -- 加入特權群組＝高風險
   initiator_account    nvarchar(255) NULL               -- 操作者（NetIQ sun 或訊息 Subject 區段）

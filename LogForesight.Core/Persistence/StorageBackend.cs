@@ -30,10 +30,10 @@ public class StorageBackend
 
     /// <summary>Sqlite 未指定 ConnectionString 時，db 檔所在的子資料夾（相對於 DataRoot）。
     /// 資料檔集中在此，與 <c>export\</c> 等產出目錄分開。</summary>
-    public const string DefaultSqliteDirectoryName = "Db";
+    private const string DefaultSqliteDirectoryName = "Db";
 
     /// <summary>Sqlite 未指定 ConnectionString 時的 db 檔名</summary>
-    public const string DefaultSqliteFileName = "logforesight.db";
+    private const string DefaultSqliteFileName = "logforesight.db";
 
     /// <summary>Sqlite 預設 db 檔的完整路徑（DataRoot 底下）。Program.cs 的資料根目錄健檢
     /// 用同一個方法算落點，路徑規則不會兩邊各走各的。</summary>
@@ -69,8 +69,11 @@ public class StorageBackend
                 }
                 catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
                 {
+                    // 帶上原始訊息：IOException 不一定是權限（例如 DataRoot 底下已有同名的
+                    // 「Db」檔案），只講權限會把診斷帶偏
                     throw new InvalidOperationException(
-                        $"無法建立資料庫目錄「{dbDir}」：請確認執行帳號對 Storage:DataRoot（{fallbackDir}）有寫入權限。", ex);
+                        $"無法建立資料庫目錄「{dbDir}」（{ex.Message}）：請確認執行帳號對 " +
+                        $"Storage:DataRoot（{fallbackDir}）有寫入權限，且該路徑下沒有同名檔案。", ex);
                 }
                 cs = $"Data Source={dbPath}";
             }

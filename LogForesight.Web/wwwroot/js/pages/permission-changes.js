@@ -570,29 +570,38 @@ function parseStructuredLine(line) {
         const colonIdx = colonIndices[i];
         if (colonIdx < lastMatchEnd) continue;
 
-        // 取冒號前最後一個空白之後的字串當 key 候選（行首與行內共用同一套規則）
+        // key 契約：長度 2～20 字元、不含冒號、且必須至少包含一個字母（A-Z／a-z）或中日韓文字
+        const isValidKey = (key) =>
+            key.length >= 2 && key.length <= 20 &&
+            /[\p{L}]/u.test(key) &&
+            !key.includes(':') && !key.includes('：');
+
+        // 多字 key（Security ID／Object Name）只在「該行第一個配對」時嘗試整段當候選：
+        // Windows 多行原文的 key 都在行首（縮排後），整段除了 key 沒有別的；行內後續配對
+        // 的冒號前必然帶著上一對的值（…識別碼: S-1-5-21-1 帳戶名稱:…），整段當 key 會把
+        // 值吞進 key 裡，只能取「最後一個空白之後」的單詞。
         let candidateStart = -1;
-        for (let k = colonIdx - 1; k >= lastMatchEnd; k--) {
-            if (/\s/.test(line[k])) {
-                candidateStart = k + 1;
-                break;
+        const segment = line.slice(lastMatchEnd, colonIdx);
+        const firstNonSpace = segment.search(/\S/);
+        if (lastMatchEnd === 0 && firstNonSpace !== -1 && isValidKey(segment.slice(firstNonSpace).trimEnd())) {
+            candidateStart = firstNonSpace;
+        } else {
+            for (let k = colonIdx - 1; k >= lastMatchEnd; k--) {
+                if (/\s/.test(line[k])) {
+                    candidateStart = k + 1;
+                    break;
+                }
+            }
+            // 回掃不到空白時只有行首算數：否則像 AAA:BBB:CCC 這種值本身含冒號的字串，
+            // BBB 會被當成 key（它既不在行首也不在空白之後），把 AAA 的值整個吃掉
+            if (candidateStart === -1) {
+                if (lastMatchEnd !== 0) continue;
+                candidateStart = 0;
             }
         }
-        // 回掃不到空白時只有行首算數：否則像 AAA:BBB:CCC 這種值本身含冒號的字串，
-        // BBB 會被當成 key（它既不在行首也不在空白之後），把 AAA 的值整個吃掉
-        if (candidateStart === -1) {
-            if (lastMatchEnd !== 0) continue;
-            candidateStart = 0;
-        }
 
-        const candidateKey = line.slice(candidateStart, colonIdx);
-        const candidateLen = candidateKey.length;
-
-        // key 契約：長度 2～20 字元、不含冒號、且必須至少包含一個字母（A-Z／a-z）或中日韓文字
-        const hasLetterOrCjk = /[\p{L}]/u.test(candidateKey);
-        const hasColon = candidateKey.includes(':') || candidateKey.includes('：');
-
-        if (candidateLen >= 2 && candidateLen <= 20 && hasLetterOrCjk && !hasColon) {
+        const candidateKey = line.slice(candidateStart, colonIdx).trimEnd();
+        if (isValidKey(candidateKey)) {
             matches.push({
                 keyStart: candidateStart,
                 colonIdx: colonIdx,
@@ -684,6 +693,8 @@ function renderStructuredDetail(rawText, emptyFallback = '—', monoPlain = fals
     const tbody = document.createElement('tbody');
     for (const lineItems of parsedLines) {
         for (const item of lineItems) {
+            // 原文區段之間的空行不渲染：每列有底線，空列會變成一條條無內容的分隔線
+            if (item.type === 'asis' && !(item.text || '').trim()) continue;
             const tr = document.createElement('tr');
             if (item.type === 'section') {
                 tr.className = 'lf-kv-row--section';
