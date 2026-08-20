@@ -654,6 +654,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     使用者顯示名稱為主、完整格式放 title（空間有限）；NetIQ 維護頁更新者維持帳號
     （`NetiqOptions` 是直接回傳的 Core 儲存模型，不為單一欄位重造零加值 DTO 複本）。
 
+13. **一鍵全部展開／收合**：可展開列（`renderTable` 的 `rowDetail`／`onRowExpand`）的表格，
+    若一次要比對多列細節，表格上方給一個全展／全收控制項（`ui.js` 的 `toggleAllTableDetails`，
+    作用範圍為當頁，按鈕文字隨狀態切換）。**只適用於 `rowDetail`（eager，進頁就建好 DOM）的表格**
+    ——它直接操作 DOM，會繞過 `onRowExpand` 的 lazy 填充，lazy 模式的頁面用了會展出空白詳情列。
+
 - **載入失敗的收斂**：骨架列（`renderLoading`）是
   「等一下就會有東西」的承諾，但各頁的 `load()`／`init()` 過去沒有頂層 catch——中途任何一支 API
   失敗或前端例外，骨架列就**永遠**留在畫面上（錯誤 toast 幾秒後消失，使用者看到的是「一直載入」）。
@@ -2079,7 +2084,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
-| `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
+| `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新，不再是各寫各的 key） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
 | `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |
 | `BatchRunStore`（介面已於簡化重構移除） | log `batch_runs`、`batch_run_logs` | 批次 |

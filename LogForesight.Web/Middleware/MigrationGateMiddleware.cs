@@ -3,7 +3,9 @@ using LogForesight.Web.Models;
 namespace LogForesight.Web.Middleware;
 
 /// <summary>
-/// 處理狀態搬移期間擋下**寫入**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+/// 資料搬移期間擋下**寫入**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+/// 目前管兩件事：處理狀態搬移（/api/handling、/api/records）與權限異動搬移
+/// （/api/permission-changes），兩者各看各的遷移狀態。
 ///
 /// **為什麼需要**：遷移改成背景執行之後，站台在搬移進行中就已經可以服務請求。
 /// 若此時使用者標記了一個問題，那筆資料會寫進**還沒搬完**的表——

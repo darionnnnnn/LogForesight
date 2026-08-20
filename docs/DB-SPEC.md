@@ -45,7 +45,7 @@
 ## 資料表設計（欄位級）
 
 設計原則：**每張表都是現有 C# 模型的一比一投影**（`DailyAnalysisRecord`、`LogIssueSignature`、
-`WeeklyCheckupResult`、`PermissionChangeDetail`、深析 `DeepDiveItem`），JSONL→DB 匯入器因此是
+`WeeklyCheckupResult`、`PermissionChangeRecord`、深析 `DeepDiveItem`），JSONL→DB 匯入器因此是
 機械化轉換，不需要任何語意判斷。
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
@@ -280,7 +280,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
   created_at           datetime2 NOT NULL               -- 寫進資料庫的時間（保留期清理用）
   target               nvarchar(512) NOT NULL           -- 資料夾路徑或群組名稱
-  change_type          nvarchar(64) NOT NULL            -- 10 個相異值，見 DETECTION-SPEC
+  change_type          nvarchar(64) NOT NULL            -- 10 個相異值，對應類別見 DETECTION-SPEC「權限異動類別」
   category             nvarchar(64) NOT NULL            -- 類別 key，由 change_type/event_id 純函式推導
   is_privileged_target bit NOT NULL                     -- 加入特權群組＝高風險
   initiator_account    nvarchar(255) NULL               -- 操作者（NetIQ sun 或訊息 Subject 區段）
@@ -290,7 +290,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字
   source               nvarchar(64) NOT NULL            -- '本機監控' | 'NetIQ 事件'
   event_id             int NULL
-  status               nvarchar(30) NOT NULL DEFAULT 'pending'  -- 'pending' | 'authorized' | 'suspicious'
+  status               nvarchar(30) NOT NULL             -- 'pending' | 'authorized' | 'suspicious'（預設值由應用層填，DDL 無 DEFAULT 子句）
   confirmed_by         bigint NULL
   confirmed_by_account nvarchar(255) NULL
   confirmed_at         datetime2 NULL
@@ -390,7 +390,7 @@ lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
 lf_deep_dive_analyses: (record_id)
 lf_record_alerts:  (record_id)
 lf_reports:        (host_id, report_date)
-lf_permission_changes: (confirm_status)、(host_id, detected_at) — pending 待辦清單
+lf_permission_changes: 見上方定義區塊（不在此重列，避免兩份索引清單各自演化）
 lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
