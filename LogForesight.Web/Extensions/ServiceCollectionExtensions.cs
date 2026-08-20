@@ -62,10 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<PermissionChangeStore>(sp =>
-        {
-            var backend = sp.GetRequiredService<StorageBackend>();
-            return new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
-        });
+            sp.GetRequiredService<StorageBackend>().PermissionChanges());
 
         // 規則維護與執行監控
         services.AddSingleton<IKnownIssueRuleStore>(sp => new KnownIssueRuleStore(sp.GetRequiredService<StorageBackend>().Blob("rules")));

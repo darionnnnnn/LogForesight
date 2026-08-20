@@ -155,6 +155,9 @@ public class StorageBackend
 
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
+    /// <summary>權限異動待辦 store（↔ lf_permission_changes）</summary>
+    public PermissionChangeStore PermissionChanges() => new(_dbFactory);
+
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
     /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>

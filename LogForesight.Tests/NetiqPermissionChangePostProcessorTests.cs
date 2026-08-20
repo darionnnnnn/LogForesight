@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -87,7 +87,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 主機日事件含4756_寫出一筆PermissionChangeRecord_欄位對應正確()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-DC01";
         var eventTime = new DateTime(2026, 8, 19, 10, 30, 0);
 
@@ -125,7 +125,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 同一主機日重跑兩次_紀錄不重複()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-APP01";
         var date = new DateTime(2026, 8, 19);
 
@@ -163,7 +163,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 不在集合內的EventId_不產生紀錄()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-SQL01";
         var date = new DateTime(2026, 8, 19);
 
@@ -184,7 +184,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void Linux主機與EventId0_不產生紀錄()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
 
         // Linux 主機，即使有 4756 也應被略過
@@ -208,7 +208,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 異動類型與欄位擷取_各類事件對應正確()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-TEST";
         var date = new DateTime(2026, 8, 19);
 
@@ -282,7 +282,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void Target退路值_擷取不到群組或物件名稱時不留空字串()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
 
         var events = new List<EventLogEntryData>
@@ -317,7 +317,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             State = SentinelJobState.Completed
         };
 
-        var permStore = new PermissionChangeStore(_backend.LogStore("perm_changes"), _backend.Blob("perm_confirms"));
+        var permStore = _backend.PermissionChanges();
         var pipeline = MakePipeline(useAi: false);
 
         var hostList = HostListSelection.FromStore(_hosts, _sentinels);
@@ -339,7 +339,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 同主機日超過上限_只逐則寫前50筆並多一筆彙總()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
         var events = Enumerable.Range(0, 80).Select(i => new EventLogEntryData
         {

@@ -135,7 +135,8 @@
 - **契約**：
   - 新表 `lf_permission_changes`，**一列＝一筆異動且含確認狀態**（不另建確認表）。欄位至少涵蓋：`change_id`（唯一）、`host_name`、`host_name_key`（比照 `lf_issue_handling` 既有正規化鍵慣例）、`detected_at`、`target`、`change_type`、`category`、`is_privileged_target`、`initiator_account`、`target_account`、`before_value`、`after_value`、`alert_text`、`source`、`event_id`、`status`（預設 `pending`）、`confirmed_by`、`confirmed_by_account`、`confirmed_at`、`confirm_note`、`created_at`。
   - 依 `SchemaUpgrader` 既有樣板：冪等 DDL、單一入口 + `isSqlite` 分支、CREATE TABLE SQL 兩份常數（Sqlite `INTEGER … AUTOINCREMENT` vs SqlServer `bigint … IDENTITY`）。
-  - 索引（**暫定**，執行端可依實際查詢計畫調整並記錄）：`change_id` 唯一；`dedupe_key`（寫入去重用）；`(status, detected_at)`；`(detected_at)`；`(host_name_key, detected_at)`；`(category, status)`；`created_at`（保留期清理用）。
+  - 索引：`change_id` 唯一；`(status, detected_at)`；`(detected_at)`；`(host_name_key, detected_at)`；`(category, status)`；`created_at`（保留期清理用，也是 `GetDedupeKeys` 的篩選欄）。
+    **`dedupe_key` 不建索引**（規劃初版寫要建，實作時更正）：沒有任何查詢以它為條件，而它由「主機名(≤255)｜Ticks(19)｜EventId｜AlertText(≤503)」串成、最長約 790 字元，貼著 SQL Server 非叢集索引鍵 1700 bytes（850 nvarchar 字元）的上限。欄位本身**不得設長度上限**——設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。
   - 去重鍵須成為**獨立欄位並建索引**（`dedupe_key`）。現行 `GetDedupeKeys` 註解已載明「逐主機日呼叫在 3000 台規模下會變成數萬次全表掃描」，正規化後**不得保留任何需要整表讀出才能判定去重的路徑**。
   - `PermissionChangeStore` 改走 EF：
     - 寫入端維持既有去重語意（`DedupeKey` 的組成不變），改為以 `dedupe_key` 欄位在 SQL 層判定
@@ -407,7 +408,7 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A-1 | agy | 通過 | 2332 支（2326 綠／6 略過／0 紅），較基準 2288 增 44；建置唯一警告為既有的 `EfIssueAggregateQuery.cs:987`，不在 diff 內。10 個相異 ChangeType 值逐一 grep 確認皆在測資中 | 過度設計 2 處由 Claude 自行移除：① `ResolveCategory()` 是 `Resolve()` 的純別名且零呼叫者；② `IsPrivilegedTarget()` 多一個 optional `category` 參數，可傳入與 `changeType` 互相矛盾的值而靜默回 false。另：agy 移除了 `PermissionChangeRecord.cs` 的 UTF-8 BOM，清點後全專案 447 個 .cs 僅 32 個有 BOM，判定為正規化，保留不復原 |
-| A-2 | | | | |
+| A-2 | agy | 通過 | 2340 支（2334 綠／6 略過／0 紅），較 A-1 後的 2332 增 8；建置警告數不變（仍只有既有的 `EfIssueAggregateQuery.cs:987`）。逐一查證：確認寫入是 `ExecuteUpdate` 帶 `WHERE status=pending` 的單一敘述；`CountPending` 走 SQL COUNT、`Prune` 走 `ExecuteDelete`、`GetDedupeKeys` 只投影單欄，無「先 ToList 再 Where」；三個既有測試檔只改建構 store 的那一行，斷言未動 | **跨 provider 真 bug（Claude 修）**：`dedupe_key` 被宣告 `nvarchar(512)` 並建索引，但該鍵最長約 790 字元。SQLite 的 TEXT 無長度限制故測試全綠，SQL Server 上首筆長告警文字寫入即拋「字串或二進位資料會被截斷」。修法為移除索引並取消長度上限（見 §A-2 索引段的更正），程式碼留註解禁止改回。**此為規劃者自身的錯**：初版把「讓 GetDedupeKeys 不必整表讀出」的理由掛在 `dedupe_key` 索引上，但該查詢真正需要的是 `created_at` 索引 |
 | A-3 | | | | |
 | B-1 | | | | |
 | B-2 | | | | |

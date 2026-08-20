@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -374,7 +374,7 @@ public class AnalysisOrchestrator
                 // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
                 try
                 {
-                    var permissionChangeStore = new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
+                    var permissionChangeStore = backend.PermissionChanges();
                     var detectedAt = DateTime.Now;
 
                     permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
@@ -467,7 +467,7 @@ public class AnalysisOrchestrator
 
                 // 權限異動待辦（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
                 // 跟稽核紀錄同一個保留天數
-                var permPruned = new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"))
+                var permPruned = backend.PermissionChanges()
                     .Prune(retention.AuditRetentionDays);
                 if (permPruned > 0)
                     console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");

@@ -107,7 +107,10 @@ public class PermissionChangeService
             Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim()
         };
 
-        _store.SaveConfirmation(confirmation);
+        if (!_store.SaveConfirmation(confirmation))
+        {
+            throw DomainException.Conflict("這筆權限異動已被其他使用者處理過，請重新整理頁面。");
+        }
 
         _audit.Record(
             action: request.Status == PermissionConfirmStatuses.Authorized

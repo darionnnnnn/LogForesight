@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -119,7 +119,7 @@ public class NetiqPipelineService
         _onlyMissingOrFailed = onlyMissingOrFailed;
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
-        _permissionChangeStore = permissionChangeStore ?? new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
+        _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；

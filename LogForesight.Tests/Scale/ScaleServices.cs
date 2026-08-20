@@ -56,7 +56,7 @@ internal sealed class ScaleServices
             recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress, new FakeIssueAggregateQuery());
 
         var permissionChanges = new PermissionChangeService(
-            new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms")),
+            backend.PermissionChanges(),
             Hosts, Visibility, currentUser, new RecordingAuditService(), users);
 
         var aggregates = backend.IssueAggregateQuery(Hosts);

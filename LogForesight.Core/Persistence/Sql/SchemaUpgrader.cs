@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using NLog;
 using LogForesight.Core.Persistence;
 
@@ -133,6 +133,22 @@ internal static class SchemaUpgrader
             isSqlite ? SqliteCreateIssueFirstSeen : SqlServerCreateIssueFirstSeen);
         // 種子（SeedIssueFirstSeenIfEmpty）已移往背景服務 IssueFirstSeenSeedHostedService。
         // 理由：原本放在啟動路徑上會因為全表掃描而導致 30 秒的 SCM 啟動逾時。
+
+        // 權限異動待辦（↔ lf_permission_changes，含確認狀態）
+        CreateTableIfMissing(ctx, isSqlite, "lf_permission_changes",
+            isSqlite ? SqliteCreatePermissionChanges : SqlServerCreatePermissionChanges);
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_change_id", "change_id", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_status_detected_at", "status, detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_detected_at", "detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_host_detected", "host_name_key, detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_category_status", "category, status");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_created_at", "created_at");
     }
 
 
@@ -429,6 +445,62 @@ internal static class SchemaUpgrader
             source_name nvarchar(255) NOT NULL,
             first_seen datetime2 NOT NULL,
             CONSTRAINT PK_lf_issue_first_seen PRIMARY KEY (source_key, event_id)
+        )
+        """;
+
+    private const string SqliteCreatePermissionChanges = """
+        CREATE TABLE lf_permission_changes (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_permission_changes PRIMARY KEY AUTOINCREMENT,
+            change_id TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            host_name TEXT NOT NULL,
+            host_name_key TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            target TEXT NOT NULL,
+            change_type TEXT NOT NULL,
+            category TEXT NOT NULL,
+            is_privileged_target INTEGER NOT NULL,
+            initiator_account TEXT NULL,
+            target_account TEXT NULL,
+            before_value TEXT NOT NULL,
+            after_value TEXT NOT NULL,
+            alert_text TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_id INTEGER NULL,
+            status TEXT NOT NULL,
+            confirmed_by INTEGER NULL,
+            confirmed_by_account TEXT NULL,
+            confirmed_at TEXT NULL,
+            confirm_note TEXT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePermissionChanges = """
+        CREATE TABLE lf_permission_changes (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_permission_changes PRIMARY KEY,
+            change_id nvarchar(64) NOT NULL,
+            dedupe_key nvarchar(max) NOT NULL,
+            host_name nvarchar(255) NOT NULL,
+            host_name_key nvarchar(255) NOT NULL,
+            detected_at datetime2 NOT NULL,
+            created_at datetime2 NOT NULL,
+            target nvarchar(512) NOT NULL,
+            change_type nvarchar(64) NOT NULL,
+            category nvarchar(64) NOT NULL,
+            is_privileged_target bit NOT NULL,
+            initiator_account nvarchar(255) NULL,
+            target_account nvarchar(255) NULL,
+            before_value nvarchar(max) NOT NULL,
+            after_value nvarchar(max) NOT NULL,
+            alert_text nvarchar(max) NOT NULL,
+            source nvarchar(64) NOT NULL,
+            event_id int NULL,
+            status nvarchar(30) NOT NULL,
+            confirmed_by bigint NULL,
+            confirmed_by_account nvarchar(255) NULL,
+            confirmed_at datetime2 NULL,
+            confirm_note nvarchar(max) NULL
         )
         """;
 
