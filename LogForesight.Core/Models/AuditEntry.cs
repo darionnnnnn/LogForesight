@@ -85,6 +85,7 @@ public static class AuditActions
     // 權限異動確認
     public const string PermConfirmAuthorized = "perm_confirm_authorized";
     public const string PermConfirmSuspicious = "perm_confirm_suspicious";
+    public const string PermConfirmBatch = "perm_confirm_batch";
 
     // 規則
     public const string RuleCreate = "rule_create";

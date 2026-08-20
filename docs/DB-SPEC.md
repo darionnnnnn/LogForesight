@@ -45,7 +45,7 @@
 ## 資料表設計（欄位級）
 
 設計原則：**每張表都是現有 C# 模型的一比一投影**（`DailyAnalysisRecord`、`LogIssueSignature`、
-`WeeklyCheckupResult`、`PermissionChangeDetail`、深析 `DeepDiveItem`），JSONL→DB 匯入器因此是
+`WeeklyCheckupResult`、`PermissionChangeRecord`、深析 `DeepDiveItem`），JSONL→DB 匯入器因此是
 機械化轉換，不需要任何語意判斷。
 
 ### 主機與授權（Web「只看自己負責的主機」的基礎）
@@ -271,25 +271,58 @@ lf_weekly_checkups                                   -- ↔ WeeklyCheckupResult
   report_id      bigint NULL FK → lf_reports
   UNIQUE (host_id, checkup_date)
 
-lf_permission_changes                                -- ↔ PermissionChangeDetail ＋ Web 化的人工確認流程
-  change_id      bigint PK
-  host_id        bigint FK → lf_hosts NOT NULL
-  detected_at    timestamp NOT NULL
-  target         nvarchar(1000) NOT NULL          -- 資料夾路徑或群組名稱
-  change_type    nvarchar(50) NOT NULL            -- 成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取
-  before_state   text
-  after_state    text
-  source         nvarchar(20) NOT NULL DEFAULT '本機監控'  -- '本機監控' | 'NetIQ 事件'（缺欄視為本機監控）
-  event_id       int NULL                          -- NetIQ 事件來源才有，供去重鍵
-  confirm_status nvarchar(20) NOT NULL DEFAULT 'pending'  -- 'pending' | 'authorized' | 'suspicious'
-  confirmed_by   bigint NULL FK → lf_users
-  confirmed_at   timestamp NULL
-  confirm_note   nvarchar(500) NULL
+lf_permission_changes                                -- ↔ PermissionChangeRecord ＋ 人工確認狀態（同一列）
+  id                   bigint PK IDENTITY
+  change_id            nvarchar(64) NOT NULL            -- GUID("N")，對外識別用；唯一性由下方索引保證（DDL 無 UNIQUE 子句）
+  dedupe_key           nvarchar(max) NOT NULL           -- 主機|事件時間Ticks|EventId|告警文字
+  host_name            nvarchar(255) NOT NULL           -- 非正規化字串，不是 FK
+  host_name_key        nvarchar(255) NOT NULL           -- 不分大小寫比對用的正規化鍵
+  detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
+  created_at           datetime2 NOT NULL               -- 寫進資料庫的時間（保留期清理用）
+  target               nvarchar(max) NOT NULL           -- 資料夾路徑或群組名稱（不得設長度上限：Windows 長路徑輕易超過 512，SQLite 測不出、SQL Server 會截斷）
+  change_type          nvarchar(64) NOT NULL            -- 10 個相異值，對應類別見 DETECTION-SPEC「權限異動類別」
+  category             nvarchar(64) NOT NULL            -- 類別 key，由 change_type/event_id 純函式推導
+  is_privileged_target bit NOT NULL                     -- 加入特權群組＝高風險
+  initiator_account    nvarchar(255) NULL               -- 操作者（NetIQ sun 或訊息 Subject 區段）
+  target_account       nvarchar(255) NULL               -- 被異動的成員／目標帳號
+  before_value         nvarchar(max) NOT NULL
+  after_value          nvarchar(max) NOT NULL
+  alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字
+  source               nvarchar(64) NOT NULL            -- '本機監控' | 'NetIQ 事件'
+  event_id             int NULL
+  status               nvarchar(30) NOT NULL             -- 'pending' | 'authorized' | 'suspicious'（預設值由應用層填，DDL 無 DEFAULT 子句）
+  confirmed_by         bigint NULL
+  confirmed_by_account nvarchar(255) NULL
+  confirmed_at         datetime2 NULL
+  confirm_note         nvarchar(max) NULL
+
+索引：change_id 唯一；(status, detected_at)；detected_at；(host_name_key, detected_at)；
+      (category, status)；created_at
 ```
 
-`confirm_status` 是把現有「被異動項目明細（人工防護層）」搬上 Web 的自然延伸：
-現在使用者只能看報告檔逐項自問「這是授權操作嗎」，上 Web 後可以逐筆點掉（authorized）
-或標記可疑（suspicious），**pending 清單本身就是待辦事項**，比 txt 報告可追蹤得多。
+**確認狀態與異動同列，不另建表。** 三個理由：狀態要能在 SQL 端篩選；批次核准要能做成
+單一 `UPDATE … WHERE change_id IN (…) AND status='pending'` 的原子操作；確認若存在獨立的
+整份讀改寫容器，兩人同時確認會後寫覆蓋先寫，使用者收不到任何提示。
+
+**`detected_at` 與 `created_at` 不可互相取代。** 排序與時間篩選用 `detected_at`；保留期清理
+用 `created_at`。反例：NetIQ 重跑一個 100 天前的主機日，寫出的列 `detected_at` 是 100 天前、
+`created_at` 是現在——依 `detected_at` 清理的話這批剛補出來的待辦會立刻消失。**不要改回去。**
+
+**`dedupe_key` 不設長度上限也不建索引。** 它由「主機名(≤255)｜Ticks(19)｜EventId｜
+AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不
+出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」；而 SQL Server 非叢集索引鍵
+上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。沒有任何查詢以
+它為條件（`GetDedupeKeys` 是依 `created_at` 篩選後投影這一欄），索引不存在也不影響效能。
+
+**升級路徑**：舊部署的資料在 log key `perm_changes`（JSONL）與 blob key `perm_confirms`，
+由 `PermissionChangeMigrator` 背景搬移。它有**自己的**遷移狀態（blob key
+`permission_change_migration`），刻意不併進 `HandlingBlobMigrator`——既有部署的處理狀態遷移
+早已是 `Completed`，而 `Evaluate()` 對 `Completed` 直接短路，併進去就永遠不會執行。
+遷移期間 `MigrationGateMiddleware` 擋下 `/api/permission-changes` 的非 GET 請求（GET 放行）。
+重入保護是**逐筆比對 `change_id`**，不是「表裡有資料就整批跳過」——遷移閘門只擋得住 HTTP 寫入，
+而背景排程的分析流程也會寫這張表，夜間分析先寫進一列就會讓整批舊資料被誤判成已搬而永久消失。
+`HandlingBlobMigrator` 的三張表情況相同（`AnalysisOrchestrator` 讓夜間分析直接寫），同樣採
+逐筆比對自然鍵。舊 log 與舊 blob **不刪**，保留為備份。
 
 ### 報告全文（人看的完整內容，與結構化資料並存的第二層）
 
@@ -358,7 +391,7 @@ lf_record_handling: UNIQUE(host_name_key, record_date)；(handler_id)；(status)
 lf_deep_dive_analyses: (record_id)
 lf_record_alerts:  (record_id)
 lf_reports:        (host_id, report_date)
-lf_permission_changes: (confirm_status)、(host_id, detected_at) — pending 待辦清單
+lf_permission_changes: 見上方定義區塊（不在此重列，避免兩份索引清單各自演化）
 lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
@@ -372,7 +405,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 |---|---|---|
 | `RetentionDays` | 120 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
 | `DetailRetentionDays` | 120 | `lf_daily_records.content_json`（風險日詳情的原始樣本訊息）——**只清內容、整列保留** |
-| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）** |
+| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，見其定義區塊） |
 | `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
 
@@ -447,7 +480,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | 風險日的處理歷程 | `lf_record_handling_log` WHERE record_id ORDER BY created_at（指派→查修→結案的完整敘事） |
 | 單一主機風險時間軸 | `lf_daily_records` WHERE host_id + 日期範圍，點開某天載入 `lf_top_issues`/`lf_record_alerts`/`lf_deep_dive_analyses` |
 | **看完整報告（畫面直接顯示）** | `lf_daily_records.report_id` → `lf_reports.content`（純文字含框線符號，前端以等寬字型/`<pre>` 呈現即可，不需轉換） |
-| 權限異動待辦 | `lf_permission_changes` WHERE confirm_status='pending'（授權範圍內的主機） |
+| 權限異動待辦 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
 | 跨主機同類問題（管理員） | `lf_top_issues` WHERE event_id=153 join `lf_daily_records`/`lf_hosts`，依日期分布 |
 | 週體檢發現 | `lf_weekly_checkups` WHERE has_findings=1 |
 

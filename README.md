@@ -28,7 +28,8 @@ LogForesight.Core/     Web 共用的類別庫（原批次與 Web 共用，批次
 
 LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC，.NET 8）：
 │                       排程設定＋立即執行（AnalysisOrchestrator 的呼叫端）、儀表板、問題查詢、
-│                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動逐筆確認、
+│                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動待辦
+│                       （表格＋篩選/排序/分頁，可依類別批次核准，見 docs/WEB-SPEC.md §9.5）、
 │                       規則維護（builtin 可改可回復不可刪）、告警抑制（規則/簽章/關聯/總量四型；
 │                       規則型支援主機/群組/全站三種範圍，其餘三型僅單台主機，見 docs/RULES-SPEC.md
 │                       範圍矩陣）、CSV／NetIQ 掃描匯入、執行監控、操作稽核、
@@ -317,7 +318,7 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 
 ### 運作方式
 
-快照存於執行檔目錄的 `permission_snapshot.json`，每次執行讀取目前狀態、與快照比對出異動、
+快照存於資料庫（blob key `permission_snapshot`），每次執行讀取目前狀態、與快照比對出異動、
 再覆寫快照。首次執行沒有快照可比對，只建立基準、不產生告警。
 
 發現異動時「排程作業」頁的執行輸出會標示明顯的異動警示（與風險等級的紅/黃色徽章區隔），

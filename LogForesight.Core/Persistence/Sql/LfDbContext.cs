@@ -55,6 +55,9 @@ public class LfDbContext : DbContext
     /// 也不受（未來的）保留期修剪——見 <see cref="IssueFirstSeenRow"/> 類別註解。</summary>
     public DbSet<IssueFirstSeenRow> IssueFirstSeen => Set<IssueFirstSeenRow>();
 
+    /// <summary>權限異動待辦（↔ lf_permission_changes，含確認狀態）</summary>
+    public DbSet<PermissionChangeRow> PermissionChanges => Set<PermissionChangeRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -291,6 +294,51 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId });
             e.HasIndex(x => x.Date);
         });
+
+        b.Entity<PermissionChangeRow>(e =>
+        {
+            e.ToTable("lf_permission_changes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.ChangeId).HasColumnName("change_id").HasMaxLength(64);
+            // 去重鍵刻意不設長度上限：它由「主機名(≤255)｜Ticks(19)｜EventId｜AlertText(≤503)」串成，
+            // 最長可達約 790 字元。設成 nvarchar(512) 在 SQLite 上（TEXT 無長度）測不出來，
+            // 到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。不要改回加長度。
+            e.Property(x => x.DedupeKey).HasColumnName("dedupe_key");
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.DetectedAt).HasColumnName("detected_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            // Target 直接來自事件訊息的 Object Name／Group Name，Windows 長路徑（\?\ 前綴、
+            // 深層 UNC 分享）輕易超過 512 字元。設長度上限在 SQLite（TEXT 無長度）測不出來，
+            // 到 SQL Server 會變成寫入時截斷例外，讓整批夜間分析的權限異動寫入失敗。
+            // 它沒有索引，不設上限沒有代價。
+            e.Property(x => x.Target).HasColumnName("target");
+            e.Property(x => x.ChangeType).HasColumnName("change_type").HasMaxLength(64);
+            e.Property(x => x.Category).HasColumnName("category").HasMaxLength(64);
+            e.Property(x => x.IsPrivilegedTarget).HasColumnName("is_privileged_target");
+            e.Property(x => x.InitiatorAccount).HasColumnName("initiator_account").HasMaxLength(255);
+            e.Property(x => x.TargetAccount).HasColumnName("target_account").HasMaxLength(255);
+            e.Property(x => x.BeforeValue).HasColumnName("before_value");
+            e.Property(x => x.AfterValue).HasColumnName("after_value");
+            e.Property(x => x.AlertText).HasColumnName("alert_text");
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(64);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.ConfirmedBy).HasColumnName("confirmed_by");
+            e.Property(x => x.ConfirmedByAccount).HasColumnName("confirmed_by_account").HasMaxLength(255);
+            e.Property(x => x.ConfirmedAt).HasColumnName("confirmed_at");
+            e.Property(x => x.ConfirmNote).HasColumnName("confirm_note");
+
+            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeys 是依 created_at 篩選後
+            // 投影這一欄），而它又長到不適合當索引鍵。
+            e.HasIndex(x => x.ChangeId).IsUnique();
+            e.HasIndex(x => new { x.Status, x.DetectedAt });
+            e.HasIndex(x => x.DetectedAt);
+            e.HasIndex(x => new { x.HostNameKey, x.DetectedAt });
+            e.HasIndex(x => new { x.Category, x.Status });
+            e.HasIndex(x => x.CreatedAt);
+        });
     }
 }
 
@@ -492,3 +540,32 @@ public class LogLineRow
     /// <summary>插入時間；schema 升級前寫入的既存列為 null（見 <see cref="SchemaUpgrader"/>）</summary>
     public DateTime? CreatedAt { get; set; }
 }
+
+/// <summary>權限異動待辦一列（含人工確認狀態）。↔ lf_permission_changes</summary>
+public class PermissionChangeRow
+{
+    public long Id { get; set; }
+    public string ChangeId { get; set; } = string.Empty;
+    public string DedupeKey { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime DetectedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string Target { get; set; } = string.Empty;
+    public string ChangeType { get; set; } = string.Empty;
+    public string Category { get; set; } = "other";
+    public bool IsPrivilegedTarget { get; set; }
+    public string? InitiatorAccount { get; set; }
+    public string? TargetAccount { get; set; }
+    public string BeforeValue { get; set; } = string.Empty;
+    public string AfterValue { get; set; } = string.Empty;
+    public string AlertText { get; set; } = string.Empty;
+    public string Source { get; set; } = "本機監控";
+    public int? EventId { get; set; }
+    public string Status { get; set; } = "pending";
+    public long? ConfirmedBy { get; set; }
+    public string? ConfirmedByAccount { get; set; }
+    public DateTime? ConfirmedAt { get; set; }
+    public string? ConfirmNote { get; set; }
+}
+

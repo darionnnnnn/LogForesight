@@ -64,6 +64,9 @@ internal static class SentinelEventMapper
             message = fields.GetValueOrDefault(SentinelFieldMap.EventName, string.Empty);
         }
 
+        var initiator = fields.GetValueOrDefault(SentinelFieldMap.InitiatorAccount);
+        var initiatorAccount = string.IsNullOrWhiteSpace(initiator) ? null : initiator;
+
         return new EventLogEntryData
         {
             // dt 是 UTC；轉本機時區（部署環境固定為 Asia/Taipei，estz 欄位佐證）與既有
@@ -77,7 +80,8 @@ internal static class SentinelEventMapper
             EventId = eventId,
             // InstanceId 只在 classic API 相容情境使用（history.txt 舊格式），Sentinel 路徑沒有
             // Qualifiers 概念，直接等於 EventId（同 EventRecordMapper 對此欄位的「僅相容性保留」定位）
-            InstanceId = eventId
+            InstanceId = eventId,
+            InitiatorAccount = initiatorAccount
         };
     }
 

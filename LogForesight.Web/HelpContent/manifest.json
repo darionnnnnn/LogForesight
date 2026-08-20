@@ -28,7 +28,7 @@
       "keywords": ["主機", "主機群組", "群組", "負責人", "NetIQ", "Sentinel", "掃描", "作業系統", "Windows", "Linux"],
       "related": ["permissions", "imports"] },
     { "id": "permissions", "title": "授權與角色", "file": "09-permissions.md", "icon": "diagram-3",
-      "keywords": ["授權", "角色", "能力", "Capability", "user", "dev", "manager", "admin", "群組授權", "權限異動", "問題負責人"],
+      "keywords": ["授權", "角色", "能力", "Capability", "user", "dev", "manager", "admin", "群組授權", "權限異動", "權限異動待辦", "批次核准", "網段", "類別", "高風險", "問題負責人"],
       "related": ["hosts", "handling"] },
     { "id": "scheduler", "title": "排程作業", "file": "10-scheduler.md", "icon": "activity",
       "keywords": ["排程", "排程作業", "立即執行", "只補跑失敗", "補跑", "略過已完成", "AI待補", "執行窗口", "執行監控", "回補", "缺漏日", "分析本機主機", "本機分析"],

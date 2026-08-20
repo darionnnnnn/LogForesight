@@ -263,6 +263,35 @@ docs/archive/HISTORY.md #1）。
 > （可能是入侵者提權得手後清除操作紀錄）。這些事件都需要 Security log 讀取權限；
 > 若無法以系統管理員權限執行，改用下方「權限/角色異動監控」章節的機制。
 
+#### 權限異動類別（兩來源共用的分類層）
+
+寫進「權限異動待辦」的每一筆都帶一個**類別 key**，由 `change_type` 與 EventId 以純函式推導
+（`PermissionCategory.Resolve`，純函式是為了讓舊資料能在遷移時離線重算）。`change_type`
+共 10 個相異值、兩個來源，其中「成員新增」「成員移除」兩個值兩來源共用：
+
+| 類別 key | 中文標籤 | 涵蓋的 change_type |
+|---|---|---|
+| `group_member` | 群組成員異動 | 成員新增、成員移除（NetIQ 4728/4732/4756、4729/4733/4757；本機 Administrators 群組） |
+| `folder_acl` | 資料夾權限異動 | 權限新增（ACL 規則）、權限移除（ACL 規則）、權限變更（4670） |
+| `owner_change` | 擁有者變更 | 擁有者變更 |
+| `folder_access` | 資料夾存取狀態 | 無法存取、恢復可存取 |
+| `audit_policy` | 稽核政策變更 | 稽核政策變更（4717／4718／4719／4907） |
+| `summary` | 權限異動彙總 | 權限異動（彙總）——同一主機日逐則超過 50 筆時的彙總列 |
+| `other` | 其他 | 推導不出對應類別時的退路，恆非空 |
+
+另有 `is_privileged_target` 旗標：類別為 `group_member`、`change_type` 是「成員新增」、
+且對象命中特權群組關鍵字（Administrators、Domain Admins、Enterprise Admins、Schema Admins、
+Account Operators、Backup Operators、本機 Administrators 群組，不分大小寫）時為真。
+只標「加入」不標「移除」——這個旗標的用途是提示提權。
+
+**稽核政策類事件的異動前後值**：4717／4718 取被授予／移除的存取權，4719 取政策類別與子類別
+（有變更內容時附上），4907 取物件 SACL 的前後值（取不到退回變更內容）。抽不到時一律填
+「（訊息未提供）」而**不是空字串**——空字串在畫面上與「沒有異動」無法區分。
+
+**操作者與目標帳號分開擷取**：操作者取 NetIQ 的 `sun` 欄位，沒有時退而取訊息 `Subject`／
+「主體」區段的帳戶名稱；目標帳號只取 `Member`／「成員」區段。剖析是**分區段**的——
+`Subject` 與 `Member` 各自獨立，操作者在結構上不可能流進成員欄位。
+
 #### 惡意程式與防護狀態（Microsoft Defender Operational 頻道，經 EventLogReader 讀取）
 
 | 來源 | Event ID | 意義 | 嚴重度 |

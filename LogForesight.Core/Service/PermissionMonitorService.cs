@@ -1,6 +1,7 @@
 using System.DirectoryServices.AccountManagement;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using LogForesight.Core.Models;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -12,6 +13,10 @@ internal class PermissionChangeDetail
     public string ChangeType { get; init; } = string.Empty;  // 成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取
     public string Before { get; init; } = string.Empty;
     public string After { get; init; } = string.Empty;
+    public string Category { get; init; } = PermissionCategory.Other;
+    public bool IsPrivilegedTarget { get; init; }
+    public string? InitiatorAccount { get; init; }
+    public string? TargetAccount { get; init; }
 }
 
 /// <summary>權限檢查結果：告警行（自動檢查用）＋異動明細（人工確認用），兩者一一對應</summary>
@@ -86,7 +91,11 @@ internal class PermissionMonitorService
                         Target = "本機 Administrators 群組",
                         ChangeType = "成員新增",
                         Before = "（不在群組中）",
-                        After = member
+                        After = member,
+                        Category = PermissionCategory.Resolve("成員新增"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget("本機 Administrators 群組", "成員新增"),
+                        InitiatorAccount = null,
+                        TargetAccount = member
                     });
             }
             foreach (var member in removed)
@@ -97,7 +106,11 @@ internal class PermissionMonitorService
                         Target = "本機 Administrators 群組",
                         ChangeType = "成員移除",
                         Before = member,
-                        After = "（已移出群組）"
+                        After = "（已移出群組）",
+                        Category = PermissionCategory.Resolve("成員移除"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget("本機 Administrators 群組", "成員移除"),
+                        InitiatorAccount = null,
+                        TargetAccount = member
                     });
             }
         }
@@ -119,8 +132,14 @@ internal class PermissionMonitorService
                 result.Add($"【異常】資料夾變成無法存取：{path}（可能已被刪除，或權限被鎖死以阻擋存取／掩蓋內容）",
                     new PermissionChangeDetail
                     {
-                        Target = path, ChangeType = "無法存取",
-                        Before = "可正常存取", After = "無法存取（可能已刪除或權限被鎖死）"
+                        Target = path,
+                        ChangeType = "無法存取",
+                        Before = "可正常存取",
+                        After = "無法存取（可能已刪除或權限被鎖死）",
+                        Category = PermissionCategory.Resolve("無法存取"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(path, "無法存取"),
+                        InitiatorAccount = null,
+                        TargetAccount = null
                     });
                 continue;
             }
@@ -129,8 +148,14 @@ internal class PermissionMonitorService
                 result.Add($"【狀態變更】資料夾恢復可存取：{path}",
                     new PermissionChangeDetail
                     {
-                        Target = path, ChangeType = "恢復可存取",
-                        Before = "無法存取", After = "可正常存取"
+                        Target = path,
+                        ChangeType = "恢復可存取",
+                        Before = "無法存取",
+                        After = "可正常存取",
+                        Category = PermissionCategory.Resolve("恢復可存取"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(path, "恢復可存取"),
+                        InitiatorAccount = null,
+                        TargetAccount = null
                     });
             }
             if (!before.Accessible || !after.Accessible)
@@ -143,8 +168,14 @@ internal class PermissionMonitorService
                 result.Add($"【擁有者變更】{path} 的擁有者由「{before.Owner}」變更為「{after.Owner}」",
                     new PermissionChangeDetail
                     {
-                        Target = path, ChangeType = "擁有者變更",
-                        Before = before.Owner ?? "（未知）", After = after.Owner ?? "（未知）"
+                        Target = path,
+                        ChangeType = "擁有者變更",
+                        Before = before.Owner ?? "（未知）",
+                        After = after.Owner ?? "（未知）",
+                        Category = PermissionCategory.Resolve("擁有者變更"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(path, "擁有者變更"),
+                        InitiatorAccount = null,
+                        TargetAccount = null
                     });
             }
 
@@ -153,8 +184,14 @@ internal class PermissionMonitorService
                 result.Add($"【權限新增】{path}：{rule}",
                     new PermissionChangeDetail
                     {
-                        Target = path, ChangeType = "權限新增（ACL 規則）",
-                        Before = "（無此規則）", After = rule
+                        Target = path,
+                        ChangeType = "權限新增（ACL 規則）",
+                        Before = "（無此規則）",
+                        After = rule,
+                        Category = PermissionCategory.Resolve("權限新增（ACL 規則）"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(path, "權限新增（ACL 規則）"),
+                        InitiatorAccount = null,
+                        TargetAccount = null
                     });
             }
             foreach (var rule in before.Rules.Except(after.Rules))
@@ -162,8 +199,14 @@ internal class PermissionMonitorService
                 result.Add($"【權限移除】{path}：{rule}",
                     new PermissionChangeDetail
                     {
-                        Target = path, ChangeType = "權限移除（ACL 規則）",
-                        Before = rule, After = "（已移除）"
+                        Target = path,
+                        ChangeType = "權限移除（ACL 規則）",
+                        Before = rule,
+                        After = "（已移除）",
+                        Category = PermissionCategory.Resolve("權限移除（ACL 規則）"),
+                        IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(path, "權限移除（ACL 規則）"),
+                        InitiatorAccount = null,
+                        TargetAccount = null
                     });
             }
         }

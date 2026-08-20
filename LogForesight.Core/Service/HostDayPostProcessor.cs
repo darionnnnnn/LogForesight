@@ -1,4 +1,4 @@
-﻿using LogForesight.Core.Models;
+using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using System.Collections.Concurrent;
 using NLog;
@@ -182,17 +182,22 @@ public static class HostDayPostProcessor
                     continue;
                 }
 
-                var (target, before, after) = ExtractPermissionDetails(evt, changeType);
+                var details = PermissionChangeExtractor.Extract(
+                    evt.Message, changeType, evt.EventId, evt.Source, evt.InitiatorAccount);
 
                 recordsToAppend.Add(new PermissionChangeRecord
                 {
                     ChangeId = Guid.NewGuid().ToString("N"),
                     HostName = hostName,
                     DetectedAt = evt.TimeGenerated,
-                    Target = target,
+                    Target = details.Target,
                     ChangeType = changeType,
-                    Before = before,
-                    After = after,
+                    Category = PermissionCategory.Resolve(changeType, evt.EventId),
+                    IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(details.Target, changeType),
+                    InitiatorAccount = details.InitiatorAccount,
+                    TargetAccount = details.TargetAccount,
+                    Before = details.Before,
+                    After = details.After,
                     AlertText = alertText,
                     Source = PermissionChangeSources.Netiq,
                     EventId = evt.EventId
@@ -214,6 +219,10 @@ public static class HostDayPostProcessor
                         DetectedAt = date.Date,
                         Target = $"{hostName}（彙總）",
                         ChangeType = "權限異動（彙總）",
+                        Category = PermissionCategory.Resolve("權限異動（彙總）", 0),
+                        IsPrivilegedTarget = false,
+                        InitiatorAccount = null,
+                        TargetAccount = null,
                         Before = string.Empty,
                         After = string.Empty,
                         AlertText = summaryText,
@@ -233,81 +242,6 @@ public static class HostDayPostProcessor
         {
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動待辦寫入失敗（不影響分析結果）", logContext, date);
         }
-    }
-
-    private static (string Target, string Before, string After) ExtractPermissionDetails(EventLogEntryData evt, string changeType)
-    {
-        var message = evt.Message ?? string.Empty;
-        var lines = message.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-
-        string? target = null;
-        string? memberName = null;
-        string? originalSecDesc = null;
-        string? newSecDesc = null;
-
-        foreach (var rawLine in lines)
-        {
-            var line = rawLine.Trim();
-            if (target == null)
-            {
-                target = TryExtractValue(line, "Group Name:", "群組名稱:", "群組名稱：", "Object Name:", "物件名稱:", "物件名稱：", "Target Account:", "目標帳戶:", "目標帳戶：");
-            }
-            if (memberName == null)
-            {
-                memberName = TryExtractValue(line, "Member Name:", "成員名稱:", "成員名稱：", "Account Name:", "帳戶名稱:", "帳戶名稱：");
-            }
-            if (originalSecDesc == null)
-            {
-                originalSecDesc = TryExtractValue(line, "Original Security Descriptor:", "原始安全性描述元:", "原始安全性描述元：");
-            }
-            if (newSecDesc == null)
-            {
-                newSecDesc = TryExtractValue(line, "New Security Descriptor:", "新的安全性描述元:", "新的安全性描述元：");
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(target))
-        {
-            target = string.IsNullOrWhiteSpace(evt.Source)
-                ? $"Event {evt.EventId}"
-                : $"{evt.Source} (EventId {evt.EventId})";
-        }
-
-        string before = string.Empty;
-        string after = string.Empty;
-
-        if (changeType == "成員新增")
-        {
-            before = "（不在群組中）";
-            after = memberName ?? string.Empty;
-        }
-        else if (changeType == "成員移除")
-        {
-            before = memberName ?? string.Empty;
-            after = "（已移出群組）";
-        }
-        else if (changeType == "權限變更")
-        {
-            before = originalSecDesc ?? string.Empty;
-            after = newSecDesc ?? string.Empty;
-        }
-
-        return (target, before, after);
-    }
-
-    private static string? TryExtractValue(string line, params string[] prefixes)
-    {
-        foreach (var prefix in prefixes)
-        {
-            var idx = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
-            {
-                var val = line[(idx + prefix.Length)..].Trim();
-                if (!string.IsNullOrEmpty(val) && val != "-")
-                    return val;
-            }
-        }
-        return null;
     }
 
     /// <summary>

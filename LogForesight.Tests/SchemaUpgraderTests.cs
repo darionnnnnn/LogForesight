@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.Sqlite;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -275,6 +275,60 @@ public class SchemaUpgraderTests : IDisposable
             var row = ctx.IssueFirstSeen.Single();
             Assert.Equal("disk", row.SourceName);
             Assert.Equal(new DateTime(2026, 1, 1), row.FirstSeen);
+        }
+    }
+
+    /// <summary>lf_permission_changes 是全新的表，連線上完全沒有任何表時也要由 SchemaUpgrader 建得起來且可讀寫</summary>
+    [Fact]
+    public void 空連線升級後_lf_permission_changes表存在且可讀寫()
+    {
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        var now = new DateTime(2026, 8, 20, 10, 0, 0);
+        using (var ctx = NewContext())
+        {
+            ctx.PermissionChanges.Add(new PermissionChangeRow
+            {
+                ChangeId = "test-change-id-1",
+                DedupeKey = "HOST-01|12345678|4728|alert",
+                HostName = "HOST-01",
+                HostNameKey = "HOST-01",
+                DetectedAt = now,
+                CreatedAt = now,
+                Target = "本機 Administrators 群組",
+                ChangeType = "成員新增",
+                Category = "group_member",
+                IsPrivilegedTarget = true,
+                InitiatorAccount = "admin",
+                TargetAccount = "user1",
+                BeforeValue = "（不在群組中）",
+                AfterValue = "user1",
+                AlertText = "成員新增告警",
+                Source = "本機監控",
+                EventId = 4728,
+                Status = "pending",
+                ConfirmedBy = 1,
+                ConfirmedByAccount = "auditor",
+                ConfirmedAt = now,
+                ConfirmNote = "確認備註"
+            });
+            ctx.SaveChanges();
+        }
+
+        using (var ctx = NewContext())
+        {
+            var row = ctx.PermissionChanges.Single();
+            Assert.Equal("test-change-id-1", row.ChangeId);
+            Assert.Equal("group_member", row.Category);
+            Assert.True(row.IsPrivilegedTarget);
+            Assert.Equal("pending", row.Status);
+            Assert.Equal("admin", row.InitiatorAccount);
+            Assert.Equal("user1", row.TargetAccount);
+            Assert.Equal("auditor", row.ConfirmedByAccount);
+            Assert.Equal("確認備註", row.ConfirmNote);
         }
     }
 

@@ -1,14 +1,11 @@
-﻿namespace LogForesight.Core.Models;
+namespace LogForesight.Core.Models;
 
 /// <summary>
-/// 權限異動的結構化紀錄（↔ lf_permission_changes）。
+/// 權限異動的結構化紀錄（↔ lf_permission_changes，異動與確認狀態同一列，
+/// 見 docs/DB-SPEC.md）。分析端寫異動、Web 端以條件式原子更新寫確認狀態。
 ///
-/// **雙軌寫入**（docs/WEB-SPEC.md §2.1 Phase 3）：批次的既有 console 告警與
-/// export txt 報告照舊，另外把每一筆異動明細寫成結構化資料供 Web 的待辦頁使用。
-/// 沒有這一軌，權限異動待辦頁在 JSONL 前期就沒有任何資料可顯示。
-///
-/// <see cref="ChangeId"/> 用 GUID 而不是遞增數字：批次與 Web 分別寫入不同檔案
-/// （異動由批次寫、確認狀態由 Web 寫），沒有共用的序號來源。
+/// <see cref="ChangeId"/> 用 GUID 而不是資料表的自增主鍵：它是對外（API 路由、
+/// 稽核 targetId、批次請求）的識別，不能隨資料表重建而改變。
 /// </summary>
 public class PermissionChangeRecord
 {
@@ -21,7 +18,11 @@ public class PermissionChangeRecord
     /// <summary>資料夾路徑或群組名稱</summary>
     public string Target { get; set; } = string.Empty;
 
-    /// <summary>成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取</summary>
+    /// <summary>
+    /// 異動類型（共 10 個相異值）。
+    /// NetIQ 事件來源：成員新增、成員移除、權限變更、稽核政策變更、權限異動（彙總）。
+    /// 本機監控來源：成員新增、成員移除、無法存取、恢復可存取、擁有者變更、權限新增（ACL 規則）、權限移除（ACL 規則）。
+    /// </summary>
     public string ChangeType { get; set; } = string.Empty;
 
     public string Before { get; set; } = string.Empty;
@@ -36,6 +37,18 @@ public class PermissionChangeRecord
 
     /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
     public int? EventId { get; set; }
+
+    /// <summary>類別 key（永遠非空，預設為 other）</summary>
+    public string Category { get; set; } = PermissionCategory.Other;
+
+    /// <summary>是否為高風險（特權群組）異動，預設 false</summary>
+    public bool IsPrivilegedTarget { get; set; }
+
+    /// <summary>操作者帳號（由後續作業負責填入）</summary>
+    public string? InitiatorAccount { get; set; }
+
+    /// <summary>被異動的目標帳號／成員（由後續作業負責填入）</summary>
+    public string? TargetAccount { get; set; }
 
     /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
     public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>

@@ -62,10 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
         services.AddSingleton<PermissionChangeStore>(sp =>
-        {
-            var backend = sp.GetRequiredService<StorageBackend>();
-            return new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
-        });
+            sp.GetRequiredService<StorageBackend>().PermissionChanges());
 
         // 規則維護與執行監控
         services.AddSingleton<IKnownIssueRuleStore>(sp => new KnownIssueRuleStore(sp.GetRequiredService<StorageBackend>().Blob("rules")));
@@ -341,6 +338,7 @@ public static class ServiceCollectionExtensions
         // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
         // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
         services.AddHostedService<HandlingMigrationHostedService>();
+        services.AddHostedService<PermissionChangeMigrationHostedService>();
 
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務

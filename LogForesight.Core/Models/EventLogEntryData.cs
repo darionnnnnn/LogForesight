@@ -19,4 +19,7 @@ public class EventLogEntryData
 
     /// <summary>傳統 Event ID（InstanceId 的低 16 位元），文件與規則表都以此為準</summary>
     public int EventId { get; set; }
+
+    /// <summary>發起這個操作的帳號（NetIQ sun 欄位）。非 NetIQ 來源與 Linux 路徑為 null。</summary>
+    public string? InitiatorAccount { get; set; }
 }

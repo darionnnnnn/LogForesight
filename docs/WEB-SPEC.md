@@ -654,6 +654,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
     使用者顯示名稱為主、完整格式放 title（空間有限）；NetIQ 維護頁更新者維持帳號
     （`NetiqOptions` 是直接回傳的 Core 儲存模型，不為單一欄位重造零加值 DTO 複本）。
 
+13. **一鍵全部展開／收合**：可展開列（`renderTable` 的 `rowDetail`／`onRowExpand`）的表格，
+    若一次要比對多列細節，表格上方給一個全展／全收控制項（`ui.js` 的 `toggleAllTableDetails`，
+    作用範圍為當頁，按鈕文字隨狀態切換）。**只適用於 `rowDetail`（eager，進頁就建好 DOM）的表格**
+    ——它直接操作 DOM，會繞過 `onRowExpand` 的 lazy 填充，lazy 模式的頁面用了會展出空白詳情列。
+
 - **載入失敗的收斂**：骨架列（`renderLoading`）是
   「等一下就會有東西」的承諾，但各頁的 `load()`／`init()` 過去沒有頂層 catch——中途任何一支 API
   失敗或前端例外，骨架列就**永遠**留在畫面上（錯誤 toast 幾秒後消失，使用者看到的是「一直載入」）。
@@ -1219,13 +1224,43 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
-- pending 清單（對象/類型/前後對照），逐筆「確認為授權操作」/「標記可疑」＋備註；已處理頁籤可查歷史。
+- **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／選取（勾選欄，
+  依 §8.6 第 6 條不排第一欄——展開箭頭固定插在首欄）／主機 (IP)／帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
+  EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。
+  表格上方有一鍵全部展開／收合（作用範圍為當頁）。
+- 「主機 (IP)」的 IP 取自主機主檔 `WebHost.IpAddress`，取不到且主機名本身是 IP 時用主機名
+  （NetIQ 主機常如此），都沒有就不顯示括號。**不存 IP 快照**——IP 會變，顯示最新的才合理。
+- 「帳號」兩行：操作者與目標帳號。缺值顯示「—」，**不猜、不填假值**。
+- 「異動說明」是後端產生的 `SummaryText`；類別中文標籤是後端的 `CategoryLabel`。
+  **前端不維護第二套**——摘要規則或標籤散在前端，會和後端各自演化成兩種說法。
+- **時間語意**：`本機監控` 來源是快照比對，寫入時整批同一個時間戳，那是「偵測到的時間」
+  而非事件發生時間。欄位標題附說明，不讓使用者誤讀。
+- **篩選**：關鍵字（比對主機／操作者／目標帳號／對象／說明）、網段（CIDR／萬用字元／單一 IP，
+  走 `CidrMatcher`；格式錯誤時錯誤訊息顯示在該欄位旁而非只在頁面頂端）、類別（多選，選項來自
+  `GET api/permission-changes/categories`）、來源、時間範圍。條件記憶於 localStorage 並同步網址。
+  **狀態不放進篩選列**——維持既有四個頁籤（待確認／已確認授權／標記可疑／全部），兩套並存會產生
+  「頁籤選待確認、篩選選可疑」這種無解狀態。
+- **批次核准**：勾選框只出現在待確認的列；跨頁保留選取；表頭全選三態；另有「選取全部符合條件」
+  （走 `ids` 端點，超過上限時誠實告知筆數並請分批）。送出前 modal 預覽按類別與主機分組。
+  回應是**逐筆結果**：已被他人處理／不在可見範圍／找不到的項目進 `skipped` 並顯示原因，
+  其餘照樣成功——不做全有全無。
 - **兩個來源**，每筆以 `PermissionChangeRecord.Source` 標示：`本機監控`（`PermissionMonitorService`
   比對本機群組成員與 WatchedFolders ACL）與 `NetIQ 事件`（`HostDayPostProcessor.RecordPermissionChanges`
-  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時
-  畫面視為本機監控。NetIQ 這條的冪等鍵＝(主機, 事件時間, EventId, 告警文字)，去重鍵快照
-  每輪執行載入一次、只讀回望窗口＋一週內附加的列。每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆「權限異動（彙總）」；整份 log 依 `AuditRetentionDays` 清理。
-- API：`GET api/permission-changes?status=&page=`、`PUT api/permission-changes/{id}/confirm`
+  由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，
+  Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時畫面視為本機監控。NetIQ 這條的冪等鍵＝
+  (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
+  每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆
+  「權限異動（彙總）」；依 `AuditRetentionDays` 清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+- **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
+- API：
+  - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
+    → `PagedResult<PermissionChangeDto>`（`Total` 是套用篩選後的真實總筆數，畫面「共 N 筆」的來源）
+  - `GET api/permission-changes/categories` → 類別 key 與中文標籤（篩選下拉的來源；
+    **不可改成從當頁資料收集**，那樣沒出現在當頁的類別就選不到）
+  - `GET api/permission-changes/ids` → `{ changeIds, total, truncated }`（僅待確認；與清單共用同一份篩選組裝）
+  - `PUT api/permission-changes/{id}/confirm`（單筆；已被他人處理時回 Conflict）
+  - `POST api/permission-changes/confirm/batch` → `{ updatedCount, skipped[] }`（一次上限 500；
+    標記可疑時說明必填；稽核一次寫一筆，action `perm_confirm_batch`）
 
 ### 9.6 `/reports` 報表（全角色；user 限授權範圍）——主管的主要畫面，排版是重點
 
@@ -2047,7 +2082,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
-| `PermissionChangeStore`（介面已於簡化重構移除） | log `perm_changes`（異動明細，change_id=GUID）＋blob `perm_confirms`（確認狀態，以 change_id 關連） | 批次寫異動、Web 寫確認（各寫各的 key，維持單一寫入者） |
+| `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
 | `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |
 | `BatchRunStore`（介面已於簡化重構移除） | log `batch_runs`、`batch_run_logs` | 批次 |

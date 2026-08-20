@@ -314,3 +314,11 @@
 依問題視角的日風險母體限縮（`ApplyRiskLevels`）在一次 `Aggregate` 呼叫裡會下四次同樣的
 `lf_daily_records` 子查詢（主查詢＋三個輔助），而該表只有 `record_date`、`(host_id, record_date)`
 索引。兩千台規模下這是主動線，值得實測後決定加索引或改成一次取出 record_id 集合再共用。
+
+## 權限異動待辦（PERMISSION-CHANGES 輪次遞延）
+
+- **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
+- **使用者自訂異動類別**：本輪類別是系統內建的固定七類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。
+- **`EnsureCreated` 與 `SchemaUpgrader` 在全新安裝會建出兩份同欄位索引**：`AddIndexIfMissing` 依**索引名稱**判斷存在與否，而 EnsureCreated 建的是 EF 預設命名（`IX_lf_xxx_ChangeId`）、SchemaUpgrader 用的是自訂名稱（`IX_lf_xxx_change_id`），兩者不相等。這不是本輪造成的，`lf_issue_handling` 等表早已如此，影響是寫入吞吐與儲存空間、不影響正確性。要處理的話是全專案 schema 層級的一輪。
+- **高風險（特權目標）判定的涵蓋範圍待議**：目前只標「成員新增到特權群組」。終檢建議一併涵蓋「成員移除」（把稽核人員移出 Domain Admins 是入侵後常見動作）與 ACL 授權對象（`權限新增（ACL 規則）` 的授權對象若是 Everyone／Domain Admins）。後者要改成比對 `Before`／`After` 的授權對象而非 `Target`（`Target` 是路徑，永遠不會命中群組關鍵字）。這是安全判定的範圍決策，需要與使用者確認後再改。
+- **權限異動的排序在兩個 provider 上定序不同**：`OrderBy(HostName)` 在 SQLite 是 BINARY（大寫排在小寫前），SQL Server 依資料庫定序（多半不分大小寫）。分頁情境下順序不穩定可能造成翻頁時漏列或重複。可改為對已全大寫的 `HostNameKey` 排序。

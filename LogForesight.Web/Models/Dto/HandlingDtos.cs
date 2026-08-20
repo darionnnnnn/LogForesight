@@ -543,17 +543,39 @@ public class AssigneeCannotHandleDto
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────
 
+public class PermissionChangeQueryRequest
+{
+    public string? Keyword { get; set; }
+    public string? Subnet { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public string Sort { get; set; } = "detectedAt";
+    public bool Ascending { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
 public class PermissionChangeDto
 {
     public string ChangeId { get; set; } = string.Empty;
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+    public string? HostIp { get; set; }
     public DateTime DetectedAt { get; set; }
     public string Target { get; set; } = string.Empty;
     public string ChangeType { get; set; } = string.Empty;
+    public string Category { get; set; } = PermissionCategory.Other;
+    public string CategoryLabel { get; set; } = string.Empty;
+    public bool IsPrivilegedTarget { get; set; }
+    public string? InitiatorAccount { get; set; }
+    public string? TargetAccount { get; set; }
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+    public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;
 
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
@@ -572,6 +594,44 @@ public class ConfirmPermissionChangeRequest
 
     [StringLength(500)]
     public string? Note { get; set; }
+}
+
+public class BatchConfirmPermissionChangesRequest
+{
+    [Required(ErrorMessage = "請至少勾選一筆權限異動。")]
+    [MinLength(1, ErrorMessage = "請至少勾選一筆權限異動。")]
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>authorized（確認為授權操作）| suspicious（標記可疑）</summary>
+    [Required]
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(500)]
+    public string? Note { get; set; }
+}
+
+public class BatchConfirmPermissionChangesResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<SkippedPermissionChangeDto> Skipped { get; set; } = new();
+}
+
+public class SkippedPermissionChangeDto
+{
+    public string ChangeId { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class PermissionChangeIdListDto
+{
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>符合篩選的異動總數（截斷前）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝超過單次上限，畫面必須說明要分批</summary>
+    public bool Truncated { get; set; }
 }
 
 // ── 操作紀錄（§9.11）───────────────────────────────────────────────────────
@@ -656,4 +716,11 @@ public class HandlerDayItemDto
     public string DerivedStatusText { get; set; } = string.Empty;
     public string? DueDate { get; set; }
     public bool IsOverdue { get; set; }
+}
+
+/// <summary>權限異動類別選項（供前端篩選下拉使用）</summary>
+public class PermissionCategoryOptionDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
 }

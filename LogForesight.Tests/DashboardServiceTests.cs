@@ -49,7 +49,7 @@ public class DashboardServiceTests : IDisposable
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
         var audit = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
         var currentUser = FakeCurrentUser.WithCapabilities();
-        var permStore = new PermissionChangeStore(new EfJsonLogStore(_fixture.NewContext, "perm_changes"), new EfJsonBlobStore(_fixture.NewContext, "perm_confirms"));
+        var permStore = new PermissionChangeStore(_fixture.NewContext);
         var permissionChanges = new PermissionChangeService(permStore, _hosts, visibility, currentUser, new RecordingAuditService(), _users);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver);

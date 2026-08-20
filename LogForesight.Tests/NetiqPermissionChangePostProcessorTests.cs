@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -87,7 +87,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 主機日事件含4756_寫出一筆PermissionChangeRecord_欄位對應正確()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-DC01";
         var eventTime = new DateTime(2026, 8, 19, 10, 30, 0);
 
@@ -125,7 +125,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 同一主機日重跑兩次_紀錄不重複()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-APP01";
         var date = new DateTime(2026, 8, 19);
 
@@ -163,7 +163,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 不在集合內的EventId_不產生紀錄()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-SQL01";
         var date = new DateTime(2026, 8, 19);
 
@@ -184,7 +184,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void Linux主機與EventId0_不產生紀錄()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
 
         // Linux 主機，即使有 4756 也應被略過
@@ -208,7 +208,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 異動類型與欄位擷取_各類事件對應正確()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var hostName = "SRV-TEST";
         var date = new DateTime(2026, 8, 19);
 
@@ -282,7 +282,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void Target退路值_擷取不到群組或物件名稱時不留空字串()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
 
         var events = new List<EventLogEntryData>
@@ -317,7 +317,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             State = SentinelJobState.Completed
         };
 
-        var permStore = new PermissionChangeStore(_backend.LogStore("perm_changes"), _backend.Blob("perm_confirms"));
+        var permStore = _backend.PermissionChanges();
         var pipeline = MakePipeline(useAi: false);
 
         var hostList = HostListSelection.FromStore(_hosts, _sentinels);
@@ -339,7 +339,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     public void 同主機日超過上限_只逐則寫前50筆並多一筆彙總()
     {
         using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.LogStore("perm_changes"), fixture.Blob("perm_confirms"));
+        var store = new PermissionChangeStore(fixture.NewContext);
         var date = new DateTime(2026, 8, 19);
         var events = Enumerable.Range(0, 80).Select(i => new EventLogEntryData
         {
@@ -354,5 +354,405 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal(HostDayPostProcessor.MaxPermissionChangeRecordsPerHostDay + 1, records.Count);
         var summary = Assert.Single(records, r => r.ChangeType == "權限異動（彙總）");
         Assert.Contains("30 則", summary.AlertText);
+    }
+
+    [Fact]
+    public void 訊息含Subject與Member區段時_正確分離操作者與被異動成員且After不為操作者()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 20);
+
+        var msg = "A member was added to a security-enabled global group.\r\n" +
+                  "Subject:\r\n" +
+                  "    Security ID: DOMAIN\\admin_user\r\n" +
+                  "    Account Name: admin_user\r\n" +
+                  "    Account Domain: DOMAIN\r\n" +
+                  "Member:\r\n" +
+                  "    Security ID: DOMAIN\\alice\r\n" +
+                  "    Account Name: alice\r\n" +
+                  "Group:\r\n" +
+                  "    Group Name: Domain Admins\r\n";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("Domain Admins", record.Target);
+        Assert.Equal("admin_user", record.InitiatorAccount);
+        Assert.Equal("alice", record.TargetAccount);
+        Assert.Equal("alice", record.After);
+        Assert.Equal("（不在群組中）", record.Before);
+        Assert.NotEqual("admin_user", record.After);
+    }
+
+    [Fact]
+    public void 訊息只有Subject區段而無成員名時_操作者不被寫入After或Before()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 20);
+
+        // 成員新增但訊息中只有 Subject，無 Member 區段
+        var msgAdded = "A member was added to a security-enabled global group.\r\n" +
+                       "Subject:\r\n" +
+                       "    Security ID: DOMAIN\\admin_operator\r\n" +
+                       "    Account Name: admin_operator\r\n" +
+                       "Group:\r\n" +
+                       "    Group Name: Domain Admins\r\n";
+
+        // 成員移除但訊息中只有 Subject，無 Member 區段
+        var msgRemoved = "A member was removed from a security-enabled global group.\r\n" +
+                         "Subject:\r\n" +
+                         "    Security ID: DOMAIN\\admin_operator\r\n" +
+                         "    Account Name: admin_operator\r\n" +
+                         "Group:\r\n" +
+                         "    Group Name: Domain Admins\r\n";
+
+        var events = new List<EventLogEntryData>
+        {
+            new() { EventId = 4728, Source = "Microsoft-Windows-Security-Auditing", TimeGenerated = date.AddHours(1), Message = msgAdded },
+            new() { EventId = 4729, Source = "Microsoft-Windows-Security-Auditing", TimeGenerated = date.AddHours(2), Message = msgRemoved }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 100).Where(c => c.HostName == hostName).OrderBy(r => r.DetectedAt).ToList();
+        Assert.Equal(2, records.Count);
+
+        // 成員新增：After 不應被操作者頂替，應為空字串；Before 為「（不在群組中）」
+        Assert.Equal("admin_operator", records[0].InitiatorAccount);
+        Assert.Null(records[0].TargetAccount);
+        Assert.Equal(string.Empty, records[0].After);
+        Assert.Equal("（不在群組中）", records[0].Before);
+        Assert.NotEqual("admin_operator", records[0].After);
+
+        // 成員移除：Before 不應被操作者頂替，應為空字串；After 為「（已移出群組）」
+        Assert.Equal("admin_operator", records[1].InitiatorAccount);
+        Assert.Null(records[1].TargetAccount);
+        Assert.Equal(string.Empty, records[1].Before);
+        Assert.Equal("（已移出群組）", records[1].After);
+        Assert.NotEqual("admin_operator", records[1].Before);
+    }
+
+    [Fact]
+    public void 事件本身帶有InitiatorAccount時_優先採用該值而非訊息文字()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 20);
+
+        var msg = "Subject:\r\n" +
+                  "    Account Name: msg_subject_user\r\n" +
+                  "Member:\r\n" +
+                  "    Account Name: target_user\r\n" +
+                  "Group:\r\n" +
+                  "    Group Name: Domain Admins\r\n";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = msg,
+                InitiatorAccount = "netiq_sun_operator" // NetIQ sun 欄位優先
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("netiq_sun_operator", record.InitiatorAccount);
+        Assert.Equal("target_user", record.TargetAccount);
+        Assert.Equal("target_user", record.After);
+    }
+
+    [Fact]
+    public void 事件4719稽核政策變更_產生的Before與After皆非空字串()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 20);
+
+        // 1. 純文字未帶結構化欄位的 4719
+        var event1 = new EventLogEntryData
+        {
+            EventId = 4719,
+            Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(1),
+            Message = "System audit policy was changed."
+        };
+
+        // 2. 帶類別、子類別與變更內容的 4719
+        var event2 = new EventLogEntryData
+        {
+            EventId = 4719,
+            Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(2),
+            Message = "Subject:\r\n  Account Name: secadmin\r\nAudit Policy Change:\r\n  Category: Object Access\r\n  Subcategory: File System\r\n  Changes: Success removed"
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, new List<EventLogEntryData> { event1, event2 }, date);
+
+        var records = store.Query(null, null, 100).Where(c => c.HostName == hostName).OrderBy(r => r.DetectedAt).ToList();
+        Assert.Equal(2, records.Count);
+
+        // 兩筆的 Before 與 After 皆不得為空字串
+        Assert.False(string.IsNullOrWhiteSpace(records[0].Before));
+        Assert.False(string.IsNullOrWhiteSpace(records[0].After));
+        Assert.Equal(PermissionChangeExtractor.DefaultNotProvided, records[0].Before);
+        Assert.Equal(PermissionChangeExtractor.DefaultNotProvided, records[0].After);
+
+        Assert.False(string.IsNullOrWhiteSpace(records[1].Before));
+        Assert.False(string.IsNullOrWhiteSpace(records[1].After));
+        Assert.Equal("secadmin", records[1].InitiatorAccount);
+        // 逐字比對而不是 Contains：「Subcategory:」這個字串本身含有「Category:」，
+        // 用 Contains("File System") 的話類別被子類別覆寫（變成「File System - File System」）
+        // 一樣會通過，等於對類別欄位零覆蓋。
+        Assert.Equal("Object Access - File System：Success removed", records[1].After);
+    }
+
+    [Fact]
+    public void 各類NetIQ事件產生的紀錄_Category皆非空且與純函式推導一致()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-TEST";
+        var date = new DateTime(2026, 8, 20);
+
+        var events = new List<EventLogEntryData>
+        {
+            new() { EventId = 4728, Source = "Security", TimeGenerated = date.AddMinutes(1), Message = "Group Name: G1\nMember Name: U1" },
+            new() { EventId = 4729, Source = "Security", TimeGenerated = date.AddMinutes(2), Message = "Group Name: G1\nMember Name: U1" },
+            new() { EventId = 4670, Source = "Security", TimeGenerated = date.AddMinutes(3), Message = "Object Name: C:\\f.txt" },
+            new() { EventId = 4717, Source = "Security", TimeGenerated = date.AddMinutes(4), Message = "Target Account: Svc\nAccess Granted: SeLogon" },
+            new() { EventId = 4718, Source = "Security", TimeGenerated = date.AddMinutes(5), Message = "Target Account: Svc\nAccess Removed: SeLogon" },
+            new() { EventId = 4719, Source = "Security", TimeGenerated = date.AddMinutes(6), Message = "Audit changed" },
+            new() { EventId = 4907, Source = "Security", TimeGenerated = date.AddMinutes(7), Message = "Object Name: C:\\a.txt" }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 100).Where(c => c.HostName == hostName).OrderBy(r => r.DetectedAt).ToList();
+        Assert.Equal(7, records.Count);
+
+        foreach (var record in records)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(record.Category));
+            var expectedCategory = PermissionCategory.Resolve(record.ChangeType, record.EventId);
+            Assert.Equal(expectedCategory, record.Category);
+        }
+    }
+
+    [Fact]
+    public void 本機監控產生的明細_Category非空_InitiatorAccount為null且群組成員TargetAccount正確()
+    {
+        var detailAdd = new PermissionChangeDetail
+        {
+            Target = "本機 Administrators 群組",
+            ChangeType = "成員新增",
+            Before = "（不在群組中）",
+            After = "charlie",
+            Category = PermissionCategory.Resolve("成員新增"),
+            IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget("本機 Administrators 群組", "成員新增"),
+            InitiatorAccount = null,
+            TargetAccount = "charlie"
+        };
+
+        var detailRemove = new PermissionChangeDetail
+        {
+            Target = "本機 Administrators 群組",
+            ChangeType = "成員移除",
+            Before = "bob",
+            After = "（已移出群組）",
+            Category = PermissionCategory.Resolve("成員移除"),
+            IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget("本機 Administrators 群組", "成員移除"),
+            InitiatorAccount = null,
+            TargetAccount = "bob"
+        };
+
+        var detailAcl = new PermissionChangeDetail
+        {
+            Target = "C:\\Share",
+            ChangeType = "權限新增（ACL 規則）",
+            Before = "（無此規則）",
+            After = "DOMAIN\\david｜Allow｜Read｜明確設定",
+            Category = PermissionCategory.Resolve("權限新增（ACL 規則）"),
+            IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget("C:\\Share", "權限新增（ACL 規則）"),
+            InitiatorAccount = null,
+            TargetAccount = null
+        };
+
+        // 驗證成員新增
+        Assert.Equal(PermissionCategory.GroupMember, detailAdd.Category);
+        Assert.True(detailAdd.IsPrivilegedTarget);
+        Assert.Null(detailAdd.InitiatorAccount);
+        Assert.Equal("charlie", detailAdd.TargetAccount);
+
+        // 驗證成員移除
+        Assert.Equal(PermissionCategory.GroupMember, detailRemove.Category);
+        Assert.False(detailRemove.IsPrivilegedTarget);
+        Assert.Null(detailRemove.InitiatorAccount);
+        Assert.Equal("bob", detailRemove.TargetAccount);
+
+        // 驗證資料夾 ACL
+        Assert.Equal(PermissionCategory.FolderAcl, detailAcl.Category);
+        Assert.False(detailAcl.IsPrivilegedTarget);
+        Assert.Null(detailAcl.InitiatorAccount);
+        Assert.Null(detailAcl.TargetAccount);
+    }
+
+    [Fact]
+    public void 加入特權群組時IsPrivilegedTarget為true_加入一般資料夾時為false()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-TEST";
+        var date = new DateTime(2026, 8, 20);
+
+        var events = new List<EventLogEntryData>
+        {
+            // 加入特權群組（Domain Admins）
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = "Group Name: Domain Admins\nMember Name: PrivUser"
+            },
+            // 加入一般群組（Normal Group）
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(2),
+                Message = "Group Name: Normal Users Group\nMember Name: RegularUser"
+            },
+            // 物件權限變更（ACL）
+            new()
+            {
+                EventId = 4670,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(3),
+                Message = "Object Name: C:\\SharedFolder\nOriginal Security Descriptor: D:(A;;GA;;;BA)\nNew Security Descriptor: D:(A;;GA;;;WD)"
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 100).Where(c => c.HostName == hostName).OrderBy(r => r.DetectedAt).ToList();
+        Assert.Equal(3, records.Count);
+
+        Assert.True(records[0].IsPrivilegedTarget);
+        Assert.Equal(PermissionCategory.GroupMember, records[0].Category);
+
+        Assert.False(records[1].IsPrivilegedTarget);
+        Assert.Equal(PermissionCategory.GroupMember, records[1].Category);
+
+        Assert.False(records[2].IsPrivilegedTarget);
+        Assert.Equal(PermissionCategory.FolderAcl, records[2].Category);
+    }
+
+    [Fact]
+    public void 事件4717與4718_正確擷取TargetAccount與非空BeforeAfter()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-TEST";
+        var date = new DateTime(2026, 8, 20);
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4717,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = "Subject:\r\n  Account Name: admin1\r\nTarget Account:\tServiceAcct1\r\nAccess Granted:\tSeServiceLogonRight"
+            },
+            new()
+            {
+                EventId = 4718,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(2),
+                Message = "Subject:\r\n  Account Name: admin2\r\nTarget Account:\tServiceAcct2\r\nAccess Removed:\tSeServiceLogonRight"
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 100).Where(c => c.HostName == hostName).OrderBy(r => r.DetectedAt).ToList();
+        Assert.Equal(2, records.Count);
+
+        // 4717 授與權限
+        Assert.Equal("ServiceAcct1", records[0].Target);
+        Assert.Equal("ServiceAcct1", records[0].TargetAccount);
+        Assert.Equal("admin1", records[0].InitiatorAccount);
+        Assert.Equal("（未授與）", records[0].Before);
+        Assert.Equal("SeServiceLogonRight", records[0].After);
+
+        // 4718 移除權限
+        Assert.Equal("ServiceAcct2", records[1].Target);
+        Assert.Equal("ServiceAcct2", records[1].TargetAccount);
+        Assert.Equal("admin2", records[1].InitiatorAccount);
+        Assert.Equal("SeServiceLogonRight", records[1].Before);
+        Assert.Equal("（已移除）", records[1].After);
+    }
+
+    [Fact]
+    public void 中文區段標頭與欄位_正確擷取操作者與成員帳號()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 20);
+
+        var msg = "已將成員新增到安全性通用群組。\r\n" +
+                  "主體:\r\n" +
+                  "    安全性識別碼: CONTOSO\\admin_zh\r\n" +
+                  "    帳戶名稱: admin_zh\r\n" +
+                  "成員:\r\n" +
+                  "    安全性識別碼: CONTOSO\\user_zh\r\n" +
+                  "    帳戶名稱: user_zh\r\n" +
+                  "群組:\r\n" +
+                  "    群組名稱: Administrators\r\n";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4756,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("Administrators", record.Target);
+        Assert.Equal("admin_zh", record.InitiatorAccount);
+        Assert.Equal("user_zh", record.TargetAccount);
+        Assert.Equal("user_zh", record.After);
+        Assert.Equal("（不在群組中）", record.Before);
+        Assert.True(record.IsPrivilegedTarget);
+        Assert.Equal(PermissionCategory.GroupMember, record.Category);
     }
 }

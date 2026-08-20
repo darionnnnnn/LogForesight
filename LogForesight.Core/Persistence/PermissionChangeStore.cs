@@ -1,139 +1,410 @@
-﻿using System.Text;
-using System.Text.Json;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence.Sql;
+using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Core.Persistence;
 
+/// <summary>權限異動查詢條件（多條件組合、分頁與排序下推 SQL）</summary>
+public class PermissionChangeQueryFilter
+{
+    public IReadOnlyCollection<string>? HostNames { get; set; }
+    public string? Keyword { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public string? Sort { get; set; }
+    public bool Ascending { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
 /// <summary>
-/// 權限異動的讀寫（↔ lf_permission_changes）。
+/// 權限異動待辦的真表儲存（↔ lf_permission_changes，含確認狀態）。
 ///
-/// **批次與 Web 的寫入職責分離**：批次呼叫 <see cref="AppendChanges"/> 寫入偵測到的異動，
-/// Web 呼叫 <see cref="SaveConfirmation"/> 寫入人工確認結果。
-///
-/// **兩個 key、兩個寫入者**（沿用單一寫入者原則）：
-///   - log key=perm_changes：批次寫入偵測到的異動（append-only）
-///   - blob key=perm_confirms：Web 寫入人工確認狀態（整份型，需更新）
-/// 各寫各的 key，寫入路徑不交錯。
+/// **單表整合異動與確認**：原本異動走 JSONL log、確認走 blob，現在合併為一列真表資料。
+/// 狀態欄位可直接在 SQL 端篩選，並支援條件式原子更新（WHERE status = 'pending'），
+/// 解決舊版整份讀改寫時多人同時確認會互相覆寫的問題。
 /// </summary>
 public class PermissionChangeStore
 {
-    private readonly EfJsonLogStore _changes;
-    private readonly JsonConfirmationFile _confirmations;
-    private readonly object _lock = new();
+    private readonly Func<LfDbContext> _contextFactory;
 
-    public PermissionChangeStore(EfJsonLogStore changes, EfJsonBlobStore confirmations)
+    public PermissionChangeStore(Func<LfDbContext> contextFactory)
     {
-        _changes = changes;
-        _confirmations = new JsonConfirmationFile(confirmations);
+        _contextFactory = contextFactory;
     }
 
-    /// <summary>批次寫入本次偵測到的異動（append-only）</summary>
+    /// <summary>批次寫入本次偵測到的異動</summary>
     public void AppendChanges(IEnumerable<PermissionChangeRecord> changes)
     {
-        lock (_lock)
-        {
-            foreach (var change in changes)
-            {
-                if (string.IsNullOrWhiteSpace(change.ChangeId))
-                    change.ChangeId = Guid.NewGuid().ToString("N");
+        var list = changes.ToList();
+        if (list.Count == 0) return;
 
-                _changes.AppendLine(JsonSerializer.Serialize(change, LfJsonOptions.Compact));
-            }
+        var now = DateTime.Now;
+        using var ctx = _contextFactory();
+
+        foreach (var change in list)
+        {
+            if (string.IsNullOrWhiteSpace(change.ChangeId))
+                change.ChangeId = Guid.NewGuid().ToString("N");
+
+            var row = new PermissionChangeRow
+            {
+                ChangeId = change.ChangeId,
+                DedupeKey = change.DedupeKey(),
+                HostName = change.HostName,
+                HostNameKey = HostNameKey.Of(change.HostName),
+                DetectedAt = change.DetectedAt,
+                CreatedAt = now,
+                Target = change.Target,
+                ChangeType = change.ChangeType,
+                Category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category,
+                IsPrivilegedTarget = change.IsPrivilegedTarget,
+                InitiatorAccount = change.InitiatorAccount,
+                TargetAccount = change.TargetAccount,
+                BeforeValue = change.Before ?? string.Empty,
+                AfterValue = change.After ?? string.Empty,
+                AlertText = change.AlertText ?? string.Empty,
+                Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
+                EventId = change.EventId,
+                Status = PermissionConfirmStatuses.Pending
+            };
+
+            ctx.PermissionChanges.Add(row);
         }
+
+        ctx.SaveChanges();
     }
 
-    /// <summary>依主機與確認狀態查詢；hostNames 為空集合時回空結果（授權範圍為空）</summary>
-    public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount)
+    /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
+    public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
     {
-        var changes = ReadAllChanges();
-
-        // hostNames 為 null = 不限；空集合 = 查不到任何資料（與 RecordQueryFilter 同一語意）
-        if (hostNames != null)
+        if (filter.HostNames != null && filter.HostNames.Count == 0)
         {
-            var names = hostNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            changes = changes.Where(c => names.Contains(c.HostName)).ToList();
-        }
-
-        if (!string.IsNullOrWhiteSpace(status))
-        {
-            var confirmations = _confirmations.Read()
-                .ToDictionary(c => c.ChangeId, StringComparer.OrdinalIgnoreCase);
-
-            changes = changes.Where(c =>
+            return new PagedResult<PermissionChangeRecord>
             {
-                var current = confirmations.TryGetValue(c.ChangeId, out var confirmation)
-                    ? confirmation.Status
-                    : PermissionConfirmStatuses.Pending;
-                return string.Equals(current, status, StringComparison.OrdinalIgnoreCase);
-            }).ToList();
+                Items = new List<PermissionChangeRecord>(),
+                Page = filter.Page,
+                PageSize = filter.PageSize,
+                Total = 0
+            };
         }
 
-        return changes
-            .OrderByDescending(c => c.DetectedAt)
-            .Take(maxCount)
+        using var ctx = _contextFactory();
+        var query = BuildQuery(ctx, filter);
+
+        var total = query.Count();
+        if (total == 0)
+        {
+            return new PagedResult<PermissionChangeRecord>
+            {
+                Items = new List<PermissionChangeRecord>(),
+                Page = filter.Page,
+                PageSize = filter.PageSize,
+                Total = 0
+            };
+        }
+
+        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
+
+        var skip = Math.Max(0, (filter.Page - 1) * filter.PageSize);
+        var rows = query
+            .Skip(skip)
+            .Take(filter.PageSize)
             .ToList();
+
+        return new PagedResult<PermissionChangeRecord>
+        {
+            Items = rows.Select(ToModel).ToList(),
+            Page = filter.Page,
+            PageSize = filter.PageSize,
+            Total = total
+        };
     }
 
-    public PermissionChangeRecord? Get(string changeId) =>
-        ReadAllChanges().FirstOrDefault(c =>
-            string.Equals(c.ChangeId, changeId, StringComparison.OrdinalIgnoreCase));
+    /// <summary>依篩選條件查詢符合的 ChangeId 清單（含總符合筆數與上限截斷）</summary>
+    public (List<string> Ids, int Total) QueryIds(PermissionChangeQueryFilter filter, int maxCount)
+    {
+        if (filter.HostNames != null && filter.HostNames.Count == 0)
+        {
+            return (new List<string>(), 0);
+        }
 
-    /// <summary>整份去重鍵快照（供後處理冪等）。**每輪執行讀一次**——這個 store 是
-    /// append-only 的 JSON log，每次讀都要整份反序列化，逐主機日呼叫在 3000 台規模下
-    /// 會變成數萬次全表掃描（同 suppressionSnapshot／profilesByKey 的一次性載入慣例）。</summary>
-    /// <paramref name="appendedSince"/>：只讀這個時間之後附加的列（回望窗口內重跑才會撞鍵，
-    /// 更早的列不必進快照）。null＝整份。</summary>
-    public HashSet<string> GetDedupeKeys(DateTime? appendedSince = null) =>
-        _changes.ReadLines(appendedSince, null)
-            .Select(line => JsonSerializer.Deserialize<PermissionChangeRecord>(line, LfJsonOptions.Compact))
-            .Where(c => c != null)
-            .Select(c => c!.DedupeKey())
-            .ToHashSet(StringComparer.Ordinal);
+        using var ctx = _contextFactory();
+        var query = BuildQuery(ctx, filter);
 
-    /// <summary>清除超過保留天數的異動列（依附加時間；確認狀態 blob 內的孤兒鍵無害）</summary>
-    public int Prune(int retentionDays) => _changes.Prune(DateTime.Today.AddDays(-retentionDays));
+        var total = query.Count();
+        if (total == 0)
+        {
+            return (new List<string>(), 0);
+        }
 
+        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
+
+        var ids = query
+            .Take(maxCount)
+            .Select(r => r.ChangeId)
+            .ToList();
+
+        return (ids, total);
+    }
+
+    private static IQueryable<PermissionChangeRow> BuildQuery(LfDbContext ctx, PermissionChangeQueryFilter filter)
+    {
+        IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();
+
+        if (filter.HostNames != null)
+        {
+            var keys = filter.HostNames.Select(HostNameKey.Of).Distinct().ToList();
+            query = query.Where(r => keys.Contains(r.HostNameKey));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Keyword))
+        {
+            var q = filter.Keyword.Trim();
+            query = query.Where(r =>
+                r.HostName.Contains(q) ||
+                (r.InitiatorAccount != null && r.InitiatorAccount.Contains(q)) ||
+                (r.TargetAccount != null && r.TargetAccount.Contains(q)) ||
+                r.Target.Contains(q) ||
+                r.AlertText.Contains(q));
+        }
+
+        if (filter.Categories is { Count: > 0 })
+        {
+            query = query.Where(r => filter.Categories.Contains(r.Category));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Status))
+        {
+            query = query.Where(r => r.Status == filter.Status);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Source))
+        {
+            query = query.Where(r => r.Source == filter.Source);
+        }
+
+        if (filter.From.HasValue)
+        {
+            query = query.Where(r => r.DetectedAt >= filter.From.Value);
+        }
+
+        if (filter.To.HasValue)
+        {
+            query = query.Where(r => r.DetectedAt <= filter.To.Value);
+        }
+
+        return query;
+    }
+
+    /// <summary>簡化多載（轉發至多條件分頁查詢）。生產程式碼一律走 filter 版本，
+    /// 這個只供測試以「主機＋狀態」的最小形狀建查詢，避免每支測試都要組整份 filter。</summary>
+    public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount) =>
+        Query(new PermissionChangeQueryFilter
+        {
+            HostNames = hostNames,
+            Status = status,
+            PageSize = maxCount
+        }).Items;
+
+    private static IQueryable<PermissionChangeRow> ApplyOrdering(
+        IQueryable<PermissionChangeRow> query,
+        string? sort,
+        bool ascending)
+    {
+        // 先把 sortKey 正規化到白名單內，不認識的一律退回 detectedat。
+        // 否則未支援的欄位名會直接落到最後那支 catch-all，連 ascending 一起吃掉——
+        // 使用者按了升冪卻看到降冪，而且分頁時每頁的順序基準還不一致。
+        var sortKey = sort?.Trim().ToLowerInvariant();
+        if (sortKey is not ("hostname" or "category" or "status" or "detectedat"))
+        {
+            sortKey = "detectedat";
+        }
+
+        return (sortKey, ascending) switch
+        {
+            ("hostname", true) => query.OrderBy(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("hostname", false) => query.OrderByDescending(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            ("category", true) => query.OrderBy(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("category", false) => query.OrderByDescending(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            ("status", true) => query.OrderBy(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("status", false) => query.OrderByDescending(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            (_, true) => query.OrderBy(r => r.DetectedAt).ThenBy(r => r.Id),
+            _ => query.OrderByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id)
+        };
+    }
+
+    /// <summary>單列查詢</summary>
+    public PermissionChangeRecord? Get(string changeId)
+    {
+        if (string.IsNullOrWhiteSpace(changeId)) return null;
+
+        using var ctx = _contextFactory();
+        var row = ctx.PermissionChanges.AsNoTracking()
+            .FirstOrDefault(r => r.ChangeId == changeId);
+
+        return row != null ? ToModel(row) : null;
+    }
+
+    /// <summary>批次查詢多筆異動紀錄</summary>
+    public List<PermissionChangeRecord> GetByChangeIds(IEnumerable<string> changeIds)
+    {
+        var ids = changeIds.Distinct().ToList();
+        if (ids.Count == 0) return new List<PermissionChangeRecord>();
+
+        using var ctx = _contextFactory();
+        var rows = ctx.PermissionChanges.AsNoTracking()
+            .Where(r => ids.Contains(r.ChangeId))
+            .ToList();
+
+        return rows.Select(ToModel).ToList();
+    }
+
+    /// <summary>取得指定異動的確認狀態清單</summary>
     public List<PermissionChangeConfirmation> GetConfirmations(IEnumerable<string> changeIds)
     {
-        var ids = changeIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return _confirmations.Read().Where(c => ids.Contains(c.ChangeId)).ToList();
-    }
+        var ids = changeIds.Distinct().ToList();
+        if (ids.Count == 0) return new List<PermissionChangeConfirmation>();
 
-    public void SaveConfirmation(PermissionChangeConfirmation confirmation) =>
-        _confirmations.Upsert(confirmation);
-
-    /// <summary>待確認筆數（儀表板待辦區）</summary>
-    public int CountPending(IReadOnlyCollection<string>? hostNames) =>
-        Query(hostNames, PermissionConfirmStatuses.Pending, int.MaxValue).Count;
-
-    private List<PermissionChangeRecord> ReadAllChanges() =>
-        JsonLogParser.Parse<PermissionChangeRecord>(_changes.ReadLines(), LfJsonOptions.Compact);
-
-    /// <summary>確認狀態的整份型儲存（Web 單一寫入者，原子讀改寫）</summary>
-    private class JsonConfirmationFile : JsonBlobCollection<PermissionChangeConfirmation>
-    {
-        public JsonConfirmationFile(EfJsonBlobStore blob) : base(blob) { }
-
-        public new List<PermissionChangeConfirmation> Read() => base.Read();
-
-        public void Upsert(PermissionChangeConfirmation confirmation)
-        {
-            Mutate(items =>
+        using var ctx = _contextFactory();
+        var rows = ctx.PermissionChanges.AsNoTracking()
+            .Where(r => ids.Contains(r.ChangeId))
+            .Select(r => new
             {
-                var existing = items.FirstOrDefault(c =>
-                    string.Equals(c.ChangeId, confirmation.ChangeId, StringComparison.OrdinalIgnoreCase));
+                r.ChangeId,
+                r.Status,
+                r.ConfirmedBy,
+                r.ConfirmedByAccount,
+                r.ConfirmedAt,
+                r.ConfirmNote
+            })
+            .ToList();
 
-                if (existing == null)
-                {
-                    items.Add(confirmation);
-                    return;
-                }
-
-                existing.Status = confirmation.Status;
-                existing.ConfirmedBy = confirmation.ConfirmedBy;
-                existing.ConfirmedByAccount = confirmation.ConfirmedByAccount;
-                existing.ConfirmedAt = confirmation.ConfirmedAt;
-                existing.Note = confirmation.Note;
-            });
-        }
+        return rows.Select(r => new PermissionChangeConfirmation
+        {
+            ChangeId = r.ChangeId,
+            Status = r.Status,
+            ConfirmedBy = r.ConfirmedBy,
+            ConfirmedByAccount = r.ConfirmedByAccount ?? string.Empty,
+            ConfirmedAt = r.ConfirmedAt,
+            Note = r.ConfirmNote
+        }).ToList();
     }
+
+    /// <summary>去重鍵快照（只投影 dedupe_key 欄位）</summary>
+    public HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
+    {
+        using var ctx = _contextFactory();
+        IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();
+
+        if (appendedSince.HasValue)
+        {
+            query = query.Where(r => r.CreatedAt >= appendedSince.Value);
+        }
+
+        return query
+            .Select(r => r.DedupeKey)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>條件式原子更新確認狀態：只有目前為 pending 時才寫入成功</summary>
+    public bool SaveConfirmation(PermissionChangeConfirmation confirmation)
+    {
+        if (string.IsNullOrWhiteSpace(confirmation.ChangeId)) return false;
+
+        return SaveConfirmationsInternal(
+            new[] { confirmation.ChangeId },
+            confirmation.Status,
+            confirmation.ConfirmedBy,
+            confirmation.ConfirmedByAccount,
+            confirmation.ConfirmedAt,
+            confirmation.Note) > 0;
+    }
+
+    /// <summary>批次條件式原子更新確認狀態：只有目前為 pending 的列才會被更新</summary>
+    public int SaveConfirmations(
+        IEnumerable<string> changeIds,
+        string status,
+        long? confirmedBy,
+        string confirmedByAccount,
+        DateTime? confirmedAt,
+        string? note)
+    {
+        return SaveConfirmationsInternal(changeIds, status, confirmedBy, confirmedByAccount, confirmedAt, note);
+    }
+
+    private int SaveConfirmationsInternal(
+        IEnumerable<string> changeIds,
+        string status,
+        long? confirmedBy,
+        string confirmedByAccount,
+        DateTime? confirmedAt,
+        string? note)
+    {
+        var ids = changeIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count == 0) return 0;
+
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => ids.Contains(r.ChangeId) && r.Status == PermissionConfirmStatuses.Pending)
+            .ExecuteUpdate(s => s
+                .SetProperty(r => r.Status, status)
+                .SetProperty(r => r.ConfirmedBy, confirmedBy)
+                .SetProperty(r => r.ConfirmedByAccount, confirmedByAccount)
+                .SetProperty(r => r.ConfirmedAt, confirmedAt)
+                .SetProperty(r => r.ConfirmNote, note));
+    }
+
+    /// <summary>待確認筆數（SQL COUNT 下推）</summary>
+    public int CountPending(IReadOnlyCollection<string>? hostNames)
+    {
+        if (hostNames != null && hostNames.Count == 0)
+            return 0;
+
+        using var ctx = _contextFactory();
+        IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking()
+            .Where(r => r.Status == PermissionConfirmStatuses.Pending);
+
+        if (hostNames != null)
+        {
+            var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
+            query = query.Where(r => keys.Contains(r.HostNameKey));
+        }
+
+        return query.Count();
+    }
+
+    /// <summary>依寫入時間（created_at）清除超過保留天數的異動列</summary>
+    public int Prune(int retentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => r.CreatedAt < cutoff)
+            .ExecuteDelete();
+    }
+
+    private static PermissionChangeRecord ToModel(PermissionChangeRow row) => new()
+    {
+        ChangeId = row.ChangeId,
+        HostName = row.HostName,
+        DetectedAt = row.DetectedAt,
+        Target = row.Target,
+        ChangeType = row.ChangeType,
+        Before = row.BeforeValue,
+        After = row.AfterValue,
+        AlertText = row.AlertText,
+        Source = row.Source,
+        EventId = row.EventId,
+        Category = row.Category,
+        IsPrivilegedTarget = row.IsPrivilegedTarget,
+        InitiatorAccount = row.InitiatorAccount,
+        TargetAccount = row.TargetAccount
+    };
 }

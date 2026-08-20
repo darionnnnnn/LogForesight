@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 共用 UI 元件（docs/WEB-SPEC.md §8.1）：toast、確認對話框、表格渲染、載入/空狀態。
  *
  * 集中在這裡的理由與 api.js 相同——「破壞性操作要二次確認」「空狀態要有指引」
@@ -692,6 +692,33 @@ function sortHeader(col, sort, onSort) {
 
     return btn;
 }
+
+/**
+ * 展開或收合容器內表格的所有可展開列（作用範圍：當前 DOM 中的表格列）。
+ * @param {HTMLElement} container 包含表格的容器
+ * @param {boolean} [expand] true 為展開，false 為收合；未指定時若有未展開列則全部展開，否則全部收合
+ * @returns {boolean} 全部切換後的狀態（true＝已全部展開，false＝已全部收合）
+ */
+export function toggleAllTableDetails(container, expand) {
+    if (!container) return false;
+    const rows = container.querySelectorAll('tbody tr.lf-row-expandable');
+    if (rows.length === 0) return false;
+
+    const shouldExpand = expand !== undefined
+        ? expand
+        : Array.from(rows).some(r => r.getAttribute('aria-expanded') !== 'true');
+
+    for (const tr of rows) {
+        const detailRow = tr.nextElementSibling;
+        if (!detailRow || !detailRow.classList.contains('lf-row-detail')) continue;
+
+        detailRow.classList.toggle('d-none', !shouldExpand);
+        tr.classList.toggle('lf-row-open', shouldExpand);
+        tr.setAttribute('aria-expanded', String(shouldExpand));
+    }
+    return shouldExpand;
+}
+
 
 /**
  * 本地排序（表格清單頁：使用者、規則、告警抑制、執行監控單日明細／異常彙總）。
