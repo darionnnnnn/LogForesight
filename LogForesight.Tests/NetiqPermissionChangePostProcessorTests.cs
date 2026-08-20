@@ -272,7 +272,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("ServiceAcct", records[7].Target);
 
         Assert.Equal("稽核政策變更", records[8].ChangeType);
-        Assert.Equal("Microsoft-Windows-Security-Auditing (EventId 4719)", records[8].Target); // 退路值
+        Assert.Equal(string.Empty, records[8].Target); // 剖不出對象時為空字串，不塞事件來源退路值
 
         Assert.Equal("稽核政策變更", records[9].ChangeType);
         Assert.Equal("C:\\audit_target.txt", records[9].Target);
@@ -299,8 +299,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-TEST", WebHost.OsWindows, events, date);
 
         var record = store.Query(null, null, 1000).Where(c => string.Equals(c.HostName, "SRV-TEST", StringComparison.OrdinalIgnoreCase)).ToList().Single();
-        Assert.False(string.IsNullOrWhiteSpace(record.Target));
-        Assert.Equal("Microsoft-Windows-Security-Auditing (EventId 4756)", record.Target);
+        Assert.Equal(string.Empty, record.Target);
     }
 
     [Fact]
@@ -776,5 +775,88 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("（不在群組中）", record.Before);
         Assert.True(record.IsPrivilegedTarget);
         Assert.Equal(PermissionCategory.GroupMember, record.Category);
+    }
+
+    [Fact]
+    public void 訊息剖不出對象時_Target為空字串()
+    {
+        var details = PermissionChangeExtractor.Extract(
+            message: "無任何群組或物件欄位的純文字訊息",
+            changeType: "成員新增",
+            eventId: 4756);
+
+        Assert.Equal(string.Empty, details.Target);
+    }
+
+    [Fact]
+    public void 事件來源名不再出現在Target()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 20);
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4719,
+                Source = "Microsoft-Windows-Security-Auditing",
+                Message = "System audit policy was changed.",
+                TimeGenerated = date
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-TEST", WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == "SRV-TEST");
+        Assert.DoesNotContain("Microsoft-Windows-Security-Auditing", record.Target);
+        Assert.DoesNotContain("EventId", record.Target);
+        Assert.Equal(string.Empty, record.Target);
+    }
+
+    [Theory]
+    [InlineData("CN=33951 [Li Zhihui],OU=1220000000,DC=corp", "33951 [Li Zhihui]")]
+    [InlineData("CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=corp,DC=com", "33951 [Li Zhihui]")]
+    [InlineData("cn=Admin User,ou=Admins,ou=IT,dc=domain,dc=local", "Admin User")]
+    [InlineData("CN=SingleCNOnly", "SingleCNOnly")]
+    [InlineData("OU=Admins,CN=NestedUser,DC=corp", "NestedUser")]
+    public void 帳號顯示短名_多層OU的DN取CN值(string dn, string expected)
+    {
+        var result = AccountDisplayFormatter.ToShortName(dn);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData(@"DOMAIN\name", @"DOMAIN\name")]
+    [InlineData(@"CONTOSO\alice", @"CONTOSO\alice")]
+    [InlineData("name@domain.com", "name@domain.com")]
+    [InlineData("alice", "alice")]
+    [InlineData("S-1-5-21-1234567890-1234567890-1234567890-1001", "S-1-5-21-1234567890-1234567890-1234567890-1001")]
+    [InlineData("OU=Sales,OU=HQ,DC=corp,DC=com", "OU=Sales,OU=HQ,DC=corp,DC=com")]
+    public void 帳號顯示短名_Domain帳號與其他非DN格式原樣返回(string account, string expected)
+    {
+        var result = AccountDisplayFormatter.ToShortName(account);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t\r\n")]
+    public void 帳號顯示短名_Null或空白返回空字串(string? input)
+    {
+        var result = AccountDisplayFormatter.ToShortName(input);
+        Assert.Equal(string.Empty, result);
+    }
+
+    [Theory]
+    [InlineData(@"CN=Wang\, Ming,OU=Users,DC=corp", "Wang, Ming")]
+    [InlineData(@"CN=Special\, Name\, Jr.,OU=Admins,DC=corp", "Special, Name, Jr.")]
+    [InlineData(@"CN=Smith\, John,OU=Engineering,OU=HQ,DC=example,DC=com", "Smith, John")]
+    public void 帳號顯示短名_含反斜線跳脫逗號的CN值不被截斷且不留跳脫符號(string dn, string expected)
+    {
+        var result = AccountDisplayFormatter.ToShortName(dn);
+        Assert.Equal(expected, result);
     }
 }

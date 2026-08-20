@@ -66,7 +66,6 @@ public static class PermissionChangeExtractor
         string? message,
         string changeType,
         int eventId = 0,
-        string? eventSource = null,
         string? initialInitiatorAccount = null)
     {
         var parsed = ParseMessage(message);
@@ -78,14 +77,8 @@ public static class PermissionChangeExtractor
             initiatorAccount = parsed.SubjectAccountName;
         }
 
-        // 2. 目標資源名稱（群組/物件/目標帳戶/退路值）
-        string? target = parsed.GroupName ?? parsed.ObjectName ?? parsed.TargetAccount;
-        if (string.IsNullOrWhiteSpace(target))
-        {
-            target = string.IsNullOrWhiteSpace(eventSource)
-                ? (eventId > 0 ? $"Event {eventId}" : string.Empty)
-                : (eventId > 0 ? $"{eventSource} (EventId {eventId})" : eventSource);
-        }
+        // 2. 目標資源名稱（群組/物件/目標帳戶，剖不出時為空字串）
+        string target = parsed.GroupName ?? parsed.ObjectName ?? parsed.TargetAccount ?? string.Empty;
 
         // 3. 被異動目標帳號（群組成員或授權目標帳戶）
         string? targetAccount = null;

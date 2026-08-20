@@ -174,7 +174,7 @@ public static class HostDayPostProcessor
                 if (!knownKeys.TryAdd(key, 0)) continue;
 
                 var details = PermissionChangeExtractor.Extract(
-                    evt.Message, changeType, evt.EventId, evt.Source, evt.InitiatorAccount);
+                    evt.Message, changeType, evt.EventId, evt.InitiatorAccount);
 
                 recordsToAppend.Add(new PermissionChangeRecord
                 {
