@@ -319,9 +319,10 @@ AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 S
 `permission_change_migration`），刻意不併進 `HandlingBlobMigrator`——既有部署的處理狀態遷移
 早已是 `Completed`，而 `Evaluate()` 對 `Completed` 直接短路，併進去就永遠不會執行。
 遷移期間 `MigrationGateMiddleware` 擋下 `/api/permission-changes` 的非 GET 請求（GET 放行）。
-重入保護是**逐筆比對 `change_id`**，不是「表裡有資料就整批跳過」——後者在 `HandlingBlobMigrator`
-上安全（那三張表只有 HTTP 寫入、閘門擋得住），但權限異動的寫入端還有背景排程的分析流程，
-夜間分析先寫進一列就會讓整批舊資料被誤判成已搬而永久消失。舊 log 與舊 blob **不刪**，保留為備份。
+重入保護是**逐筆比對 `change_id`**，不是「表裡有資料就整批跳過」——遷移閘門只擋得住 HTTP 寫入，
+而背景排程的分析流程也會寫這張表，夜間分析先寫進一列就會讓整批舊資料被誤判成已搬而永久消失。
+`HandlingBlobMigrator` 原本正是「整批跳過」的寫法且情況相同（`AnalysisOrchestrator` 讓夜間分析
+直接寫那三張表），已一併改為逐筆比對自然鍵。舊 log 與舊 blob **不刪**，保留為備份。
 
 ### 報告全文（人看的完整內容，與結構化資料並存的第二層）
 

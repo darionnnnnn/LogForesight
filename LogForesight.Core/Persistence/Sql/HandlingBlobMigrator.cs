@@ -8,7 +8,7 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 把三份處理狀態自整份 JSON blob 搬進真表（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3、
 /// 修復規劃 docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
 ///
-/// **這是全案唯一會動到既有資料的一步**，四條約束：
+/// **這是全案唯一會動到既有資料的一步**，五條約束：
 ///
 /// 1. **中斷後可安全重來**：每一份的「讀 blob → 寫表 → 記錄完成」包在**單一交易**內。
 ///    被強制中止（服務啟動逾時被 SCM 砍掉）就整份回滾、表仍為空，下次啟動重搬。
@@ -19,6 +19,12 @@ namespace LogForesight.Core.Persistence.Sql;
 /// 3. **不刪舊 blob**：搬完保留當備份，由遷移狀態擔任它的失效標記。
 /// 4. **不靜默丟資料**：解析失敗直接拋，讓遷移標記為失敗並在畫面上看得見，
 ///    而不是安靜地少了一半處理狀態——後者要好幾天後才會有人發現。
+/// 5. **重入保護逐筆比對自然鍵，不是「表裡有資料就整批跳過」**。
+///    遷移閘門（<c>MigrationGateMiddleware</c>）只擋得住 HTTP 寫入，而這三張表
+///    還有另一個寫入端：<c>AnalysisOrchestrator</c> 把三個真表 store 交給
+///    <c>IssueCaseCoordinator</c>，夜間分析每個主機日都會呼叫 <c>AttachNewDay</c> 寫入。
+///    只要排程搶在遷移完成前寫進一列，「整批跳過」就會讓整份舊處理狀態永遠不被搬，
+///    而且回報一個看起來正常的列數、狀態標成完成——沒有任何錯誤訊息。
 ///
 /// **不在啟動路徑上執行**：由背景服務驅動（見 Web 端 HandlingMigrationHostedService）。
 /// 2000 台約 108 萬列／350 MB，同步搬會直接撞上 Windows 服務 30 秒的啟動逾時。
@@ -163,10 +169,6 @@ public sealed class HandlingBlobMigrator
 
     private static int MigrateIssueHandlings(LfDbContext ctx, string? json)
     {
-        // 表已有資料代表上次的交易已 commit（正常情況下不會走到，除非狀態 blob 被手動改過）——
-        // 不重複匯入，避免撞唯一索引
-        if (ctx.IssueHandlings.Any()) return ctx.IssueHandlings.Count();
-
         var items = Deserialize<IssueHandling>(json, "issue_handling");
         if (items.Count == 0) return 0;
 
@@ -176,6 +178,17 @@ public sealed class HandlingBlobMigrator
             .ToList();
         if (deduped.Count != items.Count)
             Log.Warn("[SQL] issue_handling 遷移：{Dup} 筆重複鍵已保留最後一筆", items.Count - deduped.Count);
+
+        // 逐筆比對自然鍵，只補表裡沒有的——不能用「表裡有資料就整批跳過」（見類別註解第 5 條）
+        var existing = ctx.IssueHandlings.AsNoTracking()
+            .Select(r => new { r.HostNameKey, r.RecordDate, r.IssueKey })
+            .ToList()
+            .Select(r => (r.HostNameKey, r.RecordDate, r.IssueKey))
+            .ToHashSet();
+        deduped = deduped
+            .Where(h => !existing.Contains((HostNameKey.Of(h.HostName), h.Date.Date, h.IssueKey)))
+            .ToList();
+        if (deduped.Count == 0) return 0;
 
         ctx.IssueHandlings.AddRange(deduped.Select(h => new IssueHandlingRow
         {
@@ -197,14 +210,16 @@ public sealed class HandlingBlobMigrator
 
     private static int MigrateIssueCases(LfDbContext ctx, string? json)
     {
-        if (ctx.IssueCases.Any()) return ctx.IssueCases.Count();
-
         var items = Deserialize<IssueCase>(json, "issue_cases");
         if (items.Count == 0) return 0;
 
         var deduped = items.GroupBy(c => c.CaseId).Select(g => g.Last()).ToList();
         if (deduped.Count != items.Count)
             Log.Warn("[SQL] issue_cases 遷移：{Dup} 筆重複 case_id 已保留最後一筆", items.Count - deduped.Count);
+
+        var existing = ctx.IssueCases.AsNoTracking().Select(r => r.CaseId).ToHashSet(StringComparer.Ordinal);
+        deduped = deduped.Where(c => !existing.Contains(c.CaseId)).ToList();
+        if (deduped.Count == 0) return 0;
 
         ctx.IssueCases.AddRange(deduped.Select(c => new IssueCaseRow
         {
@@ -230,8 +245,6 @@ public sealed class HandlingBlobMigrator
 
     private static int MigrateRecordHandlings(LfDbContext ctx, string? json)
     {
-        if (ctx.RecordHandlings.Any()) return ctx.RecordHandlings.Count();
-
         var items = Deserialize<RecordHandling>(json, "record_handling");
         if (items.Count == 0) return 0;
 
@@ -241,6 +254,16 @@ public sealed class HandlingBlobMigrator
             .ToList();
         if (deduped.Count != items.Count)
             Log.Warn("[SQL] record_handling 遷移：{Dup} 筆重複鍵已保留最後一筆", items.Count - deduped.Count);
+
+        var existing = ctx.RecordHandlings.AsNoTracking()
+            .Select(r => new { r.HostNameKey, r.RecordDate })
+            .ToList()
+            .Select(r => (r.HostNameKey, r.RecordDate))
+            .ToHashSet();
+        deduped = deduped
+            .Where(h => !existing.Contains((HostNameKey.Of(h.HostName), h.Date.Date)))
+            .ToList();
+        if (deduped.Count == 0) return 0;
 
         ctx.RecordHandlings.AddRange(deduped.Select(h => new RecordHandlingRow
         {
