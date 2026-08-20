@@ -488,8 +488,11 @@ body {
        讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，不管有無副標。 */
     align-items: stretch;
     gap: var(--lf-space-2);
-    padding: var(--lf-space-4) var(--lf-space-5);
-    font-size: var(--lf-font-size-xl);
+    /* 左右內距用 space-4 而不是 space-5：側欄總寬固定（--lf-sidebar-width），
+       品牌名稱能用的水平空間＝總寬扣掉圖示、gap 與左右內距。字級提到 2xl 之後，
+       「LogForesight」在 space-5 的內距下會剛好觸發 .lf-sidebar__brand-name 的省略號。 */
+    padding: var(--lf-space-4);
+    font-size: var(--lf-font-size-2xl);
     font-weight: 700;
     color: #fff;
     letter-spacing: .01em;
@@ -519,23 +522,19 @@ body {
     flex-direction: column;
     /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
        預設值，寫出來是文件化意圖：不依賴父層設定不變，之後若父層改回 center 這裡仍然正確）。
-       justify-content:space-between 讓名稱貼齊撐滿後的區塊上緣、副標貼齊下緣（回饋十六輪
-       批次E-2：原本兩者只是各自靠攏，沒有對齊圖示邊界）。*/
-    justify-content: space-between;
+       justify-content:center 讓名稱與副標當成一組、整組對齊圖示中線——兩行之間只留
+       副標自己的 margin-top，副標因此緊跟在名稱下方，而不是被推到圖示的下緣。*/
+    justify-content: center;
     align-self: stretch;
     min-width: 0;
     flex: 1 1 auto;
-}
-
-/* 沒有副標時只剩一行文字，space-between 在單一子項時等同貼頂——改回置中對齊圖示中線 */
-.lf-sidebar__brand-text:not(:has(small)) {
-    justify-content: center;
 }
 
 .lf-sidebar__brand-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.15;
 }
 
 .lf-sidebar__brand-text small {
@@ -543,10 +542,13 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: .7rem;
+    /* 副標用字級 token 的最小級（xs）而不是自訂 .7rem——.7rem 在預設根字級下約 11px，
+       低於可讀下限 */
+    font-size: var(--lf-font-size-xs);
     font-weight: 400;
     color: var(--lf-sidebar-section);
-    margin-top: .15rem;
+    margin-top: .1rem;
+    line-height: 1.25;
     letter-spacing: 0;
 }
 
@@ -1942,10 +1944,13 @@ a.lf-calendar__cell:focus-visible {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.15;
 }
 
+/* 與側欄品牌區同一組行高，副標緊跟名稱下方 */
 .lf-login__subtitle {
     display: block;
+    line-height: 1.25;
     font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
     overflow: hidden;
