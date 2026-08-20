@@ -246,18 +246,18 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
         });
 
         // 1. hostNames 為 null：不限主機，依 DetectedAt 降冪排列
-        var all = _store.Query(null, null, 100);
+        var all = _store.Query(new PermissionChangeQueryFilter { PageSize = 100 }).Items;
         Assert.Equal(3, all.Count);
         Assert.Equal("q3", all[0].ChangeId); // time3
         Assert.Equal("q2", all[1].ChangeId); // time2
         Assert.Equal("q1", all[2].ChangeId); // time1
 
         // 2. hostNames 為空集合：回傳空結果
-        var empty = _store.Query(Array.Empty<string>(), null, 100);
+        var empty = _store.Query(new PermissionChangeQueryFilter { HostNames = Array.Empty<string>(), PageSize = 100 }).Items;
         Assert.Empty(empty);
 
         // 3. hostNames 指定主機
-        var srv1Only = _store.Query(new[] { "srv-1" }, null, 100); // 測試大小寫不敏感
+        var srv1Only = _store.Query(new PermissionChangeQueryFilter { HostNames = new[] { "srv-1" }, PageSize = 100 }).Items; // 測試大小寫不敏感
         Assert.Equal(2, srv1Only.Count);
         Assert.All(srv1Only, r => Assert.Equal("SRV-1", r.HostName));
 
@@ -268,12 +268,12 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
             Status = PermissionConfirmStatuses.Authorized
         });
 
-        var pendingOnly = _store.Query(null, PermissionConfirmStatuses.Pending, 100);
+        var pendingOnly = _store.Query(new PermissionChangeQueryFilter { Status = PermissionConfirmStatuses.Pending, PageSize = 100 }).Items;
         Assert.Equal(2, pendingOnly.Count);
         Assert.Contains(pendingOnly, r => r.ChangeId == "q2");
         Assert.Contains(pendingOnly, r => r.ChangeId == "q3");
 
-        var authorizedOnly = _store.Query(null, PermissionConfirmStatuses.Authorized, 100);
+        var authorizedOnly = _store.Query(new PermissionChangeQueryFilter { Status = PermissionConfirmStatuses.Authorized, PageSize = 100 }).Items;
         Assert.Single(authorizedOnly);
         Assert.Equal("q1", authorizedOnly[0].ChangeId);
     }

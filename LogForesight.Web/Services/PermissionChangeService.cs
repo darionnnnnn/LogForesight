@@ -1,3 +1,7 @@
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -15,7 +19,7 @@ public class PermissionChangeService
     private readonly PermissionChangeStore _store;
     private readonly IHostStore _hosts;
     private readonly IVisibilityService _visibility;
-    private readonly Auth.ICurrentUser _currentUser;
+    private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IUserStore _users;
 
@@ -23,7 +27,7 @@ public class PermissionChangeService
         PermissionChangeStore store,
         IHostStore hosts,
         IVisibilityService visibility,
-        Auth.ICurrentUser currentUser,
+        ICurrentUser currentUser,
         IAuditService audit,
         IUserStore users)
     {
@@ -35,42 +39,110 @@ public class PermissionChangeService
         _users = users;
     }
 
-    public List<PermissionChangeDto> Query(string? status, int maxCount)
+    /// <summary>組裝查詢條件（供查詢端點與批次核准端點共用）</summary>
+    public PermissionChangeQueryFilter BuildFilter(PermissionChangeQueryRequest request)
     {
-        var changes = _store.Query(VisibleHostNames(), status, maxCount);
-        if (changes.Count == 0) return new List<PermissionChangeDto>();
+        var (page, pageSize) = Paging.Normalize(request.Page, request.PageSize);
 
-        var confirmations = _store.GetConfirmations(changes.Select(c => c.ChangeId))
+        CidrRange? cidr = null;
+        if (!string.IsNullOrWhiteSpace(request.Subnet))
+        {
+            cidr = CidrMatcher.Parse(request.Subnet)
+                   ?? throw DomainException.Validation(
+                       $"「{request.Subnet}」不是有效的網段格式（可用 192.168.1.0/24、192.168.1.* 或 192.168.1.100）。");
+        }
+
+        IReadOnlyCollection<string>? hostNames;
+        if (_currentUser.Has(Capability.ViewAll))
+        {
+            if (cidr != null)
+            {
+                hostNames = _hosts.GetAll()
+                    .Where(h => CidrMatcher.Matches(cidr, ResolveHostIp(h, h.HostName)))
+                    .Select(h => h.HostName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            else
+            {
+                hostNames = null; // 可見範圍為全體時不下推主機名單（不限）
+            }
+        }
+        else
+        {
+            var visibleHosts = _visibility.GetVisibleHosts();
+            if (cidr != null)
+            {
+                hostNames = visibleHosts
+                    .Where(h => CidrMatcher.Matches(cidr, ResolveHostIp(h, h.HostName)))
+                    .Select(h => h.HostName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            else
+            {
+                hostNames = visibleHosts
+                    .Select(h => h.HostName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+
+        return new PermissionChangeQueryFilter
+        {
+            HostNames = hostNames,
+            Keyword = request.Keyword,
+            Categories = request.Categories,
+            Status = request.Status,
+            Source = request.Source,
+            From = request.From,
+            To = request.To,
+            Sort = request.Sort,
+            Ascending = request.Ascending,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
+    public PagedResult<PermissionChangeDto> Query(PermissionChangeQueryRequest request)
+    {
+        var filter = BuildFilter(request);
+        var pagedRecords = _store.Query(filter);
+        if (pagedRecords.Items.Count == 0)
+        {
+            return new PagedResult<PermissionChangeDto>
+            {
+                Items = new List<PermissionChangeDto>(),
+                Page = pagedRecords.Page,
+                PageSize = pagedRecords.PageSize,
+                Total = pagedRecords.Total
+            };
+        }
+
+        var confirmations = _store.GetConfirmations(pagedRecords.Items.Select(c => c.ChangeId))
             .ToDictionary(c => c.ChangeId, StringComparer.OrdinalIgnoreCase);
 
         var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
 
-        return changes.Select(change =>
+        var items = pagedRecords.Items.Select(change =>
         {
             confirmations.TryGetValue(change.ChangeId, out var confirmation);
             hostsByName.TryGetValue(change.HostName, out var host);
 
-            return new PermissionChangeDto
-            {
-                ChangeId = change.ChangeId,
-                HostId = host?.HostId ?? 0,
-                HostName = change.HostName,
-                DetectedAt = change.DetectedAt,
-                Target = change.Target,
-                ChangeType = change.ChangeType,
-                Before = change.Before,
-                After = change.After,
-                AlertText = change.AlertText,
-                Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
-                Status = confirmation?.Status ?? PermissionConfirmStatuses.Pending,
-                ConfirmedByAccount = confirmation?.ConfirmedByAccount,
-                ConfirmedByDisplayName = string.IsNullOrEmpty(confirmation?.ConfirmedByAccount)
-                    ? null
-                    : _users.FindByAccount(confirmation.ConfirmedByAccount)?.DisplayName,
-                ConfirmedAt = confirmation?.ConfirmedAt,
-                ConfirmNote = confirmation?.Note
-            };
+            var confirmedByDisplayName = !string.IsNullOrEmpty(confirmation?.ConfirmedByAccount)
+                ? _users.FindByAccount(confirmation.ConfirmedByAccount)?.DisplayName
+                : null;
+
+            return MapToDto(change, confirmation, host, confirmedByDisplayName);
         }).ToList();
+
+        return new PagedResult<PermissionChangeDto>
+        {
+            Items = items,
+            Page = pagedRecords.Page,
+            PageSize = pagedRecords.PageSize,
+            Total = pagedRecords.Total
+        };
     }
 
     public PermissionChangeDto Confirm(string changeId, ConfirmPermissionChangeRequest request)
@@ -123,11 +195,177 @@ public class PermissionChangeService
             targetId: changeId,
             detail: new { change.Target, change.ChangeType, change.Before, change.After, confirmation.Note });
 
-        return Query(null, int.MaxValue).First(c => c.ChangeId == changeId);
+        var savedConfirmation = _store.GetConfirmations(new[] { changeId }).FirstOrDefault() ?? confirmation;
+        var confirmedByDisplayName = !string.IsNullOrEmpty(savedConfirmation.ConfirmedByAccount)
+            ? _users.FindByAccount(savedConfirmation.ConfirmedByAccount)?.DisplayName
+            : null;
+
+        return MapToDto(change, savedConfirmation, host, confirmedByDisplayName);
     }
 
-    public int CountPending() => _store.CountPending(VisibleHostNames());
+    public int CountPending()
+    {
+        var hostNames = _currentUser.Has(Capability.ViewAll) ? null : VisibleHostNames();
+        return _store.CountPending(hostNames);
+    }
+
+    private static PermissionChangeDto MapToDto(
+        PermissionChangeRecord change,
+        PermissionChangeConfirmation? confirmation,
+        WebHost? host,
+        string? confirmedByDisplayName)
+    {
+        var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
+        return new PermissionChangeDto
+        {
+            ChangeId = change.ChangeId,
+            HostId = host?.HostId ?? 0,
+            HostName = change.HostName,
+            HostIp = ResolveHostIp(host, change.HostName),
+            DetectedAt = change.DetectedAt,
+            Target = change.Target,
+            ChangeType = change.ChangeType,
+            Category = category,
+            CategoryLabel = PermissionCategory.GetLabel(category),
+            IsPrivilegedTarget = change.IsPrivilegedTarget,
+            InitiatorAccount = change.InitiatorAccount,
+            TargetAccount = change.TargetAccount,
+            Before = change.Before,
+            After = change.After,
+            AlertText = change.AlertText,
+            SummaryText = GenerateSummaryText(change),
+            Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
+            Status = confirmation?.Status ?? PermissionConfirmStatuses.Pending,
+            ConfirmedByAccount = confirmation?.ConfirmedByAccount,
+            ConfirmedByDisplayName = confirmedByDisplayName,
+            ConfirmedAt = confirmation?.ConfirmedAt,
+            ConfirmNote = confirmation?.Note
+        };
+    }
+
+    /// <summary>產生異動摘要說明（後端統一組裝，避免前後端規則漂移）</summary>
+    public static string GenerateSummaryText(PermissionChangeRecord change)
+    {
+        var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
+        var categoryLabel = PermissionCategory.GetLabel(category);
+        var target = string.IsNullOrWhiteSpace(change.Target) ? "（未指定對象）" : change.Target.Trim();
+
+        switch (category)
+        {
+            case PermissionCategory.GroupMember:
+            {
+                var member = !string.IsNullOrWhiteSpace(change.After)
+                    ? change.After
+                    : (!string.IsNullOrWhiteSpace(change.TargetAccount)
+                        ? change.TargetAccount
+                        : change.Before);
+
+                if (change.ChangeType == "成員新增")
+                {
+                    return !string.IsNullOrWhiteSpace(member)
+                        ? $"{categoryLabel}：{target} 新增成員 {member}"
+                        : $"{categoryLabel}：{target} 成員新增";
+                }
+                if (change.ChangeType == "成員移除")
+                {
+                    var removedMember = !string.IsNullOrWhiteSpace(change.Before)
+                        ? change.Before
+                        : (!string.IsNullOrWhiteSpace(change.TargetAccount)
+                            ? change.TargetAccount
+                            : change.After);
+
+                    return !string.IsNullOrWhiteSpace(removedMember)
+                        ? $"{categoryLabel}：{target} 移除成員 {removedMember}"
+                        : $"{categoryLabel}：{target} 成員移除";
+                }
+                return !string.IsNullOrWhiteSpace(change.ChangeType)
+                    ? $"{categoryLabel}：{target} {change.ChangeType}"
+                    : $"{categoryLabel}：{target}";
+            }
+
+            case PermissionCategory.FolderAcl:
+            {
+                if (change.ChangeType == "權限新增（ACL 規則）")
+                {
+                    return !string.IsNullOrWhiteSpace(change.After)
+                        ? $"{categoryLabel}：{target} 新增權限 {change.After}"
+                        : $"{categoryLabel}：{target} 新增權限";
+                }
+                if (change.ChangeType == "權限移除（ACL 規則）")
+                {
+                    return !string.IsNullOrWhiteSpace(change.Before)
+                        ? $"{categoryLabel}：{target} 移除權限 {change.Before}"
+                        : $"{categoryLabel}：{target} 移除權限";
+                }
+                if (change.ChangeType == "權限變更")
+                {
+                    if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
+                        return $"{categoryLabel}：{target} 權限由 {change.Before} 變更為 {change.After}";
+                    if (!string.IsNullOrWhiteSpace(change.After))
+                        return $"{categoryLabel}：{target} 權限變更為 {change.After}";
+                    return $"{categoryLabel}：{target} 權限變更";
+                }
+                return !string.IsNullOrWhiteSpace(change.ChangeType)
+                    ? $"{categoryLabel}：{target} {change.ChangeType}"
+                    : $"{categoryLabel}：{target}";
+            }
+
+            case PermissionCategory.OwnerChange:
+            {
+                if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
+                    return $"{categoryLabel}：{target} 擁有者由 {change.Before} 變更為 {change.After}";
+                if (!string.IsNullOrWhiteSpace(change.After))
+                    return $"{categoryLabel}：{target} 擁有者變更為 {change.After}";
+                return $"{categoryLabel}：{target} 擁有者變更";
+            }
+
+            case PermissionCategory.FolderAccess:
+            {
+                if (change.ChangeType is "無法存取" or "恢復可存取")
+                    return $"{categoryLabel}：{target} {change.ChangeType}";
+                return !string.IsNullOrWhiteSpace(change.ChangeType)
+                    ? $"{categoryLabel}：{target} {change.ChangeType}"
+                    : $"{categoryLabel}：{target}";
+            }
+
+            case PermissionCategory.AuditPolicy:
+            {
+                if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
+                    return $"{categoryLabel}：{target} 政策由 {change.Before} 變更為 {change.After}";
+                if (!string.IsNullOrWhiteSpace(change.After))
+                    return $"{categoryLabel}：{target} 政策變更為 {change.After}";
+                return $"{categoryLabel}：{target} 稽核政策變更";
+            }
+
+            case PermissionCategory.Summary:
+            {
+                return !string.IsNullOrWhiteSpace(change.AlertText)
+                    ? $"{categoryLabel}：{target} {change.AlertText}"
+                    : $"{categoryLabel}：{target}";
+            }
+
+            default:
+            {
+                if (!string.IsNullOrWhiteSpace(change.AlertText))
+                    return $"{categoryLabel}：{target} {change.AlertText}";
+                if (!string.IsNullOrWhiteSpace(change.ChangeType))
+                    return $"{categoryLabel}：{target} {change.ChangeType}";
+                return $"{categoryLabel}：{target}";
+            }
+        }
+    }
+
+    private static string? ResolveHostIp(WebHost? host, string hostName)
+    {
+        if (!string.IsNullOrWhiteSpace(host?.IpAddress))
+            return host.IpAddress;
+
+        if (!string.IsNullOrWhiteSpace(hostName) && System.Net.IPAddress.TryParse(hostName.Trim(), out _))
+            return hostName.Trim();
+
+        return null;
+    }
 
     private List<string> VisibleHostNames() =>
-        _visibility.GetVisibleHosts().Select(h => h.HostName).ToList();
+        _visibility.GetVisibleHosts().Select(h => h.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 }

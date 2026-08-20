@@ -4,6 +4,22 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LogForesight.Core.Persistence;
 
+/// <summary>權限異動查詢條件（多條件組合、分頁與排序下推 SQL）</summary>
+public class PermissionChangeQueryFilter
+{
+    public IReadOnlyCollection<string>? HostNames { get; set; }
+    public string? Keyword { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public string? Sort { get; set; }
+    public bool Ascending { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
 /// <summary>
 /// 權限異動待辦的真表儲存（↔ lf_permission_changes，含確認狀態）。
 ///
@@ -62,32 +78,123 @@ public class PermissionChangeStore
         ctx.SaveChanges();
     }
 
-    /// <summary>依主機與確認狀態查詢；hostNames 為空集合時回空結果（授權範圍為空）</summary>
-    public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount)
+    /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
+    public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
     {
-        if (hostNames != null && hostNames.Count == 0)
-            return new List<PermissionChangeRecord>();
+        if (filter.HostNames != null && filter.HostNames.Count == 0)
+        {
+            return new PagedResult<PermissionChangeRecord>
+            {
+                Items = new List<PermissionChangeRecord>(),
+                Page = filter.Page,
+                PageSize = filter.PageSize,
+                Total = 0
+            };
+        }
 
         using var ctx = _contextFactory();
         IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();
 
-        if (hostNames != null)
+        if (filter.HostNames != null)
         {
-            var keys = hostNames.Select(HostNameKey.Of).Distinct().ToList();
+            var keys = filter.HostNames.Select(HostNameKey.Of).Distinct().ToList();
             query = query.Where(r => keys.Contains(r.HostNameKey));
         }
 
-        if (!string.IsNullOrWhiteSpace(status))
+        if (!string.IsNullOrWhiteSpace(filter.Keyword))
         {
-            query = query.Where(r => r.Status == status);
+            var q = filter.Keyword.Trim();
+            query = query.Where(r =>
+                r.HostName.Contains(q) ||
+                (r.InitiatorAccount != null && r.InitiatorAccount.Contains(q)) ||
+                (r.TargetAccount != null && r.TargetAccount.Contains(q)) ||
+                r.Target.Contains(q) ||
+                r.AlertText.Contains(q));
         }
 
+        if (filter.Categories is { Count: > 0 })
+        {
+            query = query.Where(r => filter.Categories.Contains(r.Category));
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Status))
+        {
+            query = query.Where(r => r.Status == filter.Status);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.Source))
+        {
+            query = query.Where(r => r.Source == filter.Source);
+        }
+
+        if (filter.From.HasValue)
+        {
+            query = query.Where(r => r.DetectedAt >= filter.From.Value);
+        }
+
+        if (filter.To.HasValue)
+        {
+            query = query.Where(r => r.DetectedAt <= filter.To.Value);
+        }
+
+        var total = query.Count();
+        if (total == 0)
+        {
+            return new PagedResult<PermissionChangeRecord>
+            {
+                Items = new List<PermissionChangeRecord>(),
+                Page = filter.Page,
+                PageSize = filter.PageSize,
+                Total = 0
+            };
+        }
+
+        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
+
+        var skip = Math.Max(0, (filter.Page - 1) * filter.PageSize);
         var rows = query
-            .OrderByDescending(r => r.DetectedAt)
-            .Take(maxCount)
+            .Skip(skip)
+            .Take(filter.PageSize)
             .ToList();
 
-        return rows.Select(ToModel).ToList();
+        return new PagedResult<PermissionChangeRecord>
+        {
+            Items = rows.Select(ToModel).ToList(),
+            Page = filter.Page,
+            PageSize = filter.PageSize,
+            Total = total
+        };
+    }
+
+    /// <summary>相容既有呼叫端的多載（轉發至多條件分頁查詢）</summary>
+    public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount) =>
+        Query(new PermissionChangeQueryFilter
+        {
+            HostNames = hostNames,
+            Status = status,
+            PageSize = maxCount
+        }).Items;
+
+    private static IQueryable<PermissionChangeRow> ApplyOrdering(
+        IQueryable<PermissionChangeRow> query,
+        string? sort,
+        bool ascending)
+    {
+        var sortKey = sort?.Trim().ToLowerInvariant();
+        return (sortKey, ascending) switch
+        {
+            ("hostname", true) => query.OrderBy(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("hostname", false) => query.OrderByDescending(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            ("category", true) => query.OrderBy(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("category", false) => query.OrderByDescending(r => r.Category).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            ("status", true) => query.OrderBy(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
+            ("status", false) => query.OrderByDescending(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
+
+            ("detectedat" or null or "", true) => query.OrderBy(r => r.DetectedAt).ThenBy(r => r.Id),
+            _ => query.OrderByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id)
+        };
     }
 
     /// <summary>單列查詢</summary>

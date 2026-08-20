@@ -543,17 +543,39 @@ public class AssigneeCannotHandleDto
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────
 
+public class PermissionChangeQueryRequest
+{
+    public string? Keyword { get; set; }
+    public string? Subnet { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public string Sort { get; set; } = "detectedAt";
+    public bool Ascending { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
 public class PermissionChangeDto
 {
     public string ChangeId { get; set; } = string.Empty;
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+    public string? HostIp { get; set; }
     public DateTime DetectedAt { get; set; }
     public string Target { get; set; } = string.Empty;
     public string ChangeType { get; set; } = string.Empty;
+    public string Category { get; set; } = PermissionCategory.Other;
+    public string CategoryLabel { get; set; } = string.Empty;
+    public bool IsPrivilegedTarget { get; set; }
+    public string? InitiatorAccount { get; set; }
+    public string? TargetAccount { get; set; }
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+    public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;
 
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
