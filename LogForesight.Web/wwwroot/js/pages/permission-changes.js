@@ -18,6 +18,9 @@ const STORAGE_KEY = 'lf.permissionChanges.filters';
 
 const modal = new bootstrap.Modal(document.getElementById('confirm-modal'));
 const confirmForm = document.getElementById('confirm-form');
+const batchConfirmModal = new bootstrap.Modal(document.getElementById('batch-confirm-modal'));
+const batchSkippedModal = new bootstrap.Modal(document.getElementById('batch-skipped-modal'));
+const batchConfirmForm = document.getElementById('batch-confirm-form');
 
 const filterForm = document.getElementById('filter-form');
 const keywordInput = document.getElementById('filter-keyword');
@@ -41,6 +44,10 @@ let searchDebounce = null;
 
 const selectedCategories = new Set();
 const knownCategories = new Map(); // categoryKey -> categoryLabel
+
+const selectedChanges = new Map(); // changeId -> change object
+let headerCheckboxEl = null;
+let batchTargetStatus = 'authorized';
 
 /**
  * 載入可用的類別清單。刻意向後端要，而不是從當頁資料收集——
@@ -195,8 +202,11 @@ function showSubnetError(message) {
     if (subnetFeedback) subnetFeedback.textContent = message || '網段格式錯誤';
 }
 
-/** 組裝查詢參數（供清單查詢共用） */
-function buildQueryParams(overrides = {}) {
+/**
+ * 目前的篩選條件（供清單查詢與「全選符合條件」共用同一份組裝）。
+ * 兩邊共用同一份組裝，避免清單與全選條件不一致。
+ */
+function buildQueryParams(includePaging = true) {
     const params = new URLSearchParams();
 
     const q = keywordInput ? keywordInput.value.trim() : '';
@@ -224,8 +234,10 @@ function buildQueryParams(overrides = {}) {
 
     params.set('sort', sort.key || 'detectedAt');
     params.set('dir', sort.dir || 'desc');
-    params.set('page', String(overrides.page ?? currentPage));
-    params.set('pageSize', String(overrides.pageSize ?? pageSize));
+    if (includePaging) {
+        params.set('page', String(currentPage));
+        params.set('pageSize', String(pageSize));
+    }
     return params;
 }
 
@@ -236,11 +248,19 @@ async function load() {
     const container = document.getElementById('perm-list');
     renderLoading(container, 5);
 
-    const params = buildQueryParams();
+    const params = buildQueryParams(true);
     history.replaceState(null, '', `?${params.toString()}`);
 
     try {
-        lastResult = await api.get(`/api/permission-changes?${params}`, { silent: true });
+        lastResult = await api.get(`/api/permission-changes?${params.toString()}`, { silent: true });
+
+        if (lastResult && Array.isArray(lastResult.items)) {
+            for (const item of lastResult.items) {
+                if (selectedChanges.has(item.changeId)) {
+                    selectedChanges.set(item.changeId, item);
+                }
+            }
+        }
 
         renderCategoryChips();
         render();
@@ -256,6 +276,38 @@ async function load() {
     }
 }
 
+/**
+ * 全選符合目前篩選的待確認權限異動。
+ * 伺服器端以同一組篩選條件解析出 changeIds 清單，跨頁選取不需使用者逐頁翻過去。
+ */
+async function selectAllMatching(button) {
+    const restore = withBusy(button, '選取中');
+    try {
+        const params = buildQueryParams(false);
+        const result = await api.get(`/api/permission-changes/ids?${params.toString()}`);
+
+        for (const changeId of result.changeIds) {
+            if (selectedChanges.has(changeId)) continue;
+            const known = (lastResult?.items || []).find(c => c.changeId === changeId);
+            selectedChanges.set(changeId, known ?? {
+                changeId,
+                hostName: '（其他）',
+                categoryLabel: '其他',
+                target: ''
+            });
+        }
+
+        if (result.truncated) {
+            toast(`符合 ${result.total} 筆，本次只能選取 ${result.changeIds.length} 筆，請分批處理。`, 'warning', 8000);
+        } else {
+            toast(`已選取符合目前篩選的 ${result.changeIds.length} 筆權限異動。`, 'success');
+        }
+        render();
+    } finally {
+        restore();
+    }
+}
+
 function render() {
     const total = lastResult.total;
     const countEl = document.getElementById('perm-count');
@@ -268,6 +320,12 @@ function render() {
 
     renderTable(document.getElementById('perm-list'), {
         columns: [
+            {
+                title: '',
+                className: 'lf-checkbox-cell',
+                renderHeader: selectAllHeaderCheckbox,
+                render: rowCheckboxCell
+            },
             {
                 key: 'detectedAt',
                 title: '時間',
@@ -323,6 +381,73 @@ function render() {
     });
 
     renderPager();
+    renderSelectionBar();
+}
+
+/** 勾選框只出現在 status 為 pending 的列（已確認的不能改回） */
+function isSelectable(change) {
+    return change.status === 'pending';
+}
+
+function rowCheckboxCell(change) {
+    if (!isSelectable(change)) return document.createTextNode('');
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.checked = selectedChanges.has(change.changeId);
+    check.title = '選取此項目';
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        if (check.checked) selectedChanges.set(change.changeId, change);
+        else selectedChanges.delete(change.changeId);
+        renderSelectionBar();
+        syncSelectAllHeaderCheckbox();
+    });
+
+    return check;
+}
+
+/** 表頭全選：只作用在目前這一頁可勾選的列 */
+function selectAllHeaderCheckbox() {
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'form-check-input';
+    check.title = '全選本頁待確認項目';
+
+    check.addEventListener('click', event => event.stopPropagation());
+    check.addEventListener('change', () => {
+        const selectable = (lastResult?.items || []).filter(isSelectable);
+        if (check.checked) {
+            for (const change of selectable) selectedChanges.set(change.changeId, change);
+        } else {
+            for (const change of selectable) selectedChanges.delete(change.changeId);
+        }
+        render();
+    });
+
+    headerCheckboxEl = check;
+    syncSelectAllHeaderCheckbox();
+    return check;
+}
+
+/** 本頁可勾選列是否已全部勾選，維持三態同步 */
+function syncSelectAllHeaderCheckbox() {
+    if (!headerCheckboxEl) return;
+    const selectable = (lastResult?.items || []).filter(isSelectable);
+    headerCheckboxEl.checked = selectable.length > 0 && selectable.every(c => selectedChanges.has(c.changeId));
+    headerCheckboxEl.indeterminate = !headerCheckboxEl.checked && selectable.some(c => selectedChanges.has(c.changeId));
+}
+
+function renderSelectionBar() {
+    const bar = document.getElementById('perm-selection-bar');
+    if (!bar) return;
+    bar.classList.toggle('d-none', selectedChanges.size === 0);
+    const countEl = document.getElementById('perm-selection-count');
+    if (countEl) {
+        countEl.textContent = `已選 ${selectedChanges.size} 筆`;
+    }
 }
 
 function hostCell(row) {
@@ -640,6 +765,8 @@ confirmForm.addEventListener('submit', async event => {
             note: note || null
         });
 
+        selectedChanges.delete(pendingConfirm.change.changeId);
+
         toast(pendingConfirm.targetStatus === 'authorized' ? '已確認為授權操作' : '已標記為可疑', 'success');
         modal.hide();
         await load();
@@ -647,6 +774,157 @@ confirmForm.addEventListener('submit', async event => {
         restore();
     }
 });
+
+/**
+ * 批次確認 modal 預覽：依類別與主機分組摘要，資料來自 selectedChanges 勾選當下已有的列物件，不重打 API。
+ */
+function openBatchConfirmModal(targetStatus) {
+    if (selectedChanges.size === 0) {
+        toast('請先勾選要處理的權限異動', 'warning');
+        return;
+    }
+
+    batchTargetStatus = targetStatus;
+    const isSuspicious = targetStatus === 'suspicious';
+    const actionText = isSuspicious ? '標記為可疑' : '標記為授權操作';
+    const statusText = isSuspicious ? '可疑' : '授權操作';
+
+    document.getElementById('batch-confirm-modal-title').textContent = `批次${actionText}`;
+    document.getElementById('batch-confirm-summary-text').textContent =
+        `將把 ${selectedChanges.size} 筆標記為${statusText}`;
+
+    // 依類別與主機分組摘要
+    const categoryCounts = new Map();
+    const hostCounts = new Map();
+    for (const change of selectedChanges.values()) {
+        const cat = change.categoryLabel || change.category || '其他';
+        categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
+
+        const host = change.hostName || '（未指定主機）';
+        hostCounts.set(host, (hostCounts.get(host) || 0) + 1);
+    }
+
+    const catContainer = document.getElementById('batch-confirm-categories');
+    catContainer.replaceChildren();
+    for (const [cat, count] of categoryCounts.entries()) {
+        const item = document.createElement('div');
+        item.className = 'd-flex justify-content-between align-items-center small py-1 border-bottom';
+        const name = document.createElement('span');
+        name.textContent = cat;
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = `${count} 筆`;
+        item.append(name, badge);
+        catContainer.appendChild(item);
+    }
+
+    const hostContainer = document.getElementById('batch-confirm-hosts');
+    hostContainer.replaceChildren();
+    for (const [host, count] of hostCounts.entries()) {
+        const item = document.createElement('div');
+        item.className = 'd-flex justify-content-between align-items-center small py-1 border-bottom';
+        const name = document.createElement('span');
+        name.className = 'font-monospace';
+        name.textContent = host;
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--secondary';
+        badge.textContent = `${count} 筆`;
+        item.append(name, badge);
+        hostContainer.appendChild(item);
+    }
+
+    const noteEl = document.getElementById('batch-confirm-note');
+    noteEl.value = '';
+    noteEl.required = isSuspicious;
+
+    const reqMark = document.getElementById('batch-confirm-note-required');
+    if (reqMark) {
+        reqMark.classList.toggle('d-none', !isSuspicious);
+    }
+
+    const hintEl = document.getElementById('batch-confirm-note-hint');
+    hintEl.textContent = isSuspicious
+        ? '必填：請說明可疑之處，供後續調查參考。'
+        : '選填：可記錄這是誰在什麼情況下做的變更。';
+
+    const submitBtn = document.getElementById('batch-confirm-submit');
+    submitBtn.className = `btn btn-${isSuspicious ? 'danger' : 'success'}`;
+    submitBtn.textContent = isSuspicious ? '標記可疑' : '確認為授權操作';
+
+    batchConfirmModal.show();
+}
+
+/**
+ * 顯示批次處理中被略過的項目與原因。
+ */
+function showSkippedModal(result) {
+    const summary = document.getElementById('batch-skipped-summary');
+    summary.textContent = `已處理 ${result.updatedCount} 筆，略過 ${result.skipped.length} 筆。略過明細如下：`;
+
+    const list = document.getElementById('batch-skipped-list');
+    list.replaceChildren();
+
+    for (const item of result.skipped) {
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-center justify-content-between py-1 border-bottom small';
+
+        const host = document.createElement('span');
+        host.className = 'fw-medium text-truncate me-2';
+        host.textContent = item.hostName || '（未指定主機）';
+
+        const reason = document.createElement('span');
+        reason.className = 'text-danger';
+        reason.textContent = item.reason;
+
+        row.append(host, reason);
+        list.appendChild(row);
+    }
+
+    batchSkippedModal.show();
+}
+
+if (batchConfirmForm) {
+    batchConfirmForm.addEventListener('submit', async event => {
+        event.preventDefault();
+
+        if (selectedChanges.size === 0) {
+            toast('請至少勾選一筆權限異動', 'warning');
+            return;
+        }
+
+        const note = document.getElementById('batch-confirm-note').value.trim();
+        if (batchTargetStatus === 'suspicious' && !note) {
+            toast('標記為可疑時請填寫說明', 'warning');
+            return;
+        }
+
+        const submitBtn = document.getElementById('batch-confirm-submit');
+        const restore = withBusy(submitBtn, '處理中');
+
+        try {
+            const result = await api.post('/api/permission-changes/confirm/batch', {
+                changeIds: [...selectedChanges.keys()],
+                status: batchTargetStatus,
+                note: note || null
+            });
+
+            if (result.skipped && result.skipped.length > 0) {
+                toast(`已處理 ${result.updatedCount} 筆，略過 ${result.skipped.length} 筆`, 'warning');
+                showSkippedModal(result);
+            } else {
+                toast(`已處理 ${result.updatedCount} 筆`, 'success');
+            }
+
+            selectedChanges.clear();
+            batchConfirmModal.hide();
+            await load();
+        } catch {
+            // 錯誤已由 api.js 顯示
+        } finally {
+            restore();
+        }
+    });
+}
 
 function resetFilters() {
     if (keywordInput) keywordInput.value = '';
@@ -714,6 +992,18 @@ if (toInput) {
 if (resetBtn) {
     resetBtn.addEventListener('click', resetFilters);
 }
+
+document.getElementById('btn-select-all-matching')
+    ?.addEventListener('click', event => selectAllMatching(event.currentTarget));
+document.getElementById('btn-batch-authorize')
+    ?.addEventListener('click', () => openBatchConfirmModal('authorized'));
+document.getElementById('btn-batch-suspicious')
+    ?.addEventListener('click', () => openBatchConfirmModal('suspicious'));
+document.getElementById('btn-clear-selection')
+    ?.addEventListener('click', () => {
+        selectedChanges.clear();
+        render();
+    });
 
 initFiltersFromUrlOrStorage();
 // 先取類別清單再渲染篩選晶片，避免第一次畫面上的類別篩選是空的

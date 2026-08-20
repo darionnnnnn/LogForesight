@@ -55,6 +55,20 @@
     </div>
 </div>
 
+<div class="lf-toolbar mb-3">
+    <button type="button" class="btn btn-sm btn-outline-primary" id="btn-select-all-matching">
+        全選符合目前篩選的權限異動
+    </button>
+    <span class="text-muted small">只會選取待確認的項目；已確認的項目不會被選到。</span>
+</div>
+
+<div class="lf-toolbar mb-3 d-none" id="perm-selection-bar">
+    <span class="fw-semibold" id="perm-selection-count"></span>
+    <button type="button" class="btn btn-sm btn-success" id="btn-batch-authorize">標記為授權操作</button>
+    <button type="button" class="btn btn-sm btn-danger" id="btn-batch-suspicious">標記為可疑</button>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-clear-selection">清除選取</button>
+</div>
+
 <div class="lf-card">
     <div class="lf-card__header d-flex align-items-center justify-content-between flex-wrap gap-2">
         <h2 class="lf-card__title mb-0">權限異動 <span class="text-muted small" id="perm-count"></span></h2>
@@ -88,6 +102,59 @@
                     <button type="submit" class="btn btn-primary" id="confirm-submit">確認</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batch-confirm-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="batch-confirm-modal-title">批次確認權限異動</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <form id="batch-confirm-form" novalidate>
+                <div class="modal-body">
+                    <div class="alert alert-info mb-3" id="batch-confirm-summary-text"></div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">依類別摘要</label>
+                            <div id="batch-confirm-categories" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">依主機摘要</label>
+                            <div id="batch-confirm-hosts" class="border rounded p-2" style="max-height: 180px; overflow-y: auto;"></div>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label for="batch-confirm-note" class="form-label">說明 <span id="batch-confirm-note-required" class="text-danger d-none">*</span></label>
+                        <textarea class="form-control" id="batch-confirm-note" rows="3"></textarea>
+                        <div class="form-text" id="batch-confirm-note-hint"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" id="batch-confirm-submit">確認</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="batch-skipped-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">批次處理略過清單</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning mb-3" id="batch-skipped-summary"></div>
+                <div id="batch-skipped-list" class="lf-bulk-assign-hosts"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal">確定</button>
+            </div>
         </div>
     </div>
 </div>

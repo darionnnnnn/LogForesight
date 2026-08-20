@@ -417,8 +417,8 @@
 | D-1 | agy | 通過 | 2394 支（2388 綠／6 略過／0 紅），較 C-1 後的 2381 增 13；建置 0 警告。查證：批次更新是單一 `ExecuteUpdate` 帶 `IN (…) AND status=pending`；單筆與批次共用同一個 `SaveConfirmationsInternal`（無兩份判定）；`ids` 端點呼叫 `BuildFilter`；稽核 action 常數與 `AuditQueryService` 中文對照皆補上；不可見主機的略過原因與「找不到」共用同一句話，不洩漏存在性 | 無需修正。**殘留脆弱點（記入 SQL Server 實機驗證項）**：批次判斷「哪幾筆是本次真正更新到的」是靠更新後重讀比對 `ConfirmedAt` 是否等於本次時間戳。SQLite（TEXT 存 ISO）與 SQL Server（`datetime2` 預設 7 位精度）都能完整往返故正確，但它依賴時間戳的位元級往返精度——若欄位精度改成 `datetime2(3)`，成功的列會被誤報成「已被他人處理」（不掉資料，但訊息錯誤） |
 | E-1 | agy | 通過 | 測試維持 2394 支（純前端段）；`.mjs` 副檔名下 `node --check` 兩檔語法皆過。查證：只動 3 個前端檔、零 `.cs`；`core/ui.js` 只新增 `toggleAllTableDetails` 而 `renderTable`／`renderPagination` 未改；用 eager 的 `rowDetail`；無 `sortRows`、無類別對照表、無自製分頁 DOM；查詢參數集中一處組裝且帶齊 sort/dir/page/pageSize | **與 E-3 合併執行**（查證發現 `renderTable` 本就支援 `rowDetail`／`onRowExpand`，展開列不需自製，E-3 縮成一個全展收控制項；且 Gemini 週限吃緊）。<br>agy 回報的 `node --check` 是偽陰性（`.js` 被當 CommonJS，ESM 必失敗），Claude 改用 `.mjs` 重驗才是有效結論。<br>**留意**：新增的 `toggleAllTableDetails` 直接操作 DOM，會**繞過 lazy 的 `onRowExpand` 填充**。本頁用 eager 的 `rowDetail` 故安全，但它已是 `core/ui.js` 公開 API，其他頁面若以 lazy 模式呼叫會展出空白詳情列 |
 | E-2 | agy | 通過（Claude 修一處） | 測試維持 2394 支；`--no-incremental` 全建置唯一警告是既有的 `EfIssueAggregateQuery.cs:987`；`.mjs` 語法檢查通過。查證：查詢參數 11 個 `params.set` 全在同一函式、localStorage 與網址 query 同步、篩選變動重設頁碼 | **約束滿足但功能不成立（Claude 修）**：規格禁止前端硬寫類別清單，agy 改成「從當頁資料收集類別」。沒有硬寫對照表，但每頁 20 筆，**沒出現在當頁的類別就不會出現在篩選選項裡＝篩不到那一類**，而使用者的核心需求正是「選某類別→全部打勾」。規格已寫明「需要後端配合就回報卡點」，它選了繞過。<br>修法：後端新增 `GET /api/permission-changes/categories`（資料來源即 A-1 保留的 `PermissionCategory.GetAllLabels()`），前端初始化時取一次。程式碼留註解說明為何不能從當頁收集 |
-| E-3 | | | | |
-| E-4 | | | | |
+| E-3 | — | 併入 E-1 | 見 E-1 列 | `renderTable` 本就支援 `rowDetail`／`onRowExpand`（含 `aria-expanded` 與鍵盤可達性），展開列不需自製，本階段縮成一個全展收控制項，與表格骨架同屬一個關注點；加上 Gemini 週限吃緊，合併執行 |
+| E-4 | agy | 通過 | 測試維持 2394 支；`.mjs` 語法檢查通過。驗收 grep 全過：勾選框依 `status === 'pending'` 建立、`indeterminate` 三態、勾選事件 `stopPropagation`（本頁列點擊是展開詳情，不擋會連帶展開）、兩個新端點皆有呼叫、`skipped` 與 `truncated` 皆有處理。**`params.set` 仍為 11 個**，證明「全選符合條件」共用既有的 `buildQueryParams()`，沒有第二份組裝。只動 2 個前端檔，零 `.cs`、零 `core/ui.js` | 無。本段未發現問題，Claude 未做任何修正 |
 | F | | | | |
 
 ### 終檢（併回前）
