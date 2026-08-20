@@ -94,6 +94,7 @@ public class StorageBackend
                 // 掛在啟動路徑上會直接撞 Windows 服務 30 秒的啟動逾時而被 SCM 砍掉。
                 // 這裡只做毫秒級的「需不需要搬」判定並寫下狀態，搬移交給背景服務。
                 HandlingMigrator.Evaluate();
+                PermissionChangeMigrator.Evaluate();
             }, SchemaMutexTimeout);
 
             if (!exclusive)
@@ -171,6 +172,15 @@ public class StorageBackend
         new HandlingBlobMigrator(_dbFactory, Blob, new HandlingMigrationStateStore(Blob("handling_migration")));
 
     private HandlingBlobMigrator? _handlingMigrator;
+
+    /// <summary>
+    /// 權限異動自 JSONL log 與 blob 搬進真表的遷移器。
+    /// **每個後端一份**：遷移狀態要跨呼叫共享，不能每次都 new 一個新的。
+    /// </summary>
+    public PermissionChangeMigrator PermissionChangeMigrator => _permissionChangeMigrator ??=
+        new PermissionChangeMigrator(_dbFactory, Blob, new PermissionChangeMigrationStateStore(Blob(PermissionChangeMigrator.StateBlobKey)));
+
+    private PermissionChangeMigrator? _permissionChangeMigrator;
 
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);

@@ -188,6 +188,7 @@
   - 填入新欄位：`Category`、`IsPrivilegedTarget`、`InitiatorAccount`、`TargetAccount`。
   - `PermissionMonitorService`（本機監控來源）同樣填入新欄位：目標帳號取成員名（僅群組成員類），操作者帳號為 null（本機快照比對無從得知）。
   - 既有去重鍵語意與每主機日 50 筆上限行為**不得改變**。
+  - **跨段：帳號擷取只能有一份實作。** A-3 的遷移器已經為了補舊資料的帳號欄位寫了一套擷取（`PermissionChangeMigrator.ExtractAccounts`），且它猜的操作者前綴（`Caller User Name:`／`操作者帳號:`）在 Windows 事件訊息中並不存在、實際永遠抽不到。本階段定義的正式擷取規則落地後，**遷移器必須改呼叫同一個函式**，不得兩處各留一份。
 - **範圍**：`HostDayPostProcessor.cs`、`PermissionMonitorService.cs`、`AnalysisOrchestrator.cs` 寫入段及其測試。**不准動**：其他作業檔案、`docs/`。
 - **驗收**：
   - `dotnet build` 零警告、`dotnet test` 全綠
@@ -409,7 +410,7 @@
 |---|---|---|---|---|
 | A-1 | agy | 通過 | 2332 支（2326 綠／6 略過／0 紅），較基準 2288 增 44；建置唯一警告為既有的 `EfIssueAggregateQuery.cs:987`，不在 diff 內。10 個相異 ChangeType 值逐一 grep 確認皆在測資中 | 過度設計 2 處由 Claude 自行移除：① `ResolveCategory()` 是 `Resolve()` 的純別名且零呼叫者；② `IsPrivilegedTarget()` 多一個 optional `category` 參數，可傳入與 `changeType` 互相矛盾的值而靜默回 false。另：agy 移除了 `PermissionChangeRecord.cs` 的 UTF-8 BOM，清點後全專案 447 個 .cs 僅 32 個有 BOM，判定為正規化，保留不復原 |
 | A-2 | agy | 通過 | 2340 支（2334 綠／6 略過／0 紅），較 A-1 後的 2332 增 8；建置警告數不變（仍只有既有的 `EfIssueAggregateQuery.cs:987`）。逐一查證：確認寫入是 `ExecuteUpdate` 帶 `WHERE status=pending` 的單一敘述；`CountPending` 走 SQL COUNT、`Prune` 走 `ExecuteDelete`、`GetDedupeKeys` 只投影單欄，無「先 ToList 再 Where」；三個既有測試檔只改建構 store 的那一行，斷言未動 | **跨 provider 真 bug（Claude 修）**：`dedupe_key` 被宣告 `nvarchar(512)` 並建索引，但該鍵最長約 790 字元。SQLite 的 TEXT 無長度限制故測試全綠，SQL Server 上首筆長告警文字寫入即拋「字串或二進位資料會被截斷」。修法為移除索引並取消長度上限（見 §A-2 索引段的更正），程式碼留註解禁止改回。**此為規劃者自身的錯**：初版把「讓 GetDedupeKeys 不必整表讀出」的理由掛在 `dedupe_key` 索引上，但該查詢真正需要的是 `created_at` 索引 |
-| A-3 | | | | |
+| A-3 | agy | 通過 | 2352 支（2346 綠／6 略過／0 紅），較 A-2 後的 2340 增 12（agy 11 ＋ Claude 回歸測試 1）。查證通過：獨立遷移器與獨立狀態 blob key、單一交易、失敗退回 Pending 並寫 LastError、不刪舊 log／blob、類別以 A-1 純函式重算、孤兒確認列 warn 略過、閘門分流正確（權限異動走新狀態、既有兩前綴不變、唯讀方法放行） | **資料遺失風險（Claude 修）**：重入保護照抄 `HandlingBlobMigrator` 的 `if (ctx.Xxx.Any()) return;`。該寫法在處理狀態上安全（那三張表只有 HTTP 寫入、閘門擋得住），但權限異動的 `AppendChanges` 還有背景排程分析這個非 HTTP 呼叫端——夜間分析在遷移完成前寫進一列，整批舊資料就被判定為已搬而永久消失，狀態仍顯示完成。改為逐筆比對 `change_id` 只補未搬的，並加回歸測試 `遷移前背景分析已寫入新表_舊資料仍然全部搬進來`。同時違反該遷移器自身註解第 2 條「完成與否是被寫下的事實，不是從目標表空不空反推」。<br>小修：移除未使用的 `_logFactory` 建構參數；log 行反序列化選項由 `Pretty` 改為寫入端用的 `Compact`。<br>**規格外補強**：`SchemaUpgrader` 的 `lf_permission_changes` CREATE TABLE 常數原本在任何測試中都沒被執行過（`EfSqliteFixture` 只跑 `EnsureCreated`，之後 `CreateTableIfMissing` 恆為 no-op），已補上「空連線直接 Upgrade」測試 |
 | B-1 | | | | |
 | B-2 | | | | |
 | C-1 | | | | |

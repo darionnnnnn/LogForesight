@@ -60,6 +60,7 @@ public class HealthService
         var storageOk = ProbeStorage(out var storageError);
         var performance = _backend.Performance.Snapshot();
         var migration = _backend.HandlingMigrator.State;
+        var permMigration = _backend.PermissionChangeMigrator.State;
 
         // 診斷頁只有一行進度可顯示：主／子軌取捨（子進度優先）由 LatestActivity 單點決定
         // （回饋十四輪 UI-6 體檢，與 /api/run-activity 同一個選擇邏輯）——只讀主進度的話，
@@ -107,6 +108,12 @@ public class HealthService
             MigrationDoneParts = new[] { migration.IssueHandlingDone, migration.IssueCasesDone, migration.RecordHandlingDone }
                 .Count(x => x),
             MigrationError = migration.LastError,
+
+            // 權限異動遷移狀態
+            PermissionChangeMigrationState = permMigration.State,
+            PermissionChangeMigrationBlocksWrites = permMigration.ShouldBlockWrites,
+            PermissionChangeMigratedRows = permMigration.MigratedRows,
+            PermissionChangeMigrationError = permMigration.LastError,
 
             // 問題機房首見日的背景合併（首次合併記錄浮水印，重啟跳過；連續失敗達上限反映為 degraded）
             IssueFirstSeenSeedState = firstSeenProgress?.State ?? IssueFirstSeenSeedStates.NotStarted,
