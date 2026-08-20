@@ -206,9 +206,45 @@ public class PermissionChangesController : ControllerBase
         return ApiResponse<PagedResult<PermissionChangeDto>>.Ok(_service.Query(request));
     }
 
+    /// <summary>「全選符合目前篩選的權限異動」ID 清單（僅限待確認項目）</summary>
+    [HttpGet("ids")]
+    public ApiResponse<PermissionChangeIdListDto> GetMatchingChangeIds(
+        [FromQuery] string? q,
+        [FromQuery] string? subnet,
+        [FromQuery] string? category,
+        [FromQuery] string? status,
+        [FromQuery] string? source,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string sort = "detectedAt",
+        [FromQuery] string dir = "desc")
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        var request = new PermissionChangeQueryRequest
+        {
+            Keyword = q,
+            Subnet = subnet,
+            Categories = QueryStringParsing.ParseStrings(category),
+            Status = status,
+            Source = source,
+            From = parsedFrom,
+            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            Sort = sort,
+            Ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase)
+        };
+        return ApiResponse<PermissionChangeIdListDto>.Ok(_service.MatchingChangeIds(request));
+    }
+
     [HttpPut("{changeId}/confirm")]
     [Permission(Capability.ConfirmPermission)]
     public ApiResponse<PermissionChangeDto> Confirm(
         string changeId, [FromBody] ConfirmPermissionChangeRequest request) =>
         ApiResponse<PermissionChangeDto>.Ok(_service.Confirm(changeId, request));
+
+    /// <summary>批次確認權限異動（授權操作或標記可疑）</summary>
+    [HttpPost("confirm/batch")]
+    [Permission(Capability.ConfirmPermission)]
+    public ApiResponse<BatchConfirmPermissionChangesResultDto> ConfirmBatch(
+        [FromBody] BatchConfirmPermissionChangesRequest request) =>
+        ApiResponse<BatchConfirmPermissionChangesResultDto>.Ok(_service.ConfirmBatch(request));
 }

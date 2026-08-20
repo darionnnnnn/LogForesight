@@ -145,6 +145,27 @@ public class PermissionChangeService
         };
     }
 
+    public const int MaxSelectAllChanges = 2000;
+    public const int MaxBatchConfirmChanges = 500;
+
+    /// <summary>
+    /// 「全選符合目前篩選的權限異動」ID 清單。
+    /// 與清單查詢共用 BuildFilter 條件組裝，只回傳 pending 狀態的項目。
+    /// </summary>
+    public PermissionChangeIdListDto MatchingChangeIds(PermissionChangeQueryRequest request)
+    {
+        var filter = BuildFilter(request);
+        filter.Status = PermissionConfirmStatuses.Pending;
+
+        var (ids, total) = _store.QueryIds(filter, MaxSelectAllChanges);
+        return new PermissionChangeIdListDto
+        {
+            ChangeIds = ids,
+            Total = total,
+            Truncated = total > MaxSelectAllChanges
+        };
+    }
+
     public PermissionChangeDto Confirm(string changeId, ConfirmPermissionChangeRequest request)
     {
         if (!PermissionConfirmStatuses.IsValid(request.Status) ||
@@ -201,6 +222,154 @@ public class PermissionChangeService
             : null;
 
         return MapToDto(change, savedConfirmation, host, confirmedByDisplayName);
+    }
+
+    /// <summary>
+    /// 批次確認權限異動（授權操作或標記可疑）。
+    /// 逐筆判斷可見範圍與是否已被處理，支援條件式原子更新。
+    /// </summary>
+    public BatchConfirmPermissionChangesResultDto ConfirmBatch(BatchConfirmPermissionChangesRequest request)
+    {
+        if (request.ChangeIds == null || request.ChangeIds.Count == 0 || request.ChangeIds.All(string.IsNullOrWhiteSpace))
+        {
+            throw DomainException.Validation("請至少勾選一筆權限異動。");
+        }
+
+        if (request.ChangeIds.Count > MaxBatchConfirmChanges)
+        {
+            throw DomainException.Validation($"單次批次確認上限為 {MaxBatchConfirmChanges} 筆，請分批操作。");
+        }
+
+        var requestedIds = request.ChangeIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (requestedIds.Count == 0)
+        {
+            throw DomainException.Validation("請至少勾選一筆權限異動。");
+        }
+
+        if (requestedIds.Count > MaxBatchConfirmChanges)
+        {
+            throw DomainException.Validation($"單次批次確認上限為 {MaxBatchConfirmChanges} 筆，請分批操作。");
+        }
+
+        if (!PermissionConfirmStatuses.IsValid(request.Status) ||
+            request.Status == PermissionConfirmStatuses.Pending)
+        {
+            throw DomainException.Validation("確認結果只能是「授權操作」或「可疑」。");
+        }
+
+        if (request.Status == PermissionConfirmStatuses.Suspicious &&
+            string.IsNullOrWhiteSpace(request.Note))
+        {
+            throw DomainException.Validation("標記為可疑時請填寫說明，供後續調查參考。");
+        }
+
+        var records = _store.GetByChangeIds(requestedIds);
+        var recordsById = records.ToDictionary(r => r.ChangeId, StringComparer.OrdinalIgnoreCase);
+
+        var hasViewAll = _currentUser.Has(Capability.ViewAll);
+        var visibleHostIds = hasViewAll ? null : _visibility.GetVisibleHostIds().ToHashSet();
+        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
+
+        var candidateIds = new List<string>();
+        var skipped = new List<SkippedPermissionChangeDto>();
+
+        foreach (var id in requestedIds)
+        {
+            if (!recordsById.TryGetValue(id, out var record))
+            {
+                skipped.Add(new SkippedPermissionChangeDto
+                {
+                    ChangeId = id,
+                    HostName = string.Empty,
+                    Reason = "找不到這筆權限異動紀錄"
+                });
+                continue;
+            }
+
+            var isVisible = hasViewAll ||
+                (hostsByName.TryGetValue(record.HostName, out var host) && visibleHostIds!.Contains(host.HostId));
+
+            if (!isVisible)
+            {
+                // 授權範圍保護：不可見主機的異動不得洩漏其存在或主機名稱
+                skipped.Add(new SkippedPermissionChangeDto
+                {
+                    ChangeId = id,
+                    HostName = string.Empty,
+                    Reason = "找不到這筆權限異動紀錄，或您沒有檢視權限。"
+                });
+                continue;
+            }
+
+            candidateIds.Add(id);
+        }
+
+        var updatedRecords = new List<PermissionChangeRecord>();
+        var occurredAt = DateTime.Now;
+        var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+        var confirmedBy = _currentUser.UserId > 0 ? _currentUser.UserId : (long?)null;
+        var confirmedByAccount = _currentUser.Account;
+
+        if (candidateIds.Count > 0)
+        {
+            _store.SaveConfirmations(
+                candidateIds,
+                request.Status,
+                confirmedBy,
+                confirmedByAccount,
+                occurredAt,
+                note);
+
+            var confirmations = _store.GetConfirmations(candidateIds)
+                .ToDictionary(c => c.ChangeId, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var id in candidateIds)
+            {
+                var record = recordsById[id];
+                if (confirmations.TryGetValue(id, out var conf) &&
+                    conf.Status == request.Status &&
+                    conf.ConfirmedAt == occurredAt &&
+                    string.Equals(conf.ConfirmedByAccount, confirmedByAccount, StringComparison.OrdinalIgnoreCase))
+                {
+                    updatedRecords.Add(record);
+                }
+                else
+                {
+                    skipped.Add(new SkippedPermissionChangeDto
+                    {
+                        ChangeId = id,
+                        HostName = record.HostName,
+                        Reason = "這筆權限異動已被其他使用者處理過"
+                    });
+                }
+            }
+        }
+
+        if (updatedRecords.Count > 0)
+        {
+            var statusLabel = request.Status == PermissionConfirmStatuses.Authorized ? "授權操作" : "可疑";
+            _audit.Record(
+                action: AuditActions.PermConfirmBatch,
+                summary: $"批次確認 {updatedRecords.Count} 筆權限異動為{statusLabel}",
+                targetKind: "permission_change",
+                targetId: "batch",
+                detail: new
+                {
+                    Status = request.Status,
+                    Count = updatedRecords.Count,
+                    ChangeIds = updatedRecords.Select(r => r.ChangeId).ToList(),
+                    HostNames = updatedRecords.Select(r => r.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                    Categories = updatedRecords.Select(r => r.Category).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                    Note = note,
+                    Skipped = skipped.Select(s => new { s.ChangeId, s.HostName, s.Reason }).ToList()
+                });
+        }
+
+        return new BatchConfirmPermissionChangesResultDto
+        {
+            UpdatedCount = updatedRecords.Count,
+            Skipped = skipped
+        };
     }
 
     public int CountPending()

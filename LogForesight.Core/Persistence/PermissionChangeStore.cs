@@ -93,6 +93,66 @@ public class PermissionChangeStore
         }
 
         using var ctx = _contextFactory();
+        var query = BuildQuery(ctx, filter);
+
+        var total = query.Count();
+        if (total == 0)
+        {
+            return new PagedResult<PermissionChangeRecord>
+            {
+                Items = new List<PermissionChangeRecord>(),
+                Page = filter.Page,
+                PageSize = filter.PageSize,
+                Total = 0
+            };
+        }
+
+        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
+
+        var skip = Math.Max(0, (filter.Page - 1) * filter.PageSize);
+        var rows = query
+            .Skip(skip)
+            .Take(filter.PageSize)
+            .ToList();
+
+        return new PagedResult<PermissionChangeRecord>
+        {
+            Items = rows.Select(ToModel).ToList(),
+            Page = filter.Page,
+            PageSize = filter.PageSize,
+            Total = total
+        };
+    }
+
+    /// <summary>依篩選條件查詢符合的 ChangeId 清單（含總符合筆數與上限截斷）</summary>
+    public (List<string> Ids, int Total) QueryIds(PermissionChangeQueryFilter filter, int maxCount)
+    {
+        if (filter.HostNames != null && filter.HostNames.Count == 0)
+        {
+            return (new List<string>(), 0);
+        }
+
+        using var ctx = _contextFactory();
+        var query = BuildQuery(ctx, filter);
+
+        var total = query.Count();
+        if (total == 0)
+        {
+            return (new List<string>(), 0);
+        }
+
+        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
+
+        var ids = query
+            .Take(maxCount)
+            .Select(r => r.ChangeId)
+            .ToList();
+
+        return (ids, total);
+    }
+
+    private static IQueryable<PermissionChangeRow> BuildQuery(LfDbContext ctx, PermissionChangeQueryFilter filter)
+    {
         IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();
 
         if (filter.HostNames != null)
@@ -137,33 +197,7 @@ public class PermissionChangeStore
             query = query.Where(r => r.DetectedAt <= filter.To.Value);
         }
 
-        var total = query.Count();
-        if (total == 0)
-        {
-            return new PagedResult<PermissionChangeRecord>
-            {
-                Items = new List<PermissionChangeRecord>(),
-                Page = filter.Page,
-                PageSize = filter.PageSize,
-                Total = 0
-            };
-        }
-
-        query = ApplyOrdering(query, filter.Sort, filter.Ascending);
-
-        var skip = Math.Max(0, (filter.Page - 1) * filter.PageSize);
-        var rows = query
-            .Skip(skip)
-            .Take(filter.PageSize)
-            .ToList();
-
-        return new PagedResult<PermissionChangeRecord>
-        {
-            Items = rows.Select(ToModel).ToList(),
-            Page = filter.Page,
-            PageSize = filter.PageSize,
-            Total = total
-        };
+        return query;
     }
 
     /// <summary>相容既有呼叫端的多載（轉發至多條件分頁查詢）</summary>
@@ -207,6 +241,20 @@ public class PermissionChangeStore
             .FirstOrDefault(r => r.ChangeId == changeId);
 
         return row != null ? ToModel(row) : null;
+    }
+
+    /// <summary>批次查詢多筆異動紀錄</summary>
+    public List<PermissionChangeRecord> GetByChangeIds(IEnumerable<string> changeIds)
+    {
+        var ids = changeIds.Distinct().ToList();
+        if (ids.Count == 0) return new List<PermissionChangeRecord>();
+
+        using var ctx = _contextFactory();
+        var rows = ctx.PermissionChanges.AsNoTracking()
+            .Where(r => ids.Contains(r.ChangeId))
+            .ToList();
+
+        return rows.Select(ToModel).ToList();
     }
 
     /// <summary>取得指定異動的確認狀態清單</summary>
@@ -261,17 +309,47 @@ public class PermissionChangeStore
     {
         if (string.IsNullOrWhiteSpace(confirmation.ChangeId)) return false;
 
-        using var ctx = _contextFactory();
-        var updated = ctx.PermissionChanges
-            .Where(r => r.ChangeId == confirmation.ChangeId && r.Status == PermissionConfirmStatuses.Pending)
-            .ExecuteUpdate(s => s
-                .SetProperty(r => r.Status, confirmation.Status)
-                .SetProperty(r => r.ConfirmedBy, confirmation.ConfirmedBy)
-                .SetProperty(r => r.ConfirmedByAccount, confirmation.ConfirmedByAccount)
-                .SetProperty(r => r.ConfirmedAt, confirmation.ConfirmedAt)
-                .SetProperty(r => r.ConfirmNote, confirmation.Note));
+        return SaveConfirmationsInternal(
+            new[] { confirmation.ChangeId },
+            confirmation.Status,
+            confirmation.ConfirmedBy,
+            confirmation.ConfirmedByAccount,
+            confirmation.ConfirmedAt,
+            confirmation.Note) > 0;
+    }
 
-        return updated > 0;
+    /// <summary>批次條件式原子更新確認狀態：只有目前為 pending 的列才會被更新</summary>
+    public int SaveConfirmations(
+        IEnumerable<string> changeIds,
+        string status,
+        long? confirmedBy,
+        string confirmedByAccount,
+        DateTime? confirmedAt,
+        string? note)
+    {
+        return SaveConfirmationsInternal(changeIds, status, confirmedBy, confirmedByAccount, confirmedAt, note);
+    }
+
+    private int SaveConfirmationsInternal(
+        IEnumerable<string> changeIds,
+        string status,
+        long? confirmedBy,
+        string confirmedByAccount,
+        DateTime? confirmedAt,
+        string? note)
+    {
+        var ids = changeIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        if (ids.Count == 0) return 0;
+
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => ids.Contains(r.ChangeId) && r.Status == PermissionConfirmStatuses.Pending)
+            .ExecuteUpdate(s => s
+                .SetProperty(r => r.Status, status)
+                .SetProperty(r => r.ConfirmedBy, confirmedBy)
+                .SetProperty(r => r.ConfirmedByAccount, confirmedByAccount)
+                .SetProperty(r => r.ConfirmedAt, confirmedAt)
+                .SetProperty(r => r.ConfirmNote, note));
     }
 
     /// <summary>待確認筆數（SQL COUNT 下推）</summary>

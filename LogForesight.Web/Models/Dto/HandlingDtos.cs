@@ -596,6 +596,44 @@ public class ConfirmPermissionChangeRequest
     public string? Note { get; set; }
 }
 
+public class BatchConfirmPermissionChangesRequest
+{
+    [Required(ErrorMessage = "請至少勾選一筆權限異動。")]
+    [MinLength(1, ErrorMessage = "請至少勾選一筆權限異動。")]
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>authorized（確認為授權操作）| suspicious（標記可疑）</summary>
+    [Required]
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(500)]
+    public string? Note { get; set; }
+}
+
+public class BatchConfirmPermissionChangesResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<SkippedPermissionChangeDto> Skipped { get; set; } = new();
+}
+
+public class SkippedPermissionChangeDto
+{
+    public string ChangeId { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class PermissionChangeIdListDto
+{
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>符合篩選的異動總數（截斷前）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝超過單次上限，畫面必須說明要分批</summary>
+    public bool Truncated { get; set; }
+}
+
 // ── 操作紀錄（§9.11）───────────────────────────────────────────────────────
 
 public class AuditEntryDto
