@@ -10,6 +10,7 @@ public static class PermissionCategory
     public const string OwnerChange = "owner_change";
     public const string FolderAccess = "folder_access";
     public const string AuditPolicy = "audit_policy";
+    /// <summary>不再產生的類別（某主機日的異動總計列）。既有資料仍有這種列，保留供其分類與篩選。</summary>
     public const string Summary = "summary";
     public const string Other = "other";
 

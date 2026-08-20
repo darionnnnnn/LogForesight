@@ -490,7 +490,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 |---|---|---|
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
 | `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
 | `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
@@ -585,13 +585,18 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 ```
 D:\LogForesight\
 └─ Web\                    ← LogForesight.Web.exe 與其 appsettings.json
-    ├─ logforesight.db     ← Storage:DataRoot 下的 SQLite 檔（若用 Sqlite；留空預設為執行檔目錄）
+    ├─ Db\                  ← SQLite 檔 logforesight.db（若用 Sqlite；Storage:DataRoot 底下）
     ├─ export\              ← 風險報告全文
     └─ logs\                ← 診斷檔案 log（nlog.config）
 ```
 
 單一部署單位，`Storage:DataRoot` 留空即可（預設為執行檔目錄），不需要另外規劃第二個目錄
 給批次程式使用。
+
+> **升級注意**：舊版把 `logforesight.db` 放在 `Storage:DataRoot` 直下。升級後預設落點改為
+> 底下的 `Db\`，站台會在新位置建立空資料庫，舊檔留在原地不動。要沿用既有資料，請在啟動前
+> 手動把 `logforesight.db`（連同可能存在的 `-wal`／`-shm`）搬進 `Db\`，或在
+> `Storage:ConnectionString` 明寫舊路徑。
 
 ## 正式環境穩定性設計
 

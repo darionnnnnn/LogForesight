@@ -1228,6 +1228,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   依 §8.6 第 6 條不排第一欄——展開箭頭固定插在首欄）／主機 (IP)／帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
   EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。
   表格上方有一鍵全部展開／收合（作用範圍為當頁）。
+- **展開列的行為說明／異動前／異動後三欄共用同一個渲染函式**：保留原文換行，並依通用規則
+  逐行拆成 key／value 雙欄表格（key＝行首或空白之後、長度 2～20、至少含一個字母或中日韓
+  文字、其後緊接半形或全形冒號；冒號後為空者視為區段標題）。解析不到的行原樣單欄顯示，
+  整段拆不出兩對以上時退回純文字。**解析規則不得綁定特定 EventId 或欄位名**——事件文字的
+  格式由 Windows／NetIQ 決定，寫死欄位名會在對方改格式時整段失效。長度 2 的下限與「須含
+  文字」這兩條不是美觀考量：安全性描述元的 `D:` 與時間的 `17:40` 正是靠它們才不會被誤拆。
 - 「主機 (IP)」的 IP 取自主機主檔 `WebHost.IpAddress`，取不到且主機名本身是 IP 時用主機名
   （NetIQ 主機常如此），都沒有就不顯示括號。**不存 IP 快照**——IP 會變，顯示最新的才合理。
 - 「帳號」兩行：操作者與目標帳號。缺值顯示「—」，**不猜、不填假值**。
@@ -1249,8 +1255,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，
   Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時畫面視為本機監控。NetIQ 這條的冪等鍵＝
   (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
-  每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆
-  「權限異動（彙總）」；依 `AuditRetentionDays` 清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+  **不設每主機日筆數上限**：權限異動全數逐則入庫，每一筆都查得到、篩得到；量的控制交給
+  依 `AuditRetentionDays` 的清理（依寫入時間，不是事件時間，見 DB-SPEC）。
 - **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
 - API：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
@@ -2171,7 +2177,8 @@ temp 檔＋`File.Replace` 手法。
 - 表由程式首次啟動時 `EnsureCreated` 自動建立；對**既有** DB 的欄位/索引增補由 `SchemaUpgrader`
   （自製冪等 DDL，見 [DB-SPEC.md](DB-SPEC.md)「Schema 升級機制」）在 EnsureCreated
   之後接手——不用 EF Migrations。批次與 Web 須設**相同的 `Storage.Type`**；
-  SQLite 模式共用 `{DataRoot}\logforesight.db`，批次寫入的分析紀錄 Web 立刻讀得到。
+  SQLite 模式共用 `{DataRoot}\Db\logforesight.db`（`ConnectionString` 留空時的預設落點，
+  子資料夾由 `StorageBackend` 自動建立），批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
 
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）

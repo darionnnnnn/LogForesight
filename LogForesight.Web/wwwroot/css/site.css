@@ -482,14 +482,17 @@ body {
 
 .lf-sidebar__brand {
     display: flex;
-    /* align-items:stretch（回饋十六輪批次E-2，改自 center）：有副標時兩行文字的自然高度
-       可能超過 .lf-sidebar__brand-mark 的基準高度（實測中文字級下約 60px > 53px）——
-       固定 center 對齊時圖示不會跟著撐高，導致圖示反而沒對齊到文字的上下邊界。stretch
-       讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，不管有無副標。 */
+    /* align-items:stretch：有副標時兩行文字的自然高度可能超過 .lf-sidebar__brand-mark
+       的基準高度——固定 center 對齊時圖示不會跟著撐高，導致圖示沒對齊到文字的上下邊界。
+       stretch 讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，
+       不管有無副標。 */
     align-items: stretch;
     gap: var(--lf-space-2);
-    padding: var(--lf-space-4) var(--lf-space-5);
-    font-size: var(--lf-font-size-xl);
+    /* 左右內距用 space-4 而不是 space-5：側欄總寬固定（--lf-sidebar-width），
+       品牌名稱能用的水平空間＝總寬扣掉圖示、gap 與左右內距。字級提到 2xl 之後，
+       「LogForesight」在 space-5 的內距下會剛好觸發 .lf-sidebar__brand-name 的省略號。 */
+    padding: var(--lf-space-4);
+    font-size: var(--lf-font-size-2xl);
     font-weight: 700;
     color: #fff;
     letter-spacing: .01em;
@@ -519,23 +522,19 @@ body {
     flex-direction: column;
     /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
        預設值，寫出來是文件化意圖：不依賴父層設定不變，之後若父層改回 center 這裡仍然正確）。
-       justify-content:space-between 讓名稱貼齊撐滿後的區塊上緣、副標貼齊下緣（回饋十六輪
-       批次E-2：原本兩者只是各自靠攏，沒有對齊圖示邊界）。*/
-    justify-content: space-between;
+       justify-content:center 讓名稱與副標當成一組、整組對齊圖示中線——兩行之間只留
+       副標自己的 margin-top，副標因此緊跟在名稱下方，而不是被推到圖示的下緣。*/
+    justify-content: center;
     align-self: stretch;
     min-width: 0;
     flex: 1 1 auto;
-}
-
-/* 沒有副標時只剩一行文字，space-between 在單一子項時等同貼頂——改回置中對齊圖示中線 */
-.lf-sidebar__brand-text:not(:has(small)) {
-    justify-content: center;
 }
 
 .lf-sidebar__brand-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.15;
 }
 
 .lf-sidebar__brand-text small {
@@ -543,10 +542,13 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: .7rem;
+    /* 副標用字級 token 的最小級（xs）而不是自訂 .7rem——.7rem 在預設根字級下約 11px，
+       低於可讀下限 */
+    font-size: var(--lf-font-size-xs);
     font-weight: 400;
     color: var(--lf-sidebar-section);
-    margin-top: .15rem;
+    margin-top: .1rem;
+    line-height: 1.25;
     letter-spacing: 0;
 }
 
@@ -1942,10 +1944,13 @@ a.lf-calendar__cell:focus-visible {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.15;
 }
 
+/* 與側欄品牌區同一組行高，副標緊跟名稱下方 */
 .lf-login__subtitle {
     display: block;
+    line-height: 1.25;
     font-size: var(--lf-font-size-sm);
     color: var(--lf-text-muted);
     overflow: hidden;
@@ -2095,4 +2100,68 @@ a.lf-calendar__cell:focus-visible {
         background: var(--lf-sidebar-hover-bg);
         border-bottom-color: var(--lf-primary-hover);
     }
+}
+
+/* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */
+
+/* 解析不出成對欄位時的退路：只保留原文換行與折行。異動前／異動後兩欄另加
+   .font-monospace——安全性描述元這類單串值走的正是這條路徑，等寬字是它唯一的可讀性依靠 */
+.lf-detail-plain,
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.lf-kv-table {
+    width: 100%;
+    table-layout: fixed;
+    margin: 0;
+    background: transparent;
+    border-collapse: collapse;
+}
+
+.lf-kv-table tr {
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-kv-table tr:last-child {
+    border-bottom: none;
+}
+
+.lf-kv-row--section th.lf-kv-section-header {
+    background-color: var(--lf-gray-100);
+    color: var(--lf-text);
+    font-weight: 600;
+    font-size: var(--lf-font-size-xs);
+    padding: var(--lf-space-2) var(--lf-space-2);
+    border: none;
+    letter-spacing: .02em;
+}
+
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    color: var(--lf-text);
+}
+
+/* 欄寬由 width 決定（表格是 table-layout: fixed，max-width 在此不生效） */
+.lf-kv-key {
+    width: 32%;
+    vertical-align: top;
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    padding: var(--lf-space-1) var(--lf-space-2);
+    white-space: normal;
+    word-break: break-word;
+}
+
+.lf-kv-val {
+    width: 68%;
+    vertical-align: top;
+    font-family: var(--lf-font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    color: var(--lf-text);
+    padding: var(--lf-space-1) var(--lf-space-2);
 }

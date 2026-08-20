@@ -28,6 +28,18 @@ public class StorageBackend
     public const int ForegroundCommandTimeoutSeconds = 60;
     public const int AnalysisCommandTimeoutSeconds = 300;
 
+    /// <summary>Sqlite 未指定 ConnectionString 時，db 檔所在的子資料夾（相對於 DataRoot）。
+    /// 資料檔集中在此，與 <c>export\</c> 等產出目錄分開。</summary>
+    public const string DefaultSqliteDirectoryName = "Db";
+
+    /// <summary>Sqlite 未指定 ConnectionString 時的 db 檔名</summary>
+    public const string DefaultSqliteFileName = "logforesight.db";
+
+    /// <summary>Sqlite 預設 db 檔的完整路徑（DataRoot 底下）。Program.cs 的資料根目錄健檢
+    /// 用同一個方法算落點，路徑規則不會兩邊各走各的。</summary>
+    public static string DefaultSqlitePath(string dataRoot) =>
+        Path.Combine(dataRoot, DefaultSqliteDirectoryName, DefaultSqliteFileName);
+
     /// <param name="settings">儲存後端設定（Type／ConnectionString）</param>
     /// <param name="fallbackDir">Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）</param>
     /// <param name="maxPoolSize">連線池上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
@@ -43,9 +55,29 @@ public class StorageBackend
         DbContextOptions<LfDbContext> options;
         if (settings.Type == "Sqlite")
         {
-            var cs = string.IsNullOrWhiteSpace(settings.ConnectionString)
-                ? $"Data Source={Path.Combine(fallbackDir, "logforesight.db")}"
-                : settings.ConnectionString;
+            string cs;
+            if (string.IsNullOrWhiteSpace(settings.ConnectionString))
+            {
+                var dbPath = DefaultSqlitePath(fallbackDir);
+                // Sqlite 不會替我們建目錄，首次啟動時 Db\ 還不存在。
+                // 失敗時要講出「這是 DataRoot 的寫入權限問題」——只丟原生的「拒絕存取路徑 X」
+                // 看不出該去改哪個設定。
+                var dbDir = Path.GetDirectoryName(dbPath)!;
+                try
+                {
+                    Directory.CreateDirectory(dbDir);
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                {
+                    throw new InvalidOperationException(
+                        $"無法建立資料庫目錄「{dbDir}」：請確認執行帳號對 Storage:DataRoot（{fallbackDir}）有寫入權限。", ex);
+                }
+                cs = $"Data Source={dbPath}";
+            }
+            else
+            {
+                cs = settings.ConnectionString;
+            }
             cs = DisableSqlitePoolingIfUnset(cs);
             options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(cs).Options;
             _dbDesc = $"Sqlite（{cs}）";

@@ -19,9 +19,11 @@ public class PermissionChangeRecord
     public string Target { get; set; } = string.Empty;
 
     /// <summary>
-    /// 異動類型（共 10 個相異值）。
-    /// NetIQ 事件來源：成員新增、成員移除、權限變更、稽核政策變更、權限異動（彙總）。
+    /// 異動類型（共 9 個相異值）。
+    /// NetIQ 事件來源：成員新增、成員移除、權限變更、稽核政策變更。
     /// 本機監控來源：成員新增、成員移除、無法存取、恢復可存取、擁有者變更、權限新增（ACL 規則）、權限移除（ACL 規則）。
+    /// 既有資料庫另可能存在「權限異動（彙總）」——那是不再產生的舊值，查詢與分類仍須認得
+    /// （<see cref="PermissionCategory"/> 保留其對應），歷史列不刪。
     /// </summary>
     public string ChangeType { get; set; } = string.Empty;
 
