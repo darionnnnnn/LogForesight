@@ -2096,3 +2096,67 @@ a.lf-calendar__cell:focus-visible {
         border-bottom-color: var(--lf-primary-hover);
     }
 }
+
+/* ── 權限異動明細結構化 key/value 呈現（.gemini-tasks/task-c1.md）─────────── */
+
+.lf-detail-plain {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.lf-kv-table {
+    width: 100%;
+    table-layout: fixed;
+    margin: 0;
+    background: transparent;
+    border-collapse: collapse;
+}
+
+.lf-kv-table tr {
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-kv-table tr:last-child {
+    border-bottom: none;
+}
+
+.lf-kv-row--section th.lf-kv-section-header {
+    background-color: var(--lf-gray-100);
+    color: var(--lf-text);
+    font-weight: 600;
+    font-size: var(--lf-font-size-xs);
+    padding: var(--lf-space-2) var(--lf-space-2);
+    border: none;
+    letter-spacing: .02em;
+}
+
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    color: var(--lf-text);
+}
+
+.lf-kv-key {
+    width: 32%;
+    max-width: 12rem;
+    vertical-align: top;
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    padding: var(--lf-space-1) var(--lf-space-2);
+    white-space: normal;
+    word-break: break-word;
+}
+
+.lf-kv-val {
+    width: 68%;
+    vertical-align: top;
+    font-family: var(--lf-font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    color: var(--lf-text);
+    padding: var(--lf-space-1) var(--lf-space-2);
+}

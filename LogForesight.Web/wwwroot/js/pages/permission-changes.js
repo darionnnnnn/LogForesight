@@ -538,6 +538,179 @@ function statusBadge(status) {
     return span;
 }
 
+/**
+ * 解析單行文字為結構化項目（區段標題、key/value 對、或原樣單欄）。
+ * key 判定規則：出現在行首或空白之後、長度 2～20 字元、至少包含一個字母或中日韓文字、不含冒號與換行、緊接半形或全形冒號。
+ * 冒號後內容為空（緊接下一個 key 或行尾）者視為區段標題。
+ *
+ * @param {string} line
+ * @returns {Array<{type: 'section'|'kv'|'asis', title?: string, key?: string, value?: string, text?: string, colonChar?: string}>}
+ */
+function parseStructuredLine(line) {
+    if (!line) {
+        return [{ type: 'asis', text: '' }];
+    }
+
+    // 尋找行內所有的冒號位置（半形 : 或全形 ：）
+    const colonIndices = [];
+    for (let i = 0; i < line.length; i++) {
+        if (line[i] === ':' || line[i] === '：') {
+            colonIndices.push(i);
+        }
+    }
+
+    if (colonIndices.length === 0) {
+        return [{ type: 'asis', text: line }];
+    }
+
+    const matches = [];
+    let lastMatchEnd = 0;
+
+    for (let i = 0; i < colonIndices.length; i++) {
+        const colonIdx = colonIndices[i];
+        if (colonIdx < lastMatchEnd) continue;
+
+        // 取冒號前最後一個空白之後的字串當 key 候選（行首與行內共用同一套規則）
+        let candidateStart = lastMatchEnd;
+        for (let k = colonIdx - 1; k >= lastMatchEnd; k--) {
+            if (/\s/.test(line[k])) {
+                candidateStart = k + 1;
+                break;
+            }
+        }
+
+        const candidateKey = line.slice(candidateStart, colonIdx);
+        const candidateLen = candidateKey.length;
+
+        // key 契約：長度 2～20 字元、不含冒號、且必須至少包含一個字母（A-Z／a-z）或中日韓文字
+        const hasLetterOrCjk = /[\p{L}]/u.test(candidateKey);
+        const hasColon = candidateKey.includes(':') || candidateKey.includes('：');
+
+        if (candidateLen >= 2 && candidateLen <= 20 && hasLetterOrCjk && !hasColon) {
+            matches.push({
+                keyStart: candidateStart,
+                colonIdx: colonIdx,
+                key: candidateKey,
+                colonChar: line[colonIdx]
+            });
+            lastMatchEnd = colonIdx + 1;
+        }
+    }
+
+    if (matches.length === 0) {
+        return [{ type: 'asis', text: line }];
+    }
+
+    const items = [];
+    const leadingText = line.slice(0, matches[0].keyStart).trim();
+    if (leadingText) {
+        items.push({ type: 'asis', text: leadingText });
+    }
+
+    for (let i = 0; i < matches.length; i++) {
+        const m = matches[i];
+        const nextStart = (i + 1 < matches.length) ? matches[i + 1].keyStart : line.length;
+        const valRaw = line.slice(m.colonIdx + 1, nextStart);
+        const valTrimmed = valRaw.trim();
+
+        if (valTrimmed === '') {
+            items.push({
+                type: 'section',
+                title: m.key,
+                colonChar: m.colonChar
+            });
+        } else {
+            items.push({
+                type: 'kv',
+                key: m.key,
+                value: valTrimmed
+            });
+        }
+    }
+
+    return items;
+}
+
+/**
+ * 通用權限異動明細文字渲染函式（行為說明／異動前／異動後共用）。
+ * 具備保留換行、通用 key/value 拆解、區段標題與少於 2 對時退回純文字機制。
+ *
+ * @param {string|null|undefined} rawText
+ * @param {string} emptyFallback 空值時的預設文字（例如「—」或「（無）」）
+ * @returns {HTMLElement}
+ */
+function renderStructuredDetail(rawText, emptyFallback = '—') {
+    const text = (rawText != null) ? String(rawText).trim() : '';
+    if (!text) {
+        const emptyEl = document.createElement('span');
+        emptyEl.className = 'text-muted';
+        emptyEl.textContent = emptyFallback;
+        return emptyEl;
+    }
+
+    const lines = String(rawText).split(/\r\n|\r|\n/);
+    const parsedLines = lines.map(parseStructuredLine);
+
+    // 計算整段文字解析出的 key/value 與區段標題總數
+    let totalKvCount = 0;
+    for (const lineItems of parsedLines) {
+        for (const item of lineItems) {
+            if (item.type === 'kv' || item.type === 'section') {
+                totalKvCount++;
+            }
+        }
+    }
+
+    // 少於 2 對時，整段退回純文字（僅套用保留換行與自動折行）
+    if (totalKvCount < 2) {
+        const plainWrap = document.createElement('div');
+        plainWrap.className = 'lf-detail-plain';
+        plainWrap.textContent = rawText;
+        return plainWrap;
+    }
+
+    // 解析成功：以雙欄表格逐列呈現
+    const table = document.createElement('table');
+    table.className = 'lf-kv-table table table-sm mb-0';
+
+    const tbody = document.createElement('tbody');
+    for (const lineItems of parsedLines) {
+        for (const item of lineItems) {
+            const tr = document.createElement('tr');
+            if (item.type === 'section') {
+                tr.className = 'lf-kv-row--section';
+                const th = document.createElement('th');
+                th.colSpan = 2;
+                th.className = 'lf-kv-section-header';
+                th.textContent = item.title ? `${item.title}${item.colonChar || '：'}` : '';
+                tr.appendChild(th);
+            } else if (item.type === 'asis') {
+                tr.className = 'lf-kv-row--asis';
+                const td = document.createElement('td');
+                td.colSpan = 2;
+                td.className = 'lf-kv-asis-cell';
+                td.textContent = item.text || '';
+                tr.appendChild(td);
+            } else if (item.type === 'kv') {
+                tr.className = 'lf-kv-row--kv';
+                const tdKey = document.createElement('td');
+                tdKey.className = 'lf-kv-key small';
+                tdKey.textContent = item.key;
+
+                const tdVal = document.createElement('td');
+                tdVal.className = 'lf-kv-val small';
+                tdVal.textContent = item.value;
+
+                tr.append(tdKey, tdVal);
+            }
+            tbody.appendChild(tr);
+        }
+    }
+
+    table.appendChild(tbody);
+    return table;
+}
+
 function detailView(change) {
     const wrap = document.createElement('div');
     wrap.className = 'p-3 bg-light rounded border';
@@ -547,12 +720,11 @@ function detailView(change) {
 
     const colAlert = document.createElement('div');
     colAlert.className = 'col-12';
-    const alertLabel = document.createElement('span');
-    alertLabel.className = 'text-muted me-2';
+    const alertLabel = document.createElement('div');
+    alertLabel.className = 'text-muted mb-1';
     alertLabel.textContent = '行為說明：';
-    const alertVal = document.createElement('span');
-    alertVal.className = 'fw-medium';
-    alertVal.textContent = change.alertText || '—';
+    const alertVal = document.createElement('div');
+    alertVal.appendChild(renderStructuredDetail(change.alertText, '—'));
     colAlert.append(alertLabel, alertVal);
 
     const colTarget = document.createElement('div');
@@ -592,13 +764,13 @@ function detailView(change) {
     diffWrap.innerHTML = `
         <table class="table table-sm bg-white mb-0 border">
             <tbody>
-                <tr><th style="width:6rem" class="bg-light text-muted">異動前</th><td class="font-monospace small"></td></tr>
-                <tr><th class="bg-light text-muted">異動後</th><td class="font-monospace small"></td></tr>
+                <tr><th style="width:6rem" class="bg-light text-muted align-top">異動前</th><td class="small"></td></tr>
+                <tr><th class="bg-light text-muted align-top">異動後</th><td class="small"></td></tr>
             </tbody>
         </table>`;
     const cells = diffWrap.querySelectorAll('td');
-    cells[0].textContent = change.before || '（無）';
-    cells[1].textContent = change.after || '（無）';
+    cells[0].appendChild(renderStructuredDetail(change.before, '（無）'));
+    cells[1].appendChild(renderStructuredDetail(change.after, '（無）'));
     wrap.appendChild(diffWrap);
 
     if (change.status === 'pending') {
