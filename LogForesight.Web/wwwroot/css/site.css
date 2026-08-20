@@ -1480,6 +1480,13 @@ a.lf-stat:hover .lf-card,
     border-radius: var(--lf-radius-sm);
 }
 
+/* 白話句是該列的主要資訊時（權限異動待辦的「異動說明」）：用正文色而非附註灰，
+   寬度也放寬——那一句就是使用者不展開也要看懂的內容 */
+.lf-issue-explanation--primary {
+    color: var(--lf-text);
+    max-width: 28rem;
+}
+
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
 

@@ -477,23 +477,24 @@ function accountCell(row) {
     const wrap = document.createElement('div');
     wrap.className = 'small';
 
-    const opRow = document.createElement('div');
-    const opLabel = document.createElement('span');
-    opLabel.className = 'text-muted me-1';
-    opLabel.textContent = '操作者：';
-    const opVal = document.createElement('span');
-    opVal.textContent = row.initiatorAccount || '—';
-    opRow.append(opLabel, opVal);
+    // 顯示短名（完整 DN 留在 title 與展開明細）：AD 的帳號值動輒是
+    // CN=…,OU=…,DC=… 整串，直接印會把這一欄撐開、也蓋不住重點
+    const line = (labelText, display, full) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'text-truncate';
+        const label = document.createElement('span');
+        label.className = 'text-muted me-1';
+        label.textContent = labelText;
+        const val = document.createElement('span');
+        val.textContent = display || full || '—';
+        if (full) rowEl.title = full;
+        rowEl.append(label, val);
+        return rowEl;
+    };
 
-    const targetRow = document.createElement('div');
-    const targetLabel = document.createElement('span');
-    targetLabel.className = 'text-muted me-1';
-    targetLabel.textContent = '目標：';
-    const targetVal = document.createElement('span');
-    targetVal.textContent = row.targetAccount || '—';
-    targetRow.append(targetLabel, targetVal);
-
-    wrap.append(opRow, targetRow);
+    wrap.append(
+        line('操作者：', row.initiatorAccountDisplay, row.initiatorAccount),
+        line('目標：', row.targetAccountDisplay, row.targetAccount));
     return wrap;
 }
 
@@ -517,11 +518,15 @@ function categoryCell(row) {
 }
 
 function summaryCell(row) {
+    // 沿用問題查詢頁的白話說明範式（.lf-issue-explanation）：同一套寬度與省略號規則，
+    // tabIndex 讓鍵盤使用者也叫得出完整句子的 tooltip
     const div = document.createElement('div');
-    div.className = 'text-truncate';
-    div.style.maxWidth = '360px';
+    div.className = 'lf-issue-explanation lf-issue-explanation--primary';
     div.textContent = row.summaryText || '—';
-    div.title = row.summaryText || '';
+    if (row.summaryText) {
+        div.title = row.summaryText;
+        div.tabIndex = 0;
+    }
     return div;
 }
 
