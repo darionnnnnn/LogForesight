@@ -1,6 +1,8 @@
+﻿using System.Text.RegularExpressions;
 using LogForesight.Core.Analysis;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -211,9 +213,10 @@ public class PermissionChangeService
             action: request.Status == PermissionConfirmStatuses.Authorized
                 ? AuditActions.PermConfirmAuthorized
                 : AuditActions.PermConfirmSuspicious,
+            // Target 剖不出時是空字串，直接串會留一個沒有下文的「／」
             summary: request.Status == PermissionConfirmStatuses.Authorized
-                ? $"確認 {change.HostName} 的權限異動為授權操作：{change.ChangeType}／{change.Target}"
-                : $"將 {change.HostName} 的權限異動標記為可疑：{change.ChangeType}／{change.Target}",
+                ? $"確認 {change.HostName} 的權限異動為授權操作：{AuditChangeDesc(change)}"
+                : $"將 {change.HostName} 的權限異動標記為可疑：{AuditChangeDesc(change)}",
             targetKind: "permission_change",
             targetId: changeId,
             detail: new { change.Target, change.ChangeType, change.Before, change.After, confirmation.Note });
@@ -385,6 +388,58 @@ public class PermissionChangeService
         return _store.CountPending(hostNames);
     }
 
+    /// <summary>舊資料的對象欄可能被寫成事件來源名而非真正的異動對象，兩種形狀：
+    /// 「來源名 (EventId 4756)」與無來源時的「Event 4756」。只認形狀不認特定來源名。</summary>
+    /// <summary>稽核摘要用的「異動類型／對象」，任一段為空就不留分隔符</summary>
+    private static string AuditChangeDesc(PermissionChangeRecord change) =>
+        string.Join("／", new[] { change.ChangeType, change.Target }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    private static readonly Regex BadTargetRegex =
+        new(@"(\(EventId\s+(?<id>\d+)\)$|^Event\s+(?<id>\d+)$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <param name="eventId">本列的 EventId。舊退路值裡的數字必然等於它——比對數字才不會把
+    /// 真的叫「Event 5」的群組或路徑誤判成壞資料。</param>
+    private static string ResolveTarget(string? rawTarget, string fallback, int? eventId)
+    {
+        if (string.IsNullOrWhiteSpace(rawTarget))
+            return fallback;
+
+        var trimmed = rawTarget.Trim();
+        var bad = BadTargetRegex.Match(trimmed);
+        if (bad.Success && eventId is > 0 &&
+            int.TryParse(bad.Groups["id"].Value, out var idInTarget) && idInTarget == eventId)
+        {
+            return fallback;
+        }
+
+        return trimmed;
+    }
+
+    /// <summary>把句子的兩段接起來：中文與英數之間留半形空格是刻意的排版，但全形標點
+    /// （降級佔位字「（未能解析…）」的前後括號）兩側再加空格會在句子中間開一個洞。</summary>
+    private static string Sp(string left, string right)
+    {
+        if (left.Length == 0) return right;
+        if (right.Length == 0) return left;
+        var noSpace = IsFullWidth(left[^1]) || IsFullWidth(right[0]);
+        return noSpace ? left + right : $"{left} {right}";
+
+        static bool IsFullWidth(char c) => c is '（' or '）' or '、' or '，' or '。';
+    }
+
+    /// <summary>把句子的各段依 <see cref="Sp"/> 的規則接起來，空段自動略過。
+    /// 句子一律用它組——直接把空格寫進插值字串的話，遇到降級佔位字就會在句中留下孤兒空格。</summary>
+    private static string Sentence(params string?[] parts)
+    {
+        var result = string.Empty;
+        foreach (var part in parts)
+        {
+            if (!string.IsNullOrEmpty(part)) result = Sp(result, part);
+        }
+        return result;
+    }
+
     private static PermissionChangeDto MapToDto(
         PermissionChangeRecord change,
         PermissionChangeConfirmation? confirmation,
@@ -405,7 +460,10 @@ public class PermissionChangeService
             CategoryLabel = PermissionCategory.GetLabel(category),
             IsPrivilegedTarget = change.IsPrivilegedTarget,
             InitiatorAccount = change.InitiatorAccount,
+            InitiatorAccountDisplay = AccountDisplayFormatter.ToShortName(change.InitiatorAccount),
             TargetAccount = change.TargetAccount,
+            TargetAccountDisplay = AccountDisplayFormatter.ToShortName(change.TargetAccount),
+            EventId = change.EventId,
             Before = change.Before,
             After = change.After,
             AlertText = change.AlertText,
@@ -424,109 +482,124 @@ public class PermissionChangeService
     {
         var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
         var categoryLabel = PermissionCategory.GetLabel(category);
-        var target = string.IsNullOrWhiteSpace(change.Target) ? "（未指定對象）" : change.Target.Trim();
+        var initiator = AccountDisplayFormatter.ToShortName(change.InitiatorAccount);
+        var hasInitiator = !string.IsNullOrWhiteSpace(initiator);
 
         switch (category)
         {
             case PermissionCategory.GroupMember:
             {
-                var member = !string.IsNullOrWhiteSpace(change.After)
-                    ? change.After
-                    : (!string.IsNullOrWhiteSpace(change.TargetAccount)
-                        ? change.TargetAccount
-                        : change.Before);
+                var target = ResolveTarget(change.Target, "（未能解析群組名稱）", change.EventId);
+                var rawMember = change.ChangeType == "成員移除"
+                    ? (!string.IsNullOrWhiteSpace(change.Before) ? change.Before : (!string.IsNullOrWhiteSpace(change.TargetAccount) ? change.TargetAccount : change.After))
+                    : (!string.IsNullOrWhiteSpace(change.After) ? change.After : (!string.IsNullOrWhiteSpace(change.TargetAccount) ? change.TargetAccount : change.Before));
+
+                var member = AccountDisplayFormatter.ToShortName(rawMember);
+                if (string.IsNullOrWhiteSpace(member))
+                    member = "（未能解析成員）";
+
+                var group = Sp("群組", target);
 
                 if (change.ChangeType == "成員新增")
                 {
-                    return !string.IsNullOrWhiteSpace(member)
-                        ? $"{categoryLabel}：{target} 新增成員 {member}"
-                        : $"{categoryLabel}：{target} 成員新增";
+                    return hasInitiator
+                        ? Sentence(initiator, "將", member, "加入" + group)
+                        : Sentence(member, "被加入" + group);
                 }
+
                 if (change.ChangeType == "成員移除")
                 {
-                    var removedMember = !string.IsNullOrWhiteSpace(change.Before)
-                        ? change.Before
-                        : (!string.IsNullOrWhiteSpace(change.TargetAccount)
-                            ? change.TargetAccount
-                            : change.After);
-
-                    return !string.IsNullOrWhiteSpace(removedMember)
-                        ? $"{categoryLabel}：{target} 移除成員 {removedMember}"
-                        : $"{categoryLabel}：{target} 成員移除";
+                    return hasInitiator
+                        ? Sentence(initiator, "將", member, "移出" + group)
+                        : Sentence(member, "被移出" + group);
                 }
-                return !string.IsNullOrWhiteSpace(change.ChangeType)
-                    ? $"{categoryLabel}：{target} {change.ChangeType}"
-                    : $"{categoryLabel}：{target}";
+
+                // 用原始異動類型收尾：群組類未來若新增其他型別，不該一律被講成「成員變更」
+                var groupAction = !string.IsNullOrWhiteSpace(change.ChangeType) ? change.ChangeType : "成員變更";
+                return hasInitiator
+                    ? Sentence(initiator, "變更" + group, "的" + groupAction)
+                    : Sentence(group, groupAction);
             }
 
             case PermissionCategory.FolderAcl:
             {
+                var target = ResolveTarget(change.Target, "（未能解析路徑）", change.EventId);
+
                 if (change.ChangeType == "權限新增（ACL 規則）")
                 {
-                    return !string.IsNullOrWhiteSpace(change.After)
-                        ? $"{categoryLabel}：{target} 新增權限 {change.After}"
-                        : $"{categoryLabel}：{target} 新增權限";
+                    return hasInitiator
+                        ? Sentence(initiator, "於", target, "新增權限規則")
+                        : Sentence(target, "的權限規則被新增");
                 }
+
                 if (change.ChangeType == "權限移除（ACL 規則）")
                 {
-                    return !string.IsNullOrWhiteSpace(change.Before)
-                        ? $"{categoryLabel}：{target} 移除權限 {change.Before}"
-                        : $"{categoryLabel}：{target} 移除權限";
+                    return hasInitiator
+                        ? Sentence(initiator, "於", target, "移除權限規則")
+                        : Sentence(target, "的權限規則被移除");
                 }
-                if (change.ChangeType == "權限變更")
-                {
-                    if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
-                        return $"{categoryLabel}：{target} 權限由 {change.Before} 變更為 {change.After}";
-                    if (!string.IsNullOrWhiteSpace(change.After))
-                        return $"{categoryLabel}：{target} 權限變更為 {change.After}";
-                    return $"{categoryLabel}：{target} 權限變更";
-                }
-                return !string.IsNullOrWhiteSpace(change.ChangeType)
-                    ? $"{categoryLabel}：{target} {change.ChangeType}"
-                    : $"{categoryLabel}：{target}";
+
+                return hasInitiator
+                    ? Sentence(initiator, "變更", target, "的權限")
+                    : Sentence(target, "的權限被變更");
             }
 
             case PermissionCategory.OwnerChange:
             {
-                if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
-                    return $"{categoryLabel}：{target} 擁有者由 {change.Before} 變更為 {change.After}";
-                if (!string.IsNullOrWhiteSpace(change.After))
-                    return $"{categoryLabel}：{target} 擁有者變更為 {change.After}";
-                return $"{categoryLabel}：{target} 擁有者變更";
+                var target = ResolveTarget(change.Target, "（未能解析路徑）", change.EventId);
+                var beforeOwner = AccountDisplayFormatter.ToShortName(change.Before);
+                var afterOwner = AccountDisplayFormatter.ToShortName(change.After);
+
+                if (!string.IsNullOrWhiteSpace(beforeOwner) && !string.IsNullOrWhiteSpace(afterOwner))
+                {
+                    return hasInitiator
+                        ? Sentence(initiator, "將", target, "的擁有者由", beforeOwner, "變更為", afterOwner)
+                        : Sentence(target, "的擁有者由", beforeOwner, "變更為", afterOwner);
+                }
+
+                if (!string.IsNullOrWhiteSpace(afterOwner))
+                {
+                    return hasInitiator
+                        ? Sentence(initiator, "將", target, "的擁有者變更為", afterOwner)
+                        : Sentence(target, "的擁有者變更為", afterOwner);
+                }
+
+                return hasInitiator
+                    ? Sentence(initiator, "變更", target, "的擁有者")
+                    : Sentence(target, "的擁有者被變更");
             }
 
             case PermissionCategory.FolderAccess:
             {
-                if (change.ChangeType is "無法存取" or "恢復可存取")
-                    return $"{categoryLabel}：{target} {change.ChangeType}";
-                return !string.IsNullOrWhiteSpace(change.ChangeType)
-                    ? $"{categoryLabel}：{target} {change.ChangeType}"
-                    : $"{categoryLabel}：{target}";
+                var target = ResolveTarget(change.Target, "（未能解析路徑）", change.EventId);
+                // 本機監控來源沒有操作者，這裡不組操作者前綴；異動類型本身就是動詞
+                // （「無法存取」「恢復可存取」），類型缺漏時給一個不會變成孤立路徑的退路
+                return Sentence(target,
+                    !string.IsNullOrWhiteSpace(change.ChangeType) ? change.ChangeType : "存取狀態變更");
             }
 
             case PermissionCategory.AuditPolicy:
             {
-                if (!string.IsNullOrWhiteSpace(change.Before) && !string.IsNullOrWhiteSpace(change.After))
-                    return $"{categoryLabel}：{target} 政策由 {change.Before} 變更為 {change.After}";
-                if (!string.IsNullOrWhiteSpace(change.After))
-                    return $"{categoryLabel}：{target} 政策變更為 {change.After}";
-                return $"{categoryLabel}：{target} 稽核政策變更";
+                var target = ResolveTarget(change.Target, "（未能解析對象）", change.EventId);
+                return hasInitiator
+                    ? Sentence(initiator, "變更", target, "的稽核政策")
+                    : Sentence(target, "的稽核政策被變更");
             }
 
             case PermissionCategory.Summary:
             {
-                return !string.IsNullOrWhiteSpace(change.AlertText)
-                    ? $"{categoryLabel}：{target} {change.AlertText}"
-                    : $"{categoryLabel}：{target}";
+                // 彙總列的對象是主機名（不是 Extract 出來的異動對象），不套壞形狀辨識
+                var target = string.IsNullOrWhiteSpace(change.Target) ? "（未指定對象）" : change.Target.Trim();
+                return Sentence($"{categoryLabel}：{target}", change.AlertText);
             }
 
             default:
             {
-                if (!string.IsNullOrWhiteSpace(change.AlertText))
-                    return $"{categoryLabel}：{target} {change.AlertText}";
-                if (!string.IsNullOrWhiteSpace(change.ChangeType))
-                    return $"{categoryLabel}：{target} {change.ChangeType}";
-                return $"{categoryLabel}：{target}";
+                // 對象是群組或路徑，不是帳號——不套帳號短名規則
+                var target = ResolveTarget(change.Target, "（未指定對象）", change.EventId);
+
+                var detail = !string.IsNullOrWhiteSpace(change.AlertText) ? change.AlertText : change.ChangeType;
+                return Sentence($"{categoryLabel}：{target}", detail);
             }
         }
     }

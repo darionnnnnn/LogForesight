@@ -434,4 +434,366 @@ public sealed class PermissionChangeQueryTests : IDisposable
         Assert.Single(netiqResult.Items);
         Assert.Equal("src-netiq", netiqResult.Items[0].ChangeId);
     }
+
+    [Fact]
+    public void SummaryText_群組成員新增有操作者時_產生主動句且帳號為短名()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-add-1",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = "admin_ad.brk",
+            TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            After = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Target = "_6110H1220000000"
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal("admin_ad.brk 將 33951 [Li Zhihui] 加入群組 _6110H1220000000", summary);
+    }
+
+    [Fact]
+    public void SummaryText_群組成員新增無操作者時_產生被動句且帳號為短名()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-add-2",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = null,
+            TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            After = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Target = "_6110H1220000000"
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal("33951 [Li Zhihui] 被加入群組 _6110H1220000000", summary);
+    }
+
+    [Fact]
+    public void SummaryText_群組成員移除_有操作者與無操作者皆產生正確句型()
+    {
+        var recordWithInit = new PermissionChangeRecord
+        {
+            ChangeId = "gm-rem-1",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員移除",
+            InitiatorAccount = "admin_ad.brk",
+            TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Before = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Target = "_6110H1220000000"
+        };
+
+        var summaryWithInit = PermissionChangeService.GenerateSummaryText(recordWithInit);
+        Assert.Equal("admin_ad.brk 將 33951 [Li Zhihui] 移出群組 _6110H1220000000", summaryWithInit);
+
+        var recordNoInit = new PermissionChangeRecord
+        {
+            ChangeId = "gm-rem-2",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員移除",
+            InitiatorAccount = null,
+            TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Before = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Target = "_6110H1220000000"
+        };
+
+        var summaryNoInit = PermissionChangeService.GenerateSummaryText(recordNoInit);
+        Assert.Equal("33951 [Li Zhihui] 被移出群組 _6110H1220000000", summaryNoInit);
+    }
+
+    [Fact]
+    public void SummaryText_Target為空字串或空白時_降級為未能解析群組名稱或路徑()
+    {
+        var gmRecord = new PermissionChangeRecord
+        {
+            ChangeId = "gm-empty-target",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = null,
+            TargetAccount = "CN=33951 [Li Zhihui],OU=User,DC=corp",
+            After = "CN=33951 [Li Zhihui],OU=User,DC=corp",
+            Target = "   "
+        };
+
+        var gmSummary = PermissionChangeService.GenerateSummaryText(gmRecord);
+        Assert.Equal("33951 [Li Zhihui] 被加入群組（未能解析群組名稱）", gmSummary);
+
+        var faRecord = new PermissionChangeRecord
+        {
+            ChangeId = "fa-empty-target",
+            Category = PermissionCategory.FolderAcl,
+            ChangeType = "權限變更",
+            InitiatorAccount = null,
+            Target = ""
+        };
+
+        var faSummary = PermissionChangeService.GenerateSummaryText(faRecord);
+        Assert.Equal("（未能解析路徑）的權限被變更", faSummary);
+    }
+
+    [Fact]
+    public void SummaryText_Target為舊資料壞形狀結尾帶EventId時_降級為未能解析()
+    {
+        var gmRecord = new PermissionChangeRecord
+        {
+            ChangeId = "gm-bad-target",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = null,
+            TargetAccount = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            After = "CN=33951 [Li Zhihui],OU=1220000000,OU=User,DC=brk,DC=corp",
+            Target = "Microsoft-Windows-Security-Auditing (EventId 4756)",
+            EventId = 4756
+        };
+
+        var gmSummary = PermissionChangeService.GenerateSummaryText(gmRecord);
+        Assert.Equal("33951 [Li Zhihui] 被加入群組（未能解析群組名稱）", gmSummary);
+
+        var faRecord = new PermissionChangeRecord
+        {
+            ChangeId = "fa-bad-target",
+            Category = PermissionCategory.FolderAcl,
+            ChangeType = "權限變更",
+            InitiatorAccount = "admin_ad.brk",
+            Target = "Security-Audit-Source (EventId 4670)",
+            EventId = 4670
+        };
+
+        var faSummary = PermissionChangeService.GenerateSummaryText(faRecord);
+        Assert.Equal("admin_ad.brk 變更（未能解析路徑）的權限", faSummary);
+    }
+
+    [Fact]
+    public void SummaryText_帳號為完整DN格式時_句中一律轉為短名()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "dn-test",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = "CN=Operator Admin,OU=IT,DC=corp",
+            TargetAccount = "CN=John Doe\\, Jr.,OU=Users,DC=corp",
+            After = "CN=John Doe\\, Jr.,OU=Users,DC=corp",
+            Target = "DevGroup"
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Contains("Operator Admin", summary);
+        Assert.Contains("John Doe, Jr.", summary);
+        Assert.DoesNotContain("CN=", summary);
+        Assert.DoesNotContain("DC=corp", summary);
+        Assert.DoesNotContain("OU=", summary);
+    }
+
+    [Fact]
+    public void SummaryText_資料夾權限異動與稽核政策_長SDDL字串不得進入句子()
+    {
+        var faRecord = new PermissionChangeRecord
+        {
+            ChangeId = "fa-sddl",
+            Category = PermissionCategory.FolderAcl,
+            ChangeType = "權限變更",
+            InitiatorAccount = null,
+            Target = @"C:\share\finance",
+            Before = "D:(A;;GA;;;SY)(A;;GRGX;;;BA)",
+            After = "D:(A;;GA;;;SY)(A;;GRGX;;;BA)(A;;0x1200a9;;;WD)"
+        };
+
+        var faSummary = PermissionChangeService.GenerateSummaryText(faRecord);
+        Assert.Equal(@"C:\share\finance 的權限被變更", faSummary);
+        Assert.DoesNotContain("D:(A;;", faSummary);
+        Assert.DoesNotContain("SY", faSummary);
+
+        var apRecord = new PermissionChangeRecord
+        {
+            ChangeId = "ap-sddl",
+            Category = PermissionCategory.AuditPolicy,
+            ChangeType = "稽核政策變更",
+            InitiatorAccount = "DOMAIN\\auditor",
+            Target = "Audit-Object-Access",
+            Before = "S:(AU;FA;CCDCLCSWRPWPDTLOSDRCWDWO;;;WD)",
+            After = "S:(AU;FA;CCDCLCSWRPWPDTLOSDRCWDWO;;;WD)(AU;SA;CCDCLCSWRPWPDTLOSDRCWDWO;;;WD)"
+        };
+
+        var apSummary = PermissionChangeService.GenerateSummaryText(apRecord);
+        Assert.Equal("DOMAIN\\auditor 變更 Audit-Object-Access 的稽核政策", apSummary);
+        Assert.DoesNotContain("S:(AU;", apSummary);
+    }
+
+    [Fact]
+    public void SummaryText_擁有者變更_前後帳號轉為短名且正確入句()
+    {
+        var recordWithInit = new PermissionChangeRecord
+        {
+            ChangeId = "oc-1",
+            Category = PermissionCategory.OwnerChange,
+            ChangeType = "擁有者變更",
+            InitiatorAccount = "admin_ad.brk",
+            Target = @"C:\share\secret",
+            Before = "CN=Alice Smith,OU=Users,DC=corp",
+            After = "CN=Bob Jones,OU=Users,DC=corp"
+        };
+
+        var summaryWithInit = PermissionChangeService.GenerateSummaryText(recordWithInit);
+        Assert.Equal(@"admin_ad.brk 將 C:\share\secret 的擁有者由 Alice Smith 變更為 Bob Jones", summaryWithInit);
+
+        var recordNoInit = new PermissionChangeRecord
+        {
+            ChangeId = "oc-2",
+            Category = PermissionCategory.OwnerChange,
+            ChangeType = "擁有者變更",
+            InitiatorAccount = null,
+            Target = @"C:\share\secret",
+            Before = "CN=Alice Smith,OU=Users,DC=corp",
+            After = "CN=Bob Jones,OU=Users,DC=corp"
+        };
+
+        var summaryNoInit = PermissionChangeService.GenerateSummaryText(recordNoInit);
+        Assert.Equal(@"C:\share\secret 的擁有者由 Alice Smith 變更為 Bob Jones", summaryNoInit);
+    }
+
+    [Fact]
+    public void SummaryText_權限異動彙總summary類別_維持現行類別前綴與AlertText不變()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "sum-1",
+            Category = PermissionCategory.Summary,
+            ChangeType = "權限異動（彙總）",
+            Target = "SRV-01",
+            AlertText = "共 12 筆權限異動"
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+        Assert.Equal("權限異動彙總：SRV-01 共 12 筆權限異動", summary);
+    }
+
+    [Fact]
+    public void MapToDto_補齊EventId與帳號顯示短名三個欄位()
+    {
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "dto-1",
+                HostName = "SRV-01",
+                Category = PermissionCategory.GroupMember,
+                ChangeType = "成員新增",
+                InitiatorAccount = "CN=33950 [Admin],OU=User,DC=corp",
+                TargetAccount = "CN=33951 [Li Zhihui],OU=User,DC=corp",
+                After = "CN=33951 [Li Zhihui],OU=User,DC=corp",
+                Target = "SecGroup",
+                EventId = 4728,
+                DetectedAt = DateTime.Now
+            }
+        });
+
+        var service = CreateService();
+        var result = service.Query(new PermissionChangeQueryRequest { Keyword = "SecGroup" });
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal(4728, item.EventId);
+        Assert.Equal("CN=33950 [Admin],OU=User,DC=corp", item.InitiatorAccount);
+        Assert.Equal("33950 [Admin]", item.InitiatorAccountDisplay);
+        Assert.Equal("CN=33951 [Li Zhihui],OU=User,DC=corp", item.TargetAccount);
+        Assert.Equal("33951 [Li Zhihui]", item.TargetAccountDisplay);
+    }
+
+    [Fact]
+    public void MapToDto_帳號欄位為null或空白時_顯示欄位回傳空字串()
+    {
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "dto-2",
+                HostName = "SRV-01",
+                Category = PermissionCategory.FolderAcl,
+                ChangeType = "權限變更",
+                InitiatorAccount = null,
+                TargetAccount = "   ",
+                Target = @"C:\share",
+                EventId = null,
+                DetectedAt = DateTime.Now
+            }
+        });
+
+        var service = CreateService();
+        var result = service.Query(new PermissionChangeQueryRequest { Keyword = "share" });
+
+        var item = Assert.Single(result.Items);
+        Assert.Null(item.EventId);
+        Assert.Null(item.InitiatorAccount);
+        Assert.Equal(string.Empty, item.InitiatorAccountDisplay);
+        Assert.Equal("   ", item.TargetAccount);
+        Assert.Equal(string.Empty, item.TargetAccountDisplay);
+    }
+
+    /// <summary>降級佔位字是全形括號起頭，接合處不得留下孤兒空格——句子中間開洞比截斷還難讀。</summary>
+    [Fact]
+    public void SummaryText_成員與對象皆降級時_句中不留孤兒空格()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-both-fallback",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            InitiatorAccount = "admin_ad.brk",
+            Target = string.Empty
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal("admin_ad.brk 將（未能解析成員）加入群組（未能解析群組名稱）", summary);
+        Assert.DoesNotContain(" （", summary);
+        Assert.DoesNotContain("） ", summary);
+    }
+
+    /// <summary>壞形狀辨識要比對本列 EventId：真的叫「Event 5」的群組不能被誤判成壞資料。</summary>
+    [Fact]
+    public void SummaryText_對象形狀像退路值但EventId不符時_視為正常對象()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "gm-real-event-name",
+            Category = PermissionCategory.GroupMember,
+            ChangeType = "成員新增",
+            TargetAccount = @"CORP\alice",
+            After = @"CORP\alice",
+            Target = "Event 5",
+            EventId = 4756
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Equal(@"CORP\alice 被加入群組 Event 5", summary);
+        Assert.DoesNotContain("未能解析", summary);
+    }
+
+    /// <summary>資料夾存取狀態沒有操作者，句子仍要有動詞，不能只剩一個孤立路徑。</summary>
+    [Fact]
+    public void SummaryText_資料夾存取狀態_異動類型缺漏時仍是完整句()
+    {
+        var withType = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "fa-type",
+            Category = PermissionCategory.FolderAccess,
+            ChangeType = "無法存取",
+            Target = @"D:\share\finance"
+        });
+        Assert.Equal(@"D:\share\finance 無法存取", withType);
+
+        var withoutType = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "fa-no-type",
+            Category = PermissionCategory.FolderAccess,
+            Target = @"D:\share\finance"
+        });
+        Assert.Equal(@"D:\share\finance 存取狀態變更", withoutType);
+    }
 }

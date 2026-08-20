@@ -571,7 +571,13 @@ public class PermissionChangeDto
     public string CategoryLabel { get; set; } = string.Empty;
     public bool IsPrivilegedTarget { get; set; }
     public string? InitiatorAccount { get; set; }
+    /// <summary>操作者帳號顯示短名（由 InitiatorAccount 經 ToShortName 轉換）</summary>
+    public string? InitiatorAccountDisplay { get; set; }
     public string? TargetAccount { get; set; }
+    /// <summary>目標帳號顯示短名（由 TargetAccount 經 ToShortName 轉換）</summary>
+    public string? TargetAccountDisplay { get; set; }
+    /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
+    public int? EventId { get; set; }
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
