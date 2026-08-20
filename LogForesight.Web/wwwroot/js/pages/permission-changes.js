@@ -3,17 +3,32 @@
  *
  * 每一筆逐項顯示「時間／主機 (IP)／帳號／類別／異動說明／狀態」，
  * 支援伺服器端排序、分頁與展開檢視完整異動明細。
+ * 支援關鍵字、網段、類別（多選）、來源、時間範圍篩選，
+ * 篩選條件記憶於 localStorage 並同步至網址 query string。
  */
 
 import { api } from '../core/api.js';
 import {
     renderTable, renderLoading, renderPagination, loadPageSize, savePageSize,
-    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails
+    guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 
+const STORAGE_KEY = 'lf.permissionChanges.filters';
+
 const modal = new bootstrap.Modal(document.getElementById('confirm-modal'));
-const form = document.getElementById('confirm-form');
+const confirmForm = document.getElementById('confirm-form');
+
+const filterForm = document.getElementById('filter-form');
+const keywordInput = document.getElementById('filter-keyword');
+const subnetInput = document.getElementById('filter-subnet');
+const subnetFeedback = document.getElementById('filter-subnet-feedback');
+const sourceSelect = document.getElementById('filter-source');
+const fromInput = document.getElementById('filter-from');
+const toInput = document.getElementById('filter-to');
+const categoryRow = document.getElementById('filter-category-row');
+const categoryChips = document.getElementById('filter-category-chips');
+const resetBtn = document.getElementById('btn-reset-filters');
 
 let currentStatus = 'pending';
 let currentPage = 1;
@@ -22,6 +37,27 @@ let sort = { key: 'detectedAt', dir: 'desc' };
 let lastResult = null;
 let isAllExpanded = false;
 let pendingConfirm = null;   // { change, targetStatus }
+let searchDebounce = null;
+
+const selectedCategories = new Set();
+const knownCategories = new Map(); // categoryKey -> categoryLabel
+
+/**
+ * 載入可用的類別清單。刻意向後端要，而不是從當頁資料收集——
+ * 只從當頁收集的話，沒出現在當頁的類別就不會出現在篩選裡，等於篩不到那一類。
+ */
+async function loadCategories() {
+    try {
+        const options = await api.get('/api/permission-changes/categories', { silent: true });
+        if (Array.isArray(options)) {
+            for (const opt of options) {
+                if (opt.key) knownCategories.set(opt.key, opt.label || opt.key);
+            }
+        }
+    } catch {
+        // 類別清單載入失敗不影響其他篩選，維持空清單即可
+    }
+}
 
 document.getElementById('perm-tabs').addEventListener('click', event => {
     const button = event.target.closest('[data-status]');
@@ -35,12 +71,157 @@ document.getElementById('perm-tabs').addEventListener('click', event => {
     load();
 });
 
+/** 讀取 localStorage 篩選偏好 */
+function loadStoredFilters() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+}
+
+/** 儲存篩選偏好至 localStorage */
+function saveStoredFilters() {
+    const filters = {
+        q: keywordInput ? keywordInput.value.trim() : '',
+        subnet: subnetInput ? subnetInput.value.trim() : '',
+        category: [...selectedCategories].join(','),
+        source: sourceSelect ? sourceSelect.value : '',
+        from: fromInput ? fromInput.value : '',
+        to: toInput ? toInput.value : ''
+    };
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+    } catch {
+        // 略過 localStorage 寫入錯誤
+    }
+}
+
+/** 初始化篩選條件（優先讀取 URL query string，次之讀取 localStorage） */
+function initFiltersFromUrlOrStorage() {
+    const params = new URLSearchParams(location.search);
+    const hasUrlParams = params.has('q') || params.has('subnet') || params.has('category') ||
+        params.has('source') || params.has('from') || params.has('to') ||
+        params.has('status') || params.has('sort') || params.has('dir') ||
+        params.has('page') || params.has('pageSize');
+
+    if (hasUrlParams) {
+        if (params.has('q') && keywordInput) keywordInput.value = params.get('q');
+        if (params.has('subnet') && subnetInput) subnetInput.value = params.get('subnet');
+        if (params.has('source') && sourceSelect) sourceSelect.value = params.get('source');
+        if (params.has('from') && fromInput) fromInput.value = params.get('from');
+        if (params.has('to') && toInput) toInput.value = params.get('to');
+        if (params.has('category')) {
+            for (const cat of params.get('category').split(',').filter(Boolean)) {
+                selectedCategories.add(cat);
+                if (!knownCategories.has(cat)) {
+                    knownCategories.set(cat, cat);
+                }
+            }
+        }
+        if (params.has('status')) {
+            currentStatus = params.get('status');
+            for (const tab of document.querySelectorAll('#perm-tabs .nav-link')) {
+                tab.classList.toggle('active', tab.dataset.status === currentStatus);
+            }
+        }
+        if (params.has('sort')) {
+            sort.key = params.get('sort');
+            sort.dir = params.get('dir') === 'asc' ? 'asc' : 'desc';
+        }
+        if (params.has('page')) {
+            currentPage = Math.max(1, parseInt(params.get('page'), 10) || 1);
+        }
+        if (params.has('pageSize')) {
+            const ps = parseInt(params.get('pageSize'), 10);
+            if (ps > 0) pageSize = ps;
+        }
+    } else {
+        const stored = loadStoredFilters();
+        if (stored) {
+            if (stored.q && keywordInput) keywordInput.value = stored.q;
+            if (stored.subnet && subnetInput) subnetInput.value = stored.subnet;
+            if (stored.source && sourceSelect) sourceSelect.value = stored.source;
+            if (stored.from && fromInput) fromInput.value = stored.from;
+            if (stored.to && toInput) toInput.value = stored.to;
+            if (stored.category) {
+                for (const cat of stored.category.split(',').filter(Boolean)) {
+                    selectedCategories.add(cat);
+                    if (!knownCategories.has(cat)) {
+                        knownCategories.set(cat, cat);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 渲染類別多選 chip（標籤與 key 完全來自後端 DTO） */
+function renderCategoryChips() {
+    if (!categoryChips) return;
+    if (knownCategories.size === 0 && selectedCategories.size === 0) {
+        if (categoryRow) categoryRow.classList.add('d-none');
+        return;
+    }
+    if (categoryRow) categoryRow.classList.remove('d-none');
+
+    const items = Array.from(knownCategories.entries()).map(([value, label]) => ({
+        value,
+        label
+    }));
+
+    renderChips(categoryChips, {
+        items,
+        attr: 'category',
+        activeValues: [...selectedCategories],
+        multi: true,
+        onToggle: (value, active) => {
+            if (active) selectedCategories.add(value);
+            else selectedCategories.delete(value);
+            currentPage = 1;
+            load();
+        }
+    });
+}
+
+function clearSubnetError() {
+    if (subnetInput) subnetInput.classList.remove('is-invalid');
+    if (subnetFeedback) subnetFeedback.textContent = '';
+}
+
+function showSubnetError(message) {
+    if (subnetInput) subnetInput.classList.add('is-invalid');
+    if (subnetFeedback) subnetFeedback.textContent = message || '網段格式錯誤';
+}
+
 /** 組裝查詢參數（供清單查詢共用） */
 function buildQueryParams(overrides = {}) {
     const params = new URLSearchParams();
+
+    const q = keywordInput ? keywordInput.value.trim() : '';
+    if (q) params.set('q', q);
+
+    const subnet = subnetInput ? subnetInput.value.trim() : '';
+    if (subnet) params.set('subnet', subnet);
+
+    if (selectedCategories.size > 0) {
+        params.set('category', [...selectedCategories].join(','));
+    }
+
     if (currentStatus) {
         params.set('status', currentStatus);
     }
+
+    const source = sourceSelect ? sourceSelect.value : '';
+    if (source) params.set('source', source);
+
+    const from = fromInput ? fromInput.value : '';
+    if (from) params.set('from', from);
+
+    const to = toInput ? toInput.value : '';
+    if (to) params.set('to', to);
+
     params.set('sort', sort.key || 'detectedAt');
     params.set('dir', sort.dir || 'desc');
     params.set('page', String(overrides.page ?? currentPage));
@@ -49,12 +230,30 @@ function buildQueryParams(overrides = {}) {
 }
 
 async function load() {
+    clearSubnetError();
+    saveStoredFilters();
+
     const container = document.getElementById('perm-list');
     renderLoading(container, 5);
 
     const params = buildQueryParams();
-    lastResult = await api.get(`/api/permission-changes?${params}`);
-    render();
+    history.replaceState(null, '', `?${params.toString()}`);
+
+    try {
+        lastResult = await api.get(`/api/permission-changes?${params}`, { silent: true });
+
+        renderCategoryChips();
+        render();
+    } catch (err) {
+        const isSubnetErr = subnetInput?.value.trim() && (err.code === 'validation_failed' || (err.message && err.message.includes('網段')));
+        if (isSubnetErr) {
+            showSubnetError(err.message);
+        } else {
+            toast(err.message || '查詢失敗', 'danger');
+        }
+        lastResult = { items: [], total: 0, page: currentPage, pageSize };
+        render();
+    }
 }
 
 function render() {
@@ -423,7 +622,7 @@ function openConfirm(change, targetStatus) {
     modal.show();
 }
 
-form.addEventListener('submit', async event => {
+confirmForm.addEventListener('submit', async event => {
     event.preventDefault();
 
     const note = document.getElementById('confirm-note').value.trim();
@@ -449,4 +648,74 @@ form.addEventListener('submit', async event => {
     }
 });
 
+function resetFilters() {
+    if (keywordInput) keywordInput.value = '';
+    if (subnetInput) subnetInput.value = '';
+    if (sourceSelect) sourceSelect.value = '';
+    if (fromInput) fromInput.value = '';
+    if (toInput) toInput.value = '';
+    selectedCategories.clear();
+    clearSubnetError();
+    renderCategoryChips();
+    try {
+        localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+    currentPage = 1;
+    load();
+}
+
+function onSearchInput() {
+    clearSubnetError();
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+        currentPage = 1;
+        load();
+    }, 300);
+}
+
+if (filterForm) {
+    filterForm.addEventListener('submit', event => {
+        event.preventDefault();
+        clearTimeout(searchDebounce);
+        currentPage = 1;
+        load();
+    });
+}
+
+if (keywordInput) {
+    keywordInput.addEventListener('input', onSearchInput);
+}
+
+if (subnetInput) {
+    subnetInput.addEventListener('input', onSearchInput);
+}
+
+if (sourceSelect) {
+    sourceSelect.addEventListener('change', () => {
+        currentPage = 1;
+        load();
+    });
+}
+
+if (fromInput) {
+    fromInput.addEventListener('change', () => {
+        currentPage = 1;
+        load();
+    });
+}
+
+if (toInput) {
+    toInput.addEventListener('change', () => {
+        currentPage = 1;
+        load();
+    });
+}
+
+if (resetBtn) {
+    resetBtn.addEventListener('click', resetFilters);
+}
+
+initFiltersFromUrlOrStorage();
+// 先取類別清單再渲染篩選晶片，避免第一次畫面上的類別篩選是空的
+loadCategories().then(renderCategoryChips);
 guardLoad(document.getElementById('perm-list'), load);

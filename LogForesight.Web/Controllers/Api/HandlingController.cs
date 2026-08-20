@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -205,6 +206,18 @@ public class PermissionChangesController : ControllerBase
         };
         return ApiResponse<PagedResult<PermissionChangeDto>>.Ok(_service.Query(request));
     }
+
+    /// <summary>
+    /// 可用的異動類別清單（key 與中文標籤）。
+    /// 前端的類別篩選必須靠它才列得全——只從當頁資料收集的話，
+    /// 沒有出現在當頁的類別就選不到，等於篩不到那一類。
+    /// </summary>
+    [HttpGet("categories")]
+    public ApiResponse<List<PermissionCategoryOptionDto>> GetCategories() =>
+        ApiResponse<List<PermissionCategoryOptionDto>>.Ok(
+            PermissionCategory.GetAllLabels()
+                .Select(kv => new PermissionCategoryOptionDto { Key = kv.Key, Label = kv.Value })
+                .ToList());
 
     /// <summary>「全選符合目前篩選的權限異動」ID 清單（僅限待確認項目）</summary>
     [HttpGet("ids")]

@@ -19,6 +19,42 @@
     <li class="nav-item"><button class="nav-link" data-status="" type="button">全部</button></li>
 </ul>
 
+<div class="lf-toolbar">
+    <form id="filter-form" class="lf-toolbar__row">
+        <div class="lf-toolbar__search">
+            <input type="search" class="form-control form-control-sm" id="filter-keyword"
+                   placeholder="搜尋主機、帳號、對象、說明" autocomplete="off" />
+        </div>
+        <div class="lf-toolbar__field position-relative" style="min-width: 200px;">
+            <input type="text" class="form-control form-control-sm" id="filter-subnet"
+                   placeholder="網段，例：192.168.1.0/24" autocomplete="off" />
+            <div class="invalid-feedback" id="filter-subnet-feedback"></div>
+        </div>
+        <div class="lf-toolbar__field" style="min-width: 130px;">
+            <select class="form-select form-select-sm" id="filter-source">
+                <option value="">全部來源</option>
+                <option value="本機監控">本機監控</option>
+                <option value="NetIQ 事件">NetIQ 事件</option>
+            </select>
+        </div>
+        <div class="lf-toolbar__field d-flex align-items-center gap-1" style="min-width: 260px;">
+            <input type="date" class="form-control form-control-sm" id="filter-from" title="起始時間" />
+            <span class="text-muted small">～</span>
+            <input type="date" class="form-control form-control-sm" id="filter-to" title="結束時間" />
+        </div>
+        <div class="lf-toolbar__spacer"></div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-reset-filters">清除篩選</button>
+        </div>
+    </form>
+    <div class="lf-toolbar__row d-none" id="filter-category-row">
+        <div class="lf-toolbar__group">
+            <span class="lf-toolbar__group-label">類別</span>
+            <div class="lf-toolbar__chips" id="filter-category-chips"></div>
+        </div>
+    </div>
+</div>
+
 <div class="lf-card">
     <div class="lf-card__header d-flex align-items-center justify-content-between flex-wrap gap-2">
         <h2 class="lf-card__title mb-0">權限異動 <span class="text-muted small" id="perm-count"></span></h2>

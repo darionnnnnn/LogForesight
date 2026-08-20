@@ -717,3 +717,10 @@ public class HandlerDayItemDto
     public string? DueDate { get; set; }
     public bool IsOverdue { get; set; }
 }
+
+/// <summary>權限異動類別選項（供前端篩選下拉使用）</summary>
+public class PermissionCategoryOptionDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+}
