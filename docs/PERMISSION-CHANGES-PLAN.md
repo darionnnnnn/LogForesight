@@ -406,7 +406,7 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| A-1 | | | | |
+| A-1 | agy | 通過 | 2332 支（2326 綠／6 略過／0 紅），較基準 2288 增 44；建置唯一警告為既有的 `EfIssueAggregateQuery.cs:987`，不在 diff 內。10 個相異 ChangeType 值逐一 grep 確認皆在測資中 | 過度設計 2 處由 Claude 自行移除：① `ResolveCategory()` 是 `Resolve()` 的純別名且零呼叫者；② `IsPrivilegedTarget()` 多一個 optional `category` 參數，可傳入與 `changeType` 互相矛盾的值而靜默回 false。另：agy 移除了 `PermissionChangeRecord.cs` 的 UTF-8 BOM，清點後全專案 447 個 .cs 僅 32 個有 BOM，判定為正規化，保留不復原 |
 | A-2 | | | | |
 | A-3 | | | | |
 | B-1 | | | | |

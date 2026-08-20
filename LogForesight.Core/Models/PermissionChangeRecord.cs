@@ -1,4 +1,4 @@
-﻿namespace LogForesight.Core.Models;
+namespace LogForesight.Core.Models;
 
 /// <summary>
 /// 權限異動的結構化紀錄（↔ lf_permission_changes）。
@@ -21,7 +21,11 @@ public class PermissionChangeRecord
     /// <summary>資料夾路徑或群組名稱</summary>
     public string Target { get; set; } = string.Empty;
 
-    /// <summary>成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取</summary>
+    /// <summary>
+    /// 異動類型（共 10 個相異值）。
+    /// NetIQ 事件來源：成員新增、成員移除、權限變更、稽核政策變更、權限異動（彙總）。
+    /// 本機監控來源：成員新增、成員移除、無法存取、恢復可存取、擁有者變更、權限新增（ACL 規則）、權限移除（ACL 規則）。
+    /// </summary>
     public string ChangeType { get; set; } = string.Empty;
 
     public string Before { get; set; } = string.Empty;
@@ -36,6 +40,18 @@ public class PermissionChangeRecord
 
     /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
     public int? EventId { get; set; }
+
+    /// <summary>類別 key（永遠非空，預設為 other）</summary>
+    public string Category { get; set; } = PermissionCategory.Other;
+
+    /// <summary>是否為高風險（特權群組）異動，預設 false</summary>
+    public bool IsPrivilegedTarget { get; set; }
+
+    /// <summary>操作者帳號（由後續作業負責填入）</summary>
+    public string? InitiatorAccount { get; set; }
+
+    /// <summary>被異動的目標帳號／成員（由後續作業負責填入）</summary>
+    public string? TargetAccount { get; set; }
 
     /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
     public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>
