@@ -182,7 +182,7 @@ public class PermissionChangeService
         // 授權範圍檢查：權限異動屬於主機的資料，同樣受可見範圍限制
         var host = _hosts.FindByName(change.HostName);
         if (host == null || !_visibility.GetVisibleHostIds().Contains(host.HostId))
-            throw DomainException.NotFound("找不到這筆權限異動紀錄，或您沒有檢視權限。");
+            throw DomainException.NotFound("找不到這筆權限異動紀錄。");
 
         // 標記可疑必須說明原因：那是要交給別人接手調查的訊號，
         // 沒有說明的「可疑」對後續處理的人毫無幫助
@@ -283,7 +283,7 @@ public class PermissionChangeService
                 {
                     ChangeId = id,
                     HostName = string.Empty,
-                    Reason = "找不到這筆權限異動紀錄"
+                    Reason = "找不到這筆權限異動紀錄。"
                 });
                 continue;
             }
@@ -298,7 +298,7 @@ public class PermissionChangeService
                 {
                     ChangeId = id,
                     HostName = string.Empty,
-                    Reason = "找不到這筆權限異動紀錄，或您沒有檢視權限。"
+                    Reason = "找不到這筆權限異動紀錄。"
                 });
                 continue;
             }

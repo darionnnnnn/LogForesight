@@ -325,18 +325,20 @@ function render() {
     renderTable(document.getElementById('perm-list'), {
         columns: [
             {
-                title: '',
-                className: 'lf-checkbox-cell',
-                renderHeader: selectAllHeaderCheckbox,
-                render: rowCheckboxCell
-            },
-            {
                 key: 'detectedAt',
                 title: '時間',
                 sortKey: 'detectedAt',
                 sortDefaultDir: 'desc',
                 renderHeader: () => headerWithHelp('時間', '本機監控來源的時間語意為系統偵測比對時間，非事件實際發生時間。', '時間說明'),
                 render: row => formatDateTime(row.detectedAt)
+            },
+            // 選取欄刻意不排第一欄（WEB-SPEC §8.6 第 6 條）：renderTable 的展開箭頭
+            // 固定插在第一欄，排第一欄會與 checkbox 擠在同一格
+            {
+                title: '',
+                className: 'lf-checkbox-cell',
+                renderHeader: selectAllHeaderCheckbox,
+                render: rowCheckboxCell
             },
             {
                 key: 'hostName',

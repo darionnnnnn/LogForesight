@@ -200,7 +200,8 @@ public class PermissionChangeStore
         return query;
     }
 
-    /// <summary>相容既有呼叫端的多載（轉發至多條件分頁查詢）</summary>
+    /// <summary>簡化多載（轉發至多條件分頁查詢）。生產程式碼一律走 filter 版本，
+    /// 這個只供測試以「主機＋狀態」的最小形狀建查詢，避免每支測試都要組整份 filter。</summary>
     public List<PermissionChangeRecord> Query(IReadOnlyCollection<string>? hostNames, string? status, int maxCount) =>
         Query(new PermissionChangeQueryFilter
         {

@@ -1224,8 +1224,8 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
 ### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
-- **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／主機 (IP)／
-  帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
+- **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／選取（勾選欄，
+  依 §8.6 第 6 條不排第一欄——展開箭頭固定插在首欄）／主機 (IP)／帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
   EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。
   表格上方有一鍵全部展開／收合（作用範圍為當頁）。
 - 「主機 (IP)」的 IP 取自主機主檔 `WebHost.IpAddress`，取不到且主機名本身是 IP 時用主機名
@@ -1238,7 +1238,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - **篩選**：關鍵字（比對主機／操作者／目標帳號／對象／說明）、網段（CIDR／萬用字元／單一 IP，
   走 `CidrMatcher`；格式錯誤時錯誤訊息顯示在該欄位旁而非只在頁面頂端）、類別（多選，選項來自
   `GET api/permission-changes/categories`）、來源、時間範圍。條件記憶於 localStorage 並同步網址。
-  **狀態不放進篩選列**——維持既有四個頁籤（待確認／授權操作／可疑／全部），兩套並存會產生
+  **狀態不放進篩選列**——維持既有四個頁籤（待確認／已確認授權／標記可疑／全部），兩套並存會產生
   「頁籤選待確認、篩選選可疑」這種無解狀態。
 - **批次核准**：勾選框只出現在待確認的列；跨頁保留選取；表頭全選三態；另有「選取全部符合條件」
   （走 `ids` 端點，超過上限時誠實告知筆數並請分批）。送出前 modal 預覽按類別與主機分組。
@@ -1251,9 +1251,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
   每主機日逐則寫入上限 50（`MaxPermissionChangeRecordsPerHostDay`），超過的彙總成一筆
   「權限異動（彙總）」；依 `AuditRetentionDays` 清理（依寫入時間，不是事件時間，見 DB-SPEC）。
-- **操作者帳號**取自 NetIQ 的 `sun` 欄位（Q1 投影本來就查回來了，只是舊版在
-  `SentinelEventMapper` 映射時丟棄）；沒有時退而取訊息 `Subject` 區段的帳戶名稱。
-  擷取是**分區段**的：`Subject` 與 `Member` 各自獨立，操作者不可能被寫成被異動的成員。
+- **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
 - API：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
     → `PagedResult<PermissionChangeDto>`（`Total` 是套用篩選後的真實總筆數，畫面「共 N 筆」的來源）
@@ -2084,7 +2082,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | `INoiseMarkStore` | blob `noise_marks`（已知雜訊記憶，主機＋簽章為鍵） | Web |
 | `IIssueOwnerStore` | blob `issue_owners`（`IssueProfile`：問題負責人＋機房結論，(Source,EventId) 為鍵、OrdinalIgnoreCase 去重；`/admin/issue-owners`「問題檔案」頁維護） | Web |
 | `SetupWizardStateStore` | blob `setup_wizard_state`（單一物件：跳過的步驟 id 集合＋精靈入口隱藏旗標） | Web |
-| `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新，不再是各寫各的 key） |
+| `PermissionChangeStore`（介面已於簡化重構移除） | **表 `lf_permission_changes`**（異動與確認狀態同一列，見 docs/DB-SPEC.md）。舊 log `perm_changes`／blob `perm_confirms` 僅為升級遷移來源，保留不刪 | 分析寫異動、Web 寫確認狀態（條件式原子更新） |
 | `PermissionSnapshotStore`（介面已於簡化重構移除） | blob `permission_snapshot` | 批次寫、批次讀，Web 不碰 |
 | `IKnownIssueRuleStore` / `IRuleSeedStore` / `ISuppressionStore` | blob `rules`／`rule_seeds`／`suppressions` | Web＋批次 |
 | `BatchRunStore`（介面已於簡化重構移除） | log `batch_runs`、`batch_run_logs` | 批次 |

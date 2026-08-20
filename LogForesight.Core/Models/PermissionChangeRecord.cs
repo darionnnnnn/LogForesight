@@ -1,14 +1,11 @@
 namespace LogForesight.Core.Models;
 
 /// <summary>
-/// 權限異動的結構化紀錄（↔ lf_permission_changes）。
+/// 權限異動的結構化紀錄（↔ lf_permission_changes，異動與確認狀態同一列，
+/// 見 docs/DB-SPEC.md）。分析端寫異動、Web 端以條件式原子更新寫確認狀態。
 ///
-/// **雙軌寫入**（docs/WEB-SPEC.md §2.1 Phase 3）：批次的既有 console 告警與
-/// export txt 報告照舊，另外把每一筆異動明細寫成結構化資料供 Web 的待辦頁使用。
-/// 沒有這一軌，權限異動待辦頁在 JSONL 前期就沒有任何資料可顯示。
-///
-/// <see cref="ChangeId"/> 用 GUID 而不是遞增數字：批次與 Web 分別寫入不同檔案
-/// （異動由批次寫、確認狀態由 Web 寫），沒有共用的序號來源。
+/// <see cref="ChangeId"/> 用 GUID 而不是資料表的自增主鍵：它是對外（API 路由、
+/// 稽核 targetId、批次請求）的識別，不能隨資料表重建而改變。
 /// </summary>
 public class PermissionChangeRecord
 {

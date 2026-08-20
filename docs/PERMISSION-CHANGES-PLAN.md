@@ -137,7 +137,7 @@
   - 依 `SchemaUpgrader` 既有樣板：冪等 DDL、單一入口 + `isSqlite` 分支、CREATE TABLE SQL 兩份常數（Sqlite `INTEGER … AUTOINCREMENT` vs SqlServer `bigint … IDENTITY`）。
   - 索引：`change_id` 唯一；`(status, detected_at)`；`(detected_at)`；`(host_name_key, detected_at)`；`(category, status)`；`created_at`（保留期清理用，也是 `GetDedupeKeys` 的篩選欄）。
     **`dedupe_key` 不建索引**（規劃初版寫要建，實作時更正）：沒有任何查詢以它為條件，而它由「主機名(≤255)｜Ticks(19)｜EventId｜AlertText(≤503)」串成、最長約 790 字元，貼著 SQL Server 非叢集索引鍵 1700 bytes（850 nvarchar 字元）的上限。欄位本身**不得設長度上限**——設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。
-  - 去重鍵須成為**獨立欄位並建索引**（`dedupe_key`）。現行 `GetDedupeKeys` 註解已載明「逐主機日呼叫在 3000 台規模下會變成數萬次全表掃描」，正規化後**不得保留任何需要整表讀出才能判定去重的路徑**。
+  - 去重鍵須成為**獨立欄位**（`dedupe_key`，不建索引——見上方索引段的更正）。現行 `GetDedupeKeys` 註解已載明「逐主機日呼叫在 3000 台規模下會變成數萬次全表掃描」，正規化後**不得保留任何需要整表讀出才能判定去重的路徑**（實作為依 `created_at` 篩選後投影單欄）。
   - `PermissionChangeStore` 改走 EF：
     - 寫入端維持既有去重語意（`DedupeKey` 的組成不變），改為以 `dedupe_key` 欄位在 SQL 層判定
     - `CountPending()` 改為 `COUNT(*)`，不得整表物化（修 B2）
@@ -383,7 +383,7 @@
 | `docs/DETECTION-SPEC.md` | 補類別對應表與 4717/4718/4719/4907 的 Before/After 產出規則 |
 | `README.md` | 權限異動待辦功能描述更新（篩選、批次核准） |
 | `LogForesight.Web/HelpContent/09-permissions.md` | 怎麼篩、怎麼批次核准、批次上限、「偵測時間」語意（B8）、高風險徽章的意思 |
-| `docs/BACKLOG.md` | 移入本輪不做的項目：Sentinel 投影加 `sip`／`shn`、使用者自訂類別 |
+| `docs/BACKLOG.md` | 移入本輪不做的項目：Sentinel 投影加 `sip`／`shn`、使用者自訂類別、EnsureCreated 雙索引、高風險判定涵蓋範圍、跨 provider 定序 |
 
 ---
 
@@ -440,7 +440,7 @@
 
 文件審查抓到並修正的：DB-SPEC 索引段與 WEB-SPEC 儲存對照表都還停在舊結構（`confirm_status`／`host_id` 索引、JSONL＋blob）——**是 B3「文件說謊」的同型漏網**；DETECTION-SPEC 的類別對照與擷取規則沒補（DB-SPEC 卻已指向它，形成懸空參照）；WEB-SPEC §8.6 缺 `toggleAllTableDetails` 的共用規範與它只適用 eager `rowDetail` 的限制；說明書寫「六類」但 categories 端點會回 `other` 共七類；`status` 的 `DEFAULT 'pending'` 是文件單方面宣告，DDL 無此子句；README 的權限快照路徑仍寫檔案而非 blob。
 
-**推翻既有定案的一條**：A-3 的遷移器註解宣稱「`HandlingBlobMigrator` 那三張表的寫入只來自 HTTP，遷移閘門擋得住」。查證 `AnalysisOrchestrator.cs:316-318` 後確認**該敘述為誤**——夜間分析直接寫那三個真表 store。註解已更正，`HandlingBlobMigrator` 的同型資料遺失風險已記入 BACKLOG（屬另一子系統，需獨立一輪）。
+**推翻既有定案的一條**：A-3 的遷移器註解宣稱「`HandlingBlobMigrator` 那三張表的寫入只來自 HTTP，遷移閘門擋得住」。查證 `AnalysisOrchestrator.cs:316-318` 後確認**該敘述為誤**——夜間分析直接寫那三個真表 store。註解已更正；`HandlingBlobMigrator` 的同型風險經使用者裁示後**已於本輪一併修正**（三處重入保護改逐筆比對自然鍵＋回歸測試），不再遞延。
 
 全部作業驗收後、合併前，開兩個獨立審查各審一次全 diff：
 

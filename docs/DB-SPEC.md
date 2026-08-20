@@ -273,13 +273,13 @@ lf_weekly_checkups                                   -- ↔ WeeklyCheckupResult
 
 lf_permission_changes                                -- ↔ PermissionChangeRecord ＋ 人工確認狀態（同一列）
   id                   bigint PK IDENTITY
-  change_id            nvarchar(64) NOT NULL UNIQUE     -- GUID("N")，對外識別用
+  change_id            nvarchar(64) NOT NULL            -- GUID("N")，對外識別用；唯一性由下方索引保證（DDL 無 UNIQUE 子句）
   dedupe_key           nvarchar(max) NOT NULL           -- 主機|事件時間Ticks|EventId|告警文字
   host_name            nvarchar(255) NOT NULL           -- 非正規化字串，不是 FK
   host_name_key        nvarchar(255) NOT NULL           -- 不分大小寫比對用的正規化鍵
   detected_at          datetime2 NOT NULL               -- 事件發生時間（排序與時間篩選用）
   created_at           datetime2 NOT NULL               -- 寫進資料庫的時間（保留期清理用）
-  target               nvarchar(512) NOT NULL           -- 資料夾路徑或群組名稱
+  target               nvarchar(max) NOT NULL           -- 資料夾路徑或群組名稱（不得設長度上限：Windows 長路徑輕易超過 512，SQLite 測不出、SQL Server 會截斷）
   change_type          nvarchar(64) NOT NULL            -- 10 個相異值，對應類別見 DETECTION-SPEC「權限異動類別」
   category             nvarchar(64) NOT NULL            -- 類別 key，由 change_type/event_id 純函式推導
   is_privileged_target bit NOT NULL                     -- 加入特權群組＝高風險
@@ -301,8 +301,8 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
 ```
 
 **確認狀態與異動同列，不另建表。** 三個理由：狀態要能在 SQL 端篩選；批次核准要能做成
-單一 `UPDATE … WHERE change_id IN (…) AND status='pending'` 的原子操作；舊版把確認狀態
-放在單一 blob 整份讀改寫，兩人同時確認會後寫覆蓋先寫，使用者收不到任何提示。
+單一 `UPDATE … WHERE change_id IN (…) AND status='pending'` 的原子操作；確認若存在獨立的
+整份讀改寫容器，兩人同時確認會後寫覆蓋先寫，使用者收不到任何提示。
 
 **`detected_at` 與 `created_at` 不可互相取代。** 排序與時間篩選用 `detected_at`；保留期清理
 用 `created_at`。反例：NetIQ 重跑一個 100 天前的主機日，寫出的列 `detected_at` 是 100 天前、
@@ -321,8 +321,8 @@ AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 S
 遷移期間 `MigrationGateMiddleware` 擋下 `/api/permission-changes` 的非 GET 請求（GET 放行）。
 重入保護是**逐筆比對 `change_id`**，不是「表裡有資料就整批跳過」——遷移閘門只擋得住 HTTP 寫入，
 而背景排程的分析流程也會寫這張表，夜間分析先寫進一列就會讓整批舊資料被誤判成已搬而永久消失。
-`HandlingBlobMigrator` 原本正是「整批跳過」的寫法且情況相同（`AnalysisOrchestrator` 讓夜間分析
-直接寫那三張表），已一併改為逐筆比對自然鍵。舊 log 與舊 blob **不刪**，保留為備份。
+`HandlingBlobMigrator` 的三張表情況相同（`AnalysisOrchestrator` 讓夜間分析直接寫），同樣採
+逐筆比對自然鍵。舊 log 與舊 blob **不刪**，保留為備份。
 
 ### 報告全文（人看的完整內容，與結構化資料並存的第二層）
 
@@ -405,7 +405,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 |---|---|---|
 | `RetentionDays` | 120 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
 | `DetailRetentionDays` | 120 | `lf_daily_records.content_json`（風險日詳情的原始樣本訊息）——**只清內容、整列保留** |
-| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）** |
+| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，見其定義區塊） |
 | `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 | `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
 
