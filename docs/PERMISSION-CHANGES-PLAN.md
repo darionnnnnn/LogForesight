@@ -419,9 +419,28 @@
 | E-2 | agy | 通過（Claude 修一處） | 測試維持 2394 支；`--no-incremental` 全建置唯一警告是既有的 `EfIssueAggregateQuery.cs:987`；`.mjs` 語法檢查通過。查證：查詢參數 11 個 `params.set` 全在同一函式、localStorage 與網址 query 同步、篩選變動重設頁碼 | **約束滿足但功能不成立（Claude 修）**：規格禁止前端硬寫類別清單，agy 改成「從當頁資料收集類別」。沒有硬寫對照表，但每頁 20 筆，**沒出現在當頁的類別就不會出現在篩選選項裡＝篩不到那一類**，而使用者的核心需求正是「選某類別→全部打勾」。規格已寫明「需要後端配合就回報卡點」，它選了繞過。<br>修法：後端新增 `GET /api/permission-changes/categories`（資料來源即 A-1 保留的 `PermissionCategory.GetAllLabels()`），前端初始化時取一次。程式碼留註解說明為何不能從當頁收集 |
 | E-3 | — | 併入 E-1 | 見 E-1 列 | `renderTable` 本就支援 `rowDetail`／`onRowExpand`（含 `aria-expanded` 與鍵盤可達性），展開列不需自製，本階段縮成一個全展收控制項，與表格骨架同屬一個關注點；加上 Gemini 週限吃緊，合併執行 |
 | E-4 | agy | 通過 | 測試維持 2394 支；`.mjs` 語法檢查通過。驗收 grep 全過：勾選框依 `status === 'pending'` 建立、`indeterminate` 三態、勾選事件 `stopPropagation`（本頁列點擊是展開詳情，不擋會連帶展開）、兩個新端點皆有呼叫、`skipped` 與 `truncated` 皆有處理。**`params.set` 仍為 11 個**，證明「全選符合條件」共用既有的 `buildQueryParams()`，沒有第二份組裝。只動 2 個前端檔，零 `.cs`、零 `core/ui.js` | 無。本段未發現問題，Claude 未做任何修正 |
-| F | | | | |
+| F | Claude | 完成 | 跨段產出鏈 grep：7 個新 DTO 欄位皆有前端消費點；規劃定案的四項畫面承諾（共 N 筆／全展收／偵測時間語意／目標帳號）皆已實作。文件更新 7 份。終檢後全套 2395 支綠 | 見下方終檢段 |
 
 ### 終檢（併回前）
+
+**已執行**（2026-08-20，程式碼與文件各一個獨立審查）。
+
+程式碼審查抓到、Claude 查證屬實後修正的：
+
+| 嚴重度 | 問題 | 根因 |
+|---|---|---|
+| 高 | `TryExtractValue` 用 `IndexOf` 子字串比對，而 `"Subcategory:"` 本身含 `"Category:"` → 4719 的類別被子類別覆寫，異動說明變成「子類別 - 子類別」 | 沿用既有函式的比對方式，沒察覺新加的欄名彼此有包含關係。修法：命中位置的前一字元必須不是字母 |
+| 高 | 全選上限 2000 與批次確認上限 500 不一致 → 使用者選得起來、送不出去，且畫面上沒有取消多餘選取的路徑，等於卡死 | **規劃者的錯**：兩個上限寫在同一份規格的不同段落卻沒交叉檢查。修法：全選上限直接定義為批次上限 |
+| 高 | 4719 的測試用 `Contains("File System")` 斷言，而錯誤輸出「File System - File System：…」同樣通過 → 看似覆蓋類別欄位，實際零覆蓋 | 修法：改逐字比對完整字串 |
+| 中 | `target nvarchar(512)`：Windows 長路徑在 SQL Server 上寫入截斷例外 | 與 `dedupe_key` 完全同型，A-2 只修了其中一個。修法：同樣取消長度上限 |
+| 中 | 批次的 `UpdatedCount` 與稽核寫入都依賴「重讀後比對確認時間戳」，時間戳往返精度一旦改變會變成「資料全部更新、稽核一筆沒寫」 | 修法：改以資料庫實際更新的列數為權威值，時間戳比對只用於組略過清單的訊息 |
+| 中 | 未知的 `sort` 值會連 `dir` 一起落到 catch-all，升冪顯示成降冪且分頁順序基準不一致 | 修法：`sortKey` 先正規化到白名單 |
+
+另修：遷移對空 `ChangeId` 舊列改用決定性 id（`legacy{seq}`，避免中斷重跑時搬第二次）、切換頁籤與重設篩選時清空選取（否則略過原因會顯示與實情不符的「已被其他使用者處理過」）、`IsPrivilegedTarget` 與批次上限檢查各一處冗餘判斷。
+
+文件審查抓到並修正的：DB-SPEC 索引段與 WEB-SPEC 儲存對照表都還停在舊結構（`confirm_status`／`host_id` 索引、JSONL＋blob）——**是 B3「文件說謊」的同型漏網**；DETECTION-SPEC 的類別對照與擷取規則沒補（DB-SPEC 卻已指向它，形成懸空參照）；WEB-SPEC §8.6 缺 `toggleAllTableDetails` 的共用規範與它只適用 eager `rowDetail` 的限制；說明書寫「六類」但 categories 端點會回 `other` 共七類；`status` 的 `DEFAULT 'pending'` 是文件單方面宣告，DDL 無此子句；README 的權限快照路徑仍寫檔案而非 blob。
+
+**推翻既有定案的一條**：A-3 的遷移器註解宣稱「`HandlingBlobMigrator` 那三張表的寫入只來自 HTTP，遷移閘門擋得住」。查證 `AnalysisOrchestrator.cs:316-318` 後確認**該敘述為誤**——夜間分析直接寫那三個真表 store。註解已更正，`HandlingBlobMigrator` 的同型資料遺失風險已記入 BACKLOG（屬另一子系統，需獨立一輪）。
 
 全部作業驗收後、合併前，開兩個獨立審查各審一次全 diff：
 

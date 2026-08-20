@@ -74,6 +74,10 @@ document.getElementById('perm-tabs').addEventListener('click', event => {
     for (const tab of document.querySelectorAll('#perm-tabs .nav-link')) {
         tab.classList.toggle('active', tab === button);
     }
+    // 切換頁籤要清空選取：勾選框只在「待確認」的列出現，切走之後那些選取項目
+    // 使用者已經看不見，送出時後端會以「已被其他使用者處理過」回絕，
+    // 那個理由與實情不符，會把排查帶往錯誤方向。
+    selectedChanges.clear();
     currentPage = 1;
     load();
 });
@@ -933,6 +937,7 @@ function resetFilters() {
     if (fromInput) fromInput.value = '';
     if (toInput) toInput.value = '';
     selectedCategories.clear();
+    selectedChanges.clear();   // 篩選換了，先前選取的項目多半已不在結果內
     clearSubnetError();
     renderCategoryChips();
     try {

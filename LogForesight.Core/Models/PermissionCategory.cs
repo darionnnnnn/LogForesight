@@ -82,7 +82,8 @@ public static class PermissionCategory
     {
         if (string.IsNullOrWhiteSpace(target)) return false;
 
-        if (Resolve(changeType) != GroupMember) return false;
+        // 只認「成員新增」：這個旗標的用途是提示提權（有人被加進特權群組）。
+        // 不必再檢查類別——能推導成 group_member 的只有成員新增與成員移除，後者在這裡就被擋掉了。
         if (changeType != "成員新增") return false;
 
         for (var i = 0; i < PrivilegedTargetKeywords.Count; i++)

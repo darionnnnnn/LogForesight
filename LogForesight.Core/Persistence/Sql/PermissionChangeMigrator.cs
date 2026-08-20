@@ -131,10 +131,14 @@ public sealed class PermissionChangeMigrator
 
     private int MigratePermissionChanges(LfDbContext ctx)
     {
-        // 重入保護刻意**不是**「表裡有沒有資料就整批跳過」——HandlingBlobMigrator 是那樣寫的，
-        // 但它那三張表的寫入只來自 HTTP，遷移閘門擋得住。權限異動的寫入端還有背景排程的分析流程，
-        // 那不是 HTTP 請求、閘門管不到：夜間分析只要在遷移完成前寫進一列，整批舊資料就會被誤判成
-        // 「已經搬過」而永久消失，狀態還顯示一切正常。改成逐筆比對 change_id，只補沒搬過的。
+        // 重入保護刻意**不是**「表裡有沒有資料就整批跳過」。遷移閘門只擋得住 HTTP 寫入，
+        // 而權限異動的寫入端還有背景排程的分析流程——夜間分析只要在遷移完成前寫進一列，
+        // 整批舊資料就會被誤判成「已經搬過」而永久消失，狀態還顯示一切正常。
+        // 改成逐筆比對 change_id，只補沒搬過的。
+        //
+        // 註：HandlingBlobMigrator 目前仍是「表裡有資料就整批跳過」的寫法，而它那三張表
+        // 同樣不是只有 HTTP 寫入（AnalysisOrchestrator 把三個真表 store 傳給 IssueCaseCoordinator，
+        // 夜間分析會直接寫），所以那邊有同型的資料遺失風險，見 docs/BACKLOG.md。
         var existingChangeIds = ctx.PermissionChanges.AsNoTracking()
             .Select(r => r.ChangeId)
             .ToHashSet(StringComparer.Ordinal);
@@ -162,8 +166,11 @@ public sealed class PermissionChangeMigrator
                     "資料未被修改，請確認 lf_log_lines 的內容後重新啟動。", ex);
             }
 
+            // 舊列若沒有 change_id，用 log 列的 seq 推出一個**決定性**的 id，不能用
+            // Guid.NewGuid()：遷移在 commit 後、寫入完成狀態前被中斷時會重跑，隨機 id 會讓
+            // 重入比對認不出上次搬過的那幾列，同一筆資料被搬第二次。
             if (string.IsNullOrWhiteSpace(record.ChangeId))
-                record.ChangeId = Guid.NewGuid().ToString("N");
+                record.ChangeId = $"legacy{logLine.Seq}";
 
             parsedRecords.Add((record, logLine.CreatedAt));
         }

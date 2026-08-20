@@ -214,7 +214,15 @@ public class PermissionChangeStore
         string? sort,
         bool ascending)
     {
+        // 先把 sortKey 正規化到白名單內，不認識的一律退回 detectedat。
+        // 否則未支援的欄位名會直接落到最後那支 catch-all，連 ascending 一起吃掉——
+        // 使用者按了升冪卻看到降冪，而且分頁時每頁的順序基準還不一致。
         var sortKey = sort?.Trim().ToLowerInvariant();
+        if (sortKey is not ("hostname" or "category" or "status" or "detectedat"))
+        {
+            sortKey = "detectedat";
+        }
+
         return (sortKey, ascending) switch
         {
             ("hostname", true) => query.OrderBy(r => r.HostName).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
@@ -226,7 +234,7 @@ public class PermissionChangeStore
             ("status", true) => query.OrderBy(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenBy(r => r.Id),
             ("status", false) => query.OrderByDescending(r => r.Status).ThenByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id),
 
-            ("detectedat" or null or "", true) => query.OrderBy(r => r.DetectedAt).ThenBy(r => r.Id),
+            (_, true) => query.OrderBy(r => r.DetectedAt).ThenBy(r => r.Id),
             _ => query.OrderByDescending(r => r.DetectedAt).ThenByDescending(r => r.Id)
         };
     }

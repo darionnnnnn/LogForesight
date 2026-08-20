@@ -522,8 +522,10 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(records[1].Before));
         Assert.False(string.IsNullOrWhiteSpace(records[1].After));
         Assert.Equal("secadmin", records[1].InitiatorAccount);
-        Assert.Contains("File System", records[1].After);
-        Assert.Contains("Success removed", records[1].After);
+        // 逐字比對而不是 Contains：「Subcategory:」這個字串本身含有「Category:」，
+        // 用 Contains("File System") 的話類別被子類別覆寫（變成「File System - File System」）
+        // 一樣會通過，等於對類別欄位零覆蓋。
+        Assert.Equal("Object Access - File System：Success removed", records[1].After);
     }
 
     [Fact]

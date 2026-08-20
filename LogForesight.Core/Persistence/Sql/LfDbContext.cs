@@ -309,7 +309,11 @@ public class LfDbContext : DbContext
             e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
             e.Property(x => x.DetectedAt).HasColumnName("detected_at");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
-            e.Property(x => x.Target).HasColumnName("target").HasMaxLength(512);
+            // Target 直接來自事件訊息的 Object Name／Group Name，Windows 長路徑（\?\ 前綴、
+            // 深層 UNC 分享）輕易超過 512 字元。設長度上限在 SQLite（TEXT 無長度）測不出來，
+            // 到 SQL Server 會變成寫入時截斷例外，讓整批夜間分析的權限異動寫入失敗。
+            // 它沒有索引，不設上限沒有代價。
+            e.Property(x => x.Target).HasColumnName("target");
             e.Property(x => x.ChangeType).HasColumnName("change_type").HasMaxLength(64);
             e.Property(x => x.Category).HasColumnName("category").HasMaxLength(64);
             e.Property(x => x.IsPrivilegedTarget).HasColumnName("is_privileged_target");

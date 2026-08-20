@@ -448,4 +448,14 @@ public sealed class PermissionChangeBatchTests : IDisposable
             Assert.Equal("發現未經申請的帳號變動", c.Note);
         }
     }
+
+    [Fact]
+    public void 全選上限不得大於批次確認上限()
+    {
+        // 兩者不一致時，使用者會選到一批「選得起來、送不出去」的項目，
+        // 而且畫面上沒有取消掉多出來那些的路徑，等於卡死。
+        Assert.True(
+            PermissionChangeService.MaxSelectAllChanges <= PermissionChangeService.MaxBatchConfirmChanges,
+            "全選上限不得大於批次確認上限");
+    }
 }

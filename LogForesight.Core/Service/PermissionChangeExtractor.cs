@@ -373,7 +373,7 @@ public static class PermissionChangeExtractor
 
             var catVal = TryExtractValue(line,
                 "Category:", "類別:", "類別：");
-            if (catVal != null && (section == Section.AuditPolicyChange || fields.AuditCategory == null))
+            if (catVal != null && fields.AuditCategory == null)
             {
                 fields.AuditCategory = catVal;
             }
@@ -438,7 +438,10 @@ public static class PermissionChangeExtractor
         foreach (var prefix in prefixes)
         {
             var idx = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
+            // 命中位置的前一個字元必須不是字母，否則是「較長欄名剛好包含較短欄名」的誤判：
+            // 「Subcategory:」整個字串就含有「Category:」，沒有這道守衛的話子類別那一行
+            // 會把類別的值覆寫掉，4719 的異動說明就會變成「子類別 - 子類別」。
+            if (idx >= 0 && (idx == 0 || !char.IsLetter(line[idx - 1])))
             {
                 var val = line[(idx + prefix.Length)..].Trim();
                 return CleanValue(val);

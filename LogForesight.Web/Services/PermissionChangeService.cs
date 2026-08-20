@@ -145,7 +145,9 @@ public class PermissionChangeService
         };
     }
 
-    public const int MaxSelectAllChanges = 2000;
+    // 全選上限刻意與批次確認上限相同：兩者不一致的話，使用者會選到一批「選得起來、送不出去」
+    // 的項目，而且畫面上沒有「取消掉多出來那些」的路徑，等於卡死。
+    public const int MaxSelectAllChanges = MaxBatchConfirmChanges;
     public const int MaxBatchConfirmChanges = 500;
 
     /// <summary>
@@ -235,7 +237,7 @@ public class PermissionChangeService
             throw DomainException.Validation("請至少勾選一筆權限異動。");
         }
 
-        if (request.ChangeIds.Count > MaxBatchConfirmChanges)
+        if (request.ChangeIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() > MaxBatchConfirmChanges)
         {
             throw DomainException.Validation($"單次批次確認上限為 {MaxBatchConfirmChanges} 筆，請分批操作。");
         }
@@ -305,6 +307,7 @@ public class PermissionChangeService
         }
 
         var updatedRecords = new List<PermissionChangeRecord>();
+        var updatedCount = 0;
         var occurredAt = DateTime.Now;
         var note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
         var confirmedBy = _currentUser.UserId > 0 ? _currentUser.UserId : (long?)null;
@@ -312,7 +315,11 @@ public class PermissionChangeService
 
         if (candidateIds.Count > 0)
         {
-            _store.SaveConfirmations(
+            // 以資料庫實際更新的列數為權威值。下面的逐筆分類是用「重讀後比對確認時間戳」
+            // 推出來的，只用於組略過清單的訊息；若哪天時間戳的往返精度改變（例如欄位型別
+            // 從 datetime2 降精度），分類會全數落空——那時若連 UpdatedCount 與稽核都跟著它走，
+            // 就會變成「資料已經全部更新、稽核卻一筆都沒寫」，那比報錯更糟。
+            updatedCount = _store.SaveConfirmations(
                 candidateIds,
                 request.Status,
                 confirmedBy,
@@ -345,18 +352,18 @@ public class PermissionChangeService
             }
         }
 
-        if (updatedRecords.Count > 0)
+        if (updatedCount > 0)
         {
             var statusLabel = request.Status == PermissionConfirmStatuses.Authorized ? "授權操作" : "可疑";
             _audit.Record(
                 action: AuditActions.PermConfirmBatch,
-                summary: $"批次確認 {updatedRecords.Count} 筆權限異動為{statusLabel}",
+                summary: $"批次確認 {updatedCount} 筆權限異動為{statusLabel}",
                 targetKind: "permission_change",
                 targetId: "batch",
                 detail: new
                 {
                     Status = request.Status,
-                    Count = updatedRecords.Count,
+                    Count = updatedCount,
                     ChangeIds = updatedRecords.Select(r => r.ChangeId).ToList(),
                     HostNames = updatedRecords.Select(r => r.HostName).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     Categories = updatedRecords.Select(r => r.Category).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
@@ -367,7 +374,7 @@ public class PermissionChangeService
 
         return new BatchConfirmPermissionChangesResultDto
         {
-            UpdatedCount = updatedRecords.Count,
+            UpdatedCount = updatedCount,
             Skipped = skipped
         };
     }

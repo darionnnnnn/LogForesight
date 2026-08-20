@@ -485,7 +485,7 @@ internal static class SchemaUpgrader
             host_name_key nvarchar(255) NOT NULL,
             detected_at datetime2 NOT NULL,
             created_at datetime2 NOT NULL,
-            target nvarchar(512) NOT NULL,
+            target nvarchar(max) NOT NULL,
             change_type nvarchar(64) NOT NULL,
             category nvarchar(64) NOT NULL,
             is_privileged_target bit NOT NULL,
