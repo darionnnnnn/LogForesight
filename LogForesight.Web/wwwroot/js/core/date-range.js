@@ -1,12 +1,13 @@
 /**
- * 期間快捷（docs/WEB-SPEC.md §8.6-8）：問題查詢／報表／儀表板／主機詳情／排程作業共用。
+ * 期間快捷（docs/WEB-SPEC.md §8.6-8）：問題查詢／報表／儀表板三頁共用。
+ * （主機詳情／排程作業的天數鈕是趨勢圖視窗，不是查詢區間，不在這裡。）
  *
- * 期間終點一律錨在**昨天**（`analysisAnchorLocal`）而非今天：分析只產到昨天，
+ * 期間終點一律錨在**昨天**（同 format.js 的 analysisAnchorLocal）而非今天：分析只產到昨天，
  * 錨在今天會讓區間的最後一天必然沒有資料。`data-range="1"` ＝「昨日」（起訖同一天）。
  *
  * 這裡是唯一一份計算：三頁原本各有一份逐行等價的複本，加一個選項要改三個地方。
  */
-import { toLocalDateString, analysisAnchorLocal } from './format.js';
+import { toLocalDateString } from './format.js';
 
 /**
  * 由天數算出 { from, to } 兩個本地日期字串（yyyy-MM-dd）。
@@ -19,9 +20,6 @@ export function rangeFromDays(days) {
     from.setDate(from.getDate() - days + 1);
     return { from: toLocalDateString(from), to: toLocalDateString(to) };
 }
-
-/** 期間終點（＝分析涵蓋的最後一天，昨天）；等同 format.js 的 analysisAnchorLocal */
-export const rangeAnchor = analysisAnchorLocal;
 
 /**
  * 綁定一組快捷鈕：每顆帶 `data-range="{天數}"`，按下時把 from/to 填進兩個日期欄位，

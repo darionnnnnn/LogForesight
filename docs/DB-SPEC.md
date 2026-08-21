@@ -401,10 +401,10 @@ lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
 
-### 保留策略（以**實際實作**為準，取代原本的統一年限構想）
+### 保留策略
 
-原規劃是「`Storage.DbRetentionDays` 預設 730、全部資料表統一適用」。
-實際落地後分成**五個保留期**，因為這些資料的性質不同：
+保留期**不是單一年限**，而是依資料性質分成五個（另有 `InitialHistoryDays` 決定首次回補幾天，
+與保留期同受 90 天下限約束，但它不刪資料）：
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|

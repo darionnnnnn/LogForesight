@@ -281,6 +281,9 @@ function renderTrendChart() {
     const wrapper = document.getElementById('trend-wrapper');
 
     if (points.length === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.trend?.destroy();
+        chartInstances.trend = null;
         charts.renderNoData(wrapper);
         return;
     }
@@ -342,6 +345,9 @@ function renderCategoryChart() {
     if (subtitle) subtitle.textContent = currentScope !== 'all' ? '不受「顯示範圍」篩選影響' : '';
 
     if (categories.length === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.category?.destroy();
+        chartInstances.category = null;
         charts.renderNoData(wrapper);
         return;
     }
@@ -433,6 +439,9 @@ function renderHostChart() {
     renderHostRankMeta();
 
     if (hosts.length === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.host?.destroy();
+        chartInstances.host = null;
         charts.renderNoData(wrapper, '此期間沒有風險主機');
         return;
     }
@@ -498,6 +507,9 @@ function renderIssueRankChart() {
     renderIssueRankMeta();
 
     if (issues.length === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.host?.destroy();
+        chartInstances.host = null;
         charts.renderNoData(wrapper, '此期間沒有問題事件');
         return;
     }
@@ -609,6 +621,9 @@ function renderRiskChart() {
     const legend = document.getElementById('risk-legend');
 
     if (totalDays === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.risk?.destroy();
+        chartInstances.risk = null;
         charts.renderNoData(wrapper, '此期間沒有風險日');
         legend.replaceChildren();
         return;
@@ -652,6 +667,9 @@ function renderAffectedHostsChart() {
     const affected = currentData.kpi.affectedHosts;
 
     if (total === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.affectedHosts?.destroy();
+        chartInstances.affectedHosts = null;
         charts.renderNoData(wrapper, '尚無主機資料');
         legend.replaceChildren();
         return;
@@ -694,6 +712,9 @@ function renderHandlingProgressChart() {
     const total = handling.totalCount;
 
     if (total === 0) {
+        // 沒資料也要收掉上一次的 Chart 實例：canvas 只是藏起來，舊實例不收會一直活著
+        chartInstances.handlingProgress?.destroy();
+        chartInstances.handlingProgress = null;
         charts.renderNoData(wrapper, '此期間沒有高／中風險日');
         legend.replaceChildren();
         return;

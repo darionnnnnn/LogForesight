@@ -54,11 +54,15 @@ function alignOne(block) {
 function measureNaturalWidth(subtitle) {
     const probe = document.createElement('span');
     const style = getComputedStyle(subtitle);
-    probe.textContent = subtitle.textContent;
+    probe.textContent = subtitle.textContent.trim();   // 與 charCount 同一份文字（去掉 Razor 可能留下的空白）
     probe.style.position = 'absolute';
     probe.style.visibility = 'hidden';
     probe.style.whiteSpace = 'pre';
-    probe.style.font = style.font;
+    // 逐項複製而不是 style.font 簡寫：簡寫屬性在部分引擎的 getComputedStyle 回空字串
+    probe.style.fontFamily = style.fontFamily;
+    probe.style.fontSize = style.fontSize;
+    probe.style.fontWeight = style.fontWeight;
+    probe.style.fontStyle = style.fontStyle;
     probe.style.letterSpacing = '0';
     subtitle.parentElement.appendChild(probe);
     const width = probe.getBoundingClientRect().width;
