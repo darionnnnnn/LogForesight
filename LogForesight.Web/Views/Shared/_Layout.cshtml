@@ -17,8 +17,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - @brand.Name</title>
+    <link rel="icon" href="~/favicon.ico" />
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @* 站台掛載路徑（IIS 子 Application 時是 /LogForesight 這種前綴）：前端的連結組裝與
+       API 呼叫靠它補前綴，見 wwwroot/js/core/api.js 的 appUrl()。必須早於任何 module。 *@
+    <script>window.LF_BASE = '@Context.Request.PathBase.Value';</script>
 </head>
 <body>
     <div class="lf-layout">

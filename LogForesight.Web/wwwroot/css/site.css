@@ -1,4 +1,4 @@
-/*
+﻿/*
   LogForesight 設計系統（docs/DESIGN-SYSTEM.md、docs/WEB-SPEC.md §8.2）
 
   Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
@@ -17,7 +17,7 @@
     font-style: normal;
     font-weight: 400;
     font-display: swap;
-    src: url("/fonts/fira-sans-400-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-400-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -26,7 +26,7 @@
     font-style: normal;
     font-weight: 500;
     font-display: swap;
-    src: url("/fonts/fira-sans-500-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-500-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -35,7 +35,7 @@
     font-style: normal;
     font-weight: 600;
     font-display: swap;
-    src: url("/fonts/fira-sans-600-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-600-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -44,7 +44,7 @@
     font-style: normal;
     font-weight: 700;
     font-display: swap;
-    src: url("/fonts/fira-sans-700-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-700-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -53,7 +53,7 @@
     font-style: normal;
     font-weight: 300 700;
     font-display: swap;
-    src: url("/fonts/fira-code-latin.woff2") format("woff2");
+    src: url("../fonts/fira-code-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 

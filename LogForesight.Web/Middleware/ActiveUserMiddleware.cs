@@ -38,7 +38,7 @@ public class ActiveUserMiddleware
                 }
                 else
                 {
-                    context.Response.Redirect("/login");
+                    context.Response.Redirect($"{context.Request.PathBase}/login");
                 }
                 return;
             }

@@ -13,8 +13,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>登入 - @brand.Name</title>
+    <link rel="icon" href="~/favicon.ico" />
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @* 登入頁不套 _Layout，掛載前綴要自己注入——漏掉的話登入頁的 API 全數 404
+       （畫面症狀是「無法取得登入設定」）。 *@
+    <script>window.LF_BASE = '@Context.Request.PathBase.Value';</script>
 </head>
 <body>
     <div class="lf-login">
