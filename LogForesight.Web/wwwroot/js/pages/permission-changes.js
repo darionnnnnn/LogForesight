@@ -781,21 +781,69 @@ function detailView(change) {
     colEventId.append(eventIdLabel, eventIdVal);
 
     metaGrid.append(colAlert, colTarget, colSource, colEventId);
+
+    // 4670 的物件類型與處理程序：說明句只留處理程序的檔名，完整路徑放這裡
+    // （「哪支程式改的權限」是排查這類事件的第一個問題）
+    if (change.objectType || change.processName) {
+        const colObject = document.createElement('div');
+        colObject.className = 'col-md-4';
+        const objectLabel = document.createElement('span');
+        objectLabel.className = 'text-muted me-2';
+        objectLabel.textContent = '物件類型：';
+        const objectVal = document.createElement('span');
+        objectVal.textContent = change.objectType || '—';
+        colObject.append(objectLabel, objectVal);
+
+        const colProcess = document.createElement('div');
+        colProcess.className = 'col-md-8';
+        const processLabel = document.createElement('span');
+        processLabel.className = 'text-muted me-2';
+        processLabel.textContent = '處理程序：';
+        const processVal = document.createElement('span');
+        processVal.className = 'font-monospace';
+        processVal.textContent = change.processName || '—';
+        colProcess.append(processLabel, processVal);
+
+        metaGrid.append(colObject, colProcess);
+    }
+
+    // 彙總列的涵蓋時間區間與對數：彙總列的時間欄只有日期（時間恆為 00:00），
+    // 沒有這一段看不出這批異動是集中在某個時段還是散落整天
+    if (change.coveredFrom && change.coveredTo) {
+        const colCovered = document.createElement('div');
+        colCovered.className = 'col-12';
+        const coveredLabel = document.createElement('span');
+        coveredLabel.className = 'text-muted me-2';
+        coveredLabel.textContent = '涵蓋時間：';
+        const coveredVal = document.createElement('span');
+        // 彙總列以主機日為單位，起訖必在同一天：日期已在時間欄，這裡只印時分
+        const hhmm = v => formatDateTime(v).slice(-5);
+        const span = `${hhmm(change.coveredFrom)} ～ ${hhmm(change.coveredTo)}`;
+        coveredVal.textContent = change.pairCount != null ? `${span}（${change.pairCount} 對）` : span;
+        colCovered.append(coveredLabel, coveredVal);
+        metaGrid.appendChild(colCovered);
+    }
+
     wrap.appendChild(metaGrid);
 
-    const diffWrap = document.createElement('div');
-    diffWrap.className = 'lf-table-wrap mb-3';
-    diffWrap.innerHTML = `
-        <table class="table table-sm bg-white mb-0 border">
-            <tbody>
-                <tr><th style="width:6rem" class="bg-light text-muted align-top">異動前</th><td class="small"></td></tr>
-                <tr><th class="bg-light text-muted align-top">異動後</th><td class="small"></td></tr>
-            </tbody>
-        </table>`;
-    const cells = diffWrap.querySelectorAll('td');
-    cells[0].appendChild(renderStructuredDetail(change.before, '（無）', true));
-    cells[1].appendChild(renderStructuredDetail(change.after, '（無）', true));
-    wrap.appendChild(diffWrap);
+    // 異動前／後兩者皆空時整塊不渲染：兩格都印「（無）」等於用兩列告訴使用者「沒有內容」，
+    // 彙總列與存取狀態類的異動本來就沒有前後值可比
+    const hasDiff = String(change.before ?? '').trim() !== '' || String(change.after ?? '').trim() !== '';
+    if (hasDiff) {
+        const diffWrap = document.createElement('div');
+        diffWrap.className = 'lf-table-wrap mb-3';
+        diffWrap.innerHTML = `
+            <table class="table table-sm bg-white mb-0 border">
+                <tbody>
+                    <tr><th style="width:6rem" class="bg-light text-muted align-top">異動前</th><td class="small"></td></tr>
+                    <tr><th class="bg-light text-muted align-top">異動後</th><td class="small"></td></tr>
+                </tbody>
+            </table>`;
+        const cells = diffWrap.querySelectorAll('td');
+        cells[0].appendChild(renderStructuredDetail(change.before, '（無）', true));
+        cells[1].appendChild(renderStructuredDetail(change.after, '（無）', true));
+        wrap.appendChild(diffWrap);
+    }
 
     if (change.status === 'pending') {
         const actionArea = document.createElement('div');

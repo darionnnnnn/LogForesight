@@ -52,6 +52,30 @@ public class PermissionChangeRecord
     /// <summary>被異動的目標帳號／成員（由後續作業負責填入）</summary>
     public string? TargetAccount { get; set; }
 
+    /// <summary>
+    /// 物件類型（EventId 4670「物件的權限已變更」訊息裡的「物件類型」，如 Token／File／Key）。
+    /// 非 4670 或訊息未提供時為 null。用來把「不是檔案的物件」與資料夾權限異動分開
+    /// （見 <see cref="PermissionCategory.Resolve(string, int?, string?)"/>）。
+    /// </summary>
+    public string? ObjectType { get; set; }
+
+    /// <summary>處理程序名稱（4670 訊息的「處理程序名稱」，如 C:\Windows\System32\svchost.exe）。</summary>
+    public string? ProcessName { get; set; }
+
+    /// <summary>
+    /// 彙總列涵蓋的第一筆／最後一筆事件時間。逐則列為 null。
+    /// 彙總列的 <see cref="DetectedAt"/> 只有日期（時間恆為 00:00），沒有這兩欄就看不出
+    /// 這批異動集中在哪個時段——例行同步的「凌晨兩點跑完」與「整天散落」是兩件事。
+    /// </summary>
+    public DateTime? CoveredFrom { get; set; }
+
+    /// <inheritdoc cref="CoveredFrom"/>
+    public DateTime? CoveredTo { get; set; }
+
+    /// <summary>彙總列合併掉的「成員新增＋成員移除」對數。逐則列為 null。
+    /// 數字也寫在 <see cref="AlertText"/> 裡，但那是給人看的句子，不能拿來排序或統計。</summary>
+    public int? PairCount { get; set; }
+
     /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
     public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>
         $"{hostName.ToUpperInvariant()}|{detectedAt.Ticks}|{eventId}|{alertText}";

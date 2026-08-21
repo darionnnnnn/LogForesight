@@ -9,6 +9,7 @@ import { api, getCurrentUser, hasCapability } from './api.js';
 import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName } from './format.js';
+import { initBrandAlign } from './brand-align.js';
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -390,4 +391,5 @@ function renderSetupReturnBanner() {
 }
 
 initFontScale();
+initBrandAlign();
 init();

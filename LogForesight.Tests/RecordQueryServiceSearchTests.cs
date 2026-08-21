@@ -1027,6 +1027,53 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Null(unknown.PlainExplanation);
     }
 
+    // ── 回饋二十六輪 E3：Linux 問題的白話說明與分類取最近一天 ──────────────────
+
+    [Fact]
+    public void SearchByIssue_Linux問題帶得出Linux規則的白話說明()
+    {
+        var a = AddHost("HOST-LINUX");
+        // Linux 事件的 EventId 恆為 0、Source 是 program（SentinelEventMapper.MapLinux）
+        var linuxIssue = Issue("chronyd", 0, IssueSeverity.Medium, IssueCategory.Config);
+
+        AddRecord(a, Yesterday, "中", issues: new[] { linuxIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var issue = result.Items.Single(i => i.Source == "chronyd");
+        Assert.False(string.IsNullOrWhiteSpace(issue.PlainExplanation));
+    }
+
+    [Fact]
+    public void SearchByIssue_同一program命中多條Linux規則時不給說明()
+    {
+        var a = AddHost("HOST-LINUX2");
+        // sshd 同時對應「暴力破解」與「登入成功」兩條規則，聚合層沒有訊息內容可判斷是哪一種
+        var sshIssue = Issue("sshd", 0, IssueSeverity.High, IssueCategory.Security);
+
+        AddRecord(a, Yesterday, "高", issues: new[] { sshIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Null(result.Items.Single(i => i.Source == "sshd").PlainExplanation);
+    }
+
+    [Fact]
+    public void SearchByIssue_分類取最近一天_不再黏在字典序最小的其他()
+    {
+        var a = AddHost("HOST-CAT");
+        // 同一簽章：較早那天分析時沒命中規則（其他），最近一天已能正確分類為儲存裝置
+        AddRecord(a, Yesterday.AddDays(-3), "高",
+            issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Other) });
+        AddRecord(a, Yesterday, "高",
+            issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage) });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var disk = result.Items.Single(i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal(IssueCategory.Storage.ToString(), disk.Category);
+    }
+
     [Fact]
     public void SearchByIssue_處理概況三個整數與既有HandlingSummary字串一致()
     {

@@ -223,6 +223,15 @@ public class StorageBackend
 
     private PermissionChangeReparser? _permissionChangeReparser;
 
+    /// <summary>舊版「權限異動（彙總）」列一次性清理的狀態（見 PermissionLegacySummaryCleanupState）</summary>
+    public PermissionLegacySummaryCleanupStateStore PermissionLegacySummaryCleanupState =>
+        _permissionLegacySummaryCleanupState ??= new PermissionLegacySummaryCleanupStateStore(
+            Blob(PermissionLegacySummaryCleanupBlobKey));
+
+    private PermissionLegacySummaryCleanupStateStore? _permissionLegacySummaryCleanupState;
+
+    public const string PermissionLegacySummaryCleanupBlobKey = "permission_legacy_summary_cleanup";
+
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);
 

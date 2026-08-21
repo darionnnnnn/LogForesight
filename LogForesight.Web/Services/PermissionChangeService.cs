@@ -388,6 +388,16 @@ public class PermissionChangeService
         return _store.CountPending(hostNames);
     }
 
+    /// <summary>處理程序的檔名（完整路徑對句子太長，svchost.exe 才是有資訊量的那一段）</summary>
+    private static string? ProcessFileName(string? processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName)) return null;
+        var trimmed = processName.Trim();
+        var idx = trimmed.LastIndexOfAny(new[] { '\\', '/' });
+        var name = idx >= 0 && idx < trimmed.Length - 1 ? trimmed[(idx + 1)..] : trimmed;
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
+
     /// <summary>稽核摘要用的「異動類型／對象」，任一段為空就不留分隔符</summary>
     private static string AuditChangeDesc(PermissionChangeRecord change) =>
         string.Join("／", new[] { change.ChangeType, change.Target }
@@ -469,6 +479,11 @@ public class PermissionChangeService
             After = change.After,
             AlertText = change.AlertText,
             SummaryText = GenerateSummaryText(change),
+            ObjectType = change.ObjectType,
+            ProcessName = change.ProcessName,
+            CoveredFrom = change.CoveredFrom,
+            CoveredTo = change.CoveredTo,
+            PairCount = change.PairCount,
             Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
             Status = confirmation?.Status ?? PermissionConfirmStatuses.Pending,
             ConfirmedByAccount = confirmation?.ConfirmedByAccount,
@@ -548,6 +563,24 @@ public class PermissionChangeService
                     : Sentence(target, "的權限被變更");
             }
 
+            case PermissionCategory.ObjectAcl:
+            {
+                // 4670 的非檔案物件（Token、登錄機碼…）：物件名稱常是「-」，此時用物件類型
+                // 與處理程序名稱組句——「（未能解析路徑）」對 Token 物件是錯的語意
+                var objectType = string.IsNullOrWhiteSpace(change.ObjectType) ? null : change.ObjectType.Trim();
+                var process = ProcessFileName(change.ProcessName);
+                var objectName = string.IsNullOrWhiteSpace(change.Target) ? null : change.Target.Trim();
+
+                var what = objectName != null
+                    ? (objectType != null ? Sp(objectName, $"（{objectType}）") : objectName)
+                    : (objectType != null ? $"{objectType} 物件" : "物件");
+                if (process != null) what = Sp(what, $"（{process}）");
+
+                return hasInitiator
+                    ? Sentence(initiator, "變更", what, "的權限")
+                    : Sentence(what, "的權限被變更");
+            }
+
             case PermissionCategory.OwnerChange:
             {
                 var target = ResolveTarget(change.Target, "（未能解析路徑）", change.EventId);
@@ -592,9 +625,10 @@ public class PermissionChangeService
 
             case PermissionCategory.Summary:
             {
-                // 彙總列的對象是主機名（不是 Extract 出來的異動對象），不套壞形狀辨識
+                // 彙總列的對象是主機名（不是 Extract 出來的異動對象），不套壞形狀辨識。
+                // 句首**不重複類別標籤**：列表已有「類別」欄，重複的六個字只是把說明擠掉
                 var target = string.IsNullOrWhiteSpace(change.Target) ? "（未指定對象）" : change.Target.Trim();
-                return Sentence($"{categoryLabel}：{target}", change.AlertText);
+                return Sentence(target, change.AlertText);
             }
 
             default:

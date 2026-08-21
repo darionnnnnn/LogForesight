@@ -4,6 +4,7 @@
     唯一的例外是品牌三元素（docs/archive/FEEDBACK-10-PLAN.md §1）：那是每頁第一眼看到的東西，
     等前端 fetch 回來才替換會閃動，所以伺服器端就渲染好。
 *@
+@using Microsoft.AspNetCore.Mvc.ViewFeatures
 @inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     // 頁尾顯示版本號（docs/archive/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本
@@ -27,29 +28,7 @@
 <body>
     <div class="lf-layout">
         <aside class="lf-sidebar lf-no-print">
-            <a href="@Url.Content("~/")" class="lf-sidebar__brand">
-                @* id 供 settings.js 儲存成功後即時更新（回饋十六輪批次E-3），不必整頁重整
-                   才看到外觀變更——JS 端分別定位圖示、名稱、副標三段各自替換 *@
-                <span class="lf-sidebar__brand-mark" id="lf-brand-mark">
-                    @if (brand.IconDataUri != null)
-                    {
-                        @* 自訂圖示（§1）：alt 留空——它旁邊就是產品名稱文字，
-                           讀屏再念一次圖片等於重複，屬純裝飾 *@
-                        <img src="@brand.IconDataUri" alt="" class="lf-sidebar__brand-img" />
-                    }
-                    else
-                    {
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#speedometer2"></use></svg>
-                    }
-                </span>
-                <span class="lf-sidebar__brand-text">
-                    <span class="lf-sidebar__brand-name" id="lf-brand-name" title="@brand.Name">@brand.Name</span>
-                    @if (brand.Subtitle != null)
-                    {
-                        <small id="lf-brand-subtitle" title="@brand.Subtitle">@brand.Subtitle</small>
-                    }
-                </span>
-            </a>
+            <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "sidebar", ["BrandHref"] = Url.Content("~/") }' />
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>
             <div class="lf-sidebar__footer">
                 <div class="lf-sidebar__user">

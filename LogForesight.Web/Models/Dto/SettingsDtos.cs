@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -192,24 +193,24 @@ public class UpdateSystemSettingsRequest
 
     public bool ClearAiApiKey { get; set; }
 
-    [Range(1, 3650, ErrorMessage = "首次回補天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "首次回補天數必須介於 90~3650 天")]
     public int InitialHistoryDays { get; set; }
 
-    [Range(1, 3650, ErrorMessage = "歷史資料保留天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "歷史資料保留天數必須介於 90~3650 天")]
     public int RetentionDays { get; set; }
 
-    [Range(7, 3650, ErrorMessage = "執行歷程保留天數必須介於 7~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "執行歷程保留天數必須介於 90~3650 天")]
     public int RunLogRetentionDays { get; set; }
 
-    [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
 
     /// <summary>風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2）；上限交由
     /// SystemSettingsService.Update 對照 RetentionDays 驗證（暫存不可活得比分析紀錄久）</summary>
-    [Range(1, 3650, ErrorMessage = "風險 log 暫存保留天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "風險 log 暫存保留天數必須介於 90~3650 天")]
     public int RiskyEventRetentionDays { get; set; }
 
-    [Range(1, 3650, ErrorMessage = "詳情保留天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "詳情保留天數必須介於 90~3650 天")]
     public int DetailRetentionDays { get; set; }
 
     // ── AD 驗證（docs/archive/HISTORY.md #9）────────────────────────────────

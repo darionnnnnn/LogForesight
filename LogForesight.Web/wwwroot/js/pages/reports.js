@@ -17,10 +17,11 @@ import { api, getDisplaySettings } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { statCard, toast } from '../core/ui.js';
 import {
-    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal,
+    formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, analysisAnchorLocal,
     issueBaselineText
 } from '../core/format.js';
 import * as charts from '../core/charts.js';
+import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
 
 let currentData = null;
 // docs/archive/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
@@ -630,6 +631,8 @@ function renderRiskChart() {
         }
     });
 
+    charts.setCenterText(wrapper, `${Math.round((high / (high + medium)) * 100)}%`);
+
     charts.attachDoughnutLegend(legend, [
         { label: '高風險', value: high, color: risk['高'],
             url: `/records?riskLevels=${encodeURIComponent('高')}&from=${currentData.from}&to=${currentData.to}` },
@@ -727,12 +730,7 @@ document.getElementById('report-form').addEventListener('submit', event => {
     load();
 });
 
-for (const button of document.querySelectorAll('[data-range]')) {
-    button.addEventListener('click', () => {
-        setRange(Number(button.dataset.range));
-        load();
-    });
-}
+bindRangeChips({ onApply: ({ days }) => { setRange(days); load(); } });
 
 document.getElementById('btn-print-report').addEventListener('click', () => window.print());
 
@@ -774,16 +772,10 @@ document.getElementById('report-from').addEventListener('change', updateDefaultC
 document.getElementById('report-to').addEventListener('change', updateDefaultCompare);
 
 function setRange(days) {
-    // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天，
-    // 錨在今天會讓「本週/本月/近 90 天」的最後一天必然沒有資料
-    const to = new Date();
-    to.setDate(to.getDate() - 1);
-    const from = new Date(to);
-    from.setDate(from.getDate() - days + 1);
-
-    // 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
-    document.getElementById('report-from').value = toLocalDateString(from);
-    document.getElementById('report-to').value = toLocalDateString(to);
+    // 期間的計算（錨在昨天、本地日期）在 core/date-range.js，三頁共用
+    const { from, to } = rangeFromDays(days);
+    document.getElementById('report-from').value = from;
+    document.getElementById('report-to').value = to;
 
     if (!userSelectedCompare) {
         document.getElementById('report-compare').value = days >= 180 ? 'yoy' : 'previous';

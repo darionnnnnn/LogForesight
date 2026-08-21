@@ -6,6 +6,7 @@
 import { api } from '../core/api.js';
 import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { alignBrandSubtitles } from '../core/brand-align.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
 // 不放在表單欄位裡——<input type="file"> 的值無法用程式設定，載入既有圖示時填不回去
@@ -378,7 +379,7 @@ function applyBrandToSidebar(settings) {
             const img = document.createElement('img');
             img.src = settings.brandIconDataUri;
             img.alt = '';
-            img.className = 'lf-sidebar__brand-img';
+            img.className = 'lf-brand__img';
             mark.appendChild(img);
         } else {
             mark.appendChild(icon('speedometer2'));
@@ -395,15 +396,19 @@ function applyBrandToSidebar(settings) {
     let subtitleEl = document.getElementById('lf-brand-subtitle');
     if (settings.brandSubtitle) {
         if (!subtitleEl) {
-            subtitleEl = document.createElement('small');
+            subtitleEl = document.createElement('span');
             subtitleEl.id = 'lf-brand-subtitle';
-            document.querySelector('.lf-sidebar__brand-text')?.appendChild(subtitleEl);
+            subtitleEl.className = 'lf-brand__subtitle';
+            document.querySelector('.lf-brand__text')?.appendChild(subtitleEl);
         }
         subtitleEl.textContent = settings.brandSubtitle;
         subtitleEl.title = settings.brandSubtitle;
     } else if (subtitleEl) {
         subtitleEl.remove();
     }
+
+    // 主標題／副標題文字換了，貼齊要重算（brand-align.js 只在載入時與 resize 時算）
+    alignBrandSubtitles();
 }
 
 function setBrandIcon(dataUri) {
@@ -531,6 +536,11 @@ function bindForm() {
         if (riskyEventRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('risky-event-retention-days'));
             toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+        if (detailRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('detail-retention-days'));
+            toast('詳情保留天數不可大於歷史資料保留天數。', 'warning');
             return;
         }
 

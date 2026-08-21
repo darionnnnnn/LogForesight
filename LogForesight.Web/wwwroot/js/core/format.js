@@ -235,7 +235,7 @@ export function issueBaselineCell(group) {
     const multiplier = group.baselineDeviationMultiplier;
 
     const line1 = document.createElement('div');
-    line1.className = 'small lf-mono';
+    line1.className = 'small lf-mono text-nowrap';
     line1.textContent = `基準 ${median} 台/日 → ${group.baselineLatestHostCount} 台`;
     wrap.appendChild(line1);
 

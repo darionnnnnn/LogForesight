@@ -13,12 +13,12 @@ public class SystemSettings
     // 消費端＝_Layout.cshtml 與 Login.cshtml 的伺服器端渲染（不走前端 fetch：側欄品牌是
     // 每頁第一眼，等 API 回來才換會閃動）。
 
-    /// <summary>側欄與登入頁的產品名稱。空字串＝回退預設值</summary>
+    /// <summary>側欄與登入頁的主標題。空字串＝回退預設值</summary>
     public string BrandName { get; set; } = "LogForesight";
 
     /// <summary>
-    /// 產品名稱下方的副標。預設**不含「Windows」**——Linux 規則面已就緒（docs/LINUX-RULES.md），
-    /// 寫死 Windows 名不符實。空字串＝不顯示副標（使用者可以刻意只留產品名）。
+    /// 主標題下方的副標題。預設**不含「Windows」**——Linux 規則面已就緒（docs/LINUX-RULES.md），
+    /// 寫死 Windows 名不符實。空字串＝不顯示副標題（使用者可以刻意只留主標題）。
     /// </summary>
     public string BrandSubtitle { get; set; } = "事件日誌預警";
 
@@ -172,11 +172,18 @@ public class SystemSettings
     /// </summary>
     public string AiApiKeyEnc { get; set; } = "";
 
+    /// <summary>保留天數類設定的共同下限：任何一種資料都至少留 90 天，
+    /// 低於此值的設定在寫入時會被擋下（讀取端不 clamp——已儲存的舊值照舊生效）。</summary>
+    public const int MinRetentionDays = 90;
+
+    /// <summary>InitialHistoryDays 的出廠預設</summary>
+    public const int DefaultInitialHistoryDays = 120;
+
     /// <summary>首次執行（歷史資料庫全空）時回補歷史的天數</summary>
-    public int InitialHistoryDays { get; set; } = 120;
+    public int InitialHistoryDays { get; set; } = DefaultInitialHistoryDays;
 
     /// <summary>RetentionDays 的出廠預設——設定不可得時的 fallback 也引用這裡
-    /// （HostVisibilityResolver／VisibilityService），改預設值只改這一處。</summary>
+    /// （HostVisibilityResolver／VisibilityService／RetentionOptions），改預設值只改這一處。</summary>
     public const int DefaultRetentionDays = 120;
 
     /// <summary>歷史資料庫保留天數（需 &gt;= InitialHistoryDays）</summary>
@@ -187,27 +194,39 @@ public class SystemSettings
     /// docs/archive/HISTORY.md P0-3）。與業務資料的 <see cref="RetentionDays"/> 分開，
     /// 因為兩者性質不同：這是「這次跑了什麼」的執行歷程，不是分析結果本身。
     /// </summary>
-    public int RunLogRetentionDays { get; set; } = 90;
+    public int RunLogRetentionDays { get; set; } = DefaultRunLogRetentionDays;
+
+    /// <summary>RunLogRetentionDays 的出廠預設</summary>
+    public const int DefaultRunLogRetentionDays = 90;
 
     /// <summary>
     /// 稽核紀錄保留天數（操作稽核——docs/WEB-SPEC.md §11-6、docs/archive/HISTORY.md P0-3）。
     /// 稽核是合規／追責用途，保留期通常比業務資料更長，故獨立設定。
     /// </summary>
-    public int AuditRetentionDays { get; set; } = 730;
+    public int AuditRetentionDays { get; set; } = DefaultAuditRetentionDays;
+
+    /// <summary>AuditRetentionDays 的出廠預設</summary>
+    public const int DefaultAuditRetentionDays = 730;
 
     /// <summary>
     /// 風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3，2026-07-31 定案）：規則命中或
     /// 趨勢異常的問題簽章原始事件，暫存供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel。
     /// 與業務資料的 <see cref="RetentionDays"/> 是不同性質的保留期（暫存 vs 長期分析紀錄），
-    /// 驗證要求 <c>1 &lt;= 值 &lt;= RetentionDays</c>——暫存活得比分析紀錄久沒有意義。
+    /// 驗證要求 <c>MinRetentionDays &lt;= 值 &lt;= RetentionDays</c>——暫存活得比分析紀錄久沒有意義。
     /// </summary>
-    public int RiskyEventRetentionDays { get; set; } = 14;
+    public int RiskyEventRetentionDays { get; set; } = DefaultRiskyEventRetentionDays;
+
+    /// <summary>RiskyEventRetentionDays 的出廠預設（與下限同值屬巧合，兩者語意不同，不要互相引用）</summary>
+    public const int DefaultRiskyEventRetentionDays = 90;
 
     /// <summary>
     /// 詳情保留天數：風險日詳情頁的原始內容（樣本訊息等）保留多久。
-    /// 必須小於或等於 <see cref="RetentionDays"/>，預設為 120。
+    /// 必須小於或等於 <see cref="RetentionDays"/>。
     /// </summary>
-    public int DetailRetentionDays { get; set; } = 120;
+    public int DetailRetentionDays { get; set; } = DefaultDetailRetentionDays;
+
+    /// <summary>DetailRetentionDays 的出廠預設</summary>
+    public const int DefaultDetailRetentionDays = 120;
 
     /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的

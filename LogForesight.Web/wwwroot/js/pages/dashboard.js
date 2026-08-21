@@ -12,6 +12,7 @@ import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } fr
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
 import { renderAiInline } from '../core/markdown-lite.js';
+import { bindRangeChips, setActiveChip } from '../core/date-range.js';
 
 let currentDays = Number(localStorage.getItem('lf.dashboard.days')) || 7;
 
@@ -186,7 +187,7 @@ function renderServerAdminGuide() {
     for (const id of ['dashboard-categories', 'dashboard-hosts', 'dashboard-group-risk']) {
         document.getElementById(id)?.closest('.row')?.classList.add('d-none');
     }
-    for (const el of document.querySelectorAll('[data-days]')) el.closest('.btn-group')?.classList.add('d-none');
+    for (const el of document.querySelectorAll('[data-range]')) el.closest('.btn-group')?.classList.add('d-none');
 
     const container = document.getElementById('dashboard-banner');
     const card = document.createElement('div');
@@ -787,22 +788,17 @@ function renderGroupRisk(data) {
     });
 }
 
-for (const button of document.querySelectorAll('[data-days]')) {
-    button.addEventListener('click', () => {
-        currentDays = Number(button.dataset.days);
+const rangeChips = bindRangeChips({
+    markActive: true,
+    onApply: ({ days }) => {
+        currentDays = days;
         localStorage.setItem('lf.dashboard.days', String(currentDays));
-
-        for (const other of document.querySelectorAll('[data-days]')) {
-            other.classList.toggle('active', other === button);
-        }
         load();
-    });
-}
+    }
+});
 
 // 還原上次選的期間（§8.6-1 篩選記憶）
-for (const button of document.querySelectorAll('[data-days]')) {
-    button.classList.toggle('active', Number(button.dataset.days) === currentDays);
-}
+setActiveChip(rangeChips, currentDays);
 
 guardLoad([
     document.getElementById('dashboard-categories'),

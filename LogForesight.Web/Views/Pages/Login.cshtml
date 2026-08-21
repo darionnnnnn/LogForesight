@@ -1,10 +1,11 @@
-﻿@inject LogForesight.Web.Services.IBrandProvider Brand
+﻿@using Microsoft.AspNetCore.Mvc.ViewFeatures
+@inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     ViewData["Title"] = "登入";
     Layout = null;   // 登入頁不套主版面（沒有側欄與選單）
 
     // 品牌自訂（docs/archive/FEEDBACK-10-PLAN.md §1）：登入頁雖是匿名頁，但品牌不是機密
-    // （產品名稱、副標與圖示，任何看得到登入畫面的人本來就看得到），照樣套設定值
+    // （主標題、副標題與圖示，任何看得到登入畫面的人本來就看得到），照樣套設定值
     var brand = Brand.Get();
 }
 <!DOCTYPE html>
@@ -23,28 +24,7 @@
 <body>
     <div class="lf-login">
         <div class="lf-login__card">
-            <div class="lf-login__brand">
-                <span class="lf-login__brand-mark">
-                    @if (brand.IconDataUri != null)
-                    {
-                        @* alt 留空：緊接著的標題就是產品名稱，讀屏再念一次等於重複（純裝飾） *@
-                        <img src="@brand.IconDataUri" alt="" class="lf-login__logo" />
-                    }
-                    else
-                    {
-                        @* 沒有自訂圖示時沿用內建向量圖示——與側欄同一套 fallback 語意
-                           （docs/archive/FEEDBACK-10-PLAN.md §1，IBrandProvider.IconDataUri 文件） *@
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#speedometer2"></use></svg>
-                    }
-                </span>
-                <span class="lf-login__brand-text">
-                    <span class="lf-login__title" title="@brand.Name">@brand.Name</span>
-                    @if (brand.Subtitle != null)
-                    {
-                        <span class="lf-login__subtitle" title="@brand.Subtitle">@brand.Subtitle</span>
-                    }
-                </span>
-            </div>
+            <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "login" }' />
 
             <form id="lf-login-form" novalidate>
                 <div class="mb-3">

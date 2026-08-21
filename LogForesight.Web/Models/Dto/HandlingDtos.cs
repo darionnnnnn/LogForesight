@@ -584,6 +584,15 @@ public class PermissionChangeDto
     public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;
 
+    /// <summary>4670 的物件類型與處理程序名稱（非 4670 或訊息未提供時為 null）</summary>
+    public string? ObjectType { get; set; }
+    public string? ProcessName { get; set; }
+
+    /// <summary>彙總列涵蓋的事件時間區間與對數；逐則列與既有彙總列為 null（三者皆空時展開明細不顯示這一行）</summary>
+    public DateTime? CoveredFrom { get; set; }
+    public DateTime? CoveredTo { get; set; }
+    public int? PairCount { get; set; }
+
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
     public string? ConfirmedByAccount { get; set; }
     /// <summary>確認者顯示名稱（§9：前端以 formatUserName 組「顯示名稱(帳號)」）</summary>

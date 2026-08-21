@@ -59,6 +59,40 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             {
                 Log.Error(ex, "[SQL] 權限異動重剖回填失敗（不影響新資料）：{Msg}", ex.Message);
             }
+
+            // 舊版每主機日「權限異動（彙總）」列的一次性清理：那批列的產生邏輯已移除，
+            // 內容是「本日另有 N 則未逐則列出」，被它取代的逐則列並沒有寫進資料庫，
+            // 點開看不到任何明細。失敗不影響站台，下次啟動會再試一次。
+            // 關機途中不要動整表刪除：重剖被取消時不寫狀態（下次會重跑），
+            // 清理卻是單向閘門，跑一半被中斷會標成完成
+            if (stoppingToken.IsCancellationRequested) return;
+
+            try
+            {
+                CleanupLegacySummaryRows();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[SQL] 舊彙總列清理失敗（不影響新資料）：{Msg}", ex.Message);
+            }
         }, stoppingToken);
+    }
+
+    private void CleanupLegacySummaryRows()
+    {
+        var stateStore = _backend.PermissionLegacySummaryCleanupState;
+        if (stateStore.Get().Completed) return;
+
+        var deleted = _backend.PermissionChanges().DeleteLegacySummaryRows();
+
+        stateStore.Update(s =>
+        {
+            s.Completed = true;
+            s.DeletedRows = deleted;
+            s.CompletedAt = DateTime.Now;
+        });
+
+        if (deleted > 0)
+            Log.Info("[SQL] 舊版「權限異動（彙總）」列清理完成：刪除 {Count} 列", deleted);
     }
 }

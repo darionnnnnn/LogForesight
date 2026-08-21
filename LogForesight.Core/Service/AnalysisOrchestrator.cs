@@ -1035,10 +1035,10 @@ public class AnalysisOrchestrator
 /// </summary>
 public record RetentionOptions
 {
-    public int InitialHistoryDays { get; init; } = 120;
-    public int RetentionDays { get; init; } = 120;
-    public int RunLogRetentionDays { get; init; } = 90;
-    public int AuditRetentionDays { get; init; } = 730;
-    public int RiskyEventRetentionDays { get; init; } = 14;
-    public int DetailRetentionDays { get; init; } = 120;
+    public int InitialHistoryDays { get; init; } = SystemSettings.DefaultInitialHistoryDays;
+    public int RetentionDays { get; init; } = SystemSettings.DefaultRetentionDays;
+    public int RunLogRetentionDays { get; init; } = SystemSettings.DefaultRunLogRetentionDays;
+    public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
+    public int RiskyEventRetentionDays { get; init; } = SystemSettings.DefaultRiskyEventRetentionDays;
+    public int DetailRetentionDays { get; init; } = SystemSettings.DefaultDetailRetentionDays;
 }

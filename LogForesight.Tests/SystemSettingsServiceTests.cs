@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -32,7 +33,7 @@ public class SystemSettingsServiceTests : IDisposable
                 MailState));
 
     private static UpdateSystemSettingsRequest ValidRequest(
-        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 14, int detailRetentionDays = 120) => new()
+        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 90, int detailRetentionDays = 120) => new()
     {
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
@@ -210,8 +211,42 @@ public class SystemSettingsServiceTests : IDisposable
 
         Assert.Equal(90, settings.RunLogRetentionDays);
         Assert.Equal(730, settings.AuditRetentionDays);
-        Assert.Equal(14, settings.RiskyEventRetentionDays);
+        Assert.Equal(90, settings.RiskyEventRetentionDays);
         Assert.Equal(120, settings.DetailRetentionDays);
+        Assert.Equal(120, settings.InitialHistoryDays);
+        Assert.Equal(120, settings.RetentionDays);
+    }
+
+    // ── 保留天數共同下限 90（回饋二十六輪作業 D）─────────────────────────────────
+    // [Range] 在 API 邊界的模型驗證生效（服務層只做跨欄位規則），所以這裡直接驗屬性。
+
+    [Theory]
+    [InlineData(nameof(UpdateSystemSettingsRequest.InitialHistoryDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.RetentionDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.DetailRetentionDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.RunLogRetentionDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.AuditRetentionDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.RiskyEventRetentionDays))]
+    public void 保留天數低於90時模型驗證不通過(string propertyName)
+    {
+        // 走 ASP.NET 模型繫結實際使用的那一套驗證（Validator + DataAnnotations），
+        // 不是斷言「屬性上掛了某個 attribute」——後者連 DTO 換掉都不會紅。
+        var request = ValidRequest();
+        var property = typeof(UpdateSystemSettingsRequest).GetProperty(propertyName)!;
+        property.SetValue(request, 89);
+
+        var results = new List<ValidationResult>();
+        var ok = Validator.TryValidateObject(
+            request, new ValidationContext(request), results, validateAllProperties: true);
+
+        Assert.False(ok);
+        Assert.Contains(results, r => r.MemberNames.Contains(propertyName));
+
+        // 90 是允許的下界
+        property.SetValue(request, 90);
+        results.Clear();
+        Validator.TryValidateObject(request, new ValidationContext(request), results, validateAllProperties: true);
+        Assert.DoesNotContain(results, r => r.MemberNames.Contains(propertyName));
     }
 
     // ── 詳情保留天數（DetailRetentionDays） ───────────────────────────────────────────
