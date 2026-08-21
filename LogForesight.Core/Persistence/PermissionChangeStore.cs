@@ -125,6 +125,22 @@ public class PermissionChangeStore
         ctx.SaveChanges();
     }
 
+    /// <summary>
+    /// 依去重鍵刪除一筆（供彙總列撤銷使用）：當某主機日的成對數跌回門檻以下、改為逐則列出時，
+    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在、被重複計算。
+    /// 回傳是否真的刪到。
+    /// </summary>
+    public bool DeleteByDedupeKey(string dedupeKey)
+    {
+        using var ctx = _contextFactory();
+        var existing = ctx.PermissionChanges.FirstOrDefault(r => r.DedupeKey == dedupeKey);
+        if (existing == null) return false;
+
+        ctx.PermissionChanges.Remove(existing);
+        ctx.SaveChanges();
+        return true;
+    }
+
     /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
     public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
     {

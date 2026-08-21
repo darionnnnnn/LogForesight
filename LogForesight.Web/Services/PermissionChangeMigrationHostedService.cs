@@ -1,4 +1,5 @@
 using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
 using NLog;
 
 namespace LogForesight.Web.Services;
@@ -13,10 +14,12 @@ public class PermissionChangeMigrationHostedService : BackgroundService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly StorageBackend _backend;
+    private readonly ISystemSettingsStore _systemSettings;
 
-    public PermissionChangeMigrationHostedService(StorageBackend backend)
+    public PermissionChangeMigrationHostedService(StorageBackend backend, ISystemSettingsStore systemSettings)
     {
         _backend = backend;
+        _systemSettings = systemSettings;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,7 +51,9 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             // 只是顯示退化成降級句，新寫入的資料走的是修好的解析器。
             try
             {
-                _backend.PermissionChangeReparser.Run(stoppingToken);
+                // 帶上欄位對應：訊息用非標準欄位名的站台，沒帶就等於白跑（重剖是一次性的）
+                _backend.PermissionChangeReparser.Run(
+                    stoppingToken, PermissionFieldMappings.FromSystemSettings(_systemSettings.Get()));
             }
             catch (Exception ex)
             {

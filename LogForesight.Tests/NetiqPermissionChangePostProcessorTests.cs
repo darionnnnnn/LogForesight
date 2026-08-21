@@ -1394,4 +1394,57 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.False(summary.IsPrivilegedTarget);
         Assert.Equal(PermissionChangeSources.Netiq, summary.Source);
     }
+
+    /// <summary>英文版 4728/4756 的欄位是 `Group Name: X Group Domain: Y`：多字欄名沒被認得時，
+    /// 候選會退化成尾字（Domain），把「X Group」併進群組名——這是「吞尾巴」缺陷的英文語系版本。</summary>
+    [Theory]
+    [InlineData("A member was added to a security-enabled global group. Subject: Security ID: S-1-5-21-1-2-3-17749 Account Name: OP_ACCT Account Domain: DOM1 Member: Security ID: S-1-5-21-1-2-3-278464 Account Name: CN=User One,OU=Dept,DC=example,DC=com Group: Security ID: S-1-5-21-1-2-3-40793 Group Name: GROUP_A Group Domain: DOM1", "GROUP_A")]
+    [InlineData("Subject: Account Name: OP_ACCT Member: Account Name: MEM1 Member Domain: DOM1 Group: Group Name: GROUP_B Group Domain: DOM1", "GROUP_B")]
+    public void 單行英文訊息_群組名不被網域欄污染(string message, string expectedGroup)
+    {
+        var details = PermissionChangeExtractor.Extract(message, "成員新增", 4756);
+
+        Assert.Equal(expectedGroup, details.Target);
+        Assert.DoesNotContain("Group", details.Target.Replace(expectedGroup, string.Empty));
+    }
+
+    /// <summary>4719 的 Subcategory 之後緊接 Subcategory GUID：沒認得就會退化成 GUID，
+    /// 把「子類別值 Subcategory」併進 Subcategory 的值。</summary>
+    [Fact]
+    public void 單行稽核政策訊息_子類別不被GUID欄污染()
+    {
+        const string message =
+            "System audit policy was changed. Subject: Account Name: OP_ACCT " +
+            "Category: Object Access Subcategory: File System Subcategory GUID: {0CCE921D-69AE-11D9-BED3-505054503030} " +
+            "Changes: Success removed";
+
+        var details = PermissionChangeExtractor.Extract(message, "稽核政策變更", 4719);
+
+        Assert.Contains("File System", details.After);
+        Assert.DoesNotContain("Subcategory GUID", details.After);
+        Assert.DoesNotContain("{0CCE921D", details.After);
+    }
+
+    /// <summary>重跑時若來源只回傳子集、對數跌回門檻以下，這批異動改為逐則列出——
+    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在。</summary>
+    [Fact]
+    public void 例行同步_對數跌破門檻時撤掉既有彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+
+        // 重跑時來源只回了 3 對（保留期滾動、查詢部分失敗等）
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.DoesNotContain(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Equal(6, records.Count);   // 3 對逐則列出，沒有彙總列殘留造成重複計算
+    }
 }

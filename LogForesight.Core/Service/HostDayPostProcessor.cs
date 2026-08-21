@@ -197,9 +197,16 @@ public static class HostDayPostProcessor
             }
 
             var routineSummary = ExtractRoutineSyncPairs(recordsToAppend, hostName, date);
+            var routineKey = RoutineSyncDedupeKey(hostName, date);
             if (routineSummary != null)
             {
-                permissionChangeStore.UpsertByDedupeKey(routineSummary, RoutineSyncDedupeKey(hostName, date));
+                permissionChangeStore.UpsertByDedupeKey(routineSummary, routineKey);
+            }
+            else
+            {
+                // 這次沒達門檻＝這批異動改為逐則列出，先前那筆彙總列必須撤掉，
+                // 否則同一批異動會同時以彙總與逐則兩種形式存在（重跑時 NetIQ 只回子集就會發生）
+                permissionChangeStore.DeleteByDedupeKey(routineKey);
             }
 
             if (recordsToAppend.Count > 0)

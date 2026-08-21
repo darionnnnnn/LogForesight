@@ -127,4 +127,57 @@ public sealed class PermissionChangeReparserTests : IDisposable
         Assert.Equal("Domain Admins", row.Target);
         Assert.True(row.IsPrivilegedTarget);
     }
+
+    /// <summary>重剖也要吃欄位對應設定：用非標準欄位名的站台，沒帶對應等於白跑一趟，
+    /// 而重剖是一次性工作、跑完不會自動重來（作業 B 與 D 之間的接線）。</summary>
+    [Fact]
+    public void 重剖回填_套用自訂欄位對應()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "custom-1",
+                HostName = "SRV-OLD",
+                DetectedAt = new DateTime(2026, 8, 18),
+                Target = string.Empty,
+                ChangeType = "成員新增",
+                Category = PermissionCategory.GroupMember,
+                AlertText = "CustomGrp: GROUP_X CustomMem: DOM1" + Sep + "userx",
+                Source = PermissionChangeSources.Netiq,
+                EventId = 4728
+            }
+        });
+
+        var mappings = new PermissionFieldMappings(
+            operatorFields: null,
+            memberFields: new[] { "CustomMem" },
+            groupFields: new[] { "CustomGrp" },
+            objectFields: null);
+
+        NewReparser().Run(default, mappings);
+
+        var row = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal("GROUP_X", row.Target);
+        Assert.Equal("DOM1" + Sep + "userx", row.TargetAccount);
+    }
+
+    private const string Sep = @"\";
+
+    /// <summary>舊列的操作者本身就是髒值（被吞了行尾）——回填不能把它當成「事件自帶的操作者」
+    /// 餵回解析器，否則那個欄位永遠修不好。</summary>
+    [Fact]
+    public void 重剖回填_操作者是髒值時也會被修正()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        var dirty = DirtyRecord("dirty-initiator");
+        dirty.InitiatorAccount = "OP_ACCT 帳戶網域: DOM1 成員: ...";   // 舊解析器吞到行尾的操作者
+        store.AppendChanges(new[] { dirty });
+
+        NewReparser().Run();
+
+        var row = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal("OP_ACCT", row.InitiatorAccount);
+    }
 }

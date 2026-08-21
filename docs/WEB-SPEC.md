@@ -1256,6 +1256,15 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   4. 句子各段用同一個接合規則組出（全形標點兩側不加半形空格），不把空格寫死在字串裡。
 - 關鍵字比對與展開明細呈現的是**資料庫原值**：既有壞資料的對象欄雖在說明句降級顯示，
   搜尋仍命中、展開仍看得到原值——證據層不改寫。
+- **例行同步彙總列**（`change_type` ＝`例行同步（彙總）`、類別 `summary`）：AD 自動化程序的
+  對稱異動達門檻時由後端合併產生（成對定義、門檻與特權群組例外見
+  [DETECTION-SPEC.md](DETECTION-SPEC.md)「例行同步合併」）。顯示形狀：`Target` 為
+  `{主機}（例行同步）`、異動前後為空、EventId 顯示「—」，說明句即 `AlertText` 原文
+  （含推測原因與「未成對的異動仍逐則列出」）。**`EventId` 為 0 的舊彙總列在 DTO 映射時轉成
+  null**，否則畫面會顯示「0」。
+- 前端展開明細的 key/value 拆欄與後端的欄位解析是**兩套規則**：前端只為了排版把原文拆得好讀
+  （通用規則），後端要判定語意（區段感知＋官方欄名白名單，見 DETECTION-SPEC）。兩者對同一段
+  文字的拆法可能不同，這是刻意的——展開明細呈現原文，語意欄位以後端解析為準。
 - **時間語意**：`本機監控` 來源是快照比對，寫入時整批同一個時間戳，那是「偵測到的時間」
   而非事件發生時間。欄位標題附說明，不讓使用者誤讀。
 - **篩選**：關鍵字（比對主機／操作者／目標帳號／對象／原始告警文字 `AlertText`——不是列表
@@ -1693,7 +1702,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      體檢間隔天數（`CheckupIntervalDays`）、額外監控權限異動的資料夾（`WatchedFolders`，
      一行一路徑）、掃描頻道（`AnalysisChannels`，一行一頻道全名、空＝預設六頻道；只正規化
      不驗證已知性——自訂頻道是既有設計，拼錯會在分析時誠實申報「不存在／不適用」）、
-     CSV 匯入上限（`ImportMaxFileSizeKb`/`ImportMaxRows`，每次上傳即時讀取）。
+     CSV 匯入上限（`ImportMaxFileSizeKb`/`ImportMaxRows`，每次上傳即時讀取）、
+     **權限異動欄位對應**（`PermissionOperatorFields`／`PermissionMemberFields`／
+     `PermissionGroupFields`／`PermissionObjectFields`，四個語意角色各一個多行輸入、
+     一行一個自訂欄位名；空＝只用內建的官方欄名）。事件來源用非標準欄位名時才需要設定，
+     解析時與官方欄名同權重併入、同名時官方語意優先；設定值經
+     `RuntimeSettingsResolver` → `AppSettings.Permissions.FieldMappings` 傳到解析器
+     （設定必須有消費端，見「不要做」）。**既有資料不會因為改了對應而重新解析**——
+     重剖回填是升級時的一次性工作。
   2c. **AI 進階參數的「還原預設值」**：`GET api/admin/settings`
      多回一個 `AiAdvancedDefaults` 子物件，值由 `new SystemSettings()` 取得——**出廠值的單一
      事實來源仍是 Core 模型的屬性初始器**，前端不硬編第二份。按鈕只把九個欄位填回表單、

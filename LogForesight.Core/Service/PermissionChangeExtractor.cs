@@ -71,7 +71,6 @@ public sealed class PermissionFieldMappings
 
     public bool IsCustomMultiWordKey(string key) => _allCustomMultiWordKeys.Contains(key);
     public bool HasCustomKey(string key) => _allCustomKeys.Contains(key);
-    public bool IsEmpty => _allCustomKeys.Count == 0;
 }
 
 /// <summary>
@@ -126,6 +125,19 @@ public static class PermissionChangeExtractor
         "Account That Was Granted Access",
         "Account That Was Removed Access",
         "Account Modified",
+        // 群組／成員／主體的網域欄：4728/4729/4756/4757 英文版就長這樣
+        // （`Group Name: GROUP_A Group Domain: DOM1`）。少列一個的後果不是「這欄漏抓」，而是
+        // 候選退化成尾字（Domain），把「GROUP_A Group」併進前一欄的值——前一欄正好是群組名。
+        "Group Domain",
+        "Member Domain",
+        "Subject Domain",
+        // 4719 稽核政策變更：Subcategory 之後緊接 Subcategory GUID
+        "Subcategory GUID",
+        "Subcategory Guid",
+        "Category GUID",
+        "Category Guid",
+        "子類別 GUID",
+        "類別 GUID",
         "安全性 ID"
     };
 
@@ -489,6 +501,12 @@ public static class PermissionChangeExtractor
                         {
                             fields.TargetAccount = clean;
                         }
+                        else if (section == Section.None && mappings != null)
+                        {
+                            // 官方欄名但區段不明（訊息沒有區段標題時很常見）：這裡不消費就沒人消費了，
+                            // 使用者若把這個欄名設進某個角色，讓自訂對應接手，值才不會靜默消失
+                            TryMatchCustomField(key, value, mappings, fields);
+                        }
                     }
                 }
                 else if (IsKey(key, "Security ID", "安全性識別碼", "安全性 ID"))
@@ -578,6 +596,10 @@ public static class PermissionChangeExtractor
             int selectedStart = -1;
             string? selectedKey = null;
 
+            // 由左往右試候選（最長的先試），取第一個合法的。多字欄名靠白名單認得；
+            // 都不合法時會退到最後一個詞——「值的尾字＋單字欄名」（`DOM1 其他資訊:`）與
+            // 「兩個詞的欄名」（`Group Domain:`）從字面分不出來，靠的就是白名單要收齊官方欄名。
+            // 白名單漏一個的代價不是「這欄漏抓」，而是把值的尾字併進前一欄（見 KnownMultiWordKeys）。
             for (int start = minStart; start < i; start++)
             {
                 if (start == 0 || char.IsWhiteSpace(line[start - 1]))
@@ -619,6 +641,11 @@ public static class PermissionChangeExtractor
     private static bool IsValidKeyCandidate(string text, PermissionFieldMappings? mappings = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
+
+        // 使用者明確設定的自訂欄名一律放行：長度上限是給「猜哪一段是欄名」用的啟發式，
+        // 對已知的欄名沒有意義——擋掉的話設定會沒有作用，那是本專案的紅線
+        if (mappings?.HasCustomKey(text) == true) return true;
+
         if (text.Length < 2 || text.Length > 35) return false;
 
         bool hasLetter = false;
@@ -643,23 +670,6 @@ public static class PermissionChangeExtractor
         }
 
         return text.Length <= 20 || (mappings?.HasCustomKey(text) == true);
-    }
-
-    public static string? TryExtractValue(string line, params string[] prefixes)
-    {
-        var pairs = ExtractPairs(line);
-        foreach (var prefix in prefixes)
-        {
-            var normalizedPrefix = prefix.TrimEnd(':', '：').Trim();
-            foreach (var (k, v) in pairs)
-            {
-                if (k.Equals(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    return CleanValue(v);
-                }
-            }
-        }
-        return null;
     }
 
     public static string? CleanValue(string? val)

@@ -37,7 +37,9 @@ public sealed class PermissionChangeReparser
     /// 重剖回填（背景執行）。跑完即標記完成，之後不再掃描——新寫入的列走的是修好的解析器，
     /// 不需要再回填。
     /// </summary>
-    public void Run(CancellationToken cancellationToken = default)
+    /// <param name="mappings">自訂欄位對應（同寫入路徑）。訊息用非標準欄位名的站台，
+    /// 沒有它就等於白跑一趟——而這是一次性工作，跑完不會自動重來。</param>
+    public void Run(CancellationToken cancellationToken = default, PermissionFieldMappings? mappings = null)
     {
         if (IsCompleted) return;
 
@@ -65,8 +67,11 @@ public sealed class PermissionChangeReparser
             {
                 if (string.IsNullOrWhiteSpace(row.AlertText)) continue;
 
+                // initialInitiatorAccount 傳 null：那個參數的語意是「事件自帶的操作者」，
+                // 會蓋過訊息裡剖出來的值。回填時傳入 row 的舊值等於拿要修的髒值當標準答案，
+                // 操作者欄位就永遠修不好。
                 var details = PermissionChangeExtractor.Extract(
-                    row.AlertText, row.ChangeType, row.EventId ?? 0, row.InitiatorAccount);
+                    row.AlertText, row.ChangeType, row.EventId ?? 0, initialInitiatorAccount: null, mappings);
 
                 var changed = false;
 
@@ -97,11 +102,16 @@ public sealed class PermissionChangeReparser
                     changed = true;
                 }
 
-                if (!changed) continue;
+                // 特權判定一律依現在的對象重算：對象修對了它才成立（舊列的對象是訊息尾巴，
+                // 永遠命中不了關鍵字），而舊列即使欄位沒變，旗標也可能是舊判定邏輯留下的錯值
+                var privileged = PermissionCategory.IsPrivilegedTarget(row.Target, row.ChangeType);
+                if (privileged != row.IsPrivilegedTarget)
+                {
+                    row.IsPrivilegedTarget = privileged;
+                    changed = true;
+                }
 
-                // 對象改對了，特權判定才跟著成立（舊列的對象是訊息尾巴，永遠命中不了關鍵字）
-                row.IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(row.Target, row.ChangeType);
-                updated++;
+                if (changed) updated++;
             }
 
             ctx.SaveChanges();
