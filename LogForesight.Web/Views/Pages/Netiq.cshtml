@@ -23,7 +23,7 @@
             </h2>
             <span tabindex="0" data-bs-toggle="popover"
                   data-bs-content="各台 NetIQ Sentinel 的連線設定。停用＝暫停輪巡（主機不動）；刪除＝轄下使用中的主機會停用並標記孤兒（可於主機頁重新綁定）。掃描匯入請切到本頁的「匯入」分頁。">
-                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
             </span>
         </div>
         <div class="lf-card__body p-0" id="sentinel-list"></div>
@@ -41,7 +41,7 @@
                     <label for="opt-query-delay" class="form-label">節流間隔（毫秒）</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="每次 REST 呼叫之間的間隔。0＝不節流。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="opt-query-delay" min="0" max="60000" />
                 </div>
@@ -53,7 +53,7 @@
                     <label for="opt-max-results" class="form-label">單一查詢最多筆數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="超過時該批標記結果被截斷，防止異常爆量日無限制拉取。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="opt-max-results" min="1" max="10000000" />
                 </div>
@@ -69,7 +69,7 @@
                     <label for="opt-backfill-days" class="form-label">每次執行回望天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="每台主機每次執行往回檢查幾天內有沒有缺漏或需要補跑的日子（上限 30 天），已完成的日子不會重跑。正式環境建議 1（只查前一天）——2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。需要補較久以前的歷史時可暫時調大此值、跑一次、再調回來。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="opt-backfill-days" min="1" max="30" />
                 </div>
@@ -77,7 +77,7 @@
                     <label for="opt-max-parallel-servers" class="form-label">同時處理幾台 Sentinel</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="各台 Sentinel 轄下主機互不重疊，可平行處理縮短整體執行時間。設 1＝完全依序處理（既有行為）。上限 3：分析與網站同一個行程，平行度上限 3，避免拖慢前景畫面（不是效能旋鈕，調更高不會生效）。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="opt-max-parallel-servers" min="1" max="3" />
                 </div>
@@ -85,7 +85,7 @@
                     <label for="opt-max-parallel-queries" class="form-label">單台 Sentinel 內查詢平行度</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="同一台 Sentinel 當天要查的主機批次最多同時開幾條查詢。與「同時處理幾台 Sentinel」是不同維度——這個是單一 Sentinel 內部再往下一層，只有 1～2 台 Sentinel 但主機量大時最有感。設 1＝完全依序處理（既有行為）。上限 4：同一個行程架構上限，不是效能旋鈕。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="opt-max-parallel-queries" min="1" max="4" />
                 </div>
@@ -103,7 +103,7 @@
                 </label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="開啟後掃描匯入精靈改用離線示範資料（固定台數/網段，不連 Sentinel），供沒有可連 Sentinel 的開發/展示環境跑完整流程。掃描結果會顯著標示「示範資料」，切勿當成真實掃描。預設關閉（真實連線）；正式環境不允許開啟。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
             </div>
             <div class="form-check mt-2 d-none" id="opt-chat-live-fetch-wrap">
@@ -111,7 +111,7 @@
                 <label class="form-check-label" for="opt-chat-live-fetch">詢問 AI 查無暫存資料時，向 Sentinel 即時查詢現場事件（僅 NetIQ 主機）</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="風險日詳情「詢問 AI」對話第一輪一律先查風險 log 暫存資料庫（毫秒級，不打 Sentinel，本開關管不到）；只有暫存查無（超過保留天數、功能上線前分析的日子、或不屬風險簽章）才用到本開關——開啟時會 fallback 向該主機所屬 Sentinel 發一次即時查詢。預設關閉；全站併發上限 1、結果快取 10 分鐘，且只對 NetIQ 主機生效（本機直讀主機沒有這條路徑）。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
             </div>
         </div>
@@ -132,7 +132,7 @@
             <h2 class="lf-card__title">掃描匯入</h2>
             <span tabindex="0" data-bs-toggle="popover"
                   data-bs-content="掃描是「查一個網段」，不是盲掃全站——請輸入網段前綴（如 192.168.0）或 CIDR（如 192.168.0.0/24）。結果只涵蓋掃描窗口內有事件回報的主機，涵蓋範圍會顯示在掃描結果上方，安靜的主機請至主機頁手動登錄。">
-                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
             </span>
         </div>
         <div class="lf-card__body" id="netiq-scan-picker"></div>
@@ -141,7 +141,7 @@
     <div class="lf-card">
         <div class="lf-card__header">
             <h2 class="lf-card__title">最近的掃描匯入紀錄</h2>
-            <a class="btn btn-sm btn-outline-secondary" href="/admin/imports">全部匯入紀錄</a>
+            <a class="btn btn-sm btn-outline-secondary" href="@Url.Content("~/admin/imports")">全部匯入紀錄</a>
         </div>
         <div class="lf-card__body p-0" id="netiq-import-logs"></div>
     </div>
@@ -152,7 +152,7 @@
         <h2 class="lf-card__title">NetIQ API 診斷</h2>
         <span tabindex="0" data-bs-toggle="popover"
               data-bs-content="對選定的 Sentinel 執行一組小規模驗證查詢（逐台十幾筆查詢，近 1～24 小時級距），用於核對欄位對應／時區／批次大小；不影響夜間排程分析（各自獨立執行、互不阻塞）。輸出可直接複製貼回對話討論。">
-            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
         </span>
     </div>
     <div class="lf-card__body">
@@ -165,7 +165,7 @@
                 <label for="probe-sample-ip" class="form-label">樣本 IP（Windows，選填）</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="一台已知的 Windows 主機 IP，用於核對跨主機事件的主機歸屬鍵、頻道覆蓋、時間邊界。省略時對應的核對步驟會標示略過，不影響其餘步驟。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <input type="text" class="form-control" id="probe-sample-ip" placeholder="192.168.0.34" />
             </div>
@@ -201,7 +201,7 @@
                             <label for="sentinel-name" class="form-label">名稱 <span class="text-danger">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="主機頁「所屬 Sentinel」下拉會顯示這個名稱。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="sentinel-name" required />
                         </div>
@@ -215,7 +215,7 @@
                             <label for="sentinel-username" class="form-label">探索帳號</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="帳號密碼齊備才能在本頁的「匯入」分頁對這台 Sentinel 掃描匯入主機。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="sentinel-username" />
                         </div>
@@ -229,7 +229,7 @@
                         <label for="sentinel-os" class="form-label">作業系統</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="這台 Sentinel 轄下主機的作業系統；掃描匯入精靈以此預填整批 OS（可改）。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <select class="form-select" id="sentinel-os">
                             <option value="windows">Windows</option>

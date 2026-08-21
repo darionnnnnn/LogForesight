@@ -13,6 +13,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderLoading, renderTable, renderChips, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -220,7 +221,7 @@ function issueHostsTable(group) {
 
 function detailLink(item) {
     const link = document.createElement('a');
-    link.href = `/records/${item.hostId}/${item.lastLinkedDate}`;
+    link.href = appUrl(`/records/${item.hostId}/${item.lastLinkedDate}`);
     link.className = 'btn btn-sm btn-outline-primary';
     link.textContent = '去處理';
     return link;
@@ -276,7 +277,7 @@ function dueCell(item) {
 
 function hostLink(item) {
     const link = document.createElement('a');
-    link.href = `/hosts/${item.hostId}`;
+    link.href = appUrl(`/hosts/${item.hostId}`);
     link.textContent = item.hostName;
     link.addEventListener('click', event => event.stopPropagation());
     return link;

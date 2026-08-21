@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "風險日詳情";
 }
 
@@ -41,7 +41,7 @@
                         <span class="text-muted small" id="chat-turn-count"></span>
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="chat-expand">放大檢視</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="chat-clear">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                             清除重來
                         </button>
                     </div>
@@ -68,7 +68,7 @@
                 <div class="lf-card__header lf-card__header--clickable" id="report-header" role="button" tabindex="0" aria-expanded="false">
                     <div class="d-flex align-items-center gap-2">
                         <span class="lf-collapse-caret" id="report-caret">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#chevron-down"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#chevron-down"></use></svg>
                         </span>
                         <h2 class="lf-card__title mb-0">風險報告全文</h2>
                     </div>

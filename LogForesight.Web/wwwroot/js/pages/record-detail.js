@@ -7,6 +7,7 @@
  */
 
 import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
@@ -212,7 +213,7 @@ async function setupNextUnhandled() {
     const next = currentIndex >= 0 ? items[currentIndex + 1] : items[0];
     if (!next) return;   // 這是最後一筆未處理
 
-    button.href = `/records/${next.hostId}/${next.date}`;
+    button.href = appUrl(`/records/${next.hostId}/${next.date}`);
     button.classList.remove('d-none');
 }
 
@@ -241,7 +242,7 @@ function renderHeader(detail) {
     top.className = 'd-flex align-items-center gap-3 mb-2 flex-wrap';
 
     const hostLink = document.createElement('a');
-    hostLink.href = `/hosts/${detail.hostId}`;
+    hostLink.href = appUrl(`/hosts/${detail.hostId}`);
     hostLink.className = 'fs-5 fw-semibold text-decoration-none';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
@@ -1364,7 +1365,7 @@ function caseBadge(issue) {
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
     badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
     if (issue.caseHandlerId) {
-        badge.href = `/handlers/${issue.caseHandlerId}`;
+        badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());
     }
     badge.textContent = `${handlerText} ${statusText}`;
@@ -1752,7 +1753,7 @@ function renderCategories(detail) {
         // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
         const cross = document.createElement('a');
         cross.className = 'lf-no-print ms-2 text-muted';
-        cross.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`;
+        cross.href = appUrl(`/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`);
         cross.title = '在問題查詢中看這一類（可跨日）';
         cross.appendChild(icon('search'));
 

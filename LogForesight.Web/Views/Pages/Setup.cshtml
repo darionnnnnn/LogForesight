@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "首次啟動精靈";
 }
 
@@ -18,7 +18,7 @@
 <div id="setup-settled-card" class="lf-card mb-3 d-none">
     <div class="lf-card__body">
         <div class="d-flex align-items-center gap-2 mb-2">
-            <svg class="lf-icon text-success" aria-hidden="true"><use href="/img/icons.svg#clipboard-check"></use></svg>
+            <svg class="lf-icon text-success" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#clipboard-check"></use></svg>
             <strong>全部步驟已完成（含跳過的步驟）。</strong>
         </div>
         <div class="form-check">

@@ -7,6 +7,7 @@
  */
 
 import { api, getCurrentUser, getDisplaySettings, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, icon, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, CATEGORY_NAMES, SEVERITY_ORDER, severityCountBadge, severityBadge, issueBaselineCell } from '../core/format.js';
 import { categoryColors } from '../core/charts.js';
@@ -364,7 +365,7 @@ function renderCategories(data) {
         // 落在依問題視角——與 renderTopIssues 的下鑽連結（見下方，同一個 view=issue 慣例）
         // 保持一致，否則帶著 categories 參數進頁會被 §10 的「帶參數預設回明細」規則接住，
         // 使用者點一個問題類別的卡片，看到的卻是逐筆明細而非依問題分組。
-        link.href = `/records?view=issue&categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`;
+        link.href = appUrl(`/records?view=issue&categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`);
 
         // 嚴重度驅動顯著性：命中「重大」旗標加紅邊、High 加黃邊（§8.2 原則 1；
         // docs/archive/HISTORY.md #1 B1 三級化後 criticalCount 恆為 0，改看 elevatesCount）
@@ -755,7 +756,7 @@ function renderSilentHosts(data) {
     }
 
     const link = document.createElement('a');
-    link.href = '/admin/hosts?status=silent';
+    link.href = appUrl('/admin/hosts?status=silent');
     link.className = 'lf-stat d-block text-center py-3';
 
     const value = document.createElement('div');

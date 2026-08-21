@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 風險日詳情的處理面板（docs/WEB-SPEC.md §9.3；2026-07-27 批次套用改版）。
  *
  * 核心情境一：主機 A 的負責人是 OOO，但主管認為問題緊急、先交給 XXX 處理——
@@ -10,6 +10,7 @@
  */
 
 import { api } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderLoading, renderEmpty, toast, withBusy, showDetailModal, labelValue, button, helpIcon, searchableUserSelect, confirmAction } from '../core/ui.js';
 import { formatDateTime, formatUserName, toLocalDateString } from '../core/format.js';
 
@@ -417,7 +418,7 @@ function handlingForm() {
     const ruleHint = document.createElement('div');
     ruleHint.className = 'lf-hint mb-3 d-none';
     const ruleLink = document.createElement('a');
-    ruleLink.href = '/admin/rules';
+    ruleLink.href = appUrl('/admin/rules');
     ruleLink.target = '_blank';
     ruleLink.textContent = '如果規則常常誤判，可以到規則維護調整判定條件';
     ruleHint.appendChild(ruleLink);

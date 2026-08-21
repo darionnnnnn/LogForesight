@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 主機詳情／風險時間軸（docs/WEB-SPEC.md §9.4）。
  *
  * 時間軸的每一格都可點擊進入該日詳情——這是 §8.4 下鑽規則的另一個入口。
@@ -6,6 +6,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
 
@@ -183,7 +184,7 @@ function renderTimeline(detail) {
             }
 
             if (day.hasRecord) {
-                cell.href = `/records/${hostId}/${day.date}`;
+                cell.href = appUrl(`/records/${hostId}/${day.date}`);
                 cell.title = `${day.date}｜${day.riskLevel}風險${day.headline ? '｜' + day.headline : ''}`;
             } else {
                 // 這天沒有分析紀錄——可能是排程沒跑、機器關機，不是「沒問題」
@@ -313,7 +314,7 @@ function renderIssues(detail) {
 
 function lastSeenLink(signature) {
     const link = document.createElement('a');
-    link.href = `/records/${hostId}/${signature.lastSeenDate}`;
+    link.href = appUrl(`/records/${hostId}/${signature.lastSeenDate}`);
     link.textContent = signature.lastSeenDate;
     link.title = '前往這天的風險日詳情';
     link.addEventListener('click', event => event.stopPropagation());
@@ -403,7 +404,7 @@ function renderOccurrencePanel(container, data) {
         const closedNote = data.case.closedAt ? '（已結案）' : '（進行中）';
         if (data.case.handlerId) {
             const link = document.createElement('a');
-            link.href = `/handlers/${data.case.handlerId}`;
+            link.href = appUrl(`/handlers/${data.case.handlerId}`);
             link.textContent = data.case.handlerName;
             link.addEventListener('click', event => event.stopPropagation());
             caseRow.append(`案件處理人：`, link, ` ｜ 狀態：${data.case.statusText}${closedNote} ｜ 涵蓋自 ${data.case.firstLinkedDate} 起`);
@@ -433,7 +434,7 @@ function renderOccurrencePanel(container, data) {
 
         const dateCell = document.createElement('td');
         const link = document.createElement('a');
-        link.href = `/records/${hostId}/${occurrence.date}`;
+        link.href = appUrl(`/records/${hostId}/${occurrence.date}`);
         link.textContent = occurrence.date;
         dateCell.appendChild(link);
         tr.appendChild(dateCell);

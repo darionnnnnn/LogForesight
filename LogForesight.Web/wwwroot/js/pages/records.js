@@ -12,6 +12,7 @@
  */
 
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
     loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
@@ -607,7 +608,7 @@ function handlerCell(record) {
 
     const suffix = record.handlerFromCase ? '（案件）' : '';
     const link = document.createElement('a');
-    link.href = `/handlers/${record.handlerId}`;
+    link.href = appUrl(`/handlers/${record.handlerId}`);
     link.textContent = formatUserName(record.handlerName, record.handlerAccount) + suffix;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
@@ -812,7 +813,7 @@ async function renderIssueOccurrences(cell, group) {
 /** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
 function goHandleLink(record) {
     const link = document.createElement('a');
-    link.href = `/records/${record.hostId}/${record.date}`;
+    link.href = appUrl(`/records/${record.hostId}/${record.date}`);
     link.className = 'btn btn-sm btn-outline-primary';
     link.textContent = '去處理';
     return link;
@@ -832,7 +833,7 @@ function issueHandlersCell(group) {
     shown.forEach((h, index) => {
         if (index > 0) wrap.appendChild(document.createTextNode('、'));
         const link = document.createElement('a');
-        link.href = `/handlers/${h.handlerId}`;
+        link.href = appUrl(`/handlers/${h.handlerId}`);
         link.textContent = formatUserName(h.displayName, h.account);
         link.addEventListener('click', event => event.stopPropagation());
         wrap.appendChild(link);
@@ -1301,7 +1302,7 @@ function showBulkCloseTraceLink(result) {
     if (result.to) params.set('to', result.to);
 
     const link = document.createElement('a');
-    link.href = `/records?${params.toString()}`;
+    link.href = appUrl(`/records?${params.toString()}`);
     link.textContent = '檢視這次影響的清單';
     toast(link, 'info', 10000);
 }

@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "主機";
 }
 
@@ -16,7 +16,7 @@
         </div>
         <div class="lf-toolbar__spacer"></div>
         <div class="d-flex gap-2">
-            <a class="btn btn-sm btn-outline-primary" href="/admin/netiq">從 NetIQ 匯入</a>
+            <a class="btn btn-sm btn-outline-primary" href="@Url.Content("~/admin/netiq")">從 NetIQ 匯入</a>
             <button type="button" class="btn btn-sm btn-outline-primary" id="btn-bulk-hosts">批次貼上</button>
             <button type="button" class="btn btn-sm btn-primary" id="btn-new-host">新增主機</button>
         </div>
@@ -86,7 +86,7 @@
                             <label for="host-ip" class="form-label">IP 位址</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="NetIQ 主機以此向 Sentinel 查詢；本機主機僅供人工辨識。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="host-ip" />
                         </div>
@@ -94,7 +94,7 @@
                             <label for="host-netiq" class="form-label">所屬 Sentinel</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="名單來自「NetIQ 維護」頁維護的 Sentinel。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <select class="form-select" id="host-netiq">
                                 <option value="">（待歸屬，由批次自動確認）</option>
@@ -109,7 +109,7 @@
                             <label for="host-role-desc" class="form-label">角色描述</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="例如「AD 網域控制站」，會影響 AI 判讀事件的嚴重性。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="host-role-desc" />
                         </div>
@@ -117,7 +117,7 @@
                             <label for="host-os" class="form-label">作業系統類型</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="決定套用哪個平台的規則面（規則維護頁的 Windows規則／Linux規則）。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <select class="form-select" id="host-os">
                                 <option value="windows">Windows</option>
@@ -128,7 +128,7 @@
                             <label for="host-tier" class="form-label">分級</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="純人工分類，供優先度分數的權重與清單/詳情頁徽章使用，不影響規則面或批次行為。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <select class="form-select" id="host-tier">
                                 <option value="core">核心</option>
@@ -186,7 +186,7 @@
                         <label for="bulk-os" class="form-label">作業系統類型</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="整批同一種作業系統；混合平台請分兩批貼上。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <select class="form-select" id="bulk-os">
                             <option value="windows">Windows</option>
@@ -197,7 +197,7 @@
                         <label for="bulk-tier" class="form-label">分級</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="整批同一個分級；只套用在本次新增的主機，既有主機的分級不動。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <select class="form-select" id="bulk-tier">
                             <option value="core">核心</option>

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * API 呼叫的唯一出口（docs/WEB-SPEC.md §8.1）。
  *
  * 頁面模組**不得直接呼叫 fetch**——信封解析、錯誤提示、401 導頁、CSRF 標頭
@@ -6,38 +6,10 @@
  */
 
 import { toast } from './ui.js';
+import { appUrl, appPath } from './paths.js';
 
 const CSRF_HEADER = 'X-Requested-By';
 const CSRF_VALUE = 'LogForesight';
-
-/**
- * 站台掛載路徑：IIS 子 Application 時是 `/LogForesight` 這種前綴，直接掛在網站根目錄時為空。
- * 由 `_Layout.cshtml`／`Login.cshtml` 以 `window.LF_BASE` 注入 `Request.PathBase`，不含尾斜線。
- */
-const BASE = (window.LF_BASE || '').replace(/\/$/, '');
-
-/**
- * 把 app 內的絕對路徑（`/records?x=1`）補上掛載前綴。
- * **全站的連結組裝與轉址都必須走這裡**——寫死 `/` 開頭的路徑在子 Application 下會打到
- * 網站根目錄而 404。非 `/` 開頭的值（相對路徑、完整網址、`#`、`//host/…`）原樣返回。
- */
-export function appUrl(path) {
-    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) return path;
-    return BASE + path;
-}
-
-/**
- * 目前頁面在 app 內的路徑（已去掉掛載前綴），供路由比對用。
- * 直接比對 `location.pathname` 在子 Application 下會失準，而且是**靜默失效**不是 404：
- * 選單不會高亮、登入頁判斷會失敗，畫面卻看起來正常。
- */
-export function appPath() {
-    const path = location.pathname;
-    if (BASE && (path === BASE || path.startsWith(BASE + '/'))) {
-        return path.slice(BASE.length) || '/';
-    }
-    return path;
-}
 
 /** API 回傳的業務錯誤。message 是後端組好的中文，可直接顯示 */
 export class ApiError extends Error {

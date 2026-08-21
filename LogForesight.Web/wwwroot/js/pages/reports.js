@@ -14,6 +14,7 @@
  */
 
 import { api, getDisplaySettings } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { statCard, toast } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, toLocalDateString, analysisAnchorLocal,
@@ -576,7 +577,7 @@ function renderIssueRankMeta() {
     subtitle.textContent = count > 0 ? `共 ${count} 個問題${scopeNote}${pendingNote}${concludedNote}` : '';
 
     if (currentData.issueOthers) {
-        viewAll.href = `/records?view=issue&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`;
+        viewAll.href = appUrl(`/records?view=issue&riskLevels=${encodeURIComponent('高,中,低')}&from=${currentData.from}&to=${currentData.to}`);
         viewAll.classList.remove('d-none');
     } else {
         viewAll.classList.add('d-none');
@@ -593,7 +594,7 @@ function renderHostRankMeta() {
 
     // 有主機被 Top 10 擋在外面時才顯示「查看全部」，沒有就別給多餘的出口
     if (currentData.others) {
-        viewAll.href = `/records?view=host&riskLevels=${encodeURIComponent('高,中')}` +
+        viewAll.href = appUrl(`/records?view=host&riskLevels=${encodeURIComponent('高,中')}`) +
             `&from=${currentData.from}&to=${currentData.to}`;
         viewAll.classList.remove('d-none');
     } else {
