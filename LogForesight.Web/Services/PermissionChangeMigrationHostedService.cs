@@ -41,6 +41,18 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             catch (Exception ex)
             {
                 Log.Error(ex, "[SQL] 權限異動遷移失敗，權限異動維持唯讀：{Msg}", ex.Message);
+                return;   // 遷移沒完成就重剖會漏掉還沒搬進表的列
+            }
+
+            // 遷移完成後接著重剖回填舊列的欄位（一次性）。失敗不影響站台：欄位補不回來
+            // 只是顯示退化成降級句，新寫入的資料走的是修好的解析器。
+            try
+            {
+                _backend.PermissionChangeReparser.Run(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[SQL] 權限異動重剖回填失敗（不影響新資料）：{Msg}", ex.Message);
             }
         }, stoppingToken);
     }

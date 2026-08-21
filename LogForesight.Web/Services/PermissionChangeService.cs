@@ -463,7 +463,8 @@ public class PermissionChangeService
             InitiatorAccountDisplay = AccountDisplayFormatter.ToShortName(change.InitiatorAccount),
             TargetAccount = change.TargetAccount,
             TargetAccountDisplay = AccountDisplayFormatter.ToShortName(change.TargetAccount),
-            EventId = change.EventId,
+            // 舊的彙總列 EventId 存 0（沒有對應的單一事件），前端只擋 null 會顯示「0」
+            EventId = change.EventId == 0 ? null : change.EventId,
             Before = change.Before,
             After = change.After,
             AlertText = change.AlertText,
