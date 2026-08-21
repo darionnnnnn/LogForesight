@@ -196,6 +196,12 @@ public static class HostDayPostProcessor
                 });
             }
 
+            var routineSummary = ExtractRoutineSyncPairs(recordsToAppend, hostName, date);
+            if (routineSummary != null)
+            {
+                permissionChangeStore.UpsertByDedupeKey(routineSummary, RoutineSyncDedupeKey(hostName, date));
+            }
+
             if (recordsToAppend.Count > 0)
             {
                 permissionChangeStore.AppendChanges(recordsToAppend);
@@ -206,6 +212,90 @@ public static class HostDayPostProcessor
         {
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動待辦寫入失敗（不影響分析結果）", logContext, date);
         }
+    }
+
+    /// <summary>成員新增＋成員移除成對出現達此對數時，該主機日的成對異動合併為一筆彙總列。
+    /// 門檻不做成設定項：這是「明顯是自動化程序」的判斷，不是使用者要調的參數。</summary>
+    internal const int RoutineSyncPairThreshold = 50;
+
+    /// <summary>例行同步彙總列的異動類型；去重鍵用的固定字串也是它（不含對數，對數變動時
+    /// 更新既有列而不是長出第二筆）。</summary>
+    internal const string RoutineSyncChangeType = "例行同步（彙總）";
+
+    /// <summary>例行同步彙總列的去重鍵：**不含對數**——含了的話對數一變就會長出第二筆，
+    /// 而不是更新既有那筆。</summary>
+    internal static string RoutineSyncDedupeKey(string hostName, DateTime date) =>
+        PermissionChangeRecord.DedupeKey(hostName, date.Date, 0, RoutineSyncChangeType);
+
+    /// <summary>
+    /// 把「同一主機日內 (成員, 群組) 相同的成員新增＋成員移除」配對；成對數達門檻時，
+    /// 從 <paramref name="records"/> 移除這些成對紀錄並回傳一筆彙總列，否則回傳 null
+    /// （全部維持逐則）。AD 自動化程序（例如每天先清空再重建的群組同步腳本）一天能產生
+    /// 數萬則這種對稱異動，逐則列出會把真正可疑的異動淹沒。
+    ///
+    /// 刻意只合併這一種形狀：未成對的異動、剖不出成員或群組的異動、以及**特權群組**的異動
+    /// （即使成對）一律逐則——安全訊號不能被降噪機制吞掉。
+    /// </summary>
+    internal static PermissionChangeRecord? ExtractRoutineSyncPairs(
+        List<PermissionChangeRecord> records, string hostName, DateTime date)
+    {
+        bool IsPairable(PermissionChangeRecord r) =>
+            (r.ChangeType == "成員新增" || r.ChangeType == "成員移除") &&
+            !r.IsPrivilegedTarget &&
+            !string.IsNullOrWhiteSpace(r.Target) &&
+            !string.IsNullOrWhiteSpace(r.TargetAccount);
+
+        var paired = new HashSet<PermissionChangeRecord>();
+        var groups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var accounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pairCount = 0;
+
+        foreach (var group in records.Where(IsPairable)
+                     .GroupBy(r => (
+                         Account: r.TargetAccount!.Trim().ToUpperInvariant(),
+                         Target: r.Target.Trim().ToUpperInvariant())))
+        {
+            var added = group.Where(r => r.ChangeType == "成員新增").ToList();
+            var removed = group.Where(r => r.ChangeType == "成員移除").ToList();
+            var pairs = Math.Min(added.Count, removed.Count);   // 一則只配一次，多出來的照常逐則
+            if (pairs == 0) continue;
+
+            for (var i = 0; i < pairs; i++)
+            {
+                paired.Add(added[i]);
+                paired.Add(removed[i]);
+            }
+
+            pairCount += pairs;
+            groups.Add(group.Key.Target);
+            accounts.Add(group.Key.Account);
+        }
+
+        if (pairCount < RoutineSyncPairThreshold) return null;
+
+        records.RemoveAll(paired.Contains);
+
+        return new PermissionChangeRecord
+        {
+            ChangeId = Guid.NewGuid().ToString("N"),
+            HostName = hostName,
+            DetectedAt = date.Date,
+            Target = $"{hostName}（例行同步）",
+            ChangeType = RoutineSyncChangeType,
+            Category = PermissionCategory.Summary,
+            IsPrivilegedTarget = false,
+            InitiatorAccount = null,
+            TargetAccount = null,
+            Before = string.Empty,
+            After = string.Empty,
+            AlertText =
+                $"本日偵測到 {pairCount} 對「成員新增＋成員移除」的對稱異動" +
+                $"（涉及 {groups.Count} 個群組、{accounts.Count} 個帳號），未逐則列出。" +
+                "此模式可能是 AD 自動化程序（例如每天以先清空再重建的方式同步群組成員的腳本）產生；" +
+                "未成對的異動仍逐則列出。",
+            Source = PermissionChangeSources.Netiq,
+            EventId = null
+        };
     }
 
     /// <summary>

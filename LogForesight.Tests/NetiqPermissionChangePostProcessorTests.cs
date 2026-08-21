@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -1198,5 +1198,200 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("PIPELINE_GROUP", record.Target);
         Assert.Equal("PipeAdmin", record.InitiatorAccount);
         Assert.Equal("PipeUser", record.TargetAccount);
+    }
+
+    // ── 例行同步成對合併（作業 C）────────────────────────────────────────────
+
+    /// <summary>AD 自動化（先清空再重建式同步）的成對異動測試資料：
+    /// 同一 (成員, 群組) 各一則新增與移除。</summary>
+    private static List<EventLogEntryData> SyncPairEvents(DateTime date, int pairCount, string groupPrefix = "GRP")
+    {
+        var events = new List<EventLogEntryData>();
+        for (var i = 0; i < pairCount; i++)
+        {
+            var msg = $"群組名稱: {groupPrefix}_{i}\r\n成員名稱: DOM1\\user{i}";
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddMinutes(i), Message = msg
+            });
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddMinutes(i).AddSeconds(30), Message = msg
+            });
+        }
+        return events;
+    }
+
+    [Fact]
+    public void 例行同步_達門檻時成對合併為一筆而未成對的仍逐則()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+        // 一則沒有配對的異動（只有新增、沒有對應的移除）
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(3),
+            Message = $"群組名稱: LONELY_GROUP\r\n成員名稱: DOM1\\lonely"
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        var summary = Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Contains($"{HostDayPostProcessor.RoutineSyncPairThreshold} 對", summary.AlertText);
+        Assert.Contains("先清空再重建", summary.AlertText);
+        Assert.Contains("未成對的異動仍逐則列出", summary.AlertText);
+
+        // 成對的都沒逐則寫，只剩那一則未成對的
+        var detailed = records.Where(r => r.ChangeType != HostDayPostProcessor.RoutineSyncChangeType).ToList();
+        Assert.Equal("LONELY_GROUP", Assert.Single(detailed).Target);
+    }
+
+    [Fact]
+    public void 例行同步_未達門檻時全部逐則且不產生彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var pairs = HostDayPostProcessor.RoutineSyncPairThreshold - 1;
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, pairs), date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Equal(pairs * 2, records.Count);
+        Assert.DoesNotContain(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+    }
+
+    /// <summary>特權群組的成對異動即使達門檻也逐則寫入——安全訊號不能被降噪機制吞掉。</summary>
+    [Fact]
+    public void 例行同步_特權群組的成對異動不併入彙總()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+        var privMsg = $"群組名稱: Domain Admins\r\n成員名稱: DOM1\\attacker";
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(4), Message = privMsg
+        });
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(4).AddSeconds(30), Message = privMsg
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        var priv = records.Where(r => r.Target == "Domain Admins").ToList();
+        Assert.Equal(2, priv.Count);                       // 新增與移除兩則都逐則保留，沒被併進彙總
+        // 特權旗標目前只標「加入特權群組」（移除尚未涵蓋，見 BACKLOG）——被排除在配對之外的
+        // 是「加入」那則；移除那則因此配不到對象，也自然留下
+        Assert.True(Assert.Single(priv, r => r.ChangeType == "成員新增").IsPrivilegedTarget);
+    }
+
+    [Fact]
+    public void 例行同步_同組多則只配成一對其餘逐則()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        // 門檻前一對由既有成對事件湊足，另加同一 (成員, 群組) 的 3 新增 + 1 移除
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold - 1);
+        var msg = $"群組名稱: MULTI_GROUP\r\n成員名稱: DOM1\\multi";
+        for (var i = 0; i < 3; i++)
+        {
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(5).AddSeconds(i), Message = msg
+            });
+        }
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(6), Message = msg
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        // 3 新增 1 移除只成 1 對，剩下 2 則新增仍逐則
+        var multi = records.Where(r => r.Target == "MULTI_GROUP").ToList();
+        Assert.Equal(2, multi.Count);
+        Assert.All(multi, r => Assert.Equal("成員新增", r.ChangeType));
+    }
+
+    [Fact]
+    public void 例行同步_重跑同一主機日不產生第二筆彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+    }
+
+    /// <summary>對數變動時更新既有彙總列，而不是長出第二筆（去重鍵不含計數）。</summary>
+    [Fact]
+    public void 例行同步_對數變動時更新既有彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+
+        // 回補後同一天多了幾對
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold + 5), date);
+
+        var summary = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Contains($"{threshold + 5} 對", summary.AlertText);
+    }
+
+    [Fact]
+    public void 例行同步_彙總列欄位形狀符合契約()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows,
+            SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold), date);
+
+        var summary = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+
+        Assert.Equal(PermissionCategory.Summary, summary.Category);
+        Assert.Equal(date.Date, summary.DetectedAt);
+        Assert.Equal("SRV-SYNC（例行同步）", summary.Target);
+        Assert.Equal(string.Empty, summary.Before);
+        Assert.Equal(string.Empty, summary.After);
+        Assert.Null(summary.EventId);
+        Assert.Null(summary.InitiatorAccount);
+        Assert.Null(summary.TargetAccount);
+        Assert.False(summary.IsPrivilegedTarget);
+        Assert.Equal(PermissionChangeSources.Netiq, summary.Source);
     }
 }

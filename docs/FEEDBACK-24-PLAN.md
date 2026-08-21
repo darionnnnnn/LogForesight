@@ -43,6 +43,8 @@
 委派模型：`gemini-3.7-flash-high`（開工前查：Gemini 週限 2%／五小時限 100%；
 Claude 池週限 0%——依 §3.5「Claude 池用罄時整輪切回 Gemini」）。
 「額度用完再自己做」指示仍適用：中斷則該段起由 Claude 接手。
+**實際：作業 C 開始時 agy 回報 `Individual quota reached`（Gemini 週限歸零、11.5 小時後重置；
+Claude 池本來就 0%），零產出。依使用者指示，作業 C 起全部由 Claude 自做。**
 
 | 作業 | 目標 | 依賴 | 執行 |
 |---|---|---|---|
