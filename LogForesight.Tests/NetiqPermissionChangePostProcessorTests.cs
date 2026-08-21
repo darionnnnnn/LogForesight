@@ -83,6 +83,39 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
 
+    // ── 回饋二十六輪作業 B：4670 物件欄位與彙總涵蓋區間 ─────────────────────────
+
+    [Fact]
+    public void Extract_4670Token_擷取物件類型與處理程序名稱()
+    {
+        var msg = @"物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security 物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe";
+
+        var details = PermissionChangeExtractor.Extract(msg, "權限變更", 4670);
+
+        Assert.Equal("Token", details.ObjectType);
+        Assert.Equal(@"C:\Windows\System32\svchost.exe", details.ProcessName);
+        Assert.Equal(string.Empty, details.Target);   // 物件名稱是「-」＝無值（既有行為不變）
+    }
+
+    [Theory]
+    [InlineData("Token", PermissionCategory.ObjectAcl)]
+    [InlineData("Key", PermissionCategory.ObjectAcl)]
+    [InlineData("File", PermissionCategory.FolderAcl)]
+    [InlineData("Directory", PermissionCategory.FolderAcl)]
+    [InlineData(null, PermissionCategory.FolderAcl)]      // 既有列沒有物件類型欄，分類不變
+    public void Resolve_4670依物件類型分流(string? objectType, string expected)
+    {
+        Assert.Equal(expected, PermissionCategory.Resolve("權限變更", 4670, objectType));
+    }
+
+    [Fact]
+    public void Resolve_非4670的權限變更不受物件類型影響()
+    {
+        // 本機監控來源的「權限新增（ACL 規則）」等值沒有 EventId，一律仍是資料夾權限異動
+        Assert.Equal(PermissionCategory.FolderAcl, PermissionCategory.Resolve("權限變更", null, "Token"));
+        Assert.Equal(PermissionCategory.FolderAcl, PermissionCategory.Resolve("權限新增（ACL 規則）", null, "Token"));
+    }
+
     [Fact]
     public void 主機日事件含4756_寫出一筆PermissionChangeRecord_欄位對應正確()
     {
@@ -1251,6 +1284,71 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         // 成對的都沒逐則寫，只剩那一則未成對的
         var detailed = records.Where(r => r.ChangeType != HostDayPostProcessor.RoutineSyncChangeType).ToList();
         Assert.Equal("LONELY_GROUP", Assert.Single(detailed).Target);
+    }
+
+    [Fact]
+    public void 例行同步_彙總列寫入涵蓋起訖時間與對數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var pairs = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, pairs), date);
+
+        var summary = store.Query(null, null, 1000)
+            .Single(r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+
+        // 彙總列自己的 DetectedAt 只有日期；涵蓋區間取被合併事件的首末時間
+        Assert.Equal(date.Date, summary.DetectedAt);
+        Assert.Equal(date, summary.CoveredFrom);
+        Assert.Equal(date.AddMinutes(pairs - 1).AddSeconds(30), summary.CoveredTo);
+        Assert.Equal(pairs, summary.PairCount);
+    }
+
+    [Fact]
+    public void 例行同步_同一主機日再次執行時更新涵蓋區間與對數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        // 第一次：剛好達門檻
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+
+        // 第二次：同一主機日多了幾對（去重鍵不含對數，走的是更新既有列的路徑）
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold + 5), date);
+
+        var summaries = store.Query(null, null, 1000)
+            .Where(r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType)
+            .ToList();
+
+        var summary = Assert.Single(summaries);        // 仍只有一筆，不是新增第二筆
+        Assert.Equal(threshold + 5, summary.PairCount);
+        Assert.Equal(date.AddMinutes(threshold + 4).AddSeconds(30), summary.CoveredTo);
+    }
+
+    [Fact]
+    public void 例行同步_逐則列不帶涵蓋區間與對數()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows,
+            SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold - 1), date);
+
+        Assert.All(store.Query(null, null, 1000), r =>
+        {
+            Assert.Null(r.CoveredFrom);
+            Assert.Null(r.CoveredTo);
+            Assert.Null(r.PairCount);
+        });
     }
 
     [Fact]

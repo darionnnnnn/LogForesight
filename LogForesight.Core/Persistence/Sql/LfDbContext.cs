@@ -319,6 +319,12 @@ public class LfDbContext : DbContext
             e.Property(x => x.IsPrivilegedTarget).HasColumnName("is_privileged_target");
             e.Property(x => x.InitiatorAccount).HasColumnName("initiator_account").HasMaxLength(255);
             e.Property(x => x.TargetAccount).HasColumnName("target_account").HasMaxLength(255);
+            e.Property(x => x.ObjectType).HasColumnName("object_type").HasMaxLength(64);
+            // 處理程序名稱是完整路徑，不設長度上限（同 target 欄的理由）
+            e.Property(x => x.ProcessName).HasColumnName("process_name");
+            e.Property(x => x.CoveredFrom).HasColumnName("covered_from");
+            e.Property(x => x.CoveredTo).HasColumnName("covered_to");
+            e.Property(x => x.PairCount).HasColumnName("pair_count");
             e.Property(x => x.BeforeValue).HasColumnName("before_value");
             e.Property(x => x.AfterValue).HasColumnName("after_value");
             e.Property(x => x.AlertText).HasColumnName("alert_text");
@@ -557,6 +563,19 @@ public class PermissionChangeRow
     public bool IsPrivilegedTarget { get; set; }
     public string? InitiatorAccount { get; set; }
     public string? TargetAccount { get; set; }
+
+    /// <summary>4670 的物件類型／處理程序名稱（見 PermissionChangeRecord）</summary>
+    public string? ObjectType { get; set; }
+
+    public string? ProcessName { get; set; }
+
+    /// <summary>彙總列涵蓋的事件時間區間與對數（逐則列為 null，見 PermissionChangeRecord）</summary>
+    public DateTime? CoveredFrom { get; set; }
+
+    public DateTime? CoveredTo { get; set; }
+
+    public int? PairCount { get; set; }
+
     public string BeforeValue { get; set; } = string.Empty;
     public string AfterValue { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;

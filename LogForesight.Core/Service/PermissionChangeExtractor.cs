@@ -10,7 +10,11 @@ public readonly record struct PermissionExtractedDetails(
     string Before,
     string After,
     string? InitiatorAccount,
-    string? TargetAccount);
+    string? TargetAccount,
+    /// <summary>4670 的物件類型（Token／File／Key…），訊息未提供時為 null</summary>
+    string? ObjectType = null,
+    /// <summary>4670 的處理程序名稱（完整路徑），訊息未提供時為 null</summary>
+    string? ProcessName = null);
 
 /// <summary>
 /// 權限異動自訂欄位對應（四個語意角色：操作者帳號、成員帳號、群組名稱、物件名稱）。
@@ -173,6 +177,8 @@ public static class PermissionChangeExtractor
         public string? AccessGranted { get; set; }
         public string? AccessRemoved { get; set; }
         public string? AccessRight { get; set; }
+        public string? ObjectType { get; set; }
+        public string? ProcessName { get; set; }
     }
 
     /// <summary>
@@ -323,7 +329,8 @@ public static class PermissionChangeExtractor
             after = parsed.NewSecDesc ?? string.Empty;
         }
 
-        return new PermissionExtractedDetails(target, before, after, initiatorAccount, targetAccount);
+        return new PermissionExtractedDetails(
+            target, before, after, initiatorAccount, targetAccount, parsed.ObjectType, parsed.ProcessName);
     }
 
     /// <summary>
@@ -447,6 +454,15 @@ public static class PermissionChangeExtractor
                 else if (IsKey(key, "Object Name", "物件名稱"))
                 {
                     fields.ObjectName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Object Type", "物件類型"))
+                {
+                    // 4670 的重點：Token／Key 這類非檔案物件與資料夾權限異動是兩回事
+                    fields.ObjectType ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Process Name", "處理程序名稱"))
+                {
+                    fields.ProcessName ??= CleanValue(value);
                 }
                 else if (IsKey(key, "Original Security Descriptor", "原始安全性描述元"))
                 {

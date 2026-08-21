@@ -24,6 +24,7 @@ import {
 } from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
+import { bindRangeChips } from '../core/date-range.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -682,14 +683,28 @@ function renderIssueView() {
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         {
             title: '主機數 / 主機日',
-            className: 'text-end text-nowrap',
+            // 兩個數字上下兩行（回饋二十六輪 E1）：單行 nowrap 時這一欄要 12 個字寬，
+            // 依問題視角有 12 欄，寬度全被少數幾欄吃掉
+            className: 'text-end',
             sortKey: 'hostCount', sortDefaultDir: 'desc',
             renderHeader: () => headerWithHelp('主機數 / 主機日', '在本次查詢日期區間內，曾出現此問題的相異主機總台數（台），以及累計出現的主機日總數（主機日，即展開明細的總筆數）。', '主機數與主機日'),
-            render: i => `${formatNumber(i.hostCount)} 台 / ${formatNumber(i.dayCount)} 主機日`
+            render: i => {
+                const wrap = document.createElement('div');
+                const hosts = document.createElement('div');
+                hosts.className = 'text-nowrap';
+                hosts.textContent = `${formatNumber(i.hostCount)} 台`;
+                const days = document.createElement('div');
+                days.className = 'small text-muted text-nowrap';
+                days.textContent = `${formatNumber(i.dayCount)} 主機日`;
+                wrap.append(hosts, days);
+                return wrap;
+            }
         },
         {
             title: 'vs 基準',
-            className: 'text-nowrap',
+            // 徽章與基準說明各自一行（E1）：不 nowrap 整欄，由 issueBaselineCell 內部
+            // 對「基準 N 台/日 → M 台」那一行自己保 nowrap
+            className: '',
             renderHeader: () => headerWithHelp('vs 基準', '最近一次出現時的受影響主機數，與過去 30 天歷史中位數（基準台數/日）的比較。倍數大於等於 2（紅色）代表異常擴散，1 到 2 之間（灰色）為正常波動，小於 1（綠色「收斂」）代表影響範圍已低於平時基準。', 'vs 基準線'),
             render: i => issueBaselineCell(i)
         },
@@ -979,12 +994,23 @@ function issueGroupCell(group) {
     title.textContent = `${group.source} (${group.eventId})`;
     wrap.appendChild(title);
 
-    // 白話說明：在來源(EventId)之下多一行，null 時不佔行；單行截斷、設最大寬度、hover/focus 可看完整內容
-    if (group.plainExplanation) {
+    // 白話說明：在來源(EventId)之下多一行；單行截斷、設最大寬度、hover/focus 可看完整內容。
+    // 沒有說明且分類是「其他」時改顯示固定句（回饋二十六輪 E3）——「其他」在定義上就是
+    // 沒命中任何規則的收容分類，整欄留白會讓人以為是資料漏了，而不是「本來就沒有規則」。
+    // 兩種都沒有才補固定句：knownIssue（規則描述快照）本身就是說明，兩行都補會變成廢話
+    const fallbackExplanation = group.knownIssue
+        ? null
+        : (group.category === 'Other'
+            ? '未命中任何規則的事件，分類為其他'
+            : '這個問題的規則沒有填寫白話說明');
+    const explanationText = group.plainExplanation || fallbackExplanation;
+    if (explanationText) {
         const explanation = document.createElement('div');
         explanation.className = 'lf-issue-explanation';
-        explanation.textContent = group.plainExplanation;
-        explanation.title = group.plainExplanation;
+        explanation.textContent = explanationText;
+        explanation.title = group.plainExplanation
+            ? explanationText
+            : '沒有可顯示的白話說明。可在「規則維護」為這個事件建立規則或補上說明。';
         explanation.tabIndex = 0;
         wrap.appendChild(explanation);
     }
@@ -1028,7 +1054,8 @@ function detailForIssue(group) {
  */
 function issueActionsCell(group) {
     const wrap = document.createElement('div');
-    wrap.className = 'd-flex gap-2 justify-content-end';
+    // 直排（E1）：三顆按鈕橫排時這一欄約 15 個字寬，是全表最寬的欄之一
+    wrap.className = 'd-flex flex-column gap-1 align-items-end';
 
     // 「是我的案件」還不夠，還要「動得了」（體檢 H2）：被指派但沒有 Handle 能力的人
     // （manager／dev／未分群組且非負責人）過去看得到這顆按鈕，按下去必定 403。
@@ -1823,21 +1850,11 @@ document.getElementById('view-toggle').addEventListener('click', event => {
     search();
 });
 
-for (const button of document.querySelectorAll('[data-range]')) {
-    button.addEventListener('click', () => {
-        const days = Number(button.dataset.range);
-        // 期間終點錨在昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
-        const to = new Date();
-        to.setDate(to.getDate() - 1);
-        const from = new Date(to);
-        from.setDate(from.getDate() - days + 1);
-
-        document.getElementById('filter-from').value = toLocalDateString(from);
-        document.getElementById('filter-to').value = toLocalDateString(to);
-        currentPage = 1;
-        search();
-    });
-}
+bindRangeChips({
+    fromInput: document.getElementById('filter-from'),
+    toInput: document.getElementById('filter-to'),
+    onApply: () => { currentPage = 1; search(); }
+});
 
 /** 複製為 CSV：前端序列化當前頁，零後端成本（§8.6-7）。欄位隨視角而異 */
 document.getElementById('btn-copy-csv').addEventListener('click', async () => {

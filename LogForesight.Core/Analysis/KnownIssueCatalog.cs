@@ -328,11 +328,43 @@ public static class KnownIssueCatalog
         return KnownIssueSeed.CreateRules();
     }
 
-    /// <summary>命中規則的白話說明；未命中或規則沒寫說明時為 null（讓呼叫端據此決定要不要佔行）。</summary>
+    /// <summary>
+    /// 命中規則的白話說明；未命中或規則沒寫說明時為 null（讓呼叫端據此決定要不要佔行）。
+    ///
+    /// **EventId 0 走 Linux 規則**：Linux 事件的 EventId 恆為 0、Source 是 program
+    /// （<c>SentinelEventMapper.MapLinux</c>），(來源, EventId) 這組聚合鍵在 Windows 規則裡
+    /// 永遠找不到東西，過去導致 Linux 問題的白話說明恆為 null。這裡改以 program 比對
+    /// Linux 規則；聚合層沒有訊息內容，無法套 MessagePatterns，因此**只在恰好一條規則
+    /// 命中該 program 時**才給說明——兩條以上時給不出「是哪一種」，寧可不顯示也不要顯示錯的。
+    /// </summary>
     public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
     {
-        var rule = FindRule(rules, source, eventId);
+        var rule = eventId == 0
+            ? FindLinuxRuleByProgram(rules, source)
+            : FindRule(rules, source, eventId);
         return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 只用 program 比對 Linux 規則（聚合層沒有訊息內容可套 MessagePatterns）。
+    /// 命中零條或兩條以上都回 null——聚合層無從判斷是哪一種問題。
+    /// </summary>
+    public static KnownIssueRule? FindLinuxRuleByProgram(IReadOnlyList<KnownIssueRule> rules, string program)
+    {
+        if (string.IsNullOrWhiteSpace(program)) return null;
+
+        KnownIssueRule? found = null;
+        foreach (var rule in rules)
+        {
+            if (!rule.Enabled || rule.Platform != "linux") continue;
+            if (string.IsNullOrEmpty(rule.ProgramPattern)) continue;
+            if (!program.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (found != null) return null;   // 不只一條命中：說不出是哪一種，不給說明
+            found = rule;
+        }
+
+        return found;
     }
 
     public static KnownIssueRule? FindRule(string source, int eventId) => FindRule(Rules, source, eventId);

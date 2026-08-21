@@ -6,6 +6,7 @@
 import { api } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { withBusy } from '../core/ui.js';
+import { initBrandAlign } from '../core/brand-align.js';
 
 const form = document.getElementById('lf-login-form');
 const accountInput = document.getElementById('account');
@@ -81,3 +82,5 @@ function hideError() {
 }
 
 init();
+
+initBrandAlign();

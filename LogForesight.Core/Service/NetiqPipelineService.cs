@@ -98,7 +98,7 @@ public class NetiqPipelineService
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
-        IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
+        IRiskyEventStore? riskyEventStore = null, int? riskyEventRetentionDays = null, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
@@ -116,7 +116,7 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
-        _riskyEventRetentionDays = riskyEventRetentionDays;
+        _riskyEventRetentionDays = riskyEventRetentionDays ?? SystemSettings.DefaultRiskyEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
         _onlyMissingOrFailed = onlyMissingOrFailed;

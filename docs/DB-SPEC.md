@@ -285,6 +285,11 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   is_privileged_target bit NOT NULL                     -- 加入特權群組＝高風險
   initiator_account    nvarchar(255) NULL               -- 操作者（NetIQ sun 或訊息 Subject 區段）
   target_account       nvarchar(255) NULL               -- 被異動的成員／目標帳號
+  object_type          nvarchar(64) NULL                -- 4670 的物件類型（Token／File／Key…），決定類別分流與句型
+  process_name         nvarchar(max) NULL               -- 4670 的處理程序名稱（完整路徑，不設長度上限同 target）
+  covered_from         datetime2 NULL                   -- 彙總列涵蓋的首筆事件時間（逐則列與既有列為 NULL）
+  covered_to           datetime2 NULL                   -- 彙總列涵蓋的末筆事件時間
+  pair_count           int NULL                         -- 彙總列合併掉的成對數（AlertText 裡的數字是給人看的句子，不可拿來排序）
   before_value         nvarchar(max) NOT NULL
   after_value          nvarchar(max) NOT NULL
   alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字
@@ -407,7 +412,10 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | `DetailRetentionDays` | 120 | `lf_daily_records.content_json`（風險日詳情的原始樣本訊息）——**只清內容、整列保留** |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，見其定義區塊） |
 | `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
-| `RiskyEventRetentionDays` | 14 | `lf_risky_events`（風險 log 暫存） |
+| `RiskyEventRetentionDays` | 90 | `lf_risky_events`（風險 log 暫存） |
+
+六個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
+讀取端不 clamp，既有部署存過的較短天數照舊生效。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
 NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只對跑分析的那台機器生效

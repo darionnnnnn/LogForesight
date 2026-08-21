@@ -149,6 +149,19 @@ internal static class SchemaUpgrader
             "IX_lf_permission_changes_category_status", "category, status");
         AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
             "IX_lf_permission_changes_created_at", "created_at");
+
+        // 4670 的物件類型／處理程序名稱，與彙總列的涵蓋區間／對數（回饋二十六輪作業 B）。
+        // 皆可為 null：既有列與逐則列本來就沒有這些值，不回填。
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "object_type",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "process_name",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "covered_from",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "covered_to",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "pair_count",
+            isSqlite ? "INTEGER NULL" : "int NULL");
     }
 
 

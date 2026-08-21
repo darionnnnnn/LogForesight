@@ -171,11 +171,11 @@ public class SystemSettingsService : ISystemSettingsService
         // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
         var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
         if (brandName.Length > BrandTextMaxLength)
-            throw DomainException.Validation($"產品名稱不可超過 {BrandTextMaxLength} 個字。");
+            throw DomainException.Validation($"主標題不可超過 {BrandTextMaxLength} 個字。");
 
         var brandSubtitle = (request.BrandSubtitle ?? "").Trim();
         if (brandSubtitle.Length > BrandTextMaxLength)
-            throw DomainException.Validation($"副標文字不可超過 {BrandTextMaxLength} 個字。");
+            throw DomainException.Validation($"副標題不可超過 {BrandTextMaxLength} 個字。");
 
         var brandIcon = ValidateBrandIcon(request.BrandIconDataUri);
 
@@ -406,7 +406,7 @@ public class SystemSettingsService : ISystemSettingsService
     /// <summary>名稱空白時回退的出廠名（與 <see cref="SystemSettings.BrandName"/> 初始值同源）</summary>
     private static readonly string DefaultBrandName = new SystemSettings().BrandName;
 
-    /// <summary>產品名稱／副標的長度上限：側欄寬度固定，再長也只會被 text-truncate 切掉</summary>
+    /// <summary>主標題／副標題的長度上限：側欄寬度固定，再長也只會被 text-truncate 切掉</summary>
     private const int BrandTextMaxLength = 40;
 
     /// <summary>自訂圖示解碼後的大小上限（KB）。側欄顯示尺寸約 30px，64KB 綽綽有餘；

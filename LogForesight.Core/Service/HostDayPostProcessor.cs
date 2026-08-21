@@ -184,10 +184,12 @@ public static class HostDayPostProcessor
                     DetectedAt = evt.TimeGenerated,
                     Target = details.Target,
                     ChangeType = changeType,
-                    Category = PermissionCategory.Resolve(changeType, evt.EventId),
+                    Category = PermissionCategory.Resolve(changeType, evt.EventId, details.ObjectType),
                     IsPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(details.Target, changeType),
                     InitiatorAccount = details.InitiatorAccount,
                     TargetAccount = details.TargetAccount,
+                    ObjectType = details.ObjectType,
+                    ProcessName = details.ProcessName,
                     Before = details.Before,
                     After = details.After,
                     AlertText = alertText,
@@ -273,12 +275,17 @@ public static class HostDayPostProcessor
                 paired.Add(removed[i]);
             }
 
+
             pairCount += pairs;
             groups.Add(group.Key.Target);
             accounts.Add(group.Key.Account);
         }
 
         if (pairCount < RoutineSyncPairThreshold) return null;
+
+        // 涵蓋區間取被合併掉那些事件的首末時間（彙總列自己的 DetectedAt 只有日期）
+        var coveredFrom = paired.Min(r => r.DetectedAt);
+        var coveredTo = paired.Max(r => r.DetectedAt);
 
         records.RemoveAll(paired.Contains);
 
@@ -301,7 +308,10 @@ public static class HostDayPostProcessor
                 "此模式可能是 AD 自動化程序（例如每天以先清空再重建的方式同步群組成員的腳本）產生；" +
                 "未成對的異動仍逐則列出。",
             Source = PermissionChangeSources.Netiq,
-            EventId = null
+            EventId = null,
+            CoveredFrom = coveredFrom,
+            CoveredTo = coveredTo,
+            PairCount = pairCount
         };
     }
 

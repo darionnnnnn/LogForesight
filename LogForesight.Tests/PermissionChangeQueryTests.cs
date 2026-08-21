@@ -658,7 +658,7 @@ public sealed class PermissionChangeQueryTests : IDisposable
     }
 
     [Fact]
-    public void SummaryText_權限異動彙總summary類別_維持現行類別前綴與AlertText不變()
+    public void SummaryText_summary類別_句首不含類別標籤只留對象與AlertText()
     {
         var record = new PermissionChangeRecord
         {
@@ -670,7 +670,66 @@ public sealed class PermissionChangeQueryTests : IDisposable
         };
 
         var summary = PermissionChangeService.GenerateSummaryText(record);
-        Assert.Equal("權限異動彙總：SRV-01 共 12 筆權限異動", summary);
+        Assert.Equal("SRV-01 共 12 筆權限異動", summary);
+        Assert.DoesNotContain("權限異動彙總", summary);
+    }
+
+    // ── 回饋二十六輪作業 B3：4670 物件權限變更 ──────────────────────────────
+
+    [Fact]
+    public void SummaryText_4670物件權限變更_以物件類型與處理程序組句_不說路徑()
+    {
+        var record = new PermissionChangeRecord
+        {
+            ChangeId = "obj-1",
+            Category = PermissionCategory.ObjectAcl,
+            ChangeType = "權限變更",
+            EventId = 4670,
+            Target = string.Empty,                    // 4670 的 Token 物件常見「物件名稱: -」
+            InitiatorAccount = @"CORP\TP-CRECDC11$",
+            ObjectType = "Token",
+            ProcessName = @"C:\Windows\System32\svchost.exe"
+        };
+
+        var summary = PermissionChangeService.GenerateSummaryText(record);
+
+        Assert.Contains("Token 物件", summary);
+        Assert.Contains("svchost.exe", summary);
+        Assert.Contains("TP-CRECDC11$", summary);
+        Assert.DoesNotContain("未能解析路徑", summary);
+        Assert.DoesNotContain(@"C:\Windows\System32", summary);   // 完整路徑不入句，只留檔名
+    }
+
+    [Fact]
+    public void MapToDto_帶出物件類型處理程序與彙總涵蓋區間()
+    {
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "obj-dto-1",
+                HostName = "SRV-01",
+                DetectedAt = new DateTime(2026, 8, 18, 10, 44, 0),
+                Target = string.Empty,
+                ChangeType = "權限變更",
+                Category = PermissionCategory.ObjectAcl,
+                EventId = 4670,
+                ObjectType = "Token",
+                ProcessName = @"C:\Windows\System32\svchost.exe",
+                CoveredFrom = new DateTime(2026, 8, 18, 1, 5, 0),
+                CoveredTo = new DateTime(2026, 8, 18, 2, 30, 0),
+                PairCount = 51,
+                Source = PermissionChangeSources.Netiq
+            }
+        });
+
+        var dto = CreateService().Query(new PermissionChangeQueryRequest()).Items.Single();
+
+        Assert.Equal("Token", dto.ObjectType);
+        Assert.Equal(@"C:\Windows\System32\svchost.exe", dto.ProcessName);
+        Assert.Equal(new DateTime(2026, 8, 18, 1, 5, 0), dto.CoveredFrom);
+        Assert.Equal(new DateTime(2026, 8, 18, 2, 30, 0), dto.CoveredTo);
+        Assert.Equal(51, dto.PairCount);
     }
 
     [Fact]

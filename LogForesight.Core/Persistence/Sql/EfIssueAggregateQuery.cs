@@ -83,9 +83,13 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
                 g.Key.SourceUpper,
                 Source = g.Min(x => x.SourceName) ?? g.Key.SourceUpper,
                 g.Key.EventId,
-                // 類別由規則以簽章為鍵決定，同一組內恆定——取 MIN 只是為了在 SQL 端
-                // 有個確定性的選法，不必為此多一趟「哪個類別出現最多」的 GROUP BY
-                Category = g.Min(x => x.Category),
+                // 類別在同一組內**不**恆定：category 是分析當下寫入的快照，規則新增／改分類／
+                // 停用之後，同一個簽章的歷史列會留著舊分類。過去取 MIN（字串字典序）等於
+                // 讓「Other」永遠贏過 Resource／Security／Service／Storage——只要這個簽章
+                // 歷史上有任何一天沒命中規則，整組就永久黏在「其他」。改由 LatestCategories
+                // 取最近一天的分類（見下方輕量查詢）。這裡只留一個回退值，
+                // 供 LatestCategories 查不到該簽章時使用（理論上不會發生，兩邊同一組篩選條件）。
+                FallbackCategory = g.Min(x => x.Category),
                 MaxSeverityRank = g.Max(x => x.SeverityRank),
                 Elevates = g.Max(x => x.ElevatesDayRisk ? 1 : 0),
                 ActiveDays = g.Select(x => x.RecordDate).Distinct().Count(),
@@ -102,6 +106,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var hostCounts = SurvivingHostCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
         var hostDays = SurvivingHostDayCounts(ctx, f, t, expandedHostIds, aliasIndex, visibleRanks, riskLevels);
         var signatures = DistinctSignatures(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
+        var latestCategories = LatestCategories(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
 
         var result = grouped.Select(g =>
         {
@@ -110,7 +115,9 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             {
                 Source = g.Source,
                 EventId = g.EventId,
-                Category = g.Category ?? string.Empty,
+                // 查不到時回退到組內既有類別（與 AggregateByCategory 同一個回退，
+                // 兩邊回退不同會正好在異常情境下讓卡片與下鑽再度分岔）
+                Category = latestCategories.TryGetValue(key, out var cat) ? cat : (g.FallbackCategory ?? string.Empty),
                 // 舊資料相容（LegacySeverityRank）：SQL 端存的是三級化前寫入的原始值（Critical=3），
                 // blob 路徑在讀取時正規化成 High＋elevates，這裡是同一條規則的 SQL 端版本——
                 // 沒有這一步，依問題視角與重點問題卡會顯示「Critical」而報表／詳情頁顯示「高，重大」，
@@ -891,7 +898,6 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return trend;
     }
 
-
     public List<CategoryAggregate> AggregateByCategory(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? allowedSeverities,
         IReadOnlySet<string>? riskLevels = null)
@@ -907,10 +913,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
 
         var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= f && x.RecordDate <= t);
 
+        HashSet<long>? expandedHostIds = null;
         if (hostIds != null)
         {
-            var expanded = ExpandToAliasIds(aliasIndex, hostIds);
-            q = q.Where(x => expanded.Contains(x.HostId));
+            expandedHostIds = ExpandToAliasIds(aliasIndex, hostIds);
+            q = q.Where(x => expandedHostIds.Contains(x.HostId));
         }
 
         q = ApplyRiskLevels(ctx, q, f, t, riskLevels);
@@ -939,17 +946,20 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .ToList();
 
         // 一個問題只歸一個類別：同一個 (Source, EventId) 的列可能帶不同 category（規則調整過、
-        // 或部分主機日未命中規則而落 Other）。依問題視角用 MIN(category) 收斂成單一類別
-        // （見 Aggregate），卡片這邊若照原始列的類別各算一次，同一個問題會被兩張卡都算進去，
-        // 點進去卻只出現在其中一張——卡片數字與下鑽筆數就差在這裡。
-        var canonicalCategory = riskItems
-            .GroupBy(x => (Source: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
-            .ToDictionary(g => g.Key, g => g.Min(x => x.Category));
+        // 或部分主機日未命中規則而落 Other）。卡片這邊若照原始列的類別各算一次，同一個問題
+        // 會被兩張卡都算進去，點進去卻只出現在其中一張——卡片數字與下鑽筆數就差在這裡。
+        //
+        // 收斂方式必須與 Aggregate（依問題視角）**完全相同**：取該簽章最近一天的類別。
+        // 兩邊用不同的收斂規則，等於卡片與下鑽各講一套。
+        var canonicalCategory = LatestCategories(ctx, f, t, expandedHostIds, visibleRanks, riskLevels);
 
         var result = riskItems
             .Select(x => new
             {
-                Category = canonicalCategory[((x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId)],
+                Category = canonicalCategory.TryGetValue(
+                    ((x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId), out var cat)
+                    ? cat
+                    : x.Category,
                 x.HostId,
                 x.SourceName,
                 x.EventId,
@@ -1315,6 +1325,44 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             .ToDictionary(
                 g => g.Key,
                 g => g.Select(x => (Surviving(aliasIndex, x.HostId), x.RecordDate)).Distinct().Count());
+    }
+
+    /// <summary>
+    /// 每個簽章「最近一天」的類別。
+    ///
+    /// 類別是分析當下的快照，規則變更後歷史列不會回頭改；聚合時若取字典序最小值，
+    /// 只要歷史上出現過一次「Other」，整組就永久顯示為其他（規則後來已能正確分類也一樣）。
+    /// 取 record_date 最大那天的分類才反映現況。
+    ///
+    /// 查的是去重後的 (來源, EventId, 日期, 類別) 四元組，不是原始列——筆數是簽章數×天數等級，
+    /// 遠小於逐主機日的列數，與其他三趟輕量查詢同一個作法。
+    /// </summary>
+    private static Dictionary<(string, int), string> LatestCategories(
+        LfDbContext ctx, DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<int>? visibleRanks = null, IReadOnlySet<string>? riskLevels = null)
+    {
+        var q = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= from && x.RecordDate <= to);
+        q = ApplyRiskLevels(ctx, q, from, to, riskLevels);
+        if (hostIds != null)
+        {
+            var ids = hostIds.ToList();
+            q = q.Where(x => ids.Contains(x.HostId));
+        }
+        if (visibleRanks != null) q = q.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+        return q
+            .Select(x => new { x.SourceName, x.EventId, x.RecordDate, x.Category })
+            .Distinct()
+            .ToList()
+            .GroupBy(x => (SourceUpper: (x.SourceName ?? string.Empty).ToUpperInvariant(), x.EventId))
+            .ToDictionary(
+                g => g.Key,
+                // 同一天可能有多個類別（規則在當天中途被改）：字典序當決勝條件，
+                // 只為了讓結果穩定，不是語意上的選擇
+                g => g.OrderByDescending(x => x.RecordDate)
+                      .ThenBy(x => x.Category, StringComparer.Ordinal)
+                      .Select(x => x.Category)
+                      .FirstOrDefault() ?? string.Empty);
     }
 
     /// <summary>

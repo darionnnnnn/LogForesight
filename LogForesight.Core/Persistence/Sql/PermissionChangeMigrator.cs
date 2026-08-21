@@ -208,7 +208,11 @@ public sealed class PermissionChangeMigrator
             // 已經在表裡的（上次遷移搬過、或本來就是新格式寫入的）跳過，避免撞 change_id 唯一索引
             if (existingChangeIds.Contains(record.ChangeId)) continue;
 
-            var category = PermissionCategory.Resolve(record.ChangeType, record.EventId);
+            // 4670 的物件類型決定它是資料夾權限還是物件權限：從原始訊息剖出來再判類別，
+            // 少了它遷移進來的 Token／登錄機碼列會先被歸成資料夾權限異動
+            var details = PermissionChangeExtractor.Extract(
+                record.AlertText, record.ChangeType ?? string.Empty, record.EventId ?? 0);
+            var category = PermissionCategory.Resolve(record.ChangeType, record.EventId, details.ObjectType);
             var isPrivilegedTarget = PermissionCategory.IsPrivilegedTarget(record.Target, record.ChangeType);
             var (initiatorAccount, targetAccount) = PermissionChangeExtractor.ExtractAccounts(
                 record.AlertText,
@@ -236,7 +240,9 @@ public sealed class PermissionChangeMigrator
                 AfterValue = record.After ?? string.Empty,
                 AlertText = record.AlertText ?? string.Empty,
                 Source = string.IsNullOrWhiteSpace(record.Source) ? PermissionChangeSources.Local : record.Source,
-                EventId = record.EventId
+                EventId = record.EventId,
+                ObjectType = details.ObjectType,
+                ProcessName = details.ProcessName
             };
 
             if (confirmMap.TryGetValue(record.ChangeId, out var confirm))

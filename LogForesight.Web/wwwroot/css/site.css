@@ -90,7 +90,7 @@
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
        （見下方 html 規則的說明）——原本固定 px 時，2K 螢幕＋「大字級」偏好疊加後根字級衝到
-       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-sidebar__brand-name
+       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-brand__name
        的省略號截斷成「LogForesig...」。15.25rem 是原 244px 换算（244÷16），預設字級下畫面
        完全不變，只有字級被放大時側欄才跟著等比變寬。 */
     --lf-sidebar-width: 15.25rem;
@@ -480,53 +480,37 @@ body {
     align-self: flex-start;
 }
 
-.lf-sidebar__brand {
+/* ── 品牌區塊（側欄／登入頁共用，Views/Shared/_Brand.cshtml）──────────────────
+   兩處原本各有一份結構與樣式（平行複製），改為同一份：尺寸差異全部收斂成
+   .lf-brand--sidebar／--login 覆寫的四個變數，結構與對齊規則只有一套。
+
+   副標題的對齊由 core/brand-align.js 量測後決定（docs/WEB-SPEC.md §9.9b 2d）：
+   比主標題窄時撐 letter-spacing 左右貼齊、比主標題寬時靠左＋省略號。 */
+.lf-brand {
+    --lf-brand-mark-size: 2.75rem;
+    --lf-brand-name-size: 1.6rem;
+    --lf-brand-subtitle-size: .92rem;
+    --lf-brand-mark-radius: var(--lf-radius-sm);
+
     display: flex;
-    /* align-items:stretch：有副標時兩行文字的自然高度可能超過 .lf-sidebar__brand-mark
-       的基準高度——固定 center 對齊時圖示不會跟著撐高，導致圖示沒對齊到文字的上下邊界。
-       stretch 讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，
-       不管有無副標。 */
+    /* align-items:stretch：有副標時兩行文字的自然高度可能超過圖示，stretch 讓文字區
+       撐到自然高度，圖示則以 align-self:center 維持正方形並置中（見 .lf-brand__mark） */
     align-items: stretch;
-    /* 整組（圖示＋文字）在側欄裡置中，文字本身仍靠左貼著圖示——文字區用 flex:0 1 auto
-       （見 .lf-sidebar__brand-text）才不會吃滿剩餘空間把整組推回左邊 */
+    /* 整組（圖示＋文字）置中，文字本身仍靠左貼著圖示——文字區用 flex:0 1 auto
+       才不會吃滿剩餘空間把整組推回左邊 */
     justify-content: center;
     gap: var(--lf-space-2);
-    /* 左右內距用 space-3：側欄總寬固定（--lf-sidebar-width），品牌名稱能用的水平空間
-       ＝總寬扣掉圖示、gap 與左右內距。字級放大後這裡每縮一級都是名稱能顯示的字數。 */
-    padding: var(--lf-space-4) var(--lf-space-3);
-    font-size: var(--lf-font-size-2xl);
-    font-weight: 700;
-    color: #fff;
-    letter-spacing: .01em;
-    border-bottom: 1px solid rgba(255, 255, 255, .07);
     text-decoration: none;
-    cursor: pointer;
-    transition: background-color var(--lf-transition);
 }
 
-.lf-sidebar__brand:hover {
-    background: var(--lf-sidebar-hover-bg);
-    color: #fff;
-}
-
-.lf-sidebar__brand:focus-visible {
-    outline: 2px solid var(--lf-sidebar-fg-strong);
-    outline-offset: -2px;
-}
-
-/* 回饋十三輪 G：品牌名稱過長時要優雅省略號而非撐版或裁一半的字——.lf-sidebar__brand-text
-   必須自己 min-width:0，flex 子項預設 min-width:auto 在部分瀏覽器/情境下不會縮到內容寬度以下
-   （見 #lf-current-user 的既有先例，docs/FEEDBACK-5-PLAN.md §3）。名稱與副標分開各自截斷——
-   原本兩者共用一個 text-truncate 容器，副標是 <small> 區塊子元素，不受父層 nowrap/ellipsis
-   保護，超長時會被硬裁斷、裁到字元一半也不留省略號。*/
-.lf-sidebar__brand-text {
+/* 品牌名稱過長時要優雅省略號而非撐版或裁一半的字：flex 子項預設 min-width:auto，
+   不寫 min-width:0 不會縮到內容寬度以下。主標題與副標題各自截斷——兩者共用一個
+   truncate 容器時，副標不受父層 nowrap/ellipsis 保護，超長會被硬裁到字元一半。 */
+.lf-brand__text {
     display: flex;
     flex-direction: column;
-    /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
-       預設值，寫出來是文件化意圖：不依賴父層設定不變）。
-       space-between：兩行文字上下撐滿圖示高度——首行頂貼、末行底貼，視覺上與圖示等高。
-       單行（無副標）時 space-between 等同貼頂，故另有 :not(:has(small)) 規則改回置中。
-       flex:0 1 auto 是「整組置中」的前提：吃滿剩餘寬度的話整組會被推回左邊。*/
+    /* space-between：兩行文字上下撐滿圖示高度——首行頂貼、末行底貼。
+       單行（無副標）時等同貼頂，故另有 :not(:has()) 規則改回置中。 */
     justify-content: space-between;
     align-self: stretch;
     min-width: 0;
@@ -534,69 +518,100 @@ body {
 }
 
 /* 沒有副標時只有一行，撐滿沒有意義——垂直置中對齊圖示中線 */
-.lf-sidebar__brand-text:not(:has(small)) {
+.lf-brand__text:not(:has(.lf-brand__subtitle)) {
     justify-content: center;
 }
 
-.lf-sidebar__brand-name {
+.lf-brand__name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* 貼齊靠父層的 space-between（首行頂貼、末行底貼）；行高壓到接近 1，否則行高留白
-       會讓字形離圖示邊緣還有一段空隙。
-       1.6rem 是**水平**上限：預設字級下側欄文字可用寬約 157px，「LogForesight」在 1.6rem／700
-       加上父層 letter-spacing 後約 150px，再大就會觸發省略號。側欄寬是固定值而字級會跟著
-       使用者的字級偏好放大，選「大字級」時餘裕會縮小——長品牌名在該情境下截斷屬預期。 */
-    font-size: 1.6rem;
+    /* 行高壓到接近 1：否則行高留白會讓字形離圖示邊緣還有一段空隙 */
+    font-size: var(--lf-brand-name-size);
     line-height: 1.05;
 }
 
-.lf-sidebar__brand-text small {
+.lf-brand__subtitle {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* .92rem 不在字級 token 階上：這裡的約束是「名稱＋副標兩行合計貼齊圖示高度」，
-       由名稱 1.6rem／兩行行高 1.05 反推而來，token 階（xs=.78）會讓副標離圖示下緣一截 */
-    font-size: .92rem;
+    /* 字級不在 token 階上：這裡的約束是「主標題＋副標題兩行合計貼齊圖示高度」，
+       由主標題字級與行高反推而來 */
+    font-size: var(--lf-brand-subtitle-size);
     font-weight: 400;
-    color: var(--lf-sidebar-section);
     line-height: 1.05;
     letter-spacing: 0;
 }
 
-/* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
-   視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
-   維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。
-   回饋十六輪批次E-2：再放大到 2.75rem，當時用 min-height 撐高圖示去對齊兩行文字，
-   結果有副標時文字自然高度（約 60px）超過 2.75rem，圖示被拉成瘦長矩形——自訂圖示
-   （PNG/JPG）用 object-fit:contain 雖不變形，但無 viewBox 的 SVG 會被真的拉伸，
-   內建向量圖示與外框漸層底看起來也不像正方形標記了（回饋十七輪批次H 修正）。
-   改回固定正方形＋置中對齊：aspect-ratio 鎖住比例，align-self:center 不再跟著父層
-   stretch 撐高——圖示永遠是乾淨的正方形，文字對齊（justify-content:space-between，
-   上方 .lf-sidebar__brand-text）不受影響，兩者各自表述而非互相牽動。 */
-.lf-sidebar__brand-mark {
+/* 圖示固定正方形＋置中：aspect-ratio 鎖住比例，align-self:center 不跟著父層 stretch
+   撐高——被拉成瘦長矩形時，無 viewBox 的 SVG 會真的變形，漸層底也不再像方形標記 */
+.lf-brand__mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.75rem;
+    width: var(--lf-brand-mark-size);
     aspect-ratio: 1 / 1;
     align-self: center;
-    border-radius: var(--lf-radius-sm);
+    border-radius: var(--lf-brand-mark-radius);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
     flex-shrink: 0;
 }
 
-.lf-sidebar__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
+.lf-brand__mark .lf-icon { width: 1.5rem; height: 1.5rem; }
 
-/* 自訂品牌圖示（docs/archive/FEEDBACK-10-PLAN.md §1）：上傳的圖片比例不一，contain 保證整張看得到
-   （cover 會裁掉邊角，logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
-.lf-sidebar__brand-img {
+/* 自訂品牌圖示：上傳的圖片比例不一，contain 保證整張看得到（cover 會裁掉邊角，
+   logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
+.lf-brand__img {
     width: 100%;
     height: 100%;
     object-fit: contain;
     border-radius: inherit;
+}
+
+/* 側欄變體：整塊是連結（可 hover／focus），底線分隔選單 */
+.lf-brand--sidebar {
+    /* 左右內距用 space-3：側欄總寬固定（--lf-sidebar-width），主標題能用的水平空間
+       ＝總寬扣掉圖示、gap 與左右內距 */
+    padding: var(--lf-space-4) var(--lf-space-3);
+    font-size: var(--lf-font-size-2xl);
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: .01em;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    cursor: pointer;
+    transition: background-color var(--lf-transition);
+}
+
+.lf-brand--sidebar .lf-brand__subtitle {
+    color: var(--lf-sidebar-section);
+}
+
+.lf-brand--sidebar:hover {
+    background: var(--lf-sidebar-hover-bg);
+    color: #fff;
+}
+
+.lf-brand--sidebar:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: -2px;
+}
+
+/* 登入頁變體：卡片裡的靜態區塊，尺寸略大 */
+.lf-brand--login {
+    --lf-brand-mark-size: 3rem;
+    --lf-brand-name-size: 1.85rem;
+    --lf-brand-subtitle-size: 1.02rem;
+    --lf-brand-mark-radius: var(--lf-radius);
+
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-5);
+    font-weight: 600;
+}
+
+.lf-brand--login .lf-brand__subtitle {
+    color: var(--lf-text-muted);
 }
 
 .lf-sidebar__nav {
@@ -1079,7 +1094,8 @@ a.lf-stat:hover .lf-card,
     min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
 }
 
-/* 甜甜圈中央的百分比文字（charts.js setCenterText） */
+/* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
+   這裡的值只是還沒算出來之前的起始字級 */
 .lf-chart__center-text {
     position: absolute;
     top: 50%;
@@ -1087,7 +1103,24 @@ a.lf-stat:hover .lf-card,
     transform: translate(-50%, -50%);
     font-size: 1.25rem;
     font-weight: 600;
+    line-height: 1;
     pointer-events: none;
+}
+
+/* 空資料狀態（charts.js renderNoData）：canvas 留在原地只是藏起來，
+   換一個有資料的期間時 create() 會把它放回來 */
+.lf-chart--empty > canvas {
+    visibility: hidden;
+}
+
+.lf-chart--empty > .lf-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--lf-space-2);
 }
 
 /* 圓餅圖右側文字條列（#3，取代表格切換）：色點＋名稱＋數值/百分比，
@@ -1097,6 +1130,32 @@ a.lf-stat:hover .lf-card,
     flex-direction: column;
     gap: var(--lf-space-2);
     min-width: 140px;
+}
+
+/* 三顆占比小圖並排時，卡片標題的字數不同（「風險層級占比」6 字／「受影響主機占比」7 字／
+   「處理進度」4 字）在半欄再切三份的窄欄裡會換成不同行數，甜甜圈分到的剩餘高度就不一樣。
+   標題固定佔兩行的高度，三張卡的圓才會一樣大 */
+.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__title {
+    min-height: 2.4em;
+}
+
+/* 三顆占比小圖並排時，圖例是唯一會讓三張卡分到不同甜甜圈高度的東西：
+   標籤字數與數值長度不同 → 換行列數不同 → 圓大小不一。
+   在報表頁的窄欄裡取消 min-width（改為欄寬自適應）、每列單行不換行，
+   讓三組圖例的高度恆等（都是兩列） */
+.lf-report-page .lf-chart-stack .lf-legend-list {
+    min-width: 0;
+    width: 100%;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row {
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .lf-legend-row {
@@ -1924,71 +1983,11 @@ a.lf-calendar__cell:focus-visible {
     padding: var(--lf-space-6);
 }
 
-/* 回饋十三輪 G：品牌區重調為圖示＋文字橫向排列（原本 CSS 早已是 flex，但 Login.cshtml 是
-   圖示獨占一行、標題另起頭的直向堆疊，兩者對不上——這裡讓 HTML 跟上既有的 CSS 意圖，
-   同時與側欄品牌區採同一套視覺語言：方形漸層底圖示 + 名稱/副標垂直疊放）*/
-.lf-login__brand {
-    display: flex;
-    align-items: stretch;
-    /* 整組（圖示＋文字）在卡片裡置中，文字本身仍靠左貼著圖示 */
-    justify-content: center;
-    gap: var(--lf-space-3);
-    margin-bottom: var(--lf-space-5);
-}
-
-.lf-login__brand-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 3rem;
-    height: 3rem;
-    flex-shrink: 0;
-    border-radius: var(--lf-radius);
-    background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
-    color: #fff;
-}
-
-.lf-login__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
-
-/* min-width:0 同側欄品牌區的理由：flex item 沒有這行，超長品牌名不會優雅省略，
-   而是撐開卡片、把版面推爆（見 .lf-sidebar__brand-text 旁的說明）。display:flex
-   column 讓子項（.lf-login__title/.lf-login__subtitle）自動 blockify 成 block——
-   兩者本是 <span>，沒有這層 flex container 就停留在 display:inline，overflow/
-   text-overflow 對 inline 元素不生效，ellipsis 會整個沒有作用（曾在 preview 實測踩到）。 */
-.lf-login__brand-text {
-    display: flex;
-    flex-direction: column;
-    /* 同側欄：兩行上下撐滿圖示高度；flex:0 1 auto 才能讓整組真的置中 */
-    justify-content: space-between;
-    min-width: 0;
-    flex: 0 1 auto;
-}
-
-/* 沒有副標時只有一行，垂直置中對齊圖示中線 */
-.lf-login__brand-text:not(:has(.lf-login__subtitle)) {
-    justify-content: center;
-}
-
-.lf-login__title {
-    /* 字級與行高：兩行合計貼齊 .lf-login__brand-mark 的 3rem（行高留白會讓「行盒等高」
-       看起來仍有空隙，所以壓到接近 1） */
-    font-size: 1.85rem;
+/* 錯誤頁的標題（Error.cshtml）：借用登入頁的卡片版面，但不是品牌區塊 */
+.lf-login__heading {
+    font-size: 1.5rem;
     font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.05;
-}
-
-/* 與側欄品牌區同一組行高，副標緊跟名稱下方 */
-.lf-login__subtitle {
-    display: block;
-    line-height: 1.05;
-    font-size: 1.02rem;
-    color: var(--lf-text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.2;
 }
 
 /* 設定頁的圖示預覽格（docs/archive/FEEDBACK-10-PLAN.md §1）：尺寸刻意接近側欄實際顯示大小，
@@ -2011,16 +2010,6 @@ a.lf-calendar__cell:focus-visible {
     height: 100%;
     object-fit: contain;
     border-radius: inherit;
-}
-
-/* 自訂品牌圖示的登入頁版本（docs/archive/FEEDBACK-10-PLAN.md §1；回饋十三輪 G 改嵌入
-   .lf-login__brand-mark 方形容器，撐滿＋contain 保留原比例，不裁角。沒有自訂圖示時
-   fallback 成內建向量圖示（同容器），不會像改版前那樣整個品牌區只剩純文字 */
-.lf-login__logo {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
 }
 
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */

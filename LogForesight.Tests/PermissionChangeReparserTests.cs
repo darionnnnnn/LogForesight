@@ -1,6 +1,7 @@
 ﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using LogForesight.Core.Persistence.Sql;
+using LogForesight.Core.Service;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -68,6 +69,157 @@ public sealed class PermissionChangeReparserTests : IDisposable
         Assert.Equal(string.Empty, row.Target);                       // 剖不出就維持原本的空
         Assert.Equal("OP_ACCT 帳戶網域: DOM1 成員: ...", row.TargetAccount);   // 髒值保留，不被洗掉
         Assert.Equal("OP_ACCT", row.InitiatorAccount);                // 剖得出的仍補上
+    }
+
+    // ── 回饋二十六輪作業 B3：4670 髒對象洗掉、物件欄位補上、版本升級重跑 ──────────
+
+    private const string Object4670Message =
+        "物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security " +
+        "物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 " +
+        @"處理程序名稱: C:\Windows\System32\svchost.exe";
+
+    private PermissionChangeRecord Dirty4670Record() => new()
+    {
+        ChangeId = "dirty-4670",
+        HostName = "SRV-OLD",
+        DetectedAt = new DateTime(2026, 8, 18, 10, 44, 0),
+        // 舊解析器把整段訊息尾巴當成對象寫了進去
+        Target = @"- 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe",
+        ChangeType = "權限變更",
+        Category = PermissionCategory.FolderAcl,
+        AlertText = Object4670Message,
+        Source = PermissionChangeSources.Netiq,
+        EventId = 4670
+    };
+
+    [Fact]
+    public void 重剖回填_4670髒對象被洗成空_並補上物件類型與處理程序()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[] { Dirty4670Record() });
+
+        NewReparser().Run();
+
+        var row = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal(string.Empty, row.Target);            // 髒值形狀允許洗成空
+        Assert.Equal("Token", row.ObjectType);
+        Assert.Equal(@"C:\Windows\System32\svchost.exe", row.ProcessName);
+        // 類別重算：Token 不是檔案物件，從資料夾權限異動分到物件權限變更
+        Assert.Equal(PermissionCategory.ObjectAcl, row.Category);
+    }
+
+    [Fact]
+    public void 重剖回填_狀態版本落後時重新執行()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[] { Dirty4670Record() });
+
+        var stateStore = new PermissionChangeReparseStateStore(
+            new EfJsonBlobStore(_fixture.NewContext, PermissionChangeReparser.StateBlobKey));
+        // 舊版部署的狀態：跑過了，但版本落後
+        stateStore.Update(s => { s.Completed = true; s.Version = PermissionChangeReparser.CurrentVersion - 1; });
+
+        var reparser = NewReparser();
+        Assert.False(reparser.IsCompleted);
+
+        reparser.Run();
+
+        Assert.True(reparser.IsCompleted);
+        Assert.Equal("Token", Assert.Single(store.Query(null, null, 100)).ObjectType);
+    }
+
+    [Fact]
+    public void 重剖回填_一般對象不會被誤判為髒值洗掉()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "long-path",
+                HostName = "SRV-OLD",
+                DetectedAt = new DateTime(2026, 8, 18),
+                // 長路徑（超過 40 字）但沒有「鍵: 值」形狀，不是髒值
+                Target = @"C:\share\dept\finance\2026\quarterly\reports\archive\confidential",
+                ChangeType = "權限變更",
+                Category = PermissionCategory.FolderAcl,
+                AlertText = "物件的權限已變更。 主旨: 帳戶名稱: HOST1$",
+                Source = PermissionChangeSources.Netiq,
+                EventId = 4670
+            }
+        });
+
+        NewReparser().Run();
+
+        var row = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal(@"C:\share\dept\finance\2026\quarterly\reports\archive\confidential", row.Target);
+    }
+
+    [Fact]
+    public void 重剖回填_含單一冒號的合法對象不被誤判為髒值()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "colon-name",
+                HostName = "SRV-OLD",
+                DetectedAt = new DateTime(2026, 8, 18),
+                // 合法命名也可能帶一個冒號，長度也超過 40 字——一組「鍵: 值」不足以判定是髒值
+                Target = @"CORP\專案: 財務季報存取群組（2026 年度，含子部門）",
+                ChangeType = "成員新增",
+                Category = PermissionCategory.GroupMember,
+                AlertText = "已新增成員到已啟用安全性的萬用群組。 主體: 帳戶名稱: OP_ACCT",
+                Source = PermissionChangeSources.Netiq,
+                EventId = 4756
+            }
+        });
+
+        NewReparser().Run();
+
+        var row = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal(@"CORP\專案: 財務季報存取群組（2026 年度，含子部門）", row.Target);
+    }
+
+    [Fact]
+    public void 舊彙總列清理_刪除舊值且不動例行同步彙總列()
+    {
+        var store = new PermissionChangeStore(_fixture.NewContext);
+        store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "legacy-summary",
+                HostName = "SRV-OLD",
+                DetectedAt = new DateTime(2026, 8, 18),
+                Target = "SRV-OLD（彙總）",
+                ChangeType = PermissionChangeStore.LegacySummaryChangeType,
+                Category = PermissionCategory.Summary,
+                AlertText = "本日另有 92054 則權限異動事件未逐則列出",
+                Source = PermissionChangeSources.Netiq
+            },
+            new PermissionChangeRecord
+            {
+                ChangeId = "routine-summary",
+                HostName = "SRV-OLD",
+                DetectedAt = new DateTime(2026, 8, 18),
+                Target = "SRV-OLD（例行同步）",
+                ChangeType = HostDayPostProcessor.RoutineSyncChangeType,
+                Category = PermissionCategory.Summary,
+                AlertText = "本日偵測到 92 對「成員新增＋成員移除」的對稱異動",
+                Source = PermissionChangeSources.Netiq
+            }
+        });
+
+        var deleted = store.DeleteLegacySummaryRows();
+
+        Assert.Equal(1, deleted);
+        var remaining = Assert.Single(store.Query(null, null, 100));
+        Assert.Equal(HostDayPostProcessor.RoutineSyncChangeType, remaining.ChangeType);
+
+        // 第二次執行沒有東西可刪（呼叫端以狀態旗標保證只跑一次，這裡確認重跑也不會誤傷）
+        Assert.Equal(0, store.DeleteLegacySummaryRows());
     }
 
     [Fact]

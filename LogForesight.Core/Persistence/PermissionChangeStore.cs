@@ -64,6 +64,11 @@ public class PermissionChangeStore
                 IsPrivilegedTarget = change.IsPrivilegedTarget,
                 InitiatorAccount = change.InitiatorAccount,
                 TargetAccount = change.TargetAccount,
+                ObjectType = change.ObjectType,
+                ProcessName = change.ProcessName,
+                CoveredFrom = change.CoveredFrom,
+                CoveredTo = change.CoveredTo,
+                PairCount = change.PairCount,
                 BeforeValue = change.Before ?? string.Empty,
                 AfterValue = change.After ?? string.Empty,
                 AlertText = change.AlertText ?? string.Empty,
@@ -94,6 +99,10 @@ public class PermissionChangeStore
         {
             existing.Target = change.Target;
             existing.AlertText = change.AlertText ?? string.Empty;
+            // 涵蓋區間與對數會隨當日新事件變動，與說明文字同屬描述性欄位，一起更新
+            existing.CoveredFrom = change.CoveredFrom;
+            existing.CoveredTo = change.CoveredTo;
+            existing.PairCount = change.PairCount;
             ctx.SaveChanges();
             return;
         }
@@ -115,6 +124,11 @@ public class PermissionChangeStore
             IsPrivilegedTarget = change.IsPrivilegedTarget,
             InitiatorAccount = change.InitiatorAccount,
             TargetAccount = change.TargetAccount,
+            ObjectType = change.ObjectType,
+            ProcessName = change.ProcessName,
+            CoveredFrom = change.CoveredFrom,
+            CoveredTo = change.CoveredTo,
+            PairCount = change.PairCount,
             BeforeValue = change.Before ?? string.Empty,
             AfterValue = change.After ?? string.Empty,
             AlertText = change.AlertText ?? string.Empty,
@@ -140,6 +154,24 @@ public class PermissionChangeStore
         ctx.SaveChanges();
         return true;
     }
+
+    /// <summary>
+    /// 刪除舊版每主機日「權限異動（彙總）」列並回傳刪除筆數。
+    ///
+    /// 這批列由已移除的「每主機日筆數上限」機制產生（現行只產生「例行同步（彙總）」），
+    /// 內容是「本日另有 N 則權限異動事件未逐則列出」——被它取代的那些逐則列並沒有寫進資料庫，
+    /// 補不回來也查不了，留著只會讓待辦清單裡出現一筆點開沒有內容的項目。
+    /// </summary>
+    public int DeleteLegacySummaryRows()
+    {
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => r.ChangeType == LegacySummaryChangeType)
+            .ExecuteDelete();
+    }
+
+    /// <summary>不再產生的舊彙總列 change_type（見 <see cref="DeleteLegacySummaryRows"/>）</summary>
+    public const string LegacySummaryChangeType = "權限異動（彙總）";
 
     /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
     public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
@@ -468,6 +500,11 @@ public class PermissionChangeStore
         Category = row.Category,
         IsPrivilegedTarget = row.IsPrivilegedTarget,
         InitiatorAccount = row.InitiatorAccount,
-        TargetAccount = row.TargetAccount
+        TargetAccount = row.TargetAccount,
+        ObjectType = row.ObjectType,
+        ProcessName = row.ProcessName,
+        CoveredFrom = row.CoveredFrom,
+        CoveredTo = row.CoveredTo,
+        PairCount = row.PairCount
     };
 }
