@@ -860,4 +860,169 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var result = AccountDisplayFormatter.ToShortName(dn);
         Assert.Equal(expected, result);
     }
+
+    [Fact]
+    public void 樣本S1_單行成員新增4756_結構化欄位擷取正確()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。 主體: 安全性識別碼: S-1-5-21-1-2-3-17749 帳戶名稱: OP_ACCT 帳戶網域: DOM1 登入識別碼: 0x1FC9071B 成員: 安全性識別碼: S-1-5-21-1-2-3-278464 帳戶名稱: CN=User One,OU=Dept,DC=example,DC=com 群組: 安全性識別碼: S-1-5-21-1-2-3-40793 帳戶名稱: GROUP_A 帳戶網域: DOM1 其他資訊: 特殊權限: -";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_A", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", details.After);
+    }
+
+    [Fact]
+    public void 樣本S1_單行成員新增4756_寫入Store後欄位對應正確()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 21);
+
+        var msg = "已新增成員到已啟用安全性的萬用群組。 主體: 安全性識別碼: S-1-5-21-1-2-3-17749 帳戶名稱: OP_ACCT 帳戶網域: DOM1 登入識別碼: 0x1FC9071B 成員: 安全性識別碼: S-1-5-21-1-2-3-278464 帳戶名稱: CN=User One,OU=Dept,DC=example,DC=com 群組: 安全性識別碼: S-1-5-21-1-2-3-40793 帳戶名稱: GROUP_A 帳戶網域: DOM1 其他資訊: 特殊權限: -";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4756,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("GROUP_A", record.Target);
+        Assert.Equal("OP_ACCT", record.InitiatorAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", record.TargetAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", record.After);
+        Assert.Equal("（不在群組中）", record.Before);
+    }
+
+    [Fact]
+    public void 樣本S2_單行物件權限變更4670_物件名稱為減號時Target為空字串且不吞尾巴()
+    {
+        var msg = @"物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security 物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe";
+
+        var details = PermissionChangeExtractor.Extract(msg, "權限變更", 4670);
+
+        Assert.Equal(string.Empty, details.Target);
+        Assert.Equal("HOST1$", details.InitiatorAccount);
+        Assert.Null(details.TargetAccount);
+        Assert.Equal(string.Empty, details.Before);
+        Assert.Equal(string.Empty, details.After);
+    }
+
+    [Fact]
+    public void 樣本S2_單行物件權限變更4670_寫入Store後欄位對應正確()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-APP01";
+        var date = new DateTime(2026, 8, 21);
+
+        var msg = @"物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security 物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4670,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(2),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal(string.Empty, record.Target);
+        Assert.Equal("HOST1$", record.InitiatorAccount);
+        Assert.Null(record.TargetAccount);
+    }
+
+    [Fact]
+    public void 樣本S3_多行群組區段內帳戶名稱_正確解析為群組名()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。\r\n" +
+                  "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "成員:\r\n" +
+                  "    帳戶名稱: CN=User Two,OU=Dept,DC=example,DC=com\r\n" +
+                  "群組:\r\n" +
+                  "    帳戶名稱: GROUP_B";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_B", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal("CN=User Two,OU=Dept,DC=example,DC=com", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal("CN=User Two,OU=Dept,DC=example,DC=com", details.After);
+    }
+
+    [Fact]
+    public void 樣本S4_多行群組名稱與成員名稱_維持既有格式解析正確()
+    {
+        var msg = "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "群組名稱: GROUP_C\r\n" +
+                  "成員名稱: DOM1\\user3";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728);
+
+        Assert.Equal("GROUP_C", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal(@"DOM1\user3", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal(@"DOM1\user3", details.After);
+    }
+
+    [Fact]
+    public void 單行訊息_全形冒號與混用空白_正確擷取欄位()
+    {
+        var msg = "主體： 帳戶名稱： OP_ZH 成員： 帳戶名稱： MEMBER_ZH 群組： 帳戶名稱： GROUP_ZH";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_ZH", details.Target);
+        Assert.Equal("OP_ZH", details.InitiatorAccount);
+        Assert.Equal("MEMBER_ZH", details.TargetAccount);
+    }
+
+    [Fact]
+    public void 單行訊息_ExtractAccounts_正確擷取操作者與被異動帳號()
+    {
+        var alertText = "主體: 帳戶名稱: OP_MIG 成員: 帳戶名稱: TARGET_MIG 群組: 帳戶名稱: GROUP_MIG";
+
+        var (initiator, target) = PermissionChangeExtractor.ExtractAccounts(
+            alertText: alertText,
+            changeType: "成員新增",
+            before: null,
+            after: null);
+
+        Assert.Equal("OP_MIG", initiator);
+        Assert.Equal("TARGET_MIG", target);
+    }
+
+    [Fact]
+    public void 單行物件權限變更4670_路徑含磁碟機代號不被誤判為Key()
+    {
+        var msg = @"物件的權限已變更。 主旨: 帳戶名稱: ADMIN1 物件: 物件名稱: D:\Shares\Confidential\doc.pdf 原始安全性描述元: D:(A;;GA;;;BA) 新的安全性描述元: D:(A;;GA;;;WD)";
+
+        var details = PermissionChangeExtractor.Extract(msg, "權限變更", 4670);
+
+        Assert.Equal(@"D:\Shares\Confidential\doc.pdf", details.Target);
+        Assert.Equal("ADMIN1", details.InitiatorAccount);
+        Assert.Equal("D:(A;;GA;;;BA)", details.Before);
+        Assert.Equal("D:(A;;GA;;;WD)", details.After);
+    }
 }

@@ -14,7 +14,7 @@ public readonly record struct PermissionExtractedDetails(
 
 /// <summary>
 /// 權限異動事件訊息與告警文字的結構化擷取工具（共用純邏輯）。
-/// 支援分區段（Subject、Member、Group、Object、Audit Policy 等）精確剖析，
+/// 支援行內多對與分區段（Subject、Member、Group、Object、Audit Policy 等）精確剖析，
 /// 避免操作者帳號誤充當被異動成員。
 /// </summary>
 public static class PermissionChangeExtractor
@@ -24,6 +24,48 @@ public static class PermissionChangeExtractor
     public const string DefaultRemovedFromGroup = "（已移出群組）";
     public const string DefaultNotGranted = "（未授與）";
     public const string DefaultRemoved = "（已移除）";
+
+    private static readonly HashSet<string> KnownMultiWordKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Account Name",
+        "Security ID",
+        "Security Id",
+        "Account Domain",
+        "Logon ID",
+        "Logon Id",
+        "Group Name",
+        "Member Name",
+        "Object Name",
+        "Object Server",
+        "Object Type",
+        "Handle ID",
+        "Handle Id",
+        "Process ID",
+        "Process Id",
+        "Process Name",
+        "Process Information",
+        "Target Account",
+        "Target Domain",
+        "Target Server",
+        "Access Granted",
+        "Access Removed",
+        "Access Right",
+        "Access Right(s)",
+        "Access Rights",
+        "Audit Policy Change",
+        "Auditing Settings",
+        "Permissions Change",
+        "Original Security Descriptor",
+        "New Security Descriptor",
+        "Special Privileges",
+        "Additional Information",
+        "Access Request Information",
+        "Detailed Authentication Information",
+        "Account That Was Granted Access",
+        "Account That Was Removed Access",
+        "Account Modified",
+        "安全性 ID"
+    };
 
     private enum Section
     {
@@ -293,132 +335,116 @@ public static class PermissionChangeExtractor
             var line = rawLine.Trim();
             if (line.Length == 0) continue;
 
-            if (TryMatchSectionHeader(line, out var newSection))
+            var pairs = ExtractPairs(line);
+            if (pairs.Count == 0)
             {
-                section = newSection;
+                if (TryGetSectionByName(line, out var headerSection))
+                {
+                    section = headerSection;
+                }
                 continue;
             }
 
-            var targetVal = TryExtractValue(line,
-                "Target Account:", "目標帳戶:", "目標帳戶：",
-                "被異動帳戶:", "被異動帳戶：");
-            if (targetVal != null && fields.TargetAccount == null)
+            foreach (var (key, value) in pairs)
             {
-                fields.TargetAccount = targetVal;
-            }
-
-            var memberVal = TryExtractValue(line,
-                "Member Name:", "成員名稱:", "成員名稱：");
-            if (memberVal != null && fields.MemberAccountName == null)
-            {
-                fields.MemberAccountName = memberVal;
-            }
-
-            var groupVal = TryExtractValue(line,
-                "Group Name:", "群組名稱:", "群組名稱：");
-            if (groupVal != null && fields.GroupName == null)
-            {
-                fields.GroupName = groupVal;
-            }
-
-            var objectVal = TryExtractValue(line,
-                "Object Name:", "物件名稱:", "物件名稱：");
-            if (objectVal != null && fields.ObjectName == null)
-            {
-                fields.ObjectName = objectVal;
-            }
-
-            var origVal = TryExtractValue(line,
-                "Original Security Descriptor:", "原始安全性描述元:", "原始安全性描述元：");
-            if (origVal != null && fields.OriginalSecDesc == null)
-            {
-                fields.OriginalSecDesc = origVal;
-            }
-
-            var newVal = TryExtractValue(line,
-                "New Security Descriptor:", "新的安全性描述元:", "新的安全性描述元：");
-            if (newVal != null && fields.NewSecDesc == null)
-            {
-                fields.NewSecDesc = newVal;
-            }
-
-            var grantedVal = TryExtractValue(line,
-                "Access Granted:", "授與的存取權:", "授與的存取權：");
-            if (grantedVal != null && fields.AccessGranted == null)
-            {
-                fields.AccessGranted = grantedVal;
-            }
-
-            var removedVal = TryExtractValue(line,
-                "Access Removed:", "移除的存取權:", "移除的存取權：");
-            if (removedVal != null && fields.AccessRemoved == null)
-            {
-                fields.AccessRemoved = removedVal;
-            }
-
-            var rightVal = TryExtractValue(line,
-                "Access Right:", "Access Right(s):", "存取權:", "存取權：",
-                "存取權限:", "存取權限：", "Accesses:", "存取:", "存取：");
-            if (rightVal != null && fields.AccessRight == null)
-            {
-                fields.AccessRight = rightVal;
-            }
-
-            var catVal = TryExtractValue(line,
-                "Category:", "類別:", "類別：");
-            if (catVal != null && fields.AuditCategory == null)
-            {
-                fields.AuditCategory = catVal;
-            }
-
-            var subCatVal = TryExtractValue(line,
-                "Subcategory:", "子類別:", "子類別：");
-            if (subCatVal != null && fields.AuditSubcategory == null)
-            {
-                fields.AuditSubcategory = subCatVal;
-            }
-
-            var changesVal = TryExtractValue(line,
-                "Changes:", "變更:", "變更：");
-            if (changesVal != null && fields.AuditChanges == null)
-            {
-                fields.AuditChanges = changesVal;
-            }
-
-            var acctNameVal = TryExtractValue(line,
-                "Account Name:", "帳戶名稱:", "帳戶名稱：");
-            if (acctNameVal != null)
-            {
-                if (section == Section.Subject && fields.SubjectAccountName == null)
+                if (string.IsNullOrEmpty(value))
                 {
-                    fields.SubjectAccountName = acctNameVal;
+                    if (TryGetSectionByName(key, out var newSection))
+                    {
+                        section = newSection;
+                    }
+                    continue;
                 }
-                else if (section == Section.Member && fields.MemberAccountName == null)
-                {
-                    fields.MemberAccountName = acctNameVal;
-                }
-                else if (section == Section.TargetAccount && fields.TargetAccount == null)
-                {
-                    fields.TargetAccount = acctNameVal;
-                }
-            }
 
-            var secIdVal = TryExtractValue(line,
-                "Security ID:", "安全性識別碼:", "安全性識別碼：",
-                "安全性 ID:", "安全性 ID：");
-            if (secIdVal != null)
-            {
-                if (section == Section.Subject && fields.SubjectSecurityId == null)
+                if (IsKey(key, "Target Account", "目標帳戶", "被異動帳戶"))
                 {
-                    fields.SubjectSecurityId = secIdVal;
+                    fields.TargetAccount ??= CleanValue(value);
                 }
-                else if (section == Section.Member && fields.MemberSecurityId == null)
+                else if (IsKey(key, "Member Name", "成員名稱"))
                 {
-                    fields.MemberSecurityId = secIdVal;
+                    fields.MemberAccountName ??= CleanValue(value);
                 }
-                else if (section == Section.TargetAccount && fields.TargetSecurityId == null)
+                else if (IsKey(key, "Group Name", "群組名稱"))
                 {
-                    fields.TargetSecurityId = secIdVal;
+                    fields.GroupName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Object Name", "物件名稱"))
+                {
+                    fields.ObjectName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Original Security Descriptor", "原始安全性描述元"))
+                {
+                    fields.OriginalSecDesc ??= CleanValue(value);
+                }
+                else if (IsKey(key, "New Security Descriptor", "新的安全性描述元"))
+                {
+                    fields.NewSecDesc ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Granted", "授與的存取權"))
+                {
+                    fields.AccessGranted ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Removed", "移除的存取權"))
+                {
+                    fields.AccessRemoved ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Right", "Access Right(s)", "存取權", "存取權限", "Accesses", "存取"))
+                {
+                    fields.AccessRight ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Category", "類別"))
+                {
+                    fields.AuditCategory ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Subcategory", "子類別"))
+                {
+                    fields.AuditSubcategory ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Changes", "變更"))
+                {
+                    fields.AuditChanges ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Account Name", "帳戶名稱"))
+                {
+                    var clean = CleanValue(value);
+                    if (clean != null)
+                    {
+                        if (section == Section.Subject && fields.SubjectAccountName == null)
+                        {
+                            fields.SubjectAccountName = clean;
+                        }
+                        else if (section == Section.Member && fields.MemberAccountName == null)
+                        {
+                            fields.MemberAccountName = clean;
+                        }
+                        else if (section == Section.Group && fields.GroupName == null)
+                        {
+                            fields.GroupName = clean;
+                        }
+                        else if (section == Section.TargetAccount && fields.TargetAccount == null)
+                        {
+                            fields.TargetAccount = clean;
+                        }
+                    }
+                }
+                else if (IsKey(key, "Security ID", "安全性識別碼", "安全性 ID"))
+                {
+                    var clean = CleanValue(value);
+                    if (clean != null)
+                    {
+                        if (section == Section.Subject && fields.SubjectSecurityId == null)
+                        {
+                            fields.SubjectSecurityId = clean;
+                        }
+                        else if (section == Section.Member && fields.MemberSecurityId == null)
+                        {
+                            fields.MemberSecurityId = clean;
+                        }
+                        else if (section == Section.TargetAccount && fields.TargetSecurityId == null)
+                        {
+                            fields.TargetSecurityId = clean;
+                        }
+                    }
                 }
             }
         }
@@ -426,18 +452,115 @@ public static class PermissionChangeExtractor
         return fields;
     }
 
+    private static bool IsKey(string key, params string[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (key.Equals(candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<(string Key, string Value)> ExtractPairs(string line)
+    {
+        var pairs = new List<(string Key, string Value)>();
+        if (string.IsNullOrWhiteSpace(line)) return pairs;
+
+        var keyOccurrences = new List<(int KeyStart, int ColonIndex, string KeyName)>();
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c != ':' && c != '：') continue;
+
+            int prevColon = keyOccurrences.Count > 0 ? keyOccurrences[^1].ColonIndex : -1;
+            int minStart = Math.Max(prevColon + 1, i - 40);
+
+            int selectedStart = -1;
+            string? selectedKey = null;
+
+            for (int start = minStart; start < i; start++)
+            {
+                if (start == 0 || char.IsWhiteSpace(line[start - 1]))
+                {
+                    var candidate = line[start..i].Trim();
+                    if (IsValidKeyCandidate(candidate))
+                    {
+                        selectedStart = start;
+                        selectedKey = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedStart >= 0 && selectedKey != null)
+            {
+                keyOccurrences.Add((selectedStart, i, selectedKey));
+            }
+        }
+
+        for (int k = 0; k < keyOccurrences.Count; k++)
+        {
+            var current = keyOccurrences[k];
+            int valStart = current.ColonIndex + 1;
+            int valEnd = (k + 1 < keyOccurrences.Count) ? keyOccurrences[k + 1].KeyStart : line.Length;
+
+            string value = string.Empty;
+            if (valEnd > valStart)
+            {
+                value = line[valStart..valEnd].Trim();
+            }
+
+            pairs.Add((current.KeyName, value));
+        }
+
+        return pairs;
+    }
+
+    private static bool IsValidKeyCandidate(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (text.Length < 2 || text.Length > 35) return false;
+
+        bool hasLetter = false;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (char.IsLetter(ch))
+            {
+                hasLetter = true;
+            }
+            else if (!char.IsDigit(ch) && ch != ' ' && ch != '-' && ch != '(' && ch != ')' && ch != '_')
+            {
+                return false;
+            }
+        }
+
+        if (!hasLetter) return false;
+
+        if (text.Contains(' '))
+        {
+            return KnownMultiWordKeys.Contains(text) || TryGetSectionByName(text, out _);
+        }
+
+        return text.Length <= 20;
+    }
+
     public static string? TryExtractValue(string line, params string[] prefixes)
     {
+        var pairs = ExtractPairs(line);
         foreach (var prefix in prefixes)
         {
-            var idx = line.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
-            // 命中位置的前一個字元必須不是字母，否則是「較長欄名剛好包含較短欄名」的誤判：
-            // 「Subcategory:」整個字串就含有「Category:」，沒有這道守衛的話子類別那一行
-            // 會把類別的值覆寫掉，4719 的異動說明就會變成「子類別 - 子類別」。
-            if (idx >= 0 && (idx == 0 || !char.IsLetter(line[idx - 1])))
+            var normalizedPrefix = prefix.TrimEnd(':', '：').Trim();
+            foreach (var (k, v) in pairs)
             {
-                var val = line[(idx + prefix.Length)..].Trim();
-                return CleanValue(val);
+                if (k.Equals(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return CleanValue(v);
+                }
             }
         }
         return null;
@@ -474,7 +597,8 @@ public static class PermissionChangeExtractor
     private static bool TryGetSectionByName(string name, out Section section)
     {
         if (name.Equals("Subject", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("主體", StringComparison.OrdinalIgnoreCase))
+            name.Equals("主體", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("主旨", StringComparison.OrdinalIgnoreCase))
         {
             section = Section.Subject;
             return true;
@@ -499,7 +623,9 @@ public static class PermissionChangeExtractor
         }
         if (name.Equals("Audit Policy Change", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("稽核原則變更", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("稽核原則", StringComparison.OrdinalIgnoreCase))
+            name.Equals("稽核原則", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則已變更", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則已變更。", StringComparison.OrdinalIgnoreCase))
         {
             section = Section.AuditPolicyChange;
             return true;
@@ -521,17 +647,25 @@ public static class PermissionChangeExtractor
             name.Equals("Account That Was Removed Access", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("已移除存取權的帳戶", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("Account Modified", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("修改的帳戶", StringComparison.OrdinalIgnoreCase))
+            name.Equals("修改的帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Target Account", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("目標帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("被異動帳戶", StringComparison.OrdinalIgnoreCase))
         {
             section = Section.TargetAccount;
             return true;
         }
         if (name.Equals("Process Information", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("程序資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("處理程序", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("處理程序資訊", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("Access Request Information", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("存取要求資訊", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("Detailed Authentication Information", StringComparison.OrdinalIgnoreCase) ||
-            name.Equals("網路資訊", StringComparison.OrdinalIgnoreCase))
+            name.Equals("詳細驗證資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("網路資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("其他資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Additional Information", StringComparison.OrdinalIgnoreCase))
         {
             section = Section.Other;
             return true;
