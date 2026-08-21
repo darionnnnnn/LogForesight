@@ -163,6 +163,10 @@ public class SystemSettingsService : ISystemSettingsService
         // 在分析時會誠實申報「頻道不存在／不適用」，不會靜默假裝掃過。
         var channels = NormalizeLines(request.AnalysisChannels);
         var watchedFolders = NormalizeLines(request.WatchedFolders);
+        var permOperatorFields = NormalizeLines(request.PermissionOperatorFields);
+        var permMemberFields = NormalizeLines(request.PermissionMemberFields);
+        var permGroupFields = NormalizeLines(request.PermissionGroupFields);
+        var permObjectFields = NormalizeLines(request.PermissionObjectFields);
 
         // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
         var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
@@ -299,6 +303,10 @@ public class SystemSettingsService : ISystemSettingsService
             s.ServerDescription = request.ServerDescription?.Trim() ?? "";
             s.CheckupIntervalDays = request.CheckupIntervalDays;
             s.AnalysisChannels = channels;
+            s.PermissionOperatorFields = permOperatorFields;
+            s.PermissionMemberFields = permMemberFields;
+            s.PermissionGroupFields = permGroupFields;
+            s.PermissionObjectFields = permObjectFields;
             s.ImportMaxFileSizeKb = request.ImportMaxFileSizeKb;
             s.ImportMaxRows = request.ImportMaxRows;
 
@@ -364,6 +372,8 @@ public class SystemSettingsService : ISystemSettingsService
                     before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
                     before.RiskyEventRetentionDays, before.DetailRetentionDays,
+                    before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
+                    before.PermissionOperatorFields, before.PermissionMemberFields, before.PermissionGroupFields, before.PermissionObjectFields,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
                     before.MailEnabled, before.SmtpServer, before.SmtpPort, before.SmtpUseTls, before.SmtpAccount,
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
@@ -376,6 +386,8 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
                     saved.RiskyEventRetentionDays, saved.DetailRetentionDays,
+                    saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
+                    saved.PermissionOperatorFields, saved.PermissionMemberFields, saved.PermissionGroupFields, saved.PermissionObjectFields,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
                     saved.MailEnabled, saved.SmtpServer, saved.SmtpPort, saved.SmtpUseTls, saved.SmtpAccount,
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
@@ -623,6 +635,10 @@ public class SystemSettingsService : ISystemSettingsService
         ServerDescription = s.ServerDescription,
         CheckupIntervalDays = s.CheckupIntervalDays,
         AnalysisChannels = s.AnalysisChannels,
+        PermissionOperatorFields = s.PermissionOperatorFields,
+        PermissionMemberFields = s.PermissionMemberFields,
+        PermissionGroupFields = s.PermissionGroupFields,
+        PermissionObjectFields = s.PermissionObjectFields,
         ImportMaxFileSizeKb = s.ImportMaxFileSizeKb,
         ImportMaxRows = s.ImportMaxRows,
         // 郵件通知（回饋十五輪批次D）

@@ -145,7 +145,8 @@ public static class HostDayPostProcessor
         string hostOs,
         List<EventLogEntryData> events,
         DateTime date,
-        string logContext = "")
+        string logContext = "",
+        PermissionFieldMappings? mappings = null)
     {
         if (permissionChangeStore == null) return;
         if (!string.Equals(hostOs, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)) return;
@@ -174,7 +175,7 @@ public static class HostDayPostProcessor
                 if (!knownKeys.TryAdd(key, 0)) continue;
 
                 var details = PermissionChangeExtractor.Extract(
-                    evt.Message, changeType, evt.EventId, evt.InitiatorAccount);
+                    evt.Message, changeType, evt.EventId, evt.InitiatorAccount, mappings);
 
                 recordsToAppend.Add(new PermissionChangeRecord
                 {

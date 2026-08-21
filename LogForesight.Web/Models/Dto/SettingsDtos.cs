@@ -78,6 +78,12 @@ public class SystemSettingsDto
     public int CheckupIntervalDays { get; set; }
     public List<string> AnalysisChannels { get; set; } = new();
 
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+    public List<string> PermissionOperatorFields { get; set; } = new();
+    public List<string> PermissionMemberFields { get; set; } = new();
+    public List<string> PermissionGroupFields { get; set; } = new();
+    public List<string> PermissionObjectFields { get; set; } = new();
+
     // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）────────────────────────
     public int ImportMaxFileSizeKb { get; set; }
     public int ImportMaxRows { get; set; }
@@ -260,6 +266,12 @@ public class UpdateSystemSettingsRequest
 
     /// <summary>空清單＝使用預設六頻道；頻道名可解析性由 SystemSettingsService.Update 驗證</summary>
     public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+    public List<string> PermissionOperatorFields { get; set; } = new();
+    public List<string> PermissionMemberFields { get; set; } = new();
+    public List<string> PermissionGroupFields { get; set; } = new();
+    public List<string> PermissionObjectFields { get; set; } = new();
 
     // ── 匯入限制（§12）───────────────────────────────────────────────────────
 

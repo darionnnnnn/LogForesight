@@ -128,6 +128,11 @@ public class PermissionSettings
     /// 執行檔自身所在目錄一律會被監控，不需加入此清單。
     /// </summary>
     public List<string> WatchedFolders { get; set; } = new();
+
+    /// <summary>
+    /// 權限異動自訂欄位對應（由 <c>RuntimeSettingsResolver.ApplySystemSettingsOverrides</c> 從 DB 注入）。
+    /// </summary>
+    public Service.PermissionFieldMappings FieldMappings { get; set; } = Service.PermissionFieldMappings.Empty;
 }
 
 public class AnalysisSettings

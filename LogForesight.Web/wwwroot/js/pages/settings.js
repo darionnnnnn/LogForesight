@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 全站設定（「系統管理 > 設定」頁）：未處理計算等級、AI 服務、資料保留天數。
  * 單一表單、單一 PUT，三個卡片對應同一份 SystemSettingsDto。
  */
@@ -236,12 +236,16 @@ function renderAiFields(settings) {
     document.getElementById('ai-extra-request-fields').value = settings.aiExtraRequestFieldsJson ?? '';
 }
 
-/** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／匯入上限） */
+/** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／權限異動欄位／匯入上限） */
 function renderAnalysisFields(settings) {
     document.getElementById('server-description').value = settings.serverDescription ?? '';
     setNumber('checkup-interval-days', settings.checkupIntervalDays);
     document.getElementById('watched-folders').value = (settings.watchedFolders ?? []).join('\n');
     document.getElementById('analysis-channels').value = (settings.analysisChannels ?? []).join('\n');
+    document.getElementById('perm-operator-fields').value = (settings.permissionOperatorFields ?? []).join('\n');
+    document.getElementById('perm-member-fields').value = (settings.permissionMemberFields ?? []).join('\n');
+    document.getElementById('perm-group-fields').value = (settings.permissionGroupFields ?? []).join('\n');
+    document.getElementById('perm-object-fields').value = (settings.permissionObjectFields ?? []).join('\n');
     setNumber('import-max-file-size-kb', settings.importMaxFileSizeKb);
     setNumber('import-max-rows', settings.importMaxRows);
 }
@@ -679,6 +683,10 @@ function bindForm() {
                 checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
                 watchedFolders: collectLines('watched-folders'),
                 analysisChannels: collectLines('analysis-channels'),
+                permissionOperatorFields: collectLines('perm-operator-fields'),
+                permissionMemberFields: collectLines('perm-member-fields'),
+                permissionGroupFields: collectLines('perm-group-fields'),
+                permissionObjectFields: collectLines('perm-object-fields'),
                 importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
                 importMaxRows: Number(document.getElementById('import-max-rows').value),
                 // 郵件通知（回饋十五輪批次D）

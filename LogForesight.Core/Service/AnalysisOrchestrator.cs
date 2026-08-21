@@ -831,7 +831,7 @@ public class AnalysisOrchestrator
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, ISentinelStore sentinelStore,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService)
     {
-        var (request, _, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
+        var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
@@ -870,7 +870,8 @@ public class AnalysisOrchestrator
                 backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
                 riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress,
-                onlyMissingOrFailed: request.OnlyMissingOrFailed);
+                onlyMissingOrFailed: request.OnlyMissingOrFailed,
+                permissionMappings: settings.Permissions.FieldMappings);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

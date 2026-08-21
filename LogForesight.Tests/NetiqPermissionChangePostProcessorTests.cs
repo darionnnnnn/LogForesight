@@ -1025,4 +1025,178 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Equal("D:(A;;GA;;;BA)", details.Before);
         Assert.Equal("D:(A;;GA;;;WD)", details.After);
     }
+
+    // ── 權限異動自訂欄位對應（task-b1）──────────────────────────────────────────────
+
+    [Fact]
+    public void 自訂欄位名設定後_經實際寫入路徑解析成功寫入Target()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 21);
+
+        var mappings = new PermissionFieldMappings(
+            operatorFields: null,
+            memberFields: null,
+            groupFields: new[] { "GrpName" },
+            objectFields: null);
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(3),
+                Message = "主體:\r\n  帳戶名稱: admin1\r\nGrpName: GROUP_X\r\n成員名稱: user1"
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date, mappings: mappings);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("GROUP_X", record.Target);
+        Assert.Equal("admin1", record.InitiatorAccount);
+        Assert.Equal("user1", record.TargetAccount);
+    }
+
+    [Fact]
+    public void 自訂欄位未設定全空時_解析結果與內建行為完全相同()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。\r\n" +
+                  "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "成員:\r\n" +
+                  "    帳戶名稱: USER_MEMBER\r\n" +
+                  "群組:\r\n" +
+                  "    帳戶名稱: GROUP_BUILTIN";
+
+        var defaultDetails = PermissionChangeExtractor.Extract(msg, "成員新增", 4756, mappings: null);
+        var emptyDetails = PermissionChangeExtractor.Extract(msg, "成員新增", 4756, mappings: PermissionFieldMappings.Empty);
+
+        Assert.Equal(defaultDetails.Target, emptyDetails.Target);
+        Assert.Equal(defaultDetails.InitiatorAccount, emptyDetails.InitiatorAccount);
+        Assert.Equal(defaultDetails.TargetAccount, emptyDetails.TargetAccount);
+        Assert.Equal(defaultDetails.Before, emptyDetails.Before);
+        Assert.Equal(defaultDetails.After, emptyDetails.After);
+        Assert.Equal("GROUP_BUILTIN", emptyDetails.Target);
+        Assert.Equal("OP_ACCT", emptyDetails.InitiatorAccount);
+        Assert.Equal("USER_MEMBER", emptyDetails.TargetAccount);
+    }
+
+    [Fact]
+    public void 四個自訂語意角色_各自分派正確且不受區段限制()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "CustomOp" },
+            memberFields: new[] { "CustomMem" },
+            groupFields: new[] { "CustomGrp" },
+            objectFields: new[] { "CustomObj" });
+
+        // 1. 群組成員變更（4728）
+        var msg1 = "CustomOp: OperatorBob\r\nCustomMem: MemberAlice\r\nCustomGrp: SecurityTeam";
+        var details1 = PermissionChangeExtractor.Extract(msg1, "成員新增", 4728, mappings: mappings);
+
+        Assert.Equal("OperatorBob", details1.InitiatorAccount);
+        Assert.Equal("MemberAlice", details1.TargetAccount);
+        Assert.Equal("SecurityTeam", details1.Target);
+        Assert.Equal("MemberAlice", details1.After);
+        Assert.Equal("（不在群組中）", details1.Before);
+
+        // 2. 物件權限變更（4670）
+        var msg2 = "CustomOp: OperatorBob\r\nCustomObj: C:\\Data\\Secret.doc\r\nOriginal Security Descriptor: D:(A;;GA;;;BA)\r\nNew Security Descriptor: D:(A;;GA;;;WD)";
+        var details2 = PermissionChangeExtractor.Extract(msg2, "權限變更", 4670, mappings: mappings);
+
+        Assert.Equal("OperatorBob", details2.InitiatorAccount);
+        Assert.Equal(@"C:\Data\Secret.doc", details2.Target);
+        Assert.Equal("D:(A;;GA;;;BA)", details2.Before);
+        Assert.Equal("D:(A;;GA;;;WD)", details2.After);
+    }
+
+    [Fact]
+    public void 自訂欄位名含空白與大小寫全半形冒號_皆能正確命中()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "Operator User" },
+            memberFields: new[] { "Target User" },
+            groupFields: new[] { "Team Group" },
+            objectFields: null);
+
+        var msg = "Operator User： AdminCharlie\r\nTeam Group: ProjectAlpha\r\nTarget User: DevDavid";
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728, mappings: mappings);
+
+        Assert.Equal("AdminCharlie", details.InitiatorAccount);
+        Assert.Equal("ProjectAlpha", details.Target);
+        Assert.Equal("DevDavid", details.TargetAccount);
+    }
+
+    [Fact]
+    public void 內建官方欄位名優先_同Key時依官方區段感知處理()
+    {
+        // 刻意把官方欄位名設進自訂成員欄位
+        var mappings = new PermissionFieldMappings(
+            operatorFields: null,
+            memberFields: new[] { "Account Name" },
+            groupFields: null,
+            objectFields: null);
+
+        var msg = "Subject:\r\n  Account Name: SuperAdmin\r\nMember:\r\n  Account Name: StandardUser\r\nGroup Name: TestGroup";
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728, mappings: mappings);
+
+        // 官方區段優先：Subject 下的 Account Name 不會被自訂 memberFields 搶去
+        Assert.Equal("SuperAdmin", details.InitiatorAccount);
+        Assert.Equal("StandardUser", details.TargetAccount);
+        Assert.Equal("TestGroup", details.Target);
+    }
+
+    [Fact]
+    public async Task 自訂欄位經由Pipeline管線執行端對端寫入Store()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "PipelineOp" },
+            memberFields: new[] { "PipelineMem" },
+            groupFields: new[] { "PipelineGrp" },
+            objectFields: null);
+
+        var reportSink = new FakeReportSink();
+        var reportService = new RiskReportService(_ai, reportSink);
+        var batchRunStore = new BatchRunStore(_backend.LogStore("test_runs"), _backend.LogStore("test_run_logs"));
+        var runRecorder = new BatchRunRecorder(batchRunStore, "test-host", Array.Empty<string>());
+        var caseCoordinator = new IssueCaseCoordinator(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
+            _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var console = new RecordingRunConsole(_console);
+
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.9", "SRV-PIPE01");
+
+        var customPipeline = new NetiqPipelineService(
+            _backend, new NetiqOptions { BackfillDays = 1 }, _sentinels, _hosts, new EventLogService(),
+            _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
+            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: false, progress: null,
+            clientFactory: FakeSentinelSearchClientFactory.Single(_client),
+            permissionMappings: mappings);
+
+        // 訊息只用自訂欄位名，沒有任何官方欄名——解析得出來就代表設定真的接通到管線
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[]
+            {
+                SentinelPermEvent("10.0.0.9", "SRV-PIPE01", "4728",
+                    "PipelineOp: PipeAdmin\r\nPipelineGrp: PIPELINE_GROUP\r\nPipelineMem: PipeUser")
+            },
+            Found = 1,
+            State = SentinelJobState.Completed
+        };
+
+        var permStore = _backend.PermissionChanges();
+        await customPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 1);
+
+        var record = Assert.Single(
+            permStore.Query(null, null, 100).Where(c => c.HostName == "SRV-PIPE01").ToList());
+        Assert.Equal("PIPELINE_GROUP", record.Target);
+        Assert.Equal("PipeAdmin", record.InitiatorAccount);
+        Assert.Equal("PipeUser", record.TargetAccount);
+    }
 }

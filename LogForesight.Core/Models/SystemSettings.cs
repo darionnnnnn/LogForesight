@@ -136,6 +136,28 @@ public class SystemSettings
     /// <summary>要掃描的 Event Log 頻道全名清單。空清單＝使用預設六頻道</summary>
     public List<string> AnalysisChannels { get; set; } = new();
 
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+
+    /// <summary>
+    /// 操作者帳號自訂欄位名清單（對應主體區段帳戶名稱）。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionOperatorFields { get; set; } = new();
+
+    /// <summary>
+    /// 成員帳號自訂欄位名清單（對應成員區段帳戶名稱）。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionMemberFields { get; set; } = new();
+
+    /// <summary>
+    /// 群組名稱自訂欄位名清單。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionGroupFields { get; set; } = new();
+
+    /// <summary>
+    /// 物件名稱自訂欄位名清單。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionObjectFields { get; set; } = new();
+
     // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）───────────────────────────
 
     /// <summary>CSV 匯入單檔大小上限（KB）</summary>

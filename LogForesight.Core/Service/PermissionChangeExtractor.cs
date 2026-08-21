@@ -13,6 +13,68 @@ public readonly record struct PermissionExtractedDetails(
     string? TargetAccount);
 
 /// <summary>
+/// 權限異動自訂欄位對應（四個語意角色：操作者帳號、成員帳號、群組名稱、物件名稱）。
+/// 留空＝僅使用內建官方欄位名。
+/// </summary>
+public sealed class PermissionFieldMappings
+{
+    public static readonly PermissionFieldMappings Empty = new(null, null, null, null);
+
+    private readonly HashSet<string> _operatorFields;
+    private readonly HashSet<string> _memberFields;
+    private readonly HashSet<string> _groupFields;
+    private readonly HashSet<string> _objectFields;
+    private readonly HashSet<string> _allCustomMultiWordKeys;
+    private readonly HashSet<string> _allCustomKeys;
+
+    public PermissionFieldMappings(
+        IEnumerable<string>? operatorFields,
+        IEnumerable<string>? memberFields,
+        IEnumerable<string>? groupFields,
+        IEnumerable<string>? objectFields)
+    {
+        _operatorFields = ToSet(operatorFields);
+        _memberFields = ToSet(memberFields);
+        _groupFields = ToSet(groupFields);
+        _objectFields = ToSet(objectFields);
+
+        _allCustomKeys = new HashSet<string>(_operatorFields.Concat(_memberFields).Concat(_groupFields).Concat(_objectFields), StringComparer.OrdinalIgnoreCase);
+        _allCustomMultiWordKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _allCustomKeys)
+        {
+            if (key.Contains(' '))
+            {
+                _allCustomMultiWordKeys.Add(key);
+            }
+        }
+    }
+
+    public static PermissionFieldMappings FromSystemSettings(SystemSettings? settings)
+    {
+        if (settings == null) return Empty;
+        return new PermissionFieldMappings(
+            settings.PermissionOperatorFields,
+            settings.PermissionMemberFields,
+            settings.PermissionGroupFields,
+            settings.PermissionObjectFields);
+    }
+
+    private static HashSet<string> ToSet(IEnumerable<string>? items) =>
+        items != null
+            ? new HashSet<string>(items.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()), StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsOperatorField(string key) => _operatorFields.Contains(key);
+    public bool IsMemberField(string key) => _memberFields.Contains(key);
+    public bool IsGroupField(string key) => _groupFields.Contains(key);
+    public bool IsObjectField(string key) => _objectFields.Contains(key);
+
+    public bool IsCustomMultiWordKey(string key) => _allCustomMultiWordKeys.Contains(key);
+    public bool HasCustomKey(string key) => _allCustomKeys.Contains(key);
+    public bool IsEmpty => _allCustomKeys.Count == 0;
+}
+
+/// <summary>
 /// 權限異動事件訊息與告警文字的結構化擷取工具（共用純邏輯）。
 /// 支援行內多對與分區段（Subject、Member、Group、Object、Audit Policy 等）精確剖析，
 /// 避免操作者帳號誤充當被異動成員。
@@ -108,9 +170,10 @@ public static class PermissionChangeExtractor
         string? message,
         string changeType,
         int eventId = 0,
-        string? initialInitiatorAccount = null)
+        string? initialInitiatorAccount = null,
+        PermissionFieldMappings? mappings = null)
     {
-        var parsed = ParseMessage(message);
+        var parsed = ParseMessage(message, mappings);
 
         // 1. 操作者帳號：優先取事件自帶的 InitiatorAccount（NetIQ sun 欄位），無值時取 Subject 區段帳戶名稱
         string? initiatorAccount = CleanValue(initialInitiatorAccount);
@@ -261,7 +324,8 @@ public static class PermissionChangeExtractor
         string? before,
         string? after,
         string? initialInitiatorAccount = null,
-        string? initialTargetAccount = null)
+        string? initialTargetAccount = null,
+        PermissionFieldMappings? mappings = null)
     {
         string? initiator = CleanValue(initialInitiatorAccount);
         string? target = CleanValue(initialTargetAccount);
@@ -310,7 +374,7 @@ public static class PermissionChangeExtractor
         // 2. 若仍有任一欄位為空，以分區段剖析器掃描 AlertText
         if ((initiator == null || target == null) && !string.IsNullOrWhiteSpace(alertText))
         {
-            var parsed = ParseMessage(alertText);
+            var parsed = ParseMessage(alertText, mappings);
             initiator ??= parsed.SubjectAccountName;
 
             if (target == null && (changeType is null or "成員新增" or "成員移除" or "稽核政策變更"))
@@ -322,7 +386,7 @@ public static class PermissionChangeExtractor
         return (initiator, target);
     }
 
-    private static ParsedFields ParseMessage(string? message)
+    private static ParsedFields ParseMessage(string? message, PermissionFieldMappings? mappings = null)
     {
         var fields = new ParsedFields();
         if (string.IsNullOrWhiteSpace(message)) return fields;
@@ -335,7 +399,7 @@ public static class PermissionChangeExtractor
             var line = rawLine.Trim();
             if (line.Length == 0) continue;
 
-            var pairs = ExtractPairs(line);
+            var pairs = ExtractPairs(line, mappings);
             if (pairs.Count == 0)
             {
                 if (TryGetSectionByName(line, out var headerSection))
@@ -446,10 +510,42 @@ public static class PermissionChangeExtractor
                         }
                     }
                 }
+                else if (mappings != null && TryMatchCustomField(key, value, mappings, fields))
+                {
+                    // 已由自訂欄位對應命中
+                }
             }
         }
 
         return fields;
+    }
+
+    private static bool TryMatchCustomField(string key, string value, PermissionFieldMappings mappings, ParsedFields fields)
+    {
+        var clean = CleanValue(value);
+        if (clean == null) return false;
+
+        if (mappings.IsOperatorField(key))
+        {
+            fields.SubjectAccountName ??= clean;
+            return true;
+        }
+        if (mappings.IsMemberField(key))
+        {
+            fields.MemberAccountName ??= clean;
+            return true;
+        }
+        if (mappings.IsGroupField(key))
+        {
+            fields.GroupName ??= clean;
+            return true;
+        }
+        if (mappings.IsObjectField(key))
+        {
+            fields.ObjectName ??= clean;
+            return true;
+        }
+        return false;
     }
 
     private static bool IsKey(string key, params string[] candidates)
@@ -464,7 +560,7 @@ public static class PermissionChangeExtractor
         return false;
     }
 
-    private static List<(string Key, string Value)> ExtractPairs(string line)
+    private static List<(string Key, string Value)> ExtractPairs(string line, PermissionFieldMappings? mappings = null)
     {
         var pairs = new List<(string Key, string Value)>();
         if (string.IsNullOrWhiteSpace(line)) return pairs;
@@ -487,7 +583,7 @@ public static class PermissionChangeExtractor
                 if (start == 0 || char.IsWhiteSpace(line[start - 1]))
                 {
                     var candidate = line[start..i].Trim();
-                    if (IsValidKeyCandidate(candidate))
+                    if (IsValidKeyCandidate(candidate, mappings))
                     {
                         selectedStart = start;
                         selectedKey = candidate;
@@ -520,7 +616,7 @@ public static class PermissionChangeExtractor
         return pairs;
     }
 
-    private static bool IsValidKeyCandidate(string text)
+    private static bool IsValidKeyCandidate(string text, PermissionFieldMappings? mappings = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
         if (text.Length < 2 || text.Length > 35) return false;
@@ -543,10 +639,10 @@ public static class PermissionChangeExtractor
 
         if (text.Contains(' '))
         {
-            return KnownMultiWordKeys.Contains(text) || TryGetSectionByName(text, out _);
+            return KnownMultiWordKeys.Contains(text) || TryGetSectionByName(text, out _) || (mappings?.IsCustomMultiWordKey(text) == true);
         }
 
-        return text.Length <= 20;
+        return text.Length <= 20 || (mappings?.HasCustomKey(text) == true);
     }
 
     public static string? TryExtractValue(string line, params string[] prefixes)
