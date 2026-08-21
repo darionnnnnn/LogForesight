@@ -815,4 +815,49 @@ public sealed class PermissionChangeQueryTests : IDisposable
         Assert.Equal(@"CORP\alice 被加入本機 Administrators 群組", summary);
         Assert.DoesNotContain("群組 本機", summary);
     }
+
+    /// <summary>例行同步彙總列在列表上的那一句要讀得懂「為什麼被合併」，
+    /// 而不是只有一個代號（作業 C＋E 的接線）。</summary>
+    [Fact]
+    public void SummaryText_例行同步彙總列_句中含推測原因與未成對說明()
+    {
+        var summary = PermissionChangeService.GenerateSummaryText(new PermissionChangeRecord
+        {
+            ChangeId = "routine-1",
+            HostName = "SRV-SYNC",
+            Category = PermissionCategory.Summary,
+            ChangeType = "例行同步（彙總）",
+            Target = "SRV-SYNC（例行同步）",
+            AlertText = "本日偵測到 120 對「成員新增＋成員移除」的對稱異動（涉及 8 個群組、110 個帳號），未逐則列出。" +
+                        "此模式可能是 AD 自動化程序（例如每天以先清空再重建的方式同步群組成員的腳本）產生；未成對的異動仍逐則列出。"
+        });
+
+        Assert.Contains("120 對", summary);
+        Assert.Contains("先清空再重建", summary);
+        Assert.Contains("未成對的異動仍逐則列出", summary);
+    }
+
+    /// <summary>舊彙總列的 EventId 存 0（沒有對應的單一事件）——DTO 要給 null，
+    /// 否則展開明細會顯示「0」。</summary>
+    [Fact]
+    public void MapToDto_EventId為0時給null()
+    {
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = "evt-zero",
+                HostName = "SRV-01",
+                DetectedAt = DateTime.Now,
+                Category = PermissionCategory.Summary,
+                ChangeType = "權限異動（彙總）",
+                Target = "SRV-01（彙總）",
+                EventId = 0,
+                Source = PermissionChangeSources.Netiq
+            }
+        });
+
+        var dto = Assert.Single(CreateService().Query(new PermissionChangeQueryRequest()).Items);
+        Assert.Null(dto.EventId);
+    }
 }
