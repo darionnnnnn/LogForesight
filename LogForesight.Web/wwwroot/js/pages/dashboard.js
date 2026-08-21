@@ -162,7 +162,7 @@ async function loadAiFocus() {
         renderAiInline(li, item.text);
         if (item.link) {
             const link = document.createElement('a');
-            link.href = item.link;   // 後端已過白名單驗證
+            link.href = appUrl(item.link);   // 後端已過白名單驗證（回傳的是 app 內路徑）
             link.className = 'ms-2 small';
             link.textContent = '檢視 →';
             li.appendChild(link);
@@ -737,7 +737,7 @@ function correlationCell(host) {
 
 function hostLink(host) {
     const link = document.createElement('a');
-    link.href = host.hostId > 0 ? `/hosts/${host.hostId}` : '#';
+    link.href = host.hostId > 0 ? appUrl(`/hosts/${host.hostId}`) : '#';
     link.textContent = host.hostName;
     return link;
 }

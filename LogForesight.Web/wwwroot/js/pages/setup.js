@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 首次啟動精靈（回饋十八輪批次H）：checklist 即精靈骨架。
  *
  * 混合制：「完成」由後端依系統狀態自動判定（見 SetupReadinessService），畫面只讀不算；
@@ -7,6 +7,7 @@
  */
 
 import { api } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { toast, withBusy, guardLoad } from '../core/ui.js';
 import { statusBadge } from '../core/format.js';
 
@@ -104,7 +105,7 @@ function renderSteps() {
         if (step.targetUrl && !step.done) {
             const goButton = document.createElement('a');
             goButton.className = 'btn btn-sm btn-primary';
-            goButton.href = `${step.targetUrl}?from=setup`;
+            goButton.href = appUrl(`${step.targetUrl}?from=setup`);
             goButton.textContent = '前往設定';
             actions.appendChild(goButton);
         }

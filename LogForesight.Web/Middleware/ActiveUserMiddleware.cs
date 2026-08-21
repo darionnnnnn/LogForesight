@@ -28,7 +28,10 @@ public class ActiveUserMiddleware
             var user = users.Get(currentUser.UserId);
             if (user == null || !user.Active)
             {
-                context.Response.Cookies.Delete(settings.Jwt.CookieName);
+                // 與寫入時同一組選項（Path 不一致會刪不掉，見 AuthController.AuthCookieOptions）
+                context.Response.Cookies.Delete(
+                    settings.Jwt.CookieName,
+                    Controllers.Api.AuthController.AuthCookieOptions(context.Request, expires: null));
 
                 if (context.Request.Path.StartsWithSegments("/api"))
                 {

@@ -45,7 +45,8 @@ for (const input of document.querySelectorAll('[data-upload]')) {
         try {
             // 檔案上傳同樣走 api.js（它認得 FormData，會讓瀏覽器自己帶 multipart boundary）：
             // CSRF 標頭、信封解析、401 導頁、掛載前綴都在那裡一次處理好
-            currentPlan = await api.post(`/api/imports/${kind}/preview`, formData);
+            // silent：下面的 catch 自己跳 toast（含較長的停留時間），不加會跳兩次
+            currentPlan = await api.post(`/api/imports/${kind}/preview`, formData, { silent: true });
             currentKind = kind;
             renderPreview();
         } catch (error) {

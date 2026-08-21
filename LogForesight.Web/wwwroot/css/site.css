@@ -544,8 +544,9 @@ body {
     white-space: nowrap;
     /* 貼齊靠父層的 space-between（首行頂貼、末行底貼）；行高壓到接近 1，否則行高留白
        會讓字形離圖示邊緣還有一段空隙。
-       1.6rem 是**水平**上限：側欄文字可用寬約 157px，「LogForesight」在 1.6rem／700
-       加上父層 letter-spacing 後約 150px，再大就會觸發省略號。 */
+       1.6rem 是**水平**上限：預設字級下側欄文字可用寬約 157px，「LogForesight」在 1.6rem／700
+       加上父層 letter-spacing 後約 150px，再大就會觸發省略號。側欄寬是固定值而字級會跟著
+       使用者的字級偏好放大，選「大字級」時餘裕會縮小——長品牌名在該情境下截斷屬預期。 */
     font-size: 1.6rem;
     line-height: 1.05;
 }

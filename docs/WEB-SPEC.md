@@ -1,4 +1,4 @@
-# LogForesight.Web 開發規格文件
+﻿# LogForesight.Web 開發規格文件
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 >
@@ -444,7 +444,10 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 ### 8.1 JS 架構（原生 ES Modules）
 
 - `core/api.js`：fetch 包裝的**唯一出口**——組信封解析、錯誤 toast、401 導登入、
-  非 GET 自動帶 `X-Requested-By`。頁面模組不得直接呼叫 `fetch`。
+  非 GET 自動帶 `X-Requested-By`、掛載前綴（§8.1a）。頁面模組不得直接呼叫 `fetch`
+  （含檔案上傳：傳 `FormData` 進來即可，它不會自己設 Content-Type，boundary 交給瀏覽器）。
+- `core/paths.js`：站台掛載前綴的唯一出口（§8.1a）——`appUrl()` 補前綴、`appPath()` 去前綴。
+  獨立成模組是因為 `ui.js` 也要用它，而 `api.js` 反過來用 `ui.js` 的 toast，放一起會成環。
 - `core/ui.js`：toast（Bootstrap Toast）、確認對話框（Bootstrap Modal 包裝，
   破壞性操作一律經過它）、表格渲染 helper（欄位定義 → `<table>`，含空狀態與載入中列）。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
@@ -463,6 +466,30 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
   134KB），屬純靜態字型資產、零外部請求、**不透過 CDN／Google Fonts**（違反上面的無外部請求原則）。
   拉丁字由 `@font-face` + `unicode-range` 接管，**中文一律走系統字 fallback**（微軟正黑）——
   不引入 MB 級中文 webfont，維持零依賴精神。
+
+### 8.1a 站台掛載路徑（可掛在 IIS 子 Application）
+
+站台可能掛在網站根目錄，也可能是 IIS 的 Application（`http://host/LogForesight/...`）。
+IIS in-process 託管時 ASP.NET Core 會自動填 `Request.PathBase`；Kestrel 直曝而前面的
+反向代理加了前綴時，用 `Server:PathBase` 設定鍵（預設空）補上。
+
+`_Layout.cshtml` 與 `Login.cshtml`（不套主版面，**兩處都要**）server-render
+`window.LF_BASE = Request.PathBase`，前端據此補前綴。
+
+**紅線：前端不得寫死 `/` 開頭的路徑。**
+
+| 情境 | 用什麼 |
+|---|---|
+| API 呼叫 | `api.js`（出口已補前綴，`/api/...` 字串照寫） |
+| 連結組裝、轉址 | `core/paths.js` 的 `appUrl()` |
+| 路由比對（選單高亮、頁面判斷） | `appPath()`——直接比 `location.pathname` 會**靜默失效**，不是 404 |
+| cshtml 資源／連結 | `~/`（tag helper 會展開）或 `@Url.Content("~/...")` |
+| CSS 內的資源 | 相對路徑（`../fonts/...`） |
+
+`appUrl()` **只在值即將寫進 `href`／`location` 的那一處套一次**——重複套用會變成
+`/LogForesight/LogForesight/...`。因此 `core/ui.js`（sprite、整列可點、連結 helper）、
+`core/charts.js`（下鑽）、`core/layout.js`（選單）這些**匯集點**負責套用，頁面模組傳給
+它們的值一律維持 app 相對。
 
 ### 8.2 設計系統（Bootstrap 為基底、功能取向的自訂外觀）
 
@@ -513,7 +540,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 
 **圖示**：採自架單一 SVG sprite（`wwwroot/img/icons.svg`，Bootstrap Icons MIT 子集，見 §8.1
 白名單），零外部請求、無字型下載。cshtml 內以 `<svg class="lf-icon"><use href="/img/icons.svg#名稱">`
-引用（注意 `href` 走絕對路徑，Razor 不解析 SVG `<use>` 內的 `~/`）；JS 動態產生的內容用
+引用時必須寫成 `<use href="@Url.Content("~/img/icons.svg")#名稱">`——Razor **不會**解析
+SVG `<use>` 內的 `~/`，得用 `@Url.Content` 顯式求值；寫死 `/img/...` 在子 Application 下會 404
+（見 §8.1a）。JS 動態產生的內容用
 `ui.js` 的 `icon(name)`（`createElementNS` 建 SVG）。圖示一律 `aria-hidden`、跟隨文字色與字級，
 **裝飾性、不得比風險訊號搶眼**（原則 1）——側欄與按鈕圖示皆降透明度處理。
 

@@ -1,4 +1,4 @@
-# LogForesight
+﻿# LogForesight
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
@@ -476,6 +476,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 
 ```json
 {
+  "Server": { "PathBase": "" },
   "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },
   "Jwt": { "SecretKey": "<測試值，正式環境以環境變數覆寫>", "ExpireHours": 8 },
   "Auth": {
@@ -488,6 +489,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
+| `Server.PathBase` | `""`（＝掛在網站根目錄） | 站台掛載前綴（例 `/LogForesight`）。**IIS 子 Application 不需要設定**（自動辨識）；只有「Kestrel 直曝＋反向代理加了前綴」或本機要驗證前綴行為時才填 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
@@ -575,10 +577,28 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
 
+### 以 IIS 子 Application 部署
+
+站台可以掛在 IIS 網站底下的 Application，網址帶前綴（`http://host/LogForesight/...`）：
+
+1. 主機安裝 **ASP.NET Core Hosting Bundle**（IIS 要靠它託管 .NET 8 應用程式）。
+2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。
+3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
+4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
+   與 `logs\` 有讀寫權限。
+
+**不需要設定 `Server:PathBase`**——in-process 託管時 ASP.NET Core 會自動辨識掛載路徑，
+前端也會跟著補前綴（見 docs/WEB-SPEC.md §8.1a）。只有「Kestrel 直曝、而前面的反向代理
+自己加了路徑前綴」時才需要手動填那個設定。
+
+Cookie 的作用範圍會跟著掛載路徑走，因此同一台主機掛正式與測試兩個 Application 時，
+兩邊的登入身分不會互相覆蓋。
+
 ### 防火牆
 
-內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可，不需要 IIS 反向代理：只開放 Web 站台埠號（如 8443）
-給實際會用到的內網範圍，不對外網開放。
+內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可（不需要為了轉發而多架一層反向代理）：
+只開放 Web 站台埠號（如 8443）給實際會用到的內網範圍，不對外網開放。
+組織既有 IIS 站台要統一入口時，改用 IIS 託管，見下方「以 IIS 子 Application 部署」。
 
 ### 目錄配置
 

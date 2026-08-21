@@ -69,14 +69,10 @@ public class AuthController : ControllerBase
         // HttpOnly：前端 JS 讀不到 token（XSS 也偷不走）
         // SameSite=Strict：跨站請求不帶上這張 Cookie，這是 CSRF 的第一層防線
         // Secure：只走 HTTPS。內網也必須是 HTTPS，否則 Cookie 在網路上是明文
-        Response.Cookies.Append(_settings.Jwt.CookieName, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = expires,
-            Path = "/"
-        });
+        // Path 跟著站台的掛載路徑：同一台主機掛兩個 LogForesight 子 Application（正式／測試
+        // 很常見）時，兩者的 Cookie 同名，Path 都寫 "/" 會讓後登入的那個直接蓋掉前一個——
+        // 症狀不是被登出，而是「身分變成另一個環境的人」，比 401 難查得多。
+        Response.Cookies.Append(_settings.Jwt.CookieName, token, AuthCookieOptions(Request, expires));
 
         return Ok(ApiResponse<CurrentUserDto>.Ok(ToDto(outcome.Identity)));
     }
@@ -90,9 +86,23 @@ public class AuthController : ControllerBase
                 _currentUser.UserId > 0 ? _currentUser.UserId : null, "登出", AuditResult.Ok);
         }
 
-        Response.Cookies.Delete(_settings.Jwt.CookieName);
+        // 刪除時的 Path 必須與寫入時相同，否則瀏覽器當成另一張 Cookie、刪不掉
+        Response.Cookies.Delete(_settings.Jwt.CookieName, AuthCookieOptions(Request, expires: null));
         return ApiResponse.Ok();
     }
+
+    /// <summary>
+    /// 驗證 Cookie 的統一選項（寫入與刪除共用——兩邊的 Path 只要不一致就刪不掉）。
+    /// </summary>
+    public static CookieOptions AuthCookieOptions(HttpRequest request, DateTimeOffset? expires) =>
+        new()
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Expires = expires,
+            Path = request.PathBase.HasValue ? request.PathBase.Value! : "/"
+        };
 
     /// <summary>目前登入者。前端用來渲染側欄選單與功能鈕的顯示範圍</summary>
     [HttpGet("me")]

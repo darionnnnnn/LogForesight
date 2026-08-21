@@ -29,7 +29,14 @@ export function appUrl(path) {
  */
 export function appPath() {
     const path = location.pathname;
-    if (BASE && (path === BASE || path.startsWith(BASE + '/'))) {
+    if (!BASE) return path;
+
+    // 大小寫不敏感比對：IIS 的路由不分大小寫，使用者打 /logforesight/records 一樣進得來，
+    // 但 LF_BASE 是伺服器設定的 /LogForesight——大小寫敏感的比對會在這裡失手，
+    // 而失手的症狀是選單不高亮這種靜默失效，不會有人回報。切片仍用原字串。
+    const lower = path.toLowerCase();
+    const baseLower = BASE.toLowerCase();
+    if (lower === baseLower || lower.startsWith(baseLower + '/')) {
         return path.slice(BASE.length) || '/';
     }
     return path;
