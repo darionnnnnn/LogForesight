@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
     @* 登入頁不套 _Layout，掛載前綴要自己注入——漏掉的話登入頁的 API 全數 404
        （畫面症狀是「無法取得登入設定」）。 *@
-    <script>window.LF_BASE = '@Context.Request.PathBase.Value';</script>
+    <script>window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
 </head>
 <body>
     <div class="lf-login">

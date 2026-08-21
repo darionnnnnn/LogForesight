@@ -76,13 +76,13 @@ public class PathBaseTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<ISystemSettingsStore>(new InMemorySystemSettingsStore());
+        services.AddSingleton<ISystemSettingsStore>(new FakeSystemSettingsStore());
         // 金鑰只為了讓 JwtBearer 選項建得起來；本測試不簽發也不驗證 token
         var settings = new WebAppSettings();
         settings.Jwt.SecretKey = new string('k', 64);
         services.AddLogForesightAuth(settings);
 
-        var provider = services.BuildServiceProvider();
+        using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<IOptionsMonitor<JwtBearerOptions>>()
             .Get(JwtBearerDefaults.AuthenticationScheme);
 
@@ -123,18 +123,6 @@ public class PathBaseTests
         Assert.Contains(Uri.EscapeDataString("/records?riskLevels="), location);
     }
 
-    /// <summary>只為了讓 auth 註冊拿得到設定；本測試不碰任何設定值</summary>
-    private sealed class InMemorySystemSettingsStore : ISystemSettingsStore
-    {
-        private readonly SystemSettings _settings = new();
-        public SystemSettings Get() => _settings;
-        public SystemSettings Update(Action<SystemSettings> mutation)
-        {
-            mutation(_settings);
-            return _settings;
-        }
-    }
-
     /// <summary>API 請求不轉址：前端 api.js 自己攔 401 導頁（頁面請求才 302）</summary>
     [Fact]
     public async Task 未登入的API請求_在子應用下回401信封而非轉址()
@@ -143,5 +131,36 @@ public class PathBaseTests
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.True(string.IsNullOrEmpty(context.Response.Headers.Location.ToString()));
+    }
+
+    /// <summary>cookie 的 Path 跟掛載路徑走，且寫入與刪除必須拿到同一個 Path——
+    /// 兩邊不一致時刪除等於沒刪（瀏覽器把不同 Path 的同名 Cookie 當成不同張）。</summary>
+    [Theory]
+    [InlineData("/LogForesight", "/LogForesight")]
+    [InlineData("", "/")]
+    public void 驗證Cookie的Path跟掛載路徑走且寫入與刪除一致(string pathBase, string expectedPath)
+    {
+        var request = ContextWith(pathBase, "/records").Request;
+
+        var writeOptions = AuthCookie.Options(request, DateTimeOffset.Now.AddHours(8));
+        var deleteOptions = AuthCookie.Options(request, expires: null);
+
+        Assert.Equal(expectedPath, writeOptions.Path);
+        Assert.Equal(writeOptions.Path, deleteOptions.Path);
+        Assert.True(writeOptions.HttpOnly);
+        Assert.Equal(SameSiteMode.Strict, writeOptions.SameSite);
+    }
+
+    /// <summary>掛載名稱含非 ASCII 時，Path 用編碼後形式——瀏覽器 path-match 比對的是
+    /// 請求 URL 的編碼後路徑，存解碼後的值會永遠比不中、Cookie 不被送回（登入迴圈）。</summary>
+    [Fact]
+    public void 驗證Cookie的Path使用編碼後形式()
+    {
+        var request = ContextWith("/日誌預警", "/records").Request;
+
+        var options = AuthCookie.Options(request, expires: null);
+
+        Assert.DoesNotContain("日", options.Path);
+        Assert.StartsWith("/%", options.Path);
     }
 }

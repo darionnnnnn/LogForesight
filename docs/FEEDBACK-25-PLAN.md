@@ -170,5 +170,26 @@ A 的四支後端測試；B 靠 grep＋C 的整站實測兜底（前端無自動
 的理由；新增 §8.1a 路徑規約（含匯集點只套一次的規則）；README 收斂「不需要 IIS」的既有
 矛盾＋新增 IIS 子 Application 部署章節＋設定表與範例補 `Server:PathBase`；CLAUDE.md 加紅線。
 
+### 體檢輪（終檢修正 commit 的獨立審查）
+
+**程式碼審查成立並修正**：
+1. **升級情境的雙 cookie**（高，安全面）：既有部署的舊 `Path=/` cookie 與新的
+   `Path={PathBase}` 同名並存；ASP.NET Core 解析 Cookie 標頭時後到的值覆寫先到的，
+   舊 token 會蓋過新 token 且重登救不回來，登出也只刪新範圍、舊 token 永遠有效。
+   修法：寫入與刪除都連同 `Path=/` 的舊 cookie 一併清（一次性清理，數版後可移除）。
+2. cookie Path 用 `PathBase.Value`（解碼後）與轉址（編碼後）不一致：掛載名稱含空白或
+   非 ASCII 時 path-match 永遠比不中，變登入迴圈。改 `ToUriComponent()`。
+3. `LF_BASE` 注入走 Razor HTML 編碼器：非 ASCII 會編成 `&#x…;` 且 `<script>` 內不解碼，
+   全站前綴靜默全錯。改 `Html.Raw(JsonSerializer.Serialize(...))`。
+4. cookie 邏輯自 Controller 移到 `Auth/AuthCookie`（middleware 反向依賴 Controller 違反
+   分層慣例）；測試改用既有 `FakeSystemSettingsStore`（原重造了一份）；補 cookie Path
+   一致性與編碼形式的測試。實測驗證：登入回應同時送出「刪 `path=/`」與
+   「寫 `path=/LogForesight`」兩個 Set-Cookie。
+
+**文件審查成立並修正**：§8.1a 匯集點規則改為「誰寫入誰套一次」（原敘述會把頁面模組的
+正確寫法讀成違規）；§8.5 sprite 段刪掉殘留的舊寫法示範（改一半反而自相矛盾）；
+_Layout 註解指錯檔（appUrl 在 paths.js 不在 api.js）；site.css 副標註解與值矛盾；
+README IIS 章節與設定表的重複收斂。
+
 **規劃自己的落差**：§5 寫「WEB-SPEC §9.5 品牌版面」是錯的——§9.5 是權限異動待辦，
 品牌在 §9.9b，且該段不描述版面字級，本輪不需要動它。

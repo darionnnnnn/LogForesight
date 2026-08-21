@@ -487,9 +487,10 @@ IIS in-process 託管時 ASP.NET Core 會自動填 `Request.PathBase`；Kestrel 
 | CSS 內的資源 | 相對路徑（`../fonts/...`） |
 
 `appUrl()` **只在值即將寫進 `href`／`location` 的那一處套一次**——重複套用會變成
-`/LogForesight/LogForesight/...`。因此 `core/ui.js`（sprite、整列可點、連結 helper）、
-`core/charts.js`（下鑽）、`core/layout.js`（選單）這些**匯集點**負責套用，頁面模組傳給
-它們的值一律維持 app 相對。
+`/LogForesight/LogForesight/...`。判準是「**誰負責寫入，誰套**」：頁面模組自己建連結、
+自己指派 `href` 時自己套；把值**交給** `core/ui.js`（sprite、整列可點、`rowHref`、statCard）、
+`core/charts.js`（下鑽 `url`）、`core/layout.js`（選單表）這些 helper 時維持 app 相對，
+由 helper 在寫入的那一刻套，頁面端不得先套。
 
 ### 8.2 設計系統（Bootstrap 為基底、功能取向的自訂外觀）
 
@@ -539,10 +540,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 （規則/主機/使用者的快速篩選、問題查詢的群組 chip、風險日詳情的狀態面板）的共同基座。
 
 **圖示**：採自架單一 SVG sprite（`wwwroot/img/icons.svg`，Bootstrap Icons MIT 子集，見 §8.1
-白名單），零外部請求、無字型下載。cshtml 內以 `<svg class="lf-icon"><use href="/img/icons.svg#名稱">`
-引用時必須寫成 `<use href="@Url.Content("~/img/icons.svg")#名稱">`——Razor **不會**解析
-SVG `<use>` 內的 `~/`，得用 `@Url.Content` 顯式求值；寫死 `/img/...` 在子 Application 下會 404
-（見 §8.1a）。JS 動態產生的內容用
+白名單），零外部請求、無字型下載。cshtml 內以 `<svg class="lf-icon"><use href="@Url.Content("~/img/icons.svg")#名稱"></use></svg>`
+引用——Razor **不會**解析 SVG `<use>` 內的 `~/`，得用 `@Url.Content` 顯式求值；
+寫死 `/img/...` 在子 Application 下會 404（見 §8.1a）。JS 動態產生的內容用
 `ui.js` 的 `icon(name)`（`createElementNS` 建 SVG）。圖示一律 `aria-hidden`、跟隨文字色與字級，
 **裝飾性、不得比風險訊號搶眼**（原則 1）——側欄與按鈕圖示皆降透明度處理。
 

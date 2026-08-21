@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 
@@ -28,10 +28,7 @@ public class ActiveUserMiddleware
             var user = users.Get(currentUser.UserId);
             if (user == null || !user.Active)
             {
-                // 與寫入時同一組選項（Path 不一致會刪不掉，見 AuthController.AuthCookieOptions）
-                context.Response.Cookies.Delete(
-                    settings.Jwt.CookieName,
-                    Controllers.Api.AuthController.AuthCookieOptions(context.Request, expires: null));
+                AuthCookie.Delete(context.Response, context.Request, settings.Jwt.CookieName);
 
                 if (context.Request.Path.StartsWithSegments("/api"))
                 {

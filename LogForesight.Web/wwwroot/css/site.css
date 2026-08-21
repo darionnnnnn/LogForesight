@@ -556,8 +556,8 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* 副標用字級 token 的最小級（xs）而不是自訂 .7rem——.7rem 在預設根字級下約 11px，
-       低於可讀下限 */
+    /* .92rem 不在字級 token 階上：這裡的約束是「名稱＋副標兩行合計貼齊圖示高度」，
+       由名稱 1.6rem／兩行行高 1.05 反推而來，token 階（xs=.78）會讓副標離圖示下緣一截 */
     font-size: .92rem;
     font-weight: 400;
     color: var(--lf-sidebar-section);

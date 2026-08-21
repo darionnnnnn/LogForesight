@@ -587,9 +587,8 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
    與 `logs\` 有讀寫權限。
 
-**不需要設定 `Server:PathBase`**——in-process 託管時 ASP.NET Core 會自動辨識掛載路徑，
-前端也會跟著補前綴（見 docs/WEB-SPEC.md §8.1a）。只有「Kestrel 直曝、而前面的反向代理
-自己加了路徑前綴」時才需要手動填那個設定。
+**不需要設定 `Server:PathBase`**——in-process 託管時掛載路徑自動辨識，前端也會跟著
+補前綴（見 docs/WEB-SPEC.md §8.1a）；何時才要手動填見設定表該列。
 
 Cookie 的作用範圍會跟著掛載路徑走，因此同一台主機掛正式與測試兩個 Application 時，
 兩邊的登入身分不會互相覆蓋。
