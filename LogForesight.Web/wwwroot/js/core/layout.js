@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 主版面的共用行為（docs/WEB-SPEC.md §8.5）：側欄選單、目前使用者、登出。
  *
  * 選單依能力顯示，但這**只是顯示層的方便**——真正的防線在後端的 PermissionFilter。
@@ -6,6 +6,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from './api.js';
+import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName } from './format.js';
 
@@ -90,7 +91,7 @@ function renderNav(user) {
     const nav = document.getElementById('lf-nav');
     if (!nav) return;
 
-    const currentPath = location.pathname;
+    const currentPath = appPath();
 
     for (const section of NAV_SECTIONS) {
         // href 可以是函式（依目前使用者算出連結，例如「我的交辦」連到自己的處理人頁）——
@@ -135,7 +136,7 @@ function renderNav(user) {
 
         for (const item of visible) {
             const link = document.createElement('a');
-            link.href = item.resolvedHref;
+            link.href = appUrl(item.resolvedHref);
             link.className = 'lf-sidebar__link';
             link.appendChild(icon(item.icon));
 
@@ -311,7 +312,7 @@ function bindLogout() {
         try {
             await api.post('/api/auth/logout');
         } finally {
-            location.href = '/login';
+            location.href = appUrl('/login');
         }
     });
 }
@@ -373,7 +374,7 @@ function renderSetupReturnBanner() {
     actions.className = 'd-flex align-items-center gap-2';
 
     const backLink = document.createElement('a');
-    backLink.href = '/setup';
+    backLink.href = appUrl('/setup');
     backLink.className = 'btn btn-sm btn-primary';
     backLink.textContent = '返回啟動精靈';
     actions.appendChild(backLink);

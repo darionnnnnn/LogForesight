@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chart.js 的包裝層（docs/WEB-SPEC.md §8.3）。
  *
  * **頁面模組不得直接呼叫 Chart.js**，一律經過這裡。這一層負責四件事：
@@ -11,6 +11,7 @@
  * 換圖表庫時只需要重寫這個模組——這是防廢棄的實際手段，不是原則宣示。
  */
 
+import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
 
 /** 自 CSS 變數讀取設計 token：顏色只在 site.css 定義一次 */
@@ -100,7 +101,7 @@ function baseOptions({ drillTo, onDrill }) {
 
             if (url) {
                 if (onDrill) onDrill(url);
-                else location.href = url;
+                else location.href = appUrl(url);
             }
         },
         onHover: (event, elements) => {
@@ -191,7 +192,7 @@ export function attachDoughnutLegend(container, items) {
 
         const row = document.createElement(item.url ? 'a' : 'div');
         row.className = 'lf-legend-row' + (item.url ? ' lf-legend-row--link' : '');
-        if (item.url) row.href = item.url;
+        if (item.url) row.href = appUrl(item.url);
 
         const dot = document.createElement('span');
         dot.className = 'lf-legend-row__dot';

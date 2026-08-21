@@ -35,7 +35,7 @@ LogForesight：分析 Windows Server（Linux 規則面就緒、取數未串）�
 
 - **分支流程**：自 `dev` 開 `feature/*`，完成後併 `dev` 給使用者實測、確認無誤才併 `master`；
   併入後刪除該 `feature/*` 分支。不主動 commit/push，除非使用者要求。
-- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **2469** 個測試（略過 6；
+- **測試**：`dotnet test`（根目錄）。改動需維持全綠——目前基線 **2479** 個測試（略過 6；
   略過的是規模壓測，設 `LF_SCALE_BENCH=1` 才跑）。
   部署前驗證＝跑測試（規則合法性、遮蔽偵測、關聯層覆蓋皆為自動化測試，非手動 CLI）。
 - **語言**：說明文字與註解用**台灣繁中**（專有名詞除外）。全站用詞規範見 WEB-SPEC §8.6a。
@@ -57,3 +57,6 @@ LogForesight：分析 Windows Server（Linux 規則面就緒、取數未串）�
 - 不要拆 WEB-SPEC（會斷開大量 §編號交叉引用）。
 - 不要新增沒有消費端的設定欄位。
 - 不要讓 AI 產出被當成 HTML 解析（前端一律 `textContent`／走 `markdown-lite` 唯一出口）。
+- 不要在前端寫死 `/` 開頭的路徑：連結組裝與轉址走 `core/paths.js` 的 `appUrl()`、路由比對走
+  `appPath()`、API 走 `api.js`（出口已補前綴）、cshtml 走 `~/` 或 `@Url.Content`。站台可能掛在
+  IIS 子 Application，寫死會整站 404 或選單靜默失效（見 WEB-SPEC §8.1a）。

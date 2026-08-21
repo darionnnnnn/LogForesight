@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 
@@ -28,7 +28,7 @@ public class ActiveUserMiddleware
             var user = users.Get(currentUser.UserId);
             if (user == null || !user.Active)
             {
-                context.Response.Cookies.Delete(settings.Jwt.CookieName);
+                AuthCookie.Delete(context.Response, context.Request, settings.Jwt.CookieName);
 
                 if (context.Request.Path.StartsWithSegments("/api"))
                 {
@@ -38,7 +38,7 @@ public class ActiveUserMiddleware
                 }
                 else
                 {
-                    context.Response.Redirect("/login");
+                    context.Response.Redirect($"{context.Request.PathBase}/login");
                 }
                 return;
             }

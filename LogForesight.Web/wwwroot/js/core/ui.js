@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 共用 UI 元件（docs/WEB-SPEC.md §8.1）：toast、確認對話框、表格渲染、載入/空狀態。
  *
  * 集中在這裡的理由與 api.js 相同——「破壞性操作要二次確認」「空狀態要有指引」
@@ -17,6 +17,7 @@ import { formatUserName } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
+import { appUrl } from './paths.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -27,7 +28,7 @@ export function icon(name, className) {
     svg.setAttribute('aria-hidden', 'true');
 
     const use = document.createElementNS(SVG_NS, 'use');
-    const href = `/img/icons.svg#${name}`;
+    const href = appUrl(`/img/icons.svg#${name}`);
     use.setAttribute('href', href);
     use.setAttributeNS(XLINK_NS, 'xlink:href', href);   // 舊瀏覽器相容
     svg.appendChild(use);
@@ -514,7 +515,7 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             // 依問題視角展開列都**沒有列內連結**），只有 click 監聽等於這些功能對
             // 鍵盤／輔助技術使用者不存在。範本取自風險日詳情已經做對的
             // lf-card__header--clickable（role + tabindex + Enter/Space + :focus-visible）。
-            makeRowActivatable(tr, () => { location.href = href; });
+            makeRowActivatable(tr, () => { location.href = appUrl(href); });
         }
 
         // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
@@ -876,7 +877,7 @@ function backLinkNode({ href, text = '返回清單' }) {
     wrap.className = 'mt-3';
     const link = document.createElement('a');
     link.className = 'btn btn-sm btn-outline-secondary';
-    link.href = href;
+    link.href = appUrl(href);
     link.textContent = text;
     wrap.appendChild(link);
     return wrap;
@@ -1177,7 +1178,7 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 export function statCard({ value, label, variant, url, hint, centered = true, extra }) {
     const inner = document.createElement(url ? 'a' : 'div');
     inner.className = 'lf-stat';
-    if (url) inner.href = url;
+    if (url) inner.href = appUrl(url);
 
     const box = document.createElement('div');
     box.className = 'lf-card h-100' + (url ? ' lf-card--clickable' : '');

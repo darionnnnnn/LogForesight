@@ -43,20 +43,10 @@ for (const input of document.querySelectorAll('[data-upload]')) {
         previewCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         try {
-            // FormData 上傳不經 core/api.js 的 JSON 包裝，但 CSRF 標頭與信封解析規則相同
-            const response = await fetch(`/api/imports/${kind}/preview`, {
-                method: 'POST',
-                headers: { 'X-Requested-By': 'LogForesight' },
-                credentials: 'same-origin',
-                body: formData
-            });
-
-            const payload = await response.json();
-            if (!response.ok || !payload.success) {
-                throw new Error(payload?.error?.message ?? '預覽失敗');
-            }
-
-            currentPlan = payload.data;
+            // 檔案上傳同樣走 api.js（它認得 FormData，會讓瀏覽器自己帶 multipart boundary）：
+            // CSRF 標頭、信封解析、401 導頁、掛載前綴都在那裡一次處理好
+            // silent：下面的 catch 自己跳 toast（含較長的停留時間），不加會跳兩次
+            currentPlan = await api.post(`/api/imports/${kind}/preview`, formData, { silent: true });
             currentKind = kind;
             renderPreview();
         } catch (error) {

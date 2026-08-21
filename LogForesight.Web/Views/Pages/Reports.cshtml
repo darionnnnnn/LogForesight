@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "報表";
 }
 
@@ -54,12 +54,12 @@
                 <div class="col-auto ms-auto d-flex gap-2 align-items-center">
                     @* 跨主機同簽章查詢已併入「問題查詢」（§4）：原本是頁底一整段說明文字，
                        docs/archive/FEEDBACK-10-PLAN.md §5 收進 popover——一次性的導引不值得每次都佔一段版面 *@
-                    <a class="btn btn-sm btn-outline-secondary" href="/records">
+                    <a class="btn btn-sm btn-outline-secondary" href="@Url.Content("~/records")">
                         查同一問題的其他主機
                     </a>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="要查同一事件簽章出現在哪些主機／日子（判斷是單機個案還是全環境共通），請到問題查詢頁輸入 Event ID／來源，切「依問題」視角即可，還能直接下鑽與指派。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-customize-charts" data-bs-toggle="modal" data-bs-target="#chart-picker-modal">自訂圖表</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>

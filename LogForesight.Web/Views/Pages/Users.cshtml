@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "使用者";
 }
 
@@ -21,7 +21,7 @@
             @* docs/archive/FEEDBACK-10-PLAN.md §10：角色不是使用者自己的屬性，是所屬群組帶來的 *@
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                     data-bs-content="角色來自使用者所屬的群組（見「群組與授權」頁）。一個人屬於多個群組時，這裡會同時符合多個角色的篩選。">
-                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
             </button>
             <div class="lf-toolbar__chips" id="user-role-chips"></div>
         </div>
@@ -69,7 +69,7 @@
                             <label for="user-accounts-batch" class="form-label">帳號 <span class="text-danger">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="一行一個帳號（也接受逗號分隔）。顯示名稱預設為帳號本身，若之後以 AD 登入會自動補上真實姓名與 Email。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <textarea class="form-control" id="user-accounts-batch" rows="6" placeholder="一行一個帳號，也接受逗號分隔&#10;DOMAIN\user1&#10;DOMAIN\user2"></textarea>
                         </div>
@@ -97,7 +97,7 @@
                         <label class="form-label">所屬群組</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="群組決定這個人的角色與可看見的主機。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <div id="user-groups" class="border rounded p-2" style="max-height: 200px; overflow-y: auto;"></div>
                     </div>

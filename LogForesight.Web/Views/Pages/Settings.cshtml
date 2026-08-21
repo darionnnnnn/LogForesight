@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "設定";
 }
 
@@ -44,7 +44,7 @@
             <label class="form-label small fw-semibold">日風險等級顯示</label>
             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                     data-bs-content="「高風險日」為必要顯示項目，無法取消勾選。">
-                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
             </button>
             <p class="text-muted small mb-2">
                 未勾選等級的風險日整批從儀表板 KPI、報表趨勢、問題查詢的統計與清單中消失
@@ -75,7 +75,7 @@
                 <label for="ai-base-url" class="form-label" id="ai-base-url-label">API 位址</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="ai-base-url-help"
                         data-bs-content="OpenAI 相容端點（如 llama.cpp／KoboldCpp）。留空會停用 AI 分析與加值功能。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <input type="text" class="form-control" id="ai-base-url" placeholder="http://localhost:8080" />
                 <div class="form-text" id="ai-base-url-hint"></div>
@@ -117,7 +117,7 @@
                    （整頁單一 form 語意，不做偷偷落盤）。放 summary 外側，避免點按鈕誤觸折疊 *@
                 <div class="mt-2">
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-ai-advanced-reset">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                         還原預設值
                     </button>
                 </div>
@@ -166,7 +166,7 @@
                         <label for="ai-extra-request-fields" class="form-label">額外請求欄位（JSON）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="原封不動合併進送給 AI 的請求 JSON。伺服器不認得的欄位通常會被忽略、不會報錯，所以換 server/模型時務必對照對方的啟動設定或文件確認參數名稱（本專案實測的 KoboldCpp 認 rep_pen 與聊天範本的 enable_thinking 布林開關；原生 llama.cpp server 則是 repeat_penalty）。留空＝不附加任何欄位。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <textarea class="form-control lf-mono" id="ai-extra-request-fields" rows="3"
                                   placeholder='{"rep_pen": 1.3}'></textarea>
@@ -187,7 +187,7 @@
                 <label for="server-description" class="form-label">伺服器角色描述</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="會帶入 prompt 讓 AI 依環境判讀——同一個事件在網域控制站與一般檔案伺服器上的嚴重性不同。留空＝略過。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <input type="text" class="form-control" id="server-description" placeholder="例如：公司機房的 AD 網域控制站" />
             </div>
@@ -196,7 +196,7 @@
                 <label for="checkup-interval-days" class="form-label">體檢間隔天數</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="距上次體檢達此天數即到期執行（due-date 輪巡，不綁固定星期幾）。漏跑時下次執行自動補上，體檢不會因此消失。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <input type="number" class="form-control" id="checkup-interval-days" min="1" max="365" style="max-width: 12rem;" />
             </div>
@@ -205,7 +205,7 @@
                 <label for="watched-folders" class="form-label">額外監控權限異動的資料夾</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="一行一個路徑，支援環境變數（如 %ProgramFiles%\YourApp）。本站台執行檔自身目錄一律自動監控，不必列在此。建議加入網站根目錄、應用程式安裝目錄等重要位置。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control lf-mono" id="watched-folders" rows="3"
                           placeholder="C:\inetpub\wwwroot&#10;%ProgramFiles%\YourApp"></textarea>
@@ -216,7 +216,7 @@
                 <label for="analysis-channels" class="form-label">要掃描的 Event Log 頻道</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="一行一個頻道全名。留空＝使用預設六頻道（System／Application／Security 三個傳統日誌，加上 Defender 與兩個 RDP TerminalServices Operational 頻道）。主機上不存在的頻道會誠實申報「不適用」，不會當成錯誤。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control lf-mono" id="analysis-channels" rows="3"
                           placeholder="留空＝預設六頻道"></textarea>
@@ -285,7 +285,7 @@
                 <label for="ad-servers" class="form-label">AD 伺服器</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="一行一台，依序嘗試第一個可連線者。可填 IP 或主機名稱／FQDN。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control" id="ad-servers" rows="3" placeholder="一行一台，例如：&#10;dc1.corp.local&#10;dc2.corp.local"></textarea>
             </div>
@@ -298,7 +298,7 @@
                     <label for="ad-search-base" class="form-label">查詢基準 DN（選填）</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="留空使用目錄預設根目錄。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="text" class="form-control" id="ad-search-base" placeholder="DC=corp,DC=local" />
                 </div>
@@ -306,7 +306,7 @@
                     <label for="ad-search-filter" class="form-label">查詢過濾器</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="{0} 會被代入登入帳號。AD 預設 (sAMAccountName={0})。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="text" class="form-control" id="ad-search-filter" placeholder="(sAMAccountName={0})" />
                 </div>
@@ -354,7 +354,7 @@
                     <label for="initial-history-days" class="form-label">首次執行回補天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="initial-history-days" min="1" max="3650" required />
                 </div>
@@ -362,7 +362,7 @@
                     <label for="retention-days" class="form-label">歷史資料保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="超過此天數的歷史紀錄，每次批次啟動時自動清除，永久刪除，無法復原。不可小於首次執行回補天數。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="retention-days" min="1" max="3650" required />
                 </div>
@@ -370,7 +370,7 @@
                     <label for="detail-retention-days" class="form-label">詳情保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="詳情刪除後，該日的統計、風險等級與問題清單仍然保留，只有原始樣本訊息不可再查看。超過此天數每次批次啟動時自動清除，永久刪除，無法復原。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="detail-retention-days" min="1" max="3650" required />
                 </div>
@@ -378,7 +378,7 @@
                     <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。資料只留在資料庫，不影響業務分析結果。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="run-log-retention-days" min="7" max="3650" required />
                 </div>
@@ -386,7 +386,7 @@
                     <label for="audit-retention-days" class="form-label">稽核紀錄保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="操作稽核紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。合規／追責用途，保留期通常較長。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required />
                 </div>
@@ -394,7 +394,7 @@
                     <label for="risky-event-retention-days" class="form-label">風險 log 暫存保留天數</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。不可大於歷史資料保留天數。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <input type="number" class="form-control" id="risky-event-retention-days" min="1" max="3650" required />
                 </div>
@@ -460,7 +460,7 @@
                 <label for="mail-recipients" class="form-label">收件人</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="一行一位，全域收件人，三路通知共用。「同時通知負責人」勾選時，每個主機日的通知對象優先給該日問題的問題負責人（於「問題負責人」頁設定）；沒有問題負責人命中時才改通知主機負責人，兩者擇一、不疊加。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control" id="mail-recipients" rows="3" placeholder="一行一位，例如：&#10;ops@corp.local"></textarea>
             </div>
@@ -472,7 +472,7 @@
                 <strong>已暫停寄送的收件人</strong>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="這些地址連續寄送失敗達 3 次，已自動排除避免拖累其他收件人；通常代表地址打錯。修正地址後儲存本頁設定即可重新嘗試。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <div id="mail-suspended-recipients-list" class="lf-mono mt-1"></div>
             </div>
@@ -483,7 +483,7 @@
                 <label for="mail-min-risk-level" class="form-label">摘要納入門檻</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="執行摘要與每日／每週彙總只納入達此風險等級以上的主機日；高風險即時通知固定只看「高」，不受此設定影響。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <select class="form-select" id="mail-min-risk-level" style="max-width: 12rem;">
                     <option value="高">高</option>
@@ -550,7 +550,7 @@
                 <label for="mail-subject-template" class="form-label">標題模板</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                         data-bs-content="可用變數：{site}＝品牌名稱、{host}＝主機、{date}＝日期、{risk}＝風險等級、{type}＝通知種類、{summary}＝摘要文字。">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <input type="text" class="form-control lf-mono" id="mail-subject-template" placeholder="[{site}] {type}：{date} {summary}" />
             </div>
@@ -599,7 +599,7 @@
                     <label for="brand-icon-file" class="form-label">圖示</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="PNG 或 JPG，64KB 以內。顯示尺寸只有約 30 像素，不需要大圖。未上傳時使用內建圖示。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <div class="d-flex align-items-center gap-3">
                         <span class="lf-brand-preview" id="brand-icon-preview"></span>
@@ -615,7 +615,7 @@
 
                 <div class="col-12">
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="brand-reset">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#arrow-counterclockwise"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#arrow-counterclockwise"></use></svg>
                         還原預設外觀
                     </button>
                 </div>

@@ -161,8 +161,10 @@ public static class ServiceCollectionExtensions
                         }
                         else
                         {
+                            // Request.Path 已扣掉掛載前綴，returnUrl 存的是 app 內路徑
+                            // （前端用 appUrl 還原）；轉址目標本身要補回前綴才到得了登入頁
                             var returnUrl = Uri.EscapeDataString(context.Request.Path + context.Request.QueryString);
-                            context.Response.Redirect($"/login?returnUrl={returnUrl}");
+                            context.Response.Redirect($"{context.Request.PathBase}/login?returnUrl={returnUrl}");
                         }
                     }
                 };
