@@ -487,11 +487,13 @@ body {
        stretch 讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，
        不管有無副標。 */
     align-items: stretch;
+    /* 整組（圖示＋文字）在側欄裡置中，文字本身仍靠左貼著圖示——文字區用 flex:0 1 auto
+       （見 .lf-sidebar__brand-text）才不會吃滿剩餘空間把整組推回左邊 */
+    justify-content: center;
     gap: var(--lf-space-2);
-    /* 左右內距用 space-4 而不是 space-5：側欄總寬固定（--lf-sidebar-width），
-       品牌名稱能用的水平空間＝總寬扣掉圖示、gap 與左右內距。字級提到 2xl 之後，
-       「LogForesight」在 space-5 的內距下會剛好觸發 .lf-sidebar__brand-name 的省略號。 */
-    padding: var(--lf-space-4);
+    /* 左右內距用 space-3：側欄總寬固定（--lf-sidebar-width），品牌名稱能用的水平空間
+       ＝總寬扣掉圖示、gap 與左右內距。字級放大後這裡每縮一級都是名稱能顯示的字數。 */
+    padding: var(--lf-space-4) var(--lf-space-3);
     font-size: var(--lf-font-size-2xl);
     font-weight: 700;
     color: #fff;
@@ -521,20 +523,31 @@ body {
     display: flex;
     flex-direction: column;
     /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
-       預設值，寫出來是文件化意圖：不依賴父層設定不變，之後若父層改回 center 這裡仍然正確）。
-       justify-content:center 讓名稱與副標當成一組、整組對齊圖示中線——兩行之間只留
-       副標自己的 margin-top，副標因此緊跟在名稱下方，而不是被推到圖示的下緣。*/
-    justify-content: center;
+       預設值，寫出來是文件化意圖：不依賴父層設定不變）。
+       space-between：兩行文字上下撐滿圖示高度——首行頂貼、末行底貼，視覺上與圖示等高。
+       單行（無副標）時 space-between 等同貼頂，故另有 :not(:has(small)) 規則改回置中。
+       flex:0 1 auto 是「整組置中」的前提：吃滿剩餘寬度的話整組會被推回左邊。*/
+    justify-content: space-between;
     align-self: stretch;
     min-width: 0;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+}
+
+/* 沒有副標時只有一行，撐滿沒有意義——垂直置中對齊圖示中線 */
+.lf-sidebar__brand-text:not(:has(small)) {
+    justify-content: center;
 }
 
 .lf-sidebar__brand-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    line-height: 1.15;
+    /* 貼齊靠父層的 space-between（首行頂貼、末行底貼）；行高壓到接近 1，否則行高留白
+       會讓字形離圖示邊緣還有一段空隙。
+       1.6rem 是**水平**上限：側欄文字可用寬約 157px，「LogForesight」在 1.6rem／700
+       加上父層 letter-spacing 後約 150px，再大就會觸發省略號。 */
+    font-size: 1.6rem;
+    line-height: 1.05;
 }
 
 .lf-sidebar__brand-text small {
@@ -544,11 +557,10 @@ body {
     white-space: nowrap;
     /* 副標用字級 token 的最小級（xs）而不是自訂 .7rem——.7rem 在預設根字級下約 11px，
        低於可讀下限 */
-    font-size: var(--lf-font-size-xs);
+    font-size: .92rem;
     font-weight: 400;
     color: var(--lf-sidebar-section);
-    margin-top: .1rem;
-    line-height: 1.25;
+    line-height: 1.05;
     letter-spacing: 0;
 }
 
@@ -1916,7 +1928,9 @@ a.lf-calendar__cell:focus-visible {
    同時與側欄品牌區採同一套視覺語言：方形漸層底圖示 + 名稱/副標垂直疊放）*/
 .lf-login__brand {
     display: flex;
-    align-items: center;
+    align-items: stretch;
+    /* 整組（圖示＋文字）在卡片裡置中，文字本身仍靠左貼著圖示 */
+    justify-content: center;
     gap: var(--lf-space-3);
     margin-bottom: var(--lf-space-5);
 }
@@ -1943,24 +1957,33 @@ a.lf-calendar__cell:focus-visible {
 .lf-login__brand-text {
     display: flex;
     flex-direction: column;
+    /* 同側欄：兩行上下撐滿圖示高度；flex:0 1 auto 才能讓整組真的置中 */
+    justify-content: space-between;
     min-width: 0;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
+}
+
+/* 沒有副標時只有一行，垂直置中對齊圖示中線 */
+.lf-login__brand-text:not(:has(.lf-login__subtitle)) {
+    justify-content: center;
 }
 
 .lf-login__title {
-    font-size: var(--lf-font-size-2xl);
+    /* 字級與行高：兩行合計貼齊 .lf-login__brand-mark 的 3rem（行高留白會讓「行盒等高」
+       看起來仍有空隙，所以壓到接近 1） */
+    font-size: 1.85rem;
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    line-height: 1.15;
+    line-height: 1.05;
 }
 
 /* 與側欄品牌區同一組行高，副標緊跟名稱下方 */
 .lf-login__subtitle {
     display: block;
-    line-height: 1.25;
-    font-size: var(--lf-font-size-sm);
+    line-height: 1.05;
+    font-size: 1.02rem;
     color: var(--lf-text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
