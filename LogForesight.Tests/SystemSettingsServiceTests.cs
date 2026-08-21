@@ -100,6 +100,40 @@ public class SystemSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Update後_權限異動自訂欄位四角色持久化與往返DTO不掉值()
+    {
+        var service = Create();
+        var request = ValidRequest();
+        request.PermissionOperatorFields = new List<string> { " CustomOp ", "", "CustomOp2", "CustomOp" };
+        request.PermissionMemberFields = new List<string> { "CustomMem" };
+        request.PermissionGroupFields = new List<string> { " Team Group ", "GrpName" };
+        request.PermissionObjectFields = new List<string> { "ResourcePath" };
+
+        var saved = service.Update(request);
+
+        Assert.Equal(new[] { "CustomOp", "CustomOp2" }, saved.PermissionOperatorFields);
+        Assert.Equal(new[] { "CustomMem" }, saved.PermissionMemberFields);
+        Assert.Equal(new[] { "Team Group", "GrpName" }, saved.PermissionGroupFields);
+        Assert.Equal(new[] { "ResourcePath" }, saved.PermissionObjectFields);
+
+        // 重讀確認資料庫落地
+        var reread = service.Get();
+        Assert.Equal(new[] { "CustomOp", "CustomOp2" }, reread.PermissionOperatorFields);
+        Assert.Equal(new[] { "CustomMem" }, reread.PermissionMemberFields);
+        Assert.Equal(new[] { "Team Group", "GrpName" }, reread.PermissionGroupFields);
+        Assert.Equal(new[] { "ResourcePath" }, reread.PermissionObjectFields);
+
+        // 驗證 JSON 序列化往返不掉值
+        var json = System.Text.Json.JsonSerializer.Serialize(reread);
+        var deserialized = System.Text.Json.JsonSerializer.Deserialize<SystemSettingsDto>(json);
+        Assert.NotNull(deserialized);
+        Assert.Equal(reread.PermissionOperatorFields, deserialized.PermissionOperatorFields);
+        Assert.Equal(reread.PermissionMemberFields, deserialized.PermissionMemberFields);
+        Assert.Equal(reread.PermissionGroupFields, deserialized.PermissionGroupFields);
+        Assert.Equal(reread.PermissionObjectFields, deserialized.PermissionObjectFields);
+    }
+
+    [Fact]
     public void Update_額外請求欄位非JSON物件時拒絕()
     {
         var service = Create();

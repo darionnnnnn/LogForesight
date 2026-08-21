@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
@@ -859,5 +859,592 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     {
         var result = AccountDisplayFormatter.ToShortName(dn);
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void 樣本S1_單行成員新增4756_結構化欄位擷取正確()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。 主體: 安全性識別碼: S-1-5-21-1-2-3-17749 帳戶名稱: OP_ACCT 帳戶網域: DOM1 登入識別碼: 0x1FC9071B 成員: 安全性識別碼: S-1-5-21-1-2-3-278464 帳戶名稱: CN=User One,OU=Dept,DC=example,DC=com 群組: 安全性識別碼: S-1-5-21-1-2-3-40793 帳戶名稱: GROUP_A 帳戶網域: DOM1 其他資訊: 特殊權限: -";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_A", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", details.After);
+    }
+
+    [Fact]
+    public void 樣本S1_單行成員新增4756_寫入Store後欄位對應正確()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 21);
+
+        var msg = "已新增成員到已啟用安全性的萬用群組。 主體: 安全性識別碼: S-1-5-21-1-2-3-17749 帳戶名稱: OP_ACCT 帳戶網域: DOM1 登入識別碼: 0x1FC9071B 成員: 安全性識別碼: S-1-5-21-1-2-3-278464 帳戶名稱: CN=User One,OU=Dept,DC=example,DC=com 群組: 安全性識別碼: S-1-5-21-1-2-3-40793 帳戶名稱: GROUP_A 帳戶網域: DOM1 其他資訊: 特殊權限: -";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4756,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(1),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("GROUP_A", record.Target);
+        Assert.Equal("OP_ACCT", record.InitiatorAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", record.TargetAccount);
+        Assert.Equal("CN=User One,OU=Dept,DC=example,DC=com", record.After);
+        Assert.Equal("（不在群組中）", record.Before);
+    }
+
+    [Fact]
+    public void 樣本S2_單行物件權限變更4670_物件名稱為減號時Target為空字串且不吞尾巴()
+    {
+        var msg = @"物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security 物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe";
+
+        var details = PermissionChangeExtractor.Extract(msg, "權限變更", 4670);
+
+        Assert.Equal(string.Empty, details.Target);
+        Assert.Equal("HOST1$", details.InitiatorAccount);
+        Assert.Null(details.TargetAccount);
+        Assert.Equal(string.Empty, details.Before);
+        Assert.Equal(string.Empty, details.After);
+    }
+
+    [Fact]
+    public void 樣本S2_單行物件權限變更4670_寫入Store後欄位對應正確()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-APP01";
+        var date = new DateTime(2026, 8, 21);
+
+        var msg = @"物件的權限已變更。 主旨: 安全性識別碼: S-1-5-18 帳戶名稱: HOST1$ 物件: 物件伺服器: Security 物件類型: Token 物件名稱: - 控制代碼識別碼: 0x185c 處理程序: 處理程序識別碼: 0x568 處理程序名稱: C:\Windows\System32\svchost.exe";
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4670,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(2),
+                Message = msg
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal(string.Empty, record.Target);
+        Assert.Equal("HOST1$", record.InitiatorAccount);
+        Assert.Null(record.TargetAccount);
+    }
+
+    [Fact]
+    public void 樣本S3_多行群組區段內帳戶名稱_正確解析為群組名()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。\r\n" +
+                  "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "成員:\r\n" +
+                  "    帳戶名稱: CN=User Two,OU=Dept,DC=example,DC=com\r\n" +
+                  "群組:\r\n" +
+                  "    帳戶名稱: GROUP_B";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_B", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal("CN=User Two,OU=Dept,DC=example,DC=com", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal("CN=User Two,OU=Dept,DC=example,DC=com", details.After);
+    }
+
+    [Fact]
+    public void 樣本S4_多行群組名稱與成員名稱_維持既有格式解析正確()
+    {
+        var msg = "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "群組名稱: GROUP_C\r\n" +
+                  "成員名稱: DOM1\\user3";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728);
+
+        Assert.Equal("GROUP_C", details.Target);
+        Assert.Equal("OP_ACCT", details.InitiatorAccount);
+        Assert.Equal(@"DOM1\user3", details.TargetAccount);
+        Assert.Equal("（不在群組中）", details.Before);
+        Assert.Equal(@"DOM1\user3", details.After);
+    }
+
+    [Fact]
+    public void 單行訊息_全形冒號與混用空白_正確擷取欄位()
+    {
+        var msg = "主體： 帳戶名稱： OP_ZH 成員： 帳戶名稱： MEMBER_ZH 群組： 帳戶名稱： GROUP_ZH";
+
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4756);
+
+        Assert.Equal("GROUP_ZH", details.Target);
+        Assert.Equal("OP_ZH", details.InitiatorAccount);
+        Assert.Equal("MEMBER_ZH", details.TargetAccount);
+    }
+
+    [Fact]
+    public void 單行訊息_ExtractAccounts_正確擷取操作者與被異動帳號()
+    {
+        var alertText = "主體: 帳戶名稱: OP_MIG 成員: 帳戶名稱: TARGET_MIG 群組: 帳戶名稱: GROUP_MIG";
+
+        var (initiator, target) = PermissionChangeExtractor.ExtractAccounts(
+            alertText: alertText,
+            changeType: "成員新增",
+            before: null,
+            after: null);
+
+        Assert.Equal("OP_MIG", initiator);
+        Assert.Equal("TARGET_MIG", target);
+    }
+
+    [Fact]
+    public void 單行物件權限變更4670_路徑含磁碟機代號不被誤判為Key()
+    {
+        var msg = @"物件的權限已變更。 主旨: 帳戶名稱: ADMIN1 物件: 物件名稱: D:\Shares\Confidential\doc.pdf 原始安全性描述元: D:(A;;GA;;;BA) 新的安全性描述元: D:(A;;GA;;;WD)";
+
+        var details = PermissionChangeExtractor.Extract(msg, "權限變更", 4670);
+
+        Assert.Equal(@"D:\Shares\Confidential\doc.pdf", details.Target);
+        Assert.Equal("ADMIN1", details.InitiatorAccount);
+        Assert.Equal("D:(A;;GA;;;BA)", details.Before);
+        Assert.Equal("D:(A;;GA;;;WD)", details.After);
+    }
+
+    // ── 權限異動自訂欄位對應（task-b1）──────────────────────────────────────────────
+
+    [Fact]
+    public void 自訂欄位名設定後_經實際寫入路徑解析成功寫入Target()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC01";
+        var date = new DateTime(2026, 8, 21);
+
+        var mappings = new PermissionFieldMappings(
+            operatorFields: null,
+            memberFields: null,
+            groupFields: new[] { "GrpName" },
+            objectFields: null);
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4728,
+                Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(3),
+                Message = "主體:\r\n  帳戶名稱: admin1\r\nGrpName: GROUP_X\r\n成員名稱: user1"
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, date, mappings: mappings);
+
+        var record = Assert.Single(store.Query(null, null, 100), c => c.HostName == hostName);
+        Assert.Equal("GROUP_X", record.Target);
+        Assert.Equal("admin1", record.InitiatorAccount);
+        Assert.Equal("user1", record.TargetAccount);
+    }
+
+    [Fact]
+    public void 自訂欄位未設定全空時_解析結果與內建行為完全相同()
+    {
+        var msg = "已新增成員到已啟用安全性的萬用群組。\r\n" +
+                  "主體:\r\n" +
+                  "    帳戶名稱: OP_ACCT\r\n" +
+                  "成員:\r\n" +
+                  "    帳戶名稱: USER_MEMBER\r\n" +
+                  "群組:\r\n" +
+                  "    帳戶名稱: GROUP_BUILTIN";
+
+        var defaultDetails = PermissionChangeExtractor.Extract(msg, "成員新增", 4756, mappings: null);
+        var emptyDetails = PermissionChangeExtractor.Extract(msg, "成員新增", 4756, mappings: PermissionFieldMappings.Empty);
+
+        Assert.Equal(defaultDetails.Target, emptyDetails.Target);
+        Assert.Equal(defaultDetails.InitiatorAccount, emptyDetails.InitiatorAccount);
+        Assert.Equal(defaultDetails.TargetAccount, emptyDetails.TargetAccount);
+        Assert.Equal(defaultDetails.Before, emptyDetails.Before);
+        Assert.Equal(defaultDetails.After, emptyDetails.After);
+        Assert.Equal("GROUP_BUILTIN", emptyDetails.Target);
+        Assert.Equal("OP_ACCT", emptyDetails.InitiatorAccount);
+        Assert.Equal("USER_MEMBER", emptyDetails.TargetAccount);
+    }
+
+    [Fact]
+    public void 四個自訂語意角色_各自分派正確且不受區段限制()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "CustomOp" },
+            memberFields: new[] { "CustomMem" },
+            groupFields: new[] { "CustomGrp" },
+            objectFields: new[] { "CustomObj" });
+
+        // 1. 群組成員變更（4728）
+        var msg1 = "CustomOp: OperatorBob\r\nCustomMem: MemberAlice\r\nCustomGrp: SecurityTeam";
+        var details1 = PermissionChangeExtractor.Extract(msg1, "成員新增", 4728, mappings: mappings);
+
+        Assert.Equal("OperatorBob", details1.InitiatorAccount);
+        Assert.Equal("MemberAlice", details1.TargetAccount);
+        Assert.Equal("SecurityTeam", details1.Target);
+        Assert.Equal("MemberAlice", details1.After);
+        Assert.Equal("（不在群組中）", details1.Before);
+
+        // 2. 物件權限變更（4670）
+        var msg2 = "CustomOp: OperatorBob\r\nCustomObj: C:\\Data\\Secret.doc\r\nOriginal Security Descriptor: D:(A;;GA;;;BA)\r\nNew Security Descriptor: D:(A;;GA;;;WD)";
+        var details2 = PermissionChangeExtractor.Extract(msg2, "權限變更", 4670, mappings: mappings);
+
+        Assert.Equal("OperatorBob", details2.InitiatorAccount);
+        Assert.Equal(@"C:\Data\Secret.doc", details2.Target);
+        Assert.Equal("D:(A;;GA;;;BA)", details2.Before);
+        Assert.Equal("D:(A;;GA;;;WD)", details2.After);
+    }
+
+    [Fact]
+    public void 自訂欄位名含空白與大小寫全半形冒號_皆能正確命中()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "Operator User" },
+            memberFields: new[] { "Target User" },
+            groupFields: new[] { "Team Group" },
+            objectFields: null);
+
+        var msg = "Operator User： AdminCharlie\r\nTeam Group: ProjectAlpha\r\nTarget User: DevDavid";
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728, mappings: mappings);
+
+        Assert.Equal("AdminCharlie", details.InitiatorAccount);
+        Assert.Equal("ProjectAlpha", details.Target);
+        Assert.Equal("DevDavid", details.TargetAccount);
+    }
+
+    [Fact]
+    public void 內建官方欄位名優先_同Key時依官方區段感知處理()
+    {
+        // 刻意把官方欄位名設進自訂成員欄位
+        var mappings = new PermissionFieldMappings(
+            operatorFields: null,
+            memberFields: new[] { "Account Name" },
+            groupFields: null,
+            objectFields: null);
+
+        var msg = "Subject:\r\n  Account Name: SuperAdmin\r\nMember:\r\n  Account Name: StandardUser\r\nGroup Name: TestGroup";
+        var details = PermissionChangeExtractor.Extract(msg, "成員新增", 4728, mappings: mappings);
+
+        // 官方區段優先：Subject 下的 Account Name 不會被自訂 memberFields 搶去
+        Assert.Equal("SuperAdmin", details.InitiatorAccount);
+        Assert.Equal("StandardUser", details.TargetAccount);
+        Assert.Equal("TestGroup", details.Target);
+    }
+
+    [Fact]
+    public async Task 自訂欄位經由Pipeline管線執行端對端寫入Store()
+    {
+        var mappings = new PermissionFieldMappings(
+            operatorFields: new[] { "PipelineOp" },
+            memberFields: new[] { "PipelineMem" },
+            groupFields: new[] { "PipelineGrp" },
+            objectFields: null);
+
+        var reportSink = new FakeReportSink();
+        var reportService = new RiskReportService(_ai, reportSink);
+        var batchRunStore = new BatchRunStore(_backend.LogStore("test_runs"), _backend.LogStore("test_run_logs"));
+        var runRecorder = new BatchRunRecorder(batchRunStore, "test-host", Array.Empty<string>());
+        var caseCoordinator = new IssueCaseCoordinator(
+            _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
+            _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
+        var console = new RecordingRunConsole(_console);
+
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.9", "SRV-PIPE01");
+
+        var customPipeline = new NetiqPipelineService(
+            _backend, new NetiqOptions { BackfillDays = 1 }, _sentinels, _hosts, new EventLogService(),
+            _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
+            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: false, progress: null,
+            clientFactory: FakeSentinelSearchClientFactory.Single(_client),
+            permissionMappings: mappings);
+
+        // 訊息只用自訂欄位名，沒有任何官方欄名——解析得出來就代表設定真的接通到管線
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[]
+            {
+                SentinelPermEvent("10.0.0.9", "SRV-PIPE01", "4728",
+                    "PipelineOp: PipeAdmin\r\nPipelineGrp: PIPELINE_GROUP\r\nPipelineMem: PipeUser")
+            },
+            Found = 1,
+            State = SentinelJobState.Completed
+        };
+
+        var permStore = _backend.PermissionChanges();
+        await customPipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 1);
+
+        var record = Assert.Single(
+            permStore.Query(null, null, 100).Where(c => c.HostName == "SRV-PIPE01").ToList());
+        Assert.Equal("PIPELINE_GROUP", record.Target);
+        Assert.Equal("PipeAdmin", record.InitiatorAccount);
+        Assert.Equal("PipeUser", record.TargetAccount);
+    }
+
+    // ── 例行同步成對合併（作業 C）────────────────────────────────────────────
+
+    /// <summary>AD 自動化（先清空再重建式同步）的成對異動測試資料：
+    /// 同一 (成員, 群組) 各一則新增與移除。</summary>
+    private static List<EventLogEntryData> SyncPairEvents(DateTime date, int pairCount, string groupPrefix = "GRP")
+    {
+        var events = new List<EventLogEntryData>();
+        for (var i = 0; i < pairCount; i++)
+        {
+            var msg = $"群組名稱: {groupPrefix}_{i}\r\n成員名稱: DOM1\\user{i}";
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddMinutes(i), Message = msg
+            });
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddMinutes(i).AddSeconds(30), Message = msg
+            });
+        }
+        return events;
+    }
+
+    [Fact]
+    public void 例行同步_達門檻時成對合併為一筆而未成對的仍逐則()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+        // 一則沒有配對的異動（只有新增、沒有對應的移除）
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(3),
+            Message = $"群組名稱: LONELY_GROUP\r\n成員名稱: DOM1\\lonely"
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        var summary = Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Contains($"{HostDayPostProcessor.RoutineSyncPairThreshold} 對", summary.AlertText);
+        Assert.Contains("先清空再重建", summary.AlertText);
+        Assert.Contains("未成對的異動仍逐則列出", summary.AlertText);
+
+        // 成對的都沒逐則寫，只剩那一則未成對的
+        var detailed = records.Where(r => r.ChangeType != HostDayPostProcessor.RoutineSyncChangeType).ToList();
+        Assert.Equal("LONELY_GROUP", Assert.Single(detailed).Target);
+    }
+
+    [Fact]
+    public void 例行同步_未達門檻時全部逐則且不產生彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var pairs = HostDayPostProcessor.RoutineSyncPairThreshold - 1;
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, pairs), date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Equal(pairs * 2, records.Count);
+        Assert.DoesNotContain(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+    }
+
+    /// <summary>特權群組的成對異動即使達門檻也逐則寫入——安全訊號不能被降噪機制吞掉。</summary>
+    [Fact]
+    public void 例行同步_特權群組的成對異動不併入彙總()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+        var privMsg = $"群組名稱: Domain Admins\r\n成員名稱: DOM1\\attacker";
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(4), Message = privMsg
+        });
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(4).AddSeconds(30), Message = privMsg
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        var priv = records.Where(r => r.Target == "Domain Admins").ToList();
+        Assert.Equal(2, priv.Count);                       // 新增與移除兩則都逐則保留，沒被併進彙總
+        // 特權旗標目前只標「加入特權群組」（移除尚未涵蓋，見 BACKLOG）——被排除在配對之外的
+        // 是「加入」那則；移除那則因此配不到對象，也自然留下
+        Assert.True(Assert.Single(priv, r => r.ChangeType == "成員新增").IsPrivilegedTarget);
+    }
+
+    [Fact]
+    public void 例行同步_同組多則只配成一對其餘逐則()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        // 門檻前一對由既有成對事件湊足，另加同一 (成員, 群組) 的 3 新增 + 1 移除
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold - 1);
+        var msg = $"群組名稱: MULTI_GROUP\r\n成員名稱: DOM1\\multi";
+        for (var i = 0; i < 3; i++)
+        {
+            events.Add(new EventLogEntryData
+            {
+                EventId = 4728, Source = "Microsoft-Windows-Security-Auditing",
+                TimeGenerated = date.AddHours(5).AddSeconds(i), Message = msg
+            });
+        }
+        events.Add(new EventLogEntryData
+        {
+            EventId = 4729, Source = "Microsoft-Windows-Security-Auditing",
+            TimeGenerated = date.AddHours(6), Message = msg
+        });
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        // 3 新增 1 移除只成 1 對，剩下 2 則新增仍逐則
+        var multi = records.Where(r => r.Target == "MULTI_GROUP").ToList();
+        Assert.Equal(2, multi.Count);
+        Assert.All(multi, r => Assert.Equal("成員新增", r.ChangeType));
+    }
+
+    [Fact]
+    public void 例行同步_重跑同一主機日不產生第二筆彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+    }
+
+    /// <summary>對數變動時更新既有彙總列，而不是長出第二筆（去重鍵不含計數）。</summary>
+    [Fact]
+    public void 例行同步_對數變動時更新既有彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+
+        // 回補後同一天多了幾對
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold + 5), date);
+
+        var summary = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Contains($"{threshold + 5} 對", summary.AlertText);
+    }
+
+    [Fact]
+    public void 例行同步_彙總列欄位形狀符合契約()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows,
+            SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold), date);
+
+        var summary = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+
+        Assert.Equal(PermissionCategory.Summary, summary.Category);
+        Assert.Equal(date.Date, summary.DetectedAt);
+        Assert.Equal("SRV-SYNC（例行同步）", summary.Target);
+        Assert.Equal(string.Empty, summary.Before);
+        Assert.Equal(string.Empty, summary.After);
+        Assert.Null(summary.EventId);
+        Assert.Null(summary.InitiatorAccount);
+        Assert.Null(summary.TargetAccount);
+        Assert.False(summary.IsPrivilegedTarget);
+        Assert.Equal(PermissionChangeSources.Netiq, summary.Source);
+    }
+
+    /// <summary>英文版 4728/4756 的欄位是 `Group Name: X Group Domain: Y`：多字欄名沒被認得時，
+    /// 候選會退化成尾字（Domain），把「X Group」併進群組名——這是「吞尾巴」缺陷的英文語系版本。</summary>
+    [Theory]
+    [InlineData("A member was added to a security-enabled global group. Subject: Security ID: S-1-5-21-1-2-3-17749 Account Name: OP_ACCT Account Domain: DOM1 Member: Security ID: S-1-5-21-1-2-3-278464 Account Name: CN=User One,OU=Dept,DC=example,DC=com Group: Security ID: S-1-5-21-1-2-3-40793 Group Name: GROUP_A Group Domain: DOM1", "GROUP_A")]
+    [InlineData("Subject: Account Name: OP_ACCT Member: Account Name: MEM1 Member Domain: DOM1 Group: Group Name: GROUP_B Group Domain: DOM1", "GROUP_B")]
+    public void 單行英文訊息_群組名不被網域欄污染(string message, string expectedGroup)
+    {
+        var details = PermissionChangeExtractor.Extract(message, "成員新增", 4756);
+
+        Assert.Equal(expectedGroup, details.Target);
+        Assert.DoesNotContain("Group", details.Target.Replace(expectedGroup, string.Empty));
+    }
+
+    /// <summary>4719 的 Subcategory 之後緊接 Subcategory GUID：沒認得就會退化成 GUID，
+    /// 把「子類別值 Subcategory」併進 Subcategory 的值。</summary>
+    [Fact]
+    public void 單行稽核政策訊息_子類別不被GUID欄污染()
+    {
+        const string message =
+            "System audit policy was changed. Subject: Account Name: OP_ACCT " +
+            "Category: Object Access Subcategory: File System Subcategory GUID: {0CCE921D-69AE-11D9-BED3-505054503030} " +
+            "Changes: Success removed";
+
+        var details = PermissionChangeExtractor.Extract(message, "稽核政策變更", 4719);
+
+        Assert.Contains("File System", details.After);
+        Assert.DoesNotContain("Subcategory GUID", details.After);
+        Assert.DoesNotContain("{0CCE921D", details.After);
+    }
+
+    /// <summary>重跑時若來源只回傳子集、對數跌回門檻以下，這批異動改為逐則列出——
+    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在。</summary>
+    [Fact]
+    public void 例行同步_對數跌破門檻時撤掉既有彙總列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+
+        // 重跑時來源只回了 3 對（保留期滾動、查詢部分失敗等）
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.DoesNotContain(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Equal(6, records.Count);   // 3 對逐則列出，沒有彙總列殘留造成重複計算
     }
 }

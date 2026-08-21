@@ -217,6 +217,12 @@ public class StorageBackend
 
     private PermissionChangeMigrator? _permissionChangeMigrator;
 
+    /// <summary>既有 NetIQ 權限異動列的重剖回填（背景一次性工作，同樣每個後端一份）</summary>
+    public PermissionChangeReparser PermissionChangeReparser => _permissionChangeReparser ??=
+        new PermissionChangeReparser(_dbFactory, new PermissionChangeReparseStateStore(Blob(PermissionChangeReparser.StateBlobKey)));
+
+    private PermissionChangeReparser? _permissionChangeReparser;
+
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);
 

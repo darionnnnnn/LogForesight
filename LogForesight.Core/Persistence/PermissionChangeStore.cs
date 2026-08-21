@@ -78,6 +78,69 @@ public class PermissionChangeStore
         ctx.SaveChanges();
     }
 
+    /// <summary>
+    /// 依去重鍵寫入或更新一筆（供彙總列使用）。彙總列的內容會隨當日對數變動，
+    /// 用 append 會每變一次就多一筆，所以這裡走「有就更新說明、沒有才新增」。
+    /// 使用者已處理過的狀態（確認結果）不動——只更新描述性欄位。
+    /// </summary>
+    /// <param name="dedupeKey">**呼叫端指定的穩定鍵**：彙總列的說明文字含當日對數，用預設的
+    /// 去重鍵（含 AlertText）會在對數一變就變成另一筆，所以由呼叫端給一個不含計數的鍵。</param>
+    public void UpsertByDedupeKey(PermissionChangeRecord change, string dedupeKey)
+    {
+        using var ctx = _contextFactory();
+        var existing = ctx.PermissionChanges.FirstOrDefault(r => r.DedupeKey == dedupeKey);
+
+        if (existing != null)
+        {
+            existing.Target = change.Target;
+            existing.AlertText = change.AlertText ?? string.Empty;
+            ctx.SaveChanges();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(change.ChangeId))
+            change.ChangeId = Guid.NewGuid().ToString("N");
+
+        ctx.PermissionChanges.Add(new PermissionChangeRow
+        {
+            ChangeId = change.ChangeId,
+            DedupeKey = dedupeKey,
+            HostName = change.HostName,
+            HostNameKey = HostNameKey.Of(change.HostName),
+            DetectedAt = change.DetectedAt,
+            CreatedAt = DateTime.Now,
+            Target = change.Target,
+            ChangeType = change.ChangeType,
+            Category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category,
+            IsPrivilegedTarget = change.IsPrivilegedTarget,
+            InitiatorAccount = change.InitiatorAccount,
+            TargetAccount = change.TargetAccount,
+            BeforeValue = change.Before ?? string.Empty,
+            AfterValue = change.After ?? string.Empty,
+            AlertText = change.AlertText ?? string.Empty,
+            Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
+            EventId = change.EventId,
+            Status = PermissionConfirmStatuses.Pending
+        });
+        ctx.SaveChanges();
+    }
+
+    /// <summary>
+    /// 依去重鍵刪除一筆（供彙總列撤銷使用）：當某主機日的成對數跌回門檻以下、改為逐則列出時，
+    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在、被重複計算。
+    /// 回傳是否真的刪到。
+    /// </summary>
+    public bool DeleteByDedupeKey(string dedupeKey)
+    {
+        using var ctx = _contextFactory();
+        var existing = ctx.PermissionChanges.FirstOrDefault(r => r.DedupeKey == dedupeKey);
+        if (existing == null) return false;
+
+        ctx.PermissionChanges.Remove(existing);
+        ctx.SaveChanges();
+        return true;
+    }
+
     /// <summary>多條件篩選、排序與分頁查詢（全部條件下推 SQL）</summary>
     public PagedResult<PermissionChangeRecord> Query(PermissionChangeQueryFilter filter)
     {

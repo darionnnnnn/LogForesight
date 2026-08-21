@@ -65,6 +65,7 @@ public class NetiqPipelineService
     private readonly bool _onlyMissingOrFailed;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
     private readonly PermissionChangeStore? _permissionChangeStore;
+    private readonly PermissionFieldMappings? _permissionMappings;
     /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
     private ConcurrentDictionary<string, byte> _permissionKeys = new();
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
@@ -91,6 +92,7 @@ public class NetiqPipelineService
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
     /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
     /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
+    /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -99,7 +101,8 @@ public class NetiqPipelineService
         IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
-        PermissionChangeStore? permissionChangeStore = null)
+        PermissionChangeStore? permissionChangeStore = null,
+        PermissionFieldMappings? permissionMappings = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -120,6 +123,7 @@ public class NetiqPipelineService
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
+        _permissionMappings = permissionMappings;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -610,7 +614,7 @@ public class NetiqPipelineService
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(
-                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext);
+                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 
             // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
             // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果

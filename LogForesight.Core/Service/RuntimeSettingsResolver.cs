@@ -51,6 +51,7 @@ public static class RuntimeSettingsResolver
 
             // 權限監控資料夾與分析參數（§12）：DB 是唯一事實來源
             settings.Permissions.WatchedFolders = new List<string>(systemSettings.WatchedFolders);
+            settings.Permissions.FieldMappings = PermissionFieldMappings.FromSystemSettings(systemSettings);
             settings.Analysis.ServerDescription = systemSettings.ServerDescription;
             if (systemSettings.CheckupIntervalDays >= 1)
                 settings.Analysis.CheckupIntervalDays = systemSettings.CheckupIntervalDays;

@@ -224,6 +224,34 @@
             </div>
 
             <hr />
+            <h3 class="h6">權限異動自訂欄位對應</h3>
+            <p class="text-muted small mb-3">
+                事件訊息使用非標準欄位名時才需要設定，留空代表只使用內建的標準欄位名。
+            </p>
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label for="perm-operator-fields" class="form-label">操作者帳號自訂欄位</label>
+                    <textarea class="form-control lf-mono" id="perm-operator-fields" rows="2" placeholder="一行一個欄位名"></textarea>
+                    <div class="form-text">對應主體區段帳戶名稱；留空＝只用內建官方欄位名。</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="perm-member-fields" class="form-label">成員帳號自訂欄位</label>
+                    <textarea class="form-control lf-mono" id="perm-member-fields" rows="2" placeholder="一行一個欄位名"></textarea>
+                    <div class="form-text">對應成員區段帳戶名稱；留空＝只用內建官方欄位名。</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="perm-group-fields" class="form-label">群組名稱自訂欄位</label>
+                    <textarea class="form-control lf-mono" id="perm-group-fields" rows="2" placeholder="一行一個欄位名"></textarea>
+                    <div class="form-text">對應群組名稱；留空＝只用內建官方欄位名。</div>
+                </div>
+                <div class="col-md-6">
+                    <label for="perm-object-fields" class="form-label">物件名稱自訂欄位</label>
+                    <textarea class="form-control lf-mono" id="perm-object-fields" rows="2" placeholder="一行一個欄位名"></textarea>
+                    <div class="form-text">對應物件名稱；留空＝只用內建官方欄位名。</div>
+                </div>
+            </div>
+
+            <hr />
             <div class="row g-3">
                 <div class="col-md-6">
                     <label for="import-max-file-size-kb" class="form-label">CSV 匯入檔案大小上限（KB）</label>
