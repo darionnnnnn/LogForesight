@@ -99,4 +99,36 @@ public class HelpContentServiceTests
             typeof(LogForesight.Web.Models.Dto.HelpChapterDto).GetProperties(),
             p => p.Name.Contains("Ai", StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// manifest 宣告了 aiFile 的章節，實際一定要讀得到那個檔。
+    /// 沒有這條的話，檔名打錯／檔案沒被編進組件都只會靜默 fallback 成使用者版——
+    /// 畫面一切正常，只有 AI 答得比預期差，而且沒有任何人會發現。
+    /// </summary>
+    [Fact]
+    public void 宣告了aiFile的章節都要真的讀到AI版內容()
+    {
+        var assembly = typeof(HelpContentService).Assembly;
+        var manifestName = assembly.GetManifestResourceNames()
+            .Single(n => n.EndsWith("HelpContent.manifest.json", StringComparison.Ordinal));
+
+        using var stream = assembly.GetManifestResourceStream(manifestName)!;
+        using var reader = new StreamReader(stream);
+        using var doc = System.Text.Json.JsonDocument.Parse(reader.ReadToEnd());
+
+        var idsWithAiFile = doc.RootElement.GetProperty("chapters").EnumerateArray()
+            .Where(c => c.TryGetProperty("aiFile", out _))
+            .Select(c => c.GetProperty("id").GetString()!)
+            .ToList();
+
+        Assert.NotEmpty(idsWithAiFile);   // 一章都沒有的話這條測試等於沒測到東西
+
+        foreach (var id in idsWithAiFile)
+        {
+            var chapter = _service.Chapters.Single(c => c.Id == id);
+            Assert.False(string.IsNullOrWhiteSpace(chapter.AiContent),
+                $"章節 {id} 的 manifest 有 aiFile，卻沒讀到 AI 版內容（檔名打錯或沒被編進組件）");
+            Assert.NotEqual(chapter.Content, chapter.AiContent);
+        }
+    }
 }
