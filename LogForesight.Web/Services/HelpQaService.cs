@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 

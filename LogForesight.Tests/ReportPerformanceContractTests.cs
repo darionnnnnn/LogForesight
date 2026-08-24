@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LogForesight.Web.Controllers.Api;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 using Xunit;
@@ -126,7 +127,172 @@ public class ReportPerformanceContractTests : IDisposable
         Assert.Equal(new ReportKpiAggregate(0, 0, 0, 0, 0), previous);
     }
 
+    /// <summary>
+    /// 帶條件的等值：riskLevels／visibleSeverities／非空 hostIds（含被合併的別名 id）三組
+    /// 條件都要與逐期呼叫相同。沒有這三條的話，把合併查詢裡任一個條件整段拿掉，
+    /// 只傳 null 的那幾條測試依然全綠（終檢抓到）。
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, true, true)]
+    public void KpiPair_帶條件時仍與逐期呼叫結果相同(bool withRiskLevels, bool withSeverities, bool withHostIds)
+    {
+        var survivor = _hosts.Upsert(new WebHost { HostName = "B" });
+        var merged = _hosts.Upsert(new WebHost { HostName = "A" });
+        _hosts.Merge(merged.HostId, survivor.HostId);
+        var other = _hosts.Upsert(new WebHost { HostName = "C" });
+
+        var to = new DateTime(2026, 8, 20);
+        var from = to.AddDays(-6);
+        var previousTo = from.AddDays(-1);
+        var previousFrom = previousTo.AddDays(-6);
+
+        // 兩期都放進高／中／低三種風險日與高／低兩種嚴重度的問題，讓每個條件都真的篩掉東西
+        Add(merged.HostId, "A", to, RiskLevels.High, Issue("disk", 7), Issue("net", 9, IssueSeverity.Low));
+        Add(survivor.HostId, "B", to.AddDays(-1), RiskLevels.Medium, Issue("disk", 7));
+        Add(other.HostId, "C", to.AddDays(-2), RiskLevels.Low, Issue("net", 9, IssueSeverity.Low));
+        Add(survivor.HostId, "B", previousTo, RiskLevels.High, Issue("disk", 7));
+        Add(other.HostId, "C", previousFrom, RiskLevels.Low, Issue("net", 9, IssueSeverity.Low));
+
+        IReadOnlySet<string>? riskLevels = withRiskLevels ? new HashSet<string> { RiskLevels.High } : null;
+        IReadOnlySet<IssueSeverity>? severities = withSeverities
+            ? new HashSet<IssueSeverity> { IssueSeverity.High }
+            : null;
+        IReadOnlyCollection<long>? hostIds = withHostIds
+            ? new[] { survivor.HostId, other.HostId }   // 只給存活 id，別名下的歷史也要被涵蓋
+            : null;
+
+        var query = Query();
+        var expectedCurrent = query.AggregateReportKpi(from, to, hostIds, riskLevels, severities);
+        var expectedPrevious = query.AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, severities);
+
+        var (current, previous) = query.AggregateReportKpiPair(
+            from, to, previousFrom, previousTo, hostIds, riskLevels, severities);
+
+        Assert.Equal(expectedCurrent, current);
+        Assert.Equal(expectedPrevious, previous);
+    }
+
     // ── F4：問題排行快取 ────────────────────────────────────────────────────
+
+    private IssueRankingBuilder BuilderWith(FakeIssueAggregateQuery aggregates, IssueRankingCache? cache) =>
+        new(aggregates, _hosts, cache: cache);
+
+    /// <summary>
+    /// 快取要在 Build 這一層真的生效——只測 Cache 物件本身等於在測一個字典加 TTL，
+    /// 把 Build 裡的 Set／TryGet 整行刪掉那種測試照樣全綠（終檢抓到）。
+    /// </summary>
+    [Fact]
+    public void 排行快取_同條件第二次Build不重打聚合()
+    {
+        var aggregates = new FakeIssueAggregateQuery();
+        var now = new DateTime(2026, 8, 21, 10, 0, 0);
+        var builder = BuilderWith(aggregates, new IssueRankingCache(() => now));
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 20);
+
+        builder.Build(from, to, new long[] { 1, 2 }, 2);
+        var afterFirst = aggregates.AggregateCallCount;
+        Assert.True(afterFirst > 0);
+
+        builder.Build(from, to, new long[] { 1, 2 }, 2);
+
+        Assert.Equal(afterFirst, aggregates.AggregateCallCount);
+    }
+
+    /// <summary>不同可見範圍必須各自重算——共用結果等於讓人看到授權外的資料。</summary>
+    [Fact]
+    public void 排行快取_可見範圍不同時Build會重算()
+    {
+        var aggregates = new FakeIssueAggregateQuery();
+        var now = new DateTime(2026, 8, 21, 10, 0, 0);
+        var builder = BuilderWith(aggregates, new IssueRankingCache(() => now));
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 20);
+
+        builder.Build(from, to, new long[] { 1, 2 }, 2);
+        var afterFirst = aggregates.AggregateCallCount;
+
+        builder.Build(from, to, new long[] { 1 }, 2);
+
+        Assert.True(aggregates.AggregateCallCount > afterFirst, "可見範圍不同卻共用了快取結果");
+    }
+
+    /// <summary>TTL 過期後 Build 要重算，不是永遠回同一份。</summary>
+    [Fact]
+    public void 排行快取_TTL過期後Build會重算()
+    {
+        var aggregates = new FakeIssueAggregateQuery();
+        var clock = new DateTime(2026, 8, 21, 10, 0, 0);
+        var builder = BuilderWith(aggregates, new IssueRankingCache(() => clock));
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 20);
+
+        builder.Build(from, to, null, 2);
+        var afterFirst = aggregates.AggregateCallCount;
+
+        clock = clock.AddSeconds(IssueRankingCache.TtlSeconds);
+        builder.Build(from, to, null, 2);
+
+        Assert.True(aggregates.AggregateCallCount > afterFirst, "TTL 過期後仍回傳快取結果");
+    }
+
+    /// <summary>沒有注入快取時行為不變（每次都重算）——快取是加值，不是必要條件。</summary>
+    [Fact]
+    public void 未注入快取時Build每次都重算()
+    {
+        var aggregates = new FakeIssueAggregateQuery();
+        var builder = BuilderWith(aggregates, cache: null);
+        var from = new DateTime(2026, 8, 1);
+        var to = new DateTime(2026, 8, 20);
+
+        builder.Build(from, to, null, 2);
+        var afterFirst = aggregates.AggregateCallCount;
+        builder.Build(from, to, null, 2);
+
+        Assert.True(aggregates.AggregateCallCount > afterFirst);
+    }
+
+    // ── B2：AI 用量 API（終檢指出規劃驗收要求的 API 測試原本沒做）────────────
+
+    private SettingsController AiUsageController(AiUsageStore store, RecordingAuditService audit) =>
+        new(new FakeSystemSettingsService(), store, audit);
+
+    [Fact]
+    public void AiUsageApi_讀取回傳今日與累計()
+    {
+        var now = new DateTime(2026, 8, 21, 9, 0, 0);
+        var store = new AiUsageStore(_fx.Blob(AiUsageStore.BlobKey), () => now);
+        store.Record(100, 50, 150, hasUsage: true);
+
+        var dto = AiUsageDto.From(store, AiUsageDto.TableDays);
+
+        Assert.Equal(150, dto.Total.TotalTokens);
+        Assert.Equal(1, dto.Total.Calls);
+        Assert.Equal("2026-08-21", dto.CountingSince);
+        Assert.Single(dto.Days);
+    }
+
+    /// <summary>清空是不可復原的管理操作：必須歸零，而且必須留下稽核紀錄。</summary>
+    [Fact]
+    public void AiUsageApi_清空後歸零且留下稽核紀錄()
+    {
+        var store = new AiUsageStore(_fx.Blob(AiUsageStore.BlobKey));
+        store.Record(100, 50, 150, hasUsage: true);
+
+        var audit = new RecordingAuditService();
+        var response = AiUsageController(store, audit).ResetAiUsage();
+
+        Assert.Equal(0, response.Data!.Total.TotalTokens);
+        Assert.Equal(0, response.Data.Total.Calls);
+        Assert.Empty(response.Data.Days);
+
+        var entry = Assert.Single(audit.Entries, e => e.TargetKind == "ai_usage");
+        Assert.Contains("150", entry.Summary);   // 清空前的量要留在稽核裡，事後才查得到
+    }
+
 
     private static List<IssueRankingDto> Ranking(string source) => new()
     {

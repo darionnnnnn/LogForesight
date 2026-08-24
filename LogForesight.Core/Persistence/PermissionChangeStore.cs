@@ -139,6 +139,24 @@ public class PermissionChangeStore
         ctx.SaveChanges();
     }
 
+    /// <summary>
+    /// 批次依去重鍵刪除，回傳刪除筆數（回饋二十七輪終檢）。
+    ///
+    /// 用途：某主機日的成對異動由「逐則列出」升級為「彙總列」時，先前已入庫的那些逐則列
+    /// 必須撤掉——否則同一批異動同時以彙總與逐則兩種形式存在、被重複計算。
+    /// 空集合直接回 0，不發查詢（呼叫端不必自己判斷）。
+    /// </summary>
+    public int DeleteByDedupeKeys(IEnumerable<string> dedupeKeys)
+    {
+        var keys = dedupeKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0) return 0;
+
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => keys.Contains(r.DedupeKey))
+            .ExecuteDelete();
+    }
+
     /// <summary>某去重鍵是否已有列（供彙總列判斷「這天先前已看過完整的例行同步」使用）。</summary>
     public bool ExistsByDedupeKey(string dedupeKey)
     {

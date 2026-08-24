@@ -1587,6 +1587,34 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
     }
 
+    /// <summary>
+    /// 由「逐則」升級為「彙總」時，先前已入庫的那些逐則列必須撤掉（終檢抓到的方向相反版本）：
+    /// 第一次取數只回子集（不足門檻）→ 全部逐則入庫；重跑回傳完整當日事件 → 達門檻產生彙總列。
+    /// 若不撤掉舊的逐則列，同一批異動會同時以彙總與逐則兩種形式存在、被重複計算。
+    /// </summary>
+    [Fact]
+    public void 例行同步_由逐則升級為彙總時撤掉既有的逐則列()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var threshold = HostDayPostProcessor.RoutineSyncPairThreshold;
+
+        // 第一次：來源只回 3 對，不足門檻 → 6 筆逐則入庫、沒有彙總列
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
+        Assert.Equal(6, store.Query(null, null, 1000).Count);
+
+        // 重跑：來源回傳完整當日事件（達門檻）→ 產生彙總列
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
+
+        var records = store.Query(null, null, 1000);
+        Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        // 先前那 6 筆逐則列已被彙總涵蓋，不得殘留
+        Assert.DoesNotContain(records, r => r.ChangeType == "成員新增" || r.ChangeType == "成員移除");
+    }
+
     /// <summary>從未達過門檻、也沒有既有彙總列時：全部逐則列出（原行為不變）。</summary>
     [Fact]
     public void 例行同步_無既有彙總列且未達門檻時全部逐則()

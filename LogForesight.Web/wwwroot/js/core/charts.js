@@ -175,7 +175,7 @@ const _toolbarTableMap = new WeakMap();
 
 export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
     // 清除上一次由 attachToolbar 產生的 toolbar（以 data-lf-toolbar 標記）
-    container.querySelector('[data-lf-toolbar]')?.remove();
+    container.querySelectorAll('[data-lf-toolbar]').forEach(el => el.remove());
 
     // 清除上一次由 attachToolbar 插入的 tableWrapper（以 WeakMap 追蹤）
     _toolbarTableMap.get(container)?.remove();

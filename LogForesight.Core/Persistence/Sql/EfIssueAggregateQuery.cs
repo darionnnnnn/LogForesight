@@ -67,10 +67,11 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
             var current = _aliasIndexSnapshot;
             if (current == null || current.Version != version)
             {
-                // 建完再讀一次版本配上去：兩次讀之間主機可能又被改過，
-                // 拿舊版本號配新索引存進快照，快取就永遠不會再更新
+                // **配上去的是進來時讀到的 version，不是建完後再讀一次的新版本**：
+                // 兩次讀之間主機若被改過，「新版本號配舊內容」會讓過期索引一路命中到下次寫入為止；
+                // 反過來「舊版本號配新內容」只會下次比對不相等、多重建一次，是安全的失敗方向。
                 var index = new HostAliasIndex(_hosts.GetAll());
-                current = new AliasIndexSnapshot(index, _hosts.DataVersion);
+                current = new AliasIndexSnapshot(index, version);
                 _aliasIndexSnapshot = current;
             }
             return current.Index;

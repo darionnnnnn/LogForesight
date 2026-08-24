@@ -27,13 +27,13 @@ public class IssueRankingBuilder
     private readonly DailyRecordBackfiller? _dailyBackfiller;
     private readonly IKnownIssueRuleStore? _rules;
 
+    /// <summary>跨請求結果快取（回饋二十七輪作業 F4）；null＝不快取（測試預設）。</summary>
+    private readonly IssueRankingCache? _cache;
+
     /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
     /// 刻意內建計算而不是留給呼叫端傳字典：這個參數過去就是以「呼叫端自己組字典」的形式存在，
     /// 結果兩個正式呼叫端都忘了傳，OpenHostCount 因此死了一整輪（回饋十九輪查證抓到）。</param>
-    /// <summary>跨請求結果快取（回饋二十七輪作業 F4）；null＝不快取（測試預設）。</summary>
-    private readonly IssueRankingCache? _cache;
-
     public IssueRankingBuilder(
         IIssueAggregateQuery aggregates,
         IHostStore hosts,

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -456,7 +456,7 @@ public class NetiqPipelineService
         AiFollowupQueue<AiFollowupJob> aiQueue, AiFollowupJob job, string sentinelName,
         NetiqPipelineResult result, CancellationToken ct)
     {
-        _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），" +
+        _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiQueueCapacity} 件），" +
                            $"搜尋暫停等待消化中…（佇列尚有 {aiQueue.PendingCount} 件）");
 
         ReportAiDigestProgress(result);

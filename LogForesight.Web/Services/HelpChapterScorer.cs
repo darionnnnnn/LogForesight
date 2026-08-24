@@ -1,4 +1,4 @@
-﻿namespace LogForesight.Web.Services;
+namespace LogForesight.Web.Services;
 
 /// <summary>
 /// 操作說明書 AI 問答的選節計分（docs/archive/FEEDBACK-15-PLAN.md 批次E-3）：對 question 做關鍵字

@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using System.Collections.Concurrent;
 using NLog;
@@ -197,6 +197,13 @@ public static class HostDayPostProcessor
                 });
             }
 
+            // 本批內先去重一次（終檢抓到）：去重移到配對之後，同一次回應若把同一則事件回兩次，
+            // 配對會把它算成兩對，成對數就被灌水、可能假性跨過門檻把該逐則列出的異動吞掉。
+            // 這裡只折疊「本批內完全相同的事件」，與跨執行的 knownKeys 佔位是兩件事。
+            var seenInBatch = new HashSet<string>(StringComparer.Ordinal);
+            dayRecords.RemoveAll(r => !seenInBatch.Add(PermissionChangeRecord.DedupeKey(
+                hostName, r.DetectedAt, r.EventId ?? 0, r.AlertText ?? string.Empty)));
+
             var routineKey = RoutineSyncDedupeKey(hostName, date);
             var pairing = FindRoutineSyncPairs(dayRecords);
 
@@ -204,6 +211,15 @@ public static class HostDayPostProcessor
             {
                 permissionChangeStore.UpsertByDedupeKey(
                     BuildRoutineSummary(pairing, hostName, date), routineKey);
+
+                // 這批成對事件先前可能已經以逐則形式入庫（前一次取數只回了子集、成對數不足門檻，
+                // 於是全部逐則列出）。現在升級成彙總列，那些逐則列必須撤掉，
+                // 否則同一批異動同時以彙總與逐則兩種形式存在、被重複計算——
+                // 正是作業 A 要消滅的症狀，只是方向相反（終檢抓到）。
+                permissionChangeStore.DeleteByDedupeKeys(
+                    pairing.Paired.Select(r => PermissionChangeRecord.DedupeKey(
+                        hostName, r.DetectedAt, r.EventId ?? 0, r.AlertText ?? string.Empty)));
+
                 dayRecords.RemoveAll(pairing.Paired.Contains);
             }
             else if (pairing.PairCount > 0 && permissionChangeStore.ExistsByDedupeKey(routineKey))
