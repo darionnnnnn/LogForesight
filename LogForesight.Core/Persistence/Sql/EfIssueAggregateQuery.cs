@@ -901,6 +901,86 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         return new ReportKpiAggregate(totalIssues, highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
     }
 
+    /// <summary>
+    /// 本期＋前期 KPI 的合併查詢（回饋二十七輪作業 F3，覆寫介面的預設實作）。
+    ///
+    /// 逐期呼叫 <see cref="AggregateReportKpi"/> 是每期 3 個查詢（stats 載入、受影響主機
+    /// DISTINCT、TotalIssues Count），兩期共 6 次往返＋兩次 context/索引 setup。這裡收斂成：
+    /// 一次載入兩期的 stats 列（含 HostId，受影響主機數直接在記憶體算，省掉 DISTINCT 查詢）
+    /// ＋每期一次 TotalIssues Count＝3 次往返。兩期以 OR 條件合併載入而不是拉整段連續區間——
+    /// 對比去年同期時兩期相隔一年，拉連續區間會多載一整年的無關列。
+    ///
+    /// 契約＝與逐期呼叫逐欄位相同（riskLevels／visibleSeverities／主機合併去重語意一致），
+    /// 由等值測試釘住。
+    /// </summary>
+    public (ReportKpiAggregate Current, ReportKpiAggregate Previous) AggregateReportKpiPair(
+        DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
+    {
+        if (hostIds != null && hostIds.Count == 0)
+        {
+            var empty = new ReportKpiAggregate(0, 0, 0, 0, 0);
+            return (empty, empty);
+        }
+
+        var sw = Stopwatch.StartNew();
+        var f1 = from.Date;
+        var t1 = to.Date;
+        var f2 = previousFrom.Date;
+        var t2 = previousTo.Date;
+        var aliasIndex = AliasIndex();
+        var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
+        var expanded = hostIds == null ? null : ExpandToAliasIds(aliasIndex, hostIds);
+
+        using var ctx = _contextFactory();
+
+        var qBoth = ctx.DailyRecords.AsNoTracking()
+            .Where(r => (r.RecordDate >= f1 && r.RecordDate <= t1) || (r.RecordDate >= f2 && r.RecordDate <= t2));
+        if (expanded != null) qBoth = qBoth.Where(r => expanded.Contains(r.HostId));
+        if (riskLevels != null) qBoth = qBoth.Where(r => riskLevels.Contains(r.RiskLevel));
+
+        var stats = qBoth
+            .Select(r => new { r.RecordDate, r.RiskLevel, r.DataIncomplete, r.SecurityLogAvailable, r.HostId })
+            .ToList();
+
+        ReportKpiAggregate BuildPeriod(DateTime pf, DateTime pt)
+        {
+            var rows = stats.Where(s => s.RecordDate >= pf && s.RecordDate <= pt).ToList();
+            var highRiskDays = rows.Count(r => r.RiskLevel == RiskLevels.High);
+            var mediumRiskDays = rows.Count(r => r.RiskLevel == RiskLevels.Medium);
+            var coverageGapDays = rows.Count(r => r.DataIncomplete || r.SecurityLogAvailable == false);
+            var affectedHosts = rows
+                .Where(r => r.RiskLevel == RiskLevels.High || r.RiskLevel == RiskLevels.Medium)
+                .Select(r => Surviving(aliasIndex, r.HostId))
+                .Distinct()
+                .Count();
+
+            var qRecords = ctx.DailyRecords.AsNoTracking().Where(r => r.RecordDate >= pf && r.RecordDate <= pt);
+            if (expanded != null) qRecords = qRecords.Where(r => expanded.Contains(r.HostId));
+            if (riskLevels != null) qRecords = qRecords.Where(r => riskLevels.Contains(r.RiskLevel));
+
+            var qIssues = ctx.TopIssues.AsNoTracking().Where(x => x.RecordDate >= pf && x.RecordDate <= pt);
+            if (expanded != null) qIssues = qIssues.Where(x => expanded.Contains(x.HostId));
+            if (riskLevels != null)
+            {
+                var allowedRecordIds = qRecords.Select(r => r.RecordId);
+                qIssues = qIssues.Where(x => allowedRecordIds.Contains(x.RecordId));
+            }
+            if (visibleRanks != null) qIssues = qIssues.Where(x => visibleRanks.Contains(x.SeverityRank));
+
+            return new ReportKpiAggregate(qIssues.Count(), highRiskDays, mediumRiskDays, affectedHosts, coverageGapDays);
+        }
+
+        var current = BuildPeriod(f1, t1);
+        var previous = BuildPeriod(f2, t2);
+
+        Log.Debug("[SQL] IssueAggregate.AggregateReportKpiPair（{From:yyyy-MM-dd}~{To:yyyy-MM-dd} vs {PFrom:yyyy-MM-dd}~{PTo:yyyy-MM-dd}）→ {Ms}ms",
+            f1, t1, f2, t2, sw.ElapsedMilliseconds);
+        _performance?.Record("issues:AggregateReportKpiPair", sw.ElapsedMilliseconds);
+
+        return (current, previous);
+    }
+
     public List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities)
     {
         if (hostIds != null && hostIds.Count == 0) return new List<TrendAggregate>();

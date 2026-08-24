@@ -142,17 +142,32 @@ NetIQ 回補的舊事件（detected_at 可達 100 天前）不該一寫入就被
 - 契約：群組風險計算改為先建 `groupId → hosts` 索引一次，總複雜度由 O(群組×主機) 降為 O(主機×每台群組數)。輸出不變（含排序）。
 - 驗收：行為等值測試；（可選）Scale 壓測數字記錄。
 
-### F3 KPI/聚合平行化 — Claude
-- 契約：本期/前期 KPI 與互不依賴的聚合改平行執行；注意 DbContext 不可跨執行緒共用——平行化僅在各查詢有獨立 context/連線的前提下做，做不到的維持串列並記錄理由。輸出不變。
-- 驗收：行為等值測試全綠；不引入共用 context 併發。
+### F3 KPI 聚合收斂 — Claude（實作時改向，經使用者同意本輪做）
+- **推翻原契約「平行化」**：測試後端所有 DbContext 共用同一條 SQLite 連線（`EfSqliteFixture`），
+  執行緒平行在測試裡無法安全驗證＝出貨一段測不到的並行程式碼。改為**合併查詢**收斂往返：
+  本期＋前期 KPI 由兩次方法呼叫（各 3 個查詢，共 6 次往返＋兩次 setup）合併為一次
+  `AggregateReportKpiPair`（單一 context：一次載入兩期 stats 列＋兩次 TotalIssues 彙總=3 次往返；
+  受影響主機數改由 stats 列在記憶體算，省掉兩次 DISTINCT 查詢）。省 wall-clock 的目的相同、機制可測。
+- 不能破壞：兩期各自的 KPI 五個數字與原本逐期呼叫完全相同（含 riskLevels/visibleSeverities/主機合併語意）。
+- 驗收：等值測試——同一批資料下 Pair 結果與兩次單期呼叫逐欄位相同（含 yoy 非連續期間、主機合併去重）。
 
 ### F4 報表↔儀表板共用聚合快取 — Claude
-- 契約：同一資料版本內兩頁共用的聚合結果（至少 `IssueRankingBuilder.Build`）加短存活記憶體快取；失效條件必須明確（暫定：時間 TTL＋資料寫入版本戳，實作時依既有機制定案並記錄）。快取後兩頁數字不得分岔。
-- 驗收：兩次相同請求第二次不重打聚合（計數測試）；寫入新資料後快取失效測試。
+- 契約修正：資料寫入版本戳不可靠（聚合橫跨 records＋handling 多表，沒有單一版本錨點；
+  硬湊會做出「假失效」讓兩頁分岔——本專案踩過）。改為**短 TTL（暫定 30 秒）記憶體快取**：
+  `IssueRankingBuilder.Build` 結果以 (from, to, 可見主機集合, totalHosts) 為鍵快取於 Singleton
+  快取件（builder 本身是 Scoped，快取必須獨立成 Singleton 才跨請求生效）；時鐘可注入供測試。
+  30 秒內處理狀態變更反映延遲屬可接受（頁面本身也非即時）；快取回傳副本，呼叫端不得改到共用物件。
+- 驗收：計數測試——同鍵第二次 Build 不重打聚合、TTL 過期重算、不同可見範圍各自獨立（授權不得串味）。
 
-### F5 非 All scope SQL 端化＋索引核對 — Claude
-- 契約：`handlingScope != All` 分支的記憶體全載入改為 SQL 端聚合（與 All 分支對稱）；若某聚合無法下推，記錄理由並縮小載入投影。索引面：對照 DB-SPEC 索引節核對報表聚合的 WHERE 條件有覆蓋索引，缺的補進 schema 升級（SqlServer DDL 未實測的既有警語維持）。
-- 驗收：行為等值測試（All 與非 All scope 同資料下數字關係正確）；長區間（90天）路徑不再整段載入（計數/投影斷言）。
+### F5 非 All scope 的 SQL 端窄化 — Claude（範圍修正）
+- 契約修正：日層級處理狀態由 `DayHandlingDerivation`（TopIssues＋handling＋案件＋嚴重度設定）
+  在記憶體推導，**整段下推 SQL 不可行**。但核對 `FilterByScope` 發現：scope != All 時非 actionable
+  （低風險）紀錄一律被丟棄——所以可以把 `RiskLevels IN (高,中)` 下推進 `QueryLightweight`
+  （filter 已有現成欄位），本期與前期兩次載入都套。90 天路徑從整段載入變成只載高/中風險列
+  （實務上低風險占絕大多數），行為等值。
+- 索引核對：`lf_daily_records` 已有 `(HostId, RecordDate)`＋`RecordDate`、`lf_top_issues` 已有
+  `(HostId, Date, Source, EventId)`＋`Date`，報表聚合條件已覆蓋，本輪不加索引。
+- 驗收：等值測試（含低風險紀錄的資料集在非 All scope 下輸出不變）；下推斷言（spy/直測 store 過濾）。
 
 ## 作業G：說明書雙版本＋補章（P12）
 

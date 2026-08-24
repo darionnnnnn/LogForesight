@@ -31,6 +31,9 @@ public class IssueRankingBuilder
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
     /// 刻意內建計算而不是留給呼叫端傳字典：這個參數過去就是以「呼叫端自己組字典」的形式存在，
     /// 結果兩個正式呼叫端都忘了傳，OpenHostCount 因此死了一整輪（回饋十九輪查證抓到）。</param>
+    /// <summary>跨請求結果快取（回饋二十七輪作業 F4）；null＝不快取（測試預設）。</summary>
+    private readonly IssueRankingCache? _cache;
+
     public IssueRankingBuilder(
         IIssueAggregateQuery aggregates,
         IHostStore hosts,
@@ -38,7 +41,8 @@ public class IssueRankingBuilder
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null,
         DailyRecordBackfiller? dailyBackfiller = null,
-        IKnownIssueRuleStore? rules = null)
+        IKnownIssueRuleStore? rules = null,
+        IssueRankingCache? cache = null)
     {
         _aggregates = aggregates;
         _hosts = hosts;
@@ -47,6 +51,7 @@ public class IssueRankingBuilder
         _backend = backend;
         _dailyBackfiller = dailyBackfiller;
         _rules = rules;
+        _cache = cache;
     }
 
     /// <summary>
@@ -100,6 +105,15 @@ public class IssueRankingBuilder
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
         IReadOnlyCollection<WebHost>? hostSnapshot = null)
     {
+        // 跨請求快取（回饋二十七輪作業 F4）：儀表板與報表共用這份投影，
+        // 使用者在兩頁間切換時同一組聚合幾秒內會被整套重算——短 TTL 內直接沿用
+        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(from, to, visibleHostIds, totalHosts);
+        if (cacheKey != null)
+        {
+            var cached = _cache!.TryGet(cacheKey);
+            if (cached != null) return cached;
+        }
+
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
         // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
@@ -112,6 +126,17 @@ public class IssueRankingBuilder
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
+        var result = BuildFromAggregates(current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
+
+        if (cacheKey != null) _cache!.Set(cacheKey, result);
+        return result;
+    }
+
+    private List<IssueRankingDto> BuildFromAggregates(
+        List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueAggregate> previous,
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
+        IReadOnlyCollection<WebHost>? hostSnapshot, int periodDays)
+    {
 
         // 機房級基準線（§G1）與 fleet 首見（§G4）：只對「當頁組」（current 命中的問題）查，
         // 不是整份表——與 LatestOccurrences 同一個規模假設。基準期固定「to 往前 30 天」，

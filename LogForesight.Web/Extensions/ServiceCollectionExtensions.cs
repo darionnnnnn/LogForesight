@@ -280,6 +280,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RecordDetailQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
+        // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
+        // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
+        services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依

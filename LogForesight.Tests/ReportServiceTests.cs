@@ -816,4 +816,36 @@ public class ReportServiceTests : IDisposable
         Assert.True(_hosts.GetAllCallCount <= MaxHostGetAllPerSummary,
             $"整份主機表被載入 {_hosts.GetAllCallCount} 次，超過契約上限 {MaxHostGetAllPerSummary} 次");
     }
+
+    /// <summary>
+    /// F5：非 All 顯示範圍把「只要高／中風險」下推 SQL 之後，輸出必須與下推前相同。
+    /// FilterByScope 本來就會丟掉低風險列，所以下推是等值的——這條測試用「資料集裡
+    /// 混著低風險列」的情況釘住這個前提，避免哪天 scope 語意改成也涵蓋低風險時
+    /// 這個下推變成安靜吃資料。
+    /// </summary>
+    [Fact]
+    public void GetSummary_非全部顯示範圍時低風險紀錄不影響輸出()
+    {
+        var host = AddHost("HOST-SCOPE-LOW");
+        var today = DateTime.Today;
+        AddRecord(host, today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        var before = _service.GetSummary(today.AddDays(-6), today, handlingScope: "unhandled");
+
+        // 再塞一批低風險紀錄——非 All 範圍下它們本來就不該影響任何數字
+        var noisy = AddHost("HOST-SCOPE-LOW-2");
+        AddRecord(noisy, today, "低", Issue("net", 3, IssueSeverity.Low, 1));
+        AddRecord(noisy, today.AddDays(-2), "低", Issue("net", 4, IssueSeverity.Low, 1));
+
+        var after = _service.GetSummary(today.AddDays(-6), today, handlingScope: "unhandled");
+
+        Assert.Equal(before.Kpi.HighRiskDays, after.Kpi.HighRiskDays);
+        Assert.Equal(before.Kpi.AffectedHosts, after.Kpi.AffectedHosts);
+        Assert.Equal(before.Handling.TotalCount, after.Handling.TotalCount);
+        Assert.Equal(before.RankedHostCount, after.RankedHostCount);
+        Assert.Equal(
+            before.HostRanking.Select(h => h.HostName),
+            after.HostRanking.Select(h => h.HostName));
+    }
 }

@@ -65,9 +65,10 @@ public class ReportService
             }
             else
             {
-                var kpiAgg = _aggregates.AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities);
-
-                var kpiAggPrev = _aggregates.AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
+                // 本期＋前期一次取回（回饋二十七輪作業 F3）：EF 端是合併查詢，
+                // 少一半的 KPI 往返；測試替身走介面預設實作（呼叫兩次單期），語意相同
+                var (kpiAgg, kpiAggPrev) = _aggregates.AggregateReportKpiPair(
+                    from, to, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
 
                 kpi = new ReportKpiDto
                 {
@@ -95,11 +96,16 @@ public class ReportService
         }
         else
         {
-            var records = _handling.FilterByScope(_repository.QueryLightweight(new RecordQueryFilter { From = from, To = to }), scope);
+            // 風險等級下推 SQL（回饋二十七輪作業 F5）：scope != All 時 FilterByScope 一律丟棄
+            // 非 actionable（低風險）紀錄，先在 SQL 端濾掉就不必把整段期間載進記憶體——
+            // 90 天區間下低風險列占絕大多數。與可見等級的交集由 QueryLightweight 既有機制處理。
+            var actionableLevels = new[] { RiskLevels.High, RiskLevels.Medium };
+            var records = _handling.FilterByScope(
+                _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
             recordsForTodo = records;
 
             var previousRecords = _handling.FilterByScope(
-                _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
+                _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
 
             // 同上：QueryLightweight 已套可見範圍（RecordRepository.ApplyVisibility），
             // 撈回來的紀錄其主機必然在 visibleHosts 裡，不必再載一次整份主機表
