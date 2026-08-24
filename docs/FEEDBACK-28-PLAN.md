@@ -284,4 +284,10 @@ B2（CSS 基準）→ D1/D2/D3（吃 B2 的基準）→ A → C → E → F → 
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （待填） | | | | |
+| B2 控制項高度基準 | agy（2 輪）＋Claude 收尾 | 通過 `d397575` | 2539 綠；瀏覽器實測 filter bar 同列底緣一致、四張圖卡底緣同為 819.3px | 首輪漏兩處：`--lf-control-height-sm` 少算邊框（chip 矮 1.6px）、`.btn-group-sm > .btn` specificity 較高沒被覆寫（矮 3.6px），回饋後修正。卡片底緣未對齊的真因是內層 row 的垂直 gutter，改 `gx-3`＋col `h-100`（Claude 自做）。實測發現三卡 header 的 min-height 恆被標題的 `min-height: 2.4em` 蓋過、從未生效，註解已改為據實說明。agy 剝掉 site.css 的 BOM，已還原 |
+| D1 期間快捷統一 | agy（1 輪） | 通過 `48ba332` | 2539 綠；四頁樣式一致，權限異動頁點「近 7 天」正確填 2026-08-17～23 並重查 | agy 剝掉 Records/PermissionChanges 兩個 cshtml 的 BOM，已還原 |
+| D2 工具列尺寸收斂 | agy（1 輪）＋Claude 收尾 | 通過 `bf65afc` | 2539 綠；問題查詢第一列四欄頂底緣皆 147.9／188.7 | **規劃前提被推翻**：四頁工具列本來就已是小尺寸，無 `-sm` 的控制項全在 modal 與設定卡片內（刻意維持預設大小），故 markup 不動。實際問題是空的已選主機 chip 容器佔位；agy 的 `:empty` 規則被 Bootstrap `.d-flex` 的 `!important` 蓋過而無效，Claude 補 `!important` 才生效 |
+
+### 待續
+
+D3（出現密度置中）之後，依建議順序進行 A → C → E → F → G → H → I → J → K。
