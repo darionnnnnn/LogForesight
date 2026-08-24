@@ -298,6 +298,9 @@ public class SystemSettingsService : ISystemSettingsService
             s.AiDeepDiveMaxTokens = request.AiDeepDiveMaxTokens;
             s.AiFrequencyPenalty = request.AiFrequencyPenalty;
             s.AiPresencePenalty = request.AiPresencePenalty;
+            // 估費單價：負數沒有意義（會算出負金額），一律夾回 0＝不估費
+            s.AiInputPricePerMillion = Math.Max(0, request.AiInputPricePerMillion);
+            s.AiOutputPricePerMillion = Math.Max(0, request.AiOutputPricePerMillion);
             s.AiExtraRequestFieldsJson = extraFieldsJson;
             s.WatchedFolders = watchedFolders;
             s.ServerDescription = request.ServerDescription?.Trim() ?? "";
@@ -629,6 +632,8 @@ public class SystemSettingsService : ISystemSettingsService
         AiDeepDiveMaxTokens = s.AiDeepDiveMaxTokens,
         AiFrequencyPenalty = s.AiFrequencyPenalty,
         AiPresencePenalty = s.AiPresencePenalty,
+        AiInputPricePerMillion = s.AiInputPricePerMillion,
+        AiOutputPricePerMillion = s.AiOutputPricePerMillion,
         AiExtraRequestFieldsJson = s.AiExtraRequestFieldsJson,
         AiAdvancedDefaults = AiAdvancedDefaults,
         WatchedFolders = s.WatchedFolders,

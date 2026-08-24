@@ -61,6 +61,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
+        services.AddSingleton<AiUsageStore>(sp =>
+            new AiUsageStore(sp.GetRequiredService<StorageBackend>().Blob(AiUsageStore.BlobKey)));
         services.AddSingleton<PermissionChangeStore>(sp =>
             sp.GetRequiredService<StorageBackend>().PermissionChanges());
 

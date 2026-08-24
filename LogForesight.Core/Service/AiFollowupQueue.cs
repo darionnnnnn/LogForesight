@@ -47,4 +47,9 @@ public sealed class AiFollowupQueue<T>
 
     /// <summary>單一消費者依序（FIFO）讀取，直到 <see cref="Complete"/> 後清空為止。</summary>
     public IAsyncEnumerable<T> ReadAllAsync(CancellationToken ct = default) => _channel.Reader.ReadAllAsync(ct);
+
+    /// <summary>目前還積在佇列裡、尚未被消費者取走的工作項數（回饋二十七輪作業 B）。
+    /// 背壓期間搜尋主線已停、只剩 AI 在消化，這個數字是畫面上唯一會動的東西——
+    /// 沒有它，使用者看到的是一個凍住的進度條，分不出「正在消化」與「卡死」。</summary>
+    public int PendingCount => _channel.Reader.Count;
 }

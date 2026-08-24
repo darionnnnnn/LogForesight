@@ -64,6 +64,10 @@ public class SystemSettingsDto
     public int AiDeepDiveMaxTokens { get; set; }
     public double AiFrequencyPenalty { get; set; }
     public double AiPresencePenalty { get; set; }
+
+    /// <summary>估費單價（每百萬 token）；0＝不估費</summary>
+    public double AiInputPricePerMillion { get; set; }
+    public double AiOutputPricePerMillion { get; set; }
     public string AiExtraRequestFieldsJson { get; set; } = "";
 
     /// <summary>
@@ -250,6 +254,14 @@ public class UpdateSystemSettingsRequest
 
     [Range(0, 2, ErrorMessage = "存在懲罰必須介於 0~2")]
     public double AiPresencePenalty { get; set; }
+
+    /// <summary>估費單價：每百萬 input token 的金額，0＝不估費（回饋二十七輪作業 B）</summary>
+    [Range(0, 1000000, ErrorMessage = "單價必須介於 0~1000000")]
+    public double AiInputPricePerMillion { get; set; }
+
+    /// <summary>估費單價：每百萬 output token 的金額，0＝不估費</summary>
+    [Range(0, 1000000, ErrorMessage = "單價必須介於 0~1000000")]
+    public double AiOutputPricePerMillion { get; set; }
 
     /// <summary>JSON 物件文字；格式由 SystemSettingsService.Update 驗證（空字串＝不附加任何欄位）</summary>
     [StringLength(4000)]

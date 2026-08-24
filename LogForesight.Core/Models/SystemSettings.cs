@@ -106,6 +106,16 @@ public class SystemSettings
     /// <summary>深入分析呼叫的 token 上限（天生比終端摘要長，故與 <see cref="AiMaxTokens"/> 分開）</summary>
     public int AiDeepDiveMaxTokens { get; set; } = 8192;
 
+    /// <summary>
+    /// 估費單價：每百萬 input token 的金額（回饋二十七輪作業 B）。0＝不估費，設定頁不顯示金額。
+    /// 純粹用於「如果改用線上模型大概要多少錢」的試算，不影響任何 AI 呼叫行為；
+    /// 幣別由使用者自行認定（畫面不標幣別符號）。
+    /// </summary>
+    public double AiInputPricePerMillion { get; set; }
+
+    /// <summary>估費單價：每百萬 output token 的金額。0＝不估費。</summary>
+    public double AiOutputPricePerMillion { get; set; }
+
     /// <summary>頻率懲罰：抑制「同一段文字反覆重複」的退化輸出</summary>
     public double AiFrequencyPenalty { get; set; } = 0.8;
 

@@ -64,20 +64,25 @@ public class AIService : IAiService
     private readonly ResiliencePipeline _retryPipeline;
     private readonly IPromptDumper _dumper;
 
+    /// <summary>token 用量計量（回饋二十七輪作業 B）；null＝不統計（批次以外的臨時實例、測試）</summary>
+    private readonly IAiUsageMeter? _usageMeter;
+
     /// <summary>
     /// 請求佇列：同一時間只發出一個 request 給 AI API，其餘呼叫依序排隊。
     /// 本機 llama.cpp 同時處理多個請求會互搶 GPU 資源導致全部變慢甚至逾時，序列化最穩定。
     /// </summary>
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
 
-    public AIService(AiSettings settings, IPromptDumper? dumper = null)
-        : this(settings, CreateDefaultHandler(), dumper)
+    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null)
+        : this(settings, CreateDefaultHandler(), dumper, usageMeter)
     {
     }
 
-    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null)
+    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null,
+        IAiUsageMeter? usageMeter = null)
     {
         _dumper = dumper ?? new NullPromptDumper();
+        _usageMeter = usageMeter;
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
@@ -274,6 +279,10 @@ public class AIService : IAiService
                     throw new AiEnvelopeParseException(ex);
                 }
 
+                // 計量點在這裡而不是回傳前：這次 HTTP 已經完成、token 已經消耗掉了，
+                // 後面因空回應／清洗後為空而重試的那些嘗試同樣要算進去，否則帳目會少計。
+                RecordUsage(result?.Usage);
+
                 var text = result?.Choices.FirstOrDefault()?.Message.Content;
 
                 // 空回應視為失敗觸發重試，不讓「無內容」流進分析結果
@@ -322,6 +331,23 @@ public class AIService : IAiService
         finally
         {
             _requestQueue.Release();
+        }
+    }
+
+    /// <summary>記下這次呼叫的 token 用量；統計失敗不得影響 AI 呼叫本身。</summary>
+    private void RecordUsage(OpenAIUsage? usage)
+    {
+        if (_usageMeter == null) return;
+
+        try
+        {
+            _usageMeter.Record(
+                usage?.PromptTokens ?? 0, usage?.CompletionTokens ?? 0, usage?.TotalTokens ?? 0,
+                hasUsage: usage != null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "AI token 用量記錄失敗（不影響分析結果）");
         }
     }
 
@@ -489,6 +515,22 @@ public class AIService : IAiService
     {
         [JsonPropertyName("choices")]
         public List<OpenAIChoice> Choices { get; set; } = new();
+
+        /// <summary>OpenAI／Azure／llama.cpp 都會回；部分地端模型省略，故可為 null</summary>
+        [JsonPropertyName("usage")]
+        public OpenAIUsage? Usage { get; set; }
+    }
+
+    private class OpenAIUsage
+    {
+        [JsonPropertyName("prompt_tokens")]
+        public int PromptTokens { get; set; }
+
+        [JsonPropertyName("completion_tokens")]
+        public int CompletionTokens { get; set; }
+
+        [JsonPropertyName("total_tokens")]
+        public int TotalTokens { get; set; }
     }
 
     private class OpenAIChoice

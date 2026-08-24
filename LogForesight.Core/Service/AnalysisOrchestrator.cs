@@ -193,7 +193,8 @@ public class AnalysisOrchestrator
 
             var eventLogService = new EventLogService();
             IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-            var aiService = new AIService(settings.Ai, dumper);
+            var aiService = new AIService(settings.Ai, dumper,
+                new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
             var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
 
             // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
