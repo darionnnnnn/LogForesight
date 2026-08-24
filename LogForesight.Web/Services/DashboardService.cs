@@ -93,7 +93,7 @@ public class DashboardService
         // 在記憶體 GroupBy——6000 台 × 7 天約 4.2 萬筆紀錄、數十萬個問題物件，
         // 每次載入都重算一遍。順帶取得「時間形狀」五個訊號（§10.3），
         // 那是「今天有什麼不一樣」的唯一來源。
-        var ranked = _issueRanking.Build(from, anchor, visibleHostIds, visibleHosts.Count);
+        var ranked = _issueRanking.Build(from, anchor, visibleHostIds, visibleHosts.Count, visibleHosts);
         var (openIssues, concludedCount) = IssueRankingBuilder.ExcludeConcluded(ranked);
         dto.TopIssues = openIssues.Take(5).ToList();
         dto.ConcludedTopIssueCount = concludedCount;
@@ -179,11 +179,30 @@ public class DashboardService
     {
         var aggByHost = hostRiskAgg.ToDictionary(h => h.HostId);
 
+        // 群組 → 成員主機的索引先建一次（回饋二十七輪作業 F）：原本逐群組對 visibleHosts
+        // 線性掃描，是 O(群組數 × 主機數)——50 群 × 2000 台就是 10 萬次比對。
+        // 反轉成一次 O(主機數 × 每台群組數) 的走訪，結果與逐群組過濾等價（同樣只收 Active 主機）
+        var hostsByGroupId = new Dictionary<long, List<WebHost>>();
+        foreach (var host in visibleHosts.Where(h => h.Active))
+        {
+            foreach (var groupId in host.GroupIds)
+            {
+                if (!hostsByGroupId.TryGetValue(groupId, out var members))
+                {
+                    members = new List<WebHost>();
+                    hostsByGroupId[groupId] = members;
+                }
+                members.Add(host);
+            }
+        }
+
         dto.GroupRisk = _hostGroups.GetAll()
             .Where(g => g.Active)
             .Select(group =>
             {
-                var memberHosts = visibleHosts.Where(h => h.Active && h.GroupIds.Contains(group.GroupId)).ToList();
+                var memberHosts = hostsByGroupId.TryGetValue(group.GroupId, out var m)
+                    ? m
+                    : new List<WebHost>();
                 var memberAgg = memberHosts
                     .Select(h => aggByHost.TryGetValue(h.HostId, out var agg) ? agg : null)
                     .Where(a => a != null)

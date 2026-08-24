@@ -15,7 +15,45 @@ internal class FakeHostStore : IHostStore
     /// 從「主機數×天數」收斂成「主機數」的計數器。</summary>
     public int GetCallCount { get; private set; }
 
-    public List<WebHost> GetAll() => _hosts.ToList();
+    /// <summary>回饋二十七輪作業 F：一次請求內整份主機表被投影載入幾次。
+    /// 正式實作是 SQL 查詢，2000 台規模下每多一次就是一次全表投影。</summary>
+    public int GetAllCallCount { get; private set; }
+
+    public List<WebHost> GetAll()
+    {
+        GetAllCallCount++;
+        return _hosts.ToList();
+    }
+
+    /// <summary>計數歸零（測試要量的是「一次請求」的次數，不含建立測試資料那段）</summary>
+    public void ResetCallCounts()
+    {
+        GetCallCount = 0;
+        GetAllCallCount = 0;
+    }
+
+    /// <summary>
+    /// 資料版本（回饋二十七輪作業 F）。**由內容推導而不是人工遞增**：這個替身有十個以上的
+    /// 寫入方法，改用計數器的話漏加一個就變成「上層快取永遠不更新」的假綠——測試全過、
+    /// 正式環境卻拿過期索引查資料。這裡的清單很小，每次重算的成本可以忽略。
+    /// 涵蓋別名索引真正吃的欄位：主機識別與併入關係。
+    /// </summary>
+    public long DataVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(_hosts.Count);
+            foreach (var host in _hosts)
+            {
+                hash.Add(host.HostId);
+                hash.Add(host.HostName, StringComparer.OrdinalIgnoreCase);
+                hash.Add(host.MergedInto);
+                hash.Add(host.Active);
+            }
+            return hash.ToHashCode();
+        }
+    }
 
     public WebHost? Get(long hostId)
     {

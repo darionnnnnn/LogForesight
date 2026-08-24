@@ -37,6 +37,46 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         _performance = performance;
     }
 
+    /// <summary>索引與它對應的資料版本綁在同一個不可變物件上——兩個獨立欄位的話，
+    /// 讀取端可能看到「新索引配舊版本」的撕裂組合（同 JsonBlobCollection 的快照作法）。</summary>
+    private sealed record AliasIndexSnapshot(HostAliasIndex Index, long Version);
+
+    private volatile AliasIndexSnapshot? _aliasIndexSnapshot;
+    private readonly object _aliasIndexLock = new();
+
+    /// <summary>
+    /// 主機別名索引（回饋二十七輪作業 F）。
+    ///
+    /// 原本每個聚合方法各自 <c>new HostAliasIndex(_hosts.GetAll())</c>，而一次報表請求會呼叫
+    /// 八個以上的聚合方法，等於把 3000 台主機的三張字典重建八次。清單本身早有版本快取
+    /// （<see cref="JsonBlobCollection{T}"/>），但**由它建出來的索引**沒有，重建成本逐次付。
+    ///
+    /// 改成探測主機資料版本，版本沒變就沿用既有索引。刻意不設 TTL：別名索引決定紀錄歸屬
+    /// 哪一台主機，過期索引會讓查詢結果落在錯誤的主機上——與清單快取同一個判準。
+    /// </summary>
+    private HostAliasIndex AliasIndex()
+    {
+        var version = _hosts.DataVersion;
+
+        // 命中路徑不進鎖（同 JsonBlobCollection.Read 的理由：連命中都搶鎖等於換一個咽喉點）
+        var snapshot = _aliasIndexSnapshot;
+        if (snapshot != null && snapshot.Version == version) return snapshot.Index;
+
+        lock (_aliasIndexLock)
+        {
+            var current = _aliasIndexSnapshot;
+            if (current == null || current.Version != version)
+            {
+                // 建完再讀一次版本配上去：兩次讀之間主機可能又被改過，
+                // 拿舊版本號配新索引存進快照，快取就永遠不會再更新
+                var index = new HostAliasIndex(_hosts.GetAll());
+                current = new AliasIndexSnapshot(index, _hosts.DataVersion);
+                _aliasIndexSnapshot = current;
+            }
+            return current.Index;
+        }
+    }
+
     public List<IssueAggregate> Aggregate(
         DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
         IReadOnlySet<IssueSeverity>? visibleSeverities = null,
@@ -49,7 +89,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
@@ -206,7 +246,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
 
         var wanted = issues.Select(i => (SourceKey: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
@@ -251,7 +291,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
@@ -320,7 +360,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
 
         var wanted = issues.Select(i => (Source: i.Source.ToUpperInvariant(), i.EventId)).ToHashSet();
         var eventIds = wanted.Select(w => w.EventId).ToHashSet();
@@ -397,7 +437,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
@@ -710,7 +750,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
 
         using var ctx = _contextFactory();
@@ -757,7 +797,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var unhandledRanks = unhandledSeverities.Select(s => (int)s).ToList();
 
         using var ctx = _contextFactory();
@@ -814,7 +854,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
@@ -868,7 +908,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
 
         using var ctx = _contextFactory();
 
@@ -907,7 +947,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
 
         using var ctx = _contextFactory();
 
@@ -1029,7 +1069,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();
@@ -1104,7 +1144,7 @@ public sealed class EfIssueAggregateQuery : IIssueAggregateQuery
         var sw = Stopwatch.StartNew();
         var f = from.Date;
         var t = to.Date;
-        var aliasIndex = new HostAliasIndex(_hosts.GetAll());
+        var aliasIndex = AliasIndex();
         var visibleRanks = visibleSeverities == null ? null : LegacySeverityRank.ExpandVisibleRanks(visibleSeverities);
 
         using var ctx = _contextFactory();

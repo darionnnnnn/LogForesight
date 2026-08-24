@@ -15,6 +15,14 @@ public interface IHostStore
 {
     List<WebHost> GetAll();
 
+    /// <summary>
+    /// 主機資料的版本；內容每被寫入一次就前進（回饋二十七輪作業 F）。
+    /// 供上層快取判定「用主機清單建出來的索引要不要重建」——刻意探測版本而不設 TTL：
+    /// 主機清單是授權可見範圍的來源，過期快取會讓人看到不該看的主機
+    /// （與 JsonBlobCollection 的讀取快取同一個理由、同一個探測點）。
+    /// </summary>
+    long DataVersion { get; }
+
     WebHost? Get(long hostId);
 
     /// <summary>依主機名稱查詢（不分大小寫）</summary>

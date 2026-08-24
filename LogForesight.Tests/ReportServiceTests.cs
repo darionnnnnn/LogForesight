@@ -776,4 +776,44 @@ public class ReportServiceTests : IDisposable
         Assert.Equal(0, result.Handling.TotalCount);
         Assert.Equal(0, result.Handling.OpenCount);
     }
+
+    // ── 回饋二十七輪作業 F：效能驗收 ──────────────────────────────────────────
+    //
+    // 這兩條先於實作寫下，訂出「改完之後必須成立」的條件，之後充當回歸護欄。
+    //
+    // 上限 4 是實測後訂的契約值，不是理論下限：改動前是 13 次，主要來自
+    // EfIssueAggregateQuery 的每個聚合方法各自重建一次主機別名索引（一次報表請求會呼叫
+    // 八個以上聚合方法）。索引改為依主機資料版本快取後降到 4——剩下的四次分別來自
+    // 可見性服務、處理狀態彙總的主機索引，以及索引首次建立，各自服務邊界不同，
+    // 硬要收斂成一次得把主機快照穿過好幾層 API，代價大於效益。
+    // **這個數字只能往下調，不能往上**：往上代表又有人在請求路徑上加了一次全表走訪。
+
+    private const int MaxHostGetAllPerSummary = 4;
+
+    [Fact]
+    public void GetSummary_整份主機表的載入次數不得超過契約上限()
+    {
+        var host = AddHost("HOST-GETALL");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.ResetCallCounts();
+        _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.True(_hosts.GetAllCallCount <= MaxHostGetAllPerSummary,
+            $"整份主機表被載入 {_hosts.GetAllCallCount} 次，超過契約上限 {MaxHostGetAllPerSummary} 次");
+    }
+
+    /// <summary>非 All 顯示範圍走記憶體分支，同樣受同一個上限約束。</summary>
+    [Fact]
+    public void GetSummary_非全部顯示範圍時載入次數同樣不得超過契約上限()
+    {
+        var host = AddHost("HOST-GETALL-SCOPE");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.ResetCallCounts();
+        _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, handlingScope: "unhandled");
+
+        Assert.True(_hosts.GetAllCallCount <= MaxHostGetAllPerSummary,
+            $"整份主機表被載入 {_hosts.GetAllCallCount} 次，超過契約上限 {MaxHostGetAllPerSummary} 次");
+    }
 }

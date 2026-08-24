@@ -9,6 +9,8 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public List<WebHost> GetAll() => Read();
 
+    public long DataVersion => CurrentVersion;
+
     public WebHost? Get(long hostId) => Read().FirstOrDefault(h => h.HostId == hostId);
 
     public WebHost? FindByName(string hostName) =>

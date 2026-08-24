@@ -92,9 +92,13 @@ public class IssueRankingBuilder
     /// 期間內的問題排行。<paramref name="visibleHostIds"/> 為可見範圍
     /// （null＝不限制；空集合＝零結果，與查詢層同一套授權語意）。
     /// <paramref name="totalHosts"/> 供影響率使用，0 時影響率為 0。
+    /// <paramref name="hostSnapshot"/>：呼叫端手上已有的可見主機清單（回饋二十七輪作業 F）——
+    /// 傳進來就不再自己打一次整份主機表（報表一次請求原本要載入三次）。null 時退回自行查詢。
+    /// 只用來查主機分級，而分級只問「本期有命中的主機」，那些主機必然在可見範圍內。
     /// </summary>
     public List<IssueRankingDto> Build(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
+        IReadOnlyCollection<WebHost>? hostSnapshot = null)
     {
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
@@ -128,7 +132,7 @@ public class IssueRankingBuilder
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
         var hostIdsByIssue = _aggregates.HostIdsByIssue(issuesOnPage, from, to, visibleHostIds);
-        var tierByHostId = _hosts.GetAll().ToDictionary(h => h.HostId, h => h.Tier);
+        var tierByHostId = (hostSnapshot ?? _hosts.GetAll()).ToDictionary(h => h.HostId, h => h.Tier);
 
         // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
         // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼
