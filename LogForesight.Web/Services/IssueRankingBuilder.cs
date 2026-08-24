@@ -27,6 +27,9 @@ public class IssueRankingBuilder
     private readonly DailyRecordBackfiller? _dailyBackfiller;
     private readonly IKnownIssueRuleStore? _rules;
 
+    /// <summary>跨請求結果快取（回饋二十七輪作業 F4）；null＝不快取（測試預設）。</summary>
+    private readonly IssueRankingCache? _cache;
+
     /// <param name="rollup">處理概況彙總（§10.6）。null 時 OpenHostCount／ResolvedHostCount 恆為 0——
     /// 只有測試在不需要處理狀態的情境下才會不傳，正式 DI 一律注入（見 ServiceCollectionExtensions）。
     /// 刻意內建計算而不是留給呼叫端傳字典：這個參數過去就是以「呼叫端自己組字典」的形式存在，
@@ -38,7 +41,8 @@ public class IssueRankingBuilder
         TopIssueBackfiller? backfiller = null,
         StorageBackend? backend = null,
         DailyRecordBackfiller? dailyBackfiller = null,
-        IKnownIssueRuleStore? rules = null)
+        IKnownIssueRuleStore? rules = null,
+        IssueRankingCache? cache = null)
     {
         _aggregates = aggregates;
         _hosts = hosts;
@@ -47,6 +51,7 @@ public class IssueRankingBuilder
         _backend = backend;
         _dailyBackfiller = dailyBackfiller;
         _rules = rules;
+        _cache = cache;
     }
 
     /// <summary>
@@ -92,10 +97,23 @@ public class IssueRankingBuilder
     /// 期間內的問題排行。<paramref name="visibleHostIds"/> 為可見範圍
     /// （null＝不限制；空集合＝零結果，與查詢層同一套授權語意）。
     /// <paramref name="totalHosts"/> 供影響率使用，0 時影響率為 0。
+    /// <paramref name="hostSnapshot"/>：呼叫端手上已有的可見主機清單（回饋二十七輪作業 F）——
+    /// 傳進來就不再自己打一次整份主機表（報表一次請求原本要載入三次）。null 時退回自行查詢。
+    /// 只用來查主機分級，而分級只問「本期有命中的主機」，那些主機必然在可見範圍內。
     /// </summary>
     public List<IssueRankingDto> Build(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
+        IReadOnlyCollection<WebHost>? hostSnapshot = null)
     {
+        // 跨請求快取（回饋二十七輪作業 F4）：儀表板與報表共用這份投影，
+        // 使用者在兩頁間切換時同一組聚合幾秒內會被整套重算——短 TTL 內直接沿用
+        var cacheKey = _cache == null ? null : IssueRankingCache.KeyOf(from, to, visibleHostIds, totalHosts);
+        if (cacheKey != null)
+        {
+            var cached = _cache!.TryGet(cacheKey);
+            if (cached != null) return cached;
+        }
+
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
         // 前期對比用**等長**的前一個期間——拿一週跟一個月比毫無意義（沿用報表既有規則）
@@ -108,6 +126,17 @@ public class IssueRankingBuilder
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
         var current = _aggregates.Aggregate(from, to, visibleHostIds);
+        var result = BuildFromAggregates(current, previous, from, to, visibleHostIds, totalHosts, hostSnapshot, periodDays);
+
+        if (cacheKey != null) _cache!.Set(cacheKey, result);
+        return result;
+    }
+
+    private List<IssueRankingDto> BuildFromAggregates(
+        List<IssueAggregate> current, Dictionary<(string SourceUpper, int EventId), IssueAggregate> previous,
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, int totalHosts,
+        IReadOnlyCollection<WebHost>? hostSnapshot, int periodDays)
+    {
 
         // 機房級基準線（§G1）與 fleet 首見（§G4）：只對「當頁組」（current 命中的問題）查，
         // 不是整份表——與 LatestOccurrences 同一個規模假設。基準期固定「to 往前 30 天」，
@@ -128,7 +157,7 @@ public class IssueRankingBuilder
         // PriorityScore 的 tierW（§G3）：受影響主機各自的分級，取最高者代表這個問題的分級權重——
         // 一台核心主機中鏢，即使其餘都是測試機，也不該被稀釋成「一般」
         var hostIdsByIssue = _aggregates.HostIdsByIssue(issuesOnPage, from, to, visibleHostIds);
-        var tierByHostId = _hosts.GetAll().ToDictionary(h => h.HostId, h => h.Tier);
+        var tierByHostId = (hostSnapshot ?? _hosts.GetAll()).ToDictionary(h => h.HostId, h => h.Tier);
 
         // 處理概況（§10.6）：由本類別內建計算，不留給呼叫端傳字典——這個參數過去就是
         // 「呼叫端自己組字典」的形式存在，結果兩個正式呼叫端都忘了傳，一直是死碼

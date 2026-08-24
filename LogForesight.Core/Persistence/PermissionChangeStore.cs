@@ -140,9 +140,34 @@ public class PermissionChangeStore
     }
 
     /// <summary>
-    /// 依去重鍵刪除一筆（供彙總列撤銷使用）：當某主機日的成對數跌回門檻以下、改為逐則列出時，
-    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在、被重複計算。
-    /// 回傳是否真的刪到。
+    /// 批次依去重鍵刪除，回傳刪除筆數（回饋二十七輪終檢）。
+    ///
+    /// 用途：某主機日的成對異動由「逐則列出」升級為「彙總列」時，先前已入庫的那些逐則列
+    /// 必須撤掉——否則同一批異動同時以彙總與逐則兩種形式存在、被重複計算。
+    /// 空集合直接回 0，不發查詢（呼叫端不必自己判斷）。
+    /// </summary>
+    public int DeleteByDedupeKeys(IEnumerable<string> dedupeKeys)
+    {
+        var keys = dedupeKeys.Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0) return 0;
+
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges
+            .Where(r => keys.Contains(r.DedupeKey))
+            .ExecuteDelete();
+    }
+
+    /// <summary>某去重鍵是否已有列（供彙總列判斷「這天先前已看過完整的例行同步」使用）。</summary>
+    public bool ExistsByDedupeKey(string dedupeKey)
+    {
+        using var ctx = _contextFactory();
+        return ctx.PermissionChanges.AsNoTracking().Any(r => r.DedupeKey == dedupeKey);
+    }
+
+    /// <summary>
+    /// 依去重鍵刪除一筆。**不用於撤銷例行同步彙總列**——來源重跑只回子集時撤掉彙總，
+    /// 等於用一次不完整的取數抹掉完整那次的結論，而被合併掉的成對明細從未入庫、補不回來
+    /// （回饋二十七輪作業 A）。保留此方法供其他依鍵刪除的情境使用。
     /// </summary>
     public bool DeleteByDedupeKey(string dedupeKey)
     {
@@ -475,7 +500,13 @@ public class PermissionChangeStore
         return query.Count();
     }
 
-    /// <summary>依寫入時間（created_at）清除超過保留天數的異動列</summary>
+    /// <summary>
+    /// 依寫入時間（created_at）清除超過保留天數的異動列。
+    ///
+    /// 判準刻意不用 detected_at：NetIQ 回補進來的舊事件 detected_at 可以遠早於保留期，
+    /// 依它清理會讓剛匯入的資料一寫入就消失。重跑不會刷新 created_at（去重鍵讓明細列不重寫，
+    /// 彙總列走 UpsertByDedupeKey 只更新描述性欄位），所以舊資料不會因重跑而續命。
+    /// </summary>
     public int Prune(int retentionDays)
     {
         var cutoff = DateTime.Today.AddDays(-retentionDays);

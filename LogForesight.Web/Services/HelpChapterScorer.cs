@@ -120,7 +120,9 @@ public static class HelpChapterScorer
         foreach (var id in orderedIds)
         {
             var chapter = chapterById[id];
-            var chapterTokens = PromptBudget.EstimateTokens(chapter.Content);
+            // 預算以「實際會塞進 prompt 的那一份」估算（回饋二十七輪作業 G）：AI 版通常比
+            // 使用者版長，拿簡明版估會低估、超出預算
+            var chapterTokens = PromptBudget.EstimateTokens(chapter.ContentForAi);
             if (result.Count > 0 && usedTokens + chapterTokens > maxTokenBudget) break;
             result.Add(chapter);
             usedTokens += chapterTokens;

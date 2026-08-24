@@ -570,6 +570,33 @@ public class IssueAggregateQueryTests : IDisposable
         Assert.Equal(2, agg.HostCount);
     }
 
+    // ── 回饋二十七輪作業 F：主機別名索引依版本快取 ────────────────────────────
+
+    /// <summary>
+    /// 別名索引改為跨呼叫快取後，主機資料一變就必須重建。
+    /// 快取失效沒做對的話症狀是「合併主機後查詢結果仍照舊識別分開算」，
+    /// 而且會一直錯到站台重啟——這條測試就是那個假綠的守門員。
+    /// </summary>
+    [Fact]
+    public void 別名索引快取_主機合併後同一個查詢實例要看得到新的併入關係()
+    {
+        var d0 = new DateTime(2026, 8, 1);
+        var b = _hosts.Upsert(new WebHost { HostName = "B" });
+        var a = _hosts.Upsert(new WebHost { HostName = "A" });
+
+        Add(a.HostId, "A", d0, Issue("disk", 153));
+        Add(b.HostId, "B", d0.AddDays(1), Issue("disk", 153));
+
+        // 同一個查詢實例先查一次，讓索引進快取
+        var query = Query();
+        Assert.Equal(2, query.Aggregate(d0, d0.AddDays(1), null).Single().HostCount);
+
+        // 之後才把 A 併入 B（Web 端的合併操作）
+        _hosts.Merge(a.HostId, b.HostId);
+
+        Assert.Equal(1, query.Aggregate(d0, d0.AddDays(1), null).Single().HostCount);
+    }
+
     /// <summary>
     /// 同一來源名稱不同大小寫合併後，FirstSeen 取較早者、LastSeen 取較晚者。
     /// </summary>

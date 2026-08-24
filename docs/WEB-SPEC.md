@@ -449,7 +449,12 @@ ViewAll 角色不列——放進去只會讓人以為那些勾選有意義）。
 - `core/paths.js`：站台掛載前綴的唯一出口（§8.1a）——`appUrl()` 補前綴、`appPath()` 去前綴。
   獨立成模組是因為 `ui.js` 也要用它，而 `api.js` 反過來用 `ui.js` 的 toast，放一起會成環。
 - `core/ui.js`：toast（Bootstrap Toast）、確認對話框（Bootstrap Modal 包裝，
-  破壞性操作一律經過它）、表格渲染 helper（欄位定義 → `<table>`，含空狀態與載入中列）。
+  破壞性操作一律經過它）、表格渲染 helper（欄位定義 → `<table>`，含空狀態與載入中列）、
+  勾選清單 `checkboxList`。後者可選 `filterable`（回饋二十七輪）：加一個即時篩選框
+  （比對顯示名、不分大小寫）與捲動高度上限，供「負責人」這類數十人的清單使用；
+  **篩選以隱藏（`d-none`）實作、不移除節點**——移除的話被篩掉的已勾選項目會連值一起消失
+  （呼叫端一律以 `input:checked` 讀值）。目前啟用於問題檔案負責人與主機負責人兩處，
+  其餘呼叫端不傳此選項、行為與過去完全相同。
 - `core/format.js`：日期、風險等級徽章、狀態徽章的統一格式化（風險/狀態的顯示規則只寫一次）。
 - `pages/*.js`：一頁一模組，`_Layout.cshtml` 以 `<script type="module">` 載入對應頁模組；
   頁面需要的初始參數（如 record id）用 `data-*` 屬性放在 View 的根元素上，JS 讀取——
@@ -608,6 +613,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
    條列（`charts.attachDoughnutLegend`）常駐顯示數值與百分比，不需要再切換一次表格模式；
    條列每列沿用該分段的下鑽 URL。**PNG 下載已移除**：需要圖檔的情境走既有
    「列印 / 存成 PDF」，`attachToolbar` 不再提供 `toBase64Image()` 下載鈕。
+   **重繪不得殘留**（回饋二十七輪）：`attachToolbar` 對同一容器重複呼叫時，先清除自己上次
+   產生的按鈕與隱藏表格再建新的——不清的話每點一次期間快捷就多一顆「表格」鈕與一份表格。
+   主機排行與問題排行**共用同一個工具列容器**，切換視角同樣不得殘留另一模式的產物。
 
 ### 8.4 下鑽（drill-down）規則——「報表關連到實際項目」的統一機制
 
@@ -818,7 +826,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   - **vs 基準**：基準＝過去 30 天（查詢期間終點往前推，不受查詢
     期間本身影響）出現日台數的中位數，偏離倍數＝最近出現日台數 ÷ 基準；出現不足 3 天視為
     新問題、顯示「新問題，無基準」。`IssueBaselineCalculator`（純函式）與依問題視角共用
-    同一份計算，兩頁數字必然一致。
+    同一份計算，兩頁數字必然一致。畫面上這一欄**分三行**（回饋二十七輪）：`基準 N 台/日`／
+    `→ M 台`／倍數徽章——一行寫完會擠壓欄位。純文字版（報表表格模式與 CSV 匯出，
+    `issueBaselineText`）**刻意維持單行**，內容與視覺版等價、只有排版不同。
   - **本期首見／首見（機房）**：前者受查詢期間截斷（這次查詢看到的
     最早一筆），後者不受截斷（↔ `lf_issue_first_seen`，這個問題第一次在機房出現的真正日期，
     以 insert-if-absent 落地）。本期首見只顯示單一日期，「還在不在發生」由距今天數提示
@@ -1758,6 +1768,20 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      多回一個 `AiAdvancedDefaults` 子物件，值由 `new SystemSettings()` 取得——**出廠值的單一
      事實來源仍是 Core 模型的屬性初始器**，前端不硬編第二份。按鈕只把九個欄位填回表單、
      **不直接落盤**（仍走整頁單一 form 的「儲存」，未儲存提醒照常亮起）。
+  2c-2. **AI token 用量統計**（回饋二十七輪）：AI 頁籤最下方一區，顯示今日消耗、
+     累計消耗（含累計起算日）與累計呼叫次數，可展開近 30 天每日明細
+     （日期／呼叫次數／prompt／completion／總計）。
+     **計量母體＝實際發出的 HTTP 呼叫**：含因空回應或格式不合而重試的每一次；
+     命中 `AiCacheStore` 的呼叫不經 `AIService`，不計入。計量點掛在 `AIService`
+     這個唯一 HTTP 出口而不是各呼叫端（呼叫端有六處以上，且上層還有快取，在那裡記會把
+     沒真的呼叫的也算進去）。部分地端模型不回 `usage`，那些呼叫次數照計、token 記 0，
+     畫面另行提示有幾次未回報。
+     另有兩個估費單價（`AiInputPricePerMillion`／`AiOutputPricePerMillion`，每百萬 token，
+     0＝不估費），**跟著整頁 form 儲存、不另做儲存按鈕**；金額由前端即時試算
+     （單價一改就要重算，後端算好送過來等於每改一個數字往返一次），純試算不影響呼叫行為，
+     畫面不標幣別符號。「清空重新計算」歸零每日與累計、起算日重設為今天，**不可復原**，
+     走既有的破壞性操作確認，並留稽核（含清空前的量——不留的話事後無從回答「當時累計到哪」）。
+     統計存放走 `lf_blobs` 單例 blob（見 [DB-SPEC.md](DB-SPEC.md)），跟著 DB 備份與搬遷走。
   2d. **外觀／品牌**：主標題
      （`BrandName`，空＝回退 `LogForesight`）、副標題（`BrandSubtitle`，**出廠值
      「事件日誌預警」不含「Windows」**——Linux 規則面已就緒，寫死 Windows 名不符實；
@@ -1879,6 +1903,8 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      問題改備註重存不重寄。fire-and-forget，內部 try/catch 到底，寄送成敗不影響狀態變更。
 - API：`GET/PUT api/admin/settings`（`Maintain`）、`POST api/admin/settings/ad-test`、
   `POST api/admin/settings/mail-test`、
+  `GET api/admin/settings/ai-usage`（token 用量統計）、
+  `POST api/admin/settings/ai-usage/reset`（清空重新計算，不可復原、留稽核）、
   `GET api/settings/display`（任何已登入者，公開子集，見上方 1b）
 
 ### 9.9c `/help/manual` 操作說明書＋AI 提問（`Maintain`，實驗性）

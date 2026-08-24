@@ -1,4 +1,4 @@
-using LogForesight.Core.Models;
+﻿using LogForesight.Core.Models;
 using LogForesight.Core.Persistence;
 using System.Collections.Concurrent;
 using NLog;
@@ -160,24 +160,23 @@ public static class HostDayPostProcessor
 
             if (matchingEvents.Count == 0) return;
 
-            // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。去重鍵由呼叫端傳入
-            // 的快照承擔——多台主機平行處理，用 ConcurrentDictionary.TryAdd 做原子佔位。
-            //
             // 每主機日不設筆數上限：權限異動全部逐則入庫才查得到、篩得到（一台吵雜的 DC
             // 一天可達數萬則）。量的控制交給保留天數清理（PermissionChangeStore 依 created_at）。
-            var recordsToAppend = new List<PermissionChangeRecord>();
+            //
+            // 這裡先把來源本次回傳的當日事件全部轉成紀錄（**還不去重**）：例行同步彙總是對
+            // 「當日全部事件」的判斷，先去重的話重跑時只剩子集，成對數會假性跌破門檻——
+            // 被合併掉的成對明細從未入庫，去重鍵撈不到它們。
+            var dayRecords = new List<PermissionChangeRecord>();
 
             foreach (var evt in matchingEvents)
             {
                 var changeType = PermissionChangeEventTypes[evt.EventId];
                 var alertText = TextTruncation.Truncate(evt.Message ?? string.Empty, 500);
-                var key = PermissionChangeRecord.DedupeKey(hostName, evt.TimeGenerated, evt.EventId, alertText);
-                if (!knownKeys.TryAdd(key, 0)) continue;
 
                 var details = PermissionChangeExtractor.Extract(
                     evt.Message, changeType, evt.EventId, evt.InitiatorAccount, mappings);
 
-                recordsToAppend.Add(new PermissionChangeRecord
+                dayRecords.Add(new PermissionChangeRecord
                 {
                     ChangeId = Guid.NewGuid().ToString("N"),
                     HostName = hostName,
@@ -198,17 +197,47 @@ public static class HostDayPostProcessor
                 });
             }
 
-            var routineSummary = ExtractRoutineSyncPairs(recordsToAppend, hostName, date);
+            // 本批內先去重一次（終檢抓到）：去重移到配對之後，同一次回應若把同一則事件回兩次，
+            // 配對會把它算成兩對，成對數就被灌水、可能假性跨過門檻把該逐則列出的異動吞掉。
+            // 這裡只折疊「本批內完全相同的事件」，與跨執行的 knownKeys 佔位是兩件事。
+            var seenInBatch = new HashSet<string>(StringComparer.Ordinal);
+            dayRecords.RemoveAll(r => !seenInBatch.Add(PermissionChangeRecord.DedupeKey(
+                hostName, r.DetectedAt, r.EventId ?? 0, r.AlertText ?? string.Empty)));
+
             var routineKey = RoutineSyncDedupeKey(hostName, date);
-            if (routineSummary != null)
+            var pairing = FindRoutineSyncPairs(dayRecords);
+
+            if (pairing.PairCount >= RoutineSyncPairThreshold)
             {
-                permissionChangeStore.UpsertByDedupeKey(routineSummary, routineKey);
+                permissionChangeStore.UpsertByDedupeKey(
+                    BuildRoutineSummary(pairing, hostName, date), routineKey);
+
+                // 這批成對事件先前可能已經以逐則形式入庫（前一次取數只回了子集、成對數不足門檻，
+                // 於是全部逐則列出）。現在升級成彙總列，那些逐則列必須撤掉，
+                // 否則同一批異動同時以彙總與逐則兩種形式存在、被重複計算——
+                // 正是作業 A 要消滅的症狀，只是方向相反（終檢抓到）。
+                permissionChangeStore.DeleteByDedupeKeys(
+                    pairing.Paired.Select(r => PermissionChangeRecord.DedupeKey(
+                        hostName, r.DetectedAt, r.EventId ?? 0, r.AlertText ?? string.Empty)));
+
+                dayRecords.RemoveAll(pairing.Paired.Contains);
             }
-            else
+            else if (pairing.PairCount > 0 && permissionChangeStore.ExistsByDedupeKey(routineKey))
             {
-                // 這次沒達門檻＝這批異動改為逐則列出，先前那筆彙總列必須撤掉，
-                // 否則同一批異動會同時以彙總與逐則兩種形式存在（重跑時 NetIQ 只回子集就會發生）
-                permissionChangeStore.DeleteByDedupeKey(routineKey);
+                // 已有彙總列＝這天先前看過完整的例行同步。這次來源只回子集（成對數不足門檻）時，
+                // 這批成對事件是被那筆彙總列涵蓋的同一批，逐則列出會與彙總重複計算——
+                // 略過它們，但**不撤掉彙總列**：撤掉等於用一次不完整的取數抹掉完整那次的結論。
+                dayRecords.RemoveAll(pairing.Paired.Contains);
+            }
+
+            // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。去重鍵由呼叫端傳入的
+            // 快照承擔——多台主機平行處理，用 ConcurrentDictionary.TryAdd 做原子佔位。
+            var recordsToAppend = new List<PermissionChangeRecord>();
+            foreach (var record in dayRecords)
+            {
+                var key = PermissionChangeRecord.DedupeKey(
+                    hostName, record.DetectedAt, record.EventId ?? 0, record.AlertText ?? string.Empty);
+                if (knownKeys.TryAdd(key, 0)) recordsToAppend.Add(record);
             }
 
             if (recordsToAppend.Count > 0)
@@ -236,17 +265,23 @@ public static class HostDayPostProcessor
     internal static string RoutineSyncDedupeKey(string hostName, DateTime date) =>
         PermissionChangeRecord.DedupeKey(hostName, date.Date, 0, RoutineSyncChangeType);
 
+    /// <summary>例行同步配對結果：哪些紀錄成了對、共幾對、涉及多少群組與帳號。
+    /// 門檻判斷與「要不要撤既有彙總列」由呼叫端決定——這裡只認事實。</summary>
+    internal sealed record RoutineSyncPairing(
+        HashSet<PermissionChangeRecord> Paired,
+        int PairCount,
+        int GroupCount,
+        int AccountCount);
+
     /// <summary>
-    /// 把「同一主機日內 (成員, 群組) 相同的成員新增＋成員移除」配對；成對數達門檻時，
-    /// 從 <paramref name="records"/> 移除這些成對紀錄並回傳一筆彙總列，否則回傳 null
-    /// （全部維持逐則）。AD 自動化程序（例如每天先清空再重建的群組同步腳本）一天能產生
-    /// 數萬則這種對稱異動，逐則列出會把真正可疑的異動淹沒。
+    /// 把「同一主機日內 (成員, 群組) 相同的成員新增＋成員移除」配對並回報結果
+    /// （**不改動 <paramref name="records"/>**）。AD 自動化程序（例如每天先清空再重建的
+    /// 群組同步腳本）一天能產生數萬則這種對稱異動，逐則列出會把真正可疑的異動淹沒。
     ///
-    /// 刻意只合併這一種形狀：未成對的異動、剖不出成員或群組的異動、以及**特權群組**的異動
-    /// （即使成對）一律逐則——安全訊號不能被降噪機制吞掉。
+    /// 刻意只認這一種形狀：未成對的異動、剖不出成員或群組的異動、以及**特權群組**的異動
+    /// （即使成對）一律不算——安全訊號不能被降噪機制吞掉。
     /// </summary>
-    internal static PermissionChangeRecord? ExtractRoutineSyncPairs(
-        List<PermissionChangeRecord> records, string hostName, DateTime date)
+    internal static RoutineSyncPairing FindRoutineSyncPairs(List<PermissionChangeRecord> records)
     {
         bool IsPairable(PermissionChangeRecord r) =>
             (r.ChangeType == "成員新增" || r.ChangeType == "成員移除") &&
@@ -281,13 +316,18 @@ public static class HostDayPostProcessor
             accounts.Add(group.Key.Account);
         }
 
-        if (pairCount < RoutineSyncPairThreshold) return null;
+        return new RoutineSyncPairing(paired, pairCount, groups.Count, accounts.Count);
+    }
+
+    /// <summary>依配對結果組出彙總列（呼叫端已確認達門檻）。</summary>
+    internal static PermissionChangeRecord BuildRoutineSummary(
+        RoutineSyncPairing pairing, string hostName, DateTime date)
+    {
+        var pairCount = pairing.PairCount;
 
         // 涵蓋區間取被合併掉那些事件的首末時間（彙總列自己的 DetectedAt 只有日期）
-        var coveredFrom = paired.Min(r => r.DetectedAt);
-        var coveredTo = paired.Max(r => r.DetectedAt);
-
-        records.RemoveAll(paired.Contains);
+        var coveredFrom = pairing.Paired.Min(r => r.DetectedAt);
+        var coveredTo = pairing.Paired.Max(r => r.DetectedAt);
 
         return new PermissionChangeRecord
         {
@@ -304,7 +344,7 @@ public static class HostDayPostProcessor
             After = string.Empty,
             AlertText =
                 $"本日偵測到 {pairCount} 對「成員新增＋成員移除」的對稱異動" +
-                $"（涉及 {groups.Count} 個群組、{accounts.Count} 個帳號），未逐則列出。" +
+                $"（涉及 {pairing.GroupCount} 個群組、{pairing.AccountCount} 個帳號），未逐則列出。" +
                 "此模式可能是 AD 自動化程序（例如每天以先清空再重建的方式同步群組成員的腳本）產生；" +
                 "未成對的異動仍逐則列出。",
             Source = PermissionChangeSources.Netiq,

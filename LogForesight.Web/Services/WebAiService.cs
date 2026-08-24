@@ -92,13 +92,18 @@ public class WebAiService : IWebAiService
     // 對話用獨立的第二個 AIService 實例（各自的請求佇列）：對話輪次的逾時/token 上限與
     // 其他互動情境（判讀單一問題、AI 歸納）不同，且不希望一輪對話卡住佇列讓其他 AI 卡片跟著等。
     // 兩個實例仍打同一個 KoboldCpp，實際併發上限由對方序列化，這裡最多讓 Web 端同時有 2 個請求在飛。
+    /// <summary>互動／對話兩條路徑的 token 也要進帳（回饋二十七輪作業 B）：使用者在畫面上按的
+    /// 每次 AI 歸納、每輪問答都真的打了模型，只算批次會讓統計與帳單對不起來。</summary>
+    private readonly AiUsageStore _usageMeter;
+
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _interactiveClient;
     private readonly SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService> _chatClient;
 
-    public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings)
+    public WebAiService(AiCacheStore cache, ISystemSettingsStore systemSettings, AiUsageStore usageMeter)
     {
         _cache = cache;
         _systemSettings = systemSettings;
+        _usageMeter = usageMeter;
 
         _interactiveClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
         {
@@ -126,7 +131,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            });
+            }, usageMeter: _usageMeter);
         });
 
         _chatClient = new SettingsBoundClient<(string Provider, string BaseUrl, string KeyEnc, string Model, string AzureDeployment, string AzureApiVersion, string Advanced), AIService>(snapshot =>
@@ -155,7 +160,7 @@ public class WebAiService : IWebAiService
                 FrequencyPenalty = advanced.FrequencyPenalty,
                 PresencePenalty = advanced.PresencePenalty,
                 ExtraRequestFields = advanced.ExtraRequestFields
-            });
+            }, usageMeter: _usageMeter);
         });
     }
 

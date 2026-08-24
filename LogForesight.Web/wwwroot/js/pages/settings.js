@@ -4,8 +4,8 @@
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction } from '../core/ui.js';
-import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable } from '../core/ui.js';
+import { formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
 import { alignBrandSubtitles } from '../core/brand-align.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
@@ -62,6 +62,7 @@ async function load() {
     renderBrandFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
+    loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -206,6 +207,167 @@ function updateAiProviderFields(provider) {
     }
 }
 
+/** 最近一次 GET /api/admin/settings/ai-usage 的回傳值；用於估費計算 */
+let aiUsageData = null;
+
+/**
+ * 估算金額的唯一計算點（規格限制：反方向禁止複製，只能有一份）。
+ * 依累計 promptTokens × inputPrice + completionTokens × outputPrice 計算，
+ * 並即時更新 #ai-usage-cost 顯示。
+ * 兩個單價都是 0（或空）時顯示「未設定單價」。
+ * 此函式同時作為 input 事件處理器（單價欄位改動時即時觸發）。
+ */
+function calcAndRenderCost() {
+    const costEl = document.getElementById('ai-usage-cost');
+    if (!costEl) return;
+
+    const inputPrice = Number(document.getElementById('ai-input-price')?.value) || 0;
+    const outputPrice = Number(document.getElementById('ai-output-price')?.value) || 0;
+
+    if (inputPrice === 0 && outputPrice === 0) {
+        costEl.textContent = '未設定單價';
+        return;
+    }
+
+    if (!aiUsageData) {
+        costEl.textContent = '—';
+        return;
+    }
+
+    const promptTokens = aiUsageData.total?.promptTokens ?? 0;
+    const completionTokens = aiUsageData.total?.completionTokens ?? 0;
+
+    // 金額＝(promptTokens × inputPrice + completionTokens × outputPrice) ÷ 1,000,000
+    const cost = (promptTokens * inputPrice + completionTokens * outputPrice) / 1_000_000;
+    // 小數位視金額大小而定：小於 1 顯示 4 位，其餘顯示 2 位
+    const formatted = cost < 1 ? cost.toFixed(4) : cost.toFixed(2);
+    costEl.textContent = formatted;
+}
+
+/**
+ * 將 AiUsageDto 資料渲染至 AI 頁籤的用量統計區。
+ * 同時更新模組狀態 aiUsageData 以供 calcAndRenderCost 使用。
+ */
+function renderAiUsage(usage) {
+    aiUsageData = usage;
+
+    // 今日消耗
+    const todayEl = document.getElementById('ai-usage-today-tokens');
+    if (todayEl) {
+        todayEl.textContent = usage?.today
+            ? formatNumber(usage.today.totalTokens)
+            : '—';
+    }
+
+    // 累計消耗＋起算日小字
+    const totalEl = document.getElementById('ai-usage-total-tokens');
+    if (totalEl) {
+        totalEl.textContent = usage?.total
+            ? formatNumber(usage.total.totalTokens)
+            : '—';
+    }
+    const sinceEl = document.getElementById('ai-usage-since');
+    if (sinceEl) {
+        sinceEl.textContent = usage?.countingSince ? `（自 ${usage.countingSince}）` : '';
+    }
+
+    // 累計呼叫次數
+    const callsEl = document.getElementById('ai-usage-total-calls');
+    if (callsEl) {
+        callsEl.textContent = usage?.total ? formatNumber(usage.total.calls) : '—';
+    }
+
+    // 未回報 token 提示
+    const noTokenHint = document.getElementById('ai-usage-no-token-hint');
+    if (noTokenHint) {
+        const n = usage?.total?.callsWithoutUsage ?? 0;
+        if (n > 0) {
+            noTokenHint.textContent =
+                `注意：有 ${formatNumber(n)} 次呼叫的模型未回報 token 數（那些呼叫的 token 記 0）。`;
+            noTokenHint.classList.remove('d-none');
+        } else {
+            noTokenHint.classList.add('d-none');
+        }
+    }
+
+    // 更新時間
+    const updatedEl = document.getElementById('ai-usage-updated');
+    if (updatedEl) {
+        updatedEl.textContent = usage?.updatedAt ? `最後更新：${formatDateTime(usage.updatedAt)}` : '';
+    }
+
+    // 重繪 30 天表格
+    renderAiUsageDaysTable(usage?.days ?? []);
+
+    // 依新資料即時更新估算金額
+    calcAndRenderCost();
+}
+
+/**
+ * 用 renderTable 渲染近 30 天明細表格。
+ * days 為空時 renderTable 呼叫 renderEmpty，顯示「尚無資料」。
+ */
+function renderAiUsageDaysTable(days) {
+    const container = document.getElementById('ai-usage-days-table');
+    if (!container) return;
+
+    renderTable(container, {
+        columns: [
+            { key: 'date',             title: '日期' },
+            { key: 'calls',            title: '呼叫次數',        className: 'text-end', render: r => formatNumber(r.calls) },
+            { key: 'promptTokens',     title: 'prompt tokens',   className: 'text-end', render: r => formatNumber(r.promptTokens) },
+            { key: 'completionTokens', title: 'completion tokens', className: 'text-end', render: r => formatNumber(r.completionTokens) },
+            { key: 'totalTokens',      title: '總計 tokens',     className: 'text-end', render: r => formatNumber(r.totalTokens) }
+        ],
+        rows: days,
+        empty: { title: '尚無資料', hint: '目前沒有任何 AI 呼叫紀錄。' }
+    });
+}
+
+/**
+ * 非同步載入 AI token 用量統計。
+ * 失敗靜默——這是加值資訊，不應阻塞設定頁其餘欄位。
+ */
+async function loadAiUsage() {
+    try {
+        const usage = await api.get('/api/admin/settings/ai-usage', { silent: true });
+        renderAiUsage(usage);
+    } catch {
+        // 靜默：載不到統計不影響其他欄位
+    }
+}
+
+/**
+ * 「清空重新計算」按鈕：
+ * 先跳既有破壞性操作確認（confirmAction），確認後打
+ * POST /api/admin/settings/ai-usage/reset，成功後用回傳值重繪並顯示 toast。
+ */
+function bindAiUsageReset() {
+    const button = document.getElementById('btn-ai-usage-reset');
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            title: '清空 token 用量統計',
+            message: '此操作將清除目前所有累計的 token 用量紀錄，清空後無法復原。確定要繼續？',
+            confirmText: '清空',
+            confirmVariant: 'danger'
+        });
+        if (!confirmed) return;
+
+        const restore = withBusy(button, '清空中');
+        try {
+            const usage = await api.post('/api/admin/settings/ai-usage/reset', {});
+            renderAiUsage(usage);
+            toast('已清空 token 用量統計', 'success');
+        } catch {
+            // 錯誤由 api.js toast 顯示
+        } finally {
+            restore();
+        }
+    });
+}
+
 function renderAiFields(settings) {
     const provider = settings.aiProvider || 'Local';
     document.getElementById('ai-provider').value = provider;
@@ -235,6 +397,12 @@ function renderAiFields(settings) {
     setNumber('ai-frequency-penalty', settings.aiFrequencyPenalty);
     setNumber('ai-presence-penalty', settings.aiPresencePenalty);
     document.getElementById('ai-extra-request-fields').value = settings.aiExtraRequestFieldsJson ?? '';
+
+    // 單價欄位（token 用量估費，跟著整頁 form 儲存）
+    setNumber('ai-input-price', settings.aiInputPricePerMillion);
+    setNumber('ai-output-price', settings.aiOutputPricePerMillion);
+    // 重算估費顯示（資料或單價其中一方改動時都要更新）
+    calcAndRenderCost();
 }
 
 /** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／權限異動欄位／匯入上限） */
@@ -688,6 +856,9 @@ function bindForm() {
                 aiFrequencyPenalty: Number(document.getElementById('ai-frequency-penalty').value),
                 aiPresencePenalty: Number(document.getElementById('ai-presence-penalty').value),
                 aiExtraRequestFieldsJson: document.getElementById('ai-extra-request-fields').value.trim(),
+                // token 用量單價（跟著整頁 form 儲存）
+                aiInputPricePerMillion: Number(document.getElementById('ai-input-price').value) || 0,
+                aiOutputPricePerMillion: Number(document.getElementById('ai-output-price').value) || 0,
                 // 分析參數（§12）
                 serverDescription: document.getElementById('server-description').value.trim(),
                 checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
@@ -878,6 +1049,10 @@ bindAiProvider();
 bindAdTest();
 bindMailTest();
 bindAiAdvancedReset();
+bindAiUsageReset();
+// 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
+document.getElementById('ai-input-price')?.addEventListener('input', calcAndRenderCost);
+document.getElementById('ai-output-price')?.addEventListener('input', calcAndRenderCost);
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明

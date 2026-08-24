@@ -170,14 +170,25 @@ export const doughnut = (canvas, spec) => create(canvas, { ...spec, type: 'dough
  * PNG 下載已移除（docs/archive/HISTORY.md #4）：需要圖檔的情境走既有
  * 「列印 / 存成 PDF」，不再逐圖各自下載。
  */
+/** 追蹤每個 container 上一次由 attachToolbar 插入的 tableWrapper，供清除用 */
+const _toolbarTableMap = new WeakMap();
+
 export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
-    const toolbar = document.createElement('div');
-    toolbar.className = 'd-flex gap-1 lf-no-print';
+    // 清除上一次由 attachToolbar 產生的 toolbar（以 data-lf-toolbar 標記）
+    container.querySelectorAll('[data-lf-toolbar]').forEach(el => el.remove());
+
+    // 清除上一次由 attachToolbar 插入的 tableWrapper（以 WeakMap 追蹤）
+    _toolbarTableMap.get(container)?.remove();
 
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'lf-table-wrap d-none';
     tableWrapper.appendChild(buildTable(tableColumns, tableRows));
     canvasWrapper.after(tableWrapper);
+    _toolbarTableMap.set(container, tableWrapper);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'd-flex gap-1 lf-no-print';
+    toolbar.dataset.lfToolbar = '';   // 標記，供下次呼叫定位並清除
 
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';

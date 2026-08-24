@@ -214,6 +214,16 @@ public interface IIssueAggregateQuery
     /// </summary>
     List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
 
+    /// <summary>
+    /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
+    /// <see cref="AggregateReportKpi"/> 逐欄位相同；預設實作就是那樣呼叫兩次
+    /// （測試替身自動取得等值行為），EF 實作覆寫成合併查詢收斂資料庫往返。
+    /// </summary>
+    (ReportKpiAggregate Current, ReportKpiAggregate Previous) AggregateReportKpiPair(
+        DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) =>
+        (AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities),
+         AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
 }
 
 public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);

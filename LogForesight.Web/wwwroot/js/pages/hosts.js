@@ -604,7 +604,7 @@ function openModal(host) {
         id: u.userId,
         label: formatUserName(u.displayName, u.account),
         checked: host?.ownerUserIds?.includes(u.userId) ?? false
-    })), '尚無使用者，請先建立或匯入使用者。');
+    })), '尚無使用者，請先建立或匯入使用者。', { filterable: true });
 
     modal.show();
 }

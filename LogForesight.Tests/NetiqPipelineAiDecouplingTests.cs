@@ -71,8 +71,20 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
+    /// <summary>回饋二十七輪作業 B：記下每次進度回報，驗證背壓期間報的是 AI 消化件數</summary>
+    private sealed class RecordingProgress : IRunProgress
+    {
+        public List<(string Phase, int Done, int Total)> Reports { get; } = new();
+
+        public void Report(string phase, int done, int total)
+        {
+            lock (Reports) Reports.Add((phase, done, total));
+        }
+    }
+
     private NetiqPipelineService MakePipeline(
-        NetiqOptions? options = null, List<string>? consoleLines = null, IRiskyEventStore? riskyEventStore = null)
+        NetiqOptions? options = null, List<string>? consoleLines = null, IRiskyEventStore? riskyEventStore = null,
+        IRunProgress? progress = null, int? aiQueueCapacity = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
         var reportSink = new FakeReportSink();
@@ -84,11 +96,14 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
             _backend.RecordStore(), _hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
         var console = new RecordingRunConsole(consoleLines ?? new List<string>());
 
-        return new NetiqPipelineService(
+        var pipeline = new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: riskyEventStore, riskyEventRetentionDays: 14, useAi: true, progress: null,
+            riskyEventStore: riskyEventStore, riskyEventRetentionDays: 14, useAi: true, progress: progress,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
+
+        if (aiQueueCapacity.HasValue) pipeline.AiQueueCapacity = aiQueueCapacity.Value;
+        return pipeline;
     }
 
     /// <summary>
@@ -118,6 +133,46 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         Assert.Equal(3, _client.Requests.Count); // 三天的搜尋全部發出，沒有被卡住的 AI 擋住
 
         // 收尾：解除卡住讓背景執行完成，避免留下懸掛的 Task 影響後續測試
+        hang.SetResult(new AiResponse { Success = true, Content = "{}" });
+        await runTask;
+    }
+
+    /// <summary>
+    /// 回饋二十七輪作業 B：AI 佇列滿載、搜尋暫停等待時，子進度必須報「AI 消化件數」，
+    /// 不能沿用主機日數字——搜尋此時已停，主機日數字到等待結束都不會變，
+    /// 畫面就是一條凍住的進度條（使用者回饋②：背景在跑卻看不出進度，以為卡住了）。
+    /// </summary>
+    [Fact]
+    public async Task 背壓期間子進度報的是AI消化件數而非主機日()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+        };
+
+        var hang = new TaskCompletionSource<AiResponse>();
+        _ai.Behavior = (_, ct) => hang.Task.WaitAsync(ct);
+
+        var progress = new RecordingProgress();
+        // 容量 1：第一件被消費者取走後卡在 AI，第二件填滿佇列，第三件就會進背壓等待
+        var pipeline = MakePipeline(new NetiqOptions { BackfillDays = 3 }, progress: progress, aiQueueCapacity: 1);
+        var runTask = pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        await WaitUntilAsync(
+            () => { lock (progress.Reports) return progress.Reports.Any(r => r.Phase == "netiq-backpressure"); },
+            "背壓進度已回報");
+
+        List<(string Phase, int Done, int Total)> backpressure;
+        lock (progress.Reports)
+            backpressure = progress.Reports.Where(r => r.Phase == "netiq-backpressure").ToList();
+
+        // 分母是已排入 AI 的件數（此時 1~2 件），不是三個主機日
+        Assert.All(backpressure, r => Assert.True(r.Total < 3,
+            $"背壓進度分母應為 AI 件數而非主機日總數，實際 {r.Total}"));
+        Assert.All(backpressure, r => Assert.True(r.Done <= r.Total));
+
         hang.SetResult(new AiResponse { Success = true, Content = "{}" });
         await runTask;
     }

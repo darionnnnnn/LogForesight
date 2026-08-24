@@ -171,7 +171,7 @@ function openModal(rule) {
         id: u.userId,
         label: formatUserName(u.displayName, u.account),
         checked: rule?.ownerUserIds?.includes(u.userId) ?? false
-    })), '尚無使用者，請先於「使用者」頁建立。');
+    })), '尚無使用者，請先於「使用者」頁建立。', { filterable: true });
 
     renderSelectedSummary();
     renderConclusionSection(rule);

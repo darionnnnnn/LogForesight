@@ -926,8 +926,13 @@ export function renderSpinner(container, text = '載入中…') {
  * 勾選清單（users.js/groups.js/hosts.js 原本各自手刻一份幾乎相同的 form-check 清單）：
  * items: [{ id, label, checked }]。id 屬性組成 `${container.id}-${item.id}`，
  * 供同一清單內 label 的 htmlFor 配對；清單為空時顯示 emptyHint 取代整份清單。
+ *
+ * options.filterable（選填，預設 false）：true 時在清單上方插入文字篩選框，
+ * 並將勾選項目包在限高捲動容器內——篩選以隱藏方式（d-none）實作，
+ * 不移除 DOM 節點，被篩掉的已勾選項目其 checked 狀態仍保留，
+ * 呼叫端 querySelectorAll('input:checked') 依然讀得到。
  */
-export function checkboxList(container, items, emptyHint) {
+export function checkboxList(container, items, emptyHint, options) {
     container.replaceChildren();
 
     if (items.length === 0) {
@@ -936,6 +941,35 @@ export function checkboxList(container, items, emptyHint) {
         hint.textContent = emptyHint;
         container.appendChild(hint);
         return;
+    }
+
+    const filterable = options?.filterable === true;
+
+    // 篩選框（filterable 模式才插入）
+    let filterInput = null;
+    if (filterable) {
+        filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.className = 'form-control form-control-sm mb-2';
+        filterInput.placeholder = '輸入文字篩選…';
+        filterInput.autocomplete = 'off';
+        container.appendChild(filterInput);
+    }
+
+    // filterable 模式下把勾選項目包在限高捲動容器；否則直接放進 container
+    const listRoot = filterable ? document.createElement('div') : container;
+    if (filterable) {
+        listRoot.className = 'lf-checkbox-list-scroll';
+        container.appendChild(listRoot);
+    }
+
+    // 無符合項目時的提示行（filterable 模式專用，初始隱藏）
+    let noMatchHint = null;
+    if (filterable) {
+        noMatchHint = document.createElement('div');
+        noMatchHint.className = 'text-muted small d-none';
+        noMatchHint.textContent = '沒有符合的項目';
+        listRoot.appendChild(noMatchHint);
     }
 
     for (const item of items) {
@@ -955,7 +989,24 @@ export function checkboxList(container, items, emptyHint) {
         label.textContent = item.label;
 
         wrapper.append(input, label);
-        container.appendChild(wrapper);
+        listRoot.appendChild(wrapper);
+    }
+
+    // 即時篩選：比對 label 文字，不分大小寫，以隱藏取代移除——勾選狀態不受影響
+    if (filterable) {
+        filterInput.addEventListener('input', () => {
+            const keyword = filterInput.value.trim().toLowerCase();
+            // listRoot 下所有 .form-check 即勾選項目列（noMatchHint 不是 .form-check，不會被選到）
+            const rows = listRoot.querySelectorAll('.form-check');
+            let visibleCount = 0;
+            for (const row of rows) {
+                const labelEl = row.querySelector('.form-check-label');
+                const matches = !keyword || labelEl.textContent.toLowerCase().includes(keyword);
+                row.classList.toggle('d-none', !matches);
+                if (matches) visibleCount++;
+            }
+            noMatchHint.classList.toggle('d-none', visibleCount > 0);
+        });
     }
 }
 

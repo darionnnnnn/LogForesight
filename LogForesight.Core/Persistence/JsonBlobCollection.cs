@@ -36,6 +36,10 @@ public abstract class JsonBlobCollection<T> where T : class
     /// <summary>供 log／Location 顯示（相容原本的名稱；DB 後端回傳的是位置描述而非真實路徑）</summary>
     protected string FilePath => _blob.Location;
 
+    /// <summary>目前資料版本（每次寫入前進一號）。只查一個整數欄、不拉整份內容，
+    /// 供上層判定「用這份資料建出來的索引要不要重建」——與 <see cref="Read"/> 同一個探測點。</summary>
+    protected long CurrentVersion => _blob.ReadVersion();
+
     /// <summary>
     /// 讀取整份清單。內容不存在時回空清單（首次執行的正常情況，不是錯誤）。
     /// <para>為什麼要快取：主機清單（3000 台約 4 MB）在單一請求內會被讀取十幾次，若無快取反序列化成本極高。</para>

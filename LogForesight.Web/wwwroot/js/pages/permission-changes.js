@@ -360,6 +360,7 @@ function render() {
             },
             {
                 title: '異動說明',
+                className: 'lf-issue-col',
                 render: row => summaryCell(row)
             },
             {

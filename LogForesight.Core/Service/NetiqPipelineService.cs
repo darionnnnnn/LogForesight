@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -175,7 +175,7 @@ public class NetiqPipelineService
         // 有界佇列，單一背景消費者依序（FIFO）取出跑 AI，搜尋不再被 AI 拖住。無論下面的搜尋
         // 迴圈正常結束還是被取消，finally 都要讓消費者知道不會再有新項目並等它收尾——
         // 否則消費者會永遠卡在 ReadAllAsync 等下一筆，執行永遠收不了尾。
-        var aiQueue = new AiFollowupQueue<AiFollowupJob>();
+        var aiQueue = new AiFollowupQueue<AiFollowupJob>(AiQueueCapacity);
         var consumerTask = ConsumeAiQueueAsync(aiQueue, result, trendWindowDays, ct);
 
         // 抑制清單 run 開始時讀一次（回饋十四輪 A3），往下傳給每台主機每一天共用——取代原本
@@ -428,10 +428,7 @@ public class NetiqPipelineService
             // 更容易撞上前面一般缺漏日已經把佇列排滿的情況
             if (!aiQueue.TryEnqueue(job))
             {
-                _console.WriteLine($"  ⏸ [{sentinel.Name}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
-                _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
-                await aiQueue.EnqueueAsync(job, ct);
-                _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+                await EnqueueUnderBackpressureAsync(aiQueue, job, sentinel.Name, result, ct);
             }
             // 計數放在 EnqueueAsync 成功之後（同 AnalyzeHostDayAsync 的理由）：取消若發生在
             // 背壓等待中，這筆工作項並未真的進到佇列，提前計數會讓 AiQueued 與
@@ -439,6 +436,48 @@ public class NetiqPipelineService
             result.AddAiQueued();
         }
     }
+
+    /// <summary>背壓期間的進度回報間隔。AI 一件動輒數十秒，太密只是重複同一個數字。</summary>
+    private const int BackpressureReportIntervalMs = 2000;
+
+    /// <summary>AI 佇列容量。正式執行一律用預設值；開放覆寫是為了讓測試能以極小容量
+    /// 重現背壓路徑，不必真的塞滿 200 件。</summary>
+    internal int AiQueueCapacity { get; set; } = AiFollowupQueue<AiFollowupJob>.Capacity;
+
+    /// <summary>
+    /// 佇列滿載時的入列等待（回饋二十七輪作業 B）。
+    ///
+    /// 舊版在這裡回報的是「主機日」數字，而且只在進入背壓那一瞬間報一次——搜尋主線此時已停，
+    /// 那個數字到等待結束都不會變，畫面看起來就是卡死（使用者回饋②：AI 佇列 200 件卡著，
+    /// 背景明明在跑卻看不出進度）。改成回報 AI 消化進度並在等待期間持續更新：
+    /// 分子是已完成＋已放棄的 AI 件數、分母是已排入的件數，數字會隨每件 AI 跑完而前進。
+    /// </summary>
+    private async Task EnqueueUnderBackpressureAsync(
+        AiFollowupQueue<AiFollowupJob> aiQueue, AiFollowupJob job, string sentinelName,
+        NetiqPipelineResult result, CancellationToken ct)
+    {
+        _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiQueueCapacity} 件），" +
+                           $"搜尋暫停等待消化中…（佇列尚有 {aiQueue.PendingCount} 件）");
+
+        ReportAiDigestProgress(result);
+
+        var enqueue = aiQueue.EnqueueAsync(job, ct).AsTask();
+        while (!enqueue.IsCompleted)
+        {
+            // 等待間隔本身不掛 ct：ct 取消時 enqueue 會自己結束迴圈並在下面的 await 拋出，
+            // 這裡再掛一次只會多一個要處理的取消例外
+            await Task.WhenAny(enqueue, Task.Delay(BackpressureReportIntervalMs, CancellationToken.None));
+            ReportAiDigestProgress(result);
+        }
+
+        await enqueue;   // 取消與例外原樣往外傳（呼叫端依賴 OperationCanceledException 走孤兒補跑）
+
+        _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+    }
+
+    /// <summary>AI 消化進度：與 netiq-ai 軌同一組數字，背壓期間畫面才不會退回主機日語意。</summary>
+    private void ReportAiDigestProgress(NetiqPipelineResult result) =>
+        _progress?.Report("netiq-backpressure", result.AiCompleted + result.AiAbandoned, result.AiQueued);
 
     private async Task RunBatchDayAsync(
         ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date, string os,
@@ -647,10 +686,7 @@ public class NetiqPipelineService
                 ct.ThrowIfCancellationRequested();
                 if (!aiQueue.TryEnqueue(job))
                 {
-                    _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
-                    _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
-                    await aiQueue.EnqueueAsync(job, ct);
-                    _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+                    await EnqueueUnderBackpressureAsync(aiQueue, job, sentinelName, result, ct);
                 }
                 // 計數放在 EnqueueAsync 成功之後：取消若發生在背壓等待中，這筆工作項其實
                 // 沒有真的進到佇列，AddAiQueued 若在等待之前就算會與 AiCompleted+AiAbandoned

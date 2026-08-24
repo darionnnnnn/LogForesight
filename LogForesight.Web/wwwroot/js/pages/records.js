@@ -678,7 +678,7 @@ function renderIssueView() {
     // 「涵蓋範圍」與「出現密度」是需求「期間跨度」的落地：只有「最近出現」看不出
     // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
-        { title: '問題', render: i => issueGroupCell(i) },
+        { title: '問題', className: 'lf-issue-col', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
         {
@@ -727,7 +727,7 @@ function renderIssueView() {
             renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
             render: i => formatNumber(i.totalCount)
         },
-        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
+        { title: '最近出現', className: 'text-nowrap', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
         {
             title: '處理概況',
             className: 'text-nowrap',
