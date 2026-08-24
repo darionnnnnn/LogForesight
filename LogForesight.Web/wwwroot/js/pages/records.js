@@ -727,7 +727,7 @@ function renderIssueView() {
             renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
             render: i => formatNumber(i.totalCount)
         },
-        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
+        { title: '最近出現', className: 'text-nowrap', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
         {
             title: '處理概況',
             className: 'text-nowrap',

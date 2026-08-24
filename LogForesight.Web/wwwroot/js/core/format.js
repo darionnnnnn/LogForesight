@@ -236,12 +236,17 @@ export function issueBaselineCell(group) {
 
     const line1 = document.createElement('div');
     line1.className = 'small lf-mono text-nowrap';
-    line1.textContent = `基準 ${median} 台/日 → ${group.baselineLatestHostCount} 台`;
+    line1.textContent = `基準 ${median} 台/日`;
     wrap.appendChild(line1);
 
+    const line2 = document.createElement('div');
+    line2.className = 'small lf-mono text-nowrap';
+    line2.textContent = `→ ${group.baselineLatestHostCount} 台`;
+    wrap.appendChild(line2);
+
     if (multiplier != null) {
-        const line2 = document.createElement('div');
-        line2.className = 'mt-1';
+        const line3 = document.createElement('div');
+        line3.className = 'mt-1';
         const m = multiplier.toFixed(1);
         const tooltip = `基準倍數（最近出現主機數 ÷ 過去 30 天基準中位數）：大於 1 表示影響擴大（≥2 為異常擴散）；小於 1（如 ×${m}）表示影響台數低於平時基準，情況正在收斂。`;
 
@@ -256,8 +261,8 @@ export function issueBaselineCell(group) {
             // 影響台數低於基準本來就是好消息，淡綠底語意也對
             badge = statusBadge(`×${m} 收斂`, 'success', { title: tooltip });
         }
-        line2.appendChild(badge);
-        wrap.appendChild(line2);
+        line3.appendChild(badge);
+        wrap.appendChild(line3);
     }
 
     return wrap;

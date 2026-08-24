@@ -352,6 +352,24 @@ body {
 .form-select {
     border-color: var(--lf-border-strong);
     border-radius: var(--lf-radius-sm);
+    /* 明確指定字族與字級：瀏覽器 autofill 狀態下用自己的 UA 字型渲染，使用者一聚焦
+       就變回站台字型，看起來像「點一下字就變大」（回饋二十七輪 P9）。
+       **值必須是 1rem**——那正是 Bootstrap .form-control 原本生效的字級，也是使用者
+       指名要保留的「放大後」那個大小；改用 body 的 --lf-font-size-base（.95rem）
+       會把全站表單欄位一起縮小，方向剛好相反 */
+    font-family: var(--lf-font-family);
+    font-size: 1rem;
+}
+
+/* autofill 系列：瀏覽器注入的 UA 樣式優先權高，字族與字級要明確覆寫才壓得住，
+   否則自動填入狀態下與一般輸入不一致（登入頁帳號欄位最明顯）。
+   底色不覆寫——那是瀏覽器給使用者「這格是自動填入的」的提示。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    font-family: var(--lf-font-family) !important;
+    font-size: 1rem !important;
 }
 
 .form-control:focus,
@@ -1094,6 +1112,20 @@ a.lf-stat:hover .lf-card,
     min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
 }
 
+/* lg+ 視口，右側三顆圓餅卡片的卡頭最小高度對齊左側主機告警排行卡的卡頭。
+   左卡頭含 btn-group-sm（約 31px）+ rank-mode-toggle，高於右卡的純 h2 標題列（約 20px）；
+   補 min-height 讓兩側 .lf-card__body 起點齊平，圖形底緣才能視覺對齊。
+   3.5rem = btn-group-sm 高度 31px + header padding-block 0.75rem × 2 ≒ 55px；
+   用 rem 跟隨字級縮放（按鈕高度本身不會超過 header，就算字級偏大也不會造成截斷）。
+   md 以下不套用，不影響手機 / 小平板版面。 */
+@media (min-width: 992px) {
+    .lf-report-page #risk-section .lf-card__header,
+    .lf-report-page #affected-hosts-section .lf-card__header,
+    .lf-report-page #handling-progress-section .lf-card__header {
+        min-height: 3.5rem;
+    }
+}
+
 /* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
    這裡的值只是還沒算出來之前的起始字級 */
 .lf-chart__center-text {
@@ -1543,7 +1575,7 @@ a.lf-stat:hover .lf-card,
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 18rem;
+    max-width: 100%;
     cursor: default;
 }
 
@@ -1553,10 +1585,10 @@ a.lf-stat:hover .lf-card,
 }
 
 /* 白話句是該列的主要資訊時（權限異動待辦的「異動說明」）：用正文色而非附註灰，
-   寬度也放寬——那一句就是使用者不展開也要看懂的內容 */
+   寬度由欄位實際可用寬度決定（同基礎 .lf-issue-explanation）——
+   保留此 class 不刪，兩個頁面都在用（records.js／permission-changes.js） */
 .lf-issue-explanation--primary {
     color: var(--lf-text);
-    max-width: 28rem;
     /* 不吃掉整列可點的手指游標（.lf-issue-explanation 的 cursor: default 會蓋掉列的 pointer） */
     cursor: inherit;
 }
