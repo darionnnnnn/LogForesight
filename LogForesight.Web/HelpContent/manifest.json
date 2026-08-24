@@ -44,6 +44,18 @@
       "related": ["dashboard", "record-detail"] },
     { "id": "faq", "title": "常見問題", "file": "14-faq.md", "icon": "question-circle",
       "keywords": ["常見問題", "FAQ", "問題排解", "AI未回應", "沒有告警", "誤報"],
-      "related": ["overview", "glossary"] }
+      "related": ["overview", "glossary"] },
+    { "id": "reports", "title": "報表", "file": "15-reports.md", "aiFile": "15-reports.ai.md", "icon": "file-earmark-text",
+      "keywords": ["報表", "KPI", "告警趨勢", "風險類型分布", "主機排行", "問題排行", "風險層級占比", "受影響主機占比", "處理進度", "自訂圖表", "對比前一期", "對比去年同期", "顯示範圍", "涵蓋率缺口"],
+      "related": ["dashboard", "issues", "settings"] },
+    { "id": "issue-owners", "title": "問題檔案", "file": "16-issue-owners.md", "aiFile": "16-issue-owners.ai.md", "icon": "people",
+      "keywords": ["問題檔案", "問題負責人", "機房結論", "自動套用", "解除結論", "Source", "Event ID", "手動輸入", "近期出現"],
+      "related": ["hosts", "handling", "issues", "permissions"] },
+    { "id": "netiq", "title": "NetIQ 維護", "file": "17-netiq.md", "aiFile": "17-netiq.ai.md", "icon": "link-45deg",
+      "keywords": ["NetIQ", "NetIQ維護", "Sentinel", "掃描匯入", "節流間隔", "回望天數", "平行度", "ESM", "API診斷", "網段掃描", "孤兒主機", "可復活", "示範資料"],
+      "related": ["hosts", "imports", "scheduler", "settings"] },
+    { "id": "audit", "title": "稽核日誌", "file": "18-audit.md", "aiFile": "18-audit.ai.md", "icon": "journal-text",
+      "keywords": ["稽核日誌", "操作紀錄", "稽核", "被拒", "Denied", "登入失敗", "動作篩選", "DetailJson", "前後對照", "ViewAudit"],
+      "related": ["overview", "permissions", "settings"] }
   ]
 }
