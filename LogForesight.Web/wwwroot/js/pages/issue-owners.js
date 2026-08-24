@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 問題檔案維護（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）。
  *
  * 以 (Source, EventId) 為鍵指派跨主機負責人——與主機負責人（hosts.js 的 #host-owners）
@@ -171,7 +171,7 @@ function openModal(rule) {
         id: u.userId,
         label: formatUserName(u.displayName, u.account),
         checked: rule?.ownerUserIds?.includes(u.userId) ?? false
-    })), '尚無使用者，請先於「使用者」頁建立。');
+    })), '尚無使用者，請先於「使用者」頁建立。', { filterable: true });
 
     renderSelectedSummary();
     renderConclusionSection(rule);

@@ -291,6 +291,16 @@ body {
     padding: var(--lf-space-2) var(--lf-space-3);
 }
 
+/* checkboxList filterable 模式的勾選項目捲動容器（task-02）：
+   人數多達數十人時以限高＋捲動取代全部攤開，約 12 列高 */
+.lf-checkbox-list-scroll {
+    max-height: 18rem;
+    overflow-y: auto;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
 /* 小型「說明」圖示鈕（開 popover）*/
 .lf-help {
     display: inline-flex;
