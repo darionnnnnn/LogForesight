@@ -222,3 +222,6 @@ NetIQ 回補的舊事件（detected_at 可達 100 天前）不該一寫入就被
 | G1 | agy→Claude | 完成 | 3 條新測試 | agy 中途停在旁白且無法編譯（`entry.AiFile` 未定義），Claude 接手；並把 fallback 從載入端移進型別 |
 | G2 | agy(gemini) | 完成 | manifest 合法性＋icon 存在＋四項可證偽宣稱抽查 | **本段起委派模型改為 gemini-3.7-flash-high**（agy Claude 組五小時額度用罄），之後不換回 |
 | G3 | agy(gemini) | 完成 | 逐項核對 SystemSettings | **抓到五處內容錯誤**（JSON 重問預設 3→2、兩個 token 上限寫成 0、兩個懲罰值寫成 0）＋LaTeX 語法（手冊渲染器不支援，使用者會看到原始 `$\ge 2.0$`），均已修正；另補接線測試防「aiFile 打錯只會靜默 fallback」 |
+| 終檢-程式碼 | Explore×1 | 完成 | 全 diff 審查 | **抓到真 bug**：升級為彙總時沒撤掉先前已逐則入庫的那批（P4 症狀的相反方向）→ 新增 `DeleteByDedupeKeys` 修正，突變測試確認測試抓得到；另修別名索引版本讀取順序（過期索引會永久命中）、本批內去重防成對數灌水、C3 欄寬另一半（max-width:100% 在 auto-layout 表格不觸發 overflow）；補 F3 帶條件等值測試＋F4 經 Build 的計數測試＋B2 API 測試＋reset 稽核 |
+| 終檢-文件 | Explore×1 | 完成 | 契約逐條對照＋現況文件核對＋說明書抽查 | 四份現況文件全未更新→補齊（DETECTION-SPEC 配對先於去重決策表／WEB-SPEC 用量統計與新 API／DB-SPEC ai_usage 與 DataVersion／BACKLOG 七項遞延）；說明書巢狀清單渲染器不支援→委派 agy(gemini) 拉平 35 行（task-07，驗收全 0）；BOM 還原四檔與 dev 基準一致 |
+| 終檢後全套 | Claude | 完成 | 2539 綠（2545 總/略過 6） | 併 dev@7bb58f0 推送，feature 分支已刪 |
