@@ -1523,10 +1523,32 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         Assert.DoesNotContain("{0CCE921D", details.After);
     }
 
-    /// <summary>重跑時若來源只回傳子集、對數跌回門檻以下，這批異動改為逐則列出——
-    /// 先前那筆彙總列必須撤掉，否則同一批異動會同時以彙總與逐則兩種形式存在。</summary>
+    // ── 回饋二十七輪作業 A：重跑不得抹掉彙總列 ────────────────────────────────
+    //
+    // 舊行為是「這次沒達門檻就撤掉既有彙總列」。但被合併掉的成對明細從未入庫，撤掉之後
+    // 兩頭落空（彙總沒了、明細也補不回來），使用者看到的就是「權限異動彙總類別沒資料」。
+
+    /// <summary>重跑時來源回傳完整當日事件：去重不得讓成對數假性跌破門檻，彙總列要留著。</summary>
     [Fact]
-    public void 例行同步_對數跌破門檻時撤掉既有彙總列()
+    public void 例行同步_重跑回傳完整當日事件時彙總列仍在()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+        var events = SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold);
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), "SRV-SYNC", WebHost.OsWindows, events, date);
+        HostDayPostProcessor.RecordPermissionChanges(store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, events, date);
+
+        var summary = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Equal(HostDayPostProcessor.RoutineSyncPairThreshold, summary.PairCount);
+    }
+
+    /// <summary>重跑時來源只回子集（查詢部分失敗、保留期滾動）：彙總列不得被撤掉，
+    /// 這批成對事件也不逐則列出——它們正是那筆彙總列涵蓋的同一批。</summary>
+    [Fact]
+    public void 例行同步_重跑只回子集時彙總列仍在且成對事件不重複列出()
     {
         using var fixture = new EfSqliteFixture();
         var store = new PermissionChangeStore(fixture.NewContext);
@@ -1535,14 +1557,49 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 
         HostDayPostProcessor.RecordPermissionChanges(
             store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, threshold), date);
-        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        var summaryBefore = Assert.Single(
+            store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
 
-        // 重跑時來源只回了 3 對（保留期滾動、查詢部分失敗等）
         HostDayPostProcessor.RecordPermissionChanges(
             store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
 
         var records = store.Query(null, null, 1000);
+        var summaryAfter = Assert.Single(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+        Assert.Equal(summaryBefore.PairCount, summaryAfter.PairCount);   // 不被子集覆寫成 3
+        Assert.DoesNotContain(records, r => r.ChangeType == "成員新增" || r.ChangeType == "成員移除");
+    }
+
+    /// <summary>重跑時來源整天沒回事件：彙總列仍在（沒有新資訊 ≠ 那天沒發生過例行同步）。</summary>
+    [Fact]
+    public void 例行同步_重跑無事件時彙總列仍在()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows,
+            SyncPairEvents(date, HostDayPostProcessor.RoutineSyncPairThreshold), date);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, KeysFrom(store), "SRV-SYNC", WebHost.OsWindows, new List<EventLogEntryData>(), date);
+
+        Assert.Single(store.Query(null, null, 1000), r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
+    }
+
+    /// <summary>從未達過門檻、也沒有既有彙總列時：全部逐則列出（原行為不變）。</summary>
+    [Fact]
+    public void 例行同步_無既有彙總列且未達門檻時全部逐則()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var date = new DateTime(2026, 8, 21);
+
+        HostDayPostProcessor.RecordPermissionChanges(
+            store, Keys(), "SRV-SYNC", WebHost.OsWindows, SyncPairEvents(date, 3), date);
+
+        var records = store.Query(null, null, 1000);
         Assert.DoesNotContain(records, r => r.ChangeType == HostDayPostProcessor.RoutineSyncChangeType);
-        Assert.Equal(6, records.Count);   // 3 對逐則列出，沒有彙總列殘留造成重複計算
+        Assert.Equal(6, records.Count);
     }
 }
