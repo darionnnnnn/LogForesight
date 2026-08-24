@@ -13,6 +13,7 @@ import {
     guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { bindRangeChips } from '../core/date-range.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
 
@@ -1242,6 +1243,15 @@ if (toInput) {
         load();
     });
 }
+
+bindRangeChips({
+    fromInput,
+    toInput,
+    onApply: () => {
+        currentPage = 1;
+        load();
+    }
+});
 
 if (resetBtn) {
     resetBtn.addEventListener('click', resetFilters);
