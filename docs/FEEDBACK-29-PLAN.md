@@ -181,4 +181,46 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （待實作） | | | | |
+| B-1 登入頁防呆 | agy | 通過 | 2571 綠，4 新測試 | agy 剝除 `Login.cshtml` 的 UTF-8 BOM，Claude 補回 |
+| B-2 設定頁 AD 狀態 | Claude | 通過 | 2571 綠 | 十餘行小修，依委派紀律不外包 |
+| C-1 KPI 同口徑 | agy | 通過 | 2573 綠，2 新測試 | 規格已含突變驗證要求，agy 兩測試各紅一次後改回，無落差 |
+| A-1 登入可診斷性 | agy | 通過 | 2582 綠，9 新測試 | 無落差；`PasswordHasher` 抽出 `TryParse` 共用，未複製判定 |
+| D-1 同型入口統一 | agy | 通過 | 2584 綠，2 新測試 | 規格預先點名 Singleton/Scoped 生命週期陷阱，agy 正確改注入 `ISystemSettingsStore` |
+| E 文件 | Claude | 完成 | 2584 綠 | — |
+| 終檢（程式碼／文件各一 Explore） | Claude | 完成 | 2587 綠 | 見下方終檢處置 |
+
+### 終檢處置
+
+**採納並修正**
+
+1. `AuthCookie` 的 `Secure = request.IsHttps` 在反向代理終止 TLS 時是**安全降級**
+   （走 HTTPS 的使用者拿到沒有 Secure 旗標的 token）。改為同時認 `X-Forwarded-Proto: https`；
+   偽造該標頭只會讓 Secure 變 true（更嚴格），不需要 KnownProxies 名單。補測試。
+2. `IssueTodoQuery.Build` 的 `visibleSeverities` 是死參數（正式碼只走 `ResolveActionable`），移除。
+3. `LoginPageFallbackTests` 四個測試都是字面比對，把降級區塊整段刪掉仍會綠。
+   改為抓出守衛區塊本體並斷言其中含 `preventDefault`／`disabled`／提示文字，
+   且守衛方向必須是 `!== true`。已做突變驗證（改成 `=== true` 會紅）。
+4. 郵件的日風險等級過濾零覆蓋（agy 為了讓既有案例通過而把 fixture 預設風險改寬），
+   補「低風險日的問題不進郵件問題摘要」測試釘住。
+5. `AuthCookie.Delete` 的 legacy 根路徑清理是另一處手寫 `CookieOptions`，補測試。
+6. 文件自身的錯誤：WEB-SPEC「登入失敗訊息一律是帳號或密碼錯誤」**過度宣稱**
+   （實際有五種訊息）、README 診斷第 1 步描述的是**修好之前**的症狀、
+   第 3 步的「請使用者清 cookie」在自動清理存在後會把人帶偏、
+   §12 退役表殘留「明講請以 serverAdmin 登入後設定」、CLAUDE.md 測試基線數字過期。全數修正。
+
+**查證後不採納**
+
+- 終檢主張「大小寫不敏感比較子會讓同一問題同時計入未處理與處理中」。普查後不成立：
+  `IssueKey` 用 `Ordinal` 是全專案十餘處的既有慣例，且「同一問題在 A 主機未處理、
+  在 B 主機處理中」本來就會同時計入兩個計數——那是既有且刻意的語意，不是本輪新增的缺陷。
+  改動只讓大小寫變體與多主機情境一致。已記入 BACKLOG。
+- 終檢主張下鑽 `riskLevels` 的括號解釋張冠李戴。核對後**文件是對的**：該參數在依問題視角
+  確實被解讀為問題嚴重度（`MapRiskLevelToSeverities`），只是原文沒把這點寫明，已補述。
+
+### 規劃階段的核對修正（實作前）
+
+- **推翻**：原假說「下鑽 `riskLevels=高,中,低` 濾掉四級外 rank」不成立（見批次 C 第 2 點）。
+- **新增**：問題去重的大小寫不對稱是真 bug（見批次 C 第 3 點），方向與 36 > 32 相符。
+- **新增**：`MailIssueDigest` 有**三個**聚合呼叫點都缺參數，不是核對階段以為的一個。
+- **新增**：`Login.cshtml` 的密碼欄預設 `d-none`，module 失敗時密碼欄整個不出現——
+  與「按登入沒反應」是同一根因的兩個表徵。

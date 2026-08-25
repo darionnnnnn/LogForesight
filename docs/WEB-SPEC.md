@@ -165,7 +165,7 @@ LogForesight.Web/
 | `Import`（MaxFileSizeKb／MaxRows） | 設定頁「分析參數」→ `SystemSettings.ImportMaxFileSizeKb`／`ImportMaxRows`（每次上傳即時讀取） |
 | `Ui:DashboardDefaultDays`／`RunMatrixDays` | 程式常數 `DashboardController.DefaultDays`／`RunsController.DefaultRunSummaryDays`（前端本來就明傳期間，這只是 API fallback） |
 | `Ui:DefaultPageSize` | **直接刪除**——盤點後無任何消費端（「有設定無行為」是本專案紅線） |
-| `Auth:Ldap:Domain` | **退役**：AD 驗證的唯一事實來源是設定頁（`AdAuthEnabled`／`AdServers`）；`LdapAuthenticationProvider` 一併移除，`Provider=Ad` 在 AD 未設定時的 fallback 為 `UnconfiguredAdAuthenticationProvider`（明講「請以 serverAdmin 登入後設定」） |
+| `Auth:Ldap:Domain` | **退役**：AD 驗證的唯一事實來源是設定頁（`AdAuthEnabled`／`AdServers`）；`LdapAuthenticationProvider` 一併移除，`Provider=Ad` 在 AD 未設定時的 fallback 為 `UnconfiguredAdAuthenticationProvider`（回前端的訊息與密碼錯誤相同，真正原因只寫進記錄檔；見 §6.2） |
 | `Netiq:DiscoveryClient` | **退役**（§13）：改為「NetIQ 維護」頁的 `UseOfflineDemoData` 開關，僅非 Production 可開 |
 
 > **升級零遷移**：每個新 `SystemSettings` 欄位的程式內建預設值＝原 appsettings 的出廠值，
@@ -211,7 +211,11 @@ LogForesight.Web/
   Cookie（名稱 `lf_auth`）。前端 JS **接觸不到 token**（HttpOnly），fetch 同源自動帶上，
   避免 localStorage 存 token 的 XSS 竊取面。View（MVC 頁面殼）與 API 走同一張 Cookie、
   同一套驗證管線——頁面殼本身也要求已驗證（未登入直接 302 到登入頁，而不是空殼進來再被 API 401）。
-- 需要 HTTPS（Secure cookie 前提）；內網自簽或企業 CA 憑證皆可。
+- **建議以 HTTPS 提供服務**；內網自簽或企業 CA 憑證皆可。Cookie 的 `Secure` 旗標
+  **跟隨當次請求的 `Request.IsHttps`**（`Auth/AuthCookie.cs`），不是寫死 `true`：寫死時
+  HTTP 部署下瀏覽器會**靜默丟棄** Set-Cookie，症狀是登入 API 其實回 200 成功、使用者卻被
+  轉址打回登入頁，畫面與記錄檔都沒有任何錯誤訊息——那是最難查的一種失敗。
+  HTTPS 下行為與寫死 `true` 完全相同。
 
 ### 6.2 登入流程與 Claims
 
@@ -221,11 +225,27 @@ LogForesight.Web/
       serverAdmin 帳號比對（任何 Provider 下優先檢查，見下方專節）
       Stub 實作：lf_users 存在且 active 即通過（password 忽略）——僅供開發/前期測試
       正式（§12 起）：DynamicAuthenticationProvider 依設定頁的 AD 設定（AdAuthEnabled/AdServers）
-        bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider（明講請以
-        serverAdmin 登入後至設定頁設定）
+        bind 驗證；AD 尚未設定時 fallback 為 UnconfiguredAdAuthenticationProvider
   → 成功：查使用者群組 → RoleCapabilityMap 算出能力集合 → 簽發 JWT → Set-Cookie
   → 稽核 login / login_failed（§13）
 ```
+
+**憑證不正確的路徑一律回「帳號或密碼錯誤。」**：查無帳號、密碼錯誤、AD 尚未設定三者
+**回同一句**，Provider 回報的具體原因（含 `UnconfiguredAdAuthenticationProvider` 的
+「AD 尚未設定」）**只寫進診斷記錄檔，不回前端**——回前端會讓未持有正確憑證的人列舉帳號。
+其餘三種失敗另有各自訊息，因為它們**都不是憑證問題**：帳號欄留空（「請輸入帳號。」）、
+serverAdmin 連續失敗鎖定（「…已鎖定，請於 N 分鐘後再試。」）、
+以及**憑證已驗證通過**之後才可能出現的「此帳號尚未建立於系統中」與「此帳號已停用」——
+後兩者要先通過 AD 驗證才看得到，對沒有正確密碼的人不構成列舉管道，
+訊息說得明確才能讓當事人知道該找誰。
+因此「AD 未設定」與「密碼打錯」在登入頁上**看起來完全一樣**；
+管理者要分辨，看「系統管理 > 設定」的 AD 區塊狀態列（未生效時明說一般帳號一律無法登入），
+或看 `logs/web.log`。
+
+**登入結果的記錄檔落點**：serverAdmin 的登入成功／密碼錯誤（`Log.Info`）與鎖定被拒
+（`Log.Warn`）都會寫進 `logs/web.log`，一般帳號的 Provider 驗證失敗亦然；
+記錄檔只寫帳號與狀態，**不含密碼或雜湊任何片段**。稽核資料庫（`login`／`login_failed`）
+仍是另一條獨立的紀錄，兩者都有。
 
 **serverAdmin（本地救援/引導帳號）**：
 
@@ -244,7 +264,11 @@ LogForesight.Web/
   `Provider=Stub` 不驗密碼（見下方「Stub 免密碼」），serverAdmin 直接放行、無密碼可錯、不計失敗。
 - 全部操作照常稽核（account=設定的帳號名、user_id NULL）；儀表板登入失敗卡對它的
   失敗嘗試同樣可見。
-- 啟動驗證：`ServerAdmin.Account`/`PasswordHash` 為必填（§5）。
+- 啟動驗證：`ServerAdmin.Account`/`PasswordHash` 為必填（§5），且 `PasswordHash`
+  **必須是 `PBKDF2$<iterations>$<salt>$<hash>` 格式**——格式不符（最常見是誤填明文密碼）
+  在**所有環境**都 fail fast，訊息指引以 `--hash-password` 產生。這道欄杆存在的理由：
+  `PasswordHasher.Verify` 對格式不符的雜湊是**靜默回 false**（設定錯誤不該讓登入端點噴 500），
+  沒有啟動驗證的話，症狀會變成「密碼明明對卻一直說錯」且無從查起。
 
 **Stub 免密碼**：測試期間環境不含核心重要
 主機，免密碼風險已評估接受。**「免密碼」的界線在後端、不在前端**：`Provider=Stub` 下登入頁
@@ -781,6 +805,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   密碼，見 §6.2「Stub 免密碼」），登入成功導向儀表板或原請求頁。
 - API：`POST api/auth/login`、`POST api/auth/logout`、`GET api/auth/me`
   （回傳 display_name、能力集合、所屬群組——側欄選單與功能鈕的顯示依據）。
+- **JS module 失敗的降級行為**：本頁的送出、密碼欄顯示全由 `js/pages/login.js`（ES Module）
+  接管，module 鏈任一支載入失敗時整套行為都不會綁上。為此有兩道欄杆：
+  表單標 `method="post"`（原生送出也**不會把密碼放進網址列 query**），
+  以及頁內一段**不依賴 module 的傳統 script**——`login.js` 尾端設 `window.LF_LOGIN_READY = true`，
+  該段在 `load` 後若未見此旗標，就顯示「頁面資源載入失敗…」並停用登入鈕。
+  沒有這兩道時的症狀是「按登入頁面重整、密碼欄不出現、無任何訊息、伺服器端零紀錄」。
 
 ### 9.1 `/` 總覽儀表板（所有已登入角色；user 只見授權範圍統計）
 - 區塊：風險類型統計卡（8 類：主數字＝**問題類型數** `IssueTypeCount`——相異 (Source, EventId)、
@@ -854,6 +884,23 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   空出的右下角由「依群組風險概況」補位，與高風險主機 6／6 分欄。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
+  「未處理數」**只計未處理（Open）**，與 KPI 卡「未處理問題」同一個定義——含處理中會讓
+  同一頁的同一個詞指兩件事，且群組加總必然大於卡片。
+
+- **KPI 卡與其下鑽必須同口徑**（契約）：任何 KPI 卡的數字，都必須等於點它進去之後
+  那一頁列出的筆數。為此「未處理問題」卡與依問題視角共用兩條規則：
+  1. **三層可見範圍全部套用**——KPI 端與查詢頁一樣傳入 `visibleSeverities`
+     （`IssueTodoQuery.ResolveActionable` 的參數），被站台隱藏的嚴重度不會只在卡片上冒出來。
+  2. **問題去重的鍵一律大小寫不敏感**——SQL 端以 `UPPER(source)` 收斂，記憶體端
+     （`IssueTodoQuery.Aggregate`）用大小寫不敏感比較子，否則同一問題的來源名稱大小寫不同時
+     卡片會多算。
+  下鑽網址帶的 `riskLevels=高,中,低` 在依問題視角等同**不篩**，不是漏篩：這個參數
+  **在依問題視角被解讀為問題嚴重度**（不是日風險等級，見
+  `RecordListQueryService.MapRiskLevelToSeverities`），而 `IssueSeverity` 值域只有
+  Low/Medium/High/Critical 四個、「高」展開為 High＋Critical，三級全帶即涵蓋全部四值。
+  **例外（刻意）**：重點問題 Top 5 與報表問題排行會排除「全主機已有結論」的問題
+  （`IssueRankingBuilder.ExcludeConcluded`）——排行榜的用途是聚焦還沒收尾的問題，
+  與 KPI 卡的母體本就不同，這個差異不需要收斂。
 - **日風險等級顯示設定的影響**：統計母體經
   `RecordRepository` 已排除被隱藏等級的風險日（見 9.9b 1b）；前端另依
   `GET api/settings/display` 把被隱藏等級的 KPI 卡整卡不顯示——「0」與「被藏起來」是兩件事，
@@ -1873,6 +1920,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      皆為 Singleton（`OccurrenceStatusResolver` 自身相依
      全是 Singleton，沒有 captive dependency 疑慮），批次內相同可見範圍的收件人共用同一次
      查詢結果（`BuildIssueRowsCached`，以 hostIds 集合排序後的字串為鍵）。
+     **母體與站台顯示政策一致**：問題優先區塊同樣套用「可見嚴重度」與「日風險等級顯示範圍」
+     （每次 `Build` 讀一次設定後傳給三個聚合查詢）——被站台隱藏、網站任何頁面都看不到的問題，
+     不該只在信裡冒出來。因 `MailIssueDigest` 是 Singleton，設定值取自 Singleton 的
+     `ISystemSettingsStore` 並經 `SystemSettingsService` 的 static 解析方法轉換，
+     **不可注入 Scoped 的 `ISystemSettingsService`**（captive dependency）。
+     與儀表板的差別只有一處：儀表板對「顯示範圍交集為空」有 `nothingVisible` 短路，
+     郵件沒有——設定頁的寫入端不允許把日風險等級全部取消勾選，只有手改 DB 才到得了那個狀態，
+     且 `IIssueAggregateQuery` 現行實作對空集合一律回零筆（不是「不限制」）。
 
      **收件人跨輪失敗排除**：單一收件人連續寄送失敗達 3 次
      即從後續寄送清單排除（`RecipientFailureStreaks`），不再讓一個打錯的地址拖累全域收件人

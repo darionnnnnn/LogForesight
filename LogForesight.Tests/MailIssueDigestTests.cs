@@ -177,4 +177,22 @@ public class MailIssueDigestTests : IDisposable
         Assert.Equal("disk", row.Source);
         Assert.Equal(153, row.EventId);
     }
+
+    /// <summary>
+    /// 日風險等級顯示範圍同樣套用到郵件（<c>VisibleDayRiskLevels</c> 出廠預設是「高,中」）：
+    /// 低風險日上的問題在站台任何頁面都看不到，不該只在信裡冒出來。
+    /// 這一半行為若無測試釘住，日後被改掉不會有人發現。
+    /// </summary>
+    [Fact]
+    public void 低風險日的問題不進郵件問題摘要()
+    {
+        var today = new DateTime(2026, 8, 8);
+        Add(1, "A", today, RiskLevels.Low, Issue("lowday", 900, severity: IssueSeverity.High));
+        Add(2, "B", today, RiskLevels.High, Issue("highday", 901, severity: IssueSeverity.High));
+
+        var rows = Digest().Build(today, today, null);
+
+        var row = Assert.Single(rows);
+        Assert.Equal("highday", row.Source);
+    }
 }

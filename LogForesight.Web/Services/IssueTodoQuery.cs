@@ -28,11 +28,8 @@ public class IssueTodoQuery
         _statusResolver = statusResolver;
     }
 
-    public IssueTodoDto Build(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
-        IReadOnlySet<string>? riskLevels = null,
-        IReadOnlySet<IssueSeverity>? visibleSeverities = null) =>
-        Aggregate(ResolveActionable(from, to, visibleHostIds, riskLevels, visibleSeverities));
+    public IssueTodoDto Build(DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds, IReadOnlySet<string>? riskLevels = null) =>
+        Aggregate(ResolveActionable(from, to, visibleHostIds, riskLevels));
 
     /// <summary>
     /// 解析一次、彙總多次（回饋十九輪批次I 體檢修正）：儀表板的全站 KPI 與逐群組的

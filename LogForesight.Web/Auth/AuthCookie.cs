@@ -12,13 +12,14 @@ public static class AuthCookie
     /// 「身分變成另一個環境的人」，比 401 難查得多。
     /// 用 ToUriComponent()（編碼後形式）而不是 Value：瀏覽器做 path-match 比對的是請求 URL
     /// 的編碼後路徑，掛載名稱含空白或非 ASCII 時，解碼後的 Path 永遠比不中，Cookie 就不會被送回。
-    /// Secure 跟隨 request.IsHttps：寫死 true 在 HTTP 部署下會被瀏覽器靜默丟棄 Cookie，症狀是登入成功卻被打回登入頁。
+    /// Secure 跟隨連線是否為 HTTPS（見 <see cref="IsSecureConnection"/>）：寫死 true 在 HTTP 部署下
+    /// 會被瀏覽器靜默丟棄 Cookie，症狀是登入成功卻被打回登入頁、畫面與記錄檔都沒有錯誤。
     /// </summary>
     public static CookieOptions Options(HttpRequest request, DateTimeOffset? expires) =>
         new()
         {
             HttpOnly = true,
-            Secure = request.IsHttps,
+            Secure = IsSecureConnection(request),
             SameSite = SameSiteMode.Strict,
             Expires = expires,
             Path = request.PathBase.HasValue ? request.PathBase.ToUriComponent() : "/"
@@ -51,9 +52,21 @@ public static class AuthCookie
         response.Cookies.Delete(name, new CookieOptions
         {
             HttpOnly = true,
-            Secure = request.IsHttps,
+            Secure = IsSecureConnection(request),
             SameSite = SameSiteMode.Strict,
             Path = "/"
         });
     }
+
+    /// <summary>
+    /// 這次連線該不該掛 Secure 旗標。除了 <c>Request.IsHttps</c>，也認 <c>X-Forwarded-Proto</c>——
+    /// 反向代理（IIS ARR／Nginx）終止 TLS 後以 HTTP 轉發時 <c>IsHttps</c> 是 false，
+    /// 只看它會讓「使用者明明走 HTTPS」的 token cookie 少掉 Secure 旗標，是安全降級。
+    ///
+    /// 這個標頭未經 <c>UseForwardedHeaders</c> 驗證，但**偽造它只會讓 Secure 變成 true**
+    /// （更嚴格，攻擊者只能鎖住自己），不存在往寬鬆方向被利用的路徑，因此不需要 KnownProxies 名單。
+    /// </summary>
+    private static bool IsSecureConnection(HttpRequest request) =>
+        request.IsHttps ||
+        string.Equals(request.Headers["X-Forwarded-Proto"], "https", StringComparison.OrdinalIgnoreCase);
 }

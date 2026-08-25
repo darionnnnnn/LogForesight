@@ -595,6 +595,31 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
 
+### 登入不了時的診斷順序
+
+「帳號密碼確定正確卻登不進去」有好幾種成因，畫面上看起來都很像。照這個順序查最快：
+
+1. **畫面是否顯示「頁面資源載入失敗…」且登入鈕被停用**：是的話代表登入頁的 JS module
+   沒載入成功，開 F12 Console 看是哪一支 `js/` 檔 404 或 MIME 錯誤（子 Application 部署下
+   多半是靜態檔路徑或瀏覽器快取住舊檔）。此時密碼欄也不會出現。
+2. **F12 > Network 有沒有發出 `POST api/auth/login`**：沒有＝同上；
+   回 401＝帳號或密碼問題（往下第 4 步）；回 200 卻仍被打回登入頁＝往下第 3 步。
+3. **Cookie 沒被瀏覽器接受**：檢查回應的 `Set-Cookie lf_auth` 有沒有出現、旗標是否合理
+   （`Secure` 只在 HTTPS 或有 `X-Forwarded-Proto: https` 時才會加）。
+   站台每次登入／登出都會自動清掉舊版遺留的 `Path=/` cookie，正常不必請使用者手動清；
+   若 `Set-Cookie` 正常送出而瀏覽器仍不帶回，才需要清一次瀏覽器 cookie 排除殘留。
+4. **看 `logs/web.log`**：serverAdmin 的登入成功／密碼錯誤／鎖定都會留紀錄（站台「稽核查詢」
+   頁的 `login`／`login_failed` 是另一條獨立紀錄，兩邊都可查）。
+   兩邊都完全沒有紀錄＝請求根本沒到後端，回到第 1 步。
+5. **設定被覆寫**：環境變數 `Auth__ServerAdmin__PasswordHash` 的優先權**高於**
+   `appsettings.json`——部署時設過，改檔案就沒有效果。另確認 `ASPNETCORE_ENVIRONMENT`
+   不是 `Development`，否則 `appsettings.Development.json` 會蓋掉這組設定。
+6. **AD 未設定時一般帳號一律登入失敗**，訊息與密碼打錯完全相同（刻意不洩漏帳號是否存在）。
+   此時只有 serverAdmin 進得來；「系統管理 > 設定」的 AD 區塊會顯示目前是否生效。
+
+> `PasswordHash` 誤填**明文密碼**時，站台會在啟動時 fail fast 並指引改用 `--hash-password`
+> 產生雜湊——沒有這道檢查的話，症狀會是「密碼明明對卻一直說錯」。
+
 ### 以 IIS 子 Application 部署
 
 站台可以掛在 IIS 網站底下的 Application，網址帶前綴（`http://host/LogForesight/...`）：

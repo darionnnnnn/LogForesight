@@ -101,7 +101,7 @@ public static class ServiceCollectionExtensions
         // AdAuthEnabled 開啟時走設定頁的 AD 設定，否則落到下面的 fallback。
         // §12：AD 驗證的唯一事實來源是設定頁——appsettings 的 Auth:Ldap:Domain 與
         // LdapAuthenticationProvider 已退役，"Ad"（含舊值 "Ldap"）的 fallback 改為
-        // UnconfiguredAdAuthenticationProvider（明講「AD 尚未設定，請以 serverAdmin 登入後設定」）。
+        // UnconfiguredAdAuthenticationProvider（記錄檔載明「AD 尚未設定，請以 serverAdmin 登入後設定」）。
         services.AddSingleton<IAuthenticationProvider>(sp =>
         {
             IAuthenticationProvider fallback = settings.Auth.Provider.ToLowerInvariant() switch

@@ -28,6 +28,35 @@ public class AuthCookieTests
 
         Assert.True(options.Secure);
     }
+
+    /// <summary>反向代理終止 TLS 後以 HTTP 轉發時 IsHttps 是 false，只看它會讓走 HTTPS 的
+    /// 使用者拿到沒有 Secure 旗標的 token cookie——那是安全降級，必須認 X-Forwarded-Proto。</summary>
+    [Fact]
+    public void 反向代理轉發的HTTPS請求_Secure仍為True()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.IsHttps = false;
+        context.Request.Headers["X-Forwarded-Proto"] = "https";
+
+        Assert.True(AuthCookie.Options(context.Request, null).Secure);
+    }
+
+    /// <summary>刪除舊 Path=/ Cookie 是另一處手寫的 CookieOptions，Secure 判定必須與寫入端一致——
+    /// 不一致時 HTTP 部署下刪不掉舊 token，殘留的舊 token 會覆寫新 token，使用者重登也救不回來。</summary>
+    [Fact]
+    public void HTTP請求_刪除舊根路徑Cookie的Secure也為False()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.IsHttps = false;
+        context.Request.PathBase = "/LogForesight";
+
+        AuthCookie.Delete(context.Response, context.Request, "lf_auth");
+
+        var setCookies = context.Response.Headers["Set-Cookie"].ToString();
+        Assert.Contains("path=/LogForesight", setCookies, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path=/;", setCookies, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secure", setCookies, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public class PasswordHasherTests
