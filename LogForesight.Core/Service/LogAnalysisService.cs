@@ -185,6 +185,10 @@ public class LogAnalysisService
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
         var history = _historyService.ReadRecent(targetDate, historyDays);
 
+        // 殘留憑證重試判定（A3）：登入失敗若為機械性重複且跨日重現，標記為疑似殘留憑證重試並調降嚴重度，
+        // 必須在 TrendAnalyzer 之前執行，避免殘留憑證因頻率上升而被誤升為高風險日
+        ResidualCredentialDetector.Mark(issues, history, targetDate);
+
         // 總量抑制（回饋十五輪 A-1）：整體錯誤量／安全稽核事件量突增過去不掛任何簽章，
         // 結構上沒有抑制掛載點——TargetType=Volume 補上這個缺口。
         bool suppressErrorVolume = SuppressionFilter.HasVolumeSuppression(activeSuppressions, VolumeKinds.Error);

@@ -65,6 +65,13 @@ public class LogIssueSignature
     /// 依 (帳號, 來源, 登入類型, 失敗原因) 分組計數。非登入失敗簽章為 null。</summary>
     public List<LoginFailureDetail>? LoginFailureDetails { get; set; }
 
+    /// <summary>true = 此登入失敗簽章判定為「疑似殘留憑證重試」（機械性重複，非攻擊）。
+    /// 由 ResidualCredentialDetector 填入，判定依據見 ResidualCredentialBasis。</summary>
+    public bool ResidualCredentialRetry { get; set; }
+
+    /// <summary>殘留憑證重試的判定依據白話說明（供畫面與報告呈現），未命中為 null。</summary>
+    public string? ResidualCredentialBasis { get; set; }
+
     // 以下由 KnownIssueCatalog.Classify 填入
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public IssueCategory Category { get; set; } = IssueCategory.Other;
