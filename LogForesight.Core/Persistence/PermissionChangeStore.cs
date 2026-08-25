@@ -72,6 +72,7 @@ public class PermissionChangeStore
                 BeforeValue = change.Before ?? string.Empty,
                 AfterValue = change.After ?? string.Empty,
                 AlertText = change.AlertText ?? string.Empty,
+                RawText = change.RawText,
                 Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
                 EventId = change.EventId,
                 Status = PermissionConfirmStatuses.Pending
@@ -132,6 +133,7 @@ public class PermissionChangeStore
             BeforeValue = change.Before ?? string.Empty,
             AfterValue = change.After ?? string.Empty,
             AlertText = change.AlertText ?? string.Empty,
+            RawText = change.RawText,
             Source = string.IsNullOrWhiteSpace(change.Source) ? PermissionChangeSources.Local : change.Source,
             EventId = change.EventId,
             Status = PermissionConfirmStatuses.Pending
@@ -526,6 +528,7 @@ public class PermissionChangeStore
         Before = row.BeforeValue,
         After = row.AfterValue,
         AlertText = row.AlertText,
+        RawText = row.RawText,
         Source = row.Source,
         EventId = row.EventId,
         Category = row.Category,

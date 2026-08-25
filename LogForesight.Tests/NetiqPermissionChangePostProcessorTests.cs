@@ -155,6 +155,40 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
     }
 
     [Fact]
+    public void 寫入的事件訊息超過500字_AlertText截斷而RawText存全文()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var hostName = "SRV-DC02";
+        var eventTime = new DateTime(2026, 8, 25, 11, 0, 0);
+
+        // 真實的 4756 訊息後面還接著大段屬性清單，輕易超過 500 字
+        var longMessage = "已將成員新增到安全性通用群組 Enterprise Admins" + new string('屬', 900);
+
+        var events = new List<EventLogEntryData>
+        {
+            new()
+            {
+                EventId = 4756,
+                Source = "Microsoft-Windows-Security-Auditing",
+                LogName = "Security",
+                TimeGenerated = eventTime,
+                EntryType = EventLogEntryType.Information,
+                Message = longMessage
+            }
+        };
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Keys(), hostName, WebHost.OsWindows, events, eventTime.Date);
+
+        var record = store.Query(null, null, 1000)
+            .Single(c => string.Equals(c.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(record.AlertText.Length <= 503, $"AlertText 長度 {record.AlertText.Length} 應為截斷版");
+        Assert.Equal(longMessage, record.RawText);
+        Assert.True(record.RawText!.Length > record.AlertText.Length);
+    }
+
+    [Fact]
     public void 同一主機日重跑兩次_紀錄不重複()
     {
         using var fixture = new EfSqliteFixture();

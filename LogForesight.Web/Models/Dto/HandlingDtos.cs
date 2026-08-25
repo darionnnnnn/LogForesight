@@ -581,6 +581,11 @@ public class PermissionChangeDto
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>未截斷的原始事件訊息。升級前寫入的資料與彙總列為 null，
+    /// 此時展開明細只能退而顯示 500 字截斷版的 AlertText</summary>
+    public string? RawText { get; set; }
+
     public string SummaryText { get; set; } = string.Empty;
     public string Source { get; set; } = PermissionChangeSources.Local;
 

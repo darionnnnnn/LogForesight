@@ -26,7 +26,7 @@ public static class PermissionCategory
         [OwnerChange] = "擁有者變更",
         [FolderAccess] = "資料夾存取狀態",
         [AuditPolicy] = "稽核政策變更",
-        [Summary] = "權限異動彙總",
+        [Summary] = "例行同步彙總",
         [Other] = "其他"
     };
 
@@ -72,7 +72,10 @@ public static class PermissionCategory
             "擁有者變更" => OwnerChange,
             "無法存取" or "恢復可存取" => FolderAccess,
             "稽核政策變更" => AuditPolicy,
-            "權限異動（彙總）" => Summary,
+            // 兩個彙總字串都要認：現行寫入的是「例行同步（彙總）」
+            // （HostDayPostProcessor.RoutineSyncChangeType），舊字串則是既有資料列還在用的值。
+            // 只認舊字串時，任何走 Resolve 重新分類的路徑都會把彙總列誤歸成「其他」
+            "例行同步（彙總）" or "權限異動（彙總）" => Summary,
             _ => Other
         };
     }

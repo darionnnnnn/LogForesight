@@ -171,6 +171,8 @@ public static class HostDayPostProcessor
             foreach (var evt in matchingEvents)
             {
                 var changeType = PermissionChangeEventTypes[evt.EventId];
+                // AlertText 是清單與去重鍵用的 500 字截斷版（長度上限的來龍去脈見 LfDbContext 的 dedupe_key 註解）；
+                // 展開明細要看的完整原文另存 RawText（回饋二十八輪 P9）
                 var alertText = TextTruncation.Truncate(evt.Message ?? string.Empty, 500);
 
                 var details = PermissionChangeExtractor.Extract(
@@ -192,6 +194,7 @@ public static class HostDayPostProcessor
                     Before = details.Before,
                     After = details.After,
                     AlertText = alertText,
+                    RawText = evt.Message,
                     Source = PermissionChangeSources.Netiq,
                     EventId = evt.EventId
                 });
@@ -342,6 +345,7 @@ public static class HostDayPostProcessor
             TargetAccount = null,
             Before = string.Empty,
             After = string.Empty,
+            // 彙總列不存 RawText：它代表的是多則異動合併後的結果，沒有單一的原始訊息可對應
             AlertText =
                 $"本日偵測到 {pairCount} 對「成員新增＋成員移除」的對稱異動" +
                 $"（涉及 {pairing.GroupCount} 個群組、{pairing.AccountCount} 個帳號），未逐則列出。" +

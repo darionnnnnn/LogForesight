@@ -371,4 +371,61 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
         Assert.Equal(ApiErrorCodes.Conflict, ex.Code);
         Assert.Contains("已被其他使用者處理過", ex.Message);
     }
+
+    [Fact]
+    public void 超過500字的原始訊息_AlertText截斷而RawText保留全文()
+    {
+        // 展開明細要看完整原文（回饋二十八輪 P9），而清單與去重鍵仍用 500 字截斷版
+        var changeId = Guid.NewGuid().ToString("N");
+        var fullText = new string('事', 1200);
+
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = changeId,
+                HostName = "SRV-DC01",
+                DetectedAt = new DateTime(2026, 8, 25, 9, 0, 0),
+                Target = "Domain Admins",
+                ChangeType = "成員新增",
+                AlertText = fullText[..500],
+                RawText = fullText,
+                Source = PermissionChangeSources.Netiq,
+                EventId = 4756
+            }
+        });
+
+        var fetched = _store.Get(changeId);
+
+        Assert.NotNull(fetched);
+        Assert.Equal(500, fetched!.AlertText.Length);
+        Assert.Equal(1200, fetched.RawText!.Length);
+        Assert.Equal(fullText, fetched.RawText);
+    }
+
+    [Fact]
+    public void 未提供RawText的異動_讀回為null()
+    {
+        // 升級前寫入的資料與彙總列都是這種情形，不回填
+        var changeId = Guid.NewGuid().ToString("N");
+
+        _store.AppendChanges(new[]
+        {
+            new PermissionChangeRecord
+            {
+                ChangeId = changeId,
+                HostName = "SRV-DC01",
+                DetectedAt = new DateTime(2026, 8, 25, 9, 30, 0),
+                Target = "SRV-DC01（例行同步）",
+                ChangeType = "例行同步（彙總）",
+                AlertText = "本日偵測到 60 對對稱異動",
+                Source = PermissionChangeSources.Netiq
+            }
+        });
+
+        var fetched = _store.Get(changeId);
+
+        Assert.NotNull(fetched);
+        Assert.Null(fetched!.RawText);
+    }
 }

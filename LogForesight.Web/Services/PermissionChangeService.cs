@@ -478,6 +478,7 @@ public class PermissionChangeService
             Before = change.Before,
             After = change.After,
             AlertText = change.AlertText,
+            RawText = change.RawText,
             SummaryText = GenerateSummaryText(change),
             ObjectType = change.ObjectType,
             ProcessName = change.ProcessName,

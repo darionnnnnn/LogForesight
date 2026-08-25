@@ -162,6 +162,10 @@ internal static class SchemaUpgrader
             isSqlite ? "TEXT NULL" : "datetime2 NULL");
         AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "pair_count",
             isSqlite ? "INTEGER NULL" : "int NULL");
+
+        // 未截斷的原始事件訊息（回饋二十八輪 P9）。只對升級後新寫入的列有值，既有列維持 null、不回填
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "raw_text",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
     }
 
 
