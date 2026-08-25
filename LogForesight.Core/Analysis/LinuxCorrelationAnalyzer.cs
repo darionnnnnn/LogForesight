@@ -28,28 +28,6 @@ internal static class LinuxCorrelationAnalyzer
     /// （硬編，不去讀規則表）。</summary>
     private const int HeavyBruteforceThreshold = 10;
 
-    /// <summary>
-    /// 失敗登入樣本格式（診斷輪 B 第四次 probe，8g，2026-08-07 真實樣本）：
-    /// <c>Failed password for invalid user 1838651 from 10.225.2.219 port 54500 ssh2</c>。
-    /// <c>invalid user </c> 是可選段（無效帳號才有，合法帳號密碼打錯不會有這段）。
-    /// **不錨定行首**——輪 B 實證部分 sshd 事件的 msg 沒有 <c>program[pid]:</c> 前綴
-    /// （<see cref="SentinelEventMapper"/> 保留原文，前綴存在與否不影響這裡的比對）。
-    /// </summary>
-    private static readonly Regex FailedPasswordRegex = new(
-        @"Failed password for (?:invalid user )?(?<user>\S+) from (?<ip>\d{1,3}(?:\.\d{1,3}){3}) port \d+",
-        RegexOptions.Compiled);
-
-    /// <summary>
-    /// 成功登入樣本格式：OpenSSH 上游標準模板。四輪 probe 皆未直接取樣到這一行（8f 只見
-    /// pam_unix session opened／SFTP opendir 這類周邊訊息）——若此環境的 sshd LogLevel
-    /// 設定不記錄 Accepted 行，這條 regex 永遠比對不到、<see cref="SshAcceptRuleId"/> 簽章
-    /// 恆零，關聯因此永不觸發：這是**誠實的沉默**（沒有可信資料就不下結論），不是誤報，
-    /// 試點階段用真實環境核對即可，不值得為了這一行再跑一輪 probe。
-    /// </summary>
-    private static readonly Regex AcceptedRegex = new(
-        @"Accepted (?:password|publickey) for (?<user>\S+) from (?<ip>\d{1,3}(?:\.\d{1,3}){3}) port \d+",
-        RegexOptions.Compiled);
-
     /// <param name="issues">已聚合分類的當日簽章（判斷是否達門檻用 Count，不逐事件解析）。</param>
     /// <param name="logs">當日原始事件（regex 逐事件解析帳號/IP 用；聚合後的 SampleMessages
     /// 只留 3 則，涵蓋不了整批事件的帳號/IP 交集判定）。</param>
@@ -69,8 +47,8 @@ internal static class LinuxCorrelationAnalyzer
         var bruteforceEvents = FilterByEventKey(logs, SshBruteforceRuleId);
         var acceptEvents = FilterByEventKey(logs, SshAcceptRuleId);
 
-        var (bruteforceMatches, bruteforceParseFailures) = ExtractMatches(bruteforceEvents, FailedPasswordRegex);
-        var (acceptMatches, acceptParseFailures) = ExtractMatches(acceptEvents, AcceptedRegex);
+        var (bruteforceMatches, bruteforceParseFailures) = ExtractMatches(bruteforceEvents, LinuxAuthParser.FailedPasswordRegex);
+        var (acceptMatches, acceptParseFailures) = ExtractMatches(acceptEvents, LinuxAuthParser.AcceptedRegex);
 
         var bruteforceUsers = bruteforceMatches.Select(m => m.User).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var bruteforceIps = bruteforceMatches.Select(m => m.Ip).ToHashSet();

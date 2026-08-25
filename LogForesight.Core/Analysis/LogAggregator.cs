@@ -158,9 +158,7 @@ internal static class LogAggregator
                     KeyDetails = ShouldExtractKeyDetails(g.Key.LogName)
                         ? ExtractSecurityDetails(g.Select(e => e.Message))
                         : null,
-                    LoginFailureDetails = IsLoginFailureEvent(g.Key.EventId)
-                        ? ExtractLoginFailureDetails(g.Key.EventId, g.Select(e => e.Message))
-                        : null
+                    LoginFailureDetails = ExtractLoginFailureDetailsForGroup(g.Key, g.Select(e => e.Message))
                 };
             })
             .ToList();
@@ -369,17 +367,33 @@ internal static class LogAggregator
         }
     }
 
+    private static List<LoginFailureDetail>? ExtractLoginFailureDetailsForGroup(
+        (string LogName, string Source, int EventId, EventLogEntryType EntryType, string EventKey) key,
+        IEnumerable<string> rawMessages)
+    {
+        if (key.LogName.Equals(LinuxLogName, StringComparison.OrdinalIgnoreCase))
+        {
+            return LinuxAuthParser.LoginFailureRuleIds.Contains(key.EventKey)
+                ? ExtractLinuxLoginFailureDetails(rawMessages)
+                : null;
+        }
+
+        return IsLoginFailureEvent(key.EventId)
+            ? ExtractLoginFailureDetails(key.EventId, rawMessages)
+            : null;
+    }
+
     /// <summary>
-    /// 從登入失敗事件的多筆原始訊息彙總結構化明細，依 (Account, Source, LogonType, ReasonCode) 分組計數，
-    /// 依 Count 降冪排序，最多保留 50 筆。
+    /// 將多筆登入失敗明細依 (Account, Source, LogonType, ReasonCode) 分組計數，
+    /// 帳號與來源比對不分大小寫，依 Count 降冪排序，最多保留 50 筆。
+    /// Windows 與 Linux 共用此分組邏輯。
     /// </summary>
-    public static List<LoginFailureDetail> ExtractLoginFailureDetails(int eventId, IEnumerable<string> rawMessages)
+    private static List<LoginFailureDetail> GroupAndAggregateFailureDetails(IEnumerable<LoginFailureDetail> details)
     {
         var groups = new Dictionary<(string AccountKey, string SourceKey, int? LogonType, string ReasonCode), LoginFailureDetail>();
 
-        foreach (var message in rawMessages)
+        foreach (var detail in details)
         {
-            var detail = ExtractLoginFailureDetail(eventId, message);
             var key = (
                 detail.Account.ToUpperInvariant(),
                 detail.Source.ToUpperInvariant(),
@@ -389,7 +403,7 @@ internal static class LogAggregator
 
             if (groups.TryGetValue(key, out var existing))
             {
-                existing.Count++;
+                existing.Count += detail.Count;
             }
             else
             {
@@ -400,7 +414,7 @@ internal static class LogAggregator
                     Source = detail.Source,
                     LogonType = detail.LogonType,
                     ReasonCode = detail.ReasonCode,
-                    Count = 1
+                    Count = detail.Count
                 };
             }
         }
@@ -410,6 +424,39 @@ internal static class LogAggregator
             .Take(50)
             .ToList();
     }
+
+    /// <summary>
+    /// 從 Linux 登入/認證失敗事件的多筆原始訊息抽取結構化明細（A2）。
+    /// 依 (Account, Source, LogonType, ReasonCode) 分組計數，依 Count 降冪排序，最多保留 50 筆。
+    /// </summary>
+    public static List<LoginFailureDetail> ExtractLinuxLoginFailureDetails(IEnumerable<string> rawMessages)
+    {
+        var items = new List<LoginFailureDetail>();
+        foreach (var message in rawMessages)
+        {
+            if (LinuxAuthParser.TryParseAuthFailure(message, out var user, out var ip, out var reasonCode))
+            {
+                items.Add(new LoginFailureDetail
+                {
+                    Account = user,
+                    IsComputerAccount = false,
+                    Source = ip,
+                    LogonType = null,
+                    ReasonCode = reasonCode,
+                    Count = 1
+                });
+            }
+        }
+
+        return GroupAndAggregateFailureDetails(items);
+    }
+
+    /// <summary>
+    /// 從登入失敗事件的多筆原始訊息彙總結構化明細，依 (Account, Source, LogonType, ReasonCode) 分組計數，
+    /// 依 Count 降冪排序，最多保留 50 筆。
+    /// </summary>
+    public static List<LoginFailureDetail> ExtractLoginFailureDetails(int eventId, IEnumerable<string> rawMessages) =>
+        GroupAndAggregateFailureDetails(rawMessages.Select(m => ExtractLoginFailureDetail(eventId, m)));
 
     private static string Normalize4625ReasonCode(string raw)
     {

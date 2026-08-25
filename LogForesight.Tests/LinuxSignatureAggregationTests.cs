@@ -330,4 +330,248 @@ public class LinuxSignatureAggregationTests : IDisposable
         Assert.All(bruteforceEvents, e => Assert.Contains("Failed password", e.Message));
         Assert.All(acceptEvents, e => Assert.Contains("Accepted password", e.Message));
     }
+
+    // ── LinuxAuthParser / LogAggregator：Linux 登入失敗明細抽取（A2） ────────────
+
+    [Fact]
+    public void 解析sshd密碼錯誤訊息()
+    {
+        var msg = "Failed password for alice from 10.0.0.5 port 22 ssh2";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("alice", user);
+        Assert.Equal("10.0.0.5", ip);
+        Assert.Equal("bad_password", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sshd", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("alice", detail.Account);
+        Assert.False(detail.IsComputerAccount);
+        Assert.Equal("10.0.0.5", detail.Source);
+        Assert.Null(detail.LogonType);
+        Assert.Equal("bad_password", detail.ReasonCode);
+        Assert.Equal(1, detail.Count);
+    }
+
+    [Fact]
+    public void 解析sshd無效帳號密碼錯誤訊息()
+    {
+        var msg = "Failed password for invalid user 1838651 from 10.225.2.219 port 54500 ssh2";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("1838651", user);
+        Assert.Equal("10.225.2.219", ip);
+        Assert.Equal("unknown_user", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sshd", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("1838651", detail.Account);
+        Assert.Equal("10.225.2.219", detail.Source);
+        Assert.Equal("unknown_user", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 解析sshd獨立InvalidUser行()
+    {
+        var msg = "Invalid user admin from 10.0.0.5 port 22";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("admin", user);
+        Assert.Equal("10.0.0.5", ip);
+        Assert.Equal("unknown_user", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sshd", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("admin", detail.Account);
+        Assert.Equal("10.0.0.5", detail.Source);
+        Assert.Equal("unknown_user", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 解析pam_unix_sshd認證失敗訊息取user而非ruser()
+    {
+        var msg = "pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=10.0.0.5 user=root";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("root", user);
+        Assert.Equal("10.0.0.5", ip);
+        Assert.Equal("bad_password", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sshd", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("root", detail.Account);
+        Assert.Equal("10.0.0.5", detail.Source);
+        Assert.Equal("bad_password", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 解析pam_unix_sudo認證失敗訊息rhost為空時ip為空字串()
+    {
+        var msg = "pam_unix(sudo:auth): authentication failure; logname=alice uid=1000 euid=0 tty=/dev/pts/0 ruser=alice rhost= user=alice";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("alice", user);
+        Assert.Equal(string.Empty, ip);
+        Assert.Equal("bad_password", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sudo", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("alice", detail.Account);
+        Assert.Equal(string.Empty, detail.Source);
+        Assert.Equal("bad_password", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 解析pam_unix_su認證失敗訊息取user而非ruser()
+    {
+        var msg = "pam_unix(su:auth): authentication failure; logname=alice uid=1000 euid=0 tty=/dev/pts/1 ruser=alice rhost= user=root";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("root", user);
+        Assert.Equal(string.Empty, ip);
+        Assert.Equal("bad_password", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("su", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("root", detail.Account);
+        Assert.Equal(string.Empty, detail.Source);
+        Assert.Equal("bad_password", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 解析sudo_incorrect_password_attempt訊息()
+    {
+        var msg = "alice : 1 incorrect password attempt ; TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/ls";
+        var success = LinuxAuthParser.TryParseAuthFailure(msg, out var user, out var ip, out var reasonCode);
+
+        Assert.True(success);
+        Assert.Equal("alice", user);
+        Assert.Equal(string.Empty, ip);
+        Assert.Equal("bad_password", reasonCode);
+
+        var logs = new List<EventLogEntryData> { MakeLinuxEntry("sudo", msg) };
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.NotNull(sig.LoginFailureDetails);
+        var detail = Assert.Single(sig.LoginFailureDetails);
+        Assert.Equal("alice", detail.Account);
+        Assert.Equal(string.Empty, detail.Source);
+        Assert.Equal("bad_password", detail.ReasonCode);
+    }
+
+    [Fact]
+    public void 完全不符合任何樣式的訊息不產生明細且簽章Count不受影響()
+    {
+        var unparseableMsg = "sshd: some unparseable authentication failure message";
+        var success = LinuxAuthParser.TryParseAuthFailure(unparseableMsg, out var user, out var ip, out var reasonCode);
+
+        Assert.False(success);
+        Assert.Equal(string.Empty, user);
+        Assert.Equal(string.Empty, ip);
+        Assert.Equal(string.Empty, reasonCode);
+
+        var logs = new List<EventLogEntryData>
+        {
+            MakeLinuxEntry("sshd", unparseableMsg),
+            MakeLinuxEntry("sshd", unparseableMsg)
+        };
+
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.Equal("builtin-linux-ssh-bruteforce", sig.EventKey);
+        Assert.Equal(2, sig.Count);
+        Assert.NotNull(sig.LoginFailureDetails);
+        Assert.Empty(sig.LoginFailureDetails);
+    }
+
+    [Fact]
+    public void 同一帳號與IP多次出現合併為一筆且Count正確()
+    {
+        var logs = new List<EventLogEntryData>
+        {
+            MakeLinuxEntry("sshd", "Failed password for alice from 10.0.0.5 port 22 ssh2"),
+            MakeLinuxEntry("sshd", "Failed password for ALICE from 10.0.0.5 port 23 ssh2"),
+            MakeLinuxEntry("sshd", "Failed password for bob from 10.0.0.6 port 22 ssh2")
+        };
+
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.Equal(3, sig.Count);
+        Assert.NotNull(sig.LoginFailureDetails);
+        Assert.Equal(2, sig.LoginFailureDetails.Count);
+
+        var alice = sig.LoginFailureDetails[0];
+        Assert.Equal("alice", alice.Account);
+        Assert.Equal("10.0.0.5", alice.Source);
+        Assert.Equal(2, alice.Count);
+        Assert.Equal("bad_password", alice.ReasonCode);
+
+        var bob = sig.LoginFailureDetails[1];
+        Assert.Equal("bob", bob.Account);
+        Assert.Equal("10.0.0.6", bob.Source);
+        Assert.Equal(1, bob.Count);
+        Assert.Equal("bad_password", bob.ReasonCode);
+    }
+
+    [Fact]
+    public void 非登入失敗的Linux簽章其LoginFailureDetails為null()
+    {
+        var logs = new List<EventLogEntryData>
+        {
+            MakeLinuxEntry("kernel", "EXT4-fs error (device sda1): ext4_lookup: deleted inode referenced: 12345")
+        };
+
+        var sig = Assert.Single(LogAggregator.Aggregate(logs));
+        Assert.Equal("builtin-linux-storage-io", sig.EventKey);
+        Assert.Null(sig.LoginFailureDetails);
+    }
+
+    [Fact]
+    public void Linux登入失敗明細超過50組時最多保留50筆且依Count降冪排序()
+    {
+        var msgs = new List<string>();
+        for (int i = 1; i <= 60; i++)
+        {
+            int count = (i == 1) ? 5 : 1;
+            for (int j = 0; j < count; j++)
+            {
+                msgs.Add($"Failed password for user{i} from 10.0.0.{i} port 22 ssh2");
+            }
+        }
+
+        var details = LogAggregator.ExtractLinuxLoginFailureDetails(msgs);
+
+        Assert.Equal(50, details.Count);
+        Assert.Equal("user1", details[0].Account);
+        Assert.Equal(5, details[0].Count);
+
+        for (int i = 0; i < details.Count - 1; i++)
+        {
+            Assert.True(details[i].Count >= details[i + 1].Count);
+        }
+    }
+
+    [Fact]
+    public void LoginFailureRuleIds集合包含三個預期規則Id()
+    {
+        Assert.Contains("builtin-linux-ssh-bruteforce", LinuxAuthParser.LoginFailureRuleIds);
+        Assert.Contains("builtin-linux-sudo-auth-failure", LinuxAuthParser.LoginFailureRuleIds);
+        Assert.Contains("builtin-linux-su-auth-failure", LinuxAuthParser.LoginFailureRuleIds);
+        Assert.Equal(3, LinuxAuthParser.LoginFailureRuleIds.Count);
+    }
 }
