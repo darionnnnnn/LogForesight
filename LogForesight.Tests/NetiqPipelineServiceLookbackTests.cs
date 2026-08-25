@@ -95,67 +95,24 @@ public class NetiqPipelineServiceLookbackTests
         Assert.Equal(expectValid, ok);
     }
 
-    /// <summary>驗證 2：BackfillDays 在天花板內、但超過目前 RetentionDays → 回 400，訊息含上限數字與說明</summary>
+    /// <summary>驗證 2：BackfillDays 在天花板內、但超過目前 RetentionDays → 回 400，訊息含上限數字與說明。
+    /// 直接測抽出的驗證方法：先前為了建構整個 controller 而在正式碼加了恆真的 null 分支，
+    /// 「通過」的斷言實際上來自常數——那是測試假通過，已改揉。</summary>
     [Fact]
-    public async Task TriggerRun_BackfillDays超過RetentionDays時回傳400且訊息含上限數字()
+    public void ValidateBackfillDays_超過RetentionDays時拒絕且訊息含上限數字()
     {
-        using var fixture = new EfSqliteFixture();
-        var settingsStore = new FakeSystemSettingsStore();
-        settingsStore.Update(s => s.RetentionDays = 180);
-        var optionsStore = new ScheduleOptionsStore(fixture.Blob("schedule_options_test1"));
-        var hosts = new FakeHostStore();
-        var sentinel = new Sentinel { SentinelId = 1, Name = "S1", BaseUrl = "https://x", Username = "u", PasswordEnc = "p", Active = true };
-        hosts.Upsert(new WebHost { HostId = 1, HostName = "host1", IpAddress = "10.0.0.1", Os = WebHost.OsWindows, SentinelId = 1, NetiqServer = "S1", Source = "netiq", Active = true });
-        var sentinels = new FakeSentinelStore();
-        sentinels.Upsert(sentinel);
-
-        var controller = new ScheduleController(
-            optionsStore,
-            scheduler: null!,
-            runState: new SchedulerRunState(),
-            hosts: hosts,
-            sentinels: sentinels,
-            audit: new RecordingAuditService(),
-            currentUser: new FakeCurrentUser(),
-            users: new FakeUserStore(),
-            records: null!,
-            settingsStore: settingsStore);
-
-        var ex = await Assert.ThrowsAsync<DomainException>(() =>
-            controller.Run(new TriggerRunRequest { Scope = "all", BackfillDays = 200 }));
+        var ex = Assert.Throws<DomainException>(() => ScheduleController.ValidateBackfillDays(200, retentionDays: 180));
 
         Assert.Contains("180", ex.Message);
         Assert.Contains("超過保留天數的回補資料會在下次清理時被刪除", ex.Message);
     }
 
-    /// <summary>驗證 3：BackfillDays 等於 RetentionDays → 通過</summary>
+    /// <summary>驗證 3：BackfillDays 等於 RetentionDays → 通過；未指定也通過</summary>
     [Fact]
-    public async Task TriggerRun_BackfillDays等於RetentionDays時通過()
+    public void ValidateBackfillDays_等於上限或未指定時通過()
     {
-        using var fixture = new EfSqliteFixture();
-        var settingsStore = new FakeSystemSettingsStore();
-        settingsStore.Update(s => s.RetentionDays = 180);
-        var optionsStore = new ScheduleOptionsStore(fixture.Blob("schedule_options_test2"));
-        var hosts = new FakeHostStore();
-        var sentinel = new Sentinel { SentinelId = 1, Name = "S1", BaseUrl = "https://x", Username = "u", PasswordEnc = "p", Active = true };
-        hosts.Upsert(new WebHost { HostId = 1, HostName = "host1", IpAddress = "10.0.0.1", Os = WebHost.OsWindows, SentinelId = 1, NetiqServer = "S1", Source = "netiq", Active = true });
-        var sentinels = new FakeSentinelStore();
-        sentinels.Upsert(sentinel);
-
-        var controller = new ScheduleController(
-            optionsStore,
-            scheduler: null!,
-            runState: new SchedulerRunState(),
-            hosts: hosts,
-            sentinels: sentinels,
-            audit: new RecordingAuditService(),
-            currentUser: new FakeCurrentUser(),
-            users: new FakeUserStore(),
-            records: null!,
-            settingsStore: settingsStore);
-
-        var result = await controller.Run(new TriggerRunRequest { Scope = "all", BackfillDays = 180 });
-        Assert.True(result.Data!.Started);
+        ScheduleController.ValidateBackfillDays(180, retentionDays: 180);
+        ScheduleController.ValidateBackfillDays(null, retentionDays: 180);
     }
 
     /// <summary>驗證 4：去重鍵查詢起點依實際回望天數推算（例如回望 5 天 → 起點是 12 天前），不隨絕對上限常數改變</summary>

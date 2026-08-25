@@ -298,6 +298,8 @@ function renderHeader(detail) {
     body.appendChild(top);
 
     // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
+    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
     // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
     const textParts = [];
     if (detail.headline) textParts.push({ headline: true, text: detail.headline });

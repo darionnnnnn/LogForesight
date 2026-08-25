@@ -78,6 +78,8 @@ export function headerWithHelp(title, content, popoverTitle) {
  * @param {string} content 說明文字
  */
 export function applyBackfillDaysLimit(inputElOrId, helpElOrId, maxDays, content) {
+    // maxDays 缺值（舊 API 回應、欄位漏帶）時不動 max 也不換文案——
+    // 寧可沒有前端上限也不寫死一個猜測值；後端仍會以有效上限驗證並回 400
     if (!maxDays) return;
     const input = typeof inputElOrId === 'string' ? document.getElementById(inputElOrId) : inputElOrId;
     if (input) {

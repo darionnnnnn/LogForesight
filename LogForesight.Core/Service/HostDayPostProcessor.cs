@@ -261,7 +261,7 @@ public static class HostDayPostProcessor
 
     /// <summary>例行同步彙總列的異動類型；去重鍵用的固定字串也是它（不含對數，對數變動時
     /// 更新既有列而不是長出第二筆）。</summary>
-    internal const string RoutineSyncChangeType = "例行同步（彙總）";
+    internal const string RoutineSyncChangeType = PermissionCategory.RoutineSyncChangeType;
 
     /// <summary>例行同步彙總列的去重鍵：**不含對數**——含了的話對數一變就會長出第二筆，
     /// 而不是更新既有那筆。</summary>

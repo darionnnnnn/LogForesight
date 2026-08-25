@@ -867,6 +867,13 @@ public class AnalysisOrchestrator
             {
                 netiqOptions.BackfillDays = backfillOverride;
             }
+            // 回望天數的有效上限＝目前的保留天數（超過保留期的回補下輪就被清掉，白跑）。
+            // Web 端儲存與觸發時都驗證過，但這條路徑直接讀 blob——blob 裡若存著舊的大值、
+            // 或 RetentionDays 事後被調小，不在這裡夾住就會回望超過保留期，
+            // 連帶讓去重鍵的查詢窗口跨到同樣的天數。
+            netiqOptions.BackfillDays = Math.Min(
+                netiqOptions.BackfillDays,
+                NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
             var netiqPipeline = new NetiqPipelineService(
                 backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,

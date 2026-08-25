@@ -26,6 +26,8 @@ export function rangeFromDays(days) {
  * 把自己標成 active，再呼叫 onApply。
  *
  * fromInput／toInput 傳 null 時不填欄位（儀表板只用天數、沒有日期欄）。
+ * markActive 只有儀表板傳 true：有日期欄的頁面（問題查詢／報表／權限異動檢核）
+ * 刻意不標選中態——使用者點完快捷後可能手動微調日期，殘留的 active 會變成說謊。
  */
 export function bindRangeChips({ container = document, fromInput, toInput, onApply, markActive = false }) {
     const buttons = [...container.querySelectorAll('[data-range]')];

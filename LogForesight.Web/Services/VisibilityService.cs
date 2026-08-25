@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 
 namespace LogForesight.Web.Services;

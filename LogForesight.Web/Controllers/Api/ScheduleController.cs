@@ -179,19 +179,24 @@ public class ScheduleController : ControllerBase
         });
     }
 
+    /// <summary>回望天數的有效上限驗證：超過目前保留天數回 400，不靜默 clamp。
+    /// 抽成靜態方法讓測試能單獨驗證邊界，不必為了建構整個 controller 而在正式碼塞遷就替身的分支</summary>
+    internal static void ValidateBackfillDays(int? backfillDays, int retentionDays)
+    {
+        if (backfillDays is not { } days) return;
+        var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(retentionDays);
+        if (days > effectiveLimit)
+        {
+            throw DomainException.Validation(
+                $"回望天數（{days} 天）不可超過歷史資料保留天數（{effectiveLimit} 天），超過保留天數的回補資料會在下次清理時被刪除。");
+        }
+    }
+
     [HttpPost("run")]
     [Permission(Capability.Maintain)]
     public async Task<ApiResponse<TriggerRunResultDto>> Run([FromBody] TriggerRunRequest request)
     {
-        if (request.BackfillDays is { } backfillDays)
-        {
-            var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays);
-            if (backfillDays > effectiveLimit)
-            {
-                throw DomainException.Validation(
-                    $"回望天數（{backfillDays} 天）不可超過歷史資料保留天數（{effectiveLimit} 天），超過保留天數的回補資料會在下次清理時被刪除。");
-            }
-        }
+        ValidateBackfillDays(request.BackfillDays, _settingsStore.Get().RetentionDays);
 
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
@@ -215,7 +220,7 @@ public class ScheduleController : ControllerBase
             targetKind: "schedule",
             detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays, request.OnlyMissingOrFailed });
 
-        var started = _scheduler != null ? await _scheduler.TriggerRunAsync(runRequest) : true;
+        var started = await _scheduler.TriggerRunAsync(runRequest);
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
         {
             Started = started,

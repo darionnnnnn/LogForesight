@@ -860,11 +860,16 @@ function detailView(change) {
         const rawLabel = document.createElement('div');
         rawLabel.className = 'small text-muted mb-1';
         const isSummaryRow = change.coveredFrom != null && change.coveredTo != null;
+        // 本機監控的異動由快照比對產生，本來就沒有事件原文可存——
+        // 不能把「無 rawText」一律歸因於升級前寫入，那個標註對本機來源會說謊
+        const isLocalSource = change.source === '本機監控';
         rawLabel.textContent = rawText !== ''
             ? '原始訊息'
             : isSummaryRow
                 ? '原始訊息（彙總列由多則異動合併，沒有單一原文，以下為合併說明）'
-                : '原始訊息（僅存前 500 字，此為本次升級前寫入的資料）';
+                : isLocalSource
+                    ? '原始訊息（本機監控由快照比對產生，沒有事件原文，以下為告警文字）'
+                    : '原始訊息（僅存前 500 字，此為本次升級前寫入的資料）';
         rawWrap.appendChild(rawLabel);
 
         const rawBody = document.createElement('div');

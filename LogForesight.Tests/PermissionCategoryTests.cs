@@ -154,12 +154,10 @@ public class PermissionCategoryTests
     }
 
     [Fact]
-    public void 彙總類別的標籤與實際的異動類型一致()
+    public void 寫入端的彙總字串與Resolve往返一致()
     {
-        // 標籤曾經是「權限異動彙總」，但寫入的 change_type 是「例行同步（彙總）」，
-        // 兩者語意不一致（回饋二十八輪 P9）
-        var labels = PermissionCategory.GetAllLabels();
-
-        Assert.Equal("例行同步彙總", labels[PermissionCategory.Summary]);
+        // 驗證的是「寫入端用的字串確實被 Resolve 認得」這件事本身，
+        // 而不是把標籤字面值再抄一遍（那種斷言永遠綠，抓不到兩邊不一致）
+        Assert.Equal(PermissionCategory.Summary, PermissionCategory.Resolve(HostDayPostProcessor.RoutineSyncChangeType));
     }
 }

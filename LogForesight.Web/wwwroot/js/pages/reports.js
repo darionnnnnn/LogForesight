@@ -18,7 +18,7 @@ import { appUrl } from '../core/paths.js';
 import { statCard, toast } from '../core/ui.js';
 import {
     formatNumber, CATEGORY_NAMES, severityName, SEVERITY_ORDER, analysisAnchorLocal,
-    issueBaselineText
+    issueBaselineText, toLocalDateString
 } from '../core/format.js';
 import * as charts from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
@@ -819,12 +819,15 @@ function updateYoyOptionLabel() {
     const to = document.getElementById('report-to').value;
     if (retentionDays == null || !to) { option.textContent = base; return; }
 
+    // 兩邊都正規化成本地日期字串再比：new Date('YYYY-MM-DD') 是 UTC 午夜、
+    // new Date() 帶當下時分，直接比對會在邊界日與後端的純日期判定分岐
     const retentionLine = new Date();
     retentionLine.setDate(retentionLine.getDate() - retentionDays);
     const yoyTo = new Date(to);
     yoyTo.setFullYear(yoyTo.getFullYear() - 1);
 
-    option.textContent = yoyTo < retentionLine ? `${base}（超出保留期）` : base;
+    const outOfRetention = toLocalDateString(yoyTo) < toLocalDateString(retentionLine);
+    option.textContent = outOfRetention ? `${base}（超出保留期）` : base;
 }
 
 function updateDefaultCompare() {

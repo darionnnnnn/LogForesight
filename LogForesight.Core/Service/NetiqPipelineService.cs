@@ -259,8 +259,8 @@ public class NetiqPipelineService
     /// 回望窗口與趨勢基線窗口是兩件不同的事，上限夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（或指定的有效上限），
     /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
-    internal static int ResolveLookbackDays(int backfillDays, int maxLimit = NetiqOptions.MaxBackfillDaysLimit) =>
-        Math.Clamp(backfillDays, 0, maxLimit);   // 0＝不回望（既有語意）
+    internal static int ResolveLookbackDays(int backfillDays) =>
+        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）；有效上限由呼叫端先夾（AnalysisOrchestrator）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的

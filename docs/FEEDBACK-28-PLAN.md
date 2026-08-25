@@ -320,6 +320,11 @@ B2（CSS 基準）→ D1/D2/D3（吃 B2 的基準）→ A → C → E → F → 
 | C1 回望上限動態化 | agy（2 輪）＋Claude 收尾 | 通過 | 2558 綠（+14） | agy 補上規格漏列的第三處回望輸入框（主機詳情「立即更新」modal），正確。首輪把 `ISystemSettingsStore` 寫成可選參數＋`?? DefaultRetentionDays` 重複六處（測試會拿 fallback、測不到真實設定），前端「設 max＋重建 popover」樣板複製三份；回饋後改必填、抽 `applyBackfillDaysLimit` 進 `core/ui.js`。連帶修正 `VisibilityService`：問題負責人可見範圍原本在依賴缺席時退回出廠預設，A1 把預設由 120 改 180 後會讓測試與正式環境分岔。Claude 清掉改必填後恆真的 null 判斷。agy 剝掉六個檔的 BOM，已還原 |
 | B1 比對前期三缺口 | Claude | 通過 `6b4b53d` | 2567 綠（+2）；瀏覽器實測四項行為（部分超出提示、200 天區間不再自動切 yoy、偽造保留 730 時正確切 yoy、選項標註） | 補做前重核對後修訂了門檻方向：原契約是「區間超過保留天數就不自動切 yoy」，改為更根本的「只有保留天數足以涵蓋去年同期才切」——前者在保留 180 的站台仍會在 179 天區間切到全空的 yoy。實作時另發現常數放在檔案中段有 TDZ 風險（目前執行順序安全但易踩雷），已移到頂部 |
 
-### 待續
-
-D3（出現密度置中）之後，依建議順序進行 A → C → E → F → G → H → I → J → K。
+| I1 AI 產出接渲染 | agy（1 輪） | 通過 `dc0ba75` | 三處改接 renderAiInline；標籤維持純文字 | 刻意用 inline 而非區塊版（prompt 要求散文短句），終檢後已補決策註解 |
+| K1 儀表板佈局 | agy（1 輪） | 通過 `ce903da` | KPI 七卡含未回報主機；群組風險 6／6；console 無錯 | agy 執行超時久但結果完整；連帶清理三處殘留引用都有做到 |
+| F1 全站改名 | Claude（agy 20 分鐘零改動後終止接手） | 通過 `44cb656` | 26 處 21 檔；儀表板「待確認」未誤改；route 不動 | 純字串替換不適合委派，腳本三分鐘完成且 BOM 逐檔保留 |
+| F2 RawText 全文＋類別修正 | Claude（agy 同症狀終止，只留下模型欄位一段） | 通過 `720eee0` | 2565 綠（+5）；兩後端 migration 走既有 SchemaUpgrader | 終檢抓到本機監控寫入端沒存 RawText——實查後確認本機來源是快照比對、本來就沒有事件原文，修法是前端文案分流而非後端補存 |
+| F3 原始訊息區塊 | Claude | 通過 `eb02e07` | 三樣態實測；`<script>` 純文字呈現 | 終檢後補第四樣態（本機監控） |
+| G／H 規則頁 icon＋log 切檔 | Claude | 通過 `40f5983` | 實測 logs/ 產生日期化檔且 error 分流正確 | 終檢推翻 H 首版方案：`${shortdate}` 入檔名時主檔永不進歸檔、保留天數管不到，改標準 `archiveEvery="Day"` 組合後實測歸檔語意正確 |
+| J1／J2 說明書 AI 版 | agy（J1）＋Claude（J2＋補漏） | 通過 `3f1cf17` | 18/18 章有 aiFile；抽三章逐項對程式碼核實 | 終檢抽查抓到 03-issues 編造 localStorage 持久化＋嫁接 LaTeX 語法，已修；permissions 章未反映本輪新功能，Claude 補 |
+| 終檢輪 | 2 個獨立 Explore＋Claude 修正 | 完成 | 2567 綠；高 3 中 3 低 8 全數處置 | 高：①排程實際執行路徑繞過回望有效上限（AnalysisOrchestrator 直讀 blob，已在建 pipeline 前夾住）②ScheduleController 為測試塞恆真 null 分支、「通過」斷言來自常數（抽 ValidateBackfillDays 靜態方法、刪三元、改測）③本機監控無原文卻被標成升級前資料（文案分流）。中：nlog 日切方案換標準組合、ResolveLookbackDays 死參數刪除、renderAiInline 為有意決策補註。低：BOM 多還一檔、彙總字串常數單一化、常數對常數測試改往返、yoy 日期比對正規化等。文件審查：README 升級段舊鍵＋三效應、五處過時預設、錯字「錨」「脫」、四處敘事字眼、PLAN 執行紀錄缺段——皆已修 |
