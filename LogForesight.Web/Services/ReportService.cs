@@ -35,8 +35,12 @@ public class ReportService
         if (to < from) (from, to) = (to, from);
 
         var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
-        var retentionThreshold = DateTime.Today.AddDays(-_settings.Get().RetentionDays);
+        var retentionDays = _settings.Get().RetentionDays;
+        var retentionThreshold = DateTime.Today.AddDays(-retentionDays);
+        // 兩種超出互斥：終點都早於保留線＝整段都沒資料；只有起點超出＝被截掉一截。
+        // 後者以往沒申報，而它比前者更危險——比較期有數字、只是偏低，畫面上看起來完全正常。
         bool outOfRetention = previousTo < retentionThreshold;
+        bool partiallyOutOfRetention = !outOfRetention && previousFrom < retentionThreshold;
 
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
 
@@ -129,6 +133,8 @@ public class ReportService
             HandlingScope = scope,
             ComparisonMode = actualComparisonMode,
             ComparisonOutOfRetention = outOfRetention,
+            ComparisonPartiallyOutOfRetention = partiallyOutOfRetention,
+            RetentionDays = retentionDays,
             Kpi = kpi,
             Trend = trend,
             // 風險類型分布走 SQL 端聚合（回饋十九輪批次D、二十輪批次B），與儀表板同一個查詢方法。

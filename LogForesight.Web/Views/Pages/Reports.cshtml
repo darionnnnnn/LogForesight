@@ -30,7 +30,7 @@
                     </select>
                 </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-sm btn-primary mb-0" style="height: 31px;">套用</button>
+                    <button type="submit" class="btn btn-sm btn-primary mb-0">套用</button>
                 </div>
                 <div class="col-auto">
                     <div class="btn-group btn-group-sm">
@@ -145,8 +145,11 @@
                半欄根本容不下，一屏化必然破功。並排後整組只需要一張卡的高度，
                圖例改放甜甜圈下方（欄位變窄，並排會把文字擠成逐字直排）。 *@
             <div class="col-lg-6">
-                <div class="row g-3 h-100">
-                    <div class="col-4" id="risk-section">
+                @* gx-3（只要水平間距）而非 g-3：巢狀 row 的垂直 gutter 會在自己身上加負 margin-top、
+                   在子 col 加同額 padding-top，整組因此比左欄的卡片矮一個 gutter，圓餅底緣對不上長條圖。
+                   三張卡同列，本來就不需要垂直間距。col 補 h-100 才會撐滿到與左欄同高 *@
+                <div class="row gx-3 h-100">
+                    <div class="col-4 h-100" id="risk-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">風險層級占比</h2>
@@ -158,7 +161,7 @@
                         </section>
                     </div>
 
-                    <div class="col-4" id="affected-hosts-section">
+                    <div class="col-4 h-100" id="affected-hosts-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">受影響主機占比</h2>
@@ -170,7 +173,7 @@
                         </section>
                     </div>
 
-                    <div class="col-4" id="handling-progress-section">
+                    <div class="col-4 h-100" id="handling-progress-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">處理進度</h2>

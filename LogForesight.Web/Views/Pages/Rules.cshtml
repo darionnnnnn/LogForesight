@@ -62,6 +62,13 @@
             <div class="lf-toolbar__divider"></div>
             <div class="lf-toolbar__group">
                 <span class="lf-toolbar__group-label">重大</span>
+                @* 「重大」篩的是 ElevatesDayRisk 布林旗標，與同一列上方的「嚴重度」是兩件事，
+                   容易被誤讀成同一個概念（回饋二十八輪 P10） *@
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-title="關於「重大」"
+                        data-bs-content="命中就把當天列為高風險日的規則旗標（規則編輯裡的「命中即列為高風險日」）。這是一個是／否的開關，不是風險等級；規則本身的等級看上方的「嚴重度」篩選。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
                 <div class="lf-toolbar__chips" id="rule-elevates-chips"></div>
             </div>
         </div>

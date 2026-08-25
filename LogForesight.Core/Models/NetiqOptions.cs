@@ -43,7 +43,7 @@ public class NetiqOptions
     /// 每台主機每次執行最多回補幾天（docs/archive/FEEDBACK-3-PLAN.md #1）。取代原本首次執行深度回補
     /// 14 天、非首次檢查 14 天內缺漏的雙軌設計——2000 台規模下對 Sentinel 做大量歷史日查詢
     /// 不現實，正式環境的預期行為是「只查前一天」。首次與非首次統一套用同一個值
-    /// （夾在 <see cref="MaxBackfillDaysLimit"/>，見 NetiqPipelineService.ResolveLookbackDays）。
+    /// （上限為有效上限，見 NetiqPipelineService.ResolveLookbackDays 與 GetEffectiveBackfillDaysLimit）。
     ///
     /// 預設 1 的取捨（顯式，非隱藏行為）：
     ///   - 缺漏日不自動自癒：排程漏跑的中間日子永遠不會補，主機時間軸的灰格與執行監控頁
@@ -72,12 +72,18 @@ public class NetiqOptions
     public const int MaxParallelServersLimit = 3;
 
     /// <summary>
-    /// 回望天數（<see cref="BackfillDays"/>）的上限。回望窗口與趨勢基線窗口
-    /// （AnalysisOrchestrator.TrendWindowDays）是兩件不同的事——前者決定「往回檢查幾天有沒有
-    /// 缺漏或需補跑的日子」，後者決定趨勢比較的基線長度，不該互相夾住。
-    /// Web 端 DTO 的 <c>[Range]</c> 與 pipeline 的 <c>ResolveLookbackDays</c> 共用這個數字。
+    /// 回望天數（<see cref="BackfillDays"/>）的編譯期絕對天花板（供 DTO 的 <c>[Range]</c> 宣告使用）。
+    /// 實務上的有效上限由「歷史資料保留天數」（<see cref="SystemSettings.RetentionDays"/>）決定，
+    /// 不再以此常數為實務上限——回補超過保留天數的日子，補回來的資料在下次清理階段就會被刪除，等於白跑。
     /// </summary>
-    public const int MaxBackfillDaysLimit = 30;
+    public const int MaxBackfillDaysLimit = 365;
+
+    /// <summary>
+    /// 計算回望天數的有效上限（實務上限＝歷史資料保留天數，且不超過編譯期絕對天花板 <see cref="MaxBackfillDaysLimit"/>）。
+    /// 回補超過保留天數的日子，補回來的資料在下一次批次啟動的清理階段就會被刪除，等於白跑。
+    /// </summary>
+    public static int GetEffectiveBackfillDaysLimit(int retentionDays) =>
+        Math.Min(MaxBackfillDaysLimit, Math.Max(1, retentionDays));
 
     /// <summary>
     /// 單一 Sentinel 內部，同一天要查的主機批次最多同時開幾條查詢（回饋十三輪 D）。

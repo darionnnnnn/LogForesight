@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -534,6 +534,13 @@ function applyScheduleOptions(options) {
     } else if (options.nextTriggerTime) {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
     }
+
+    applyBackfillDaysLimit(
+        'run-now-backfill',
+        'run-now-backfill-help',
+        options.maxBackfillDays,
+        `檢查最近幾天內有沒有缺漏或需要補跑的日子（上限 ${options.maxBackfillDays} 天），已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。`
+    );
 }
 
 function renderScheduleWindows() {

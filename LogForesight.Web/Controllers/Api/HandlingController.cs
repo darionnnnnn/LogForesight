@@ -163,7 +163,7 @@ public class IssueBulkCloseController : ControllerBase
         ApiResponse<BulkCloseIssueResultDto>.Ok(_service.BulkCloseIssue(request));
 }
 
-/// <summary>權限異動待辦（§9.5）</summary>
+/// <summary>權限異動檢核（§9.5）</summary>
 [ApiController]
 [Route("api/permission-changes")]
 public class PermissionChangesController : ControllerBase

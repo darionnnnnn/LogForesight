@@ -55,7 +55,7 @@ public class LfDbContext : DbContext
     /// 也不受（未來的）保留期修剪——見 <see cref="IssueFirstSeenRow"/> 類別註解。</summary>
     public DbSet<IssueFirstSeenRow> IssueFirstSeen => Set<IssueFirstSeenRow>();
 
-    /// <summary>權限異動待辦（↔ lf_permission_changes，含確認狀態）</summary>
+    /// <summary>權限異動檢核（↔ lf_permission_changes，含確認狀態）</summary>
     public DbSet<PermissionChangeRow> PermissionChanges => Set<PermissionChangeRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -328,6 +328,9 @@ public class LfDbContext : DbContext
             e.Property(x => x.BeforeValue).HasColumnName("before_value");
             e.Property(x => x.AfterValue).HasColumnName("after_value");
             e.Property(x => x.AlertText).HasColumnName("alert_text");
+            // 原始事件訊息不設長度上限（同 target／process_name 的理由）：Windows 事件訊息長度不可預期，
+            // 設上限在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時的截斷例外
+            e.Property(x => x.RawText).HasColumnName("raw_text");
             e.Property(x => x.Source).HasColumnName("source").HasMaxLength(64);
             e.Property(x => x.EventId).HasColumnName("event_id");
             e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
@@ -547,7 +550,7 @@ public class LogLineRow
     public DateTime? CreatedAt { get; set; }
 }
 
-/// <summary>權限異動待辦一列（含人工確認狀態）。↔ lf_permission_changes</summary>
+/// <summary>權限異動檢核一列（含人工確認狀態）。↔ lf_permission_changes</summary>
 public class PermissionChangeRow
 {
     public long Id { get; set; }
@@ -579,6 +582,10 @@ public class PermissionChangeRow
     public string BeforeValue { get; set; } = string.Empty;
     public string AfterValue { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>未截斷的原始事件訊息（回饋二十八輪 P9）。升級前寫入的列與彙總列為 null</summary>
+    public string? RawText { get; set; }
+
     public string Source { get; set; } = "本機監控";
     public int? EventId { get; set; }
     public string Status { get; set; } = "pending";

@@ -1,5 +1,5 @@
 /**
- * 權限異動待辦（docs/WEB-SPEC.md §9.5）。
+ * 權限異動檢核（docs/WEB-SPEC.md §9.5）。
  *
  * 每一筆逐項顯示「時間／主機 (IP)／帳號／類別／異動說明／狀態」，
  * 支援伺服器端排序、分頁與展開檢視完整異動明細。
@@ -13,6 +13,7 @@ import {
     guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { bindRangeChips } from '../core/date-range.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
 
@@ -846,6 +847,42 @@ function detailView(change) {
         wrap.appendChild(diffWrap);
     }
 
+    // 原始訊息（回饋二十八輪 P9）：rawText 是未截斷的事件原文，只有升級後寫入的資料才有。
+    // 舊資料退而顯示 500 字截斷版的 alertText 並標註；彙總列本來就沒有單一原文。
+    // 內容是來自事件日誌的外部輸入，一律走 textContent；也不送進 markdown-lite（那是 AI 產出用的，
+    // 這裡要的是一字不改照實顯示）
+    const rawText = String(change.rawText ?? '').trim();
+    const fallbackText = rawText === '' ? String(change.alertText ?? '').trim() : '';
+    if (rawText !== '' || fallbackText !== '') {
+        const rawWrap = document.createElement('div');
+        rawWrap.className = 'mb-3';
+
+        const rawLabel = document.createElement('div');
+        rawLabel.className = 'small text-muted mb-1';
+        const isSummaryRow = change.coveredFrom != null && change.coveredTo != null;
+        // 本機監控的異動由快照比對產生，本來就沒有事件原文可存——
+        // 不能把「無 rawText」一律歸因於升級前寫入，那個標註對本機來源會說謊
+        const isLocalSource = change.source === '本機監控';
+        rawLabel.textContent = rawText !== ''
+            ? '原始訊息'
+            : isSummaryRow
+                ? '原始訊息（彙總列由多則異動合併，沒有單一原文，以下為合併說明）'
+                : isLocalSource
+                    ? '原始訊息（本機監控由快照比對產生，沒有事件原文，以下為告警文字）'
+                    : '原始訊息（僅存前 500 字，此為本次升級前寫入的資料）';
+        rawWrap.appendChild(rawLabel);
+
+        const rawBody = document.createElement('div');
+        rawBody.className = 'lf-mono small border rounded bg-white p-2';
+        rawBody.style.maxHeight = '18rem';
+        rawBody.style.overflowY = 'auto';
+        rawBody.style.whiteSpace = 'pre-wrap';
+        rawBody.style.wordBreak = 'break-word';
+        rawBody.textContent = rawText !== '' ? rawText : fallbackText;
+        rawWrap.appendChild(rawBody);
+
+        wrap.appendChild(rawWrap);
+    }
     if (change.status === 'pending') {
         const actionArea = document.createElement('div');
         actionArea.className = 'd-flex align-items-center justify-content-between flex-wrap gap-2 pt-2 border-top';
@@ -1242,6 +1279,15 @@ if (toInput) {
         load();
     });
 }
+
+bindRangeChips({
+    fromInput,
+    toInput,
+    onApply: () => {
+        currentPage = 1;
+        load();
+    }
+});
 
 if (resetBtn) {
     resetBtn.addEventListener('click', resetFilters);

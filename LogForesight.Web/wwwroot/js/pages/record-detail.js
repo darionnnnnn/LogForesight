@@ -12,7 +12,7 @@ import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, co
 import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
-import { renderAiText } from '../core/markdown-lite.js';
+import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -298,6 +298,8 @@ function renderHeader(detail) {
     body.appendChild(top);
 
     // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
+    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
     // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
     const textParts = [];
     if (detail.headline) textParts.push({ headline: true, text: detail.headline });
@@ -319,7 +321,7 @@ function renderHeader(detail) {
             if (part.headline) {
                 const headline = document.createElement('div');
                 headline.className = 'fs-5 mb-2';
-                headline.textContent = part.text;
+                renderAiInline(headline, part.text);
                 target.appendChild(headline);
                 continue;
             }
@@ -327,7 +329,8 @@ function renderHeader(detail) {
             p.className = 'mb-2';
             const strong = document.createElement('strong');
             strong.textContent = `${part.label}：`;
-            p.append(strong, document.createTextNode(part.text));
+            p.appendChild(strong);
+            renderAiInline(p, part.text);
             target.appendChild(p);
         }
 
@@ -1928,13 +1931,14 @@ function otherAnalysis(detail) {
 
         const problem = document.createElement('div');
         problem.className = 'fw-semibold';
-        problem.textContent = finding.problem;
+        renderAiInline(problem, finding.problem);
         item.appendChild(problem);
 
         if (finding.impact) {
             const impact = document.createElement('div');
             impact.className = 'small text-muted mb-1';
-            impact.textContent = `影響：${finding.impact}`;
+            impact.appendChild(document.createTextNode('影響：'));
+            renderAiInline(impact, finding.impact);
             item.appendChild(impact);
         }
 
@@ -1959,7 +1963,7 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
     list.className = 'small mb-1 ps-3';
     for (const item of items) {
         const li = document.createElement('li');
-        li.textContent = item;
+        renderAiInline(li, item);
         list.appendChild(li);
     }
     parent.appendChild(list);

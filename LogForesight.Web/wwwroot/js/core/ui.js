@@ -69,6 +69,34 @@ export function headerWithHelp(title, content, popoverTitle) {
 }
 
 /**
+ * 套用回望天數上限與更新說明 popover（排程作業、NetIQ 維護、主機詳情「立即更新」modal 共用）。
+ * 設 input 的 max 屬性，並更新說明 icon 的 popover 內容（dispose 舊實例後重建）。
+ *
+ * @param {string|HTMLElement} inputElOrId 輸入框元素或 id
+ * @param {string|HTMLElement} helpElOrId 說明 icon 元素或 id
+ * @param {number} maxDays 有效上限天數
+ * @param {string} content 說明文字
+ */
+export function applyBackfillDaysLimit(inputElOrId, helpElOrId, maxDays, content) {
+    // maxDays 缺值（舊 API 回應、欄位漏帶）時不動 max 也不換文案——
+    // 寧可沒有前端上限也不寫死一個猜測值；後端仍會以有效上限驗證並回 400
+    if (!maxDays) return;
+    const input = typeof inputElOrId === 'string' ? document.getElementById(inputElOrId) : inputElOrId;
+    if (input) {
+        input.max = maxDays;
+    }
+    const help = typeof helpElOrId === 'string' ? document.getElementById(helpElOrId) : helpElOrId;
+    if (help) {
+        help.setAttribute('data-bs-content', content);
+        const inst = bootstrap.Popover.getInstance(help);
+        if (inst) {
+            inst.dispose();
+            new bootstrap.Popover(help, { trigger: 'hover focus', html: false });
+        }
+    }
+}
+
+/**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
  */

@@ -12,13 +12,20 @@ public class NetiqOptionsService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IWebHostEnvironment _env;
+    private readonly ISystemSettingsStore _settings;
 
-    public NetiqOptionsService(NetiqOptionsStore store, ICurrentUser currentUser, IAuditService audit, IWebHostEnvironment env)
+    public NetiqOptionsService(
+        NetiqOptionsStore store,
+        ICurrentUser currentUser,
+        IAuditService audit,
+        IWebHostEnvironment env,
+        ISystemSettingsStore settings)
     {
         _store = store;
         _currentUser = currentUser;
         _audit = audit;
         _env = env;
+        _settings = settings;
     }
 
     /// <summary>
@@ -27,7 +34,8 @@ public class NetiqOptionsService
     /// 上限從 8 收斂到 3 之後，既有環境若曾存過 4~8 的值，維護頁載入時要顯示夾住後的值，
     /// 否則表單顯示 8、瀏覽器 <c>max=3</c> 驗證會擋住整張表單存不了檔。<see cref="_store"/>
     /// 每次 <c>Get()</c> 都回傳新反序列化的物件，就地修改不影響其他呼叫端或底層儲存。
-    /// <see cref="NetiqOptions.MaxParallelQueriesPerServer"/>（回饋十三輪 D）同一套理由，一併夾住。
+    /// <see cref="NetiqOptions.MaxParallelQueriesPerServer"/>（回饋十三輪 D）與
+    /// <see cref="NetiqOptions.BackfillDays"/>（有效上限＝保留天數）同一套理由，一併夾住。
     /// </summary>
     public NetiqOptions Get()
     {
@@ -36,12 +44,19 @@ public class NetiqOptionsService
             options.MaxParallelServers = NetiqOptions.MaxParallelServersLimit;
         if (options.MaxParallelQueriesPerServer > NetiqOptions.MaxParallelQueriesPerServerLimit)
             options.MaxParallelQueriesPerServer = NetiqOptions.MaxParallelQueriesPerServerLimit;
+        var effectiveBackfillLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settings.Get().RetentionDays);
+        if (options.BackfillDays > effectiveBackfillLimit)
+            options.BackfillDays = effectiveBackfillLimit;
         return options;
     }
 
     public NetiqOptions Update(UpdateNetiqOptionsRequest request)
     {
         var before = _store.Get();
+
+        var effectiveBackfillLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settings.Get().RetentionDays);
+        if (request.BackfillDays > effectiveBackfillLimit)
+            throw DomainException.Validation($"回望天數（{request.BackfillDays} 天）不可超過歷史資料保留天數（{effectiveBackfillLimit} 天），超過保留天數的回補資料會在下次清理時被刪除。");
 
         // §13：離線示範資料只允許在非 Production 開啟——假資料不得上正式（雙保險，DI factory
         // 在 Production 也不理會此開關）。Production 嘗試開啟直接擋下並說明。

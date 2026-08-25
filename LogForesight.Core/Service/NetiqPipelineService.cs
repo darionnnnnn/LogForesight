@@ -59,7 +59,7 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
-    private readonly int _riskyEventRetentionDays;
+    private readonly int _rawEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
     private readonly bool _onlyMissingOrFailed;
@@ -80,7 +80,7 @@ public class NetiqPipelineService
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
     /// Web 狀態卡的訊息其實是凍結的。改走與本機路徑相同的 <see cref="IRunConsole"/>。</param>
     /// <param name="riskyEventStore">風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）；null＝不寫暫存（測試情境）</param>
-    /// <param name="riskyEventRetentionDays">暫存保留天數——超過保留期的回補日跳過寫入
+    /// <param name="rawEventRetentionDays">原始事件保留天數——超過保留期的回補日跳過寫入
     /// （見 <see cref="RiskyEventSelector.WithinRetention"/>），與本機路徑同一個閘門</param>
     /// <param name="useAi">false＝AI 未設定，本次以統計模式跑（不呼叫 AI），與本機路徑同一個
     /// 開關（docs/archive/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
@@ -98,7 +98,7 @@ public class NetiqPipelineService
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
-        IRiskyEventStore? riskyEventStore = null, int? riskyEventRetentionDays = null, bool useAi = true,
+        IRiskyEventStore? riskyEventStore = null, int? rawEventRetentionDays = null, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
@@ -116,7 +116,7 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
-        _riskyEventRetentionDays = riskyEventRetentionDays ?? SystemSettings.DefaultRiskyEventRetentionDays;
+        _rawEventRetentionDays = rawEventRetentionDays ?? SystemSettings.DefaultRawEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
         _onlyMissingOrFailed = onlyMissingOrFailed;
@@ -140,8 +140,10 @@ public class NetiqPipelineService
         }
 
         // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
-        // 只讀回望窗口（＋一週緩衝）內附加的列：更早的列不可能在本輪被重寫
-        var dedupeSince = DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7));
+        // 必須依本次執行實際採用的回望天數（＋一週緩衝）推算查詢起點，絕不能引用編譯期絕對上限常數（MaxBackfillDaysLimit=365）：
+        // 正式環境權限異動每日近十萬筆，若用常數推算會一次撈回 372 天數千萬筆去重鍵，將記憶體撐爆。更早的列不可能在本輪被重寫。
+        var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
+        var dedupeSince = DateTime.Today.AddDays(-(lookbackDays + 7));
         _permissionKeys = new ConcurrentDictionary<string, byte>(
             (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
             StringComparer.Ordinal);
@@ -254,11 +256,11 @@ public class NetiqPipelineService
     /// <summary>
     /// 回補天數計算（docs/archive/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
     /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
-    /// 回望窗口與趨勢基線窗口是兩件不同的事，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>，
+    /// 回望窗口與趨勢基線窗口是兩件不同的事，上限夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（或指定的有效上限），
     /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
     internal static int ResolveLookbackDays(int backfillDays) =>
-        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）
+        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）；有效上限由呼叫端先夾（AnalysisOrchestrator）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
@@ -651,7 +653,7 @@ public class NetiqPipelineService
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
-                _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+                _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(
                 _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 

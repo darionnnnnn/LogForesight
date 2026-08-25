@@ -292,7 +292,8 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   pair_count           int NULL                         -- 彙總列合併掉的成對數（AlertText 裡的數字是給人看的句子，不可拿來排序）
   before_value         nvarchar(max) NOT NULL
   after_value          nvarchar(max) NOT NULL
-  alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字
+  alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字（清單與去重鍵用）
+  raw_text             nvarchar(max) NULL               -- 未截斷的原始事件訊息（展開明細用；升級前寫入的列與彙總列為 NULL，不回填）
   source               nvarchar(64) NOT NULL            -- '本機監控' | 'NetIQ 事件'
   event_id             int NULL
   status               nvarchar(30) NOT NULL             -- 'pending' | 'authorized' | 'suspicious'（預設值由應用層填，DDL 無 DEFAULT 子句）
@@ -403,18 +404,17 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 
 ### 保留策略
 
-保留期**不是單一年限**，而是依資料性質分成五個（另有 `InitialHistoryDays` 決定首次回補幾天，
+保留期**不是單一年限**，而是依資料性質分成四個（另有 `InitialHistoryDays` 決定首次回補幾天，
 與保留期同受 90 天下限約束，但它不刪資料）：
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| `RetentionDays` | 120 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
-| `DetailRetentionDays` | 120 | `lf_daily_records.content_json`（風險日詳情的原始樣本訊息）——**只清內容、整列保留** |
-| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，見其定義區塊） |
-| `RunLogRetentionDays` | 90 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
-| `RiskyEventRetentionDays` | 90 | `lf_risky_events`（風險 log 暫存） |
+| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
+| `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
+| `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
+| `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
 
-六個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
+五個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
 讀取端不 clamp，既有部署存過的較短天數照舊生效。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。
@@ -432,10 +432,10 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 **為什麼詳情要獨立一層**（SCALE-3000 S2）：`content_json` 是整張表的儲存量大宗
 （實測平均 5.3 KB/筆），而年度同期比較需要的 KPI 與趨勢**沒有一項讀它**——
 那些全部來自抽出欄與 `lf_top_issues`。3000 台若把分析紀錄留兩年（`RetentionDays` 760），
-連 `content_json` 一起留約 12 GB；詳情只留 120 天則約 1.9 GB。
+連 `content_json` 一起留約 12 GB；原始事件內容只留 120 天則約 1.9 GB。
 清除方式是把 `content_json` 設為空字串並標記 `detail_pruned`，**不刪列**，
-統計、風險等級、問題清單一律不受影響。驗證 `DetailRetentionDays <= RetentionDays`——
-詳情活得比它所屬的紀錄久沒有意義。
+統計、風險等級、問題清單一律不受影響。驗證 `RawEventRetentionDays <= RetentionDays`——
+原始內容活得比它所屬的紀錄久沒有意義。
 
 **處理歷程跟稽核而不是跟執行歷程**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md G4）：
 它記的是「誰在什麼時候把這個問題標成什麼、為什麼」——那是**追責用的證據**，
@@ -488,7 +488,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | 風險日的處理歷程 | `lf_record_handling_log` WHERE record_id ORDER BY created_at（指派→查修→結案的完整敘事） |
 | 單一主機風險時間軸 | `lf_daily_records` WHERE host_id + 日期範圍，點開某天載入 `lf_top_issues`/`lf_record_alerts`/`lf_deep_dive_analyses` |
 | **看完整報告（畫面直接顯示）** | `lf_daily_records.report_id` → `lf_reports.content`（純文字含框線符號，前端以等寬字型/`<pre>` 呈現即可，不需轉換） |
-| 權限異動待辦 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
+| 權限異動檢核 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
 | 跨主機同類問題（管理員） | `lf_top_issues` WHERE event_id=153 join `lf_daily_records`/`lf_hosts`，依日期分布 |
 | 週體檢發現 | `lf_weekly_checkups` WHERE has_findings=1 |
 

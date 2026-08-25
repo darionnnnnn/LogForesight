@@ -18,6 +18,7 @@ public class PermissionCategoryTests
     [InlineData("恢復可存取", PermissionCategory.FolderAccess)]
     [InlineData("稽核政策變更", PermissionCategory.AuditPolicy)]
     [InlineData("權限異動（彙總）", PermissionCategory.Summary)]
+    [InlineData("例行同步（彙總）", PermissionCategory.Summary)]
     public void 十個已知異動類型皆正確推導至指定類別且不落入其他(string changeType, string expectedCategory)
     {
         var category = PermissionCategory.Resolve(changeType);
@@ -115,7 +116,7 @@ public class PermissionCategoryTests
     [InlineData(PermissionCategory.OwnerChange, "擁有者變更")]
     [InlineData(PermissionCategory.FolderAccess, "資料夾存取狀態")]
     [InlineData(PermissionCategory.AuditPolicy, "稽核政策變更")]
-    [InlineData(PermissionCategory.Summary, "權限異動彙總")]
+    [InlineData(PermissionCategory.Summary, "例行同步彙總")]
     [InlineData(PermissionCategory.Other, "其他")]
     public void 類別標籤查詢_已知類別回傳對應中文標籤(string category, string expectedLabel)
     {
@@ -150,5 +151,13 @@ public class PermissionCategoryTests
         Assert.False(record.IsPrivilegedTarget);
         Assert.Null(record.InitiatorAccount);
         Assert.Null(record.TargetAccount);
+    }
+
+    [Fact]
+    public void 寫入端的彙總字串與Resolve往返一致()
+    {
+        // 驗證的是「寫入端用的字串確實被 Resolve 認得」這件事本身，
+        // 而不是把標籤字面值再抄一遍（那種斷言永遠綠，抓不到兩邊不一致）
+        Assert.Equal(PermissionCategory.Summary, PermissionCategory.Resolve(HostDayPostProcessor.RoutineSyncChangeType));
     }
 }

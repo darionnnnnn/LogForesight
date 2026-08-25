@@ -25,7 +25,7 @@ const NAV_SECTIONS = [
             // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
             // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
             { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
-            { href: '/permission-changes', label: '權限異動待辦', icon: 'clipboard-check', requires: 'ConfirmPermission' },
+            { href: '/permission-changes', label: '權限異動檢核', icon: 'clipboard-check', requires: 'ConfirmPermission' },
             { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
         ]
     },

@@ -246,7 +246,7 @@ docs/archive/HISTORY.md #1）。
 | Security-Auditing | 1102 | **安全稽核日誌被清除 — 入侵者滅跡的典型行為，應立即調查** | 高（重大） |
 | Security-Auditing | 4719 | 稽核原則被變更（關閉記錄以躲避偵測） | High |
 | Security-Auditing | 4720, 4722, 4724 | 帳戶建立 / 啟用 / 密碼被重設 — 入侵者建立立足點 | High |
-| Security-Auditing | 4728, 4732, 4756 | 帳戶被加入特權群組（如 Administrators）— 典型提權手法。**同批 EventId（含 4729/4733/4757、4670、4717/4718/4719/4907）在 NetIQ 主機另會逐則寫成「權限異動待辦」**（`HostDayPostProcessor.RecordPermissionChanges`，與規則命中互不影響） | High |
+| Security-Auditing | 4728, 4732, 4756 | 帳戶被加入特權群組（如 Administrators）— 典型提權手法。**同批 EventId（含 4729/4733/4757、4670、4717/4718/4719/4907）在 NetIQ 主機另會逐則寫成「權限異動檢核」**（`HostDayPostProcessor.RecordPermissionChanges`，與規則命中互不影響） | High |
 | Security-Auditing | 4729, 4733, 4757 | 帳戶被**移出**特權群組 — 也可能是提權得手後清除紀錄 | High |
 | Security-Auditing | 4697, 4698 | 安裝服務 / 建立排程任務 — 常見持久化手法 | High |
 | Security-Auditing | 4670 | 檔案/資料夾/登錄物件的**權限 (ACL) 被變更** | High |
@@ -265,7 +265,7 @@ docs/archive/HISTORY.md #1）。
 
 #### 權限異動類別（兩來源共用的分類層）
 
-寫進「權限異動待辦」的每一筆都帶一個**類別 key**，由 `change_type` 與 EventId 以純函式推導
+寫進「權限異動檢核」的每一筆都帶一個**類別 key**，由 `change_type` 與 EventId 以純函式推導
 （`PermissionCategory.Resolve`，純函式是為了讓舊資料能在遷移時離線重算）。`change_type`
 現行產生 10 個相異值、兩個來源，其中「成員新增」「成員移除」兩個值兩來源共用
 （另有既有資料才會出現的舊值，見下表 `summary`）：

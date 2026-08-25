@@ -716,7 +716,7 @@ function renderIssueView() {
         },
         {
             title: '出現密度',
-            className: 'text-end text-nowrap',
+            className: 'text-center text-nowrap',
             renderHeader: () => headerWithHelp('出現密度', '查詢期間內有發生此問題的天數比例（出現天數 / 查詢天數）。比例高（如 30/30）代表天天發生的背景雜訊；比例低（如 2/30）代表近期或零星爆發的突發狀況。', '出現密度'),
             render: i => issueDensityCell(i)
         },
@@ -904,6 +904,8 @@ function issueHandlingSummaryCell(group) {
 /**
  * 首見（兩欄合併）：預設顯示機房首見；當本期首見與機房首見不同時，
  * 換行顯示第二行標示本期首見，並附 SVG 圖示標記差異；相同時只顯示一行。
+ * 兩行都以日期起頭，標記放在日期之後——圖示放行首會把第二行的日期推開，
+ * 兩個日期的左緣就對不齊了。
  */
 function issueFirstSeenCell(group) {
     const wrap = document.createElement('div');
@@ -919,11 +921,17 @@ function issueFirstSeenCell(group) {
 
     if (periodFirst && periodFirst !== fleetFirst) {
         const periodLine = document.createElement('div');
-        periodLine.className = 'lf-mono small text-muted d-inline-flex align-items-center gap-1 mt-1';
-        periodLine.appendChild(icon('info-circle'));
+        periodLine.className = 'lf-mono small text-muted d-flex align-items-center gap-1 mt-1';
+        const date = document.createElement('span');
+        date.textContent = periodFirst;
+        periodLine.appendChild(date);
+        const marker = document.createElement('span');
+        marker.className = 'd-inline-flex align-items-center gap-1';
+        marker.appendChild(icon('info-circle'));
         const text = document.createElement('span');
-        text.textContent = `本期 ${periodFirst}`;
-        periodLine.appendChild(text);
+        text.textContent = '本期';
+        marker.appendChild(text);
+        periodLine.appendChild(marker);
         wrap.appendChild(periodLine);
     }
 
@@ -937,7 +945,7 @@ function issueFirstSeenCell(group) {
  */
 function issueDensityCell(group) {
     const wrap = document.createElement('div');
-    wrap.className = 'd-inline-flex flex-column align-items-end';
+    wrap.className = 'd-inline-flex flex-column align-items-center';
 
     const text = document.createElement('span');
     text.className = 'lf-mono small';

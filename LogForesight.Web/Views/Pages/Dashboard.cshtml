@@ -9,9 +9,9 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3 lf-no-print">
     <div class="btn-group btn-group-sm" role="group" aria-label="期間">
-        <button type="button" class="btn btn-outline-primary" data-range="1">昨日</button>
-        <button type="button" class="btn btn-outline-primary active" data-range="7">近 7 天</button>
-        <button type="button" class="btn btn-outline-primary" data-range="30">近 30 天</button>
+        <button type="button" class="btn btn-outline-secondary" data-range="1">昨日</button>
+        <button type="button" class="btn btn-outline-secondary active" data-range="7">近 7 天</button>
+        <button type="button" class="btn btn-outline-secondary" data-range="30">近 30 天</button>
     </div>
     <span class="text-muted small" id="dashboard-range"></span>
 </div>
@@ -59,7 +59,7 @@
 </div>
 
 <div class="row g-3 mt-1">
-    <div class="col-lg-7">
+    <div class="col-lg-6">
         <section class="lf-card h-100">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">高風險主機</h2>
@@ -67,20 +67,8 @@
             <div class="lf-card__body p-0" id="dashboard-hosts"></div>
         </section>
     </div>
-    <div class="col-lg-5">
+    <div class="col-lg-6">
         <section class="lf-card h-100">
-            <div class="lf-card__header">
-                <h2 class="lf-card__title">未回報主機</h2>
-                <span class="text-muted small">沒回報 ≠ 沒問題</span>
-            </div>
-            <div class="lf-card__body" id="dashboard-silent"></div>
-        </section>
-    </div>
-</div>
-
-<div class="row g-3 mt-1">
-    <div class="col-12">
-        <section class="lf-card">
             <div class="lf-card__header">
                 <h2 class="lf-card__title">依群組風險概況</h2>
                 <span class="text-muted small">點列檢視該群組的問題明細——兩千台規模下先看部門、再下鑽個別主機</span>

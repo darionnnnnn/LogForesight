@@ -7,8 +7,9 @@
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
-import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows } from '../core/ui.js';
+import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
+import { renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
@@ -492,7 +493,7 @@ function renderCheckup(detail) {
         (detail.latestCheckup.hasFindings ? '' : '（本期無累積性異常）');
 
     const conclusion = document.createElement('div');
-    conclusion.textContent = detail.latestCheckup.conclusion;
+    renderAiInline(conclusion, detail.latestCheckup.conclusion);
 
     container.replaceChildren(date, conclusion);
 }
@@ -512,7 +513,16 @@ for (const button of document.querySelectorAll('[data-days]')) {
 function openHostUpdateModal(detail) {
     document.getElementById('host-update-message').textContent =
         `重新分析「${detail.hostName}」的缺漏日；已分析過的日子仍會冪等跳過，不會重複產生紀錄。`;
-    document.getElementById('host-update-backfill').value = '';
+    const backfillInput = document.getElementById('host-update-backfill');
+    if (backfillInput) {
+        backfillInput.value = '';
+    }
+    applyBackfillDaysLimit(
+        'host-update-backfill',
+        'host-update-backfill-help',
+        detail.maxBackfillDays,
+        `往回檢查幾天內有沒有缺漏或需要補跑的日子（上限 ${detail.maxBackfillDays} 天），已完成的日子不會重跑。只影響這次執行，不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機不受此影響）。`
+    );
     hostUpdateModal.show();
 }
 

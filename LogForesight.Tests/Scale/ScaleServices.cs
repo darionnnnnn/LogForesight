@@ -47,7 +47,7 @@ internal sealed class ScaleServices
             ? FakeCurrentUser.ForUser(1, Capability.ViewAll, Capability.Assign, Capability.Handle, Capability.ViewAudit)
             : FakeCurrentUser.ForUser(2, Capability.Handle);
 
-        Visibility = new VisibilityService(currentUser, users, userGroups, access, Hosts, Cases);
+        Visibility = new VisibilityService(currentUser, users, userGroups, access, Hosts, Cases, settingsStore);
         var settingsService = new FakeSystemSettingsService();
         Repository = new RecordRepository(recordStore, Hosts, Visibility, settingsService);
 

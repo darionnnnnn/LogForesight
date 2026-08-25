@@ -28,7 +28,7 @@ public class UserAdminServiceTests
         _users, _groups, _hosts, _hostGroups, _cases,
         new VisibilityService(
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
-            _users, _groups, _access, _hosts, _cases),
+            _users, _groups, _access, _hosts, _cases, new FakeSystemSettingsStore()),
         _audit,
         new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
 

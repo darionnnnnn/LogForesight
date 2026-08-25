@@ -27,6 +27,7 @@ public class AdminController : ControllerBase
     private readonly IAuditService _audit;
     private readonly IUserStore _userStore;
     private readonly IWebHostEnvironment _env;
+    private readonly ISystemSettingsStore _settingsStore;
 
     public AdminController(
         UserAdminService users,
@@ -39,7 +40,8 @@ public class AdminController : ControllerBase
         NetiqProbeService probe,
         IAuditService audit,
         IUserStore userStore,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISystemSettingsStore settingsStore)
     {
         _users = users;
         _hosts = hosts;
@@ -52,6 +54,7 @@ public class AdminController : ControllerBase
         _audit = audit;
         _userStore = userStore;
         _env = env;
+        _settingsStore = settingsStore;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -328,7 +331,8 @@ public class AdminController : ControllerBase
         UpdatedByAccount = o.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(o.UpdatedByAccount)
             ? null
-            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName
+            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName,
+        MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };
 
     // ── NetIQ API 診斷（probe，「診斷」分頁，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）──────────

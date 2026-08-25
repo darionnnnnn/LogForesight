@@ -229,9 +229,9 @@
   這是分批上線程序（依 Sentinel 或主機群組分梯次啟用）要解的，不是程式碼；
   `AiFollowupQueue.Capacity = 200` 回補期間必然長時間背壓，畫面會誠實顯示「搜尋暫停中」，
   屬正確行為，刻意不做成設定。
-- **年度同期比較的資料前提**：`RetentionDays` 預設 120 天，`compare=yoy` 的比較期資料早已被清除，
+- **年度同期比較的資料前提**：`RetentionDays` 預設 180 天，`compare=yoy` 的比較期資料早已被清除，
   前端會依 `comparisonOutOfRetention` 顯示提示。要做真正的年度比較需把 `RetentionDays` 調到
-  760 以上，儲存量靠 `DetailRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
+  760 以上，儲存量靠 `RawEventRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
   詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
 
 ## 設計面債務（未排期）
@@ -315,7 +315,7 @@
 `lf_daily_records` 子查詢（主查詢＋三個輔助），而該表只有 `record_date`、`(host_id, record_date)`
 索引。兩千台規模下這是主動線，值得實測後決定加索引或改成一次取出 record_id 集合再共用。
 
-## 權限異動待辦（PERMISSION-CHANGES 輪次遞延）
+## 權限異動檢核（PERMISSION-CHANGES 輪次遞延）
 
 - **Sentinel 投影新增 `sip`／`shn`**（來源 IP／發起端機器名）：本輪只取已在投影內的 `sun`（操作者帳號）。這兩個欄位要改查詢語句並實機驗證，另案處理。
 - **使用者自訂異動類別**：類別是系統內建的固定六類（key 已是資料表欄位）。要開放自訂需引入規則引擎與「規則改動後歷史資料如何重分類」的策略，範圍不成比例。

@@ -451,10 +451,9 @@ function collectAdServers() {
 function renderRetentionFields(settings) {
     document.getElementById('initial-history-days').value = settings.initialHistoryDays;
     document.getElementById('retention-days').value = settings.retentionDays;
-    document.getElementById('detail-retention-days').value = settings.detailRetentionDays;
+    document.getElementById('raw-event-retention-days').value = settings.rawEventRetentionDays;
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
-    document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
 }
 
 /** 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：密碼欄比照 AI 金鑰，不預填、只顯示是否已設定 */
@@ -697,18 +696,12 @@ function bindForm() {
             return;
         }
 
-        const detailRetentionDays = Number(document.getElementById('detail-retention-days').value);
+        const rawEventRetentionDays = Number(document.getElementById('raw-event-retention-days').value);
         const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
-        const riskyEventRetentionDays = Number(document.getElementById('risky-event-retention-days').value);
-        if (riskyEventRetentionDays > retentionDays) {
-            activateTabForElement(document.getElementById('risky-event-retention-days'));
-            toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
-            return;
-        }
-        if (detailRetentionDays > retentionDays) {
-            activateTabForElement(document.getElementById('detail-retention-days'));
-            toast('詳情保留天數不可大於歷史資料保留天數。', 'warning');
+        if (rawEventRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('raw-event-retention-days'));
+            toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
             return;
         }
 
@@ -719,17 +712,14 @@ function bindForm() {
         if (retentionDays < current.retentionDays) {
             reducedItems.push(`歷史資料保留天數：${current.retentionDays} → ${retentionDays} 天（${retentionDays} 天以前的分析紀錄將進入刪除範圍）`);
         }
-        if (detailRetentionDays < current.detailRetentionDays) {
-            reducedItems.push(`詳情保留天數：${current.detailRetentionDays} → ${detailRetentionDays} 天（${detailRetentionDays} 天以前的原始樣本訊息將被清除，統計與問題清單保留）`);
+        if (rawEventRetentionDays < current.rawEventRetentionDays) {
+            reducedItems.push(`原始事件內容保留天數：${current.rawEventRetentionDays} → ${rawEventRetentionDays} 天（${rawEventRetentionDays} 天以前的原始事件文字將被清除，統計與問題清單保留）`);
         }
         if (runLogRetentionDays < current.runLogRetentionDays) {
             reducedItems.push(`執行歷程保留天數：${current.runLogRetentionDays} → ${runLogRetentionDays} 天（${runLogRetentionDays} 天以前的紀錄將進入刪除範圍）`);
         }
         if (auditRetentionDays < current.auditRetentionDays) {
-            reducedItems.push(`稽核紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
-        }
-        if (riskyEventRetentionDays < current.riskyEventRetentionDays) {
-            reducedItems.push(`風險 log 暫存保留天數：${current.riskyEventRetentionDays} → ${riskyEventRetentionDays} 天（${riskyEventRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+            reducedItems.push(`稽核與追責紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
         }
 
         if (reducedItems.length > 0) {
@@ -838,10 +828,9 @@ function bindForm() {
                 clearAiApiKey: clearApiKey,
                 initialHistoryDays,
                 retentionDays,
-                detailRetentionDays,
+                rawEventRetentionDays,
                 runLogRetentionDays,
                 auditRetentionDays,
-                riskyEventRetentionDays,
                 adAuthEnabled,
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),

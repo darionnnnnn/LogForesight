@@ -34,6 +34,9 @@ public class PermissionChangeRecord
     /// <summary>批次產生的告警文字（與 console 顯示的同一行）</summary>
     public string AlertText { get; set; } = string.Empty;
 
+    /// <summary>未經截斷的原始事件訊息（逐則列填入，彙總列為 null）</summary>
+    public string? RawText { get; set; }
+
     /// <summary>異動來源（本機監控／NetIQ 事件）</summary>
     public string Source { get; set; } = PermissionChangeSources.Local;
 

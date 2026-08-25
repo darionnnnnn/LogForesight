@@ -733,11 +733,11 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void GetSummary_ComparisonOutOfRetention_依比較期終點是否落在保留期之外判定()
     {
-        var fromOutside = DateTime.Today.AddDays(-120);
-        var toOutside = DateTime.Today.AddDays(-119);
+        var fromOutside = DateTime.Today.AddDays(-180);
+        var toOutside = DateTime.Today.AddDays(-179);
 
-        var fromInside = DateTime.Today.AddDays(-119);
-        var toInside = DateTime.Today.AddDays(-118);
+        var fromInside = DateTime.Today.AddDays(-179);
+        var toInside = DateTime.Today.AddDays(-178);
 
         var resultOutside = _service.GetSummary(fromOutside, toOutside, null, "previous");
         var resultInside = _service.GetSummary(fromInside, toInside, null, "previous");
@@ -746,6 +746,41 @@ public class ReportServiceTests : IDisposable
         Assert.False(resultInside.ComparisonOutOfRetention);
     }
 
+    [Fact]
+    public void GetSummary_比較期三態_全部超出與部分超出互斥()
+    {
+        // 保留線在 180 天前（FakeSystemSettingsStore 的出廠預設）。
+        // previous 模式的比較期＝查詢區間往前平移一個區間長度。
+        _settingsStore.Update(x => x.RetentionDays = 180);
+
+        // (a) 全部超出：比較期終點也早於保留線
+        var allOut = _service.GetSummary(DateTime.Today.AddDays(-180), DateTime.Today.AddDays(-179), null, "previous");
+
+        // (b) 部分超出：區間 10 天，比較期跨過保留線（起點在外、終點在內）
+        var partial = _service.GetSummary(DateTime.Today.AddDays(-176), DateTime.Today.AddDays(-167), null, "previous");
+
+        // (c) 完全在保留期內
+        var inside = _service.GetSummary(DateTime.Today.AddDays(-20), DateTime.Today.AddDays(-11), null, "previous");
+
+        Assert.True(allOut.ComparisonOutOfRetention);
+        Assert.False(allOut.ComparisonPartiallyOutOfRetention);   // 互斥
+
+        Assert.False(partial.ComparisonOutOfRetention);
+        Assert.True(partial.ComparisonPartiallyOutOfRetention);
+
+        Assert.False(inside.ComparisonOutOfRetention);
+        Assert.False(inside.ComparisonPartiallyOutOfRetention);
+    }
+
+    [Fact]
+    public void GetSummary_帶出目前的保留天數_供前端推導比較模式門檻()
+    {
+        _settingsStore.Update(x => x.RetentionDays = 400);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-10), DateTime.Today.AddDays(-1), null, "previous");
+
+        Assert.Equal(400, result.RetentionDays);
+    }
     [Fact]
     public void GetSummary_日風險等級只顯示高時_中風險日的待辦不計入Todo()
     {

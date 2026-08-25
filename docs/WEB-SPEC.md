@@ -663,10 +663,11 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 7. **每頁筆數可選**：`renderPagination` 的每頁筆數下拉固定 10/20/30/50/100，
    預設 20；選擇記在 `localStorage`（per 呼叫端一把 key），下次進頁沿用。表格提供
    「複製為 CSV」按鈕（前端序列化當前頁，零後端成本）
-8. 日期區間提供快捷鈕：昨日／近 7 天／近 30 天／近 90 天（各頁選項略有不同）。
+8. 日期區間提供快捷鈕：昨日／近 7 天／近 30 天／近 90 天（各頁選項略有不同），
+   樣式統一為**相連的 `btn-group btn-group-sm`＋`btn-outline-secondary`**，不帶文字標籤。
    **期間終點一律錨在昨天**（分析只產到昨天，錨在今天會讓最後一天必然沒有資料），
    「昨日」＝起訖同一天。計算與綁定的單一規則點是 `core/date-range.js`
-   （`data-range="{天數}"`）——問題查詢／報表／儀表板共用，不各自複製一份
+   （`data-range="{天數}"`）——問題查詢／報表／儀表板／權限異動檢核共用，不各自複製一份
 9. **modal 寬度**：表單 modal 欄位 ≥3 組即
    `modal-lg`＋`row g-3` 兩欄排列；檢視型 modal（唯讀展示內容，非表單）一律 `modal-lg`
    起跳。避免「細細一長排」逼使用者在窄欄位裡一路往下捲；<992px（`modal-lg` 斷點以下）
@@ -731,6 +732,8 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - 陸詞（刷新/保存/設置/服務器/網絡/數據/信息/軟件/硬件/加載/默認/運行/界面/連接/字段/郵件等）
   全面避免；「用戶端」（client 的微軟官方譯名）與「通過驗證」（動詞，非介詞誤用）是正確用法，
   不算陸詞。
+- **站台選用名稱**：「權限異動檢核」是該頁的正式名稱（微軟詞彙表無對應詞）；它是一道需要人逐筆核對是否為授權操作的檢核關卡，不是任務清單。
+  路由 `/permission-changes` 與 API 路徑不隨顯示名稱改變。
 - 檢視範圍涵蓋 Razor views、前端 JS（動態產生的 `textContent`、toast、確認框、空狀態、表頭）、
   後端使用者可見字串（`DomainException` 訊息——API 錯誤直接顯示於前端不轉譯、稽核 summary、
   `RiskReportService` 報告 txt）與 README／部署文件的操作指引段；程式碼註解不列入此規範
@@ -844,9 +847,11 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 - 所有統計卡與排行列皆可下鑽（§8.4）；排版遵循 §8.2 視覺層級——有「重大」問題時該類別卡
   加紅邊（`DashboardCategoryDto.ElevatesCount`），全綠時首屏顯示「今日無風險訊號」大字狀態
   （沒事也要一眼確認是真的沒事）。
-- **未回報主機改計數卡＋下鑽**：兩千台規模下逐台列出可能數百筆，
-  改成一個大數字卡（`SilentHostsCount`）＋連結到主機頁的 `/admin/hosts?status=silent`
+- **未回報主機是頂部 KPI 卡列的一張計數卡**：兩千台規模下逐台列出可能數百筆，
+  改為計數（`SilentHostsCount`）＋下鑽到主機頁的 `/admin/hosts?status=silent`
   篩選（該頁本就有分頁與搜尋，且與此卡同一套「兩天未回報」定義，兩邊數字對得上）。
+  0 台時照常顯示 0（secondary 色），不換成空狀態插圖；「沒回報 ≠ 沒問題」放卡片 tooltip。
+  空出的右下角由「依群組風險概況」補位，與高風險主機 6／6 分欄。
 - **依群組風險概況**：每個主機群組一列（主機數/高風險日/中風險日/未處理數），
   點列導向 `/records?groupIds={id}&riskLevels=高,中`。兩千台規模的主要動線是「先看部門、再下鑽個別主機」。
 - **日風險等級顯示設定的影響**：統計母體經
@@ -1268,7 +1273,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   預計完成／逾期，「顯示近 30 天已結案」切換預設關。
 - API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
-### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
+### 9.5 `/permission-changes` 權限異動檢核（`ConfirmPermission`）
 - **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／選取（勾選欄，
   依 §8.6 第 6 條不排第一欄——展開箭頭固定插在首欄）／主機 (IP)／帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
   EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。
@@ -1285,6 +1290,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `DOMAIN\name`、`name@domain`、SID、純短名原樣）。完整值放 `title` 與展開明細——AD 的
   完整 DN 動輒上百字，整串印在欄位裡會撐版又蓋掉重點。短名規則的單一規則點是
   `AccountDisplayFormatter.ToShortName`，前後端不各寫一套。缺值顯示「—」，**不猜、不填假值**。
+- **展開列最下方的「原始訊息」區塊**：`rawText`（未截斷全文，只有升級後寫入的資料才有）
+  存在時顯示全文；舊資料退而顯示 500 字截斷版的 `alertText` 並標註「僅存前 500 字」；
+  彙總列標註它由多則合併、沒有單一原文；本機監控來源標註它由快照比對產生、
+  沒有事件原文（不可把「無 rawText」一律歸因於升級前寫入）。等寬字、保留換行、高度上限內可捲動；
+  內容是外部輸入，一律 `textContent`，也不送進 markdown-lite（那是 AI 產出用的，
+  這裡要的是一字不改照實顯示）。
 - 「異動說明」是後端產生的 `SummaryText`；類別中文標籤是後端的 `CategoryLabel`。
   **前端不維護第二套**——摘要規則或標籤散在前端，會和後端各自演化成兩種說法。
 - **異動說明的句型規則**（`PermissionChangeService.GenerateSummaryText`，未展開就要看得懂
@@ -1367,10 +1378,15 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
 前端在區間 ≥ 180 天時預設選 `yoy`（長區間拿緊鄰前期比會把季節性混進來），
 但使用者手動切換過就尊重其選擇、不再自動改回。
 
-**比較期超出保留期時必須申報**（`comparisonOutOfRetention`）：`RetentionDays` 預設 120 天，
+**比較期超出保留期時必須申報**（`comparisonOutOfRetention`）：`RetentionDays` 預設 180 天，
 選「去年同期」時比較期的資料早已被清除，各項會是 0。不提示的話使用者會讀成
-「去年完全沒問題」——這是最糟的一種錯，因為它看起來完全正常。
-要做真正的年度比較，`RetentionDays` 需調到 760 以上，並靠 `DetailRetentionDays`
+「去年完全沒問題」——這是最糟的一種錯，因為它看起來完全正常。提示分兩級：
+比較期**整段**早於保留線（`comparisonOutOfRetention`，數字不具參考價值）與
+**跨過**保留線（`comparisonPartiallyOutOfRetention`，數字被截而偏低），兩旗標互斥。
+「對比去年同期」選項在算出來沒資料時附註「（超出保留期）」；長區間自動切 yoy
+只在「保留天數足以涵蓋去年同期」（retentionDays >= 365 + 區間天數）時發生，
+門檻由 summary 帶回的 `retentionDays` 推導，前端不寫死。
+要做真正的年度比較，`RetentionDays` 需調到 760 以上，並靠 `RawEventRetentionDays`
 把儲存量壓下來（見 docs/DB-SPEC.md 保留策略）。
 
 **版面結構（由上而下，12 欄網格）**：
@@ -1801,19 +1817,19 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
      是 AD 設定填錯時的逃生門。另提供「測試連線」（`POST api/admin/settings/ad-test`）：
      用管理者當場輸入的帳密對表單目前的伺服器試 bind（未儲存也能測），密碼不落盤、不進稽核 detail。
-  4. **資料保留**：六個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
+  4. **資料保留**：五個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
      出廠預設與下限的單一事實來源都在 `SystemSettings` 的 `Default*` 常數，其他地方引用不另寫一份）。
      下限只在**寫入時**驗證（DTO `[Range]`＋設定頁）——**讀取端不 clamp**，既有部署存過的
      較短天數照舊生效，升級不會偷改任何人已儲存的設定。
-     首次執行回補天數、歷史資料保留天數、詳情保留天數（預設皆 120，需保留天數 ≥ 回補天數，
-     且詳情 ≤ 保留天數）；**執行歷程保留天數**（預設 90，
-     批次執行紀錄/診斷與匯入紀錄）與**稽核紀錄保留天數**（預設 730）——
-     批次每晚啟動時依這些天數清理對應的 `lf_log_lines` 資料。
-     另有**風險 log 暫存保留天數**（預設 90，
-     不可大於歷史資料保留天數，前後端皆驗證）——規則命中/趨勢異常問題的
-     原始事件暫存（`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3），批次每晚
-     依此天數清理；回補超過此天數的日子直接跳過寫入（寫了下次也會被清，見
-     `RiskyEventSelector.WithinRetention`）。
+     首次執行回補天數（預設 120，不刪資料，畫面上另立小節）、
+     歷史資料保留天數（預設 180，需 ≥ 回補天數）、
+     **原始事件內容保留天數**（`RawEventRetentionDays`，預設 120，不可大於歷史保留，
+     前後端皆驗證）——同時控制每日紀錄的原始樣本訊息與風險 log 暫存
+     （`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3；回補超過此天數的日子
+     直接跳過寫入，見 `RiskyEventSelector.WithinRetention`）；
+     **執行歷程保留天數**（預設 120，批次執行紀錄/診斷與匯入紀錄）與
+     **稽核與追責紀錄保留天數**（預設 730，同時控制操作稽核、權限異動紀錄與處理歷程）——
+     批次每晚啟動時依這些天數清理。設定面板每項均為「標題／常駐說明／天數輸入框」直列式。
   5. **郵件通知**：啟用開關＋
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
@@ -1915,11 +1931,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
   `type="link"` 的章節（目前只有第一項「首次啟動精靈」，`href="/setup"`）沒有 Markdown 檔，
-  前端渲染成導引卡）＋ 14 個章節 Markdown 檔（清單共 15 項＝14 md＋1 link），全部以
+  前端渲染成導引卡）＋ 18 個章節 Markdown 檔（清單共 19 項＝18 md＋1 link），全部以
   **內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
-  精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
+  - **雙版本內容（使用者簡明版 vs AI 詳細版）**：manifest 每章除 `file` 外可選帶 `aiFile`。
+  - `file`：**畫面上顯示的使用者版**，要好讀，且受渲染器限制——
+    `markdown-lite` 只支援粗體／行內代碼／單層清單／`#` 開頭行／GFM 表格，
+    **巢狀清單與標題層級都不支援**，內容必須維持單層結構。
+  - `aiFile`：**只餵給 AI 問答當知識庫**，不會出現在畫面上，也因此不經渲染器——
+    可自由使用巢狀清單、多層標題與表格，內容可以寫得比使用者版詳細得多
+    （欄位定義、門檻數字、狀態流轉、權限差異、常見誤解）。
+  - 兩者的單一匯合點在 `HelpChapter.ContentForAi`（`HelpContentService`）：
+    有 `aiFile` 就用詳細版，沒有則 fallback 回使用者版。
+    `GetManual()` 只塞 `Content`，**AI 版不會外洩到前端**；
+    選節計分（`HelpChapterScorer`）與 `HelpQaService` 組 prompt 時用的都是 `ContentForAi`。
+  - 目前 18 章全數具備 `aiFile`。
+- 精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
   `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
 - **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
   一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
@@ -2104,8 +2132,12 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （與 NetIQ 同一套日期對應、同一次 `ListHostDates` 查詢），存在則標新狀態 `backfilled`
   （「已回補」淺綠）——刻意不冒充 success，「當天真的有跑」與「後來補的資料」要分得出來。
   未登記主機（HostId=0）不走 fallback（舊紀錄 HostId 也可能為 0，跨主機誤配比顯示未執行更糟）。
-  立即執行 modal 的「回望天數」（上限 `NetiqOptions.MaxBackfillDaysLimit`＝30，與趨勢基線
-  窗口 `TrendWindowDays`＝14 脫鉤）文案講明：檢查最近 N 天內有沒有缺漏或需補跑的日子、
+  立即執行 modal 的「回望天數」有效上限＝**目前的歷史資料保留天數**
+  （`NetiqOptions.GetEffectiveBackfillDaysLimit`；超過保留期的回補下輪就被清掉，白跑），
+  編譯期絕對天花板 `MaxBackfillDaysLimit`＝365 只供 DTO `[Range]` 用；超過有效上限回 400，不靜默 clamp。
+  三處輸入框（排程作業／NetIQ 維護／主機詳情「立即更新」）的 max 與說明都由 API 帶回的
+  `maxBackfillDays` 填入（共用 `ui.js` 的 `applyBackfillDaysLimit`）；與趨勢基線窗口
+  `TrendWindowDays`＝14 脫鉤。文案講明：檢查最近 N 天內有沒有缺漏或需補跑的日子、
   已完成的日子不會重跑；僅影響 NetIQ，本機一律自動回補趨勢窗口內的缺漏日。
 - **「已停止」狀態**（§1.4.4）：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
@@ -2306,7 +2338,7 @@ temp 檔＋`File.Replace` 手法。
 4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web.log`），照常回應。
 5. 批次端：啟動先寫 `lf_batch_runs`（finished_at=NULL），結束回填；進 store 的只有
    Warn 以上＋固定 Info 里程碑；訊息自帶脈絡（處理日期＋階段）。NLog 檔案 log 職責不變。
-6. 保留：各類資料的保留期與預設值見 §9.9b 項次 4 與 [DB-SPEC.md](DB-SPEC.md)「保留策略」（稽核 730、執行歷程 90、業務資料 120，皆可調且下限 90）。
+6. 保留：各類資料的保留期與預設值見 §9.9b 項次 4 與 [DB-SPEC.md](DB-SPEC.md)「保留策略」（稽核 730、執行歷程 120、業務資料 180、原始事件內容 120，皆可調且下限 90）。
 
 ## 12. 測試策略
 
