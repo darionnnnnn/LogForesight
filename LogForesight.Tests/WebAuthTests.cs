@@ -1,8 +1,34 @@
 using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace LogForesight.Tests;
+
+public class AuthCookieTests
+{
+    [Fact]
+    public void HTTP請求_CookieOptions的Secure為False()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.IsHttps = false;
+
+        var options = AuthCookie.Options(context.Request, null);
+
+        Assert.False(options.Secure);
+    }
+
+    [Fact]
+    public void HTTPS請求_CookieOptions的Secure為True()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.IsHttps = true;
+
+        var options = AuthCookie.Options(context.Request, null);
+
+        Assert.True(options.Secure);
+    }
+}
 
 public class PasswordHasherTests
 {
@@ -42,6 +68,47 @@ public class PasswordHasherTests
     public void 雜湊字串不合格_回false不拋例外(string storedHash)
     {
         Assert.False(PasswordHasher.Verify("any", storedHash));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_合法雜湊格式_回True()
+    {
+        var hash = PasswordHasher.Hash("任意密碼");
+        Assert.True(PasswordHasher.IsValidHashFormat(hash));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_純明文密碼_回False()
+    {
+        Assert.False(PasswordHasher.IsValidHashFormat("MyPassword123"));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_段數不足_回False()
+    {
+        Assert.False(PasswordHasher.IsValidHashFormat("PBKDF2$210000$abc"));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_迭代次數非數字_回False()
+    {
+        var validBase64 = Convert.ToBase64String(new byte[16]);
+        Assert.False(PasswordHasher.IsValidHashFormat($"PBKDF2$abc${validBase64}${validBase64}"));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_Salt非合法Base64_回False()
+    {
+        var validBase64 = Convert.ToBase64String(new byte[16]);
+        Assert.False(PasswordHasher.IsValidHashFormat($"PBKDF2$210000$!!!!${validBase64}"));
+    }
+
+    [Fact]
+    public void IsValidHashFormat_空字串與Null_回False()
+    {
+        Assert.False(PasswordHasher.IsValidHashFormat(""));
+        Assert.False(PasswordHasher.IsValidHashFormat(null));
+        Assert.False(PasswordHasher.IsValidHashFormat("   "));
     }
 }
 
@@ -166,9 +233,20 @@ public class WebAppSettingsValidationTests
     {
         var settings = Baseline();
         settings.Jwt.SecretKey = "這是另外產生的至少三十二個位元組長的隨機字串內容測試用途";
-        settings.Auth.ServerAdmin.PasswordHash = "PBKDF2$210000$另一組真正產生的雜湊$不是已知測試值==";
+        settings.Auth.ServerAdmin.PasswordHash = PasswordHasher.Hash("Production-Overridden-P@ssw0rd");
 
         settings.Validate(isProduction: true);   // 不應拋例外
+    }
+
+    [Fact]
+    public void PasswordHash為明文密碼_啟動驗證失敗且訊息提示產生方式()
+    {
+        var settings = Baseline();
+        settings.Auth.ServerAdmin.PasswordHash = "MyPlainPassword123!";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => settings.Validate(isProduction: false));
+        Assert.Contains("--hash-password", ex.Message);
+        Assert.Contains("Auth:ServerAdmin:PasswordHash", ex.Message);
     }
 
     // §13：Netiq:DiscoveryClient 已退役（離線示範資料改由 DB 開關＋非 Production 限定控制），

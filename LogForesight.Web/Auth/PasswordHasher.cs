@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 
 namespace LogForesight.Web.Auth;
@@ -26,30 +27,50 @@ public static class PasswordHasher
         return $"{Prefix}${iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
     }
 
+    /// <summary>判定儲存的雜湊字串是否為合法的 PBKDF2 格式</summary>
+    public static bool IsValidHashFormat(string? storedHash) =>
+        TryParse(storedHash, out _, out _, out _);
+
     /// <summary>驗證密碼。雜湊字串格式不正確時回 false（不拋例外——設定錯誤不該讓登入端點噴 500）</summary>
     public static bool Verify(string password, string storedHash)
     {
-        if (string.IsNullOrWhiteSpace(storedHash)) return false;
-
-        var parts = storedHash.Split('$');
-        if (parts.Length != 4 || parts[0] != Prefix) return false;
-        if (!int.TryParse(parts[1], out var iterations) || iterations <= 0) return false;
-
-        byte[] salt, expected;
-        try
-        {
-            salt = Convert.FromBase64String(parts[2]);
-            expected = Convert.FromBase64String(parts[3]);
-        }
-        catch (FormatException)
-        {
+        if (!TryParse(storedHash, out var iterations, out var salt, out var expected))
             return false;
-        }
 
-        var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
+        var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt!, iterations, HashAlgorithmName.SHA256, expected!.Length);
 
         // 固定時間比對：一般的位元組比較會在第一個不同的位元組就返回，
         // 執行時間會洩漏「猜對了前幾個位元組」的資訊
         return CryptographicOperations.FixedTimeEquals(actual, expected);
+    }
+
+    private static bool TryParse(
+        [NotNullWhen(true)] string? storedHash,
+        out int iterations,
+        [NotNullWhen(true)] out byte[]? salt,
+        [NotNullWhen(true)] out byte[]? hash)
+    {
+        iterations = 0;
+        salt = null;
+        hash = null;
+
+        if (string.IsNullOrWhiteSpace(storedHash)) return false;
+
+        var parts = storedHash.Split('$');
+        if (parts.Length != 4 || parts[0] != Prefix) return false;
+        if (!int.TryParse(parts[1], out iterations) || iterations <= 0) return false;
+
+        try
+        {
+            salt = Convert.FromBase64String(parts[2]);
+            hash = Convert.FromBase64String(parts[3]);
+            return true;
+        }
+        catch (FormatException)
+        {
+            salt = null;
+            hash = null;
+            return false;
+        }
     }
 }

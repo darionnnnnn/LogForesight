@@ -1,3 +1,5 @@
+using LogForesight.Web.Auth;
+
 namespace LogForesight.Web.Configuration;
 
 /// <summary>
@@ -70,6 +72,8 @@ public class WebAppSettings
 
         if (string.IsNullOrWhiteSpace(Auth.ServerAdmin.PasswordHash))
             errors.Add("Auth:ServerAdmin:PasswordHash 未設定（以 LogForesight.Web.exe --hash-password 產生）。");
+        else if (!PasswordHasher.IsValidHashFormat(Auth.ServerAdmin.PasswordHash))
+            errors.Add("Auth:ServerAdmin:PasswordHash 格式不正確（不可直接填寫明文密碼，請使用 LogForesight.Web.exe --hash-password 產生 PBKDF2 雜湊）。");
         else if (isProduction && KnownDevSecrets.Contains(Auth.ServerAdmin.PasswordHash))
             errors.Add("Auth:ServerAdmin:PasswordHash 是已提交進版控的公開測試值，正式環境不可沿用（請以環境變數 Auth__ServerAdmin__PasswordHash 設定 --hash-password 產生的新雜湊）。");
 
