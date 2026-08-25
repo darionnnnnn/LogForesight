@@ -9,6 +9,7 @@ import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import { appUrl } from '../core/paths.js';
 import { renderLoading, renderSpinner, renderTable, labelValue, toast, withBusy, guardLoad, sortRows, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatNumber, severityBadge, riskBadge, CATEGORY_NAMES, SEVERITY_ORDER } from '../core/format.js';
+import { renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('host-detail');
 const hostId = Number(root.dataset.hostId);
@@ -492,7 +493,7 @@ function renderCheckup(detail) {
         (detail.latestCheckup.hasFindings ? '' : '（本期無累積性異常）');
 
     const conclusion = document.createElement('div');
-    conclusion.textContent = detail.latestCheckup.conclusion;
+    renderAiInline(conclusion, detail.latestCheckup.conclusion);
 
     container.replaceChildren(date, conclusion);
 }
