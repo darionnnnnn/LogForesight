@@ -28,7 +28,6 @@ async function load() {
     renderLoading(document.getElementById('dashboard-categories'), 3);
     renderLoading(document.getElementById('dashboard-issues'), 3);
     renderLoading(document.getElementById('dashboard-hosts'), 4);
-    renderLoading(document.getElementById('dashboard-silent'), 2);
     renderLoading(document.getElementById('dashboard-group-risk'), 3);
 
     const [data, user, displaySettings] = await Promise.all([
@@ -44,7 +43,6 @@ async function load() {
     renderCategories(data);
     renderTopIssues(data);
     renderHosts(data);
-    renderSilentHosts(data);
     renderGroupRisk(data);
 
     loadAiFocus();   // AI 今日焦點：非同步、失敗靜默，不擋主畫面
@@ -184,7 +182,7 @@ function renderServerAdminGuide() {
     for (const id of ['dashboard-kpi', 'dashboard-ai-focus']) {
         document.getElementById(id)?.replaceChildren();
     }
-    for (const id of ['dashboard-categories', 'dashboard-hosts', 'dashboard-group-risk']) {
+    for (const id of ['dashboard-categories', 'dashboard-hosts']) {
         document.getElementById(id)?.closest('.row')?.classList.add('d-none');
     }
     for (const el of document.querySelectorAll('[data-range]')) el.closest('.btn-group')?.classList.add('d-none');
@@ -304,6 +302,17 @@ function renderKpi(data, user, displaySettings) {
         // 依問題視角的 chip 是嚴重度語意，只帶高中會把低嚴重度的未處理問題濾掉
         url: `/records?view=issue&statuses=open&riskLevels=${encodeURIComponent('高,中,低')}&from=${data.from}&to=${data.to}`,
         extra: todoExtra
+    });
+
+    // 未回報主機計數卡（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
+    // 改成計數卡＋下鑽到主機頁的「未回報」篩選（該頁有分頁與搜尋）。
+    // 0 台時照常顯示，不換成空狀態插圖（KPI 卡列慣例）。
+    cards.push({
+        label: '未回報主機',
+        value: data.silentHostsCount,
+        variant: data.silentHostsCount > 0 ? 'danger' : 'secondary',
+        hint: '沒回報 ≠ 沒問題',
+        url: '/admin/hosts?status=silent'
     });
 
     if (data.pendingPermissionChanges > 0 && hasCapability(user, 'ConfirmPermission')) {
@@ -743,35 +752,6 @@ function hostLink(host) {
     return link;
 }
 
-/**
- * 未回報主機改計數卡＋下鑽（§5.4 D-4）：兩千台規模下逐台列出可能是數百筆，
- * 改成一個大數字＋連結到主機頁的「未回報」篩選，該頁本來就有分頁與搜尋。
- */
-function renderSilentHosts(data) {
-    const container = document.getElementById('dashboard-silent');
-    container.replaceChildren();
-
-    if (data.silentHostsCount === 0) {
-        renderEmpty(container, { title: '所有主機都正常回報', hint: `每台主機近兩天內都有執行紀錄。` });
-        return;
-    }
-
-    const link = document.createElement('a');
-    link.href = appUrl('/admin/hosts?status=silent');
-    link.className = 'lf-stat d-block text-center py-3';
-
-    const value = document.createElement('div');
-    value.className = 'lf-stat__value text-danger';
-    value.textContent = formatNumber(data.silentHostsCount);
-
-    const label = document.createElement('div');
-    label.className = 'lf-stat__label';
-    label.textContent = '台主機超過 2 天未回報，點此檢視';
-
-    link.append(value, label);
-    container.appendChild(link);
-}
-
 /** 依群組風險概況（§5.4 D-4）：點列導向問題查詢並帶群組篩選，兩千台規模的主要動線是「先群組後下鑽」 */
 function renderGroupRisk(data) {
     renderTable(document.getElementById('dashboard-group-risk'), {
@@ -803,6 +783,5 @@ setActiveChip(rangeChips, currentDays);
 guardLoad([
     document.getElementById('dashboard-categories'),
     document.getElementById('dashboard-hosts'),
-    document.getElementById('dashboard-silent'),
     document.getElementById('dashboard-group-risk')
 ], load);
