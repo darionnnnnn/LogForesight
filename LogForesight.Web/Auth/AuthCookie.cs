@@ -66,7 +66,13 @@ public static class AuthCookie
     /// 這個標頭未經 <c>UseForwardedHeaders</c> 驗證，但**偽造它只會讓 Secure 變成 true**
     /// （更嚴格，攻擊者只能鎖住自己），不存在往寬鬆方向被利用的路徑，因此不需要 KnownProxies 名單。
     /// </summary>
-    private static bool IsSecureConnection(HttpRequest request) =>
-        request.IsHttps ||
-        string.Equals(request.Headers["X-Forwarded-Proto"], "https", StringComparison.OrdinalIgnoreCase);
+    private static bool IsSecureConnection(HttpRequest request)
+    {
+        if (request.IsHttps) return true;
+
+        // 多層代理會把值累加成逗號清單（例「https, http」），最靠近使用者的是第一段
+        var proto = request.Headers["X-Forwarded-Proto"].ToString();
+        var first = proto.Split(',')[0].Trim();
+        return string.Equals(first, "https", StringComparison.OrdinalIgnoreCase);
+    }
 }

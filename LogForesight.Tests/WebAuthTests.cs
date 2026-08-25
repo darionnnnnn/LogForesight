@@ -41,6 +41,18 @@ public class AuthCookieTests
         Assert.True(AuthCookie.Options(context.Request, null).Secure);
     }
 
+    /// <summary>多層代理會把 X-Forwarded-Proto 累加成逗號清單，最靠近使用者的是第一段——
+    /// 拿整串比對「https」會恆為 false，Secure 又掉回去。</summary>
+    [Fact]
+    public void 多層代理的XForwardedProto清單_取第一段判定()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.IsHttps = false;
+        context.Request.Headers["X-Forwarded-Proto"] = "https, http";
+
+        Assert.True(AuthCookie.Options(context.Request, null).Secure);
+    }
+
     /// <summary>刪除舊 Path=/ Cookie 是另一處手寫的 CookieOptions，Secure 判定必須與寫入端一致——
     /// 不一致時 HTTP 部署下刪不掉舊 token，殘留的舊 token 會覆寫新 token，使用者重登也救不回來。</summary>
     [Fact]
