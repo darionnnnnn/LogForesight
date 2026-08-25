@@ -2306,7 +2306,7 @@ temp 檔＋`File.Replace` 手法。
    的中文對照表**必須同 commit 補上**——漏了不會壞，但稽核頁會顯示原始代碼字串。
 2. `summary` 在寫入當下組好人話（含對象名稱與前後值摘要）；欄位級對照放 `detail_json`。
 3. `PermissionFilter` 攔下的 403 寫 `result='denied'`。
-4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web.log`），照常回應。
+4. **稽核/執行紀錄寫入失敗不得中斷業務操作**——catch 後寫 Web 端 NLog（`logs\web-yyyy-MM-dd.log`），照常回應。
 5. 批次端：啟動先寫 `lf_batch_runs`（finished_at=NULL），結束回填；進 store 的只有
    Warn 以上＋固定 Info 里程碑；訊息自帶脈絡（處理日期＋階段）。NLog 檔案 log 職責不變。
 6. 保留：各類資料的保留期與預設值見 §9.9b 項次 4 與 [DB-SPEC.md](DB-SPEC.md)「保留策略」（稽核 730、執行歷程 90、業務資料 120，皆可調且下限 90）。
