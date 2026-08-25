@@ -59,7 +59,7 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
-    private readonly int _riskyEventRetentionDays;
+    private readonly int _rawEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
     private readonly bool _onlyMissingOrFailed;
@@ -80,7 +80,7 @@ public class NetiqPipelineService
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
     /// Web 狀態卡的訊息其實是凍結的。改走與本機路徑相同的 <see cref="IRunConsole"/>。</param>
     /// <param name="riskyEventStore">風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）；null＝不寫暫存（測試情境）</param>
-    /// <param name="riskyEventRetentionDays">暫存保留天數——超過保留期的回補日跳過寫入
+    /// <param name="rawEventRetentionDays">原始事件保留天數——超過保留期的回補日跳過寫入
     /// （見 <see cref="RiskyEventSelector.WithinRetention"/>），與本機路徑同一個閘門</param>
     /// <param name="useAi">false＝AI 未設定，本次以統計模式跑（不呼叫 AI），與本機路徑同一個
     /// 開關（docs/archive/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
@@ -98,7 +98,7 @@ public class NetiqPipelineService
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
-        IRiskyEventStore? riskyEventStore = null, int? riskyEventRetentionDays = null, bool useAi = true,
+        IRiskyEventStore? riskyEventStore = null, int? rawEventRetentionDays = null, bool useAi = true,
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
@@ -116,7 +116,7 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
-        _riskyEventRetentionDays = riskyEventRetentionDays ?? SystemSettings.DefaultRiskyEventRetentionDays;
+        _rawEventRetentionDays = rawEventRetentionDays ?? SystemSettings.DefaultRawEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
         _onlyMissingOrFailed = onlyMissingOrFailed;
@@ -651,7 +651,7 @@ public class NetiqPipelineService
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
-                _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+                _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(
                 _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 

@@ -431,10 +431,10 @@ public class AnalysisOrchestrator
 
             try
             {
-                var detailPruned = allHostRecords.PruneDetails(retention.DetailRetentionDays);
+                var detailPruned = allHostRecords.PruneDetails(retention.RawEventRetentionDays);
                 if (detailPruned > 0)
                 {
-                    console.WriteLine($"已清除 {detailPruned} 筆超過 {retention.DetailRetentionDays} 天的紀錄詳情" +
+                    console.WriteLine($"已清除 {detailPruned} 筆超過 {retention.RawEventRetentionDays} 天的紀錄詳情" +
                                       "（統計與問題清單保留，僅原始樣本訊息不可再查看）。");
                 }
 
@@ -478,9 +478,9 @@ public class AnalysisOrchestrator
                     console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");
 
                 // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
-                var riskyEventPruned = riskyEventStore.Prune(retention.RiskyEventRetentionDays);
+                var riskyEventPruned = riskyEventStore.Prune(retention.RawEventRetentionDays);
                 if (riskyEventPruned > 0)
-                    console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RiskyEventRetentionDays} 天的風險 log 暫存。");
+                    console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RawEventRetentionDays} 天的風險 log 暫存。");
             }
             catch (Exception ex)
             {
@@ -788,7 +788,7 @@ public class AnalysisOrchestrator
             // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
             HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
             HostDayPostProcessor.ReplaceRiskyEvents(
-                riskyEventStore, retention.RiskyEventRetentionDays, date, record.TopIssues, logs, currentHostId);
+                riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 
             dayStopwatch.Stop();
             elapsedByDate[date] = dayStopwatch.Elapsed;
@@ -870,7 +870,7 @@ public class AnalysisOrchestrator
             var netiqPipeline = new NetiqPipelineService(
                 backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
-                riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress,
+                riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings);
 
@@ -1040,6 +1040,5 @@ public record RetentionOptions
     public int RetentionDays { get; init; } = SystemSettings.DefaultRetentionDays;
     public int RunLogRetentionDays { get; init; } = SystemSettings.DefaultRunLogRetentionDays;
     public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
-    public int RiskyEventRetentionDays { get; init; } = SystemSettings.DefaultRiskyEventRetentionDays;
-    public int DetailRetentionDays { get; init; } = SystemSettings.DefaultDetailRetentionDays;
+    public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
 }

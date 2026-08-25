@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace LogForesight.Core.Models;
 
 /// <summary>
@@ -192,9 +195,15 @@ public class SystemSettings
     /// <summary>首次執行（歷史資料庫全空）時回補歷史的天數</summary>
     public int InitialHistoryDays { get; set; } = DefaultInitialHistoryDays;
 
+    /// <summary>
+    /// 承接 JSON 中未對應到屬性的額外鍵（供舊版保留天數設定遷移至 <see cref="RawEventRetentionDays"/> 使用）。
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
     /// <summary>RetentionDays 的出廠預設——設定不可得時的 fallback 也引用這裡
     /// （HostVisibilityResolver／VisibilityService／RetentionOptions），改預設值只改這一處。</summary>
-    public const int DefaultRetentionDays = 120;
+    public const int DefaultRetentionDays = 180;
 
     /// <summary>歷史資料庫保留天數（需 &gt;= InitialHistoryDays）</summary>
     public int RetentionDays { get; set; } = DefaultRetentionDays;
@@ -207,7 +216,7 @@ public class SystemSettings
     public int RunLogRetentionDays { get; set; } = DefaultRunLogRetentionDays;
 
     /// <summary>RunLogRetentionDays 的出廠預設</summary>
-    public const int DefaultRunLogRetentionDays = 90;
+    public const int DefaultRunLogRetentionDays = 120;
 
     /// <summary>
     /// 稽核紀錄保留天數（操作稽核——docs/WEB-SPEC.md §11-6、docs/archive/HISTORY.md P0-3）。
@@ -219,24 +228,14 @@ public class SystemSettings
     public const int DefaultAuditRetentionDays = 730;
 
     /// <summary>
-    /// 風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3，2026-07-31 定案）：規則命中或
-    /// 趨勢異常的問題簽章原始事件，暫存供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel。
-    /// 與業務資料的 <see cref="RetentionDays"/> 是不同性質的保留期（暫存 vs 長期分析紀錄），
-    /// 驗證要求 <c>MinRetentionDays &lt;= 值 &lt;= RetentionDays</c>——暫存活得比分析紀錄久沒有意義。
-    /// </summary>
-    public int RiskyEventRetentionDays { get; set; } = DefaultRiskyEventRetentionDays;
-
-    /// <summary>RiskyEventRetentionDays 的出廠預設（與下限同值屬巧合，兩者語意不同，不要互相引用）</summary>
-    public const int DefaultRiskyEventRetentionDays = 90;
-
-    /// <summary>
-    /// 詳情保留天數：風險日詳情頁的原始內容（樣本訊息等）保留多久。
+    /// 原始事件內容保留天數（日紀錄原始樣本訊息與風險 log 暫存）：超過此天數的分析紀錄
+    /// 只保留統計欄與問題清單，原始事件文本予以清除；風險 log 暫存亦同步清理。
     /// 必須小於或等於 <see cref="RetentionDays"/>。
     /// </summary>
-    public int DetailRetentionDays { get; set; } = DefaultDetailRetentionDays;
+    public int RawEventRetentionDays { get; set; } = DefaultRawEventRetentionDays;
 
-    /// <summary>DetailRetentionDays 的出廠預設</summary>
-    public const int DefaultDetailRetentionDays = 120;
+    /// <summary>RawEventRetentionDays 的出廠預設</summary>
+    public const int DefaultRawEventRetentionDays = 120;
 
     /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的

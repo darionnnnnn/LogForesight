@@ -33,7 +33,7 @@ public class SystemSettingsServiceTests : IDisposable
                 MailState));
 
     private static UpdateSystemSettingsRequest ValidRequest(
-        int runLogRetentionDays = 90, int auditRetentionDays = 730, int riskyEventRetentionDays = 90, int detailRetentionDays = 120) => new()
+        int runLogRetentionDays = 120, int auditRetentionDays = 730, int rawEventRetentionDays = 120) => new()
     {
         UnhandledSeverities = new List<string> { "High" },
         SeverityDisplayMode = "DefaultHidden",
@@ -44,11 +44,10 @@ public class SystemSettingsServiceTests : IDisposable
         AiAzureDeployment = "",
         AiAzureApiVersion = "2024-10-21",
         InitialHistoryDays = 120,
-        RetentionDays = 120,
+        RetentionDays = 180,
         RunLogRetentionDays = runLogRetentionDays,
         AuditRetentionDays = auditRetentionDays,
-        RiskyEventRetentionDays = riskyEventRetentionDays,
-        DetailRetentionDays = detailRetentionDays,
+        RawEventRetentionDays = rawEventRetentionDays,
         // §12：自 appsettings 遷入的參數（各欄位的 [Range] 由 API 邊界的模型驗證負責，
         // 服務層只做跨欄位規則；這裡帶出廠值，讓既有測試不會存進一堆 0）
         AiTimeoutSeconds = 600,
@@ -172,36 +171,38 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.Equal(365, service.Get().AuditRetentionDays);
     }
 
-    // ── docs/archive/WEB-SCHEDULER-PLAN.md §2：RiskyEventRetentionDays ──────────────────────
+    // ── 原始事件內容保留天數（RawEventRetentionDays） ──────────────────────
 
     [Fact]
-    public void Update後_風險log暫存保留天數持久化()
+    public void Update後_原始事件內容保留天數持久化()
     {
         var service = Create();
 
-        var saved = service.Update(ValidRequest(riskyEventRetentionDays: 7));
+        var saved = service.Update(ValidRequest(rawEventRetentionDays: 90));
 
-        Assert.Equal(7, saved.RiskyEventRetentionDays);
-        Assert.Equal(7, service.Get().RiskyEventRetentionDays);
+        Assert.Equal(90, saved.RawEventRetentionDays);
+        Assert.Equal(90, service.Get().RawEventRetentionDays);
     }
 
     [Fact]
-    public void 風險log暫存保留天數大於歷史資料保留天數時拒絕()
+    public void 原始事件內容保留天數大於歷史資料保留天數時拒絕()
     {
         var service = Create();
-        var request = ValidRequest(riskyEventRetentionDays: 200); // RetentionDays 固定為 120（ValidRequest）
+        var request = ValidRequest(rawEventRetentionDays: 200);
+        request.RetentionDays = 180;
 
-        Assert.Throws<DomainException>(() => service.Update(request));
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("原始事件內容保留天數", ex.Message);
     }
 
     [Fact]
-    public void 風險log暫存保留天數等於歷史資料保留天數時允許()
+    public void 原始事件內容保留天數等於歷史資料保留天數時允許()
     {
         var service = Create();
 
-        var saved = service.Update(ValidRequest(riskyEventRetentionDays: 120));
+        var saved = service.Update(ValidRequest(rawEventRetentionDays: 180));
 
-        Assert.Equal(120, saved.RiskyEventRetentionDays);
+        Assert.Equal(180, saved.RawEventRetentionDays);
     }
 
     [Fact]
@@ -209,12 +210,11 @@ public class SystemSettingsServiceTests : IDisposable
     {
         var settings = new SystemSettings();
 
-        Assert.Equal(90, settings.RunLogRetentionDays);
+        Assert.Equal(120, settings.RunLogRetentionDays);
         Assert.Equal(730, settings.AuditRetentionDays);
-        Assert.Equal(90, settings.RiskyEventRetentionDays);
-        Assert.Equal(120, settings.DetailRetentionDays);
+        Assert.Equal(120, settings.RawEventRetentionDays);
         Assert.Equal(120, settings.InitialHistoryDays);
-        Assert.Equal(120, settings.RetentionDays);
+        Assert.Equal(180, settings.RetentionDays);
     }
 
     // ── 保留天數共同下限 90（回饋二十六輪作業 D）─────────────────────────────────
@@ -223,10 +223,9 @@ public class SystemSettingsServiceTests : IDisposable
     [Theory]
     [InlineData(nameof(UpdateSystemSettingsRequest.InitialHistoryDays))]
     [InlineData(nameof(UpdateSystemSettingsRequest.RetentionDays))]
-    [InlineData(nameof(UpdateSystemSettingsRequest.DetailRetentionDays))]
+    [InlineData(nameof(UpdateSystemSettingsRequest.RawEventRetentionDays))]
     [InlineData(nameof(UpdateSystemSettingsRequest.RunLogRetentionDays))]
     [InlineData(nameof(UpdateSystemSettingsRequest.AuditRetentionDays))]
-    [InlineData(nameof(UpdateSystemSettingsRequest.RiskyEventRetentionDays))]
     public void 保留天數低於90時模型驗證不通過(string propertyName)
     {
         // 走 ASP.NET 模型繫結實際使用的那一套驗證（Validator + DataAnnotations），
@@ -249,41 +248,8 @@ public class SystemSettingsServiceTests : IDisposable
         Assert.DoesNotContain(results, r => r.MemberNames.Contains(propertyName));
     }
 
-    // ── 詳情保留天數（DetailRetentionDays） ───────────────────────────────────────────
-
     [Fact]
-    public void Update後_詳情保留天數持久化()
-    {
-        var service = Create();
-
-        var saved = service.Update(ValidRequest(detailRetentionDays: 90));
-
-        Assert.Equal(90, saved.DetailRetentionDays);
-        Assert.Equal(90, service.Get().DetailRetentionDays);
-    }
-
-    [Fact]
-    public void 詳情保留天數大於歷史資料保留天數時拒絕()
-    {
-        var service = Create();
-        var request = ValidRequest(detailRetentionDays: 200); // RetentionDays 固定為 120
-
-        var ex = Assert.Throws<DomainException>(() => service.Update(request));
-        Assert.Contains("詳情保留天數", ex.Message);
-    }
-
-    [Fact]
-    public void 詳情保留天數等於歷史資料保留天數時允許()
-    {
-        var service = Create();
-
-        var saved = service.Update(ValidRequest(detailRetentionDays: 120));
-
-        Assert.Equal(120, saved.DetailRetentionDays);
-    }
-
-    [Fact]
-    public void Update_稽核紀錄同時包含Before與After的詳情保留天數()
+    public void Update_稽核紀錄同時包含Before與After的原始事件內容保留天數()
     {
         // 先建立初始設定並清除之前的稽核紀錄（或者直接用新的 audit service 拿最後一筆）
         var audit = new RecordingAuditService();
@@ -294,7 +260,7 @@ public class SystemSettingsServiceTests : IDisposable
                 MailState));
 
         // 存入不同的值以確認稽核抓到變更
-        service.Update(ValidRequest(detailRetentionDays: 90));
+        service.Update(ValidRequest(rawEventRetentionDays: 90));
 
         var record = audit.Entries.Last();
         var detailNode = System.Text.Json.Nodes.JsonNode.Parse(record.DetailJson!)!;
@@ -302,8 +268,133 @@ public class SystemSettingsServiceTests : IDisposable
         // FakeSystemSettingsStore 會修改同一個物件參考，所以 before/after 值可能相同。
         // 但測試的重點是「斷言兩邊都在」（Before 與 After 區塊都有此欄位），所以檢查 key 是否存在。
         var detailObj = detailNode.AsObject();
-        Assert.True(detailObj["Before"]!.AsObject().ContainsKey("DetailRetentionDays"));
-        Assert.True(detailObj["After"]!.AsObject().ContainsKey("DetailRetentionDays"));
+        Assert.True(detailObj["Before"]!.AsObject().ContainsKey("RawEventRetentionDays"));
+        Assert.True(detailObj["After"]!.AsObject().ContainsKey("RawEventRetentionDays"));
+    }
+
+    // ── 舊版保留天數設定遷移（SystemSettingsStore.OnDeserialized） ───────────────
+
+    [Fact]
+    public void 舊設定遷移_情境1_同時有兩個舊鍵且值不同_新鍵取較小者()
+    {
+        _fx.Blob("system_settings_mig_1").Mutate<object?>(_ => ("""
+        {
+          "DetailRetentionDays": 120,
+          "RiskyEventRetentionDays": 90
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_1"));
+        var settings = store.Get();
+
+        Assert.Equal(90, settings.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_情境2a_只有DetailRetentionDays舊鍵_新鍵等於該值()
+    {
+        _fx.Blob("system_settings_mig_2a").Mutate<object?>(_ => ("""
+        {
+          "DetailRetentionDays": 100
+        }
+        """, null));
+        var storeDetail = new SystemSettingsStore(_fx.Blob("system_settings_mig_2a"));
+        Assert.Equal(100, storeDetail.Get().RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_情境2b_只有RiskyEventRetentionDays舊鍵_新鍵等於該值()
+    {
+        _fx.Blob("system_settings_mig_2b").Mutate<object?>(_ => ("""
+        {
+          "RiskyEventRetentionDays": 60
+        }
+        """, null));
+        var storeRisky = new SystemSettingsStore(_fx.Blob("system_settings_mig_2b"));
+        Assert.Equal(60, storeRisky.Get().RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_情境3_兩個舊鍵都沒有_新鍵等於出廠預設()
+    {
+        _fx.Blob("system_settings_mig_3").Mutate<object?>(_ => ("""
+        {
+          "BrandName": "MyPlatform"
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_3"));
+        var settings = store.Get();
+
+        Assert.Equal(SystemSettings.DefaultRawEventRetentionDays, settings.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_情境4_已是新版JSON_值原樣保留不被遷移覆寫()
+    {
+        _fx.Blob("system_settings_mig_4").Mutate<object?>(_ => ("""
+        {
+          "RawEventRetentionDays": 200
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_4"));
+        var settings = store.Get();
+
+        Assert.Equal(200, settings.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_情境5_遷移後再存一次_寫回的JSON不再包含舊鍵()
+    {
+        _fx.Blob("system_settings_mig_5").Mutate<object?>(_ => ("""
+        {
+          "DetailRetentionDays": 120,
+          "RiskyEventRetentionDays": 90,
+          "BrandName": "LogForesight"
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_5"));
+        store.Update(s => s.BrandName = "UpdatedBrand");
+
+        var rawJson = _fx.Blob("system_settings_mig_5").Read();
+        Assert.NotNull(rawJson);
+        Assert.Contains("RawEventRetentionDays", rawJson);
+        Assert.DoesNotContain("DetailRetentionDays", rawJson);
+        Assert.DoesNotContain("RiskyEventRetentionDays", rawJson);
+    }
+
+    [Fact]
+    public void 舊設定遷移_同時有兩個舊鍵且值相同_新鍵等於該值()
+    {
+        _fx.Blob("system_settings_mig_same").Mutate<object?>(_ => ("""
+        {
+          "DetailRetentionDays": 90,
+          "RiskyEventRetentionDays": 90
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_same"));
+        var settings = store.Get();
+
+        Assert.Equal(90, settings.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void 舊設定遷移_舊鍵名稱大小寫不敏感_仍能正確遷移()
+    {
+        _fx.Blob("system_settings_mig_case").Mutate<object?>(_ => ("""
+        {
+          "detailretentiondays": 110,
+          "riskyeventretentiondays": 95
+        }
+        """, null));
+
+        var store = new SystemSettingsStore(_fx.Blob("system_settings_mig_case"));
+        var settings = store.Get();
+
+        Assert.Equal(95, settings.RawEventRetentionDays);
     }
 
     /// <summary>

@@ -79,7 +79,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: useAi, progress: null,
+            riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
 
@@ -1207,7 +1207,7 @@ public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
         var customPipeline = new NetiqPipelineService(
             _backend, new NetiqOptions { BackfillDays = 1 }, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: false, progress: null,
+            riskyEventStore: null, rawEventRetentionDays: 14, useAi: false, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client),
             permissionMappings: mappings);
 

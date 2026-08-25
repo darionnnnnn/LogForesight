@@ -149,12 +149,12 @@ public class RuntimeSettingsResolverTests
         _store.Update(s =>
         {
             s.RetentionDays = 120;
-            s.DetailRetentionDays = 90;
+            s.RawEventRetentionDays = 90;
         });
 
         var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
 
-        Assert.Equal(90, retention.DetailRetentionDays);
+        Assert.Equal(90, retention.RawEventRetentionDays);
     }
 
     [Fact]
@@ -163,13 +163,13 @@ public class RuntimeSettingsResolverTests
         _store.Update(s =>
         {
             s.RetentionDays = 120;
-            s.DetailRetentionDays = 200; // 超出範圍
+            s.RawEventRetentionDays = 200; // 超出範圍
         });
 
         var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
 
         // RetentionOptions 的出廠預設為 120
-        Assert.Equal(120, retention.DetailRetentionDays);
+        Assert.Equal(120, retention.RawEventRetentionDays);
     }
 
     [Fact]
@@ -178,11 +178,25 @@ public class RuntimeSettingsResolverTests
         _store.Update(s =>
         {
             s.RetentionDays = 120;
-            s.DetailRetentionDays = 0; // 不合法下限
+            s.RawEventRetentionDays = 0; // 不合法下限
         });
 
         var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
 
-        Assert.Equal(120, retention.DetailRetentionDays);
+        Assert.Equal(120, retention.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_等於歷史資料保留天數時正確套用()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.RawEventRetentionDays = 120;
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(120, retention.RawEventRetentionDays);
     }
 }

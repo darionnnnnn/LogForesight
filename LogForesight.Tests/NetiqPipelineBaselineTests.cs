@@ -96,7 +96,7 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         return new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: useAi, progress: null,
+            riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
 

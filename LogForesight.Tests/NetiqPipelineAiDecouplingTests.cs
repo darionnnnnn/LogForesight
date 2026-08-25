@@ -99,7 +99,7 @@ public sealed class NetiqPipelineAiDecouplingTests : IDisposable
         var pipeline = new NetiqPipelineService(
             _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: riskyEventStore, riskyEventRetentionDays: 14, useAi: true, progress: progress,
+            riskyEventStore: riskyEventStore, rawEventRetentionDays: 14, useAi: true, progress: progress,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
 
         if (aiQueueCapacity.HasValue) pipeline.AiQueueCapacity = aiQueueCapacity.Value;

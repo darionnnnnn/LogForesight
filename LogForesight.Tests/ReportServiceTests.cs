@@ -733,11 +733,11 @@ public class ReportServiceTests : IDisposable
     [Fact]
     public void GetSummary_ComparisonOutOfRetention_依比較期終點是否落在保留期之外判定()
     {
-        var fromOutside = DateTime.Today.AddDays(-120);
-        var toOutside = DateTime.Today.AddDays(-119);
+        var fromOutside = DateTime.Today.AddDays(-180);
+        var toOutside = DateTime.Today.AddDays(-179);
 
-        var fromInside = DateTime.Today.AddDays(-119);
-        var toInside = DateTime.Today.AddDays(-118);
+        var fromInside = DateTime.Today.AddDays(-179);
+        var toInside = DateTime.Today.AddDays(-178);
 
         var resultOutside = _service.GetSummary(fromOutside, toOutside, null, "previous");
         var resultInside = _service.GetSummary(fromInside, toInside, null, "previous");
