@@ -341,6 +341,10 @@
             <h2 class="lf-card__title">AD 驗證</h2>
         </div>
         <div class="lf-card__body">
+            @* 生效狀態一句話講完：AD 沒設定時一般帳號一律登入失敗，且失敗訊息與密碼打錯
+               完全相同（刻意不洩漏帳號是否存在），沒有這行提示無從分辨。 *@
+            <div class="alert d-none mb-3" id="ad-status" role="status"></div>
+
             <div class="form-check mb-3">
                 <input class="form-check-input" type="checkbox" id="ad-auth-enabled" />
                 <label class="form-check-label" for="ad-auth-enabled">啟用 AD 驗證</label>
