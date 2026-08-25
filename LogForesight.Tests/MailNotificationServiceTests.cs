@@ -50,7 +50,7 @@ public class MailNotificationServiceTests : IDisposable
     private MailNotificationService CreateWithIssueDigest()
     {
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore);
-        var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver);
+        var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore);
         return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates, issueDigest);
     }

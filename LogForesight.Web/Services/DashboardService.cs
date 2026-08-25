@@ -209,8 +209,8 @@ public class DashboardService
                     .Select(a => a!)
                     .ToList();
 
-                // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理／處理中的問題數，
-                // 不再是風險日數——與儀表板 KPI 卡同一套定義，只是把母體縮到這個群組的主機。
+                // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理的問題數，
+                // 不再是風險日數——與儀表板 KPI 卡同一套定義（只計未處理），只是把母體縮到這個群組的主機。
                 // 從呼叫端已解析好的全站快照做記憶體子集彙總（回饋十九輪批次I 體檢修正），
                 // 不逐群組重新查詢——群組成員 ⊆ 可見範圍，子集過濾與逐群組查詢結果等價
                 var memberIds = memberHosts.Select(h => h.HostId).ToHashSet();
@@ -224,7 +224,7 @@ public class DashboardService
                     HostCount = memberHosts.Count,
                     HighRiskDays = memberAgg.Sum(a => a.HighRiskDays),
                     MediumRiskDays = memberAgg.Sum(a => a.MediumRiskDays),
-                    UnhandledCount = groupIssueTodo.OpenIssueCount + groupIssueTodo.InProgressIssueCount
+                    UnhandledCount = groupIssueTodo.OpenIssueCount
                 };
             })
             .Where(g => g.HostCount > 0)

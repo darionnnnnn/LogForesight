@@ -94,17 +94,27 @@ public class SystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
 
-    public HashSet<string>? GetVisibleSeverities()
-    {
-        var settings = _store.Get();
-        return NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
+    public HashSet<string>? GetVisibleSeverities() => ResolveVisibleSeverities(_store.Get());
+
+    public IReadOnlySet<string>? GetVisibleDayRiskLevels() => ResolveVisibleDayRiskLevels(_store.Get());
+
+    /// <summary>
+    /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合；DefaultHidden 回傳 null。
+    /// 供非 Scoped 呼叫端（如 Singleton 的 MailIssueDigest）直接依 settings 運算，
+    /// 與實例方法共用同一份判定邏輯。
+    /// </summary>
+    public static HashSet<string>? ResolveVisibleSeverities(SystemSettings settings) =>
+        NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
             ? NormalizeLegacySeverities(settings.UnhandledSeverities).ToHashSet()
             : null;
-    }
 
-    public IReadOnlySet<string>? GetVisibleDayRiskLevels()
+    /// <summary>
+    /// 顯示中的日風險等級集合。全勾（高/中/低皆顯示）回傳 null。
+    /// 供非 Scoped 呼叫端直接依 settings 運算，與實例方法共用同一份判定邏輯。
+    /// </summary>
+    public static IReadOnlySet<string>? ResolveVisibleDayRiskLevels(SystemSettings settings)
     {
-        var visible = NormalizeDayRiskLevels(_store.Get().VisibleDayRiskLevels);
+        var visible = NormalizeDayRiskLevels(settings.VisibleDayRiskLevels);
         return visible.Count == RiskLevels.All.Length ? null : visible.ToHashSet();
     }
 

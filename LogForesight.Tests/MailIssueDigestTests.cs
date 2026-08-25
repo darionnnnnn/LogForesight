@@ -31,7 +31,7 @@ public class MailIssueDigestTests : IDisposable
     {
         var aggregates = new EfIssueAggregateQuery(_fx.NewContext, _hosts);
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings);
-        return new MailIssueDigest(aggregates, statusResolver);
+        return new MailIssueDigest(aggregates, statusResolver, _settings);
     }
 
     private static LogIssueSignature Issue(
@@ -43,7 +43,7 @@ public class MailIssueDigestTests : IDisposable
         };
 
     private void Add(long hostId, string host, DateTime date, params LogIssueSignature[] issues) =>
-        Add(hostId, host, date, RiskLevels.Low, issues);
+        Add(hostId, host, date, RiskLevels.High, issues);
 
     /// <summary>逾期判定的母體是 ActionableOccurrences（日層級 RiskLevel 為高或中，見
     /// IIssueAggregateQuery.ActionableOccurrences 的既有定義），不是問題自身嚴重度——
@@ -154,5 +154,27 @@ public class MailIssueDigestTests : IDisposable
         var row = new MailIssueRow("disk", 153, "Storage", 3, 1, MailIssueBucket.Spreading);
 
         Assert.Equal("disk/153（儲存裝置）｜影響 3 台（前期 1）｜擴散中", row.FormatLine());
+    }
+
+    /// <summary>站台設定為 SiteHidden 且只顯示高嚴重度時，郵件問題摘要排除低嚴重度問題</summary>
+    [Fact]
+    public void 站台設為SiteHidden時_郵件問題摘要排除隱藏嚴重度()
+    {
+        _settings.Update(s =>
+        {
+            s.SeverityDisplayMode = "SiteHidden";
+            s.UnhandledSeverities = new List<string> { "High" };
+        });
+
+        var today = new DateTime(2026, 8, 8);
+        Add(1, "A", today,
+            Issue("disk", 153, severity: IssueSeverity.High),
+            Issue("DCOM", 10016, severity: IssueSeverity.Low));
+
+        var rows = Digest().Build(today, today, null);
+
+        var row = Assert.Single(rows);
+        Assert.Equal("disk", row.Source);
+        Assert.Equal(153, row.EventId);
     }
 }

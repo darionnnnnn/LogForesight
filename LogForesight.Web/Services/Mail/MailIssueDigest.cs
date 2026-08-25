@@ -1,3 +1,7 @@
+using LogForesight.Core.Analysis;
+using LogForesight.Core.Persistence;
+using LogForesight.Web.Repositories;
+
 namespace LogForesight.Web.Services.Mail;
 
 /// <summary>
@@ -8,21 +12,26 @@ namespace LogForesight.Web.Services.Mail;
 /// 可對大量收件人各自重複呼叫一次的路徑。
 ///
 /// **Singleton-safe**：<see cref="MailNotificationService"/> 是 Singleton（背景排程觸發，不經
-/// HTTP 請求 Scope），這裡的兩個相依（<see cref="IIssueAggregateQuery"/>／
-/// <see cref="OccurrenceStatusResolver"/>）皆已註冊為 Singleton（見
-/// ServiceCollectionExtensions），沒有 captive dependency 疑慮。刻意不注入 Scoped 的
-/// <see cref="IssueRankingBuilder"/>——即使只是不用它的欄位，注入本身就會在 DI 容器的
+/// HTTP 請求 Scope），這裡的三個相依（<see cref="IIssueAggregateQuery"/>／
+/// <see cref="OccurrenceStatusResolver"/>／<see cref="ISystemSettingsStore"/>）皆已註冊為 Singleton（見
+/// ServiceCollectionExtensions），沒有 captive dependency 疑慮。刻意不注入 Scoped 服務
+/// 或 <see cref="IssueRankingBuilder"/>——即使只是不用它的欄位，注入本身就會在 DI 容器的
 /// scope 驗證下出錯。
 /// </summary>
 public class MailIssueDigest
 {
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
+    private readonly ISystemSettingsStore _settingsStore;
 
-    public MailIssueDigest(IIssueAggregateQuery aggregates, OccurrenceStatusResolver statusResolver)
+    public MailIssueDigest(
+        IIssueAggregateQuery aggregates,
+        OccurrenceStatusResolver statusResolver,
+        ISystemSettingsStore settingsStore)
     {
         _aggregates = aggregates;
         _statusResolver = statusResolver;
+        _settingsStore = settingsStore;
     }
 
     /// <summary>
@@ -40,6 +49,12 @@ public class MailIssueDigest
     {
         if (visibleHostIds != null && visibleHostIds.Count == 0) return new List<MailIssueRow>();
 
+        var settings = _settingsStore.Get();
+        var visibleSeverities = RecordRepository.ParseVisibleSeverities(
+            SystemSettingsService.ResolveVisibleSeverities(settings));
+        var riskLevels = RecordRepository.ResolveDayRiskLevels(
+            SystemSettingsService.ResolveVisibleDayRiskLevels(settings), null);
+
         var periodDays = Math.Max(1, (to.Date - from.Date).Days + 1);
 
         // 前期對比用**等長**的前一個期間——與 IssueRankingBuilder.Build 同一套規則
@@ -47,13 +62,17 @@ public class MailIssueDigest
         var previousFrom = previousTo.AddDays(-periodDays + 1);
         // 鍵正規化成大寫（回饋二十輪 I）：Aggregate 輸出的 Source 是該期間內任一個原始寫法，
         // 本期與前期可能取到不同大小寫，用原始字串當鍵會讓前期對比靜默落空
-        var previous = _aggregates.Aggregate(previousFrom, previousTo, visibleHostIds)
+        var previous = _aggregates.Aggregate(
+            previousFrom, previousTo, visibleHostIds,
+            visibleSeverities: visibleSeverities, riskLevels: riskLevels)
             .ToDictionary(a => IssueProfile.KeyOf(a.Source, a.EventId));
 
-        var current = _aggregates.Aggregate(from, to, visibleHostIds);
+        var current = _aggregates.Aggregate(
+            from, to, visibleHostIds,
+            visibleSeverities: visibleSeverities, riskLevels: riskLevels);
         if (current.Count == 0) return new List<MailIssueRow>();
 
-        var overdueKeys = ResolveOverdueKeys(from, to, visibleHostIds);
+        var overdueKeys = ResolveOverdueKeys(from, to, visibleHostIds, visibleSeverities, riskLevels);
 
         var rows = new List<MailIssueRow>();
         foreach (var a in current)
@@ -81,9 +100,13 @@ public class MailIssueDigest
     /// <summary>逾期問題的 (Source,EventId) 集合——母體與判定規則與 <see cref="IssueTodoQuery"/>
     /// 共用同一個口徑（<see cref="IssueTodoQuery.IsOverdueInProgress"/>），不是另訂一套規則。</summary>
     private HashSet<(string SourceUpper, int EventId)> ResolveOverdueKeys(
-        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds)
+        DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities,
+        IReadOnlySet<string>? riskLevels)
     {
-        var actionable = _aggregates.ActionableOccurrences(from, to, visibleHostIds);
+        var actionable = _aggregates.ActionableOccurrences(
+            from, to, visibleHostIds,
+            visibleSeverities: visibleSeverities, riskLevels: riskLevels);
         if (actionable.Count == 0) return new HashSet<(string, int)>();
 
         var resolved = _statusResolver.Resolve(actionable, from, to);

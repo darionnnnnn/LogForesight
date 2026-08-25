@@ -415,4 +415,49 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(1, summary.IssueTodo.OpenIssueCount);
         Assert.Equal(summary.IssueTodo.OpenIssueCount, issueResult.Total);
     }
+
+    /// <summary>
+    /// 群組風險概況的 UnhandledCount 與全站 KPI 卡「未處理問題」同口徑：只計未處理（Open），
+    /// 不含「處理中」（InProgress）的問題。
+    /// </summary>
+    [Fact]
+    public void GetSummary_群組風險概況的未處理數只計未處理問題()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var host = AddHost("HOST-A", 1);
+
+        var openIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "Disk", EventId = 7,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        var inProgressIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "DCOM", EventId = 10016,
+            EntryType = System.Diagnostics.EventLogEntryType.Warning,
+            Category = IssueCategory.Service, Severity = IssueSeverity.High
+        };
+
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Anchor, RiskLevel = RiskLevels.High,
+            TopIssues = new() { openIssue, inProgressIssue }
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = Anchor,
+            IssueKey = IssueSignatureKey.For(inProgressIssue),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = Anchor.AddDays(7)
+        });
+
+        var summary = _service.GetSummary(7);
+
+        var group = Assert.Single(summary.GroupRisk);
+        Assert.Equal(1, group.UnhandledCount);
+        Assert.Equal(summary.IssueTodo.OpenIssueCount, group.UnhandledCount);
+    }
 }
