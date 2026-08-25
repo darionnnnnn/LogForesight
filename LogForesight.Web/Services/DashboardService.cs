@@ -107,7 +107,7 @@ public class DashboardService
         // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
         var actionableResolved = nothingVisible
             ? new List<ResolvedOccurrence>()
-            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels);
+            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels, visibleSeverities: visibleSeverities);
         BuildGroupRisk(dto, hostRiskAgg, visibleHosts, actionableResolved);
 
         // 全站三個日數從同一個 KPI 聚合取（與報表同一支查詢）。刻意**不**用 hostRiskAgg 加總——
