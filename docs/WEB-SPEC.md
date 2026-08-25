@@ -1918,11 +1918,23 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `keywords[]`／`related[]`／`type`／`href`；`icon` 對應 `icons.svg` 的 symbol id，各章節各配一個、盡量對齊真實側欄同功能頁面的圖示選擇；
   `type`／`href` 欄位：`type` 省略時預設 `"markdown"`（既有章節零改動），
   `type="link"` 的章節（目前只有第一項「首次啟動精靈」，`href="/setup"`）沒有 Markdown 檔，
-  前端渲染成導引卡）＋ 14 個章節 Markdown 檔（清單共 15 項＝14 md＋1 link），全部以
+  前端渲染成導引卡）＋ 18 個章節 Markdown 檔（清單共 19 項＝18 md＋1 link），全部以
   **內嵌資源**編進組件（csproj 的
   `<EmbeddedResource>`，部署零額外檔案）。`HelpContentService`（Singleton，`Lazy<T>` 延後載入）
   以資源名稱尾碼比對（`HelpContent.{檔名}`）取出內容，不寫死組件的根命名空間前綴。
-  精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
+  - **雙版本內容（使用者簡明版 vs AI 詳細版）**：manifest 每章除 `file` 外可選帶 `aiFile`。
+  - `file`：**畫面上顯示的使用者版**，要好讀，且受渲染器限制——
+    `markdown-lite` 只支援粗體／行內代碼／單層清單／`#` 開頭行／GFM 表格，
+    **巢狀清單與標題層級都不支援**，內容必須維持單層結構。
+  - `aiFile`：**只餵給 AI 問答當知識庫**，不會出現在畫面上，也因此不經渲染器——
+    可自由使用巢狀清單、多層標題與表格，內容可以寫得比使用者版詳細得多
+    （欄位定義、門檻數字、狀態流轉、權限差異、常見誤解）。
+  - 兩者的單一匯合點在 `HelpChapter.ContentForAi`（`HelpContentService`）：
+    有 `aiFile` 就用詳細版，沒有則 fallback 回使用者版。
+    `GetManual()` 只塞 `Content`，**AI 版不會外洩到前端**；
+    選節計分（`HelpChapterScorer`）與 `HelpQaService` 組 prompt 時用的都是 `ContentForAi`。
+  - 目前 18 章全數具備 `aiFile`。
+- 精靈入口的 Hidden 過濾在 `HelpController` 層做（`GetManual(hideSetupWizard)`，讀
   `SetupWizardStateStore.Hidden`）——章節快取本身維持與狀態無關。
 - **頁面版面**：左側章節目錄（`list-group`，每項含圖示）＋右側內容（單一 `GET /api/help/manual`
   一次取回 manifest＋全部章節內容，總量 &lt;200KB，不值得分節載入）；章節切換用 URL hash
