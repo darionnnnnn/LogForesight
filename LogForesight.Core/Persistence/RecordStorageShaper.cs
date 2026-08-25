@@ -70,6 +70,8 @@ internal static class RecordStorageShaper
                 SampleMessages = new List<string>(),       // 精簡：體積大戶，無風險日的基準用不到
                 DistinctMessageCount = i.DistinctMessageCount,
                 KeyDetails = null,                          // 精簡：同上
+                // 登入失敗明細（A1）：跨日比對依賴此欄位，已分組封頂 50 組體積受控，完整保留不精簡
+                LoginFailureDetails = i.LoginFailureDetails,
                 Category = i.Category,
                 Severity = i.Severity,
                 // 低風險日仍可能帶「重大」旗標：被抑制的簽章不拉高風險（見 ComputeRuleBasedRisk）

@@ -211,6 +211,56 @@ public class RecordStorageShaperTests
         Assert.Empty(shaped.TopIssues[0].SampleMessages);
     }
 
+    [Fact]
+    public void 低風險日_保留LoginFailureDetails且清空SampleMessages與KeyDetails()
+    {
+        var record = new DailyAnalysisRecord
+        {
+            Date = DateTime.Today,
+            RiskLevel = "低",
+            ErrorCount = 3,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    Count = 10,
+                    Severity = IssueSeverity.High,
+                    Category = IssueCategory.Security,
+                    SampleMessages = new List<string> { "sample 1", "sample 2" },
+                    KeyDetails = "相關帳號(1個): alice",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "alice",
+                            IsComputerAccount = false,
+                            Source = "WKS01",
+                            LogonType = 3,
+                            ReasonCode = "bad_password",
+                            Count = 10
+                        }
+                    }
+                }
+            }
+        };
+
+        var shaped = RecordStorageShaper.ForStorage(record);
+        var issue = Assert.Single(shaped.TopIssues);
+
+        Assert.Empty(issue.SampleMessages);
+        Assert.Null(issue.KeyDetails);
+        var detail = Assert.Single(issue.LoginFailureDetails!);
+        Assert.Equal("alice", detail.Account);
+        Assert.False(detail.IsComputerAccount);
+        Assert.Equal("WKS01", detail.Source);
+        Assert.Equal(3, detail.LogonType);
+        Assert.Equal("bad_password", detail.ReasonCode);
+        Assert.Equal(10, detail.Count);
+    }
+
     private static DailyAnalysisRecord LowRiskRecord() => new()
     {
         Date = DateTime.Today,

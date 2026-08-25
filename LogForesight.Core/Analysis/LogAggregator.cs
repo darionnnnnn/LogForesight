@@ -4,6 +4,16 @@ using System.Text.RegularExpressions;
 
 namespace LogForesight.Core.Analysis;
 
+public class LoginFailureDetail
+{
+    public string Account { get; set; } = string.Empty;
+    public bool IsComputerAccount { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public int? LogonType { get; set; }
+    public string ReasonCode { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
 public class LogIssueSignature
 {
     public string LogName { get; set; } = string.Empty;
@@ -50,6 +60,10 @@ public class LogIssueSignature
 
     /// <summary>Security 事件從全部訊息彙總出的相關帳號與來源 IP（入侵分析關鍵資訊），非安全事件為 null</summary>
     public string? KeyDetails { get; set; }
+
+    /// <summary>登入失敗事件（4625／4771／Linux ssh 認證失敗）的結構化明細，
+    /// 依 (帳號, 來源, 登入類型, 失敗原因) 分組計數。非登入失敗簽章為 null。</summary>
+    public List<LoginFailureDetail>? LoginFailureDetails { get; set; }
 
     // 以下由 KnownIssueCatalog.Classify 填入
     [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -143,6 +157,9 @@ internal static class LogAggregator
                     DistinctMessageCount = distinctMessages.Count,
                     KeyDetails = ShouldExtractKeyDetails(g.Key.LogName)
                         ? ExtractSecurityDetails(g.Select(e => e.Message))
+                        : null,
+                    LoginFailureDetails = IsLoginFailureEvent(g.Key.EventId)
+                        ? ExtractLoginFailureDetails(g.Key.EventId, g.Select(e => e.Message))
                         : null
                 };
             })
@@ -276,4 +293,217 @@ internal static class LogAggregator
     private static string CleanMessage(string s) =>
         string.Join(' ', s.Split('\r', '\n', '\t').Where(p => p.Length > 0));
 
+    private static readonly string[] LogonTypeLabels = { "Logon Type:", "Logon Type：", "登入類型:", "登入類型：" };
+    private static readonly string[] SubStatusLabels = { "Sub Status:", "Sub Status：", "SubStatus:", "SubStatus：", "子狀態:", "子狀態：" };
+    private static readonly string[] StatusLabels = { "Status:", "Status：", "狀態:", "狀態：" };
+    private static readonly string[] FailureCodeLabels = { "Failure Code:", "Failure Code：", "失敗碼:", "失敗碼：" };
+    private static readonly string[] WorkstationLabels = { "Workstation Name:", "Workstation Name：", "工作站名稱:", "工作站名稱：" };
+    private static readonly string[] SourceNetworkAddressLabels = { "Source Network Address:", "Source Network Address：", "來源網路位址:", "來源網路位址：" };
+    private static readonly string[] ClientAddressLabels = { "Client Address:", "Client Address：", "用戶端位址:", "用戶端位址：" };
+
+    private static readonly string[] SubStatusExcludeSubstrings = { "Sub Status", "SubStatus", "子狀態" };
+
+    private static bool IsLoginFailureEvent(int eventId) => eventId == 4625 || eventId == 4771;
+
+    /// <summary>
+    /// 從單筆登入失敗事件（4625／4771）完整訊息中抽取結構化欄位（A1）。
+    /// </summary>
+    public static LoginFailureDetail ExtractLoginFailureDetail(int eventId, string rawMessage)
+    {
+        var account = ExtractLastValue(rawMessage, AccountLabels) ?? string.Empty;
+        var isComputer = account.EndsWith('$');
+
+        if (eventId == 4771)
+        {
+            var rawClientAddress = ExtractLastValue(rawMessage, ClientAddressLabels) ?? string.Empty;
+            if (string.IsNullOrEmpty(rawClientAddress))
+            {
+                rawClientAddress = ExtractLastValue(rawMessage, SourceNetworkAddressLabels) ?? string.Empty;
+            }
+            var source = CleanClientAddress(rawClientAddress);
+
+            var rawFailureCode = ExtractLastValue(rawMessage, FailureCodeLabels) ?? string.Empty;
+            var reasonCode = Normalize4771ReasonCode(rawFailureCode);
+
+            return new LoginFailureDetail
+            {
+                Account = account,
+                IsComputerAccount = isComputer,
+                Source = source,
+                LogonType = null,
+                ReasonCode = reasonCode,
+                Count = 1
+            };
+        }
+        else
+        {
+            var rawLogonType = ExtractLastValue(rawMessage, LogonTypeLabels);
+            int? logonType = int.TryParse(rawLogonType, out var lt) ? lt : null;
+
+            var subStatus = ExtractLastValue(rawMessage, SubStatusLabels);
+            string rawStatus;
+            if (!string.IsNullOrWhiteSpace(subStatus) && subStatus != "0x0" && subStatus != "0" && subStatus != "0x00000000")
+            {
+                rawStatus = subStatus;
+            }
+            else
+            {
+                rawStatus = ExtractLastValue(rawMessage, StatusLabels, SubStatusExcludeSubstrings) ?? string.Empty;
+            }
+            var reasonCode = Normalize4625ReasonCode(rawStatus);
+
+            var workstation = ExtractLastValue(rawMessage, WorkstationLabels) ?? string.Empty;
+            var netAddress = ExtractLastValue(rawMessage, SourceNetworkAddressLabels) ?? string.Empty;
+
+            var source = !string.IsNullOrEmpty(workstation) ? workstation : CleanClientAddress(netAddress);
+
+            return new LoginFailureDetail
+            {
+                Account = account,
+                IsComputerAccount = isComputer,
+                Source = source,
+                LogonType = logonType,
+                ReasonCode = reasonCode,
+                Count = 1
+            };
+        }
+    }
+
+    /// <summary>
+    /// 從登入失敗事件的多筆原始訊息彙總結構化明細，依 (Account, Source, LogonType, ReasonCode) 分組計數，
+    /// 依 Count 降冪排序，最多保留 50 筆。
+    /// </summary>
+    public static List<LoginFailureDetail> ExtractLoginFailureDetails(int eventId, IEnumerable<string> rawMessages)
+    {
+        var groups = new Dictionary<(string AccountKey, string SourceKey, int? LogonType, string ReasonCode), LoginFailureDetail>();
+
+        foreach (var message in rawMessages)
+        {
+            var detail = ExtractLoginFailureDetail(eventId, message);
+            var key = (
+                detail.Account.ToUpperInvariant(),
+                detail.Source.ToUpperInvariant(),
+                detail.LogonType,
+                detail.ReasonCode
+            );
+
+            if (groups.TryGetValue(key, out var existing))
+            {
+                existing.Count++;
+            }
+            else
+            {
+                groups[key] = new LoginFailureDetail
+                {
+                    Account = detail.Account,
+                    IsComputerAccount = detail.IsComputerAccount,
+                    Source = detail.Source,
+                    LogonType = detail.LogonType,
+                    ReasonCode = detail.ReasonCode,
+                    Count = 1
+                };
+            }
+        }
+
+        return groups.Values
+            .OrderByDescending(d => d.Count)
+            .Take(50)
+            .ToList();
+    }
+
+    private static string Normalize4625ReasonCode(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "-" || raw == "0x0" || raw == "0" || raw == "0x00000000")
+        {
+            return string.Empty;
+        }
+
+        var trimmed = raw.Trim().ToLowerInvariant();
+        return trimmed switch
+        {
+            "0xc000006a" => "bad_password",
+            "0xc0000071" => "password_expired",
+            "0xc0000234" => "account_locked",
+            "0xc0000072" => "account_disabled",
+            "0xc0000064" => "unknown_user",
+            "0xc000006f" => "logon_time_restriction",
+            "0xc0000070" => "workstation_restriction",
+            "0xc0000193" => "account_expired",
+            _ => trimmed
+        };
+    }
+
+    private static string Normalize4771ReasonCode(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "-" || raw == "0x0" || raw == "0")
+        {
+            return string.Empty;
+        }
+
+        var trimmed = raw.Trim().ToLowerInvariant();
+        return trimmed switch
+        {
+            "0x18" => "bad_password",
+            "0x17" => "password_expired",
+            "0x12" => "account_locked_or_disabled",
+            "0x6" or "0x06" => "unknown_user",
+            _ => trimmed
+        };
+    }
+
+    private static string CleanClientAddress(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "-")
+        {
+            return string.Empty;
+        }
+
+        var trimmed = raw.Trim();
+        var match = Ipv4Regex.Match(trimmed);
+        if (match.Success)
+        {
+            return match.Value;
+        }
+
+        if (trimmed.StartsWith("::ffff:", StringComparison.OrdinalIgnoreCase))
+        {
+            var stripped = trimmed[7..].Trim();
+            return stripped == "-" ? string.Empty : stripped;
+        }
+
+        return trimmed == "-" ? string.Empty : trimmed;
+    }
+
+    private static string? ExtractLastValue(string message, string[] labels, string[]? excludeSubstrings = null)
+    {
+        string? last = null;
+        foreach (var line in message.Split('\n'))
+        {
+            if (excludeSubstrings != null && excludeSubstrings.Any(ex => line.Contains(ex, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            foreach (var label in labels)
+            {
+                int idx = line.IndexOf(label, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0)
+                {
+                    continue;
+                }
+
+                var value = line[(idx + label.Length)..].Trim();
+                if (value == "-")
+                {
+                    last = string.Empty;
+                }
+                else if (value.Length > 0)
+                {
+                    last = value;
+                }
+                break;
+            }
+        }
+        return last;
+    }
 }
