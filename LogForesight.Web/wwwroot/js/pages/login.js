@@ -84,3 +84,4 @@ function hideError() {
 init();
 
 initBrandAlign();
+window.LF_LOGIN_READY = true;

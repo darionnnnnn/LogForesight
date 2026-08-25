@@ -320,4 +320,144 @@ public class DashboardServiceTests : IDisposable
         Assert.Equal(2, secCard.AffectedHosts);
         Assert.Equal(secCard.AffectedHosts, issueResult.DistinctHostCount);
     }
+
+    [Fact]
+    public void 未處理問題KPI與依問題視角下鑽筆數一致_站台隱藏嚴重度()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+
+        var highIssue = new LogIssueSignature
+        {
+            LogName = "Security", Source = "Auth", EventId = 4625,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Security, Severity = IssueSeverity.High
+        };
+        var lowIssue = new LogIssueSignature
+        {
+            LogName = "Security", Source = "Audit", EventId = 4624,
+            EntryType = System.Diagnostics.EventLogEntryType.Information,
+            Category = IssueCategory.Security, Severity = IssueSeverity.Low
+        };
+
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { highIssue } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { lowIssue } });
+
+        _settingsStore.Update(s => s.UnhandledSeverities = new() { "High", "Medium", "Low" });
+
+        // SiteHidden 模式：隱藏 Low，只顯示 High
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High" };
+
+        var summary = _service.GetSummary(7);
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var listService = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver);
+
+        var issueResult = listService.SearchByIssue(new RecordSearchRequest
+        {
+            From = DateTime.Parse(summary.From),
+            To = DateTime.Parse(summary.To),
+            Statuses = new() { "open" }
+        });
+
+        // 驗證：隱藏 Low 後，KPI 與依問題視角下鑽都只剩 High 那個未處理問題（1 個）
+        Assert.Equal(1, summary.IssueTodo.OpenIssueCount);
+        Assert.Equal(summary.IssueTodo.OpenIssueCount, issueResult.Total);
+    }
+
+    [Fact]
+    public void 未處理問題KPI與依問題視角下鑽筆數一致_來源名稱大小寫不同視為同一問題()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var a = AddHost("HOST-A", 1);
+        var b = AddHost("HOST-B", 1);
+
+        var issue1 = new LogIssueSignature
+        {
+            LogName = "System", Source = "Disk", EventId = 7,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        var issue2 = new LogIssueSignature
+        {
+            LogName = "System", Source = "disk", EventId = 7,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+
+        _recordStore.Append(new DailyAnalysisRecord { HostId = a.HostId, Host = a.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { issue1 } });
+        _recordStore.Append(new DailyAnalysisRecord { HostId = b.HostId, Host = b.HostName, Date = Anchor, RiskLevel = RiskLevels.High, TopIssues = new() { issue2 } });
+
+        var summary = _service.GetSummary(7);
+
+        var visibility = new AlwaysVisibleService(_hosts);
+        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
+        var listService = new RecordListQueryService(
+            repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
+            _severityVisibility, visibility, aggregates, statusResolver);
+
+        var issueResult = listService.SearchByIssue(new RecordSearchRequest
+        {
+            From = DateTime.Parse(summary.From),
+            To = DateTime.Parse(summary.To),
+            Statuses = new() { "open" }
+        });
+
+        // 驗證：Source 大小寫不同但 EventId 相同時，KPI 與依問題視角下鑽皆視為同一個未處理問題（1 個）
+        Assert.Equal(1, summary.IssueTodo.OpenIssueCount);
+        Assert.Equal(summary.IssueTodo.OpenIssueCount, issueResult.Total);
+    }
+
+    /// <summary>
+    /// 群組風險概況的 UnhandledCount 與全站 KPI 卡「未處理問題」同口徑：只計未處理（Open），
+    /// 不含「處理中」（InProgress）的問題。
+    /// </summary>
+    [Fact]
+    public void GetSummary_群組風險概況的未處理數只計未處理問題()
+    {
+        _hostGroups.Upsert(new HostGroup { GroupId = 1, GroupName = "G1", Active = true });
+        var host = AddHost("HOST-A", 1);
+
+        var openIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "Disk", EventId = 7,
+            EntryType = System.Diagnostics.EventLogEntryType.Error,
+            Category = IssueCategory.Storage, Severity = IssueSeverity.High
+        };
+        var inProgressIssue = new LogIssueSignature
+        {
+            LogName = "System", Source = "DCOM", EventId = 10016,
+            EntryType = System.Diagnostics.EventLogEntryType.Warning,
+            Category = IssueCategory.Service, Severity = IssueSeverity.High
+        };
+
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = Anchor, RiskLevel = RiskLevels.High,
+            TopIssues = new() { openIssue, inProgressIssue }
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = Anchor,
+            IssueKey = IssueSignatureKey.For(inProgressIssue),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = Anchor.AddDays(7)
+        });
+
+        var summary = _service.GetSummary(7);
+
+        var group = Assert.Single(summary.GroupRisk);
+        Assert.Equal(1, group.UnhandledCount);
+        Assert.Equal(summary.IssueTodo.OpenIssueCount, group.UnhandledCount);
+    }
 }

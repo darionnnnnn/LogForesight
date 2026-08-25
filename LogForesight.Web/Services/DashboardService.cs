@@ -107,7 +107,7 @@ public class DashboardService
         // 每個群組都是一趟 SQL＋三次批次載入，群組數不設上限時就是 4×N 次查詢的 N+1
         var actionableResolved = nothingVisible
             ? new List<ResolvedOccurrence>()
-            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels);
+            : _issueTodo.ResolveActionable(from, anchor, visibleHostIds, riskLevels, visibleSeverities: visibleSeverities);
         BuildGroupRisk(dto, hostRiskAgg, visibleHosts, actionableResolved);
 
         // 全站三個日數從同一個 KPI 聚合取（與報表同一支查詢）。刻意**不**用 hostRiskAgg 加總——
@@ -209,8 +209,8 @@ public class DashboardService
                     .Select(a => a!)
                     .ToList();
 
-                // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理／處理中的問題數，
-                // 不再是風險日數——與儀表板 KPI 卡同一套定義，只是把母體縮到這個群組的主機。
+                // UnhandledCount 改問題口徑（回饋十九輪批次D2）：群組內未處理的問題數，
+                // 不再是風險日數——與儀表板 KPI 卡同一套定義（只計未處理），只是把母體縮到這個群組的主機。
                 // 從呼叫端已解析好的全站快照做記憶體子集彙總（回饋十九輪批次I 體檢修正），
                 // 不逐群組重新查詢——群組成員 ⊆ 可見範圍，子集過濾與逐群組查詢結果等價
                 var memberIds = memberHosts.Select(h => h.HostId).ToHashSet();
@@ -224,7 +224,7 @@ public class DashboardService
                     HostCount = memberHosts.Count,
                     HighRiskDays = memberAgg.Sum(a => a.HighRiskDays),
                     MediumRiskDays = memberAgg.Sum(a => a.MediumRiskDays),
-                    UnhandledCount = groupIssueTodo.OpenIssueCount + groupIssueTodo.InProgressIssueCount
+                    UnhandledCount = groupIssueTodo.OpenIssueCount
                 };
             })
             .Where(g => g.HostCount > 0)

@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Models.Dto;
 
 namespace LogForesight.Web.Services;
@@ -16,6 +17,8 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class IssueTodoQuery
 {
+    private static readonly IssueTupleComparer IssueComparer = new();
+
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
 
@@ -38,9 +41,11 @@ public class IssueTodoQuery
     /// </summary>
     public List<ResolvedOccurrence> ResolveActionable(
         DateTime from, DateTime to, IReadOnlyCollection<long>? visibleHostIds,
-        IReadOnlySet<string>? riskLevels = null)
+        IReadOnlySet<string>? riskLevels = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null)
     {
-        var occurrences = _aggregates.ActionableOccurrences(from, to, visibleHostIds, riskLevels: riskLevels);
+        var occurrences = _aggregates.ActionableOccurrences(
+            from, to, visibleHostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
         if (occurrences.Count == 0) return new List<ResolvedOccurrence>();
 
         return _statusResolver.Resolve(occurrences, from, to);
@@ -51,9 +56,9 @@ public class IssueTodoQuery
     /// 兩件事不要混在同一個數字裡。</summary>
     public static IssueTodoDto Aggregate(IEnumerable<ResolvedOccurrence> resolved)
     {
-        var openIssues = new HashSet<(string Source, int EventId)>();
-        var inProgressIssues = new HashSet<(string, int)>();
-        var overdueIssues = new HashSet<(string, int)>();
+        var openIssues = new HashSet<(string Source, int EventId)>(IssueComparer);
+        var inProgressIssues = new HashSet<(string, int)>(IssueComparer);
+        var overdueIssues = new HashSet<(string, int)>(IssueComparer);
         var openHosts = new HashSet<long>();
 
         foreach (var r in resolved)
@@ -95,5 +100,14 @@ public class IssueTodoQuery
             return r.OpenCase.Status == IssueHandlingStatuses.InProgress && r.OpenCase.DueDate?.Date < today;
 
         return r.Handling is { Status: IssueHandlingStatuses.InProgress } && r.Handling.DueDate?.Date < today;
+    }
+
+    private sealed class IssueTupleComparer : IEqualityComparer<(string Source, int EventId)>
+    {
+        public bool Equals((string Source, int EventId) x, (string Source, int EventId) y) =>
+            x.EventId == y.EventId && StringComparer.OrdinalIgnoreCase.Equals(x.Source, y.Source);
+
+        public int GetHashCode((string Source, int EventId) obj) =>
+            HashCode.Combine(obj.Source != null ? StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Source) : 0, obj.EventId);
     }
 }

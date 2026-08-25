@@ -441,6 +441,29 @@ function renderAdFields(settings) {
     document.getElementById('ad-test-account').value = '';
     document.getElementById('ad-test-password').value = '';
     document.getElementById('ad-test-result').replaceChildren();
+
+    renderAdStatus();
+}
+
+/**
+ * AD 生效狀態。未設定時一般帳號一律登入失敗，而登入頁的訊息與密碼打錯完全相同
+ * （刻意不洩漏帳號是否存在），管理者只能從這裡看出差別。
+ * 隨勾選與伺服器清單即時更新，不必先儲存。
+ */
+function renderAdStatus() {
+    const box = document.getElementById('ad-status');
+    const enabled = document.getElementById('ad-auth-enabled').checked;
+    const serverCount = collectAdServers().length;
+
+    box.classList.remove('d-none', 'alert-warning', 'alert-success');
+    if (!enabled || serverCount === 0) {
+        box.classList.add('alert-warning');
+        box.textContent = '目前狀態：AD 驗證未生效——一般帳號一律無法登入（登入頁只會顯示「帳號或密碼錯誤」）。'
+            + '請以本機救援帳號（serverAdmin）登入設定，或維持此狀態只用救援帳號管理。';
+    } else {
+        box.classList.add('alert-success');
+        box.textContent = `目前狀態：AD 驗證生效中，共 ${serverCount} 台伺服器依序嘗試。`;
+    }
 }
 
 /** 一行一台，去除空白行——與後端 SystemSettingsService.NormalizeAdServers 對齊的寬鬆解析 */
@@ -1042,6 +1065,9 @@ bindAiUsageReset();
 // 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
 document.getElementById('ai-input-price')?.addEventListener('input', calcAndRenderCost);
 document.getElementById('ai-output-price')?.addEventListener('input', calcAndRenderCost);
+// AD 生效狀態同樣即時反映目前欄位內容，不必先儲存
+document.getElementById('ad-auth-enabled')?.addEventListener('change', renderAdStatus);
+document.getElementById('ad-servers')?.addEventListener('input', renderAdStatus);
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明
