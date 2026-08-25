@@ -121,11 +121,27 @@
 1. **C1 KPI 套可見嚴重度**：`DashboardService` 呼叫 `IssueTodoQuery`／`ActionableOccurrences` 時傳入與
    查詢頁同一支 `ResolveVisibleSeverities()` 結果。受影響的儀表板 KPI（未處理問題、影響主機數等
    同一母體的欄位）一致套用。
-2. **C2 riskLevels 下鑽語意**：儀表板下鑽 URL 不再帶「高,中,低」假不篩——改為**不帶 riskLevels 參數**
-   （查詢頁既有語意「未帶＝不限」，`records.js` 註解已載）。若查詢頁對未帶值另有預設篩選，
-   以「下鑽結果必須等於卡片數」為契約由執行端對齊，處置寫執行紀錄。
-3. **C3 一致性測試**：新增端到端測試——同一批資料下，`dashboard/summary` 的 `openIssueCount` ==
-   以下鑽同參數呼叫 by-issue 的 `total`。含至少一筆「站台隱藏嚴重度」與一筆「四級外 rank」資料作反例料。
+2. **C2（實作前核對推翻，改列不做）**：原假說「下鑽帶 `riskLevels=高,中,低` 會濾掉四級外 rank」
+   **不成立**——`IssueSeverity` 只有 Low/Medium/High/Critical 四個值
+   （`LogForesight.Core/Analysis/KnownIssueCatalog.cs:17-23`），而 `MapRiskLevelToSeverities`
+   把「高」展開為 High＋Critical，故三級全帶＝四值全帶＝實質不篩。`dashboard.js:300-302`
+   的既有註解正確。此項不改。
+
+3. **C2′ 問題去重的大小寫不對稱（實作前核對新發現，真 bug）**：
+   KPI 端 `IssueTodoQuery.Aggregate` 的 `openIssues` 是
+   `HashSet<(string Source, int EventId)>`，用**預設序數比較子（大小寫敏感）**，
+   而 Source 由 `TryParseSignature` 原樣取出（`LogForesight.Core/Models/IssueHandling.cs:84-90`），
+   上游 `ActionableOccurrences` 的 GROUP BY 也用原始 `SourceName`
+   （`EfIssueAggregateQuery.cs:474`）；查詢頁的 `Aggregate` 則以
+   `GROUP BY UPPER(source), event_id` 收斂（`EfIssueAggregateQuery.cs:81-118`）。
+   → 同一個問題來源名稱大小寫不同時（例：`Disk` 與 `disk`），**KPI 算 2 個、查詢頁算 1 個**，
+   方向正好是「儀表板較多」，與 36 > 32 相符。
+   定案：KPI 端的四個 HashSet 一律改用大小寫不敏感比較子，與 SQL 端 `UPPER(source)` 對齊。
+4. **C3 一致性測試**：新增端到端測試——同一批資料下，`dashboard/summary` 的 `openIssueCount` ==
+   以下鑽同參數呼叫 by-issue 的 `total`。反例料至少含：一筆被站台隱藏嚴重度的未處理問題（驗 C1）、
+   一組來源名稱僅大小寫不同的同一問題（驗 C2′）。測試骨架比照
+   `LogForesight.Tests/DashboardServiceTests.cs:275-322`（既有的「風險類型卡主機數 ==
+   by-issue DistinctHostCount」測試已把兩邊服務接好）。
 
 ### 測試 / 驗收
 - C3 為主驗收；另補 C1 單元（隱藏嚴重度不計入 KPI）。既有 `DashboardServiceTests` 全綠（
