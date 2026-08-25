@@ -285,11 +285,25 @@ public class ReportSummaryDto
     public string ComparisonMode { get; set; } = string.Empty;
 
     /// <summary>
-    /// 為什麼需要這一欄：RetentionDays 預設 120 天，去年同期的資料早就被清掉了。
+    /// 為什麼需要這一欄：超過保留期的資料早就被清掉了（去年同期尤其容易落在保留期外）。
     /// 不申報的話畫面會顯示比較期各項為 0，使用者會讀成「去年完全沒問題」——
     /// 那是最糟的一種錯，因為它看起來完全正常。前端會用這個旗標顯示提示。
     /// </summary>
     public bool ComparisonOutOfRetention { get; set; }
+
+    /// <summary>
+    /// 比較期「一部分」早於保留線（起點超出、終點還在）。
+    /// 這種情形比全部超出更隱微：比較期有數字、只是被截掉一截而偏低，
+    /// 對比百分比因此虛高，畫面上完全看不出異狀。與
+    /// <see cref="ComparisonOutOfRetention"/> 互斥（全部超出時只設前者）。
+    /// </summary>
+    public bool ComparisonPartiallyOutOfRetention { get; set; }
+
+    /// <summary>
+    /// 目前的歷史資料保留天數。前端的「自動切換比較模式」門檻與
+    /// 「去年同期超出保留期」標註都要用它——不帶出來的話前端只能寫死一個猜測的天數。
+    /// </summary>
+    public int RetentionDays { get; set; }
 }
 
 /// <summary>主機排行 Top 10 之外的彙總（避免主機量大時尾端主機完全隱形）</summary>

@@ -24,6 +24,12 @@ import * as charts from '../core/charts.js';
 import { bindRangeChips, rangeFromDays } from '../core/date-range.js';
 
 let currentData = null;
+// 保留天數來自第一次 summary 回覆；在那之前不做自動切換（寫死一個猜測值反而會猜錯）
+let retentionDays = null;
+
+// 「長區間」門檻：區間夠長才值得看年比而不是前一期。這是區間長度的語意，
+// 與保留天數無關（以往這兩件事被混在同一個 180）
+const LONG_RANGE_DAYS = 180;
 // docs/archive/FEEDBACK-3-PLAN.md #8：資料母體已在後端 RecordRepository 過濾（KPI/排行表格數值
 // 本來就正確），只有趨勢圖需要主動隱藏被藏等級的 series——否則 legend 仍會列出一條
 // 圖例但整條線恆為 0，容易被誤讀成「這期間真的沒有中風險日」而不是「被設定藏起來」
@@ -146,6 +152,8 @@ async function load() {
         getDisplaySettings()
     ]);
     currentData = data;
+    retentionDays = data.retentionDays ?? retentionDays;
+    updateYoyOptionLabel();
     currentScope = data.handlingScope || 'all';
     visibleDayRisk = new Set(displaySettings?.visibleDayRiskLevels ?? ['高', '中', '低']);
 
@@ -209,14 +217,21 @@ function renderKpi() {
     const container = document.getElementById('report-kpi');
     container.replaceChildren();
 
-    if (currentData.comparisonOutOfRetention) {
+    // 兩種超出互斥（後端保證）：全部超出→數字不具參考價值；部分超出→數字偏低
+    const retentionWarning = currentData.comparisonOutOfRetention
+        ? '比較期間的資料已超過保留期，對比數字不具參考價值。'
+        : currentData.comparisonPartiallyOutOfRetention
+            ? '比較期間有一部分早於保留期，那段的資料已被清除，對比數字會偏低。'
+            : null;
+
+    if (retentionWarning) {
         const warning = document.createElement('div');
         warning.className = 'col-12';
         const msg = document.createElement('div');
         msg.className = 'small px-3 py-2 rounded';
         msg.style.backgroundColor = 'var(--lf-warning-soft)';
         msg.style.color = 'var(--lf-warning-text)';
-        msg.textContent = '比較期間的資料已超過保留期，對比數字不具參考價值。';
+        msg.textContent = retentionWarning;
         warning.appendChild(msg);
         container.appendChild(warning);
     }
@@ -777,15 +792,47 @@ document.getElementById('report-compare').addEventListener('change', () => {
     userSelectedCompare = true;
 });
 
-function updateDefaultCompare() {
-    if (userSelectedCompare) return;
-    const from = document.getElementById('report-from').value;
+/** 起訖日期字串算出含頭含尾的天數；任一為空回 null */
+function rangeDays(from, to) {
+    if (!from || !to) return null;
+    return Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+}
+
+/**
+ * 預設的比較模式。只有「保留天數足以涵蓋去年同期」時，長區間才自動切 yoy：
+ * 保留 180 天的站台，去年同期永遠是空的，自動切過去只會得到一頁零。
+ * previous 就算殘缺也還有部分資料，配上保留期提示比切到全空模式誠實。
+ * retentionDays 還沒拿到（首次查詢前）時一律維持 previous。
+ */
+function defaultCompareFor(days) {
+    if (days == null || days < LONG_RANGE_DAYS) return 'previous';
+    if (retentionDays == null) return 'previous';
+    return retentionDays >= 365 + days ? 'yoy' : 'previous';
+}
+
+/** 去年同期落在保留期外時，在下拉選項上標註——仍可選，只是事先告知會是空的 */
+function updateYoyOptionLabel() {
+    const option = document.querySelector('#report-compare option[value="yoy"]');
+    if (!option) return;
+
+    const base = '對比去年同期';
     const to = document.getElementById('report-to').value;
-    if (from && to) {
-        const fromDate = new Date(from);
-        const toDate = new Date(to);
-        const diffDays = Math.round((toDate - fromDate) / 86400000) + 1;
-        document.getElementById('report-compare').value = diffDays >= 180 ? 'yoy' : 'previous';
+    if (retentionDays == null || !to) { option.textContent = base; return; }
+
+    const retentionLine = new Date();
+    retentionLine.setDate(retentionLine.getDate() - retentionDays);
+    const yoyTo = new Date(to);
+    yoyTo.setFullYear(yoyTo.getFullYear() - 1);
+
+    option.textContent = yoyTo < retentionLine ? `${base}（超出保留期）` : base;
+}
+
+function updateDefaultCompare() {
+    updateYoyOptionLabel();
+    if (userSelectedCompare) return;
+    const days = rangeDays(document.getElementById('report-from').value, document.getElementById('report-to').value);
+    if (days != null) {
+        document.getElementById('report-compare').value = defaultCompareFor(days);
     }
 }
 
@@ -799,8 +846,9 @@ function setRange(days) {
     document.getElementById('report-to').value = to;
 
     if (!userSelectedCompare) {
-        document.getElementById('report-compare').value = days >= 180 ? 'yoy' : 'previous';
+        document.getElementById('report-compare').value = defaultCompareFor(days);
     }
+    updateYoyOptionLabel();
 }
 
 document.getElementById('chart-picker-modal').addEventListener('show.bs.modal', renderChartPickerBody);
