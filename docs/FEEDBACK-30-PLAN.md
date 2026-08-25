@@ -50,9 +50,13 @@
   0xC0000064 帳號不存在；其餘保留原始碼值）、來源工作站、帳號、來源 IP。中英文事件訊息皆須支援
   （標籤比對沿用既有 `AccountLabels` 的雙語策略）。
 - 聚合為**簽章級登入失敗明細**：per (帳號, 來源工作站, LogonType, SubStatus) 計數，
-  隨簽章持久化（暫定：`lf_top_issues` 新增 nullable JSON 欄位；SQLite/SqlServer 雙 provider、
-  SchemaUpgrader 增欄、舊列 null 容忍）。**簽章分組鍵不變**（動了會讓既有 4625 歷史斷成
-  「首次出現」，DETECTION-SPEC 已有教訓記載）；`KeyDetails` 字串維持既有格式相容。
+  隨簽章持久化。**持久化方式於開工前查證推翻原暫定**：明細作為 `LogIssueSignature` 的
+  `LoginFailureDetails` 屬性，隨 `lf_daily_records.ContentJson` 序列化落地——
+  **零 schema 變更、無 SchemaUpgrader、無雙 provider 風險**。理由：`TopIssueRow` 實際上
+  只是給 SQL 端聚合用的去正規化投影（不含 `KeyDetails`／`SampleMessages`／趨勢欄），
+  完整簽章一向存在 ContentJson；明細只被分析管線與詳情頁消費，不需要 SQL 端聚合。
+- **簽章分組鍵不變**（動了會讓既有 4625 歷史斷成「首次出現」，DETECTION-SPEC 已有教訓記載）；
+  `KeyDetails` 字串維持既有格式相容。
 - **電腦帳號（`$` 結尾）納入明細與 KeyDetails**，標示為電腦帳號——收斂「計數含它、顯示跳過它」
   的口徑不一（順手 bug 2）。
 - NetIQ 投影補 `shn`（發起端機器名）／`sip`（發起端 IP）兩欄，對應到來源工作站／來源 IP 的
@@ -105,8 +109,10 @@
   4. **跨日確認（定案，非暫定）**：集中組的 (帳號, 來源) 組合在該主機近 7 天內（含當日）
      的登入失敗明細出現 ≥2 天——**首日不滿足、照常以既有攻擊語意告警**，重現日起才標殘留。
      每個新組合都會被人看到一次才消音；「內網主機單帳號重試」的橫向移動因此保有首次偵測。
-     回看讀 A1 持久化明細，僅對登入失敗家族簽章發查（成本有界）；回看窗內明細缺席
-     （舊資料未回溯）視同未重現。
+     **回看資料來源已查證定案**：直接用 `LogAnalysisService` 既有的
+     `_historyService.ReadRecent(targetDate, historyDays)`（預設 14 天、已載入供
+     TrendAnalyzer／CorrelationAnalyzer 使用）中的歷史簽章明細——**不新增任何 DB 查詢**，
+     7 天窗是既有 14 天窗的子集。回看窗內明細缺席（舊資料未回溯）視同未重現。
 - **「一組」的定義**：(正規化帳號, 來源工作站或 IP) 二元組；來源缺席時以帳號單獨成組；
   連帳號都抽不出的失敗**不得**標殘留（保守——判不了就維持既有攻擊語意）。
 - **信心加分（非必要條件）**：集中組的來源 IP 若屬站內已登錄主機（HostStore 可查）→
@@ -396,11 +402,33 @@ watchlist 推導測試含新 ID；seed 升級 preview 測試（v4 庫 → v5 提
 - 背景掃描在真實大網段的實際耗時與 NOT 子句生效性（B3；沿用既有未生效偵測）。
 - 殘留判定上線後第一週：抽驗被標殘留的樣本，確認無真攻擊被誤靜音（A3 的反向驗證）。
 
+## 開工前查證推翻的規劃前提（記錄，供終檢對照）
+
+1. **明細持久化不需要動 schema**（A1）：`TopIssueRow`／`lf_top_issues` 只是 SQL 聚合投影，
+   完整簽章一向序列化在 `lf_daily_records.ContentJson`。原「新增 DB 欄位＋SchemaUpgrader」
+   暫定作廢，改為 `LogIssueSignature.LoginFailureDetails` 屬性。
+2. **跨日回看不需要新查詢**（A3）：`LogAnalysisService` 已載入 14 天 `ReadRecent` 歷史供
+   趨勢與關聯層使用，7 天回看是其子集，直接沿用。
+3. **順帶發現的文件漂移（本輪一併修）**：`docs/DB-SPEC.md` 的 `lf_top_issues` 區塊宣稱
+   「↔ LogIssueSignature（欄位一比一，趨勢數字全保留）」並列出 `key_details`／
+   `sample_messages_json`／`trend`／`prev_day_count`／`history_avg`／`days_seen`／
+   `first_seen`／`last_seen`／`severity` 等欄，但實際 `TopIssueRow` 沒有這些欄位
+   （實際欄位：issue_id/record_id/source_name/event_id/category/severity_rank/host_id/
+   record_date/event_count/elevates_day_risk/log_name/entry_type/known_issue/event_key）。
+   文件描述的是未落地的設計。收尾文件階段修正此區塊（Claude 親寫）。
+
+## 委派紀律（本輪踩到，後續各段適用）
+
+- **委派前必須先 commit 規劃文件的任何修改**：A1 委派期間 agy 為了讓「只改白名單」成立，
+  **靜默還原了 Claude 並行編輯的 `docs/FEEDBACK-30-PLAN.md`**（被還原的檔案不會出現在
+  `git status`，因為它回到了 HEAD 狀態）。這是 gemini-delegate skill 已記載的失敗模式，
+  本輪實際踩到一次。後續各段：委派期間 Claude 不編輯此 repo 內任何檔案。
+
 ## 執行紀錄
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| A1 | | | | |
+| A1 | agy | 通過（1 輪） | 2602 綠（+14）；白名單 6 檔相符；BOM 全數未動；突變測試（破壞精簡路徑保留）確實失敗 | 持久化方式由 Claude 於開工前查證改為 ContentJson 屬性（見上節 1）；委派期間規劃文件被還原，事後補回 |
 | A2 | | | | |
 | A3 | | | | |
 | A4 | | | | |
