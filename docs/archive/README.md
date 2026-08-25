@@ -1,4 +1,4 @@
-# docs/archive — 歷程資料夾索引
+﻿# docs/archive — 歷程資料夾索引
 
 > ⚠️ **非必要不要讀取這個資料夾。** 這裡只有「當時怎麼決策、怎麼實作」的過程記錄，
 > 沒有現行事實。要知道系統現在怎麼運作，一律讀 `docs/` 主目錄的現行文件
@@ -40,6 +40,7 @@
 | `FEEDBACK-26-PLAN.md` | 品牌副標題對齊（共用 partial＋字距貼齊）／權限異動說明（彙總句首、涵蓋區間、4670 物件權限變更分流與重剖）／報表甜甜圈修正／保留期下限 90／問題查詢（欄位換行、期間快捷共用與「昨日」、分類取最近一天與 Linux 白話說明）。 |
 | `FEEDBACK-27-PLAN.md` | AI token 用量統計／佇列進度回報／權限異動彙總列／報表效能／說明書雙版本（aiFile 機制）。 |
 | `FEEDBACK-28-PLAN.md` | 19 項回饋：保留鍵合併（RawEventRetentionDays）與預設拉長／回望上限動態化／控制項高度基準統一撤像素補丁／四頁期間快捷統一／「權限異動檢核」改名與 raw_text 全文／儀表板 KPI 收編／log 每日歸檔分流 error／說明書 11 章 AI 版補齊／報表比對前期兩級提示。 |
+| `FEEDBACK-29-PLAN.md` | 登入可診斷性（cookie Secure 跟隨連線含 X-Forwarded-Proto／serverAdmin 補 web.log／PasswordHash 格式 fail fast／登入頁 module 失敗防呆）＋儀表板「未處理問題」KPI 與下鑽同口徑（補套可見嚴重度、去重改大小寫不敏感）＋郵件摘要與群組未處理數口徑統一。 |
 | `UX-AUDIT-2026-08-05.md` | 四角色實際登入的全面 UX 體檢報告（只提問題，不含實作）。 |
 | `SCALE-ISSUE-FIRST-PLAN.md` | 規模化（2000~6000 台）與問題主視角的規劃案。 |
 | `SCALE-REVIEW-2026-08-06.md` | 上述規模化改版的體檢報告（14 項問題）。 |
