@@ -731,6 +731,9 @@ Bootstrap 風格」與「維護成本最小化」能同時成立的前提。
 - 陸詞（刷新/保存/設置/服務器/網絡/數據/信息/軟件/硬件/加載/默認/運行/界面/連接/字段/郵件等）
   全面避免；「用戶端」（client 的微軟官方譯名）與「通過驗證」（動詞，非介詞誤用）是正確用法，
   不算陸詞。
+- **站台選用名稱**：「權限異動檢核」是該頁的正式名稱（微軟詞彙表無對應詞）。原名「權限異動待辦」
+  讀起來像一份任務清單，但它實際上是一道需要人逐筆核對是否為授權操作的檢核關卡，故選「檢核」。
+  路由 `/permission-changes` 與 API 路徑不隨顯示名稱改變。
 - 檢視範圍涵蓋 Razor views、前端 JS（動態產生的 `textContent`、toast、確認框、空狀態、表頭）、
   後端使用者可見字串（`DomainException` 訊息——API 錯誤直接顯示於前端不轉譯、稽核 summary、
   `RiskReportService` 報告 txt）與 README／部署文件的操作指引段；程式碼註解不列入此規範
@@ -1268,7 +1271,7 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   預計完成／逾期，「顯示近 30 天已結案」切換預設關。
 - API：`GET api/handlers/{userId}/workload`（查無此人回 404）。
 
-### 9.5 `/permission-changes` 權限異動待辦（`ConfirmPermission`）
+### 9.5 `/permission-changes` 權限異動檢核（`ConfirmPermission`）
 - **表格**（§8.6 慣例，`renderTable`＋`renderPagination`，不自製元件）。欄位：時間／選取（勾選欄，
   依 §8.6 第 6 條不排第一欄——展開箭頭固定插在首欄）／主機 (IP)／帳號／類別／異動說明／狀態，**點列展開**才顯示異動前後完整值、行為說明原文、對象、來源、
   EventId 與確認資訊——ACL 規則字串與 Security Descriptor 動輒上百字，塞進欄位一定爆版。

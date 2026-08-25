@@ -21,7 +21,7 @@ public class PermissionChangeQueryFilter
 }
 
 /// <summary>
-/// 權限異動待辦的真表儲存（↔ lf_permission_changes，含確認狀態）。
+/// 權限異動檢核的真表儲存（↔ lf_permission_changes，含確認狀態）。
 ///
 /// **單表整合異動與確認**：原本異動走 JSONL log、確認走 blob，現在合併為一列真表資料。
 /// 狀態欄位可直接在 SQL 端篩選，並支援條件式原子更新（WHERE status = 'pending'），

@@ -10,7 +10,7 @@ using LogForesight.Web.Models.Dto;
 namespace LogForesight.Web.Services;
 
 /// <summary>
-/// 權限異動待辦（docs/WEB-SPEC.md §9.5）。
+/// 權限異動檢核（docs/WEB-SPEC.md §9.5）。
 ///
 /// 這是把 README 的「被異動項目明細（人工防護層）」搬上 Web 的自然延伸：
 /// 自動檢查負責「發現有異動」，逐筆確認讓了解環境的人判斷「這筆是否正常」——

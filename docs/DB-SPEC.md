@@ -488,7 +488,7 @@ NetIQ 機房主機的紀錄不屬於本機，用限縮實例等於保留期只�
 | 風險日的處理歷程 | `lf_record_handling_log` WHERE record_id ORDER BY created_at（指派→查修→結案的完整敘事） |
 | 單一主機風險時間軸 | `lf_daily_records` WHERE host_id + 日期範圍，點開某天載入 `lf_top_issues`/`lf_record_alerts`/`lf_deep_dive_analyses` |
 | **看完整報告（畫面直接顯示）** | `lf_daily_records.report_id` → `lf_reports.content`（純文字含框線符號，前端以等寬字型/`<pre>` 呈現即可，不需轉換） |
-| 權限異動待辦 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
+| 權限異動檢核 | `lf_permission_changes` WHERE status='pending'（授權範圍內的主機），可再依類別／關鍵字／網段／時間篩選 |
 | 跨主機同類問題（管理員） | `lf_top_issues` WHERE event_id=153 join `lf_daily_records`/`lf_hosts`，依日期分布 |
 | 週體檢發現 | `lf_weekly_checkups` WHERE has_findings=1 |
 

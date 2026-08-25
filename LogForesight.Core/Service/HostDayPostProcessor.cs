@@ -243,12 +243,12 @@ public static class HostDayPostProcessor
             if (recordsToAppend.Count > 0)
             {
                 permissionChangeStore.AppendChanges(recordsToAppend);
-                Log.Info("{Context}{Date:yyyy-MM-dd} 權限異動待辦：寫入 {Count} 筆紀錄", logContext, date, recordsToAppend.Count);
+                Log.Info("{Context}{Date:yyyy-MM-dd} 權限異動檢核：寫入 {Count} 筆紀錄", logContext, date, recordsToAppend.Count);
             }
         }
         catch (Exception ex)
         {
-            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動待辦寫入失敗（不影響分析結果）", logContext, date);
+            Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動檢核寫入失敗（不影響分析結果）", logContext, date);
         }
     }
 

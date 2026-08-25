@@ -8,7 +8,7 @@ using Xunit;
 namespace LogForesight.Tests;
 
 /// <summary>
-/// NetIQ 主機權限異動待辦（從 Security 事件產生）後處理步驟測試（task-H1）。
+/// NetIQ 主機權限異動檢核（從 Security 事件產生）後處理步驟測試（task-H1）。
 /// </summary>
 public sealed class NetiqPermissionChangePostProcessorTests : IDisposable
 {

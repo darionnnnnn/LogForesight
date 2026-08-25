@@ -134,7 +134,7 @@ internal static class SchemaUpgrader
         // 種子（SeedIssueFirstSeenIfEmpty）已移往背景服務 IssueFirstSeenSeedHostedService。
         // 理由：原本放在啟動路徑上會因為全表掃描而導致 30 秒的 SCM 啟動逾時。
 
-        // 權限異動待辦（↔ lf_permission_changes，含確認狀態）
+        // 權限異動檢核（↔ lf_permission_changes，含確認狀態）
         CreateTableIfMissing(ctx, isSqlite, "lf_permission_changes",
             isSqlite ? SqliteCreatePermissionChanges : SqlServerCreatePermissionChanges);
         AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",

@@ -191,7 +191,7 @@ public class StorageBackend
 
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
-    /// <summary>權限異動待辦 store（↔ lf_permission_changes）</summary>
+    /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
     public PermissionChangeStore PermissionChanges() => new(_dbFactory);
 
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。

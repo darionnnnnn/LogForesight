@@ -372,7 +372,7 @@ public class AnalysisOrchestrator
                 console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
 
                 // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
-                // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
+                // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
                 try
                 {
                     var permissionChangeStore = backend.PermissionChanges();
@@ -470,7 +470,7 @@ public class AnalysisOrchestrator
                 if (auditPruned > 0)
                     console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
 
-                // 權限異動待辦（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
+                // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
                 // 跟稽核紀錄同一個保留天數
                 var permPruned = backend.PermissionChanges()
                     .Prune(retention.AuditRetentionDays);

@@ -1622,7 +1622,7 @@ a.lf-stat:hover .lf-card,
     border-radius: var(--lf-radius-sm);
 }
 
-/* 白話句是該列的主要資訊時（權限異動待辦的「異動說明」）：用正文色而非附註灰，
+/* 白話句是該列的主要資訊時（權限異動檢核的「異動說明」）：用正文色而非附註灰，
    寬度由欄位實際可用寬度決定（同基礎 .lf-issue-explanation）——
    保留此 class 不刪，兩個頁面都在用（records.js／permission-changes.js） */
 .lf-issue-explanation--primary {

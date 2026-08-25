@@ -55,7 +55,7 @@ public class LfDbContext : DbContext
     /// 也不受（未來的）保留期修剪——見 <see cref="IssueFirstSeenRow"/> 類別註解。</summary>
     public DbSet<IssueFirstSeenRow> IssueFirstSeen => Set<IssueFirstSeenRow>();
 
-    /// <summary>權限異動待辦（↔ lf_permission_changes，含確認狀態）</summary>
+    /// <summary>權限異動檢核（↔ lf_permission_changes，含確認狀態）</summary>
     public DbSet<PermissionChangeRow> PermissionChanges => Set<PermissionChangeRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -547,7 +547,7 @@ public class LogLineRow
     public DateTime? CreatedAt { get; set; }
 }
 
-/// <summary>權限異動待辦一列（含人工確認狀態）。↔ lf_permission_changes</summary>
+/// <summary>權限異動檢核一列（含人工確認狀態）。↔ lf_permission_changes</summary>
 public class PermissionChangeRow
 {
     public long Id { get; set; }
