@@ -326,7 +326,8 @@ public class RecordDetailQueryService
                 HasFindings = latestCheckup.HasFindings,
                 Conclusion = latestCheckup.Conclusion
             },
-            TopSignatures = BuildIssueSummary(records.Values)
+            TopSignatures = BuildIssueSummary(records.Values),
+            MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settings.Get().RetentionDays)
         };
     }
 

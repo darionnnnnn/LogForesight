@@ -32,7 +32,7 @@ public sealed class PermissionChangeQueryTests : IDisposable
     {
         var user = currentUser ?? FakeCurrentUser.WithCapabilities(Capability.ViewAll);
         var visibility = new VisibilityService(
-            user, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(), _hosts, new FakeIssueCaseStore());
+            user, _users, new FakeUserGroupStore(), new FakeGroupAccessStore(), _hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
         return new PermissionChangeService(_store, _hosts, visibility, user, new RecordingAuditService(), _users);
     }
 

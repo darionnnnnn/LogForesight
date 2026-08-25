@@ -28,12 +28,15 @@ public class ScheduleController : ControllerBase
     private readonly ICurrentUser _currentUser;
     private readonly IUserStore _users;
     private readonly IAnalysisRecordQuery _records;
+    private readonly ISystemSettingsStore _settingsStore;
     private readonly IWebAiService? _webAi;
+    private readonly NetiqOptionsStore? _netiqStore;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
-        IAnalysisRecordQuery records, IWebAiService? webAi = null)
+        IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IWebAiService? webAi = null,
+        NetiqOptionsStore? netiqStore = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -44,7 +47,9 @@ public class ScheduleController : ControllerBase
         _currentUser = currentUser;
         _users = users;
         _records = records;
+        _settingsStore = settingsStore;
         _webAi = webAi;
+        _netiqStore = netiqStore;
     }
 
     [HttpGet("options")]
@@ -132,7 +137,9 @@ public class ScheduleController : ControllerBase
         }
 
         var useAi = !aiDisabled;
-        var lookback = Math.Clamp(backfillDays ?? 14, 1, NetiqOptions.MaxBackfillDaysLimit);
+        var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays);
+        var defaultBackfill = _netiqStore?.Get().BackfillDays ?? 1;
+        var lookback = Math.Clamp(backfillDays ?? defaultBackfill, 1, effectiveLimit);
         var from = DateTime.Today.AddDays(-lookback);
         var to = DateTime.Today.AddDays(-1);
         // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，
@@ -176,6 +183,16 @@ public class ScheduleController : ControllerBase
     [Permission(Capability.Maintain)]
     public async Task<ApiResponse<TriggerRunResultDto>> Run([FromBody] TriggerRunRequest request)
     {
+        if (request.BackfillDays is { } backfillDays)
+        {
+            var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays);
+            if (backfillDays > effectiveLimit)
+            {
+                throw DomainException.Validation(
+                    $"回望天數（{backfillDays} 天）不可超過歷史資料保留天數（{effectiveLimit} 天），超過保留天數的回補資料會在下次清理時被刪除。");
+            }
+        }
+
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
@@ -198,7 +215,7 @@ public class ScheduleController : ControllerBase
             targetKind: "schedule",
             detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays, request.OnlyMissingOrFailed });
 
-        var started = await _scheduler.TriggerRunAsync(runRequest);
+        var started = _scheduler != null ? await _scheduler.TriggerRunAsync(runRequest) : true;
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
         {
             Started = started,
@@ -316,6 +333,7 @@ public class ScheduleController : ControllerBase
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)
             ? null
             : _users.FindByAccount(options.UpdatedByAccount)?.DisplayName,
-        NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null
+        NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
+        MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };
 }

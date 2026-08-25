@@ -418,7 +418,7 @@ public class PermissionChangeStore
     }
 
     /// <summary>去重鍵快照（只投影 dedupe_key 欄位）</summary>
-    public HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
+    public virtual HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
     {
         using var ctx = _contextFactory();
         IQueryable<PermissionChangeRow> query = ctx.PermissionChanges.AsNoTracking();

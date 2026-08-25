@@ -346,7 +346,7 @@ public sealed class EfPermissionChangeStoreTests : IDisposable
 
         var users = new FakeUserStore();
         var currentUser = FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.ViewAll);
-        var visibility = new VisibilityService(currentUser, users, new FakeUserGroupStore(), new FakeGroupAccessStore(), hosts, new FakeIssueCaseStore());
+        var visibility = new VisibilityService(currentUser, users, new FakeUserGroupStore(), new FakeGroupAccessStore(), hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
         var service = new PermissionChangeService(_store, hosts, visibility, currentUser, new RecordingAuditService(), users);
 
         _store.AppendChanges(new[]

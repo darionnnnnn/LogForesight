@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 
 namespace LogForesight.Web.Services;
@@ -105,7 +105,7 @@ public class VisibilityService : IVisibilityService
     /// 這條路徑靜默跳過（同本檔既有的 Singleton 依賴慣例）。</summary>
     private readonly IIssueOwnerStore? _issueOwners;
     private readonly IIssueAggregateQuery? _issueAggregates;
-    private readonly ISystemSettingsStore? _settings;
+    private readonly ISystemSettingsStore _settings;
 
     // 每請求快取：一次請求內可能被多個 Service 呼叫（查詢＋計數＋明細），
     // Scoped 生命週期下重複解析同一份資料是白費工
@@ -119,9 +119,9 @@ public class VisibilityService : IVisibilityService
         IGroupAccessStore access,
         IHostStore hosts,
         IIssueCaseStore cases,
+        ISystemSettingsStore settings,
         IIssueOwnerStore? issueOwners = null,
-        IIssueAggregateQuery? issueAggregates = null,
-        ISystemSettingsStore? settings = null)
+        IIssueAggregateQuery? issueAggregates = null)
     {
         _currentUser = currentUser;
         _users = users;
@@ -129,9 +129,9 @@ public class VisibilityService : IVisibilityService
         _access = access;
         _hosts = hosts;
         _cases = cases;
+        _settings = settings;
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
-        _settings = settings;
     }
 
     public IReadOnlySet<long> GetVisibleHostIds()
@@ -183,9 +183,11 @@ public class VisibilityService : IVisibilityService
             .ToHashSet();
 
         // ∪ 問題負責人（回饋十八輪批次F，第四條授權路徑）：與主機負責人同級的整台可見，
-        // 理由同上——問題歸屬也是第一手資料。三個依賴同時可用才查（其一為 null 代表測試組裝
+        // 理由同上——問題歸屬也是第一手資料。兩個可選依賴同時可用才查（其一為 null 代表測試組裝
         // 沒注入，靜默跳過這條路徑，同本類別既有的 Singleton 依賴慣例）。
-        if (_issueOwners != null && _issueAggregates != null && _settings != null)
+        // 保留天數改由必填的 _settings 提供：它決定問題負責人可見的回溯範圍，
+        // 之前是可選依賴、缺席時退回出廠預設，等於測試與正式環境算出不同的可見範圍。
+        if (_issueOwners != null && _issueAggregates != null)
         {
             var retentionDays = _settings.Get().RetentionDays;
             visible.UnionWith(HostVisibilityResolver.GetIssueOwnedHostIds(
@@ -206,7 +208,7 @@ public class VisibilityService : IVisibilityService
 
     public IReadOnlySet<long> GetVisibleHostIdsFor(long userId) =>
         HostVisibilityResolver.GetVisibleHostIds(_hosts, _users, _userGroups, _access, userId,
-            _issueOwners, _issueAggregates, _settings?.Get().RetentionDays ?? SystemSettings.DefaultRetentionDays);
+            _issueOwners, _issueAggregates, _settings.Get().RetentionDays);
 
     public IReadOnlySet<long> GetGroupVisibleHostIdsFor(long userId) =>
         HostVisibilityResolver.GetGroupVisibleHostIds(_hosts, _users, _userGroups, _access, userId);

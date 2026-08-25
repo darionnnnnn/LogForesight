@@ -98,7 +98,7 @@ public class CaseGrantVisibilityTests : IDisposable
         });
 
     private VisibilityService Visibility() =>
-        new(FakeCurrentUser.ForUser(_user.UserId, Capability.Handle), _users, _userGroups, _access, _hosts, _cases);
+        new(FakeCurrentUser.ForUser(_user.UserId, Capability.Handle), _users, _userGroups, _access, _hosts, _cases, _settings);
 
     private RecordQueryServiceFacade Query(IVisibilityService visibility) =>
         new(

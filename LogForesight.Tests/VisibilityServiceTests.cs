@@ -23,7 +23,7 @@ public class VisibilityServiceTests
     private readonly FakeSystemSettingsStore _settings = new();
 
     private VisibilityService Create(ICurrentUser currentUser) =>
-        new(currentUser, _users, _userGroups, _access, _hosts, _cases, _issueOwners, _issueAggregates, _settings);
+        new(currentUser, _users, _userGroups, _access, _hosts, _cases, _settings, _issueOwners, _issueAggregates);
 
     /// <summary>建立「OO 部門使用者 → OO 部門主機」的完整授權鏈，並額外建立一台 XX 部門主機</summary>
     private (WebUser user, WebHost ooHost, WebHost xxHost) SetupTwoDepartments()

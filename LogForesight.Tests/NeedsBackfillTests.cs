@@ -152,7 +152,7 @@ public sealed class NeedsBackfillTests : IDisposable
             null!,
             new SchedulerRunState(),
             hosts, sentinels, new RecordingAuditService(), new FakeCurrentUser(), new FakeUserStore(),
-            records: store, webAi: fakeAi);
+            records: store, settingsStore: new FakeSystemSettingsStore(), webAi: fakeAi);
 
         var preview = controller.RunPreview("all", segment: null, hostId: null, onlyMissingOrFailed: true, backfillDays: 1);
 
@@ -209,7 +209,7 @@ public sealed class NeedsBackfillTests : IDisposable
             null!,
             new SchedulerRunState(),
             hosts, sentinels, new RecordingAuditService(), new FakeCurrentUser(), new FakeUserStore(),
-            records: store, webAi: fakeAi);
+            records: store, settingsStore: new FakeSystemSettingsStore(), webAi: fakeAi);
 
         var preview = controller.RunPreview("all", segment: null, hostId: null, onlyMissingOrFailed: true, backfillDays: 1);
 

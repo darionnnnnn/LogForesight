@@ -533,6 +533,9 @@ public class HostDetailDto
     /// 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的
     /// 問題（依 Source+EventId 分組），每列連結到最近一次出現的那天詳情</summary>
     public List<HostIssueSummaryDto> TopSignatures { get; set; } = new();
+
+    /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
+    public int MaxBackfillDays { get; set; }
 }
 
 /// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/archive/FEEDBACK-3-PLAN.md #4）。

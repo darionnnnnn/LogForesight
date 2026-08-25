@@ -34,6 +34,9 @@ public class NetiqOptionsDto
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
     public string? UpdatedByDisplayName { get; set; }
+
+    /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
+    public int MaxBackfillDays { get; set; }
 }
 
 public class NetiqOverviewDto

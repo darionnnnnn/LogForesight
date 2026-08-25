@@ -16,11 +16,11 @@
                     <div class="modal-body">
                         <p class="mb-3" id="host-update-message"></p>
                         <label for="host-update-backfill" class="form-label">回望天數（選填）</label>
-                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="往回檢查幾天內有沒有缺漏或需要補跑的日子（上限 30 天），已完成的日子不會重跑。只影響這次執行，不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機不受此影響）。">
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="host-update-backfill-help"
+                                data-bs-content="往回檢查幾天內有沒有缺漏或需要補跑的日子，已完成的日子不會重跑。只影響這次執行，不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機不受此影響）。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
-                        <input type="number" class="form-control form-control-sm" id="host-update-backfill" min="1" max="30" style="max-width: 120px;" />
+                        <input type="number" class="form-control form-control-sm" id="host-update-backfill" min="1" style="max-width: 120px;" />
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>

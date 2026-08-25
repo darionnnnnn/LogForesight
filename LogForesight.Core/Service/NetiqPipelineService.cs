@@ -140,8 +140,10 @@ public class NetiqPipelineService
         }
 
         // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
-        // 只讀回望窗口（＋一週緩衝）內附加的列：更早的列不可能在本輪被重寫
-        var dedupeSince = DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7));
+        // 必須依本次執行實際採用的回望天數（＋一週緩衝）推算查詢起點，絕不能引用編譯期絕對上限常數（MaxBackfillDaysLimit=365）：
+        // 正式環境權限異動每日近十萬筆，若用常數推算會一次撈回 372 天數千萬筆去重鍵，將記憶體撐爆。更早的列不可能在本輪被重寫。
+        var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
+        var dedupeSince = DateTime.Today.AddDays(-(lookbackDays + 7));
         _permissionKeys = new ConcurrentDictionary<string, byte>(
             (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
             StringComparer.Ordinal);
@@ -254,11 +256,11 @@ public class NetiqPipelineService
     /// <summary>
     /// 回補天數計算（docs/archive/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
     /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
-    /// 回望窗口與趨勢基線窗口是兩件不同的事，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>，
+    /// 回望窗口與趨勢基線窗口是兩件不同的事，上限夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（或指定的有效上限），
     /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
-    internal static int ResolveLookbackDays(int backfillDays) =>
-        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）
+    internal static int ResolveLookbackDays(int backfillDays, int maxLimit = NetiqOptions.MaxBackfillDaysLimit) =>
+        Math.Clamp(backfillDays, 0, maxLimit);   // 0＝不回望（既有語意）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的

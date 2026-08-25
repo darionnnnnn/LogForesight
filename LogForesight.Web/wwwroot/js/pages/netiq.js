@@ -7,7 +7,7 @@
  */
 
 import { api } from '../core/api.js';
-import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad } from '../core/ui.js';
+import { renderTable, renderLoading, renderSpinner, toast, confirmAction, withBusy, bindTabs, guardLoad, applyBackfillDaysLimit } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
 import { initNetiqImportTab, refreshScanPicker } from './netiq-import-wizard.js';
 
@@ -242,6 +242,13 @@ async function loadOptions() {
     document.getElementById('opt-offline-demo').checked = options.useOfflineDemoData;
     document.getElementById('opt-offline-demo-wrap').classList.toggle('d-none', !options.canUseOfflineDemo);
     document.getElementById('opt-offline-demo-badge').classList.toggle('d-none', !options.useOfflineDemoData);
+
+    applyBackfillDaysLimit(
+        'opt-backfill-days',
+        'opt-backfill-days-help',
+        options.maxBackfillDays,
+        `每台主機每次執行往回檢查幾天內有沒有缺漏或需要補跑的日子（上限 ${options.maxBackfillDays} 天），已完成的日子不會重跑。正式環境建議 1（只查前一天）——2000 台規模下對 Sentinel 做大量歷史日查詢會拖垮執行時間。需要補較久以前的歷史時可暫時調大此值、跑一次、再調回來。`
+    );
 
     renderOptionsUpdated(options);
 }

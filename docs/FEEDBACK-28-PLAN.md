@@ -1,4 +1,4 @@
-# FEEDBACK-28-PLAN — 回饋第二十八輪規劃
+﻿# FEEDBACK-28-PLAN — 回饋第二十八輪規劃
 
 > 狀態：規劃定案，未實作。核對證據與討論結論見本檔；實作以各階段規格為準。
 > 原始回饋 19 項（P1~P19）；P14（登入字體）與 P15（負責人 scrollbar）核對後確認已修/已存在，本輪不動。
@@ -287,6 +287,10 @@ B2（CSS 基準）→ D1/D2/D3（吃 B2 的基準）→ A → C → E → F → 
 | B2 控制項高度基準 | agy（2 輪）＋Claude 收尾 | 通過 `d397575` | 2539 綠；瀏覽器實測 filter bar 同列底緣一致、四張圖卡底緣同為 819.3px | 首輪漏兩處：`--lf-control-height-sm` 少算邊框（chip 矮 1.6px）、`.btn-group-sm > .btn` specificity 較高沒被覆寫（矮 3.6px），回饋後修正。卡片底緣未對齊的真因是內層 row 的垂直 gutter，改 `gx-3`＋col `h-100`（Claude 自做）。實測發現三卡 header 的 min-height 恆被標題的 `min-height: 2.4em` 蓋過、從未生效，註解已改為據實說明。agy 剝掉 site.css 的 BOM，已還原 |
 | D1 期間快捷統一 | agy（1 輪） | 通過 `48ba332` | 2539 綠；四頁樣式一致，權限異動頁點「近 7 天」正確填 2026-08-17～23 並重查 | agy 剝掉 Records/PermissionChanges 兩個 cshtml 的 BOM，已還原 |
 | D2 工具列尺寸收斂 | agy（1 輪）＋Claude 收尾 | 通過 `bf65afc` | 2539 綠；問題查詢第一列四欄頂底緣皆 147.9／188.7 | **規劃前提被推翻**：四頁工具列本來就已是小尺寸，無 `-sm` 的控制項全在 modal 與設定卡片內（刻意維持預設大小），故 markup 不動。實際問題是空的已選主機 chip 容器佔位；agy 的 `:empty` 規則被 Bootstrap `.d-flex` 的 `!important` 蓋過而無效，Claude 補 `!important` 才生效 |
+| D3／E1 出現密度置中＋首見對齊 | Claude | 通過 `67f92bd` | 2539 綠；攔截 API 餵樣本跑真實渲染，兩行日期左緣同為 1044.1px | E2（vs 基準斷行）實測重現不了：三行皆有 `text-nowrap`，1280／1024px 下都是完整單行無溢出，研判前輪已修。待使用者提供可重現的視窗寬度與字級 |
+| A1 保留鍵合併＋預設調長 | agy（1 輪，含逾時續跑） | 通過 `0c77156` | 2544 綠（+5）；五個遷移情境走真實 store 讀舊 JSON | 規格要求「新鍵未出現在 JSON 才遷移」，物件層面無法分辨，agy 改用「ExtensionData 有舊鍵即為舊版 blob」判斷，效果等價，接受。agy 剝掉兩個檔的 BOM，已還原 |
+| A2 設定頁保留區改版 | agy（1 輪） | 通過 `e3a81a8` | 2544 綠；瀏覽器實測五欄載入新預設，改值儲存 PUT 200 並讀回 | 無落差 |
+| C1 回望上限動態化 | agy（2 輪）＋Claude 收尾 | 通過 | 2558 綠（+14） | agy 補上規格漏列的第三處回望輸入框（主機詳情「立即更新」modal），正確。首輪把 `ISystemSettingsStore` 寫成可選參數＋`?? DefaultRetentionDays` 重複六處（測試會拿 fallback、測不到真實設定），前端「設 max＋重建 popover」樣板複製三份；回饋後改必填、抽 `applyBackfillDaysLimit` 進 `core/ui.js`。連帶修正 `VisibilityService`：問題負責人可見範圍原本在依賴缺席時退回出廠預設，A1 把預設由 120 改 180 後會讓測試與正式環境分岔。Claude 清掉改必填後恆真的 null 判斷。agy 剝掉六個檔的 BOM，已還原 |
 
 ### 待續
 

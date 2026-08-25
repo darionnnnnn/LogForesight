@@ -15,6 +15,7 @@ namespace LogForesight.Tests;
 public class NetiqOptionsServiceTests : IDisposable
 {
     private readonly EfSqliteFixture _fx = new();
+    private readonly FakeSystemSettingsStore _settings = new();
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
@@ -22,7 +23,8 @@ public class NetiqOptionsServiceTests : IDisposable
         new(new NetiqOptionsStore(_fx.Blob("netiq_options")),
             FakeCurrentUser.WithCapabilities(),
             new RecordingAuditService(),
-            new FakeWebHostEnvironment(environmentName));
+            new FakeWebHostEnvironment(environmentName),
+            _settings);
 
     /// <summary>合格的基準請求（各欄位都在 Range 內），測試只覆寫要驗的那一項</summary>
     private static UpdateNetiqOptionsRequest Baseline() => new()
@@ -128,6 +130,30 @@ public class NetiqOptionsServiceTests : IDisposable
         service.Update(request);
 
         Assert.Equal(3, service.Get().MaxParallelQueriesPerServer);
+    }
+
+    [Fact]
+    public void 回望天數超過RetentionDays時讀取自動夾住()
+    {
+        _settings.Update(s => s.RetentionDays = 180);
+        var service = Create("Development");
+        var store = new NetiqOptionsStore(_fx.Blob("netiq_options"));
+        store.Update(o => o.BackfillDays = 200);
+
+        Assert.Equal(180, service.Get().BackfillDays);
+    }
+
+    [Fact]
+    public void 回望天數超過RetentionDays時更新被拒絕()
+    {
+        _settings.Update(s => s.RetentionDays = 180);
+        var service = Create("Development");
+        var request = Baseline();
+        request.BackfillDays = 200;
+
+        var ex = Assert.Throws<DomainException>(() => service.Update(request));
+        Assert.Contains("180", ex.Message);
+        Assert.Contains("超過保留天數的回補資料會在下次清理時被刪除", ex.Message);
     }
 }
 
