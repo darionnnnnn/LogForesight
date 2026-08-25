@@ -26,7 +26,7 @@
         <div class="lf-login__card">
             <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "login" }' />
 
-            <form id="lf-login-form" novalidate>
+            <form id="lf-login-form" method="post" novalidate>
                 <div class="mb-3">
                     <label for="account" class="form-label">帳號</label>
                     <input type="text" class="form-control" id="account" name="account"
@@ -53,5 +53,26 @@
 
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js" asp-append-version="true"></script>
     <script type="module" src="~/js/pages/login.js" asp-append-version="true"></script>
+    <script>
+        window.addEventListener('load', function () {
+            if (window.LF_LOGIN_READY !== true) {
+                var errorBox = document.getElementById('login-error');
+                if (errorBox) {
+                    errorBox.classList.remove('d-none');
+                    errorBox.textContent = '頁面資源載入失敗，請強制重新整理（Ctrl+F5）；若持續發生請聯絡管理者。';
+                }
+                var form = document.getElementById('lf-login-form');
+                if (form) {
+                    form.addEventListener('submit', function (event) {
+                        event.preventDefault();
+                    });
+                }
+                var submitBtn = document.getElementById('login-submit');
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                }
+            }
+        });
+    </script>
 </body>
 </html>
