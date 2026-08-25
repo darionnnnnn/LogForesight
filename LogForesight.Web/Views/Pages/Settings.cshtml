@@ -246,6 +246,10 @@
             <h2 class="lf-card__title">分析參數</h2>
         </div>
         <div class="lf-card__body">
+            <p class="text-muted small mb-3">
+                以下分析與掃描參數儲存後，在<strong>下一次排程或立即執行時生效</strong>。
+            </p>
+
             <div class="mb-3">
                 <label for="server-description" class="form-label">伺服器角色描述</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
@@ -315,6 +319,10 @@
             </div>
 
             <hr />
+            <h3 class="h6">匯入上限</h3>
+            <p class="text-muted small mb-3">
+                CSV 匯入大小與列數限制，每次上傳時即時讀取、<strong>立刻生效</strong>。
+            </p>
             <div class="row g-3">
                 <div class="col-md-6">
                     <label for="import-max-file-size-kb" class="form-label">CSV 匯入檔案大小上限（KB）</label>
@@ -412,55 +420,47 @@
                維運端沒有任何畫面讀取點。只在真的回填中才顯示，平常不佔版面 *@
             <div class="alert alert-info d-none" id="backfill-status" role="status"></div>
 
-            <div class="row g-3">
-                <div class="col-sm-6">
-                    <label for="initial-history-days" class="form-label">首次執行回補天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="initial-history-days" min="90" max="3650" required />
+            <div class="mb-3">
+                <label for="retention-days" class="form-label">歷史資料保留天數</label>
+                <div class="text-muted small mb-2">
+                    刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄、案件與匯出的報告檔。不可小於首次執行回補天數。
                 </div>
-                <div class="col-sm-6">
-                    <label for="retention-days" class="form-label">歷史資料保留天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="超過此天數的歷史紀錄，每次批次啟動時自動清除，永久刪除，無法復原。不可小於首次執行回補天數。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="retention-days" min="90" max="3650" required />
+                <input type="number" class="form-control" id="retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+            </div>
+
+            <div class="mb-3">
+                <label for="raw-event-retention-days" class="form-label">原始事件內容保留天數</label>
+                <div class="text-muted small mb-2">
+                    刪除原始事件文字：每日紀錄的樣本訊息，以及規則命中／趨勢異常的事件暫存（「詢問 AI」會優先取用這份暫存）。刪除後該日的統計、風險等級與問題清單仍在，只是看不到原始訊息。不可大於歷史資料保留天數。
                 </div>
-                <div class="col-sm-6">
-                    <label for="detail-retention-days" class="form-label">詳情保留天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="詳情刪除後，該日的統計、風險等級與問題清單仍然保留，只有原始樣本訊息不可再查看。超過此天數每次批次啟動時自動清除，永久刪除，無法復原。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="detail-retention-days" min="90" max="3650" required />
+                <input type="number" class="form-control" id="raw-event-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+            </div>
+
+            <div class="mb-3">
+                <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
+                <div class="text-muted small mb-2">
+                    刪除批次執行紀錄／診斷與匯入紀錄；只影響維運追蹤，不影響業務分析結果。
                 </div>
-                <div class="col-sm-6">
-                    <label for="run-log-retention-days" class="form-label">執行歷程保留天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="批次執行紀錄／診斷、匯入紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。資料只留在資料庫，不影響業務分析結果。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="run-log-retention-days" min="90" max="3650" required />
+                <input type="number" class="form-control" id="run-log-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+            </div>
+
+            <div class="mb-3">
+                <label for="audit-retention-days" class="form-label">稽核與追責紀錄保留天數</label>
+                <div class="text-muted small mb-2">
+                    這一項同時控制三種資料：操作稽核紀錄、權限異動紀錄、處理歷程。合規與追責用途，保留期通常最長。
                 </div>
-                <div class="col-sm-6">
-                    <label for="audit-retention-days" class="form-label">稽核紀錄保留天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="操作稽核紀錄，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。合規／追責用途，保留期通常較長。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required />
+                <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+            </div>
+
+            <hr />
+
+            <h3 class="h6">首次執行回補</h3>
+            <div class="mb-3">
+                <label for="initial-history-days" class="form-label">首次執行回補天數</label>
+                <div class="text-muted small mb-2">
+                    歷史資料庫全空時（首次執行），一次回補多少天的歷史，讓趨勢分析一開始就有基準資料。此設定僅決定首次執行的回溯天數，不會刪除任何資料。
                 </div>
-                <div class="col-sm-6">
-                    <label for="risky-event-retention-days" class="form-label">風險 log 暫存保留天數</label>
-                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                            data-bs-content="規則命中或趨勢異常問題的原始事件暫存，供「詢問 AI」對話優先取用，超過此天數每次批次啟動時自動清除，永久刪除，無法復原。不可大於歷史資料保留天數。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
-                    </button>
-                    <input type="number" class="form-control" id="risky-event-retention-days" min="90" max="3650" required />
-                </div>
+                <input type="number" class="form-control" id="initial-history-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>
         </div>
     </div>
