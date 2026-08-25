@@ -1,6 +1,6 @@
 # CLAUDE.md — 專案入口地圖
 
-LogForesight：分析 Windows Server（Linux 規則面就緒、取數未串）的 Event Log，
+LogForesight：分析 Windows Server 與 Linux 主機的日誌（Windows Event Log／Linux syslog），
 以確定性規則／趨勢／關聯層**提早發現硬體故障前兆與入侵跡象**；地端小模型只把結論翻成白話。
 唯一的執行與查詢介面是 `LogForesight.Web`（ASP.NET Core MVC，.NET 8）。
 
