@@ -229,9 +229,9 @@
   這是分批上線程序（依 Sentinel 或主機群組分梯次啟用）要解的，不是程式碼；
   `AiFollowupQueue.Capacity = 200` 回補期間必然長時間背壓，畫面會誠實顯示「搜尋暫停中」，
   屬正確行為，刻意不做成設定。
-- **年度同期比較的資料前提**：`RetentionDays` 預設 120 天，`compare=yoy` 的比較期資料早已被清除，
+- **年度同期比較的資料前提**：`RetentionDays` 預設 180 天，`compare=yoy` 的比較期資料早已被清除，
   前端會依 `comparisonOutOfRetention` 顯示提示。要做真正的年度比較需把 `RetentionDays` 調到
-  760 以上，儲存量靠 `DetailRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
+  760 以上，儲存量靠 `RawEventRetentionDays` 留 120 天壓下來（實測 3000 台兩年：詳情全留約 12 GB、
   詳情只留 120 天約 1.9 GB）；調大後第一次能做完整年度比較是一年後。
 
 ## 設計面債務（未排期）
