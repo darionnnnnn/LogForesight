@@ -224,3 +224,12 @@
 - **新增**：`MailIssueDigest` 有**三個**聚合呼叫點都缺參數，不是核對階段以為的一個。
 - **新增**：`Login.cshtml` 的密碼欄預設 `d-none`，module 失敗時密碼欄整個不出現——
   與「按登入沒反應」是同一根因的兩個表徵。
+
+## 體檢交接
+
+- 實作模型：claude-opus-5（規劃輪為 claude-fable-5，B/C/A/D 四段委派 agy gemini-3.7-flash-high）
+- 實作完成時測試：2587 通過／6 略過（基準 dev@ba9bc4e 2567）
+- 實作方自評最沒把握處：
+  1. `AuthCookie.IsSecureConnection` 認 `X-Forwarded-Proto` 的安全論證（偽造只會更嚴格）——沒有反向代理實機驗證。
+  2. `MailIssueDigest` 套日風險等級是**行為擴大**（預設「高,中」下低風險日的問題自此不進郵件），已補測試釘住，但是否符合使用者期望未經實測。
+  3. `LoginPageFallbackTests` 仍是靜態字串/regex 檢查（專案無瀏覽器測試管線），regex 對 cshtml 改排版的韌性未知。
