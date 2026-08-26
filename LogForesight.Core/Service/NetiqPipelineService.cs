@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using LogForesight.Core.Models;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -66,6 +67,8 @@ public class NetiqPipelineService
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
     private readonly PermissionChangeStore? _permissionChangeStore;
     private readonly PermissionFieldMappings? _permissionMappings;
+    private readonly RerunMode _rerunMode;
+    private readonly int? _rerunDays;
     /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
     private ConcurrentDictionary<string, byte> _permissionKeys = new();
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
@@ -93,6 +96,8 @@ public class NetiqPipelineService
     /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
     /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
     /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
+    /// <param name="rerunMode">重新分析模式，預設 None</param>
+    /// <param name="rerunDays">重新分析回望天數</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -102,7 +107,9 @@ public class NetiqPipelineService
         IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
-        PermissionFieldMappings? permissionMappings = null)
+        PermissionFieldMappings? permissionMappings = null,
+        RerunMode rerunMode = RerunMode.None,
+        int? rerunDays = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -124,6 +131,8 @@ public class NetiqPipelineService
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
         _permissionMappings = permissionMappings;
+        _rerunMode = rerunMode;
+        _rerunDays = rerunDays;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -239,6 +248,9 @@ public class NetiqPipelineService
 
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
                           $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日" +
+                          (result.RerunDaysAnalyzed > 0 || result.RerunDaysRetained > 0
+                              ? $"、重新分析 {result.RerunDaysAnalyzed} 天、保留原結果 {result.RerunDaysRetained} 天（來源已無資料）"
+                              : "") +
                           (result.AiQueued > 0
                               ? $"、AI 分析 {result.AiCompleted} 件完成（放棄 {result.AiAbandoned}，下次執行自動補跑）"
                               : "") +
@@ -307,6 +319,12 @@ public class NetiqPipelineService
             var store = _backend.RecordStore(hostKey);
             var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
 
+            var rerunLookback = ResolveLookbackDays(_rerunDays ?? lookback);
+            var rerunDates = _rerunMode != RerunMode.None
+                ? RerunDateFinder.Find(store, _backend.IssueHandlingStore(), target.HostName, rerunLookback, _rerunMode)
+                : new List<DateTime>();
+            var targetDates = missingDates.Union(rerunDates).OrderBy(d => d).ToList();
+
             // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
             // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
             // 28,000 次全量讀。同一個值也給下面孤兒補跑的 retryService 用，本來就是同一台
@@ -316,20 +334,20 @@ public class NetiqPipelineService
             var groupIds = (IReadOnlyCollection<long>?)hostRecord?.GroupIds ?? Array.Empty<long>();
             var isHighVolume = hostRecord?.IsHighVolume ?? false;
 
-            if (missingDates.Count == 0)
+            if (targetDates.Count == 0)
             {
                 result.AddSkipped();
             }
             else
             {
-                plans.Add(new HostPlan(target, store, missingDates, groupIds, isHighVolume));
+                plans.Add(new HostPlan(target, store, targetDates, rerunDates.ToHashSet(), groupIds, isHighVolume));
             }
 
             // AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
             // 主機可能今天已經補齊缺漏日，但上次執行被取消時留下的某一天還卡在「AI 排隊中」，
             // 兩者互不影響，各自獨立檢查同一個 lookback 窗口（與 MissingDateFinder 同一個範圍：
             // 今天往回數 lookback 天，不含今天）。
-            var missingSet = missingDates.ToHashSet();
+            var missingSet = targetDates.ToHashSet();
             var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback)
                 .Where(r => (_onlyMissingOrFailed ? HostDayPostProcessor.NeedsBackfill(r, _useAi) : r.AiPending) && !missingSet.Contains(r.Date.Date))
                 .ToList();
@@ -609,6 +627,15 @@ public class NetiqPipelineService
         AiFollowupQueue<AiFollowupJob> aiQueue, List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var target = plan.Target;
+        var isRerun = plan.RerunDates.Contains(date.Date);
+
+        if (isRerun && events.Count == 0)
+        {
+            result.AddRerunRetained();
+            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件，保留原分析結果");
+            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            return;
+        }
 
         // 每台主機各自一個 LogAnalysisService 實例：historyService（owner-host 隔離）與
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
@@ -639,6 +666,12 @@ public class NetiqPipelineService
             (record, workItem) = await analysisService.BuildStatisticalRecordAsync(
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
+
+            if (isRerun)
+            {
+                plan.Store.DeleteDays(new[] { date });
+                result.AddRerunAnalyzed();
+            }
 
             plan.Store.Append(record);
 
@@ -897,7 +930,7 @@ public class NetiqPipelineService
     /// <see cref="WebHost.IsHighVolume"/> 的計畫階段快照）：true 時分批（<see cref="RunServerOsGroupAsync"/>）
     /// 直接讓它單獨成一批，不必每天都從整批大小重新二分收斂到它。</param>
     private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates,
-        IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
+        HashSet<DateTime> RerunDates, IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
 }
 
 /// <summary>
@@ -916,6 +949,8 @@ public sealed class NetiqPipelineResult
     private int _aiQueued;
     private int _aiCompleted;
     private int _aiAbandoned;
+    private int _rerunDaysAnalyzed;
+    private int _rerunDaysRetained;
     private readonly List<string> _warnings = new();
 
     /// <summary>今日已有分析紀錄、本次跳過的主機數（當日續跑的核心：不重複分析）</summary>
@@ -927,6 +962,12 @@ public sealed class NetiqPipelineResult
     /// <summary>失敗的「主機×日」次數（含批次查詢失敗與單台分析失敗）</summary>
     public int HostsFailed => _hostsFailed;
 
+    /// <summary>重新分析完成的「主機×日」天數</summary>
+    public int RerunDaysAnalyzed => _rerunDaysAnalyzed;
+
+    /// <summary>重跑但來源無資料而保留原結果的「主機×日」天數</summary>
+    public int RerunDaysRetained => _rerunDaysRetained;
+
     /// <summary>
     /// 本次需要分析的「主機×日」總數（docs/archive/FEEDBACK-8-PLAN.md #2，進度條分母）：
     /// 各 Sentinel 平行掃描後才知道各自轄下要補幾天，隨掃描逐步累加——只會變大、不會倒退，
@@ -934,8 +975,8 @@ public sealed class NetiqPipelineResult
     /// </summary>
     public int HostDaysTotal => _hostDaysTotal;
 
-    /// <summary>已處理（含成功與失敗）的「主機×日」次數——進度條分子</summary>
-    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed;
+    /// <summary>已處理（含成功、失敗與保留原結果）的「主機×日」次數——進度條分子</summary>
+    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed + _rerunDaysRetained;
 
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
     public IReadOnlyList<string> Warnings => _warnings;
@@ -965,6 +1006,10 @@ public sealed class NetiqPipelineResult
     internal void AddAiCompleted() => Interlocked.Increment(ref _aiCompleted);
 
     internal void AddAiAbandoned() => Interlocked.Increment(ref _aiAbandoned);
+
+    internal void AddRerunAnalyzed() => Interlocked.Increment(ref _rerunDaysAnalyzed);
+
+    internal void AddRerunRetained() => Interlocked.Increment(ref _rerunDaysRetained);
 
     internal void AddWarning(string message)
     {

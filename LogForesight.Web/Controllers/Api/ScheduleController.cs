@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Service;
+﻿using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -198,6 +199,14 @@ public class ScheduleController : ControllerBase
     {
         ValidateBackfillDays(request.BackfillDays, _settingsStore.Get().RetentionDays);
 
+        if (request.RerunMode != RerunMode.None)
+        {
+            if (request.RerunDays is not { } rerunDays || rerunDays < 1)
+                throw DomainException.Validation("重新分析模式下必須指定重跑天數且必須大於等於 1 天。");
+
+            ValidateBackfillDays(request.RerunDays, _settingsStore.Get().RetentionDays);
+        }
+
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
@@ -208,17 +217,33 @@ public class ScheduleController : ControllerBase
             HostIds = hostIds,
             BackfillOverride = request.BackfillDays,
             OnlyMissingOrFailed = request.OnlyMissingOrFailed,
+            RerunMode = request.RerunMode,
+            RerunDays = request.RerunDays,
             Trigger = $"manual:{_currentUser.Account}"
         };
+
+        var rerunSummary = request.RerunMode != RerunMode.None
+            ? $"，重新分析：{RerunModeText(request.RerunMode)}（{request.RerunDays} 天）"
+            : "";
 
         _audit.Record(
             action: AuditActions.ScheduleManualRun,
             summary: $"手動觸發分析執行（範圍：{ScopeText(request.Scope)}" +
                      (request.Segment != null ? $"「{request.Segment}」" : "") +
                      (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") +
-                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") + "）",
+                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") +
+                     rerunSummary + "）",
             targetKind: "schedule",
-            detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays, request.OnlyMissingOrFailed });
+            detail: new
+            {
+                request.Scope,
+                request.Segment,
+                request.HostId,
+                request.BackfillDays,
+                request.OnlyMissingOrFailed,
+                request.RerunMode,
+                request.RerunDays
+            });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
@@ -325,6 +350,14 @@ public class ScheduleController : ControllerBase
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
             $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
+    };
+
+    private static string RerunModeText(RerunMode mode) => mode switch
+    {
+        RerunMode.Unhandled => "未處理",
+        RerunMode.UnhandledAndAssigned => "未處理與處理中",
+        RerunMode.All => "全部",
+        _ => "不重跑"
     };
 
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()

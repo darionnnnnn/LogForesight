@@ -122,6 +122,13 @@ public class TriggerRunRequest
 
     /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</summary>
     public bool OnlyMissingOrFailed { get; set; }
+
+    /// <summary>重新分析模式：None / Unhandled / UnhandledAndAssigned / All，預設 None</summary>
+    public RerunMode RerunMode { get; set; } = RerunMode.None;
+
+    /// <summary>重新分析回望天數（1..MaxBackfillDaysLimit，且不可超過 RetentionDays）</summary>
+    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
+    public int? RerunDays { get; set; }
 }
 
 public class TriggerRunResultDto

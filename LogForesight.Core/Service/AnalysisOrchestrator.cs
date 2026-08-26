@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -39,6 +39,16 @@ public class RunRequest
 
     /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false。</summary>
     public bool OnlyMissingOrFailed { get; init; }
+
+    /// <summary>
+    /// 重新分析模式：要不要重新分析已有紀錄的日子、重跑到什麼程度。預設 None（不重跑）。
+    /// </summary>
+    public RerunMode RerunMode { get; init; } = RerunMode.None;
+
+    /// <summary>
+    /// 重新分析回望天數（null＝不適用；只有 <see cref="RerunMode"/> != None 時有意義）。
+    /// </summary>
+    public int? RerunDays { get; init; }
 
     /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
@@ -571,7 +581,7 @@ public class AnalysisOrchestrator
             }
             else
             {
-                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, currentHost, currentHostId, yesterday);
+                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
             }
 
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
@@ -685,7 +695,7 @@ public class AnalysisOrchestrator
 
     private async Task RunLocalAnalysisAsync(
         AnalysisRunContext ctx, LogAnalysisService analysisService, IAnalysisRecordStore historyService,
-        string currentHost, long currentHostId, DateTime yesterday)
+        IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
@@ -695,7 +705,20 @@ public class AnalysisOrchestrator
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
         var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
-        if (missingDates.Count == 0)
+        // 重跑回望天數同樣夾在保留期上限內（比照 NetIQ 路徑對 BackfillDays 的二次夾制）：
+        // Web 端觸發時已驗證過，這裡再夾一次是為了「保留期事後被調小」與未來新增呼叫端——
+        // 回望超過保留期的日子重跑完下輪就被清掉，白跑一趟。
+        var rerunLookback = Math.Min(
+            request.RerunDays ?? TrendWindowDays,
+            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
+        var rerunDates = request.RerunMode != RerunMode.None
+            ? RerunDateFinder.Find(historyService, handlingStore, currentHost, rerunLookback, request.RerunMode)
+            : new List<DateTime>();
+        var rerunDateSet = rerunDates.ToHashSet();
+
+        var datesToAnalyze = missingDates.Union(rerunDates).OrderBy(date => date).ToList();
+
+        if (datesToAnalyze.Count == 0)
         {
             // 白天手動執行時這是最常見的路徑（昨晚排程已分析過昨天）：措辭刻意講清楚
             // 「本機無需回補、不是本機未執行」（docs/archive/FEEDBACK-8-PLAN.md #3），
@@ -710,7 +733,7 @@ public class AnalysisOrchestrator
         }
 
         // 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料。
-        var rangeStart = missingDates[0];
+        var rangeStart = datesToAnalyze[0];
 
         var channelNames = settings.Analysis.Channels.Count > 0
             ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
@@ -759,26 +782,44 @@ public class AnalysisOrchestrator
             Missing = scanResult.ChannelsMissing
         };
 
-        if (missingDates.Count > 1)
+        if (datesToAnalyze.Count > 1)
         {
             var aiClause = useAi ? "每天皆完整 AI 分析，" : "統計模式（AI 未設定），";
-            console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
+            console.WriteLine($"偵測到歷史資料有缺漏，回補 {datesToAnalyze.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
             console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
         }
 
         // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
         var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
-        progress?.Report("local", 0, missingDates.Count);
+        progress?.Report("local", 0, datesToAnalyze.Count);
         var localDone = 0;
-        foreach (var date in missingDates)
+        var rerunAnalyzedCount = 0;
+        var rerunRetainedCount = 0;
+        foreach (var date in datesToAnalyze)
         {
             // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
             ct.ThrowIfCancellationRequested();
 
+            var isRerun = rerunDateSet.Contains(date.Date);
+            var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+
+            if (isRerun)
+            {
+                if (logs.Count == 0)
+                {
+                    rerunRetainedCount++;
+                    console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件，保留原分析結果");
+                    progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                    continue;
+                }
+
+                historyService.DeleteDays(new[] { date });
+                rerunAnalyzedCount++;
+            }
+
             console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
             var dayStopwatch = Stopwatch.StartNew();
 
-            var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
             var dataIncomplete = scanResult.IsDateIncomplete(date);
             var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
                 dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
@@ -797,7 +838,7 @@ public class AnalysisOrchestrator
             HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
             PrintResult(console, record, verbose: date == yesterday);
             console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
-            progress?.Report("local", ++localDone, missingDates.Count);
+            progress?.Report("local", ++localDone, datesToAnalyze.Count);
 
             // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
             // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
@@ -805,6 +846,13 @@ public class AnalysisOrchestrator
         }
 
         runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
+
+        if (request.RerunMode != RerunMode.None)
+        {
+            var rerunSummary = $"重新分析 {rerunAnalyzedCount} 天，保留原結果 {rerunRetainedCount} 天（來源已無資料）";
+            console.WriteLine($"\n  {rerunSummary}");
+            runRecorder.Milestone(rerunSummary);
+        }
 
         // 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
         console.WriteLine("\n══════════ 本次執行結果 ══════════");
@@ -879,12 +927,17 @@ public class AnalysisOrchestrator
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
                 riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
-                permissionMappings: settings.Permissions.FieldMappings);
+                permissionMappings: settings.Permissions.FieldMappings,
+                rerunMode: request.RerunMode,
+                rerunDays: request.RerunDays);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
             runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
+                (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
+                    ? $"、重新分析 {netiqResult.RerunDaysAnalyzed} 天、保留原結果 {netiqResult.RerunDaysRetained} 天（來源已無資料）"
+                    : "") +
                 (netiqResult.AiQueued > 0
                     ? $"、AI 分析 {netiqResult.AiCompleted} 件完成（放棄 {netiqResult.AiAbandoned}）"
                     : ""));

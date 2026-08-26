@@ -152,6 +152,8 @@ public class SchedulerHostedService : BackgroundService
         HostIds = request.HostIds,
         BackfillOverride = request.BackfillOverride,
         OnlyMissingOrFailed = request.OnlyMissingOrFailed,
+        RerunMode = request.RerunMode,
+        RerunDays = request.RerunDays,
         DebugDump = scheduleOptions.DebugDump,
         IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
         Trigger = request.Trigger
