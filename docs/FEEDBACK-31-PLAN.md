@@ -159,4 +159,5 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| （尚未開始） | | | | |
+| A | Claude | 完成 | 5 測試綠，突變測試（拿掉欄位傳遞）3 紅確認守衛有效 | 原規劃只說「補上傳遞」，實作時抽出 `ComposeEffectiveRequest` 純函式才測得到——`TriggerRunAsync` 相依過多具體類別無法直接建構 |
+| B | agy（gemini-3.7-flash-high） | 完成，一次過 | 2904 總計（+7）全綠；diff 白名單相符、BOM 未動、Web 端零命中；複用 `OwnedRows`／`PruneBatchSize`，無過度設計 | 突變測試（拿掉子表刪除）仍全綠——查明是 `LfDbContext.cs:174` 的 `OnDelete(Cascade)` 在 SQLite 上代勞，**非測試假通過**：顯式刪子表是既有 `Prune` 的慣例（防 provider 間 cascade 不一致），既有 Prune 測試同樣無法分辨。留此限制，不加 SqlServer 實機測試 |
