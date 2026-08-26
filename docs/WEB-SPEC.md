@@ -2123,12 +2123,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「只補跑失敗或未執行的
-  主機」勾選**——`TriggerRunRequest.OnlyMissingOrFailed`：待跑判定是
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「執行模式」下拉選單**
+  （四選一，見 §10.9）、**「分析本機主機」開關**……其中執行模式的預設值「只補跑失敗或未執行的
+  主機」——`TriggerRunRequest.OnlyMissingOrFailed`：待跑判定是
   `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日／`AiPending`／
   「AI 已設定且未分析且非低風險」三者之一才算待跑），三處呼叫端（缺漏日掃描、NetIQ 孤兒
   補跑、預覽）共用，不各寫一份。低風險日不跑 AI 是合法終局、AI 未設定時 `AiAnalyzed` 恆為
-  false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日）、**「分析本機主機」開關**
+  false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日。
+  此旗標由執行模式推導（模式＝`None` 時為 true），`SchedulerHostedService.ComposeEffectiveRequest`
+  逐欄重建 `RunRequest` 時必須帶上——漏抄會讓勾選靜默失效，反射守衛測試鎖住此事）、
+  **「分析本機主機」開關**
   ：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
@@ -2412,6 +2416,47 @@ temp 檔＋`File.Replace` 手法。
   SQLite 模式共用 `{DataRoot}\Db\logforesight.db`（`ConnectionString` 留空時的預設落點，
   子資料夾由 `StorageBackend` 自動建立），批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
+
+### 10.9 執行模式與舊日重新分析
+
+「立即執行」modal 的**執行模式**下拉選單（`TriggerRunRequest.RerunMode`／`RerunDays`，
+`#run-now-rerun-mode`）決定這次執行要不要重新分析**已經有紀錄**的日子。規則更新後要把新規則
+回溯套用到過去，就是走這裡——**規則變更本身只影響之後的分析**。
+
+| 值 | 選項文字 | 重跑哪些既有主機日 | 畫面 |
+|---|---|---|---|
+| `None` | 只補跑失敗或未執行（預設） | 不重跑，只補缺日／失敗日 | 無警示 |
+| `Unhandled` | 重新分析未處理的日子 | 該主機日在 `lf_issue_handling` **無任何列** | `alert-warning` |
+| `UnhandledAndAssigned` | 重新分析未處理與處理中的日子 | 該主機日**無結案類列**（可有 in_progress／observing／escalated／open） | `alert-warning`＋送出前 `confirmAction` |
+| `All` | 全部重新分析（含已處理完的） | 窗口內全部既有日，不過濾 | `alert-danger`＋送出前 `confirmAction` |
+
+- **判準是「有無列／有無結案類列」**，不走日層級狀態推導：確定性高，且不依賴 `DayHandlingDerivation`
+  的推導細節。結案類的定義單一來源是 `IssueHandlingStatuses.IsClosed`（`RerunDateFinder` 不得自列狀態字串）。
+  混合日（同日有結案也有未處理）只有 `All` 會重跑。
+- **候選日挑選**：`RerunDateFinder.Find` 只回傳窗口內**已有紀錄**的日子（沒有紀錄的屬缺漏日，
+  仍由 `MissingDateFinder` 負責），處理狀態以 `IIssueHandlingStore.GetMany` 一次批次取回、不逐日查。
+  兩者聯集去重後由舊到新逐日分析。
+- **回望天數**：`RerunDays`（UI 預設 30）夾在 `NetiqOptions.GetEffectiveBackfillDaysLimit(RetentionDays)`
+  內，API 超限回 400 不靜默 clamp；本機與 NetIQ 兩條路徑在 orchestrator 內**再夾一次**
+  （防設定被事後調小，同 `BackfillDays` 既有慣例）。
+- **逐日就地取代，不整批預刪**：先確認該日自來源（Windows Event Log／Sentinel）取得到事件，
+  才 `IAnalysisRecordStore.DeleteDays` 刪舊列並寫入新結果。**來源已無事件或掃描失敗的日子整天跳過、
+  保留原結果**並計入申報——原始事件不存 DB，整批預刪會把「舊結果尚在、新資料取不到」的日子變成永久空洞。
+- **不會被刪除的東西**：處理狀態（`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`）、
+  首見日（`lf_issue_first_seen`）、郵件已寄鍵。處理狀態的鍵是 `(host, date, issue_key)`，
+  重跑後同一個問題自動接回既有結論；新規則不再產生該問題時，該處理列成為孤兒列保留在歷史中。
+- **AI 不自動重跑**：重跑寫入的日子照一般新分析日的規則決定 `AiPending`，不主動為整個窗口花 AI token。
+  要補 AI 走模式 `None`（「只補跑失敗或未執行」），兩個模式互補。
+- **郵件不重寄**：`{HostId}|{date}` 已寄鍵未清除，重跑在舊日子挖出的高風險**不會**逐日通知，
+  使用者靠執行申報得知（見下）。
+- **申報**：兩條路徑都在執行摘要輸出「重新分析 N 天／保留原結果 M 天（來源已無資料）」，
+  本機走 `runRecorder.Milestone`，NetIQ 併入 `NetiqPipelineResult`（`RerunDaysAnalyzed`／`RerunDaysRetained`，
+  後者也計入進度條分子）。
+- **自動排程永遠不進入重跑模式**：排程輪詢自組的 `RunRequest` 不帶重跑欄位（預設 `None`），
+  由測試鎖住——破壞性行為只在有人看著的手動觸發發生。
+- **接線注意**：`RerunMode` 在 DTO 上必須標 `[JsonConverter(typeof(JsonStringEnumConverter))]`——
+  前端送字串、站台未全域註冊字串列舉轉換器，不標會在綁定階段回 400，而後端單元測試全綠
+  （它們直接建物件不經 JSON）。`TriggerRunRequestBindingTests` 鎖住此事。
 
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）
 
