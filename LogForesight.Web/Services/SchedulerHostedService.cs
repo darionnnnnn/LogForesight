@@ -1,4 +1,4 @@
-using LogForesight.Web.Configuration;
+﻿using LogForesight.Web.Configuration;
 using LogForesight.Web.Services.Mail;
 using NLog;
 
@@ -139,6 +139,24 @@ public class SchedulerHostedService : BackgroundService
     /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
     /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
     /// </summary>
+    /// <summary>
+    /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。
+    ///
+    /// **新增 <see cref="RunRequest"/> 欄位時必須同步這裡**：這是逐欄重建而非複製，漏抄的欄位會
+    /// 靜默失效——`OnlyMissingOrFailed` 曾因此從未生效（API 設了、稽核訊息也印了，執行端卻收不到）。
+    /// 抽成獨立函式就是為了讓「欄位有沒有全部帶到」測得到。
+    /// </summary>
+    internal static RunRequest ComposeEffectiveRequest(RunRequest request, ScheduleOptions scheduleOptions) => new()
+    {
+        Scope = request.Scope,
+        HostIds = request.HostIds,
+        BackfillOverride = request.BackfillOverride,
+        OnlyMissingOrFailed = request.OnlyMissingOrFailed,
+        DebugDump = scheduleOptions.DebugDump,
+        IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
+        Trigger = request.Trigger
+    };
+
     public async Task<bool> TriggerRunAsync(RunRequest request)
     {
         // AI 診斷傾印一律以目前的排程設定為準（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.10）：
@@ -147,15 +165,7 @@ public class SchedulerHostedService : BackgroundService
         // IncludeLocal 同一套作法（回饋十八輪批次D）：本機分析停用開關與排程設定同一生命週期，
         // 統一在這裡覆寫，不由呼叫端各自決定。
         var scheduleOptions = _scheduleOptionsStore.Get();
-        var effectiveRequest = new RunRequest
-        {
-            Scope = request.Scope,
-            HostIds = request.HostIds,
-            BackfillOverride = request.BackfillOverride,
-            DebugDump = scheduleOptions.DebugDump,
-            IncludeLocal = scheduleOptions.LocalAnalysisEnabled,
-            Trigger = request.Trigger
-        };
+        var effectiveRequest = ComposeEffectiveRequest(request, scheduleOptions);
 
         if (!_runState.TryBeginRun(effectiveRequest.Trigger ?? "manual", out var runCts))
         {
