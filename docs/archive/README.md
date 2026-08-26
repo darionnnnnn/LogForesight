@@ -42,6 +42,7 @@
 | `FEEDBACK-28-PLAN.md` | 19 項回饋：保留鍵合併（RawEventRetentionDays）與預設拉長／回望上限動態化／控制項高度基準統一撤像素補丁／四頁期間快捷統一／「權限異動檢核」改名與 raw_text 全文／儀表板 KPI 收編／log 每日歸檔分流 error／說明書 11 章 AI 版補齊／報表比對前期兩級提示。 |
 | `FEEDBACK-29-PLAN.md` | 登入可診斷性（cookie Secure 跟隨連線含 X-Forwarded-Proto／serverAdmin 補 web.log／PasswordHash 格式 fail fast／登入頁 module 失敗防呆）＋儀表板「未處理問題」KPI 與下鑽同口徑（補套可見嚴重度、去重改大小寫不敏感）＋郵件摘要與群組未處理數口徑統一。 |
 | `FEEDBACK-30-PLAN.md` | 登入失敗誤判分辨（結構化明細／殘留憑證跨日確認制／關聯與趨勢下游修正／密碼噴灑偵測）＋NetIQ 探索改良（提早停頁、背景工作化、網段分割、掃描粒度）＋規則補強（seed v4→v5、ModifiedBy 分流、既有規則降噪）。 |
+| `FEEDBACK-31-PLAN.md` | 規則更新後舊日重新分析：立即執行改四模式下拉（依處理狀態分級重跑）＋紀錄層 DeleteDays＋RerunDateFinder＋兩條路徑逐日就地取代（來源無資料保留原結果）＋修 OnlyMissingOrFailed 從未生效／JSON enum 綁定／先刪後分析／趨勢基準自污染等真 bug。 |
 | `UX-AUDIT-2026-08-05.md` | 四角色實際登入的全面 UX 體檢報告（只提問題，不含實作）。 |
 | `SCALE-ISSUE-FIRST-PLAN.md` | 規模化（2000~6000 台）與問題主視角的規劃案。 |
 | `SCALE-REVIEW-2026-08-06.md` | 上述規模化改版的體檢報告（14 項問題）。 |
