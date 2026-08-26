@@ -274,9 +274,12 @@ public class SentinelQueryBuilderTests
             Assert.Contains($"{SentinelFieldMap.LinuxProgram}:{noisy}* AND {SentinelFieldMap.Message}:(", filter);
         }
 
-        // 靜 program：帳號異動類（無 MessagePatterns）應該只有整拉，不帶 msg 子句
-        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:user*", filter);
-        Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:user* AND", filter);
+        // 靜 program：帳號與群組異動類（無 MessagePatterns）應該只有整拉，不帶 msg 子句
+        foreach (var prog in new[] { "useradd", "usermod", "userdel", "groupadd", "groupmod", "groupdel" })
+        {
+            Assert.Contains($"{SentinelFieldMap.LinuxProgram}:{prog}*", filter);
+            Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:{prog}* AND", filter);
+        }
     }
 
     // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-REFERENCE.md §3.4）──

@@ -206,15 +206,15 @@ public class KnownIssueCatalogTests : IDisposable
     }
 
     [Fact]
-    public void 規則總數正確_Windows共64條_Linux共24條_總計88條()
+    public void 規則總數正確_Windows共64條_Linux共28條_總計92條()
     {
         var rules = KnownIssueSeed.CreateRules();
         var windows = rules.Where(r => r.Platform == "windows").ToList();
         var linux = rules.Where(r => r.Platform == "linux").ToList();
 
         Assert.Equal(64, windows.Count);
-        Assert.Equal(24, linux.Count);
-        Assert.Equal(88, rules.Count);
+        Assert.Equal(28, linux.Count);
+        Assert.Equal(92, rules.Count);
     }
 
     [Fact]
@@ -340,6 +340,112 @@ public class KnownIssueCatalogTests : IDisposable
         Assert.NotNull(rule);
         Assert.Equal("builtin-linux-security-fail2ban-ban", rule!.Id);
         Assert.Equal(IssueSeverity.Low, rule.Severity);
+    }
+
+    // ── C3（既有規則降噪調整）：比對收斂與門檻/重大調整驗證 ──────────────────
+
+    [Theory]
+    [InlineData("libuser")]
+    [InlineData("gnome-user-share")]
+    [InlineData("systemd-userdbd")]
+    [InlineData("user@1000.service")]
+    public void 帳號家族誤報反例_含user但非管理指令的daemon不命中帳號規則(string program)
+    {
+        var hit = KnownIssueCatalog.FindLinuxRule(program, null, "any message");
+        var accountRuleIds = new[] { "builtin-linux-account-change", "builtin-linux-account-mod", "builtin-linux-account-del" };
+        if (hit != null)
+        {
+            Assert.DoesNotContain(hit.Id, accountRuleIds);
+        }
+    }
+
+    [Theory]
+    [InlineData("useradd", "builtin-linux-account-change")]
+    [InlineData("usermod", "builtin-linux-account-mod")]
+    [InlineData("userdel", "builtin-linux-account-del")]
+    public void 帳號家族真陽性維持_useradd與usermod與userdel命中各自規則(string program, string expectedRuleId)
+    {
+        var hit = KnownIssueCatalog.FindLinuxRule(program, null, "account action");
+        Assert.NotNull(hit);
+        Assert.Equal(expectedRuleId, hit!.Id);
+        Assert.Equal(IssueSeverity.High, hit.Severity);
+        Assert.Equal(IssueCategory.Security, hit.Category);
+    }
+
+    [Theory]
+    [InlineData("groupmems-helper")]
+    [InlineData("systemd-journal-group")]
+    [InlineData("group-service")]
+    public void 群組家族誤報反例_含group但非管理指令的daemon不命中群組規則(string program)
+    {
+        var hit = KnownIssueCatalog.FindLinuxRule(program, null, "any message");
+        var groupRuleIds = new[] { "builtin-linux-group-mgmt", "builtin-linux-group-mod", "builtin-linux-group-del" };
+        if (hit != null)
+        {
+            Assert.DoesNotContain(hit.Id, groupRuleIds);
+        }
+    }
+
+    [Theory]
+    [InlineData("groupadd", "builtin-linux-group-mgmt")]
+    [InlineData("groupmod", "builtin-linux-group-mod")]
+    [InlineData("groupdel", "builtin-linux-group-del")]
+    public void 群組家族真陽性維持_groupadd與groupmod與groupdel命中各自規則(string program, string expectedRuleId)
+    {
+        var hit = KnownIssueCatalog.FindLinuxRule(program, null, "group action");
+        Assert.NotNull(hit);
+        Assert.Equal(expectedRuleId, hit!.Id);
+        Assert.Equal(IssueSeverity.High, hit.Severity);
+        Assert.Equal(IssueCategory.Security, hit.Category);
+    }
+
+    [Fact]
+    public void Linux_gpasswd特權群組規則行為不變_回歸保護()
+    {
+        var hit = KnownIssueCatalog.FindLinuxRule("gpasswd", null, "gpasswd -a testadmin wheel");
+        Assert.NotNull(hit);
+        Assert.Equal("builtin-linux-priv-group-membership", hit!.Id);
+        Assert.Equal(IssueSeverity.High, hit.Severity);
+    }
+
+    [Fact]
+    public void Security_4703權杖權限調整門檻為10_達門檻為High_未達門檻降為Medium()
+    {
+        var rule = KnownIssueCatalog.FindRule("Security-Auditing", 4703);
+        Assert.NotNull(rule);
+        Assert.Equal(10, rule!.CountThreshold);
+        Assert.Equal(IssueSeverity.High, rule.Severity);
+        Assert.False(rule.ElevatesDayRisk);
+
+        // 達門檻 (10 筆) 為 High
+        var logs10 = MakeEntries(10, "Security-Auditing", 4703, EventLogEntryType.SuccessAudit);
+        var sig10 = LogAggregator.Aggregate(logs10).FirstOrDefault(s => s.EventId == 4703);
+        Assert.NotNull(sig10);
+        Assert.Equal(IssueSeverity.High, sig10!.Severity);
+
+        // 未達門檻 (1 筆) 降為 Medium
+        var logs1 = MakeEntries(1, "Security-Auditing", 4703, EventLogEntryType.SuccessAudit);
+        var sig1 = LogAggregator.Aggregate(logs1).FirstOrDefault(s => s.EventId == 4703);
+        Assert.NotNull(sig1);
+        Assert.Equal(IssueSeverity.Medium, sig1!.Severity);
+    }
+
+    [Fact]
+    public void Security_4907物件SACL稽核設定變更不帶重大旗標且嚴重度為High()
+    {
+        var rule = KnownIssueCatalog.FindRule("Security-Auditing", 4907);
+        Assert.NotNull(rule);
+        Assert.Equal(IssueSeverity.High, rule!.Severity);
+        Assert.False(rule.ElevatesDayRisk);
+    }
+
+    [Fact]
+    public void Security_1102安全稽核日誌清除維持重大旗標_回歸保護()
+    {
+        var rule = KnownIssueCatalog.FindRule("Security-Auditing", 1102);
+        Assert.NotNull(rule);
+        Assert.Equal(IssueSeverity.High, rule!.Severity);
+        Assert.True(rule.ElevatesDayRisk);
     }
 
     private static EventLogEntryType InferEntryType(string source, int eventId)
