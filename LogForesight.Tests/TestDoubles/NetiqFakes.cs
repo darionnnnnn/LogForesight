@@ -46,18 +46,40 @@ internal class FakeNetiqHostServiceForAdmin : INetiqHostService
 internal sealed class FakeClient : INetiqDirectoryClient
 {
     private readonly List<NetiqDiscoveredHost> _hosts;
+    private readonly Func<SentinelServer, string, CancellationToken, IReadOnlyCollection<string>?, Action<string, int>?, int?, Task<NetiqDiscoveryResult>>? _handler;
 
     public FakeClient(params (string name, string ip)[] hosts) =>
         _hosts = hosts.Select(h => new NetiqDiscoveredHost(h.name, h.ip)).ToList();
 
+    public FakeClient(Func<SentinelServer, string, CancellationToken, IReadOnlyCollection<string>?, Action<string, int>?, int?, Task<NetiqDiscoveryResult>> handler)
+    {
+        _hosts = new List<NetiqDiscoveredHost>();
+        _handler = handler;
+    }
+
+    public FakeClient(Exception exceptionToThrow)
+    {
+        _hosts = new List<NetiqDiscoveredHost>();
+        _handler = (_, _, _, _, _, _) => Task.FromException<NetiqDiscoveryResult>(exceptionToThrow);
+    }
+
     /// <summary>最後一次收到的已登錄 IP——驗證重掃時 Service 有把它們傳下去（§3.3）</summary>
     public IReadOnlyCollection<string>? LastKnownIps { get; private set; }
+    public Action<string, int>? LastProgressCallback { get; private set; }
+    public int? LastTotalBudgetSecondsOverride { get; private set; }
 
     public Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer s, string subnetPrefix, CancellationToken ct,
-        IReadOnlyCollection<string>? knownIps = null)
+        IReadOnlyCollection<string>? knownIps = null,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null)
     {
         LastKnownIps = knownIps;
+        LastProgressCallback = onProgress;
+        LastTotalBudgetSecondsOverride = totalBudgetSecondsOverride;
+
+        if (_handler != null)
+            return _handler(s, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride);
 
         // 真實 client 在 server 端就排除已登錄主機，回傳裡不含它們——替身照做。
         // 不然「Service 端合成已登錄主機回結果」的行為會被替身的寬鬆回傳掩蓋，

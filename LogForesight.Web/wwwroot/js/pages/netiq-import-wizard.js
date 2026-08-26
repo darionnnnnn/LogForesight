@@ -136,8 +136,23 @@ let wizardPane = 'subnets';       // 'subnets' | 'groups'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
+let pollTimer = null;
+let currentJobId = null;
+
+function stopPolling() {
+    if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+    }
+    currentJobId = null;
+}
+
 function bindWizardControls() {
-    wizardModal = new bootstrap.Modal(document.getElementById('netiq-wizard-modal'));
+    const modalEl = document.getElementById('netiq-wizard-modal');
+    wizardModal = new bootstrap.Modal(modalEl);
+    modalEl.addEventListener('hidden.bs.modal', () => {
+        stopPolling();
+    });
     wizardTitle = document.getElementById('wizard-title');
     wizardHint = document.getElementById('wizard-hint');
     wizardBackButton = document.getElementById('wizard-back');
@@ -181,7 +196,77 @@ function bindWizardControls() {
     });
 }
 
+function renderScanProgress(jobId, stage, hostsFound) {
+    const container = document.getElementById('wizard-scan-result');
+    container.replaceChildren();
+
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-center justify-content-between p-3 border rounded bg-light';
+
+    const statusWrap = document.createElement('div');
+    const stageText = stage || '掃描中';
+    renderSpinner(statusWrap, `${stageText}（已發現 ${hostsFound} 台）…`);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-sm btn-outline-danger';
+    cancelBtn.textContent = '取消掃描';
+    cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '取消中…';
+        try {
+            await api.post(`/api/admin/netiq/scan/${jobId}/cancel`);
+        } catch {
+            // ApiError 由 api.js 顯示
+        }
+    });
+
+    row.append(statusWrap, cancelBtn);
+    container.appendChild(row);
+}
+
+function startPolling(jobId) {
+    stopPolling();
+    currentJobId = jobId;
+    renderScanProgress(jobId, '主掃描中', 0);
+
+    const poll = async () => {
+        if (currentJobId !== jobId) return;
+        try {
+            const job = await api.get(`/api/admin/netiq/scan/${jobId}`);
+            if (currentJobId !== jobId) return;
+
+            if (job.status === 'running') {
+                renderScanProgress(jobId, job.stage, job.hostsFound);
+                pollTimer = setTimeout(poll, 2000);
+            } else if (job.status === 'completed') {
+                stopPolling();
+                wizardScan = job.result;
+                wizardPrimaryButton.disabled = false;
+                renderCoverageNote();
+                renderSubnetSelection();
+            } else if (job.status === 'failed') {
+                stopPolling();
+                if (job.error) {
+                    toast(job.error, 'danger');
+                }
+                wizardModal.hide();
+            } else if (job.status === 'canceled') {
+                stopPolling();
+                wizardModal.hide();
+            }
+        } catch {
+            // 輪詢遇到「工作不存在或已逾期」的錯誤（例如站台重啟）由 api.js 顯示訊息，停止輪詢
+            stopPolling();
+            wizardModal.hide();
+        }
+    };
+
+    pollTimer = setTimeout(poll, 2000);
+}
+
 async function openWizard(sentinel, subnetPrefix) {
+    stopPolling();
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
@@ -200,13 +285,10 @@ async function openWizard(sentinel, subnetPrefix) {
     renderSpinner(document.getElementById('wizard-scan-result'), '掃描中…');
     wizardPrimaryButton.disabled = true;
     try {
-        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
-        renderCoverageNote();
-        renderSubnetSelection();
+        const job = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
+        startPolling(job.jobId);
     } catch {
         wizardModal.hide();
-    } finally {
-        wizardPrimaryButton.disabled = false;
     }
 }
 

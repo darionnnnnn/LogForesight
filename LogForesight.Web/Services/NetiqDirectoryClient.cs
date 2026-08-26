@@ -47,7 +47,9 @@ public interface INetiqDirectoryClient
     /// （它們的名稱以主機清單為準，比事件裡的 sn 更可靠）。</param>
     Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer server, string subnetPrefix, CancellationToken ct,
-        IReadOnlyCollection<string>? knownIps = null);
+        IReadOnlyCollection<string>? knownIps = null,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null);
 }
 
 /// <summary>
@@ -61,7 +63,9 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
     /// 在 demo 下也走得到，把已登錄的濾掉等於把要示範的東西刪光。真實 client 才排除。</param>
     public Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer server, string subnetPrefix, CancellationToken ct,
-        IReadOnlyCollection<string>? knownIps = null)
+        IReadOnlyCollection<string>? knownIps = null,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null)
     {
         string normalized;
         try
@@ -201,6 +205,11 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// 管理員盯著精靈畫面等，逾時要短，讓失敗訊息很快回來而不是乾等。</summary>
     internal const int InteractiveTimeoutSeconds = 30;
 
+    /// <summary>背景掃描的總預算秒數。掃描改為背景工作後沒有人在瀏覽器前乾等，
+    /// 預算可以放到真正夠用的量級——下一階段的網段自動分割會把寬網段拆成上百個子網段，
+    /// 90 秒的互動預算遠遠不夠。仍保留上限：無上限的背景工作會在 Sentinel 端長期佔資源。</summary>
+    internal const int BackgroundTotalBudgetSeconds = 900;
+
     /// <summary>
     /// **整趟掃描**的總預算秒數。<see cref="InteractiveTimeoutSeconds"/> 只約束單次 REST 呼叫與
     /// job 輪詢階段（<c>SentinelClient.PollUntilTerminalAsync</c>），**分頁迴圈不受它約束**：
@@ -238,7 +247,9 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
     public async Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer server, string subnetPrefix, CancellationToken ct,
-        IReadOnlyCollection<string>? knownIps = null)
+        IReadOnlyCollection<string>? knownIps = null,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new NetiqDiscoveryException($"Sentinel「{server.Name}」未設定 BaseUrl。");
@@ -268,10 +279,14 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             AllowInvalidCertificates = baseOptions.AllowInvalidCertificates
         };
 
+        var budgetSeconds = totalBudgetSecondsOverride is > 0
+            ? totalBudgetSecondsOverride.Value
+            : _totalBudgetSeconds;
+
         // 整趟掃描的總預算（見 InteractiveTotalBudgetSeconds）——分頁迴圈本身不受單次逾時約束，
         // 沒有這道 deadline 就沒有任何東西能保證互動操作會在可接受的時間內結束
         using var budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budgetCts.CancelAfter(TimeSpan.FromSeconds(_totalBudgetSeconds));
+        budgetCts.CancelAfter(TimeSpan.FromSeconds(budgetSeconds));
         var scanCt = budgetCts.Token;
 
         try
@@ -295,12 +310,18 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
             var scan = new ScanState(alreadyKnown);
 
+            onProgress?.Invoke("主掃描中", 0);
+
             // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
             var mainOutcome = await RunResidualRoundsAsync(
                 client, scanCt,
                 exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(subnetPrefix, exclude, server.Os),
                 now.AddHours(-WindowHours), now,
                 CoverageTargetResults, MaxResidualRounds, scan, warnings, "主掃描");
+
+            onProgress?.Invoke("主掃描完成", scan.DiscoveredHosts().Count);
+
+            onProgress?.Invoke("補充掃描中", scan.DiscoveredHosts().Count);
 
             // ── 補充掃描：全事件短窗，撈主掃描漏掉的 Security-only 主機 ──────────
             // 排除主掃描已見是關鍵（§3.2）：不排除的話取回的絕大多數是已知主機的
@@ -350,11 +371,11 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         // 因此這裡兩種例外都要看 budgetCts 有沒有被觸發。
         catch (OperationCanceledException) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, _totalBudgetSeconds));
+            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
         }
         catch (SentinelClientException ex) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, _totalBudgetSeconds), ex);
+            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds), ex);
         }
         catch (SentinelClientException ex)
         {

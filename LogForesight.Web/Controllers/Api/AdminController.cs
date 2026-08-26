@@ -214,8 +214,26 @@ public class AdminController : ControllerBase
     // ── NetIQ 主動探索匯入（docs/archive/HISTORY.md §1）──────────────────────────
 
     [HttpPost("netiq/scan")]
-    public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>
-        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, request.SubnetPrefix, ct));
+    public ApiResponse<NetiqScanJobDto> StartScan([FromBody] NetiqScanRequest request)
+    {
+        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix);
+        return ApiResponse<NetiqScanJobDto>.Ok(new NetiqScanJobDto
+        {
+            JobId = jobId,
+            Status = "running"
+        });
+    }
+
+    [HttpGet("netiq/scan/{jobId}")]
+    public ApiResponse<NetiqScanJobDto> GetScanStatus(string jobId) =>
+        ApiResponse<NetiqScanJobDto>.Ok(_discovery.GetScanStatus(jobId));
+
+    [HttpPost("netiq/scan/{jobId}/cancel")]
+    public ApiResponse<bool> CancelScan(string jobId)
+    {
+        _discovery.CancelScan(jobId);
+        return ApiResponse<bool>.Ok(true);
+    }
 
     [HttpPost("netiq/import")]
     public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
