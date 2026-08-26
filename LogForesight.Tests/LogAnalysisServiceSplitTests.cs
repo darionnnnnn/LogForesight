@@ -110,4 +110,153 @@ public class LogAnalysisServiceSplitTests : IDisposable
         Assert.All(workItem.Logs, e => Assert.Equal("disk", e.Source));
         Assert.True(workItem.Logs.Count < logs.Count);
     }
+
+    [Fact]
+    public void 時序過濾_成功在失敗之後_判定得手保留帳號()
+    {
+        var candidates = new[] { "alice" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 9, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 14, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Contains("alice", result);
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public void 時序過濾_成功在失敗之前_不判定得手過濾帳號()
+    {
+        var candidates = new[] { "alice" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 17, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 9, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.DoesNotContain("alice", result);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void 時序過濾_同時間視為通過保留帳號()
+    {
+        var candidates = new[] { "alice" };
+        var sameTime = new DateTime(2026, 8, 26, 10, 0, 0);
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = sameTime
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = sameTime
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Contains("alice", result);
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public void 時序過濾_失敗面缺時間資料_保守保留帳號()
+    {
+        var candidates = new[] { "alice" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 14, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Contains("alice", result);
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public void 時序過濾_成功面缺時間資料_保守保留帳號()
+    {
+        var candidates = new[] { "alice" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 9, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Contains("alice", result);
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public void 時序過濾_IP成功早於失敗_被過濾()
+    {
+        var candidates = new[] { "10.0.0.5" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["10.0.0.5"] = new(2026, 8, 26, 17, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["10.0.0.5"] = new(2026, 8, 26, 9, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.DoesNotContain("10.0.0.5", result);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void 時序過濾_多帳號部分過濾_僅保留時序合格者()
+    {
+        var candidates = new[] { "alice", "bob" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 9, 0, 0),
+            ["bob"] = new(2026, 8, 26, 17, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 14, 0, 0),
+            ["bob"] = new(2026, 8, 26, 9, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Contains("alice", result);
+        Assert.DoesNotContain("bob", result);
+        Assert.Single(result);
+    }
+
+    [Fact]
+    public void 時序過濾_全部帳號被過濾後回傳空交集()
+    {
+        var candidates = new[] { "alice" };
+        var earliestFailure = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 17, 0, 0)
+        };
+        var latestSuccess = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice"] = new(2026, 8, 26, 9, 0, 0)
+        };
+
+        var result = LogAnalysisService.FilterByTiming(candidates, earliestFailure, latestSuccess);
+
+        Assert.Empty(result);
+    }
 }

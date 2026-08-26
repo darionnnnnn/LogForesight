@@ -711,13 +711,14 @@ public class LogAnalysisService
     /// <summary>
     /// 4625 達暴力破解門檻時，條件式撈取當日 4624（成功登入），比對是否與失敗記錄同一組帳號/IP。
     /// 平時不收 4624（SuccessAudit 量極大），只在已有暴力破解訊號時才多查一次，兼顧偵測面與效能。
+    /// 此外加上時序條件：成功登入必須晚於或等於該帳號/IP 當日首次失敗時間，避免正常登入後續遭排程失敗污染而誤判。
     /// </summary>
     private async Task<SuccessfulLogonMatch?> DetectSuccessfulLogonAfterBruteForceAsync(DateTime targetDate, List<EventLogEntryData> logs)
     {
-        var failedMessages = logs
-            .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625)
-            .Select(l => l.Message);
-        var (failedAccounts, failedIps) = LogAggregator.ExtractAccountsAndIps(failedMessages);
+        var failedEntries = logs
+            .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625);
+        var (failedAccounts, failedIps, earliestFailureByAccount, earliestFailureByIp) =
+            ExtractAccountsAndIpsWithTimes(failedEntries, pickEarliest: true);
 
         if (failedAccounts.Count == 0 && failedIps.Count == 0)
         {
@@ -727,21 +728,26 @@ public class LogAnalysisService
         var scan = await Task.Run(() =>
             _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security", securityExtraEventIds: new[] { 4624 }));
 
-        var logonSuccessMessages = scan.Entries.Where(l => l.EventId == 4624).Select(l => l.Message).ToList();
+        var logonSuccessEntries = scan.Entries.Where(l => l.EventId == 4624);
 
         // RDP 成功登入（LSM 21/25、RCM 1149）已在主掃描收進 logs（Operational 頻道 watchlist），
         // 一併納入成功登入面：暴力破解未必走 4624，也可能直接以 RDP 工作階段得手
-        var rdpSuccessMessages = logs.Where(IsRdpSuccessLogon).Select(l => l.Message).ToList();
+        var rdpSuccessEntries = logs.Where(IsRdpSuccessLogon).ToList();
 
-        var allSuccessMessages = logonSuccessMessages.Concat(rdpSuccessMessages).ToList();
-        if (allSuccessMessages.Count == 0)
+        var allSuccessEntries = logonSuccessEntries.Concat(rdpSuccessEntries);
+        var (successAccounts, successIps, latestSuccessByAccount, latestSuccessByIp) =
+            ExtractAccountsAndIpsWithTimes(allSuccessEntries, pickEarliest: false);
+
+        if (successAccounts.Count == 0 && successIps.Count == 0)
         {
             return null;
         }
 
-        var (successAccounts, successIps) = LogAggregator.ExtractAccountsAndIps(allSuccessMessages);
-        var matchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
-        var matchedIps = successIps.Intersect(failedIps).ToList();
+        var rawMatchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
+        var rawMatchedIps = successIps.Intersect(failedIps, StringComparer.OrdinalIgnoreCase).ToList();
+
+        var matchedAccounts = FilterByTiming(rawMatchedAccounts, earliestFailureByAccount, latestSuccessByAccount);
+        var matchedIps = FilterByTiming(rawMatchedIps, earliestFailureByIp, latestSuccessByIp);
 
         if (matchedAccounts.Count == 0 && matchedIps.Count == 0)
         {
@@ -749,13 +755,112 @@ public class LogAnalysisService
         }
 
         // 判斷「得手途徑是否含 RDP」：僅當交集帳號/IP 確實出現在 RDP 成功面時才標註，避免 4624 得手也誤稱 RDP
-        var (rdpAccounts, rdpIps) = LogAggregator.ExtractAccountsAndIps(rdpSuccessMessages);
-        bool includesRdp = matchedAccounts.Any(a => rdpAccounts.Contains(a)) || matchedIps.Any(rdpIps.Contains);
+        var (rdpAccounts, rdpIps) = LogAggregator.ExtractAccountsAndIps(rdpSuccessEntries.Select(l => l.Message));
+        var rdpAccountSet = new HashSet<string>(rdpAccounts, StringComparer.OrdinalIgnoreCase);
+        var rdpIpSet = new HashSet<string>(rdpIps, StringComparer.OrdinalIgnoreCase);
+        bool includesRdp = matchedAccounts.Any(rdpAccountSet.Contains) || matchedIps.Any(rdpIpSet.Contains);
 
         Log.Warn("{Date:yyyy-MM-dd} 偵測到破解得手跡象：大量登入失敗後同一組帳號/IP 出現成功登入（帳號={Accounts}，IP={Ips}，含RDP={Rdp}）",
             targetDate, string.Join(",", matchedAccounts), string.Join(",", matchedIps), includesRdp);
 
+        Log.Debug("{Date:yyyy-MM-dd} 破解得手時序過濾結果：過濾帳號={FilteredAccounts} 個，過濾 IP={FilteredIps} 個",
+            targetDate, rawMatchedAccounts.Count - matchedAccounts.Count, rawMatchedIps.Count - matchedIps.Count);
+
         return new SuccessfulLogonMatch { MatchedAccounts = matchedAccounts, MatchedIps = matchedIps, IncludesRdp = includesRdp };
+    }
+
+    /// <summary>
+    /// 依時序條件過濾帳號或 IP 候選清單：成功時間須晚於或等於該項目的最早失敗時間（latestSuccess >= earliestFailure）。
+    /// 若任一邊缺少時間資料（例如 TimeGenerated 未設定），則保守保留該項目，避免因資料不全而漏報。
+    /// </summary>
+    internal static List<string> FilterByTiming(
+        IEnumerable<string> candidates,
+        IReadOnlyDictionary<string, DateTime> earliestFailureTimes,
+        IReadOnlyDictionary<string, DateTime> latestSuccessTimes)
+    {
+        var matched = new List<string>();
+        foreach (var item in candidates)
+        {
+            if (earliestFailureTimes.TryGetValue(item, out var failureTime) &&
+                latestSuccessTimes.TryGetValue(item, out var successTime))
+            {
+                if (successTime >= failureTime)
+                {
+                    matched.Add(item);
+                }
+            }
+            else
+            {
+                // 任一邊缺少時間資料時退回保守行為，予以保留
+                matched.Add(item);
+            }
+        }
+
+        return matched;
+    }
+
+    /// <summary>
+    /// 逐筆事件抽取帳號與 IP，並維護各帳號/IP 的時間戳記（pickEarliest=true 取最早失敗時間，false 取最晚成功時間）。
+    /// 若事件未帶時間（TimeGenerated 為 default），帳號/IP 仍會納入集合，但跳過時間更新，後續比較時退回保守保留。
+    /// </summary>
+    private static (HashSet<string> Accounts, HashSet<string> Ips, Dictionary<string, DateTime> TimeByAccount, Dictionary<string, DateTime> TimeByIp)
+        ExtractAccountsAndIpsWithTimes(IEnumerable<EventLogEntryData> entries, bool pickEarliest)
+    {
+        var accounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var timeByAccount = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var timeByIp = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Message))
+            {
+                continue;
+            }
+
+            var (extractedAccounts, extractedIps) = LogAggregator.ExtractAccountsAndIps(new[] { entry.Message });
+
+            foreach (var account in extractedAccounts)
+            {
+                accounts.Add(account);
+            }
+
+            foreach (var ip in extractedIps)
+            {
+                ips.Add(ip);
+            }
+
+            if (entry.TimeGenerated == default)
+            {
+                continue;
+            }
+
+            foreach (var account in extractedAccounts)
+            {
+                if (!timeByAccount.TryGetValue(account, out var existingTime))
+                {
+                    timeByAccount[account] = entry.TimeGenerated;
+                }
+                else if (pickEarliest ? entry.TimeGenerated < existingTime : entry.TimeGenerated > existingTime)
+                {
+                    timeByAccount[account] = entry.TimeGenerated;
+                }
+            }
+
+            foreach (var ip in extractedIps)
+            {
+                if (!timeByIp.TryGetValue(ip, out var existingTime))
+                {
+                    timeByIp[ip] = entry.TimeGenerated;
+                }
+                else if (pickEarliest ? entry.TimeGenerated < existingTime : entry.TimeGenerated > existingTime)
+                {
+                    timeByIp[ip] = entry.TimeGenerated;
+                }
+            }
+        }
+
+        return (accounts, ips, timeByAccount, timeByIp);
     }
 
     /// <summary>RDP 成功登入事件：LocalSessionManager 21（登入）/25（重連），RemoteConnectionManager 1149（驗證成功）。</summary>
