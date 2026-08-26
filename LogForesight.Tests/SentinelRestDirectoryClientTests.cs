@@ -32,9 +32,27 @@ public class SentinelRestDirectoryClientTests
     private const string AuthUrl = "https://sentinel.local:8443/SentinelAuthServices/auth/tokens";
     private const string JobCollectionUrl = "https://sentinel.local:8443/SentinelRESTServices/objects/event-search";
 
-    /// <summary>一個 job 的模擬回應：found 與實際回傳的事件。
-    /// truncated 由 <c>found &gt; 事件數</c> 自然成立，與真實 client 的判斷同源。</summary>
-    private sealed record JobScript(int Found, params (string Ip, string? Name)[] Events);
+    /// <summary>一個 job 的模擬回應：found 與實際回傳的事件（可傳單頁事件或多頁陣列）。
+    /// truncated 由 <c>found > 事件數</c> 自然成立，與真實 client 的判斷同源。</summary>
+    private sealed class JobScript
+    {
+        public int Found { get; }
+        public (string Ip, string? Name)[][] Pages { get; }
+
+        public JobScript(int found, params (string Ip, string? Name)[] events)
+        {
+            Found = found;
+            Pages = new[] { events };
+        }
+
+        public JobScript(int found, (string Ip, string? Name)[][] pages)
+        {
+            Found = found;
+            Pages = pages;
+        }
+
+        public int TotalEventsCount => Pages.Sum(p => p.Length);
+    }
 
     private static JobScript Empty() => new(0);
 
@@ -480,6 +498,185 @@ public class SentinelRestDirectoryClientTests
             client.ListHostsAsync(Server(), "10.1.2", cts.Token));
     }
 
+    // ── 提早停頁：連續 K 頁無新主機即停止翻頁 ───────────────────────────────────
+
+    /// <summary>
+    /// 準備 10 頁（每頁 1000 筆達 pageSize 門檻），前 2 頁各有新主機，第 3~5 頁全是重複 IP →
+    /// 連續 3 頁無新主機應於第 5 頁喊停，實際發出的分頁請求數為 5 頁而非 10 頁。
+    /// </summary>
+    [Fact]
+    public async Task 連續3頁無新主機_停止翻頁且實際請求5頁()
+    {
+        // 準備 10 頁，每頁 1000 筆
+        var page1 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var page2 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.2", (string?)"srv2")).ToArray();
+        var duplicatePage = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.2", (string?)"srv2")).ToArray();
+
+        var pages = new[]
+        {
+            page1,          // 第 1 頁：新主機 10.1.2.1 (consecutive=0)
+            page2,          // 第 2 頁：新主機 10.1.2.2 (consecutive=0)
+            duplicatePage,  // 第 3 頁：無新主機 (consecutive=1)
+            duplicatePage,  // 第 4 頁：無新主機 (consecutive=2)
+            duplicatePage,  // 第 5 頁：無新主機 (consecutive=3 → 停止)
+            duplicatePage,  // 第 6 頁：不應被請求
+            duplicatePage,  // 第 7 頁：不應被請求
+            duplicatePage,  // 第 8 頁：不應被請求
+            duplicatePage,  // 第 9 頁：不應被請求
+            duplicatePage   // 第 10 頁：不應被請求
+        };
+
+        var handler = new ScriptedHandler(
+            new JobScript(50_000, pages), // 主掃描第 1 輪
+            Empty(),                      // 主掃描第 2 輪（因第 1 輪觸頂進殘差輪）
+            Empty());                     // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(2, result.Hosts.Count);
+        // 斷言分頁請求數確實為 5（而非 10）
+        Assert.Equal(5, handler.PageRequestCount);
+    }
+
+    /// <summary>
+    /// 提早停頁不等於已涵蓋：該輪取回數必小於 Found，Truncated 必然為 true，
+    /// 且探索有繼續進殘差輪（第 2 輪查詢帶有 NOT 排除前一輪 IP）。
+    /// </summary>
+    [Fact]
+    public async Task 提早停頁的那一輪仍視為觸頂_且繼續進殘差輪()
+    {
+        var page1 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var duplicatePage = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+
+        var pages = new[]
+        {
+            page1,          // 第 1 頁：新主機 (consecutive=0)
+            duplicatePage,  // 第 2 頁：無新主機 (consecutive=1)
+            duplicatePage,  // 第 3 頁：無新主機 (consecutive=2)
+            duplicatePage   // 第 4 頁：無新主機 (consecutive=3 → 停止)
+        };
+
+        var handler = new ScriptedHandler(
+            new JobScript(50_000, pages),                                       // 第 1 輪：提早停頁，取回 4000 < 50000 觸頂
+            new JobScript(1, ("10.1.2.9", "srv9")),                             // 第 2 輪（殘差輪）：發現新主機並掃完
+            Empty());                                                           // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        // 兩輪主機聯集
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.2.1");
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.2.9");
+
+        // 斷言殘差輪確實發出，且 filter 帶有第一輪的排除條件
+        Assert.True(handler.Filters.Count >= 2);
+        Assert.Contains("NOT (repip:10.1.2.1)", handler.Filters[1]);
+    }
+
+    /// <summary>
+    /// 每頁都有新主機時不提早停止：10 頁每頁都有新 IP → 翻完全部 10 頁，不因提早停頁機制而少翻。
+    /// </summary>
+    [Fact]
+    public async Task 每頁都有新主機_不提早停止_翻完全部頁數()
+    {
+        var pages = Enumerable.Range(1, 10)
+            .Select(i => Enumerable.Range(0, 1000).Select(_ => ($"10.1.2.{i}", (string?)$"srv{i}")).ToArray())
+            .ToArray();
+
+        var handler = new ScriptedHandler(
+            new JobScript(10_000, pages), // 主掃描第 1 輪：10 頁共 10000 筆，每頁都有新 IP
+            Empty());                     // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(10, result.Hosts.Count);
+        // 10 頁全部翻完，分頁請求數為 10
+        Assert.Equal(10, handler.PageRequestCount);
+    }
+
+    /// <summary>
+    /// 翻完且未觸頂時行為不變（回歸保護）：總筆數小於上限、每頁都有新主機 → Truncated 為 false、不進殘差輪。
+    /// </summary>
+    [Fact]
+    public async Task 翻完且未觸頂_行為不變_不進殘差輪()
+    {
+        var page1 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var page2 = Enumerable.Range(0, 500).Select(_ => ("10.1.2.2", (string?)"srv2")).ToArray(); // 不足一頁筆數，為最後一頁
+
+        var pages = new[] { page1, page2 };
+
+        var handler = new ScriptedHandler(
+            new JobScript(1500, pages), // 主掃描：Found=1500，取回 1500 筆未觸頂
+            Empty());                   // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(2, result.Hosts.Count);
+        // 主掃描未觸頂 → 只跑 1 輪主掃描 + 1 輪補充掃描，共 2 個 job
+        Assert.Equal(2, handler.Filters.Count);
+        Assert.Contains("NOT (repip:10.1.2.1 OR repip:10.1.2.2)", handler.Filters[1]);
+    }
+
+    /// <summary>
+    /// PageObserver 為 null 時分頁行為與修改前完全相同（回歸保護）：既有不傳觀察者的呼叫端不受影響。
+    /// </summary>
+    [Fact]
+    public async Task PageObserver為null_分頁行為與修改前完全相同()
+    {
+        var page1 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var duplicatePage = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+
+        var pages = new[] { page1, duplicatePage, duplicatePage, duplicatePage, duplicatePage };
+
+        var handler = new ScriptedHandler(new JobScript(5000, pages));
+
+        await using var client = new SentinelClient(Server(), Options(), handler);
+        // 不帶 PageObserver（預設為 null）
+        var result = await client.SearchAsync(new SentinelSearchRequest(
+            "filter", DateTimeOffset.UtcNow.AddHours(-1), DateTimeOffset.UtcNow,
+            MaxResults: 5000, PageSize: 1000));
+
+        // 雖然連續多頁無新主機，但 PageObserver 為 null，因此 5 頁全部取回
+        Assert.Equal(5000, result.Events.Count);
+        Assert.Equal(5, handler.PageRequestCount);
+        Assert.False(result.Truncated);
+    }
+
+    /// <summary>
+    /// 觀察者不會誤把上一輪已見的主機當新主機：第一輪已見 A、B，第二輪第 1~3 頁全是 A、B →
+    /// 第二輪連續 3 頁計為無新主機並於第 3 頁停止翻頁。
+    /// </summary>
+    [Fact]
+    public async Task 觀察者不會誤把上一輪已見主機當新主機()
+    {
+        // 第 1 輪：1 頁發現 10.1.2.1 與 10.1.2.2，但設定 Found=1000 觸發 Truncated 進殘差輪
+        var round1Events = new[] { ("10.1.2.1", (string?)"srv1"), ("10.1.2.2", (string?)"srv2") };
+
+        // 第 2 輪：4 頁，前 3 頁全是第 1 輪已見的主機，第 4 頁有新主機（不應被翻到）
+        var round2Page1 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var round2Page2 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.2", (string?)"srv2")).ToArray();
+        var round2Page3 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.1", (string?)"srv1")).ToArray();
+        var round2Page4 = Enumerable.Range(0, 1000).Select(_ => ("10.1.2.3", (string?)"srv3")).ToArray();
+
+        var round2Pages = new[] { round2Page1, round2Page2, round2Page3, round2Page4 };
+
+        var handler = new ScriptedHandler(
+            new JobScript(1000, round1Events), // 第 1 輪：取回 2 < Found 1000 觸頂（1 次分頁請求）
+            new JobScript(5000, round2Pages),  // 第 2 輪：前 3 頁皆為已知主機，於第 3 頁喊停（3 次分頁請求）
+            Empty());                          // 補充掃描
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
+
+        Assert.Equal(2, result.Hosts.Count);
+        // 第 1 輪 1 次 + 第 2 輪 3 次 = 4 次分頁請求（第 2 輪第 4 頁的新主機 10.1.2.3 未被翻到）
+        Assert.Equal(4, handler.PageRequestCount);
+    }
+
     /// <summary>
     /// 依 job 建立順序回應的 Sentinel 替身：第 n 個建立的 job 套用第 n 個 <see cref="JobScript"/>。
     /// 同時記下每個 job 的 filter 與時間區間——殘差輪掃的斷言全部落在「送出去的查詢長什麼樣」，
@@ -497,6 +694,12 @@ public class SentinelRestDirectoryClientTests
 
         /// <summary>每個 job 的查詢時間區間，依建立順序</summary>
         public List<(DateTimeOffset Start, DateTimeOffset End)> Windows { get; } = new();
+
+        /// <summary>分頁請求的實際發出次數</summary>
+        public int PageRequestCount { get; private set; }
+
+        /// <summary>每次分頁請求的 URL</summary>
+        public List<string> PageUrls { get; } = new();
 
         public HttpStatusCode AuthStatus { get; init; } = HttpStatusCode.OK;
 
@@ -551,8 +754,15 @@ public class SentinelRestDirectoryClientTests
             if (request.Method == HttpMethod.Get && url.Contains("/results"))
             {
                 if (PageDelay > TimeSpan.Zero) await Task.Delay(PageDelay, CancellationToken.None);
+                PageRequestCount++;
+                PageUrls.Add(url);
                 var index = JobIndex(url);
-                return Json(HttpStatusCode.OK, EventsJson(_scripts[index]));
+                var script = _scripts[index];
+                var page = ParsePageQuery(url);
+                var pageEvents = (page >= 1 && page <= script.Pages.Length)
+                    ? script.Pages[page - 1]
+                    : Array.Empty<(string Ip, string? Name)>();
+                return Json(HttpStatusCode.OK, EventsJson(pageEvents));
             }
 
             if (request.Method == HttpMethod.Get && url.StartsWith($"{JobCollectionUrl}/job"))
@@ -562,7 +772,7 @@ public class SentinelRestDirectoryClientTests
                     throw new InvalidOperationException($"測試腳本只給了 {_scripts.Length} 個 job，實際建立了第 {index + 1} 個");
 
                 var script = _scripts[index];
-                var avail = script.Events.Length;
+                var avail = script.TotalEventsCount;
                 if (avail == 0)
                     return Json(HttpStatusCode.OK, $"{{\"status\":2,\"found\":{script.Found},\"avail\":0}}");
 
@@ -584,13 +794,19 @@ public class SentinelRestDirectoryClientTests
             return int.Parse(digits) - 1;
         }
 
-        private static string EventsJson(JobScript script)
+        private static int ParsePageQuery(string url)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(url, @"[?&]page=(\d+)");
+            return match.Success ? int.Parse(match.Groups[1].Value) : 1;
+        }
+
+        private static string EventsJson((string Ip, string? Name)[] events)
         {
             var sb = new StringBuilder("[");
-            for (var i = 0; i < script.Events.Length; i++)
+            for (var i = 0; i < events.Length; i++)
             {
                 if (i > 0) sb.Append(',');
-                var (ip, name) = script.Events[i];
+                var (ip, name) = events[i];
                 sb.Append($"{{\"repip\":\"{ip}\"");
                 if (name != null) sb.Append($",\"sn\":\"{name}\"");
                 sb.Append('}');

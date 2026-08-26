@@ -24,6 +24,7 @@ public sealed partial class SentinelClient
             if (pageEvents.Count == 0) break; // 沒有更多資料，即使數字對不上也停止，避免無窮迴圈
 
             events.AddRange(pageEvents);
+            if (request.PageObserver?.Invoke(pageEvents) == false) break;
             if (pageEvents.Count < pageSize) break; // 這頁不足一頁筆數，視為最後一頁
 
             page++;

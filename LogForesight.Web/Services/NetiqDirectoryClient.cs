@@ -181,6 +181,12 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// </summary>
     internal const int ExclusionClauseLimit = 500;
 
+    /// <summary>提早停頁門檻：連續這麼多頁都沒出現沒見過的主機，就停止翻頁。
+    /// 探索只需要相異主機 IP，不需要把事件翻完——一輪 50 頁約 85 秒，
+    /// 幾乎吃光整趟 90 秒預算，殘差輪掃因此永遠跑不完。
+    /// **提早停頁不等於已涵蓋**：該輪仍視為觸頂（Truncated）並繼續進殘差輪。</summary>
+    internal const int NoNewHostPagesBeforeStop = 3;
+
     /// <summary>補充掃描的窗口（分鐘）。短窗對 Security 的涵蓋率天生高——
     /// 只要主機活著，60 分鐘內幾乎必有 Security 事件（登入、稽核、票證），
     /// 而 Security 正是主掃描刻意排除掉的那一塊。兩段各用自己擅長的頻道×窗口組合。</summary>
@@ -463,10 +469,35 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 }
             }
 
+            // 該輪專用的提早停頁觀察者：連續 NoNewHostPagesBeforeStop 頁都沒有新主機就喊停。
+            // 初始內容包含 scan 目前已見的全部 IP，避免把上一輪已知主機誤認為新主機。
+            // 觀察者只判斷是否翻頁，不修改 scan 狀態，維持 Absorb 單一寫入點。
+            var roundSeenIps = new HashSet<string>(scan.SeenIps, StringComparer.OrdinalIgnoreCase);
+            var consecutiveNoNewPages = 0;
+
             var result = await client.SearchAsync(new SentinelSearchRequest(
                 filterFactory(exclusion), start, end,
                 new[] { SentinelFieldMap.HostIp, SentinelFieldMap.HostName },
-                MaxResults: maxResults), ct);
+                MaxResults: maxResults,
+                PageObserver: pageEvents =>
+                {
+                    var hasNewHost = false;
+                    foreach (var evt in pageEvents)
+                    {
+                        var ip = evt.Fields.GetValueOrDefault(SentinelFieldMap.HostIp);
+                        if (!string.IsNullOrEmpty(ip) && roundSeenIps.Add(ip))
+                        {
+                            hasNewHost = true;
+                        }
+                    }
+
+                    if (hasNewHost)
+                        consecutiveNoNewPages = 0;
+                    else
+                        consecutiveNoNewPages++;
+
+                    return consecutiveNoNewPages < NoNewHostPagesBeforeStop;
+                }), ct);
 
             // NOT 子句在本環境**尚未實測**（probe 驗過 OR 50~100 子句、片語、前綴萬用字元，
             // 沒驗過 NOT）。萬一這個語法被忽略，每輪都會取回同一批已知主機、白白燒完輪數，
@@ -544,6 +575,9 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         {
             foreach (var ip in alreadyKnown) _seen.Add(ip);
         }
+
+        /// <summary>目前已見過的全部 IP（唯讀檢視，供提早停頁觀察者判斷是否為新主機）</summary>
+        public IReadOnlySet<string> SeenIps => _seen;
 
         /// <summary>這一輪要排除的 IP（已見過的全部）；超過子句上限回 null，
         /// 呼叫端據此停止並警告——送出超長 filter 會被 Sentinel 整個拒絕。</summary>
