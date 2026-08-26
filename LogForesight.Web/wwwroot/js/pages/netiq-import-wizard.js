@@ -74,6 +74,15 @@ function renderScanPicker(allSentinels) {
     subnetInput.placeholder = '網段，例：192.168.0';
     row.appendChild(subnetInput);
 
+    const granularitySelect = document.createElement('select');
+    granularitySelect.className = 'form-select';
+    granularitySelect.style.maxWidth = '200px';
+    granularitySelect.id = 'scan-granularity-select';
+    granularitySelect.appendChild(new Option('每段 254 台（預設）', '24', true, true));
+    granularitySelect.appendChild(new Option('每段 126 台', '25'));
+    granularitySelect.appendChild(new Option('每段 62 台（最細）', '26'));
+    row.appendChild(granularitySelect);
+
     const scanButton = document.createElement('button');
     scanButton.type = 'button';
     scanButton.className = 'btn btn-primary';
@@ -81,15 +90,17 @@ function renderScanPicker(allSentinels) {
     scanButton.addEventListener('click', () => {
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
         const subnetPrefix = subnetInput.value.trim();
+        const granularity = granularitySelect.value;
         if (!subnetPrefix) {
             toast('請輸入要掃描的網段', 'warning');
             return;
         }
-        if (sentinel) openWizard(sentinel, subnetPrefix);
+        if (sentinel) openWizard(sentinel, subnetPrefix, granularity);
     });
     row.appendChild(scanButton);
 
     scanPicker.appendChild(row);
+    scanPicker.appendChild(pickerHint('網段事件量大時選較細的粒度可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。'));
 }
 
 function pickerHint(text) {
@@ -265,7 +276,7 @@ function startPolling(jobId) {
     pollTimer = setTimeout(poll, 2000);
 }
 
-async function openWizard(sentinel, subnetPrefix) {
+async function openWizard(sentinel, subnetPrefix, granularity = '24') {
     stopPolling();
     wizardPane = 'subnets';
     wizardScan = null;
@@ -285,7 +296,7 @@ async function openWizard(sentinel, subnetPrefix) {
     renderSpinner(document.getElementById('wizard-scan-result'), '掃描中…');
     wizardPrimaryButton.disabled = true;
     try {
-        const job = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
+        const job = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix, granularity });
         startPolling(job.jobId);
     } catch {
         wizardModal.hide();

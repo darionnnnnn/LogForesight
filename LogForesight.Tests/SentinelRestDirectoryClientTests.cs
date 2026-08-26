@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Services;
 using Xunit;
 
@@ -884,12 +885,12 @@ public class SentinelRestDirectoryClientTests
     }
 
     /// <summary>
-    /// 段數超過上限擲 NetiqDiscoveryException。
+    /// 段數超過上限擲 NetiqDiscoveryException，且訊息含建議改用較粗粒度的字樣。
     /// </summary>
     [Fact]
     public async Task 段數超過上限_擲NetiqDiscoveryException()
     {
-        Assert.Equal(256, SentinelRestDirectoryClient.MaxSegments);
+        Assert.Equal(1024, SentinelRestDirectoryClient.MaxSegments);
 
         var handler = new ScriptedHandler();
         var client = new SentinelRestDirectoryClient(Options(), handler);
@@ -898,6 +899,154 @@ public class SentinelRestDirectoryClientTests
         var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
             client.ListHostsAsync(Server(), "10", CancellationToken.None));
         Assert.Contains("太籠統", ex.Message);
+    }
+
+    /// <summary>
+    /// /26 段的 filter 是明列 OR、不含萬用字元。
+    /// </summary>
+    [Fact]
+    public async Task 細粒度Slash26掃描送出明列OR_不含萬用字元()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1, ("192.168.7.10", "srv-1")),
+            Empty(),
+            Empty(),
+            Empty(),
+            Empty(),
+            Empty(),
+            Empty(),
+            Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash26);
+
+        Assert.Single(result.Hosts);
+        Assert.NotEmpty(handler.Filters);
+
+        var firstFilter = handler.Filters[0];
+        Assert.Contains("repip:192.168.7.0 OR", firstFilter);
+        Assert.DoesNotContain("192.168.7.*", firstFilter);
+    }
+
+    /// <summary>
+    /// /24 段的 filter 仍是萬用字元（回歸保護）。
+    /// </summary>
+    [Fact]
+    public async Task 預設Slash24掃描仍送出前綴萬用字元()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1, ("192.168.7.10", "srv-1")),
+            Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash24);
+
+        Assert.Single(result.Hosts);
+        Assert.Contains("repip:192.168.7.*", handler.Filters[0]);
+    }
+
+    /// <summary>
+    /// 不傳粒度時行為與 /24 完全相同（回歸保護）：比對送出的 filter 序列。
+    /// </summary>
+    [Fact]
+    public async Task 不傳粒度時行為與Slash24完全相同_比對送出的filter序列()
+    {
+        var handlerDefault = new ScriptedHandler(
+            new JobScript(1, ("192.168.7.10", "srv-1")),
+            Empty());
+        var handlerSlash24 = new ScriptedHandler(
+            new JobScript(1, ("192.168.7.10", "srv-1")),
+            Empty());
+
+        var resultDefault = await new SentinelRestDirectoryClient(Options(), handlerDefault)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None);
+
+        var resultSlash24 = await new SentinelRestDirectoryClient(Options(), handlerSlash24)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash24);
+
+        Assert.Equal(handlerSlash24.Filters, handlerDefault.Filters);
+        Assert.Equal(resultSlash24.CoverageNote, resultDefault.CoverageNote);
+    }
+
+    /// <summary>
+    /// 段內排除跨 /25 兩段共享 /24 歸屬：第一段已見 2 台，第二段的 filter
+    /// 帶有那 2 台的排除子句（因為同屬一個 /24）。
+    /// </summary>
+    [Fact]
+    public async Task 段內排除跨Slash25兩段共享Slash24歸屬()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.7.0 OR") && filter.Contains("rv150:System"))
+                    return new JobScript(2, ("192.168.7.10", "srv-a"), ("192.168.7.20", "srv-b"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash25);
+
+        Assert.Equal(2, result.Hosts.Count);
+
+        var seg2Filters = handler.Filters.Where(f => f.Contains("repip:192.168.7.128 OR")).ToList();
+        Assert.NotEmpty(seg2Filters);
+        Assert.All(seg2Filters, f =>
+        {
+            Assert.Contains("NOT (repip:192.168.7.10 OR repip:192.168.7.20)", f);
+        });
+    }
+
+    /// <summary>
+    /// CoverageNote 的未收斂段以 Label 呈現（/26 時應看到 x.x.x.0/26 形式而非只有 /24 前綴）。
+    /// </summary>
+    [Fact]
+    public async Task CoverageNote未收斂段以Label呈現()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.7.0 OR"))
+                    return new JobScript(99_999, ("192.168.7.1", "noisy0"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash26);
+
+        Assert.Contains("共掃 4 個子網段", result.CoverageNote);
+        Assert.Contains("192.168.7.0/26", result.CoverageNote);
+    }
+
+    /// <summary>
+    /// 細粒度時安靜主機不被吵雜主機擠掉：/26 粒度下，
+    /// 192.168.7.0/26 段觸頂用盡輪數（有警告），192.168.7.64/26 段的安靜主機仍在結果中。
+    /// </summary>
+    [Fact]
+    public async Task 細粒度時安靜主機不被吵雜主機擠掉()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                // 192.168.7.0/26 觸頂用盡輪數
+                if (filter.Contains("repip:192.168.7.0 OR"))
+                    return new JobScript(99_999, ("192.168.7.1", "noisy-host"));
+                // 192.168.7.64/26 回安靜主機
+                if (filter.Contains("repip:192.168.7.64 OR") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.7.70", "quiet-host"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash26);
+
+        Assert.Contains(result.Hosts, h => h.IpAddress == "192.168.7.70" && h.HostName == "quiet-host");
+        Assert.Contains(result.Warnings, w => w.Contains("192.168.7.0/26") && w.Contains("清單可能不完整"));
     }
 
     /// <summary>

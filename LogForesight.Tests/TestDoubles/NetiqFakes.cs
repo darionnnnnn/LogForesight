@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Services;
 
@@ -67,16 +68,19 @@ internal sealed class FakeClient : INetiqDirectoryClient
     public IReadOnlyCollection<string>? LastKnownIps { get; private set; }
     public Action<string, int>? LastProgressCallback { get; private set; }
     public int? LastTotalBudgetSecondsOverride { get; private set; }
+    public ScanGranularity LastGranularity { get; private set; }
 
     public Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer s, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
-        int? totalBudgetSecondsOverride = null)
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24)
     {
         LastKnownIps = knownIps;
         LastProgressCallback = onProgress;
         LastTotalBudgetSecondsOverride = totalBudgetSecondsOverride;
+        LastGranularity = granularity;
 
         if (_handler != null)
             return _handler(s, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride);

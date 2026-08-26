@@ -1,3 +1,5 @@
+using LogForesight.Core.Analysis;
+
 namespace LogForesight.Web.Services;
 
 /// <summary>Sentinel 目錄回報的一台主機（探索結果的最小單位）</summary>
@@ -49,7 +51,8 @@ public interface INetiqDirectoryClient
         SentinelServer server, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
-        int? totalBudgetSecondsOverride = null);
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24);
 }
 
 /// <summary>
@@ -65,7 +68,8 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
         SentinelServer server, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
-        int? totalBudgetSecondsOverride = null)
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24)
     {
         string normalized;
         try
@@ -152,10 +156,10 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 /// </summary>
 public class SentinelRestDirectoryClient : INetiqDirectoryClient
 {
-    /// <summary>單次掃描可展開的最大子網段數。/16 展開成 256 個 /24 在預算內，
-    /// 更寬的輸入（如只給一段）已由 SentinelQueryBuilder.MinPrefixOctets 擋掉。
-    /// 這個上限是防禦性的第二道閘門。</summary>
-    internal const int MaxSegments = 256;
+    /// <summary>單次掃描可展開的最大分段數。/16 在 /24 粒度是 256 段、/25 是 512 段、
+    /// /26 是 1024 段。上限取 1024 讓三種粒度都能掃完整個 /16；
+    /// 更寬的輸入已由 SentinelQueryBuilder.MinPrefixOctets 擋掉。</summary>
+    internal const int MaxSegments = 1024;
 
     /// <summary>單輪掃描取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h
     /// 從幾萬到近 76 萬筆都有，這個值是「翻頁數（上限約 50 頁）」與「單輪涵蓋」的折衷。
@@ -254,21 +258,22 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         SentinelServer server, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
-        int? totalBudgetSecondsOverride = null)
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new NetiqDiscoveryException($"Sentinel「{server.Name}」未設定 BaseUrl。");
 
         string normalizedPrefix;
-        IReadOnlyList<string> segments;
+        IReadOnlyList<ScanSegment> segments;
         try
         {
             normalizedPrefix = SentinelQueryBuilder.NormalizeSubnetPrefix(subnetPrefix);
-            segments = SentinelQueryBuilder.ExpandToSlash24Prefixes(subnetPrefix);
+            segments = SentinelQueryBuilder.ExpandToSegments(subnetPrefix, granularity);
             if (segments.Count > MaxSegments)
             {
                 throw new NetiqDiscoveryException(
-                    $"網段範圍過大（展開後共 {segments.Count} 個子網段，超過單次掃描上限 {MaxSegments} 個），請縮小輸入範圍。");
+                    $"網段範圍過大（展開後共 {segments.Count} 個分段，超過單次掃描上限 {MaxSegments} 個），請縮小輸入範圍或改用較粗的掃描粒度。");
             }
         }
         catch (ArgumentException ex)
@@ -319,7 +324,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             }
 
             var scan = new ScanState(alreadyKnown);
-            var completedSegments = new List<string>();
+            var completedSegments = new List<ScanSegment>();
             var incompleteSegments = new List<string>();
             var budgetExceeded = false;
             var isSingleSegment = segments.Count == 1;
@@ -348,7 +353,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 }
                 else
                 {
-                    onProgress?.Invoke($"掃描中 {i}/{segments.Count}（{segment}）", scan.DiscoveredHosts().Count);
+                    onProgress?.Invoke($"掃描中 {i}/{segments.Count}（{segment.Label}）", scan.DiscoveredHosts().Count);
                 }
 
                 try
@@ -358,7 +363,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(segment, exclude, server.Os),
                         now.AddHours(-WindowHours), now,
-                        CoverageTargetResults, MaxResidualRounds, scan, segment, warnings, $"主掃描（{segment}）");
+                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, warnings, $"主掃描（{segment.Label}）");
 
                     if (isSingleSegment)
                     {
@@ -373,14 +378,14 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(segment, exclude),
                         now.AddMinutes(-SupplementWindowMinutes), now,
-                        SupplementMaxResults, SupplementResidualRounds, scan, segment, warnings, $"補充掃描（{segment}）",
+                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, warnings, $"補充掃描（{segment.Label}）",
                         // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
                         // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
                         fallbackToUnexcludedFirstRound: true);
 
                     if (!mainOutcome.Complete || !supplementOutcome.Complete)
                     {
-                        incompleteSegments.Add(segment);
+                        incompleteSegments.Add(segment.Label);
                     }
 
                     // 主掃描 0 台但補充掃描有台數＝這個環境的 collector 可能不轉送 System/Application，
@@ -389,7 +394,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                     if (mainOutcome.NewHosts == 0 && supplementOutcome.NewHosts > 0)
                     {
                         warnings.Add(
-                            $"主掃描（{segment}）（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
+                            $"主掃描（{segment.Label}）（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
                             "這台 Sentinel 的 collector 可能不轉送這兩個頻道，掃描涵蓋率會因此偏低。" +
                             "請至「診斷」分頁執行一次診斷確認頻道覆蓋情形。");
                     }
@@ -418,7 +423,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
             if (budgetExceeded)
             {
-                var unscanned = segments.Skip(completedSegments.Count).ToList();
+                var unscanned = segments.Skip(completedSegments.Count).Select(s => s.Label).ToList();
                 warnings.Add(
                     $"掃描時間用盡，已完成 {completedSegments.Count}/{segments.Count} 段，" +
                     $"未掃描的網段：{FormatSegmentList(unscanned)}。");

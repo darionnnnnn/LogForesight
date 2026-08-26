@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -216,7 +217,8 @@ public class AdminController : ControllerBase
     [HttpPost("netiq/scan")]
     public ApiResponse<NetiqScanJobDto> StartScan([FromBody] NetiqScanRequest request)
     {
-        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix);
+        var granularity = SentinelQueryBuilder.ParseGranularity(request.Granularity);
+        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix, granularity);
         return ApiResponse<NetiqScanJobDto>.Ok(new NetiqScanJobDto
         {
             JobId = jobId,
