@@ -217,10 +217,7 @@ public class LogAnalysisService
         SuccessfulLogonMatch? successfulLogonMatch = null;
         if (securityLogAvailable != false)
         {
-            var bruteForceSignature = issues.FirstOrDefault(i =>
-                i.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) &&
-                i.Source.Contains("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
-                i.EventId == 4625 && i.Count >= 10);
+            var bruteForceSignature = issues.FirstOrDefault(CorrelationAnalyzer.IsBruteForceAnchor);
 
             if (bruteForceSignature != null)
             {
