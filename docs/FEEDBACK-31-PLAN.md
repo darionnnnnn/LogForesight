@@ -160,6 +160,7 @@
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
 | A | Claude | 完成 | 5 測試綠，突變測試（拿掉欄位傳遞）3 紅確認守衛有效 | 原規劃只說「補上傳遞」，實作時抽出 `ComposeEffectiveRequest` 純函式才測得到——`TriggerRunAsync` 相依過多具體類別無法直接建構 |
+| D | agy（gemini-3.7-flash-high） | 完成，一次過（Claude 修一個真 bug） | 2933 總計全綠；三個 id 齊備、`role="alert"`、複用 `confirmAction`、原生 confirm 零命中、舊勾選框零殘留、BOM 全數保留 | **跨段接線真 bug**：前端送字串 `"All"`、DTO 是 enum，而站台未全域註冊 `JsonStringEnumConverter` → 正式環境會 400，**所有後端測試照樣全綠**（它們直接建物件不經 JSON）。Claude 補 `[JsonConverter]` 並新增 `TriggerRunRequestBindingTests`（先寫測試證明 4 紅，修後 5 綠） |
 | C2 | agy（gemini-3.7-flash-high） | 完成，一次過（Claude 補兩處） | 2928 總計（+9）全綠；兩條路徑各接上 `DeleteDays`、上限判定未另寫一份；批次 A 的反射守衛測試綠＝新欄位確實同步 | ①**三個檔案的 UTF-8 BOM 被剝除**（已知失敗模式），Claude 還原；②本機路徑 `rerunLookback` 未二次夾制，Claude 比照 NetIQ 既有慣例補上 `GetEffectiveBackfillDaysLimit` 夾制（防保留期事後調小）；③我規格的驗收基準寫錯（上限判定命中數寫 1、實際 3），核對後確認未被改動 |
 | C1 | agy（gemini-3.7-flash-high） | 完成，一次過 | 2919 總計（+15）全綠；零既有檔案修改、Web 端零命中、grep 證明結案判定確實委託 `IssueHandlingStatuses.IsClosed`；突變測試（把結案判定換成任意列）1 紅 | `All` 模式提早回傳、不查 handling——規格沒要求但語意正確且省一次查詢，接受 |
 | B | agy（gemini-3.7-flash-high） | 完成，一次過 | 2904 總計（+7）全綠；diff 白名單相符、BOM 未動、Web 端零命中；複用 `OwnedRows`／`PruneBatchSize`，無過度設計 | 突變測試（拿掉子表刪除）仍全綠——查明是 `LfDbContext.cs:174` 的 `OnDelete(Cascade)` 在 SQLite 上代勞，**非測試假通過**：顯式刪子表是既有 `Prune` 的慣例（防 provider 間 cascade 不一致），既有 Prune 測試同樣無法分辨。留此限制，不加 SqlServer 實機測試 |

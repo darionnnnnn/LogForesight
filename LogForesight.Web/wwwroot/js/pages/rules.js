@@ -637,6 +637,8 @@ document.getElementById('rule-form').addEventListener('submit', async event => {
             toast(editingRule ? '已更新規則' : '已新增規則', 'success');
         }
 
+        toast('規則變更只影響之後的分析；如需回溯套用到過去的日子，請至「排程作業」頁使用「立即執行」的重新分析模式。', 'info');
+
         ruleModal.hide();
         await load();
     } catch {

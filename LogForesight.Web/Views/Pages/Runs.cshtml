@@ -181,11 +181,26 @@
                         </button>
                         <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" style="max-width: 120px;" />
                     </div>
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="run-now-only-missing" />
-                        <label class="form-check-label" for="run-now-only-missing">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的）</label>
+                    <div class="mb-3">
+                        <label for="run-now-rerun-mode" class="form-label">執行模式</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-rerun-mode-help"
+                                data-bs-content="「只補跑失敗或未執行」僅補跑缺漏或失敗日，不影響既有結果；其餘模式為重新分析，會刪除選定日子的既有分析結果（含 AI 判讀）後重新產生。「重新分析未處理」只重跑無人處理過的日子；「重新分析未處理與處理中」加上處理中日子；「全部重新分析」則重跑所有日子（含已結案）。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                        <select class="form-select form-select-sm" id="run-now-rerun-mode">
+                            <option value="None" selected>只補跑失敗或未執行（預設）</option>
+                            <option value="Unhandled">重新分析未處理的日子</option>
+                            <option value="UnhandledAndAssigned">重新分析未處理與處理中的日子</option>
+                            <option value="All">全部重新分析（含已處理完的）</option>
+                        </select>
                         <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
                     </div>
+                    <div class="mb-3" id="run-now-rerun-days-wrap" hidden>
+                        <label class="form-label" for="run-now-rerun-days">重新分析回望天數</label>
+                        <input type="number" class="form-control form-control-sm" id="run-now-rerun-days" min="1" value="30" style="max-width: 120px;" />
+                        <div class="form-text">預設 30 天；上限為歷史資料保留天數</div>
+                    </div>
+                    <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
                 </div>
                 <div class="modal-footer">
