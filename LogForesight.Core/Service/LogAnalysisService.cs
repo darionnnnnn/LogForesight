@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -192,6 +192,12 @@ public class LogAnalysisService
         // 錨定在被分析的那一天：回補中間缺漏日時，檔案裡已經有該日之後的紀錄，
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
         var history = _historyService.ReadRecent(targetDate, historyDays);
+
+        // 基準一律排除被分析日自己：ReadRecent 窗口含錨定日，正常缺日分析時該日沒有紀錄、
+        // 這行是 no-op；但重新分析既有日（replaceExisting）時舊紀錄要到寫入前才刪，不排除的話
+        // 舊版的「今天」會混進趨勢基準——事件在舊列出現過就不再算新問題、量值也墊高基準，
+        // New/Rising 與慢速趨勢全部失真。分析某一天的基準只能是那一天之前的世界。
+        history.RemoveAll(h => h.Date.Date == targetDate.Date);
 
         // 殘留憑證重試判定（A3）：登入失敗若為機械性重複且跨日重現，標記為疑似殘留憑證重試並調降嚴重度，
         // 必須在 TrendAnalyzer 之前執行，避免殘留憑證因頻率上升而被誤升為高風險日

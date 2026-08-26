@@ -136,6 +136,31 @@ public class RerunBehaviorTests : IDisposable
         return null;
     }
 
+    // ── 趨勢基準不含被分析日自己 ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 重跑既有日時，舊紀錄要到寫入前才刪（防永久空洞），所以統計段讀基準的當下**舊的「今天」
+    /// 還在 store 裡**——不排除的話會混進趨勢基準（事件在舊列出現過就不算新問題、量值墊高基準）。
+    /// 以「趨勢基準建立中（歷史 N/13 天）」的 N 當觀測點：今天的舊列＋昨天各一列時，
+    /// 基準必須只算到昨天那 1 筆。拿掉 BuildStatisticalRecordAsync 的排除那行，N 會變 2、此測試轉紅。
+    /// </summary>
+    [Fact]
+    public async Task 重跑日的舊紀錄不混進趨勢基準()
+    {
+        var store = new EfAnalysisRecordStore(_fx.NewContext, "sqlite-in-memory");
+        var today = DateTime.Today;
+
+        store.Append(new DailyAnalysisRecord { Date = today, Host = "SRV-A", HostId = 1, RiskLevel = "高", Headline = "今天的舊結果" });
+        store.Append(new DailyAnalysisRecord { Date = today.AddDays(-1), Host = "SRV-A", HostId = 1, RiskLevel = "低", Headline = "昨天" });
+
+        var service = new LogAnalysisService(new EventLogService(), new FakeAiService(), store, new FakeSuppressionStore());
+        var (record, _) = await service.BuildStatisticalRecordAsync(
+            today, new List<EventLogEntryData>(), useAi: false);
+
+        // 歷史窗口預設 14 天、門檻 13：基準只該有「昨天」1 筆，今天的舊列必須被排除
+        Assert.Contains(record.UncoveredChecks, c => c.Contains("趨勢基準建立中（歷史 1/"));
+    }
+
     // ── 取代語意：刪除後重寫，同一天只會留下新的那一列 ────────────────────────
 
     [Fact]

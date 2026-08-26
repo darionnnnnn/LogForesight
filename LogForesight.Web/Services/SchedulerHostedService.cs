@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Configuration;
+using LogForesight.Web.Configuration;
 using LogForesight.Web.Services.Mail;
 using NLog;
 
