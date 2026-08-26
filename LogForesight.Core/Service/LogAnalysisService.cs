@@ -235,6 +235,9 @@ public class LogAnalysisService
             ? LinuxCorrelationAnalyzer.Detect(issues, logs)
             : CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
 
+        // 密碼噴灑偵測（A5）：少數密碼嘗試大量帳號的特徵，適用 Windows 與 Linux
+        correlations.AddRange(PasswordSprayDetector.Detect(issues));
+
         // 關聯模式抑制（回饋十五輪 A-1）：跨 log 關聯訊號過去無抑制路徑，且
         // correlations.Count > 0 直接判中風險（見下方 ComputeRuleBasedRisk）、ElevatesDayRisk
         // 命中甚至直接判高風險——是本輪影響面最大的一種抑制，建立時要求理由必填＋強警告

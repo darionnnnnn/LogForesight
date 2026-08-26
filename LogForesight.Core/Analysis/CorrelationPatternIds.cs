@@ -27,6 +27,8 @@ public static class CorrelationPatternIds
     public const string CrashServiceFail = "crash-service-fail";
     public const string CrashLoopResource = "crash-loop-resource";
     public const string TimeSkewAuth = "time-skew-auth";
+    /// <summary>密碼噴灑偵測（同時適用 Windows 與 Linux 簽章）</summary>
+    public const string PasswordSpray = "password-spray";
 
     // ── Windows：跨日組合 ──────────────────────────────────────────
     public const string XdayIntrusion = "xday-intrusion";
@@ -42,7 +44,7 @@ public static class CorrelationPatternIds
     {
         IntrusionChain, BruteSuccess, Persistence, AuditTamper, PrivImplant,
         AvOffMalware, MalwarePersistence, StorageChain, StorageCrash, HwUnstable,
-        CrashServiceFail, CrashLoopResource, TimeSkewAuth,
+        CrashServiceFail, CrashLoopResource, TimeSkewAuth, PasswordSpray,
         XdayIntrusion, XdayStorage, XdayAvOffMalware, XdayBruteRdp,
         LinuxSshBruteSuccess, LinuxSshBruteUncertain
     };
