@@ -46,6 +46,25 @@ internal static class MissingDateFinder
 /// </summary>
 public static class HostDayPostProcessor
 {
+    /// <summary>
+    /// 重跑某個主機日之前的「該不該用新結果取代舊結果」判定（第三十一輪）——本機路徑與 NetIQ
+    /// 機房路徑共用同一份，不各寫一份（兩邊各寫一份的第一個代價就是刪除時機一個寫在分析前、
+    /// 一個寫在分析後）。
+    ///
+    /// 回 true＝保留原結果、整天跳過（不刪、不分析、不寫入）。原始事件不存 DB，重跑等於重新向
+    /// 來源（Windows Event Log／Sentinel）取數，取不到或只取得到殘缺的資料時，用它覆蓋掉當初
+    /// 完整分析出來的結果是淨損失。
+    /// </summary>
+    /// <param name="eventCount">本次自來源取得的事件數</param>
+    /// <param name="dataIncomplete">本次取數對這一天是否不完整（來源已滾掉部分事件／查詢被截斷）</param>
+    /// <param name="sourceDegraded">來源本身降級（頻道存取被拒等），取得到的事件不足以還原當初的判斷</param>
+    public static bool ShouldRetainExistingDay(int eventCount, bool dataIncomplete, bool sourceDegraded) =>
+        eventCount == 0 || dataIncomplete || sourceDegraded;
+
+    /// <summary>重跑結果的申報字串——兩條路徑共用，措辭不各寫一份</summary>
+    public static string RerunSummary(int analyzed, int retained) =>
+        $"重新分析 {analyzed} 天，保留原結果 {retained} 天（來源已無資料或資料不完整）";
+
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     /// <summary>

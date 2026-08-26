@@ -127,7 +127,7 @@ public class SchedulerHostedService : BackgroundService
 
         if (!ScheduleCalculator.ShouldTriggerNow(now, options.Windows, recentScheduleTriggerTimes)) return;
 
-        await TriggerRunAsync(new RunRequest { Scope = RunScope.Full, Trigger = "schedule" });
+        await TriggerRunAsync(ComposeScheduledRequest());
     }
 
     /// <summary>
@@ -139,6 +139,14 @@ public class SchedulerHostedService : BackgroundService
     /// HTTP 請求會被掛住數小時，排程輪詢迴圈也會被卡死（窗口 End 的優雅停止就永遠輪不到）。
     /// 背景工作只碰 Singleton 依賴（store／設定／run state），與 NetiqProbeService 同一套作法。
     /// </summary>
+    /// <summary>
+    /// 排程輪詢自己組的請求。**永遠不帶重新分析模式**（<see cref="RerunMode.None"/>）——
+    /// 刪除既有分析結果重跑是破壞性動作，只在有人看著的手動觸發發生，不在無人看管的夜間排程。
+    /// 抽成獨立函式是為了讓這條契約測得到。
+    /// </summary>
+    internal static RunRequest ComposeScheduledRequest() =>
+        new() { Scope = RunScope.Full, Trigger = "schedule" };
+
     /// <summary>
     /// 把呼叫端的請求與目前排程設定合成實際執行用的請求（<see cref="TriggerRunAsync"/> 的純函式部分）。
     ///

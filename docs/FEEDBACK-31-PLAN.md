@@ -103,7 +103,7 @@
 - **刪除時機＝逐日就地取代，不整批預刪**：對窗口內每個主機日，先完成該日重新掃描/分析，**產出可寫入的新結果後**才刪舊列、緊接 Append（同一主機日內完成刪＋寫）。理由：來源（Event Log/Sentinel）可能已滾掉舊事件，整批預刪會把「舊結果尚在、新資料取不到」的日子變成永久空洞。
 - **來源無資料的保護（暫定契約）**：該日重掃結果完全無事件、而既有紀錄有事件 → **保留舊紀錄不取代**，計入申報（「N 個主機日因來源已無資料而保留原結果」）。什麼算「完全無事件」：掃描成功但事件數為 0；掃描本身失敗（頻道不可讀、Sentinel 查詢錯誤）同樣保留舊紀錄。
 - **AI 不自動重跑**：重跑寫入的日子照一般新分析日的規則決定 `AiPending`（低風險日不標）；不主動對整窗口花 AI token。使用者事後可用「只補跑失敗或未執行」補 AI——兩模式因此互補。
-- **首見日**：接受「新規則在舊日挖出的問題被視為近 7 天新問題、優先度拉高」——語意上對使用者就是新發現，不做首見日回填。`lf_issue_first_seen` 只升不降的既有保護維持。
+- **首見日**：終檢查證推翻此前提——`UpsertFirstSeen` 是「只在新日期更早時更新」（只會往前、不會往後），且鍵不含 `record_id`，所以重跑舊日不會讓問題被誤判成近期新問題：新規則首次命中的事件會以**該舊日期**建立首見日。原規劃寫的「接受被視為近 7 天新問題」是基於錯誤理解，實際不需要接受任何損失，也不需要回填。
 - **郵件**：不重寄（`{host}|{date}` 已寄鍵不清）。重跑找到的新高風險不逐日通知，靠 UI 申報（批次 D）。
 - **案件**：重跑日照常走 `IssueCaseCoordinator.AttachNewDay`，可能對進行中案件產生新活動訊號——接受，屬既有機制自然行為。
 - **NetIQ 權限異動段**：重跑路徑不繞過 HostDayPostProcessor.cs:228-234 的「來源只回子集時不撤彙總列」保護分支。
@@ -162,5 +162,6 @@
 | A | Claude | 完成 | 5 測試綠，突變測試（拿掉欄位傳遞）3 紅確認守衛有效 | 原規劃只說「補上傳遞」，實作時抽出 `ComposeEffectiveRequest` 純函式才測得到——`TriggerRunAsync` 相依過多具體類別無法直接建構 |
 | D | agy（gemini-3.7-flash-high） | 完成，一次過（Claude 修一個真 bug） | 2933 總計全綠；三個 id 齊備、`role="alert"`、複用 `confirmAction`、原生 confirm 零命中、舊勾選框零殘留、BOM 全數保留 | **跨段接線真 bug**：前端送字串 `"All"`、DTO 是 enum，而站台未全域註冊 `JsonStringEnumConverter` → 正式環境會 400，**所有後端測試照樣全綠**（它們直接建物件不經 JSON）。Claude 補 `[JsonConverter]` 並新增 `TriggerRunRequestBindingTests`（先寫測試證明 4 紅，修後 5 綠） |
 | C2 | agy（gemini-3.7-flash-high） | 完成，一次過（Claude 補兩處） | 2928 總計（+9）全綠；兩條路徑各接上 `DeleteDays`、上限判定未另寫一份；批次 A 的反射守衛測試綠＝新欄位確實同步 | ①**三個檔案的 UTF-8 BOM 被剝除**（已知失敗模式），Claude 還原；②本機路徑 `rerunLookback` 未二次夾制，Claude 比照 NetIQ 既有慣例補上 `GetEffectiveBackfillDaysLimit` 夾制（防保留期事後調小）；③我規格的驗收基準寫錯（上限判定命中數寫 1、實際 3），核對後確認未被改動 |
+| 終檢輪 | Claude | 完成 | 2941 綠；兩個獨立審查（程式碼／文件）各跑一次，發現逐項處理如下 | **兩個真 bug**：①本機路徑「先刪後分析」（NetIQ 是分析後才刪，兩條路徑分歧——正是同邏輯寫兩份的代價）：修法把刪除移進 `LogAnalysisService.AnalyzeDayAsync` 的 `replaceExisting` 分支、緊貼 `Append` 之前；②NetIQ 的 `rerunDays` 沒被保留期夾制（`ResolveLookbackDays` 只夾 365，註解明說上限由呼叫端負責，而呼叫端漏了）——**且我的執行紀錄與文件都宣稱做了，等於說謊**。另修：`DeleteDays` 兩步刪除補交易；保留判定抽成 `ShouldRetainExistingDay` 共用並納入「取數不完整／來源降級」（原本只判零事件，與規劃 §C104 不符）；申報字串共用；`OnlyMissingOrFailed` 與 `RerunMode` 互斥驗證。**測試補洞**：原本「排程不重跑」是同義反覆（測試自己 new 一個再斷言自己寫的值）→ 抽 `ComposeScheduledRequest` 改測真實路徑；`ScheduleController` 欄位對應零覆蓋 → 抽 `ToRunRequest` 加逐欄＋反射守衛（突變驗證 2 紅）；補保留判定與取代語意測試。**文件三處我自己寫錯**：夾制說謊、排程頁段落被我改到讀不通、首見日方向寫反（實際只會往前不會往後，連帶「被當成近期新問題」的規劃前提也不成立，已更正定案） |
 | C1 | agy（gemini-3.7-flash-high） | 完成，一次過 | 2919 總計（+15）全綠；零既有檔案修改、Web 端零命中、grep 證明結案判定確實委託 `IssueHandlingStatuses.IsClosed`；突變測試（把結案判定換成任意列）1 紅 | `All` 模式提早回傳、不查 handling——規格沒要求但語意正確且省一次查詢，接受 |
 | B | agy（gemini-3.7-flash-high） | 完成，一次過 | 2904 總計（+7）全綠；diff 白名單相符、BOM 未動、Web 端零命中；複用 `OwnedRows`／`PruneBatchSize`，無過度設計 | 突變測試（拿掉子表刪除）仍全綠——查明是 `LfDbContext.cs:174` 的 `OnDelete(Cascade)` 在 SQLite 上代勞，**非測試假通過**：顯式刪子表是既有 `Prune` 的慣例（防 provider 間 cascade 不一致），既有 Prune 測試同樣無法分辨。留此限制，不加 SqlServer 實機測試 |

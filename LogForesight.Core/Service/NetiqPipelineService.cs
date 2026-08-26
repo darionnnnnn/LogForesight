@@ -249,7 +249,7 @@ public class NetiqPipelineService
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
                           $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日" +
                           (result.RerunDaysAnalyzed > 0 || result.RerunDaysRetained > 0
-                              ? $"、重新分析 {result.RerunDaysAnalyzed} 天、保留原結果 {result.RerunDaysRetained} 天（來源已無資料）"
+                              ? "、" + HostDayPostProcessor.RerunSummary(result.RerunDaysAnalyzed, result.RerunDaysRetained)
                               : "") +
                           (result.AiQueued > 0
                               ? $"、AI 分析 {result.AiCompleted} 件完成（放棄 {result.AiAbandoned}，下次執行自動補跑）"
@@ -629,10 +629,12 @@ public class NetiqPipelineService
         var target = plan.Target;
         var isRerun = plan.RerunDates.Contains(date.Date);
 
-        if (isRerun && events.Count == 0)
+        // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺（查詢被截斷）時保留原結果——
+        // 判定與本機路徑共用同一個函式，不各寫一份
+        if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
         {
             result.AddRerunRetained();
-            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件，保留原分析結果");
+            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
             _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
             return;
         }

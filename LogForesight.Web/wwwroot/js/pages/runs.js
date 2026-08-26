@@ -535,6 +535,15 @@ function applyScheduleOptions(options) {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
     }
 
+    // 重跑天數與回望天數共用同一個有效上限（＝歷史資料保留天數）：不在前端擋的話，
+    // 使用者要送出後才被後端 400 打回
+    const rerunDaysInput = document.getElementById('run-now-rerun-days');
+    if (rerunDaysInput && options.maxBackfillDays) {
+        rerunDaysInput.max = options.maxBackfillDays;
+        const hint = document.getElementById('run-now-rerun-days-hint');
+        if (hint) hint.textContent = `預設 30 天；上限 ${options.maxBackfillDays} 天（歷史資料保留天數）`;
+    }
+
     applyBackfillDaysLimit(
         'run-now-backfill',
         'run-now-backfill-help',
@@ -898,7 +907,7 @@ const RERUN_MODE_CONFIG = {
     Unhandled: {
         label: '重新分析未處理的日子',
         variant: 'warning',
-        consequence: '將刪除選定日子中「沒有人處理過」的既有分析結果（含 AI 判讀）並以目前的規則重新產生。來源已無資料的日子會保留原結果。'
+        consequence: '將刪除選定日子中「沒有人處理過」的既有分析結果（含 AI 判讀與深度分析）並以目前的規則重新產生。來源已無資料的日子會保留原結果。'
     },
     UnhandledAndAssigned: {
         label: '重新分析未處理與處理中的日子',
@@ -908,7 +917,7 @@ const RERUN_MODE_CONFIG = {
     All: {
         label: '全部重新分析（含已處理完的）',
         variant: 'danger',
-        consequence: '已處理完成的日子也會被刪除重建：這些日子的既有分析結果（含 AI 判讀）會被刪除，並以目前的規則重新產生。處理結論本身不會被刪除，同一個問題會自動接回；若新規則不再產生該問題，舊的處理紀錄會成為孤兒紀錄保留在歷史中。'
+        consequence: '已處理完成的日子也會被刪除重建：這些日子的既有分析結果（含 AI 判讀與深度分析）會被刪除，並以目前的規則重新產生。處理結論本身不會被刪除，同一個問題會自動接回；若新規則不再產生該問題，舊的處理紀錄會成為孤兒紀錄保留在歷史中。'
     }
 };
 

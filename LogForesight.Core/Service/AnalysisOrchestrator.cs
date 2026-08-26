@@ -803,26 +803,29 @@ public class AnalysisOrchestrator
             var isRerun = rerunDateSet.Contains(date.Date);
             var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
 
-            if (isRerun)
-            {
-                if (logs.Count == 0)
-                {
-                    rerunRetainedCount++;
-                    console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件，保留原分析結果");
-                    progress?.Report("local", ++localDone, datesToAnalyze.Count);
-                    continue;
-                }
+            var dataIncomplete = scanResult.IsDateIncomplete(date);
 
-                historyService.DeleteDays(new[] { date });
-                rerunAnalyzedCount++;
+            // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
+            // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
+            if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
+                    logs.Count, dataIncomplete, scanResult.SecurityAvailable == false))
+            {
+                rerunRetainedCount++;
+                console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
+                progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                continue;
             }
 
             console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
             var dayStopwatch = Stopwatch.StartNew();
 
-            var dataIncomplete = scanResult.IsDateIncomplete(date);
+            // 重跑日的舊紀錄由 AnalyzeDayAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
+            // 否則分析途中拋例外會留下「舊的已刪、新的沒寫」的永久空白日
+            if (isRerun) rerunAnalyzedCount++;
+
             var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
-                dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
+                dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability,
+                replaceExisting: isRerun);
             result.LocalResults.Add(record);
 
             // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
@@ -849,7 +852,7 @@ public class AnalysisOrchestrator
 
         if (request.RerunMode != RerunMode.None)
         {
-            var rerunSummary = $"重新分析 {rerunAnalyzedCount} 天，保留原結果 {rerunRetainedCount} 天（來源已無資料）";
+            var rerunSummary = HostDayPostProcessor.RerunSummary(rerunAnalyzedCount, rerunRetainedCount);
             console.WriteLine($"\n  {rerunSummary}");
             runRecorder.Milestone(rerunSummary);
         }
@@ -929,14 +932,18 @@ public class AnalysisOrchestrator
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,
                 rerunMode: request.RerunMode,
-                rerunDays: request.RerunDays);
+                // 與上面的 BackfillDays 同一道夾制：ResolveLookbackDays 只夾 MaxBackfillDaysLimit，
+                // 保留期上限由呼叫端負責（見該函式註解），漏夾就會回望超過保留期、下輪清掉白跑
+                rerunDays: request.RerunDays is { } days
+                    ? Math.Min(days, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+                    : null);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
             runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
-                    ? $"、重新分析 {netiqResult.RerunDaysAnalyzed} 天、保留原結果 {netiqResult.RerunDaysRetained} 天（來源已無資料）"
+                    ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
                     : "") +
                 (netiqResult.AiQueued > 0
                     ? $"、AI 分析 {netiqResult.AiCompleted} 件完成（放棄 {netiqResult.AiAbandoned}）"

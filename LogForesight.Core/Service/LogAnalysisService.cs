@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -97,9 +97,12 @@ public class LogAnalysisService
     /// <param name="channels">本次各頻道的讀取三態（成功/被拒/不存在）；null = 舊呼叫端（單日情境），
     /// 退回三頻道假設。寫入 <see cref="DailyAnalysisRecord.ChannelsRead"/> 供暖身/趨勢基準判斷，
     /// 並讓 UncoveredChecks 申報被拒的 Defender/RDP 頻道</param>
+    /// <param name="replaceExisting">重新分析既有日（第三十一輪）：true 時在寫入前刪掉這一天的舊紀錄。
+    /// **刪除刻意緊貼 <see cref="IAnalysisRecordStore.Append"/> 之前**——分析途中拋例外（AI 逾時、
+    /// 取消）時舊紀錄還在，不會留下「舊的已刪、新的沒寫」的永久空白日。NetIQ 路徑是同一個順序。</param>
     public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
         int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool replaceExisting = false)
     {
         var sw = Stopwatch.StartNew();
 
@@ -110,6 +113,11 @@ public class LogAnalysisService
         {
             var outcome = await CompleteAiAsync(workItem, ct);
             ApplyOutcome(record, outcome);
+        }
+
+        if (replaceExisting)
+        {
+            _historyService.DeleteDays(new[] { targetDate.Date });
         }
 
         _historyService.Append(record);

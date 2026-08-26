@@ -1081,6 +1081,8 @@ document.getElementById('rule-import-apply-btn').addEventListener('click', async
             (result.warnings.length > 0 ? `（另有 ${result.warnings.length} 項驗證警告，詳見主控台）` : ''),
             'success'
         );
+        toast('規則變更只影響之後的分析；如需回溯套用到過去的日子，請至「排程作業」頁使用「立即執行」的重新分析模式。', 'info');
+
         // 警告是非阻斷性資訊（遮蔽偵測／規則不合格被跳過），不塞進 toast 洗版，
         // 有需要深入排查的人打開瀏覽器主控台看——與原本 console 版逐行印出 ⚠ 同一份內容
         for (const warning of result.warnings) console.warn(warning);
