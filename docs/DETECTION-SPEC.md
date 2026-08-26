@@ -33,15 +33,15 @@
 
 | 模式 | 組合條件 | 意義 |
 |---|---|---|
-| 【入侵鏈】 | 大量 4625（≥10）＋帳號建立/提權（4720/4732 等）同日 | 暴力破解得手後建立立足點；有時間先後可判斷時會標注時序是否符合攻擊推進 |
-| 【破解得手】 | 大量 4625（≥10）＋條件式撈取的 4624（成功登入）與失敗記錄同一組帳號/IP | 比帳號建立/提權更早、更直接的得手證據——暴力破解攻擊者未必馬上建帳號提權，可能先潛伏 |
+| 【入侵鏈】※ | 大量 4625（≥10）＋帳號建立/提權（4720/4732 等）同日 | 暴力破解得手後建立立足點；有時間先後可判斷時會標注時序是否符合攻擊推進 |
+| 【破解得手】※ | 大量 4625（≥10）＋條件式撈取的 4624（成功登入）與失敗記錄同一組帳號/IP | 比帳號建立/提權更早、更直接的得手證據——暴力破解攻擊者未必馬上建帳號提權，可能先潛伏 |
 | 【持久化】 | 帳號異動或攻擊嘗試＋新服務/排程任務（7045/4697/4698）同日 | 入侵後植入後門 |
 | 【滅跡】 | 稽核清除/變更（1102/4719/4907）＋同日其他安全事件 | 入侵者清除操作痕跡 |
-| 【提權→植入】 | 權限/特權異動（4670/4703 等）＋新服務/排程任務同日 | 先取得權限再植入執行體 |
-| 【暴力破解→RDP 得手】 | **昨日**大量 4625（≥10）的來源 IP，**今日**以 RDP 成功登入（21/25/1149）同一 IP | 暴力破解跨日以遠端桌面得手；純以 IP 交集判定，無交集不觸發 |
+| 【提權→植入】 | 權限/特權異動（4670/4703 等（4703 已加 ≥10 次門檻：新版 Windows 上系統行程會例行調整權杖權限））＋新服務/排程任務同日 | 先取得權限再植入執行體 |
+| 【暴力破解→RDP 得手】※ | **昨日**大量 4625（≥10）的來源 IP，**今日**以 RDP 成功登入（21/25/1149）同一 IP | 暴力破解跨日以遠端桌面得手；純以 IP 交集判定，無交集不觸發 |
 | 【防護遭關閉→惡意程式】 | Defender 防護被關閉/停用（5001/5010/5012）＋同日惡意程式偵測或攻擊訊號（也含跨日：昨日關防護、今日驗出惡意程式） | 入侵者常在植入前先解除防護；單獨關防護只走規則層、不觸發關聯 |
 | 【惡意程式→持久化】 | Defender 惡意程式偵測（1006/1116 等）＋新服務/排程任務同日 | 惡意程式建立持久化立足點 |
-| 【跨日入侵鏈】 | **昨日**大量登入失敗＋**今日**帳號/權限/服務異動 | 攻擊者跨日推進，比單日訊號更值得警戒 |
+| 【跨日入侵鏈】※ | **昨日**大量登入失敗＋**今日**帳號/權限/服務異動 | 攻擊者跨日推進，比單日訊號更值得警戒 |
 | 【儲存連鎖】 | disk/Ntfs/storahci 三類儲存訊號同日命中 ≥2 類 | 硬碟故障連鎖反應，故障迫在眉睫 |
 | 【儲存→當機】 | 儲存錯誤＋非預期關機（41/6008）同日 | 儲存故障已導致系統崩潰 |
 | 【儲存持續劣化】 | 儲存錯誤連續兩日出現 | 不是偶發抖動，硬碟剩餘壽命可能以天計 |
@@ -49,12 +49,17 @@
 | 【崩潰→服務失敗】 | 應用程式崩潰（1000/1026）＋服務異常終止（7031/7034）同日 | 可能為同一應用的崩潰導致服務失敗 |
 | 【崩潰循環→資源耗盡】 | 服務高頻異常終止（≥100 次）＋資源耗盡（2004）同日 | 崩潰重啟循環正在拖垮整機 |
 | 【時間偏移→驗證失敗】 | 時間同步失敗＋登入失敗同日 | 時鐘偏移造成的假性攻擊訊號（仍需排除真攻擊） |
+| 【密碼噴灑】 | 同一來源對 ≥10 個相異帳號登入失敗，且每帳號 ≤3 次 | 刻意避開帳號鎖定門檻的噴灑特徵；Windows（4625/4771）與 Linux 認證失敗簽章共用同一判定，單次最多回報 5 個來源 |
+
+※ 以「4625 大量登入失敗」為錨點的四個模式，錨點判定收斂在
+`CorrelationAnalyzer.IsBruteForceAnchor`：除次數 ≥10 外還要求 `LogName=Security`、
+來源含 `Security-Auditing`，且**排除已判定為「疑似殘留憑證重試」的簽章**（見下節）。
 
 關聯訊號在 prompt 中以獨立區塊呈現並明確標注「由程式確定性比對，不是猜測」，
 執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
 
-**`PatternId`**（`Analysis/CorrelationPatternIds.cs`）：上表 17 個 Windows 模式
-＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）合計 19 個模式，各自有
+**`PatternId`**（`Analysis/CorrelationPatternIds.cs`）：上表 18 個模式（其中【密碼噴灑】跨平台共用）
+＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）合計 20 個模式，各自有
 穩定不隨文字說明變動的 Id 常數。用途是**關聯模式抑制**的比對鍵（`RuleSuppression.TargetType=
 Correlation`，見 docs/RULES-SPEC.md「抑制目標四型」）——過去關聯訊號只能整層 log 分析器一起
 開關，沒有針對單一模式的抑制路徑；`CorrelationFinding.PatternId` 現在是 `public required
@@ -80,6 +85,63 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 只有兩種有錨點的組合才把 RDP 成功登入判成入侵：**【破解得手】**（同日 4625 ≥ 10 且相同帳號/IP
 出現成功登入，成功面現含 RDP 工作階段）與**【暴力破解→RDP 得手】**（昨日暴力破解的來源 IP、
 今日以 RDP 成功登入同一 IP）。兩者都需要「暴力破解達門檻」加「帳號/IP 交集」，正常使用不會命中。
+
+### 疑似殘留憑證重試（登入失敗降噪，`ResidualCredentialDetector`）
+
+實務上大量登入失敗來自「使用動態密碼(OTP)登入主機後未登出，隔天密碼變更，殘留的 session／
+排程工作／磁碟機對應持續用舊密碼重試」——機械性重複，不是入侵。純計數的判定無從分辨。
+
+**資料基礎**：`LogIssueSignature.LoginFailureDetails`——4625／4771／Linux ssh・sudo・su
+認證失敗簽章在聚合時抽出 (帳號, 來源, 登入類型, 失敗原因) 分組計數，依次數降冪封頂 50 組，
+隨 `ContentJson` 落地。截斷前的總次數另存 `LoginFailureTotalCount`、截斷與否存
+`LoginFailureDetailsTruncated`（集中度一律以總量為分母，**截斷時不判定**——
+用保留下來的組數當分母會把分散的攻擊形狀算成高集中度，是往「少報攻擊」的方向錯）。
+
+**四個條件全中才算**（判定為純函式）：
+
+1. **失敗集中**：前兩大組佔總次數 ≥ 80%。
+2. **型態機械**：4625 看集中組中 LogonType ∈ {3 網路, 4 批次, 5 服務} 的佔比 ≥ 80%
+   （2 互動、10 RDP 是真人操作，不該判為殘留）；4771 與 Linux 無 LogonType，
+   改用更高的集中門檻——單一最大組佔總次數 ≥ 80%。
+3. **帳號非未知**：集中組沒有任何一組的失敗原因是「帳號不存在」（猜帳號是攻擊特徵）。
+4. **跨日確認**：最大組的 (帳號, 來源) 在該主機近 7 天歷史的登入失敗明細中另有 ≥1 天出現。
+   **首日一律不滿足、照常以既有攻擊語意告警**——每個新組合都會被人看到一次才消音，
+   「內網主機以單一帳號對目標重試」的橫向移動因此保有首次偵測。回看直接用分析流程已載入的
+   14 天歷史，不新增查詢。
+
+保守守門：最大組帳號為空字串（連帳號都抽不出）一律不標。
+
+**命中的後果**：
+- 該簽章 High → Medium、清除「重大」旗標（當天因此不會被這條拉成高風險日）。
+- **不作為關聯層的暴力破解錨點**（`CorrelationAnalyzer.IsBruteForceAnchor`）——
+  【入侵鏈】【跨日入侵鏈】【破解得手】【暴力破解→RDP 得手】四個模式都排除它。
+- **趨勢層不重新升級**：Rising／Surge 分支不執行 `Escalate`、不設「重大」旗標，
+  告警文字改進 `SuppressedAlerts` 並加註「（疑似殘留憑證重試，不列入風險判定）」
+  ——不這樣做的話，降級後的 Medium 簽章會被 Rising 升回 High 並產生告警，
+  而 `ComputeRuleBasedRisk` 只要有任何趨勢告警就判中風險，降噪等於白做。
+- **安全稽核事件量突增排除殘留量**：分子扣掉已標殘留簽章的稽核筆數，
+  **基準維持原始筆數不扣**（刻意的保守不對稱，只會少報不會多報）；
+  有扣除時告警文字附註「（已排除疑似殘留憑證重試 N 筆）」。
+  儲存的 `AuditEventCount` 一律是原始完整筆數，那是未來基準的來源。
+- **4740（帳號鎖定）交叉**：被鎖帳號與當日殘留帳號有交集時降為 Medium 並填入判定依據
+  （殘留重試必然反覆鎖定帳號）。
+- 判定依據以白話字串 `ResidualCredentialBasis` 呈現於風險日詳情頁、風險報告與 AI prompt
+  （AI 不知道判定結果的話，會把系統已判定為殘留的東西敘述成暴力破解，兩邊互相矛盾）。
+
+**【破解得手】另加時序條件**：成功登入的時間須 ≥ 該帳號／IP 當日最早的失敗時間；
+任一邊缺時間資料時保守保留（不因資料不全而漏報）。防的是「早上正常登入成功、
+下午排程開始用舊憑證失敗」被判成破解得手。
+
+### 密碼噴灑（`PasswordSprayDetector`）
+
+「用少數幾個常見密碼試大量帳號」，每個帳號只失敗 1~3 次以避開帳號鎖定門檻——
+與暴力破解的形狀相反，純計數的判定完全看不到它。
+
+判定（以 `LoginFailureDetails` 依來源分組，帳號先合併再計次，防止拆成多筆繞過門檻）：
+**同一來源打 ≥10 個相異帳號、且每帳號次數 ≤3** → 產生【密碼噴灑】訊號
+（High、「重大」旗標、模式 Id `password-spray`，可被 Correlation 型抑制）。
+來源為空字串的明細不參與（無法歸因到單一攻擊來源）。單次最多回報 5 個來源。
+Windows 與 Linux 簽章共用同一判定。噴灑形狀天然不符殘留判準（多帳號），兩者互斥。
 
 ### 讀取方式：傳統日誌走 classic API，Operational 頻道走 EventLogReader
 
@@ -230,6 +292,10 @@ docs/archive/HISTORY.md #1）。
 |---|---|---|---|
 | disk | 7, 11, 51, 52, 153 | 磁碟 I/O 錯誤、壞軌前兆 — **硬碟即將故障最直接的訊號** | 高（重大） |
 | Ntfs | 55, 98, 130, 140, 141 | 檔案系統損毀跡象 | 高（重大） |
+| Ntfs | 137 | NTFS 延遲寫入失敗（≥3 次） | Medium |
+| BugCheck | 1001 | **藍屏當機記錄** | 高（重大） |
+| MSSQL* | 823, 824, 825 | **SQL Server I/O 錯誤** — 磁碟劣化的強訊號（來源比對含 `MSSQL`，同時涵蓋預設與具名執行個體） | 高（重大） |
+| ESENT | 467, 474 | 資料庫頁面損毀／檢查碼錯誤。**刻意不帶「重大」**：Windows Update 儲存庫損毀等非磁碟成因也會發 | High |
 | storahci / stornvme | 129 | 儲存控制器逾時重置，常見於硬碟劣化、線材或背板異常 | High |
 | WHEA-Logger | （全部） | CPU / 記憶體 / PCIe 硬體錯誤；corrected error 上升＝硬體劣化中 | 高（重大） |
 | Kernel-Power | 41 | 非預期斷電或當機重開（電源、過熱、硬體不穩） | 高（重大） |
@@ -241,7 +307,19 @@ docs/archive/HISTORY.md #1）。
 
 | 來源 | Event ID | 意義 | 嚴重度 |
 |---|---|---|---|
-| Security-Auditing | 4625 | 登入失敗；**單日 ≥10 次**視為暴力破解攻擊 | High |
+| Security-Auditing | 4625 | 登入失敗；**單日 ≥10 次**視為暴力破解攻擊。明細會結構化拆解成 (帳號, 來源, 登入類型, 失敗原因)，並經「疑似殘留憑證重試」判定分辨機械性重試（見前節） | High |
+| Security-Auditing | 4771 | **Kerberos 預先驗證失敗**；單日 ≥10 次。AD 網域環境中「動態密碼(OTP)登入後未登出、隔天密碼變更造成的殘留憑證重試」最典型的表現就是大量 4771——判讀時先排除機械性重試再論攻擊 | High |
+| Security-Auditing | 4725, 4726 | 帳戶被停用 / 刪除 | High |
+| Security-Auditing | 4767 | 帳戶被解鎖。**刻意為 Medium**：殘留憑證重試會反覆鎖定帳號、helpdesk 例行解鎖是日常，High 會天天誤報 | Medium |
+| Security-Auditing | 4738 | 帳戶屬性被變更；**≥10 次**才升級——AD 例行同步環境單日可達數萬則 | High |
+| Security-Auditing | 4699 | **排程工作被刪除** — 反鑑識／破壞特徵 | High |
+| Security-Auditing | 4700, 4701, 4702 | 排程工作被啟用 / 停用 / 更新；**≥5 次**。**刻意為 Medium**：Windows 自身維護會例行更新排程（4702 尤甚） | Medium |
+| Security-Auditing | 4946, 4947, 4948 | 防火牆規則被新增 / 變更 / 刪除；**≥5 次**。**刻意為 Medium**：軟體安裝與 GPO 重整會例行寫入 | Medium |
+| Security-Auditing | 4741, 4743 | **電腦帳號建立 / 刪除** — 流氓機器加入網域。**4742（變更）刻意不收**：機器帳號密碼例行輪換會刷 | High |
+| Security-Auditing | 4727, 4730, 4754, 4758 | 網域安全性群組建立 / 刪除（對齊本機群組 4731/4734 的分級） | Medium |
+| Security-Auditing | 4713, 4865, 4866, 4867 | **網域信任 / Kerberos 原則被變更** — 極稀有、高訊號 | 高（重大） |
+| Security-Auditing | 4794 | **DSRM 密碼變更嘗試**（DC 專屬，幾乎不會例行發生） | 高（重大） |
+| Eventlog | 104 | **System／Application 記錄檔被清除** — 補上 1102（僅涵蓋 Security）之外的另一半滅跡面 | 高（重大） |
 | Security-Auditing | 4740 | 帳戶被鎖定（通常是暴力破解的結果） | High |
 | Security-Auditing | 1102 | **安全稽核日誌被清除 — 入侵者滅跡的典型行為，應立即調查** | 高（重大） |
 | Security-Auditing | 4719 | 稽核原則被變更（關閉記錄以躲避偵測） | High |
@@ -250,7 +328,7 @@ docs/archive/HISTORY.md #1）。
 | Security-Auditing | 4729, 4733, 4757 | 帳戶被**移出**特權群組 — 也可能是提權得手後清除紀錄 | High |
 | Security-Auditing | 4697, 4698 | 安裝服務 / 建立排程任務 — 常見持久化手法 | High |
 | Security-Auditing | 4670 | 檔案/資料夾/登錄物件的**權限 (ACL) 被變更** | High |
-| Security-Auditing | 4907 | 物件的**稽核設定 (SACL) 被變更** — 針對性關閉稽核以躲避偵測 | 高（重大） |
+| Security-Auditing | 4907 | 物件的**稽核設定 (SACL) 被變更** — 針對性關閉稽核以躲避偵測。**不帶「重大」旗標**：安裝程式與 Windows Update 修改檔案稽核設定就會觸發，一發就強制高風險日會讓每個 patch 日必然高風險 | High |
 | Security-Auditing | 4717, 4718 | 系統存取權限被授予/移除（User Rights Assignment） | High |
 | Security-Auditing | 4704, 4705 | 使用者權限指派被新增/移除 | High |
 | Security-Auditing | 4703 | 權杖 (token) 特殊權限於執行期間被調整 — 常見提權攻擊手法 | High |
@@ -379,6 +457,7 @@ key 出現在行首或空白之後、其後緊接半形或全形冒號；value �
 | Service Control Manager | 7031, 7034 | 服務異常終止；單日 ≥3 次才升為 Medium（偶發屬正常雜訊） | Medium |
 | Service Control Manager | 7000, 7001 | 服務啟動失敗 | Medium |
 | Application Error | 1000 | 應用程式反覆崩潰（≥3 次）——服務完全掛掉前的先兆 | Medium |
+| Application Hang | 1002 | 應用程式無回應（≥3 次）——補齊 1000 崩潰的另一半 | Medium |
 | .NET Runtime | 1026 | .NET 未處理例外反覆發生（≥3 次） | Medium |
 
 #### 營運健康（備份 / 時間 / 憑證 / 網域）
@@ -400,7 +479,7 @@ key 出現在行首或空白之後、其後緊接半形或全形冒號；value �
 > Security log 的 SuccessAudit 事件量極大（每次登入都記一筆），所以只挑
 > `KnownIssueCatalog.SecurityAuditWatchlist` 內的高價值事件納入，其餘忽略。
 
-#### Linux syslog（seed v4；Sentinel 取數＋SSH 攻擊鏈關聯已全面落地）
+#### Linux syslog（seed v5；Sentinel 取數＋SSH 攻擊鏈關聯已全面落地）
 
 Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
 Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
@@ -413,8 +492,19 @@ Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子�
 | sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
 | sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
 | su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
-| useradd/usermod/userdel（`user`） | （不看訊息） | 帳號建立/修改/刪除 — 入侵者建立立足點 | High |
-| groupadd/groupmod/groupdel（`group`） | （不看訊息） | 群組異動 | High |
+| `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
+| `usermod` | （不看訊息） | 帳號屬性修改 | High |
+| `userdel` | （不看訊息） | 帳號刪除 — 需確認授權與滅跡可能 | High |
+| `groupadd` | （不看訊息） | 群組建立 | High |
+| `groupmod` | （不看訊息） | 群組修改 | High |
+| `groupdel` | （不看訊息） | 群組刪除 | High |
+| `kernel` | No space left on device | 磁碟空間耗盡 | High |
+| `kernel` | Remounting filesystem read-only／re-mounted. Opts: ro | 檔案系統被重掛為唯讀 — 底層 I/O 已失敗 | 高（重大） |
+| `mdadm` | DegradedArray／Fail event／FailSpare event | 軟體 RAID 陣列降級或成員失效 | 高（重大） |
+| `kernel` | Link is Down／NETDEV WATCHDOG | 網卡斷線或傳輸逾時（≥3 次） | Medium |
+| `crontab` | REPLACE／BEGIN EDIT | 排程被編輯 — 持久化手法（對齊 Windows 4698 語意） | Medium |
+| `fail2ban` | Ban | 來源被封鎖 — **收集用**，與 ssh 暴力破解規則互為佐證；對外主機日常有量故為 Low | Low |
+| `rsyslogd` | begin to drop messages／suspended | **日誌管線掉訊息 ＝ 監控盲區**（log 遺失會讓其他偵測失效） | Medium |
 | gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
 | auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |
 | kernel | I/O error / Buffer I/O error / EXT4-fs error / XFS internal error | 磁碟或檔案系統錯誤 | 高（重大） |

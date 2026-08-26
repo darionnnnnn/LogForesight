@@ -102,7 +102,7 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
   與 IP——NetIQ 主機以 IP 登錄，只有一串 IP 認不出是哪台機器；OS 決定套用哪個平台的規則面，
   判讀問題時需要知道。
 
-## 現行 Linux 種子規則（17 條，seed v4）
+## 現行 Linux 種子規則（28 條，seed v5）
 
 「嚴重度」欄的「高（重大）」＝ High 且帶 `ElevatesDayRisk` 旗標（命中即列為當日高風險）。
 
@@ -112,8 +112,19 @@ Builtin Linux 規則 Id：`builtin-linux-{類別}-{代表}`（如 `builtin-linux
 | sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
 | sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
 | su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
-| useradd/usermod/userdel（`user`） | （不看訊息） | 帳號建立/修改/刪除 — 入侵者建立立足點 | High |
-| groupadd/groupmod/groupdel（`group`） | （不看訊息） | 群組異動 | High |
+| `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
+| `usermod` | （不看訊息） | 帳號屬性修改 | High |
+| `userdel` | （不看訊息） | 帳號刪除 — 需確認授權與滅跡可能 | High |
+| `groupadd` | （不看訊息） | 群組建立 | High |
+| `groupmod` | （不看訊息） | 群組修改 | High |
+| `groupdel` | （不看訊息） | 群組刪除 | High |
+| `kernel` | No space left on device | 磁碟空間耗盡 | High |
+| `kernel` | Remounting filesystem read-only／re-mounted. Opts: ro | 檔案系統被重掛為唯讀 — 底層 I/O 已失敗 | 高（重大） |
+| `mdadm` | DegradedArray／Fail event／FailSpare event | 軟體 RAID 陣列降級或成員失效 | 高（重大） |
+| `kernel` | Link is Down／NETDEV WATCHDOG | 網卡斷線或傳輸逾時（≥3 次） | Medium |
+| `crontab` | REPLACE／BEGIN EDIT | 排程被編輯 — 持久化手法（對齊 Windows 4698 語意） | Medium |
+| `fail2ban` | Ban | 來源被封鎖 — **收集用**，與 ssh 暴力破解規則互為佐證；對外主機日常有量故為 Low | Low |
+| `rsyslogd` | begin to drop messages／suspended | **日誌管線掉訊息 ＝ 監控盲區**（log 遺失會讓其他偵測失效） | Medium |
 | gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
 | auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |
 | kernel | I/O error / Buffer I/O error / EXT4-fs error / XFS internal error | 磁碟或檔案系統錯誤 | 高（重大） |
