@@ -601,4 +601,209 @@ public class ResidualCredentialDetectorTests
         Assert.True(todaySig.ResidualCredentialRetry);
         Assert.Equal("疑似殘留憑證重試：svc_app 自 來源不明 重複失敗 40 次（網路登入，密碼錯誤），近 7 天已重複出現", todaySig.ResidualCredentialBasis);
     }
+
+    // ── 4740 帳號鎖定與殘留憑證交叉比對（A4c）─────────────────────────
+
+    /// <summary>
+    /// A4c：4740 帳號鎖定簽章的帳號若與當日殘留憑證重試帳號有交集，
+    /// 嚴重度由 High 降為 Medium、清除 ElevatesDayRisk、填入關聯依據說明。
+    /// </summary>
+    [Fact]
+    public void 事件4740_與殘留帳號交集時降級且填入依據()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = "相關帳號(1個): svc_backup";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.Medium, lockoutSig.Severity);
+        Assert.False(lockoutSig.ElevatesDayRisk);
+        Assert.False(lockoutSig.ResidualCredentialRetry);
+        Assert.NotNull(lockoutSig.ResidualCredentialBasis);
+        Assert.Contains("svc_backup", lockoutSig.ResidualCredentialBasis);
+        Assert.Equal("可能由殘留憑證重試觸發：帳號 svc_backup 當日有疑似殘留的重複登入失敗", lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// A4c：4740 帳號與當日殘留帳號不同時維持 High 嚴重度，不做任何調整。
+    /// </summary>
+    [Fact]
+    public void 事件4740_帳號不同時維持High嚴重度()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = "相關帳號(1個): administrator";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.High, lockoutSig.Severity);
+        Assert.True(lockoutSig.ElevatesDayRisk);
+        Assert.Null(lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// A4c：4740 的 KeyDetails 為 null 時不做任何調整（保守，維持 High）。
+    /// </summary>
+    [Fact]
+    public void 事件4740_KeyDetails為null時維持High嚴重度()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = null;
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.High, lockoutSig.Severity);
+        Assert.True(lockoutSig.ElevatesDayRisk);
+        Assert.Null(lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// A4c：4740 簽章的 ResidualCredentialRetry 旗標不得被設為 true（它不是登入失敗簽章）。
+    /// </summary>
+    [Fact]
+    public void 事件4740_ResidualCredentialRetry旗標不得被設為true()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var loginFailSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        loginFailSig.ElevatesDayRisk = true;
+        loginFailSig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = "相關帳號(1個): svc_backup";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { loginFailSig, lockoutSig }, history, targetDate);
+
+        Assert.False(lockoutSig.ResidualCredentialRetry);
+    }
+
+    /// <summary>
+    /// A4c 回歸保護：當日沒有任何殘留簽章時，4740 簽章完全不受影響。
+    /// </summary>
+    [Fact]
+    public void 事件4740_無任何殘留簽章時不受影響()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 1, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = "相關帳號(1個): svc_backup";
+
+        var history = new List<DailyAnalysisRecord>();
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.High, lockoutSig.Severity);
+        Assert.True(lockoutSig.ElevatesDayRisk);
+        Assert.Null(lockoutSig.ResidualCredentialBasis);
+    }
+
+    /// <summary>
+    /// A4c：KeyDetails 帳號解析含省略號時，正確去除省略號並解析出完整帳號清單。
+    /// </summary>
+    [Fact]
+    public void KeyDetails帳號解析_含省略號時正確去除省略號()
+    {
+        var keyDetails = "相關帳號(8個): a, b, c, d, e…；來源IP(2個): 10.0.0.1, 10.0.0.2";
+        var accounts = ResidualCredentialDetector.ExtractAccountsFromKeyDetails(keyDetails);
+
+        Assert.Equal(new[] { "a", "b", "c", "d", "e" }, accounts);
+    }
+
+    /// <summary>
+    /// A4c：4740 命中多個殘留帳號時以頓號串接。
+    /// </summary>
+    [Fact]
+    public void 事件4740_多個殘留帳號交集時以頓號串接()
+    {
+        var targetDate = new DateTime(2026, 8, 25);
+        var sig1 = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        sig1.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 }
+        };
+        var sig2 = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 30, IssueSeverity.High, IssueCategory.Security);
+        sig2.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_sync", Source = "WKS02", LogonType = 3, ReasonCode = "bad_password", Count = 30 }
+        };
+
+        var lockoutSig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4740, 2, IssueSeverity.High, IssueCategory.Security);
+        lockoutSig.ElevatesDayRisk = true;
+        lockoutSig.KeyDetails = "相關帳號(2個): svc_backup, svc_sync";
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 },
+                new() { Account = "svc_sync", Source = "WKS02", LogonType = 3, ReasonCode = "bad_password", Count = 15 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { sig1, sig2, lockoutSig }, history, targetDate);
+
+        Assert.Equal(IssueSeverity.Medium, lockoutSig.Severity);
+        Assert.Equal("可能由殘留憑證重試觸發：帳號 svc_backup、svc_sync 當日有疑似殘留的重複登入失敗", lockoutSig.ResidualCredentialBasis);
+    }
 }

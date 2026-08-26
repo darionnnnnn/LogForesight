@@ -30,6 +30,9 @@ internal static class ResidualCredentialDetector
             return;
         }
 
+        var residualAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 第一階段：登入失敗簽章的殘留憑證重試判定（既有四條件判定邏輯）
         foreach (var issue in issues)
         {
             if (issue.LoginFailureDetails == null || issue.LoginFailureDetails.Count == 0)
@@ -103,12 +106,54 @@ internal static class ResidualCredentialDetector
             // 四條件皆滿足：標記為殘留憑證重試
             issue.ResidualCredentialRetry = true;
             issue.ResidualCredentialBasis = BuildBasis(issue, largest);
+            residualAccounts.Add(largest.Account);
 
             if (issue.Severity == IssueSeverity.High)
             {
                 issue.Severity = IssueSeverity.Medium;
                 issue.ElevatesDayRisk = false;
             }
+        }
+
+        // 第二階段：4740 帳號鎖定與殘留帳號交叉比對（A4c）
+        if (residualAccounts.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var issue in issues)
+        {
+            if (issue.EventId != 4740)
+            {
+                continue;
+            }
+
+            var accounts = ExtractAccountsFromKeyDetails(issue.KeyDetails);
+            if (accounts.Count == 0)
+            {
+                continue;
+            }
+
+            var matchedAccounts = accounts
+                .Where(a => residualAccounts.Contains(a))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (matchedAccounts.Count == 0)
+            {
+                continue;
+            }
+
+            if (issue.Severity == IssueSeverity.High)
+            {
+                issue.Severity = IssueSeverity.Medium;
+            }
+
+            issue.ElevatesDayRisk = false;
+
+            var displayAccounts = string.Join("、", matchedAccounts.Take(3));
+            issue.ResidualCredentialBasis =
+                $"可能由殘留憑證重試觸發：帳號 {displayAccounts} 當日有疑似殘留的重複登入失敗";
         }
     }
 
@@ -218,4 +263,48 @@ internal static class ResidualCredentialDetector
         5 => "服務",
         _ => $"登入類型 {logonType}"
     };
+
+    /// <summary>
+    /// 從簽章的 KeyDetails 字串（如「相關帳號(3個): alice, bob, svc_backup；來源IP(1個): 10.0.0.5」）
+    /// 解析出相關帳號清單，供 4740 帳號鎖定比對。
+    /// </summary>
+    internal static List<string> ExtractAccountsFromKeyDetails(string? keyDetails)
+    {
+        if (string.IsNullOrWhiteSpace(keyDetails))
+        {
+            return new List<string>();
+        }
+
+        var accountIndex = keyDetails.IndexOf("相關帳號", StringComparison.Ordinal);
+        if (accountIndex < 0)
+        {
+            return new List<string>();
+        }
+
+        var colonIndex = keyDetails.IndexOfAny(new[] { ':', '：' }, accountIndex);
+        if (colonIndex < 0)
+        {
+            return new List<string>();
+        }
+
+        var startIndex = colonIndex + 1;
+        var semicolonIndex = keyDetails.IndexOfAny(new[] { '；', ';' }, startIndex);
+        var content = semicolonIndex >= 0
+            ? keyDetails.Substring(startIndex, semicolonIndex - startIndex)
+            : keyDetails.Substring(startIndex);
+
+        var rawTokens = content.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries);
+        var accounts = new List<string>();
+
+        foreach (var token in rawTokens)
+        {
+            var cleaned = token.Trim().TrimEnd('…', '.').Trim();
+            if (!string.IsNullOrWhiteSpace(cleaned))
+            {
+                accounts.Add(cleaned);
+            }
+        }
+
+        return accounts;
+    }
 }
