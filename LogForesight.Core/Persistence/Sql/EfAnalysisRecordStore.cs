@@ -318,6 +318,51 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return total;
     }
 
+    public int DeleteDays(IReadOnlyCollection<DateTime> dates)
+    {
+        if (dates == null || dates.Count == 0)
+        {
+            Log.Info("[SQL] DeleteDays（0 個日期）：無可清除紀錄");
+            return 0;
+        }
+
+        var distinctDates = dates.Select(d => d.Date).Distinct().ToList();
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var total = 0;
+        while (true)
+        {
+            // **只撈主鍵，不撈實體**：僅取 record_id，實際刪除交給 ExecuteDelete 在 DB 端完成
+            var recordIds = OwnedRows(ctx)
+                .Where(r => distinctDates.Contains(r.RecordDate))
+                .OrderBy(r => r.RecordDate)
+                .Select(r => r.RecordId)
+                .Take(PruneBatchSize)
+                .ToList();
+            if (recordIds.Count == 0) break;
+
+            // **先刪子表再刪主表，不依賴 FK cascade**：顯式刪除避免孤兒 top_issues 列。
+            // 兩次刪除包在同一個交易裡——中斷在兩者之間會留下沒有主列的孤兒子列
+            // （SQLite 有 cascade 掩護、SqlServer 不保證），重跑的取消語意也依賴「不留半日」。
+            using var tx = ctx.Database.BeginTransaction();
+            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+            tx.Commit();
+        }
+
+        if (total == 0)
+        {
+            Log.Info("[SQL] DeleteDays（{Days} 個日期）：無可清除紀錄", distinctDates.Count);
+            return 0;
+        }
+
+        Log.Info("[SQL] DeleteDays（{Days} 個日期）：清除 {Count} 筆、{Ms}ms",
+            distinctDates.Count, total, sw.ElapsedMilliseconds);
+
+        return total;
+    }
+
     /// <summary>回報「若現在執行 Prune，會刪掉幾列」，不做任何異動。</summary>
     public int CountPrunableRecords(int retentionDays)
     {

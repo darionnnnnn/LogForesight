@@ -49,6 +49,19 @@ public interface IAnalysisRecordStore : IAnalysisRecordReader
     int Prune(int retentionDays);
 
     /// <summary>
+    /// 刪除此 store 擁有者主機（建構子的 ownerHost，即批次面既有的 <c>OwnedRows</c> 範圍）在指定日期集合上的所有分析紀錄。
+    /// 回傳實際刪除的主列筆數。
+    ///
+    /// 契約：
+    /// <list type="bullet">
+    ///   <item>只比對日期部分（<see cref="DateTime.Date"/>），忽略時間。</item>
+    ///   <item>刪除主列與 <c>lf_top_issues</c> 子列，不動處理狀態（<c>lf_issue_handling</c> / <c>lf_record_handling</c> / <c>lf_issue_cases</c>）與 <c>lf_issue_first_seen</c>。</item>
+    ///   <item>冪等：日期不存在、集合為空、集合含重複日期，均不擲例外，回傳實際刪除數（可為 0）。</item>
+    /// </list>
+    /// </summary>
+    int DeleteDays(IReadOnlyCollection<DateTime> dates);
+
+    /// <summary>
     /// 將週體檢結果附掛到已存在的當日紀錄。週體檢在每日分析＋Append 之後才執行（需要讀到當天剛寫入的統計），
     /// 所以是對既有紀錄的一次更新，不是新增一筆——DB 後端是一次 UPDATE。
     /// 找不到對應日期的紀錄時安靜略過（理論上不應發生，因為呼叫前一定先做過當日分析）。

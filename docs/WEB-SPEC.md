@@ -2123,13 +2123,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （開啟時常駐警示徽章「持續佔用磁碟，驗證完請關閉」；排程與手動觸發統一在
   `SchedulerHostedService.TriggerRunAsync` 以當下設定為準）、下次觸發時刻、目前執行狀態
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
-  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「只補跑失敗或未執行的
-  主機」勾選**——`TriggerRunRequest.OnlyMissingOrFailed`：待跑判定是
-  `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日／`AiPending`／
+  可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「執行模式」下拉選單**
+  （四選一，見 §10.9；預設值「只補跑失敗或未執行」推導出 `TriggerRunRequest.OnlyMissingOrFailed`：
+  待跑判定是 `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日／`AiPending`／
   「AI 已設定且未分析且非低風險」三者之一才算待跑），三處呼叫端（缺漏日掃描、NetIQ 孤兒
   補跑、預覽）共用，不各寫一份。低風險日不跑 AI 是合法終局、AI 未設定時 `AiAnalyzed` 恆為
-  false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日）、**「分析本機主機」開關**
-  ：停用後排程與立即執行
+  false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日。
+  `SchedulerHostedService.ComposeEffectiveRequest` 逐欄重建 `RunRequest`，新增欄位必須同步加入；
+  反射守衛測試斷言欄位全數傳遞）、**「分析本機主機」開關**：停用後排程與立即執行
   都只跑 NetIQ（`RunRequest.IncludeLocal`，`SchedulerHostedService.TriggerRunAsync` 統一以當下
   設定覆寫，同 DebugDump 慣例）、「全部主機」範圍與 run-preview 不含本機、主機詳情頁對本機
   隱藏「指定主機更新」、指定本機主機更新回 400、執行總表本機空白日顯示「本機分析已停用」
@@ -2412,6 +2413,55 @@ temp 檔＋`File.Replace` 手法。
   SQLite 模式共用 `{DataRoot}\Db\logforesight.db`（`ConnectionString` 留空時的預設落點，
   子資料夾由 `StorageBackend` 自動建立），批次寫入的分析紀錄 Web 立刻讀得到。
 - 每個 SQL 操作落 `[SQL]` NLog（條件/筆數/時間），供在可執行環境中透過 log 診斷。
+
+### 10.9 執行模式與舊日重新分析
+
+「立即執行」modal 的**執行模式**下拉選單（`TriggerRunRequest.RerunMode`／`RerunDays`，
+`#run-now-rerun-mode`）決定這次執行要不要重新分析**已經有紀錄**的日子。規則更新後要把新規則
+回溯套用到過去，就是走這裡——**規則變更本身只影響之後的分析**。
+
+| 值 | 選項文字 | 重跑哪些既有主機日 | 畫面 |
+|---|---|---|---|
+| `None` | 只補跑失敗或未執行（預設） | 不重跑，只補缺日／失敗日 | 無警示 |
+| `Unhandled` | 重新分析未處理的日子 | 該主機日在 `lf_issue_handling` **無任何列** | `alert-warning` |
+| `UnhandledAndAssigned` | 重新分析未處理與處理中的日子 | 該主機日**無結案類列**（可有 in_progress／observing／escalated／open） | `alert-warning`＋送出前 `confirmAction` |
+| `All` | 全部重新分析（含已處理完的） | 窗口內全部既有日，不過濾 | `alert-danger`＋送出前 `confirmAction` |
+
+- **判準是「有無列／有無結案類列」**，不走日層級狀態推導：確定性高，且不依賴 `DayHandlingDerivation`
+  的推導細節。結案類的定義單一來源是 `IssueHandlingStatuses.IsClosed`（`RerunDateFinder` 不得自列狀態字串）。
+  混合日（同日有結案也有未處理）只有 `All` 會重跑。
+- **候選日挑選**：`RerunDateFinder.Find` 只回傳窗口內**已有紀錄**的日子（沒有紀錄的屬缺漏日，
+  仍由 `MissingDateFinder` 負責），處理狀態以 `IIssueHandlingStore.GetMany` 一次批次取回、不逐日查。
+  兩者聯集去重後由舊到新逐日分析。
+- **回望天數**：`RerunDays`（UI 預設 30）夾在 `NetiqOptions.GetEffectiveBackfillDaysLimit(RetentionDays)`
+  內，API 超限回 400 不靜默 clamp；兩條路徑的天數在 `AnalysisOrchestrator` 內**再夾一次**
+  （防設定被事後調小，同 `BackfillDays` 既有慣例——`NetiqPipelineService.ResolveLookbackDays`
+  只夾 `MaxBackfillDaysLimit`，保留期上限由呼叫端負責）。
+- **逐日就地取代，不整批預刪**：原始事件不存 DB，整批預刪會把「舊結果尚在、新資料取不到」的日子
+  變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayAsync` 的 `replaceExisting`
+  分支、NetIQ 在 `BuildStatisticalRecordAsync` 之後）——分析途中拋例外（AI 逾時、取消）時舊紀錄還在。
+- **什麼時候保留原結果不取代**：`HostDayPostProcessor.ShouldRetainExistingDay` 是兩條路徑共用的單一
+  判準——來源零事件、該日取數不完整（來源已滾掉部分事件／查詢被截斷）、來源降級（本機頻道存取被拒）
+  三者之一即整天跳過並計入保留申報。NetIQ 端整批查詢失敗的主機日走既有失敗計數，紀錄同樣不被刪除，
+  但不計入保留申報。
+- **不會被刪除的東西**：處理狀態（`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`）、
+  首見日（`lf_issue_first_seen`）、郵件已寄鍵。處理狀態的鍵是 `(host, date, issue_key)`，
+  重跑後同一個問題自動接回既有結論；新規則不再產生該問題時，該處理列成為孤兒列保留在歷史中。
+- **AI 不自動重跑**：重跑寫入的日子照一般新分析日的規則決定 `AiPending`，不主動為整個窗口花 AI token。
+  要補 AI 走模式 `None`（「只補跑失敗或未執行」），兩個模式互補。
+- **郵件不重寄**：`{HostId}|{date}` 已寄鍵未清除，重跑在舊日子挖出的高風險**不會**逐日通知，
+  使用者靠執行申報得知（見下）。
+- **申報**：兩條路徑都在執行摘要輸出「重新分析 N 天／保留原結果 M 天（來源已無資料）」，
+  本機走 `runRecorder.Milestone`，NetIQ 併入 `NetiqPipelineResult`（`RerunDaysAnalyzed`／`RerunDaysRetained`，
+  後者也計入進度條分子）。
+- **自動排程永遠不進入重跑模式**：排程輪詢自組的 `RunRequest` 不帶重跑欄位（預設 `None`），
+  由測試鎖住——破壞性行為只在有人看著的手動觸發發生。
+- **run-preview 不涵蓋重跑模式**：預覽只回報符合範圍的主機台數，重跑模式下**不預估**「將重跑幾個
+  主機日」——那需要逐主機掃描既有紀錄與處理狀態，3000 台規模下的預覽查詢成本不成比例。實際影響數
+  在執行後由申報給出。
+- **接線注意**：`RerunMode` 在 DTO 上必須標 `[JsonConverter(typeof(JsonStringEnumConverter))]`：
+  前端送字串、站台未全域註冊字串列舉轉換器。`TriggerRunRequestBindingTests` 以 JSON 綁定路徑鎖住。
+- **`OnlyMissingOrFailed` 與 `RerunMode` 互斥**：同時指定回 400（前者是模式 `None` 的語意）。
 
 ## 11. 稽核與執行監控寫入規範（開發時逐條遵守）
 

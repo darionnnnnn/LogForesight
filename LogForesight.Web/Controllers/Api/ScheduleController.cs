@@ -1,4 +1,5 @@
-﻿using LogForesight.Core.Service;
+﻿using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -198,27 +199,47 @@ public class ScheduleController : ControllerBase
     {
         ValidateBackfillDays(request.BackfillDays, _settingsStore.Get().RetentionDays);
 
+        if (request.RerunMode != RerunMode.None)
+        {
+            // 兩者是同一個下拉選單的四個值，不該同時成立：OnlyMissingOrFailed 是模式 None 的語意，
+            // 同時給等於要求「只補缺日」又要求「重跑既有日」，行為未定義——擋掉而不是猜使用者想要哪個
+            if (request.OnlyMissingOrFailed)
+                throw DomainException.Validation("「只補跑失敗或未執行」與重新分析模式不能同時指定。");
+
+            if (request.RerunDays is not { } rerunDays || rerunDays < 1)
+                throw DomainException.Validation("重新分析模式下必須指定重跑天數且必須大於等於 1 天。");
+
+            ValidateBackfillDays(request.RerunDays, _settingsStore.Get().RetentionDays);
+        }
+
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
 
-        var runRequest = new RunRequest
-        {
-            Scope = runScope,
-            HostIds = hostIds,
-            BackfillOverride = request.BackfillDays,
-            OnlyMissingOrFailed = request.OnlyMissingOrFailed,
-            Trigger = $"manual:{_currentUser.Account}"
-        };
+        var runRequest = ToRunRequest(request, runScope, hostIds, _currentUser.Account);
+
+        var rerunSummary = request.RerunMode != RerunMode.None
+            ? $"，重新分析：{RerunModeText(request.RerunMode)}（{request.RerunDays} 天）"
+            : "";
 
         _audit.Record(
             action: AuditActions.ScheduleManualRun,
             summary: $"手動觸發分析執行（範圍：{ScopeText(request.Scope)}" +
                      (request.Segment != null ? $"「{request.Segment}」" : "") +
                      (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") +
-                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") + "）",
+                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") +
+                     rerunSummary + "）",
             targetKind: "schedule",
-            detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays, request.OnlyMissingOrFailed });
+            detail: new
+            {
+                request.Scope,
+                request.Segment,
+                request.HostId,
+                request.BackfillDays,
+                request.OnlyMissingOrFailed,
+                request.RerunMode,
+                request.RerunDays
+            });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
@@ -227,6 +248,23 @@ public class ScheduleController : ControllerBase
             Message = started ? "已開始執行。" : "目前已有其他執行進行中，請稍後再試（不會排隊）。"
         });
     }
+
+    /// <summary>
+    /// 手動觸發請求 → 執行請求的欄位對應。抽成獨立函式是為了讓「欄位有沒有全部帶到」測得到——
+    /// 同型的漏抄曾讓 <see cref="RunRequest.OnlyMissingOrFailed"/> 靜默失效（API 設了、稽核也印了、
+    /// 執行端收不到）。新增 <see cref="TriggerRunRequest"/> 欄位時必須同步這裡。
+    /// </summary>
+    internal static RunRequest ToRunRequest(
+        TriggerRunRequest request, RunScope runScope, IReadOnlyList<long>? hostIds, string account) => new()
+    {
+        Scope = runScope,
+        HostIds = hostIds,
+        BackfillOverride = request.BackfillDays,
+        OnlyMissingOrFailed = request.OnlyMissingOrFailed,
+        RerunMode = request.RerunMode,
+        RerunDays = request.RerunDays,
+        Trigger = $"manual:{account}"
+    };
 
     [HttpPost("cancel")]
     [Permission(Capability.Maintain)]
@@ -325,6 +363,14 @@ public class ScheduleController : ControllerBase
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
             $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
+    };
+
+    private static string RerunModeText(RerunMode mode) => mode switch
+    {
+        RerunMode.Unhandled => "未處理",
+        RerunMode.UnhandledAndAssigned => "未處理與處理中",
+        RerunMode.All => "全部",
+        _ => "不重跑"
     };
 
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()

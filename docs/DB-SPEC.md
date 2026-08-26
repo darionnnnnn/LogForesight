@@ -414,6 +414,30 @@ lf_weekly_checkups: UNIQUE(host_id, checkup_date)
 lf_qa_messages:    UNIQUE(session_id, seq)
 ```
 
+### 刪除指定主機日（舊日重新分析用）
+
+`IAnalysisRecordStore.DeleteDays(IReadOnlyCollection<DateTime> dates)`：刪除該 store 擁有者主機
+（`OwnedRows` 範圍）在指定日期上的分析紀錄，回傳刪除的主列筆數。規則更新後重新分析舊日子時，
+在寫入新結果前呼叫（見 [WEB-SPEC.md](WEB-SPEC.md) §10.9）。
+
+- **刪除範圍**：`lf_daily_records` 主列＋`lf_top_issues` 子列。類別彙總／告警／深入分析目前寫在
+  `content_json` 內（尚未各自成表），隨主列一併消失；`lf_risky_events` 每日寫入本就是 `ReplaceDay`，
+  重跑時自然覆蓋，不需另刪。
+- **不觸碰**：`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`／`lf_issue_first_seen`。
+  處理狀態的鍵是 `(host_name_key, record_date, issue_key)`，不掛在 `record_id` 上，所以刪列重跑後
+  同一個問題會自動接回既有結論。
+- **實作形狀比照 `Prune`**：只撈 `record_id` 不載入實體（`content_json` 每列數 KB）、
+  **顯式先刪子表再刪主表**（不依賴 FK cascade——是否生效取決於 provider 與連線設定，
+  兩後端不保證一致）、以 `PruneBatchSize` 分批。
+- **冪等**：日期不存在、集合為空、集合含重複日期都不擲例外，回傳實際刪除數。
+- **對首見日的影響**：`lf_issue_first_seen` 的鍵是 `(source_key, event_id)`，不含主機也不含 `record_id`，
+  因此刪列重跑不會使它失去資料。重跑舊日時以**該舊日期**做 upsert：既有列只在該日期更早時被往前更新
+  （`UPDATE … WHERE first_seen > {date}`，只會變早、不會變晚），新規則首次命中的 `(source, event_id)`
+  則以該舊日期建立。換言之首見日反映的是「機房裡最早看到這個事件的日子」，重跑不會把它推遲。
+  完整重算入口仍未開放（見 BACKLOG）。
+- **無交易保護以外的限制**：刪除的兩步（子列、主列）包在同一個交易內；但「刪除＋重新寫入」整體
+  不是單一交易——重跑途中進程被強制中止，該主機日可能只剩缺日狀態，由下次執行以缺日回補補回。
+
 ### 保留策略
 
 保留期**不是單一年限**，而是依資料性質分成四個（另有 `InitialHistoryDays` 決定首次回補幾天，
