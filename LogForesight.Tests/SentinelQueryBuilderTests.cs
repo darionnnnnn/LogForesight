@@ -478,4 +478,50 @@ public class SentinelQueryBuilderTests
 
         Assert.All(matchAllOnlyIds, id => Assert.DoesNotContain(id, eventIds));
     }
+
+    // ── ExpandToSlash24Prefixes（/24 網段展開，task-B2-step1）──────────────────
+
+    [Fact]
+    public void ExpandToSlash24Prefixes_兩段前綴展開成256個子網段()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes("192.168");
+
+        Assert.Equal(256, segments.Count);
+        Assert.Equal("192.168.0", segments[0]);
+        Assert.Equal("192.168.255", segments[255]);
+        Assert.Equal("192.168.1", segments[1]);
+    }
+
+    [Fact]
+    public void ExpandToSlash24Prefixes_三段前綴回傳單元素清單()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes("192.168.1");
+
+        var segment = Assert.Single(segments);
+        Assert.Equal("192.168.1", segment);
+    }
+
+    [Theory]
+    [InlineData("192.168.0.0/16", 256, "192.168.0", "192.168.255")]
+    [InlineData("192.168.0.0/24", 1, "192.168.0", "192.168.0")]
+    [InlineData("10.1.2.0/24", 1, "10.1.2", "10.1.2")]
+    public void ExpandToSlash24Prefixes_CIDR輸入正確展開(string input, int expectedCount, string first, string last)
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes(input);
+
+        Assert.Equal(expectedCount, segments.Count);
+        Assert.Equal(first, segments.First());
+        Assert.Equal(last, segments.Last());
+    }
+
+    [Theory]
+    [InlineData("10")]               // 太籠統（只有一段）
+    [InlineData("192.168.1.1")]      // 完整四段單一 IP
+    [InlineData("192.168.0.0/25")]   // 不支援的 CIDR
+    [InlineData("invalid-subnet")]   // 非法字串
+    [InlineData("")]                 // 空字串
+    public void ExpandToSlash24Prefixes_不合法輸入擲ArgumentException(string input)
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.ExpandToSlash24Prefixes(input));
+    }
 }

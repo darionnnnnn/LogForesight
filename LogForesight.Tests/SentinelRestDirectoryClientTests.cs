@@ -203,18 +203,18 @@ public class SentinelRestDirectoryClientTests
     {
         // 主掃描一輪回超過上限（501 台）且未截斷 → 補充掃描的排除清單放不進子句
         var manyHosts = Enumerable.Range(0, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
-            .Select(i => ($"10.1.{i / 250}.{i % 250}", (string?)$"srv{i}"))
+            .Select(i => ($"10.1.2.{i}", (string?)$"srv{i}"))
             .ToArray();
         var handler = new ScriptedHandler(
             new JobScript(manyHosts.Length, manyHosts),
-            new JobScript(1, ("10.1.9.9", "supp")));
+            new JobScript(1, ("10.1.2.9", "supp")));
 
         var result = await new SentinelRestDirectoryClient(Options(), handler)
-            .ListHostsAsync(Server(), "10.1", CancellationToken.None);
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None);
 
         Assert.Equal(2, handler.Filters.Count);                 // 補充掃描真的跑了
         Assert.DoesNotContain("NOT", handler.Filters[1]);       // 而且是無排除版
-        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.9.9");
+        Assert.Contains(result.Hosts, h => h.IpAddress == "10.1.2.9");
         // 兩段都掃完（未截斷）→ 不該有「排除上限」的警告
         Assert.DoesNotContain(result.Warnings, w => w.Contains("排除上限"));
     }
@@ -241,12 +241,12 @@ public class SentinelRestDirectoryClientTests
     public async Task 已登錄主機數超過子句上限_退回不排除的一般掃描()
     {
         var tooMany = Enumerable.Range(1, SentinelRestDirectoryClient.ExclusionClauseLimit + 1)
-            .Select(i => $"10.1.{i / 256}.{i % 256}")
+            .Select(i => $"10.1.{i / 250}.{i % 250}")
             .ToList();
         var handler = new ScriptedHandler(Empty(), Empty());
 
         await new SentinelRestDirectoryClient(Options(), handler)
-            .ListHostsAsync(Server(), "10.1", CancellationToken.None, knownIps: tooMany);
+            .ListHostsAsync(Server(), "10.1.2", CancellationToken.None, knownIps: tooMany);
 
         Assert.DoesNotContain("NOT", handler.Filters[0]);
     }
@@ -677,6 +677,271 @@ public class SentinelRestDirectoryClientTests
         Assert.Equal(4, handler.PageRequestCount);
     }
 
+    // ── 逐段掃描（B2：/24 自動分割，task-B2-step1）───────────────────────────
+
+    /// <summary>
+    /// 跨段結果聯集正確：假 client 讓 192.168.0 回主機 A、192.168.7 回主機 B → 最終結果同時含 A 與 B。
+    /// </summary>
+    [Fact]
+    public async Task 跨段結果聯集正確_不同子網段發現的主機皆入列()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.0.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.0.10", "srv-a"));
+                if (filter.Contains("repip:192.168.7.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.7.20", "srv-b"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        Assert.Equal(2, result.Hosts.Count);
+        Assert.Contains(result.Hosts, h => h.IpAddress == "192.168.0.10" && h.HostName == "srv-a");
+        Assert.Contains(result.Hosts, h => h.IpAddress == "192.168.7.20" && h.HostName == "srv-b");
+    }
+
+    /// <summary>
+    /// 吵雜段壟斷不影響其他段：192.168.0 段觸頂且輪數用盡（有警告），192.168.9 段正常回一台安靜主機 →
+    /// 該安靜主機仍在結果中。
+    /// </summary>
+    [Fact]
+    public async Task 吵雜段壟斷不影響其他段_安靜主機仍被發現()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.0.*"))
+                    return new JobScript(99_999, ("192.168.0.1", "noisy-host")); // 觸頂
+                if (filter.Contains("repip:192.168.9.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.9.50", "quiet-host")); // 安靜主機
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        Assert.Contains(result.Hosts, h => h.IpAddress == "192.168.9.50" && h.HostName == "quiet-host");
+        Assert.Contains(result.Warnings, w => w.Contains("192.168.0") && w.Contains("清單可能不完整"));
+    }
+
+    /// <summary>
+    /// 段內排除只帶該段 IP：192.168.0 段已見 3 台、192.168.9 段開始掃時，送出的 filter
+    /// 不含 192.168.0.* 那三台的排除子句。
+    /// </summary>
+    [Fact]
+    public async Task 段內排除只帶該段IP_不含其他段已見IP()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.0.*") && filter.Contains("rv150:System"))
+                    return new JobScript(3, ("192.168.0.1", "h1"), ("192.168.0.2", "h2"), ("192.168.0.3", "h3"));
+                return Empty();
+            }
+        };
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        var seg9Filters = handler.Filters.Where(f => f.Contains("repip:192.168.9.*")).ToList();
+        Assert.NotEmpty(seg9Filters);
+        Assert.All(seg9Filters, f =>
+        {
+            Assert.DoesNotContain("192.168.0.1", f);
+            Assert.DoesNotContain("192.168.0.2", f);
+            Assert.DoesNotContain("192.168.0.3", f);
+            Assert.DoesNotContain("NOT", f);
+        });
+    }
+
+    /// <summary>
+    /// 單段時 CoverageNote 不含分段敘述（回歸保護：使用者輸入 /24 時體感不變）。
+    /// </summary>
+    [Fact]
+    public async Task 單段時CoverageNote不含分段敘述()
+    {
+        var handler = new ScriptedHandler(
+            new JobScript(1, ("192.168.1.10", "srv-1")),
+            Empty());
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.1", CancellationToken.None);
+
+        Assert.DoesNotContain("子網段", result.CoverageNote);
+        Assert.DoesNotContain("共掃", result.CoverageNote);
+        Assert.Contains("掃描涵蓋「192.168.1.*」近 24 小時內有 System/Application 事件", result.CoverageNote);
+    }
+
+    /// <summary>
+    /// 多段時 CoverageNote 說明段數與未收斂段。
+    /// </summary>
+    [Fact]
+    public async Task 多段時CoverageNote說明段數與未收斂段()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.0.*"))
+                    return new JobScript(99_999, ("192.168.0.1", "noisy0")); // 觸頂未收斂
+                if (filter.Contains("repip:192.168.1.*"))
+                    return new JobScript(99_999, ("192.168.1.1", "noisy1")); // 觸頂未收斂
+                if (filter.Contains("repip:192.168.2.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.2.10", "srv-ok"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        Assert.Contains("共掃 256 個子網段", result.CoverageNote);
+        Assert.Contains("其中 2 段未能完整收斂（192.168.0、192.168.1）", result.CoverageNote);
+    }
+
+    /// <summary>
+    /// 空段不產生警告：多數段回 0 筆 → warnings 不因此增加。
+    /// </summary>
+    [Fact]
+    public async Task 空段不產生警告_多數段為空時warnings為空()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.10.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.10.5", "srv-10"));
+                return Empty();
+            }
+        };
+
+        var result = await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        Assert.Single(result.Hosts);
+        Assert.Empty(result.Warnings);
+    }
+
+    /// <summary>
+    /// 多段預算用盡回部分結果＋警告：模擬預算耗盡 → 不擲例外，回已完成段的主機，
+    /// 且 warnings 含「已完成 N/M 段」字樣。
+    /// </summary>
+    [Fact]
+    public async Task 多段預算用盡回部分結果與警告_不擲例外()
+    {
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = filter =>
+            {
+                if (filter.Contains("repip:192.168.0.*") && filter.Contains("rv150:System"))
+                    return new JobScript(1, ("192.168.0.10", "srv-0"));
+                return Empty();
+            },
+            OnJobCreated = jobCount =>
+            {
+                // 完成第 1 段（2 個 job）後，於建立第 3 個 job 時等待讓 1 秒預算逾時
+                if (jobCount == 3)
+                {
+                    Thread.Sleep(1200);
+                }
+            }
+        };
+
+        var client = new SentinelRestDirectoryClient(Options(), handler, totalBudgetSeconds: 1);
+        var result = await client.ListHostsAsync(Server(), "192.168", CancellationToken.None);
+
+        Assert.Single(result.Hosts);
+        Assert.Equal("192.168.0.10", result.Hosts[0].IpAddress);
+        Assert.Contains(result.Warnings, w => w.Contains("已完成 1/256 段") && w.Contains("未掃描的網段"));
+    }
+
+    /// <summary>
+    /// 單段預算用盡仍擲例外（回歸保護）。
+    /// </summary>
+    [Fact]
+    public async Task 單段預算用盡仍擲例外_回歸保護()
+    {
+        var handler = new ScriptedHandler(
+            Enumerable.Range(0, 20).Select(i => new JobScript(9999, ($"10.1.2.{i}", $"h{i}"))).ToArray())
+        {
+            PageDelay = TimeSpan.FromMilliseconds(400)
+        };
+
+        var client = new SentinelRestDirectoryClient(Options(), handler, totalBudgetSeconds: 2);
+        var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
+            client.ListHostsAsync(Server(), "10.1.2", CancellationToken.None));
+
+        Assert.Contains("超過 2 秒", ex.Message);
+        Assert.Contains("更小的網段", ex.Message);
+    }
+
+    /// <summary>
+    /// 段數超過上限擲 NetiqDiscoveryException。
+    /// </summary>
+    [Fact]
+    public async Task 段數超過上限_擲NetiqDiscoveryException()
+    {
+        Assert.Equal(256, SentinelRestDirectoryClient.MaxSegments);
+
+        var handler = new ScriptedHandler();
+        var client = new SentinelRestDirectoryClient(Options(), handler);
+
+        // 太寬的輸入（如只給 1 段）由 MinPrefixOctets 擋下並轉為 NetiqDiscoveryException
+        var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
+            client.ListHostsAsync(Server(), "10", CancellationToken.None));
+        Assert.Contains("太籠統", ex.Message);
+    }
+
+    /// <summary>
+    /// 進度回報含段進度：多段掃描時 onProgress 收到的階段描述含 / 分數格式。
+    /// </summary>
+    [Fact]
+    public async Task 多段掃描進度回報含段進度分數格式()
+    {
+        var progressMessages = new List<string>();
+        var handler = new ScriptedHandler
+        {
+            ScriptSelector = _ => Empty()
+        };
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168", CancellationToken.None,
+                onProgress: (stage, count) => progressMessages.Add(stage));
+
+        Assert.NotEmpty(progressMessages);
+        Assert.Contains("掃描中 0/256（192.168.0）", progressMessages);
+        Assert.Contains("掃描中 1/256（192.168.1）", progressMessages);
+        Assert.Contains("掃描中 255/256（192.168.255）", progressMessages);
+    }
+
+    /// <summary>
+    /// 單段進度回報維持既有文字（不出現「1/1」）。
+    /// </summary>
+    [Fact]
+    public async Task 單段進度回報維持既有文字不出現分數()
+    {
+        var progressMessages = new List<string>();
+        var handler = new ScriptedHandler(Empty(), Empty());
+
+        await new SentinelRestDirectoryClient(Options(), handler)
+            .ListHostsAsync(Server(), "192.168.1", CancellationToken.None,
+                onProgress: (stage, count) => progressMessages.Add(stage));
+
+        Assert.Contains("主掃描中", progressMessages);
+        Assert.Contains("主掃描完成", progressMessages);
+        Assert.Contains("補充掃描中", progressMessages);
+        Assert.DoesNotContain(progressMessages, m => m.Contains("1/1"));
+        Assert.DoesNotContain(progressMessages, m => m.Contains("/"));
+    }
+
     /// <summary>
     /// 依 job 建立順序回應的 Sentinel 替身：第 n 個建立的 job 套用第 n 個 <see cref="JobScript"/>。
     /// 同時記下每個 job 的 filter 與時間區間——殘差輪掃的斷言全部落在「送出去的查詢長什麼樣」，
@@ -685,9 +950,19 @@ public class SentinelRestDirectoryClientTests
     private sealed class ScriptedHandler : HttpMessageHandler
     {
         private readonly JobScript[] _scripts;
+        private readonly Dictionary<int, JobScript> _resolvedScripts = new();
         private int _jobsCreated;
 
         public ScriptedHandler(params JobScript[] scripts) => _scripts = scripts;
+
+        /// <summary>依 filter 動態決定 JobScript，若指定則優先於依序索引</summary>
+        public Func<string, JobScript>? ScriptSelector { get; init; }
+
+        /// <summary>當腳本耗盡時的預設 JobScript；若為 null 且超出範圍則擲例外</summary>
+        public JobScript? DefaultScript { get; init; }
+
+        /// <summary>當 job 建立時觸發（參數為已建立的 job 總數）</summary>
+        public Action<int>? OnJobCreated { get; init; }
 
         /// <summary>每個 job 送出的 filter，依建立順序</summary>
         public List<string> Filters { get; } = new();
@@ -742,12 +1017,21 @@ public class SentinelRestDirectoryClientTests
             {
                 var body = await request.Content!.ReadAsStringAsync(ct);
                 using var doc = JsonDocument.Parse(body);
-                Filters.Add(doc.RootElement.GetProperty("filter").GetString()!);
+                var filter = doc.RootElement.GetProperty("filter").GetString()!;
+                Filters.Add(filter);
                 Windows.Add((
                     DateTimeOffset.Parse(doc.RootElement.GetProperty("start").GetString()!),
                     DateTimeOffset.Parse(doc.RootElement.GetProperty("end").GetString()!)));
 
+                var index = _jobsCreated;
                 _jobsCreated++;
+
+                var script = ScriptSelector?.Invoke(filter)
+                    ?? (index < _scripts.Length ? _scripts[index] : (DefaultScript ?? throw new InvalidOperationException($"測試腳本只給了 {_scripts.Length} 個 job，實際建立了第 {_jobsCreated} 個")));
+                _resolvedScripts[index] = script;
+
+                OnJobCreated?.Invoke(_jobsCreated);
+
                 return Json(HttpStatusCode.Created, "{}", $"{JobCollectionUrl}/job{_jobsCreated}");
             }
 
@@ -757,7 +1041,7 @@ public class SentinelRestDirectoryClientTests
                 PageRequestCount++;
                 PageUrls.Add(url);
                 var index = JobIndex(url);
-                var script = _scripts[index];
+                var script = _resolvedScripts[index];
                 var page = ParsePageQuery(url);
                 var pageEvents = (page >= 1 && page <= script.Pages.Length)
                     ? script.Pages[page - 1]
@@ -768,10 +1052,9 @@ public class SentinelRestDirectoryClientTests
             if (request.Method == HttpMethod.Get && url.StartsWith($"{JobCollectionUrl}/job"))
             {
                 var index = JobIndex(url);
-                if (index >= _scripts.Length)
-                    throw new InvalidOperationException($"測試腳本只給了 {_scripts.Length} 個 job，實際建立了第 {index + 1} 個");
+                if (!_resolvedScripts.TryGetValue(index, out var script))
+                    throw new InvalidOperationException($"未找到第 {index + 1} 個 job 的解析腳本");
 
-                var script = _scripts[index];
                 var avail = script.TotalEventsCount;
                 if (avail == 0)
                     return Json(HttpStatusCode.OK, $"{{\"status\":2,\"found\":{script.Found},\"avail\":0}}");

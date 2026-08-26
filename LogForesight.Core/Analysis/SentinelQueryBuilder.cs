@@ -363,4 +363,38 @@ public static class SentinelQueryBuilder
 
         return string.Join('.', parsed);
     }
+
+    /// <summary>
+    /// 把使用者輸入的網段前綴（如「192.168」或「192.168.1」或 CIDR「192.168.0.0/16」）
+    /// 展開成逐段掃描的 /24 前綴清單。
+    /// <list type="bullet">
+    ///   <item>正規化後已是三段（如「192.168.1」）→ 回傳單元素清單 [192.168.1]。</item>
+    ///   <item>正規化後是兩段（如「192.168」）→ 展開為「192.168.0」～「192.168.255」，共 256 個子網段。</item>
+    /// </list>
+    /// 純函數，驗證與格式例外完全沿用 <see cref="NormalizeSubnetPrefix"/>。
+    /// </summary>
+    /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足／超出規範。</exception>
+    public static IReadOnlyList<string> ExpandToSlash24Prefixes(string subnetInput)
+    {
+        var normalized = NormalizeSubnetPrefix(subnetInput);
+        var octets = normalized.Split('.');
+
+        if (octets.Length == 3)
+        {
+            return new[] { normalized };
+        }
+
+        if (octets.Length == 2)
+        {
+            var prefixes = new List<string>(256);
+            for (var i = 0; i <= 255; i++)
+            {
+                prefixes.Add($"{normalized}.{i}");
+            }
+            return prefixes;
+        }
+
+        // NormalizeSubnetPrefix 已透過 MinPrefixOctets 擋下 < 2 段，且不接受 4 段；此處為防禦性回傳
+        return new[] { normalized };
+    }
 }

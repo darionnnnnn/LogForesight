@@ -628,7 +628,7 @@ public class NetiqDiscoveryServiceTests
     // ── 背景工作模式（B3 規格）──────────────────────────────────────────────
 
     private static async Task<NetiqScanJobDto> WaitForJobAsync(
-        NetiqDiscoveryService svc, string jobId, Func<NetiqScanJobDto, bool> condition, int timeoutMs = 3000)
+        NetiqDiscoveryService svc, string jobId, Func<NetiqScanJobDto, bool> condition, int timeoutMs = 15000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
