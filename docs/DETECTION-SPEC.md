@@ -37,7 +37,7 @@
 | 【破解得手】※ | 大量 4625（≥10）＋條件式撈取的 4624（成功登入）與失敗記錄同一組帳號/IP | 比帳號建立/提權更早、更直接的得手證據——暴力破解攻擊者未必馬上建帳號提權，可能先潛伏 |
 | 【持久化】 | 帳號異動或攻擊嘗試＋新服務/排程任務（7045/4697/4698）同日 | 入侵後植入後門 |
 | 【滅跡】 | 稽核清除/變更（1102/4719/4907）＋同日其他安全事件 | 入侵者清除操作痕跡 |
-| 【提權→植入】 | 權限/特權異動（4670/4703 等（4703 已加 ≥10 次門檻：新版 Windows 上系統行程會例行調整權杖權限））＋新服務/排程任務同日 | 先取得權限再植入執行體 |
+| 【提權→植入】 | 權限/特權異動（4670／4703 等；4703 門檻 ≥10 次——新版 Windows 系統行程會例行調整權杖權限）＋新服務/排程任務同日 | 先取得權限再植入執行體 |
 | 【暴力破解→RDP 得手】※ | **昨日**大量 4625（≥10）的來源 IP，**今日**以 RDP 成功登入（21/25/1149）同一 IP | 暴力破解跨日以遠端桌面得手；純以 IP 交集判定，無交集不觸發 |
 | 【防護遭關閉→惡意程式】 | Defender 防護被關閉/停用（5001/5010/5012）＋同日惡意程式偵測或攻擊訊號（也含跨日：昨日關防護、今日驗出惡意程式） | 入侵者常在植入前先解除防護；單獨關防護只走規則層、不觸發關聯 |
 | 【惡意程式→持久化】 | Defender 惡意程式偵測（1006/1116 等）＋新服務/排程任務同日 | 惡意程式建立持久化立足點 |
@@ -58,7 +58,7 @@
 關聯訊號在 prompt 中以獨立區塊呈現並明確標注「由程式確定性比對，不是猜測」，
 執行輸出以紅色🔗區塊顯示，風險報告的整體摘要一併列出，也存入歷史資料庫的 `CorrelationAlerts` 欄位。
 
-**`PatternId`**（`Analysis/CorrelationPatternIds.cs`）：上表 18 個模式（其中【密碼噴灑】跨平台共用）
+**`PatternId`**（`Analysis/CorrelationPatternIds.cs`）：上表 17 列共 18 個模式 Id（【防護遭關閉→惡意程式】一列含同日與跨日兩個 Id；【密碼噴灑】跨平台共用）
 ＋ Linux 面 2 個模式（SSH 破解得手／不確定，見 docs/LINUX-RULES.md）合計 20 個模式，各自有
 穩定不隨文字說明變動的 Id 常數。用途是**關聯模式抑制**的比對鍵（`RuleSuppression.TargetType=
 Correlation`，見 docs/RULES-SPEC.md「抑制目標四型」）——過去關聯訊號只能整層 log 分析器一起
@@ -97,12 +97,12 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 `LoginFailureDetailsTruncated`（集中度一律以總量為分母，**截斷時不判定**——
 用保留下來的組數當分母會把分散的攻擊形狀算成高集中度，是往「少報攻擊」的方向錯）。
 
-**四個條件全中才算**（判定為純函式）：
+**四個條件全中才算**（判定不讀任何設定，門檻全為常數）：
 
 1. **失敗集中**：前兩大組佔總次數 ≥ 80%。
 2. **型態機械**：4625 看集中組中 LogonType ∈ {3 網路, 4 批次, 5 服務} 的佔比 ≥ 80%
    （2 互動、10 RDP 是真人操作，不該判為殘留）；4771 與 Linux 無 LogonType，
-   改用更高的集中門檻——單一最大組佔總次數 ≥ 80%。
+   改用更嚴的集中判準——單一最大組佔總次數 ≥ 80%（門檻值同為 0.8，但分母只算一組）。
 3. **帳號非未知**：集中組沒有任何一組的失敗原因是「帳號不存在」（猜帳號是攻擊特徵）。
 4. **跨日確認**：最大組的 (帳號, 來源) 在該主機近 7 天歷史的登入失敗明細中另有 ≥1 天出現。
    **首日一律不滿足、照常以既有攻擊語意告警**——每個新組合都會被人看到一次才消音，
@@ -128,7 +128,7 @@ RDP 事件規則一律 Low（不參與風險判定、不觸發「首次出現」
 - 判定依據以白話字串 `ResidualCredentialBasis` 呈現於風險日詳情頁、風險報告與 AI prompt
   （AI 不知道判定結果的話，會把系統已判定為殘留的東西敘述成暴力破解，兩邊互相矛盾）。
 
-**【破解得手】另加時序條件**：成功登入的時間須 ≥ 該帳號／IP 當日最早的失敗時間；
+**【破解得手】另加時序條件**：該帳號／IP 當日**最晚**的成功登入時間須 ≥ 其**最早**的失敗時間；
 任一邊缺時間資料時保守保留（不因資料不全而漏報）。防的是「早上正常登入成功、
 下午排程開始用舊憑證失敗」被判成破解得手。
 
@@ -481,72 +481,13 @@ key 出現在行首或空白之後、其後緊接半形或全形冒號；value �
 
 #### Linux syslog（seed v5；Sentinel 取數＋SSH 攻擊鏈關聯已全面落地）
 
-Linux 主機沒有 Event ID，規則改以 **program（syslog identifier）＋訊息子字串**比對，或
-Sentinel 正規化後的事件名（兩條路 OR，完整規則模型與種子清單見
-[docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。主機的 `Os` 欄位（Web 主機頁維護）決定它套用
-哪個平台的規則面。
-
-| program | 訊息關鍵字（任一命中） | 意義 | 嚴重度 |
-|---|---|---|---|
-| sshd | Failed password / authentication failure / Invalid user | SSH 登入失敗；**單日 ≥10 次**視為暴力破解 | High |
-| sshd | Accepted password / Accepted publickey | SSH 登入成功 | **Low（收集用，非告警）** |
-| sudo | authentication failure / incorrect password attempt | sudo 提權驗證失敗（≥5 次） | Medium |
-| su | authentication failure / incorrect password / FAILED su | su 提權驗證失敗（≥5 次） | Medium |
-| `useradd` | （不看訊息） | 帳號建立 — 入侵者建立立足點 | High |
-| `usermod` | （不看訊息） | 帳號屬性修改 | High |
-| `userdel` | （不看訊息） | 帳號刪除 — 需確認授權與滅跡可能 | High |
-| `groupadd` | （不看訊息） | 群組建立 | High |
-| `groupmod` | （不看訊息） | 群組修改 | High |
-| `groupdel` | （不看訊息） | 群組刪除 | High |
-| `kernel` | No space left on device | 磁碟空間耗盡 | High |
-| `kernel` | Remounting filesystem read-only／re-mounted. Opts: ro | 檔案系統被重掛為唯讀 — 底層 I/O 已失敗 | 高（重大） |
-| `mdadm` | DegradedArray／Fail event／FailSpare event | 軟體 RAID 陣列降級或成員失效 | 高（重大） |
-| `kernel` | Link is Down／NETDEV WATCHDOG | 網卡斷線或傳輸逾時（≥3 次） | Medium |
-| `crontab` | REPLACE／BEGIN EDIT | 排程被編輯 — 持久化手法（對齊 Windows 4698 語意） | Medium |
-| `fail2ban` | Ban | 來源被封鎖 — **收集用**，與 ssh 暴力破解規則互為佐證；對外主機日常有量故為 Low | Low |
-| `rsyslogd` | begin to drop messages／suspended | **日誌管線掉訊息 ＝ 監控盲區**（log 遺失會讓其他偵測失效） | Medium |
-| gpasswd | （不看訊息） | 帳號被加入/移出群組 — 加入 sudo/wheel 即提權 | High |
-| auditd | audit daemon is exiting / stopping | **稽核服務被停止 — 滅跡的典型行為** | 高（重大） |
-| kernel | I/O error / Buffer I/O error / EXT4-fs error / XFS internal error | 磁碟或檔案系統錯誤 | 高（重大） |
-| smartd | Prefailure / FAILED SMART self-check / predicted TO FAIL | S.M.A.R.T. 預警硬碟即將故障 | 高（重大） |
-| kernel | Hardware Error / Machine Check / mce: | CPU/記憶體/PCIe 硬體錯誤 | 高（重大） |
-| kernel | Out of memory / oom-kill / Killed process | 記憶體耗盡，核心強制終止程序 | High |
-| systemd | entered failed state / Failed to start / Main process exited | 服務啟動失敗或異常終止（≥3 次） | Medium |
-| kernel | segfault | 應用程式反覆區段錯誤（≥3 次） | Medium |
-| chronyd | Can't synchronise / no reachable sources | 時間同步失敗（≥3 次） | Medium |
-| ntpd | time reset / synchronisation lost / no servers reachable | 時間同步失敗（≥3 次） | Medium |
-| CRON | FAILED / (CRON) ERROR | 排程任務執行失敗（≥3 次） | Medium |
-
-> **比對順序有意義**：`ProgramPattern` 是子字串比對，`"sudo"` 包含 `"su"`，所以 sudo 規則必須排在
-> su 之前，否則 sudo 的事件會被 su 規則先攔走。單元測試的逐條命中驗證會抓到這類錯誤。
->
-> **SSH 登入成功刻意設為 Low**：與 RDP 同一個防誤報設計——日常遠端維運即會產生，本身不是告警訊號，
-> 收集目的是趨勢基準與未來 SSH 關聯鏈的成功面。
->
-> **現況**：規則模型、種子、驗證、Web 維護介面（規則頁的「Linux規則」分頁）、
-> **事件模型與簽章聚合**（`EventKey` 五元組分組鍵、`LogAggregator.ClassifyLinux`、
-> `IssueSignatureKey` 相容擴充）、**Sentinel 實際取數分支**
-> （`SentinelFieldMap`／`SentinelEventMapper.MapLinux`／`SentinelQueryBuilder.BuildLinuxFilter`，
-> 見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md) §4a）、以及
-> **SSH 攻擊鏈關聯**（`LinuxCorrelationAnalyzer`，見下方關聯層說明）全部完成並有專屬測試覆蓋
-> （見 [docs/LINUX-RULES.md](docs/LINUX-RULES.md)）。上表的訊息關鍵字已對照真實環境輸出
-> （program 量級、`msg` 片語查詢行為、sshd 樣本全文）逐項核對，零矛盾證據，seed 版本
-> 維持 v4。
-> 也就是說 Linux 主機從掃描精靈納入、排程／立即執行、Sentinel 取數、五層偵測到 AI 判讀，
-> 已與 Windows 主機同一條管線走完整趟，沒有殘留的止血擋板或短路（見
-> [docs/BACKLOG.md](docs/BACKLOG.md)）。本環境的 **Windows 與 Linux 已拆分為不同的 Sentinel**
-> （同一台 Sentinel 不混平台，故 OS 標記落在 Sentinel 層級而非逐事件判別；唯一例外是同一台
-> Sentinel 上另有 CEF collector 路徑，欄位形狀細節見 NETIQ-API-REFERENCE.md §4a）。
->
-> **五層偵測對 Linux 主機的適用性**：
->
-> | 層 | 適用 Linux？ | 說明 |
-> |---|---|---|
-> | 規則層 | ✓ | `KnownIssueCatalog.ClassifyLinux`，program＋訊息子字串比對 |
-> | 趨勢層 | ✓ | `TrendAnalyzer.SameIssue` 五元組比對，隔離「同 program 不同規則」 |
-> | 慢速趨勢層 | ✓ | `SlowTrendAnalyzer` 同上；`ChannelCoverage.WasRead("Linux")` 恆真 |
-> | 關聯層 | 部分（僅 SSH 破解得手一項） | `LinuxCorrelationAnalyzer` 獨立於 Windows 的 `CorrelationAnalyzer`（機制完全不同：regex 解析 `msg` 文字取 user/ip 再找重疊，而非 EventId 群組比對）；同日 `builtin-linux-ssh-bruteforce` 達門檻＋`builtin-linux-ssh-accept` 存在時比對兩者的 (user, ip)，重疊→精確命中（High），無重疊但有解析失敗樣本→降級提醒（Medium），全數解析成功且無重疊→誠實不告警（不是漏做）。其餘 Windows 面的組合模式（帳號異動鏈／新服務鏈／儲存連鎖等）目前不適用於 Linux 主機，`UncoveredChecks` 會明講 |
-> | AI 判讀層 | ✓ | 與平台無關，餵給 AI 的是聚合後的統計摘要，Linux 主機的規則/趨勢/慢速趨勢/關聯結果一樣能被翻譯成白話；「詢問 AI 現場取數」的即時查詢分支也已改用 program 子句支援 Linux（原本沿用 Windows 的 EventId 子句會恆查 0 筆） |
+Linux 規則以 `ProgramPattern`（syslog identifier 子字串）＋`MessagePatterns`（訊息子字串 OR）
+比對，seed v5 共 **28 條**——涵蓋登入與提權失敗（sshd／sudo／su）、帳號與群組異動
+（useradd 家族六條精確 identifier）、稽核破壞（auditd）、儲存與硬體（kernel I/O／唯讀重掛／
+mdadm／SMART／網卡）、資源（磁碟空間／OOM）、服務與排程（systemd／segfault／CRON／crontab 編輯）、
+時間同步、日誌管線（rsyslog 掉訊息）與 fail2ban（Low 收集用）。
+**完整規則表（單一事實來源）見 [LINUX-RULES.md](LINUX-RULES.md)**，
+比對語意與順序規則（第一個命中者勝、kernel 家族專一者在前）也在該文件。
 
 ### 給 AI 判讀的輔助資訊（除了事件本身）
 

@@ -586,6 +586,8 @@ public class RecordDetailQueryService
                 ReasonText = LoginFailureTextFormatter.FormatReason(d.ReasonCode),
                 Count = d.Count
             }).ToList(),
+            LoginFailureTotalCount = issue.LoginFailureTotalCount,
+            LoginFailureDetailsTruncated = issue.LoginFailureDetailsTruncated,
             ResidualCredentialRetry = issue.ResidualCredentialRetry,
             ResidualCredentialBasis = issue.ResidualCredentialBasis,
             SampleMessages = issue.SampleMessages,

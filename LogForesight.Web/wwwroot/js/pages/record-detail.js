@@ -1339,7 +1339,7 @@ function issueCell(issue) {
     } else {
         if (issue.residualCredentialBasis) wrap.appendChild(residualCredentialBlock(issue));
 
-        if (issue.loginFailureDetails?.length) wrap.appendChild(loginFailureDetailsTable(issue.loginFailureDetails));
+        if (issue.loginFailureDetails?.length) wrap.appendChild(loginFailureDetailsTable(issue));
 
         if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
 
@@ -1383,7 +1383,8 @@ function residualCredentialBlock(issue) {
  * 登入失敗明細表（A6）：
  * 顯示帳號／來源／類型／原因／次數結構化明細，上限 10 列。
  */
-function loginFailureDetailsTable(details) {
+function loginFailureDetailsTable(issue) {
+    const details = issue.loginFailureDetails;
     const wrap = document.createElement('div');
     wrap.className = 'mt-1';
 
@@ -1442,11 +1443,14 @@ function loginFailureDetailsTable(details) {
     table.appendChild(tbody);
     wrap.appendChild(table);
 
-    if (details.length > maxRows) {
+    if (details.length > maxRows || issue.loginFailureDetailsTruncated) {
         const remaining = details.length - maxRows;
         const note = document.createElement('div');
         note.className = 'text-muted small mt-1';
-        note.textContent = `另有 ${remaining} 筆明細未顯示`;
+        // 後端明細封頂 50 組——截斷時不能拿清單長度冒充全貌，改報總次數並言明已截斷
+        note.textContent = issue.loginFailureDetailsTruncated
+            ? `另有 ${remaining} 筆明細未顯示（實際共 ${issue.loginFailureTotalCount} 次登入失敗，明細僅保留前 ${details.length} 組）`
+            : `另有 ${remaining} 筆明細未顯示`;
         wrap.appendChild(note);
     }
 

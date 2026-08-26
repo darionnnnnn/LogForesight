@@ -158,6 +158,11 @@ public class NetiqScanRequest
 public class NetiqScanJobDto
 {
     public string JobId { get; set; } = string.Empty;
+
+    /// <summary>啟動這個掃描時鎖定的 Sentinel 與網段——前端續看前要比對「是不是同一台」，
+    /// 不同台就不能接手（否則舊結果會配上新選 Sentinel 的 OS 預設值匯入）。</summary>
+    public string ServerName { get; set; } = string.Empty;
+    public string SubnetPrefix { get; set; } = string.Empty;
     /// <summary>running / completed / failed / canceled</summary>
     public string Status { get; set; } = string.Empty;
     public string Stage { get; set; } = string.Empty;

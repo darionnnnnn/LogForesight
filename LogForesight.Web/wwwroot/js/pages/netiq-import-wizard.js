@@ -261,6 +261,8 @@ function startPolling(jobId, { resume = false } = {}) {
             } else if (job.status === 'completed') {
                 stopPolling();
                 wizardScan = job.result;
+                // 續看情境：結果屬於啟動掃描當下的 Sentinel，精靈標題不能跟著重開時的新選擇走
+                if (wizardScan?.server) wizardServer = wizardScan.server;
                 wizardPrimaryButton.disabled = false;
                 renderCoverageNote();
                 renderSubnetSelection();
@@ -303,11 +305,26 @@ async function openWizard(sentinel, subnetPrefix, granularity = '24') {
     document.getElementById('wizard-warnings').replaceChildren();
     renderSpinner(document.getElementById('wizard-scan-result'), '掃描中…');
     wizardPrimaryButton.disabled = true;
-    // 上一次掃描還在背景跑（精靈被關掉但工作沒停）→ 續看它，不要再啟動一個新掃描：
-    // 後端全站同時只允許一個 running 工作，硬送會吃到「已有掃描進行中」而把人鎖死。
+    // 上一次掃描還在背景跑（精靈被關掉但工作沒停）→ 只有「同一台 Sentinel 且仍在進行中」
+    // 才續看：不同台不能接手——舊結果會配上這裡剛依新選 Sentinel 重設的 OS 預設值匯入，
+    // 正是上面那段註解要防的錯配；已結束的舊工作則放掉識別、照常啟動這次要求的新掃描。
     if (currentJobId) {
-        startPolling(currentJobId, { resume: true });
-        return;
+        let job = null;
+        try {
+            job = await api.get(`/api/admin/netiq/scan/${currentJobId}`);
+        } catch {
+            // 工作已逾期/站台重啟：identifier 作廢，走新掃描
+        }
+        if (job && job.status === 'running') {
+            if (job.serverName === sentinel.name) {
+                startPolling(currentJobId, { resume: true });
+                return;
+            }
+            toast(`「${job.serverName}」的掃描仍在進行中（${job.subnetPrefix}），請先等它完成或取消後再掃描其他 Sentinel`, 'warning');
+            wizardModal.hide();
+            return;
+        }
+        currentJobId = null;
     }
 
     try {

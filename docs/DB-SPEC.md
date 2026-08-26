@@ -214,7 +214,7 @@ lf_top_issues                                        -- LogIssueSignature 的**�
   category          nvarchar(20) NOT NULL             -- Storage/Hardware/Security/...
   severity_rank     int NOT NULL                      -- IssueSeverity 的**序數**（不是字串）
   elevates_day_risk bit NOT NULL DEFAULT 0            -- 「重大」旗標（排行清單的嚴重度維度）
-  known_issue       nvarchar(500) NULL                -- 命中規則表時的中文說明（
+  known_issue       nvarchar(max) NULL                -- 命中規則表時的中文說明（SQLite TEXT；
                                                      --   依問題視角的說明欄直接查此欄不解 JSON）
 ```
 

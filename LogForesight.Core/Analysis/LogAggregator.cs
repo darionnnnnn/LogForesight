@@ -411,7 +411,10 @@ internal static class LogAggregator
     /// 帳號與來源比對不分大小寫，依 Count 降冪排序，最多保留 50 筆。
     /// Windows 與 Linux 共用此分組邏輯。
     /// </summary>
-    /// <summary>封頂組數——超過的尾巴小組會被丟棄，總量與截斷旗標另外保留（見 LoginFailureTotalCount）。</summary>
+    /// <summary>封頂組數——超過的尾巴小組會被丟棄，總量與截斷旗標另外保留（見 LoginFailureTotalCount）。
+    /// 兩個消費端對截斷的處理刻意不對稱：殘留判定（ResidualCredentialDetector）截斷時**不判定**
+    /// （分母縮水會把攻擊形狀誤判成集中，往少報攻擊方向錯）；密碼噴灑（PasswordSprayDetector）
+    /// 照常判定——截斷代表 ≥50 組、帳號數遠超噴灑門檻，只會更容易命中，方向是多報攻擊、安全側。</summary>
     internal const int LoginFailureDetailCap = 50;
 
     private static (List<LoginFailureDetail> Details, int TotalCount, bool Truncated)

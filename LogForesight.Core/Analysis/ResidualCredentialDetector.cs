@@ -43,7 +43,14 @@ internal static class ResidualCredentialDetector
             // 明細封頂 50 組時被丟掉的都是尾巴小組。若拿保留下來的組數當分母，集中度會被
             // 系統性抬高——本來分散（多帳號多來源＝攻擊形狀）的簽章會被誤判成殘留而靜音，
             // 是往「少報攻擊」的方向錯。截斷時資料不足以判斷集中度，一律不標殘留。
-            if (issue.LoginFailureDetailsTruncated)
+            // 舊資料相容：截斷旗標與總量是後加的欄位，舊 ContentJson 反序列化後
+            // 恆為 false／0。舊資料若當初就滿 50 組，很可能實際被截斷過——
+            // 保守地把「滿 50 組且無總量」也視為疑似截斷（誤傷的只是「剛好 50 組」的
+            // 合法情況，代價是維持既有攻擊語意，方向安全）。
+            bool suspectedLegacyTruncation =
+                issue.LoginFailureTotalCount == 0 &&
+                issue.LoginFailureDetails.Count >= LogAggregator.LoginFailureDetailCap;
+            if (issue.LoginFailureDetailsTruncated || suspectedLegacyTruncation)
             {
                 continue;
             }

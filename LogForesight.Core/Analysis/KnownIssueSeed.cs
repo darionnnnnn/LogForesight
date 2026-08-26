@@ -772,7 +772,7 @@ public static class KnownIssueSeed
                     "確認該程式連線的後端資料庫或相依網路服務是否正常且回應迅速",
                     "若為自行開發系統，將當結報告提供開發團隊分析執行緒鎖定與逾時邏輯" } },
 
-        // ── Linux（docs/LINUX-RULES.md，seed v4）──────────────────────
+        // ── Linux（docs/LINUX-RULES.md，seed v5）──────────────────────
         // 比對走 Platform="linux" 的 ProgramPattern＋MessagePatterns 路（EventNamePattern 留空，
         // 待 NetIQ 診斷分頁的 probe 在真實環境確認 Sentinel 有無做事件正規化後補上，見規劃文件 §1.2/§8）。
         // ProgramPattern 沿用 SourcePattern 同樣的 Contains 語意，因此同一規則只精準對應

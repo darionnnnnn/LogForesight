@@ -161,6 +161,71 @@ public class ResidualCredentialDetectorTests
     }
 
     [Fact]
+    public void 舊資料無總量欄位時退回明細加總_照常判定()
+    {
+        // A1 之前寫入的 ContentJson 沒有 LoginFailureTotalCount／Truncated 欄位（反序列化為 0／false）。
+        // 未滿封頂組數時，分母退回明細加總是唯一可行也正確的相容路徑——這條測試釘住 fallback，
+        // 日後有人拿掉它，這裡會紅。
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 42, IssueSeverity.High, IssueCategory.Security);
+        todaySig.ElevatesDayRisk = true;
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 },
+            new() { Account = "admin", Source = "10.0.0.1", LogonType = 3, ReasonCode = "bad_password", Count = 2 }
+        };
+        // 刻意不設 LoginFailureTotalCount（模擬舊資料）
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { todaySig }, history, targetDate);
+
+        Assert.True(todaySig.ResidualCredentialRetry);
+    }
+
+    [Fact]
+    public void 舊資料滿封頂組數且無總量_視為疑似截斷不判定()
+    {
+        // 舊資料當初若真的被截斷，Truncated 反序列化為 false、總量為 0——守門會失效。
+        // 保守推測：「滿 50 組且無總量」視為疑似截斷、不判定（誤傷的只是剛好 50 組的合法情況，
+        // 代價是維持既有攻擊語意，方向安全）。
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 200, IssueSeverity.High, IssueCategory.Security);
+        todaySig.ElevatesDayRisk = true;
+        var details = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 100 },
+            new() { Account = "svc_task", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 60 }
+        };
+        // 補滿到剛好 50 組（尾巴小組）
+        for (int i = 0; i < 48; i++)
+        {
+            details.Add(new LoginFailureDetail { Account = $"u{i}", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 1 });
+        }
+        todaySig.LoginFailureDetails = details;
+        // 刻意不設總量與截斷旗標（模擬舊資料）
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { todaySig }, history, targetDate);
+
+        Assert.False(todaySig.ResidualCredentialRetry);
+        Assert.Equal(IssueSeverity.High, todaySig.Severity);
+    }
+
+    [Fact]
     public void 情境03_密碼噴灑不命中_集中度不足()
     {
         var targetDate = new DateTime(2026, 8, 25);

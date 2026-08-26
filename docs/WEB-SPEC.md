@@ -1100,17 +1100,19 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
      否則會把其餘欄壓成逐字直排。keyDetails 超過 3 行以 line-clamp 收合＋「顯示全部」展開
      （初次量測隱藏中的列——收合區——由 ResizeObserver 於展開時補量）；列印時
      `@media print` 解除收合。
-  12a. **登入失敗明細表與殘留憑證徽章**（`issueCell` 內，排在 keyDetails 之前）：
-     - `IssueDto.LoginFailureDetails` 有值時（4625／4771／Linux 認證失敗簽章），
-       渲染「帳號｜來源｜類型｜原因｜次數」表格，**最多顯示 10 列**（後端最多 50 組，
-       超過時下方以小字說明「另有 N 筆明細未顯示」）。帳號／來源為空顯示「（不明）」、
-       類型為空顯示「—」、電腦帳號在帳號後加小字「（電腦帳號）」。
-       「類型」「原因」是後端 `LoginFailureTextFormatter` 轉好的白話字串
-       （`LogonTypeText`／`ReasonText`）——**前端不持有第二份對照表**。
+  12a. **殘留憑證徽章與登入失敗明細表**（`issueCell` 內，依此順序排在 keyDetails 之前）：
      - `ResidualCredentialBasis` 有值時顯示 info-soft 區塊，徽章文字依
        `ResidualCredentialRetry` 為「疑似殘留憑證重試」或「可能由殘留憑證觸發」
        （後者是 4740 帳號鎖定與殘留帳號交叉命中的情況），下方顯示判定依據全文。
        判定機制見 [DETECTION-SPEC.md](DETECTION-SPEC.md)。
+     - `IssueDto.LoginFailureDetails` 有值時（4625／4771／Linux 認證失敗簽章），
+       渲染「帳號｜來源｜類型｜原因｜次數」表格，**最多顯示 10 列**（後端最多 50 組）。
+       超出 10 列時下方小字「另有 N 筆明細未顯示」；後端標記截斷
+       （`LoginFailureDetailsTruncated`）時改報總次數並言明明細僅保留前 50 組
+       （`LoginFailureTotalCount`）。帳號／來源為空顯示「（不明）」、類型為空顯示「—」、
+       電腦帳號在帳號後加小字「（電腦帳號）」。「類型」「原因」是後端
+       `LoginFailureTextFormatter` 轉好的白話字串（`LogonTypeText`／`ReasonText`）——
+       **前端不持有第二份對照表**。
      - 明細缺席的舊資料維持既有的 keyDetails 顯示，兩者不互斥。
   13. **勾選 checkbox 併回「處理狀態」欄**：三欄為「問題｜趨勢｜處理狀態」；表頭「處理狀態」
      文字右側放全選 checkbox（含 indeterminate 三態），欄內每列右上角放大版 checkbox
@@ -1754,16 +1756,18 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `DisplayName`，不用等夜間批次回填；既有主機／復活孤兒的 `DisplayName` 一律不動。
 - **掃描是背景工作（不是同步請求）**：`POST api/admin/netiq/scan` 立即回
   `{ jobId, status:"running" }`；前端每 2 秒輪詢 `GET api/admin/netiq/scan/{jobId}`
-  （回 `status`＝running／completed／failed／canceled，另有 `stage` 進度文字、
+  （回 `status`＝running／completed／failed／canceled，另有 `serverName`／`subnetPrefix`（續看前比對是否同一台）、`stage` 進度文字、
   `hostsFound` 即時台數、完成時 `result`、失敗時 `error`），並提供
-  `POST api/admin/netiq/scan/{jobId}/cancel` 取消。**同步掃描路徑已退場，不留雙軌。**
-  - 改成背景工作的理由：原本 90 秒的互動預算與涵蓋保證互相矛盾——一輪翻頁最多 50 頁、
-    實測約 85 秒，殘差輪掃根本跑不完。背景化後總預算 900 秒。
+  `POST api/admin/netiq/scan/{jobId}/cancel` 取消。**沒有同步掃描端點。**
+  - 背景執行的理由：一輪翻頁最多 50 頁、實測約 85 秒，互動請求的秒級預算容不下
+    殘差輪掃——背景工作的總預算是 900 秒。
   - **全站同時只允許一個進行中的掃描**（再啟動回「已有掃描進行中」的驗證錯誤）。
   - 工作狀態**只存在行程內記憶體**，站台重啟即消失（前端顯示「工作不存在或已逾期」
     並允許重新掃描）——掃描可重跑，刻意不引入持久化。
-  - 精靈關閉時**只停輪詢、保留工作識別**，重開可續看同一個工作；否則背景工作還在跑、
-    而重開精靈會去啟動新掃描並吃到「已有掃描進行中」，使用者被鎖到工作自然結束為止。
+  - 精靈關閉時**只停輪詢、保留工作識別**；重開時若該工作仍在進行中**且屬同一台 Sentinel**
+    則續看（不同台顯示提示、不接手——舊結果配上新選 Sentinel 的 OS 預設值匯入會錯配），
+    已結束的舊工作則放掉識別、照常啟動新掃描。不保留識別的話，背景工作還在跑而重開精靈
+    會啟動新掃描並吃到「已有掃描進行中」，使用者被鎖到工作自然結束為止。
 - **掃描粒度下拉**（`scan-granularity-select`，請求欄位 `granularity`）：
   `24`＝每段 254 台（預設）／`26`＝每段 62 台（最細）。網段事件量大時選較細的粒度
   可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。無法解析或缺席一律當 `/24`。

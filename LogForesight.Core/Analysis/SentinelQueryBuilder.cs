@@ -232,7 +232,7 @@ public static class SentinelQueryBuilder
 
     /// <summary>
     /// 依 <see cref="ScanSegment"/> 建構探索補充掃描的 filter。
-    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/25、/26），以逐 IP 明列 OR 子句表達；
+    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/26），以逐 IP 明列 OR 子句表達；
     /// 若為 null（/24），使用前綴萬用字元查詢。
     /// 
     /// <para><b>子句數申報</b>：/26 為 64 個位址子句，加上排除最多 64 個，合計最多 128 個 OR/NOT 子句。
@@ -271,7 +271,7 @@ public static class SentinelQueryBuilder
 
     /// <summary>
     /// 依 <see cref="ScanSegment"/> 建構探索主掃描的 filter（位址子句 ＋ 頻道窄化 ＋ 排除後綴）。
-    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/25、/26），以逐 IP 明列 OR 子句表達；
+    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/26），以逐 IP 明列 OR 子句表達；
     /// 若為 null（/24），使用前綴萬用字元查詢。
     /// 
     /// <para><b>子句數申報</b>：/26 為 64 個位址子句，加上排除最多 64 個，合計最多 128 個 OR/NOT 子句。
@@ -498,11 +498,11 @@ public static class SentinelQueryBuilder
 }
 
 /// <summary>掃描粒度：一次查詢涵蓋多大的位址範圍。/24 用前綴萬用字元，
-/// /25 與 /26 無法對齊字串前綴，改以逐 IP 明列 OR 子句表達。</summary>
+/// /26 無法對齊字串前綴，改以逐 IP 明列 OR 子句表達（/25 刻意不提供，理由見 ExpandToSegments）。</summary>
 public enum ScanGranularity { Slash24, Slash26 }
 
 /// <summary>一個掃描分段。Prefix 是顯示與歸屬用的 /24 前綴；
-/// Ips 非 null 時代表這一段要以逐 IP 明列 OR 子句查詢（/25、/26），
+/// Ips 非 null 時代表這一段要以逐 IP 明列 OR 子句查詢（/26），
 /// null 代表用 Prefix 的前綴萬用字元查詢（/24）。</summary>
 public sealed record ScanSegment(string Prefix, string Label, IReadOnlyList<string>? Ips);
 

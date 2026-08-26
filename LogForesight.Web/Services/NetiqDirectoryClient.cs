@@ -156,9 +156,10 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
 /// </summary>
 public class SentinelRestDirectoryClient : INetiqDirectoryClient
 {
-    /// <summary>單次掃描可展開的最大分段數。/16 在 /24 粒度是 256 段、/25 是 512 段、
-    /// /26 是 1024 段。上限取 1024 讓三種粒度都能掃完整個 /16；
-    /// 更寬的輸入已由 SentinelQueryBuilder.MinPrefixOctets 擋掉。</summary>
+    /// <summary>單次掃描可展開的最大分段數。/16 在 /24 粒度是 256 段（在預算內掃得完）；
+    /// /16 配 /26 會展開 1024 段、**刻意被此上限擋下**——細粒度的用途是「已知某個 /24
+    /// 特別吵時針對它掃」，不是拿來掃整個 /16。更寬的輸入已由
+    /// SentinelQueryBuilder.MinPrefixOctets 擋掉，這個上限是防禦性的第二道閘門。</summary>
     internal const int MaxSegments = 512;
 
     /// <summary>單輪掃描取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h

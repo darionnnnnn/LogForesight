@@ -72,6 +72,8 @@ internal static class RecordStorageShaper
                 KeyDetails = null,                          // 精簡：同上
                 // 登入失敗明細（A1）：跨日比對依賴此欄位，已分組封頂 50 組體積受控，完整保留不精簡
                 LoginFailureDetails = i.LoginFailureDetails,
+                LoginFailureTotalCount = i.LoginFailureTotalCount,
+                LoginFailureDetailsTruncated = i.LoginFailureDetailsTruncated,
                 // 殘留憑證判定結果（A3／A4）同樣必須保留，且**正是低風險日最需要它的時候**：
                 // 判定命中會把 High 降成 Medium 並清掉 ElevatesDayRisk，這一天因此幾乎必然
                 // 被判為低風險日、走這條精簡路徑。漏抄的話跨日關聯（CorrelationAnalyzer 讀

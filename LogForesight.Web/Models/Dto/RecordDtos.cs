@@ -343,6 +343,12 @@ public class IssueDto
     /// <summary>登入失敗（4625／4771／Linux ssh 認證失敗）的結構化明細，非登入失敗簽章為 null。</summary>
     public List<LoginFailureDetailDto>? LoginFailureDetails { get; set; }
 
+    /// <summary>截斷前的明細總次數——明細封頂 50 組，前端「另有 N 筆」不能拿封頂後的清單長度當全貌。</summary>
+    public int LoginFailureTotalCount { get; set; }
+
+    /// <summary>明細是否因封頂而截斷。</summary>
+    public bool LoginFailureDetailsTruncated { get; set; }
+
     /// <summary>true＝此簽章判定為疑似殘留憑證重試（機械性重複，非攻擊）。</summary>
     public bool ResidualCredentialRetry { get; set; }
 

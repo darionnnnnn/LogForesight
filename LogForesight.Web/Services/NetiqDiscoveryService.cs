@@ -456,6 +456,8 @@ public class NetiqDiscoveryService
         public NetiqScanJobDto ToDto() => new()
         {
             JobId = JobId,
+            ServerName = ServerName,
+            SubnetPrefix = SubnetPrefix,
             Status = Status,
             Stage = Stage,
             HostsFound = HostsFound,
