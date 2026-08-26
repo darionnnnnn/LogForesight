@@ -66,11 +66,16 @@
 
 ### 現況與核對結果
 - `IAnalysisRecordStore` 只有 `Append`/`Prune`/`AttachWeeklyCheckup`/`AttachAiResult`，**無刪除指定主機日的方法**；`Append` 無條件新增（EfAnalysisRecordStore.cs:102），同日防重靠呼叫端 `HasRecord`。
-- 一個主機日的落點：`lf_daily_records` 主列＋`lf_top_issues`、`lf_record_categories`、`lf_record_alerts`、`lf_deep_dive_analyses` 子表；另 `lf_risky_events` 每日寫入本就是 `ReplaceDay`（HostDayPostProcessor.cs:133），不需刪。
+- 一個主機日的落點（**實查修正**）：只有 `lf_daily_records` 主列＋`lf_top_issues` 子表。
+  `lf_record_categories`／`lf_record_alerts`／`lf_deep_dive_analyses` **並不存在**——LfDbContext.cs:15
+  明載「完整正規化（alerts/categories/deep_dives 各自成表）留待特定查詢需要時再加」，類別彙總
+  目前寫在 `content_json` 內，隨主列一併刪除。`lf_risky_events` 每日寫入本就是 `ReplaceDay`
+  （HostDayPostProcessor.cs:133），重跑時自然覆蓋，不需另刪。
+- 既有 `Prune` 已是「先刪子表再刪主表、不依賴 FK cascade」的樣板（EfAnalysisRecordStore.cs:294-296），刪除主機日照同一形狀。
 - `Prune` 有單次 50,000 列上限與「陸續清完 vs 卡住」申報的前例（DB-SPEC:441-443）。
 
 ### 定案
-新增「以主機＋日期集合為單位刪除分析紀錄」的介面方法，Sqlite/SqlServer 雙後端實作，刪除主列與上述四張子表；分批執行並回報刪除筆數。**不動** `lf_issue_first_seen`、`lf_issue_handling`/`lf_record_handling`、`lf_issue_cases`、郵件已寄鍵——處理狀態鍵是 `(host, date, issue_key)`，重跑後自動接回，這是本設計成立的前提。
+新增「以主機＋日期集合為單位刪除分析紀錄」的介面方法，Sqlite/SqlServer 共用同一份 EF 實作，刪除主列與 `lf_top_issues` 子列；分批執行並回報刪除筆數。**不動** `lf_issue_first_seen`、`lf_issue_handling`/`lf_record_handling`、`lf_issue_cases`、郵件已寄鍵——處理狀態鍵是 `(host, date, issue_key)`，重跑後自動接回，這是本設計成立的前提。
 
 ### 改動
 1. `IAnalysisRecordStore` 新增刪除方法（介面名稱與簽章由實作端定，契約：指定 host＋日期集合，主列與子表一致刪除，回傳刪除的主機日數；冪等——刪不存在的日子不報錯）。
@@ -78,7 +83,7 @@
 3. 單次呼叫的批量上限與分批策略（暫定：沿用既有 BatchedPrune 的批次大小精神，由實作端依實測定，執行紀錄寫明理由）。
 
 ### 測試 / 驗收
-- 契約測試（比照 `AnalysisRecordStoreContractTests` 形式，Sqlite 實跑）：建立含全部子表資料的主機日 → 刪除 → 主列與四張子表皆無殘留；相鄰日、其他主機同日不受影響；重複刪除冪等。
+- 契約測試（比照 `AnalysisRecordStoreContractTests` 形式，Sqlite 實跑）：建立含 top_issues 子列的主機日 → 刪除 → 主列與子列皆無殘留；相鄰日、其他主機同日不受影響；重複刪除冪等。
 - 刪除後 `HasRecord` 回 false、`MissingDateFinder` 視為缺日。
 - handling／first_seen／mail 狀態不被觸碰（測試斷言表列數不變）。
 
