@@ -339,6 +339,15 @@ public class IssueDto
     public string LastSeen { get; set; } = string.Empty;
     public int DistinctMessageCount { get; set; }
     public string? KeyDetails { get; set; }
+
+    /// <summary>登入失敗（4625／4771／Linux ssh 認證失敗）的結構化明細，非登入失敗簽章為 null。</summary>
+    public List<LoginFailureDetailDto>? LoginFailureDetails { get; set; }
+
+    /// <summary>true＝此簽章判定為疑似殘留憑證重試（機械性重複，非攻擊）。</summary>
+    public bool ResidualCredentialRetry { get; set; }
+
+    /// <summary>殘留憑證重試（或 4740 由殘留觸發）的白話判定依據，未命中為 null。</summary>
+    public string? ResidualCredentialBasis { get; set; }
     public List<string> SampleMessages { get; set; } = new();
     public bool Suppressed { get; set; }
 
@@ -404,6 +413,18 @@ public class IssueDto
     /// 不必再到獨立的深入分析卡玩多對多連連看。
     /// </summary>
     public IssueGuidanceDto? Guidance { get; set; }
+}
+
+public class LoginFailureDetailDto
+{
+    public string Account { get; set; } = string.Empty;
+    public bool IsComputerAccount { get; set; }
+    public string Source { get; set; } = string.Empty;
+    /// <summary>登入類型的白話文字（如「網路登入」），Linux／4771 無此欄時為空字串。</summary>
+    public string LogonTypeText { get; set; } = string.Empty;
+    /// <summary>失敗原因的白話文字（如「密碼錯誤」）。</summary>
+    public string ReasonText { get; set; } = string.Empty;
+    public int Count { get; set; }
 }
 
 /// <summary>單一問題的處置參考——欄位對應 KnownIssueRule 的白話知識庫（也是 txt 報告「處置參考」的來源）</summary>

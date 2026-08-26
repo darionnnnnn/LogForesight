@@ -1337,6 +1337,10 @@ function issueCell(issue) {
         prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
         wrap.appendChild(prunedHint);
     } else {
+        if (issue.residualCredentialBasis) wrap.appendChild(residualCredentialBlock(issue));
+
+        if (issue.loginFailureDetails?.length) wrap.appendChild(loginFailureDetailsTable(issue.loginFailureDetails));
+
         if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
 
         if (issue.distinctMessageCount > 1) {
@@ -1347,6 +1351,103 @@ function issueCell(issue) {
         }
 
         if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
+    }
+
+    return wrap;
+}
+
+/**
+ * 殘留徽章與判定依據（A6）：
+ * 當 issue.residualCredentialBasis 有值時呈現疑似殘留或由殘留觸發的徽章與說明。
+ */
+function residualCredentialBlock(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'small mt-1 px-2 py-1 rounded';
+    wrap.style.backgroundColor = 'var(--lf-info-soft)';
+    wrap.style.color = 'var(--lf-info-text)';
+
+    const badge = document.createElement('span');
+    badge.className = 'lf-badge lf-badge--secondary';
+    badge.textContent = issue.residualCredentialRetry ? '疑似殘留憑證重試' : '可能由殘留憑證觸發';
+    wrap.appendChild(badge);
+
+    const basis = document.createElement('div');
+    basis.className = 'mt-1';
+    basis.textContent = issue.residualCredentialBasis;
+    wrap.appendChild(basis);
+
+    return wrap;
+}
+
+/**
+ * 登入失敗明細表（A6）：
+ * 顯示帳號／來源／類型／原因／次數結構化明細，上限 10 列。
+ */
+function loginFailureDetailsTable(details) {
+    const wrap = document.createElement('div');
+    wrap.className = 'mt-1';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const headers = ['帳號', '來源', '類型', '原因', '次數'];
+    for (const h of headers) {
+        const th = document.createElement('th');
+        th.textContent = h;
+        if (h === '次數') th.className = 'text-end';
+        headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const maxRows = 10;
+    const displayed = details.slice(0, maxRows);
+    for (const d of displayed) {
+        const tr = document.createElement('tr');
+
+        const accountTd = document.createElement('td');
+        const accountSpan = document.createElement('span');
+        accountSpan.textContent = d.account ? d.account : '（不明）';
+        accountTd.appendChild(accountSpan);
+        if (d.isComputerAccount) {
+            const note = document.createElement('span');
+            note.className = 'text-muted small ms-1';
+            note.textContent = '（電腦帳號）';
+            accountTd.appendChild(note);
+        }
+        tr.appendChild(accountTd);
+
+        const sourceTd = document.createElement('td');
+        sourceTd.textContent = d.source ? d.source : '（不明）';
+        tr.appendChild(sourceTd);
+
+        const typeTd = document.createElement('td');
+        typeTd.textContent = d.logonTypeText ? d.logonTypeText : '—';
+        tr.appendChild(typeTd);
+
+        const reasonTd = document.createElement('td');
+        reasonTd.textContent = d.reasonText ? d.reasonText : '（不明）';
+        tr.appendChild(reasonTd);
+
+        const countTd = document.createElement('td');
+        countTd.className = 'text-end';
+        countTd.textContent = formatNumber(d.count);
+        tr.appendChild(countTd);
+
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    if (details.length > maxRows) {
+        const remaining = details.length - maxRows;
+        const note = document.createElement('div');
+        note.className = 'text-muted small mt-1';
+        note.textContent = `另有 ${remaining} 筆明細未顯示`;
+        wrap.appendChild(note);
     }
 
     return wrap;

@@ -227,12 +227,12 @@ internal static class ResidualCredentialDetector
         var account = largest.Account;
         var source = string.IsNullOrWhiteSpace(largest.Source) ? "來源不明" : largest.Source;
         var count = largest.Count;
-        var reasonText = FormatReason(largest.ReasonCode);
+        var reasonText = LoginFailureTextFormatter.FormatReason(largest.ReasonCode);
 
         string parenDetails;
         if (issue.EventId == 4625 && largest.LogonType.HasValue)
         {
-            var typeText = FormatLogonType(largest.LogonType.Value);
+            var typeText = LoginFailureTextFormatter.FormatLogonType(largest.LogonType.Value);
             parenDetails = $"{typeText}，{reasonText}";
         }
         else
@@ -243,26 +243,6 @@ internal static class ResidualCredentialDetector
         return $"疑似殘留憑證重試：{account} 自 {source} 重複失敗 {count} 次（{parenDetails}），近 7 天已重複出現";
     }
 
-    private static string FormatReason(string? reasonCode) => reasonCode?.ToLowerInvariant() switch
-    {
-        "bad_password" => "密碼錯誤",
-        "password_expired" => "密碼已過期",
-        "account_locked" => "帳號已鎖定",
-        "account_disabled" => "帳號已停用",
-        "account_locked_or_disabled" => "帳號已鎖定或停用",
-        "account_expired" => "帳號已到期",
-        "logon_time_restriction" => "登入時段限制",
-        "workstation_restriction" => "工作站限制",
-        _ => "原因不明"
-    };
-
-    private static string FormatLogonType(int logonType) => logonType switch
-    {
-        3 => "網路登入",
-        4 => "排程工作",
-        5 => "服務",
-        _ => $"登入類型 {logonType}"
-    };
 
     /// <summary>
     /// 從簽章的 KeyDetails 字串（如「相關帳號(3個): alice, bob, svc_backup；來源IP(1個): 10.0.0.5」）
