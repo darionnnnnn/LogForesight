@@ -486,6 +486,13 @@ public class RiskReportService
             sb.AppendLine();
             sb.Append($"  {i.KeyDetails}");
         }
+        // 殘留憑證判定依據（FEEDBACK-30 A3）：這條簽章的嚴重度被判定調降過，
+        // 報告不寫出理由的話，讀者只會看到一個沒來由變成 Medium 的登入失敗。
+        if (i.ResidualCredentialBasis != null)
+        {
+            sb.AppendLine();
+            sb.Append($"  {i.ResidualCredentialBasis}");
+        }
         return sb.ToString();
     }
 

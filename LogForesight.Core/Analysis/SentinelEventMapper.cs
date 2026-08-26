@@ -64,6 +64,21 @@ internal static class SentinelEventMapper
             message = fields.GetValueOrDefault(SentinelFieldMap.EventName, string.Empty);
         }
 
+        if (eventId == 4625 || eventId == 4771)
+        {
+            var shn = fields.GetValueOrDefault(SentinelFieldMap.InitiatorHostName);
+            if (!string.IsNullOrWhiteSpace(shn) && shn != "-")
+            {
+                message = message.Length > 0 ? $"{message}\nWorkstation Name: {shn}" : $"Workstation Name: {shn}";
+            }
+
+            var sip = fields.GetValueOrDefault(SentinelFieldMap.InitiatorIp);
+            if (!string.IsNullOrWhiteSpace(sip) && sip != "-")
+            {
+                message = message.Length > 0 ? $"{message}\nSource Network Address: {sip}" : $"Source Network Address: {sip}";
+            }
+        }
+
         var initiator = fields.GetValueOrDefault(SentinelFieldMap.InitiatorAccount);
         var initiatorAccount = string.IsNullOrWhiteSpace(initiator) ? null : initiator;
 

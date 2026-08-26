@@ -95,7 +95,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 （`SentinelQueryBuilder.LinuxRuleProgramClauses` 的 `sp:{pattern}*`，不像 `MessagePatterns`
 有引號＋跳脫保護），空白或 `(`／`:`／`*` 等特殊字元會讓整份夜間取數查詢語法壞掉、
 整批主機查詢失敗。字元集與 `SentinelEventMapper` 的 msg 前綴 program 正則一致
-（syslog identifier 的實務形狀），17 條種子全數天然合格。
+（syslog identifier 的實務形狀），28 條 Linux 種子全數天然合格。
 
 ### `MatchAllEventIds` 為什麼要顯式宣告
 
@@ -174,9 +174,17 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 - `--import-rules`（`RuleImportPlanner`）以 `Id` 為鍵做 diff：
   - 種子裡存在、`rules.json` 沒有的 → **新增**
   - 兩邊 Id 相同、內容相同（不比較 `Enabled`）→ **略過**
-  - 兩邊 Id 相同、內容不同、`Origin` 為 `builtin` → 預設**略過並提示**，需要
-    `--overwrite-builtin` 才會覆蓋；覆蓋時**保留使用者原本的 `Enabled` 設定**
-    （使用者停用某條 builtin 是操作決定，不是「內容被改過」，匯入不該把它悄悄打開）
+  - 兩邊 Id 相同、內容不同、`Origin` 為 `builtin` → **依 `ModifiedBy` 分流**：
+    - `ModifiedBy` 為 null（使用者從未在管理頁改過這條）→ 視為**原廠更新，直接套用**，
+      不需要 `--overwrite-builtin`／不需要勾選覆蓋。**這是必要的**：內容不同純粹是因為
+      程式更新了規則（例如修正一條比對範圍過寬的規則、調整一個會誤報的嚴重度），
+      而「連同已修改的內建規則一併覆蓋」這個選項的語意是保護使用者的手動修改，
+      不該連帶擋住使用者根本沒碰過的規則的原廠修正。
+    - `ModifiedBy` 有值（使用者曾手動修改）→ 維持預設**略過並提示**，
+      需要 `--overwrite-builtin`／勾選覆蓋才會以原廠版本蓋掉。
+    - 兩條路徑都**保留使用者原本的 `Enabled` 設定**（使用者停用某條 builtin 是操作決定，
+      不是「內容被改過」，匯入不該把它悄悄打開）；套用時 `CloneForSeedOverwrite`
+      一併清空 `ModifiedBy`／`ModifiedAt`（回到未修改狀態）。
   - 兩邊 Id 相同但 `Origin` 不是 `builtin`（使用者把它改成 custom 或衝突）→ **衝突**，
     不處理，需要人工排解
   - 預設**只預覽**（列出將新增/更新/略過/衝突的 Id 與原因），加 `--apply` 才真正寫入；

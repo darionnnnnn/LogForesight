@@ -72,7 +72,7 @@ public static class SentinelFieldMap
     public static readonly IReadOnlyList<string> Q1ProjectionFields = new[]
     {
         HostIp, HostName, EventId, Source, LogName, Timestamp, Severity, Message, EventName,
-        InitiatorAccount, XdasOutcome
+        InitiatorAccount, XdasOutcome, InitiatorHostName, InitiatorIp
     };
 
     // ── Linux（docs/archive/FEEDBACK-12-PLAN.md §4.0/§4.4，四輪 probe 實證定案，Sentinel「118_linux」）──

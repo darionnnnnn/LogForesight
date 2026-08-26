@@ -77,6 +77,12 @@ internal class AnalysisPromptBuilder
                 {
                     sb.AppendLine($"   {item.KeyDetails}");
                 }
+                // 殘留憑證判定（FEEDBACK-30 A3）必須進 prompt：不給的話 AI 看到大量登入失敗
+                // 會自行敘述成暴力破解，與系統自己的判定互相矛盾。
+                if (item.ResidualCredentialBasis != null)
+                {
+                    sb.AppendLine($"   {item.ResidualCredentialBasis}");
+                }
             }
             sb.AppendLine();
             sb.AppendLine("請只回傳一個 JSON 物件（不要任何其他文字），no 為上列項目編號；全部屬一般雜訊時 notable 給空陣列：");
@@ -290,6 +296,11 @@ internal class AnalysisPromptBuilder
         if (i.KeyDetails != null)
         {
             sb.AppendLine($"  {i.KeyDetails}");
+        }
+        // 同上：AI 的白話說明不得與系統的殘留判定相矛盾
+        if (i.ResidualCredentialBasis != null)
+        {
+            sb.AppendLine($"  {i.ResidualCredentialBasis}");
         }
     }
 

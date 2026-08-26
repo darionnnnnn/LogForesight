@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Xunit;
 using static LogForesight.Tests.TestData;
 
@@ -578,6 +579,147 @@ public class TrendAnalyzerTests
         Assert.Empty(alerts);
         Assert.Empty(refs);
         Assert.Contains(suppressed, a => a.Contains("頻率上升"));
+    }
+
+    // ── 殘留憑證重試與趨勢層整合（A4c）─────────────────────────────────
+
+    /// <summary>
+    /// A4c：殘留簽章（ResidualCredentialRetry=true）達到 Rising 門檻時，
+    /// 不升級嚴重度（維持 Medium）、不設定 ElevatesDayRisk、Trend 仍照設 Rising，
+    /// 告警文字不進入 alerts（不把當日拉成中風險）。
+    /// </summary>
+    [Fact]
+    public void 殘留簽章Rising不升級嚴重度且不產生一般告警()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d =>
+            {
+                var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
+                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                return h;
+            })
+            .ToList();
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
+        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.ResidualCredentialRetry = true;
+        sig.ElevatesDayRisk = false;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Equal(IssueSeverity.Medium, sig.Severity);
+        Assert.False(sig.ElevatesDayRisk);
+        Assert.DoesNotContain(alerts, a => a.Contains("頻率上升"));
+    }
+
+    /// <summary>
+    /// A4c：殘留簽章的告警文字進 suppressedAlerts 且尾端含「（疑似殘留憑證重試，不列入風險判定）」。
+    /// </summary>
+    [Fact]
+    public void 殘留簽章的告警進suppressedAlerts且含註記()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d =>
+            {
+                var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
+                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                return h;
+            })
+            .ToList();
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
+        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.ResidualCredentialRetry = true;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10,
+            false, false, out var suppressedAlerts, out var refs);
+
+        Assert.Empty(alerts);
+        Assert.Empty(refs);
+        var suppressed = Assert.Single(suppressedAlerts);
+        Assert.Contains("頻率上升", suppressed);
+        Assert.Contains("疑似殘留憑證重試", suppressed);
+    }
+
+    /// <summary>
+    /// A4c 回歸保護：非殘留簽章（ResidualCredentialRetry=false）達到 Rising 門檻時照常升級嚴重度並產生告警。
+    /// </summary>
+    [Fact]
+    public void 非殘留簽章Rising照常升級且產生告警()
+    {
+        var history = Enumerable.Range(1, 14)
+            .Select(d =>
+            {
+                var h = HistoryDay(DateTime.Today.AddDays(-d), "Microsoft-Windows-Security-Auditing", 4625, 2, IssueSeverity.Medium, "Security", IssueCategory.Security);
+                h.TopIssues[0].EntryType = EventLogEntryType.FailureAudit;
+                return h;
+            })
+            .ToList();
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
+        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.ResidualCredentialRetry = false;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, 0, 10);
+
+        Assert.Equal(IssueTrend.Rising, sig.Trend);
+        Assert.Equal(IssueSeverity.High, sig.Severity);
+        Assert.Contains(alerts, a => a.Contains("頻率上升"));
+    }
+
+    /// <summary>
+    /// A4c：安全稽核事件量突增在扣除殘留稽核量後未達突增門檻時不告警。
+    /// todayAuditCount 500、殘留 480、基準 20 → 排除後 20 筆未達基準 2 倍，不告警。
+    /// </summary>
+    [Fact]
+    public void 安全稽核事件量突增_排除殘留量後不告警()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 20, RiskLevel = "低" })
+            .ToList();
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 480, IssueSeverity.Medium, IssueCategory.Security);
+        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.ResidualCredentialRetry = true;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 500);
+
+        Assert.DoesNotContain(alerts, a => a.Contains("安全稽核事件量突增"));
+    }
+
+    /// <summary>
+    /// A4c：安全稽核事件量突增在扣除殘留稽核量後仍達突增門檻時照常告警，且文字註明已排除筆數。
+    /// todayAuditCount 500、殘留 100、基準 20 → 排除後 400 筆仍達基準 2 倍，照常告警且文字含「已排除」。
+    /// </summary>
+    [Fact]
+    public void 安全稽核事件量突增_排除後仍突增則照常告警且文字含已排除()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 20, RiskLevel = "低" })
+            .ToList();
+        var sig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 100, IssueSeverity.Medium, IssueCategory.Security);
+        sig.EntryType = EventLogEntryType.FailureAudit;
+        sig.ResidualCredentialRetry = true;
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature> { sig }, history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 500);
+
+        var alert = Assert.Single(alerts, a => a.Contains("安全稽核事件量突增"));
+        Assert.Contains("今日 400 筆", alert);
+        Assert.Contains("已排除疑似殘留憑證重試 100 筆", alert);
+    }
+
+    /// <summary>
+    /// A4c 回歸保護：無任何殘留簽章時，安全稽核事件量突增文字與行為不變（不含「已排除」）。
+    /// </summary>
+    [Fact]
+    public void 安全稽核事件量突增_無殘留時文字與行為不變()
+    {
+        var history = Enumerable.Range(1, 5)
+            .Select(d => new DailyAnalysisRecord { Date = DateTime.Today.AddDays(-d), ErrorCount = 0, AuditEventCount = 20, RiskLevel = "低" })
+            .ToList();
+
+        var alerts = TrendAnalyzer.Apply(new List<LogIssueSignature>(), history, DateTime.Today, todayErrorCount: 0, todayAuditCount: 500);
+
+        var alert = Assert.Single(alerts, a => a.Contains("安全稽核事件量突增"));
+        Assert.Contains("今日 500 筆", alert);
+        Assert.DoesNotContain("已排除", alert);
     }
 
     private static DailyAnalysisRecord DefenderHistoryDay(DateTime date, int eventId, int count)

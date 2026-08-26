@@ -188,6 +188,29 @@ public static class SentinelQueryBuilder
     internal const int MinPrefixOctets = 2;
 
     /// <summary>
+    /// 將字串形式的粒度（如 "24"、"/24"、"Slash24"）解析為 <see cref="ScanGranularity"/>。
+    /// 無法解析、空值或未支援的值一律安全退回 <see cref="ScanGranularity.Slash24"/>（粒度為最佳化選項，不擲例外）。
+    /// </summary>
+    public static ScanGranularity ParseGranularity(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return ScanGranularity.Slash24;
+
+        var trimmed = input.Trim().TrimStart('/');
+        if (trimmed.Equals("24", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Slash24", StringComparison.OrdinalIgnoreCase))
+        {
+            return ScanGranularity.Slash24;
+        }
+        if (trimmed.Equals("26", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("Slash26", StringComparison.OrdinalIgnoreCase))
+        {
+            return ScanGranularity.Slash26;
+        }
+
+        return ScanGranularity.Slash24;
+    }
+
+    /// <summary>
     /// 把使用者輸入的網段字串（前綴「192.168.0」或 CIDR「192.168.0.0/24」）正規化成
     /// Lucene 前綴萬用字元查詢（<c>repip:192.168.0.*</c>）。純格式驗證，不含任何比對
     /// Sentinel 實際資料的邏輯。不帶 CIDR 的完整四段 IP **不接受**，理由見
@@ -204,7 +227,21 @@ public static class SentinelQueryBuilder
     public static string BuildSubnetDiscoveryFilter(string subnetInput, IReadOnlyCollection<string>? excludeIps)
     {
         var prefix = NormalizeSubnetPrefix(subnetInput);
-        return $"{SentinelFieldMap.HostIp}:{prefix}.*{BuildExclusionSuffix(excludeIps)}";
+        return BuildSubnetDiscoveryFilter(new ScanSegment(prefix, prefix, null), excludeIps);
+    }
+
+    /// <summary>
+    /// 依 <see cref="ScanSegment"/> 建構探索補充掃描的 filter。
+    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/25、/26），以逐 IP 明列 OR 子句表達；
+    /// 若為 null（/24），使用前綴萬用字元查詢。
+    /// 
+    /// <para><b>子句數申報</b>：/26 為 64 個位址子句，加上排除最多 64 個，合計最多 128 個 OR/NOT 子句。
+    /// Lucene 預設 maxClauseCount 是 1024，結構上安全但 128 子句未經實測，試點時要核對是否被 Sentinel 拒絕。</para>
+    /// </summary>
+    public static string BuildSubnetDiscoveryFilter(ScanSegment segment, IReadOnlyCollection<string>? excludeIps = null)
+    {
+        var addressClause = BuildAddressClause(segment);
+        return $"{addressClause}{BuildExclusionSuffix(excludeIps)}";
     }
 
     /// <summary>
@@ -229,11 +266,34 @@ public static class SentinelQueryBuilder
         string subnetInput, IReadOnlyCollection<string>? excludeIps = null, string os = WebHost.OsWindows)
     {
         var prefix = NormalizeSubnetPrefix(subnetInput);
-        var contentClause = os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)
+        return BuildSubnetProbeFilter(new ScanSegment(prefix, prefix, null), excludeIps, os);
+    }
+
+    /// <summary>
+    /// 依 <see cref="ScanSegment"/> 建構探索主掃描的 filter（位址子句 ＋ 頻道窄化 ＋ 排除後綴）。
+    /// 若分段帶有 <see cref="ScanSegment.Ips"/>（/25、/26），以逐 IP 明列 OR 子句表達；
+    /// 若為 null（/24），使用前綴萬用字元查詢。
+    /// 
+    /// <para><b>子句數申報</b>：/26 為 64 個位址子句，加上排除最多 64 個，合計最多 128 個 OR/NOT 子句。
+    /// Lucene 預設 maxClauseCount 是 1024，結構上安全但 128 子句未經實測，試點時要核對是否被 Sentinel 拒絕。</para>
+    /// </summary>
+    public static string BuildSubnetProbeFilter(
+        ScanSegment segment, IReadOnlyCollection<string>? excludeIps = null, string os = WebHost.OsWindows)
+    {
+        var addressClause = BuildAddressClause(segment);
+        var contentClause = BuildProbeContentClause(os);
+        return $"({addressClause} AND {contentClause}){BuildExclusionSuffix(excludeIps)}";
+    }
+
+    private static string BuildAddressClause(ScanSegment segment) =>
+        segment.Ips is { Count: > 0 }
+            ? BuildIpClause(segment.Ips)
+            : $"{SentinelFieldMap.HostIp}:{segment.Prefix}.*";
+
+    private static string BuildProbeContentClause(string os) =>
+        os.Equals(WebHost.OsLinux, StringComparison.OrdinalIgnoreCase)
             ? $"{SentinelFieldMap.Severity}:[0 TO 5]"
             : $"({SentinelFieldMap.LogName}:System OR {SentinelFieldMap.LogName}:Application)";
-        return $"({SentinelFieldMap.HostIp}:{prefix}.* AND {contentClause}){BuildExclusionSuffix(excludeIps)}";
-    }
 
     /// <summary>
     /// 排除子句 <c> AND NOT (repip:a OR repip:b …)</c>——空清單回空字串。
@@ -363,4 +423,86 @@ public static class SentinelQueryBuilder
 
         return string.Join('.', parsed);
     }
+
+    /// <summary>
+    /// 把使用者輸入的網段前綴（如「192.168」或「192.168.1」或 CIDR「192.168.0.0/16」）
+    /// 展開成逐段掃描的 /24 前綴清單。
+    /// <list type="bullet">
+    ///   <item>正規化後已是三段（如「192.168.1」）→ 回傳單元素清單 [192.168.1]。</item>
+    ///   <item>正規化後是兩段（如「192.168」）→ 展開為「192.168.0」～「192.168.255」，共 256 個子網段。</item>
+    /// </list>
+    /// 純函數，驗證與格式例外完全沿用 <see cref="NormalizeSubnetPrefix"/>。
+    /// </summary>
+    /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足／超出規範。</exception>
+    public static IReadOnlyList<string> ExpandToSlash24Prefixes(string subnetInput)
+    {
+        var normalized = NormalizeSubnetPrefix(subnetInput);
+        var octets = normalized.Split('.');
+
+        if (octets.Length == 3)
+        {
+            return new[] { normalized };
+        }
+
+        if (octets.Length == 2)
+        {
+            var prefixes = new List<string>(256);
+            for (var i = 0; i <= 255; i++)
+            {
+                prefixes.Add($"{normalized}.{i}");
+            }
+            return prefixes;
+        }
+
+        // NormalizeSubnetPrefix 已透過 MinPrefixOctets 擋下 < 2 段，且不接受 4 段；此處為防禦性回傳
+        return new[] { normalized };
+    }
+
+    /// <summary>
+    /// 依指定的掃描粒度將使用者輸入的網段展開成分段清單：
+    /// <list type="bullet">
+    ///   <item><see cref="ScanGranularity.Slash24"/>：每 /24 產生 1 個分段，使用前綴萬用字元查詢（Ips 為 null）。</item>
+    ///   <item><see cref="ScanGranularity.Slash26"/>：每 /24 產生 4 個分段（.0~.63、.64~.127、.128~.191、.192~.255），以逐 IP 明列 OR 子句查詢。</item>
+    /// </list>
+    /// IP 清單包含該範圍內的全部位址（含網路與廣播位址，以實際事件 repip 為準）。
+    /// 驗證與格式例外完全沿用 <see cref="ExpandToSlash24Prefixes"/>。
+    /// </summary>
+    /// <exception cref="ArgumentException">輸入不是合法的 IPv4 前綴／CIDR，或段數不足／超出規範。</exception>
+    public static IReadOnlyList<ScanSegment> ExpandToSegments(string subnetInput, ScanGranularity granularity)
+    {
+        var prefixes = ExpandToSlash24Prefixes(subnetInput);
+
+        if (granularity == ScanGranularity.Slash24)
+        {
+            return prefixes.Select(p => new ScanSegment(p, p, null)).ToList();
+        }
+
+        // /26＝每 64 個位址一段（每個 /24 拆四段）。
+        // **刻意不提供 /25**：/25 一次要送 128 個位址子句，加上段內排除最多再 128 個，
+        // 合計 256 子句——而本環境的 probe 只實證過 OR 50~100 個。把 /25 拆成兩個 64 子句的
+        // 查詢送出後，它與 /26 在查詢層面完全等價，多這個選項只是讓人以為有第三種涵蓋粒度。
+        const int segmentSize = 64;
+        var segments = new List<ScanSegment>(prefixes.Count * (256 / segmentSize));
+
+        foreach (var prefix in prefixes)
+        {
+            for (var start = 0; start < 256; start += segmentSize)
+            {
+                var ips = Enumerable.Range(start, segmentSize).Select(i => $"{prefix}.{i}").ToList();
+                segments.Add(new ScanSegment(prefix, $"{prefix}.{start}/26", ips));
+            }
+        }
+
+        return segments;
+    }
 }
+
+/// <summary>掃描粒度：一次查詢涵蓋多大的位址範圍。/24 用前綴萬用字元，
+/// /25 與 /26 無法對齊字串前綴，改以逐 IP 明列 OR 子句表達。</summary>
+public enum ScanGranularity { Slash24, Slash26 }
+
+/// <summary>一個掃描分段。Prefix 是顯示與歸屬用的 /24 前綴；
+/// Ips 非 null 時代表這一段要以逐 IP 明列 OR 子句查詢（/25、/26），
+/// null 代表用 Prefix 的前綴萬用字元查詢（/24）。</summary>
+public sealed record ScanSegment(string Prefix, string Label, IReadOnlyList<string>? Ips);
+

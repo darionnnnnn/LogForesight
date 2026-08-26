@@ -170,6 +170,17 @@ JSON 裡多出的欄位，不是新增資料表欄位）**：
   Linux 問題仍會併成一組，這是有意識接受的 v1 限制，真的有 Linux 流量進來後再評估
   （見 docs/LINUX-RULES.md）。
 
+- `LogIssueSignature.LoginFailureDetails`（`List<LoginFailureDetail>`，非登入失敗簽章為 null）：
+  登入失敗（4625／4771／Linux ssh・sudo・su 認證失敗）的結構化明細，依
+  (帳號, 來源, 登入類型, 失敗原因) 分組計數、依次數降冪封頂 50 組。
+  **低風險日的精簡策略刻意保留此欄不清空**（`RecordStorageShaper.ForStorage` 會把
+  `SampleMessages` 清空、`KeyDetails` 設為 null，但**不動這一欄**）——殘留憑證的跨日確認
+  要讀歷史紀錄的這個欄位，一併精簡掉就會靜默廢掉跨日確認制。**要動精簡策略前先看這一條。**
+- `LogIssueSignature.ResidualCredentialRetry`（bool）／`ResidualCredentialBasis`（string?）：
+  疑似殘留憑證重試的判定結果與白話依據（見 docs/DETECTION-SPEC.md）。
+  **只在 ContentJson，未抽出成 `lf_top_issues` 欄位**——因此無法用 SQL 篩「哪些日子有殘留判定」，
+  需要時走詳情頁路徑。
+
 **`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
 內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`**（AI 有可能把
 程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level` 篩選的查詢
@@ -177,41 +188,42 @@ JSON 裡多出的欄位，不是新增資料表欄位）**：
 bug 家族的同一種模式，寫入路徑因此固定放在同一處做兩件事。
 
 ```
-lf_top_issues                                        -- ↔ LogIssueSignature（欄位一比一，趨勢數字全保留）
+lf_top_issues                                        -- LogIssueSignature 的**抽出子表**（不是一比一鏡像）：
+                                                     -- 只抽出過濾／聚合需要的維度。趨勢數字、時段、
+                                                     -- 樣本訊息、key_details、登入失敗明細一律**只存在**
+                                                     -- lf_daily_records.content_json 的 DailyAnalysisRecord JSON。
                                                      -- 同時是**問題聚合的事實表**
                                                      -- （docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
                                                      -- 「這個問題影響幾台、跨哪段期間、出現幾天」
                                                      -- 由本表 GROUP BY 直接回答，不再把整段期間的
                                                      -- 紀錄撈回記憶體聚合。
-  issue_id         bigint PK
-  record_id        bigint FK → lf_daily_records NOT NULL
-  host_id          bigint NOT NULL DEFAULT 0         -- 去正規化自父列，且映射為**存活主機**：
+  issue_id          bigint PK
+  record_id         bigint FK → lf_daily_records NOT NULL
+  host_id           bigint NOT NULL DEFAULT 0         -- 去正規化自父列，且映射為**存活主機**：
                                                      -- 直接用紀錄的 host_id 會讓合併過的機器
                                                      -- （墓碑列＋存活列）被算成兩台
-  record_date      date NOT NULL                     -- 去正規化自父列（期間跨度／出現密度）
-  elevates_day_risk bit NOT NULL DEFAULT 0           -- 「重大」旗標（排行清單的嚴重度維度）
-  log_name         nvarchar(50) NOT NULL
-  source_name      nvarchar(255) NOT NULL         -- 'source' 是 Oracle 慣用字，改名避開
-  event_id         int NOT NULL
-  entry_type       nvarchar(20) NOT NULL
-  event_count      int NOT NULL                   -- 'count' 是保留字，改名
-  category         nvarchar(20) NOT NULL          -- Storage/Hardware/Security/...
-  severity         nvarchar(10) NOT NULL          -- Low/Medium/High/Critical
-  known_issue      nvarchar(500) NULL             -- 命中規則表時的中文說明（
-                                                  --   依問題視角的說明欄直接查此欄不解 JSON）
-  event_key        nvarchar(255) NOT NULL DEFAULT ''  -- 完整簽章第五段（
-                                                  --   Linux 規則 Id，Windows 恆空字串；聚合鍵仍是
-                                                  --   (source_name, event_id)，見 ContentJson 補充節）
-  first_seen       nvarchar(5)                    -- HH:mm（沿用現有模型；跨日聚合無意義所以不用 timestamp）
-  last_seen        nvarchar(5)
-  distinct_msg_count int NOT NULL
-  trend            nvarchar(20) NOT NULL          -- New/Rising/Recurring/Declining/Unknown
-  prev_day_count   int NULL
-  history_avg      float NULL                     -- SQL Server FLOAT / Oracle BINARY_DOUBLE
-  days_seen        int NOT NULL
-  sample_messages_json text NULL                  -- 低風險日為 NULL（精簡策略，與 JSONL 一致）
-  key_details      nvarchar(1000) NULL            -- Security 事件的帳號/IP 彙總
+  record_date       date NOT NULL                     -- 去正規化自父列（期間跨度／出現密度）
+  log_name          nvarchar(255) NOT NULL DEFAULT ''
+  source_name       nvarchar(255) NOT NULL            -- 'source' 是 Oracle 慣用字，改名避開
+  event_id          int NOT NULL
+  entry_type        int NOT NULL DEFAULT 0            -- EventLogEntryType 的**整數值**（不是字串）
+  event_key         nvarchar(255) NOT NULL DEFAULT '' -- 完整簽章第五段（
+                                                     --   Linux 規則 Id，Windows 恆空字串；聚合鍵仍是
+                                                     --   (source_name, event_id)，見 ContentJson 補充節）
+  event_count       int NOT NULL                      -- 'count' 是保留字，改名
+  category          nvarchar(20) NOT NULL             -- Storage/Hardware/Security/...
+  severity_rank     int NOT NULL                      -- IssueSeverity 的**序數**（不是字串）
+  elevates_day_risk bit NOT NULL DEFAULT 0            -- 「重大」旗標（排行清單的嚴重度維度）
+  known_issue       nvarchar(500) NULL                -- 命中規則表時的中文說明（
+                                                     --   依問題視角的說明欄直接查此欄不解 JSON）
+```
 
+**趨勢與呈現欄不在本表**：`Trend`／`PreviousDayCount`／`HistoryDailyAverage`／`DaysSeen`／
+`FirstSeen`／`LastSeen`／`DistinctMessageCount`／`SampleMessages`／`KeyDetails`／
+`LoginFailureDetails` 皆由 `content_json` round-trip 保真，需要它們的查詢一律走詳情頁路徑
+（`RecordDetailQueryService`），**不可假設 SQL 端取得**。
+
+```
 lf_record_alerts                                     -- ↔ TrendAlerts / CorrelationAlerts（+未來 fleet）
   alert_id       bigint PK
   record_id      bigint FK → lf_daily_records NOT NULL

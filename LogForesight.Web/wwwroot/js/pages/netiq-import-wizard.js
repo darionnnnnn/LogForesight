@@ -74,6 +74,14 @@ function renderScanPicker(allSentinels) {
     subnetInput.placeholder = '網段，例：192.168.0';
     row.appendChild(subnetInput);
 
+    const granularitySelect = document.createElement('select');
+    granularitySelect.className = 'form-select';
+    granularitySelect.style.maxWidth = '200px';
+    granularitySelect.id = 'scan-granularity-select';
+    granularitySelect.appendChild(new Option('每段 254 台（預設）', '24', true, true));
+    granularitySelect.appendChild(new Option('每段 62 台（最細）', '26'));
+    row.appendChild(granularitySelect);
+
     const scanButton = document.createElement('button');
     scanButton.type = 'button';
     scanButton.className = 'btn btn-primary';
@@ -81,15 +89,17 @@ function renderScanPicker(allSentinels) {
     scanButton.addEventListener('click', () => {
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
         const subnetPrefix = subnetInput.value.trim();
+        const granularity = granularitySelect.value;
         if (!subnetPrefix) {
             toast('請輸入要掃描的網段', 'warning');
             return;
         }
-        if (sentinel) openWizard(sentinel, subnetPrefix);
+        if (sentinel) openWizard(sentinel, subnetPrefix, granularity);
     });
     row.appendChild(scanButton);
 
     scanPicker.appendChild(row);
+    scanPicker.appendChild(pickerHint('網段事件量大時選較細的粒度可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。'));
 }
 
 function pickerHint(text) {
@@ -136,8 +146,32 @@ let wizardPane = 'subnets';       // 'subnets' | 'groups'
 let wizardScan = null;            // 最近一次掃描結果（NetiqScanResultDto）
 let wizardServer = null;          // 目前掃描的 Sentinel 名稱
 
+let pollTimer = null;
+let currentJobId = null;
+
+/**
+ * 停止輪詢。
+ * @param {boolean} forget true＝連工作識別一起丟掉（工作已結束或使用者取消）；
+ *   false＝只停定時器、保留 jobId——精靈關掉時背景工作仍在跑，丟掉 jobId 的話重開精靈
+ *   會去啟動新掃描並吃到後端「已有掃描進行中」，使用者被鎖到工作自然結束為止。
+ */
+function stopPolling(forget = true) {
+    if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+    }
+    if (forget) {
+        currentJobId = null;
+    }
+}
+
 function bindWizardControls() {
-    wizardModal = new bootstrap.Modal(document.getElementById('netiq-wizard-modal'));
+    const modalEl = document.getElementById('netiq-wizard-modal');
+    wizardModal = new bootstrap.Modal(modalEl);
+    modalEl.addEventListener('hidden.bs.modal', () => {
+        // 保留 jobId：背景工作沒有因為關掉畫面而停止，重開精靈要能續看
+        stopPolling(false);
+    });
     wizardTitle = document.getElementById('wizard-title');
     wizardHint = document.getElementById('wizard-hint');
     wizardBackButton = document.getElementById('wizard-back');
@@ -181,7 +215,77 @@ function bindWizardControls() {
     });
 }
 
-async function openWizard(sentinel, subnetPrefix) {
+function renderScanProgress(jobId, stage, hostsFound) {
+    const container = document.getElementById('wizard-scan-result');
+    container.replaceChildren();
+
+    const row = document.createElement('div');
+    row.className = 'd-flex align-items-center justify-content-between p-3 border rounded bg-light';
+
+    const statusWrap = document.createElement('div');
+    const stageText = stage || '掃描中';
+    renderSpinner(statusWrap, `${stageText}（已發現 ${hostsFound} 台）…`);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-sm btn-outline-danger';
+    cancelBtn.textContent = '取消掃描';
+    cancelBtn.addEventListener('click', async () => {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '取消中…';
+        try {
+            await api.post(`/api/admin/netiq/scan/${jobId}/cancel`);
+        } catch {
+            // ApiError 由 api.js 顯示
+        }
+    });
+
+    row.append(statusWrap, cancelBtn);
+    container.appendChild(row);
+}
+
+function startPolling(jobId, { resume = false } = {}) {
+    stopPolling(false);
+    currentJobId = jobId;
+    renderScanProgress(jobId, resume ? '接續先前的掃描…' : '主掃描中', 0);
+
+    const poll = async () => {
+        if (currentJobId !== jobId) return;
+        try {
+            const job = await api.get(`/api/admin/netiq/scan/${jobId}`);
+            if (currentJobId !== jobId) return;
+
+            if (job.status === 'running') {
+                renderScanProgress(jobId, job.stage, job.hostsFound);
+                pollTimer = setTimeout(poll, 2000);
+            } else if (job.status === 'completed') {
+                stopPolling();
+                wizardScan = job.result;
+                wizardPrimaryButton.disabled = false;
+                renderCoverageNote();
+                renderSubnetSelection();
+            } else if (job.status === 'failed') {
+                stopPolling();
+                if (job.error) {
+                    toast(job.error, 'danger');
+                }
+                wizardModal.hide();
+            } else if (job.status === 'canceled') {
+                stopPolling();
+                wizardModal.hide();
+            }
+        } catch {
+            // 輪詢遇到「工作不存在或已逾期」的錯誤（例如站台重啟）由 api.js 顯示訊息，停止輪詢
+            stopPolling();
+            wizardModal.hide();
+        }
+    };
+
+    pollTimer = setTimeout(poll, 2000);
+}
+
+async function openWizard(sentinel, subnetPrefix, granularity = '24') {
+    stopPolling(false);
     wizardPane = 'subnets';
     wizardScan = null;
     wizardServer = sentinel.name;
@@ -199,14 +303,18 @@ async function openWizard(sentinel, subnetPrefix) {
     document.getElementById('wizard-warnings').replaceChildren();
     renderSpinner(document.getElementById('wizard-scan-result'), '掃描中…');
     wizardPrimaryButton.disabled = true;
+    // 上一次掃描還在背景跑（精靈被關掉但工作沒停）→ 續看它，不要再啟動一個新掃描：
+    // 後端全站同時只允許一個 running 工作，硬送會吃到「已有掃描進行中」而把人鎖死。
+    if (currentJobId) {
+        startPolling(currentJobId, { resume: true });
+        return;
+    }
+
     try {
-        wizardScan = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix });
-        renderCoverageNote();
-        renderSubnetSelection();
+        const job = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix, granularity });
+        startPolling(job.jobId);
     } catch {
         wizardModal.hide();
-    } finally {
-        wizardPrimaryButton.disabled = false;
     }
 }
 

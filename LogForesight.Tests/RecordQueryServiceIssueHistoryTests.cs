@@ -241,4 +241,288 @@ public class RecordQueryServiceIssueHistoryTests : IDisposable
 
         Assert.Empty(history.Cases);
     }
+
+    // ── A6：登入失敗明細與殘留標記的 DTO 轉換 ────────────────────────────────
+
+    [Fact]
+    public void 明細有值時DTO正確轉換()
+    {
+        var host = AddHost("HOST-LOGIN-1");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "高",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    Count = 43,
+                    Severity = IssueSeverity.High,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "alice",
+                            IsComputerAccount = false,
+                            Source = "10.0.0.1",
+                            LogonType = 3,
+                            ReasonCode = "bad_password",
+                            Count = 40
+                        },
+                        new()
+                        {
+                            Account = "svc_backup",
+                            IsComputerAccount = false,
+                            Source = "10.0.0.2",
+                            LogonType = 5,
+                            ReasonCode = "password_expired",
+                            Count = 3
+                        }
+                    }
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+
+        Assert.NotNull(issue.LoginFailureDetails);
+        Assert.Equal(2, issue.LoginFailureDetails.Count);
+
+        var first = issue.LoginFailureDetails[0];
+        Assert.Equal("alice", first.Account);
+        Assert.False(first.IsComputerAccount);
+        Assert.Equal("10.0.0.1", first.Source);
+        Assert.Equal("網路登入", first.LogonTypeText);
+        Assert.Equal("密碼錯誤", first.ReasonText);
+        Assert.Equal(40, first.Count);
+
+        var second = issue.LoginFailureDetails[1];
+        Assert.Equal("svc_backup", second.Account);
+        Assert.False(second.IsComputerAccount);
+        Assert.Equal("10.0.0.2", second.Source);
+        Assert.Equal("服務", second.LogonTypeText);
+        Assert.Equal("密碼已過期", second.ReasonText);
+        Assert.Equal(3, second.Count);
+    }
+
+    [Fact]
+    public void 明細為null時DTO為null()
+    {
+        var host = AddHost("HOST-LOGIN-2");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "低",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "System",
+                    Source = Source,
+                    EventId = EventId,
+                    EntryType = System.Diagnostics.EventLogEntryType.Error,
+                    Count = 1,
+                    Severity = IssueSeverity.Low,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    LoginFailureDetails = null
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+
+        Assert.Null(issue.LoginFailureDetails);
+    }
+
+    [Fact]
+    public void 殘留旗標與依據正確傳遞()
+    {
+        var host = AddHost("HOST-LOGIN-3");
+        const string expectedBasis = "疑似殘留憑證重試：alice 自 10.0.0.1 重複失敗 40 次（網路登入，密碼錯誤），近 7 天已重複出現";
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "中",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    Count = 40,
+                    Severity = IssueSeverity.Medium,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    ResidualCredentialRetry = true,
+                    ResidualCredentialBasis = expectedBasis
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+
+        Assert.True(issue.ResidualCredentialRetry);
+        Assert.Equal(expectedBasis, issue.ResidualCredentialBasis);
+    }
+
+    [Fact]
+    public void LogonType為null時LogonTypeText為空字串()
+    {
+        var host = AddHost("HOST-LOGIN-4");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "高",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4771,
+                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    Count = 10,
+                    Severity = IssueSeverity.High,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "bob",
+                            IsComputerAccount = false,
+                            Source = "10.0.0.5",
+                            LogonType = null,
+                            ReasonCode = "bad_password",
+                            Count = 10
+                        }
+                    }
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+        var item = Assert.Single(issue.LoginFailureDetails!);
+
+        Assert.Equal(string.Empty, item.LogonTypeText);
+        Assert.Equal("密碼錯誤", item.ReasonText);
+    }
+
+    [Fact]
+    public void 電腦帳號旗標正確傳遞()
+    {
+        var host = AddHost("HOST-LOGIN-5");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "低",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    Count = 5,
+                    Severity = IssueSeverity.Low,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "WS01$",
+                            IsComputerAccount = true,
+                            Source = "192.168.1.50",
+                            LogonType = 3,
+                            ReasonCode = "bad_password",
+                            Count = 5
+                        }
+                    }
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+        var item = Assert.Single(issue.LoginFailureDetails!);
+
+        Assert.True(item.IsComputerAccount);
+        Assert.Equal("WS01$", item.Account);
+    }
+
+    [Fact]
+    public void 未知ReasonCode轉為原因不明()
+    {
+        var host = AddHost("HOST-LOGIN-6");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId,
+            Host = host.HostName,
+            Date = Today,
+            RiskLevel = "低",
+            Headline = $"{host.HostName} {Today:MM-dd}",
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    EntryType = System.Diagnostics.EventLogEntryType.FailureAudit,
+                    Count = 2,
+                    Severity = IssueSeverity.Low,
+                    FirstSeen = "00:00",
+                    LastSeen = "01:00",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "user_x",
+                            IsComputerAccount = false,
+                            Source = "10.0.0.9",
+                            LogonType = 3,
+                            ReasonCode = "some_custom_unknown_code",
+                            Count = 2
+                        }
+                    }
+                }
+            }
+        });
+
+        var detail = _service.GetDetail(host.HostId, Today);
+        var issue = Assert.Single(detail.TopIssues);
+        var item = Assert.Single(issue.LoginFailureDetails!);
+
+        Assert.Equal("原因不明", item.ReasonText);
+    }
 }

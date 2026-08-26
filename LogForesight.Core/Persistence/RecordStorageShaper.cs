@@ -70,6 +70,16 @@ internal static class RecordStorageShaper
                 SampleMessages = new List<string>(),       // 精簡：體積大戶，無風險日的基準用不到
                 DistinctMessageCount = i.DistinctMessageCount,
                 KeyDetails = null,                          // 精簡：同上
+                // 登入失敗明細（A1）：跨日比對依賴此欄位，已分組封頂 50 組體積受控，完整保留不精簡
+                LoginFailureDetails = i.LoginFailureDetails,
+                // 殘留憑證判定結果（A3／A4）同樣必須保留，且**正是低風險日最需要它的時候**：
+                // 判定命中會把 High 降成 Medium 並清掉 ElevatesDayRisk，這一天因此幾乎必然
+                // 被判為低風險日、走這條精簡路徑。漏抄的話跨日關聯（CorrelationAnalyzer 讀
+                // previousDay.TopIssues）會把昨天已判定殘留的 4625 當成暴力破解錨點，
+                // 【跨日入侵鏈】【暴力破解→RDP 得手】的誤報一個都不會消掉；詳情頁的徽章與
+                // 判定依據也會在最該顯示的那些日子整批消失。
+                ResidualCredentialRetry = i.ResidualCredentialRetry,
+                ResidualCredentialBasis = i.ResidualCredentialBasis,
                 Category = i.Category,
                 Severity = i.Severity,
                 // 低風險日仍可能帶「重大」旗標：被抑制的簽章不拉高風險（見 ComputeRuleBasedRisk）

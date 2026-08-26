@@ -211,6 +211,64 @@ public class RecordStorageShaperTests
         Assert.Empty(shaped.TopIssues[0].SampleMessages);
     }
 
+    [Fact]
+    public void 低風險日_保留LoginFailureDetails且清空SampleMessages與KeyDetails()
+    {
+        var record = new DailyAnalysisRecord
+        {
+            Date = DateTime.Today,
+            RiskLevel = "低",
+            ErrorCount = 3,
+            TopIssues = new List<LogIssueSignature>
+            {
+                new()
+                {
+                    LogName = "Security",
+                    Source = "Microsoft-Windows-Security-Auditing",
+                    EventId = 4625,
+                    Count = 10,
+                    Severity = IssueSeverity.High,
+                    Category = IssueCategory.Security,
+                    SampleMessages = new List<string> { "sample 1", "sample 2" },
+                    KeyDetails = "相關帳號(1個): alice",
+                    // 殘留判定命中會把 High 降 Medium 並清 ElevatesDayRisk，這一天因此幾乎必然
+                    // 是低風險日、走精簡路徑——正是最需要保留這兩個旗標的時候（見 ForStorage 註解）
+                    ResidualCredentialRetry = true,
+                    ResidualCredentialBasis = "疑似殘留憑證重試：alice 自 WKS01 重複失敗 40 次（網路登入，密碼錯誤），近 7 天已重複出現",
+                    LoginFailureDetails = new List<LoginFailureDetail>
+                    {
+                        new()
+                        {
+                            Account = "alice",
+                            IsComputerAccount = false,
+                            Source = "WKS01",
+                            LogonType = 3,
+                            ReasonCode = "bad_password",
+                            Count = 10
+                        }
+                    }
+                }
+            }
+        };
+
+        var shaped = RecordStorageShaper.ForStorage(record);
+        var issue = Assert.Single(shaped.TopIssues);
+
+        Assert.Empty(issue.SampleMessages);
+        Assert.Null(issue.KeyDetails);
+        // 跨日關聯（CorrelationAnalyzer 讀 previousDay.TopIssues）與詳情頁徽章都靠這兩個旗標；
+        // 漏抄的話昨天已判定殘留的 4625 明天照樣被當成暴力破解錨點。
+        Assert.True(issue.ResidualCredentialRetry);
+        Assert.Contains("疑似殘留憑證重試：alice", issue.ResidualCredentialBasis);
+        var detail = Assert.Single(issue.LoginFailureDetails!);
+        Assert.Equal("alice", detail.Account);
+        Assert.False(detail.IsComputerAccount);
+        Assert.Equal("WKS01", detail.Source);
+        Assert.Equal(3, detail.LogonType);
+        Assert.Equal("bad_password", detail.ReasonCode);
+        Assert.Equal(10, detail.Count);
+    }
+
     private static DailyAnalysisRecord LowRiskRecord() => new()
     {
         Date = DateTime.Today,

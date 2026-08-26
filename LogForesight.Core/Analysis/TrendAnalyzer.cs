@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace LogForesight.Core.Analysis;
 
 public enum IssueTrend
@@ -205,10 +207,14 @@ public static class TrendAnalyzer
                     // 三級化前（docs/archive/HISTORY.md #1，B1）：High 頻率上升會升級成 Critical，
                     // 直接讓當天判定為高風險日。嚴重度現在封頂 High，改用旗標達成同樣效果——
                     // 判定時機要在 Escalate 之前（看「升級前」是不是 High），
-                    // 否則 Medium→High 這種正常升一級也會被誤判成「原本就是 High」
+                    // 否則 Medium→High 這種正常升一級也會被誤判成「原本就是 High」。
+                    // 疑似殘留憑證重試（A4c）不升級嚴重度、不設定 ElevatesDayRisk。
                     var preEscalationSeverity = sig.Severity;
-                    if (sig.Severity == IssueSeverity.High) sig.ElevatesDayRisk = true;
-                    sig.Severity = Escalate(sig.Severity);
+                    if (!sig.ResidualCredentialRetry)
+                    {
+                        if (sig.Severity == IssueSeverity.High) sig.ElevatesDayRisk = true;
+                        sig.Severity = Escalate(sig.Severity);
+                    }
 
                     // Rising 嚴重度閘門（回饋十五輪 A-4）：Trend/Escalate/ElevatesDayRisk 上面已經
                     // 照算不受影響（供紀錄與頻率報表），但 Low 簽章的頻率上升不產生告警文字、不拉高
@@ -216,19 +222,11 @@ public static class TrendAnalyzer
                     // LogAnalysisService.ComputeRuleBasedRisk：trendAlerts.Count > 0 直接判中風險）。
                     // 門檻用升級前的嚴重度：Escalate 必定把 Low 拉到 Medium，若用升級後的值判斷，
                     // 這道閘門會恆真、形同沒做。
+                    string? text = null;
                     if (preEscalationSeverity >= IssueSeverity.Medium)
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                        var text = $"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
-                        if (sig.Suppressed)
-                        {
-                            suppressedAlerts.Add(text);
-                        }
-                        else
-                        {
-                            alerts.Add(text);
-                            alertRefs.Add(new TrendAlertRef { Text = text, IssueKey = issueKey, Kind = TrendAlertKinds.Signature });
-                        }
+                        text = $"頻率上升：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
                     }
                     // 爆量例外（回饋十六輪批次B-1，見 SurgeFactor／SurgeMinCount 說明）：升級前是
                     // Low，一般閘門本該靜音，但今日量體已達基準 10 倍或絕對量 100 筆——未命中任何
@@ -237,8 +235,19 @@ public static class TrendAnalyzer
                     else if (sig.Count >= sig.HistoryDailyAverage * SurgeFactor || sig.Count >= SurgeMinCount)
                     {
                         var prevText = sig.PreviousDayCount != null ? $"、昨日 x{sig.PreviousDayCount}" : "";
-                        var text = $"頻率暴增：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
-                        if (sig.Suppressed)
+                        text = $"頻率暴增：{sig.SourceEventLabel} 今日 x{sig.Count}，近 {relevantHistory.Count} 日可靠歷史基準 x{sig.HistoryDailyAverage}{prevText}";
+                    }
+
+                    if (text != null)
+                    {
+                        // 疑似殘留憑證重試（A4c）：告警文字送進 suppressedAlerts（不進 alerts/alertRefs），
+                        // 避免 trendAlerts.Count > 0 把當天拉成中風險，並於文字尾端加註說明。
+                        if (sig.ResidualCredentialRetry)
+                        {
+                            text += "（疑似殘留憑證重試，不列入風險判定）";
+                            suppressedAlerts.Add(text);
+                        }
+                        else if (sig.Suppressed)
                         {
                             suppressedAlerts.Add(text);
                         }
@@ -304,21 +313,29 @@ public static class TrendAnalyzer
         // 安全稽核事件總量突增：稽核事件（如 4625 登入失敗）不計入錯誤數，需獨立比對總量；
         // 額外排除 Security log 無權限的歷史日（假性零會把基準墊低）。基準同樣改用非零日中位數，
         // 理由與上方錯誤量突增一致。
+        //
+        // 分子排除當日殘留稽核量（A4c），基準維持原始筆數未排除：刻意的保守不對稱，只會少報不會多報。
         if (reliableAuditHistory.Count > 0)
         {
+            var residualAuditCount = issues
+                .Where(i => i.ResidualCredentialRetry && (i.EntryType is EventLogEntryType.FailureAudit or EventLogEntryType.SuccessAudit))
+                .Sum(i => i.Count);
+            var effectiveTodayAuditCount = Math.Max(0, todayAuditCount - residualAuditCount);
+            var residualAuditNote = residualAuditCount > 0 ? $"（已排除疑似殘留憑證重試 {residualAuditCount} 筆）" : "";
+
             var nonZeroAuditDays = reliableAuditHistory.Select(h => h.AuditEventCount).Where(c => c > 0).ToList();
             string? text = null;
             if (nonZeroAuditDays.Count > 0)
             {
                 var baselineAudit = Median(nonZeroAuditDays);
-                if (todayAuditCount >= 10 && todayAuditCount >= baselineAudit * RisingFactor)
+                if (effectiveTodayAuditCount >= 10 && effectiveTodayAuditCount >= baselineAudit * RisingFactor)
                 {
-                    text = $"安全稽核事件量突增：今日 {todayAuditCount} 筆，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試";
+                    text = $"安全稽核事件量突增：今日 {effectiveTodayAuditCount} 筆{residualAuditNote}，近 {reliableAuditHistory.Count} 日可靠歷史基準 {baselineAudit:0.#} 筆，需留意入侵嘗試";
                 }
             }
-            else if (todayAuditCount >= 10)
+            else if (effectiveTodayAuditCount >= 10)
             {
-                text = $"安全稽核事件量突增：近 {reliableAuditHistory.Count} 日可靠歷史多數日無稽核事件，今日出現 {todayAuditCount} 筆，需留意入侵嘗試";
+                text = $"安全稽核事件量突增：近 {reliableAuditHistory.Count} 日可靠歷史多數日無稽核事件，今日出現 {effectiveTodayAuditCount} 筆{residualAuditNote}，需留意入侵嘗試";
             }
 
             if (text != null)

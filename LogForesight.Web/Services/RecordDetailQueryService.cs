@@ -577,6 +577,17 @@ public class RecordDetailQueryService
             LastSeen = issue.LastSeen,
             DistinctMessageCount = issue.DistinctMessageCount,
             KeyDetails = issue.KeyDetails,
+            LoginFailureDetails = issue.LoginFailureDetails?.Select(d => new LoginFailureDetailDto
+            {
+                Account = d.Account,
+                IsComputerAccount = d.IsComputerAccount,
+                Source = d.Source,
+                LogonTypeText = d.LogonType.HasValue ? LoginFailureTextFormatter.FormatLogonType(d.LogonType.Value) : string.Empty,
+                ReasonText = LoginFailureTextFormatter.FormatReason(d.ReasonCode),
+                Count = d.Count
+            }).ToList(),
+            ResidualCredentialRetry = issue.ResidualCredentialRetry,
+            ResidualCredentialBasis = issue.ResidualCredentialBasis,
             SampleMessages = issue.SampleMessages,
             Suppressed = issue.Suppressed,
             Trend = issue.Trend.ToString(),

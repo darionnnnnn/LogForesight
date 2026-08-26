@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -149,6 +149,21 @@ public class NetiqScanRequest
     [Required(ErrorMessage = "請輸入要掃描的網段")]
     [StringLength(20)]
     public string SubnetPrefix { get; set; } = string.Empty;
+
+    /// <summary>掃描粒度（選填）："24"（預設）、"25"、"26"（或 "/24"、"/25"、"/26"）。
+    /// 無法解析或缺席時一律退回 /24。</summary>
+    public string? Granularity { get; set; }
+}
+
+public class NetiqScanJobDto
+{
+    public string JobId { get; set; } = string.Empty;
+    /// <summary>running / completed / failed / canceled</summary>
+    public string Status { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public int HostsFound { get; set; }
+    public NetiqScanResultDto? Result { get; set; }
+    public string? Error { get; set; }
 }
 
 public class NetiqScanResultDto

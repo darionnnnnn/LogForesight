@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using Xunit;
 
 namespace LogForesight.Tests;
@@ -273,9 +274,12 @@ public class SentinelQueryBuilderTests
             Assert.Contains($"{SentinelFieldMap.LinuxProgram}:{noisy}* AND {SentinelFieldMap.Message}:(", filter);
         }
 
-        // 靜 program：帳號異動類（無 MessagePatterns）應該只有整拉，不帶 msg 子句
-        Assert.Contains($"{SentinelFieldMap.LinuxProgram}:user*", filter);
-        Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:user* AND", filter);
+        // 靜 program：帳號與群組異動類（無 MessagePatterns）應該只有整拉，不帶 msg 子句
+        foreach (var prog in new[] { "useradd", "usermod", "userdel", "groupadd", "groupmod", "groupdel" })
+        {
+            Assert.Contains($"{SentinelFieldMap.LinuxProgram}:{prog}*", filter);
+            Assert.DoesNotContain($"{SentinelFieldMap.LinuxProgram}:{prog}* AND", filter);
+        }
     }
 
     // ── NormalizeSubnetPrefix／BuildSubnetDiscoveryFilter（網段範圍探索，docs/NETIQ-API-REFERENCE.md §3.4）──
@@ -477,5 +481,148 @@ public class SentinelQueryBuilderTests
             .Where(id => !seedRules.Any(r => !r.MatchAllEventIds && r.EventIds.Contains(id)));
 
         Assert.All(matchAllOnlyIds, id => Assert.DoesNotContain(id, eventIds));
+    }
+
+    // ── ExpandToSlash24Prefixes（/24 網段展開，task-B2-step1）──────────────────
+
+    [Fact]
+    public void ExpandToSlash24Prefixes_兩段前綴展開成256個子網段()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes("192.168");
+
+        Assert.Equal(256, segments.Count);
+        Assert.Equal("192.168.0", segments[0]);
+        Assert.Equal("192.168.255", segments[255]);
+        Assert.Equal("192.168.1", segments[1]);
+    }
+
+    [Fact]
+    public void ExpandToSlash24Prefixes_三段前綴回傳單元素清單()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes("192.168.1");
+
+        var segment = Assert.Single(segments);
+        Assert.Equal("192.168.1", segment);
+    }
+
+    [Theory]
+    [InlineData("192.168.0.0/16", 256, "192.168.0", "192.168.255")]
+    [InlineData("192.168.0.0/24", 1, "192.168.0", "192.168.0")]
+    [InlineData("10.1.2.0/24", 1, "10.1.2", "10.1.2")]
+    public void ExpandToSlash24Prefixes_CIDR輸入正確展開(string input, int expectedCount, string first, string last)
+    {
+        var segments = SentinelQueryBuilder.ExpandToSlash24Prefixes(input);
+
+        Assert.Equal(expectedCount, segments.Count);
+        Assert.Equal(first, segments.First());
+        Assert.Equal(last, segments.Last());
+    }
+
+    [Theory]
+    [InlineData("10")]               // 太籠統（只有一段）
+    [InlineData("192.168.1.1")]      // 完整四段單一 IP
+    [InlineData("192.168.0.0/25")]   // 不支援的 CIDR
+    [InlineData("invalid-subnet")]   // 非法字串
+    [InlineData("")]                 // 空字串
+    public void ExpandToSlash24Prefixes_不合法輸入擲ArgumentException(string input)
+    {
+        Assert.Throws<ArgumentException>(() => SentinelQueryBuilder.ExpandToSlash24Prefixes(input));
+    }
+
+    // ── ExpandToSegments（粒度展開，task-B2b-step1）───────────────────────────
+
+    [Fact]
+    public void ExpandToSegments_Slash24產生單段且Ips為null()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash24);
+
+        var seg = Assert.Single(segments);
+        Assert.Equal("192.168.7", seg.Prefix);
+        Assert.Equal("192.168.7", seg.Label);
+        Assert.Null(seg.Ips);
+    }
+
+    [Fact]
+    public void ExpandToSegments_Slash26產生4段首位址正確()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash26);
+
+        Assert.Equal(4, segments.Count);
+
+        var expectedLabels = new[] { "192.168.7.0/26", "192.168.7.64/26", "192.168.7.128/26", "192.168.7.192/26" };
+        var expectedFirstIps = new[] { "192.168.7.0", "192.168.7.64", "192.168.7.128", "192.168.7.192" };
+        var expectedLastIps = new[] { "192.168.7.63", "192.168.7.127", "192.168.7.191", "192.168.7.255" };
+
+        for (var i = 0; i < 4; i++)
+        {
+            var seg = segments[i];
+            Assert.Equal("192.168.7", seg.Prefix);
+            Assert.Equal(expectedLabels[i], seg.Label);
+            Assert.NotNull(seg.Ips);
+            Assert.Equal(64, seg.Ips.Count);
+            Assert.Equal(expectedFirstIps[i], seg.Ips[0]);
+            Assert.Equal(expectedLastIps[i], seg.Ips[63]);
+        }
+    }
+
+    [Fact]
+    public void ExpandToSegments_兩段前綴配合Slash26展開為1024段_超過掃描端512上限()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSegments("192.168", ScanGranularity.Slash26);
+
+        // 展開本身照算 1024 段，但掃描端的 MaxSegments 是 512——
+        // 這個組合會在 NetiqDirectoryClient 被擋下並提示改用較粗粒度或縮小範圍。
+        Assert.Equal(1024, segments.Count);
+        Assert.Equal("192.168.0", segments[0].Prefix);
+        Assert.Equal("192.168.0.0/26", segments[0].Label);
+        Assert.Equal("192.168.255", segments[1023].Prefix);
+        Assert.Equal("192.168.255.192/26", segments[1023].Label);
+    }
+
+    [Fact]
+    public void BuildSubnetDiscoveryFilter與BuildSubnetProbeFilter_Slash26明列OR且不含萬用字元()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash26);
+        var seg0 = segments[0];
+
+        var discoveryFilter = SentinelQueryBuilder.BuildSubnetDiscoveryFilter(seg0);
+        Assert.StartsWith("(repip:192.168.7.0 OR repip:192.168.7.1 OR ", discoveryFilter);
+        Assert.DoesNotContain("192.168.7.*", discoveryFilter);
+
+        var probeFilter = SentinelQueryBuilder.BuildSubnetProbeFilter(seg0);
+        Assert.StartsWith("((repip:192.168.7.0 OR repip:192.168.7.1 OR ", probeFilter);
+        Assert.Contains(" AND (rv150:System OR rv150:Application))", probeFilter);
+        Assert.DoesNotContain("192.168.7.*", probeFilter);
+    }
+
+    [Fact]
+    public void BuildSubnetDiscoveryFilter與BuildSubnetProbeFilter_Slash24仍使用萬用字元()
+    {
+        var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash24);
+        var seg = segments[0];
+
+        var discoveryFilter = SentinelQueryBuilder.BuildSubnetDiscoveryFilter(seg);
+        Assert.Equal("repip:192.168.7.*", discoveryFilter);
+
+        var probeFilter = SentinelQueryBuilder.BuildSubnetProbeFilter(seg);
+        Assert.Equal("(repip:192.168.7.* AND (rv150:System OR rv150:Application))", probeFilter);
+    }
+
+    [Theory]
+    [InlineData("26", ScanGranularity.Slash26)]
+    [InlineData("/26", ScanGranularity.Slash26)]
+    [InlineData("Slash26", ScanGranularity.Slash26)]
+    [InlineData("25", ScanGranularity.Slash24)]   // /25 已移除（見 ExpandToSegments 註解），無法解析一律退回 /24
+    [InlineData("24", ScanGranularity.Slash24)]
+    [InlineData("/24", ScanGranularity.Slash24)]
+    [InlineData("Slash24", ScanGranularity.Slash24)]
+    [InlineData(null, ScanGranularity.Slash24)]
+    [InlineData("", ScanGranularity.Slash24)]
+    [InlineData("   ", ScanGranularity.Slash24)]
+    [InlineData("abc", ScanGranularity.Slash24)]
+    [InlineData("/27", ScanGranularity.Slash24)]
+    public void ParseGranularity_各種格式正確解析與容錯(string? input, ScanGranularity expected)
+    {
+        Assert.Equal(expected, SentinelQueryBuilder.ParseGranularity(input));
     }
 }
