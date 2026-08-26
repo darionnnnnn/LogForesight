@@ -554,7 +554,7 @@ public class LinuxSignatureAggregationTests : IDisposable
             }
         }
 
-        var details = LogAggregator.ExtractLinuxLoginFailureDetails(msgs);
+        var details = LogAggregator.ExtractLinuxLoginFailureDetails(msgs).Details;
 
         Assert.Equal(50, details.Count);
         Assert.Equal("user1", details[0].Account);

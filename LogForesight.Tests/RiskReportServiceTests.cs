@@ -49,6 +49,23 @@ public class RiskReportServiceTests
     };
 
     [Fact]
+    public async Task 殘留憑證判定依據要寫進風險報告()
+    {
+        // 殘留判定會把嚴重度調降，報告不寫出理由的話，讀者只會看到一個沒來由變成
+        // Medium 的登入失敗（FEEDBACK-30 A3 契約：「畫面與報告標示判定依據」）。
+        var sink = new FakeReportSink();
+        var service = MakeService(sink);
+        var issue = MakeStorageIssue();
+        issue.ResidualCredentialBasis = "疑似殘留憑證重試：svc_backup 自 WKS01 重複失敗 40 次（網路登入，密碼錯誤），近 7 天已重複出現";
+        var record = MakeRecord(issue);
+
+        await service.GenerateAsync(record, new List<EventLogEntryData>());
+
+        Assert.NotNull(sink.LastContent);
+        Assert.Contains("疑似殘留憑證重試：svc_backup 自 WKS01", sink.LastContent);
+    }
+
+    [Fact]
     public async Task 規則命中類別直接渲染靜態知識庫不呼叫AI()
     {
         var sink = new FakeReportSink();

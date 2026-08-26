@@ -159,7 +159,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// <summary>單次掃描可展開的最大分段數。/16 在 /24 粒度是 256 段、/25 是 512 段、
     /// /26 是 1024 段。上限取 1024 讓三種粒度都能掃完整個 /16；
     /// 更寬的輸入已由 SentinelQueryBuilder.MinPrefixOctets 擋掉。</summary>
-    internal const int MaxSegments = 1024;
+    internal const int MaxSegments = 512;
 
     /// <summary>單輪掃描取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h
     /// 從幾萬到近 76 萬筆都有，這個值是「翻頁數（上限約 50 頁）」與「單輪涵蓋」的折衷。
@@ -353,7 +353,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                 }
                 else
                 {
-                    onProgress?.Invoke($"掃描中 {i}/{segments.Count}（{segment.Label}）", scan.DiscoveredHosts().Count);
+                    onProgress?.Invoke($"掃描中 {i + 1}/{segments.Count}（{segment.Label}）", scan.DiscoveredHosts().Count);
                 }
 
                 try
@@ -363,7 +363,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(segment, exclude, server.Os),
                         now.AddHours(-WindowHours), now,
-                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, warnings, $"主掃描（{segment.Label}）");
+                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, segment.Ips, warnings, $"主掃描（{segment.Label}）");
 
                     if (isSingleSegment)
                     {
@@ -378,7 +378,7 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(segment, exclude),
                         now.AddMinutes(-SupplementWindowMinutes), now,
-                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, warnings, $"補充掃描（{segment.Label}）",
+                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, segment.Ips, warnings, $"補充掃描（{segment.Label}）",
                         // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
                         // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
                         fallbackToUnexcludedFirstRound: true);
@@ -551,14 +551,15 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         SentinelClient client, CancellationToken ct,
         Func<IReadOnlyCollection<string>, string> filterFactory,
         DateTimeOffset start, DateTimeOffset end,
-        int maxResults, int maxRounds, ScanState scan, string segmentPrefix, List<string> warnings, string stageName,
+        int maxResults, int maxRounds, ScanState scan, string segmentPrefix, IReadOnlyList<string>? segmentIps,
+        List<string> warnings, string stageName,
         bool fallbackToUnexcludedFirstRound = false)
     {
         var newHosts = 0;
 
         for (var round = 0; round < maxRounds; round++)
         {
-            var exclusion = scan.SegmentExclusionOrNull(segmentPrefix);
+            var exclusion = scan.SegmentExclusionOrNull(segmentPrefix, segmentIps);
             // 排除清單已超出子句上限：再送出去會被 Sentinel 整個拒絕。
             // 第一輪且允許退路 → 無排除照掃（取回會混入已知主機的事件，Absorb 自然去重）；
             // 其餘情況只能停在這裡——這是「可能漏」的情況之一，必須警告。
@@ -709,16 +710,30 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         public IReadOnlySet<string> SeenIps => _seen;
 
         /// <summary>
-        /// 取得特定 /24 前綴底下已見的 IP 清單（排除清單的來源）；
-        /// 若該段已見主機數超過子句上限則回傳 null，呼叫端據此停止並警告。
+        /// 取得**這一段實際查詢範圍內**已見的 IP 清單（排除清單的來源）；
+        /// 若超過子句上限則回傳 null，呼叫端據此停止並警告。
+        ///
+        /// <paramref name="segmentIps"/> 有值（/26 細粒度）時只取該 64 個位址中已見的，
+        /// **不是整個 /24 已見的全部**——後者會讓 /26 段送出 64 個位址子句配上最多 254 個
+        /// 排除子句（其中 190 個根本不在查詢範圍內），把細粒度想省下來的子句預算再灌爆一次。
         /// </summary>
-        public IReadOnlyCollection<string>? SegmentExclusionOrNull(string segmentPrefix)
+        public IReadOnlyCollection<string>? SegmentExclusionOrNull(
+            string segmentPrefix, IReadOnlyList<string>? segmentIps)
         {
-            var prefixWithDot = segmentPrefix.EndsWith('.') ? segmentPrefix : segmentPrefix + ".";
-            var segmentIps = _seen
-                .Where(ip => ip.StartsWith(prefixWithDot, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            return segmentIps.Count > ExclusionClauseLimit ? null : segmentIps;
+            List<string> seenInSegment;
+            if (segmentIps != null)
+            {
+                var scope = new HashSet<string>(segmentIps, StringComparer.OrdinalIgnoreCase);
+                seenInSegment = _seen.Where(scope.Contains).ToList();
+            }
+            else
+            {
+                var prefixWithDot = segmentPrefix.EndsWith('.') ? segmentPrefix : segmentPrefix + ".";
+                seenInSegment = _seen
+                    .Where(ip => ip.StartsWith(prefixWithDot, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+            return seenInSegment.Count > ExclusionClauseLimit ? null : seenInSegment;
         }
 
         /// <summary>取回的事件裡有沒有「本輪應該已被排除」的主機——有就代表 NOT 沒生效</summary>

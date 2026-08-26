@@ -98,6 +98,69 @@ public class ResidualCredentialDetectorTests
     }
 
     [Fact]
+    public void 明細被截斷時不得標殘留_避免分母縮水把攻擊形狀誤判成集中()
+    {
+        // 明細封頂 50 組時丟掉的都是尾巴小組。若用「保留下來的組」當分母，
+        // 分散的攻擊形狀（多帳號多來源）會被算成高集中度而誤判成殘留並靜音。
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 300, IssueSeverity.High, IssueCategory.Security);
+        todaySig.ElevatesDayRisk = true;
+        // 保留下來的明細看起來很集中（前兩組佔 100%），但那是截斷造成的假象
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 },
+            new() { Account = "svc_task", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 38 }
+        };
+        // 總量設成 85：78/85 = 92% ≥ 80%，集中度條件會過——此時只有「截斷守門」擋得下來，
+        // 這樣突變測試才隔離得出守門本身是否生效（分母正確性由下一個測試負責）。
+        todaySig.LoginFailureTotalCount = 85;
+        todaySig.LoginFailureDetailsTruncated = true;
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 20 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { todaySig }, history, targetDate);
+
+        Assert.False(todaySig.ResidualCredentialRetry);
+        Assert.Equal(IssueSeverity.High, todaySig.Severity);
+    }
+
+    [Fact]
+    public void 集中度以截斷前總量為分母()
+    {
+        // 未截斷但總量欄位有值時，分母要用總量（與明細加總一致）——
+        // 這條釘住「分母來源」這個決定，避免日後有人改回用保留組數加總。
+        var targetDate = new DateTime(2026, 8, 25);
+        var todaySig = Sig("Security", "Microsoft-Windows-Security-Auditing", 4625, 100, IssueSeverity.High, IssueCategory.Security);
+        todaySig.ElevatesDayRisk = true;
+        todaySig.LoginFailureDetails = new List<LoginFailureDetail>
+        {
+            new() { Account = "svc_backup", Source = "WKS01", LogonType = 3, ReasonCode = "bad_password", Count = 40 },
+            new() { Account = "other", Source = "WKS02", LogonType = 3, ReasonCode = "bad_password", Count = 60 }
+        };
+        todaySig.LoginFailureTotalCount = 100;
+        todaySig.LoginFailureDetailsTruncated = false;
+
+        var history = new List<DailyAnalysisRecord>
+        {
+            CreateHistoryRecord(targetDate.AddDays(-1), new List<LoginFailureDetail>
+            {
+                new() { Account = "other", Source = "WKS02", LogonType = 3, ReasonCode = "bad_password", Count = 30 }
+            })
+        };
+
+        ResidualCredentialDetector.Mark(new List<LogIssueSignature> { todaySig }, history, targetDate);
+
+        // 前兩組佔 100/100 = 100% ≥ 80%，且型態機械、非 unknown_user、跨日重現 → 命中
+        Assert.True(todaySig.ResidualCredentialRetry);
+    }
+
+    [Fact]
     public void 情境03_密碼噴灑不命中_集中度不足()
     {
         var targetDate = new DateTime(2026, 8, 25);

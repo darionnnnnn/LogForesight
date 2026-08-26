@@ -22,7 +22,7 @@ public static class KnownIssueSeed
     /// 記錄檔清除 104、電腦帳號異動 4741/4743、網域群組異動 4727/4730/4754/4758、網域信任/Kerberos原則 4713/4865-4867、
     /// DSRM 密碼嘗試 4794、NTFS 延遲寫入 137、BSOD 1001、MSSQL I/O 錯誤 823-825、ESENT 損毀 467/474、
     /// App Hang 1002）與 7 條 Linux 規則（磁碟耗盡、唯讀重掛、mdadm 降級、網卡中斷、crontab 編輯、
-    /// fail2ban 封鎖、rsyslog 掉訊息），總計 88 條（Windows 64、Linux 24）。</summary>
+    /// fail2ban 封鎖、rsyslog 掉訊息），總計 92 條（Windows 64、Linux 28）。</summary>
     public const int Version = 5;
 
     public static List<KnownIssueRule> CreateRules() => new()

@@ -201,11 +201,6 @@ public static class SentinelQueryBuilder
         {
             return ScanGranularity.Slash24;
         }
-        if (trimmed.Equals("25", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("Slash25", StringComparison.OrdinalIgnoreCase))
-        {
-            return ScanGranularity.Slash25;
-        }
         if (trimmed.Equals("26", StringComparison.OrdinalIgnoreCase) ||
             trimmed.Equals("Slash26", StringComparison.OrdinalIgnoreCase))
         {
@@ -467,7 +462,6 @@ public static class SentinelQueryBuilder
     /// 依指定的掃描粒度將使用者輸入的網段展開成分段清單：
     /// <list type="bullet">
     ///   <item><see cref="ScanGranularity.Slash24"/>：每 /24 產生 1 個分段，使用前綴萬用字元查詢（Ips 為 null）。</item>
-    ///   <item><see cref="ScanGranularity.Slash25"/>：每 /24 產生 2 個分段（.0~.127、.128~.255），以逐 IP 明列 OR 子句查詢。</item>
     ///   <item><see cref="ScanGranularity.Slash26"/>：每 /24 產生 4 個分段（.0~.63、.64~.127、.128~.191、.192~.255），以逐 IP 明列 OR 子句查詢。</item>
     /// </list>
     /// IP 清單包含該範圍內的全部位址（含網路與廣播位址，以實際事件 repip 為準）。
@@ -483,10 +477,11 @@ public static class SentinelQueryBuilder
             return prefixes.Select(p => new ScanSegment(p, p, null)).ToList();
         }
 
-        // /25＝每 128 個位址一段（2 段）、/26＝每 64 個位址一段（4 段）。
-        // 兩者只有「一段多大」不同，用同一個迴圈表達，避免同一段邏輯寫兩份。
-        var segmentSize = granularity == ScanGranularity.Slash25 ? 128 : 64;
-        var bits = granularity == ScanGranularity.Slash25 ? 25 : 26;
+        // /26＝每 64 個位址一段（每個 /24 拆四段）。
+        // **刻意不提供 /25**：/25 一次要送 128 個位址子句，加上段內排除最多再 128 個，
+        // 合計 256 子句——而本環境的 probe 只實證過 OR 50~100 個。把 /25 拆成兩個 64 子句的
+        // 查詢送出後，它與 /26 在查詢層面完全等價，多這個選項只是讓人以為有第三種涵蓋粒度。
+        const int segmentSize = 64;
         var segments = new List<ScanSegment>(prefixes.Count * (256 / segmentSize));
 
         foreach (var prefix in prefixes)
@@ -494,7 +489,7 @@ public static class SentinelQueryBuilder
             for (var start = 0; start < 256; start += segmentSize)
             {
                 var ips = Enumerable.Range(start, segmentSize).Select(i => $"{prefix}.{i}").ToList();
-                segments.Add(new ScanSegment(prefix, $"{prefix}.{start}/{bits}", ips));
+                segments.Add(new ScanSegment(prefix, $"{prefix}.{start}/26", ips));
             }
         }
 
@@ -504,7 +499,7 @@ public static class SentinelQueryBuilder
 
 /// <summary>掃描粒度：一次查詢涵蓋多大的位址範圍。/24 用前綴萬用字元，
 /// /25 與 /26 無法對齊字串前綴，改以逐 IP 明列 OR 子句表達。</summary>
-public enum ScanGranularity { Slash24, Slash25, Slash26 }
+public enum ScanGranularity { Slash24, Slash26 }
 
 /// <summary>一個掃描分段。Prefix 是顯示與歸屬用的 /24 前綴；
 /// Ips 非 null 時代表這一段要以逐 IP 明列 OR 子句查詢（/25、/26），

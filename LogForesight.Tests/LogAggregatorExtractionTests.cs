@@ -255,7 +255,7 @@ Failure Code:		0x12";
             "Account Name: bob\nLogon Type: 3\nSub Status: 0xC000006A\nWorkstation Name: WKS02"
         };
 
-        var details = LogAggregator.ExtractLoginFailureDetails(4625, msgs);
+        var details = LogAggregator.ExtractLoginFailureDetails(4625, msgs).Details;
 
         Assert.Equal(2, details.Count);
 
@@ -308,7 +308,7 @@ Failure Code:		0x12";
             }
         }
 
-        var details = LogAggregator.ExtractLoginFailureDetails(4625, msgs);
+        var details = LogAggregator.ExtractLoginFailureDetails(4625, msgs).Details;
 
         Assert.Equal(50, details.Count);
         Assert.Equal("user1", details[0].Account);

@@ -543,30 +543,6 @@ public class SentinelQueryBuilderTests
     }
 
     [Fact]
-    public void ExpandToSegments_Slash25產生2段首末位址正確()
-    {
-        var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash25);
-
-        Assert.Equal(2, segments.Count);
-
-        var seg0 = segments[0];
-        Assert.Equal("192.168.7", seg0.Prefix);
-        Assert.Equal("192.168.7.0/25", seg0.Label);
-        Assert.NotNull(seg0.Ips);
-        Assert.Equal(128, seg0.Ips.Count);
-        Assert.Equal("192.168.7.0", seg0.Ips[0]);
-        Assert.Equal("192.168.7.127", seg0.Ips[127]);
-
-        var seg1 = segments[1];
-        Assert.Equal("192.168.7", seg1.Prefix);
-        Assert.Equal("192.168.7.128/25", seg1.Label);
-        Assert.NotNull(seg1.Ips);
-        Assert.Equal(128, seg1.Ips.Count);
-        Assert.Equal("192.168.7.128", seg1.Ips[0]);
-        Assert.Equal("192.168.7.255", seg1.Ips[127]);
-    }
-
-    [Fact]
     public void ExpandToSegments_Slash26產生4段首位址正確()
     {
         var segments = SentinelQueryBuilder.ExpandToSegments("192.168.7", ScanGranularity.Slash26);
@@ -590,10 +566,12 @@ public class SentinelQueryBuilderTests
     }
 
     [Fact]
-    public void ExpandToSegments_兩段前綴配合Slash26展開為1024段()
+    public void ExpandToSegments_兩段前綴配合Slash26展開為1024段_超過掃描端512上限()
     {
         var segments = SentinelQueryBuilder.ExpandToSegments("192.168", ScanGranularity.Slash26);
 
+        // 展開本身照算 1024 段，但掃描端的 MaxSegments 是 512——
+        // 這個組合會在 NetiqDirectoryClient 被擋下並提示改用較粗粒度或縮小範圍。
         Assert.Equal(1024, segments.Count);
         Assert.Equal("192.168.0", segments[0].Prefix);
         Assert.Equal("192.168.0.0/26", segments[0].Label);
@@ -634,9 +612,7 @@ public class SentinelQueryBuilderTests
     [InlineData("26", ScanGranularity.Slash26)]
     [InlineData("/26", ScanGranularity.Slash26)]
     [InlineData("Slash26", ScanGranularity.Slash26)]
-    [InlineData("25", ScanGranularity.Slash25)]
-    [InlineData("/25", ScanGranularity.Slash25)]
-    [InlineData("Slash25", ScanGranularity.Slash25)]
+    [InlineData("25", ScanGranularity.Slash24)]   // /25 已移除（見 ExpandToSegments 註解），無法解析一律退回 /24
     [InlineData("24", ScanGranularity.Slash24)]
     [InlineData("/24", ScanGranularity.Slash24)]
     [InlineData("Slash24", ScanGranularity.Slash24)]

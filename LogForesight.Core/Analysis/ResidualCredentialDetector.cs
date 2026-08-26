@@ -40,7 +40,17 @@ internal static class ResidualCredentialDetector
                 continue;
             }
 
-            int totalDetailCount = issue.LoginFailureDetails.Sum(d => d.Count);
+            // 明細封頂 50 組時被丟掉的都是尾巴小組。若拿保留下來的組數當分母，集中度會被
+            // 系統性抬高——本來分散（多帳號多來源＝攻擊形狀）的簽章會被誤判成殘留而靜音，
+            // 是往「少報攻擊」的方向錯。截斷時資料不足以判斷集中度，一律不標殘留。
+            if (issue.LoginFailureDetailsTruncated)
+            {
+                continue;
+            }
+
+            int totalDetailCount = issue.LoginFailureTotalCount > 0
+                ? issue.LoginFailureTotalCount
+                : issue.LoginFailureDetails.Sum(d => d.Count);
             if (totalDetailCount == 0)
             {
                 continue;

@@ -890,7 +890,7 @@ public class SentinelRestDirectoryClientTests
     [Fact]
     public async Task 段數超過上限_擲NetiqDiscoveryException()
     {
-        Assert.Equal(1024, SentinelRestDirectoryClient.MaxSegments);
+        Assert.Equal(512, SentinelRestDirectoryClient.MaxSegments);
 
         var handler = new ScriptedHandler();
         var client = new SentinelRestDirectoryClient(Options(), handler);
@@ -973,12 +973,16 @@ public class SentinelRestDirectoryClientTests
     /// 帶有那 2 台的排除子句（因為同屬一個 /24）。
     /// </summary>
     [Fact]
-    public async Task 段內排除跨Slash25兩段共享Slash24歸屬()
+    public async Task 細粒度段的排除只帶該段位址範圍內的已見主機()
     {
+        // 排除清單依「這一段實際查詢的位址範圍」過濾，不是整個 /24：
+        // 否則 /26 段（只查 64 個位址）會配上最多 254 個排除子句，其中大半根本不在查詢範圍內，
+        // 把細粒度想省下來的子句預算再灌爆一次。
         var handler = new ScriptedHandler
         {
             ScriptSelector = filter =>
             {
+                // 第一段（.0~.63）發現兩台
                 if (filter.Contains("repip:192.168.7.0 OR") && filter.Contains("rv150:System"))
                     return new JobScript(2, ("192.168.7.10", "srv-a"), ("192.168.7.20", "srv-b"));
                 return Empty();
@@ -986,15 +990,18 @@ public class SentinelRestDirectoryClientTests
         };
 
         var result = await new SentinelRestDirectoryClient(Options(), handler)
-            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash25);
+            .ListHostsAsync(Server(), "192.168.7", CancellationToken.None, granularity: ScanGranularity.Slash26);
 
         Assert.Equal(2, result.Hosts.Count);
 
-        var seg2Filters = handler.Filters.Where(f => f.Contains("repip:192.168.7.128 OR")).ToList();
+        // 第二段（.64~.127）與第一段的位址範圍不重疊，不該帶第一段已見主機的排除子句
+        var seg2Filters = handler.Filters.Where(f => f.Contains("repip:192.168.7.64 OR")).ToList();
         Assert.NotEmpty(seg2Filters);
         Assert.All(seg2Filters, f =>
         {
-            Assert.Contains("NOT (repip:192.168.7.10 OR repip:192.168.7.20)", f);
+            // 第一段發現的 .10／.20 不在本段位址範圍內，本段因此完全不該有排除子句。
+            // （不能直接斷言不含 "192.168.7.10" —— 本段合法包含 .100，會誤中子字串。）
+            Assert.DoesNotContain("NOT (", f);
         });
     }
 
@@ -1066,9 +1073,9 @@ public class SentinelRestDirectoryClientTests
                 onProgress: (stage, count) => progressMessages.Add(stage));
 
         Assert.NotEmpty(progressMessages);
-        Assert.Contains("掃描中 0/256（192.168.0）", progressMessages);
-        Assert.Contains("掃描中 1/256（192.168.1）", progressMessages);
-        Assert.Contains("掃描中 255/256（192.168.255）", progressMessages);
+        Assert.Contains("掃描中 1/256（192.168.0）", progressMessages);
+        Assert.Contains("掃描中 2/256（192.168.1）", progressMessages);
+        Assert.Contains("掃描中 256/256（192.168.255）", progressMessages);
     }
 
     /// <summary>
