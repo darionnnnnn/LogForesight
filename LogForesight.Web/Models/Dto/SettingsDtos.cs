@@ -61,6 +61,9 @@ public class SystemSettingsDto
 
     public string AdSearchFilter { get; set; } = "";
 
+    /// <summary>使用者名稱顯示規則（多行文字，樣式 => 取代文字，預設空字串）</summary>
+    public string AccountDisplayRules { get; set; } = "";
+
     // ── AI 進階參數（§12：自 appsettings 的 Ai 區段遷入）─────────────────────────
     public int AiTimeoutSeconds { get; set; }
     public int AiRetryCount { get; set; }
@@ -236,6 +239,10 @@ public class UpdateSystemSettingsRequest
 
     [StringLength(500)]
     public string AdSearchFilter { get; set; } = "";
+
+    /// <summary>使用者名稱顯示規則（多行文字，樣式 => 取代文字，預設空字串）</summary>
+    [StringLength(4000)]
+    public string AccountDisplayRules { get; set; } = "";
 
     // ── AI 進階參數（§12）：範圍取自原 appsettings 各欄位的實務上下限 ─────────────
 

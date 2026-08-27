@@ -25,6 +25,7 @@ public class PermissionChangeService
     private readonly IAuditService _audit;
     private readonly IUserStore _users;
     private readonly IReportReader _reports;
+    private readonly ISystemSettingsStore _settings;
 
     public PermissionChangeService(
         PermissionChangeStore store,
@@ -33,7 +34,8 @@ public class PermissionChangeService
         ICurrentUser currentUser,
         IAuditService audit,
         IUserStore users,
-        IReportReader reports)
+        IReportReader reports,
+        ISystemSettingsStore settings)
     {
         _store = store;
         _hosts = hosts;
@@ -42,7 +44,13 @@ public class PermissionChangeService
         _audit = audit;
         _users = users;
         _reports = reports;
+        _settings = settings;
     }
+
+    /// <summary>解析當前系統設定的使用者名稱顯示規則。**一次查詢解析一次**供整批共用，
+    /// 不是每列一次——規則是正則表達式，逐列重編譯在數千列的清單上是白花的成本。</summary>
+    private AccountDisplayRuleSet ResolveDisplayRules() =>
+        AccountDisplayFormatter.ParseRules(_settings.Get().AccountDisplayRules);
 
     /// <summary>
     /// 某主機某日的權限異動報告全文（逐項「請確認」的完整敘事，與清單的結構化逐筆紀錄並存）。
@@ -143,6 +151,8 @@ public class PermissionChangeService
             };
         }
 
+        var rules = ResolveDisplayRules();
+
         var confirmations = _store.GetConfirmations(pagedRecords.Items.Select(c => c.ChangeId))
             .ToDictionary(c => c.ChangeId, StringComparer.OrdinalIgnoreCase);
 
@@ -157,7 +167,7 @@ public class PermissionChangeService
                 ? _users.FindByAccount(confirmation.ConfirmedByAccount)?.DisplayName
                 : null;
 
-            return MapToDto(change, confirmation, host, confirmedByDisplayName);
+            return MapToDto(change, confirmation, host, confirmedByDisplayName, rules);
         }).ToList();
 
         return new PagedResult<PermissionChangeDto>
@@ -248,7 +258,8 @@ public class PermissionChangeService
             ? _users.FindByAccount(savedConfirmation.ConfirmedByAccount)?.DisplayName
             : null;
 
-        return MapToDto(change, savedConfirmation, host, confirmedByDisplayName);
+        var rules = ResolveDisplayRules();
+        return MapToDto(change, savedConfirmation, host, confirmedByDisplayName, rules);
     }
 
     /// <summary>
@@ -476,7 +487,8 @@ public class PermissionChangeService
         PermissionChangeRecord change,
         PermissionChangeConfirmation? confirmation,
         WebHost? host,
-        string? confirmedByDisplayName)
+        string? confirmedByDisplayName,
+        AccountDisplayRuleSet rules)
     {
         var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
         return new PermissionChangeDto
@@ -492,16 +504,16 @@ public class PermissionChangeService
             CategoryLabel = PermissionCategory.GetLabel(category),
             IsPrivilegedTarget = change.IsPrivilegedTarget,
             InitiatorAccount = change.InitiatorAccount,
-            InitiatorAccountDisplay = AccountDisplayFormatter.ToShortName(change.InitiatorAccount),
+            InitiatorAccountDisplay = AccountDisplayFormatter.Format(change.InitiatorAccount, rules),
             TargetAccount = change.TargetAccount,
-            TargetAccountDisplay = AccountDisplayFormatter.ToShortName(change.TargetAccount),
+            TargetAccountDisplay = AccountDisplayFormatter.Format(change.TargetAccount, rules),
             // 舊的彙總列 EventId 存 0（沒有對應的單一事件），前端只擋 null 會顯示「0」
             EventId = change.EventId == 0 ? null : change.EventId,
             Before = change.Before,
             After = change.After,
             AlertText = change.AlertText,
             RawText = change.RawText,
-            SummaryText = GenerateSummaryText(change),
+            SummaryText = GenerateSummaryText(change, rules),
             ObjectType = change.ObjectType,
             ProcessName = change.ProcessName,
             CoveredFrom = change.CoveredFrom,
@@ -516,12 +528,14 @@ public class PermissionChangeService
         };
     }
 
-    /// <summary>產生異動摘要說明（後端統一組裝，避免前後端規則漂移）</summary>
-    public static string GenerateSummaryText(PermissionChangeRecord change)
+    /// <summary>產生異動摘要說明（後端統一組裝，避免前後端規則漂移）。
+    /// <paramref name="rules"/> 為使用者名稱顯示規則，未指定＝不套用任何規則。</summary>
+    public static string GenerateSummaryText(PermissionChangeRecord change, AccountDisplayRuleSet? rules = null)
     {
+        rules ??= AccountDisplayRuleSet.Empty;
         var category = string.IsNullOrWhiteSpace(change.Category) ? PermissionCategory.Other : change.Category;
         var categoryLabel = PermissionCategory.GetLabel(category);
-        var initiator = AccountDisplayFormatter.ToShortName(change.InitiatorAccount);
+        var initiator = AccountDisplayFormatter.Format(change.InitiatorAccount, rules);
         var hasInitiator = !string.IsNullOrWhiteSpace(initiator);
 
         switch (category)
@@ -533,7 +547,7 @@ public class PermissionChangeService
                     ? (!string.IsNullOrWhiteSpace(change.Before) ? change.Before : (!string.IsNullOrWhiteSpace(change.TargetAccount) ? change.TargetAccount : change.After))
                     : (!string.IsNullOrWhiteSpace(change.After) ? change.After : (!string.IsNullOrWhiteSpace(change.TargetAccount) ? change.TargetAccount : change.Before));
 
-                var member = AccountDisplayFormatter.ToShortName(rawMember);
+                var member = AccountDisplayFormatter.Format(rawMember, rules);
                 if (string.IsNullOrWhiteSpace(member))
                     member = "（未能解析成員）";
 
@@ -607,8 +621,8 @@ public class PermissionChangeService
             case PermissionCategory.OwnerChange:
             {
                 var target = ResolveTarget(change.Target, "（未能解析路徑）", change.EventId);
-                var beforeOwner = AccountDisplayFormatter.ToShortName(change.Before);
-                var afterOwner = AccountDisplayFormatter.ToShortName(change.After);
+                var beforeOwner = AccountDisplayFormatter.Format(change.Before, rules);
+                var afterOwner = AccountDisplayFormatter.Format(change.After, rules);
 
                 if (!string.IsNullOrWhiteSpace(beforeOwner) && !string.IsNullOrWhiteSpace(afterOwner))
                 {
