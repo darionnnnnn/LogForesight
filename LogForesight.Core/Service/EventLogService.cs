@@ -289,6 +289,40 @@ public class EventLogService
         };
     }
 
+    /// <summary>本機回補的預設掃描區塊天數。回補區間可長達 InitialHistoryDays（120 天），
+    /// 一次全載會讓一台吵雜主機的事件塞爆記憶體；切塊掃描讓同時間只有一塊的事件在記憶體裡。</summary>
+    public const int DefaultScanChunkDays = 7;
+
+    /// <summary>
+    /// 將指定日期區間 [startDate, endDateExclusive) 依區塊天數切分成連續區塊清單，由舊到新排序。
+    /// 最後一個區塊長度可不足 chunkSizeDays 天。若區間無效（startDate >= endDateExclusive）則回傳空清單。
+    /// </summary>
+    public static List<(DateTime Start, DateTime EndExclusive)> SplitDateRange(
+        DateTime startDate, DateTime endDateExclusive, int chunkSizeDays = 7)
+    {
+        if (chunkSizeDays <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(chunkSizeDays), "區塊天數必須大於 0。");
+        }
+
+        var chunks = new List<(DateTime Start, DateTime EndExclusive)>();
+        var current = startDate;
+
+        while (current < endDateExclusive)
+        {
+            var next = current.AddDays(chunkSizeDays);
+            if (next > endDateExclusive)
+            {
+                next = endDateExclusive;
+            }
+
+            chunks.Add((current, next));
+            current = next;
+        }
+
+        return chunks;
+    }
+
     private static bool ShouldInclude(ChannelPolicy policy, EventLogEntryType type, int eventId, int[]? securityExtraEventIds)
     {
         // Critical 等級事件 EntryType 為 0（EventLogEntryType 列舉沒有 Critical 值，見 EventRecordMapper），
