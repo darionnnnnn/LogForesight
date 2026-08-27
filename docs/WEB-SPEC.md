@@ -1772,6 +1772,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   `24`＝每段 254 台（預設）／`26`＝每段 62 台（最細）。網段事件量大時選較細的粒度
   可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。無法解析或缺席一律當 `/24`。
   機制與「為什麼沒有 /25」見 [NETIQ-API-REFERENCE.md](NETIQ-API-REFERENCE.md) §3.4。
+- **併發下拉**（`scan-concurrency-select`，請求欄位 `concurrency`，`[Range(1,3)]`）：
+  `1`＝單一查詢（預設，等同依序）／`2`／`3`。分段掃描的平行度，每一條併發是一個獨立的
+  `SentinelClient`（各自 SAML 登入、各自的節流間隔），因此開 3 條對這台 Sentinel 的請求
+  速率是 3 倍——上限收斂在 `SentinelRestDirectoryClient.MaxScanConcurrency`，理由同
+  `NetiqOptions.MaxParallelQueriesPerServerLimit`：Sentinel 不是本系統獨佔的資源。
+  **每次掃描自選，不落地成系統設定**。展開後只有一個分段時併發沒有作用（畫面提示已明說）。
+  掃描總預算（`BackgroundTotalBudgetSeconds`）不隨併發放寬——併發買到的是「同樣時間內掃完
+  更多段」。各段結果依**分段原順序**合併（主機清單、警告、未完成段），與完成先後無關；
+  預算用盡時的「未掃描網段」以集合差集計算，不是「前 N 段之後」。
+  兩個下拉的寬度依選項內容自動撐開（`width:auto`），不寫死上限。
 - **主機名稱 tooltip 掛在整列**：`title` 掛在整列 `wizardHostRow` 的容器元素，滑到 checkbox 旁的
   空白處也看得到完整「IP＋主機名稱」（「可復活」徽章自己的 `title` 仍優先顯示，DOM 就近比對是
   瀏覽器標準行為）。
@@ -1896,7 +1906,7 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
      是 AD 設定填錯時的逃生門。另提供「測試連線」（`POST api/admin/settings/ad-test`）：
      用管理者當場輸入的帳密對表單目前的伺服器試 bind（未儲存也能測），密碼不落盤、不進稽核 detail。
-  4. **資料保留**：五個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
+  4. **資料保留**：六個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
      出廠預設與下限的單一事實來源都在 `SystemSettings` 的 `Default*` 常數，其他地方引用不另寫一份）。
      下限只在**寫入時**驗證（DTO `[Range]`＋設定頁）——**讀取端不 clamp**，既有部署存過的
      較短天數照舊生效，升級不會偷改任何人已儲存的設定。
@@ -1907,8 +1917,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      （`lf_risky_events`，供「詢問 AI」對話優先取用，見 §9.3；回補超過此天數的日子
      直接跳過寫入，見 `RiskyEventSelector.WithinRetention`）；
      **執行歷程保留天數**（預設 120，批次執行紀錄/診斷與匯入紀錄）與
-     **稽核與追責紀錄保留天數**（預設 730，同時控制操作稽核、權限異動紀錄與處理歷程）——
+     **稽核與追責紀錄保留天數**（預設 730，同時控制操作稽核、權限異動紀錄與處理歷程）與
+     **報告檔保留天數**（`ReportRetentionDays`，預設 1095，只管 `export\` 底下的三種報告檔）——
      批次每晚啟動時依這些天數清理。設定面板每項均為「標題／常駐說明／天數輸入框」直列式。
+
+     報告檔保留天數**刻意不與歷史資料保留天數做大小關係驗證**：報告是純文字小檔，設計上就要
+     能留得比 DB 紀錄久。代價要讓管理者知道且已寫進該欄位的常駐說明——超過歷史資料保留天數
+     之後，對應的分析紀錄已被清除，Web 上不再有入口可點開那份報告，但檔案仍依主機與年月
+     留在磁碟上（見 DB-SPEC 保留策略表）。
   5. **郵件通知**：啟用開關＋
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
@@ -2304,7 +2320,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | 介面 | 儲存 key（blob＝整份型／log＝append-only／表＝正規化真表） | 寫入者 |
 |---|---|---|
 | `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者同時是問題聚合的事實表） | 批次 |
-| `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」） | 批次 |
+| `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\[{主機}\]{yyyy-MM}\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」；年月層由檔名的日期前綴推導，讀取一律依紀錄存下的完整路徑，不按慣例重組） | 批次 |
 | `IUserStore` | blob `users` | Web |
 | `IUserGroupStore` | blob `user_groups` | Web |
 | `IHostStore` | blob `hosts`（含群組/負責人參照，`SetGroups`/`SetOwners` 直接改本文件內的清單） | Web＋批次（批次僅 upsert host_name/last_report_at） |

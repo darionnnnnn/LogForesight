@@ -1,6 +1,6 @@
 # LogForesight 第三十二輪規劃
 
-> 狀態：實作中
+> 狀態：全案完成，待併 dev
 > 基準：dev@a57d770（2942 綠，略過 6）
 > 分支：`feature/feedback-32`
 > 來源：使用者回饋三項（報告年月分層與保留期／NetIQ 匯入下拉寬度／掃描併發）
@@ -215,11 +215,32 @@
 
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| A1 報告年月分層 | | | | |
-| A2 空目錄清理 | | | | |
-| B1 Core 設定鏈 | | | | |
-| B2 Web 設定鏈 | | | | |
-| C1 分段平行化 | | | | |
-| D1 併發參數全鏈 | | | | |
-| D2 掃描列 UI | | | | |
-| E 文件 | | | | |
+| A1 報告年月分層 | agy | 通過 | 相關測試 27 綠 | agy 另開新檔寫 `FileReportSinkTests`，但基準版 `ExportReportPrunerTests.cs` 裡**已有同名類別**，它改命名空間躲掉編譯衝突 → 兩個同名測試類別。Claude 合併成一份、刪除重複的逃逸字元案例，既有斷言未改 |
+| A2 空目錄清理 | agy | 通過 | 相關測試 28 綠（含合併後） | 無 |
+| B1 Core 設定鏈 | agy | 通過 | 相關測試 20 綠 | console 訊息原本寫「風險報告檔」，但清理對象是三種報告 → Claude 改為「報告檔（風險／週檢／權限異動）」 |
+| B2 Web 設定鏈 | agy | 通過 | 相關測試 91 綠 | agy 主動接上設定頁既有的「縮短保留期先確認」（`reducedItems`）機制，與鄰近欄位一致，保留 |
+| C1 分段平行化 | agy | 通過 | NetIQ 271 綠 | agy 為了不改測試替身，在 `INetiqDirectoryClient` 上加了一個舊簽章的相容多載（＝為測試遷就正式碼）→ Claude 移除多載、改為更新 `FakeClient` 簽章並補 `LastConcurrency` |
+| D1 併發參數全鏈 | agy | 通過 | NetIQ 278 綠 | 無（五個轉手點全接上，含「不傳＝1」回歸） |
+| D2 掃描列 UI | agy | 通過 | UI 字串比對 5 綠 | agy 把粒度寬度從 200px 改成 230px（仍是魔術數字）→ Claude 改為 `width:auto` 依內容撐開，與字型／縮放無關 |
+| E 文件 | Claude | 通過 | — | DB-SPEC 保留策略表、WEB-SPEC（報告路徑／設定頁／§9.9a 併發）、DETECTION-SPEC 週檢路徑、CLAUDE.md 基線 |
+
+## 併回前終檢
+
+- **全套測試**：2985 通過／略過 6／總計 2991（基準 2942，淨增 49）。
+- **跨段產出鏈回頭 grep**：
+  - `NetiqScanRequest.Concurrency` → 前端 `api.post('/api/admin/netiq/scan', {… concurrency})` ✅
+  - `SystemSettingsDto.ReportRetentionDays` → `settings.js` 讀入 `settings.reportRetentionDays` ✅、
+    送出 payload 含 `reportRetentionDays` ✅
+  - `UpdateSystemSettingsRequest` 的**唯一**前端組裝點是 `settings.js` 的 `api.put('/api/admin/settings')`
+    （已 grep 確認沒有第二個 payload 組裝處）——漏帶新欄位會讓值變 0 而卡在 `[Range]`，這條有查 ✅
+- **BOM**：每個被改的檔案與基準 `a57d770` 逐一比對，全數未變。Claude 自己一次 `utf-8-sig` 寫入
+  曾對 `ExportReportPrunerTests.cs` 加上 BOM，當場還原。
+- **讀取端相容性**：`FileReportReader` 依紀錄存下的完整路徑讀取、只驗「仍在資料根目錄內」，
+  新舊路徑都通；全 repo grep `"export"` 的組路徑點只有 sink 建構、pruner 呼叫、sink 預設值三處，
+  不存在「用日期＋主機自行拼路徑再讀」的第二個讀取端。
+- **已接受的殘留**：
+  - `FileReportSink`（Persistence）為複用日期解析而 `using LogForesight.Core.Service`，
+    分層方向略為顛倒；替代方案是把判定複製一份，違反「同一判定只寫一次」，故接受。
+  - `ListHostsAsync` 的 `catch (AggregateException)` 正規化區塊在 `Parallel.ForEachAsync` 的
+    實際例外形狀下不會被觸發（await 會直接重擲第一個內層例外），屬防禦性死碼；
+    保留不影響行為，未實測前不動它。
