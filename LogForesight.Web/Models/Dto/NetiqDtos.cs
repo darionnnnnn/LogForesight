@@ -153,6 +153,11 @@ public class NetiqScanRequest
     /// <summary>掃描粒度（選填）："24"（預設）、"25"、"26"（或 "/24"、"/25"、"/26"）。
     /// 無法解析或缺席時一律退回 /24。</summary>
     public string? Granularity { get; set; }
+
+    /// <summary>同時併發幾個查詢（選填）：1（預設，單一查詢）~3。
+    /// 併發會同時對這台 Sentinel 開多條查詢（各自獨立登入），只掃單一網段時沒有作用。</summary>
+    [Range(1, 3, ErrorMessage = "併發查詢數必須介於 1~3")]
+    public int? Concurrency { get; set; }
 }
 
 public class NetiqScanJobDto

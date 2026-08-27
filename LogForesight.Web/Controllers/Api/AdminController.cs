@@ -218,7 +218,7 @@ public class AdminController : ControllerBase
     public ApiResponse<NetiqScanJobDto> StartScan([FromBody] NetiqScanRequest request)
     {
         var granularity = SentinelQueryBuilder.ParseGranularity(request.Granularity);
-        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix, granularity);
+        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix, granularity, request.Concurrency ?? 1);
         return ApiResponse<NetiqScanJobDto>.Ok(new NetiqScanJobDto
         {
             JobId = jobId,

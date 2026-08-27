@@ -57,7 +57,7 @@ public class NetiqDiscoveryService
         _audit = audit;
     }
 
-    public string StartScan(string serverName, string subnetPrefix, ScanGranularity granularity = ScanGranularity.Slash24)
+    public string StartScan(string serverName, string subnetPrefix, ScanGranularity granularity = ScanGranularity.Slash24, int concurrency = 1)
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
@@ -90,7 +90,8 @@ public class NetiqDiscoveryService
                             }
                         },
                         totalBudgetSecondsOverride: SentinelRestDirectoryClient.BackgroundTotalBudgetSeconds,
-                        granularity: granularity);
+                        granularity: granularity,
+                        concurrency: concurrency);
 
                     lock (job)
                     {
@@ -153,7 +154,8 @@ public class NetiqDiscoveryService
         string serverName, string subnetPrefix, CancellationToken ct,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24)
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
@@ -165,7 +167,7 @@ public class NetiqDiscoveryService
         // 它們在下面被合成回結果，精靈畫面的「既有／新發現」分組完全不變。
         var alreadyRegistered = AlreadyRegisteredInSubnet(server.Name, subnetPrefix);
 
-        var discovered = await DiscoverAsync(server, subnetPrefix, alreadyRegistered.Keys.ToList(), ct, onProgress, totalBudgetSecondsOverride, granularity);
+        var discovered = await DiscoverAsync(server, subnetPrefix, alreadyRegistered.Keys.ToList(), ct, onProgress, totalBudgetSecondsOverride, granularity, concurrency);
         return BuildScanResult(server.Name, discovered, alreadyRegistered);
     }
 
@@ -207,11 +209,12 @@ public class NetiqDiscoveryService
         SentinelServer server, string subnetPrefix, IReadOnlyCollection<string> knownIps, CancellationToken ct,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24)
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         try
         {
-            return await _client.ListHostsAsync(server, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride, granularity);
+            return await _client.ListHostsAsync(server, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride, granularity, concurrency);
         }
         catch (NetiqDiscoveryException ex)
         {
