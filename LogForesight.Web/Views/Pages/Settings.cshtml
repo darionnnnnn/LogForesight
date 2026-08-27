@@ -389,6 +389,24 @@
 
             <hr />
 
+            <h3 class="h6">使用者名稱顯示規則</h3>
+            <p class="text-muted small mb-2">
+                畫面上顯示的帳號可用正則表達式調整，例如把使用者名稱裡的公司名稱前綴去掉。
+                一行一條規則，格式為 <code>樣式 =&gt; 取代文字</code>；取代文字留空代表刪除符合的片段，
+                <code>#</code> 開頭的行是註解。多條規則由上往下依序套用。
+            </p>
+            <div class="mb-3">
+                <label for="account-display-rules" class="form-label">規則（選填）</label>
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-content="只影響畫面顯示，資料庫存的仍是原始帳號，規則調整後既有紀錄立即套用、改錯也救得回來。但分析當下就寫進分析紀錄與報告內文的帳號文字不受影響——那是入庫值，要套新規則得重新分析。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
+                <textarea class="form-control lf-mono" id="account-display-rules" rows="4"
+                          placeholder="例如：&#10;^台積電- =&gt;&#10;^VENDOR_(.+)$ =&gt; $1（外包）"></textarea>
+            </div>
+
+            <hr />
+
             <h3 class="h6">測試連線</h3>
             <p class="text-muted small">
                 用你自己的 AD 帳密，測試以上設定是否能連上並驗證成功（尚未儲存也可以測）。密碼只用於這次測試，不會被儲存。
@@ -427,7 +445,8 @@
             <div class="mb-3">
                 <label for="retention-days" class="form-label">歷史資料保留天數</label>
                 <div class="text-muted small mb-2">
-                    刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄、案件與匯出的報告檔。不可小於首次執行回補天數。
+                    刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄與案件。不可小於首次執行回補天數。
+                    （報告全文存在資料庫裡，另有下方的「報告保留天數」。）
                 </div>
                 <input type="number" class="form-control" id="retention-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>

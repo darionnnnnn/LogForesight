@@ -157,9 +157,13 @@ public static class HostDayPostProcessor
         }
     }
 
+    /// <param name="hostDayClaims">主機日層級的佔位（回饋三十四輪 A2）：多台 Sentinel 平行處理時
+    /// 保證同一個主機日只被處理一次。**只放「主機＋日期」的鍵，不放事件內容**——舊做法是把整個
+    /// 查詢窗的內容去重鍵全載進來，正式環境每日近十萬筆權限異動會讓它膨脹到數 GB 且整趟不釋放。
+    /// 跨執行的內容去重改由資料庫承擔（見下方 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/>）。</param>
     public static void RecordPermissionChanges(
         PermissionChangeStore? permissionChangeStore,
-        ConcurrentDictionary<string, byte> knownKeys,
+        ConcurrentDictionary<string, byte> hostDayClaims,
         string hostName,
         string hostOs,
         List<EventLogEntryData> events,
@@ -170,6 +174,10 @@ public static class HostDayPostProcessor
         if (permissionChangeStore == null) return;
         if (!string.Equals(hostOs, WebHost.OsWindows, StringComparison.OrdinalIgnoreCase)) return;
         if (events == null || events.Count == 0) return;
+
+        // 同一個主機日只處理一次：一台主機只登錄在一台 Sentinel 上，正常情況下不會重入，
+        // 這道佔位是平行處理下的安全網（同時也讓佔位集合的大小停在「主機數×天數」量級）
+        if (!hostDayClaims.TryAdd($"{HostNameKey.Of(hostName)}|{date:yyyyMMdd}", 0)) return;
 
         try
         {
@@ -213,7 +221,7 @@ public static class HostDayPostProcessor
                     Before = details.Before,
                     After = details.After,
                     AlertText = alertText,
-                    RawText = evt.Message,
+                    RawText = evt.Message == null ? null : TextTruncation.Truncate(evt.Message, RawTextMaxLength),
                     Source = PermissionChangeSources.Netiq,
                     EventId = evt.EventId
                 });
@@ -252,14 +260,21 @@ public static class HostDayPostProcessor
                 dayRecords.RemoveAll(pairing.Paired.Contains);
             }
 
-            // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。去重鍵由呼叫端傳入的
-            // 快照承擔——多台主機平行處理，用 ConcurrentDictionary.TryAdd 做原子佔位。
+            // 冪等：同一主機日重跑（回補、重新分析）不得產生重複紀錄。跨執行的去重鍵改由資料庫
+            // 現查（回饋三十四輪 A2）：只撈這台主機、這批事件時間範圍內的既有鍵，走
+            // (host_name_key, detected_at) 索引，查回來的集合是區域變數、離開這個方法就回收。
+            if (dayRecords.Count == 0) return;   // 成對事件全被彙總／略過後就沒有逐則列要寫了
+
+            var earliest = dayRecords.Min(r => r.DetectedAt);
+            var latest = dayRecords.Max(r => r.DetectedAt);
+            var existingKeys = permissionChangeStore.GetDedupeKeysForHost(hostName, earliest, latest);
+
             var recordsToAppend = new List<PermissionChangeRecord>();
             foreach (var record in dayRecords)
             {
                 var key = PermissionChangeRecord.DedupeKey(
                     hostName, record.DetectedAt, record.EventId ?? 0, record.AlertText ?? string.Empty);
-                if (knownKeys.TryAdd(key, 0)) recordsToAppend.Add(record);
+                if (!existingKeys.Contains(key)) recordsToAppend.Add(record);
             }
 
             if (recordsToAppend.Count > 0)
@@ -273,6 +288,11 @@ public static class HostDayPostProcessor
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動檢核寫入失敗（不影響分析結果）", logContext, date);
         }
     }
+
+    /// <summary>入庫原文（RawText）的長度上限（回饋三十四輪 A4）。展開明細要看完整原文，
+    /// 所以留得比清單用的 AlertText（500 字）寬得多；但完全不設限時，一台吵雜的 DC 一天數萬則
+    /// 全帶完整原文，記憶體與資料庫體積都沒有上界。8000 字足以涵蓋實務上的權限異動事件全文。</summary>
+    internal const int RawTextMaxLength = 8000;
 
     /// <summary>成員新增＋成員移除成對出現達此對數時，該主機日的成對異動合併為一筆彙總列。
     /// 門檻不做成設定項：這是「明顯是自動化程序」的判斷，不是使用者要調的參數。</summary>

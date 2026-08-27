@@ -11,10 +11,12 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 
     public long DataVersion => CurrentVersion;
 
-    public WebHost? Get(long hostId) => Read().FirstOrDefault(h => h.HostId == hostId);
+    // 單筆查找走不複製的快照（回饋三十四輪 A5）：呼叫點在逐主機迴圈裡，
+    // 3682 台規模下每查一台就複製整份清單純粹是 GC 壓力
+    public WebHost? Get(long hostId) => ReadSnapshot().FirstOrDefault(h => h.HostId == hostId);
 
     public WebHost? FindByName(string hostName) =>
-        Read().FirstOrDefault(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
+        ReadSnapshot().FirstOrDefault(h => string.Equals(h.HostName, hostName, StringComparison.OrdinalIgnoreCase));
 
     public WebHost Upsert(WebHost host)
     {

@@ -1349,9 +1349,12 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   （NetIQ 主機常如此），都沒有就不顯示括號。**不存 IP 快照**——IP 會變，顯示最新的才合理。
 - 「帳號」兩行：操作者與目標帳號，皆顯示**短名**（`CN=…,OU=…` 取第一個 CN 值；
   `DOMAIN\name`、`name@domain`、SID、純短名原樣）。完整值放 `title` 與展開明細——AD 的
-  完整 DN 動輒上百字，整串印在欄位裡會撐版又蓋掉重點。短名規則的單一規則點是
-  `AccountDisplayFormatter.ToShortName`，前後端不各寫一套。缺值顯示「—」，**不猜、不填假值**。
-- **展開列最下方的「原始訊息」區塊**：`rawText`（未截斷全文，只有升級後寫入的資料才有）
+  完整 DN 動輒上百字，整串印在欄位裡會撐版又蓋掉重點。帳號顯示的單一出口是
+  `AccountDisplayFormatter`（短名化，再套管理員自訂的**使用者名稱顯示規則**——
+  設定頁 AD 分頁的 `AccountDisplayRules`，正則取代，見 §設定頁），前後端不各寫一套。
+  規則只作用於顯示，資料庫存的是原始帳號，改規則後既有紀錄立即套用。
+  缺值顯示「—」，**不猜、不填假值**。
+- **展開列最下方的「原始訊息」區塊**：`rawText`（入庫上限 8000 字，只有升級後寫入的資料才有）
   存在時顯示全文；舊資料退而顯示 500 字截斷版的 `alertText` 並標註「僅存前 500 字」；
   彙總列標註它由多則合併、沒有單一原文；本機監控來源標註它由快照比對產生、
   沒有事件原文（不可把「無 rawText」一律歸因於升級前寫入）。等寬字、保留換行、高度上限內可捲動；
@@ -1407,9 +1410,13 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   比對本機群組成員與 WatchedFolders ACL）與 `NetIQ 事件`（`HostDayPostProcessor.RecordPermissionChanges`
   由該主機日 Security 事件推導，事件集合與中文類型對應是單一常數點；**只對 Windows 主機**產生，
   Linux 事件 EventId 恆 0 不適用）。舊資料無此欄位時畫面視為本機監控。NetIQ 這條的冪等鍵＝
-  (主機, 事件時間, EventId, 告警文字)，去重鍵快照每輪執行載入一次、只讀回望窗口＋一週內附加的列。
-  **不設每主機日筆數上限**：權限異動全數逐則入庫，每一筆都查得到、篩得到；量的控制交給
-  依 `AuditRetentionDays` 的清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+  (主機, 事件時間, EventId, 告警文字)，跨執行的去重**逐主機日向資料庫現查**
+  （`PermissionChangeStore.GetDedupeKeysForHost`，走 `(host_name_key, detected_at)` 索引，
+  查詢範圍是該批事件的時間區間）；行程內另以「主機＋日期」層級的佔位確保平行處理下
+  同一個主機日只處理一次。**不設每主機日筆數上限**：權限異動全數逐則入庫，每一筆都查得到、
+  篩得到；量的控制交給依 `AuditRetentionDays` 的清理（依寫入時間，不是事件時間，見 DB-SPEC）。
+  原始訊息（`raw_text`）入庫上限 8000 字，寫入每 500 筆一批——兩者都是量的上界，
+  避免吵雜 DC 的單日數萬則把記憶體與資料庫體積推到沒有天花板。
 - **操作者／目標帳號的擷取規則**見 docs/DETECTION-SPEC.md「權限異動類別」段（偵測層的事實來源）。
 - API：
   - `GET api/permission-changes?q=&subnet=&category=&status=&source=&from=&to=&sort=&dir=&page=&pageSize=`
@@ -1908,6 +1915,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      bind 用登入者自己的帳密，**不儲存任何服務帳號密碼**。serverAdmin 本地救援帳號不經 Provider，
      是 AD 設定填錯時的逃生門。另提供「測試連線」（`POST api/admin/settings/ad-test`）：
      用管理者當場輸入的帳密對表單目前的伺服器試 bind（未儲存也能測），密碼不落盤、不進稽核 detail。
+     同分頁另有**使用者名稱顯示規則**（`AccountDisplayRules`，`#account-display-rules`）：
+     一行一條 `樣式 => 取代文字` 的 .NET 正則規則（取代文字留空＝刪除、`#` 為註解、依序套用），
+     用來把使用者名稱裡的公司名稱等前後綴拿掉。**只影響顯示**——資料庫存的仍是原始帳號，
+     改規則後既有紀錄立即套用；但分析當下就寫進分析紀錄與報告內文的帳號文字不受影響
+     （那是入庫值，要套新規則得重新分析）。存檔時逐行驗證樣式可否編譯，不合法回 400 並指出行號；
+     前端只擋「缺 `=>`／樣式為空」這類與引擎無關的格式錯誤（JS 與 .NET 的正則語法集不同，
+     在前端驗語法會誤擋後端接受的規則）。套用點：權限異動清單的操作者／目標帳號與摘要說明、
+     風險日詳情的登入失敗明細帳號欄。
   4. **資料保留**：六個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
      出廠預設與下限的單一事實來源都在 `SystemSettings` 的 `Default*` 常數，其他地方引用不另寫一份）。
      下限只在**寫入時**驗證（DTO `[Range]`＋設定頁）——**讀取端不 clamp**，既有部署存過的
@@ -2244,8 +2259,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   編譯期絕對天花板 `MaxBackfillDaysLimit`＝365 只供 DTO `[Range]` 用；超過有效上限回 400，不靜默 clamp。
   三處輸入框（排程作業／NetIQ 維護／主機詳情「立即更新」）的 max 與說明都由 API 帶回的
   `maxBackfillDays` 填入（共用 `ui.js` 的 `applyBackfillDaysLimit`）；與趨勢基線窗口
-  `TrendWindowDays`＝14 脫鉤。文案講明：檢查最近 N 天內有沒有缺漏或需補跑的日子、
-  已完成的日子不會重跑；僅影響 NetIQ，本機一律自動回補趨勢窗口內的缺漏日。
+  `TrendWindowDays`＝14 脫鉤。文案講明：檢查最近 N 天內的日子——沒有分析紀錄的補跑、
+  已有紀錄的依「執行模式」重新分析（模式為預設的「只補跑失敗或未執行」時不重跑任何既有日）；
+  **本機主機與 NetIQ 主機都適用**，留空則沿用 NetIQ 維護頁設定（本機留空時回補趨勢窗口內的缺漏日）。
 - **「已停止」狀態**（§1.4.4）：手動停止或窗口 End 的優雅停止回填
   `BatchRun.Stopped`（JSON 缺欄容忍，零遷移）＋里程碑「執行已優雅停止…」——是獨立狀態、
   不是失敗也不卡執行中；不列入失敗主機清單，剩餘缺漏日由下次執行自動回補。
@@ -2435,8 +2451,8 @@ temp 檔＋`File.Replace` 手法。
 
 ### 10.9 執行模式與舊日重新分析
 
-「立即執行」modal 的**執行模式**下拉選單（`TriggerRunRequest.RerunMode`／`RerunDays`，
-`#run-now-rerun-mode`）決定這次執行要不要重新分析**已經有紀錄**的日子。規則更新後要把新規則
+「立即執行」modal 的**執行模式**下拉選單（`TriggerRunRequest.RerunMode`，`#run-now-rerun-mode`）
+決定這次執行要不要重新分析**已經有紀錄**的日子。規則更新後要把新規則
 回溯套用到過去，就是走這裡——**規則變更本身只影響之後的分析**。
 
 | 值 | 選項文字 | 重跑哪些既有主機日 | 畫面 |
@@ -2452,10 +2468,13 @@ temp 檔＋`File.Replace` 手法。
 - **候選日挑選**：`RerunDateFinder.Find` 只回傳窗口內**已有紀錄**的日子（沒有紀錄的屬缺漏日，
   仍由 `MissingDateFinder` 負責），處理狀態以 `IIssueHandlingStore.GetMany` 一次批次取回、不逐日查。
   兩者聯集去重後由舊到新逐日分析。
-- **回望天數**：`RerunDays`（UI 預設 30）夾在 `NetiqOptions.GetEffectiveBackfillDaysLimit(RetentionDays)`
-  內，API 超限回 400 不靜默 clamp；兩條路徑的天數在 `AnalysisOrchestrator` 內**再夾一次**
-  （防設定被事後調小，同 `BackfillDays` 既有慣例——`NetiqPipelineService.ResolveLookbackDays`
-  只夾 `MaxBackfillDaysLimit`，保留期上限由呼叫端負責）。
+- **回望天數是單一欄位**：`TriggerRunRequest.BackfillDays`（`#run-now-backfill`，選填）同時決定
+  缺漏補跑與重新分析的窗口——兩者找的是同一條時間軸上互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），
+  沒有任何模式需要兩個不同的天數。**本機主機與 NetIQ 主機都適用**。留空＝沿用 NetIQ 維護頁設定的
+  回望天數；本機留空時維持既有預設（已有紀錄用趨勢窗口、首次執行用 `InitialHistoryDays`）。
+  夾在 `NetiqOptions.GetEffectiveBackfillDaysLimit(RetentionDays)` 內，API 超限回 400 不靜默 clamp、
+  前端另擋下界（<1）；兩條路徑的天數在 `AnalysisOrchestrator` 內**再夾一次**（防設定被事後調小——
+  `NetiqPipelineService.ResolveLookbackDays` 只夾 `MaxBackfillDaysLimit`，保留期上限由呼叫端負責）。
 - **逐日就地取代，不整批預刪**：原始事件不存 DB，整批預刪會把「舊結果尚在、新資料取不到」的日子
   變成永久空洞。刪除**緊貼寫入之前**（本機在 `LogAnalysisService.AnalyzeDayAsync` 的 `replaceExisting`
   分支、NetIQ 在 `BuildStatisticalRecordAsync` 之後）——分析途中拋例外（AI 逾時、取消）時舊紀錄還在。

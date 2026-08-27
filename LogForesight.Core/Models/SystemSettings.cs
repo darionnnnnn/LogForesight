@@ -268,6 +268,12 @@ public class SystemSettings
     /// <summary>查詢使用者的過濾器樣板，{0} 代入登入帳號</summary>
     public string AdSearchFilter { get; set; } = "(sAMAccountName={0})";
 
+    /// <summary>
+    /// 使用者名稱顯示規則（多行文字，樣式 => 取代文字，預設空字串）。
+    /// 每行一條規則，# 開頭為註解，空白行略過。樣式為 .NET 正則表達式，依序套用。
+    /// </summary>
+    public string AccountDisplayRules { get; set; } = "";
+
     // ── 郵件通知（回饋十五輪批次D）───────────────────────────────────────────
     // 全案原本零 SMTP 基礎設施（十四輪暫緩批次D）。三路觸發共用同一份收件人/門檻設定：
     // 排程結束後摘要、每日/每週定時彙總、高風險即時（不受時間限制，見 MailNotificationService）。

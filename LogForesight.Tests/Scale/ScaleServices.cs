@@ -57,7 +57,7 @@ internal sealed class ScaleServices
 
         var permissionChanges = new PermissionChangeService(
             backend.PermissionChanges(),
-            Hosts, Visibility, currentUser, new RecordingAuditService(), users, new NullReportReader());
+            Hosts, Visibility, currentUser, new RecordingAuditService(), users, new NullReportReader(), new FakeSystemSettingsStore());
 
         var aggregates = backend.IssueAggregateQuery(Hosts);
         var issueRanking = new IssueRankingBuilder(aggregates, Hosts);

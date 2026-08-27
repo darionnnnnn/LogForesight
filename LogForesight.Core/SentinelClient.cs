@@ -39,7 +39,12 @@ public sealed record SentinelSearchRequest(
     /// 用於主機探索：只需要相異主機 IP，不必把事件翻完。null＝不提早停止（預設）。
     /// 提早停止會讓取回數小於 Found，因此結果的 Truncated 為 true——語意正確：
     /// 沒翻完就是可能還有沒看到的東西。</summary>
-    Func<IReadOnlyList<SentinelEvent>, bool>? PageObserver = null);
+    Func<IReadOnlyList<SentinelEvent>, bool>? PageObserver = null,
+    /// <summary>true＝串流模式（回饋三十四輪 A3）：取回的分頁只交給 <see cref="PageObserver"/>，
+    /// **不累積進結果的 Events**。單一 job 上限 10 萬筆、最多 12 個 job 同時在跑，
+    /// 全量緩衝是排程執行占用 22GB 的主因之一。必須搭配 PageObserver 使用。
+    /// 預設 false＝維持既有全量行為（診斷探測等呼叫端要看完整結果）。</summary>
+    bool StreamOnly = false);
 
 public sealed class SentinelSearchResult
 {
@@ -50,9 +55,20 @@ public sealed class SentinelSearchResult
 
     public required SentinelJobState State { get; init; }
 
+    private readonly int? _retrieved;
+
+    /// <summary>本次實際取回的事件筆數。串流模式下 <see cref="Events"/> 是空的，
+    /// 截斷判定仍必須以實際取回筆數為準，故獨立成一個欄位；
+    /// 未指定時退回 <c>Events.Count</c>——非串流模式下兩者本來就相同。</summary>
+    public int Retrieved
+    {
+        get => _retrieved ?? Events.Count;
+        init => _retrieved = value;
+    }
+
     /// <summary>實際取回筆數少於 Found——受 max-results 上限或分頁提前中止影響，
     /// 呼叫端應比照 DataIncomplete 的基準排除邏輯處理（docs/archive/HISTORY.md）</summary>
-    public bool Truncated => Events.Count < Found;
+    public bool Truncated => Retrieved < Found;
 }
 
 /// <summary>連線／查詢過程中的錯誤。訊息不含密碼，可直接顯示給操作者或寫入 log。</summary>

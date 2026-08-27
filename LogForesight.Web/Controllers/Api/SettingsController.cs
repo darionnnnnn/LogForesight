@@ -1,3 +1,4 @@
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -29,8 +30,17 @@ public class SettingsController : ControllerBase
         ApiResponse<SystemSettingsDto>.Ok(_settings.Get());
 
     [HttpPut]
-    public ApiResponse<SystemSettingsDto> Update([FromBody] UpdateSystemSettingsRequest request) =>
-        ApiResponse<SystemSettingsDto>.Ok(_settings.Update(request));
+    public ApiResponse<SystemSettingsDto> Update([FromBody] UpdateSystemSettingsRequest request)
+    {
+        // 使用者名稱顯示規則是自由文字的正則表達式，資料註解擋不住語法錯誤——
+        // 存檔前先驗一次，訊息指出是第幾行（回饋三十四輪 B1）
+        if (!AccountDisplayFormatter.TryValidateRules(request.AccountDisplayRules, out var error))
+        {
+            throw DomainException.Validation(error);
+        }
+
+        return ApiResponse<SystemSettingsDto>.Ok(_settings.Update(request));
+    }
 
     /// <summary>AD 測試連線（docs/archive/HISTORY.md #9）：用表單目前填的值＋管理者當場輸入的帳密試 bind</summary>
     [HttpPost("ad-test")]

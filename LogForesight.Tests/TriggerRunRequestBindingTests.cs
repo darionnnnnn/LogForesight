@@ -29,10 +29,9 @@ public class TriggerRunRequestBindingTests
         {
           "scope": "all",
           "segment": null,
-          "backfillDays": null,
+          "backfillDays": 30,
           "onlyMissingOrFailed": false,
-          "rerunMode": "{{sent}}",
-          "rerunDays": 30
+          "rerunMode": "{{sent}}"
         }
         """;
 
@@ -40,10 +39,10 @@ public class TriggerRunRequestBindingTests
 
         Assert.NotNull(request);
         Assert.Equal(expected, request!.RerunMode);
-        Assert.Equal(30, request.RerunDays);
+        Assert.Equal(30, request.BackfillDays);
     }
 
-    /// <summary>沒帶 rerunMode 的舊呼叫端（或前端預設路徑）仍要落在 None、rerunDays 為 null。</summary>
+    /// <summary>沒帶 rerunMode 的舊呼叫端（或前端預設路徑）仍要落在 None。</summary>
     [Fact]
     public void 未帶重新分析欄位時落在預設值()
     {
@@ -53,6 +52,6 @@ public class TriggerRunRequestBindingTests
 
         Assert.NotNull(request);
         Assert.Equal(RerunMode.None, request!.RerunMode);
-        Assert.Null(request.RerunDays);
+        Assert.Null(request.BackfillDays);
     }
 }

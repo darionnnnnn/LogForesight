@@ -23,8 +23,11 @@ public sealed partial class SentinelClient
                 throw new SentinelClientException($"Sentinel「{_server.Name}」查詢工作結束於非成功狀態：{status.State}");
             }
 
-            var events = await FetchAllPagesAsync(status, request, ct);
-            return new SentinelSearchResult { Events = events, Found = status.Found, State = status.State };
+            var (events, retrieved) = await FetchAllPagesAsync(status, request, ct);
+            return new SentinelSearchResult
+            {
+                Events = events, Retrieved = retrieved, Found = status.Found, State = status.State
+            };
         }
         finally
         {

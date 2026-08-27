@@ -36,16 +36,33 @@ public class PermissionChangeStore
         _contextFactory = contextFactory;
     }
 
-    /// <summary>批次寫入本次偵測到的異動</summary>
+    /// <summary>單次 SaveChanges 的列數上限（回饋三十四輪 A4）：一台吵雜的 DC 一天可達數萬則，
+    /// 整批塞進同一個 DbContext 後才存檔，變更追蹤器會同時追蹤全部列，記憶體峰值等於整批再翻一倍。</summary>
+    private const int AppendBatchSize = 500;
+
+    /// <summary>批次寫入本次偵測到的異動（每 <see cref="AppendBatchSize"/> 筆存一次檔）</summary>
     public void AppendChanges(IEnumerable<PermissionChangeRecord> changes)
     {
         var list = changes.ToList();
         if (list.Count == 0) return;
 
+        // 整批共用同一個時間值：分批只是寫入策略，不該讓同一次偵測的列拿到不同的 created_at
+        // （保留期清理與「本次新增」的判斷都看它）
         var now = DateTime.Now;
+
+        for (var offset = 0; offset < list.Count; offset += AppendBatchSize)
+        {
+            AppendBatch(list.Skip(offset).Take(AppendBatchSize), now);
+        }
+    }
+
+    /// <summary>單一批次的寫入。任一批失敗時例外照樣往外傳——呼叫端會記錄警告；
+    /// 絕不吞掉例外或靜默跳過剩餘批次（那會變成「前半批進了、後半批無聲消失」）。</summary>
+    private void AppendBatch(IEnumerable<PermissionChangeRecord> batch, DateTime now)
+    {
         using var ctx = _contextFactory();
 
-        foreach (var change in list)
+        foreach (var change in batch)
         {
             if (string.IsNullOrWhiteSpace(change.ChangeId))
                 change.ChangeId = Guid.NewGuid().ToString("N");
@@ -431,6 +448,26 @@ public class PermissionChangeStore
         }
 
         return query
+            .Select(r => r.DedupeKey)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// 單一主機、單一時間區間內既有列的去重鍵（回饋三十四輪 A2）。
+    /// 取代「開跑時把整個查詢窗的去重鍵全部載進記憶體」的做法——正式環境權限異動每日近十萬筆，
+    /// 回望天數一拉大就是千萬筆鍵、數 GB 記憶體，且整趟執行都不釋放。
+    /// 查詢走既有的 (host_name_key, detected_at) 複合索引，**不以 dedupe_key 為條件**
+    /// （該欄無索引且在 SqlServer 上是 nvarchar(max)，會全表掃描）。
+    /// </summary>
+    /// <param name="from">起（含）</param>
+    /// <param name="toInclusive">迄（含）——呼叫端以本批紀錄的最早／最晚偵測時間為界</param>
+    public virtual HashSet<string> GetDedupeKeysForHost(string hostName, DateTime from, DateTime toInclusive)
+    {
+        var hostKey = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+
+        return ctx.PermissionChanges.AsNoTracking()
+            .Where(r => r.HostNameKey == hostKey && r.DetectedAt >= from && r.DetectedAt <= toInclusive)
             .Select(r => r.DedupeKey)
             .ToHashSet(StringComparer.Ordinal);
     }

@@ -206,10 +206,6 @@ public class ScheduleController : ControllerBase
             if (request.OnlyMissingOrFailed)
                 throw DomainException.Validation("「只補跑失敗或未執行」與重新分析模式不能同時指定。");
 
-            if (request.RerunDays is not { } rerunDays || rerunDays < 1)
-                throw DomainException.Validation("重新分析模式下必須指定重跑天數且必須大於等於 1 天。");
-
-            ValidateBackfillDays(request.RerunDays, _settingsStore.Get().RetentionDays);
         }
 
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
@@ -218,8 +214,11 @@ public class ScheduleController : ControllerBase
 
         var runRequest = ToRunRequest(request, runScope, hostIds, _currentUser.Account);
 
+        // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C）；
+        // 留空代表沿用 NetIQ 維護頁設定的回望天數
+        var daysText = request.BackfillDays is { } d ? $"{d} 天" : "沿用設定天數";
         var rerunSummary = request.RerunMode != RerunMode.None
-            ? $"，重新分析：{RerunModeText(request.RerunMode)}（{request.RerunDays} 天）"
+            ? $"，重新分析：{RerunModeText(request.RerunMode)}（{daysText}）"
             : "";
 
         _audit.Record(
@@ -237,8 +236,7 @@ public class ScheduleController : ControllerBase
                 request.HostId,
                 request.BackfillDays,
                 request.OnlyMissingOrFailed,
-                request.RerunMode,
-                request.RerunDays
+                request.RerunMode
             });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
@@ -262,7 +260,6 @@ public class ScheduleController : ControllerBase
         BackfillOverride = request.BackfillDays,
         OnlyMissingOrFailed = request.OnlyMissingOrFailed,
         RerunMode = request.RerunMode,
-        RerunDays = request.RerunDays,
         Trigger = $"manual:{account}"
     };
 

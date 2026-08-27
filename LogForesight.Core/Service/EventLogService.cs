@@ -289,6 +289,46 @@ public class EventLogService
         };
     }
 
+    /// <summary>
+    /// 本機回補的預設掃描區塊天數。回補區間可長達 InitialHistoryDays（120 天），
+    /// 一次全載會讓一台吵雜主機的事件塞爆記憶體；切塊掃描讓同時間只有一塊的事件在記憶體裡。
+    /// <para>取捨：classic <see cref="EventLog"/> 是由新到舊倒序遍歷、早於區間起點才停，
+    /// 所以掃較舊的區塊時要先跳過所有較新的項目——區塊切得越細，重複遍歷的次數越多
+    /// （只讀時間戳、不物化訊息，但仍有成本）。14 天是「記憶體上界」與「遍歷次數」的折衷：
+    /// 120 天首跑分 9 塊，峰值降到約整段的十四分之一。</para>
+    /// </summary>
+    public const int DefaultScanChunkDays = 14;
+
+    /// <summary>
+    /// 將指定日期區間 [startDate, endDateExclusive) 依區塊天數切分成連續區塊清單，由舊到新排序。
+    /// 最後一個區塊長度可不足 chunkSizeDays 天。若區間無效（startDate >= endDateExclusive）則回傳空清單。
+    /// </summary>
+    public static List<(DateTime Start, DateTime EndExclusive)> SplitDateRange(
+        DateTime startDate, DateTime endDateExclusive, int chunkSizeDays = DefaultScanChunkDays)
+    {
+        if (chunkSizeDays <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(chunkSizeDays), "區塊天數必須大於 0。");
+        }
+
+        var chunks = new List<(DateTime Start, DateTime EndExclusive)>();
+        var current = startDate;
+
+        while (current < endDateExclusive)
+        {
+            var next = current.AddDays(chunkSizeDays);
+            if (next > endDateExclusive)
+            {
+                next = endDateExclusive;
+            }
+
+            chunks.Add((current, next));
+            current = next;
+        }
+
+        return chunks;
+    }
+
     private static bool ShouldInclude(ChannelPolicy policy, EventLogEntryType type, int eventId, int[]? securityExtraEventIds)
     {
         // Critical 等級事件 EntryType 為 0（EventLogEntryType 列舉沒有 Critical 值，見 EventRecordMapper），

@@ -302,6 +302,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.AdSearchFilter = string.IsNullOrWhiteSpace(request.AdSearchFilter)
                 ? "(sAMAccountName={0})"
                 : request.AdSearchFilter.Trim();
+            s.AccountDisplayRules = request.AccountDisplayRules ?? "";
 
             // §12：自 appsettings 遷入的參數
             s.AiTimeoutSeconds = request.AiTimeoutSeconds;
@@ -661,6 +662,7 @@ public class SystemSettingsService : ISystemSettingsService
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,
         AdSearchFilter = s.AdSearchFilter,
+        AccountDisplayRules = s.AccountDisplayRules,
         // §12：自 appsettings 遷入的參數
         AiTimeoutSeconds = s.AiTimeoutSeconds,
         AiRetryCount = s.AiRetryCount,

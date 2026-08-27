@@ -305,7 +305,7 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
   before_value         nvarchar(max) NOT NULL
   after_value          nvarchar(max) NOT NULL
   alert_text           nvarchar(max) NOT NULL           -- 原始訊息前 500 字（清單與去重鍵用）
-  raw_text             nvarchar(max) NULL               -- 未截斷的原始事件訊息（展開明細用；升級前寫入的列與彙總列為 NULL，不回填）
+  raw_text             nvarchar(max) NULL               -- 原始事件訊息，入庫上限 8000 字（展開明細用；升級前寫入的列與彙總列為 NULL，不回填）
   source               nvarchar(64) NOT NULL            -- '本機監控' | 'NetIQ 事件'
   event_id             int NULL
   status               nvarchar(30) NOT NULL             -- 'pending' | 'authorized' | 'suspicious'（預設值由應用層填，DDL 無 DEFAULT 子句）
@@ -330,7 +330,8 @@ lf_permission_changes                                -- ↔ PermissionChangeReco
 AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 SQLite（TEXT 無長度）測不
 出來，到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」；而 SQL Server 非叢集索引鍵
 上限 1700 bytes（850 個 nvarchar 字元），790 字元的鍵本來就不適合當索引鍵。沒有任何查詢以
-它為條件（`GetDedupeKeys` 是依 `created_at` 篩選後投影這一欄），索引不存在也不影響效能。
+它為條件：跨執行去重走 `GetDedupeKeysForHost`，以 `(host_name_key, detected_at)` 複合索引
+篩出該主機該批時間區間的列後才投影這一欄——索引不存在也不影響效能。
 
 **升級路徑**：舊部署的資料在 log key `perm_changes`（JSONL）與 blob key `perm_confirms`，
 由 `PermissionChangeMigrator` 背景搬移。它有**自己的**遷移狀態（blob key

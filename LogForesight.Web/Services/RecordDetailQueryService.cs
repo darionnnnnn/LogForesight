@@ -106,6 +106,8 @@ public class RecordDetailQueryService
 
         var settings = _settings.Get();
         var unhandledSeverities = settings.ParseUnhandledSeverities();
+        // 使用者名稱顯示規則：整份詳情解析一次共用，不逐列重編譯正則（回饋三十四輪 B3）
+        var accountRules = AccountDisplayFormatter.ParseRules(settings.AccountDisplayRules);
 
         // 嚴重度可見性已由 RecordRepository.GetOne 強制套用（S1）：record.TopIssues 已是
         // SiteHidden 模式下的可見子集，這裡不必也不該重覆判斷 SeverityDisplayMode
@@ -148,7 +150,7 @@ public class RecordDetailQueryService
             ErrorCount = record.ErrorCount,
             WarningCount = record.WarningCount,
             AuditEventCount = record.AuditEventCount,
-            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, openCases, priorClosedIssueKeys)).ToList(),
+            TopIssues = visibleTopIssues.Select(i => ToIssueDto(i, guidance, issueHandlingByKey, noiseMarks, unhandledSeverities, accountRules, openCases, priorClosedIssueKeys)).ToList(),
             Categories = CategoryAggregator.Aggregate(visibleTopIssues).Select(ToCategoryDto).ToList(),
             TrendAlerts = caseGrantOnly ? new List<string>() : record.TrendAlerts,
             CorrelationAlerts = caseGrantOnly ? new List<string>() : record.CorrelationAlerts,
@@ -575,6 +577,7 @@ public class RecordDetailQueryService
         Dictionary<string, IssueHandling>? issueHandlingByKey,
         Dictionary<string, NoiseMark>? noiseMarks,
         IReadOnlySet<IssueSeverity> unhandledSeverities,
+        AccountDisplayRuleSet accountRules,
         Dictionary<string, (long? HandlerId, string? HandlerName, string? HandlerAccount, string Status, string FirstLinkedDate)>? openCases = null,
         HashSet<string>? priorClosedIssueKeys = null)
     {
@@ -602,7 +605,9 @@ public class RecordDetailQueryService
             KeyDetails = issue.KeyDetails,
             LoginFailureDetails = issue.LoginFailureDetails?.Select(d => new LoginFailureDetailDto
             {
-                Account = d.Account,
+                // 登入失敗明細的帳號是查詢時才組出的顯示欄位，套用使用者名稱顯示規則
+                // （回饋三十四輪 B3）。分析當下就寫進紀錄內文的帳號文字不在此列——那是入庫值。
+                Account = AccountDisplayFormatter.Format(d.Account, accountRules),
                 IsComputerAccount = d.IsComputerAccount,
                 Source = d.Source,
                 LogonTypeText = d.LogonType.HasValue ? LoginFailureTextFormatter.FormatLogonType(d.LogonType.Value) : string.Empty,
