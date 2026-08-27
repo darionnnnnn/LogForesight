@@ -477,6 +477,7 @@ function renderRetentionFields(settings) {
     document.getElementById('raw-event-retention-days').value = settings.rawEventRetentionDays;
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
+    document.getElementById('report-retention-days').value = settings.reportRetentionDays;
 }
 
 /** 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：密碼欄比照 AI 金鑰，不預填、只顯示是否已設定 */
@@ -722,6 +723,7 @@ function bindForm() {
         const rawEventRetentionDays = Number(document.getElementById('raw-event-retention-days').value);
         const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
+        const reportRetentionDays = Number(document.getElementById('report-retention-days').value);
         if (rawEventRetentionDays > retentionDays) {
             activateTabForElement(document.getElementById('raw-event-retention-days'));
             toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
@@ -743,6 +745,9 @@ function bindForm() {
         }
         if (auditRetentionDays < current.auditRetentionDays) {
             reducedItems.push(`稽核與追責紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+        if (reportRetentionDays < current.reportRetentionDays) {
+            reducedItems.push(`報告檔保留天數：${current.reportRetentionDays} → ${reportRetentionDays} 天（${reportRetentionDays} 天以前的報告檔將進入刪除範圍）`);
         }
 
         if (reducedItems.length > 0) {
@@ -854,6 +859,7 @@ function bindForm() {
                 rawEventRetentionDays,
                 runLogRetentionDays,
                 auditRetentionDays,
+                reportRetentionDays,
                 adAuthEnabled,
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),

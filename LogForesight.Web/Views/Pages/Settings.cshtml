@@ -456,6 +456,14 @@
                 <input type="number" class="form-control" id="audit-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>
 
+            <div class="mb-3">
+                <label for="report-retention-days" class="form-label">報告檔保留天數</label>
+                <div class="text-muted small mb-2">
+                    這一項只管 export\ 底下的報告檔（風險報告、週檢報告、權限異動報告），與歷史資料保留天數各自獨立，可以設得比它長；超過歷史資料保留天數之後，雖然資料庫紀錄已被清除且網站上不再有入口可點開，但檔案仍會依主機與年月分資料夾留在磁碟上。
+                </div>
+                <input type="number" class="form-control" id="report-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
+            </div>
+
             <hr />
 
             <h3 class="h6">首次執行回補</h3>

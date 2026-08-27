@@ -288,6 +288,7 @@ public class SystemSettingsService : ISystemSettingsService
             s.RunLogRetentionDays = request.RunLogRetentionDays;
             s.AuditRetentionDays = request.AuditRetentionDays;
             s.RawEventRetentionDays = request.RawEventRetentionDays;
+            s.ReportRetentionDays = request.ReportRetentionDays;
             s.AdAuthEnabled = request.AdAuthEnabled;
             s.AdServers = adServers;
             s.AdSearchBase = request.AdSearchBase?.Trim() ?? "";
@@ -380,7 +381,7 @@ public class SystemSettingsService : ISystemSettingsService
                     before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
                     before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
-                    before.RawEventRetentionDays,
+                    before.RawEventRetentionDays, before.ReportRetentionDays,
                     before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
                     before.PermissionOperatorFields, before.PermissionMemberFields, before.PermissionGroupFields, before.PermissionObjectFields,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
@@ -394,7 +395,7 @@ public class SystemSettingsService : ISystemSettingsService
                     saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
                     saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
-                    saved.RawEventRetentionDays,
+                    saved.RawEventRetentionDays, saved.ReportRetentionDays,
                     saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
                     saved.PermissionOperatorFields, saved.PermissionMemberFields, saved.PermissionGroupFields, saved.PermissionObjectFields,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
@@ -624,6 +625,7 @@ public class SystemSettingsService : ISystemSettingsService
         RunLogRetentionDays = s.RunLogRetentionDays,
         AuditRetentionDays = s.AuditRetentionDays,
         RawEventRetentionDays = s.RawEventRetentionDays,
+        ReportRetentionDays = s.ReportRetentionDays,
         AdAuthEnabled = s.AdAuthEnabled,
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,
