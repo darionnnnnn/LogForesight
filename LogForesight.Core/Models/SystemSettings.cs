@@ -238,6 +238,16 @@ public class SystemSettings
     public const int DefaultRawEventRetentionDays = 120;
 
     /// <summary>
+    /// 報告檔保留天數（<c>export\</c> 底下的風險報告／週檢報告／權限異動報告）：超過此天數的報告檔予以清理。
+    /// 這一項只管 <c>export\</c> 底下的報告檔（風險報告／週檢報告／權限異動報告），
+    /// 與資料庫分析紀錄的 <see cref="RetentionDays"/> 各自獨立、不互相約束。
+    /// </summary>
+    public int ReportRetentionDays { get; set; } = DefaultReportRetentionDays;
+
+    /// <summary>ReportRetentionDays 的出廠預設</summary>
+    public const int DefaultReportRetentionDays = 1095;
+
+    /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的
     /// Auth:Provider 是 Stub 或 Ldap，一律改用 <see cref="AdServers"/> 等 DB 設定連線驗證——
     /// 這正是「測試模式（Stub）開啟後也走 AD 驗證」的開關，見 DynamicAuthenticationProvider。

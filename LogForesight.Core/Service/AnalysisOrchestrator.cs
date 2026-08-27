@@ -528,12 +528,13 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            // 1c. 清理過期的風險報告檔（docs/archive/HISTORY.md P1-4）
+            // 1c. 清理過期的報告檔（風險／週檢／權限異動，docs/archive/HISTORY.md P1-4）——
+            // 保留期是獨立設定 ReportRetentionDays，刻意不跟 RetentionDays 綁在一起
             try
             {
-                var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.RetentionDays);
+                var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.ReportRetentionDays);
                 if (reportsPruned > 0)
-                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.RetentionDays} 天的風險報告檔。");
+                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告檔（風險／週檢／權限異動）。");
             }
             catch (Exception ex)
             {
@@ -1108,4 +1109,5 @@ public record RetentionOptions
     public int RunLogRetentionDays { get; init; } = SystemSettings.DefaultRunLogRetentionDays;
     public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
     public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
+    public int ReportRetentionDays { get; init; } = SystemSettings.DefaultReportRetentionDays;
 }
