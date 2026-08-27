@@ -133,10 +133,6 @@ public class TriggerRunRequest
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public RerunMode RerunMode { get; set; } = RerunMode.None;
-
-    /// <summary>重新分析回望天數（1..MaxBackfillDaysLimit，且不可超過 RetentionDays）</summary>
-    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
-    public int? RerunDays { get; set; }
 }
 
 public class TriggerRunResultDto

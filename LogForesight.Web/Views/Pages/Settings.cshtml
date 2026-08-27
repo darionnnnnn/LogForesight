@@ -445,7 +445,8 @@
             <div class="mb-3">
                 <label for="retention-days" class="form-label">歷史資料保留天數</label>
                 <div class="text-muted small mb-2">
-                    刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄、案件與匯出的報告檔。不可小於首次執行回補天數。
+                    刪除超過天數的分析紀錄、問題處理狀態、每日處理紀錄與案件。不可小於首次執行回補天數。
+                    （報告全文存在資料庫裡，另有下方的「報告保留天數」。）
                 </div>
                 <input type="number" class="form-control" id="retention-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>

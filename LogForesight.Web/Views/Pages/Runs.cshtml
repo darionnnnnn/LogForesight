@@ -176,7 +176,7 @@
                     <div class="mb-3">
                         <label for="run-now-backfill" class="form-label">回望天數（選填）</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-backfill-help"
-                                data-bs-content="檢查最近幾天內有沒有缺漏或需要補跑的日子，已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
+                                data-bs-content="檢查最近幾天內的日子：沒有分析紀錄的補跑，已有紀錄的依下方「執行模式」重新分析。本機主機與 NetIQ 主機都適用。只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機留空時回補趨勢窗口內的缺漏日）。">
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" style="max-width: 120px;" />
@@ -194,11 +194,6 @@
                             <option value="All">全部重新分析（含已處理完的）</option>
                         </select>
                         <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
-                    </div>
-                    <div class="mb-3" id="run-now-rerun-days-wrap" hidden>
-                        <label class="form-label" for="run-now-rerun-days">重新分析回望天數</label>
-                        <input type="number" class="form-control form-control-sm" id="run-now-rerun-days" min="1" value="30" style="max-width: 120px;" />
-                        <div class="form-text" id="run-now-rerun-days-hint">預設 30 天；上限為歷史資料保留天數</div>
                     </div>
                     <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>

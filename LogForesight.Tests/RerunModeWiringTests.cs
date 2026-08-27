@@ -15,7 +15,7 @@ namespace LogForesight.Tests;
 /// 1. RunRequest 預設值
 /// 2. ComposeEffectiveRequest 欄位同步
 /// 3. 排程輪詢觸發時維持預設 None / null
-/// 4. ScheduleController.Run 驗證（RerunDays 為空、小於 1、超過保留天數上限）
+/// 4. ScheduleController.Run 驗證（回望天數留空合法、超過保留天數上限被拒）
 /// </summary>
 public class RerunModeWiringTests
 {
@@ -23,12 +23,9 @@ public class RerunModeWiringTests
         new() { DebugDump = false, LocalAnalysisEnabled = true };
 
     [Fact]
-    public void RunRequest_預設值為None與null()
+    public void RunRequest_重新分析模式預設為None()
     {
-        var request = new RunRequest();
-
-        Assert.Equal(RerunMode.None, request.RerunMode);
-        Assert.Null(request.RerunDays);
+        Assert.Equal(RerunMode.None, new RunRequest().RerunMode);
     }
 
     [Theory]
@@ -36,33 +33,34 @@ public class RerunModeWiringTests
     [InlineData(RerunMode.Unhandled, 7)]
     [InlineData(RerunMode.UnhandledAndAssigned, 14)]
     [InlineData(RerunMode.All, 30)]
-    public void ComposeEffectiveRequest_正確傳遞RerunMode與RerunDays(RerunMode mode, int? days)
+    public void ComposeEffectiveRequest_正確傳遞重新分析模式與回望天數(RerunMode mode, int? days)
     {
+        // 回望天數合併為單一欄位（回饋三十四輪 C）：缺漏補跑與重新分析共用 BackfillOverride
         var request = new RunRequest
         {
             Scope = RunScope.Full,
             RerunMode = mode,
-            RerunDays = days,
+            BackfillOverride = days,
             Trigger = "manual:tester"
         };
 
         var effective = SchedulerHostedService.ComposeEffectiveRequest(request, DefaultOptions());
 
         Assert.Equal(mode, effective.RerunMode);
-        Assert.Equal(days, effective.RerunDays);
+        Assert.Equal(days, effective.BackfillOverride);
     }
 
     [Fact]
-    public void 排程輪詢觸發時_RunRequest維持預設None與null()
+    public void 排程輪詢觸發時_維持預設不重跑且不覆寫回望天數()
     {
         var scheduledRequest = new RunRequest { Scope = RunScope.Full, Trigger = "schedule" };
 
         Assert.Equal(RerunMode.None, scheduledRequest.RerunMode);
-        Assert.Null(scheduledRequest.RerunDays);
+        Assert.Null(scheduledRequest.BackfillOverride);
 
         var effective = SchedulerHostedService.ComposeEffectiveRequest(scheduledRequest, DefaultOptions());
         Assert.Equal(RerunMode.None, effective.RerunMode);
-        Assert.Null(effective.RerunDays);
+        Assert.Null(effective.BackfillOverride);
     }
 
     private static ScheduleController CreateController(int retentionDays = 180)
@@ -92,37 +90,24 @@ public class RerunModeWiringTests
     }
 
     [Fact]
-    public async Task ScheduleController_Run_RerunMode非None但RerunDays為null時拒絕()
+    public async Task ScheduleController_Run_回望天數留空時所有模式都不拒絕()
     {
         var controller = CreateController(180);
 
-        var ex = await Assert.ThrowsAsync<DomainException>(() => controller.Run(new TriggerRunRequest
+        // 合併後留空＝沿用 NetIQ 維護頁設定的回望天數，在重新分析模式下同樣合法
+        // （合併前這裡會因為「必須指定重跑天數」被擋掉）
+        var ex = await Record.ExceptionAsync(() => controller.Run(new TriggerRunRequest
         {
             Scope = "all",
             RerunMode = RerunMode.Unhandled,
-            RerunDays = null
+            BackfillDays = null
         }));
 
-        Assert.Contains("必須指定重跑天數", ex.Message);
+        Assert.IsNotType<DomainException>(ex);
     }
 
     [Fact]
-    public async Task ScheduleController_Run_RerunMode非None但RerunDays小於1時拒絕()
-    {
-        var controller = CreateController(180);
-
-        var ex = await Assert.ThrowsAsync<DomainException>(() => controller.Run(new TriggerRunRequest
-        {
-            Scope = "all",
-            RerunMode = RerunMode.Unhandled,
-            RerunDays = 0
-        }));
-
-        Assert.Contains("必須指定重跑天數", ex.Message);
-    }
-
-    [Fact]
-    public async Task ScheduleController_Run_RerunDays超過RetentionDays上限時拒絕()
+    public async Task ScheduleController_Run_回望天數超過保留天數上限時拒絕()
     {
         var controller = CreateController(retentionDays: 180);
 
@@ -130,7 +115,7 @@ public class RerunModeWiringTests
         {
             Scope = "all",
             RerunMode = RerunMode.All,
-            RerunDays = 200
+            BackfillDays = 200
         }));
 
         Assert.Contains("180", ex.Message);

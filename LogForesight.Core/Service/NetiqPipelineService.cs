@@ -68,7 +68,6 @@ public class NetiqPipelineService
     private readonly PermissionChangeStore? _permissionChangeStore;
     private readonly PermissionFieldMappings? _permissionMappings;
     private readonly RerunMode _rerunMode;
-    private readonly int? _rerunDays;
     /// <summary>權限異動的主機日佔位（回饋三十四輪 A2）：只放「主機＋日期」，不放事件內容——
     /// 內容去重由 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/> 逐主機日現查承擔。</summary>
     private ConcurrentDictionary<string, byte> _permissionHostDayClaims = new();
@@ -98,7 +97,6 @@ public class NetiqPipelineService
     /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
     /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
     /// <param name="rerunMode">重新分析模式，預設 None</param>
-    /// <param name="rerunDays">重新分析回望天數</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
@@ -109,8 +107,7 @@ public class NetiqPipelineService
         bool onlyMissingOrFailed = false,
         PermissionChangeStore? permissionChangeStore = null,
         PermissionFieldMappings? permissionMappings = null,
-        RerunMode rerunMode = RerunMode.None,
-        int? rerunDays = null)
+        RerunMode rerunMode = RerunMode.None)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -133,7 +130,6 @@ public class NetiqPipelineService
         _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
         _permissionMappings = permissionMappings;
         _rerunMode = rerunMode;
-        _rerunDays = rerunDays;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -318,9 +314,10 @@ public class NetiqPipelineService
             var store = _backend.RecordStore(hostKey);
             var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
 
-            var rerunLookback = ResolveLookbackDays(_rerunDays ?? lookback);
+            // 缺漏日與重跑日共用同一個回望窗口（回饋三十四輪 C）：兩者找的是同一條時間軸上
+            // 互斥的兩半（沒紀錄的補、有紀錄的依模式重跑），沒有任何模式需要兩個不同的天數。
             var rerunDates = _rerunMode != RerunMode.None
-                ? RerunDateFinder.Find(store, _backend.IssueHandlingStore(), target.HostName, rerunLookback, _rerunMode)
+                ? RerunDateFinder.Find(store, _backend.IssueHandlingStore(), target.HostName, lookback, _rerunMode)
                 : new List<DateTime>();
             var targetDates = missingDates.Union(rerunDates).OrderBy(d => d).ToList();
 

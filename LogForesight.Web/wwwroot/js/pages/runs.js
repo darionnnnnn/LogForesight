@@ -535,20 +535,13 @@ function applyScheduleOptions(options) {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
     }
 
-    // 重跑天數與回望天數共用同一個有效上限（＝歷史資料保留天數）：不在前端擋的話，
-    // 使用者要送出後才被後端 400 打回
-    const rerunDaysInput = document.getElementById('run-now-rerun-days');
-    if (rerunDaysInput && options.maxBackfillDays) {
-        rerunDaysInput.max = options.maxBackfillDays;
-        const hint = document.getElementById('run-now-rerun-days-hint');
-        if (hint) hint.textContent = `預設 30 天；上限 ${options.maxBackfillDays} 天（歷史資料保留天數）`;
-    }
-
+    // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C），
+    // 有效上限＝歷史資料保留天數：不在前端擋的話，使用者要送出後才被後端 400 打回
     applyBackfillDaysLimit(
         'run-now-backfill',
         'run-now-backfill-help',
         options.maxBackfillDays,
-        `檢查最近幾天內有沒有缺漏或需要補跑的日子（上限 ${options.maxBackfillDays} 天），已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。`
+        `檢查最近幾天內的日子（上限 ${options.maxBackfillDays} 天）：沒有分析紀錄的補跑，已有紀錄的依下方「執行模式」重新分析。本機主機與 NetIQ 主機都適用。只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數（本機主機留空時回補趨勢窗口內的缺漏日）。`
     );
 }
 
@@ -923,12 +916,10 @@ const RERUN_MODE_CONFIG = {
 
 function updateRerunModeUI() {
     const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
-    const daysWrap = document.getElementById('run-now-rerun-days-wrap');
     const warningEl = document.getElementById('run-now-rerun-warning');
     const config = RERUN_MODE_CONFIG[rerunMode];
 
     if (!config || rerunMode === 'None') {
-        if (daysWrap) daysWrap.hidden = true;
         if (warningEl) {
             warningEl.hidden = true;
             warningEl.textContent = '';
@@ -1024,14 +1015,16 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     const backfillDays = document.getElementById('run-now-backfill').value;
     const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
     const onlyMissingOrFailed = rerunMode === 'None';
-    const rerunDaysInput = document.getElementById('run-now-rerun-days')?.value.trim();
-    const rerunDays = rerunMode !== 'None' && rerunDaysInput !== '' && !Number.isNaN(Number(rerunDaysInput))
-        ? Number(rerunDaysInput)
-        : null;
+    // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C）：留空＝沿用設定天數
+    const days = backfillDays.trim() === '' ? null : Number(backfillDays);
+    if (days !== null && (!Number.isFinite(days) || days < 1)) {
+        toast('回望天數必須是大於等於 1 的整數。', 'warning');
+        return;
+    }
 
     if (rerunMode === 'UnhandledAndAssigned' || rerunMode === 'All') {
         const config = RERUN_MODE_CONFIG[rerunMode];
-        const daysText = rerunDays !== null ? `${rerunDays} 天` : '未指定';
+        const daysText = days !== null ? `${days} 天` : '沿用設定天數';
         const confirmed = await confirmAction({
             title: '確認重新分析',
             message: `模式：${config.label}\n回望天數：${daysText}\n\n${config.consequence}`,
@@ -1047,10 +1040,9 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const result = await api.post('/api/admin/schedule/run', {
             scope,
             segment: scope === 'segment' ? segment : null,
-            backfillDays: backfillDays ? Number(backfillDays) : null,
+            backfillDays: days,
             onlyMissingOrFailed,
-            rerunMode,
-            rerunDays
+            rerunMode
         });
         toast(result.message, result.started ? 'success' : 'warning');
         if (result.started) {

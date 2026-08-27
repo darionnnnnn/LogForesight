@@ -46,11 +46,6 @@ public class RunRequest
     public RerunMode RerunMode { get; init; } = RerunMode.None;
 
     /// <summary>
-    /// 重新分析回望天數（null＝不適用；只有 <see cref="RerunMode"/> != None 時有意義）。
-    /// </summary>
-    public int? RerunDays { get; init; }
-
-    /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
     /// </summary>
@@ -703,19 +698,22 @@ public class AnalysisOrchestrator
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
 
-        // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
-        // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
-        var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
+        // 回望天數（回饋三十四輪 C）：立即執行的「回望天數」是單一欄位，缺漏日與重跑日
+        // 共用同一個窗口，且**本機與 NetIQ 都適用**——合併前這個欄位只影響 NetIQ，
+        // 本機只吃重跑天數，填 30 天卻只回補 14 天是說不通的靜默不一致。
+        // 留空（未指定）時維持本機既有預設：首次執行（歷史全空）回補 InitialHistoryDays 天
+        // 讓趨勢一開始就有基準，已有紀錄時只看趨勢窗口 TrendWindowDays 天。
+        // 夾在保留期上限內：Web 端觸發時已驗證過，這裡再夾一次是為了「保留期事後被調小」
+        // 與未來新增呼叫端——回望超過保留期的日子分析完下輪就被清掉，白跑一趟。
+        var defaultLookback = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
+        var lookbackDays = Math.Min(
+            request.BackfillOverride ?? defaultLookback,
+            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
+
         var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
-        // 重跑回望天數同樣夾在保留期上限內（比照 NetIQ 路徑對 BackfillDays 的二次夾制）：
-        // Web 端觸發時已驗證過，這裡再夾一次是為了「保留期事後被調小」與未來新增呼叫端——
-        // 回望超過保留期的日子重跑完下輪就被清掉，白跑一趟。
-        var rerunLookback = Math.Min(
-            request.RerunDays ?? TrendWindowDays,
-            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
         var rerunDates = request.RerunMode != RerunMode.None
-            ? RerunDateFinder.Find(historyService, handlingStore, currentHost, rerunLookback, request.RerunMode)
+            ? RerunDateFinder.Find(historyService, handlingStore, currentHost, lookbackDays, request.RerunMode)
             : new List<DateTime>();
         var rerunDateSet = rerunDates.ToHashSet();
 
@@ -964,12 +962,7 @@ public class AnalysisOrchestrator
                 riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
                 onlyMissingOrFailed: request.OnlyMissingOrFailed,
                 permissionMappings: settings.Permissions.FieldMappings,
-                rerunMode: request.RerunMode,
-                // 與上面的 BackfillDays 同一道夾制：ResolveLookbackDays 只夾 MaxBackfillDaysLimit，
-                // 保留期上限由呼叫端負責（見該函式註解），漏夾就會回望超過保留期、下輪清掉白跑
-                rerunDays: request.RerunDays is { } days
-                    ? Math.Min(days, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
-                    : null);
+                rerunMode: request.RerunMode);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;

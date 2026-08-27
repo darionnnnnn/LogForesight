@@ -62,7 +62,7 @@ public class RerunBehaviorTests : IDisposable
         var request = SchedulerHostedService.ComposeScheduledRequest();
 
         Assert.Equal(RerunMode.None, request.RerunMode);
-        Assert.Null(request.RerunDays);
+        Assert.Null(request.BackfillOverride);
         Assert.Equal(RunScope.Full, request.Scope);
         Assert.Equal("schedule", request.Trigger);
     }
@@ -77,8 +77,7 @@ public class RerunBehaviorTests : IDisposable
             Scope = "all",
             BackfillDays = 21,
             OnlyMissingOrFailed = false,
-            RerunMode = RerunMode.All,
-            RerunDays = 30
+            RerunMode = RerunMode.All
         };
 
         var runRequest = ScheduleController.ToRunRequest(dto, RunScope.Full, new[] { 3L }, "tester");
@@ -87,7 +86,6 @@ public class RerunBehaviorTests : IDisposable
         Assert.Equal(new[] { 3L }, runRequest.HostIds);
         Assert.Equal(21, runRequest.BackfillOverride);
         Assert.Equal(RerunMode.All, runRequest.RerunMode);
-        Assert.Equal(30, runRequest.RerunDays);
         Assert.Equal("manual:tester", runRequest.Trigger);
     }
 
