@@ -70,17 +70,22 @@ internal sealed class FakeClient : INetiqDirectoryClient
     public int? LastTotalBudgetSecondsOverride { get; private set; }
     public ScanGranularity LastGranularity { get; private set; }
 
+    /// <summary>最後一次收到的分段掃描併發度——驗證 Service 有把它傳下去（第三十二輪批次D）</summary>
+    public int LastConcurrency { get; private set; }
+
     public Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer s, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24)
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         LastKnownIps = knownIps;
         LastProgressCallback = onProgress;
         LastTotalBudgetSecondsOverride = totalBudgetSecondsOverride;
         LastGranularity = granularity;
+        LastConcurrency = concurrency;
 
         if (_handler != null)
             return _handler(s, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride);
