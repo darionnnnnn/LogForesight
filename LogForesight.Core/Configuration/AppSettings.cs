@@ -215,7 +215,7 @@ public class StorageSettings
 
     /// <summary>
     /// 資料根目錄：Sqlite 未設定 ConnectionString 時，預設 db 檔位置的退路；
-    /// export\ 報告全文等交付檔案的所在。空字串＝執行檔自身目錄。
+    /// 診斷 log 等產出檔案的所在。空字串＝執行檔自身目錄。
     /// </summary>
     public string DataRoot { get; set; } = "";
 

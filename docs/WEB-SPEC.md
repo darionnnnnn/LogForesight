@@ -1920,13 +1920,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      直接跳過寫入，見 `RiskyEventSelector.WithinRetention`）；
      **執行歷程保留天數**（預設 120，批次執行紀錄/診斷與匯入紀錄）與
      **稽核與追責紀錄保留天數**（預設 730，同時控制操作稽核、權限異動紀錄與處理歷程）與
-     **報告檔保留天數**（`ReportRetentionDays`，預設 1095，只管 `export\` 底下的三種報告檔）——
+     **報告保留天數**（`ReportRetentionDays`，預設 180，管三種報告的全文）——
      批次每晚啟動時依這些天數清理。設定面板每項均為「標題／常駐說明／天數輸入框」直列式。
 
-     報告檔保留天數**刻意不與歷史資料保留天數做大小關係驗證**：報告是純文字小檔，設計上就要
-     能留得比 DB 紀錄久。代價要讓管理者知道且已寫進該欄位的常駐說明——超過歷史資料保留天數
-     之後，對應的分析紀錄已被清除，Web 上不再有入口可點開那份報告，但檔案仍依主機與年月
-     留在磁碟上（見 DB-SPEC 保留策略表）。
+     報告保留天數**不可大於歷史資料保留天數**（前後端皆驗證）：報告全文存在資料庫，
+     超過歷史資料保留天數之後對應的分析紀錄已被清除，那些報告在站上不再有任何入口可以點開，
+     留著只是佔資料庫空間。該欄位的常駐說明必須明說**報告全文存在資料庫、會佔用資料庫空間**，
+     並顯示實測用量（目前已存份數與概略 MB，來自 `lf_reports`）——只寫天數會讓管理者在
+     不知道代價的情況下調長保留期。
   5. **郵件通知**：啟用開關＋
      SMTP 連線四欄（伺服器／Port／TLS／帳號，密碼 write-only 比照 AI 金鑰的三態處理——
      `SmtpHasPassword` 唯讀顯示是否已設定、`SmtpPassword`／`ClearSmtpPassword` 寫入）＋
@@ -2322,7 +2323,7 @@ lf_audit_logs         audit_id PK / occurred_at / user_id FK NULL / account NOT 
 | 介面 | 儲存 key（blob＝整份型／log＝append-only／表＝正規化真表） | 寫入者 |
 |---|---|---|
 | `IAnalysisRecordReader/Writer`（既有） | `lf_daily_records`／`lf_top_issues`（正規化表，非 blob；後者同時是問題聚合的事實表） | 批次 |
-| `IReportSink` / 報告讀取（既有＋Web 讀全文） | `export\[{主機}\]{yyyy-MM}\*.txt`（唯一保留的實體檔案交付物，不屬「JSON 作為資料庫」；年月層由檔名的日期前綴推導，讀取一律依紀錄存下的完整路徑，不按慣例重組） | 批次 |
+| `IReportSink` / `IReportReader`（批次寫、Web 讀全文） | `lf_reports`（正規化表；一主機日一種報告一列，同日重跑就地取代。讀取以「主機×日期×種類」自然鍵反查，不依賴紀錄存下的參照） | 批次 |
 | `IUserStore` | blob `users` | Web |
 | `IUserGroupStore` | blob `user_groups` | Web |
 | `IHostStore` | blob `hosts`（含群組/負責人參照，`SetGroups`/`SetOwners` 直接改本文件內的清單） | Web＋批次（批次僅 upsert host_name/last_report_at） |

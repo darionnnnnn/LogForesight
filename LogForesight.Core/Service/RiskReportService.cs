@@ -5,7 +5,7 @@ using NLog;
 namespace LogForesight.Core.Service;
 
 /// <summary>
-/// 風險日報告：當日風險等級「中」以上時輸出報告檔，讓使用者聚焦問題點。
+/// 風險日報告：當日風險等級「中」以上時產生報告，讓使用者聚焦問題點。
 /// 報告依問題類別分區塊（儲存裝置、硬體、安全、服務、備份、設定、資源）。
 /// **處置參考的來源依類別分流**（2026-07-20 AI 角色轉換，見 docs/archive/HISTORY.md）：
 /// 規則已命中的類別（Category ≠ Other）直接查 <see cref="KnownIssueCatalog"/> 的靜態知識庫，
@@ -13,8 +13,7 @@ namespace LogForesight.Core.Service;
 /// 才發一次獨立的 AI 深入分析呼叫——類別內的事件彼此相關該一起看
 /// （如 disk/Ntfs/storahci 常是同一顆硬碟的故事），跨類別的整合判讀已由主分析完成，
 /// 各類別結果並列呈現、不需合併結論，所以分開呼叫沒有整合問題。
-/// 檔名標注當日發現的類別：export/2026-07-15_儲存裝置+安全.txt。
-/// 一天一個檔案；無風險的日期不產生檔案。
+/// 報告全文存進 `lf_reports`（一主機一天一份，同日重跑就地取代）；無風險的日期不產生報告。
 /// </summary>
 public class RiskReportService
 {
@@ -49,12 +48,13 @@ public class RiskReportService
         _deepDiveMaxTokens = deepDiveMaxTokens;
     }
 
-    /// <summary>產生風險報告檔，回傳報告參照（今日為檔案完整路徑）</summary>
-    /// <param name="host">主機識別，單機情境留空即可</param>
+    /// <summary>產生風險報告，回傳報告參照（`lf_reports.report_id`）</summary>
+    /// <param name="host">主機識別。**必須帶入真實主機**——多台主機同一天、同風險等級、
+    /// 同類別組合的報告只差在這個鍵，不帶就會互相覆蓋</param>
     /// <param name="activeSuppressions">本機現在生效中的抑制項目（含 Reason），用來在報告的
     /// 「已抑制的告警」區塊顯示原因；null/空清單時該區塊不輸出</param>
     public async Task<string> GenerateAsync(DailyAnalysisRecord record, List<EventLogEntryData> logs, string serverDescription = "",
-        List<RuleSuppression>? activeSuppressions = null, string host = "", CancellationToken ct = default)
+        List<RuleSuppression>? activeSuppressions = null, HostKey? host = null, CancellationToken ct = default)
     {
         var focusIssues = SelectFocusIssues(record.TopIssues);
 
@@ -113,10 +113,14 @@ public class RiskReportService
             sections.Add(new CategorySection(group.Key, issues, categoryLogs, outcome.Result, outcome.Truncated, outcome.IncludedLogs));
         }
 
-        var fileName = BuildFileName(record.Date, record.RiskLevel, sections);
-        var reportPath = await _reportSink.WriteAsync(ReportKind.DailyRisk, host, fileName, BuildReport(record, sections, activeSuppressions));
-        Log.Info("風險報告已寫入：{Path}", reportPath);
-        return reportPath;
+        var categories = string.Join("+", sections.Select(s => CategoryZh(s.Category)).Distinct());
+        var fileName = BuildFileName(record.Date, record.RiskLevel, categories);
+        var hostKey = host ?? new HostKey { HostId = record.HostId, HostName = record.Host };
+        var reportRef = await _reportSink.WriteAsync(ReportKind.DailyRisk, hostKey, fileName,
+            BuildReport(record, sections, activeSuppressions),
+            new ReportMeta(record.RiskLevel, categories.Length > 0 ? categories : null));
+        Log.Info("風險報告已寫入：{Host} {Date:yyyy-MM-dd}（參照 {Ref}）", hostKey.HostName, record.Date, reportRef);
+        return reportRef;
     }
 
     /// <summary>類別的中文顯示名稱（區塊標題與檔名共用）——委派給 Core 的唯一字典
@@ -126,13 +130,12 @@ public class RiskReportService
 
     /// <summary>
     /// 檔名：日期＋風險等級＋當日發現的類別，如 2026-07-15_高風險_儲存裝置+安全.txt。
-    /// 風險等級緊接在日期之後，讓使用者列出 export 目錄時不用打開檔案就能一眼看出重要性；
-    /// 「高風險」的中文排序也剛好在「中風險」之前，同一天多檔並列時更醒目。
+    /// 這個字串存進 `lf_reports.file_name`，是報告的顯示名稱與下載檔名——風險等級緊接在
+    /// 日期之後，讓使用者不用打開報告就能一眼看出重要性。
     /// </summary>
-    private static string BuildFileName(DateTime date, string riskLevel, List<CategorySection> sections)
+    private static string BuildFileName(DateTime date, string riskLevel, string categories)
     {
-        var categories = sections.Select(s => CategoryZh(s.Category)).Distinct().ToList();
-        var categorySuffix = categories.Count > 0 ? "_" + string.Join("+", categories) : "";
+        var categorySuffix = categories.Length > 0 ? "_" + categories : "";
         return $"{date:yyyy-MM-dd}_{riskLevel}風險{categorySuffix}.txt";
     }
 

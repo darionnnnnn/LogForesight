@@ -79,13 +79,24 @@ public static class RuntimeSettingsResolver
                     systemSettings.RawEventRetentionDays, retention.RetentionDays);
             }
 
-            if (systemSettings.ReportRetentionDays >= SystemSettings.MinRetentionDays && systemSettings.ReportRetentionDays <= 3650)
+            // 上限收斂為歷史資料保留天數：報告全文改存資料庫後，超過 RetentionDays 的報告
+            // 在站上已無入口可點（分析紀錄已被清除），留著只是佔空間。
+            // 舊部署可能存著大於 RetentionDays 的值（早期版本兩者互不約束），**取小**而不是
+            // 退回預設值——退回預設會把使用者刻意調短的設定悄悄調長，方向剛好相反。
+            if (systemSettings.ReportRetentionDays >= SystemSettings.MinRetentionDays)
             {
-                retention = retention with { ReportRetentionDays = systemSettings.ReportRetentionDays };
+                var effective = Math.Min(systemSettings.ReportRetentionDays, retention.RetentionDays);
+                if (effective != systemSettings.ReportRetentionDays)
+                {
+                    Log.Info("系統設定的報告保留天數（{ReportRetentionDays}）大於歷史資料保留天數（{RetentionDays}），" +
+                             "本次以 {Effective} 天計算——超過歷史資料保留天數的報告在站上已無入口可點。",
+                        systemSettings.ReportRetentionDays, retention.RetentionDays, effective);
+                }
+                retention = retention with { ReportRetentionDays = effective };
             }
             else
             {
-                Log.Warn("系統設定的報告檔保留天數（{ReportRetentionDays}）超出合理範圍（{MinRetentionDays}~3650），改用內建預設值。",
+                Log.Warn("系統設定的報告保留天數（{ReportRetentionDays}）低於下限（{MinRetentionDays}），改用內建預設值。",
                     systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays);
             }
         }

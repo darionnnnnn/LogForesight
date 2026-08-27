@@ -457,9 +457,15 @@
             </div>
 
             <div class="mb-3">
-                <label for="report-retention-days" class="form-label">報告檔保留天數</label>
+                <label for="report-retention-days" class="form-label">報告保留天數</label>
                 <div class="text-muted small mb-2">
-                    這一項只管 export\ 底下的報告檔（風險報告、週檢報告、權限異動報告），與歷史資料保留天數各自獨立，可以設得比它長；超過歷史資料保留天數之後，雖然資料庫紀錄已被清除且網站上不再有入口可點開，但檔案仍會依主機與年月分資料夾留在磁碟上。
+                    這一項管三種報告的全文（風險報告、體檢報告、權限異動報告）。<strong>報告全文存在資料庫裡，會佔用資料庫空間</strong>——單份約 20～30 KB，主機數量多、風險日多的環境累積得很快，設定前請一併衡量資料庫的容量規劃。
+                </div>
+                <div class="text-muted small mb-2">
+                    不可大於歷史資料保留天數：超過之後對應的分析紀錄已被清除，那些報告在網站上不再有任何入口可以點開，留著只會佔空間。
+                </div>
+                <div class="alert alert-secondary py-2 px-3 small mb-2" id="report-usage" role="status" style="max-width: 32rem;">
+                    目前已存報告：<span id="report-usage-count">—</span> 份，佔用約 <span id="report-usage-size">—</span> MB。
                 </div>
                 <input type="number" class="form-control" id="report-retention-days" min="90" max="3650" required style="max-width: 12rem;" />
             </div>

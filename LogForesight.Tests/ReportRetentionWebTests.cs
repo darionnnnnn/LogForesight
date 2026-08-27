@@ -28,7 +28,7 @@ public class ReportRetentionWebTests
         RunLogRetentionDays = 120,
         AuditRetentionDays = 730,
         RawEventRetentionDays = 120,
-        ReportRetentionDays = 1095,
+        ReportRetentionDays = 180,
         AiTimeoutSeconds = 600,
         AiRetryCount = 3,
         AiRetryDelaySeconds = 10,
@@ -43,10 +43,10 @@ public class ReportRetentionWebTests
     };
 
     [Fact]
-    public void 更新DTO_帶合法值1095與其餘合法欄位_通過模型驗證()
+    public void 更新DTO_帶合法值與其餘合法欄位_通過模型驗證()
     {
         var request = CreateValidRequest();
-        request.ReportRetentionDays = 1095;
+        request.ReportRetentionDays = 180;
 
         var results = new List<ValidationResult>();
         var isValid = Validator.TryValidateObject(
@@ -57,7 +57,7 @@ public class ReportRetentionWebTests
     }
 
     [Fact]
-    public void 更新DTO_ReportRetentionDays為89_驗證失敗且錯誤訊息含報告檔保留天數()
+    public void 更新DTO_ReportRetentionDays為89_驗證失敗且錯誤訊息含報告保留天數()
     {
         var request = CreateValidRequest();
         request.ReportRetentionDays = 89;
@@ -68,7 +68,7 @@ public class ReportRetentionWebTests
 
         Assert.False(isValid);
         var failure = Assert.Single(results, r => r.MemberNames.Contains(nameof(UpdateSystemSettingsRequest.ReportRetentionDays)));
-        Assert.Contains("報告檔保留天數", failure.ErrorMessage);
+        Assert.Contains("報告保留天數", failure.ErrorMessage);
     }
 
     [Fact]
@@ -85,10 +85,14 @@ public class ReportRetentionWebTests
         Assert.Contains(results, r => r.MemberNames.Contains(nameof(UpdateSystemSettingsRequest.ReportRetentionDays)));
     }
 
+    /// <summary>
+    /// 兩者的大小關係是跨欄位約束，DataAnnotations 管不到——由 SystemSettingsService.Update 擋，
+    /// 所以模型驗證這一層仍然放行。這條測試釘住的是「別把它誤加成屬性層 Range」，
+    /// 加了會讓錯誤訊息出現在錯的地方（欄位旁而不是整體），也擋不住只改單一欄位的請求。
+    /// </summary>
     [Fact]
-    public void 更新DTO_報告保留天數大於歷史資料保留天數_驗證通過()
+    public void 更新DTO_報告保留天數大於歷史資料保留天數_模型驗證放行由服務層攔截()
     {
-        // 報告保留天數與 RetentionDays 各自獨立，可留存得比 DB 久而不受大小限制約束
         var request = CreateValidRequest();
         request.RetentionDays = 180;
         request.ReportRetentionDays = 1095;
@@ -98,7 +102,6 @@ public class ReportRetentionWebTests
             request, new ValidationContext(request), results, validateAllProperties: true);
 
         Assert.True(isValid);
-        Assert.True(request.ReportRetentionDays > request.RetentionDays);
         Assert.Empty(results);
     }
 
@@ -133,6 +136,15 @@ public class ReportRetentionWebTests
         Assert.Contains("id=\"report-retention-days\"", cshtml);
         Assert.Contains("report-retention-days", js);
         Assert.Contains("reportRetentionDays", js);
+
+        // 空間告知：報告全文改存資料庫後，設定頁必須明說它會佔用資料庫空間，
+        // 並顯示實測用量（份數與 MB）——只寫天數會讓管理者在不知道代價的情況下調長保留期
+        Assert.Contains("會佔用資料庫空間", cshtml);
+        Assert.Contains("id=\"report-usage-count\"", cshtml);
+        Assert.Contains("id=\"report-usage-size\"", cshtml);
+        Assert.Contains("report-usage-count", js);
+        Assert.Contains("reportCount", js);
+        Assert.Contains("reportSizeMb", js);
 
         var matches = Regex.Matches(service, @"\bReportRetentionDays\b");
         Assert.True(matches.Count >= 4, $"SystemSettingsService.cs 應包含至少 4 次 ReportRetentionDays，實際為 {matches.Count} 次。");

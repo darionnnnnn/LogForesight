@@ -50,7 +50,7 @@ public class DashboardServiceTests : IDisposable
         var audit = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
         var currentUser = FakeCurrentUser.WithCapabilities();
         var permStore = new PermissionChangeStore(_fixture.NewContext);
-        var permissionChanges = new PermissionChangeService(permStore, _hosts, visibility, currentUser, new RecordingAuditService(), _users);
+        var permissionChanges = new PermissionChangeService(permStore, _hosts, visibility, currentUser, new RecordingAuditService(), _users, new NullReportReader());
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var issueTodo = new IssueTodoQuery(aggregates, statusResolver);
 

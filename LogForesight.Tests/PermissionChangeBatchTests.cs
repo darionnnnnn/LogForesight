@@ -43,7 +43,7 @@ public sealed class PermissionChangeBatchTests : IDisposable
         var user = currentUser ?? FakeCurrentUser.WithCapabilities(Capability.ViewAll, Capability.ConfirmPermission);
         var visibility = new VisibilityService(
             user, _users, _userGroups, _access, _hosts, new FakeIssueCaseStore(), new FakeSystemSettingsStore());
-        return new PermissionChangeService(_store, _hosts, visibility, user, _audit, _users);
+        return new PermissionChangeService(_store, _hosts, visibility, user, _audit, _users, new NullReportReader());
     }
 
     [Fact]

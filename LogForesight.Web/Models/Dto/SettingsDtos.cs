@@ -43,8 +43,14 @@ public class SystemSettingsDto
     /// <summary>原始事件內容保留天數（日紀錄原始樣本與風險 log 暫存）</summary>
     public int RawEventRetentionDays { get; set; }
 
-    /// <summary>報告檔保留天數（export\ 底下的風險報告、週檢報告、權限異動報告）</summary>
+    /// <summary>報告全文保留天數（資料庫裡的風險報告、體檢報告、權限異動報告）</summary>
     public int ReportRetentionDays { get; set; }
+
+    /// <summary>目前已存的報告份數（設定頁的空間告知）</summary>
+    public int ReportCount { get; set; }
+
+    /// <summary>目前報告全文佔用的概略空間（MB，設定頁的空間告知）</summary>
+    public double ReportSizeMb { get; set; }
 
     /// <summary>是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
@@ -214,7 +220,9 @@ public class UpdateSystemSettingsRequest
     [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "原始事件內容保留天數必須介於 90~3650 天")]
     public int RawEventRetentionDays { get; set; }
 
-    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "報告檔保留天數必須介於 90~3650 天")]
+    /// <summary>報告全文保留天數；上限交由 SystemSettingsService.Update 對照 RetentionDays 驗證
+    /// （報告全文存在資料庫，超過歷史資料保留天數之後在站上已無入口可點）</summary>
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "報告保留天數必須介於 90~3650 天")]
     public int ReportRetentionDays { get; set; }
 
     // ── AD 驗證（docs/archive/HISTORY.md #9）────────────────────────────────

@@ -24,6 +24,7 @@ public class PermissionChangeService
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly IUserStore _users;
+    private readonly IReportReader _reports;
 
     public PermissionChangeService(
         PermissionChangeStore store,
@@ -31,7 +32,8 @@ public class PermissionChangeService
         IVisibilityService visibility,
         ICurrentUser currentUser,
         IAuditService audit,
-        IUserStore users)
+        IUserStore users,
+        IReportReader reports)
     {
         _store = store;
         _hosts = hosts;
@@ -39,6 +41,26 @@ public class PermissionChangeService
         _currentUser = currentUser;
         _audit = audit;
         _users = users;
+        _reports = reports;
+    }
+
+    /// <summary>
+    /// 某主機某日的權限異動報告全文（逐項「請確認」的完整敘事，與清單的結構化逐筆紀錄並存）。
+    /// 找不到回 null——報告有自己的保留期，可能比異動紀錄先被清掉。
+    /// </summary>
+    public ReportViewDto? GetReport(string hostName, DateTime date)
+    {
+        var host = _hosts.FindByName(hostName)
+                   ?? throw DomainException.NotFound("找不到這台主機，或您沒有檢視權限。");
+
+        // 授權與清單同一套：可見範圍先過（EnsureVisible 查無權限一律回 404，不回 403）；
+        // 案件授與者另擋——報告全文是整台主機當日的完整敘事，不在被交辦問題的範圍內（§7）
+        _visibility.EnsureVisible(host.HostId);
+        if (_visibility.IsCaseGrantOnly(host.HostId)) return null;
+
+        var content = _reports.Read(new HostKey { HostId = host.HostId, HostName = host.HostName },
+            date, ReportKinds.Permission);
+        return content == null ? null : ReportViewDto.From(content);
     }
 
     /// <summary>組裝查詢條件（供查詢端點與批次核准端點共用）</summary>

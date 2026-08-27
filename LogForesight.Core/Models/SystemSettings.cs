@@ -238,14 +238,18 @@ public class SystemSettings
     public const int DefaultRawEventRetentionDays = 120;
 
     /// <summary>
-    /// 報告檔保留天數（<c>export\</c> 底下的風險報告／週檢報告／權限異動報告）：超過此天數的報告檔予以清理。
-    /// 這一項只管 <c>export\</c> 底下的報告檔（風險報告／週檢報告／權限異動報告），
-    /// 與資料庫分析紀錄的 <see cref="RetentionDays"/> 各自獨立、不互相約束。
+    /// 報告全文保留天數（<c>lf_reports</c> 的風險報告／體檢報告／權限異動報告）：
+    /// 超過此天數的報告全文予以清理。
+    ///
+    /// **必須小於或等於 <see cref="RetentionDays"/>**：報告全文存在資料庫裡，
+    /// 而超過歷史資料保留天數之後對應的分析紀錄已被清除，那些報告在站上不再有任何入口可以點開，
+    /// 留著只是佔資料庫空間的死資料。
     /// </summary>
     public int ReportRetentionDays { get; set; } = DefaultReportRetentionDays;
 
-    /// <summary>ReportRetentionDays 的出廠預設</summary>
-    public const int DefaultReportRetentionDays = 1095;
+    /// <summary>ReportRetentionDays 的出廠預設——與 <see cref="DefaultRetentionDays"/> 同值，
+    /// 因為它的上限就是 RetentionDays</summary>
+    public const int DefaultReportRetentionDays = DefaultRetentionDays;
 
     /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的

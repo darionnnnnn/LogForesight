@@ -69,7 +69,7 @@ flowchart TD
     RISK["LogAnalysisService<br/>風險等級確定性判定"]
     AI["AIService<br/>llama.cpp / KoboldCpp"]
     HIST[("分析紀錄庫（DB）<br/>IAnalysisRecordStore")]
-    REPORT["RiskReportService<br/>export/*.txt"]
+    REPORT["RiskReportService<br/>報告全文（DB）"]
 
     ELS --> AGG
     AGG --> CAT
@@ -340,10 +340,10 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 再覆寫快照。首次執行沒有快照可比對，只建立基準、不產生告警。
 
 發現異動時「排程作業」頁的執行輸出會標示明顯的異動警示（與風險等級的紅/黃色徽章區隔），
-並輸出 `export\{today}_權限異動.txt`，不含 AI 分析——
+並產生當日的權限異動報告全文（存入資料庫，可於「權限異動檢核」頁檢視），不含 AI 分析——
 這類發現本身已經是明確事實陳述，不需要 AI 解讀，也讓這個檢查完全不依賴 AI 服務是否可用。
 
-**被異動項目明細（人工防護層）**：執行輸出與報告檔的最後都會逐項列出每一筆異動的
+**被異動項目明細（人工防護層）**：執行輸出與報告全文的最後都會逐項列出每一筆異動的
 「對象／異動類型／異動前／異動後」對照，並附上確認提示
 （「此異動是否為您或授權人員的操作？」）。這是獨立於自動檢查之外的一層人工防護——
 自動檢查負責「發現有異動」，明細清單讓使用者能逐筆判斷「這筆異動是否正常」，
@@ -416,19 +416,21 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 一個本質上無關緊要的問題拉成需要人工介入的中風險日。**趨勢判定與嚴重度升級本身不受影響**
 （`Trend` 欄位仍正確標示 `Rising`），只是不吵、不拉風險——資訊沒有遺失，只是不再用來吵人。
 
-## 風險報告（export/{日期}_{類別}.txt）
+## 風險報告
 
-風險等級「中」以上的日期，自動輸出報告檔到**執行檔所在目錄下的 `export`**
-（不用 CurrentDirectory，因為排程執行時可能是 system32）。一天一個檔案、
-該日所有風險都收在同一份；無風險的日期不產生檔案。報告路徑會回寫到歷史資料庫的 `ReportFile` 欄位。
+風險等級「中」以上的日期，自動產生報告全文並存入資料庫（`lf_reports`）。一主機一天一份、
+該日所有風險都收在同一份；無風險的日期不產生報告。同一天重新分析會就地取代，不留舊版。
 
-**檔名標注風險等級與當日發現的問題類別**，掃一眼目錄就知道哪天最重要、出過什麼事：
+報告在 Web 的「分析紀錄詳情」頁以可收合卡片呈現，可複製、下載成 txt、列印。
+體檢報告同頁另有一張卡片；權限異動報告在「權限異動檢核」頁的列展開內容裡。
+
+報告的顯示名稱與下載檔名沿用既有的命名慣例，**標注風險等級與當日發現的問題類別**，
+不必打開就能看出哪天最重要、出過什麼事：
 
 ```
-export\
-├── 2026-07-12_中風險_服務.txt
-├── 2026-07-14_高風險_儲存裝置+安全.txt
-└── 2026-07-15_中風險_安全.txt
+2026-07-12_中風險_服務.txt
+2026-07-14_高風險_儲存裝置+安全.txt
+2026-07-15_中風險_安全.txt
 ```
 
 類別共八種：儲存裝置、硬體、安全、服務、備份、設定、資源、其他
@@ -509,7 +511,7 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 |---|---|---|
 | `Server.PathBase` | `""`（＝掛在網站根目錄） | 站台掛載前綴（例 `/LogForesight`）。**IIS 子 Application 不需要設定**（自動辨識）；只有「Kestrel 直曝＋反向代理加了前綴」或本機要驗證前綴行為時才填 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
-| `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
+| `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點與診斷 log 的所在） |
 | `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
 | `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
@@ -648,7 +650,6 @@ Cookie 的作用範圍會跟著掛載路徑走，因此同一台主機掛正式�
 D:\LogForesight\
 └─ Web\                    ← LogForesight.Web.exe 與其 appsettings.json
     ├─ Db\                  ← SQLite 檔 logforesight.db（若用 Sqlite；Storage:DataRoot 底下）
-    ├─ export\              ← 風險報告全文
     └─ logs\                ← 診斷檔案 log（nlog.config）
 ```
 
@@ -680,7 +681,7 @@ Polly 網路重試、停用連線池、退化重複輸出抑制、context 預算
 
 **完整 prompt 文字**和**完整 Event Log 內容**一律不寫入——只記字元數/筆數等統計數字。原因：
 - prompt 每次呼叫可能有數 KB，完整記錄的話 log 檔案大小會隨呼叫次數線性增長，很快就暴增
-- Event Log 內容本來就已經完整保存在分析紀錄資料庫與風險報告（`export\`），不需要在診斷 log 裡重複一份
+- Event Log 內容本來就已經完整保存在分析紀錄資料庫與風險報告全文裡，不需要在診斷 log 裡重複一份
 - 已經記錄的「短診斷片段」（回覆預覽、解析後的物件、程式產生的告警字串）本身都有長度上限或天然筆數上限，不會無界增長
 
 ### 檔案切分與容量控制

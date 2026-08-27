@@ -43,7 +43,9 @@ public static class ServiceCollectionExtensions
 
         // 分析紀錄與報告全文：批次寫、Web 讀
         services.AddSingleton<IAnalysisRecordQuery>(sp => sp.GetRequiredService<StorageBackend>().RecordStore());
-        services.AddSingleton<IReportReader>(_ => new FileReportReader(dataRoot));
+        services.AddSingleton<EfReportStore>(sp => sp.GetRequiredService<StorageBackend>().ReportStore());
+        services.AddSingleton<IReportReader>(sp => sp.GetRequiredService<EfReportStore>());
+        services.AddSingleton<IReportUsageQuery>(sp => sp.GetRequiredService<EfReportStore>());
 
         // 寫入面：處理狀態（Web 寫）、權限異動（批次寫異動、Web 寫確認）
         //
@@ -346,6 +348,10 @@ public static class ServiceCollectionExtensions
         // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
         services.AddHostedService<HandlingMigrationHostedService>();
         services.AddHostedService<PermissionChangeMigrationHostedService>();
+
+        // 既有 export\ 報告檔搬進 lf_reports（一次性）。不需要寫入閘門——報告只由夜間分析寫入，
+        // 遷移逐筆比對自然鍵補缺、遇到已存在就跳過，兩邊同時進行也不會互相覆蓋。
+        services.AddHostedService<ReportFileMigrationHostedService>();
 
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務

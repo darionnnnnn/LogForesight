@@ -81,15 +81,17 @@ public class SystemSettingsService : ISystemSettingsService
     private readonly IAuditService _audit;
     private readonly IUserStore _users;
     private readonly MailNotificationService _mail;
+    private readonly IReportUsageQuery _reportUsage;
 
     public SystemSettingsService(ISystemSettingsStore store, ICurrentUser currentUser, IAuditService audit,
-        IUserStore users, MailNotificationService mail)
+        IUserStore users, MailNotificationService mail, IReportUsageQuery reportUsage)
     {
         _store = store;
         _currentUser = currentUser;
         _audit = audit;
         _users = users;
         _mail = mail;
+        _reportUsage = reportUsage;
     }
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
@@ -144,6 +146,11 @@ public class SystemSettingsService : ISystemSettingsService
 
         if (request.RawEventRetentionDays > request.RetentionDays)
             throw DomainException.Validation("原始事件內容保留天數不可大於歷史資料保留天數。");
+
+        // 報告全文存在資料庫：超過歷史資料保留天數之後對應的分析紀錄已被清除，
+        // 那些報告在站上不再有任何入口可以點開，留著只是佔資料庫空間
+        if (request.ReportRetentionDays > request.RetentionDays)
+            throw DomainException.Validation("報告保留天數不可大於歷史資料保留天數。");
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -606,7 +613,27 @@ public class SystemSettingsService : ISystemSettingsService
         };
     }
 
-    private SystemSettingsDto ToDto(SystemSettings s) => new()
+    private SystemSettingsDto ToDto(SystemSettings s) => ToDto(s, ReadReportUsage());
+
+    /// <summary>
+    /// 報告全文的實際佔用。查詢失敗不得讓整個設定頁掛掉——這只是一則參考資訊，
+    /// 拿不到就顯示 0，其餘設定照常運作。
+    /// </summary>
+    private (int Count, double SizeMb) ReadReportUsage()
+    {
+        try
+        {
+            var (count, totalChars) = _reportUsage.Usage();
+            // 以 UTF-8 概估：報告以中文敘事為主但夾雜大量 ASCII 的原始 log，取 2 bytes/字元
+            return (count, Math.Round(totalChars * 2 / (1024.0 * 1024.0), 2));
+        }
+        catch (Exception)
+        {
+            return (0, 0);
+        }
+    }
+
+    private SystemSettingsDto ToDto(SystemSettings s, (int Count, double SizeMb) reportUsage) => new()
     {
         BrandName = s.BrandName,
         BrandSubtitle = s.BrandSubtitle,
@@ -626,6 +653,10 @@ public class SystemSettingsService : ISystemSettingsService
         AuditRetentionDays = s.AuditRetentionDays,
         RawEventRetentionDays = s.RawEventRetentionDays,
         ReportRetentionDays = s.ReportRetentionDays,
+        // 空間告知用實測值而非估算公式：份數與內容長度是查得到的事實，
+        // 一條使用者無法驗證的估算公式只會讓人不知道該不該相信
+        ReportCount = reportUsage.Count,
+        ReportSizeMb = reportUsage.SizeMb,
         AdAuthEnabled = s.AdAuthEnabled,
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,

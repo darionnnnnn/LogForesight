@@ -166,6 +166,15 @@ internal static class SchemaUpgrader
         // 未截斷的原始事件訊息（回饋二十八輪 P9）。只對升級後新寫入的列有值，既有列維持 null、不回填
         AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "raw_text",
             isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+
+        // 報告全文（↔ lf_reports）：三種報告（風險／週檢／權限異動）的完整內容。
+        // 唯一索引即 upsert 的判定鍵，**含 host_name**：host_id = 0 是「主機尚未登記」的哨兵值
+        // 而不是一台主機，只用 host_id 會讓兩台都還沒登記成功的主機在同一天互相覆蓋。
+        CreateTableIfMissing(ctx, isSqlite, "lf_reports",
+            isSqlite ? SqliteCreateReports : SqlServerCreateReports);
+        AddIndexIfMissing(ctx, isSqlite, "lf_reports",
+            "IX_lf_reports_host_date_kind", "host_id, host_name, report_date, kind", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_reports", "IX_lf_reports_created_at", "created_at");
     }
 
 
@@ -518,6 +527,39 @@ internal static class SchemaUpgrader
             confirmed_by_account nvarchar(255) NULL,
             confirmed_at datetime2 NULL,
             confirm_note nvarchar(max) NULL
+        )
+        """;
+
+    // 報告全文。content 不設長度上限：報告是人看的完整敘事，長度不可預期
+    // （設上限在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時的截斷例外）。
+    // 主鍵在 SQLite 必須是 INTEGER（rowid），不能寫 bigint。
+    private const string SqliteCreateReports = """
+        CREATE TABLE lf_reports (
+            report_id INTEGER NOT NULL CONSTRAINT PK_lf_reports PRIMARY KEY AUTOINCREMENT,
+            host_id INTEGER NOT NULL,
+            host_name TEXT NOT NULL,
+            report_date TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            risk_level TEXT NULL,
+            categories TEXT NULL,
+            file_name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """;
+
+    private const string SqlServerCreateReports = """
+        CREATE TABLE lf_reports (
+            report_id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_reports PRIMARY KEY,
+            host_id bigint NOT NULL,
+            host_name nvarchar(255) NOT NULL,
+            report_date datetime2 NOT NULL,
+            kind nvarchar(20) NOT NULL,
+            risk_level nvarchar(10) NULL,
+            categories nvarchar(200) NULL,
+            file_name nvarchar(255) NOT NULL,
+            content nvarchar(max) NOT NULL,
+            created_at datetime2 NOT NULL
         )
         """;
 

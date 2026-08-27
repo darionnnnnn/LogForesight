@@ -103,7 +103,7 @@ public class CaseGrantVisibilityTests : IDisposable
     private RecordQueryServiceFacade Query(IVisibilityService visibility) =>
         new(
             repository: new RecordRepository(_recordStore, _hosts, visibility, new FakeSystemSettingsService()),
-            reports: new NullReportReader(),
+            reports: new StubReportReader(),
             hosts: _hosts,
             users: _users,
             hostGroups: new FakeHostGroupStore(),
@@ -252,6 +252,20 @@ public class CaseGrantVisibilityTests : IDisposable
             }));
 
         Assert.Equal(ApiErrorCodes.NotFound, ex.Code);
+    }
+
+    /// <summary>
+    /// 報告全文是整台主機當日的完整敘事，案件授與者不得取得——三種報告同一套判斷，
+    /// 不能只擋住風險報告那一種。
+    /// </summary>
+    [Fact]
+    public void 僅案件授與_三種報告全文皆取不到()
+    {
+        var query = Query(Visibility());
+
+        Assert.Null(query.GetReportView(_grantedHost.HostId, Day, ReportKinds.DailyRisk));
+        Assert.Null(query.GetReportView(_grantedHost.HostId, Day, ReportKinds.WeeklyCheckup));
+        Assert.Null(query.GetReport(_grantedHost.HostId, Day));
     }
 
     /// <summary>
