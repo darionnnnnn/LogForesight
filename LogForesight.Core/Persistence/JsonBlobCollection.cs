@@ -49,14 +49,21 @@ public abstract class JsonBlobCollection<T> where T : class
     /// 若連命中也要搶同一把鎖，單一請求十幾次的 <c>GetAll()</c> 加上多人併發就全部排隊在這裡——
     /// 反序列化是省掉了，卻換來一個新的咽喉點，等於抵消掉加快取的目的。</para>
     /// </summary>
-    protected List<T> Read()
+    protected List<T> Read() => new(ReadSnapshot());
+
+    /// <summary>
+    /// 與 <see cref="Read"/> 同一條讀取路徑，但**不複製清單**——供「只是要查一筆」的呼叫端使用
+    /// （回饋三十四輪 A5）：3682 台規模下，逐主機迴圈裡每次查一台都複製整份清單，
+    /// 光是配置就是可觀的 GC 壓力。回傳的是共用快照，呼叫端只能讀。
+    /// </summary>
+    protected IReadOnlyList<T> ReadSnapshot()
     {
         if (!_cached) return Deserialize(_blob.Read());
 
         // 鎖外：版本探測是單列主鍵查詢，快照是不可變物件，兩者都不需要互斥
         var version = _blob.ReadVersion();
         var snapshot = _snapshot;
-        if (snapshot != null && snapshot.Version == version) return new List<T>(snapshot.Items);
+        if (snapshot != null && snapshot.Version == version) return snapshot.Items;
 
         lock (_cacheLock)
         {
@@ -70,7 +77,7 @@ public abstract class JsonBlobCollection<T> where T : class
                 current = new CacheSnapshot(Deserialize(content), loadedVersion);
                 _snapshot = current;
             }
-            return new List<T>(current.Items);
+            return current.Items;
         }
     }
 

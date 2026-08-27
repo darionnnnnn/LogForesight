@@ -221,7 +221,7 @@ public static class HostDayPostProcessor
                     Before = details.Before,
                     After = details.After,
                     AlertText = alertText,
-                    RawText = evt.Message,
+                    RawText = evt.Message == null ? null : TextTruncation.Truncate(evt.Message, RawTextMaxLength),
                     Source = PermissionChangeSources.Netiq,
                     EventId = evt.EventId
                 });
@@ -288,6 +288,11 @@ public static class HostDayPostProcessor
             Log.Warn(ex, "{Context}{Date:yyyy-MM-dd} 權限異動檢核寫入失敗（不影響分析結果）", logContext, date);
         }
     }
+
+    /// <summary>入庫原文（RawText）的長度上限（回饋三十四輪 A4）。展開明細要看完整原文，
+    /// 所以留得比清單用的 AlertText（500 字）寬得多；但完全不設限時，一台吵雜的 DC 一天數萬則
+    /// 全帶完整原文，記憶體與資料庫體積都沒有上界。8000 字足以涵蓋實務上的權限異動事件全文。</summary>
+    internal const int RawTextMaxLength = 8000;
 
     /// <summary>成員新增＋成員移除成對出現達此對數時，該主機日的成對異動合併為一筆彙總列。
     /// 門檻不做成設定項：這是「明顯是自動化程序」的判斷，不是使用者要調的參數。</summary>
