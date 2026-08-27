@@ -1,7 +1,7 @@
 using System.Text;
 using Xunit;
 
-namespace LogForesight.Tests.Persistence;
+namespace LogForesight.Tests;
 
 /// <summary>
 /// A1：<see cref="FileReportSink"/>——報告輸出目錄依檔名 yyyy-MM-dd 日期前綴分年月子目錄。
@@ -96,30 +96,6 @@ public class FileReportSinkTests : IDisposable
     }
 
     /// <summary>
-    /// 5. host 帶路徑逃逸字元（例如 ..\evil）
-    /// → 寫出的完整路徑仍在 export 目錄之內（既有淨化行為未被破壞）。
-    /// </summary>
-    [Theory]
-    [InlineData(@"..\evil", ".._evil")]
-    [InlineData("../evil", ".._evil")]
-    [InlineData("..", "_")]
-    [InlineData(".", "_")]
-    public async Task host帶路徑逃逸字元時寫出完整路徑仍在export目錄之內(string maliciousHost, string expectedFolder)
-    {
-        var sink = new FileReportSink(_dir);
-        var content = "安全檢查測試內容";
-        var fileName = "2026-08-27_高風險_安全.txt";
-
-        var path = await sink.WriteAsync(ReportKind.DailyRisk, maliciousHost, fileName, content);
-
-        var fileInfo = new FileInfo(path);
-        Assert.True(fileInfo.Exists);
-        Assert.StartsWith(_dir, fileInfo.FullName, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("2026-08", fileInfo.Directory!.Name);
-        Assert.Equal(expectedFolder, fileInfo.Directory.Parent!.Name);
-    }
-
-    /// <summary>
     /// 6. 寫入內容以 UTF-8 讀回與傳入字串相同（既有行為不變）。
     /// </summary>
     [Fact]
@@ -133,5 +109,26 @@ public class FileReportSinkTests : IDisposable
 
         var actualContent = await File.ReadAllTextAsync(path, Encoding.UTF8);
         Assert.Equal(expectedContent, actualContent);
+    }
+
+    [Theory]
+    [InlineData("../outside", ".._outside")]
+    [InlineData("..\\outside", ".._outside")]
+    [InlineData("..", "_")]
+    [InlineData(".", "_")]
+    [InlineData("host/name", "host_name")]
+    [InlineData("host\\name", "host_name")]
+    public async Task 寫入時淨化host避免跳出export目錄(string maliciousHost, string expectedFolder)
+    {
+        var sink = new LogForesight.Core.Persistence.FileReportSink(_dir);
+        var content = "test content";
+        var fileName = "report.txt";
+
+        var path = await sink.WriteAsync((LogForesight.Core.Persistence.ReportKind)0, maliciousHost, fileName, content);
+
+        var fileInfo = new FileInfo(path);
+        Assert.True(fileInfo.Exists);
+        Assert.Equal(expectedFolder, fileInfo.Directory!.Name);
+        Assert.StartsWith(_dir, fileInfo.Directory.FullName, StringComparison.OrdinalIgnoreCase);
     }
 }
