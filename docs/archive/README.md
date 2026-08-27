@@ -43,6 +43,7 @@
 | `FEEDBACK-29-PLAN.md` | 登入可診斷性（cookie Secure 跟隨連線含 X-Forwarded-Proto／serverAdmin 補 web.log／PasswordHash 格式 fail fast／登入頁 module 失敗防呆）＋儀表板「未處理問題」KPI 與下鑽同口徑（補套可見嚴重度、去重改大小寫不敏感）＋郵件摘要與群組未處理數口徑統一。 |
 | `FEEDBACK-30-PLAN.md` | 登入失敗誤判分辨（結構化明細／殘留憑證跨日確認制／關聯與趨勢下游修正／密碼噴灑偵測）＋NetIQ 探索改良（提早停頁、背景工作化、網段分割、掃描粒度）＋規則補強（seed v4→v5、ModifiedBy 分流、既有規則降噪）。 |
 | `FEEDBACK-31-PLAN.md` | 規則更新後舊日重新分析：立即執行改四模式下拉（依處理狀態分級重跑）＋紀錄層 DeleteDays＋RerunDateFinder＋兩條路徑逐日就地取代（來源無資料保留原結果）＋修 OnlyMissingOrFailed 從未生效／JSON enum 綁定／先刪後分析／趨勢基準自污染等真 bug。 |
+| `FEEDBACK-32-PLAN.md` | 報告檔依主機＋年月分子目錄（年月由檔名日期前綴推導，舊檔不搬）＋清理後移除空目錄；報告保留期拆成獨立設定 `ReportRetentionDays`（預設 1095，刻意不與 `RetentionDays` 做大小約束）；NetIQ 掃描分段平行化（併發 1~3 由掃描列每次自選，每段各自一份 `ScanState`＋client pool）＋修預算用盡時「未掃描網段」用 `Skip(已完成數)` 會指錯段、分段中斷時涵蓋警告遺失等真 bug。 |
 | `UX-AUDIT-2026-08-05.md` | 四角色實際登入的全面 UX 體檢報告（只提問題，不含實作）。 |
 | `SCALE-ISSUE-FIRST-PLAN.md` | 規模化（2000~6000 台）與問題主視角的規劃案。 |
 | `SCALE-REVIEW-2026-08-06.md` | 上述規模化改版的體檢報告（14 項問題）。 |
