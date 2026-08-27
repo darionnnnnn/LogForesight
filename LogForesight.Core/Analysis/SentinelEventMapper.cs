@@ -64,6 +64,24 @@ internal static class SentinelEventMapper
             message = fields.GetValueOrDefault(SentinelFieldMap.EventName, string.Empty);
         }
 
+        if (eventId == 4625 || eventId == 4771)
+        {
+            var shn = fields.GetValueOrDefault(SentinelFieldMap.InitiatorHostName);
+            if (!string.IsNullOrWhiteSpace(shn) && shn != "-")
+            {
+                message = message.Length > 0 ? $"{message}\nWorkstation Name: {shn}" : $"Workstation Name: {shn}";
+            }
+
+            var sip = fields.GetValueOrDefault(SentinelFieldMap.InitiatorIp);
+            if (!string.IsNullOrWhiteSpace(sip) && sip != "-")
+            {
+                message = message.Length > 0 ? $"{message}\nSource Network Address: {sip}" : $"Source Network Address: {sip}";
+            }
+        }
+
+        var initiator = fields.GetValueOrDefault(SentinelFieldMap.InitiatorAccount);
+        var initiatorAccount = string.IsNullOrWhiteSpace(initiator) ? null : initiator;
+
         return new EventLogEntryData
         {
             // dt 是 UTC；轉本機時區（部署環境固定為 Asia/Taipei，estz 欄位佐證）與既有
@@ -77,7 +95,8 @@ internal static class SentinelEventMapper
             EventId = eventId,
             // InstanceId 只在 classic API 相容情境使用（history.txt 舊格式），Sentinel 路徑沒有
             // Qualifiers 概念，直接等於 EventId（同 EventRecordMapper 對此欄位的「僅相容性保留」定位）
-            InstanceId = eventId
+            InstanceId = eventId,
+            InitiatorAccount = initiatorAccount
         };
     }
 

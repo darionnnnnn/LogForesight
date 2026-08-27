@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 共用 UI 元件（docs/WEB-SPEC.md §8.1）：toast、確認對話框、表格渲染、載入/空狀態。
  *
  * 集中在這裡的理由與 api.js 相同——「破壞性操作要二次確認」「空狀態要有指引」
@@ -17,6 +17,7 @@ import { formatUserName } from './format.js';
 // 同一個循環 import 安全模式（見上）：api.js 也 import 本檔的 toast，雙方都只在函式體內
 // 使用彼此（searchableHostSelect 於執行期才呼叫 api.get）。
 import { api } from './api.js';
+import { appUrl } from './paths.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -27,7 +28,7 @@ export function icon(name, className) {
     svg.setAttribute('aria-hidden', 'true');
 
     const use = document.createElementNS(SVG_NS, 'use');
-    const href = `/img/icons.svg#${name}`;
+    const href = appUrl(`/img/icons.svg#${name}`);
     use.setAttribute('href', href);
     use.setAttributeNS(XLINK_NS, 'xlink:href', href);   // 舊瀏覽器相容
     svg.appendChild(use);
@@ -55,6 +56,47 @@ export function helpIcon(content, title) {
 }
 
 /**
+ * 表頭文字＋說明圖示的組合節點（回饋二十輪 J），供欄位定義的 renderHeader() 使用。
+ * 說明內容沿用 helpIcon 的 popover 行為（hover 與 focus 都能觸發）。
+ */
+export function headerWithHelp(title, content, popoverTitle) {
+    const wrap = document.createElement('span');
+    wrap.className = 'd-inline-flex align-items-center gap-1';
+    const text = document.createElement('span');
+    text.textContent = title;
+    wrap.append(text, helpIcon(content, popoverTitle));
+    return wrap;
+}
+
+/**
+ * 套用回望天數上限與更新說明 popover（排程作業、NetIQ 維護、主機詳情「立即更新」modal 共用）。
+ * 設 input 的 max 屬性，並更新說明 icon 的 popover 內容（dispose 舊實例後重建）。
+ *
+ * @param {string|HTMLElement} inputElOrId 輸入框元素或 id
+ * @param {string|HTMLElement} helpElOrId 說明 icon 元素或 id
+ * @param {number} maxDays 有效上限天數
+ * @param {string} content 說明文字
+ */
+export function applyBackfillDaysLimit(inputElOrId, helpElOrId, maxDays, content) {
+    // maxDays 缺值（舊 API 回應、欄位漏帶）時不動 max 也不換文案——
+    // 寧可沒有前端上限也不寫死一個猜測值；後端仍會以有效上限驗證並回 400
+    if (!maxDays) return;
+    const input = typeof inputElOrId === 'string' ? document.getElementById(inputElOrId) : inputElOrId;
+    if (input) {
+        input.max = maxDays;
+    }
+    const help = typeof helpElOrId === 'string' ? document.getElementById(helpElOrId) : helpElOrId;
+    if (help) {
+        help.setAttribute('data-bs-content', content);
+        const inst = bootstrap.Popover.getInstance(help);
+        if (inst) {
+            inst.dispose();
+            new bootstrap.Popover(help, { trigger: 'hover focus', html: false });
+        }
+    }
+}
+
+/**
  * 統一的按鈕工廠，取代各頁自己寫的 button()/actionButton()（都在組 `btn btn-sm btn-*`）。
  * text 走 textContent；variant/size/iconName 皆為開發者常數。
  */
@@ -68,6 +110,8 @@ export function button(text, { variant = 'outline-secondary', size = 'sm', icon:
         const span = document.createElement('span');
         span.textContent = text;
         btn.appendChild(span);
+    } else if (title) {
+        btn.setAttribute('aria-label', title);
     }
     if (onClick) btn.addEventListener('click', onClick);
     return btn;
@@ -275,7 +319,9 @@ export function confirmAction({ title = '請確認', message, confirmText = '確
                 </div>
             </div>`;
         el.querySelector('.modal-title').textContent = title;
-        el.querySelector('.modal-body p').textContent = message;
+        const body = el.querySelector('.modal-body p');
+        body.textContent = message;
+        body.style.whiteSpace = 'pre-line';   // 呼叫端用換行字元排條列，textContent 不會自己換行
         el.querySelector('[data-lf-confirm]').textContent = confirmText;
 
         document.body.appendChild(el);
@@ -468,6 +514,9 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
     const headRow = document.createElement('tr');
     for (const col of columns) {
         const th = document.createElement('th');
+        // sortKey 與 renderHeader 可以共存（回饋二十輪終檢）：可排序欄位也要能掛說明圖示。
+        // 原本兩者互斥，K2 為了讓 headerWithHelp 出來只好把主機數／總次數的 sortKey 刪掉，
+        // 使用者可見的排序功能就這樣倒退了
         if (col.sortKey && onSort) {
             th.appendChild(sortHeader(col, sort, onSort));
             const active = sort && sort.key === col.sortKey;
@@ -494,7 +543,7 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             // 依問題視角展開列都**沒有列內連結**），只有 click 監聽等於這些功能對
             // 鍵盤／輔助技術使用者不存在。範本取自風險日詳情已經做對的
             // lf-card__header--clickable（role + tabindex + Enter/Space + :focus-visible）。
-            makeRowActivatable(tr, () => { location.href = href; });
+            makeRowActivatable(tr, () => { location.href = appUrl(href); });
         }
 
         // 兩種展開：rowDetail 進頁即建好 DOM（eager）；onRowExpand 首次展開才建（lazy，
@@ -506,23 +555,32 @@ export function renderTable(container, { columns, rows, empty, rowHref, rowDetai
             const td = document.createElement('td');
             if (col.className) td.className = col.className;
 
-            // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示
+            const content = col.render ? col.render(row) : row[col.key];
+            // 非 Node 的值一律走 createTextNode（等同 textContent）而非 innerHTML：
+            // 資料裡混有 Event Log 的原始訊息，那是攻擊者可控的字串，絕不能當成 HTML 解析
+            const contentNode = content instanceof Node
+                ? content
+                : document.createTextNode(content === null || content === undefined ? '' : String(content));
+
+            // 展開箭頭放在首欄最前面，作為「這列可展開」的視覺提示。
+            // 以 flex 排版包裹箭頭與內容，確保箭頭與第一行內容同列、對齊頂端——
+            // 內容是 block 元素（如 issueCell／issueGroupCell）時，箭頭原本會被擠成獨佔一行
             if (expandable && index === 0) {
+                const wrap = document.createElement('div');
+                wrap.className = 'lf-row-expand-cell';
+
                 const caret = document.createElement('span');
                 caret.className = 'lf-row-caret';
                 caret.appendChild(icon('chevron-down'));
-                td.appendChild(caret);
-            }
 
-            const content = col.render ? col.render(row) : row[col.key];
-            if (content instanceof Node) {
-                td.appendChild(content);
-            } else if (content === null || content === undefined) {
-                td.appendChild(document.createTextNode(''));
+                const body = document.createElement('div');
+                body.className = 'lf-row-expand-cell__body';
+                body.appendChild(contentNode);
+
+                wrap.append(caret, body);
+                td.appendChild(wrap);
             } else {
-                // 一律用 textContent 而非 innerHTML：資料裡混有 Event Log 的原始訊息，
-                // 那是攻擊者可控的字串，絕不能當成 HTML 解析
-                td.appendChild(document.createTextNode(String(content)));
+                td.appendChild(contentNode);
             }
             tr.appendChild(td);
         }
@@ -637,9 +695,18 @@ function sortHeader(col, sort, onSort) {
     btn.type = 'button';
     btn.className = 'lf-th-sort' + (active ? ' lf-th-sort--active' : '');
 
-    const text = document.createElement('span');
-    text.textContent = col.title;
-    btn.appendChild(text);
+    if (col.renderHeader) {
+        // 說明圖示的 popover 靠 hover/focus，點它不該切換排序——攔在按鈕之前
+        const custom = col.renderHeader();
+        custom.addEventListener('click', e => {
+            if (e.target.closest('.lf-help')) e.stopPropagation();
+        });
+        btn.appendChild(custom);
+    } else {
+        const text = document.createElement('span');
+        text.textContent = col.title;
+        btn.appendChild(text);
+    }
 
     const caret = document.createElement('span');
     caret.className = 'lf-th-sort__caret';
@@ -654,6 +721,33 @@ function sortHeader(col, sort, onSort) {
 
     return btn;
 }
+
+/**
+ * 展開或收合容器內表格的所有可展開列（作用範圍：當前 DOM 中的表格列）。
+ * @param {HTMLElement} container 包含表格的容器
+ * @param {boolean} [expand] true 為展開，false 為收合；未指定時若有未展開列則全部展開，否則全部收合
+ * @returns {boolean} 全部切換後的狀態（true＝已全部展開，false＝已全部收合）
+ */
+export function toggleAllTableDetails(container, expand) {
+    if (!container) return false;
+    const rows = container.querySelectorAll('tbody tr.lf-row-expandable');
+    if (rows.length === 0) return false;
+
+    const shouldExpand = expand !== undefined
+        ? expand
+        : Array.from(rows).some(r => r.getAttribute('aria-expanded') !== 'true');
+
+    for (const tr of rows) {
+        const detailRow = tr.nextElementSibling;
+        if (!detailRow || !detailRow.classList.contains('lf-row-detail')) continue;
+
+        detailRow.classList.toggle('d-none', !shouldExpand);
+        tr.classList.toggle('lf-row-open', shouldExpand);
+        tr.setAttribute('aria-expanded', String(shouldExpand));
+    }
+    return shouldExpand;
+}
+
 
 /**
  * 本地排序（表格清單頁：使用者、規則、告警抑制、執行監控單日明細／異常彙總）。
@@ -811,7 +905,7 @@ function backLinkNode({ href, text = '返回清單' }) {
     wrap.className = 'mt-3';
     const link = document.createElement('a');
     link.className = 'btn btn-sm btn-outline-secondary';
-    link.href = href;
+    link.href = appUrl(href);
     link.textContent = text;
     wrap.appendChild(link);
     return wrap;
@@ -860,8 +954,13 @@ export function renderSpinner(container, text = '載入中…') {
  * 勾選清單（users.js/groups.js/hosts.js 原本各自手刻一份幾乎相同的 form-check 清單）：
  * items: [{ id, label, checked }]。id 屬性組成 `${container.id}-${item.id}`，
  * 供同一清單內 label 的 htmlFor 配對；清單為空時顯示 emptyHint 取代整份清單。
+ *
+ * options.filterable（選填，預設 false）：true 時在清單上方插入文字篩選框，
+ * 並將勾選項目包在限高捲動容器內——篩選以隱藏方式（d-none）實作，
+ * 不移除 DOM 節點，被篩掉的已勾選項目其 checked 狀態仍保留，
+ * 呼叫端 querySelectorAll('input:checked') 依然讀得到。
  */
-export function checkboxList(container, items, emptyHint) {
+export function checkboxList(container, items, emptyHint, options) {
     container.replaceChildren();
 
     if (items.length === 0) {
@@ -870,6 +969,35 @@ export function checkboxList(container, items, emptyHint) {
         hint.textContent = emptyHint;
         container.appendChild(hint);
         return;
+    }
+
+    const filterable = options?.filterable === true;
+
+    // 篩選框（filterable 模式才插入）
+    let filterInput = null;
+    if (filterable) {
+        filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.className = 'form-control form-control-sm mb-2';
+        filterInput.placeholder = '輸入文字篩選…';
+        filterInput.autocomplete = 'off';
+        container.appendChild(filterInput);
+    }
+
+    // filterable 模式下把勾選項目包在限高捲動容器；否則直接放進 container
+    const listRoot = filterable ? document.createElement('div') : container;
+    if (filterable) {
+        listRoot.className = 'lf-checkbox-list-scroll';
+        container.appendChild(listRoot);
+    }
+
+    // 無符合項目時的提示行（filterable 模式專用，初始隱藏）
+    let noMatchHint = null;
+    if (filterable) {
+        noMatchHint = document.createElement('div');
+        noMatchHint.className = 'text-muted small d-none';
+        noMatchHint.textContent = '沒有符合的項目';
+        listRoot.appendChild(noMatchHint);
     }
 
     for (const item of items) {
@@ -889,7 +1017,24 @@ export function checkboxList(container, items, emptyHint) {
         label.textContent = item.label;
 
         wrapper.append(input, label);
-        container.appendChild(wrapper);
+        listRoot.appendChild(wrapper);
+    }
+
+    // 即時篩選：比對 label 文字，不分大小寫，以隱藏取代移除——勾選狀態不受影響
+    if (filterable) {
+        filterInput.addEventListener('input', () => {
+            const keyword = filterInput.value.trim().toLowerCase();
+            // listRoot 下所有 .form-check 即勾選項目列（noMatchHint 不是 .form-check，不會被選到）
+            const rows = listRoot.querySelectorAll('.form-check');
+            let visibleCount = 0;
+            for (const row of rows) {
+                const labelEl = row.querySelector('.form-check-label');
+                const matches = !keyword || labelEl.textContent.toLowerCase().includes(keyword);
+                row.classList.toggle('d-none', !matches);
+                if (matches) visibleCount++;
+            }
+            noMatchHint.classList.toggle('d-none', visibleCount > 0);
+        });
     }
 }
 
@@ -1112,7 +1257,7 @@ export function labelValue(label, value, { labelClass = 'text-muted' } = {}) {
 export function statCard({ value, label, variant, url, hint, centered = true, extra }) {
     const inner = document.createElement(url ? 'a' : 'div');
     inner.className = 'lf-stat';
-    if (url) inner.href = url;
+    if (url) inner.href = appUrl(url);
 
     const box = document.createElement('div');
     box.className = 'lf-card h-100' + (url ? ' lf-card--clickable' : '');

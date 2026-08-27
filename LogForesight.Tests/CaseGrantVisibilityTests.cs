@@ -98,7 +98,7 @@ public class CaseGrantVisibilityTests : IDisposable
         });
 
     private VisibilityService Visibility() =>
-        new(FakeCurrentUser.ForUser(_user.UserId, Capability.Handle), _users, _userGroups, _access, _hosts, _cases);
+        new(FakeCurrentUser.ForUser(_user.UserId, Capability.Handle), _users, _userGroups, _access, _hosts, _cases, _settings);
 
     private RecordQueryServiceFacade Query(IVisibilityService visibility) =>
         new(
@@ -114,7 +114,9 @@ public class CaseGrantVisibilityTests : IDisposable
             noiseMarks: new FakeNoiseMarkStore(),
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.ForUser(_user.UserId, Capability.Handle),
-            settings: _settings);
+            settings: _settings,
+            aggregates: new EfIssueAggregateQuery(_fixture.NewContext, _hosts),
+            statusResolver: new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settings));
 
     private HandlingServiceFacade Handling(IVisibilityService visibility)
     {
@@ -123,7 +125,7 @@ public class CaseGrantVisibilityTests : IDisposable
             store: _handlings,
             issueStore: _issueHandlings,
             cases: _cases,
-            caseCoordinator: new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _recordStore, _hosts),
+            caseCoordinator: new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _recordStore, _hosts, new FakeIssueOwnerStore()),
             noiseMarks: new FakeNoiseMarkStore(),
             repository: repository,
             hosts: _hosts,

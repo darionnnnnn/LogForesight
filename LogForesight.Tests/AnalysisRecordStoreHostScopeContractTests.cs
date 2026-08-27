@@ -159,4 +159,19 @@ public class AnalysisRecordStoreHostScopeContractTests : IDisposable
         var all = unscoped.ReadRecent(DateTime.Today, 365);
         Assert.Contains(all, r => r.Host == "SRV-OTHER");   // 別台的過期紀錄仍在
     }
+
+    [Fact]
+    public void CountPrunableRecords_未限縮store能算到別台主機的紀錄_而限縮store僅能算到自己的()
+    {
+        var unscoped = (EfAnalysisRecordStore)UnscopedStore();
+
+        unscoped.Append(Rec(DateTime.Today.AddDays(-130), OwnerId, OwnerName));
+        unscoped.Append(Rec(DateTime.Today.AddDays(-131), 5, "SRV-OTHER"));
+        unscoped.Append(Rec(DateTime.Today.AddDays(-10), OwnerId, OwnerName));
+
+        var scoped = (EfAnalysisRecordStore)OwnerStore();
+
+        Assert.Equal(2, unscoped.CountPrunableRecords(120));
+        Assert.Equal(1, scoped.CountPrunableRecords(120));
+    }
 }

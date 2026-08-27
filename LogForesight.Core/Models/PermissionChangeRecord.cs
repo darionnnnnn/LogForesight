@@ -1,14 +1,11 @@
 namespace LogForesight.Core.Models;
 
 /// <summary>
-/// 權限異動的結構化紀錄（↔ lf_permission_changes）。
+/// 權限異動的結構化紀錄（↔ lf_permission_changes，異動與確認狀態同一列，
+/// 見 docs/DB-SPEC.md）。分析端寫異動、Web 端以條件式原子更新寫確認狀態。
 ///
-/// **雙軌寫入**（docs/WEB-SPEC.md §2.1 Phase 3）：批次的既有 console 告警與
-/// export txt 報告照舊，另外把每一筆異動明細寫成結構化資料供 Web 的待辦頁使用。
-/// 沒有這一軌，權限異動待辦頁在 JSONL 前期就沒有任何資料可顯示。
-///
-/// <see cref="ChangeId"/> 用 GUID 而不是遞增數字：批次與 Web 分別寫入不同檔案
-/// （異動由批次寫、確認狀態由 Web 寫），沒有共用的序號來源。
+/// <see cref="ChangeId"/> 用 GUID 而不是資料表的自增主鍵：它是對外（API 路由、
+/// 稽核 targetId、批次請求）的識別，不能隨資料表重建而改變。
 /// </summary>
 public class PermissionChangeRecord
 {
@@ -21,7 +18,13 @@ public class PermissionChangeRecord
     /// <summary>資料夾路徑或群組名稱</summary>
     public string Target { get; set; } = string.Empty;
 
-    /// <summary>成員新增/成員移除/擁有者變更/權限新增/權限移除/無法存取</summary>
+    /// <summary>
+    /// 異動類型（共 9 個相異值）。
+    /// NetIQ 事件來源：成員新增、成員移除、權限變更、稽核政策變更。
+    /// 本機監控來源：成員新增、成員移除、無法存取、恢復可存取、擁有者變更、權限新增（ACL 規則）、權限移除（ACL 規則）。
+    /// 既有資料庫另可能存在「權限異動（彙總）」——那是不再產生的舊值，查詢與分類仍須認得
+    /// （<see cref="PermissionCategory"/> 保留其對應），歷史列不刪。
+    /// </summary>
     public string ChangeType { get; set; } = string.Empty;
 
     public string Before { get; set; } = string.Empty;
@@ -30,6 +33,63 @@ public class PermissionChangeRecord
 
     /// <summary>批次產生的告警文字（與 console 顯示的同一行）</summary>
     public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>未經截斷的原始事件訊息（逐則列填入，彙總列為 null）</summary>
+    public string? RawText { get; set; }
+
+    /// <summary>異動來源（本機監控／NetIQ 事件）</summary>
+    public string Source { get; set; } = PermissionChangeSources.Local;
+
+    /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
+    public int? EventId { get; set; }
+
+    /// <summary>類別 key（永遠非空，預設為 other）</summary>
+    public string Category { get; set; } = PermissionCategory.Other;
+
+    /// <summary>是否為高風險（特權群組）異動，預設 false</summary>
+    public bool IsPrivilegedTarget { get; set; }
+
+    /// <summary>操作者帳號（由後續作業負責填入）</summary>
+    public string? InitiatorAccount { get; set; }
+
+    /// <summary>被異動的目標帳號／成員（由後續作業負責填入）</summary>
+    public string? TargetAccount { get; set; }
+
+    /// <summary>
+    /// 物件類型（EventId 4670「物件的權限已變更」訊息裡的「物件類型」，如 Token／File／Key）。
+    /// 非 4670 或訊息未提供時為 null。用來把「不是檔案的物件」與資料夾權限異動分開
+    /// （見 <see cref="PermissionCategory.Resolve(string, int?, string?)"/>）。
+    /// </summary>
+    public string? ObjectType { get; set; }
+
+    /// <summary>處理程序名稱（4670 訊息的「處理程序名稱」，如 C:\Windows\System32\svchost.exe）。</summary>
+    public string? ProcessName { get; set; }
+
+    /// <summary>
+    /// 彙總列涵蓋的第一筆／最後一筆事件時間。逐則列為 null。
+    /// 彙總列的 <see cref="DetectedAt"/> 只有日期（時間恆為 00:00），沒有這兩欄就看不出
+    /// 這批異動集中在哪個時段——例行同步的「凌晨兩點跑完」與「整天散落」是兩件事。
+    /// </summary>
+    public DateTime? CoveredFrom { get; set; }
+
+    /// <inheritdoc cref="CoveredFrom"/>
+    public DateTime? CoveredTo { get; set; }
+
+    /// <summary>彙總列合併掉的「成員新增＋成員移除」對數。逐則列為 null。
+    /// 數字也寫在 <see cref="AlertText"/> 裡，但那是給人看的句子，不能拿來排序或統計。</summary>
+    public int? PairCount { get; set; }
+
+    /// <summary>去重鍵（主機, 事件時間, EventId, 告警文字）——寫入端與快照端共用同一個定義</summary>
+    public static string DedupeKey(string hostName, DateTime detectedAt, int eventId, string alertText) =>
+        $"{hostName.ToUpperInvariant()}|{detectedAt.Ticks}|{eventId}|{alertText}";
+
+    public string DedupeKey() => DedupeKey(HostName, DetectedAt, EventId ?? 0, AlertText);
+}
+
+public static class PermissionChangeSources
+{
+    public const string Local = "本機監控";
+    public const string Netiq = "NetIQ 事件";
 }
 
 /// <summary>

@@ -16,7 +16,7 @@ public class AiInsightServiceTests
     {
         From = "2026-07-17", To = "2026-07-23",
         HighRiskDays = high, MediumRiskDays = medium,
-        Categories = new() { new DashboardCategoryDto { Category = "Storage", IssueCount = 8, AffectedHosts = 3, MaxSeverity = "Critical" } }
+        Categories = new() { new DashboardCategoryDto { Category = "Storage", RiskItemCount = 8, AffectedHosts = 3, HighCount = 8 } }
     };
 
     [Fact]

@@ -1,8 +1,9 @@
 using System.Text;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Persistence;
 
-/// <summary>預設的報告輸出實作：寫到執行檔目錄下的 export（單機/多機共用一個實作，host 有值時分子目錄）</summary>
+/// <summary>預設的報告輸出實作：寫到執行檔目錄下的 export（單機/多機共用一個實作，host 有值時分子目錄，檔名帶日期前綴時分年月子目錄）</summary>
 internal class FileReportSink : IReportSink
 {
     private readonly string _exportDir;
@@ -15,11 +16,32 @@ internal class FileReportSink : IReportSink
 
     public async Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
     {
-        var dir = string.IsNullOrEmpty(host) ? _exportDir : Path.Combine(_exportDir, host);
+        var safeHost = string.IsNullOrEmpty(host) ? string.Empty : SanitizePathComponent(host);
+        var safeFileName = SanitizePathComponent(fileName);
+
+        var dir = string.IsNullOrEmpty(safeHost) ? _exportDir : Path.Combine(_exportDir, safeHost);
+        if (ExportReportPruner.TryParseReportDate(fileName, out var reportDate))
+        {
+            dir = Path.Combine(dir, reportDate.ToString("yyyy-MM"));
+        }
         Directory.CreateDirectory(dir);
 
-        var path = Path.Combine(dir, fileName);
+        var path = Path.Combine(dir, safeFileName);
         await File.WriteAllTextAsync(path, content, Encoding.UTF8);
         return path;
+    }
+
+    /// <summary>
+    /// 淨化路徑片段：避免外部輸入（如 host）含有 .. 或路徑分隔字元，導致寫出 export 目錄之外。
+    /// </summary>
+    private static string SanitizePathComponent(string component)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(component.Select(c => invalidChars.Contains(c) ? '_' : c).ToArray()).Trim();
+        if (string.IsNullOrEmpty(sanitized) || sanitized == "." || sanitized == "..")
+        {
+            return "_";
+        }
+        return sanitized;
     }
 }

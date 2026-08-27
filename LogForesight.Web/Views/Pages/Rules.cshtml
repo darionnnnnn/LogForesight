@@ -1,14 +1,14 @@
-@{
+﻿@{
     ViewData["Title"] = "規則維護";
 }
 
 <div class="lf-hint mb-3">
-    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
     <span>規則儲存前會自動驗證，不合格不會寫入。</span>
     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
             data-bs-title="關於規則維護"
             data-bs-content="儲存前會自動執行驗證（欄位合格、Id 重複、規則遮蔽），不合格不會寫入。停用規則只關掉「規則命中的分類與知識庫」，趨勢層與關聯層對同一事件的偵測不受影響。規則由上而下依「順序」欄比對，第一條命中者生效；新規則一律加在清單最後，本頁不支援調整順序。">
-        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
     </button>
 </div>
 
@@ -62,6 +62,13 @@
             <div class="lf-toolbar__divider"></div>
             <div class="lf-toolbar__group">
                 <span class="lf-toolbar__group-label">重大</span>
+                @* 「重大」篩的是 ElevatesDayRisk 布林旗標，與同一列上方的「嚴重度」是兩件事，
+                   容易被誤讀成同一個概念（回饋二十八輪 P10） *@
+                <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                        data-bs-title="關於「重大」"
+                        data-bs-content="命中就把當天列為高風險日的規則旗標（規則編輯裡的「命中即列為高風險日」）。這是一個是／否的開關，不是風險等級；規則本身的等級看上方的「嚴重度」篩選。">
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                </button>
                 <div class="lf-toolbar__chips" id="rule-elevates-chips"></div>
             </div>
         </div>
@@ -142,7 +149,7 @@
                             <label for="rule-source" class="form-label">來源比對 <span class="text-danger">*</span></label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="Event Log 的來源名稱，例如 disk、Ntfs。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="rule-source" />
                         </div>
@@ -167,7 +174,7 @@
                             <label for="rule-event-name" class="form-label">正規化事件名（選填）</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="Sentinel 有做事件正規化時可用此欄，命中即算，不需再比對訊息。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="text" class="form-control" id="rule-event-name" />
                         </div>
@@ -207,7 +214,7 @@
                             <label for="rule-threshold" class="form-label">次數門檻</label>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="未達門檻降一級。">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                             <input type="number" class="form-control" id="rule-threshold" min="1" value="1" />
                         </div>
@@ -228,13 +235,13 @@
                             <hr class="my-1" />
                             <button type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-2"
                                     data-bs-toggle="collapse" data-bs-target="#rule-kb" aria-expanded="false" aria-controls="rule-kb">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#chevron-down"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#chevron-down"></use></svg>
                                 處置知識庫
                                 <span class="text-muted small" id="rule-kb-summary"></span>
                             </button>
                             <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                     data-bs-content="規則命中時直接渲染這裡的內容，不呼叫 AI——更快、更一致、零幻覺。（選填）">
-                                <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                                <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                             </button>
                         </div>
 
@@ -309,12 +316,12 @@
             <form id="suppress-form">
                 <div class="modal-body">
                     <div class="lf-hint mb-3">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
                         <span>抑制只關掉通知與風險升級，事件仍照常聚合與紀錄。</span>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-title="抑制的作用範圍"
                                 data-bs-content="抑制只關掉通知與風險升級，事件仍照常聚合、命中規則、寫入歷史——這樣體檢報告與頻率報表才看得到「這條被抑制的規則本期實際發生了幾次」，暫時關掉的東西不會變成沒人記得的永久盲區。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                     </div>
                     <div class="row g-3 mb-3">
@@ -353,7 +360,7 @@
                         <label for="suppress-reason" class="form-label">原因 <span class="text-danger">*</span></label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="日後回頭確認「當初為什麼關掉」的唯一依據。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                         <textarea class="form-control" id="suppress-reason" rows="2" required></textarea>
                     </div>
@@ -382,7 +389,7 @@
                     </label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="預設只補上缺少的內建規則；若某條 builtin 規則的內容被你改過（且與新版種子不同），需要勾選這個才會覆蓋回種子最新內容。custom 規則永遠不受影響。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                 </div>
                 <div class="mb-3" id="rule-import-summary"></div>

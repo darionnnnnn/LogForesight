@@ -63,7 +63,7 @@ internal sealed class FakeAiService : IAiService
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default)
     {
         Interlocked.Increment(ref _calls);
@@ -83,7 +83,7 @@ internal sealed class FakeAiService : IAiService
     }
 
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class
     {
         var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature,

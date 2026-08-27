@@ -25,6 +25,21 @@ public class StorageBackend
     private readonly Func<LfDbContext> _dbFactory;
     private readonly string _dbDesc;
 
+    public const int ForegroundCommandTimeoutSeconds = 60;
+    public const int AnalysisCommandTimeoutSeconds = 300;
+
+    /// <summary>Sqlite 未指定 ConnectionString 時，db 檔所在的子資料夾（相對於 DataRoot）。
+    /// 資料檔集中在此，與 <c>export\</c> 等產出目錄分開。</summary>
+    private const string DefaultSqliteDirectoryName = "Db";
+
+    /// <summary>Sqlite 未指定 ConnectionString 時的 db 檔名</summary>
+    private const string DefaultSqliteFileName = "logforesight.db";
+
+    /// <summary>Sqlite 預設 db 檔的完整路徑（DataRoot 底下）。Program.cs 的資料根目錄健檢
+    /// 用同一個方法算落點，路徑規則不會兩邊各走各的。</summary>
+    public static string DefaultSqlitePath(string dataRoot) =>
+        Path.Combine(dataRoot, DefaultSqliteDirectoryName, DefaultSqliteFileName);
+
     /// <param name="settings">儲存後端設定（Type／ConnectionString）</param>
     /// <param name="fallbackDir">Sqlite 模式下用來決定預設 db 檔位置的退路（ConnectionString 未設時）</param>
     /// <param name="maxPoolSize">連線池上限（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）。
@@ -40,9 +55,32 @@ public class StorageBackend
         DbContextOptions<LfDbContext> options;
         if (settings.Type == "Sqlite")
         {
-            var cs = string.IsNullOrWhiteSpace(settings.ConnectionString)
-                ? $"Data Source={Path.Combine(fallbackDir, "logforesight.db")}"
-                : settings.ConnectionString;
+            string cs;
+            if (string.IsNullOrWhiteSpace(settings.ConnectionString))
+            {
+                var dbPath = DefaultSqlitePath(fallbackDir);
+                // Sqlite 不會替我們建目錄，首次啟動時 Db\ 還不存在。
+                // 失敗時要講出「這是 DataRoot 的寫入權限問題」——只丟原生的「拒絕存取路徑 X」
+                // 看不出該去改哪個設定。
+                var dbDir = Path.GetDirectoryName(dbPath)!;
+                try
+                {
+                    Directory.CreateDirectory(dbDir);
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                {
+                    // 帶上原始訊息：IOException 不一定是權限（例如 DataRoot 底下已有同名的
+                    // 「Db」檔案），只講權限會把診斷帶偏
+                    throw new InvalidOperationException(
+                        $"無法建立資料庫目錄「{dbDir}」（{ex.Message}）：請確認執行帳號對 " +
+                        $"Storage:DataRoot（{fallbackDir}）有寫入權限，且該路徑下沒有同名檔案。", ex);
+                }
+                cs = $"Data Source={dbPath}";
+            }
+            else
+            {
+                cs = settings.ConnectionString;
+            }
             cs = DisableSqlitePoolingIfUnset(cs);
             options = new DbContextOptionsBuilder<LfDbContext>().UseSqlite(cs).Options;
             _dbDesc = $"Sqlite（{cs}）";
@@ -50,10 +88,17 @@ public class StorageBackend
         else
         {
             var cs = ApplyMaxPoolSizeIfUnset(settings.ConnectionString, maxPoolSize);
+            // 依用途分流逾時長度：
+            // 前景站台（maxPoolSize == null）逾時設 60 秒，比預設寬一點吸收尖峰，但仍要在使用者放棄之前失敗。
+            // 夜間分析（maxPoolSize != null）逾時設 300 秒，批次聚合本來就慢，用前景的標準會讓夜間分析在正常情況下失敗。
+            var timeoutSeconds = maxPoolSize == null ? ForegroundCommandTimeoutSeconds : AnalysisCommandTimeoutSeconds;
+
             // 暫時性錯誤（failover／節流等）自動重試；Sqlite 是本機檔案，沒有這類網路層
             // 暫時性錯誤，不需要
             options = new DbContextOptionsBuilder<LfDbContext>()
-                .UseSqlServer(cs, o => o.EnableRetryOnFailure(maxRetryCount: 5))
+                .UseSqlServer(cs, o => o
+                    .EnableRetryOnFailure(maxRetryCount: 5)
+                    .CommandTimeout(timeoutSeconds))
                 .Options;
             _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
         }
@@ -84,6 +129,7 @@ public class StorageBackend
                 // 掛在啟動路徑上會直接撞 Windows 服務 30 秒的啟動逾時而被 SCM 砍掉。
                 // 這裡只做毫秒級的「需不需要搬」判定並寫下狀態，搬移交給背景服務。
                 HandlingMigrator.Evaluate();
+                PermissionChangeMigrator.Evaluate();
             }, SchemaMutexTimeout);
 
             if (!exclusive)
@@ -145,8 +191,13 @@ public class StorageBackend
 
     public EfRecordHandlingStore RecordHandlingStore() => new(_dbFactory, LogStore("handling_log"));
 
-    /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）</summary>
-    public EfIssueAggregateQuery IssueAggregateQuery() => new(_dbFactory, Performance);
+    /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
+    public PermissionChangeStore PermissionChanges() => new(_dbFactory);
+
+    /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
+    /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
+    /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>
+    public EfIssueAggregateQuery IssueAggregateQuery(IHostStore hosts) => new(_dbFactory, hosts, Performance);
 
     /// <summary>
     /// 處理狀態自 blob 搬進真表的遷移器（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）。
@@ -157,8 +208,46 @@ public class StorageBackend
 
     private HandlingBlobMigrator? _handlingMigrator;
 
+    /// <summary>
+    /// 權限異動自 JSONL log 與 blob 搬進真表的遷移器。
+    /// **每個後端一份**：遷移狀態要跨呼叫共享，不能每次都 new 一個新的。
+    /// </summary>
+    public PermissionChangeMigrator PermissionChangeMigrator => _permissionChangeMigrator ??=
+        new PermissionChangeMigrator(_dbFactory, Blob, new PermissionChangeMigrationStateStore(Blob(PermissionChangeMigrator.StateBlobKey)));
+
+    private PermissionChangeMigrator? _permissionChangeMigrator;
+
+    /// <summary>既有 NetIQ 權限異動列的重剖回填（背景一次性工作，同樣每個後端一份）</summary>
+    public PermissionChangeReparser PermissionChangeReparser => _permissionChangeReparser ??=
+        new PermissionChangeReparser(_dbFactory, new PermissionChangeReparseStateStore(Blob(PermissionChangeReparser.StateBlobKey)));
+
+    private PermissionChangeReparser? _permissionChangeReparser;
+
+    /// <summary>舊版「權限異動（彙總）」列一次性清理的狀態（見 PermissionLegacySummaryCleanupState）</summary>
+    public PermissionLegacySummaryCleanupStateStore PermissionLegacySummaryCleanupState =>
+        _permissionLegacySummaryCleanupState ??= new PermissionLegacySummaryCleanupStateStore(
+            Blob(PermissionLegacySummaryCleanupBlobKey));
+
+    private PermissionLegacySummaryCleanupStateStore? _permissionLegacySummaryCleanupState;
+
+    public const string PermissionLegacySummaryCleanupBlobKey = "permission_legacy_summary_cleanup";
+
     /// <summary>lf_top_issues 聚合欄的背景回填（P4）——啟動路徑不做，見 §8.2 E3</summary>
     public TopIssueBackfiller TopIssueBackfiller() => new(_dbFactory);
+
+    /// <summary>lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上</summary>
+    public DailyRecordBackfiller DailyRecordBackfiller() => new(_dbFactory);
+
+    /// <summary>
+    /// 機房首見日的冪等合併（與順序無關）。
+    /// 從啟動路徑移至背景服務，避免造成啟動逾時。
+    /// 回傳這次是真的跑了合併還是被浮水印閘門跳過，供背景服務申報狀態。
+    /// </summary>
+    public IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(bool force = false)
+    {
+        using var ctx = _dbFactory();
+        return SchemaUpgrader.MergeIssueFirstSeenSeed(ctx, force);
+    }
 
     /// <summary>
     /// 關閉 Sqlite 連線池：Microsoft.Data.Sqlite 預設開啟連線池，連線 Close() 回池前的

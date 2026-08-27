@@ -23,9 +23,55 @@ internal static class ExportReportPruner
             File.Delete(file);
             removed++;
         }
+
+        DeleteEmptySubdirectories(exportDir);
+
         return removed;
     }
 
+    /// <summary>
+    /// 由深至淺移除已完全空掉的子目錄（不含 exportDir 本身）。
+    /// </summary>
+    private static void DeleteEmptySubdirectories(string dir, bool isRoot = true)
+    {
+        try
+        {
+            if (!Directory.Exists(dir)) return;
+
+            foreach (var subDir in Directory.GetDirectories(dir))
+            {
+                DeleteEmptySubdirectories(subDir, isRoot: false);
+            }
+
+            if (!isRoot && IsDirectoryEmpty(dir))
+            {
+                Directory.Delete(dir);
+            }
+        }
+        catch
+        {
+            // 清理為盡力而為，吞掉例外並繼續處理其餘目錄
+        }
+    }
+
+    /// <summary>
+    /// 判定目錄是否完全為空（無任何檔案且無任何子目錄）。
+    /// </summary>
+    private static bool IsDirectoryEmpty(string dir)
+    {
+        try
+        {
+            return !Directory.EnumerateFileSystemEntries(dir).Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 解析檔名開頭的 yyyy-MM-dd 日期（FileReportSink 與 ExportReportPruner 共同複用）。
+    /// </summary>
     internal static bool TryParseReportDate(string fileName, out DateTime date)
     {
         if (fileName.Length < 10)

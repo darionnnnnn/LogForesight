@@ -51,6 +51,13 @@ public class LfDbContext : DbContext
     /// <summary>日層級處理狀態快照（↔ lf_record_handling，原 blob key=record_handling）</summary>
     public DbSet<RecordHandlingRow> RecordHandlings => Set<RecordHandlingRow>();
 
+    /// <summary>問題的機房首見日（↔ lf_issue_first_seen，回饋十九輪批次B）：不受查詢期間截斷，
+    /// 也不受（未來的）保留期修剪——見 <see cref="IssueFirstSeenRow"/> 類別註解。</summary>
+    public DbSet<IssueFirstSeenRow> IssueFirstSeen => Set<IssueFirstSeenRow>();
+
+    /// <summary>權限異動檢核（↔ lf_permission_changes，含確認狀態）</summary>
+    public DbSet<PermissionChangeRow> PermissionChanges => Set<PermissionChangeRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -59,6 +66,7 @@ public class LfDbContext : DbContext
             e.HasKey(x => x.BlobKey);
             e.Property(x => x.BlobKey).HasColumnName("blob_key").HasMaxLength(100);
             e.Property(x => x.Content).HasColumnName("content");
+            e.Property(x => x.Version).HasColumnName("version");
             // 樂觀鎖：UpdatedAt 當並發權杖。EfJsonBlobStore.Mutate 是「讀→改→寫」，
             // 沒有這個標記的話兩個行程各自讀到舊內容、後寫的整份蓋掉先寫的（更新遺失）——
             // 這正是 JSONL 檔案時代跨程序鎖檔要防的事故，換 DB 後要用資料庫的機制補上。
@@ -99,10 +107,29 @@ public class LfDbContext : DbContext
             e.Property(x => x.WeeklyCheckupDate).HasColumnName("weekly_checkup_date");
             e.Property(x => x.ContentJson).HasColumnName("content_json");
             e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            e.Property(x => x.DetailPruned).HasColumnName("detail_pruned").HasDefaultValue(false);
+
+            // 讀取面全面 SQL 化的抽出欄（回饋十九輪批次B）：只有這幾個欄位需要跨越單筆詳情頁
+            // （仍讀 ContentJson）以外的清單／聚合路徑，其餘欄位（RiskBasis／TrendAssessment／
+            // AI 敘事本文等）留在 blob——沒有查詢路徑需要在不解 blob 的情況下讀它們。
+            // 舊列預設值不是正確資料，由 DailyRecordBackfiller 背景補齊（見 ExtractVersion）。
+            e.Property(x => x.Headline).HasColumnName("headline").HasDefaultValue(string.Empty);
+            e.Property(x => x.DataIncomplete).HasColumnName("data_incomplete").HasDefaultValue(false);
+            e.Property(x => x.SecurityLogAvailable).HasColumnName("security_log_available");
+            e.Property(x => x.ErrorCount).HasColumnName("error_count").HasDefaultValue(0);
+            e.Property(x => x.WarningCount).HasColumnName("warning_count").HasDefaultValue(0);
+            e.Property(x => x.AiAnalyzed).HasColumnName("ai_analyzed").HasDefaultValue(false);
+            e.Property(x => x.AiPending).HasColumnName("ai_pending").HasDefaultValue(false);
+            // 存量回填的判定欄（取代 lf_top_issues 沿用的「record_date 是否為 MinValue」哨兵手法——
+            // 這幾個欄位本身的合法值就含 0/false/空字串，沒有哪個值能安全地當「還沒回填」的訊號）。
+            // 本輪寫入＝1；舊列預設 0，DailyRecordBackfiller 掃 &lt;1。has_correlation（P1-2 既有欄）
+            // 的舊列回填一併掛在同一個版本號下，不另開一欄。
+            e.Property(x => x.ExtractVersion).HasColumnName("extract_version").HasDefaultValue(0);
 
             // 錨定窗查詢（ReadRecent）與缺日判定（HasRecord）都以日期為主軸
             e.HasIndex(x => x.RecordDate);
             e.HasIndex(x => new { x.HostId, x.RecordDate });
+            e.HasIndex(x => x.ExtractVersion);   // DailyRecordBackfiller 的候選查詢
         });
 
         b.Entity<TopIssueRow>(e =>
@@ -130,6 +157,12 @@ public class LfDbContext : DbContext
             // 處理狀態，§10.6「排除已有結論的問題」也就做不出來（規劃 §8.1 缺陷 1）
             e.Property(x => x.LogName).HasColumnName("log_name").HasMaxLength(255).HasDefaultValue(string.Empty);
             e.Property(x => x.EntryType).HasColumnName("entry_type").HasDefaultValue(0);
+            // 回饋十九輪批次B：依問題視角全面 SQL 化需要的最後兩欄。
+            // KnownIssue：latest 快照用（依問題視角「已知問題」欄，只取最近一次出現的值）。
+            // EventKey：Linux 完整簽章第五段，沒有它 IssueSignatureKey 組不回去，
+            // 「同 program 不同規則」會在 SQL 端誤併成一組（規劃 §8.1 缺陷 1 的 Linux 版本）。
+            e.Property(x => x.KnownIssue).HasColumnName("known_issue");
+            e.Property(x => x.EventKey).HasColumnName("event_key").HasMaxLength(255).HasDefaultValue(string.Empty);
 
             e.HasIndex(x => x.RecordId);
             e.HasIndex(x => new { x.EventId, x.SourceName });   // 跨主機同簽章查詢
@@ -176,6 +209,10 @@ public class LfDbContext : DbContext
             e.Property(x => x.DueDate).HasColumnName("due_date");
             e.Property(x => x.CaseId).HasColumnName("case_id").HasMaxLength(64);
             e.Property(x => x.UpdatedAt).HasColumnName("updated_at").IsConcurrencyToken();
+            // 首次寫入時間（回饋十九輪批次B，MTTA 保底）：只在 INSERT 時落，之後不隨狀態異動改變
+            // ——UpdatedAt 已經是並發權杖、每次改狀態都會被覆寫，答不出「這一列何時第一次被人碰」。
+            // 舊列為 null，本輪不回填（成效指標另案，見 BACKLOG），本輪也不建任何查詢消費它。
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
 
             // 唯一鍵＝原 blob 的「同一 (主機, 日期, 問題) 只有一列」語意，由資料庫保證
             e.HasIndex(x => new { x.HostNameKey, x.RecordDate, x.IssueKey }).IsUnique();
@@ -227,6 +264,16 @@ public class LfDbContext : DbContext
             e.HasIndex(x => x.Status);      // GetUnresolved
         });
 
+        b.Entity<IssueFirstSeenRow>(e =>
+        {
+            e.ToTable("lf_issue_first_seen");
+            e.HasKey(x => new { x.SourceKey, x.EventId });
+            e.Property(x => x.SourceKey).HasColumnName("source_key").HasMaxLength(255);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.SourceName).HasColumnName("source_name").HasMaxLength(255);
+            e.Property(x => x.FirstSeen).HasColumnName("first_seen");
+        });
+
         b.Entity<RiskyEventRow>(e =>
         {
             e.ToTable("lf_risky_events");
@@ -247,6 +294,60 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.HostId, x.Date, x.Source, x.EventId });
             e.HasIndex(x => x.Date);
         });
+
+        b.Entity<PermissionChangeRow>(e =>
+        {
+            e.ToTable("lf_permission_changes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id").ValueGeneratedOnAdd();
+            e.Property(x => x.ChangeId).HasColumnName("change_id").HasMaxLength(64);
+            // 去重鍵刻意不設長度上限：它由「主機名(≤255)｜Ticks(19)｜EventId｜AlertText(≤503)」串成，
+            // 最長可達約 790 字元。設成 nvarchar(512) 在 SQLite 上（TEXT 無長度）測不出來，
+            // 到 SQL Server 會變成寫入時「字串或二進位資料會被截斷」。不要改回加長度。
+            e.Property(x => x.DedupeKey).HasColumnName("dedupe_key");
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.HostNameKey).HasColumnName("host_name_key").HasMaxLength(255);
+            e.Property(x => x.DetectedAt).HasColumnName("detected_at");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+            // Target 直接來自事件訊息的 Object Name／Group Name，Windows 長路徑（\?\ 前綴、
+            // 深層 UNC 分享）輕易超過 512 字元。設長度上限在 SQLite（TEXT 無長度）測不出來，
+            // 到 SQL Server 會變成寫入時截斷例外，讓整批夜間分析的權限異動寫入失敗。
+            // 它沒有索引，不設上限沒有代價。
+            e.Property(x => x.Target).HasColumnName("target");
+            e.Property(x => x.ChangeType).HasColumnName("change_type").HasMaxLength(64);
+            e.Property(x => x.Category).HasColumnName("category").HasMaxLength(64);
+            e.Property(x => x.IsPrivilegedTarget).HasColumnName("is_privileged_target");
+            e.Property(x => x.InitiatorAccount).HasColumnName("initiator_account").HasMaxLength(255);
+            e.Property(x => x.TargetAccount).HasColumnName("target_account").HasMaxLength(255);
+            e.Property(x => x.ObjectType).HasColumnName("object_type").HasMaxLength(64);
+            // 處理程序名稱是完整路徑，不設長度上限（同 target 欄的理由）
+            e.Property(x => x.ProcessName).HasColumnName("process_name");
+            e.Property(x => x.CoveredFrom).HasColumnName("covered_from");
+            e.Property(x => x.CoveredTo).HasColumnName("covered_to");
+            e.Property(x => x.PairCount).HasColumnName("pair_count");
+            e.Property(x => x.BeforeValue).HasColumnName("before_value");
+            e.Property(x => x.AfterValue).HasColumnName("after_value");
+            e.Property(x => x.AlertText).HasColumnName("alert_text");
+            // 原始事件訊息不設長度上限（同 target／process_name 的理由）：Windows 事件訊息長度不可預期，
+            // 設上限在 SQLite（TEXT 無長度）測不出來，到 SQL Server 會變成寫入時的截斷例外
+            e.Property(x => x.RawText).HasColumnName("raw_text");
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(64);
+            e.Property(x => x.EventId).HasColumnName("event_id");
+            e.Property(x => x.Status).HasColumnName("status").HasMaxLength(30);
+            e.Property(x => x.ConfirmedBy).HasColumnName("confirmed_by");
+            e.Property(x => x.ConfirmedByAccount).HasColumnName("confirmed_by_account").HasMaxLength(255);
+            e.Property(x => x.ConfirmedAt).HasColumnName("confirmed_at");
+            e.Property(x => x.ConfirmNote).HasColumnName("confirm_note");
+
+            // dedupe_key 沒有索引：沒有任何查詢以它為條件（GetDedupeKeys 是依 created_at 篩選後
+            // 投影這一欄），而它又長到不適合當索引鍵。
+            e.HasIndex(x => x.ChangeId).IsUnique();
+            e.HasIndex(x => new { x.Status, x.DetectedAt });
+            e.HasIndex(x => x.DetectedAt);
+            e.HasIndex(x => new { x.HostNameKey, x.DetectedAt });
+            e.HasIndex(x => new { x.Category, x.Status });
+            e.HasIndex(x => x.CreatedAt);
+        });
     }
 }
 
@@ -262,6 +363,23 @@ public class DailyRecordRow
     public DateTime? WeeklyCheckupDate { get; set; }
     public string ContentJson { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>標記詳情是否已因超過保留期而被清除，以確保夜間作業冪等性</summary>
+    public bool DetailPruned { get; set; }
+
+    // ── 讀取面 SQL 化的抽出欄（回饋十九輪批次B）──────────────────────────
+
+    public string Headline { get; set; } = string.Empty;
+    public bool DataIncomplete { get; set; }
+    public bool? SecurityLogAvailable { get; set; }
+    public int ErrorCount { get; set; }
+    public int WarningCount { get; set; }
+    public bool AiAnalyzed { get; set; }
+    public bool AiPending { get; set; }
+
+    /// <summary>存量回填的版本號：本輪寫入＝1，舊列預設 0。不是布林是因為未來若再擴充抽出欄，
+    /// 版本號可以往上加而不必再想一個新的哨兵值。</summary>
+    public int ExtractVersion { get; set; }
 }
 
 /// <summary>
@@ -299,6 +417,15 @@ public class TopIssueRow
 
     /// <summary>完整簽章的第四段（<see cref="System.Diagnostics.EventLogEntryType"/> 的整數值）</summary>
     public int EntryType { get; set; }
+
+    /// <summary>命中規則表時的已知問題說明（latest 快照，同一 RecordId 內只有一個值）——
+    /// 依問題視角全面 SQL 化用（回饋十九輪批次B），未命中為 null</summary>
+    public string? KnownIssue { get; set; }
+
+    /// <summary>Linux 完整簽章第五段（回饋十九輪批次B，補上 v1 刻意省略的欄位）：
+    /// 沒有它，SQL 端無法組回完整 <c>IssueSignatureKey</c> 去 join 處理狀態，
+    /// 「同一個 program 命中不同規則」會被併成同一組。Windows 事件恆為空字串。</summary>
+    public string EventKey { get; set; } = string.Empty;
 }
 
 /// <summary>風險 log 暫存一列（docs/archive/WEB-SCHEDULER-PLAN.md §2）。↔ lf_risky_events</summary>
@@ -343,6 +470,28 @@ public class IssueHandlingRow
     public DateTime? DueDate { get; set; }
     public string? CaseId { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>首次寫入時間（回饋十九輪批次B）。舊列為 null，本輪不消費、不回填。</summary>
+    public DateTime? CreatedAt { get; set; }
+}
+
+/// <summary>
+/// 問題的機房首見日（回饋十九輪批次G 呈現，批次B 落地）。↔ lf_issue_first_seen
+///
+/// **與 <see cref="TopIssueRow.RecordDate"/> 的 MIN 不同**：問題聚合查詢的 FirstSeen
+/// 受查詢期間截斷（選近 7 天時半年前就存在的老問題會顯示成「7 天前首見」），這張表
+/// 寫入時 insert-if-absent，之後不論查詢哪個期間、不論（未來的）保留期怎麼修剪歷史紀錄，
+/// 這個日期都不會變——它答的是「這個問題第一次在機房出現是什麼時候」，不是「這次查詢
+/// 看到的最早一筆」。鍵刻意用 <see cref="SourceKey"/>（正規化大寫，同 HostNameKey 的
+/// collation-safety 理由）＋EventId，不含 LogName/EntryType：首見的語意是「這個問題」
+/// （依問題視角的分組鍵），不是某個完整簽章第一次出現。
+/// </summary>
+public class IssueFirstSeenRow
+{
+    public string SourceKey { get; set; } = string.Empty;
+    public int EventId { get; set; }
+    public string SourceName { get; set; } = string.Empty;
+    public DateTime FirstSeen { get; set; }
 }
 
 /// <summary>問題案件的一列。↔ lf_issue_cases</summary>
@@ -385,6 +534,9 @@ public class BlobRow
     public string BlobKey { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public DateTime UpdatedAt { get; set; }
+
+    /// <summary>供上層快取判定用的單調遞增版本號，與 UpdatedAt（並發權杖）用途不同。</summary>
+    public long Version { get; set; }
 }
 
 /// <summary>append-only JSONL 的一行（log_key＝來源，如 "audit"；seq 自增即附加順序）。↔ lf_log_lines</summary>
@@ -397,3 +549,49 @@ public class LogLineRow
     /// <summary>插入時間；schema 升級前寫入的既存列為 null（見 <see cref="SchemaUpgrader"/>）</summary>
     public DateTime? CreatedAt { get; set; }
 }
+
+/// <summary>權限異動檢核一列（含人工確認狀態）。↔ lf_permission_changes</summary>
+public class PermissionChangeRow
+{
+    public long Id { get; set; }
+    public string ChangeId { get; set; } = string.Empty;
+    public string DedupeKey { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string HostNameKey { get; set; } = string.Empty;
+    public DateTime DetectedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public string Target { get; set; } = string.Empty;
+    public string ChangeType { get; set; } = string.Empty;
+    public string Category { get; set; } = "other";
+    public bool IsPrivilegedTarget { get; set; }
+    public string? InitiatorAccount { get; set; }
+    public string? TargetAccount { get; set; }
+
+    /// <summary>4670 的物件類型／處理程序名稱（見 PermissionChangeRecord）</summary>
+    public string? ObjectType { get; set; }
+
+    public string? ProcessName { get; set; }
+
+    /// <summary>彙總列涵蓋的事件時間區間與對數（逐則列為 null，見 PermissionChangeRecord）</summary>
+    public DateTime? CoveredFrom { get; set; }
+
+    public DateTime? CoveredTo { get; set; }
+
+    public int? PairCount { get; set; }
+
+    public string BeforeValue { get; set; } = string.Empty;
+    public string AfterValue { get; set; } = string.Empty;
+    public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>未截斷的原始事件訊息（回饋二十八輪 P9）。升級前寫入的列與彙總列為 null</summary>
+    public string? RawText { get; set; }
+
+    public string Source { get; set; } = "本機監控";
+    public int? EventId { get; set; }
+    public string Status { get; set; } = "pending";
+    public long? ConfirmedBy { get; set; }
+    public string? ConfirmedByAccount { get; set; }
+    public DateTime? ConfirmedAt { get; set; }
+    public string? ConfirmNote { get; set; }
+}
+

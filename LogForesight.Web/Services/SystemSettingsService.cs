@@ -1,3 +1,4 @@
+using LogForesight.Core.Configuration;
 using System.Runtime.Versioning;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Auth.Ldap;
@@ -66,6 +67,9 @@ public class SystemSettingsService : ISystemSettingsService
     /// </summary>
     public static readonly string[] ValidSeverityDisplayModes = { "DefaultHidden", "SiteHidden" };
 
+    /// <summary>合法 AI 提供者名稱</summary>
+    public static IReadOnlyList<string> ValidAiProviders => AiProviders.All;
+
     /// <summary>舊值遷移：既存 blob 裡的 Locked／GlobalFilter 一律視同新的 SiteHidden——
     /// 兩者語意都被新模式涵蓋（全站查詢層排除）且更嚴格一致，不需要区分。
     /// 只在讀取／過濾判斷時正規化，不改寫 blob 本身，下次使用者存檔會自然寫入新值。</summary>
@@ -90,17 +94,27 @@ public class SystemSettingsService : ISystemSettingsService
 
     public SystemSettingsDto Get() => ToDto(_store.Get());
 
-    public HashSet<string>? GetVisibleSeverities()
-    {
-        var settings = _store.Get();
-        return NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
+    public HashSet<string>? GetVisibleSeverities() => ResolveVisibleSeverities(_store.Get());
+
+    public IReadOnlySet<string>? GetVisibleDayRiskLevels() => ResolveVisibleDayRiskLevels(_store.Get());
+
+    /// <summary>
+    /// 模式為 SiteHidden 時回傳應顯示的嚴重度集合；DefaultHidden 回傳 null。
+    /// 供非 Scoped 呼叫端（如 Singleton 的 MailIssueDigest）直接依 settings 運算，
+    /// 與實例方法共用同一份判定邏輯。
+    /// </summary>
+    public static HashSet<string>? ResolveVisibleSeverities(SystemSettings settings) =>
+        NormalizeDisplayMode(settings.SeverityDisplayMode) == "SiteHidden"
             ? NormalizeLegacySeverities(settings.UnhandledSeverities).ToHashSet()
             : null;
-    }
 
-    public IReadOnlySet<string>? GetVisibleDayRiskLevels()
+    /// <summary>
+    /// 顯示中的日風險等級集合。全勾（高/中/低皆顯示）回傳 null。
+    /// 供非 Scoped 呼叫端直接依 settings 運算，與實例方法共用同一份判定邏輯。
+    /// </summary>
+    public static IReadOnlySet<string>? ResolveVisibleDayRiskLevels(SystemSettings settings)
     {
-        var visible = NormalizeDayRiskLevels(_store.Get().VisibleDayRiskLevels);
+        var visible = NormalizeDayRiskLevels(settings.VisibleDayRiskLevels);
         return visible.Count == RiskLevels.All.Length ? null : visible.ToHashSet();
     }
 
@@ -128,8 +142,8 @@ public class SystemSettingsService : ISystemSettingsService
         if (request.RetentionDays < request.InitialHistoryDays)
             throw DomainException.Validation("歷史資料保留天數不可小於首次回補天數。");
 
-        if (request.RiskyEventRetentionDays > request.RetentionDays)
-            throw DomainException.Validation("風險 log 暫存保留天數不可大於歷史資料保留天數。");
+        if (request.RawEventRetentionDays > request.RetentionDays)
+            throw DomainException.Validation("原始事件內容保留天數不可大於歷史資料保留天數。");
 
         var adServers = NormalizeAdServers(request.AdServers);
         if (request.AdAuthEnabled && adServers.Count == 0)
@@ -156,15 +170,19 @@ public class SystemSettingsService : ISystemSettingsService
         // 在分析時會誠實申報「頻道不存在／不適用」，不會靜默假裝掃過。
         var channels = NormalizeLines(request.AnalysisChannels);
         var watchedFolders = NormalizeLines(request.WatchedFolders);
+        var permOperatorFields = NormalizeLines(request.PermissionOperatorFields);
+        var permMemberFields = NormalizeLines(request.PermissionMemberFields);
+        var permGroupFields = NormalizeLines(request.PermissionGroupFields);
+        var permObjectFields = NormalizeLines(request.PermissionObjectFields);
 
         // §1（回饋第十輪）：品牌三欄。名稱空白＝回退出廠名，副標允許空（刻意只留產品名）
         var brandName = string.IsNullOrWhiteSpace(request.BrandName) ? DefaultBrandName : request.BrandName.Trim();
         if (brandName.Length > BrandTextMaxLength)
-            throw DomainException.Validation($"產品名稱不可超過 {BrandTextMaxLength} 個字。");
+            throw DomainException.Validation($"主標題不可超過 {BrandTextMaxLength} 個字。");
 
         var brandSubtitle = (request.BrandSubtitle ?? "").Trim();
         if (brandSubtitle.Length > BrandTextMaxLength)
-            throw DomainException.Validation($"副標文字不可超過 {BrandTextMaxLength} 個字。");
+            throw DomainException.Validation($"副標題不可超過 {BrandTextMaxLength} 個字。");
 
         var brandIcon = ValidateBrandIcon(request.BrandIconDataUri);
 
@@ -205,7 +223,36 @@ public class SystemSettingsService : ISystemSettingsService
                 throw DomainException.Validation("每週摘要星期不合法。");
         }
 
+        var aiProvider = AiProviders.Normalize(request.AiProvider);
+        var matchedProvider = ValidAiProviders.FirstOrDefault(p => string.Equals(p, aiProvider, StringComparison.OrdinalIgnoreCase));
+        if (matchedProvider == null)
+            throw DomainException.Validation("AI 服務提供者不合法。");
+        aiProvider = matchedProvider;
+
         var before = _store.Get();
+
+        var hasApiKey = !string.IsNullOrWhiteSpace(request.AiApiKey) ||
+                        (!string.IsNullOrEmpty(before.AiApiKeyEnc) && !request.ClearAiApiKey);
+
+        if (aiProvider == AiProviders.OpenAi)
+        {
+            if (!hasApiKey)
+                throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入 API 金鑰。");
+            if (string.IsNullOrWhiteSpace(request.AiModel))
+                throw DomainException.Validation("使用 OpenAI 官方 API 時，請輸入模型名稱。");
+        }
+        else if (aiProvider == AiProviders.AzureOpenAi)
+        {
+            if (string.IsNullOrWhiteSpace(request.AiBaseUrl))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入端點位址。");
+            if (string.IsNullOrWhiteSpace(request.AiAzureDeployment))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入部署名稱。");
+            if (string.IsNullOrWhiteSpace(request.AiAzureApiVersion))
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入 API 版本。");
+            if (!hasApiKey)
+                throw DomainException.Validation("使用 Azure OpenAI 時，請輸入 API 金鑰。");
+        }
+
         // 由關轉開判定要用的三個舊值先讀成區域變數（回饋十八輪批次C）：不能依賴 before 這個
         // 物件在 _store.Update() 之後仍保有「更新前」的內容——ISystemSettingsStore 的介面契約
         // 只保證 Get() 回傳的是讀取當下的快照，並未保證與後續 Update() 使用的是不同執行個體
@@ -223,16 +270,25 @@ public class SystemSettingsService : ISystemSettingsService
             s.UnhandledSeverities = severities;
             s.SeverityDisplayMode = request.SeverityDisplayMode;
             s.VisibleDayRiskLevels = dayRiskLevels;
+            s.AiProvider = aiProvider;
             s.AiBaseUrl = request.AiBaseUrl.Trim();
             if (request.ClearAiApiKey)
                 s.AiApiKeyEnc = "";
             else if (!string.IsNullOrEmpty(request.AiApiKey))
                 s.AiApiKeyEnc = CryptoHelper.Encrypt(request.AiApiKey);
+            s.AiModel = string.IsNullOrWhiteSpace(request.AiModel)
+                ? AiProviders.DefaultModel(aiProvider)
+                : request.AiModel.Trim();
+            s.AiAzureDeployment = request.AiAzureDeployment?.Trim() ?? "";
+            s.AiAzureApiVersion = string.IsNullOrWhiteSpace(request.AiAzureApiVersion)
+                ? "2024-10-21"
+                : request.AiAzureApiVersion.Trim();
             s.InitialHistoryDays = request.InitialHistoryDays;
             s.RetentionDays = request.RetentionDays;
             s.RunLogRetentionDays = request.RunLogRetentionDays;
             s.AuditRetentionDays = request.AuditRetentionDays;
-            s.RiskyEventRetentionDays = request.RiskyEventRetentionDays;
+            s.RawEventRetentionDays = request.RawEventRetentionDays;
+            s.ReportRetentionDays = request.ReportRetentionDays;
             s.AdAuthEnabled = request.AdAuthEnabled;
             s.AdServers = adServers;
             s.AdSearchBase = request.AdSearchBase?.Trim() ?? "";
@@ -249,11 +305,18 @@ public class SystemSettingsService : ISystemSettingsService
             s.AiDeepDiveMaxTokens = request.AiDeepDiveMaxTokens;
             s.AiFrequencyPenalty = request.AiFrequencyPenalty;
             s.AiPresencePenalty = request.AiPresencePenalty;
+            // 估費單價：負數沒有意義（會算出負金額），一律夾回 0＝不估費
+            s.AiInputPricePerMillion = Math.Max(0, request.AiInputPricePerMillion);
+            s.AiOutputPricePerMillion = Math.Max(0, request.AiOutputPricePerMillion);
             s.AiExtraRequestFieldsJson = extraFieldsJson;
             s.WatchedFolders = watchedFolders;
             s.ServerDescription = request.ServerDescription?.Trim() ?? "";
             s.CheckupIntervalDays = request.CheckupIntervalDays;
             s.AnalysisChannels = channels;
+            s.PermissionOperatorFields = permOperatorFields;
+            s.PermissionMemberFields = permMemberFields;
+            s.PermissionGroupFields = permGroupFields;
+            s.PermissionObjectFields = permObjectFields;
             s.ImportMaxFileSizeKb = request.ImportMaxFileSizeKb;
             s.ImportMaxRows = request.ImportMaxRows;
 
@@ -315,9 +378,12 @@ public class SystemSettingsService : ISystemSettingsService
             {
                 Before = new
                 {
-                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels, before.AiBaseUrl,
+                    before.UnhandledSeverities, before.SeverityDisplayMode, before.VisibleDayRiskLevels,
+                    before.AiProvider, before.AiBaseUrl, before.AiModel, before.AiAzureDeployment, before.AiAzureApiVersion,
                     before.InitialHistoryDays, before.RetentionDays, before.RunLogRetentionDays, before.AuditRetentionDays,
-                    before.RiskyEventRetentionDays,
+                    before.RawEventRetentionDays, before.ReportRetentionDays,
+                    before.WatchedFolders, before.ServerDescription, before.CheckupIntervalDays, before.AnalysisChannels,
+                    before.PermissionOperatorFields, before.PermissionMemberFields, before.PermissionGroupFields, before.PermissionObjectFields,
                     before.AdAuthEnabled, before.AdServers, before.AdSearchBase, before.AdSearchFilter,
                     before.MailEnabled, before.SmtpServer, before.SmtpPort, before.SmtpUseTls, before.SmtpAccount,
                     before.MailFrom, before.MailRecipients, before.MailNotifyHostOwners, before.MailMinRiskLevel,
@@ -326,9 +392,12 @@ public class SystemSettingsService : ISystemSettingsService
                 },
                 After = new
                 {
-                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels, saved.AiBaseUrl,
+                    saved.UnhandledSeverities, saved.SeverityDisplayMode, saved.VisibleDayRiskLevels,
+                    saved.AiProvider, saved.AiBaseUrl, saved.AiModel, saved.AiAzureDeployment, saved.AiAzureApiVersion,
                     saved.InitialHistoryDays, saved.RetentionDays, saved.RunLogRetentionDays, saved.AuditRetentionDays,
-                    saved.RiskyEventRetentionDays,
+                    saved.RawEventRetentionDays, saved.ReportRetentionDays,
+                    saved.WatchedFolders, saved.ServerDescription, saved.CheckupIntervalDays, saved.AnalysisChannels,
+                    saved.PermissionOperatorFields, saved.PermissionMemberFields, saved.PermissionGroupFields, saved.PermissionObjectFields,
                     saved.AdAuthEnabled, saved.AdServers, saved.AdSearchBase, saved.AdSearchFilter,
                     saved.MailEnabled, saved.SmtpServer, saved.SmtpPort, saved.SmtpUseTls, saved.SmtpAccount,
                     saved.MailFrom, saved.MailRecipients, saved.MailNotifyHostOwners, saved.MailMinRiskLevel,
@@ -347,7 +416,7 @@ public class SystemSettingsService : ISystemSettingsService
     /// <summary>名稱空白時回退的出廠名（與 <see cref="SystemSettings.BrandName"/> 初始值同源）</summary>
     private static readonly string DefaultBrandName = new SystemSettings().BrandName;
 
-    /// <summary>產品名稱／副標的長度上限：側欄寬度固定，再長也只會被 text-truncate 切掉</summary>
+    /// <summary>主標題／副標題的長度上限：側欄寬度固定，再長也只會被 text-truncate 切掉</summary>
     private const int BrandTextMaxLength = 40;
 
     /// <summary>自訂圖示解碼後的大小上限（KB）。側欄顯示尺寸約 30px，64KB 綽綽有餘；
@@ -545,13 +614,18 @@ public class SystemSettingsService : ISystemSettingsService
         UnhandledSeverities = NormalizeLegacySeverities(s.UnhandledSeverities),
         SeverityDisplayMode = NormalizeDisplayMode(s.SeverityDisplayMode),
         VisibleDayRiskLevels = NormalizeDayRiskLevels(s.VisibleDayRiskLevels),
+        AiProvider = AiProviders.Normalize(s.AiProvider),
         AiBaseUrl = s.AiBaseUrl,
         AiHasApiKey = !string.IsNullOrEmpty(s.AiApiKeyEnc),
+        AiModel = string.IsNullOrWhiteSpace(s.AiModel) ? AiProviders.DefaultModel(s.AiProvider) : s.AiModel,
+        AiAzureDeployment = s.AiAzureDeployment,
+        AiAzureApiVersion = string.IsNullOrWhiteSpace(s.AiAzureApiVersion) ? "2024-10-21" : s.AiAzureApiVersion,
         InitialHistoryDays = s.InitialHistoryDays,
         RetentionDays = s.RetentionDays,
         RunLogRetentionDays = s.RunLogRetentionDays,
         AuditRetentionDays = s.AuditRetentionDays,
-        RiskyEventRetentionDays = s.RiskyEventRetentionDays,
+        RawEventRetentionDays = s.RawEventRetentionDays,
+        ReportRetentionDays = s.ReportRetentionDays,
         AdAuthEnabled = s.AdAuthEnabled,
         AdServers = s.AdServers,
         AdSearchBase = s.AdSearchBase,
@@ -565,12 +639,18 @@ public class SystemSettingsService : ISystemSettingsService
         AiDeepDiveMaxTokens = s.AiDeepDiveMaxTokens,
         AiFrequencyPenalty = s.AiFrequencyPenalty,
         AiPresencePenalty = s.AiPresencePenalty,
+        AiInputPricePerMillion = s.AiInputPricePerMillion,
+        AiOutputPricePerMillion = s.AiOutputPricePerMillion,
         AiExtraRequestFieldsJson = s.AiExtraRequestFieldsJson,
         AiAdvancedDefaults = AiAdvancedDefaults,
         WatchedFolders = s.WatchedFolders,
         ServerDescription = s.ServerDescription,
         CheckupIntervalDays = s.CheckupIntervalDays,
         AnalysisChannels = s.AnalysisChannels,
+        PermissionOperatorFields = s.PermissionOperatorFields,
+        PermissionMemberFields = s.PermissionMemberFields,
+        PermissionGroupFields = s.PermissionGroupFields,
+        PermissionObjectFields = s.PermissionObjectFields,
         ImportMaxFileSizeKb = s.ImportMaxFileSizeKb,
         ImportMaxRows = s.ImportMaxRows,
         // 郵件通知（回饋十五輪批次D）

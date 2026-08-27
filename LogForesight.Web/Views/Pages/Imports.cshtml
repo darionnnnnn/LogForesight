@@ -1,15 +1,15 @@
-@{
+﻿@{
     ViewData["Title"] = "資料匯入";
 }
 
 @* §2a（回饋第十一輪）：使用者／主機／群組授權三種 CSV 已退役，本頁只剩「負責人」，
    因此不再需要分頁；NetIQ 掃描匯入已整批搬到「NetIQ 維護」頁（§1）。 *@
 <div class="lf-hint mb-3">
-    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#info-circle"></use></svg>
+    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#info-circle"></use></svg>
     <span>
-        主機的建立來源是「<a href="/admin/netiq">NetIQ 維護 &gt; 匯入</a>」掃描匯入與批次自動登錄；
-        使用者請於「<a href="/admin/users">使用者</a>」頁新增（支援一次多筆），
-        群組授權請於「<a href="/admin/groups">群組與授權</a>」頁的授權矩陣設定。
+        主機的建立來源是「<a href="@Url.Content("~/admin/netiq")">NetIQ 維護 &gt; 匯入</a>」掃描匯入與批次自動登錄；
+        使用者請於「<a href="@Url.Content("~/admin/users")">使用者</a>」頁新增（支援一次多筆），
+        群組授權請於「<a href="@Url.Content("~/admin/groups")">群組與授權</a>」頁的授權矩陣設定。
     </span>
 </div>
 
@@ -40,7 +40,7 @@
                     </table>
                     </div>
                 </details>
-                <a class="btn btn-sm btn-outline-secondary mb-2" href="/api/imports/Owners/template">下載範本</a>
+                <a class="btn btn-sm btn-outline-secondary mb-2" href="@Url.Content("~/api/imports/Owners/template")">下載範本</a>
                 <input type="file" class="form-control form-control-sm" accept=".csv" data-upload="Owners" />
             </div>
         </div>
@@ -74,7 +74,7 @@
         <h2 class="lf-card__title">匯入紀錄</h2>
         <span tabindex="0" data-bs-toggle="popover"
               data-bs-content="含歷次 CSV 匯入與 NetIQ 掃描匯入的結果。已退役的匯入類型（使用者／主機／群組授權）的歷史紀錄仍保留在這裡——匯入紀錄是稽核性質的歷史事實。">
-            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
         </span>
     </div>
     <div class="lf-card__body p-0" id="import-logs"></div>

@@ -14,10 +14,14 @@ namespace LogForesight.Web.Controllers.Api;
 public class SettingsController : ControllerBase
 {
     private readonly ISystemSettingsService _settings;
+    private readonly AiUsageStore _aiUsage;
+    private readonly IAuditService _audit;
 
-    public SettingsController(ISystemSettingsService settings)
+    public SettingsController(ISystemSettingsService settings, AiUsageStore aiUsage, IAuditService audit)
     {
         _settings = settings;
+        _aiUsage = aiUsage;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -37,4 +41,35 @@ public class SettingsController : ControllerBase
     [HttpPost("mail-test")]
     public async Task<ApiResponse<TestMailResultDto>> TestMail([FromBody] TestMailRequest request) =>
         ApiResponse<TestMailResultDto>.Ok(await _settings.TestMail(request));
+
+    /// <summary>AI token 用量統計（回饋二十七輪作業 B）：今日／累計＋近 30 天每日明細</summary>
+    [HttpGet("ai-usage")]
+    public ApiResponse<AiUsageDto> GetAiUsage() =>
+        ApiResponse<AiUsageDto>.Ok(AiUsageDto.From(_aiUsage, AiUsageDto.TableDays));
+
+    /// <summary>清空重新計算：每日與累計歸零、起算日重設為今天（不可復原）</summary>
+    [HttpPost("ai-usage/reset")]
+    public ApiResponse<AiUsageDto> ResetAiUsage()
+    {
+        // 清空前先取一次舊值：這個操作不可復原，稽核只留「清掉了」而不留「清掉多少」的話，
+        // 事後就沒有任何依據能回答「當時累計到哪裡」（同 controller 其餘破壞性操作都有稽核）
+        var before = _aiUsage.Get().Total;
+
+        _aiUsage.Reset();
+
+        _audit.Record(
+            action: AuditActions.SettingsUpdate,
+            summary: $"清空 AI token 用量統計（清空前累計 {before.Calls} 次呼叫、{before.TotalTokens} tokens）",
+            targetKind: "ai_usage",
+            targetId: AiUsageStore.BlobKey,
+            detail: new
+            {
+                BeforeCalls = before.Calls,
+                BeforePromptTokens = before.PromptTokens,
+                BeforeCompletionTokens = before.CompletionTokens,
+                BeforeTotalTokens = before.TotalTokens
+            });
+
+        return ApiResponse<AiUsageDto>.Ok(AiUsageDto.From(_aiUsage, AiUsageDto.TableDays));
+    }
 }

@@ -12,10 +12,13 @@ public class ReportService
     private readonly HandlingHistoryQueryService _handling;
     private readonly IssueRankingBuilder _issueRanking;
     private readonly ISystemSettingsStore _settings;
+    private readonly IIssueAggregateQuery _aggregates;
+    private readonly ISystemSettingsService _systemSettings;
 
     public ReportService(
         IRecordRepository repository, IHostStore hosts, IVisibilityService visibility,
-        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings)
+        HandlingHistoryQueryService handling, IssueRankingBuilder issueRanking, ISystemSettingsStore settings,
+        IIssueAggregateQuery aggregates, ISystemSettingsService systemSettings)
     {
         _repository = repository;
         _hosts = hosts;
@@ -23,42 +26,124 @@ public class ReportService
         _handling = handling;
         _issueRanking = issueRanking;
         _settings = settings;
+        _aggregates = aggregates;
+        _systemSettings = systemSettings;
     }
 
-    public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null)
+    public ReportSummaryDto GetSummary(DateTime from, DateTime to, string? handlingScope = null, string? compare = null)
     {
         if (to < from) (from, to) = (to, from);
 
+        var (previousFrom, previousTo, actualComparisonMode) = CalculateComparisonPeriod(from, to, compare);
+        var retentionDays = _settings.Get().RetentionDays;
+        var retentionThreshold = DateTime.Today.AddDays(-retentionDays);
+        // 兩種超出互斥：終點都早於保留線＝整段都沒資料；只有起點超出＝被截掉一截。
+        // 後者以往沒申報，而它比前者更危險——比較期有數字、只是偏低，畫面上看起來完全正常。
+        bool outOfRetention = previousTo < retentionThreshold;
+        bool partiallyOutOfRetention = !outOfRetention && previousFrom < retentionThreshold;
+
         var scope = HandlingHistoryQueryService.HandlingScopes.Normalize(handlingScope);
-        var records = _handling.FilterByScope(_repository.Query(new RecordQueryFilter { From = from, To = to }), scope);
 
-        // 與前一個「等長」期間比較：主管要的不是數字本身，是「變好還是變壞」。
-        // 等長才可比——拿一週跟一個月比毫無意義。前期套用同一 scope，比較才有意義（§5）
-        var span = (to.Date - from.Date).Days + 1;
-        var previousTo = from.Date.AddDays(-1);
-        var previousFrom = previousTo.AddDays(-span + 1);
-        var previousRecords = _handling.FilterByScope(
-            _repository.Query(new RecordQueryFilter { From = previousFrom, To = previousTo }), scope);
-
-        var hostsByName = _hosts.GetAll().ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
-        var ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
-
-        // 問題排行走 SQL 端聚合（P4）：與儀表板同一個 IssueRankingBuilder，兩頁數字必然一致。
-        // **不受 handlingScope 篩選影響**——scope 是日層級的過濾（先過濾再聚合），
-        // 而問題聚合是跨主機跨日的獨立投影；把 scope 套上去會讓「這個問題影響幾台」
-        // 變成「符合這個處理狀態的日子裡影響幾台」，那是另一個問題的答案
+        List<DailyAnalysisRecord>? recordsForTodo = null;
         var visibleHosts = _visibility.GetVisibleHosts();
-        var issueRanked = _issueRanking.Build(
-            from, to, visibleHosts.Select(h => h.HostId).ToList(), visibleHosts.Count);
+        var hostIds = visibleHosts.Select(h => h.HostId).ToList();
+
+        ReportKpiDto kpi;
+        List<ReportTrendPointDto> trend;
+        List<DashboardHostDto> ranked;
+        HandlingTodoDto? handlingDto = null;
+
+        var visibleDayRiskLevels = _systemSettings.GetVisibleDayRiskLevels();
+        var riskLevels = RecordRepository.ResolveDayRiskLevels(visibleDayRiskLevels, null);
+        var visibleSeverities = RecordRepository.ParseVisibleSeverities(_systemSettings.GetVisibleSeverities());
+        var nothingVisible = riskLevels != null && riskLevels.Count == 0;
+
+        if (scope == HandlingHistoryQueryService.HandlingScopes.All)
+        {
+            if (nothingVisible)
+            {
+                kpi = new ReportKpiDto();
+                trend = BuildTrendFromAggregate(new List<TrendAggregate>(), from, to);
+                ranked = new List<DashboardHostDto>();
+                handlingDto = new HandlingTodoDto();
+            }
+            else
+            {
+                // 本期＋前期一次取回（回饋二十七輪作業 F3）：EF 端是合併查詢，
+                // 少一半的 KPI 往返；測試替身走介面預設實作（呼叫兩次單期），語意相同
+                var (kpiAgg, kpiAggPrev) = _aggregates.AggregateReportKpiPair(
+                    from, to, previousFrom, previousTo, hostIds, riskLevels, visibleSeverities);
+
+                kpi = new ReportKpiDto
+                {
+                    TotalIssues = kpiAgg.TotalIssues,
+                    TotalIssuesPrevious = kpiAggPrev.TotalIssues,
+                    HighRiskDays = kpiAgg.HighRiskDays,
+                    HighRiskDaysPrevious = kpiAggPrev.HighRiskDays,
+                    AffectedHosts = kpiAgg.AffectedHosts,
+                    AffectedHostsPrevious = kpiAggPrev.AffectedHosts,
+                    CoverageGapDays = kpiAgg.CoverageGapDays
+                };
+
+                var trendAgg = _aggregates.AggregateReportTrend(from, to, hostIds, riskLevels, visibleSeverities);
+                trend = BuildTrendFromAggregate(trendAgg, from, to);
+
+                // 排序規則與 BuildHostRanking 一致：高風險日 → 關聯日 → 中風險日。
+                var hostRiskAgg = _aggregates.AggregateByHost(from, to, hostIds, riskLevels: riskLevels, visibleSeverities: visibleSeverities);
+                // 用手上這份 visibleHosts 建索引，不再多打一次整份主機表（回饋二十七輪作業 F）：
+                // 聚合本身就是以 hostIds（＝可見主機）為範圍查的，索引不可能需要範圍外的主機
+                var hostsById = visibleHosts.ToDictionary(h => h.HostId);
+                ranked = RecordStatsBuilder.BuildHostRanking(hostRiskAgg, hostsById);
+                handlingDto = _handling.GetTodoByRange(from, to, riskLevels);
+            }
+            // 待辦走 GetTodoByRange（見下方 Handling 欄位），這條分支從頭到尾不載入任何紀錄
+        }
+        else
+        {
+            // 風險等級下推 SQL（回饋二十七輪作業 F5）：scope != All 時 FilterByScope 一律丟棄
+            // 非 actionable（低風險）紀錄，先在 SQL 端濾掉就不必把整段期間載進記憶體——
+            // 90 天區間下低風險列占絕大多數。與可見等級的交集由 QueryLightweight 既有機制處理。
+            var actionableLevels = new[] { RiskLevels.High, RiskLevels.Medium };
+            var records = _handling.FilterByScope(
+                _repository.QueryLightweight(new RecordQueryFilter { From = from, To = to, RiskLevels = actionableLevels }), scope);
+            recordsForTodo = records;
+
+            var previousRecords = _handling.FilterByScope(
+                _repository.QueryLightweight(new RecordQueryFilter { From = previousFrom, To = previousTo, RiskLevels = actionableLevels }), scope);
+
+            // 同上：QueryLightweight 已套可見範圍（RecordRepository.ApplyVisibility），
+            // 撈回來的紀錄其主機必然在 visibleHosts 裡，不必再載一次整份主機表
+            var hostsByName = visibleHosts.ToDictionary(h => h.HostName, StringComparer.OrdinalIgnoreCase);
+            ranked = RecordStatsBuilder.BuildHostRanking(records, hostsByName);
+            kpi = BuildKpi(records, previousRecords);
+            trend = BuildTrend(records, from, to);
+        }
+
+        var allIssueRanked = _issueRanking.Build(
+            from, to, hostIds, visibleHosts.Count, visibleHosts);
+        // §10.6：全部主機都已有結論的問題不佔用排行版面（與儀表板重點問題卡同一套規則）
+        var (issueRanked, concludedIssueCount) = IssueRankingBuilder.ExcludeConcluded(allIssueRanked);
+
+        var statsPending = _issueRanking.StatsPending();
 
         var dto = new ReportSummaryDto
         {
             From = from.ToString("yyyy-MM-dd"),
             To = to.ToString("yyyy-MM-dd"),
             HandlingScope = scope,
-            Kpi = BuildKpi(records, previousRecords),
-            Trend = BuildTrend(records, from, to),
-            Categories = RecordStatsBuilder.BuildCategoryCards(records, _settings.Get().ParseUnhandledSeverities()),
+            ComparisonMode = actualComparisonMode,
+            ComparisonOutOfRetention = outOfRetention,
+            ComparisonPartiallyOutOfRetention = partiallyOutOfRetention,
+            RetentionDays = retentionDays,
+            Kpi = kpi,
+            Trend = trend,
+            // 風險類型分布走 SQL 端聚合（回饋十九輪批次D、二十輪批次B），與儀表板同一個查詢方法。
+            // 刻意**不套用 handlingScope**——與下方問題排行同一個理由（見該處註解與前端
+            // category-subtitle 的說明文字）：這裡是跨主機跨日的獨立投影，母體與「顯示範圍」
+            // 篩的日層級處理狀態不是同一件事
+            Categories = RecordStatsBuilder.BuildCategoryCards(nothingVisible
+                ? new List<CategoryAggregate>()
+                : _aggregates.AggregateByCategory(from, to, hostIds, visibleSeverities, riskLevels)),
             HostRanking = ranked.Take(HostRankingLimit).ToList(),
             RankedHostCount = ranked.Count,
             Others = BuildOthers(ranked),
@@ -67,16 +152,51 @@ public class ReportService
             IssueRanking = issueRanked.Take(HostRankingLimit).ToList(),
             RankedIssueCount = issueRanked.Count,
             IssueOthers = BuildIssueOthers(issueRanked),
+            ConcludedIssueCount = concludedIssueCount,
             // #6 管理者指標：與儀表板同一來源（IVisibilityService／HandlingHistoryQueryService.GetTodo），
             // 兩頁的「主機總數」「處理進度」數字才不會各算各的
             TotalHosts = visibleHosts.Count,
             // 背景整理中時問題排行的數字會偏低但看起來正常——必須說出來（G2）
-            IssueStatsPending = _issueRanking.StatsPending().Pending,
-            IssueStatsPendingHint = _issueRanking.StatsPending().Hint,
-            Handling = _handling.GetTodo(records)
+            IssueStatsPending = statsPending.Pending,
+            IssueStatsPendingHint = statsPending.Hint,
+            Handling = scope == HandlingHistoryQueryService.HandlingScopes.All
+                ? handlingDto ?? new HandlingTodoDto()
+                : _handling.GetTodo(recordsForTodo!)
         };
 
         return dto;
+    }
+
+    private (DateTime previousFrom, DateTime previousTo, string comparisonMode) CalculateComparisonPeriod(DateTime from, DateTime to, string? compare)
+    {
+        if (string.Equals(compare, "yoy", StringComparison.OrdinalIgnoreCase))
+        {
+            return (from.AddYears(-1), to.AddYears(-1), "yoy");
+        }
+
+        var span = (to.Date - from.Date).Days + 1;
+        var previousTo = from.Date.AddDays(-1);
+        var previousFrom = previousTo.AddDays(-span + 1);
+        return (previousFrom, previousTo, "previous");
+    }
+
+
+    private static List<ReportTrendPointDto> BuildTrendFromAggregate(List<TrendAggregate> aggregates, DateTime from, DateTime to)
+    {
+        var byDate = aggregates.ToDictionary(a => a.Date.Date);
+        var points = new List<ReportTrendPointDto>();
+        for (var date = from.Date; date <= to.Date; date = date.AddDays(1))
+        {
+            byDate.TryGetValue(date, out var agg);
+            points.Add(new ReportTrendPointDto
+            {
+                Date = date.ToString("yyyy-MM-dd"),
+                HighRisk = agg?.HighRisk ?? 0,
+                MediumRisk = agg?.MediumRisk ?? 0,
+                ErrorCount = agg?.ErrorCount ?? 0
+            });
+        }
+        return points;
     }
 
     /// <summary>排行榜顯示上限——超過的併入「其他 N 台」彙總條，保住圖表可讀性又不讓尾端主機隱形</summary>

@@ -37,6 +37,19 @@ public class RunRequest
     /// </summary>
     public bool IncludeLocal { get; init; } = true;
 
+    /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false。</summary>
+    public bool OnlyMissingOrFailed { get; init; }
+
+    /// <summary>
+    /// 重新分析模式：要不要重新分析已有紀錄的日子、重跑到什麼程度。預設 None（不重跑）。
+    /// </summary>
+    public RerunMode RerunMode { get; init; } = RerunMode.None;
+
+    /// <summary>
+    /// 重新分析回望天數（null＝不適用；只有 <see cref="RerunMode"/> != None 時有意義）。
+    /// </summary>
+    public int? RerunDays { get; init; }
+
     /// <summary>
     /// <see cref="BatchRun.Trigger"/>：<c>"schedule"</c>｜<c>"manual:{帳號}"</c>
     /// （歷史紀錄中另有已退場的 console 批次寫入的 <c>"console"</c>）。
@@ -190,7 +203,8 @@ public class AnalysisOrchestrator
 
             var eventLogService = new EventLogService();
             IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
-            var aiService = new AIService(settings.Ai, dumper);
+            var aiService = new AIService(settings.Ai, dumper,
+                new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
             var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
 
             // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
@@ -315,7 +329,8 @@ public class AnalysisOrchestrator
                 backend.IssueHandlingStore(),
                 backend.RecordHandlingStore(),
                 backend.RecordStore(),
-                hostStore);
+                hostStore,
+                new IssueOwnerStore(backend.Blob("issue_owners")));
 
             // 0. 權限/角色異動檢查：與每日事件分析各自獨立，反映「本次執行當下」的權限狀態
             //    （不是某個歷史日期的事），所以每次執行都做一次、不受歷史回補流程影響。
@@ -367,10 +382,10 @@ public class AnalysisOrchestrator
                 console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
 
                 // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
-                // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動待辦」逐筆確認。
+                // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
                 try
                 {
-                    var permissionChangeStore = new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
+                    var permissionChangeStore = backend.PermissionChanges();
                     var detectedAt = DateTime.Now;
 
                     permissionChangeStore.AppendChanges(permissionCheck.Details.Select((detail, index) => new PermissionChangeRecord
@@ -380,9 +395,14 @@ public class AnalysisOrchestrator
                         DetectedAt = detectedAt,
                         Target = detail.Target,
                         ChangeType = detail.ChangeType,
+                        Category = detail.Category,
+                        IsPrivilegedTarget = detail.IsPrivilegedTarget,
+                        InitiatorAccount = detail.InitiatorAccount,
+                        TargetAccount = detail.TargetAccount,
                         Before = detail.Before,
                         After = detail.After,
-                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty
+                        AlertText = index < permissionCheck.Alerts.Count ? permissionCheck.Alerts[index] : string.Empty,
+                        Source = PermissionChangeSources.Local
                     }));
 
                     console.WriteLine($"  ✓ 已寫入 {permissionCheck.Details.Count} 筆權限異動供 Web 逐筆確認");
@@ -398,11 +418,54 @@ public class AnalysisOrchestrator
                 console.WriteLine("  未偵測到權限異動。");
             }
 
-            // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長
-            var pruned = historyService.Prune(retention.RetentionDays);
+            // 1. 清理超過保留天數的歷史紀錄，避免資料庫無限增長。
+            //
+            // **一律用未限縮的 RecordStore()，不要用上面的 historyService**（SCALE-3000 S2-3b）：
+            // historyService 綁定「本機」識別（缺日判定與趨勢基準只看本機），而 NetIQ 機房
+            // 數千台主機的紀錄不屬於本機。這裡若用它，保留期對絕大多數資料等於從來沒有生效——
+            // 這正是 2026-08-16 以前的實際情況，而 docs/DB-SPEC.md 的保留策略表寫的是全表適用，
+            // 文件與實作長期不一致。實測（RetentionScopeBenchmarks）：500 台 × 200 天的資料集，
+            // 限縮到本機可清 0 筆、未限縮 39,500 筆。
+            //
+            // 限縮語意本身沒有錯，錯的是拿它來清理——store 該誠實，所以只改呼叫端。
+            //
+            // 兩層保留期（S2）：先刪整列，再把「留著但已過詳情保留期」的 content_json 清空。
+            // **順序不可反**：先清詳情再刪列，等於為即將被刪的列白做一次 UPDATE。
+            var allHostRecords = backend.RecordStore();
+
+            var pruned = allHostRecords.Prune(retention.RetentionDays);
             if (pruned > 0)
             {
                 console.WriteLine($"已清除 {pruned} 筆超過 {retention.RetentionDays} 天的歷史紀錄。");
+            }
+
+            try
+            {
+                var detailPruned = allHostRecords.PruneDetails(retention.RawEventRetentionDays);
+                if (detailPruned > 0)
+                {
+                    console.WriteLine($"已清除 {detailPruned} 筆超過 {retention.RawEventRetentionDays} 天的紀錄詳情" +
+                                      "（統計與問題清單保留，僅原始樣本訊息不可再查看）。");
+                }
+
+                // 積壓申報：單次清除有上限（見 EfAnalysisRecordStore.MaxPruneRowsPerRun），
+                // 首次啟用時的積壓會分多晚排掉。沒有這行的話，使用者看到「清了還有」會以為壞掉。
+                var remaining = allHostRecords.CountPrunableRecords(retention.RetentionDays);
+                if (remaining > 0)
+                {
+                    // 只報筆數的話，「陸續清完」與「卡住了」在畫面上分不出來——
+                    // 依單次上限估出還要幾次執行，使用者才知道是明天還是下個月
+                    var perRun = EfAnalysisRecordStore.MaxPruneRowsPerRun;
+                    var estimatedRuns = (remaining + perRun - 1) / perRun;
+                    var msg = $"尚有 {remaining} 筆過期紀錄超出本次清除上限（每次上限 {perRun} 筆），" +
+                              $"預估還需約 {estimatedRuns} 次執行清完。";
+                    console.WriteLine($"  ℹ {msg}");
+                    runRecorder.Milestone(msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(ex, "詳情清除或積壓申報失敗（不影響本次分析）：{0}", ex.Message);
             }
 
             // 1b. 清理執行歷程／匯入紀錄／稽核紀錄（docs/archive/HISTORY.md P0-3）
@@ -417,10 +480,17 @@ public class AnalysisOrchestrator
                 if (auditPruned > 0)
                     console.WriteLine($"已清除 {auditPruned} 筆超過 {retention.AuditRetentionDays} 天的稽核紀錄。");
 
+                // 權限異動檢核（含 NetIQ 事件來源，3000 台規模下每天都會寫入）：性質是追責證據，
+                // 跟稽核紀錄同一個保留天數
+                var permPruned = backend.PermissionChanges()
+                    .Prune(retention.AuditRetentionDays);
+                if (permPruned > 0)
+                    console.WriteLine($"已清除 {permPruned} 筆超過 {retention.AuditRetentionDays} 天的權限異動紀錄。");
+
                 // 風險 log 暫存清理（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3）
-                var riskyEventPruned = riskyEventStore.Prune(retention.RiskyEventRetentionDays);
+                var riskyEventPruned = riskyEventStore.Prune(retention.RawEventRetentionDays);
                 if (riskyEventPruned > 0)
-                    console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RiskyEventRetentionDays} 天的風險 log 暫存。");
+                    console.WriteLine($"已清除 {riskyEventPruned} 筆超過 {retention.RawEventRetentionDays} 天的風險 log 暫存。");
             }
             catch (Exception ex)
             {
@@ -429,7 +499,7 @@ public class AnalysisOrchestrator
 
             // 1b-2. 清理處理狀態三表與處理歷程（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-4／G4）。
             //
-            // **必須排在 historyService.Prune 之後**：那一步決定了哪些日期的分析紀錄還在，
+            // **必須排在上面的分析紀錄清理（步驟 1）之後**：那一步決定了哪些日期的分析紀錄還在，
             // 這裡刪的正是「紀錄已經不在、卻還留著的處理狀態」。順序反過來的話，
             // 這一輪會漏掉剛被判定過期的那幾天，要等到下次執行才補上。
             //
@@ -458,12 +528,13 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            // 1c. 清理過期的風險報告檔（docs/archive/HISTORY.md P1-4）
+            // 1c. 清理過期的報告檔（風險／週檢／權限異動，docs/archive/HISTORY.md P1-4）——
+            // 保留期是獨立設定 ReportRetentionDays，刻意不跟 RetentionDays 綁在一起
             try
             {
-                var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.RetentionDays);
+                var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.ReportRetentionDays);
                 if (reportsPruned > 0)
-                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.RetentionDays} 天的風險報告檔。");
+                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告檔（風險／週檢／權限異動）。");
             }
             catch (Exception ex)
             {
@@ -478,11 +549,10 @@ public class AnalysisOrchestrator
             // 平行跑多個 Sentinel worker，這裡是把本機也當成「多一個並行 worker」。
             //
             // **runCtx 只建一份、兩路共用同一個實例**（尤其 CaseCoordinator／RiskyEventStore／
-            // RunRecorder）——這是併發安全的關鍵前提，不是巧合：IssueCaseCoordinator 底下的
-            // RecordHandlingLog.LogId 是行程內單一序號產生器（EfRecordHandlingStore._lastLogId），
-            // 靠實例層級的鎖擋撞號，只有在「本機與 NetIQ 共用同一個 IssueCaseCoordinator 實例」時
-            // 才安全；若未來改動讓任一路各自另外呼叫 backend.RecordHandlingStore() 建出第二個實例，
-            // 兩個實例會各自對 DB 算 MAX(seq) 而互相不知道對方，序號會撞號。同理 BatchRunRecorder
+            // RunRecorder）——共用是刻意的，但**歷程序號已不再依賴它**：
+            // EfRecordHandlingStore.AppendLog 每次寫入都重讀 DB 尾端取得起點，不留記憶體快取，
+            // 所以多個實例並存也不會撞號（Web 端 Singleton 與這裡自建的 backend 本來就是兩份，
+            // 舊的快取寫法在那個邊界上已經會重號）。同理 BatchRunRecorder
             // 的 Finish()/Dispose() 未加鎖也是安全的——因為它們只在下方 WhenAll 之後的單一匯合點
             // 被呼叫一次，永遠不會被兩條路徑各自呼叫（Task.WhenAll 的語意保證：回傳的 Task 要等
             // 兩個輸入 Task 都進入終態才會完成，不會有「其中一條還在跑、外層就已經在收尾」的情況）。
@@ -512,7 +582,7 @@ public class AnalysisOrchestrator
             }
             else
             {
-                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, currentHost, currentHostId, yesterday);
+                localTask = RunLocalAnalysisAsync(localCtx, analysisService, historyService, backend.IssueHandlingStore(), currentHost, currentHostId, yesterday);
             }
 
             // 5b. NetIQ 機房分析（docs/archive/HISTORY.md 決策 B2、§4；Phase 4）：對 Web 主機頁登錄的
@@ -626,7 +696,7 @@ public class AnalysisOrchestrator
 
     private async Task RunLocalAnalysisAsync(
         AnalysisRunContext ctx, LogAnalysisService analysisService, IAnalysisRecordStore historyService,
-        string currentHost, long currentHostId, DateTime yesterday)
+        IIssueHandlingStore handlingStore, string currentHost, long currentHostId, DateTime yesterday)
     {
         var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
@@ -634,9 +704,22 @@ public class AnalysisOrchestrator
         // 找出缺漏的日子。首次執行（本機歷史資料庫全空）回補 InitialHistoryDays 天，讓趨勢分析
         // 一開始就有更充足的基準資料；已有任何本機紀錄時只看趨勢窗口 TrendWindowDays 天。
         var lookbackDays = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
-        var missingDates = MissingDateFinder.Find(historyService, lookbackDays);
+        var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
-        if (missingDates.Count == 0)
+        // 重跑回望天數同樣夾在保留期上限內（比照 NetIQ 路徑對 BackfillDays 的二次夾制）：
+        // Web 端觸發時已驗證過，這裡再夾一次是為了「保留期事後被調小」與未來新增呼叫端——
+        // 回望超過保留期的日子重跑完下輪就被清掉，白跑一趟。
+        var rerunLookback = Math.Min(
+            request.RerunDays ?? TrendWindowDays,
+            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
+        var rerunDates = request.RerunMode != RerunMode.None
+            ? RerunDateFinder.Find(historyService, handlingStore, currentHost, rerunLookback, request.RerunMode)
+            : new List<DateTime>();
+        var rerunDateSet = rerunDates.ToHashSet();
+
+        var datesToAnalyze = missingDates.Union(rerunDates).OrderBy(date => date).ToList();
+
+        if (datesToAnalyze.Count == 0)
         {
             // 白天手動執行時這是最常見的路徑（昨晚排程已分析過昨天）：措辭刻意講清楚
             // 「本機無需回補、不是本機未執行」（docs/archive/FEEDBACK-8-PLAN.md #3），
@@ -651,7 +734,7 @@ public class AnalysisOrchestrator
         }
 
         // 一次倒序掃描取回整個缺漏區間的事件，三個日誌來源平行掃描，並回傳資料完整性中繼資料。
-        var rangeStart = missingDates[0];
+        var rangeStart = datesToAnalyze[0];
 
         var channelNames = settings.Analysis.Channels.Count > 0
             ? settings.Analysis.Channels.Select(c => ChannelCatalog.Resolve(c).ChannelName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
@@ -700,36 +783,57 @@ public class AnalysisOrchestrator
             Missing = scanResult.ChannelsMissing
         };
 
-        if (missingDates.Count > 1)
+        if (datesToAnalyze.Count > 1)
         {
             var aiClause = useAi ? "每天皆完整 AI 分析，" : "統計模式（AI 未設定），";
-            console.WriteLine($"偵測到歷史資料有缺漏，回補 {missingDates.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
+            console.WriteLine($"偵測到歷史資料有缺漏，回補 {datesToAnalyze.Count} 天（{aiClause}由最舊到最新，後面的日期能參照前面累積的歷史）。");
             console.WriteLine("（能回補多久取決於 Event Log 的保留量，太舊的事件可能已被覆蓋）");
         }
 
         // 逐日分析：趨勢比對依賴前面日期寫入的歷史，因此分析本身必須依序執行。
         var elapsedByDate = new Dictionary<DateTime, TimeSpan>();
-        progress?.Report("local", 0, missingDates.Count);
+        progress?.Report("local", 0, datesToAnalyze.Count);
         var localDone = 0;
-        foreach (var date in missingDates)
+        var rerunAnalyzedCount = 0;
+        var rerunRetainedCount = 0;
+        foreach (var date in datesToAnalyze)
         {
             // 取消語意＝停在「主機日」邊界：當前這一天分析完才停，不硬掐 AI 呼叫本身
             ct.ThrowIfCancellationRequested();
 
+            var isRerun = rerunDateSet.Contains(date.Date);
+            var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+
+            var dataIncomplete = scanResult.IsDateIncomplete(date);
+
+            // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
+            // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
+            if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
+                    logs.Count, dataIncomplete, scanResult.SecurityAvailable == false))
+            {
+                rerunRetainedCount++;
+                console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
+                progress?.Report("local", ++localDone, datesToAnalyze.Count);
+                continue;
+            }
+
             console.WriteLine($"\n[{date:yyyy-MM-dd}] 分析中（{(useAi ? "含 AI 判讀" : "統計模式，AI 未設定")}）...");
             var dayStopwatch = Stopwatch.StartNew();
 
-            var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
-            var dataIncomplete = scanResult.IsDateIncomplete(date);
+            // 重跑日的舊紀錄由 AnalyzeDayAsync 在寫入前才刪（replaceExisting）——不在這裡先刪，
+            // 否則分析途中拋例外會留下「舊的已刪、新的沒寫」的永久空白日
+            if (isRerun) rerunAnalyzedCount++;
+
             var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
-                dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability);
+                dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability,
+                replaceExisting: isRerun);
             result.LocalResults.Add(record);
 
             // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
             // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
             HostDayPostProcessor.AttachCase(caseCoordinator, currentHost, date, record.TopIssues);
             HostDayPostProcessor.ReplaceRiskyEvents(
-                riskyEventStore, retention.RiskyEventRetentionDays, date, record.TopIssues, logs, currentHostId);
+                riskyEventStore, retention.RawEventRetentionDays, date, record.TopIssues, logs, currentHostId);
 
             dayStopwatch.Stop();
             elapsedByDate[date] = dayStopwatch.Elapsed;
@@ -738,7 +842,7 @@ public class AnalysisOrchestrator
             HostDayPostProcessor.RecordAiCallIfApplicable(runRecorder, useAi, record);
             PrintResult(console, record, verbose: date == yesterday);
             console.WriteLine($"  ⏱ 本日耗時：{FormatElapsed(dayStopwatch.Elapsed)}");
-            progress?.Report("local", ++localDone, missingDates.Count);
+            progress?.Report("local", ++localDone, datesToAnalyze.Count);
 
             // 逐日之間讓出執行緒（S-3，與 NetIQ 路徑同一個理由）：統計模式下這個迴圈幾乎
             // 全程同步，不讓出的話會一路佔住同一條 thread pool 執行緒到回補完所有缺漏日
@@ -746,6 +850,13 @@ public class AnalysisOrchestrator
         }
 
         runRecorder.Milestone($"逐日分析完成：{result.LocalResults.Count} 天");
+
+        if (request.RerunMode != RerunMode.None)
+        {
+            var rerunSummary = HostDayPostProcessor.RerunSummary(rerunAnalyzedCount, rerunRetainedCount);
+            console.WriteLine($"\n  {rerunSummary}");
+            runRecorder.Milestone(rerunSummary);
+        }
 
         // 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
         console.WriteLine("\n══════════ 本次執行結果 ══════════");
@@ -773,7 +884,7 @@ public class AnalysisOrchestrator
         AnalysisRunContext ctx, StorageBackend backend, IHostStore hostStore, ISentinelStore sentinelStore,
         AIService aiService, ISuppressionStore suppressionStore, RiskReportService reportService)
     {
-        var (request, _, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
+        var (request, settings, retention, console, ct, eventLogService, caseCoordinator, riskyEventStore,
             runRecorder, result, useAi, progress) = ctx;
 
         var netiqHostList = HostListSelection.FromStore(hostStore, sentinelStore);
@@ -808,15 +919,33 @@ public class AnalysisOrchestrator
             {
                 netiqOptions.BackfillDays = backfillOverride;
             }
+            // 回望天數的有效上限＝目前的保留天數（超過保留期的回補下輪就被清掉，白跑）。
+            // Web 端儲存與觸發時都驗證過，但這條路徑直接讀 blob——blob 裡若存著舊的大值、
+            // 或 RetentionDays 事後被調小，不在這裡夾住就會回望超過保留期，
+            // 連帶讓去重鍵的查詢窗口跨到同樣的天數。
+            netiqOptions.BackfillDays = Math.Min(
+                netiqOptions.BackfillDays,
+                NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
             var netiqPipeline = new NetiqPipelineService(
                 backend, netiqOptions, sentinelStore, hostStore,
                 eventLogService, aiService, suppressionStore, reportService, runRecorder, caseCoordinator, console,
-                riskyEventStore, retention.RiskyEventRetentionDays, useAi, progress);
+                riskyEventStore, retention.RawEventRetentionDays, useAi, progress,
+                onlyMissingOrFailed: request.OnlyMissingOrFailed,
+                permissionMappings: settings.Permissions.FieldMappings,
+                rerunMode: request.RerunMode,
+                // 與上面的 BackfillDays 同一道夾制：ResolveLookbackDays 只夾 MaxBackfillDaysLimit，
+                // 保留期上限由呼叫端負責（見該函式註解），漏夾就會回望超過保留期、下輪清掉白跑
+                rerunDays: request.RerunDays is { } days
+                    ? Math.Min(days, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+                    : null);
 
             var netiqResult = await netiqPipeline.RunAsync(netiqHostList, TrendWindowDays, ct);
             result.NetiqResult = netiqResult;
             runRecorder.Milestone($"NetIQ 機房分析完成：已完成跳過 {netiqResult.HostsSkippedUpToDate}、" +
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
+                (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
+                    ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
+                    : "") +
                 (netiqResult.AiQueued > 0
                     ? $"、AI 分析 {netiqResult.AiCompleted} 件完成（放棄 {netiqResult.AiAbandoned}）"
                     : ""));
@@ -975,9 +1104,10 @@ public class AnalysisOrchestrator
 /// </summary>
 public record RetentionOptions
 {
-    public int InitialHistoryDays { get; init; } = 120;
-    public int RetentionDays { get; init; } = 120;
-    public int RunLogRetentionDays { get; init; } = 90;
-    public int AuditRetentionDays { get; init; } = 730;
-    public int RiskyEventRetentionDays { get; init; } = 14;
+    public int InitialHistoryDays { get; init; } = SystemSettings.DefaultInitialHistoryDays;
+    public int RetentionDays { get; init; } = SystemSettings.DefaultRetentionDays;
+    public int RunLogRetentionDays { get; init; } = SystemSettings.DefaultRunLogRetentionDays;
+    public int AuditRetentionDays { get; init; } = SystemSettings.DefaultAuditRetentionDays;
+    public int RawEventRetentionDays { get; init; } = SystemSettings.DefaultRawEventRetentionDays;
+    public int ReportRetentionDays { get; init; } = SystemSettings.DefaultReportRetentionDays;
 }

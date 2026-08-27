@@ -33,6 +33,8 @@ public class NetiqDiscoveryService
     private readonly IAuditService _audit;
 
     private static readonly ConcurrentDictionary<string, PendingScan> Pending = new();
+    private static readonly ConcurrentDictionary<string, ScanJob> Jobs = new();
+    private static readonly object _jobsLock = new();
     private static readonly TimeSpan ScanLifetime = TimeSpan.FromMinutes(30);
 
     public NetiqDiscoveryService(
@@ -55,7 +57,105 @@ public class NetiqDiscoveryService
         _audit = audit;
     }
 
-    public async Task<NetiqScanResultDto> ScanAsync(string serverName, string subnetPrefix, CancellationToken ct)
+    public string StartScan(string serverName, string subnetPrefix, ScanGranularity granularity = ScanGranularity.Slash24, int concurrency = 1)
+    {
+        var server = _catalog.GetServer(serverName)
+                     ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
+        if (!server.CanDiscover)
+            throw DomainException.Validation($"Sentinel「{serverName}」尚未設定探索帳密，無法主動掃描。");
+
+        CleanupExpired();
+        lock (_jobsLock)
+        {
+            if (Jobs.Values.Any(j => j.Status == "running"))
+                throw DomainException.Validation("已有掃描進行中，請等待完成或取消後再試。");
+
+            var jobId = Guid.NewGuid().ToString("N");
+            var cts = new CancellationTokenSource();
+            var job = new ScanJob(jobId, serverName, subnetPrefix, cts);
+            Jobs[jobId] = job;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var result = await ScanAsync(
+                        serverName, subnetPrefix, cts.Token,
+                        onProgress: (stage, count) =>
+                        {
+                            lock (job)
+                            {
+                                job.Stage = stage;
+                                job.HostsFound = count;
+                            }
+                        },
+                        totalBudgetSecondsOverride: SentinelRestDirectoryClient.BackgroundTotalBudgetSeconds,
+                        granularity: granularity,
+                        concurrency: concurrency);
+
+                    lock (job)
+                    {
+                        job.Status = "completed";
+                        job.Stage = "完成";
+                        job.HostsFound = result.TotalCount;
+                        job.Result = result;
+                        job.FinishedAt = DateTime.Now;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    lock (job)
+                    {
+                        job.Status = "canceled";
+                        job.Stage = "已取消";
+                        job.FinishedAt = DateTime.Now;
+                    }
+                }
+                // DomainException／NetiqDiscoveryException 與其他例外的處置完全相同
+                // （都記為 failed 並帶訊息），故不分開接——背景工作只要保證例外不逸出。
+                catch (Exception ex)
+                {
+                    lock (job)
+                    {
+                        job.Status = "failed";
+                        job.Stage = "失敗";
+                        job.Error = ex.Message;
+                        job.FinishedAt = DateTime.Now;
+                    }
+                }
+            });
+
+            return jobId;
+        }
+    }
+
+    public NetiqScanJobDto GetScanStatus(string jobId)
+    {
+        CleanupExpired();
+        if (!Jobs.TryGetValue(jobId, out var job))
+            throw DomainException.Validation("掃描工作不存在或已逾期，請重新掃描。");
+
+        lock (job)
+        {
+            return job.ToDto();
+        }
+    }
+
+    public void CancelScan(string jobId)
+    {
+        CleanupExpired();
+        if (!Jobs.TryGetValue(jobId, out var job))
+            throw DomainException.Validation("掃描工作不存在或已逾期，請重新掃描。");
+
+        job.Cts.Cancel();
+    }
+
+    public async Task<NetiqScanResultDto> ScanAsync(
+        string serverName, string subnetPrefix, CancellationToken ct,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         var server = _catalog.GetServer(serverName)
                      ?? throw DomainException.Validation($"找不到 Sentinel「{serverName}」。");
@@ -67,7 +167,7 @@ public class NetiqDiscoveryService
         // 它們在下面被合成回結果，精靈畫面的「既有／新發現」分組完全不變。
         var alreadyRegistered = AlreadyRegisteredInSubnet(server.Name, subnetPrefix);
 
-        var discovered = await DiscoverAsync(server, subnetPrefix, alreadyRegistered.Keys.ToList(), ct);
+        var discovered = await DiscoverAsync(server, subnetPrefix, alreadyRegistered.Keys.ToList(), ct, onProgress, totalBudgetSecondsOverride, granularity, concurrency);
         return BuildScanResult(server.Name, discovered, alreadyRegistered);
     }
 
@@ -106,11 +206,15 @@ public class NetiqDiscoveryService
     }
 
     private async Task<NetiqDiscoveryResult> DiscoverAsync(
-        SentinelServer server, string subnetPrefix, IReadOnlyCollection<string> knownIps, CancellationToken ct)
+        SentinelServer server, string subnetPrefix, IReadOnlyCollection<string> knownIps, CancellationToken ct,
+        Action<string, int>? onProgress = null,
+        int? totalBudgetSecondsOverride = null,
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         try
         {
-            return await _client.ListHostsAsync(server, subnetPrefix, ct, knownIps);
+            return await _client.ListHostsAsync(server, subnetPrefix, ct, knownIps, onProgress, totalBudgetSecondsOverride, granularity, concurrency);
         }
         catch (NetiqDiscoveryException ex)
         {
@@ -214,7 +318,7 @@ public class NetiqDiscoveryService
         // 匯入耗時申報（回饋十七輪批次D-1，規劃明列）：批次化前逐台 FindByName+Upsert 是匯入慢
         // 的主因，落一筆台數＋毫秒的 log，之後有沒有改善（或再劣化）看得見。
         var applyStopwatch = Stopwatch.StartNew();
-        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp);
+        var outcome = NetiqImportApplier.Apply(scan.ServerName, wanted, _hosts, _sentinels, groupByIp, request.Os, displayNameByIp, request.Tier);
         applyStopwatch.Stop();
         Log.Info("NetIQ 匯入套用完成：{Count} 台（新增 {Added}／更新 {Updated}／復活 {Revived}），耗時 {ElapsedMs}ms",
             wanted.Count, outcome.Added, outcome.Updated, outcome.Revived, applyStopwatch.ElapsedMilliseconds);
@@ -315,7 +419,53 @@ public class NetiqDiscoveryService
         var cutoff = DateTime.Now - ScanLifetime;
         foreach (var entry in Pending.Where(p => p.Value.CreatedAt < cutoff).ToList())
             Pending.TryRemove(entry.Key, out _);
+
+        foreach (var entry in Jobs.Where(j => j.Value.Status != "running" && (j.Value.FinishedAt ?? j.Value.CreatedAt) < cutoff).ToList())
+            Jobs.TryRemove(entry.Key, out _);
     }
 
     private record PendingScan(string ServerName, List<NetiqDiscoveredHost> Hosts, DateTime CreatedAt);
+
+    /// <summary>
+    /// NetIQ 背景掃描工作狀態。
+    ///
+    /// 工作是行程內狀態，站台重啟即消失——這是刻意的取捨（掃描可重跑，
+    /// 不值得為它引入持久化）。
+    /// </summary>
+    private sealed class ScanJob
+    {
+        public string JobId { get; }
+        public string ServerName { get; }
+        public string SubnetPrefix { get; }
+        public CancellationTokenSource Cts { get; }
+        public DateTime CreatedAt { get; }
+        public DateTime? FinishedAt { get; set; }
+
+        public string Status { get; set; } = "running";
+        public string Stage { get; set; } = "主掃描中";
+        public int HostsFound { get; set; }
+        public NetiqScanResultDto? Result { get; set; }
+        public string? Error { get; set; }
+
+        public ScanJob(string jobId, string serverName, string subnetPrefix, CancellationTokenSource cts)
+        {
+            JobId = jobId;
+            ServerName = serverName;
+            SubnetPrefix = subnetPrefix;
+            Cts = cts;
+            CreatedAt = DateTime.Now;
+        }
+
+        public NetiqScanJobDto ToDto() => new()
+        {
+            JobId = JobId,
+            ServerName = ServerName,
+            SubnetPrefix = SubnetPrefix,
+            Status = Status,
+            Stage = Stage,
+            HostsFound = HostsFound,
+            Result = Result,
+            Error = Error
+        };
+    }
 }

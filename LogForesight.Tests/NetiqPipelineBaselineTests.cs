@@ -80,22 +80,23 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
         [SentinelFieldMap.XdasOutcome] = "1"
     });
 
-    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null)
+    private NetiqPipelineService MakePipeline(bool useAi = false, NetiqOptions? options = null, IHostStore? overrideHosts = null)
     {
         var netiqOptions = options ?? new NetiqOptions { BackfillDays = 1 };
+        var hosts = overrideHosts ?? _hosts;
         var reportSink = new FakeReportSink();
         var reportService = new RiskReportService(_ai, reportSink);
         var batchRunStore = new BatchRunStore(_backend.LogStore("baseline_runs"), _backend.LogStore("baseline_run_logs"));
         var runRecorder = new BatchRunRecorder(batchRunStore, "test-host", Array.Empty<string>());
         var caseCoordinator = new IssueCaseCoordinator(
             _backend.IssueCaseStore(), _backend.IssueHandlingStore(), _backend.RecordHandlingStore(),
-            _backend.RecordStore(), _hosts);
+            _backend.RecordStore(), hosts, new IssueOwnerStore(_backend.Blob("issue_owners")));
         var console = new RecordingRunConsole(_console);
 
         return new NetiqPipelineService(
-            _backend, netiqOptions, _sentinels, _hosts, new EventLogService(),
+            _backend, netiqOptions, _sentinels, hosts, new EventLogService(),
             _ai, _suppressions, reportService, runRecorder, caseCoordinator, console,
-            riskyEventStore: null, riskyEventRetentionDays: 14, useAi: useAi, progress: null,
+            riskyEventStore: null, rawEventRetentionDays: 14, useAi: useAi, progress: null,
             clientFactory: FakeSentinelSearchClientFactory.Single(_client));
     }
 
@@ -432,6 +433,119 @@ public sealed class NetiqPipelineBaselineTests : IDisposable
 
         Assert.Equal(6, result.HostDaysAnalyzed); // 場景本身橫跨多主機多天，才能證明不是巧合
         Assert.Equal(1, _suppressions.LoadAllCallCount);
+    }
+
+    [Fact]
+    public async Task 執行完畢且空緩衝時_不觸發主機清單全量寫入()
+    {
+        using var fx = new EfSqliteFixture();
+        var blob = fx.Blob("hosts");
+        var realHosts = new HostStore(blob);
+
+        var sentinel = AddSentinel();
+        var host = new WebHost
+        {
+            HostName = "HOST-A", IpAddress = "10.0.0.1", Os = WebHost.OsWindows,
+            SentinelId = sentinel.SentinelId, NetiqServer = sentinel.Name, Source = "netiq", Active = true
+        };
+        realHosts.Upsert(host);
+
+        var initialVersion = blob.ReadVersion();
+
+        // 故意讓這台主機查不到任何事件，hostReported 會是 false，所以不會有任何 touch 寫入緩衝
+        _client.Responder = _ => new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+
+        var pipeline = MakePipeline(useAi: false, overrideHosts: realHosts);
+        await pipeline.RunAsync(HostListSelection.FromStore(realHosts, _sentinels), trendWindowDays: 14);
+
+        Assert.Equal(initialVersion, blob.ReadVersion());
+    }
+
+    [Fact]
+    public async Task 批次更新主機_未帶回名稱的主機不覆蓋既有顯示名()
+    {
+        var sentinel = AddSentinel();
+        // 刻意先建好帶有「既有顯示名」的主機
+        var hostA = AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        hostA.DisplayName = "既有顯示名-A";
+        _hosts.Upsert(hostA);
+
+        var hostB = AddWindowsHost(sentinel, "10.0.0.2", "HOST-B");
+        hostB.DisplayName = "既有顯示名-B";
+        _hosts.Upsert(hostB);
+
+        _client.Responder = request =>
+        {
+            var isHostA = request.Filter.Contains("10.0.0.1");
+            var isHostB = request.Filter.Contains("10.0.0.2");
+            var events = new List<SentinelEvent>();
+
+            if (isHostA || isHostB)
+            {
+                if (isHostA)
+                {
+                    events.Add(new SentinelEvent(new Dictionary<string, string>
+                    {
+                        [SentinelFieldMap.HostIp] = "10.0.0.1",
+                        [SentinelFieldMap.Timestamp] = DateTime.UtcNow.ToString("O")
+                    }));
+                }
+
+                if (isHostB)
+                {
+                    events.Add(new SentinelEvent(new Dictionary<string, string>
+                    {
+                        [SentinelFieldMap.HostIp] = "10.0.0.2",
+                        [SentinelFieldMap.HostName] = "NEW-NAME-B",
+                        [SentinelFieldMap.Timestamp] = DateTime.UtcNow.ToString("O")
+                    }));
+                }
+
+                return new SentinelSearchResult { Events = events, Found = events.Count, State = SentinelJobState.Completed };
+            }
+
+            return new SentinelSearchResult { Events = Array.Empty<SentinelEvent>(), Found = 0, State = SentinelJobState.Completed };
+        };
+
+        var pipeline = MakePipeline(useAi: false);
+        await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        var afterA = _hosts.FindByName("HOST-A")!;
+        Assert.Equal("既有顯示名-A", afterA.DisplayName); // 不應該被清掉
+
+        var afterB = _hosts.FindByName("HOST-B")!;
+        Assert.Equal("NEW-NAME-B", afterB.DisplayName); // 有傳名字的應該要更新
+    }
+
+    /// <summary>
+    /// 回饋二十輪 D：回報時間批次寫回失敗時，不可讓整台 Sentinel 的主機被記成失敗。
+    /// hosts blob 的行程內互斥是 per-instance 的鎖，Web 端與分析端各有一份 backend，
+    /// 同一份 blob 真的會在 DB 層競爭並在重試耗盡後拋出——那個例外若冒到 RunServerAsync
+    /// 尾端，會被 Parallel.ForEachAsync 的 catch 記成「整台 Sentinel 失敗」，
+    /// 幾百台已經分析完成的主機因此變成失敗。
+    /// </summary>
+    [Fact]
+    public async Task 回報時間寫回失敗時_分析結果不作廢且主機不被記為失敗()
+    {
+        var sentinel = AddSentinel();
+        AddWindowsHost(sentinel, "10.0.0.1", "HOST-A");
+        // 要真的有事件才會累積回報時間（零事件刻意不 Touch，見 hostReported 的註解）
+        _client.Responder = _ => new SentinelSearchResult
+        {
+            Events = new[] { HighRiskEvent("10.0.0.1") }, Found = 1, State = SentinelJobState.Completed
+        };
+        _hosts.ThrowOnMutateBatch = true;
+        var pipeline = MakePipeline(useAi: false);
+
+        var result = await pipeline.RunAsync(HostListSelection.FromStore(_hosts, _sentinels), trendWindowDays: 14);
+
+        Assert.True(_hosts.MutateBatchAttempts > 0);   // 真的走到了批次寫回
+        Assert.Equal(0, result.HostsFailed);
+        Assert.Equal(1, result.HostDaysAnalyzed);
+
+        // 分析結果本身照樣落地
+        var store = _backend.RecordStore(new HostKey { HostId = 1, HostName = "HOST-A" });
+        Assert.Single(store.ReadRecent(DateTime.Today.AddDays(-1), 1));
     }
 }
 

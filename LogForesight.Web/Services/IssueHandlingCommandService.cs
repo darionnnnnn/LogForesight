@@ -40,6 +40,8 @@ public class IssueHandlingCommandService
     /// null 只發生在測試組裝，此時上報通知靜默跳過（通知行為另有專屬測試覆蓋）。</summary>
     private readonly MailNotificationService? _mail;
 
+    private readonly IssueOwnerAdminService _issueOwnerAdmin;
+
     public IssueHandlingCommandService(
         IRecordHandlingStore store,
         IIssueHandlingStore issueStore,
@@ -54,6 +56,7 @@ public class IssueHandlingCommandService
         IAuditService audit,
         HandlingProgressCalculator progress,
         UserCapabilityResolver capabilities,
+        IssueOwnerAdminService issueOwnerAdmin,
         MailNotificationService? mail = null)
     {
         _capabilities = capabilities;
@@ -69,6 +72,7 @@ public class IssueHandlingCommandService
         _currentUser = currentUser;
         _audit = audit;
         _progress = progress;
+        _issueOwnerAdmin = issueOwnerAdmin;
         _mail = mail;
     }
 
@@ -752,16 +756,27 @@ public class IssueHandlingCommandService
             }
         }
 
+        // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這一次的統一標記只處理**既有**日子，
+        // 勾選「之後自動套用」時另外把問題檔案設成機房結論，讓之後新出現的主機日
+        // （見 IssueCaseCoordinator.AttachNewDay）也自動套用同一個結論——兩件事分開落盤，
+        // 前者是這次操作的結果，後者是「以後也這樣」的設定
+        if (request.AutoApply)
+        {
+            _issueOwnerAdmin.SetConclusion(request.Source, request.EventId,
+                new SetIssueConclusionRequest { Status = request.Status, Note = note, AutoApply = true });
+        }
+
         _audit.Record(
             action: AuditActions.IssueBulkClose,
             summary: $"統一標記「{request.Source} {request.EventId}」為「{HandlingTextHelpers.IssueStatusText(request.Status)}」：" +
                      $"{targets.Count} 台主機、共 {updatedDays} 天" +
-                     (skipped.Count > 0 ? $"，{skipped.Count} 台略過" : ""),
+                     (skipped.Count > 0 ? $"，{skipped.Count} 台略過" : "") +
+                     (request.AutoApply ? "，並設為機房結論自動套用" : ""),
             targetKind: "issue_case",
             targetId: $"{request.Source}/{request.EventId}",
             detail: new
             {
-                request.Source, request.EventId, request.Status, Note = note,
+                request.Source, request.EventId, request.Status, Note = note, request.AutoApply,
                 From = request.From?.ToString("yyyy-MM-dd"), To = request.To?.ToString("yyyy-MM-dd"),
                 Hosts = targets.Select(t => new { t.Host.HostName, DayCount = t.Days.Count }),
                 Skipped = skipped.Select(s => new { s.HostName, s.SkipReason })

@@ -1,4 +1,4 @@
-﻿using LogForesight.Web.Auth;
+using LogForesight.Web.Auth;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
@@ -39,20 +39,24 @@ internal class HandlingServiceFacade
         ISystemSettingsStore settings,
         IUserGroupStore? groups = null,
         IIssueOwnerStore? issueOwners = null,
-        LogForesight.Web.Services.Mail.MailNotificationService? mail = null)
+        LogForesight.Web.Services.Mail.MailNotificationService? mail = null,
+        IIssueAggregateQuery? issueAggregates = null)
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
         // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
+        var issueOwnerAdmin = new IssueOwnerAdminService(
+            issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
+            audit, currentUser);
         _day = new DayHandlingCommandService(
             store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
             mail, issueOwners);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
-            mail);
+            issueOwnerAdmin, mail);
         _history = new HandlingHistoryQueryService(
-            store, issueStore, cases, hosts, users, visibility, settings, repository, progress);
+            store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery());
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
@@ -119,6 +123,10 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     // 委派給下方 IAnalysisRecordQuery 的顯式實作（終檢輪修正）：原本這裡無視 filter 全量回傳，
     // 同一類別內的兩個 Query 各是一套語意——正是這輪在別的替身抓過的漂移家族。
     public List<DailyAnalysisRecord> Query(RecordQueryFilter filter, bool applyDayRiskVisibility = true) =>
+        ((IAnalysisRecordQuery)this).Query(filter);
+
+    /// <summary>記憶體實作沒有「整份 blob」與「輕量列」的區別，直接沿用 Query()（同 FakeAnalysisRecordQuery 的既有慣例）</summary>
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter) =>
         ((IAnalysisRecordQuery)this).Query(filter);
 
     // ── IAnalysisRecordQuery（顯式實作，正確套用 filter.Hosts／From／To／RiskLevels）─────

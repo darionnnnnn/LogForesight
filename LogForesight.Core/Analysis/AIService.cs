@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -7,6 +7,8 @@ using System.Text.Json.Serialization;
 using NLog;
 using Polly;
 using Polly.Retry;
+
+using LogForesight.Core.Configuration;
 
 namespace LogForesight.Core.Analysis;
 
@@ -38,11 +40,11 @@ public class AiJsonResult<T> where T : class
 public interface IAiService
 {
     Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default);
 
     Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class;
 }
 
@@ -51,7 +53,9 @@ public class AIService : IAiService
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly HttpClient _httpClient;
-    private readonly string _baseUrl;
+    private readonly string _provider;
+    private readonly string _requestUrl;
+    private readonly string _defaultModel;
     private readonly int _maxTokens;
     private readonly int _jsonRetryCount;
     private readonly double? _frequencyPenalty;
@@ -60,26 +64,25 @@ public class AIService : IAiService
     private readonly ResiliencePipeline _retryPipeline;
     private readonly IPromptDumper _dumper;
 
+    /// <summary>token 用量計量（回饋二十七輪作業 B）；null＝不統計（批次以外的臨時實例、測試）</summary>
+    private readonly IAiUsageMeter? _usageMeter;
+
     /// <summary>
     /// 請求佇列：同一時間只發出一個 request 給 AI API，其餘呼叫依序排隊。
     /// 本機 llama.cpp 同時處理多個請求會互搶 GPU 資源導致全部變慢甚至逾時，序列化最穩定。
     /// </summary>
     private readonly SemaphoreSlim _requestQueue = new(1, 1);
 
-    public AIService(AiSettings settings, IPromptDumper? dumper = null)
+    public AIService(AiSettings settings, IPromptDumper? dumper = null, IAiUsageMeter? usageMeter = null)
+        : this(settings, CreateDefaultHandler(), dumper, usageMeter)
+    {
+    }
+
+    internal AIService(AiSettings settings, HttpMessageHandler handler, IPromptDumper? dumper = null,
+        IAiUsageMeter? usageMeter = null)
     {
         _dumper = dumper ?? new NullPromptDumper();
-        // 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
-        // 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
-        // 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
-        // 用戶端還不知道就拿去重用」的典型特徵，跟 HTTP/2 協商無關（先前以為是協商問題，
-        // 加了固定 HTTP/1.1 版本也沒解決，故排除該假設）。
-        // 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
-        // 相對生成時間微乎其微，直接停用連線池換取穩定性划算。
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.Zero
-        };
+        _usageMeter = usageMeter;
         _httpClient = new HttpClient(handler)
         {
             Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds),
@@ -91,14 +94,41 @@ public class AIService : IAiService
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
 
-        // 需驗證的端點才帶 Authorization；地端無驗證的端點（多數情況）沒有金鑰，不送這個標頭
-        if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+        _provider = AiProviders.Normalize(settings.Provider);
+        _defaultModel = string.IsNullOrWhiteSpace(settings.Model) ? AiProviders.DefaultModel(_provider) : settings.Model.Trim();
+
+        if (_provider == AiProviders.AzureOpenAi)
         {
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            var baseUrl = settings.BaseUrl.TrimEnd('/');
+            var deployment = settings.AzureDeployment?.Trim() ?? "";
+            var apiVersion = string.IsNullOrWhiteSpace(settings.AzureApiVersion) ? "2024-10-21" : settings.AzureApiVersion.Trim();
+            _requestUrl = $"{baseUrl}/openai/deployments/{deployment}/chat/completions?api-version={apiVersion}";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("api-key", settings.ApiKey);
+            }
+        }
+        else if (_provider == AiProviders.OpenAi)
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://api.openai.com" : settings.BaseUrl.TrimEnd('/');
+            _requestUrl = $"{baseUrl}/v1/chat/completions";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            }
+        }
+        else
+        {
+            var baseUrl = settings.BaseUrl.TrimEnd('/');
+            _requestUrl = $"{baseUrl}/v1/chat/completions";
+            if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+            {
+                _httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            }
         }
 
-        _baseUrl = settings.BaseUrl.TrimEnd('/');
         _maxTokens = settings.MaxTokens;
         _jsonRetryCount = settings.JsonRetryCount;
         _frequencyPenalty = settings.FrequencyPenalty;
@@ -142,9 +172,6 @@ public class AIService : IAiService
                     .Handle<AiEnvelopeParseException>(),
                 OnRetry = args =>
                 {
-                    var msg = $"AI 呼叫失敗（{args.Outcome.Exception?.Message}），" +
-                             $"{args.RetryDelay.TotalSeconds:0} 秒後重試（第 {args.AttemptNumber + 1}/{settings.RetryCount} 次）...";
-                    Console.WriteLine($"  {msg}");
                     Log.Warn(args.Outcome.Exception, "AI 網路層呼叫失敗，第 {Attempt}/{Total} 次重試", args.AttemptNumber + 1, settings.RetryCount);
                     return default;
                 }
@@ -152,13 +179,28 @@ public class AIService : IAiService
             .Build();
     }
 
+    /// <summary>
+    /// 完全停用連線池（PooledConnectionLifetime=0 依官方文件即為「歸還後立即失效」）。
+    /// 從實際 log 的時間戳確認："response ended prematurely" 幾乎都發生在前一次呼叫剛
+    /// 結束後幾十毫秒內，不是生成到一半斷線——這是「連線池裡的連線其實已被對方關閉，
+    /// 用戶端還不知道就拿去重用」的典型特徵，跟 HTTP/2 協商無關（先前以為是協商問題，
+    /// 加了固定 HTTP/1.1 版本也沒解決，故排除該假設）。
+    /// 每次呼叫都間隔數秒到數十秒、單次又動輒數十秒，重用連線省下的 TCP/握手成本
+    /// 相對生成時間微乎其微，直接停用連線池換取穩定性划算。**不要改回預設的連線池。**
+    /// </summary>
+    private static HttpMessageHandler CreateDefaultHandler() =>
+        new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.Zero
+        };
+
     /// <param name="jsonMode">true 時透過 response_format=json_object 讓 llama.cpp 以 grammar 強制輸出合法 JSON</param>
     /// <param name="maxTokens">覆寫預設的 token 上限；null 則用設定檔的 Ai.MaxTokens。
     /// 短小的終端 JSON（如每日總覽、前置掃描）該用較小的上限——模型一旦退化重複輸出，
     /// 上限越大只是讓失敗的嘗試跑越久才觸頂，不會讓成功率變高；篇幅本來就較長的深入分析
     /// 才需要調大</param>
     public async Task<AiResponse> ChatAsync(string prompt, string? systemPrompt = null, bool jsonMode = false,
-        string model = "local-model", double temperature = 0.2, int? maxTokens = null, string label = "chat",
+        string? model = null, double temperature = 0.2, int? maxTokens = null, string label = "chat",
         CancellationToken ct = default)
     {
         var messages = new List<OpenAIMessage>();
@@ -177,15 +219,16 @@ public class AIService : IAiService
         if (effectiveMaxTokens > 0 &&
             PromptBudget.ExceedsBudget(prompt + (systemPrompt ?? ""), effectiveMaxTokens, out var estimatedPromptTokens))
         {
-            Console.WriteLine($"  ⚠ [{label}] prompt 估計 {estimatedPromptTokens} tokens + 輸出上限 {effectiveMaxTokens}，" +
-                              $"可能超出 context 預算（約 {PromptBudget.UsableTokens}），回應有被 server 端截斷的風險。");
             Log.Warn("[{Label}] prompt 估計 {PromptTokens} tokens + maxTokens {MaxTokens} 可能超出可用預算 {Usable}",
                 label, estimatedPromptTokens, effectiveMaxTokens, PromptBudget.UsableTokens);
         }
 
+        var isAzure = _provider == AiProviders.AzureOpenAi;
+        var effectiveModel = isAzure ? null : (!string.IsNullOrWhiteSpace(model) ? model : _defaultModel);
+
         var requestBody = new OpenAIRequest
                           {
-                              Model = model,
+                              Model = effectiveModel,
                               Temperature = temperature,
                               Messages = messages,
                               ResponseFormat = jsonMode ? new OpenAIResponseFormat() : null,
@@ -214,7 +257,7 @@ public class AIService : IAiService
         {
             var content = await _retryPipeline.ExecuteAsync(async attemptCt =>
             {
-                var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/v1/chat/completions", requestNode, attemptCt);
+                var response = await _httpClient.PostAsJsonAsync(_requestUrl, requestNode, attemptCt);
                 response.EnsureSuccessStatusCode();
 
                 // 先讀成字串再自己解析，而不是直接 ReadFromJsonAsync：中間的 proxy/gateway
@@ -229,13 +272,16 @@ public class AIService : IAiService
                 catch (JsonException ex)
                 {
                     var preview = PreviewForLog(rawBody);
-                    Console.WriteLine($"    AI 回應信封不是合法 JSON，預覽：{preview}");
                     Log.Warn(ex, "AI 回應信封不是合法 JSON，HTTP 狀態碼={StatusCode}，預覽：{Preview}",
                         (int)response.StatusCode, preview);
                     // 包裝成同一種例外類型丟出去，讓 Polly 依 ShouldHandle 判斷是否重試，
                     // 且不掩蓋原始例外（透過 InnerException 保留完整堆疊供除錯）
                     throw new AiEnvelopeParseException(ex);
                 }
+
+                // 計量點在這裡而不是回傳前：這次 HTTP 已經完成、token 已經消耗掉了，
+                // 後面因空回應／清洗後為空而重試的那些嘗試同樣要算進去，否則帳目會少計。
+                RecordUsage(result?.Usage);
 
                 var text = result?.Choices.FirstOrDefault()?.Message.Content;
 
@@ -288,6 +334,23 @@ public class AIService : IAiService
         }
     }
 
+    /// <summary>記下這次呼叫的 token 用量；統計失敗不得影響 AI 呼叫本身。</summary>
+    private void RecordUsage(OpenAIUsage? usage)
+    {
+        if (_usageMeter == null) return;
+
+        try
+        {
+            _usageMeter.Record(
+                usage?.PromptTokens ?? 0, usage?.CompletionTokens ?? 0, usage?.TotalTokens ?? 0,
+                hasUsage: usage != null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(ex, "AI token 用量記錄失敗（不影響分析結果）");
+        }
+    }
+
     /// <summary>
     /// 呼叫 AI 並要求回覆符合 JSON 契約，格式或內容檢查未通過時重新請求（最多 JsonRetryCount 次）。
     /// response_format=json_object 只保證輸出是「合法 JSON」，不保證是我們要的物件形狀
@@ -297,7 +360,7 @@ public class AIService : IAiService
     /// <param name="validate">額外的內容合理性檢查（如必填欄位非空、長度未超出正常摘要範圍），null 則只要求解析成功</param>
     /// <param name="maxTokens">覆寫預設的 token 上限，見 <see cref="ChatAsync"/> 的說明</param>
     public async Task<AiJsonResult<T>> ChatJsonAsync<T>(string prompt, string? systemPrompt = null,
-        Func<T, bool>? validate = null, string model = "local-model", double temperature = 0.2, int? maxTokens = null,
+        Func<T, bool>? validate = null, string? model = null, double temperature = 0.2, int? maxTokens = null,
         string label = "chat-json", CancellationToken ct = default) where T : class
     {
         string rawContent = string.Empty;
@@ -306,7 +369,11 @@ public class AIService : IAiService
 
         for (int attempt = 1; attempt <= totalAttempts; attempt++)
         {
-            var response = await ChatAsync(prompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
+            var currentPrompt = attempt == 1 || string.IsNullOrWhiteSpace(lastError)
+                ? prompt
+                : BuildRetryPrompt(prompt, lastError, rawContent);
+
+            var response = await ChatAsync(currentPrompt, systemPrompt, jsonMode: true, model: model, temperature: temperature, maxTokens: maxTokens,
                 label: totalAttempts > 1 ? $"{label}-a{attempt}" : label, ct: ct);
 
             if (!response.Success)
@@ -333,7 +400,6 @@ public class AIService : IAiService
                     // 印出回覆預覽方便診斷（截斷、前言文字、格式跑掉等），不然完全是黑盒子；
                     // 只取頭尾各一截、控制在數百字元內，不是把整段回覆存進去
                     var preview = PreviewForLog(response.Content);
-                    Console.WriteLine($"    回覆預覽：{preview}");
                     Log.Warn("JSON 解析失敗（第 {Attempt}/{Total} 次），型別={Type}，回覆長度={ResponseChars}，預覽：{Preview}",
                         attempt, totalAttempts, typeof(T).Name, response.Content.Length, preview);
                 }
@@ -347,15 +413,20 @@ public class AIService : IAiService
                 }
             }
 
-            if (attempt < totalAttempts)
-            {
-                Console.WriteLine($"  {lastError}，重新請求（第 {attempt + 1}/{totalAttempts} 次）...");
-            }
         }
 
         Log.Error("ChatJsonAsync 最終失敗（{Total} 次嘗試皆未通過），型別={Type}，原因：{Error}",
             totalAttempts, typeof(T).Name, lastError);
         return new AiJsonResult<T> { Success = false, RawContent = rawContent, Error = lastError, Attempts = totalAttempts };
+    }
+
+    /// <summary>
+    /// ChatJsonAsync 重試時將上次失敗原因與回覆片段附加在使用者 prompt 尾端，要求模型修正。
+    /// </summary>
+    private static string BuildRetryPrompt(string originalPrompt, string lastError, string? rawContent)
+    {
+        var preview = string.IsNullOrWhiteSpace(rawContent) ? "（無回覆內容）" : PreviewForLog(rawContent);
+        return $"{originalPrompt}\n\n【前次嘗試失敗，請修正後重新回答】\n失敗原因：{lastError}\n前次回覆片段：{preview}\n請修正上述問題，並嚴格依要求輸出合法的 JSON。";
     }
 
     /// <summary>把解析出的（已是我們自訂的小型結構化物件，不是原始長文字）結果序列化成一行方便寫入 log，
@@ -399,7 +470,8 @@ public class AIService : IAiService
     private class OpenAIRequest
     {
         [JsonPropertyName("model")]
-        public string Model { get; set; } = string.Empty;
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Model { get; set; }
 
         [JsonPropertyName("messages")]
         public List<OpenAIMessage> Messages { get; set; } = new();
@@ -443,6 +515,22 @@ public class AIService : IAiService
     {
         [JsonPropertyName("choices")]
         public List<OpenAIChoice> Choices { get; set; } = new();
+
+        /// <summary>OpenAI／Azure／llama.cpp 都會回；部分地端模型省略，故可為 null</summary>
+        [JsonPropertyName("usage")]
+        public OpenAIUsage? Usage { get; set; }
+    }
+
+    private class OpenAIUsage
+    {
+        [JsonPropertyName("prompt_tokens")]
+        public int PromptTokens { get; set; }
+
+        [JsonPropertyName("completion_tokens")]
+        public int CompletionTokens { get; set; }
+
+        [JsonPropertyName("total_tokens")]
+        public int TotalTokens { get; set; }
     }
 
     private class OpenAIChoice

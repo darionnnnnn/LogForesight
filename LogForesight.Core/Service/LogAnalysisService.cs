@@ -97,9 +97,12 @@ public class LogAnalysisService
     /// <param name="channels">本次各頻道的讀取三態（成功/被拒/不存在）；null = 舊呼叫端（單日情境），
     /// 退回三頻道假設。寫入 <see cref="DailyAnalysisRecord.ChannelsRead"/> 供暖身/趨勢基準判斷，
     /// 並讓 UncoveredChecks 申報被拒的 Defender/RDP 頻道</param>
+    /// <param name="replaceExisting">重新分析既有日（第三十一輪）：true 時在寫入前刪掉這一天的舊紀錄。
+    /// **刪除刻意緊貼 <see cref="IAnalysisRecordStore.Append"/> 之前**——分析途中拋例外（AI 逾時、
+    /// 取消）時舊紀錄還在，不會留下「舊的已刪、新的沒寫」的永久空白日。NetIQ 路徑是同一個順序。</param>
     public async Task<DailyAnalysisRecord> AnalyzeDayAsync(DateTime targetDate, List<EventLogEntryData> logs, bool useAi = true,
         int historyDays = 14, bool dataIncomplete = false, bool? securityLogAvailable = true, ChannelAvailability? channels = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool replaceExisting = false)
     {
         var sw = Stopwatch.StartNew();
 
@@ -110,6 +113,11 @@ public class LogAnalysisService
         {
             var outcome = await CompleteAiAsync(workItem, ct);
             ApplyOutcome(record, outcome);
+        }
+
+        if (replaceExisting)
+        {
+            _historyService.DeleteDays(new[] { targetDate.Date });
         }
 
         _historyService.Append(record);
@@ -185,6 +193,16 @@ public class LogAnalysisService
         // 而 TrendAnalyzer 不自行過濾日期——不錨定就等於拿後來發生的事去判斷這一天
         var history = _historyService.ReadRecent(targetDate, historyDays);
 
+        // 基準一律排除被分析日自己：ReadRecent 窗口含錨定日，正常缺日分析時該日沒有紀錄、
+        // 這行是 no-op；但重新分析既有日（replaceExisting）時舊紀錄要到寫入前才刪，不排除的話
+        // 舊版的「今天」會混進趨勢基準——事件在舊列出現過就不再算新問題、量值也墊高基準，
+        // New/Rising 與慢速趨勢全部失真。分析某一天的基準只能是那一天之前的世界。
+        history.RemoveAll(h => h.Date.Date == targetDate.Date);
+
+        // 殘留憑證重試判定（A3）：登入失敗若為機械性重複且跨日重現，標記為疑似殘留憑證重試並調降嚴重度，
+        // 必須在 TrendAnalyzer 之前執行，避免殘留憑證因頻率上升而被誤升為高風險日
+        ResidualCredentialDetector.Mark(issues, history, targetDate);
+
         // 總量抑制（回饋十五輪 A-1）：整體錯誤量／安全稽核事件量突增過去不掛任何簽章，
         // 結構上沒有抑制掛載點——TargetType=Volume 補上這個缺口。
         bool suppressErrorVolume = SuppressionFilter.HasVolumeSuppression(activeSuppressions, VolumeKinds.Error);
@@ -213,10 +231,7 @@ public class LogAnalysisService
         SuccessfulLogonMatch? successfulLogonMatch = null;
         if (securityLogAvailable != false)
         {
-            var bruteForceSignature = issues.FirstOrDefault(i =>
-                i.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) &&
-                i.Source.Contains("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
-                i.EventId == 4625 && i.Count >= 10);
+            var bruteForceSignature = issues.FirstOrDefault(CorrelationAnalyzer.IsBruteForceAnchor);
 
             if (bruteForceSignature != null)
             {
@@ -233,6 +248,9 @@ public class LogAnalysisService
         var correlations = isLinuxHost
             ? LinuxCorrelationAnalyzer.Detect(issues, logs)
             : CorrelationAnalyzer.Detect(issues, history, targetDate, successfulLogonMatch);
+
+        // 密碼噴灑偵測（A5）：少數密碼嘗試大量帳號的特徵，適用 Windows 與 Linux
+        correlations.AddRange(PasswordSprayDetector.Detect(issues));
 
         // 關聯模式抑制（回饋十五輪 A-1）：跨 log 關聯訊號過去無抑制路徑，且
         // correlations.Count > 0 直接判中風險（見下方 ComputeRuleBasedRisk）、ElevatesDayRisk
@@ -407,7 +425,6 @@ public class LogAnalysisService
         AnalysisPromptBuilder.ScreeningOutcome? screening = null;
         if (shouldScreen)
         {
-            Console.WriteLine($"  事件種類較多，前置掃描 {tailIssues.Count} 項未分類項目...");
             screening = await _promptBuilder.ScreenTailAsync(item.TargetDate, tailIssues, ct);
             Log.Info("前置掃描完成：共 {Total} 項，值得注意 {Notable} 項，一般雜訊 {Clean} 項，掃描失敗 {Failed} 項",
                 tailIssues.Count, screening.Notable.Count, screening.CleanCount, screening.FailedCount);
@@ -645,9 +662,12 @@ public class LogAnalysisService
         // 重試耗盡仍完全失敗（如 llama.cpp 未啟動、網路不通）時降級為統計模式紀錄。
         // 偵測（規則/趨勢/關聯）與規則命中問題的處置建議（靜態知識庫）完全不受影響，
         // 只是少了白話摘要——降級語意刻意用正面表述，AI 已不是偵測的必要環節
+        // headline 帶「AI 待補」是刻意的（回饋二十輪 N）：ApplyOutcome 會把這種主機日標為
+        // AiPending 讓「只補跑失敗或未執行」撿得到，但前端對 AiPending 一律顯示「AI 分析中」——
+        // 沒有這個標記，失敗的主機日會永久顯示成「分析中」，使用者看不出它其實已經失敗
         Log.Error("{Date:yyyy-MM-dd} 主分析完全失敗，降級為統計模式：{Error}", date, result.Error);
-        return ("今日分析摘要暫缺（AI 服務未回應）",
-            $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。",
+        return ("今日分析摘要暫缺（AI 服務未回應，AI 待補）",
+            $"偵測與處置建議仍完整，僅白話摘要因 AI 服務未回應而從缺（{result.Error}）。可用排程頁「只補跑失敗或未執行」補回。",
             string.Empty, string.Empty, ruleRisk, null, false);
     }
 
@@ -663,7 +683,9 @@ public class LogAnalysisService
         record.RiskLevel = outcome.RiskLevel;
         record.RiskBasis = outcome.RiskBasis;
         record.AiAnalyzed = outcome.AiAnalyzed;
-        record.AiPending = false;
+        // AI 失敗且非低風險才標待補（回饋二十輪 N）：低風險日本來就不會呼叫 AI
+        // （見 needsAi 的判準），標了會讓「只補跑」把它們全撿回來重跑一遍統計
+        record.AiPending = !outcome.AiAnalyzed && record.RiskLevel != RiskLevels.Low;
         record.ScreenedTailCount = outcome.ScreenedTailCount;
         record.ScreeningNotes = outcome.ScreeningNotes;
         record.ReportFile = outcome.ReportFile;
@@ -698,7 +720,6 @@ public class LogAnalysisService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"風險報告輸出失敗：{ex.Message}");
             Log.Error(ex, "風險報告輸出失敗：{Date:yyyy-MM-dd}", record.Date);
             return null;
         }
@@ -707,13 +728,14 @@ public class LogAnalysisService
     /// <summary>
     /// 4625 達暴力破解門檻時，條件式撈取當日 4624（成功登入），比對是否與失敗記錄同一組帳號/IP。
     /// 平時不收 4624（SuccessAudit 量極大），只在已有暴力破解訊號時才多查一次，兼顧偵測面與效能。
+    /// 此外加上時序條件：成功登入必須晚於或等於該帳號/IP 當日首次失敗時間，避免正常登入後續遭排程失敗污染而誤判。
     /// </summary>
     private async Task<SuccessfulLogonMatch?> DetectSuccessfulLogonAfterBruteForceAsync(DateTime targetDate, List<EventLogEntryData> logs)
     {
-        var failedMessages = logs
-            .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625)
-            .Select(l => l.Message);
-        var (failedAccounts, failedIps) = LogAggregator.ExtractAccountsAndIps(failedMessages);
+        var failedEntries = logs
+            .Where(l => l.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase) && l.EventId == 4625);
+        var (failedAccounts, failedIps, earliestFailureByAccount, earliestFailureByIp) =
+            ExtractAccountsAndIpsWithTimes(failedEntries, pickEarliest: true);
 
         if (failedAccounts.Count == 0 && failedIps.Count == 0)
         {
@@ -723,21 +745,26 @@ public class LogAnalysisService
         var scan = await Task.Run(() =>
             _eventLogService.ScanRange(targetDate.Date, targetDate.Date.AddDays(1), "Security", securityExtraEventIds: new[] { 4624 }));
 
-        var logonSuccessMessages = scan.Entries.Where(l => l.EventId == 4624).Select(l => l.Message).ToList();
+        var logonSuccessEntries = scan.Entries.Where(l => l.EventId == 4624);
 
         // RDP 成功登入（LSM 21/25、RCM 1149）已在主掃描收進 logs（Operational 頻道 watchlist），
         // 一併納入成功登入面：暴力破解未必走 4624，也可能直接以 RDP 工作階段得手
-        var rdpSuccessMessages = logs.Where(IsRdpSuccessLogon).Select(l => l.Message).ToList();
+        var rdpSuccessEntries = logs.Where(IsRdpSuccessLogon).ToList();
 
-        var allSuccessMessages = logonSuccessMessages.Concat(rdpSuccessMessages).ToList();
-        if (allSuccessMessages.Count == 0)
+        var allSuccessEntries = logonSuccessEntries.Concat(rdpSuccessEntries);
+        var (successAccounts, successIps, latestSuccessByAccount, latestSuccessByIp) =
+            ExtractAccountsAndIpsWithTimes(allSuccessEntries, pickEarliest: false);
+
+        if (successAccounts.Count == 0 && successIps.Count == 0)
         {
             return null;
         }
 
-        var (successAccounts, successIps) = LogAggregator.ExtractAccountsAndIps(allSuccessMessages);
-        var matchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
-        var matchedIps = successIps.Intersect(failedIps).ToList();
+        var rawMatchedAccounts = successAccounts.Intersect(failedAccounts, StringComparer.OrdinalIgnoreCase).ToList();
+        var rawMatchedIps = successIps.Intersect(failedIps, StringComparer.OrdinalIgnoreCase).ToList();
+
+        var matchedAccounts = FilterByTiming(rawMatchedAccounts, earliestFailureByAccount, latestSuccessByAccount);
+        var matchedIps = FilterByTiming(rawMatchedIps, earliestFailureByIp, latestSuccessByIp);
 
         if (matchedAccounts.Count == 0 && matchedIps.Count == 0)
         {
@@ -745,13 +772,112 @@ public class LogAnalysisService
         }
 
         // 判斷「得手途徑是否含 RDP」：僅當交集帳號/IP 確實出現在 RDP 成功面時才標註，避免 4624 得手也誤稱 RDP
-        var (rdpAccounts, rdpIps) = LogAggregator.ExtractAccountsAndIps(rdpSuccessMessages);
-        bool includesRdp = matchedAccounts.Any(a => rdpAccounts.Contains(a)) || matchedIps.Any(rdpIps.Contains);
+        var (rdpAccounts, rdpIps) = LogAggregator.ExtractAccountsAndIps(rdpSuccessEntries.Select(l => l.Message));
+        var rdpAccountSet = new HashSet<string>(rdpAccounts, StringComparer.OrdinalIgnoreCase);
+        var rdpIpSet = new HashSet<string>(rdpIps, StringComparer.OrdinalIgnoreCase);
+        bool includesRdp = matchedAccounts.Any(rdpAccountSet.Contains) || matchedIps.Any(rdpIpSet.Contains);
 
         Log.Warn("{Date:yyyy-MM-dd} 偵測到破解得手跡象：大量登入失敗後同一組帳號/IP 出現成功登入（帳號={Accounts}，IP={Ips}，含RDP={Rdp}）",
             targetDate, string.Join(",", matchedAccounts), string.Join(",", matchedIps), includesRdp);
 
+        Log.Debug("{Date:yyyy-MM-dd} 破解得手時序過濾結果：過濾帳號={FilteredAccounts} 個，過濾 IP={FilteredIps} 個",
+            targetDate, rawMatchedAccounts.Count - matchedAccounts.Count, rawMatchedIps.Count - matchedIps.Count);
+
         return new SuccessfulLogonMatch { MatchedAccounts = matchedAccounts, MatchedIps = matchedIps, IncludesRdp = includesRdp };
+    }
+
+    /// <summary>
+    /// 依時序條件過濾帳號或 IP 候選清單：成功時間須晚於或等於該項目的最早失敗時間（latestSuccess >= earliestFailure）。
+    /// 若任一邊缺少時間資料（例如 TimeGenerated 未設定），則保守保留該項目，避免因資料不全而漏報。
+    /// </summary>
+    internal static List<string> FilterByTiming(
+        IEnumerable<string> candidates,
+        IReadOnlyDictionary<string, DateTime> earliestFailureTimes,
+        IReadOnlyDictionary<string, DateTime> latestSuccessTimes)
+    {
+        var matched = new List<string>();
+        foreach (var item in candidates)
+        {
+            if (earliestFailureTimes.TryGetValue(item, out var failureTime) &&
+                latestSuccessTimes.TryGetValue(item, out var successTime))
+            {
+                if (successTime >= failureTime)
+                {
+                    matched.Add(item);
+                }
+            }
+            else
+            {
+                // 任一邊缺少時間資料時退回保守行為，予以保留
+                matched.Add(item);
+            }
+        }
+
+        return matched;
+    }
+
+    /// <summary>
+    /// 逐筆事件抽取帳號與 IP，並維護各帳號/IP 的時間戳記（pickEarliest=true 取最早失敗時間，false 取最晚成功時間）。
+    /// 若事件未帶時間（TimeGenerated 為 default），帳號/IP 仍會納入集合，但跳過時間更新，後續比較時退回保守保留。
+    /// </summary>
+    private static (HashSet<string> Accounts, HashSet<string> Ips, Dictionary<string, DateTime> TimeByAccount, Dictionary<string, DateTime> TimeByIp)
+        ExtractAccountsAndIpsWithTimes(IEnumerable<EventLogEntryData> entries, bool pickEarliest)
+    {
+        var accounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var timeByAccount = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var timeByIp = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Message))
+            {
+                continue;
+            }
+
+            var (extractedAccounts, extractedIps) = LogAggregator.ExtractAccountsAndIps(new[] { entry.Message });
+
+            foreach (var account in extractedAccounts)
+            {
+                accounts.Add(account);
+            }
+
+            foreach (var ip in extractedIps)
+            {
+                ips.Add(ip);
+            }
+
+            if (entry.TimeGenerated == default)
+            {
+                continue;
+            }
+
+            foreach (var account in extractedAccounts)
+            {
+                if (!timeByAccount.TryGetValue(account, out var existingTime))
+                {
+                    timeByAccount[account] = entry.TimeGenerated;
+                }
+                else if (pickEarliest ? entry.TimeGenerated < existingTime : entry.TimeGenerated > existingTime)
+                {
+                    timeByAccount[account] = entry.TimeGenerated;
+                }
+            }
+
+            foreach (var ip in extractedIps)
+            {
+                if (!timeByIp.TryGetValue(ip, out var existingTime))
+                {
+                    timeByIp[ip] = entry.TimeGenerated;
+                }
+                else if (pickEarliest ? entry.TimeGenerated < existingTime : entry.TimeGenerated > existingTime)
+                {
+                    timeByIp[ip] = entry.TimeGenerated;
+                }
+            }
+        }
+
+        return (accounts, ips, timeByAccount, timeByIp);
     }
 
     /// <summary>RDP 成功登入事件：LocalSessionManager 21（登入）/25（重連），RemoteConnectionManager 1149（驗證成功）。</summary>

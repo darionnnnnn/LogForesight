@@ -38,10 +38,20 @@ public static class RuntimeSettingsResolver
             if (CryptoHelper.IsEncrypted(systemSettings.AiApiKeyEnc))
                 settings.Ai.ApiKey = CryptoHelper.Decrypt(systemSettings.AiApiKeyEnc);
 
+            settings.Ai.Provider = AiProviders.Normalize(systemSettings.AiProvider);
+            settings.Ai.Model = string.IsNullOrWhiteSpace(systemSettings.AiModel)
+                ? AiProviders.DefaultModel(settings.Ai.Provider)
+                : systemSettings.AiModel.Trim();
+            settings.Ai.AzureDeployment = systemSettings.AiAzureDeployment?.Trim() ?? "";
+            settings.Ai.AzureApiVersion = string.IsNullOrWhiteSpace(systemSettings.AiAzureApiVersion)
+                ? "2024-10-21"
+                : systemSettings.AiAzureApiVersion.Trim();
+
             ApplyAiAdvanced(settings.Ai, systemSettings);
 
             // 權限監控資料夾與分析參數（§12）：DB 是唯一事實來源
             settings.Permissions.WatchedFolders = new List<string>(systemSettings.WatchedFolders);
+            settings.Permissions.FieldMappings = PermissionFieldMappings.FromSystemSettings(systemSettings);
             settings.Analysis.ServerDescription = systemSettings.ServerDescription;
             if (systemSettings.CheckupIntervalDays >= 1)
                 settings.Analysis.CheckupIntervalDays = systemSettings.CheckupIntervalDays;
@@ -59,14 +69,24 @@ public static class RuntimeSettingsResolver
 
             retention = retention with { RunLogRetentionDays = systemSettings.RunLogRetentionDays, AuditRetentionDays = systemSettings.AuditRetentionDays };
 
-            if (systemSettings.RiskyEventRetentionDays >= 1 && systemSettings.RiskyEventRetentionDays <= retention.RetentionDays)
+            if (systemSettings.RawEventRetentionDays >= 1 && systemSettings.RawEventRetentionDays <= retention.RetentionDays)
             {
-                retention = retention with { RiskyEventRetentionDays = systemSettings.RiskyEventRetentionDays };
+                retention = retention with { RawEventRetentionDays = systemSettings.RawEventRetentionDays };
             }
             else
             {
-                Log.Warn("系統設定的風險 log 暫存保留天數（{RiskyEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
-                    systemSettings.RiskyEventRetentionDays, retention.RetentionDays);
+                Log.Warn("系統設定的原始事件內容保留天數（{RawEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
+                    systemSettings.RawEventRetentionDays, retention.RetentionDays);
+            }
+
+            if (systemSettings.ReportRetentionDays >= SystemSettings.MinRetentionDays && systemSettings.ReportRetentionDays <= 3650)
+            {
+                retention = retention with { ReportRetentionDays = systemSettings.ReportRetentionDays };
+            }
+            else
+            {
+                Log.Warn("系統設定的報告檔保留天數（{ReportRetentionDays}）超出合理範圍（{MinRetentionDays}~3650），改用內建預設值。",
+                    systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays);
             }
         }
         catch (Exception ex)

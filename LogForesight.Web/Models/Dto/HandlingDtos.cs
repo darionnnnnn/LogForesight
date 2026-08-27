@@ -223,6 +223,25 @@ public class HandlingTodoDto
     public int TotalCount { get; set; }
 }
 
+/// <summary>
+/// 待辦的問題口徑（回饋十九輪批次D2）：儀表板 KPI 卡的主要數字，答的是「有幾個不同的問題
+/// 要處理」而不是「有幾個主機日還沒結案」——後者仍看 <see cref="HandlingTodoDto"/>
+/// （供「未處理風險日 M」副標與報表「處理進度」圖表用，兩者角色不同、不互相取代）。
+/// </summary>
+public class IssueTodoDto
+{
+    /// <summary>未處理問題數（依 (Source, EventId) 去重）——KPI 卡的大數字</summary>
+    public int OpenIssueCount { get; set; }
+
+    public int InProgressIssueCount { get; set; }
+
+    /// <summary>處理中但預計完成日已過的問題數，與批次H 郵件的逾期區塊同一個口徑</summary>
+    public int OverdueIssueCount { get; set; }
+
+    /// <summary>受未處理問題影響的相異主機數——KPI 卡副標「影響 N 台」</summary>
+    public int AffectedHostCount { get; set; }
+}
+
 // ── 問題案件跨主機批次指派（docs/archive/FEEDBACK-4-PLAN.md §4）────────────────────────
 
 /// <summary>批次指派 modal 開啟時的受影響主機預覽——已有進行中案件的主機標出既有處理人，
@@ -355,6 +374,13 @@ public class BulkCloseIssueRequest
     [Required(ErrorMessage = "請填寫原因")]
     [StringLength(1000, ErrorMessage = "原因長度不可超過 1000 字元")]
     public string Note { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 之後新出現的主機日是否自動套用這個結論（回饋十九輪批次F，§2 決策一）：勾選時同時把
+    /// (Source,EventId) 的問題檔案設成機房結論，見 IssueOwnerAdminService.SetConclusion——
+    /// 這一次的統一標記只處理**既有**日子，AutoApply 才是「以後也這樣」的開關。
+    /// </summary>
+    public bool AutoApply { get; set; }
 }
 
 /// <summary>統一標記的預覽／結果共用的逐主機列</summary>
@@ -517,17 +543,60 @@ public class AssigneeCannotHandleDto
 
 // ── 權限異動（§9.5）────────────────────────────────────────────────────────
 
+public class PermissionChangeQueryRequest
+{
+    public string? Keyword { get; set; }
+    public string? Subnet { get; set; }
+    public List<string>? Categories { get; set; }
+    public string? Status { get; set; }
+    public string? Source { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public string Sort { get; set; } = "detectedAt";
+    public bool Ascending { get; set; }
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 50;
+}
+
 public class PermissionChangeDto
 {
     public string ChangeId { get; set; } = string.Empty;
     public long HostId { get; set; }
     public string HostName { get; set; } = string.Empty;
+    public string? HostIp { get; set; }
     public DateTime DetectedAt { get; set; }
     public string Target { get; set; } = string.Empty;
     public string ChangeType { get; set; } = string.Empty;
+    public string Category { get; set; } = PermissionCategory.Other;
+    public string CategoryLabel { get; set; } = string.Empty;
+    public bool IsPrivilegedTarget { get; set; }
+    public string? InitiatorAccount { get; set; }
+    /// <summary>操作者帳號顯示短名（由 InitiatorAccount 經 ToShortName 轉換）</summary>
+    public string? InitiatorAccountDisplay { get; set; }
+    public string? TargetAccount { get; set; }
+    /// <summary>目標帳號顯示短名（由 TargetAccount 經 ToShortName 轉換）</summary>
+    public string? TargetAccountDisplay { get; set; }
+    /// <summary>原始事件 ID（NetIQ 事件填入，本機監控為 null）</summary>
+    public int? EventId { get; set; }
     public string Before { get; set; } = string.Empty;
     public string After { get; set; } = string.Empty;
     public string AlertText { get; set; } = string.Empty;
+
+    /// <summary>未截斷的原始事件訊息。升級前寫入的資料與彙總列為 null，
+    /// 此時展開明細只能退而顯示 500 字截斷版的 AlertText</summary>
+    public string? RawText { get; set; }
+
+    public string SummaryText { get; set; } = string.Empty;
+    public string Source { get; set; } = PermissionChangeSources.Local;
+
+    /// <summary>4670 的物件類型與處理程序名稱（非 4670 或訊息未提供時為 null）</summary>
+    public string? ObjectType { get; set; }
+    public string? ProcessName { get; set; }
+
+    /// <summary>彙總列涵蓋的事件時間區間與對數；逐則列與既有彙總列為 null（三者皆空時展開明細不顯示這一行）</summary>
+    public DateTime? CoveredFrom { get; set; }
+    public DateTime? CoveredTo { get; set; }
+    public int? PairCount { get; set; }
 
     public string Status { get; set; } = PermissionConfirmStatuses.Pending;
     public string? ConfirmedByAccount { get; set; }
@@ -545,6 +614,44 @@ public class ConfirmPermissionChangeRequest
 
     [StringLength(500)]
     public string? Note { get; set; }
+}
+
+public class BatchConfirmPermissionChangesRequest
+{
+    [Required(ErrorMessage = "請至少勾選一筆權限異動。")]
+    [MinLength(1, ErrorMessage = "請至少勾選一筆權限異動。")]
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>authorized（確認為授權操作）| suspicious（標記可疑）</summary>
+    [Required]
+    public string Status { get; set; } = string.Empty;
+
+    [StringLength(500)]
+    public string? Note { get; set; }
+}
+
+public class BatchConfirmPermissionChangesResultDto
+{
+    public int UpdatedCount { get; set; }
+    public List<SkippedPermissionChangeDto> Skipped { get; set; } = new();
+}
+
+public class SkippedPermissionChangeDto
+{
+    public string ChangeId { get; set; } = string.Empty;
+    public string HostName { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class PermissionChangeIdListDto
+{
+    public List<string> ChangeIds { get; set; } = new();
+
+    /// <summary>符合篩選的異動總數（截斷前）</summary>
+    public int Total { get; set; }
+
+    /// <summary>true＝超過單次上限，畫面必須說明要分批</summary>
+    public bool Truncated { get; set; }
 }
 
 // ── 操作紀錄（§9.11）───────────────────────────────────────────────────────
@@ -629,4 +736,11 @@ public class HandlerDayItemDto
     public string DerivedStatusText { get; set; } = string.Empty;
     public string? DueDate { get; set; }
     public bool IsOverdue { get; set; }
+}
+
+/// <summary>權限異動類別選項（供前端篩選下拉使用）</summary>
+public class PermissionCategoryOptionDto
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
 }

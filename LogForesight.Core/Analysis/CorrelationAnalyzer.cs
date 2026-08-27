@@ -55,6 +55,18 @@ internal static class CorrelationAnalyzer
     internal static readonly int[] DefenderMalwareIds = { 1006, 1116, 1007, 1117, 1008, 1118, 1119 };
     internal static readonly int[] DefenderProtectionOffIds = { 5001, 5010, 5012 };
 
+    private const int BruteForceThreshold = 10;
+
+    /// <summary>
+    /// 判斷簽章是否可作為暴力破解攻擊錨點（Security 4625、次數達門檻、且未標記為殘留憑證重試）。
+    /// </summary>
+    internal static bool IsBruteForceAnchor(LogIssueSignature issue) =>
+        !issue.ResidualCredentialRetry &&
+        issue.EventId == 4625 &&
+        issue.Count >= BruteForceThreshold &&
+        issue.Source.Contains("Security-Auditing", StringComparison.OrdinalIgnoreCase) &&
+        issue.LogName.Equals("Security", StringComparison.OrdinalIgnoreCase);
+
     public static List<CorrelationFinding> Detect(List<LogIssueSignature> issues,
         List<DailyAnalysisRecord> history, DateTime targetDate, SuccessfulLogonMatch? successfulLogonMatch = null)
     {
@@ -74,8 +86,8 @@ internal static class CorrelationAnalyzer
 
         // ── 安全：入侵鏈（同日）───────────────────────────────────────
 
-        var bruteForce = Find("Security-Auditing", 4625);
-        bool heavyBruteForce = bruteForce != null && bruteForce.Count >= 10;
+        var bruteForce = issues.FirstOrDefault(IsBruteForceAnchor);
+        bool heavyBruteForce = bruteForce != null;
         var accountChange = Find("Security-Auditing", AccountChangeIds);
 
         // 今日的 RDP 成功登入簽章（LSM 21/25、RCM 1149）——本身不是告警，只在與攻擊錨點交集時才成為訊號
@@ -264,8 +276,7 @@ internal static class CorrelationAnalyzer
         var previousDay = history.FirstOrDefault(h => h.Date.Date == targetDate.Date.AddDays(-1));
         if (previousDay != null)
         {
-            bool yesterdayBruteForce = previousDay.TopIssues
-                .Any(i => i.EventId == 4625 && i.Count >= 10);
+            bool yesterdayBruteForce = previousDay.TopIssues.Any(IsBruteForceAnchor);
             bool todayFoothold = accountChange != null || newService != null || permissionChange != null;
 
             if (yesterdayBruteForce && todayFoothold)
@@ -308,7 +319,7 @@ internal static class CorrelationAnalyzer
             if (rdpSuccess.Count > 0)
             {
                 var yesterdayBruteIps = previousDay.TopIssues
-                    .Where(i => i.EventId == 4625 && i.Count >= 10 && i.KeyDetails != null)
+                    .Where(i => IsBruteForceAnchor(i) && i.KeyDetails != null)
                     .SelectMany(i => ExtractIps(i.KeyDetails!))
                     .ToHashSet();
                 var todayRdpIps = rdpSuccess

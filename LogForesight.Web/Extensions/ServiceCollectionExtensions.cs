@@ -56,15 +56,15 @@ public static class ServiceCollectionExtensions
 
         // 問題聚合（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）：一句 GROUP BY 取代
         // 「撈回整段期間的紀錄再於記憶體 GroupBy」
-        services.AddSingleton<IIssueAggregateQuery>(sp => sp.GetRequiredService<StorageBackend>().IssueAggregateQuery());
+        services.AddSingleton<IIssueAggregateQuery>(sp =>
+            sp.GetRequiredService<StorageBackend>().IssueAggregateQuery(sp.GetRequiredService<IHostStore>()));
         services.AddSingleton<TopIssueBackfiller>(sp => sp.GetRequiredService<StorageBackend>().TopIssueBackfiller());
         services.AddSingleton<INoiseMarkStore>(sp => new NoiseMarkStore(sp.GetRequiredService<StorageBackend>().Blob("noise_marks")));
         services.AddSingleton<AiCacheStore>(sp => new AiCacheStore(sp.GetRequiredService<StorageBackend>().Blob("ai_cache")));
+        services.AddSingleton<AiUsageStore>(sp =>
+            new AiUsageStore(sp.GetRequiredService<StorageBackend>().Blob(AiUsageStore.BlobKey)));
         services.AddSingleton<PermissionChangeStore>(sp =>
-        {
-            var backend = sp.GetRequiredService<StorageBackend>();
-            return new PermissionChangeStore(backend.LogStore("perm_changes"), backend.Blob("perm_confirms"));
-        });
+            sp.GetRequiredService<StorageBackend>().PermissionChanges());
 
         // 規則維護與執行監控
         services.AddSingleton<IKnownIssueRuleStore>(sp => new KnownIssueRuleStore(sp.GetRequiredService<StorageBackend>().Blob("rules")));
@@ -101,7 +101,7 @@ public static class ServiceCollectionExtensions
         // AdAuthEnabled 開啟時走設定頁的 AD 設定，否則落到下面的 fallback。
         // §12：AD 驗證的唯一事實來源是設定頁——appsettings 的 Auth:Ldap:Domain 與
         // LdapAuthenticationProvider 已退役，"Ad"（含舊值 "Ldap"）的 fallback 改為
-        // UnconfiguredAdAuthenticationProvider（明講「AD 尚未設定，請以 serverAdmin 登入後設定」）。
+        // UnconfiguredAdAuthenticationProvider（記錄檔載明「AD 尚未設定，請以 serverAdmin 登入後設定」）。
         services.AddSingleton<IAuthenticationProvider>(sp =>
         {
             IAuthenticationProvider fallback = settings.Auth.Provider.ToLowerInvariant() switch
@@ -163,8 +163,10 @@ public static class ServiceCollectionExtensions
                         }
                         else
                         {
+                            // Request.Path 已扣掉掛載前綴，returnUrl 存的是 app 內路徑
+                            // （前端用 appUrl 還原）；轉址目標本身要補回前綴才到得了登入頁
                             var returnUrl = Uri.EscapeDataString(context.Request.Path + context.Request.QueryString);
-                            context.Response.Redirect($"/login?returnUrl={returnUrl}");
+                            context.Response.Redirect($"{context.Request.PathBase}/login?returnUrl={returnUrl}");
                         }
                     }
                 };
@@ -278,6 +280,21 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RecordDetailQueryService>();
         // 問題排行的共用投影（P4）：儀表板與報表共用，兩頁數字必然一致
         services.AddScoped<IssueRankingBuilder>();
+        // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
+        // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
+        services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
+        // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
+        // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
+        // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
+        // （IHostStore／IIssueHandlingStore／IIssueCaseStore／ISystemSettingsStore）本來就全是
+        // Singleton，往下調整生命週期沒有 captive dependency 疑慮；這樣批次H 的
+        // MailIssueDigest（Singleton，見下方郵件通知區塊）才能直接注入它，重用同一套
+        // 「批次撈 handling/case → 逐筆判定」邏輯，不必為 Singleton 情境另外複製一份判定規則。
+        // 既有的 Scoped 呼叫端（DashboardService／ReportService 等）依賴 Singleton 服務永遠合法，
+        // 不受影響。
+        services.AddSingleton<OccurrenceStatusResolver>();
+        services.AddScoped<IssueHandlingRollupQuery>();
+        services.AddScoped<IssueTodoQuery>();
         services.AddScoped<DashboardService>();
         services.AddScoped<ReportService>();
 
@@ -307,6 +324,9 @@ public static class ServiceCollectionExtensions
         // 直接建構子注入而非每次觸發解析 Scope，MailNotificationService 的相依（Store 們）
         // 本來就全是 Singleton，沒有 captive dependency 疑慮。
         services.AddSingleton<ISmtpMailSender, SystemNetSmtpMailSender>();
+        // 郵件問題優先摘要（回饋十九輪批次H1）：同樣 Singleton-safe，相依的 IIssueAggregateQuery／
+        // OccurrenceStatusResolver 皆已是 Singleton
+        services.AddSingleton<MailIssueDigest>();
         services.AddSingleton<MailNotificationService>();
 
         // 排程引擎（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.3）：SchedulerRunState 是行程內單例狀態
@@ -325,10 +345,17 @@ public static class ServiceCollectionExtensions
         // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
         // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除
         services.AddHostedService<HandlingMigrationHostedService>();
+        services.AddHostedService<PermissionChangeMigrationHostedService>();
 
         // lf_top_issues 聚合欄的背景回填（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4）：
         // 掛在啟動路徑上會讓 Windows 服務啟動逾時（§8.2 E3），所以走背景服務
         services.AddHostedService<TopIssueBackfillHostedService>();
+        services.AddSingleton<IssueFirstSeenSeedHostedService>();
+        services.AddHostedService(sp => sp.GetRequiredService<IssueFirstSeenSeedHostedService>());
+
+        // lf_daily_records 抽出欄的背景回填（回饋十九輪批次B），骨架與時機同上
+        services.AddSingleton<DailyRecordBackfiller>(sp => sp.GetRequiredService<StorageBackend>().DailyRecordBackfiller());
+        services.AddHostedService<DailyRecordBackfillHostedService>();
 
         // NetIQ API 診斷（probe，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）：狀態單例本身就是
         // 併發 1 的 gate，刻意與上面的 SchedulerRunState 分開——不與排程/手動分析共用

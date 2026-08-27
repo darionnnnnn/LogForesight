@@ -1,4 +1,4 @@
-/**
+﻿/**
  * API 呼叫的唯一出口（docs/WEB-SPEC.md §8.1）。
  *
  * 頁面模組**不得直接呼叫 fetch**——信封解析、錯誤提示、401 導頁、CSRF 標頭
@@ -6,6 +6,7 @@
  */
 
 import { toast } from './ui.js';
+import { appUrl, appPath } from './paths.js';
 
 const CSRF_HEADER = 'X-Requested-By';
 const CSRF_VALUE = 'LogForesight';
@@ -33,13 +34,19 @@ async function request(method, url, body, options = {}) {
     }
 
     if (body !== undefined && body !== null) {
-        init.headers['Content-Type'] = 'application/json';
-        init.body = JSON.stringify(body);
+        if (body instanceof FormData) {
+            // 檔案上傳：Content-Type 必須讓瀏覽器自己帶（它要在裡面附 multipart boundary），
+            // 手動指定會讓後端解不出欄位
+            init.body = body;
+        } else {
+            init.headers['Content-Type'] = 'application/json';
+            init.body = JSON.stringify(body);
+        }
     }
 
     let response;
     try {
-        response = await fetch(url, init);
+        response = await fetch(appUrl(url), init);
     } catch (networkError) {
         // 網路層失敗（站台重啟、連線中斷）與業務錯誤是不同的情況，訊息要說得出差別，
         // 否則使用者只會看到「失敗」而不知道該重試還是該找人
@@ -52,10 +59,11 @@ async function request(method, url, body, options = {}) {
     // 例外：登入頁本身送出的登入請求 401 是「帳號或密碼錯誤」，不是「登入逾期」——
     // 整頁轉址會讓 login.js 的錯誤訊息顯示與輸入內容保留全部失效（訊息閃一下就被
     // 蓋成「登入已逾期」）。此時放行到下面的一般錯誤處理，讓後端訊息正常顯示。
-    const isLoginAttempt = location.pathname === '/login' || url === '/api/auth/login';
+    const isLoginAttempt = appPath() === '/login' || url === '/api/auth/login';
     if (response.status === 401 && !isLoginAttempt) {
-        const returnUrl = encodeURIComponent(location.pathname + location.search);
-        location.href = `/login?returnUrl=${returnUrl}`;
+        // returnUrl 記的是 app 內路徑（不含掛載前綴），登入後由 login.js 用 appUrl 還原
+        const returnUrl = encodeURIComponent(appPath() + location.search);
+        location.href = appUrl(`/login?returnUrl=${returnUrl}`);
         throw new ApiError('auth_expired', '登入已逾期', 401);
     }
 

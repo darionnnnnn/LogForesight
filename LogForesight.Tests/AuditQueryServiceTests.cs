@@ -46,4 +46,28 @@ public class AuditQueryServiceTests : IDisposable
         Assert.Null(entry.AccountDisplayName);
         Assert.Equal("DOMAIN\\typo-user", entry.Account);
     }
+
+    /// <summary>
+    /// 回饋二十輪作業 A：起訖顛倒時由 controller 的 ParseDateRange 自動交換。
+    /// 這支刻意走 controller 而非直接呼叫 ParseDateRange——只測工具函式的話，
+    /// controller 忘了接上也照樣全綠。
+    /// </summary>
+    [Fact]
+    public void Controller查詢_起訖顛倒_自動交換後查得到資料()
+    {
+        _store.Append(new AuditEntry
+        {
+            Action = "login",
+            OccurredAt = DateTime.Today.AddDays(-3).AddHours(9),
+            Account = "DOMAIN\\alice"
+        });
+        var controller = new LogForesight.Web.Controllers.Api.AuditController(_service);
+
+        var 顛倒 = controller.Query(
+            from: DateTime.Today.ToString("yyyy-MM-dd"),
+            to: DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"),
+            userId: null, actions: null, targetKind: null, result: null);
+
+        Assert.Single(顛倒.Data!.Items);
+    }
 }

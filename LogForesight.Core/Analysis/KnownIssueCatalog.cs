@@ -1,3 +1,5 @@
+using LogForesight.Core.Persistence;
+
 namespace LogForesight.Core.Analysis;
 
 public enum IssueCategory
@@ -18,6 +20,40 @@ public enum IssueSeverity
     Medium,
     High,
     Critical
+}
+
+/// <summary>
+/// 舊資料相容（docs/archive/HISTORY.md #1，B1 三級化；回饋十九輪批次B 把這個規則搬成
+/// 共用元件，供 SQL 端聚合查詢使用）：三級化之前寫入的歷史紀錄若嚴重度仍是 Critical，
+/// 一律等同 High＋ElevatesDayRisk=true——Critical 原本唯一的實際作用就是「命中即列為高風險日」，
+/// 正規化後可解釋性不變。
+///
+/// **只在讀取時正規化，不回寫資料庫**（<c>RecordRepository.NormalizeLegacySeverity</c> 的
+/// 既有原則：證據層是事後不可改寫的批次判定結果）——這個類別是同一條規則的第二個實作，
+/// 供 SQL 端（操作 <c>int</c> severity_rank）使用；blob 路徑操作 <see cref="IssueSeverity"/>
+/// 列舉，兩邊分開實作是因為型別不同，但規則本身必須是同一份（都是「Critical→High+elevates」，
+/// 改一邊忘了改另一邊就是兩個畫面對不起來的新來源）。
+/// </summary>
+public static class LegacySeverityRank
+{
+    /// <summary>正規化後的嚴重度整數值：Critical 降為 High，其餘不變</summary>
+    public static int Normalize(int rank) =>
+        rank == (int)IssueSeverity.Critical ? (int)IssueSeverity.High : rank;
+
+    /// <summary>是否因為原始值是 Critical 而必須強制視為「重大」</summary>
+    public static bool ForcesElevate(int rank) => rank == (int)IssueSeverity.Critical;
+
+    /// <summary>
+    /// 可見嚴重度集合展開回「正規化後會落在可見集合內」的原始 rank 集合（回饋十九輪批次E1/E2，
+    /// SiteHidden 過濾用）：可見集合含 High 時，Critical(3) 的舊資料列也算可見——
+    /// Critical 正規化後就是 High，呼叫端不必自己展開這條規則。
+    /// </summary>
+    public static HashSet<int> ExpandVisibleRanks(IReadOnlySet<IssueSeverity> visible)
+    {
+        var ranks = visible.Select(s => (int)s).ToHashSet();
+        if (visible.Contains(IssueSeverity.High)) ranks.Add((int)IssueSeverity.Critical);
+        return ranks;
+    }
 }
 
 public class KnownIssueRule
@@ -275,11 +311,76 @@ public static class KnownIssueCatalog
     /// 明確只看 Platform="windows" 規則——Linux 規則的 SourcePattern 恆空，
     /// 顯式排除比依賴「空字串 Contains 恆真但 EventIds 恆空」的隱含行為清楚（docs/LINUX-RULES.md §1.2）。
     /// </summary>
-    public static KnownIssueRule? FindRule(string source, int eventId)
+    /// <summary>
+    /// Web 端取得「目前生效規則清單」的唯一入口（回饋二十輪終檢收斂）：有規則儲存就讀它
+    /// （反映 Web 編輯），讀不到或為空、或根本沒注入（測試組裝）都退回內建種子——
+    /// 不要退回靜態 <see cref="Rules"/>，Web 行程刻意不初始化它、在那裡是空的。
+    /// 這個退路策略是有語意的決策，兩個消費端各寫一份遲早漂移成兩個畫面顯示不同的說明。
+    /// </summary>
+    public static List<KnownIssueRule> ResolveRules(IKnownIssueRuleStore? store)
     {
-        foreach (var rule in Rules)
+        if (store == null) return KnownIssueSeed.CreateRules();
+        var outcome = store.Load();
+        if (outcome.Success && outcome.Content?.Rules is { Count: > 0 } rules)
         {
-            if (rule.Platform != "windows")
+            return rules;
+        }
+        return KnownIssueSeed.CreateRules();
+    }
+
+    /// <summary>
+    /// 命中規則的白話說明；未命中或規則沒寫說明時為 null（讓呼叫端據此決定要不要佔行）。
+    ///
+    /// **EventId 0 走 Linux 規則**：Linux 事件的 EventId 恆為 0、Source 是 program
+    /// （<c>SentinelEventMapper.MapLinux</c>），(來源, EventId) 這組聚合鍵在 Windows 規則裡
+    /// 永遠找不到東西，過去導致 Linux 問題的白話說明恆為 null。這裡改以 program 比對
+    /// Linux 規則；聚合層沒有訊息內容，無法套 MessagePatterns，因此**只在恰好一條規則
+    /// 命中該 program 時**才給說明——兩條以上時給不出「是哪一種」，寧可不顯示也不要顯示錯的。
+    /// </summary>
+    public static string? PlainExplanationFor(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        var rule = eventId == 0
+            ? FindLinuxRuleByProgram(rules, source)
+            : FindRule(rules, source, eventId);
+        return string.IsNullOrWhiteSpace(rule?.PlainExplanation) ? null : rule.PlainExplanation;
+    }
+
+    /// <summary>
+    /// 只用 program 比對 Linux 規則（聚合層沒有訊息內容可套 MessagePatterns）。
+    /// 命中零條或兩條以上都回 null——聚合層無從判斷是哪一種問題。
+    /// </summary>
+    public static KnownIssueRule? FindLinuxRuleByProgram(IReadOnlyList<KnownIssueRule> rules, string program)
+    {
+        if (string.IsNullOrWhiteSpace(program)) return null;
+
+        KnownIssueRule? found = null;
+        foreach (var rule in rules)
+        {
+            if (!rule.Enabled || rule.Platform != "linux") continue;
+            if (string.IsNullOrEmpty(rule.ProgramPattern)) continue;
+            if (!program.Contains(rule.ProgramPattern, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (found != null) return null;   // 不只一條命中：說不出是哪一種，不給說明
+            found = rule;
+        }
+
+        return found;
+    }
+
+    public static KnownIssueRule? FindRule(string source, int eventId) => FindRule(Rules, source, eventId);
+
+    /// <summary>
+    /// 同上，但比對對象由呼叫端提供——Web 行程刻意不呼叫 <see cref="Initialize"/>
+    /// （見 Program.cs：全域分類狀態是批次分析才用得到的），靜態 <see cref="Rules"/> 在那裡是空的，
+    /// 所以 Web 端要自行從規則儲存載入後傳進來。比對規則只有這一份定義，不要另外複製。
+    /// </summary>
+    public static KnownIssueRule? FindRule(IReadOnlyList<KnownIssueRule> rules, string source, int eventId)
+    {
+        foreach (var rule in rules)
+        {
+            // Linux 規則的比對需要 program＋訊息內容（見 FindLinuxRule），
+            // 不是這裡的 (來源, EventId) 能決定的，故一律略過
+            if (!rule.Enabled || rule.Platform != "windows")
             {
                 continue;
             }

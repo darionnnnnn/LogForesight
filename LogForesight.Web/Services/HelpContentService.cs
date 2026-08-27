@@ -7,9 +7,18 @@ namespace LogForesight.Web.Services;
 /// <summary>操作說明書單一章節的完整內容（回饋十五輪批次E）。Keywords 只供 AI 選節計分使用，
 /// 不外洩到 <see cref="HelpChapterDto"/>——前端不需要知道計分用的關鍵字清單。
 /// <paramref name="Type"/>／<paramref name="Href"/>（回饋十八輪批次H）：type=link 的章節
-/// （目前只有啟動精靈）沒有 Markdown 內容，Content 恆為空字串。</summary>
+/// （目前只有啟動精靈）沒有 Markdown 內容，Content 恆為空字串。
+/// <paramref name="AiContent"/>（回饋二十七輪作業 G）：AI 問答專用的詳細版原文，
+/// manifest 有填 aiFile 時才有值；要餵給 AI 的內容一律走 <see cref="ContentForAi"/>，
+/// 不要直接讀這個欄位。</summary>
 public record HelpChapter(string Id, string Title, string Content, List<string> Keywords, List<string> Related, string Icon,
-    string Type = "markdown", string? Href = null);
+    string Type = "markdown", string? Href = null, string AiContent = "")
+{
+    /// <summary>實際餵給 AI 的內容：沒有 AI 版時 fallback 成使用者版。
+    /// **fallback 只寫在這裡一處**——寫在載入端的話，任何直接建構 HelpChapter 的地方
+    /// （測試、未來的其他來源）都會拿到空內容，而且空得無聲無息。</summary>
+    public string ContentForAi => string.IsNullOrEmpty(AiContent) ? Content : AiContent;
+}
 
 /// <summary>
 /// 操作說明書內容載入（docs/archive/FEEDBACK-15-PLAN.md 批次E-1）：manifest.json＋各章節 Markdown
@@ -61,18 +70,37 @@ public class HelpContentService
         foreach (var entry in manifest.Chapters)
         {
             // type=link 章節（回饋十八輪批次H，目前只有啟動精靈）沒有對應的 Markdown 檔——
-            // File 欄位在 manifest 裡就沒填，載入時直接跳過開檔，Content 留空
+            // File 欄位在 manifest 裡就沒填，載入時直接跳過開檔，Content 留空；
+            // AiContent 同 Content 維持空字串（沒有可塞進 prompt 的說明文字）。
             if (entry.Type == "link")
             {
                 chapters.Add(new HelpChapter(entry.Id, entry.Title, "", entry.Keywords, entry.Related, entry.Icon,
-                    entry.Type, entry.Href));
+                    entry.Type, entry.Href, AiContent: ""));
                 continue;
             }
 
             using var contentStream = OpenResource(assembly, entry.File);
             using var contentReader = new StreamReader(contentStream);
-            chapters.Add(new HelpChapter(entry.Id, entry.Title, contentReader.ReadToEnd().TrimEnd(),
-                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href));
+            var content = contentReader.ReadToEnd().TrimEnd();
+
+            // aiFile（回饋二十七輪作業 G）：有填且對應內嵌資源存在時讀 AI 版；讀不到就留空字串，
+            // 由 HelpChapter.ContentForAi 統一 fallback 回使用者版（fallback 不在這裡重寫一份）
+            var aiContent = string.Empty;
+            if (!string.IsNullOrEmpty(entry.AiFile))
+            {
+                var aiSuffix = ResourceSuffixPrefix + entry.AiFile;
+                var aiName = assembly.GetManifestResourceNames()
+                    .FirstOrDefault(n => n.EndsWith(aiSuffix, StringComparison.Ordinal));
+                if (aiName != null)
+                {
+                    using var aiStream = assembly.GetManifestResourceStream(aiName)!;
+                    using var aiReader = new StreamReader(aiStream);
+                    aiContent = aiReader.ReadToEnd().TrimEnd();
+                }
+            }
+
+            chapters.Add(new HelpChapter(entry.Id, entry.Title, content,
+                entry.Keywords, entry.Related, entry.Icon, entry.Type, entry.Href, AiContent: aiContent));
         }
         return chapters;
     }
@@ -101,6 +129,10 @@ public class HelpContentService
         public string Type { get; set; } = "markdown";
 
         public string? Href { get; set; }
+
+        /// <summary>選填：AI 問答用的詳細版內容檔（回饋二十七輪作業 G）。沒填就沿用
+        /// <see cref="File"/> 的內容——使用者版與 AI 版分離是加值，不是每章的必要條件。</summary>
+        public string? AiFile { get; set; }
     }
 
     private class ManifestRoot

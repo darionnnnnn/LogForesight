@@ -1,3 +1,4 @@
+using LogForesight.Core.Models;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -81,9 +82,12 @@ public class IssueCasesController : ControllerBase
     [HttpGet("preview")]
     public ApiResponse<IssueCaseAssignPreviewDto> Preview(
         [FromQuery] string source, [FromQuery] int eventId,
-        [FromQuery] string? from, [FromQuery] string? to) =>
-        ApiResponse<IssueCaseAssignPreviewDto>.Ok(
-            _service.PreviewIssueCaseAssign(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
+        [FromQuery] string? from, [FromQuery] string? to)
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        return ApiResponse<IssueCaseAssignPreviewDto>.Ok(
+            _service.PreviewIssueCaseAssign(source, eventId, parsedFrom, parsedTo));
+    }
 
     [HttpPost("bulk-assign")]
     public ApiResponse<BulkAssignIssueCaseResultDto> BulkAssign([FromBody] BulkAssignIssueCaseRequest request) =>
@@ -147,16 +151,19 @@ public class IssueBulkCloseController : ControllerBase
     [HttpGet("close-preview")]
     public ApiResponse<IssueBulkClosePreviewDto> ClosePreview(
         [FromQuery] string source, [FromQuery] int eventId,
-        [FromQuery] string? from, [FromQuery] string? to) =>
-        ApiResponse<IssueBulkClosePreviewDto>.Ok(
-            _service.PreviewBulkClose(source, eventId, QueryStringParsing.ParseDate(from), QueryStringParsing.ParseDate(to)));
+        [FromQuery] string? from, [FromQuery] string? to)
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        return ApiResponse<IssueBulkClosePreviewDto>.Ok(
+            _service.PreviewBulkClose(source, eventId, parsedFrom, parsedTo));
+    }
 
     [HttpPost("bulk-close")]
     public ApiResponse<BulkCloseIssueResultDto> BulkClose([FromBody] BulkCloseIssueRequest request) =>
         ApiResponse<BulkCloseIssueResultDto>.Ok(_service.BulkCloseIssue(request));
 }
 
-/// <summary>權限異動待辦（§9.5）</summary>
+/// <summary>權限異動檢核（§9.5）</summary>
 [ApiController]
 [Route("api/permission-changes")]
 public class PermissionChangesController : ControllerBase
@@ -169,13 +176,88 @@ public class PermissionChangesController : ControllerBase
     }
 
     [HttpGet]
-    public ApiResponse<List<PermissionChangeDto>> Query(
-        [FromQuery] string? status, [FromQuery] int maxCount = 200) =>
-        ApiResponse<List<PermissionChangeDto>>.Ok(_service.Query(status, Math.Clamp(maxCount, 1, 1000)));
+    public ApiResponse<PagedResult<PermissionChangeDto>> Query(
+        [FromQuery] string? q,
+        [FromQuery] string? subnet,
+        [FromQuery] string? category,
+        [FromQuery] string? status,
+        [FromQuery] string? source,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string sort = "detectedAt",
+        [FromQuery] string dir = "desc",
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        var request = new PermissionChangeQueryRequest
+        {
+            Keyword = q,
+            Subnet = subnet,
+            Categories = QueryStringParsing.ParseStrings(category),
+            Status = status,
+            Source = source,
+            From = parsedFrom,
+            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            Sort = sort,
+            Ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase),
+            Page = page,
+            PageSize = pageSize
+        };
+        return ApiResponse<PagedResult<PermissionChangeDto>>.Ok(_service.Query(request));
+    }
+
+    /// <summary>
+    /// 可用的異動類別清單（key 與中文標籤）。
+    /// 前端的類別篩選必須靠它才列得全——只從當頁資料收集的話，
+    /// 沒有出現在當頁的類別就選不到，等於篩不到那一類。
+    /// </summary>
+    [HttpGet("categories")]
+    public ApiResponse<List<PermissionCategoryOptionDto>> GetCategories() =>
+        ApiResponse<List<PermissionCategoryOptionDto>>.Ok(
+            PermissionCategory.GetAllLabels()
+                .Select(kv => new PermissionCategoryOptionDto { Key = kv.Key, Label = kv.Value })
+                .ToList());
+
+    /// <summary>「全選符合目前篩選的權限異動」ID 清單（僅限待確認項目）</summary>
+    [HttpGet("ids")]
+    public ApiResponse<PermissionChangeIdListDto> GetMatchingChangeIds(
+        [FromQuery] string? q,
+        [FromQuery] string? subnet,
+        [FromQuery] string? category,
+        [FromQuery] string? status,
+        [FromQuery] string? source,
+        [FromQuery] string? from,
+        [FromQuery] string? to,
+        [FromQuery] string sort = "detectedAt",
+        [FromQuery] string dir = "desc")
+    {
+        var (parsedFrom, parsedTo) = QueryStringParsing.ParseDateRange(from, to);
+        var request = new PermissionChangeQueryRequest
+        {
+            Keyword = q,
+            Subnet = subnet,
+            Categories = QueryStringParsing.ParseStrings(category),
+            Status = status,
+            Source = source,
+            From = parsedFrom,
+            To = parsedTo?.AddDays(1).AddSeconds(-1),
+            Sort = sort,
+            Ascending = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase)
+        };
+        return ApiResponse<PermissionChangeIdListDto>.Ok(_service.MatchingChangeIds(request));
+    }
 
     [HttpPut("{changeId}/confirm")]
     [Permission(Capability.ConfirmPermission)]
     public ApiResponse<PermissionChangeDto> Confirm(
         string changeId, [FromBody] ConfirmPermissionChangeRequest request) =>
         ApiResponse<PermissionChangeDto>.Ok(_service.Confirm(changeId, request));
+
+    /// <summary>批次確認權限異動（授權操作或標記可疑）</summary>
+    [HttpPost("confirm/batch")]
+    [Permission(Capability.ConfirmPermission)]
+    public ApiResponse<BatchConfirmPermissionChangesResultDto> ConfirmBatch(
+        [FromBody] BatchConfirmPermissionChangesRequest request) =>
+        ApiResponse<BatchConfirmPermissionChangesResultDto>.Ok(_service.ConfirmBatch(request));
 }

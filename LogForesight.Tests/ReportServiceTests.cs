@@ -16,27 +16,35 @@ public class ReportServiceTests : IDisposable
     private readonly EfAnalysisRecordStore _recordStore;
     private readonly FakeHostStore _hosts = new();
     private readonly FakeUserStore _users = new();
-    private readonly FakeHandlingStore _handlingStore = new();
-    private readonly FakeIssueHandlingStore _issueHandlingStore = new();
+    private readonly EfRecordHandlingStore _handlingStore;
+    private readonly EfIssueHandlingStore _issueHandlingStore;
     private readonly FakeIssueCaseStore _caseStore = new();
     private readonly FakeSystemSettingsStore _settingsStore = new();
     private readonly FakeSystemSettingsService _severityVisibility = new();
+    private readonly RecordRepository _repository;
+    private readonly HandlingHistoryQueryService _handling;
     private readonly ReportService _service;
 
     public ReportServiceTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
+        _handlingStore = new EfRecordHandlingStore(_fixture.NewContext, new EfJsonLogStore(_fixture.NewContext, "handling"));
+        _issueHandlingStore = new EfIssueHandlingStore(_fixture.NewContext);
         var visibility = new AlwaysVisibleService(_hosts);
-        var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        _repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
 
         var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
-        var handling = new HandlingHistoryQueryService(
-            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress);
 
-        // 問題排行自 P4 起走 SQL 端聚合（lf_top_issues），與紀錄查詢共用同一個 EF fixture——
-        // 用假實作會讓「排行只含可見主機」這條授權測試測不到真正的下推路徑
-        var issueRanking = new IssueRankingBuilder(new EfIssueAggregateQuery(_fixture.NewContext));
-        _service = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore);
+        // 排行／風險類型分布自 P4 起走 SQL 端投影（lf_top_issues），與儀表板查詢共用同一份
+        // EF fixture。實作，讓「排行只含可見主機」這類測試測得到下推路徑
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+
+        _handling = new HandlingHistoryQueryService(
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates);
+
+        var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
+
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -48,6 +56,40 @@ public class ReportServiceTests : IDisposable
         {
             HostId = host.HostId, Host = host.HostName, Date = date, RiskLevel = risk, TopIssues = issues.ToList()
         });
+
+    /// <summary>
+    /// 主機排行不是只有兩個天數欄位：關聯天數、最新風險等級、最新標題也要帶回來。
+    ///
+    /// 這條存在的理由是實作時真的踩過：KPI 下推 SQL 之後，排行一度改用
+    /// 「把聚合結果展開成每個風險日一個假紀錄、再餵回 RecordStatsBuilder」的作法——
+    /// 天數對得上，但假紀錄沒有關聯訊號也沒有標題，那幾欄會**靜默變空**，
+    /// 而當時的測試只驗天數所以全綠。
+    /// </summary>
+    [Fact]
+    public void GetSummary_主機排行帶回關聯天數與最新標題()
+    {
+        var host = AddHost("HOST-RANK");
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-1),
+            RiskLevel = "高", Headline = "舊的標題",
+            CorrelationAlerts = new List<string> { "測試用關聯訊號" }
+        });
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = host.HostId, Host = host.HostName, Date = DateTime.Today,
+            RiskLevel = "中", Headline = "最新的標題"
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        var row = Assert.Single(result.HostRanking);
+        Assert.Equal(1, row.HighRiskDays);
+        Assert.Equal(1, row.MediumRiskDays);
+        Assert.Equal(1, row.CorrelationDays);            // 假紀錄的作法這裡會是 0
+        Assert.Equal("最新的標題", row.LatestHeadline);   // 假紀錄的作法這裡會是空字串
+        Assert.Equal("中", row.LatestRiskLevel);
+    }
 
     [Fact]
     public void GetSummary_TotalHosts與可見主機數一致()
@@ -160,6 +202,7 @@ public class ReportServiceTests : IDisposable
                 Severity = IssueSeverity.Low, Category = IssueCategory.Other, Count = 1
             });
 
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High", "Medium" };
         var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
 
         // 「其他」類別只有一個 Low 嚴重度問題，預設未勾選 Low 時整卡不應出現
@@ -243,5 +286,601 @@ public class ReportServiceTests : IDisposable
         var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
 
         Assert.DoesNotContain(result.IssueRanking, i => i.Source == "ghost");
+    }
+
+    [Fact]
+    public void GetSummary_主機名稱大小寫不同時仍能正確對應到處理狀態()
+    {
+        var host = AddHost("HoSt-CaSe");
+        AddRecord(host, DateTime.Today, "高");
+        // 存檔用全小寫
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = "host-case", Date = DateTime.Today,
+            Status = HandlingStatuses.InProgress, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+        // 如果有抓到狀態，就不會是 Open（預設）
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.InProgressCount);
+        Assert.Equal(0, result.Handling.OpenCount);
+    }
+
+    [Fact]
+    public void GetSummary_同一天有多個問題層級標記時推導結果一致()
+    {
+        var host = AddHost("HOST-MULTI");
+        var issue1 = Issue("disk", 1, IssueSeverity.High, 1);
+        var issue2 = Issue("disk", 2, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today, "高", issue1, issue2);
+
+        // 兩個問題分別有狀態
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue1),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue2),
+            Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.InProgressCount);
+    }
+
+    [Fact]
+    public void GetSummary_unassigned範圍_日層級無處理人但問題屬進行中案件時不算未指派()
+    {
+        var host = AddHost("HOST-CASE-ASSIGN");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today, "高", issue);
+
+        // 日層級沒有處理人，但有一個針對該問題的案件，有指派處理人
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\x", DisplayName = "案件負責人" });
+        _caseStore.Save(new IssueCase
+        {
+            HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            CreatedAt = DateTime.Now, UpdatedAt = DateTime.Now
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, "unassigned");
+        // 有案件負責人，所以不算 unassigned，因此高風險日應為 0
+        Assert.Equal(0, result.Kpi.HighRiskDays);
+    }
+    [Fact]
+    public void GetSummary_AllScope_KPI欄位正確且包含或條件CoverageGap()
+    {
+        var host = AddHost("HOST-KPI");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        var rec1 = new DailyAnalysisRecord { HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-2), RiskLevel = "低", DataIncomplete = true, TopIssues = new List<LogIssueSignature>() };
+        var rec2 = new DailyAnalysisRecord { HostId = host.HostId, Host = host.HostName, Date = DateTime.Today.AddDays(-3), RiskLevel = "低", SecurityLogAvailable = false, TopIssues = new List<LogIssueSignature>() };
+        _recordStore.Append(rec1);
+        _recordStore.Append(rec2);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(2, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+        Assert.Equal(2, result.Kpi.CoverageGapDays);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_合併主機舊識別算進存活主機()
+    {
+        var hostA = AddHost("HOST-A-MERGE");
+        var hostB = AddHost("HOST-B-MERGE");
+        AddRecord(hostA, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(hostB, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.Merge(hostB.HostId, hostA.HostId);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.AffectedHosts); // A and B merged to A
+        Assert.Single(result.HostRanking);
+        Assert.Equal(2, result.HostRanking[0].HighRiskDays);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_不可見主機不計入任何數字()
+    {
+        var visible = AddHost("HOST-VIS");
+        AddRecord(visible, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _recordStore.Append(new DailyAnalysisRecord
+        {
+            HostId = 9999, Host = "HOST-GHOST", Date = DateTime.Today, RiskLevel = "高",
+            TopIssues = new List<LogIssueSignature> { Issue("ghost", 1, IssueSeverity.High, 1) }
+        });
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+        Assert.Single(result.HostRanking);
+        Assert.Equal(1, result.RankedHostCount);
+        Assert.Equal(1, result.Trend.Count(t => t.HighRisk > 0));
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_日風險等級顯示範圍限制()
+    {
+        var host = AddHost("HOST-RISK");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        // 只顯示高，中風險日被濾掉
+        Assert.Equal(1, result.Kpi.TotalIssues);
+        Assert.Equal(1, result.Kpi.HighRiskDays);
+        Assert.Equal(1, result.Kpi.AffectedHosts);
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_不可見嚴重度不計入TotalIssues但不影響風險日()
+    {
+        var host = AddHost("HOST-SEV");
+        AddRecord(host, DateTime.Today, "高",
+            Issue("disk", 1, IssueSeverity.High, 1),
+            Issue("disk", 2, IssueSeverity.Low, 1));
+
+        // SiteHidden 隱藏 Low
+        _severityVisibility.VisibleSeverities = new HashSet<string> { "High", "Medium" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Kpi.TotalIssues); // Low is hidden
+        Assert.Equal(1, result.Kpi.HighRiskDays); // 仍是高風險日
+    }
+
+    [Fact]
+    public void GetSummary_AllScope_趨勢補零()
+    {
+        var host = AddHost("HOST-TREND");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(7, result.Trend.Count);
+        Assert.Equal(1, result.Trend.Count(t => t.HighRisk == 1));
+        Assert.Equal(6, result.Trend.Count(t => t.HighRisk == 0));
+    }
+
+    // ── 待辦事項 (GetTodoByRange) 測試 ─────────────────────────────────────────────
+
+    [Fact]
+    public void GetTodoByRange_與GetTodo記憶體聚合四計數等價()
+    {
+        var from = DateTime.Today.AddDays(-9);
+        var to = DateTime.Today;
+
+        // 建立 20 台主機
+        var hosts = Enumerable.Range(1, 20).Select(i => AddHost($"HOST-EQ-{i}")).ToList();
+
+        // 建立假資料：各種狀態組合
+        foreach (var host in hosts)
+        {
+            for (var d = from; d <= to; d = d.AddDays(1))
+            {
+                var issues = new[] { Issue("disk", 1, IssueSeverity.High, 1), Issue("cpu", 2, IssueSeverity.Medium, 1) };
+                AddRecord(host, d, "高", issues);
+
+                // 隨機（依據主機跟日期分派不同狀態組合）
+                int mod = (int)((host.HostId + d.DayOfYear) % 7);
+                switch (mod)
+                {
+                    case 0: // 未標記
+                        break;
+                    case 1: // 問題層級結案
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now });
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[1]), Status = IssueHandlingStatuses.KnownNoise, UpdatedAt = DateTime.Now });
+                        break;
+                    case 2: // 部分結案
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now });
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[1]), Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now });
+                        break;
+                    case 3: // InProgress (問題層級)
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.InProgress, UpdatedAt = DateTime.Now });
+                        break;
+                    case 4: // Observing (問題層級)
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(1), UpdatedAt = DateTime.Now });
+                        break;
+                    case 5: // Escalated
+                        _issueHandlingStore.Save(new IssueHandling { HostName = host.HostName, Date = d, IssueKey = IssueSignatureKey.For(issues[0]), Status = IssueHandlingStatuses.Escalated, UpdatedAt = DateTime.Now });
+                        break;
+                    case 6: // 日層級 wont_fix
+                        _handlingStore.Save(new RecordHandling { HostName = host.HostName, Date = d, Status = HandlingStatuses.WontFix, UpdatedAt = DateTime.Now });
+                        break;
+                }
+            }
+        }
+
+        var filter = new RecordQueryFilter { From = from, To = to, Hosts = hosts.Select(HostKey.Of).ToList() };
+        var records = _repository.QueryLightweight(filter);
+        var memTodo = _handling.GetTodo(records);
+        var sqlTodo = _handling.GetTodoByRange(from, to);
+
+        Assert.Equal(memTodo.TotalCount, sqlTodo.TotalCount);
+        Assert.Equal(memTodo.OpenCount, sqlTodo.OpenCount);
+        Assert.Equal(memTodo.InProgressCount, sqlTodo.InProgressCount);
+        Assert.Equal(memTodo.ResolvedCount, sqlTodo.ResolvedCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_墓碑主機合併後舊識別的風險日仍被正確計數()
+    {
+        var hostA = AddHost("HOST-A-TODO");
+        var hostB = AddHost("HOST-B-TODO");
+        var from = DateTime.Today.AddDays(-2);
+        var to = DateTime.Today;
+
+        AddRecord(hostB, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.Merge(hostB.HostId, hostA.HostId);
+
+        var todo = _handling.GetTodoByRange(from, to);
+
+        Assert.Equal(1, todo.TotalCount);
+        Assert.Equal(1, todo.OpenCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則一_日層級逾期未結案_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-1");
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            Status = HandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則二_問題層級InProgress且逾期_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-2");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue);
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期規則三_問題層級Observing且逾期_計入OverdueCount()
+    {
+        var host = AddHost("HOST-OVERDUE-3");
+        var issue = Issue("disk", 1, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue);
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void GetTodoByRange_逾期不重複計算_同一天多條逾期規則同時滿足時只算一次()
+    {
+        var host = AddHost("HOST-OVERDUE-4");
+        var issue1 = Issue("disk", 1, IssueSeverity.High, 1);
+        var issue2 = Issue("disk", 2, IssueSeverity.High, 1);
+        AddRecord(host, DateTime.Today.AddDays(-1), "高", issue1, issue2);
+
+        _handlingStore.Save(new RecordHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            Status = HandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue1),
+            Status = IssueHandlingStatuses.InProgress,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = host.HostName,
+            Date = DateTime.Today.AddDays(-1),
+            IssueKey = IssueSignatureKey.For(issue2),
+            Status = IssueHandlingStatuses.Observing,
+            DueDate = DateTime.Today.AddDays(-1),
+            UpdatedAt = DateTime.Now
+        });
+
+        var todo = _handling.GetTodoByRange(DateTime.Today.AddDays(-2), DateTime.Today);
+        Assert.Equal(1, todo.OverdueCount);
+    }
+
+    [Fact]
+    public void ReportsController_Summary_367天丟出驗證錯誤()
+    {
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var from = DateTime.Today.AddDays(-366).ToString("yyyy-MM-dd");
+        var to = DateTime.Today.ToString("yyyy-MM-dd");
+
+        var ex = Assert.Throws<LogForesight.Web.Models.DomainException>(() => controller.Summary(from, to, null));
+        Assert.Contains("366", ex.Message);
+    }
+
+    [Fact]
+    public void ReportsController_Summary_366天可以通過()
+    {
+        var controller = new LogForesight.Web.Controllers.Api.ReportsController(_service);
+        var from = DateTime.Today.AddDays(-365).ToString("yyyy-MM-dd");
+        var to = DateTime.Today.ToString("yyyy-MM-dd");
+
+        var result = controller.Summary(from, to, null);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void GetSummary_CompareYoy_比較期為去年同期()
+    {
+        var host = AddHost("HOST-YOY");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevFrom = from.AddYears(-1);
+        var prevTo = to.AddYears(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "yoy");
+
+        Assert.Equal("yoy", result.ComparisonMode);
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_ComparePrevious_維持現行緊鄰前期行為()
+    {
+        var host = AddHost("HOST-PREV");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevTo = from.AddDays(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result1 = _service.GetSummary(from, to, null, "previous");
+        var result2 = _service.GetSummary(from, to, null, null);
+
+        Assert.Equal("previous", result1.ComparisonMode);
+        Assert.Equal(1, result1.Kpi.HighRiskDaysPrevious);
+        Assert.Equal("previous", result2.ComparisonMode);
+        Assert.Equal(1, result2.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_CompareUnrecognized_當成previous不丟錯()
+    {
+        var host = AddHost("HOST-UNREC");
+        var from = DateTime.Today.AddDays(-10);
+        var to = DateTime.Today;
+
+        var prevTo = from.AddDays(-1);
+
+        AddRecord(host, prevTo, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "invalid_mode");
+
+        Assert.Equal("previous", result.ComparisonMode);
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_CompareYoy_閏年2月29的去年比較期終點是2月28()
+    {
+        var host = AddHost("HOST-LEAP");
+        var from = new DateTime(2024, 2, 29);
+        var to = new DateTime(2024, 2, 29);
+
+        AddRecord(host, new DateTime(2023, 2, 28), "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        var result = _service.GetSummary(from, to, null, "yoy");
+
+        Assert.Equal(1, result.Kpi.HighRiskDaysPrevious);
+    }
+
+    [Fact]
+    public void GetSummary_ComparisonOutOfRetention_依比較期終點是否落在保留期之外判定()
+    {
+        var fromOutside = DateTime.Today.AddDays(-180);
+        var toOutside = DateTime.Today.AddDays(-179);
+
+        var fromInside = DateTime.Today.AddDays(-179);
+        var toInside = DateTime.Today.AddDays(-178);
+
+        var resultOutside = _service.GetSummary(fromOutside, toOutside, null, "previous");
+        var resultInside = _service.GetSummary(fromInside, toInside, null, "previous");
+
+        Assert.True(resultOutside.ComparisonOutOfRetention);
+        Assert.False(resultInside.ComparisonOutOfRetention);
+    }
+
+    [Fact]
+    public void GetSummary_比較期三態_全部超出與部分超出互斥()
+    {
+        // 保留線在 180 天前（FakeSystemSettingsStore 的出廠預設）。
+        // previous 模式的比較期＝查詢區間往前平移一個區間長度。
+        _settingsStore.Update(x => x.RetentionDays = 180);
+
+        // (a) 全部超出：比較期終點也早於保留線
+        var allOut = _service.GetSummary(DateTime.Today.AddDays(-180), DateTime.Today.AddDays(-179), null, "previous");
+
+        // (b) 部分超出：區間 10 天，比較期跨過保留線（起點在外、終點在內）
+        var partial = _service.GetSummary(DateTime.Today.AddDays(-176), DateTime.Today.AddDays(-167), null, "previous");
+
+        // (c) 完全在保留期內
+        var inside = _service.GetSummary(DateTime.Today.AddDays(-20), DateTime.Today.AddDays(-11), null, "previous");
+
+        Assert.True(allOut.ComparisonOutOfRetention);
+        Assert.False(allOut.ComparisonPartiallyOutOfRetention);   // 互斥
+
+        Assert.False(partial.ComparisonOutOfRetention);
+        Assert.True(partial.ComparisonPartiallyOutOfRetention);
+
+        Assert.False(inside.ComparisonOutOfRetention);
+        Assert.False(inside.ComparisonPartiallyOutOfRetention);
+    }
+
+    [Fact]
+    public void GetSummary_帶出目前的保留天數_供前端推導比較模式門檻()
+    {
+        _settingsStore.Update(x => x.RetentionDays = 400);
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-10), DateTime.Today.AddDays(-1), null, "previous");
+
+        Assert.Equal(400, result.RetentionDays);
+    }
+    [Fact]
+    public void GetSummary_日風險等級只顯示高時_中風險日的待辦不計入Todo()
+    {
+        var host = AddHost("HOST-RISK-TODO");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高" };
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(1, result.Handling.TotalCount);
+        Assert.Equal(1, result.Handling.OpenCount);
+    }
+
+    [Fact]
+    public void GetSummary_日風險等級全部隱藏時_Todo為零()
+    {
+        var host = AddHost("HOST-ALL-HIDDEN");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, DateTime.Today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string>();
+
+        var result = _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.Equal(0, result.Kpi.HighRiskDays);
+        Assert.Equal(0, result.Handling.TotalCount);
+        Assert.Equal(0, result.Handling.OpenCount);
+    }
+
+    // ── 回饋二十七輪作業 F：效能驗收 ──────────────────────────────────────────
+    //
+    // 這兩條先於實作寫下，訂出「改完之後必須成立」的條件，之後充當回歸護欄。
+    //
+    // 上限 4 是實測後訂的契約值，不是理論下限：改動前是 13 次，主要來自
+    // EfIssueAggregateQuery 的每個聚合方法各自重建一次主機別名索引（一次報表請求會呼叫
+    // 八個以上聚合方法）。索引改為依主機資料版本快取後降到 4——剩下的四次分別來自
+    // 可見性服務、處理狀態彙總的主機索引，以及索引首次建立，各自服務邊界不同，
+    // 硬要收斂成一次得把主機快照穿過好幾層 API，代價大於效益。
+    // **這個數字只能往下調，不能往上**：往上代表又有人在請求路徑上加了一次全表走訪。
+
+    private const int MaxHostGetAllPerSummary = 4;
+
+    [Fact]
+    public void GetSummary_整份主機表的載入次數不得超過契約上限()
+    {
+        var host = AddHost("HOST-GETALL");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.ResetCallCounts();
+        _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today);
+
+        Assert.True(_hosts.GetAllCallCount <= MaxHostGetAllPerSummary,
+            $"整份主機表被載入 {_hosts.GetAllCallCount} 次，超過契約上限 {MaxHostGetAllPerSummary} 次");
+    }
+
+    /// <summary>非 All 顯示範圍走記憶體分支，同樣受同一個上限約束。</summary>
+    [Fact]
+    public void GetSummary_非全部顯示範圍時載入次數同樣不得超過契約上限()
+    {
+        var host = AddHost("HOST-GETALL-SCOPE");
+        AddRecord(host, DateTime.Today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+
+        _hosts.ResetCallCounts();
+        _service.GetSummary(DateTime.Today.AddDays(-6), DateTime.Today, handlingScope: "unhandled");
+
+        Assert.True(_hosts.GetAllCallCount <= MaxHostGetAllPerSummary,
+            $"整份主機表被載入 {_hosts.GetAllCallCount} 次，超過契約上限 {MaxHostGetAllPerSummary} 次");
+    }
+
+    /// <summary>
+    /// F5：非 All 顯示範圍把「只要高／中風險」下推 SQL 之後，輸出必須與下推前相同。
+    /// FilterByScope 本來就會丟掉低風險列，所以下推是等值的——這條測試用「資料集裡
+    /// 混著低風險列」的情況釘住這個前提，避免哪天 scope 語意改成也涵蓋低風險時
+    /// 這個下推變成安靜吃資料。
+    /// </summary>
+    [Fact]
+    public void GetSummary_非全部顯示範圍時低風險紀錄不影響輸出()
+    {
+        var host = AddHost("HOST-SCOPE-LOW");
+        var today = DateTime.Today;
+        AddRecord(host, today, "高", Issue("disk", 1, IssueSeverity.High, 1));
+        AddRecord(host, today.AddDays(-1), "中", Issue("disk", 2, IssueSeverity.Medium, 1));
+
+        var before = _service.GetSummary(today.AddDays(-6), today, handlingScope: "unhandled");
+
+        // 再塞一批低風險紀錄——非 All 範圍下它們本來就不該影響任何數字
+        var noisy = AddHost("HOST-SCOPE-LOW-2");
+        AddRecord(noisy, today, "低", Issue("net", 3, IssueSeverity.Low, 1));
+        AddRecord(noisy, today.AddDays(-2), "低", Issue("net", 4, IssueSeverity.Low, 1));
+
+        var after = _service.GetSummary(today.AddDays(-6), today, handlingScope: "unhandled");
+
+        Assert.Equal(before.Kpi.HighRiskDays, after.Kpi.HighRiskDays);
+        Assert.Equal(before.Kpi.AffectedHosts, after.Kpi.AffectedHosts);
+        Assert.Equal(before.Handling.TotalCount, after.Handling.TotalCount);
+        Assert.Equal(before.RankedHostCount, after.RankedHostCount);
+        Assert.Equal(
+            before.HostRanking.Select(h => h.HostName),
+            after.HostRanking.Select(h => h.HostName));
     }
 }

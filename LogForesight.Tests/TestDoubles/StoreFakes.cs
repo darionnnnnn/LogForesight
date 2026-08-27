@@ -15,7 +15,45 @@ internal class FakeHostStore : IHostStore
     /// 從「主機數×天數」收斂成「主機數」的計數器。</summary>
     public int GetCallCount { get; private set; }
 
-    public List<WebHost> GetAll() => _hosts.ToList();
+    /// <summary>回饋二十七輪作業 F：一次請求內整份主機表被投影載入幾次。
+    /// 正式實作是 SQL 查詢，2000 台規模下每多一次就是一次全表投影。</summary>
+    public int GetAllCallCount { get; private set; }
+
+    public List<WebHost> GetAll()
+    {
+        GetAllCallCount++;
+        return _hosts.ToList();
+    }
+
+    /// <summary>計數歸零（測試要量的是「一次請求」的次數，不含建立測試資料那段）</summary>
+    public void ResetCallCounts()
+    {
+        GetCallCount = 0;
+        GetAllCallCount = 0;
+    }
+
+    /// <summary>
+    /// 資料版本（回饋二十七輪作業 F）。**由內容推導而不是人工遞增**：這個替身有十個以上的
+    /// 寫入方法，改用計數器的話漏加一個就變成「上層快取永遠不更新」的假綠——測試全過、
+    /// 正式環境卻拿過期索引查資料。這裡的清單很小，每次重算的成本可以忽略。
+    /// 涵蓋別名索引真正吃的欄位：主機識別與併入關係。
+    /// </summary>
+    public long DataVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(_hosts.Count);
+            foreach (var host in _hosts)
+            {
+                hash.Add(host.HostId);
+                hash.Add(host.HostName, StringComparer.OrdinalIgnoreCase);
+                hash.Add(host.MergedInto);
+                hash.Add(host.Active);
+            }
+            return hash.ToHashCode();
+        }
+    }
 
     public WebHost? Get(long hostId)
     {
@@ -47,6 +85,7 @@ internal class FakeHostStore : IHostStore
         existing.RoleDesc = host.RoleDesc;
         existing.Source = host.Source;
         existing.Os = host.Os;
+        existing.Tier = host.Tier;
         existing.Active = host.Active;
         existing.GroupIds = host.GroupIds;
         existing.OwnerUserIds = host.OwnerUserIds;
@@ -143,8 +182,17 @@ internal class FakeHostStore : IHostStore
     /// 同一份語意（一次完成、不逐台整份讀改寫）。mutation 內若自行配發 HostId（NetiqImportApplier
     /// 的批次三態邏輯就是這樣），事後把 _nextId 頂到目前最大值之上，避免後續 Upsert／Touch
     /// 撞號。</summary>
+    /// <summary>設為 true 時 MutateBatch 一律拋例外，用來模擬 blob 寫入重試耗盡（回饋二十輪 D）</summary>
+    public bool ThrowOnMutateBatch { get; set; }
+
+    /// <summary>MutateBatch 被呼叫的次數（含失敗）</summary>
+    public int MutateBatchAttempts { get; private set; }
+
     public TResult MutateBatch<TResult>(Func<List<WebHost>, TResult> mutation)
     {
+        MutateBatchAttempts++;
+        if (ThrowOnMutateBatch) throw new InvalidOperationException("模擬 blob 寫入重試耗盡");
+
         var result = mutation(_hosts);
         if (_hosts.Count > 0) _nextId = Math.Max(_nextId, _hosts.Max(h => h.HostId) + 1);
         return result;
@@ -351,6 +399,10 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false) =>
         throw new NotImplementedException();
 
+    /// <summary>記憶體實作沒有「整份 blob」與「輕量列」的區別，直接沿用 Query()——
+    /// 差異只在真正的 SQL 後端才有效能意義，測試在意的是篩選/授權語意逐位一致。</summary>
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter) => Query(filter);
+
     /// <summary>與 EfAnalysisRecordStore.ListHostDates 同語意（回饋十八輪批次C 測試所需）：
     /// 窗口內 HostId／Date 的輕量投影，HostId=0（無主機識別的舊列）不列入。</summary>
     public HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to) =>
@@ -360,17 +412,17 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .ToHashSet();
 }
 
-/// <summary>問題負責人規則的記憶體實作（回饋十八輪批次F）：與正式的 IssueOwnerStore
-/// 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
+/// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
+/// IssueOwnerStore 同語意（(Source,EventId) 不分大小寫為鍵）。</summary>
 internal class FakeIssueOwnerStore : IIssueOwnerStore
 {
-    private readonly List<IssueOwnerRule> _rules = new();
+    private readonly List<IssueProfile> _rules = new();
 
-    public List<IssueOwnerRule> GetAll() => _rules.ToList();
+    public List<IssueProfile> GetAll() => _rules.ToList();
 
-    public IssueOwnerRule? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
+    public IssueProfile? Get(string source, int eventId) => _rules.FirstOrDefault(r => Matches(r, source, eventId));
 
-    public IssueOwnerRule Upsert(IssueOwnerRule rule)
+    public IssueProfile Upsert(IssueProfile rule)
     {
         var existing = _rules.FirstOrDefault(r => Matches(r, rule.SourceName, rule.EventId));
         if (existing == null)
@@ -383,6 +435,12 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
         existing.Note = rule.Note;
         existing.UpdatedAt = DateTime.Now;
         existing.UpdatedByAccount = rule.UpdatedByAccount;
+        existing.ConclusionStatus = rule.ConclusionStatus;
+        existing.ConclusionNote = rule.ConclusionNote;
+        existing.ConcludedById = rule.ConcludedById;
+        existing.ConcludedByAccount = rule.ConcludedByAccount;
+        existing.ConcludedAt = rule.ConcludedAt;
+        existing.AutoApply = rule.AutoApply;
         return existing;
     }
 
@@ -390,8 +448,8 @@ internal class FakeIssueOwnerStore : IIssueOwnerStore
 
     // 委派單一事實來源（終檢輪修正）：自寫一份就是 FakeHostStore/FakeUserStore 踩過的
     // 「測試替身與正式實作語意漂移」家族，正式端改比對規則時這裡不會跟著動。
-    private static bool Matches(IssueOwnerRule r, string source, int eventId) =>
-        IssueOwnerRule.Matches(r, source, eventId);
+    private static bool Matches(IssueProfile r, string source, int eventId) =>
+        IssueProfile.Matches(r, source, eventId);
 }
 
 /// <summary>

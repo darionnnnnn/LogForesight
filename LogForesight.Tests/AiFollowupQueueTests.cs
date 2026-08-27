@@ -108,4 +108,20 @@ public class AiFollowupQueueTests
 
         Assert.False(queue.TryEnqueue(2));
     }
+
+    /// <summary>回饋二十七輪作業 B：背壓期間畫面要看得出佇列在消化，佇列深度必須拿得到。</summary>
+    [Fact]
+    public async Task PendingCount反映尚未被取走的件數()
+    {
+        var queue = new AiFollowupQueue<int>(capacity: 5);
+        Assert.Equal(0, queue.PendingCount);
+
+        await queue.EnqueueAsync(1);
+        await queue.EnqueueAsync(2);
+        Assert.Equal(2, queue.PendingCount);
+
+        var reader = queue.ReadAllAsync().GetAsyncEnumerator();
+        Assert.True(await reader.MoveNextAsync());
+        Assert.Equal(1, queue.PendingCount);
+    }
 }

@@ -1,9 +1,10 @@
-@*
+﻿@*
     主版面（docs/WEB-SPEC.md §8.2 版面骨架、§8.5 頁面殼）。
     View 只有結構、沒有資料——側欄選單由 core/layout.js 依 /api/auth/me 回傳的能力渲染。
     唯一的例外是品牌三元素（docs/archive/FEEDBACK-10-PLAN.md §1）：那是每頁第一眼看到的東西，
     等前端 fetch 回來才替換會閃動，所以伺服器端就渲染好。
 *@
+@using Microsoft.AspNetCore.Mvc.ViewFeatures
 @inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     // 頁尾顯示版本號（docs/archive/HISTORY.md P1-4）：報修時能確認回報者手上的部署是哪個版本
@@ -17,43 +18,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>@ViewData["Title"] - @brand.Name</title>
+    <link rel="icon" href="~/favicon.ico" />
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @* 站台掛載路徑（IIS 子 Application 時是 /LogForesight 這種前綴）：前端的連結組裝與
+       API 呼叫靠它補前綴，見 wwwroot/js/core/paths.js 的 appUrl()。必須早於任何 module。 *@
+    <script>window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
 </head>
 <body>
     <div class="lf-layout">
         <aside class="lf-sidebar lf-no-print">
-            <div class="lf-sidebar__brand">
-                @* id 供 settings.js 儲存成功後即時更新（回饋十六輪批次E-3），不必整頁重整
-                   才看到外觀變更——JS 端分別定位圖示、名稱、副標三段各自替換 *@
-                <span class="lf-sidebar__brand-mark" id="lf-brand-mark">
-                    @if (brand.IconDataUri != null)
-                    {
-                        @* 自訂圖示（§1）：alt 留空——它旁邊就是產品名稱文字，
-                           讀屏再念一次圖片等於重複，屬純裝飾 *@
-                        <img src="@brand.IconDataUri" alt="" class="lf-sidebar__brand-img" />
-                    }
-                    else
-                    {
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
-                    }
-                </span>
-                <span class="lf-sidebar__brand-text">
-                    <span class="lf-sidebar__brand-name" id="lf-brand-name" title="@brand.Name">@brand.Name</span>
-                    @if (brand.Subtitle != null)
-                    {
-                        <small id="lf-brand-subtitle" title="@brand.Subtitle">@brand.Subtitle</small>
-                    }
-                </span>
-            </div>
+            <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "sidebar", ["BrandHref"] = Url.Content("~/") }' />
             <nav class="lf-sidebar__nav" id="lf-nav"></nav>
             <div class="lf-sidebar__footer">
                 <div class="lf-sidebar__user">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#people"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#people"></use></svg>
                     <span id="lf-current-user" class="text-truncate"></span>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline-light w-100" id="lf-logout">
-                    <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#box-arrow-right"></use></svg>
+                    <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#box-arrow-right"></use></svg>
                     登出
                 </button>
                 <div class="lf-sidebar__version text-muted small">v@(appVersion)</div>

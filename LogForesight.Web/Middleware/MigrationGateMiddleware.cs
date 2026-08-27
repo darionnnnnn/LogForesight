@@ -3,7 +3,9 @@ using LogForesight.Web.Models;
 namespace LogForesight.Web.Middleware;
 
 /// <summary>
-/// 處理狀態搬移期間擋下**寫入**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+/// 資料搬移期間擋下**寫入**（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三-d）。
+/// 目前管兩件事：處理狀態搬移（/api/handling、/api/records）與權限異動搬移
+/// （/api/permission-changes），兩者各看各的遷移狀態。
 ///
 /// **為什麼需要**：遷移改成背景執行之後，站台在搬移進行中就已經可以服務請求。
 /// 若此時使用者標記了一個問題，那筆資料會寫進**還沒搬完**的表——
@@ -20,11 +22,13 @@ namespace LogForesight.Web.Middleware;
 public class MigrationGateMiddleware
 {
     /// <summary>受保護的路徑前綴：處理狀態相關的寫入入口</summary>
-    private static readonly string[] GuardedPrefixes =
+    private static readonly string[] HandlingGuardedPrefixes =
     {
         "/api/handling",        // 跨主機批次指派／統一標記／回覆狀態
         "/api/records"          // 風險日詳情的日層級與問題層級標記（.../handling/...）
     };
+
+    private const string PermissionChangeGuardedPrefix = "/api/permission-changes";
 
     private readonly RequestDelegate _next;
 
@@ -35,33 +39,40 @@ public class MigrationGateMiddleware
 
     public async Task InvokeAsync(HttpContext context, StorageBackend backend)
     {
-        if (RequiresGate(context))
+        if (!IsReadOnlyMethod(context.Request.Method))
         {
-            var state = backend.HandlingMigrator.State;
-            if (state.ShouldBlockWrites)
+            if (context.Request.Path.StartsWithSegments(PermissionChangeGuardedPrefix))
             {
-                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-                await context.Response.WriteAsJsonAsync(
-                    ApiResponse<object>.Fail(ApiErrorCodes.Conflict, DescribeState(state)));
-                return;
+                var permState = backend.PermissionChangeMigrator.State;
+                if (permState.ShouldBlockWrites)
+                {
+                    context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                    await context.Response.WriteAsJsonAsync(
+                        ApiResponse<object>.Fail(ApiErrorCodes.Conflict, DescribePermissionChangeState(permState)));
+                    return;
+                }
+            }
+            else if (HandlingGuardedPrefixes.Any(prefix => context.Request.Path.StartsWithSegments(prefix)))
+            {
+                var state = backend.HandlingMigrator.State;
+                if (state.ShouldBlockWrites)
+                {
+                    context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                    await context.Response.WriteAsJsonAsync(
+                        ApiResponse<object>.Fail(ApiErrorCodes.Conflict, DescribeState(state)));
+                    return;
+                }
             }
         }
 
         await _next(context);
     }
 
-    /// <summary>只擋處理狀態相關路徑的非 GET 請求——查詢一律放行</summary>
-    private static bool RequiresGate(HttpContext context)
-    {
-        if (HttpMethods.IsGet(context.Request.Method) ||
-            HttpMethods.IsHead(context.Request.Method) ||
-            HttpMethods.IsOptions(context.Request.Method))
-        {
-            return false;
-        }
-
-        return GuardedPrefixes.Any(prefix => context.Request.Path.StartsWithSegments(prefix));
-    }
+    /// <summary>非 GET／HEAD／OPTIONS 請求才需要檢查遷移閘門——查詢一律放行</summary>
+    private static bool IsReadOnlyMethod(string method) =>
+        HttpMethods.IsGet(method) ||
+        HttpMethods.IsHead(method) ||
+        HttpMethods.IsOptions(method);
 
     /// <summary>
     /// 訊息要說得出「現在是什麼狀況、要不要等」——只回「服務暫時無法使用」的話，
@@ -77,6 +88,18 @@ public class MigrationGateMiddleware
 
         var done = new[] { state.IssueHandlingDone, state.IssueCasesDone, state.RecordHandlingDone }.Count(x => x);
         return $"處理狀態的資料正在搬移中（已完成 {done}/3），此期間無法變更處理狀態，請稍候再試。" +
+               "查詢與檢視不受影響。";
+    }
+
+    private static string DescribePermissionChangeState(PermissionChangeMigrationState state)
+    {
+        if (!string.IsNullOrWhiteSpace(state.LastError))
+        {
+            return "權限異動的資料搬移失敗，目前為唯讀模式，請聯繫系統管理員。" +
+                   $"（原因：{state.LastError}）";
+        }
+
+        return "權限異動的資料正在搬移中，此期間無法確認權限異動，請稍候再試。" +
                "查詢與檢視不受影響。";
     }
 }

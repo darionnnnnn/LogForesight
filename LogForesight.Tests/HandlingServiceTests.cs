@@ -51,7 +51,7 @@ public class HandlingServiceTests : IDisposable
 
         _repository = new FakeRecordRepository(_hosts);
         _repository.AddRecord(_host.HostName, Today);
-        _caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _repository, _hosts);
+        _caseCoordinator = new IssueCaseCoordinator(_cases, _issueHandlings, _handlings, _repository, _hosts, new FakeIssueOwnerStore());
     }
 
     private static DateTime Today => DateTime.Today;
@@ -253,7 +253,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -268,7 +268,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule
+        _issueOwners.Upsert(new IssueProfile
         {
             SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId, third.UserId }
         });
@@ -288,8 +288,8 @@ public class HandlingServiceTests : IDisposable
         var a = Issue("disk", 153);
         var b = Issue("network", 201);
         _repository.AddRecord(_host.HostName, day, a, b);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { third.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -304,8 +304,8 @@ public class HandlingServiceTests : IDisposable
         var a = Issue("disk", 153);
         var b = Issue("network", 201);
         _repository.AddRecord(_host.HostName, day, a, b);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 201, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -321,7 +321,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         var result = Create(Capability.Handle).Get(_host.HostId, day);
 
@@ -335,7 +335,7 @@ public class HandlingServiceTests : IDisposable
         var day = Today.AddDays(1);
         var issue = Issue("disk", 153);
         _repository.AddRecord(_host.HostName, day, issue);
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { _other.UserId } });
 
         Create(Capability.Handle).Update(_host.HostId, day, new UpdateHandlingRequest { Status = HandlingStatuses.InProgress });
 
@@ -1252,6 +1252,44 @@ public class HandlingServiceTests : IDisposable
         {
             Assert.Single(_handlings.GetLogs(_host.HostName, day), l => l.Action == HandlingActions.IssueStatus);
         }
+    }
+
+    /// <summary>勾選「之後自動套用」（回饋十九輪批次F，§2 決策一）：統一標記除了處理既有日子，
+    /// 還要把問題檔案設成機房結論，供之後新出現的主機日自動套用</summary>
+    [Fact]
+    public void 統一標記_勾選自動套用時設定問題檔案的機房結論()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.KnownNoise, Note = "已知的雜訊來源",
+            AutoApply = true
+        });
+
+        var profile = _issueOwners.Get("disk", 153);
+        Assert.NotNull(profile);
+        Assert.Equal(IssueHandlingStatuses.KnownNoise, profile!.ConclusionStatus);
+        Assert.Equal("已知的雜訊來源", profile.ConclusionNote);
+        Assert.True(profile.AutoApply);
+    }
+
+    /// <summary>不勾選時只處理既有日子，不建立／不動問題檔案的機房結論</summary>
+    [Fact]
+    public void 統一標記_不勾選自動套用時不動問題檔案()
+    {
+        var a = Issue("disk", 153);
+        var day = Today.AddDays(-3);
+        _repository.AddRecord(_host.HostName, day, a);
+
+        Create(Capability.Assign, Capability.Handle).BulkCloseIssue(new BulkCloseIssueRequest
+        {
+            Source = "disk", EventId = 153, Status = IssueHandlingStatuses.Resolved, Note = "這次先這樣"
+        });
+
+        Assert.Null(_issueOwners.Get("disk", 153));
     }
 
     /// <summary>

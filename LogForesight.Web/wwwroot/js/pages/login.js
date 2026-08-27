@@ -4,7 +4,9 @@
  */
 
 import { api } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { withBusy } from '../core/ui.js';
+import { initBrandAlign } from '../core/brand-align.js';
 
 const form = document.getElementById('lf-login-form');
 const accountInput = document.getElementById('account');
@@ -56,9 +58,10 @@ form.addEventListener('submit', async event => {
 
         // returnUrl：被踢回登入頁前想去的位置。只接受站內相對路徑——
         // 直接採用外部網址會變成開放重新導向（釣魚可用它把使用者帶去偽站）
+        // returnUrl 存的是 app 內路徑（不含掛載前綴），用 appUrl 還原成真正的網址
         const params = new URLSearchParams(location.search);
         const returnUrl = params.get('returnUrl');
-        location.href = isSafeReturnUrl(returnUrl) ? returnUrl : '/';
+        location.href = appUrl(isSafeReturnUrl(returnUrl) ? returnUrl : '/');
     } catch (error) {
         showError(error.message);
         restore();
@@ -79,3 +82,6 @@ function hideError() {
 }
 
 init();
+
+initBrandAlign();
+window.LF_LOGIN_READY = true;

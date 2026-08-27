@@ -1,5 +1,15 @@
 namespace LogForesight.Web.Models.Dto;
 
+/// <summary>
+/// 問題查詢「依問題」視角的分頁結果（回饋二十輪 B2）：在既有分頁結果上附加去重主機總數，
+/// 供前端顯示「共 N 台主機（去重）」與風險類型卡對齊。
+/// </summary>
+public class IssueSearchResultDto : PagedResult<IssueGroupDto>
+{
+    /// <summary>期間內符合條件的問題所影響的相異存活主機去重計數（定義同風險類型卡的主機數）</summary>
+    public int DistinctHostCount { get; set; }
+}
+
 /// <summary>問題查詢的清單列</summary>
 public class RecordListItemDto
 {
@@ -143,9 +153,21 @@ public class IssueGroupDto
 
     public string? KnownIssue { get; set; }
 
+    /// <summary>白話說明（取自命中規則的 PlainExplanation；未命中或規則無說明時為 null）</summary>
+    public string? PlainExplanation { get; set; }
+
     /// <summary>「N 台未處理／M 台處理中／K 台已處理」三態摘要（依各主機進行中案件與
     /// 最近一次出現的標記彙總）</summary>
     public string HandlingSummary { get; set; } = string.Empty;
+
+    /// <summary>處理概況：未處理台數（與 HandlingSummary 來源一致）</summary>
+    public int UnhandledCount { get; set; }
+
+    /// <summary>處理概況：處理中台數（與 HandlingSummary 來源一致）</summary>
+    public int InProgressCount { get; set; }
+
+    /// <summary>處理概況：已處理台數（與 HandlingSummary 來源一致）</summary>
+    public int ResolvedCount { get; set; }
 
     /// <summary>群組層級處理概況的對外三態（§10 篩選用）：open｜in_progress｜resolved
     /// ——有未處理→open，否則有處理中→in_progress，否則 resolved</summary>
@@ -161,6 +183,16 @@ public class IssueGroupDto
     /// 兩者可以不同（同 WebHost.OwnerUserIds 與 RecordHandling.HandlerId 的既有區分）。空清單＝
     /// 沒有指派問題負責人規則。</summary>
     public List<string> IssueOwnerNames { get; set; } = new();
+
+    // ── 機房級基準線（回饋十九輪批次G1，語意同 IssueRankingDto 同名欄位）───────
+
+    public double? BaselineMedianHostCount { get; set; }
+    public int? BaselineLatestHostCount { get; set; }
+    public double? BaselineDeviationMultiplier { get; set; }
+    public int BaselineOccurrenceDays { get; set; }
+
+    /// <summary>問題在整個機房第一次出現的日期（回饋十九輪批次G4，不受查詢期間截斷）</summary>
+    public string FleetFirstSeen { get; set; } = string.Empty;
 }
 
 /// <summary>依問題視角「處理人」欄的單一處理人（姓名＋工作頁連結用的 Id）</summary>
@@ -209,6 +241,9 @@ public class RecordDetailDto
     /// <summary>統計已完成、AI 分析還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5），
     /// 見 <see cref="RecordListItemDto.AiPending"/> 的說明。</summary>
     public bool AiPending { get; set; }
+
+    /// <summary>原始樣本訊息與詳情已超過保留期並清除（整列與統計欄、問題清單仍保留）</summary>
+    public bool DetailPruned { get; set; }
 
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
@@ -304,6 +339,21 @@ public class IssueDto
     public string LastSeen { get; set; } = string.Empty;
     public int DistinctMessageCount { get; set; }
     public string? KeyDetails { get; set; }
+
+    /// <summary>登入失敗（4625／4771／Linux ssh 認證失敗）的結構化明細，非登入失敗簽章為 null。</summary>
+    public List<LoginFailureDetailDto>? LoginFailureDetails { get; set; }
+
+    /// <summary>截斷前的明細總次數——明細封頂 50 組，前端「另有 N 筆」不能拿封頂後的清單長度當全貌。</summary>
+    public int LoginFailureTotalCount { get; set; }
+
+    /// <summary>明細是否因封頂而截斷。</summary>
+    public bool LoginFailureDetailsTruncated { get; set; }
+
+    /// <summary>true＝此簽章判定為疑似殘留憑證重試（機械性重複，非攻擊）。</summary>
+    public bool ResidualCredentialRetry { get; set; }
+
+    /// <summary>殘留憑證重試（或 4740 由殘留觸發）的白話判定依據，未命中為 null。</summary>
+    public string? ResidualCredentialBasis { get; set; }
     public List<string> SampleMessages { get; set; } = new();
     public bool Suppressed { get; set; }
 
@@ -369,6 +419,18 @@ public class IssueDto
     /// 不必再到獨立的深入分析卡玩多對多連連看。
     /// </summary>
     public IssueGuidanceDto? Guidance { get; set; }
+}
+
+public class LoginFailureDetailDto
+{
+    public string Account { get; set; } = string.Empty;
+    public bool IsComputerAccount { get; set; }
+    public string Source { get; set; } = string.Empty;
+    /// <summary>登入類型的白話文字（如「網路登入」），Linux／4771 無此欄時為空字串。</summary>
+    public string LogonTypeText { get; set; } = string.Empty;
+    /// <summary>失敗原因的白話文字（如「密碼錯誤」）。</summary>
+    public string ReasonText { get; set; } = string.Empty;
+    public int Count { get; set; }
 }
 
 /// <summary>單一問題的處置參考——欄位對應 KnownIssueRule 的白話知識庫（也是 txt 報告「處置參考」的來源）</summary>
@@ -477,6 +539,12 @@ public class HostDetailDto
     /// <summary>'windows' | 'linux'（docs/LINUX-RULES.md）</summary>
     public string Os { get; set; } = "windows";
 
+    /// <summary>'core' | 'standard' | 'test'（回饋十九輪批次G）</summary>
+    public string Tier { get; set; } = "standard";
+
+    /// <summary>Tier 的中文顯示（核心／一般／測試）</summary>
+    public string TierText { get; set; } = "一般";
+
     /// <summary>'local'（本機直讀）| 'netiq'（自 Sentinel 取得），↔ WebHost.Source（回饋十八輪批次D）：
     /// 前端據此判斷「指定主機更新」按鈕在本機分析停用時是否要隱藏。</summary>
     public string Source { get; set; } = "local";
@@ -492,6 +560,9 @@ public class HostDetailDto
     /// 原本只看得到時間軸色格，逐格點日期才看得到問題——這裡直接列出期間內出現過的
     /// 問題（依 Source+EventId 分組），每列連結到最近一次出現的那天詳情</summary>
     public List<HostIssueSummaryDto> TopSignatures { get; set; } = new();
+
+    /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
+    public int MaxBackfillDays { get; set; }
 }
 
 /// <summary>主機詳情頁「重點問題（期間彙總）」的單列（docs/archive/FEEDBACK-3-PLAN.md #4）。

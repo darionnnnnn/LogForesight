@@ -8,7 +8,7 @@
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
 import {
     renderTable, renderLoading, renderEmpty, labelValue, renderPagination, sortRows, loadPageSize, savePageSize,
-    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs
+    toast, withBusy, confirmAction, showDetailModal, guardLoad, bindTabs, applyBackfillDaysLimit
 } from '../core/ui.js';
 import { formatDateTime, formatNumber, formatUserName } from '../core/format.js';
 
@@ -534,6 +534,22 @@ function applyScheduleOptions(options) {
     } else if (options.nextTriggerTime) {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
     }
+
+    // 重跑天數與回望天數共用同一個有效上限（＝歷史資料保留天數）：不在前端擋的話，
+    // 使用者要送出後才被後端 400 打回
+    const rerunDaysInput = document.getElementById('run-now-rerun-days');
+    if (rerunDaysInput && options.maxBackfillDays) {
+        rerunDaysInput.max = options.maxBackfillDays;
+        const hint = document.getElementById('run-now-rerun-days-hint');
+        if (hint) hint.textContent = `預設 30 天；上限 ${options.maxBackfillDays} 天（歷史資料保留天數）`;
+    }
+
+    applyBackfillDaysLimit(
+        'run-now-backfill',
+        'run-now-backfill-help',
+        options.maxBackfillDays,
+        `檢查最近幾天內有沒有缺漏或需要補跑的日子（上限 ${options.maxBackfillDays} 天），已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。`
+    );
 }
 
 function renderScheduleWindows() {
@@ -707,13 +723,14 @@ function applyScheduleStatus(status) {
 // 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
 // netiq-backpressure（回饋十三輪 A7）：AI 待處理佇列滿載（AiFollowupQueue.Capacity=200）時，
 // 搜尋主線在 NetiqPipelineService 背壓等待——外觀上與「卡住」無法區分，必須獨立標示原因，
-// 否則使用者回報的症狀就是「進度條不動了」。done/total 沿用 netiq 階段同一組主機日數字
-// （暫停當下已完成的量不會消失），只是暫時不再往前走。
+// 否則使用者回報的症狀就是「進度條不動了」。
+// 回饋二十七輪：done/total 改為 AI 消化件數（與 netiq-ai 同一組數字），不再沿用主機日——
+// 背壓期間搜尋已停，主機日數字到等待結束都不會變，顯示它等於畫一條凍住的進度條。
 const PROGRESS_PHASE_LABEL = {
     local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中',
-    'netiq-backpressure': '搜尋暫停：AI 佇列已滿，等待消化中'
+    'netiq-backpressure': '搜尋暫停：AI 佇列消化中'
 };
-const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件' };
+const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件', 'netiq-backpressure': '件' };
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
@@ -881,10 +898,56 @@ document.getElementById('schedule-stop')?.addEventListener('click', async () => 
 
 let runNowPreviewDebounce = null;
 
+const RERUN_MODE_CONFIG = {
+    None: {
+        label: '只補跑失敗或未執行（預設）',
+        variant: null,
+        consequence: ''
+    },
+    Unhandled: {
+        label: '重新分析未處理的日子',
+        variant: 'warning',
+        consequence: '將刪除選定日子中「沒有人處理過」的既有分析結果（含 AI 判讀與深度分析）並以目前的規則重新產生。來源已無資料的日子會保留原結果。'
+    },
+    UnhandledAndAssigned: {
+        label: '重新分析未處理與處理中的日子',
+        variant: 'warning',
+        consequence: '除了未處理的日子，已指派但尚未完成處理的日子也會被刪除並重新分析。處理結論本身不會被刪除，同一個問題會自動接回。'
+    },
+    All: {
+        label: '全部重新分析（含已處理完的）',
+        variant: 'danger',
+        consequence: '已處理完成的日子也會被刪除重建：這些日子的既有分析結果（含 AI 判讀與深度分析）會被刪除，並以目前的規則重新產生。處理結論本身不會被刪除，同一個問題會自動接回；若新規則不再產生該問題，舊的處理紀錄會成為孤兒紀錄保留在歷史中。'
+    }
+};
+
+function updateRerunModeUI() {
+    const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
+    const daysWrap = document.getElementById('run-now-rerun-days-wrap');
+    const warningEl = document.getElementById('run-now-rerun-warning');
+    const config = RERUN_MODE_CONFIG[rerunMode];
+
+    if (!config || rerunMode === 'None') {
+        if (daysWrap) daysWrap.hidden = true;
+        if (warningEl) {
+            warningEl.hidden = true;
+            warningEl.textContent = '';
+        }
+    } else {
+        if (daysWrap) daysWrap.hidden = false;
+        if (warningEl) {
+            warningEl.className = `alert alert-${config.variant} py-2 px-3 mb-3`;
+            warningEl.textContent = config.consequence;
+            warningEl.hidden = false;
+        }
+    }
+}
+
 document.getElementById('schedule-run-now')?.addEventListener('click', () => {
     document.getElementById('run-now-form').reset();
     document.getElementById('run-now-scope-all').checked = true;
     document.getElementById('run-now-segment-field').classList.add('d-none');
+    updateRerunModeUI();
     updateRunNowPreview();
     runNowModal.show();
 });
@@ -901,9 +964,22 @@ document.getElementById('run-now-segment').addEventListener('input', () => {
     runNowPreviewDebounce = setTimeout(updateRunNowPreview, 400);
 });
 
+document.getElementById('run-now-backfill')?.addEventListener('input', () => {
+    clearTimeout(runNowPreviewDebounce);
+    runNowPreviewDebounce = setTimeout(updateRunNowPreview, 400);
+});
+
+document.getElementById('run-now-rerun-mode')?.addEventListener('change', () => {
+    updateRerunModeUI();
+    updateRunNowPreview();
+});
+
 async function updateRunNowPreview() {
     const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
     const segment = document.getElementById('run-now-segment').value.trim();
+    const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
+    const onlyMissingOrFailed = rerunMode === 'None';
+    const backfillDays = document.getElementById('run-now-backfill')?.value;
     const previewEl = document.getElementById('run-now-preview');
 
     if (scope === 'segment' && !segment) {
@@ -914,16 +990,26 @@ async function updateRunNowPreview() {
 
     const params = new URLSearchParams({ scope });
     if (scope === 'segment') params.set('segment', segment);
+    if (onlyMissingOrFailed) params.set('onlyMissingOrFailed', 'true');
+    if (backfillDays) params.set('backfillDays', backfillDays);
 
     try {
         const result = await api.get(`/api/admin/schedule/run-preview?${params}`, { silent: true });
         const heavy = result.hostCount >= 50;
+        const suffix = onlyMissingOrFailed ? '待補跑或未執行。' : '符合條件。';
         const text = heavy
-            ? `目前有 ${result.hostCount} 台主機符合條件，數量較多——請留意白天對 Sentinel 的查詢負載，` +
+            ? `目前有 ${result.hostCount} 台主機${suffix.replace('。', '，')}數量較多——請留意白天對 Sentinel 的查詢負載，` +
               '必要時改用網段範圍縮小。'
-            : `目前有 ${result.hostCount} 台主機符合條件。`;
+            : `目前有 ${result.hostCount} 台主機${suffix}`;
         previewEl.textContent = text;
         previewEl.className = heavy ? 'alert alert-warning py-2 px-3 mb-0' : 'alert alert-secondary py-2 px-3 mb-0';
+
+        // 當 AI 未設定時，在「只補跑失敗或未執行的主機」選項旁顯示提示文字
+        const aiDisabledHint = document.getElementById('run-now-ai-disabled-hint');
+        if (aiDisabledHint) {
+            aiDisabledHint.textContent = result.aiDisabled ? 'AI 未設定，此選項僅補跑缺漏日' : '';
+            aiDisabledHint.hidden = !result.aiDisabled;
+        }
     } catch (err) {
         previewEl.textContent = err?.message || '無法預覽，請確認網段格式。';
         previewEl.className = 'alert alert-danger py-2 px-3 mb-0';
@@ -936,6 +1022,24 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
     const scope = document.querySelector('input[name="run-now-scope"]:checked').value;
     const segment = document.getElementById('run-now-segment').value.trim();
     const backfillDays = document.getElementById('run-now-backfill').value;
+    const rerunMode = document.getElementById('run-now-rerun-mode')?.value || 'None';
+    const onlyMissingOrFailed = rerunMode === 'None';
+    const rerunDaysInput = document.getElementById('run-now-rerun-days')?.value.trim();
+    const rerunDays = rerunMode !== 'None' && rerunDaysInput !== '' && !Number.isNaN(Number(rerunDaysInput))
+        ? Number(rerunDaysInput)
+        : null;
+
+    if (rerunMode === 'UnhandledAndAssigned' || rerunMode === 'All') {
+        const config = RERUN_MODE_CONFIG[rerunMode];
+        const daysText = rerunDays !== null ? `${rerunDays} 天` : '未指定';
+        const confirmed = await confirmAction({
+            title: '確認重新分析',
+            message: `模式：${config.label}\n回望天數：${daysText}\n\n${config.consequence}`,
+            confirmText: '確定重新分析',
+            confirmVariant: config.variant
+        });
+        if (!confirmed) return;
+    }
 
     const submitButton = document.getElementById('run-now-submit');
     const restore = withBusy(submitButton, '送出中');
@@ -943,7 +1047,10 @@ document.getElementById('run-now-form').addEventListener('submit', async event =
         const result = await api.post('/api/admin/schedule/run', {
             scope,
             segment: scope === 'segment' ? segment : null,
-            backfillDays: backfillDays ? Number(backfillDays) : null
+            backfillDays: backfillDays ? Number(backfillDays) : null,
+            onlyMissingOrFailed,
+            rerunMode,
+            rerunDays
         });
         toast(result.message, result.started ? 'success' : 'warning');
         if (result.started) {

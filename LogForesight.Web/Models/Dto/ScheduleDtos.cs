@@ -1,3 +1,7 @@
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
+using LogForesight.Core.Models;
+
 namespace LogForesight.Web.Models.Dto;
 
 public class ScheduleOptionsDto
@@ -18,6 +22,9 @@ public class ScheduleOptionsDto
 
     /// <summary>Enabled=false 時為 null（沒有下一次）</summary>
     public DateTime? NextTriggerTime { get; set; }
+
+    /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
+    public int MaxBackfillDays { get; set; }
 }
 
 public class SaveScheduleOptionsRequest
@@ -97,6 +104,10 @@ public class RunActivityDto
 public class RunPreviewDto
 {
     public int HostCount { get; set; }
+
+    /// <summary>AI 未設定時為 true（統計模式）。前端可據此在「只補跑失敗或未執行的主機」
+    /// 選項旁顯示提示文字，說明此選項在 AI 未設定時的實際語意。</summary>
+    public bool AiDisabled { get; set; }
 }
 
 /// <summary>Scope：all（全部主機）｜segment（網段範圍，NetIQ 主機）｜host（單一主機）</summary>
@@ -106,8 +117,26 @@ public class TriggerRunRequest
     public string? Segment { get; set; }
     public long? HostId { get; set; }
 
-    /// <summary>一次性回補天數覆寫（1..14），不落地設定</summary>
+    /// <summary>一次性回補天數覆寫（1..MaxBackfillDaysLimit，且不可超過 RetentionDays），不落地設定</summary>
+    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
     public int? BackfillDays { get; set; }
+
+    /// <summary>只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</summary>
+    public bool OnlyMissingOrFailed { get; set; }
+
+    /// <summary>
+    /// 重新分析模式：None / Unhandled / UnhandledAndAssigned / All，預設 None。
+    ///
+    /// **必須標 <see cref="JsonStringEnumConverter"/>**：前端送的是字串（<c>"All"</c>），
+    /// 而站台沒有全域註冊字串列舉轉換器，不標的話請求會被 System.Text.Json 擋在綁定階段
+    /// （400），且後端單元測試全綠——它們直接建物件，不經過 JSON（見 TriggerRunRequestBindingTests）。
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public RerunMode RerunMode { get; set; } = RerunMode.None;
+
+    /// <summary>重新分析回望天數（1..MaxBackfillDaysLimit，且不可超過 RetentionDays）</summary>
+    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
+    public int? RerunDays { get; set; }
 }
 
 public class TriggerRunResultDto

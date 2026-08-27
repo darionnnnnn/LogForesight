@@ -98,9 +98,11 @@ public class PagesController : Controller
     [Permission(Capability.Maintain)]
     public IActionResult Groups() => View();
 
-    /// <summary>問題負責人（回饋十八輪批次F）：以 (Source,EventId) 為鍵指派跨主機的問題負責人，
-    /// 與主機負責人是相同概念、相同待遇——優先於主機負責人（自動帶入處理人／郵件路由），
-    /// 並隱含具備第四條授權路徑（見 VisibilityService／UserCapabilityResolver）。</summary>
+    /// <summary>問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+    /// 以 (Source,EventId) 為鍵指派跨主機的問題負責人，與主機負責人是相同概念、相同待遇——
+    /// 優先於主機負責人（自動帶入處理人／郵件路由），並隱含具備第四條授權路徑（見
+    /// VisibilityService／UserCapabilityResolver）。機房結論（§2 決策一）記錄機房對這個問題的
+    /// 定論，AutoApply 開啟時之後新出現的主機日自動套用（見 IssueCaseCoordinator.AttachNewDay）。</summary>
     [HttpGet("/admin/issue-owners")]
     [Permission(Capability.Maintain)]
     public IActionResult IssueOwners() => View();

@@ -34,6 +34,9 @@ public class NetiqOptionsDto
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
     public string? UpdatedByDisplayName { get; set; }
+
+    /// <summary>回望天數有效上限（歷史資料保留天數）</summary>
+    public int MaxBackfillDays { get; set; }
 }
 
 public class NetiqOverviewDto
@@ -87,6 +90,9 @@ public class AddNetiqHostRequest
 
     /// <summary>'windows'（預設）| 'linux'</summary>
     public string Os { get; set; } = "windows";
+
+    /// <summary>'core'／'standard'（預設）／'test'（回饋十九輪批次G，選填）</summary>
+    public string? Tier { get; set; }
 }
 
 public class BulkAddNetiqHostsRequest
@@ -101,6 +107,9 @@ public class BulkAddNetiqHostsRequest
 
     /// <summary>'windows'（預設）| 'linux'——整批同一種作業系統，混合平台請分兩批貼上</summary>
     public string Os { get; set; } = "windows";
+
+    /// <summary>'core'／'standard'（預設）／'test'（回饋十九輪批次G，選填）——整批同一個分級</summary>
+    public string? Tier { get; set; }
 }
 
 /// <summary>
@@ -140,6 +149,31 @@ public class NetiqScanRequest
     [Required(ErrorMessage = "請輸入要掃描的網段")]
     [StringLength(20)]
     public string SubnetPrefix { get; set; } = string.Empty;
+
+    /// <summary>掃描粒度（選填）："24"（預設）、"25"、"26"（或 "/24"、"/25"、"/26"）。
+    /// 無法解析或缺席時一律退回 /24。</summary>
+    public string? Granularity { get; set; }
+
+    /// <summary>同時併發幾個查詢（選填）：1（預設，單一查詢）~3。
+    /// 併發會同時對這台 Sentinel 開多條查詢（各自獨立登入），只掃單一網段時沒有作用。</summary>
+    [Range(1, 3, ErrorMessage = "併發查詢數必須介於 1~3")]
+    public int? Concurrency { get; set; }
+}
+
+public class NetiqScanJobDto
+{
+    public string JobId { get; set; } = string.Empty;
+
+    /// <summary>啟動這個掃描時鎖定的 Sentinel 與網段——前端續看前要比對「是不是同一台」，
+    /// 不同台就不能接手（否則舊結果會配上新選 Sentinel 的 OS 預設值匯入）。</summary>
+    public string ServerName { get; set; } = string.Empty;
+    public string SubnetPrefix { get; set; } = string.Empty;
+    /// <summary>running / completed / failed / canceled</summary>
+    public string Status { get; set; } = string.Empty;
+    public string Stage { get; set; } = string.Empty;
+    public int HostsFound { get; set; }
+    public NetiqScanResultDto? Result { get; set; }
+    public string? Error { get; set; }
 }
 
 public class NetiqScanResultDto
@@ -207,6 +241,12 @@ public class NetiqImportRequest
     /// 上選；混合平台的網段請分兩次掃描匯入。
     /// </summary>
     public string Os { get; set; } = WebHost.OsWindows;
+
+    /// <summary>
+    /// 本次匯入的主機分級（回饋十九輪批次G，選填）。**只套用在本次新增的主機**，同 <see cref="Os"/> 原則。
+    /// 省略＝standard（一般）。
+    /// </summary>
+    public string? Tier { get; set; }
 }
 
 /// <summary>單一網段的群組指派方式</summary>
@@ -256,9 +296,9 @@ public class UpdateNetiqOptionsRequest
 
     public bool AllowInvalidCertificates { get; set; }
 
-    /// <summary>docs/archive/FEEDBACK-3-PLAN.md #1：正式環境的預期值是 1（只查前一天），
-    /// 上限 14 與趨勢窗口天數對齊——回補比趨勢分析用得到的更多天沒有意義</summary>
-    [Range(1, 14)]
+    /// <summary>正式環境的預期值是 1（只查前一天）；上限見
+    /// <see cref="NetiqOptions.MaxBackfillDaysLimit"/>——回望窗口與趨勢基線窗口是兩件事</summary>
+    [Range(1, NetiqOptions.MaxBackfillDaysLimit)]
     public int BackfillDays { get; set; }
 
     /// <summary>docs/archive/FEEDBACK-3-PLAN.md #2：同時處理幾台 Sentinel，1＝完全依序處理。

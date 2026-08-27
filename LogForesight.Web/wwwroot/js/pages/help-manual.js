@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 操作說明書（docs/archive/FEEDBACK-15-PLAN.md 批次E）：左側章節目錄＋右側內容，
  * 頂部單輪 AI 問答（實驗性）。內容渲染沿用 markdown-lite.js 的安全子集——
  * 這是全站唯一不使用可解析 HTML/連結的 Markdown 庫的渲染方式，即使手冊內容是自家資源，
@@ -6,6 +6,7 @@
  */
 
 import { api } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { toast, withBusy, icon } from '../core/ui.js';
 import { renderAiText } from '../core/markdown-lite.js';
 
@@ -86,7 +87,7 @@ function renderChapterContent(chapter) {
 
     const link = document.createElement('a');
     link.className = 'btn btn-primary';
-    link.href = chapter.href;
+    link.href = appUrl(chapter.href);
     link.textContent = '開啟啟動精靈';
     card.appendChild(link);
 

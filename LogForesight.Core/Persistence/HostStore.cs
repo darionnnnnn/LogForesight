@@ -4,9 +4,12 @@ namespace LogForesight.Core.Persistence;
 /// <summary><see cref="IHostStore"/> 的實作（blob key=hosts，整份型）</summary>
 public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 {
-    public HostStore(EfJsonBlobStore blob) : base(blob) { }
+    // 快取原因：主機清單隨主機數成長而變大，且單一請求內會被多次呼叫反覆讀取
+    public HostStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     public List<WebHost> GetAll() => Read();
+
+    public long DataVersion => CurrentVersion;
 
     public WebHost? Get(long hostId) => Read().FirstOrDefault(h => h.HostId == hostId);
 
@@ -36,6 +39,7 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
             existing.RoleDesc = host.RoleDesc;
             existing.Source = host.Source;
             existing.Os = host.Os;
+            existing.Tier = host.Tier;
             existing.Active = host.Active;
             existing.GroupIds = host.GroupIds;
             existing.OwnerUserIds = host.OwnerUserIds;
@@ -213,7 +217,8 @@ public class HostStore : JsonBlobCollection<WebHost>, IHostStore
 /// <summary><see cref="IHostGroupStore"/> 的實作（blob key=host_groups，整份型）</summary>
 public class HostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 {
-    public HostGroupStore(EfJsonBlobStore blob) : base(blob) { }
+    // 快取原因：群組清單隨主機數成長而變大，且單一請求內會被多次呼叫反覆讀取
+    public HostGroupStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     public List<HostGroup> GetAll() => Read();
 
@@ -247,7 +252,8 @@ public class HostGroupStore : JsonBlobCollection<HostGroup>, IHostGroupStore
 /// <summary><see cref="IGroupAccessStore"/> 的實作（blob key=group_access，整份型）</summary>
 public class GroupAccessStore : JsonBlobCollection<GroupAccess>, IGroupAccessStore
 {
-    public GroupAccessStore(EfJsonBlobStore blob) : base(blob) { }
+    // 快取原因：存取權限清單隨主機群組數成長而變大，且單一請求內會被多次呼叫反覆讀取
+    public GroupAccessStore(EfJsonBlobStore blob) : base(blob, cached: true) { }
 
     public List<GroupAccess> GetAll() => Read();
 

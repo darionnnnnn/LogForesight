@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Models.Dto;
 using LogForesight.Web.Repositories;
 using LogForesight.Web.Services;
@@ -31,11 +31,17 @@ public class RecordQueryServiceSearchTests : IDisposable
     private readonly RecordQueryServiceFacade _service;
     private readonly HandlingServiceFacade _handlingService;
 
+    /// <summary>分析永遠只產出到昨天——測試紀錄以此為基準日而非 DateTime.Today（回饋十七輪
+    /// 頭號教訓；本檔於回饋十九輪批次I 隨 ResolveDateRange 預設終點右移昨天一併遷移）</summary>
+    private static readonly DateTime Yesterday = DateTime.Today.AddDays(-1);
+
     public RecordQueryServiceSearchTests()
     {
         _recordStore = new EfAnalysisRecordStore(_fixture.NewContext, "test");
         var visibility = new AlwaysVisibleService(_hosts);
         var repository = new RecordRepository(_recordStore, _hosts, visibility, _severityVisibility);
+        var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
 
         _service = new RecordQueryServiceFacade(
             repository: repository,
@@ -51,11 +57,14 @@ public class RecordQueryServiceSearchTests : IDisposable
             rules: new FakeRuleStore(),
             currentUser: FakeCurrentUser.WithCapabilities(),
             settings: _settingsStore,
-            issueOwners: _issueOwners);
+            aggregates: aggregates,
+            statusResolver: statusResolver,
+            issueOwners: _issueOwners,
+            settingsService: _severityVisibility);
 
         // 依問題視角的批次指派測試共用同一份主機/紀錄——HandlingService 與 RecordQueryService
         // 指向同一個 repository/_recordStore，Assign() 建的案在 SearchByIssue 查得到
-        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts);
+        var caseCoordinator = new IssueCaseCoordinator(_caseStore, _issueHandlingStore, _handlingStore, _recordStore, _hosts, _issueOwners);
         _handlingService = new HandlingServiceFacade(
             store: _handlingStore,
             issueStore: _issueHandlingStore,
@@ -94,16 +103,16 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today.AddDays(-2), "低");
-        AddRecord(b, DateTime.Today, "高", correlation: false);
-        AddRecord(a, DateTime.Today.AddDays(-1), "高", correlation: true);
+        AddRecord(a, Yesterday.AddDays(-2), "低");
+        AddRecord(b, Yesterday, "高", correlation: false);
+        AddRecord(a, Yesterday.AddDays(-1), "高", correlation: true);
 
         var result = _service.Search(new RecordSearchRequest { Page = 1, PageSize = 50 });
 
         Assert.Equal(3, result.Total);
         Assert.Equal(new[] { "HOST-A", "HOST-B", "HOST-A" }, result.Items.Select(i => i.HostName));
         Assert.Equal(
-            new[] { DateTime.Today.AddDays(-1), DateTime.Today, DateTime.Today.AddDays(-2) },
+            new[] { Yesterday.AddDays(-1), Yesterday, Yesterday.AddDays(-2) },
             result.Items.Select(i => DateTime.Parse(i.Date)));
     }
 
@@ -112,7 +121,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var host = AddHost("HOST-A");
         for (var i = 0; i < 5; i++)
-            AddRecord(host, DateTime.Today.AddDays(-i), "低");
+            AddRecord(host, Yesterday.AddDays(-i), "低");
 
         var page1 = _service.Search(new RecordSearchRequest { Page = 1, PageSize = 2 });
         var page2 = _service.Search(new RecordSearchRequest { Page = 2, PageSize = 2 });
@@ -129,11 +138,11 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var host = AddHost("HOST-A");
         var user = _users.Upsert(new WebUser { Account = "DOMAIN\\wang", DisplayName = "王小明" });
-        AddRecord(host, DateTime.Today, "高");
+        AddRecord(host, Yesterday, "高");
         _handlingStore.Save(new RecordHandling
         {
             HostName = host.HostName,
-            Date = DateTime.Today,
+            Date = Yesterday,
             Status = HandlingStatuses.InProgress,
             HandlerId = user.UserId
         });
@@ -160,13 +169,13 @@ public class RecordQueryServiceSearchTests : IDisposable
             LogName = "System", Source = "disk", EventId = 153,
             EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
         };
-        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
         _caseStore.Save(new IssueCase
         {
             CaseId = "case-1", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
             IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = user.UserId,
-            FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
             CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
         });
 
@@ -188,10 +197,10 @@ public class RecordQueryServiceSearchTests : IDisposable
         // 直接建一台不在 FakeHostStore 授權清單裡的紀錄（用不存在的 HostId 模擬）：
         // AlwaysVisibleService 依 _hosts.GetAll() 決定可見範圍，未登錄的主機不會出現在可見清單，
         // 因此其紀錄應在 RecordRepository 的可見範圍過濾中被排除
-        AddRecord(visible, DateTime.Today, "高");
+        AddRecord(visible, Yesterday, "高");
         _recordStore.Append(new DailyAnalysisRecord
         {
-            HostId = 9999, Host = "HOST-GHOST", Date = DateTime.Today, RiskLevel = "高", Headline = "ghost"
+            HostId = 9999, Host = "HOST-GHOST", Date = Yesterday, RiskLevel = "高", Headline = "ghost"
         });
 
         var result = _service.Search(new RecordSearchRequest());
@@ -207,9 +216,9 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today, "高"); // 無問題、無日層級狀態 → open
-        AddRecord(b, DateTime.Today, "高"); // 無問題、有日層級 resolved
-        _handlingStore.Save(new RecordHandling { HostName = b.HostName, Date = DateTime.Today, Status = HandlingStatuses.Resolved });
+        AddRecord(a, Yesterday, "高"); // 無問題、無日層級狀態 → open
+        AddRecord(b, Yesterday, "高"); // 無問題、有日層級 resolved
+        _handlingStore.Save(new RecordHandling { HostName = b.HostName, Date = Yesterday, Status = HandlingStatuses.Resolved });
 
         var result = _service.Search(new RecordSearchRequest { Statuses = new List<string> { HandlingStatuses.Resolved } });
 
@@ -226,8 +235,8 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void Search_依Statuses篩選_WontFix視同已處理()
     {
         var a = AddHost("HOST-A");
-        AddRecord(a, DateTime.Today, "高");
-        _handlingStore.Save(new RecordHandling { HostName = a.HostName, Date = DateTime.Today, Status = HandlingStatuses.WontFix });
+        AddRecord(a, Yesterday, "高");
+        _handlingStore.Save(new RecordHandling { HostName = a.HostName, Date = Yesterday, Status = HandlingStatuses.WontFix });
 
         var result = _service.Search(new RecordSearchRequest { Statuses = new List<string> { HandlingStatuses.Resolved } });
 
@@ -244,17 +253,17 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var overdue = AddHost("HOST-OVERDUE");
         var onTrack = AddHost("HOST-ONTRACK");
-        AddRecord(overdue, DateTime.Today, "高");
-        AddRecord(onTrack, DateTime.Today, "高");
+        AddRecord(overdue, Yesterday, "高");
+        AddRecord(onTrack, Yesterday, "高");
         _handlingStore.Save(new RecordHandling
         {
-            HostName = overdue.HostName, Date = DateTime.Today,
-            Status = HandlingStatuses.InProgress, DueDate = DateTime.Today.AddDays(-1)
+            HostName = overdue.HostName, Date = Yesterday,
+            Status = HandlingStatuses.InProgress, DueDate = Yesterday.AddDays(-1)
         });
         _handlingStore.Save(new RecordHandling
         {
-            HostName = onTrack.HostName, Date = DateTime.Today,
-            Status = HandlingStatuses.InProgress, DueDate = DateTime.Today.AddDays(7)
+            HostName = onTrack.HostName, Date = Yesterday,
+            Status = HandlingStatuses.InProgress, DueDate = Yesterday.AddDays(7)
         });
 
         var result = _service.Search(new RecordSearchRequest { Overdue = true });
@@ -268,7 +277,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void Search_Statuses為空清單_視同不篩選走快速路徑()
     {
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高");
+        AddRecord(host, Yesterday, "高");
 
         // 空清單（不是 null）應等同「沒有篩選」，走快速路徑也要能正確回傳
         var result = _service.Search(new RecordSearchRequest { Statuses = new List<string>() });
@@ -290,7 +299,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void SearchByHost_SiteHidden模式下類別聚合不含被隱藏層級()
     {
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高", issues: new[]
+        AddRecord(host, Yesterday, "高", issues: new[]
         {
             Issue("disk", 153, IssueSeverity.Critical, IssueCategory.Storage),
             Issue("app", 1000, IssueSeverity.Medium, IssueCategory.Resource)
@@ -310,8 +319,8 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today.AddDays(-1), "高");
-        AddRecord(b, DateTime.Today, "低");
+        AddRecord(a, Yesterday.AddDays(-1), "高");
+        AddRecord(b, Yesterday, "低");
 
         var result = _service.Search(new RecordSearchRequest { SortKey = "date", Ascending = true });
 
@@ -324,8 +333,8 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today.AddDays(-1), "高");
-        AddRecord(b, DateTime.Today, "低");
+        AddRecord(a, Yesterday.AddDays(-1), "高");
+        AddRecord(b, Yesterday, "低");
         // Statuses 非空清單強制走慢速路徑（見類別註解）；未建立處理紀錄的日一律預設 open 外部狀態
         var result = _service.Search(new RecordSearchRequest
         {
@@ -344,9 +353,9 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today, "高");
-        AddRecord(a, DateTime.Today.AddDays(-1), "高");
-        AddRecord(b, DateTime.Today, "高");
+        AddRecord(a, Yesterday, "高");
+        AddRecord(a, Yesterday.AddDays(-1), "高");
+        AddRecord(b, Yesterday, "高");
 
         var result = _service.SearchByHost(new RecordSearchRequest { SortKey = "highRisk", Ascending = true });
 
@@ -359,9 +368,9 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
-        AddRecord(a, DateTime.Today, "高");
-        AddRecord(a, DateTime.Today.AddDays(-1), "高");
-        AddRecord(b, DateTime.Today.AddDays(-1), "高");
+        AddRecord(a, Yesterday, "高");
+        AddRecord(a, Yesterday.AddDays(-1), "高");
+        AddRecord(b, Yesterday.AddDays(-1), "高");
 
         var result = _service.SearchByDate(new RecordSearchRequest { SortKey = "hostCount", Ascending = false });
 
@@ -382,22 +391,22 @@ public class RecordQueryServiceSearchTests : IDisposable
             LogName = "System", Source = "disk", EventId = 153,
             EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
         };
-        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
         _caseStore.Save(new IssueCase
         {
             CaseId = "case-1", HostName = host.HostName, IssueKey = IssueSignatureKey.For(issue),
             IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
-            FirstLinkedDate = DateTime.Today.AddDays(-5), LastLinkedDate = DateTime.Today,
+            FirstLinkedDate = Yesterday.AddDays(-5), LastLinkedDate = Yesterday,
             CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
         });
 
-        var detail = _service.GetDetail(host.HostId, DateTime.Today);
+        var detail = _service.GetDetail(host.HostId, Yesterday);
 
         var dto = detail.TopIssues.Single();
         Assert.Equal("小明", dto.CaseHandlerName);
         Assert.Equal(IssueHandlingStatuses.InProgress, dto.CaseStatus);
-        Assert.Equal(DateTime.Today.AddDays(-5).ToString("yyyy-MM-dd"), dto.CaseFirstLinkedDate);
+        Assert.Equal(Yesterday.AddDays(-5).ToString("yyyy-MM-dd"), dto.CaseFirstLinkedDate);
     }
 
     /// <summary>沒有進行中案件時，案件欄位維持 null（既有行為不受影響）</summary>
@@ -410,9 +419,9 @@ public class RecordQueryServiceSearchTests : IDisposable
             LogName = "System", Source = "disk", EventId = 153,
             EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
         };
-        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
 
-        var detail = _service.GetDetail(host.HostId, DateTime.Today);
+        var detail = _service.GetDetail(host.HostId, Yesterday);
 
         var dto = detail.TopIssues.Single();
         Assert.Null(dto.CaseHandlerName);
@@ -434,9 +443,9 @@ public class RecordQueryServiceSearchTests : IDisposable
         var a = AddHost("HOST-A");
         var b = AddHost("HOST-B");
         var issue = DiskIssue();
-        AddRecord(a, DateTime.Today.AddDays(-1), "高", issues: new[] { issue });
-        AddRecord(a, DateTime.Today, "高", issues: new[] { issue });   // 同主機第二天：算同一個問題、多一個風險日
-        AddRecord(b, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(a, Yesterday.AddDays(-1), "高", issues: new[] { issue });
+        AddRecord(a, Yesterday, "高", issues: new[] { issue });   // 同主機第二天：算同一個問題、多一個風險日
+        AddRecord(b, Yesterday, "高", issues: new[] { issue });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 
@@ -446,7 +455,7 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal(2, group.HostCount);   // HOST-A、HOST-B 各一台
         Assert.Equal(3, group.DayCount);    // HOST-A 兩天 + HOST-B 一天
         Assert.Equal("High", group.MaxSeverity);
-        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), group.LastSeen);
+        Assert.Equal(Yesterday.ToString("yyyy-MM-dd"), group.LastSeen);
     }
 
     /// <summary>單台出現的問題也要列出來——這裡不像 ClusterSignatures 排除單機問題，
@@ -455,7 +464,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void SearchByIssue_單台主機的問題也列出()
     {
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
+        AddRecord(host, Yesterday, "高", issues: new[] { DiskIssue() });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 
@@ -470,8 +479,8 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "OOO", Active = true });
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        AddRecord(host, Yesterday, "高", issues: new[] { DiskIssue() });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 
@@ -482,11 +491,50 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void SearchByIssue_沒有問題負責人規則時回空清單()
     {
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高", issues: new[] { DiskIssue() });
+        AddRecord(host, Yesterday, "高", issues: new[] { DiskIssue() });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 
         Assert.Empty(result.Items[0].IssueOwnerNames);
+    }
+
+    // ── 機房級基準線與 fleet 首見（回饋十九輪批次G1/G4）─────────────────────────
+
+    [Fact]
+    public void SearchByIssue_基準線與偏離倍數()
+    {
+        var to = new DateTime(2026, 8, 10);
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        // 基準期兩個出現日各 1 台，第三個出現日（查詢當天）2 台
+        AddRecord(a, to.AddDays(-25), "高", issues: new[] { DiskIssue() });
+        AddRecord(a, to.AddDays(-15), "高", issues: new[] { DiskIssue() });
+        AddRecord(a, to, "高", issues: new[] { DiskIssue() });
+        AddRecord(b, to, "高", issues: new[] { DiskIssue() });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = to, To = to });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(3, group.BaselineOccurrenceDays);
+        Assert.Equal(1, group.BaselineMedianHostCount);
+        Assert.Equal(2, group.BaselineLatestHostCount);
+        Assert.Equal(2.0, group.BaselineDeviationMultiplier);
+    }
+
+    [Fact]
+    public void SearchByIssue_機房首見不受查詢期間截斷()
+    {
+        var oldDate = new DateTime(2026, 1, 1);
+        var recentDate = new DateTime(2026, 8, 1);
+        var host = AddHost("HOST-A");
+        AddRecord(host, oldDate, "高", issues: new[] { DiskIssue() });
+        AddRecord(host, recentDate, "高", issues: new[] { DiskIssue() });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest { From = recentDate, To = recentDate });
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal("2026-08-01", group.FirstSeen);
+        Assert.Equal("2026-01-01", group.FleetFirstSeen);
     }
 
     [Fact]
@@ -498,23 +546,23 @@ public class RecordQueryServiceSearchTests : IDisposable
         var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
         var issue = DiskIssue();
 
-        AddRecord(processingHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(processingHost, Yesterday, "高", issues: new[] { issue });
         _caseStore.Save(new IssueCase
         {
             CaseId = "case-1", HostName = processingHost.HostName, IssueKey = IssueSignatureKey.For(issue),
             IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
-            FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
             CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
         });
 
-        AddRecord(resolvedHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(resolvedHost, Yesterday, "高", issues: new[] { issue });
         _issueHandlingStore.Save(new IssueHandling
         {
-            HostName = resolvedHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            HostName = resolvedHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
             Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
         });
 
-        AddRecord(unhandledHost, DateTime.Today, "高", issues: new[] { issue });   // 從未標記過
+        AddRecord(unhandledHost, Yesterday, "高", issues: new[] { issue });   // 從未標記過
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
 
@@ -538,10 +586,10 @@ public class RecordQueryServiceSearchTests : IDisposable
     {
         var host = AddHost("HOST-A");
         var issue = DiskIssue();
-        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
         _issueHandlingStore.Save(new IssueHandling
         {
-            HostName = host.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
+            HostName = host.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
             Status = IssueHandlingStatuses.Escalated, Note = "需要外部廠商", UpdatedAt = DateTime.Now
         });
 
@@ -570,15 +618,15 @@ public class RecordQueryServiceSearchTests : IDisposable
             EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
         };
 
-        AddRecord(assignedHost, DateTime.Today, "高", issues: new[] { assignedIssue });
+        AddRecord(assignedHost, Yesterday, "高", issues: new[] { assignedIssue });
         _caseStore.Save(new IssueCase
         {
             CaseId = "case-1", HostName = assignedHost.HostName, IssueKey = IssueSignatureKey.For(assignedIssue),
             IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
-            FirstLinkedDate = DateTime.Today, LastLinkedDate = DateTime.Today,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
             CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
         });
-        AddRecord(unassignedHost, DateTime.Today, "高", issues: new[] { unassignedIssue });
+        AddRecord(unassignedHost, Yesterday, "高", issues: new[] { unassignedIssue });
 
         var all = _service.SearchByIssue(new RecordSearchRequest());
         Assert.Equal(2, all.Items.Count);
@@ -605,11 +653,11 @@ public class RecordQueryServiceSearchTests : IDisposable
             LogName = "System", Source = "Ntfs", EventId = 55,
             EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
         };
-        AddRecord(openHost, DateTime.Today, "高", issues: new[] { openIssue });   // 從未標記＝未處理
-        AddRecord(resolvedHost, DateTime.Today, "高", issues: new[] { resolvedIssue });
+        AddRecord(openHost, Yesterday, "高", issues: new[] { openIssue });   // 從未標記＝未處理
+        AddRecord(resolvedHost, Yesterday, "高", issues: new[] { resolvedIssue });
         _issueHandlingStore.Save(new IssueHandling
         {
-            HostName = resolvedHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(resolvedIssue),
+            HostName = resolvedHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(resolvedIssue),
             Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
         });
 
@@ -628,13 +676,13 @@ public class RecordQueryServiceSearchTests : IDisposable
         var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
         var issue = DiskIssue();
 
-        AddRecord(assignedHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(assignedHost, Yesterday, "高", issues: new[] { issue });
         _handlingStore.Save(new RecordHandling
         {
-            HostName = assignedHost.HostName, Date = DateTime.Today,
+            HostName = assignedHost.HostName, Date = Yesterday,
             Status = HandlingStatuses.InProgress, HandlerId = handler.UserId, UpdatedAt = DateTime.Now
         });
-        AddRecord(unassignedHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(unassignedHost, Yesterday, "高", issues: new[] { issue });
 
         var all = _service.Search(new RecordSearchRequest());
         Assert.Equal(2, all.Items.Count);
@@ -656,18 +704,18 @@ public class RecordQueryServiceSearchTests : IDisposable
         var expiredHost = AddHost("HOST-EXPIRED");
         var issue = DiskIssue();
 
-        AddRecord(observingHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(observingHost, Yesterday, "高", issues: new[] { issue });
         _issueHandlingStore.Save(new IssueHandling
         {
-            HostName = observingHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
-            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(7), UpdatedAt = DateTime.Now
+            HostName = observingHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = Yesterday.AddDays(7), UpdatedAt = DateTime.Now
         });
 
-        AddRecord(expiredHost, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(expiredHost, Yesterday, "高", issues: new[] { issue });
         _issueHandlingStore.Save(new IssueHandling
         {
-            HostName = expiredHost.HostName, Date = DateTime.Today, IssueKey = IssueSignatureKey.For(issue),
-            Status = IssueHandlingStatuses.Observing, DueDate = DateTime.Today.AddDays(-1), UpdatedAt = DateTime.Now
+            HostName = expiredHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Observing, DueDate = Yesterday.AddDays(-1), UpdatedAt = DateTime.Now
         });
 
         var result = _service.SearchByIssue(new RecordSearchRequest());
@@ -678,9 +726,9 @@ public class RecordQueryServiceSearchTests : IDisposable
     }
 
     /// <summary>
-    /// docs/archive/FEEDBACK-8-PLAN.md #5：上方風險層級 chips 篩的是「日風險」，但依問題視角顯示的是
-    /// 「問題嚴重度」——高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一
-    /// 嚴重度），預設「高＋中」篩選下不該漏出低嚴重度問題組。
+    /// docs/archive/FEEDBACK-8-PLAN.md #5：依問題視角的 chips 篩的是**問題嚴重度**——
+    /// 高風險日裡本來就可能同時有低嚴重度的問題（規則命中不代表整批問題都同一嚴重度），
+    /// 勾「高＋中」時不該出現低嚴重度的問題組。
     /// </summary>
     [Fact]
     public void SearchByIssue_高風險日內的低嚴重度問題_預設高中篩選下不出現_勾低後出現()
@@ -691,7 +739,7 @@ public class RecordQueryServiceSearchTests : IDisposable
             LogName = "System", Source = "noisy", EventId = 111,
             EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
         };
-        AddRecord(host, DateTime.Today, "高", issues: new[] { lowIssue });
+        AddRecord(host, Yesterday, "高", issues: new[] { lowIssue });
 
         var filtered = _service.SearchByIssue(new RecordSearchRequest { RiskLevels = new List<string> { "高", "中" } });
         Assert.Empty(filtered.Items);
@@ -713,7 +761,7 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void SearchByIssue_篩安全類型_其他類型問題不應出現()
     {
         var host = AddHost("HOST-A");
-        AddRecord(host, DateTime.Today, "高", issues: new[]
+        AddRecord(host, Yesterday, "高", issues: new[]
         {
             Issue("security", 4625, IssueSeverity.High, IssueCategory.Security),
             Issue("other", 9999, IssueSeverity.Medium, IssueCategory.Other)
@@ -729,15 +777,15 @@ public class RecordQueryServiceSearchTests : IDisposable
     public void SearchByIssue_依主機數排序()
     {
         var issueA = DiskIssue();
-        AddRecord(AddHost("HOST-A1"), DateTime.Today, "高", issues: new[] { issueA });
-        AddRecord(AddHost("HOST-A2"), DateTime.Today, "高", issues: new[] { issueA });
+        AddRecord(AddHost("HOST-A1"), Yesterday, "高", issues: new[] { issueA });
+        AddRecord(AddHost("HOST-A2"), Yesterday, "高", issues: new[] { issueA });
 
         var issueB = new LogIssueSignature
         {
             LogName = "Application", Source = "other", EventId = 999,
             EntryType = System.Diagnostics.EventLogEntryType.Warning, Severity = IssueSeverity.High
         };
-        AddRecord(AddHost("HOST-B1"), DateTime.Today, "高", issues: new[] { issueB });
+        AddRecord(AddHost("HOST-B1"), Yesterday, "高", issues: new[] { issueB });
 
         var result = _service.SearchByIssue(new RecordSearchRequest { SortKey = "hostCount", Ascending = true });
 
@@ -755,11 +803,11 @@ public class RecordQueryServiceSearchTests : IDisposable
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
         var newHandler = _users.Upsert(new WebUser { Account = "DOMAIN\\new", DisplayName = "新處理人" });
         var issue = DiskIssue();
-        AddRecord(host1, DateTime.Today, "高", issues: new[] { issue });
-        AddRecord(host2, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
+        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
 
         // host1 先有案件
-        _handlingService.Assign(host1.HostId, DateTime.Today, owner.UserId);
+        _handlingService.Assign(host1.HostId, Yesterday, owner.UserId);
 
         var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
         {
@@ -786,8 +834,8 @@ public class RecordQueryServiceSearchTests : IDisposable
         var first = _users.Upsert(new WebUser { Account = "DOMAIN\\a", DisplayName = "甲" });
         var second = _users.Upsert(new WebUser { Account = "DOMAIN\\b", DisplayName = "乙" });
         var issue = DiskIssue();
-        AddRecord(host1, DateTime.Today, "高", issues: new[] { issue });
-        AddRecord(host2, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
+        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
 
         var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
         {
@@ -817,12 +865,12 @@ public class RecordQueryServiceSearchTests : IDisposable
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
         var newHandler = _users.Upsert(new WebUser { Account = "DOMAIN\\new", DisplayName = "新處理人" });
         var issue = DiskIssue();
-        AddRecord(host1, DateTime.Today, "高", issues: new[] { issue });
-        AddRecord(host2, DateTime.Today, "高", issues: new[] { issue });
+        AddRecord(host1, Yesterday, "高", issues: new[] { issue });
+        AddRecord(host2, Yesterday, "高", issues: new[] { issue });
 
         // 兩台都先有 owner 的案件
-        _handlingService.Assign(host1.HostId, DateTime.Today, owner.UserId);
-        _handlingService.Assign(host2.HostId, DateTime.Today, owner.UserId);
+        _handlingService.Assign(host1.HostId, Yesterday, owner.UserId);
+        _handlingService.Assign(host2.HostId, Yesterday, owner.UserId);
 
         var result = _handlingService.BulkAssignIssueCase(new BulkAssignIssueCaseRequest
         {
@@ -859,8 +907,8 @@ public class RecordQueryServiceSearchTests : IDisposable
         var host = AddHost("HOST-A");
         var owner = _users.Upsert(new WebUser { Account = "DOMAIN\\owner", DisplayName = "原處理人" });
         var issue = DiskIssue();
-        AddRecord(host, DateTime.Today, "高", issues: new[] { issue });
-        _handlingService.Assign(host.HostId, DateTime.Today, owner.UserId);
+        AddRecord(host, Yesterday, "高", issues: new[] { issue });
+        _handlingService.Assign(host.HostId, Yesterday, owner.UserId);
 
         var preview = _handlingService.PreviewIssueCaseAssign("disk", 153, null, null);
 
@@ -869,6 +917,252 @@ public class RecordQueryServiceSearchTests : IDisposable
         Assert.Equal("原處理人", item.ExistingHandlerName);
         Assert.Equal(1, preview.TotalHostCount);
         Assert.False(preview.Truncated);
+    }
+
+    // ── ClusterSignatures（回饋十九輪批次E6：改走 Aggregate 子集）──────────────────
+
+    [Fact]
+    public void ClusterSignatures_只保留跨主機的問題()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var shared = DiskIssue();
+        var soloIssue = Issue("app", 999, IssueSeverity.Medium, IssueCategory.Resource);
+        AddRecord(a, Yesterday, "高", issues: new[] { shared });
+        AddRecord(b, Yesterday, "高", issues: new[] { shared });
+        AddRecord(a, Yesterday.AddDays(-1), "中", issues: new[] { soloIssue });   // 單機問題
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest());
+
+        var cluster = Assert.Single(clusters);
+        Assert.Equal("disk", cluster.Source);
+        Assert.Equal(153, cluster.EventId);
+        Assert.Equal(2, cluster.HostCount);
+    }
+
+    [Fact]
+    public void ClusterSignatures_依主機數排序_取前五()
+    {
+        var issues = Enumerable.Range(0, 6)
+            .Select(i => Issue($"src{i}", 100 + i, IssueSeverity.High, IssueCategory.Other))
+            .ToList();
+
+        // 第 0 個問題影響 3 台，其餘各影響 2 台——第 0 個應該排最前面
+        var hosts = Enumerable.Range(0, 3).Select(i => AddHost($"HOST-{i}")).ToList();
+        foreach (var host in hosts) AddRecord(host, Yesterday, "高", issues: new[] { issues[0] });
+        for (var i = 1; i < issues.Count; i++)
+        {
+            AddRecord(hosts[0], Yesterday, "高", issues: new[] { issues[i] });
+            AddRecord(hosts[1], Yesterday, "高", issues: new[] { issues[i] });
+        }
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest());
+
+        Assert.Equal(5, clusters.Count);   // 6 個跨主機問題只取前 5
+        Assert.Equal("src0", clusters[0].Source);
+        Assert.Equal(3, clusters[0].HostCount);
+        Assert.All(clusters.Skip(1), c => Assert.Equal(2, c.HostCount));
+    }
+
+    [Fact]
+    public void ClusterSignatures_套用風險類型過濾()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+        var storage = DiskIssue();
+        var security = Issue("Defender", 1116, IssueSeverity.High, IssueCategory.Security);
+        AddRecord(a, Yesterday, "高", issues: new[] { storage });
+        AddRecord(b, Yesterday, "高", issues: new[] { storage });
+        AddRecord(a, Yesterday.AddDays(-1), "高", issues: new[] { security });
+        AddRecord(b, Yesterday.AddDays(-1), "高", issues: new[] { security });
+
+        var clusters = _service.ClusterSignatures(new RecordSearchRequest { Categories = new List<string> { "Security" } });
+
+        var cluster = Assert.Single(clusters);
+        Assert.Equal("Defender", cluster.Source);
+    }
+
+    [Fact]
+    public void SearchByIssue_同一主機命中多個問題_去重主機總數不重複計算()
+    {
+        var a = AddHost("HOST-A");
+        var b = AddHost("HOST-B");
+
+        var issue1 = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage);
+        var issue2 = Issue("Ntfs", 55, IssueSeverity.High, IssueCategory.Storage);
+
+        // HOST-A 同時命中 issue1 與 issue2；HOST-B 只命中 issue1
+        AddRecord(a, Yesterday, "高", issues: new[] { issue1, issue2 });
+        AddRecord(b, Yesterday, "高", issues: new[] { issue1 });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Equal(2, result.Items.Count);
+        // 各問題各自的主機數：issue1 有 2 台，issue2 有 1 台（加總 = 3）
+        var g1 = result.Items.First(i => i.Source == "disk");
+        var g2 = result.Items.First(i => i.Source == "Ntfs");
+        Assert.Equal(2, g1.HostCount);
+        Assert.Equal(1, g2.HostCount);
+
+        // 跨問題去重後的主機總數為 2 台（HOST-A、HOST-B），不重複計算 HOST-A
+        // ——各列 HostCount 加總是 3，去重後才是可以跟風險類型卡對照的數字
+        Assert.Equal(2, result.DistinctHostCount);
+    }
+
+    [Fact]
+    public void SearchByIssue_命中規則帶得出白話說明_未命中為null()
+    {
+        var a = AddHost("HOST-A");
+        var diskIssue = Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage);
+        var unknownIssue = Issue("CustomApp", 9999, IssueSeverity.High, IssueCategory.Other);
+
+        AddRecord(a, Yesterday, "高", issues: new[] { diskIssue, unknownIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var disk = result.Items.Single(i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal("這台伺服器的硬碟出現讀寫錯誤，是硬碟即將故障最直接的警訊。", disk.PlainExplanation);
+
+        var unknown = result.Items.Single(i => i.Source == "CustomApp" && i.EventId == 9999);
+        Assert.Null(unknown.PlainExplanation);
+    }
+
+    // ── 回饋二十六輪 E3：Linux 問題的白話說明與分類取最近一天 ──────────────────
+
+    [Fact]
+    public void SearchByIssue_Linux問題帶得出Linux規則的白話說明()
+    {
+        var a = AddHost("HOST-LINUX");
+        // Linux 事件的 EventId 恆為 0、Source 是 program（SentinelEventMapper.MapLinux）
+        var linuxIssue = Issue("chronyd", 0, IssueSeverity.Medium, IssueCategory.Config);
+
+        AddRecord(a, Yesterday, "中", issues: new[] { linuxIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var issue = result.Items.Single(i => i.Source == "chronyd");
+        Assert.False(string.IsNullOrWhiteSpace(issue.PlainExplanation));
+    }
+
+    [Fact]
+    public void SearchByIssue_同一program命中多條Linux規則時不給說明()
+    {
+        var a = AddHost("HOST-LINUX2");
+        // sshd 同時對應「暴力破解」與「登入成功」兩條規則，聚合層沒有訊息內容可判斷是哪一種
+        var sshIssue = Issue("sshd", 0, IssueSeverity.High, IssueCategory.Security);
+
+        AddRecord(a, Yesterday, "高", issues: new[] { sshIssue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Null(result.Items.Single(i => i.Source == "sshd").PlainExplanation);
+    }
+
+    [Fact]
+    public void SearchByIssue_分類取最近一天_不再黏在字典序最小的其他()
+    {
+        var a = AddHost("HOST-CAT");
+        // 同一簽章：較早那天分析時沒命中規則（其他），最近一天已能正確分類為儲存裝置
+        AddRecord(a, Yesterday.AddDays(-3), "高",
+            issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Other) });
+        AddRecord(a, Yesterday, "高",
+            issues: new[] { Issue("disk", 153, IssueSeverity.High, IssueCategory.Storage) });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var disk = result.Items.Single(i => i.Source == "disk" && i.EventId == 153);
+        Assert.Equal(IssueCategory.Storage.ToString(), disk.Category);
+    }
+
+    [Fact]
+    public void SearchByIssue_處理概況三個整數與既有HandlingSummary字串一致()
+    {
+        var processingHost = AddHost("HOST-PROCESSING");
+        var resolvedHost = AddHost("HOST-RESOLVED");
+        var unhandledHost = AddHost("HOST-UNHANDLED");
+        var handler = _users.Upsert(new WebUser { Account = "DOMAIN\\h", DisplayName = "小陳" });
+        var issue = DiskIssue();
+
+        AddRecord(processingHost, Yesterday, "高", issues: new[] { issue });
+        _caseStore.Save(new IssueCase
+        {
+            CaseId = "case-1", HostName = processingHost.HostName, IssueKey = IssueSignatureKey.For(issue),
+            IssueLabel = "disk 153", Status = IssueHandlingStatuses.InProgress, HandlerId = handler.UserId,
+            FirstLinkedDate = Yesterday, LastLinkedDate = Yesterday,
+            CreatedAt = DateTime.Now, CreatedByAccount = "a", UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(resolvedHost, Yesterday, "高", issues: new[] { issue });
+        _issueHandlingStore.Save(new IssueHandling
+        {
+            HostName = resolvedHost.HostName, Date = Yesterday, IssueKey = IssueSignatureKey.For(issue),
+            Status = IssueHandlingStatuses.Resolved, UpdatedAt = DateTime.Now
+        });
+
+        AddRecord(unhandledHost, Yesterday, "高", issues: new[] { issue });
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        var group = Assert.Single(result.Items);
+        Assert.Equal(1, group.UnhandledCount);
+        Assert.Equal(1, group.InProgressCount);
+        Assert.Equal(1, group.ResolvedCount);
+        Assert.Equal("1 台未處理／1 台處理中／1 台已處理", group.HandlingSummary);
+    }
+
+    /// <summary>
+    /// 依問題視角的母體＝全站「日風險等級顯示」設定允許的主機日（WEB-SPEC §10）：
+    /// 隱藏低風險日時，只出現在低風險日的問題查不到；高風險日上的問題不受影響。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_全站隱藏低風險日_只出現在低風險日的問題不列入母體()
+    {
+        var host = AddHost("HOST-A");
+        var onHighDay = new LogIssueSignature
+        {
+            LogName = "System", Source = "on-high", EventId = 101,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        var onLowDay = new LogIssueSignature
+        {
+            LogName = "System", Source = "on-low", EventId = 102,
+            EntryType = System.Diagnostics.EventLogEntryType.Error, Severity = IssueSeverity.High
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { onHighDay });
+        AddRecord(host, Yesterday.AddDays(-1), "低", issues: new[] { onLowDay });
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高", "中" };
+
+        var result = _service.SearchByIssue(new RecordSearchRequest());
+
+        Assert.Single(result.Items);
+        Assert.Equal("on-high", result.Items[0].Source);
+    }
+
+    /// <summary>
+    /// 隱藏低風險**日**不可以連帶取消依問題視角的「低」篩選——那裡的 chip 是**問題嚴重度**。
+    /// 勾「低」時，高風險日上的低嚴重度問題仍要查得到（儀表板風險類型卡下鑽的路徑）。
+    /// </summary>
+    [Fact]
+    public void SearchByIssue_全站隱藏低風險日_勾低嚴重度仍查得到高風險日上的低嚴重度問題()
+    {
+        var host = AddHost("HOST-A");
+        var lowSeverity = new LogIssueSignature
+        {
+            LogName = "System", Source = "noisy", EventId = 111,
+            EntryType = System.Diagnostics.EventLogEntryType.Information, Severity = IssueSeverity.Low
+        };
+        AddRecord(host, Yesterday, "高", issues: new[] { lowSeverity });
+
+        _severityVisibility.VisibleDayRiskLevels = new HashSet<string> { "高", "中" };
+
+        var withLow = _service.SearchByIssue(
+            new RecordSearchRequest { RiskLevels = new List<string> { "高", "中", "低" } });
+        Assert.Single(withLow.Items);
+
+        var highMediumOnly = _service.SearchByIssue(
+            new RecordSearchRequest { RiskLevels = new List<string> { "高", "中" } });
+        Assert.Empty(highMediumOnly.Items);
     }
 }
 

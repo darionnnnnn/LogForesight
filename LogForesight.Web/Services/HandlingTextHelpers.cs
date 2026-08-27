@@ -1,4 +1,4 @@
-namespace LogForesight.Web.Services;
+﻿namespace LogForesight.Web.Services;
 
 /// <summary>
 /// 處理狀態／案件相關的顯示文字對照，供日層級（DayHandlingCommandService）、問題層級
@@ -36,6 +36,8 @@ internal static class HandlingTextHelpers
     {
         HandlingActions.Assign => "指派處理人",
         HandlingActions.AutoAssign => "自動帶入處理人",
+        HandlingActions.OwnerAutoAssign => "依問題檔案自動派送",
+        HandlingActions.FleetApply => "套用機房結論",
         HandlingActions.StatusChange => "變更狀態",
         HandlingActions.NoteUpdate => "更新說明",
         HandlingActions.IssueStatus => "標記問題",

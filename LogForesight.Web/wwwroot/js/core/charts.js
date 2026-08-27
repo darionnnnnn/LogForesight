@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chart.js 的包裝層（docs/WEB-SPEC.md §8.3）。
  *
  * **頁面模組不得直接呼叫 Chart.js**，一律經過這裡。這一層負責四件事：
@@ -11,6 +11,7 @@
  * 換圖表庫時只需要重寫這個模組——這是防廢棄的實際手段，不是原則宣示。
  */
 
+import { appUrl } from './paths.js';
 import { formatNumber } from './format.js';
 
 /** 自 CSS 變數讀取設計 token：顏色只在 site.css 定義一次 */
@@ -60,11 +61,18 @@ export function statusColors() {
 
 const FONT_FAMILY = '"Segoe UI", "Microsoft JhengHei", system-ui, sans-serif';
 
-function baseOptions({ drillTo, onDrill }) {
-    return {
+// 圓形圖（甜甜圈／圓餅）沒有 XY 軸，也不該用 index 模式的共用提示——
+// 兩者都是為折線／長條圖準備的，套到圓形圖上會多畫出一組 0～1 的空軸並吃掉繪圖區。
+const CIRCULAR_TYPES = new Set(['doughnut', 'pie', 'polarArea']);
+
+function baseOptions({ drillTo, onDrill, type }) {
+    const circular = CIRCULAR_TYPES.has(type);
+    const options = {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
+        interaction: circular
+            ? { mode: 'nearest', intersect: true }
+            : { mode: 'index', intersect: false },
         plugins: {
             legend: {
                 position: 'bottom',
@@ -76,15 +84,6 @@ function baseOptions({ drillTo, onDrill }) {
                 bodyFont: { family: FONT_FAMILY, size: 12 },
                 padding: 10,
                 displayColors: true
-            }
-        },
-        scales: {
-            x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: 11 } } },
-            y: {
-                beginAtZero: true,
-                grid: { color: 'rgba(0,0,0,.06)' },
-                // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
-                ticks: { font: { family: FONT_FAMILY, size: 11 }, precision: 0 }
             }
         },
         onClick: (event, elements, chart) => {
@@ -100,7 +99,7 @@ function baseOptions({ drillTo, onDrill }) {
 
             if (url) {
                 if (onDrill) onDrill(url);
-                else location.href = url;
+                else location.href = appUrl(url);
             }
         },
         onHover: (event, elements) => {
@@ -108,16 +107,37 @@ function baseOptions({ drillTo, onDrill }) {
             event.native.target.style.cursor = drillTo && elements.length > 0 ? 'pointer' : 'default';
         }
     };
+
+    if (!circular) {
+        options.scales = {
+            x: { grid: { display: false }, ticks: { font: { family: FONT_FAMILY, size: 11 } } },
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(0,0,0,.06)' },
+                // 問題數是整數，Y 軸出現 0.5 這種刻度只會讓人困惑
+                ticks: { font: { family: FONT_FAMILY, size: 11 }, precision: 0 }
+            }
+        };
+    }
+
+    return options;
 }
 
 function merge(base, extra) {
     if (!extra) return base;
-    return {
+    const merged = {
         ...base,
         ...extra,
-        plugins: { ...base.plugins, ...(extra.plugins ?? {}) },
-        scales: { ...base.scales, ...(extra.scales ?? {}) }
+        plugins: { ...base.plugins, ...(extra.plugins ?? {}) }
     };
+
+    // 圓形圖的 base 沒有 scales，這裡也不能無條件補一個空物件回去——
+    // Chart.js 會照 options.scales 逐項建軸，不因圖型是甜甜圈而略過。
+    if (base.scales || extra.scales) {
+        merged.scales = { ...base.scales, ...(extra.scales ?? {}) };
+    }
+
+    return merged;
 }
 
 /**
@@ -125,6 +145,9 @@ function merge(base, extra) {
  * spec: { type, data, options, drillTo(point) => url|null, tableColumns, tableRows }
  */
 export function create(canvas, spec) {
+    // 前一次可能顯示過「沒有資料」——重新畫圖時要把提示收掉，並讓 canvas 回到可見狀態
+    clearNoData(canvas.parentElement);
+
     const chart = new Chart(canvas, {
         type: spec.type,
         data: spec.data,
@@ -147,14 +170,25 @@ export const doughnut = (canvas, spec) => create(canvas, { ...spec, type: 'dough
  * PNG 下載已移除（docs/archive/HISTORY.md #4）：需要圖檔的情境走既有
  * 「列印 / 存成 PDF」，不再逐圖各自下載。
  */
+/** 追蹤每個 container 上一次由 attachToolbar 插入的 tableWrapper，供清除用 */
+const _toolbarTableMap = new WeakMap();
+
 export function attachToolbar(container, { canvasWrapper, tableColumns, tableRows, title }) {
-    const toolbar = document.createElement('div');
-    toolbar.className = 'd-flex gap-1 lf-no-print';
+    // 清除上一次由 attachToolbar 產生的 toolbar（以 data-lf-toolbar 標記）
+    container.querySelectorAll('[data-lf-toolbar]').forEach(el => el.remove());
+
+    // 清除上一次由 attachToolbar 插入的 tableWrapper（以 WeakMap 追蹤）
+    _toolbarTableMap.get(container)?.remove();
 
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'lf-table-wrap d-none';
     tableWrapper.appendChild(buildTable(tableColumns, tableRows));
     canvasWrapper.after(tableWrapper);
+    _toolbarTableMap.set(container, tableWrapper);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'd-flex gap-1 lf-no-print';
+    toolbar.dataset.lfToolbar = '';   // 標記，供下次呼叫定位並清除
 
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
@@ -191,7 +225,7 @@ export function attachDoughnutLegend(container, items) {
 
         const row = document.createElement(item.url ? 'a' : 'div');
         row.className = 'lf-legend-row' + (item.url ? ' lf-legend-row--link' : '');
-        if (item.url) row.href = item.url;
+        if (item.url) row.href = appUrl(item.url);
 
         const dot = document.createElement('span');
         dot.className = 'lf-legend-row__dot';
@@ -240,12 +274,33 @@ function buildTable(columns, rows) {
     return table;
 }
 
-/** 空資料時顯示提示而不是一張空白的圖 */
+/**
+ * 空資料時顯示提示而不是一張空白的圖。
+ *
+ * **不可以移除 canvas**：容器裡的 canvas 是頁面 markup 的一部分，把它換掉之後
+ * 再選一次 `getElementById` 會拿到 null，換一個有資料的期間時圖就再也回不來。
+ * 改成疊一層提示並把 canvas 藏起來，由 create() 在下次畫圖時自動還原。
+ */
 export function renderNoData(container, message = '此期間沒有資料') {
-    const el = document.createElement('div');
-    el.className = 'lf-empty';
+    container.classList.add('lf-chart--empty');
+
+    let el = container.querySelector(':scope > .lf-empty');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'lf-empty';
+        container.appendChild(el);
+    }
     el.textContent = message;
-    container.replaceChildren(el);
+
+    // 中央百分比是上一次的殘值，沒有資料時不該留著
+    container.querySelector(':scope > .lf-chart__center-text')?.remove();
+}
+
+/** 還原 renderNoData 的效果（create() 會自動呼叫） */
+export function clearNoData(container) {
+    if (!container) return;
+    container.classList.remove('lf-chart--empty');
+    container.querySelector(':scope > .lf-empty')?.remove();
 }
 
 /**
@@ -260,4 +315,27 @@ export function setCenterText(canvasWrapper, text) {
         canvasWrapper.appendChild(label);
     }
     label.textContent = text;
+
+    // 甜甜圈取容器短邊畫圓，容器變扁時圓會縮小而固定字級不會——跟著短邊縮放，
+    // 字才不會溢出圓環。**observer 掛在 wrapper 上、每個 wrapper 只掛一次**：
+    // renderNoData 會把 label 移除，若跟著 label 建立，每次「沒資料→有資料」都會多一個
+    // observer，而舊的那些還抓著已脫離 DOM 的節點。callback 每次自己重查當前 label。
+    if (!canvasWrapper.__lfCenterTextObserver) {
+        canvasWrapper.__lfCenterTextObserver = new ResizeObserver(() => {
+            const current = canvasWrapper.querySelector('.lf-chart__center-text');
+            if (current) fitCenterText(canvasWrapper, current);
+        });
+        canvasWrapper.__lfCenterTextObserver.observe(canvasWrapper);
+    }
+
+    fitCenterText(canvasWrapper, label);
+}
+
+function fitCenterText(canvasWrapper, label) {
+    const rect = canvasWrapper.getBoundingClientRect();
+    const shortSide = Math.min(rect.width, rect.height);
+    if (shortSide <= 0) return;
+    // 甜甜圈預設環寬約半徑的一半，內圈直徑約短邊的一半——字寬控制在內圈以內
+    const size = Math.max(11, Math.min(20, shortSide * 0.18));
+    label.style.fontSize = `${size.toFixed(1)}px`;
 }

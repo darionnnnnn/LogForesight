@@ -320,6 +320,142 @@ public class CorrelationAnalyzerTests
         Assert.Empty(findings);
     }
 
+    // ── A4a：殘留憑證重試排除暴力破解錨點 ──────────────────────────────
+
+    [Fact]
+    public void 殘留不觸發入侵鏈_當日4625標殘留加帳號建立()
+    {
+        var brute = Sig("Security", "Security-Auditing", 4625, 40, IssueSeverity.Medium, IssueCategory.Security);
+        brute.ResidualCredentialRetry = true;
+        var issues = new List<LogIssueSignature>
+        {
+            brute,
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);
+
+        Assert.DoesNotContain(findings, f => f.Description.Contains("【入侵鏈】"));
+    }
+
+    [Fact]
+    public void 真攻擊照常觸發入侵鏈_當日4625未標殘留加帳號建立()
+    {
+        var brute = Sig("Security", "Security-Auditing", 4625, 40, IssueSeverity.High, IssueCategory.Security);
+        brute.ResidualCredentialRetry = false;
+        var issues = new List<LogIssueSignature>
+        {
+            brute,
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);
+
+        Assert.Contains(findings, f => f.Description.Contains("【入侵鏈】") && f.PatternId == CorrelationPatternIds.IntrusionChain);
+    }
+
+    [Fact]
+    public void 殘留不觸發跨日入侵鏈_昨日4625標殘留加今日帳號異動()
+    {
+        var yesterdayResidual = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 30, IssueSeverity.Medium, "Security", IssueCategory.Security);
+        yesterdayResidual.TopIssues[0].ResidualCredentialRetry = true;
+        var issues = new List<LogIssueSignature>
+        {
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayResidual }, DateTime.Today);
+
+        Assert.DoesNotContain(findings, f => f.Description.Contains("【跨日入侵鏈】"));
+    }
+
+    [Fact]
+    public void 真攻擊照常觸發跨日入侵鏈_昨日4625未標殘留加今日帳號異動()
+    {
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 30, IssueSeverity.High, "Security", IssueCategory.Security);
+        yesterdayBrute.TopIssues[0].ResidualCredentialRetry = false;
+        var issues = new List<LogIssueSignature>
+        {
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
+
+        Assert.Contains(findings, f => f.Description.Contains("【跨日入侵鏈】") && f.PatternId == CorrelationPatternIds.XdayIntrusion);
+    }
+
+    [Fact]
+    public void 殘留不觸發暴力破解RDP得手_昨日4625標殘留同IP()
+    {
+        var yesterdayResidual = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 30, IssueSeverity.Medium,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7");
+        yesterdayResidual.TopIssues[0].ResidualCredentialRetry = true;
+        var issues = new List<LogIssueSignature>
+        {
+            Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+                IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7")
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayResidual }, DateTime.Today);
+
+        Assert.DoesNotContain(findings, f => f.Description.Contains("【暴力破解→RDP 得手】"));
+    }
+
+    [Fact]
+    public void 真攻擊照常觸發暴力破解RDP得手_昨日4625未標殘留同IP()
+    {
+        var yesterdayBrute = HistoryDay(DateTime.Today.AddDays(-1), "Security-Auditing", 4625, 30, IssueSeverity.High,
+            "Security", IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7");
+        yesterdayBrute.TopIssues[0].ResidualCredentialRetry = false;
+        var issues = new List<LogIssueSignature>
+        {
+            Sig(ChannelCatalog.RdpRcmChannel, "Microsoft-Windows-TerminalServices-RemoteConnectionManager", 1149, 3,
+                IssueSeverity.Low, IssueCategory.Security, keyDetails: "來源IP(1個): 203.0.113.7")
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord> { yesterdayBrute }, DateTime.Today);
+
+        Assert.Contains(findings, f => f.Description.Contains("【暴力破解→RDP 得手】") && f.ElevatesDayRisk &&
+            f.PatternId == CorrelationPatternIds.XdayBruteRdp);
+    }
+
+    [Fact]
+    public void 次數未達門檻不觸發_4625未達十次()
+    {
+        var issues = new List<LogIssueSignature>
+        {
+            Sig("Security", "Security-Auditing", 4625, 5, IssueSeverity.High, IssueCategory.Security),
+            Sig("Security", "Security-Auditing", 4720, 1, IssueSeverity.High, IssueCategory.Security)
+        };
+
+        var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);
+
+        Assert.DoesNotContain(findings, f => f.Description.Contains("【入侵鏈】"));
+    }
+
+    [Fact]
+    public void 暴力破解錨點判定_各條件驗證()
+    {
+        var valid = Sig("Security", "Security-Auditing", 4625, 10, IssueSeverity.High, IssueCategory.Security);
+        Assert.True(CorrelationAnalyzer.IsBruteForceAnchor(valid));
+
+        var residual = Sig("Security", "Security-Auditing", 4625, 10, IssueSeverity.Medium, IssueCategory.Security);
+        residual.ResidualCredentialRetry = true;
+        Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(residual));
+
+        var lowCount = Sig("Security", "Security-Auditing", 4625, 9, IssueSeverity.High, IssueCategory.Security);
+        Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(lowCount));
+
+        var wrongEvent = Sig("Security", "Security-Auditing", 4624, 10, IssueSeverity.High, IssueCategory.Security);
+        Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(wrongEvent));
+
+        var wrongSource = Sig("Security", "Other-Source", 4625, 10, IssueSeverity.High, IssueCategory.Security);
+        Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(wrongSource));
+
+        var wrongLogName = Sig("System", "Security-Auditing", 4625, 10, IssueSeverity.High, IssueCategory.Security);
+        Assert.False(CorrelationAnalyzer.IsBruteForceAnchor(wrongLogName));
+    }
+
     private static void AssertPattern(string pattern, string expectedPatternId, List<LogIssueSignature> issues)
     {
         var findings = CorrelationAnalyzer.Detect(issues, new List<DailyAnalysisRecord>(), DateTime.Today);

@@ -1,11 +1,12 @@
-/**
+﻿/**
  * 全站設定（「系統管理 > 設定」頁）：未處理計算等級、AI 服務、資料保留天數。
  * 單一表單、單一 PUT，三個卡片對應同一份 SystemSettingsDto。
  */
 
 import { api } from '../core/api.js';
-import { toast, withBusy, trackUnsaved, bindTabs, icon } from '../core/ui.js';
-import { formatDateTime, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { toast, withBusy, trackUnsaved, bindTabs, icon, confirmAction, renderTable } from '../core/ui.js';
+import { formatDateTime, formatNumber, formatUserName, severityName, SEVERITY_ORDER } from '../core/format.js';
+import { alignBrandSubtitles } from '../core/brand-align.js';
 
 // 外觀／品牌（docs/archive/FEEDBACK-10-PLAN.md §1）：目前選定的圖示 data URI。
 // 不放在表單欄位裡——<input type="file"> 的值無法用程式設定，載入既有圖示時填不回去
@@ -16,6 +17,9 @@ const BRAND_ICON_MAX_KB = 64;
 
 /** 「還原預設外觀」填回的副標——與 Core 的 SystemSettings.BrandSubtitle 出廠值一致 */
 const BRAND_DEFAULT_SUBTITLE = '事件日誌預警';
+
+/** 雲端 AI 提供者的資料外送申報文字：provider 提示與切換確認框共用同一句 */
+const CLOUD_AI_DECLARATION = '分析時最多 500 則原始 log 訊息（可能含帳號名稱、來源 IP）會傳送至第三方服務。';
 
 // 未儲存提醒（docs/archive/HISTORY.md #2）：MPA 站台離開頁面前用瀏覽器原生確認攔一次。
 // AD 測試帳密／測試連線按鈕不算「設定內容」——測完即丟，不該觸發離開提醒
@@ -58,6 +62,7 @@ async function load() {
     renderBrandFields(current);
     renderUpdatedAt(current);
     loadBackfillStatus();   // 獨立打，失敗靜默、不阻塞其餘欄位（見函式註解）
+    loadAiUsage();          // 獨立打，失敗靜默（見函式註解）
 }
 
 // 按鈕反白樣式沿用風險日詳情頁的嚴重度篩選鈕（record-detail.js renderSeverityFilter），
@@ -149,8 +154,228 @@ function collectDayRiskLevels() {
         .map(btn => btn.dataset.riskLevel);
 }
 
+function updateAiProviderFields(provider) {
+    const baseUrlWrap = document.getElementById('ai-base-url-wrap');
+    const baseUrlLabel = document.getElementById('ai-base-url-label');
+    const baseUrlInput = document.getElementById('ai-base-url');
+    const baseUrlHint = document.getElementById('ai-base-url-hint');
+    const modelWrap = document.getElementById('ai-model-wrap');
+    const modelLabel = document.getElementById('ai-model-label');
+    const modelInput = document.getElementById('ai-model');
+    const modelHint = document.getElementById('ai-model-hint');
+    const azureDepWrap = document.getElementById('ai-azure-deployment-wrap');
+    const azureVerWrap = document.getElementById('ai-azure-api-version-wrap');
+    const apiKeyLabel = document.getElementById('ai-api-key-label');
+    const providerHint = document.getElementById('ai-provider-hint');
+
+    if (provider === 'OpenAi') {
+        if (providerHint) providerHint.textContent = `使用 OpenAI 官方 API 服務。${CLOUD_AI_DECLARATION}`;
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = 'API 位址（選填）';
+        baseUrlInput.placeholder = '留空使用官方端點，要走 proxy 才填';
+        if (baseUrlHint) baseUrlHint.textContent = '留空使用官方端點，要走 proxy 才填。';
+        modelWrap.classList.remove('d-none');
+        modelLabel.textContent = '模型名稱（必填）';
+        modelInput.placeholder = '例如 gpt-4o、gpt-4o-mini';
+        modelHint.textContent = '例如 gpt-4o、gpt-4o-mini。';
+        azureDepWrap.classList.add('d-none');
+        azureVerWrap.classList.add('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
+    } else if (provider === 'AzureOpenAi') {
+        if (providerHint) providerHint.textContent = `使用 Microsoft Azure OpenAI 服務。${CLOUD_AI_DECLARATION}`;
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = '端點位址（Endpoint，必填）';
+        baseUrlInput.placeholder = 'https://your-resource.openai.azure.com/';
+        if (baseUrlHint) baseUrlHint.textContent = '';
+        modelWrap.classList.add('d-none');
+        azureDepWrap.classList.remove('d-none');
+        azureVerWrap.classList.remove('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（必填）';
+    } else {
+        if (providerHint) providerHint.textContent = '使用本機或內部部署之 OpenAI 相容端點（如 llama.cpp／KoboldCpp）。';
+        baseUrlWrap.classList.remove('d-none');
+        baseUrlLabel.textContent = 'API 位址';
+        baseUrlInput.placeholder = 'http://localhost:8080';
+        if (baseUrlHint) baseUrlHint.textContent = '';
+        modelWrap.classList.remove('d-none');
+        modelLabel.textContent = '模型名稱';
+        modelInput.placeholder = 'local-model';
+        modelHint.textContent = '選填，預設 local-model。';
+        azureDepWrap.classList.add('d-none');
+        azureVerWrap.classList.add('d-none');
+        if (apiKeyLabel) apiKeyLabel.textContent = 'API 金鑰（選填）';
+    }
+}
+
+/** 最近一次 GET /api/admin/settings/ai-usage 的回傳值；用於估費計算 */
+let aiUsageData = null;
+
+/**
+ * 估算金額的唯一計算點（規格限制：反方向禁止複製，只能有一份）。
+ * 依累計 promptTokens × inputPrice + completionTokens × outputPrice 計算，
+ * 並即時更新 #ai-usage-cost 顯示。
+ * 兩個單價都是 0（或空）時顯示「未設定單價」。
+ * 此函式同時作為 input 事件處理器（單價欄位改動時即時觸發）。
+ */
+function calcAndRenderCost() {
+    const costEl = document.getElementById('ai-usage-cost');
+    if (!costEl) return;
+
+    const inputPrice = Number(document.getElementById('ai-input-price')?.value) || 0;
+    const outputPrice = Number(document.getElementById('ai-output-price')?.value) || 0;
+
+    if (inputPrice === 0 && outputPrice === 0) {
+        costEl.textContent = '未設定單價';
+        return;
+    }
+
+    if (!aiUsageData) {
+        costEl.textContent = '—';
+        return;
+    }
+
+    const promptTokens = aiUsageData.total?.promptTokens ?? 0;
+    const completionTokens = aiUsageData.total?.completionTokens ?? 0;
+
+    // 金額＝(promptTokens × inputPrice + completionTokens × outputPrice) ÷ 1,000,000
+    const cost = (promptTokens * inputPrice + completionTokens * outputPrice) / 1_000_000;
+    // 小數位視金額大小而定：小於 1 顯示 4 位，其餘顯示 2 位
+    const formatted = cost < 1 ? cost.toFixed(4) : cost.toFixed(2);
+    costEl.textContent = formatted;
+}
+
+/**
+ * 將 AiUsageDto 資料渲染至 AI 頁籤的用量統計區。
+ * 同時更新模組狀態 aiUsageData 以供 calcAndRenderCost 使用。
+ */
+function renderAiUsage(usage) {
+    aiUsageData = usage;
+
+    // 今日消耗
+    const todayEl = document.getElementById('ai-usage-today-tokens');
+    if (todayEl) {
+        todayEl.textContent = usage?.today
+            ? formatNumber(usage.today.totalTokens)
+            : '—';
+    }
+
+    // 累計消耗＋起算日小字
+    const totalEl = document.getElementById('ai-usage-total-tokens');
+    if (totalEl) {
+        totalEl.textContent = usage?.total
+            ? formatNumber(usage.total.totalTokens)
+            : '—';
+    }
+    const sinceEl = document.getElementById('ai-usage-since');
+    if (sinceEl) {
+        sinceEl.textContent = usage?.countingSince ? `（自 ${usage.countingSince}）` : '';
+    }
+
+    // 累計呼叫次數
+    const callsEl = document.getElementById('ai-usage-total-calls');
+    if (callsEl) {
+        callsEl.textContent = usage?.total ? formatNumber(usage.total.calls) : '—';
+    }
+
+    // 未回報 token 提示
+    const noTokenHint = document.getElementById('ai-usage-no-token-hint');
+    if (noTokenHint) {
+        const n = usage?.total?.callsWithoutUsage ?? 0;
+        if (n > 0) {
+            noTokenHint.textContent =
+                `注意：有 ${formatNumber(n)} 次呼叫的模型未回報 token 數（那些呼叫的 token 記 0）。`;
+            noTokenHint.classList.remove('d-none');
+        } else {
+            noTokenHint.classList.add('d-none');
+        }
+    }
+
+    // 更新時間
+    const updatedEl = document.getElementById('ai-usage-updated');
+    if (updatedEl) {
+        updatedEl.textContent = usage?.updatedAt ? `最後更新：${formatDateTime(usage.updatedAt)}` : '';
+    }
+
+    // 重繪 30 天表格
+    renderAiUsageDaysTable(usage?.days ?? []);
+
+    // 依新資料即時更新估算金額
+    calcAndRenderCost();
+}
+
+/**
+ * 用 renderTable 渲染近 30 天明細表格。
+ * days 為空時 renderTable 呼叫 renderEmpty，顯示「尚無資料」。
+ */
+function renderAiUsageDaysTable(days) {
+    const container = document.getElementById('ai-usage-days-table');
+    if (!container) return;
+
+    renderTable(container, {
+        columns: [
+            { key: 'date',             title: '日期' },
+            { key: 'calls',            title: '呼叫次數',        className: 'text-end', render: r => formatNumber(r.calls) },
+            { key: 'promptTokens',     title: 'prompt tokens',   className: 'text-end', render: r => formatNumber(r.promptTokens) },
+            { key: 'completionTokens', title: 'completion tokens', className: 'text-end', render: r => formatNumber(r.completionTokens) },
+            { key: 'totalTokens',      title: '總計 tokens',     className: 'text-end', render: r => formatNumber(r.totalTokens) }
+        ],
+        rows: days,
+        empty: { title: '尚無資料', hint: '目前沒有任何 AI 呼叫紀錄。' }
+    });
+}
+
+/**
+ * 非同步載入 AI token 用量統計。
+ * 失敗靜默——這是加值資訊，不應阻塞設定頁其餘欄位。
+ */
+async function loadAiUsage() {
+    try {
+        const usage = await api.get('/api/admin/settings/ai-usage', { silent: true });
+        renderAiUsage(usage);
+    } catch {
+        // 靜默：載不到統計不影響其他欄位
+    }
+}
+
+/**
+ * 「清空重新計算」按鈕：
+ * 先跳既有破壞性操作確認（confirmAction），確認後打
+ * POST /api/admin/settings/ai-usage/reset，成功後用回傳值重繪並顯示 toast。
+ */
+function bindAiUsageReset() {
+    const button = document.getElementById('btn-ai-usage-reset');
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+        const confirmed = await confirmAction({
+            title: '清空 token 用量統計',
+            message: '此操作將清除目前所有累計的 token 用量紀錄，清空後無法復原。確定要繼續？',
+            confirmText: '清空',
+            confirmVariant: 'danger'
+        });
+        if (!confirmed) return;
+
+        const restore = withBusy(button, '清空中');
+        try {
+            const usage = await api.post('/api/admin/settings/ai-usage/reset', {});
+            renderAiUsage(usage);
+            toast('已清空 token 用量統計', 'success');
+        } catch {
+            // 錯誤由 api.js toast 顯示
+        } finally {
+            restore();
+        }
+    });
+}
+
 function renderAiFields(settings) {
+    const provider = settings.aiProvider || 'Local';
+    document.getElementById('ai-provider').value = provider;
     document.getElementById('ai-base-url').value = settings.aiBaseUrl ?? '';
+    document.getElementById('ai-model').value = settings.aiModel ?? '';
+    document.getElementById('ai-azure-deployment').value = settings.aiAzureDeployment ?? '';
+    document.getElementById('ai-azure-api-version').value = settings.aiAzureApiVersion || '2024-10-21';
+    updateAiProviderFields(provider);
 
     const apiKeyInput = document.getElementById('ai-api-key');
     apiKeyInput.value = '';
@@ -172,14 +397,24 @@ function renderAiFields(settings) {
     setNumber('ai-frequency-penalty', settings.aiFrequencyPenalty);
     setNumber('ai-presence-penalty', settings.aiPresencePenalty);
     document.getElementById('ai-extra-request-fields').value = settings.aiExtraRequestFieldsJson ?? '';
+
+    // 單價欄位（token 用量估費，跟著整頁 form 儲存）
+    setNumber('ai-input-price', settings.aiInputPricePerMillion);
+    setNumber('ai-output-price', settings.aiOutputPricePerMillion);
+    // 重算估費顯示（資料或單價其中一方改動時都要更新）
+    calcAndRenderCost();
 }
 
-/** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／匯入上限） */
+/** 分析參數（§12：伺服器角色／體檢間隔／監控資料夾／掃描頻道／權限異動欄位／匯入上限） */
 function renderAnalysisFields(settings) {
     document.getElementById('server-description').value = settings.serverDescription ?? '';
     setNumber('checkup-interval-days', settings.checkupIntervalDays);
     document.getElementById('watched-folders').value = (settings.watchedFolders ?? []).join('\n');
     document.getElementById('analysis-channels').value = (settings.analysisChannels ?? []).join('\n');
+    document.getElementById('perm-operator-fields').value = (settings.permissionOperatorFields ?? []).join('\n');
+    document.getElementById('perm-member-fields').value = (settings.permissionMemberFields ?? []).join('\n');
+    document.getElementById('perm-group-fields').value = (settings.permissionGroupFields ?? []).join('\n');
+    document.getElementById('perm-object-fields').value = (settings.permissionObjectFields ?? []).join('\n');
     setNumber('import-max-file-size-kb', settings.importMaxFileSizeKb);
     setNumber('import-max-rows', settings.importMaxRows);
 }
@@ -206,6 +441,29 @@ function renderAdFields(settings) {
     document.getElementById('ad-test-account').value = '';
     document.getElementById('ad-test-password').value = '';
     document.getElementById('ad-test-result').replaceChildren();
+
+    renderAdStatus();
+}
+
+/**
+ * AD 生效狀態。未設定時一般帳號一律登入失敗，而登入頁的訊息與密碼打錯完全相同
+ * （刻意不洩漏帳號是否存在），管理者只能從這裡看出差別。
+ * 隨勾選與伺服器清單即時更新，不必先儲存。
+ */
+function renderAdStatus() {
+    const box = document.getElementById('ad-status');
+    const enabled = document.getElementById('ad-auth-enabled').checked;
+    const serverCount = collectAdServers().length;
+
+    box.classList.remove('d-none', 'alert-warning', 'alert-success');
+    if (!enabled || serverCount === 0) {
+        box.classList.add('alert-warning');
+        box.textContent = '目前狀態：AD 驗證未生效——一般帳號一律無法登入（登入頁只會顯示「帳號或密碼錯誤」）。'
+            + '請以本機救援帳號（serverAdmin）登入設定，或維持此狀態只用救援帳號管理。';
+    } else {
+        box.classList.add('alert-success');
+        box.textContent = `目前狀態：AD 驗證生效中，共 ${serverCount} 台伺服器依序嘗試。`;
+    }
 }
 
 /** 一行一台，去除空白行——與後端 SystemSettingsService.NormalizeAdServers 對齊的寬鬆解析 */
@@ -216,9 +474,10 @@ function collectAdServers() {
 function renderRetentionFields(settings) {
     document.getElementById('initial-history-days').value = settings.initialHistoryDays;
     document.getElementById('retention-days').value = settings.retentionDays;
+    document.getElementById('raw-event-retention-days').value = settings.rawEventRetentionDays;
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
-    document.getElementById('risky-event-retention-days').value = settings.riskyEventRetentionDays;
+    document.getElementById('report-retention-days').value = settings.reportRetentionDays;
 }
 
 /** 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：密碼欄比照 AI 金鑰，不預填、只顯示是否已設定 */
@@ -311,7 +570,7 @@ function applyBrandToSidebar(settings) {
             const img = document.createElement('img');
             img.src = settings.brandIconDataUri;
             img.alt = '';
-            img.className = 'lf-sidebar__brand-img';
+            img.className = 'lf-brand__img';
             mark.appendChild(img);
         } else {
             mark.appendChild(icon('speedometer2'));
@@ -328,15 +587,19 @@ function applyBrandToSidebar(settings) {
     let subtitleEl = document.getElementById('lf-brand-subtitle');
     if (settings.brandSubtitle) {
         if (!subtitleEl) {
-            subtitleEl = document.createElement('small');
+            subtitleEl = document.createElement('span');
             subtitleEl.id = 'lf-brand-subtitle';
-            document.querySelector('.lf-sidebar__brand-text')?.appendChild(subtitleEl);
+            subtitleEl.className = 'lf-brand__subtitle';
+            document.querySelector('.lf-brand__text')?.appendChild(subtitleEl);
         }
         subtitleEl.textContent = settings.brandSubtitle;
         subtitleEl.title = settings.brandSubtitle;
     } else if (subtitleEl) {
         subtitleEl.remove();
     }
+
+    // 主標題／副標題文字換了，貼齊要重算（brand-align.js 只在載入時與 resize 時算）
+    alignBrandSubtitles();
 }
 
 function setBrandIcon(dataUri) {
@@ -457,17 +720,88 @@ function bindForm() {
             return;
         }
 
+        const rawEventRetentionDays = Number(document.getElementById('raw-event-retention-days').value);
         const runLogRetentionDays = Number(document.getElementById('run-log-retention-days').value);
         const auditRetentionDays = Number(document.getElementById('audit-retention-days').value);
-        const riskyEventRetentionDays = Number(document.getElementById('risky-event-retention-days').value);
-        if (riskyEventRetentionDays > retentionDays) {
-            activateTabForElement(document.getElementById('risky-event-retention-days'));
-            toast('風險 log 暫存保留天數不可大於歷史資料保留天數。', 'warning');
+        const reportRetentionDays = Number(document.getElementById('report-retention-days').value);
+        if (rawEventRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('raw-event-retention-days'));
+            toast('原始事件內容保留天數不可大於歷史資料保留天數。', 'warning');
             return;
         }
 
+        // **只列真的會造成刪除的設定。** 首次執行回補天數刻意不列——它決定的是
+        // 「首次執行要往回補幾天」，調小不會刪掉任何既有資料。把不會發生的事寫進
+        // 刪除確認，只會讓使用者學會忽略這個對話框。
+        const reducedItems = [];
+        if (retentionDays < current.retentionDays) {
+            reducedItems.push(`歷史資料保留天數：${current.retentionDays} → ${retentionDays} 天（${retentionDays} 天以前的分析紀錄將進入刪除範圍）`);
+        }
+        if (rawEventRetentionDays < current.rawEventRetentionDays) {
+            reducedItems.push(`原始事件內容保留天數：${current.rawEventRetentionDays} → ${rawEventRetentionDays} 天（${rawEventRetentionDays} 天以前的原始事件文字將被清除，統計與問題清單保留）`);
+        }
+        if (runLogRetentionDays < current.runLogRetentionDays) {
+            reducedItems.push(`執行歷程保留天數：${current.runLogRetentionDays} → ${runLogRetentionDays} 天（${runLogRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+        if (auditRetentionDays < current.auditRetentionDays) {
+            reducedItems.push(`稽核與追責紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
+        }
+        if (reportRetentionDays < current.reportRetentionDays) {
+            reducedItems.push(`報告檔保留天數：${current.reportRetentionDays} → ${reportRetentionDays} 天（${reportRetentionDays} 天以前的報告檔將進入刪除範圍）`);
+        }
+
+        if (reducedItems.length > 0) {
+            const confirmed = await confirmAction({
+                title: '確認資料保留變更',
+                message: `${reducedItems.map(x => '• ' + x).join('\n')}\n\n此變更無法復原。確定要儲存？`,
+                confirmText: '確定',
+                confirmVariant: 'danger'
+            });
+            if (!confirmed) return;
+        }
+
+        const aiProvider = document.getElementById('ai-provider').value;
+        const aiBaseUrl = document.getElementById('ai-base-url').value.trim();
+        const aiModel = document.getElementById('ai-model').value.trim();
+        const aiAzureDeployment = document.getElementById('ai-azure-deployment').value.trim();
+        const aiAzureApiVersion = document.getElementById('ai-azure-api-version').value.trim();
         const apiKey = document.getElementById('ai-api-key').value;
         const clearApiKey = document.getElementById('ai-api-key-clear').checked;
+        const hasApiKey = apiKey || (current?.aiHasApiKey && !clearApiKey);
+
+        if (aiProvider === 'OpenAi') {
+            if (!hasApiKey) {
+                activateTabForElement(document.getElementById('ai-api-key'));
+                toast('使用 OpenAI 官方 API 時，請輸入 API 金鑰。', 'warning');
+                return;
+            }
+            if (!aiModel) {
+                activateTabForElement(document.getElementById('ai-model'));
+                toast('使用 OpenAI 官方 API 時，請輸入模型名稱。', 'warning');
+                return;
+            }
+        } else if (aiProvider === 'AzureOpenAi') {
+            if (!aiBaseUrl) {
+                activateTabForElement(document.getElementById('ai-base-url'));
+                toast('使用 Azure OpenAI 時，請輸入端點位址。', 'warning');
+                return;
+            }
+            if (!aiAzureDeployment) {
+                activateTabForElement(document.getElementById('ai-azure-deployment'));
+                toast('使用 Azure OpenAI 時，請輸入部署名稱。', 'warning');
+                return;
+            }
+            if (!aiAzureApiVersion) {
+                activateTabForElement(document.getElementById('ai-azure-api-version'));
+                toast('使用 Azure OpenAI 時，請輸入 API 版本。', 'warning');
+                return;
+            }
+            if (!hasApiKey) {
+                activateTabForElement(document.getElementById('ai-api-key'));
+                toast('使用 Azure OpenAI 時，請輸入 API 金鑰。', 'warning');
+                return;
+            }
+        }
 
         const adAuthEnabled = document.getElementById('ad-auth-enabled').checked;
         const adServers = collectAdServers();
@@ -495,20 +829,37 @@ function bindForm() {
             }
         }
 
+        // 切換到雲端 provider 時二次確認（由 Local 切到 OpenAi 或 AzureOpenAi）
+        const previousAiProvider = current?.aiProvider || 'Local';
+        if (previousAiProvider === 'Local' && (aiProvider === 'OpenAi' || aiProvider === 'AzureOpenAi')) {
+            const confirmed = await confirmAction({
+                title: '確認切換至雲端 AI 服務',
+                message: `切換至雲端提供者後，${CLOUD_AI_DECLARATION}\n\n確定要儲存？`,
+                confirmText: '確定',
+                confirmVariant: 'danger'
+            });
+            if (!confirmed) return;
+        }
+
         const restore = withBusy(saveButton, '儲存中');
         try {
             current = await api.put('/api/admin/settings', {
                 unhandledSeverities: severities,
                 severityDisplayMode: collectDisplayMode(),
                 visibleDayRiskLevels: collectDayRiskLevels(),
-                aiBaseUrl: document.getElementById('ai-base-url').value.trim(),
+                aiProvider,
+                aiBaseUrl,
+                aiModel,
+                aiAzureDeployment,
+                aiAzureApiVersion,
                 aiApiKey: apiKey || null,
                 clearAiApiKey: clearApiKey,
                 initialHistoryDays,
                 retentionDays,
+                rawEventRetentionDays,
                 runLogRetentionDays,
                 auditRetentionDays,
-                riskyEventRetentionDays,
+                reportRetentionDays,
                 adAuthEnabled,
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),
@@ -523,11 +874,18 @@ function bindForm() {
                 aiFrequencyPenalty: Number(document.getElementById('ai-frequency-penalty').value),
                 aiPresencePenalty: Number(document.getElementById('ai-presence-penalty').value),
                 aiExtraRequestFieldsJson: document.getElementById('ai-extra-request-fields').value.trim(),
+                // token 用量單價（跟著整頁 form 儲存）
+                aiInputPricePerMillion: Number(document.getElementById('ai-input-price').value) || 0,
+                aiOutputPricePerMillion: Number(document.getElementById('ai-output-price').value) || 0,
                 // 分析參數（§12）
                 serverDescription: document.getElementById('server-description').value.trim(),
                 checkupIntervalDays: Number(document.getElementById('checkup-interval-days').value),
                 watchedFolders: collectLines('watched-folders'),
                 analysisChannels: collectLines('analysis-channels'),
+                permissionOperatorFields: collectLines('perm-operator-fields'),
+                permissionMemberFields: collectLines('perm-member-fields'),
+                permissionGroupFields: collectLines('perm-group-fields'),
+                permissionObjectFields: collectLines('perm-object-fields'),
                 importMaxFileSizeKb: Number(document.getElementById('import-max-file-size-kb').value),
                 importMaxRows: Number(document.getElementById('import-max-rows').value),
                 // 郵件通知（回饋十五輪批次D）
@@ -694,10 +1052,28 @@ function bindAiAdvancedReset() {
     });
 }
 
+function bindAiProvider() {
+    document.getElementById('ai-provider')?.addEventListener('change', e => {
+        // 位址欄語意隨 provider 改變（本機端點／OpenAI proxy／Azure endpoint），切換時清空，
+        // 否則從 Local 切到雲端會把 localhost 位址一起存出去——請求根本沒出內網，申報卻說會
+        const baseUrl = document.getElementById('ai-base-url');
+        if (baseUrl) baseUrl.value = '';
+        updateAiProviderFields(e.target.value);
+    });
+}
+
 bindForm();
+bindAiProvider();
 bindAdTest();
 bindMailTest();
 bindAiAdvancedReset();
+bindAiUsageReset();
+// 單價欄位改動時即時更新估算金額（不必按儲存、不必打 API）
+document.getElementById('ai-input-price')?.addEventListener('input', calcAndRenderCost);
+document.getElementById('ai-output-price')?.addEventListener('input', calcAndRenderCost);
+// AD 生效狀態同樣即時反映目前欄位內容，不必先儲存
+document.getElementById('ad-auth-enabled')?.addEventListener('change', renderAdStatus);
+document.getElementById('ad-servers')?.addEventListener('input', renderAdStatus);
 bindBrandIcon();
 // #settings-tabs 在 <form> 外面，切頁籤的點擊不會冒泡進表單的 trackUnsaved 監聽器，
 // 不需要額外排除——見 activateTabForElement 的說明

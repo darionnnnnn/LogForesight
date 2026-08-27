@@ -1,10 +1,11 @@
+﻿@using Microsoft.AspNetCore.Mvc.ViewFeatures
 @inject LogForesight.Web.Services.IBrandProvider Brand
 @{
     ViewData["Title"] = "登入";
     Layout = null;   // 登入頁不套主版面（沒有側欄與選單）
 
     // 品牌自訂（docs/archive/FEEDBACK-10-PLAN.md §1）：登入頁雖是匿名頁，但品牌不是機密
-    // （產品名稱、副標與圖示，任何看得到登入畫面的人本來就看得到），照樣套設定值
+    // （主標題、副標題與圖示，任何看得到登入畫面的人本來就看得到），照樣套設定值
     var brand = Brand.Get();
 }
 <!DOCTYPE html>
@@ -13,36 +14,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>登入 - @brand.Name</title>
+    <link rel="icon" href="~/favicon.ico" />
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" asp-append-version="true" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    @* 登入頁不套 _Layout，掛載前綴要自己注入——漏掉的話登入頁的 API 全數 404
+       （畫面症狀是「無法取得登入設定」）。 *@
+    <script>window.LF_BASE = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Context.Request.PathBase.ToUriComponent()));</script>
 </head>
 <body>
     <div class="lf-login">
         <div class="lf-login__card">
-            <div class="lf-login__brand">
-                <span class="lf-login__brand-mark">
-                    @if (brand.IconDataUri != null)
-                    {
-                        @* alt 留空：緊接著的標題就是產品名稱，讀屏再念一次等於重複（純裝飾） *@
-                        <img src="@brand.IconDataUri" alt="" class="lf-login__logo" />
-                    }
-                    else
-                    {
-                        @* 沒有自訂圖示時沿用內建向量圖示——與側欄同一套 fallback 語意
-                           （docs/archive/FEEDBACK-10-PLAN.md §1，IBrandProvider.IconDataUri 文件） *@
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#speedometer2"></use></svg>
-                    }
-                </span>
-                <span class="lf-login__brand-text">
-                    <span class="lf-login__title" title="@brand.Name">@brand.Name</span>
-                    @if (brand.Subtitle != null)
-                    {
-                        <span class="lf-login__subtitle" title="@brand.Subtitle">@brand.Subtitle</span>
-                    }
-                </span>
-            </div>
+            <partial name="_Brand" model="brand" view-data='new ViewDataDictionary(ViewData) { ["BrandVariant"] = "login" }' />
 
-            <form id="lf-login-form" novalidate>
+            <form id="lf-login-form" method="post" novalidate>
                 <div class="mb-3">
                     <label for="account" class="form-label">帳號</label>
                     <input type="text" class="form-control" id="account" name="account"
@@ -69,5 +53,26 @@
 
     <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js" asp-append-version="true"></script>
     <script type="module" src="~/js/pages/login.js" asp-append-version="true"></script>
+    <script>
+        window.addEventListener('load', function () {
+            if (window.LF_LOGIN_READY !== true) {
+                var errorBox = document.getElementById('login-error');
+                if (errorBox) {
+                    errorBox.classList.remove('d-none');
+                    errorBox.textContent = '頁面資源載入失敗，請強制重新整理（Ctrl+F5）；若持續發生請聯絡管理者。';
+                }
+                var form = document.getElementById('lf-login-form');
+                if (form) {
+                    form.addEventListener('submit', function (event) {
+                        event.preventDefault();
+                    });
+                }
+                var submitBtn = document.getElementById('login-submit');
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                }
+            }
+        });
+    </script>
 </body>
 </html>

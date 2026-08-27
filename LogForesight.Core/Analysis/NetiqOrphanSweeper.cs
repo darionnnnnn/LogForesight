@@ -61,13 +61,21 @@ public static class NetiqOrphanSweeper
         }
 
         var orphanedNames = new List<string>();
-        foreach (var host in orphans)
+        hosts.MutateBatch(batch =>
         {
-            host.Active = false;
-            host.OrphanedFromSentinel = host.NetiqServer;
-            hosts.Upsert(host);
-            orphanedNames.Add(host.HostName);
-        }
+            var batchOrphans = batch
+                .Where(h => string.Equals(h.Source, "netiq", StringComparison.OrdinalIgnoreCase) &&
+                            h.Active && h.MergedInto == null &&
+                            h.SentinelId.HasValue)
+                .Where(h => !existing.Contains(h.SentinelId!.Value));
+
+            foreach (var host in batchOrphans)
+            {
+                host.Active = false;
+                host.OrphanedFromSentinel = host.NetiqServer;
+                orphanedNames.Add(host.HostName);
+            }
+        });
 
         Log.Warn("偵測到 Sentinel 已被刪除，停用所屬 NetIQ 主機 {Count} 台：{Hosts}",
             orphanedNames.Count, string.Join("、", orphanedNames));

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Models;
 
 namespace LogForesight.Web.Models.Dto;
 
@@ -20,7 +21,11 @@ public class SystemSettingsDto
     /// <summary>顯示中的日風險等級（高/中/低，docs/archive/FEEDBACK-3-PLAN.md #8）——與問題嚴重度是不同的兩套層級</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
     public string AiBaseUrl { get; set; } = "";
+    public string AiModel { get; set; } = "local-model";
+    public string AiAzureDeployment { get; set; } = "";
+    public string AiAzureApiVersion { get; set; } = "2024-10-21";
 
     /// <summary>API 金鑰是否已設定；金鑰本身 write-only，絕不回傳明碼或密文</summary>
     public bool AiHasApiKey { get; set; }
@@ -35,8 +40,11 @@ public class SystemSettingsDto
     /// <summary>稽核紀錄保留天數</summary>
     public int AuditRetentionDays { get; set; }
 
-    /// <summary>風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2）</summary>
-    public int RiskyEventRetentionDays { get; set; }
+    /// <summary>原始事件內容保留天數（日紀錄原始樣本與風險 log 暫存）</summary>
+    public int RawEventRetentionDays { get; set; }
+
+    /// <summary>報告檔保留天數（export\ 底下的風險報告、週檢報告、權限異動報告）</summary>
+    public int ReportRetentionDays { get; set; }
 
     /// <summary>是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
@@ -56,6 +64,10 @@ public class SystemSettingsDto
     public int AiDeepDiveMaxTokens { get; set; }
     public double AiFrequencyPenalty { get; set; }
     public double AiPresencePenalty { get; set; }
+
+    /// <summary>估費單價（每百萬 token）；0＝不估費</summary>
+    public double AiInputPricePerMillion { get; set; }
+    public double AiOutputPricePerMillion { get; set; }
     public string AiExtraRequestFieldsJson { get; set; } = "";
 
     /// <summary>
@@ -70,6 +82,12 @@ public class SystemSettingsDto
     public string ServerDescription { get; set; } = "";
     public int CheckupIntervalDays { get; set; }
     public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+    public List<string> PermissionOperatorFields { get; set; } = new();
+    public List<string> PermissionMemberFields { get; set; } = new();
+    public List<string> PermissionGroupFields { get; set; } = new();
+    public List<string> PermissionObjectFields { get; set; } = new();
 
     // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）────────────────────────
     public int ImportMaxFileSizeKb { get; set; }
@@ -158,9 +176,20 @@ public class UpdateSystemSettingsRequest
     /// 見 SystemSettingsService.Update</summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new();
 
+    public string AiProvider { get; set; } = LogForesight.Core.Configuration.AiProviders.Local;
+
     /// <summary>空字串＝刻意停用 AI（設定頁明講「留空會停用」），所以不能標 [Required]——那會把空字串擋在驗證層</summary>
     [StringLength(500)]
     public string AiBaseUrl { get; set; } = "";
+
+    [StringLength(200)]
+    public string AiModel { get; set; } = "";
+
+    [StringLength(200)]
+    public string AiAzureDeployment { get; set; } = "";
+
+    [StringLength(100)]
+    public string AiAzureApiVersion { get; set; } = "";
 
     /// <summary>write-only；留空＝沿用既有金鑰，要清除請另外傳 ClearAiApiKey=true</summary>
     [StringLength(500)]
@@ -168,22 +197,25 @@ public class UpdateSystemSettingsRequest
 
     public bool ClearAiApiKey { get; set; }
 
-    [Range(1, 3650, ErrorMessage = "首次回補天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "首次回補天數必須介於 90~3650 天")]
     public int InitialHistoryDays { get; set; }
 
-    [Range(1, 3650, ErrorMessage = "歷史資料保留天數必須介於 1~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "歷史資料保留天數必須介於 90~3650 天")]
     public int RetentionDays { get; set; }
 
-    [Range(7, 3650, ErrorMessage = "執行歷程保留天數必須介於 7~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "執行歷程保留天數必須介於 90~3650 天")]
     public int RunLogRetentionDays { get; set; }
 
-    [Range(90, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "稽核紀錄保留天數必須介於 90~3650 天")]
     public int AuditRetentionDays { get; set; }
 
-    /// <summary>風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2）；上限交由
-    /// SystemSettingsService.Update 對照 RetentionDays 驗證（暫存不可活得比分析紀錄久）</summary>
-    [Range(1, 3650, ErrorMessage = "風險 log 暫存保留天數必須介於 1~3650 天")]
-    public int RiskyEventRetentionDays { get; set; }
+    /// <summary>原始事件內容保留天數（日紀錄原始樣本與風險 log 暫存）；上限交由
+    /// SystemSettingsService.Update 對照 RetentionDays 驗證</summary>
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "原始事件內容保留天數必須介於 90~3650 天")]
+    public int RawEventRetentionDays { get; set; }
+
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "報告檔保留天數必須介於 90~3650 天")]
+    public int ReportRetentionDays { get; set; }
 
     // ── AD 驗證（docs/archive/HISTORY.md #9）────────────────────────────────
 
@@ -223,6 +255,14 @@ public class UpdateSystemSettingsRequest
     [Range(0, 2, ErrorMessage = "存在懲罰必須介於 0~2")]
     public double AiPresencePenalty { get; set; }
 
+    /// <summary>估費單價：每百萬 input token 的金額，0＝不估費（回饋二十七輪作業 B）</summary>
+    [Range(0, 1000000, ErrorMessage = "單價必須介於 0~1000000")]
+    public double AiInputPricePerMillion { get; set; }
+
+    /// <summary>估費單價：每百萬 output token 的金額，0＝不估費</summary>
+    [Range(0, 1000000, ErrorMessage = "單價必須介於 0~1000000")]
+    public double AiOutputPricePerMillion { get; set; }
+
     /// <summary>JSON 物件文字；格式由 SystemSettingsService.Update 驗證（空字串＝不附加任何欄位）</summary>
     [StringLength(4000)]
     public string AiExtraRequestFieldsJson { get; set; } = "";
@@ -239,6 +279,12 @@ public class UpdateSystemSettingsRequest
 
     /// <summary>空清單＝使用預設六頻道；頻道名可解析性由 SystemSettingsService.Update 驗證</summary>
     public List<string> AnalysisChannels { get; set; } = new();
+
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+    public List<string> PermissionOperatorFields { get; set; } = new();
+    public List<string> PermissionMemberFields { get; set; } = new();
+    public List<string> PermissionGroupFields { get; set; } = new();
+    public List<string> PermissionObjectFields { get; set; } = new();
 
     // ── 匯入限制（§12）───────────────────────────────────────────────────────
 
@@ -376,4 +422,7 @@ public class TestAdConnectionResultDto
 public class DisplaySettingsDto
 {
     public List<string> VisibleDayRiskLevels { get; set; } = new();
+
+    /// <summary>顯示中的問題嚴重度清單（回饋二十輪 B2，SiteHidden 模式下的可見嚴重度；未限制時為完整清單）</summary>
+    public List<string> VisibleSeverities { get; set; } = new();
 }

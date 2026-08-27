@@ -51,6 +51,7 @@ public class AuditQueryService
 
         [AuditActions.PermConfirmAuthorized] = "確認權限異動為授權",
         [AuditActions.PermConfirmSuspicious] = "標記權限異動可疑",
+        [AuditActions.PermConfirmBatch] = "批次確認權限異動",
 
         [AuditActions.RuleCreate] = "新增規則",
         [AuditActions.RuleUpdate] = "修改規則",

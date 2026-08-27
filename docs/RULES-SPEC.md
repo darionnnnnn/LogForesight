@@ -95,7 +95,7 @@ Linux syslog 沒有 Event ID，所以規則模型多了一個 `Platform` 欄位�
 （`SentinelQueryBuilder.LinuxRuleProgramClauses` 的 `sp:{pattern}*`，不像 `MessagePatterns`
 有引號＋跳脫保護），空白或 `(`／`:`／`*` 等特殊字元會讓整份夜間取數查詢語法壞掉、
 整批主機查詢失敗。字元集與 `SentinelEventMapper` 的 msg 前綴 program 正則一致
-（syslog identifier 的實務形狀），17 條種子全數天然合格。
+（syslog identifier 的實務形狀），28 條 Linux 種子全數天然合格。
 
 ### `MatchAllEventIds` 為什麼要顯式宣告
 
@@ -174,9 +174,17 @@ Web DI 以 `StorageBackend.Blob("rules")`/`Blob("suppressions")` 組出兩個 st
 - `--import-rules`（`RuleImportPlanner`）以 `Id` 為鍵做 diff：
   - 種子裡存在、`rules.json` 沒有的 → **新增**
   - 兩邊 Id 相同、內容相同（不比較 `Enabled`）→ **略過**
-  - 兩邊 Id 相同、內容不同、`Origin` 為 `builtin` → 預設**略過並提示**，需要
-    `--overwrite-builtin` 才會覆蓋；覆蓋時**保留使用者原本的 `Enabled` 設定**
-    （使用者停用某條 builtin 是操作決定，不是「內容被改過」，匯入不該把它悄悄打開）
+  - 兩邊 Id 相同、內容不同、`Origin` 為 `builtin` → **依 `ModifiedBy` 分流**：
+    - `ModifiedBy` 為 null（使用者從未在管理頁改過這條）→ 視為**原廠更新，直接套用**，
+      不需要 `--overwrite-builtin`／不需要勾選覆蓋。**這是必要的**：內容不同純粹是因為
+      程式更新了規則（例如修正一條比對範圍過寬的規則、調整一個會誤報的嚴重度），
+      而「連同已修改的內建規則一併覆蓋」這個選項的語意是保護使用者的手動修改，
+      不該連帶擋住使用者根本沒碰過的規則的原廠修正。
+    - `ModifiedBy` 有值（使用者曾手動修改）→ 維持預設**略過並提示**，
+      需要 `--overwrite-builtin`／勾選覆蓋才會以原廠版本蓋掉。
+    - 兩條路徑都**保留使用者原本的 `Enabled` 設定**（使用者停用某條 builtin 是操作決定，
+      不是「內容被改過」，匯入不該把它悄悄打開）；套用時 `CloneForSeedOverwrite`
+      一併清空 `ModifiedBy`／`ModifiedAt`（回到未修改狀態）。
   - 兩邊 Id 相同但 `Origin` 不是 `builtin`（使用者把它改成 custom 或衝突）→ **衝突**，
     不處理，需要人工排解
   - 預設**只預覽**（列出將新增/更新/略過/衝突的 Id 與原因），加 `--apply` 才真正寫入；
@@ -316,6 +324,23 @@ docs/DETECTION-SPEC.md）。詳情頁的簽章／關聯抑制入口本來就硬�
 的精簡路徑，`RecordStorageShaper` 明確保留這兩個欄位）。這是未來管理頁「頻率報表」與
 「哪些規則被哪些主機關閉」查詢的資料基礎——用 `Id` 查詢不受規則內容演進影響，比事後用
 `(Source, EventId)` 反推更穩定。
+
+## 規則變更的回溯套用
+
+**規則的新增/修改只影響之後的分析**——已經分析過的日子維持原本的結果，規則異動不會自動回頭
+重算（沒有規則異動追蹤機制，這是刻意的：自動排程不做破壞性動作）。要把新規則套用到過去，
+使用者在「排程作業 → 立即執行」選**執行模式**，見 [WEB-SPEC.md](WEB-SPEC.md) §10.9。
+規則維護頁儲存成功後會提示這件事。
+
+回溯套用時的兩個規則面副作用：
+
+- **改規則可能改變 `issue_key`**：Linux 簽章的第五段就是命中的規則 Id
+  （`IssueSignatureKey.For(LogIssueSignature)` 的 `EventKey` 尾段）。新增或修改 Linux 規則後重跑，
+  同一個事件的 `issue_key` 可能從 4 段變 5 段或換值，**舊的處理結論會接不回來、成為孤兒列**
+  （保留在歷史中當稽核軌跡，不清除）。Windows 事件與未命中規則的 Linux 事件 `EventKey` 恆空，不受影響。
+- **停用規則再重跑會造成資料缺口**：`Enabled=false` 不等於不偵測（見「三條語意邊界」），
+  但 Operational 頻道的 watchlist 是從**啟用中規則**的 EventIds 聯集推導——先停用舊規則再重跑舊日，
+  該事件在重跑結果中整段收不進來。要換規則就直接改內容或新增規則，不要走「停用舊的、加新的、再重跑」。
 
 ## 未來擴充卡位（此版本不實作，只預留欄位/語意）
 

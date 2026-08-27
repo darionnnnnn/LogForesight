@@ -1,0 +1,20 @@
+@* 品牌區塊的內容（見 _Brand.cshtml）：外層是連結或一般區塊，內容一律相同 *@
+@model LogForesight.Web.Services.BrandInfo
+<span class="lf-brand__mark" id="lf-brand-mark">
+    @if (Model.IconDataUri != null)
+    {
+        @* alt 留空：緊接著的主標題就是同一個名稱，讀屏再念一次等於重複（純裝飾） *@
+        <img src="@Model.IconDataUri" alt="" class="lf-brand__img" />
+    }
+    else
+    {
+        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#speedometer2"></use></svg>
+    }
+</span>
+<span class="lf-brand__text">
+    <span class="lf-brand__name" id="lf-brand-name" title="@Model.Name">@Model.Name</span>
+    @if (Model.Subtitle != null)
+    {
+        <span class="lf-brand__subtitle" id="lf-brand-subtitle" title="@Model.Subtitle">@Model.Subtitle</span>
+    }
+</span>

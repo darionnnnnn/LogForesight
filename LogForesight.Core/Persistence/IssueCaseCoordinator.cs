@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Persistence;
+﻿namespace LogForesight.Core.Persistence;
 
 /// <summary>建案結果：Created=false 時代表該問題已有他人的進行中案件，未變更（2.1「只由一個人處理」）</summary>
 public readonly record struct CaseBuildResult(bool Created, string? CaseId, long? ExistingHandlerId, int LinkedDayCount);
@@ -34,19 +34,22 @@ public class IssueCaseCoordinator
     private readonly IRecordHandlingStore _handlingLog;
     private readonly IAnalysisRecordQuery _records;
     private readonly IHostStore _hosts;
+    private readonly IIssueOwnerStore _issueProfiles;
 
     public IssueCaseCoordinator(
         IIssueCaseStore cases,
         IIssueHandlingStore issueHandlings,
         IRecordHandlingStore handlingLog,
         IAnalysisRecordQuery records,
-        IHostStore hosts)
+        IHostStore hosts,
+        IIssueOwnerStore issueProfiles)
     {
         _cases = cases;
         _issueHandlings = issueHandlings;
         _handlingLog = handlingLog;
         _records = records;
         _hosts = hosts;
+        _issueProfiles = issueProfiles;
     }
 
     /// <summary>
@@ -95,13 +98,11 @@ public class IssueCaseCoordinator
         }
         _issueHandlings.SaveMany(toSave);
 
-        _cases.Save(new IssueCase
-        {
-            CaseId = caseId, HostName = hostName, IssueKey = issueKey, IssueLabel = issueLabel,
-            Status = status, HandlerId = handlerId, Note = note, DueDate = dueDate,
-            FirstLinkedDate = eligibleDays[0], LastLinkedDate = eligibleDays[^1],
-            CreatedAt = occurredAt, CreatedByAccount = actorAccount, UpdatedAt = occurredAt
-        });
+        _cases.Save(CreateOpenCase(
+            caseId, hostName, issueKey, issueLabel,
+            handlerId, note, dueDate,
+            eligibleDays[0], eligibleDays[^1],
+            occurredAt, actorAccount));
 
         return new CaseBuildResult(Created: true, CaseId: caseId, ExistingHandlerId: null, LinkedDayCount: toSave.Count);
     }
@@ -183,51 +184,141 @@ public class IssueCaseCoordinator
     }
 
     /// <summary>
-    /// 批次逐日掛接（§0.4-C）：console 排程每天寫入新的 DailyAnalysisRecord 後呼叫，
-    /// 把當日 TopIssues 中「有進行中案件」的問題掛進案件——只掛進行中案件（已結案案件見
-    /// <see cref="SyncStatus"/> 的重現語意），該日該問題已有標記時不覆蓋（防禦性，理論上不會發生），
-    /// 內建冪等（已掛過的日子下次呼叫直接跳過），失敗由呼叫端決定是否吞掉（不擋分析主流程）。
+    /// 批次逐日掛接（§0.4-C，回饋十九輪批次F 擴充機房結論自動套用，回饋二十一輪擴充問題負責人自動建案）：
+    /// console 排程每天寫入新的 DailyAnalysisRecord 後呼叫，依優先序把當日 TopIssues 掛上狀態：
+    ///   1. 該日該問題已有標記時不覆蓋（防禦性，理論上不會發生，或已掛過——內建冪等）。
+    ///   2. 有進行中案件（既有行為）：掛進案件狀態，記 <see cref="HandlingActions.CaseAttach"/>。
+    ///   3. 沒有進行中案件，但問題檔案（<see cref="IssueProfile"/>）有機房結論且
+    ///      <see cref="IssueProfile.AutoApply"/>＝true：自動套用該結論，記
+    ///      <see cref="HandlingActions.FleetApply"/>——這正是機房結論存在的主要情境
+    ///      （多數問題從沒建過案件，不會走到分支 2）。
+    ///   4. 沒有進行中案件也沒有機房結論，但問題檔案有負責人：自動建立案件並指派給第一位負責人，
+    ///      記 <see cref="HandlingActions.OwnerAutoAssign"/>。
+    /// 只掛進行中案件／有 AutoApply 結論／有負責人的問題（已結案案件見 <see cref="SyncStatus"/> 的重現語意），
+    /// 失敗由呼叫端決定是否吞掉（不擋分析主流程）。
     /// </summary>
     public CaseAttachResult AttachNewDay(string hostName, DateTime date, IReadOnlyCollection<LogIssueSignature> issues, DateTime occurredAt)
     {
-        var openCases = _cases.GetOpenForHost(hostName);
-        if (openCases.Count == 0 || issues.Count == 0) return new CaseAttachResult(0);
+        if (issues.Count == 0) return new CaseAttachResult(0);
 
+        var openCases = _cases.GetOpenForHost(hostName);
         var casesByIssueKey = openCases.ToDictionary(c => c.IssueKey, StringComparer.Ordinal);
+
+        // 自動建案的「不再打擾」集合：同主機同問題最近一筆案件被人以 wont_fix／false_positive／
+        // known_noise 結案時，代表負責人已判定這個問題不值得處理——隔天問題再出現不該再開一件
+        // 新案件把它復活（resolved 除外：真正修好後再出現是新的事件，該再交辦一次）。
+        // 只在有負責人 profile 時才需要這份資料，避免每主機日多讀一次全部案件。
+        HashSet<string>? dismissedIssueKeys = null;
         var existingForDay = _issueHandlings.GetForDay(hostName, date)
             .ToDictionary(h => h.IssueKey, StringComparer.Ordinal);
+
+        // fleet 結論與問題負責人索引：批次每天呼叫一次，profiles 整份 blob 讀本來就輕（一次性載入，
+        // 不是逐問題查）。索引涵蓋有 AutoApply 結論或有負責人的檔案
+        var profilesByKey = _issueProfiles.GetAll()
+            .Where(p => (p.AutoApply && p.ConclusionStatus != null) || p.OwnerUserIds.Count > 0)
+            .GroupBy(p => IssueProfile.KeyOf(p.SourceName, p.EventId))
+            .ToDictionary(g => g.Key, g => g.First());
+
+        if (profilesByKey.Values.Any(p => p.OwnerUserIds.Count > 0))
+        {
+            dismissedIssueKeys = _cases.GetMany(new[] { hostName })
+                .GroupBy(c => c.IssueKey, StringComparer.Ordinal)
+                .Select(g => g.OrderByDescending(c => c.CreatedAt).First())
+                .Where(c => c.Status is IssueHandlingStatuses.WontFix
+                    or IssueHandlingStatuses.FalsePositive or IssueHandlingStatuses.KnownNoise)
+                .Select(c => c.IssueKey)
+                .ToHashSet(StringComparer.Ordinal);
+        }
 
         var toSave = new List<IssueHandling>();
         var casesToSave = new List<IssueCase>();
         foreach (var issue in issues)
         {
             var key = IssueSignatureKey.For(issue);
-            if (!casesByIssueKey.TryGetValue(key, out var openCase)) continue;
             if (existingForDay.ContainsKey(key)) continue;   // 已有標記（防禦性）或已掛過（冪等）→ 不覆蓋
 
-            toSave.Add(new IssueHandling
+            if (casesByIssueKey.TryGetValue(key, out var openCase))
             {
-                HostName = hostName, Date = date, IssueKey = key, Status = openCase.Status,
-                Note = openCase.Note, DueDate = openCase.DueDate, CaseId = openCase.CaseId,
-                ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
-            });
+                toSave.Add(new IssueHandling
+                {
+                    HostName = hostName, Date = date, IssueKey = key, Status = openCase.Status,
+                    Note = openCase.Note, DueDate = openCase.DueDate, CaseId = openCase.CaseId,
+                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
+                });
 
-            _handlingLog.AppendLog(new RecordHandlingLog
-            {
-                HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
-                Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
-                ActorId = null, ActorAccount = string.Empty,
-                Action = HandlingActions.CaseAttach, CreatedAt = occurredAt
-            });
+                _handlingLog.AppendLog(new RecordHandlingLog
+                {
+                    HostName = hostName, Date = date, Status = openCase.Status, IssueKey = key, IssueLabel = openCase.IssueLabel,
+                    Note = IssueHandlingStatuses.ComposeLogNote(openCase.Status, openCase.Note, openCase.DueDate),
+                    ActorId = null, ActorAccount = string.Empty,
+                    Action = HandlingActions.CaseAttach, CreatedAt = occurredAt
+                });
 
-            if (date.Date > openCase.LastLinkedDate.Date)
+                if (date.Date > openCase.LastLinkedDate.Date)
+                {
+                    openCase.LastLinkedDate = date.Date;
+                    openCase.UpdatedAt = occurredAt;
+                    // **累積後一次寫**（體檢 S4／docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
+                    // 原本在迴圈內逐案 Save，2000 台每晚約 4000 次寫入——blob 時代那是
+                    // 4000 次整份讀改寫，且與 Web 端的標記操作搶同一把鎖
+                    casesToSave.Add(openCase);
+                }
+                existingForDay[key] = toSave[^1];
+                continue;
+            }
+
+            if (!profilesByKey.TryGetValue(IssueProfile.KeyOf(issue.Source, issue.EventId), out var profile)) continue;
+
+            if (profile.AutoApply && profile.ConclusionStatus != null)
             {
-                openCase.LastLinkedDate = date.Date;
-                openCase.UpdatedAt = occurredAt;
-                // **累積後一次寫**（體檢 S4／docs/archive/SCALE-ISSUE-FIRST-PLAN.md P3）：
-                // 原本在迴圈內逐案 Save，2000 台每晚約 4000 次寫入——blob 時代那是
-                // 4000 次整份讀改寫，且與 Web 端的標記操作搶同一把鎖
-                casesToSave.Add(openCase);
+                var note = $"〔機房結論〕{profile.ConclusionNote}";
+                toSave.Add(new IssueHandling
+                {
+                    HostName = hostName, Date = date, IssueKey = key, Status = profile.ConclusionStatus!,
+                    Note = note, DueDate = null, CaseId = null,
+                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
+                });
+
+                _handlingLog.AppendLog(new RecordHandlingLog
+                {
+                    HostName = hostName, Date = date, Status = profile.ConclusionStatus!, IssueKey = key,
+                    IssueLabel = issue.SourceEventLabel, Note = note,
+                    ActorId = null, ActorAccount = string.Empty,
+                    Action = HandlingActions.FleetApply, CreatedAt = occurredAt
+                });
+                existingForDay[key] = toSave[^1];
+                continue;
+            }
+
+            if (profile.OwnerUserIds.Count > 0)
+            {
+                if (dismissedIssueKeys != null && dismissedIssueKeys.Contains(key)) continue;
+
+                var caseId = Guid.NewGuid().ToString("n");
+                const string status = IssueHandlingStatuses.InProgress;
+                const string autoNote = "系統依問題檔案自動派送";
+
+                toSave.Add(new IssueHandling
+                {
+                    HostName = hostName, Date = date, IssueKey = key, Status = status,
+                    Note = autoNote, DueDate = null, CaseId = caseId,
+                    ActorId = null, ActorAccount = string.Empty, UpdatedAt = occurredAt
+                });
+
+                _handlingLog.AppendLog(new RecordHandlingLog
+                {
+                    HostName = hostName, Date = date, Status = status, IssueKey = key,
+                    IssueLabel = issue.SourceEventLabel, Note = autoNote,
+                    ActorId = null, ActorAccount = string.Empty,
+                    Action = HandlingActions.OwnerAutoAssign, CreatedAt = occurredAt
+                });
+
+                casesToSave.Add(CreateOpenCase(
+                    caseId, hostName, key, issue.SourceEventLabel,
+                    profile.OwnerUserIds[0], autoNote, null,
+                    date.Date, date.Date,
+                    occurredAt, string.Empty));
+                existingForDay[key] = toSave[^1];
             }
         }
 
@@ -310,5 +401,29 @@ public class IssueCaseCoordinator
             .Select(r => r.Date.Date)
             .Distinct()
             .ToList();
+    }
+
+    private static IssueCase CreateOpenCase(
+        string caseId, string hostName, string issueKey, string issueLabel,
+        long? handlerId, string? note, DateTime? dueDate,
+        DateTime firstLinkedDate, DateTime lastLinkedDate,
+        DateTime occurredAt, string createdByAccount)
+    {
+        return new IssueCase
+        {
+            CaseId = caseId,
+            HostName = hostName,
+            IssueKey = issueKey,
+            IssueLabel = issueLabel,
+            Status = IssueHandlingStatuses.InProgress,
+            HandlerId = handlerId,
+            Note = note,
+            DueDate = dueDate,
+            FirstLinkedDate = firstLinkedDate,
+            LastLinkedDate = lastLinkedDate,
+            CreatedAt = occurredAt,
+            CreatedByAccount = createdByAccount,
+            UpdatedAt = occurredAt
+        };
     }
 }

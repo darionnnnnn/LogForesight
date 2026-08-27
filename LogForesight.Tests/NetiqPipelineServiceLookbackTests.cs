@@ -1,37 +1,180 @@
+﻿using System.ComponentModel.DataAnnotations;
+using LogForesight.Core.Models;
+using LogForesight.Core.Persistence;
+using LogForesight.Core.Service;
+using LogForesight.Web.Controllers.Api;
+using LogForesight.Web.Models;
+using LogForesight.Web.Models.Dto;
+using LogForesight.Web.Services;
 using Xunit;
 
 namespace LogForesight.Tests;
 
 /// <summary>
-/// docs/archive/FEEDBACK-3-PLAN.md #1：<see cref="NetiqPipelineService.ResolveLookbackDays"/>——
-/// 首次執行與缺漏日回補統一套用 BackfillDays，取代原本「首次深度回補 14 天」的例外路徑。
+/// <see cref="NetiqPipelineService.ResolveLookbackDays"/>——首次執行與缺漏日回補統一套用
+/// BackfillDays，只夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（回望窗口與趨勢基線
+/// 窗口是兩件不同的事，不互相夾住）。
 /// </summary>
 public class NetiqPipelineServiceLookbackTests
 {
     [Fact]
     public void 預設值1只回補一天()
     {
-        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 1, trendWindowDays: 14));
+        Assert.Equal(1, NetiqPipelineService.ResolveLookbackDays(backfillDays: 1));
     }
 
     [Fact]
     public void BackfillDays設為3時回補三天內缺漏()
     {
-        Assert.Equal(3, NetiqPipelineService.ResolveLookbackDays(backfillDays: 3, trendWindowDays: 14));
+        Assert.Equal(3, NetiqPipelineService.ResolveLookbackDays(backfillDays: 3));
     }
 
-    /// <summary>不再有「首次執行深度回補 14 天」的例外——即使 BackfillDays 設定值較大，
-    /// 也不會超過趨勢窗口本身，回補比趨勢分析用得到的更多天沒有意義</summary>
+    /// <summary>回望天數不再被趨勢窗口（14）夾住——設 30 就回望 30 天</summary>
     [Fact]
-    public void BackfillDays大於趨勢窗口時以趨勢窗口為準()
+    public void BackfillDays設為30時不被趨勢窗口夾住()
     {
-        Assert.Equal(14, NetiqPipelineService.ResolveLookbackDays(backfillDays: 20, trendWindowDays: 14));
+        Assert.Equal(30, NetiqPipelineService.ResolveLookbackDays(backfillDays: 30));
     }
 
     [Fact]
-    public void BackfillDays等於趨勢窗口時取該值()
+    public void BackfillDays設為180時放寬通過()
     {
-        Assert.Equal(14, NetiqPipelineService.ResolveLookbackDays(backfillDays: 14, trendWindowDays: 14));
+        Assert.Equal(180, NetiqPipelineService.ResolveLookbackDays(backfillDays: 180));
+    }
+
+    [Fact]
+    public void BackfillDays超過絕對天花板上限時夾在上限()
+    {
+        Assert.Equal(NetiqOptions.MaxBackfillDaysLimit, NetiqPipelineService.ResolveLookbackDays(backfillDays: 400));
+    }
+
+    [Fact]
+    public void BackfillDays為0時維持不回望的既有語意()
+    {
+        Assert.Equal(0, NetiqPipelineService.ResolveLookbackDays(backfillDays: 0));
+        Assert.Equal(0, NetiqPipelineService.ResolveLookbackDays(backfillDays: -3));
+    }
+
+    [Theory]
+    [InlineData(180, 180)]
+    [InlineData(90, 90)]
+    [InlineData(365, 365)]
+    [InlineData(500, 365)]
+    [InlineData(0, 1)]
+    public void GetEffectiveBackfillDaysLimit_依RetentionDays計算且不超過絕對天花板(int retentionDays, int expected)
+    {
+        Assert.Equal(expected, NetiqOptions.GetEffectiveBackfillDaysLimit(retentionDays));
+    }
+
+    /// <summary>DTO 驗證邊界：365 通過、366 被拒（與 pipeline 夾值共用同一個絕對天花板常數）</summary>
+    [Theory]
+    [InlineData(365, true)]
+    [InlineData(366, false)]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    public void BackfillDays的DTO驗證以絕對天花板常數為界(int value, bool expectValid)
+    {
+        var dto = new UpdateNetiqOptionsRequest { BackfillDays = value };
+        var ctx = new ValidationContext(dto) { MemberName = nameof(UpdateNetiqOptionsRequest.BackfillDays) };
+        var ok = Validator.TryValidateProperty(value, ctx, new List<ValidationResult>());
+        Assert.Equal(expectValid, ok);
+    }
+
+    /// <summary>驗證 1：TriggerRunRequest.BackfillDays 超過絕對天花板 → 被 [Range] 擋下（不是 clamp）</summary>
+    [Theory]
+    [InlineData(365, true)]
+    [InlineData(366, false)]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    public void TriggerRunRequest的BackfillDays以絕對天花板為界(int value, bool expectValid)
+    {
+        var dto = new TriggerRunRequest { BackfillDays = value };
+        var ctx = new ValidationContext(dto) { MemberName = nameof(TriggerRunRequest.BackfillDays) };
+        var ok = Validator.TryValidateProperty(value, ctx, new List<ValidationResult>());
+        Assert.Equal(expectValid, ok);
+    }
+
+    /// <summary>驗證 2：BackfillDays 在天花板內、但超過目前 RetentionDays → 回 400，訊息含上限數字與說明。
+    /// 直接測抽出的驗證方法：先前為了建構整個 controller 而在正式碼加了恆真的 null 分支，
+    /// 「通過」的斷言實際上來自常數——那是測試假通過，已改揉。</summary>
+    [Fact]
+    public void ValidateBackfillDays_超過RetentionDays時拒絕且訊息含上限數字()
+    {
+        var ex = Assert.Throws<DomainException>(() => ScheduleController.ValidateBackfillDays(200, retentionDays: 180));
+
+        Assert.Contains("180", ex.Message);
+        Assert.Contains("超過保留天數的回補資料會在下次清理時被刪除", ex.Message);
+    }
+
+    /// <summary>驗證 3：BackfillDays 等於 RetentionDays → 通過；未指定也通過</summary>
+    [Fact]
+    public void ValidateBackfillDays_等於上限或未指定時通過()
+    {
+        ScheduleController.ValidateBackfillDays(180, retentionDays: 180);
+        ScheduleController.ValidateBackfillDays(null, retentionDays: 180);
+    }
+
+    /// <summary>驗證 4：去重鍵查詢起點依實際回望天數推算（例如回望 5 天 → 起點是 12 天前），不隨絕對上限常數改變</summary>
+    [Fact]
+    public async Task NetiqPipeline_去重鍵查詢起點依實際回望天數加七天推算()
+    {
+        using var fixture = new EfSqliteFixture();
+        var dir = Path.Combine(Path.GetTempPath(), "lf-dedupe-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var backend = new StorageBackend(
+                new StorageSettings { Type = "Sqlite", ConnectionString = $"Data Source={Path.Combine(dir, "p.db")}" }, dir);
+
+            var sentinels = new FakeSentinelStore();
+            var sentinel = sentinels.Upsert(new Sentinel { SentinelId = 1, Name = "S1", BaseUrl = "https://x", Username = "u", PasswordEnc = "p", Active = true });
+            var hosts = new FakeHostStore();
+            hosts.Upsert(new WebHost { HostId = 1, HostName = "host1", IpAddress = "10.0.0.1", Os = WebHost.OsWindows, SentinelId = 1, NetiqServer = "S1", Source = "netiq", Active = true });
+
+            var client = new FakeSentinelSearchClient();
+            var batchRunStore = new BatchRunStore(backend.LogStore("r1"), backend.LogStore("r2"));
+            var runRecorder = new BatchRunRecorder(batchRunStore, "test", Array.Empty<string>());
+            var caseCoordinator = new IssueCaseCoordinator(
+                backend.IssueCaseStore(), backend.IssueHandlingStore(), backend.RecordHandlingStore(),
+                backend.RecordStore(), hosts, new IssueOwnerStore(backend.Blob("issue_owners")));
+            var reportService = new RiskReportService(new FakeAiService(), new FakeReportSink());
+
+            var spyStore = new SpyPermissionChangeStore();
+
+            var pipeline = new NetiqPipelineService(
+                backend, new NetiqOptions { BackfillDays = 5 }, sentinels, hosts, new EventLogService(),
+                new FakeAiService(), new FakeSuppressionStore(), reportService, runRecorder, caseCoordinator,
+                new RecordingRunConsole(new List<string>()),
+                clientFactory: FakeSentinelSearchClientFactory.Single(client),
+                permissionChangeStore: spyStore);
+
+            var hostList = HostListSelection.FromStore(hosts, sentinels);
+            await pipeline.RunAsync(hostList, 14);
+
+            // 回望 5 天 → 起點為 12 天前 (5 + 7 = 12)，絕不是以 365 常數推算的 372 天前
+            var expectedDate = DateTime.Today.AddDays(-12);
+            Assert.NotNull(spyStore.LastAppendedSince);
+            Assert.Equal(expectedDate, spyStore.LastAppendedSince.Value.Date);
+            Assert.NotEqual(DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7)), spyStore.LastAppendedSince.Value.Date);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    private class SpyPermissionChangeStore : PermissionChangeStore
+    {
+        public DateTime? LastAppendedSince { get; private set; }
+        public SpyPermissionChangeStore() : base(() => null!) { }
+
+        public override HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
+        {
+            LastAppendedSince = appendedSince;
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
     }
 }
 

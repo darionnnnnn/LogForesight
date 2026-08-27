@@ -76,6 +76,20 @@ public class NetiqOrphanSweeperTests
 
         Assert.True(_hosts.FindByName("MYPC")!.Active);
     }
+
+    [Fact]
+    public void 批次作業_孤兒主機仍被正確停用且寫入()
+    {
+        AddNetiq("10.1.2.20", sentinelId: 99, netiqServer: "SENTINEL-OLD");
+        AddNetiq("10.1.2.21", sentinelId: 99, netiqServer: "SENTINEL-OLD");
+
+        var result = NetiqOrphanSweeper.Sweep(_hosts, new long[] { 1 });
+
+        Assert.Equal(2, result.OrphanedCount);
+        Assert.False(_hosts.FindByName("10.1.2.20")!.Active);
+        Assert.Equal("SENTINEL-OLD", _hosts.FindByName("10.1.2.20")!.OrphanedFromSentinel);
+        Assert.False(_hosts.FindByName("10.1.2.21")!.Active);
+    }
 }
 
 /// <summary>
@@ -363,6 +377,42 @@ public class NetiqDiscoveryServiceTests
         Assert.Equal("linux", _hosts.FindByName("10.1.2.63")!.Os);
     }
 
+    // ── 掃描匯入的分級（回饋十九輪批次G：只套用在本次新增的主機，同 OS 原則）────
+
+    [Fact]
+    public void 套用_新主機依指定分級登錄()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.64" }, _hosts, sentinels, tier: "core");
+
+        Assert.Equal("core", _hosts.FindByName("10.1.2.64")!.Tier);
+    }
+
+    [Fact]
+    public void 套用_未指定分級時新主機預設standard()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.65" }, _hosts, sentinels);
+
+        Assert.Equal("standard", _hosts.FindByName("10.1.2.65")!.Tier);
+    }
+
+    [Fact]
+    public void 套用_既有主機的分級不被匯入改動()
+    {
+        var sentinels = new FakeSentinelStore();
+        sentinels.Upsert(new Sentinel { Name = "S1" });
+        _hosts.Upsert(new WebHost { HostName = "10.1.2.66", IpAddress = "10.1.2.66", Source = "netiq", Tier = "core" });
+
+        NetiqImportApplier.Apply("S1", new[] { "10.1.2.66" }, _hosts, sentinels, tier: "test");
+
+        Assert.Equal("core", _hosts.FindByName("10.1.2.66")!.Tier);
+    }
+
     [Fact]
     public void 套用_新主機以IP為HostName登錄()
     {
@@ -573,5 +623,181 @@ public class NetiqDiscoveryServiceTests
         // 既有主機（含復活的孤兒）：更新只動 NetiqServer/SentinelId/Active，DisplayName 不動——
         // 同 groupByIp/os 一致原則，匯入不隱性改既有主機欄位
         Assert.Equal("人工核對過的名稱", _hosts.FindByName("10.1.2.50")!.DisplayName);
+    }
+
+    // ── 背景工作模式（B3 規格）──────────────────────────────────────────────
+
+    private static async Task<NetiqScanJobDto> WaitForJobAsync(
+        NetiqDiscoveryService svc, string jobId, Func<NetiqScanJobDto, bool> condition, int timeoutMs = 15000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var status = svc.GetScanStatus(jobId);
+            if (condition(status)) return status;
+            await Task.Yield();
+        }
+        return svc.GetScanStatus(jobId);
+    }
+
+    [Fact]
+    public async Task StartScan_立即回傳JobId且狀態為running()
+    {
+        var tcs = new TaskCompletionSource<NetiqDiscoveryResult>();
+        var client = new FakeClient((s, p, ct, k, prog, b) => tcs.Task);
+        var svc = Create(client, Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+
+        Assert.False(string.IsNullOrWhiteSpace(jobId));
+        var status = svc.GetScanStatus(jobId);
+        Assert.Equal(jobId, status.JobId);
+        Assert.Equal("running", status.Status);
+
+        // 必須等背景工作收尾才結束：Jobs 是行程內共用的靜態狀態，留下 running 的工作
+        // 會讓下一個測試的 StartScan 撞上「已有掃描進行中」而間歇性失敗。
+        tcs.SetResult(new NetiqDiscoveryResult());
+        await WaitForJobAsync(svc, jobId, j => j.Status != "running");
+    }
+
+    [Fact]
+    public async Task 背景掃描_完成後GetScanStatus回completed且帶Result()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.11"), ("SRV-B", "10.1.2.12")), Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+
+        var finalStatus = await WaitForJobAsync(svc, jobId, j => j.Status == "completed");
+        Assert.Equal("completed", finalStatus.Status);
+        Assert.NotNull(finalStatus.Result);
+        Assert.Equal(2, finalStatus.Result.TotalCount);
+        Assert.Single(finalStatus.Result.Subnets);
+    }
+
+    [Fact]
+    public async Task StartScan_同時只允許一個進行中的工作()
+    {
+        var tcs = new TaskCompletionSource<NetiqDiscoveryResult>();
+        var client = new FakeClient((s, p, ct, k, prog, b) => tcs.Task);
+        var svc = Create(client, Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+
+        var ex = Assert.Throws<DomainException>(() => svc.StartScan("S1", AnySubnet));
+        Assert.Contains("已有掃描進行中", ex.Message);
+
+        // 同上：不等工作收尾就結束，會把 running 狀態留給下一個測試。
+        tcs.SetResult(new NetiqDiscoveryResult());
+        await WaitForJobAsync(svc, jobId, j => j.Status != "running");
+    }
+
+    [Fact]
+    public async Task 背景掃描_前一個工作完成後可以再開新的()
+    {
+        var svc = Create(new FakeClient(("SRV-A", "10.1.2.11")), Discoverable("S1"));
+
+        var jobId1 = svc.StartScan("S1", AnySubnet);
+        var final1 = await WaitForJobAsync(svc, jobId1, j => j.Status == "completed");
+        Assert.Equal("completed", final1.Status);
+
+        var jobId2 = svc.StartScan("S1", AnySubnet);
+        Assert.NotEqual(jobId1, jobId2);
+        var final2 = await WaitForJobAsync(svc, jobId2, j => j.Status == "completed");
+        Assert.Equal("completed", final2.Status);
+    }
+
+    [Fact]
+    public void StartScan_找不到Sentinel時立刻擲錯()
+    {
+        var svc = Create(new FakeClient(), Discoverable("S1"));
+
+        var ex = Assert.Throws<DomainException>(() => svc.StartScan("NOT_EXIST", AnySubnet));
+        Assert.Contains("找不到 Sentinel", ex.Message);
+    }
+
+    [Fact]
+    public void StartScan_未設定探索帳密時立刻擲錯()
+    {
+        var svc = Create(new FakeClient(), new SentinelServer { Name = "S1" });
+
+        var ex = Assert.Throws<DomainException>(() => svc.StartScan("S1", AnySubnet));
+        Assert.Contains("尚未設定探索帳密", ex.Message);
+    }
+
+    [Fact]
+    public async Task 背景掃描_假Client擲例外時工作狀態為failed且帶Error()
+    {
+        var client = new FakeClient(new NetiqDiscoveryException("Sentinel 連線逾時"));
+        var svc = Create(client, Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+
+        var finalStatus = await WaitForJobAsync(svc, jobId, j => j.Status == "failed");
+        Assert.Equal("failed", finalStatus.Status);
+        Assert.Equal("Sentinel 連線逾時", finalStatus.Error);
+    }
+
+    [Fact]
+    public async Task CancelScan_取消後工作狀態為canceled()
+    {
+        var client = new FakeClient(async (s, p, ct, k, prog, b) =>
+        {
+            var tcs = new TaskCompletionSource<NetiqDiscoveryResult>();
+            using (ct.Register(() => tcs.TrySetCanceled()))
+            {
+                return await tcs.Task;
+            }
+        });
+        var svc = Create(client, Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+        svc.CancelScan(jobId);
+
+        var finalStatus = await WaitForJobAsync(svc, jobId, j => j.Status == "canceled");
+        Assert.Equal("canceled", finalStatus.Status);
+    }
+
+    [Fact]
+    public void GetScanStatus_查不存在的jobId擲驗證錯誤()
+    {
+        var svc = Create(new FakeClient(), Discoverable("S1"));
+
+        var ex = Assert.Throws<DomainException>(() => svc.GetScanStatus("NON_EXISTING_JOB_ID"));
+        Assert.Contains("掃描工作不存在或已逾期", ex.Message);
+    }
+
+    [Fact]
+    public async Task 背景掃描_進度回報有被傳遞()
+    {
+        var tcs = new TaskCompletionSource<NetiqDiscoveryResult>();
+        var client = new FakeClient((s, p, ct, k, prog, b) =>
+        {
+            prog?.Invoke("主掃描中", 3);
+            return tcs.Task;
+        });
+        var svc = Create(client, Discoverable("S1"));
+
+        var jobId = svc.StartScan("S1", AnySubnet);
+
+        var progressStatus = await WaitForJobAsync(svc, jobId, j => j.Stage == "主掃描中" && j.HostsFound == 3);
+        Assert.Equal("主掃描中", progressStatus.Stage);
+        Assert.Equal(3, progressStatus.HostsFound);
+
+        // 同上：等工作收尾，不把 running 狀態留給下一個測試。
+        tcs.SetResult(new NetiqDiscoveryResult());
+        await WaitForJobAsync(svc, jobId, j => j.Status != "running");
+    }
+
+    [Fact]
+    public async Task 既有呼叫端不傳新可選參數時行為不變()
+    {
+        var client = new FakeClient(("SRV-A", "10.1.2.11"));
+        var svc = Create(client, Discoverable("S1"));
+
+        var result = await svc.ScanAsync("S1", AnySubnet, default);
+
+        Assert.Equal(1, result.TotalCount);
+        Assert.Null(client.LastProgressCallback);
+        Assert.Null(client.LastTotalBudgetSecondsOverride);
     }
 }

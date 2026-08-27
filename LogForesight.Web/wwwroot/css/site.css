@@ -1,4 +1,4 @@
-/*
+﻿/*
   LogForesight 設計系統（docs/DESIGN-SYSTEM.md、docs/WEB-SPEC.md §8.2）
 
   Bootstrap 提供柵格、元件與可及性行為；外觀由這裡的自訂層決定，不受限於 Bootstrap 預設風格。
@@ -17,7 +17,7 @@
     font-style: normal;
     font-weight: 400;
     font-display: swap;
-    src: url("/fonts/fira-sans-400-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-400-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -26,7 +26,7 @@
     font-style: normal;
     font-weight: 500;
     font-display: swap;
-    src: url("/fonts/fira-sans-500-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-500-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -35,7 +35,7 @@
     font-style: normal;
     font-weight: 600;
     font-display: swap;
-    src: url("/fonts/fira-sans-600-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-600-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -44,7 +44,7 @@
     font-style: normal;
     font-weight: 700;
     font-display: swap;
-    src: url("/fonts/fira-sans-700-latin.woff2") format("woff2");
+    src: url("../fonts/fira-sans-700-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -53,7 +53,7 @@
     font-style: normal;
     font-weight: 300 700;
     font-display: swap;
-    src: url("/fonts/fira-code-latin.woff2") format("woff2");
+    src: url("../fonts/fira-code-latin.woff2") format("woff2");
     unicode-range: U+0000-00FF, U+2000-206F, U+2074, U+20AC, U+2122, U+2212;
 }
 
@@ -90,7 +90,7 @@
     --lf-sidebar-hover-bg: rgba(255, 255, 255, .06);
     /* 回饋十四輪 UI-1：改用 rem，跟著 html{font-size} 的 clamp+使用者字級偏好一起縮放
        （見下方 html 規則的說明）——原本固定 px 時，2K 螢幕＋「大字級」偏好疊加後根字級衝到
-       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-sidebar__brand-name
+       20px 上限，品牌名稱「LogForesight」需要的寬度會超出側欄，觸發 .lf-brand__name
        的省略號截斷成「LogForesig...」。15.25rem 是原 244px 换算（244÷16），預設字級下畫面
        完全不變，只有字級被放大時側欄才跟著等比變寬。 */
     --lf-sidebar-width: 15.25rem;
@@ -116,6 +116,11 @@
     --lf-font-size-stat: 1.95rem;
     --lf-line-tight: 1.25;
     --lf-line-base: 1.55;
+
+    /* ── 控制項尺寸基準（filter bar 內 input／select／button／chip 的共同高度基準）──
+       高度由「小尺寸控制項字級 × Bootstrap 行高 1.5 ＋ 垂直 padding 合計 .5rem ＋ 上下邊框 2px」推導 */
+    --lf-control-font-size-sm: 1rem;
+    --lf-control-height-sm: calc(var(--lf-control-font-size-sm) * 1.5 + .5rem + 2px);
 
     /* ── 間距階層 ─────────────────────────────────────────────────────── */
     --lf-space-1: .25rem;
@@ -291,6 +296,16 @@ body {
     padding: var(--lf-space-2) var(--lf-space-3);
 }
 
+/* checkboxList filterable 模式的勾選項目捲動容器（回饋二十七輪作業 E）：
+   人數多達數十人時以限高＋捲動取代全部攤開，約 12 列高 */
+.lf-checkbox-list-scroll {
+    max-height: 18rem;
+    overflow-y: auto;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2) var(--lf-space-3);
+}
+
 /* 小型「說明」圖示鈕（開 popover）*/
 .lf-help {
     display: inline-flex;
@@ -324,7 +339,12 @@ body {
     transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition);
 }
 
-.btn-sm { --bs-btn-border-radius: var(--lf-radius-sm); }
+/* .btn-group-sm > .btn 的 specificity (0,2,0) 高於 .btn-sm (0,1,0)，需一併覆寫字級避免被 Bootstrap 原生 .875rem 蓋掉 */
+.btn-sm,
+.btn-group-sm > .btn {
+    --bs-btn-font-size: var(--lf-control-font-size-sm);
+    --bs-btn-border-radius: var(--lf-radius-sm);
+}
 
 .btn-primary {
     --bs-btn-bg: var(--lf-primary);
@@ -352,6 +372,24 @@ body {
 .form-select {
     border-color: var(--lf-border-strong);
     border-radius: var(--lf-radius-sm);
+    /* 明確指定字族與字級：瀏覽器 autofill 狀態下用自己的 UA 字型渲染，使用者一聚焦
+       就變回站台字型，看起來像「點一下字就變大」（回饋二十七輪 P9）。
+       **值必須是 1rem**——那正是 Bootstrap .form-control 原本生效的字級，也是使用者
+       指名要保留的「放大後」那個大小；改用 body 的 --lf-font-size-base（.95rem）
+       會把全站表單欄位一起縮小，方向剛好相反 */
+    font-family: var(--lf-font-family);
+    font-size: 1rem;
+}
+
+/* autofill 系列：瀏覽器注入的 UA 樣式優先權高，字族與字級要明確覆寫才壓得住，
+   否則自動填入狀態下與一般輸入不一致（登入頁帳號欄位最明顯）。
+   底色不覆寫——那是瀏覽器給使用者「這格是自動填入的」的提示。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    font-family: var(--lf-font-family) !important;
+    font-size: 1rem !important;
 }
 
 .form-control:focus,
@@ -480,95 +518,138 @@ body {
     align-self: flex-start;
 }
 
-.lf-sidebar__brand {
+/* ── 品牌區塊（側欄／登入頁共用，Views/Shared/_Brand.cshtml）──────────────────
+   兩處原本各有一份結構與樣式（平行複製），改為同一份：尺寸差異全部收斂成
+   .lf-brand--sidebar／--login 覆寫的四個變數，結構與對齊規則只有一套。
+
+   副標題的對齊由 core/brand-align.js 量測後決定（docs/WEB-SPEC.md §9.9b 2d）：
+   比主標題窄時撐 letter-spacing 左右貼齊、比主標題寬時靠左＋省略號。 */
+.lf-brand {
+    --lf-brand-mark-size: 2.75rem;
+    --lf-brand-name-size: 1.6rem;
+    --lf-brand-subtitle-size: .92rem;
+    --lf-brand-mark-radius: var(--lf-radius-sm);
+
     display: flex;
-    /* align-items:stretch（回饋十六輪批次E-2，改自 center）：有副標時兩行文字的自然高度
-       可能超過 .lf-sidebar__brand-mark 的基準高度（實測中文字級下約 60px > 53px）——
-       固定 center 對齊時圖示不會跟著撐高，導致圖示反而沒對齊到文字的上下邊界。stretch
-       讓兩個子項一起撐到「較高者」的高度，圖示與文字互相以對方為準對齊，不管有無副標。 */
+    /* align-items:stretch：有副標時兩行文字的自然高度可能超過圖示，stretch 讓文字區
+       撐到自然高度，圖示則以 align-self:center 維持正方形並置中（見 .lf-brand__mark） */
     align-items: stretch;
+    /* 整組（圖示＋文字）置中，文字本身仍靠左貼著圖示——文字區用 flex:0 1 auto
+       才不會吃滿剩餘空間把整組推回左邊 */
+    justify-content: center;
     gap: var(--lf-space-2);
-    padding: var(--lf-space-4) var(--lf-space-5);
-    font-size: var(--lf-font-size-xl);
-    font-weight: 700;
-    color: #fff;
-    letter-spacing: .01em;
-    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    text-decoration: none;
 }
 
-/* 回饋十三輪 G：品牌名稱過長時要優雅省略號而非撐版或裁一半的字——.lf-sidebar__brand-text
-   必須自己 min-width:0，flex 子項預設 min-width:auto 在部分瀏覽器/情境下不會縮到內容寬度以下
-   （見 #lf-current-user 的既有先例，docs/FEEDBACK-5-PLAN.md §3）。名稱與副標分開各自截斷——
-   原本兩者共用一個 text-truncate 容器，副標是 <small> 區塊子元素，不受父層 nowrap/ellipsis
-   保護，超長時會被硬裁斷、裁到字元一半也不留省略號。*/
-.lf-sidebar__brand-text {
+/* 品牌名稱過長時要優雅省略號而非撐版或裁一半的字：flex 子項預設 min-width:auto，
+   不寫 min-width:0 不會縮到內容寬度以下。主標題與副標題各自截斷——兩者共用一個
+   truncate 容器時，副標不受父層 nowrap/ellipsis 保護，超長會被硬裁到字元一半。 */
+.lf-brand__text {
     display: flex;
     flex-direction: column;
-    /* align-self:stretch 顯式聲明（父層 .lf-sidebar__brand 已是 align-items:stretch，這裡屬
-       預設值，寫出來是文件化意圖：不依賴父層設定不變，之後若父層改回 center 這裡仍然正確）。
-       justify-content:space-between 讓名稱貼齊撐滿後的區塊上緣、副標貼齊下緣（回饋十六輪
-       批次E-2：原本兩者只是各自靠攏，沒有對齊圖示邊界）。*/
+    /* space-between：兩行文字上下撐滿圖示高度——首行頂貼、末行底貼。
+       單行（無副標）時等同貼頂，故另有 :not(:has()) 規則改回置中。 */
     justify-content: space-between;
     align-self: stretch;
     min-width: 0;
-    flex: 1 1 auto;
+    flex: 0 1 auto;
 }
 
-/* 沒有副標時只剩一行文字，space-between 在單一子項時等同貼頂——改回置中對齊圖示中線 */
-.lf-sidebar__brand-text:not(:has(small)) {
+/* 沒有副標時只有一行，撐滿沒有意義——垂直置中對齊圖示中線 */
+.lf-brand__text:not(:has(.lf-brand__subtitle)) {
     justify-content: center;
 }
 
-.lf-sidebar__brand-name {
+.lf-brand__name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* 行高壓到接近 1：否則行高留白會讓字形離圖示邊緣還有一段空隙 */
+    font-size: var(--lf-brand-name-size);
+    line-height: 1.05;
 }
 
-.lf-sidebar__brand-text small {
+.lf-brand__subtitle {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: .7rem;
+    /* 字級不在 token 階上：這裡的約束是「主標題＋副標題兩行合計貼齊圖示高度」，
+       由主標題字級與行高反推而來 */
+    font-size: var(--lf-brand-subtitle-size);
     font-weight: 400;
-    color: var(--lf-sidebar-section);
-    margin-top: .15rem;
+    line-height: 1.05;
     letter-spacing: 0;
 }
 
-/* 回饋十四輪 UI-4：1.9rem 的圖示相對兩行品牌文字（名稱+副標約 3.1rem 高）顯得偏小、
-   視覺重量不夠——品牌標記在側欄頂端該是最強的錨點。2.25rem 與內部圖示 1.25rem
-   維持原本的比例（圖示≈標記的 55%）一起放大，不只放大外框、圖示變得空洞。
-   回饋十六輪批次E-2：再放大到 2.75rem，當時用 min-height 撐高圖示去對齊兩行文字，
-   結果有副標時文字自然高度（約 60px）超過 2.75rem，圖示被拉成瘦長矩形——自訂圖示
-   （PNG/JPG）用 object-fit:contain 雖不變形，但無 viewBox 的 SVG 會被真的拉伸，
-   內建向量圖示與外框漸層底看起來也不像正方形標記了（回饋十七輪批次H 修正）。
-   改回固定正方形＋置中對齊：aspect-ratio 鎖住比例，align-self:center 不再跟著父層
-   stretch 撐高——圖示永遠是乾淨的正方形，文字對齊（justify-content:space-between，
-   上方 .lf-sidebar__brand-text）不受影響，兩者各自表述而非互相牽動。 */
-.lf-sidebar__brand-mark {
+/* 圖示固定正方形＋置中：aspect-ratio 鎖住比例，align-self:center 不跟著父層 stretch
+   撐高——被拉成瘦長矩形時，無 viewBox 的 SVG 會真的變形，漸層底也不再像方形標記 */
+.lf-brand__mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.75rem;
+    width: var(--lf-brand-mark-size);
     aspect-ratio: 1 / 1;
     align-self: center;
-    border-radius: var(--lf-radius-sm);
+    border-radius: var(--lf-brand-mark-radius);
     background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
     color: #fff;
     flex-shrink: 0;
 }
 
-.lf-sidebar__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
+.lf-brand__mark .lf-icon { width: 1.5rem; height: 1.5rem; }
 
-/* 自訂品牌圖示（docs/archive/FEEDBACK-10-PLAN.md §1）：上傳的圖片比例不一，contain 保證整張看得到
-   （cover 會裁掉邊角，logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
-.lf-sidebar__brand-img {
+/* 自訂品牌圖示：上傳的圖片比例不一，contain 保證整張看得到（cover 會裁掉邊角，
+   logo 被切比縮小更難看）。圓角切齊外框的漸層底 */
+.lf-brand__img {
     width: 100%;
     height: 100%;
     object-fit: contain;
     border-radius: inherit;
+}
+
+/* 側欄變體：整塊是連結（可 hover／focus），底線分隔選單 */
+.lf-brand--sidebar {
+    /* 左右內距用 space-3：側欄總寬固定（--lf-sidebar-width），主標題能用的水平空間
+       ＝總寬扣掉圖示、gap 與左右內距 */
+    padding: var(--lf-space-4) var(--lf-space-3);
+    font-size: var(--lf-font-size-2xl);
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: .01em;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    cursor: pointer;
+    transition: background-color var(--lf-transition);
+}
+
+.lf-brand--sidebar .lf-brand__subtitle {
+    color: var(--lf-sidebar-section);
+}
+
+.lf-brand--sidebar:hover {
+    background: var(--lf-sidebar-hover-bg);
+    color: #fff;
+}
+
+.lf-brand--sidebar:focus-visible {
+    outline: 2px solid var(--lf-sidebar-fg-strong);
+    outline-offset: -2px;
+}
+
+/* 登入頁變體：卡片裡的靜態區塊，尺寸略大 */
+.lf-brand--login {
+    --lf-brand-mark-size: 3rem;
+    --lf-brand-name-size: 1.85rem;
+    --lf-brand-subtitle-size: 1.02rem;
+    --lf-brand-mark-radius: var(--lf-radius);
+
+    gap: var(--lf-space-3);
+    margin-bottom: var(--lf-space-5);
+    font-weight: 600;
+}
+
+.lf-brand--login .lf-brand__subtitle {
+    color: var(--lf-text-muted);
 }
 
 .lf-sidebar__nav {
@@ -775,6 +856,20 @@ body {
     border: 1px solid var(--lf-border);
     border-radius: var(--lf-radius);
     box-shadow: var(--lf-shadow-xs);
+    transition: background-color var(--lf-transition), border-color var(--lf-transition), box-shadow var(--lf-transition), transform var(--lf-transition);
+}
+
+.lf-card:hover {
+    background-color: var(--lf-primary-soft);
+}
+
+.lf-card--clickable {
+    cursor: pointer;
+}
+
+.lf-card--clickable:focus-visible {
+    outline: none;
+    box-shadow: var(--lf-focus-ring);
 }
 
 .lf-card__header {
@@ -1037,7 +1132,23 @@ a.lf-stat:hover .lf-card,
     min-height: 72px;   /* 同上，物理下限不隨字級縮放 */
 }
 
-/* 甜甜圈中央的百分比文字（charts.js setCenterText） */
+/* lg+ 視口，右側三顆圓餅卡片的卡頭高度下限，對齊左側主機告警排行卡的卡頭
+   （左卡頭含 btn-group-sm + rank-mode-toggle，比純標題列高）。
+   值由控制項高度變數 ＋ .lf-card__header 垂直 padding 推導，不是量測值，字級縮放時跟著走。
+   實測附註：這三顆卡的標題另有 min-height: 2.4em（見下方「標題固定佔兩行」那條），
+   算出來恆高於這裡的下限，因此本條目前不會實際生效——留著是為了標題那條若改回單行時仍有下限可守。
+   兩側卡片與圖形底緣的對齊不靠這條，靠的是 Reports.cshtml 內層 row 的 gx-3 ＋ col 的 h-100。
+   md 以下不套用，不影響手機 / 小平板版面。 */
+@media (min-width: 992px) {
+    .lf-report-page #risk-section .lf-card__header,
+    .lf-report-page #affected-hosts-section .lf-card__header,
+    .lf-report-page #handling-progress-section .lf-card__header {
+        min-height: calc(var(--lf-control-height-sm) + var(--lf-space-3) * 2);
+    }
+}
+
+/* 甜甜圈中央的百分比文字（charts.js setCenterText）。字級由 JS 依容器短邊算，
+   這裡的值只是還沒算出來之前的起始字級 */
 .lf-chart__center-text {
     position: absolute;
     top: 50%;
@@ -1045,7 +1156,24 @@ a.lf-stat:hover .lf-card,
     transform: translate(-50%, -50%);
     font-size: 1.25rem;
     font-weight: 600;
+    line-height: 1;
     pointer-events: none;
+}
+
+/* 空資料狀態（charts.js renderNoData）：canvas 留在原地只是藏起來，
+   換一個有資料的期間時 create() 會把它放回來 */
+.lf-chart--empty > canvas {
+    visibility: hidden;
+}
+
+.lf-chart--empty > .lf-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: var(--lf-space-2);
 }
 
 /* 圓餅圖右側文字條列（#3，取代表格切換）：色點＋名稱＋數值/百分比，
@@ -1055,6 +1183,32 @@ a.lf-stat:hover .lf-card,
     flex-direction: column;
     gap: var(--lf-space-2);
     min-width: 140px;
+}
+
+/* 三顆占比小圖並排時，卡片標題的字數不同（「風險層級占比」6 字／「受影響主機占比」7 字／
+   「處理進度」4 字）在半欄再切三份的窄欄裡會換成不同行數，甜甜圈分到的剩餘高度就不一樣。
+   標題固定佔兩行的高度，三張卡的圓才會一樣大 */
+.lf-report-page .lf-card:has(.lf-chart-stack) .lf-card__title {
+    min-height: 2.4em;
+}
+
+/* 三顆占比小圖並排時，圖例是唯一會讓三張卡分到不同甜甜圈高度的東西：
+   標籤字數與數值長度不同 → 換行列數不同 → 圓大小不一。
+   在報表頁的窄欄裡取消 min-width（改為欄寬自適應）、每列單行不換行，
+   讓三組圖例的高度恆等（都是兩列） */
+.lf-report-page .lf-chart-stack .lf-legend-list {
+    min-width: 0;
+    width: 100%;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row {
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.lf-report-page .lf-chart-stack .lf-legend-row__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .lf-legend-row {
@@ -1307,6 +1461,7 @@ a.lf-stat:hover .lf-card,
     align-items: center;
     gap: .35em;
     padding: .3rem .7rem;
+    min-height: var(--lf-control-height-sm);
     border-radius: var(--lf-radius-pill);
     border: 1px solid var(--lf-border-strong);
     background: var(--lf-card-bg);
@@ -1346,6 +1501,12 @@ a.lf-stat:hover .lf-card,
 .lf-chip__count {
     font-variant-numeric: tabular-nums;
     opacity: .85;
+}
+
+/* 空的已選主機 chip 容器不佔位，避免 mt-1 撐開欄位、把同列的主機輸入框頂高約 2px。
+   要 !important 才壓得過容器自己的 .d-flex——Bootstrap 的 display utility 本身就帶 !important */
+#filter-host-chips:empty {
+    display: none !important;
 }
 
 /* ── 表格：緊湊表頭＋柔和列 hover ───────────────────────────────────────── */
@@ -1435,6 +1596,41 @@ a.lf-stat:hover .lf-card,
     background: var(--lf-primary);
 }
 
+/* 問題欄白話說明（單行截斷、支援 focus-visible 樣式）。
+   截斷的實際上界由**欄位**給（見 .lf-issue-col），這裡只吃滿欄寬：
+   自己硬寫 rem 上界的話，短說明在寬欄位裡照樣被砍（回饋二十七輪 P5 的原症狀）；
+   但只寫 max-width:100% 也不夠——auto-layout 表格的儲存格寬度由內容決定，
+   百分比會解析成內容本身的寬度、永遠不觸發 overflow，長說明反而把欄位撐爆（終檢抓到）。 */
+.lf-issue-explanation {
+    font-size: var(--lf-font-size-sm);
+    color: var(--lf-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    cursor: default;
+}
+
+/* 問題欄的寬度上界：說明放得下就完整顯示，真的過長才以 ellipsis 收尾。
+   32rem 是「一句白話說明的合理長度」，只在說明異常長時才生效。 */
+.lf-issue-col {
+    max-width: 32rem;
+}
+
+.lf-issue-explanation:focus-visible {
+    outline: 2px solid var(--lf-primary);
+    border-radius: var(--lf-radius-sm);
+}
+
+/* 白話句是該列的主要資訊時（權限異動檢核的「異動說明」）：用正文色而非附註灰，
+   寬度由欄位實際可用寬度決定（同基礎 .lf-issue-explanation）——
+   保留此 class 不刪，兩個頁面都在用（records.js／permission-changes.js） */
+.lf-issue-explanation--primary {
+    color: var(--lf-text);
+    /* 不吃掉整列可點的手指游標（.lf-issue-explanation 的 cursor: default 會蓋掉列的 pointer） */
+    cursor: inherit;
+}
+
 /* 整列可點：游標提示，hover 沿用表格既有的柔和底色 */
 .table > tbody > tr.lf-row-link { cursor: pointer; }
 
@@ -1451,9 +1647,29 @@ a.lf-stat:hover .lf-card,
 }
 .table > tbody > tr.lf-row-link:focus-visible,
 .table > tbody > tr.lf-row-expandable:focus-visible { outline: none; }
+/* 告警列的文字側（回饋二十輪 Q18）：li 是 flex 容器，子項預設 min-width:auto——
+   來源名稱這類不含空白的長 token 會拒絕收縮並把右側按鈕推出卡片。
+   min-width:0 讓它可收縮，overflow-wrap 讓長 token 真的斷得下去 */
+.lf-alert-item__text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+.lf-row-expand-cell {
+    display: flex;
+    align-items: flex-start;
+    gap: .4em;
+}
+.lf-row-expand-cell__body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .lf-row-caret {
     display: inline-flex;
-    margin-right: .4em;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: .15em;
     color: var(--lf-text-muted);
     transform: rotate(-90deg);
     transition: transform .15s ease;
@@ -1464,15 +1680,120 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-4) var(--lf-space-4) var(--lf-space-4) var(--lf-space-5);
 }
 
+/* ── 主機詳情：月曆式風險時間軸（docs/task-M.md）────────────────────────── */
+
+.lf-calendar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lf-space-4, 1rem);
+    align-items: flex-start;
+}
+
+.lf-calendar__month {
+    flex: 0 0 auto;
+    width: 210px;
+    max-width: 100%;
+}
+
+.lf-calendar__title {
+    font-size: var(--lf-font-size-sm, .86rem);
+    font-weight: 600;
+    color: var(--lf-text, #0f172a);
+    margin-bottom: var(--lf-space-2, .5rem);
+    text-align: center;
+}
+
+.lf-calendar__weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.lf-calendar__weekday {
+    font-size: var(--lf-font-size-xs, .78rem);
+    font-weight: 500;
+    color: var(--lf-text-muted, #64748b);
+    line-height: 1.2;
+}
+
+.lf-calendar__grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.lf-calendar__cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    border-radius: var(--lf-radius-sm, .25rem);
+    font-size: .75rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    color: var(--lf-gray-900, #0f172a);
+    user-select: none;
+    position: relative;
+    transition: transform var(--lf-transition, .15s ease),
+                opacity var(--lf-transition, .15s ease),
+                outline-color var(--lf-transition, .15s ease),
+                box-shadow var(--lf-transition, .15s ease);
+}
+
+.lf-calendar__cell[data-risk="高"] {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell {
+    cursor: pointer;
+}
+
+a.lf-calendar__cell:hover {
+    transform: scale(1.12);
+    z-index: 2;
+    box-shadow: var(--lf-shadow-sm, 0 1px 3px rgba(15, 23, 42, .08));
+    color: var(--lf-gray-900, #0f172a);
+}
+
+a.lf-calendar__cell[data-risk="高"]:hover {
+    color: #ffffff;
+}
+
+a.lf-calendar__cell:focus-visible {
+    outline: 2px solid var(--lf-primary, #1e40af);
+    outline-offset: 2px;
+    z-index: 3;
+}
+
+.lf-calendar__cell--empty {
+    background: transparent;
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* 主機詳情問題發生明細展開時的時間軸高亮連動（docs/FEEDBACK-4-PLAN.md §3）：
    這個問題出現過的日子加外框，其餘日子淡化——背景色（風險等級）維持不變，
    只疊加外框/透明度，展開哪個問題一眼看得出來 */
 .lf-timeline-cell--highlight {
     outline: 2px solid var(--lf-primary, #1e40af);
     outline-offset: 1px;
+    z-index: 1;
 }
+
 .lf-timeline-cell--dim {
     opacity: .25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lf-calendar__cell {
+        transition: none;
+    }
+    a.lf-calendar__cell:hover {
+        transform: none;
+    }
 }
 
 /* ── 問題層級處理狀態：狀態文字＋右側批次套用（2026-07-27 改版；2026-07-28 #7 拆欄）─────
@@ -1732,57 +2053,11 @@ a.lf-stat:hover .lf-card,
     padding: var(--lf-space-6);
 }
 
-/* 回饋十三輪 G：品牌區重調為圖示＋文字橫向排列（原本 CSS 早已是 flex，但 Login.cshtml 是
-   圖示獨占一行、標題另起頭的直向堆疊，兩者對不上——這裡讓 HTML 跟上既有的 CSS 意圖，
-   同時與側欄品牌區採同一套視覺語言：方形漸層底圖示 + 名稱/副標垂直疊放）*/
-.lf-login__brand {
-    display: flex;
-    align-items: center;
-    gap: var(--lf-space-3);
-    margin-bottom: var(--lf-space-5);
-}
-
-.lf-login__brand-mark {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 3rem;
-    height: 3rem;
-    flex-shrink: 0;
-    border-radius: var(--lf-radius);
-    background: linear-gradient(135deg, var(--lf-primary) 0%, var(--lf-primary-hover) 100%);
-    color: #fff;
-}
-
-.lf-login__brand-mark .lf-icon { width: 1.5rem; height: 1.5rem; }
-
-/* min-width:0 同側欄品牌區的理由：flex item 沒有這行，超長品牌名不會優雅省略，
-   而是撐開卡片、把版面推爆（見 .lf-sidebar__brand-text 旁的說明）。display:flex
-   column 讓子項（.lf-login__title/.lf-login__subtitle）自動 blockify 成 block——
-   兩者本是 <span>，沒有這層 flex container 就停留在 display:inline，overflow/
-   text-overflow 對 inline 元素不生效，ellipsis 會整個沒有作用（曾在 preview 實測踩到）。 */
-.lf-login__brand-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    flex: 1 1 auto;
-}
-
-.lf-login__title {
-    font-size: var(--lf-font-size-2xl);
+/* 錯誤頁的標題（Error.cshtml）：借用登入頁的卡片版面，但不是品牌區塊 */
+.lf-login__heading {
+    font-size: 1.5rem;
     font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.lf-login__subtitle {
-    display: block;
-    font-size: var(--lf-font-size-sm);
-    color: var(--lf-text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.2;
 }
 
 /* 設定頁的圖示預覽格（docs/archive/FEEDBACK-10-PLAN.md §1）：尺寸刻意接近側欄實際顯示大小，
@@ -1805,16 +2080,6 @@ a.lf-stat:hover .lf-card,
     height: 100%;
     object-fit: contain;
     border-radius: inherit;
-}
-
-/* 自訂品牌圖示的登入頁版本（docs/archive/FEEDBACK-10-PLAN.md §1；回饋十三輪 G 改嵌入
-   .lf-login__brand-mark 方形容器，撐滿＋contain 保留原比例，不裁角。沒有自訂圖示時
-   fallback 成內建向量圖示（同容器），不會像改版前那樣整個品牌區只剩純文字 */
-.lf-login__logo {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
 }
 
 /* ── 列印：主管會把報表印出來或另存 PDF（§9.6）───────────────────────────── */
@@ -1927,4 +2192,68 @@ a.lf-stat:hover .lf-card,
         background: var(--lf-sidebar-hover-bg);
         border-bottom-color: var(--lf-primary-hover);
     }
+}
+
+/* ── 權限異動明細的結構化 key/value 呈現（WEB-SPEC §9.5）─────────────────── */
+
+/* 解析不出成對欄位時的退路：只保留原文換行與折行。異動前／異動後兩欄另加
+   .font-monospace——安全性描述元這類單串值走的正是這條路徑，等寬字是它唯一的可讀性依靠 */
+.lf-detail-plain,
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.lf-kv-table {
+    width: 100%;
+    table-layout: fixed;
+    margin: 0;
+    background: transparent;
+    border-collapse: collapse;
+}
+
+.lf-kv-table tr {
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-kv-table tr:last-child {
+    border-bottom: none;
+}
+
+.lf-kv-row--section th.lf-kv-section-header {
+    background-color: var(--lf-gray-100);
+    color: var(--lf-text);
+    font-weight: 600;
+    font-size: var(--lf-font-size-xs);
+    padding: var(--lf-space-2) var(--lf-space-2);
+    border: none;
+    letter-spacing: .02em;
+}
+
+.lf-kv-row--asis td.lf-kv-asis-cell {
+    padding: var(--lf-space-1) var(--lf-space-2);
+    color: var(--lf-text);
+}
+
+/* 欄寬由 width 決定（表格是 table-layout: fixed，max-width 在此不生效） */
+.lf-kv-key {
+    width: 32%;
+    vertical-align: top;
+    color: var(--lf-text-muted);
+    font-weight: 500;
+    padding: var(--lf-space-1) var(--lf-space-2);
+    white-space: normal;
+    word-break: break-word;
+}
+
+.lf-kv-val {
+    width: 68%;
+    vertical-align: top;
+    font-family: var(--lf-font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    color: var(--lf-text);
+    padding: var(--lf-space-1) var(--lf-space-2);
 }

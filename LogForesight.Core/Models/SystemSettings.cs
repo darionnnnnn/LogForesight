@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace LogForesight.Core.Models;
 
 /// <summary>
@@ -13,12 +16,12 @@ public class SystemSettings
     // 消費端＝_Layout.cshtml 與 Login.cshtml 的伺服器端渲染（不走前端 fetch：側欄品牌是
     // 每頁第一眼，等 API 回來才換會閃動）。
 
-    /// <summary>側欄與登入頁的產品名稱。空字串＝回退預設值</summary>
+    /// <summary>側欄與登入頁的主標題。空字串＝回退預設值</summary>
     public string BrandName { get; set; } = "LogForesight";
 
     /// <summary>
-    /// 產品名稱下方的副標。預設**不含「Windows」**——Linux 規則面已就緒（docs/LINUX-RULES.md），
-    /// 寫死 Windows 名不符實。空字串＝不顯示副標（使用者可以刻意只留產品名）。
+    /// 主標題下方的副標題。預設**不含「Windows」**——Linux 規則面已就緒（docs/LINUX-RULES.md），
+    /// 寫死 Windows 名不符實。空字串＝不顯示副標題（使用者可以刻意只留主標題）。
     /// </summary>
     public string BrandSubtitle { get; set; } = "事件日誌預警";
 
@@ -69,15 +72,27 @@ public class SystemSettings
     /// </summary>
     public List<string> VisibleDayRiskLevels { get; set; } = new() { "高", "中" };
 
-    /// <summary>AI（llama.cpp／OpenAI 相容端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
+    /// <summary>AI 提供者（Local／OpenAi／AzureOpenAi）。預設為 Local（本機 OpenAI 相容端點）</summary>
+    public string AiProvider { get; set; } = Configuration.AiProviders.Local;
+
+    /// <summary>AI（llama.cpp／OpenAI 相容端點／Azure 端點）位址。空字串＝AI 加值層與批次 AI 分析停用</summary>
     public string AiBaseUrl { get; set; } = "http://localhost:8080";
+
+    /// <summary>模型名稱。OpenAI 官方必填；本機預設為 local-model</summary>
+    public string AiModel { get; set; } = "local-model";
+
+    /// <summary>Azure OpenAI 部署名稱（deployment）</summary>
+    public string AiAzureDeployment { get; set; } = "";
+
+    /// <summary>Azure OpenAI API 版本，預設 2024-10-21</summary>
+    public string AiAzureApiVersion { get; set; } = "2024-10-21";
 
     // ── AI 進階參數（§12，回饋第九輪：自 appsettings 的 Ai 區段遷入）──────────────────
     // 各欄位預設值＝原 appsettings.json 的出廠值，舊部署升級後行為不變（零遷移）。
     // 套用點：RuntimeSettingsResolver.ApplySystemSettingsOverrides（排程/立即執行每次重建設定）。
 
     /// <summary>單次 AI 呼叫逾時秒數（本機 27B 級模型單次回應可能需數分鐘）</summary>
-    public int AiTimeoutSeconds { get; set; } = 600;
+    public int AiTimeoutSeconds { get; set; } = 1200;
 
     /// <summary>網路層失敗重試次數（Polly：連線失敗/HTTP 錯誤/逾時/空回應）</summary>
     public int AiRetryCount { get; set; } = 3;
@@ -93,6 +108,16 @@ public class SystemSettings
 
     /// <summary>深入分析呼叫的 token 上限（天生比終端摘要長，故與 <see cref="AiMaxTokens"/> 分開）</summary>
     public int AiDeepDiveMaxTokens { get; set; } = 8192;
+
+    /// <summary>
+    /// 估費單價：每百萬 input token 的金額（回饋二十七輪作業 B）。0＝不估費，設定頁不顯示金額。
+    /// 純粹用於「如果改用線上模型大概要多少錢」的試算，不影響任何 AI 呼叫行為；
+    /// 幣別由使用者自行認定（畫面不標幣別符號）。
+    /// </summary>
+    public double AiInputPricePerMillion { get; set; }
+
+    /// <summary>估費單價：每百萬 output token 的金額。0＝不估費。</summary>
+    public double AiOutputPricePerMillion { get; set; }
 
     /// <summary>頻率懲罰：抑制「同一段文字反覆重複」的退化輸出</summary>
     public double AiFrequencyPenalty { get; set; } = 0.8;
@@ -124,6 +149,28 @@ public class SystemSettings
     /// <summary>要掃描的 Event Log 頻道全名清單。空清單＝使用預設六頻道</summary>
     public List<string> AnalysisChannels { get; set; } = new();
 
+    // ── 權限異動欄位對應（自訂欄位名 → 語意角色）─────────────────────────────────
+
+    /// <summary>
+    /// 操作者帳號自訂欄位名清單（對應主體區段帳戶名稱）。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionOperatorFields { get; set; } = new();
+
+    /// <summary>
+    /// 成員帳號自訂欄位名清單（對應成員區段帳戶名稱）。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionMemberFields { get; set; } = new();
+
+    /// <summary>
+    /// 群組名稱自訂欄位名清單。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionGroupFields { get; set; } = new();
+
+    /// <summary>
+    /// 物件名稱自訂欄位名清單。事件訊息使用非標準欄位名時才需要設定；留空＝只用內建的官方欄位名。
+    /// </summary>
+    public List<string> PermissionObjectFields { get; set; } = new();
+
     // ── 匯入限制（§12：自 appsettings 的 Import 區段遷入）───────────────────────────
 
     /// <summary>CSV 匯入單檔大小上限（KB）</summary>
@@ -138,12 +185,25 @@ public class SystemSettings
     /// </summary>
     public string AiApiKeyEnc { get; set; } = "";
 
+    /// <summary>保留天數類設定的共同下限：任何一種資料都至少留 90 天，
+    /// 低於此值的設定在寫入時會被擋下（讀取端不 clamp——已儲存的舊值照舊生效）。</summary>
+    public const int MinRetentionDays = 90;
+
+    /// <summary>InitialHistoryDays 的出廠預設</summary>
+    public const int DefaultInitialHistoryDays = 120;
+
     /// <summary>首次執行（歷史資料庫全空）時回補歷史的天數</summary>
-    public int InitialHistoryDays { get; set; } = 120;
+    public int InitialHistoryDays { get; set; } = DefaultInitialHistoryDays;
+
+    /// <summary>
+    /// 承接 JSON 中未對應到屬性的額外鍵（供舊版保留天數設定遷移至 <see cref="RawEventRetentionDays"/> 使用）。
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 
     /// <summary>RetentionDays 的出廠預設——設定不可得時的 fallback 也引用這裡
-    /// （HostVisibilityResolver／VisibilityService），改預設值只改這一處。</summary>
-    public const int DefaultRetentionDays = 120;
+    /// （HostVisibilityResolver／VisibilityService／RetentionOptions），改預設值只改這一處。</summary>
+    public const int DefaultRetentionDays = 180;
 
     /// <summary>歷史資料庫保留天數（需 &gt;= InitialHistoryDays）</summary>
     public int RetentionDays { get; set; } = DefaultRetentionDays;
@@ -153,21 +213,39 @@ public class SystemSettings
     /// docs/archive/HISTORY.md P0-3）。與業務資料的 <see cref="RetentionDays"/> 分開，
     /// 因為兩者性質不同：這是「這次跑了什麼」的執行歷程，不是分析結果本身。
     /// </summary>
-    public int RunLogRetentionDays { get; set; } = 90;
+    public int RunLogRetentionDays { get; set; } = DefaultRunLogRetentionDays;
+
+    /// <summary>RunLogRetentionDays 的出廠預設</summary>
+    public const int DefaultRunLogRetentionDays = 120;
 
     /// <summary>
     /// 稽核紀錄保留天數（操作稽核——docs/WEB-SPEC.md §11-6、docs/archive/HISTORY.md P0-3）。
     /// 稽核是合規／追責用途，保留期通常比業務資料更長，故獨立設定。
     /// </summary>
-    public int AuditRetentionDays { get; set; } = 730;
+    public int AuditRetentionDays { get; set; } = DefaultAuditRetentionDays;
+
+    /// <summary>AuditRetentionDays 的出廠預設</summary>
+    public const int DefaultAuditRetentionDays = 730;
 
     /// <summary>
-    /// 風險 log 暫存保留天數（docs/archive/WEB-SCHEDULER-PLAN.md §2.2.3，2026-07-31 定案）：規則命中或
-    /// 趨勢異常的問題簽章原始事件，暫存供「詢問 AI」對話優先取用，不必每次都即時打 Sentinel。
-    /// 與業務資料的 <see cref="RetentionDays"/> 是不同性質的保留期（暫存 vs 長期分析紀錄），
-    /// 驗證要求 <c>1 &lt;= 值 &lt;= RetentionDays</c>——暫存活得比分析紀錄久沒有意義。
+    /// 原始事件內容保留天數（日紀錄原始樣本訊息與風險 log 暫存）：超過此天數的分析紀錄
+    /// 只保留統計欄與問題清單，原始事件文本予以清除；風險 log 暫存亦同步清理。
+    /// 必須小於或等於 <see cref="RetentionDays"/>。
     /// </summary>
-    public int RiskyEventRetentionDays { get; set; } = 14;
+    public int RawEventRetentionDays { get; set; } = DefaultRawEventRetentionDays;
+
+    /// <summary>RawEventRetentionDays 的出廠預設</summary>
+    public const int DefaultRawEventRetentionDays = 120;
+
+    /// <summary>
+    /// 報告檔保留天數（<c>export\</c> 底下的風險報告／週檢報告／權限異動報告）：超過此天數的報告檔予以清理。
+    /// 這一項只管 <c>export\</c> 底下的報告檔（風險報告／週檢報告／權限異動報告），
+    /// 與資料庫分析紀錄的 <see cref="RetentionDays"/> 各自獨立、不互相約束。
+    /// </summary>
+    public int ReportRetentionDays { get; set; } = DefaultReportRetentionDays;
+
+    /// <summary>ReportRetentionDays 的出廠預設</summary>
+    public const int DefaultReportRetentionDays = 1095;
 
     /// <summary>
     /// 是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）。開啟後不論 appsettings 的

@@ -57,7 +57,7 @@ public class RuntimeSettingsResolverTests
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
 
-        Assert.Equal(600, settings.Ai.TimeoutSeconds);
+        Assert.Equal(1200, settings.Ai.TimeoutSeconds);
         Assert.Equal(3, settings.Ai.RetryCount);
         Assert.Equal(2048, settings.Ai.MaxTokens);
         Assert.Equal(8192, settings.Ai.DeepDiveMaxTokens);
@@ -79,9 +79,44 @@ public class RuntimeSettingsResolverTests
         var settings = new AppSettings();
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
 
-        Assert.Equal(600, settings.Ai.TimeoutSeconds);
+        Assert.Equal(1200, settings.Ai.TimeoutSeconds);
         Assert.Equal(0.8, settings.Ai.FrequencyPenalty);
         Assert.Equal(7, settings.Analysis.CheckupIntervalDays);
+    }
+
+    [Fact]
+    public void DB值覆寫AI提供者與新欄位()
+    {
+        _store.Update(s =>
+        {
+            s.UpdatedAt = DateTime.Now;
+            s.AiProvider = "AzureOpenAi";
+            s.AiBaseUrl = "https://my-resource.openai.azure.com/";
+            s.AiModel = "gpt-4o";
+            s.AiAzureDeployment = "gpt-4o-prod";
+            s.AiAzureApiVersion = "2024-12-01-preview";
+        });
+
+        var settings = new AppSettings();
+        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
+
+        Assert.Equal("AzureOpenAi", settings.Ai.Provider);
+        Assert.Equal("https://my-resource.openai.azure.com/", settings.Ai.BaseUrl);
+        Assert.Equal("gpt-4o", settings.Ai.Model);
+        Assert.Equal("gpt-4o-prod", settings.Ai.AzureDeployment);
+        Assert.Equal("2024-12-01-preview", settings.Ai.AzureApiVersion);
+    }
+
+    [Fact]
+    public void 未設定Provider的既有設定_傳遞到執行期設定預設為本機()
+    {
+        var settings = new AppSettings();
+        RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
+
+        Assert.Equal("Local", settings.Ai.Provider);
+        Assert.Equal("local-model", settings.Ai.Model);
+        Assert.Equal("", settings.Ai.AzureDeployment);
+        Assert.Equal("2024-10-21", settings.Ai.AzureApiVersion);
     }
 
     [Fact]
@@ -104,5 +139,64 @@ public class RuntimeSettingsResolverTests
         RuntimeSettingsResolver.ApplySystemSettingsOverrides(settings, _store);
 
         Assert.Null(settings.Ai.ExtraRequestFields);
+    }
+
+    // ── 保留天數解析（ResolveRetention） ───────────────────────────────────────────
+
+    [Fact]
+    public void ResolveRetention_合理範圍內的值正確套用()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.RawEventRetentionDays = 90;
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(90, retention.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_大於歷史資料保留天數時不套用_沿用預設值()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.RawEventRetentionDays = 200; // 超出範圍
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        // RetentionOptions 的出廠預設為 120
+        Assert.Equal(120, retention.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_小於1時不套用_沿用預設值()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.RawEventRetentionDays = 0; // 不合法下限
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(120, retention.RawEventRetentionDays);
+    }
+
+    [Fact]
+    public void ResolveRetention_等於歷史資料保留天數時正確套用()
+    {
+        _store.Update(s =>
+        {
+            s.RetentionDays = 120;
+            s.RawEventRetentionDays = 120;
+        });
+
+        var retention = RuntimeSettingsResolver.ApplySystemSettingsOverrides(new AppSettings(), _store);
+
+        Assert.Equal(120, retention.RawEventRetentionDays);
     }
 }

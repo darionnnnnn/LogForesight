@@ -296,4 +296,25 @@ public class HandlingStoreContractTests : IDisposable
         Assert.Equal(2, logs.Count);
         Assert.Equal(new long[] { 1, 2 }, logs.Select(l => l.LogId));
     }
+    [Fact]
+    public void 日狀態_多個獨立實例交互寫入不重號()
+    {
+        var date = DateTime.Today;
+        var storeA = Days();
+        var storeB = Days();
+
+        // A 先寫入，建立快取（如果在舊版有快取的情況下）
+        storeA.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "a" });
+        // B 寫入
+        storeB.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "b" });
+        // A 再寫入，如果 A 的快取沒有被移除，它會從它上次的紀錄續號，導致重號
+        storeA.AppendLog(new RecordHandlingLog { HostName = "SRV-01", Date = date, Action = "c" });
+
+        var logs = Days().GetLogs("SRV-01", date);
+
+        Assert.Equal(3, logs.Count);
+        // LogId 必須依序遞增，不重號
+        Assert.True(logs[1].LogId > logs[0].LogId);
+        Assert.True(logs[2].LogId > logs[1].LogId);
+    }
 }

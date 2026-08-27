@@ -82,7 +82,9 @@ public class HelpQaService
             foreach (var chapter in chapters)
             {
                 sb.AppendLine($"### {chapter.Title}");
-                sb.AppendLine(chapter.Content);
+                // 餵給 AI 的是詳細版（回饋二十七輪作業 G）：使用者手冊要好讀、AI 要夠細，
+                // 兩者衝突。沒有 AI 版的章節 AiContent 會 fallback 成 Content，行為不變
+                sb.AppendLine(chapter.ContentForAi);
                 sb.AppendLine();
             }
         }

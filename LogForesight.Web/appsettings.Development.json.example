@@ -15,7 +15,7 @@
     // DataRoot 留空即可：退回本站台自己的執行檔目錄（StorageSettings.ResolveDataRoot()）——
     // Web 排程／立即執行是現在唯一的分析執行途徑，資料本來就該落在 Web 自己的目錄下。
     // 只有要讀「別處」的資料時才需在此明確填絕對路徑（填的目錄必須存在，否則啟動驗證會 fail fast）。
-    // SQLite 模式下 DataRoot 也決定 logforesight.db 的落點。
+    // SQLite 模式下 DataRoot 也決定 Db\logforesight.db 的落點。
     // ⚠ repo 位於 OneDrive 同步範圍時，同步掃檔可能與 SQLite 鎖檔衝突（偶發 database is locked）；
     //   長時間測試建議把 DataRoot 指到 OneDrive 之外（如 "C:\\LogForesightData-dev"）。
     "DataRoot": ""

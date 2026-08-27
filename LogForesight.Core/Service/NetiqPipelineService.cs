@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
+using LogForesight.Core.Models;
 using NLog;
 
 namespace LogForesight.Core.Service;
@@ -59,16 +60,30 @@ public class NetiqPipelineService
     private readonly IssueCaseCoordinator _caseCoordinator;
     private readonly IRunConsole _console;
     private readonly IRiskyEventStore? _riskyEventStore;
-    private readonly int _riskyEventRetentionDays;
+    private readonly int _rawEventRetentionDays;
     private readonly bool _useAi;
     private readonly IRunProgress? _progress;
+    private readonly bool _onlyMissingOrFailed;
     private readonly Func<Sentinel, ISentinelSearchClient> _clientFactory;
+    private readonly PermissionChangeStore? _permissionChangeStore;
+    private readonly PermissionFieldMappings? _permissionMappings;
+    private readonly RerunMode _rerunMode;
+    private readonly int? _rerunDays;
+    /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
+    private ConcurrentDictionary<string, byte> _permissionKeys = new();
+    /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
+    /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
+    private readonly ConcurrentDictionary<long, HostTouch> _hostTouches = new();
+
+    /// <summary>單台主機待寫回的回報時間與顯示名。同一台主機重複觸發時後寫覆蓋前寫——
+    /// 一趟執行內的 <c>DateTime.Now</c> 差異對「最後回報時間」沒有意義。</summary>
+    private sealed record HostTouch(string? DisplayName, DateTime ReportedAt);
 
     /// <param name="console">輸出去哪裡（docs/archive/FEEDBACK-8-PLAN.md #2）：原本整支寫死 Console.WriteLine，
     /// console 批次專案退場後這些輸出沒有任何地方接收——排程跑到 NetIQ 段（整晚執行的大宗）時
     /// Web 狀態卡的訊息其實是凍結的。改走與本機路徑相同的 <see cref="IRunConsole"/>。</param>
     /// <param name="riskyEventStore">風險 log 暫存（docs/archive/WEB-SCHEDULER-PLAN.md §2）；null＝不寫暫存（測試情境）</param>
-    /// <param name="riskyEventRetentionDays">暫存保留天數——超過保留期的回補日跳過寫入
+    /// <param name="rawEventRetentionDays">原始事件保留天數——超過保留期的回補日跳過寫入
     /// （見 <see cref="RiskyEventSelector.WithinRetention"/>），與本機路徑同一個閘門</param>
     /// <param name="useAi">false＝AI 未設定，本次以統計模式跑（不呼叫 AI），與本機路徑同一個
     /// 開關（docs/archive/FEEDBACK-7-PLAN.md）；本 pipeline 每次執行都重新建構，用建構參數而不是
@@ -78,13 +93,23 @@ public class NetiqPipelineService
     /// null＝預設走真正的 <see cref="SentinelClient"/>（<see cref="SentinelConnectionFactory.ToConnectable"/>
     /// 轉連線資訊）。測試可覆寫成回傳假搜尋結果的替身，不必真的連 Sentinel，也不用重寫
     /// 整個 <see cref="RunAsync"/> 的批次／逐日邏輯。</param>
+    /// <param name="onlyMissingOrFailed">只補跑失敗或未執行的主機（略過已成功且有 AI 分析的），預設 false</param>
+    /// <param name="permissionChangeStore">權限異動 store；null＝預設由 backend 建構</param>
+    /// <param name="permissionMappings">權限異動自訂欄位對應；null＝使用內建官方欄位名</param>
+    /// <param name="rerunMode">重新分析模式，預設 None</param>
+    /// <param name="rerunDays">重新分析回望天數</param>
     public NetiqPipelineService(
         StorageBackend backend, NetiqOptions netiqOptions,
         ISentinelStore sentinels, IHostStore hosts, EventLogService eventLogService,
         IAiService aiService, ISuppressionStore suppressionStore, RiskReportService reportService,
         BatchRunRecorder runRecorder, IssueCaseCoordinator caseCoordinator, IRunConsole console,
-        IRiskyEventStore? riskyEventStore = null, int riskyEventRetentionDays = 14, bool useAi = true,
-        IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null)
+        IRiskyEventStore? riskyEventStore = null, int? rawEventRetentionDays = null, bool useAi = true,
+        IRunProgress? progress = null, Func<Sentinel, ISentinelSearchClient>? clientFactory = null,
+        bool onlyMissingOrFailed = false,
+        PermissionChangeStore? permissionChangeStore = null,
+        PermissionFieldMappings? permissionMappings = null,
+        RerunMode rerunMode = RerunMode.None,
+        int? rerunDays = null)
     {
         _backend = backend;
         _netiqOptions = netiqOptions;
@@ -98,11 +123,16 @@ public class NetiqPipelineService
         _caseCoordinator = caseCoordinator;
         _console = console;
         _riskyEventStore = riskyEventStore;
-        _riskyEventRetentionDays = riskyEventRetentionDays;
+        _rawEventRetentionDays = rawEventRetentionDays ?? SystemSettings.DefaultRawEventRetentionDays;
         _useAi = useAi;
         _progress = progress;
+        _onlyMissingOrFailed = onlyMissingOrFailed;
         _clientFactory = clientFactory ?? (sentinel =>
             new SentinelClient(SentinelConnectionFactory.ToConnectable(sentinel), netiqOptions));
+        _permissionChangeStore = permissionChangeStore ?? backend.PermissionChanges();
+        _permissionMappings = permissionMappings;
+        _rerunMode = rerunMode;
+        _rerunDays = rerunDays;
     }
 
     /// <param name="hostList">今晚要查詢的主機（<see cref="HostListSelection"/>）；
@@ -117,6 +147,15 @@ public class NetiqPipelineService
         {
             return result;
         }
+
+        // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
+        // 必須依本次執行實際採用的回望天數（＋一週緩衝）推算查詢起點，絕不能引用編譯期絕對上限常數（MaxBackfillDaysLimit=365）：
+        // 正式環境權限異動每日近十萬筆，若用常數推算會一次撈回 372 天數千萬筆去重鍵，將記憶體撐爆。更早的列不可能在本輪被重寫。
+        var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
+        var dedupeSince = DateTime.Today.AddDays(-(lookbackDays + 7));
+        _permissionKeys = new ConcurrentDictionary<string, byte>(
+            (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
+            StringComparer.Ordinal);
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -147,7 +186,7 @@ public class NetiqPipelineService
         // 有界佇列，單一背景消費者依序（FIFO）取出跑 AI，搜尋不再被 AI 拖住。無論下面的搜尋
         // 迴圈正常結束還是被取消，finally 都要讓消費者知道不會再有新項目並等它收尾——
         // 否則消費者會永遠卡在 ReadAllAsync 等下一筆，執行永遠收不了尾。
-        var aiQueue = new AiFollowupQueue<AiFollowupJob>();
+        var aiQueue = new AiFollowupQueue<AiFollowupJob>(AiQueueCapacity);
         var consumerTask = ConsumeAiQueueAsync(aiQueue, result, trendWindowDays, ct);
 
         // 抑制清單 run 開始時讀一次（回饋十四輪 A3），往下傳給每台主機每一天共用——取代原本
@@ -204,10 +243,14 @@ public class NetiqPipelineService
         {
             aiQueue.Complete();
             await consumerTask;
+            FlushHostTouches();
         }
 
         _console.WriteLine($"\n── NetIQ 機房分析結果：已完成跳過 {result.HostsSkippedUpToDate} 台" +
                           $"、本次分析 {result.HostDaysAnalyzed} 個主機日、失敗 {result.HostsFailed} 個主機日" +
+                          (result.RerunDaysAnalyzed > 0 || result.RerunDaysRetained > 0
+                              ? "、" + HostDayPostProcessor.RerunSummary(result.RerunDaysAnalyzed, result.RerunDaysRetained)
+                              : "") +
                           (result.AiQueued > 0
                               ? $"、AI 分析 {result.AiCompleted} 件完成（放棄 {result.AiAbandoned}，下次執行自動補跑）"
                               : "") +
@@ -225,12 +268,11 @@ public class NetiqPipelineService
     /// <summary>
     /// 回補天數計算（docs/archive/FEEDBACK-3-PLAN.md #1）：不超過管理者設定的 BackfillDays——
     /// 首次執行與缺漏日回補一視同仁，不再有「首次深度回補」的例外路徑。
-    /// 若 BackfillDays 設得比趨勢窗口還大，仍以趨勢窗口為準——回補比趨勢分析
-    /// 實際會用到的更多天沒有意義，多查的天數只是白費 Sentinel 查詢額度。
-    /// 抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
+    /// 回望窗口與趨勢基線窗口是兩件不同的事，上限夾在 <see cref="NetiqOptions.MaxBackfillDaysLimit"/>（或指定的有效上限），
+    /// 不再受趨勢窗口天數限制。抽成獨立純函式方便單元測試，不需要建構整個 pipeline 的相依物件。
     /// </summary>
-    internal static int ResolveLookbackDays(int backfillDays, int trendWindowDays) =>
-        Math.Min(backfillDays, trendWindowDays);
+    internal static int ResolveLookbackDays(int backfillDays) =>
+        Math.Clamp(backfillDays, 0, NetiqOptions.MaxBackfillDaysLimit);   // 0＝不回望（既有語意）；有效上限由呼叫端先夾（AnalysisOrchestrator）
 
     /// <summary>
     /// 依 <see cref="NetiqTarget.Os"/> 把這台 Sentinel 轄下的主機分成兩組，各自跑完整的
@@ -253,6 +295,8 @@ public class NetiqPipelineService
         {
             await RunServerOsGroupAsync(sentinel, linuxTargets, WebHost.OsLinux, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
         }
+
+        FlushHostTouches();
     }
 
     private async Task RunServerOsGroupAsync(
@@ -265,7 +309,7 @@ public class NetiqPipelineService
         // 首次與非首次統一套用 BackfillDays（docs/archive/FEEDBACK-3-PLAN.md #1）：不再區分
         // 「該主機是否已有任何紀錄」——2000 台規模下不管是首次登錄還是排程漏跑，
         // 對 Sentinel 做大量歷史日查詢都不現實，一律以管理者設定的回補窗口為準
-        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays, trendWindowDays);
+        var lookback = ResolveLookbackDays(_netiqOptions.BackfillDays);
 
         var plans = new List<HostPlan>();
         var orphanJobs = new List<AiFollowupJob>();
@@ -273,7 +317,13 @@ public class NetiqPipelineService
         {
             var hostKey = new HostKey { HostId = target.HostId, HostName = target.HostName };
             var store = _backend.RecordStore(hostKey);
-            var missingDates = MissingDateFinder.Find(store, lookback);
+            var missingDates = MissingDateFinder.Find(store, lookback, requireAi: _onlyMissingOrFailed, useAi: _useAi);
+
+            var rerunLookback = ResolveLookbackDays(_rerunDays ?? lookback);
+            var rerunDates = _rerunMode != RerunMode.None
+                ? RerunDateFinder.Find(store, _backend.IssueHandlingStore(), target.HostName, rerunLookback, _rerunMode)
+                : new List<DateTime>();
+            var targetDates = missingDates.Union(rerunDates).OrderBy(d => d).ToList();
 
             // 群組成員資格計畫階段解析一次（回饋十四輪 A3）：取代原本每主機日各自呼叫一次
             // HostStore.Get（整份主機清單 JSON blob 反序列化、無快取）——2000 台×14 天等於
@@ -284,20 +334,23 @@ public class NetiqPipelineService
             var groupIds = (IReadOnlyCollection<long>?)hostRecord?.GroupIds ?? Array.Empty<long>();
             var isHighVolume = hostRecord?.IsHighVolume ?? false;
 
-            if (missingDates.Count == 0)
+            if (targetDates.Count == 0)
             {
                 result.AddSkipped();
             }
             else
             {
-                plans.Add(new HostPlan(target, store, missingDates, groupIds, isHighVolume));
+                plans.Add(new HostPlan(target, store, targetDates, rerunDates.ToHashSet(), groupIds, isHighVolume));
             }
 
             // AiPending 孤兒補跑（docs/archive/FEEDBACK-12-PLAN.md §3.10）：與「今天有沒有缺漏日」無關——
             // 主機可能今天已經補齊缺漏日，但上次執行被取消時留下的某一天還卡在「AI 排隊中」，
             // 兩者互不影響，各自獨立檢查同一個 lookback 窗口（與 MissingDateFinder 同一個範圍：
             // 今天往回數 lookback 天，不含今天）。
-            var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback).Where(r => r.AiPending).ToList();
+            var missingSet = targetDates.ToHashSet();
+            var pendingRecords = store.ReadRecent(DateTime.Today.AddDays(-1), lookback)
+                .Where(r => (_onlyMissingOrFailed ? HostDayPostProcessor.NeedsBackfill(r, _useAi) : r.AiPending) && !missingSet.Contains(r.Date.Date))
+                .ToList();
             foreach (var pending in pendingRecords)
             {
                 var retryService = new LogAnalysisService(
@@ -311,7 +364,9 @@ public class NetiqPipelineService
 
         if (plans.Count == 0 && orphanJobs.Count == 0)
         {
-            _console.WriteLine($"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
+            _console.WriteLine(_onlyMissingOrFailed
+                ? $"  [{sentinel.Name}] 今日全數主機皆已完成且具備 AI 分析，跳過。"
+                : $"  [{sentinel.Name}] 今日全數主機皆已有分析紀錄，跳過。");
             return;
         }
 
@@ -393,10 +448,7 @@ public class NetiqPipelineService
             // 更容易撞上前面一般缺漏日已經把佇列排滿的情況
             if (!aiQueue.TryEnqueue(job))
             {
-                _console.WriteLine($"  ⏸ [{sentinel.Name}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
-                _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
-                await aiQueue.EnqueueAsync(job, ct);
-                _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+                await EnqueueUnderBackpressureAsync(aiQueue, job, sentinel.Name, result, ct);
             }
             // 計數放在 EnqueueAsync 成功之後（同 AnalyzeHostDayAsync 的理由）：取消若發生在
             // 背壓等待中，這筆工作項並未真的進到佇列，提前計數會讓 AiQueued 與
@@ -404,6 +456,48 @@ public class NetiqPipelineService
             result.AddAiQueued();
         }
     }
+
+    /// <summary>背壓期間的進度回報間隔。AI 一件動輒數十秒，太密只是重複同一個數字。</summary>
+    private const int BackpressureReportIntervalMs = 2000;
+
+    /// <summary>AI 佇列容量。正式執行一律用預設值；開放覆寫是為了讓測試能以極小容量
+    /// 重現背壓路徑，不必真的塞滿 200 件。</summary>
+    internal int AiQueueCapacity { get; set; } = AiFollowupQueue<AiFollowupJob>.Capacity;
+
+    /// <summary>
+    /// 佇列滿載時的入列等待（回饋二十七輪作業 B）。
+    ///
+    /// 舊版在這裡回報的是「主機日」數字，而且只在進入背壓那一瞬間報一次——搜尋主線此時已停，
+    /// 那個數字到等待結束都不會變，畫面看起來就是卡死（使用者回饋②：AI 佇列 200 件卡著，
+    /// 背景明明在跑卻看不出進度）。改成回報 AI 消化進度並在等待期間持續更新：
+    /// 分子是已完成＋已放棄的 AI 件數、分母是已排入的件數，數字會隨每件 AI 跑完而前進。
+    /// </summary>
+    private async Task EnqueueUnderBackpressureAsync(
+        AiFollowupQueue<AiFollowupJob> aiQueue, AiFollowupJob job, string sentinelName,
+        NetiqPipelineResult result, CancellationToken ct)
+    {
+        _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiQueueCapacity} 件），" +
+                           $"搜尋暫停等待消化中…（佇列尚有 {aiQueue.PendingCount} 件）");
+
+        ReportAiDigestProgress(result);
+
+        var enqueue = aiQueue.EnqueueAsync(job, ct).AsTask();
+        while (!enqueue.IsCompleted)
+        {
+            // 等待間隔本身不掛 ct：ct 取消時 enqueue 會自己結束迴圈並在下面的 await 拋出，
+            // 這裡再掛一次只會多一個要處理的取消例外
+            await Task.WhenAny(enqueue, Task.Delay(BackpressureReportIntervalMs, CancellationToken.None));
+            ReportAiDigestProgress(result);
+        }
+
+        await enqueue;   // 取消與例外原樣往外傳（呼叫端依賴 OperationCanceledException 走孤兒補跑）
+
+        _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+    }
+
+    /// <summary>AI 消化進度：與 netiq-ai 軌同一組數字，背壓期間畫面才不會退回主機日語意。</summary>
+    private void ReportAiDigestProgress(NetiqPipelineResult result) =>
+        _progress?.Report("netiq-backpressure", result.AiCompleted + result.AiAbandoned, result.AiQueued);
 
     private async Task RunBatchDayAsync(
         ISentinelSearchClient client, string sentinelName, HostPlan[] batch, DateTime date, string os,
@@ -533,6 +627,17 @@ public class NetiqPipelineService
         AiFollowupQueue<AiFollowupJob> aiQueue, List<RuleSuppression> suppressionSnapshot, CancellationToken ct)
     {
         var target = plan.Target;
+        var isRerun = plan.RerunDates.Contains(date.Date);
+
+        // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺（查詢被截斷）時保留原結果——
+        // 判定與本機路徑共用同一個函式，不各寫一份
+        if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(events.Count, dataIncomplete, sourceDegraded: false))
+        {
+            result.AddRerunRetained();
+            _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 來源已無事件或資料不完整，保留原分析結果");
+            _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+            return;
+        }
 
         // 每台主機各自一個 LogAnalysisService 實例：historyService（owner-host 隔離）與
         // host/hostId 綁定同一台，但 eventLogService/aiService/reportService/suppressionStore
@@ -564,6 +669,12 @@ public class NetiqPipelineService
                 date, events, useAi: _useAi, historyDays: trendWindowDays, dataIncomplete: dataIncomplete,
                 securityLogAvailable: true, channels: null, ct, hostOs: target.Os);
 
+            if (isRerun)
+            {
+                plan.Store.DeleteDays(new[] { date });
+                result.AddRerunAnalyzed();
+            }
+
             plan.Store.Append(record);
 
             result.AddAnalyzed();
@@ -577,7 +688,9 @@ public class NetiqPipelineService
             var logContext = $"[{sentinelName}] [{target.IpAddress}] ";
             HostDayPostProcessor.AttachCase(_caseCoordinator, target.HostName, date, record.TopIssues, logContext);
             HostDayPostProcessor.ReplaceRiskyEvents(
-                _riskyEventStore, _riskyEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+                _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
+            HostDayPostProcessor.RecordPermissionChanges(
+                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 
             // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
             // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果
@@ -590,7 +703,7 @@ public class NetiqPipelineService
             // 這個訊號值得人工看一眼（確認是真安靜還是轉送掛了），試點階段再依誤報率校準。
             if (hostReported)
             {
-                _hosts.TouchNetiq(target.HostId, displayName, DateTime.Now);
+                _hostTouches[target.HostId] = new HostTouch(displayName, DateTime.Now);
             }
 
             if (workItem != null)
@@ -610,10 +723,7 @@ public class NetiqPipelineService
                 ct.ThrowIfCancellationRequested();
                 if (!aiQueue.TryEnqueue(job))
                 {
-                    _console.WriteLine($"  ⏸ [{sentinelName}] AI 佇列已滿（{AiFollowupQueue<AiFollowupJob>.Capacity} 件），搜尋暫停等待消化中…");
-                    _progress?.Report("netiq-backpressure", result.HostDaysDone, result.HostDaysTotal);
-                    await aiQueue.EnqueueAsync(job, ct);
-                    _progress?.Report("netiq", result.HostDaysDone, result.HostDaysTotal);
+                    await EnqueueUnderBackpressureAsync(aiQueue, job, sentinelName, result, ct);
                 }
                 // 計數放在 EnqueueAsync 成功之後：取消若發生在背壓等待中，這筆工作項其實
                 // 沒有真的進到佇列，AddAiQueued 若在等待之前就算會與 AiCompleted+AiAbandoned
@@ -744,6 +854,77 @@ public class NetiqPipelineService
         }
     }
 
+    /// <summary>
+    /// 把累積的回報時間一次寫回主機清單。逐台 <c>TouchNetiq</c> 是整份 blob 的讀→改→寫，
+    /// 3000 台 × 120 天的初次回補等於 36 萬次 4 MB 全量重寫；改為累積後在**每台 Sentinel
+    /// 跑完**與 <see cref="RunAsync"/> 的 finally 各 flush 一次，一趟執行降到個位數次。
+    ///
+    /// 延遲寫入的代價是崩潰時丟掉尚未 flush 的回報時間，那些主機會短暫顯示為無回報；
+    /// 損失上界是「一台 Sentinel 的回報時間」，而執行中途崩潰本來就代表那一批資料不完整。
+    ///
+    /// **逐鍵 TryRemove 而不是「複製一份再 Clear」**：多台 Sentinel 平行處理，各自跑完都會
+    /// 呼叫這裡。<c>Clear</c> 會把「複製之後、清除之前」由別台 Sentinel 寫入的新項目一併刪掉，
+    /// 那台主機的 LastReportAt 就這樣消失、畫面顯示成無回報，而且不會有任何錯誤訊息——
+    /// 正是「沒查 ≠ 沒事」要防的靜默盲區。只移除自己真的取走的鍵才不會漏。
+    /// </summary>
+    private void FlushHostTouches()
+    {
+        if (_hostTouches.IsEmpty) return;
+
+        var touches = new List<KeyValuePair<long, HostTouch>>();
+        foreach (var hostId in _hostTouches.Keys)
+        {
+            if (_hostTouches.TryRemove(hostId, out var touch))
+            {
+                touches.Add(new KeyValuePair<long, HostTouch>(hostId, touch));
+            }
+        }
+
+        if (touches.Count == 0) return;
+
+        // 寫入失敗不讓整台 Sentinel 作廢（比照 HostDayPostProcessor 的既定哲學）：
+        // blob 的行程內互斥是 per-instance 的鎖，Web 端與分析端各有一份 backend，
+        // 同一份 hosts blob 真的會在 DB 層競爭、撞滿重試次數後拋出。這個例外若冒到
+        // RunServerAsync 尾端，會被 Parallel.ForEachAsync 的 catch 記成「整台 Sentinel 失敗」
+        // ——幾百台已經分析完成的主機被記為失敗，只因為回報時間寫不回去。
+        // 失敗時把 touch 放回字典等下次 flush；已有較新的值就保留較新的，不要覆蓋回舊值。
+        try
+        {
+            _hosts.MutateBatch(batch =>
+            {
+                var hostDict = batch.ToDictionary(h => h.HostId);
+                foreach (var kvp in touches)
+                {
+                    if (hostDict.TryGetValue(kvp.Key, out var host))
+                    {
+                        host.LastReportAt = kvp.Value.ReportedAt;
+                        if (!string.IsNullOrWhiteSpace(kvp.Value.DisplayName))
+                        {
+                            host.DisplayName = kvp.Value.DisplayName;
+                        }
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            foreach (var kvp in touches)
+            {
+                // 逐欄合併而不是整筆二選一：ReportedAt 取較新，DisplayName 取非空的那個——
+                // 整筆丟掉會連帶丟掉另一筆才有的顯示名稱，容錯機制自己先丟一半資料
+                _hostTouches.AddOrUpdate(
+                    kvp.Key,
+                    kvp.Value,
+                    (_, existing) => new HostTouch(
+                        !string.IsNullOrWhiteSpace(existing.DisplayName) ? existing.DisplayName : kvp.Value.DisplayName,
+                        existing.ReportedAt >= kvp.Value.ReportedAt ? existing.ReportedAt : kvp.Value.ReportedAt));
+            }
+
+            Log.Warn(ex, "回報時間批次寫回失敗（{Count} 台），保留待下次 flush 重試：{Msg}",
+                touches.Count, ex.Message);
+        }
+    }
+
     /// <param name="GroupIds">這台主機所屬的主機群組 Id（回饋十四輪 A3）：計畫階段（<see cref="RunServerOsGroupAsync"/>）
     /// 解析一次，取代原本 <see cref="AnalyzeHostDayAsync"/> 每主機日各自呼叫一次 <c>HostStore.Get</c>——
     /// 該方法整份 blob 反序列化、無快取，2000 台×14 天等於 28,000 次全量讀。</param>
@@ -751,7 +932,7 @@ public class NetiqPipelineService
     /// <see cref="WebHost.IsHighVolume"/> 的計畫階段快照）：true 時分批（<see cref="RunServerOsGroupAsync"/>）
     /// 直接讓它單獨成一批，不必每天都從整批大小重新二分收斂到它。</param>
     private sealed record HostPlan(NetiqTarget Target, IAnalysisRecordStore Store, List<DateTime> MissingDates,
-        IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
+        HashSet<DateTime> RerunDates, IReadOnlyCollection<long> GroupIds, bool IsHighVolume);
 }
 
 /// <summary>
@@ -770,6 +951,8 @@ public sealed class NetiqPipelineResult
     private int _aiQueued;
     private int _aiCompleted;
     private int _aiAbandoned;
+    private int _rerunDaysAnalyzed;
+    private int _rerunDaysRetained;
     private readonly List<string> _warnings = new();
 
     /// <summary>今日已有分析紀錄、本次跳過的主機數（當日續跑的核心：不重複分析）</summary>
@@ -781,6 +964,12 @@ public sealed class NetiqPipelineResult
     /// <summary>失敗的「主機×日」次數（含批次查詢失敗與單台分析失敗）</summary>
     public int HostsFailed => _hostsFailed;
 
+    /// <summary>重新分析完成的「主機×日」天數</summary>
+    public int RerunDaysAnalyzed => _rerunDaysAnalyzed;
+
+    /// <summary>重跑但來源無資料而保留原結果的「主機×日」天數</summary>
+    public int RerunDaysRetained => _rerunDaysRetained;
+
     /// <summary>
     /// 本次需要分析的「主機×日」總數（docs/archive/FEEDBACK-8-PLAN.md #2，進度條分母）：
     /// 各 Sentinel 平行掃描後才知道各自轄下要補幾天，隨掃描逐步累加——只會變大、不會倒退，
@@ -788,8 +977,8 @@ public sealed class NetiqPipelineResult
     /// </summary>
     public int HostDaysTotal => _hostDaysTotal;
 
-    /// <summary>已處理（含成功與失敗）的「主機×日」次數——進度條分子</summary>
-    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed;
+    /// <summary>已處理（含成功、失敗與保留原結果）的「主機×日」次數——進度條分子</summary>
+    public int HostDaysDone => _hostDaysAnalyzed + _hostsFailed + _rerunDaysRetained;
 
     /// <summary>需要人工留意的項目（Sentinel 失聯、Linux 主機不支援等）——不是可以吞掉的雜訊</summary>
     public IReadOnlyList<string> Warnings => _warnings;
@@ -819,6 +1008,10 @@ public sealed class NetiqPipelineResult
     internal void AddAiCompleted() => Interlocked.Increment(ref _aiCompleted);
 
     internal void AddAiAbandoned() => Interlocked.Increment(ref _aiAbandoned);
+
+    internal void AddRerunAnalyzed() => Interlocked.Increment(ref _rerunDaysAnalyzed);
+
+    internal void AddRerunRetained() => Interlocked.Increment(ref _rerunDaysRetained);
 
     internal void AddWarning(string message)
     {

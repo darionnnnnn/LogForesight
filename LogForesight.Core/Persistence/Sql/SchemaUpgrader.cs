@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NLog;
+using LogForesight.Core.Persistence;
 
 namespace LogForesight.Core.Persistence.Sql;
 
@@ -23,6 +24,11 @@ internal static class SchemaUpgrader
 
         AddColumnIfMissing(ctx, isSqlite, "lf_log_lines", "created_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
         AddIndexIfMissing(ctx, isSqlite, "lf_log_lines", "IX_lf_log_lines_log_key_created_at", "log_key, created_at");
+
+        // 供上層快取失效判定的單調遞增版本號。不重用 updated_at 是因為 DateTime.Now 在 Windows 解析度約 15.6 ms，
+        // 同 tick 寫入會漏更新，因此獨立加一欄。
+        AddColumnIfMissing(ctx, isSqlite, "lf_blobs", "version",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bigint NOT NULL DEFAULT 0");
 
         // P1-2：問題查詢頁分頁排序需要的抽出欄（見 LfDbContext.DailyRecordRow.HasCorrelation 註解）。
         // 舊資料補上後預設為 0/false，下次批次重新分析同一天會自然更新為正確值。
@@ -85,6 +91,224 @@ internal static class SchemaUpgrader
             "IX_lf_record_handling_unique", "host_name_key, record_date", unique: true);
         AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_handler", "handler_id");
         AddIndexIfMissing(ctx, isSqlite, "lf_record_handling", "IX_lf_record_handling_status", "status");
+
+        // 首次寫入時間（回饋十九輪批次B，MTTA 保底）：舊列為 NULL，本輪不回填
+        AddColumnIfMissing(ctx, isSqlite, "lf_issue_handling", "created_at", isSqlite ? "TEXT NULL" : "datetime2 NULL");
+
+        // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）。舊列的預設值不是正確資料，
+        // 由 DailyRecordBackfiller 依 extract_version 背景補齊（同 lf_top_issues 既有機制）。
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "headline",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(max) NOT NULL DEFAULT ''");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "data_incomplete",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "security_log_available",
+            isSqlite ? "INTEGER NULL" : "bit NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "error_count",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "warning_count",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "ai_analyzed",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "ai_pending",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "extract_version",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
+
+        // 詳情兩層保留期的標記
+        AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "detail_pruned",
+            isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "bit NOT NULL DEFAULT 0");
+
+        // 依問題視角全面 SQL 化的最後兩欄（回饋十九輪批次B）：見 LfDbContext.TopIssueRow 類別註解。
+        // event_key 補上後，SchemaUpgrader 這裡刻意**不**回填舊列（回填只在 TopIssueBackfiller
+        // 尚未跑完的舊列上才有意義；已回填過的舊列即使沒有 event_key 也代表當初分析時
+        // EventKey 恆為空——Windows 事件與規劃 §8.1 缺陷 1 修復前的 Linux 事件皆是如此，
+        // 語意上就是空字串，不是「還沒回填」）。
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "known_issue", isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_top_issues", "event_key",
+            isSqlite ? "TEXT NOT NULL DEFAULT ''" : "nvarchar(255) NOT NULL DEFAULT ''");
+
+        // 問題機房首見日（回饋十九輪批次B／G，↔ IssueFirstSeenRow）
+        CreateTableIfMissing(ctx, isSqlite, "lf_issue_first_seen",
+            isSqlite ? SqliteCreateIssueFirstSeen : SqlServerCreateIssueFirstSeen);
+        // 種子（SeedIssueFirstSeenIfEmpty）已移往背景服務 IssueFirstSeenSeedHostedService。
+        // 理由：原本放在啟動路徑上會因為全表掃描而導致 30 秒的 SCM 啟動逾時。
+
+        // 權限異動檢核（↔ lf_permission_changes，含確認狀態）
+        CreateTableIfMissing(ctx, isSqlite, "lf_permission_changes",
+            isSqlite ? SqliteCreatePermissionChanges : SqlServerCreatePermissionChanges);
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_change_id", "change_id", unique: true);
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_status_detected_at", "status, detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_detected_at", "detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_host_detected", "host_name_key, detected_at");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_category_status", "category, status");
+        AddIndexIfMissing(ctx, isSqlite, "lf_permission_changes",
+            "IX_lf_permission_changes_created_at", "created_at");
+
+        // 4670 的物件類型／處理程序名稱，與彙總列的涵蓋區間／對數（回饋二十六輪作業 B）。
+        // 皆可為 null：既有列與逐則列本來就沒有這些值，不回填。
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "object_type",
+            isSqlite ? "TEXT NULL" : "nvarchar(64) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "process_name",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "covered_from",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "covered_to",
+            isSqlite ? "TEXT NULL" : "datetime2 NULL");
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "pair_count",
+            isSqlite ? "INTEGER NULL" : "int NULL");
+
+        // 未截斷的原始事件訊息（回饋二十八輪 P9）。只對升級後新寫入的列有值，既有列維持 null、不回填
+        AddColumnIfMissing(ctx, isSqlite, "lf_permission_changes", "raw_text",
+            isSqlite ? "TEXT NULL" : "nvarchar(max) NULL");
+    }
+
+
+
+    internal const string IssueFirstSeenWatermarkBlobKey = "issue_first_seen_watermark";
+    internal const string IssueFirstSeenFullDoneBlobKey = "issue_first_seen_full_done";
+
+    internal static IssueFirstSeenSeedMergeOutcome MergeIssueFirstSeenSeed(LfDbContext ctx, bool force = false)
+    {
+        // 依分析等級設置 300 秒逾時，避免大表掃描因 60 秒前景逾時而失敗
+        ctx.Database.SetCommandTimeout(StorageBackend.AnalysisCommandTimeoutSeconds);
+
+        // 便宜閘門：讀取目前 lf_top_issues 最大 record_id 與既有浮水印比較（毫秒級單一查詢）
+        var currentMaxRecordId = ctx.TopIssues.Max(t => (long?)t.RecordId) ?? 0;
+        var watermarkRow = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenWatermarkBlobKey);
+
+        long watermark = 0;
+        var hasValidWatermark = watermarkRow != null && long.TryParse(watermarkRow.Content, out watermark);
+
+        if (!force && hasValidWatermark && watermark == currentMaxRecordId)
+        {
+            Log.Info("[SQL] lf_issue_first_seen 浮水印相同（{Watermark}），跳過機房首見日合併", watermark);
+            return IssueFirstSeenSeedMergeOutcome.Skipped;
+        }
+
+        // force＝完整重算：浮水印視為 0（全部列都當新列掃）、全掃修正段也不看初次回補旗標。
+        // 保留期清理刪列／重新分析舊日期這兩種情況需要它（見 BACKLOG「首見日的完整重算入口」）。
+        if (force) watermark = 0;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // 檢查是否已完成初次回補（UPDATE 段）
+        var fullDoneRow = ctx.Blobs.FirstOrDefault(b => b.BlobKey == IssueFirstSeenFullDoneBlobKey);
+
+        // **兩段 SQL 刻意避開「在 HAVING 裡引用外層欄位或未分組的欄位」**：那種寫法在 Sqlite 上
+        // 能跑，在 SqlServer 上卻可能因為分組規則較嚴而失敗——而測試只跑得到 Sqlite，
+        // 這種差異會是「測試全綠、正式環境炸」。改用衍生資料表與純量子查詢，兩個 provider
+        // 的語意都沒有模糊空間。
+
+        // 補缺：lf_top_issues 有、lf_issue_first_seen 沒有的組合，補上歷史最小 record_date
+        // （增量處理：只掃 record_id > watermark 的新列；浮水印不存在時 watermark 為 0，等同全掃）
+        var inserted = ctx.Database.ExecuteSqlRaw("""
+            INSERT INTO lf_issue_first_seen (source_key, event_id, source_name, first_seen)
+            SELECT src.source_key, src.event_id, src.source_name, src.first_seen
+            FROM (
+                SELECT UPPER(source_name) AS source_key,
+                       event_id           AS event_id,
+                       MIN(source_name)   AS source_name,
+                       MIN(record_date)   AS first_seen
+                FROM lf_top_issues
+                WHERE record_date >= '2000-01-01'
+                  AND record_id > {0}
+                GROUP BY UPPER(source_name), event_id
+            ) src
+            WHERE NOT EXISTS (
+                SELECT 1 FROM lf_issue_first_seen fs
+                WHERE fs.source_key = src.source_key AND fs.event_id = src.event_id
+            )
+            """, watermark);
+
+        // 增量修正：回補會替既有組合寫入「日期更早」的新列（回望窗口最多 30 天），
+        // 這些列必須讓 first_seen 往前移。只掃 record_id > watermark 的新列，成本與新資料量成正比。
+        var incrementalUpdated = ctx.Database.ExecuteSqlRaw("""
+            UPDATE lf_issue_first_seen
+            SET first_seen = (
+                SELECT MIN(t.record_date)
+                FROM lf_top_issues t
+                WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                  AND t.event_id = lf_issue_first_seen.event_id
+                  AND t.record_date >= '2000-01-01'
+                  AND t.record_id > {0}
+            )
+            WHERE (
+                SELECT MIN(t2.record_date)
+                FROM lf_top_issues t2
+                WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                  AND t2.event_id = lf_issue_first_seen.event_id
+                  AND t2.record_date >= '2000-01-01'
+                  AND t2.record_id > {0}
+            ) < lf_issue_first_seen.first_seen
+            """, watermark);
+
+        // 修正：兩邊都有、但歷史最小日期早於現存 first_seen 的，更新成較早的那個。
+        // 純量子查詢在 WHERE 直接與 first_seen 比較——NULL（該問題已無歷史列）不成立，
+        // 那一列自然不會被更新，不必另外處理。
+        // （只在「初次回補」執行一次，成功後寫入旗標；旗標已存在則整段跳過）
+        var updated = incrementalUpdated;
+        if (force || fullDoneRow == null)
+        {
+            updated += ctx.Database.ExecuteSqlRaw("""
+                UPDATE lf_issue_first_seen
+                SET first_seen = (
+                    SELECT MIN(t.record_date)
+                    FROM lf_top_issues t
+                    WHERE UPPER(t.source_name) = lf_issue_first_seen.source_key
+                      AND t.event_id = lf_issue_first_seen.event_id
+                      AND t.record_date >= '2000-01-01'
+                )
+                WHERE (
+                    SELECT MIN(t2.record_date)
+                    FROM lf_top_issues t2
+                    WHERE UPPER(t2.source_name) = lf_issue_first_seen.source_key
+                      AND t2.event_id = lf_issue_first_seen.event_id
+                      AND t2.record_date >= '2000-01-01'
+                ) < lf_issue_first_seen.first_seen
+                """);
+
+            if (fullDoneRow == null)
+            {
+                ctx.Blobs.Add(new BlobRow
+                {
+                    BlobKey = IssueFirstSeenFullDoneBlobKey,
+                    Content = "true",
+                    UpdatedAt = DateTime.Now,
+                    Version = 1
+                });
+            }
+        }
+
+        // 更新浮水印至 lf_blobs
+        if (watermarkRow == null)
+        {
+            ctx.Blobs.Add(new BlobRow
+            {
+                BlobKey = IssueFirstSeenWatermarkBlobKey,
+                Content = currentMaxRecordId.ToString(),
+                UpdatedAt = DateTime.Now,
+                Version = 1
+            });
+        }
+        else
+        {
+            watermarkRow.Content = currentMaxRecordId.ToString();
+            watermarkRow.UpdatedAt = DateTime.Now;
+            watermarkRow.Version++;
+        }
+
+        ctx.SaveChanges();
+
+        Log.Info("[SQL] lf_issue_first_seen 機房首見日冪等合併完成（浮水印更新至 {Watermark}）：補缺 {Inserted} 列，修正 {Updated} 列，耗時 {Ms}ms",
+            currentMaxRecordId, inserted, updated, sw.ElapsedMilliseconds);
+
+        return IssueFirstSeenSeedMergeOutcome.Completed;
     }
 
     private const string SqliteCreateIssueHandling = """
@@ -221,6 +445,82 @@ internal static class SchemaUpgrader
         )
         """;
 
+    private const string SqliteCreateIssueFirstSeen = """
+        CREATE TABLE lf_issue_first_seen (
+            source_key TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            source_name TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            CONSTRAINT PK_lf_issue_first_seen PRIMARY KEY (source_key, event_id)
+        )
+        """;
+
+    private const string SqlServerCreateIssueFirstSeen = """
+        CREATE TABLE lf_issue_first_seen (
+            source_key nvarchar(255) NOT NULL,
+            event_id int NOT NULL,
+            source_name nvarchar(255) NOT NULL,
+            first_seen datetime2 NOT NULL,
+            CONSTRAINT PK_lf_issue_first_seen PRIMARY KEY (source_key, event_id)
+        )
+        """;
+
+    private const string SqliteCreatePermissionChanges = """
+        CREATE TABLE lf_permission_changes (
+            id INTEGER NOT NULL CONSTRAINT PK_lf_permission_changes PRIMARY KEY AUTOINCREMENT,
+            change_id TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            host_name TEXT NOT NULL,
+            host_name_key TEXT NOT NULL,
+            detected_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            target TEXT NOT NULL,
+            change_type TEXT NOT NULL,
+            category TEXT NOT NULL,
+            is_privileged_target INTEGER NOT NULL,
+            initiator_account TEXT NULL,
+            target_account TEXT NULL,
+            before_value TEXT NOT NULL,
+            after_value TEXT NOT NULL,
+            alert_text TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_id INTEGER NULL,
+            status TEXT NOT NULL,
+            confirmed_by INTEGER NULL,
+            confirmed_by_account TEXT NULL,
+            confirmed_at TEXT NULL,
+            confirm_note TEXT NULL
+        )
+        """;
+
+    private const string SqlServerCreatePermissionChanges = """
+        CREATE TABLE lf_permission_changes (
+            id bigint NOT NULL IDENTITY(1,1) CONSTRAINT PK_lf_permission_changes PRIMARY KEY,
+            change_id nvarchar(64) NOT NULL,
+            dedupe_key nvarchar(max) NOT NULL,
+            host_name nvarchar(255) NOT NULL,
+            host_name_key nvarchar(255) NOT NULL,
+            detected_at datetime2 NOT NULL,
+            created_at datetime2 NOT NULL,
+            target nvarchar(max) NOT NULL,
+            change_type nvarchar(64) NOT NULL,
+            category nvarchar(64) NOT NULL,
+            is_privileged_target bit NOT NULL,
+            initiator_account nvarchar(255) NULL,
+            target_account nvarchar(255) NULL,
+            before_value nvarchar(max) NOT NULL,
+            after_value nvarchar(max) NOT NULL,
+            alert_text nvarchar(max) NOT NULL,
+            source nvarchar(64) NOT NULL,
+            event_id int NULL,
+            status nvarchar(30) NOT NULL,
+            confirmed_by bigint NULL,
+            confirmed_by_account nvarchar(255) NULL,
+            confirmed_at datetime2 NULL,
+            confirm_note nvarchar(max) NULL
+        )
+        """;
+
     private static void CreateTableIfMissing(LfDbContext ctx, bool isSqlite, string table, string createTableSql)
     {
         if (TableExists(ctx, isSqlite, table)) return;
@@ -287,4 +587,11 @@ internal static class SchemaUpgrader
                 "SELECT i.name AS Value FROM sys.indexes i JOIN sys.tables t ON i.object_id = t.object_id WHERE t.name = {0}", table).ToList();
         return names.Contains(indexName, StringComparer.OrdinalIgnoreCase);
     }
+}
+
+/// <summary>首見日合併的執行結果</summary>
+public enum IssueFirstSeenSeedMergeOutcome
+{
+    Completed,
+    Skipped
 }

@@ -1,4 +1,4 @@
-using LogForesight.Web.Auth;
+﻿using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
@@ -69,14 +69,7 @@ public class AuthController : ControllerBase
         // HttpOnly：前端 JS 讀不到 token（XSS 也偷不走）
         // SameSite=Strict：跨站請求不帶上這張 Cookie，這是 CSRF 的第一層防線
         // Secure：只走 HTTPS。內網也必須是 HTTPS，否則 Cookie 在網路上是明文
-        Response.Cookies.Append(_settings.Jwt.CookieName, token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = expires,
-            Path = "/"
-        });
+        AuthCookie.Append(Response, Request, _settings.Jwt.CookieName, token, expires);
 
         return Ok(ApiResponse<CurrentUserDto>.Ok(ToDto(outcome.Identity)));
     }
@@ -90,7 +83,7 @@ public class AuthController : ControllerBase
                 _currentUser.UserId > 0 ? _currentUser.UserId : null, "登出", AuditResult.Ok);
         }
 
-        Response.Cookies.Delete(_settings.Jwt.CookieName);
+        AuthCookie.Delete(Response, Request, _settings.Jwt.CookieName);
         return ApiResponse.Ok();
     }
 

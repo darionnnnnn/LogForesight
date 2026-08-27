@@ -66,45 +66,127 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         var sw = Stopwatch.StartNew();
         var shaped = RecordStorageShaper.ForStorage(record);
 
-        using var ctx = _contextFactory();
-        var row = new DailyRecordRow
-        {
-            HostId = shaped.HostId,
-            HostName = shaped.Host,
-            RecordDate = shaped.Date.Date,
-            RiskLevel = shaped.RiskLevel,
-            HasCorrelation = shaped.CorrelationAlerts.Count > 0,
-            WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
-            ContentJson = JsonSerializer.Serialize(shaped),
-            CreatedAt = DateTime.Now
-        };
-        ctx.DailyRecords.Add(row);
-        ctx.SaveChanges();   // 先存主列拿到 RecordId
+        // 主列與問題子列必須同進退——分兩次 SaveChanges 但不包交易時，子列寫入失敗會留下
+        // 一筆「沒有問題列」的紀錄，SQL 聚合（IIssueAggregateQuery）會靜默漏算這一天。
+        // execution strategy／BeginTransaction 的用法同 EfJsonBlobStore.Mutate。
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
 
-        foreach (var issue in shaped.TopIssues)
+        strategy.Execute(() =>
         {
-            ctx.TopIssues.Add(new TopIssueRow
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+
+            var row = new DailyRecordRow
             {
-                RecordId = row.RecordId,
-                SourceName = issue.Source,
-                EventId = issue.EventId,
-                Category = issue.Category.ToString(),
-                SeverityRank = (int)issue.Severity,
-                // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
-                // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
-                // 分析層看不到這張表，批次的分析邏輯零修改
                 HostId = shaped.HostId,
+                HostName = shaped.Host,
                 RecordDate = shaped.Date.Date,
-                EventCount = issue.Count,
-                ElevatesDayRisk = issue.ElevatesDayRisk,
-                LogName = issue.LogName,
-                EntryType = (int)issue.EntryType
-            });
-        }
-        ctx.SaveChanges();
+                RiskLevel = shaped.RiskLevel,
+                HasCorrelation = shaped.CorrelationAlerts.Count > 0,
+                WeeklyCheckupDate = shaped.WeeklyCheckup?.CheckupDate.Date,
+                ContentJson = JsonSerializer.Serialize(shaped),
+                CreatedAt = DateTime.Now,
+                // 讀取面 SQL 化的抽出欄（回饋十九輪批次B）：寫入時一併填好，語意同 lf_top_issues
+                // 既有聚合維度的分工。ExtractVersion=1 標記「這是本輪寫入的新列」，
+                // 舊列（回填前）維持 0，DailyRecordBackfiller 依此判定候選。
+                Headline = shaped.Headline,
+                DataIncomplete = shaped.DataIncomplete,
+                SecurityLogAvailable = shaped.SecurityLogAvailable,
+                ErrorCount = shaped.ErrorCount,
+                WarningCount = shaped.WarningCount,
+                AiAnalyzed = shaped.AiAnalyzed,
+                AiPending = shaped.AiPending,
+                ExtractVersion = 1
+            };
+            ctx.DailyRecords.Add(row);
+            ctx.SaveChanges();   // 先存主列拿到 RecordId
+
+            foreach (var issue in shaped.TopIssues)
+            {
+                ctx.TopIssues.Add(new TopIssueRow
+                {
+                    RecordId = row.RecordId,
+                    SourceName = issue.Source,
+                    EventId = issue.EventId,
+                    Category = issue.Category.ToString(),
+                    SeverityRank = (int)issue.Severity,
+                    // 聚合維度（P4）：寫入時一併填好，查詢端直接 GROUP BY，不必查詢期重算——
+                    // 同 lf_record_categories「寫入時算好」的既有分工（WEB-SPEC §10.3），
+                    // 分析層看不到這張表，批次的分析邏輯零修改
+                    HostId = shaped.HostId,
+                    RecordDate = shaped.Date.Date,
+                    EventCount = issue.Count,
+                    ElevatesDayRisk = issue.ElevatesDayRisk,
+                    LogName = issue.LogName,
+                    EntryType = (int)issue.EntryType,
+                    KnownIssue = issue.KnownIssue,
+                    EventKey = issue.EventKey
+                });
+            }
+            ctx.SaveChanges();
+            tx.Commit();
+        });
+
+        // 機房首見日（回饋十九輪批次B）：獨立於主交易之外——這是輔助的呈現用資料，
+        // 不該因為它偶發的並發競態（見 UpsertFirstSeen）而讓當天的分析結果整筆遺失。
+        UpsertFirstSeen(shaped);
 
         Log.Info("[SQL] Append 主機 {Host}（id={HostId}）{Date:yyyy-MM-dd} 風險 {Risk}，問題 {Issues} 項，{Ms}ms",
             shaped.Host, shaped.HostId, shaped.Date, shaped.RiskLevel, shaped.TopIssues.Count, sw.ElapsedMilliseconds);
+    }
+
+    /// <summary>
+    /// 機房首見日 insert-if-absent，取較早的日期為準（回饋十九輪批次B）。
+    ///
+    /// 平行處理多台主機（NetIQ MaxParallelServers）時，兩台主機可能同時第一次寫入同一個
+    /// 新問題——insert 可能撞唯一鍵。這裡當一般情況處理（catch 後改走「取較早日期」的
+    /// 更新），不是異常：先查是否已存在，不存在才嘗試新增；新增撞鍵或已存在時，
+    /// 改成「較早的日期才更新」的條件式 UPDATE，不會被較晚出現的紀錄覆蓋掉更早的首見日。
+    /// </summary>
+    private void UpsertFirstSeen(DailyAnalysisRecord shaped)
+    {
+        var date = shaped.Date.Date;
+        foreach (var (source, eventId) in shaped.TopIssues.Select(i => (i.Source, i.EventId)).Distinct())
+        {
+            var sourceKey = source.ToUpperInvariant();
+            try
+            {
+                using var ctx = _contextFactory();
+                if (ctx.IssueFirstSeen.Any(f => f.SourceKey == sourceKey && f.EventId == eventId))
+                {
+                    // 已存在：只有新日期更早才更新，一句 SQL 完成、不必先讀出來比較
+                    ctx.Database.ExecuteSqlInterpolated($"""
+                        UPDATE lf_issue_first_seen SET first_seen = {date}
+                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
+                        """);
+                    continue;
+                }
+
+                ctx.IssueFirstSeen.Add(new IssueFirstSeenRow
+                    { SourceKey = sourceKey, EventId = eventId, SourceName = source, FirstSeen = date });
+                ctx.SaveChanges();
+            }
+            catch (DbUpdateException ex)
+            {
+                // 唯一鍵競態：另一台主機的平行寫入搶先建了這一列，補一次「較早才更新」即可，
+                // 不是需要中止分析的錯誤
+                Log.Debug("[SQL] IssueFirstSeen 新增撞鍵（{Source}/{EventId}），改走較早日期更新：{Msg}",
+                    source, eventId, ex.Message);
+                try
+                {
+                    using var ctx = _contextFactory();
+                    ctx.Database.ExecuteSqlInterpolated($"""
+                        UPDATE lf_issue_first_seen SET first_seen = {date}
+                        WHERE source_key = {sourceKey} AND event_id = {eventId} AND first_seen > {date}
+                        """);
+                }
+                catch (Exception retryEx)
+                {
+                    Log.Warn(retryEx, "[SQL] IssueFirstSeen 補更新仍失敗，這個問題的首見日這次先不更新：{Msg}", retryEx.Message);
+                }
+            }
+        }
     }
 
     public void AttachWeeklyCheckup(DateTime date, WeeklyCheckupResult checkup)
@@ -177,7 +259,8 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
     /// 交易日誌暴增、鎖住整張表、夜間批次卡在清理階段出不來。
     /// 超過的部分留給下一次執行（清理天生冪等，分幾晚刪完不影響正確性）。
     /// </summary>
-    private const int MaxPruneRowsPerRun = 50_000;
+    /// <remarks>積壓申報要用它估「還需幾次執行」，所以是 internal 而非 private。</remarks>
+    internal const int MaxPruneRowsPerRun = 50_000;
 
     /// <summary>一批刪除的列數：夠大到不會來回太多次，夠小到單筆交易不會過長</summary>
     private const int PruneBatchSize = 2_000;
@@ -230,6 +313,128 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         {
             Log.Info("[SQL] Prune（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms",
                 retentionDays, cutoff, total, sw.ElapsedMilliseconds);
+        }
+
+        return total;
+    }
+
+    public int DeleteDays(IReadOnlyCollection<DateTime> dates)
+    {
+        if (dates == null || dates.Count == 0)
+        {
+            Log.Info("[SQL] DeleteDays（0 個日期）：無可清除紀錄");
+            return 0;
+        }
+
+        var distinctDates = dates.Select(d => d.Date).Distinct().ToList();
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var total = 0;
+        while (true)
+        {
+            // **只撈主鍵，不撈實體**：僅取 record_id，實際刪除交給 ExecuteDelete 在 DB 端完成
+            var recordIds = OwnedRows(ctx)
+                .Where(r => distinctDates.Contains(r.RecordDate))
+                .OrderBy(r => r.RecordDate)
+                .Select(r => r.RecordId)
+                .Take(PruneBatchSize)
+                .ToList();
+            if (recordIds.Count == 0) break;
+
+            // **先刪子表再刪主表，不依賴 FK cascade**：顯式刪除避免孤兒 top_issues 列。
+            // 兩次刪除包在同一個交易裡——中斷在兩者之間會留下沒有主列的孤兒子列
+            // （SQLite 有 cascade 掩護、SqlServer 不保證），重跑的取消語意也依賴「不留半日」。
+            using var tx = ctx.Database.BeginTransaction();
+            ctx.TopIssues.Where(t => recordIds.Contains(t.RecordId)).ExecuteDelete();
+            total += ctx.DailyRecords.Where(r => recordIds.Contains(r.RecordId)).ExecuteDelete();
+            tx.Commit();
+        }
+
+        if (total == 0)
+        {
+            Log.Info("[SQL] DeleteDays（{Days} 個日期）：無可清除紀錄", distinctDates.Count);
+            return 0;
+        }
+
+        Log.Info("[SQL] DeleteDays（{Days} 個日期）：清除 {Count} 筆、{Ms}ms",
+            distinctDates.Count, total, sw.ElapsedMilliseconds);
+
+        return total;
+    }
+
+    /// <summary>回報「若現在執行 Prune，會刪掉幾列」，不做任何異動。</summary>
+    public int CountPrunableRecords(int retentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-retentionDays);
+        using var ctx = _contextFactory();
+        return OwnedRows(ctx).Count(r => r.RecordDate < cutoff);
+    }
+
+    /// <summary>回報「若現在執行 PruneDetails，會清掉幾列詳情」，不做任何異動。
+    /// 不受單次上限影響——它回答的是「總共還有多少」，不是「這次會清多少」。</summary>
+    public int CountPrunableDetails(int detailRetentionDays)
+    {
+        var cutoff = DateTime.Today.AddDays(-detailRetentionDays);
+        using var ctx = _contextFactory();
+        return OwnedRows(ctx).Count(r => r.RecordDate < cutoff && !r.DetailPruned);
+    }
+
+    /// <summary>
+    /// 清除過期的詳情內容（<c>content_json</c>），**整列保留**——與 <see cref="Prune"/> 的
+    /// 整列刪除是兩層不同的保留期：統計層（抽出欄與 lf_top_issues）要留到足以做年度同期比較，
+    /// 而詳情只有風險日詳情頁在讀，是整張表的儲存量大宗。兩層分開才不必為了年度比較
+    /// 把儲存量整個放大。
+    ///
+    /// <c>content_json</c> 與 <c>detail_pruned</c> **在同一次 ExecuteUpdate 設定**：
+    /// 分兩趟的話中途失敗會留下「內容清了但標記沒設」的列，那列會被下次執行重複處理，
+    /// 畫面也無從分辨詳情是被清掉還是本來就沒有。
+    /// </summary>
+    public int PruneDetails(int detailRetentionDays) => PruneDetails(detailRetentionDays, MaxPruneRowsPerRun, PruneBatchSize);
+
+    internal int PruneDetails(int detailRetentionDays, int maxRows, int batchSize)
+    {
+        var cutoff = DateTime.Today.AddDays(-detailRetentionDays);
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var total = 0;
+        while (total < maxRows)
+        {
+            var batch = Math.Min(batchSize, maxRows - total);
+            var recordIds = OwnedRows(ctx)
+                .Where(r => r.RecordDate < cutoff && !r.DetailPruned)
+                .OrderBy(r => r.RecordDate)
+                .Select(r => r.RecordId)
+                .Take(batch)
+                .ToList();
+            if (recordIds.Count == 0) break;
+
+            var updated = ctx.DailyRecords
+                .Where(r => recordIds.Contains(r.RecordId))
+                .ExecuteUpdate(s => s
+                    .SetProperty(p => p.ContentJson, string.Empty)
+                    .SetProperty(p => p.DetailPruned, true));
+            total += updated;
+        }
+
+        if (total == 0)
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天）：無可清除詳情", detailRetentionDays);
+            return 0;
+        }
+
+        var remaining = OwnedRows(ctx).Count(r => r.RecordDate < cutoff && !r.DetailPruned);
+        if (remaining > 0)
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms，" +
+                     "另有 {Remaining} 筆超過本次上限 {Max}，留待下次執行",
+                detailRetentionDays, cutoff, total, sw.ElapsedMilliseconds, remaining, maxRows);
+        }
+        else
+        {
+            Log.Info("[SQL] PruneDetails（保留 {Days} 天，cutoff {Cutoff:yyyy-MM-dd}）：清除 {Count} 筆、{Ms}ms",
+                detailRetentionDays, cutoff, total, sw.ElapsedMilliseconds);
         }
 
         return total;
@@ -365,6 +570,90 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    public List<DailyAnalysisRecord> QueryLightweight(RecordQueryFilter filter)
+    {
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var q = ApplyPushableFilters(ctx, ctx.DailyRecords, filter);
+        var rows = q
+            .Select(r => new
+            {
+                r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
+                r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
+                r.AiAnalyzed, r.AiPending, r.DetailPruned
+            })
+            .ToList();
+
+        // 只帶判定/分類需要的欄位（不含 SampleMessages／KeyDetails 等風險日詳情頁專用內容）
+        var recordIds = rows.Select(r => r.RecordId).ToHashSet();
+        var issuesByRecordId = recordIds.Count == 0
+            ? new Dictionary<long, List<LogIssueSignature>>()
+            : ctx.TopIssues.AsNoTracking()
+                .Where(t => recordIds.Contains(t.RecordId))
+                .Select(t => new
+                {
+                    t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
+                    t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey
+                })
+                .ToList()
+                .GroupBy(t => t.RecordId)
+                .ToDictionary(g => g.Key, g => g.Select(t => new LogIssueSignature
+                {
+                    LogName = t.LogName,
+                    Source = t.SourceName,
+                    EventId = t.EventId,
+                    EntryType = (System.Diagnostics.EventLogEntryType)t.EntryType,
+                    EventKey = t.EventKey,
+                    Count = t.EventCount,
+                    // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
+                    // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
+                    // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
+                    Severity = (IssueSeverity)t.SeverityRank,
+                    Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
+                    ElevatesDayRisk = t.ElevatesDayRisk,
+                    KnownIssue = t.KnownIssue
+                }).ToList());
+
+        var records = rows.Select(r => new DailyAnalysisRecord
+        {
+            HostId = r.HostId,
+            Host = r.HostName,
+            Date = r.RecordDate,
+            RiskLevel = r.RiskLevel,
+            Headline = r.Headline,
+            ErrorCount = r.ErrorCount,
+            WarningCount = r.WarningCount,
+            DataIncomplete = r.DataIncomplete,
+            SecurityLogAvailable = r.SecurityLogAvailable,
+            AiAnalyzed = r.AiAnalyzed,
+            AiPending = r.AiPending,
+            DetailPruned = r.DetailPruned,
+            // 輕量列沒有整份關聯訊號內容（那要整份 blob）——呼叫端（RecordListQueryService.ToListItem）
+            // 只檢查 Count > 0，用單一佔位元素表達「有」就夠，內容本身不會被讀取
+            CorrelationAlerts = r.HasCorrelation ? new List<string> { "(lightweight)" } : new List<string>(),
+            TopIssues = issuesByRecordId.TryGetValue(r.RecordId, out var issues) ? issues : new List<LogIssueSignature>()
+        });
+
+        // 主機名稱 fallback（HostId=0 的舊列）與 RecordFilterMatcher 防禦性覆核，與 Query() 同一套規則
+        if (filter.Hosts != null)
+        {
+            var matcher = new HostMatcher(filter.Hosts);
+            records = records.Where(matcher.Matches);
+        }
+
+        var result = records
+            .Where(r => RecordFilterMatcher.Matches(r, filter))
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Debug("[SQL] QueryLightweight（from={From:yyyy-MM-dd} to={To:yyyy-MM-dd} hosts={Hosts}）→ DB {Rows} 列、篩後 {Result} 筆、{Ms}ms",
+            filter.From, filter.To, filter.Hosts?.Count, rows.Count, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryLightweight", sw.ElapsedMilliseconds);
+        return result;
+    }
+
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var sw = Stopwatch.StartNew();
@@ -491,7 +780,27 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return null;
     }
 
-    /// <summary>預設 JsonSerializer，round-trip 保真</summary>
-    private static DailyAnalysisRecord Deserialize(DailyRecordRow row) =>
-        JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
+    /// <summary>
+    /// 預設 JsonSerializer，round-trip 保真。
+    /// 空字串是 PruneDetails 的產物，Deserialize 對它會丟 JsonException，
+    /// 不是回 null，所以必須在呼叫前就攔下。
+    /// </summary>
+    private static DailyAnalysisRecord Deserialize(DailyRecordRow row)
+    {
+        if (row.DetailPruned || string.IsNullOrWhiteSpace(row.ContentJson))
+        {
+            return new DailyAnalysisRecord
+            {
+                HostId = row.HostId,
+                Host = row.HostName,
+                Date = row.RecordDate,
+                RiskLevel = row.RiskLevel,
+                DetailPruned = true
+            };
+        }
+
+        var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
+        record.DetailPruned = row.DetailPruned;
+        return record;
+    }
 }

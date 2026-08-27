@@ -71,16 +71,16 @@ try
     // 刻意不 fail-fast：排程還沒首次執行過是合法狀態；但要顯性提示，而不是讓人對著空白畫面猜。
     var dataRoot = settings.Storage.ResolveDataRoot();
     var expectedDataFiles = settings.Storage.Type == "Sqlite" && string.IsNullOrWhiteSpace(settings.Storage.ConnectionString)
-        ? new[] { "logforesight.db" }
+        ? new[] { StorageBackend.DefaultSqlitePath(dataRoot) }
         : Array.Empty<string>();   // SqlServer／自訂連線的 Sqlite：足跡不在 DataRoot，交給 DB 連線把關
     if (expectedDataFiles.Length > 0 &&
-        !expectedDataFiles.Any(f => File.Exists(Path.Combine(dataRoot, f))))
+        !expectedDataFiles.Any(File.Exists))
     {
-        var names = string.Join(" / ", expectedDataFiles);
-        logger.Warn("資料根目錄 {0} 底下找不到 {1}。若排程/立即執行已跑過至少一次，" +
+        var names = string.Join(" / ", expectedDataFiles.Select(Path.GetFileName));
+        logger.Warn("資料根目錄 {0} 的 Db 子資料夾底下找不到 {1}。若排程/立即執行已跑過至少一次，" +
             "代表 Storage:DataRoot 指錯目錄，儀表板與問題查詢會因此空白" +
             "（規則維護頁不受影響——Web 啟動會自行初始化規則庫，見下方「啟動時的資料準備」）。", dataRoot, names);
-        Console.Error.WriteLine($"⚠ 資料根目錄「{dataRoot}」底下找不到 {names}；" +
+        Console.Error.WriteLine($"⚠ 資料根目錄「{dataRoot}」的 Db 子資料夾底下找不到 {names}；" +
             "若排程/立即執行已跑過，請確認 Storage:DataRoot 指向正確的資料目錄。");
     }
 
@@ -155,6 +155,15 @@ try
     }
 
     // ── 管線 ─────────────────────────────────────────────────────────────────
+    // 掛載前綴：IIS 以子 Application 掛載時 ASP.NET Core 會自動填 Request.PathBase，
+    // 這個設定只給「Kestrel 直曝但前面有反向代理加了前綴」的情境，以及本機驗證前綴行為用。
+    // 必須排在所有 middleware 之前——之後才註冊的東西看到的 Path 才是扣掉前綴的。
+    var pathBase = builder.Configuration["Server:PathBase"];
+    if (!string.IsNullOrWhiteSpace(pathBase))
+    {
+        app.UsePathBase(pathBase.TrimEnd('/'));
+    }
+
     if (!app.Environment.IsDevelopment())
     {
         app.UseExceptionHandler("/error");

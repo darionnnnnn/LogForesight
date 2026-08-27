@@ -1,0 +1,799 @@
+using LogForesight.Core.Models;
+
+namespace LogForesight.Core.Service;
+
+/// <summary>
+/// 權限異動明細擷取結果。
+/// </summary>
+public readonly record struct PermissionExtractedDetails(
+    string Target,
+    string Before,
+    string After,
+    string? InitiatorAccount,
+    string? TargetAccount,
+    /// <summary>4670 的物件類型（Token／File／Key…），訊息未提供時為 null</summary>
+    string? ObjectType = null,
+    /// <summary>4670 的處理程序名稱（完整路徑），訊息未提供時為 null</summary>
+    string? ProcessName = null);
+
+/// <summary>
+/// 權限異動自訂欄位對應（四個語意角色：操作者帳號、成員帳號、群組名稱、物件名稱）。
+/// 留空＝僅使用內建官方欄位名。
+/// </summary>
+public sealed class PermissionFieldMappings
+{
+    public static readonly PermissionFieldMappings Empty = new(null, null, null, null);
+
+    private readonly HashSet<string> _operatorFields;
+    private readonly HashSet<string> _memberFields;
+    private readonly HashSet<string> _groupFields;
+    private readonly HashSet<string> _objectFields;
+    private readonly HashSet<string> _allCustomMultiWordKeys;
+    private readonly HashSet<string> _allCustomKeys;
+
+    public PermissionFieldMappings(
+        IEnumerable<string>? operatorFields,
+        IEnumerable<string>? memberFields,
+        IEnumerable<string>? groupFields,
+        IEnumerable<string>? objectFields)
+    {
+        _operatorFields = ToSet(operatorFields);
+        _memberFields = ToSet(memberFields);
+        _groupFields = ToSet(groupFields);
+        _objectFields = ToSet(objectFields);
+
+        _allCustomKeys = new HashSet<string>(_operatorFields.Concat(_memberFields).Concat(_groupFields).Concat(_objectFields), StringComparer.OrdinalIgnoreCase);
+        _allCustomMultiWordKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in _allCustomKeys)
+        {
+            if (key.Contains(' '))
+            {
+                _allCustomMultiWordKeys.Add(key);
+            }
+        }
+    }
+
+    public static PermissionFieldMappings FromSystemSettings(SystemSettings? settings)
+    {
+        if (settings == null) return Empty;
+        return new PermissionFieldMappings(
+            settings.PermissionOperatorFields,
+            settings.PermissionMemberFields,
+            settings.PermissionGroupFields,
+            settings.PermissionObjectFields);
+    }
+
+    private static HashSet<string> ToSet(IEnumerable<string>? items) =>
+        items != null
+            ? new HashSet<string>(items.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()), StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsOperatorField(string key) => _operatorFields.Contains(key);
+    public bool IsMemberField(string key) => _memberFields.Contains(key);
+    public bool IsGroupField(string key) => _groupFields.Contains(key);
+    public bool IsObjectField(string key) => _objectFields.Contains(key);
+
+    public bool IsCustomMultiWordKey(string key) => _allCustomMultiWordKeys.Contains(key);
+    public bool HasCustomKey(string key) => _allCustomKeys.Contains(key);
+}
+
+/// <summary>
+/// 權限異動事件訊息與告警文字的結構化擷取工具（共用純邏輯）。
+/// 支援行內多對與分區段（Subject、Member、Group、Object、Audit Policy 等）精確剖析，
+/// 避免操作者帳號誤充當被異動成員。
+/// </summary>
+public static class PermissionChangeExtractor
+{
+    public const string DefaultNotProvided = "（訊息未提供）";
+    public const string DefaultNotInGroup = "（不在群組中）";
+    public const string DefaultRemovedFromGroup = "（已移出群組）";
+    public const string DefaultNotGranted = "（未授與）";
+    public const string DefaultRemoved = "（已移除）";
+
+    private static readonly HashSet<string> KnownMultiWordKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Account Name",
+        "Security ID",
+        "Security Id",
+        "Account Domain",
+        "Logon ID",
+        "Logon Id",
+        "Group Name",
+        "Member Name",
+        "Object Name",
+        "Object Server",
+        "Object Type",
+        "Handle ID",
+        "Handle Id",
+        "Process ID",
+        "Process Id",
+        "Process Name",
+        "Process Information",
+        "Target Account",
+        "Target Domain",
+        "Target Server",
+        "Access Granted",
+        "Access Removed",
+        "Access Right",
+        "Access Right(s)",
+        "Access Rights",
+        "Audit Policy Change",
+        "Auditing Settings",
+        "Permissions Change",
+        "Original Security Descriptor",
+        "New Security Descriptor",
+        "Special Privileges",
+        "Additional Information",
+        "Access Request Information",
+        "Detailed Authentication Information",
+        "Account That Was Granted Access",
+        "Account That Was Removed Access",
+        "Account Modified",
+        // 群組／成員／主體的網域欄：4728/4729/4756/4757 英文版就長這樣
+        // （`Group Name: GROUP_A Group Domain: DOM1`）。少列一個的後果不是「這欄漏抓」，而是
+        // 候選退化成尾字（Domain），把「GROUP_A Group」併進前一欄的值——前一欄正好是群組名。
+        "Group Domain",
+        "Member Domain",
+        "Subject Domain",
+        // 4719 稽核政策變更：Subcategory 之後緊接 Subcategory GUID
+        "Subcategory GUID",
+        "Subcategory Guid",
+        "Category GUID",
+        "Category Guid",
+        "子類別 GUID",
+        "類別 GUID",
+        "安全性 ID"
+    };
+
+    private enum Section
+    {
+        None,
+        Subject,
+        Member,
+        Group,
+        Object,
+        TargetAccount,
+        AuditPolicyChange,
+        AuditingSettings,
+        PermissionsChange,
+        Other
+    }
+
+    private sealed class ParsedFields
+    {
+        public string? SubjectAccountName { get; set; }
+        public string? SubjectSecurityId { get; set; }
+        public string? MemberAccountName { get; set; }
+        public string? MemberSecurityId { get; set; }
+        public string? GroupName { get; set; }
+        public string? ObjectName { get; set; }
+        public string? TargetAccount { get; set; }
+        public string? TargetSecurityId { get; set; }
+        public string? OriginalSecDesc { get; set; }
+        public string? NewSecDesc { get; set; }
+        public string? AuditCategory { get; set; }
+        public string? AuditSubcategory { get; set; }
+        public string? AuditChanges { get; set; }
+        public string? AccessGranted { get; set; }
+        public string? AccessRemoved { get; set; }
+        public string? AccessRight { get; set; }
+        public string? ObjectType { get; set; }
+        public string? ProcessName { get; set; }
+    }
+
+    /// <summary>
+    /// 從事件訊息與事件欄位擷取結構化權限異動明細。
+    /// </summary>
+    public static PermissionExtractedDetails Extract(
+        string? message,
+        string changeType,
+        int eventId = 0,
+        string? initialInitiatorAccount = null,
+        PermissionFieldMappings? mappings = null)
+    {
+        var parsed = ParseMessage(message, mappings);
+
+        // 1. 操作者帳號：優先取事件自帶的 InitiatorAccount（NetIQ sun 欄位），無值時取 Subject 區段帳戶名稱
+        string? initiatorAccount = CleanValue(initialInitiatorAccount);
+        if (initiatorAccount == null)
+        {
+            initiatorAccount = parsed.SubjectAccountName;
+        }
+
+        // 2. 目標資源名稱（群組/物件/目標帳戶，剖不出時為空字串）
+        string target = parsed.GroupName ?? parsed.ObjectName ?? parsed.TargetAccount ?? string.Empty;
+
+        // 3. 被異動目標帳號（群組成員或授權目標帳戶）
+        string? targetAccount = null;
+        if (changeType is "成員新增" or "成員移除")
+        {
+            targetAccount = parsed.MemberAccountName ?? parsed.MemberSecurityId;
+        }
+        else if (changeType == "稽核政策變更")
+        {
+            targetAccount = parsed.TargetAccount ?? parsed.TargetSecurityId;
+        }
+
+        // 4. 異動前後值
+        string before = string.Empty;
+        string after = string.Empty;
+
+        if (changeType == "成員新增")
+        {
+            before = DefaultNotInGroup;
+            after = parsed.MemberAccountName ?? parsed.MemberSecurityId ?? string.Empty;
+        }
+        else if (changeType == "成員移除")
+        {
+            before = parsed.MemberAccountName ?? parsed.MemberSecurityId ?? string.Empty;
+            after = DefaultRemovedFromGroup;
+        }
+        else if (changeType == "權限變更")
+        {
+            before = parsed.OriginalSecDesc ?? string.Empty;
+            after = parsed.NewSecDesc ?? string.Empty;
+        }
+        else if (changeType == "稽核政策變更")
+        {
+            if (eventId == 4717 || parsed.AccessGranted != null)
+            {
+                var right = parsed.AccessGranted ?? parsed.AccessRight;
+                if (right != null)
+                {
+                    before = DefaultNotGranted;
+                    after = right;
+                }
+                else
+                {
+                    before = DefaultNotProvided;
+                    after = DefaultNotProvided;
+                }
+            }
+            else if (eventId == 4718 || parsed.AccessRemoved != null)
+            {
+                var right = parsed.AccessRemoved ?? parsed.AccessRight;
+                if (right != null)
+                {
+                    before = right;
+                    after = DefaultRemoved;
+                }
+                else
+                {
+                    before = DefaultNotProvided;
+                    after = DefaultNotProvided;
+                }
+            }
+            else if (eventId == 4719)
+            {
+                string? policyDesc = null;
+                if (parsed.AuditCategory != null && parsed.AuditSubcategory != null)
+                {
+                    policyDesc = $"{parsed.AuditCategory} - {parsed.AuditSubcategory}";
+                }
+                else
+                {
+                    policyDesc = parsed.AuditSubcategory ?? parsed.AuditCategory;
+                }
+
+                if (parsed.AuditChanges != null)
+                {
+                    before = DefaultNotProvided;
+                    after = policyDesc != null ? $"{policyDesc}：{parsed.AuditChanges}" : parsed.AuditChanges;
+                }
+                else if (policyDesc != null)
+                {
+                    before = DefaultNotProvided;
+                    after = policyDesc;
+                }
+                else
+                {
+                    before = DefaultNotProvided;
+                    after = DefaultNotProvided;
+                }
+            }
+            else if (eventId == 4907)
+            {
+                if (parsed.OriginalSecDesc != null || parsed.NewSecDesc != null)
+                {
+                    before = parsed.OriginalSecDesc ?? DefaultNotProvided;
+                    after = parsed.NewSecDesc ?? DefaultNotProvided;
+                }
+                else if (parsed.AuditChanges != null)
+                {
+                    before = DefaultNotProvided;
+                    after = parsed.AuditChanges;
+                }
+                else
+                {
+                    before = DefaultNotProvided;
+                    after = DefaultNotProvided;
+                }
+            }
+            else
+            {
+                if (parsed.OriginalSecDesc != null || parsed.NewSecDesc != null)
+                {
+                    before = parsed.OriginalSecDesc ?? DefaultNotProvided;
+                    after = parsed.NewSecDesc ?? DefaultNotProvided;
+                }
+                else
+                {
+                    before = DefaultNotProvided;
+                    after = DefaultNotProvided;
+                }
+            }
+        }
+        else
+        {
+            before = parsed.OriginalSecDesc ?? string.Empty;
+            after = parsed.NewSecDesc ?? string.Empty;
+        }
+
+        return new PermissionExtractedDetails(
+            target, before, after, initiatorAccount, targetAccount, parsed.ObjectType, parsed.ProcessName);
+    }
+
+    /// <summary>
+    /// 供遷移器與舊資料相容使用的帳號擷取函式。
+    /// 優先採用既有欄位值，未設定時從 Before/After 與 AlertText 中剖析。
+    /// </summary>
+    public static (string? InitiatorAccount, string? TargetAccount) ExtractAccounts(
+        string? alertText,
+        string? changeType,
+        string? before,
+        string? after,
+        string? initialInitiatorAccount = null,
+        string? initialTargetAccount = null,
+        PermissionFieldMappings? mappings = null)
+    {
+        string? initiator = CleanValue(initialInitiatorAccount);
+        string? target = CleanValue(initialTargetAccount);
+
+        // 1. TargetAccount 從 Before / After 提取
+        if (target == null && !string.IsNullOrWhiteSpace(changeType))
+        {
+            if (changeType == "成員新增")
+            {
+                if (!string.IsNullOrWhiteSpace(after) &&
+                    after != DefaultNotInGroup &&
+                    after != DefaultRemovedFromGroup &&
+                    after != DefaultNotProvided)
+                {
+                    target = CleanValue(after);
+                }
+            }
+            else if (changeType == "成員移除")
+            {
+                if (!string.IsNullOrWhiteSpace(before) &&
+                    before != DefaultNotInGroup &&
+                    before != DefaultRemovedFromGroup &&
+                    before != DefaultNotProvided)
+                {
+                    target = CleanValue(before);
+                }
+            }
+            else if (changeType == "權限新增（ACL 規則）" && !string.IsNullOrWhiteSpace(after))
+            {
+                var parts = after.Split('｜');
+                if (parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0]))
+                {
+                    target = CleanValue(parts[0]);
+                }
+            }
+            else if (changeType == "權限移除（ACL 規則）" && !string.IsNullOrWhiteSpace(before))
+            {
+                var parts = before.Split('｜');
+                if (parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0]))
+                {
+                    target = CleanValue(parts[0]);
+                }
+            }
+        }
+
+        // 2. 若仍有任一欄位為空，以分區段剖析器掃描 AlertText
+        if ((initiator == null || target == null) && !string.IsNullOrWhiteSpace(alertText))
+        {
+            var parsed = ParseMessage(alertText, mappings);
+            initiator ??= parsed.SubjectAccountName;
+
+            if (target == null && (changeType is null or "成員新增" or "成員移除" or "稽核政策變更"))
+            {
+                target = parsed.MemberAccountName ?? parsed.TargetAccount ?? parsed.MemberSecurityId ?? parsed.TargetSecurityId;
+            }
+        }
+
+        return (initiator, target);
+    }
+
+    private static ParsedFields ParseMessage(string? message, PermissionFieldMappings? mappings = null)
+    {
+        var fields = new ParsedFields();
+        if (string.IsNullOrWhiteSpace(message)) return fields;
+
+        var lines = message.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        var section = Section.None;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0) continue;
+
+            var pairs = ExtractPairs(line, mappings);
+            if (pairs.Count == 0)
+            {
+                if (TryGetSectionByName(line, out var headerSection))
+                {
+                    section = headerSection;
+                }
+                continue;
+            }
+
+            foreach (var (key, value) in pairs)
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    if (TryGetSectionByName(key, out var newSection))
+                    {
+                        section = newSection;
+                    }
+                    continue;
+                }
+
+                if (IsKey(key, "Target Account", "目標帳戶", "被異動帳戶"))
+                {
+                    fields.TargetAccount ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Member Name", "成員名稱"))
+                {
+                    fields.MemberAccountName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Group Name", "群組名稱"))
+                {
+                    fields.GroupName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Object Name", "物件名稱"))
+                {
+                    fields.ObjectName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Object Type", "物件類型"))
+                {
+                    // 4670 的重點：Token／Key 這類非檔案物件與資料夾權限異動是兩回事
+                    fields.ObjectType ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Process Name", "處理程序名稱"))
+                {
+                    fields.ProcessName ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Original Security Descriptor", "原始安全性描述元"))
+                {
+                    fields.OriginalSecDesc ??= CleanValue(value);
+                }
+                else if (IsKey(key, "New Security Descriptor", "新的安全性描述元"))
+                {
+                    fields.NewSecDesc ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Granted", "授與的存取權"))
+                {
+                    fields.AccessGranted ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Removed", "移除的存取權"))
+                {
+                    fields.AccessRemoved ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Access Right", "Access Right(s)", "存取權", "存取權限", "Accesses", "存取"))
+                {
+                    fields.AccessRight ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Category", "類別"))
+                {
+                    fields.AuditCategory ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Subcategory", "子類別"))
+                {
+                    fields.AuditSubcategory ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Changes", "變更"))
+                {
+                    fields.AuditChanges ??= CleanValue(value);
+                }
+                else if (IsKey(key, "Account Name", "帳戶名稱"))
+                {
+                    var clean = CleanValue(value);
+                    if (clean != null)
+                    {
+                        if (section == Section.Subject && fields.SubjectAccountName == null)
+                        {
+                            fields.SubjectAccountName = clean;
+                        }
+                        else if (section == Section.Member && fields.MemberAccountName == null)
+                        {
+                            fields.MemberAccountName = clean;
+                        }
+                        else if (section == Section.Group && fields.GroupName == null)
+                        {
+                            fields.GroupName = clean;
+                        }
+                        else if (section == Section.TargetAccount && fields.TargetAccount == null)
+                        {
+                            fields.TargetAccount = clean;
+                        }
+                        else if (section == Section.None && mappings != null)
+                        {
+                            // 官方欄名但區段不明（訊息沒有區段標題時很常見）：這裡不消費就沒人消費了，
+                            // 使用者若把這個欄名設進某個角色，讓自訂對應接手，值才不會靜默消失
+                            TryMatchCustomField(key, value, mappings, fields);
+                        }
+                    }
+                }
+                else if (IsKey(key, "Security ID", "安全性識別碼", "安全性 ID"))
+                {
+                    var clean = CleanValue(value);
+                    if (clean != null)
+                    {
+                        if (section == Section.Subject && fields.SubjectSecurityId == null)
+                        {
+                            fields.SubjectSecurityId = clean;
+                        }
+                        else if (section == Section.Member && fields.MemberSecurityId == null)
+                        {
+                            fields.MemberSecurityId = clean;
+                        }
+                        else if (section == Section.TargetAccount && fields.TargetSecurityId == null)
+                        {
+                            fields.TargetSecurityId = clean;
+                        }
+                    }
+                }
+                else if (mappings != null && TryMatchCustomField(key, value, mappings, fields))
+                {
+                    // 已由自訂欄位對應命中
+                }
+            }
+        }
+
+        return fields;
+    }
+
+    private static bool TryMatchCustomField(string key, string value, PermissionFieldMappings mappings, ParsedFields fields)
+    {
+        var clean = CleanValue(value);
+        if (clean == null) return false;
+
+        if (mappings.IsOperatorField(key))
+        {
+            fields.SubjectAccountName ??= clean;
+            return true;
+        }
+        if (mappings.IsMemberField(key))
+        {
+            fields.MemberAccountName ??= clean;
+            return true;
+        }
+        if (mappings.IsGroupField(key))
+        {
+            fields.GroupName ??= clean;
+            return true;
+        }
+        if (mappings.IsObjectField(key))
+        {
+            fields.ObjectName ??= clean;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool IsKey(string key, params string[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (key.Equals(candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<(string Key, string Value)> ExtractPairs(string line, PermissionFieldMappings? mappings = null)
+    {
+        var pairs = new List<(string Key, string Value)>();
+        if (string.IsNullOrWhiteSpace(line)) return pairs;
+
+        var keyOccurrences = new List<(int KeyStart, int ColonIndex, string KeyName)>();
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c != ':' && c != '：') continue;
+
+            int prevColon = keyOccurrences.Count > 0 ? keyOccurrences[^1].ColonIndex : -1;
+            int minStart = Math.Max(prevColon + 1, i - 40);
+
+            int selectedStart = -1;
+            string? selectedKey = null;
+
+            // 由左往右試候選（最長的先試），取第一個合法的。多字欄名靠白名單認得；
+            // 都不合法時會退到最後一個詞——「值的尾字＋單字欄名」（`DOM1 其他資訊:`）與
+            // 「兩個詞的欄名」（`Group Domain:`）從字面分不出來，靠的就是白名單要收齊官方欄名。
+            // 白名單漏一個的代價不是「這欄漏抓」，而是把值的尾字併進前一欄（見 KnownMultiWordKeys）。
+            for (int start = minStart; start < i; start++)
+            {
+                if (start == 0 || char.IsWhiteSpace(line[start - 1]))
+                {
+                    var candidate = line[start..i].Trim();
+                    if (IsValidKeyCandidate(candidate, mappings))
+                    {
+                        selectedStart = start;
+                        selectedKey = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedStart >= 0 && selectedKey != null)
+            {
+                keyOccurrences.Add((selectedStart, i, selectedKey));
+            }
+        }
+
+        for (int k = 0; k < keyOccurrences.Count; k++)
+        {
+            var current = keyOccurrences[k];
+            int valStart = current.ColonIndex + 1;
+            int valEnd = (k + 1 < keyOccurrences.Count) ? keyOccurrences[k + 1].KeyStart : line.Length;
+
+            string value = string.Empty;
+            if (valEnd > valStart)
+            {
+                value = line[valStart..valEnd].Trim();
+            }
+
+            pairs.Add((current.KeyName, value));
+        }
+
+        return pairs;
+    }
+
+    private static bool IsValidKeyCandidate(string text, PermissionFieldMappings? mappings = null)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        // 使用者明確設定的自訂欄名一律放行：長度上限是給「猜哪一段是欄名」用的啟發式，
+        // 對已知的欄名沒有意義——擋掉的話設定會沒有作用，那是本專案的紅線
+        if (mappings?.HasCustomKey(text) == true) return true;
+
+        if (text.Length < 2 || text.Length > 35) return false;
+
+        bool hasLetter = false;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (char.IsLetter(ch))
+            {
+                hasLetter = true;
+            }
+            else if (!char.IsDigit(ch) && ch != ' ' && ch != '-' && ch != '(' && ch != ')' && ch != '_')
+            {
+                return false;
+            }
+        }
+
+        if (!hasLetter) return false;
+
+        if (text.Contains(' '))
+        {
+            return KnownMultiWordKeys.Contains(text) || TryGetSectionByName(text, out _) || (mappings?.IsCustomMultiWordKey(text) == true);
+        }
+
+        return text.Length <= 20 || (mappings?.HasCustomKey(text) == true);
+    }
+
+    public static string? CleanValue(string? val)
+    {
+        if (string.IsNullOrWhiteSpace(val)) return null;
+        var trimmed = val.Trim();
+        if (trimmed is "-" or "—" or "null" or "NULL") return null;
+        return trimmed;
+    }
+
+    private static bool TryMatchSectionHeader(string line, out Section section)
+    {
+        section = Section.None;
+        var colonIdx = line.IndexOfAny(new[] { ':', '：' });
+        if (colonIdx < 0)
+        {
+            var trimmed = line.Trim();
+            return TryGetSectionByName(trimmed, out section);
+        }
+
+        var afterColon = line[(colonIdx + 1)..].Trim();
+        if (string.IsNullOrEmpty(afterColon))
+        {
+            var beforeColon = line[..colonIdx].Trim();
+            return TryGetSectionByName(beforeColon, out section);
+        }
+
+        return false;
+    }
+
+    private static bool TryGetSectionByName(string name, out Section section)
+    {
+        if (name.Equals("Subject", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("主體", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("主旨", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.Subject;
+            return true;
+        }
+        if (name.Equals("Member", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("成員", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.Member;
+            return true;
+        }
+        if (name.Equals("Group", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("群組", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.Group;
+            return true;
+        }
+        if (name.Equals("Object", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("物件", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.Object;
+            return true;
+        }
+        if (name.Equals("Audit Policy Change", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則變更", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則已變更", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核原則已變更。", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.AuditPolicyChange;
+            return true;
+        }
+        if (name.Equals("Auditing Settings", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("稽核設定", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.AuditingSettings;
+            return true;
+        }
+        if (name.Equals("Permissions Change", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("權限變更", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.PermissionsChange;
+            return true;
+        }
+        if (name.Equals("Account That Was Granted Access", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("已授與存取權的帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Account That Was Removed Access", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("已移除存取權的帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Account Modified", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("修改的帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Target Account", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("目標帳戶", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("被異動帳戶", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.TargetAccount;
+            return true;
+        }
+        if (name.Equals("Process Information", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("程序資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("處理程序", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("處理程序資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Access Request Information", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("存取要求資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Detailed Authentication Information", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("詳細驗證資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("網路資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("其他資訊", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Additional Information", StringComparison.OrdinalIgnoreCase))
+        {
+            section = Section.Other;
+            return true;
+        }
+
+        section = Section.None;
+        return false;
+    }
+}

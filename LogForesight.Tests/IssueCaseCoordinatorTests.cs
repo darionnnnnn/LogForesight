@@ -20,13 +20,14 @@ public class IssueCaseCoordinatorTests
     private readonly FakeIssueCaseStore _cases = new();
     private readonly FakeIssueHandlingStore _issueHandlings = new();
     private readonly FakeHandlingStore _handlingLog = new();
+    private readonly FakeIssueOwnerStore _issueProfiles = new();
 
     public IssueCaseCoordinatorTests()
     {
         _hosts.Upsert(new WebHost { HostName = Host });
     }
 
-    private IssueCaseCoordinator Create() => new(_cases, _issueHandlings, _handlingLog, _records, _hosts);
+    private IssueCaseCoordinator Create() => new(_cases, _issueHandlings, _handlingLog, _records, _hosts, _issueProfiles);
 
     /// <summary>某天的分析紀錄，TopIssues 帶入固定的 disk 153 問題簽章</summary>
     private void AddRecord(DateTime date)
@@ -255,6 +256,135 @@ public class IssueCaseCoordinatorTests
         var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
 
         Assert.Equal(0, result.AttachedCount);
+    }
+
+    // ── 機房結論自動套用（回饋十九輪批次F，§2 決策一）────────────────────────────
+
+    [Fact]
+    public void 掛接_無案件時套用機房結論()
+    {
+        _issueProfiles.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            ConclusionStatus = IssueHandlingStatuses.KnownNoise, ConclusionNote = "已知的雜訊來源", AutoApply = true
+        });
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
+
+        Assert.Equal(1, result.AttachedCount);
+        var row = _issueHandlings.GetForDay(Host, DateTime.Today).Single();
+        Assert.Equal(IssueHandlingStatuses.KnownNoise, row.Status);
+        Assert.Equal("〔機房結論〕已知的雜訊來源", row.Note);
+        Assert.Null(row.CaseId);
+    }
+
+    [Fact]
+    public void 掛接_AutoApply關閉時不套用()
+    {
+        _issueProfiles.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            ConclusionStatus = IssueHandlingStatuses.KnownNoise, ConclusionNote = "已知的雜訊來源", AutoApply = false
+        });
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
+
+        Assert.Equal(0, result.AttachedCount);
+        Assert.Empty(_issueHandlings.GetForDay(Host, DateTime.Today));
+    }
+
+    [Fact]
+    public void 掛接_進行中案件優先於機房結論()
+    {
+        var trigger = DateTime.Today.AddDays(-1);
+        var newDay = DateTime.Today;
+        AddRecord(trigger);
+        var coordinator = Create();
+        coordinator.BuildCase(Host, IssueKey, IssueLabel, trigger, handlerId: 1, note: "有人在處理", dueDate: null,
+            actorId: 1, actorAccount: "a", occurredAt: DateTime.Now);
+
+        // 同一個問題「機房」也有結論，但案件優先——案件代表「有人正在管」，不該被 fleet 結論蓋過去
+        _issueProfiles.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            ConclusionStatus = IssueHandlingStatuses.KnownNoise, ConclusionNote = "已知的雜訊來源", AutoApply = true
+        });
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var result = coordinator.AttachNewDay(Host, newDay, issues, DateTime.Now);
+
+        Assert.Equal(1, result.AttachedCount);
+        var row = _issueHandlings.GetForDay(Host, newDay).Single();
+        Assert.Equal(IssueHandlingStatuses.InProgress, row.Status);   // 案件狀態，不是機房結論
+        Assert.Equal("有人在處理", row.Note);
+    }
+
+    [Fact]
+    public void 掛接_當日已有人工標記時機房結論不覆蓋()
+    {
+        _issueProfiles.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            ConclusionStatus = IssueHandlingStatuses.KnownNoise, ConclusionNote = "已知的雜訊來源", AutoApply = true
+        });
+
+        // 使用者已經自己標過這一天（例如標成處理中，準備自己查）
+        _issueHandlings.Save(new IssueHandling
+        {
+            HostName = Host, Date = DateTime.Today, IssueKey = IssueKey,
+            Status = IssueHandlingStatuses.InProgress, Note = "我自己查查看", UpdatedAt = DateTime.Now
+        });
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var result = Create().AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
+
+        Assert.Equal(0, result.AttachedCount);   // 已有標記 → 不覆蓋
+        var row = _issueHandlings.GetForDay(Host, DateTime.Today).Single();
+        Assert.Equal("我自己查查看", row.Note);   // 使用者的標記原封不動
+    }
+
+    [Fact]
+    public void 掛接_解除機房結論後新的一天不再自動套用()
+    {
+        var profile = _issueProfiles.Upsert(new IssueProfile
+        {
+            SourceName = "disk", EventId = 153,
+            ConclusionStatus = IssueHandlingStatuses.KnownNoise, ConclusionNote = "已知的雜訊來源", AutoApply = true
+        });
+
+        var issues = new List<LogIssueSignature>
+        {
+            new() { LogName = "System", Source = "disk", EventId = 153, EntryType = System.Diagnostics.EventLogEntryType.Error }
+        };
+        var coordinator = Create();
+        coordinator.AttachNewDay(Host, DateTime.Today.AddDays(-1), issues, DateTime.Now);
+
+        // 解除結論（清空 ConclusionStatus，AutoApply 隨之停止生效）
+        profile.ConclusionStatus = null;
+        profile.AutoApply = false;
+        _issueProfiles.Upsert(profile);
+
+        var result = coordinator.AttachNewDay(Host, DateTime.Today, issues, DateTime.Now);
+
+        Assert.Equal(0, result.AttachedCount);
+        Assert.Empty(_issueHandlings.GetForDay(Host, DateTime.Today));
+        // 已經套用過的那一天維持原樣（不回滾，誠實留痕）
+        var oldRow = _issueHandlings.GetForDay(Host, DateTime.Today.AddDays(-1)).Single();
+        Assert.Equal(IssueHandlingStatuses.KnownNoise, oldRow.Status);
     }
 
     // ── 觀察中（docs/archive/FEEDBACK-8-PLAN.md #4）──────────────────────────────────────

@@ -347,7 +347,7 @@ public class DayHandlingCommandService
 
     /// <summary>
     /// 當日問題負責人恰一人時回傳其 UserId（回饋十八輪批次F）：把當天全部問題各自命中的
-    /// 問題負責人規則（<see cref="IssueOwnerRule.Matches"/>，(Source,EventId) 不分大小寫比對）
+    /// 問題負責人規則（<see cref="IssueProfile.Matches"/>，(Source,EventId) 不分大小寫比對）
     /// 聯集去重——多筆問題各只有一個負責人但恰好是同一人時仍算「恰一人」，不同問題各自的
     /// 負責人不同時則不猜（同主機負責人的「多人不猜」精神，只是這裡的「人」是跨問題聯集後的結果）。
     /// <paramref name="issueOwners"/> 由呼叫端傳入（非空由呼叫端保證）：不在方法內部用
@@ -358,7 +358,7 @@ public class DayHandlingCommandService
         var rules = issueOwners.GetAll();
         var ownerIds = record.TopIssues
             .SelectMany(issue => rules
-                .Where(r => IssueOwnerRule.Matches(r, issue.Source, issue.EventId))
+                .Where(r => IssueProfile.Matches(r, issue.Source, issue.EventId))
                 .SelectMany(r => r.OwnerUserIds))
             .Distinct()
             .ToList();

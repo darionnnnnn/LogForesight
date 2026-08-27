@@ -31,9 +31,11 @@ public class RuleImportPlan
 /// <summary>
 /// 內建規則種子的匯入計畫與套用（docs/RULES-SPEC.md「初次部署寫入、後續手動匯入」；
 /// docs/archive/WEB-SCHEDULER-PLAN.md §1.4.9 自 console 的 RuleImporter 拆出，console／Web 共用同一份，
-/// 不寫兩套會漂移的分類邏輯）。以 Id 為鍵去重，custom 規則一律不碰；builtin 規則預設只補缺，
-/// 內容有異動需要 overwriteBuiltin 才會覆蓋——覆蓋時保留使用者對 Enabled 的選擇（使用者停用
-/// 某條 builtin 不是「修改內容」，是操作決定，匯入不應該把它打開）。
+/// 不寫兩套會漂移的分類邏輯）。以 Id 為鍵去重，custom 規則一律不碰。
+/// builtin 規則若內容與種子不同，依 ModifiedBy 分流：
+/// 1. ModifiedBy 為 null（使用者從未修改過）：視為原廠更新直接套用（UpdatedBuiltin），不需 overwriteBuiltin。
+/// 2. ModifiedBy 有值（使用者曾手動修改）：保護使用者自訂變更，維持 SkippedModifiedBuiltin，需勾選 overwriteBuiltin 才覆蓋。
+/// 覆蓋／套用時一律保留使用者對 Enabled 的選擇（使用者停用某條 builtin 是操作決定，不是「修改內容」，匯入不該把它打開）。
 /// </summary>
 public static class RuleImportPlanner
 {
@@ -86,26 +88,35 @@ public static class RuleImportPlanner
                 continue;
             }
 
-            if (!overwriteBuiltin)
+            // 內容與種子不同：依 ModifiedBy 判斷是否為使用者手動修改過的規則。
+            // 1. ModifiedBy 有值：代表使用者透過管理介面改過這條規則，為保護其手動修改，
+            //    在未勾選 overwriteBuiltin 時略過（SkippedModifiedBuiltin）。
+            // 2. ModifiedBy 為 null：代表使用者從未碰過此規則，內容差異純粹是原廠（程式）升級更新，
+            //    直接套用原廠更新（UpdatedBuiltin），不需強迫使用者勾選覆蓋。
+            if (existing.ModifiedBy != null && !overwriteBuiltin)
             {
                 plan.Items.Add(new RuleImportItem
                 {
                     Id = seedRule.Id,
                     Action = RuleImportAction.SkippedModifiedBuiltin,
-                    Detail = "builtin 內容與內建種子不同（程式已更新此規則），需勾選「連同已修改的內建規則一併覆蓋」才會覆蓋"
+                    Detail = "此規則曾被修改過，需勾選才會以原廠版本覆蓋"
                 });
                 continue;
             }
 
-            // 覆蓋：內容改用種子最新版本，但保留使用者對 Enabled 的選擇——
+            // 套用原廠更新／勾選覆蓋：
+            // 內容改用種子最新版本，但保留使用者對 Enabled 的選擇——
             // 停用某條 builtin 是操作決定，不是「內容被改過」，匯入不該把它悄悄打開。
+            // CloneForSeedOverwrite 同時清空 ModifiedBy / ModifiedAt（回到未修改狀態）。
             var updated = seedRule.CloneForSeedOverwrite(existing.Enabled);
             plan.ResultingRules[resultingIndexById[seedRule.Id]] = updated;
             plan.Items.Add(new RuleImportItem
             {
                 Id = seedRule.Id,
                 Action = RuleImportAction.UpdatedBuiltin,
-                Detail = "已用內建種子最新內容覆蓋（保留原本的 Enabled 設定）"
+                Detail = existing.ModifiedBy == null
+                    ? "內建規則已由程式更新（此規則未被修改過，直接套用）"
+                    : "已用內建種子最新內容覆蓋（保留原本的 Enabled 設定）"
             });
         }
 

@@ -23,7 +23,7 @@ public class VisibilityServiceTests
     private readonly FakeSystemSettingsStore _settings = new();
 
     private VisibilityService Create(ICurrentUser currentUser) =>
-        new(currentUser, _users, _userGroups, _access, _hosts, _cases, _issueOwners, _issueAggregates, _settings);
+        new(currentUser, _users, _userGroups, _access, _hosts, _cases, _settings, _issueOwners, _issueAggregates);
 
     /// <summary>建立「OO 部門使用者 → OO 部門主機」的完整授權鏈，並額外建立一台 XX 部門主機</summary>
     private (WebUser user, WebHost ooHost, WebHost xxHost) SetupTwoDepartments()
@@ -301,7 +301,7 @@ public class VisibilityServiceTests
     public void 問題負責人_看得到出現過其問題的主機即使不屬於授權群組()
     {
         var (user, ooHost, xxHost) = SetupTwoDepartments();
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
         _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
 
         var visible = Create(FakeCurrentUser.ForUser(user.UserId)).GetVisibleHostIds();
@@ -316,7 +316,7 @@ public class VisibilityServiceTests
     public void 問題負責人_已停用主機不視為可見()
     {
         var (user, _, xxHost) = SetupTwoDepartments();
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
         xxHost.Active = false;
         _hosts.Upsert(xxHost);
         _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
@@ -344,7 +344,7 @@ public class VisibilityServiceTests
     public void 問題負責人_不視為案件授與而是完整可見()
     {
         var (user, _, xxHost) = SetupTwoDepartments();
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
         _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
 
         var service = Create(FakeCurrentUser.ForUser(user.UserId));
@@ -359,7 +359,7 @@ public class VisibilityServiceTests
     public void 問題負責人_使用者已停用時可見範圍為空()
     {
         var (user, _, xxHost) = SetupTwoDepartments();
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
         _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
         user.Active = false;
         _users.Upsert(user);
@@ -373,7 +373,7 @@ public class VisibilityServiceTests
     public void 指定使用者的可見範圍_含問題負責人路徑()
     {
         var (user, _, xxHost) = SetupTwoDepartments();
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { user.UserId } });
         _issueAggregates.HostIdsForResult = new HashSet<long> { xxHost.HostId };
 
         var visible = Create(FakeCurrentUser.WithCapabilities(Capability.ViewAll)).GetVisibleHostIdsFor(user.UserId);

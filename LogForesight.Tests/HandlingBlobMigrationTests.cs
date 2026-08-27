@@ -130,6 +130,35 @@ public class HandlingBlobMigrationTests : IDisposable
         Assert.Equal(1, state.RecordHandlingRows);
     }
 
+    [Fact]
+    public void 遷移前夜間分析已寫入真表_舊blob的處理狀態仍然全部搬進來()
+    {
+        // 遷移閘門只擋 HTTP 寫入，但這三張表還有另一個寫入端：AnalysisOrchestrator 把三個
+        // 真表 store 交給 IssueCaseCoordinator，夜間分析每個主機日都會寫。重入保護若寫成
+        // 「表裡有資料就整批跳過」，排程搶先寫一列就會讓整份舊處理狀態永遠不被搬。
+        var date = DateTime.Today;
+        var backend = SeedLegacyDatabase(date);
+
+        backend.IssueHandlingStore().SaveMany(new[] { Handling("SRV-99", date, "k9", "open") });
+        backend.RecordHandlingStore().Save(new RecordHandling
+        {
+            HostName = "SRV-99",
+            Date = date,
+            Status = "open",
+            HandlerId = 1,
+            UpdatedAt = DateTime.Now
+        });
+
+        backend.HandlingMigrator.Run(CancellationToken.None);
+
+        // 舊 blob 的兩筆 issue_handling 與一筆 record_handling 都要在
+        Assert.Equal("resolved", backend.IssueHandlingStore().GetForDay("SRV-01", date).Single().Status);
+        Assert.Equal("wont_fix", backend.IssueHandlingStore().GetForDay("SRV-02", date).Single().Status);
+        Assert.Equal(7, backend.RecordHandlingStore().Get("SRV-01", date)!.HandlerId);
+        // 分析先寫入的那一筆不受影響
+        Assert.Equal("open", backend.IssueHandlingStore().GetForDay("SRV-99", date).Single().Status);
+    }
+
     /// <summary>搬完不刪 blob——真的出事時資料還在原地，不必從備份還原</summary>
     [Fact]
     public void 搬移後_舊blob保留未刪()

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 問題查詢（docs/WEB-SPEC.md §9.2）。
  *
  * 篩選條件與 URL 查詢字串同步（§8.6-2）——查詢結果可以複製網址給同事，
@@ -12,13 +12,19 @@
  */
 
 import { api, getDisplaySettings, getCurrentUser, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import {
     renderTable, renderLoading, renderSpinner, renderEmpty, toast, renderPagination, withBusy, renderChips,
-    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad
+    loadPageSize, savePageSize, PAGE_SIZE_OPTIONS, showDetailModal, button, searchableUserSelect, guardLoad,
+    headerWithHelp, icon
 } from '../core/ui.js';
-import { riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, severityName, formatNumber, formatUserName, toLocalDateString, todayLocal } from '../core/format.js';
+import {
+    riskBadge, handlingBadge, statusBadge, severityBadge, CATEGORY_NAMES, CATEGORY_ORDER, severityName, formatNumber,
+    formatUserName, toLocalDateString, todayLocal, analysisAnchorLocal, isAiRetryPending, issueBaselineCell
+} from '../core/format.js';
 import { renderAiText } from '../core/markdown-lite.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
+import { bindRangeChips } from '../core/date-range.js';
 
 // 預設不顯示低風險：清單常被低風險的雜訊淹沒，真正要處理的高／中反而被推到後面
 const DEFAULT_RISKS = ['高', '中'];
@@ -33,6 +39,8 @@ let pageSize = loadPageSize('records');
 // 因此視角切換時重設（見 view-toggle 事件），不像篩選條件那樣沿用
 let sort = { key: '', dir: 'desc' };
 let lastResult = null;
+// 全站「日風險等級顯示」設定允許的等級（見 syncRiskChipSemantics）
+let dayRiskVisible = new Set(['高', '中', '低']);
 
 let aiAvailable = false;
 
@@ -65,12 +73,28 @@ async function init() {
  * 在 init 的首次 search() 之前執行，取消後的條件才是實際送出的查詢。
  */
 async function applyDayRiskVisibility() {
-    const settings = await getDisplaySettings();
-    const visible = new Set(settings?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    dayRiskVisible = new Set((await getDisplaySettings())?.visibleDayRiskLevels ?? ['高', '中', '低']);
+    syncRiskChipSemantics();
+}
+
+/**
+ * 這排 chip 在不同視角是**不同層級**：依問題視角（問題主視角）篩的是「問題嚴重度」，
+ * 其餘視角篩的是「日風險等級」。因此：
+ *   - 標籤文字隨視角改，使用者看得出自己在篩什麼；
+ *   - 全站「日風險等級顯示」設定只能藏／取消日層級的 chip，**不能**動到依問題視角的嚴重度
+ *     篩選（拿日層級的可見性去取消嚴重度條件，會讓低嚴重度問題整批消失、與儀表板風險類型卡
+ *     的數字對不上，正是這個設定想避免的那種「看不見卻仍生效」）。
+ */
+function syncRiskChipSemantics() {
+    const isIssueView = currentView === 'issue';
+    const label = document.getElementById('filter-risk-label');
+    if (label) label.textContent = isIssueView ? '問題嚴重度' : '風險層級';
+
     for (const btn of document.querySelectorAll('#filter-risk-chips [data-risk]')) {
-        const hidden = !visible.has(btn.dataset.risk);
+        const hidden = !isIssueView && !dayRiskVisible.has(btn.dataset.risk);
         btn.classList.toggle('d-none', hidden);
         if (hidden) btn.classList.remove('active');
+        btn.title = isIssueView ? '問題自身的嚴重度（與該問題出現在哪種風險日無關）' : '';
     }
 }
 
@@ -322,6 +346,8 @@ function setActiveView(view) {
             : '依主機／依日期視角不支援處理狀態篩選';
     }
 
+    syncRiskChipSemantics();
+
     // 未指派 chip 僅「依問題」視角顯示（§10）：問題角度的分派入口
     document.getElementById('filter-unassigned-group').classList.toggle('d-none', view !== 'issue');
     if (view !== 'issue') document.getElementById('filter-unassigned-chip').classList.remove('active');
@@ -447,8 +473,13 @@ function renderActiveConditions(filters) {
 const VIEW_UNIT = { detail: '筆', host: '台主機', date: '天', issue: '個問題' };
 
 function render() {
-    document.getElementById('result-count').textContent =
-        lastResult.total > 0 ? `共 ${lastResult.total} ${VIEW_UNIT[currentView] ?? '筆'}` : '';
+    // 依問題視角多帶「共 N 台主機（去重）」（回饋二十輪 B2／終檢補接）：列表各列的主機數
+    // 是各問題自己的台數、加總會大於儀表板風險類型卡的去重數，這個才是與卡片同一口徑的數字
+    let countText = lastResult.total > 0 ? `共 ${lastResult.total} ${VIEW_UNIT[currentView] ?? '筆'}` : '';
+    if (currentView === 'issue' && lastResult.total > 0 && Number.isInteger(lastResult.distinctHostCount)) {
+        countText += `，共 ${lastResult.distinctHostCount} 台主機（去重）`;
+    }
+    document.getElementById('result-count').textContent = countText;
 
     if (currentView === 'host') renderHostView();
     else if (currentView === 'date') renderDateView();
@@ -463,7 +494,7 @@ function render() {
 function renderDetailView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => dateLink(r) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: r => r.date },
             { title: '主機', sortKey: 'host', render: r => r.hostName },
             { title: '風險', sortKey: 'risk', render: r => riskBadge(r.riskLevel) },
             { title: '狀況', render: r => headlineCell(r) },
@@ -495,13 +526,6 @@ function detailQuery() {
     return categories.length ? `?categories=${encodeURIComponent(categories.join(','))}` : '';
 }
 
-function dateLink(record) {
-    const link = document.createElement('a');
-    link.href = `/records/${record.hostId}/${record.date}${detailQuery()}`;
-    link.textContent = record.date;
-    return link;
-}
-
 function headlineCell(record) {
     const wrap = document.createElement('span');
 
@@ -510,6 +534,13 @@ function headlineCell(record) {
         badge.className = 'lf-badge lf-badge--secondary me-1';
         badge.textContent = 'AI';
         badge.title = 'AI 產出摘要';
+        wrap.appendChild(badge);
+    } else if (record.aiPending && isAiRetryPending(record.headline)) {
+        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：與「分析中」區分開
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning me-1';
+        badge.textContent = 'AI 待補';
+        badge.title = 'AI 服務當時未回應，可用排程頁「只補跑失敗或未執行」補回';
         wrap.appendChild(badge);
     } else if (record.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
@@ -578,7 +609,7 @@ function handlerCell(record) {
 
     const suffix = record.handlerFromCase ? '（案件）' : '';
     const link = document.createElement('a');
-    link.href = `/handlers/${record.handlerId}`;
+    link.href = appUrl(`/handlers/${record.handlerId}`);
     link.textContent = formatUserName(record.handlerName, record.handlerAccount) + suffix;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
@@ -610,7 +641,7 @@ function renderHostView() {
 function renderDateView() {
     renderTable(listContainer, {
         columns: [
-            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => dateViewLink(d) },
+            { title: '日期', sortKey: 'date', sortDefaultDir: 'desc', render: d => d.date },
             { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: d => String(d.hostCount) },
             { title: '高風險', className: 'text-end', sortKey: 'highRisk', sortDefaultDir: 'desc', render: d => String(d.highRiskHosts) },
             { title: '中風險', className: 'text-end', sortKey: 'mediumRisk', sortDefaultDir: 'desc', render: d => String(d.mediumRiskHosts) },
@@ -640,13 +671,6 @@ function detailForDate(date) {
     return `?${params.toString()}`;
 }
 
-function dateViewLink(row) {
-    const link = document.createElement('a');
-    link.href = detailForDate(row.date);
-    link.textContent = row.date;
-    return link;
-}
-
 // ── 依問題視角（主機與日期都合併，docs/archive/FEEDBACK-4-PLAN.md §4）──────────────────
 
 function renderIssueView() {
@@ -654,15 +678,62 @@ function renderIssueView() {
     // 「涵蓋範圍」與「出現密度」是需求「期間跨度」的落地：只有「最近出現」看不出
     // 這是天天都有的背景值、還是近三天才冒出來的新問題。
     const columns = [
-        { title: '問題', render: i => issueGroupCell(i) },
+        { title: '問題', className: 'lf-issue-col', render: i => issueGroupCell(i) },
         { title: '分類', render: i => CATEGORY_NAMES[i.category] ?? i.category },
         { title: '嚴重度', sortKey: 'severity', render: i => issueSeverityCell(i) },
-        { title: '主機數', className: 'text-end', sortKey: 'hostCount', sortDefaultDir: 'desc', render: i => String(i.hostCount) },
-        { title: '涵蓋範圍', className: 'text-nowrap', render: i => issueSpanCell(i) },
-        { title: '出現密度', className: 'text-end text-nowrap', render: i => issueDensityCell(i) },
-        { title: '總次數', className: 'text-end', sortKey: 'totalCount', sortDefaultDir: 'desc', render: i => formatNumber(i.totalCount) },
-        { title: '最近出現', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
-        { title: '處理概況', render: i => i.handlingSummary },
+        {
+            title: '主機數 / 主機日',
+            // 兩個數字上下兩行（回饋二十六輪 E1）：單行 nowrap 時這一欄要 12 個字寬，
+            // 依問題視角有 12 欄，寬度全被少數幾欄吃掉
+            className: 'text-end',
+            sortKey: 'hostCount', sortDefaultDir: 'desc',
+            renderHeader: () => headerWithHelp('主機數 / 主機日', '在本次查詢日期區間內，曾出現此問題的相異主機總台數（台），以及累計出現的主機日總數（主機日，即展開明細的總筆數）。', '主機數與主機日'),
+            render: i => {
+                const wrap = document.createElement('div');
+                const hosts = document.createElement('div');
+                hosts.className = 'text-nowrap';
+                hosts.textContent = `${formatNumber(i.hostCount)} 台`;
+                const days = document.createElement('div');
+                days.className = 'small text-muted text-nowrap';
+                days.textContent = `${formatNumber(i.dayCount)} 主機日`;
+                wrap.append(hosts, days);
+                return wrap;
+            }
+        },
+        {
+            title: 'vs 基準',
+            // 徽章與基準說明各自一行（E1）：不 nowrap 整欄，由 issueBaselineCell 內部
+            // 對「基準 N 台/日 → M 台」那一行自己保 nowrap
+            className: '',
+            renderHeader: () => headerWithHelp('vs 基準', '最近一次出現時的受影響主機數，與過去 30 天歷史中位數（基準台數/日）的比較。倍數大於等於 2（紅色）代表異常擴散，1 到 2 之間（灰色）為正常波動，小於 1（綠色「收斂」）代表影響範圍已低於平時基準。', 'vs 基準線'),
+            render: i => issueBaselineCell(i)
+        },
+        {
+            title: '首見',
+            className: 'text-nowrap',
+            renderHeader: () => headerWithHelp('首見', '此問題在全機房歷史記錄中首次出現的日期。若本次查詢區間內的首次出現日與機房首見不同，第二行會額外標示本次查詢區間的「本期首見」日期。', '首見日期'),
+            render: i => issueFirstSeenCell(i)
+        },
+        {
+            title: '出現密度',
+            className: 'text-center text-nowrap',
+            renderHeader: () => headerWithHelp('出現密度', '查詢期間內有發生此問題的天數比例（出現天數 / 查詢天數）。比例高（如 30/30）代表天天發生的背景雜訊；比例低（如 2/30）代表近期或零星爆發的突發狀況。', '出現密度'),
+            render: i => issueDensityCell(i)
+        },
+        {
+            title: '總次數',
+            className: 'text-end',
+            sortKey: 'totalCount', sortDefaultDir: 'desc',
+            renderHeader: () => headerWithHelp('總次數', '在本次查詢日期區間內，所有受影響主機累計觸發此事件記錄的總次數。', '總次數'),
+            render: i => formatNumber(i.totalCount)
+        },
+        { title: '最近出現', className: 'text-nowrap', sortKey: 'lastSeen', sortDefaultDir: 'desc', render: i => issueLastSeenCell(i) },
+        {
+            title: '處理概況',
+            className: 'text-nowrap',
+            renderHeader: () => headerWithHelp('處理概況', '受此問題影響的主機目前處理狀態分佈。分為未指派或待確認的「未處理」、已有案件或跟進中的「處理中」，以及已結案或確認為雜訊/誤報的「已處理」台數。', '處理概況'),
+            render: i => issueHandlingSummaryCell(i)
+        },
         { title: '處理人', render: i => issueHandlersCell(i) }
     ];
 
@@ -739,7 +810,13 @@ async function renderIssueOccurrences(cell, group) {
 
     // 保留原本「切到明細視角看全部」的出口（不再是整列導向，改成明確連結）
     const foot = document.createElement('div');
-    foot.className = 'small mt-2';
+    foot.className = 'small mt-2 d-flex align-items-center gap-2';
+    if (result.total > result.items.length) {
+        const truncNote = document.createElement('span');
+        truncNote.className = 'text-muted';
+        truncNote.textContent = `共 ${formatNumber(result.total)} 筆（不套用風險層級篩選），僅顯示前 ${result.items.length} 筆。`;
+        foot.appendChild(truncNote);
+    }
     const allLink = document.createElement('a');
     allLink.href = detailForIssue(group);
     allLink.textContent = '在明細視角檢視這個問題的全部風險日 →';
@@ -751,7 +828,7 @@ async function renderIssueOccurrences(cell, group) {
 /** 展開列內每列的「去處理」連結，連到該主機該日風險日詳情 */
 function goHandleLink(record) {
     const link = document.createElement('a');
-    link.href = `/records/${record.hostId}/${record.date}`;
+    link.href = appUrl(`/records/${record.hostId}/${record.date}`);
     link.className = 'btn btn-sm btn-outline-primary';
     link.textContent = '去處理';
     return link;
@@ -771,7 +848,7 @@ function issueHandlersCell(group) {
     shown.forEach((h, index) => {
         if (index > 0) wrap.appendChild(document.createTextNode('、'));
         const link = document.createElement('a');
-        link.href = `/handlers/${h.handlerId}`;
+        link.href = appUrl(`/handlers/${h.handlerId}`);
         link.textContent = formatUserName(h.displayName, h.account);
         link.addEventListener('click', event => event.stopPropagation());
         wrap.appendChild(link);
@@ -801,24 +878,74 @@ function issueSeverityCell(group) {
     return wrap;
 }
 
-/** 涵蓋範圍：首見 ~ 最近出現（需求的「期間跨度」）。同一天時只顯示一次，不寫成「X ~ X」 */
-function issueSpanCell(group) {
-    const span = document.createElement('span');
-    span.className = 'lf-mono small';
-    span.textContent = group.firstSeen === group.lastSeen
-        ? group.firstSeen
-        : `${group.firstSeen} ~ ${group.lastSeen}`;
-    return span;
+/**
+ * 處理概況：三種狀態各一行（未處理／處理中／已處理），數量為 0 時淡色呈現
+ */
+function issueHandlingSummaryCell(group) {
+    const wrap = document.createElement('div');
+    wrap.className = 'small lf-mono';
+
+    const unhandled = document.createElement('div');
+    unhandled.className = group.unhandledCount > 0 ? '' : 'text-muted';
+    unhandled.textContent = `${formatNumber(group.unhandledCount)} 台未處理`;
+
+    const inProgress = document.createElement('div');
+    inProgress.className = group.inProgressCount > 0 ? '' : 'text-muted';
+    inProgress.textContent = `${formatNumber(group.inProgressCount)} 台處理中`;
+
+    const resolved = document.createElement('div');
+    resolved.className = group.resolvedCount > 0 ? '' : 'text-muted';
+    resolved.textContent = `${formatNumber(group.resolvedCount)} 台已處理`;
+
+    wrap.append(unhandled, inProgress, resolved);
+    return wrap;
 }
 
 /**
+ * 首見（兩欄合併）：預設顯示機房首見；當本期首見與機房首見不同時，
+ * 換行顯示第二行標示本期首見，並附 SVG 圖示標記差異；相同時只顯示一行。
+ * 兩行都以日期起頭，標記放在日期之後——圖示放行首會把第二行的日期推開，
+ * 兩個日期的左緣就對不齊了。
+ */
+function issueFirstSeenCell(group) {
+    const wrap = document.createElement('div');
+    const fleetFirst = group.fleetFirstSeen || group.firstSeen;
+    const periodFirst = group.firstSeen;
+
+    wrap.title = '機房首見：此問題在全機房歷史記錄中首次出現的日期。\n本期首見：此問題在本次查詢區間內首次出現的日期。';
+
+    const fleetLine = document.createElement('div');
+    fleetLine.className = 'lf-mono small';
+    fleetLine.textContent = fleetFirst;
+    wrap.appendChild(fleetLine);
+
+    if (periodFirst && periodFirst !== fleetFirst) {
+        const periodLine = document.createElement('div');
+        periodLine.className = 'lf-mono small text-muted d-flex align-items-center gap-1 mt-1';
+        const date = document.createElement('span');
+        date.textContent = periodFirst;
+        periodLine.appendChild(date);
+        const marker = document.createElement('span');
+        marker.className = 'd-inline-flex align-items-center gap-1';
+        marker.appendChild(icon('info-circle'));
+        const text = document.createElement('span');
+        text.textContent = '本期';
+        marker.appendChild(text);
+        periodLine.appendChild(marker);
+        wrap.appendChild(periodLine);
+    }
+
+    return wrap;
+}
+
+
+/**
  * 出現密度：出現天數 ÷ 期間天數（§10.3）。
- * 「2/90」與「90/90」是完全不同的問題——前者是零星爆發、後者是天天都有的背景值，
- * 而數量排序看不出這件事。附一條密度條讓比例一眼可辨（文字仍是主要資訊，圖只是輔助）。
+ * 數字在上、進度條換行在下，欄寬不變。既有的數字文字與 tooltip 內容保留。
  */
 function issueDensityCell(group) {
-    const wrap = document.createElement('span');
-    wrap.className = 'd-inline-flex align-items-center gap-1 justify-content-end';
+    const wrap = document.createElement('div');
+    wrap.className = 'd-inline-flex flex-column align-items-center';
 
     const text = document.createElement('span');
     text.className = 'lf-mono small';
@@ -827,7 +954,7 @@ function issueDensityCell(group) {
 
     const ratio = group.periodDays > 0 ? group.activeDays / group.periodDays : 0;
     const bar = document.createElement('span');
-    bar.className = 'lf-density';
+    bar.className = 'lf-density mt-1';
     bar.title = `期間 ${group.periodDays} 天內出現 ${group.activeDays} 天（${Math.round(ratio * 100)}%）`;
     const fill = document.createElement('span');
     fill.className = 'lf-density__fill';
@@ -855,7 +982,7 @@ function issueLastSeenCell(group) {
     hint.className = 'small';
     if (group.daysSinceLastSeen === 0) {
         hint.className += ' text-danger fw-semibold';
-        hint.textContent = '今天仍在發生';
+        hint.textContent = '昨日仍在發生';
     } else if (group.daysSinceLastSeen <= 3) {
         hint.className += ' text-danger';
         hint.textContent = `${group.daysSinceLastSeen} 天前`;
@@ -874,6 +1001,27 @@ function issueGroupCell(group) {
     title.className = 'fw-semibold';
     title.textContent = `${group.source} (${group.eventId})`;
     wrap.appendChild(title);
+
+    // 白話說明：在來源(EventId)之下多一行；單行截斷、設最大寬度、hover/focus 可看完整內容。
+    // 沒有說明且分類是「其他」時改顯示固定句（回饋二十六輪 E3）——「其他」在定義上就是
+    // 沒命中任何規則的收容分類，整欄留白會讓人以為是資料漏了，而不是「本來就沒有規則」。
+    // 兩種都沒有才補固定句：knownIssue（規則描述快照）本身就是說明，兩行都補會變成廢話
+    const fallbackExplanation = group.knownIssue
+        ? null
+        : (group.category === 'Other'
+            ? '未命中任何規則的事件，分類為其他'
+            : '這個問題的規則沒有填寫白話說明');
+    const explanationText = group.plainExplanation || fallbackExplanation;
+    if (explanationText) {
+        const explanation = document.createElement('div');
+        explanation.className = 'lf-issue-explanation';
+        explanation.textContent = explanationText;
+        explanation.title = group.plainExplanation
+            ? explanationText
+            : '沒有可顯示的白話說明。可在「規則維護」為這個事件建立規則或補上說明。';
+        explanation.tabIndex = 0;
+        wrap.appendChild(explanation);
+    }
 
     // 問題負責人 badge（回饋十八輪批次F）：「這個問題歸誰」在主視角一眼可見——
     // 與下方 issueHandlersCell（現在誰在處理）是不同概念，見後端 IssueGroupDto.IssueOwnerNames 註解。
@@ -914,7 +1062,8 @@ function detailForIssue(group) {
  */
 function issueActionsCell(group) {
     const wrap = document.createElement('div');
-    wrap.className = 'd-flex gap-2 justify-content-end';
+    // 直排（E1）：三顆按鈕橫排時這一欄約 15 個字寬，是全表最寬的欄之一
+    wrap.className = 'd-flex flex-column gap-1 align-items-end';
 
     // 「是我的案件」還不夠，還要「動得了」（體檢 H2）：被指派但沒有 Handle 能力的人
     // （manager／dev／未分群組且非負責人）過去看得到這顆按鈕，按下去必定 403。
@@ -1096,6 +1245,21 @@ function renderBulkCloseForm(body, group, preview) {
     noteInput.placeholder = '例：確認為週期性維護作業產生，非異常。';
     form.append(noteLabel, noteInput);
 
+    // 機房結論自動套用（回饋十九輪批次F，§2 決策一）：這次操作只處理上方列出的既有日子，
+    // 勾選後才會另外把這個問題設成機房結論，讓之後新出現的主機日也自動套用同一個結論
+    const autoApplyWrap = document.createElement('div');
+    autoApplyWrap.className = 'form-check mb-3';
+    const autoApplyInput = document.createElement('input');
+    autoApplyInput.type = 'checkbox';
+    autoApplyInput.className = 'form-check-input';
+    autoApplyInput.id = 'bulk-close-auto-apply';
+    const autoApplyLabel = document.createElement('label');
+    autoApplyLabel.className = 'form-check-label small';
+    autoApplyLabel.htmlFor = 'bulk-close-auto-apply';
+    autoApplyLabel.textContent = '之後新出現的主機日也自動套用這個結論（設為機房結論）';
+    autoApplyWrap.append(autoApplyInput, autoApplyLabel);
+    form.appendChild(autoApplyWrap);
+
     const submit = document.createElement('button');
     submit.type = 'submit';
     submit.className = 'btn btn-sm btn-primary';
@@ -1130,11 +1294,13 @@ function renderBulkCloseForm(body, group, preview) {
                 from: filters.from || null,
                 to: filters.to || null,
                 status: statusSelect.value,
-                note: noteInput.value.trim()
+                note: noteInput.value.trim(),
+                autoApply: autoApplyInput.checked
             });
 
             toast(`已標記 ${formatNumber(result.updatedHostCount)} 台主機、共 ${formatNumber(result.updatedDayCount)} 天` +
-                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : ''), 'success', 6000);
+                  (result.skippedHostCount > 0 ? `；${formatNumber(result.skippedHostCount)} 台略過` : '') +
+                  (autoApplyInput.checked ? '；已設為機房結論，之後新出現的主機日將自動套用' : ''), 'success', 6000);
 
             if (statusSelect.value === 'false_positive') {
                 toast('若要根治誤報，請至「規則維護」調整對應規則的門檻或條件。', 'info', 8000);
@@ -1171,7 +1337,7 @@ function showBulkCloseTraceLink(result) {
     if (result.to) params.set('to', result.to);
 
     const link = document.createElement('a');
-    link.href = `/records?${params.toString()}`;
+    link.href = appUrl(`/records?${params.toString()}`);
     link.textContent = '檢視這次影響的清單';
     toast(link, 'info', 10000);
 }
@@ -1610,11 +1776,16 @@ function correlationCell(count) {
     return span;
 }
 
+const categoryOrderMap = new Map(CATEGORY_ORDER.map((c, i) => [c, i]));
+
 function categoryBadges(categories) {
-    // 有類別篩選時，命中的類別 badge 用主色標示，看得出哪個是你篩的
+    // 依 CATEGORY_ORDER 的固定順序呈現，使各列類別順序一致；命中篩選者仍用主色
     const active = new Set(activeChips('filter-category-chips', 'category'));
     const wrap = document.createElement('span');
-    for (const category of categories) {
+    const sorted = [...(categories ?? [])].sort((a, b) =>
+        (categoryOrderMap.get(a) ?? 999) - (categoryOrderMap.get(b) ?? 999) || a.localeCompare(b)
+    );
+    for (const category of sorted) {
         const badge = document.createElement('span');
         badge.className = active.has(category)
             ? 'lf-badge lf-badge--primary me-1'
@@ -1687,18 +1858,11 @@ document.getElementById('view-toggle').addEventListener('click', event => {
     search();
 });
 
-for (const button of document.querySelectorAll('[data-range]')) {
-    button.addEventListener('click', () => {
-        const days = Number(button.dataset.range);
-        const from = new Date();
-        from.setDate(from.getDate() - days + 1);
-
-        document.getElementById('filter-from').value = toLocalDateString(from);
-        document.getElementById('filter-to').value = todayLocal();
-        currentPage = 1;
-        search();
-    });
-}
+bindRangeChips({
+    fromInput: document.getElementById('filter-from'),
+    toInput: document.getElementById('filter-to'),
+    onApply: () => { currentPage = 1; search(); }
+});
 
 /** 複製為 CSV：前端序列化當前頁，零後端成本（§8.6-7）。欄位隨視角而異 */
 document.getElementById('btn-copy-csv').addEventListener('click', async () => {
@@ -1728,7 +1892,8 @@ function csvHeader() {
     // CSV 與畫面欄位不一致會讓人以為匯出漏東西——出現天數／期間天數已能回答同樣的問題。
     if (currentView === 'issue') {
         return ['來源', 'Event ID', '分類', '嚴重度', '重大', '主機數',
-            '首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '本期首見', '最近出現', '距今天數', '出現天數', '期間天數',
+            '首見（機房）', '基準台數／日', '偏離倍數',
             '總次數', '處理概況', '處理人'];
     }
     return ['日期', '主機', '風險', '狀況', '類型', '處理狀態', '處理人'];
@@ -1750,6 +1915,8 @@ function csvRow(item) {
             item.hostCount,
             item.firstSeen, item.lastSeen, item.daysSinceLastSeen,
             item.activeDays, item.periodDays,
+            item.fleetFirstSeen || item.firstSeen,
+            item.baselineMedianHostCount ?? '', item.baselineDeviationMultiplier ?? '',
             item.totalCount,
             quote(item.handlingSummary), quote((item.handlers ?? []).map(h => h.displayName).join('、'))];
     }
@@ -1765,14 +1932,14 @@ function quote(value) {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-// 本地日期（S12）：toISOString() 取的是 UTC 日期，台灣（UTC+8）凌晨 0~8 點呼叫會少算一天
+// 期間篩選的預設終點錨在昨天（回饋十九輪批次C），不是真實今天——見 analysisAnchorLocal 的說明
 function today() {
-    return todayLocal();
+    return analysisAnchorLocal();
 }
 
 function defaultFrom() {
     const date = new Date();
-    date.setDate(date.getDate() - 6);
+    date.setDate(date.getDate() - 7);   // 錨點已右移一天，往前 7 天湊回原本 7 天的預設窗
     return toLocalDateString(date);
 }
 

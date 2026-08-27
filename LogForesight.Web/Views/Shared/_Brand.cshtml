@@ -1,0 +1,28 @@
+@*
+    品牌區塊（logo＋主標題＋副標題）：側欄與登入頁共用同一份結構與樣式（docs/WEB-SPEC.md §9.9b 2d）。
+    兩處的尺寸差異只由 .lf-brand--sidebar／--login 的 CSS 變數表達，結構不分岔。
+
+    id（lf-brand-mark／lf-brand-name／lf-brand-subtitle）供 settings.js 儲存成功後即時更新，
+    只有側欄那一份會用到；登入頁是匿名頁，不會有設定表單。
+
+    Model：BrandInfo。ViewData["BrandVariant"]＝"sidebar"｜"login"；
+    ViewData["BrandHref"] 有值時整塊是連結，否則是一般區塊。
+*@
+@model LogForesight.Web.Services.BrandInfo
+@{
+    var variant = (ViewData["BrandVariant"] as string) ?? "sidebar";
+    var href = ViewData["BrandHref"] as string;
+    var cssClass = $"lf-brand lf-brand--{variant}";
+}
+@if (href != null)
+{
+    <a class="@cssClass" href="@href">
+        <partial name="_BrandInner" model="Model" />
+    </a>
+}
+else
+{
+    <div class="@cssClass">
+        <partial name="_BrandInner" model="Model" />
+    </div>
+}

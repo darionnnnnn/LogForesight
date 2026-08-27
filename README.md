@@ -1,4 +1,4 @@
-# LogForesight
+﻿# LogForesight
 
 > 除非必要否則不要讀取 docs/archive/ 內容，避免浪費 token。
 
@@ -7,7 +7,7 @@
 **提早發現硬體故障前兆與入侵跡象**，在問題擴大前示警。
 偵測與風險判定完全由確定性的規則/趨勢/慢速趨勢/關聯層負責；本機 AI 模型（llama.cpp + Gemma 26B/27B 級
 MoE 小模型）只負責把這些結論**翻譯成白話**，讓不懂 Event Log 的人也能一眼看懂狀況該怎麼處理
-（2026-07-20 AI 角色轉換，詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
+（詳見 [docs/archive/HISTORY.md](docs/archive/HISTORY.md)）。
 
 ## 專案結構
 
@@ -28,7 +28,8 @@ LogForesight.Core/     Web 共用的類別庫（原批次與 Web 共用，批次
 
 LogForesight.Web/      唯一的執行與查詢/維護介面（ASP.NET Core MVC，.NET 8）：
 │                       排程設定＋立即執行（AnalysisOrchestrator 的呼叫端）、儀表板、問題查詢、
-│                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動逐筆確認、
+│                       風險日詳情（含處理狀態/指派）、報表（Chart.js 可下鑽）、權限異動檢核
+│                       （表格＋篩選/排序/分頁，可依類別批次核准，見 docs/WEB-SPEC.md §9.5）、
 │                       規則維護（builtin 可改可回復不可刪）、告警抑制（規則/簽章/關聯/總量四型；
 │                       規則型支援主機/群組/全站三種範圍，其餘三型僅單台主機，見 docs/RULES-SPEC.md
 │                       範圍矩陣）、CSV／NetIQ 掃描匯入、執行監控、操作稽核、
@@ -96,16 +97,43 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 與嚴重度）、RDP 防誤報設計、趨勢與關聯判定規則、給 AI 的輔助資訊、資料完整性誠實申報、
 體檢機制——完整內容見 **[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)**。
 
+## 升級注意事項
+
+**升級到本版之前，先到「系統管理 > 設定」確認各項資料保留天數。**
+
+**保留鍵合併**：舊版的「詳情保留天數」與「風險 log 暫存保留天數」已合併為單一的
+「原始事件內容保留天數」（`RawEventRetentionDays`）。升級時自動取兩舊值中**較小者**遷移
+（本來會被刪的資料不該因升級變成不刪）；若兩舊值不同且你想要的是較大值，升級後到設定頁改回來。
+
+**權限異動的原始訊息全文**（`raw_text`）只對升級後新寫入的資料生效；既有列當初只存了
+前 500 字，不會回填，展開明細時畫面會直接標註這件事。
+
+**log 改為每日歸檔**（當天仍是 `logs\web.log`，歸檔改為 `archive\web-yyyy-MM-dd.log`，
+另新增 `error.log` 分流 Warn 以上）。
+
+本版之前，資料清理實際上只作用於本機主機——透過 NetIQ 收錄的主機（正式環境的絕大多數）
+從來沒有被清過。本版修正後這兩個設定值**第一次真正生效**：升級後第一晚起，超過保留天數的
+NetIQ 主機紀錄會開始真的被刪除。如果當初因為「反正沒作用」而把天數設得很短，升級前務必先
+改成真正要的值。
+
+積壓量大時會分多次執行清完（單次上限 50,000 筆），執行畫面會申報剩餘筆數與預估還需幾次執行。
+
+**保留天數的下限是 90 天**（四個保留期設定與首次回補天數皆同）。已經儲存過的設定值不會被改動，
+只有下次在設定頁按儲存時才會要求補到 90 以上；從未存過設定的部署直接吃出廠預設
+。
+
+**權限異動的資料維護（自動、各跑一次）**：站台啟動時會重剖既有 NetIQ 權限異動列以補上
+物件類型與處理程序名稱（並把 EventId 4670 的非檔案物件改分到「物件權限變更」），
+另會刪除沒有明細可展開的舊「權限異動（彙總）」總計列。兩者各自記狀態、只執行一次。
+
 ## 部署驗證
 
-早期版本有獨立的 `--selftest`／`--debug-dump` console 旗標，隨批次 console 專案於 Phase 5
-退場（`docs/archive/WEB-SCHEDULER-PLAN.md` §1.5）一併移除，對應的驗證方式改為：
+沒有獨立的驗證用 CLI 旗標，驗證方式如下：
 
 - **內建規則的合法性**（有無不合格項目、是否有規則被排序在前面的規則遮蔽、推導出的 Security
-  稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：現在是
-  `LogForesight.Tests` 的自動化測試（`KnownIssueCatalogTests`、
-  `CorrelationAnalyzerRuleAlignmentTests`），換一台主機部署前跑 `dotnet test` 全綠即可，
-  比手動執行一次性 CLI 驗證更不容易被忘記跑。
+  稽核 watchlist 是否涵蓋齊全、關聯層引用的事件 ID 是否都存在於種子規則表）：由
+  `LogForesight.Tests` 的自動化測試涵蓋（`KnownIssueCatalogTests`、
+  `CorrelationAnalyzerRuleAlignmentTests`），換一台主機部署前跑 `dotnet test` 全綠即可。
 - **你改過的規則**（透過 Web 規則維護頁新增/修改）：儲存前一律經過 `RuleValidator`（見下方
   「規則庫與抑制設定」），驗證不過直接拒絕寫入，不需要另外手動驗證。
 - **AI 呼叫的完整 prompt 與原始回應**（平常的診斷 log 刻意不記錄這些，見下方「診斷用檔案
@@ -115,13 +143,13 @@ AI 白話翻譯（JSON 格式/內容檢查未過自動重問）→ 寫回歷史�
 
 ## 規則庫與抑制設定
 
-2026-07-21 規則外部化：`KnownIssueCatalog` 的規則表（[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)
+規則外部化：`KnownIssueCatalog` 的規則表（[docs/DETECTION-SPEC.md](docs/DETECTION-SPEC.md)
 「監控的危險訊號清單」列出的那些規則）不再寫死在程式碼裡，調整規則**不需要重新編譯部署**。
 
-**存放位置（2026-07-24 起）**：規則與抑制設定存在**資料庫**裡（`lf_blobs` 的 `rules`／
+**存放位置**：規則與抑制設定存在**資料庫**裡（`lf_blobs` 的 `rules`／
 `suppressions` 兩個 key），不是可以直接開啟編輯的檔案——`rules.json`／`suppressions.json`
-是 Jsonl 檔案後端時代的產物，該後端已於 2026-07-24 全面退役（見 docs/archive/HISTORY.md「2026-07-24」段
-定案 10）。完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
+是 Jsonl 檔案後端時代的產物，該後端已全面退役（詳見 docs/archive/HISTORY.md）。
+完整設計定案（語意邊界、seed/匯入政策、DB 映射）見
 [docs/RULES-SPEC.md](docs/RULES-SPEC.md)，這裡只說日常維護怎麼做。
 
 **Web 站台啟動時會冪等初始化規則庫**（`rules` blob 不存在才寫入內建種子，已存在只載入不覆寫），
@@ -213,7 +241,7 @@ Web「NetIQ 維護」頁的「匯入」分頁：選一台已設好探索帳密�
 既有使用中的不勾）與「全不選」兩個快捷。作業系統預設值取自該台 Sentinel 的設定
 （見「NetIQ 維護」頁），只套用在本次**新增**的主機。
 
-**掃描一律真實連線；離線示範資料是顯式開關（2026-08-05 §13）**：不論哪個環境，掃描預設都連
+**掃描一律真實連線；離線示範資料是顯式開關（§13）**：不論哪個環境，掃描預設都連
 真實 Sentinel——沒有可連的 Sentinel 時精靈會誠實回報連線錯誤，而不是默默給假資料。需要離線
 跑完整匯入流程（開發／展示）時，到「系統管理 > NetIQ 維護」頁開啟**「使用離線示範資料」**
 開關（固定台數／網段數，掃描結果上方會有醒目警告標示，頁面另有常駐徽章）。
@@ -226,7 +254,7 @@ Web「NetIQ 維護」頁的「匯入」分頁：選一台已設好探索帳密�
 `SentinelEventMapper`／`SentinelQueryBuilder`，`LogForesight.Core/Analysis/`）；機房 pipeline
 本體（`NetiqPipelineService`，`LogForesight.Core/Service/`）在本機分析結束後接機房迴圈，
 逐日、批次（≤50 台 IP）向 Sentinel 取事件、映射後餵進與本機路徑相同的分析服務——
-**Windows／Linux 主機皆支援**（2026-08-07 起，依主機 `Os` 分組各自建查詢與映射，
+**Windows／Linux 主機皆支援**（依主機 `Os` 分組各自建查詢與映射，
 Linux 欄位對應與 filter 規則見 [docs/NETIQ-API-REFERENCE.md](docs/NETIQ-API-REFERENCE.md)
 §4a）；當日續跑靠既有的缺漏日回補機制。每台主機每次執行最多回補
 `NetiqOptions.BackfillDays` 天（預設 1，「系統管理 > NetIQ 維護」頁可調），
@@ -257,7 +285,7 @@ token 有效期等細節），待核對清單見 [docs/BACKLOG.md](docs/BACKLOG.
 1. **純統計模式回補歷史基準（建議排週末）**：到「系統管理 > 設定 > AI 服務」頁清空
    `AiBaseUrl` 並存檔——系統會自動短路成統計模式（規則／趨勢／關聯層照常執行，只是不呼叫
    AI，見下方「深入分析」一節），速度快得多。到「系統管理 > NetIQ 維護」頁把
-   `BackfillDays` 設為 14（上限值；`TrendAnalyzer` 需要至少 13～14 天可靠歷史才不會持續
+   `BackfillDays` 設為 14（上限是 30，但 `TrendAnalyzer` 只需要 13～14 天可靠歷史，設 14 就夠；設更多只是多查 Sentinel。趨勢分析需要足夠歷史才不會持續
    申報「趨勢基準建立中」），視 Sentinel 環境與網路狀況調整 `MaxParallelServers`／
    `MaxParallelQueriesPerServer`（見「NetIQ 事件取數與 API 驗證」一節）縮短總耗時。完成
    掃描匯入後，到「系統管理 > 排程作業」頁按「立即執行」觸發第一次全量回補。
@@ -308,7 +336,7 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 
 ### 運作方式
 
-快照存於執行檔目錄的 `permission_snapshot.json`，每次執行讀取目前狀態、與快照比對出異動、
+快照存於資料庫（blob key `permission_snapshot`），每次執行讀取目前狀態、與快照比對出異動、
 再覆寫快照。首次執行沒有快照可比對，只建立基準、不產生告警。
 
 發現異動時「排程作業」頁的執行輸出會標示明顯的異動警示（與風險等級的紅/黃色徽章區隔），
@@ -381,7 +409,7 @@ is not allowed"），代表僅靠 Security log 事件規則的話，權限異動
 檔案；風險等級以紅（高）/黃（中）/灰（低）三色徽章呈現，全站語意色一致（見「Web 部署」與
 文件地圖中的 WEB-SPEC.md）。
 
-**行為變更（2026-08-11，回饋十五輪 A-4）：Low 嚴重度簽章的「頻率上升」不再產生告警文字**。
+**行為變更：Low 嚴重度簽章的「頻率上升」不再產生告警文字**。
 過去任何嚴重度的簽章一旦判定 Rising（歷史基準兩倍以上且達最低次數），都會列進頻率異常告警、
 可能把當天從低風險拉到中風險；現在只有 Medium 以上嚴重度的簽章才會產生告警文字並參與風險
 判定，Low 嚴重度的雜訊型簽章（本來就大量存在、頻率本身波動就大）不再能單靠「量的變化」把
@@ -422,7 +450,7 @@ export\
 ■ 前置掃描                  ← 主分析篇幅外的低嚴重度項目篩選結果
 ```
 
-### 深入分析：規則命中查知識庫，只有 Other 類別才呼叫 AI（2026-07-20 AI 角色轉換）
+### 深入分析：規則命中查知識庫，只有 Other 類別才呼叫 AI
 
 **規則已命中的類別（儲存裝置、硬體、安全…）直接查 `KnownIssueCatalog` 的靜態知識庫渲染**——
 同一 Event ID 的原因/處置幾乎不變，寫死比每次重新生成更快、更一致、零幻覺，AI 服務不可用時
@@ -462,10 +490,11 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 
 執行檔目錄下的 `appsettings.json`。找不到時使用預設值（開箱即用）；**存在但格式錯誤時直接中止啟動**並印出錯誤位置——設定檔存在代表有明確設定意圖，靜默改用預設值可能把資料寫進錯誤的儲存後端。
 
-**本檔只保留「站台還沒起來、資料庫還沒連上之前就必須知道」的啟動與安全前提**（2026-08-05 §12 精簡）：
+**本檔只保留「站台還沒起來、資料庫還沒連上之前就必須知道」的啟動與安全前提**（§12 精簡）：
 
 ```json
 {
+  "Server": { "PathBase": "" },
   "Storage": { "Type": "Sqlite", "DataRoot": "", "ConnectionString": "" },
   "Jwt": { "SecretKey": "<測試值，正式環境以環境變數覆寫>", "ExpireHours": 8 },
   "Auth": {
@@ -478,9 +507,10 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 
 | 設定 | 預設值 | 說明 |
 |---|---|---|
+| `Server.PathBase` | `""`（＝掛在網站根目錄） | 站台掛載前綴（例 `/LogForesight`）。**IIS 子 Application 不需要設定**（自動辨識）；只有「Kestrel 直曝＋反向代理加了前綴」或本機要驗證前綴行為時才填 |
 | `Storage.Type` | `Sqlite` | 儲存後端二選一，預設 `Sqlite`（測試/開發用單一 `.db` 檔真資料庫）／`SqlServer`（正式環境，2000 台量級）。全部資料走 DB；`StorageBackend` 是唯一路由點，分析邏輯不需異動。詳見 docs/WEB-SPEC.md §10.5 |
 | `Storage.DataRoot` | `""`（＝執行檔目錄） | 資料根目錄（決定 SQLite `.db` 落點；export\ 報告全文等交付檔案的所在） |
-| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\logforesight.db`）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
+| `Storage.ConnectionString` | `""` | `Type=SqlServer` 時的連線字串；正式環境建議以環境變數 `Storage__ConnectionString` 覆寫，不寫進版控。`Type=Sqlite` 亦可自訂（留空＝`{DataRoot}\Db\logforesight.db`，子資料夾不存在時自動建立）；未明寫 `Pooling` 時系統自動補 `Pooling=False`——Microsoft.Data.Sqlite 連線池與 EF user function 在併發下會拋「unable to delete/modify user-function due to active statements」 |
 | `Jwt.SecretKey` | 公開已知測試值 | HMAC-SHA256 簽章金鑰（≥32 bytes）。正式環境以環境變數 `Jwt__SecretKey` 覆寫，否則 Production 啟動會被擋下 |
 | `Auth.Provider` | `Stub` | `Ad`（正式；AD 伺服器等設定在「系統管理 > 設定」頁）或 `Stub`（測試，不驗密碼；Production 啟動會被擋下） |
 | `Auth.ServerAdmin` | `svc-lfadmin` | 本地救援帳號（指派 admin 成員、AD 停擺時的入口）。`PasswordHash` 以 `LogForesight.Web.exe --hash-password` 產生，正式環境以環境變數 `Auth__ServerAdmin__PasswordHash` 覆寫 |
@@ -489,17 +519,16 @@ Security log 權限這些模式永遠不會命中；系統實質上只剩儲存�
 AI 位址／金鑰與進階參數（逾時、重試、token 上限、取樣懲罰、額外請求欄位）、
 權限監控資料夾、分析參數（伺服器角色描述、體檢間隔、掃描頻道）、CSV 匯入上限、
 各項保留天數、AD 驗證伺服器。NetIQ 連線與節流參數則在「系統管理 > NetIQ 維護」頁。
-（原本散在 appsettings 的 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段
-皆於 §12 遷入或退役；每個欄位的預設值＝原出廠值，升級後行為不變。）
+（`appsettings.json` 沒有 `Ai`／`Permissions`／`Analysis`／`Import`／`Ui`／`Auth:Ldap` 區段，
+這些設定一律以 DB 的設定頁為準——見 docs/WEB-SPEC.md §12。）
 
 `nlog.config`（同目錄的獨立 XML 檔，NLog 慣例）控制診斷檔案 log 的等級與輪替策略，
 預設 Info 以上、單檔 10MB 輪替、最多保留 30 個歸檔，詳見下方「診斷用檔案 Log」章節。
 
 ## Web 部署（docs/archive/HISTORY.md P1-3）
 
-**只需要部署 `LogForesight.Web` 一個執行檔**——早期版本另需與批次 `LogForesight.exe` 部署在
-同一台伺服器並共用資料目錄，批次專案已隨 Phase 5 退場（docs/archive/WEB-SCHEDULER-PLAN.md §1.5），
-現在 Web 站台本身就是分析執行與查詢介面的唯一部署單位。
+**只需要部署 `LogForesight.Web` 一個執行檔**——Web 站台本身就是分析執行與查詢介面的
+唯一部署單位，沒有另外的批次執行檔要一起部署。
 
 ### 以 Windows 服務執行
 
@@ -511,10 +540,23 @@ sc create LogForesightWeb ^
   binPath= "C:\path\to\LogForesight.Web.exe" ^
   start= auto
 sc description LogForesightWeb "LogForesight 查詢介面（Web）"
+sc failure LogForesightWeb reset= 86400 actions= restart/60000/restart/60000/restart/60000
 sc start LogForesightWeb
 ```
 
 服務帳號需要對 `Storage:DataRoot`（含資料庫檔案，若用 Sqlite）與自己的 `logs\` 目錄有讀寫權限。
+
+`sc failure` 是必要的，不是加分項：這套系統的用途就是「沒人看的時候幫你看」，
+服務自己掛掉卻掛到有人發現為止，等於監控本身變成盲區。上面的設定是三次失敗各隔 60 秒重啟、
+失敗計數 24 小時歸零。
+
+**啟動逾時**：SCM 預設只等 30 秒。主機數多時首次啟動要做 schema 確認與背景搬移的判定，
+接近或超過 30 秒會被 SCM 直接砍掉，而且症狀是「服務起不來」而非任何錯誤訊息——
+唯一線索在 `logs\` 的 nlog 檔裡。真的遇到就調整登錄檔（單位是毫秒，需重開機生效）：
+
+```
+reg add "HKLM\SYSTEM\CurrentControlSet\Control" /v ServicesPipeTimeout /t REG_DWORD /d 120000 /f
+```
 
 ### HTTPS（Kestrel）
 
@@ -549,27 +591,74 @@ appsettings.json 會進版控，下列欄位在正式環境**一律**用環境�
 | `ASPNETCORE_ENVIRONMENT` | — | 設為 `Production`——`WebAppSettings.Validate()` 的多項 fail-fast 檢查（Stub 驗證、已知測試金鑰黑名單）只在 Production 生效 |
 | `Jwt__SecretKey` | `Jwt:SecretKey` | JWT 簽章金鑰（≥32 bytes）。appsettings.json 內建的是公開已知的測試值，帶著它上 Production 會被 `Validate()` 擋下啟動 |
 | `Auth__ServerAdmin__PasswordHash` | `Auth:ServerAdmin:PasswordHash` | 本地救援帳號密碼雜湊，以 `LogForesight.Web.exe --hash-password` 產生。appsettings.json 內建值同樣是已知測試值，會被擋下 |
-| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定 |
+| `LF_CRYPTO_KEY` | — | Sentinel 密碼／AI API 金鑰加密用（`CryptoHelper`，base64、解碼後需恰為 32 bytes）。未設定時 fallback 內嵌金鑰＋記警告——正式環境建議設定，**使用雲端 AI provider（OpenAI 官方／Azure OpenAI）時必須設定**：保護的是真實的雲端 API 憑證 |
 | `Storage__ConnectionString` | `Storage:ConnectionString` | `Storage:Type=SqlServer` 時的連線字串 |
 | `Kestrel__Endpoints__Https__Certificate__Password` | `Kestrel:Endpoints:Https:Certificate:Password` | HTTPS 憑證密碼（見上） |
 
+### 登入不了時的診斷順序
+
+「帳號密碼確定正確卻登不進去」有好幾種成因，畫面上看起來都很像。照這個順序查最快：
+
+1. **畫面是否顯示「頁面資源載入失敗…」且登入鈕被停用**：是的話代表登入頁的 JS module
+   沒載入成功，開 F12 Console 看是哪一支 `js/` 檔 404 或 MIME 錯誤（子 Application 部署下
+   多半是靜態檔路徑或瀏覽器快取住舊檔）。此時密碼欄也不會出現。
+2. **F12 > Network 有沒有發出 `POST api/auth/login`**：沒有＝同上；
+   回 401＝帳號或密碼問題（往下第 4 步）；回 200 卻仍被打回登入頁＝往下第 3 步。
+3. **Cookie 沒被瀏覽器接受**：檢查回應的 `Set-Cookie lf_auth` 有沒有出現、旗標是否合理
+   （`Secure` 只在 HTTPS 或有 `X-Forwarded-Proto: https` 時才會加）。
+   站台每次登入／登出都會自動清掉舊版遺留的 `Path=/` cookie，正常不必請使用者手動清；
+   若 `Set-Cookie` 正常送出而瀏覽器仍不帶回，才需要清一次瀏覽器 cookie 排除殘留。
+4. **看 `logs/web.log`**：serverAdmin 的登入成功／密碼錯誤／鎖定都會留紀錄（站台「稽核查詢」
+   頁的 `login`／`login_failed` 是另一條獨立紀錄，兩邊都可查）。
+   兩邊都完全沒有紀錄＝請求根本沒到後端，回到第 1 步。
+5. **設定被覆寫**：環境變數 `Auth__ServerAdmin__PasswordHash` 的優先權**高於**
+   `appsettings.json`——部署時設過，改檔案就沒有效果。另確認 `ASPNETCORE_ENVIRONMENT`
+   不是 `Development`，否則 `appsettings.Development.json` 會蓋掉這組設定。
+6. **AD 未設定時一般帳號一律登入失敗**，訊息與密碼打錯完全相同（刻意不洩漏帳號是否存在）。
+   此時只有 serverAdmin 進得來；「系統管理 > 設定」的 AD 區塊會顯示目前是否生效。
+
+> `PasswordHash` 誤填**明文密碼**時，站台會在啟動時 fail fast 並指引改用 `--hash-password`
+> 產生雜湊——沒有這道檢查的話，症狀會是「密碼明明對卻一直說錯」。
+
+### 以 IIS 子 Application 部署
+
+站台可以掛在 IIS 網站底下的 Application，網址帶前綴（`http://host/LogForesight/...`）：
+
+1. 主機安裝 **ASP.NET Core Hosting Bundle**（IIS 要靠它託管 .NET 8 應用程式）。
+2. `dotnet publish -c Release`——發行輸出會自動含 `web.config`，IIS 靠它啟動應用程式。
+3. IIS 管理員：在網站底下「新增應用程式」，別名填 `LogForesight`、實體路徑指向發行目錄。
+4. 應用程式集區設為 **無受控程式碼**（.NET CLR 版本），身分需要對 `Storage:DataRoot`
+   與 `logs\` 有讀寫權限。
+
+**不需要設定 `Server:PathBase`**——in-process 託管時掛載路徑自動辨識，前端也會跟著
+補前綴（見 docs/WEB-SPEC.md §8.1a）；何時才要手動填見設定表該列。
+
+Cookie 的作用範圍會跟著掛載路徑走，因此同一台主機掛正式與測試兩個 Application 時，
+兩邊的登入身分不會互相覆蓋。
+
 ### 防火牆
 
-內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可，不需要 IIS 反向代理：只開放 Web 站台埠號（如 8443）
-給實際會用到的內網範圍，不對外網開放。
+內網管理系統用 Kestrel 直曝＋防火牆限縮來源即可（不需要為了轉發而多架一層反向代理）：
+只開放 Web 站台埠號（如 8443）給實際會用到的內網範圍，不對外網開放。
+組織既有 IIS 站台要統一入口時，改用 IIS 託管，見下方「以 IIS 子 Application 部署」。
 
 ### 目錄配置
 
 ```
 D:\LogForesight\
 └─ Web\                    ← LogForesight.Web.exe 與其 appsettings.json
-    ├─ logforesight.db     ← Storage:DataRoot 下的 SQLite 檔（若用 Sqlite；留空預設為執行檔目錄）
+    ├─ Db\                  ← SQLite 檔 logforesight.db（若用 Sqlite；Storage:DataRoot 底下）
     ├─ export\              ← 風險報告全文
     └─ logs\                ← 診斷檔案 log（nlog.config）
 ```
 
 單一部署單位，`Storage:DataRoot` 留空即可（預設為執行檔目錄），不需要另外規劃第二個目錄
 給批次程式使用。
+
+> **升級注意**：舊版把 `logforesight.db` 放在 `Storage:DataRoot` 直下。升級後預設落點改為
+> 底下的 `Db\`，站台會在新位置建立空資料庫，舊檔留在原地不動。要沿用既有資料，請在啟動前
+> 手動把 `logforesight.db`（連同可能存在的 `-wal`／`-shm`）搬進 `Db\`，或在
+> `Storage:ConnectionString` 明寫舊路徑。
 
 ## 正式環境穩定性設計
 
@@ -579,7 +668,7 @@ Polly 網路重試、停用連線池、退化重複輸出抑制、context 預算
 
 ## 診斷用檔案 Log（NLog）
 
-執行輸出（排程作業頁、排程狀態卡）是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位）時常常不夠。`logs\web.log`（執行檔同目錄）補這塊，記錄比執行輸出更細的診斷資訊：
+執行輸出（排程作業頁、排程狀態卡）是給人即時看的摘要，遇到需要深入排查的問題（例如「AI 回覆內容未通過檢查」但看不出是哪個欄位）時常常不夠。`logs\web.log`（執行檔同目錄；昨天以前每日一檔在 `logs\archive\web-yyyy-MM-dd.log`）補這塊，記錄比執行輸出更細的診斷資訊：
 
 - 每次 AI 呼叫的耗時、回應長度、重試原因
 - **JSON 解析/內容檢查失敗時的具體診斷**：解析失敗會記錄回覆預覽（頭尾各一截）；內容檢查沒過（如摘要超長、必填欄位空白）會記錄**解析出的結構化物件本身**，才看得出究竟是哪個欄位不合理——這是執行輸出完全沒有的資訊
@@ -594,10 +683,15 @@ Polly 網路重試、停用連線池、退化重複輸出抑制、context 預算
 - Event Log 內容本來就已經完整保存在分析紀錄資料庫與風險報告（`export\`），不需要在診斷 log 裡重複一份
 - 已經記錄的「短診斷片段」（回覆預覽、解析後的物件、程式產生的告警字串）本身都有長度上限或天然筆數上限，不會無界增長
 
-### 容量控制（雙重防護）
+### 檔案切分與容量控制
 
-`nlog.config` 設定單檔超過 **10MB** 自動輪替，最多保留 **30 個**歸檔檔案（`logs\archive\`），
-即使某個角落不慎記錄了較大內容，磁碟用量仍有明確上限，不會無限增長。
+log 每天歸檔：當天內容在 `web.log`，跨日時歸檔成 `archive\web-yyyy-MM-dd.log`——
+要回頭查「上週三那次跑批」時，直接開那天的歸檔檔就好。
+
+**`Warn` 以上另寫一份獨立的 `error.log`（同樣每日歸檔）**：平常要看的是「有沒有出事」，
+在混著 Info 的檔案裡撈例外太費事。錯誤內容兩邊都有——完整時序留在 web 檔，單獨追錯用 error 檔。
+
+容量仍有雙重防護：單檔超過 **10MB** 會提早歸檔，歸檔檔（`logs\archive\`）保留 **90 天**，即使某個角落不慎記錄了較大內容，磁碟用量仍有明確上限。
 
 ### 層級
 

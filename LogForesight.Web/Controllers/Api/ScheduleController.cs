@@ -1,3 +1,5 @@
+﻿using LogForesight.Core.Models;
+using LogForesight.Core.Service;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -26,10 +28,16 @@ public class ScheduleController : ControllerBase
     private readonly IAuditService _audit;
     private readonly ICurrentUser _currentUser;
     private readonly IUserStore _users;
+    private readonly IAnalysisRecordQuery _records;
+    private readonly ISystemSettingsStore _settingsStore;
+    private readonly IWebAiService? _webAi;
+    private readonly NetiqOptionsStore? _netiqStore;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
-        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users)
+        IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
+        IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IWebAiService? webAi = null,
+        NetiqOptionsStore? netiqStore = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -39,6 +47,10 @@ public class ScheduleController : ControllerBase
         _audit = audit;
         _currentUser = currentUser;
         _users = users;
+        _records = records;
+        _settingsStore = settingsStore;
+        _webAi = webAi;
+        _netiqStore = netiqStore;
     }
 
     [HttpGet("options")]
@@ -109,38 +121,125 @@ public class ScheduleController : ControllerBase
     /// <summary>執行前預覽：這個範圍實際會涵蓋幾台主機（docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4）</summary>
     [HttpGet("run-preview")]
     [Permission(Capability.Maintain)]
-    public ApiResponse<RunPreviewDto> RunPreview([FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId)
+    public ApiResponse<RunPreviewDto> RunPreview(
+        [FromQuery] string scope, [FromQuery] string? segment, [FromQuery] long? hostId,
+        [FromQuery] bool onlyMissingOrFailed = false, [FromQuery] int? backfillDays = null)
     {
         var (_, hostIds, includesLocal) = ResolveScope(scope, segment, hostId);
+        var aiDisabled = !(_webAi?.Available ?? true);
+
+        if (!onlyMissingOrFailed)
+        {
+            return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
+            {
+                HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0),
+                AiDisabled = aiDisabled
+            });
+        }
+
+        var useAi = !aiDisabled;
+        var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays);
+        var defaultBackfill = _netiqStore?.Get().BackfillDays ?? 1;
+        var lookback = Math.Clamp(backfillDays ?? defaultBackfill, 1, effectiveLimit);
+        var from = DateTime.Today.AddDays(-lookback);
+        var to = DateTime.Today.AddDays(-1);
+        // 走輕量查詢：這裡只需要 HostId／Date／AiAnalyzed／AiPending 四個欄位，
+        // Query 會反序列化整份分析內容，三千台 × 14 天在預覽這種互動路徑上代價過高
+        var recentRecords = _records.QueryLightweight(new RecordQueryFilter { From = from, To = to });
+
+        var count = 0;
+
+        if (hostIds is { Count: > 0 })
+        {
+            var recordsByHost = recentRecords.Where(r => r.HostId != 0).GroupBy(r => r.HostId).ToDictionary(g => g.Key, g => g.ToList());
+            foreach (var id in hostIds)
+            {
+                // 「該主機在回望窗口內的紀錄筆數不足＝有缺日」語意保留
+                if (!recordsByHost.TryGetValue(id, out var hostRecords) || hostRecords.Count < lookback ||
+                    hostRecords.Any(r => HostDayPostProcessor.NeedsBackfill(r, useAi)))
+                {
+                    count++;
+                }
+            }
+        }
+
+        if (includesLocal)
+        {
+            var localHostName = Environment.MachineName;
+            var localRecords = recentRecords.Where(r => string.Equals(r.Host, localHostName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (localRecords.Count < lookback || localRecords.Any(r => HostDayPostProcessor.NeedsBackfill(r, useAi)))
+            {
+                count++;
+            }
+        }
+
         return ApiResponse<RunPreviewDto>.Ok(new RunPreviewDto
         {
-            HostCount = (hostIds?.Count ?? 0) + (includesLocal ? 1 : 0)
+            HostCount = count,
+            AiDisabled = aiDisabled
         });
+    }
+
+    /// <summary>回望天數的有效上限驗證：超過目前保留天數回 400，不靜默 clamp。
+    /// 抽成靜態方法讓測試能單獨驗證邊界，不必為了建構整個 controller 而在正式碼塞遷就替身的分支</summary>
+    internal static void ValidateBackfillDays(int? backfillDays, int retentionDays)
+    {
+        if (backfillDays is not { } days) return;
+        var effectiveLimit = NetiqOptions.GetEffectiveBackfillDaysLimit(retentionDays);
+        if (days > effectiveLimit)
+        {
+            throw DomainException.Validation(
+                $"回望天數（{days} 天）不可超過歷史資料保留天數（{effectiveLimit} 天），超過保留天數的回補資料會在下次清理時被刪除。");
+        }
     }
 
     [HttpPost("run")]
     [Permission(Capability.Maintain)]
     public async Task<ApiResponse<TriggerRunResultDto>> Run([FromBody] TriggerRunRequest request)
     {
+        ValidateBackfillDays(request.BackfillDays, _settingsStore.Get().RetentionDays);
+
+        if (request.RerunMode != RerunMode.None)
+        {
+            // 兩者是同一個下拉選單的四個值，不該同時成立：OnlyMissingOrFailed 是模式 None 的語意，
+            // 同時給等於要求「只補缺日」又要求「重跑既有日」，行為未定義——擋掉而不是猜使用者想要哪個
+            if (request.OnlyMissingOrFailed)
+                throw DomainException.Validation("「只補跑失敗或未執行」與重新分析模式不能同時指定。");
+
+            if (request.RerunDays is not { } rerunDays || rerunDays < 1)
+                throw DomainException.Validation("重新分析模式下必須指定重跑天數且必須大於等於 1 天。");
+
+            ValidateBackfillDays(request.RerunDays, _settingsStore.Get().RetentionDays);
+        }
+
         var (runScope, hostIds, _) = ResolveScope(request.Scope, request.Segment, request.HostId);
         if (runScope == RunScope.NetiqHosts && (hostIds == null || hostIds.Count == 0))
             throw DomainException.Validation("找不到符合條件的主機，請確認網段或主機是否正確。");
 
-        var runRequest = new RunRequest
-        {
-            Scope = runScope,
-            HostIds = hostIds,
-            BackfillOverride = request.BackfillDays,
-            Trigger = $"manual:{_currentUser.Account}"
-        };
+        var runRequest = ToRunRequest(request, runScope, hostIds, _currentUser.Account);
+
+        var rerunSummary = request.RerunMode != RerunMode.None
+            ? $"，重新分析：{RerunModeText(request.RerunMode)}（{request.RerunDays} 天）"
+            : "";
 
         _audit.Record(
             action: AuditActions.ScheduleManualRun,
             summary: $"手動觸發分析執行（範圍：{ScopeText(request.Scope)}" +
                      (request.Segment != null ? $"「{request.Segment}」" : "") +
-                     (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") + "）",
+                     (hostIds != null ? $"，涵蓋 {hostIds.Count} 台主機" : "") +
+                     (request.OnlyMissingOrFailed ? "，僅補跑失敗或未執行" : "") +
+                     rerunSummary + "）",
             targetKind: "schedule",
-            detail: new { request.Scope, request.Segment, request.HostId, request.BackfillDays });
+            detail: new
+            {
+                request.Scope,
+                request.Segment,
+                request.HostId,
+                request.BackfillDays,
+                request.OnlyMissingOrFailed,
+                request.RerunMode,
+                request.RerunDays
+            });
 
         var started = await _scheduler.TriggerRunAsync(runRequest);
         return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
@@ -149,6 +248,23 @@ public class ScheduleController : ControllerBase
             Message = started ? "已開始執行。" : "目前已有其他執行進行中，請稍後再試（不會排隊）。"
         });
     }
+
+    /// <summary>
+    /// 手動觸發請求 → 執行請求的欄位對應。抽成獨立函式是為了讓「欄位有沒有全部帶到」測得到——
+    /// 同型的漏抄曾讓 <see cref="RunRequest.OnlyMissingOrFailed"/> 靜默失效（API 設了、稽核也印了、
+    /// 執行端收不到）。新增 <see cref="TriggerRunRequest"/> 欄位時必須同步這裡。
+    /// </summary>
+    internal static RunRequest ToRunRequest(
+        TriggerRunRequest request, RunScope runScope, IReadOnlyList<long>? hostIds, string account) => new()
+    {
+        Scope = runScope,
+        HostIds = hostIds,
+        BackfillOverride = request.BackfillDays,
+        OnlyMissingOrFailed = request.OnlyMissingOrFailed,
+        RerunMode = request.RerunMode,
+        RerunDays = request.RerunDays,
+        Trigger = $"manual:{account}"
+    };
 
     [HttpPost("cancel")]
     [Permission(Capability.Maintain)]
@@ -249,6 +365,14 @@ public class ScheduleController : ControllerBase
         _ => trigger
     };
 
+    private static string RerunModeText(RerunMode mode) => mode switch
+    {
+        RerunMode.Unhandled => "未處理",
+        RerunMode.UnhandledAndAssigned => "未處理與處理中",
+        RerunMode.All => "全部",
+        _ => "不重跑"
+    };
+
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
     {
         Enabled = options.Enabled,
@@ -260,6 +384,7 @@ public class ScheduleController : ControllerBase
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)
             ? null
             : _users.FindByAccount(options.UpdatedByAccount)?.DisplayName,
-        NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null
+        NextTriggerTime = options.Enabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.Windows) : null,
+        MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };
 }

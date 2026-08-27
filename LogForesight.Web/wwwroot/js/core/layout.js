@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 主版面的共用行為（docs/WEB-SPEC.md §8.5）：側欄選單、目前使用者、登出。
  *
  * 選單依能力顯示，但這**只是顯示層的方便**——真正的防線在後端的 PermissionFilter。
@@ -6,8 +6,10 @@
  */
 
 import { api, getCurrentUser, hasCapability } from './api.js';
+import { appUrl, appPath } from './paths.js';
 import { icon } from './ui.js';
 import { formatUserName } from './format.js';
+import { initBrandAlign } from './brand-align.js';
 
 /**
  * 選單分組（requires 為 null 代表所有已登入者可見）。分組讓 11 個項目按用途歸類，
@@ -23,7 +25,7 @@ const NAV_SECTIONS = [
             // 處理人員每天上工的起點，不該藏在別的頁面連結後面。ServerAdmin 帳號 userId=0，
             // 沒有對應的 WebUser，同 BUSINESS_PAGES 的既有邏輯隱藏（hideForServerAdmin）
             { href: user => `/handlers/${user.userId}`, label: '我的交辦', icon: 'inbox', requires: null, hideForServerAdmin: true },
-            { href: '/permission-changes', label: '權限異動待辦', icon: 'clipboard-check', requires: 'ConfirmPermission' },
+            { href: '/permission-changes', label: '權限異動檢核', icon: 'clipboard-check', requires: 'ConfirmPermission' },
             { href: '/reports', label: '報表', icon: 'file-earmark-text', requires: null }
         ]
     },
@@ -36,9 +38,10 @@ const NAV_SECTIONS = [
             { href: '/admin/hosts', label: '主機', icon: 'hdd-network', requires: 'Maintain' },
             { href: '/admin/users', label: '使用者', icon: 'people', requires: 'Maintain' },
             { href: '/admin/groups', label: '群組與授權', icon: 'diagram-3', requires: 'Maintain' },
-            // 問題負責人（回饋十八輪批次F）：以 (Source,EventId) 為鍵指派跨主機負責人，
-            // 與主機負責人是相同概念——放在主機／群組之後，同屬「誰負責什麼」這條動線
-            { href: '/admin/issue-owners', label: '問題負責人', icon: 'people', requires: 'Maintain' },
+            // 問題檔案（回饋十八輪批次F 建立「問題負責人」、回饋十九輪批次F 擴充機房結論）：
+            // 以 (Source,EventId) 為鍵指派跨主機負責人＋記錄機房結論——放在主機／群組之後，
+            // 同屬「誰負責什麼」這條動線
+            { href: '/admin/issue-owners', label: '問題檔案', icon: 'people', requires: 'Maintain' },
             { href: '/admin/imports', label: '資料匯入', icon: 'upload', requires: 'Maintain' },
             { href: '/admin/netiq', label: 'NetIQ 維護', icon: 'link-45deg', requires: 'Maintain' },
             { href: '/admin/settings', label: '設定', icon: 'gear', requires: 'Maintain' }
@@ -89,7 +92,7 @@ function renderNav(user) {
     const nav = document.getElementById('lf-nav');
     if (!nav) return;
 
-    const currentPath = location.pathname;
+    const currentPath = appPath();
 
     for (const section of NAV_SECTIONS) {
         // href 可以是函式（依目前使用者算出連結，例如「我的交辦」連到自己的處理人頁）——
@@ -134,7 +137,7 @@ function renderNav(user) {
 
         for (const item of visible) {
             const link = document.createElement('a');
-            link.href = item.resolvedHref;
+            link.href = appUrl(item.resolvedHref);
             link.className = 'lf-sidebar__link';
             link.appendChild(icon(item.icon));
 
@@ -310,7 +313,7 @@ function bindLogout() {
         try {
             await api.post('/api/auth/logout');
         } finally {
-            location.href = '/login';
+            location.href = appUrl('/login');
         }
     });
 }
@@ -372,7 +375,7 @@ function renderSetupReturnBanner() {
     actions.className = 'd-flex align-items-center gap-2';
 
     const backLink = document.createElement('a');
-    backLink.href = '/setup';
+    backLink.href = appUrl('/setup');
     backLink.className = 'btn btn-sm btn-primary';
     backLink.textContent = '返回啟動精靈';
     actions.appendChild(backLink);
@@ -388,4 +391,5 @@ function renderSetupReturnBanner() {
 }
 
 initFontScale();
+initBrandAlign();
 init();

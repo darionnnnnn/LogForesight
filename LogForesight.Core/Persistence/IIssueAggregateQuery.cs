@@ -1,4 +1,4 @@
-namespace LogForesight.Core.Persistence;
+﻿namespace LogForesight.Core.Persistence;
 
 /// <summary>
 /// 一個問題（Source＋EventId）在某段期間內的聚合結果
@@ -63,8 +63,18 @@ public interface IIssueAggregateQuery
     /// <summary>
     /// 期間內依 (Source, EventId) 聚合。<paramref name="hostIds"/> 為可見範圍
     /// （null＝不限制；空集合＝零結果，與 <c>RecordQueryFilter.Hosts</c> 同一套授權語意）。
+    /// <paramref name="visibleSeverities"/>＝SiteHidden 模式的問題嚴重度可見性
+    /// （<c>ISystemSettingsService.GetVisibleSeverities</c>，null＝不限制／DefaultHidden 模式）——
+    /// 這裡繞過 <c>RecordRepository</c> 的「單一咽喉」，呼叫端必須自己把這道過濾傳進來，
+    /// 否則 SiteHidden 模式下應該被隱藏的問題會在依問題／依主機／依日期視角重新冒出來。
+    /// <paramref name="riskLevels"/>＝**日**風險等級（畫面上的「風險層級」chip），篩的是
+    /// 「問題出現在哪些主機日」，與問題自身的嚴重度是兩套層級；null＝不限制。與
+    /// <see cref="AggregateByCategory"/> 同一套語意，儀表板風險類型卡的數字才等於下鑽筆數。
     /// </summary>
-    List<IssueAggregate> Aggregate(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds);
+    List<IssueAggregate> Aggregate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
 
     /// <summary>
     /// 反查：期間內出現過指定問題（Source＋EventId，任一命中即算）的相異存活主機 ID
@@ -74,4 +84,264 @@ public interface IIssueAggregateQuery
     /// 同一套排除慣例。
     /// </summary>
     HashSet<long> HostIdsFor(IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to);
+
+    /// <summary>
+    /// 期間內每個問題各自影響的相異存活主機 id 集合（回饋十九輪批次G3，PriorityScore 的
+    /// tierW 用：「受影響主機最高分級」需要逐一問題各自的主機清單，不是合起來的一個集合）。
+    /// 與 <see cref="HostIdsFor"/> 的差異只在回傳形狀——那裡是輸入問題集合「合起來」影響的
+    /// 主機（授權反查用），這裡是「逐一問題」各自的主機集合。查無資料的問題不在回傳字典中。
+    /// </summary>
+    Dictionary<(string SourceKey, int EventId), HashSet<long>> HostIdsByIssue(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// 期間內每個 (存活主機, 完整簽章) 最近一次出現的日期與當時嚴重度（回饋十九輪批次A，
+    /// §10.6「排除已有結論的問題」的資料基礎）。這裡只回答「這個組合最後一次出現時長什麼樣子」——
+    /// 「有沒有結論」由呼叫端另外查處理狀態／案件表判斷，兩件事分開才不會把 SQL 查詢與
+    /// 處理狀態的業務規則（案件優先／觀察到期／預設嚴重度）綁在同一層。
+    /// </summary>
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
+    List<HostIssueOccurrence> LatestOccurrences(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
+
+    /// <summary>
+    /// 期間內出現在「可行動」風險日（高／中）上的每個 (存活主機, 完整簽章) 最近一次出現快照
+    /// （回饋十九輪批次D，Todo 問題口徑用）。母體與 <c>HandlingHistoryQueryService.GetTodo</c>
+    /// 的既有定義一致：日層級 RiskLevel 為高或中，不是問題自身嚴重度。
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>。
+    /// </summary>
+    List<HostIssueOccurrence> ActionableOccurrences(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null,
+        IReadOnlySet<string>? riskLevels = null);
+
+    /// <summary>
+    /// 依風險類別彙總（回饋十九輪批次D，取代 <c>CategoryAggregator.Merge</c> 在記憶體對
+    /// 整段期間紀錄的彙總）。<paramref name="allowedSeverities"/> 為 null 時不限制，
+    /// 否則只計入落在集合內的問題（已含 Critical→High 的舊資料相容映射，呼叫端不必自己展開）。
+    /// </summary>
+    List<CategoryAggregate> AggregateByCategory(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity>? allowedSeverities,
+        IReadOnlySet<string>? riskLevels = null);
+
+    /// <summary>
+    /// 依日期彙總（回饋十九輪批次E2，取代「依日期」視角在記憶體對整段期間紀錄的 GroupBy）。
+    /// 彙總單位是 <c>lf_daily_records</c>（不是問題表）：一天一列，回答「這一天整體有多不平靜」。
+    /// <paramref name="riskLevels"/> 非 null 時只計入日風險等級落在集合內的紀錄——這是母體篩選
+    /// （篩掉的日子連同它的高/中/低分桶一起消失），不是分桶後再過濾，篩「只看高」時
+    /// 中/低分桶自然全為零，與舊版 <c>RecordFilterMatcher</c> 的既有語意相同。
+    /// <paramref name="categories"/>／<paramref name="eventId"/>／<paramref name="source"/>
+    /// 語意同 <see cref="RecordQueryFilter"/> 的同名欄位（紀錄中任一問題簽章符合即命中該紀錄）。
+    /// </summary>
+    /// <paramref name="visibleSeverities"/> 語意同 <see cref="Aggregate"/>：套用在風險類型 chips 的
+    /// 母體上（<c>Categories</c> 欄位），不影響高/中/低風險日分桶——那是日層級欄位，不受問題嚴重度
+    /// 可見性影響（同 <c>RecordRepository.ApplySeverityVisibility</c> 只砍 TopIssues、不動 RiskLevel 的既有原則）。
+    List<DateRiskAggregate> AggregateByDate(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+
+    /// <summary>
+    /// 依主機彙總（回饋十九輪批次E2，取代「依主機」視角在記憶體對整段期間紀錄的 GroupBy）。
+    /// 彙總單位同樣是 <c>lf_daily_records</c>，跨整段期間攤平成一台主機一列。
+    /// 其餘參數語意同 <see cref="AggregateByDate"/>。
+    /// </summary>
+    List<HostRiskAggregate> AggregateByHost(
+        DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<string>? riskLevels = null, IReadOnlySet<IssueCategory>? categories = null,
+        int? eventId = null, string? source = null, IssueSeverity? minSeverity = null,
+        IReadOnlySet<IssueSeverity>? visibleSeverities = null);
+
+    /// <summary>
+    /// 期間內每個 (問題, 出現日) 的相異存活主機數（回饋十九輪批次G1，機房級基準線用）。
+    /// 只回傳有出現的日子——沒出現的日子不落地成 0，呼叫端用列數就能知道「出現日數」，
+    /// 不必額外傳日曆天數展開。<paramref name="issues"/> 是呼叫端已經算出的候選問題集合
+    /// （通常是當頁排行結果），不是整份表——與 <see cref="LatestOccurrences"/> 同一個規模假設。
+    /// </summary>
+    List<IssueDailyHostCount> DailyHostCounts(
+        IReadOnlyCollection<(string Source, int EventId)> issues, DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds);
+
+    /// <summary>
+    /// 問題的機房首見日（回饋十九輪批次G4呈現，批次B落地，↔ lf_issue_first_seen）。
+    /// 鍵為 (SourceKey 正規化大寫, EventId)，呼叫端查詢時要對 Source 做同樣的
+    /// <c>ToUpperInvariant()</c> 正規化才查得到——與本檔其餘方法的 wanted-normalization 慣例一致。
+    /// 查無資料（理論上不會發生，機房首見日在每次分析寫入時 insert-if-absent）時該問題不在回傳字典中，
+    /// 呼叫端須自行決定 fallback（如退回本次查詢窗口內的 FirstSeen）。
+    ///
+    /// **刻意沒有 <c>hostIds</c> 參數——這是「空集合＝零結果」授權慣例的唯一例外，不是漏做**
+    /// （回饋十九輪批次I 體檢確認）：「機房首見」的語意本來就是**跨主機的機房級事實**
+    /// （「這個問題第一次在機房出現是什麼時候」），套上可見範圍過濾就會退化成「這個問題在
+    /// 我看得到的主機上第一次出現」——那正是呼叫端已經有的 <see cref="IssueAggregate.FirstSeen"/>，
+    /// 兩欄會變成同一個數字，這個欄位存在的理由（分辨「本期首見」與「其實是老問題」）就消失了。
+    /// 揭露面可接受：回傳值只有日期、不含任何主機資訊，且呼叫端傳入的問題集合本來就已經過
+    /// 可見範圍過濾（見 <c>IssueRankingBuilder.Build</c>），使用者問不到自己看不見的問題。
+    /// 做授權下推稽核時請勿把這裡「修」成有過濾。
+    /// </summary>
+    Dictionary<(string SourceKey, int EventId), DateTime> FirstSeenFor(
+        IReadOnlyCollection<(string Source, int EventId)> issues);
+
+    /// <summary>
+    /// 推導風險日的處理狀態（SQL 端實作）。
+    /// 注意：墓碑主機不在本查詢的責任範圍，呼叫端必須排除並自行處理。
+    /// </summary>
+    List<DayHandlingProjection> DeriveDayHandling(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds);
+
+    DayTodoAggregate AggregateDayTodo(
+        DateTime from, DateTime to,
+        IReadOnlyCollection<long>? hostIds,
+        IReadOnlySet<IssueSeverity> unhandledSeverities,
+        IReadOnlyCollection<long> excludedHostIds,
+        DateTime today,
+        IReadOnlySet<string>? riskLevels = null);
+
+    /// <summary>
+    /// 報表 KPI 聚合 (scope == all)。
+    /// </summary>
+    ReportKpiAggregate AggregateReportKpi(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
+    /// <summary>
+    /// 報表逐日趨勢聚合 (scope == all)。
+    /// </summary>
+    List<TrendAggregate> AggregateReportTrend(DateTime from, DateTime to, IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities);
+
+    /// <summary>
+    /// 本期＋前期 KPI 一次取回（回饋二十七輪作業 F3）。契約＝與分別呼叫兩次
+    /// <see cref="AggregateReportKpi"/> 逐欄位相同；預設實作就是那樣呼叫兩次
+    /// （測試替身自動取得等值行為），EF 實作覆寫成合併查詢收斂資料庫往返。
+    /// </summary>
+    (ReportKpiAggregate Current, ReportKpiAggregate Previous) AggregateReportKpiPair(
+        DateTime from, DateTime to, DateTime previousFrom, DateTime previousTo,
+        IReadOnlyCollection<long>? hostIds, IReadOnlySet<string>? riskLevels, IReadOnlySet<IssueSeverity>? visibleSeverities) =>
+        (AggregateReportKpi(from, to, hostIds, riskLevels, visibleSeverities),
+         AggregateReportKpi(previousFrom, previousTo, hostIds, riskLevels, visibleSeverities));
 }
+
+public sealed record ReportKpiAggregate(int TotalIssues, int HighRiskDays, int MediumRiskDays, int AffectedHosts, int CoverageGapDays);
+public sealed record TrendAggregate(DateTime Date, int HighRisk, int MediumRisk, int ErrorCount);
+
+/// <summary>
+/// SQL 端推導出的風險日處理狀態（不含墓碑主機）。
+/// </summary>
+public sealed record DayHandlingProjection(long HostId, DateTime Date, string DayStatus, bool HasHandler);
+
+/// <summary>單一問題在單一出現日的相異存活主機數（回饋十九輪批次G1）</summary>
+public sealed class IssueDailyHostCount
+{
+    public string Source { get; init; } = string.Empty;
+    public int EventId { get; init; }
+    public DateTime Date { get; init; }
+    public int HostCount { get; init; }
+}
+
+/// <summary>單一天（跨全部主機）的風險彙總</summary>
+public sealed class DateRiskAggregate
+{
+    public DateTime Date { get; init; }
+    public int HighRiskHosts { get; init; }
+    public int MediumRiskHosts { get; init; }
+    public int LowRiskHosts { get; init; }
+
+    /// <summary>當天有關聯訊號的相異存活主機數</summary>
+    public int CorrelationHosts { get; init; }
+
+    /// <summary>當天有風險紀錄的相異存活主機數</summary>
+    public int HostCount { get; init; }
+
+    /// <summary>當天出現過的風險類型，依「最高嚴重度、問題數」排序（<see cref="CategoryAggregator"/> 同一套規則）</summary>
+    public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>單一（存活）主機跨整段期間的風險彙總</summary>
+public sealed class HostRiskAggregate
+{
+    public long HostId { get; init; }
+    public int HighRiskDays { get; init; }
+    public int MediumRiskDays { get; init; }
+    public int LowRiskDays { get; init; }
+    public int CorrelationDays { get; init; }
+
+    /// <summary>期間內出現過的風險類型，依「最高嚴重度、問題數」排序（跨日去重）</summary>
+    public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
+
+    public DateTime LatestDate { get; init; }
+    public string LatestRiskLevel { get; init; } = string.Empty;
+    /// <summary>最新一天的風險日標題</summary>
+    public string LatestHeadline { get; init; } = string.Empty;
+}
+
+/// <summary>單一（存活主機, 完整簽章）在期間內最近一次出現的快照</summary>
+public sealed class HostIssueOccurrence
+{
+    public long HostId { get; init; }
+    public string IssueKey { get; init; } = string.Empty;
+    public DateTime LastSeen { get; init; }
+    public int SeverityRank { get; init; }
+
+    /// <summary>最近一次出現當天的已知問題說明（回饋十九輪批次E1，依問題視角用），未命中規則為 null</summary>
+    public string? KnownIssue { get; init; }
+}
+
+/// <summary>
+/// 單一風險類別在期間內的彙總（回饋十九輪批次D，§二-2「大數字該是去重筆數」）。
+///
+/// **兩種計數口徑並存，各自回答不同的問題**：
+///   - <see cref="IssueTypeCount"/>（卡片大數字）＝相異 (Source, EventId) 數，跨主機跨日皆去重，
+///     答的是「這個類別有幾種問題」。
+///   - <see cref="RiskItemCount"/>＝這段期間「有幾個不同的（主機,問題）風險資訊」
+///     ——同一台主機同一個問題連續多天出現只算一筆，答的是「現在有多少個問題要處理」。
+///   - <see cref="CumulativeCount"/>（小字）＝主機×日的原始出現次數加總，答的是
+///     「這段期間累計看到幾次」，數字大不代表問題多，只代表拖得久。
+/// 過去只有後者（<c>CategoryAggregator</c> 的既有語意），且被誤當「有幾個問題」顯示，
+/// 是外部審查點名「總覽儀表板看不出真正嚴重程度」的直接原因。
+/// </summary>
+public sealed class CategoryAggregate
+{
+    public string Category { get; init; } = string.Empty;
+
+    /// <summary>去重問題類型數：相異 (SourceName 大小寫不敏感, EventId) 組合數，跨主機、跨日期皆去重</summary>
+    public int IssueTypeCount { get; init; }
+
+    /// <summary>去重風險資訊筆數：相異 (存活主機, Source, EventId) 組合數</summary>
+    public int RiskItemCount { get; init; }
+
+    /// <summary>主機×日累計出現次數（COUNT(*)，即舊 IssueCount 的語意）</summary>
+    public long CumulativeCount { get; init; }
+
+    /// <summary>相異存活主機數</summary>
+    public int AffectedHosts { get; init; }
+
+    /// <summary>期間內全部事件次數加總（原始日誌筆數，不去重——與風險資訊筆數是不同的量綱）</summary>
+    public long TotalEvents { get; init; }
+
+    /// <summary>
+    /// 依風險資訊（去重後）的最高嚴重度分桶，三者之和＝<see cref="RiskItemCount"/>。
+    /// 三級化後不再有 Critical 分桶（正規化為 High，見 <see cref="LegacySeverityRank"/>）。
+    /// </summary>
+    public int HighCount { get; init; }
+    public int MediumCount { get; init; }
+    public int LowCount { get; init; }
+
+    /// <summary>
+    /// 依「問題類型」（相異 Source+EventId，取該類型跨主機跨日的最高嚴重度）分桶，
+    /// 三者之和＝<see cref="IssueTypeCount"/>——卡片大數字與嚴重度分解同一量綱。
+    /// </summary>
+    public int HighTypeCount { get; init; }
+    public int MediumTypeCount { get; init; }
+    public int LowTypeCount { get; init; }
+
+    /// <summary>命中「重大」旗標（或舊資料 Critical 正規化強制）的風險資訊筆數，去重口徑</summary>
+    public int ElevatesCount { get; init; }
+}
+
+public sealed record DayTodoAggregate(
+    int TotalCount, int OpenCount, int InProgressCount, int ResolvedCount, int OverdueCount);

@@ -25,7 +25,9 @@ public class DashboardController : ControllerBase
 
     [HttpGet("summary")]
     public ApiResponse<DashboardDto> Summary([FromQuery] int? days) =>
-        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(days ?? DefaultDays));
+        // Clamp 同 host-detail 慣例（1..90）：未夾住時任意整數（含負數／超大值）會直接進
+        // DateTime.Today.AddDays(-days+1) 算出離譜的查詢區間
+        ApiResponse<DashboardDto>.Ok(_dashboard.GetSummary(Math.Clamp(days ?? DefaultDays, 1, 90)));
 }
 
 /// <summary>
@@ -60,9 +62,11 @@ public class RunActivityController : ControllerBase
             IsRunning = _runState.IsRunning,
             Done = done,
             Total = total,
-            // 分母都是「主機日」，但一般使用者對這個單位沒有概念——本機路徑是逐日回補（天），
-            // NetIQ 機房路徑是逐台主機（台）；netiq-ai／netiq-backpressure 是排隊的主機日數，
-            // 用「件」而非「台」，避免使用者以為又要重新查一次（docs/archive/FEEDBACK-12-PLAN.md §3.7）。
+            // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台）——「主機日」這個單位
+            // 一般使用者沒有概念。netiq-ai／netiq-backpressure 這條 AI 背景消化軌的分母是
+            // **排入 AI 佇列的件數**（回饋二十七輪作業 B3：背壓期間改報 AI 消化進度，
+            // 不再沿用主機日數字），用「件」而非「台」，避免使用者以為又要重新查一次
+            // （docs/archive/FEEDBACK-12-PLAN.md §3.7）。
             UnitText = phase switch
             {
                 "local" => "天",
@@ -112,12 +116,19 @@ public class ReportsController : ControllerBase
 
     [HttpGet("summary")]
     public ApiResponse<ReportSummaryDto> Summary(
-        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope)
+        [FromQuery] string? from, [FromQuery] string? to, [FromQuery] string? handlingScope, [FromQuery] string? compare = null)
     {
-        var toDate = ParseDate(to) ?? DateTime.Today;
-        var fromDate = ParseDate(from) ?? toDate.AddDays(-29);
+        // 未帶 to 時的預設終點錨在昨天（回饋十九輪批次C）：前端一律會帶明確日期
+        // toDefault 為昨天；fromDefault 依實際解析出的 to 往前 29 天（報表 JS 的 setRange 語意）
+        var toDefault = DateTime.Today.AddDays(-1);
+        var (fromDate, toDate) = ParseDateRange(
+            from, to,
+            fromDefault: (ParseDate(to) ?? toDefault).AddDays(-29),
+            toDefault: toDefault,
+            throwOnReversed: true,
+            maxDays: 366);
 
-        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate, toDate, handlingScope));
+        return ApiResponse<ReportSummaryDto>.Ok(_reports.GetSummary(fromDate!.Value, toDate!.Value, handlingScope, compare));
     }
     // 跨主機同簽章查詢（原 GET signature）已於 §4 併入「問題查詢」（eventId＋source＋依問題視角
     // 為嚴格超集），端點與 ReportService.FindSignature／SignatureHitDto 一併移除。

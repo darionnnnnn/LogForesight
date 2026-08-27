@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 使用者詳細（docs/archive/FEEDBACK-11-PLAN.md §3）：管理視角的單一使用者全貌。
  *
  * 兩支 API 各司其職，不重複第二套投影：
@@ -9,6 +9,7 @@
  */
 
 import { api, getCurrentUser } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, formatDateTime, riskBadge } from '../core/format.js';
 
@@ -74,7 +75,7 @@ function renderHeader(detail) {
 
     const workLink = document.createElement('a');
     workLink.className = 'btn btn-sm btn-outline-primary ms-auto';
-    workLink.href = `/handlers/${user.userId}`;
+    workLink.href = appUrl(`/handlers/${user.userId}`);
     workLink.textContent = '開啟工作頁';
     titleRow.appendChild(workLink);
 

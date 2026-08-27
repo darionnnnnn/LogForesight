@@ -1,5 +1,6 @@
 using LogForesight.Core.Service;
 using LogForesight.Web.Models;
+using LogForesight.Web.Services;
 using LogForesight.Web.Services.Mail;
 using Xunit;
 
@@ -27,6 +28,8 @@ public class MailNotificationServiceTests : IDisposable
     private readonly FakeHandlingStore _handlings = new();
     private readonly FakeIssueOwnerStore _issueOwners = new();
     private readonly FakeIssueAggregateQuery _issueAggregates = new();
+    private readonly FakeIssueHandlingStore _issueHandlings = new();
+    private readonly FakeIssueCaseStore _cases = new();
     private readonly EfSqliteFixture _fx = new();
 
     /// <summary>分析永遠只產出到昨天——所有測試紀錄以此為基準日，而非 DateTime.Today</summary>
@@ -34,9 +37,23 @@ public class MailNotificationServiceTests : IDisposable
 
     public void Dispose() { _fx.Dispose(); GC.SuppressFinalize(this); }
 
+    /// <summary>不含問題優先摘要（回饋十九輪批次H1）：不關心信件內容問題區塊的既有測試繼續用這個
+    /// ——MailIssueDigest 為 null 時該區塊靜默留空，不影響其餘欄位（見 MailNotificationService
+    /// 的既有慣例，同 _issueOwners／_issueAggregates 選填）。</summary>
     private MailNotificationService Create() =>
         new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
             new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates);
+
+    /// <summary>含問題優先摘要：串真的 OccurrenceStatusResolver（逾期判定需要），
+    /// _issueAggregates 仍是 Fake——測試以 _issueAggregates.Result／AggregateOverride／
+    /// ActionableOccurrencesResult 造資料，不需要真的連 SQL。</summary>
+    private MailNotificationService CreateWithIssueDigest()
+    {
+        var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlings, _cases, _settingsStore);
+        var issueDigest = new MailIssueDigest(_issueAggregates, statusResolver, _settingsStore);
+        return new(_settingsStore, _sender, _hosts, _users, _userGroups, _groupAccess, _records, _handlings,
+            new MailNotifyStateStore(_fx.Blob("mail_notify_state")), _issueOwners, _issueAggregates, issueDigest);
+    }
 
     private static DailyAnalysisRecord Record(long hostId, string host, DateTime date, string riskLevel,
         string headline = "", string? riskBasis = null, params LogIssueSignature[] issues) => new()
@@ -128,6 +145,11 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
+    /// <summary>
+    /// 回饋十九輪批次H2：執行摘要的主機日明細已改為「請至站台」連結，不再逐筆列出主機名——
+    /// 這裡改以統計行（未過濾的達門檻筆數）驗證只有 host1（High）進了門檻，host2（Low）沒有，
+    /// 而不是像改版前那樣直接在 body 找主機名字串。
+    /// </summary>
     [Fact]
     public async Task NotifyAfterRunAsync_執行摘要只納入達門檻的紀錄()
     {
@@ -141,31 +163,36 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyAfterRunAsync();
 
         var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("host1", sent.Message.Body);
-        Assert.DoesNotContain("host2", sent.Message.Body);
+        Assert.Contains("執行摘要：1 台主機達", sent.Message.Body);
+        Assert.DoesNotContain("如需查看逐主機逐日明細", sent.Message.Body);   // 未注入 MailIssueDigest 時問題優先區塊整段不附
     }
 
-    /// <summary>回饋十六輪批次A-5：達門檻紀錄超過 50 筆時，明細只列前 50 筆並補一行
-    /// 「其餘 N 台請至站台檢視」——2000 台規模下 MailMinRiskLevel=中 可能有 600+ 筆，
+    /// <summary>回饋十六輪批次A-5、回饋十九輪批次H2 改版：主機日明細改為問題優先區塊，行數上限
+    /// 語意隨之改為「問題行」上限，數值沿用 50——2000 台規模下同時逾期／擴散的問題數可能破百，
     /// 純文字信不該無上限列出去。</summary>
     [Fact]
-    public async Task NotifyAfterRunAsync_執行摘要超過上限時截斷並提示其餘筆數()
+    public async Task NotifyAfterRunAsync_問題優先區塊超過上限時截斷並提示其餘筆數()
     {
         CreateViewAllAccount("ops@test.local");
         EnableMail(s => { s.MailOnRunCompleted = true; s.MailMinRiskLevel = RiskLevels.Medium; });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
         for (var i = 0; i < 55; i++)
         {
-            var host = _hosts.Upsert(new WebHost { HostName = $"host{i}" });
-            _records.Add(Record(host.HostId, $"host{i}", Yesterday, RiskLevels.High));
+            _issueAggregates.Result.Add(new IssueAggregate
+            {
+                Source = $"issue{i}", EventId = i, Category = "Other",
+                MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, FirstSeen = Yesterday, LastSeen = Yesterday
+            });
         }
 
-        await Create().NotifyAfterRunAsync();
+        await CreateWithIssueDigest().NotifyAfterRunAsync();
 
         var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("host0", sent.Message.Body);
-        Assert.Contains("host49", sent.Message.Body);
-        Assert.DoesNotContain("host50", sent.Message.Body);
-        Assert.Contains("其餘 5 台請至站台", sent.Message.Body);
+        Assert.Contains("issue0/0", sent.Message.Body);
+        Assert.Contains("issue49/49", sent.Message.Body);
+        Assert.DoesNotContain("issue50/50", sent.Message.Body);
+        Assert.Contains("其餘 5 個問題請至站台", sent.Message.Body);
     }
 
     [Fact]
@@ -224,6 +251,70 @@ public class MailNotificationServiceTests : IDisposable
         await Create().NotifyAfterRunAsync();
 
         Assert.Empty(_sender.Sent);
+    }
+
+    /// <summary>回饋十九輪批次H2：高風險即時通知改為「逐問題行＋主機日附錄」——問題優先區塊是
+    /// 主要內容，既有的逐主機日明細降級為附錄，兩者同時出現在同一封信裡（不是二選一）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_高風險即時通知同時包含問題優先與主機日附錄()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => s.MailUrgentEnabled = true);
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        _issueAggregates.Result.Add(new IssueAggregate
+        {
+            Source = "disk", EventId = 153, Category = "Storage",
+            MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, FirstSeen = Yesterday, LastSeen = Yesterday
+        });
+
+        await CreateWithIssueDigest().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("disk/153", sent.Message.Body);
+        Assert.Contains("主機日附錄", sent.Message.Body);
+        Assert.Contains("host1", sent.Message.Body);
+    }
+
+    /// <summary>回饋十九輪批次H3：同一批次內，可見範圍相同的收件人共用同一次問題查詢——
+    /// 兩位皆為 ViewAll 帳號（可見範圍集合相同），MailIssueDigest.Build 每次呼叫跑兩次
+    /// Aggregate（前期＋本期），H3 應該只實際查一次（共 2 次），不是各自查一次（共 4 次）。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_相同可見範圍的收件人共用同一次問題查詢()
+    {
+        const string email1 = "ops1@test.local";
+        const string email2 = "ops2@test.local";
+        CreateViewAllAccount(email1);
+        CreateViewAllAccount(email2);
+        EnableMail(s => { s.MailOnRunCompleted = true; s.MailRecipients = new List<string> { email1, email2 }; });
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        _issueAggregates.Result.Add(new IssueAggregate
+        {
+            Source = "disk", EventId = 153, Category = "Storage",
+            MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, FirstSeen = Yesterday, LastSeen = Yesterday
+        });
+
+        await CreateWithIssueDigest().NotifyAfterRunAsync();
+
+        Assert.Equal(2, _sender.Sent.Count);
+        Assert.Equal(2, _issueAggregates.AggregateCallCount);
+    }
+
+    /// <summary>問題優先區塊空清單時明講「目前沒有」，不留空白讓人誤以為信件壞掉或漏印。</summary>
+    [Fact]
+    public async Task NotifyAfterRunAsync_問題優先區塊空清單時明講目前沒有()
+    {
+        CreateViewAllAccount("ops@test.local");
+        EnableMail(s => s.MailOnRunCompleted = true);
+        var host = _hosts.Upsert(new WebHost { HostName = "host1" });
+        _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High));
+        // _issueAggregates.Result 刻意留空
+
+        await CreateWithIssueDigest().NotifyAfterRunAsync();
+
+        var sent = Assert.Single(_sender.Sent);
+        Assert.Contains("目前沒有需要優先處理的問題。", sent.Message.Body);
     }
 
     // ── RiskLevels 查詢下推（回饋十八輪批次A）─────────────────────────────
@@ -348,7 +439,7 @@ public class MailNotificationServiceTests : IDisposable
         var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
         var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
 
@@ -366,7 +457,7 @@ public class MailNotificationServiceTests : IDisposable
         CreateViewAllAccount("ops@test.local");
         var hostOwner = _users.Upsert(new WebUser { Account = "hostowner", Email = "hostowner@test.local", Active = true });
         var host = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "network", EventId = 999, OwnerUserIds = new List<long> { hostOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
 
@@ -384,7 +475,7 @@ public class MailNotificationServiceTests : IDisposable
         var issueOwner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
         var host1 = _hosts.Upsert(new WebHost { HostName = "host1", OwnerUserIds = new List<long> { hostOwner.UserId } });
         var host2 = _hosts.Upsert(new WebHost { HostName = "host2", OwnerUserIds = new List<long> { hostOwner.UserId } });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { issueOwner.UserId } });
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailNotifyHostOwners = true; });
         _records.Add(Record(host1.HostId, "host1", Yesterday, RiskLevels.High, issues: Issue("disk", 153)));
         _records.Add(Record(host2.HostId, "host2", Yesterday, RiskLevels.High, issues: Issue("network", 999)));
@@ -403,7 +494,7 @@ public class MailNotificationServiceTests : IDisposable
     public async Task NotifyAfterRunAsync_全域收件人是問題負責人時看得到該主機明細()
     {
         var owner = _users.Upsert(new WebUser { Account = "issueowner", Email = "issueowner@test.local", Active = true });
-        _issueOwners.Upsert(new IssueOwnerRule { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
+        _issueOwners.Upsert(new IssueProfile { SourceName = "disk", EventId = 153, OwnerUserIds = new List<long> { owner.UserId } });
         var host = _hosts.Upsert(new WebHost { HostName = "host1" });
         _issueAggregates.HostIdsForResult = new HashSet<long> { host.HostId };
         EnableMail(s => { s.MailUrgentEnabled = true; s.MailRecipients = new List<string> { "issueowner@test.local" }; });
@@ -879,8 +970,12 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Single(_sender.Sent);
     }
 
-    /// <summary>每日摘要窗口右移一天（回饋十七輪批次A-3）：分析永遠只產出到昨天，
-    /// 「今天」的紀錄（理論上不存在的狀態）不該落在每日摘要窗口內。</summary>
+    /// <summary>
+    /// 每日摘要窗口右移一天（回饋十七輪批次A-3）：分析永遠只產出到昨天，「今天」的紀錄
+    /// （理論上不存在的狀態）不該落在每日摘要窗口內。回饋十九輪批次H2 改版後主機日明細不再
+    /// 逐筆列出主機名，改以統計行（只統計窗口內的達門檻筆數）驗證同一件事——若「今天」的紀錄
+    /// 被誤含入窗口，這裡會變成「2 個主機日達」。
+    /// </summary>
     [Fact]
     public async Task CheckAndSendDailyWeeklyAsync_每日摘要窗口是昨天不含今天()
     {
@@ -895,8 +990,7 @@ public class MailNotificationServiceTests : IDisposable
         await Create().CheckAndSendDailyWeeklyAsync(now);
 
         var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("host-yesterday", sent.Message.Body);
-        Assert.DoesNotContain("host-today", sent.Message.Body);
+        Assert.Contains("1 個主機日達", sent.Message.Body);
     }
 
     /// <summary>回饋十七輪批次A-4：「無事時不寄」開關，預設 false（照寄）——期間內無事同時是
@@ -924,8 +1018,13 @@ public class MailNotificationServiceTests : IDisposable
         Assert.Empty(_sender.Sent);
     }
 
-    /// <summary>週報彙總範圍（docs/archive/FEEDBACK-15-PLAN.md D-3）：過去 7 個完整日（窗口右移一天，
-    /// 昨天往回 7 天）達門檻的主機日逐主機彙總＋未處理數；窗口外的紀錄不計入。</summary>
+    /// <summary>
+    /// 週報彙總範圍（docs/archive/FEEDBACK-15-PLAN.md D-3）：過去 7 個完整日（窗口右移一天，
+    /// 昨天往回 7 天）達門檻的主機日計入統計、窗口外的紀錄不計入；未處理數不受窗口限制。
+    /// 回饋十九輪批次H2 改版：內容整段改為問題優先區塊（見末段 disk/153 斷言），
+    /// 逐主機彙總格式（「host1：高風險 N 天」）不再是本文內容，統計行與未處理數兩個既有
+    /// 觀察面沒有變化，繼續用它們驗證窗口正確性。
+    /// </summary>
     [Fact]
     public async Task 週報彙總過去七日達門檻的主機日並附未處理數()
     {
@@ -944,11 +1043,17 @@ public class MailNotificationServiceTests : IDisposable
         _records.Add(Record(host1.HostId, "host1", to, RiskLevels.Medium));
         _records.Add(Record(host1.HostId, "host1", to.AddDays(-9), RiskLevels.High));   // 窗口外，不計入
         _handlings.Save(new RecordHandling { HostName = "host1", Date = to.AddDays(-1), Status = HandlingStatuses.Open });
+        _issueAggregates.Result.Add(new IssueAggregate
+        {
+            Source = "disk", EventId = 153, Category = "Storage",
+            MaxSeverityRank = (int)IssueSeverity.High, HostCount = 1, FirstSeen = to, LastSeen = to
+        });
 
-        await Create().CheckAndSendDailyWeeklyAsync(now);
+        await CreateWithIssueDigest().CheckAndSendDailyWeeklyAsync(now);
 
         var sent = Assert.Single(_sender.Sent);
-        Assert.Contains("host1：高風險 1 天、中風險 1 天", sent.Message.Body);
+        Assert.Contains("2 個主機日達", sent.Message.Body);
+        Assert.Contains("disk/153", sent.Message.Body);
         Assert.Contains("未處理（含處理中）的風險日共 1 筆", sent.Message.Body);
     }
 

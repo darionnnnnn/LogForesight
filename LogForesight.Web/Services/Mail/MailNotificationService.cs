@@ -78,6 +78,11 @@ public class MailNotificationService
     /// 兩邊本該同步卻各自維護一份而漂移。可為 null，同 _issueOwners 的既有慣例。</summary>
     private readonly IIssueAggregateQuery? _issueAggregates;
 
+    /// <summary>問題優先摘要（回饋十九輪批次H1）：三路信件的主要內容來源。可為 null——同
+    /// _issueOwners／_issueAggregates 的既有慣例，測試不注入時問題優先區塊靜默留空，
+    /// 不影響其餘欄位（統計行／熔斷／可見範圍過濾等既有行為完全不變）。</summary>
+    private readonly MailIssueDigest? _issueDigest;
+
     public MailNotificationService(
         ISystemSettingsStore settingsStore,
         ISmtpMailSender sender,
@@ -89,7 +94,8 @@ public class MailNotificationService
         IRecordHandlingStore handlings,
         MailNotifyStateStore state,
         IIssueOwnerStore? issueOwners = null,
-        IIssueAggregateQuery? issueAggregates = null)
+        IIssueAggregateQuery? issueAggregates = null,
+        MailIssueDigest? issueDigest = null)
     {
         _settingsStore = settingsStore;
         _sender = sender;
@@ -102,6 +108,7 @@ public class MailNotificationService
         _issueAggregates = issueAggregates;
         _state = state;
         _issueOwners = issueOwners;
+        _issueDigest = issueDigest;
     }
 
     // ── 對外三路觸發 ──────────────────────────────────────────────────────
@@ -157,12 +164,12 @@ public class MailNotificationService
 
                 if (settings.MailOnRunCompleted)
                 {
-                    await SendRunSummaryAsync(settings, records, ctx, ct);
+                    await SendRunSummaryAsync(settings, records, ctx, from, to, ct);
                 }
 
                 if (settings.MailUrgentEnabled)
                 {
-                    await SendUrgentNotificationsAsync(settings, records, ctx, ct);
+                    await SendUrgentNotificationsAsync(settings, records, ctx, from, to, ct);
                 }
             }
             finally
@@ -358,7 +365,7 @@ public class MailNotificationService
     private MailContext BuildContext() => new(
         _hosts.GetAll().ToDictionary(h => h.HostId),
         _users.GetAll(),
-        IssueOwnerRule.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueOwnerRule>()));
+        IssueProfile.IndexByKey(_issueOwners?.GetAll() ?? new List<IssueProfile>()));
 
     // ── 內部：收件人解析與可見範圍 ────────────────────────────────────────
 
@@ -408,8 +415,16 @@ public class MailNotificationService
     /// 共用信箱）只收統計行，不含任何主機明細（回饋十七輪批次B-4 決策：權限無從判定時只給
     /// 全站數字）；否則為該收件人可見範圍內的紀錄清單（可能是空清單——代表全域收件人但看不到
     /// 任何一筆本輪內容，仍會收到純統計信）。
+    ///
+    /// <see cref="VisibleHostIds"/>（回饋十九輪批次H2）：該收件人的完整可見主機範圍，供
+    /// <see cref="MailIssueDigest"/> 查問題優先清單用——與 <see cref="Detail"/> 是兩件不同的事：
+    /// Detail 是「本輪窗口內、達門檻的主機日」子集（用於既有的 coverage／SentKeys 去重機制，
+    /// 不能動），VisibleHostIds 是「這個人整體看得到哪些主機」，問題優先清單要看的是後者——
+    /// 一個問題即使沒有主機日觸發本輪通知門檻，只要在可見範圍內持續逾期或擴散，收件人仍該
+    /// 在信裡看到它。null＝這位收件人無法判定可見範圍（同 Detail 為 null 的情境），
+    /// 問題優先區塊比照統計行以外的明細一樣整段留空。
     /// </summary>
-    private sealed record RecipientView(List<DailyAnalysisRecord>? Detail);
+    private sealed record RecipientView(List<DailyAnalysisRecord>? Detail, IReadOnlySet<long>? VisibleHostIds);
 
     /// <summary>
     /// 依可見範圍把「本次涵蓋的全部紀錄」拆給每位收件人（回饋十七輪批次B-4）：
@@ -447,15 +462,16 @@ public class MailNotificationService
         {
             var account = ResolveAccount(email, ctx.AllUsers);
             List<DailyAnalysisRecord>? detail = null;
+            IReadOnlySet<long>? visible = null;
             if (account != null)
             {
                 // 體檢輪抓到：GetVisibleHostIds 若直接寫在 Where 的 predicate 裡，
                 // 每筆 record 都會重新呼叫一次（LINQ 對每個來源元素求值一次 predicate），
                 // 對每位收件人重跑一次完整的 store 全表掃描，正是 B-2 想修掉的同一種 N+1。
-                var visible = GetVisibleHostIds(account.UserId, settings.RetentionDays);
+                visible = GetVisibleHostIds(account.UserId, settings.RetentionDays);
                 detail = records.Where(r => visible.Contains(r.HostId)).ToList();
             }
-            views[email] = new RecipientView(detail);
+            views[email] = new RecipientView(detail, visible);
             order.Add(email);
         }
 
@@ -473,7 +489,11 @@ public class MailNotificationService
 
                     if (!views.TryGetValue(email, out var existing))
                     {
-                        views[email] = new RecipientView(new List<DailyAnalysisRecord> { record });
+                        // 問題優先區塊要看負責人的**整體**可見範圍，不是只有這一筆觸發的主機——
+                        // 一次批次觸發只補一位負責人一筆 record，但這個人可能同時負責好幾台
+                        // 正在逾期／擴散的主機，那些理應一併出現在信裡（同全域收件人的既有原則）
+                        var ownerVisible = GetVisibleHostIds(ownerId, settings.RetentionDays);
+                        views[email] = new RecipientView(new List<DailyAnalysisRecord> { record }, ownerVisible);
                         order.Add(email);
                     }
                     else if (existing.Detail != null && !existing.Detail.Contains(record))
@@ -499,7 +519,7 @@ public class MailNotificationService
     {
         var issueOwnerIds = record.TopIssues
             .SelectMany(issue => ctx.IssueOwnersByKey.TryGetValue(
-                IssueOwnerRule.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
+                IssueProfile.KeyOf(issue.Source, issue.EventId), out var owners) ? owners : Enumerable.Empty<long>())
             .Distinct()
             .ToList();
 
@@ -508,7 +528,8 @@ public class MailNotificationService
 
     // ── 內部：組信 ────────────────────────────────────────────────────────
 
-    private async Task SendRunSummaryAsync(SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, CancellationToken ct)
+    private async Task SendRunSummaryAsync(
+        SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct)
     {
         var minRank = RiskLevels.Rank(settings.MailMinRiskLevel);
         var state = _state.Get();
@@ -525,8 +546,9 @@ public class MailNotificationService
         var subject = ExpandTemplate(settings.MailSubjectTemplate, "全站", DateTime.Today.ToString("yyyy-MM-dd"),
             settings.MailMinRiskLevel, "執行摘要", statsLine);
 
+        var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
         (string Subject, string Body) BuildMessage(RecipientView view) =>
-            (subject, BuildStatsAndDetailBody(settings, statsLine, view.Detail, ctx));
+            (subject, BuildStatsAndDetailBody(settings, statsLine, BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds)));
 
         // 標記放在 SendPerRecipientAsync 的 finally 裡執行（見其文件說明）：取消例外會讓
         // await 直接拋出、跳過這裡以下的程式碼，中斷前已寄成的部分仍要落地標記，
@@ -540,7 +562,8 @@ public class MailNotificationService
     /// 一封信。回饋十七輪批次B-4 疊加可見範圍過濾：對應到帳號的收件人只看見自己可見範圍內的
     /// 主機，對應不到帳號的收件人只收統計行。
     /// </summary>
-    private async Task SendUrgentNotificationsAsync(SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, CancellationToken ct)
+    private async Task SendUrgentNotificationsAsync(
+        SystemSettings settings, List<DailyAnalysisRecord> records, MailContext ctx, DateTime from, DateTime to, CancellationToken ct)
     {
         var highRisk = records.Where(r => r.RiskLevel == RiskLevels.High).ToList();
         if (highRisk.Count == 0) return;
@@ -563,7 +586,9 @@ public class MailNotificationService
         // 已過濾後的 view.Detail 現算，收件人看得到部分主機、看不到的那些主機就連統計數字都
         // 沒被提及，卻仍被標記成已通知，是真實的靜默漏寄。
         var globalStatsLine = $"本次執行共 {pending.Count} 筆高風險主機日達門檻";
-        (string Subject, string Body) BuildMessage(RecipientView view) => BuildUrgentMessage(settings, globalStatsLine, view.Detail, ctx);
+        var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
+        (string Subject, string Body) BuildMessage(RecipientView view) =>
+            BuildUrgentMessage(settings, globalStatsLine, view.Detail, BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds), ctx);
 
         // 標記語意：涵蓋此 record 的信全部寄成功才標記已寄（回饋十六輪體檢發現2a 的根修）——
         // 寧可讓已收到的人下次重複收到，也不漏寄。放在 SendPerRecipientAsync 的 finally 裡
@@ -694,63 +719,56 @@ public class MailNotificationService
         return (recipientSuccess, coverage);
     }
 
-    /// <summary>統計行永遠開頭，明細行（若有）接在後面——對應不到帳號的收件人只看得到統計行，
-    /// view.Detail 為 null 時不附任何明細（回饋十七輪批次B-4）。</summary>
-    private string BuildStatsAndDetailBody(SystemSettings settings, string statsLine, List<DailyAnalysisRecord>? detail, MailContext ctx)
+    /// <summary>
+    /// 統計行永遠開頭，問題優先區塊（若可判定可見範圍）接在後面（回饋十九輪批次H2，取代舊版
+    /// 逐主機日一行的明細）：對應不到帳號的收件人只看得到統計行，<paramref name="issueRows"/>
+    /// 為 null（同 <see cref="RecipientView.VisibleHostIds"/> 為 null 的情境）時不附任何明細
+    /// （沿用回饋十七輪批次B-4 的既有原則）。主機日逐日明細不再列出，改成一行站台連結——
+    /// 問題優先區塊已經回答「該看哪個問題」，逐日列表留給站台的問題查詢頁展開。
+    /// </summary>
+    private string BuildStatsAndDetailBody(SystemSettings settings, string statsLine, List<MailIssueRow>? issueRows)
     {
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(statsLine);
 
-        if (detail == null) return body.ToString();
+        if (issueRows == null) return body.ToString();
 
         body.AppendLine();
-        var ordered = detail.OrderByDescending(r => RiskLevels.Rank(r.RiskLevel)).ThenBy(r => r.Date).ToList();
-        foreach (var record in ordered.Take(SummaryBodyLineLimit))
-        {
-            var hostName = ResolveHostDisplayName(record, ctx);
-            // 內容廣泛化（回饋十七輪批次B-3，使用者回饋「其他 8」）：不含 Headline／RiskBasis，
-            // 只留主機、日期、風險等級、錯誤／警告數量
-            body.AppendLine($"  - [{record.RiskLevel}風險] {hostName}　{record.Date:yyyy-MM-dd}　錯誤 {record.ErrorCount}／警告 {record.WarningCount}");
-        }
-        if (ordered.Count > SummaryBodyLineLimit)
-        {
-            body.AppendLine($"  ……其餘 {ordered.Count - SummaryBodyLineLimit} 台請至站台的問題查詢頁檢視。");
-        }
+        AppendIssueRows(body, issueRows, SummaryBodyLineLimit);
+        body.AppendLine();
+        body.AppendLine("如需查看逐主機逐日明細，請至站台的問題查詢頁。");
         return body.ToString();
     }
 
-    /// <summary>每日／週報彙總的明細格式——與 <see cref="BuildStatsAndDetailBody"/>（逐主機日
-    /// 一行）不同：這裡是**逐主機一行**，彙整窗口內的高／中風險天數（「host1：高風險 1 天、
-    /// 中風險 1 天」），窗口動輒涵蓋 7 天、同一主機多天都達門檻時逐日列會太長。</summary>
-    private string BuildDigestBody(SystemSettings settings, string windowText, List<DailyAnalysisRecord>? detail, MailContext ctx)
+    /// <summary>每日／週報彙總（回饋十九輪批次H2，取代舊版逐主機一行的「高風險 N 天、中風險 M 天」
+    /// 彙整）：內容整段改為問題優先區塊——窗口動輒涵蓋 7 天，「這個問題新出現／擴散中／逾期」
+    /// 比「哪些主機累計了幾天」更能回答「這週該先處理哪個」。<paramref name="issueRows"/> 為 null
+    /// 時（同 <see cref="BuildStatsAndDetailBody"/>）不附任何明細。</summary>
+    private string BuildDigestBody(SystemSettings settings, string windowText, List<MailIssueRow>? issueRows)
     {
         var body = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(windowText);
 
-        if (detail == null) return body.ToString();
+        if (issueRows == null) return body.ToString();
 
         body.AppendLine();
-        var hostGroups = detail.GroupBy(r => r.HostId).ToList();
-        foreach (var group in hostGroups.Take(SummaryBodyLineLimit))
-        {
-            var hostName = ResolveHostDisplayName(group.First(), ctx);
-            var highCount = group.Count(r => r.RiskLevel == RiskLevels.High);
-            var mediumCount = group.Count(r => r.RiskLevel == RiskLevels.Medium);
-            body.AppendLine($"  - {hostName}：高風險 {highCount} 天、中風險 {mediumCount} 天");
-        }
-        if (hostGroups.Count > SummaryBodyLineLimit)
-        {
-            body.AppendLine($"  ……其餘 {hostGroups.Count - SummaryBodyLineLimit} 台請至站台的問題查詢頁檢視。");
-        }
+        AppendIssueRows(body, issueRows, SummaryBodyLineLimit);
         return body.ToString();
     }
 
-    /// <summary><paramref name="globalStatsLine"/> 是未經可見範圍過濾的全站聚合統計行，每位
-    /// 收件人共用同一句（見呼叫端的說明）；<paramref name="detail"/> 才是該收件人自己可見範圍
-    /// 內的主機明細，null 或空清單都只附全站統計行、不附明細清單。</summary>
-    private (string Subject, string Body) BuildUrgentMessage(SystemSettings settings, string globalStatsLine, List<DailyAnalysisRecord>? detail, MailContext ctx)
+    /// <summary>
+    /// 高風險即時通知（回饋十九輪批次H2）：主要內容改為問題優先區塊（<paramref name="issueRows"/>），
+    /// 逐主機日一行的既有明細降級為附錄——兩者互補不是重複：問題優先答「哪些問題」，可能把同一
+    /// 問題跨多台合併成一行；附錄仍逐一點名觸發的主機日，答「哪台、哪一天」。
+    /// <paramref name="globalStatsLine"/> 是未經可見範圍過濾的全站聚合統計行，每位收件人共用
+    /// 同一句（見呼叫端的說明）；<paramref name="detail"/> 才是該收件人自己可見範圍內的主機明細，
+    /// null 或空清單都只附全站統計行、不附任何明細或問題優先區塊。
+    /// </summary>
+    private (string Subject, string Body) BuildUrgentMessage(
+        SystemSettings settings, string globalStatsLine, List<DailyAnalysisRecord>? detail,
+        List<MailIssueRow>? issueRows, MailContext ctx)
     {
         var dateText = DateTime.Today.ToString("yyyy-MM-dd");
         var records = detail ?? new List<DailyAnalysisRecord>();
@@ -773,9 +791,17 @@ public class MailNotificationService
         if (!string.IsNullOrWhiteSpace(settings.MailBodyIntro)) body.AppendLine(settings.MailBodyIntro).AppendLine();
         body.AppendLine(globalStatsLine);
         body.AppendLine();
+
+        if (issueRows != null)
+        {
+            AppendIssueRows(body, issueRows, UrgentBodyLineLimit);
+            body.AppendLine();
+        }
+
+        // 主機日附錄（規劃原文「逐問題行＋主機日附錄」，上限沿用既有的 UrgentBodyLineLimit）
         body.AppendLine(ordered.Count == 1
-            ? $"主機 {ResolveHostDisplayName(ordered[0], ctx)} 於 {ordered[0].Date:yyyy-MM-dd} 判定為高風險日。"
-            : "本次執行新增以下您可見範圍內的高風險主機日：");
+            ? $"主機日附錄：{ResolveHostDisplayName(ordered[0], ctx)} 於 {ordered[0].Date:yyyy-MM-dd} 判定為高風險日。"
+            : "主機日附錄（本次執行新增以下您可見範圍內的高風險主機日）：");
         body.AppendLine();
 
         foreach (var record in ordered.Take(UrgentBodyLineLimit))
@@ -790,6 +816,63 @@ public class MailNotificationService
         // 判定依據（RiskBasis）不再附上——內容廣泛化（回饋十七輪批次B-3）
 
         return (subject, body.ToString());
+    }
+
+    /// <summary>
+    /// 問題優先區塊的共用格式（回饋十九輪批次H2，三種信共用同一份措辭與排序規則）：
+    /// 逾期 &gt; 新出現 &gt; 擴散中 &gt; 其他高風險（同 <see cref="MailIssueDigest.Build"/> 的分區
+    /// 優先序），同區內依影響主機數由大到小——這是使用者判斷「這個問題有多急」的第一手訊號。
+    /// 空清單時明講「目前沒有」，不留空白讓人誤以為漏印或信件壞掉。<paramref name="limit"/>
+    /// 語意由舊版「主機日行數上限」改為「問題行數上限」，數值沿用（規劃原文明定）。
+    /// </summary>
+    private static void AppendIssueRows(StringBuilder body, List<MailIssueRow> rows, int limit)
+    {
+        if (rows.Count == 0)
+        {
+            body.AppendLine("目前沒有需要優先處理的問題。");
+            return;
+        }
+
+        var ordered = rows.OrderBy(r => IssueBucketRank(r.Bucket)).ThenByDescending(r => r.HostCount).ToList();
+        foreach (var row in ordered.Take(limit))
+        {
+            body.AppendLine($"  - {row.FormatLine()}");
+        }
+        if (ordered.Count > limit)
+        {
+            body.AppendLine($"  ……其餘 {ordered.Count - limit} 個問題請至站台的問題查詢頁檢視。");
+        }
+    }
+
+    private static int IssueBucketRank(string bucket) => bucket switch
+    {
+        MailIssueBucket.Overdue => 0,
+        MailIssueBucket.New => 1,
+        MailIssueBucket.Spreading => 2,
+        _ => 3
+    };
+
+    /// <summary>
+    /// H3：同一批次內，相同可見範圍集合的收件人共用同一次 <see cref="MailIssueDigest.Build"/>
+    /// 查詢結果——不是常駐快取，<paramref name="cache"/> 由每個 SendXxxAsync 各自在方法開頭
+    /// 新建、隨方法結束捨棄，只避免同一輪批次內對同一個 visibleHostIds 集合重複跑 GROUP BY
+    /// （2000 台環境下，多位收件人共用同一組部門群組授權時完全同一個集合是常見情況）。
+    /// 鍵用排序後的 id 序列組字串——集合雜湊的簡化版，批次內收件人數量級（十幾到數十人）
+    /// 用字串鍵的字典查找已經足夠快，不需要真正的雜湊函式。
+    /// null（無法判定可見範圍）與 _issueDigest 未注入（測試／功能未啟用）都回 null，
+    /// 呼叫端據此整段略過問題優先區塊，不是顯示「查無問題」。
+    /// </summary>
+    private List<MailIssueRow>? BuildIssueRowsCached(
+        Dictionary<string, List<MailIssueRow>> cache, DateTime from, DateTime to, IReadOnlySet<long>? visibleHostIds)
+    {
+        if (_issueDigest == null || visibleHostIds == null) return null;
+
+        var key = visibleHostIds.Count == 0 ? "∅" : string.Join(",", visibleHostIds.OrderBy(x => x));
+        if (cache.TryGetValue(key, out var cached)) return cached;
+
+        var rows = _issueDigest.Build(from, to, visibleHostIds);
+        cache[key] = rows;
+        return rows;
     }
 
     private async Task SendDigestAsync(SystemSettings settings, DateTime now, int windowDays, bool isWeekly, CancellationToken ct)
@@ -834,9 +917,11 @@ public class MailNotificationService
                 : $"目前未處理（含處理中）的風險日共 {unresolved.Count} 筆，請至站台的問題查詢頁檢視。";
         }
 
+        var issueRowsCache = new Dictionary<string, List<MailIssueRow>>();
         (string Subject, string Body) BuildMessage(RecipientView view)
         {
-            var body = new StringBuilder(BuildDigestBody(settings, windowText, view.Detail, ctx));
+            var issueRows = BuildIssueRowsCached(issueRowsCache, from, to, view.VisibleHostIds);
+            var body = new StringBuilder(BuildDigestBody(settings, windowText, issueRows));
             if (unresolvedLine != null) body.AppendLine().AppendLine(unresolvedLine);
             return (subject, body.ToString());
         }

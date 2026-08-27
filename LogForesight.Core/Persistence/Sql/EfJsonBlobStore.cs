@@ -44,6 +44,37 @@ public sealed class EfJsonBlobStore
         return content;
     }
 
+    /// <summary>目前版本號；內容不存在回 0。只讀一個整數欄，不拉整份內容——
+    /// 這是上層快取判定「要不要重讀」的探測點。
+    /// 成本要記進效能監控：SQLite 是本機檔案存取，SqlServer 是一次網路往返，
+    /// 單一請求十幾次探測的真實代價只有量到才看得見。</summary>
+    public long ReadVersion()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var version = ctx.Blobs.AsNoTracking()
+            .Where(b => b.BlobKey == _key)
+            .Select(b => b.Version)
+            .FirstOrDefault();
+        _performance?.Record($"blob:{_key}:ReadVersion", sw.ElapsedMilliseconds);
+        return version;
+    }
+
+    /// <summary>目前內容與版本；內容不存在回 (null, 0)。
+    /// 快取填充要用這個而不是分別呼叫 Read() 與 ReadVersion()——
+    /// 分兩次讀之間內容可能被改掉，快取會存下「新內容配舊版本」而永遠不再更新。</summary>
+    public (string? Content, long Version) ReadWithVersion()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var row = ctx.Blobs.AsNoTracking()
+            .Where(b => b.BlobKey == _key)
+            .Select(b => new { b.Content, b.Version })
+            .FirstOrDefault();
+        _performance?.Record($"blob:{_key}:Read", sw.ElapsedMilliseconds);
+        return row == null ? (null, 0) : (row.Content, row.Version);
+    }
+
     /// <summary>讀→改→寫的原子操作。mutation 收目前內容、回 (新內容, 結果)</summary>
     public TResult Mutate<TResult>(Func<string?, (string content, TResult result)> mutation)
     {
@@ -79,11 +110,12 @@ public sealed class EfJsonBlobStore
                         var (content, result) = mutation(row?.Content);
 
                         if (row == null)
-                            ctx.Blobs.Add(new BlobRow { BlobKey = _key, Content = content, UpdatedAt = DateTime.Now });
+                            ctx.Blobs.Add(new BlobRow { BlobKey = _key, Content = content, UpdatedAt = DateTime.Now, Version = 1 });
                         else
                         {
                             row.Content = content;
                             row.UpdatedAt = DateTime.Now;
+                            row.Version++;
                         }
 
                         ctx.SaveChanges();

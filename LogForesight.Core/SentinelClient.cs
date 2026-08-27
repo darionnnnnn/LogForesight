@@ -34,7 +34,12 @@ public sealed record SentinelSearchRequest(
     IReadOnlyList<string>? Fields = null,
     int? PageSize = null,
     int? MaxResults = null,
-    string Type = "USER");
+    string Type = "USER",
+    /// <summary>每取回一頁就呼叫一次，回傳 false 代表呼叫端已取得所需資訊、可停止翻頁。
+    /// 用於主機探索：只需要相異主機 IP，不必把事件翻完。null＝不提早停止（預設）。
+    /// 提早停止會讓取回數小於 Found，因此結果的 Truncated 為 true——語意正確：
+    /// 沒翻完就是可能還有沒看到的東西。</summary>
+    Func<IReadOnlyList<SentinelEvent>, bool>? PageObserver = null);
 
 public sealed class SentinelSearchResult
 {

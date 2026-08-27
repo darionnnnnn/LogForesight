@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "報表";
 }
 
@@ -16,19 +16,27 @@
             <form id="report-form" class="row g-2 align-items-end">
                 <div class="col-auto">
                     <label for="report-from" class="form-label small mb-1">起始日期</label>
-                    <input type="date" class="form-control form-control-sm" id="report-from" />
+                    <input type="date" class="form-control form-control-sm" id="report-from" max="@DateTime.Now.ToString("yyyy-MM-dd")" />
                 </div>
                 <div class="col-auto">
                     <label for="report-to" class="form-label small mb-1">結束日期</label>
-                    <input type="date" class="form-control form-control-sm" id="report-to" />
+                    <input type="date" class="form-control form-control-sm" id="report-to" max="@DateTime.Now.ToString("yyyy-MM-dd")" />
                 </div>
                 <div class="col-auto">
-                    <button type="submit" class="btn btn-sm btn-primary">套用</button>
+                    <label for="report-compare" class="form-label small mb-1">比較模式</label>
+                    <select class="form-select form-select-sm" id="report-compare">
+                        <option value="previous">對比前一期</option>
+                        <option value="yoy">對比去年同期</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-primary mb-0">套用</button>
                 </div>
                 <div class="col-auto">
                     <div class="btn-group btn-group-sm">
-                        <button type="button" class="btn btn-outline-secondary" data-range="7">本週</button>
-                        <button type="button" class="btn btn-outline-secondary" data-range="30">本月</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="1">昨日</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="7">近 7 天</button>
+                        <button type="button" class="btn btn-outline-secondary" data-range="30">近 30 天</button>
                         <button type="button" class="btn btn-outline-secondary" data-range="90">近 90 天</button>
                     </div>
                 </div>
@@ -47,12 +55,12 @@
                 <div class="col-auto ms-auto d-flex gap-2 align-items-center">
                     @* 跨主機同簽章查詢已併入「問題查詢」（§4）：原本是頁底一整段說明文字，
                        docs/archive/FEEDBACK-10-PLAN.md §5 收進 popover——一次性的導引不值得每次都佔一段版面 *@
-                    <a class="btn btn-sm btn-outline-secondary" href="/records">
+                    <a class="btn btn-sm btn-outline-secondary" href="@Url.Content("~/records")">
                         查同一問題的其他主機
                     </a>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="要查同一事件簽章出現在哪些主機／日子（判斷是單機個案還是全環境共通），請到問題查詢頁輸入 Event ID／來源，切「依問題」視角即可，還能直接下鑽與指派。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-customize-charts" data-bs-toggle="modal" data-bs-target="#chart-picker-modal">自訂圖表</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print-report">列印 / 存成 PDF</button>
@@ -90,7 +98,10 @@
             <div class="col-lg-6" id="category-section">
                 <section class="lf-card h-100">
                     <div class="lf-card__header">
-                        <h2 class="lf-card__title">風險類型分布</h2>
+                        <div class="d-flex align-items-center gap-2">
+                            <h2 class="lf-card__title mb-0">風險類型分布</h2>
+                            <span class="text-muted small" id="category-subtitle"></span>
+                        </div>
                         <div id="category-toolbar"></div>
                     </div>
                     <div class="lf-card__body">
@@ -134,8 +145,11 @@
                半欄根本容不下，一屏化必然破功。並排後整組只需要一張卡的高度，
                圖例改放甜甜圈下方（欄位變窄，並排會把文字擠成逐字直排）。 *@
             <div class="col-lg-6">
-                <div class="row g-3 h-100">
-                    <div class="col-4" id="risk-section">
+                @* gx-3（只要水平間距）而非 g-3：巢狀 row 的垂直 gutter 會在自己身上加負 margin-top、
+                   在子 col 加同額 padding-top，整組因此比左欄的卡片矮一個 gutter，圓餅底緣對不上長條圖。
+                   三張卡同列，本來就不需要垂直間距。col 補 h-100 才會撐滿到與左欄同高 *@
+                <div class="row gx-3 h-100">
+                    <div class="col-4 h-100" id="risk-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">風險層級占比</h2>
@@ -147,7 +161,7 @@
                         </section>
                     </div>
 
-                    <div class="col-4" id="affected-hosts-section">
+                    <div class="col-4 h-100" id="affected-hosts-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">受影響主機占比</h2>
@@ -159,7 +173,7 @@
                         </section>
                     </div>
 
-                    <div class="col-4" id="handling-progress-section">
+                    <div class="col-4 h-100" id="handling-progress-section">
                         <section class="lf-card h-100">
                             <div class="lf-card__header">
                                 <h2 class="lf-card__title">處理進度</h2>

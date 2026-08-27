@@ -316,4 +316,65 @@ public class SentinelEventMapperTests
         Assert.Equal(2, mapped.Count);
         Assert.Equal(1, skipped);
     }
+
+    [Fact]
+    public void Sentinel事件含sun時_映射出正確的InitiatorAccount()
+    {
+        var mapped = SentinelEventMapper.Map(LoginSuccessFixture());
+
+        Assert.NotNull(mapped);
+        Assert.Equal("svc-test.corp", mapped!.InitiatorAccount);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void sun缺席或為空白字串時_InitiatorAccount為null(string? rawSun)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dt"] = "2026-07-29T03:07:28.000Z",
+            ["sev"] = "0",
+            ["rv150"] = "Security",
+            ["rv40"] = "4624",
+            ["obssvcname"] = "Microsoft-Windows-Security-Auditing",
+            ["msg"] = "測試訊息"
+        };
+        if (rawSun != null)
+        {
+            fields["sun"] = rawSun;
+        }
+
+        var mapped = SentinelEventMapper.Map(new SentinelEvent(fields));
+
+        Assert.NotNull(mapped);
+        Assert.Null(mapped!.InitiatorAccount);
+    }
+
+    [Fact]
+    public void 完整欄位事件映射_既有七個欄位結果與改動前一致()
+    {
+        var fixture = LoginSuccessFixture();
+        var mapped = SentinelEventMapper.Map(fixture);
+
+        Assert.NotNull(mapped);
+        var expectedTime = DateTimeOffset.Parse("2026-07-29T03:07:28.000Z").ToLocalTime().DateTime;
+        Assert.Equal(expectedTime, mapped!.TimeGenerated);
+        Assert.Equal(EventLogEntryType.SuccessAudit, mapped.EntryType);
+        Assert.Equal("Security", mapped.LogName);
+        Assert.Equal("Microsoft-Windows-Security-Auditing", mapped.Source);
+        Assert.Equal("帳戶已順利登入。    主體：安全性識別碼：S-1-5-18   帳戶名稱：svc-test.corp", mapped.Message);
+        Assert.Equal(4624, mapped.EventId);
+        Assert.Equal(4624, mapped.InstanceId);
+    }
+
+    [Fact]
+    public void Linux事件映射_InitiatorAccount維持為null()
+    {
+        var mapped = SentinelEventMapper.Map(LinuxSshBruteforceFixture(), WebHost.OsLinux);
+
+        Assert.NotNull(mapped);
+        Assert.Null(mapped!.InitiatorAccount);
+    }
 }

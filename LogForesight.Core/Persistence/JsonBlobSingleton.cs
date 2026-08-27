@@ -31,9 +31,16 @@ public abstract class JsonBlobSingleton<T> where T : new()
     /// <summary>Update 成功後的蓋章動作（例如 UpdatedAt=DateTime.Now）；預設不做事</summary>
     protected virtual void Touch(T value) { }
 
+    /// <summary>反序列化後的掛勾（例如舊設定遷移）；預設不做事</summary>
+    protected virtual void OnDeserialized(T value) { }
+
     /// <summary>內容不存在（首次執行）時回預設值——沿用型別的欄位預設值</summary>
-    private static T Deserialize(string? json) =>
-        string.IsNullOrWhiteSpace(json)
+    private T Deserialize(string? json)
+    {
+        var value = string.IsNullOrWhiteSpace(json)
             ? new T()
             : JsonSerializer.Deserialize<T>(json, LfJsonOptions.Pretty) ?? new T();
+        OnDeserialized(value);
+        return value;
+    }
 }

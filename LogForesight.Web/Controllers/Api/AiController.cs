@@ -60,11 +60,12 @@ public class AiController : ControllerBase
     {
         if (!_ai.Available) return ApiResponse<AiTextDto?>.Ok(null);
 
+        var (parsedFrom, parsedTo) = ParseDateRange(from, to);
         var request = new RecordSearchRequest
         {
             HostIds = ParseLongs(hostIds),
-            From = ParseDate(from),
-            To = ParseDate(to),
+            From = parsedFrom,
+            To = parsedTo,
             RiskLevels = ParseStrings(riskLevels),
             Categories = ParseStrings(categories)
         };

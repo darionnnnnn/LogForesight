@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 處理人員工作頁（docs/archive/FEEDBACK-4-PLAN.md §6）：點某個處理人的名字，看這個人目前
  * 被交辦哪些項目——進行中案件（跨日追蹤的問題）＋被指派的風險日（推導後未結案為主）。
  *
@@ -13,6 +13,7 @@
  */
 
 import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderLoading, renderTable, renderChips, statCard, guardLoad } from '../core/ui.js';
 import { formatNumber, formatUserName, riskBadge } from '../core/format.js';
 import { openIssueStatusReplyModal } from './issue-status-reply.js';
@@ -220,7 +221,7 @@ function issueHostsTable(group) {
 
 function detailLink(item) {
     const link = document.createElement('a');
-    link.href = `/records/${item.hostId}/${item.lastLinkedDate}`;
+    link.href = appUrl(`/records/${item.hostId}/${item.lastLinkedDate}`);
     link.className = 'btn btn-sm btn-outline-primary';
     link.textContent = '去處理';
     return link;
@@ -244,7 +245,7 @@ function renderDays(days) {
     const container = document.getElementById('handler-days');
     renderTable(container, {
         columns: [
-            { title: '日期', render: d => dateLink(d) },
+            { title: '日期', render: d => d.date },
             { title: '主機', render: d => hostLink(d) },
             { title: '風險', render: d => riskBadge(d.riskLevel) },
             { title: '狀態', render: d => statusText(d) },
@@ -276,16 +277,8 @@ function dueCell(item) {
 
 function hostLink(item) {
     const link = document.createElement('a');
-    link.href = `/hosts/${item.hostId}`;
+    link.href = appUrl(`/hosts/${item.hostId}`);
     link.textContent = item.hostName;
-    link.addEventListener('click', event => event.stopPropagation());
-    return link;
-}
-
-function dateLink(item) {
-    const link = document.createElement('a');
-    link.href = `/records/${item.hostId}/${item.date}`;
-    link.textContent = item.date;
     link.addEventListener('click', event => event.stopPropagation());
     return link;
 }

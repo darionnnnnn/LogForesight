@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 風險日詳情（docs/WEB-SPEC.md §9.3）。
  *
  * 兩層呈現（DB-PLAN 定案）：
@@ -6,12 +6,13 @@
  *   - 全文層：報告 txt 原樣以等寬字型呈現
  */
 
-import { api, getCurrentUser, hasCapability } from '../core/api.js';
+import { api, getCurrentUser, hasCapability, getDisplaySettings } from '../core/api.js';
+import { appUrl } from '../core/paths.js';
 import { renderTable, renderLoading, renderEmpty, toast, icon, confirmAction, confirmActionWithReason, withBusy, showDetailModal, guardLoad, helpIcon, button } from '../core/ui.js';
-import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal } from '../core/format.js';
+import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, CATEGORY_NAMES, severityName, SEVERITY_ORDER, todayLocal, isAiRetryPending } from '../core/format.js';
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
-import { renderAiText } from '../core/markdown-lite.js';
+import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -23,6 +24,7 @@ const date = root.dataset.date;
 // 把使用者手動調整過的篩選狀態蓋回預設值。
 let activeSeverities = null;
 let currentDetail = null;
+let currentDisplaySettings = null;
 
 // 批次套用改版（2026-07-27）：勾選純粹代表「這列要包含在下一次批次套用」，
 // 與這列目前的處理狀態脫鉤——狀態改在右側「處理狀態」區塊填一次套用給全部勾選的問題
@@ -91,23 +93,30 @@ async function load() {
     renderLoading(document.getElementById('detail-issues'), 5);
     selectedIssueKeys.clear();
 
-    const [detail, user, aiStatus] = await Promise.all([
+    const [detail, user, aiStatus, displaySettings] = await Promise.all([
         api.get(`/api/records/${hostId}/${date}`),
         getCurrentUser(),
-        api.get('/api/ai/status', { silent: true }).catch(() => null)
+        api.get('/api/ai/status', { silent: true }).catch(() => null),
+        getDisplaySettings()
     ]);
     // SiteHidden 模式的過濾已由後端 RecordRepository 統一套用（docs/archive/HISTORY.md S1）：
     // detail.topIssues 拿到的就是可見子集，不需要（也不該）在前端再做一次特判過濾
     currentDetail = detail;
+    currentDisplaySettings = displaySettings;
     canMaintainRules = hasCapability(user, 'Maintain');
     // 「這個案件是不是我的」要靠 userId 比對（§8）；ServerAdmin 沒有對應的 WebUser，
     // userId 為 0，比對永遠不成立——它本來就看不到業務資料，行為正確
     currentUserId = user.userId;
     aiAvailable = !!aiStatus?.available;
 
+    const allowed = allowedSeverities();
     if (activeSeverities === null) {
-        activeSeverities = new Set(
-            detail.unhandledSeverities?.length ? detail.unhandledSeverities : ['Critical', 'High', 'Medium']);
+        const initial = detail.unhandledSeverities?.length ? detail.unhandledSeverities : ['Critical', 'High', 'Medium'];
+        activeSeverities = new Set(initial.filter(s => allowed.has(s)));
+    } else {
+        for (const s of activeSeverities) {
+            if (!allowed.has(s)) activeSeverities.delete(s);
+        }
     }
 
     renderHeader(currentDetail);
@@ -204,7 +213,7 @@ async function setupNextUnhandled() {
     const next = currentIndex >= 0 ? items[currentIndex + 1] : items[0];
     if (!next) return;   // 這是最後一筆未處理
 
-    button.href = `/records/${next.hostId}/${next.date}`;
+    button.href = appUrl(`/records/${next.hostId}/${next.date}`);
     button.classList.remove('d-none');
 }
 
@@ -233,7 +242,7 @@ function renderHeader(detail) {
     top.className = 'd-flex align-items-center gap-3 mb-2 flex-wrap';
 
     const hostLink = document.createElement('a');
-    hostLink.href = `/hosts/${detail.hostId}`;
+    hostLink.href = appUrl(`/hosts/${detail.hostId}`);
     hostLink.className = 'fs-5 fw-semibold text-decoration-none';
     // NetIQ 主機以 IP 登錄，光看 hostName 認不出是哪台機器——有 Sentinel 回報的顯示名就一併帶出
     hostLink.textContent = detail.hostDisplayName ? `${detail.hostName}（${detail.hostDisplayName}）` : detail.hostName;
@@ -262,7 +271,15 @@ function renderHeader(detail) {
         top.appendChild(ipSpan);
     }
 
-    if (detail.aiPending) {
+    if (detail.aiPending && isAiRetryPending(detail.headline)) {
+        // AI 曾嘗試但完全失敗、已標為待補（回饋二十輪 N）：不能顯示成「分析中」——
+        // 那會讓人以為稍後重整就有，實際要靠排程「只補跑失敗或未執行」才補得回來
+        const badge = document.createElement('span');
+        badge.className = 'lf-badge lf-badge--warning';
+        badge.textContent = 'AI 待補';
+        badge.title = 'AI 服務當時未回應，白話摘要從缺；可用排程頁「只補跑失敗或未執行」補回';
+        top.appendChild(badge);
+    } else if (detail.aiPending) {
         // 統計段已寫入、AI 段還在排隊或執行中（docs/archive/FEEDBACK-12-PLAN.md §3.5）——
         // 中性色，不能顯示成跟「統計模式（AI 未分析）」一樣，那看起來像失敗
         const badge = document.createElement('span');
@@ -281,6 +298,8 @@ function renderHeader(detail) {
     body.appendChild(top);
 
     // headline/summary/trendAssessment/action 皆為 AI 產出（見 DailyAnalysisRecord）。
+    // 刻意用 renderAiInline 而非區塊版：prompt 要求這幾欄是散文短句（一句話標題、白話說明），
+    // 清單／表格不在預期輸出內；inline 附加而不清空，「狀況：」這類標籤才能維持純文字。
     // aiAnalyzed 為 false 時這些欄位其實是統計模式的替代文字，不是 AI 產出，不包框。
     const textParts = [];
     if (detail.headline) textParts.push({ headline: true, text: detail.headline });
@@ -302,7 +321,7 @@ function renderHeader(detail) {
             if (part.headline) {
                 const headline = document.createElement('div');
                 headline.className = 'fs-5 mb-2';
-                headline.textContent = part.text;
+                renderAiInline(headline, part.text);
                 target.appendChild(headline);
                 continue;
             }
@@ -310,7 +329,8 @@ function renderHeader(detail) {
             p.className = 'mb-2';
             const strong = document.createElement('strong');
             strong.textContent = `${part.label}：`;
-            p.append(strong, document.createTextNode(part.text));
+            p.appendChild(strong);
+            renderAiInline(p, part.text);
             target.appendChild(p);
         }
 
@@ -794,6 +814,8 @@ async function setIssueStatus(issue, status, wrap, extra = {}) {
 
         wrap.replaceWith(statusControl(issue));
         renderProgress();
+        renderSeverityFilter(currentDetail);
+        renderScopeFilter(currentDetail);
 
         // 案件同步提示（docs/archive/FEEDBACK-4-PLAN.md §2）：這個問題有進行中案件時，這次標記
         // 也會連動到案件涵蓋的其他日子，提示使用者「不是只改了眼前這一列」
@@ -955,8 +977,60 @@ function highlightedCategories() {
  * 切換時共用同一份判斷，避免多處篩選邏輯各自維護後兜不起來。
  * 嚴重度與顯示範圍（§8）是 AND 關係——兩個條件都通過才看得到。
  */
+/**
+ * 管理者顯示設定允許的嚴重度（回饋二十輪 L）。與使用者自己的篩選（activeSeverities）
+ * 是兩件事：被管理者隱藏的層級不該長出篩選鈕、也不該算進「另有 N 項未顯示」——
+ * 那句提示講的是「你自己篩掉的」，管理者隱藏的部分由 hiddenIssueCount 那句負責交代。
+ * 取不到設定時退回全部允許（getDisplaySettings 本身已對失敗降級）。
+ */
+function allowedSeverities() {
+    return new Set(currentDisplaySettings?.visibleSeverities ?? SEVERITY_ORDER);
+}
+
 function visibleTopIssues() {
-    return currentDetail.topIssues.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
+    const allowed = allowedSeverities();
+    return currentDetail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity) && inCurrentScope(i));
+}
+
+/**
+ * 計算符合條件的問題筆數（契約 §1、§2、§3 共用）。
+ * @param {Array} issues 問題清單（通常為 detail.topIssues）
+ * @param {object} opts
+ *   severity: 指定單一嚴重度字串；若為 null 則取 activeSeverities
+ *   scoped: 是否套用目前顯示範圍（inCurrentScope）
+ */
+function countIssues(issues, { severity = null, scoped = true, scopeValue = null } = {}) {
+    const allowed = allowedSeverities();
+    const buckets = scopeValue
+        ? (SCOPE_OPTIONS.find(o => o.value === scopeValue) ?? SCOPE_OPTIONS[0]).buckets
+        : null;
+    return issues.filter(i => {
+        if (!allowed.has(i.severity)) return false;
+        if (severity !== null ? i.severity !== severity : !activeSeverities.has(i.severity)) return false;
+        if (buckets) return buckets.includes(issueBucket(i));
+        return !scoped || inCurrentScope(i);
+    }).length;
+}
+
+/**
+ * 找出「切過去真的看得到」的顯示範圍。預設不處理的低嚴重度問題落在 done 桶，
+ * 而「顯示所有問題」的桶不含 done——直接寫死切到 all 會切了還是空的。
+ * 回傳 null 代表沒有任何範圍看得到（不該出現捷徑按鈕）。
+ */
+function scopeThatReveals(issues) {
+    return SCOPE_OPTIONS.find(o => o.value !== currentScope &&
+        countIssues(issues, { scopeValue: o.value }) > 0) ?? null;
+}
+
+/**
+ * 切換顯示範圍並連動重新渲染問題清單、嚴重度篩選鈕與顯示範圍下拉。
+ */
+function changeScope(newScope) {
+    currentScope = newScope;
+    renderIssues(currentDetail);
+    renderSeverityFilter(currentDetail);
+    renderScopeFilter(currentDetail);
+    updateIssueOptions(visibleTopIssues());
 }
 
 /**
@@ -969,7 +1043,8 @@ function renderScopeFilter(detail) {
     if (!select) return;
 
     // 只算嚴重度篩選後的問題：下拉顯示的數字要與切過去之後真正看得到的列數一致
-    const bySeverity = detail.topIssues.filter(i => activeSeverities.has(i.severity));
+    const allowed = allowedSeverities();
+    const bySeverity = detail.topIssues.filter(i => allowed.has(i.severity) && activeSeverities.has(i.severity));
     const counts = { pending: 0, mine: 0, others: 0, done: 0 };
     for (const issue of bySeverity) counts[issueBucket(issue)]++;
 
@@ -985,12 +1060,7 @@ function renderScopeFilter(detail) {
 
     // 沒有任何他人處理中的問題時，「待處理」與「顯示所有問題」看到的東西完全一樣——
     // 下拉仍保留（選項數固定比較好預期），但預設值不需要使用者操心
-    select.onchange = () => {
-        currentScope = select.value;
-        renderIssues(currentDetail);
-        renderScopeFilter(currentDetail);
-        updateIssueOptions(visibleTopIssues());
-    };
+    select.onchange = () => changeScope(select.value);
 }
 
 /**
@@ -1001,9 +1071,11 @@ function renderSeverityFilter(detail) {
     const container = document.getElementById('detail-severity-filter');
     if (!container) return;
 
-    // 只列出當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
-    // Locked 模式不需特判：load() 已把未勾選層級從 topIssues 拿掉，這裡自然長不出對應的鈕
-    const present = SEVERITY_ORDER.filter(s => detail.topIssues.some(i => i.severity === s));
+    // 只列出管理者顯示設定允許且當日實際存在的嚴重度，避免出現點了也沒東西的空鈕。
+    // 某嚴重度在目前顯示範圍下筆數為 0，但在未套範圍時筆數大於 0 時，該按鈕仍要顯示（計數顯示 0）。
+    // 完全不存在該嚴重度的問題時，維持現行行為（按鈕不出現）。
+    const allowed = allowedSeverities();
+    const present = SEVERITY_ORDER.filter(s => allowed.has(s) && detail.topIssues.some(i => i.severity === s));
     if (present.length <= 1) {
         container.replaceChildren();
         return;
@@ -1011,7 +1083,7 @@ function renderSeverityFilter(detail) {
 
     container.replaceChildren();
     for (const severity of present) {
-        const count = detail.topIssues.filter(i => i.severity === severity).length;
+        const count = countIssues(detail.topIssues, { severity, scoped: true });
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-outline-secondary' + (activeSeverities.has(severity) ? ' active' : '');
@@ -1054,6 +1126,7 @@ function renderIssues(detail) {
 
     let shown = 0;
     let hidden = 0;
+    const allowed = allowedSeverities();
 
     // 顯示範圍（§8）：collapseDone 決定「已完成」是維持既有的分節底部收合列（待處理／
     // 顯示所有問題），還是整組不出現（隱藏已完成）／整組平鋪（僅已完成）
@@ -1063,10 +1136,13 @@ function renderIssues(detail) {
         const all = detail.topIssues.filter(i => i.category === category.category);
         if (all.length === 0) continue;
 
-        // 嚴重度與顯示範圍兩道篩選（§8）：兩者都要通過才顯示，被篩掉的併入底部的
+        // 管理者顯示設定允許的問題（排除管理者設定隱藏的嚴重度，不計入使用者篩選造成的 hidden）
+        const allowedIssues = all.filter(i => allowed.has(i.severity));
+
+        // 嚴重度與顯示範圍兩道使用者篩選（§8）：兩者都要通過才顯示，被使用者篩掉的併入底部的
         // 「另有 N 項未顯示」提示——「沒看到」與「不存在」必須分得清楚
-        const issues = all.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
-        hidden += all.length - issues.length;
+        const issues = allowedIssues.filter(i => activeSeverities.has(i.severity) && inCurrentScope(i));
+        hidden += allowedIssues.length - issues.length;
         if (issues.length === 0) continue;
         shown += issues.length;
 
@@ -1121,14 +1197,35 @@ function renderIssues(detail) {
 
     // 全被篩掉時給明確出口，不留白畫面讓人誤以為「這天沒問題」
     if (shown === 0) {
-        renderEmpty(container, {
-            title: `已隱藏全部 ${hidden} 項`,
-            hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
-        });
+        const unscopedCount = countIssues(detail.topIssues, { scoped: false });
+        const target = unscopedCount > 0 ? scopeThatReveals(detail.topIssues) : null;
+        if (target) {
+            renderEmpty(container, {
+                title: `已隱藏全部 ${hidden} 項`,
+                hint: `有 ${unscopedCount} 項符合目前嚴重度篩選的問題不在「${currentScopeOption().label}」這個顯示範圍內。`
+            });
+            const btn = button(`切換為「${target.label}」`, {
+                variant: 'outline-primary',
+                size: 'sm',
+                onClick: () => changeScope(target.value)
+            });
+            btn.classList.add('mt-3');
+            container.querySelector('.lf-empty')?.appendChild(btn);
+        } else if (hidden > 0) {
+            renderEmpty(container, {
+                title: `已隱藏全部 ${hidden} 項`,
+                hint: '目前的嚴重度篩選或顯示範圍未包含任何一項，請調整上方的篩選條件。'
+            });
+        } else {
+            renderEmpty(container, {
+                title: '當日沒有符合顯示設定的重點問題',
+                hint: '當日問題已依全站顯示設定隱藏。'
+            });
+        }
         return;
     }
 
-    // 有被篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
+    // 有被使用者篩掉的項數在底部提示，「沒看到」與「不存在」要分得清楚（README 的核心誠實原則）
     if (hidden > 0) {
         const note = document.createElement('div');
         note.className = 'text-muted small px-3 py-2 border-top';
@@ -1232,16 +1329,130 @@ function issueCell(issue) {
     // Security 事件的帳號/IP 彙總是入侵分析最關鍵的依據，不能真的藏起來——
     // 超長時只是視覺上先收合（keyDetailsBlock），有明確的「顯示全部」可以展開，
     // 不是把內容拿掉
-    if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
+    if (currentDetail.detailPruned) {
+        const prunedHint = document.createElement('div');
+        prunedHint.className = 'small mt-1 px-2 py-1 rounded';
+        prunedHint.style.backgroundColor = 'var(--lf-info-soft)';
+        prunedHint.style.color = 'var(--lf-info-text)';
+        prunedHint.textContent = '這一天的詳情已超過保留期並清除，統計、風險等級與問題清單仍然保留。';
+        wrap.appendChild(prunedHint);
+    } else {
+        if (issue.residualCredentialBasis) wrap.appendChild(residualCredentialBlock(issue));
 
-    if (issue.distinctMessageCount > 1) {
-        const distinct = document.createElement('div');
-        distinct.className = 'small text-muted mt-1';
-        distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
-        wrap.appendChild(distinct);
+        if (issue.loginFailureDetails?.length) wrap.appendChild(loginFailureDetailsTable(issue));
+
+        if (issue.keyDetails) wrap.appendChild(keyDetailsBlock(issue.keyDetails));
+
+        if (issue.distinctMessageCount > 1) {
+            const distinct = document.createElement('div');
+            distinct.className = 'small text-muted mt-1';
+            distinct.textContent = `${issue.distinctMessageCount} 種相異訊息`;
+            wrap.appendChild(distinct);
+        }
+
+        if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
     }
 
-    if (issue.sampleMessages?.length) wrap.appendChild(sampleMessagesTrigger(issue));
+    return wrap;
+}
+
+/**
+ * 殘留徽章與判定依據（A6）：
+ * 當 issue.residualCredentialBasis 有值時呈現疑似殘留或由殘留觸發的徽章與說明。
+ */
+function residualCredentialBlock(issue) {
+    const wrap = document.createElement('div');
+    wrap.className = 'small mt-1 px-2 py-1 rounded';
+    wrap.style.backgroundColor = 'var(--lf-info-soft)';
+    wrap.style.color = 'var(--lf-info-text)';
+
+    const badge = document.createElement('span');
+    badge.className = 'lf-badge lf-badge--secondary';
+    badge.textContent = issue.residualCredentialRetry ? '疑似殘留憑證重試' : '可能由殘留憑證觸發';
+    wrap.appendChild(badge);
+
+    const basis = document.createElement('div');
+    basis.className = 'mt-1';
+    basis.textContent = issue.residualCredentialBasis;
+    wrap.appendChild(basis);
+
+    return wrap;
+}
+
+/**
+ * 登入失敗明細表（A6）：
+ * 顯示帳號／來源／類型／原因／次數結構化明細，上限 10 列。
+ */
+function loginFailureDetailsTable(issue) {
+    const details = issue.loginFailureDetails;
+    const wrap = document.createElement('div');
+    wrap.className = 'mt-1';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm mb-0';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const headers = ['帳號', '來源', '類型', '原因', '次數'];
+    for (const h of headers) {
+        const th = document.createElement('th');
+        th.textContent = h;
+        if (h === '次數') th.className = 'text-end';
+        headerRow.appendChild(th);
+    }
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const maxRows = 10;
+    const displayed = details.slice(0, maxRows);
+    for (const d of displayed) {
+        const tr = document.createElement('tr');
+
+        const accountTd = document.createElement('td');
+        const accountSpan = document.createElement('span');
+        accountSpan.textContent = d.account ? d.account : '（不明）';
+        accountTd.appendChild(accountSpan);
+        if (d.isComputerAccount) {
+            const note = document.createElement('span');
+            note.className = 'text-muted small ms-1';
+            note.textContent = '（電腦帳號）';
+            accountTd.appendChild(note);
+        }
+        tr.appendChild(accountTd);
+
+        const sourceTd = document.createElement('td');
+        sourceTd.textContent = d.source ? d.source : '（不明）';
+        tr.appendChild(sourceTd);
+
+        const typeTd = document.createElement('td');
+        typeTd.textContent = d.logonTypeText ? d.logonTypeText : '—';
+        tr.appendChild(typeTd);
+
+        const reasonTd = document.createElement('td');
+        reasonTd.textContent = d.reasonText ? d.reasonText : '（不明）';
+        tr.appendChild(reasonTd);
+
+        const countTd = document.createElement('td');
+        countTd.className = 'text-end';
+        countTd.textContent = formatNumber(d.count);
+        tr.appendChild(countTd);
+
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    if (details.length > maxRows || issue.loginFailureDetailsTruncated) {
+        const remaining = details.length - maxRows;
+        const note = document.createElement('div');
+        note.className = 'text-muted small mt-1';
+        // 後端明細封頂 50 組——截斷時不能拿清單長度冒充全貌，改報總次數並言明已截斷
+        note.textContent = issue.loginFailureDetailsTruncated
+            ? `另有 ${remaining} 筆明細未顯示（實際共 ${issue.loginFailureTotalCount} 次登入失敗，明細僅保留前 ${details.length} 組）`
+            : `另有 ${remaining} 筆明細未顯示`;
+        wrap.appendChild(note);
+    }
 
     return wrap;
 }
@@ -1262,7 +1473,7 @@ function caseBadge(issue) {
     // d-inline-block + mt-1：徽章現在接在狀態文字／預計完成日之下，需要自己撐開行距
     badge.className = 'lf-badge lf-badge--primary d-inline-block mt-1';
     if (issue.caseHandlerId) {
-        badge.href = `/handlers/${issue.caseHandlerId}`;
+        badge.href = appUrl(`/handlers/${issue.caseHandlerId}`);
         badge.addEventListener('click', event => event.stopPropagation());
     }
     badge.textContent = `${handlerText} ${statusText}`;
@@ -1441,6 +1652,7 @@ function correlationAlertItem(ref) {
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
     const text = document.createElement('span');
+    text.className = 'lf-alert-item__text';
     text.textContent = ref.text;
     item.appendChild(text);
 
@@ -1483,25 +1695,32 @@ function trendAlertItem(ref) {
     const item = document.createElement('li');
     item.className = 'd-flex align-items-start justify-content-between gap-2 mb-1';
 
+    // 文字側必須能收縮（lf-alert-item__text）：flex 子項預設 min-width:auto，
+    // 而這裡的內容是「Microsoft-Windows-Security-Auditing EventId 4719」這種不含空白的
+    // 長 token，不加的話它拒絕收縮、把整列推出卡片（純中文的那幾行會自動斷行所以看不出來）
     if (ref.kind === 'signature' && ref.issueKey) {
         const link = document.createElement('button');
         link.type = 'button';
-        link.className = 'btn btn-link p-0 text-body text-start';
+        link.className = 'btn btn-link p-0 text-body text-start lf-alert-item__text';
         link.textContent = ref.text;
         link.addEventListener('click', () => scrollToIssue(ref.issueKey));
         item.appendChild(link);
     } else {
         const text = document.createElement('span');
+        text.className = 'lf-alert-item__text';
         text.textContent = ref.text;
         item.appendChild(text);
     }
 
     if (canMaintainRules && ref.kind !== 'signature') {
         const volumeKind = ref.kind === 'volume-audit' ? 'audit' : 'error';
-        item.appendChild(button('', {
+        const right = document.createElement('span');
+        right.className = 'd-flex align-items-center gap-1 flex-shrink-0';
+        right.appendChild(button('', {
             variant: 'outline-danger', size: 'sm', icon: 'bell-slash', title: '抑制此類告警（本主機）',
             onClick: () => suppressVolumeAlert(volumeKind)
         }));
+        item.appendChild(right);
     }
     return item;
 }
@@ -1642,7 +1861,7 @@ function renderCategories(detail) {
         // 跨日：帶條件回問題查詢（§8.4），次要動作、圖示連結不搶主視線
         const cross = document.createElement('a');
         cross.className = 'lf-no-print ms-2 text-muted';
-        cross.href = `/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`;
+        cross.href = appUrl(`/records?categories=${category.category}&riskLevels=${encodeURIComponent('高,中,低')}&from=${detail.date}&to=${detail.date}`);
         cross.title = '在問題查詢中看這一類（可跨日）';
         cross.appendChild(icon('search'));
 
@@ -1817,13 +2036,14 @@ function otherAnalysis(detail) {
 
         const problem = document.createElement('div');
         problem.className = 'fw-semibold';
-        problem.textContent = finding.problem;
+        renderAiInline(problem, finding.problem);
         item.appendChild(problem);
 
         if (finding.impact) {
             const impact = document.createElement('div');
             impact.className = 'small text-muted mb-1';
-            impact.textContent = `影響：${finding.impact}`;
+            impact.appendChild(document.createTextNode('影響：'));
+            renderAiInline(impact, finding.impact);
             item.appendChild(impact);
         }
 
@@ -1848,7 +2068,7 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
     list.className = 'small mb-1 ps-3';
     for (const item of items) {
         const li = document.createElement('li');
-        li.textContent = item;
+        renderAiInline(li, item);
         list.appendChild(li);
     }
     parent.appendChild(list);

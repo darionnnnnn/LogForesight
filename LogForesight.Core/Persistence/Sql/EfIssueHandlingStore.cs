@@ -122,7 +122,10 @@ public sealed class EfIssueHandlingStore : IIssueHandlingStore
                     HostName = handling.HostName,
                     HostNameKey = rowKey.Item1,
                     RecordDate = handling.Date.Date,
-                    IssueKey = handling.IssueKey
+                    IssueKey = handling.IssueKey,
+                    // 首次寫入時間（回饋十九輪批次B）：只在新增這一列時落，Apply() 更新既有列
+                    // 不會覆寫它——語意同 UpdatedAt 對比，一個答「第一次」一個答「最近一次」
+                    CreatedAt = DateTime.Now
                 };
                 ctx.IssueHandlings.Add(row);
                 existing[rowKey] = row;

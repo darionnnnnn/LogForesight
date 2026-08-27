@@ -1,4 +1,4 @@
-@{
+﻿@{
     ViewData["Title"] = "排程作業";
 }
 
@@ -19,7 +19,7 @@
                         <label class="form-check-label" for="schedule-enabled">啟用排程</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="關閉時不會有任何自動觸發，僅能於本頁手動立即執行。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                     </div>
 
@@ -30,14 +30,14 @@
                         <label class="form-check-label" for="schedule-local-analysis">分析本機主機</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="關閉後排程／立即執行只跑 NetIQ 機房分析，本機（Web 主機自身）不再逐日分析。若同一台機器日後也以 IP 登錄為 NetIQ 主機，仍會照常從 Sentinel 取數，不受此開關影響。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                     </div>
 
                     <label class="form-label small fw-semibold">執行窗口</label>
                     <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                             data-bs-content="Start 到點觸發一次完整執行，End 到點對進行中的執行發出優雅停止（停在主機日邊界）。最多 4 組，時間不可重疊；支援跨午夜（如 22:00→06:00）。">
-                        <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                     </button>
                     <div id="schedule-windows" class="mb-2"></div>
                     <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="schedule-add-window" data-maintain-only>
@@ -49,7 +49,7 @@
                         <label class="form-check-label" for="schedule-debug-dump">AI 診斷傾印</label>
                         <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
                                 data-bs-content="開啟後下一次執行會把每次 AI 呼叫的完整 prompt 與原始回應輸出到資料根目錄的 diag\ 目錄，持續佔用磁碟。驗證完請記得關閉，不會自動關閉。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                     </div>
                 </div>
@@ -174,13 +174,33 @@
                         </div>
                     </div>
                     <div class="mb-3">
-                        <label for="run-now-backfill" class="form-label">回補天數（選填）</label>
-                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                                data-bs-content="僅影響 NetIQ 主機的回補窗口，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回補天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
-                            <svg class="lf-icon" aria-hidden="true"><use href="/img/icons.svg#question-circle"></use></svg>
+                        <label for="run-now-backfill" class="form-label">回望天數（選填）</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-backfill-help"
+                                data-bs-content="檢查最近幾天內有沒有缺漏或需要補跑的日子，已完成的日子不會重跑。僅影響 NetIQ 主機，只作用於這次執行、不會落地變更設定值；留空則沿用 NetIQ 維護頁設定的回望天數。本機主機（若「分析本機主機」已啟用）每次執行都會自動回補趨勢窗口內的缺漏日，不受此欄位影響。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
-                        <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" max="14" style="max-width: 120px;" />
+                        <input type="number" class="form-control form-control-sm" id="run-now-backfill" min="1" style="max-width: 120px;" />
                     </div>
+                    <div class="mb-3">
+                        <label for="run-now-rerun-mode" class="form-label">執行模式</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover" id="run-now-rerun-mode-help"
+                                data-bs-content="「只補跑失敗或未執行」僅補跑缺漏或失敗日，不影響既有結果；其餘模式為重新分析，會刪除選定日子的既有分析結果（含 AI 判讀與深度分析）後重新產生。「重新分析未處理」只重跑無人處理過的日子；「重新分析未處理與處理中」加上處理中日子；「全部重新分析」則重跑所有日子（含已結案）。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                        <select class="form-select form-select-sm" id="run-now-rerun-mode">
+                            <option value="None" selected>只補跑失敗或未執行（預設）</option>
+                            <option value="Unhandled">重新分析未處理的日子</option>
+                            <option value="UnhandledAndAssigned">重新分析未處理與處理中的日子</option>
+                            <option value="All">全部重新分析（含已處理完的）</option>
+                        </select>
+                        <div class="form-text text-warning" id="run-now-ai-disabled-hint" hidden></div>
+                    </div>
+                    <div class="mb-3" id="run-now-rerun-days-wrap" hidden>
+                        <label class="form-label" for="run-now-rerun-days">重新分析回望天數</label>
+                        <input type="number" class="form-control form-control-sm" id="run-now-rerun-days" min="1" value="30" style="max-width: 120px;" />
+                        <div class="form-text" id="run-now-rerun-days-hint">預設 30 天；上限為歷史資料保留天數</div>
+                    </div>
+                    <div class="alert py-2 px-3 mb-3" id="run-now-rerun-warning" role="alert" hidden></div>
                     <div class="alert alert-secondary py-2 px-3 mb-0" id="run-now-preview">請選擇範圍以預覽台數。</div>
                 </div>
                 <div class="modal-footer">

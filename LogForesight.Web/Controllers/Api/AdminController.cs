@@ -1,3 +1,4 @@
+using LogForesight.Core.Analysis;
 using LogForesight.Web.Auth;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
@@ -27,6 +28,7 @@ public class AdminController : ControllerBase
     private readonly IAuditService _audit;
     private readonly IUserStore _userStore;
     private readonly IWebHostEnvironment _env;
+    private readonly ISystemSettingsStore _settingsStore;
 
     public AdminController(
         UserAdminService users,
@@ -39,7 +41,8 @@ public class AdminController : ControllerBase
         NetiqProbeService probe,
         IAuditService audit,
         IUserStore userStore,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ISystemSettingsStore settingsStore)
     {
         _users = users;
         _hosts = hosts;
@@ -52,6 +55,7 @@ public class AdminController : ControllerBase
         _audit = audit;
         _userStore = userStore;
         _env = env;
+        _settingsStore = settingsStore;
     }
 
     // ── 使用者 ───────────────────────────────────────────────────────────────
@@ -167,6 +171,11 @@ public class AdminController : ControllerBase
     public ApiResponse<HostGroupsBatchResultDto> SetGroupsBatch([FromBody] SetGroupsBatchRequest request) =>
         ApiResponse<HostGroupsBatchResultDto>.Ok(_hosts.SetGroupsBatch(request.HostIds, request.GroupIds, request.Mode));
 
+    /// <summary>批次設定分級（回饋十九輪批次G）</summary>
+    [HttpPut("hosts/tier/batch")]
+    public ApiResponse<HostTierBatchResultDto> SetTierBatch([FromBody] SetTierBatchRequest request) =>
+        ApiResponse<HostTierBatchResultDto>.Ok(_hosts.SetTierBatch(request.HostIds, request.Tier));
+
     [HttpPut("hosts/{hostId:long}/owners")]
     public ApiResponse<HostDto> SetHostOwners(long hostId, [FromBody] SetIdsRequest request) =>
         ApiResponse<HostDto>.Ok(_hosts.SetHostOwners(hostId, request.Ids));
@@ -206,8 +215,27 @@ public class AdminController : ControllerBase
     // ── NetIQ 主動探索匯入（docs/archive/HISTORY.md §1）──────────────────────────
 
     [HttpPost("netiq/scan")]
-    public async Task<ApiResponse<NetiqScanResultDto>> Scan([FromBody] NetiqScanRequest request, CancellationToken ct) =>
-        ApiResponse<NetiqScanResultDto>.Ok(await _discovery.ScanAsync(request.Server, request.SubnetPrefix, ct));
+    public ApiResponse<NetiqScanJobDto> StartScan([FromBody] NetiqScanRequest request)
+    {
+        var granularity = SentinelQueryBuilder.ParseGranularity(request.Granularity);
+        var jobId = _discovery.StartScan(request.Server, request.SubnetPrefix, granularity, request.Concurrency ?? 1);
+        return ApiResponse<NetiqScanJobDto>.Ok(new NetiqScanJobDto
+        {
+            JobId = jobId,
+            Status = "running"
+        });
+    }
+
+    [HttpGet("netiq/scan/{jobId}")]
+    public ApiResponse<NetiqScanJobDto> GetScanStatus(string jobId) =>
+        ApiResponse<NetiqScanJobDto>.Ok(_discovery.GetScanStatus(jobId));
+
+    [HttpPost("netiq/scan/{jobId}/cancel")]
+    public ApiResponse<bool> CancelScan(string jobId)
+    {
+        _discovery.CancelScan(jobId);
+        return ApiResponse<bool>.Ok(true);
+    }
 
     [HttpPost("netiq/import")]
     public ApiResponse<NetiqImportResultDto> ImportNetiq([FromBody] NetiqImportRequest request) =>
@@ -323,7 +351,8 @@ public class AdminController : ControllerBase
         UpdatedByAccount = o.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(o.UpdatedByAccount)
             ? null
-            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName
+            : _userStore.FindByAccount(o.UpdatedByAccount)?.DisplayName,
+        MaxBackfillDays = NetiqOptions.GetEffectiveBackfillDaysLimit(_settingsStore.Get().RetentionDays)
     };
 
     // ── NetIQ API 診斷（probe，「診斷」分頁，docs/archive/WEB-SCHEDULER-PLAN.md §1.4.11）──────────
