@@ -53,7 +53,24 @@
 | 5 | 遷移掃 `export\` 目錄 | 遷移**由分析紀錄驅動**（權限異動報告除外） | 升級前的寫入端都沒帶主機識別，檔案全落在 export 根目錄，掃目錄只能全部歸給本機＝丟掉所有 NetIQ 主機的報告連結 |
 | — | `HasReport` 維持看 `record.ReportFile` | 改為實查 `IReportReader.Exists` | 報告有自己的保留期、可能比紀錄先被清掉，旗標卻永遠留著，會給出點下去必定落空的入口 |
 
-### 自查抓到的真 bug（實作期間）
+## 體檢輪修正（體檢方：claude-fable-5，實作方：claude-opus-5）
+
+1. **`EfReportStore.Write` 的 upsert 鍵與 `Read` 語意不一致（真 bug）**
+   - 哪裡：`Write` 的 upsert 查詢認四欄完全相等，`Read` 卻是 HostIdentity 語意（先比 id、0 列退名稱）。
+   - 症狀：主機未登記時寫過報告（列上 host_id=0）、事後登記成功再重跑同一天——`Write` 找不到 0 列而
+     **新增第二列**，同一主機日兩列並存，`Read` 沒有排序、讀到哪列不確定（可能顯示舊報告）。
+   - 修法：upsert 查詢改用同一套 HostIdentity 語意並**認領**（命中 0 列時把 host_id/host_name 升級成
+     現在的識別，表中始終一列）；`Read` 另加 `OrderByDescending(HostId)` 防禦排序，讓意外的兩列狀態
+     也有確定答案。
+   - 迴歸測試：`ReportStoreTests.未登記時寫過報告_登記後重跑同一天_認領原列不新增`。
+2. **`report-view.js` 的 `toolbar` 帶著沒人用的 `onClick` 參數（過度設計）**——移除。
+3. 檢視過但**判定不修**：`lf_reports` 在全新安裝會有 EF 預設名與 SchemaUpgrader 自訂名兩份唯一索引
+   ——這是全專案既有的同型現象（BACKLOG「EnsureCreated 與 SchemaUpgrader 建出兩份同欄位索引」條
+   已涵蓋），影響寫入吞吐不影響正確性，處理是 schema 層級的一輪，不在本輪加碼。
+
+測試：2989 綠（略過 6）。體檢後基線 2988 → 2989（+1 迴歸測試）。
+
+### 實作方自查抓到的真 bug（實作期間）
 
 - **未登記主機的讀取會串台**：`Read`／`Exists` 的比對寫成 `r.HostId == host.HostId || (r.HostId == 0 && 名稱相符)`，
   查詢端自己是未登記主機（id 為 0）時第一段退化成 `r.HostId == 0`，會命中**所有**未登記主機的報告。

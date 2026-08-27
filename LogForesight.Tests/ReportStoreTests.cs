@@ -124,6 +124,25 @@ public sealed class ReportStoreTests : IDisposable
         Assert.Equal("內容", _store.Read(Host(42, "SRV01"), Day, ReportKinds.DailyRisk)!.Content);
     }
 
+    /// <summary>
+    /// 體檢輪抓到的 bug 的迴歸鎖：主機未登記時寫過報告（列上 host_id=0），事後登記成功
+    /// 拿到 PK 再重跑同一天——Write 的 upsert 查詢若只認四欄完全相等，會找不到 0 列而
+    /// 新增第二列，同一主機日兩列並存、Read 讀到哪列變成不確定。
+    /// 正確行為是**認領**：命中 0 列時把主機識別一併升級，表中始終只有一列。
+    /// </summary>
+    [Fact]
+    public async Task 未登記時寫過報告_登記後重跑同一天_認領原列不新增()
+    {
+        await WriteAsync(Host(0, "SRV01"), "2026-08-27_高風險.txt", "登記前的報告");
+        await WriteAsync(Host(42, "SRV01"), "2026-08-27_中風險.txt", "登記後重跑的報告");
+
+        using var ctx = _fx.NewContext();
+        var row = Assert.Single(ctx.Reports);
+        Assert.Equal(42, row.HostId);
+
+        Assert.Equal("登記後重跑的報告", _store.Read(Host(42, "SRV01"), Day, ReportKinds.DailyRisk)!.Content);
+    }
+
     [Fact]
     public async Task 三種報告種類同主機同日_彼此獨立()
     {

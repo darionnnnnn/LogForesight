@@ -44,21 +44,23 @@ public sealed class EfReportStore : IReportSink, IReportReader, IReportUsageQuer
 
         // upsert：同一主機同一天同一種報告只留一份。重新分析同一天要就地取代，
         // 不是留兩份讓使用者猜哪份是現行的。
+        //
+        // 查詢條件**必須與 Read 同一套 HostIdentity 語意**，不能只認四欄完全相等：
+        // 主機在未登記時寫過報告（列上 host_id=0）、事後登記成功拿到 PK 再重跑同一天，
+        // 完全相等的查詢會找不到 0 列而新增第二列——同一主機日兩列並存，Read 讀到哪列
+        // 變成不確定。改為認領：命中 0 列時把 host_id/host_name 一併升級成現在的識別。
         var row = ctx.Reports.FirstOrDefault(r =>
-            r.HostId == host.HostId && r.HostName == host.HostName &&
-            r.ReportDate == reportDate && r.Kind == kind);
+            r.Kind == kind && r.ReportDate == reportDate &&
+            ((host.HostId != 0 && r.HostId == host.HostId) || (r.HostId == 0 && r.HostName == host.HostName)));
 
         if (row == null)
         {
-            row = new ReportRow
-            {
-                HostId = host.HostId,
-                HostName = host.HostName,
-                ReportDate = reportDate,
-                Kind = kind
-            };
+            row = new ReportRow { ReportDate = reportDate, Kind = kind };
             ctx.Reports.Add(row);
         }
+
+        row.HostId = host.HostId;
+        row.HostName = host.HostName;
 
         row.RiskLevel = meta?.RiskLevel;
         row.Categories = meta?.Categories;
@@ -85,9 +87,13 @@ public sealed class EfReportStore : IReportSink, IReportReader, IReportUsageQuer
     {
         using var ctx = _contextFactory();
         var day = date.Date;
-        var row = ctx.Reports.AsNoTracking().FirstOrDefault(r =>
-            r.Kind == kind && r.ReportDate == day &&
-            ((host.HostId != 0 && r.HostId == host.HostId) || (r.HostId == 0 && r.HostName == host.HostName)));
+        // OrderByDescending：命中集合只可能是「id 相符列」∪「0 列」，非 0 者（=id 相符）優先——
+        // Write 的認領邏輯理論上不會留下兩列並存，這是對意外狀態的防禦，讓讀到哪列有確定答案
+        var row = ctx.Reports.AsNoTracking()
+            .Where(r => r.Kind == kind && r.ReportDate == day &&
+                ((host.HostId != 0 && r.HostId == host.HostId) || (r.HostId == 0 && r.HostName == host.HostName)))
+            .OrderByDescending(r => r.HostId)
+            .FirstOrDefault();
 
         return row == null
             ? null

@@ -61,7 +61,7 @@ async function copyReport(report) {
  * 工具列（複製／下載／列印）。刻意都是文字鈕而非純圖示鈕——
  * 純圖示鈕在沒有可見標籤時對螢幕閱讀器與不熟悉圖示的使用者都是猜謎。
  */
-function toolbar(report, { onClick } = {}) {
+function toolbar(report) {
     const wrap = document.createElement('div');
     wrap.className = 'd-flex gap-2 lf-no-print';
 
@@ -73,7 +73,6 @@ function toolbar(report, { onClick } = {}) {
         btn.addEventListener('click', event => {
             // 卡片模式下整個 header 都是開合熱區，工具列的點擊不該連帶把卡片合起來
             event.stopPropagation();
-            onClick?.(event);
             handler();
         });
         return btn;
