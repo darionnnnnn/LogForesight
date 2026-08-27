@@ -300,7 +300,6 @@ function startPolling(jobId, { resume = false } = {}) {
 }
 
 async function openWizard(sentinel, subnetPrefix, granularity = '24', concurrency = 1) {
-    concurrency = parseInt(concurrency, 10) || 1;
     stopPolling(false);
     wizardPane = 'subnets';
     wizardScan = null;

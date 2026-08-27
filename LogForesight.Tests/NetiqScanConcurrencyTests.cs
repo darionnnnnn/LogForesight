@@ -354,6 +354,71 @@ public class NetiqScanConcurrencyTests
         Assert.Contains("更小的網段", ex.Message);
     }
 
+    // ── 案例 9：多分段中單一分段硬失敗時的例外型別契約 ──────────────────────────
+
+    /// <summary>
+    /// 多分段平行執行時，若某一分段的查詢真的失敗（非預算用盡，例如 Sentinel 回 400），
+    /// 呼叫端必須收到可顯示的 <see cref="NetiqDiscoveryException"/>，
+    /// **不是** <c>AggregateException</c> 或原始的 <c>SentinelClientException</c>——
+    /// 前端只會把訊息原樣顯示給管理者，漏包裝就會噴出無法閱讀的內部例外。
+    /// </summary>
+    [Fact]
+    public async Task 多分段中單一分段硬失敗_擲出可顯示的NetiqDiscoveryException()
+    {
+        var handler = new ConcurrencyTrackingHandler
+        {
+            EventSelector = MakeFourSegmentHosts,
+            FailFilterPredicate = filter => filter.Contains("repip:192.168.1.128")
+        };
+
+        var client = new SentinelRestDirectoryClient(Options(), handler);
+
+        var ex = await Assert.ThrowsAsync<NetiqDiscoveryException>(() =>
+            client.ListHostsAsync(Server(), "192.168.1", CancellationToken.None,
+                granularity: ScanGranularity.Slash26, concurrency: 3));
+
+        Assert.Contains("SENTINEL-TEST", ex.Message);
+    }
+
+    // ── 案例 10：警告依分段原順序合併且歸屬正確 ────────────────────────────────
+
+    /// <summary>
+    /// 平行化之後警告改寫進「每段自己的 outcome」再依分段索引合併。這條釘住兩件事：
+    /// 警告內容仍標注正確的分段（歸屬沒有在重構中錯位），且輸出順序是**分段原順序**、
+    /// 與哪一段先跑完無關。
+    /// </summary>
+    [Fact]
+    public async Task 多分段警告依分段原順序合併且標注正確分段()
+    {
+        // 讓第 2、4 段（.64 與 .192）的主掃描（含 rv150:System 的窄化 filter）查無主機、
+        // 補充掃描卻撈得到 → 觸發「collector 可能不轉送 System/Application」警告。
+        // 同時讓這兩段慢一點，確保它們的完成順序與分段順序不同。
+        var handler = new ConcurrencyTrackingHandler
+        {
+            EventSelector = filter =>
+            {
+                var supplementOnly = filter.Contains("repip:192.168.1.64") || filter.Contains("repip:192.168.1.192");
+                if (supplementOnly && filter.Contains("rv150:System")) return Array.Empty<(string Ip, string? Name)>();
+                return MakeFourSegmentHosts(filter.Contains("rv150:System") ? filter : filter + " rv150:System");
+            },
+            DelaySelector = filter => filter.Contains("repip:192.168.1.64")
+                ? TimeSpan.FromMilliseconds(120)
+                : TimeSpan.Zero
+        };
+
+        var client = new SentinelRestDirectoryClient(Options(), handler);
+
+        var result = await client.ListHostsAsync(Server(), "192.168.1", CancellationToken.None,
+            granularity: ScanGranularity.Slash26, concurrency: 3);
+
+        var collectorWarnings = result.Warnings.Where(w => w.Contains("collector")).ToList();
+        Assert.Equal(2, collectorWarnings.Count);
+
+        // 依分段原順序：.64 那段的警告必須排在 .192 那段之前，即使它跑得比較慢
+        Assert.Contains("192.168.1.64/26", collectorWarnings[0]);
+        Assert.Contains("192.168.1.192/26", collectorWarnings[1]);
+    }
+
     // ── 輔助方法 ─────────────────────────────────────────────────────────────
 
     private static (string Ip, string? Name)[] MakeFourSegmentHosts(string filter)
@@ -386,6 +451,9 @@ public class NetiqScanConcurrencyTests
         public TimeSpan DefaultDelay { get; set; } = TimeSpan.Zero;
         public Func<string, TimeSpan>? DelaySelector { get; set; }
         public Func<string, (string Ip, string? Name)[]>? EventSelector { get; set; }
+
+        /// <summary>回傳 true 的 filter 讓 Sentinel 回 400——模擬單一分段的硬失敗（非預算用盡）</summary>
+        public Func<string, bool>? FailFilterPredicate { get; set; }
 
         private void TrackPeak(int current)
         {
@@ -427,6 +495,11 @@ public class NetiqScanConcurrencyTests
                     lock (_lock)
                     {
                         CreatedFilters.Add(filter);
+                    }
+
+                    if (FailFilterPredicate?.Invoke(filter) == true)
+                    {
+                        return Json(HttpStatusCode.BadRequest, "{\"error\":\"filter rejected\"}");
                     }
 
                     var jobId = Interlocked.Increment(ref _jobIdSequence);

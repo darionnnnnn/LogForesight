@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Runtime.ExceptionServices;
 using LogForesight.Core;
 using LogForesight.Core.Analysis;
 
@@ -359,141 +358,133 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             var budgetExceeded = false;
             var isSingleSegment = segments.Count == 1;
 
-            try
+            await Parallel.ForEachAsync(indexedSegments, new ParallelOptions
             {
-                await Parallel.ForEachAsync(indexedSegments, new ParallelOptions
+                MaxDegreeOfParallelism = poolSize,
+                CancellationToken = ct
+            }, async (item, itemCt) =>
+            {
+                var (segment, index) = item;
+
+                if (scanCt.IsCancellationRequested)
                 {
-                    MaxDegreeOfParallelism = poolSize,
-                    CancellationToken = ct
-                }, async (item, itemCt) =>
-                {
-                    var (segment, index) = item;
-
-                    if (scanCt.IsCancellationRequested)
-                    {
-                        if (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
-                        {
-                            if (isSingleSegment)
-                            {
-                                throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
-                            }
-                            budgetExceeded = true;
-                            return;
-                        }
-                        ct.ThrowIfCancellationRequested();
-                    }
-
-                    if (!clientPool.TryTake(out var client))
-                        throw new InvalidOperationException("Sentinel client pool 耗盡（不應發生：並行度已受池大小節制）。");
-
-                    try
-                    {
-                        var scan = new ScanState(alreadyKnown);
-                        var segmentWarnings = new List<string>();
-
-                        if (isSingleSegment)
-                        {
-                            onProgress?.Invoke("主掃描中", 0);
-                        }
-
-                        // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
-                        var mainOutcome = await RunResidualRoundsAsync(
-                            client, scanCt,
-                            exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(segment, exclude, server.Os),
-                            now.AddHours(-WindowHours), now,
-                            CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, segment.Ips, segmentWarnings, $"主掃描（{segment.Label}）");
-
-                        if (isSingleSegment)
-                        {
-                            onProgress?.Invoke("主掃描完成", scan.DiscoveredHosts().Count);
-                            onProgress?.Invoke("補充掃描中", scan.DiscoveredHosts().Count);
-                        }
-
-                        // ── 補充掃描：全事件短窗，撈主掃描漏掉的 Security-only 主機 ──────────
-                        // 排除主掃描已見是關鍵（§3.2）：不排除的話取回的絕大多數是已知主機的
-                        // Security 洪流，純浪費；排除後殘差極小，短窗的涵蓋承諾才在 cap 內成立。
-                        var supplementOutcome = await RunResidualRoundsAsync(
-                            client, scanCt,
-                            exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(segment, exclude),
-                            now.AddMinutes(-SupplementWindowMinutes), now,
-                            SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, segment.Ips, segmentWarnings, $"補充掃描（{segment.Label}）",
-                            // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
-                            // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
-                            fallbackToUnexcludedFirstRound: true);
-
-                        var outcome = segmentOutcomes[index];
-                        outcome.Incomplete = !mainOutcome.Complete || !supplementOutcome.Complete;
-
-                        // 主掃描 0 台但補充掃描有台數＝這個環境的 collector 可能不轉送 System/Application，
-                        // 窄化 filter 因此失效（規劃 §3.8 的已知風險）。說出來讓人去查，不要靜靜地
-                        // 每次都靠補充掃描的短窗硬撐——那樣涵蓋率會長期偏低而沒有人知道原因。
-                        if (mainOutcome.NewHosts == 0 && supplementOutcome.NewHosts > 0)
-                        {
-                            segmentWarnings.Add(
-                                $"主掃描（{segment.Label}）（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
-                                "這台 Sentinel 的 collector 可能不轉送這兩個頻道，掃描涵蓋率會因此偏低。" +
-                                "請至「診斷」分頁執行一次診斷確認頻道覆蓋情形。");
-                        }
-
-                        outcome.Warnings.AddRange(segmentWarnings);
-                        outcome.Hosts.AddRange(scan.DiscoveredHosts());
-                        outcome.Completed = true;
-
-                        if (!isSingleSegment)
-                        {
-                            var completed = Interlocked.Increment(ref completedSegmentsCount);
-                            var totalDiscovered = Interlocked.Add(ref runningDiscoveredHostsCount, outcome.Hosts.Count);
-                            onProgress?.Invoke($"掃描中 {completed}/{segments.Count}（{segment.Label}）", totalDiscovered);
-                        }
-                    }
-                    catch (OperationCanceledException) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                    if (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
                     {
                         if (isSingleSegment)
                         {
                             throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
                         }
                         budgetExceeded = true;
+                        return;
                     }
-                    catch (SentinelClientException ex) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
-                    {
-                        if (isSingleSegment)
-                        {
-                            throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds), ex);
-                        }
-                        budgetExceeded = true;
-                    }
-                    finally
-                    {
-                        clientPool.Add(client);
-                    }
-                });
-            }
-            catch (AggregateException ex)
-            {
-                var flat = ex.Flatten();
-                if (flat.InnerExceptions.OfType<NetiqDiscoveryException>().FirstOrDefault() is { } netiqEx)
-                    ExceptionDispatchInfo.Capture(netiqEx).Throw();
-                if (flat.InnerExceptions.OfType<SentinelClientException>().FirstOrDefault() is { } sentinelEx)
-                    ExceptionDispatchInfo.Capture(sentinelEx).Throw();
-                if (flat.InnerExceptions.OfType<OperationCanceledException>().FirstOrDefault() is { } cancelEx)
-                    ExceptionDispatchInfo.Capture(cancelEx).Throw();
-                ExceptionDispatchInfo.Capture(flat.InnerExceptions[0]).Throw();
-            }
+                    ct.ThrowIfCancellationRequested();
+                }
 
+                if (!clientPool.TryTake(out var client))
+                    throw new InvalidOperationException("Sentinel client pool 耗盡（不應發生：並行度已受池大小節制）。");
+
+                try
+                {
+                    var scan = new ScanState(alreadyKnown);
+
+                    // 警告直接寫進這一段的 outcome（每段只有一條執行緒碰它，不需要鎖）。
+                    // 先寫區域清單、跑完才搬進 outcome 的話，段中途因預算用盡被中斷時，
+                    // 已經產生的涵蓋警告（如「NOT 排除語法未生效」）會連同清單一起消失——
+                    // 那正是最需要讓管理者看到的診斷。
+                    var outcome = segmentOutcomes[index];
+
+                    if (isSingleSegment)
+                    {
+                        onProgress?.Invoke("主掃描中", 0);
+                    }
+
+                    // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
+                    var mainOutcome = await RunResidualRoundsAsync(
+                        client, scanCt,
+                        exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(segment, exclude, server.Os),
+                        now.AddHours(-WindowHours), now,
+                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, segment.Ips, outcome.Warnings, $"主掃描（{segment.Label}）");
+
+                    if (isSingleSegment)
+                    {
+                        onProgress?.Invoke("主掃描完成", scan.DiscoveredHosts().Count);
+                        onProgress?.Invoke("補充掃描中", scan.DiscoveredHosts().Count);
+                    }
+
+                    // ── 補充掃描：全事件短窗，撈主掃描漏掉的 Security-only 主機 ──────────
+                    // 排除主掃描已見是關鍵（§3.2）：不排除的話取回的絕大多數是已知主機的
+                    // Security 洪流，純浪費；排除後殘差極小，短窗的涵蓋承諾才在 cap 內成立。
+                    var supplementOutcome = await RunResidualRoundsAsync(
+                        client, scanCt,
+                        exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(segment, exclude),
+                        now.AddMinutes(-SupplementWindowMinutes), now,
+                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, segment.Ips, outcome.Warnings, $"補充掃描（{segment.Label}）",
+                        // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
+                        // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
+                        fallbackToUnexcludedFirstRound: true);
+
+                    outcome.Incomplete = !mainOutcome.Complete || !supplementOutcome.Complete;
+
+                    // 主掃描 0 台但補充掃描有台數＝這個環境的 collector 可能不轉送 System/Application，
+                    // 窄化 filter 因此失效（規劃 §3.8 的已知風險）。說出來讓人去查，不要靜靜地
+                    // 每次都靠補充掃描的短窗硬撐——那樣涵蓋率會長期偏低而沒有人知道原因。
+                    if (mainOutcome.NewHosts == 0 && supplementOutcome.NewHosts > 0)
+                    {
+                        outcome.Warnings.Add(
+                            $"主掃描（{segment.Label}）（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
+                            "這台 Sentinel 的 collector 可能不轉送這兩個頻道，掃描涵蓋率會因此偏低。" +
+                            "請至「診斷」分頁執行一次診斷確認頻道覆蓋情形。");
+                    }
+
+                    outcome.Hosts.AddRange(scan.DiscoveredHosts());
+                    outcome.Completed = true;
+
+                    if (!isSingleSegment)
+                    {
+                        var completed = Interlocked.Increment(ref completedSegmentsCount);
+                        var totalDiscovered = Interlocked.Add(ref runningDiscoveredHostsCount, outcome.Hosts.Count);
+                        onProgress?.Invoke($"掃描中 {completed}/{segments.Count}（{segment.Label}）", totalDiscovered);
+                    }
+                }
+                catch (OperationCanceledException) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    if (isSingleSegment)
+                    {
+                        throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
+                    }
+                    budgetExceeded = true;
+                }
+                catch (SentinelClientException ex) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    if (isSingleSegment)
+                    {
+                        throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds), ex);
+                    }
+                    budgetExceeded = true;
+                }
+                finally
+                {
+                    clientPool.Add(client);
+                }
+            });
             var allHosts = new List<NetiqDiscoveredHost>();
             var incompleteSegments = new List<string>();
 
             for (var i = 0; i < segments.Count; i++)
             {
                 var outcome = segmentOutcomes[i];
-                if (outcome.Completed)
+
+                // 警告不分完成與否都要留：段中途被預算中斷，它先前產生的涵蓋警告仍然成立。
+                warnings.AddRange(outcome.Warnings);
+
+                // 主機與「掃了但沒掃乾淨」只採計跑完的段——沒跑完的段會被列進下面的
+                // 「未掃描的網段」，同時又貢獻半套主機清單會自相矛盾。
+                if (!outcome.Completed) continue;
+
+                allHosts.AddRange(outcome.Hosts);
+                if (outcome.Incomplete)
                 {
-                    allHosts.AddRange(outcome.Hosts);
-                    warnings.AddRange(outcome.Warnings);
-                    if (outcome.Incomplete)
-                    {
-                        incompleteSegments.Add(segments[i].Label);
-                    }
+                    incompleteSegments.Add(segments[i].Label);
                 }
             }
 
