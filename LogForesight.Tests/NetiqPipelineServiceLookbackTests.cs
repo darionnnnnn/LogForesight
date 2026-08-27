@@ -115,9 +115,11 @@ public class NetiqPipelineServiceLookbackTests
         ScheduleController.ValidateBackfillDays(null, retentionDays: 180);
     }
 
-    /// <summary>驗證 4：去重鍵查詢起點依實際回望天數推算（例如回望 5 天 → 起點是 12 天前），不隨絕對上限常數改變</summary>
+    /// <summary>驗證 4：權限異動去重不再於開跑時載入整個查詢窗的去重鍵（回饋三十四輪 A2）。
+    /// 舊做法一次撈回「回望天數＋7 天」內的全部鍵，正式環境每日近十萬筆時是數 GB 且整趟不釋放；
+    /// 改為逐主機日向資料庫現查後，整輪執行不得再出現「以天數推算的整窗鍵查詢」。</summary>
     [Fact]
-    public async Task NetiqPipeline_去重鍵查詢起點依實際回望天數加七天推算()
+    public async Task NetiqPipeline_不再於開跑時載入整窗去重鍵()
     {
         using var fixture = new EfSqliteFixture();
         var dir = Path.Combine(Path.GetTempPath(), "lf-dedupe-test-" + Guid.NewGuid().ToString("N"));
@@ -152,11 +154,8 @@ public class NetiqPipelineServiceLookbackTests
             var hostList = HostListSelection.FromStore(hosts, sentinels);
             await pipeline.RunAsync(hostList, 14);
 
-            // 回望 5 天 → 起點為 12 天前 (5 + 7 = 12)，絕不是以 365 常數推算的 372 天前
-            var expectedDate = DateTime.Today.AddDays(-12);
-            Assert.NotNull(spyStore.LastAppendedSince);
-            Assert.Equal(expectedDate, spyStore.LastAppendedSince.Value.Date);
-            Assert.NotEqual(DateTime.Today.AddDays(-(NetiqOptions.MaxBackfillDaysLimit + 7)), spyStore.LastAppendedSince.Value.Date);
+            // 整窗鍵快照已退場：整趟執行一次都不該呼叫它
+            Assert.False(spyStore.SnapshotRequested);
         }
         finally
         {
@@ -167,14 +166,17 @@ public class NetiqPipelineServiceLookbackTests
 
     private class SpyPermissionChangeStore : PermissionChangeStore
     {
-        public DateTime? LastAppendedSince { get; private set; }
+        public bool SnapshotRequested { get; private set; }
         public SpyPermissionChangeStore() : base(() => null!) { }
 
         public override HashSet<string> GetDedupeKeys(DateTime? appendedSince = null)
         {
-            LastAppendedSince = appendedSince;
+            SnapshotRequested = true;
             return new HashSet<string>(StringComparer.Ordinal);
         }
+
+        public override HashSet<string> GetDedupeKeysForHost(string hostName, DateTime from, DateTime toInclusive)
+            => new(StringComparer.Ordinal);
     }
 }
 

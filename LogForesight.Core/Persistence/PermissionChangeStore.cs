@@ -435,6 +435,26 @@ public class PermissionChangeStore
             .ToHashSet(StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// 單一主機、單一時間區間內既有列的去重鍵（回饋三十四輪 A2）。
+    /// 取代「開跑時把整個查詢窗的去重鍵全部載進記憶體」的做法——正式環境權限異動每日近十萬筆，
+    /// 回望天數一拉大就是千萬筆鍵、數 GB 記憶體，且整趟執行都不釋放。
+    /// 查詢走既有的 (host_name_key, detected_at) 複合索引，**不以 dedupe_key 為條件**
+    /// （該欄無索引且在 SqlServer 上是 nvarchar(max)，會全表掃描）。
+    /// </summary>
+    /// <param name="from">起（含）</param>
+    /// <param name="toInclusive">迄（含）——呼叫端以本批紀錄的最早／最晚偵測時間為界</param>
+    public virtual HashSet<string> GetDedupeKeysForHost(string hostName, DateTime from, DateTime toInclusive)
+    {
+        var hostKey = HostNameKey.Of(hostName);
+        using var ctx = _contextFactory();
+
+        return ctx.PermissionChanges.AsNoTracking()
+            .Where(r => r.HostNameKey == hostKey && r.DetectedAt >= from && r.DetectedAt <= toInclusive)
+            .Select(r => r.DedupeKey)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
     /// <summary>條件式原子更新確認狀態：只有目前為 pending 時才寫入成功</summary>
     public bool SaveConfirmation(PermissionChangeConfirmation confirmation)
     {

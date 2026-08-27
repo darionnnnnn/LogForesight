@@ -69,8 +69,9 @@ public class NetiqPipelineService
     private readonly PermissionFieldMappings? _permissionMappings;
     private readonly RerunMode _rerunMode;
     private readonly int? _rerunDays;
-    /// <summary>權限異動去重鍵快照，每輪執行載入一次（見 PermissionChangeStore.GetDedupeKeys）</summary>
-    private ConcurrentDictionary<string, byte> _permissionKeys = new();
+    /// <summary>權限異動的主機日佔位（回饋三十四輪 A2）：只放「主機＋日期」，不放事件內容——
+    /// 內容去重由 <see cref="PermissionChangeStore.GetDedupeKeysForHost"/> 逐主機日現查承擔。</summary>
+    private ConcurrentDictionary<string, byte> _permissionHostDayClaims = new();
     /// <summary>待寫回的主機回報時間，key＝HostId（見 <see cref="FlushHostTouches"/>）。
     /// 執行緒安全的集合是必要的：多台 Sentinel 平行處理，會同時寫進這裡。</summary>
     private readonly ConcurrentDictionary<long, HostTouch> _hostTouches = new();
@@ -148,14 +149,12 @@ public class NetiqPipelineService
             return result;
         }
 
-        // 權限異動去重鍵：整份 log 只讀這一次，之後各主機日共用（平行處理下用 TryAdd 佔位）
-        // 必須依本次執行實際採用的回望天數（＋一週緩衝）推算查詢起點，絕不能引用編譯期絕對上限常數（MaxBackfillDaysLimit=365）：
-        // 正式環境權限異動每日近十萬筆，若用常數推算會一次撈回 372 天數千萬筆去重鍵，將記憶體撐爆。更早的列不可能在本輪被重寫。
+        // 權限異動去重（回饋三十四輪 A2）：跨執行的內容去重改由資料庫逐主機日現查
+        // （PermissionChangeStore.GetDedupeKeysForHost），這裡只留主機日層級的佔位集合，
+        // 確保平行處理下同一個主機日不會被處理兩次。舊做法是開跑時把整個查詢窗的內容去重鍵
+        // 一次全載，正式環境每日近十萬筆、回望天數一拉大就是數 GB 且整趟不釋放。
+        _permissionHostDayClaims = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         var lookbackDays = ResolveLookbackDays(_netiqOptions.BackfillDays);
-        var dedupeSince = DateTime.Today.AddDays(-(lookbackDays + 7));
-        _permissionKeys = new ConcurrentDictionary<string, byte>(
-            (_permissionChangeStore?.GetDedupeKeys(dedupeSince) ?? new HashSet<string>()).Select(k => new KeyValuePair<string, byte>(k, 0)),
-            StringComparer.Ordinal);
 
         var configured = _netiqOptions.MaxParallelServers;
         var maxParallel = ResolveParallelism(configured);
@@ -690,7 +689,7 @@ public class NetiqPipelineService
             HostDayPostProcessor.ReplaceRiskyEvents(
                 _riskyEventStore, _rawEventRetentionDays, date, record.TopIssues, events, target.HostId, logContext);
             HostDayPostProcessor.RecordPermissionChanges(
-                _permissionChangeStore, _permissionKeys, target.HostName, target.Os, events, date, logContext, _permissionMappings);
+                _permissionChangeStore, _permissionHostDayClaims, target.HostName, target.Os, events, date, logContext, _permissionMappings);
 
             // AiWorkItem.Logs 的窄化（回饋十三輪 B1）已移進 BuildStatisticalRecordAsync 本身
             // （回饋十四輪 A2）：workItem 拿到手時 Logs 已經是 RiskyEventSelector 的選取結果
