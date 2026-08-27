@@ -49,9 +49,13 @@ public sealed class EfReportStore : IReportSink, IReportReader, IReportUsageQuer
         // 主機在未登記時寫過報告（列上 host_id=0）、事後登記成功拿到 PK 再重跑同一天，
         // 完全相等的查詢會找不到 0 列而新增第二列——同一主機日兩列並存，Read 讀到哪列
         // 變成不確定。改為認領：命中 0 列時把 host_id/host_name 一併升級成現在的識別。
-        var row = ctx.Reports.FirstOrDefault(r =>
-            r.Kind == kind && r.ReportDate == reportDate &&
-            ((host.HostId != 0 && r.HostId == host.HostId) || (r.HostId == 0 && r.HostName == host.HostName)));
+        // OrderByDescending 與 Read 對稱：意外的「id 相符列＋0 列」並存狀態下必須先取 id 相符列——
+        // 取到 0 列並把它認領成 id 相符，會與既存的 id 相符列撞唯一索引，寫入直接炸
+        var row = ctx.Reports
+            .Where(r => r.Kind == kind && r.ReportDate == reportDate &&
+                ((host.HostId != 0 && r.HostId == host.HostId) || (r.HostId == 0 && r.HostName == host.HostName)))
+            .OrderByDescending(r => r.HostId)
+            .FirstOrDefault();
 
         if (row == null)
         {
