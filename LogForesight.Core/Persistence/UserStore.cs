@@ -8,10 +8,12 @@ public class UserStore : JsonBlobCollection<WebUser>, IUserStore
 
     public List<WebUser> GetAll() => Read();
 
-    public WebUser? Get(long userId) => Read().FirstOrDefault(u => u.UserId == userId);
+    // 單筆查找走不複製的快照（回饋三十四輪 A5 同型）：FindByAccount 在權限異動清單的
+    // 逐列迴圈裡被呼叫，每列複製整份使用者清單純粹是 GC 壓力
+    public WebUser? Get(long userId) => ReadSnapshot().FirstOrDefault(u => u.UserId == userId);
 
     public WebUser? FindByAccount(string account) =>
-        Read().FirstOrDefault(u => string.Equals(u.Account, account, StringComparison.OrdinalIgnoreCase));
+        ReadSnapshot().FirstOrDefault(u => string.Equals(u.Account, account, StringComparison.OrdinalIgnoreCase));
 
     public WebUser Upsert(WebUser user)
     {

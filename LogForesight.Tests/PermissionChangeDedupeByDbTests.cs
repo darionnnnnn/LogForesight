@@ -50,16 +50,46 @@ public class PermissionChangeDedupeByDbTests
     }
 
     [Fact]
-    public void 同一次執行內同主機日重入只處理一次()
+    public void 同一次執行內同主機日重入時第二次完全不碰資料庫()
     {
-        using var fixture = new EfSqliteFixture();
-        var store = new PermissionChangeStore(fixture.NewContext);
+        var store = new ThrowOnSecondLookupStore();
         var at = new DateTime(2026, 8, 19, 10, 30, 0);
         var events = MemberAddEvent(at, "CONTOSO\\AdminUser");
         var claims = Claims();
 
         HostDayPostProcessor.RecordPermissionChanges(store, claims, "SRV-DC01", WebHost.OsWindows, events, at.Date);
         HostDayPostProcessor.RecordPermissionChanges(store, claims, "SRV-DC01", WebHost.OsWindows, events, at.Date);
+
+        // 佔位若失效，第二次會再查一次資料庫（替身會擲例外，但 RecordPermissionChanges 內部
+        // 吞例外只記警告，所以改以呼叫次數斷言——用結果筆數斷言的話刪掉佔位也照樣綠
+        Assert.Equal(1, store.LookupCount);
+    }
+
+    /// <summary>只用來數「跨執行去重查詢被呼叫幾次」的替身：主機日佔位有效時第二次不該再查</summary>
+    private sealed class ThrowOnSecondLookupStore : PermissionChangeStore
+    {
+        public int LookupCount { get; private set; }
+        public ThrowOnSecondLookupStore() : base(() => null!) { }
+
+        public override HashSet<string> GetDedupeKeysForHost(string hostName, DateTime from, DateTime toInclusive)
+        {
+            LookupCount++;
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 同一批內完全相同的兩則事件只入庫一筆()
+    {
+        using var fixture = new EfSqliteFixture();
+        var store = new PermissionChangeStore(fixture.NewContext);
+        var at = new DateTime(2026, 8, 19, 10, 30, 0);
+
+        // 來源把同一則事件回了兩次（查詢區間重疊、來源重送）
+        var events = MemberAddEvent(at, "CONTOSO\\AdminUser");
+        events.AddRange(MemberAddEvent(at, "CONTOSO\\AdminUser"));
+
+        HostDayPostProcessor.RecordPermissionChanges(store, Claims(), "SRV-DC01", WebHost.OsWindows, events, at.Date);
 
         Assert.Equal(1, CountFor(store, "SRV-DC01"));
     }

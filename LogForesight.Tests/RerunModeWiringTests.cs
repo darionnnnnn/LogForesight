@@ -103,7 +103,11 @@ public class RerunModeWiringTests
             BackfillDays = null
         }));
 
+        // 這個替身只餵得到驗證階段（scheduler 為 null、blob 尚未建表），走完驗證後必然因基礎設施
+        // 而失敗——所以斷言只釘住「驗證階段沒有拒絕」：合併前這裡會是「必須指定重跑天數」的
+        // DomainException，合併後必須放行到驗證之後。
         Assert.IsNotType<DomainException>(ex);
+        Assert.DoesNotContain("重跑天數", ex?.Message ?? "");
     }
 
     [Fact]

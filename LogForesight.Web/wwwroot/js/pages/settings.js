@@ -468,9 +468,12 @@ function renderAdStatus() {
 }
 
 /**
- * 使用者名稱顯示規則的前端檢查（回饋三十四輪 B2）：格式為「樣式 => 取代文字」，
- * `#` 開頭為註解、空白行略過。與後端 AccountDisplayFormatter.TryValidateRules 同一組規則，
- * 回傳錯誤訊息字串（含行號）或 null（合法）。
+ * 使用者名稱顯示規則的前端格式檢查（回饋三十四輪 B2）：格式為「樣式 => 取代文字」，
+ * `#` 開頭為註解、空白行略過。回傳錯誤訊息字串（含行號）或 null。
+ *
+ * **只驗與正則引擎無關的格式**：正則語法一律交給後端驗。前端是 JavaScript RegExp、
+ * 後端是 .NET Regex，語法集不同（例如 `\p{IsCJKUnifiedIdeographs}`、變長後查在 .NET 合法、
+ * 在 JS 直接丟例外）——在這裡驗語法會把後端接受的規則永遠擋在存檔之外（終檢抓到）。
  */
 function validateAccountDisplayRules(text) {
     const lines = (text ?? '').split(/\r\n|\r|\n/);
@@ -480,15 +483,7 @@ function validateAccountDisplayRules(text) {
 
         const arrow = line.indexOf('=>');
         if (arrow < 0) return `第 ${i + 1} 行規則格式錯誤：缺少「=>」分隔符號。`;
-
-        const pattern = line.slice(0, arrow).trim();
-        if (pattern.length === 0) return `第 ${i + 1} 行正則表達式樣式不可為空。`;
-
-        try {
-            new RegExp(pattern);
-        } catch {
-            return `第 ${i + 1} 行正則表達式語法錯誤。`;
-        }
+        if (line.slice(0, arrow).trim().length === 0) return `第 ${i + 1} 行正則表達式樣式不可為空。`;
     }
     return null;
 }

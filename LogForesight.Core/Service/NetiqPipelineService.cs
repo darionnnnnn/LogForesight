@@ -598,6 +598,13 @@ public class NetiqPipelineService
         }
 
         var totalSkipped = 0;
+        // 同一批裡可能有兩台主機登錄同一個 IP（NetIQ 主機以 IP 登錄，重複登錄並非不可能）。
+        // 用剩餘台數決定何時可以把桶子丟掉——只剩最後一台在用時才移除，
+        // 否則第二台會拿到空事件、整天被當成「來源未回報」（終檢抓到）。
+        var plansPerIp = batch
+            .GroupBy(p => p.Target.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
         foreach (var plan in batch)
         {
             var hostRawEvents = eventsByIp.TryGetValue(plan.Target.IpAddress, out var raw) ? raw : new List<SentinelEvent>();
@@ -612,8 +619,12 @@ public class NetiqPipelineService
             var hostReported = hostRawEvents.Count > 0;
 
             // 這台的原始事件已經映射完，分析期間不必再留著（回饋三十四輪 A3）：
-            // 移出桶子讓原始字典層在 AnalyzeHostDayAsync 執行期間就能被回收
-            eventsByIp.Remove(plan.Target.IpAddress);
+            // 移出桶子讓原始字典層在 AnalyzeHostDayAsync 執行期間就能被回收。
+            // 共用同一 IP 的主機都取用過了才丟。
+            if (--plansPerIp[plan.Target.IpAddress] == 0)
+            {
+                eventsByIp.Remove(plan.Target.IpAddress);
+            }
 
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,

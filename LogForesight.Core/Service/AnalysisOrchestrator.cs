@@ -705,10 +705,12 @@ public class AnalysisOrchestrator
         // 讓趨勢一開始就有基準，已有紀錄時只看趨勢窗口 TrendWindowDays 天。
         // 夾在保留期上限內：Web 端觸發時已驗證過，這裡再夾一次是為了「保留期事後被調小」
         // 與未來新增呼叫端——回望超過保留期的日子分析完下輪就被清掉，白跑一趟。
-        var defaultLookback = historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays;
-        var lookbackDays = Math.Min(
-            request.BackfillOverride ?? defaultLookback,
-            NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays));
+        // 夾制只套在使用者明示的天數上：留空時的預設值（首次執行的 InitialHistoryDays）本來就受
+        // 「保留天數不可小於首次回補天數」的設定驗證管，再夾一次會在既有 DB 的異常設定下
+        // 把首跑回補靜默縮短（終檢抓到）。
+        var lookbackDays = request.BackfillOverride is { } requested
+            ? Math.Min(requested, NetiqOptions.GetEffectiveBackfillDaysLimit(retention.RetentionDays))
+            : (historyService.HasAnyRecord() ? TrendWindowDays : retention.InitialHistoryDays);
 
         var missingDates = MissingDateFinder.Find(historyService, lookbackDays, requireAi: request.OnlyMissingOrFailed, useAi: useAi);
 
