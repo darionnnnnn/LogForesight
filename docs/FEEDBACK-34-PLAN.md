@@ -149,3 +149,18 @@
 | A1 分塊使 classic API 重複遍歷（效能取捨） | 成立 | 區塊天數 7→14（120 天首跑 9 塊），取捨寫進常數註解 |
 | A3 未達成「原始事件不整 job 累積」 | **成立，誠實申報** | 現況是消掉一份複本（扁平清單），分組後的桶子仍持有整個 job、但逐主機處理完即釋放。要再進一步需改成逐主機查詢，本輪不做 |
 | 文件過時（WEB-SPEC 三處、DB-SPEC 兩處、BACKLOG 一處、CLAUDE.md 基準） | 成立 | 全部更新 |
+
+## 體檢交接與換模型體檢
+
+- 實作方：Claude Opus 5（批次 A/C/D 與 B2/B3 自做；B1 由 agy 產出後大幅修正）；實作輪內另有兩個獨立 Explore 終檢（程式碼＋文件）。
+- 體檢方：Claude Fable 5（使用者切換模型後執行收尾）。
+
+### 換模型體檢結果
+
+1. **終檢後手改 commit（b122682）單獨重掃**——它未被實作輪的任何獨立驗收看過：共用 IP 桶子改計數後移除（正確，含 OrdinalIgnoreCase 一致）、本機留空不夾制（正確，明示值仍夾）、`DefaultScanChunkDays` 7→14 且參數預設值改引常數（正確）、前端只驗引擎無關格式（正確）——皆無新問題。
+2. **`UserStore.ReadSnapshot` 效益註記**：`UserStore` 基底未開快取（`base(blob)`），`ReadSnapshot` 在無快取下退回逐次反序列化——省掉的是 List 複製、不是反序列化，效益比 HostStore（有快取）小，但行為正確、無回歸。是否給 UserStore 開快取屬另一決策，本輪不動。
+3. **契約抽驗**（實作輪文件稽核標「無法從文件判斷」的項目）：B3 入庫文字產生點零改動（diff 無 LogAggregator/LoginFailureTextFormatter/LinuxAuthParser 等檔）、B1 regex 逾時保護（100ms）與 400 訊息含行號皆在、A4 批間失敗不吞例外。全部符合。
+4. **計畫外改動掃描**：diff 檔案清單全部對得上批次；`SchedulerHostedService` 的一行刪除是 C 的必要連動。無需回退項。
+5. 新增 BACKLOG 註記：`GetDedupeKeys` 死碼待下輪退場。
+
+體檢結論：**無新 bug、無過度設計需回退，可併 dev**。測試 3034（略過 6）全綠。

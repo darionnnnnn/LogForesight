@@ -405,6 +405,7 @@
 ## 回饋三十四輪遞延
 
 - **AI 診斷傾印（`diag/`）沒有任何上界**：`FilePromptDumper` 每次 AI 呼叫寫一個 `.txt` 到 `AppContext.BaseDirectory/diag/`，無保留期、無數量或總大小上限、也沒有任何清理呼叫端。排程設定的「AI 診斷傾印」開著跑一晚 3682 台就是數萬個檔，忘了關會慢慢塞爆磁碟。處理方向是比照其他保留期做定期清理，或改存資料庫；本輪聚焦排程記憶體，未動診斷路徑。
+- **`PermissionChangeStore.GetDedupeKeys`（整窗去重鍵快照）已成死碼**：生產路徑改走 `GetDedupeKeysForHost` 後零呼叫端，只剩測試在用。整窗快照正是被消滅的記憶體形狀，留著有被誤用的風險；待下輪連同其測試一併移除。
 - **報告檔遷移器（`ReportFileMigrator` / `ReportFileMigrationHostedService`）尚未退場**：報告已全數存在資料庫，遷移器只在升級時讀舊 `export\` 檔。第三十三輪的報告機制尚未在正式機實測，升級路徑還需要它——待正式機驗證後的輪次再移除（連同 `export` 這個已死的目錄概念）。
 
 ## 報告全文改存資料庫（遞延）
