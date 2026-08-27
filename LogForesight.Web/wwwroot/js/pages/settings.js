@@ -437,6 +437,7 @@ function renderAdFields(settings) {
     document.getElementById('ad-servers').value = (settings.adServers ?? []).join('\n');
     document.getElementById('ad-search-base').value = settings.adSearchBase ?? '';
     document.getElementById('ad-search-filter').value = settings.adSearchFilter ?? '';
+    document.getElementById('account-display-rules').value = settings.accountDisplayRules ?? '';
 
     document.getElementById('ad-test-account').value = '';
     document.getElementById('ad-test-password').value = '';
@@ -464,6 +465,32 @@ function renderAdStatus() {
         box.classList.add('alert-success');
         box.textContent = `目前狀態：AD 驗證生效中，共 ${serverCount} 台伺服器依序嘗試。`;
     }
+}
+
+/**
+ * 使用者名稱顯示規則的前端檢查（回饋三十四輪 B2）：格式為「樣式 => 取代文字」，
+ * `#` 開頭為註解、空白行略過。與後端 AccountDisplayFormatter.TryValidateRules 同一組規則，
+ * 回傳錯誤訊息字串（含行號）或 null（合法）。
+ */
+function validateAccountDisplayRules(text) {
+    const lines = (text ?? '').split(/\r\n|\r|\n/);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line.length === 0 || line.startsWith('#')) continue;
+
+        const arrow = line.indexOf('=>');
+        if (arrow < 0) return `第 ${i + 1} 行規則格式錯誤：缺少「=>」分隔符號。`;
+
+        const pattern = line.slice(0, arrow).trim();
+        if (pattern.length === 0) return `第 ${i + 1} 行正則表達式樣式不可為空。`;
+
+        try {
+            new RegExp(pattern);
+        } catch {
+            return `第 ${i + 1} 行正則表達式語法錯誤。`;
+        }
+    }
+    return null;
 }
 
 /** 一行一台，去除空白行——與後端 SystemSettingsService.NormalizeAdServers 對齊的寬鬆解析 */
@@ -827,6 +854,15 @@ function bindForm() {
             return;
         }
 
+        // 使用者名稱顯示規則：前端先擋一次格式與明顯的語法錯誤是體驗，
+        // 後端仍會逐行驗一次（前端驗證不是防線）
+        const ruleError = validateAccountDisplayRules(document.getElementById('account-display-rules').value);
+        if (ruleError) {
+            activateTabForElement(document.getElementById('account-display-rules'));
+            toast(ruleError, 'warning');
+            return;
+        }
+
         // 郵件通知（回饋十五輪批次D）：與後端 SystemSettingsService.Update 的驗證規則對齊，
         // 前端先擋一次是體驗，後端仍會再驗一次（前端驗證不是防線）
         const mailEnabled = document.getElementById('mail-enabled').checked;
@@ -880,6 +916,7 @@ function bindForm() {
                 adServers,
                 adSearchBase: document.getElementById('ad-search-base').value.trim(),
                 adSearchFilter: document.getElementById('ad-search-filter').value.trim(),
+                accountDisplayRules: document.getElementById('account-display-rules').value,
                 // AI 進階參數（§12）
                 aiTimeoutSeconds: Number(document.getElementById('ai-timeout-seconds').value),
                 aiRetryCount: Number(document.getElementById('ai-retry-count').value),
