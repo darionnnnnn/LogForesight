@@ -1169,5 +1169,6 @@ public class RecordQueryServiceSearchTests : IDisposable
 /// <summary>永遠回 null——Search 不會實際讀報告全文，這裡只是滿足建構式依賴</summary>
 internal class NullReportReader : IReportReader
 {
-    public string? Read(string reportRef) => null;
+    public ReportContent? Read(HostKey host, DateTime date, string kind) => null;
+    public bool Exists(HostKey host, DateTime date, string kind) => false;
 }

@@ -345,22 +345,53 @@ AlertText(≤503)」串成，最長約 790 字元：設成 `nvarchar(512)` 在 S
 ### 報告全文（人看的完整內容，與結構化資料並存的第二層）
 
 ```
-lf_reports                                           -- ↔ export\ 下的 txt 報告
+lf_reports                                           -- 三種報告的全文
   report_id      bigint PK
-  host_id        bigint FK → lf_hosts NOT NULL
-  report_date    date NOT NULL
+  host_id        bigint NOT NULL                  -- 0＝主機當時尚未登記，改以 host_name 歸戶
+  host_name      nvarchar(255) NOT NULL
+  report_date    date NOT NULL                    -- 報告所屬日期（不是產生時間）
   kind           nvarchar(20) NOT NULL            -- 'daily_risk' | 'weekly_checkup' | 'permission'
   risk_level     nvarchar(10) NULL                -- daily_risk 才有
-  categories     nvarchar(200) NULL               -- 儲存裝置+安全（檔名裡的類別串）
-  file_name      nvarchar(255) NOT NULL           -- 原始檔名（顯示與追溯用）
+  categories     nvarchar(200) NULL               -- 儲存裝置+安全（類別串）
+  file_name      nvarchar(255) NOT NULL           -- 顯示名稱與下載檔名
   content        text NOT NULL                    -- 報告全文
-  created_at     timestamp NOT NULL
+  created_at     timestamp NOT NULL               -- 產生時間；保留期清理依這一欄
+  UNIQUE (host_id, host_name, report_date, kind)
 ```
 
+**`host_id` 刻意不設 FK。** 主機登記失敗時它是 0（全站 `HostIdentity` 慣例是「host_id = 0 時
+改以 host_name 歸戶」），設 FK 會讓當晚的報告寫入直接拋，把「報告寫不出來」升級成
+「整趟分析失敗」。讀取端的比對規則同 `HostIdentity`：先比 `host_id`，只有列上是 0 的才退回
+名稱比對——**查詢端自己是未登記主機（id 為 0）時必須也要求名稱相符**，否則會命中所有未登記
+主機的報告而讀到別台的內容。
+
+**唯一鍵含 `host_name`，且它就是 upsert 的判定鍵。** `host_id = 0` 是「尚未登記」的哨兵值而
+不是一台主機，只用 `host_id` 會讓兩台都還沒登記成功的主機在同一天互相覆蓋。同一主機日重跑
+（回補、重新分析）就地取代該列，不累積多份讓使用者猜哪份是現行的。
+
+**`report_date` 與 `created_at` 不可互相取代。** 查詢與顯示用 `report_date`；保留期清理用
+`created_at`——重跑 100 天前的主機日時，依 `report_date` 清理會讓剛補出來的報告立刻消失
+（理由同 `lf_permission_changes`）。
+
+**升級路徑**：舊部署的報告是 `{DataRoot}\export\` 底下的 txt，由 `ReportFileMigrator` 背景搬入
+（自己的遷移狀態，blob key `report_file_migration`）。遷移**由分析紀錄驅動**而不是掃目錄：
+升級前的寫入端都沒有帶主機識別，檔案全落在 export 根目錄，光看檔案無從得知它屬於哪一台主機，
+掃目錄只能全部歸給本機、等於丟掉所有 NetIQ 主機的報告連結；紀錄的 `ReportFile` 存的是那筆
+紀錄實際指向的路徑，照著它搬才歸得對。權限異動報告是唯一例外（路徑從未存下來，且只有本機
+監控會產生，歸給本機是正確的）。重入保護是**逐筆比對自然鍵**，不是「表裡有資料就整批跳過」
+——夜間分析也會寫這張表。舊檔**不刪**，保留為備份。
+
+> 檔案時代的檔名碰撞（多台主機同日同風險同類別覆蓋成同一個檔）**不會被遷移「修好」**：
+> 幾筆紀錄指向同一個檔就是同一份內容，遷移忠實保留升級前使用者看到的東西。
+> 升級後新產生的報告不再碰撞。
+
 風險報告在 DB 裡因此是**兩層**：
-- **結構化層**（`lf_daily_records`＋`lf_top_issues`＋`lf_record_alerts`＋`lf_deep_dive_analyses`）：
-  Web 篩選、統計、排序、餵 AI context 都用這層
-- **全文層**（`lf_reports.content`）：使用者點開看完整報告時顯示，一字不差保留現有 txt 格式
+- **結構化層**（`lf_daily_records`＋`lf_top_issues`）：Web 篩選、統計、排序、餵 AI context 都用這層
+- **全文層**（`lf_reports.content`）：使用者點開看完整報告時顯示，一字不差保留既有的 txt 版面
+
+三種報告的 Web 入口：風險報告與體檢報告在分析紀錄詳情（可收合卡片），權限異動報告在
+權限異動檢核頁的列展開內容（對話框）。三者共用同一個呈現元件，皆可複製／下載 txt／列印；
+下載在前端組 Blob，**不新增任何後端存檔路徑**。
 
 ### AI 問答（⏸ 未來選項——視資源決定，僅保留設計）
 
@@ -449,7 +480,7 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 | `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
-| `ReportRetentionDays` | 1095 | `export\` 底下的報告檔（風險報告／週檢報告／權限異動報告），依檔名日期前綴判定。**與 `RetentionDays` 各自獨立、不互相約束**：報告是純文字小檔，設計上可留得比分析紀錄久。超過 `RetentionDays` 之後 DB 紀錄已清除，該報告在 Web 上不再有入口，但檔案仍在磁碟（依主機與年月分資料夾） |
+| `ReportRetentionDays` | 180 | 報告全文：`lf_reports`（風險報告／體檢報告／權限異動報告），依 `created_at` 判定。**不可大於 `RetentionDays`**（前後端皆驗證，讀取端另取小）：報告全文存在資料庫，而超過 `RetentionDays` 之後對應的分析紀錄已被清除，那些報告在 Web 上不再有任何入口可點開，留著只是佔空間 |
 
 六個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
 讀取端不 clamp，既有部署存過的較短天數照舊生效。

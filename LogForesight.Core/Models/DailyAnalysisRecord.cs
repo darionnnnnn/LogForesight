@@ -105,7 +105,16 @@ public class DailyAnalysisRecord
     /// <summary>前置掃描判定值得注意的項目（事件 + AI 掃描意見），已回流主分析一併判讀</summary>
     public List<string> ScreeningNotes { get; set; } = new();
 
-    /// <summary>風險「中」以上時輸出的報告檔參照（今日為 export/{日期}_*.txt 路徑，未來 DB 後端可能是資料表 id），無風險為 null</summary>
+    /// <summary>
+    /// 風險「中」以上時產生的報告參照（`lf_reports.report_id`），無風險為 null。
+    ///
+    /// **查詢端不靠它讀報告**：報告全文一律以「主機×日期×種類」自然鍵反查
+    /// （見 <c>IReportReader</c>），三種報告同一條路徑；報告有自己的保留期、可能比紀錄先被清掉，
+    /// 這個欄位卻永遠留著，拿它當「有沒有報告」的判斷會給出點下去必定落空的入口。
+    ///
+    /// 它現在的用途有二：批次輸出「這天有沒有產生報告」的訊息，以及
+    /// <c>ReportFileMigrator</c> 讀升級前存下的檔案路徑（那是唯一能把舊報告歸回正確主機日的線索）。
+    /// </summary>
     public string? ReportFile { get; set; }
 
     /// <summary>

@@ -41,7 +41,7 @@ public class LogAnalysisService
     /// <param name="suppressionStore">主機級告警抑制設定（見 docs/RULES-SPEC.md）：只影響「要不要吵」
     /// （通知、風險升級），偵測與紀錄照常——事件照樣聚合、命中規則、寫入歷史，只是不進告警清單、不拉高風險</param>
     /// <param name="serverDescription">伺服器角色描述（如「AD 網域控制站」），會帶入 prompt 讓 AI 依環境判讀；空字串則略過</param>
-    /// <param name="reportService">提供時，風險「中」以上的日期會輸出 export/{日期}.txt 風險報告</param>
+    /// <param name="reportService">提供時，風險「中」以上的日期會產生風險報告全文（存入 lf_reports）</param>
     /// <param name="host">寫入紀錄的主機名稱；null/空字串時預設為 Environment.MachineName（本機情境的自然值）</param>
     /// <param name="hostId">寫入紀錄的主機 PK（主機清單登記後取得）。**紀錄與主機的關聯鍵**；
     /// 0＝取不到主機列時的降級，查詢端會退回以主機名稱比對，分析本身不受影響</param>
@@ -123,7 +123,7 @@ public class LogAnalysisService
         _historyService.Append(record);
 
         Log.Info("完成分析 {Date:yyyy-MM-dd}：風險={Risk}, 錯誤={Errors}, 警告={Warnings}, 稽核={Audit}, " +
-                 "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告檔={ReportFile}",
+                 "aiAnalyzed={AiAnalyzed}, 耗時={ElapsedMs}ms, 報告參照={ReportFile}",
             targetDate, record.RiskLevel, record.ErrorCount, record.WarningCount, record.AuditEventCount,
             record.AiAnalyzed, sw.ElapsedMilliseconds, record.ReportFile ?? "(無)");
 
@@ -716,7 +716,9 @@ public class LogAnalysisService
 
         try
         {
-            return await _reportService.GenerateAsync(record, logs, _serverDescription, activeSuppressions, ct: ct);
+            // 主機一定要帶：多台主機同一天、同風險等級、同類別組合的報告只差在這個鍵
+            return await _reportService.GenerateAsync(record, logs, _serverDescription, activeSuppressions,
+                host: new HostKey { HostId = _hostId, HostName = _host }, ct: ct);
         }
         catch (Exception ex)
         {

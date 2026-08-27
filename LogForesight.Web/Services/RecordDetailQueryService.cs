@@ -117,6 +117,7 @@ public class RecordDetailQueryService
         // 這一天發生什麼事」的內容，交辦一個問題不等於交出整天的狀況。
         var grantedKeys = _visibility.GetIssueKeyRestriction(hostId);
         var caseGrantOnly = grantedKeys != null;
+        var reportHost = new HostKey { HostId = record.HostId, HostName = record.Host };
         if (grantedKeys != null)
         {
             visibleTopIssues = visibleTopIssues
@@ -171,13 +172,18 @@ public class RecordDetailQueryService
             DataIncomplete = record.DataIncomplete,
             SecurityLogAvailable = record.SecurityLogAvailable,
             UncoveredChecks = record.UncoveredChecks,
-            HasReport = !caseGrantOnly && !string.IsNullOrWhiteSpace(record.ReportFile),
+            // 報告有自己的保留期，可能比紀錄先被清掉——實查有無，不看紀錄上那個永遠留著的旗標，
+            // 否則畫面會給出一個點下去必定落空的入口
+            HasReport = !caseGrantOnly && _reports.Exists(reportHost, date, ReportKinds.DailyRisk),
             CaseGrantOnly = caseGrantOnly,
             WeeklyCheckup = record.WeeklyCheckup == null ? null : new WeeklyCheckupDto
             {
                 CheckupDate = record.WeeklyCheckup.CheckupDate.ToString("yyyy-MM-dd"),
                 HasFindings = record.WeeklyCheckup.HasFindings,
-                Conclusion = record.WeeklyCheckup.Conclusion
+                Conclusion = record.WeeklyCheckup.Conclusion,
+                // 體檢報告掛在體檢基準日，不是這筆紀錄的日期
+                HasReport = !caseGrantOnly &&
+                            _reports.Exists(reportHost, record.WeeklyCheckup.CheckupDate, ReportKinds.WeeklyCheckup)
             },
             CanHandle = _currentUser.Has(Capability.Handle),
             UnhandledSeverities = settings.UnhandledSeverities,
@@ -185,7 +191,19 @@ public class RecordDetailQueryService
         };
     }
 
-    public string? GetReport(long hostId, DateTime date)
+    /// <summary>
+    /// 當日報告全文（純文字），供「詢問 AI」把報告一併餵給模型。
+    /// </summary>
+    public string? GetReport(long hostId, DateTime date) =>
+        GetReportView(hostId, date, ReportKinds.DailyRisk)?.Content;
+
+    /// <summary>
+    /// 報告全文與其顯示欄位。<paramref name="kind"/> 見 <see cref="ReportKinds"/>。
+    ///
+    /// 讀取以「主機×日期×種類」自然鍵反查（見 <see cref="IReportReader"/>），
+    /// 紀錄上的 <c>ReportFile</c> 只當「這天有沒有風險報告」的旗標用。
+    /// </summary>
+    public ReportViewDto? GetReportView(long hostId, DateTime date, string kind)
     {
         var record = _repository.GetOne(hostId, date)
                      ?? throw DomainException.NotFound("找不到這筆分析紀錄，或您沒有檢視權限。");
@@ -197,7 +215,12 @@ public class RecordDetailQueryService
         // 只是不含報告內容
         if (_visibility.IsCaseGrantOnly(hostId)) return null;
 
-        return string.IsNullOrWhiteSpace(record.ReportFile) ? null : _reports.Read(record.ReportFile);
+        // 體檢報告掛在體檢基準日，不是這筆紀錄的日期——兩者可以不同天
+        var reportDate = kind == ReportKinds.WeeklyCheckup ? record.WeeklyCheckup?.CheckupDate.Date : date.Date;
+        if (reportDate == null) return null;
+
+        var content = _reports.Read(new HostKey { HostId = record.HostId, HostName = record.Host }, reportDate.Value, kind);
+        return content == null ? null : ReportViewDto.From(content);
     }
 
     /// <summary>

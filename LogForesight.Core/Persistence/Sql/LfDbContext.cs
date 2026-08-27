@@ -58,6 +58,9 @@ public class LfDbContext : DbContext
     /// <summary>權限異動檢核（↔ lf_permission_changes，含確認狀態）</summary>
     public DbSet<PermissionChangeRow> PermissionChanges => Set<PermissionChangeRow>();
 
+    /// <summary>報告全文（↔ lf_reports，風險／週檢／權限異動三種）</summary>
+    public DbSet<ReportRow> Reports => Set<ReportRow>();
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<BlobRow>(e =>
@@ -348,6 +351,34 @@ public class LfDbContext : DbContext
             e.HasIndex(x => new { x.Category, x.Status });
             e.HasIndex(x => x.CreatedAt);
         });
+
+        b.Entity<ReportRow>(e =>
+        {
+            e.ToTable("lf_reports");
+            e.HasKey(x => x.ReportId);
+            e.Property(x => x.ReportId).HasColumnName("report_id").ValueGeneratedOnAdd();
+            // host_id 刻意不設 FK：主機登記失敗時它是 0（全站的 HostIdentity 慣例是
+            // 「host_id = 0 時改以 host_name 歸戶」），設 FK 會讓當晚的報告寫入直接拋，
+            // 把「報告寫不出來」升級成「整趟分析失敗」。host_name 是那條 fallback 的歸戶鍵。
+            e.Property(x => x.HostId).HasColumnName("host_id");
+            e.Property(x => x.HostName).HasColumnName("host_name").HasMaxLength(255);
+            e.Property(x => x.ReportDate).HasColumnName("report_date");
+            e.Property(x => x.Kind).HasColumnName("kind").HasMaxLength(20);
+            e.Property(x => x.RiskLevel).HasColumnName("risk_level").HasMaxLength(10);
+            e.Property(x => x.Categories).HasColumnName("categories").HasMaxLength(200);
+            e.Property(x => x.FileName).HasColumnName("file_name").HasMaxLength(255);
+            e.Property(x => x.Content).HasColumnName("content");
+            e.Property(x => x.CreatedAt).HasColumnName("created_at");
+
+            // 唯一鍵＝upsert 的判定鍵：重新分析同一天要就地取代，不是留兩份讓使用者猜哪份是現行的。
+            // **host_name 必須納入鍵**：host_id = 0 是「未登記」的哨兵值而不是一台主機，
+            // 兩台都還沒登記成功的主機在同一天會撞同一個鍵，只留 host_id 就會讓其中一台的
+            // 報告覆蓋另一台——那正是本輪要修掉的檔名碰撞 bug 換個地方重演。
+            e.HasIndex(x => new { x.HostId, x.HostName, x.ReportDate, x.Kind }).IsUnique();
+            // 保留期清理依 created_at（不是 report_date）：重跑 100 天前的主機日時，
+            // 依 report_date 清理會讓剛補出來的報告立刻消失。理由同 lf_permission_changes。
+            e.HasIndex(x => x.CreatedAt);
+        });
     }
 }
 
@@ -595,3 +626,40 @@ public class PermissionChangeRow
     public string? ConfirmNote { get; set; }
 }
 
+
+/// <summary>
+/// 報告全文的一列（風險／週檢／權限異動三種）。↔ lf_reports
+///
+/// 風險報告在 DB 裡因此是兩層：結構化層（lf_daily_records＋lf_top_issues＋…）供篩選、統計、
+/// 排序與餵 AI context；全文層（本表的 <see cref="Content"/>）供使用者點開看完整報告，
+/// 一字不差保留既有的 txt 版面。
+/// </summary>
+public class ReportRow
+{
+    public long ReportId { get; set; }
+
+    /// <summary>主機 PK；0 代表主機尚未登記成功，改以 <see cref="HostName"/> 歸戶</summary>
+    public long HostId { get; set; }
+
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>報告所屬日期（不是產生時間；產生時間是 <see cref="CreatedAt"/>）</summary>
+    public DateTime ReportDate { get; set; }
+
+    /// <summary>報告種類，值域見 <see cref="LogForesight.Core.Persistence.ReportKinds"/></summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>風險等級，僅 daily_risk 有值</summary>
+    public string? RiskLevel { get; set; }
+
+    /// <summary>當日發現的類別串（如「儲存裝置+安全」），僅 daily_risk 有值</summary>
+    public string? Categories { get; set; }
+
+    /// <summary>既有檔名格式（如 2026-08-27_高風險_儲存裝置+安全.txt）——顯示與下載檔名用</summary>
+    public string FileName { get; set; } = string.Empty;
+
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>產生時間。**保留期清理依這一欄**，不是 <see cref="ReportDate"/></summary>
+    public DateTime CreatedAt { get; set; }
+}

@@ -733,7 +733,7 @@ public class NetiqPipelineService
             else
             {
                 _console.WriteLine($"  [{sentinelName}] [{target.IpAddress}] {date:yyyy-MM-dd} 風險【{record.RiskLevel}】" +
-                                  (record.ReportFile != null ? $" → {record.ReportFile}" : ""));
+                                  (record.ReportFile != null ? " → 已產生風險報告" : ""));
             }
 
             // 統計完成即算 done，AI 不在內（docs/archive/FEEDBACK-12-PLAN.md §3.7）：進度條分子分母
@@ -824,7 +824,7 @@ public class NetiqPipelineService
 
                     result.AddAiCompleted();
                     _console.WriteLine($"  [{job.SentinelName}] [{job.Ip}] {job.Date:yyyy-MM-dd} {tag}完成，" +
-                                      $"風險【{outcome.RiskLevel}】" + (outcome.ReportFile != null ? $" → {outcome.ReportFile}" : ""));
+                                      $"風險【{outcome.RiskLevel}】" + (outcome.ReportFile != null ? " → 已產生風險報告" : ""));
                 }
                 catch (OperationCanceledException)
                 {

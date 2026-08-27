@@ -43,11 +43,16 @@ public class LogAnalysisServiceSplitTests : IDisposable
         };
         var reportService = new RiskReportService(ai, sink);
         var service = new LogAnalysisService(new EventLogService(), ai, history, new FakeSuppressionStore(),
-            reportService: reportService);
+            reportService: reportService, host: "SRV-NETIQ-07", hostId: 42);
 
         var record = await service.AnalyzeDayAsync(DateTime.Today.AddDays(-1), MakeHighRiskDiskEvents(), useAi: true);
 
         Assert.Equal("高", record.RiskLevel);
+
+        // 報告要歸到這個分析服務綁定的主機：升級前這裡完全沒把主機傳下去，
+        // 多台主機同日同風險同類別的報告因而互相覆蓋
+        Assert.Equal(42, sink.LastHost?.HostId);
+        Assert.Equal("SRV-NETIQ-07", sink.LastHost?.HostName);
         Assert.True(record.AiAnalyzed);
         Assert.NotNull(record.ReportFile);
         Assert.NotNull(sink.LastContent);

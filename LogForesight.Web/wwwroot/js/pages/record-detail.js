@@ -13,6 +13,7 @@ import { riskBadge, severityBadge, elevatesBadge, formatNumber, formatUserName, 
 import { initHandlingPanel, refreshSelection } from './handling-panel.js';
 import { initChatPanel, updateIssueOptions } from './chat-panel.js';
 import { renderAiText, renderAiInline } from '../core/markdown-lite.js';
+import { reportCard } from '../core/report-view.js';
 
 const root = document.getElementById('record-detail');
 const hostId = Number(root.dataset.hostId);
@@ -135,7 +136,7 @@ async function load() {
         caseGrantOnly: currentDetail.caseGrantOnly
     });
 
-    if (currentDetail.hasReport) await loadReport();
+    await loadReports();
 
     setupNextUnhandled();
 }
@@ -146,46 +147,6 @@ async function onBatchSaved(result) {
     if (result?.status === 'known_noise') await offerBatchSuppression(result.issueKeys);
 }
 
-/**
- * 報告全文預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的
- * 重點問題，全文留給少數需要逐字核對的場合。展開狀態記 localStorage——
- * 常看全文的人不必每次進來都重新展開。
- *
- * 整個 header 都可點開合（docs/archive/HISTORY.md #10）：原本只有標題那顆
- * btn-link 可點，右側複製/列印鈕之外的空白區點了沒反應。複製/列印鈕各自
- * stopPropagation，不被 header 的點擊攔截。
- */
-function setupReportToggle() {
-    const header = document.getElementById('report-header');
-    const body = document.getElementById('report-body');
-    const caret = document.getElementById('report-caret');
-
-    const expanded = localStorage.getItem('lf.recordDetail.reportExpanded') === 'true';
-    applyReportExpanded(expanded);
-
-    header.addEventListener('click', () => toggleReport());
-    header.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            toggleReport();
-        }
-    });
-
-    for (const id of ['btn-copy-report', 'btn-print']) {
-        document.getElementById(id).addEventListener('click', event => event.stopPropagation());
-    }
-
-    function toggleReport() {
-        applyReportExpanded(body.classList.contains('d-none'));
-    }
-
-    function applyReportExpanded(nowOpen) {
-        body.classList.toggle('d-none', !nowOpen);
-        caret.classList.toggle('lf-collapse-caret--open', nowOpen);
-        header.setAttribute('aria-expanded', String(nowOpen));
-        localStorage.setItem('lf.recordDetail.reportExpanded', String(nowOpen));
-    }
-}
 
 /**
  * 「下一筆未處理」捷徑：處理完一天後不必手動返回清單再自己找下一筆。
@@ -2074,24 +2035,31 @@ function appendList(parent, label, items, labelClass = 'small fw-semibold mt-1')
     parent.appendChild(list);
 }
 
-async function loadReport() {
-    const content = await api.get(`/api/records/${hostId}/${date}/report`);
-    if (!content) return;
+/**
+ * 報告全文（風險／體檢）。兩者共用 core/report-view.js 的同一個卡片元件——
+ * 版面、鍵盤開合與複製/下載/列印行為完全一致。
+ *
+ * 預設收合（§5.1 D-1 #1）：一天的報告全文很長，多數時候只需要看結構化的重點問題，
+ * 全文留給少數需要逐字核對的場合。展開狀態各自記 localStorage——
+ * 常看某一種全文的人不必每次進來都重新展開。
+ */
+const riskReportCard = reportCard({ storageKey: 'lf.recordDetail.reportExpanded' });
+const checkupReportCard = reportCard({ storageKey: 'lf.recordDetail.checkupReportExpanded' });
+document.getElementById('report-cards').append(riskReportCard.el, checkupReportCard.el);
 
-    document.getElementById('report-card').classList.remove('d-none');
-    document.getElementById('detail-report').textContent = content;
-    setupReportToggle();
+async function loadReports() {
+    // 兩份報告各自可有可無，分開請求；任一份查無（已過保留期）不影響另一份
+    const [risk, checkup] = await Promise.all([
+        currentDetail.hasReport
+            ? api.get(`/api/records/${hostId}/${date}/report`)
+            : Promise.resolve(null),
+        currentDetail.weeklyCheckup?.hasReport
+            ? api.get(`/api/records/${hostId}/${date}/report?kind=weekly_checkup`)
+            : Promise.resolve(null)
+    ]);
+
+    riskReportCard.setReport(risk);
+    checkupReportCard.setReport(checkup);
 }
-
-document.getElementById('btn-copy-report').addEventListener('click', async () => {
-    try {
-        await navigator.clipboard.writeText(document.getElementById('detail-report').textContent);
-        toast('已複製報告全文', 'success');
-    } catch {
-        toast('複製失敗，瀏覽器可能不允許存取剪貼簿', 'danger');
-    }
-});
-
-document.getElementById('btn-print').addEventListener('click', () => window.print());
 
 guardLoad(document.getElementById('detail-issues'), load);

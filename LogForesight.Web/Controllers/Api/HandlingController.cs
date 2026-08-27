@@ -208,6 +208,16 @@ public class PermissionChangesController : ControllerBase
     }
 
     /// <summary>
+    /// 某主機某日的權限異動報告全文（逐項「請確認」的完整敘事）。查無回 null，不是錯誤。
+    /// </summary>
+    [HttpGet("report")]
+    public ApiResponse<ReportViewDto?> GetReport([FromQuery] string host, [FromQuery] string date)
+    {
+        if (string.IsNullOrWhiteSpace(host)) throw DomainException.Validation("請指定主機。");
+        return ApiResponse<ReportViewDto?>.Ok(_service.GetReport(host, QueryStringParsing.ParseRequiredDate(date)));
+    }
+
+    /// <summary>
     /// 可用的異動類別清單（key 與中文標籤）。
     /// 前端的類別篩選必須靠它才列得全——只從當頁資料收集的話，
     /// 沒有出現在當頁的類別就選不到，等於篩不到那一類。

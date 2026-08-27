@@ -64,23 +64,9 @@
                 </div>
             </section>
 
-            <section class="lf-card d-none" id="report-card">
-                <div class="lf-card__header lf-card__header--clickable" id="report-header" role="button" tabindex="0" aria-expanded="false">
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="lf-collapse-caret" id="report-caret">
-                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#chevron-down"></use></svg>
-                        </span>
-                        <h2 class="lf-card__title mb-0">風險報告全文</h2>
-                    </div>
-                    <div class="d-flex gap-2 lf-no-print">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-copy-report">複製</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-print">列印</button>
-                    </div>
-                </div>
-                <div class="lf-card__body d-none" id="report-body">
-                    <pre class="report-text" id="detail-report"></pre>
-                </div>
-            </section>
+            <!-- 報告全文（風險／體檢）由 core/report-view.js 掛載：三種報告共用同一個卡片元件，
+                 版面與鍵盤行為不會因為頁面不同而長歪 -->
+            <div id="report-cards" class="d-flex flex-column gap-3"></div>
         </div>
 
         <div class="col-lg-4">

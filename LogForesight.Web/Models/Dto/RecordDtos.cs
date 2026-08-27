@@ -516,6 +516,45 @@ public class WeeklyCheckupDto
     public string CheckupDate { get; set; } = string.Empty;
     public bool HasFindings { get; set; }
     public string Conclusion { get; set; } = string.Empty;
+
+    /// <summary>這次體檢有沒有留下報告全文可看（有結論不代表有全文——AI 失敗那次不寫入）</summary>
+    public bool HasReport { get; set; }
+}
+
+/// <summary>
+/// 報告全文與它的顯示欄位（三種報告共用同一個形狀，前端也就共用同一個檢視元件）。
+/// </summary>
+public class ReportViewDto
+{
+    /// <summary>種類字面值（daily_risk／weekly_checkup／permission）</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>種類的中文名稱，直接當卡片標題用</summary>
+    public string KindName { get; set; } = string.Empty;
+
+    public string ReportDate { get; set; } = string.Empty;
+
+    /// <summary>下載時的檔名（沿用產生當時的命名慣例）</summary>
+    public string FileName { get; set; } = string.Empty;
+
+    public string? RiskLevel { get; set; }
+
+    /// <summary>當日發現的類別串（僅風險報告）</summary>
+    public string? Categories { get; set; }
+
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>儲存層的報告 → 畫面 DTO。三種報告共用同一條轉換，避免各服務各寫一份而漂移。</summary>
+    public static ReportViewDto From(ReportContent content) => new()
+    {
+        Kind = content.Kind,
+        KindName = ReportKinds.Zh(content.Kind),
+        ReportDate = content.ReportDate.ToString("yyyy-MM-dd"),
+        FileName = content.FileName,
+        RiskLevel = content.RiskLevel,
+        Categories = content.Categories,
+        Content = content.Content
+    };
 }
 
 /// <summary>主機時間軸的單日格子</summary>

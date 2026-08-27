@@ -51,6 +51,7 @@ internal class RecordQueryServiceFacade
 
     public RecordDetailDto GetDetail(long hostId, DateTime date) => _detail.GetDetail(hostId, date);
     public string? GetReport(long hostId, DateTime date) => _detail.GetReport(hostId, date);
+    public ReportViewDto? GetReportView(long hostId, DateTime date, string kind) => _detail.GetReportView(hostId, date, kind);
     public IssueHistoryDto GetIssueHistory(long hostId, DateTime date, string issueKey) => _detail.GetIssueHistory(hostId, date, issueKey);
     public HostDetailDto GetHostDetail(long hostId, int days) => _detail.GetHostDetail(hostId, days);
     public HostIssueOccurrenceDto GetHostIssueOccurrences(long hostId, string source, int eventId, int days) =>

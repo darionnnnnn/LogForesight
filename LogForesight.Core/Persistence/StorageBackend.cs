@@ -25,11 +25,14 @@ public class StorageBackend
     private readonly Func<LfDbContext> _dbFactory;
     private readonly string _dbDesc;
 
+    /// <summary>資料根目錄（升級前的 <c>export\</c> 報告檔落點，供一次性遷移掃描）</summary>
+    private readonly string _dataRoot;
+
     public const int ForegroundCommandTimeoutSeconds = 60;
     public const int AnalysisCommandTimeoutSeconds = 300;
 
     /// <summary>Sqlite 未指定 ConnectionString 時，db 檔所在的子資料夾（相對於 DataRoot）。
-    /// 資料檔集中在此，與 <c>export\</c> 等產出目錄分開。</summary>
+    /// 資料檔集中在此，與診斷 log 等產出目錄分開。</summary>
     private const string DefaultSqliteDirectoryName = "Db";
 
     /// <summary>Sqlite 未指定 ConnectionString 時的 db 檔名</summary>
@@ -103,6 +106,7 @@ public class StorageBackend
             _dbDesc = $"SqlServer（{MaskConnectionString(cs)}）";
         }
 
+        _dataRoot = fallbackDir;
         _dbFactory = () => new LfDbContext(options);
 
         Log.Info("[SQL] 啟用 {Desc} 後端（全資料走 SQL，無檔案）。正在確保 schema…", _dbDesc);
@@ -130,6 +134,7 @@ public class StorageBackend
                 // 這裡只做毫秒級的「需不需要搬」判定並寫下狀態，搬移交給背景服務。
                 HandlingMigrator.Evaluate();
                 PermissionChangeMigrator.Evaluate();
+                ReportFileMigrator.Evaluate();
             }, SchemaMutexTimeout);
 
             if (!exclusive)
@@ -194,6 +199,10 @@ public class StorageBackend
     /// <summary>權限異動檢核 store（↔ lf_permission_changes）</summary>
     public PermissionChangeStore PermissionChanges() => new(_dbFactory);
 
+    /// <summary>報告全文 store（↔ lf_reports）：同時是 <see cref="IReportSink"/> 與
+    /// <see cref="IReportReader"/> 的實作</summary>
+    public EfReportStore ReportStore() => new(_dbFactory);
+
     /// <summary>問題聚合查詢（docs/archive/SCALE-ISSUE-FIRST-PLAN.md P4／根因 C）。
     /// <paramref name="hosts"/> 用於查詢當下把 host_id 解析回存活主機（主機合併鏈），
     /// 呼叫端另外持有——本類別不擁有主機清單的生命週期。</summary>
@@ -216,6 +225,14 @@ public class StorageBackend
         new PermissionChangeMigrator(_dbFactory, Blob, new PermissionChangeMigrationStateStore(Blob(PermissionChangeMigrator.StateBlobKey)));
 
     private PermissionChangeMigrator? _permissionChangeMigrator;
+
+    /// <summary>
+    /// 既有 <c>export\</c> 報告檔搬進 lf_reports 的遷移器（背景一次性工作，同樣每個後端一份）。
+    /// </summary>
+    public ReportFileMigrator ReportFileMigrator => _reportFileMigrator ??=
+        new ReportFileMigrator(_dbFactory, new ReportMigrationStateStore(Blob(ReportFileMigrator.StateBlobKey)), _dataRoot);
+
+    private ReportFileMigrator? _reportFileMigrator;
 
     /// <summary>既有 NetIQ 權限異動列的重剖回填（背景一次性工作，同樣每個後端一份）</summary>
     public PermissionChangeReparser PermissionChangeReparser => _permissionChangeReparser ??=

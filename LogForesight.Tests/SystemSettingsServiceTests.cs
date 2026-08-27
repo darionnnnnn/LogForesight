@@ -30,7 +30,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState));
+                MailState), new FakeReportUsageQuery());
 
     private static UpdateSystemSettingsRequest ValidRequest(
         int runLogRetentionDays = 120, int auditRetentionDays = 730, int rawEventRetentionDays = 120) => new()
@@ -257,7 +257,7 @@ public class SystemSettingsServiceTests : IDisposable
             new MailNotificationService(_store, _mailSender, new FakeHostStore(), new FakeUserStore(),
                 new FakeUserGroupStore(), new FakeGroupAccessStore(),
                 _mailRecords, new FakeHandlingStore(),
-                MailState));
+                MailState), new FakeReportUsageQuery());
 
         // 存入不同的值以確認稽核抓到變更
         service.Update(ValidRequest(rawEventRetentionDays: 90));

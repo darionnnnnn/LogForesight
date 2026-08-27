@@ -205,7 +205,7 @@ public class AnalysisOrchestrator
             IPromptDumper dumper = request.DebugDump ? new FilePromptDumper() : new NullPromptDumper();
             var aiService = new AIService(settings.Ai, dumper,
                 new AiUsageStore(backend.Blob(AiUsageStore.BlobKey)));
-            var reportSink = new FileReportSink(Path.Combine(dataRoot, "export")); // 風險報告輸出至資料根目錄下的 export
+            var reportSink = backend.ReportStore(); // 報告全文存進 lf_reports
 
             // AI 是否已設定（docs/archive/FEEDBACK-7-PLAN.md）：未設定時自動短路成統計模式（規則/趨勢/關聯
             // 照常執行，只是不呼叫 AI），不再逐日嘗試打逾時再降級——那樣會讓整晚的排程被逾時
@@ -378,10 +378,11 @@ public class AnalysisOrchestrator
                 }
 
                 var permissionFileName = $"{DateTime.Today:yyyy-MM-dd}_權限異動.txt";
-                var permissionReportPath = await reportSink.WriteAsync(ReportKind.Permission, host: "", permissionFileName, reportSb.ToString());
-                console.WriteLine($"  📄 權限異動報告（含逐項明細）：{permissionReportPath}");
+                await reportSink.WriteAsync(ReportKind.Permission,
+                    new HostKey { HostId = currentHostId, HostName = currentHost }, permissionFileName, reportSb.ToString());
+                console.WriteLine("  📄 權限異動報告（含逐項明細）已產生，可於「權限異動檢核」頁檢視。");
 
-                // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與 txt 報告是既有輸出、
+                // 雙軌寫入（docs/WEB-SPEC.md §2.1 Phase 3）：上面的 console 告警與報告全文是既有輸出、
                 // 一字未改；這裡另外把每筆異動寫成結構化紀錄，供 Web 的「權限異動檢核」逐筆確認。
                 try
                 {
@@ -528,17 +529,17 @@ public class AnalysisOrchestrator
                 Log.Warn(ex, "處理狀態／處理歷程清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
-            // 1c. 清理過期的報告檔（風險／週檢／權限異動，docs/archive/HISTORY.md P1-4）——
-            // 保留期是獨立設定 ReportRetentionDays，刻意不跟 RetentionDays 綁在一起
+            // 1c. 清理過期的報告全文（風險／週檢／權限異動）——保留期是獨立設定
+            // ReportRetentionDays，但上限受 RetentionDays 約束（見 RuntimeSettingsResolver）
             try
             {
-                var reportsPruned = ExportReportPruner.Prune(Path.Combine(dataRoot, "export"), retention.ReportRetentionDays);
+                var reportsPruned = backend.ReportStore().Prune(retention.ReportRetentionDays);
                 if (reportsPruned > 0)
-                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告檔（風險／週檢／權限異動）。");
+                    console.WriteLine($"已清除 {reportsPruned} 份超過 {retention.ReportRetentionDays} 天的報告全文（風險／週檢／權限異動）。");
             }
             catch (Exception ex)
             {
-                Log.Warn(ex, "風險報告檔清理失敗（不影響本次分析）：{0}", ex.Message);
+                Log.Warn(ex, "報告全文清理失敗（不影響本次分析）：{0}", ex.Message);
             }
 
             var yesterday = DateTime.Today.AddDays(-1);
@@ -605,7 +606,8 @@ public class AnalysisOrchestrator
             {
                 console.WriteLine($"\n執行體檢（週期性回顧，以 {yesterday:yyyy-MM-dd} 為基準）...");
                 var checkupStopwatch = Stopwatch.StartNew();
-                var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays, settings.Analysis.ServerDescription, useAi: useAi);
+                var checkup = await weeklyCheckupService.RunAsync(yesterday, settings.Analysis.CheckupIntervalDays,
+                    settings.Analysis.ServerDescription, host: new HostKey { HostId = currentHostId, HostName = currentHost }, useAi: useAi);
 
                 if (!checkup.Completed)
                 {
@@ -620,7 +622,7 @@ public class AnalysisOrchestrator
                         console.WriteLine($"  📋 體檢有發現：{checkup.Conclusion}");
                         if (checkup.ReportFile != null)
                         {
-                            console.WriteLine($"  📄 體檢報告：{checkup.ReportFile}");
+                            console.WriteLine("  📄 體檢報告已產生，可於該日的分析紀錄詳情檢視。");
                         }
                     }
                     else
@@ -858,19 +860,21 @@ public class AnalysisOrchestrator
             runRecorder.Milestone(rerunSummary);
         }
 
-        // 執行結果總表：讓使用者一眼看到「哪幾天有問題、該打開哪個報告檔、花了多久」
+        // 執行結果總表：讓使用者一眼看到「哪幾天有問題、哪幾天有報告可看、花了多久」。
+        // 報告參照（lf_reports 的主鍵）對使用者沒有意義，console 只標示有無，內容到 Web 看。
         console.WriteLine("\n══════════ 本次執行結果 ══════════");
         foreach (var r in result.LocalResults)
         {
             console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
-                              (r.ReportFile != null ? $"  → {r.ReportFile}" : ""));
+                              (r.ReportFile != null ? "  → 已產生風險報告" : ""));
         }
 
         var riskyCount = result.LocalResults.Count(r => r.ReportFile != null);
         if (riskyCount > 0)
         {
             console.WriteLine(
-                $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已輸出至上列報告檔。");
+                $"\n  需要關注：{riskyCount} 天判定有風險，問題說明、AI 深入分析與原始 log 已寫入報告，" +
+                "可於 Web 的分析紀錄詳情檢視。");
         }
         else
         {
@@ -1088,11 +1092,11 @@ public class AnalysisOrchestrator
             console.WriteLine($"  {record.Summary}");
         }
 
-        // 有輸出風險報告時明確指引檔案位置，讓使用者知道去哪看細節
+        // 有產生風險報告時明確指引去哪看細節（報告參照是主鍵，對使用者沒有意義，不印出來）
         if (record.ReportFile != null)
         {
             console.WriteLine(
-                $"\n  📄 詳細風險報告（含 AI 深入分析與原始 log）：{record.ReportFile}");
+                "\n  📄 詳細風險報告（含 AI 深入分析與原始 log）已產生，可於 Web 的分析紀錄詳情檢視。");
         }
     }
 }

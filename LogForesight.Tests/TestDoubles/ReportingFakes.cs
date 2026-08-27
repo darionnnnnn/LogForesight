@@ -12,10 +12,21 @@ internal sealed class FakeReportSink : IReportSink
     public bool Called { get; private set; }
     public string? LastContent { get; private set; }
 
-    public Task<string> WriteAsync(ReportKind kind, string host, string fileName, string content)
+    /// <summary>最後一次寫入帶的主機識別——「報告有沒有歸到正確的主機」是本身就要驗的事</summary>
+    public HostKey? LastHost { get; private set; }
+
+    public ReportKind LastKind { get; private set; }
+    public string? LastFileName { get; private set; }
+    public ReportMeta? LastMeta { get; private set; }
+
+    public Task<string> WriteAsync(ReportKind kind, HostKey host, string fileName, string content, ReportMeta? meta = null)
     {
         Called = true;
         LastContent = content;
+        LastHost = host;
+        LastKind = kind;
+        LastFileName = fileName;
+        LastMeta = meta;
         return Task.FromResult($"fake/{fileName}");
     }
 }
@@ -41,4 +52,25 @@ internal sealed class FakeReader : IAnalysisRecordReader
     public bool HasAnyRecord() => _records.Count > 0;
     public bool HasRecord(DateTime date) => _records.Any(r => r.Date.Date == date.Date);
     public DateTime? LastWeeklyCheckupDate() => _lastCheckup;
+}
+
+/// <summary>報告存量查詢替身（設定頁的空間告知；多數測試不在意這個數字）</summary>
+internal sealed class FakeReportUsageQuery : IReportUsageQuery
+{
+    public int Count { get; set; }
+    public long TotalChars { get; set; }
+
+    public (int Count, long TotalChars) Usage() => (Count, TotalChars);
+}
+
+/// <summary>
+/// 「每一天每一種報告都有」的讀取替身：讓斷言得以檢查授權裁剪本身，
+/// 而不是被「測試環境裡本來就沒有報告」矇混過去。
+/// </summary>
+internal sealed class StubReportReader : IReportReader
+{
+    public ReportContent? Read(HostKey host, DateTime date, string kind) =>
+        new(1, kind, date.Date, RiskLevels.High, "儲存裝置", $"{date:yyyy-MM-dd}_報告.txt", "報告內容");
+
+    public bool Exists(HostKey host, DateTime date, string kind) => true;
 }

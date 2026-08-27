@@ -72,11 +72,11 @@ internal class WeeklyCheckupService
     }
 
     /// <param name="intervalDays">體檢窗口天數，通常等於 <see cref="AnalysisSettings.CheckupIntervalDays"/></param>
-    /// <param name="host">主機識別，單機情境留空即可</param>
+    /// <param name="host">主機識別。null 時退回本機（<c>Environment.MachineName</c>，host_id 未知）</param>
     /// <param name="useAi">false＝AI 未設定（docs/archive/FEEDBACK-7-PLAN.md）。窗口內無訊號時不受影響
     /// （本來就不呼叫 AI）；有訊號時不嘗試呼叫，回傳 Completed=false 讓呼叫端沿用既有
     /// 「未完成不寫入歷史、下次執行自動補跑」語意——AI 設定好之後這期的體檢會自動補上。</param>
-    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", string host = "", bool useAi = true)
+    public async Task<WeeklyCheckupResult> RunAsync(DateTime checkupDate, int intervalDays, string serverDescription = "", HostKey? host = null, bool useAi = true)
     {
         var window = _historyReader.ReadRecent(checkupDate, intervalDays);
 
@@ -147,7 +147,8 @@ internal class WeeklyCheckupService
             ? SuppressionFilter.ActiveForHost(_suppressionStore.LoadAll(), Environment.MachineName, _hostGroupIds, DateTime.Now)
             : new List<RuleSuppression>();
         var content = BuildReportText(checkupDate, window, outcome, activeSuppressions);
-        outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup, host, fileName, content);
+        outcome.ReportFile = await _reportSink.WriteAsync(ReportKind.WeeklyCheckup,
+            host ?? new HostKey { HostName = Environment.MachineName }, fileName, content);
 
         Log.Info("{Date:yyyy-MM-dd} 體檢完成：有發現={HasFindings}", checkupDate, outcome.HasFindings);
         return outcome;

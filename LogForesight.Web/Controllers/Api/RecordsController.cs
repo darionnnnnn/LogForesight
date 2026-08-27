@@ -163,10 +163,23 @@ public class RecordsController : ControllerBase
     public ApiResponse<RecordDetailDto> GetDetail(long hostId, string date) =>
         ApiResponse<RecordDetailDto>.Ok(_detail.GetDetail(hostId, ParseRequiredDate(date)));
 
-    /// <summary>報告全文（純文字，前端以等寬字型原樣呈現）</summary>
+    /// <summary>
+    /// 報告全文（前端以等寬字型原樣呈現）。<c>kind</c> 預設風險報告，
+    /// <c>weekly_checkup</c> 取該日紀錄所掛的體檢報告。查無回 null，不是錯誤。
+    /// </summary>
     [HttpGet("{hostId:long}/{date}/report")]
-    public ApiResponse<string?> GetReport(long hostId, string date) =>
-        ApiResponse<string?>.Ok(_detail.GetReport(hostId, ParseRequiredDate(date)));
+    public ApiResponse<ReportViewDto?> GetReport(long hostId, string date, [FromQuery] string? kind = null)
+    {
+        var reportKind = kind switch
+        {
+            null or "" or ReportKinds.DailyRisk => ReportKinds.DailyRisk,
+            ReportKinds.WeeklyCheckup => ReportKinds.WeeklyCheckup,
+            // 權限異動報告不掛在分析紀錄上（走 /api/permission-changes/report），
+            // 未知種類一律擋掉而不是安靜回空，否則打錯字會被當成「這天沒報告」
+            _ => throw DomainException.Validation("不支援的報告種類。")
+        };
+        return ApiResponse<ReportViewDto?>.Ok(_detail.GetReportView(hostId, ParseRequiredDate(date), reportKind));
+    }
 
     /// <summary>
     /// 單一問題簽章的先前處理歷史（docs/archive/FEEDBACK-5-PLAN.md §4）。issueKey 含 <c>|</c>，

@@ -478,6 +478,15 @@ function renderRetentionFields(settings) {
     document.getElementById('run-log-retention-days').value = settings.runLogRetentionDays;
     document.getElementById('audit-retention-days').value = settings.auditRetentionDays;
     document.getElementById('report-retention-days').value = settings.reportRetentionDays;
+
+    // 空間告知用實測值：報告全文存在資料庫，管理者要能看到「現在到底佔了多少」
+    // 才有辦法決定保留期，一條估算公式他無從驗證
+    document.getElementById('report-usage-count').textContent = formatNumber(settings.reportCount ?? 0);
+    // 小於 0.1 MB 但確實有資料時顯示「< 0.1」而不是「0.0」——後者看起來像「一份都沒有」，
+    // 與旁邊的份數自相矛盾
+    const sizeMb = settings.reportSizeMb ?? 0;
+    document.getElementById('report-usage-size').textContent =
+        sizeMb > 0 && sizeMb < 0.1 ? '< 0.1' : sizeMb.toFixed(1);
 }
 
 /** 郵件通知（docs/archive/FEEDBACK-15-PLAN.md 批次D）：密碼欄比照 AI 金鑰，不預填、只顯示是否已設定 */
@@ -730,6 +739,13 @@ function bindForm() {
             return;
         }
 
+        // 報告全文存在資料庫，超過歷史資料保留天數之後站上已無入口可點，留著只佔空間
+        if (reportRetentionDays > retentionDays) {
+            activateTabForElement(document.getElementById('report-retention-days'));
+            toast('報告保留天數不可大於歷史資料保留天數。', 'warning');
+            return;
+        }
+
         // **只列真的會造成刪除的設定。** 首次執行回補天數刻意不列——它決定的是
         // 「首次執行要往回補幾天」，調小不會刪掉任何既有資料。把不會發生的事寫進
         // 刪除確認，只會讓使用者學會忽略這個對話框。
@@ -747,7 +763,7 @@ function bindForm() {
             reducedItems.push(`稽核與追責紀錄保留天數：${current.auditRetentionDays} → ${auditRetentionDays} 天（${auditRetentionDays} 天以前的紀錄將進入刪除範圍）`);
         }
         if (reportRetentionDays < current.reportRetentionDays) {
-            reducedItems.push(`報告檔保留天數：${current.reportRetentionDays} → ${reportRetentionDays} 天（${reportRetentionDays} 天以前的報告檔將進入刪除範圍）`);
+            reducedItems.push(`報告保留天數：${current.reportRetentionDays} → ${reportRetentionDays} 天（${reportRetentionDays} 天以前的報告全文將進入刪除範圍）`);
         }
 
         if (reducedItems.length > 0) {

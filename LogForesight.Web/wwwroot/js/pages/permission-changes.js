@@ -13,6 +13,7 @@ import {
     guardLoad, toast, withBusy, headerWithHelp, toggleAllTableDetails, renderChips
 } from '../core/ui.js';
 import { formatDateTime, formatUserName } from '../core/format.js';
+import { openReportModal } from '../core/report-view.js';
 import { bindRangeChips } from '../core/date-range.js';
 
 const STORAGE_KEY = 'lf.permissionChanges.filters';
@@ -954,7 +955,55 @@ function detailView(change) {
         wrap.appendChild(confirmedArea);
     }
 
+    // 報告只由本機監控的權限檢查產生：NetIQ 來源的異動沒有對應的報告全文，
+    // 給了入口只會讓人點到「已不存在」。主機名稱為空代表這列超出可見範圍（後端已遮蔽）
+    if (change.source === '本機監控' && change.hostName) {
+        wrap.appendChild(dayReportLink(change));
+    }
+
     return wrap;
+}
+
+/**
+ * 當日權限異動報告全文的入口。
+ *
+ * 逐筆結構化紀錄（這張清單）與報告全文是同一件事的兩層：清單負責篩選、排序與逐筆確認，
+ * 全文保留當初產生時「逐項請確認」的完整敘事與措辭，是拿去存查或轉寄的那一份。
+ *
+ * 放在列的展開內容裡而不是頁面上另闢版位：報告的範圍是「這一列的主機 × 這一天」，
+ * 頁面層級沒有那個脈絡，另立版位就得再擺一組主機與日期選單。
+ *
+ * 內容以對話框呈現（不像分析紀錄詳情那樣就地展開）：清單頁一次可能展開很多列，
+ * 就地展開會把整份長文塞進列間，讓清單本身變得無法瀏覽。
+ */
+function dayReportLink(change) {
+    const area = document.createElement('div');
+    area.className = 'pt-2 mt-2 border-top lf-no-print';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-link p-0';
+    btn.textContent = '查看當日權限異動報告全文';
+    btn.addEventListener('click', async () => {
+        // 日期取異動的偵測日：報告是以主機日為單位產生的
+        const day = String(change.detectedAt ?? '').slice(0, 10);
+        if (day.length !== 10) {
+            toast('這筆異動沒有可對應的日期，無法取得報告。', 'warning');
+            return;
+        }
+
+        const params = new URLSearchParams({ host: change.hostName, date: day });
+        const report = await api.get(`/api/permission-changes/report?${params.toString()}`);
+        if (!report) {
+            // 報告有自己的保留期，可能比異動紀錄先被清掉——那不是錯誤
+            toast('這一天的報告全文已不存在（可能已超過報告保留天數）。', 'info');
+            return;
+        }
+        openReportModal(report);
+    });
+
+    area.appendChild(btn);
+    return area;
 }
 
 function renderPager() {
