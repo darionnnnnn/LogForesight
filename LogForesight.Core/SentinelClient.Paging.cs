@@ -6,31 +6,44 @@ namespace LogForesight.Core;
 /// <summary>SentinelClient 的查詢結果分頁取回與 best-effort JSON 解析。</summary>
 public sealed partial class SentinelClient
 {
-    private async Task<List<SentinelEvent>> FetchAllPagesAsync(JobStatus status, SentinelSearchRequest request, CancellationToken ct)
+    /// <summary>
+    /// 逐頁取回查詢結果。串流模式（<see cref="SentinelSearchRequest.StreamOnly"/>）下不累積事件，
+    /// 只把每一頁交給 PageObserver 後隨即釋放——回傳的清單為空，取回筆數另外計數。
+    /// </summary>
+    private async Task<(List<SentinelEvent> Events, int Retrieved)> FetchAllPagesAsync(
+        JobStatus status, SentinelSearchRequest request, CancellationToken ct)
     {
+        if (request.StreamOnly && request.PageObserver == null)
+        {
+            throw new ArgumentException(
+                "串流模式（StreamOnly）必須提供 PageObserver，否則取回的事件無處可去。", nameof(request));
+        }
+
         var events = new List<SentinelEvent>();
+        var retrieved = 0;
         if (status.ResultsHref == null || status.Avail == 0)
-            return events;
+            return (events, retrieved);
 
         var pageSize = request.PageSize ?? _settings.PageSize;
         var targetCount = Math.Min(status.Found, request.MaxResults ?? _settings.MaxResultsPerJob);
         var page = 1;
 
-        while (events.Count < targetCount)
+        while (retrieved < targetCount)
         {
             await ThrottleAsync(ct);
             var href = SetPageQueryParam(status.ResultsHref, page);
             var pageEvents = await FetchPageAsync(href, ct);
             if (pageEvents.Count == 0) break; // 沒有更多資料，即使數字對不上也停止，避免無窮迴圈
 
-            events.AddRange(pageEvents);
+            retrieved += pageEvents.Count;
+            if (!request.StreamOnly) events.AddRange(pageEvents);
             if (request.PageObserver?.Invoke(pageEvents) == false) break;
             if (pageEvents.Count < pageSize) break; // 這頁不足一頁筆數，視為最後一頁
 
             page++;
         }
 
-        return events;
+        return (events, retrieved);
     }
 
     /// <summary>把 results 連結的 <c>page=</c> 參數改成指定頁碼。避免依賴未文件化的「下一頁連結」

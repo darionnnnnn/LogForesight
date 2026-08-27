@@ -48,7 +48,7 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
         try
         {
             if (Delay > TimeSpan.Zero) await Task.Delay(Delay, ct);
-            return Responder(request);
+            return ApplyStreaming(request, Responder(request));
         }
         finally
         {
@@ -60,6 +60,40 @@ internal sealed class FakeSentinelSearchClient : ISentinelSearchClient
     {
         Disposed = true;
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 比照真實 <see cref="SentinelClient"/> 的分頁契約（回饋三十四輪 A3）：
+    /// 串流模式下事件只經 PageObserver 交付、結果的 Events 為空，取回筆數另外回報。
+    /// Responder 的設定方式不變（照樣給整份事件），由這裡切頁餵給觀察者。
+    /// </summary>
+    private static SentinelSearchResult ApplyStreaming(SentinelSearchRequest request, SentinelSearchResult result)
+    {
+        if (!request.StreamOnly) return result;
+
+        if (request.PageObserver == null)
+        {
+            throw new ArgumentException("串流模式必須提供 PageObserver。", nameof(request));
+        }
+
+        var pageSize = request.PageSize ?? 500;
+        var all = result.Events;
+        var delivered = 0;
+
+        for (var offset = 0; offset < all.Count; offset += pageSize)
+        {
+            var page = all.Skip(offset).Take(pageSize).ToList();
+            delivered += page.Count;
+            if (!request.PageObserver(page)) break;
+        }
+
+        return new SentinelSearchResult
+        {
+            Events = Array.Empty<SentinelEvent>(),
+            Retrieved = delivered,
+            Found = result.Found,
+            State = result.State
+        };
     }
 }
 

@@ -524,11 +524,33 @@ public class NetiqPipelineService
 
         var projectionFields = isLinux ? SentinelFieldMap.LinuxQ1ProjectionFields : SentinelFieldMap.Q1ProjectionFields;
 
+        // 串流分組（回饋三十四輪 A3）：以往是「整個 job 的事件先全量取回 → GroupBy 分組 → 逐主機再映射」，
+        // 同一批資料同時有三份在記憶體裡（單 job 上限 10 萬筆、最多 12 個 job 並行）。改成逐頁進來就
+        // 直接分進各主機的桶子，任何時刻都不存在整批的扁平清單。
+        var eventsByIp = new Dictionary<string, List<SentinelEvent>>(StringComparer.OrdinalIgnoreCase);
+
         SentinelSearchResult searchResult;
         try
         {
             searchResult = await client.SearchAsync(
-                new SentinelSearchRequest(filter, start, end, projectionFields), ct);
+                new SentinelSearchRequest(
+                    filter, start, end, projectionFields,
+                    PageObserver: page =>
+                    {
+                        foreach (var evt in page)
+                        {
+                            var ip = evt.Fields.GetValueOrDefault(SentinelFieldMap.HostIp, string.Empty);
+                            if (!eventsByIp.TryGetValue(ip, out var bucket))
+                            {
+                                bucket = new List<SentinelEvent>();
+                                eventsByIp[ip] = bucket;
+                            }
+                            bucket.Add(evt);
+                        }
+                        return true;
+                    },
+                    StreamOnly: true),
+                ct);
         }
         catch (SentinelClientException ex)
         {
@@ -550,6 +572,8 @@ public class NetiqPipelineService
             // 遞迴呼叫本身就是「換一批更小的 ips 重新走一次這個函式」，不會重複計數。
             if (batch.Length > 1)
             {
+                // 重查前先把這次分組好的資料放掉，否則遞迴下去時上一層的整批事件還被參照著
+                eventsByIp.Clear();
                 var mid = batch.Length / 2;
                 await RunBatchDayAsync(client, sentinelName, batch[..mid], date, os, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
                 await RunBatchDayAsync(client, sentinelName, batch[mid..], date, os, trendWindowDays, result, aiQueue, suppressionSnapshot, ct);
@@ -558,7 +582,7 @@ public class NetiqPipelineService
 
             // 已收斂到單台仍截斷：真的沒辦法再切了，誠實標記資料不完整
             _console.WriteLine($"  ⚠ [{sentinelName}] {date:yyyy-MM-dd} 查詢結果被截斷" +
-                              $"（found={searchResult.Found}，取回={searchResult.Events.Count}），標記資料不完整");
+                              $"（found={searchResult.Found}，取回={searchResult.Retrieved}），標記資料不完整");
 
             // 跨日記憶（回饋十四輪 B1）：單獨查詢都還截斷，記下來讓明天分批直接把這台獨立成一批，
             // 不必再從整批大小重新二分收斂。只在旗標還沒設時才寫，避免同一台主機連續高流量的
@@ -576,10 +600,6 @@ public class NetiqPipelineService
             _hosts.SetHighVolume(batch[0].Target.HostId, false);
         }
 
-        var eventsByIp = searchResult.Events
-            .GroupBy(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostIp, string.Empty), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-
         var totalSkipped = 0;
         foreach (var plan in batch)
         {
@@ -592,10 +612,15 @@ public class NetiqPipelineService
             var displayName = hostRawEvents
                 .Select(e => e.Fields.GetValueOrDefault(SentinelFieldMap.HostName))
                 .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+            var hostReported = hostRawEvents.Count > 0;
+
+            // 這台的原始事件已經映射完，分析期間不必再留著（回饋三十四輪 A3）：
+            // 移出桶子讓原始字典層在 AnalyzeHostDayAsync 執行期間就能被回收
+            eventsByIp.Remove(plan.Target.IpAddress);
 
             await AnalyzeHostDayAsync(
                 plan, date, mapped, searchResult.Truncated, displayName,
-                hostReported: hostRawEvents.Count > 0, trendWindowDays, result, sentinelName, aiQueue, suppressionSnapshot, ct);
+                hostReported, trendWindowDays, result, sentinelName, aiQueue, suppressionSnapshot, ct);
 
             // 主機之間讓出執行緒（docs/archive/SCALE-FIX-PLAN-2026-08-06.md S-3）：統計段（AI 已脫鉤，
             // §3）幾乎全程同步完成，這個 foreach 會一路把同一條 thread pool 執行緒佔到整批
