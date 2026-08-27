@@ -26,6 +26,9 @@ internal static class ExportReportPruner
         return removed;
     }
 
+    /// <summary>
+    /// 解析檔名開頭的 yyyy-MM-dd 日期（FileReportSink 與 ExportReportPruner 共同複用）。
+    /// </summary>
     internal static bool TryParseReportDate(string fileName, out DateTime date)
     {
         if (fileName.Length < 10)
