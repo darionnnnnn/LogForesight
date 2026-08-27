@@ -43,6 +43,9 @@ public class SystemSettingsDto
     /// <summary>原始事件內容保留天數（日紀錄原始樣本與風險 log 暫存）</summary>
     public int RawEventRetentionDays { get; set; }
 
+    /// <summary>報告檔保留天數（export\ 底下的風險報告、週檢報告、權限異動報告）</summary>
+    public int ReportRetentionDays { get; set; }
+
     /// <summary>是否啟用 DB 設定的 AD 驗證（docs/archive/HISTORY.md #9）</summary>
     public bool AdAuthEnabled { get; set; }
 
@@ -210,6 +213,9 @@ public class UpdateSystemSettingsRequest
     /// SystemSettingsService.Update 對照 RetentionDays 驗證</summary>
     [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "原始事件內容保留天數必須介於 90~3650 天")]
     public int RawEventRetentionDays { get; set; }
+
+    [Range(SystemSettings.MinRetentionDays, 3650, ErrorMessage = "報告檔保留天數必須介於 90~3650 天")]
+    public int ReportRetentionDays { get; set; }
 
     // ── AD 驗證（docs/archive/HISTORY.md #9）────────────────────────────────
 

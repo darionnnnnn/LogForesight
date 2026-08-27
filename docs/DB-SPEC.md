@@ -440,17 +440,18 @@ lf_qa_messages:    UNIQUE(session_id, seq)
 
 ### 保留策略
 
-保留期**不是單一年限**，而是依資料性質分成四個（另有 `InitialHistoryDays` 決定首次回補幾天，
+保留期**不是單一年限**，而是依資料性質分成五個（另有 `InitialHistoryDays` 決定首次回補幾天，
 與保留期同受 90 天下限約束，但它不刪資料）：
 
 | 設定（`SystemSettings`） | 預設 | 適用對象 |
 |---|---|---|
-| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案）／export 報告檔 |
+| `RetentionDays` | 180 | 分析紀錄與其附屬狀態：`lf_daily_records`／`lf_top_issues`／`lf_issue_handling`／`lf_record_handling`／`lf_issue_cases`（僅已結案） |
 | `RawEventRetentionDays` | 120 | 原始事件內容：`lf_daily_records.content_json`（風險日詳情的原始樣本訊息，**只清內容、整列保留**）與 `lf_risky_events`（風險 log 暫存）——兩者刪的都是原始事件文字，舊版的 `DetailRetentionDays`／`RiskyEventRetentionDays` 兩鍵已合併，升級時自動取兩舊值較小者遷移 |
 | `AuditRetentionDays` | 730 | 稽核類：`audit`、**`handling_log`（處理歷程）**、`lf_permission_changes`（依 `created_at`，含 `raw_text` 原始訊息全文，見其定義區塊） |
 | `RunLogRetentionDays` | 120 | 執行歷程：`batch_runs`／`batch_run_logs`／`import_logs` |
+| `ReportRetentionDays` | 1095 | `export\` 底下的報告檔（風險報告／週檢報告／權限異動報告），依檔名日期前綴判定。**與 `RetentionDays` 各自獨立、不互相約束**：報告是純文字小檔，設計上可留得比分析紀錄久。超過 `RetentionDays` 之後 DB 紀錄已清除，該報告在 Web 上不再有入口，但檔案仍在磁碟（依主機與年月分資料夾） |
 
-五個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
+六個天數的**下限一律 90 天**（`SystemSettings.MinRetentionDays`），只在寫入時驗證；
 讀取端不 clamp，既有部署存過的較短天數照舊生效。
 
 **清理一律涵蓋全部主機**：夜間作業用未限縮的 `RecordStore()`，不是綁定本機識別的那個實例。

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using LogForesight.Core;
 using LogForesight.Core.Analysis;
 
 namespace LogForesight.Web.Services;
@@ -47,12 +49,14 @@ public interface INetiqDirectoryClient
     /// 沒有新主機時 found=0、一次查詢即結束——重掃因此從「又拉數萬筆」變成趨近免費。
     /// null／空＝首掃行為（不排除）。**回傳結果不含這些主機**，呼叫端自行合成
     /// （它們的名稱以主機清單為準，比事件裡的 sn 更可靠）。</param>
+    /// <param name="concurrency">網段分段的平行掃描併發度（1~<see cref="SentinelRestDirectoryClient.MaxScanConcurrency"/>，預設 1＝依序）。</param>
     Task<NetiqDiscoveryResult> ListHostsAsync(
         SentinelServer server, string subnetPrefix, CancellationToken ct,
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24);
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1);
 }
 
 /// <summary>
@@ -69,7 +73,8 @@ public class StubNetiqDirectoryClient : INetiqDirectoryClient
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24)
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         string normalized;
         try
@@ -161,6 +166,13 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
     /// 特別吵時針對它掃」，不是拿來掃整個 /16。更寬的輸入已由
     /// SentinelQueryBuilder.MinPrefixOctets 擋掉，這個上限是防禦性的第二道閘門。</summary>
     internal const int MaxSegments = 512;
+
+    /// <summary>
+    /// 互動掃描的最大分段併發度。這是行程架構上限不是效能旋鈕：
+    /// 互動掃描可能與夜間 pipeline 同時對同一台 Sentinel 施壓
+    /// （理由比照 <see cref="NetiqOptions.MaxParallelQueriesPerServerLimit"/>）。
+    /// </summary>
+    internal const int MaxScanConcurrency = 3;
 
     /// <summary>單輪掃描取回的事件筆數上限。第二、三輪 probe 實證：單台網段近 24h
     /// 從幾萬到近 76 萬筆都有，這個值是「翻頁數（上限約 50 頁）」與「單輪涵蓋」的折衷。
@@ -260,7 +272,8 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         IReadOnlyCollection<string>? knownIps = null,
         Action<string, int>? onProgress = null,
         int? totalBudgetSecondsOverride = null,
-        ScanGranularity granularity = ScanGranularity.Slash24)
+        ScanGranularity granularity = ScanGranularity.Slash24,
+        int concurrency = 1)
     {
         if (string.IsNullOrWhiteSpace(server.BaseUrl))
             throw new NetiqDiscoveryException($"Sentinel「{server.Name}」未設定 BaseUrl。");
@@ -305,9 +318,18 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         budgetCts.CancelAfter(TimeSpan.FromSeconds(budgetSeconds));
         var scanCt = budgetCts.Token;
 
+        var effectiveConcurrency = Math.Clamp(concurrency, 1, MaxScanConcurrency);
+        var poolSize = Math.Max(1, Math.Min(effectiveConcurrency, segments.Count));
+
+        var clients = new List<SentinelClient>(poolSize);
+        for (var i = 0; i < poolSize; i++)
+        {
+            clients.Add(new SentinelClient(server, interactiveOptions, _handler));
+        }
+        var clientPool = new ConcurrentBag<SentinelClient>(clients);
+
         try
         {
-            await using var client = new SentinelClient(server, interactiveOptions, _handler);
             var now = DateTimeOffset.UtcNow;
 
             // 重掃時已登錄主機在 server 端就被排除（§3.3）——沒有新主機時 found=0，
@@ -320,19 +342,29 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
             // 失敗（無權限／格式不符）落到下面的事件掃描，並把原因講出來。
             if (server.UseEsmDirectory)
             {
-                var esm = await TryEsmDirectoryAsync(client, normalizedPrefix, alreadyKnown, warnings, scanCt);
+                var esm = await TryEsmDirectoryAsync(clients[0], normalizedPrefix, alreadyKnown, warnings, scanCt);
                 if (esm != null) return esm;
             }
 
-            var scan = new ScanState(alreadyKnown);
-            var completedSegments = new List<ScanSegment>();
-            var incompleteSegments = new List<string>();
+            var segmentOutcomes = new SegmentOutcome[segments.Count];
+            for (var i = 0; i < segments.Count; i++)
+            {
+                segmentOutcomes[i] = new SegmentOutcome();
+            }
+
+            var indexedSegments = segments.Select((seg, idx) => (Segment: seg, Index: idx)).ToList();
+            var completedSegmentsCount = 0;
+            var runningDiscoveredHostsCount = 0;
             var budgetExceeded = false;
             var isSingleSegment = segments.Count == 1;
 
-            for (var i = 0; i < segments.Count; i++)
+            await Parallel.ForEachAsync(indexedSegments, new ParallelOptions
             {
-                var segment = segments[i];
+                MaxDegreeOfParallelism = poolSize,
+                CancellationToken = ct
+            }, async (item, itemCt) =>
+            {
+                var (segment, index) = item;
 
                 if (scanCt.IsCancellationRequested)
                 {
@@ -343,28 +375,35 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                             throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
                         }
                         budgetExceeded = true;
-                        break;
+                        return;
                     }
                     ct.ThrowIfCancellationRequested();
                 }
 
-                if (isSingleSegment)
-                {
-                    onProgress?.Invoke("主掃描中", 0);
-                }
-                else
-                {
-                    onProgress?.Invoke($"掃描中 {i + 1}/{segments.Count}（{segment.Label}）", scan.DiscoveredHosts().Count);
-                }
+                if (!clientPool.TryTake(out var client))
+                    throw new InvalidOperationException("Sentinel client pool 耗盡（不應發生：並行度已受池大小節制）。");
 
                 try
                 {
+                    var scan = new ScanState(alreadyKnown);
+
+                    // 警告直接寫進這一段的 outcome（每段只有一條執行緒碰它，不需要鎖）。
+                    // 先寫區域清單、跑完才搬進 outcome 的話，段中途因預算用盡被中斷時，
+                    // 已經產生的涵蓋警告（如「NOT 排除語法未生效」）會連同清單一起消失——
+                    // 那正是最需要讓管理者看到的診斷。
+                    var outcome = segmentOutcomes[index];
+
+                    if (isSingleSegment)
+                    {
+                        onProgress?.Invoke("主掃描中", 0);
+                    }
+
                     // ── 主掃描：窄化頻道、固定 24h 窗口、觸頂進殘差輪 ──────────────────
                     var mainOutcome = await RunResidualRoundsAsync(
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetProbeFilter(segment, exclude, server.Os),
                         now.AddHours(-WindowHours), now,
-                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, segment.Ips, warnings, $"主掃描（{segment.Label}）");
+                        CoverageTargetResults, MaxResidualRounds, scan, segment.Prefix, segment.Ips, outcome.Warnings, $"主掃描（{segment.Label}）");
 
                     if (isSingleSegment)
                     {
@@ -379,28 +418,33 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         client, scanCt,
                         exclude => SentinelQueryBuilder.BuildSubnetDiscoveryFilter(segment, exclude),
                         now.AddMinutes(-SupplementWindowMinutes), now,
-                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, segment.Ips, warnings, $"補充掃描（{segment.Label}）",
+                        SupplementMaxResults, SupplementResidualRounds, scan, segment.Prefix, segment.Ips, outcome.Warnings, $"補充掃描（{segment.Label}）",
                         // 主掃描發現的主機超過排除上限時，退回無排除照掃（§3.2）——跳過補充掃描
                         // 等於把「撈 Security-only 漏網主機」整段棄守，掃了至少還有機會補到一些
                         fallbackToUnexcludedFirstRound: true);
 
-                    if (!mainOutcome.Complete || !supplementOutcome.Complete)
-                    {
-                        incompleteSegments.Add(segment.Label);
-                    }
+                    outcome.Incomplete = !mainOutcome.Complete || !supplementOutcome.Complete;
 
                     // 主掃描 0 台但補充掃描有台數＝這個環境的 collector 可能不轉送 System/Application，
                     // 窄化 filter 因此失效（規劃 §3.8 的已知風險）。說出來讓人去查，不要靜靜地
                     // 每次都靠補充掃描的短窗硬撐——那樣涵蓋率會長期偏低而沒有人知道原因。
                     if (mainOutcome.NewHosts == 0 && supplementOutcome.NewHosts > 0)
                     {
-                        warnings.Add(
+                        outcome.Warnings.Add(
                             $"主掃描（{segment.Label}）（System/Application 頻道）沒有找到任何主機，全部由補充掃描的短窗撈到——" +
                             "這台 Sentinel 的 collector 可能不轉送這兩個頻道，掃描涵蓋率會因此偏低。" +
                             "請至「診斷」分頁執行一次診斷確認頻道覆蓋情形。");
                     }
 
-                    completedSegments.Add(segment);
+                    outcome.Hosts.AddRange(scan.DiscoveredHosts());
+                    outcome.Completed = true;
+
+                    if (!isSingleSegment)
+                    {
+                        var completed = Interlocked.Increment(ref completedSegmentsCount);
+                        var totalDiscovered = Interlocked.Add(ref runningDiscoveredHostsCount, outcome.Hosts.Count);
+                        onProgress?.Invoke($"掃描中 {completed}/{segments.Count}（{segment.Label}）", totalDiscovered);
+                    }
                 }
                 catch (OperationCanceledException) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
@@ -409,7 +453,6 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds));
                     }
                     budgetExceeded = true;
-                    break;
                 }
                 catch (SentinelClientException ex) when (budgetCts.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
@@ -418,21 +461,46 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
                         throw new NetiqDiscoveryException(BudgetExceededMessage(normalizedPrefix, budgetSeconds), ex);
                     }
                     budgetExceeded = true;
-                    break;
+                }
+                finally
+                {
+                    clientPool.Add(client);
+                }
+            });
+            var allHosts = new List<NetiqDiscoveredHost>();
+            var incompleteSegments = new List<string>();
+
+            for (var i = 0; i < segments.Count; i++)
+            {
+                var outcome = segmentOutcomes[i];
+
+                // 警告不分完成與否都要留：段中途被預算中斷，它先前產生的涵蓋警告仍然成立。
+                warnings.AddRange(outcome.Warnings);
+
+                // 主機與「掃了但沒掃乾淨」只採計跑完的段——沒跑完的段會被列進下面的
+                // 「未掃描的網段」，同時又貢獻半套主機清單會自相矛盾。
+                if (!outcome.Completed) continue;
+
+                allHosts.AddRange(outcome.Hosts);
+                if (outcome.Incomplete)
+                {
+                    incompleteSegments.Add(segments[i].Label);
                 }
             }
 
             if (budgetExceeded)
             {
-                var unscanned = segments.Skip(completedSegments.Count).Select(s => s.Label).ToList();
+                var completedCount = segmentOutcomes.Count(o => o.Completed);
+                var unscanned = segments
+                    .Where((s, idx) => !segmentOutcomes[idx].Completed)
+                    .Select(s => s.Label)
+                    .ToList();
                 warnings.Add(
-                    $"掃描時間用盡，已完成 {completedSegments.Count}/{segments.Count} 段，" +
+                    $"掃描時間用盡，已完成 {completedCount}/{segments.Count} 段，" +
                     $"未掃描的網段：{FormatSegmentList(unscanned)}。");
             }
 
-            var hosts = scan.DiscoveredHosts();
-
-            if (hosts.Count == 0 && warnings.Count == 0)
+            if (allHosts.Count == 0 && warnings.Count == 0)
             {
                 return new NetiqDiscoveryResult
                 {
@@ -448,8 +516,8 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
 
             return new NetiqDiscoveryResult
             {
-                Hosts = hosts,
-                CoverageNote = BuildCoverageNote(normalizedPrefix, hosts.Count, alreadyKnown.Count, segments.Count, incompleteSegments),
+                Hosts = allHosts,
+                CoverageNote = BuildCoverageNote(normalizedPrefix, allHosts.Count, alreadyKnown.Count, segments.Count, incompleteSegments),
                 Warnings = warnings
             };
         }
@@ -468,6 +536,13 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         catch (SentinelClientException ex)
         {
             throw new NetiqDiscoveryException($"掃描 Sentinel「{server.Name}」失敗：{ex.Message}", ex);
+        }
+        finally
+        {
+            foreach (var client in clients)
+            {
+                await client.DisposeAsync();
+            }
         }
     }
 
@@ -683,6 +758,15 @@ public class SentinelRestDirectoryClient : INetiqDirectoryClient
         // 分段掃描後排除清單改依 /24 網段過濾（單段最多 254 台），此處 > ExclusionClauseLimit
         // 的整組放棄分支實務上已幾乎不會觸發，保留作為全域輸入驗證的防禦性第二道閘門。
         return normalized.Count > ExclusionClauseLimit ? Array.Empty<string>() : normalized;
+    }
+
+    /// <summary>單一分段掃描的產出（以分段索引固定收集，確保合併決定性）</summary>
+    private sealed class SegmentOutcome
+    {
+        public bool Completed { get; set; }
+        public bool Incomplete { get; set; }
+        public List<NetiqDiscoveredHost> Hosts { get; } = new();
+        public List<string> Warnings { get; } = new();
     }
 
     /// <summary>單輪掃描的結果：這一段新發現幾台、以及殘差是否已掃乾淨</summary>

@@ -76,11 +76,23 @@ function renderScanPicker(allSentinels) {
 
     const granularitySelect = document.createElement('select');
     granularitySelect.className = 'form-select';
-    granularitySelect.style.maxWidth = '200px';
+    // 寬度依選項內容自動撐開：Bootstrap 的 form-select 預設 width:100%，在這一列會被壓到
+    // 固定上限而截斷最長的選項文字（「每段 254 台（預設）」）。改用 auto 交給瀏覽器算，
+    // 換字型或使用者放大字級都不會再截斷，不必回頭調魔術數字。
+    granularitySelect.style.width = 'auto';
     granularitySelect.id = 'scan-granularity-select';
     granularitySelect.appendChild(new Option('每段 254 台（預設）', '24', true, true));
     granularitySelect.appendChild(new Option('每段 62 台（最細）', '26'));
     row.appendChild(granularitySelect);
+
+    const concurrencySelect = document.createElement('select');
+    concurrencySelect.className = 'form-select';
+    concurrencySelect.style.width = 'auto';
+    concurrencySelect.id = 'scan-concurrency-select';
+    concurrencySelect.appendChild(new Option('單一查詢（預設）', '1', true, true));
+    concurrencySelect.appendChild(new Option('同時 2 個查詢', '2'));
+    concurrencySelect.appendChild(new Option('同時 3 個查詢', '3'));
+    row.appendChild(concurrencySelect);
 
     const scanButton = document.createElement('button');
     scanButton.type = 'button';
@@ -90,16 +102,17 @@ function renderScanPicker(allSentinels) {
         const sentinel = discoverableSentinels.find(s => s.name === select.value);
         const subnetPrefix = subnetInput.value.trim();
         const granularity = granularitySelect.value;
+        const concurrency = parseInt(concurrencySelect.value, 10) || 1;
         if (!subnetPrefix) {
             toast('請輸入要掃描的網段', 'warning');
             return;
         }
-        if (sentinel) openWizard(sentinel, subnetPrefix, granularity);
+        if (sentinel) openWizard(sentinel, subnetPrefix, granularity, concurrency);
     });
     row.appendChild(scanButton);
 
     scanPicker.appendChild(row);
-    scanPicker.appendChild(pickerHint('網段事件量大時選較細的粒度可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。'));
+    scanPicker.appendChild(pickerHint('網段事件量大時選較細的粒度可避免安靜主機被吵雜主機擠掉，代價是掃描時間變長。併發會同時對這台 Sentinel 開多條查詢（各自獨立登入、節流間隔各自計算）；只掃單一網段時併發沒有作用。'));
 }
 
 function pickerHint(text) {
@@ -286,7 +299,7 @@ function startPolling(jobId, { resume = false } = {}) {
     pollTimer = setTimeout(poll, 2000);
 }
 
-async function openWizard(sentinel, subnetPrefix, granularity = '24') {
+async function openWizard(sentinel, subnetPrefix, granularity = '24', concurrency = 1) {
     stopPolling(false);
     wizardPane = 'subnets';
     wizardScan = null;
@@ -328,7 +341,9 @@ async function openWizard(sentinel, subnetPrefix, granularity = '24') {
     }
 
     try {
-        const job = await api.post('/api/admin/netiq/scan', { server: sentinel.name, subnetPrefix, granularity });
+        const job = await api.post('/api/admin/netiq/scan', {
+            server: sentinel.name, subnetPrefix, granularity, concurrency
+        });
         startPolling(job.jobId);
     } catch {
         wizardModal.hide();

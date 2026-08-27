@@ -1,8 +1,9 @@
 using System.Text;
+using LogForesight.Core.Service;
 
 namespace LogForesight.Core.Persistence;
 
-/// <summary>預設的報告輸出實作：寫到執行檔目錄下的 export（單機/多機共用一個實作，host 有值時分子目錄）</summary>
+/// <summary>預設的報告輸出實作：寫到執行檔目錄下的 export（單機/多機共用一個實作，host 有值時分子目錄，檔名帶日期前綴時分年月子目錄）</summary>
 internal class FileReportSink : IReportSink
 {
     private readonly string _exportDir;
@@ -19,6 +20,10 @@ internal class FileReportSink : IReportSink
         var safeFileName = SanitizePathComponent(fileName);
 
         var dir = string.IsNullOrEmpty(safeHost) ? _exportDir : Path.Combine(_exportDir, safeHost);
+        if (ExportReportPruner.TryParseReportDate(fileName, out var reportDate))
+        {
+            dir = Path.Combine(dir, reportDate.ToString("yyyy-MM"));
+        }
         Directory.CreateDirectory(dir);
 
         var path = Path.Combine(dir, safeFileName);

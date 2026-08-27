@@ -78,6 +78,16 @@ public static class RuntimeSettingsResolver
                 Log.Warn("系統設定的原始事件內容保留天數（{RawEventRetentionDays}）超出合理範圍（1~{RetentionDays}），改用內建預設值。",
                     systemSettings.RawEventRetentionDays, retention.RetentionDays);
             }
+
+            if (systemSettings.ReportRetentionDays >= SystemSettings.MinRetentionDays && systemSettings.ReportRetentionDays <= 3650)
+            {
+                retention = retention with { ReportRetentionDays = systemSettings.ReportRetentionDays };
+            }
+            else
+            {
+                Log.Warn("系統設定的報告檔保留天數（{ReportRetentionDays}）超出合理範圍（{MinRetentionDays}~3650），改用內建預設值。",
+                    systemSettings.ReportRetentionDays, SystemSettings.MinRetentionDays);
+            }
         }
         catch (Exception ex)
         {
