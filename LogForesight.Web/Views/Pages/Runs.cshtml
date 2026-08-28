@@ -115,6 +115,8 @@
         <button type="button" class="btn btn-outline-primary" data-days="7">7 天</button>
         <button type="button" class="btn btn-outline-primary active" data-days="14">14 天</button>
         <button type="button" class="btn btn-outline-primary" data-days="30">30 天</button>
+        @* 全部按鈕（批次G）：天數來自後端 MaxDays（RunLogRetentionDays 設定值），不寫死 *@
+        <button type="button" class="btn btn-outline-primary" data-days="all">全部</button>
     </div>
 </div>
 
@@ -126,6 +128,8 @@
         </div>
         <div class="lf-card__body p-0" id="run-summary"></div>
     </section>
+    @* 分頁控制（批次G）：總頁數 > 1 時才顯示，由 runs.js 依 API 回傳的 totalPages 渲染 *@
+    <nav id="run-summary-pager" class="mt-1 mb-3"></nav>
 </div>
 
 <div data-panel="errors" class="d-none">

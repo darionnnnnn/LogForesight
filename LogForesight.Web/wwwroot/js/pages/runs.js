@@ -32,6 +32,10 @@ const STATUS_META = {
 };
 
 let currentDays = 14;
+// 「全部」按鈕的天數由後端 MaxDays（RunLogRetentionDays）決定，不寫死
+let summaryMaxDays = null;
+// 執行總表分頁狀態（批次G）：切換天數時重設為第 1 頁
+let currentSummaryPage = 1;
 
 // 異常彙總（本地排序，筆數通常不多，不加分頁）
 let currentErrors = [];
@@ -42,16 +46,27 @@ async function load() {
     renderLoading(document.getElementById('run-errors'), 3);
     renderLoading(document.getElementById('run-list'), 4);
 
-    const [summaries, errors, runList] = await Promise.all([
-        api.get(`/api/runs/summary?days=${currentDays}`),
+    const [summaryPage, errors, runList] = await Promise.all([
+        api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
         api.get(`/api/runs/errors?days=${currentDays}`),
         api.get(`/api/runs/list?days=${currentDays}`)
     ]);
 
+    // 記住後端告知的最大天數供「全部」按鈕使用（不寫死）
+    if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
+
     renderLegend();
-    renderSummary(summaries);
+    renderSummary(summaryPage);
     renderErrors(errors);
     renderRunList(runList);
+}
+
+/** 只重新取執行總表（換頁時用，errors/list 不必重取） */
+async function loadSummary() {
+    renderLoading(document.getElementById('run-summary'), 4);
+    const summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
+    renderSummary(summaryPage);
 }
 
 function renderLegend() {
@@ -79,15 +94,19 @@ function renderLegend() {
 /**
  * 執行總表改每日一列（§5.4 D-4）：取代舊版「主機×日期」矩陣——
  * 兩千台規模下矩陣會炸出過大的 DOM（2000×90 格），彙總後點日期才下鑽看逐主機明細。
+ * 批次G：改接收 summaryPage 物件（含 items 清單與分頁資訊）。
  */
-function renderSummary(summaries) {
+function renderSummary(summaryPage) {
     const container = document.getElementById('run-summary');
+    const pagerEl = document.getElementById('run-summary-pager');
+    const summaries = summaryPage.items;
 
     if (summaries.every(s => s.totalHosts === 0)) {
         renderEmpty(container, {
             title: '尚無執行紀錄',
             hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。'
         });
+        if (pagerEl) pagerEl.replaceChildren();
         return;
     }
 
@@ -110,6 +129,15 @@ function renderSummary(summaries) {
         onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
         empty: { title: '尚無執行紀錄' }
     });
+
+    // 分頁控制（批次G）：總頁數由後端回傳，只有多頁時才顯示（renderPagination 自動判定）
+    if (pagerEl && summaryPage.totalPages != null) {
+        renderPagination(pagerEl, {
+            page: summaryPage.page,
+            totalPages: summaryPage.totalPages,
+            onPage: p => { currentSummaryPage = p; loadSummary(); }
+        });
+    }
 }
 
 function countCell(count, status) {
@@ -469,7 +497,16 @@ function logMessageCell(log) {
 
 for (const button of document.querySelectorAll('[data-days]')) {
     button.addEventListener('click', () => {
-        currentDays = Number(button.dataset.days);
+        const raw = button.dataset.days;
+        if (raw === 'all') {
+            // 「全部」：天數來自後端告知的 MaxDays（RunLogRetentionDays），不寫死
+            if (summaryMaxDays == null) return;   // 還沒收到後端回應，不動作
+            currentDays = summaryMaxDays;
+        } else {
+            currentDays = Number(raw);
+        }
+        // 切換天數時重設為第 1 頁
+        currentSummaryPage = 1;
         for (const other of document.querySelectorAll('[data-days]')) {
             other.classList.toggle('active', other === button);
         }
@@ -704,6 +741,7 @@ function applyScheduleStatus(status) {
     // 使用者不必手動重新整理才看得到剛跑完的這趟（手動與排程觸發都經過這條輪詢，天然涵蓋兩者）
     if (wasScheduleRunning && !status.isRunning) {
         toast('執行已結束，執行總表已刷新', 'info');
+        currentSummaryPage = 1;   // 重設回最新頁，讓使用者一眼看到剛跑完的結果
         load();
     }
     wasScheduleRunning = status.isRunning;
