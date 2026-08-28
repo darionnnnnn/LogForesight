@@ -52,12 +52,21 @@ public class RunRequest
     public string? Trigger { get; init; }
 }
 
+/// <summary>本機逐日分析的單日摘要（批次E）：執行結果總表與計數用，不持有分析內容。</summary>
+public record LocalDaySummary(DateTime Date, string RiskLevel, bool HasReport);
+
 /// <summary>單次執行的結果摘要，供呼叫端（Web 的 BatchRun 回填與失敗回饋）使用。</summary>
 public class OrchestratorResult
 {
     public bool Success { get; set; } = true;
     public string? FailureMessage { get; set; }
-    public List<DailyAnalysisRecord> LocalResults { get; set; } = new();
+    /// <summary>
+    /// 本機逐日分析的結果摘要（回饋三十五輪批次E）：只留消費端真正會用到的三個欄位。
+    /// 原本整趟累積完整的 <see cref="DailyAnalysisRecord"/>（含 TopIssues 與樣本訊息），
+    /// 一次 120 天的回補會讓這份清單在整趟執行期間持續佔用記憶體，
+    /// 而消費端只需要「哪天、什麼風險、有沒有報告」。
+    /// </summary>
+    public List<LocalDaySummary> LocalResults { get; set; } = new();
     public NetiqPipelineResult? NetiqResult { get; set; }
     public TimeSpan Elapsed { get; set; }
 }
@@ -855,7 +864,7 @@ public class AnalysisOrchestrator
                 var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
                     dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability,
                     replaceExisting: isRerun);
-                result.LocalResults.Add(record);
+                result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
                 // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
                 // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
@@ -894,10 +903,10 @@ public class AnalysisOrchestrator
         foreach (var r in result.LocalResults)
         {
             console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
-                              (r.ReportFile != null ? "  → 已產生風險報告" : ""));
+                              (r.HasReport ? "  → 已產生風險報告" : ""));
         }
 
-        var riskyCount = result.LocalResults.Count(r => r.ReportFile != null);
+        var riskyCount = result.LocalResults.Count(r => r.HasReport);
         if (riskyCount > 0)
         {
             console.WriteLine(

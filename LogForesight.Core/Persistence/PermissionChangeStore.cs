@@ -52,7 +52,9 @@ public class PermissionChangeStore
 
         for (var offset = 0; offset < list.Count; offset += AppendBatchSize)
         {
-            AppendBatch(list.Skip(offset).Take(AppendBatchSize), now);
+            // GetRange 而非 Skip/Take（回饋三十五輪批次E）：List 上的 Skip 每批都要從頭
+            // 重新列舉，整體是 O(n²)；GetRange 直接切片，配置量仍以單批為上界。
+            AppendBatch(list.GetRange(offset, Math.Min(AppendBatchSize, list.Count - offset)), now);
         }
     }
 

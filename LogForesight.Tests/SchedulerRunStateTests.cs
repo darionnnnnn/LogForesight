@@ -320,7 +320,7 @@ public class SchedulerRunStateTests
     public void ComputeAnyRecordsWritten_本機有結果時為true()
     {
         var result = new OrchestratorResult { Success = false, FailureMessage = "NetIQ 失敗" };
-        result.LocalResults.Add(new DailyAnalysisRecord { Host = "SRV-A", Date = DateTime.Today.AddDays(-1) });
+        result.LocalResults.Add(new LocalDaySummary(DateTime.Today.AddDays(-1), RiskLevels.Low, HasReport: false));
 
         Assert.True(RunOutcome.ComputeAnyRecordsWritten(result));
     }
