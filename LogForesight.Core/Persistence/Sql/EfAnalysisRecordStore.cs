@@ -782,6 +782,27 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         return result;
     }
 
+    /// <summary>
+    /// 強制重新分析：整批重標待補（契約與判準見 <see cref="IAnalysisRecordQuery.MarkAllForAiRerun"/>）。
+    /// 全庫範圍（不限本 store 的主機），與 <see cref="QueryPendingAi"/>／<see cref="CountPendingAi"/> 同層。
+    /// </summary>
+    public int MarkAllForAiRerun()
+    {
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        // 低風險且從未跑過 AI 的日子不標——那是「本來就不需要 AI」，
+        // 標了會讓補跑把整庫撿回來跑一遍（同 LogAnalysisService 決定 AiPending 的判準）
+        var affected = ctx.DailyRecords
+            .Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low)
+            .ExecuteUpdate(s => s.SetProperty(r => r.AiPending, true));
+
+        Log.Info("[SQL] 強制重新分析：整批重標 ai_pending = true，共 {Count} 列、{Ms}ms",
+            affected, sw.ElapsedMilliseconds);
+        _performance?.Record("records:MarkAllForAiRerun", sw.ElapsedMilliseconds);
+        return affected;
+    }
+
     public int CountPendingAi()
     {
         var sw = Stopwatch.StartNew();

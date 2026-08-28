@@ -521,7 +521,7 @@ public class LogAnalysisService
     /// <see cref="DailyAnalysisRecord.RiskLevel"/>，不看這裡重建的嚴重度，所以這個簡化
     /// 不影響風險判定正確性。
     /// </summary>
-    internal async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
+    public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，

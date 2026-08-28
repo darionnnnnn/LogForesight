@@ -33,12 +33,15 @@ public class ScheduleController : ControllerBase
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly IWebAiService? _webAi;
     private readonly NetiqOptionsStore? _netiqStore;
+    private readonly AiAnalysisHostedService? _aiScheduler;
+    private readonly AiAnalysisRunState? _aiRunState;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
         IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IUserDisplayNameService userDisplayNames,
-        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null)
+        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null,
+        AiAnalysisHostedService? aiScheduler = null, AiAnalysisRunState? aiRunState = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -53,6 +56,8 @@ public class ScheduleController : ControllerBase
         _userDisplayNames = userDisplayNames;
         _webAi = webAi;
         _netiqStore = netiqStore;
+        _aiScheduler = aiScheduler;
+        _aiRunState = aiRunState;
     }
 
     [HttpGet("options")]
@@ -67,12 +72,22 @@ public class ScheduleController : ControllerBase
         if (!validation.IsValid)
             throw DomainException.Validation(string.Join("；", validation.Errors));
 
+        var aiValidation = ScheduleCalculator.Validate(request.AiWindows);
+        if (!aiValidation.IsValid)
+            throw DomainException.Validation("AI 執行窗口驗證失敗：" + string.Join("；", aiValidation.Errors));
+
+        if (request.AiConcurrency < 1 || request.AiConcurrency > 8)
+            throw DomainException.Validation("AI 分析併發數必須在 1 到 8 之間。");
+
         var saved = _optionsStore.Update(o =>
         {
             o.Enabled = request.Enabled;
             o.Windows = request.Windows;
             o.DebugDump = request.DebugDump;
             o.LocalAnalysisEnabled = request.LocalAnalysisEnabled;
+            o.AiEnabled = request.AiEnabled;
+            o.AiWindows = request.AiWindows;
+            o.AiConcurrency = Math.Clamp(request.AiConcurrency, 1, 8);
             o.UpdatedByAccount = _currentUser.Account;
         });
 
@@ -80,9 +95,19 @@ public class ScheduleController : ControllerBase
             action: AuditActions.ScheduleOptionsUpdate,
             summary: $"更新排程設定：{(saved.Enabled ? "已啟用" : "未啟用")}、{saved.Windows.Count} 個執行窗口" +
                      (saved.DebugDump ? "，AI 診斷傾印開啟中" : "") +
-                     (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用"),
+                     (saved.LocalAnalysisEnabled ? "" : "，本機分析已停用") +
+                     $"，AI 排程：{(saved.AiEnabled ? "已啟用" : "未啟用")}、{saved.AiWindows.Count} 個執行窗口、併發 {saved.AiConcurrency}",
             targetKind: "schedule",
-            detail: new { saved.Enabled, saved.Windows, saved.DebugDump, saved.LocalAnalysisEnabled });
+            detail: new
+            {
+                saved.Enabled,
+                saved.Windows,
+                saved.DebugDump,
+                saved.LocalAnalysisEnabled,
+                saved.AiEnabled,
+                saved.AiWindows,
+                saved.AiConcurrency
+            });
 
         return ApiResponse<ScheduleOptionsDto>.Ok(ToDto(saved));
     }
@@ -372,12 +397,91 @@ public class ScheduleController : ControllerBase
         _ => "不重跑"
     };
 
+    /// <summary>AI 排程狀態查詢（是否執行中、本輪已處理／目標數、待補總數、最後訊息）</summary>
+    [HttpGet("ai/status")]
+    [HttpGet("ai-status")]
+    [Permission(Capability.DevMonitor, Capability.Maintain)]
+    public ApiResponse<AiScheduleStatusDto> GetAiStatus()
+    {
+        var options = _optionsStore.Get();
+        var snapshot = _aiRunState?.Snapshot();
+        var lastOutcome = snapshot?.LastOutcome;
+
+        return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
+        {
+            IsRunning = snapshot?.IsRunning ?? false,
+            TriggerText = snapshot?.Trigger != null ? TriggerText(snapshot.Trigger) : "閒置",
+            StartedAt = snapshot?.StartedAt,
+            CompletedAt = snapshot?.CompletedAt,
+            LatestMessage = snapshot?.LatestMessage,
+            ProgressPhase = "netiq-ai",
+            ProgressDone = snapshot?.ProgressDone ?? 0,
+            ProgressTotal = snapshot?.ProgressTotal ?? 0,
+            PendingTotal = _records.CountPendingAi(),
+            UnitText = "件",
+            CanStop = snapshot?.IsRunning ?? false,
+            AiEnabled = options.AiEnabled,
+            AiConcurrency = options.AiConcurrency,
+            NextTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,
+            LastRunSuccess = lastOutcome?.Success,
+            LastRunMessage = lastOutcome?.Message,
+            LastRunTriggerText = lastOutcome != null ? TriggerText(lastOutcome.Trigger) : null,
+            LastRunEndedAt = lastOutcome?.EndedAt
+        });
+    }
+
+    /// <summary>手動立即執行 AI 分析（可指定是否強制重新分析）</summary>
+    [HttpPost("ai/run")]
+    [HttpPost("ai-run")]
+    [Permission(Capability.Maintain)]
+    public async Task<ApiResponse<TriggerRunResultDto>> RunAi([FromBody] TriggerAiRunRequest? request)
+    {
+        if (_aiScheduler == null)
+            throw DomainException.Validation("AI 分析排程服務未就緒。");
+
+        var force = request?.ForceRerun ?? false;
+
+        _audit.Record(
+            action: AuditActions.ScheduleManualRun,
+            summary: $"手動觸發 AI 分析執行（{(force ? "強制重新分析全部紀錄" : "補跑待補紀錄")}）",
+            targetKind: "schedule",
+            detail: new { forceRerun = force });
+
+        var started = await _aiScheduler.TriggerRunAsync(force, $"manual:{_currentUser.Account}");
+        return ApiResponse<TriggerRunResultDto>.Ok(new TriggerRunResultDto
+        {
+            Started = started,
+            Message = started ? "已開始執行。" : "目前已有其他 AI 執行進行中，請稍後再試（不會排隊）。"
+        });
+    }
+
+    /// <summary>停止進行中的 AI 分析（優雅停止，停在單筆邊界）</summary>
+    [HttpPost("ai/cancel")]
+    [HttpPost("ai-cancel")]
+    [Permission(Capability.Maintain)]
+    public ApiResponse CancelAi()
+    {
+        if (_aiRunState == null || !_aiRunState.TryCancel())
+            throw DomainException.Validation("目前沒有正在執行的 AI 分析。");
+
+        _audit.Record(
+            action: AuditActions.ScheduleManualCancel,
+            summary: "手動停止進行中的 AI 分析（優雅停止，停在單筆邊界）",
+            targetKind: "schedule");
+
+        return ApiResponse.Ok();
+    }
+
     private ScheduleOptionsDto ToDto(ScheduleOptions options) => new()
     {
         Enabled = options.Enabled,
         Windows = options.Windows,
         DebugDump = options.DebugDump,
         LocalAnalysisEnabled = options.LocalAnalysisEnabled,
+        AiEnabled = options.AiEnabled,
+        AiWindows = options.AiWindows,
+        AiConcurrency = options.AiConcurrency,
+        NextAiTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,
         UpdatedAt = options.UpdatedAt,
         UpdatedByAccount = options.UpdatedByAccount,
         UpdatedByDisplayName = string.IsNullOrEmpty(options.UpdatedByAccount)

@@ -186,6 +186,14 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
 
+    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    int IAnalysisRecordQuery.MarkAllForAiRerun()
+    {
+        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        foreach (var r in targets) r.AiPending = true;
+        return targets.Count;
+    }
+
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {
         var ordered = _records

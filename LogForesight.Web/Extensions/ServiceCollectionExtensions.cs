@@ -344,6 +344,33 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
 
+        // AI 分析獨立排程（批次D2）：常駐輪詢，自成一個併發 1 的 gate（AiAnalysisRunState），
+        // 刻意不與取數排程互斥。AiAnalysisHostedService 註冊為單例並註冊為 HostedService。
+        services.AddSingleton<AiAnalysisRunState>();
+        services.AddSingleton<AiAnalysisHostedService>(sp =>
+        {
+            var optionsStore = sp.GetRequiredService<ScheduleOptionsStore>();
+            var schedulerRunState = sp.GetRequiredService<SchedulerRunState>();
+            var aiRunState = sp.GetRequiredService<AiAnalysisRunState>();
+            var recordQuery = sp.GetRequiredService<IAnalysisRecordQuery>();
+            var storageBackend = sp.GetRequiredService<StorageBackend>();
+            var systemSettingsStore = sp.GetRequiredService<ISystemSettingsStore>();
+            var suppressionStore = sp.GetRequiredService<ISuppressionStore>();
+            var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+
+            return new AiAnalysisHostedService(
+                optionsStore,
+                schedulerRunState,
+                aiRunState,
+                recordQuery,
+                storageBackend,
+                systemSettingsStore,
+                suppressionStore,
+                aiService: null,
+                lifetime: lifetime);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
+
         // 處理狀態自 blob 搬進真表（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）：
         // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。
         // **註冊在回填之前**——遷移未完成時處理狀態是唯讀的，要優先解除

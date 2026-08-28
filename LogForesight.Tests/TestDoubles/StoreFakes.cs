@@ -424,6 +424,14 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
     }
 
     public int CountPendingAi() => _records.Count(r => r.AiPending);
+
+    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    public int MarkAllForAiRerun()
+    {
+        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        foreach (var r in targets) r.AiPending = true;
+        return targets.Count;
+    }
 }
 
 /// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的
