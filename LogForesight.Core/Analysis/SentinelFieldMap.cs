@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 
 namespace LogForesight.Core.Analysis;
 
@@ -105,6 +106,17 @@ public static class SentinelFieldMap
     {
         HostIp, HostName, LinuxProgram, LinuxObsSvcName, LinuxFacility, Timestamp, Severity, Message
     };
+
+    /// <summary>
+    /// 取數解析時要保留的欄位（回饋三十五輪批次E1）＝兩組投影清單的聯集。
+    ///
+    /// 查詢送出時雖已指定投影欄位，但解析端原本是把回應物件的**每一個屬性**原樣入袋
+    /// （Sentinel 是否嚴格遵守投影並無保證），單筆事件的字典大小因此不受控；
+    /// 一個 job 上限十萬筆、十二個 job 並行時這是取數期間最大的記憶體來源。
+    /// 以聯集為準是因為同一份解析程式碼同時服務 Windows 與 Linux 兩種查詢。
+    /// </summary>
+    public static readonly IReadOnlySet<string> ParseKeepFields =
+        Q1ProjectionFields.Concat(LinuxQ1ProjectionFields).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Linux sev→<see cref="EventLogEntryType"/> 的推導（輪 B 第 3/4 項定案）：

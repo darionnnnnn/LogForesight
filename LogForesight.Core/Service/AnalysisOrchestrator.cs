@@ -797,11 +797,24 @@ public class AnalysisOrchestrator
         {
             ct.ThrowIfCancellationRequested();
 
-            var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
-            var logsByDate = scanResult.Entries
-                .GroupBy(l => l.TimeGenerated.Date)
-                .ToDictionary(g => g.Key, g => g.ToList());
-            totalEvents += scanResult.Entries.Count;
+            var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
+
+            // 掃描結果只在這個區塊裡存活（回饋三十五輪批次E3）：ScanRangeFromAllAsync 回傳的
+            // ScanResult 同時持有合併後的 Entries 與逐頻道的 BySource 兩份清單參照，
+            // 原本整份在該區塊 14 天的分析期間全程不放。這裡先把逐日分組與逐日中繼資料取出來，
+            // 讓 scanResult 在進入逐日迴圈前就離開範圍，只留下真正還要用的東西。
+            Dictionary<DateTime, List<EventLogEntryData>> logsByDate;
+            Dictionary<DateTime, bool> incompleteByDate;
+            ChannelAvailability channelAvailability;
+            bool? securityAvailable;
+            {
+                var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
+                logsByDate = scanResult.Entries
+                    .GroupBy(l => l.TimeGenerated.Date)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+                incompleteByDate = chunkDates.ToDictionary(d => d, scanResult.IsDateIncomplete);
+                securityAvailable = scanResult.SecurityAvailable;
+                totalEvents += scanResult.Entries.Count;
 
             if (!warningsPrinted)
             {
@@ -824,14 +837,13 @@ public class AnalysisOrchestrator
                 }
             }
 
-            var channelAvailability = new ChannelAvailability
-            {
-                Read = scanResult.ChannelsRead,
-                Denied = scanResult.ChannelsDenied,
-                Missing = scanResult.ChannelsMissing
-            };
-
-            var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
+                channelAvailability = new ChannelAvailability
+                {
+                    Read = scanResult.ChannelsRead,
+                    Denied = scanResult.ChannelsDenied,
+                    Missing = scanResult.ChannelsMissing
+                };
+            }
 
             foreach (var date in chunkDates)
             {
@@ -840,13 +852,16 @@ public class AnalysisOrchestrator
 
                 var isRerun = rerunDateSet.Contains(date.Date);
                 var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+                // 這一天的事件取出後就從分組移除（批次E3）：區塊內的記憶體隨進度遞減，
+                // 而不是整塊 14 天的事件全程壓在記憶體裡等最後一起回收。
+                logsByDate.Remove(date);
 
-                var dataIncomplete = scanResult.IsDateIncomplete(date);
+                var dataIncomplete = incompleteByDate[date];
 
                 // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
                 // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
                 if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
-                        logs.Count, dataIncomplete, scanResult.SecurityAvailable == false))
+                        logs.Count, dataIncomplete, securityAvailable == false))
                 {
                     rerunRetainedCount++;
                     console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
@@ -862,7 +877,7 @@ public class AnalysisOrchestrator
                 if (isRerun) rerunAnalyzedCount++;
 
                 var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
-                    dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability,
+                    dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                     replaceExisting: isRerun);
                 result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 

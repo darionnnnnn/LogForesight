@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LogForesight.Core.Analysis;
 using System.Text.RegularExpressions;
 
 namespace LogForesight.Core;
@@ -70,7 +71,9 @@ public sealed partial class SentinelClient
             }
 
             var json = await resp.Content.ReadAsStringAsync(ct);
-            return ParseEventsPage(json);
+            // 只留分析與顯示會用到的欄位（批次E1）：回應可能帶回投影以外的屬性，
+            // 全部入袋會讓單筆事件大小不受控。診斷路徑要看原始全欄位時傳 null。
+            return ParseEventsPage(json, SentinelFieldMap.ParseKeepFields);
         }
     }
 
@@ -85,7 +88,7 @@ public sealed partial class SentinelClient
     /// 真實結構，不能讓「格式猜錯」讓整條查詢鏈斷裂。真實環境的 probe 輸出定案欄位對應後，
     /// 這裡再依實測結果收斂。
     /// </summary>
-    internal static List<SentinelEvent> ParseEventsPage(string json)
+    internal static List<SentinelEvent> ParseEventsPage(string json, IReadOnlySet<string>? keepFields)
     {
         var events = new List<SentinelEvent>();
         JsonDocument doc;
@@ -106,9 +109,12 @@ public sealed partial class SentinelClient
             foreach (var item in array.Value.EnumerateArray())
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
-                var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var fields = new Dictionary<string, string>(
+                    keepFields?.Count ?? 0, StringComparer.OrdinalIgnoreCase);
                 foreach (var prop in item.EnumerateObject())
                 {
+                    // keepFields 為 null＝不過濾（診斷用途要看真實回應的全部欄位）
+                    if (keepFields != null && !keepFields.Contains(prop.Name)) continue;
                     fields[prop.Name] = ElementToString(prop.Value);
                 }
                 events.Add(new SentinelEvent(fields));

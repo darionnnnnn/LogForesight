@@ -636,7 +636,7 @@ public class SentinelClientTests
     [Fact]
     public void ParseEventsPage_純陣列根節點()
     {
-        var events = SentinelClient.ParseEventsPage("[{\"evt\":\"A\",\"sev\":\"3\"},{\"evt\":\"B\"}]");
+        var events = SentinelClient.ParseEventsPage("[{\"evt\":\"A\",\"sev\":\"3\"},{\"evt\":\"B\"}]", keepFields: null);
 
         Assert.Equal(2, events.Count);
         Assert.Equal("A", events[0].Fields["evt"]);
@@ -652,7 +652,7 @@ public class SentinelClientTests
     public void ParseEventsPage_物件包裝常見鍵名(string key)
     {
         var json = $"{{\"{key}\":[{{\"evt\":\"A\"}}]}}";
-        var events = SentinelClient.ParseEventsPage(json);
+        var events = SentinelClient.ParseEventsPage(json, keepFields: null);
 
         Assert.Single(events);
         Assert.Equal("A", events[0].Fields["evt"]);
@@ -661,16 +661,44 @@ public class SentinelClientTests
     [Fact]
     public void ParseEventsPage_未知鍵名_保底取第一個陣列屬性()
     {
-        var events = SentinelClient.ParseEventsPage("{\"totalCount\":1,\"unknownKey\":[{\"evt\":\"A\"}]}");
+        var events = SentinelClient.ParseEventsPage("{\"totalCount\":1,\"unknownKey\":[{\"evt\":\"A\"}]}", keepFields: null);
 
         Assert.Single(events);
         Assert.Equal("A", events[0].Fields["evt"]);
     }
 
+    /// <summary>
+    /// 投影過濾（回饋三十五輪批次E1）：回應帶回投影以外的屬性時只保留要用的欄位——
+    /// 單筆事件的字典大小必須有上界，否則取數期間十萬筆 × 十二個並行 job 會把記憶體吃光。
+    /// </summary>
+    [Fact]
+    public void ParseEventsPage_只保留指定欄位_其餘屬性不入袋()
+    {
+        var json = "[{\"msg\":\"訊息\",\"repip\":\"10.0.0.1\",\"noise1\":\"" + new string('x', 500) + "\",\"noise2\":\"y\"}]";
+
+        var events = SentinelClient.ParseEventsPage(json, SentinelFieldMap.ParseKeepFields);
+
+        var fields = Assert.Single(events).Fields;
+        Assert.Equal("訊息", fields[SentinelFieldMap.Message]);
+        Assert.Equal("10.0.0.1", fields[SentinelFieldMap.HostIp]);
+        Assert.False(fields.ContainsKey("noise1"));
+        Assert.False(fields.ContainsKey("noise2"));
+    }
+
+    /// <summary>診斷路徑（keepFields=null）要看真實回應的全部欄位，不得被過濾。</summary>
+    [Fact]
+    public void ParseEventsPage_未指定保留欄位_全部屬性保留()
+    {
+        var events = SentinelClient.ParseEventsPage("[{\"msg\":\"A\",\"unknown_field\":\"B\"}]", keepFields: null);
+
+        var fields = Assert.Single(events).Fields;
+        Assert.Equal("B", fields["unknown_field"]);
+    }
+
     [Fact]
     public void ParseEventsPage_不是合法JSON_回空清單不擲例外()
     {
-        var events = SentinelClient.ParseEventsPage("<html>not json</html>");
+        var events = SentinelClient.ParseEventsPage("<html>not json</html>", keepFields: null);
 
         Assert.Empty(events);
     }
@@ -678,7 +706,7 @@ public class SentinelClientTests
     [Fact]
     public void ParseEventsPage_找不到任何陣列_回空清單()
     {
-        var events = SentinelClient.ParseEventsPage("{\"status\":\"ok\"}");
+        var events = SentinelClient.ParseEventsPage("{\"status\":\"ok\"}", keepFields: null);
 
         Assert.Empty(events);
     }
