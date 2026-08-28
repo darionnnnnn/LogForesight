@@ -228,7 +228,8 @@ public sealed class MissingDateFinderRequireAiTests : IDisposable
             null!,
             new SchedulerRunState(),
             hosts, sentinels, new RecordingAuditService(), new FakeCurrentUser(), new FakeUserStore(),
-            records: store, settingsStore: new FakeSystemSettingsStore(), userDisplayNames: new UserDisplayNameService(new FakeSystemSettingsStore()));
+            records: store, settingsStore: new FakeSystemSettingsStore(), userDisplayNames: new UserDisplayNameService(new FakeSystemSettingsStore()),
+            aiScheduler: null!, aiRunState: new AiAnalysisRunState());
 
         // 預設模式（onlyMissingOrFailed = false）：預覽全部 4 台（3 台 NetIQ + 1 台本機）
         var defaultPreview = controller.RunPreview("all", segment: null, hostId: null, onlyMissingOrFailed: false, backfillDays: 1);

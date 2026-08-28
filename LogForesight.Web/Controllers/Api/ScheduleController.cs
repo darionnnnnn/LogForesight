@@ -33,15 +33,15 @@ public class ScheduleController : ControllerBase
     private readonly IUserDisplayNameService _userDisplayNames;
     private readonly IWebAiService? _webAi;
     private readonly NetiqOptionsStore? _netiqStore;
-    private readonly AiAnalysisHostedService? _aiScheduler;
-    private readonly AiAnalysisRunState? _aiRunState;
+    private readonly AiAnalysisHostedService _aiScheduler;
+    private readonly AiAnalysisRunState _aiRunState;
 
     public ScheduleController(
         ScheduleOptionsStore optionsStore, SchedulerHostedService scheduler, SchedulerRunState runState,
         IHostStore hosts, ISentinelStore sentinels, IAuditService audit, ICurrentUser currentUser, IUserStore users,
         IAnalysisRecordQuery records, ISystemSettingsStore settingsStore, IUserDisplayNameService userDisplayNames,
-        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null,
-        AiAnalysisHostedService? aiScheduler = null, AiAnalysisRunState? aiRunState = null)
+        AiAnalysisHostedService aiScheduler, AiAnalysisRunState aiRunState,
+        IWebAiService? webAi = null, NetiqOptionsStore? netiqStore = null)
     {
         _optionsStore = optionsStore;
         _scheduler = scheduler;
@@ -398,28 +398,27 @@ public class ScheduleController : ControllerBase
     };
 
     /// <summary>AI 排程狀態查詢（是否執行中、本輪已處理／目標數、待補總數、最後訊息）</summary>
-    [HttpGet("ai/status")]
     [HttpGet("ai-status")]
     [Permission(Capability.DevMonitor, Capability.Maintain)]
     public ApiResponse<AiScheduleStatusDto> GetAiStatus()
     {
         var options = _optionsStore.Get();
-        var snapshot = _aiRunState?.Snapshot();
-        var lastOutcome = snapshot?.LastOutcome;
+        var snapshot = _aiRunState.Snapshot();
+        var lastOutcome = snapshot.LastOutcome;
 
         return ApiResponse<AiScheduleStatusDto>.Ok(new AiScheduleStatusDto
         {
-            IsRunning = snapshot?.IsRunning ?? false,
-            TriggerText = snapshot?.Trigger != null ? TriggerText(snapshot.Trigger) : "閒置",
-            StartedAt = snapshot?.StartedAt,
-            CompletedAt = snapshot?.CompletedAt,
-            LatestMessage = snapshot?.LatestMessage,
+            IsRunning = snapshot.IsRunning,
+            TriggerText = snapshot.Trigger != null ? TriggerText(snapshot.Trigger) : "閒置",
+            StartedAt = snapshot.StartedAt,
+            CompletedAt = snapshot.CompletedAt,
+            LatestMessage = snapshot.LatestMessage,
             ProgressPhase = "netiq-ai",
-            ProgressDone = snapshot?.ProgressDone ?? 0,
-            ProgressTotal = snapshot?.ProgressTotal ?? 0,
+            ProgressDone = snapshot.ProgressDone,
+            ProgressTotal = snapshot.ProgressTotal,
             PendingTotal = _records.CountPendingAi(),
             UnitText = "件",
-            CanStop = snapshot?.IsRunning ?? false,
+            CanStop = snapshot.IsRunning,
             AiEnabled = options.AiEnabled,
             AiConcurrency = options.AiConcurrency,
             NextTriggerTime = options.AiEnabled ? ScheduleCalculator.NextTriggerTime(DateTime.Now, options.AiWindows) : null,
@@ -431,14 +430,10 @@ public class ScheduleController : ControllerBase
     }
 
     /// <summary>手動立即執行 AI 分析（可指定是否強制重新分析）</summary>
-    [HttpPost("ai/run")]
     [HttpPost("ai-run")]
     [Permission(Capability.Maintain)]
     public async Task<ApiResponse<TriggerRunResultDto>> RunAi([FromBody] TriggerAiRunRequest? request)
     {
-        if (_aiScheduler == null)
-            throw DomainException.Validation("AI 分析排程服務未就緒。");
-
         var force = request?.ForceRerun ?? false;
 
         _audit.Record(
@@ -456,12 +451,11 @@ public class ScheduleController : ControllerBase
     }
 
     /// <summary>停止進行中的 AI 分析（優雅停止，停在單筆邊界）</summary>
-    [HttpPost("ai/cancel")]
     [HttpPost("ai-cancel")]
     [Permission(Capability.Maintain)]
     public ApiResponse CancelAi()
     {
-        if (_aiRunState == null || !_aiRunState.TryCancel())
+        if (!_aiRunState.TryCancel())
             throw DomainException.Validation("目前沒有正在執行的 AI 分析。");
 
         _audit.Record(

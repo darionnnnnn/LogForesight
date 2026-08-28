@@ -87,7 +87,8 @@ public class RerunModeWiringTests
             new FakeUserStore(),
             records: new FakeRecordRepository(hosts),
             settingsStore: settingsStore,
-            userDisplayNames: new UserDisplayNameService(settingsStore));
+            userDisplayNames: new UserDisplayNameService(settingsStore),
+            aiScheduler: null!, aiRunState: new AiAnalysisRunState());
     }
 
     [Fact]
