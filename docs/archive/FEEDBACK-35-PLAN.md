@@ -541,3 +541,9 @@ BACKLOG 註記）；取數 run 詳情的 AiCalls 對機房路徑恆 0（AI 件�
 「使用者名稱顯示規則」一節）；Settings popover 補全站套用範圍說明。
 
 測試：3068 → 體檢輪後全量綠（最終數字見合併 commit）。
+
+## 終檢輪
+
+合併 dev 後複掃體檢修正 commit 的關鍵接線（ai-status 的 PendingTotal、run-activity 前端
+以 isRunning 驅動、版本戳中介軟體位於 MapControllers 之前）與合併後全量測試
+（3067 綠／略過 6／失敗 0）：終檢無新發現。
