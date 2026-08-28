@@ -291,26 +291,27 @@ public class AiAnalysisSchedulerTests : IDisposable
 
         var lockObj = new object();
         var callLogs = new List<(string Host, DateTime Date, DateTime Start, DateTime End)>();
-        int activeConcurrency = 0;
-        int maxObservedConcurrency = 0;
+
+        // 併發以「會合點」驗證而非計時：兩個不同主機的呼叫必須能同時停在這裡，
+        // 第二個到達時才一起放行。若併發度實際上是 1，第一個會等到逾時而永遠等不到第二個，
+        // 測試確定性失敗——不像量測 60ms 重疊那樣會因執行緒池忙碌而偶發紅燈。
+        var arrived = new SemaphoreSlim(0);
+        var bothArrived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrivedCount = 0;
 
         _ai.Behavior = async (prompt, ct) =>
         {
             var host = prompt.Contains("HOST-1") ? "HOST-1" : "HOST-2";
             var date = prompt.Contains(dateA.ToString("yyyy-MM-dd")) ? dateA : dateB;
-
-            var current = Interlocked.Increment(ref activeConcurrency);
-            lock (lockObj)
-            {
-                if (current > maxObservedConcurrency) maxObservedConcurrency = current;
-            }
-
             var start = DateTime.UtcNow;
-            await Task.Delay(60, ct); // 人工延遲以觀察併發與序列交疊
+
+            if (Interlocked.Increment(ref arrivedCount) >= 2) bothArrived.TrySetResult(true);
+
+            // 兩個主機各自的第一筆會在此會合；之後的筆數直接通過（同主機序列的驗證靠時間區間）
+            await Task.WhenAny(bothArrived.Task, Task.Delay(TimeSpan.FromSeconds(5), ct));
+            await Task.Delay(20, ct);
+
             var end = DateTime.UtcNow;
-
-            Interlocked.Decrement(ref activeConcurrency);
-
             lock (lockObj)
             {
                 callLogs.Add((host, date, start, end));
@@ -332,10 +333,13 @@ public class AiAnalysisSchedulerTests : IDisposable
         Assert.True(host2Logs[0].End <= host2Logs[1].Start.AddMilliseconds(50),
             $"HOST-2 必須序列：第一筆結束 {host2Logs[0].End:O}，第二筆開始 {host2Logs[1].Start:O}");
 
-        // 斷言 2：不同主機之間有平行執行（觀測到同時有 2 個 AI 請求在執行中，或執行時間區間重疊）
+        // 斷言 2：不同主機之間確實平行——兩個主機的呼叫同時抵達會合點才可能成立。
+        // 併發度若退回 1，bothArrived 永遠不會完成，兩筆呼叫各等 5 秒逾時，
+        // 且執行區間不會重疊，下面兩個斷言都會失敗。
+        Assert.True(bothArrived.Task.IsCompletedSuccessfully, "AiConcurrency=2 時兩個不同主機的 AI 呼叫必須能同時進行（會合點未達成）");
+
         bool hasOverlap = host1Logs.Any(h1 => host2Logs.Any(h2 => h1.Start < h2.End && h2.Start < h1.End));
-        Assert.True(maxObservedConcurrency >= 2 || hasOverlap,
-            $"AiConcurrency=2 時不同主機之間應有重疊平行執行（觀測到最大併發: {maxObservedConcurrency}）");
+        Assert.True(hasOverlap, "AiConcurrency=2 時不同主機之間應有重疊的執行區間");
     }
 
     [Fact]

@@ -52,6 +52,38 @@
                             <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                         </button>
                     </div>
+
+                    <hr class="my-3" />
+                    <h3 class="h6 mb-3">AI 分析排程</h3>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="schedule-ai-enabled" data-maintain-only />
+                        <label class="form-check-label" for="schedule-ai-enabled">啟用 AI 分析排程</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="關閉時不會依窗口自動觸發 AI 分析，僅能手動補跑。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                    </div>
+
+                    <label class="form-label small fw-semibold" for="schedule-ai-windows">AI 執行窗口</label>
+                    <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                            data-bs-content="Start 到點觸發一次 AI 分析排程，消化待補積壓紀錄；End 到點對進行中的 AI 分析發出優雅停止（停在單筆邊界）。最多 4 組，時間不可重疊；支援跨午夜。">
+                        <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                    </button>
+                    <div id="schedule-ai-windows" class="mb-2"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="schedule-ai-add-window" data-maintain-only>
+                        新增窗口
+                    </button>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold" for="schedule-ai-concurrency">併發數</label>
+                        <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
+                                data-bs-content="同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。範圍 1 到 8。">
+                            <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
+                        </button>
+                        <input type="number" class="form-control form-control-sm" id="schedule-ai-concurrency" min="1" max="8" value="1" style="max-width: 120px;" data-maintain-only />
+                        <div class="form-text small text-muted">同時進行的 AI 分析數。地端模型建議 1；接外部 API 可調高。</div>
+                    </div>
                 </div>
 
                 <div class="col-md-5">
@@ -85,6 +117,28 @@
                         <div class="small text-muted mb-2 ms-3 d-none" id="schedule-subprogress-text"></div>
                         <div class="small text-muted mb-3" id="schedule-latest-message"></div>
                         <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-stop" data-maintain-only>停止執行</button>
+
+                        <hr class="my-3" />
+                        <h3 class="h6 mb-3">AI 分析狀態</h3>
+                        <div class="small text-muted mb-1">下次觸發時刻</div>
+                        <div class="fw-semibold mb-3" id="schedule-ai-next-trigger">—</div>
+                        <div class="small text-muted mb-1">目前狀態</div>
+                        <div class="fw-semibold mb-1" id="schedule-ai-run-state">閒置</div>
+                        <div class="small text-muted mb-1 d-none" id="schedule-ai-elapsed"></div>
+                        <div class="mb-3">
+                            <div class="small text-muted mb-1">待補分析</div>
+                            <div class="fw-semibold" id="schedule-ai-pending-total">—</div>
+                        </div>
+                        <div class="progress mb-1 d-none" id="schedule-ai-progress-wrap" style="height: 6px;">
+                            <div class="progress-bar" id="schedule-ai-progress-bar" role="progressbar"></div>
+                        </div>
+                        <div class="small text-muted mb-2 d-none" id="schedule-ai-progress-text"></div>
+                        <div class="small text-muted mb-3" id="schedule-ai-latest-message"></div>
+                        <div class="d-flex flex-wrap align-items-center gap-2" data-maintain-only>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="schedule-ai-run-now">立即補跑 AI</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger d-none" id="schedule-ai-stop">停止</button>
+                            <button type="button" class="btn btn-sm btn-outline-warning" id="schedule-ai-force-rerun">強制重新分析</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -207,6 +261,27 @@
                     <button type="submit" class="btn btn-primary" id="run-now-submit">開始執行</button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="schedule-ai-rerun-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">強制重新分析</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning py-2 px-3 mb-3" role="alert">
+                    會把全部既有 AI 結論標記為待重跑（低風險日不受影響），舊結果在被覆蓋前仍可查看。適用於規則更新後。
+                </div>
+                <p class="small text-muted mb-0">確定要將全部既有 AI 結論標記為待重跑並立即開始執行嗎？</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-warning" id="schedule-ai-rerun-confirm" data-maintain-only>強制重新分析</button>
+            </div>
         </div>
     </div>
 </div>
