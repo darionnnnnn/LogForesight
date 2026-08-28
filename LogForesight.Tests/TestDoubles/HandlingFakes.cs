@@ -104,6 +104,8 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     public FakeRecordRepository(FakeHostStore hosts) => _hosts = hosts;
 
+    public void Add(DailyAnalysisRecord record) => _records.Add(record);
+
     public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues) =>
         AddRecord(hostName, date, "高", issues);
 
@@ -169,6 +171,20 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to) =>
         throw new NotImplementedException();
+
+    List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        return _records
+            .Where(r => r.AiPending)
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .Take(batchSize)
+            .ToList();
+    }
+
+    int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {

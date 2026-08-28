@@ -410,6 +410,20 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date && r.HostId != 0)
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
+
+    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        return _records
+            .Where(r => r.AiPending)
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .Take(batchSize)
+            .ToList();
+    }
+
+    public int CountPendingAi() => _records.Count(r => r.AiPending);
 }
 
 /// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的

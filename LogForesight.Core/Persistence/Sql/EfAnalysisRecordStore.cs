@@ -243,8 +243,11 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
         row.ContentJson = JsonSerializer.Serialize(record);
 
         // 抽出欄同步（docs/archive/FEEDBACK-12-PLAN.md §3.5）：AI 把風險往上拉（ai_raise）時，
-        // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移
+        // 清單／排行／儀表板查詢讀的是這個抽出欄，只改 JSON 內容不改這裡就是欄位漂移；
+        // 成功後清為 false（批次C 單點化事實來源），ai_analyzed 同步。
         row.RiskLevel = outcome.RiskLevel;
+        row.AiPending = false;
+        row.AiAnalyzed = outcome.AiAnalyzed;
         ctx.SaveChanges();
 
         Log.Info("[SQL] AttachAiResult {Date:yyyy-MM-dd}（風險={Risk}, aiAnalyzed={AiAnalyzed}）",
@@ -587,33 +590,7 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
 
         // 只帶判定/分類需要的欄位（不含 SampleMessages／KeyDetails 等風險日詳情頁專用內容）
         var recordIds = rows.Select(r => r.RecordId).ToHashSet();
-        var issuesByRecordId = recordIds.Count == 0
-            ? new Dictionary<long, List<LogIssueSignature>>()
-            : ctx.TopIssues.AsNoTracking()
-                .Where(t => recordIds.Contains(t.RecordId))
-                .Select(t => new
-                {
-                    t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
-                    t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey
-                })
-                .ToList()
-                .GroupBy(t => t.RecordId)
-                .ToDictionary(g => g.Key, g => g.Select(t => new LogIssueSignature
-                {
-                    LogName = t.LogName,
-                    Source = t.SourceName,
-                    EventId = t.EventId,
-                    EntryType = (System.Diagnostics.EventLogEntryType)t.EntryType,
-                    EventKey = t.EventKey,
-                    Count = t.EventCount,
-                    // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
-                    // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
-                    // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
-                    Severity = (IssueSeverity)t.SeverityRank,
-                    Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
-                    ElevatesDayRisk = t.ElevatesDayRisk,
-                    KnownIssue = t.KnownIssue
-                }).ToList());
+        var issuesByRecordId = LoadLightweightIssues(ctx, recordIds);
 
         var records = rows.Select(r => new DailyAnalysisRecord
         {
@@ -758,6 +735,98 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
             .ToHashSet();
     }
 
+    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+
+        var rows = WhereAiPending(ctx.DailyRecords.AsNoTracking())
+            .OrderByDescending(r => r.RecordDate)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.RecordId)
+            .Take(batchSize)
+            .Select(r => new
+            {
+                r.RecordId, r.HostId, r.HostName, r.RecordDate, r.RiskLevel, r.HasCorrelation,
+                r.Headline, r.ErrorCount, r.WarningCount, r.DataIncomplete, r.SecurityLogAvailable,
+                r.AiAnalyzed, r.AiPending, r.DetailPruned
+            })
+            .ToList();
+
+        var recordIds = rows.Select(r => r.RecordId).ToHashSet();
+        var issuesByRecordId = LoadLightweightIssues(ctx, recordIds);
+
+        var result = rows.Select(r => new DailyAnalysisRecord
+        {
+            HostId = r.HostId,
+            Host = r.HostName,
+            Date = r.RecordDate,
+            RiskLevel = r.RiskLevel,
+            Headline = r.Headline,
+            ErrorCount = r.ErrorCount,
+            WarningCount = r.WarningCount,
+            DataIncomplete = r.DataIncomplete,
+            SecurityLogAvailable = r.SecurityLogAvailable,
+            AiAnalyzed = r.AiAnalyzed,
+            AiPending = r.AiPending,
+            DetailPruned = r.DetailPruned,
+            CorrelationAlerts = r.HasCorrelation ? new List<string> { "(lightweight)" } : new List<string>(),
+            TopIssues = issuesByRecordId.TryGetValue(r.RecordId, out var issues) ? issues : new List<LogIssueSignature>()
+        }).ToList();
+
+        Log.Debug("[SQL] QueryPendingAi（batchSize={BatchSize}）→ {Count} 筆、{Ms}ms",
+            batchSize, result.Count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:QueryPendingAi", sw.ElapsedMilliseconds);
+        return result;
+    }
+
+    public int CountPendingAi()
+    {
+        var sw = Stopwatch.StartNew();
+        using var ctx = _contextFactory();
+        var count = WhereAiPending(ctx.DailyRecords.AsNoTracking()).Count();
+        Log.Debug("[SQL] CountPendingAi → {Count} 筆、{Ms}ms", count, sw.ElapsedMilliseconds);
+        _performance?.Record("records:CountPendingAi", sw.ElapsedMilliseconds);
+        return count;
+    }
+
+    /// <summary>待補條件單點化（批次C）：全域 ai_pending = true 條件僅定義於此處</summary>
+    private static IQueryable<DailyRecordRow> WhereAiPending(IQueryable<DailyRecordRow> query) =>
+        query.Where(r => r.AiPending);
+
+    private static Dictionary<long, List<LogIssueSignature>> LoadLightweightIssues(LfDbContext ctx, HashSet<long> recordIds)
+    {
+        if (recordIds.Count == 0) return new Dictionary<long, List<LogIssueSignature>>();
+
+        return ctx.TopIssues.AsNoTracking()
+            .Where(t => recordIds.Contains(t.RecordId))
+            .Select(t => new
+            {
+                t.RecordId, t.LogName, t.SourceName, t.EventId, t.Category, t.SeverityRank,
+                t.EntryType, t.EventCount, t.ElevatesDayRisk, t.KnownIssue, t.EventKey
+            })
+            .ToList()
+            .GroupBy(t => t.RecordId)
+            .ToDictionary(g => g.Key, g => g.Select(t => new LogIssueSignature
+            {
+                LogName = t.LogName,
+                Source = t.SourceName,
+                EventId = t.EventId,
+                EntryType = (System.Diagnostics.EventLogEntryType)t.EntryType,
+                EventKey = t.EventKey,
+                Count = t.EventCount,
+                // 嚴重度刻意不在這裡正規化（Critical=3 原樣帶出）——與 Deserialize() 回傳的
+                // 完整紀錄行為一致，正規化是 RecordRepository.ApplySeverityVisibility 讀取時
+                // 的職責（單一咽喉），這裡另外做一次會漏掉 SiteHidden 那半套規則
+                Severity = (IssueSeverity)t.SeverityRank,
+                Category = Enum.TryParse<IssueCategory>(t.Category, out var cat) ? cat : IssueCategory.Other,
+                ElevatesDayRisk = t.ElevatesDayRisk,
+                KnownIssue = t.KnownIssue
+            }).ToList());
+    }
+
     public DailyAnalysisRecord? GetOne(IReadOnlyCollection<HostKey> hosts, DateTime date)
     {
         if (hosts.Count == 0) return null;
@@ -795,12 +864,15 @@ public class EfAnalysisRecordStore : IAnalysisRecordStore, IAnalysisRecordQuery
                 Host = row.HostName,
                 Date = row.RecordDate,
                 RiskLevel = row.RiskLevel,
+                AiPending = row.AiPending,
                 DetailPruned = true
             };
         }
 
         var record = JsonSerializer.Deserialize<DailyAnalysisRecord>(row.ContentJson) ?? new DailyAnalysisRecord();
         record.DetailPruned = row.DetailPruned;
+        // 事實來源單點化（批次C）：以 DB 欄位 ai_pending 為準，不得改讀 ContentJson 內序列化的同名值
+        record.AiPending = row.AiPending;
         return record;
     }
 }

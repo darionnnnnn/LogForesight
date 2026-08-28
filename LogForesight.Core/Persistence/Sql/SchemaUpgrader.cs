@@ -114,6 +114,8 @@ internal static class SchemaUpgrader
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "extract_version",
             isSqlite ? "INTEGER NOT NULL DEFAULT 0" : "int NOT NULL DEFAULT 0");
         AddIndexIfMissing(ctx, isSqlite, "lf_daily_records", "IX_lf_daily_records_extract_version", "extract_version");
+        AddIndexIfMissing(ctx, isSqlite, "lf_daily_records",
+            "IX_lf_daily_records_ai_pending_record_date", "ai_pending, record_date");
 
         // 詳情兩層保留期的標記
         AddColumnIfMissing(ctx, isSqlite, "lf_daily_records", "detail_pruned",

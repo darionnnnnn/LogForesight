@@ -133,6 +133,7 @@ public class LfDbContext : DbContext
             e.HasIndex(x => x.RecordDate);
             e.HasIndex(x => new { x.HostId, x.RecordDate });
             e.HasIndex(x => x.ExtractVersion);   // DailyRecordBackfiller 的候選查詢
+            e.HasIndex(x => new { x.AiPending, x.RecordDate }).HasDatabaseName("IX_lf_daily_records_ai_pending_record_date"); // 全域待補查詢（批次C）
         });
 
         b.Entity<TopIssueRow>(e =>

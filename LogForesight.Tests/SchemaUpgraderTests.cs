@@ -725,4 +725,44 @@ public class SchemaUpgraderTests : IDisposable
         EventId = eventId, EntryType = 2, EventCount = 1, Category = "Storage",
         SeverityRank = (int)IssueSeverity.High, EventKey = ""
     };
+
+    /// <summary>
+    /// 批次C 驗收：以 PRAGMA index_list('lf_daily_records') 斷言新索引存在，
+    /// 且 SchemaUpgrader 重複執行兩次不會出錯（冪等）。
+    /// </summary>
+    [Fact]
+    public void 舊schema升級後_ai_pending複合索引存在且SchemaUpgrader重複執行冪等()
+    {
+        CreateOldSchema();
+
+        using (var ctx = NewContext())
+        {
+            SchemaUpgrader.Upgrade(ctx);
+            // 連續執行第二次：必須冪等、不拋例外
+            SchemaUpgrader.Upgrade(ctx);
+        }
+
+        using (var ctx = NewContext())
+        {
+            var indexNames = ctx.Database.SqlQueryRaw<string>(
+                "SELECT name FROM pragma_index_list('lf_daily_records')").ToList();
+
+            Assert.Contains("IX_lf_daily_records_ai_pending_record_date", indexNames);
+        }
+    }
+
+    [Fact]
+    public void 新schema建庫後_ai_pending複合索引存在且SchemaUpgrader執行冪等()
+    {
+        using var ctx = NewContext();
+        ctx.Database.EnsureCreated();
+
+        var indexNames = ctx.Database.SqlQueryRaw<string>(
+            "SELECT name FROM pragma_index_list('lf_daily_records')").ToList();
+        Assert.Contains("IX_lf_daily_records_ai_pending_record_date", indexNames);
+
+        // 升級執行兩次仍維持冪等
+        SchemaUpgrader.Upgrade(ctx);
+        SchemaUpgrader.Upgrade(ctx);
+    }
 }

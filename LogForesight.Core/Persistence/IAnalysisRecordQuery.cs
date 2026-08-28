@@ -93,4 +93,16 @@ public interface IAnalysisRecordQuery
     /// 全量載入。HostId=0（舊列／無主機識別）不列入，NetIQ 紀錄必有真實 HostId。
     /// </summary>
     HashSet<(long HostId, DateTime Date)> ListHostDates(DateTime from, DateTime to);
+
+    /// <summary>
+    /// 取一批待補 AI 的主機日（批次C）：條件 ai_pending = true，依日期新到舊排序。
+    /// 不反序列化 ContentJson，只回傳識別資訊與重建 AI 輸入時必要的最小欄位（沿用 QueryLightweight 投影手法）。
+    /// </summary>
+    List<DailyAnalysisRecord> QueryPendingAi(int batchSize);
+
+    /// <summary>
+    /// 待補總數計數（批次C）：回傳目前全庫 ai_pending = true 的筆數。
+    /// SQL 端 COUNT，不載入列資料。
+    /// </summary>
+    int CountPendingAi();
 }
