@@ -89,63 +89,17 @@ public class SchedulerRunStateTests
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
         state.ReportProgress("netiq", 5, 10);
-        state.ReportProgress("netiq-ai", 2, 8);
         Assert.Equal(10, state.ProgressTotal);
-        Assert.Equal(8, state.SubProgressTotal);
 
         state.EndRun();
 
         Assert.Null(state.ProgressPhase);
         Assert.Equal(0, state.ProgressDone);
         Assert.Equal(0, state.ProgressTotal);
-        Assert.Null(state.SubProgressPhase);
-        Assert.Equal(0, state.SubProgressDone);
-        Assert.Equal(0, state.SubProgressTotal);
     }
 
     // ── 主／子進度分離（回饋十四輪 UI-6）─────────────────────────────────────
 
-    /// <summary>
-    /// 核心場景：netiq（主進度，搜尋仍在往下一台主機推進）與 netiq-ai（子進度，AI 佇列在背景
-    /// 消化）在同一次執行內同時在跑。修復前兩者共用一組欄位，後回報的會直接覆蓋先回報的，
-    /// 使用者看到的症狀是「進度卡住不動」。
-    /// </summary>
-    [Fact]
-    public void 主進度與子進度分開存放_互不覆蓋()
-    {
-        var state = new SchedulerRunState();
-        Assert.True(state.TryBeginRun("schedule", out _));
-
-        state.ReportProgress("netiq", 3, 10);
-        state.ReportProgress("netiq-ai", 1, 4);
-        // 主進度繼續往前推進，不該影響已經回報過的子進度
-        state.ReportProgress("netiq", 4, 10);
-
-        Assert.Equal("netiq", state.ProgressPhase);
-        Assert.Equal(4, state.ProgressDone);
-        Assert.Equal(10, state.ProgressTotal);
-        Assert.Equal("netiq-ai", state.SubProgressPhase);
-        Assert.Equal(1, state.SubProgressDone);
-        Assert.Equal(4, state.SubProgressTotal);
-    }
-
-    /// <summary>netiq-backpressure 與 netiq-ai 是同一條「AI 背景消化」軌的兩種狀態（暫停中／消化中），
-    /// 共用同一組子進度欄位，切換時互相覆蓋是正確行為（不是兩條各自獨立的子軌）。</summary>
-    [Fact]
-    public void netiq背壓與netiqAi共用同一組子進度欄位()
-    {
-        var state = new SchedulerRunState();
-        Assert.True(state.TryBeginRun("schedule", out _));
-
-        state.ReportProgress("netiq-ai", 2, 5);
-        state.ReportProgress("netiq-backpressure", 2, 5);
-
-        Assert.Equal("netiq-backpressure", state.SubProgressPhase);
-        Assert.Null(state.ProgressPhase); // 主進度欄位完全不受子進度回報影響
-    }
-
-    // ── 本機／NetIQ 並行進度（回饋十七輪批次E）─────────────────────────────
-    // 本機與 NetIQ 機房分析改成並行執行（AnalysisOrchestrator 的 Task.WhenAll），local／netiq
     // 兩個 phase 現在會同時回報進度，不能再共用一組主進度欄位——否則會重演 netiq／netiq-ai
     // 當初共用一組欄位時「進度卡住不動」的症狀。
 
@@ -181,7 +135,7 @@ public class SchedulerRunStateTests
     /// 後的行為：清空主／子進度欄位，讓 LatestActivity() 的優先序自然落回還在推進的本機。
     /// </summary>
     [Fact]
-    public void NetIQ完工後清空主子進度欄位_LatestActivity落回仍在推進的本機()
+    public void NetIQ完工後清空主進度欄位_LatestActivity落回仍在推進的本機()
     {
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
@@ -194,7 +148,6 @@ public class SchedulerRunStateTests
 
         Assert.Null(state.ProgressPhase);
         Assert.Equal(0, state.ProgressTotal);
-        Assert.Null(state.SubProgressPhase);
         // 本機的欄位完全不受影響——它還在跑，不該被 NetIQ 收尾的動作波及
         Assert.Equal("local", state.LocalProgressPhase);
         Assert.Equal(2, state.LocalProgressDone);
@@ -246,46 +199,23 @@ public class SchedulerRunStateTests
     }
 
     /// <summary>
-    /// 一般使用者的「執行中告示」（<c>/api/run-activity</c>，RunActivityController）只有單一條
-    /// 進度可顯示，主／子拆開後必須自己決定顯示哪一條——選子進度（較晚、較貼近「現在卡在哪」
-    /// 的階段）。這條測試釘住 SchedulerRunState 這一側的前提：子進度有值時 SubProgressPhase
-    /// 非 null 且主進度仍各自保有自己的值，控制器才有辦法做這個優先序判斷。
-    /// 體檢時抓到的實際缺口：拆欄位後該控制器仍只讀主進度，AI 消化階段畫面會停在搜尋階段的數字。
+    /// 單一告示的選擇邏輯（LatestActivity）由 SchedulerRunState 本身提供，兩個讀取端
+    /// （/api/run-activity、健康診斷 AnalysisPhase）共用——「漏改讀取端」這個坑已在兩處
+    /// 各踩一次，選擇邏輯不再散落各處。子進度軌已隨 AI 拆離移除（體檢輪）：未知 phase
+    /// 一律落主進度欄位，優先序剩 netiq > 本機。
     /// </summary>
     [Fact]
-    public void 子進度有值時主子兩組欄位同時可讀_供單一告示決定優先序()
-    {
-        var state = new SchedulerRunState();
-        Assert.True(state.TryBeginRun("schedule", out _));
-
-        state.ReportProgress("netiq", 100, 100);   // 搜尋主線已跑完
-        state.ReportProgress("netiq-ai", 12, 80);  // AI 佇列還在背景消化
-
-        Assert.Equal("netiq", state.ProgressPhase);
-        Assert.Equal("netiq-ai", state.SubProgressPhase);
-        Assert.Equal(12, state.SubProgressDone);
-        Assert.Equal(80, state.SubProgressTotal);
-    }
-
-    /// <summary>
-    /// 二次體檢後的單點化（LatestActivity）：單一告示的「子進度優先」取捨改由 SchedulerRunState
-    /// 本身提供，兩個讀取端（/api/run-activity、健康診斷 AnalysisPhase）共用——「漏改讀取端」
-    /// 這個坑已在兩處各踩一次（RunActivityController、HealthService），選擇邏輯不再散落各處。
-    /// </summary>
-    [Fact]
-    public void LatestActivity_子進度有值時優先回子進度_否則回主進度()
+    public void LatestActivity_只剩主與本機兩軌_未知phase落主進度()
     {
         var state = new SchedulerRunState();
         Assert.True(state.TryBeginRun("schedule", out _));
 
         state.ReportProgress("netiq", 40, 100);
-        Assert.Equal(("netiq", 40, 100), state.LatestActivity()); // 尚無子進度：回主進度
+        Assert.Equal(("netiq", 40, 100), state.LatestActivity());
 
+        // 舊子軌 phase（netiq-ai）已無特殊路由：當成一般主進度值寫入
         state.ReportProgress("netiq-ai", 12, 80);
-        Assert.Equal(("netiq-ai", 12, 80), state.LatestActivity()); // 子進度出現後優先回它
-
-        state.ReportProgress("netiq", 60, 100);
-        Assert.Equal(("netiq-ai", 12, 80), state.LatestActivity()); // 主進度再推進也不搶回單一告示
+        Assert.Equal(("netiq-ai", 12, 80), state.ProgressPhase != null ? (state.ProgressPhase, state.ProgressDone, state.ProgressTotal) : (null, 0, 0));
     }
 
     [Fact]
@@ -335,7 +265,7 @@ public class SchedulerRunStateTests
     public void ComputeAnyRecordsWritten_本機有結果時為true()
     {
         var result = new OrchestratorResult { Success = false, FailureMessage = "NetIQ 失敗" };
-        result.LocalResults.Add(new DailyAnalysisRecord { Host = "SRV-A", Date = DateTime.Today.AddDays(-1) });
+        result.LocalResults.Add(new LocalDaySummary(DateTime.Today.AddDays(-1), RiskLevels.Low, HasReport: false));
 
         Assert.True(RunOutcome.ComputeAnyRecordsWritten(result));
     }

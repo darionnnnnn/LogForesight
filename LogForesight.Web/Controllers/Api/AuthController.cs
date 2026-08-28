@@ -24,6 +24,7 @@ public class AuthController : ControllerBase
     private readonly ICurrentUser _currentUser;
     private readonly IAuditService _audit;
     private readonly WebAppSettings _settings;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
     public AuthController(
         IdentityService identity,
@@ -31,7 +32,8 @@ public class AuthController : ControllerBase
         IAuthenticationProvider provider,
         ICurrentUser currentUser,
         IAuditService audit,
-        WebAppSettings settings)
+        WebAppSettings settings,
+        IUserDisplayNameService userDisplayNames)
     {
         _identity = identity;
         _tokens = tokens;
@@ -39,6 +41,7 @@ public class AuthController : ControllerBase
         _currentUser = currentUser;
         _audit = audit;
         _settings = settings;
+        _userDisplayNames = userDisplayNames;
     }
 
     /// <summary>登入頁初始化：是否需要密碼欄</summary>
@@ -94,7 +97,7 @@ public class AuthController : ControllerBase
         {
             UserId = _currentUser.UserId,
             Account = _currentUser.Account,
-            DisplayName = _currentUser.DisplayName,
+            DisplayName = _userDisplayNames.Of(_currentUser.DisplayName),
             IsServerAdmin = _currentUser.IsServerAdmin,
             Capabilities = _currentUser.Capabilities.Select(c => c.ToString()).ToList(),
             NeedsAdminSetup = _currentUser.IsServerAdmin && _identity.HasNoAdmins()
@@ -104,7 +107,7 @@ public class AuthController : ControllerBase
     {
         UserId = identity.UserId,
         Account = identity.Account,
-        DisplayName = identity.DisplayName,
+        DisplayName = _userDisplayNames.Of(identity.DisplayName),
         IsServerAdmin = identity.IsServerAdmin,
         Capabilities = identity.Capabilities.Select(c => c.ToString()).ToList(),
         NeedsAdminSetup = identity.IsServerAdmin && _identity.HasNoAdmins()

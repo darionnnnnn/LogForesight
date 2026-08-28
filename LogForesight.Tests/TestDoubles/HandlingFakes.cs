@@ -44,19 +44,20 @@ internal class HandlingServiceFacade
     {
         var progress = new HandlingProgressCalculator(issueStore, store, cases, settings);
         // 能力解析（體檢 H1 的指派前檢查）：預設給一份空的群組 store——
-        // 多數測試不在意「對方動不動得了」，在意的那幾條會明確傳入
         var capabilities = new LogForesight.Web.Auth.UserCapabilityResolver(groups ?? new FakeUserGroupStore(), hosts, issueOwners);
+        var displayNames = new UserDisplayNameService(settings);
         var issueOwnerAdmin = new IssueOwnerAdminService(
             issueOwners ?? new FakeIssueOwnerStore(), issueAggregates ?? new FakeIssueAggregateQuery(), users,
-            audit, currentUser);
+            audit, currentUser, displayNames);
         _day = new DayHandlingCommandService(
             store, issueStore, caseCoordinator, repository, hosts, users, visibility, currentUser, audit, settings, progress, capabilities,
-            mail, issueOwners);
+            displayNames, mail, issueOwners);
         _issue = new IssueHandlingCommandService(
             store, issueStore, cases, caseCoordinator, noiseMarks, repository, hosts, users, visibility, currentUser, audit, progress, capabilities,
-            issueOwnerAdmin, mail);
+            issueOwnerAdmin, displayNames, mail);
         _history = new HandlingHistoryQueryService(
-            store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery());
+            store, issueStore, cases, hosts, users, visibility, settings, repository, progress, issueAggregates ?? new FakeIssueAggregateQuery(),
+            displayNames);
     }
 
     public HandlingDto Get(long hostId, DateTime date) => _day.Get(hostId, date);
@@ -102,6 +103,8 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
     private readonly List<DailyAnalysisRecord> _records = new();
 
     public FakeRecordRepository(FakeHostStore hosts) => _hosts = hosts;
+
+    public void Add(DailyAnalysisRecord record) => _records.Add(record);
 
     public DailyAnalysisRecord AddRecord(string hostName, DateTime date, params LogIssueSignature[] issues) =>
         AddRecord(hostName, date, "高", issues);
@@ -168,6 +171,48 @@ internal class FakeRecordRepository : IRecordRepository, IAnalysisRecordQuery
 
     HashSet<(long HostId, DateTime Date)> IAnalysisRecordQuery.ListHostDates(DateTime from, DateTime to) =>
         throw new NotImplementedException();
+
+    List<DailyAnalysisRecord> IAnalysisRecordQuery.QueryPendingAi(int batchSize)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        return _records
+            .Where(r => r.AiPending && !r.DetailPruned)
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .Take(batchSize)
+            // 與正式實作同形狀（體檢輪）：QueryPendingAi 是不讀 ContentJson 的輕量投影——
+            // TrendAlerts/AuditEventCount 不填、CorrelationAlerts 是佔位字串。替身若回完整
+            // 紀錄，「補跑必須先完整載入」的缺陷在測試裡就永遠測不到。
+            .Select(r => new DailyAnalysisRecord
+            {
+                HostId = r.HostId,
+                Host = r.Host,
+                Date = r.Date,
+                RiskLevel = r.RiskLevel,
+                Headline = r.Headline,
+                ErrorCount = r.ErrorCount,
+                WarningCount = r.WarningCount,
+                DataIncomplete = r.DataIncomplete,
+                SecurityLogAvailable = r.SecurityLogAvailable,
+                AiAnalyzed = r.AiAnalyzed,
+                AiPending = r.AiPending,
+                DetailPruned = r.DetailPruned,
+                CorrelationAlerts = r.CorrelationAlerts.Count > 0 ? new List<string> { "(lightweight)" } : new List<string>(),
+                TopIssues = r.TopIssues
+            })
+            .ToList();
+    }
+
+    int IAnalysisRecordQuery.CountPendingAi() => _records.Count(r => r.AiPending);
+
+    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    int IAnalysisRecordQuery.MarkAllForAiRerun()
+    {
+        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        foreach (var r in targets) r.AiPending = true;
+        return targets.Count;
+    }
 
     public PagedResult<DailyAnalysisRecord> QueryPage(RecordQueryFilter filter, int page, int pageSize, string? sortKey = null, bool ascending = false)
     {

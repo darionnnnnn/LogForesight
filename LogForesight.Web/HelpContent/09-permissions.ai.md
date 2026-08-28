@@ -27,7 +27,7 @@ LogForesight 將授權嚴格拆分為兩個正交維度：
   3. `Assign`：指派／改派問題案件的處理人（僅 admin）。
   4. `ConfirmPermission`：確認權限異動檢核（授權操作或標記可疑）。
   5. `Maintain`：維護規則、抑制、主機、使用者、群組、Sentinel 與系統設定。
-  6. `DevMonitor`：檢視排程作業、背景佇列、執行監控與除錯日誌。
+  6. `DevMonitor`：檢視排程作業、AI 分析狀態、執行監控與除錯日誌。
   7. `ViewAudit`：檢視操作紀錄與安全性稽核日誌。
 - 四大角色映射：
   - `user`：`Handle`、`ConfirmPermission`。

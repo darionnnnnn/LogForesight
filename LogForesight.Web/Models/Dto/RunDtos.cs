@@ -117,6 +117,9 @@ public class RunListItemDto
     /// 同一套語意（不含 backfilled／none——那是「沒有這筆 BatchRun」的狀態，這裡每筆都存在）</summary>
     public string Status { get; set; } = string.Empty;
 
+    /// <summary>作業類型顯示文字（批次D）：「取數分析」（含舊紀錄）｜「AI 分析」</summary>
+    public string JobTypeText { get; set; } = string.Empty;
+
     public string TriggerText { get; set; } = string.Empty;
     public string Args { get; set; } = string.Empty;
     public int DaysAnalyzed { get; set; }
@@ -124,4 +127,33 @@ public class RunListItemDto
     public int AiFailures { get; set; }
     public int WarnCount { get; set; }
     public int ErrorCount { get; set; }
+}
+
+/// <summary>
+/// 執行總表分頁回應（批次G）：含當頁的每日彙總清單與分頁資訊。
+/// 分頁以「最新的一頁為第 1 頁」為準，每頁內部維持既有的舊→新排序，
+/// 前端顯示時再 reverse 成新→舊。
+/// </summary>
+public class RunDaySummaryPageDto
+{
+    /// <summary>當頁的每日彙總列表（舊→新排序，前端 reverse 顯示）</summary>
+    public List<RunDaySummaryDto> Items { get; set; } = new();
+
+    /// <summary>總天數（Clamp 後的實際值，≤ MaxDays）</summary>
+    public int TotalDays { get; set; }
+
+    /// <summary>總頁數（= ceil(TotalDays / PageSize)）</summary>
+    public int TotalPages { get; set; }
+
+    /// <summary>目前頁碼（1 起算）</summary>
+    public int Page { get; set; }
+
+    /// <summary>每頁天數（Clamp 後的實際值）</summary>
+    public int PageSize { get; set; }
+
+    /// <summary>
+    /// 可用最大天數（max(90, RunLogRetentionDays)）：「全部」按鈕的天數來源——
+    /// 前端不得寫死，必須讀此欄位。
+    /// </summary>
+    public int MaxDays { get; set; }
 }

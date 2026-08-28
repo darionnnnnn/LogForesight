@@ -20,7 +20,18 @@ public sealed class DailyRecordBackfiller
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private const int BatchSize = 500;
-    private const int CurrentVersion = 1;
+
+    /// <summary>
+    /// 抽出欄的內容版本。**推進這個值＝要求所有既有列重新從 ContentJson 同步一次抽出欄**，
+    /// 回填器與 <see cref="EfAnalysisRecordStore"/> 寫入新列時共用（分開寫死會讓新列永遠
+    /// 落在待回填集合裡）。
+    ///
+    /// 版本 2（回饋三十五輪批次C）：<c>ai_pending</c> 欄位存量校正。AttachAiResult 先前
+    /// 只把 AiPending 寫進 ContentJson、沒有同步抽出欄，導致「AI 已完成」的舊列欄位永遠
+    /// 停在 1。欄位在此之前沒有任何查詢端，漂移因此無聲；批次C 起 AI 排程改以欄位為事實
+    /// 來源，不校正就會把整庫已完成的紀錄全當成待補而重跑一遍。
+    /// </summary>
+    public const int CurrentVersion = 2;
 
     private readonly Func<LfDbContext> _contextFactory;
 
@@ -83,7 +94,11 @@ public sealed class DailyRecordBackfiller
             if (record == null)
             {
                 // 解析失敗：標成已回填避免卡住整個回填流程，欄位維持預設值——同
-                // TopIssueBackfiller.ParseIssues 的既有取捨（誠實接受這一列補不齊）
+                // TopIssueBackfiller.ParseIssues 的既有取捨（誠實接受這一列補不齊）。
+                // 詳情已清（detail_pruned）的列 ContentJson 本來就是空字串、必然走到這裡：
+                // 順手把漂移的 ai_pending 清掉（體檢輪）——AI 輸入無法重建，掛著只會
+                // 讓待補計數虛高（查詢端已排除 detail_pruned，這裡清欄位讓數字誠實）。
+                if (row.DetailPruned) row.AiPending = false;
                 row.ExtractVersion = CurrentVersion;
                 continue;
             }

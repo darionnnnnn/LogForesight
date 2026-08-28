@@ -21,16 +21,18 @@ public class IssueOwnerAdminService
     private readonly IUserStore _users;
     private readonly IAuditService _audit;
     private readonly ICurrentUser _currentUser;
+    private readonly IUserDisplayNameService _displayNameService;
 
     public IssueOwnerAdminService(
         IIssueOwnerStore issueOwners, IIssueAggregateQuery issueAggregates, IUserStore users, IAuditService audit,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser, IUserDisplayNameService displayNameService)
     {
         _issueOwners = issueOwners;
         _issueAggregates = issueAggregates;
         _users = users;
         _audit = audit;
         _currentUser = currentUser;
+        _displayNameService = displayNameService;
     }
 
     public List<IssueOwnerDto> List()
@@ -232,7 +234,7 @@ public class IssueOwnerAdminService
             DisplayLabel = FormatDisplayLabel(rule.SourceName, rule.EventId),
             OwnerUserIds = rule.OwnerUserIds,
             OwnerNames = rule.OwnerUserIds
-                .Select(id => usersById.TryGetValue(id, out var u) ? NameFormat.WithAccount(u.DisplayName, u.Account) : $"(已刪除:{id})")
+                .Select(id => usersById.TryGetValue(id, out var u) ? _displayNameService.WithAccount(u.DisplayName, u.Account) : $"(已刪除:{id})")
                 .ToList(),
             Note = rule.Note,
             UpdatedAt = rule.UpdatedAt,

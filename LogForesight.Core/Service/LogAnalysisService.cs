@@ -408,7 +408,7 @@ public class LogAnalysisService
     /// 統計紀錄——<see cref="AnalyzeDayAsync"/> 的組合呼叫直接套用；NetIQ pipeline 的兩階段
     /// 消費者則透過類似 <c>AttachWeeklyCheckup</c> 的讀-改-寫回樣板套用（見 <c>AttachAiResult</c>）。
     ///
-    /// 歷史在這裡才重讀，不是統計段算好傳進來：讓 <see cref="AiFollowupQueue{T}"/> 的 FIFO
+    /// 歷史在這裡才重讀，不是統計段算好傳進來：讓依序消費的 FIFO
     /// 保序保證的「前一天已定案」語意在讀取當下自然成立，隔日 prompt 引用前一天 AI 摘要的
     /// 既有語意不因兩階段化而降級。
     /// </summary>
@@ -521,7 +521,7 @@ public class LogAnalysisService
     /// <see cref="DailyAnalysisRecord.RiskLevel"/>，不看這裡重建的嚴重度，所以這個簡化
     /// 不影響風險判定正確性。
     /// </summary>
-    internal async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
+    public async Task<AiOutcome> RetryAiAsync(DailyAnalysisRecord pendingRecord, int historyDays, CancellationToken ct = default)
     {
         var history = _historyService.ReadRecent(pendingRecord.Date, historyDays);
         // PatternId 重建不出來：持久化時只留描述文字（同 Severity/ElevatesDayRisk 的既有簡化，

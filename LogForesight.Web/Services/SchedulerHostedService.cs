@@ -30,6 +30,7 @@ public class SchedulerHostedService : BackgroundService
     private readonly ISystemSettingsStore _systemSettingsStore;
     private readonly BatchRunStore _batchRunStore;
     private readonly SchedulerRunState _runState;
+    private readonly DataVersionStamp _dataVersion;
     private readonly AnalysisOrchestrator _orchestrator;
     private readonly NamedMutexGate _mutexGate;
     private readonly MailNotificationService _mail;
@@ -44,13 +45,15 @@ public class SchedulerHostedService : BackgroundService
         AnalysisOrchestrator orchestrator,
         NamedMutexGate mutexGate,
         MailNotificationService mail,
-        IHostApplicationLifetime lifetime)
+        IHostApplicationLifetime lifetime,
+        DataVersionStamp dataVersion)
     {
         _webSettings = webSettings;
         _scheduleOptionsStore = scheduleOptionsStore;
         _systemSettingsStore = systemSettingsStore;
         _batchRunStore = batchRunStore;
         _runState = runState;
+        _dataVersion = dataVersion;
         _orchestrator = orchestrator;
         _mutexGate = mutexGate;
         _mail = mail;
@@ -233,6 +236,9 @@ public class SchedulerHostedService : BackgroundService
             finally
             {
                 _runState.EndRun(outcome);
+                // 分析落地了新資料，儀表板／報表的整包快取要失效（批次F）。
+                // 背景執行不走 HTTP 管線，因此不會被那條中介軟體涵蓋，得自己推進。
+                _dataVersion.Bump();
             }
 
             // 郵件通知（回饋十五輪批次D，回饋十六輪批次A-4 移出執行鎖）：執行摘要與高風險

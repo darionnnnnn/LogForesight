@@ -7,11 +7,13 @@ public class AuditQueryService
 {
     private readonly AuditLogStore _store;
     private readonly IUserStore _users;
+    private readonly IUserDisplayNameService _displayNameService;
 
-    public AuditQueryService(AuditLogStore store, IUserStore users)
+    public AuditQueryService(AuditLogStore store, IUserStore users, IUserDisplayNameService displayNameService)
     {
         _store = store;
         _users = users;
+        _displayNameService = displayNameService;
     }
 
     public PagedResult<AuditEntryDto> Query(AuditQuery query)
@@ -19,7 +21,7 @@ public class AuditQueryService
         var result = _store.Query(query);
 
         // 一次載入做字典（docs/archive/FEEDBACK-8-PLAN.md #6）：單頁筆數有限，不必逐筆查
-        var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => u.DisplayName, StringComparer.OrdinalIgnoreCase);
+        var byAccount = _users.GetAll().ToDictionary(u => u.Account, u => _displayNameService.Of(u.DisplayName), StringComparer.OrdinalIgnoreCase);
 
         return new PagedResult<AuditEntryDto>
         {

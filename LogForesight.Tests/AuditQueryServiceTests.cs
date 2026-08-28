@@ -17,7 +17,7 @@ public class AuditQueryServiceTests : IDisposable
     public AuditQueryServiceTests()
     {
         _store = new AuditLogStore(_fixture.LogStore("audit"));
-        _service = new AuditQueryService(_store, _users);
+        _service = new AuditQueryService(_store, _users, new UserDisplayNameService(new FakeSystemSettingsStore()));
     }
 
     public void Dispose() => _fixture.Dispose();

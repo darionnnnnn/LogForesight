@@ -18,34 +18,45 @@ public class EfRiskyEventStore : IRiskyEventStore
     public void ReplaceDay(long hostId, DateTime date, List<RiskyEvent> events)
     {
         var day = date.Date;
-        using var ctx = _contextFactory();
 
-        var existing = ctx.RiskyEvents.Where(r => r.HostId == hostId && r.Date == day).ToList();
-        if (existing.Count > 0)
-        {
-            ctx.RiskyEvents.RemoveRange(existing);
-        }
+        // 舊列以 ExecuteDelete 直接在 SQL 端刪除（回饋三十五輪批次E）：原本是把整天的列
+        // 載進 ChangeTracker 再 RemoveRange，吵雜主機一天數千筆全部進記憶體只為了刪掉。
+        // 刪除與寫入仍包在同一個交易裡——中途失敗會讓那一天變成空的，語意同原本的
+        // 「RemoveRange + Add 一次 SaveChanges」（交易寫法比照 EfAnalysisRecordStore.Append）。
+        using var probe = _contextFactory();
+        var strategy = probe.Database.CreateExecutionStrategy();
 
-        foreach (var e in events)
+        var removed = 0;
+        strategy.Execute(() =>
         {
-            ctx.RiskyEvents.Add(new RiskyEventRow
+            using var ctx = _contextFactory();
+            using var tx = ctx.Database.BeginTransaction();
+
+            removed = ctx.RiskyEvents.Where(r => r.HostId == hostId && r.Date == day).ExecuteDelete();
+
+            foreach (var e in events)
             {
-                HostId = hostId,
-                Date = day,
-                LogName = e.LogName,
-                Source = e.Source,
-                EventId = e.EventId,
-                EntryType = e.EntryType,
-                EventTime = e.EventTime,
-                Message = e.Message,
-                RuleId = e.RuleId,
-                CreatedAt = e.CreatedAt
-            });
-        }
-        ctx.SaveChanges();
+                ctx.RiskyEvents.Add(new RiskyEventRow
+                {
+                    HostId = hostId,
+                    Date = day,
+                    LogName = e.LogName,
+                    Source = e.Source,
+                    EventId = e.EventId,
+                    EntryType = e.EntryType,
+                    EventTime = e.EventTime,
+                    Message = e.Message,
+                    RuleId = e.RuleId,
+                    CreatedAt = e.CreatedAt
+                });
+            }
+
+            ctx.SaveChanges();
+            tx.Commit();
+        });
 
         Log.Info("[SQL] RiskyEvent.ReplaceDay 主機（id={HostId}）{Date:yyyy-MM-dd}：清除 {Removed} 筆、寫入 {Added} 筆",
-            hostId, day, existing.Count, events.Count);
+            hostId, day, removed, events.Count);
     }
 
     public List<RiskyEvent> Query(long hostId, DateTime date, string source, int eventId, int maxResults)

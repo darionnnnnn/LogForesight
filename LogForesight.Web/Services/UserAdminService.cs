@@ -20,6 +20,7 @@ public class UserAdminService
     private readonly IVisibilityService _visibility;
     private readonly IAuditService _audit;
     private readonly UserCapabilityResolver _capabilities;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
     public UserAdminService(
         IUserStore users,
@@ -29,7 +30,8 @@ public class UserAdminService
         IIssueCaseStore cases,
         IVisibilityService visibility,
         IAuditService audit,
-        UserCapabilityResolver capabilities)
+        UserCapabilityResolver capabilities,
+        IUserDisplayNameService userDisplayNames)
     {
         _users = users;
         _groups = groups;
@@ -39,6 +41,7 @@ public class UserAdminService
         _visibility = visibility;
         _audit = audit;
         _capabilities = capabilities;
+        _userDisplayNames = userDisplayNames;
     }
 
     public List<UserDto> GetUsers()
@@ -304,12 +307,12 @@ public class UserAdminService
         return (accounts, invalidCount);
     }
 
-    private static UserDto ToDto(
+    private UserDto ToDto(
         WebUser user, IReadOnlyDictionary<long, UserGroup> groupsById, int ownedHostCount = 0) => new()
     {
         UserId = user.UserId,
         Account = user.Account,
-        DisplayName = user.DisplayName,
+        DisplayName = _userDisplayNames.Of(user.DisplayName),
         Email = user.Email,
         Active = user.Active,
         GroupIds = user.GroupIds,

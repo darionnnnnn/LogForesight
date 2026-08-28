@@ -52,12 +52,21 @@ public class RunRequest
     public string? Trigger { get; init; }
 }
 
+/// <summary>本機逐日分析的單日摘要（批次E）：執行結果總表與計數用，不持有分析內容。</summary>
+public record LocalDaySummary(DateTime Date, string RiskLevel, bool HasReport);
+
 /// <summary>單次執行的結果摘要，供呼叫端（Web 的 BatchRun 回填與失敗回饋）使用。</summary>
 public class OrchestratorResult
 {
     public bool Success { get; set; } = true;
     public string? FailureMessage { get; set; }
-    public List<DailyAnalysisRecord> LocalResults { get; set; } = new();
+    /// <summary>
+    /// 本機逐日分析的結果摘要（回饋三十五輪批次E）：只留消費端真正會用到的三個欄位。
+    /// 原本整趟累積完整的 <see cref="DailyAnalysisRecord"/>（含 TopIssues 與樣本訊息），
+    /// 一次 120 天的回補會讓這份清單在整趟執行期間持續佔用記憶體，
+    /// 而消費端只需要「哪天、什麼風險、有沒有報告」。
+    /// </summary>
+    public List<LocalDaySummary> LocalResults { get; set; } = new();
     public NetiqPipelineResult? NetiqResult { get; set; }
     public TimeSpan Elapsed { get; set; }
 }
@@ -788,11 +797,24 @@ public class AnalysisOrchestrator
         {
             ct.ThrowIfCancellationRequested();
 
-            var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
-            var logsByDate = scanResult.Entries
-                .GroupBy(l => l.TimeGenerated.Date)
-                .ToDictionary(g => g.Key, g => g.ToList());
-            totalEvents += scanResult.Entries.Count;
+            var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
+
+            // 掃描結果只在這個區塊裡存活（回饋三十五輪批次E3）：ScanRangeFromAllAsync 回傳的
+            // ScanResult 同時持有合併後的 Entries 與逐頻道的 BySource 兩份清單參照，
+            // 原本整份在該區塊 14 天的分析期間全程不放。這裡先把逐日分組與逐日中繼資料取出來，
+            // 讓 scanResult 在進入逐日迴圈前就離開範圍，只留下真正還要用的東西。
+            Dictionary<DateTime, List<EventLogEntryData>> logsByDate;
+            Dictionary<DateTime, bool> incompleteByDate;
+            ChannelAvailability channelAvailability;
+            bool? securityAvailable;
+            {
+                var scanResult = await eventLogService.ScanRangeFromAllAsync(chunkStart, chunkEndExclusive, channelNames);
+                logsByDate = scanResult.Entries
+                    .GroupBy(l => l.TimeGenerated.Date)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+                incompleteByDate = chunkDates.ToDictionary(d => d, scanResult.IsDateIncomplete);
+                securityAvailable = scanResult.SecurityAvailable;
+                totalEvents += scanResult.Entries.Count;
 
             if (!warningsPrinted)
             {
@@ -815,14 +837,13 @@ public class AnalysisOrchestrator
                 }
             }
 
-            var channelAvailability = new ChannelAvailability
-            {
-                Read = scanResult.ChannelsRead,
-                Denied = scanResult.ChannelsDenied,
-                Missing = scanResult.ChannelsMissing
-            };
-
-            var chunkDates = datesToAnalyze.Where(d => d >= chunkStart && d < chunkEndExclusive).ToList();
+                channelAvailability = new ChannelAvailability
+                {
+                    Read = scanResult.ChannelsRead,
+                    Denied = scanResult.ChannelsDenied,
+                    Missing = scanResult.ChannelsMissing
+                };
+            }
 
             foreach (var date in chunkDates)
             {
@@ -831,13 +852,16 @@ public class AnalysisOrchestrator
 
                 var isRerun = rerunDateSet.Contains(date.Date);
                 var logs = logsByDate.TryGetValue(date, out var dayLogs) ? dayLogs : new List<EventLogEntryData>();
+                // 這一天的事件取出後就從分組移除（批次E3）：區塊內的記憶體隨進度遞減，
+                // 而不是整塊 14 天的事件全程壓在記憶體裡等最後一起回收。
+                logsByDate.Remove(date);
 
-                var dataIncomplete = scanResult.IsDateIncomplete(date);
+                var dataIncomplete = incompleteByDate[date];
 
                 // 重跑日：來源取不到資料、或這次取得的資料比當初殘缺時，保留原結果整天跳過——
                 // 判定與 NetIQ 路徑共用同一個函式，不各寫一份
                 if (isRerun && HostDayPostProcessor.ShouldRetainExistingDay(
-                        logs.Count, dataIncomplete, scanResult.SecurityAvailable == false))
+                        logs.Count, dataIncomplete, securityAvailable == false))
                 {
                     rerunRetainedCount++;
                     console.WriteLine($"[{date:yyyy-MM-dd}] 來源已無事件或資料不完整，保留原分析結果");
@@ -853,9 +877,9 @@ public class AnalysisOrchestrator
                 if (isRerun) rerunAnalyzedCount++;
 
                 var record = await analysisService.AnalyzeDayAsync(date, logs, useAi: useAi, historyDays: TrendWindowDays,
-                    dataIncomplete: dataIncomplete, securityLogAvailable: scanResult.SecurityAvailable, channels: channelAvailability,
+                    dataIncomplete: dataIncomplete, securityLogAvailable: securityAvailable, channels: channelAvailability,
                     replaceExisting: isRerun);
-                result.LocalResults.Add(record);
+                result.LocalResults.Add(new LocalDaySummary(record.Date, record.RiskLevel, record.ReportFile != null));
 
                 // 問題案件批次逐日掛接（2.4）、風險 log 暫存、AI 呼叫計數：任一步失敗只記警告，
                 // 不擋分析主流程（見 HostDayPostProcessor，與 NetIQ 機房路徑共用同一套後續處理）
@@ -894,10 +918,10 @@ public class AnalysisOrchestrator
         foreach (var r in result.LocalResults)
         {
             console.WriteLine($"  {r.Date:yyyy-MM-dd}  風險【{r.RiskLevel}】  耗時 {FormatElapsed(elapsedByDate[r.Date])}" +
-                              (r.ReportFile != null ? "  → 已產生風險報告" : ""));
+                              (r.HasReport ? "  → 已產生風險報告" : ""));
         }
 
-        var riskyCount = result.LocalResults.Count(r => r.ReportFile != null);
+        var riskyCount = result.LocalResults.Count(r => r.HasReport);
         if (riskyCount > 0)
         {
             console.WriteLine(
@@ -972,9 +996,6 @@ public class AnalysisOrchestrator
                 $"本次分析 {netiqResult.HostDaysAnalyzed} 個主機日、失敗 {netiqResult.HostsFailed} 個主機日" +
                 (netiqResult.RerunDaysAnalyzed > 0 || netiqResult.RerunDaysRetained > 0
                     ? "、" + HostDayPostProcessor.RerunSummary(netiqResult.RerunDaysAnalyzed, netiqResult.RerunDaysRetained)
-                    : "") +
-                (netiqResult.AiQueued > 0
-                    ? $"、AI 分析 {netiqResult.AiCompleted} 件完成（放棄 {netiqResult.AiAbandoned}）"
                     : ""));
 
             // Warnings（Linux 主機不支援、Sentinel 失聯等）過去只印在 console 詳情，排程作業頁的

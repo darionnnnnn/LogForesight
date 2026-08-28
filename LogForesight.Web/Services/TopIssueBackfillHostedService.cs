@@ -14,12 +14,14 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class TopIssueBackfillHostedService : BackgroundService
 {
+    private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly TopIssueBackfiller _backfiller;
 
-    public TopIssueBackfillHostedService(TopIssueBackfiller backfiller)
+    public TopIssueBackfillHostedService(TopIssueBackfiller backfiller, DataVersionStamp dataVersion)
     {
+        _dataVersion = dataVersion;
         _backfiller = backfiller;
     }
 
@@ -43,6 +45,8 @@ public class TopIssueBackfillHostedService : BackgroundService
             try
             {
                 _backfiller.Run(stoppingToken);
+                // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                _dataVersion.Bump();
             }
             catch (Exception ex)
             {

@@ -398,7 +398,7 @@
             <div class="mb-3">
                 <label for="account-display-rules" class="form-label">規則（選填）</label>
                 <button type="button" class="lf-help" tabindex="0" data-bs-toggle="popover"
-                        data-bs-content="只影響畫面顯示，資料庫存的仍是原始帳號，規則調整後既有紀錄立即套用、改錯也救得回來。但分析當下就寫進分析紀錄與報告內文的帳號文字不受影響——那是入庫值，要套新規則得重新分析。">
+                        data-bs-content="套用於全站的使用者顯示名稱（側欄登入者、處理人下拉、使用者管理等）與事件裡的帳號字串；顯示名稱後面的 (帳號) 尾綴不受規則影響。只影響畫面顯示，資料庫存的仍是原始值，規則調整後既有紀錄立即套用、改錯也救得回來。但分析當下就寫進分析紀錄與報告內文的帳號文字不受影響——那是入庫值，要套新規則得重新分析。">
                     <svg class="lf-icon" aria-hidden="true"><use href="@Url.Content("~/img/icons.svg")#question-circle"></use></svg>
                 </button>
                 <textarea class="form-control lf-mono" id="account-display-rules" rows="4"
@@ -611,7 +611,7 @@
                 </div>
                 <div class="col-auto">
                     <label for="mail-daily-time" class="form-label small mb-1">時刻</label>
-                    <input type="time" class="form-control form-control-sm" id="mail-daily-time" />
+                    <input type="time" class="form-control form-control-sm lf-time-input" id="mail-daily-time" />
                 </div>
             </div>
             <div class="row g-3 align-items-end mb-3">
@@ -635,7 +635,7 @@
                 </div>
                 <div class="col-auto">
                     <label for="mail-weekly-time" class="form-label small mb-1">時刻</label>
-                    <input type="time" class="form-control form-control-sm" id="mail-weekly-time" />
+                    <input type="time" class="form-control form-control-sm lf-time-input" id="mail-weekly-time" />
                 </div>
             </div>
             <div class="form-check mb-3">

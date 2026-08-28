@@ -104,7 +104,7 @@ public static class NetiqProbeRunner
             {
                 var sw = Stopwatch.StartNew();
                 var result = await client.SearchAsync(new SentinelSearchRequest(
-                    MatchAllFilter, now.AddHours(-1), now, MaxResults: 3), ct);
+                    MatchAllFilter, now.AddHours(-1), now, MaxResults: 3, RawFields: true), ct);
                 sw.Stop();
                 console.WriteLine($"     耗時 {sw.ElapsedMilliseconds}ms，found={result.Found}，取回={result.Events.Count} 筆");
 
@@ -122,8 +122,8 @@ public static class NetiqProbeRunner
 
             ok &= await Step(console, 2, "dt 邊界（近 2 小時拆兩段，found 數請自行到 Sentinel Web UI 比對）", async () =>
             {
-                var early = await client.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddHours(-2), now.AddHours(-1), MaxResults: 1), ct);
-                var late = await client.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddHours(-1), now, MaxResults: 1), ct);
+                var early = await client.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddHours(-2), now.AddHours(-1), MaxResults: 1, RawFields: true), ct);
+                var late = await client.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddHours(-1), now, MaxResults: 1, RawFields: true), ct);
                 console.WriteLine($"     前半段 {Window(now.AddHours(-2), now.AddHours(-1))} found={early.Found}");
                 console.WriteLine($"     後半段 {Window(now.AddHours(-1), now)} found={late.Found}");
                 console.WriteLine("     ⚠ 請自行到 Sentinel Web UI 搜尋上列兩段區間，核對數字是否一致、" +
@@ -136,7 +136,7 @@ public static class NetiqProbeRunner
                 {
                     var sw = Stopwatch.StartNew();
                     var result = await client.SearchAsync(new SentinelSearchRequest(
-                        MatchAllFilter, now.AddHours(-24), now, PageSize: pageSize, MaxResults: pageSize), ct);
+                        MatchAllFilter, now.AddHours(-24), now, PageSize: pageSize, MaxResults: pageSize, RawFields: true), ct);
                     sw.Stop();
                     console.WriteLine($"     pgsize={pageSize}：耗時 {sw.ElapsedMilliseconds}ms，found={result.Found}，取回={result.Events.Count} 筆");
                 }
@@ -150,7 +150,7 @@ public static class NetiqProbeRunner
                     try
                     {
                         var sw = Stopwatch.StartNew();
-                        await client.SearchAsync(new SentinelSearchRequest(filter, now.AddMinutes(-5), now, MaxResults: 1), ct);
+                        await client.SearchAsync(new SentinelSearchRequest(filter, now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
                         sw.Stop();
                         console.WriteLine($"     {count} 個 IP 子句：接受，耗時 {sw.ElapsedMilliseconds}ms");
                     }
@@ -169,7 +169,7 @@ public static class NetiqProbeRunner
             {
                 try
                 {
-                    await client.SearchAsync(new SentinelSearchRequest("((( unclosed", now.AddMinutes(-5), now, MaxResults: 1), ct);
+                    await client.SearchAsync(new SentinelSearchRequest("((( unclosed", now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
                     console.WriteLine("     ⚠ 非法 filter 卻沒有失敗——Sentinel 可能容忍此語法，或錯誤發生在非預期階段，請留意。");
                 }
                 catch (SentinelClientException ex)
@@ -204,7 +204,7 @@ public static class NetiqProbeRunner
             ok &= await Step(console, 7, "登入事件取樣（rv40:4624/4625，近 24h、3 筆、全欄位）——核對跨主機時 dhn/sn/repip 分工＋sun 帳號欄位語意", async () =>
             {
                 var result = await client.SearchAsync(new SentinelSearchRequest(
-                    "rv40:(4624 OR 4625)", now.AddHours(-24), now, MaxResults: 3), ct);
+                    "rv40:(4624 OR 4625)", now.AddHours(-24), now, MaxResults: 3, RawFields: true), ct);
                 console.WriteLine($"     found={result.Found}，取回={result.Events.Count} 筆");
 
                 var i = 0;
@@ -238,7 +238,7 @@ public static class NetiqProbeRunner
                 ok &= await Step(console, 8, $"Linux 主機樣本（repip:{sampleLinuxIp}，近 24h、10 筆、全欄位）——program 欄位／sev↔syslog priority／OS 判別候選值＋欄位名聯集", async () =>
                 {
                     var result = await client.SearchAsync(new SentinelSearchRequest(
-                        $"repip:{sampleLinuxIp}", now.AddHours(-24), now, MaxResults: 10), ct);
+                        $"repip:{sampleLinuxIp}", now.AddHours(-24), now, MaxResults: 10, RawFields: true), ct);
                     linuxSample = result;
                     console.WriteLine($"     found={result.Found}，取回={result.Events.Count} 筆");
 
@@ -283,7 +283,7 @@ public static class NetiqProbeRunner
                 {
                     foreach (var probe in new[] { "sp:kernel", "sp:networkmanager", "sp:NetworkManager", "sp:user*" })
                     {
-                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1), ct);
+                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                         console.WriteLine($"     {probe}：found={result.Found}");
                     }
                 });
@@ -292,13 +292,13 @@ public static class NetiqProbeRunner
                 {
                     for (var sev = 0; sev <= 5; sev++)
                     {
-                        var result = await client.SearchAsync(new SentinelSearchRequest($"sev:{sev}", now.AddHours(-24), now, MaxResults: 1), ct);
+                        var result = await client.SearchAsync(new SentinelSearchRequest($"sev:{sev}", now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                         console.WriteLine($"     sev:{sev} found={result.Found}");
                     }
 
                     foreach (var filter in new[] { "sev:2", "sev:[3 TO 5]" })
                     {
-                        var result = await client.SearchAsync(new SentinelSearchRequest(filter, now.AddHours(-24), now, MaxResults: 3), ct);
+                        var result = await client.SearchAsync(new SentinelSearchRequest(filter, now.AddHours(-24), now, MaxResults: 3, RawFields: true), ct);
                         console.WriteLine($"     {filter} 樣本（found={result.Found}）：");
                         var i = 0;
                         foreach (var evt in result.Events)
@@ -319,7 +319,7 @@ public static class NetiqProbeRunner
 
                     foreach (var program in programs)
                     {
-                        var result = await client.SearchAsync(new SentinelSearchRequest($"sp:{program}", now.AddHours(-24), now, MaxResults: 1), ct);
+                        var result = await client.SearchAsync(new SentinelSearchRequest($"sp:{program}", now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                         console.WriteLine($"     sp:{program} found={result.Found}");
                     }
                 });
@@ -327,12 +327,12 @@ public static class NetiqProbeRunner
                 ok &= await Step(console, "8f", "sshd 樣本（近 7 天、10 筆，msg 全文；sp:sshd 查無則退路 msg:sshd）", async () =>
                 {
                     var usedFallback = false;
-                    var result = await client.SearchAsync(new SentinelSearchRequest("sp:sshd", now.AddDays(-7), now, MaxResults: 10), ct);
+                    var result = await client.SearchAsync(new SentinelSearchRequest("sp:sshd", now.AddDays(-7), now, MaxResults: 10, RawFields: true), ct);
                     if (result.Found == 0)
                     {
                         usedFallback = true;
                         console.WriteLine("     sp:sshd found=0，改用退路 msg:sshd");
-                        result = await client.SearchAsync(new SentinelSearchRequest("msg:sshd", now.AddDays(-7), now, MaxResults: 10), ct);
+                        result = await client.SearchAsync(new SentinelSearchRequest("msg:sshd", now.AddDays(-7), now, MaxResults: 10, RawFields: true), ct);
                     }
                     console.WriteLine($"     {(usedFallback ? "msg:sshd" : "sp:sshd")} found={result.Found}，取回={result.Events.Count} 筆");
 
@@ -348,20 +348,20 @@ public static class NetiqProbeRunner
                 {
                     foreach (var probe in new[] { "msg:\"Failed password\"", "msg:\"authentication failure\"", "msg:\"I/O error\"", "msg:\"oom-kill\"", "msg:oom" })
                     {
-                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1), ct);
+                        var result = await client.SearchAsync(new SentinelSearchRequest(probe, now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                         console.WriteLine($"     {probe}：found={result.Found}");
                     }
 
                     var groupResult = await client.SearchAsync(new SentinelSearchRequest(
-                        "sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")", now.AddDays(-7), now, MaxResults: 1), ct);
+                        "sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")", now.AddDays(-7), now, MaxResults: 1, RawFields: true), ct);
                     console.WriteLine($"     sp:sshd AND msg:(\"Failed password\" OR \"Invalid user\")：found={groupResult.Found}");
 
                     var systemdResult = await client.SearchAsync(new SentinelSearchRequest(
-                        "sp:systemd AND msg:\"entered failed state\"", now.AddHours(-24), now, MaxResults: 1), ct);
+                        "sp:systemd AND msg:\"entered failed state\"", now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                     console.WriteLine($"     sp:systemd AND msg:\"entered failed state\"：found={systemdResult.Found}");
 
                     var bruteforceResult = await client.SearchAsync(new SentinelSearchRequest(
-                        "sp:sshd AND msg:\"Failed password\"", now.AddDays(-7), now, MaxResults: 5), ct);
+                        "sp:sshd AND msg:\"Failed password\"", now.AddDays(-7), now, MaxResults: 5, RawFields: true), ct);
                     console.WriteLine($"     sp:sshd AND msg:\"Failed password\"（近 7 天）found={bruteforceResult.Found}，取回={bruteforceResult.Events.Count} 筆");
                     var j = 0;
                     foreach (var evt in bruteforceResult.Events)
@@ -391,7 +391,7 @@ public static class NetiqProbeRunner
                     foreach (var channel in new[] { "System", "Application" })
                     {
                         var result = await client.SearchAsync(new SentinelSearchRequest(
-                            $"(repip:{sampleIp}) AND (rv150:{channel})", now.AddHours(-24), now, MaxResults: 2), ct);
+                            $"(repip:{sampleIp}) AND (rv150:{channel})", now.AddHours(-24), now, MaxResults: 2, RawFields: true), ct);
                         console.WriteLine($"     {channel} found={result.Found}，取樣={result.Events.Count} 筆");
 
                         foreach (var evt in result.Events)
@@ -410,7 +410,7 @@ public static class NetiqProbeRunner
             ok &= await Step(console, 10, "generic 錯誤等級量級（決定 sev>=err 收集是否可行的量級依據）", async () =>
             {
                 var errAll = await client.SearchAsync(new SentinelSearchRequest(
-                    "sev:[3 TO 5]", now.AddHours(-24), now, MaxResults: 1), ct);
+                    "sev:[3 TO 5]", now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                 console.WriteLine($"     全站 sev:[3 TO 5] 近 24h found={errAll.Found}");
 
                 var sampleIps = new[] { sampleIp, sampleLinuxIp }.Where(ip => !string.IsNullOrWhiteSpace(ip)).ToList();
@@ -419,7 +419,7 @@ public static class NetiqProbeRunner
                     var ipFilter = $"({string.Join(" OR ", sampleIps.Select(ip => $"repip:{ip}"))})";
                     var sw = Stopwatch.StartNew();
                     var scoped = await client.SearchAsync(new SentinelSearchRequest(
-                        $"({ipFilter}) AND (sev:[3 TO 5])", now.AddHours(-24), now, MaxResults: 1), ct);
+                        $"({ipFilter}) AND (sev:[3 TO 5])", now.AddHours(-24), now, MaxResults: 1, RawFields: true), ct);
                     sw.Stop();
                     console.WriteLine($"     {sampleIps.Count} 台樣本 IP＋sev:[3 TO 5]：耗時 {sw.ElapsedMilliseconds}ms，found={scoped.Found}" +
                                       "（只是示範用小批次，真實 50 台批次的耗時需等主機清單就緒後另測）");
@@ -438,9 +438,9 @@ public static class NetiqProbeRunner
                 ok &= await Step(console, 11, $"dt 邊界精確核對（repip:{sampleIp}，近 1 小時拆兩個 30 分鐘，found 數應可人工比對）", async () =>
                 {
                     var early = await client.SearchAsync(new SentinelSearchRequest(
-                        $"repip:{sampleIp}", now.AddMinutes(-60), now.AddMinutes(-30), MaxResults: 1), ct);
+                        $"repip:{sampleIp}", now.AddMinutes(-60), now.AddMinutes(-30), MaxResults: 1, RawFields: true), ct);
                     var late = await client.SearchAsync(new SentinelSearchRequest(
-                        $"repip:{sampleIp}", now.AddMinutes(-30), now, MaxResults: 1), ct);
+                        $"repip:{sampleIp}", now.AddMinutes(-30), now, MaxResults: 1, RawFields: true), ct);
                     console.WriteLine($"     前半段 {Window(now.AddMinutes(-60), now.AddMinutes(-30))} found={early.Found}");
                     console.WriteLine($"     後半段 {Window(now.AddMinutes(-30), now)} found={late.Found}");
                     console.WriteLine("     ⚠ 請自行到 Sentinel Web UI 用同一台主機與上列兩段絕對時間核對這兩個數字，確認含/不含語意與時區基準。");
@@ -455,9 +455,9 @@ public static class NetiqProbeRunner
             ok &= await Step(console, 12, "obssvcname 欄位查詢行為（完整片語 vs 部分詞，決定規則來源能否下推 Lucene）", async () =>
             {
                 var exact = await client.SearchAsync(new SentinelSearchRequest(
-                    "obssvcname:\"Microsoft-Windows-Security-Auditing\"", now.AddMinutes(-5), now, MaxResults: 1), ct);
+                    "obssvcname:\"Microsoft-Windows-Security-Auditing\"", now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
                 var partial = await client.SearchAsync(new SentinelSearchRequest(
-                    "obssvcname:Security-Auditing", now.AddMinutes(-5), now, MaxResults: 1), ct);
+                    "obssvcname:Security-Auditing", now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
                 console.WriteLine($"     完整片語比對 found={exact.Found}｜部分詞 found={partial.Found}" +
                                   "（兩者相同＝analyzer 對此欄位做全文斷詞，可用子字串比對；不同則須用完整片語）");
             });
@@ -477,7 +477,7 @@ public static class NetiqProbeRunner
             await using var badClient = new SentinelClient(badServer, settings);
             try
             {
-                await badClient.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddMinutes(-5), now, MaxResults: 1), ct);
+                await badClient.SearchAsync(new SentinelSearchRequest(MatchAllFilter, now.AddMinutes(-5), now, MaxResults: 1, RawFields: true), ct);
                 console.WriteLine("     ⚠ 預期認證失敗，但查詢卻成功了——請確認 Sentinel 是否真的有驗證密碼。");
             }
             catch (SentinelClientException ex)

@@ -1,3 +1,4 @@
+using LogForesight.Core.Persistence;
 using LogForesight.Web.Models;
 using LogForesight.Web.Models.Dto;
 
@@ -16,6 +17,7 @@ public class RunMonitorService
     private readonly IAnalysisRecordQuery _records;
     private readonly IUserStore _users;
     private readonly ScheduleOptionsStore _scheduleOptions;
+    private readonly IUserDisplayNameService _displayNameService;
 
     /// <summary>執行超過這個時數仍未回報結束，視為異常中斷（而不是還在跑）</summary>
     private static readonly TimeSpan StuckThreshold = TimeSpan.FromHours(6);
@@ -24,13 +26,14 @@ public class RunMonitorService
     private const int MaxFailedHostNames = 10;
 
     public RunMonitorService(BatchRunStore runs, IHostStore hosts, IAnalysisRecordQuery records, IUserStore users,
-        ScheduleOptionsStore scheduleOptions)
+        ScheduleOptionsStore scheduleOptions, IUserDisplayNameService displayNameService)
     {
         _runs = runs;
         _hosts = hosts;
         _records = records;
         _users = users;
         _scheduleOptions = scheduleOptions;
+        _displayNameService = displayNameService;
     }
 
     /// <summary>主機清單以「有回報過的主機」與「已登記的主機」聯集為準：
@@ -54,19 +57,45 @@ public class RunMonitorService
             .ToList();
     }
 
-    public List<RunDaySummaryDto> GetDaySummaries(int days)
+    /// <summary>
+    /// 執行總表分頁取得（批次G）：以「最新的一頁為第 1 頁」切割，
+    /// 只計算當頁涵蓋日期的狀態，不先算全部再切片。
+    /// 每頁內部維持舊→新排序（前端 reverse 顯示）。
+    /// </summary>
+    /// <param name="days">總天數（已 Clamp）</param>
+    /// <param name="page">頁碼（1 起算）</param>
+    /// <param name="pageSize">每頁天數（已 Clamp）</param>
+    public List<RunDaySummaryDto> GetDaySummaries(int days, int page, int pageSize)
     {
-        var runs = _runs.GetRecentRuns(days, hostNames: null);
-        var from = DateTime.Today.AddDays(-days + 1);
+        // 分頁邊界計算（新→舊切割）：第 1 頁 = 最近的日期，最後一頁 = 最舊的日期。
+        // days 日期範圍：[Today-days+1, Today]，共 days 天。
+        // 第 page 頁涵蓋：跳過前 (page-1)*pageSize 個「最新」天後，取 pageSize 天。
+        // 以索引換算：索引 0 = Today，索引 days-1 = Today-days+1（舊到新）。
+        var skipFromEnd = (page - 1) * pageSize;           // 從今日往前跳過幾天
+        var pageCount = Math.Min(pageSize, days - skipFromEnd);  // 本頁實際天數
+        if (pageCount <= 0) return new List<RunDaySummaryDto>();
+
+        // 本頁日期區間（舊→新，對應 for 迴圈方向）
+        var pageEnd = DateTime.Today.AddDays(-skipFromEnd);                  // 本頁最新日（含）
+        var pageFrom = pageEnd.AddDays(-pageCount + 1);                      // 本頁最舊日（含）
+
+        // 只取回本頁涵蓋的 BatchRun（+1 天的記錄視窗）
+        var windowDays = skipFromEnd + pageCount;
+        // AI 排程的執行（JobType=ai）不進主機×日視角：它不是「哪台主機哪天跑了沒」的語意，
+        // 混入會讓 AllHosts 把執行主機當成一台幽靈主機列進總表（體檢輪）
+        var runs = _runs.GetRecentRuns(windowDays, hostNames: null)
+            .Where(r => r.JobType != BatchRun.JobTypeAi).ToList();
+
+        // 分析紀錄窗口：本頁日期 D 對應 D-1 的分析紀錄，多帶一天
+        var recordFrom = pageFrom.AddDays(-1);
+        var recordTo = pageEnd.AddDays(-1);
+        var recordDates = _records.ListHostDates(recordFrom, recordTo);
+
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
 
-        // 「執行日 D」對應「D-1 的分析紀錄是否存在」（NetIQ 與本機回補共用同一套對應，見 StatusOf），
-        // 窗口因此整體往前多帶一天。涵蓋全部主機（不只 NetIQ）——本機主機的回補 fallback 也要用
-        var recordDates = _records.ListHostDates(from.AddDays(-1), DateTime.Today.AddDays(-1));
-
         var summaries = new List<RunDaySummaryDto>();
-        for (var date = from; date <= DateTime.Today; date = date.AddDays(1))
+        for (var date = pageFrom; date <= pageEnd; date = date.AddDays(1))
         {
             var dateStr = date.ToString("yyyy-MM-dd");
             var summary = new RunDaySummaryDto { Date = dateStr, TotalHosts = hosts.Count };
@@ -105,7 +134,8 @@ public class RunMonitorService
         // GetRecentRuns 的窗口是 [Today-days+1, Today]；用「到這天為止經過的天數」當窗口大小，
         // 剛好含括目標日期，再於 RunsForHostOnDate 篩到那一天。日期在未來時窗口最小取 1。
         var windowDays = Math.Max(1, (DateTime.Today - date.Date).Days + 1);
-        var runs = _runs.GetRecentRuns(windowDays, hostNames: null);
+        var runs = _runs.GetRecentRuns(windowDays, hostNames: null)
+            .Where(r => r.JobType != BatchRun.JobTypeAi).ToList();   // 同 GetDaySummaries：AI 執行不進主機×日視角
         var dateStr = date.ToString("yyyy-MM-dd");
         var hosts = AllHosts(runs);
         var localEnabled = _scheduleOptions.Get().LocalAnalysisEnabled;
@@ -279,7 +309,7 @@ public class RunMonitorService
         null or "" or "console" => "工作排程器",
         "schedule" => "排程",
         _ when trigger.StartsWith("manual:", StringComparison.Ordinal) =>
-            $"手動（{NameFormat.FormatAccount(_users, trigger["manual:".Length..])}）",
+            $"手動（{_displayNameService.OfAccount(_users, trigger["manual:".Length..])}）",
         _ => trigger
     };
 
@@ -300,6 +330,7 @@ public class RunMonitorService
                     ? (int)(run.FinishedAt.Value - run.StartedAt).TotalSeconds
                     : null,
                 Status = ComputeStatus(run),
+                JobTypeText = run.JobType == BatchRun.JobTypeAi ? "AI 分析" : "取數分析",
                 TriggerText = TriggerText(run.Trigger),
                 Args = run.Args,
                 DaysAnalyzed = run.DaysAnalyzed,

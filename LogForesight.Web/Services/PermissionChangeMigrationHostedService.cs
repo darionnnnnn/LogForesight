@@ -11,13 +11,15 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class PermissionChangeMigrationHostedService : BackgroundService
 {
+    private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     private readonly StorageBackend _backend;
     private readonly ISystemSettingsStore _systemSettings;
 
-    public PermissionChangeMigrationHostedService(StorageBackend backend, ISystemSettingsStore systemSettings)
+    public PermissionChangeMigrationHostedService(StorageBackend backend, ISystemSettingsStore systemSettings, DataVersionStamp dataVersion)
     {
+        _dataVersion = dataVersion;
         _backend = backend;
         _systemSettings = systemSettings;
     }
@@ -59,6 +61,9 @@ public class PermissionChangeMigrationHostedService : BackgroundService
             {
                 Log.Error(ex, "[SQL] 權限異動重剖回填失敗（不影響新資料）：{Msg}", ex.Message);
             }
+
+            // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
+            _dataVersion.Bump();
 
             // 舊版每主機日「權限異動（彙總）」列的一次性清理：那批列的產生邏輯已移除，
             // 內容是「本日另有 N 則未逐則列出」，被它取代的逐則列並沒有寫進資料庫，

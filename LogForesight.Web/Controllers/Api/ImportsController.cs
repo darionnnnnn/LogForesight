@@ -2,6 +2,7 @@ using LogForesight.Web.Auth;
 using LogForesight.Web.Configuration;
 using LogForesight.Web.Filters;
 using LogForesight.Web.Models;
+using LogForesight.Web.Services;
 using LogForesight.Web.Services.Import;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,13 +18,15 @@ public class ImportsController : ControllerBase
     private readonly IImportLogStore _logs;
     private readonly ISystemSettingsStore _systemSettings;
     private readonly IUserStore _users;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
-    public ImportsController(ImportService imports, IImportLogStore logs, ISystemSettingsStore systemSettings, IUserStore users)
+    public ImportsController(ImportService imports, IImportLogStore logs, ISystemSettingsStore systemSettings, IUserStore users, IUserDisplayNameService userDisplayNames)
     {
         _imports = imports;
         _logs = logs;
         _systemSettings = systemSettings;
         _users = users;
+        _userDisplayNames = userDisplayNames;
     }
 
     /// <summary>
@@ -70,7 +73,7 @@ public class ImportsController : ControllerBase
         {
             ImportId = e.ImportId,
             Account = e.Account,
-            DisplayName = string.IsNullOrEmpty(e.Account) ? null : _users.FindByAccount(e.Account)?.DisplayName,
+            DisplayName = string.IsNullOrEmpty(e.Account) ? null : (_users.FindByAccount(e.Account) is { } user ? _userDisplayNames.Of(user.DisplayName) : null),
             Kind = e.Kind,
             FileName = e.FileName,
             AddedCount = e.AddedCount,

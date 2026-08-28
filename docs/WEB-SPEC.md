@@ -1225,9 +1225,9 @@ OpenCC 標準 `s2twp`）。converter 以 `Lazy<>` 單例持有（建構含字典
   `RiskReportService.BuildReport` 在標題列加註（「■ 白話總覽（AI 產出）」「趨勢（AI 判讀）：」，
   依 `AiAnalyzed` 旗標）；**舊報告不回溯補標**——報告是逐字保存的證據層，顯示端字串比對補標既脆弱
   又違反該原則，缺標註的風險窗口隨每日批次自然消退。
-- **「AI 分析中」徽章**：NetIQ pipeline 搜尋與
-  AI 判讀脫鉤後（見 docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節），統計已寫入、
-  AI 段還在排隊或執行中的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
+- **「AI 分析中」徽章**：取數與 AI 判讀拆成兩個獨立排程後
+  （見 docs/DETECTION-SPEC.md「兩個獨立排程」一節），統計已寫入、
+  等待 AI 分析排程撿取的紀錄（`AiPending=true`）在清單頁與詳情頁顯示 `lf-badge--info`
   「AI 分析中」，與既有的「統計模式（AI 未分析，代表已定案不需要或已嘗試失敗）」徽章區分——
   兩者都是 `aiAnalyzed=false`，但語意不同，不能共用同一個徽章文字。
 - **問題列 Source/EventId 顯示**：Linux 事件沒有
@@ -1921,8 +1921,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
      改規則後既有紀錄立即套用；但分析當下就寫進分析紀錄與報告內文的帳號文字不受影響
      （那是入庫值，要套新規則得重新分析）。存檔時逐行驗證樣式可否編譯，不合法回 400 並指出行號；
      前端只擋「缺 `=>`／樣式為空」這類與引擎無關的格式錯誤（JS 與 .NET 的正則語法集不同，
-     在前端驗語法會誤擋後端接受的規則）。套用點：權限異動清單的操作者／目標帳號與摘要說明、
-     風險日詳情的登入失敗明細帳號欄。
+     在前端驗語法會誤擋後端接受的規則）。套用點分兩類：
+     （a）事件資料裡的帳號字串——權限異動清單的操作者／目標帳號與摘要說明、風險日詳情的
+     登入失敗明細帳號欄；（b）**系統使用者主檔的顯示名稱**——凡把 `lf_users.DisplayName`
+     放進回應 DTO 的服務層一律經 `IUserDisplayNameService`（單點套用；側欄登入者、
+     使用者管理、指派／處理人下拉、稽核、匯入、負責人清單等全站出口），`(帳號)` 尾綴
+     不受規則影響。**指派下拉的置頂比對契約**：`HandlingDto.OwnerNames` 與
+     `/api/admin/users` 的 displayName 是逐字比對鍵，兩端必須同時套規則
+     （有契約測試釘住，只套一邊置頂會靜默失效）。
   4. **資料保留**：六個天數設定的**下限一律 90 天、上限 3650**（`SystemSettings.MinRetentionDays`，
      出廠預設與下限的單一事實來源都在 `SystemSettings` 的 `Default*` 常數，其他地方引用不另寫一份）。
      下限只在**寫入時**驗證（DTO `[Range]`＋設定頁）——**讀取端不 clamp**，既有部署存過的
@@ -2159,9 +2165,9 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   （觸發來源＋最新 milestone＋「停止」鈕）、「立即執行」modal（範圍全部主機／網段二選一、
   可選一次性回補天數、即時 run-preview 台數、≥50 台紅字加強警示、**「執行模式」下拉選單**
   （四選一，見 §10.9；預設值「只補跑失敗或未執行」推導出 `TriggerRunRequest.OnlyMissingOrFailed`：
-  待跑判定是 `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日／`AiPending`／
-  「AI 已設定且未分析且非低風險」三者之一才算待跑），三處呼叫端（缺漏日掃描、NetIQ 孤兒
-  補跑、預覽）共用，不各寫一份。低風險日不跑 AI 是合法終局、AI 未設定時 `AiAnalyzed` 恆為
+  待跑判定是 `HostDayPostProcessor.NeedsBackfill` 這個唯一定義（缺日、或「AI 已設定且
+  未分析且非待補且非低風險」——**`AiPending=true` 不算**：待補由獨立的 AI 分析排程消化，
+  取數重抓它們只會與 AI 排程互相打架），呼叫端（缺漏日掃描、預覽）共用，不各寫一份。低風險日不跑 AI 是合法終局、AI 未設定時 `AiAnalyzed` 恆為
   false，兩者都不算失敗；AI 未設定時預覽回應帶 `AiDisabled`，畫面明講此選項僅補跑缺漏日。
   `SchedulerHostedService.ComposeEffectiveRequest` 逐欄重建 `RunRequest`，新增欄位必須同步加入；
   反射守衛測試斷言欄位全數傳遞）、**「分析本機主機」開關**：停用後排程與立即執行
@@ -2189,20 +2195,14 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   ——console 專案退場後那些輸出沒有任何接收端，排程跑到 NetIQ 段（整晚大宗）時狀態卡訊息
   其實是凍結的。**輪詢自我調速**：執行中 3 秒、閒置 10 秒；偵測 `isRunning` true→false 時
   自動刷新執行總表＋toast「執行已結束」，使用者不必手動重新整理。
-  **`netiq-ai` phase**：NetIQ 搜尋與 AI 判讀脫鉤
-  後（見 docs/DETECTION-SPEC.md），搜尋段完成、AI 佇列仍在背景消費時進度條切換到這個新
-  phase，文字「AI 白話分析補寫中　x / y 件」（單位「件」，不是「主機日」——`DashboardController`
-  的 `UnitText` 與前端 `PROGRESS_PHASE_UNIT` map 對應這個 phase）。執行完成的里程碑同輪加註
-  AI 統計（`AiQueued`/`AiCompleted`/`AiAbandoned`，僅 `AiQueued > 0` 時顯示，取消時
-  `AiAbandoned` 讓「AI 還沒補完就被停止」這件事看得見，不是默默消失）。
-  **主／子進度條分離**：`netiq-ai`／`netiq-backpressure` 這條
-  AI 背景消化軌與主進度（`netiq`，搜尋仍在往下一台主機推進）是**同時**在跑的兩件事——原本
-  共用一組 `progressPhase/Done/Total`，後回報的直接覆蓋先回報的，症狀是「進度卡住不動」。
-  `SchedulerRunState` 拆成主／子兩組欄位（status API 加 `subProgressPhase/Done/Total`），
-  狀態卡畫兩條：主進度條在上，子進度條窄一階（高度減半、縮排、灰色調）在下、只在有值時顯示。
-  只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）由
-  `SchedulerRunState.LatestActivity()` 單點決定取捨（子進度優先──netiq 主進度次之──本機
-  再次之，較貼近「現在卡在哪」）。
+  **AI 補寫進度**：AI 判讀已拆成獨立的 AI 分析排程（見 docs/DETECTION-SPEC.md「兩個獨立排程」），
+  取數執行不再含 AI 段——原 `netiq-ai`／`netiq-backpressure` 子進度軌與 AI 統計欄位
+  （`AiQueued`/`AiCompleted`/`AiAbandoned`）已隨之移除。AI 補寫的進度改在排程作業頁的
+  「AI 分析狀態」卡（`/api/admin/schedule/ai-status`：執行狀態、已處理／目標件數、
+  **待補積壓總數**、最後訊息），執行歷程以 `JobType=ai` 的 BatchRun 進執行紀錄逐筆視角。
+  只有一行可顯示的讀取端（`/api/run-activity` 執行中告示、健康診斷 `AnalysisPhase`）：
+  取數側由 `SchedulerRunState.LatestActivity()` 單點決定（netiq 主進度優先、本機次之）；
+  `/api/run-activity` 在取數閒置時輪到 AI 排程（單位「件」）——優先序 取數 > AI。
   **本機／NetIQ 並行執行**：`AnalysisOrchestrator` 原本嚴格
   「本機跑完才進 NetIQ」，改為 `Task.WhenAll` 並行——2000 台規模下本機回補多天時，NetIQ 不必
   再空等本機，兩者本來就寫入不同主機、不同資料列。本機路徑的 `IRunConsole` 輸出全部加
@@ -2242,8 +2242,11 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   - **異常彙總**（Error/Fatal 按訊息聚合）。
   - **執行紀錄**：`GET api/runs/list?days=N`
     （`RunMonitorService.GetRunList`），逐筆列出每一次 `BatchRun`（不是按日期/主機彙總）—
-    主機／狀態／開始時間／耗時／觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了
-    多久、誰觸發的」，同一天內的多次手動重跑各自一列。狀態判定（success/failed/stopped/
+    主機／**作業類型**（取數分析｜AI 分析，`BatchRun.JobType`）／狀態／開始時間／耗時／
+    觸發來源／分析天數／警告與錯誤數，回答「這一次到底跑了多久、誰觸發的」，同一天內的
+    多次手動重跑各自一列。AI 分析排程的每次執行也寫一筆（`JobType=ai`，AiCalls/AiFailures
+    為該輪完成／失敗件數）；主機×日視角的執行總表**排除** `JobType=ai`（那不是
+    「哪台主機哪天跑了沒」的語意，混入會把執行主機當成幽靈主機列進總表）。狀態判定（success/failed/stopped/
     running/stuck/warning）抽出 `ComputeStatus(BatchRun)` 供這裡與既有的 `BuildCell`
     （總表逐主機明細用）共用，避免兩處各自維護一份判定邏輯。「檢視執行」按鈕重用既有的
     執行詳情 modal。
@@ -2279,10 +2282,16 @@ Touch 之後再用主機頁批次分組。兩千台情境主力是 NetIQ 掃描�
   只能判斷 success／none 兩態——分析失敗時管線刻意不寫入紀錄，與「沒跑」在資料面等價，
   是誠實的合併不是遺漏。已知取捨：主機首次回補多天歷史時，過去日期的列會回溯顯示成功。
   單日明細（本地排序＋分頁）與異常彙總（本地排序）也改用 §8.6-2/7 的共用機制。
-- API：`GET api/runs/summary?days=`、`GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`
-  （DevMonitor 或 Maintain）；排程（`api/admin/schedule`）：`GET/PUT options`、
-  `GET status`（讀端 DevMonitor 或 Maintain）、`GET run-preview?scope=all|segment|host`、
-  `POST run`、`POST cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ
+- API：`GET api/runs/summary?days=&page=&pageSize=`（回應含 `items/totalDays/totalPages/page/
+  pageSize/maxDays`；天數上限 `max(90, RunLogRetentionDays)`，`maxDays` 供前端「全部」鈕取值、
+  不在前端寫死；分頁以最新一頁為第 1 頁、只計算當頁日期，errors/list 的天數上限同一套）、
+  `GET api/runs/day/{date}`、`GET api/runs/{id}`、`GET api/runs/errors?days=`、`GET api/runs/list?days=`
+  （DevMonitor 或 Maintain）；排程（`api/admin/schedule`）：`GET/PUT options`（含 AI 排程三欄
+  `aiEnabled`/`aiWindows`/`aiConcurrency`）、`GET status`／`GET ai-status`（讀端 DevMonitor 或
+  Maintain；ai-status 含執行狀態、進度件數、**待補積壓總數**）、
+  `GET run-preview?scope=all|segment|host`、`POST run`、`POST cancel`、
+  `POST ai-run`（body `{forceRerun}`，強制重新分析走「停止→取得 gate→整批重標→重新開始」）、
+  `POST ai-cancel`（寫端僅 Maintain，皆寫稽核 `schedule_*`）。網段輸入語法與 NetIQ
   匯入精靈一致（`NormalizeSubnetPrefix` 共用同一份，比對用 `CidrMatcher`）。
 
 ### 9.11 `/audit` 操作紀錄（`ViewAudit`）

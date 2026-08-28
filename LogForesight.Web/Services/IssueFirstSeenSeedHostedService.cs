@@ -13,6 +13,7 @@ namespace LogForesight.Web.Services;
 /// </summary>
 public class IssueFirstSeenSeedHostedService : BackgroundService
 {
+    private readonly DataVersionStamp _dataVersion;
     private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
     public const int MaxRetries = 3;
@@ -25,8 +26,9 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
 
     public IssueFirstSeenSeedProgress Progress { get; } = new();
 
-    public IssueFirstSeenSeedHostedService(StorageBackend backend)
+    public IssueFirstSeenSeedHostedService(StorageBackend backend, DataVersionStamp dataVersion)
     {
+        _dataVersion = dataVersion;
         _backend = backend;
     }
 
@@ -60,6 +62,8 @@ public class IssueFirstSeenSeedHostedService : BackgroundService
                 try
                 {
                     outcome = _backend.MergeIssueFirstSeenSeed();
+                    // 資料已被背景改寫，儀表板／報表快取要失效（體檢輪）：背景服務不走 HTTP 管線
+                    _dataVersion.Bump();
                 }
                 catch (Exception ex)
                 {

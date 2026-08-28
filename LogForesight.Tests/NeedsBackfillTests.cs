@@ -76,21 +76,25 @@ public sealed class NeedsBackfillTests : IDisposable
     }
 
     [Fact]
-    public void NeedsBackfill_useAiIsFalse時AiPendingTrue_需補跑()
+    public void NeedsBackfill_AiPendingTrue_取數側不補跑()
     {
-        // AiPending=true 是真正的「待補」狀態，useAi=false 時仍應補跑
+        // 體檢輪語意變更：AiPending=true 的待補由獨立 AI 分析排程消化，取數側不再視為要補
+        // ——否則「只補跑失敗或未執行」會對整個 AI 積壓重打 Sentinel、重寫紀錄再標回待補，
+        // 與 AI 排程互相打架、補跑歷史永不收斂。
         var record = new DailyAnalysisRecord
         {
             Date = DateTime.Today.AddDays(-1),
             HostId = 1,
             Host = "test-host",
-            RiskLevel = "低",
+            RiskLevel = "高",
             AiAnalyzed = false,
             AiPending = true
         };
 
-        Assert.True(HostDayPostProcessor.NeedsBackfill(record, useAi: false),
-            "AiPending=true 應判定為需補跑，與 useAi 無關");
+        Assert.False(HostDayPostProcessor.NeedsBackfill(record, useAi: true),
+            "AiPending=true 應由 AI 排程消化，取數側不補跑");
+        Assert.False(HostDayPostProcessor.NeedsBackfill(record, useAi: false),
+            "統計模式下同樣不補");
     }
 
     // ── 測試 3：RunPreview 整合——低風險日不計入預覽台數 ─────────────────────
@@ -123,7 +127,8 @@ public sealed class NeedsBackfillTests : IDisposable
             AiPending = false
         });
 
-        // Host 2: 高風險且 AI 未跑（AiPending=true）→ 應計入
+        // Host 2: 高風險、AI 已定案失敗（AiPending=false、AiAnalyzed=false）→ 應計入
+        // （AiPending=true 的待補改由 AI 排程消化、取數側不補——見 NeedsBackfill 體檢輪語意）
         store.Append(new DailyAnalysisRecord
         {
             Date = yesterday,
@@ -131,7 +136,7 @@ public sealed class NeedsBackfillTests : IDisposable
             Host = "host-pending",
             RiskLevel = "高",
             AiAnalyzed = false,
-            AiPending = true
+            AiPending = false
         });
 
         // Host 3: 無紀錄（缺日）→ 應計入
@@ -152,13 +157,14 @@ public sealed class NeedsBackfillTests : IDisposable
             null!,
             new SchedulerRunState(),
             hosts, sentinels, new RecordingAuditService(), new FakeCurrentUser(), new FakeUserStore(),
-            records: store, settingsStore: new FakeSystemSettingsStore(), webAi: fakeAi);
+            records: store, settingsStore: new FakeSystemSettingsStore(), userDisplayNames: new UserDisplayNameService(new FakeSystemSettingsStore()),
+            aiScheduler: null!, aiRunState: new AiAnalysisRunState(), webAi: fakeAi);
 
         var preview = controller.RunPreview("all", segment: null, hostId: null, onlyMissingOrFailed: true, backfillDays: 1);
 
         // Local host (低, AiAnalyzed=false, AiPending=false) 不需補跑，不計入
         // host-low-risk (低, AiAnalyzed=false, AiPending=false) 不需補跑，不計入
-        // host-pending (高, AiPending=true) 需補跑 → 計入
+        // host-pending (高, AI 已定案失敗) 需補跑 → 計入
         // host-missing (無紀錄) 缺日 → 計入
         Assert.Equal(2, preview.Data!.HostCount);
         Assert.False(preview.Data.AiDisabled, "AI 已設定時 AiDisabled 應為 false");
@@ -209,7 +215,8 @@ public sealed class NeedsBackfillTests : IDisposable
             null!,
             new SchedulerRunState(),
             hosts, sentinels, new RecordingAuditService(), new FakeCurrentUser(), new FakeUserStore(),
-            records: store, settingsStore: new FakeSystemSettingsStore(), webAi: fakeAi);
+            records: store, settingsStore: new FakeSystemSettingsStore(), userDisplayNames: new UserDisplayNameService(new FakeSystemSettingsStore()),
+            aiScheduler: null!, aiRunState: new AiAnalysisRunState(), webAi: fakeAi);
 
         var preview = controller.RunPreview("all", segment: null, hostId: null, onlyMissingOrFailed: true, backfillDays: 1);
 

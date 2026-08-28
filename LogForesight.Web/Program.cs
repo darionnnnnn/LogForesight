@@ -195,6 +195,22 @@ try
     app.UseMiddleware<MigrationGateMiddleware>();
     app.UseMiddleware<CsrfHeaderMiddleware>();   // 非 GET 的 API 需帶 X-Requested-By（§6.4）
 
+    // 資料版本戳（回饋三十五輪批次F）：任何成功的非 GET 請求都推進一次，讓儀表板／報表的
+    // 整包快取失效。刻意做成單一咽喉而不是在每個寫入服務裡各 bump 一次——後者只要新增
+    // 端點時忘記加就會顯示過期資料，而這裡新端點自動涵蓋。代價是不影響那兩頁的寫入
+    // （例如改自己的偏好）也會讓快取失效，方向是偏向新鮮，可接受。
+    app.Use(async (context, next) =>
+    {
+        await next();
+
+        if (!HttpMethods.IsGet(context.Request.Method) &&
+            !HttpMethods.IsHead(context.Request.Method) &&
+            context.Response.StatusCode < 400)
+        {
+            context.RequestServices.GetRequiredService<DataVersionStamp>().Bump();
+        }
+    });
+
     app.MapControllers();
 
     logger.Info("LogForesight.Web 啟動：驗證方式 {0}，資料根目錄 {1}",

@@ -21,6 +21,7 @@ public class RecordListQueryService
     private readonly IVisibilityService _visibility;
     private readonly IIssueAggregateQuery _aggregates;
     private readonly OccurrenceStatusResolver _statusResolver;
+    private readonly IUserDisplayNameService _displayNameService;
 
     /// <summary>問題負責人（回饋十八輪批次F）：「依問題」視角順帶顯示負責人 badge，
     /// 讓「這個問題歸誰」在主視角一眼可見。可為 null——測試組裝不注入時該欄位維持空清單。</summary>
@@ -39,6 +40,7 @@ public class RecordListQueryService
         IVisibilityService visibility,
         IIssueAggregateQuery aggregates,
         OccurrenceStatusResolver statusResolver,
+        IUserDisplayNameService displayNameService,
         IIssueOwnerStore? issueOwners = null,
         IKnownIssueRuleStore? rules = null)
     {
@@ -53,6 +55,7 @@ public class RecordListQueryService
         _visibility = visibility;
         _aggregates = aggregates;
         _statusResolver = statusResolver;
+        _displayNameService = displayNameService;
         _issueOwners = issueOwners;
         _rules = rules;
     }
@@ -527,7 +530,7 @@ public class RecordListQueryService
             IssueOwnerNames = issueOwnersByKey.TryGetValue(IssueProfile.KeyOf(aggregate.Source, aggregate.EventId), out var ownerIds)
                 ? ownerIds.Select(id => usersById.GetValueOrDefault(id))
                     .Where(u => u is { Active: true })
-                    .Select(u => NameFormat.WithAccount(u!.DisplayName, u.Account))
+                    .Select(u => _displayNameService.WithAccount(u!.DisplayName, u.Account))
                     .ToList()
                 : new List<string>(),
 

@@ -40,11 +40,12 @@ public class ReportServiceTests : IDisposable
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
 
         _handling = new HandlingHistoryQueryService(
-            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates);
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, _repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore));
 
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
 
-        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
+        _service = new ReportService(_repository, _hosts, visibility, _handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
     }
 
     public void Dispose() => _fixture.Dispose();

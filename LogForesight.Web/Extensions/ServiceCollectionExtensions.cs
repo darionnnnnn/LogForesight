@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IIssueOwnerStore>(sp => new IssueOwnerStore(sp.GetRequiredService<StorageBackend>().Blob("issue_owners")));
         services.AddSingleton<SetupWizardStateStore>(sp => new SetupWizardStateStore(sp.GetRequiredService<StorageBackend>().Blob("setup_wizard_state")));
         services.AddSingleton<ISystemSettingsStore>(sp => new SystemSettingsStore(sp.GetRequiredService<StorageBackend>().Blob("system_settings")));
+        services.AddSingleton<IUserDisplayNameService, UserDisplayNameService>();
         services.AddSingleton<NetiqOptionsStore>(sp => new NetiqOptionsStore(sp.GetRequiredService<StorageBackend>().Blob("netiq_options")));
 
         // 分析紀錄與報告全文：批次寫、Web 讀
@@ -285,6 +286,10 @@ public static class ServiceCollectionExtensions
         // 該投影的短 TTL 跨請求快取（回饋二十七輪作業 F4）：builder 是 Scoped，
         // 快取必須是 Singleton 才跨得了請求（儀表板→報表切換時不必整套重算）
         services.AddSingleton<IssueRankingCache>(_ => new IssueRankingCache());
+        // 全域資料版本戳與整包回應快取（回饋三十五輪批次F）：兩者都是 Singleton
+        // ——跨請求生效才有意義（同 IssueRankingCache 的理由）。
+        services.AddSingleton<DataVersionStamp>();
+        services.AddSingleton<SummaryCache>();
         // 批次載入處理狀態＋逐筆判定的共用骨架（回饋十九輪批次D）：
         // IssueHandlingRollupQuery／IssueTodoQuery 共用，避免各自重寫一份樣板碼。
         // OccurrenceStatusResolver 註冊為 Singleton（回饋十九輪批次H）——它自己的四個相依
@@ -342,6 +347,36 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SchedulerRunState>();
         services.AddSingleton<SchedulerHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<SchedulerHostedService>());
+
+        // AI 分析獨立排程（批次D2）：常駐輪詢，自成一個併發 1 的 gate（AiAnalysisRunState），
+        // 刻意不與取數排程互斥。AiAnalysisHostedService 註冊為單例並註冊為 HostedService。
+        services.AddSingleton<AiAnalysisRunState>();
+        services.AddSingleton<AiAnalysisHostedService>(sp =>
+        {
+            var optionsStore = sp.GetRequiredService<ScheduleOptionsStore>();
+            var schedulerRunState = sp.GetRequiredService<SchedulerRunState>();
+            var aiRunState = sp.GetRequiredService<AiAnalysisRunState>();
+            var recordQuery = sp.GetRequiredService<IAnalysisRecordQuery>();
+            var storageBackend = sp.GetRequiredService<StorageBackend>();
+            var systemSettingsStore = sp.GetRequiredService<ISystemSettingsStore>();
+            var suppressionStore = sp.GetRequiredService<ISuppressionStore>();
+            var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+
+            return new AiAnalysisHostedService(
+                optionsStore,
+                schedulerRunState,
+                aiRunState,
+                recordQuery,
+                storageBackend,
+                systemSettingsStore,
+                sp.GetRequiredService<DataVersionStamp>(),
+                sp.GetRequiredService<BatchRunStore>(),
+                sp.GetRequiredService<DailyRecordBackfiller>(),
+                suppressionStore,
+                aiService: null,
+                lifetime: lifetime);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<AiAnalysisHostedService>());
 
         // 處理狀態自 blob 搬進真表（docs/archive/SCALE-FIX-PLAN-2026-08-06.md §三）：
         // 同樣不能掛在啟動路徑上，且搬完之前由 MigrationGateMiddleware 擋住寫入。

@@ -44,7 +44,12 @@ public sealed record SentinelSearchRequest(
     /// **不累積進結果的 Events**。單一 job 上限 10 萬筆、最多 12 個 job 同時在跑，
     /// 全量緩衝是排程執行占用 22GB 的主因之一。必須搭配 PageObserver 使用。
     /// 預設 false＝維持既有全量行為（診斷探測等呼叫端要看完整結果）。</summary>
-    bool StreamOnly = false);
+    bool StreamOnly = false,
+    /// <summary>true＝解析時不做欄位過濾，保留回應的全部屬性（回饋三十五輪體檢輪）：
+    /// **僅供 NetIQ probe 診斷使用**——probe 的價值正是逐筆印出全欄位、算欄位聯集來發現
+    /// 未知欄位（obssvcname、estz 都是這樣找到的），過濾後它再也看不到投影清單以外的東西。
+    /// 分析主線一律走預設 false（欄位過濾，見 SentinelFieldMap.ParseKeepFields）。</summary>
+    bool RawFields = false);
 
 public sealed class SentinelSearchResult
 {

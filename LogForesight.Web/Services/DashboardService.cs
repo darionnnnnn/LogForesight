@@ -19,6 +19,8 @@ public class DashboardService
     private readonly IssueTodoQuery _issueTodo;
     private readonly ISystemSettingsService _systemSettings;
 
+    private readonly SummaryCache _summaryCache;
+
     public DashboardService(
         IVisibilityService visibility,
         AuditLogStore audit,
@@ -30,7 +32,8 @@ public class DashboardService
         ISystemSettingsStore settings,
         IIssueAggregateQuery aggregates,
         IssueTodoQuery issueTodo,
-        ISystemSettingsService systemSettings)
+        ISystemSettingsService systemSettings,
+        SummaryCache summaryCache)
     {
         _visibility = visibility;
         _audit = audit;
@@ -43,16 +46,31 @@ public class DashboardService
         _aggregates = aggregates;
         _issueTodo = issueTodo;
         _systemSettings = systemSettings;
+        _summaryCache = summaryCache;
     }
 
     public DashboardDto GetSummary(int days)
+    {
+        // 整包回應快取（批次F）：單次請求要打十支以上聚合查詢，版本戳沒推進的期間重算是純浪費。
+        // 鍵含可見主機集合——不同授權範圍各自一份，不得串味。
+        // 可見主機取一次就傳下去，不為了組鍵多走訪一次整份主機表（同 ReportService 的效能契約）。
+        var visibleHosts = _visibility.GetVisibleHosts();
+        // 鍵含 ViewAudit 能力（體檢輪）：RecentLoginFailures 只有稽核權限者會填，
+        // 兩個可見主機集合相同、稽核權限不同的帳號共用同一筆快取就是把登入失敗數
+        // 端給無權者（或讓有權者看到 0）。BuildSummary 內其餘內容不依個人能力分歧。
+        var canViewAudit = _currentUser.Has(Auth.Capability.ViewAudit);
+        return _summaryCache.GetOrAdd(
+            SummaryCache.KeyOf("dashboard", $"{days}|audit:{canViewAudit}", visibleHosts.Select(h => h.HostId).ToList()),
+            () => BuildSummary(days, visibleHosts));
+    }
+
+    private DashboardDto BuildSummary(int days, List<WebHost> visibleHosts)
     {
         // 期間錨點＝昨天，不是今天（回饋十九輪批次C）：分析永遠只產到昨天
         // （AnalysisOrchestrator 固定分析 yesterday），錨在真實今天會讓「今天」按鈕查詢
         // 一個必然是空的區間，還觸發「本期無風險訊號」綠橫幅——把「沒資料」講成「沒事」。
         var anchor = DateTime.Today.AddDays(-1);
         var from = anchor.AddDays(-days + 1);
-        var visibleHosts = _visibility.GetVisibleHosts();
         var visibleHostIds = visibleHosts.Select(h => h.HostId).ToList();
 
         var dto = new DashboardDto

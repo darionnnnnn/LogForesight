@@ -52,8 +52,9 @@ internal sealed class ScaleServices
         Repository = new RecordRepository(recordStore, Hosts, Visibility, settingsService);
 
         var progress = new HandlingProgressCalculator(IssueHandlings, recordHandling, Cases, settingsStore);
+        var displayNames = new UserDisplayNameService(settingsStore);
         var handlingHistory = new HandlingHistoryQueryService(
-            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress, new FakeIssueAggregateQuery());
+            recordHandling, IssueHandlings, Cases, Hosts, users, Visibility, settingsStore, Repository, progress, new FakeIssueAggregateQuery(), displayNames);
 
         var permissionChanges = new PermissionChangeService(
             backend.PermissionChanges(),
@@ -66,22 +67,22 @@ internal sealed class ScaleServices
 
         Dashboard = new DashboardService(
             Visibility, audit, currentUser, handlingHistory, permissionChanges, hostGroups, issueRanking,
-            settingsStore, aggregates, issueTodo, settingsService);
+            settingsStore, aggregates, issueTodo, settingsService, new SummaryCache(new DataVersionStamp()));
 
-        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService);
+        Report = new ReportService(Repository, Hosts, Visibility, handlingHistory, issueRanking, settingsStore, aggregates, settingsService, new SummaryCache(new DataVersionStamp()));
 
         RecordList = new RecordListQueryService(
             Repository, Hosts, users, recordHandling, IssueHandlings, Cases, settingsStore,
-            settingsService, Visibility, aggregates, statusResolver);
+            settingsService, Visibility, aggregates, statusResolver, displayNames);
 
         var issueOwners = new IssueOwnerStore(backend.Blob("issue_owners"));
         CaseCoordinator = new IssueCaseCoordinator(Cases, IssueHandlings, recordHandling, recordStore, Hosts, issueOwners);
 
-        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser);
+        var issueOwnerAdmin = new IssueOwnerAdminService(issueOwners, aggregates, users, new RecordingAuditService(), currentUser, displayNames);
 
         IssueCommands = new IssueHandlingCommandService(
             recordHandling, IssueHandlings, Cases, CaseCoordinator, noiseMarks, Repository,
             Hosts, users, Visibility, currentUser, new RecordingAuditService(), progress,
-            new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin);
+            new UserCapabilityResolver(userGroups, Hosts), issueOwnerAdmin, displayNames);
     }
 }

@@ -18,6 +18,7 @@ public class UserAdminServiceTests
     private readonly FakeGroupAccessStore _access = new();
     private readonly FakeIssueCaseStore _cases = new();
     private readonly RecordingAuditService _audit = new();
+    private readonly FakeSystemSettingsStore _settings = new();
 
     /// <summary>
     /// 使用者詳細（§3）要回答「這個人看得到什麼」，因此刻意串**真實的**
@@ -28,9 +29,10 @@ public class UserAdminServiceTests
         _users, _groups, _hosts, _hostGroups, _cases,
         new VisibilityService(
             FakeCurrentUser.WithCapabilities(LogForesight.Web.Auth.Capability.Maintain),
-            _users, _groups, _access, _hosts, _cases, new FakeSystemSettingsStore()),
+            _users, _groups, _access, _hosts, _cases, _settings),
         _audit,
-        new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts));
+        new LogForesight.Web.Auth.UserCapabilityResolver(_groups, _hosts),
+        new UserDisplayNameService(_settings));
 
     private long AddGroup(string name) => _groups.Upsert(new UserGroup { GroupName = name, Role = UserRole.User, Active = true }).GroupId;
 

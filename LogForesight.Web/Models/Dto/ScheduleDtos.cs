@@ -13,6 +13,18 @@ public class ScheduleOptionsDto
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true，見 ScheduleOptions.LocalAnalysisEnabled。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
+    /// <summary>AI 分析排程是否啟用</summary>
+    public bool AiEnabled { get; set; }
+
+    /// <summary>AI 排程的執行窗口</summary>
+    public List<ScheduleWindow> AiWindows { get; set; } = new();
+
+    /// <summary>AI 分析併發數</summary>
+    public int AiConcurrency { get; set; } = 1;
+
+    /// <summary>AiEnabled=false 時為 null（沒有下一次）</summary>
+    public DateTime? NextAiTriggerTime { get; set; }
+
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 
@@ -35,6 +47,16 @@ public class SaveScheduleOptionsRequest
 
     /// <summary>是否分析本機主機（回饋十八輪批次D）：預設 true。</summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
+
+    /// <summary>AI 分析排程是否啟用</summary>
+    public bool AiEnabled { get; set; }
+
+    /// <summary>AI 排程的執行窗口</summary>
+    public List<ScheduleWindow> AiWindows { get; set; } = new();
+
+    /// <summary>AI 分析併發數（1~8）</summary>
+    [Range(1, 8)]
+    public int AiConcurrency { get; set; } = 1;
 }
 
 /// <summary>docs/archive/WEB-SCHEDULER-PLAN.md §1.4.4：目前執行中/閒置、觸發來源、最新進度、下次觸發時刻。
@@ -55,11 +77,6 @@ public class ScheduleStatusDto
     public int ProgressDone { get; set; }
     public int ProgressTotal { get; set; }
 
-    /// <summary>子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure，AI 佇列在背景消化，
-    /// 與上面的主進度同時在跑——null＝這次執行沒有（或還沒進到）子進度可畫，前端不畫子進度條。</summary>
-    public string? SubProgressPhase { get; set; }
-    public int SubProgressDone { get; set; }
-    public int SubProgressTotal { get; set; }
 
     /// <summary>本機分析進度（回饋十七輪批次E）：與上面的 NetIQ 主／子進度完全獨立的第三條軌，
     /// 本機與 NetIQ 現在並行執行，可能同時都在回報——null＝這次執行本機階段還沒開始或已跳過
@@ -139,4 +156,45 @@ public class TriggerRunResultDto
 {
     public bool Started { get; set; }
     public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>AI 分析排程狀態（執行中/閒置、本輪已處理/目標數、待補總數、最後訊息）</summary>
+public class AiScheduleStatusDto
+{
+    public bool IsRunning { get; set; }
+    public string? TriggerText { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string? LatestMessage { get; set; }
+
+    /// <summary>進度軌名稱：netiq-ai</summary>
+    public string ProgressPhase { get; set; } = "netiq-ai";
+
+    /// <summary>本輪已處理數</summary>
+    public int ProgressDone { get; set; }
+
+    /// <summary>本輪目標數</summary>
+    public int ProgressTotal { get; set; }
+
+    /// <summary>全庫待補總數</summary>
+    public int PendingTotal { get; set; }
+
+    /// <summary>進度單位：件</summary>
+    public string UnitText { get; set; } = "件";
+
+    public bool CanStop { get; set; }
+    public bool AiEnabled { get; set; }
+    public int AiConcurrency { get; set; } = 1;
+    public DateTime? NextTriggerTime { get; set; }
+    public bool? LastRunSuccess { get; set; }
+    public string? LastRunMessage { get; set; }
+    public string? LastRunTriggerText { get; set; }
+    public DateTime? LastRunEndedAt { get; set; }
+}
+
+/// <summary>手動立即執行 AI 分析請求參數</summary>
+public class TriggerAiRunRequest
+{
+    /// <summary>強制重新分析旗標：true 時整批重標待補，全部重跑</summary>
+    public bool ForceRerun { get; set; }
 }

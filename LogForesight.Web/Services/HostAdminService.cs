@@ -36,6 +36,7 @@ public class HostAdminService
     private readonly INetiqServerCatalog _servers;
     private readonly INetiqHostService _netiqHosts;
     private readonly IAuditService _audit;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
     /// <summary>未回報定義與儀表板「未回報主機」計數卡同一套規則（§5.4 D-4），兩邊數字才不會對不上</summary>
     private static readonly TimeSpan SilentCutoff = TimeSpan.FromDays(2);
@@ -54,7 +55,8 @@ public class HostAdminService
         IUserStore users,
         INetiqServerCatalog servers,
         INetiqHostService netiqHosts,
-        IAuditService audit)
+        IAuditService audit,
+        IUserDisplayNameService userDisplayNames)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
@@ -62,6 +64,7 @@ public class HostAdminService
         _servers = servers;
         _netiqHosts = netiqHosts;
         _audit = audit;
+        _userDisplayNames = userDisplayNames;
     }
 
     public PagedResult<HostDto> GetHosts(HostSearchRequest request)
@@ -75,7 +78,7 @@ public class HostAdminService
         return new PagedResult<HostDto>
         {
             Items = all.Skip((page - 1) * pageSize).Take(pageSize)
-                .Select(h => HostDtoMapper.ToDto(h, groups, users)).ToList(),
+                .Select(h => HostDtoMapper.ToDto(h, groups, users, _userDisplayNames)).ToList(),
             Page = page,
             PageSize = pageSize,
             Total = all.Count
@@ -263,7 +266,7 @@ public class HostAdminService
             targetId: saved.HostId.ToString(),
             detail: new { saved.HostName, saved.IpAddress, saved.NetiqServer, saved.RoleDesc, saved.Os, saved.Tier, saved.Active });
 
-        return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId));
+        return HostDtoMapper.ToDto(saved, _hostGroups.GetAll().ToDictionary(g => g.GroupId), _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
     }
 
     public HostDto SetHostGroups(long hostId, IEnumerable<long> groupIds)
@@ -288,7 +291,7 @@ public class HostAdminService
             targetId: hostId.ToString(),
             detail: new { Before = before, After = after });
 
-        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, allGroups, _users.GetAll().ToDictionary(u => u.UserId));
+        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, allGroups, _users.GetAll().ToDictionary(u => u.UserId), _userDisplayNames);
     }
 
     /// <summary>
@@ -408,7 +411,7 @@ public class HostAdminService
             targetId: hostId.ToString(),
             detail: new { Before = before, After = after });
 
-        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, _hostGroups.GetAll().ToDictionary(g => g.GroupId), allUsers);
+        return HostDtoMapper.ToDto(_hosts.Get(hostId)!, _hostGroups.GetAll().ToDictionary(g => g.GroupId), allUsers, _userDisplayNames);
     }
 
     public void MergeHost(long sourceHostId, long targetHostId)

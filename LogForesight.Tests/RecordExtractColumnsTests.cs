@@ -49,7 +49,7 @@ public class RecordExtractColumnsTests : IDisposable
         Assert.False(row.AiPending);
         Assert.True(row.DataIncomplete);
         Assert.False(row.SecurityLogAvailable);
-        Assert.Equal(1, row.ExtractVersion);   // 本輪寫入即最新版本，不需要回填
+        Assert.Equal(DailyRecordBackfiller.CurrentVersion, row.ExtractVersion);   // 寫入即最新版本，不需要回填
     }
 
     [Fact]
@@ -175,7 +175,7 @@ public class RecordExtractColumnsTests : IDisposable
         Assert.Equal("舊資料標題", row.Headline);
         Assert.Equal(9, row.ErrorCount);
         Assert.True(row.HasCorrelation);   // 同一趟順便補 P1-2 既有欄
-        Assert.Equal(1, row.ExtractVersion);
+        Assert.Equal(DailyRecordBackfiller.CurrentVersion, row.ExtractVersion);
         Assert.True(backfiller.Progress.Completed);
     }
 

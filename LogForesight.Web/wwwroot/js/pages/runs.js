@@ -32,6 +32,10 @@ const STATUS_META = {
 };
 
 let currentDays = 14;
+// 「全部」按鈕的天數由後端 MaxDays（RunLogRetentionDays）決定，不寫死
+let summaryMaxDays = null;
+// 執行總表分頁狀態（批次G）：切換天數時重設為第 1 頁
+let currentSummaryPage = 1;
 
 // 異常彙總（本地排序，筆數通常不多，不加分頁）
 let currentErrors = [];
@@ -42,16 +46,27 @@ async function load() {
     renderLoading(document.getElementById('run-errors'), 3);
     renderLoading(document.getElementById('run-list'), 4);
 
-    const [summaries, errors, runList] = await Promise.all([
-        api.get(`/api/runs/summary?days=${currentDays}`),
+    const [summaryPage, errors, runList] = await Promise.all([
+        api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`),
         api.get(`/api/runs/errors?days=${currentDays}`),
         api.get(`/api/runs/list?days=${currentDays}`)
     ]);
 
+    // 記住後端告知的最大天數供「全部」按鈕使用（不寫死）
+    if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
+
     renderLegend();
-    renderSummary(summaries);
+    renderSummary(summaryPage);
     renderErrors(errors);
     renderRunList(runList);
+}
+
+/** 只重新取執行總表（換頁時用，errors/list 不必重取） */
+async function loadSummary() {
+    renderLoading(document.getElementById('run-summary'), 4);
+    const summaryPage = await api.get(`/api/runs/summary?days=${currentDays}&page=${currentSummaryPage}`);
+    if (summaryPage.maxDays != null) summaryMaxDays = summaryPage.maxDays;
+    renderSummary(summaryPage);
 }
 
 function renderLegend() {
@@ -79,15 +94,19 @@ function renderLegend() {
 /**
  * 執行總表改每日一列（§5.4 D-4）：取代舊版「主機×日期」矩陣——
  * 兩千台規模下矩陣會炸出過大的 DOM（2000×90 格），彙總後點日期才下鑽看逐主機明細。
+ * 批次G：改接收 summaryPage 物件（含 items 清單與分頁資訊）。
  */
-function renderSummary(summaries) {
+function renderSummary(summaryPage) {
     const container = document.getElementById('run-summary');
+    const pagerEl = document.getElementById('run-summary-pager');
+    const summaries = summaryPage.items;
 
     if (summaries.every(s => s.totalHosts === 0)) {
         renderEmpty(container, {
             title: '尚無執行紀錄',
             hint: '分析執行後會自動登記；請至上方「排程設定」啟用排程，或按「立即執行」手動觸發。'
         });
+        if (pagerEl) pagerEl.replaceChildren();
         return;
     }
 
@@ -110,6 +129,15 @@ function renderSummary(summaries) {
         onRowExpand: (summary, cell) => renderDayDetailInto(cell, summary.date),
         empty: { title: '尚無執行紀錄' }
     });
+
+    // 分頁控制（批次G）：總頁數由後端回傳，只有多頁時才顯示（renderPagination 自動判定）
+    if (pagerEl && summaryPage.totalPages != null) {
+        renderPagination(pagerEl, {
+            page: summaryPage.page,
+            totalPages: summaryPage.totalPages,
+            onPage: p => { currentSummaryPage = p; loadSummary(); }
+        });
+    }
 }
 
 function countCell(count, status) {
@@ -270,6 +298,8 @@ let runListSort = { key: 'startedAt', dir: 'desc' };
 
 const RUN_LIST_COLUMNS = [
     { title: '主機', sortKey: 'hostName', sortValue: r => r.hostName, render: r => r.hostName },
+    // 作業類型（批次D）：取數分析與 AI 分析的執行同列在這張表，一眼分得出來
+    { title: '作業', sortKey: 'jobTypeText', sortValue: r => r.jobTypeText, render: r => r.jobTypeText },
     { title: '狀態', sortKey: 'status', sortValue: r => r.status, render: r => statusBadgeCell(r.status) },
     { title: '開始時間', sortKey: 'startedAt', sortDefaultDir: 'desc', sortValue: r => r.startedAt, render: r => formatDateTime(r.startedAt) },
     {
@@ -469,7 +499,16 @@ function logMessageCell(log) {
 
 for (const button of document.querySelectorAll('[data-days]')) {
     button.addEventListener('click', () => {
-        currentDays = Number(button.dataset.days);
+        const raw = button.dataset.days;
+        if (raw === 'all') {
+            // 「全部」：天數來自後端告知的 MaxDays（RunLogRetentionDays），不寫死
+            if (summaryMaxDays == null) return;   // 還沒收到後端回應，不動作
+            currentDays = summaryMaxDays;
+        } else {
+            currentDays = Number(raw);
+        }
+        // 切換天數時重設為第 1 頁
+        currentSummaryPage = 1;
         for (const other of document.querySelectorAll('[data-days]')) {
             other.classList.toggle('active', other === button);
         }
@@ -483,6 +522,7 @@ for (const button of document.querySelectorAll('[data-days]')) {
 // 在沒有 Maintain 時整批隱藏，而不是逐一判斷。
 
 let scheduleWindows = [];
+let scheduleAiWindows = [];
 let canMaintainSchedule = false;
 // AI 未設定時「AI 診斷傾印」開關與徽章整組隱藏（docs/archive/FEEDBACK-7-PLAN.md）：這是除錯用的手動
 // 開關，本身不預設開啟，但 AI 沒設定時這個功能沒有意義，不該佔畫面。開關值照常載入/回傳，
@@ -491,6 +531,8 @@ let aiAvailable = false;
 // 分析本機主機開關（回饋十八輪批次D）：影響「立即執行」modal 的「全部主機」描述文字。
 let localAnalysisEnabled = true;
 const runNowModal = new bootstrap.Modal(document.getElementById('run-now-modal'));
+const aiRerunModalEl = document.getElementById('schedule-ai-rerun-modal');
+const aiRerunModal = aiRerunModalEl ? new bootstrap.Modal(aiRerunModalEl) : null;
 
 async function loadSchedule() {
     const user = await getCurrentUser();
@@ -512,6 +554,7 @@ async function loadSchedule() {
 
 function applyScheduleOptions(options) {
     scheduleWindows = options.windows.map(w => ({ ...w }));
+    scheduleAiWindows = (options.aiWindows && options.aiWindows.length > 0 ? options.aiWindows : [{ start: '00:00', end: '23:59' }]).map(w => ({ ...w }));
     document.getElementById('schedule-enabled').checked = options.enabled;
     document.getElementById('schedule-debug-dump').checked = options.debugDump;
     document.getElementById('schedule-debug-dump-badge').classList.toggle('d-none', !options.debugDump || !aiAvailable);
@@ -523,7 +566,18 @@ function applyScheduleOptions(options) {
             ? '全部主機（等同排程觸發的完整執行）'
             : '全部主機（不含本機——本機分析已停用，等同排程觸發的完整執行）';
     }
-    renderScheduleWindows();
+
+    const aiEnabledCheckbox = document.getElementById('schedule-ai-enabled');
+    if (aiEnabledCheckbox) aiEnabledCheckbox.checked = !!options.aiEnabled;
+
+    const aiConcurrencyInput = document.getElementById('schedule-ai-concurrency');
+    if (aiConcurrencyInput) {
+        aiConcurrencyInput.value = options.aiConcurrency ?? 1;
+        aiConcurrencyInput.disabled = !canMaintainSchedule;
+    }
+
+    renderScheduleWindows('schedule-windows', scheduleWindows);
+    renderScheduleWindows('schedule-ai-windows', scheduleAiWindows);
 
     document.getElementById('schedule-updated').textContent = options.updatedAt
         ? `最後更新：${formatDateTime(options.updatedAt)}${options.updatedByAccount ? `（${formatUserName(options.updatedByDisplayName, options.updatedByAccount)}）` : ''}`
@@ -533,6 +587,17 @@ function applyScheduleOptions(options) {
         document.getElementById('schedule-next-trigger').textContent = '排程未啟用';
     } else if (options.nextTriggerTime) {
         document.getElementById('schedule-next-trigger').textContent = formatDateTime(options.nextTriggerTime);
+    }
+
+    const aiNextTriggerEl = document.getElementById('schedule-ai-next-trigger');
+    if (aiNextTriggerEl) {
+        if (!options.aiEnabled) {
+            aiNextTriggerEl.textContent = '排程未啟用';
+        } else if (options.nextAiTriggerTime) {
+            aiNextTriggerEl.textContent = formatDateTime(options.nextAiTriggerTime);
+        } else {
+            aiNextTriggerEl.textContent = '—';
+        }
     }
 
     // 回望天數是缺漏補跑與重新分析共用的單一欄位（回饋三十四輪 C），
@@ -545,20 +610,20 @@ function applyScheduleOptions(options) {
     );
 }
 
-function renderScheduleWindows() {
-    const container = document.getElementById('schedule-windows');
+function renderScheduleWindows(containerId = 'schedule-windows', windowsList = scheduleWindows) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
     container.replaceChildren();
 
-    scheduleWindows.forEach((window_, index) => {
+    windowsList.forEach((window_, index) => {
         const row = document.createElement('div');
         row.className = 'd-flex align-items-center gap-2 mb-2';
 
         const start = document.createElement('input');
         start.type = 'time';
-        start.className = 'form-control form-control-sm';
-        // 固定寬度而非上限：瀏覽器原生 time picker（HH:MM + 時鐘圖示）實測約需 140~150px，
-        // 130px 的上限會把數字擠掉（使用者回報時間被遮擋）。
-        start.style.width = '150px';
+        // 寬度交給 .lf-time-input 的 min-width：原生 time picker 在 12 小時制地區
+        // （「上午 01:00」＋時鐘圖示）比固定值寬，寫死 px 會把數字裁掉。
+        start.className = 'form-control form-control-sm lf-time-input';
         start.value = window_.start;
         start.disabled = !canMaintainSchedule;
         start.addEventListener('change', () => { window_.start = start.value; });
@@ -569,8 +634,7 @@ function renderScheduleWindows() {
 
         const end = document.createElement('input');
         end.type = 'time';
-        end.className = 'form-control form-control-sm';
-        end.style.width = '150px';
+        end.className = 'form-control form-control-sm lf-time-input';
         end.value = window_.end;
         end.disabled = !canMaintainSchedule;
         end.addEventListener('change', () => { window_.end = end.value; });
@@ -582,11 +646,11 @@ function renderScheduleWindows() {
             remove.type = 'button';
             remove.className = 'btn btn-sm btn-outline-danger';
             remove.textContent = '移除';
-            remove.disabled = scheduleWindows.length <= 1;
-            remove.title = scheduleWindows.length <= 1 ? '至少要保留一個窗口' : '';
+            remove.disabled = windowsList.length <= 1;
+            remove.title = windowsList.length <= 1 ? '至少要保留一個窗口' : '';
             remove.addEventListener('click', () => {
-                scheduleWindows.splice(index, 1);
-                renderScheduleWindows();
+                windowsList.splice(index, 1);
+                renderScheduleWindows(containerId, windowsList);
             });
             row.appendChild(remove);
         }
@@ -595,17 +659,32 @@ function renderScheduleWindows() {
     });
 }
 
-document.getElementById('schedule-add-window')?.addEventListener('click', () => {
-    if (scheduleWindows.length >= 4) {
+function addScheduleWindow(containerId, windowsList) {
+    if (windowsList.length >= 4) {
         toast('執行窗口最多 4 組', 'warning');
         return;
     }
-    scheduleWindows.push({ start: '01:00', end: '07:00' });
-    renderScheduleWindows();
+    windowsList.push({ start: '01:00', end: '07:00' });
+    renderScheduleWindows(containerId, windowsList);
+}
+
+document.getElementById('schedule-add-window')?.addEventListener('click', () => {
+    addScheduleWindow('schedule-windows', scheduleWindows);
+});
+
+document.getElementById('schedule-ai-add-window')?.addEventListener('click', () => {
+    addScheduleWindow('schedule-ai-windows', scheduleAiWindows);
 });
 
 document.getElementById('schedule-form').addEventListener('submit', async event => {
     event.preventDefault();
+
+    const concurrencyInput = document.getElementById('schedule-ai-concurrency');
+    const concurrencyVal = parseInt(concurrencyInput?.value, 10);
+    if (isNaN(concurrencyVal) || concurrencyVal < 1 || concurrencyVal > 8) {
+        toast('AI 分析併發數必須在 1 到 8 之間。', 'warning');
+        return;
+    }
 
     const saveButton = document.getElementById('schedule-save');
     const restore = withBusy(saveButton, '儲存中');
@@ -614,7 +693,10 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
             enabled: document.getElementById('schedule-enabled').checked,
             windows: scheduleWindows,
             debugDump: document.getElementById('schedule-debug-dump').checked,
-            localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked
+            localAnalysisEnabled: document.getElementById('schedule-local-analysis').checked,
+            aiEnabled: document.getElementById('schedule-ai-enabled')?.checked ?? false,
+            aiWindows: scheduleAiWindows,
+            aiConcurrency: concurrencyVal
         });
         applyScheduleOptions(saved);
         toast('已儲存排程設定', 'success');
@@ -629,14 +711,20 @@ document.getElementById('schedule-form').addEventListener('submit', async event 
 // 閒置時沒有進度可看，維持原本的低頻率即可。自我重新排程（而非 setInterval）方便依上一次
 // 拿到的狀態決定下一輪間隔。
 let wasScheduleRunning = false;
+let wasAiScheduleRunning = false;
 let scheduleStatusTimer = null;
 
 async function refreshScheduleStatus() {
-    const status = await api.get('/api/admin/schedule/status', { silent: true }).catch(() => null);
+    const [status, aiStatus] = await Promise.all([
+        api.get('/api/admin/schedule/status', { silent: true }).catch(() => null),
+        api.get('/api/admin/schedule/ai-status', { silent: true }).catch(() => null)
+    ]);
     if (status) applyScheduleStatus(status);
+    if (aiStatus) applyAiScheduleStatus(aiStatus);
 
     clearTimeout(scheduleStatusTimer);
-    const interval = status?.isRunning ? 3000 : 10000;
+    const isAnyRunning = (status?.isRunning ?? false) || (aiStatus?.isRunning ?? false);
+    const interval = isAnyRunning ? 3000 : 10000;
     scheduleStatusTimer = setTimeout(refreshScheduleStatus, interval);
 }
 
@@ -646,26 +734,32 @@ async function refreshScheduleStatus() {
  * 輪詢是 3 秒一次，數字跳動會不夠即時），輪詢回來時用 status.startedAt 重設一次校正飄移
  * （分頁背景分頁、系統睡眠都可能讓 setInterval 累積誤差）。
  */
-let elapsedTimer = null;
+const elapsedTimers = new Map();
 
-function startElapsedTicker(startedAt) {
+/**
+ * 已耗時計時器：取數排程與 AI 排程各有一個顯示元素，行為完全相同，
+ * 因此共用同一份實作，以元素 id 為鍵各自持有自己的 interval。
+ */
+function startElapsedTicker(startedAt, elementId = 'schedule-elapsed') {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
     const start = new Date(startedAt).getTime();
-    const el = document.getElementById('schedule-elapsed');
     el.classList.remove('d-none');
 
-    clearInterval(elapsedTimer);
+    clearInterval(elapsedTimers.get(elementId));
     function tick() {
         const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
         el.textContent = `開始於 ${formatDateTime(startedAt)}・已耗時 ${formatDuration(seconds)}`;
     }
     tick();
-    elapsedTimer = setInterval(tick, 1000);
+    elapsedTimers.set(elementId, setInterval(tick, 1000));
 }
 
-function stopElapsedTicker() {
-    clearInterval(elapsedTimer);
-    elapsedTimer = null;
-    document.getElementById('schedule-elapsed').classList.add('d-none');
+function stopElapsedTicker(elementId = 'schedule-elapsed') {
+    clearInterval(elapsedTimers.get(elementId));
+    elapsedTimers.delete(elementId);
+    document.getElementById(elementId)?.classList.add('d-none');
 }
 
 function applyScheduleStatus(status) {
@@ -706,33 +800,125 @@ function applyScheduleStatus(status) {
     // 使用者不必手動重新整理才看得到剛跑完的這趟（手動與排程觸發都經過這條輪詢，天然涵蓋兩者）
     if (wasScheduleRunning && !status.isRunning) {
         toast('執行已結束，執行總表已刷新', 'info');
+        currentSummaryPage = 1;   // 重設回最新頁，讓使用者一眼看到剛跑完的結果
         load();
     }
     wasScheduleRunning = status.isRunning;
 }
 
-// netiq-ai（docs/archive/FEEDBACK-12-PLAN.md §3.7）：搜尋全部完成、AI 佇列還在背景消化白話摘要的
-// 第二階段——統計與紀錄早就寫入了，這裡純粹是白話摘要/風險再判定的補寫進度，用詞刻意
-// 跟「NetIQ 機房分析」（還在查詢中）區分開，避免使用者以為又要重新查一次
-// netiq-backpressure（回饋十三輪 A7）：AI 待處理佇列滿載（AiFollowupQueue.Capacity=200）時，
-// 搜尋主線在 NetiqPipelineService 背壓等待——外觀上與「卡住」無法區分，必須獨立標示原因，
-// 否則使用者回報的症狀就是「進度條不動了」。
-// 回饋二十七輪：done/total 改為 AI 消化件數（與 netiq-ai 同一組數字），不再沿用主機日——
-// 背壓期間搜尋已停，主機日數字到等待結束都不會變，顯示它等於畫一條凍住的進度條。
+function applyAiScheduleStatus(status) {
+    const runStateEl = document.getElementById('schedule-ai-run-state');
+    if (runStateEl) {
+        runStateEl.textContent = status.isRunning
+            ? `執行中（${status.triggerText ?? '手動'}）`
+            : '閒置';
+    }
+
+    if (status.isRunning && status.startedAt) {
+        startElapsedTicker(status.startedAt, 'schedule-ai-elapsed');
+    } else {
+        stopElapsedTicker('schedule-ai-elapsed');
+    }
+
+    const pendingEl = document.getElementById('schedule-ai-pending-total');
+    if (pendingEl) {
+        if (status.pendingTotal > 0) {
+            pendingEl.textContent = `${formatNumber(status.pendingTotal)} 件`;
+            pendingEl.style.color = 'var(--lf-accent-text)';
+            pendingEl.classList.remove('text-muted');
+        } else {
+            pendingEl.textContent = '0 件（已全部完成）';
+            pendingEl.style.color = '';
+            pendingEl.classList.add('text-muted');
+        }
+    }
+
+    renderAiScheduleProgress(status);
+
+    const messageEl = document.getElementById('schedule-ai-latest-message');
+    if (messageEl) {
+        if (status.isRunning) {
+            messageEl.textContent = status.latestMessage ?? '';
+            messageEl.classList.remove('text-danger');
+            messageEl.classList.add('text-muted');
+        } else {
+            renderLastRunOutcome(messageEl, status);
+        }
+    }
+
+    const stopButton = document.getElementById('schedule-ai-stop');
+    if (stopButton && canMaintainSchedule) {
+        stopButton.classList.toggle('d-none', !status.canStop);
+    }
+
+    const runNowBtn = document.getElementById('schedule-ai-run-now');
+    if (runNowBtn) runNowBtn.disabled = status.isRunning;
+
+    const forceBtn = document.getElementById('schedule-ai-force-rerun');
+    if (forceBtn) forceBtn.disabled = status.isRunning;
+
+    const nextTriggerEl = document.getElementById('schedule-ai-next-trigger');
+    if (nextTriggerEl) {
+        if (status.aiEnabled && status.nextTriggerTime) {
+            nextTriggerEl.textContent = formatDateTime(status.nextTriggerTime);
+        } else if (!status.aiEnabled) {
+            nextTriggerEl.textContent = '排程未啟用';
+        } else {
+            nextTriggerEl.textContent = '—';
+        }
+    }
+
+    if (wasAiScheduleRunning && !status.isRunning) {
+        toast('AI 分析已結束', 'info');
+        load();
+    }
+    wasAiScheduleRunning = status.isRunning;
+}
+
+// 取數執行只剩本機與 NetIQ 兩條軌（AI 補寫已拆成獨立排程，進度在 AI 分析狀態卡）
 const PROGRESS_PHASE_LABEL = {
-    local: '本機分析', netiq: 'NetIQ 機房分析', 'netiq-ai': 'AI 白話分析補寫中',
-    'netiq-backpressure': '搜尋暫停：AI 佇列消化中'
+    local: '本機分析', netiq: 'NetIQ 機房分析'
 };
-const PROGRESS_PHASE_UNIT = { 'netiq-ai': '件', 'netiq-backpressure': '件' };
+const PROGRESS_PHASE_UNIT = {};
+
+/**
+ * 進度條渲染邏輯共用函式（窗口與進度條渲染皆僅維持單一實作）。
+ * 執行中且有量化進度（total > 0）畫百分比進度條＋文字；total=0 畫不定進度（準備中…）；非執行中整組隱藏。
+ */
+function updateProgressBar({ wrapEl, barEl, textEl }, isVisible, done, total, labelPrefix, unit = '主機日') {
+    if (!isVisible) {
+        wrapEl?.classList.add('d-none');
+        textEl?.classList.add('d-none');
+        return;
+    }
+    wrapEl?.classList.remove('d-none');
+    textEl?.classList.remove('d-none');
+
+    if (total > 0) {
+        const pct = Math.min(100, Math.round((done / total) * 100));
+        const label = labelPrefix ? `${labelPrefix}　${done} / ${total} ${unit}` : `${done} / ${total} ${unit}`;
+        barEl?.classList.remove('progress-bar-striped', 'progress-bar-animated');
+        if (barEl) {
+            barEl.style.width = `${pct}%`;
+            barEl.title = label;
+        }
+        if (textEl) textEl.textContent = label;
+    } else {
+        barEl?.classList.add('progress-bar-striped', 'progress-bar-animated');
+        if (barEl) {
+            barEl.style.width = '100%';
+            barEl.title = '準備中…';
+        }
+        if (textEl) textEl.textContent = '準備中…';
+    }
+}
 
 /** 執行中且有量化進度（total>0）畫百分比進度條＋「階段　x / y 主機日」文字（數字自己會說話，
  * 不只給百分比）；剛啟動／清理階段（total=0）畫不定進度；閒置時整組隱藏。
  * （docs/archive/FEEDBACK-8-PLAN.md #2）
  *
- * 子進度（回饋十四輪 UI-6）：netiq-ai／netiq-backpressure 這條 AI 背景消化軌與主進度
- * （netiq，搜尋仍在往下一台主機推進）可能同時在跑——兩者原本共用一組欄位，後回報的會
- * 直接蓋掉先回報的，畫面症狀是「進度卡住不動」。SchedulerRunState 已把兩者分成獨立欄位，
- * 這裡只需各自畫一條：主進度在上（沿用既有邏輯不變），子進度在下、只在有值時才顯示。
+ * （原「子進度」netiq-ai 軌已隨 AI 拆離移除：取數執行不再含 AI 段，
+ * AI 補寫進度改在 AI 分析狀態卡自己那條進度條。）
  *
  * 本機進度（回饋十七輪批次E）：本機與 NetIQ 改並行執行後，本機也是獨立一條軌，畫在主進度
  * 之上。與子進度同樣採「有值才顯示」——不像主進度（NetIQ）執行中就無條件顯示「準備中」，
@@ -745,98 +931,39 @@ function renderScheduleProgress(status) {
     const wrap = document.getElementById('schedule-progress-wrap');
     const bar = document.getElementById('schedule-progress-bar');
     const text = document.getElementById('schedule-progress-text');
-    const subWrap = document.getElementById('schedule-subprogress-wrap');
-    const subBar = document.getElementById('schedule-subprogress-bar');
-    const subText = document.getElementById('schedule-subprogress-text');
 
-    if (!status.isRunning) {
-        localWrap.classList.add('d-none');
-        localText.classList.add('d-none');
-        wrap.classList.add('d-none');
-        text.classList.add('d-none');
-        subWrap.classList.add('d-none');
-        subText.classList.add('d-none');
-        return;
-    }
+    updateProgressBar(
+        { wrapEl: localWrap, barEl: localBar, textEl: localText },
+        status.isRunning && !!status.localProgressPhase,
+        status.localProgressDone,
+        status.localProgressTotal,
+        PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? status.localProgressPhase,
+        PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日'
+    );
 
-    if (!status.localProgressPhase) {
-        localWrap.classList.add('d-none');
-        localText.classList.add('d-none');
-    } else {
-        localWrap.classList.remove('d-none');
-        localText.classList.remove('d-none');
+    updateProgressBar(
+        { wrapEl: wrap, barEl: bar, textEl: text },
+        status.isRunning && !!status.progressPhase,
+        status.progressDone,
+        status.progressTotal,
+        PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase,
+        PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日'
+    );
+}
 
-        if (status.localProgressTotal > 0) {
-            const localPct = Math.min(100, Math.round((status.localProgressDone / status.localProgressTotal) * 100));
-            const localUnit = PROGRESS_PHASE_UNIT[status.localProgressPhase] ?? '主機日';
-            const localLabel = `${PROGRESS_PHASE_LABEL[status.localProgressPhase] ?? status.localProgressPhase}　` +
-                               `${status.localProgressDone} / ${status.localProgressTotal} ${localUnit}`;
-            localBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-            localBar.style.width = `${localPct}%`;
-            localBar.title = localLabel;
-            localText.textContent = localLabel;
-        } else {
-            localBar.classList.add('progress-bar-striped', 'progress-bar-animated');
-            localBar.style.width = '100%';
-            localBar.title = '準備中…';
-            localText.textContent = '準備中…';
-        }
-    }
+function renderAiScheduleProgress(status) {
+    const wrap = document.getElementById('schedule-ai-progress-wrap');
+    const bar = document.getElementById('schedule-ai-progress-bar');
+    const text = document.getElementById('schedule-ai-progress-text');
 
-    // 主進度（NetIQ）：回饋十七輪批次E 前是「執行中就無條件顯示，total=0 畫不定進度」——那時
-    // 本機與 NetIQ 依序執行，這條「準備中」占位最多只會出現在本機剛跑完、NetIQ 還沒回報第一次
-    // 進度的短暫空檔。並行後兩者同時開跑，若這次執行根本沒有 NetIQ 主機（NetiqPipelineService
-    // 一開始就直接 return，永遠不會呼叫 Report("netiq",...)），這個「準備中」會卡在畫面上長達
-    // 整段本機執行時間，變成誤導（瀏覽器實測跑一次純本機執行時抓到）。改成與本機／子進度同一套
-    // 「有回報過才顯示」：沒有 NetIQ 工作時這條軌乾脆不出現，比一直閃著假的「準備中」誠實。
-    if (!status.progressPhase) {
-        wrap.classList.add('d-none');
-        text.classList.add('d-none');
-    } else {
-        wrap.classList.remove('d-none');
-        text.classList.remove('d-none');
-
-        if (status.progressTotal > 0) {
-            const pct = Math.min(100, Math.round((status.progressDone / status.progressTotal) * 100));
-            const unit = PROGRESS_PHASE_UNIT[status.progressPhase] ?? '主機日';
-            const label = `${PROGRESS_PHASE_LABEL[status.progressPhase] ?? status.progressPhase}　${status.progressDone} / ${status.progressTotal} ${unit}`;
-            bar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-            bar.style.width = `${pct}%`;
-            bar.title = label;
-            text.textContent = label;
-        } else {
-            bar.classList.add('progress-bar-striped', 'progress-bar-animated');
-            bar.style.width = '100%';
-            bar.title = '準備中…';
-            text.textContent = '準備中…';
-        }
-    }
-
-    // 子進度：沒有回報過（subProgressPhase 為 null，如純本機執行、或 NetIQ 還沒進到 AI 消化階段）
-    // 就整組隱藏，不畫一條空的第二軌出來
-    if (!status.subProgressPhase) {
-        subWrap.classList.add('d-none');
-        subText.classList.add('d-none');
-        return;
-    }
-    subWrap.classList.remove('d-none');
-    subText.classList.remove('d-none');
-
-    if (status.subProgressTotal > 0) {
-        const subPct = Math.min(100, Math.round((status.subProgressDone / status.subProgressTotal) * 100));
-        const subUnit = PROGRESS_PHASE_UNIT[status.subProgressPhase] ?? '主機日';
-        const subLabel = `${PROGRESS_PHASE_LABEL[status.subProgressPhase] ?? status.subProgressPhase}　` +
-                         `${status.subProgressDone} / ${status.subProgressTotal} ${subUnit}`;
-        subBar.classList.remove('progress-bar-striped', 'progress-bar-animated');
-        subBar.style.width = `${subPct}%`;
-        subBar.title = subLabel;
-        subText.textContent = subLabel;
-    } else {
-        subBar.classList.add('progress-bar-striped', 'progress-bar-animated');
-        subBar.style.width = '100%';
-        subBar.title = '準備中…';
-        subText.textContent = '準備中…';
-    }
+    updateProgressBar(
+        { wrapEl: wrap, barEl: bar, textEl: text },
+        status.isRunning,
+        status.progressDone,
+        status.progressTotal,
+        'AI 分析',
+        status.unitText ?? '件'
+    );
 }
 
 /**
@@ -846,24 +973,28 @@ function renderScheduleProgress(status) {
  * FailureMessage="使用者取消"），這裡特判成中性語氣，不用紅字嚇人。
  */
 function renderLastRunOutcome(messageEl, status) {
-    if (!status.lastRunEndedAt) {
-        messageEl.textContent = '';
+    const endedAt = status.lastRunEndedAt ?? status.completedAt;
+    if (!endedAt) {
+        messageEl.textContent = status.latestMessage ?? '';
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
         return;
     }
 
-    const when = formatDateTime(status.lastRunEndedAt);
-    if (status.lastRunSuccess) {
-        messageEl.textContent = `上次執行：成功（${status.lastRunTriggerText}，${when}）`;
+    const when = formatDateTime(endedAt);
+    if (status.lastRunSuccess ?? true) {
+        const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
+        messageEl.textContent = `上次執行：成功${trigger}`;
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
     } else if (status.lastRunMessage === '使用者取消') {
-        messageEl.textContent = `上次執行：已停止（${status.lastRunTriggerText}，${when}）`;
+        const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
+        messageEl.textContent = `上次執行：已停止${trigger}`;
         messageEl.classList.remove('text-danger');
         messageEl.classList.add('text-muted');
     } else {
-        messageEl.textContent = `上次執行：失敗（${status.lastRunTriggerText}，${when}）— ${status.lastRunMessage ?? ''}`;
+        const trigger = status.lastRunTriggerText ? `（${status.lastRunTriggerText}，${when}）` : `（${when}）`;
+        messageEl.textContent = `上次執行：失敗${trigger}— ${status.lastRunMessage ?? ''}`;
         messageEl.classList.remove('text-muted');
         messageEl.classList.add('text-danger');
     }
@@ -884,6 +1015,57 @@ document.getElementById('schedule-stop')?.addEventListener('click', async () => 
         await refreshScheduleStatus();
     } catch {
         // 錯誤已由 api.js 顯示
+    }
+});
+
+document.getElementById('schedule-ai-run-now')?.addEventListener('click', async () => {
+    const btn = document.getElementById('schedule-ai-run-now');
+    const restore = withBusy(btn, '啟動中');
+    try {
+        const result = await api.post('/api/admin/schedule/ai-run', { forceRerun: false });
+        toast(result.message, result.started ? 'success' : 'warning');
+        await refreshScheduleStatus();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
+    }
+});
+
+document.getElementById('schedule-ai-stop')?.addEventListener('click', async () => {
+    const confirmed = await confirmAction({
+        title: '停止 AI 分析',
+        message: '將優雅停止目前進行中的 AI 分析（停在單筆邊界，已完成的部分保留）。要繼續嗎？',
+        confirmText: '停止',
+        confirmVariant: 'danger'
+    });
+    if (!confirmed) return;
+
+    try {
+        await api.post('/api/admin/schedule/ai-cancel', {});
+        toast('已送出停止 AI 分析要求', 'success');
+        await refreshScheduleStatus();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    }
+});
+
+document.getElementById('schedule-ai-force-rerun')?.addEventListener('click', () => {
+    aiRerunModal?.show();
+});
+
+document.getElementById('schedule-ai-rerun-confirm')?.addEventListener('click', async () => {
+    const confirmBtn = document.getElementById('schedule-ai-rerun-confirm');
+    const restore = withBusy(confirmBtn, '啟動中');
+    try {
+        const result = await api.post('/api/admin/schedule/ai-run', { forceRerun: true });
+        toast(result.message, result.started ? 'success' : 'warning');
+        aiRerunModal?.hide();
+        await refreshScheduleStatus();
+    } catch {
+        // 錯誤已由 api.js 顯示
+    } finally {
+        restore();
     }
 });
 

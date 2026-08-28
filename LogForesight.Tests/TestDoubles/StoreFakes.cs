@@ -410,6 +410,48 @@ internal class FakeAnalysisRecordQuery : IAnalysisRecordQuery
             .Where(r => r.Date.Date >= from.Date && r.Date.Date <= to.Date && r.HostId != 0)
             .Select(r => (r.HostId, r.Date.Date))
             .ToHashSet();
+
+    public List<DailyAnalysisRecord> QueryPendingAi(int batchSize)
+    {
+        if (batchSize <= 0) return new List<DailyAnalysisRecord>();
+        return _records
+            .Where(r => r.AiPending && !r.DetailPruned)
+            .OrderByDescending(r => r.Date)
+            .ThenBy(r => r.HostId)
+            .ThenBy(r => r.Host, StringComparer.OrdinalIgnoreCase)
+            .Take(batchSize)
+            // 與正式實作同形狀（體檢輪）：QueryPendingAi 是不讀 ContentJson 的輕量投影——
+            // TrendAlerts/AuditEventCount 不填、CorrelationAlerts 是佔位字串。替身若回完整
+            // 紀錄，「補跑必須先完整載入」的缺陷在測試裡就永遠測不到。
+            .Select(r => new DailyAnalysisRecord
+            {
+                HostId = r.HostId,
+                Host = r.Host,
+                Date = r.Date,
+                RiskLevel = r.RiskLevel,
+                Headline = r.Headline,
+                ErrorCount = r.ErrorCount,
+                WarningCount = r.WarningCount,
+                DataIncomplete = r.DataIncomplete,
+                SecurityLogAvailable = r.SecurityLogAvailable,
+                AiAnalyzed = r.AiAnalyzed,
+                AiPending = r.AiPending,
+                DetailPruned = r.DetailPruned,
+                CorrelationAlerts = r.CorrelationAlerts.Count > 0 ? new List<string> { "(lightweight)" } : new List<string>(),
+                TopIssues = r.TopIssues
+            })
+            .ToList();
+    }
+
+    public int CountPendingAi() => _records.Count(r => r.AiPending);
+
+    /// <summary>強制重新分析：判準同正式實作——低風險且從未跑過 AI 的日子不標</summary>
+    public int MarkAllForAiRerun()
+    {
+        var targets = _records.Where(r => r.AiAnalyzed || r.RiskLevel != RiskLevels.Low).ToList();
+        foreach (var r in targets) r.AiPending = true;
+        return targets.Count;
+    }
 }
 
 /// <summary>問題檔案的記憶體實作（回饋十八輪批次F 建立、回饋十九輪批次F 擴欄）：與正式的

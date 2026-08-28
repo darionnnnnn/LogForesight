@@ -28,19 +28,22 @@ public class NetiqHostService : INetiqHostService
     private readonly IUserStore _users;
     private readonly INetiqServerCatalog _servers;
     private readonly IAuditService _audit;
+    private readonly IUserDisplayNameService _userDisplayNames;
 
     public NetiqHostService(
         IHostStore hosts,
         IHostGroupStore hostGroups,
         IUserStore users,
         INetiqServerCatalog servers,
-        IAuditService audit)
+        IAuditService audit,
+        IUserDisplayNameService userDisplayNames)
     {
         _hosts = hosts;
         _hostGroups = hostGroups;
         _users = users;
         _servers = servers;
         _audit = audit;
+        _userDisplayNames = userDisplayNames;
     }
 
     public NetiqOverviewDto GetOverview()
@@ -278,6 +281,6 @@ public class NetiqHostService : INetiqHostService
         // 每次呼叫都重查 store（既有效能議題，記入 BACKLOG，取數策略此次不動）
         var groups = _hostGroups.GetAll().ToDictionary(g => g.GroupId);
         var users = _users.GetAll().ToDictionary(u => u.UserId);
-        return HostDtoMapper.ToDto(host, groups, users);
+        return HostDtoMapper.ToDto(host, groups, users, _userDisplayNames);
     }
 }

@@ -45,7 +45,8 @@ public class DashboardServiceTests : IDisposable
         var progress = new HandlingProgressCalculator(_issueHandlingStore, _handlingStore, _caseStore, _settingsStore);
         var aggregates = new EfIssueAggregateQuery(_fixture.NewContext, _hosts);
         var handling = new HandlingHistoryQueryService(
-            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress, aggregates);
+            _handlingStore, _issueHandlingStore, _caseStore, _hosts, _users, visibility, _settingsStore, repository, progress, aggregates,
+            new UserDisplayNameService(_settingsStore));
         var issueRanking = new IssueRankingBuilder(aggregates, _hosts);
         var audit = new AuditLogStore(new EfJsonLogStore(_fixture.NewContext, "audit"));
         var currentUser = FakeCurrentUser.WithCapabilities();
@@ -56,9 +57,9 @@ public class DashboardServiceTests : IDisposable
 
         _service = new DashboardService(
             visibility, audit, currentUser, handling, permissionChanges,
-            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility);
+            _hostGroups, issueRanking, _settingsStore, aggregates, issueTodo, _severityVisibility, new SummaryCache(new DataVersionStamp()));
         // 兩頁一致的對照組：報表走同一組 store 與聚合
-        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility);
+        _reports = new ReportService(repository, _hosts, visibility, handling, issueRanking, _settingsStore, aggregates, _severityVisibility, new SummaryCache(new DataVersionStamp()));
     }
 
     public void Dispose() => _fixture.Dispose();
@@ -307,7 +308,7 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver);
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {
@@ -357,7 +358,7 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver);
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {
@@ -402,7 +403,7 @@ public class DashboardServiceTests : IDisposable
         var statusResolver = new OccurrenceStatusResolver(_hosts, _issueHandlingStore, _caseStore, _settingsStore);
         var listService = new RecordListQueryService(
             repository, _hosts, _users, _handlingStore, _issueHandlingStore, _caseStore, _settingsStore,
-            _severityVisibility, visibility, aggregates, statusResolver);
+            _severityVisibility, visibility, aggregates, statusResolver, new UserDisplayNameService(_settingsStore));
 
         var issueResult = listService.SearchByIssue(new RecordSearchRequest
         {

@@ -156,12 +156,16 @@ lf_issue_first_seen                                  -- 問題的機房首見日
 `/api/health/detail` 申報並在三次失敗時反映為降級——補不完的症狀是老問題被
 `PriorityScore` 當成 7 天內的新問題，畫面上完全看不出來，所以必須申報。
 
+**`ai_pending`（`lf_daily_records` 真實欄位）**：統計已寫入、等待 AI 分析排程撿取的第三態
+（與既有的 `ai_analyzed=false`＝「AI 判定不需要或已失敗」是不同語意，見
+docs/DETECTION-SPEC.md「兩個獨立排程」一節）。**讀取端一律以欄位為事實來源**——
+ContentJson 內序列化的同名值僅為殘留，強制重新分析是整批 UPDATE 欄位、不重寫 ContentJson，
+兩者短暫分岔是設計內行為，不得把 JSON 值當判定來源。`Append` 寫入、`AttachAiResult`
+完成時清 false；複合索引 `IX_lf_daily_records_ai_pending_record_date (ai_pending, record_date)`
+支援全域待補查詢（`QueryPendingAi`／`CountPendingAi`，日期新→舊、排除 `detail_pruned`）。
+
 **`ContentJson`（`DailyRecordRow.ContentJson`）新增序列化欄位（詳見
-docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2，無 schema 變更，兩者都只是完整 `DailyAnalysisRecord`
-JSON 裡多出的欄位，不是新增資料表欄位）**：
-- `AiPending`（bool）：NetIQ 搜尋與 AI 判讀脫鉤後的第三態——統計已寫入、AI 段還在排隊或
-  執行中。與既有的 `ai_analyzed=false`（AI 判定不需要或已失敗）是不同語意，見
-  docs/DETECTION-SPEC.md「NetIQ 搜尋與 AI 判讀脫鉤」一節。
+docs/archive/FEEDBACK-12-PLAN.md §3.5/§4.2）**：
 - `LogIssueSignature.EventKey`：問題簽章的第五個分組鍵欄位（Linux 事件命中規則時的規則 Id，
   Windows 事件恆空字串）。**已抽出成 `lf_top_issues.event_key` 欄**
   （處理狀態以完整簽章為鍵，`IssueSignatureKey` 需要它才組得回五段完整簽章、
@@ -182,10 +186,11 @@ JSON 裡多出的欄位，不是新增資料表欄位）**：
   需要時走詳情頁路徑。
 
 **`AttachAiResult`（`IAnalysisRecordStore`）**：AI 段完成後覆寫暫代的 `ContentJson`
-內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`**（AI 有可能把
-程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level` 篩選的查詢
-（清單頁、儀表板）看不到這筆紀錄升級後的真正風險，是本專案反覆出現過的「抽出欄漂移」
-bug 家族的同一種模式，寫入路徑因此固定放在同一處做兩件事。
+內容，比照既有 `AttachWeeklyCheckup` 的模式——**同時更新抽出欄 `risk_level`、`ai_pending`（清 false）、`ai_analyzed`**
+（AI 有可能把程式判定的風險等級往上拉），只改 `ContentJson` 而漏改抽出欄會讓依 `risk_level`
+篩選的查詢（清單頁、儀表板）看不到這筆紀錄升級後的真正風險——`ai_pending` 過去正是漏在
+這裡（只寫進 JSON、欄位永遠停在 1），是本專案反覆出現過的「抽出欄漂移」bug 家族的同一種
+模式，寫入路徑因此固定放在同一處一起做。
 
 ```
 lf_top_issues                                        -- LogIssueSignature 的**抽出子表**（不是一比一鏡像）：

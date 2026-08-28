@@ -38,7 +38,8 @@ internal class RecordQueryServiceFacade
     {
         _list = new RecordListQueryService(
             repository, hosts, users, handlings, issueHandlings, cases, settings,
-            settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver, issueOwners, rules);
+            settingsService ?? new FakeSystemSettingsService(), visibility, aggregates, statusResolver,
+            new UserDisplayNameService(settings), issueOwners, rules);
         _detail = new RecordDetailQueryService(
             repository, reports, hosts, users, hostGroups, visibility, issueHandlings, cases, noiseMarks, rules, currentUser, settings);
     }

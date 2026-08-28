@@ -42,6 +42,15 @@ public class ScheduleOptions
     /// </summary>
     public bool LocalAnalysisEnabled { get; set; } = true;
 
+    /// <summary>AI 分析排程是否啟用（預設 false）</summary>
+    public bool AiEnabled { get; set; } = false;
+
+    /// <summary>AI 排程的執行窗口（預設全天 00:00→23:59 一組），與取數的 Windows 完全獨立</summary>
+    public List<ScheduleWindow> AiWindows { get; set; } = new() { new ScheduleWindow { Start = "00:00", End = "23:59" } };
+
+    /// <summary>AI 分析併發數（預設 1，合法範圍 1~8）</summary>
+    public int AiConcurrency { get; set; } = 1;
+
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedByAccount { get; set; }
 }

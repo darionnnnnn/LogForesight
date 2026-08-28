@@ -44,36 +44,48 @@ public class DashboardController : ControllerBase
 public class RunActivityController : ControllerBase
 {
     private readonly SchedulerRunState _runState;
+    private readonly AiAnalysisRunState _aiRunState;
 
-    public RunActivityController(SchedulerRunState runState)
+    public RunActivityController(SchedulerRunState runState, AiAnalysisRunState aiRunState)
     {
         _runState = runState;
+        _aiRunState = aiRunState;
     }
 
     [HttpGet]
     public ApiResponse<RunActivityDto> Get()
     {
-        // 單一告示只能顯示一條進度，主／子軌的取捨（子進度優先）由 SchedulerRunState.LatestActivity
+        // 單一告示只能顯示一條進度，主／本機軌的取捨由 SchedulerRunState.LatestActivity
         // 單點決定（回饋十四輪 UI-6 體檢）——這支與健康診斷共用同一個選擇邏輯，不各自記得。
         var (phase, done, total) = _runState.LatestActivity();
 
+        if (_runState.IsRunning || phase != null)
+        {
+            return ApiResponse<RunActivityDto>.Ok(new RunActivityDto
+            {
+                IsRunning = _runState.IsRunning,
+                Done = done,
+                Total = total,
+                // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台）——「主機日」這個單位
+                // 一般使用者沒有概念。
+                UnitText = phase switch
+                {
+                    "local" => "天",
+                    "netiq" => "台",
+                    _ => null
+                }
+            });
+        }
+
+        // 取數閒置時輪到 AI 排程（回饋三十五輪批次D：AI 補寫拆成獨立排程後，
+        // 它單獨在跑時全站也要看得到——優先序 取數 > AI，兩者同時跑時取數較有代表性）
+        var ai = _aiRunState.Snapshot();
         return ApiResponse<RunActivityDto>.Ok(new RunActivityDto
         {
-            IsRunning = _runState.IsRunning,
-            Done = done,
-            Total = total,
-            // 本機路徑是逐日回補（天），NetIQ 機房路徑是逐台主機（台）——「主機日」這個單位
-            // 一般使用者沒有概念。netiq-ai／netiq-backpressure 這條 AI 背景消化軌的分母是
-            // **排入 AI 佇列的件數**（回饋二十七輪作業 B3：背壓期間改報 AI 消化進度，
-            // 不再沿用主機日數字），用「件」而非「台」，避免使用者以為又要重新查一次
-            // （docs/archive/FEEDBACK-12-PLAN.md §3.7）。
-            UnitText = phase switch
-            {
-                "local" => "天",
-                "netiq" => "台",
-                "netiq-ai" or "netiq-backpressure" => "件",
-                _ => null
-            }
+            IsRunning = ai.IsRunning,
+            Done = ai.ProgressDone,
+            Total = ai.ProgressTotal,
+            UnitText = ai.IsRunning ? "件" : null
         });
     }
 }
