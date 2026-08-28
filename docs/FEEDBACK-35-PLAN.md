@@ -383,12 +383,31 @@
 
 ## 執行紀錄
 
+> 驗收一律由 Claude 獨立重跑，不採信委派方摘要。
+
 | 作業-階段 | 執行者 | 結果 | 驗收 | 落差與處置 |
 |---|---|---|---|---|
-| A 時間欄寬 | 未開始 | | | |
-| B 顯示規則全站 | 未開始 | | | |
+| A 時間欄寬 | Claude | 完成 | 建置 0 警告；BOM 三檔比對基準一致 | 幾行級未委派；改共用 class 取代寫死 px |
+| B1 單點服務＋兩出口 | agy（gemini-3.7-flash-high） | 完成 | 3036 綠；白名單乾淨；/me 測試確實走 DI 容器 | 無落差 |
+| B2 全站出口＋置頂修復 | agy（gemini-3.7-flash-high） | 完成 | 3044 綠；NameFormat 舊方法全 repo 零命中 | 見下方兩項 |
 | G 執行總表 | 未開始 | | | |
 | C 索引與全域查詢 | 未開始 | | | |
 | D 排程拆分 | 未開始 | | | |
 | E 記憶體 | 未開始 | | | |
 | F 快取 | 未開始 | | | |
+
+### 批次B 落差與處置
+
+1. **B1 造成的置頂破口（驗收時讀程式碼比對發現，測試全綠抓不到）**：
+   B1 讓 `/api/admin/users` 的 displayName 套了規則，但 `HandlingDto.OwnerNames`
+   仍是原值；兩者是指派下拉「置頂＋（負責人）」的逐字比對鍵（`ui.js` searchableUserSelect），
+   規則一設就靜默失效且無錯誤訊息。→ 列為 B2 必修 1，兩處 OwnerNames 一併套規則，
+   並加「兩端字串必須相等」的契約測試釘住。因此 B1／B2 綁定，不單獨併 dev。
+2. **BOM 又被剝除 6 檔**（B2）：`BulkScaleGateTests`／`LinuxIssueOwnerAdminTests`／
+   `NeedsBackfillTests`／`ScheduleController`／`IssueHandlingCommandService`／
+   `IssueOwnerAdminService`，與前次幾乎同一組。規格已明寫禁止仍發生
+   → 判定為 agy 編輯工具的固有行為，規格擋不住，只能每段驗收比對基準分支後補回。
+   已逐檔補回並複驗全數一致。
+3. **白名單外連帶（判定合理）**：`HostDtoMapper` 依規格改為可取得服務，
+   因是 `internal static` 而多一個**必要**參數（非可選、非多載），
+   呼叫端 `HostAdminService`／`NetiqHostService` 隨之調整。
